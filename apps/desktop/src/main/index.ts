@@ -332,6 +332,8 @@ const CURSOR_COMPLETION_AGENT_CHANNELS = {
   getEvents: 'cursor-completion-agent:get-events',
   startRun: 'cursor-completion-agent:start-run',
   cancelRun: 'cursor-completion-agent:cancel-run',
+  subscribe: 'cursor-completion-agent:subscribe',
+  unsubscribe: 'cursor-completion-agent:unsubscribe',
 } as const
 
 const DOCUMENT_CHANNELS = {
@@ -1797,6 +1799,8 @@ function registerCursorCompletionAgentHandlers(bridge: AgentGatewayBridge): void
       bridge.getEvents(sessionId, runId, afterSeq),
     startRun: (_event, sessionId, input) => bridge.startRun(sessionId, input),
     cancelRun: (_event, runId) => bridge.cancelRun(runId),
+    subscribe: (event, sessionId) => bridge.subscribe(event.sender, sessionId),
+    unsubscribe: (event) => bridge.unsubscribe(event.sender.id),
   })
 }
 
@@ -2848,7 +2852,11 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     })))
     remoteAgentCommandClient = new RemoteAgentCommandClient(saasClient, agentGatewayBridge)
     registerAgentHandlers(agentGatewayBridge, migrationCoordinator)
-    cursorCompletionAgentBridge = new AgentGatewayBridge(cursorCompletionSupervisor)
+    // 独立 event channel：与主 Agent UI 的 'agent:event' 隔离，避免两个桥的
+    // websocket 帧在渲染进程串台。
+    cursorCompletionAgentBridge = new AgentGatewayBridge(cursorCompletionSupervisor, undefined, {
+      eventChannel: 'cursor-completion-agent:event',
+    })
     registerCursorCompletionAgentHandlers(cursorCompletionAgentBridge)
     agentStatusReporter.start()
     const keyring = new AccountKeyringService(join(dataDirectory, 'account-keyring.json'))

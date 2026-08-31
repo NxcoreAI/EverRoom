@@ -996,6 +996,9 @@ export interface NxcoreDesktopApi {
     getEvents(sessionId: string, runId: string, afterSeq: number): Promise<AgentEvent[]>
     startRun(sessionId: string, input: StartAgentRunInput): Promise<AgentRun>
     cancelRun(runId: string): Promise<AgentRun>
+    subscribe(sessionId: string): Promise<void>
+    unsubscribe(): Promise<void>
+    onEvent(listener: (frame: AgentSocketFrame) => void): () => void
   }
   documents: {
     list(roomId: string): Promise<RoomDocument[]>

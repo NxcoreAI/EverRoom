@@ -997,7 +997,7 @@ describe('RoomOverviewService', () => {
     expect(reloaded.revoke('room-overview', proposal.id).overview.status[0]?.text).toBe('Blocked by budget')
   })
 
-  it('requires a later Agent run in the same session before applying a proposal', async () => {
+  it('applies a same-session proposal immediately but still rejects cross-session applies', async () => {
     const { service, db } = await createHarness()
     service.saveSnapshot({
       rooms: [{
@@ -1017,15 +1017,26 @@ describe('RoomOverviewService', () => {
       entryPoint: 'agent',
     }, { sessionId: 'session-1', runId: 'run-propose' })
 
-    expect(() => overviews.apply('room-agent-correction', proposal.id, {
+    // 用户明确请求的修改：同轮同 run 直接应用
+    expect(overviews.apply('room-agent-correction', proposal.id, {
       sessionId: 'session-1', runId: 'run-propose',
-    })).toThrow('room_correction_confirmation_required')
-    expect(() => overviews.apply('room-agent-correction', proposal.id, {
+    }).overview.status[0]?.text).toBe('Confirmed status')
+
+    // 后续确认场景仍受会话边界保护：跨会话拒绝，同会话稍后 run 允许
+    const followUp = overviews.propose('room-agent-correction', {
+      operation: 'content_replace',
+      section: 'status',
+      originalText: 'Confirmed status',
+      replacementText: 'Final status',
+      rationale: 'Second clarification',
+      entryPoint: 'agent',
+    }, { sessionId: 'session-1', runId: 'run-propose-2' })
+    expect(() => overviews.apply('room-agent-correction', followUp.id, {
       sessionId: 'session-2', runId: 'run-confirm',
     })).toThrow('room_correction_confirmation_required')
-    expect(overviews.apply('room-agent-correction', proposal.id, {
+    expect(overviews.apply('room-agent-correction', followUp.id, {
       sessionId: 'session-1', runId: 'run-confirm',
-    }).overview.status[0]?.text).toBe('Confirmed status')
+    }).overview.status[0]?.text).toBe('Final status')
   })
 
   it('applies a citation-backed correction immediately and validates the current projection', async () => {

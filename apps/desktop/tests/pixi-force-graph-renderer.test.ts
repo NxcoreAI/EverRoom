@@ -886,6 +886,24 @@ describe('PixiForceGraphRenderer', () => {
     expect(viewport.scale.x).toBeLessThan(1)
   })
 
+  it('caps the zoom at 1 when every node is stacked at a single point', async () => {
+    const fakes = createFakes()
+    const renderer = await createPixiForceGraphRenderer({
+      dependencies: fakes.dependencies,
+      edges: [],
+      host: createHost(),
+      nodes: [{}, {}, {}],
+      // 共享坐标缓冲全 0（Worker 失败/未就绪）：所有节点叠在世界原点。
+      positions: new Float32Array(6),
+    })
+    const viewport = fakes.viewports[0]!
+
+    renderer.fitView()
+    // 不把这叠节点放大成满屏重叠大饼：只居中、缩放收敛到 ≤1。
+    expect(viewport.calls).toContain('setZoom:1')
+    expect(viewport.calls).toContain('moveCenter:0,12')
+  })
+
   it('resizes viewport and releases ticker, texture, viewport, sprites, and app resources', async () => {
     const fakes = createFakes()
     const host = createHost()
@@ -901,7 +919,8 @@ describe('PixiForceGraphRenderer', () => {
     expect(fakes.viewports[0]?.calls).toContain('resize:800,600')
 
     renderer.fitView()
-    expect(fakes.viewports[0]?.calls).toContain('setZoom:4')
+    // 两节点近距重叠（56×80 包围盒）属退化内容：只居中、不放大。
+    expect(fakes.viewports[0]?.calls).toContain('setZoom:1')
     expect(fakes.viewports[0]?.calls).toContain('moveCenter:20,42')
 
     renderer.destroy()

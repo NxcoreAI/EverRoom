@@ -1113,14 +1113,19 @@ export class AgentService {
   }
 
   listEvents(sessionId: string, runId: string | undefined, afterSeq: number): AgentEvent[] {
+    // seq/runId 过滤下推 SQL：流式轮询按 afterSeq 增量拉取，
+    // 全表扫描会让长会话的每次轮询线性变贵。
     const rows = this.db
       .select()
       .from(agentEvents)
-      .where(eq(agentEvents.sessionId, sessionId))
+      .where(and(
+        eq(agentEvents.sessionId, sessionId),
+        gt(agentEvents.seq, afterSeq),
+        ...(runId ? [eq(agentEvents.runId, runId)] : []),
+      ))
       .orderBy(asc(agentEvents.createdAt), asc(agentEvents.seq))
       .all();
     return rows
-      .filter((row) => row.seq > afterSeq && (!runId || row.runId === runId))
       .map((row) => ({
         id: row.id,
         sessionId: row.sessionId,

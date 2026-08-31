@@ -94,7 +94,7 @@ export function createRoomOverviewAgentTools(service: RoomOverviewService): PiAg
   const propose: PiAgentRuntimeTool = {
     name: "context_room_correction_propose",
     label: "提出 Room 纠正",
-    description: "把用户对当前 Room 的明确纠正整理成待确认 proposal。只要已经形成具体的原内容和拟改内容，就必须先成功调用本工具，不能只在聊天正文中虚构提案。调用成功后说明改动并停止；不得在同一轮调用 apply。信息不足时先追问。",
+    description: "把用户对当前 Room 的明确修改整理成 proposal。只要已经形成具体的原内容和拟改内容，就必须先成功调用本工具，不能只在聊天正文中虚构提案。用户明确请求的修改（如“更新建议下一步”“把简介改成……”）：propose 成功后同轮立即调用 context_room_correction_apply 直接应用并汇报结果。仅当改动由你自主发起或无法唯一定位目标时，才停在提案向用户展示并等待确认。信息不足时先追问。",
     parameters: Type.Object({
       roomId: Type.Optional(Type.String({ maxLength: 128 })),
       operation: Operation,
@@ -121,15 +121,15 @@ export function createRoomOverviewAgentTools(service: RoomOverviewService): PiAg
       } as ProposeRoomContextCorrectionInput;
       const proposal = service.propose(roomId, proposalInput, { sessionId: input.sessionId, runId: input.runId });
       return {
-        content: `已创建待确认纠正 ${proposal.id}。请向用户展示拟议改动并等待下一轮明确确认。`,
-        details: { proposal, confirmationRequired: true },
+        content: `已创建纠正提案 ${proposal.id}。若本次修改是用户明确请求的，立即调用 context_room_correction_apply 同轮应用；否则向用户展示拟议改动并等待确认。`,
+        details: { proposal },
       };
     },
   };
   const apply: PiAgentRuntimeTool = {
     name: "context_room_correction_apply",
     label: "应用已确认的 Room 纠正",
-    description: "仅在用户当前消息明确确认 context_room_context_get 返回的当前会话既有 pendingCorrections 后调用，使用其中精确 proposal id。不能应用本轮刚创建的 proposal。",
+    description: "应用 Room 纠正提案。用户明确请求的修改可同轮应用刚创建的 proposal；应用用户事后确认的既有待确认项时，先用 context_room_context_get 取当前会话 pendingCorrections 中的精确 proposal id 再调用。",
     parameters: Type.Object({
       roomId: Type.Optional(Type.String({ maxLength: 128 })),
       proposalId: Type.String({ minLength: 1, maxLength: 200 }),

@@ -1,3 +1,5 @@
+import ForceGraphWorker from './forceGraph.worker?worker&inline'
+
 import {
   DEFAULT_FORCE_GRAPH_OPTIONS,
   ForceGraphControlIndex,
@@ -23,10 +25,10 @@ export interface ForceGraphLayoutSnapshot {
 }
 
 function defaultWorkerFactory(): ForceGraphWorkerLike {
-  return new Worker(new URL('./forceGraph.worker.ts', import.meta.url), {
-    name: 'force-graph-layout',
-    type: 'module',
-  })
+  // 内联（blob URL）Worker：打包后的应用从 file:// 加载，且主进程为启用
+  // SharedArrayBuffer 注入了 COOP/COEP；此时 file:// Worker 脚本会被 CORP
+  // 拦截（module/classic 均失败，Worker 异步 error），blob URL 则两端可用。
+  return new ForceGraphWorker({ name: 'force-graph-layout' }) as ForceGraphWorkerLike
 }
 
 export class ForceGraphLayoutController {
@@ -41,11 +43,18 @@ export class ForceGraphLayoutController {
     edges,
     options,
     workerFactory = defaultWorkerFactory,
+    onFatal,
   }: {
     nodes: ForceGraphNode[]
     edges: ForceGraphEdge[]
     options?: Partial<ForceGraphOptions>
     workerFactory?: () => ForceGraphWorkerLike
+    /**
+     * Worker 致命错误回调（脚本加载失败、初始化抛错或运行中崩溃），
+     * ready 被拒与 ready 之后的 onerror 都会触发，至多一次。
+     * 共享坐标缓冲此后不再更新（保持全 0），宿主应回落静态布局。
+     */
+    onFatal?: (error: Error) => void
   }) {
     if (typeof SharedArrayBuffer === 'undefined') {
       throw new Error('SharedArrayBuffer is unavailable; enable COOP/COEP cross-origin isolation')
@@ -61,12 +70,26 @@ export class ForceGraphLayoutController {
       positions: shared.positions,
     }
     this.worker = workerFactory()
+    let fatalNotified = false
+    const notifyFatal = (error: Error) => {
+      if (fatalNotified || this.disposed) return
+      fatalNotified = true
+      onFatal?.(error)
+    }
     this.ready = new Promise<void>((resolve, reject) => {
       this.worker.onmessage = (event) => {
         if (event.data.type === 'ready') resolve()
-        else reject(new Error(event.data.message))
+        else {
+          const error = new Error(event.data.message)
+          reject(error)
+          notifyFatal(error)
+        }
       }
-      this.worker.onerror = (event) => reject(new Error(event.message || 'Force graph worker failed'))
+      this.worker.onerror = (event) => {
+        const error = new Error(event.message || 'Force graph worker failed')
+        reject(error)
+        notifyFatal(error)
+      }
     })
     this.worker.postMessage({
       type: 'initialize',

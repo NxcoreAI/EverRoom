@@ -477,11 +477,19 @@ export function createPixiForceGraphRenderer(
     if (destroyed || nodes.length === 0) return
     const bounds = contentBounds()
     if (!bounds) return
+    const boundsWidth = Math.max(1, bounds.maxX - bounds.minX)
+    const boundsHeight = Math.max(1, bounds.maxY - bounds.minY)
     const scale = Math.min(4, Math.max(minScale, Math.min(
-      Math.max(1, screenWidth - 48) / Math.max(1, bounds.maxX - bounds.minX),
-      Math.max(1, screenHeight - 48) / Math.max(1, bounds.maxY - bounds.minY),
+      Math.max(1, screenWidth - 48) / boundsWidth,
+      Math.max(1, screenHeight - 48) / boundsHeight,
     )))
-    viewport.setZoom?.(scale, false)
+    // 退化兜底：多个节点全部叠在同一点（布局失败/坐标未就绪）时不放大，
+    // 否则镜头会把这叠节点放大成满屏重叠大饼；退化为只居中（缩放 ≤1）。
+    // 单节点保持原有放大行为（就该看清这唯一的节点）。
+    const degenerate = nodes.length > 1
+      && boundsWidth < textureRadius * 4
+      && boundsHeight < textureRadius * 4 + 24
+    viewport.setZoom?.(degenerate ? Math.min(scale, 1) : scale, false)
     viewport.moveCenter?.((bounds.minX + bounds.maxX) / 2, (bounds.minY + bounds.maxY) / 2)
   }
 

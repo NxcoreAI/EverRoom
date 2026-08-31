@@ -315,6 +315,28 @@ describe('force graph shared layout', () => {
     expect((positions[1]! + positions[3]!) / 2).toBeCloseTo(200, 0)
   })
 
+  it('notifies onFatal exactly once for worker errors before or after ready', async () => {
+    const worker = new FakeWorker()
+    const onFatal = vi.fn()
+    const controller = new ForceGraphLayoutController({
+      nodes: [{ id: 'a' }],
+      edges: [],
+      workerFactory: () => worker,
+      onFatal,
+    })
+    await controller.ready
+
+    // ready 之后的运行期崩溃也要通知（onerror 路径）。
+    worker.onerror?.({ message: 'died' } as ErrorEvent)
+    expect(onFatal).toHaveBeenCalledTimes(1)
+    expect(onFatal).toHaveBeenCalledWith(expect.objectContaining({ message: 'died' }))
+
+    // 幂等：同一 Worker 的后续 error 不重复通知。
+    worker.onerror?.({ message: 'died again' } as ErrorEvent)
+    expect(onFatal).toHaveBeenCalledTimes(1)
+    controller.dispose()
+  })
+
   it('rejects edges that cannot be linked to initialized nodes', () => {
     expect(() => createForceGraphSimulation({
       nodes: [{ id: 'known' }],

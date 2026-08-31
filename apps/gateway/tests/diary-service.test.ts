@@ -10,6 +10,7 @@ import {
   connectorEmails,
   documents,
   documentVersions,
+  diarySchedules,
   diaryVersionSources,
   entities,
   entityDocLinks,
@@ -141,6 +142,48 @@ describe("DiaryService", () => {
     expect(runId).toEqual(expect.any(String));
     expect(service.getRun(runId!)).toMatchObject({ date: "2026-08-20", trigger: "scheduled" });
     expect(service.ensureCurrentDayRun()).toBeNull();
+  });
+
+  it("enables scheduled generation by default for fresh installs", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nxcore-diary-test-"));
+    temporaryDirectories.push(dir);
+    const database = createDatabase(join(dir, "gateway.sqlite"), resolve("drizzle"));
+    databases.push(database);
+    const service = new DiaryService(database.db, { now: () => new Date(NOW) });
+
+    const settings = service.getSettings();
+
+    expect(settings.enabled).toBe(true);
+    expect(settings.localTime).toBe("23:30");
+    // enabledFrom/nextRunAt 跟随宿主机时区，只断言形态与先后关系。
+    expect(settings.enabledFrom).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(settings.nextRunAt).toBeInstanceOf(Date);
+    expect(settings.nextRunAt?.getTime()).toBeGreaterThan(NOW.getTime());
+  });
+
+  it("upgrades never-configured legacy rows to default-on and respects explicit opt-outs", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nxcore-diary-test-"));
+    temporaryDirectories.push(dir);
+    const database = createDatabase(join(dir, "gateway.sqlite"), resolve("drizzle"));
+    databases.push(database);
+    // 默认关闭时代自动建出、从未被用户改过的行。
+    database.db.insert(diarySchedules).values({
+      ownerId: "local-user", enabled: false, localTime: "23:30", timezone: "Asia/Shanghai",
+      enabledFrom: null, nextRunAt: null, configVersion: 1, createdAt: NOW, updatedAt: NOW,
+    }).run();
+    const service = new DiaryService(database.db, { now: () => new Date(NOW) });
+
+    const upgraded = service.getSettings();
+
+    expect(upgraded.enabled).toBe(true);
+    expect(upgraded.enabledFrom).toBe("2026-08-20");
+    expect(upgraded.nextRunAt).toEqual(new Date("2026-08-20T15:30:00.000Z"));
+    // 不前移 configVersion：持有旧版本的客户端下一次 PATCH 不应被 409 拒绝。
+    expect(upgraded.configVersion).toBe(1);
+
+    // 用户显式关闭后（configVersion 已前移、enabledFrom 已写入），默认值不得再把它打开。
+    service.updateSettings({ enabled: false });
+    expect(service.getSettings()).toMatchObject({ enabled: false, nextRunAt: null, configVersion: 2 });
   });
 
   it("limits source reads to the run manifest and marks a ready day stale after source changes", async () => {

@@ -156,6 +156,7 @@ export class IngestFilterService {
         }
         if (timer.aborted) throw new Error("ingest filter agent timeout");
       }
+      if (!content.trim()) throw new Error("ingest filter agent returned empty content");
       return parseVerdicts(content, items.length);
     } finally {
       this.activeRuns.delete(batchKey);
@@ -276,11 +277,26 @@ export function parseVerdicts(content: string, expected: number): IngestFilterVe
       }
     }
   }
+  if (parsed === undefined) {
+    // 前言/后语 + 围栏包裹的数组（模型无视"不要解释/不要围栏"的协议）：
+    // 取首个 [ 到末个 ] 的片段解析；片段必须是合法数组才接受，失败继续
+    // 走 unparsable（fail-open 放行整批，宁漏勿错杀）。
+    const firstBracket = text.indexOf("[");
+    const lastBracket = text.lastIndexOf("]");
+    if (firstBracket >= 0 && lastBracket > firstBracket) {
+      try {
+        const sliced = JSON.parse(text.slice(firstBracket, lastBracket + 1));
+        if (Array.isArray(sliced)) parsed = sliced;
+      } catch {
+        parsed = undefined;
+      }
+    }
+  }
   // 单个裸对象（无数组包裹）也按单元素数组处理。
   if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
     parsed = [parsed];
   }
-  if (!Array.isArray(parsed)) throw new Error("filter verdict is not an array");
+  if (!Array.isArray(parsed)) throw new Error(`filter verdict is not an array: ${text.slice(0, 200)}`);
   if (parsed.length === 0 && expected > 0) {
     throw new Error(`filter verdict unparsable: ${text.slice(0, 200)}`);
   }

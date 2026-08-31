@@ -192,6 +192,7 @@ export function createIngestFilterAgentRuntime(
   resolveWikiIds?: (input: { roomId: string | null }) => Promise<string[]>,
 ): AgentRuntime | null {
   if (config.agentRuntime === "fake" || !isPiRuntimeConfigured(config.backgroundPi)) return null;
+  const bundle = builtin(BUILTIN_AGENT_IDS.ingestFilter);
   const { mcp: _mcp, ...pi } = config.backgroundPi!;
   return new PiAgentRuntime({
     ...pi,
@@ -199,6 +200,10 @@ export function createIngestFilterAgentRuntime(
     builtinTools: [],
     maxToolCallsPerRun: config.ingestFilter.maxToolCalls,
     runtimeRole: "internal",
+    // 过滤器输出是给程序 JSON.parse 的：必须挂机器对机器的 bundle 人设，
+    // 否则落到默认聊天人设（"最终答复要总结"），模型会在数组前后加说明文字
+    skillsEnabled: false,
+    systemPrompt: bundle.systemPrompt,
     sessionsDir: join(pi.sessionsDir, "ingest-filter"),
     workingDirectory: join(pi.workingDirectory, "ingest-filter"),
     agentDirectory: join(pi.agentDirectory, "ingest-filter"),
