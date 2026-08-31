@@ -19,6 +19,7 @@ import type { IngestPipelines } from '../shared/ingest'
 import type { McpServersSnapshot } from '../shared/mcp'
 import type { DesktopRequestError, NxcoreDesktopApi, RoomAgentSelectionRewriteInput } from '../shared/sources'
 import type { BrowserExtensionMessage, BrowserExtensionStatus } from '../shared/browser-extension'
+import { isCursorCompletionAgentErrorPayload } from '../shared/cursor-completion'
 import { DESKTOP_PAGE_MODE_ENV, resolveDesktopPageMode } from '../shared/page-mode'
 import {
   isDesktopLocale,
@@ -117,6 +118,11 @@ async function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
 async function invokeQuietly<T>(channel: string, ...args: unknown[]): Promise<T> {
   try {
     const result = await ipcRenderer.invoke(channel, ...args) as T
+    // 补全通道的预期失败以哨兵 payload 跨 IPC（避免 Electron 对 reject 打 ERROR 级
+    // console 噪音），这里还原成普通 Error——渲染端分类/重试逻辑不变。
+    if (isCursorCompletionAgentErrorPayload(result)) {
+      throw new Error(result.__cursorCompletionAgentError)
+    }
     const notice = rateLimitNotice(result)
     if (!notice) return result
     throw new Error(notice.message)

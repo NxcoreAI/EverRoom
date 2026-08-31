@@ -19,6 +19,7 @@ import type {
 import type { CloudAccountStatus, DefaultLocalFolder, DefaultLocalFolderConnectionResult } from '../shared/sources'
 import type { PrivateTranscriptionSyncCompletedEvent, RuntimeConfigSnapshot } from '../shared/sources'
 import { OFFICE_TEST_INSTANCE_ID, officePreviewKindForFileName } from '../shared/sources'
+import { CURSOR_COMPLETION_AGENT_ERROR_KEY } from '../shared/cursor-completion'
 import type { OpenConnectorExecutionInput } from '../shared/open-connector'
 import { ConnectorRegistry } from './connectors/connector-registry'
 import { LocalFolderConnector } from './connectors/local-folder-connector'
@@ -1791,15 +1792,28 @@ function registerAgentHandlers(bridge: AgentGatewayBridge, migrationCoordinator:
 }
 
 function registerCursorCompletionAgentHandlers(bridge: AgentGatewayBridge): void {
+  // 预期失败（409 session_busy、网络瞬断等）以哨兵 payload 返回而非 reject：
+  // 渲染端会分类重试，每次 reject 都会被 Electron 记成一条 ERROR 级 console 噪音。
+  const quiet = <Args extends unknown[]>(
+    handler: (event: Electron.IpcMainInvokeEvent, ...args: Args) => unknown,
+  ) => async (event: Electron.IpcMainInvokeEvent, ...args: Args) => {
+    try {
+      return await handler(event, ...args)
+    } catch (error) {
+      return {
+        [CURSOR_COMPLETION_AGENT_ERROR_KEY]: error instanceof Error ? error.message : String(error),
+      }
+    }
+  }
   handleGroup(CURSOR_COMPLETION_AGENT_CHANNELS, {
-    createSession: (_event, input) => bridge.createSession(input),
-    deleteSession: (_event, sessionId) => bridge.deleteSession(sessionId),
-    getEvents: (_event, sessionId, runId, afterSeq) =>
-      bridge.getEvents(sessionId, runId, afterSeq),
-    startRun: (_event, sessionId, input) => bridge.startRun(sessionId, input),
-    cancelRun: (_event, runId) => bridge.cancelRun(runId),
-    subscribe: (event, sessionId) => bridge.subscribe(event.sender, sessionId),
-    unsubscribe: (event) => bridge.unsubscribe(event.sender.id),
+    createSession: quiet((_event, input) => bridge.createSession(input)),
+    deleteSession: quiet((_event, sessionId) => bridge.deleteSession(sessionId)),
+    getEvents: quiet((_event, sessionId, runId, afterSeq) =>
+      bridge.getEvents(sessionId, runId, afterSeq)),
+    startRun: quiet((_event, sessionId, input) => bridge.startRun(sessionId, input)),
+    cancelRun: quiet((_event, runId) => bridge.cancelRun(runId)),
+    subscribe: quiet((event, sessionId) => bridge.subscribe(event.sender, sessionId)),
+    unsubscribe: quiet((event) => bridge.unsubscribe(event.sender.id)),
   })
 }
 

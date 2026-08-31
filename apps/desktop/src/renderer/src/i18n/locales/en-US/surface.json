@@ -888,6 +888,8 @@
   "settings.folderGuide.unavailable": "Folder setup is unavailable in this environment.",
   "settings.orUseYourAccountPassword": "Or use your account password",
   "settings.password": "Password",
+  "settings.paragraphCompletion": "Paragraph continuation",
+  "settings.paragraphCompletionDescription": "After a longer pause, continue the current paragraph with 2-4 sentences; click the lightbulb next to the suggestion to retry.",
   "settings.periodEnds": "Period ends",
   "settings.quickSignIn": "Quick sign-in",
   "settings.realityPerception": "Reality perception",

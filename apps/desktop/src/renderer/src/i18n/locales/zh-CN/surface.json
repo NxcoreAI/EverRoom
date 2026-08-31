@@ -888,6 +888,8 @@
   "settings.folderGuide.unavailable": "文件夹设置在当前环境不可用。",
   "settings.orUseYourAccountPassword": "或使用账号密码",
   "settings.password": "密码",
+  "settings.paragraphCompletion": "段落级续写",
+  "settings.paragraphCompletionDescription": "输入停顿较久时，在当前段落续写 2-4 句；点击建议旁的灯泡可重写。",
   "settings.periodEnds": "本周期截止",
   "settings.quickSignIn": "快捷登录",
   "settings.realityPerception": "现实感知",

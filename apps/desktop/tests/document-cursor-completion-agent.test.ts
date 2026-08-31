@@ -129,6 +129,23 @@ describe('document cursor completion Agent stream', () => {
     expect(structuredPrompt).toContain('"type":"heading"')
   })
 
+  it('rejects template-marker echoes as prompt leakage instead of showing them', () => {
+    // 实测失效形态：模型把请求模板本身当补全输出（2026-08-31 日志 "<CURSOR />" 回显）。
+    // 含任何模板标记的输出整条作废 → parse 返回空文本 → no_completion，不进熔断、不留 ghost。
+    expect(sanitizeDocumentCursorCompletion('<CURSOR />', '')).toBe('')
+    expect(sanitizeDocumentCursorCompletion('KEEP\n<CURSOR />', '')).toBe('')
+    expect(sanitizeDocumentCursorCompletion('在当前列表项中续写内容 </PREFIX>', '')).toBe('')
+    expect(sanitizeDocumentCursorCompletion('自然结束。</EDITOR_CONTEXT>', '')).toBe('')
+    // 正常内容（含普通尖括号标签）不受影响。
+    expect(sanitizeDocumentCursorCompletion('自然续写下一项。', '')).toBe('自然续写下一项。')
+    expect(parseDocumentCursorCompletion('KEEP\n<CURSOR />', request())).toEqual({
+      text: '',
+      replaceCharacters: 0,
+    })
+    // 指令段同步加固：空前缀场景显式要求直接给内容、禁止复述与模板标记。
+    expect(buildDocumentCursorCompletionPrompt(request())).toContain('当光标处前缀为空')
+  })
+
   it('allows only locally verified token corrections', () => {
     expect(parseDocumentCursorCompletion('REPLACE:32\nfunction()', {
       ...request('codeBlock'),
@@ -240,6 +257,56 @@ describe('document cursor completion Agent stream', () => {
     for (const prompt of prompts.slice(1)) {
       expect(instructionPrefix(prompt)).toBe(instructionPrefix(prompts[0]))
     }
+  })
+
+  it('keeps the instruction prefix byte-identical across completion modes', () => {
+    const instructionPrefix = (prompt: string) => prompt.slice(0, prompt.indexOf('<PREFIX>'))
+    const inlinePrompt = buildDocumentCursorCompletionPrompt(request())
+    const paragraphPrompt = buildDocumentCursorCompletionPrompt({
+      ...request(),
+      completionMode: 'paragraph',
+      avoidText: '上一条被拒绝的建议',
+    })
+    expect(instructionPrefix(paragraphPrompt)).toBe(instructionPrefix(inlinePrompt))
+    expect(paragraphPrompt).toContain('"completionMode":"paragraph"')
+    expect(paragraphPrompt).toContain('"avoidText":"上一条被拒绝的建议"')
+    expect(inlinePrompt).toContain('"completionMode":"inline"')
+    // formatRules 指令文本会提到 avoidText 这个词，这里断言的是数据字段不序列化
+    expect(inlinePrompt).not.toContain('"avoidText"')
+  })
+
+  it('sanitizes paragraph-mode suggestions to at most four sentences within 300 code points', () => {
+    // 2 句全保留（inline 档会在第 1 句截断——回归防线见上一用例）
+    expect(sanitizeDocumentCursorCompletion('第一句。第二句。第三句。', '', 'paragraph', '', undefined, 'paragraph'))
+      .toBe('第一句。第二句。第三句。')
+    // 第 5 句边界被丢弃：只取前 4 句
+    expect(sanitizeDocumentCursorCompletion('一。二。三。四。五。', '', 'paragraph', '', undefined, 'paragraph'))
+      .toBe('一。二。三。四。')
+    // 超过 300 码点时收缩到最大的可容纳句边界
+    const longSentence = '句'.repeat(120)
+    const trimmed = sanitizeDocumentCursorCompletion(
+      `${longSentence}。${longSentence}。${longSentence}。`,
+      '', 'paragraph', '', undefined, 'paragraph',
+    )
+    expect(Array.from(trimmed).length).toBe(242)
+    expect(trimmed.endsWith('。')).toBe(true)
+    // 无句末边界：按码点硬切 300
+    expect(Array.from(sanitizeDocumentCursorCompletion('字'.repeat(400), '', 'paragraph', '', undefined, 'paragraph')).length)
+      .toBe(300)
+    // 换行折叠依旧生效：段落档不允许新建块
+    expect(sanitizeDocumentCursorCompletion('第一句。\n第二句。', '', 'paragraph', '', undefined, 'paragraph'))
+      .toBe('第一句。 第二句。')
+    // codeBlock 无视档位，走代码规则
+    expect(sanitizeDocumentCursorCompletion('```ts\nreturn value\n}\n```', '', 'codeBlock', '', undefined, 'paragraph'))
+      .toBe('return value\n}')
+    // parse 透传档位：KEEP 段落文本不被单句截断
+    expect(parseDocumentCursorCompletion('KEEP\n第一句。第二句。', {
+      ...request(),
+      completionMode: 'paragraph',
+    })).toEqual({
+      text: '第一句。第二句。',
+      replaceCharacters: 0,
+    })
   })
 
   it('strips accidental structure markers from block-local suggestions', () => {
@@ -519,6 +586,71 @@ describe('document cursor completion session channel', () => {
     channel.dispose()
   })
 
+  it('retries the reused session with backoff while the gateway is still releasing the previous run', async () => {
+    const api: DocumentCursorCompletionAgentApi = {
+      createSession: vi.fn().mockResolvedValue(session()),
+      startRun: vi.fn()
+        .mockRejectedValueOnce(new Error('Agent session already has an active run'))
+        .mockResolvedValueOnce(run()),
+      getEvents: vi.fn().mockResolvedValue(completedEvents()),
+      cancelRun: vi.fn().mockResolvedValue({ ...run(), status: 'cancelled' }),
+      deleteSession: vi.fn().mockResolvedValue(undefined),
+    }
+    const channel = new DocumentCursorCompletionSessionChannel(api, {
+      roomId: 'room-1',
+      documentName: '产品计划',
+    })
+
+    const result = await streamDocumentCursorCompletion(api, request(), {
+      signal: new AbortController().signal,
+      pollIntervalMs: 0,
+      onSuggestion: vi.fn(),
+      channel,
+    })
+
+    expect(result).toEqual({ text: '自然结束。', replaceCharacters: 0 })
+    // session_busy 是暂态竞态：同会话重试，不换会话、不删会话。
+    expect(api.createSession).toHaveBeenCalledTimes(1)
+    expect(api.startRun).toHaveBeenCalledTimes(2)
+    expect(api.startRun).toHaveBeenLastCalledWith('completion-session', expect.anything())
+    expect(api.deleteSession).not.toHaveBeenCalled()
+    channel.dispose()
+  })
+
+  it('gives up after four session_busy retries and rethrows the gateway error', async () => {
+    vi.useFakeTimers()
+    try {
+      const api: DocumentCursorCompletionAgentApi = {
+        createSession: vi.fn().mockResolvedValue(session()),
+        startRun: vi.fn().mockRejectedValue(new Error('Agent session already has an active run')),
+        getEvents: vi.fn().mockResolvedValue([]),
+        cancelRun: vi.fn().mockResolvedValue({ ...run(), status: 'cancelled' }),
+        deleteSession: vi.fn().mockResolvedValue(undefined),
+      }
+      const channel = new DocumentCursorCompletionSessionChannel(api, {
+        roomId: 'room-1',
+        documentName: '产品计划',
+      })
+
+      const completion = streamDocumentCursorCompletion(api, request(), {
+        signal: new AbortController().signal,
+        pollIntervalMs: 0,
+        onSuggestion: vi.fn(),
+        channel,
+      })
+      const assertion = expect(completion).rejects.toThrow('Agent session already has an active run')
+      // 退避总额 150+300+600+1200ms 后仍忙 → 放弃重试原样抛出。
+      await vi.advanceTimersByTimeAsync(150 + 300 + 600 + 1200)
+      await assertion
+
+      expect(api.startRun).toHaveBeenCalledTimes(5)
+      expect(api.createSession).toHaveBeenCalledTimes(1)
+      channel.dispose()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('aborts early when no usable suggestion arrives within the first-suggestion deadline', async () => {
     const api: DocumentCursorCompletionAgentApi = {
       createSession: vi.fn().mockResolvedValue(session()),
@@ -567,6 +699,9 @@ describe('document cursor completion circuit breaker', () => {
     expect(classifyDocumentCursorCompletionError(new DOMException('x', 'AbortError'))).toBe('aborted')
     expect(classifyDocumentCursorCompletionError(new Error('Agent session not found'))).toBe('session_not_found')
     expect(classifyDocumentCursorCompletionError(new Error('agent_session_not_found'))).toBe('session_not_found')
+    expect(classifyDocumentCursorCompletionError(new Error('Agent session already has an active run'))).toBe('session_busy')
+    expect(classifyDocumentCursorCompletionError(new Error('agent_session_busy'))).toBe('session_busy')
+    expect(classifyDocumentCursorCompletionError(new Error('Remote Agent already has an active run'))).toBe('session_busy')
     expect(classifyDocumentCursorCompletionError(new Error('runtime_config_not_ready'))).toBe('unconfigured')
     expect(classifyDocumentCursorCompletionError(new Error('Agent 请求失败（429）'))).toBe('provider')
     expect(classifyDocumentCursorCompletionError(new Error('fetch failed'))).toBe('network')

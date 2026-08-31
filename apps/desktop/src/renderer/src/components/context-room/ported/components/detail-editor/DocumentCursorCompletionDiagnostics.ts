@@ -4,6 +4,9 @@ export type DocumentCursorCompletionTrigger =
   | 'cursor-move'
   | 'deletion'
   | 'middle-edit'
+  | 'paragraph-break'
+  | 'paragraph-idle'
+  | 'regenerate'
   | 'typing'
 
 export interface DocumentCursorCompletionDiagnosticEntry {
