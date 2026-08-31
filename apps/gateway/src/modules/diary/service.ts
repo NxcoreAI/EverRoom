@@ -28,6 +28,8 @@ export type {
 } from "./types.js";
 
 const DEFAULT_TIMEZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+// 定时总结默认开启：新装与从未配置过的老库都直接进入自动生成状态。
+const DEFAULT_LOCAL_TIME = "23:30";
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
 
@@ -75,6 +77,7 @@ export class DiaryService {
   private readonly sourceCollector: DiarySourceCollector;
   private timer: NodeJS.Timeout | null = null;
   private drainPromise: Promise<void> | null = null;
+  private drainAgain = false;
   private readonly refreshTimers = new Map<string, NodeJS.Timeout>();
   private readonly staleCheckAt = new Map<string, number>();
   private readonly backfilledDates = new Set<string>();
@@ -143,10 +146,39 @@ export class DiaryService {
   }
 
   getSettings(): typeof diarySchedules.$inferSelect {
-    const row = this.db.select().from(diarySchedules).where(eq(diarySchedules.ownerId, this.options.ownerId)).get();
-    if (row) return row;
+    let row = this.db.select().from(diarySchedules).where(eq(diarySchedules.ownerId, this.options.ownerId)).get();
+    if (row) {
+      // 老库里“从未配置过”的行（默认关闭时代自动建出、用户没动过开关）升级为
+      // 默认开启；用户显式关闭过的行（configVersion 已前移或已写过 enabledFrom）
+      // 不动。enabledFrom 落在升级当天，避免突然回填数月的历史日记。
+      if (!row.enabled && row.enabledFrom === null && row.configVersion === 1) {
+        const now = this.now();
+        const timezone = row.timezone || DEFAULT_TIMEZONE;
+        this.db.update(diarySchedules).set({
+          enabled: true,
+          enabledFrom: dateInTimezone(now, timezone),
+          nextRunAt: this.nextSchedule(now, row.localTime, timezone),
+          updatedAt: now,
+        }).where(eq(diarySchedules.ownerId, this.options.ownerId)).run();
+        this.logger?.info({ event: "diary.settings.default_enabled", timezone, localTime: row.localTime }, "diary scheduling upgraded to default-on");
+        row = this.db.select().from(diarySchedules).where(eq(diarySchedules.ownerId, this.options.ownerId)).get()!;
+      }
+      return row;
+    }
     const now = this.now();
-    this.db.insert(diarySchedules).values({ ownerId: this.options.ownerId, timezone: DEFAULT_TIMEZONE, createdAt: now, updatedAt: now }).run();
+    // 首次建行即默认开启：enabledFrom=今天、nextRunAt=下一个 23:30 槽位。
+    // 只把 enabled 置 true 而缺 nextRunAt 的话，外部调度器的定时槽位永远不触发
+    // （tick 只认 nextRunAt），当天之外的每日总结会静默丢失。
+    this.db.insert(diarySchedules).values({
+      ownerId: this.options.ownerId,
+      enabled: true,
+      localTime: DEFAULT_LOCAL_TIME,
+      timezone: DEFAULT_TIMEZONE,
+      enabledFrom: dateInTimezone(now, DEFAULT_TIMEZONE),
+      nextRunAt: this.nextSchedule(now, DEFAULT_LOCAL_TIME, DEFAULT_TIMEZONE),
+      createdAt: now,
+      updatedAt: now,
+    }).run();
     return this.db.select().from(diarySchedules).where(eq(diarySchedules.ownerId, this.options.ownerId)).get()!;
   }
 
@@ -378,9 +410,25 @@ export class DiaryService {
   }
 
   async drain(): Promise<void> {
-    if (this.drainPromise) return this.drainPromise;
-    this.drainPromise = this.drainInternal().finally(() => { this.drainPromise = null; });
-    return this.drainPromise;
+    if (this.drainPromise) {
+      // 已有 drain 在飞：标记补扫并让调用方等待完整循环。否则运行创建于本轮
+      // due 查询之后时，调用方拿到的 promise 不覆盖它，只能等 30s 轮询捡起
+      // （updateSettings 的 void drain() 与手动生成路由都会踩中这个窗口）。
+      this.drainAgain = true;
+      return this.drainPromise;
+    }
+    const execution = (async () => {
+      try {
+        do {
+          this.drainAgain = false;
+          await this.drainInternal();
+        } while (this.drainAgain);
+      } finally {
+        this.drainPromise = null;
+      }
+    })();
+    this.drainPromise = execution;
+    return execution;
   }
 
   private async drainInternal(): Promise<void> {
