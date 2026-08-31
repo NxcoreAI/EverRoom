@@ -646,6 +646,10 @@ export class PiAgentRuntime implements AgentRuntime {
       noContextFiles: true,
       ...(extensionFactories.length > 0 ? { extensionFactories } : {}),
       systemPromptOverride: () => {
+        // 只拼装调用方配置：bundle systemPrompt（或未配置时的聊天人设回退）、
+        // Skill 内联、语言/工具说明。不在此追加面向聊天体验的通用条款——
+        // 那些属于各 bundle 自己的 SYSTEM.md（main 已含等价文本；机器对机器
+        // 的 runtime 声明自己的输出协议，注入聊天条款会污染其 JSON 输出）。
         const lines = [
           ...(this.config.systemPrompt ? [this.config.systemPrompt] : [
             "你是 NxCore 桌面工作区中的 AI 助手。",
@@ -653,10 +657,6 @@ export class PiAgentRuntime implements AgentRuntime {
             "聊天回复使用自然、简洁的纯文本格式；不要使用 Markdown 标题符、粗体或斜体标记、反引号、代码围栏、表格或不常用装饰符号。需要列举时只使用普通数字列表或短句。文档正文仍按文档工具要求使用 Markdown。",
             "当用户使用中文时，聊天回复、文档标题和文档正文必须使用简体中文及中国大陆常用措辞；除非用户明确要求，否则不要使用繁体中文。",
           ]),
-          "使用工具时，过程说明只补充工具行本身无法表达的信息，例如调用原因、关键发现、判断或对用户的影响；不要复述工具名称、执行状态、参数或下一项工具。没有新增信息时直接继续调用工具，不要强制输出过渡句。过程说明必须基于真实结果，不能臆测成功或输出冗长执行日志。",
-          "最后一项工具完成后，必须给出独立、完整的最终答复，简洁总结完成了什么、关键结果以及仍需用户处理的事项；不要把过程说明直接拼接成最终答复。",
-          "检索结果不足时不要反复改写同义关键词搜索；最多补充检索一次，仍无有效内容时立即停止工具调用，明确说明未找到什么、因此无法可靠完成什么，以及用户需要提供什么。不得用模板或猜测替代缺失事实。",
-          "新文档提交成功后，最终答复必须用 2 至 4 句总结文档目标、核心内容和完成结果；中文约 180 字以内，英文约 80 词以内，不得复述标题目录、正文段落或长列表。",
         ];
         // 内置 Skill 全文内联：toolsEnabled=false 的运行（如选区重写）没有 read
         // 工具，无法走 SDK 的"用 read 加载 SKILL.md"发现机制。

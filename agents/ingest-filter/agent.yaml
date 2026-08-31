@@ -1,0 +1,15 @@
+schemaVersion: 1
+kind: builtin
+id: ingest-filter
+name: Ingest Filter Agent
+description: 判定 ingest 资料是否有沉淀价值，输出机器可直接解析的 verdict 数组
+runtime: pi
+systemPrompt: ./SYSTEM.md
+
+capabilities:
+  - ingest.filter-judge
+  - ingest.insight-generate
+
+tools: []
+
+skills: []
