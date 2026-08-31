@@ -748,7 +748,7 @@ export class SaasClient {
         `/app/asr-jobs/${this.requireCloudJobId(job.id)}/upload-authorization`,
         { method: 'POST' },
       )
-      await this.upload(filePath, info.size, authorization)
+      await this.upload(filePath, authorization)
       const queued = await this.request<CloudJob>(
         `/app/asr-jobs/${this.requireCloudJobId(job.id)}/upload-complete`,
         { method: 'POST', data: { objectKey: authorization.objectKey } },
@@ -1065,11 +1065,10 @@ export class SaasClient {
 
   private async upload(
     filePath: string,
-    size: number,
     authorization: UploadAuthorization,
   ): Promise<void> {
     const response = await http.put(authorization.uploadUrl, createReadStream(filePath), {
-      headers: { ...authorization.headers, 'Content-Length': String(size) },
+      headers: { ...authorization.headers },
       timeout: UPLOAD_TIMEOUT_MS,
       maxBodyLength: Number.POSITIVE_INFINITY,
       validateStatus: () => true,

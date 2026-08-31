@@ -33,9 +33,9 @@ interface RoomOnboardingGateProps {
   suppressOnboarding?: boolean
   onFinished?: (reason?: 'created' | 'existing') => void
   onExistingData?: () => void
-  onNavigateStage?: (stage: 'memory' | 'room' | 'folder' | 'ready') => void
+  onNavigateStage?: (stage: 'memory' | 'room' | 'folder' | 'microphone' | 'ready') => void
   memoryReady?: boolean
-  activeStage?: 'idle' | 'memory' | 'room' | 'folder' | 'ready'
+  activeStage?: 'idle' | 'memory' | 'room' | 'folder' | 'microphone' | 'ready'
 }
 
 // The guide is shown only on first use. Its marker is still updated during a
@@ -180,7 +180,7 @@ export function RoomOnboardingGate({ children, suppressOnboarding = false, onFin
     onFinished?.(reason)
   }
 
-  const navigateStage = (stage: 'memory' | 'folder' | 'ready') => {
+  const navigateStage = (stage: 'memory' | 'folder' | 'microphone' | 'ready') => {
     setMode('app')
     onNavigateStage?.(stage)
   }

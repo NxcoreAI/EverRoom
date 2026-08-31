@@ -357,6 +357,7 @@ const api: NxcoreDesktopApi = {
   },
   asr: {
     requestMicrophoneAccess: () => invoke('asr:request-microphone-access'),
+    getMicrophoneAccessStatus: () => invoke('asr:get-microphone-access-status'),
     openMicrophoneSettings: () => invoke('asr:open-microphone-settings'),
     openSystemAudioSettings: () => invoke('asr:open-system-audio-settings'),
     beginRecording: (mimeType) => invoke('asr:begin-recording', mimeType),
