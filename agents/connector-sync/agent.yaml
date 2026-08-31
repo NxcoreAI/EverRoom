@@ -25,3 +25,4 @@ skills:
   - ./skills/gmail-sync
   - ./skills/notion-sync
   - ./skills/google-calendar-sync
+  - ./skills/document-trust-verification
