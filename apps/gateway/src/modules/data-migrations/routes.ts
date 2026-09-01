@@ -35,6 +35,7 @@ export function dataMigrationRoutes(service: DataMigrationService): FastifyPlugi
     }, async (request) => service.updateProgress(request.params.id, request.body));
 
     app.post("/v1/data-migrations/runs/:id/threads", {
+      bodyLimit: 512 * 1024 * 1024,
       schema: { params: Type.Object({ id: Type.String() }), body: Type.Object({ threads: Type.Array(Type.Object({
         stableKey: Type.String({ minLength: 1, maxLength: 512 }), agentId: Type.Optional(Type.String({ maxLength: 200 })),
         externalSessionId: Type.String({ minLength: 1, maxLength: 512 }), title: Type.String({ maxLength: 500 }),

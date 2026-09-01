@@ -5,6 +5,15 @@ on:
     # 00:00 Asia/Shanghai (UTC+8). GitHub schedules use UTC.
     - cron: "0 16 * * *"
   workflow_dispatch:
+    inputs:
+      channel:
+        description: Release channel
+        required: true
+        default: nightly
+        type: choice
+        options:
+          - nightly
+          - alpha
 
 permissions:
   actions: write
@@ -52,6 +61,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_CHANNEL: ${{ inputs.channel || 'nightly' }}
         run: |
           version="$(node -p "require('./apps/desktop/package.json').version")"
           [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
@@ -59,12 +69,25 @@ jobs:
             exit 1
           }
           git fetch origin 'refs/tags/desktop-v*:refs/tags/desktop-v*'
-          tag="$(git tag --points-at HEAD --list "desktop-v$version*" --sort=-version:refname | head -n 1)"
-          if [[ -n "$tag" ]]; then
-            echo "tag-exists=true" >> "$GITHUB_OUTPUT"
+          if [[ "$RELEASE_CHANNEL" == "alpha" ]]; then
+            tag="desktop-v$version"
+            if git show-ref --verify --quiet "refs/tags/$tag"; then
+              test "$(git rev-list -n 1 "$tag")" = "$(git rev-parse HEAD)" || {
+                echo "Tag $tag already points to another commit; update the desktop package version." >&2
+                exit 1
+              }
+              echo "tag-exists=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "tag-exists=false" >> "$GITHUB_OUTPUT"
+            fi
           else
-            tag="desktop-v$version-nightly.$(TZ=Asia/Shanghai date +%Y%m%d).$GITHUB_RUN_NUMBER"
-            echo "tag-exists=false" >> "$GITHUB_OUTPUT"
+            tag="$(git tag --points-at HEAD --list "desktop-v$version-nightly.*" --sort=-version:refname | head -n 1)"
+            if [[ -n "$tag" ]]; then
+              echo "tag-exists=true" >> "$GITHUB_OUTPUT"
+            else
+              tag="desktop-v$version-nightly.$(TZ=Asia/Shanghai date +%Y%m%d).$GITHUB_RUN_NUMBER"
+              echo "tag-exists=false" >> "$GITHUB_OUTPUT"
+            fi
           fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 

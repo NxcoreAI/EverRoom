@@ -176,6 +176,9 @@ const api: NxcoreDesktopApi = {
     discover: () => invokeQuietly('migrations:discover'),
     chooseOpenClaw: () => invoke('migrations:choose-openclaw'),
     importOpenClaw: (id) => invoke('migrations:import-openclaw', id),
+    localAgentSources: (provider) => invokeQuietly('migrations:local-agent-sources', provider),
+    chooseLocalAgentDirectory: (provider) => invoke('migrations:choose-local-agent-directory', provider),
+    importLocalAgentMigration: (provider, id) => invoke('migrations:import-local-agent-migration', provider, id),
     importNotionZip: () => invoke('migrations:import-notion-zip'),
     sources: () => invokeQuietly('migrations:sources'),
     runs: (sourceId) => invokeQuietly('migrations:runs', sourceId),
@@ -382,6 +385,7 @@ const api: NxcoreDesktopApi = {
   },
   asr: {
     requestMicrophoneAccess: () => invoke('asr:request-microphone-access'),
+    getMicrophoneAccessStatus: () => invoke('asr:get-microphone-access-status'),
     openMicrophoneSettings: () => invoke('asr:open-microphone-settings'),
     openSystemAudioSettings: () => invoke('asr:open-system-audio-settings'),
     beginRecording: (mimeType) => invoke('asr:begin-recording', mimeType),

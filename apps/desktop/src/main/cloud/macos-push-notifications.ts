@@ -66,9 +66,13 @@ export class MacosPushNotificationService {
     const target = parseAgentNotificationTarget(userInfo)
     if (!target) return
     const { title, body } = alertText(userInfo)
-    if (!Notification.isSupported()) return
+    if (!Notification.isSupported()) {
+      console.warn('macOS system notifications are unavailable; dropping agent notification', target.notificationId)
+      return
+    }
     const notification = new Notification({ title, body })
     notification.on('click', () => this.openTarget(target))
+    notification.on('failed', (_event, reason) => console.warn('Agent notification failed to display', reason, target.notificationId))
     notification.show()
   }
 }

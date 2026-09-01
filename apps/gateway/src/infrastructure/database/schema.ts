@@ -746,7 +746,7 @@ export const dataMigrationSources = sqliteTable(
     transport: text("transport", { enum: ["oauth", "zip", "local-sqlite", "local-jsonl", "archive", "directory"] }).notNull(),
     stableSourceKey: text("stable_source_key").notNull(),
     displayName: text("display_name").notNull(),
-    status: text("status", { enum: ["ready", "importing", "completed", "error", "unavailable"] }).notNull().default("ready"),
+    status: text("status", { enum: ["ready", "importing", "completed", "error", "unavailable", "deleting"] }).notNull().default("ready"),
     lastSyncedAt: integer("last_synced_at", { mode: "timestamp_ms" }),
     error: text("error"),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
@@ -776,6 +776,28 @@ export const dataMigrationRuns = sqliteTable(
     completedAt: integer("completed_at", { mode: "timestamp_ms" }),
   },
   (table) => [index("data_migration_runs_source_started_idx").on(table.sourceId, table.startedAt)],
+);
+
+export const migrationJobs = sqliteTable(
+  "migration_jobs",
+  {
+    id: text("id").primaryKey(),
+    runId: text("run_id"),
+    sourceId: text("source_id"),
+    type: text("type", { enum: ["memory_index", "source_gc"] }).notNull(),
+    payload: text("payload").notNull().default("{}"),
+    status: text("status", { enum: ["pending", "running", "done", "failed"] }).notNull().default("pending"),
+    attempts: integer("attempts").notNull().default(0),
+    maxAttempts: integer("max_attempts").notNull().default(3),
+    runAt: integer("run_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("migration_jobs_status_run_at_idx").on(table.status, table.runAt),
+    index("migration_jobs_run_idx").on(table.runId),
+    index("migration_jobs_source_idx").on(table.sourceId),
+  ],
 );
 
 export const externalAgentThreads = sqliteTable(

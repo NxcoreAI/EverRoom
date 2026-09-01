@@ -916,6 +916,7 @@ export interface NxcoreDesktopApi {
   }
   asr: {
     requestMicrophoneAccess(): Promise<boolean>
+    getMicrophoneAccessStatus(): Promise<'not-determined' | 'granted' | 'denied' | 'restricted' | 'unknown'>
     openMicrophoneSettings(): Promise<void>
     openSystemAudioSettings(): Promise<void>
     beginRecording(mimeType: string): Promise<{ id: string }>

@@ -678,7 +678,7 @@ export interface StartAgentRunInput {
 
 export type MigrationProvider = "notion" | "openclaw" | "codex" | "claude";
 export type MigrationTransport = "oauth" | "zip" | "local-sqlite" | "local-jsonl" | "archive" | "directory";
-export type MigrationSourceStatus = "ready" | "importing" | "completed" | "error" | "unavailable";
+export type MigrationSourceStatus = "ready" | "importing" | "completed" | "error" | "unavailable" | "deleting";
 export type MigrationRunStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
 export type MigrationRunPhase = "discovering" | "reading" | "normalizing" | "saving" | "memory" | "finalizing" | "completed";
 

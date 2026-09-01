@@ -2,6 +2,7 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import { stat } from 'node:fs/promises'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
+import { execSync } from 'node:child_process'
 import { hostname } from 'node:os'
 import { basename, extname, isAbsolute, join, relative, resolve } from 'node:path'
 
@@ -31,6 +32,21 @@ import everroomFullLogo from '../../renderer/src/assets/everroom-full.png'
 
 const REFRESH_TOKEN_KEY = 'everroom:saas:refresh-token'
 const DEVICE_KEY_KEY = 'everroom:saas:device-key'
+
+// 读取硬件级设备标识（IOPlatformUUID）。它由主板固件决定，重装应用、清空
+// 应用数据、系统大版本升级都不会变化，只有更换整机才会变。
+let cachedHardwareKey: string | null | undefined
+function hardwareDeviceKey(): string | null {
+  if (cachedHardwareKey !== undefined) return cachedHardwareKey
+  try {
+    const output = execSync('ioreg -d 2 -l', { encoding: 'utf8', timeout: 5_000 })
+    const match = output.match(/"IOPlatformUUID" = "([0-9A-Fa-f-]+)"/)
+    cachedHardwareKey = match ? `hw-${match[1].toLowerCase()}` : null
+  } catch {
+    cachedHardwareKey = null
+  }
+  return cachedHardwareKey
+}
 const ACCOUNT_PROFILE_KEY = 'everroom:saas:account-profile'
 const REQUEST_TIMEOUT_MS = 15_000
 const UPLOAD_TIMEOUT_MS = 5 * 60_000
@@ -403,6 +419,11 @@ export class SaasClient {
   private loopbackRedirectSupported: boolean | null = null
   private loopbackServer: Server | null = null
 
+  /** 当前登录会话绑定的本机设备 ID（未登录为 null）。 */
+  get deviceId(): string | null {
+    return this.account?.device?.id ?? null
+  }
+
   readonly baseUrl: string
   readonly logtoIssuer: string
   readonly logtoAppId: string
@@ -748,7 +769,7 @@ export class SaasClient {
         `/app/asr-jobs/${this.requireCloudJobId(job.id)}/upload-authorization`,
         { method: 'POST' },
       )
-      await this.upload(filePath, info.size, authorization)
+      await this.upload(filePath, authorization)
       const queued = await this.request<CloudJob>(
         `/app/asr-jobs/${this.requireCloudJobId(job.id)}/upload-complete`,
         { method: 'POST', data: { objectKey: authorization.objectKey } },
@@ -1065,11 +1086,10 @@ export class SaasClient {
 
   private async upload(
     filePath: string,
-    size: number,
     authorization: UploadAuthorization,
   ): Promise<void> {
     const response = await http.put(authorization.uploadUrl, createReadStream(filePath), {
-      headers: { ...authorization.headers, 'Content-Length': String(size) },
+      headers: { ...authorization.headers },
       timeout: UPLOAD_TIMEOUT_MS,
       maxBodyLength: Number.POSITIVE_INFINITY,
       validateStatus: () => true,
@@ -1157,9 +1177,19 @@ export class SaasClient {
   }
 
   private async deviceKey(): Promise<string> {
+    // 设备标识锚定到硬件（IOPlatformUUID）：重装应用、清空应用数据后仍是同一台设备，
+    // 避免同一台机器在服务端裂变成多行设备记录。凭据存储里的旧随机 key 会被
+    // 硬件锚定值取代（下一次登录 UPSERT 到新 key，旧设备行自然沉寂）。
+    const stable = hardwareDeviceKey()
+    if (stable) {
+      const existing = await this.credentials.getPlainText(DEVICE_KEY_KEY)
+      if (existing !== stable) await this.credentials.setPlainText(DEVICE_KEY_KEY, stable)
+      return stable
+    }
+    // 兜底：读不到硬件标识（异常系统）时退回随机 key。
     const existing = await this.credentials.getPlainText(DEVICE_KEY_KEY)
-    if (existing) return existing
-    const value = randomUUID()
+    if (existing && existing.startsWith('hw-')) return existing
+    const value = `hw-${randomUUID()}`
     await this.credentials.setPlainText(DEVICE_KEY_KEY, value)
     return value
   }

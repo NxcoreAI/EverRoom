@@ -1,4 +1,4 @@
-import { Ban, Bot, HardDrive, Plus, RefreshCw, RotateCcw, Trash2, XCircle } from 'lucide-react'
+import { Ban, HardDrive, Plus, RefreshCw, RotateCcw, Trash2, XCircle } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 
 import type {
@@ -112,6 +112,19 @@ export function SourcesPage() {
         ? await window.nxcore!.migrations.importOpenClaw(discovered[0]!.id)
         : await window.nxcore!.migrations.chooseOpenClaw()
       if (run) setMessage(t('surface:sources.migrationCompleted', { count: run.messagesCompleted }))
+      await refreshMigrations()
+    } catch (error) { setMessage(error instanceof Error ? error.message : t('surface:sources.migrationFailed')) }
+    finally { setBusyId(null) }
+  }
+
+  const importLocalAgentHistory = async (provider: 'codex' | 'claude') => {
+    setConnectMenuOpen(false); setBusyId(`migration-${provider}`); setMessage(null)
+    try {
+      const discovered = await window.nxcore!.migrations.localAgentSources(provider)
+      const run = discovered.length
+        ? await window.nxcore!.migrations.importLocalAgentMigration(provider, discovered[0]!.id)
+        : await window.nxcore!.migrations.chooseLocalAgentDirectory(provider)
+      if (run) setMessage(t('surface:sources.localAgentMigrationCompleted', { count: run.messagesCompleted }))
       await refreshMigrations()
     } catch (error) { setMessage(error instanceof Error ? error.message : t('surface:sources.migrationFailed')) }
     finally { setBusyId(null) }
@@ -504,7 +517,7 @@ export function SourcesPage() {
   return (
     <div className="page">
       <PageHeader title={t('surface:sources.sources')} action={t('surface:sources.connectSource')} actionDisabled={busyId === 'new'} onAction={() => setConnectMenuOpen((open) => !open)} />
-      {api && connectMenuOpen ? <ConnectSourceMenu busy={Boolean(busyId)} onLocalFolder={() => void addLocalFolder()} onObsidian={() => void mountObsidian()} onGitHub={() => { setConnectMenuOpen(false); setGithubOpen(true) }} onGoogleDocs={() => { setConnectMenuOpen(false); setMarkdownSource('google-docs') }} onNotion={() => { setConnectMenuOpen(false); setMarkdownSource('notion') }} onNotionZip={() => void importNotionZip()} onOpenClaw={() => void importOpenClaw()} connectorsEnabled={connectorsEnabled} onConnectorProvider={(provider) => void connectConnector(provider)} providers={connectorProviders} onWebcalSubscription={() => { setConnectMenuOpen(false); setWebcalOpen(true) }} /> : null}
+      {api && connectMenuOpen ? <ConnectSourceMenu busy={Boolean(busyId)} onLocalFolder={() => void addLocalFolder()} onObsidian={() => void mountObsidian()} onGitHub={() => { setConnectMenuOpen(false); setGithubOpen(true) }} onGoogleDocs={() => { setConnectMenuOpen(false); setMarkdownSource('google-docs') }} onNotion={() => { setConnectMenuOpen(false); setMarkdownSource('notion') }} onNotionZip={() => void importNotionZip()} onOpenClaw={() => void importOpenClaw()} onLocalAgentHistory={(provider) => void importLocalAgentHistory(provider)} connectorsEnabled={connectorsEnabled} onConnectorProvider={(provider) => void connectConnector(provider)} providers={connectorProviders} onWebcalSubscription={() => { setConnectMenuOpen(false); setWebcalOpen(true) }} /> : null}
       {!api ? <div className="source-notice"><HardDrive aria-hidden="true" strokeWidth={1.8} /><div><strong>{t('surface:sources.connectLocalFoldersInTheDesktopApp')}</strong><span>{t('surface:sources.theWebVersionNeverRequestsOrReadsLocal')}</span></div></div> : null}
       {deletionProgress ? <div className="source-feedback source-delete-progress" role="status"><div className="source-delete-progress-copy"><strong>{deletionProgress.message}</strong><span className="source-delete-progress-track"><span style={{ width: `${deletionProgress.percent}%` }} /></span></div><b>{deletionProgress.percent}%</b></div> : message ? <div className="source-feedback" role="status">{message}</div> : null}
       {previewError ? <div className="source-feedback" role="alert">{previewError}</div> : null}
@@ -515,7 +528,7 @@ export function SourcesPage() {
       {migrationSources.length ? <div className="data-table migration-table">
         <div className="table-head"><span>{t('surface:sourceTable.name')}</span><span>{t('surface:sources.importMethod')}</span><span>{t('surface:sourceTable.status')}</span><span>{t('surface:sources.importedContent')}</span><span>{t('surface:sourceTable.actions')}</span></div>
         {migrationSources.map((source) => { const run = migrationRuns.find((item) => item.sourceId === source.id); const busy = run?.status === 'running' || run?.status === 'queued'; return <div className="table-row" key={source.id}>
-          <span className="name-cell"><span className="item-icon" data-source-kind={source.provider}>{source.provider === 'codex' || source.provider === 'claude' ? <Bot aria-hidden="true" /> : <SourceIcon kind={source.provider} />}</span><span className="source-name-copy"><strong>{source.displayName}</strong><small>{source.provider === 'claude' ? 'Claude Code' : source.provider === 'codex' ? 'Codex' : source.provider === 'openclaw' ? 'OpenClaw' : 'Notion'}</small></span></span>
+           <span className="name-cell"><span className="item-icon" data-source-kind={source.provider}><SourceIcon kind={source.provider} /></span><span className="source-name-copy"><strong>{source.displayName}</strong><small>{source.provider === 'claude' ? 'Claude Code' : source.provider === 'codex' ? 'Codex' : source.provider === 'openclaw' ? 'OpenClaw' : 'Notion'}</small></span></span>
           <span>{source.transport}</span><span className="status-cell" data-status={source.status}><span className={`status-dot ${source.status === 'completed' ? 'active' : ''}`} />{run?.phase ?? source.status}</span>
           <span className="migration-counts">{run ? <><strong>{source.provider === 'notion' ? run.pagesCompleted : run.threadsCompleted}</strong><small>{source.provider === 'notion' ? t('surface:sources.pages') : t('surface:sources.conversationsAndMessages', { count: run.messagesCompleted })}</small></> : '—'}</span>
           <span className="source-actions">{busy ? <button className="icon-button" title={t('surface:sources.cancelImport')} onClick={() => void window.nxcore!.migrations.cancel(run!.id)}><XCircle /></button> : <button className="icon-button" title={t('surface:sources.reimport')} onClick={() => void window.nxcore!.migrations.reimport(source.id).then(() => refreshMigrations())}><RefreshCw /></button>} {run?.status === 'failed' ? <button className="icon-button" title={t('surface:sources.retry')} onClick={() => void window.nxcore!.migrations.retry(run.id).then(() => refreshMigrations())}><RotateCcw /></button> : null}<button className="icon-button danger" title={t('surface:sources.clearLocalCopy')} onClick={() => { if (window.confirm(t('surface:sources.clearMigrationConfirm'))) void window.nxcore!.migrations.clear(source.id).then(() => refreshMigrations()) }}><Trash2 /></button></span>

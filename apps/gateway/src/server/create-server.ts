@@ -826,6 +826,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   filesService.initializeCatalog();
   const dataMigrationService = new DataMigrationService(db, sqlite, memoryService);
   dataMigrationService.setFilesService(filesService);
+  dataMigrationService.recover();
   resolveAgentConversation = (threadId, query) => dataMigrationService.buildReferenceContext(threadId, query);
   agentService.setExternalConversationResolver(dataMigrationService);
   agentService.setFilesService(filesService);
@@ -1126,7 +1127,15 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
         sourceId: input.fileEntryId,
         sourceVersionId: input.fileVersionId,
       } },
-      ...(input.pipelines ? { pipelines: input.pipelines } : {}),
+      // knowledge router 未开启时降级为仅记忆链路（引擎约束：room 依赖
+      // router），与连接器 sink 同款策略；桌面 packaged 环境不注入
+      // NXCORE_KNOWLEDGE_ROUTER_ENABLED，不降级会把每个文件导入整单
+      // router_disabled 拒绝。显式 pipelines（如测试/内部调用）原样透传。
+      ...(input.pipelines
+        ? { pipelines: input.pipelines }
+        : config.knowledge?.routerEnabled
+          ? {}
+          : { pipelines: { room: false, wiki: false, memory: true } }),
       ...(input.roomId ? { roomId: input.roomId } : {}),
       ...(versionContext?.entry.sourceKind === "web-clipper" ? { originChannel: "web-clipper" as const } : {}),
     });

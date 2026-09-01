@@ -1,0 +1,207 @@
+.mic-perm {
+  display: grid;
+  width: min(560px, 100%);
+  justify-items: center;
+  gap: 34px;
+  padding: 0 24px;
+  text-align: center;
+  animation: mic-perm-enter 320ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.mic-perm-copy { display: grid; gap: 12px; justify-items: center; }
+
+.mic-perm-copy h1 {
+  margin: 0;
+  font-family: ui-rounded, 'SF Pro Rounded', 'Segoe UI', system-ui, sans-serif;
+  font-size: clamp(28px, 4vh, 38px);
+  font-weight: 680;
+  line-height: 1.2;
+  color: var(--text);
+}
+
+.mic-perm-copy p {
+  max-width: 400px;
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.65;
+  color: var(--muted);
+}
+
+.mic-perm-stage { display: grid; justify-items: center; gap: 18px; }
+
+.mic-perm-button {
+  position: relative;
+  display: grid;
+  width: 132px;
+  height: 132px;
+  place-items: center;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, #d98c2f 34%, var(--border));
+  border-radius: 50%;
+  background: #fff;
+  cursor: pointer;
+  transition: transform 180ms var(--shell-motion-easing), box-shadow 180ms var(--shell-motion-easing), border-color 180ms ease;
+  box-shadow: 0 14px 34px rgb(21 26 34 / 10%), 0 2px 6px rgb(21 26 34 / 6%);
+}
+
+.mic-perm-button:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 20px 44px rgb(217 140 47 / 22%), 0 3px 8px rgb(21 26 34 / 7%); border-color: #e6b778; }
+.mic-perm-button:active:not(:disabled) { transform: translateY(0) scale(0.97); }
+.mic-perm-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+.mic-perm-button:disabled { cursor: default; }
+
+.mic-perm[data-view='granted'] .mic-perm-button {
+  border-color: color-mix(in srgb, var(--icon-task) 44%, var(--border));
+  background: color-mix(in srgb, var(--icon-task) 9%, #fff);
+  box-shadow: 0 12px 30px color-mix(in srgb, var(--icon-task) 18%, transparent);
+}
+
+.mic-perm[data-view='denied'] .mic-perm-button { border-color: color-mix(in srgb, var(--danger) 36%, var(--border)); }
+
+.mic-perm-button-face {
+  display: grid;
+  width: 92px;
+  height: 92px;
+  place-items: center;
+  border-radius: 50%;
+  background: radial-gradient(circle at 32% 26%, #f4c07a, #d98c2f 78%);
+  color: #fff;
+  transition: background 220ms ease, transform 220ms var(--shell-motion-easing);
+}
+
+.mic-perm-button-face svg { width: 40px; height: 40px; stroke-width: 1.7; }
+
+.mic-perm[data-view='requesting'] .mic-perm-button-face { animation: mic-perm-face-pulse 1.05s ease-in-out infinite; }
+.mic-perm[data-view='granted'] .mic-perm-button-face { background: var(--icon-task); transform: scale(1.03); animation: mic-perm-pop 420ms cubic-bezier(0.34, 1.56, 0.64, 1) both; }
+.mic-perm[data-view='denied'] .mic-perm-button-face { background: radial-gradient(circle at 32% 26%, #e38a8a, var(--danger) 78%); }
+
+.mic-perm-ripple { position: absolute; inset: 0; border-radius: 50%; pointer-events: none; }
+
+.mic-perm-ripple i {
+  position: absolute;
+  inset: 0;
+  border: 1px solid #d98c2f;
+  border-radius: 50%;
+  opacity: 0;
+}
+
+.mic-perm[data-view='undetermined'] .mic-perm-ripple i,
+.mic-perm[data-view='denied'] .mic-perm-ripple i { animation: mic-perm-ripple 3.2s cubic-bezier(0.22, 1, 0.36, 1) infinite; }
+.mic-perm[data-view='undetermined'] .mic-perm-ripple i:nth-child(2),
+.mic-perm[data-view='denied'] .mic-perm-ripple i:nth-child(2) { animation-delay: 1.05s; }
+.mic-perm[data-view='undetermined'] .mic-perm-ripple i:nth-child(3),
+.mic-perm[data-view='denied'] .mic-perm-ripple i:nth-child(3) { animation-delay: 2.1s; }
+
+.mic-perm[data-view='requesting'] .mic-perm-ripple i { animation: mic-perm-ripple 1.5s cubic-bezier(0.22, 1, 0.36, 1) infinite; }
+.mic-perm[data-view='requesting'] .mic-perm-ripple i:nth-child(2) { animation-delay: 0.5s; }
+.mic-perm[data-view='requesting'] .mic-perm-ripple i:nth-child(3) { animation-delay: 1s; }
+
+.mic-perm[data-view='denied'] .mic-perm-ripple i { border-color: var(--danger); }
+.mic-perm[data-view='granted'] .mic-perm-ripple i,
+.mic-perm[data-view='checking'] .mic-perm-ripple i { animation: none; }
+
+@keyframes mic-perm-ripple {
+  0% { transform: scale(0.82); opacity: 0; }
+  12% { opacity: 0.55; }
+  100% { transform: scale(1.85); opacity: 0; }
+}
+
+@keyframes mic-perm-face-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(0.94); }
+}
+
+@keyframes mic-perm-pop {
+  0% { transform: scale(0.82); }
+  100% { transform: scale(1.03); }
+}
+
+@keyframes mic-perm-enter {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.mic-perm-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  min-height: 18px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--muted);
+  transition: color 200ms ease;
+}
+
+.mic-perm-status[data-view='granted'] { color: var(--icon-task); font-weight: 650; }
+.mic-perm-status[data-view='requesting'] { color: #b66e17; }
+.mic-perm-status[data-view='denied'] { color: var(--danger); }
+
+.mic-perm-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: mic-perm-dot 0.9s ease-in-out infinite;
+}
+
+@keyframes mic-perm-dot {
+  0%, 100% { opacity: 0.35; transform: scale(0.85); }
+  50% { opacity: 1; transform: scale(1.1); }
+}
+
+.mic-perm-settings {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color 160ms ease, color 160ms ease;
+}
+
+.mic-perm-settings:hover { border-color: var(--accent); color: var(--accent-strong); }
+.mic-perm-settings svg { width: 14px; height: 14px; }
+
+.mic-perm-actions { display: grid; justify-items: center; min-height: 42px; }
+
+.mic-perm-continue {
+  display: inline-flex;
+  min-height: 40px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 22px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: var(--accent);
+  color: var(--accent-contrast);
+  font-weight: 650;
+  cursor: pointer;
+  transition: background 160ms ease;
+  animation: mic-perm-enter 320ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.mic-perm-continue:hover { background: var(--accent-strong); }
+
+.mic-perm-skip {
+  padding: 6px 0;
+  border: 0;
+  background: transparent;
+  color: var(--subtle);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.mic-perm-skip:hover { color: var(--muted); text-decoration: underline; text-underline-offset: 3px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .mic-perm, .mic-perm-continue { animation: none; }
+  .mic-perm-ripple i, .mic-perm[data-view='requesting'] .mic-perm-button-face, .mic-perm-status-dot { animation: none !important; }
+  .mic-perm[data-view='undetermined'] .mic-perm-ripple i,
+  .mic-perm[data-view='denied'] .mic-perm-ripple i,
+  .mic-perm[data-view='requesting'] .mic-perm-ripple i { opacity: 0.3; }
+}

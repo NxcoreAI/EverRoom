@@ -14,6 +14,7 @@ export const BUILTIN_AGENT_IDS = {
   cursorCompletion: "cursor-completion",
   knowledge: "knowledge",
   webSearch: "web-search",
+  ingestFilter: "ingest-filter",
 } as const;
 
 export type BuiltinAgentId = (typeof BUILTIN_AGENT_IDS)[keyof typeof BUILTIN_AGENT_IDS];

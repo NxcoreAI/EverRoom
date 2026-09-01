@@ -9,6 +9,7 @@
     "typecheck": "pnpm --filter @nxcore/agent-contract typecheck && pnpm --filter @nxcore/connector-contract typecheck && pnpm --filter @nxcore/document-model typecheck && pnpm --filter @nxcore/reality-contract typecheck && pnpm --filter @nxcore/agent-runtime typecheck && pnpm --filter @nxcore/agent-runtime-pi typecheck && pnpm --filter @nxcore/gateway typecheck && pnpm --filter @nxcore/desktop typecheck",
     "test": "pnpm --filter @nxcore/document-model test && pnpm --filter @nxcore/agent-runtime test && pnpm --filter @nxcore/agent-runtime-pi test && pnpm --filter @nxcore/gateway test && pnpm --filter @nxcore/desktop test",
     "test:ci": "pnpm --filter @nxcore/gateway exec vitest run tests/config.test.ts tests/server.test.ts && pnpm --filter @nxcore/desktop exec vitest run tests/gateway-supervisor.test.ts tests/memory-onboarding.test.ts tests/saas-client.test.ts",
-    "package:mac": "pnpm --filter @nxcore/gateway build && pnpm --filter @nxcore/desktop package:mac"
+    "package:mac": "pnpm --filter @nxcore/gateway build && pnpm --filter @nxcore/desktop package:mac",
+    "package:win": "pnpm --filter @nxcore/gateway build && pnpm --filter @nxcore/desktop package:win"
   }
 }

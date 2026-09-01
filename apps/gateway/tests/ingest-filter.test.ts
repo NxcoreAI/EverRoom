@@ -306,6 +306,40 @@ describe("parseVerdicts 宽容解析", () => {
     expect(verdicts[0]).toMatchObject({ informative: false })
   })
 
+  it("前言 + 围栏包裹的数组（真实故障形状）按数组恢复", () => {
+    const verdicts = parseVerdicts(
+      '这些资料都是通知。根据用户偏好，直接判为无信息量。\n\n```json\n[{"informative":false,"reason":"GitHub CI 通知","category":"bot-noise","confidence":0.95},{"informative":true,"reason":"包含授权事实","category":"other","confidence":0.8}]\n```',
+      2,
+    )
+    expect(verdicts).toHaveLength(2)
+    expect(verdicts[0]).toMatchObject({ informative: false, reason: "GitHub CI 通知" })
+    expect(verdicts[1]).toMatchObject({ informative: true })
+  })
+
+  it("前言 + 裸数组（无围栏）也恢复", () => {
+    const verdicts = parseVerdicts(
+      '以下是判定结果：\n[{"informative":true,"reason":"r","category":"other","confidence":1}]',
+      1,
+    )
+    expect(verdicts[0]).toMatchObject({ informative: true, reason: "r" })
+  })
+
+  it("数组 + 后语也恢复", () => {
+    const verdicts = parseVerdicts(
+      '[{"informative":false,"reason":"寒暄","category":"trivial","confidence":0.9}]\n以上判定供参考。',
+      1,
+    )
+    expect(verdicts[0]).toMatchObject({ informative: false })
+  })
+
+  it("截断的数组（无闭合 ]）仍抛错 → fail-open", () => {
+    expect(() => parseVerdicts('[{"informative":false,"reason":"半截', 1)).toThrow()
+  })
+
+  it("截取片段非合法 JSON 时仍抛错 → fail-open", () => {
+    expect(() => parseVerdicts('判定依据 [见上文] 供参考。', 1)).toThrow()
+  })
+
   it("前言 + JSON 混排（无法安全恢复）仍抛错 → fail-open", () => {
     expect(() => parseVerdicts('以下是判定：{"informative":true}', 1)).toThrow()
   })

@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto'
-import { basename, resolve } from 'node:path'
+import { homedir } from 'node:os'
+import { basename, join, resolve } from 'node:path'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { statSync } from 'node:fs'
 import { dirname } from 'node:path'
 import type { BrowserWindow } from 'electron'
 import { dialog } from 'electron'
@@ -12,17 +14,50 @@ import type {
   MigrationRun,
   MigrationSource,
 } from '@nxcore/agent-contract'
-import type { DiscoveredMigrationSource } from '../../shared/migrations'
+import type { DiscoveredMigrationSource, LocalAgentMigrationProvider } from '../../shared/migrations'
 import type { FilesGatewayBridge } from '../gateway/files-gateway-bridge'
 import type { MigrationsGatewayBridge } from '../gateway/migrations-gateway-bridge'
 import { discoverOpenClawSources, readOpenClawSource, type ResolvedOpenClawSource } from './openclaw-adapter'
 import { extractNotionZip } from './notion-zip-adapter'
-import { readLocalAgentHistory } from '../local-agents/history'
+import { streamLocalAgentHistory } from '../local-agents/history'
 
 const hash = (value: string): string => createHash('sha256').update(value).digest('hex')
 
+const LOCAL_AGENT_LABELS: Record<LocalAgentMigrationProvider, string> = { codex: 'Codex', claude: 'Claude Code' }
+const LOCAL_AGENT_DIRECTORIES: Record<LocalAgentMigrationProvider, string[]> = { codex: ['.codex'], claude: ['.claude'] }
+
+const THREADS_BATCH_LIMIT = 20
+const THREADS_BATCH_BYTES = 64 * 1024 * 1024
+
+function chunkThreads<T extends { messages: Array<{ content: string }> }>(threads: T[]): T[][] {
+  const batches: T[][] = []
+  for (let offset = 0; offset < threads.length; ) {
+    const batch: T[] = []
+    let bytes = 0
+    while (offset < threads.length && batch.length < THREADS_BATCH_LIMIT) {
+      const thread = threads[offset]!
+      const size = thread.messages.reduce((sum, message) => sum + message.content.length, 0)
+      if (batch.length && bytes + size > THREADS_BATCH_BYTES) break
+      batch.push(thread); bytes += size; offset += 1
+    }
+    batches.push(batch)
+  }
+  return batches
+}
+
+export interface ResolvedLocalAgentSource extends DiscoveredMigrationSource { path: string }
+
+export function discoverLocalAgentSources(provider: LocalAgentMigrationProvider, home = homedir()): ResolvedLocalAgentSource[] {
+  return LOCAL_AGENT_DIRECTORIES[provider]
+    .map((directory) => join(home, directory))
+    .filter((path) => {
+      try { return statSync(path).isDirectory() } catch { return false }
+    })
+    .map((path) => ({ provider, id: hash(resolve(path)), displayName: LOCAL_AGENT_LABELS[provider], transport: 'local-jsonl' as const, standard: true, path }))
+}
+
 export class MigrationCoordinator {
-  private discovered = new Map<string, ResolvedOpenClawSource>()
+  private discovered = new Map<string, ResolvedOpenClawSource | ResolvedLocalAgentSource>()
   private readonly sourcePaths = new Map<string, string>()
   private readonly runPaths = new Map<string, string>()
   private listener: ((event: MigrationProgressEvent) => void) | null = null
@@ -35,6 +70,11 @@ export class MigrationCoordinator {
   onProgress(listener: ((event: MigrationProgressEvent) => void) | null): void { this.listener = listener }
   private emit(run: MigrationRun): MigrationRun { this.listener?.({ run }); return run }
   async discover(): Promise<DiscoveredMigrationSource[]> { const items = await discoverOpenClawSources(); this.discovered = new Map(items.map((item) => [item.id, item])); return items.map(({ path: _path, ...item }) => item) }
+  localAgentSources(provider: LocalAgentMigrationProvider): DiscoveredMigrationSource[] {
+    const items = discoverLocalAgentSources(provider)
+    for (const item of items) this.discovered.set(item.id, item)
+    return items.map(({ path: _path, ...item }) => item)
+  }
   sources(): Promise<MigrationSource[]> { return this.gateway.sources() }
   runs(sourceId?: string): Promise<MigrationRun[]> { return this.gateway.runs(sourceId) }
   cancel(runId: string): Promise<MigrationRun> { return this.gateway.cancel(runId).then((run) => this.emit(run)) }
@@ -51,6 +91,19 @@ export class MigrationCoordinator {
     const source = discoveredId ? this.discovered.get(discoveredId) : this.discovered.size === 1 ? [...this.discovered.values()][0] : undefined
     if (!source) throw new Error('需要选择一个 OpenClaw 数据来源')
     return this.importOpenClawPath(source.path, source.transport, source.displayName)
+  }
+  async chooseLocalAgentDirectory(provider: LocalAgentMigrationProvider): Promise<MigrationRun | null> {
+    const label = LOCAL_AGENT_LABELS[provider]
+    const options = { title: `选择 ${label} 数据目录`, properties: ['openDirectory'] as Array<'openDirectory'> }
+    const parent = this.window(); const result = parent ? await dialog.showOpenDialog(parent, options) : await dialog.showOpenDialog(options)
+    if (result.canceled || !result.filePaths[0]) return null
+    return (await this.importLocalAgentHistoryPath(provider, result.filePaths[0])).run
+  }
+  async importLocalAgentMigration(provider: LocalAgentMigrationProvider, discoveredId?: string): Promise<MigrationRun> {
+    const sources = this.localAgentSources(provider)
+    const source = discoveredId ? this.discovered.get(discoveredId) : this.discovered.get(sources[0]?.id ?? '')
+    if (!source || source.provider !== provider) throw new Error(`未找到本机 ${LOCAL_AGENT_LABELS[provider]} 的聊天记录目录。`)
+    return (await this.importLocalAgentHistoryPath(provider, source.path, source.displayName)).run
   }
   async retry(runId: string): Promise<MigrationRun> {
     const prior = (await this.gateway.runs()).find((run) => run.id === runId)
@@ -107,7 +160,7 @@ export class MigrationCoordinator {
     try {
       const threads = await readOpenClawSource(path); const messages = threads.reduce((sum, thread) => sum + thread.messages.length, 0)
       let run = await this.gateway.progress(started.run.id, { phase: 'normalizing', threadsTotal: threads.length, messagesTotal: messages }); this.emit(run)
-      for (let offset = 0; offset < threads.length; offset += 20) { run = await this.gateway.threads(run.id, threads.slice(offset, offset + 20)); this.emit(run) }
+      for (const batch of chunkThreads(threads)) { run = await this.gateway.threads(run.id, batch); this.emit(run) }
       return this.emit(await this.gateway.finish(run.id, true))
     } catch (error) { const message = error instanceof Error ? error.message : String(error); await this.gateway.fail(started.run.id, message).then((run) => this.emit(run)); throw error }
   }
@@ -128,33 +181,46 @@ export class MigrationCoordinator {
     this.runPaths.set(started.run.id, path)
     await this.persistLocators()
     this.emit(started.run)
+    type StreamingThread = { stableKey: string; agentId?: string; externalSessionId: string; title: string; messages: Array<{ stableKey: string; role: 'user' | 'assistant'; content: string; occurredAt: string }> }
+    let run = started.run
+    let sessionsFound = 0
+    let skippedFiles = 0
     try {
-      const history = await readLocalAgentHistory({ provider, historyPaths: [path] })
-      const threads = history.conversations.map((conversation) => ({
-        stableKey: conversation.sessionId,
-        ...(agentId ? { agentId } : {}),
-        externalSessionId: conversation.sessionId,
-        title: conversation.title,
-        messages: conversation.messages.map((message, index) => ({
-          stableKey: hash(`${index}\0${message.role}\0${message.timestamp}\0${message.content}`),
-          role: message.role,
-          content: message.content,
-          occurredAt: message.timestamp,
-        })),
-      }))
-      const messagesTotal = threads.reduce((sum, thread) => sum + thread.messages.length, 0)
-      let run = await this.gateway.progress(started.run.id, {
-        phase: 'normalizing',
-        threadsTotal: threads.length,
-        messagesTotal,
-      })
+      run = await this.gateway.progress(started.run.id, { phase: 'normalizing' })
       this.emit(run)
-      for (let offset = 0; offset < threads.length; offset += 20) {
-        run = await this.gateway.threads(run.id, threads.slice(offset, offset + 20))
+      const stream = streamLocalAgentHistory({ provider, historyPaths: [path] })
+      let batch: StreamingThread[] = []
+      let batchBytes = 0
+      const flush = async (): Promise<void> => {
+        if (!batch.length) return
+        run = await this.gateway.threads(run.id, batch)
         this.emit(run)
+        batch = []
+        batchBytes = 0
       }
+      for await (const item of stream) {
+        if (item.kind !== 'conversation') { skippedFiles += 1; continue }
+        sessionsFound += 1
+        const thread: StreamingThread = {
+          stableKey: item.conversation.sessionId,
+          ...(agentId ? { agentId } : {}),
+          externalSessionId: item.conversation.sessionId,
+          title: item.conversation.title,
+          messages: item.conversation.messages.map((message, index) => ({
+            stableKey: hash(`${index}\0${message.role}\0${message.timestamp}\0${message.content}`),
+            role: message.role,
+            content: message.content,
+            occurredAt: message.timestamp,
+          })),
+        }
+        const size = thread.messages.reduce((sum, message) => sum + message.content.length, 0)
+        if (batch.length && (batch.length >= THREADS_BATCH_LIMIT || batchBytes + size > THREADS_BATCH_BYTES)) await flush()
+        batch.push(thread)
+        batchBytes += size
+      }
+      await flush()
       run = await this.gateway.finish(run.id, true)
-      return { run: this.emit(run), sessionsFound: threads.length, skippedFiles: history.skippedFiles }
+      return { run: this.emit(run), sessionsFound, skippedFiles }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       await this.gateway.fail(started.run.id, message).then((run) => this.emit(run))

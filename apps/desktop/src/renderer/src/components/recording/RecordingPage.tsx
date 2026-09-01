@@ -47,8 +47,20 @@ function isDesktopRequestError(error: unknown): boolean {
   return error instanceof Error && error.message.startsWith('Error invoking remote method')
 }
 
-function reportRecordingError(error: unknown, audioSource: AudioSource, t: Translate): void {
+function isMicAccessError(error: unknown): boolean {
+  return error instanceof DOMException && (error.name === 'NotAllowedError' || error.name === 'NotFoundError')
+}
+
+function reportRecordingError(error: unknown, audioSource: AudioSource, t: Translate, stage: 'start' | 'finish'): void {
   if (isDesktopRequestError(error)) return
+  if (stage === 'finish') {
+    window.nxcore?.errors.report({
+      channel: 'media:recording',
+      title: t('diaryReality:recording.transcriptionFailed'),
+      message: errorMessage(error, t),
+    })
+    return
+  }
   const message = errorMessage(error, t)
   window.nxcore?.errors.report(audioSource === 'system'
     ? {
@@ -58,13 +70,19 @@ function reportRecordingError(error: unknown, audioSource: AudioSource, t: Trans
         action: 'open-system-audio-settings',
         actionLabel: t('diaryReality:recording.openSystemSettings'),
       }
-    : {
-        channel: 'media:microphone',
-        title: t('diaryReality:recording.recordingDidNotStart'),
-        message,
-        action: 'open-microphone-settings',
-        actionLabel: t('diaryReality:recording.openMicrophoneSettings'),
-      })
+    : isMicAccessError(error)
+      ? {
+          channel: 'media:microphone',
+          title: t('diaryReality:recording.recordingDidNotStart'),
+          message,
+          action: 'open-microphone-settings',
+          actionLabel: t('diaryReality:recording.openMicrophoneSettings'),
+        }
+      : {
+          channel: 'media:microphone',
+          title: t('diaryReality:recording.recordingDidNotStart'),
+          message,
+        })
 }
 
 function desktopApi(t: Translate): NxcoreDesktopApi {
@@ -252,7 +270,7 @@ export function RecordingPage({
         const failed = await desktopApi(t).reality.fail(eventId, errorMessage(caught, t)).catch(() => null)
         if (failed) onEventChanged?.(failed)
       }
-      reportRecordingError(caught, audioSource, t)
+      reportRecordingError(caught, audioSource, t, 'start')
       setState('error')
     }
   }
@@ -316,7 +334,7 @@ export function RecordingPage({
         const failed = await desktopApi(t).reality.fail(eventId, errorMessage(caught, t)).catch(() => null)
         if (failed) onEventChanged?.(failed)
       }
-      reportRecordingError(caught, audioSource, t)
+      reportRecordingError(caught, audioSource, t, 'finish')
       setState('error')
     }
   }

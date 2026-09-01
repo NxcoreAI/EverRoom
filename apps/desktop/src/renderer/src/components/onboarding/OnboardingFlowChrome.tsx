@@ -1,11 +1,11 @@
-import { Check, ChevronRight, Languages } from 'lucide-react'
+import { Check, ChevronRight, Languages, Mic } from 'lucide-react'
 import type { ReactNode } from 'react'
 
 import { ProductBrand } from '@/components/ui/ProductBrand'
 import { useLocale } from '@/i18n/LocaleContext'
 import './OnboardingFlowChrome.css'
 
-export type OnboardingFlowStage = 'idle' | 'memory' | 'room' | 'folder' | 'ready'
+export type OnboardingFlowStage = 'idle' | 'memory' | 'room' | 'folder' | 'microphone' | 'agents' | 'ready'
 export type CompletedOnboardingStage = Exclude<OnboardingFlowStage, 'idle' | 'ready'>
 
 interface OnboardingFlowChromeProps {
@@ -21,7 +21,7 @@ export function OnboardingFlowChrome({ stage, completedStages = new Set(), onSta
     const state = onboardingFlowStageState(stage, value, completedStages)
     return (
       <button type="button" className="onboarding-flow-stage" data-state={state} onClick={() => onStageChange(value)}>
-        {state === 'complete' ? <Check aria-hidden="true" /> : null}{label}
+        {state === 'complete' ? <Check aria-hidden="true" /> : value === 'microphone' ? <Mic aria-hidden="true" /> : null}{label}
       </button>
     )
   }
@@ -39,7 +39,11 @@ export function OnboardingFlowChrome({ stage, completedStages = new Set(), onSta
       <nav className="onboarding-flow-sequence" aria-label={t('surface:settings.folderGuide.eyebrow')}>
         {item('folder', t('surface:settings.folderGuide.eyebrow'))}
         <ChevronRight aria-hidden="true" />
+        {item('microphone', t('surface:onboarding.microphone.eyebrow'))}
+        <ChevronRight aria-hidden="true" />
         {item('memory', t('memory:onboarding.memorySetup'))}
+        <ChevronRight aria-hidden="true" />
+        {item('agents', t('surface:onboarding.agentMigration.eyebrow'))}
         <ChevronRight aria-hidden="true" />
         {item('room', t('contextRoom:onboarding.eyebrow'))}
         <ChevronRight aria-hidden="true" />

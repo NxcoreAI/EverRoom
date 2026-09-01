@@ -43,7 +43,14 @@ export class MigrationsGatewayBridge {
 
   private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
     const connection = this.supervisor.getConnection()
-    const response = await fetch(`${connection.baseUrl}${path}`, { ...init, headers: { Authorization: `Bearer ${connection.token}`, 'Content-Type': 'application/json', ...init.headers } })
+    const response = await fetch(`${connection.baseUrl}${path}`, {
+      ...init,
+      headers: {
+        Authorization: `Bearer ${connection.token}`,
+        ...(init.body ? { 'Content-Type': 'application/json' } : {}),
+        ...init.headers,
+      },
+    })
     if (response.status === 204) return undefined as T
     const body = await response.json().catch(() => ({})) as { message?: string; error?: string }
     if (!response.ok) throw new Error(body.message ?? body.error ?? `Migration request failed (${response.status})`)

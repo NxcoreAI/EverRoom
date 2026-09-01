@@ -20,7 +20,13 @@
 .onboarding-flow-content > .memory-onboarding,
 .onboarding-flow-content > .room-onboarding,
 .onboarding-flow-content > .folder-settings-onboarding { position: static; inset: auto; min-height: 0; overflow: visible; background: transparent; }
+.onboarding-flow-content > .mic-perm { position: static; margin: 0 auto; }
+.onboarding-flow-content > .agent-migration { position: static; margin: 0 auto; }
+.onboarding-flow-chrome[data-stage='microphone'] .onboarding-flow-content,
+.onboarding-flow-chrome[data-stage='agents'] .onboarding-flow-content { display: grid; align-content: center; justify-items: center; }
 .onboarding-flow-chrome[data-stage='folder'] .onboarding-flow-content > .app-shell,
+.onboarding-flow-chrome[data-stage='microphone'] .onboarding-flow-content > .app-shell,
+.onboarding-flow-chrome[data-stage='agents'] .onboarding-flow-content > .app-shell,
 .onboarding-flow-chrome[data-stage='ready'] .onboarding-flow-content > .app-shell { display: none; }
 .onboarding-flow-chrome:not([data-stage='idle']) .onboarding-flow-content .memory-onboarding-header,
 .onboarding-flow-chrome:not([data-stage='idle']) .onboarding-flow-content .room-onboarding-header,

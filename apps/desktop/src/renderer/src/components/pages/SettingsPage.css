@@ -1572,7 +1572,7 @@
   color: #4f5967;
 }
 
-.local-agent-provider svg { width: 15px; height: 15px; }
+.local-agent-provider svg, .local-agent-provider img { width: 15px; height: 15px; border-radius: 3px; }
 
 .local-agent-status {
   color: #7b8490;
