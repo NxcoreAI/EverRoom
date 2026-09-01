@@ -5,7 +5,7 @@ import { ProductBrand } from '@/components/ui/ProductBrand'
 import { useLocale } from '@/i18n/LocaleContext'
 import './OnboardingFlowChrome.css'
 
-export type OnboardingFlowStage = 'idle' | 'memory' | 'room' | 'folder' | 'microphone' | 'ready'
+export type OnboardingFlowStage = 'idle' | 'memory' | 'room' | 'folder' | 'microphone' | 'agents' | 'ready'
 export type CompletedOnboardingStage = Exclude<OnboardingFlowStage, 'idle' | 'ready'>
 
 interface OnboardingFlowChromeProps {
@@ -42,6 +42,8 @@ export function OnboardingFlowChrome({ stage, completedStages = new Set(), onSta
         {item('microphone', t('surface:onboarding.microphone.eyebrow'))}
         <ChevronRight aria-hidden="true" />
         {item('memory', t('memory:onboarding.memorySetup'))}
+        <ChevronRight aria-hidden="true" />
+        {item('agents', t('surface:onboarding.agentMigration.eyebrow'))}
         <ChevronRight aria-hidden="true" />
         {item('room', t('contextRoom:onboarding.eyebrow'))}
         <ChevronRight aria-hidden="true" />

@@ -86,7 +86,7 @@
     "vitest": "^4.1.10"
   },
   "build": {
-    "appId": "com.nxcore.ce",
+    "appId": "ai.nxcore.everroom",
     "productName": "EverRoom",
     "protocols": [
       {

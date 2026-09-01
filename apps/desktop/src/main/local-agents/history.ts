@@ -6,10 +6,6 @@ import type {
   LocalAgentProvider,
 } from '../../shared/local-agents'
 
-const MAX_HISTORY_FILES = 100
-const MAX_FILE_BYTES = 20 * 1024 * 1024
-const MAX_MESSAGES_PER_SESSION = 200
-const MAX_MESSAGE_CHARS = 20_000
 const NATIVE_SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/u
 
 const INJECTED_CONTEXT = /^\s*<(?:environment_context|recommended_plugins|app-context|permissions instructions|command-name|command-message|local-command-caveat|ide_opened_file)>/u
@@ -51,14 +47,12 @@ export function parseCodexHistoryJsonl(text: string): LocalAgentHistoryConversat
     if (role !== 'user' && role !== 'assistant') continue
     if (role === 'assistant' && payload.phase !== undefined && payload.phase !== 'final_answer') continue
     const content = codexContentText(payload.content, role === 'user' ? 'input_text' : 'output_text')
-      .slice(0, MAX_MESSAGE_CHARS)
     if (!content) continue
     const timestamp = typeof event.timestamp === 'string' && !Number.isNaN(Date.parse(event.timestamp))
       ? new Date(event.timestamp).toISOString()
       : new Date(0).toISOString()
     messages.push({ role, content, timestamp })
     if (!title && role === 'user') title = content.replace(/\s+/gu, ' ').slice(0, 120)
-    if (messages.length >= MAX_MESSAGES_PER_SESSION) break
   }
   if (!NATIVE_SESSION_ID.test(sessionId) || messages.length === 0) return null
   return { sessionId, title: title || 'Codex conversation', messages }
@@ -100,14 +94,13 @@ export function parseClaudeHistoryJsonl(text: string): LocalAgentHistoryConversa
       : null
     if (!message) continue
     const role = event.type
-    const content = claudeContentText(message.content).slice(0, MAX_MESSAGE_CHARS)
+    const content = claudeContentText(message.content)
     if (!content) continue
     const timestamp = typeof event.timestamp === 'string' && !Number.isNaN(Date.parse(event.timestamp))
       ? new Date(event.timestamp).toISOString()
       : new Date(0).toISOString()
     messages.push({ role, content, timestamp })
     if (!title && role === 'user') title = content.replace(/\s+/gu, ' ').slice(0, 120)
-    if (messages.length >= MAX_MESSAGES_PER_SESSION) break
   }
   if (!NATIVE_SESSION_ID.test(sessionId) || messages.length === 0) return null
   return { sessionId, title: summary || title || 'Claude Code conversation', messages }
@@ -119,7 +112,7 @@ async function jsonlFiles(root: string, provider: LocalAgentProvider): Promise<s
     : provider === 'claude' ? [join(root, 'projects')] : []
   const files: Array<{ path: string; modifiedAt: number }> = []
   const visit = async (directory: string, depth: number): Promise<void> => {
-    if (depth > 6 || files.length >= MAX_HISTORY_FILES * 3) return
+    if (depth > 6) return
     let entries
     try {
       entries = await readdir(directory, { withFileTypes: true })
@@ -131,32 +124,26 @@ async function jsonlFiles(root: string, provider: LocalAgentProvider): Promise<s
       if (entry.isDirectory()) return visit(path, depth + 1)
       if (!entry.isFile() || !entry.name.endsWith('.jsonl')) return
       const info = await stat(path).catch(() => null)
-      if (info && info.size <= MAX_FILE_BYTES) files.push({ path, modifiedAt: info.mtimeMs })
+      if (info) files.push({ path, modifiedAt: info.mtimeMs })
     }))
   }
   for (const directory of roots) await visit(directory, 0)
-  return files.sort((a, b) => b.modifiedAt - a.modifiedAt).slice(0, MAX_HISTORY_FILES).map((file) => file.path)
+  return files.sort((a, b) => b.modifiedAt - a.modifiedAt).map((file) => file.path)
 }
 
-export async function readLocalAgentHistory(agent: Pick<LocalAgentInstallation, 'provider' | 'historyPaths'>): Promise<{
-  conversations: LocalAgentHistoryConversation[]
-  skippedFiles: number
-}> {
+export async function* streamLocalAgentHistory(agent: Pick<LocalAgentInstallation, 'provider' | 'historyPaths'>): AsyncGenerator<{ kind: 'conversation'; conversation: LocalAgentHistoryConversation } | { kind: 'skipped' }, void, void> {
   if (agent.provider !== 'codex' && agent.provider !== 'claude') {
     throw new Error('local_agent_history_adapter_unavailable')
   }
   const directoryName = agent.provider === 'codex' ? '.codex' : '.claude'
   const roots = agent.historyPaths.filter((path) => basename(path) === directoryName)
   const paths = [...new Set((await Promise.all(roots.map((root) => jsonlFiles(root, agent.provider)))).flat())]
-  const conversations: LocalAgentHistoryConversation[] = []
-  let skippedFiles = 0
   for (const path of paths) {
     const text = await readFile(path, 'utf8').catch(() => null)
     const conversation = text
       ? agent.provider === 'codex' ? parseCodexHistoryJsonl(text) : parseClaudeHistoryJsonl(text)
       : null
-    if (conversation) conversations.push(conversation)
-    else skippedFiles += 1
+    if (conversation) yield { kind: 'conversation', conversation }
+    else yield { kind: 'skipped' }
   }
-  return { conversations, skippedFiles }
 }

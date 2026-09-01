@@ -24,12 +24,25 @@ function validBody(value: unknown): value is AgentNotificationRequest {
     && typeof input.runId === 'string' && input.runId.length > 0
     && (input.roomId === null || typeof input.roomId === 'string')
     && typeof input.idempotencyKey === 'string' && input.idempotencyKey.length >= 8
+    && (input.local === undefined || typeof input.local === 'boolean')
+}
+
+export interface LocalAgentNotification {
+  title: string
+  body: string
+  notificationId: string
+  sessionId: string
+  runId: string
+  roomId: string | null
 }
 
 export class AgentNotificationBridgeServer {
   private server: Server | null = null
   private readonly token = randomBytes(32).toString('base64url')
-  constructor(private readonly client: () => SaasClient | null) {}
+  constructor(
+    private readonly client: () => SaasClient | null,
+    private readonly showLocalNotification: (notification: LocalAgentNotification) => void = () => undefined,
+  ) {}
 
   async start(): Promise<{ baseUrl: string; token: string }> {
     if (this.server) throw new Error('Agent notification bridge is already running')
@@ -75,6 +88,22 @@ export class AgentNotificationBridgeServer {
     if (!validBody(parsed)) return { status: 422, body: { message: 'Invalid notification request' } }
     const client = this.client()
     if (!client) return { status: 503, body: { message: 'EverRoom account service is not ready' } }
-    return { status: 200, body: { data: await client.createAgentNotification(parsed) } }
+    // `local` 是 Gateway→Bridge 的内部标志（本机兜底通知），不透传给 SaaS。
+    const { local: showLocal, ...remoteRequest } = parsed
+    const result = await client.createAgentNotification(remoteRequest) as { notificationId?: unknown }
+    if (showLocal) {
+      const notificationId = typeof result.notificationId === 'string' ? result.notificationId : ''
+      if (notificationId) {
+        this.showLocalNotification({
+          title: parsed.title,
+          body: parsed.body,
+          notificationId,
+          sessionId: parsed.sessionId,
+          runId: parsed.runId,
+          roomId: parsed.roomId,
+        })
+      }
+    }
+    return { status: 200, body: { data: result } }
   }
 }

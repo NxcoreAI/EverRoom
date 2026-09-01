@@ -8,6 +8,8 @@ import googleDocsLogo from '@/assets/source-icons/google-docs.svg'
 import notionLogo from '@/assets/source-icons/notion.svg'
 import openClawLogo from '@/assets/source-icons/openclaw.svg'
 import outlookLogo from '@/assets/source-icons/outlook.svg'
+import claudeLogo from '@/assets/source-icons/claude.svg'
+import codexLogo from '@/assets/source-icons/codex.svg'
 import obsidianLogo from '@/assets/obsidian.svg'
 
 export type SourceIconKind =
@@ -20,6 +22,8 @@ export type SourceIconKind =
   | 'outlook'
   | 'google-calendar'
   | 'openclaw'
+  | 'claude'
+  | 'codex'
   | 'feishu'
   | 'web-page'
 
@@ -34,6 +38,8 @@ const SOURCE_LOGOS: Record<BrandedSourceIconKind, string> = {
   outlook: outlookLogo,
   'google-calendar': googleCalendarLogo,
   openclaw: openClawLogo,
+  claude: claudeLogo,
+  codex: codexLogo,
   feishu: feishuLogo,
 }
 

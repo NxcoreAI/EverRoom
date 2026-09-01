@@ -7,7 +7,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { pipeline } from 'node:stream/promises'
 import { loadEnvFile } from 'node:process'
 
-import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, nativeTheme, protocol, shell, systemPreferences } from 'electron'
+import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, nativeTheme, Notification, protocol, shell, systemPreferences } from 'electron'
 import type {
   ImportRoomDocumentInput,
   DocumentOperationCommandInput,
@@ -232,6 +232,7 @@ const GATEWAY_CHANNELS = {
 } as const
 const MIGRATION_CHANNELS = {
   discover: 'migrations:discover', chooseOpenClaw: 'migrations:choose-openclaw', importOpenClaw: 'migrations:import-openclaw',
+  localAgentSources: 'migrations:local-agent-sources', chooseLocalAgentDirectory: 'migrations:choose-local-agent-directory', importLocalAgentMigration: 'migrations:import-local-agent-migration',
   importNotionZip: 'migrations:import-notion-zip', sources: 'migrations:sources', runs: 'migrations:runs', cancel: 'migrations:cancel',
   retry: 'migrations:retry', reimport: 'migrations:reimport', clear: 'migrations:clear', conversations: 'migrations:conversations',
   preview: 'migrations:preview', progress: 'migrations:progress',
@@ -1616,6 +1617,9 @@ function registerMigrationHandlers(coordinator: MigrationCoordinator): void {
   handle(MIGRATION_CHANNELS.discover, () => coordinator.discover())
   handle(MIGRATION_CHANNELS.chooseOpenClaw, () => coordinator.chooseOpenClaw())
   handle(MIGRATION_CHANNELS.importOpenClaw, (_event, id?: string) => coordinator.importOpenClaw(id))
+  handle(MIGRATION_CHANNELS.localAgentSources, (_event, provider: 'codex' | 'claude') => coordinator.localAgentSources(provider))
+  handle(MIGRATION_CHANNELS.chooseLocalAgentDirectory, (_event, provider: 'codex' | 'claude') => coordinator.chooseLocalAgentDirectory(provider))
+  handle(MIGRATION_CHANNELS.importLocalAgentMigration, (_event, provider: 'codex' | 'claude', id?: string) => coordinator.importLocalAgentMigration(provider, id))
   handle(MIGRATION_CHANNELS.importNotionZip, () => coordinator.importNotionZip())
   handle(MIGRATION_CHANNELS.sources, () => coordinator.sources())
   handle(MIGRATION_CHANNELS.runs, (_event, sourceId?: string) => coordinator.runs(sourceId))
@@ -2092,7 +2096,9 @@ function registerAsrHandlers(store: RecordingStore, coordinator: AsrCoordinator)
   })
   handle(ASR_CHANNELS.getMicrophoneAccessStatus, () => {
     if (process.platform !== 'darwin') return 'granted' as const
-    return systemPreferences.getMediaAccessStatus('microphone')
+    const status = systemPreferences.getMediaAccessStatus('microphone')
+    console.info(`[asr] microphone access status: ${status}`)
+    return status
   })
   handle(ASR_CHANNELS.openMicrophoneSettings, () => {
     if (process.platform !== 'darwin') throw new Error('麦克风隐私设置仅适用于 macOS。')
@@ -2719,7 +2725,27 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       ? randomUUID()
       : nangoUrl ? configuredNangoSecret : ''
     const nangoBootstrapPending = nangoUrl && nangoSupervisor && !nangoSecretIsUuidV4 ? '1' : '0'
-    agentNotificationBridgeServer = new AgentNotificationBridgeServer(() => saasClient)
+    agentNotificationBridgeServer = new AgentNotificationBridgeServer(
+      () => saasClient,
+      (local) => {
+        // 来源桌面端本机兜底通知：远程推送按设计排除来源设备，这里直接弹出
+        // 内容相同的通知，点击后定位到对应 Agent 会话。
+        if (!Notification.isSupported()) return
+        const sourceDeviceId = saasClient?.deviceId
+        if (!sourceDeviceId) return
+        const notification = new Notification({ title: local.title, body: local.body })
+        notification.on('click', () => openAgentNotificationTarget({
+          kind: 'agent_session',
+          notificationId: local.notificationId,
+          sourceDeviceId,
+          sessionId: local.sessionId,
+          runId: local.runId,
+          roomId: local.roomId,
+        }))
+        notification.on('failed', (_event, reason) => console.warn('Local agent notification failed to display', reason, local.notificationId))
+        notification.show()
+      },
+    )
     const notificationBridge = await agentNotificationBridgeServer.start().catch((error) => {
       console.warn('Agent notification bridge unavailable; notification tool stays disabled.', error)
       agentNotificationBridgeServer = null

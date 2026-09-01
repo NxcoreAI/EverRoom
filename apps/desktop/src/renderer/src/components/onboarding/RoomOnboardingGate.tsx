@@ -35,7 +35,7 @@ interface RoomOnboardingGateProps {
   onExistingData?: () => void
   onNavigateStage?: (stage: 'memory' | 'room' | 'folder' | 'microphone' | 'ready') => void
   memoryReady?: boolean
-  activeStage?: 'idle' | 'memory' | 'room' | 'folder' | 'microphone' | 'ready'
+  activeStage?: 'idle' | 'memory' | 'room' | 'folder' | 'microphone' | 'agents' | 'ready'
 }
 
 // The guide is shown only on first use. Its marker is still updated during a

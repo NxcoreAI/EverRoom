@@ -12,6 +12,7 @@ export function ConnectSourceMenu({
   onNotion,
   onNotionZip,
   onOpenClaw,
+  onLocalAgentHistory,
   connectorsEnabled,
   onConnectorProvider,
 }: {
@@ -23,6 +24,7 @@ export function ConnectSourceMenu({
   onNotion: () => void
   onNotionZip: () => void
   onOpenClaw: () => void
+  onLocalAgentHistory: (provider: 'codex' | 'claude') => void
   connectorsEnabled?: boolean
   onConnectorProvider?: (provider: ConnectorProviderId) => void
 }) {
@@ -37,6 +39,12 @@ export function ConnectSourceMenu({
       </button>
       <button type="button" role="menuitem" disabled={busy} onClick={onGitHub}>
         <SourceIcon kind="github" /><span><strong>GitHub</strong><small>{t('surface:connectSourceMenu.githubHint')}</small></span>
+      </button>
+      <button type="button" role="menuitem" disabled={busy} onClick={() => onLocalAgentHistory('claude')}>
+        <SourceIcon kind="claude" /><span><strong>Claude Code</strong><small>{t('surface:connectSourceMenu.localAgentHistoryHint')}</small></span>
+      </button>
+      <button type="button" role="menuitem" disabled={busy} onClick={() => onLocalAgentHistory('codex')}>
+        <SourceIcon kind="codex" /><span><strong>Codex</strong><small>{t('surface:connectSourceMenu.localAgentHistoryHint')}</small></span>
       </button>
       {connectorsEnabled && onConnectorProvider ? (
         <button type="button" role="menuitem" disabled={busy} onClick={() => onConnectorProvider('google-docs')}>

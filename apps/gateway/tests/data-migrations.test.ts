@@ -37,6 +37,7 @@ describe("data migrations", () => {
       ] },
     ]);
     await service.finish(first.run.id);
+    await service.idle();
     expect(service.searchConversations("launch", undefined, 20).items[0]).toMatchObject({ title: "Launch notes", messageCount: 2 });
     expect(memory.replaceConversationBatches).toHaveBeenCalledTimes(2);
     expect(memory.replaceConversationBatches).toHaveBeenCalledWith(expect.objectContaining({
@@ -60,8 +61,10 @@ describe("data migrations", () => {
       { stableKey: "2", role: "assistant", content: "Here is the plan", occurredAt: "2026-01-01T00:00:01.000Z" },
     ] }]);
     await service.finish(second.run.id);
+    await service.idle();
     expect(service.searchConversations("", undefined, 20).items).toHaveLength(1);
     expect(database.sqlite.prepare("SELECT count(*) count FROM external_agent_messages").get()).toEqual({ count: 3 });
+    service.dispose();
     database.sqlite.close();
   });
 
@@ -79,6 +82,7 @@ describe("data migrations", () => {
     expect(context).toContain("historic secret");
     expect(await service.bindAndBuildContext("native", thread.id, "secret")).toBeNull();
     expect(database.sqlite.prepare("SELECT count(*) count FROM agent_messages").get()).toEqual({ count: 0 });
+    service.dispose();
     database.sqlite.close();
   });
 
@@ -101,6 +105,7 @@ describe("data migrations", () => {
     expect(await service.buildReferenceContext(references[0]!.id, "基于这版改")).toContain("Adjusted the login direction");
     expect(database.sqlite.prepare("SELECT title FROM agent_sessions WHERE id='native'").get()).toEqual({ title: "Main chat" });
     expect(database.sqlite.prepare("SELECT count(*) count FROM agent_session_external_threads WHERE session_id='native'").get()).toEqual({ count: 0 });
+    service.dispose();
     database.sqlite.close();
   });
 
@@ -124,6 +129,50 @@ describe("data migrations", () => {
     expect(service.resolveNativeContinuation(thread.id, "codex:/usr/local/bin/codex")).toBe("thread-native");
     expect(service.resolveNativeContinuation(thread.id, "claude:/usr/local/bin/claude")).toBeNull();
     expect(service.resolveNativeContinuation(thread.id, "codex:/different/path")).toBeNull();
+    service.dispose();
     database.sqlite.close();
+  });
+
+  it("clears asynchronously: soft-hides first, then background GC removes rows and memory", async () => {
+    const { database, memory, service } = await setup();
+    const started = service.begin({ provider: "codex", transport: "local-jsonl", stableSourceKey: "codex-home", displayName: "Codex" });
+    service.appendThreads(started.run.id, [{ stableKey: "s1", externalSessionId: "s1", title: "To delete", messages: [
+      { stableKey: "m1", role: "user", content: "delete me", occurredAt: "2026-01-01T00:00:00.000Z" },
+    ] }]);
+    await service.finish(started.run.id);
+    await service.idle();
+
+    await service.clear(started.source.id);
+    expect(service.listSources()[0]).toMatchObject({ status: "deleting" });
+    expect(service.searchConversations("", undefined, 20).items).toHaveLength(0);
+    await service.idle();
+
+    expect(service.listSources()).toHaveLength(0);
+    expect(database.sqlite.prepare("SELECT count(*) count FROM external_agent_messages").get()).toEqual({ count: 0 });
+    expect(memory.deleteConversations).toHaveBeenCalledWith({ sessionIds: [expect.any(String)] });
+    service.dispose();
+    database.sqlite.close();
+  });
+
+  it("recovers pending memory jobs and completes a stalled run on restart", async () => {
+    const { database, memory, service } = await setup();
+    const started = service.begin({ provider: "openclaw", transport: "local-jsonl", stableSourceKey: "fixture", displayName: "OpenClaw" });
+    service.appendThreads(started.run.id, [{ stableKey: "s1", externalSessionId: "s1", title: "Stalled", messages: [
+      { stableKey: "m1", role: "user", content: "stalled turn", occurredAt: "2026-01-01T00:00:00.000Z" },
+    ] }]);
+    await service.finish(started.run.id);
+    service.dispose();
+    database.sqlite.close();
+
+    const reopened = createDatabase(join(dirs.at(-1)!, "gateway.sqlite"), migrationsDir);
+    const recovery = new DataMigrationService(reopened.db, reopened.sqlite, memory);
+    expect(recovery.listRuns()[0]).toMatchObject({ status: "running" });
+    recovery.recover();
+    await recovery.idle();
+    expect(recovery.listRuns()[0]).toMatchObject({ status: "completed" });
+    expect(recovery.listSources()[0]).toMatchObject({ status: "completed" });
+    expect(memory.replaceConversationBatches).toHaveBeenCalledTimes(1);
+    recovery.dispose();
+    reopened.sqlite.close();
   });
 });

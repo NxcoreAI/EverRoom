@@ -54,7 +54,7 @@ interface MemoryOnboardingGateProps {
   onExistingData?: () => void
   onMemoryGenerated?: (item: MemoryAtomicItemDto) => void
   onNavigateStage?: (stage: 'memory' | 'room' | 'folder' | 'microphone' | 'ready') => void
-  activeStage?: 'idle' | 'memory' | 'room' | 'folder' | 'microphone' | 'ready'
+  activeStage?: 'idle' | 'memory' | 'room' | 'folder' | 'microphone' | 'agents' | 'ready'
 }
 
 const MEMORY_TYPE_KEYS: Record<string, string> = {

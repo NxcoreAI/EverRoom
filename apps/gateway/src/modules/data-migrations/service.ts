@@ -23,6 +23,16 @@ const MEMORY_CHARACTER_LIMIT = 12_000;
 const TOTAL_CHARACTER_LIMIT = 44_000;
 const NATIVE_SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/u;
 
+type JobType = "memory_index" | "source_gc";
+
+interface JobRow {
+  id: string; run_id: string | null; source_id: string | null; type: JobType;
+  payload: string; status: "pending" | "running" | "done" | "failed";
+  attempts: number; max_attempts: number; run_at: number; created_at: number; updated_at: number;
+}
+
+const yieldToEventLoop = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
+
 export interface NormalizedExternalThread {
   stableKey: string;
   agentId?: string;
@@ -118,6 +128,7 @@ export class DataMigrationService {
   begin(input: { provider: MigrationProvider; transport: MigrationTransport; stableSourceKey: string; displayName: string }): { source: MigrationSource; run: MigrationRun } {
     const now = Date.now();
     const existing = this.sqlite.prepare("SELECT * FROM data_migration_sources WHERE provider=? AND stable_source_key=?").get(input.provider, input.stableSourceKey) as SourceRow | undefined;
+    if (existing?.status === "deleting") throw new Error("migration_source_deleting");
     const sourceId = existing?.id ?? randomUUID();
     if (existing) this.sqlite.prepare("UPDATE data_migration_sources SET transport=?,display_name=?,status='importing',error=NULL,updated_at=? WHERE id=?")
       .run(input.transport, input.displayName, now, sourceId);
@@ -157,6 +168,7 @@ export class DataMigrationService {
     if (run.provider === "notion") throw new Error("migration_provider_mismatch");
     const now = Date.now();
     let importedMessages = 0;
+    const enqueue = this.sqlite.prepare("INSERT INTO migration_jobs(id,run_id,source_id,type,payload,status,attempts,max_attempts,run_at,created_at,updated_at) VALUES(?,?,?,?,?,'pending',0,3,?,?,?)");
     const transaction = this.sqlite.transaction(() => {
       for (const input of threads) {
         const stableKey = input.stableKey.trim();
@@ -187,11 +199,13 @@ export class DataMigrationService {
           importedMessages += 1;
         });
         this.refreshFts(threadId);
+        enqueue.run(randomUUID(), runId, run.sourceId, "memory_index", JSON.stringify({ threadId }), now, now, now);
       }
       this.sqlite.prepare("UPDATE data_migration_runs SET phase='saving',threads_completed=threads_completed+?,messages_completed=messages_completed+? WHERE id=?")
         .run(threads.length, importedMessages, runId);
     });
     transaction();
+    this.kick();
     return this.getRun(runId);
   }
 
@@ -199,16 +213,18 @@ export class DataMigrationService {
     const run = this.getRun(runId);
     if (run.cancelRequested) return this.cancel(runId);
     this.sqlite.prepare("UPDATE data_migration_runs SET phase='memory' WHERE id=?").run(runId);
-    if (run.provider !== "notion") {
-      const threads = this.sqlite.prepare("SELECT id,memory_session_id FROM external_agent_threads WHERE source_id=? AND last_seen_run_id=?").all(run.sourceId, runId) as Array<{ id: string; memory_session_id: string }>;
-      for (const thread of threads) await this.indexMemory(thread.id, thread.memory_session_id);
-      if (fullScan) this.sqlite.prepare("UPDATE external_agent_threads SET available=0,updated_at=? WHERE source_id=? AND (last_seen_run_id IS NULL OR last_seen_run_id<>?)")
-        .run(Date.now(), run.sourceId, runId);
-    }
-    const now = Date.now();
-    this.sqlite.prepare("UPDATE data_migration_runs SET status='completed',phase='completed',completed_at=? WHERE id=?").run(now, runId);
-    this.sqlite.prepare("UPDATE data_migration_sources SET status='completed',last_synced_at=?,error=NULL,updated_at=? WHERE id=?").run(now, now, run.sourceId);
+    if (run.provider !== "notion" && fullScan) this.sqlite.prepare("UPDATE external_agent_threads SET available=0,updated_at=? WHERE source_id=? AND (last_seen_run_id IS NULL OR last_seen_run_id<>?)")
+      .run(Date.now(), run.sourceId, runId);
+    const remaining = this.sqlite.prepare("SELECT count(*) count FROM migration_jobs WHERE run_id=? AND status IN ('pending','running')").get(runId) as { count: number };
+    if (!remaining.count) this.completeRun(runId);
+    this.kick();
     return this.getRun(runId);
+  }
+
+  private completeRun(runId: string): void {
+    const now = Date.now();
+    this.sqlite.prepare("UPDATE data_migration_runs SET status='completed',phase='completed',completed_at=? WHERE id=? AND status='running'").run(now, runId);
+    this.sqlite.prepare("UPDATE data_migration_sources SET status='completed',last_synced_at=?,error=NULL,updated_at=? WHERE id=(SELECT source_id FROM data_migration_runs WHERE id=?)").run(now, now, runId);
   }
 
   fail(runId: string, error: string): MigrationRun {
@@ -226,16 +242,20 @@ export class DataMigrationService {
   }
 
   async clear(sourceId: string): Promise<void> {
-    const memorySessions = this.sqlite.prepare("SELECT memory_session_id FROM external_agent_threads WHERE source_id=?").all(sourceId) as Array<{ memory_session_id: string }>;
-    if (memorySessions.length) await this.memory.deleteConversations({ sessionIds: memorySessions.map((item) => item.memory_session_id) }).catch(() => undefined);
-    const ids = this.sqlite.prepare("SELECT id FROM external_agent_threads WHERE source_id=?").all(sourceId) as Array<{ id: string }>;
-    const removeFts = this.sqlite.prepare("DELETE FROM external_agent_threads_fts WHERE thread_id=?");
-    ids.forEach(({ id }) => removeFts.run(id));
-    const fileIds = this.sqlite.prepare("SELECT id FROM file_entries WHERE source_kind='migration' AND connection_id=?").all(sourceId) as Array<{ id: string }>;
-    for (const file of fileIds) await this.files?.deleteCatalogEntry(file.id, {
-      deleteMemoryDocuments: (fileId) => this.memory.deleteDocumentsByCallerRef(fileId),
+    const source = this.sqlite.prepare("SELECT id FROM data_migration_sources WHERE id=?").get(sourceId) as { id: string } | undefined;
+    if (!source) return;
+    const now = Date.now();
+    const deleting = this.sqlite.transaction(() => {
+      this.sqlite.prepare("UPDATE external_agent_threads SET available=0,updated_at=? WHERE source_id=?").run(now, sourceId);
+      this.sqlite.prepare("DELETE FROM external_agent_threads_fts WHERE thread_id IN (SELECT id FROM external_agent_threads WHERE source_id=?)").run(sourceId);
+      this.sqlite.prepare("UPDATE data_migration_runs SET status='cancelled',completed_at=? WHERE source_id=? AND status IN ('queued','running')").run(now, sourceId);
+      this.sqlite.prepare("UPDATE migration_jobs SET status='failed',updated_at=? WHERE source_id=? AND status IN ('pending','running') AND type='memory_index'").run(now, sourceId);
+      this.sqlite.prepare("UPDATE data_migration_sources SET status='deleting',updated_at=? WHERE id=?").run(now, sourceId);
+      this.sqlite.prepare("INSERT INTO migration_jobs(id,run_id,source_id,type,payload,status,attempts,max_attempts,run_at,created_at,updated_at) VALUES(?,?,?,'source_gc','{}','pending',0,3,?,?,?)")
+        .run(randomUUID(), null, sourceId, now, now, now);
     });
-    this.sqlite.prepare("DELETE FROM data_migration_sources WHERE id=?").run(sourceId);
+    deleting();
+    this.kick();
   }
 
   searchConversations(query: string, cursor: string | undefined, limit: number): ExternalConversationPage {
@@ -331,5 +351,112 @@ export class DataMigrationService {
     } catch {
       this.sqlite.prepare("UPDATE external_agent_threads SET memory_status='error' WHERE id=?").run(threadId);
     }
+  }
+
+  private async runSourceGc(sourceId: string): Promise<void> {
+    const memorySessions = this.sqlite.prepare("SELECT memory_session_id FROM external_agent_threads WHERE source_id=?").all(sourceId) as Array<{ memory_session_id: string }>;
+    if (memorySessions.length) await this.memory.deleteConversations({ sessionIds: memorySessions.map((item) => item.memory_session_id) }).catch(() => undefined);
+    const fileIds = this.sqlite.prepare("SELECT id FROM file_entries WHERE source_kind='migration' AND connection_id=?").all(sourceId) as Array<{ id: string }>;
+    for (const file of fileIds) await this.files?.deleteCatalogEntry(file.id, {
+      deleteMemoryDocuments: (fileId) => this.memory.deleteDocumentsByCallerRef(fileId),
+    });
+    this.sqlite.prepare("DELETE FROM external_agent_threads WHERE source_id=?").run(sourceId);
+    this.sqlite.prepare("DELETE FROM data_migration_sources WHERE id=? AND status='deleting'").run(sourceId);
+  }
+
+  private claimJob(): JobRow | null {
+    const now = Date.now();
+    return (this.sqlite.prepare("UPDATE migration_jobs SET status='running',attempts=attempts+1,updated_at=? WHERE id=(SELECT id FROM migration_jobs WHERE status='pending' AND run_at<=? ORDER BY run_at LIMIT 1) RETURNING *").get(now, now) as JobRow | undefined) ?? null;
+  }
+
+  private finishJob(job: JobRow, error?: unknown): void {
+    const now = Date.now();
+    if (!error) {
+      this.sqlite.prepare("UPDATE migration_jobs SET status='done',updated_at=? WHERE id=?").run(now, job.id);
+      return;
+    }
+    const retryable = job.attempts < job.max_attempts;
+    this.sqlite.prepare("UPDATE migration_jobs SET status=?,run_at=?,updated_at=? WHERE id=?")
+      .run(retryable ? "pending" : "failed", now + 5_000, now, job.id);
+  }
+
+  private async executeJob(job: JobRow): Promise<void> {
+    const payload = JSON.parse(job.payload) as { threadId?: string };
+    if (job.type === "memory_index" && payload.threadId) {
+      const thread = this.sqlite.prepare("SELECT id,memory_session_id FROM external_agent_threads WHERE id=?").get(payload.threadId) as { id: string; memory_session_id: string } | undefined;
+      if (thread) await this.indexMemory(thread.id, thread.memory_session_id);
+      return;
+    }
+    if (job.type === "source_gc" && job.source_id) {
+      await this.runSourceGc(job.source_id);
+      return;
+    }
+  }
+
+  private afterJob(job: JobRow): void {
+    if (job.type === "memory_index" && job.run_id) {
+      const run = this.sqlite.prepare("SELECT id,status,phase FROM data_migration_runs WHERE id=?").get(job.run_id) as { id: string; status: string; phase: string } | undefined;
+      if (run?.status === "running" && run.phase === "memory") {
+        const remaining = this.sqlite.prepare("SELECT count(*) count FROM migration_jobs WHERE run_id=? AND status IN ('pending','running')").get(job.run_id) as { count: number };
+        if (!remaining.count) this.completeRun(job.run_id);
+      }
+    }
+  }
+
+  kick(): void { void this.drain(); }
+
+  async idle(): Promise<void> {
+    while (this.draining || (this.sqlite.prepare("SELECT 1 FROM migration_jobs WHERE status IN ('pending','running') AND run_at<=? LIMIT 1").get(Date.now()) as unknown)) {
+      if (this.draining) await new Promise((resolve) => setTimeout(resolve, 10));
+      else await this.drain();
+    }
+  }
+
+  private draining = false;
+  private closed = false;
+  private async drain(): Promise<void> {
+    if (this.draining) return;
+    this.draining = true;
+    try {
+      for (;;) {
+        const job = this.claimJob();
+        if (!job) break;
+        await yieldToEventLoop();
+        try {
+          await this.executeJob(job);
+          this.finishJob(job);
+        } catch (error) {
+          this.finishJob(job, error);
+        }
+        this.afterJob(job);
+      }
+    } finally {
+      this.draining = false;
+      if (this.closed) return;
+      const pending = this.sqlite.prepare("SELECT 1 FROM migration_jobs WHERE status='pending' AND run_at<=? LIMIT 1").get(Date.now());
+      if (pending) void this.drain();
+    }
+  }
+
+  dispose(): void { this.closed = true; }
+
+  recover(): void {
+    const now = Date.now();
+    this.sqlite.prepare("UPDATE migration_jobs SET status='pending',updated_at=? WHERE status='running'").run(now);
+    const stale = this.sqlite.prepare("SELECT id,source_id FROM data_migration_runs WHERE status='running'").all() as Array<{ id: string; source_id: string }>;
+    for (const run of stale) {
+      const remaining = this.sqlite.prepare("SELECT count(*) count FROM migration_jobs WHERE run_id=? AND status IN ('pending','running','failed') AND type='memory_index'").get(run.id) as { count: number };
+      const completedJobs = this.sqlite.prepare("SELECT count(*) count FROM migration_jobs WHERE run_id=? AND status='done' AND type='memory_index'").get(run.id) as { count: number };
+      const failedJobs = this.sqlite.prepare("SELECT count(*) count FROM migration_jobs WHERE run_id=? AND status='failed' AND type='memory_index'").get(run.id) as { count: number };
+      if (!remaining.count && completedJobs.count + failedJobs.count > 0) {
+        this.completeRun(run.id);
+      } else if (remaining.count) {
+        this.sqlite.prepare("UPDATE data_migration_runs SET phase='memory' WHERE id=?").run(run.id);
+        this.kick();
+      }
+    }
+    const deleting = this.sqlite.prepare("SELECT source_id FROM migration_jobs WHERE type='source_gc' AND status IN ('pending','running')").all() as Array<{ source_id: string | null }>;
+    for (const job of deleting) if (job.source_id) this.kick();
+    this.kick();
   }
 }

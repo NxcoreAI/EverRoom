@@ -14,10 +14,15 @@ export interface DiscoveredMigrationSource {
   standard: boolean
 }
 
+export type LocalAgentMigrationProvider = Extract<DiscoveredMigrationSource['provider'], 'codex' | 'claude'>
+
 export interface MigrationApi {
   discover(): Promise<DiscoveredMigrationSource[]>
   chooseOpenClaw(): Promise<MigrationRun | null>
   importOpenClaw(discoveredId?: string): Promise<MigrationRun>
+  importLocalAgentMigration(provider: LocalAgentMigrationProvider, discoveredId?: string): Promise<MigrationRun>
+  chooseLocalAgentDirectory(provider: LocalAgentMigrationProvider): Promise<MigrationRun | null>
+  localAgentSources(provider: LocalAgentMigrationProvider): Promise<DiscoveredMigrationSource[]>
   importNotionZip(): Promise<MigrationRun | null>
   sources(): Promise<MigrationSource[]>
   runs(sourceId?: string): Promise<MigrationRun[]>

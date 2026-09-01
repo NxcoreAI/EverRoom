@@ -1279,7 +1279,7 @@
 .agent-external-result:hover, .agent-external-result[data-active='true'] { background: #f0f2f5; }
 .agent-external-result:focus-visible { outline: 2px solid rgba(71, 84, 103, .3); outline-offset: -2px; }
 .agent-external-result-icon { display: grid; width: 27px; height: 27px; place-items: center; border: 1px solid #e1e5ea; border-radius: 6px; background: #fff; color: #566273; }
-.agent-external-result-icon svg { width: 14px; height: 14px; }
+.agent-external-result-icon svg, .agent-external-result-icon img { width: 14px; height: 14px; }
 .agent-external-result-copy { display: grid; min-width: 0; gap: 2px; }
 .agent-external-result-copy strong, .agent-external-result-copy small, .agent-external-result-copy > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agent-external-result-copy strong { font-size: 11px; font-weight: 640; }

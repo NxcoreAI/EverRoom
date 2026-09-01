@@ -753,6 +753,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   filesService.initializeCatalog();
   const dataMigrationService = new DataMigrationService(db, sqlite, memoryService);
   dataMigrationService.setFilesService(filesService);
+  dataMigrationService.recover();
   resolveAgentConversation = (threadId, query) => dataMigrationService.buildReferenceContext(threadId, query);
   agentService.setExternalConversationResolver(dataMigrationService);
   agentService.setFilesService(filesService);
