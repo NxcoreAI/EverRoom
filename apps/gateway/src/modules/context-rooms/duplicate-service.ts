@@ -221,6 +221,24 @@ export class RoomDuplicateService {
       error: "gateway_restarted_during_merge",
       updatedAt: new Date(),
     }).where(eq(roomMergeOperations.status, "running")).run();
+    // 启动自愈：重启打断的合并遗留僵尸（source 卡 merging）——commit 未达的
+    // failed operation 回滚 active；commit 已达的补完 merged 定稿。
+    // 否则该 Room 首页消失 + agent/文档引用全部 409（no longer available）。
+    for (const op of this.db.select().from(roomMergeOperations)
+      .where(eq(roomMergeOperations.status, "failed")).all()) {
+      const source = this.db.select({
+        id: contextRooms.id,
+        lifecycle: contextRooms.lifecycle,
+      }).from(contextRooms).where(eq(contextRooms.id, op.sourceRoomId)).get();
+      if (source?.lifecycle !== "merging") continue;
+      try {
+        if (op.commitReached) this.finalizeMerge(op.id, op.sourceRoomId, op.targetRoomId);
+        else this.db.update(contextRooms).set({ lifecycle: "active", updatedAt: new Date() })
+          .where(eq(contextRooms.id, op.sourceRoomId)).run();
+      } catch {
+        // 单条自愈失败不阻断其余恢复；下次启动重试。
+      }
+    }
     this.requestRebuild();
   }
 
@@ -913,6 +931,10 @@ export class RoomDuplicateService {
             .where(eq(roomMemoryAttributions.roomId, sourceRoomId)).run();
           this.db.update(agentRuns).set({ roomId: targetRoomId })
             .where(eq(agentRuns.roomId, sourceRoomId)).run();
+          // 会话表同步迁移：否则 source Room 的 agent 会话成为孤儿——
+          // 会话按 Room 过滤/绑定的逻辑全部失联（runs 已搬而 session 没搬）。
+          this.db.update(agentSessions).set({ roomId: targetRoomId })
+            .where(eq(agentSessions.roomId, sourceRoomId)).run();
           for (const link of this.db.select().from(agentSessionLinks).all()) {
             if (link.sourceRoomId !== sourceRoomId && !JSON.stringify(link.target).includes(sourceRoomId)) continue;
             this.db.update(agentSessionLinks).set({
@@ -954,36 +976,38 @@ export class RoomDuplicateService {
       this.options.rebuildRelations?.();
 
       this.setProgress(id, "finalizing", 90);
-      const completedAt = new Date();
-      this.db.transaction((tx) => {
-        tx.update(contextRooms).set({
-          lifecycle: "merged",
-          mergedIntoRoomId: targetRoomId,
-          mergedAt: completedAt,
-          data: {
-            id: sourceRoomId,
-            title: source.title,
-            kind: source.kind,
-            lifecycle: "merged",
-            mergedIntoRoomId: targetRoomId,
-            mergedAt: completedAt.toISOString(),
-          },
-          updatedAt: completedAt,
-        }).where(eq(contextRooms.id, sourceRoomId)).run();
-        tx.update(rooms).set({ lifecycle: "merged", mergedIntoRoomId: targetRoomId, mergedAt: completedAt, updatedAt: completedAt })
-          .where(eq(rooms.id, sourceRoomId)).run();
-        tx.update(roomDuplicateCandidates).set({ status: "merged", updatedAt: completedAt })
-          .where(and(eq(roomDuplicateCandidates.roomAId, sortedPair(sourceRoomId, targetRoomId)[0]), eq(roomDuplicateCandidates.roomBId, sortedPair(sourceRoomId, targetRoomId)[1]))).run();
-        tx.delete(roomDuplicateCandidates).where(and(
-          or(eq(roomDuplicateCandidates.roomAId, sourceRoomId), eq(roomDuplicateCandidates.roomBId, sourceRoomId)),
-          eq(roomDuplicateCandidates.status, "open"),
-        )).run();
-        tx.update(roomMergeOperations).set({
-          status: "completed", stage: "completed", progress: 100, completedAt, error: null, updatedAt: completedAt,
-        }).where(eq(roomMergeOperations.id, id)).run();
-      });
+      this.finalizeMerge(id, sourceRoomId, targetRoomId);
       this.requestRebuild();
     } catch (error) {
+      // 失败恢复：commit 未达 → source 回滚 active（否则永久卡 merging：首页消失
+      // + agent/文档引用全 409）；commit 已达 → 数据已搬迁，补完收尾标记才是真相
+      // （知识重建失败可后续重试，不阻断 merged 定稿）。
+      const op = this.db.select().from(roomMergeOperations).where(eq(roomMergeOperations.id, id)).get();
+      try {
+        if (op?.commitReached) {
+          this.finalizeMerge(id, sourceRoomId, targetRoomId);
+          this.requestRebuild();
+          return;
+        }
+        if (op) {
+          const rollbackAt = new Date();
+          this.db.transaction((tx) => {
+            tx.update(contextRooms).set({ lifecycle: "active", updatedAt: rollbackAt })
+              .where(and(eq(contextRooms.id, sourceRoomId), eq(contextRooms.lifecycle, "merging"))).run();
+            tx.update(rooms).set({ lifecycle: "active", updatedAt: rollbackAt })
+              .where(eq(rooms.id, sourceRoomId)).run();
+          });
+        }
+      } catch (recoveryError) {
+        // 恢复失败保留 failed 态，交由 initialize() 启动自愈兜底。
+        this.db.update(roomMergeOperations).set({
+          status: "failed",
+          stage: "failed",
+          error: `merge_recovery_failed: ${recoveryError instanceof Error ? recoveryError.message : String(recoveryError)}`,
+          updatedAt: new Date(),
+        }).where(eq(roomMergeOperations.id, id)).run();
+        return;
+      }
       this.db.update(roomMergeOperations).set({
         status: "failed",
         stage: "failed",
@@ -991,5 +1015,38 @@ export class RoomDuplicateService {
         updatedAt: new Date(),
       }).where(eq(roomMergeOperations.id, id)).run();
     }
+  }
+
+  /** 合并收尾定稿：source 标 merged + 候选清理 + operation 完成（幂等）。 */
+  private finalizeMerge(id: string, sourceRoomId: string, targetRoomId: string): void {
+    const source = this.db.select().from(contextRooms).where(eq(contextRooms.id, sourceRoomId)).get();
+    const completedAt = new Date();
+    this.db.transaction((tx) => {
+      tx.update(contextRooms).set({
+        lifecycle: "merged",
+        mergedIntoRoomId: targetRoomId,
+        mergedAt: completedAt,
+        data: {
+          id: sourceRoomId,
+          title: source?.title ?? sourceRoomId,
+          ...(source?.kind ? { kind: source.kind } : {}),
+          lifecycle: "merged",
+          mergedIntoRoomId: targetRoomId,
+          mergedAt: completedAt.toISOString(),
+        },
+        updatedAt: completedAt,
+      }).where(eq(contextRooms.id, sourceRoomId)).run();
+      tx.update(rooms).set({ lifecycle: "merged", mergedIntoRoomId: targetRoomId, mergedAt: completedAt, updatedAt: completedAt })
+        .where(eq(rooms.id, sourceRoomId)).run();
+      tx.update(roomDuplicateCandidates).set({ status: "merged", updatedAt: completedAt })
+        .where(and(eq(roomDuplicateCandidates.roomAId, sortedPair(sourceRoomId, targetRoomId)[0]), eq(roomDuplicateCandidates.roomBId, sortedPair(sourceRoomId, targetRoomId)[1]))).run();
+      tx.delete(roomDuplicateCandidates).where(and(
+        or(eq(roomDuplicateCandidates.roomAId, sourceRoomId), eq(roomDuplicateCandidates.roomBId, sourceRoomId)),
+        eq(roomDuplicateCandidates.status, "open"),
+      )).run();
+      tx.update(roomMergeOperations).set({
+        status: "completed", stage: "completed", progress: 100, completedAt, error: null, updatedAt: completedAt,
+      }).where(eq(roomMergeOperations.id, id)).run();
+    });
   }
 }

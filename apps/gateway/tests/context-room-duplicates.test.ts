@@ -436,6 +436,41 @@ describe('RoomDuplicateService', () => {
     sqlite.close()
   })
 
+
+  it('migrates agent session room bindings and completes the merge when knowledge rebuild fails', async () => {
+    const { db, duplicates, roomsService, sqlite } = await harness(async () => undefined)
+    void db
+    roomsService.saveSnapshot({
+      rooms: [
+        { id: 'room-s', title: '来源房', kind: '主题', data: { id: 'room-s', title: '来源房' } },
+        { id: 'room-t', title: '目标房', kind: '主题', data: { id: 'room-t', title: '目标房' } },
+      ],
+      deletedRooms: [],
+    })
+    const now = new Date()
+    // 会话绑在 source Room 上：合并必须迁移，否则成为孤儿（agent 409 同族根因）。
+    db.insert(agentSessions).values({
+      id: 'session-src', roomId: 'room-s', pageLabel: 'Context Room', runtimeId: 'fake', status: 'idle', createdAt: now, updatedAt: now,
+    }).run()
+    // 用一个知识重建会抛错的服务实例执行合并（post-commit 失败路径）。
+    const failing = new RoomDuplicateService(db, {
+      mergeKnowledge: async () => { throw new Error('knowledge rebuild exploded') },
+    })
+    const preview = await failing.previewMerge('room-s', 'room-t')
+    const settled = await failing.startMerge({
+      sourceRoomId: 'room-s',
+      targetRoomId: 'room-t',
+      previewHash: preview.previewHash,
+      idempotencyKey: 'merge-session-key',
+      wait: true,
+    })
+    // 数据已搬迁（commit 已达）：失败恢复补完定稿，而非卡在 merging。
+    expect(settled).toMatchObject({ status: 'completed', commitReached: true })
+    expect(db.select().from(agentSessions).where(eq(agentSessions.id, 'session-src')).get()?.roomId).toBe('room-t')
+    expect(db.select().from(contextRooms).where(eq(contextRooms.id, 'room-s')).get()?.lifecycle).toBe('merged')
+    sqlite.close()
+  })
+
   it('returns the settled operation when startMerge waits', async () => {
     const { duplicates, roomsService, sqlite } = await harness()
     roomsService.saveSnapshot({
