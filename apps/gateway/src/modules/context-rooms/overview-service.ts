@@ -827,6 +827,84 @@ export class RoomOverviewService {
     return sortByMailSentAt([...resolvedMails, ...fallback]).slice(0, 500);
   }
 
+  /**
+   * 单封连接器邮件详情（邮件面板下半区）：与 listRoomMails 同一套三级解析
+   * （域行 → connector ref → 路由快照），返回完整正文（bodyText / 快照
+   * markdown，截断 60K 字符防御）。归属校验：sourceId 必须已挂到该 Room。
+   */
+  readRoomMail(roomId: string, sourceId: string): {
+    sourceId: string;
+    subject: string;
+    senderName: string | null;
+    senderAddress: string | null;
+    sentAt: string | null;
+    hasAttachments: boolean;
+    provider: string | null;
+    origin: "domain" | "snapshot";
+    body: string;
+  } {
+    const resolved = this.requireRoom(roomId);
+    const member = this.db.select({ sourceId: roomSourceMemberships.sourceId })
+      .from(roomSourceMemberships)
+      .where(and(
+        eq(roomSourceMemberships.roomId, resolved),
+        eq(roomSourceMemberships.sourceKind, "mail"),
+        eq(roomSourceMemberships.sourceId, sourceId),
+      ))
+      .get();
+    if (!member) throw new Error("mail_not_in_room");
+
+    const domainDetail = (row: typeof connectorEmails.$inferSelect, id: string) => ({
+      sourceId: id,
+      subject: row.subject.trim(),
+      senderName: row.senderName,
+      senderAddress: row.senderAddress,
+      sentAt: row.sentAt?.toISOString() ?? null,
+      hasAttachments: row.hasAttachments,
+      provider: row.service,
+      origin: "domain" as const,
+      body: (row.bodyText ?? "").slice(0, 60_000),
+    });
+
+    // ① 域行（CLI 直投路径 sourceId 即域行 id）
+    const domainRow = this.db.select().from(connectorEmails)
+      .where(and(eq(connectorEmails.id, sourceId), isNull(connectorEmails.deletedAt)))
+      .get();
+    if (domainRow?.subject.trim()) return domainDetail(domainRow, sourceId);
+    // ② connector ref → 域行（nango 路径主解析）
+    const refRow = this.resolveMailRefRows([sourceId]).get(sourceId);
+    if (refRow?.subject.trim()) return domainDetail(refRow, sourceId);
+    // ③ 路由快照兜底（回填前的历史 membership）
+    const snapshot = this.db.select({
+      sourceId: routeDecisions.sourceId,
+      sourceTitle: routeDecisions.sourceTitle,
+      sourceMarkdown: routeDecisions.sourceMarkdown,
+    })
+      .from(routeDecisions)
+      .where(and(
+        eq(routeDecisions.sourceKind, "mail"),
+        eq(routeDecisions.sourceId, sourceId),
+        isNotNull(routeDecisions.sourceMarkdown),
+      ))
+      .orderBy(desc(routeDecisions.sourceVersion))
+      .get();
+    if (snapshot?.sourceTitle?.trim()) {
+      const markdown = snapshot.sourceMarkdown ?? "";
+      return {
+        sourceId,
+        subject: snapshot.sourceTitle.trim(),
+        senderName: mailSenderOf(markdown),
+        senderAddress: null,
+        sentAt: mailSentAtOf(markdown),
+        hasAttachments: false,
+        provider: connectorProviderOf(sourceId),
+        origin: "snapshot",
+        body: markdown.slice(0, 60_000),
+      };
+    }
+    throw new Error("mail_not_found");
+  }
+
   private latestSourceUpdate(
     roomId: string,
     applied = this.rooms.roomAppliedEntities(roomId),

@@ -876,6 +876,7 @@ export interface NxcoreDesktopApi {
     overview(roomId: string): Promise<RoomOverviewProjection>
     refreshOverview(roomId: string): Promise<RoomOverviewProjection>
     listMails(roomId: string): Promise<{ items: RoomMail[] }>
+    readMail(roomId: string, sourceId: string): Promise<import('@nxcore/agent-contract').RoomMailDetail>
     roomEntities(roomId: string): Promise<RoomAppliedEntitiesResult>
     completeLocalAction(roomId: string, actionId: string, completed?: boolean): Promise<RoomLocalActionResult>
   }

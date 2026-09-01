@@ -328,6 +328,31 @@ export function contextRoomRoutes(
       },
     );
 
+    app.get(
+      "/v1/context-rooms/:roomId/mails/:sourceId",
+      {
+        schema: {
+          tags: ["context-rooms"],
+          params: Type.Object({
+            roomId: Type.String({ minLength: 1, maxLength: 128 }),
+            sourceId: Type.String({ minLength: 1, maxLength: 256 }),
+          }),
+        },
+      },
+      async (request, reply) => {
+        if (!overviews) return reply.code(503).send({ error: "room_overview_service_unavailable" });
+        try {
+          return overviews.readRoomMail(request.params.roomId, request.params.sourceId);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (message === "context_room_not_found" || message === "mail_not_in_room" || message === "mail_not_found") {
+            return reply.code(404).send({ error: message });
+          }
+          throw error;
+        }
+      },
+    );
+
     app.post(
       "/v1/context-rooms/:roomId/actions",
       {

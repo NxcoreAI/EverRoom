@@ -300,6 +300,7 @@ const CONTEXT_ROOM_CHANNELS = {
   overview: 'context-rooms:overview',
   refreshOverview: 'context-rooms:refresh-overview',
   listMails: 'context-rooms:list-mails',
+  readMail: 'context-rooms:read-mail',
   roomEntities: 'context-rooms:room-entities',
   completeLocalAction: 'context-rooms:complete-local-action',
 } as const
@@ -1609,6 +1610,7 @@ function registerContextRoomHandlers(bridge: ContextRoomGatewayBridge): void {
   handle(CONTEXT_ROOM_CHANNELS.overview, (_event, roomId) => bridge.overview(roomId))
   handle(CONTEXT_ROOM_CHANNELS.refreshOverview, (_event, roomId) => bridge.refreshOverview(roomId))
   handle(CONTEXT_ROOM_CHANNELS.listMails, (_event, roomId) => bridge.listMails(roomId))
+  handle(CONTEXT_ROOM_CHANNELS.readMail, (_event, roomId: string, sourceId: string) => bridge.readMail(roomId, sourceId))
   handle(CONTEXT_ROOM_CHANNELS.roomEntities, (_event, roomId) => bridge.roomEntities(roomId))
   handle(CONTEXT_ROOM_CHANNELS.completeLocalAction, (_event, roomId: string, actionId: string, completed?: boolean) =>
     bridge.completeLocalAction(roomId, actionId, completed !== false))
