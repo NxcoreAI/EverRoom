@@ -21,6 +21,7 @@ import { MemoryOnboardingGate } from '@/components/onboarding/MemoryOnboardingGa
 import { RoomOnboardingGate } from '@/components/onboarding/RoomOnboardingGate'
 import { FolderSettingsOnboarding } from '@/components/onboarding/FolderSettingsOnboarding'
 import { MicrophonePermissionOnboarding } from '@/components/onboarding/MicrophonePermissionOnboarding'
+import { AgentMigrationOnboarding } from '@/components/onboarding/AgentMigrationOnboarding'
 import { OnboardingFlowChrome, type OnboardingFlowStage } from '@/components/onboarding/OnboardingFlowChrome'
 import { RuntimeConfigGate } from '@/components/onboarding/RuntimeConfigGate'
 import {
@@ -110,7 +111,7 @@ export function App() {
   const [contextRoomHomeRequest, setContextRoomHomeRequest] = useState(0)
   const [suppressRoomOnboarding, setSuppressRoomOnboarding] = useState(false)
   const [fullOnboardingStage, setFullOnboardingStage] = useState<OnboardingFlowStage>('idle')
-  const [completedOnboardingStages, setCompletedOnboardingStages] = useState<Set<'folder' | 'microphone' | 'memory' | 'room'>>(() => new Set())
+  const [completedOnboardingStages, setCompletedOnboardingStages] = useState<Set<'folder' | 'microphone' | 'memory' | 'agents' | 'room'>>(() => new Set())
   const [folderOnboardingOpen, setFolderOnboardingOpen] = useState(false)
   const [suppressAutomaticOnboarding, setSuppressAutomaticOnboarding] = useState(true)
   const [memoryReady, setMemoryReady] = useState(false)
@@ -184,7 +185,7 @@ export function App() {
     })
   }, [activePage, folderOnboardingOpen, fullOnboardingStage, suppressRoomOnboarding])
 
-  const markOnboardingStageCompleted = useCallback((stage: 'folder' | 'microphone' | 'memory' | 'room') => {
+  const markOnboardingStageCompleted = useCallback((stage: 'folder' | 'microphone' | 'memory' | 'agents' | 'room') => {
     setCompletedOnboardingStages((current) => {
       if (current.has(stage)) return current
       return new Set([...current, stage])
@@ -741,8 +742,8 @@ export function App() {
       markOnboardingStageCompleted('memory')
       if (fullOnboardingStageRef.current !== 'memory') return
       manualMemoryOnboardingRef.current = false
-      fullOnboardingStageRef.current = 'room'
-      setFullOnboardingStage('room')
+      fullOnboardingStageRef.current = 'agents'
+      setFullOnboardingStage('agents')
       setFolderOnboardingOpen(false)
       setSuppressRoomOnboarding(false)
       setActivePage('settings')
@@ -961,6 +962,19 @@ export function App() {
             setFullOnboardingStage('memory')
             setSuppressRoomOnboarding(true)
             openMemoryOnboardingRef.current?.()
+          }}
+        />
+      ) : null}
+      {fullOnboardingStage === 'agents' ? (
+        <AgentMigrationOnboarding
+          onNavigateStage={switchOnboardingStage}
+          onFinished={() => {
+            logOnboarding('agents-finished', { stage: fullOnboardingStageRef.current })
+            markOnboardingStageCompleted('agents')
+            if (fullOnboardingStageRef.current !== 'agents') return
+            fullOnboardingStageRef.current = 'room'
+            setFullOnboardingStage('room')
+            setSuppressRoomOnboarding(false)
           }}
         />
       ) : null}

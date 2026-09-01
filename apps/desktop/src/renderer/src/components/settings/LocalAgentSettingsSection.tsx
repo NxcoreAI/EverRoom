@@ -2,6 +2,7 @@ import { Bot, Download, History, LoaderCircle, RefreshCw, TerminalSquare } from 
 import { useCallback, useEffect, useState } from 'react'
 import type { LocalAgentInstallation } from '../../../../shared/local-agents'
 import { useLocale } from '@/i18n/LocaleContext'
+import { SourceIcon } from '@/components/pages/sources/SourceIcon'
 
 function statusKey(agent: LocalAgentInstallation): string {
   if (agent.invocationSupported) return 'surface:localAgentSettings.ready'
@@ -73,7 +74,7 @@ export function LocalAgentSettingsSection() {
         <div className="local-agent-list">
           {agents.map((agent) => (
             <div key={agent.id} className="local-agent-row" data-ready={String(agent.invocationSupported)}>
-              <span className="local-agent-provider"><TerminalSquare aria-hidden="true" /></span>
+              <span className="local-agent-provider">{agent.provider === 'claude' || agent.provider === 'codex' || agent.provider === 'openclaw' ? <SourceIcon kind={agent.provider} /> : <TerminalSquare aria-hidden="true" />}</span>
               <div>
                 <strong>{agent.displayName}</strong>
                 <small title={agent.executablePath ?? agent.historyPaths.join('\n')}>{agent.version ?? t('surface:localAgentSettings.notInstalled')}</small>

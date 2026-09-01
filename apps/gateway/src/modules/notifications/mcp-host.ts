@@ -40,7 +40,10 @@ export class NotificationMcpHost{
     const platforms=Array.isArray(args.platforms)?[...new Set(args.platforms.filter((value):value is "ios"|"macos"=>value==="ios"||value==="macos"))]:[];
     if(!title||title.length>80||!body||body.length>120||platforms.length<1)throw new Error("INVALID_REQUEST: title, body and platforms are required");
     const idempotencyKey=`agent-notification:${createHash("sha256").update(JSON.stringify([context.agentSessionId,context.runId,title,body,[...platforms].sort()])).digest("hex")}`;
-    const result=await this.bridge.send({title,body,platforms,sessionId:context.agentSessionId,runId:context.runId,roomId:context.roomId,idempotencyKey});
+    // 来源桌面端不接收自己的远程推送（SaaS 扇出时排除来源设备）；当请求包含
+    // macos 时，由本机直接弹出内容相同的通知，点击可定位到对应会话。
+    const local=platforms.includes("macos");
+    const result=await this.bridge.send({title,body,platforms,sessionId:context.agentSessionId,runId:context.runId,roomId:context.roomId,idempotencyKey,local});
     return{content:[{type:"text" as const,text:JSON.stringify(result)}],structuredContent:result};
   }
   async exchangeTrusted(sessionId:string,message:Record<string,unknown>){const context=resolveTrustedMcpSession(sessionId);if(!context)throw new Error("MCP_SESSION_INVALID: Trusted MCP session is missing or expired");return this.exchange(sessionId,message,context);}

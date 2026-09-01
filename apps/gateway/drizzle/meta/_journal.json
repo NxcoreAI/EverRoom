@@ -302,6 +302,13 @@
       "when": 1787921039217,
       "tag": "0043_stale_vargas",
       "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "6",
+      "when": 1788260597460,
+      "tag": "0044_migration_jobs",
+      "breakpoints": true
     }
   ]
 }

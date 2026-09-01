@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowUp, Bot, FileText, History, LoaderCircle, Plus, Quote, Search, Square, X } from 'lucide-react'
+import { ArrowLeft, ArrowUp, FileText, History, LoaderCircle, Plus, Quote, Search, Square, X } from 'lucide-react'
 import {
   forwardRef,
   useEffect,
@@ -14,6 +14,7 @@ import type { ExternalConversationSummary } from '@nxcore/agent-contract'
 
 import { showToast } from '@/state/toast'
 import { useLocale } from '@/i18n/LocaleContext'
+import { SourceIcon } from '@/components/pages/sources/SourceIcon'
 
 const ACCEPTED_ATTACHMENTS = '.txt,.md,.csv,.json,.pdf,.docx,.xlsx,.pptx'
 const ATTACHMENT_PATTERN = /\.(txt|md|csv|json|pdf|docx|xlsx|pptx)$/i
@@ -399,7 +400,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
                     onMouseDown={(event) => event.preventDefault()}
                     onClick={() => chooseExternal(item)}
                   >
-                    <span className="agent-external-result-icon"><Bot aria-hidden="true" /></span>
+                    <span className="agent-external-result-icon"><SourceIcon kind={item.provider === 'claude' || item.provider === 'codex' || item.provider === 'openclaw' ? item.provider : 'openclaw'} /></span>
                     <span className="agent-external-result-copy">
                       <strong>{displayText(item.title, t('surface:agentComposer.untitledConversation'))}</strong>
                       <small>{displayText(item.agentId, displayText(item.provider, t('surface:agentComposer.unknownAgent')))} · {displayDate(item.lastMessageAt, formatDate, t('surface:agentComposer.dateUnavailable'))} · {t('surface:agentComposer.messageCount', { count: Number.isFinite(item.messageCount) ? item.messageCount : 0 })}</small>
