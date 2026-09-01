@@ -31,3 +31,5 @@ apps/desktop/build/packaged-env.json
 TencentDB-Agent-Memory/
 
 
+
+.claude/
