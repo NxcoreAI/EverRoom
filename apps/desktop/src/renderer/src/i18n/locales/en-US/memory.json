@@ -309,7 +309,7 @@
   "writingStyle.sparseHint": "Document samples are limited, so style guidance is minimal. Turning on either toggle backfills your existing documents automatically.",
   "writingStyle.applyTitle": "Where to apply",
   "writingStyle.completionToggle": "Apply in completion (editor ghost-text suggestions follow the style)",
-  "writingStyle.generationToggle": "Apply in generation (agent replies, document creation, edits and selection rewrite all follow the style)",
+  "writingStyle.generationToggle": "Apply in generation (document creation, edits and selection rewrite follow the style; plain conversation is unaffected)",
   "writingStyle.save": "Save",
   "writingStyle.cancel": "Cancel",
   "writingStyle.saveFailed": "Save failed.",

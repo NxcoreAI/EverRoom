@@ -309,7 +309,7 @@
   "writingStyle.sparseHint": "文档样本较少，风格参考有限；开启任一应用开关后会自动回填已有文档。",
   "writingStyle.applyTitle": "应用范围",
   "writingStyle.completionToggle": "补全中应用（编辑器光标续写遵循风格）",
-  "writingStyle.generationToggle": "生成中应用（Agent 回复、建档、改稿与划词改写均遵循风格）",
+  "writingStyle.generationToggle": "生成中应用（建档、改稿与划词改写等文档写作遵循风格，纯对话回复不受影响）",
   "writingStyle.save": "保存",
   "writingStyle.cancel": "取消",
   "writingStyle.saveFailed": "保存失败。",

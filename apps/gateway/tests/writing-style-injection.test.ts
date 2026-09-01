@@ -1,12 +1,15 @@
 import { mkdtemp, rm } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { Ajv } from "ajv";
 import { createDatabase, type DatabaseClient } from "../src/infrastructure/database/client.js";
 import { documents, roomDocumentLinks, documentVersions } from "../src/infrastructure/database/schema.js";
 import { WritingStyleService } from "../src/modules/writing-style/service.js";
 import { composeWritingStyleBlock } from "../src/modules/writing-style/compose.js";
+import { shouldInjectGenerationWritingStyle } from "../src/modules/agent/writing-style-gate.js";
 import { ContextRoomAgentDispatcher } from "../src/modules/context-rooms/room-agent.js";
 import type { SubagentOrchestrator } from "../src/modules/subagents/orchestrator.js";
 
@@ -145,6 +148,69 @@ describe("ContextRoomAgentDispatcher 划词改写注入", () => {
     });
     await dispatcher.dispatchDetached({ task: "selection-rewrite", taskInput: { selectedText: "原文" } });
     expect(inputs[0]?.input).not.toHaveProperty("writingStyle");
+  });
+
+  it("注入 writingStyle 后派发载荷必须通过 agent input schema 真实校验（回归：2026-09-01 线上 subagent_input_schema_invalid）", async () => {
+    const schema = JSON.parse(readFileSync(
+      join(process.cwd(), "..", "..", "agents", "context-room", "schemas", "input.schema.json"),
+      "utf8",
+    )) as Record<string, unknown>;
+    const ajv = new Ajv({ strict: false, allErrors: true });
+    const validate = ajv.compile(schema);
+    const { orchestrator, inputs } = stubOrchestrator();
+    const dispatcher = new ContextRoomAgentDispatcher(orchestrator, {
+      getGenerationPromptSection: () => "<writing_style>\n少用感叹号\n</writing_style>",
+    });
+    // 覆盖 REST 路由会传入的全部字段（routes.ts selection-rewrite body 的完整形态）。
+    await dispatcher.dispatchDetached({
+      task: "selection-rewrite",
+      taskInput: {
+        selectedText: "原文",
+        instruction: "更正式一点",
+        contextBefore: "选区之前的上下文",
+        contextAfter: "选区之后的上下文",
+        blockType: "paragraph",
+        roomId: "room-1",
+        documentName: "会议纪要",
+        responseLanguage: "zh-CN",
+      },
+    });
+    const input = inputs[0]?.input;
+    expect(input).toHaveProperty("writingStyle");
+    expect(validate(input)).toBe(true);
+  });
+});
+
+describe("shouldInjectGenerationWritingStyle 四信号门控（§7.2 修订）", () => {
+  it("纯问答轮（四信号全空）不注入", () => {
+    expect(shouldInjectGenerationWritingStyle({ prompt: "今天天气怎么样", context: null }, false)).toBe(false);
+  });
+
+  it("编辑器有活动文档时注入", () => {
+    expect(shouldInjectGenerationWritingStyle(
+      { prompt: "接着说", context: { activeDocument: { roomId: "room-1" } } },
+      false,
+    )).toBe(true);
+  });
+
+  it("带选区时注入", () => {
+    expect(shouldInjectGenerationWritingStyle(
+      { prompt: "这段什么意思", context: { selectedText: "某段原文" } },
+      false,
+    )).toBe(true);
+  });
+
+  it("写作意图启发式命中时注入（无编辑器上下文）", () => {
+    expect(shouldInjectGenerationWritingStyle({ prompt: "帮我写一份会议纪要文档", context: null }, false)).toBe(true);
+  });
+
+  it("否定式与咨询式写作请求不注入", () => {
+    expect(shouldInjectGenerationWritingStyle({ prompt: "不要帮我写文档", context: null }, false)).toBe(false);
+    expect(shouldInjectGenerationWritingStyle({ prompt: "如何创建文档", context: null }, false)).toBe(false);
+  });
+
+  it("本会话已用过写作工具时注入（无论本轮问什么）", () => {
+    expect(shouldInjectGenerationWritingStyle({ prompt: "再补充一点背景", context: null }, true)).toBe(true);
   });
 });
 

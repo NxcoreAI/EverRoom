@@ -222,7 +222,7 @@ merge(sketches) = Σ(count_i × w_i) / Σ(w_i)，w = 1（时间衰减为后续�
 ### 7.2 生成注入（开关 generationEnabled，服务端强制）
 
 - **读取与强制**：开关在 gateway 侧读取（`writing_style_settings`），不信任 renderer 传参——生成发生在 gateway，此处天然可服务端强制。
-- **main agent**：经 `runtimePrompt` 把注入块并入每 run 的 prompt（`agent/service.ts`，provider 由 create-server 接线，开关 gateway 强制读取）。**作用范围是全部主 Agent 轮次（含纯对话问答）**——UI 开关文案如实标注；聊天里语气也会带画像，这是有意取舍（"文档相关轮次"无法精确判定）。
+- **main agent**：经 `runtimePrompt` 把注入块并入每 run 的 prompt（`agent/service.ts`，provider 由 create-server 接线，开关 gateway 强制读取）。**2026-09-01 修订（用户决策）：作用范围从"全部主 Agent 轮次（含纯对话问答）"收窄为"文档写作轮"**——四信号门控（`modules/agent/writing-style-gate.ts`）：①编辑器有活动文档 ②本轮带选区 ③写作意图启发式（`document-intent.ts` 的 `requestsWorkspaceDocument`，即澄清卡片预检同款正则）④本会话已用过 write/patch 写作工具（`agent_events` 的 tool.completed 查询）；纯对话轮不注入，UI 开关文案同步修订。原取舍理由（"文档相关轮次无法精确判定"）由信号③④组合覆盖主要场景，残余漏注入面（无编辑器上下文、措辞不含文档关键词、且是会话首次写作请求）可接受。
 - **划词改写**：`room-agent.ts` `dispatchDetached`（:323）组装 task input 时，开关开启则把 `digestGeneration` 附加到 context-room 子 agent 的输入上下文。
 - **关闭语义**：开关关闭时 executionContext 不携带该字段，system prompt 与 dispatch 输入中无任何风格内容（验收：关闭后不注入）。
 
