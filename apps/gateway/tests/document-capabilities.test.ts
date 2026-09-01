@@ -1,9 +1,16 @@
+import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { SubagentInvocation, TiptapJsonContent } from "@nxcore/agent-contract";
 import type { DocumentCapabilityPlugin } from "../src/modules/documents/capabilities/types.js";
 import { createBuiltinDocumentCapabilityRegistry } from "../src/modules/documents/capabilities/builtins.js";
+import {
+  buildSelectionRewriteProposedContent,
+  createSelectionRewriteContentResolver,
+  sanitizeSelectionRewriteReplacement,
+} from "../src/modules/documents/capabilities/selection-rewrite-content.js";
 import { DocumentCapabilityRegistry } from "../src/modules/documents/capabilities/registry.js";
 import { createDatabase } from "../src/infrastructure/database/client.js";
 import { documentOperationItems, documentOperations, documentVersions } from "../src/infrastructure/database/schema.js";
@@ -909,5 +916,476 @@ describe("document capability registry", () => {
     expect(documents.list("room-abort")).toEqual([]);
     expect(documents.get(draftDocumentId)).toBeNull();
     expect(operations.get(operationId)).toMatchObject({ status: "cancelled", result: { reason: "test" } });
+  });
+});
+
+/** 改写信任收口（agent-architecture-optimization-plan §3）：invocation 绑定测试的公共装置。 */
+async function createInvocationRewriteHarness(name: string) {
+  const dataDir = await mkdtemp(join(tmpdir(), `nxcore-${name}-`));
+  temporaryDirectories.push(dataDir);
+  const database = createDatabase(join(dataDir, "gateway.sqlite"), resolve("drizzle"));
+  const applied = vi.fn();
+  const broker = new DocumentEventBroker();
+  const documents = new DocumentService(database.db, broker, undefined, applied);
+  const operations = new DocumentOperationService(database.db, broker);
+  const invocations = new Map<string, SubagentInvocation>();
+  // 以假 invocation 表装配真 resolver：授权判定对齐 isSelectionRewriteInvocationAuthorized 的核心规则。
+  documents.resolveSelectionRewriteContent = createSelectionRewriteContentResolver({
+    getInvocation: (invocationId) => invocations.get(invocationId) ?? null,
+    isInvocationAuthorized: (invocation, roomId) => Boolean(invocation
+      && invocation.agentDefinitionId === "context-room"
+      && invocation.source === "internal_workflow"
+      && invocation.status === "completed"
+      && (invocation.input as { roomId?: unknown }).roomId === roomId),
+    getDocument: (documentId) => documents.get(documentId),
+  });
+  const registry = createBuiltinDocumentCapabilityRegistry(documents, undefined, operations);
+  disposables.push(() => database.sqlite.close());
+  return { database, documents, operations, registry, invocations, applied };
+}
+
+function seedSelectionRewriteInvocation(
+  invocations: Map<string, SubagentInvocation>,
+  input: {
+    roomId: string;
+    selectedText: string;
+    text: string;
+    instruction?: string;
+  },
+  overrides: Partial<SubagentInvocation> = {},
+): SubagentInvocation {
+  const invocation: SubagentInvocation = {
+    id: randomUUID(),
+    agentDefinitionId: "context-room",
+    agentRevisionId: "context-room-rev-1",
+    source: "internal_workflow",
+    parentSessionId: null,
+    parentRunId: null,
+    task: "改写文档选区",
+    input: {
+      task: "selection-rewrite",
+      roomId: input.roomId,
+      documentName: "Rewrite target",
+      selectedText: input.selectedText,
+      instruction: input.instruction ?? "更简洁",
+    },
+    status: "completed",
+    result: { text: input.text },
+    errorCode: null,
+    errorMessage: null,
+    createdAt: new Date().toISOString(),
+    startedAt: new Date().toISOString(),
+    completedAt: new Date().toISOString(),
+    ...overrides,
+  };
+  invocations.set(invocation.id, invocation);
+  return invocation;
+}
+
+async function importRewriteTargetDocument(documents: DocumentService) {
+  return await documents.import({
+    id: "doc-invocation-rewrite",
+    roomId: "room-invocation",
+    title: "Invocation rewrite target",
+    contentJson: {
+      type: "doc",
+      content: [
+        { type: "paragraph", content: [{ type: "text", text: "开头段。" }] },
+        { type: "paragraph", content: [{ type: "text", text: "中间段落的开头，被选中的文本，中间段落的结尾。" }] },
+        { type: "paragraph", content: [{ type: "text", text: "结尾段。" }] },
+      ],
+    },
+  });
+}
+
+describe("selection-rewrite invocation 绑定（改写信任收口）", () => {
+  it("携带 invocationId 时由 resolver 解析内容，start/apply 落库且不采信客户端全文", async () => {
+    const { documents, operations, registry, invocations, applied } = await createInvocationRewriteHarness("selection-invocation-ok");
+    const document = await importRewriteTargetDocument(documents);
+    const invocation = seedSelectionRewriteInvocation(invocations, {
+      roomId: "room-invocation",
+      selectedText: "被选中的文本",
+      text: "改写内容如下：**全新改写**",
+      instruction: "更简洁一点",
+    });
+
+    const operation = await registry.start({
+      capabilityId: "document.selection-rewrite",
+      context: {
+        roomId: "room-invocation",
+        documentId: document.id,
+        sessionId: invocation.id,
+        runId: invocation.id,
+      },
+      input: {
+        baseVersion: document.version,
+        invocationId: invocation.id,
+        // 伪造的全文必须被忽略
+        proposedContentJson: { type: "doc", content: [] },
+        originalText: "伪造原文",
+        replacementText: "伪造替换",
+        instruction: "伪造指令",
+      },
+    });
+
+    expect(operation).toMatchObject({
+      capabilityId: "document.selection-rewrite",
+      status: "awaiting_review",
+      summary: "更简洁一点",
+    });
+    expect(operation.input).toMatchObject({
+      invocationId: invocation.id,
+      originalText: "被选中的文本",
+      replacementText: "**全新改写**",
+      instruction: "更简洁一点",
+    });
+    // 预览 after：权威文档 + 行内替换（选区在块内部且替换解析为单段）
+    const proposed = operation.items[0]!.after[0]!;
+    expect(proposed.content?.[0]).toMatchObject({ type: "paragraph" });
+    expect(proposed.content?.[1]).toMatchObject({
+      type: "paragraph",
+      content: [
+        { type: "text", text: "中间段落的开头，" },
+        { type: "text", text: "全新改写", marks: [{ type: "bold" }] },
+        { type: "text", text: "，中间段落的结尾。" },
+      ],
+    });
+    expect(proposed.content?.[2]).toMatchObject({ type: "paragraph" });
+    expect(operation.items[0]!.markdown).toBe("**全新改写**");
+    expect(documents.get(document.id)?.version).toBe(1);
+    expect(applied).not.toHaveBeenCalled();
+
+    const accepted = await operations.execute(operation.id, {
+      commandId: "accept-invocation-rewrite",
+      expectedRevision: operation.revision,
+      type: "review.apply",
+    }, (current, command) => registry.command(current, command));
+
+    expect(accepted).toMatchObject({
+      duplicate: false,
+      operation: { status: "completed" },
+      document: { id: document.id, version: 2 },
+    });
+    const middle = JSON.stringify(accepted.document!.contentJson.content?.[1]);
+    expect(middle).toContain("中间段落的开头，");
+    expect(middle).toContain("全新改写");
+    expect(middle).toContain("bold");
+    expect(middle).toContain("，中间段落的结尾。");
+    expect(applied).toHaveBeenCalledTimes(1);
+    expect(applied).toHaveBeenCalledWith(expect.objectContaining({
+      operationId: operation.id,
+      instruction: "更简洁一点",
+      originalText: "被选中的文本",
+      replacementText: "**全新改写**",
+    }));
+  });
+
+  it("用户编辑过替换文本时按用户文本重建并记 userModified（Agent 提案 + 用户修改）", async () => {
+    const { documents, operations, registry, invocations, applied } = await createInvocationRewriteHarness("selection-user-edit-ok");
+    const document = await importRewriteTargetDocument(documents);
+    const invocation = seedSelectionRewriteInvocation(invocations, {
+      roomId: "room-invocation",
+      selectedText: "被选中的文本",
+      text: "改写内容如下：**全新改写**",
+      instruction: "更简洁一点",
+    });
+
+    const operation = await registry.start({
+      capabilityId: "document.selection-rewrite",
+      context: {
+        roomId: "room-invocation",
+        documentId: document.id,
+        sessionId: invocation.id,
+        runId: invocation.id,
+      },
+      input: {
+        baseVersion: document.version,
+        invocationId: invocation.id,
+        userEditedReplacementText: "用户亲自改定的文本",
+      },
+    });
+
+    expect(operation.input).toMatchObject({
+      invocationId: invocation.id,
+      userModified: true,
+      userEditedReplacementText: "用户亲自改定的文本",
+      replacementText: "用户亲自改定的文本",
+    });
+    // 预览 after：用户文本行内替换进选区，invocation 输出不得出现
+    const proposed = operation.items[0]!.after[0]!;
+    expect(proposed.content?.[1]).toMatchObject({
+      type: "paragraph",
+      content: [
+        { type: "text", text: "中间段落的开头，" },
+        { type: "text", text: "用户亲自改定的文本" },
+        { type: "text", text: "，中间段落的结尾。" },
+      ],
+    });
+    expect(JSON.stringify(proposed)).not.toContain("全新改写");
+
+    const accepted = await operations.execute(operation.id, {
+      commandId: "accept-user-edit",
+      expectedRevision: operation.revision,
+      type: "review.apply",
+    }, (current, command) => registry.command(current, command));
+
+    expect(accepted).toMatchObject({
+      duplicate: false,
+      operation: { status: "completed" },
+      document: { id: document.id, version: 2 },
+    });
+    expect(JSON.stringify(accepted.document!.contentJson)).toContain("用户亲自改定的文本");
+    expect(JSON.stringify(accepted.document!.contentJson)).not.toContain("全新改写");
+    // 记忆沉淀用用户实际应用的文本
+    expect(applied).toHaveBeenCalledWith(expect.objectContaining({
+      replacementText: "用户亲自改定的文本",
+      originalText: "被选中的文本",
+    }));
+  });
+
+  it("userEditedReplacementText 必须伴随 invocationId（防旧路径静默丢编辑）", async () => {
+    const { documents, registry } = await createInvocationRewriteHarness("selection-user-edit-requires-invocation");
+    const document = await importRewriteTargetDocument(documents);
+    await expect(registry.start({
+      capabilityId: "document.selection-rewrite",
+      context: { roomId: "room-invocation", documentId: document.id, sessionId: "session-legacy", runId: "run-legacy" },
+      input: {
+        baseVersion: document.version,
+        proposedContentJson: { type: "doc", content: [] },
+        userEditedReplacementText: "编辑文本",
+      },
+    })).rejects.toMatchObject({
+      code: "SELECTION_REWRITE_USER_EDIT_REQUIRES_INVOCATION",
+      statusCode: 409,
+    });
+  });
+
+  it("invocationId 不存在或未授权时给出明确错误", async () => {
+    const { documents, registry, invocations } = await createInvocationRewriteHarness("selection-invocation-denied");
+    const document = await importRewriteTargetDocument(documents);
+    const start = (invocationId: string) => registry.start({
+      capabilityId: "document.selection-rewrite",
+      context: {
+        roomId: "room-invocation",
+        documentId: document.id,
+        sessionId: invocationId,
+        runId: invocationId,
+      },
+      input: { baseVersion: document.version, invocationId },
+    });
+
+    await expect(start("missing-invocation")).rejects.toMatchObject({
+      code: "SELECTION_REWRITE_INVOCATION_UNAUTHORIZED",
+      statusCode: 409,
+    });
+
+    const failed = seedSelectionRewriteInvocation(invocations, {
+      roomId: "room-invocation",
+      selectedText: "被选中的文本",
+      text: "x",
+    }, { status: "failed" });
+    await expect(start(failed.id)).rejects.toMatchObject({
+      code: "SELECTION_REWRITE_INVOCATION_UNAUTHORIZED",
+    });
+
+    const otherRoom = seedSelectionRewriteInvocation(invocations, {
+      roomId: "room-other",
+      selectedText: "被选中的文本",
+      text: "x",
+    });
+    await expect(start(otherRoom.id)).rejects.toMatchObject({
+      code: "SELECTION_REWRITE_INVOCATION_UNAUTHORIZED",
+    });
+
+    const noOutput = seedSelectionRewriteInvocation(invocations, {
+      roomId: "room-invocation",
+      selectedText: "被选中的文本",
+      text: "x",
+    }, { result: null });
+    await expect(start(noOutput.id)).rejects.toMatchObject({
+      code: "SELECTION_REWRITE_INVOCATION_UNAUTHORIZED",
+    });
+  });
+
+  it("携带 invocationId 时 baseVersion 漂移仍然 409", async () => {
+    const { documents, registry, invocations } = await createInvocationRewriteHarness("selection-invocation-conflict");
+    const document = await importRewriteTargetDocument(documents);
+    const invocation = seedSelectionRewriteInvocation(invocations, {
+      roomId: "room-invocation",
+      selectedText: "被选中的文本",
+      text: "全新改写",
+    });
+
+    await expect(registry.start({
+      capabilityId: "document.selection-rewrite",
+      context: {
+        roomId: "room-invocation",
+        documentId: document.id,
+        sessionId: invocation.id,
+        runId: invocation.id,
+      },
+      input: { baseVersion: document.version + 1, invocationId: invocation.id },
+    })).rejects.toMatchObject({ code: "DOCUMENT_CONFLICT", statusCode: 409 });
+  });
+
+  it("迁移双态：无 invocationId、仅 proposedContentJson 的旧输入仍可完成", async () => {
+    const { documents, operations, registry } = await createInvocationRewriteHarness("selection-legacy-input");
+    const document = await importRewriteTargetDocument(documents);
+    const proposed = structuredClone(document.contentJson);
+    const middle = proposed.content?.[1];
+    if (!middle) throw new Error("fixture paragraph missing");
+    middle.content = [{ type: "text", text: "旧路径替换" }];
+
+    const operation = await registry.start({
+      capabilityId: "document.selection-rewrite",
+      context: {
+        roomId: "room-invocation",
+        documentId: document.id,
+        sessionId: "legacy-session",
+        runId: "legacy-run",
+      },
+      input: {
+        baseVersion: document.version,
+        proposedContentJson: proposed,
+        originalText: "被选中的文本",
+        replacementText: "旧路径替换",
+        instruction: "旧客户端",
+      },
+    });
+    expect(operation.input).toMatchObject({ proposedContentJson: proposed });
+    const accepted = await operations.execute(operation.id, {
+      commandId: "accept-legacy-rewrite",
+      expectedRevision: operation.revision,
+      type: "review.apply",
+    }, (current, command) => registry.command(current, command));
+    expect(accepted).toMatchObject({
+      operation: { status: "completed" },
+      document: { id: document.id, version: 2 },
+    });
+  });
+
+  it("apply 时 invocation 已失效：报错且不落库", async () => {
+    const { documents, operations, registry, invocations, applied } = await createInvocationRewriteHarness("selection-invocation-apply-failed");
+    const document = await importRewriteTargetDocument(documents);
+    const invocation = seedSelectionRewriteInvocation(invocations, {
+      roomId: "room-invocation",
+      selectedText: "被选中的文本",
+      text: "全新改写",
+    });
+    const operation = await registry.start({
+      capabilityId: "document.selection-rewrite",
+      context: {
+        roomId: "room-invocation",
+        documentId: document.id,
+        sessionId: invocation.id,
+        runId: invocation.id,
+      },
+      input: { baseVersion: document.version, invocationId: invocation.id },
+    });
+    expect(operation.status).toBe("awaiting_review");
+
+    // invocation 被删（或状态变化）：apply 复核失败
+    invocations.delete(invocation.id);
+    await expect(operations.execute(operation.id, {
+      commandId: "accept-stale-invocation",
+      expectedRevision: operation.revision,
+      type: "review.apply",
+    }, (current, command) => registry.command(current, command))).rejects.toMatchObject({
+      code: "SELECTION_REWRITE_INVOCATION_UNAUTHORIZED",
+    });
+    expect(documents.get(document.id)?.version).toBe(1);
+    expect(operations.get(operation.id)?.status).toBe("awaiting_review");
+    expect(applied).not.toHaveBeenCalled();
+  });
+});
+
+describe("selection-rewrite 内容重建（服务端）", () => {
+  it("sanitizeSelectionRewriteReplacement 剥离围栏与前缀", () => {
+    expect(sanitizeSelectionRewriteReplacement("```\n纯文本\n```")).toBe("纯文本");
+    expect(sanitizeSelectionRewriteReplacement("```markdown\n带语言\n```")).toBe("带语言");
+    expect(sanitizeSelectionRewriteReplacement("改写内容如下：正文")).toBe("正文");
+    expect(sanitizeSelectionRewriteReplacement("replacement: body")).toBe("body");
+    expect(sanitizeSelectionRewriteReplacement("  保留  ")).toBe("保留");
+    // preserveWhitespace（代码块）与渲染端一致：剥围栏但保留行尾换行
+    expect(sanitizeSelectionRewriteReplacement("```js\n  code  \n```", { preserveWhitespace: true })).toBe("  code  \n");
+  });
+
+  it("整块选区替换为多块 Markdown，未选中的块保持原样", () => {
+    const source: TiptapJsonContent = {
+      type: "doc",
+      content: [
+        { type: "paragraph", content: [{ type: "text", text: "甲" }] },
+        { type: "paragraph", content: [{ type: "text", text: "乙" }] },
+        { type: "paragraph", content: [{ type: "text", text: "丙" }] },
+      ],
+    };
+    const built = buildSelectionRewriteProposedContent(source, {
+      selectedText: "甲\n乙",
+      replacementText: "## 新标题\n\n新正文",
+    });
+    expect(built.replacementText).toBe("## 新标题\n\n新正文");
+    expect(built.content.content?.map((node) => node.type)).toEqual(["heading", "paragraph", "paragraph"]);
+    expect(built.content.content?.[0]).toMatchObject({
+      type: "heading",
+      attrs: { level: 2 },
+      content: [{ type: "text", text: "新标题" }],
+    });
+    expect(built.content.content?.[1]).toMatchObject({
+      type: "paragraph",
+      content: [{ type: "text", text: "新正文" }],
+    });
+    expect(built.content.content?.[2]).toMatchObject({
+      type: "paragraph",
+      content: [{ type: "text", text: "丙" }],
+    });
+  });
+
+  it("跨块选区保留首尾未选中的残段", () => {
+    const source: TiptapJsonContent = {
+      type: "doc",
+      content: [
+        { type: "paragraph", content: [{ type: "text", text: "甲前半末尾" }] },
+        { type: "paragraph", content: [{ type: "text", text: "乙后半开头" }] },
+      ],
+    };
+    const built = buildSelectionRewriteProposedContent(source, {
+      selectedText: "前半末尾\n乙后半",
+      replacementText: "新段落",
+    });
+    expect(built.content.content?.map((node) => node.content?.[0]?.text)).toEqual(["甲", "新段落", "开头"]);
+  });
+
+  it("代码块选区按原文替换并剥离包裹围栏", () => {
+    const source: TiptapJsonContent = {
+      type: "doc",
+      content: [{
+        type: "codeBlock",
+        attrs: { language: "ts" },
+        content: [{ type: "text", text: "line1\nline2\nline3" }],
+      }],
+    };
+    const built = buildSelectionRewriteProposedContent(source, {
+      selectedText: "line2",
+      replacementText: "```ts\nreplaced\n```",
+    });
+    expect(built.replacementText).toBe("replaced\n");
+    expect(built.content.content?.[0]).toMatchObject({
+      type: "codeBlock",
+      content: [{ type: "text", text: "line1\nreplaced\n\nline3" }],
+    });
+  });
+
+  it("选区文本在文档中定位失败时报 SELECTION_NOT_FOUND", () => {
+    const source: TiptapJsonContent = {
+      type: "doc",
+      content: [{ type: "paragraph", content: [{ type: "text", text: "唯一段落" }] }],
+    };
+    let caught: unknown;
+    try {
+      buildSelectionRewriteProposedContent(source, { selectedText: "不存在的文本", replacementText: "替换" });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toMatchObject({ code: "SELECTION_NOT_FOUND" });
   });
 });

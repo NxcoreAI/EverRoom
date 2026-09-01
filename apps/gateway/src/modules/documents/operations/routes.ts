@@ -74,6 +74,18 @@ export function documentOperationRoutes(
               sessionId: raw.sessionId,
               runId: raw.runId,
             };
+          // 改写信任收口（方案 §3.2）：内容绑定的 invocationId 必须与溯源 invocation 一致，
+          // 防止"以 A 调用授权、落地 B 调用内容"的归因错位。
+          const inputInvocationId = request.body.input?.invocationId;
+          if ("invocationId" in raw
+            && typeof inputInvocationId === "string"
+            && inputInvocationId.trim() !== raw.invocationId) {
+            throw new DocumentServiceError(
+              "INVALID_OPERATION_CONTEXT",
+              "input.invocationId must match the invocation used for operation provenance",
+              400,
+            );
+          }
           authorizeContext?.({
             capabilityId: request.body.capabilityId,
             agentSessionId: context.sessionId,
