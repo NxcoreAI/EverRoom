@@ -1204,5 +1204,6 @@
   "home.manualMergeContinue": "Continue",
   "duplicateCenter.manualPairReason": "Manually selected pair",
   "duplicateCenter.willRetire": "retires after merge",
-  "duplicateCenter.willCreate": "new room"
+  "duplicateCenter.willCreate": "new room",
+  "duplicateCenter.cancel": "Cancel"
 }

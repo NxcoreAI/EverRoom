@@ -280,7 +280,12 @@ export function RoomDuplicateCenter({
             )}
 
             <footer>
-              <button type="button" onClick={() => { setPreview(null); setSelected(null); setOperation(null) }} disabled={loading}>{t('contextRoom:duplicateCenter.back')}</button>
+              {/* 手动模式：返回=关闭整个对话框（onOpenChange(false) 清 manualPair）；
+                  推荐模式：返回=回到候选列表。手动模式下清内部状态会掉进推荐列表。 */}
+              <button type="button" onClick={() => {
+                if (manualPair) onOpenChange(false)
+                else { setPreview(null); setSelected(null); setOperation(null) }
+              }} disabled={loading}>{t('contextRoom:duplicateCenter.back')}</button>
               {operation?.status === 'failed' && !operation.commitReached
                 ? <button type="button" onClick={() => void cancelOperation()} disabled={loading}>{t('contextRoom:duplicateCenter.cancelMerge')}</button>
                 : null}

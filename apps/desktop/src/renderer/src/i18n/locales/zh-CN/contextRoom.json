@@ -1204,5 +1204,6 @@
   "home.manualMergeContinue": "下一步",
   "duplicateCenter.manualPairReason": "用户手动选择的合并配对",
   "duplicateCenter.willRetire": "合并后退役",
-  "duplicateCenter.willCreate": "新建 Room"
+  "duplicateCenter.willCreate": "新建 Room",
+  "duplicateCenter.cancel": "取消"
 }

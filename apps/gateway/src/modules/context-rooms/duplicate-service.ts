@@ -239,6 +239,30 @@ export class RoomDuplicateService {
         // 单条自愈失败不阻断其余恢复；下次启动重试。
       }
     }
+    // 存量修复：新建式合并产生的新 Room 若 brief 为空串（渲染端 Boolean(brief)
+    // 形态校验会把它当残骸丢弃——列表不显示），补一段来源说明（幂等：非空跳过）。
+    for (const op of this.db.select().from(roomMergeOperations)
+      .where(eq(roomMergeOperations.status, "completed")).all()) {
+      const target = this.db.select().from(contextRooms)
+        .where(eq(contextRooms.id, op.targetRoomId)).get();
+      if (!target || target.lifecycle !== "active") continue;
+      const brief = (target.data as Record<string, unknown> | null)?.brief;
+      const isHealthyBrief = Boolean(brief) && typeof brief === "object"
+        && typeof (brief as Record<string, unknown>).background === "string"
+        && Boolean(((brief as Record<string, unknown>).background as string).trim());
+      if (isHealthyBrief) continue;
+      const source = this.db.select({ title: contextRooms.title }).from(contextRooms)
+        .where(eq(contextRooms.id, op.sourceRoomId)).get();
+      const previous = typeof brief === "string" && brief.trim() ? brief.trim() : "";
+      const data = { ...((target.data as Record<string, unknown> | null) ?? {}) };
+      data.brief = {
+        background: previous || `合并自「${source?.title ?? op.sourceRoomId.slice(0, 8)}」`,
+        goal: "", status: "", risks: [], decisions: [],
+      };
+      data.id = target.id;
+      this.db.update(contextRooms).set({ data, updatedAt: new Date() })
+        .where(eq(contextRooms.id, target.id)).run();
+    }
     this.requestRebuild();
   }
 
@@ -831,7 +855,14 @@ export class RoomDuplicateService {
       // 新 Room：最小合法 data + 空 brief/stats 骨架（isContextRoomRecord 形态）。
       tx.insert(contextRooms).values({
         id: newRoomId, title, kind, lifecycle: "active", deletedAt: null,
-        data: { id: newRoomId, title, kind, brief: "", stats: {}, materials: [], memoryItems: [], actionItems: [], timeline: [], fileItems: [], people: [], graphEdges: [] },
+        // brief 必须是 ContextRoomBrief 对象且 background 非空：渲染端
+        // isContextRoomRecord 用 Boolean(brief) 过滤残骸、OverviewDashboard 用
+        // brief.background.trim() 渲染——空值或字符串都会炸/被丢。
+        data: {
+          id: newRoomId, title, kind,
+          brief: { background: `合并自「${a.title}」与「${b.title}」`, goal: "", status: "", risks: [], decisions: [] },
+          stats: {}, materials: [], memoryItems: [], actionItems: [], timeline: [], fileItems: [], people: [], graphEdges: [],
+        },
         position: Math.max(a.position ?? 0, b.position ?? 0) + 1,
         createdAt: now, updatedAt: now,
       }).run();
@@ -857,7 +888,20 @@ export class RoomDuplicateService {
     this.runMerge(firstOpId);
     await this.runningMerges.get(firstOpId)?.catch(() => undefined);
     this.runMerge(secondOpId);
-    return this.settleOperation(secondOpId, true);
+    const settled = await this.settleOperation(secondOpId, true);
+    // 终态后显式清理两源参与的 open 候选（finalize 只删已 merged Room 直连候选，
+    // rebuild 的 250ms debounce 会先于网关侧 LLM 重评把幸存对重新入池——手动/
+    // 新建式合并的用户意图已表达，同类对不应再弹推荐）。
+    if (settled.status === "completed") {
+      for (const candidate of this.db.select().from(roomDuplicateCandidates)
+        .where(eq(roomDuplicateCandidates.status, "open")).all()) {
+        if (candidate.roomAId !== input.sourceAId && candidate.roomAId !== input.sourceBId
+          && candidate.roomBId !== input.sourceAId && candidate.roomBId !== input.sourceBId) continue;
+        this.db.update(roomDuplicateCandidates).set({ status: "merged", updatedAt: new Date() })
+          .where(eq(roomDuplicateCandidates.id, candidate.id)).run();
+      }
+    }
+    return settled;
   }
 
   /** 等待合并 Promise 终态（上限 30s；超时/不等待时返回当前快照，调用方自行决定后续）。 */

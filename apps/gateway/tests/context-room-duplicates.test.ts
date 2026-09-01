@@ -538,6 +538,11 @@ describe('RoomDuplicateService', () => {
     expect(db.select().from(contextRooms).where(eq(contextRooms.id, 'room-x')).get()?.lifecycle).toBe('merged')
     expect(db.select().from(contextRooms).where(eq(contextRooms.id, 'room-y')).get()?.lifecycle).toBe('merged')
     const newRoom = snapshot.rooms[0]!
+    // brief 为 ContextRoomBrief 对象且 background 非空（渲染端 Boolean(brief) 过滤
+    // + OverviewDashboard brief.background.trim() 渲染，二者都必须满足）。
+    const brief = (newRoom.data as Record<string, unknown>).brief as Record<string, unknown>
+    expect(typeof brief).toBe('object')
+    expect(Boolean(String(brief.background ?? '').trim())).toBe(true)
     expect(db.select().from(roomDocumentLinks).where(eq(roomDocumentLinks.documentId, 'doc-x')).get()?.roomId).toBe(newRoom.id)
     expect(db.select().from(roomDocumentLinks).where(eq(roomDocumentLinks.documentId, 'doc-y')).get()?.roomId).toBe(newRoom.id)
     expect((newRoom.data.memoryItems as Array<{ id: string }>).map((item) => item.id).sort()).toEqual(['mx', 'my'])
