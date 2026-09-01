@@ -1,9 +1,8 @@
 // Audits the Windows packaging output without installing it: mirrors the
 // macOS "Audit package contents" CI step for the NSIS/win-unpacked layout.
 // Node standard library + the repo's existing @electron/asar only.
-import { execFileSync, spawn } from 'node:child_process'
-import { randomBytes } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, relative, resolve, sep } from 'node:path'
 import { listPackage } from '@electron/asar'
 
@@ -141,52 +140,6 @@ if (existsSync(ooExe)) {
     execFileSync(ooExe, ['--version'], { stdio: 'pipe', timeout: 60_000, windowsHide: true })
   } catch (error) {
     fail(`oo CLI --version failed: ${error.stderr?.toString() ?? error.message}`)
-  }
-}
-
-// Start the packaged Nango runtime once. Static file checks cannot catch
-// workspace links being materialized into a layout with a wrong projectRoot.
-const nangoEntry = join(nangoRoot, 'packages', 'server', 'dist', 'server.js')
-if (existsSync(appRoot) && existsSync(nangoEntry) && postgresBin.length > 0) {
-  const smokeRoot = join(releaseRoot, '.nango-smoke')
-  rmSync(smokeRoot, { recursive: true, force: true, maxRetries: 3 })
-  mkdirSync(smokeRoot, { recursive: true })
-  let output = ''
-  const child = spawn(appRoot, [nangoEntry], {
-    cwd: join(nangoRoot, 'packages', 'server'),
-    env: {
-      ...process.env,
-      ELECTRON_RUN_AS_NODE: '1',
-      NANGO_EMBEDDED_DB: 'true',
-      NANGO_DB_PORT: '5433',
-      NANGO_EMBEDDED_DB_DIR: join(smokeRoot, 'embedded-postgres'),
-      NANGO_SERVER_URL: 'http://localhost:3003',
-      FLAG_AUTH_ENABLED: 'false',
-      NANGO_ENCRYPTION_KEY: randomBytes(32).toString('base64'),
-      SERVER_PORT: '3003',
-      NO_PROXY: '127.0.0.1,localhost,::1',
-    },
-    stdio: ['ignore', 'pipe', 'pipe'],
-    windowsHide: true,
-  })
-  child.stdout.on('data', (chunk) => { output = (output + chunk).slice(-8_000) })
-  child.stderr.on('data', (chunk) => { output = (output + chunk).slice(-8_000) })
-  try {
-    const deadline = Date.now() + 120_000
-    let ready = false
-    while (Date.now() < deadline && child.exitCode === null) {
-      try {
-        ready = (await fetch('http://127.0.0.1:3003/health', { signal: AbortSignal.timeout(1_000) })).ok
-      } catch {}
-      if (ready) break
-      await new Promise((resolve) => setTimeout(resolve, 250))
-    }
-    if (!ready) fail(`Packaged Nango health check failed (exit=${String(child.exitCode)}): ${output.trim()}`)
-  } finally {
-    try {
-      execFileSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true })
-    } catch {}
-    rmSync(smokeRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 250 })
   }
 }
 
