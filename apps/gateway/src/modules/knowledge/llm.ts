@@ -235,6 +235,15 @@ export class KnowledgeLlm {
     return error instanceof KnowledgeLlmError && /HTTP 429|速率限制|rate.?limit/i.test(error.message);
   }
 
+  /**
+   * 判定错误是否为输出预算截断（finish_reason=length）——瞬时态：runtime
+   * 侧已有 4 倍加预算重试，仍截断说明预算配置偏小，交 worker 退避后重试；
+   * 不得落 awaiting_review 死信（否则资料被永久定罪为"抽取失败"）。
+   */
+  static isTruncated(error: unknown): boolean {
+    return error instanceof KnowledgeLlmError && /finish_reason=length/i.test(error.message);
+  }
+
   private async chat(skillName: string, prompt: string): Promise<string> {
     try {
       const content = await invokeAgent(this.agentResolver, BUILTIN_AGENT_IDS.knowledge, [

@@ -38,6 +38,8 @@ interface OutcomeFixture {
   filename: string
   fileId: string | null
   error: string | null
+  deduped?: boolean
+  skippedReason?: 'unsupported_format' | 'pending_review' | null
 }
 
 function entityFixture(id: string, status: 'weak' | 'ready') {
@@ -329,6 +331,44 @@ describe('KnowledgePendingPanel：推荐生成会话（整卡蒙层，真实机�
     })
     expect(root.findByProps({ 'data-testid': 'context-room-recommendation-run' }).props['data-phase'])
       .toBe('accumulating')
+  })
+
+  it('成功/跳过/失败三类分账：计数与逐文件原因明细上屏，跳过文件不进路由分母', async () => {
+    const bridge = installBridge([
+      { filename: '讲义.md', fileId: 'file-1', error: null },
+      { filename: '实验.md', fileId: 'file-2', error: null, deduped: true },
+      { filename: '图片.png', fileId: null, error: null, skippedReason: 'unsupported_format' },
+      { filename: '扫描件.pdf', fileId: null, error: 'PDF 无可提取文本，扫描件请先执行 OCR' },
+    ])
+    const root = await render()
+
+    await act(async () => {
+      bridge.startRun(null)
+      await bridge.flush()
+    })
+    await act(async () => {
+      bridge.settleImport()
+      await bridge.flush()
+    })
+
+    // 成功 1（去重的实验.md 计入跳过，不虚增成功数）；跳过 2（不支持 + 重复）；失败 1
+    expect(root.findByProps({ 'data-testid': 'context-room-recommendation-run' }).props['data-phase'])
+      .toBe('routing')
+    const markup = JSON.stringify(renderer!.toJSON())
+    expect(markup).toContain('已导入 1 项，跳过 2 项，1 项失败')
+    expect(markup).toContain('格式不支持')
+    expect(markup).toContain('内容已存在')
+    expect(markup).toContain('PDF 无可提取文本，扫描件请先执行 OCR')
+    expect(showToast).toHaveBeenCalledWith(expect.objectContaining({
+      title: '已导入 1 项，跳过 2 项，1 项失败',
+      message: '部分文件无法导入（扫描版 PDF 请先 OCR），其余文件继续生成推荐',
+    }))
+    // 路由分母只含进入管线的文件（成功 + 去重），跳过/失败文件不进入查询
+    await act(async () => {
+      bridge.tickers.forEach((tick) => tick())
+      await bridge.flush()
+    })
+    expect(bridge.knowledge.routeStatus).toHaveBeenCalledWith(['file-1', 'file-2'])
   })
 
   it('无进度超时：路由与候选持续无增长才转超时，有推进则不误杀', async () => {

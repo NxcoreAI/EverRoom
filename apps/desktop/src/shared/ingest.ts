@@ -74,6 +74,12 @@ export interface FileImportOutcome {
   eventId: string | null
   dataType: string | null
   deduped: boolean
+  /**
+   * 非错误性跳过（不阻断其余文件，也不计入失败）：unsupported_format =
+   * 格式不在白名单；pending_review = 高风险批次转人工确认。deduped 的
+   * 「内容已存在」跳过由 deduped 字段表达。
+   */
+  skippedReason: 'unsupported_format' | 'pending_review' | null
   pipelines: IngestPipelines | null
   memoryResult: { documentId: string; chunkCount: number; deduplicated: boolean } | { error: string } | null
   routeJobId: string | null

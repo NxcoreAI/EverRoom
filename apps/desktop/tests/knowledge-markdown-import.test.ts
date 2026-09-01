@@ -1,10 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
+  filterConvertedMarkdownFiles,
   importRoomMarkdownFiles,
   isMarkdownFileName,
+  listRoomFilesExcludingConverted,
+  scheduleRoomMarkdownSweep,
+  sweepRoomMarkdownImports,
 } from '../src/renderer/src/components/context-room/knowledgeMarkdownImport'
-import type { KnowledgeFileDto } from '../src/shared/knowledge'
+import type { KnowledgeFileDto, KnowledgeRoomDto } from '../src/shared/knowledge'
 
 function knowledgeFile(id: string, originalName: string): KnowledgeFileDto {
   return {
@@ -19,27 +23,49 @@ function knowledgeFile(id: string, originalName: string): KnowledgeFileDto {
   }
 }
 
+function knowledgeRoom(id: string): KnowledgeRoomDto {
+  return {
+    id,
+    title: id,
+    kind: '主题',
+    origin: 'auto',
+    summary: null,
+    aliases: [],
+    createdAt: '2026-08-27T00:00:00.000Z',
+    updatedAt: '2026-08-27T00:00:00.000Z',
+  }
+}
+
 function installBridge({
   files,
   documents = [],
   markdownOf = () => '# 标题\n\n正文',
+  rooms = [],
 }: {
   files: KnowledgeFileDto[]
   documents?: Array<{ id: string; title: string }>
   markdownOf?: (fileId: string) => string
+  rooms?: KnowledgeRoomDto[]
 }) {
   const knowledge = {
     listRoomFiles: vi.fn(() => Promise.resolve({ items: files })),
     readFileMarkdown: vi.fn((fileId: string) => Promise.resolve({ markdown: markdownOf(fileId) })),
+    listRooms: vi.fn(() => Promise.resolve({ items: rooms })),
   }
   const documentsApi = {
     list: vi.fn(() => Promise.resolve(documents)),
     import: vi.fn(() => Promise.resolve({ id: 'doc-new', title: 'imported' })),
   }
+  const dispatchEvent = vi.fn()
   vi.stubGlobal('window', {
     nxcore: { knowledge, documents: documentsApi },
+    setTimeout: (callback: () => void) => {
+      callback()
+      return 0
+    },
+    dispatchEvent,
   })
-  return { knowledge, documentsApi }
+  return { knowledge, documentsApi, dispatchEvent }
 }
 
 describe('knowledgeMarkdownImport', () => {
@@ -124,5 +150,75 @@ describe('knowledgeMarkdownImport', () => {
     vi.stubGlobal('window', {})
 
     expect(await importRoomMarkdownFiles('room-md-5')).toBe(0)
+  })
+
+  it('filterConvertedMarkdownFiles：同名云文档的 md 原件隐藏，其余保留', () => {
+    const titles = new Set(['会议纪要', '报告'])
+    const files = [
+      knowledgeFile('f-converted', '会议纪要.md'),
+      knowledgeFile('f-pending', '未转换.md'),
+      knowledgeFile('f-office', '报告.pdf'),
+      knowledgeFile('f-alt-ext', '会议纪要.markdown'),
+      knowledgeFile('f-empty', '.md'),
+    ]
+
+    const visible = filterConvertedMarkdownFiles(files, titles).map((file) => file.id)
+
+    // 空名原件不套「无标题文档」兜底标题，不隐藏
+    expect(visible).toEqual(['f-pending', 'f-office', 'f-empty'])
+  })
+
+  it('listRoomFilesExcludingConverted 过滤已转换 md；文档清单失败时保守返回全量', async () => {
+    const { documentsApi } = installBridge({
+      files: [knowledgeFile('f-md', '纪要.md'), knowledgeFile('f-pdf', '资料.pdf')],
+      documents: [{ id: 'd1', title: '纪要' }],
+    })
+
+    const visible = await listRoomFilesExcludingConverted('room-filter-1')
+    expect(visible.map((file) => file.id)).toEqual(['f-pdf'])
+
+    documentsApi.list.mockRejectedValueOnce(new Error('documents down'))
+    const fallback = await listRoomFilesExcludingConverted('room-filter-1')
+    expect(fallback.map((file) => file.id)).toEqual(['f-md', 'f-pdf'])
+  })
+
+  it('sweepRoomMarkdownImports：逐 Room 补转遗漏 md，创建了文档才广播', async () => {
+    const { knowledge, dispatchEvent } = installBridge({
+      rooms: [knowledgeRoom('room-sweep-a'), knowledgeRoom('room-sweep-b')],
+    })
+    knowledge.listRoomFiles.mockImplementation((roomId: string) => Promise.resolve({
+      items: roomId === 'room-sweep-a' ? [knowledgeFile('f-sweep', '遗漏.md')] : [],
+    }))
+
+    expect(await sweepRoomMarkdownImports({ readyAttempts: 1, readyDelayMs: 0 })).toBe(1)
+    expect(dispatchEvent).toHaveBeenCalledTimes(1)
+
+    // 幂等：重跑无新增，不再广播
+    expect(await sweepRoomMarkdownImports({ readyAttempts: 1, readyDelayMs: 0 })).toBe(0)
+    expect(dispatchEvent).toHaveBeenCalledTimes(1)
+  })
+
+  it('sweepRoomMarkdownImports：网关未就绪时按次数重试后静默放弃', async () => {
+    const { knowledge } = installBridge({ rooms: [knowledgeRoom('room-sweep-c')] })
+    knowledge.listRooms.mockRejectedValue(new Error('gateway down'))
+
+    expect(await sweepRoomMarkdownImports({ readyAttempts: 2, readyDelayMs: 0 })).toBe(0)
+    expect(knowledge.listRooms).toHaveBeenCalledTimes(2)
+  })
+
+  it('scheduleRoomMarkdownSweep 每应用会话只补扫一次', async () => {
+    const { knowledge, dispatchEvent } = installBridge({
+      rooms: [knowledgeRoom('room-guard')],
+    })
+    knowledge.listRoomFiles.mockImplementation(() => Promise.resolve({
+      items: [knowledgeFile('f-guard', '唯一.md')],
+    }))
+
+    scheduleRoomMarkdownSweep()
+    scheduleRoomMarkdownSweep()
+    await new Promise((resolve) => setImmediate(resolve))
+
+    expect(knowledge.listRooms).toHaveBeenCalledTimes(1)
+    expect(dispatchEvent).toHaveBeenCalledTimes(1)
   })
 })

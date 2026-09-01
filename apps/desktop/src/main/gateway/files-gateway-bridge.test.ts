@@ -213,6 +213,13 @@ describe('FilesGatewayBridge.importPathsOnce', () => {
         fileVersionId: 'file-version-1',
         routeJobId: 'job-1',
         error: null,
+        skippedReason: null,
+      }),
+      expect.objectContaining({
+        filename: 'ignored.pdf',
+        fileId: null,
+        error: null,
+        skippedReason: 'unsupported_format',
       }),
     ])
     expect(fetchMock).toHaveBeenCalledTimes(2)
@@ -259,7 +266,9 @@ describe('FilesGatewayBridge.importPathsOnce', () => {
     } as unknown as GatewaySupervisor
 
     const outcomes = await new FilesGatewayBridge(supervisor, highRiskImports).importPathsOnce([directory])
-    expect(outcomes.map((outcome) => outcome.filename)).toEqual(['proposal.pdf'])
+    // 低风险 pdf 立即导入；101 个高风险 md 以 pending_review 跳过行回报（不静默消失）
+    expect(outcomes.filter((outcome) => outcome.fileId).map((outcome) => outcome.filename)).toEqual(['proposal.pdf'])
+    expect(outcomes.filter((outcome) => outcome.skippedReason === 'pending_review')).toHaveLength(101)
     expect(importedNames).toEqual(['proposal.pdf'])
     expect(enqueueManual).toHaveBeenCalledWith(
       expect.objectContaining({ files: expect.arrayContaining([
@@ -303,14 +312,16 @@ describe('FilesGatewayBridge.importPathsOnce', () => {
     } as unknown as GatewaySupervisor
     const bridge = new FilesGatewayBridge(supervisor, coordinator)
 
-    // 首次导入：高风险批次进审查，低风险 pdf 立即导入。
-    await expect(bridge.importPathsOnce([directory])).resolves.toHaveLength(1)
+    // 首次导入：高风险批次进审查（pending_review 跳过行回报），低风险 pdf 立即导入。
+    const firstOutcomes = await bridge.importPathsOnce([directory])
+    expect(firstOutcomes.filter((outcome) => outcome.fileId)).toHaveLength(1)
+    expect(firstOutcomes.filter((outcome) => outcome.skippedReason === 'pending_review')).toHaveLength(101)
     const review = coordinator.list()[0]!
     expect(review.fileCount).toBe(101)
     // 用户点「跳过」。
     await expect(coordinator.resolve(review.id, false)).resolves.toEqual({ accepted: false, imported: 0, failed: 0 })
 
-    // 重试同一目录：101 个 md 不再进入审查（否则又会弹一次跳过确认）。
+    // 重试同一目录：101 个 md 不再进入审查（否则又会弹一次跳过确认），也不再回报跳过行。
     await expect(bridge.importPathsOnce([directory])).resolves.toHaveLength(1)
     expect(coordinator.list()).toEqual([])
     expect(uploadedNames).toEqual(['proposal.pdf', 'proposal.pdf'])

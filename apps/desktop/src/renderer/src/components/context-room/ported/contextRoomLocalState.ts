@@ -185,21 +185,25 @@ function roomFromSnapshotItem(
 export function restoreContextRoomSnapshot(
   snapshot: ContextRoomSnapshot,
 ): ContextRoomLocalState | null {
-  const rooms = snapshot.rooms.map((item) => roomFromSnapshotItem(item));
-  const deletedRooms = snapshot.deletedRooms.map((item) => roomFromSnapshotItem(item));
-  if (rooms.some((room) => room === null) || deletedRooms.some((room) => room === null)) return null;
-  const allIds = [...rooms, ...deletedRooms].map((room) => room!.id);
+  // 逐条丢弃形态不合法的 room（如合并残留 lifecycle=merged、data 只剩
+  // {lifecycle, mergedIntoRoomId} 的残缺行），而非整包拒绝——合并后的快照若
+  // 再混入残骸，不应拖死整个工作区的同步（否则渲染端将永远停留在
+  // localStorage 旧态、网关新态无法下发）。roomFromSnapshotItem 返回 null 即丢弃。
+  const rooms = snapshot.rooms
+    .map((item) => roomFromSnapshotItem(item))
+    .filter((room): room is ContextRoomRecord => room !== null);
+  const deletedRooms = snapshot.deletedRooms
+    .map((item) => roomFromSnapshotItem(item))
+    .filter((room): room is ContextRoomRecord => room !== null);
+  const allIds = [...rooms, ...deletedRooms].map((room) => room.id);
   if (new Set(allIds).size !== allIds.length) return null;
   if (!snapshot.updatedAt) {
-    return removeDemoContextRoomState({
-      rooms: rooms as ContextRoomRecord[],
-      deletedRooms: deletedRooms as ContextRoomRecord[],
-    });
+    return removeDemoContextRoomState({ rooms, deletedRooms });
   }
   const fallbackUpdatedAt = snapshot.updatedAt;
   return removeDemoContextRoomState({
-    rooms: (rooms as ContextRoomRecord[]).map((room) => migrateLegacyUpdatedAt(room, fallbackUpdatedAt)),
-    deletedRooms: (deletedRooms as ContextRoomRecord[]).map((room) => migrateLegacyUpdatedAt(room, fallbackUpdatedAt)),
+    rooms: rooms.map((room) => migrateLegacyUpdatedAt(room, fallbackUpdatedAt)),
+    deletedRooms: deletedRooms.map((room) => migrateLegacyUpdatedAt(room, fallbackUpdatedAt)),
   });
 }
 

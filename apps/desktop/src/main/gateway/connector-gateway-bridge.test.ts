@@ -28,16 +28,25 @@ function json(response: ServerResponse, value: unknown): void {
 }
 
 describe('NangoConnectorGatewayBridge input boundary', () => {
-  it('rejects unsupported providers before issuing a request', () => {
+  // M2b 契约更新：provider 白名单校验在网关注册表（isConnectorProvider + 注册名表）；
+  // 桥层只做格式约束（^[a-z][a-z0-9-]*$），合法格式的未知 provider 交网关裁决。
+  it('rejects malformed providers before issuing a request', () => {
     expect(() => bridge().registerConnection({
-      provider: 'imap' as 'gmail',
+      provider: 'IMAP!' as string,
+      nangoConfigKey: 'mail',
+      nangoConnectionId: 'connection-1',
+    })).toThrow('不支持的连接提供方')
+    expect(() => bridge().registerConnection({
+      provider: '../evil' as string,
       nangoConfigKey: 'mail',
       nangoConnectionId: 'connection-1',
     })).toThrow('不支持的连接提供方')
   })
 
-  it('rejects unsupported authorization providers before issuing a request', async () => {
-    await expect(bridge().startAuthorization('imap' as 'gmail')).rejects.toThrow('不支持的连接提供方')
+  it('lets syntactically valid providers through to the gateway registry', async () => {
+    // 合法格式的 provider 不再被桥层拒绝：请求会发出（测试桩 supervisor 无
+    // getConnection → 报连接错误），证明没有触发本地白名单拦截。
+    await expect(bridge().startAuthorization('imap')).rejects.toThrow('getConnection')
   })
 
   it('rejects unsafe path identifiers', () => {

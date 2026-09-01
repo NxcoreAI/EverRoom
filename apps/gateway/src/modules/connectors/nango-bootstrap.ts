@@ -1,6 +1,7 @@
 import axios, { type AxiosInstance } from "axios";
 
 import type { ConnectorConfig } from "./types.js";
+import { SYNC_PROVIDERS } from "./sync-providers/index.js";
 
 // 桌面端 Nango 托管启动包含首次依赖安装 + server 构建(各 300s 超时),
 // Gateway 先于 Nango ready;此窗口需覆盖冷启动全程,取 10 分钟。
@@ -152,22 +153,18 @@ export async function bootstrapNango(config: ConnectorConfig): Promise<string> {
 
   // 无鉴权 dashboard API(创建 integration 需要);外部带鉴权的 Nango 会 401,仅记录。
   const dashboard = axios.create({ baseURL: baseUrl.replace(/\/$/, ""), timeout: 15_000 });
-  if (config.googleClientId && config.googleClientSecret) {
-    const integrations = [
-      [config.gmailConfigKey, "google-mail", "openid,email,profile,https://www.googleapis.com/auth/gmail.readonly"],
-      [config.googleCalendarConfigKey, "google-calendar", "openid,email,profile,https://www.googleapis.com/auth/calendar.readonly"],
-      [config.googleDocsConfigKey, "google-drive", "openid,email,profile,https://www.googleapis.com/auth/drive.readonly"],
-    ] as const;
-    for (const [key, provider, scopes] of integrations) {
-      if (key) await ensureIntegration(dashboard, key, provider, config.googleClientId, config.googleClientSecret, scopes);
-    }
-  }
-  if (config.notionClientId && config.notionClientSecret) {
-    await ensureIntegration(dashboard, config.notionConfigKey, "notion", config.notionClientId, config.notionClientSecret);
-  }
-  // Outlook 走 Microsoft Graph 的 `microsoft` provider(scopes 用 .default,实际权限由 Azure 应用注册决定)。
-  if (config.outlookClientId && config.outlookClientSecret) {
-    await ensureIntegration(dashboard, config.outlookConfigKey, "microsoft", config.outlookClientId, config.outlookClientSecret);
+  // 阶段二：integration 模板由 SyncProvider 注册表驱动（credential 决定用哪组
+  // OAuth client；scopes 由 provider 声明，Outlook 走 microsoft .default 不传）。
+  for (const definition of SYNC_PROVIDERS) {
+    const meta = definition.auth.nango;
+    if (!meta) continue;
+    if (meta.credential === "none") continue;
+    const clientId = config[`${meta.credential}ClientId` as keyof ConnectorConfig] as string | undefined;
+    const clientSecret = config[`${meta.credential}ClientSecret` as keyof ConnectorConfig] as string | undefined;
+    if (!clientId || !clientSecret) continue;
+    const configKey = config.providerConfigKeys?.[definition.provider] ?? meta.configKeyDefault;
+    const scopes = meta.oauthScopes?.join(",");
+    await ensureIntegration(dashboard, configKey, meta.integrationProvider, clientId, clientSecret, scopes);
   }
   return secret;
 }

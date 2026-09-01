@@ -311,6 +311,9 @@ export function TiptapDocumentEditor({
   const [cursorCompletionEnabled, setCursorCompletionEnabled] = useState(
     () => loadDocumentCursorCompletionSettings().enabled,
   )
+  const [cursorCompletionParagraphEnabled, setCursorCompletionParagraphEnabled] = useState(
+    () => loadDocumentCursorCompletionSettings().paragraphEnabled,
+  )
   const roomDocuments = useRoomDocumentsState()
   const { activateDocument } = useActiveDocument()
   const { appliedDocumentsById, setOperationPresentationPending } = useDocumentOperations()
@@ -709,6 +712,7 @@ export function TiptapDocumentEditor({
       && cursorCompletionEnabled
       && !documentOperations.completionBlocked
       && !selectionRewrite.preview),
+    paragraphEnabled: cursorCompletionParagraphEnabled,
   })
   const editorInteractions = useTransientEditorInteractions(editor, selectionRewrite.cancel)
 
@@ -730,6 +734,7 @@ export function TiptapDocumentEditor({
 
   useEffect(() => onDocumentCursorCompletionSettingsChanged((settings) => {
     setCursorCompletionEnabled(settings.enabled)
+    setCursorCompletionParagraphEnabled(settings.paragraphEnabled)
   }), [])
 
   useEffect(() => {

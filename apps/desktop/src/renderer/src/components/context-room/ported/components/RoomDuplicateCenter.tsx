@@ -129,9 +129,13 @@ export function RoomDuplicateCenter({
         targetRoomId,
         previewHash: preview.previewHash,
         idempotencyKey: crypto.randomUUID(),
+        wait: true,
       })
       setOperation(result)
-      await onMerged()
+      if (result.status === 'completed') {
+        await onMerged()
+        await reload()
+      }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t('contextRoom:duplicateCenter.startFailed'))
     } finally {
@@ -139,20 +143,26 @@ export function RoomDuplicateCenter({
     }
   }
 
-  const refreshOperation = async () => {
+  useEffect(() => {
+    // 超时兜底通道：startMerge(wait) 已在请求内等待合并终态（秒级本地事务），
+    // 常规路径不进此分支。仅当网关 30s 上限超时返回 running 态时，低频轮询收尾。
     if (!api || !operation) return
-    setLoading(true)
-    try {
-      const next = await api.getMergeOperation(operation.id)
-      setOperation(next)
-      if (next.status === 'completed') {
-        await onMerged()
-        await reload()
-      }
-    } finally {
-      setLoading(false)
-    }
-  }
+    if (operation.status !== 'queued' && operation.status !== 'running') return
+    const operationId = operation.id
+    const timer = window.setInterval(() => {
+      void api.getMergeOperation(operationId)
+        .then(async (next) => {
+          setOperation(next)
+          if (next.status === 'completed') {
+            await onMerged()
+            await reload()
+          }
+        })
+        .catch(() => undefined)
+    }, 5_000)
+    return () => window.clearInterval(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- onMerged/reload 是闭包引用，兜底轮询启停仅取决于 operation 状态机
+  }, [api, operation?.id, operation?.status])
 
   const retryOperation = async () => {
     if (!api || !operation) return
@@ -250,11 +260,7 @@ export function RoomDuplicateCenter({
               <div className="context-room-merge-operation" data-status={operation.status}>
                 {operation.status === 'completed' ? <Check aria-hidden="true" /> : operation.status === 'failed' ? <TriangleAlert aria-hidden="true" /> : <Loader2 aria-hidden="true" />}
                 <div><b>{operation.status === 'completed' ? t('contextRoom:duplicateCenter.mergeCompleted') : operation.status === 'failed' ? t('contextRoom:duplicateCenter.mergeFailed') : t('contextRoom:duplicateCenter.merging')}</b><small>{operation.stage} · {operation.progress}%</small></div>
-                {operation.status === 'failed'
-                  ? <button type="button" onClick={() => void retryOperation()}>{t('contextRoom:duplicateCenter.retry')}</button>
-                  : operation.status !== 'completed'
-                    ? <button type="button" onClick={() => void refreshOperation()}>{t('contextRoom:duplicateCenter.refreshProgress')}</button>
-                    : null}
+                {/* failed：重试按钮（重试后由自动轮询接管）；queued/running：进度自动刷新，无需手动按钮。 */}
               </div>
             ) : (
               <div className="context-room-merge-warning"><TriangleAlert aria-hidden="true" /><p>{t('contextRoom:duplicateCenter.warningIrreversible')}</p></div>

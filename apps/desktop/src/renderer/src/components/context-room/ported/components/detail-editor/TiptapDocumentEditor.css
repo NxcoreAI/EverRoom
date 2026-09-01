@@ -854,6 +854,89 @@ textarea.context-room-tiptap-rewrite-text:disabled {
   text-underline-offset: 2px;
 }
 
+/* VSCode 式灯泡：ghost 容器 pointer-events:none，这里恢复可交互 */
+.context-room-document-cursor-completion-bulb {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  margin-left: 0.35em;
+  padding: 1px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: color-mix(in srgb, var(--cr-muted) 72%, transparent);
+  pointer-events: auto;
+  cursor: pointer;
+  vertical-align: baseline;
+}
+
+.context-room-document-cursor-completion-bulb:hover,
+.context-room-document-cursor-completion-bulb[aria-expanded='true'] {
+  color: var(--cr-accent, currentColor);
+  background: color-mix(in srgb, var(--cr-muted) 14%, transparent);
+}
+
+.context-room-document-cursor-completion-bulb svg {
+  width: 1em;
+  height: 1em;
+}
+
+/* 灯泡下的小气泡（接受/拒绝/重写 选项菜单，接受与拒绝右侧带快捷键提示） */
+.context-room-document-cursor-completion-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  min-width: 11em;
+  padding: 4px;
+  /* ghost 容器整体是淡色，菜单是真实可交互 UI，恢复正常文字色。 */
+  color: var(--cr-text, inherit);
+  border: 1px solid color-mix(in srgb, var(--cr-muted) 32%, transparent);
+  border-radius: 8px;
+  background: var(--cr-surface, #fff);
+  box-shadow: 0 6px 20px rgb(0 0 0 / 12%);
+  pointer-events: auto;
+  white-space: nowrap;
+}
+
+.context-room-document-cursor-completion-menu[hidden] {
+  display: none;
+}
+
+/* 滚动区底部可视空间不足时向上弹，避免把编辑器容器撑出额外滚动高度 */
+.context-room-document-cursor-completion-menu-up {
+  top: auto;
+  bottom: calc(100% + 4px);
+}
+
+.context-room-document-cursor-completion-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 4px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  font: inherit;
+  font-size: 0.85em;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.context-room-document-cursor-completion-menu-item:hover {
+  background: color-mix(in srgb, var(--cr-accent, #4c8bf5) 16%, transparent);
+}
+
+.context-room-document-cursor-completion-menu-item-key {
+  font-size: 0.9em;
+  color: color-mix(in srgb, var(--cr-muted) 88%, transparent);
+  user-select: none;
+}
+
 .context-room-document-cursor-correction {
   color: color-mix(in srgb, var(--cr-danger) 72%, currentColor);
   text-decoration-line: line-through;
@@ -880,6 +963,14 @@ textarea.context-room-tiptap-rewrite-text:disabled {
   height: 0;
   pointer-events: none;
   color: color-mix(in srgb, var(--cr-muted) 56%, transparent);
+}
+
+/* 空行出现智能补全 ghost 时不再叠加 '/' placeholder：ghost 就是此刻可接受的建议。
+ * 不能走 placeholder 回调返回空串——Placeholder 的 state field 只在 docChanged/
+ * selectionSet 时重扫，ghost 上屏的 setMeta 事务两者皆无，装饰不会重建；
+ * :has() 直接对 widget DOM 生效，出现/消失即时切换。 */
+.context-room-tiptap-content .is-empty:has(.context-room-document-cursor-completion)::before {
+  content: none;
 }
 
 .context-room-tiptap-content h1 {

@@ -190,6 +190,8 @@ export function contextRoomRoutes(
             targetRoomId: Type.String({ minLength: 1, maxLength: 128 }),
             previewHash: Type.String({ minLength: 64, maxLength: 64 }),
             idempotencyKey: Type.String({ minLength: 1, maxLength: 128 }),
+            // 桌面端置 true：REST 调用内等待合并终态（秒级本地事务），免轮询。
+            wait: Type.Optional(Type.Boolean()),
           }),
         },
       },

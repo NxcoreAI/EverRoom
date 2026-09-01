@@ -272,11 +272,13 @@ export function FilesPage({
 
   const applyImportResults = useCallback(async (result: FileImportOutcome[]) => {
     if (result.length === 0) return
-    const entered = result.filter((outcome) => outcome.fileId).length
-    const firstError = result.find((outcome) => outcome.error)?.error
+    // 跳过行（格式不支持/待确认）不算入「总数」，避免虚增分母
+    const counted = result.filter((outcome) => !outcome.skippedReason)
+    const entered = counted.filter((outcome) => outcome.fileId).length
+    const firstError = counted.find((outcome) => outcome.error)?.error
     setMessage(entered === 0 && firstError
       ? firstError
-      : t('surface:files.importCompleteEnteredTotalFilesEnteredThePipeline', { entered, total: result.length }))
+      : t('surface:files.importCompleteEnteredTotalFilesEnteredThePipeline', { entered, total: counted.length }))
     await Promise.all([loadFiles(), loadEvents()])
   }, [loadEvents, loadFiles, t])
 

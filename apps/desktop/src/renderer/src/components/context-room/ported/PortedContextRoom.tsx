@@ -14,6 +14,7 @@ import {
   shouldDeleteRoomFromKnowledge,
   shouldSyncRoomToKnowledge,
 } from './knowledgeRoomSync'
+import { scheduleRoomMarkdownSweep } from '../knowledgeMarkdownImport'
 import type { ObsidianVaultBinding } from '../../../../../shared/obsidian'
 import { createEmptyContextRoom } from './contextRoomFactory'
 import { ObsidianVaultRoom } from '../obsidian/ObsidianVaultRoom'
@@ -148,6 +149,12 @@ export function PortedContextRoom({
       window.removeEventListener('everroom:knowledge-changed', onChanged)
     }
   }, [syncKnowledgeRooms])
+
+  // 启动补扫：晋升完成时应用未开（推荐面板没观察到 promoting→completed）导致
+  // 遗漏的 md→云文档转换，逐 Room 幂等补跑，每应用会话一次。
+  useEffect(() => {
+    scheduleRoomMarkdownSweep()
+  }, [])
 
   useEffect(() => {
     onRoomsChange(state.rooms.map(({ id, title, kind, brief, generatedContext }) => ({

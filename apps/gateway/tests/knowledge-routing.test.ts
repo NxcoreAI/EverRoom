@@ -24,6 +24,8 @@ import {
   type EntityRow,
 } from "../src/modules/knowledge/entity-registry.js";
 import {
+  KnowledgeLlm,
+  KnowledgeLlmError,
   parseExtractionResponse,
   parseJudgeResponse,
   parseProposalsResponse,
@@ -716,3 +718,24 @@ describe("实体注册表：V2 证据聚合", () => {
     sqlite.close();
   });
 });
+
+// ───────────────────────── 瞬时错误分类 ─────────────────────────
+
+describe("LLM 瞬时错误分类（router 重试 vs 死信）", () => {
+  it("isRateLimited：429/速率限制类判定为瞬时", () => {
+    expect(KnowledgeLlm.isRateLimited(
+      new KnowledgeLlmError("knowledge Agent invocation failed: knowledge provider HTTP 429: too many requests"),
+    )).toBe(true);
+    expect(KnowledgeLlm.isRateLimited(new Error("HTTP 429"))).toBe(false);
+  });
+
+  it("isTruncated：finish_reason=length 判定为瞬时（退避重试），其余错误不重试", () => {
+    expect(KnowledgeLlm.isTruncated(
+      new KnowledgeLlmError("knowledge Agent invocation failed: knowledge provider returned no content (finish_reason=length)"),
+    )).toBe(true);
+    expect(KnowledgeLlm.isTruncated(
+      new KnowledgeLlmError("knowledge provider returned no content (finish_reason=content_filter)"),
+    )).toBe(false);
+    expect(KnowledgeLlm.isTruncated(new Error("finish_reason=length"))).toBe(false);
+  });
+})
