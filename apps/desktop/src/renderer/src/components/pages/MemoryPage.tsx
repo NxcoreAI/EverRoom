@@ -5,6 +5,7 @@ import { MEMORY_TAB_EVENT } from '../MemoryPipelineStatus'
 import { AtomicMemoryPane } from './memory/AtomicMemoryPane'
 import { ConversationPane } from './memory/ConversationPane'
 import { CoreProfilePane } from './memory/CoreProfilePane'
+import { WritingStylePane } from './memory/WritingStylePane'
 import { DocumentPane } from './memory/DocumentPane'
 import { FilterRulesPane } from './memory/FilterRulesPane'
 import { IngestLedgerPane } from './memory/IngestLedgerPane'
@@ -25,6 +26,8 @@ const TABS: Array<{ id: MemoryTabId; label: string; level: string }> = [
   { id: 'atomic', label: 'memory:memory.atomicMemory', level: 'L1' },
   { id: 'scenario', label: 'memory:memory.scenarios', level: 'L2' },
   { id: 'core', label: 'memory:memory.profile', level: 'L3' },
+  // 写作风格 = 从用户文档自动沉淀的表达偏好（系统段只读）+ 用户指令段可编辑
+  { id: 'writing-style', label: 'memory:memory.writingStyle', level: 'L3' },
   // 导入记录 = 统一引擎台账（全源进入记录 + 过滤闸状态，误杀恢复入口）
   { id: 'ledger', label: 'memory:memory.ledger', level: '' },
   // 过滤规则 = 过滤器判定偏好（用户偏好可编辑 + 系统洞察只读）
@@ -172,6 +175,7 @@ export function MemoryPage({ focusAtomicId }: { focusAtomicId?: string | null } 
           ) : null}
           {tab === 'scenario' ? <ScenarioPane /> : null}
           {tab === 'core' ? <CoreProfilePane /> : null}
+          {tab === 'writing-style' ? <WritingStylePane /> : null}
           {tab === 'ledger' ? <IngestLedgerPane /> : null}
           {tab === 'filter-rules' ? <FilterRulesPane /> : null}
           {tab === 'conversation' ? (
