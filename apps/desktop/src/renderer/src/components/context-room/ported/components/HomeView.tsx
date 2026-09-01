@@ -191,6 +191,10 @@ export function HomeView({
     overrideToken: string;
   } | null>(null);
   const [renameRoom, setRenameRoom] = useState<ContextRoomRecord | null>(null);
+  // 手动合并（用户主动发起，选择与哪个 Room 合并）：对话框 + 目标选择。
+  const [manualMergeRoom, setManualMergeRoom] = useState<ContextRoomRecord | null>(null);
+  const [manualMergePartnerId, setManualMergePartnerId] = useState<string>('')
+  const [manualMergePair, setManualMergePair] = useState<Parameters<typeof RoomDuplicateCenter>[0]['manualPair']>(null);
   const [deleteRoom, setDeleteRoom] = useState<ContextRoomRecord | null>(null);
   const [deletedRoomsOpen, setDeletedRoomsOpen] = useState(false);
   const [recentlyDeleted, setRecentlyDeleted] = useState<ContextRoomRecord | null>(null);
@@ -296,6 +300,7 @@ export function HomeView({
                   onOpen={onOpenDetail}
                   onRename={() => setRenameRoom(room)}
                   onDelete={() => setDeleteRoom(room)}
+                  onMerge={() => { setManualMergeRoom(room); setManualMergePartnerId(''); }}
                 />
               ))}
               {!visibleRooms.length ? (
@@ -379,11 +384,56 @@ export function HomeView({
         ) : null}
       </ReferenceDialog>
       <RoomDuplicateCenter
-        open={duplicateCenterOpen}
-        onOpenChange={setDuplicateCenterOpen}
+        open={duplicateCenterOpen || Boolean(manualMergePair)}
+        onOpenChange={(next) => { if (!next) { setDuplicateCenterOpen(false); setManualMergePair(null); } else setDuplicateCenterOpen(next) }}
         onMerged={onRefreshRooms}
-        onCandidateCountChange={setDuplicateCandidateCount}
+        onCandidateCountChange={duplicateCenterOpen ? setDuplicateCandidateCount : undefined}
+        manualPair={manualMergePair}
       />
+      <ReferenceDialog
+        open={Boolean(manualMergeRoom)}
+        onOpenChange={(next) => { if (!next) { setManualMergeRoom(null); setManualMergePartnerId(''); } }}
+        title={t('contextRoom:home.manualMergeTitle')}
+      >
+        <div className="context-room-manual-merge">
+          <header>
+            <div>
+              <span>{t('contextRoom:home.manage')}</span>
+              <h2>{t('contextRoom:home.manualMergeTitle')}</h2>
+            </div>
+          </header>
+          <p>{t('contextRoom:home.manualMergeHint', { title: manualMergeRoom?.title ?? '' })}</p>
+          <label>
+            <span>{t('contextRoom:home.manualMergePartner')}</span>
+            <select value={manualMergePartnerId} onChange={(event) => setManualMergePartnerId(event.target.value)}>
+              <option value="">{t('contextRoom:home.manualMergePick')}</option>
+              {rooms.filter((room) => room.id !== manualMergeRoom?.id).map((room) => (
+                <option key={room.id} value={room.id}>{room.title}</option>
+              ))}
+            </select>
+          </label>
+          <footer>
+            <button type="button" onClick={() => { setManualMergeRoom(null); setManualMergePartnerId(''); }}>{t('contextRoom:duplicateCenter.cancel')}</button>
+            <button
+              type="button"
+              className="context-room-primary-button"
+              disabled={!manualMergePartnerId || !manualMergeRoom}
+              onClick={() => {
+                const partner = rooms.find((room) => room.id === manualMergePartnerId)
+                if (!manualMergeRoom || !partner) return
+                setManualMergePair({
+                  roomAId: manualMergeRoom.id,
+                  roomA: { id: manualMergeRoom.id, title: manualMergeRoom.title },
+                  roomBId: partner.id,
+                  roomB: { id: partner.id, title: partner.title },
+                })
+                setManualMergeRoom(null)
+                setManualMergePartnerId('')
+              }}
+            >{t('contextRoom:home.manualMergeContinue')}</button>
+          </footer>
+        </div>
+      </ReferenceDialog>
       <ReferenceDialog
         open={deletedRoomsOpen}
         onOpenChange={setDeletedRoomsOpen}

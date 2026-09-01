@@ -1195,5 +1195,12 @@
   "memory.openLinkedRoom": "Open linked room",
   "duplicateCenter.newRoomTitle": "New room title",
   "duplicateCenter.newRoomTitlePlaceholder": "Name for the merged room",
-  "duplicateCenter.mergeIntoNew": "Merge into new room"
+  "duplicateCenter.mergeIntoNew": "Merge into new room",
+  "roomCard.mergeIntoNewRoom": "Merge into new room…",
+  "home.manualMergeTitle": "Merge rooms",
+  "home.manualMergeHint": "Pick the other room to merge with “{title}”. Both rooms will be merged into a brand-new room.",
+  "home.manualMergePartner": "Merge with",
+  "home.manualMergePick": "Pick another room",
+  "home.manualMergeContinue": "Continue",
+  "duplicateCenter.manualPairReason": "Manually selected pair"
 }

@@ -1195,5 +1195,12 @@
   "memory.openLinkedRoom": "打开关联 Room",
   "duplicateCenter.newRoomTitle": "新 Room 名称",
   "duplicateCenter.newRoomTitlePlaceholder": "合并后的新 Room 名称",
-  "duplicateCenter.mergeIntoNew": "合并到新 Room"
+  "duplicateCenter.mergeIntoNew": "合并到新 Room",
+  "roomCard.mergeIntoNewRoom": "合并到新 Room…",
+  "home.manualMergeTitle": "合并 Room",
+  "home.manualMergeHint": "选择要与「{title}」合并的另一个 Room。两个旧 Room 将合并为一个新 Room。",
+  "home.manualMergePartner": "选择合并对象",
+  "home.manualMergePick": "请选择另一个 Room",
+  "home.manualMergeContinue": "下一步",
+  "duplicateCenter.manualPairReason": "用户手动选择的合并配对"
 }

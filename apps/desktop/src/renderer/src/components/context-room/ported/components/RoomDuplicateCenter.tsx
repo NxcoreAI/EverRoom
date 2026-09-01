@@ -34,11 +34,14 @@ export function RoomDuplicateCenter({
   onOpenChange,
   onMerged,
   onCandidateCountChange,
+  manualPair,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   onMerged: () => Promise<void>
   onCandidateCountChange?: (count: number) => void
+  /** 手动合并模式：直接进入这一对的预览（跳过候选列表；关闭即退出）。 */
+  manualPair?: { roomAId: string; roomA: { id: string; title: string }; roomBId: string; roomB: { id: string; title: string } } | null
 }) {
   const { t } = useLocale()
   const api = window.nxcore?.contextRooms
@@ -70,6 +73,22 @@ export function RoomDuplicateCenter({
   useEffect(() => {
     if (open) void reload()
   }, [open])
+
+  useEffect(() => {
+    // 手动模式：打开即进入该对的合并预览，不走候选列表。
+    if (open && manualPair) {
+      void beginPreview({
+        id: `manual:${manualPair.roomAId}:${manualPair.roomBId}`,
+        roomAId: manualPair.roomAId, roomBId: manualPair.roomBId,
+        roomA: manualPair.roomA, roomB: manualPair.roomB,
+        nameScore: 0, centroidScore: 0, contentOverlap: 0, entityOverlap: 0,
+        duplicateScore: 0, confidence: 'pending', llmVerdict: null,
+        reasons: [t('contextRoom:duplicateCenter.manualPairReason')],
+        status: 'open', updatedAt: new Date().toISOString(),
+      } as RoomDuplicateCandidate)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- beginPreview 为组件内闭包，触发点仅为打开/配对变化
+  }, [open, manualPair])
 
   useEffect(() => {
     if (open) return
