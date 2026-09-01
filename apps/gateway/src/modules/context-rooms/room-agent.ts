@@ -12,15 +12,13 @@ export type ContextRoomAgentTask =
   | "room-enrich"
   | "room-overview"
   | "brief-refresh"
-  | "selection-rewrite"
-  | "material-analysis";
+  | "selection-rewrite";
 
 const TASK_LABELS: Record<ContextRoomAgentTask, string> = {
   "room-enrich": "整理新创建的 Context Room",
   "room-overview": "生成 Context Room 总览",
   "brief-refresh": "再生成 Context Room 简报",
   "selection-rewrite": "改写文档选区",
-  "material-analysis": "分析 Context Room 资料",
 };
 
 export interface ContextRoomEnrichment {
