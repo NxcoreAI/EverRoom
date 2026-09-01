@@ -1202,5 +1202,7 @@
   "home.manualMergePartner": "Merge with",
   "home.manualMergePick": "Pick another room",
   "home.manualMergeContinue": "Continue",
-  "duplicateCenter.manualPairReason": "Manually selected pair"
+  "duplicateCenter.manualPairReason": "Manually selected pair",
+  "duplicateCenter.willRetire": "retires after merge",
+  "duplicateCenter.willCreate": "new room"
 }

@@ -12734,3 +12734,170 @@
   border-color: var(--cr-blue);
   color: var(--cr-blue);
 }
+
+/* ===== 合并弹窗视觉升级：流向示意 + 影响网格 + 备注条 ===== */
+.context-room-merge-flow {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px;
+  border: 1px solid var(--cr-border);
+  border-radius: 10px;
+  background: var(--cr-surface-secondary, #fafafa);
+}
+
+.context-room-merge-flow-sources {
+  display: grid;
+  flex: 1;
+  gap: 8px;
+  min-width: 0;
+}
+
+.context-room-merge-flow-room {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 9px 11px;
+  border: 1px solid var(--cr-border);
+  border-radius: 8px;
+  background: var(--cr-surface, #fff);
+}
+
+.context-room-merge-flow-room svg {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  color: var(--cr-tertiary, #9ca3af);
+}
+
+.context-room-merge-flow-room b {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.context-room-merge-flow-room small {
+  flex: 0 0 auto;
+  color: var(--cr-tertiary, #9ca3af);
+  font-size: 10px;
+}
+
+.context-room-merge-flow-room[data-retiring] {
+  border-style: dashed;
+  opacity: 0.85;
+}
+
+.context-room-merge-flow-room[data-new] {
+  flex: 1;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  border-color: rgba(37, 99, 235, 0.35);
+  background: rgba(37, 99, 235, 0.05);
+}
+
+.context-room-merge-flow-room[data-new] svg {
+  color: var(--cr-blue, #2563eb);
+}
+
+.context-room-merge-flow-arrow {
+  display: flex;
+  flex: 0 0 auto;
+  color: var(--cr-tertiary, #9ca3af);
+}
+
+.context-room-merge-flow-arrow svg {
+  width: 18px;
+  height: 18px;
+}
+
+.context-room-merge-impact dl > div[data-zero='true'] {
+  opacity: 0.45;
+}
+
+.context-room-merge-notes {
+  display: grid;
+  gap: 4px;
+}
+
+.context-room-merge-notes p {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--cr-muted);
+  font-size: 12px;
+}
+
+.context-room-merge-notes p svg {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 auto;
+  color: var(--cr-tertiary, #9ca3af);
+}
+
+/* ===== 手动合并选择对话框 ===== */
+.context-room-manual-merge {
+  display: grid;
+  gap: 14px;
+  width: min(480px, calc(100vw - 40px));
+  padding: 20px;
+}
+
+.context-room-manual-merge header h2 {
+  margin: 2px 0 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.context-room-manual-merge header span {
+  color: var(--cr-tertiary, #9ca3af);
+  font-size: 11px;
+}
+
+.context-room-manual-merge > p {
+  margin: 0;
+  color: var(--cr-muted);
+  font-size: 13px;
+}
+
+.context-room-manual-merge label {
+  display: grid;
+  gap: 6px;
+}
+
+.context-room-manual-merge label span {
+  color: var(--cr-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.context-room-manual-merge select {
+  height: 38px;
+  border: 1px solid var(--cr-border-strong);
+  border-radius: 6px;
+  padding: 0 10px;
+  background: var(--cr-surface);
+  color: var(--cr-text);
+  font: inherit;
+}
+
+.context-room-manual-merge footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.context-room-manual-merge footer button {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  padding: 0 12px;
+  border: 1px solid var(--cr-border);
+  border-radius: 6px;
+  font: inherit;
+}

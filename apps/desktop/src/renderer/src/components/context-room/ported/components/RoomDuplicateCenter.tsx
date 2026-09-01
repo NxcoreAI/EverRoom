@@ -1,5 +1,5 @@
 import type { RoomDuplicateCandidate, RoomMergeOperation, RoomMergePreview } from '@nxcore/agent-contract'
-import { ArrowRight, Check, GitMerge, Loader2, RefreshCw, Split, TriangleAlert } from 'lucide-react'
+import { ArrowRight, Check, GitMerge, Info, Loader2, RefreshCw, Sparkles, Split, TriangleAlert } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 
 import { useLocale, type Translate } from '@/i18n/LocaleContext'
@@ -238,6 +238,16 @@ export function RoomDuplicateCenter({
           </div>
         ) : (
           <div className="context-room-merge-preview">
+            {/* 合并示意：两个源 Room 汇入新 Room（视觉锚点，一眼看懂方向）。 */}
+            <div className="context-room-merge-flow" aria-hidden="true">
+              <div className="context-room-merge-flow-sources">
+                <div className="context-room-merge-flow-room" data-retiring><GitMerge aria-hidden="true" /><b>{selected?.roomA.title}</b><small>{t('contextRoom:duplicateCenter.willRetire')}</small></div>
+                <div className="context-room-merge-flow-room" data-retiring><GitMerge aria-hidden="true" /><b>{selected?.roomB.title}</b><small>{t('contextRoom:duplicateCenter.willRetire')}</small></div>
+              </div>
+              <div className="context-room-merge-flow-arrow"><ArrowRight aria-hidden="true" /></div>
+              <div className="context-room-merge-flow-room" data-new><Sparkles aria-hidden="true" /><b>{newRoomTitle.trim() || t('contextRoom:duplicateCenter.newRoomTitlePlaceholder')}</b><small>{t('contextRoom:duplicateCenter.willCreate')}</small></div>
+            </div>
+
             <label>
               <span>{t('contextRoom:duplicateCenter.newRoomTitle')}</span>
               <input
@@ -251,15 +261,13 @@ export function RoomDuplicateCenter({
 
             <section className="context-room-merge-impact">
               <h3>{t('contextRoom:duplicateCenter.willMigrate')}</h3>
-              <dl>{impactRows(preview).map(([label, count]) => <div key={label}><dt>{t(`contextRoom:duplicateCenter.impact.${label}`)}</dt><dd>{count}</dd></div>)}</dl>
+              <dl>{impactRows(preview).map(([label, count]) => <div key={label} data-zero={count === 0}><dt>{t(`contextRoom:duplicateCenter.impact.${label}`)}</dt><dd>{count}</dd></div>)}</dl>
             </section>
 
-            <section className="context-room-merge-excluded">
-              <h3>{t('contextRoom:duplicateCenter.willNotMigrate')}</h3>
-              {preview.excluded.map((item) => <p key={item}>{item}</p>)}
-            </section>
-
-            {preview.conflicts.length ? <section className="context-room-merge-conflicts"><h3>{t('contextRoom:duplicateCenter.conflictHandling')}</h3>{preview.conflicts.map((item) => <p key={item}>{item}</p>)}</section> : null}
+            <div className="context-room-merge-notes">
+              {preview.conflicts.map((item) => <p key={`c-${item}`}><TriangleAlert aria-hidden="true" /> {item}</p>)}
+              {preview.excluded.map((item) => <p key={`e-${item}`}><Info aria-hidden="true" /> {item}</p>)}
+            </div>
 
             {operation ? (
               <div className="context-room-merge-operation" data-status={operation.status}>
