@@ -25,6 +25,7 @@ import { createNotificationPiTools } from "../modules/notifications/pi-tools.js"
 import { documentRoutes } from "../modules/documents/routes.js";
 import { documentOperationRoutes } from "../modules/documents/operations/routes.js";
 import { DocumentService } from "../modules/documents/service.js";
+import { createSelectionRewriteContentResolver } from "../modules/documents/capabilities/selection-rewrite-content.js";
 import { ExternalDocumentProjectionService } from "../modules/documents/external-projections/service.js";
 import { externalDocumentProjectionRoutes } from "../modules/documents/external-projections/routes.js";
 import {
@@ -47,6 +48,7 @@ import { RoomDuplicateService } from "../modules/context-rooms/duplicate-service
 import { ContextRoomService } from "../modules/context-rooms/service.js";
 import { ContextRoomAgentDispatcher, isSelectionRewriteInvocationAuthorized } from "../modules/context-rooms/room-agent.js";
 import { createContextRoomAgentTools } from "../modules/context-rooms/room-agent-tools.js";
+import { buildRoomContextDigest } from "../modules/context-rooms/room-context-digest.js";
 import { RoomOverviewService } from "../modules/context-rooms/overview-service.js";
 import { createRoomOverviewAgentTools } from "../modules/context-rooms/overview-agent-tools.js";
 import { AsrError } from "../modules/asr/errors.js";
@@ -636,6 +638,18 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     app.log.warn(bindings, message);
   });
   roomOverviewService.setRoomAgentDispatcher(contextRoomAgentDispatcher);
+  // 改写信任收口（agent-architecture-optimization-plan §3）：documents 插件经
+  // CapabilityBackend 注入 resolver——从 subagent_invocations 完成态取替换文本并复核授权。
+  // 与 writingStyleProvider 同款 provider 注入模式；documents 模块不直接依赖
+  // subagents / context-rooms，模块边界只在此装配点跨越。
+  documentService.resolveSelectionRewriteContent = createSelectionRewriteContentResolver({
+    getInvocation: (invocationId) => subagentOrchestrator.getInvocation(invocationId),
+    isInvocationAuthorized: (invocation, roomId) => isSelectionRewriteInvocationAuthorized(
+      invocation,
+      { capabilityId: "document.selection-rewrite", roomId },
+    ),
+    getDocument: (documentId) => documentService.get(documentId),
+  });
   let resolveFileMarkdown: ((fileId: string) => Promise<string | null>) | undefined;
   let resolveAgentConversation: ((threadId: string, query: string) => Promise<string | null>) | undefined;
   const recoveredSubagentInvocations = subagentOrchestrator.initialize();
@@ -649,6 +663,9 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       ...(subagentConfig.enabled
         ? createSubagentPiTools(subagentRegistry, subagentOrchestrator, {
             resolveFileMarkdown: async (fileId) => resolveFileMarkdown?.(fileId) ?? null,
+            // 分析任务合并（方案 §4.2 B2）：room_analysis 网关侧组装材料的数据源
+            // （Room 不存在时 buildRoomContextDigest 抛 context_room_not_found，语义一致）。
+            resolveRoomContext: async (roomId) => buildRoomContextDigest(db, roomId),
          })
         : []),
       ...createNotificationPiTools(notificationMcpHost),

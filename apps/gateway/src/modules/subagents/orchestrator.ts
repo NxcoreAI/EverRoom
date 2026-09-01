@@ -171,7 +171,18 @@ export class SubagentOrchestrator {
 
     const definition = this.registry.get(input.agentId);
     if (!definition || !definition.enabled) throw new Error("subagent_not_found_or_disabled");
-    this.validateDispatch(definition, input);
+    try {
+      this.validateDispatch(definition, input);
+    } catch (error) {
+      // M3 观察期（方案 §5）：并发/全局限额拒绝（subagent_concurrency_limit 等）是
+      // T2 的直接证据，记录后原样抛出（框架无排队，拒绝即硬失败）。
+      this.logger.warn({
+        agentId: input.agentId,
+        task: normalizedTask,
+        error: error instanceof Error ? error.message : String(error),
+      }, "subagent dispatch rejected");
+      throw error;
+    }
     const invocationId = randomUUID();
     const now = new Date();
     this.db.insert(subagentInvocations).values({
@@ -340,7 +351,12 @@ export class SubagentOrchestrator {
       invocationId,
       agentId: definition.id,
       revisionId: definition.revision.id,
+      task: row.task,
       status: terminal,
+      errorCode: terminal === "timed_out" ? "timeout" : terminalError,
+      // M3 观察期（方案 §5）：T2/T3 判定数据——执行时长与派发→开跑的等待。
+      durationMs: completedAt.getTime() - startedAt.getTime(),
+      waitedMs: startedAt.getTime() - new Date(row.createdAt).getTime(),
     }, "subagent invocation finished");
     return this.getInvocation(invocationId)!;
   }
