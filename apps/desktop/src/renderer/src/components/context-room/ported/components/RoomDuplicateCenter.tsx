@@ -49,6 +49,7 @@ export function RoomDuplicateCenter({
   const [targetRoomId, setTargetRoomId] = useState<string>('')
   const [preview, setPreview] = useState<RoomMergePreview | null>(null)
   const [operation, setOperation] = useState<RoomMergeOperation | null>(null)
+  const [newRoomTitle, setNewRoomTitle] = useState('')
 
   const reload = async () => {
     if (!api) return
@@ -82,36 +83,17 @@ export function RoomDuplicateCenter({
     }
   }, [open, operation])
 
-  const sourceRoomId = useMemo(() => {
-    if (!selected || !targetRoomId) return ''
-    return selected.roomAId === targetRoomId ? selected.roomBId : selected.roomAId
-  }, [selected, targetRoomId])
-
   const beginPreview = async (candidate: RoomDuplicateCandidate) => {
     if (!api) return
-    const target = candidate.roomAId
     setSelected(candidate)
-    setTargetRoomId(target)
+    setTargetRoomId('')
+    setNewRoomTitle(candidate.roomA.title)
     setOperation(null)
     setLoading(true)
     setError(null)
     try {
-      setPreview(await api.previewMerge(candidate.roomBId, target))
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : t('contextRoom:duplicateCenter.previewFailed'))
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const switchTarget = async (nextTarget: string) => {
-    if (!api || !selected) return
-    const source = selected.roomAId === nextTarget ? selected.roomBId : selected.roomAId
-    setTargetRoomId(nextTarget)
-    setLoading(true)
-    setError(null)
-    try {
-      setPreview(await api.previewMerge(source, nextTarget))
+      // 新建式合并：新建 Room 收编两个旧 Room，预览为两源聚合影响（不再选保留方向）。
+      setPreview(await api.previewMergeIntoNew(candidate.roomAId, candidate.roomBId))
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t('contextRoom:duplicateCenter.previewFailed'))
     } finally {
@@ -120,13 +102,14 @@ export function RoomDuplicateCenter({
   }
 
   const confirmMerge = async () => {
-    if (!api || !preview || !sourceRoomId || !targetRoomId) return
+    if (!api || !preview || !selected || !newRoomTitle.trim()) return
     setLoading(true)
     setError(null)
     try {
-      const result = await api.startMerge({
-        sourceRoomId,
-        targetRoomId,
+      const result = await api.startMergeIntoNew({
+        sourceAId: selected.roomAId,
+        sourceBId: selected.roomBId,
+        title: newRoomTitle.trim(),
         previewHash: preview.previewHash,
         idempotencyKey: crypto.randomUUID(),
         wait: true,
@@ -237,11 +220,14 @@ export function RoomDuplicateCenter({
         ) : (
           <div className="context-room-merge-preview">
             <label>
-              <span>{t('contextRoom:duplicateCenter.keepAsPrimary')}</span>
-              <select value={targetRoomId} onChange={(event) => void switchTarget(event.target.value)} disabled={Boolean(operation)}>
-                <option value={selected?.roomAId}>{selected?.roomA.title}</option>
-                <option value={selected?.roomBId}>{selected?.roomB.title}</option>
-              </select>
+              <span>{t('contextRoom:duplicateCenter.newRoomTitle')}</span>
+              <input
+                value={newRoomTitle}
+                onChange={(event) => setNewRoomTitle(event.target.value)}
+                disabled={Boolean(operation)}
+                maxLength={120}
+                placeholder={t('contextRoom:duplicateCenter.newRoomTitlePlaceholder')}
+              />
             </label>
 
             <section className="context-room-merge-impact">
@@ -271,7 +257,7 @@ export function RoomDuplicateCenter({
               {operation?.status === 'failed' && !operation.commitReached
                 ? <button type="button" onClick={() => void cancelOperation()} disabled={loading}>{t('contextRoom:duplicateCenter.cancelMerge')}</button>
                 : null}
-              {!operation ? <button type="button" className="context-room-danger-button" onClick={() => void confirmMerge()} disabled={loading}>{t('contextRoom:duplicateCenter.mergeInto', { title: preview.targetRoom.title })}</button> : null}
+              {!operation ? <button type="button" className="context-room-danger-button" onClick={() => void confirmMerge()} disabled={loading || !newRoomTitle.trim()}>{t('contextRoom:duplicateCenter.mergeIntoNew')}</button> : null}
             </footer>
           </div>
         )}

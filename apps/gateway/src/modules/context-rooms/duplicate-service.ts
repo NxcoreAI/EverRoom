@@ -723,6 +723,143 @@ export class RoomDuplicateService {
     return this.settleOperation(id, input.wait);
   }
 
+  /**
+   * 新建式合并（用户语义变更 2026-09-01）：不并入现有 Room，而是新建一个
+   * Room 收编两个旧 Room，旧的双双退役（merged 指向新 Room）。实现为：
+   * 建新 target（收养 sourceA 的实体）→ 依次执行两段既有 executeMerge
+   * （A→新、B→新）——全部资源搬移/软删/候选清理逻辑零改动复用。
+   * 幂等：idempotencyKey 命中已完成链时直接返回终态 operation。
+   */
+  async previewMergeIntoNew(sourceAId: string, sourceBId: string): Promise<RoomMergePreview> {
+    if (sourceAId === sourceBId) throw new Error("context_room_merge_same_room");
+    const a = this.roomOrThrow(sourceAId);
+    const b = this.roomOrThrow(sourceBId);
+    const aggregate = async (sourceRoomId: string): Promise<RoomMergeImpactCounts> => {
+      const source = sourceRoomId === a.id ? a : b;
+      const memberships = this.db.select().from(roomSourceMemberships).where(eq(roomSourceMemberships.roomId, sourceRoomId)).all();
+      const sessionImpact = this.sessionImpact(sourceRoomId);
+      return {
+        documents: this.db.select().from(roomDocumentLinks).where(eq(roomDocumentLinks.roomId, sourceRoomId)).all().length,
+        externalSources: memberships.filter((item) => item.sourceKind !== "everroom-doc").length,
+        wikiFiles: await this.options.wikiFileCount?.(sourceRoomId).catch(() => 0) ?? 0,
+        localMemories: arrayOf(source.data.memoryItems).length,
+        attributedMemories: this.db.select().from(roomMemoryAttributions).where(eq(roomMemoryAttributions.roomId, sourceRoomId)).all().length,
+        agentRuns: this.db.select().from(agentRuns).where(eq(agentRuns.roomId, sourceRoomId)).all().length,
+        sessionLinks: this.db.select().from(agentSessionLinks).where(eq(agentSessionLinks.sourceRoomId, sourceRoomId)).all().length,
+        entities: new Set(this.db.select({ entityId: roomEntityMentions.entityId }).from(roomEntityMentions)
+          .where(eq(roomEntityMentions.roomId, sourceRoomId)).all().map((item) => item.entityId)).size,
+        relations: this.db.select().from(roomRelations).where(or(
+          eq(roomRelations.roomAId, sourceRoomId), eq(roomRelations.roomBId, sourceRoomId),
+        )).all().length,
+        ...sessionImpact,
+      };
+    };
+    const impactA = await aggregate(a.id);
+    const impactB = await aggregate(b.id);
+    const impact: RoomMergeImpactCounts = {
+      documents: impactA.documents + impactB.documents,
+      externalSources: impactA.externalSources + impactB.externalSources,
+      wikiFiles: impactA.wikiFiles + impactB.wikiFiles,
+      localMemories: impactA.localMemories + impactB.localMemories,
+      attributedMemories: impactA.attributedMemories + impactB.attributedMemories,
+      agentRuns: impactA.agentRuns + impactB.agentRuns,
+      sessionLinks: impactA.sessionLinks + impactB.sessionLinks,
+      entities: impactA.entities + impactB.entities,
+      relations: impactA.relations + impactB.relations,
+      unassignedRuns: impactA.unassignedRuns + impactB.unassignedRuns,
+      crossRoomSessions: impactA.crossRoomSessions + impactB.crossRoomSessions,
+    };
+    const conflicts: string[] = [];
+    if (normalizeEntityName(a.title) !== normalizeEntityName(b.title)) conflicts.push("两个来源 Room 名称将保留为主 Room 别名");
+    if (a.kind && b.kind && a.kind !== b.kind) conflicts.push("Room 类型不同，新 Room 取默认类型");
+    for (const field of ARRAY_FIELDS) {
+      const idsA = new Set(arrayOf(a.data[field]).map(itemKey));
+      const overlap = arrayOf(b.data[field]).filter((item) => idsA.has(itemKey(item))).length;
+      if (overlap > 0) conflicts.push(`${field} 中 ${overlap} 项将按稳定 ID 折叠`);
+    }
+    const excluded = [
+      `${impact.unassignedRuns} 个无 Room 归属的旧 Agent run 不迁移`,
+      `${impact.crossRoomSessions} 个跨 Room 会话不整体迁移`,
+      "全局或缺少明确 provenance 的 MemoryCore 记忆不迁移",
+    ];
+    const generatedAt = new Date().toISOString();
+    const previewHash = hash({
+      sources: [[a.id, a.updatedAt.toISOString(), a.lifecycle], [b.id, b.updatedAt.toISOString(), b.lifecycle]],
+      impact, conflicts, scoringVersion: SCORING_VERSION, mode: "merge-into-new",
+    });
+    return {
+      sourceRoom: roomSnapshot(a),
+      targetRoom: { ...roomSnapshot(b), id: "new", title: "（新建 Room）" },
+      recommendedTargetRoomId: "new",
+      impact, conflicts, excluded, previewHash, generatedAt,
+    };
+  }
+
+  async startMergeIntoNew(input: {
+    sourceAId: string;
+    sourceBId: string;
+    title: string;
+    kind?: string;
+    previewHash: string;
+    idempotencyKey: string;
+    wait?: boolean;
+  }): Promise<RoomMergeOperation> {
+    // 幂等：链尾段（:b 后缀）已存在即视为整链完成，直接返回其终态。
+    const existing = this.db.select().from(roomMergeOperations)
+      .where(eq(roomMergeOperations.idempotencyKey, `${input.idempotencyKey}:b`)).get();
+    if (existing) return operationDto(existing);
+    const title = input.title.trim().slice(0, 120);
+    if (!title) throw new Error("context_room_merge_title_required");
+    const preview = await this.previewMergeIntoNew(input.sourceAId, input.sourceBId);
+    if (preview.previewHash !== input.previewHash) throw new Error("context_room_merge_preview_stale");
+    const busy = this.db.select().from(roomMergeOperations)
+      .where(and(inArray(roomMergeOperations.status, ["queued", "running", "failed"]), or(
+        eq(roomMergeOperations.sourceRoomId, input.sourceAId),
+        eq(roomMergeOperations.targetRoomId, input.sourceAId),
+        eq(roomMergeOperations.sourceRoomId, input.sourceBId),
+        eq(roomMergeOperations.targetRoomId, input.sourceBId),
+      ))).get();
+    if (busy) throw new Error("context_room_merge_busy");
+    const a = this.roomOrThrow(input.sourceAId);
+    const b = this.roomOrThrow(input.sourceBId);
+    const kind = input.kind?.trim() || (a.kind && a.kind === b.kind ? a.kind : "主题");
+    const now = new Date();
+    const newRoomId = `room-${randomUUID()}`;
+    const firstOpId = `room-merge-${randomUUID()}`;
+    const secondOpId = `room-merge-${randomUUID()}`;
+    this.db.transaction((tx) => {
+      // 新 Room：最小合法 data + 空 brief/stats 骨架（isContextRoomRecord 形态）。
+      tx.insert(contextRooms).values({
+        id: newRoomId, title, kind, lifecycle: "active", deletedAt: null,
+        data: { id: newRoomId, title, kind, brief: "", stats: {}, materials: [], memoryItems: [], actionItems: [], timeline: [], fileItems: [], people: [], graphEdges: [] },
+        position: Math.max(a.position ?? 0, b.position ?? 0) + 1,
+        createdAt: now, updatedAt: now,
+      }).run();
+      tx.insert(rooms).values({ id: newRoomId, title, kind, origin: "user", aliases: [a.title, b.title].filter((name) => normalizeEntityName(name) !== normalizeEntityName(title)).slice(0, 50), createdAt: now, updatedAt: now }).run();
+      // 实体收养：新 Room 继承 A 的实体（roomId 重指向新 Room），B 的实体在
+      // 第二段 merge 的 mergeEntities 中并入。无实体则两源各自并入空 target 跳过。
+      const knowledgeA = tx.select({ entityId: rooms.entityId }).from(rooms).where(eq(rooms.id, a.id)).get();
+      if (knowledgeA?.entityId) {
+        tx.update(rooms).set({ entityId: knowledgeA.entityId, updatedAt: now }).where(eq(rooms.id, newRoomId)).run();
+        tx.update(entities).set({ roomId: newRoomId, updatedAt: now })
+          .where(and(eq(entities.id, knowledgeA.entityId), eq(entities.roomId, a.id))).run();
+      }
+      // 两段 operation 一次性入队（A→新、B→新），链式执行。
+      tx.insert(roomMergeOperations).values([
+        { id: firstOpId, sourceRoomId: a.id, targetRoomId: newRoomId, idempotencyKey: `${input.idempotencyKey}:a`, previewHash: input.previewHash, status: "queued", stage: "queued", progress: 0, impact: preview.impact as unknown as Record<string, unknown>, confirmedAt: now, createdAt: now, updatedAt: now },
+        { id: secondOpId, sourceRoomId: b.id, targetRoomId: newRoomId, idempotencyKey: `${input.idempotencyKey}:b`, previewHash: input.previewHash, status: "queued", stage: "queued", progress: 0, impact: preview.impact as unknown as Record<string, unknown>, confirmedAt: now, createdAt: now, updatedAt: now },
+      ]).run();
+      tx.update(contextRooms).set({ lifecycle: "merging", updatedAt: now }).where(eq(contextRooms.id, a.id)).run();
+      tx.update(rooms).set({ lifecycle: "merging", updatedAt: now }).where(eq(rooms.id, a.id)).run();
+    });
+    // 顺序执行：A 完成后再启动 B（B 的失败恢复/收尾沿用 executeMerge 既有语义）。
+    // runningMerges 的条目在 executeMerge 的 finally 中删除，await 其 promise 即等 A 终态。
+    this.runMerge(firstOpId);
+    await this.runningMerges.get(firstOpId)?.catch(() => undefined);
+    this.runMerge(secondOpId);
+    return this.settleOperation(secondOpId, true);
+  }
+
   /** 等待合并 Promise 终态（上限 30s；超时/不等待时返回当前快照，调用方自行决定后续）。 */
   private async settleOperation(id: string, wait?: boolean): Promise<RoomMergeOperation> {
     const running = this.runningMerges.get(id);

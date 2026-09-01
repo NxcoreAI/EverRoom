@@ -292,6 +292,18 @@ const api: NxcoreDesktopApi = {
     days: (start, end) => invoke('diary:days', start, end),
     day: (date) => invoke('diary:day', date),
   },
+  writingStyle: {
+    profile: () => invoke('writing-style:get'),
+    settings: () => invoke('writing-style:get-settings'),
+    updateSettings: (input) => invoke('writing-style:update-settings', input),
+    userContent: () => invoke('writing-style:get-user-content'),
+    replaceUserContent: (content) => invoke('writing-style:replace-user-content', content),
+    regenerateUserContent: () => invoke('writing-style:regenerate-user-content'),
+    recompute: () => invoke('writing-style:recompute'),
+    backfill: () => invoke('writing-style:backfill'),
+    corpus: () => invoke('writing-style:list-corpus'),
+    setExclusion: (documentId, excluded) => invoke('writing-style:set-exclusion', documentId, excluded),
+  },
   agentSchedules: {
     list: () => invoke('agent-scheduler:list'),
     create: (input) => invoke('agent-scheduler:create', input),
@@ -312,6 +324,10 @@ const api: NxcoreDesktopApi = {
     previewMerge: (sourceRoomId: string, targetRoomId: string) =>
       invokeQuietly('context-rooms:preview-merge', sourceRoomId, targetRoomId),
     startMerge: (input) => invokeQuietly('context-rooms:start-merge', input),
+    previewMergeIntoNew: (sourceAId: string, sourceBId: string) =>
+      invokeQuietly('context-rooms:preview-merge-into-new', sourceAId, sourceBId),
+    startMergeIntoNew: (input: { sourceAId: string; sourceBId: string; title: string; kind?: string; previewHash: string; idempotencyKey: string; wait?: boolean }) =>
+      invokeQuietly('context-rooms:start-merge-into-new', input),
     getMergeOperation: (id: string) => invokeQuietly('context-rooms:get-merge-operation', id),
     retryMerge: (id: string) => invokeQuietly('context-rooms:retry-merge', id),
     cancelMerge: (id: string) => invokeQuietly('context-rooms:cancel-merge', id),

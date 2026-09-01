@@ -1192,5 +1192,8 @@
   "knowledgePending.deferredTopics": "暂不创建的主题",
   "knowledgePending.restoreRecommendation": "恢复推荐",
   "knowledgePending.recommendationRestored": "已恢复推荐",
-  "memory.openLinkedRoom": "打开关联 Room"
+  "memory.openLinkedRoom": "打开关联 Room",
+  "duplicateCenter.newRoomTitle": "新 Room 名称",
+  "duplicateCenter.newRoomTitlePlaceholder": "合并后的新 Room 名称",
+  "duplicateCenter.mergeIntoNew": "合并到新 Room"
 }

@@ -1192,5 +1192,8 @@
   "knowledgePending.deferredTopics": "Deferred topics",
   "knowledgePending.restoreRecommendation": "Restore",
   "knowledgePending.recommendationRestored": "Recommendation restored",
-  "memory.openLinkedRoom": "Open linked room"
+  "memory.openLinkedRoom": "Open linked room",
+  "duplicateCenter.newRoomTitle": "New room title",
+  "duplicateCenter.newRoomTitlePlaceholder": "Name for the merged room",
+  "duplicateCenter.mergeIntoNew": "Merge into new room"
 }
