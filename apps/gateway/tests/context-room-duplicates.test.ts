@@ -438,7 +438,7 @@ describe('RoomDuplicateService', () => {
 
 
   it('migrates agent session room bindings and completes the merge when knowledge rebuild fails', async () => {
-    const { db, duplicates, roomsService, sqlite } = await harness(async () => undefined)
+    const { db, duplicates, roomsService, sqlite } = await harness()
     void db
     roomsService.saveSnapshot({
       rooms: [
@@ -468,6 +468,35 @@ describe('RoomDuplicateService', () => {
     expect(settled).toMatchObject({ status: 'completed', commitReached: true })
     expect(db.select().from(agentSessions).where(eq(agentSessions.id, 'session-src')).get()?.roomId).toBe('room-t')
     expect(db.select().from(contextRooms).where(eq(contextRooms.id, 'room-s')).get()?.lifecycle).toBe('merged')
+    sqlite.close()
+  })
+
+
+  it('stale renderer flushes no longer hard-delete rooms absent from the snapshot', async () => {
+    const { db, duplicates, roomsService, sqlite } = await harness()
+    void duplicates
+    roomsService.saveSnapshot({
+      rooms: [
+        { id: 'room-keep', title: '幸存者', kind: '主题', data: { id: 'room-keep', title: '幸存者' } },
+        { id: 'room-gone', title: '待软删', kind: '主题', data: { id: 'room-gone', title: '待软删' } },
+      ],
+      deletedRooms: [],
+    })
+    // 陈旧渲染端回刷：快照完全没提到 room-keep（旧代码会把它物理删除）。
+    roomsService.saveSnapshot({
+      rooms: [{ id: 'room-gone', title: '待软删', kind: '主题', data: { id: 'room-gone', title: '待软删' } }],
+      deletedRooms: [],
+    })
+    expect(roomsService.getSnapshot().rooms.map((room) => room.id).sort())
+      .toEqual(['room-gone', 'room-keep'])
+    // 显式删除走 deletedRooms 软删通道，仍然有效且可从回收站语义恢复。
+    roomsService.saveSnapshot({
+      rooms: [{ id: 'room-keep', title: '幸存者', kind: '主题', data: { id: 'room-keep', title: '幸存者' } }],
+      deletedRooms: [{ id: 'room-gone', title: '待软删', kind: '主题', data: { id: 'room-gone', title: '待软删' } }],
+    })
+    expect(roomsService.getSnapshot().rooms.map((room) => room.id)).toEqual(['room-keep'])
+    expect(db.select({ deletedAt: contextRooms.deletedAt }).from(contextRooms)
+      .where(eq(contextRooms.id, 'room-gone')).get()?.deletedAt).not.toBeNull()
     sqlite.close()
   })
 
