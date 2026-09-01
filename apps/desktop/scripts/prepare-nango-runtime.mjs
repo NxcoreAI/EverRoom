@@ -201,18 +201,22 @@ const materializeEscapingSymlinks = (directory) => {
 }
 materializeEscapingSymlinks(outputRoot)
 
-// pnpm materialized the `file:` workspace deps as real dirs under
-// packages/node_modules/@nangohq/*. @nangohq/utils computes projectRoot from
-// __filename (../../../..), so those copies shift the "repo root" to
-// packages/node_modules and break every projectRoot-relative resource
-// (migrations, flows.zero.json, ...). Replace them with relative symlinks
-// back to packages/<dir>: Node resolves module realpaths by default, so
-// __filename lands in packages/<dir> and projectRoot matches dev layout.
-for (const name of required) {
-  const { directory } = packageRoots.get(name)
-  const scoped = name.split('/')
-  const nmPath = join(outputRoot, 'packages', 'node_modules', ...scoped)
-  rmSync(nmPath, { recursive: true, force: true })
-  symlinkSync(join('../../', directory), nmPath, 'dir')
+// Windows installers materialize directory symlinks as regular directories.
+// Make the copied utils package resolve the runtime root directly there;
+// macOS keeps the existing symlink layout and therefore its current behavior.
+if (process.platform === 'win32') {
+  const pathModule = join(outputRoot, 'packages', 'node_modules', '@nangohq', 'utils', 'dist', 'path.js')
+  const source = readFileSync(pathModule, 'utf8')
+  const patched = source.replace("path.join(__filename, '../../../..')", "path.join(__filename, '../../../../../..')")
+  if (patched === source) throw new Error(`Unable to patch packaged Nango projectRoot: ${pathModule}`)
+  writeFileSync(pathModule, patched)
+} else {
+  for (const name of required) {
+    const { directory } = packageRoots.get(name)
+    const scoped = name.split('/')
+    const nmPath = join(outputRoot, 'packages', 'node_modules', ...scoped)
+    rmSync(nmPath, { recursive: true, force: true })
+    symlinkSync(join('../../', directory), nmPath, 'dir')
+  }
 }
 console.log(`Prepared Nango runtime at ${outputRoot}`)
