@@ -621,19 +621,30 @@ export function contextRoomRoutes(
         if (!body.selectedText.trim()) {
           return reply.code(400).send({ error: "context_room_selection_required" });
         }
-        const invocationId = await roomAgent.dispatchDetached({
-          task: "selection-rewrite",
-          taskInput: {
-            selectedText: body.selectedText,
-            ...(body.instruction?.trim() ? { instruction: body.instruction.trim() } : {}),
-            ...(body.contextBefore?.trim() ? { contextBefore: body.contextBefore } : {}),
-            ...(body.contextAfter?.trim() ? { contextAfter: body.contextAfter } : {}),
-            ...(body.blockType?.trim() ? { blockType: body.blockType } : {}),
-            ...(body.roomId ? { roomId: body.roomId } : {}),
-            ...(body.documentName ? { documentName: body.documentName } : {}),
-            ...(body.responseLanguage ? { responseLanguage: body.responseLanguage } : {}),
-          },
-        });
+        // 框架无排队（方案 §5.1）：并发限额与 schema 校验失败是可诊断的硬错误，
+        // 直接冒 500 会在桌面端变成笼统的 "An internal gateway error occurred"，这里显式透出错误码。
+        let invocationId: string;
+        try {
+          invocationId = await roomAgent.dispatchDetached({
+            task: "selection-rewrite",
+            taskInput: {
+              selectedText: body.selectedText,
+              ...(body.instruction?.trim() ? { instruction: body.instruction.trim() } : {}),
+              ...(body.contextBefore?.trim() ? { contextBefore: body.contextBefore } : {}),
+              ...(body.contextAfter?.trim() ? { contextAfter: body.contextAfter } : {}),
+              ...(body.blockType?.trim() ? { blockType: body.blockType } : {}),
+              ...(body.roomId ? { roomId: body.roomId } : {}),
+              ...(body.documentName ? { documentName: body.documentName } : {}),
+              ...(body.responseLanguage ? { responseLanguage: body.responseLanguage } : {}),
+            },
+          });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          request.log.warn({ err: message }, "selection rewrite dispatch rejected");
+          const retryable = message === "subagent_concurrency_limit"
+            || message === "subagent_global_concurrency_limit";
+          return reply.code(retryable ? 503 : 500).send({ error: message });
+        }
         return { invocationId };
       },
     );
