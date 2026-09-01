@@ -738,4 +738,13 @@ describe("LLM 瞬时错误分类（router 重试 vs 死信）", () => {
     )).toBe(false);
     expect(KnowledgeLlm.isTruncated(new Error("finish_reason=length"))).toBe(false);
   });
+
+  it("isTimedOut：调用超时判定为瞬时（退避重试）", () => {
+    expect(KnowledgeLlm.isTimedOut(
+      new KnowledgeLlmError("knowledge Agent invocation failed: Agent invocation timed out: Knowledge internal workflow"),
+    )).toBe(true);
+    expect(KnowledgeLlm.isTimedOut(
+      new KnowledgeLlmError("knowledge provider returned no content (finish_reason=length)"),
+    )).toBe(false);
+  });
 })

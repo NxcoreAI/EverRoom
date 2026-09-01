@@ -3,7 +3,7 @@
   "properties": {
     "task": {
       "type": "string",
-      "enum": ["room-enrich", "room-overview", "brief-refresh", "selection-rewrite", "material-analysis"],
+      "enum": ["room-enrich", "room-overview", "brief-refresh", "selection-rewrite"],
       "description": "The room task to execute."
     },
     "title": {
@@ -22,7 +22,7 @@
       "type": "string",
       "minLength": 1,
       "maxLength": 128,
-      "description": "Target room id, required for room-overview, brief-refresh and material-analysis."
+      "description": "Target room id, required for room-overview and brief-refresh."
     },
     "roomTitle": {
       "type": "string",
@@ -57,7 +57,7 @@
     "instruction": {
       "type": "string",
       "maxLength": 2000,
-      "description": "Rewrite instruction for selection-rewrite, or analysis focus for material-analysis."
+      "description": "Rewrite instruction for selection-rewrite."
     },
     "blockType": {
       "type": "string",
@@ -72,6 +72,11 @@
       "type": "string",
       "maxLength": 35,
       "description": "BCP-47 language tag for natural-language output."
+    },
+    "writingStyle": {
+      "type": "string",
+      "maxLength": 2000,
+      "description": "Trusted writing-style guidance section injected by the gateway for selection-rewrite; the user instruction always takes priority."
     },
     "outputContract": {
       "type": "object",

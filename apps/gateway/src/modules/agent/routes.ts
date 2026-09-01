@@ -392,9 +392,11 @@ export function agentRoutes(
             return reply.code(409).send({ error: "replace_run_active", message: "An active Agent run cannot be regenerated" });
           }
           if (error instanceof Error && error.message === "agent_room_not_available") {
+            const roomId = (error as Error & { roomId?: string }).roomId;
             return reply.code(409).send({
               error: "room_not_available",
               message: "The selected Context Room is no longer available",
+              ...(roomId ? { roomId } : {}),
             });
           }
           throw error;

@@ -180,6 +180,58 @@ export function contextRoomRoutes(
       },
     );
 
+    // 新建式合并（2026-09-01 语义变更）：新建 Room 收编两个旧 Room，旧的双双退役。
+    app.post(
+      "/v1/context-rooms/merge-preview-new",
+      {
+        schema: {
+          tags: ["context-rooms"],
+          body: Type.Object({
+            sourceAId: Type.String({ minLength: 1, maxLength: 128 }),
+            sourceBId: Type.String({ minLength: 1, maxLength: 128 }),
+          }),
+        },
+      },
+      async (request, reply) => duplicates
+        ? duplicates.previewMergeIntoNew(request.body.sourceAId, request.body.sourceBId)
+        : reply.code(503).send({ error: "room_duplicate_service_unavailable" }),
+    );
+
+    app.post(
+      "/v1/context-rooms/merge-operations-new",
+      {
+        schema: {
+          tags: ["context-rooms"],
+          body: Type.Object({
+            sourceAId: Type.String({ minLength: 1, maxLength: 128 }),
+            sourceBId: Type.String({ minLength: 1, maxLength: 128 }),
+            title: Type.String({ minLength: 1, maxLength: 120 }),
+            kind: Type.Optional(Type.String({ minLength: 1, maxLength: 24 })),
+            previewHash: Type.String({ minLength: 64, maxLength: 64 }),
+            idempotencyKey: Type.String({ minLength: 1, maxLength: 128 }),
+            wait: Type.Optional(Type.Boolean()),
+          }),
+        },
+      },
+      async (request, reply) => {
+        if (!duplicates) return reply.code(503).send({ error: "room_duplicate_service_unavailable" });
+        try {
+          return await duplicates.startMergeIntoNew(request.body);
+        } catch (error) {
+          if (error instanceof Error && error.message === "context_room_merge_busy") {
+            return reply.code(409).send({ error: "room_merge_busy", message: "A merge is already in progress for these rooms" });
+          }
+          if (error instanceof Error && error.message === "context_room_merge_preview_stale") {
+            return reply.code(409).send({ error: "preview_stale", message: "Room contents changed since the preview" });
+          }
+          if (error instanceof Error && error.message === "context_room_merge_title_required") {
+            return reply.code(400).send({ error: "invalid_title", message: "New room title cannot be blank" });
+          }
+          throw error;
+        }
+      },
+    );
+
     app.post(
       "/v1/context-rooms/merge-operations",
       {
@@ -322,6 +374,31 @@ export function contextRoomRoutes(
         } catch (error) {
           if (error instanceof Error && error.message === "context_room_not_found") {
             return reply.code(404).send({ error: error.message });
+          }
+          throw error;
+        }
+      },
+    );
+
+    app.get(
+      "/v1/context-rooms/:roomId/mails/:sourceId",
+      {
+        schema: {
+          tags: ["context-rooms"],
+          params: Type.Object({
+            roomId: Type.String({ minLength: 1, maxLength: 128 }),
+            sourceId: Type.String({ minLength: 1, maxLength: 256 }),
+          }),
+        },
+      },
+      async (request, reply) => {
+        if (!overviews) return reply.code(503).send({ error: "room_overview_service_unavailable" });
+        try {
+          return overviews.readRoomMail(request.params.roomId, request.params.sourceId);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (message === "context_room_not_found" || message === "mail_not_in_room" || message === "mail_not_found") {
+            return reply.code(404).send({ error: message });
           }
           throw error;
         }
@@ -544,19 +621,30 @@ export function contextRoomRoutes(
         if (!body.selectedText.trim()) {
           return reply.code(400).send({ error: "context_room_selection_required" });
         }
-        const invocationId = await roomAgent.dispatchDetached({
-          task: "selection-rewrite",
-          taskInput: {
-            selectedText: body.selectedText,
-            ...(body.instruction?.trim() ? { instruction: body.instruction.trim() } : {}),
-            ...(body.contextBefore?.trim() ? { contextBefore: body.contextBefore } : {}),
-            ...(body.contextAfter?.trim() ? { contextAfter: body.contextAfter } : {}),
-            ...(body.blockType?.trim() ? { blockType: body.blockType } : {}),
-            ...(body.roomId ? { roomId: body.roomId } : {}),
-            ...(body.documentName ? { documentName: body.documentName } : {}),
-            ...(body.responseLanguage ? { responseLanguage: body.responseLanguage } : {}),
-          },
-        });
+        // 框架无排队（方案 §5.1）：并发限额与 schema 校验失败是可诊断的硬错误，
+        // 直接冒 500 会在桌面端变成笼统的 "An internal gateway error occurred"，这里显式透出错误码。
+        let invocationId: string;
+        try {
+          invocationId = await roomAgent.dispatchDetached({
+            task: "selection-rewrite",
+            taskInput: {
+              selectedText: body.selectedText,
+              ...(body.instruction?.trim() ? { instruction: body.instruction.trim() } : {}),
+              ...(body.contextBefore?.trim() ? { contextBefore: body.contextBefore } : {}),
+              ...(body.contextAfter?.trim() ? { contextAfter: body.contextAfter } : {}),
+              ...(body.blockType?.trim() ? { blockType: body.blockType } : {}),
+              ...(body.roomId ? { roomId: body.roomId } : {}),
+              ...(body.documentName ? { documentName: body.documentName } : {}),
+              ...(body.responseLanguage ? { responseLanguage: body.responseLanguage } : {}),
+            },
+          });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          request.log.warn({ err: message }, "selection rewrite dispatch rejected");
+          const retryable = message === "subagent_concurrency_limit"
+            || message === "subagent_global_concurrency_limit";
+          return reply.code(retryable ? 503 : 500).send({ error: message });
+        }
         return { invocationId };
       },
     );

@@ -514,6 +514,21 @@ export interface RoomMail {
   provider?: string | null;
 }
 
+/** 单封连接器邮件详情（邮件面板下半区）：正文来自域行 bodyText 或路由快照 markdown。 */
+export interface RoomMailDetail {
+  sourceId: string;
+  subject: string;
+  senderName: string | null;
+  senderAddress: string | null;
+  sentAt: string | null;
+  hasAttachments: boolean;
+  provider: string | null;
+  /** domain = 连接器域行；snapshot = 路由快照兜底（发件地址/附件不可用）。 */
+  origin: "domain" | "snapshot";
+  /** 完整正文（网关截断 60K 字符）。 */
+  body: string;
+}
+
 export interface RoomContextCorrection {
   id: string;
   roomId: string;

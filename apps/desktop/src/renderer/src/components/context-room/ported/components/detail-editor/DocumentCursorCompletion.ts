@@ -19,6 +19,7 @@ import {
   type DocumentCursorCompletionSuggestion,
   validatedDocumentCursorReplacement,
 } from './documentCursorCompletionAgent'
+import { loadCompletionWritingStyleBlock } from './writingStyleInjection'
 import {
   documentCursorCompletionSnippet,
   nextDocumentCursorCompletionRequestId,
@@ -948,6 +949,7 @@ export function useDocumentCursorCompletion({
       }, {
         signal: controller.signal,
         responseLanguage: locale,
+        resolveWritingStyleBlock: loadCompletionWritingStyleBlock,
         ...(effectiveMode === 'paragraph' ? { timeoutMs: PARAGRAPH_STREAM_TIMEOUT_MS } : {}),
         channel: completionChannel ?? undefined,
         onSuggestion: (suggestion) => {

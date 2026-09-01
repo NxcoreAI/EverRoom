@@ -1,5 +1,5 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { Clock3, MoreVertical, Pencil, Trash2 } from 'lucide-react';
+import { Clock3, GitMerge, MoreVertical, Pencil, Trash2 } from 'lucide-react';
 import { useLocale } from '../../../../i18n/LocaleContext';
 
 import type { ContextRoomRecord } from '../types';
@@ -12,11 +12,13 @@ export function RoomCard({
   onOpen,
   onRename,
   onDelete,
+  onMerge,
 }: {
   room: ContextRoomRecord;
   onOpen: (roomId: string) => void;
   onRename: () => void;
   onDelete: () => void;
+  onMerge?: () => void;
 }) {
   const { t } = useLocale();
   const Icon = roomKindIcon(room.kind);
@@ -66,6 +68,12 @@ export function RoomCard({
               <Pencil aria-hidden="true" />
               {t('contextRoom:roomCard.rename')}
             </DropdownMenu.Item>
+            {onMerge ? (
+              <DropdownMenu.Item onSelect={onMerge}>
+                <GitMerge aria-hidden="true" />
+                {t('contextRoom:roomCard.mergeIntoNewRoom')}
+              </DropdownMenu.Item>
+            ) : null}
             <DropdownMenu.Item className="danger" onSelect={onDelete}>
               <Trash2 aria-hidden="true" />
               {t('contextRoom:roomCard.delete')}

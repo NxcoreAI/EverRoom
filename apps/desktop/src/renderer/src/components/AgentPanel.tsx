@@ -347,11 +347,14 @@ export function AgentPanel({
           status: 'processing' as const,
         }))
       }
+      // selectedRoomId 只在 Room 仍存在时提交：Room 已合并/删除/同步丢失时
+      // 提交死 id 会被网关 409 拒绝（room_not_available），转而以全局会话运行。
+      const validRoomId = roomId && rooms.some((room) => room.id === roomId) ? roomId : undefined
       if (externalConversation) {
         await session.sendPrompt(
           submittedPrompt || t('surface:agentComposer.analyzeUploadedFiles'),
           submittedContext,
-          roomId ?? undefined,
+          validRoomId,
           activeDocumentContext,
           replaceRunId,
           attachments,
@@ -362,7 +365,7 @@ export function AgentPanel({
         await session.sendPrompt(
           submittedPrompt || t('surface:agentComposer.analyzeUploadedFiles'),
           submittedContext,
-          roomId ?? undefined,
+          validRoomId,
           activeDocumentContext,
           replaceRunId,
           attachments,

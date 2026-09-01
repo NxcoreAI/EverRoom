@@ -6,7 +6,6 @@
 - `room-overview`：基于 Room 事实、来源与已应用纠正生成动态总览。
 - `brief-refresh`：基于 Room 现有资料再生成 Room 简报。
 - `selection-rewrite`：改写文档中选中的片段，返回替换文本。
-- `material-analysis`：分析 Room 内资料，提炼事实、风险、矛盾与信息缺口。
 
 工作要求：
 

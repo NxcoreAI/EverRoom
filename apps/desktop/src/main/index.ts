@@ -64,6 +64,7 @@ import { ConnectorSyncGatewayBridge } from './gateway/connector-sync-gateway-bri
 import { RealityGatewayBridge } from './gateway/reality-gateway-bridge'
 import { PerceptionGatewayBridge } from './gateway/perception-gateway-bridge'
 import { DiaryGatewayBridge } from './gateway/diary-gateway-bridge'
+import { WritingStyleGatewayBridge } from './gateway/writing-style-gateway-bridge'
 import { AgentSchedulerGatewayBridge } from './gateway/agent-scheduler-gateway-bridge'
 import { ConnectorGatewayBridge } from './gateway/connector-gateway-bridge'
 import { RecordingStore } from './recording/recording-store'
@@ -290,6 +291,8 @@ const CONTEXT_ROOM_CHANNELS = {
   listDuplicateCandidates: 'context-rooms:list-duplicate-candidates',
   updateDuplicateCandidate: 'context-rooms:update-duplicate-candidate',
   previewMerge: 'context-rooms:preview-merge',
+  previewMergeIntoNew: 'context-rooms:preview-merge-into-new',
+  startMergeIntoNew: 'context-rooms:start-merge-into-new',
   startMerge: 'context-rooms:start-merge',
   getMergeOperation: 'context-rooms:get-merge-operation',
   retryMerge: 'context-rooms:retry-merge',
@@ -301,6 +304,7 @@ const CONTEXT_ROOM_CHANNELS = {
   overview: 'context-rooms:overview',
   refreshOverview: 'context-rooms:refresh-overview',
   listMails: 'context-rooms:list-mails',
+  readMail: 'context-rooms:read-mail',
   roomEntities: 'context-rooms:room-entities',
   completeLocalAction: 'context-rooms:complete-local-action',
 } as const
@@ -554,6 +558,19 @@ const DIARY_CHANNELS = {
   day: 'diary:day',
 } as const
 
+const WRITING_STYLE_CHANNELS = {
+  profile: 'writing-style:get',
+  settings: 'writing-style:get-settings',
+  updateSettings: 'writing-style:update-settings',
+  userContent: 'writing-style:get-user-content',
+  replaceUserContent: 'writing-style:replace-user-content',
+  regenerateUserContent: 'writing-style:regenerate-user-content',
+  recompute: 'writing-style:recompute',
+  backfill: 'writing-style:backfill',
+  corpus: 'writing-style:list-corpus',
+  setExclusion: 'writing-style:set-exclusion',
+} as const
+
 const AGENT_SCHEDULER_CHANNELS = {
   list: 'agent-scheduler:list',
   create: 'agent-scheduler:create',
@@ -622,6 +639,7 @@ function installIpcRouters(): void {
     PERCEPTION_CHANNELS,
     DIARY_CHANNELS,
     AGENT_SCHEDULER_CHANNELS,
+    WRITING_STYLE_CHANNELS,
   ]
   for (const group of channelGroups) {
     for (const channel of Object.values(group)) {
@@ -683,6 +701,7 @@ let documentGatewayBridge: DocumentGatewayBridge | null = null
 let realityGatewayBridge: RealityGatewayBridge | null = null
 let perceptionGatewayBridge: PerceptionGatewayBridge | null = null
 let diaryGatewayBridge: DiaryGatewayBridge | null = null
+let writingStyleGatewayBridge: WritingStyleGatewayBridge | null = null
 let agentSchedulerGatewayBridge: AgentSchedulerGatewayBridge | null = null
 let connectorGatewayBridge: ConnectorGatewayBridge | null = null
 let migrationCoordinator: MigrationCoordinator | null = null
@@ -1598,6 +1617,8 @@ function registerContextRoomHandlers(bridge: ContextRoomGatewayBridge): void {
   handle(CONTEXT_ROOM_CHANNELS.listDuplicateCandidates, (_event, status) => bridge.listDuplicateCandidates(status))
   handle(CONTEXT_ROOM_CHANNELS.updateDuplicateCandidate, (_event, id, status) => bridge.updateDuplicateCandidate(id, status))
   handle(CONTEXT_ROOM_CHANNELS.previewMerge, (_event, sourceRoomId, targetRoomId) => bridge.previewMerge(sourceRoomId, targetRoomId))
+  handle(CONTEXT_ROOM_CHANNELS.previewMergeIntoNew, (_event, sourceAId: string, sourceBId: string) => bridge.previewMergeIntoNew(sourceAId, sourceBId))
+  handle(CONTEXT_ROOM_CHANNELS.startMergeIntoNew, (_event, input: Parameters<typeof bridge.startMergeIntoNew>[0]) => bridge.startMergeIntoNew(input))
   handle(CONTEXT_ROOM_CHANNELS.startMerge, (_event, input) => bridge.startMerge(input))
   handle(CONTEXT_ROOM_CHANNELS.getMergeOperation, (_event, id) => bridge.getMergeOperation(id))
   handle(CONTEXT_ROOM_CHANNELS.retryMerge, (_event, id) => bridge.retryMerge(id))
@@ -1611,6 +1632,7 @@ function registerContextRoomHandlers(bridge: ContextRoomGatewayBridge): void {
   handle(CONTEXT_ROOM_CHANNELS.overview, (_event, roomId) => bridge.overview(roomId))
   handle(CONTEXT_ROOM_CHANNELS.refreshOverview, (_event, roomId) => bridge.refreshOverview(roomId))
   handle(CONTEXT_ROOM_CHANNELS.listMails, (_event, roomId) => bridge.listMails(roomId))
+  handle(CONTEXT_ROOM_CHANNELS.readMail, (_event, roomId: string, sourceId: string) => bridge.readMail(roomId, sourceId))
   handle(CONTEXT_ROOM_CHANNELS.roomEntities, (_event, roomId) => bridge.roomEntities(roomId))
   handle(CONTEXT_ROOM_CHANNELS.completeLocalAction, (_event, roomId: string, actionId: string, completed?: boolean) =>
     bridge.completeLocalAction(roomId, actionId, completed !== false))
@@ -2421,6 +2443,51 @@ function registerScreenCaptureHandlers(): void {
   })
 }
 
+function registerWritingStyleHandlers(): void {
+  handle(WRITING_STYLE_CHANNELS.profile, () => {
+    if (!writingStyleGatewayBridge) throw new Error('写作风格服务尚未就绪。')
+    return writingStyleGatewayBridge.profile()
+  })
+  handle(WRITING_STYLE_CHANNELS.settings, () => {
+    if (!writingStyleGatewayBridge) throw new Error('写作风格服务尚未就绪。')
+    return writingStyleGatewayBridge.settings()
+  })
+  handle(WRITING_STYLE_CHANNELS.updateSettings, (_event, input: unknown) => {
+    if (!writingStyleGatewayBridge || !input || typeof input !== 'object') throw new Error('写作风格设置参数无效。')
+    return writingStyleGatewayBridge.updateSettings(input as { completionEnabled?: boolean; generationEnabled?: boolean })
+  })
+  handle(WRITING_STYLE_CHANNELS.userContent, () => {
+    if (!writingStyleGatewayBridge) throw new Error('写作风格服务尚未就绪。')
+    return writingStyleGatewayBridge.userContent()
+  })
+  handle(WRITING_STYLE_CHANNELS.replaceUserContent, (_event, content: unknown) => {
+    if (!writingStyleGatewayBridge || typeof content !== 'string') throw new Error('写作风格正文参数无效。')
+    return writingStyleGatewayBridge.replaceUserContent(content)
+  })
+  handle(WRITING_STYLE_CHANNELS.regenerateUserContent, () => {
+    if (!writingStyleGatewayBridge) throw new Error('写作风格服务尚未就绪。')
+    return writingStyleGatewayBridge.regenerateUserContent()
+  })
+  handle(WRITING_STYLE_CHANNELS.recompute, () => {
+    if (!writingStyleGatewayBridge) throw new Error('写作风格服务尚未就绪。')
+    return writingStyleGatewayBridge.recompute()
+  })
+  handle(WRITING_STYLE_CHANNELS.backfill, () => {
+    if (!writingStyleGatewayBridge) throw new Error('写作风格服务尚未就绪。')
+    return writingStyleGatewayBridge.backfill()
+  })
+  handle(WRITING_STYLE_CHANNELS.corpus, () => {
+    if (!writingStyleGatewayBridge) throw new Error('写作风格服务尚未就绪。')
+    return writingStyleGatewayBridge.corpus()
+  })
+  handle(WRITING_STYLE_CHANNELS.setExclusion, (_event, documentId: unknown, excluded: unknown) => {
+    if (!writingStyleGatewayBridge || typeof documentId !== 'string' || typeof excluded !== 'boolean') {
+      throw new Error('写作风格语料参数无效。')
+    }
+    return writingStyleGatewayBridge.setExclusion(documentId, excluded)
+  })
+}
+
 function registerPerceptionAndDiaryHandlers(): void {
   handle(PERCEPTION_CHANNELS.settings, () => {
     if (!perceptionGatewayBridge) throw new Error('现实感知服务尚未就绪。')
@@ -2819,6 +2886,8 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       .then((snapshot) => syncManagedChildProcesses(snapshot))
       .catch((error) => console.warn('[managed-children] startup runtime-config sync skipped:', error))
     diaryGatewayBridge = new DiaryGatewayBridge(gatewaySupervisor)
+    writingStyleGatewayBridge = new WritingStyleGatewayBridge(gatewaySupervisor)
+    registerWritingStyleHandlers()
     agentSchedulerGatewayBridge = new AgentSchedulerGatewayBridge(gatewaySupervisor)
     registerPerceptionAndDiaryHandlers()
     const perceptionSettings = await perceptionGatewayBridge.getSettings().catch(() => null)

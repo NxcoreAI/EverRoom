@@ -68,6 +68,61 @@ function runAdditiveMigrationIdempotently(
 }
 
 /**
+ * writing_style_user_content 在未发布的 0044 迭代中新增 user_edited /
+ * generated_from_cursor 两列。0044 以 CREATE TABLE IF NOT EXISTS 幂等重建，
+ * 已按旧形态建过表的开发库不会再收到 ALTER（Drizzle 视 CREATE 为已应用）。
+ * 按 PRAGMA 探测补列，语义与其他 additive 修复一致。
+ */
+function repairWritingStyleUserContentColumns(sqlite: Database.Database): void {
+  const hasTable = Boolean(sqlite.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'writing_style_user_content' LIMIT 1",
+  ).get());
+  if (!hasTable) return;
+  const columns = new Set(
+    (sqlite.prepare("PRAGMA table_info(writing_style_user_content)").all() as Array<{ name: string }>).map((row) => row.name),
+  );
+  if (!columns.has("user_edited")) {
+    sqlite.exec('ALTER TABLE `writing_style_user_content` ADD `user_edited` integer DEFAULT false NOT NULL;');
+  }
+  if (!columns.has("generated_from_cursor")) {
+    sqlite.exec('ALTER TABLE `writing_style_user_content` ADD `generated_from_cursor` text;');
+  }
+}
+
+/**
+ * 单一画像模型之前的 writing_style_user_directives 表：早期开发库可能残留
+ * 用户存过的指令。有数据且画像文本为空时迁移为画像正文（用户手写 → 视为接管），
+ * 然后 DROP 旧表。幂等：表不存在或已迁移即 no-op。
+ */
+function migrateLegacyWritingStyleDirectives(sqlite: Database.Database): void {
+  const hasLegacyTable = Boolean(sqlite.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'writing_style_user_directives' LIMIT 1",
+  ).get());
+  if (!hasLegacyTable) return;
+  const directives = sqlite.prepare(
+    "SELECT content FROM writing_style_user_directives WHERE owner_id = 'local-user' AND enabled = 1 ORDER BY sort_order ASC, created_at ASC",
+  ).all() as Array<{ content: string }>;
+  const migrated = directives.map((row) => row.content.trim()).filter((content) => content.length > 0);
+  const hasContentTable = Boolean(sqlite.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'writing_style_user_content' LIMIT 1",
+  ).get());
+  if (migrated.length > 0 && hasContentTable) {
+    const existing = sqlite.prepare(
+      "SELECT content FROM writing_style_user_content WHERE owner_id = 'local-user' LIMIT 1",
+    ).get() as { content: string } | undefined;
+    if (!existing || existing.content.trim().length === 0) {
+      const content = migrated.join("\n").slice(0, 2_000);
+      sqlite.prepare(`
+        INSERT INTO writing_style_user_content (owner_id, content, user_edited, updated_at)
+        VALUES ('local-user', ?, 1, ?)
+        ON CONFLICT(owner_id) DO UPDATE SET content = excluded.content, user_edited = 1, updated_at = excluded.updated_at
+      `).run(content, Date.now());
+    }
+  }
+  sqlite.exec("DROP TABLE IF EXISTS writing_style_user_directives;");
+}
+
+/**
  * The connector branch shipped migrations 0010-0012 with later timestamps than
  * the main branch's document migrations. On an upgraded install Drizzle would
  * therefore skip the document/knowledge migrations and only retry 0015. Move
@@ -507,6 +562,7 @@ export function createDatabase(databasePath: string, migrationsDir: string): Dat
   adoptAlreadyAppliedLateMigrations(sqlite, migrationsDir);
   adoptPreMergeContextRoomMigrations(sqlite, migrationsDir);
   repairContextRoomSchema(sqlite);
+  repairWritingStyleUserContentColumns(sqlite);
   // Compatibility repairs may create file_entries from the current schema,
   // including source_path, before the canonical additive migration runs.
   // Apply/record it idempotently so Drizzle never repeats ADD COLUMN.
@@ -524,6 +580,9 @@ export function createDatabase(databasePath: string, migrationsDir: string): Dat
   }
   const db = drizzle(sqlite, { schema });
   migrate(db, { migrationsFolder: migrationsDir });
+  // 指令表迁移须在 migrate 之后：老库的 writing_style_user_content 由
+  // migrate 创建，先迁移会把旧指令丢进不存在的表。
+  migrateLegacyWritingStyleDirectives(sqlite);
   sqlite.exec("CREATE INDEX IF NOT EXISTS jobs_type_status_created_idx ON jobs (type, status, created_at)");
   // Preserve canonical migration markers when a pre-release branch inserted
   // later timestamps before the main branch was adopted.

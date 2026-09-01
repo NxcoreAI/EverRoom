@@ -850,6 +850,18 @@ export interface NxcoreDesktopApi {
     days(start: string, end: string): Promise<DiaryDayDetails['day'][]>
     day(date: string): Promise<DiaryDayDetails | null>
   }
+  writingStyle: {
+    profile(): Promise<import('./writing-style').WritingStyleProfileDto>
+    settings(): Promise<import('./writing-style').WritingStyleSettingsDto>
+    updateSettings(input: Partial<Pick<import('./writing-style').WritingStyleSettingsDto, 'completionEnabled' | 'generationEnabled'>>): Promise<import('./writing-style').WritingStyleSettingsDto>
+    userContent(): Promise<import('./writing-style').WritingStyleUserContentDto>
+    replaceUserContent(content: string): Promise<import('./writing-style').WritingStyleUserContentDto>
+    regenerateUserContent(): Promise<import('./writing-style').WritingStyleUserContentDto>
+    recompute(): Promise<{ queuedDocuments: number }>
+    backfill(): Promise<{ queuedDocuments: number }>
+    corpus(): Promise<{ documents: Array<import('./writing-style').WritingStyleCorpusEntryDto> }>
+    setExclusion(documentId: string, excluded: boolean): Promise<{ ok: boolean }>
+  }
   agentSchedules: {
     list(): Promise<AgentScheduledTask[]>
     create(input: { agentId: string; name: string; description?: string; prompt: string; localTime?: string; timezone?: string; enabled?: boolean }): Promise<AgentScheduledTask>
@@ -865,6 +877,8 @@ export interface NxcoreDesktopApi {
     listDuplicateCandidates(status?: RoomDuplicateCandidateStatus): Promise<{ items: RoomDuplicateCandidate[] }>
     updateDuplicateCandidate(id: string, status: 'related' | 'distinct'): Promise<RoomDuplicateCandidate>
     previewMerge(sourceRoomId: string, targetRoomId: string): Promise<RoomMergePreview>
+    previewMergeIntoNew(sourceAId: string, sourceBId: string): Promise<RoomMergePreview>
+    startMergeIntoNew(input: { sourceAId: string; sourceBId: string; title: string; kind?: string; previewHash: string; idempotencyKey: string; wait?: boolean }): Promise<RoomMergeOperation>
     startMerge(input: { sourceRoomId: string; targetRoomId: string; previewHash: string; idempotencyKey: string; wait?: boolean }): Promise<RoomMergeOperation>
     getMergeOperation(id: string): Promise<RoomMergeOperation>
     retryMerge(id: string): Promise<RoomMergeOperation>
@@ -876,6 +890,7 @@ export interface NxcoreDesktopApi {
     overview(roomId: string): Promise<RoomOverviewProjection>
     refreshOverview(roomId: string): Promise<RoomOverviewProjection>
     listMails(roomId: string): Promise<{ items: RoomMail[] }>
+    readMail(roomId: string, sourceId: string): Promise<import('@nxcore/agent-contract').RoomMailDetail>
     roomEntities(roomId: string): Promise<RoomAppliedEntitiesResult>
     completeLocalAction(roomId: string, actionId: string, completed?: boolean): Promise<RoomLocalActionResult>
   }

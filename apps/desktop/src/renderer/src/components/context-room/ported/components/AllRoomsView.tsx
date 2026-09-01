@@ -15,6 +15,7 @@ export function AllRoomsView({
   onRenameRoom,
   onDeleteRoom,
   onRestoreRoom,
+  onManualMerge,
 }: {
   rooms: ContextRoomRecord[]
   onBack: () => void
@@ -22,6 +23,8 @@ export function AllRoomsView({
   onRenameRoom: (roomId: string, name: string) => void
   onDeleteRoom: (roomId: string) => void
   onRestoreRoom: (roomId: string) => void
+  /** 手动合并（选择与哪个 Room 合并）：由 PortedContextRoom 提供弹窗宿主。 */
+  onManualMerge?: (room: ContextRoomRecord) => void
 }) {
   const { t } = useLocale()
   const scrollRootRef = useRef<HTMLElement>(null)
@@ -93,6 +96,7 @@ export function AllRoomsView({
                   onOpen={onOpenDetail}
                   onRename={() => setRenameRoom(room)}
                   onDelete={() => setDeleteRoom(room)}
+                  onMerge={onManualMerge ? () => onManualMerge(room) : undefined}
                 />
               ))}
               {!filteredRooms.length ? (

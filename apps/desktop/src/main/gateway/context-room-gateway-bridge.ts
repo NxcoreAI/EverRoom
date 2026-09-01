@@ -12,6 +12,7 @@ import type {
   RoomMergeOperation,
   RoomMergePreview,
   RoomMail,
+  RoomMailDetail,
   SaveContextRoomSnapshotInput,
   SubagentInvocation,
 } from '@nxcore/agent-contract'
@@ -58,6 +59,15 @@ export class ContextRoomGatewayBridge {
     return this.request('/v1/context-rooms/merge-preview', {
       method: 'POST', body: JSON.stringify({ sourceRoomId, targetRoomId }),
     })
+  }
+
+  /** 新建式合并：新建 Room 收编两个旧 Room（wait 默认 true，请求内等待终态）。 */
+  previewMergeIntoNew(sourceAId: string, sourceBId: string): Promise<RoomMergePreview> {
+    return this.request('/v1/context-rooms/merge-preview-new', { method: 'POST', body: JSON.stringify({ sourceAId, sourceBId }) })
+  }
+
+  startMergeIntoNew(input: { sourceAId: string; sourceBId: string; title: string; kind?: string; previewHash: string; idempotencyKey: string; wait?: boolean }): Promise<RoomMergeOperation> {
+    return this.request('/v1/context-rooms/merge-operations-new', { method: 'POST', body: JSON.stringify({ ...input, wait: input.wait ?? true }) })
   }
 
   startMerge(input: { sourceRoomId: string; targetRoomId: string; previewHash: string; idempotencyKey: string; wait?: boolean }): Promise<RoomMergeOperation> {
@@ -113,6 +123,11 @@ export class ContextRoomGatewayBridge {
   /** Room 邮箱面板的连接器邮件清单（sentAt 倒序，截 500）。 */
   listMails(roomId: string): Promise<{ items: RoomMail[] }> {
     return this.request(`/v1/context-rooms/${encodeURIComponent(roomId)}/mails`)
+  }
+
+  /** 单封连接器邮件详情（面板下半区，含完整正文）。 */
+  readMail(roomId: string, sourceId: string): Promise<RoomMailDetail> {
+    return this.request(`/v1/context-rooms/${encodeURIComponent(roomId)}/mails/${encodeURIComponent(sourceId)}`)
   }
 
   refreshOverview(roomId: string): Promise<RoomOverviewProjection> {

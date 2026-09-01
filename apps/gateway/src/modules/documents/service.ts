@@ -43,6 +43,7 @@ import {
   type AtomicDocumentCommitInput,
 } from "./core/index.js";
 import { agentDocumentMarkdown, sanitizeAgentDocumentTables } from "./agent-markdown.js";
+import type { SelectionRewriteContentResolver } from "./capabilities/selection-rewrite-content.js";
 
 export { DocumentServiceError } from "./errors.js";
 
@@ -219,6 +220,14 @@ export class DocumentService {
   private readonly queryService: DocumentQueryService;
   private readonly lifecycleService: DocumentLifecycleService;
   private readonly yjsHistory: YjsHistoryService;
+
+  /**
+   * 改写信任收口（agent-architecture-optimization-plan §3）：
+   * document.selection-rewrite 携带 invocationId 时的内容解析器。
+   * 由 create-server 装配注入（orchestrator 取数 + 授权判定），
+   * documents 模块不直接依赖 subagents / context-rooms。
+   */
+  resolveSelectionRewriteContent: SelectionRewriteContentResolver | null = null;
 
   constructor(
     private readonly db: GatewayDatabase,

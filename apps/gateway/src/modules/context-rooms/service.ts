@@ -12,7 +12,7 @@ import type {
   RoomAppliedEntityStatus,
   SaveContextRoomSnapshotInput,
 } from "@nxcore/agent-contract";
-import { and, asc, eq, inArray, isNull, ne, notInArray, or } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, ne, or } from "drizzle-orm";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
 import { contextRooms, documents, entities as entitiesTable, roomEntityFacts, roomEntityMentions, roomSourceMemberships } from "../../infrastructure/database/schema.js";
 import {
@@ -796,14 +796,10 @@ export class ContextRoomService {
     const protectedIds = new Set(this.db.select({ id: contextRooms.id, lifecycle: contextRooms.lifecycle })
       .from(contextRooms).all().filter((room) => room.lifecycle !== "active").map((room) => room.id));
     this.db.transaction((tx) => {
-      if (ids.length === 0) {
-        tx.delete(contextRooms).where(eq(contextRooms.lifecycle, "active")).run();
-      } else {
-        tx.delete(contextRooms).where(and(
-          eq(contextRooms.lifecycle, "active"),
-          notInArray(contextRooms.id, ids),
-        )).run();
-      }
+      // 不按"快照未提及"删除 active Room：Room 有两个创建源（渲染端 save 与
+      // 网关侧实体晋升的 auto Room），陈旧渲染端回刷会把服务端创建的 Room
+      // （含合并幸存者）物理删除——表现为"合并后 Room 消失 + agent 409"。
+      // 删除只走显式 deletedRooms 软删通道（upsert deletedAt），可从回收站恢复。
       const upsert = (room: ContextRoomSnapshotItem, position: number, deletedAt: Date | null) => {
         if (protectedIds.has(room.id)) return;
         const current = this.db.select({ data: contextRooms.data }).from(contextRooms)

@@ -6,6 +6,8 @@ import type { ContextRoomWorkspaceTab } from '../contextRoomTabs'
 import { useContextRoomState } from '../ContextRoomStateProvider'
 import { useRoomDocumentsState } from '../RoomDocumentsProvider'
 import { useLocale } from '../../../i18n/LocaleContext'
+import { ReferenceDialog } from './components/shared'
+import { RoomDuplicateCenter } from './components/RoomDuplicateCenter'
 import { HomeView } from './components/HomeView'
 import { PortedDetail } from './components/PortedDetail'
 import type { DetailPane } from './components/RoomIconSidebar'
@@ -58,6 +60,73 @@ export function PortedContextRoom({
     roomId: string
   } | null>(null)
   const activeRoom = state.rooms.find((room) => room.id === activeRoomId) ?? null
+  // 手动合并（首页/全部列表两个视图共用）：选择对话框 + manualPair 版合并中心。
+  const [manualMergeRoom, setManualMergeRoom] = useState<ContextRoomRecord | null>(null)
+  const [manualMergePartnerId, setManualMergePartnerId] = useState<string>('')
+  const [manualMergePair, setManualMergePair] = useState<{
+    roomAId: string; roomA: { id: string; title: string }
+    roomBId: string; roomB: { id: string; title: string }
+  } | null>(null)
+  const openManualMerge = useCallback((room: ContextRoomRecord) => {
+    setManualMergeRoom(room)
+    setManualMergePartnerId('')
+  }, [])
+
+  // 手动合并弹窗组：伙伴选择 + manualPair 版合并中心（两个列表视图共用）。
+  const manualMergeDialogs = (
+    <>
+      <ReferenceDialog
+        open={Boolean(manualMergeRoom)}
+        onOpenChange={(next) => { if (!next) { setManualMergeRoom(null); setManualMergePartnerId(''); } }}
+        title={t('contextRoom:home.manualMergeTitle')}
+      >
+        <div className="context-room-manual-merge">
+          <header>
+            <div>
+              <span>{t('contextRoom:home.manage')}</span>
+              <h2>{t('contextRoom:home.manualMergeTitle')}</h2>
+            </div>
+          </header>
+          <p>{t('contextRoom:home.manualMergeHint', { title: manualMergeRoom?.title ?? '' })}</p>
+          <label>
+            <span>{t('contextRoom:home.manualMergePartner')}</span>
+            <select value={manualMergePartnerId} onChange={(event) => setManualMergePartnerId(event.target.value)}>
+              <option value="">{t('contextRoom:home.manualMergePick')}</option>
+              {state.rooms.filter((room) => room.id !== manualMergeRoom?.id).map((room) => (
+                <option key={room.id} value={room.id}>{room.title}</option>
+              ))}
+            </select>
+          </label>
+          <footer>
+            <button type="button" onClick={() => { setManualMergeRoom(null); setManualMergePartnerId(''); }}>{t('contextRoom:duplicateCenter.cancel')}</button>
+            <button
+              type="button"
+              className="context-room-primary-button"
+              disabled={!manualMergePartnerId || !manualMergeRoom}
+              onClick={() => {
+                const partner = state.rooms.find((room) => room.id === manualMergePartnerId)
+                if (!manualMergeRoom || !partner) return
+                setManualMergePair({
+                  roomAId: manualMergeRoom.id,
+                  roomA: { id: manualMergeRoom.id, title: manualMergeRoom.title },
+                  roomBId: partner.id,
+                  roomB: { id: partner.id, title: partner.title },
+                })
+                setManualMergeRoom(null)
+                setManualMergePartnerId('')
+              }}
+            >{t('contextRoom:home.manualMergeContinue')}</button>
+          </footer>
+        </div>
+      </ReferenceDialog>
+      <RoomDuplicateCenter
+        open={Boolean(manualMergePair)}
+        onOpenChange={(next) => { if (!next) setManualMergePair(null) }}
+        onMerged={async () => { await refreshFromBackend() }}
+        manualPair={manualMergePair}
+      />
+    </>
+  )
   const roomDocuments = useRoomDocumentsState()
   const reportedRoomsRef = useRef(new Map<string, string>())
   const deletedKnowledgeRoomsRef = useRef(new Set<string>())
@@ -294,6 +363,7 @@ export function PortedContextRoom({
 
   if (homeView === 'all') {
     return (
+      <>
       <Suspense fallback={<AllRoomsViewSkeleton />}>
         <AllRoomsView
           rooms={state.rooms}
@@ -302,12 +372,16 @@ export function PortedContextRoom({
           onRenameRoom={renameRoom}
           onDeleteRoom={deleteRoom}
           onRestoreRoom={restoreRoom}
+          onManualMerge={openManualMerge}
         />
       </Suspense>
+      {manualMergeDialogs}
+      </>
     )
   }
 
   return (
+    <>
     <HomeView
       rooms={state.rooms}
       deletedRooms={state.deletedRooms}
@@ -352,6 +426,9 @@ export function PortedContextRoom({
       onShowAll={() => setHomeView('all')}
       onFocusAgent={onFocusAgent}
       onRefreshRooms={async () => { await refreshFromBackend() }}
+      onManualMerge={openManualMerge}
     />
+      {manualMergeDialogs}
+    </>
   )
 }

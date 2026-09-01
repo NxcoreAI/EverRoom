@@ -295,6 +295,18 @@ const api: NxcoreDesktopApi = {
     days: (start, end) => invoke('diary:days', start, end),
     day: (date) => invoke('diary:day', date),
   },
+  writingStyle: {
+    profile: () => invoke('writing-style:get'),
+    settings: () => invoke('writing-style:get-settings'),
+    updateSettings: (input) => invoke('writing-style:update-settings', input),
+    userContent: () => invoke('writing-style:get-user-content'),
+    replaceUserContent: (content) => invoke('writing-style:replace-user-content', content),
+    regenerateUserContent: () => invoke('writing-style:regenerate-user-content'),
+    recompute: () => invoke('writing-style:recompute'),
+    backfill: () => invoke('writing-style:backfill'),
+    corpus: () => invoke('writing-style:list-corpus'),
+    setExclusion: (documentId, excluded) => invoke('writing-style:set-exclusion', documentId, excluded),
+  },
   agentSchedules: {
     list: () => invoke('agent-scheduler:list'),
     create: (input) => invoke('agent-scheduler:create', input),
@@ -315,6 +327,10 @@ const api: NxcoreDesktopApi = {
     previewMerge: (sourceRoomId: string, targetRoomId: string) =>
       invokeQuietly('context-rooms:preview-merge', sourceRoomId, targetRoomId),
     startMerge: (input) => invokeQuietly('context-rooms:start-merge', input),
+    previewMergeIntoNew: (sourceAId: string, sourceBId: string) =>
+      invokeQuietly('context-rooms:preview-merge-into-new', sourceAId, sourceBId),
+    startMergeIntoNew: (input: { sourceAId: string; sourceBId: string; title: string; kind?: string; previewHash: string; idempotencyKey: string; wait?: boolean }) =>
+      invokeQuietly('context-rooms:start-merge-into-new', input),
     getMergeOperation: (id: string) => invokeQuietly('context-rooms:get-merge-operation', id),
     retryMerge: (id: string) => invokeQuietly('context-rooms:retry-merge', id),
     cancelMerge: (id: string) => invokeQuietly('context-rooms:cancel-merge', id),
@@ -328,6 +344,7 @@ const api: NxcoreDesktopApi = {
     overview: (roomId: string) => invokeQuietly('context-rooms:overview', roomId),
     refreshOverview: (roomId: string) => invokeQuietly('context-rooms:refresh-overview', roomId),
     listMails: (roomId: string) => invokeQuietly('context-rooms:list-mails', roomId),
+    readMail: (roomId: string, sourceId: string) => invokeQuietly('context-rooms:read-mail', roomId, sourceId),
     roomEntities: (roomId: string) => invokeQuietly('context-rooms:room-entities', roomId),
     completeLocalAction: (roomId: string, actionId: string, completed?: boolean) =>
       invokeQuietly('context-rooms:complete-local-action', roomId, actionId, completed),

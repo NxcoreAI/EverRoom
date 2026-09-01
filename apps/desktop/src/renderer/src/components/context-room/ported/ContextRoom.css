@@ -3957,6 +3957,113 @@
   overflow: auto;
 }
 
+/* 邮件行清单容器：选中邮件后上半区独立滚动（见 has-detail 分区） */
+.context-room-mail-list {
+  min-height: 0;
+}
+
+.context-room-mail-pane.has-detail {
+  display: grid;
+  grid-template-rows: auto minmax(0, 42%) minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.context-room-mail-pane.has-detail .context-room-mail-list {
+  overflow-y: auto;
+  border-bottom: 1px solid var(--cr-border);
+}
+
+.context-room-mail-list > button.is-selected {
+  background: var(--cr-surface-hover);
+  box-shadow: inset 2px 0 0 var(--cr-blue);
+}
+
+/* 连接器邮件详情（面板下半区）：身份头 + 元信息 + 正文滚动区 */
+.context-room-mail-detail {
+  display: grid;
+  min-height: 0;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  background: var(--cr-surface);
+}
+
+.context-room-mail-detail > header {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr) 26px;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--cr-border);
+}
+
+.context-room-mail-detail-title {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.context-room-mail-detail-title strong {
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-room-mail-detail-title small {
+  overflow: hidden;
+  color: var(--cr-tertiary);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-room-mail-detail > header > button {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--cr-border);
+  border-radius: 6px;
+  color: var(--cr-muted);
+  cursor: pointer;
+}
+
+.context-room-mail-detail > header > button:hover {
+  border-color: var(--cr-border-strong);
+  color: var(--cr-text);
+}
+
+.context-room-mail-detail-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0;
+  padding: 6px 14px;
+  border-bottom: 1px solid var(--cr-border);
+  color: var(--cr-tertiary);
+  font-size: 11px;
+}
+
+.context-room-mail-detail-meta span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.context-room-mail-detail-body {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 14px 16px;
+}
+
+.context-room-mail-detail-hint {
+  margin: 0;
+  padding: 18px 14px;
+  color: var(--cr-tertiary);
+  font-size: 12px;
+}
+
 .context-room-compact-pane > header,
 .context-room-memory-pane > header,
 .context-room-schedule-pane > header,
@@ -3983,7 +4090,7 @@
 
 .context-room-compact-pane > button,
 .context-room-memory-pane > div > button,
-.context-room-mail-pane > button {
+.context-room-mail-list > button {
   display: flex;
   width: calc(100% - 16px);
   min-width: 0;
@@ -3997,7 +4104,7 @@
 
 .context-room-compact-pane > button:hover,
 .context-room-memory-pane > div > button:hover,
-.context-room-mail-pane > button:hover {
+.context-room-mail-list > button:hover {
   background: var(--cr-surface-hover);
 }
 
@@ -12626,4 +12733,171 @@
 .context-room-knowledge-overlay-dismiss:hover {
   border-color: var(--cr-blue);
   color: var(--cr-blue);
+}
+
+/* ===== 合并弹窗视觉升级：流向示意 + 影响网格 + 备注条 ===== */
+.context-room-merge-flow {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px;
+  border: 1px solid var(--cr-border);
+  border-radius: 10px;
+  background: var(--cr-surface-secondary, #fafafa);
+}
+
+.context-room-merge-flow-sources {
+  display: grid;
+  flex: 1;
+  gap: 8px;
+  min-width: 0;
+}
+
+.context-room-merge-flow-room {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 9px 11px;
+  border: 1px solid var(--cr-border);
+  border-radius: 8px;
+  background: var(--cr-surface, #fff);
+}
+
+.context-room-merge-flow-room svg {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  color: var(--cr-tertiary, #9ca3af);
+}
+
+.context-room-merge-flow-room b {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.context-room-merge-flow-room small {
+  flex: 0 0 auto;
+  color: var(--cr-tertiary, #9ca3af);
+  font-size: 10px;
+}
+
+.context-room-merge-flow-room[data-retiring] {
+  border-style: dashed;
+  opacity: 0.85;
+}
+
+.context-room-merge-flow-room[data-new] {
+  flex: 1;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  border-color: rgba(37, 99, 235, 0.35);
+  background: rgba(37, 99, 235, 0.05);
+}
+
+.context-room-merge-flow-room[data-new] svg {
+  color: var(--cr-blue, #2563eb);
+}
+
+.context-room-merge-flow-arrow {
+  display: flex;
+  flex: 0 0 auto;
+  color: var(--cr-tertiary, #9ca3af);
+}
+
+.context-room-merge-flow-arrow svg {
+  width: 18px;
+  height: 18px;
+}
+
+.context-room-merge-impact dl > div[data-zero='true'] {
+  opacity: 0.45;
+}
+
+.context-room-merge-notes {
+  display: grid;
+  gap: 4px;
+}
+
+.context-room-merge-notes p {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--cr-muted);
+  font-size: 12px;
+}
+
+.context-room-merge-notes p svg {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 auto;
+  color: var(--cr-tertiary, #9ca3af);
+}
+
+/* ===== 手动合并选择对话框 ===== */
+.context-room-manual-merge {
+  display: grid;
+  gap: 14px;
+  width: min(480px, calc(100vw - 40px));
+  padding: 20px;
+}
+
+.context-room-manual-merge header h2 {
+  margin: 2px 0 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.context-room-manual-merge header span {
+  color: var(--cr-tertiary, #9ca3af);
+  font-size: 11px;
+}
+
+.context-room-manual-merge > p {
+  margin: 0;
+  color: var(--cr-muted);
+  font-size: 13px;
+}
+
+.context-room-manual-merge label {
+  display: grid;
+  gap: 6px;
+}
+
+.context-room-manual-merge label span {
+  color: var(--cr-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.context-room-manual-merge select {
+  height: 38px;
+  border: 1px solid var(--cr-border-strong);
+  border-radius: 6px;
+  padding: 0 10px;
+  background: var(--cr-surface);
+  color: var(--cr-text);
+  font: inherit;
+}
+
+.context-room-manual-merge footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.context-room-manual-merge footer button {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  padding: 0 12px;
+  border: 1px solid var(--cr-border);
+  border-radius: 6px;
+  font: inherit;
 }

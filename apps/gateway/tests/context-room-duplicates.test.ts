@@ -436,6 +436,126 @@ describe('RoomDuplicateService', () => {
     sqlite.close()
   })
 
+
+  it('migrates agent session room bindings and completes the merge when knowledge rebuild fails', async () => {
+    const { db, duplicates, roomsService, sqlite } = await harness()
+    void db
+    roomsService.saveSnapshot({
+      rooms: [
+        { id: 'room-s', title: '来源房', kind: '主题', data: { id: 'room-s', title: '来源房' } },
+        { id: 'room-t', title: '目标房', kind: '主题', data: { id: 'room-t', title: '目标房' } },
+      ],
+      deletedRooms: [],
+    })
+    const now = new Date()
+    // 会话绑在 source Room 上：合并必须迁移，否则成为孤儿（agent 409 同族根因）。
+    db.insert(agentSessions).values({
+      id: 'session-src', roomId: 'room-s', pageLabel: 'Context Room', runtimeId: 'fake', status: 'idle', createdAt: now, updatedAt: now,
+    }).run()
+    // 用一个知识重建会抛错的服务实例执行合并（post-commit 失败路径）。
+    const failing = new RoomDuplicateService(db, {
+      mergeKnowledge: async () => { throw new Error('knowledge rebuild exploded') },
+    })
+    const preview = await failing.previewMerge('room-s', 'room-t')
+    const settled = await failing.startMerge({
+      sourceRoomId: 'room-s',
+      targetRoomId: 'room-t',
+      previewHash: preview.previewHash,
+      idempotencyKey: 'merge-session-key',
+      wait: true,
+    })
+    // 数据已搬迁（commit 已达）：失败恢复补完定稿，而非卡在 merging。
+    expect(settled).toMatchObject({ status: 'completed', commitReached: true })
+    expect(db.select().from(agentSessions).where(eq(agentSessions.id, 'session-src')).get()?.roomId).toBe('room-t')
+    expect(db.select().from(contextRooms).where(eq(contextRooms.id, 'room-s')).get()?.lifecycle).toBe('merged')
+    sqlite.close()
+  })
+
+
+  it('stale renderer flushes no longer hard-delete rooms absent from the snapshot', async () => {
+    const { db, duplicates, roomsService, sqlite } = await harness()
+    void duplicates
+    roomsService.saveSnapshot({
+      rooms: [
+        { id: 'room-keep', title: '幸存者', kind: '主题', data: { id: 'room-keep', title: '幸存者' } },
+        { id: 'room-gone', title: '待软删', kind: '主题', data: { id: 'room-gone', title: '待软删' } },
+      ],
+      deletedRooms: [],
+    })
+    // 陈旧渲染端回刷：快照完全没提到 room-keep（旧代码会把它物理删除）。
+    roomsService.saveSnapshot({
+      rooms: [{ id: 'room-gone', title: '待软删', kind: '主题', data: { id: 'room-gone', title: '待软删' } }],
+      deletedRooms: [],
+    })
+    expect(roomsService.getSnapshot().rooms.map((room) => room.id).sort())
+      .toEqual(['room-gone', 'room-keep'])
+    // 显式删除走 deletedRooms 软删通道，仍然有效且可从回收站语义恢复。
+    roomsService.saveSnapshot({
+      rooms: [{ id: 'room-keep', title: '幸存者', kind: '主题', data: { id: 'room-keep', title: '幸存者' } }],
+      deletedRooms: [{ id: 'room-gone', title: '待软删', kind: '主题', data: { id: 'room-gone', title: '待软删' } }],
+    })
+    expect(roomsService.getSnapshot().rooms.map((room) => room.id)).toEqual(['room-keep'])
+    expect(db.select({ deletedAt: contextRooms.deletedAt }).from(contextRooms)
+      .where(eq(contextRooms.id, 'room-gone')).get()?.deletedAt).not.toBeNull()
+    sqlite.close()
+  })
+
+
+  it('merges two rooms into a brand-new room and retires both sources', async () => {
+    const { db, duplicates, roomsService, sqlite } = await harness()
+    roomsService.saveSnapshot({
+      rooms: [
+        { id: 'room-x', title: 'Java', kind: '主题', data: { id: 'room-x', title: 'Java', memoryItems: [{ id: 'mx', content: 'X 记忆' }], materials: [] } },
+        { id: 'room-y', title: 'Java Space', kind: '主题', data: { id: 'room-y', title: 'Java Space', memoryItems: [{ id: 'my', content: 'Y 记忆' }], materials: [] } },
+      ],
+      deletedRooms: [],
+    })
+    const now = new Date()
+    for (const [id, title] of [['room-x', 'Java'], ['room-y', 'Java Space']] as const) {
+      db.insert(rooms).values({ id, title, kind: '主题', origin: 'user', createdAt: now, updatedAt: now }).run()
+    }
+    // roomDocumentLinks 有 documents 外键：先插文档行。
+    for (const docId of ['doc-x', 'doc-y']) {
+      db.insert(documents).values({
+        id: docId, title: `文档 ${docId}`, contentJson: { type: 'doc', content: [] },
+        version: 1, status: 'active', createdAt: now, updatedAt: now,
+      }).run()
+    }
+    db.insert(roomDocumentLinks).values({ roomId: 'room-x', documentId: 'doc-x', linkedAt: now }).run()
+    db.insert(roomDocumentLinks).values({ roomId: 'room-y', documentId: 'doc-y', linkedAt: now }).run()
+
+    const preview = await duplicates.previewMergeIntoNew('room-x', 'room-y')
+    expect(preview.impact.documents).toBe(2)
+    expect(preview.recommendedTargetRoomId).toBe('new')
+    const settled = await duplicates.startMergeIntoNew({
+      sourceAId: 'room-x', sourceBId: 'room-y', title: 'Java 综合',
+      previewHash: preview.previewHash, idempotencyKey: 'merge-new-key', wait: true,
+    })
+    expect(settled).toMatchObject({ status: 'completed', commitReached: true })
+    // 两个旧 Room 都退役，新 Room 收编全部资源。
+    const snapshot = roomsService.getSnapshot()
+    expect(snapshot.rooms.map((room) => room.title)).toEqual(['Java 综合'])
+    expect(db.select().from(contextRooms).where(eq(contextRooms.id, 'room-x')).get()?.lifecycle).toBe('merged')
+    expect(db.select().from(contextRooms).where(eq(contextRooms.id, 'room-y')).get()?.lifecycle).toBe('merged')
+    const newRoom = snapshot.rooms[0]!
+    // brief 为 ContextRoomBrief 对象且 background 非空（渲染端 Boolean(brief) 过滤
+    // + OverviewDashboard brief.background.trim() 渲染，二者都必须满足）。
+    const brief = (newRoom.data as Record<string, unknown>).brief as Record<string, unknown>
+    expect(typeof brief).toBe('object')
+    expect(Boolean(String(brief.background ?? '').trim())).toBe(true)
+    expect(db.select().from(roomDocumentLinks).where(eq(roomDocumentLinks.documentId, 'doc-x')).get()?.roomId).toBe(newRoom.id)
+    expect(db.select().from(roomDocumentLinks).where(eq(roomDocumentLinks.documentId, 'doc-y')).get()?.roomId).toBe(newRoom.id)
+    expect((newRoom.data.memoryItems as Array<{ id: string }>).map((item) => item.id).sort()).toEqual(['mx', 'my'])
+    // 幂等：同 idempotencyKey 重放返回既有终态，不再新建。
+    const replay = await duplicates.startMergeIntoNew({
+      sourceAId: 'room-x', sourceBId: 'room-y', title: 'Java 综合',
+      previewHash: preview.previewHash, idempotencyKey: 'merge-new-key', wait: true,
+    })
+    expect(replay.id).toBe(settled.id)
+    expect(roomsService.getSnapshot().rooms).toHaveLength(1)
+    sqlite.close()
+  })
+
   it('returns the settled operation when startMerge waits', async () => {
     const { duplicates, roomsService, sqlite } = await harness()
     roomsService.saveSnapshot({

@@ -12,7 +12,7 @@
 import { invokeAgent } from "../agent/invoke.js";
 import { BUILTIN_AGENT_IDS, type AgentResolver } from "../agent/resolver.js";
 
-const CHAT_TIMEOUT_MS = 60_000;
+const CHAT_TIMEOUT_MS = 120_000;
 const MAX_RESPONSE_CHARS = 4_000;
 
 export const ENTITY_KINDS = ["人物", "项目", "主题", "长期目标", "议题", "事件"] as const;
@@ -242,6 +242,14 @@ export class KnowledgeLlm {
    */
   static isTruncated(error: unknown): boolean {
     return error instanceof KnowledgeLlmError && /finish_reason=length/i.test(error.message);
+  }
+
+  /**
+   * 判定错误是否为调用超时——瞬时态：推理型模型的思考段偶发超过超时预算
+   * （实测 GLM-5.3 长邮件抽取可超 60s），退避后重试即可成功；不得落死信。
+   */
+  static isTimedOut(error: unknown): boolean {
+    return error instanceof KnowledgeLlmError && /invocation timed out/i.test(error.message);
   }
 
   private async chat(skillName: string, prompt: string): Promise<string> {
