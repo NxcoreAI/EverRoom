@@ -689,15 +689,12 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
             <span>{t('diaryReality:reality.visibleTotalEvents', { visible: visibleEvents.length, total: timelineItems.length })}</span>
           )}
           </div>
-          <button type="button" className="activity-toggle" aria-expanded={showActivity} aria-controls="reality-activity-panel" onClick={() => setShowActivity((value) => !value)}>
-            <BarChart3 aria-hidden="true" />{t(showActivity ? 'diaryReality:reality.hideActivity' : 'diaryReality:reality.showActivity')}
-          </button>
         </header>
         <div className="reality-toolbar">
-          <label className="reality-search"><Search aria-hidden="true" /><input value={search} placeholder={t('diaryReality:reality.searchTopicsTranscriptsOrVisualSummaries')} onChange={(event) => setSearch(event.target.value)} /></label>
+          <label className="reality-search" title={t('diaryReality:reality.searchTopicsTranscriptsOrVisualSummaries')}><Search aria-hidden="true" /><input value={search} placeholder={t('diaryReality:reality.searchPlaceholder')} title={t('diaryReality:reality.searchTopicsTranscriptsOrVisualSummaries')} onChange={(event) => setSearch(event.target.value)} /></label>
           <div className="reality-type-filter" role="group" aria-label={t('diaryReality:reality.filterByPerceptionType')}>
             {PERCEPTION_TYPE_OPTIONS.map(({ value, label, icon: Icon }) => (
-              <button type="button" key={value} aria-pressed={typeFilter === value} onClick={() => setTypeFilter(value)}><Icon aria-hidden="true" /><span>{t(label)}</span></button>
+              <button type="button" key={value} aria-pressed={typeFilter === value} title={t(label)} aria-label={t(label)} onClick={() => setTypeFilter(value)}>{value === 'all' ? <span aria-hidden="true">{t('diaryReality:reality.all')}</span> : <Icon aria-hidden="true" />}</button>
             ))}
           </div>
           <select value={filter} aria-label={t('diaryReality:reality.filterByEventStatus')} onChange={(event) => setFilter(event.target.value as StatusFilter)}>
@@ -710,19 +707,26 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
         </div>
       </section>
 
-      {showActivity ? (
-        <section id="reality-activity-panel" className="reality-activity" aria-labelledby="activity-title">
-          <header>
-            <div>
-              <h2 id="activity-title">{t('diaryReality:reality.perceptionActivity')}</h2>
-              <span>{t('diaryReality:reality.countEventsDaysDayStreak', { count: activity.total, days: activity.streak })}</span>
-            </div>
-            <div className="reality-range" aria-label={t('diaryReality:reality.activityTimeRange')}>
-              {ACTIVITY_RANGES.map(([value, label]) => (
-                <button type="button" key={value} aria-pressed={activityRange === value} onClick={() => { setRangeTouched(true); setActivityRange(value) }}>{t(label)}</button>
-              ))}
-            </div>
+      <section id="reality-activity-body" className="reality-activity" data-collapsed={String(!showActivity)} aria-labelledby="activity-title">
+          <header className="reality-activity-heading">
+            <h2 id="activity-title">
+              <button type="button" className="reality-activity-toggle" aria-expanded={showActivity} aria-controls="reality-activity-body" onClick={() => setShowActivity((value) => !value)}>
+                <BarChart3 aria-hidden="true" />
+                <span>{t('diaryReality:reality.perceptionActivity')}</span>
+                <ChevronDown aria-hidden="true" />
+              </button>
+            </h2>
+            <span className="reality-activity-meta">{t('diaryReality:reality.countEventsDaysDayStreak', { count: activity.total, days: activity.streak })}</span>
+            {showActivity ? (
+              <div className="reality-range" aria-label={t('diaryReality:reality.activityTimeRange')}>
+                {ACTIVITY_RANGES.map(([value, label]) => (
+                  <button type="button" key={value} aria-pressed={activityRange === value} onClick={() => { setRangeTouched(true); setActivityRange(value) }}>{t(label)}</button>
+                ))}
+              </div>
+            ) : null}
           </header>
+          {showActivity ? (
+            <>
           <div className="activity-chart" style={{ '--activity-weeks': activity.weeks.length } as CSSProperties}>
             <div className="activity-months">{activity.monthLabels.map((item) => (
               <span key={item.column} style={{ gridColumn: item.column }}>{item.label}</span>
@@ -760,8 +764,9 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
               <span>{t('diaryReality:reality.more')}</span>
             </div>
           </div>
+            </>
+          ) : null}
         </section>
-      ) : null}
 
       {error ? (
         <div className="reality-error" role="alert">
@@ -841,13 +846,6 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
                           <small>{event.captureDevice.name} · <LiveDuration durationMs={event.durationMs} startedAt={event.startedAt} ongoing={event.status === 'ongoing'} /> · {t(PROCESSING_LABELS[event.processingState])}</small>
                           <ChevronDown aria-hidden="true" />
                         </button>
-                        <button type="button" className="event-menu-trigger" title={t('diaryReality:reality.moreActions')} aria-label={t('diaryReality:reality.moreActions')} aria-expanded={actionMenuId === event.id} onClick={() => { setDeleteConfirmId(null); setActionMenuId((current) => current === event.id ? null : event.id) }}><MoreHorizontal aria-hidden="true" /></button>
-                        {actionMenuId === event.id ? (
-                          <div className="event-action-menu">
-                            <button type="button" aria-pressed={event.important} onClick={() => { void toggleImportant(event); setActionMenuId(null) }}><Bookmark fill={event.important ? 'currentColor' : 'none'} />{t(event.important ? 'diaryReality:reality.unmarkImportant' : 'diaryReality:reality.markImportant')}</button>
-                            <button type="button" className={deleteConfirmId === event.id ? 'danger' : undefined} onClick={() => void discardEvent(event)}><Trash2 />{t(deleteConfirmId === event.id ? 'diaryReality:reality.confirmDelete' : 'diaryReality:reality.deleteEvent')}</button>
-                          </div>
-                        ) : null}
                       </div>
 
                       {expanded ? (
@@ -963,6 +961,13 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
                         </div>
                       ) : null}
                     </div>
+                    <button type="button" className="event-menu-trigger" title={t('diaryReality:reality.moreActions')} aria-label={t('diaryReality:reality.moreActions')} aria-expanded={actionMenuId === event.id} onClick={() => { setDeleteConfirmId(null); setActionMenuId((current) => current === event.id ? null : event.id) }}><MoreHorizontal aria-hidden="true" /></button>
+                    {actionMenuId === event.id ? (
+                      <div className="event-action-menu">
+                        <button type="button" aria-pressed={event.important} onClick={() => { void toggleImportant(event); setActionMenuId(null) }}><Bookmark fill={event.important ? 'currentColor' : 'none'} />{t(event.important ? 'diaryReality:reality.unmarkImportant' : 'diaryReality:reality.markImportant')}</button>
+                        <button type="button" className={deleteConfirmId === event.id ? 'danger' : undefined} onClick={() => void discardEvent(event)}><Trash2 />{t(deleteConfirmId === event.id ? 'diaryReality:reality.confirmDelete' : 'diaryReality:reality.deleteEvent')}</button>
+                      </div>
+                    ) : null}
                   </article>
                 )
               })}
