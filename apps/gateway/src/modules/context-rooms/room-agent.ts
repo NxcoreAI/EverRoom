@@ -314,7 +314,11 @@ export interface RoomAgentDispatcher {
  * 统一 agentId / source / task 文案，业务侧只关心任务与结构化输入。
  */
 export class ContextRoomAgentDispatcher implements RoomAgentDispatcher {
-  constructor(private readonly orchestrator: SubagentOrchestrator) {}
+  constructor(
+    private readonly orchestrator: SubagentOrchestrator,
+    /** 划词改写的写作风格注入段（方案 §7.2）：provider 自查生成开关，关闭返回 null。 */
+    private readonly writingStyleProvider: { getGenerationPromptSection(): string | null } | null = null,
+  ) {}
 
   dispatch(input: RoomAgentDispatchInput): Promise<SubagentInvocation> {
     return this.orchestrator.dispatch(this.toDispatchInput(input));
@@ -325,10 +329,17 @@ export class ContextRoomAgentDispatcher implements RoomAgentDispatcher {
   }
 
   private toDispatchInput(input: RoomAgentDispatchInput) {
+    const writingStyle = input.task === "selection-rewrite"
+      ? this.writingStyleProvider?.getGenerationPromptSection() ?? null
+      : null;
     return {
       agentId: CONTEXT_ROOM_AGENT_ID,
       task: TASK_LABELS[input.task],
-      input: { task: input.task, ...input.taskInput },
+      input: {
+        task: input.task,
+        ...input.taskInput,
+        ...(writingStyle ? { writingStyle } : {}),
+      },
       idempotencyKey: input.idempotencyKey ?? `room-agent:${randomUUID()}`,
       source: "internal_workflow" as const,
       parentSessionId: null,

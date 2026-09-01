@@ -10,6 +10,7 @@ import {
 import type { NormalizedGatewayDocument } from "./content-engine.js";
 import { DocumentServiceError } from "../errors.js";
 import { enqueueDocumentIngest } from "../integration-outbox.js";
+import { enqueueWritingStyleExtract } from "../../writing-style/jobs.js";
 import { DocumentContentEngine } from "./content-engine.js";
 import { DocumentRepository } from "./repository.js";
 import { YjsHistoryService } from "./yjs-history-service.js";
@@ -157,6 +158,12 @@ export class DocumentCommitService {
         version: input.version,
         sourceTransactionId: input.sourceTransactionId ?? null,
       }, now);
+      // 写作风格增量提炼（方案 §10：与 ingest 同事务入队，worker 去抖消费）。
+      enqueueWritingStyleExtract(tx, {
+        documentId: input.documentId,
+        roomId: input.roomId,
+        version: input.version,
+      }, now);
     }
     this.repository.replaceProjection(tx, input.documentId, normalized);
     input.mutate?.(tx, normalized, now);
@@ -264,6 +271,12 @@ export class DocumentCommitService {
         roomId: input.roomId,
         version: input.version,
         sourceTransactionId: input.sourceTransactionId ?? null,
+      }, now);
+      // 写作风格增量提炼（方案 §10：与 ingest 同事务入队，worker 去抖消费）。
+      enqueueWritingStyleExtract(tx, {
+        documentId: input.documentId,
+        roomId: input.roomId,
+        version: input.version,
       }, now);
     }
     this.repository.replaceProjection(tx, input.documentId, normalized);

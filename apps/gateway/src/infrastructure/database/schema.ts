@@ -2421,3 +2421,107 @@ export const subagentInvocationEvents = sqliteTable(
   },
   (table) => [uniqueIndex("subagent_invocation_events_invocation_seq_idx").on(table.invocationId, table.seq)],
 );
+
+// ═══════════════════ Writing style profile ═══════════════════
+// docs/writing-style-profile-plan.zh-CN.md：统计层（管线产物）与用户指令层
+// （用户手写）物理隔离——Worker/refresh/recompute 永不写 user_directives 表。
+
+export const writingStyleSettings = sqliteTable("writing_style_settings", {
+  ownerId: text("owner_id").primaryKey().default("local-user"),
+  completionEnabled: integer("completion_enabled", { mode: "boolean" }).notNull().default(false),
+  generationEnabled: integer("generation_enabled", { mode: "boolean" }).notNull().default(false),
+  configVersion: integer("config_version").notNull().default(1),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
+export const writingStyleDocumentSketches = sqliteTable(
+  "writing_style_document_sketches",
+  {
+    documentId: text("document_id").primaryKey(),
+    roomId: text("room_id").notNull(),
+    sourceVersion: integer("source_version").notNull(),
+    contentHash: text("content_hash").notNull(),
+    origin: text("origin", { enum: ["user", "agent"] }).notNull().default("user"),
+    excluded: integer("excluded", { mode: "boolean" }).notNull().default(false),
+    charCount: integer("char_count").notNull().default(0),
+    status: text("status", {
+      enum: ["pending", "extracted", "failed", "skipped"],
+    })
+      .notNull()
+      .default("pending"),
+    statsJson: text("stats_json", { mode: "json" }).$type<Record<string, unknown>>(),
+    truncated: integer("truncated", { mode: "boolean" }).notNull().default(false),
+    attempts: integer("attempts").notNull().default(0),
+    extractedAt: integer("extracted_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [index("writing_style_sketches_status_idx").on(table.status)],
+);
+
+export const writingStyleProfiles = sqliteTable("writing_style_profiles", {
+  ownerId: text("owner_id").primaryKey().default("local-user"),
+  profileVersion: integer("profile_version").notNull().default(0),
+  statsJson: text("stats_json", { mode: "json" }).$type<Record<string, unknown>>(),
+  qualitativeJson: text("qualitative_json", { mode: "json" }).$type<Record<string, unknown>>(),
+  digestCompletion: text("digest_completion"),
+  digestGeneration: text("digest_generation"),
+  sampleDocumentCount: integer("sample_document_count").notNull().default(0),
+  sampleCharCount: integer("sample_char_count").notNull().default(0),
+  confidenceTier: text("confidence_tier", {
+    enum: ["empty", "sparse", "established", "mature"],
+  })
+    .notNull()
+    .default("empty"),
+  lastRefreshedAt: integer("last_refreshed_at", { mode: "timestamp_ms" }),
+  lastLlmAt: integer("last_llm_at", { mode: "timestamp_ms" }),
+  llmMaterialCursor: text("llm_material_cursor"),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
+// 行为信号（方案 §4 扩展）：用户让 agent 改文档的原话、划词改写 instruction、
+// 用户对 agent 输出的手改 diff。refresh 时只读回溯写入，与 sketches 平行。
+export const writingStyleSignals = sqliteTable(
+  "writing_style_signals",
+  {
+    // 幂等键：`rw:{operationId}` / `edit:{operationId}` / `rev:{documentId}:{version}`
+    id: text("id").primaryKey(),
+    type: text("type", {
+      enum: ["rewrite_instruction", "edit_instruction", "revision_delta"],
+    })
+      .notNull(),
+    documentId: text("document_id"),
+    roomId: text("room_id"),
+    /** 指令类：用户原话（截断 400 字符）。 */
+    instruction: text("instruction"),
+    /** 指令类：表驱动归类结果（concise/formal/...；未命中为 null）。 */
+    category: text("category"),
+    /** revision_delta：agent 版本摘录（截断 600）。 */
+    before: text("before"),
+    /** revision_delta：用户改后摘录（截断 600）。 */
+    after: text("after"),
+    /** revision_delta：方向统计（lenDelta/sentenceLenDelta 等小 JSON）。 */
+    deltaMeta: text("delta_meta", { mode: "json" }).$type<Record<string, number>>(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [index("writing_style_signals_type_idx").on(table.type)],
+);
+
+// 风格画像正文：系统生成初稿、用户可直接在其上编辑（画像式）。
+// userEdited = true 后 refresh 永不自动覆盖（编辑即接管）；generatedFromCursor
+// 记录生成时语料指纹，用于"系统有新沉淀"提示与重新生成判断。
+export const writingStyleUserContent = sqliteTable("writing_style_user_content", {
+  ownerId: text("owner_id").primaryKey().default("local-user"),
+  content: text("content").notNull().default(""),
+  userEdited: integer("user_edited", { mode: "boolean" }).notNull().default(false),
+  generatedFromCursor: text("generated_from_cursor"),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});

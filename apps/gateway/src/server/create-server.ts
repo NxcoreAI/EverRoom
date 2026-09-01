@@ -30,6 +30,7 @@ import { externalDocumentProjectionRoutes } from "../modules/documents/external-
 import {
   createAgentResolver,
   createIngestFilterAgentRuntime,
+  createWritingStyleRuntime,
   registerConnectorSyncAgent,
   registerDiaryAgent,
   registerPrimaryAgent,
@@ -121,6 +122,10 @@ import { AgentStatusService } from "../modules/agent/status-service.js";
 import { createReferencedAgentConversationTools } from "../modules/agent/reference-tools.js";
 import { RuntimeConfigManager } from "../runtime-config.js";
 import { runtimeConfigRoutes } from "../modules/runtime-config/routes.js";
+import { WritingStyleService } from "../modules/writing-style/service.js";
+import { WritingStyleLlm } from "../modules/writing-style/llm.js";
+import { writingStyleRoutes } from "../modules/writing-style/routes.js";
+import { WritingStyleWorker } from "../modules/writing-style/worker.js";
 import type { RuntimeConfig } from "../runtime-config.js";
 import { OpenAiCompatibleVlmClient } from "../modules/perception/vlm-client.js";
 import { isPrimaryConfigured as isRuntimePrimaryConfigured } from "../modules/runtime-config/validate.js";
@@ -615,7 +620,18 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     app.log,
   );
   // Room 创建整理走 internal_workflow 异步调度；logger 供失败降级日志。
-  const contextRoomAgentDispatcher = new ContextRoomAgentDispatcher(subagentOrchestrator);
+  // 写作风格服务提前创建（仅需 db）：dispatcher 与 agentService 的注入
+  // provider 在此接线，worker/路由仍在文档 worker 附近启动注册。
+  const writingStyleRuntime = createWritingStyleRuntime(config);
+  const writingStyleService = new WritingStyleService(
+    db,
+    writingStyleRuntime ? new WritingStyleLlm(writingStyleRuntime) : null,
+    app.log,
+  );
+  const contextRoomAgentDispatcher = new ContextRoomAgentDispatcher(
+    subagentOrchestrator,
+    { getGenerationPromptSection: () => writingStyleService.getGenerationPromptSection() },
+  );
   contextRoomService.setRoomAgentDispatcher(contextRoomAgentDispatcher, (bindings, message) => {
     app.log.warn(bindings, message);
   });
@@ -913,6 +929,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   }
   let documentOutboxWorker: DocumentOutboxWorker | null = null;
   let documentHistoryBackfillWorker: DocumentHistoryBackfillWorker | null = null;
+  let writingStyleWorker: WritingStyleWorker | null = null;
   app.addHook("onClose", async () => {
     // Stop producers while all ingest/classification dependencies are still alive.
     await clipperService.dispose();
@@ -928,6 +945,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     await documentMcpHost.close();
     await documentOutboxWorker?.dispose();
     await documentHistoryBackfillWorker?.dispose();
+    await writingStyleWorker?.dispose();
     filterInsightJob?.dispose();
     ingestService.disposeFilter();
     await cliConnectorSyncService.dispose();
@@ -1157,6 +1175,12 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     app.log,
   );
   documentHistoryBackfillWorker.start();
+  writingStyleWorker = new WritingStyleWorker(db, writingStyleService, app.log);
+  writingStyleWorker.start();
+  agentService.writingStyleProvider = {
+    getGenerationPromptSection: () => writingStyleService.getGenerationPromptSection(),
+  };
+  await app.register(writingStyleRoutes(writingStyleService));
   cliConnectorMarkdownService = new ConnectorMarkdownService(
     db,
     config.dataDir,

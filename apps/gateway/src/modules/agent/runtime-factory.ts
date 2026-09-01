@@ -205,6 +205,22 @@ export function createIngestFilterAgentRuntime(
   }, resolveWikiIds ? { resolveKnowledgeWikiIds: resolveWikiIds } : {});
 }
 
+/** 写作风格定性层的隔离内部 runtime（无工具、无记忆/knowledge，ingest-filter 同款）。 */
+export function createWritingStyleRuntime(config: GatewayConfig): AgentRuntime | null {
+  if (config.agentRuntime === "fake" || !isPiRuntimeConfigured(config.backgroundPi)) return null;
+  const { mcp: _mcp, ...pi } = config.backgroundPi!;
+  return new PiAgentRuntime({
+    ...pi,
+    includeBashTool: false,
+    builtinTools: [],
+    maxToolCallsPerRun: 1,
+    runtimeRole: "internal",
+    sessionsDir: join(pi.sessionsDir, "writing-style"),
+    workingDirectory: join(pi.workingDirectory, "writing-style"),
+    agentDirectory: join(pi.agentDirectory, "writing-style"),
+  });
+}
+
 /** 日记使用隔离的 Pi Runtime，只暴露来源清单读取工具。 */
 export function createDiaryAgentRuntime(
   config: GatewayConfig,
