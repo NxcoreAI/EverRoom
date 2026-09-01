@@ -1,7 +1,12 @@
 import { useLocale } from '@/i18n/LocaleContext'
-import { SourceIcon } from './SourceIcon'
+import type { ConnectorProviderSummary } from '../../../../../shared/sources'
+import { SourceIcon, type SourceIconKind } from './SourceIcon'
+import { FALLBACK_CONNECTOR_PROVIDERS } from './useConnectorProviders'
 
-export type ConnectorProviderId = 'gmail' | 'outlook' | 'google-calendar' | 'google-docs' | 'notion'
+/**
+ * 兼容导出：provider 注册名已开放（网关 SyncProvider 注册表），不再是闭集字面量。
+ */
+export type ConnectorProviderId = string
 
 export function ConnectSourceMenu({
   busy,
@@ -15,6 +20,8 @@ export function ConnectSourceMenu({
   onLocalAgentHistory,
   connectorsEnabled,
   onConnectorProvider,
+  providers,
+  onWebcalSubscription,
 }: {
   busy: boolean
   onLocalFolder: () => void
@@ -27,8 +34,15 @@ export function ConnectSourceMenu({
   onLocalAgentHistory: (provider: 'codex' | 'claude') => void
   connectorsEnabled?: boolean
   onConnectorProvider?: (provider: ConnectorProviderId) => void
+  /** 网关注册表元数据（缺省回落静态清单）——mail/calendar OAuth 与 webcal 订阅由它驱动。 */
+  providers?: ConnectorProviderSummary[]
+  onWebcalSubscription?: () => void
 }) {
   const { t } = useLocale()
+  const metadata = providers ?? FALLBACK_CONNECTOR_PROVIDERS
+  const oauthFeeds = metadata.filter((item) =>
+    item.authChannel === 'nango-oauth' && !item.comingSoon && (item.category === 'mail' || item.category === 'calendar'))
+  const webcalFeeds = metadata.filter((item) => item.authChannel === 'webcal-url' && !item.comingSoon)
   return (
     <div className="connect-source-menu" role="menu" aria-label={t('surface:connectSourceMenu.chooseSourceType')}>
       <button type="button" role="menuitem" disabled={busy} onClick={onLocalFolder}>
@@ -70,19 +84,22 @@ export function ConnectSourceMenu({
           <SourceIcon kind="notion" /><span><strong>Notion</strong><small>{t('surface:connectSourceMenu.notionMarkdownHint')}</small></span>
         </button>
       )}
-      {connectorsEnabled && onConnectorProvider ? (
-        <>
-          <button type="button" role="menuitem" disabled={busy} onClick={() => onConnectorProvider('gmail')}>
-            <SourceIcon kind="gmail" /><span><strong>Gmail</strong><small>{t('surface:connectSourceMenu.mailOAuthHint')}</small></span>
+      {connectorsEnabled && onConnectorProvider
+        // 注册表驱动：mail/calendar 类 OAuth 源（新增 provider 自动出现）。
+        ? oauthFeeds.map((item) => (
+          <button key={item.provider} type="button" role="menuitem" disabled={busy} onClick={() => onConnectorProvider(item.provider)}>
+            <SourceIcon kind={(item.iconKey as SourceIconKind) ?? 'web-page'} /><span><strong>{item.label}</strong><small>{t(item.category === 'mail' ? 'surface:connectSourceMenu.mailOAuthHint' : 'surface:connectSourceMenu.calendarOAuthHint')}</small></span>
           </button>
-          <button type="button" role="menuitem" disabled={busy} onClick={() => onConnectorProvider('outlook')}>
-            <SourceIcon kind="outlook" /><span><strong>Outlook</strong><small>{t('surface:connectSourceMenu.mailOAuthHint')}</small></span>
+        ))
+        : null}
+      {connectorsEnabled && onWebcalSubscription
+        // webcal-url 通道：订阅任意网站发布的日历（无 OAuth）。
+        ? webcalFeeds.map((item) => (
+          <button key={item.provider} type="button" role="menuitem" disabled={busy} onClick={onWebcalSubscription}>
+            <SourceIcon kind="ics-calendar" /><span><strong>{t('surface:connectSourceMenu.webcalSubscription')}</strong><small>{t('surface:connectSourceMenu.webcalHint')}</small></span>
           </button>
-          <button type="button" role="menuitem" disabled={busy} onClick={() => onConnectorProvider('google-calendar')}>
-            <SourceIcon kind="google-calendar" /><span><strong>Google Calendar</strong><small>{t('surface:connectSourceMenu.calendarOAuthHint')}</small></span>
-          </button>
-        </>
-      ) : null}
+        ))
+        : null}
       <button type="button" role="menuitem" className="connect-source-disabled" disabled>
         <SourceIcon kind="feishu" /><span><strong>{t('surface:connectSourceMenu.feishu')}</strong><small>{t('surface:connectSourceMenu.readOnlyComingSoon')}</small></span>
       </button>

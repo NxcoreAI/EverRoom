@@ -33,6 +33,9 @@ interface ActiveRun {
   queue: AsyncEventQueue<RuntimeEvent>;
 }
 
+/** length 重试的预算封顶（与 MemoryCore runner 的 4 倍重试封顶一致）。 */
+const LENGTH_RETRY_MAX_TOKENS = 32_768;
+
 /** AgentRuntime adapter for providers whose extra request fields are not supported by Pi. */
 export class OpenAiCompletionAgentRuntime implements AgentRuntime {
   readonly id: string;
@@ -93,40 +96,24 @@ export class OpenAiCompletionAgentRuntime implements AgentRuntime {
     signal: AbortSignal,
   ): Promise<void> {
     try {
-      const response = await fetch(`${this.config.baseUrl.replace(/\/+$/, "")}/chat/completions`, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          authorization: `Bearer ${this.config.apiKey}`,
-        },
-        body: JSON.stringify({
-          model: this.config.model,
-          messages: [
-            { role: "system", content: this.systemPromptFor(input) },
-            { role: "user", content: input.prompt },
-          ],
-          ...(this.config.temperature === undefined ? {} : { temperature: this.config.temperature }),
-          ...(this.config.maxTokens === undefined ? {} : { max_tokens: this.config.maxTokens }),
-          ...this.config.requestOptions,
-        }),
-        signal: AbortSignal.any([
-          signal,
-          AbortSignal.timeout(this.config.timeoutMs ?? 60_000),
-        ]),
-      });
-      if (!response.ok) {
-        const detail = this.config.includeProviderErrorBody === false
-          ? ""
-          : await response.text().catch(() => "");
-        throw new Error(`${this.id} provider HTTP ${response.status}${detail ? `: ${detail.slice(0, 400)}` : ""}`);
-      }
-      const payload = await response.json() as {
-        choices?: Array<{ message?: { content?: string | null }; finish_reason?: string }>;
-      };
-      const choice = payload.choices?.[0];
-      const content = choice?.message?.content?.trim();
-      if (!content) {
-        throw new Error(`${this.id} provider returned no content (finish_reason=${choice?.finish_reason ?? "unknown"})`);
+      // length 防护：推理型模型的思考段会先消耗 max_tokens，烧尽时以
+      // finish_reason=length 且无正文返回。一次 4 倍加预算重试（封顶
+      // LENGTH_RETRY_MAX_TOKENS，配置本身更大时保持原值不缩水）再判失败
+      // ——与 MemoryCore runner 同款策略。
+      let content: string | null = null;
+      const retryBudget = this.config.maxTokens === undefined
+        ? undefined
+        : Math.min(this.config.maxTokens * 4, LENGTH_RETRY_MAX_TOKENS);
+      for (let attempt = 0; ; attempt += 1) {
+        const budget = attempt === 0 ? this.config.maxTokens : retryBudget;
+        const outcome = await this.fetchCompletion(input, budget, signal);
+        if (outcome.content !== null) {
+          content = outcome.content;
+          break;
+        }
+        if (budget === undefined || retryBudget === undefined || budget >= retryBudget) {
+          throw new Error(`${this.id} provider returned no content (finish_reason=${outcome.finishReason})`);
+        }
       }
       queue.push({ type: "message.delta", payload: { delta: content } });
       queue.push({ type: "message.completed", payload: { role: "assistant", content } });
@@ -144,6 +131,55 @@ export class OpenAiCompletionAgentRuntime implements AgentRuntime {
       queue.end();
       this.activeRuns.delete(input.runId);
     }
+  }
+
+  /**
+   * 单次补全请求。返回 { content, finishReason }；content 为 null 表示
+   * finish_reason=length 且无正文（可加预算重试），其余空正文直接抛错。
+   */
+  private async fetchCompletion(
+    input: StartRuntimeRunInput,
+    maxTokens: number | undefined,
+    signal: AbortSignal,
+  ): Promise<{ content: string; finishReason: string } | { content: null; finishReason: string }> {
+    const response = await fetch(`${this.config.baseUrl.replace(/\/+$/, "")}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${this.config.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: this.config.model,
+        messages: [
+          { role: "system", content: this.systemPromptFor(input) },
+          { role: "user", content: input.prompt },
+        ],
+        ...(this.config.temperature === undefined ? {} : { temperature: this.config.temperature }),
+        ...(maxTokens === undefined ? {} : { max_tokens: maxTokens }),
+        ...this.config.requestOptions,
+      }),
+      signal: AbortSignal.any([
+        signal,
+        AbortSignal.timeout(this.config.timeoutMs ?? 60_000),
+      ]),
+    });
+    if (!response.ok) {
+      const detail = this.config.includeProviderErrorBody === false
+        ? ""
+        : await response.text().catch(() => "");
+      throw new Error(`${this.id} provider HTTP ${response.status}${detail ? `: ${detail.slice(0, 400)}` : ""}`);
+    }
+    const payload = await response.json() as {
+      choices?: Array<{ message?: { content?: string | null }; finish_reason?: string }>;
+    };
+    const choice = payload.choices?.[0];
+    const finishReason = choice?.finish_reason ?? "unknown";
+    const content = choice?.message?.content?.trim();
+    if (!content) {
+      if (finishReason === "length") return { content: null, finishReason };
+      throw new Error(`${this.id} provider returned no content (finish_reason=${finishReason})`);
+    }
+    return { content, finishReason };
   }
 
   private systemPromptFor(input: StartRuntimeRunInput): string {

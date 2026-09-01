@@ -19,6 +19,7 @@ import type {
 import type { CloudAccountStatus, DefaultLocalFolder, DefaultLocalFolderConnectionResult } from '../shared/sources'
 import type { PrivateTranscriptionSyncCompletedEvent, RuntimeConfigSnapshot } from '../shared/sources'
 import { OFFICE_TEST_INSTANCE_ID, officePreviewKindForFileName } from '../shared/sources'
+import { CURSOR_COMPLETION_AGENT_ERROR_KEY } from '../shared/cursor-completion'
 import type { OpenConnectorExecutionInput } from '../shared/open-connector'
 import { ConnectorRegistry } from './connectors/connector-registry'
 import { LocalFolderConnector } from './connectors/local-folder-connector'
@@ -256,7 +257,7 @@ const RUNTIME_CONFIG_CHANNELS = {
 } as const
 
 const CONNECTOR_CHANNELS = {
-  runtimeStatus: 'nango-connector:runtime-status', status: 'nango-connector:status', startAuthorization: 'nango-connector:start-authorization', authorizationStatus: 'nango-connector:authorization-status', registerConnection: 'nango-connector:register-connection', disableConnection: 'nango-connector:disable-connection', enableConnection: 'nango-connector:enable-connection', purgeConnection: 'nango-connector:purge-connection', triggerSync: 'nango-connector:trigger-sync', cancelRun: 'nango-connector:cancel-run', listScopes: 'nango-connector:list-scopes', listRuns: 'nango-connector:list-runs', listMail: 'nango-connector:list-mail', listFailures: 'nango-connector:list-failures', listDocuments: 'nango-connector:list-documents', readDocument: 'nango-connector:read-document', listRecords: 'nango-connector:list-records', armFault: 'nango-connector:arm-fault',
+  runtimeStatus: 'nango-connector:runtime-status', status: 'nango-connector:status', providers: 'nango-connector:providers', startAuthorization: 'nango-connector:start-authorization', authorizationStatus: 'nango-connector:authorization-status', registerConnection: 'nango-connector:register-connection', createWebcalSubscription: 'nango-connector:create-webcal-subscription', disableConnection: 'nango-connector:disable-connection', enableConnection: 'nango-connector:enable-connection', purgeConnection: 'nango-connector:purge-connection', triggerSync: 'nango-connector:trigger-sync', cancelRun: 'nango-connector:cancel-run', listScopes: 'nango-connector:list-scopes', listRuns: 'nango-connector:list-runs', listMail: 'nango-connector:list-mail', listFailures: 'nango-connector:list-failures', listDocuments: 'nango-connector:list-documents', readDocument: 'nango-connector:read-document', listRecords: 'nango-connector:list-records', armFault: 'nango-connector:arm-fault',
 } as const
 const OPEN_CONNECTOR_CHANNELS = {
   status: 'open-connector:status',
@@ -1427,9 +1428,11 @@ async function syncKnowledgeServiceEnvironment(snapshot: RuntimeConfigSnapshot):
 
 function registerConnectorHandlers(bridge: ConnectorGatewayBridge): void {
   ipcMain.handle(CONNECTOR_CHANNELS.status, () => bridge.status())
+  ipcMain.handle(CONNECTOR_CHANNELS.providers, () => bridge.providers())
   ipcMain.handle(CONNECTOR_CHANNELS.startAuthorization, (_event, provider) => bridge.startAuthorization(provider))
   ipcMain.handle(CONNECTOR_CHANNELS.authorizationStatus, (_event, id) => bridge.authorizationStatus(id))
   ipcMain.handle(CONNECTOR_CHANNELS.registerConnection, (_event, input) => bridge.registerConnection(input))
+  ipcMain.handle(CONNECTOR_CHANNELS.createWebcalSubscription, (_event, url) => bridge.createWebcalSubscription(url))
   ipcMain.handle(CONNECTOR_CHANNELS.disableConnection, (_event, id) => bridge.disableConnection(id))
   ipcMain.handle(CONNECTOR_CHANNELS.enableConnection, (_event, id) => bridge.enableConnection(id))
   ipcMain.handle(CONNECTOR_CHANNELS.purgeConnection, (_event, id) => bridge.purgeConnection(id))
@@ -1796,15 +1799,28 @@ function registerAgentHandlers(bridge: AgentGatewayBridge, migrationCoordinator:
 }
 
 function registerCursorCompletionAgentHandlers(bridge: AgentGatewayBridge): void {
+  // 预期失败（409 session_busy、网络瞬断等）以哨兵 payload 返回而非 reject：
+  // 渲染端会分类重试，每次 reject 都会被 Electron 记成一条 ERROR 级 console 噪音。
+  const quiet = <Args extends unknown[]>(
+    handler: (event: Electron.IpcMainInvokeEvent, ...args: Args) => unknown,
+  ) => async (event: Electron.IpcMainInvokeEvent, ...args: Args) => {
+    try {
+      return await handler(event, ...args)
+    } catch (error) {
+      return {
+        [CURSOR_COMPLETION_AGENT_ERROR_KEY]: error instanceof Error ? error.message : String(error),
+      }
+    }
+  }
   handleGroup(CURSOR_COMPLETION_AGENT_CHANNELS, {
-    createSession: (_event, input) => bridge.createSession(input),
-    deleteSession: (_event, sessionId) => bridge.deleteSession(sessionId),
-    getEvents: (_event, sessionId, runId, afterSeq) =>
-      bridge.getEvents(sessionId, runId, afterSeq),
-    startRun: (_event, sessionId, input) => bridge.startRun(sessionId, input),
-    cancelRun: (_event, runId) => bridge.cancelRun(runId),
-    subscribe: (event, sessionId) => bridge.subscribe(event.sender, sessionId),
-    unsubscribe: (event) => bridge.unsubscribe(event.sender.id),
+    createSession: quiet((_event, input) => bridge.createSession(input)),
+    deleteSession: quiet((_event, sessionId) => bridge.deleteSession(sessionId)),
+    getEvents: quiet((_event, sessionId, runId, afterSeq) =>
+      bridge.getEvents(sessionId, runId, afterSeq)),
+    startRun: quiet((_event, sessionId, input) => bridge.startRun(sessionId, input)),
+    cancelRun: quiet((_event, runId) => bridge.cancelRun(runId)),
+    subscribe: quiet((event, sessionId) => bridge.subscribe(event.sender, sessionId)),
+    unsubscribe: quiet((event) => bridge.unsubscribe(event.sender.id)),
   })
 }
 

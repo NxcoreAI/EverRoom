@@ -32,6 +32,9 @@ vi.mock('../src/renderer/src/i18n/LocaleContext', async (importOriginal) => {
 
 import {
   currentDocumentCursorCompletion,
+  DOCUMENT_CURSOR_COMPLETION_ACCEPT_EVENT,
+  DOCUMENT_CURSOR_COMPLETION_DISMISS_EVENT,
+  DOCUMENT_CURSOR_COMPLETION_RETRY_EVENT,
   documentCursorCompletionContext,
   DocumentCursorCompletionExtension,
   showDocumentCursorCompletion,
@@ -43,7 +46,7 @@ import {
   readDocumentCursorCompletionDiagnostics,
   recordDocumentCursorCompletionDiagnostic,
 } from '../src/renderer/src/components/context-room/ported/components/detail-editor/DocumentCursorCompletionDiagnostics'
-import { streamDocumentCursorCompletion } from '../src/renderer/src/components/context-room/ported/components/detail-editor/documentCursorCompletionAgent'
+import { DocumentCursorCompletionError, streamDocumentCursorCompletion } from '../src/renderer/src/components/context-room/ported/components/detail-editor/documentCursorCompletionAgent'
 
 const editors: Editor[] = []
 
@@ -674,9 +677,12 @@ class MockKeyboardEvent extends Event {
   key: string
   isComposing: boolean
 
-  constructor(type: string, init: { key: string; isComposing?: boolean }) {
-    super(type)
-    this.key = init.key
+  constructor(
+    type: string,
+    init: { key?: string; isComposing?: boolean; bubbles?: boolean } = {},
+  ) {
+    super(type, init.bubbles ? { bubbles: true } : undefined)
+    this.key = init.key ?? ''
     this.isComposing = init.isComposing ?? false
   }
 }
@@ -752,12 +758,23 @@ function createHookEditor(
   }
 }
 
-function CompletionHook({ editor, enabled = true }: { editor: Editor; enabled?: boolean }) {
+function CompletionHook({
+  editor,
+  enabled = true,
+  paragraphEnabled = true,
+  documentName = '测试文档',
+}: {
+  editor: Editor
+  enabled?: boolean
+  paragraphEnabled?: boolean
+  documentName?: string
+}) {
   const running = useDocumentCursorCompletion({
     editor,
     roomId: 'room-1',
-    documentName: '测试文档',
+    documentName,
     enabled,
+    paragraphEnabled,
   })
   return React.createElement('span', { 'data-running': running })
 }
@@ -930,6 +947,10 @@ describe('useDocumentCursorCompletion input method commits', () => {
     expect(currentDocumentCursorCompletion(editor)).toEqual({
       position: editor.state.selection.from,
       text: 'ion test() {',
+      retryLabel: '重写',
+      acceptLabel: '接受',
+      dismissLabel: '拒绝',
+      mode: 'inline',
     })
 
     await act(async () => {
@@ -962,6 +983,10 @@ describe('useDocumentCursorCompletion input method commits', () => {
     expect(currentDocumentCursorCompletion(editor)).toEqual({
       position: editor.state.selection.from,
       text: 'on test()',
+      retryLabel: '重写',
+      acceptLabel: '接受',
+      dismissLabel: '拒绝',
+      mode: 'inline',
     })
 
     pending.reject(new DOMException('cancelled', 'AbortError'))
@@ -1006,6 +1031,10 @@ describe('useDocumentCursorCompletion input method commits', () => {
       position,
       text: 'function()',
       replaceFrom: position - 8,
+      retryLabel: '重写',
+      acceptLabel: '接受',
+      dismissLabel: '拒绝',
+      mode: 'inline',
     })
     act(() => renderer.unmount())
   })
@@ -1023,6 +1052,10 @@ describe('useDocumentCursorCompletion input method commits', () => {
     expect(currentDocumentCursorCompletion(editor)).toEqual({
       position: editor.state.selection.from,
       text: '错误',
+      retryLabel: '重写',
+      acceptLabel: '接受',
+      dismissLabel: '拒绝',
+      mode: 'inline',
     })
     act(() => renderer.unmount())
   })
@@ -1190,6 +1223,114 @@ describe('useDocumentCursorCompletion input method commits', () => {
     act(() => renderer.unmount())
   })
 
+  it('requests completion when Enter splits a list item into a new empty item', async () => {
+    const { dom, editor, renderer } = setup({
+      type: 'doc',
+      content: [{
+        type: 'bulletList',
+        content: [{
+          type: 'listItem',
+          content: [{ type: 'paragraph', content: [{ type: 'text', text: '第一条已有内容' }] }],
+        }],
+      }],
+    })
+
+    // 模拟 PM keymap 的 Enter 处理：keydown（capture，先预埋分块意图）→
+    // 同步 dispatch 开新列表项的事务。真实浏览器里 Enter 不会有 input 事件。
+    dom.dispatchEvent(new MockKeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    const before = editor.state.selection.$from
+    const insertPos = before.after(2)
+    const emptyItem = editor.state.schema.nodes.listItem.create(
+      null,
+      editor.state.schema.nodes.paragraph.create(),
+    )
+    act(() => {
+      const tr = editor.state.tr
+      tr.insert(insertPos, emptyItem)
+      tr.setSelection(TextSelection.create(tr.doc, insertPos + 2))
+      editor.view.dispatch(tr)
+    })
+    await act(async () => { await vi.advanceTimersByTimeAsync(700) })
+
+    expect(streamDocumentCursorCompletion).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(streamDocumentCursorCompletion).mock.calls[0]?.[1]).toMatchObject({
+      blockPrefix: '',
+      blockSuffix: '',
+      contextBefore: expect.stringContaining('第一条已有内容'),
+    })
+    act(() => renderer.unmount())
+  })
+
+  it('does not request completion when Enter only restructures without adding a block', async () => {
+    const { dom, editor, renderer } = setup({
+      type: 'doc',
+      content: [{
+        type: 'bulletList',
+        content: [{
+          type: 'listItem',
+          content: [{ type: 'paragraph', content: [{ type: 'text', text: '第一条已有内容' }] }],
+        }],
+      }],
+    })
+
+    dom.dispatchEvent(new MockKeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    // 文本块计数不变的删除事务（如空列表项回车触发的 outdent 合并）。
+    const from = editor.state.selection.from
+    act(() => {
+      editor.view.dispatch(editor.state.tr.delete(from - 3, from))
+    })
+    await act(async () => { await vi.advanceTimersByTimeAsync(700) })
+
+    expect(streamDocumentCursorCompletion).not.toHaveBeenCalled()
+    act(() => renderer.unmount())
+  })
+
+  it('requests completion after typing a single space following existing words', async () => {
+    const { dom, insertText, renderer } = setup('hello')
+
+    // 词 + 空格 + 停顿：burst 只有 1 个字符，靠词界豁免过门槛。
+    typeText(dom, insertText, ' ')
+    await act(async () => { await vi.advanceTimersByTimeAsync(700) })
+
+    expect(streamDocumentCursorCompletion).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(streamDocumentCursorCompletion).mock.calls[0]?.[1]).toMatchObject({
+      blockPrefix: 'hello ',
+    })
+    act(() => renderer.unmount())
+  })
+
+  it('still skips a lone space typed into an otherwise empty block', async () => {
+    const { dom, insertText, renderer } = setup({
+      type: 'doc',
+      content: [
+        { type: 'paragraph', content: [{ type: 'text', text: '前面段落提供上下文。' }] },
+        { type: 'paragraph' },
+      ],
+    })
+
+    typeText(dom, insertText, ' ')
+    await act(async () => { await vi.advanceTimersByTimeAsync(1500) })
+
+    expect(streamDocumentCursorCompletion).not.toHaveBeenCalled()
+    act(() => renderer.unmount())
+  })
+
+  it('requests completion after a single-character IME commit at the end of existing text', async () => {
+    const { dom, insertText, renderer } = setup('已有正文')
+
+    dom.dispatchEvent(new Event('compositionstart'))
+    dom.dispatchEvent(new MockCompositionEvent('compositionend', { data: '好' }))
+    insertText('好')
+    dom.dispatchEvent(new MockInputEvent('input', { data: '好', inputType: 'insertText' }))
+    await act(async () => { await vi.advanceTimersByTimeAsync(700) })
+
+    expect(streamDocumentCursorCompletion).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(streamDocumentCursorCompletion).mock.calls[0]?.[1]).toMatchObject({
+      blockPrefix: '已有正文好',
+    })
+    act(() => renderer.unmount())
+  })
+
   it('counts the final composition input once after the document transaction', async () => {
     const { dom, insertText, renderer } = setup()
 
@@ -1224,7 +1365,14 @@ describe('useDocumentCursorCompletion input method commits', () => {
     dom.dispatchEvent(new MockInputEvent('input', { data: '中', inputType: 'insertText' }))
     await act(async () => { await vi.advanceTimersByTimeAsync(700) })
 
-    expect(streamDocumentCursorCompletion).not.toHaveBeenCalled()
+    // 单字上屏现在按词界同权放行（会发请求），只计一次改用调度诊断度量：
+    // typedCharacters=1 证明 commit 只计数一次（重复计数会是 2）。
+    expect(readDocumentCursorCompletionDiagnostics()).toContainEqual(expect.objectContaining({
+      event: 'schedule.created',
+      trigger: 'composition',
+      typedCharacters: 1,
+    }))
+    expect(streamDocumentCursorCompletion).toHaveBeenCalledTimes(1)
     act(() => renderer.unmount())
   })
 
@@ -1238,7 +1386,10 @@ describe('useDocumentCursorCompletion input method commits', () => {
     dom.dispatchEvent(new MockInputEvent('input', { data: '中', inputType: 'insertText' }))
     await act(async () => { await vi.advanceTimersByTimeAsync(700) })
 
-    expect(streamDocumentCursorCompletion).not.toHaveBeenCalled()
+    // 迟到的 final input 不得触发第二次调度/计数。
+    expect(readDocumentCursorCompletionDiagnostics().filter((entry) =>
+      entry.event === 'schedule.created' && entry.trigger === 'composition')).toHaveLength(1)
+    expect(streamDocumentCursorCompletion).toHaveBeenCalledTimes(1)
     act(() => renderer.unmount())
   })
 
@@ -1271,4 +1422,477 @@ describe('useDocumentCursorCompletion input method commits', () => {
       act(() => renderer.unmount())
     },
   )
+})
+
+describe('useDocumentCursorCompletion paragraph tier', () => {
+  function setup(initialContent: string | Record<string, unknown> = '已有正文') {
+    vi.useFakeTimers()
+    vi.stubGlobal('InputEvent', MockInputEvent)
+    vi.stubGlobal('CompositionEvent', MockCompositionEvent)
+    vi.stubGlobal('window', {
+      setTimeout: globalThis.setTimeout,
+      clearTimeout: globalThis.clearTimeout,
+      nxcore: { cursorCompletionAgent: {} },
+    })
+    const hookEditor = createHookEditor(initialContent)
+    let renderer!: TestRenderer.ReactTestRenderer
+    const mount = (props: { enabled?: boolean; paragraphEnabled?: boolean; documentName?: string } = {}) => {
+      act(() => {
+        renderer = TestRenderer.create(React.createElement(CompletionHook, {
+          editor: hookEditor.editor,
+          ...props,
+        }))
+      })
+    }
+    mount()
+    return {
+      ...hookEditor,
+      renderer,
+      mount,
+      isRunning: () => renderer.root.findByType('span').props['data-running'] === true,
+    }
+  }
+
+  function typeText(dom: EventTarget, insertText: (text: string) => void, text: string) {
+    dom.dispatchEvent(new MockInputEvent('beforeinput', { data: text, inputType: 'insertText' }))
+    insertText(text)
+    dom.dispatchEvent(new MockInputEvent('input', { data: text, inputType: 'insertText' }))
+  }
+
+  /** 每次流式调用一个独立 deferred，便于分别推进 inline / paragraph 请求。 */
+  function deferredStreamCalls() {
+    const calls: {
+      input: Record<string, unknown>
+      options: { signal: AbortSignal; timeoutMs?: number }
+      onSuggestion: (suggestion: { text: string; replaceCharacters: number }) => void
+      deferred: ReturnType<typeof deferred<{ text: string; replaceCharacters: number }>>
+    }[] = []
+    vi.mocked(streamDocumentCursorCompletion).mockImplementation(((_api, input, options) => {
+      const pending = deferred<{ text: string; replaceCharacters: number }>()
+      calls.push({
+        input: input as unknown as Record<string, unknown>,
+        options: options as unknown as typeof calls[number]['options'],
+        onSuggestion: options.onSuggestion ?? (() => {}),
+        deferred: pending,
+      })
+      return pending.promise
+    }) as typeof streamDocumentCursorCompletion)
+    return calls
+  }
+
+  it('schedules an inline completion at 700ms and a superseding paragraph completion at 1500ms', async () => {
+    const calls = deferredStreamCalls()
+    const { dom, insertText, renderer } = setup()
+
+    typeText(dom, insertText, '普通')
+    await act(async () => { await vi.advanceTimersByTimeAsync(699) })
+    expect(streamDocumentCursorCompletion).toHaveBeenCalledTimes(0)
+    await act(async () => { await vi.advanceTimersByTimeAsync(1) })
+    expect(streamDocumentCursorCompletion).toHaveBeenCalledTimes(1)
+    expect(calls[0]?.input.completionMode).toBe('inline')
+    expect(calls[0]?.options.timeoutMs).toBeUndefined()
+
+    // 行内已上屏：1500ms 才升级段落档（无 ghost 时不再升级，见下方专项用例）。
+    act(() => calls[0]?.onSuggestion({ text: '，行内。', replaceCharacters: 0 }))
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(799) })
+    expect(streamDocumentCursorCompletion).toHaveBeenCalledTimes(1)
+    await act(async () => { await vi.advanceTimersByTimeAsync(1) })
+    expect(streamDocumentCursorCompletion).toHaveBeenCalledTimes(2)
+
+    // 验收①：停顿 1.5s 后以段落档发起，行内请求被 supersede。
+    expect(calls[1]?.input.completionMode).toBe('paragraph')
+    expect(calls[1]?.options.timeoutMs).toBe(15_000)
+    expect(calls[1]?.input.blockPrefix).toBe('已有正文普通')
+    expect(calls[0]?.options.signal.aborted).toBe(true)
+    expect(readDocumentCursorCompletionDiagnostics()).toContainEqual(expect.objectContaining({
+      event: 'request.cancelled',
+      reason: 'superseded',
+    }))
+    expect(readDocumentCursorCompletionDiagnostics()).toContainEqual(expect.objectContaining({
+      event: 'request.started',
+      trigger: 'paragraph-idle',
+      completionMode: 'paragraph',
+    }))
+    act(() => renderer.unmount())
+  })
+
+  it('lets a pending inline request finish instead of upgrading to paragraph at 1500ms', async () => {
+    const calls = deferredStreamCalls()
+    const { dom, editor, insertText, isRunning, renderer } = setup()
+
+    typeText(dom, insertText, '普通')
+    await act(async () => { await vi.advanceTimersByTimeAsync(700) })
+    expect(calls[0]?.input.completionMode).toBe('inline')
+
+    // 模型首 token 秒级：1500ms 时行内请求仍在等、ghost 未出——不再杀掉重发。
+    await act(async () => { await vi.advanceTimersByTimeAsync(800) })
+    expect(streamDocumentCursorCompletion).toHaveBeenCalledTimes(1)
+    expect(calls[0]?.options.signal.aborted).toBe(false)
+    expect(isRunning()).toBe(true)
+    expect(readDocumentCursorCompletionDiagnostics()).toContainEqual(expect.objectContaining({
+      event: 'request.skipped',
+      trigger: 'paragraph-idle',
+      reason: 'inline_pending',
+    }))
+
+    // 行内请求跑完自然交付。
+    await act(async () => {
+      calls[0]?.deferred.resolve({ text: '，行内结果。', replaceCharacters: 0 })
+      await calls[0]?.deferred.promise
+      await Promise.resolve()
+    })
+    expect(currentDocumentCursorCompletion(editor)).toMatchObject({ text: '，行内结果。', mode: 'inline' })
+    act(() => renderer.unmount())
+  })
+
+  it('keeps the inline ghost visible until the paragraph suggestion replaces it', async () => {
+    const calls = deferredStreamCalls()
+    const { dom, editor, insertText, renderer } = setup()
+
+    typeText(dom, insertText, '普通')
+    await act(async () => { await vi.advanceTimersByTimeAsync(700) })
+    act(() => calls[0]?.onSuggestion({ text: '，第一句。', replaceCharacters: 0 }))
+    expect(currentDocumentCursorCompletion(editor)).toMatchObject({ text: '，第一句。', mode: 'inline' })
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(800) })
+    expect(streamDocumentCursorCompletion).toHaveBeenCalledTimes(2)
+    // load-bearing 不变量：行内请求被 supersede 后 ghost 存活，直到段落首建议原子替换。
+    expect(currentDocumentCursorCompletion(editor)).toMatchObject({ text: '，第一句。' })
+
+    act(() => calls[1]?.onSuggestion({ text: '段落第一句。段落第二句。', replaceCharacters: 0 }))
+    expect(currentDocumentCursorCompletion(editor)).toEqual({
+      position: editor.state.selection.from,
+      text: '段落第一句。段落第二句。',
+      retryLabel: '重写',
+      acceptLabel: '接受',
+      dismissLabel: '拒绝',
+      mode: 'paragraph',
+    })
+    expect(editor.state.doc.textContent).toBe('已有正文普通')
+    act(() => renderer.unmount())
+  })
+
+  it('reschedules the paragraph timer on continued typing', async () => {
+    const calls = deferredStreamCalls()
+    const { dom, insertText, renderer } = setup()
+
+    typeText(dom, insertText, '普通')
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
+    expect(streamDocumentCursorCompletion).toHaveBeenCalledTimes(1)
+
+    // t=1000 再输入：两个 timer 都重挂（原 paragraph timer 若未重挂会在 t=1500 触发）。
+    // 打满 2 个字：行内档重触发同样受 MIN_TYPED_CHARACTERS 门槛约束。
+    typeText(dom, insertText, '文字')
+    await act(async () => { await vi.advanceTimersByTimeAsync(699) })
+    expect(streamDocumentCursorCompletion).toHaveBeenCalledTimes(1)
+    await act(async () => { await vi.advanceTimersByTimeAsync(1) })
+    expect(streamDocumentCursorCompletion).toHaveBeenCalledTimes(2)
+    expect(calls[1]?.input.completionMode).toBe('inline')
+    // 行内上屏后，段落 timer 从 t=1000 起算：t=2499 仍只有 2 次，t=2500 第 3 次为段落档。
+    act(() => calls[1]?.onSuggestion({ text: '，行内。', replaceCharacters: 0 }))
+    await act(async () => { await vi.advanceTimersByTimeAsync(799) })
+    expect(streamDocumentCursorCompletion).toHaveBeenCalledTimes(2)
+    await act(async () => { await vi.advanceTimersByTimeAsync(1) })
+    expect(streamDocumentCursorCompletion).toHaveBeenCalledTimes(3)
+    expect(calls[2]?.input.completionMode).toBe('paragraph')
+    act(() => renderer.unmount())
+  })
+
+  it('does not arm the paragraph tier below the minimum typed characters', async () => {
+    deferredStreamCalls()
+    const { dom, insertText, renderer } = setup()
+
+    typeText(dom, insertText, '单')
+    await act(async () => { await vi.advanceTimersByTimeAsync(1500) })
+    expect(streamDocumentCursorCompletion).toHaveBeenCalledTimes(0)
+    expect(readDocumentCursorCompletionDiagnostics()).toContainEqual(expect.objectContaining({
+      event: 'request.skipped',
+      reason: 'minimum_typed_characters',
+    }))
+    act(() => renderer.unmount())
+  })
+
+  it('never requests the paragraph tier inside a code block or a middle edit', async () => {
+    const codeBlockCalls = deferredStreamCalls()
+    const codeBlock = setup({
+      type: 'doc',
+      content: [{ type: 'codeBlock', content: [{ type: 'text', text: 'const a = 1; ' }] }],
+    })
+    typeText(codeBlock.dom, codeBlock.insertText, 'ab')
+    await act(async () => { await vi.advanceTimersByTimeAsync(1500) })
+    expect(streamDocumentCursorCompletion).toHaveBeenCalledTimes(1)
+    expect(codeBlockCalls[0]?.input.completionMode).toBe('inline')
+    expect(codeBlockCalls[0]?.input.blockType).toBe('codeBlock')
+    act(() => codeBlock.renderer.unmount())
+
+    vi.clearAllMocks()
+    clearDocumentCursorCompletionDiagnostics()
+    const middleEditCalls = deferredStreamCalls()
+    const middleEdit = setup('前半后半')
+    middleEdit.moveSelectionTo(3)
+    typeText(middleEdit.dom, middleEdit.insertText, '插')
+    await act(async () => { await vi.advanceTimersByTimeAsync(1500) })
+    expect(streamDocumentCursorCompletion).toHaveBeenCalledTimes(1)
+    expect(middleEditCalls[0]?.input.completionMode).toBe('inline')
+    expect(middleEditCalls[0]?.input.blockSuffix).toBe('后半')
+    act(() => middleEdit.renderer.unmount())
+  })
+
+  it('regenerates with the remaining ghost text as avoidText and caps at three attempts per requestKey', async () => {
+    const calls = deferredStreamCalls()
+    const { dom, editor, insertText, renderer } = setup('重生成基准')
+
+    typeText(dom, insertText, '普通')
+    await act(async () => { await vi.advanceTimersByTimeAsync(700) })
+    act(() => calls[0]?.onSuggestion({ text: '建议甲', replaceCharacters: 0 }))
+    expect(currentDocumentCursorCompletion(editor)).toMatchObject({ text: '建议甲' })
+
+    const regenerate = () => act(() => {
+      dom.dispatchEvent(new CustomEvent(DOCUMENT_CURSOR_COMPLETION_RETRY_EVENT))
+    })
+    regenerate()
+    expect(streamDocumentCursorCompletion).toHaveBeenCalledTimes(2)
+    expect(calls[1]?.input).toMatchObject({ completionMode: 'inline', avoidText: '建议甲' })
+    expect(readDocumentCursorCompletionDiagnostics()).toContainEqual(expect.objectContaining({
+      event: 'request.started',
+      trigger: 'regenerate',
+    }))
+    act(() => calls[1]?.onSuggestion({ text: '建议乙', replaceCharacters: 0 }))
+
+    regenerate()
+    expect(calls[2]?.input).toMatchObject({ avoidText: '建议乙' })
+    act(() => calls[2]?.onSuggestion({ text: '建议丙', replaceCharacters: 0 }))
+
+    regenerate()
+    expect(calls[3]?.input).toMatchObject({ avoidText: '建议丙' })
+    act(() => calls[3]?.onSuggestion({ text: '建议丁', replaceCharacters: 0 }))
+
+    // 验收④上限：同一 requestKey 第 4 次重生成被拒绝。
+    regenerate()
+    expect(streamDocumentCursorCompletion).toHaveBeenCalledTimes(4)
+    expect(readDocumentCursorCompletionDiagnostics()).toContainEqual(expect.objectContaining({
+      event: 'request.skipped',
+      reason: 'regenerate_limit',
+    }))
+    act(() => renderer.unmount())
+  })
+
+  it('ignores retry events when no ghost is visible', async () => {
+    deferredStreamCalls()
+    const { dom, renderer } = setup()
+
+    act(() => { dom.dispatchEvent(new CustomEvent(DOCUMENT_CURSOR_COMPLETION_RETRY_EVENT)) })
+    expect(streamDocumentCursorCompletion).toHaveBeenCalledTimes(0)
+    act(() => renderer.unmount())
+  })
+
+  it('accepts the suggestion from the menu event like the Tab key does', async () => {
+    const calls = deferredStreamCalls()
+    const { dom, editor, insertText, renderer } = setup('菜单基准')
+
+    typeText(dom, insertText, '普通')
+    await act(async () => { await vi.advanceTimersByTimeAsync(700) })
+    act(() => calls[0]?.onSuggestion({ text: '菜单建议。', replaceCharacters: 0 }))
+    expect(currentDocumentCursorCompletion(editor)).toMatchObject({ text: '菜单建议。' })
+
+    act(() => { dom.dispatchEvent(new CustomEvent(DOCUMENT_CURSOR_COMPLETION_ACCEPT_EVENT)) })
+    expect(currentDocumentCursorCompletion(editor)).toBeNull()
+    expect(editor.state.doc.textContent).toBe('菜单基准普通菜单建议。')
+    expect(readDocumentCursorCompletionDiagnostics()).toContainEqual(expect.objectContaining({
+      event: 'suggestion.accepted',
+    }))
+    act(() => renderer.unmount())
+  })
+
+  it('dismisses the suggestion from the menu event and leaves the document untouched', async () => {
+    const calls = deferredStreamCalls()
+    const { dom, editor, insertText, renderer } = setup('菜单基准')
+
+    typeText(dom, insertText, '普通')
+    await act(async () => { await vi.advanceTimersByTimeAsync(700) })
+    act(() => calls[0]?.onSuggestion({ text: '菜单建议。', replaceCharacters: 0 }))
+    expect(currentDocumentCursorCompletion(editor)).toMatchObject({ text: '菜单建议。' })
+
+    act(() => { dom.dispatchEvent(new CustomEvent(DOCUMENT_CURSOR_COMPLETION_DISMISS_EVENT)) })
+    expect(currentDocumentCursorCompletion(editor)).toBeNull()
+    expect(editor.state.doc.textContent).toBe('菜单基准普通')
+    expect(readDocumentCursorCompletionDiagnostics()).toContainEqual(expect.objectContaining({
+      event: 'suggestion.dismissed',
+      reason: 'menu',
+    }))
+    act(() => renderer.unmount())
+  })
+
+  it('does not trip the circuit breaker on transient session_busy races', async () => {
+    const { dom, insertText, renderer } = setup()
+    vi.mocked(streamDocumentCursorCompletion).mockImplementation(() =>
+      Promise.reject(new Error('Agent session already has an active run')))
+
+    // 连续 4 次 session_busy（超过熔断阈值 3）：全是暂态竞态，不该打开熔断。
+    for (let round = 0; round < 4; round += 1) {
+      typeText(dom, insertText, '普通')
+      await act(async () => { await vi.advanceTimersByTimeAsync(700) })
+    }
+    expect(streamDocumentCursorCompletion).toHaveBeenCalledTimes(4)
+    const diagnostics = readDocumentCursorCompletionDiagnostics()
+    expect(diagnostics).not.toContainEqual(expect.objectContaining({
+      event: 'request.skipped',
+      reason: 'circuit_open',
+    }))
+    expect(diagnostics).toContainEqual(expect.objectContaining({
+      event: 'request.failed',
+      reason: 'stream_error',
+      errorKind: 'session_busy',
+    }))
+
+    // 熔断未打开：下一次输入照常发起请求。
+    vi.mocked(streamDocumentCursorCompletion).mockResolvedValue({ text: '补全结果', replaceCharacters: 0 })
+    typeText(dom, insertText, '再次')
+    await act(async () => { await vi.advanceTimersByTimeAsync(700) })
+    expect(streamDocumentCursorCompletion).toHaveBeenCalledTimes(5)
+    act(() => renderer.unmount())
+  })
+
+  it('treats consecutive no_completion outcomes as healthy instead of tripping the circuit breaker', async () => {
+    const { dom, insertText, renderer } = setup()
+    vi.mocked(streamDocumentCursorCompletion).mockImplementation(() =>
+      Promise.reject(new DocumentCursorCompletionError('no_completion', 'Agent 没有返回可用的补全内容。')))
+
+    // 模型连续 4 次表示"此处无话可补"（快速编辑下常见）：链路本身是通的，
+    // 不算熔断失败——否则真补全也会被 cooldown 跳过。
+    for (let round = 0; round < 4; round += 1) {
+      typeText(dom, insertText, '普通')
+      await act(async () => { await vi.advanceTimersByTimeAsync(700) })
+    }
+    expect(streamDocumentCursorCompletion).toHaveBeenCalledTimes(4)
+    const diagnostics = readDocumentCursorCompletionDiagnostics()
+    expect(diagnostics).not.toContainEqual(expect.objectContaining({
+      event: 'request.skipped',
+      reason: 'circuit_open',
+    }))
+    expect(diagnostics).toContainEqual(expect.objectContaining({
+      event: 'request.failed',
+      errorKind: 'no_completion',
+    }))
+
+    // 熔断未打开：下一次输入照常发起请求。
+    vi.mocked(streamDocumentCursorCompletion).mockResolvedValue({ text: '补全结果', replaceCharacters: 0 })
+    typeText(dom, insertText, '再次')
+    await act(async () => { await vi.advanceTimersByTimeAsync(700) })
+    expect(streamDocumentCursorCompletion).toHaveBeenCalledTimes(5)
+    act(() => renderer.unmount())
+  })
+
+  it('consumes or dismisses a long paragraph ghost as the user keeps typing', async () => {
+    const calls = deferredStreamCalls()
+    const { dom, editor, insertText, renderer } = setup()
+    const longSuggestion = '续'.repeat(200)
+
+    typeText(dom, insertText, '普通')
+    await act(async () => { await vi.advanceTimersByTimeAsync(700) })
+    act(() => calls[0]?.onSuggestion({ text: '，行内。', replaceCharacters: 0 }))
+    await act(async () => { await vi.advanceTimersByTimeAsync(800) })
+    expect(calls[1]?.input.completionMode).toBe('paragraph')
+    await act(async () => {
+      calls[1]?.deferred.resolve({ text: longSuggestion, replaceCharacters: 0 })
+      await calls[1]?.deferred.promise
+      await Promise.resolve()
+    })
+    expect(currentDocumentCursorCompletion(editor)).toMatchObject({ text: longSuggestion, mode: 'paragraph' })
+
+    // 前缀消费：ghost 收缩，hint/mode 保留。
+    typeText(dom, insertText, '续')
+    expect(currentDocumentCursorCompletion(editor)).toMatchObject({
+      text: longSuggestion.slice(1),
+      retryLabel: '重写',
+      acceptLabel: '接受',
+      dismissLabel: '拒绝',
+      mode: 'paragraph',
+    })
+
+    // 验收⑤：失配输入 → 旧建议立刻失效，不会被误写入。
+    typeText(dom, insertText, 'X')
+    expect(currentDocumentCursorCompletion(editor)).toBeNull()
+    expect(editor.state.doc.textContent).not.toContain(longSuggestion)
+    act(() => renderer.unmount())
+  })
+
+  it('aborts a pending paragraph request when the cursor moves', async () => {
+    const calls = deferredStreamCalls()
+    const { dom, editor, insertText, moveSelection, isRunning, renderer } = setup()
+
+    typeText(dom, insertText, '普通')
+    await act(async () => { await vi.advanceTimersByTimeAsync(700) })
+    act(() => calls[0]?.onSuggestion({ text: '，行内。', replaceCharacters: 0 }))
+    await act(async () => { await vi.advanceTimersByTimeAsync(800) })
+    expect(calls[1]?.input.completionMode).toBe('paragraph')
+    expect(isRunning()).toBe(true)
+
+    act(() => moveSelection())
+    expect(calls[1]?.options.signal.aborted).toBe(true)
+    expect(isRunning()).toBe(false)
+    expect(currentDocumentCursorCompletion(editor)).toBeNull()
+    act(() => renderer.unmount())
+  })
+
+  it('rebuilds the completion session when the document changes', async () => {
+    deferredStreamCalls()
+    const { dom, insertText, renderer } = setup()
+
+    typeText(dom, insertText, '普通')
+    await act(async () => { await vi.advanceTimersByTimeAsync(700) })
+    expect(streamDocumentCursorCompletion).toHaveBeenCalledTimes(1)
+
+    // 验收⑤：切换文档 → 旧 effect 整体拆除（请求/通道/timer），新文档重新起步。
+    act(() => renderer.update(React.createElement(CompletionHook, {
+      editor: (renderer.root.findByType(CompletionHook).props as { editor: Editor }).editor,
+      documentName: '另一个文档',
+    })))
+    expect(readDocumentCursorCompletionDiagnostics()).toContainEqual(expect.objectContaining({
+      event: 'schedule.cancelled',
+      reason: 'unmounted',
+    }))
+    expect(streamDocumentCursorCompletion).toHaveBeenCalledTimes(1)
+
+    typeText(dom, insertText, '新文')
+    await act(async () => { await vi.advanceTimersByTimeAsync(700) })
+    expect(streamDocumentCursorCompletion).toHaveBeenCalledTimes(2)
+    act(() => renderer.unmount())
+  })
+
+  it('does not schedule the paragraph tier when the setting is off', async () => {
+    const calls = deferredStreamCalls()
+    const { dom, insertText, renderer } = setup()
+    act(() => renderer.update(React.createElement(CompletionHook, {
+      editor: (renderer.root.findByType(CompletionHook).props as { editor: Editor }).editor,
+      paragraphEnabled: false,
+    })))
+
+    typeText(dom, insertText, '普通')
+    await act(async () => { await vi.advanceTimersByTimeAsync(1500) })
+    expect(streamDocumentCursorCompletion).toHaveBeenCalledTimes(1)
+    expect(calls[0]?.input.completionMode).toBe('inline')
+    act(() => renderer.unmount())
+  })
+
+  it('aborts an in-flight paragraph request when the paragraph setting turns off', async () => {
+    const calls = deferredStreamCalls()
+    const { dom, insertText, isRunning, renderer } = setup()
+
+    typeText(dom, insertText, '普通')
+    await act(async () => { await vi.advanceTimersByTimeAsync(700) })
+    act(() => calls[0]?.onSuggestion({ text: '，行内。', replaceCharacters: 0 }))
+    await act(async () => { await vi.advanceTimersByTimeAsync(800) })
+    expect(calls[1]?.input.completionMode).toBe('paragraph')
+    expect(isRunning()).toBe(true)
+
+    act(() => renderer.update(React.createElement(CompletionHook, {
+      editor: (renderer.root.findByType(CompletionHook).props as { editor: Editor }).editor,
+      paragraphEnabled: false,
+    })))
+    expect(calls[1]?.options.signal.aborted).toBe(true)
+    expect(isRunning()).toBe(false)
+    act(() => renderer.unmount())
+  })
 })

@@ -264,7 +264,19 @@ pnpm typecheck    # Type-check every workspace package
 pnpm test         # Run Agent runtime and Gateway tests
 pnpm build        # Build Gateway and Electron
 pnpm package:mac  # Create macOS DMG and ZIP artifacts
+pnpm package:win  # Create the Windows x64 NSIS installer
 ```
+
+### Building the Windows installer
+
+`pnpm package:win` runs the same chain as the macOS build — Gateway, Nango runtime with Windows embedded PostgreSQL, OpenConnector, oo CLI, GenOffice runtimes (including the Rust `xlsx-sidecar.exe`), packaged environment, then `electron-builder --win nsis --x64`. Prerequisites:
+
+- Node 22 and the pnpm version pinned in `packageManager` (`corepack enable`)
+- The Rust toolchain (`cargo`) for the GenOffice xlsx sidecar
+- `git submodule update --init --recursive` (Nango connector and GenOffice)
+- The packaged-environment variables listed in `apps/desktop/scripts/generate-packaged-env.mjs`; for local test builds use placeholder values, never production secrets
+
+The unsigned installer is written to `release/EverRoom-<version>-windows-x64.exe`. Verify it without installing by running `pnpm --filter @nxcore/desktop exec node scripts/verify-windows-package.mjs`. For scripted installs, run the NSIS installer with `/S` (silent) and `/D=<dir>` to pick the target directory. Because the build is unsigned, Microsoft Defender SmartScreen may show a warning before the first launch.
 
 ## Gateway and local data
 
@@ -296,6 +308,8 @@ On macOS, runtime data is stored under:
 ├── runtime/    # Ephemeral Gateway discovery manifest
 └── open-connector/  # Managed connector runtime and CLI data
 ```
+
+On Windows, the same layout lives under `%APPDATA%\EverRoom\` (that is `C:\Users\<user>\AppData\Roaming\EverRoom\`). Set `NXCORE_DATA_DIR` to relocate it.
 
 See [`apps/gateway/README.md`](./apps/gateway/README.md) for ASR, mail connector, and standalone Gateway details. The OpenConnector lifecycle and security boundary are documented in [`docs/open-connector-desktop-integration.zh-CN.md`](./docs/open-connector-desktop-integration.zh-CN.md).
 

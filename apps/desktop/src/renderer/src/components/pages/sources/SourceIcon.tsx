@@ -1,4 +1,4 @@
-import { FolderOpen, Globe } from 'lucide-react'
+import { CalendarDays, FolderOpen, Globe } from 'lucide-react'
 
 import feishuLogo from '@/assets/source-icons/feishu.svg'
 import githubLogo from '@/assets/source-icons/github.svg'
@@ -26,8 +26,9 @@ export type SourceIconKind =
   | 'codex'
   | 'feishu'
   | 'web-page'
+  | 'ics-calendar'
 
-type BrandedSourceIconKind = Exclude<SourceIconKind, 'local-folder' | 'web-page'>
+type BrandedSourceIconKind = Exclude<SourceIconKind, 'local-folder' | 'web-page' | 'ics-calendar'>
 
 const SOURCE_LOGOS: Record<BrandedSourceIconKind, string> = {
   'obsidian-vault': obsidianLogo,
@@ -47,6 +48,7 @@ export function SourceIcon({ kind, className = '' }: { kind: SourceIconKind; cla
   const classes = `source-icon ${className}`.trim()
   if (kind === 'local-folder') return <FolderOpen className={classes} aria-hidden="true" strokeWidth={1.8} />
   if (kind === 'web-page') return <Globe className={classes} aria-hidden="true" strokeWidth={1.8} />
+  if (kind === 'ics-calendar') return <CalendarDays className={classes} aria-hidden="true" strokeWidth={1.8} />
 
   return <img className={classes} src={SOURCE_LOGOS[kind]} alt="" aria-hidden="true" />
 }

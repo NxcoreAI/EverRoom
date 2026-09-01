@@ -7,6 +7,9 @@ import { parseArgs } from "node:util";
 import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import type { KnowledgeRuntimeConfig, MemoryRuntimeConfig } from "@nxcore/agent-runtime-pi";
+// 阶段二：注册表只被用于「读取元数据」（env 名/默认 configKey），provider 文件本身
+// 无副作用依赖，可安全进入 config 层（新增 provider 时 config 解析自动跟随注册表）。
+import { SYNC_PROVIDERS } from "./modules/connectors/sync-providers/index.js";
 
 const LogLevelSchema = Type.Union([
   Type.Literal("fatal"),
@@ -345,6 +348,8 @@ export interface GatewayConfig {
     outlookClientId: string;
     outlookClientSecret: string;
     pollingIntervalMs: number;
+    /** 阶段二：注册表驱动的 provider → configKey（新增 provider 免改此接口）。 */
+    providerConfigKeys: Record<string, string>;
   };
   cliConnector?: OpenConnectorCliConfig | null;
   notificationBridge?: { baseUrl: string; token: string } | null;
@@ -1135,6 +1140,16 @@ export function loadConfig(
       outlookClientId: firstEnvValue(env, "NXCORE_NANGO_CONNECTOR_OUTLOOK_CLIENT_ID", "NXCORE_NANGO_OUTLOOK_CLIENT_ID"),
       outlookClientSecret: firstEnvValue(env, "NXCORE_NANGO_CONNECTOR_OUTLOOK_CLIENT_SECRET", "NXCORE_NANGO_OUTLOOK_CLIENT_SECRET"),
       pollingIntervalMs: rawConfig.nangoConnectorPollMs,
+      // 阶段二：configKey 由 SyncProvider 注册表驱动（env 覆盖 + 默认值）；
+      // 上面的 legacy 命名字段保留为既有消费方（bootstrap/授权装配）的兼容出口。
+      providerConfigKeys: Object.fromEntries(
+        SYNC_PROVIDERS.map((definition) => [
+          definition.provider,
+          firstEnvValue(env, ...(definition.auth.nango?.configKeyEnv ?? []))
+            || definition.auth.nango?.configKeyDefault
+            || "",
+        ]),
+      ) as Record<string, string>,
     },
     cliConnector: cliConnectorUrl
       ? {

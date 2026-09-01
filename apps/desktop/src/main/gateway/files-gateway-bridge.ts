@@ -55,6 +55,8 @@ function imageMime(extension: string): string {
 
 interface ImportCollectionPlan {
   candidates: ImportCandidate[]
+  /** 白名单外文件（点文件/忽略目录不算——那是主动剪枝）：用于「跳过」回报。 */
+  unsupported: ImportCandidate[]
 }
 
 function isSupportedImportFile(filePath: string, extensions: ReadonlySet<string>): boolean {
@@ -64,6 +66,7 @@ function isSupportedImportFile(filePath: string, extensions: ReadonlySet<string>
 async function collectDirectoryFiles(directory: string, extensions: ReadonlySet<string>): Promise<ImportCollectionPlan> {
   const rootPath = resolve(directory)
   const candidates: ImportCandidate[] = []
+  const unsupported: ImportCandidate[] = []
   const visit = async (currentDirectory: string, isRoot = false): Promise<void> => {
     let entries
     try {
@@ -79,22 +82,31 @@ async function collectDirectoryFiles(directory: string, extensions: ReadonlySet<
         if (isIgnoredLocalDirectory(entry.name)) continue
         await visit(filePath)
       } else if (entry.isFile()) {
+        const relativeName = relative(rootPath, filePath).split(sep).join('/')
         if (isSupportedImportFile(filePath, extensions)) {
-          candidates.push({ filePath, filename: relative(rootPath, filePath).split(sep).join('/') })
+          candidates.push({ filePath, filename: relativeName })
+        } else {
+          unsupported.push({ filePath, filename: relativeName })
         }
       }
     }
   }
   await visit(rootPath, true)
   candidates.sort((left, right) => left.filename.localeCompare(right.filename))
-  return { candidates }
+  unsupported.sort((left, right) => left.filename.localeCompare(right.filename))
+  return { candidates, unsupported }
+}
+
+function uniqueCandidates(candidates: ImportCandidate[]): ImportCandidate[] {
+  return [...new Map(candidates.map((candidate) => [resolve(candidate.filePath), candidate])).values()]
 }
 
 export async function collectImportPlan(
   selectedPaths: string[],
   extensions: ReadonlySet<string> = DEFAULT_IMPORT_EXTENSIONS,
-): Promise<{ candidates: ImportCandidate[]; highRiskFileCount: number }> {
+): Promise<{ candidates: ImportCandidate[]; unsupported: ImportCandidate[]; highRiskFileCount: number }> {
   const candidates: ImportCandidate[] = []
+  const unsupported: ImportCandidate[] = []
   const seen = new Set<string>()
   for (const selectedPath of selectedPaths) {
     const resolvedPath = resolve(selectedPath)
@@ -109,13 +121,41 @@ export async function collectImportPlan(
     if (selectedStat.isDirectory()) {
       const plan = await collectDirectoryFiles(resolvedPath, extensions)
       candidates.push(...plan.candidates)
+      unsupported.push(...plan.unsupported)
     }
-    else if (selectedStat.isFile() && isSupportedImportFile(resolvedPath, extensions)) candidates.push({ filePath: resolvedPath, filename: basename(resolvedPath) })
+    else if (selectedStat.isFile()) {
+      if (isSupportedImportFile(resolvedPath, extensions)) {
+        candidates.push({ filePath: resolvedPath, filename: basename(resolvedPath) })
+      } else {
+        unsupported.push({ filePath: resolvedPath, filename: basename(resolvedPath) })
+      }
+    }
   }
-  const uniqueCandidates = [...new Map(candidates.map((candidate) => [resolve(candidate.filePath), candidate])).values()]
+  const dedupedCandidates = uniqueCandidates(candidates)
+  const candidatePaths = new Set(dedupedCandidates.map((candidate) => resolve(candidate.filePath)))
+  const dedupedUnsupported = uniqueCandidates(unsupported)
+    .filter((candidate) => !candidatePaths.has(resolve(candidate.filePath)))
   return {
-    candidates: uniqueCandidates,
-    highRiskFileCount: uniqueCandidates.filter((candidate) => !isLowRiskFileExtension(extname(candidate.filePath))).length,
+    candidates: dedupedCandidates,
+    unsupported: dedupedUnsupported,
+    highRiskFileCount: dedupedCandidates.filter((candidate) => !isLowRiskFileExtension(extname(candidate.filePath))).length,
+  }
+}
+
+/** 非错误性跳过行：不发起上传，只进入结果清单供「成功/跳过/失败」回报。 */
+function skippedOutcome(filename: string, skippedReason: 'unsupported_format' | 'pending_review'): FileImportOutcome {
+  return {
+    filename,
+    fileId: null,
+    fileVersionId: null,
+    eventId: null,
+    dataType: null,
+    deduped: false,
+    skippedReason,
+    pipelines: null,
+    memoryResult: null,
+    routeJobId: null,
+    error: null,
   }
 }
 
@@ -355,7 +395,9 @@ export class FilesGatewayBridge {
 
   /**
    * 一次性手动采集：展开本次明确选择的文件/目录并导入。不会注册本地
-   * 数据源或 watcher，后续文件变化也不会触发自动重扫。
+   * 数据源或 watcher，后续文件变化也不会触发自动重扫。白名单外与转
+   * 人工确认的文件以 skippedReason 回报（error=null、fileId=null），
+   * 便于调用方区分「成功/跳过/失败」。
    */
   async importPathsOnce(selectedPaths: string[], options?: {
     pipelines?: IngestPipelines
@@ -376,6 +418,7 @@ export class FilesGatewayBridge {
       : importPlan.candidates
     const highRiskFileCount = candidates
       .filter((candidate) => !isLowRiskFileExtension(extname(candidate.filePath))).length
+    let heldForReview: ImportCandidate[] = []
     if (highRiskFileCount > HIGH_RISK_FILE_BATCH_THRESHOLD && this.highRiskImports) {
       const lowRiskCandidates = candidates.filter((candidate) => isLowRiskFileExtension(extname(candidate.filePath)))
       const highRiskCandidates = candidates.filter((candidate) => !isLowRiskFileExtension(extname(candidate.filePath)))
@@ -385,9 +428,15 @@ export class FilesGatewayBridge {
         ...(options?.roomId ? { roomId: options.roomId } : {}),
       }, basename(resolve(selectedPaths[0]!)))
       candidates = lowRiskCandidates
+      heldForReview = highRiskCandidates
     }
 
-    return this.importCandidates(candidates, options)
+    const outcomes = await this.importCandidates(candidates, options)
+    return [
+      ...outcomes,
+      ...importPlan.unsupported.map((candidate) => skippedOutcome(candidate.filename, 'unsupported_format')),
+      ...heldForReview.map((candidate) => skippedOutcome(candidate.filename, 'pending_review')),
+    ]
   }
 
   async importObsidianProject(input: {
@@ -485,6 +534,7 @@ export class FilesGatewayBridge {
           eventId: null,
           dataType: null,
           deduped: uploaded.versionDeduped,
+          skippedReason: null,
           pipelines: options?.pipelines ?? null,
           memoryResult: null,
           routeJobId: uploaded.jobId,
@@ -499,6 +549,7 @@ export class FilesGatewayBridge {
           eventId: null,
           dataType: null,
           deduped: false,
+          skippedReason: null,
           pipelines: null,
           memoryResult: null,
           routeJobId: null,

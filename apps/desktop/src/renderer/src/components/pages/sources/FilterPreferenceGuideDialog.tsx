@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { ArrowRight, Settings2, X } from 'lucide-react'
 import { useLocale } from '@/i18n/LocaleContext'
+import { useConnectorProviders } from './useConnectorProviders'
 import { MEMORY_TAB_EVENT } from '../../MemoryPipelineStatus'
 
 /**
@@ -47,11 +48,13 @@ export function FilterPreferenceGuideDialog({ provider, onClose }: {
     }
   }
 
-  const providerName = provider === 'gmail' ? 'Gmail'
-    : provider === 'outlook' ? 'Outlook'
-      : provider === 'google-docs' ? 'Google Docs'
-        : provider === 'google-calendar' ? 'Google Calendar'
-          : provider === 'notion' ? 'Notion' : provider
+  // M2b：优先网关注册表元数据（新 provider 免改此处）；静态映射仅为旧网关兜底。
+  const providerName = useConnectorProviders().providers.find((item) => item.provider === provider)?.label
+    ?? (provider === 'gmail' ? 'Gmail'
+      : provider === 'outlook' ? 'Outlook'
+        : provider === 'google-docs' ? 'Google Docs'
+          : provider === 'google-calendar' ? 'Google Calendar'
+            : provider === 'notion' ? 'Notion' : provider)
 
   return (
     <div className="evidence-dialog-backdrop" role="presentation" onMouseDown={(event) => {

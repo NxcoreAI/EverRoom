@@ -106,7 +106,10 @@ function createKnowledgeAgentResolver(dataDir: string, llm: KnowledgeLlmConfig):
       systemPrompt: bundle.systemPrompt,
       skillPrompts: bundle.skillPrompts,
       temperature: 0.1,
-      maxTokens: 4_096,
+      // GLM-5.3 等推理型模型的思考段实测就要烧 3.5K+ token：4096 下长邮件
+      // 必然截断（finish_reason=length 无正文）。16384 首次即过；runtime 侧
+      // 还有 4 倍加预算重试兜底（openai-completion-runtime length 防护）。
+      maxTokens: 16_384,
       timeoutMs: 60_000,
       sessionsDir: join(root, "sessions"),
       workingDirectory: join(root, "workspace"),

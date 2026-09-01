@@ -104,6 +104,9 @@ import "./types.js";
 import { createConnectorDatabase } from "../infrastructure/connectors/client.js";
 import { ConnectorRepository } from "../modules/connectors/repository.js";
 import { ConnectorManager } from "../modules/connectors/manager.js";
+import { ConnectorDomainProjection, backfillDomainProjection, rewriteConnectorRefIdentities } from "../modules/connectors/domain-projection.js";
+import { SYNC_PROVIDERS, assertSyncProvidersValid } from "../modules/connectors/sync-providers/index.js";
+import { SyncEngine } from "../modules/connectors/sync-engine.js";
 import { NangoExecutor } from "../modules/connectors/nango-executor.js";
 import { NangoAuthorizationService } from "../modules/connectors/nango-authorization.js";
 import { bootstrapNangoWhenReady } from "../modules/connectors/nango-bootstrap.js";
@@ -306,7 +309,9 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     knowledgeConfigured: Boolean(config.knowledge),
     configJson: JSON.stringify(redactedRuntimeSnapshot.config),
   }, "runtime config selected");
-  const nangoConnectorConfig = config.nangoConnector ?? { enabled:false, databasePath:resolve(config.dataDir,"database","connectors.sqlite"), nangoUrl:"", nangoSecret:"", gmailConfigKey:"", outlookConfigKey:"", googleDocsConfigKey:"", notionConfigKey:"", googleCalendarConfigKey:"", googleClientId:"", googleClientSecret:"", notionClientId:"", notionClientSecret:"", outlookClientId:"", outlookClientSecret:"", pollingIntervalMs:300_000 };
+  const nangoConnectorConfig = config.nangoConnector ?? { enabled:false, databasePath:resolve(config.dataDir,"database","connectors.sqlite"), nangoUrl:"", nangoSecret:"", gmailConfigKey:"", outlookConfigKey:"", googleDocsConfigKey:"", notionConfigKey:"", googleCalendarConfigKey:"", googleClientId:"", googleClientSecret:"", notionClientId:"", notionClientSecret:"", outlookClientId:"", outlookClientSecret:"", pollingIntervalMs:300_000, providerConfigKeys:{} };
+  // 阶段二：注册表启动自检（补偿 union 放宽后丢失的编译期穷尽性）——违例拒启。
+  assertSyncProvidersValid();
   // Nango 自举（必要时创建 API key、按 .env 凭据补建 Google/Notion integration）。
   // 桌面端 Gateway 先于托管 Nango ready（首次启动含依赖安装 + 构建），启动时同步
   // 自举必失败且 placeholder secret 一直生效；改为后台自举：立即开始等待 Nango
@@ -327,7 +332,8 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       .then((secret) => {
         if (isNangoSecretFormatValid(secret)) {
           nangoSecretResolved = secret;
-          nangoConnectorManager.startPolling(pollingIntervalMs);
+          // 引擎放行 OAuth 源（轮询循环自 M3 起常开，由 canServe 门控跳过未就绪源）。
+          nangoSyncEngine.setNangoReady(true);
           app.log.info({ module: "nango-bootstrap" }, "Nango secret resolved after deferred bootstrap");
         } else {
           app.log.warn({ module: "nango-bootstrap" }, "Nango bootstrap returned no valid UUID v4 secret; connector polling remains disabled");
@@ -344,34 +350,68 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   const nangoExecutor = nangoConnectorConfig.enabled
     ? new NangoExecutor(nangoConnectorConfig.nangoUrl, resolveNangoSecret)
     : null;
+  // 阶段三：拉取引擎（nango 代理 + direct 直连双路）；direct 凭据取连接的 credentialsRef。
+  const nangoSyncEngine = new SyncEngine(
+    nangoExecutor,
+    (connection) => connection.credentialsRef ?? null,
+  );
   const nangoConnectorManager = new ConnectorManager(
     new ConnectorRepository(nangoConnectorDb.sqlite),
     nangoExecutor,
     nangoConnectorConfig.enabled ? new ConnectorDocumentStore(resolve(config.dataDir, "connectors", "documents")) : null,
+    nangoSyncEngine,
   );
   // Nango 连接器的 agent 工具（连接发现 / 触发同步 / 只读代理请求）。
   const nangoAgentTools = nangoExecutor
     ? { manager: nangoConnectorManager, executor: nangoExecutor }
     : null;
-  const nangoConnectorAuthorization = nangoConnectorConfig.enabled && "gmailConfigKey" in nangoConnectorConfig
+  const nangoConnectorAuthorization = nangoConnectorConfig.enabled && "providerConfigKeys" in nangoConnectorConfig
     ? new NangoAuthorizationService(
         nangoConnectorConfig.nangoUrl,
         resolveNangoSecret,
-        {
-          gmail: nangoConnectorConfig.gmailConfigKey,
-          outlook: nangoConnectorConfig.outlookConfigKey,
-          "google-docs": nangoConnectorConfig.googleDocsConfigKey,
-          notion: nangoConnectorConfig.notionConfigKey,
-          "google-calendar": nangoConnectorConfig.googleCalendarConfigKey,
-        },
+        // 阶段二：provider → configKey 装配由注册表驱动（新增 provider 免改此处）。
+        Object.fromEntries(SYNC_PROVIDERS.map((definition) => [
+          definition.provider,
+          nangoConnectorConfig.providerConfigKeys[definition.provider]
+            ?? definition.auth.nango?.configKeyDefault
+            ?? "",
+        ])),
         nangoConnectorManager,
       )
     : undefined;
   // When the configured value is a bootstrap placeholder, wait for the
   // dashboard API key before polling. Nango rejects non-UUID secrets with a
   // noisy 401 on every scheduled sync.
-  if (nangoConnectorConfig.enabled && configuredNangoSecretValid && !nangoBootstrapPending) {
+  if (nangoConnectorConfig.enabled) {
+    // 轮询常开：引擎门控在 secret 未就绪期间跳过 OAuth 源（无 401 噪音），
+    // direct 源（WebCal 订阅）不受 Nango 冷启动影响、立即按周期同步。
+    nangoSyncEngine.setNangoReady(configuredNangoSecretValid && !nangoBootstrapPending);
     nangoConnectorManager.startPolling(pollingIntervalMs);
+  }
+  // 阶段一域投影（connector-platform-refactor-plan）：Nango 拉取的邮件/日程
+  // 与 CLI 推送路径同落主库 connector_* 域表，Room 读侧单轨；启动后延迟 1s
+  // 幂等回填 connectors.sqlite 存量（唯一键 upsert，重复执行产出 unchanged）。
+  const connectorDomainOwner = config.connectorSyncOwnerId ?? "local-user";
+  nangoConnectorManager.setDomainProjection(new ConnectorDomainProjection(db, connectorDomainOwner));
+  if (nangoConnectorConfig.enabled) {
+    const backfillTimer = setTimeout(() => {
+      try {
+        const summary = backfillDomainProjection(db, nangoConnectorManager.repository, connectorDomainOwner);
+        if (summary.mail + summary.calendar + summary.failures > 0)
+          app.log.info({ module: "connector-domain-backfill", ...summary }, "Connector domain backfill applied");
+        // M4：回填保证域行存在后，把六张身份表的 connector ref 原地改写为域行 id
+        // （幂等；解析失败的 ref 留给读侧兜底通道，只计数）。
+        const rewrite = rewriteConnectorRefIdentities(db);
+        if (rewrite.refs > 0)
+          app.log.info({ module: "connector-identity-rewrite", ...rewrite }, "Connector identity rewrite applied");
+      } catch (error) {
+        app.log.warn(
+          { module: "connector-domain-backfill", error: error instanceof Error ? error.message : String(error) },
+          "Connector domain backfill failed; incremental sync will keep projecting new records",
+        );
+      }
+    }, 1_000);
+    backfillTimer.unref?.();
   }
 
   // /v1/runtime-config/secrets 是唯一允许真密钥出站的端点：主进程派生托管
@@ -1052,7 +1092,15 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
         sourceId: input.fileEntryId,
         sourceVersionId: input.fileVersionId,
       } },
-      ...(input.pipelines ? { pipelines: input.pipelines } : {}),
+      // knowledge router 未开启时降级为仅记忆链路（引擎约束：room 依赖
+      // router），与连接器 sink 同款策略；桌面 packaged 环境不注入
+      // NXCORE_KNOWLEDGE_ROUTER_ENABLED，不降级会把每个文件导入整单
+      // router_disabled 拒绝。显式 pipelines（如测试/内部调用）原样透传。
+      ...(input.pipelines
+        ? { pipelines: input.pipelines }
+        : config.knowledge?.routerEnabled
+          ? {}
+          : { pipelines: { room: false, wiki: false, memory: true } }),
       ...(input.roomId ? { roomId: input.roomId } : {}),
       ...(versionContext?.entry.sourceKind === "web-clipper" ? { originChannel: "web-clipper" as const } : {}),
     });
@@ -1087,7 +1135,9 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   nangoConnectorManager.setMemorySink((input) =>
     ingestService.ingestConnector({
       kind: input.kind === "document" ? "cloud-doc" : input.kind === "calendar" ? "calendar-event" : "mail",
-      sourceId: `connector:${input.provider}:${input.connectionId}:${input.kind === "document" ? "" : `${input.kind}:`}${input.documentId}`,
+      // M4 身份规范化：mail/calendar 的 sourceId = 域行 id（读侧直查域表）；
+      // document 无域行，保持 connector ref。
+      sourceId: input.domainRowId ?? `connector:${input.provider}:${input.connectionId}:${input.kind === "document" ? "" : `${input.kind}:`}${input.documentId}`,
       dataType: input.kind,
       title: input.title,
       markdown: input.markdown,
@@ -1135,6 +1185,38 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   await app.register(agentSchedulerRoutes(agentSchedulerService));
   await app.register(agentSchedulerMcpRoutes(agentSchedulerService));
   await app.register(nangoConnectorRoutes(nangoConnectorManager, nangoConnectorConfig.enabled, nangoConnectorAuthorization));
+
+  // 阶段三 M3b：REST 前缀泛化——/v1/connectors/* 为主入口。Fastify v5 路由先于
+  // onRequest（改写 URL 无效），别名经 404 兜底内部转发（app.inject 不走网络，
+  // 鉴权/解析全生命周期照常）；旧前缀由插件作用域钩子打弃用头。
+  // /v1/connectors/connections 是独立的通用连接入口，不参与转发。
+  app.setNotFoundHandler(async (request, reply) => {
+    if (
+      request.url.startsWith("/v1/connectors/") &&
+      request.url !== "/v1/connectors/connections" &&
+      !request.url.startsWith("/v1/connectors/connections/")
+    ) {
+      const rewritten = `/v1/nango-connectors/${request.url.slice("/v1/connectors/".length)}`;
+      let body: unknown;
+      if (request.method !== "GET" && request.method !== "HEAD") body = request.body;
+      const injectOptions: Record<string, unknown> = {
+        method: request.method,
+        url: rewritten,
+        headers: { ...request.headers, "x-internal-alias": "1" },
+      };
+      if (body !== undefined) injectOptions.payload = body;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- InjectOptions 联合类型在 exactOptionalPropertyTypes 下与动态 payload 不兼容
+      const response = await app.inject(injectOptions as any);
+      reply.code(response.statusCode);
+      for (const [key, value] of Object.entries(response.headers)) {
+        if (["content-length", "connection", "transfer-encoding", "date", "keep-alive"].includes(key)) continue;
+        reply.header(key, value);
+      }
+      reply.send(response.rawPayload);
+      return;
+    }
+    reply.code(404).send({ error: "not_found", path: request.url });
+  });
   if (config.knowledge) await app.register(knowledgeRoutes(knowledgeService));
   await app.register(cliConnectorRoutes(cliConnectorSyncService, ingestService, cliConnectorMarkdownService));
   await app.register(connectorSyncRoutes(cliConnectorSyncService));

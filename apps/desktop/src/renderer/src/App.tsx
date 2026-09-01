@@ -26,6 +26,8 @@ import { OnboardingFlowChrome, type OnboardingFlowStage } from '@/components/onb
 import { RuntimeConfigGate } from '@/components/onboarding/RuntimeConfigGate'
 import {
   hasExistingOnboardingData,
+  nextOnboardingProbeAction,
+  onboardingProbeRetryDelayMs,
   readFullOnboardingCompleted,
   writeFullOnboardingCompleted,
 } from '@/components/onboarding/fullOnboardingState'
@@ -335,47 +337,65 @@ export function App() {
       logOnboarding('post-login-check', { completed: fullOnboardingCompletedRef.current })
       setSuppressAutomaticOnboarding(true)
       setSuppressRoomOnboarding(true)
-      setFolderOnboardingOpen(false)
       if (fullOnboardingCompletedRef.current) return
 
       const memoryApi = window.nxcore?.memory
       const roomApi = window.nxcore?.contextRooms
       const sourcesApi = window.nxcore?.sources
       const apisAvailable = Boolean(memoryApi?.overview && roomApi?.list && sourcesApi?.list)
-      const [memoryResult, roomsResult, sourcesResult] = await Promise.allSettled([
-        memoryApi?.overview() ?? Promise.resolve(null),
-        roomApi?.list() ?? Promise.resolve(null),
-        sourcesApi?.list() ?? Promise.resolve(null),
-      ])
-      if (requestId !== onboardingCheckRequestRef.current) return
+      // Saving the runtime config restarts MemoryCore to pick up the AI env
+      // (a few-second window, same as the login restart in MemoryOnboardingGate).
+      // A failed probe here is usually transient: retry, and only after the
+      // retries are exhausted fall back to the operable main UI — never leave
+      // the first-run user on a hidden shell that only a restart would fix.
+      let attempt = 0
+      const probe = async (): Promise<void> => {
+        attempt += 1
+        const [memoryResult, roomsResult, sourcesResult] = await Promise.allSettled([
+          memoryApi?.overview() ?? Promise.resolve(null),
+          roomApi?.list() ?? Promise.resolve(null),
+          sourcesApi?.list() ?? Promise.resolve(null),
+        ])
+        if (requestId !== onboardingCheckRequestRef.current) return
 
-      const failed = [memoryResult, roomsResult, sourcesResult].some((result) => result?.status === 'rejected')
-      const memoryOverview = memoryResult?.status === 'fulfilled' ? memoryResult.value : null
-      const roomSnapshot = roomsResult?.status === 'fulfilled' ? roomsResult.value : null
-      const sources = sourcesResult?.status === 'fulfilled' ? sourcesResult.value : null
-      const hasData = hasExistingOnboardingData({
-        memoryOverview,
-        roomCount: roomSnapshot?.rooms.length ?? 0,
-        deletedRoomCount: roomSnapshot?.deletedRooms.length ?? 0,
-        sourceCount: Array.isArray(sources) ? sources.length : 0,
-      })
-      logOnboarding('data-check-complete', { failed, hasData })
-      if (hasData) {
-        completeAutomaticOnboarding()
-        return
+        const failed = [memoryResult, roomsResult, sourcesResult].some((result) => result?.status === 'rejected')
+        const memoryOverview = memoryResult?.status === 'fulfilled' ? memoryResult.value : null
+        const roomSnapshot = roomsResult?.status === 'fulfilled' ? roomsResult.value : null
+        const sources = sourcesResult?.status === 'fulfilled' ? sourcesResult.value : null
+        const hasData = hasExistingOnboardingData({
+          memoryOverview,
+          roomCount: roomSnapshot?.rooms.length ?? 0,
+          deletedRoomCount: roomSnapshot?.deletedRooms.length ?? 0,
+          sourceCount: Array.isArray(sources) ? sources.length : 0,
+        })
+        const action = nextOnboardingProbeAction({ failed, apisAvailable, hasData, attempt })
+        logOnboarding('data-check-complete', { failed, hasData, action, attempt })
+        if (action === 'complete-existing') {
+          completeAutomaticOnboarding()
+          return
+        }
+        if (action === 'retry') {
+          window.setTimeout(() => { void probe() }, onboardingProbeRetryDelayMs(attempt))
+          return
+        }
+        // 'stand-down' (services stay unreachable) and 'wait' (no preload
+        // APIs): stop probing without advancing or persisting completion.
+        // The stage stays where it is and any panel opened by an earlier
+        // check stays open, so the user lands on either the guide or the
+        // operable main UI — never a hidden shell — and later checks
+        // (runtime-config ready, next login) can still run the guide.
+        if (action === 'stand-down' || action === 'wait') return
+
+        setCompletedOnboardingStages(new Set())
+        fullOnboardingStageRef.current = 'folder'
+        setFullOnboardingStage('folder')
+        setFolderOnboardingOpen(true)
+        setMemoryReady(false)
+        setSuppressAutomaticOnboarding(false)
+        setSuppressRoomOnboarding(false)
+        setActivePage('settings')
       }
-      // Do not interrupt an established workspace merely because one service
-      // was temporarily unavailable during the first-use check.
-      if (failed || !apisAvailable) return
-
-      setCompletedOnboardingStages(new Set())
-      fullOnboardingStageRef.current = 'folder'
-      setFullOnboardingStage('folder')
-      setFolderOnboardingOpen(true)
-      setMemoryReady(false)
-      setSuppressAutomaticOnboarding(false)
-      setSuppressRoomOnboarding(false)
-      setActivePage('settings')
+      await probe()
     }
     const onPostLogin = () => { void checkAutomaticOnboarding() }
     const onRuntimeConfigStatus = (event: Event) => {
@@ -437,7 +457,10 @@ export function App() {
   }, [])
 
   useEffect(() => {
-    if (fullOnboardingCompletedRef.current) return
+    // While the flow chrome sits on folder/ready it hides the main app shell,
+    // so the folder panel must be open. Restore it if a racing check (e.g. the
+    // runtime-config-ready recheck) closed the panel but left the stage set —
+    // otherwise the first-run user lands on an empty, unoperable shell.
     if (fullOnboardingStage !== 'folder' && fullOnboardingStage !== 'ready') return
     setActivePage('settings')
     setFolderOnboardingOpen(true)

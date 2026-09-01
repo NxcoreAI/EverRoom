@@ -60,8 +60,9 @@ export class ContextRoomGatewayBridge {
     })
   }
 
-  startMerge(input: { sourceRoomId: string; targetRoomId: string; previewHash: string; idempotencyKey: string }): Promise<RoomMergeOperation> {
-    return this.request('/v1/context-rooms/merge-operations', { method: 'POST', body: JSON.stringify(input) })
+  startMerge(input: { sourceRoomId: string; targetRoomId: string; previewHash: string; idempotencyKey: string; wait?: boolean }): Promise<RoomMergeOperation> {
+    // wait=true：在请求内等待合并终态（本地事务秒级），渲染层免轮询。
+    return this.request('/v1/context-rooms/merge-operations', { method: 'POST', body: JSON.stringify({ ...input, wait: input.wait ?? true }) })
   }
 
   getMergeOperation(id: string): Promise<RoomMergeOperation> {

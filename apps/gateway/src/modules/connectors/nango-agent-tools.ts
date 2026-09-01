@@ -4,6 +4,7 @@ import type {
 } from "@nxcore/agent-runtime-pi";
 import type { StartRuntimeRunInput } from "@nxcore/agent-runtime";
 import type { ConnectorManager } from "./manager.js";
+import { syncProviderOf } from "./sync-providers/index.js";
 import type { NangoExecutor } from "./nango-executor.js";
 import {
   ExternalCallBudgetExceededError,
@@ -123,13 +124,9 @@ function nangoFailurePolicy(
   };
 }
 
-const PROVIDER_LABELS: Record<string, string> = {
-  gmail: "Gmail 邮箱",
-  outlook: "Outlook 邮箱",
-  "google-docs": "Google 文档",
-  notion: "Notion",
-  "google-calendar": "Google 日历",
-};
+// 阶段二：显示名走注册表 ui 元数据（兜底返回注册名本身）。
+const providerLabel = (provider: string): string =>
+  syncProviderOf(provider)?.ui.label ?? provider;
 
 export function createNangoPiTools(
   manager: ConnectorManager,
@@ -163,7 +160,7 @@ export function createNangoPiTools(
           .map((c) => ({
             connectionId: c.id,
             provider: c.provider,
-            displayName: PROVIDER_LABELS[c.provider] ?? c.provider,
+            displayName: providerLabel(c.provider),
             status: c.status,
             scopes: manager.repository
               .listScopes()

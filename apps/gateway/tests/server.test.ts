@@ -233,6 +233,35 @@ describe("gateway server", () => {
     expect(disabled.json()).toEqual({ enabled: false });
   });
 
+  it("degrades manual file imports to the memory pipeline when the knowledge router is off", async () => {
+    // Packaged desktop injects NXCORE_KNOWLEDGE_* but never
+    // NXCORE_KNOWLEDGE_ROUTER_ENABLED; without the connector-style degrade
+    // every manual import is rejected whole by router_disabled.
+    const config = await testConfig();
+    const app = await createServer(config);
+    const headers = { authorization: `Bearer ${config.authToken}` };
+    const form = new FormData();
+    form.append("metadata", JSON.stringify({
+      sourceKind: "manual-upload",
+      sourceKey: "manual:router-off:1",
+      originalName: "router-off.md",
+    }));
+    form.append("file", new Blob(["# Router off\n\nmemory-only degrade"], { type: "text/markdown" }), "router-off.md");
+    const accepted = await app.inject({ method: "POST", url: "/v1/file-imports", headers, payload: form });
+    expect(accepted.statusCode).toBe(202);
+
+    // file.ingest 是异步 job；修复前终态 failed（router_disabled），修复后 ready。
+    let entry: { processingState?: string } | undefined;
+    for (let attempt = 0; attempt < 200 && (!entry || entry.processingState === "processing"); attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      const catalog = await app.inject({ url: "/v1/files/catalog", headers });
+      entry = catalog.json<{ items: Array<{ originalName: string; processingState: string }> }>()
+        .items.find((item) => item.originalName === "router-off.md");
+    }
+    expect(entry?.processingState).toBe("ready");
+    await app.close();
+  });
+
   it("serves persisted perception and diary settings with local visual nodes", async () => {
     const config = await testConfig();
     const app = await createServer(config);

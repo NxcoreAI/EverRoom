@@ -7,7 +7,10 @@ import type {
 import type { ConnectorExecutor } from "./types.js";
 import { ConnectorDocumentStore } from "./document-store.js";
 import { calendarEventToMarkdown, mailToMarkdown } from "./connector-memory.js";
+import type { ConnectorDomainProjection } from "./domain-projection.js";
 import { ConnectorRepository } from "./repository.js";
+import { syncProviderOf } from "./sync-providers/index.js";
+import { SyncEngine } from "./sync-engine.js";
 
 export class ConnectorManager {
   private readonly active = new Map<string, Promise<void>>();
@@ -15,26 +18,40 @@ export class ConnectorManager {
   private timer: NodeJS.Timeout | null = null;
   /** 同步数据入库记忆的扇出（create-server 注入 MemoryService）；失败不阻塞同步本身。 */
   private memorySink:
-    | ((input: { kind: "document" | "mail" | "calendar"; provider: string; connectionId: string; documentId: string; title: string; markdown: string; calendarId?: string }) => Promise<void>)
+    | ((input: { kind: "document" | "mail" | "calendar"; provider: string; connectionId: string; documentId: string; title: string; markdown: string; calendarId?: string; domainRowId?: string }) => Promise<void>)
     | null = null;
+  /**
+   * 域投影（阶段一）：归一化记录落主库 connector_* 域表，先于 memorySink。
+   * 第一版软失败（记 sync_failures 计数，不阻断 ingest）；soak 后升硬失败。
+   */
+  private domainProjection: ConnectorDomainProjection | null = null;
 
   setMemorySink(
-    sink: (input: { kind: "document" | "mail" | "calendar"; provider: string; connectionId: string; documentId: string; title: string; markdown: string; calendarId?: string }) => Promise<void>,
+    sink: (input: { kind: "document" | "mail" | "calendar"; provider: string; connectionId: string; documentId: string; title: string; markdown: string; calendarId?: string; domainRowId?: string }) => Promise<void>,
   ) {
     this.memorySink = sink;
+  }
+  setDomainProjection(projection: ConnectorDomainProjection | null) {
+    this.domainProjection = projection;
   }
   constructor(
     public readonly repository: ConnectorRepository,
     private readonly executor: ConnectorExecutor | null,
     private readonly documentStore: ConnectorDocumentStore | null = null,
+    /** 阶段三：拉取引擎（nango/direct 分发）；缺省退化为仅 Nango 的引擎。 */
+    engine?: SyncEngine | null,
   ) {
+    this.engine = engine ?? new SyncEngine(executor, () => null);
     repository.recover();
   }
+  private readonly engine: SyncEngine;
   async register(input: {
     provider: ConnectorProvider;
     nangoConfigKey: string;
     nangoConnectionId: string;
     filters?: Record<string, unknown>;
+    authMethod?: "nango-oauth" | "api-token" | "webcal-url" | "password" | "manual-import";
+    credentialsRef?: string | null;
     /**
      * 首次连接的首同步暂缓（授权流程用）：桌面端先弹过滤偏好引导，
      * 用户设置完成后再显式触发——否则首批数据在偏好生效前就被过滤。
@@ -44,14 +61,15 @@ export class ConnectorManager {
   }) {
     const c = this.repository.registerConnection(input);
     try {
+      // 兜底 scope 种子来自注册表（executor 缺席/发现失败时；正常路径走 discoverScopes）。
+      const fallbackScopes =
+        syncProviderOf(input.provider)?.defaultScopes.map((scope) => ({
+          id: scope.providerScopeId,
+          displayName: scope.displayName,
+        })) ?? [];
       const scopes = this.executor?.discoverScopes
         ? await this.executor.discoverScopes(c)
-        : [
-            {
-              id: input.provider === "gmail" ? "me" : input.provider === "google-calendar" ? "primary" : "inbox",
-              displayName: input.provider === "gmail" ? "Mailbox" : input.provider === "google-calendar" ? "Primary calendar" : "Inbox",
-            },
-          ];
+        : fallbackScopes;
       // 重复注册（重装/重连）时 scope 已存在——只有新建的 scope 才需要首同步
       const knownBefore = new Set(
         this.repository.listScopes().filter((s) => s.connectionId === c.id).map((s) => s.providerScopeId),
@@ -83,12 +101,13 @@ export class ConnectorManager {
       .listRuns()
       .find((r) => r.scopeId === scopeId && r.status === "running");
     if (existing) return existing;
-    if (!this.executor) throw new Error("connectors_disabled");
     const scope = this.repository.getScope(scopeId),
       connection = scope && this.repository.getConnection(scope.connectionId);
+    // 引擎门控：direct 源无需 Nango；nango 源在 secret 未就绪/引擎缺席时拒绝。
+    if (!connection || !this.engine.canServe(connection.provider))
+      throw new Error("connectors_disabled");
     if (
       !scope ||
-      !connection ||
       connection.status !== "active" ||
       scope.state === "disabled"
     )
@@ -111,19 +130,45 @@ export class ConnectorManager {
       return;
     }
     const base = this.repository.getScope(scope.id)!.checkpointRevision;
+    // 域投影软失败计数：run 结束时记一条汇总 sync_failures，不阻断 ingest。
+    let projectionFailures = 0;
+    const project = (action: () => unknown) => {
+      if (!this.domainProjection) return;
+      try {
+        action();
+      } catch {
+        projectionFailures += 1;
+      }
+    };
     try {
-      for await (const page of this.executor!.pull(
+      for await (const page of this.engine.pull(
         {
           ...scope,
           provider: connection.provider,
           nangoConnectionId: connection.nangoConnectionId,
           nangoConfigKey: connection.nangoConfigKey,
         },
+        connection,
         mode,
       )) {
         if (this.cancelled.has(run.id)) throw new Error("cancelled");
         this.repository.applyPage(scope.id, run.id, fence, page.changes);
         this.repository.applyCalendarPage(scope.id, run.id, fence, page.calendarChanges ?? []);
+        // 域投影先于 memorySink（M4）：投影返回行 id 随 memorySink 透传，
+        // ingest 的 sourceId 直接用域行 id（对齐 CLI 路径；connector ref 仅存量遗留）。
+        const projectedRowIds = new Map<string, string>();
+        for (const change of page.changes) {
+          project(() => {
+            const result = this.domainProjection!.projectMail(connection.provider, connection.id, change);
+            if (change.kind === "upsert" && result.id) projectedRowIds.set(change.message.providerMessageId, result.id);
+          });
+        }
+        for (const change of page.calendarChanges ?? []) {
+          project(() => {
+            const result = this.domainProjection!.projectCalendar(connection.provider, connection.id, change);
+            if (change.kind === "upsert" && result.id) projectedRowIds.set(change.event.providerEventId, result.id);
+          });
+        }
         for (const change of page.changes) {
           if (change.kind !== "upsert" || !this.memorySink) continue;
           await this.memorySink({
@@ -133,6 +178,9 @@ export class ConnectorManager {
             documentId: change.message.providerMessageId,
             title: change.message.subject?.trim() || "（无主题）",
             markdown: mailToMarkdown(change.message),
+            ...(projectedRowIds.get(change.message.providerMessageId)
+              ? { domainRowId: projectedRowIds.get(change.message.providerMessageId)! }
+              : {}),
           }).catch(() => {});
         }
         for (const change of page.calendarChanges ?? []) {
@@ -146,6 +194,9 @@ export class ConnectorManager {
             markdown: calendarEventToMarkdown(change.event),
             // scope 按"每个日历"建立：providerScopeId 即日历 id，进规则信号做日历级归因
             calendarId: scope.providerScopeId,
+            ...(projectedRowIds.get(change.event.providerEventId)
+              ? { domainRowId: projectedRowIds.get(change.event.providerEventId)! }
+              : {}),
           }).catch(() => {});
         }
         for (const document of page.documents ?? []) {
@@ -181,6 +232,10 @@ export class ConnectorManager {
       );
     } finally {
       this.cancelled.delete(run.id);
+      if (projectionFailures > 0) {
+        this.repository.recordFailure(run.id, scope.id, "domain_projection",
+          `域投影失败 ${projectionFailures} 条（软失败：数据仍经 markdown 进 ingest，读侧暂退化为快照解析）`, null);
+      }
       this.repository.releaseLease(scope.id, owner, fence);
     }
   }
@@ -206,11 +261,16 @@ export class ConnectorManager {
   startPolling(intervalMs: number) {
     if (this.timer) return;
     const poll = () => {
-      for (const scope of this.repository.listScopes())
-        if (scope.state !== "disabled")
-          try {
-            this.trigger(scope.id, scope.sourceCursor ? "incremental" : "full");
-          } catch {}
+      for (const scope of this.repository.listScopes()) {
+        if (scope.state === "disabled") continue;
+        // 引擎门控前置：Nango secret 未就绪期间跳过 OAuth 源（避免 401 噪音），
+        // direct 源（WebCal 订阅）不受影响照常轮询。
+        const connection = this.repository.getConnection(scope.connectionId);
+        if (!connection || !this.engine.canServe(connection.provider)) continue;
+        try {
+          this.trigger(scope.id, scope.sourceCursor ? "incremental" : "full");
+        } catch {}
+      }
     };
     this.timer = setInterval(poll, intervalMs);
     this.timer.unref();

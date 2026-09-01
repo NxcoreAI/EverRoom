@@ -40,7 +40,7 @@ export class ConnectorRepository {
     return (
       this.sqlite
         .prepare(
-          "SELECT id,provider,nango_config_key as nangoConfigKey,nango_connection_id as nangoConnectionId,account_identity_hash as accountIdentityHash,status,filters_json as filters,created_at as createdAt,updated_at as updatedAt FROM connector_connections ORDER BY created_at",
+          "SELECT id,provider,nango_config_key as nangoConfigKey,nango_connection_id as nangoConnectionId,account_identity_hash as accountIdentityHash,status,filters_json as filters,auth_method as authMethod,credentials_ref as credentialsRef,created_at as createdAt,updated_at as updatedAt FROM connector_connections ORDER BY created_at",
         )
         .all() as any[]
     ).map((r) => ({ ...r, filters: JSON.parse(r.filters) }));
@@ -53,12 +53,14 @@ export class ConnectorRepository {
     nangoConfigKey: string;
     nangoConnectionId: string;
     filters?: Record<string, unknown>;
+    authMethod?: "nango-oauth" | "api-token" | "webcal-url" | "password" | "manual-import";
+    credentialsRef?: string | null;
   }): ConnectorConnection {
     const id = randomUUID(),
       t = now();
     this.sqlite
       .prepare(
-        "INSERT INTO connector_connections(id,provider,nango_config_key,nango_connection_id,filters_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
+        "INSERT INTO connector_connections(id,provider,nango_config_key,nango_connection_id,filters_json,auth_method,credentials_ref,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
       )
       .run(
         id,
@@ -66,6 +68,8 @@ export class ConnectorRepository {
         input.nangoConfigKey,
         input.nangoConnectionId,
         JSON.stringify(input.filters ?? {}),
+        input.authMethod ?? "nango-oauth",
+        input.credentialsRef ?? null,
         t,
         t,
       );
@@ -222,6 +226,12 @@ export class ConnectorRepository {
         "SELECT id,scope_id as scopeId,run_id as runId,kind as category,message,provider_item_id as itemKey,created_at as createdAt FROM sync_failures ORDER BY created_at DESC LIMIT 200",
       )
       .all();
+  }
+  /** 域投影等非致命失败的台账（阶段一软失败策略；见 manager.execute）。 */
+  recordFailure(runId: string, scopeId: string, kind: string, message: string, providerItemId: string | null) {
+    this.sqlite
+      .prepare("INSERT INTO sync_failures(id,run_id,scope_id,kind,message,provider_item_id,created_at) VALUES(?,?,?,?,?,?,?)")
+      .run(randomUUID(), runId, scopeId, kind, message, providerItemId, now());
   }
   records(
     connectionId: string,

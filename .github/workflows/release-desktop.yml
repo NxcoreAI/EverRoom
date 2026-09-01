@@ -235,8 +235,119 @@ jobs:
           compression-level: 0
           retention-days: 3
 
+  windows:
+    runs-on: windows-2025
+    env:
+      NXCORE_AGENT_RUNTIME: ${{ vars.NXCORE_AGENT_RUNTIME }}
+      NXCORE_SAAS_API_URL: ${{ vars.NXCORE_SAAS_API_URL }}
+      NXCORE_KNOWLEDGE_ROUTER_ENABLED: ${{ vars.NXCORE_KNOWLEDGE_ROUTER_ENABLED }}
+      NXCORE_KNOWLEDGE_INGEST_DEBOUNCE_MS: ${{ vars.NXCORE_KNOWLEDGE_INGEST_DEBOUNCE_MS }}
+      NXCORE_CONNECTOR_POLL_MS: ${{ vars.NXCORE_CONNECTOR_POLL_MS }}
+      NXCORE_INGEST_FILTER_ENABLED: ${{ vars.NXCORE_INGEST_FILTER_ENABLED }}
+      NXCORE_INGEST_FILTER_MODE: ${{ vars.NXCORE_INGEST_FILTER_MODE }}
+      NXCORE_NANGO_URL: ${{ secrets.NXCORE_NANGO_URL }}
+      NXCORE_NANGO_SECRET: ${{ secrets.NXCORE_NANGO_SECRET }}
+      NXCORE_NANGO_GMAIL_CONFIG_KEY: ${{ secrets.NXCORE_NANGO_GMAIL_CONFIG_KEY }}
+      NXCORE_NANGO_GOOGLE_CLIENT_ID: ${{ secrets.NXCORE_NANGO_GOOGLE_CLIENT_ID }}
+      NXCORE_NANGO_GOOGLE_CLIENT_SECRET: ${{ secrets.NXCORE_NANGO_GOOGLE_CLIENT_SECRET }}
+      NXCORE_NANGO_NOTION_CLIENT_ID: ${{ secrets.NXCORE_NANGO_NOTION_CLIENT_ID }}
+      NXCORE_NANGO_NOTION_CLIENT_SECRET: ${{ secrets.NXCORE_NANGO_NOTION_CLIENT_SECRET }}
+      NXCORE_NANGO_OUTLOOK_CLIENT_ID: ${{ secrets.NXCORE_NANGO_OUTLOOK_CLIENT_ID }}
+      NXCORE_NANGO_OUTLOOK_CLIENT_SECRET: ${{ secrets.NXCORE_NANGO_OUTLOOK_CLIENT_SECRET }}
+      NXCORE_NANGO_OUTLOOK_CONFIG_KEY: ${{ secrets.NXCORE_NANGO_OUTLOOK_CONFIG_KEY }}
+      NXCORE_BROWSER_EXTENSION_STORE_URL: ${{ vars.NXCORE_BROWSER_EXTENSION_STORE_URL }}
+      NXCORE_BROWSER_EXTENSION_ID: ${{ vars.NXCORE_BROWSER_EXTENSION_ID }}
+
+    steps:
+      - name: Check out tagged commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          submodules: recursive
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: |
+            pnpm-lock.yaml
+            apps/gateway/src/modules/connector/package-lock.json
+
+      - name: Validate release tag
+        shell: bash
+        run: |
+          version="$(node -p "require('./apps/desktop/package.json').version")"
+          [[ "$GITHUB_REF_NAME" =~ ^desktop-v([0-9]+\.[0-9]+\.[0-9]+)(-nightly\.[0-9]{8}\.[0-9]+)?$ ]] || {
+            echo "Tag $GITHUB_REF_NAME is not a desktop release tag" >&2
+            exit 1
+          }
+          test "${BASH_REMATCH[1]}" = "$version" || {
+            echo "Tag $GITHUB_REF_NAME does not match desktop version $version" >&2
+            exit 1
+          }
+          git fetch origin main --no-tags
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || {
+            echo "Tagged commit must be on main" >&2
+            exit 1
+          }
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Cache npm tarballs for submodule builds
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.npm
+          key: npm-tarballs-${{ runner.os }}-${{ hashFiles('apps/gateway/src/modules/connector/package-lock.json', 'apps/desktop/vendor/genoffice/package-lock.json') }}
+          restore-keys: npm-tarballs-${{ runner.os }}-
+
+      - name: Cache Rust build for xlsx sidecar
+        uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
+        with:
+          workspaces: apps/desktop/vendor/genoffice/apps/sheets/native/xlsx-engine
+
+      - name: Check types
+        run: pnpm typecheck
+
+      - name: Build app and bundled runtimes
+        shell: bash
+        run: |
+          pnpm build
+          pnpm --filter @nxcore/desktop exec node scripts/prepare-open-connector.mjs
+          pnpm --filter @nxcore/desktop exec node scripts/prepare-oo-cli.mjs
+          pnpm --filter @nxcore/desktop exec node scripts/generate-packaged-env.mjs
+          test -f apps/desktop/build/nango-runtime/packages/server/dist/server.js
+
+      - name: Package Windows x64
+        shell: bash
+        # npmRebuild=false: better-sqlite3 ships N-API prebuilds for every
+        # platform, so no Electron-ABI rebuild is needed and local machines
+        # without MSVC can produce the identical installer as CI.
+        run: |
+          pnpm --filter @nxcore/desktop exec electron-builder --win nsis --x64 --publish never --config.npmRebuild=false
+
+      - name: Audit package contents
+        shell: bash
+        run: |
+          pnpm --filter @nxcore/desktop exec node scripts/verify-windows-package.mjs
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-assets
+          path: |
+            release/*.exe
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 3
+
   publish:
-    needs: [macos]
+    needs: [macos, windows]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -254,6 +365,12 @@ jobs:
           name: macos-assets
           path: release-assets
 
+      - name: Download Windows artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: windows-assets
+          path: release-assets
+
       - name: Publish desktop release
         shell: bash
         env:
@@ -265,6 +382,7 @@ jobs:
           expected=(
             "release-assets/EverRoom-$version-arm64.dmg"
             "release-assets/EverRoom-$version-arm64.zip"
+            "release-assets/EverRoom-$version-windows-x64.exe"
           )
           files=(release-assets/*)
           test "${#files[@]}" -eq "${#expected[@]}" || {
@@ -282,6 +400,7 @@ jobs:
           else
             notes="Unsigned Apple Silicon development builds. macOS Gatekeeper may require manual approval before first launch."
           fi
+          notes="$notes Windows x64 builds are unsigned; Microsoft Defender SmartScreen may warn before the first launch."
           release_flags=(--latest)
           if [[ "$GITHUB_REF_NAME" == *-nightly.* ]]; then
             release_flags=(--prerelease --latest=false)
@@ -293,7 +412,7 @@ jobs:
             --notes "$notes"
 
   notify:
-    needs: [macos, publish]
+    needs: [macos, windows, publish]
     if: always()
     runs-on: ubuntu-24.04
     permissions:

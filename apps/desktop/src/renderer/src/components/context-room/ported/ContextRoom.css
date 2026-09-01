@@ -12536,6 +12536,69 @@
   line-height: 18px;
 }
 
+/* 导入结果明细：失败原因 / 跳过原因（各最多 5 行，其余折叠计数）。 */
+.context-room-knowledge-overlay-details {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 132px;
+  overflow-y: auto;
+  padding: 8px 10px;
+  border: 1px solid var(--cr-border);
+  border-radius: 8px;
+  background: var(--cr-sunken, rgba(15, 23, 42, 0.03));
+}
+
+.context-room-knowledge-overlay-details ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.context-room-knowledge-overlay-details li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 17px;
+}
+
+.context-room-knowledge-overlay-details li > svg {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  color: var(--cr-muted);
+}
+
+.context-room-knowledge-overlay-details li > span {
+  flex: none;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--cr-text);
+}
+
+.context-room-knowledge-overlay-details li > small {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--cr-muted);
+}
+
+.context-room-knowledge-overlay-details-more {
+  margin: 0;
+  color: var(--cr-muted);
+  font-size: 11px;
+  line-height: 16px;
+}
+
 .context-room-knowledge-overlay-actions {
   display: flex;
   justify-content: flex-end;

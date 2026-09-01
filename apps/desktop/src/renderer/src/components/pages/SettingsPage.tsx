@@ -928,6 +928,27 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
             {t(cursorCompletionSettings.enabled ? 'surface:settings.on' : 'surface:settings.off')}
           </button>
         </div>
+        <div className="reality-setting-row">
+          <div>
+            <strong>{t('surface:settings.paragraphCompletion')}</strong>
+            <small>{t('surface:settings.paragraphCompletionDescription')}</small>
+          </div>
+          <button
+            className="settings-toggle"
+            type="button"
+            role="switch"
+            aria-label={t('surface:settings.paragraphCompletion')}
+            aria-checked={cursorCompletionSettings.paragraphEnabled}
+            data-active={String(cursorCompletionSettings.paragraphEnabled)}
+            disabled={!cursorCompletionSettings.enabled}
+            onClick={() => updateCursorCompletionSettings({
+              paragraphEnabled: !cursorCompletionSettings.paragraphEnabled,
+            })}
+          >
+            <span aria-hidden="true" />
+            {t(cursorCompletionSettings.paragraphEnabled ? 'surface:settings.on' : 'surface:settings.off')}
+          </button>
+        </div>
       </section>
 
       <div id="settings-models" className="settings-anchor-section settings-models-group">

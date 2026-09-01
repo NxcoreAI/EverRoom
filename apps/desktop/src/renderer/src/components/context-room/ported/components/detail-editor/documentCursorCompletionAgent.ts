@@ -45,6 +45,9 @@ export interface DocumentCursorCompletionNearbyBlock {
   attrs: Record<string, string | number | boolean | null>
 }
 
+/** 补全档位：inline = 单句短补全；paragraph = 块内 2-4 句续写。 */
+export type DocumentCursorCompletionMode = 'inline' | 'paragraph'
+
 export interface DocumentCursorCompletionRequest {
   roomId: string
   roomTitle?: string
@@ -56,6 +59,10 @@ export interface DocumentCursorCompletionRequest {
   blockType: string
   formatContext: DocumentCursorCompletionFormatContext
   nearbyBlocks?: DocumentCursorCompletionNearbyBlock[]
+  /** 缺省 inline；只进 <EDITOR_CONTEXT> 数据，不进指令文本（保前缀缓存字节稳定）。 */
+  completionMode?: DocumentCursorCompletionMode
+  /** regenerate 场景带上被用户拒绝的上一次建议，模型据此避开重复。 */
+  avoidText?: string
 }
 
 export interface DocumentCursorCompletionSuggestion {
@@ -67,6 +74,7 @@ export type DocumentCursorCompletionErrorKind =
   | 'aborted'
   | 'first_suggestion_timeout'
   | 'timeout'
+  | 'session_busy'
   | 'session_not_found'
   | 'unconfigured'
   | 'network'
@@ -95,6 +103,9 @@ export function classifyDocumentCursorCompletionError(error: unknown): DocumentC
   if (isAbortError(error)) return 'aborted'
   const message = error instanceof Error ? error.message : String(error)
   if (/agent_session_not_found|session not found/i.test(message)) return 'session_not_found'
+  // 网关 409 session_busy：上一个被 supersede 的 run 尚未落库 run.cancelled，
+  // session.status 仍是 running。桥层只透传网关 message（无状态码），按文案识别。
+  if (/agent_session_busy|session_busy|already has an active run/i.test(message)) return 'session_busy'
   if (/runtime_config_not_ready/i.test(message)) return 'unconfigured'
   if (/ECONNREFUSED|ECONNRESET|EPIPE|ENOTFOUND|ETIMEDOUT|fetch failed|network|socket hang up/i.test(message)) {
     return 'network'
@@ -278,6 +289,8 @@ export function buildDocumentCursorCompletionPrompt(
     '<EDITOR_CONTEXT>',
     JSON.stringify({
       documentName: input.documentName,
+      completionMode: input.completionMode ?? 'inline',
+      ...(input.avoidText ? { avoidText: input.avoidText } : {}),
       blockPrefix: input.blockPrefix,
       blockType: input.blockType,
       formatContext: input.formatContext,
@@ -304,12 +317,46 @@ function repeatedSuffixLength(contextAfter: string, output: string): number {
   return 0
 }
 
+/** 段落档上限：2-4 句、合计约 300 码点。 */
+const PARAGRAPH_MAX_CHARACTERS = 300
+const PARAGRAPH_MAX_SENTENCES = 4
+
+/** 句末标点（与 inline 单句截断同一 alternation，加 g 供段落档收集多边界）。 */
+const SENTENCE_END_PATTERN = /[。！？!?]|\.(?=\s|$)/gu
+
+/**
+ * 段落档截断：取前 4 个句末边界中最大的「累计 ≤300 码点」边界切片；
+ * 无边界或首句即超限时按码点硬切（模型偶尔整段无句读）。
+ */
+function truncateParagraphCompletion(output: string): string {
+  const boundaries: number[] = []
+  for (const match of output.matchAll(SENTENCE_END_PATTERN)) {
+    boundaries.push(match.index + match[0].length)
+    if (boundaries.length >= PARAGRAPH_MAX_SENTENCES) break
+  }
+  for (let count = boundaries.length; count >= 1; count -= 1) {
+    const candidate = output.slice(0, boundaries[count - 1])
+    if (Array.from(candidate).length <= PARAGRAPH_MAX_CHARACTERS) {
+      return candidate.trimEnd()
+    }
+  }
+  return Array.from(output).slice(0, PARAGRAPH_MAX_CHARACTERS).join('')
+}
+
+/**
+ * 提示词模板标记：模型把请求模板当补全输出（如实测出现过的 "<CURSOR />" 回显）
+ * 即认定整条输出在复述指令而非给内容，作废处理（parse 返回空 → no_completion，
+ * 不进熔断、不留 ghost）。误伤面可忽略：全大写尖括号标签不会是正常文档内容。
+ */
+const PROMPT_TEMPLATE_MARKER = /<\/?(?:PREFIX|SUFFIX|EDITOR_CONTEXT|TIPTAP_NEARBY_BLOCKS|CURRENT_BLOCK_SUFFIX)>|<CURSOR\s*\/?>/iu
+
 export function sanitizeDocumentCursorCompletion(
   value: string,
   contextBefore: string,
   blockType = 'paragraph',
   contextAfter = '',
   formatContext?: DocumentCursorCompletionFormatContext,
+  completionMode: DocumentCursorCompletionMode = 'inline',
 ): string {
   const isCodeBlock = blockType === 'codeBlock'
   let output = value.trimEnd()
@@ -317,6 +364,7 @@ export function sanitizeDocumentCursorCompletion(
   output = output.replace(/(?:\r?\n)?```[ \t]*$/, '')
   output = output.replace(/^(?:补全|续写|建议)(?:内容|文本)?\s*[:：]\s*/i, '')
   output = output.replace(/^completion\s*[:：]\s*/i, '')
+  if (PROMPT_TEMPLATE_MARKER.test(output)) return ''
   if (!isCodeBlock) output = output.replace(/\r?\n+/g, ' ')
   if (!isCodeBlock && formatContext?.list) {
     output = output.replace(
@@ -358,10 +406,15 @@ export function sanitizeDocumentCursorCompletion(
   output = output.replace(/^["“](.*)["”]$/u, '$1')
   if (!output.trim()) return ''
   if (!isCodeBlock) {
-    const sentence = output.match(/^[\s\S]*?(?:[。！？!?]|\.(?=\s|$))/u)?.[0]
-    if (sentence) output = sentence.trimEnd()
+    if (completionMode === 'paragraph') {
+      output = truncateParagraphCompletion(output)
+    } else {
+      const sentence = output.match(/^[\s\S]*?(?:[。！？!?]|\.(?=\s|$))/u)?.[0]
+      if (sentence) output = sentence.trimEnd()
+    }
   }
-  return Array.from(output).slice(0, isCodeBlock ? 160 : 80).join('')
+  const maximum = isCodeBlock ? 160 : completionMode === 'paragraph' ? PARAGRAPH_MAX_CHARACTERS : 80
+  return Array.from(output).slice(0, maximum).join('')
 }
 
 function stripCompletionFence(value: string): string {
@@ -372,7 +425,7 @@ function stripCompletionFence(value: string): string {
 
 export function parseDocumentCursorCompletion(
   value: string,
-  input: Pick<DocumentCursorCompletionRequest, 'blockPrefix' | 'blockType' | 'contextBefore' | 'contextAfter' | 'formatContext'>,
+  input: Pick<DocumentCursorCompletionRequest, 'blockPrefix' | 'blockType' | 'contextBefore' | 'contextAfter' | 'formatContext' | 'completionMode'>,
 ): DocumentCursorCompletionSuggestion {
   const raw = stripCompletionFence(value)
   const newline = raw.search(/\r?\n/u)
@@ -403,6 +456,7 @@ export function parseDocumentCursorCompletion(
     input.blockType,
     input.contextAfter,
     input.formatContext,
+    input.completionMode,
   )
   return {
     text,
@@ -561,6 +615,9 @@ export class DocumentCursorCompletionSessionChannel {
 }
 
 const DEFAULT_STREAM_TIMEOUT_MS = 10_000
+/** session_busy 退避：150/300/600/1200ms 共 4 次，覆盖网关释放旧 run 的秒级窗口。 */
+const SESSION_BUSY_RETRY_LIMIT = 4
+const SESSION_BUSY_RETRY_BASE_MS = 150
 const DEFAULT_FIRST_SUGGESTION_MS = 4_000
 const DEFAULT_RECONCILE_INTERVAL_MS = 500
 
@@ -659,7 +716,9 @@ export async function streamDocumentCursorCompletion(
   try {
     throwIfAborted(options.signal)
     let run: AgentRun
-    for (let attempt = 0; ; attempt += 1) {
+    let rebuiltSession = false
+    let busyRetries = 0
+    for (;;) {
       const session = channel
         ? await channel.acquireSession()
         : await api.createSession({
@@ -686,11 +745,19 @@ export async function streamDocumentCursorCompletion(
         })
         break
       } catch (error) {
+        const errorKind = classifyDocumentCursorCompletionError(error)
         // 复用会话可能已被服务端丢弃（补全服务重启）：换新会话重试一次。
-        if (channel && attempt === 0
-          && classifyDocumentCursorCompletionError(error) === 'session_not_found') {
+        if (channel && !rebuiltSession && errorKind === 'session_not_found') {
+          rebuiltSession = true
           channel.invalidateSession()
           sessionId = null
+          continue
+        }
+        // 会话还在释放上一个被 supersede 的 run（网关等 run.cancelled 落库才回
+        // idle，实测可达秒级）：同会话指数退避重试，而不是把竞态当 provider 失败。
+        if (errorKind === 'session_busy' && busyRetries < SESSION_BUSY_RETRY_LIMIT) {
+          busyRetries += 1
+          await wait(SESSION_BUSY_RETRY_BASE_MS * 2 ** (busyRetries - 1), options.signal)
           continue
         }
         throw error
