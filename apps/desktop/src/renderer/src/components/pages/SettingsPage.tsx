@@ -17,6 +17,7 @@ import {
   Puzzle,
   RefreshCw,
   ShieldCheck,
+  ShieldAlert,
   Sparkles,
   Smartphone,
   Trash2,
@@ -46,6 +47,7 @@ import { LocalAgentSettingsSection } from '@/components/settings/LocalAgentSetti
 import { UsageAndBudgetSettingsSection } from '@/components/settings/UsageAndBudgetSettingsSection'
 import { RuntimeConfigSettingsSection } from '@/components/settings/RuntimeConfigSettingsSection'
 import { InvitationCodeField, useInvitationCode } from '@/components/account/InvitationCodeField'
+import { QrLoginPanel } from '@/components/account/QrLoginPanel'
 import './SettingsPage.css'
 
 const SETTINGS_NAV = [
@@ -63,7 +65,7 @@ const SETTINGS_NAV = [
   { id: 'settings-data', label: 'surface:settings.dataManagement', description: 'surface:settings.clearAllUserDataDescription', icon: Trash2 },
 ]
 
-type PendingAction = CloudOidcProvider | 'refresh' | 'logout' | 'keyring' | 'sync' | 'clear-data' | null
+type PendingAction = CloudOidcProvider | 'refresh' | 'logout' | 'keyring' | 'sync' | 'clear-data' | 'admission' | null
 type PairingSession = { pairingSessionId: string; pairingToken?: string; status: string; confirmationCode: string; expiresAt: string; origin?: string; targetDeviceId?: string | null; targetDeviceName?: string | null; targetPublicKey?: string | null }
 
 function formatMinutes(seconds: number, locale: AppLocale, t: Translate, rounding: 'down' | 'up' = 'down'): string {
@@ -352,6 +354,21 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
     setPending('logout')
     try {
       setAccount(await window.nxcore.account.logout())
+    } catch {
+      // The preload request interceptor reports the error globally.
+    } finally {
+      setPending(null)
+    }
+  }
+
+  const replaceAdmissionDevice = async (replaceDeviceId: string) => {
+    if (!window.nxcore || !account?.admission) return
+    setPending('admission')
+    try {
+      setAccount(await window.nxcore.account.replaceDeviceAdmission({
+        admissionToken: account.admission.admissionToken,
+        replaceDeviceId,
+      }))
     } catch {
       // The preload request interceptor reports the error globally.
     } finally {
@@ -731,6 +748,36 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
               </button>
             </div>
 
+            {account.admission ? (
+              <div className="qr-login-panel qr-login-admission" role="alert">
+                <div className="qr-login-admission-heading">
+                  <ShieldAlert aria-hidden="true" />
+                  <div>
+                    <strong>{t('surface:qrLogin.deviceLimitTitle', { maxDevices: account.admission.maxDevices })}</strong>
+                    <small>{t('surface:qrLogin.deviceLimitDescription')}</small>
+                  </div>
+                </div>
+                <div className="qr-login-devices">
+                  {account.admission.devices.map((device) => (
+                    <button
+                      key={device.id}
+                      type="button"
+                      className="qr-login-device"
+                      disabled={isBusy}
+                      onClick={() => void replaceAdmissionDevice(device.id)}
+                    >
+                      <Smartphone aria-hidden="true" />
+                      <span>
+                        <strong>{device.name}</strong>
+                        <small>{device.platform}{device.appVersion ? ` · ${device.appVersion}` : ''}</small>
+                      </span>
+                      <em>{t('surface:qrLogin.replaceDevice')}</em>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
             {account.subscription ? (
               <div className="cloud-subscription">
                 <div className="cloud-subscription-plan">
@@ -854,6 +901,10 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
                 </span>
                 {t('surface:settings.signInWithGoogle')}
               </button>
+            </div>
+
+            <div className="qr-login-entry">
+              <QrLoginPanel account={account} onAccountChanged={setAccount} />
             </div>
 
             <p className="oidc-login-note">
