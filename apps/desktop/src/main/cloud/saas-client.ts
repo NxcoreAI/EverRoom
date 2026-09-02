@@ -475,7 +475,9 @@ export class SaasClient {
     private readonly recordingsDirectory: string,
     private readonly openExternal: (url: string) => Promise<void>,
   ) {
-    this.baseUrl = normalizeSaasApiUrl(env('NXCORE_SAAS_API_URL', 'http://127.0.0.1:4100/api/v1'))
+    // 开发默认与手机 App 的 dev 默认（http://192.168.1.99:4100）保持同一 origin，
+    // 保证扫码登录的环境校验在两端默认配置下直接通过。
+    this.baseUrl = normalizeSaasApiUrl(env('NXCORE_SAAS_API_URL', 'http://192.168.1.99:4100/api/v1'))
     this.logtoIssuer = env('NXCORE_LOGTO_ISSUER', 'https://auth.nxcore.ai/oidc').replace(/\/+$/, '')
     this.logtoAppId = env('NXCORE_LOGTO_APP_ID', 'typreqzzbz3anel9aq1z8')
     this.connectorIds = {
