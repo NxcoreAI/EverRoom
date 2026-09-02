@@ -172,7 +172,54 @@
 
 > **路线决策（2026-09-01 用户确认，最终版）**：**连接器统一到 OpenConnector（`oo` CLI）路径，内嵌 Nango 弃用**。新能力全部落在：① 上游 [oomol-lab/open-connector](https://github.com/oomol-lab/open-connector) 的 provider 层（仓库以 tarball 固定 commit `5719a69`/v1.3.5 引入，desktop 的 `build/open-connector`），② 网关 CLI 路径（`service.ts`/`document-sync.ts`，`/v1/cli-connectors/*`），③ 桌面 cliConnector IPC + open-connector supervisor。**关键现状（已对 pin 源码核实）**：feishu provider 已声明式实现飞书 OAuth 用户授权（`authen/v1/authorize` + `authen/v2/oauth/token` JSON body + `offline_access`），且**导入与导出所需动作全部就位于当前 pin（`5719a69`/v1.3.5）**——除 7 个内联基础动作外，docs/wiki/drive/markdown/file 全套 shared 动作以 `...createFeishu*Actions()` 展开注入（`fetch_document`/`create_document`/`update_document`/`search_documents`/`list_wiki_*`/`list_drive_files`/`submit_drive_import`/`get_drive_task_status` 等，完整清单见 §0）；notion provider 已含 `retrieve_page_markdown`/`update_page_markdown`/`create_page` 等 Markdown API 动作。Nango 路径（`/v1/nango-connectors/*`、sync-providers）与 direct 引擎的 feishu-wiki 不再投入，随退役处理。
 
-### 4.1 总体数据流
+### 4.1 总体架构与数据流
+
+**组件架构图**（★ = 本需求新增；未标注 = 现有可复用/已就位，对照 §1.3；退役的 Nango 侧不在图内）：
+
+```
+┌─ 桌面端（Electron）
+│   连接管理 UI：授权入口 · 连接状态/needs_connection 徽标 · 重授权（ConnectorConsolePage/ConnectorSyncPage 骨架）
+│   导出对话框：目标选择 + mode + 冲突三选一 ★
+│   open-connector supervisor（oo 进程管理）
+│   open-connector-secret-store（Electron safeStorage → OO_CONFIG_DIR/OO_DATA_DIR）
+└────────┬──────────────────────────────────────────────────────────
+         │ cliConnector IPC + REST（连接发起/状态/作业进度/导出）
+         ▼
+┌─ 网关（gateway.sqlite）
+│   REST：/v1/cli-connectors/*（连接） · /v1/connector-exports/* ★（导出）
+│   【导入管线 · 复用为主】
+│     service.ts 作业 seed/调度（seed 列表加 feishu）
+│     document-sync.ts reconcile→incremental 双作业（扩展 feishu + edit_time 水位）
+│     防回环拦截：拉取结果进投影之前查 connector_export_targets ★（§4.4.2 单一入口）
+│     domain-projection 幂等 upsert + contentHash 跳过
+│     ConnectorMarkdownService 双向 hash 幂等 + outbox 退避
+│     IngestService → rooms / memory / files
+│   【导出管线 · ★全新】
+│     connector_export_targets 映射表 ★（§4.4.1）
+│     export outbox：lease + 退避 [30s,2m,10m,1h]，复用 markdown-service 模式 ★
+│     导出执行器：独立服务，不进导入作业只读白名单 ★（§4.4.6）
+└────────┬──────────────────────────────────────────────────────────
+         │ oo CLI 动作调用（拉取/发现/写入）
+         ▼
+┌─ open-connector 运行时（vendored，pin 5719a69/v1.3.5；桌面 supervisor 托管进程与凭据注入）
+│   feishu provider（OAuth authen/v2 + 动作均已就位）
+│     读：fetch_document（markdown/局部读） · search_documents
+│     发现：list_wiki_spaces / list_wiki_nodes · list_drive_files
+│     写：create_document / update_document · submit_drive_import（+ get_drive_task_status 轮询）
+│   notion provider（OAuth + 动作均已就位）
+│     读：retrieve_page_markdown（truncated/unknown_block_ids 补拉逻辑在网关侧）
+│     写：create_page · update_page_markdown
+└────────┬──────────────────────────────────────────────────────────
+         │ HTTPS（user_access_token；刷新轮换由 oo CLI 自管）
+         ▼
+┌─ 外部平台
+│   飞书开放平台：OAuth(authen v2) · docs_ai fetch（未公开端点，兜底 docs-v1 /content 10MB）· drive import_tasks
+│   Notion API：OAuth(capabilities) · Markdown API（Notion-Version 2026-03-11）
+└──────────────────────────────────────────────────────────────────
+```
+
+**数据流**：
+
 ```
 导入（统一走 OpenConnector CLI 路径；投影/ingest 管线复用，零新增存储）：
   Feishu OAuth ──┐    open-connector provider 动作
