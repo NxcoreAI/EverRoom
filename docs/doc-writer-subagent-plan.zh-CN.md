@@ -1,6 +1,7 @@
 # doc-writer 子 agent：文档内容生成与风格应用接管方案
 
-> 版本：v1 · 2026-09-02 · 状态：**M1、M2 已实现（2026-09-02，待真机验证）；M3 待实施**
+> 版本：v1 · 2026-09-02 · 状态：**M1、M2、M3 全部实现（2026-09-02，待真机验证）**
+> **M3 实施备注（2026-09-02）**：write_append 增 `invocationId+chunkIndex`、patch_hunk 增 `invocationId+itemIndex`（均与直写参数互斥，直写保留给 HTTP MCP 外部调用方）；document_draft 对 create/edit/continue 只回摘要（title/chunkCount/appendChunkBytes/hunkCount/hunksSummary/digest），rewrite 仍回 replacementText（对话内需逐字呈现）；resolver 工厂在 `subagents/doc-writer-content.ts`（类型在 `documents/capabilities/doc-writer-content.ts`，CapabilityBackend 增 `resolveDocWriterDraft` 注入），授权口径 = 本 run 的 document_draft 派发（agentDefinitionId=doc-writer + source=primary_agent + parentRunId 匹配 + completed）；continue 的 chunk 在 resolver 映射为 insert/{at:"end"}，落库时仍按解析节点逐个成项（沿用既有 continuation 语义，主 agent 按返回的 nextSequence 续接）。
 > **M1 实施备注（2026-09-02）**：doc-writer bundle、document_draft 工具、代发读凭证（readAuthority 上提共享）、风格注入迁移与四信号门退役、主 agent 提示/skill 改写、promptGuidelines 迁移均已落地，测试全绿（gateway 全量 = 预存基线 7 处失败，stash 对照确认零新增）。开放问题①已核实解除：子 agent 链路（PiAgentRuntime→pi-coding-agent→pi-ai）**无显式单次调用超时**，60s 超时仅存在于 OpenAiCompletionAgentRuntime（knowledge/diary 链路，runtime-factory.ts:306）；pi-ai 落到 HTTP 空闲超时默认 300s（流式按 chunk 重置），600s dispatch 预算下无需改动。新增实现事实：**单次 dispatch 的产出预算受 backgroundPi.maxTokens（默认 8192）约束**，超长文档按 draft-create SKILL 的分块约定分多次 dispatch（与主 agent 时代分批 append 同构），已列入风险表。
 > 规范真源：[agent-document-development-sop.md](agent-document-development-sop.md)（本方案 M1/M2 不触碰其任何扩展点；M3 扩工具契约走 SOP §4 流程）
 > 关联文档：[agent-architecture-optimization-plan.zh-CN.md](agent-architecture-optimization-plan.zh-CN.md)（本方案即其 §6 D4 蓝图的落地方案）、[writing-style-profile-plan.zh-CN.md](writing-style-profile-plan.zh-CN.md)（§7 注入链随本方案迁移）、[subagent-framework-design.zh-CN.md](subagent-framework-design.zh-CN.md)
@@ -322,7 +323,7 @@ readAuthority.issue(
 |---|---|---|---|
 | **M1 草稿流（V1）** ✅ 已实现（2026-09-02，待真机验证） | doc-writer bundle（含 rewrite task 契约）；document_draft 工具 + 代发凭证 + 风格注入；readAuthority 上提；主 agent 提示/skill 改写；gate 退役；对话内划词改写改走 document_draft | 新建/修改/续写三流全走子 agent；主 agent 零正文产出；风格注入仅在新注入点；context-room 零改动（rewrite 双轨并存） | 开放问题①核实（已解除，见 §13） |
 | **M2 selection-rewrite 迁移** ✅ 已实现（2026-09-02，待真机验证） | §8 全部 | 编辑器划词走 doc-writer；context-room 无 rewrite 残留；桌面/gateway 配套同版发布 | M1 |
-| **M3 引用透传（V2）** | write/patch 增 invocationId 引用参数，服务端从 invocation 转交内容（resolver 模式泛化，selection-rewrite-content.ts 同款），主 agent 只见 digest；走 SOP §4 流程 | 主 agent 上下文不再含正文全文（工具结果仅摘要） | M1；可与 M2 并行评审 |
+| **M3 引用透传（V2）** ✅ 已实现（2026-09-02，待真机验证） | write/patch 增 invocationId 引用参数，服务端从 invocation 转交内容（resolver 模式泛化，selection-rewrite-content.ts 同款），主 agent 只见 digest | 主 agent 上下文不再含正文全文（工具结果仅摘要） | M1；可与 M2 并行评审 |
 
 每里程碑完成后跑 gateway 全量测试基线（既有失败以基线法核对，不计新增）+ SOP §7 推荐命令。
 

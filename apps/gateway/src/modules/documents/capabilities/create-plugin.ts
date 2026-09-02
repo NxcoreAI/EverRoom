@@ -122,20 +122,57 @@ export function createPlugin(
   const append: DocumentCapabilityTool = {
     name: "context_room_write_append",
     title: "流式追加 Room 文档正文",
-    description: "按严格连续 sequence 追加本次新增的 Markdown 正文，不得重发累计全文。text 必须来自 document_draft 返回的 appendChunks（按顺序逐字转发），不得改写、增删或合并。正文不得包含标题或一级标题（#）：context_room_write_begin.title 由界面单独渲染为页面顶部 H1；主章节从 ## 开始，子章节依次递进。",
+    description: "按严格连续 sequence 追加本次新增的 Markdown 正文，不得重发累计全文。优先以引用方式转交：传 document_draft 返回的 invocationId 与 chunkIndex（0 起，按顺序逐块），正文由服务端从 doc-writer 结果转交，参数中不携带正文；text 仅供无法引用 invocation 的调用方直写。正文不得包含标题或一级标题（#）：context_room_write_begin.title 由界面单独渲染为页面顶部 H1；主章节从 ## 开始，子章节依次递进。",
     inputSchema: {
       type: "object", additionalProperties: false,
       properties: {
         operationId: { type: "string" }, sequence: { type: "integer", minimum: 1 },
-        text: { type: "string" },
+        text: { type: "string", description: "直写模式：本批 markdown。与 invocationId 互斥。" },
+        invocationId: { type: "string", maxLength: 64, description: "引用模式：document_draft 返回的 invocation 引用，服务端转交正文。" },
+        chunkIndex: { type: "integer", minimum: 0, description: "引用模式：appendChunks 的下标（0 起）。" },
       },
-      required: ["operationId", "sequence", "text"],
+      required: ["operationId", "sequence"],
     },
     annotations: annotations(false),
     execute: async (args, context) => {
       const operationId = stringArg(args, "operationId");
       const sequence = integerArg(args, "sequence");
-      const suppliedText = stringArg(args, "text", true);
+      const invocationId = typeof args.invocationId === "string" ? args.invocationId.trim() : "";
+      let suppliedText: string;
+      if (invocationId) {
+        if (typeof args.text === "string") {
+          throw new DocumentServiceError("INVALID_REQUEST", "Pass either invocationId or text, not both", 400);
+        }
+        const draft = backend.resolveDocWriterDraft?.(invocationId, { runId: context.runId }) ?? null;
+        if (!draft) {
+          throw new DocumentServiceError("DOC_WRITER_DRAFT_UNAVAILABLE", "No completed doc-writer draft bound to this run", 409, {
+            invocationId,
+            retryable: false,
+            nextAction: "document_draft",
+          });
+        }
+        if (draft.kind !== "draft-create") {
+          throw new DocumentServiceError("DOC_WRITER_DRAFT_KIND_MISMATCH", "write_append consumes a draft-create invocation", 409, {
+            invocationId,
+            kind: draft.kind,
+            retryable: false,
+          });
+        }
+        const chunkIndex = integerArg(args, "chunkIndex");
+        const chunk = draft.chunks[chunkIndex];
+        if (chunk === undefined) {
+          throw new DocumentServiceError("DOC_WRITER_CHUNK_INDEX_OUT_OF_RANGE", "chunkIndex is outside the draft chunks", 409, {
+            invocationId,
+            chunkIndex,
+            chunkCount: draft.chunks.length,
+            retryable: true,
+          });
+        }
+        suppliedText = chunk;
+      } else {
+        if (typeof args.text !== "string") throw new Error("INVALID_REQUEST: text is required without invocationId");
+        suppliedText = args.text;
+      }
       const operation = requireOperation(operationId, context);
       if (Buffer.byteLength(suppliedText, "utf8") > 64 * 1024) {
         throw new DocumentServiceError("SIZE_LIMIT", "Document chunk exceeds 64 KiB");
@@ -314,7 +351,7 @@ export function createPlugin(
       "只在用户明确要求创建、保存或写入工作区文档时使用创建工具。",
       "当前视口没有绑定 Room 时，先使用文档标题、主题和拟写内容，对照可用 Room 的标题、类型、背景、目标、状态及内容摘要判断归属。存在明确唯一匹配时，在 context_room_write_begin.roomId 中填写其 ID 并直接创建；无法可靠确定唯一目标时，调用 context_room_list，仅提交最可能相关的 2 至 5 个 candidateRoomIds，然后停止创建并等待用户选择。不得仅凭列表顺序、最近使用或宽泛词语猜测 Room。",
       "若被创建的对象是 Room、Context Room 或房间，不得使用文档创建工具；用途从句中出现文档、文件或项目不代表创建文档。“创建一个管理项目文档的 Context Room”应调用 context_room_create，“在 Context Room 里创建一份项目文档”才使用文档创建工具。",
-      "正文内容与标题必须来自 document_draft 的返回值并逐字转发：write_begin 使用其 title，write_append 按顺序转发其 appendChunks，不得自行撰写、改写或增删。",
+      "正文内容与标题必须来自 document_draft：write_begin 使用其返回的 title，write_append 凭返回的 invocationId 与 chunkIndex（0 起，按顺序逐块）引用转交，正文由服务端从 doc-writer 结果取用，不得在工具参数中复写正文。",
     ],
     tools: [begin, append, commit, abort],
   };

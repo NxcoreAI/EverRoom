@@ -356,11 +356,12 @@ export function createSubagentPiTools(
     tools.push({
       name: "document_draft",
       label: "Draft document content",
-      description: "调度 doc-writer 子 Agent 产出文档正文内容（起草、修改提案、续写、选区改写），"
-        + "返回可直接逐字转发给 context_room_write_* / context_room_patch_* 工具的结构化产物。"
-        + "draft-edit 与 draft-continue 只传 documentId（网关读取权威文档组装素材），返回 hunks/appendChunks 与 baseVersion，"
-        + "并已为本 run 签发读取凭证，可直接 patch_begin；draft-create 传入 instruction 与可选 material，返回 title 与 appendChunks。"
-        + "正文内容必须来自本工具的返回值，不得自行撰写或改写。",
+      description: "调度 doc-writer 子 Agent 产出文档正文内容（起草、修改提案、续写、选区改写）。"
+        + "draft-edit 与 draft-continue 只传 documentId（网关读取权威文档组装素材），返回 baseVersion 与修改项摘要，"
+        + "并已为本 run 签发读取凭证，可直接 patch_begin；draft-create 传入 instruction 与可选 material，返回 title。"
+        + "落库方式：write_append 传返回的 invocationId 与 chunkIndex（0 起）、patch_hunk 传 invocationId 与 itemIndex（0 起），"
+        + "正文由服务端从 doc-writer 结果转交，不得在工具参数中复写正文；write_begin 的 title 使用返回值。"
+        + "rewrite 返回 replacementText，逐字作为回复片段呈现。正文内容必须来自本工具的调用链，不得自行撰写或改写。",
       parameters: Type.Object({
         task: Type.Union([
           Type.Literal("draft-create"),
@@ -518,17 +519,21 @@ export function createSubagentPiTools(
         }
 
         let title: string | null = null;
-        let appendChunks: string[] | null = null;
+        let chunks: string[] | null = null;
         if (task === "draft-create" || task === "draft-continue") {
           if (typeof structured.title === "string" && structured.title.trim()) {
             title = structured.title.trim();
           }
           if (Array.isArray(structured.appendChunks)) {
-            appendChunks = structured.appendChunks.map((chunk) => String(chunk));
+            chunks = structured.appendChunks.map((chunk) => String(chunk));
           } else if (typeof structured.contentMarkdown === "string" && structured.contentMarkdown) {
-            appendChunks = splitIntoAppendChunks(structured.contentMarkdown);
+            chunks = splitIntoAppendChunks(structured.contentMarkdown);
           }
         }
+        const hunks = Array.isArray(structured.hunks)
+          ? structured.hunks.filter((hunk): hunk is Record<string, unknown> =>
+            hunk !== null && typeof hunk === "object" && !Array.isArray(hunk))
+          : null;
 
         // 版本复核 + 代发读凭证（§5.3）：与 document_read 同构，主 Agent 无需读全文即可 patch_begin。
         let readReceiptExpiresAt: string | null = null;
@@ -573,9 +578,30 @@ export function createSubagentPiTools(
             status: "completed",
             kind: task,
             ...(title ? { title } : {}),
-            ...(appendChunks ? { appendChunks } : {}),
-            ...(Array.isArray(structured.hunks) ? { hunks: structured.hunks } : {}),
-            ...(typeof structured.replacementText === "string" ? { replacementText: structured.replacementText } : {}),
+            // M3/V2 摘要回传：文档路径正文不进主 Agent 上下文，
+            // 由 write_append/patch_hunk 凭 invocationId 服务端转交。
+            ...(chunks
+              ? {
+                chunkCount: chunks.length,
+                appendChunkBytes: chunks.reduce(
+                  (sum, chunk) => sum + Buffer.byteLength(chunk, "utf8"),
+                  0,
+                ),
+              }
+              : {}),
+            ...(hunks
+              ? {
+                hunkCount: hunks.length,
+                hunksSummary: hunks.map((hunk) => ({
+                  operation: typeof hunk.operation === "string" ? hunk.operation : null,
+                  target: hunk.target ?? null,
+                })),
+              }
+              : {}),
+            // 对话内划词改写需逐字呈现片段，保留全文；落库走 patch 引用路径。
+            ...(task === "rewrite" && typeof structured.replacementText === "string"
+              ? { replacementText: structured.replacementText }
+              : {}),
             ...(snapshot
               ? {
                 baseVersion: snapshot.document.version,

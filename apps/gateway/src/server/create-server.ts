@@ -122,6 +122,7 @@ import { SubagentRuntimeManager } from "../modules/subagents/runtime-manager.js"
 import { SubagentOrchestrator } from "../modules/subagents/orchestrator.js";
 import { createSubagentPiTools } from "../modules/subagents/tools.js";
 import { createDocWriterResultValidator } from "../modules/subagents/document-draft.js";
+import { createDocWriterDraftResolver } from "../modules/subagents/doc-writer-content.js";
 import { LocalAgentRuntimeRegistry } from "../modules/local-agents/runtime-registry.js";
 import { subagentRoutes } from "../modules/subagents/routes.js";
 import { AgentStatusService } from "../modules/agent/status-service.js";
@@ -670,6 +671,11 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       { capabilityId: "document.selection-rewrite", roomId },
     ),
     getDocument: (documentId) => documentService.get(documentId),
+  });
+  // 引用透传（doc-writer-subagent-plan M3/V2）：write_append / patch_hunk 的
+  // invocationId → 草稿内容解析；授权绑定本 run 的 document_draft 派发。
+  documentService.resolveDocWriterDraft = createDocWriterDraftResolver({
+    getInvocation: (invocationId) => subagentOrchestrator.getInvocation(invocationId),
   });
   let resolveFileMarkdown: ((fileId: string) => Promise<string | null>) | undefined;
   let resolveAgentConversation: ((threadId: string, query: string) => Promise<string | null>) | undefined;

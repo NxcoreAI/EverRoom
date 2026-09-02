@@ -1380,11 +1380,11 @@ describe('document transactions', () => {
       .toContain('用户明确要求创建')
     expect(result.tools?.find((tool) => tool.name === 'context_room_create')?.description)
       .toContain('创建一个管理项目文档的 Context Room')
-    // 写作规则已迁往 doc-writer skill；append 描述只保留机械契约与逐字转发纪律。
+    // 写作规则已迁往 doc-writer skill；append 描述只保留机械契约与引用转交纪律（M3/V2）。
     expect(result.tools?.find((tool) => tool.name === 'context_room_write_append')?.description)
-      .toContain('document_draft 返回的 appendChunks')
+      .toContain('document_draft 返回的 invocationId 与 chunkIndex')
     expect(result.tools?.find((tool) => tool.name === 'context_room_write_append')?.description)
-      .toContain('不得改写、增删或合并')
+      .toContain('参数中不携带正文')
     expect(result.tools?.find((tool) => tool.name === 'context_room_write_append')?.description)
       .toContain('title 由界面单独渲染为页面顶部 H1')
     expect(result.tools?.find((tool) => tool.name === 'context_room_write_append')?.description)

@@ -16,6 +16,8 @@ export type CapabilityBackend = Pick<DocumentService,
   | "prepareAgentDocumentFinalize"
   // 改写信任收口（方案 §3）：invocationId → 内容解析器，由 create-server 装配注入。
   | "resolveSelectionRewriteContent"
+  // doc-writer 引用透传（M3/V2）：write/patch 的 invocationId → 草稿内容解析器。
+  | "resolveDocWriterDraft"
 >;
 
 export const annotations = (readOnlyHint: boolean, destructiveHint = false) => ({

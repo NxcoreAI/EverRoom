@@ -365,29 +365,70 @@ function hunkTool(
 ): DocumentCapabilityTool {
   return {
     name: "context_room_patch_hunk", title: "追加可审阅的文档修改项",
-    description: "按严格连续 sequence 追加修改项。edit 必须使用能表达用户改动的最小 target；replace 的 markdown 只能是该 target 的新内容，绝不能复制 document_read 返回的完整 markdown、文档标题或未修改的后续章节。continue 仅能 insert 全新内容；每批 markdown 只能包含本批新增片段，禁止发送累计内容、原文或全文。",
+    description: "按严格连续 sequence 追加修改项。优先以引用方式转交：传 document_draft 返回的 invocationId 与 itemIndex（0 起，按顺序逐项），operation/target/markdown 由服务端从 doc-writer 结果转交，参数中不携带正文；显式 target/markdown 仅供无法引用 invocation 的调用方直写。edit 必须使用能表达用户改动的最小 target；replace 的 markdown 只能是该 target 的新内容，绝不能复制 document_read 返回的完整 markdown、文档标题或未修改的后续章节。continue 仅能 insert 全新内容；每批 markdown 只能包含本批新增片段，禁止发送累计内容、原文或全文。",
     inputSchema: { type: "object", additionalProperties: false, properties: {
       operationId: { type: "string", description: "兼容字段；省略时 Gateway 使用当前 run 唯一运行中的 Patch。" },
       patchId: { type: "string", description: "兼容旧 Agent 会话的别名；通常无需传入。" },
       sequence: { type: "integer", minimum: 1 },
-      operation: { type: "string", enum: ["insert", "replace", "delete"], description: "可省略；Gateway 会根据当前 Patch 推断。" },
-      target: { ...PATCH_TARGET_SCHEMA, description: "只定位用户要求修改的最小块或块范围；replace/delete 不需要 edge。" },
+      operation: { type: "string", enum: ["insert", "replace", "delete"], description: "直写模式可省略；Gateway 会根据当前 Patch 推断。引用模式下由 doc-writer 结果提供。" },
+      target: { ...PATCH_TARGET_SCHEMA, description: "直写模式：只定位用户要求修改的最小块或块范围；replace/delete 不需要 edge。引用模式下由 doc-writer 结果提供。" },
       markdown: {
         type: "string",
         maxLength: 65536,
-        description: "replace 时只传 target 的替换片段，不得传完整文档、文档标题或任何未修改章节；insert 时只传本批新增片段；delete 时省略。",
+        description: "直写模式：replace 时只传 target 的替换片段，不得传完整文档、文档标题或任何未修改章节；insert 时只传本批新增片段；delete 时省略。引用模式下由 doc-writer 结果提供。",
       },
-    }, required: ["sequence", "target"] },
+      invocationId: { type: "string", maxLength: 64, description: "引用模式：document_draft 返回的 invocation 引用，服务端转交修改项。" },
+      itemIndex: { type: "integer", minimum: 0, description: "引用模式：草稿修改项的下标（0 起）。" },
+    }, required: ["sequence"] },
     annotations: annotations(false),
     execute: async (args, context) => {
       const service = kernel(operations);
       const resolvedOperation = resolveRunningOperation(service, args, context.agentSessionId, context.runId);
       const current = resolvedOperation.operation;
       const id = current.id;
-      const rawTarget = record(args.target);
-      if (!Object.keys(rawTarget).length) throw new Error("INVALID_REQUEST: target is required");
-      const source = typeof args.markdown === "string" ? args.markdown : "";
-      const suppliedKind = typeof args.operation === "string" ? args.operation : "";
+      const invocationId = typeof args.invocationId === "string" ? args.invocationId.trim() : "";
+      let rawTarget: Record<string, unknown>;
+      let source: string;
+      let suppliedKind: string;
+      if (invocationId) {
+        if (typeof args.markdown === "string" || typeof args.operation === "string"
+          || Object.keys(record(args.target)).length) {
+          throw new DocumentServiceError("INVALID_REQUEST", "Pass either invocationId or explicit target/operation/markdown, not both", 400);
+        }
+        const draft = backend.resolveDocWriterDraft?.(invocationId, { runId: context.runId }) ?? null;
+        if (!draft) {
+          throw new DocumentServiceError("DOC_WRITER_DRAFT_UNAVAILABLE", "No completed doc-writer draft bound to this run", 409, {
+            invocationId,
+            retryable: false,
+            nextAction: "document_draft",
+          });
+        }
+        if (draft.kind !== "draft-edit" && draft.kind !== "draft-continue") {
+          throw new DocumentServiceError("DOC_WRITER_DRAFT_KIND_MISMATCH", "patch_hunk consumes a draft-edit or draft-continue invocation", 409, {
+            invocationId,
+            kind: draft.kind,
+            retryable: false,
+          });
+        }
+        const itemIndex = integerArg(args, "itemIndex");
+        const item = draft.items[itemIndex];
+        if (!item) {
+          throw new DocumentServiceError("DOC_WRITER_ITEM_INDEX_OUT_OF_RANGE", "itemIndex is outside the draft items", 409, {
+            invocationId,
+            itemIndex,
+            itemCount: draft.items.length,
+            retryable: true,
+          });
+        }
+        rawTarget = item.target as Record<string, unknown>;
+        source = item.markdown;
+        suppliedKind = item.operation;
+      } else {
+        rawTarget = record(args.target);
+        if (!Object.keys(rawTarget).length) throw new Error("INVALID_REQUEST: target is required");
+        source = typeof args.markdown === "string" ? args.markdown : "";
+        suppliedKind = typeof args.operation === "string" ? args.operation : "";
+      }
       const kind = suppliedKind || (current.capabilityId === "document.continue"
         ? "insert"
         : "at" in rawTarget && source.trim() ? "insert"
@@ -791,10 +832,10 @@ export function reviewPlugins(
   const tools = [beginTool(backend, operations, reads), hunkTool(backend, operations, reads), commitTool(operations), abortTool(operations)];
   return [
     { manifest: manifest("document.edit", "mutation", "atomic_review", "atomic-diff", true, true),
-      promptGuidelines: ["修改已有文档的内容必须先调用 document_draft(task=draft-edit) 生成修改提案：网关会读取权威版本组装素材并为本 run 签发读取凭证，返回的 hunks 与 baseVersion 逐字转发给 patch 工具，不得自行撰写、改写或补写 hunk。Gateway 会在当前 run 内自动绑定读取凭证和唯一运行中的 Patch，后续工具无需搬运 readReceipt、operationId 或 patchId。重写、润色、扩写、替换或删除已有内容必须使用 kind=edit，kind=continue 只追加全新内容。Agent 只能生成提案，不能直接应用。单次工具失败若返回 retryable=true，应修正参数并重试；最终回复以最后一次工具结果为准，不能把已恢复的失败说成整轮失败。patch_commit 后必须按返回的 state/applied/documentChanged 描述状态；awaiting_review 时只能说修改建议已准备好、等待用户审阅，不能声称正文已修改。"], tools,
+      promptGuidelines: ["修改已有文档的内容必须先调用 document_draft(task=draft-edit) 生成修改提案：网关会读取权威版本组装素材并为本 run 签发读取凭证；patch_begin 后 patch_hunk 凭返回的 invocationId 与 itemIndex（0 起，按顺序逐项）引用转交，operation/target/markdown 由服务端从 doc-writer 结果取用，不得在工具参数中复写或补写。Gateway 会在当前 run 内自动绑定读取凭证和唯一运行中的 Patch，后续工具无需搬运 readReceipt、operationId 或 patchId。重写、润色、扩写、替换或删除已有内容必须使用 kind=edit，kind=continue 只追加全新内容。Agent 只能生成提案，不能直接应用。单次工具失败若返回 retryable=true，应修正参数并重试；最终回复以最后一次工具结果为准，不能把已恢复的失败说成整轮失败。patch_commit 后必须按返回的 state/applied/documentChanged 描述状态；awaiting_review 时只能说修改建议已准备好、等待用户审阅，不能声称正文已修改。"], tools,
       command: (operation, command) => editCommand(backend, operation, command) },
     { manifest: manifest("document.continue", "mutation", "incremental_review", "continuation", true, true),
-      promptGuidelines: ["continue 只用于追加原文中不存在的全新内容，不能用于重写、润色、扩写或替换已有段落；追加内容必须来自 document_draft(task=draft-continue) 的 appendChunks 并逐字转发。普通续写默认插入文末；长篇内容可分多次调用 document_draft 再按连续 sequence 分批转发，每批只能发送该批新增片段，禁止发送累计内容、原文或全文，最终由用户逐块接受。"], tools: [],
+      promptGuidelines: ["continue 只用于追加原文中不存在的全新内容，不能用于重写、润色、扩写或替换已有段落；追加内容必须来自 document_draft(task=draft-continue)，patch_hunk 凭返回的 invocationId 与 itemIndex（0 起）引用转交，markdown 由服务端从 doc-writer 结果取用。普通续写默认插入文末；长篇内容可分多次调用 document_draft 再按连续 sequence 分批引用，禁止在参数中发送累计内容、原文或全文，最终由用户逐块接受。"], tools: [],
       command: (operation, command) => continuationCommand(backend, operation, command) },
   ];
 }

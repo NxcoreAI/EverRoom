@@ -136,7 +136,7 @@ describe("createSubagentPiTools document_draft", () => {
       .map((tool) => tool.name)).not.toContain("document_draft");
   });
 
-  it("draft-create：组装 instruction/material/writingStyle 并原样返回 title 与 appendChunks", async () => {
+  it("draft-create：组装 instruction/material/writingStyle 并返回 title 与摘要（M3/V2：正文不回传）", async () => {
     const orchestrator = orchestratorReturning({
       result: {
         text: "",
@@ -177,13 +177,15 @@ describe("createSubagentPiTools document_draft", () => {
       status: "completed",
       kind: "draft-create",
       title: "接口设计文档",
-      appendChunks: ["## 背景与目标\n\n本文档……", "## 接口清单\n\n……"],
+      chunkCount: 2,
+      digest: { summary: "接口设计初稿" },
     });
-    expect(payload.digest.summary).toBe("接口设计初稿");
+    // M3/V2：正文与全文均不进入主 Agent 上下文。
+    expect(payload).not.toHaveProperty("appendChunks");
     expect(payload).not.toHaveProperty("baseVersion");
   });
 
-  it("draft-create：contentMarkdown 单串由服务端按段分块（拼接逐字节一致）", async () => {
+  it("draft-create：contentMarkdown 单串返回分块计数（字节精确性由 resolver 测试覆盖）", async () => {
     const body = "## 第一节\n\n内容甲。\n\n## 第二节\n\n内容乙。";
     const orchestrator = orchestratorReturning({
       result: { text: "", structuredOutput: { kind: "draft-create", title: "T", contentMarkdown: body, digest: { summary: "s" } } },
@@ -195,7 +197,8 @@ describe("createSubagentPiTools document_draft", () => {
       instruction: "起草",
     } as never, undefined);
     const payload = JSON.parse((result as { content: string }).content);
-    expect(payload.appendChunks.join("")).toBe(body);
+    expect(payload.chunkCount).toBe(splitIntoAppendChunks(body).length);
+    expect(payload.appendChunkBytes).toBe(Buffer.byteLength(body, "utf8"));
   });
 
   it("draft-edit：组装权威快照，成功后代发读凭证并返回 hunks 与 baseVersion", async () => {
@@ -251,8 +254,12 @@ describe("createSubagentPiTools document_draft", () => {
       baseVersion: 3,
       documentId: "doc-1",
       roomId: "room-1",
-      hunks: [{ operation: "replace", target: { blockId: "b2" }, markdown: "本周进展顺利，指标全部达标。" }],
+      hunkCount: 1,
+      hunksSummary: [{ operation: "replace", target: { blockId: "b2" } }],
     });
+    // M3/V2：hunk 正文不回传，仅摘要（operation/target）。
+    expect(payload).not.toHaveProperty("hunks");
+    expect(JSON.stringify(payload.hunksSummary)).not.toContain("指标全部达标");
   });
 
   it("draft-edit：生成期间版本漂移返回 DOCUMENT_CONFLICT 且不签凭证", async () => {
