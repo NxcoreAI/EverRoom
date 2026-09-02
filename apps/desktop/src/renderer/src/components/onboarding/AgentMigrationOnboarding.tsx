@@ -1,4 +1,4 @@
-import { ArrowRight, Check, History, LoaderCircle } from 'lucide-react'
+import { ArrowRight, Check, LoaderCircle } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import type { LocalAgentInstallation } from '../../../../shared/local-agents'
 import { SourceIcon } from '@/components/pages/sources/SourceIcon'
@@ -98,7 +98,6 @@ export function AgentMigrationOnboarding({ onFinished }: AgentMigrationOnboardin
     <section className="agent-migration" data-view={view} aria-live="polite">
       <div className="agent-migration-copy">
         <h1>{t('surface:onboarding.agentMigration.title')}</h1>
-        <p>{t('surface:onboarding.agentMigration.body')}</p>
       </div>
 
       {view === 'scanning' ? (
@@ -136,9 +135,7 @@ export function AgentMigrationOnboarding({ onFinished }: AgentMigrationOnboardin
                     <SourceIcon kind={agentIconKind(agent.provider)} />
                     <span className="agent-migration-item-copy">
                       <strong>{agent.displayName}</strong>
-                      <small>{agent.historyPaths.join('\n')}</small>
                     </span>
-                    <History aria-hidden="true" className="agent-migration-item-history" />
                   </button>
                 </li>
               )

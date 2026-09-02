@@ -17,7 +17,7 @@ import type {
 } from '../shared/memory'
 import type { IngestPipelines } from '../shared/ingest'
 import type { McpServersSnapshot } from '../shared/mcp'
-import type { DesktopRequestError, NxcoreDesktopApi, RoomAgentSelectionRewriteInput } from '../shared/sources'
+import type { CloudAccountStatus, DesktopRequestError, NxcoreDesktopApi, RoomAgentSelectionRewriteInput } from '../shared/sources'
 import type { BrowserExtensionMessage, BrowserExtensionStatus } from '../shared/browser-extension'
 import { isCursorCompletionAgentErrorPayload } from '../shared/cursor-completion'
 import { DESKTOP_PAGE_MODE_ENV, resolveDesktopPageMode } from '../shared/page-mode'
@@ -360,6 +360,18 @@ const api: NxcoreDesktopApi = {
     createPairingSession: () => invoke('account:create-pairing-session'),
     getPairingSession: (id, options) => options?.quiet ? invokeQuietly('account:get-pairing-session', id) : invoke('account:get-pairing-session', id),
     approvePairingSession: (id) => invoke('account:approve-pairing-session', id),
+    // 扫码登录：renderer 不传 token，只传可选 session id；桌面交换凭证不离开主进程。
+    createQrLoginSession: () => invoke('account:qr-login-create'),
+    getQrLoginStatus: (sessionId?: string) => invokeQuietly('account:qr-login-status', sessionId),
+    exchangeQrLoginSession: (sessionId?: string) => invoke('account:qr-login-exchange', sessionId),
+    cancelQrLoginSession: (sessionId?: string) => invoke('account:qr-login-cancel', sessionId),
+    replaceDeviceAdmission: (input: { admissionToken: string; replaceDeviceId: string }) => invoke('account:device-admission-replace', input),
+    dismissDeviceAdmission: () => invoke('account:device-admission-dismiss'),
+    onAdmissionRequired: (listener: (status: CloudAccountStatus) => void) => {
+      const handle = (_event: Electron.IpcRendererEvent, status: CloudAccountStatus) => listener(status)
+      ipcRenderer.on('account:admission-required', handle)
+      return () => ipcRenderer.removeListener('account:admission-required', handle)
+    },
   },
   notifications: {
     preferences: () => invokeQuietly('notifications:preferences'),

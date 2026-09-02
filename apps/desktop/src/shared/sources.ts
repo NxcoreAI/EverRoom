@@ -332,6 +332,14 @@ export interface CloudAccountStatus {
     accountCreated: boolean
     invitationApplied: boolean
   }
+  /** 设备额度已满时的准入挑战：renderer 展示设备列表并选择替换。 */
+  admission?: {
+    reason: string
+    maxDevices: number
+    admissionToken: string
+    expiresAt: string
+    devices: CloudDevice[]
+  }
 }
 
 export interface CloudDevice {
@@ -343,6 +351,28 @@ export interface CloudDevice {
   lastSeenAt: string
   createdAt?: string
 }
+
+/** 扫码登录 renderer 可见的展示信息（二维码载荷要素，无桌面交换凭证）。 */
+export interface QrLoginPresentation {
+  qrLoginSessionId: string
+  qrScanToken: string
+  /** 主进程组装好的完整二维码 JSON 载荷（origin 为主进程真实 SaaS 源）。 */
+  qrPayload: string
+  confirmationCode: string
+  expiresAt: string
+  status: 'pending_scan'
+}
+
+export type QrLoginStatusPayload =
+  | { status: 'pending_scan'; expiresAt: string }
+  | { status: 'scanned'; expiresAt: string; confirmationCode: string }
+  | {
+      status: 'confirmed'
+      expiresAt: string
+      confirmationCode: string
+      account: { userId: string; displayName: string; identifierHint: string | null }
+    }
+  | { status: 'rejected' | 'cancelled' | 'expired' | 'exchanged' }
 
 export type KeyringDeviceStatus = 'unregistered' | 'pending' | 'ready'
 
@@ -905,6 +935,14 @@ export interface NxcoreDesktopApi {
     createPairingSession(): Promise<{ pairingSessionId: string; pairingToken?: string; status: string; confirmationCode: string; expiresAt: string; origin?: string }>
     getPairingSession(id: string, options?: { quiet?: boolean }): Promise<{ pairingSessionId: string; status: string; confirmationCode: string; expiresAt: string; targetDeviceId?: string | null; targetDeviceName?: string | null; targetPublicKey?: string | null; targetAlgorithm?: string | null }>
     approvePairingSession(id: string): Promise<{ pairingSessionId: string; status: string; targetDeviceId?: string | null }>
+    /** 扫码登录：返回的展示信息只含 qrScanToken（进入二维码），无桌面交换凭证。 */
+    createQrLoginSession(): Promise<QrLoginPresentation>
+    getQrLoginStatus(sessionId?: string): Promise<QrLoginStatusPayload>
+    exchangeQrLoginSession(sessionId?: string): Promise<CloudAccountStatus>
+    cancelQrLoginSession(sessionId?: string): Promise<void>
+    replaceDeviceAdmission(input: { admissionToken: string; replaceDeviceId: string }): Promise<CloudAccountStatus>
+    dismissDeviceAdmission(): Promise<{ dismissed: boolean }>
+    onAdmissionRequired(listener: (status: CloudAccountStatus) => void): () => void
   }
   notifications: {
     preferences(): Promise<NotificationPreferences>

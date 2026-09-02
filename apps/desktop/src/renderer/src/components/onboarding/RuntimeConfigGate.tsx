@@ -14,6 +14,7 @@ import appleLogo from '@/assets/apple-logo.svg'
 import googleLogo from '@/assets/google-logo.svg'
 import { ProductBrand } from '@/components/ui/ProductBrand'
 import { InvitationCodeField, useInvitationCode } from '@/components/account/InvitationCodeField'
+import { QrLoginPanel } from '@/components/account/QrLoginPanel'
 import { useLocale } from '@/i18n/LocaleContext'
 import {
   buildUserConfig,
@@ -140,31 +141,37 @@ export function RuntimeConfigGate({ children }: { children: ReactNode }) {
     try {
       const account = await window.nxcore.account.loginWithOidc(provider,invitationCode)
       if(invitationCode&&account.registration)window.alert(t(account.registration.invitationApplied?'surface:settings.invitationCodeApplied':'surface:settings.invitationCodeExistingUser'))
-      window.dispatchEvent(new CustomEvent('everroom-account-status-changed', { detail: account }))
-      // 登录钩子（main index）会把 SaaS runtime config 写进 gateway；
-      // 这里再显式拉取一次确保 saas source 已保存，然后走连通测试。
-      const next = await window.nxcore.runtimeConfig.refreshSaas()
-      if (next && isRuntimeConfigReady(next)) {
-        const entered = await validateAndEnter(next, 'login')
-        if (entered) {
-          try {
-            window.sessionStorage.setItem('everroom:post-login-memory-check', '1')
-            window.sessionStorage.setItem('everroom:post-login-room-check', '1')
-          } catch {
-            // Session storage is optional; mounted gates still receive the event.
-          }
-          window.setTimeout(() => window.dispatchEvent(new CustomEvent('everroom-post-login-onboarding-check')), 0)
-        }
-      } else {
-        // 登录成功但云端没下发有效配置：留在登录页展示原因，
-        // 用户可重试或点「返回」去手动配置。
-        setTestError(t('surface:configGate.saasConfigMissing'))
-      }
+      await completeGateLogin()
     } catch (error) {
       if(invitationCode&&error instanceof Error&&/invitation code/i.test(error.message))invitation.markInvalid()
       setTestError(t('surface:configGate.loginFailed'))
     } finally {
       setOidcPending(null)
+    }
+  }
+
+  /** 登录成功后的共同放行：广播账号变化，拉取 SaaS runtime config 并连通测试。 */
+  const completeGateLogin = async () => {
+    const account = await window.nxcore!.account.status()
+    window.dispatchEvent(new CustomEvent('everroom-account-status-changed', { detail: account }))
+    // 登录钩子（main index）会把 SaaS runtime config 写进 gateway；
+    // 这里再显式拉取一次确保 saas source 已保存，然后走连通测试。
+    const next = await window.nxcore!.runtimeConfig.refreshSaas()
+    if (next && isRuntimeConfigReady(next)) {
+      const entered = await validateAndEnter(next, 'login')
+      if (entered) {
+        try {
+          window.sessionStorage.setItem('everroom:post-login-memory-check', '1')
+          window.sessionStorage.setItem('everroom:post-login-room-check', '1')
+        } catch {
+          // Session storage is optional; mounted gates still receive the event.
+        }
+        window.setTimeout(() => window.dispatchEvent(new CustomEvent('everroom-post-login-onboarding-check')), 0)
+      }
+    } else {
+      // 登录成功但云端没下发有效配置：留在登录页展示原因，
+      // 用户可重试或点「返回」去手动配置。
+      setTestError(t('surface:configGate.saasConfigMissing'))
     }
   }
 
@@ -253,6 +260,14 @@ export function RuntimeConfigGate({ children }: { children: ReactNode }) {
                   ? t('surface:settings.completeSignInInYourBrowserYouWill')
                   : t('surface:settings.signInIsCompletedSecurelyInYourBrowser')}
               </p>
+
+              <div className="runtime-config-gate-qr-login">
+                <QrLoginPanel
+                  account={null}
+                  onAccountChanged={() => undefined}
+                  onLoginSucceeded={() => { void completeGateLogin() }}
+                />
+              </div>
 
               {testError ? <p className="runtime-config-gate-error" role="alert"><PlugZap aria-hidden="true" />{testError}</p> : null}
               <div className="runtime-config-gate-button-row">

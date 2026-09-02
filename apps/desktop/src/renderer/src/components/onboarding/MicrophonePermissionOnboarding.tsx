@@ -75,13 +75,12 @@ export function MicrophonePermissionOnboarding({ onNavigateStage, onFinished }: 
         ? t('surface:onboarding.microphone.deniedHint')
         : view === 'checking'
           ? t('surface:onboarding.microphone.checking')
-          : t('surface:onboarding.microphone.idleHint')
+          : null
 
   return (
     <section className="mic-perm" data-view={view} aria-live="polite">
       <div className="mic-perm-copy">
         <h1>{t('surface:onboarding.microphone.title')}</h1>
-        <p>{t('surface:onboarding.microphone.body')}</p>
       </div>
 
       <div className="mic-perm-stage">
@@ -98,10 +97,12 @@ export function MicrophonePermissionOnboarding({ onNavigateStage, onFinished }: 
           <span className="mic-perm-ripple" aria-hidden="true"><i /><i /><i /></span>
           <span className="mic-perm-button-face">{view === 'granted' ? <Check aria-hidden="true" /> : view === 'denied' ? <MicOff aria-hidden="true" /> : <Mic aria-hidden="true" />}</span>
         </button>
-        <p className="mic-perm-status" data-view={view}>
-          {view === 'requesting' ? <span className="mic-perm-status-dot" aria-hidden="true" /> : null}
-          {statusText}
-        </p>
+        {statusText ? (
+          <p className="mic-perm-status" data-view={view}>
+            {view === 'requesting' ? <span className="mic-perm-status-dot" aria-hidden="true" /> : null}
+            {statusText}
+          </p>
+        ) : null}
         {view === 'denied' ? (
           <button type="button" className="mic-perm-settings" onClick={() => { void window.nxcore?.asr?.openMicrophoneSettings() }}>
             <Settings aria-hidden="true" />{t('surface:onboarding.microphone.openSettings')}

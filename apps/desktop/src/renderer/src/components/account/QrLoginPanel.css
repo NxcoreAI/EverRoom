@@ -1,0 +1,194 @@
+/* 扫码登录面板（SettingsPage 与 RuntimeConfigGate 共用）
+   风格对齐 SettingsPage 的 cloud-login-content：无嵌套卡片边框，
+   内容居中，主操作用 primary/secondary-button，辅助操作用 link-button。 */
+
+.qr-login-entry {
+  display: flex;
+  justify-content: center;
+  margin-top: 12px;
+}
+
+/* 进行中的主面板：不再画一层边框卡片，交给父容器（cloud-login-content / gate panel） */
+.qr-login-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+/* 纯状态提示（创建中/兑换中/成功/结束） */
+.qr-login-status { gap: 10px; }
+.qr-login-status .spin { width: 22px; height: 22px; color: var(--accent); }
+.qr-login-status p { margin: 0; color: var(--muted); font-size: 12px; }
+.qr-login-status strong { font-size: 13px; }
+.qr-login-status small { max-width: 320px; color: var(--muted); font-size: 10px; text-align: center; word-break: break-all; }
+.qr-login-success-icon { width: 26px; height: 26px; color: #22a06b; }
+
+.qr-login-panel .spin { animation: qr-login-spin 1s linear infinite; }
+@keyframes qr-login-spin { to { transform: rotate(360deg); } }
+
+/* 二维码：带浅色衬底，尺寸收敛与登录卡内容等宽协调 */
+.qr-login-qr {
+  position: relative;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #fff;
+}
+
+.qr-login-qr img { display: block; width: 180px; height: 180px; border-radius: 4px; }
+
+.qr-login-qr-badge {
+  position: absolute;
+  left: 50%;
+  bottom: -11px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border: 1px solid color-mix(in srgb, #22a06b 35%, var(--border));
+  border-radius: 999px;
+  background: var(--surface);
+  color: #16845b;
+  font-size: 10px;
+  font-weight: 650;
+  transform: translateX(-50%);
+}
+
+.qr-login-qr-badge svg { width: 11px; height: 11px; }
+
+.qr-login-hint {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  margin-top: 6px;
+  text-align: center;
+}
+
+.qr-login-hint strong { font-size: 13px; }
+.qr-login-hint small { color: var(--muted); font-size: 10.5px; }
+
+.qr-login-hint small:first-letter { letter-spacing: 0; }
+
+/* 确认码数字样式（保持等宽观感） */
+.qr-login-hint strong:has(+ small) { letter-spacing: 0; }
+
+.qr-login-account {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  margin-top: 6px;
+  text-align: center;
+}
+
+.qr-login-avatar {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.qr-login-account strong { font-size: 13px; }
+.qr-login-account small { color: var(--muted); font-size: 10.5px; }
+
+.qr-login-switch-warning {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: color-mix(in srgb, #d97706 12%, transparent);
+  color: #b45309;
+  font-size: 11px;
+  text-align: left;
+}
+
+.qr-login-switch-warning svg { flex: none; width: 13px; height: 13px; }
+
+.qr-login-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+  margin-top: 6px;
+}
+
+/* 底部辅助操作：弱化为文字链接行，避免与主操作按钮抢层级 */
+.qr-login-footer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.qr-login-sep { color: var(--border); }
+
+.qr-login-footer .link-button {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font-size: 10.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.qr-login-footer .link-button:hover { color: var(--accent-strong); text-decoration: underline; }
+
+.qr-login-footer .link-button svg { width: 11px; height: 11px; }
+
+/* 设备准入（与 SettingsPage cloud-device-row 同构） */
+.qr-login-admission { align-items: stretch; }
+.qr-login-admission-heading { display: flex; gap: 10px; align-items: flex-start; }
+.qr-login-admission-heading svg { flex: none; width: 15px; height: 15px; margin-top: 2px; color: #b45309; }
+.qr-login-admission-heading div { display: flex; flex-direction: column; gap: 3px; }
+.qr-login-admission-heading strong { font-size: 12px; }
+.qr-login-admission-heading small { color: var(--muted); font-size: 10.5px; }
+
+.qr-login-devices { display: flex; flex-direction: column; gap: 8px; }
+
+.qr-login-device {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 45px;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--surface);
+  cursor: pointer;
+  text-align: left;
+}
+
+.qr-login-device:hover { border-color: var(--accent); }
+
+.qr-login-device > svg {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 5px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.qr-login-device span { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.qr-login-device strong { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.qr-login-device small { overflow: hidden; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.qr-login-device em { font-style: normal; font-size: 11px; font-weight: 600; color: #b45309; }

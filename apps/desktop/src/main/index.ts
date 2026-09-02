@@ -70,6 +70,7 @@ import { ConnectorGatewayBridge } from './gateway/connector-gateway-bridge'
 import { RecordingStore } from './recording/recording-store'
 import { isSaasRateLimitError, OIDC_CALLBACK_URL, SaasClient, SaasRequestError } from './cloud/saas-client'
 import { AgentStatusReporter } from './cloud/agent-status-reporter'
+import { SessionLeaseKeeper } from './cloud/session-lease-keeper'
 import { RemoteAgentCommandClient } from './cloud/remote-agent-command-client'
 import { AgentNotificationBridgeServer } from './cloud/agent-notification-bridge'
 import { MacosPushNotificationService } from './cloud/macos-push-notifications'
@@ -414,6 +415,13 @@ const ACCOUNT_CHANNELS = {
   createPairingSession: 'account:create-pairing-session',
   getPairingSession: 'account:get-pairing-session',
   approvePairingSession: 'account:approve-pairing-session',
+  /** 扫码登录：renderer 只传可选 session id，桌面交换凭证不离开主进程。 */
+  qrLoginCreate: 'account:qr-login-create',
+  qrLoginStatus: 'account:qr-login-status',
+  qrLoginExchange: 'account:qr-login-exchange',
+  qrLoginCancel: 'account:qr-login-cancel',
+  deviceAdmissionReplace: 'account:device-admission-replace',
+  deviceAdmissionDismiss: 'account:device-admission-dismiss',
 } as const
 
 const TRANSCRIPTION_CHANNELS = {
@@ -708,6 +716,7 @@ let recordingStore: RecordingStore | null = null
 let privateAudioSync: PrivateAudioSyncService | null = null
 let saasClient: SaasClient | null = null
 let agentStatusReporter: AgentStatusReporter | null = null
+let sessionLeaseKeeper: SessionLeaseKeeper | null = null
 let remoteAgentCommandClient: RemoteAgentCommandClient | null = null
 let agentNotificationBridgeServer: AgentNotificationBridgeServer | null = null
 let macosPushNotifications: MacosPushNotificationService | null = null
@@ -2333,6 +2342,41 @@ function registerAccountHandlers(
     })
   })
   handle(ACCOUNT_CHANNELS.oidcCancel, () => client.cancelOidcLogin())
+  handle(ACCOUNT_CHANNELS.qrLoginCreate, () => rateLimitAware(async () => client.createQrLoginSession()))
+  handle(ACCOUNT_CHANNELS.qrLoginStatus, (_event, sessionId?: unknown) => {
+    if (sessionId !== undefined && typeof sessionId !== 'string') throw new Error('无效的扫码会话。')
+    return rateLimitAware(() => client.getQrLoginStatus(sessionId))
+  })
+  handle(ACCOUNT_CHANNELS.qrLoginExchange, (_event, sessionId?: unknown) => {
+    if (sessionId !== undefined && typeof sessionId !== 'string') throw new Error('无效的扫码会话。')
+    return rateLimitAware(async () => {
+      const account = await syncAccountMonitoring(client.exchangeQrLoginSession(sessionId))
+      onAccountChanged?.(account)
+      return account
+    })
+  })
+  handle(ACCOUNT_CHANNELS.qrLoginCancel, (_event, sessionId?: unknown) => {
+    if (sessionId !== undefined && typeof sessionId !== 'string') throw new Error('无效的扫码会话。')
+    return rateLimitAware(() => client.cancelQrLoginSession(sessionId))
+  })
+  handle(ACCOUNT_CHANNELS.deviceAdmissionReplace, (_event, input: unknown) => {
+    if (!input || typeof input !== 'object') throw new Error('无效的设备准入请求。')
+    const value = input as { admissionToken?: unknown; replaceDeviceId?: unknown }
+    if (typeof value.admissionToken !== 'string' || typeof value.replaceDeviceId !== 'string') {
+      throw new Error('无效的设备准入请求。')
+    }
+    const admissionToken = value.admissionToken
+    const replaceDeviceId = value.replaceDeviceId
+    return rateLimitAware(async () => {
+      const account = await syncAccountMonitoring(client.replaceDeviceAdmission(admissionToken, replaceDeviceId))
+      onAccountChanged?.(account)
+      return account
+    })
+  })
+  handle(ACCOUNT_CHANNELS.deviceAdmissionDismiss, () => {
+    client.clearAdmissionChallenge()
+    return { dismissed: true }
+  })
   handle(ACCOUNT_CHANNELS.logout, () => rateLimitAware(async () => {
     await beforeLogout?.()
     const connection = gatewaySupervisor?.isRunning() ? gatewaySupervisor.getConnection() : null
@@ -2968,6 +3012,19 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     })
     registerCursorCompletionAgentHandlers(cursorCompletionAgentBridge)
     agentStatusReporter.start()
+    sessionLeaseKeeper = new SessionLeaseKeeper(saasClient, () => {
+      // 设备额度被占满：拉取含准入挑战的账号状态并推给所有窗口，renderer
+      // 据此进入设备准入 UI（renderer 侧 AccountContext 监听该事件）。
+      const client = saasClient
+      if (!client) return
+      void client.status(true).then((status) => {
+        for (const target of BrowserWindow.getAllWindows()) {
+          if (!target.isDestroyed() && !target.webContents.isDestroyed()) {
+            target.webContents.send('account:admission-required', status)
+          }
+        }
+      }).catch(() => undefined)
+    })
     const keyring = new AccountKeyringService(join(dataDirectory, 'account-keyring.json'))
     privateAudioSync = new PrivateAudioSyncService(saasClient, keyring, recordingsDirectory, join(dataDirectory, 'private-audio-sync.json'))
     void privateAudioSync.drainPending().catch(() => undefined)
@@ -3054,12 +3111,14 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       if (!account.authenticated) {
         remoteAgentCommandClient?.stop()
         agentStatusReporter?.reset()
+        sessionLeaseKeeper?.stop()
         lastAccountId = null
       } else {
         if (lastAccountId !== account.user?.id) agentStatusReporter?.reset()
         lastAccountId = account.user?.id ?? null
         remoteAgentCommandClient?.start()
         agentStatusReporter?.reportNow()
+        sessionLeaseKeeper?.reset()
         transcriptionProcessingCoordinator?.wake()
         void macosPushNotifications?.registerAuthenticatedDevice()
       }
@@ -3165,6 +3224,7 @@ app.on('before-quit', (event) => {
   const knowledgeService = knowledgeServiceSupervisor
   const agentBridge = agentGatewayBridge
   const statusReporter = agentStatusReporter
+  const leaseKeeper = sessionLeaseKeeper
   const remoteCommands = remoteAgentCommandClient
   const cursorCompletionBridge = cursorCompletionAgentBridge
   const documentBridge = documentGatewayBridge
@@ -3188,6 +3248,7 @@ app.on('before-quit', (event) => {
   knowledgeServiceSupervisor = null
   agentGatewayBridge = null
   agentStatusReporter = null
+  sessionLeaseKeeper = null
   remoteAgentCommandClient = null
   cursorCompletionAgentBridge = null
   documentGatewayBridge = null
@@ -3212,6 +3273,7 @@ app.on('before-quit', (event) => {
   connectorCli?.shutdown()
   agentBridge?.dispose()
   statusReporter?.stop()
+  leaseKeeper?.stop()
   remoteCommands?.stop()
   cursorCompletionBridge?.dispose()
   documentBridge?.dispose()

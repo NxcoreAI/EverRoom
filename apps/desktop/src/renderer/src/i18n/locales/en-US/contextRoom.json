@@ -144,7 +144,7 @@
   "contextRoomState.roomNotSynced": "Room not synced",
   "contextRoomState.localContentPreserved": "Your local content is preserved. Sync will retry automatically when the connection recovers.",
   "contextRoomState.invalidSnapshot": "The Room snapshot is invalid.",
-  "memory.factSourceCount": "Stated by {{count}} sources",
+  "memory.factSourceCount": "Stated by {count} sources",
   "memory.factType.attribute": "Attribute",
   "memory.factType.relation": "Relation",
   "memory.noRelatedFacts": "No related facts yet",
