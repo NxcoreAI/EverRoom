@@ -36,14 +36,7 @@ export function RoomCard({
           <Icon aria-hidden="true" strokeWidth={1.8} />
         </span>
         <span className="context-room-home-card-body">
-          <strong>
-            {room.title}
-            {room.origin === 'auto' ? (
-              <span className="context-room-home-card-origin" title={t('contextRoom:roomCard.createdAutomaticallyDuringClassificationOpenToClaimIt')}>
-                {t('contextRoom:roomCard.autoCreated')}
-              </span>
-            ) : null}
-          </strong>
+          <strong>{room.title}</strong>
           <span className="context-room-home-card-brief">{localizedRoomSummary(room.brief.background, room.generatedContext?.overview, t)}</span>
           <span className="context-room-home-card-time">
             <Clock3 aria-hidden="true" />

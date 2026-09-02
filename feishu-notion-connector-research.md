@@ -1,425 +1,447 @@
 # 飞书云文档 + Notion 双向同步：调研与方案设计
 
-> 2026-09-02 · 面向需求：飞书 OAuth 授权、飞书云文档/Notion 页面导入 EverRoom、EverRoom 文档导出回两平台、授权失效/权限不足/同步失败的提示与重试、双向防重复与防覆盖。
-> 结论与建议均基于官方文档（检索于 2026-09）与对本仓库 connector 架构的代码调研。
+> 修订日期：2026-09-02
+> 目标：在不打断现有 Nango 连接体系的前提下，补齐飞书云文档接入，改善 Notion 文档同步，并为安全导出保留清晰的升级路径。
 
----
+## 1. 决策摘要
 
-## 0. 结论速览
+1. **Nango 继续作为当前主连接架构。** Notion、Gmail、Outlook、Google Docs 等存量连接不立即迁移。OpenConnector 是并行执行能力，不是本期替代项目。
+2. **新增统一文档适配层。** Gateway 只依赖稳定的文档连接接口；Notion 暂由 Nango adapter 实现，飞书优先复用现成的 OpenConnector provider。后续迁移只替换 adapter，不改同步、投影和摄取链路。
+3. **首版不做自动双向合并。** “双向”拆成三个明确能力：外部文档导入、EverRoom 文档创建远端副本、显式开启的单向镜像更新。删除不跨平台传播，冲突不自动覆盖。
+4. **外部文档镜像与 Context Doc 分离。** 连接器同步先生成只读来源记录和 Markdown 产物；只有用户明确选择“保存为 Context Doc”后，才创建可编辑文档和远端映射。
+5. **先交付导入，再交付写回。** 第一阶段完成 Notion 导入修正与飞书导入；第二阶段提供两端“创建副本”；Notion 原页更新和连接迁移后置。
 
-| 需求项 | 可行性 | 关键结论 |
-|---|---|---|
-| 飞书 OAuth 授权 | ✅ | 标准 OAuth 2.0 授权码模式（v2 接口）。`user_access_token`/`refresh_token` 有效期官方仅给示例并注明"非固定值"（uat 示例约 2 小时、refresh_token 示例 **7 天**，以响应体实际值为准），refresh 即轮换（旧的一次性失效）。授权由 OpenConnector feishu provider 声明式承担（已实现）；Nango 整体退役，不在其上新增 feishu provider |
-| 飞书云文档导入 | ✅ | 优先 provider `fetch_document`（markdown 整读/局部读；底层为未公开 docs_ai 端点，风险与兜底见 §2.3/§5.8）；导出任务 API 只有 docx/pdf 等、**无 Markdown**。云空间 + 知识库（wiki v2）两条发现路径都要支持（provider 动作已就位，见 §0 架构落位） |
-| Notion 页面导入 | ✅（大半已有） | Notion 官方已提供 **Markdown 内容 API**（`GET /v1/pages/:id/markdown`），可整页一次拉取，优于现有 blocks 分页实现；目标路径为 OpenConnector CLI 路径（provider 动作 + document-sync），网关侧已基本具备；存量 Nango Notion 连接随 Nango 退役迁移 |
-| EverRoom → 飞书导出 | ✅ | 两条写路径：官方"导入任务"支持 `.md` → 飞书新版文档（创建新文档，API 无覆盖语义，≤20MB、100 次/分钟）；原地更新命令族另存在（`docs +update`：str_replace / block_* / append / overwrite，v1.0.84 实测**无"按标题整节替换"**），节粒度 sync_update 需多步编排——**v1 飞书只做 create_copy**（§4.4.6） |
-| EverRoom → Notion 导出 | ✅ | `POST /v1/pages` 带 `markdown` 参数直接建页（首个 `# h1` 自动作标题）；大内容 `allow_async: true` 走异步任务轮询。更新已有页有 `replace_content`，且**默认拒绝删除子页面**，防覆盖有平台级保险 |
-| 权限/失效提示 | ✅ | 两平台错误码语义清晰（见 §5.5 矩阵）。Notion 特有：页面未共享给连接 → `404 object_not_found`，是最常见"权限不足"形态，文案必须与"授权失效"区分 |
+## 2. 仓库现状
 
-**架构落位（2026-09-01 最终决策：统一 OpenConnector 路线，Nango 弃用）**：导入走 CLI 路径（OpenConnector/`oo` CLI + 网关 `document-sync` 确定性作业 + domain-projection → markdown-service → ingest）；**上游 open-connector 已有 feishu provider（OAuth 用户授权已实现）且 notion provider 已含 Markdown API 动作（`retrieve_page_markdown`/`update_page_markdown`/`create_page`）**。（feishu provider 的 `fetch_document`（markdown/局部读）、`create_document`/`update_document`、`search_documents`、wiki/drive 发现动作、以及导出用的 `submit_drive_import`/`get_drive_import`/`get_drive_task_status` 均已就位于当前 pin（`5719a69`/v1.3.5），provider 层无需扩展——这些动作在 actions.ts 中以 `...createFeishu*Actions()` 从 shared/ 展开注入，审计代码时注意内联搜索查不到；授权 scope 集由全部动作的 `providerPermissions` 自动派生，编辑/导入/导出/wiki 权限已在派生集内。实际缺口在网关作业接入与规范化基建。）导出是全新能力，建议新建"导出 outbox + 导出映射表"，反向复用 markdown-service 的 lease/退避模式，并绕开同步作业的只读白名单（写操作走独立导出通道，不放松导入作业约束）。**终态：连接器栈只保留 OpenConnector 一条路径**——Notion 存量 Nango 连接迁移列入 M3；gmail/outlook/google-* 的 Nango 存量随独立退役工作项处理；本需求不在 Nango 侧新增任何代码。
+| 能力 | 当前实现 | 主要缺口 |
+| --- | --- | --- |
+| 桌面入口 | 默认启用“数据源”页面，连接器页面由 `NXCORE_DESKTOP_PAGE_MODE=connectors` 单独开启 | 两个页面互斥，OpenConnector 生命周期被 UI 模式间接控制 |
+| Notion 授权 | Nango OAuth 是主路径；另有手工 Token 和 ZIP 导入 | 同一平台存在多条行为不同的路径 |
+| Notion Nango 同步 | `search` 后读取 blocks children，写入 `NormalizedDocument` | 搜索只取一页；块只读一层；固定旧版 API；复杂块丢失 |
+| Notion OpenConnector 同步 | 已有全量校准、增量任务和 `retrieve_page_markdown` | 不是默认产品路径；尚未补拉 `unknown_block_ids` |
+| 飞书同步 | `feishu-wiki` 直连试点使用 `appId:appSecret` 和 tenant token | UI 禁用；只读 Wiki；`raw_content` 丢结构；无增量游标 |
+| 飞书 OpenConnector provider | 当前固定版本已包含用户 OAuth、Drive/Wiki 发现、文档读写和导入任务动作 | Gateway 未建立飞书托管文档任务和规范化 adapter |
+| 本地处理 | 已有连接器领域表、内容哈希、Markdown outbox、摄取与清理链路 | 缺少 Context Doc 映射和远端导出 outbox |
 
----
+当前代码事实：
 
-## 1. 代码库现状（本仓库调研结论）
+- `sync-providers/notion.ts` 仍是 Notion 默认同步实现，使用 Nango 代理。
+- `service.ts` 的 OpenConnector 托管文档任务只识别 Notion 和 Google Docs。
+- `ConnectSourceMenu.tsx` 中飞书入口仍为禁用状态。
+- 同步任务的 `allowedActions` 强制只读。Agent 能执行个别写动作，不等于存在可靠的导出管线。
 
-### 1.1 已有（现状：Nango 为主，CLI 路径起步）
-- **Notion 导入全链路已可用（Nango 路径）**：[sync-providers/notion.ts](apps/gateway/src/modules/connectors/sync-providers/notion.ts)：search + blocks→markdown + 授权/自举/首同步直启；另有 CLI 路径（OpenConnector）的 reconcile/incremental 双作业（`last_edited_time` 水位）与 `notion-document-sync-v1` prompt profile。
-- **飞书 wiki 导入（api-token 版）已在网关注册**：[sync-providers/feishu-wiki.ts](apps/gateway/src/modules/connectors/sync-providers/feishu-wiki.ts)（自建应用 `tenant_access_token` → wiki spaces → 节点树 → docx raw_content，凭据 `appId:appSecret`），但桌面 UI 仍是 disabled 占位（ConnectSourceMenu.tsx:95-97）。
-- **同步基础设施全部可复用**：ConnectorManager/SyncEngine/Repository（lease + fenceToken + cursor 防并发）、domain-projection 幂等 upsert（唯一键 `ownerId+service+connectionName+sourceRecordId` + contentHash 跳过）、ConnectorMarkdownService（双向 hash 幂等、outbox 退避 `[30s,2m,10m,1h]`、10 次进 dead）、IngestService（`connector-document` sourceKind 已含）。
-- **CLI 路径（OpenConnector）底座已在运行**：vendored open-connector（pin `5719a69`）+ 网关 `/v1/cli-connectors/*`（`service.ts`/`document-sync.ts`）+ 桌面 cliConnector IPC + open-connector supervisor/secret-store（safeStorage），notion/gmail 连接已跑通。
-- 内嵌 Nango（modules/connector，127.0.0.1:3003）承担 gmail/outlook/google-*/notion 的 OAuth 获取与刷新，Connect UI 现成——现状授权主力，终态退役（§1.3）。
+因此，本方案不再把“迁移到 OpenConnector”写成近期前置条件。
 
-### 1.2 缺口（对现状 Nango 栈而言）
-1. 飞书**用户级 OAuth**（区别于现有应用级 api-token）：内嵌 Nango providers.yaml **无 feishu/lark 定义**（26874 行里 0 命中）；`SyncProviderNangoMeta.credential` union 只有 `google|notion|outlook|none`——在 Nango 上扩飞书需要自定义 provider。
-2. 飞书云文档（个人云空间，非 wiki）的发现与导入 provider 不存在；现有 feishu-wiki 用 raw_content 纯文本，**不满足"正文结构完整"**，需换 blocks→Markdown 或 markdown 直读。
-3. **导出方向是全新能力**：现有同步作业强制只读（allowedActions 白名单拒绝写动作）；唯一写回是 Agent 工具的 Notion `create_page`（open-connector-tools.ts），无批量/结构化导出管线。
-4. 桌面 UI：飞书入口 disabled；docs 类菜单不消费 `api-token` 通道；无导出 UI。
-5. 内嵌 Nango 的 notion 代理配置钉在 `Notion-Version: 2022-06-28`（providers.yaml:15516），在 Nango 路径上调 Markdown API 需要按请求覆盖版本头或升级定义。
+## 3. 本期范围
 
-### 1.3 迁移到 OpenConnector：可复用 / 需修改 / 不迁移
+### 3.1 必须交付
 
-终态连接器栈只保留 OpenConnector（`oo` CLI）一条路径（§0）。对照现状逐层拆解：
+- Notion Nango 同步支持完整分页，并优先使用官方 Markdown 内容接口。
+- Notion 大页面能识别截断；无法访问的子块形成可见告警，不静默丢失。
+- 飞书支持用户级 OAuth、个人云空间和 Wiki 文档发现、结构化正文读取。
+- 两个平台统一写入 `connector_documents`、Markdown 产物和 ingest 链路。
+- 用户可以把来源记录显式保存为 Context Doc。
+- Context Doc 可以导出为新的 Notion 页面或飞书文档。
+- 授权失效、权限不足、限流、单文档失败和异步任务失败有可区分状态。
 
-**可复用（零改动或近零改动）**
-1. **投影与入库管线**（引擎无关，只消费规范化后的 Canonical 文档）：domain-projection 幂等 upsert（唯一键 + contentHash 跳过）、document-store、ConnectorMarkdownService（双向 hash 幂等、outbox 退避）、IngestService（`connector-document`）——上游是 Nango 还是 oo CLI 对这层无感。
-2. **document-sync.ts 确定性作业框架**（本就是 CLI 路径）：reconcile→incremental 双作业、`last_edited_time` 水位 + contentHash 幂等跳过、Notion 页面→Canonical 字段映射（`notionPageToDocument` 等）——切 markdown 拉取时照用，只换取数调用。
-3. **调度与并发基建**：`service.ts` 作业 seed/调度、Repository 的 lease + fenceToken + cursor 防并发——引擎无关。
-4. **桌面 CLI 路径底座**：open-connector supervisor + `open-connector-secret-store`（safeStorage）+ cliConnector IPC + ConnectorConsolePage/ConnectorSyncPage 骨架——notion/gmail 已跑通，feishu 直接插入。
-5. **Notion 域知识**：错误分类（`notionPageIsDeleted` 等）、`notion-document-sync-v1` prompt profile、scope/发现逻辑可平移。
+### 3.2 明确不做
 
-**需修改 / 新增**
-1. **Notion 取数切换**：blocks 分页拉取 → provider `retrieve_page_markdown`；网关新增 `truncated`/`unknown_block_ids` 迭代补拉；Notion-Version 随 provider 变为 2026-03-11（block 定位/trash 语义差异需回归测试）。
-2. **授权与存量连接迁移**：Notion 存量连接从 Nango credentials 迁到 OpenConnector 连接（重授权引导 + 双跑核对后切换，列入 M3）；capabilities 一次定稿。
-3. **飞书接入（新增）**：feishu provider OAuth（已就位）+ document-sync 扩展 feishu 作业（`fetch_document`/`list_drive_files`/`list_wiki_*` + `edit_time` 水位）+ 桌面入口启用 + scopes 审计（`docs:document.content:read`，§4.2）。
-4. **导出管线（新增）**：`connector_export_targets` + export outbox + 执行器调 provider 写动作 + REST/UI——两条路径都不存在，全新建。
+- 不在本期退役 Nango。
+- 不自动迁移 Notion 存量连接。
+- 不自动合并两端同时发生的编辑。
+- 不自动传播删除。
+- 不承诺所有复杂块、评论、修订历史和嵌入内容视觉等价。
+- 飞书首版不更新已有远端文档，只创建新副本。
 
-**不迁移 / 直接废弃**
-1. **内嵌 Nango 全家**：modules/connector 运行时（providers.yaml/runner/bootstrap）、nango-authorization/bootstrap/executor/agent-tools、`/v1/nango-connectors/*`、Nango Connect UI——整包退役；gmail/outlook/google-* 存量连接迁移是独立退役工作项（不在本需求内）。
-2. **sync-providers 的 nango 引擎分支与 direct 引擎 feishu-wiki**：`SyncProviderNangoMeta`/`SyncEngineKind="nango"` 分支、feishu-wiki（tenant token + raw_content）不再投入——feishu-wiki 由 provider 动作路径直接取代，不改造不迁移。
-3. **§1.2 缺口 1/5 的 Nango 侧解法**（自定义 feishu provider、覆盖 Notion-Version 头）：不做——迁移后这两个缺口自然消失（feishu 授权与动作 provider 已就位；Notion-Version 已是 2026-03-11）。
+## 4. 近期架构
 
-本需求工作量 = "需修改/新增"全集；§4 方案按此展开。
+```mermaid
+flowchart LR
+    UI[Desktop]
 
----
+    subgraph GW[Gateway]
+        CONN[连接与授权服务]
+        ROUTER[Connector capability router]
 
-## 2. 飞书开放平台调研
+        subgraph IN[入站：外部文档导入]
+            SCHED[调度 / 游标 / 租约]
+            FETCH[发现与拉取]
+            NORM[规范化 / 资源处理 / source hash]
+            MIRROR[(Connector mirror)]
+            INGEST[Markdown outbox / ingest]
+        end
 
-### 2.1 OAuth 授权（用户级）
-- **授权链接**：`https://open.feishu.cn/open-apis/authen/v1/authorize?app_id=cli_xxx&redirect_uri=...&scope=...&state=...`；用户同意后回调带 `code`+`state`。scope 需含 `offline_access` 才会下发 refresh_token（[获取授权码](https://open.feishu.cn/document/authentication-management/access-token/obtain-oauth-code?lang=zh-CN)、[浏览器网页接入指南](https://open.feishu.cn/document/sso/web-application-end-user-consent/guide?lang=zh-CN)）。
-- **换 token（v2）**：`POST /open-apis/authen/v2/oauth/token`，标准 OAuth2 字段（grant_type/client_id/client_secret/code/redirect_uri）（[Get user_access_token (v2)](https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/authentication-management/access-token/get-user-access-token)）。
-- **时效**：授权码 5 分钟一次性；`user_access_token` 与 `refresh_token` 的有效期**官方现行文档只给示例并注明"非固定值，务必以响应体实际值为准"**——uat 示例 7200s（约 2 小时），refresh_token 示例 **604800s（7 天）**；**刷新即轮换**（旧的立即失效，防重放，重放会报错）（[刷新 v2](https://open.feishu.cn/document/authentication-management/access-token/refresh-user-access-token?lang=zh-CN)、[旧版时效说明](https://open.feishu.cn/document/historic-version/authen/create-3?lang=zh-CN)）。刷新调度与"授权失效"文案一律以 `refresh_token_expires_in` 实际返回为准，不得硬编码任何天数。
-- **权限点（调用云文档 API 需要）**：
-  - 读：`docx:document:readonly`（查看新版文档）、`drive:drive:readonly`（查看云空间所有文件）
-  - 写/导出：`docx:document`（编辑）、`docs:document:import`（导入任务）、`docs:document:export` 或 `drive:export:readonly`（导出任务）、`drive:drive`（全量云空间读写，可作兜底）
-  - wiki：`wiki:wiki:readonly` 系
-  - **生效流程**：开发者后台 → 开发配置 → 权限管理 → 开通权限 → **创建版本发布**（[申请 API 权限](https://open.feishu.cn/document/server-docs/application-scope/introduction?lang=zh-CN)）。企业自建应用发布一般仅需本企业管理员审批（可配免审），**不需要商店审核**——团队内部场景建议自建应用；商店应用才走平台审核。
-- `user_access_token` 模式下文档权限**跟随用户**（用户可见的文档应用即可见），比 tenant token 少一层"添加文档应用"的授权摩擦，是导入场景的正确选择。
+        subgraph OUT[出站：Context Doc 导出]
+            CMD[显式导出命令]
+            EOUT[(Export outbox)]
+            GUARD[基线与冲突预检]
+            POLL[远端任务轮询]
+        end
 
-### 2.2 文档发现
-- **个人云空间**：`GET /drive/explorer/v2/root_folder/meta` 取根 token → `GET /drive/v1/files?folder_token=...`（page_token/page_size/order_by 分页）（[文件夹概述](https://open.feishu.cn/document/docs/drive-v1/folder/folder-overview?lang=zh-CN)、[根目录元数据](https://open.feishu.cn/document/server-docs/docs/drive-v1/folder/get-root-folder-meta?lang=zh-CN)）。
-- **知识库（团队文档主战场）**：`GET /wiki/v2/spaces` → `GET /wiki/v2/spaces/:space_id/nodes`（node_token 树）→ 节点的 **`obj_type=docx` 时 `obj_token` 即 document_id**，转 docx API 读写（[获取知识空间节点信息](https://open.feishu.cn/document/server-docs/docs/wiki-v2/space-node/get_node?lang=zh-CN)、[知识空间列表](https://open.feishu.cn/document/server-docs/docs/wiki-v2/space/list?lang=zh-CN)）。节点信息含编辑时间，可做增量水位。
+        DOCS[(Context Docs)]
+        BIND[(Bindings / sync baseline)]
+    end
 
-### 2.3 读取正文（导入方向）
-- `GET /docx/v1/documents/:document_id/blocks`：分页返回**全部块的富文本结构**，5 QPS（[获取文档所有块](https://open.feishu.cn/document/server-docs/docs/docs/docx-v1/document/list?lang=zh-CN)）。块类型枚举：Text=2、Heading1~9=3~11、Bullet=12、Ordered=13、Code=14、Table=31 等（[块数据结构](https://open.feishu.cn/document/ukTMukTMukTM/uUDN04SN0QjL1QDN/document-docx/docx-v1/data-structure/block)）。**这是结构化导入的唯一正确路径**，需自建 blocks→Markdown 转换器（成熟参考：[feishu-pages](https://github.com/yangzupan/feishu-pages) 覆盖标题/列表/代码块/表格/高亮块/分栏）。
-- `GET /docx/v1/documents/:document_id/raw_content`：纯文本，5 QPS（[文档纯文本](https://open.feishu.cn/document/server-docs/docs/docs/docx-v1/document/raw_content?lang=zh-CN)）——现有 feishu-wiki 用的就是它，结构丢失，只适合兜底/摘要。
-- **Markdown 直接读取（重要）**：公开的 docs-v1 [Get docs content](https://open.feishu.cn/document/docs/docs-v1/get?lang=zh-CN)（`GET /open-apis/docs/v1/content`）确实直接返回**新版文档的 Markdown 格式内容**；**但**官方 lark-cli 的 `docs +fetch`（v2）与 open-connector 的 `fetch_document` 动作底层走的**不是**这个接口，而是**未公开文档的 `POST /open-apis/docs_ai/v1/documents/:token/fetch`**（lark-cli 源码 docs_fetch_v2.go 与 open-connector shared/docs-runtime.ts 均可证；open.feishu.cn 检索不到该端点的公开文档；`--api-version` 已是隐藏兼容 flag，新版默认即 v2）。outline/section/range/keyword 局部读取与 `revision_id` 只在这个 docs_ai 端点上可用。两条路径各有硬限制：docs-v1 /content 权限为 `docs:document.content:read`、**内容超 10MB 报 2889925**、仅支持 docx；docs_ai 端点无公开契约（行为/配额/存续无承诺）。**导入方向仍应优先用 provider 的 `fetch_document`**（一次调用、官方映射保真、请求量小），但必须把未公开端点依赖列为显式风险（§5.8）并准备三级兜底：`fetch_document` → docs-v1 /content（10MB 内）→ blocks 分页自转；大文档/高块数行为列入 §5 待实测项。
-- **导出任务 API 不能用于导入**：仅支持导出为 Word/Excel/PDF/CSV（docx 类型只有 docx/pdf），**无 Markdown**（[创建导出任务](https://open.feishu.cn/document/server-docs/docs/drive-v1/export_task/create?lang=zh-CN)）。桌面端"下载为 Markdown"是客户端功能，API 不可用。
-- 图片/附件：block 内资源 token 需经 drive media 下载接口取回；导入时应立即下载落入 files 模块（外部 URL 均短时效）。
+    subgraph RT[连接运行时]
+        NANGO[Nango adapter]
+        OC[OpenConnector adapter]
+    end
 
-### 2.4 写入（EverRoom → 飞书导出）
-三步异步流程（[导入文件概述](https://open.feishu.cn/document/server-docs/docs/drive-v1/import_task/import-user-guide?lang=zh-CN)）：
-1. `POST /drive/v1/files/upload_all`（或 media/upload_all）上传 `.md` 源文件拿 file_token（**token 5 分钟有效**、文件 ≤20MB）；
-2. `POST /drive/v1/import_tasks`：`{file_extension:"md", file_token, type:"docx", file_name, point:{mount_type:1, mount_key:"目标文件夹token"}}`（[创建导入任务](https://open.feishu.cn/document/server-docs/docs/drive-v1/import_task/create?lang=zh-CN)，100 次/分钟，支持 user_access_token）；
-3. 轮询 `GET /drive/v1/import_tasks/:ticket` → 成功后返回新文档 token。
-- import_task 路径**只会创建新文档，不存在覆盖面**——与"不覆盖已有内容"的验收标准天然契合。
-- **原地更新（第二条写路径，lark-cli v1.0.84 实测）**：`docs +update` 的命令集是 **8 种**——`str_replace`（文本定位替换；markdown 模式下 pattern 可多行匹配）/ `block_delete` / `block_insert_after` / `block_copy_insert_after` / `block_replace` / `block_move_after`（block_id 定位的块级操作，删除支持逗号分隔批量）/ `append` / `overwrite`（官方标注慎用：整页替换可能丢无关富内容）。**没有**"按标题整节替换"这类单命令——节粒度更新需组合编排：`+fetch --scope outline/section` 拿 block_id → `block_replace`/`block_insert_after`。默认载荷格式是 **DocxXML**，markdown 是 `--doc-format markdown` 选项；`--revision-id` 支持乐观并发。局部更新保留原有媒体、评论、协作历史；大文档返回异步 `task_id` 轮询。open-connector 的 `update_document` 动作与该命令集对齐（command 枚举 replace_text/delete_blocks/insert_after/copy_after/replace_block/move_after/overwrite/append，异步时返回 taskId/pollAfterMs）。底层为公开 OpenAPI（写操作需 `docx:document.block:convert` 权限做服务端 markdown→blocks 转换，[社区踩坑记](https://juejin.cn/post/7611047795055624244)）。限制：图片/画板/电子表格/多维表格等内容以 token 形式存储，**读出后无法原样写回**，更新时要避开这些区域；写入受应用级 3 QPS + **单篇文档 3 QPS** 双限频约束（§2.6）。
-- `file_extension` 必须与实际上传后缀严格一致（`md`≠`markdown`≠`mark`，否则 1069910）。
+    NOTION[Notion]
+    FEISHU[飞书]
 
-### 2.5 事件订阅（可选加速）
-- `drive.file.edit_v1`（文件编辑）、文件已读、权限申请等事件（[云文档事件订阅](https://open.feishu.cn/document/server-docs/docs/drive-v1/event/subscribe?lang=zh-CN)、[事件概述](https://open.feishu.cn/document/server-docs/event-subscription-guide/overview?lang=zh-CN)）；事件订阅支持 **Webhook 与长连接**两种模式——桌面场景若要事件推送只能长连接，但复杂度高，**建议 V1 用轮询 + 编辑时间水位**，事件留作优化项。
-
-### 2.6 限流与错误码
-- 频率：blocks/raw_content 5 QPS、block 写 3 QPS、导入/导出任务 100 次/分钟、事件订阅 10 次/分钟；超限 429（导入任务错误码 1069923）。
-- 关键错误码：
-  - `99991663` token 无效/过期（[官方排查](https://open.feishu.cn/document/faq/trouble-shooting/how-to-fix-99991663-error)）→ 刷新或重授权；
-  - `99991672` 应用未开通该 API 权限 → 引导管理员开权限并发布版本（[排查](https://open.feishu.cn/document/faq/trouble-shooting/how-to-fix-the-99991672-error?lang=zh-CN)）；
-  - `1069902` 无文档阅读/编辑权限（user token = 该用户无权限；文案应指引到文档分享）；
-  - `1069908` 挂载点文件夹无权限（导出目标文件夹不可写）；
-  - `1069906` 文档已删除、`1069913` 上传 token 过期（重上传即可）、`1069909` 超 20MB。
-
-### 2.7 lark-cli（官方 CLI）参照分析
-
-[lark-cli](https://github.com/larksuite/cli) 是飞书/Lark **官方**开源的 CLI（Go 实现、MIT、`npx @larksuite/cli` 安装、200+ 命令、26 个 Agent Skills；OpenClaw 上的飞书官方插件底层就是它）。它对我们方案的四点直接参照：
-
-**① 授权模式（产品形态参照）**
-- `config init` **一键创建一个新应用**（也可复用已有应用）——"依赖飞书应用创建"这个门槛官方已有产品化方案。
-- `auth login`：TUI 交互选 scope / `--recommend` 常用权限集 / `--scope` 精确指定 / `--domain` 按业务域增量授权；**`--no-wait` 立即返回授权 URL、`--device-code` 之后恢复轮询**——一种不需要本地 redirect URI 的授权形态，可作 OpenConnector 桌面授权体验（supervisor 发起 + 回调）的对照与备选。
-- 凭据存 OS keychain；`--as user|bot` 身份切换；多 profile 多应用并发安全。
-
-**② 文档读写**：读 = `docs +fetch --doc-format markdown`（局部读取见 §2.3；底层为未公开的 docs_ai 端点）；写 = `docs +update` 8 命令（§2.4，v1.0.84 实测枚举）。载荷默认 **DocxXML**，markdown 是受支持的一等载荷选项之一。
-
-**③ 双向同步模型（官方印证 §4.4 的方向状态机）**
-`drive +sync`（本地目录 ↔ Drive 文件夹）的做法：
-- `+status` 先做 diff：**默认 SHA-256 精确内容比较**，`--quick` 才退化为修改时间近似；
-- `+sync` 把每个文件判为三态：`new_remote`（拉取）/ `new_local`（推送）/ `modified`（**按显式策略 `--on-conflict=remote-wins|local-wins|keep-both|ask` 处理，绝不自动合并**）；
-- **不删除两端多余文件**（删除不传播）；只同步 `type=file`，**跳过在线文档**。
-与 §4.4"每对一个方向 + 冲突显式决策 + 删除不传播"完全同构——官方也没有做自动合并。
-
-**④ Drive 原生 .md 文件（无损双向的另一形态）**
-`lark-markdown` skill 对 Drive 里作为普通文件存储的 `.md` 提供 create / fetch / **overwrite / patch** / **diff（含版本历史比对）**——如果团队接受 `.md` 文件形态（而非在线 docx），飞书侧可获得真正的无损双向同步（整文件覆盖语义 + 版本历史兜底）。
-
-**工程细节可抄**：同一目标文件夹的批量导入**必须串行**（并发冲突错误 232140101/232140100/233523001，失败重试 ≤3 次且间隔数秒）；异步任务统一 `+task_result` 查询；wiki URL 用 `+inspect` 解包出 obj_token；错误契约 stdout（成功）/stderr（错误）分离、错误码透传上游 OpenAPI code。
-
-**复用边界（2026-09-01 最终决策）**：**连接器统一到 OpenConnector（`oo` CLI）路线，内嵌 Nango 弃用**（退役本身是独立工作项）。不引入 lark-cli 作为运行时依赖。lark-cli 的价值定位为：① 调研期用它的 skills 文档与 MIT 源码确认底层公开 API 的行为（markdown 读、定位更新、异步任务、并发约束）；② 其授权模式（`--no-wait`/`--device-code` 轮询）与"一键创建应用"产品思路作为参照。
-
----
-
-## 3. Notion 调研
-
-### 3.1 公共连接 OAuth 与 capabilities
-- 授权 URL：`https://api.notion.com/v1/oauth/authorize?client_id=...&redirect_uri=...&response_type=code&owner=user&state=...`（[Authorization 指南](https://developers.notion.com/guides/get-started/authorization)）。**没有 scope 参数**——权限 = 开发者后台配置的 **connection capabilities** + 用户在 page picker 里勾选共享的页面（父页面带动全部子页面）。
-- capabilities（[官方说明](https://developers.notion.com/reference/capabilities)）：本需求需要 **Read content + Insert content + Update content**（建页还需 insert property；可在后台一并勾上）。用户信息能力选"不含邮箱"即可。
-- 换 token：`POST /v1/oauth/token`（HTTP Basic：client_id:client_secret；body `grant_type=authorization_code`+code+redirect_uri），返回 `access_token`+`refresh_token`+`bot_id`+`workspace_id/name`+`owner`（[Create a token](https://developers.notion.com/reference/create-a-token)）。refresh：`grant_type=refresh_token`，**返回新的 access+refresh（轮换）**（[Refresh a token](https://developers.notion.com/reference/refresh-a-token)）。
-- 文档未标明 access_token 有效期（历史上长期有效），但按标准做法：**401 → 先 refresh → 仍失败 → 引导重授权**。OAuth 错误码：`invalid_grant`（code/refresh 失效、被撤销、capability 变更）、`invalid_client` 等（RFC 6749 语义）。
-- ⚠️ **capability 变更会使存量授权的 refresh_token 失效（invalid_grant），用户必须重新授权**——上线前必须定稿 capabilities，之后不再改动。
-- ⚠️ capability 永远≤用户权限：用户失去某页编辑权后连接对该页自动降为只读。
-- API 版本：当前最新 `2026-03-11`（block 操作与 trash 语义有破坏性变更，[升级指南](https://developers.notion.com/guides/get-started/upgrade-guide-2026-03-11)）。OpenConnector notion provider 已使用 2026-03-11（executors.ts 的 `notionCoreVersion`）；将被退役的 Nango notion 代理仍钉在 `2022-06-28`，不做兼容投入。
-
-### 3.2 官方 Markdown 内容 API（本调研最重要发现）
-（[Working with markdown content](https://developers.notion.com/guides/data-apis/working-with-markdown-content)）Notion 现支持以"增强 Markdown"整页读写，**完全绕过 block JSON 转换**：
-
-| 操作 | 端点 | 能力要求 | 要点 |
-|---|---|---|---|
-| 读 | `GET /v1/pages/:id/markdown` | read_content | 单次返回整页 markdown；文件 URL 自动预签名；**约 20,000 块截断**：`truncated=true` + `unknown_block_ids`，可带块 ID 迭代补拉；权限不可见的子块同样标记 `<unknown>` |
-| 建页 | `POST /v1/pages` + `markdown` 参数 | insert_content(+insert_property) | 与 `children` 互斥；省略标题时首个 `# h1` 自动作页标题 |
-| 更新 | `PATCH /v1/pages/:id/markdown` | update_content | 命令式 union：`replace_content`（整页替换，推荐）/ `update_content`（搜索替换，`old_str` 须唯一否则 validation_error）/ legacy insert/replace_range；**默认拒绝删除子页面与子数据库**（需显式 `allow_deleting_content:true`）——平台级防覆盖保险 |
-
-- **大写入异步化**：`allow_async:true` → `202` + `async_task`（`status_url` 轮询，状态 queued/running/retrying/succeeded/failed；retrying 按 `poll_after_seconds` 等待）。导出长文必须走这条路径。
-- 不支持的块类型在输出中呈现为 `<unknown url="..." alt="块类型"/>`——导入时保留占位与原链接，保证"主要内容完整"且可溯源。
-- 对导入方向的意义：替换现有 notion.ts 的 blocks 分页拉取（1 次调用 vs N 次分页），在 3 rps 限流下收益显著；`last_edited_time`（search/页面属性）仍作增量水位。
-
-### 3.3 文档发现、分页、webhooks
-- 发现共享页面：`POST /v1/search`（分页 page_size≤100）（[Search](https://developers.notion.com/reference/post-search)）；页面被取消共享后 API 返回 404 而非从 search 消失的即时保证，需容错。
-- Webhook 已有（页面/数据库增删改事件，payload 只含 ID 需回查，[Webhooks](https://developers.notion.com/reference/webhooks)），但需要**公网回调端点**，桌面应用不适用——V1 用轮询，事件留作服务端部署形态的优化。
-
-### 3.4 限流与错误码
-- 平均 **约 3 请求/秒/连接**；429（`rate_limited`）带 `Retry-After` 头，另有 529 过载（[Request limits](https://developers.notion.com/reference/request-limits)、[Status codes](https://developers.notion.com/reference/status-codes)）。客户端应主动节流排队 + 退避。
-- 关键错误码：`401 unauthorized`（token 失效→refresh→重授权）；`403 restricted_resource`（capability 不足或用户权限降级）；**`404 object_not_found`（页面未共享给连接——Notion 最常见的"权限不足"形态，错误消息里带连接名，文案要引导去 Notion 页面 ··· 菜单添加连接）**；`409 conflict_error`；`429 rate_limited`。
-
----
-
-## 4. 方案设计
-
-> **路线决策（2026-09-01 用户确认，最终版）**：**连接器统一到 OpenConnector（`oo` CLI）路径，内嵌 Nango 弃用**。新能力全部落在：① 上游 [oomol-lab/open-connector](https://github.com/oomol-lab/open-connector) 的 provider 层（仓库以 tarball 固定 commit `5719a69`/v1.3.5 引入，desktop 的 `build/open-connector`），② 网关 CLI 路径（`service.ts`/`document-sync.ts`，`/v1/cli-connectors/*`），③ 桌面 cliConnector IPC + open-connector supervisor。**关键现状（已对 pin 源码核实）**：feishu provider 已声明式实现飞书 OAuth 用户授权（`authen/v1/authorize` + `authen/v2/oauth/token` JSON body + `offline_access`），且**导入与导出所需动作全部就位于当前 pin（`5719a69`/v1.3.5）**——除 7 个内联基础动作外，docs/wiki/drive/markdown/file 全套 shared 动作以 `...createFeishu*Actions()` 展开注入（`fetch_document`/`create_document`/`update_document`/`search_documents`/`list_wiki_*`/`list_drive_files`/`submit_drive_import`/`get_drive_task_status` 等，完整清单见 §0）；notion provider 已含 `retrieve_page_markdown`/`update_page_markdown`/`create_page` 等 Markdown API 动作。Nango 路径（`/v1/nango-connectors/*`、sync-providers）与 direct 引擎的 feishu-wiki 不再投入，随退役处理。
-
-### 4.1 总体架构与数据流
-
-**组件架构图**（★ = 本需求新增；未标注 = 复用/已就位，见 §1.3；Nango 退役侧不在图内）：
-
-```
-┌─ 桌面端（Electron）
-│    连接管理 UI · ★导出对话框
-│    open-connector supervisor · secret-store
-└─────────┬────────────────────────────
-          │ IPC · REST
-          ▼
-┌─ 网关 gateway
-│    REST：/v1/cli-connectors/* · ★/v1/connector-exports/*
-│
-│    导入（复用为主）：
-│      作业调度 → document-sync 双作业 → ★防回环拦截
-│        → domain-projection → markdown-service → ingest
-│        → rooms / memory / files
-│
-│    导出（★全新）：
-│      ★导出映射表 → ★export outbox → ★导出执行器
-└─────────┬────────────────────────────
-          │ oo CLI 动作调用
-          ▼
-┌─ open-connector 运行时（pin 5719a69）
-│    feishu provider：读 fetch_document ｜ 发现 list_wiki_* / list_drive_files ｜ 写 submit_drive_import 等
-│    notion provider：读 retrieve_page_markdown ｜ 写 create_page / update_page_markdown
-└─────────┬────────────────────────────
-          │ HTTPS（user_access_token）
-          ▼
-┌─ 外部平台
-│    飞书开放平台 ｜ Notion API
-└────────────────────────────────
+    UI --> CONN
+    UI --> DOCS
+    CONN --> ROUTER
+    SCHED --> FETCH --> ROUTER
+    ROUTER --> NORM --> MIRROR --> INGEST
+    MIRROR -->|用户保存为 Context Doc| DOCS
+    DOCS --> CMD --> EOUT --> GUARD --> ROUTER
+    ROUTER --> POLL --> BIND
+    NORM --> BIND
+    BIND --> GUARD
+    ROUTER <--> NANGO <--> NOTION
+    ROUTER <--> OC <--> FEISHU
 ```
 
-**数据流**：
+这不是两个平行的数据系统，也不是把同一套任务反向运行。Nango 和 OpenConnector 只负责授权、凭据刷新和 Provider API 执行；入站与出站使用同一个能力路由和 adapter，但拥有独立的触发方式、状态机和持久化队列。以下能力必须只有一个 Gateway 所有者：
 
-```
-导入（统一走 OpenConnector CLI 路径；投影/ingest 管线复用，零新增存储）：
-  Feishu OAuth ──┐    open-connector provider 动作
-                 ├→ oo CLI 连接 → 网关 document-sync 确定性作业 → markdown（Canonical 文档）
-  Notion OAuth ──┘    （fetch_document / list_* 发现 / retrieve_page_markdown）
-                            ↓
-              domain-projection 幂等 upsert（唯一键+contentHash 跳过）
-                            ↓
-              ConnectorMarkdownService（双向 hash 幂等）→ ingest_events → rooms/memory/files
-  （存量 Nango 连接冻结只读维持，随 Nango 退役迁入同一条 CLI 管线）
+- 调度、租约、重试和检查点；
+- 文档身份、规范化和内容哈希；
+- 领域投影、Markdown 物化和 ingest；
+- Context Doc 映射、冲突判断和导出状态。
 
-导出（新增）：
-  EverRoom 文档提交/用户触发
-        ↓ connector_export_targets（映射+lastExportedHash+remoteBaseline）
-        ↓ export outbox（lease + 退避，复用 markdown-service 模式）
-        ├→ 飞书：provider submit_drive_import（upload .md → import_tasks → 轮询 ticket）→ 新文档 token
-        └→ Notion：provider create_page(markdown) [或 update_page_markdown]（allow_async 大文）
-```
+### 4.1 入站与出站职责
 
-### 4.2 授权模块（OpenConnector 统一路线）
-- **授权全部由 OpenConnector（oo CLI）承担**：provider 以声明式定义授权端点与 scopes——上游 feishu provider 已配置 `authen/v1/authorize` + `authen/v2/oauth/token`（JSON body、client_secret_post）+ `offline_access`，**飞书 OAuth 用户授权在上游已实现**；token 生命周期/刷新由 oo CLI 自管，凭据经 `open-connector-secret-store.ts`（Electron safeStorage 加密）注入 `OO_CONFIG_DIR/OO_DATA_DIR`。授权发起与状态查看沿用桌面 open-connector 既有流程（cliConnector IPC）。
-- **要做的是权限审计（而非新增 scopes）**：feishu provider 的 OAuth scope 列表**由全部动作的 `providerPermissions` 自动派生**（definition.ts：`[offline_access, ...new Set(actions.flatMap(a => a.providerPermissions))]`）——全套动作已在 pin 里，派生集已含 `docx:document:create`/`docx:document:write_only`/`docs:document:import`/`docs:document:export`/`search:docs:read`/`wiki:node:read`/`wiki:space:read`/`drive:file:upload` 等（§2.1 清单里的 `docx:document`/`drive:drive:readonly`/`wiki:wiki:readonly` 是不同粒度的同义权限，逐动作核对即可）。审计项：① `docs:document.content:read`（docs-v1 /content 的公开要求；docs_ai 端点实测账号以此权限可用、是否必需待 M1 验证）**不在当前派生集内**（`fetch_document` 声明的是 `docx:document:readonly`）——自建应用需在后台单独开通；② 派生机制意味着**新增任何动作 = 自动扩大授权面**，管理员审批页可见，需写入发布说明。
-- 应用凭据走"用户自建应用"（app_id/secret 由用户或团队管理员在飞书后台创建后填入，同 lark-cli `config init` 的产品形态）；飞书后台的 redirect_uri 按 OpenConnector 授权机制配置（notion/gmail 同一套已跑通），M1 实测确认。
-- **连接状态 UI**：连接卡片展示授权身份（feishu user profile / Notion workspace_name+owner.email）+ 最近 run；授权过期置 `needs_connection` 态（CLI 路径已有该 status），显式"重新授权"按钮，不影响其他连接。
+| 方向 | 触发 | 数据权威 | 写入目标 | 状态所有者 |
+| --- | --- | --- | --- | --- |
+| 入站导入 | 定时、手动刷新 | 远端文档 | Connector mirror | 同步作业、游标、远端检查点 |
+| 保存为 Context Doc | 用户显式操作 | 当前 mirror 快照 | 新 Context Doc | 文档服务、binding |
+| 出站创建副本 | 用户显式导出 | Context Doc 指定修订 | 新远端文档 | export outbox、远端任务句柄 |
+| 出站更新原页 | 用户显式开启；后续仅 Notion | Context Doc 与上次同步基线 | 已绑定远端文档 | binding、冲突状态、export outbox |
 
-**Notion**
-- OpenConnector notion provider 动作已含 `retrieve_page_markdown` / `update_page_markdown` / `create_page` / `update_page` 等（上游已跟进 2026 Markdown API），**导入导出动作层零缺口**；需要做的是：① 开发者后台 capabilities 定稿为 Read+Insert+Update content（上线后不可再改，否则存量用户全体 invalid_grant）；② Notion-Version：provider 已使用 `2026-03-11`（executors.ts 的 `notionCoreVersion`），无需额外处理。
+入站只能更新 mirror，不能覆盖用户编辑的 Context Doc。出站只能读取用户选定的 Context Doc 修订，不能把 mirror 当作可编辑文档写回。两条管线通过 binding 共享远端身份和同步基线，但不共用任务状态。
 
-### 4.3 导入管线（CLI 路径）
-- **网关 CLI 路径扩展**：`service.ts` 托管作业 seed 列表（现仅 gmail/notion/googledrive）加 feishu；`document-sync.ts` 确定性文档作业扩展 feishu——复用 notion 的 reconcile→incremental 双作业模式（`last_edited_time`/飞书 `edit_time` 水位 + contentHash 幂等跳过）。
-- **OpenConnector provider 动作已就位、无需扩展**：markdown 获取用现成 `fetch_document`（注意底层为 docs_ai 端点，风险见 §2.3/§5.8），云空间发现用 `list_drive_files`、wiki 节点树用 `list_wiki_spaces`/`list_wiki_nodes`，导出写动作见 §4.4.6。网关工作 = 把这些动作接进 document-sync 作业；产出 markdown 后经 domain-projection → markdown-service → ingest 全链路照旧。
-- **Notion**：网关 document-sync 从 blocks 拉取切到 provider 的 `retrieve_page_markdown`（`truncated`/`unknown_block_ids` 迭代补拉逻辑放网关侧）。
-- 图片/附件：markdown 中的素材 token/预签名 URL 由执行器**即取即下载**入 files 模块，并按 §4.4.4 规范化后再算 contentHash。
+### 4.2 连接器能力接口
 
-### 4.4 双向同步与导出管线（全新，重点）
+Gateway 新增内部接口 `DocumentConnectorPort`，按 `(provider, connectionKind)` 选择 adapter，而不是只按 Provider 选择。这样 Notion 在 Nango 与 OpenConnector 并存期间不会选错凭据或运行时。
 
-#### 4.4.0 总原则：不做"真双向合并"，做"每对一个方向"的状态机
+```ts
+type DocumentConnectorCapabilities = {
+  discover: boolean
+  readMarkdown: boolean
+  createCopy: boolean
+  updateExisting: boolean
+  asyncWrite: boolean
+}
 
-真正的双向同步（两边都是工作区、随时编辑、自动 diff-merge）在这两个平台上**做不到安全**，原因硬性：
-
-- **飞书的原地更新粒度受限**：原地更新命令族存在（str_replace / block_* / append / overwrite），可保留图片评论；但**没有"按标题整节替换"的单命令**——节粒度更新需 outline→block_id→block_replace 多步编排，且**整页级 overwrite 仍有损**（可能丢媒体与评论），图片/画板等以 token 存储的内容**读出后无法原样写回**。结论：**v1 飞书侧不做 sync_update，导出一律 create_copy**；节粒度 sync_update 连同其编排成本留 v2 评估。
-- **Notion 有 `replace_content`（整页替换），但那是替换不是合并**：跨表示（markdown ↔ blocks）的三路合并每轮都是有损的，合并结果再写回会继续产生偏差。
-- 两平台的"修改时间"都没有变更粒度信息（谁改的、改了哪个块），无法做可靠的增量归并。
-
-替代模型：**每个文档对（EverRoom 文档 ↔ 外部页面）在映射表里有且只有一行，带一个 `direction` 字段**：
-
-| direction | 权威方 | 行为 |
-|---|---|---|
-| `inbound`（默认，占绝大多数） | 飞书/Notion | 正常导入管线，EverRoom 侧是只读镜像；用户在 EverRoom 里编辑它 → 提示"该文档由 XX 同步控制，改动会被下次导入覆盖"，给出转 outbound / 断开 / 分叉三选项 |
-| `outbound` | EverRoom | 导出建立的副本打镜像标记，**永不自动反向导入**；拉取时只观察远端 edited_time 用于冲突检测 |
-
-这个模型恰好匹配团队场景的真实分布：文档主要产生在飞书/Notion，EverRoom 是聚合/记忆层，导出是"发布/分享副本"。需要两边日常编辑同一篇的文档是极少数，那类需求留给 v2（§4.4.7）。
-
-#### 4.4.1 身份层：映射表
-
-**新表 `connector_export_targets`**（gateway.sqlite，下一个迁移号）：
-
-```
-id, owner_id, document_id, service, connection_name,
-external_id(远端 page/doc token), external_url,
-direction(inbound|outbound), mode(create_copy|sync_update),
-last_exported_hash, last_exported_md(基线 markdown，供 v2 三路合并),
-exported_at, remote_edited_at(导出完成时远端自报的 edited_time),
-local_synced_at(导入应用时本地基线),
-status(active|conflict|orphaned|exporting), error,
-created_at/updated_at
+interface DocumentConnectorPort {
+  getCapabilities(connection: ConnectionRef): DocumentConnectorCapabilities
+  listDocuments(input: ListDocumentsInput): Promise<DocumentPage>
+  getDocumentMetadata(input: GetDocumentInput): Promise<RemoteDocumentMetadata>
+  getMarkdown(input: GetMarkdownInput): Promise<RemoteMarkdown>
+  createCopy(input: CreateRemoteCopyInput): Promise<RemoteWriteResult>
+  updateExisting?(input: UpdateRemoteDocumentInput): Promise<RemoteWriteResult>
+  getWriteStatus?(input: GetWriteStatusInput): Promise<RemoteWriteResult>
+}
 ```
 
-身份映射是双向同步唯一的**结构性防环手段**（内容去重靠不住——导出再拉回的文本和库里那份几乎必然不同）。所有方向判断都查这张表。
+约束：
 
-#### 4.4.2 回环阻断
+- adapter 不写业务表，只返回规范化前的 Provider 结果。
+- 读结果必须包含稳定远端 ID、远端修订或编辑时间、正文、资源引用和结构降级告警。
+- 写结果必须区分“已完成”和“已接受异步任务”；异步任务句柄必须先持久化，再开始轮询。
+- 凭据不进入 Renderer、任务输入、日志或数据库业务字段。
+- Provider 动作名不泄漏到同步状态机，避免未来迁移时批量改任务定义。
+- `updateExisting` 和 `getWriteStatus` 是能力驱动的可选方法；首版飞书 adapter 不实现原页更新。
 
-拦截点放在**同步引擎消费 PullPage 之后、domain-projection 之前**（单一入口）：
+### 4.3 双向协调与防回环
 
+Gateway 增加 `DocumentSyncCoordinator`，但不让它直接调用 Provider。它只负责编排 port、binding 和两个方向的状态机：
+
+1. 入站任务按连接持有租约，分页发现文档并使用重叠水位；单文档完成规范化和 mirror 事务提交后，才推进检查点。
+2. 出站任务先把 `localDocumentId + localRevision + payloadHash` 写入 outbox，再读取 binding 基线并拉取远端最新元数据。
+3. `create_copy` 没有既有远端目标，成功后创建 `export_copy` binding；请求结果不确定时凭远端任务句柄续查，不直接重发。
+4. `sync_update` 只有在本地修订和远端 hash 均符合基线时才写入；任一侧偏离基线都进入 `conflict`。
+5. 同一 binding 的入站与出站操作共用互斥键和 fence token。出站处于 `processing` 或 `waiting_remote` 时，入站可以发现变化，但延迟提交该文档的 mirror 与基线。
+6. 每次操作生成 `originOperationId`，用于关联 outbox、任务句柄和下一次入站结果。防回环最终仍以规范化后的 hash 与双端基线为准，不能依赖远端平台保留自定义标记。
+
+### 4.4 当前运行时落位
+
+| Provider | 当前 adapter | 入站读取 | 创建副本 | 更新原页 |
+| --- | --- | --- | --- | --- |
+| Notion | Nango，当前主路径 | 本期修正 | 本期新增 | 后续阶段，显式开启 |
+| 飞书 | OpenConnector，新接入 | 本期新增 | 本期新增 | 首版不支持 |
+| Notion | OpenConnector，并行能力 | 已有基础作业 | Provider 已有动作 | 迁移评估用，不切换存量连接 |
+
+能力路由必须在连接建立时保存 `connectionKind`，不能根据当前可用 sidecar 临时改道。迁移 Notion 时应新建连接、双跑核对、切换 binding，不能在原连接上静默更换 adapter。
+
+## 5. 导入设计
+
+### 5.1 统一流水线
+
+```text
+发现远端文档
+  -> 拉取元数据和正文
+  -> 规范化 Markdown 与资源引用
+  -> 计算 source hash
+  -> 幂等写 connector_documents
+  -> Markdown outbox
+  -> ingest / Knowledge / Memory
 ```
-pull 产出 NormalizedDocument{providerDocumentId, markdown, ...}
-  → 查映射表 (service, connection, external_id = providerDocumentId)
-     ├─ 无记录 → 正常投影+ingest（普通导入）
-     ├─ direction=outbound（自己导出的镜像）
-     │    → 不投影、不 ingest
-     │    → 只比对远端 edited_time vs remote_edited_at：
-     │       未变 → 无事；变了 → status=conflict（远端副本被人为修改）
-     └─ direction=inbound → 正常投影（幂等 upsert 照旧）
+
+稳定身份使用：
+
+```text
+(ownerId, provider, connectionName, remoteDocumentId)
 ```
 
-这样"导出 → 被同步拉回 → 重复入库 → 再导出"的雪球在结构上不存在，且 outbound 副本的远端修改**顺便变成了冲突信号**（一份数据两个用途）。
+正文未变化时，只更新远端检查点和最后确认时间，不重复物化或 ingest。
 
-#### 4.4.3 冲突：只检测、不自动合并
+### 5.2 Notion：近期继续走 Nango
 
-| 方向 | 检测信号 | 触发后 |
-|---|---|---|
-| outbound，mode=sync_update（仅 Notion） | 远端 `last_edited_time` > `remote_edited_at` 基线 | 不执行 replace_content，置 conflict |
-| outbound，mode=create_copy | 同上 | 置 conflict（副本被人改了） |
-| inbound | 本地文档更新时间/修订号 > `local_synced_at` 且远端 contentHash 也变了（双向都动过） | 置 conflict |
+近期保留 Nango OAuth 和连接记录，修改 `sync-providers/notion.ts`：
 
-conflict 的 UI 永远是三选一：**以 EverRoom 为准**（outbound：Notion 覆盖远端 / 飞书另存新副本）/ **以远端为准**（拉回覆盖本地）/ **分叉另存**（断开映射，本地复制一份独立文档）。**任何选项都不是静默的**，对应验收标准"不覆盖已有内容"。
+1. `POST /v1/search` 按 `next_cursor` 完整分页；空查询表示枚举连接可见的全部页面。
+2. 通过 Nango proxy 覆盖 `Notion-Version: 2026-03-11`，调用 `GET /v1/pages/:id/markdown`。
+3. 保留 blocks API 作为降级路径，不再把它作为主路径。
+4. 处理 `truncated` 和 `unknown_block_ids`：
+   - 逐个补拉未知块子树；
+   - `object_not_found` 记为权限缺口并保留 `<unknown>` 占位；
+   - 补拉仍截断时停止递归并将文档标为 `partial`。
+5. 增量仍使用 `last_edited_time` 水位和重叠窗口；全量校准负责发现权限丢失和删除。
+6. 对 trash 内容使用独立枚举或全量缺失确认，不假设默认搜索一定返回已删除页面。
 
-两个实现细节：
-- 基线必须存**远端自报的时间**（Notion `last_edited_time`、飞书文档基础信息的 `edit_time`），不能存本地时钟——跨平台时钟不可比。
-- 飞书 `edit_time` 是否会被评论/权限变更触发需要实测（Notion 的 last_edited_time 只反映内容编辑，可靠）；若飞书有噪声，退化为"拉取该文档内容做 hash 比对"（单文档成本可接受）。
+Notion 官方当前约束：
 
-#### 4.4.4 同步抖动（round-trip churn）——最容易被忽视的杀手
+- Markdown 创建、读取、更新分别要求 `insert_content`、`read_content`、`update_content`。
+- capabilities 可以修改，但公共连接修改后，存量用户需要重新授权；并非“创建后永久锁死”。
+- 限流同时存在连接级和工作区级。连接级平均约 3 请求/秒，429 和 529 应遵循 `Retry-After`。
+- 大约 20,000 个块时 Markdown 响应可能截断；`unknown_block_ids` 无法区分“超限”和“无权限”。
+- 大写入的 HTTP 202 只表示任务进入后台处理，必须轮询到 `succeeded` 或 `failed`。
+- `replace_content` 默认拒绝删除子页面和子数据库。同步更新不得设置 `allow_deleting_content=true`。
 
-即使**没有任何人编辑**，"拉取→转换→哈希"如果不确定，会让每次同步都判定"内容变了"→ 无限重物化/重导出，几天内把平台配额和用户耐心耗光。三道防线：
+### 5.3 飞书：新接入使用 OpenConnector adapter
 
-1. **哈希前规范化层**（在 provider 产出 markdown 之后、contentHash 计算之前）：Notion Markdown API 返回的文件 URL 是**预签名的、带过期时间戳**——直接哈希必然每次不同，必须先替换成稳定资源 ID（图片在拉取时即下载入库，markdown 里引用本地稳定路径）；同理剥离/归一化所有时间戳类字段与空白差异。
-2. **转换器纯函数 + 快照测试**：同一份 blocks 输入必须产出字节级相同的 markdown（feishu blocks→md、Notion markdown 归一化都要锁死；对象键序、转义规则都是坑）。
-3. **contentHash 跳过链路照旧**：domain-projection 与 markdown-service 的双重 hash 幂等是现成的刹车，只要规范化层做对，它就生效。
+不为过渡期再复制一套飞书 Nango provider。当前 OpenConnector 固定版本已经提供用户 OAuth 和所需动作，飞书 adapter 复用这些能力：
 
-#### 4.4.5 删除与并发
+- 发现：个人云空间与 Wiki 两条路径分别分页；只处理支持的文档类型。
+- 正文：优先使用 `fetch_document` 的 Markdown 输出。
+- 降级：未公开的 `docs_ai` 端点不可用时，使用官方 docx blocks 分页并确定性转 Markdown；`raw_content` 只用于明确标记的纯文本降级。
+- 增量：以远端编辑时间为水位，固定重叠窗口；定期全量校准修复漏项。
+- 资源：图片和附件由受控下载器落入本地文件系统，Markdown 改写为稳定资源 ID 后再计算哈希。
 
-- **删除 v1 一律不自动传播**（破坏性操作无撤销）：远端删除 → 映射置 orphaned，EverRoom 侧保留内容并提示；本地删除 outbound 文档 → 映射置 orphaned，远端副本保留（Notion 可后续提供"确认删除远端"，走 2026-03-11 的 trash 语义，显式按钮）。
-- **并发**：导入（sync scope lease）与导出（outbox lease）已是各自串行；同一连接的导入与导出在**同一个 worker 里串行执行**（每连接单线程），任何文档对上的操作天然全序，不存在"正在导出时被导入覆盖"的窗口。
+必须先完成一个运行时修正：OpenConnector sidecar 的启动不能继续依赖“连接器页面”模式。数据源页面保留为默认 UI 时，也应按飞书连接需求启动 sidecar，并把状态呈现在统一连接列表中。
 
-#### 4.4.6 导出执行
+`fetch_document` 当前依赖未公开的 `/docs_ai/v1/documents/...` 端点。它可以作为优化路径，不能成为唯一正确性路径。生产验收必须覆盖 blocks fallback。
 
-- **导出 outbox**：复用 markdown-service 的 lease/退避（[30s,2m,10m,1h]，上限 10 次）模式反方向实现；导出执行器是独立服务，**不进入同步作业的 allowedActions 体系**（导入作业保持只读白名单不动摇）。
-- **mode 语义**：
-  1. `create_copy`（默认）：飞书 import_task 建新文档 / Notion `POST /v1/pages` 建新页——永不触碰已有内容；
-  2. `sync_update`（**仅 Notion，v1**）：过 §4.4.3 基线检查后执行 `replace_content`，`allow_deleting_content` 保持默认 false（平台级子页面保护）。飞书 sync_update **v1 明确不做**：`docs +update` 无"按标题整节替换"命令（§2.4 实测枚举），节粒度更新需 outline→block_id→block_replace 多步编排，复杂度与出错面不匹配首期收益——飞书导出一律 create_copy，节粒度原地更新留 v2 评估。
-- **大文档**：Notion `allow_async:true` + async_task 轮询；飞书 ticket 轮询；都在 outbox 内以租约推进，进程重启可续。
-- **幂等**：Notion 建页无服务器幂等，靠 outbox 状态机（pending→exporting[带远端任务句柄]→done）保证 at-least-once；句柄存在即续轮询而非重发，崩溃窗口内最坏重复一页，UI 提供按标题去重提示。
+### 5.4 规范化规则
 
-#### 4.4.7 v2 升级路径（真双向，Notion only）
+规范化发生在计算哈希之前：
 
-映射表已保存 `last_exported_md`（上次同步点的基线 markdown）。真双向 = 经典"无 merge 的 fetch"模型：
-- 本地当前 md、远端当前 md、基线 md 做 **diff3 三路合并**：不重叠的改动自动合，重叠段置 conflict；
-- 合并结果 EverRoom 侧直接落，Notion 侧 `replace_content` 写回，更新基线；
-- 飞书原地更新无安全的整页替换语义（§2.4），即便 v2 也只评估节粒度更新，主体维持副本模型。
+- 换行统一为 LF，移除行尾空白；
+- 预签名 URL 替换为稳定资源 ID；
+- Provider 临时时间戳不进入正文；
+- 未支持块保留可定位占位和原文链接；
+- 表格、列表、代码块和引用使用固定序列化规则；
+- 不把评论、修订历史和权限元数据混入正文。
 
-这个路径每个文档对等价于一个微型 Git，成本可控，但 v1 明确不做——先把方向模型和防环跑稳。
+规范化器必须是纯函数，并使用 Provider 响应快照做字节级测试。
 
-### 4.8 路线切换期的动工顺序
+## 6. Context Doc 与导出
 
-前提：Nango 退役与存量迁移尚需时间，期间新旧两条路径并存。按"是否依赖路线切换进度"拆分本需求的工作项：
+### 6.1 两种文档对象
 
-**立即可动（不依赖路线切换进度）**
+| 对象 | 所有者 | 默认可编辑 | 用途 |
+| --- | --- | --- | --- |
+| Connector mirror | 外部平台 | 否 | 搜索、引用、Knowledge/Memory 摄取 |
+| Context Doc | EverRoom | 是 | 用户创作、版本管理和显式导出 |
 
-1. **平台外部流程（周期最长，今天就该发起）**：
-   - 飞书：开发者后台创建企业自建应用 → 申请权限点（§2.1 清单）→ 配置 redirect_uri → 发布版本过管理员审批。审批链路是全需求最长的外部依赖。
-   - Notion：开发者后台创建公共连接 → **capabilities 一次定稿**（Read+Insert+Update content，之后不可改）→ 配置 redirect URI。
-2. **导出域模型与状态机（gateway 侧，路线无关）**：`connector_export_targets` 迁移 + export outbox（lease/退避/幂等）+ §4.4 方向状态机 + 冲突检测 + 防回环拦截点 + `/v1/connector-exports*` REST。执行器面向"平台客户端抽象接口"编程，Notion/飞书实现后插。
-3. **双向同步纯逻辑组件**：markdown 规范化层（预签名 URL→稳定资源 ID、时间戳剥离、空白归一）+ contentHash、基线比较、冲突三选一流——纯函数 + 快照测试，零平台依赖，是防抖动/防覆盖的地基。
-4. **Notion 全链路（现有 CLI 路径已够用，不必等）**：vendored open-connector 1.3.5 的 notion provider 已含 `retrieve_page_markdown`/`update_page_markdown`/`create_page`，网关 CLI 路径 notion 托管作业也在运行——**导入切 markdown 拉取（M3）与导出 Notion（M4，执行器经现有 open-connector 动作调用机制）现在就能做**，且全部代码在目标路线上、零弃置。
-5. **飞书 API spike（用第 1 项的应用凭据 + 一次性脚本）**：实测 docs-v1 markdown 读、`docs +update` 定位更新、import_task、`edit_time` 语义（冲突检测的关键前提）、限流。产出用于验证 provider 现成动作（`fetch_document`/`update_document`/`submit_drive_import` 等）的实际行为；lark-cli 可作对照客户端。
-6. **桌面导出 UI 骨架 + i18n 错误矩阵文案**：挂在导出 REST 上，与路线无关。
-7. **飞书 provider 接入（无前置依赖）**：全套动作与派生 scopes 已在 pin（`5719a69`/v1.3.5）就位，无需 fork、无需新增动作，飞书导入导出随时可在现有 pin 上接入。
+用户选择“保存为 Context Doc”时，创建本地文档快照并记录来源。后续来源更新先进入 Connector mirror，不直接覆盖已编辑的 Context Doc。
 
-**暂缓/独立推进项**
+### 6.2 首版导出语义
 
-- 飞书 OAuth 的产品化接入（授权 UI、账号管理、连接状态）——授权机制在 provider 定义里已实现，接入走现有 cliConnector 通道即可。
-- Nango 存量连接迁移（独立工作项）。
+首版只提供 `create_copy`：
 
-**推荐首期切法：单向导入先行。** 双向的冲突/防覆盖/防回环/outbox/映射表全部延后，保留：规范化层 + contentHash（防抖动仍需要）、增量水位、错误矩阵。Notion 侧零等待（现有 CLI 路径 + vendored provider 已有 markdown 动作）；飞书侧只等自建应用审批（provider 动作已在 pin 就位，无需 fork）。
+- Notion：`POST /v1/pages` 创建新页面；大内容使用 `allow_async=true` 并轮询。
+- 飞书：上传 Markdown 后提交 import task，轮询到远端文档创建完成。
+- API 接收请求时固定本地修订并生成一次性导出命令 ID；同一命令重复提交返回原 outbox 记录，用户再次主动导出才创建新命令。
+- worker 先检查连接能力并物化 Markdown 与资源清单，再调用 adapter；调用前不得把任务标为成功。
+- 远端返回任务句柄时，先持久化句柄再进入 `waiting_remote`；进程重启后从句柄继续轮询。
+- 每次成功写回远端 ID、远端 URL、基线 hash 和远端修订信息，并创建 `export_copy` binding。
+- 请求状态不确定且没有可查询句柄时进入人工确认状态，不直接重发创建请求。
+- 图片必须单独验证和处理，不能假设 Markdown 导入会自动搬运本地资源。
 
-### 4.9 Spike 实测记录（2026-09-01，lark-cli v1.0.84）
+### 6.3 后续镜像更新
 
-用 lark-cli 把本报告发布为飞书文档并回读，全链路实测结论：
+Notion 可在第二阶段提供 `sync_update`，但必须显式开启：
 
-- **建文档**：`docs +create --doc-format markdown --content @file --title` 一次成功（约 2.5 万字、大量表格/代码块/链接的中文文档），落在"我的空间"根目录，返回 `document_id` + `revision_id=5`（导入内部经历多次块修订）。
-- **回读**：`docs +fetch --api-version v2 --doc-format markdown` **单次调用**取回全文，标题、表格、引用块、链接、加粗、代码全部完整——验证 §2.3"Markdown 直读替代自建转换器"的判断（`--api-version` 已是隐藏兼容 flag，新版默认即 v2；该路径底层为**未公开的 docs_ai 端点**，风险与兜底见 §2.3/§5.8）。
-- **授权**：token `needs_refresh` 状态下首次调用自动刷新成功（refresh token 有效期内）；实测账号的 scope 集覆盖 `docx:document:create`/`docs:document.content:read`/`docs:document:import`/`wiki:*`/`search:docs:read`/`offline_access`。其中除 `docs:document.content:read` 外均已在 provider 派生 scope 集内（§4.2）——该权限点是当前唯一确认的开通缺口，需自建应用后台开通并在 M1 验证其对 docs_ai 端点的必要性。
-- **规范化实证**：回读的 markdown 与发送版存在**表示层差异**——表格分隔线 `|---|` 变 `|-|`、引用块行尾多空格等。直接证实 §4.4.4：**contentHash 必须算在"规范化之后"的形态上，绝不能假设"发出去什么读回来什么"**；规范化参照形态应取"回读形态"（平台的规范化输出是稳定的）。
-- 实测文档：https://vyi-tech.feishu.cn/docx/RLrpdlFGEoNhJExbkxucS3jhnMc（本报告线上副本，随本文同步更新）。
+1. 拉取远端最新 `last_edited_time` 和 Markdown。
+2. 比较远端 hash、本地修订和上次同步基线。
+3. 只有远端未变化时才执行 `replace_content`。
+4. 任一端同时变化则进入 `conflict`，不自动写入。
+5. 冲突操作只提供“保留本地并另存远端副本”“采用远端并新建本地版本”“断开映射”。
 
-### 4.5 提示与重试矩阵（验收标准 4 的直接答案）
+飞书原地更新需要块级定位、修订号和媒体保护，首版不进入 `sync_update`。
 
-| 场景 | 飞书信号 | Notion 信号 | 用户提示（要点） | 自动处理 |
-|---|---|---|---|---|
-| 授权失效 | 99991663 / refresh_token 过期（以响应体 `refresh_token_expires_in` 实际值为准，官方示例 7 天且"非固定值"） | 401 unauthorized / invalid_grant | "飞书授权已过期，请重新授权"（跳授权流） | 作业置 needs_connection 暂停；其余连接不受影响；UI 徽标 |
-| 权限不足（页面/文档级） | 1069902（用户无该文档权限） | 403 restricted_resource | 指明具体文档 + "在飞书分享中授予访问 / 在 Notion 页面 ··· 添加连接"步骤文案 | 单文档跳过并计入 run.failed，不中断批次；连续 N 次后从范围摘除并提示 |
-| 页面未共享（Notion 特有） | — | 404 object_not_found | "该页面未与 EverRoom 共享"（消息含连接名，直接透出） | 同上，标记该页待重授权范围 |
-| 应用权限未申请 | 99991672 | — | "管理员尚未开通 XX 权限"（面向管理员） | 不重试，人工介入 |
-| 限流 | 429 / 1069923 | 429 + Retry-After / 529 | 不打扰用户；同步详情可见"因平台限流等待" | 客户端节流（Notion ≤3rps 队列；飞书按 3–5 QPS/接口、任务 100/min）+ outbox 退避 |
-| 上传素材过期 | 1069913 | — | 无感 | 重上传后重建导入任务 |
-| 目标文件夹不可写 | 1069908 | 404/403（父页面不可写） | "导出目标不可写，请检查分享或另选位置" | 导出条目置 conflict，可改目标重试 |
-| 远端被他人修改 | doc edit_time > 基线 | last_edited_time > 基线 | 冲突三选一（覆盖/断开/另存） | 不自动覆盖 |
-| 文档被删除 | 1069906 | 404 object_not_found（持续） | "源文档已在平台删除，是否移除映射" | 映射置 orphaned；EverRoom 侧内容保留 |
+### 6.4 删除规则
 
-### 4.6 代码改动清单（按模块）
-- **open-connector（零 provider 改动）**：feishu 动作（markdown 读/发现/`update_document`/`submit_drive_import` 等写动作）与 scopes 派生集已在 pin（`5719a69`/v1.3.5）就位，**不 fork、不升 pin、不新增动作**；唯一 provider 侧工作是 §4.2 的权限审计（含 `docs:document.content:read` 开通确认）。若上游后续把 `fetch_document` 的 requiredScopes 对齐 docs_ai 实际所需，随常规 pin 升级带入即可。
-- **gateway/cli-connectors**：`service.ts` 托管作业 seed 加 feishu；`document-sync.ts` 扩展 feishu + notion 切 markdown；agent-tools 按需暴露新动作。
-- **gateway/export（新模块，与路线无关）**：export-targets 表 + 迁移、export-outbox 服务、导出执行器（经 oo CLI 调 open-connector 动作：Notion 用现成 `create_page`/`update_page_markdown`，飞书用现成 `submit_drive_import`/`update_document`）、REST（`/v1/connector-exports*`）。
-- **desktop**：连接/授权入口走 cliConnector 通道（ConnectorConsolePage/ConnectorSyncPage 现成骨架）、导出对话框（目标选择 + mode + 冲突三选一 UI）、bridge/IPC/preload 按现有模式扩展；Nango 相关 UI 随退役移除（独立工作项）。
-- **i18n**：en-US/zh-CN 新增 connector 相关文案（错误矩阵逐条）。
+- 远端删除或失去访问权限：mirror 标记为不可用；本地 Context Doc 保留。
+- 本地删除 Context Doc：远端副本保留；映射标记为 `orphaned`。
+- 任何远端删除都需要单独、明确的用户操作，不由同步任务触发。
 
-### 4.7 里程碑建议
-1. **M1 OpenConnector 路线打通**：provider 现状审计（动作清单/scope 派生集 vs 自建应用实际开通权限，重点确认 docs_ai 端点相关的 `docs:document.content:read`）→ 实测飞书 OAuth 授权闭环（含飞书后台 redirect_uri 配置、权限审批链路）→ 连接状态 UI。
-2. **M2 飞书云文档导入**：网关 document-sync 扩展 feishu（用现成 `fetch_document`/`list_drive_files`/`list_wiki_*` 动作）+ edit_time 增量水位。
-3. **M3 Notion 导入收尾（全量落在 CLI 路径）**：网关切 `retrieve_page_markdown`、capabilities 定稿重授权一次（Notion-Version 已是 2026-03-11）；存量 Nango Notion 连接迁移到 OpenConnector 连接（重授权引导 + 双跑核对后切换），完成后 sync-providers/notion.ts 冻结待退役。
-4. **M4 导出 Notion**：映射表 + outbox + create_copy（provider 动作已有，零 provider 改动）+ allow_async。
-5. **M5 导出飞书**：写动作 provider 已就位（`submit_drive_import`/`get_drive_import`/`get_drive_task_status`，零 provider 改动）——工作 = 网关导出执行器接入 import_task 流程 + 防回环；sync_update 不做（§4.4.6，v1 仅 create_copy）。
-6. **M6 错误矩阵 UX + 冲突流 + 验收**（逐条对照四条验收标准）。
+## 7. 状态与数据模型
 
----
+新增两类持久化数据。
 
-## 5. 风险与待验证项
-1. **OpenConnector 版本策略**：上游以 tarball 固定 commit（`5719a69`/v1.3.5）引入；feishu 导入/导出所需动作与派生 scopes 已确认在该 pin 就位（§0），**当前无需 fork 也无需升 pin**——常规升级随上游发布节奏走，升级时重跑一遍动作/scope 审计即可。飞书 OAuth 回调沿用 OpenConnector 既有授权机制（notion/gmail 同一套已跑通），但飞书后台 redirect_uri 配置与权限审批链路仍需 M1 实测。
-2. **Nango 退役与终态**：本需求终态 = 飞书/Notion 完全走 OpenConnector，不在 Nango 侧新增任何代码（providers.yaml、sync-providers、`/v1/nango-connectors/*` 全部冻结现状）；Notion 存量连接迁移列入 M3，gmail/outlook/google-* 的存量迁移是独立退役工作项，不阻塞本需求，期间两条路径并存（README.md 的边界约定仍有效）。
-2. **飞书应用创建与权限审批**：自建应用 + 管理员开权限 + 版本发布即可，无需商店审核；但企业若开审批流，权限生效有时滞（依赖项已列入需求）。
-3. **Notion capability 定稿即锁死**：上线后改动 = 全体用户重授权；把 Read+Insert+Update content 一次定到位。
-4. **Notion 3 rps**：批量导入大空间时是主要吞吐瓶颈；Markdown API 单页单请求已是最优，必要时并发=1 串行 + 节流队列。
-5. **结构保真度边界**：飞书高亮块/分栏、Notion 部分块类型无对应 Markdown 表示——按"占位+原文链接+导入报告说明降级项"验收，不追求 100% 视觉等价。
-6. **防回环**是双向同步最易翻车点：export_targets 的 mirror 标记必须在第一个导出 MVP 里就落地，不能后补。
-7. 仓库现状补充：Nango 路径的 feishu-wiki（api-token、raw_content 纯文本）与 notion.ts（blocks 拉取）不再投入，随 Nango/direct 退役处理；Notion-Version 已在 OpenConnector notion provider 侧确认为 2026-03-11，Nango 代理的 2022-06-28 钉死不做兼容投入。
-8. **markdown 主读路径依赖未公开端点**：provider `fetch_document` 与 lark-cli `docs +fetch` 底层均为 `POST /open-apis/docs_ai/v1/documents/:token/fetch`，open.feishu.cn 无公开文档（行为/配额/存续无契约）；公开兜底 docs-v1 `GET /open-apis/docs/v1/content` 有 **10MB 上限**（超限报 2889925）、权限 `docs:document.content:read`（**不在 provider 派生 scope 集内**，需自建应用单独开通）、仅支持 docx。对策：M2 实测大文档（>10MB/高块数）行为；导入执行器按 `fetch_document` → docs-v1 /content → blocks 分页自转三级兜底；`docs:document.content:read` 列入自建应用权限开通清单。
+### 7.1 文档映射
 
-## 6. 主要参考链接
-- 飞书 OAuth：[授权码](https://open.feishu.cn/document/authentication-management/access-token/obtain-oauth-code?lang=zh-CN) · [v2 换 token](https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/authentication-management/access-token/get-user-access-token) · [刷新 v2](https://open.feishu.cn/document/authentication-management/access-token/refresh-user-access-token?lang=zh-CN)
-- 飞书文档：[blocks 列表](https://open.feishu.cn/document/server-docs/docs/docs/docx-v1/document/list?lang=zh-CN) · [raw_content](https://open.feishu.cn/document/server-docs/docs/docs/docx-v1/document/raw_content?lang=zh-CN) · [块数据结构](https://open.feishu.cn/document/ukTMukTMukTM/uUDN04SN0QjL1QDN/document-docx/docx-v1/data-structure/block) · [wiki 节点](https://open.feishu.cn/document/server-docs/docs/wiki-v2/space-node/get_node?lang=zh-CN)
-- 飞书导入/导出：[创建导入任务](https://open.feishu.cn/document/server-docs/docs/drive-v1/import_task/create?lang=zh-CN) · [导入概述](https://open.feishu.cn/document/server-docs/docs/drive-v1/import_task/import-user-guide?lang=zh-CN) · [创建导出任务](https://open.feishu.cn/document/server-docs/docs/drive-v1/export_task/create?lang=zh-CN)
-- 飞书错误/事件：[99991663](https://open.feishu.cn/document/faq/trouble-shooting/how-to-fix-99991663-error) · [99991672](https://open.feishu.cn/document/faq/trouble-shooting/how-to-fix-the-99991672-error?lang=zh-CN) · [事件订阅概述](https://open.feishu.cn/document/server-docs/event-subscription-guide/overview?lang=zh-CN)
-- Notion：[Authorization](https://developers.notion.com/guides/get-started/authorization) · [capabilities](https://developers.notion.com/reference/capabilities) · [Markdown API](https://developers.notion.com/guides/data-apis/working-with-markdown-content) · [Create/Refresh token](https://developers.notion.com/reference/create-a-token) · [限流](https://developers.notion.com/reference/request-limits) · [错误码](https://developers.notion.com/reference/status-codes) · [2026-03-11 升级指南](https://developers.notion.com/guides/get-started/upgrade-guide-2026-03-11)
-- 开源参考：[feishu-pages（docx→Markdown）](https://github.com/yangzupan/feishu-pages) · [feishu-cli](https://github.com/riba2534/feishu-cli)
+`connector_document_bindings`：
+
+```text
+id, owner_id, provider, connection_name, connection_kind,
+remote_document_id, connector_document_id, local_document_id,
+relation(source_mirror|export_copy|sync_update),
+status(active|partial|conflict|orphaned|disabled),
+baseline_remote_hash, baseline_local_hash,
+last_remote_revision, last_local_revision,
+last_inbound_operation_id, last_outbound_operation_id,
+last_pulled_at, last_pushed_at, created_at, updated_at
+```
+
+`remote_document_id` 在 binding 中始终存在。纯来源镜像尚未保存为 Context Doc 时，`local_document_id` 为空；导出副本尚未被后续入站发现时，`connector_document_id` 为空。`create_copy` 成功前只存在 outbox 记录，`binding_id` 可为空；取得远端 ID 后才创建完整 binding。约束使用：
+
+```text
+(owner_id, provider, connection_name, remote_document_id)
+UNIQUE active sync_update
+  ON (owner_id, local_document_id, provider, connection_name)
+```
+
+同一个 Context Doc 可以保留多个 `export_copy` 历史，不能用宽泛唯一键阻止用户再次创建副本；只有 `sync_update` 要限制为同一平台连接最多一个活动目标。
+
+### 7.2 导出 outbox
+
+`connector_export_outbox`：
+
+```text
+id, owner_id, binding_id, export_command_id,
+provider, connection_name, connection_kind,
+operation(create_copy|update_existing),
+local_document_id, local_revision, payload_hash,
+expected_remote_revision, expected_remote_hash, origin_operation_id,
+status(pending|processing|waiting_remote|needs_confirmation|succeeded|failed|dead),
+attempt_count, available_at, lease_owner, lease_until,
+remote_task_id, remote_result, last_error, created_at, updated_at
+```
+
+状态迁移：
+
+```text
+pending -> processing -> waiting_remote -> succeeded
+                    \-> needs_confirmation
+                    \-> failed -> pending
+                              \-> dead
+```
+
+`export_command_id` 对 API 重试幂等，`origin_operation_id` 关联本次远端写入与后续入站观测，两者不能混用。同一 binding 串行执行导入提交和导出写操作，避免导出期间又被导入覆盖。outbox 保证可恢复的至少一次执行；外部平台通常不保证创建操作 exactly-once，因此仍需任务句柄、命令幂等和人工确认状态共同减少重复副本。
+
+## 8. 错误处理
+
+| 分类 | 典型信号 | 系统行为 | 用户提示 |
+| --- | --- | --- | --- |
+| 授权失效 | 401、invalid token、refresh 失败 | 暂停该连接任务，保留本地数据 | 重新授权该账号 |
+| 应用权限缺失 | 飞书应用 scope 不足、Notion capability 不足 | 不自动重试 | 管理员补权限；需要时重新授权 |
+| 文档权限不足 | 403、404 object_not_found、飞书文档无权访问 | 单文档失败，不中断其他文档 | 指明文档和授权方式 |
+| 限流 | 429、529、Provider 限流码 | 遵循 `Retry-After`，指数退避并加抖动 | 默认不打扰，详情页可见 |
+| 临时服务错误 | 5xx、网络超时 | 只对幂等读取自动重试 | 超过上限后显示失败 |
+| 内容不完整 | truncated、unknown block、结构降级 | 保存 partial 状态和占位 | 显示缺失原因与原文入口 |
+| 异步写入失败 | 远端任务 failed 或句柄过期 | 不重发不确定的创建请求 | 允许确认远端状态后重试 |
+| 冲突 | 本地和远端均偏离基线 | 停止写入 | 提供三种显式处理方式 |
+
+飞书 token 的有效期必须使用响应里的 `expires_in` 和 `refresh_token_expires_in`，不能硬编码“7 天”或“30 天”。当前 lark-cli 实测账号显示 access token 约 2 小时、refresh token 约 7 天，只能作为样本。
+
+飞书云文档“订阅事件”接口当前官方限额为 1000 次/分钟、50 次/秒；10 次/分钟是取消订阅接口的限制。首版仍使用轮询，事件订阅不进入关键路径。
+
+## 9. 交付阶段
+
+### P0：修正现有 Notion Nango 同步
+
+- 搜索和正文完整分页；
+- Markdown API 主路径、blocks fallback；
+- 截断与权限型 unknown 处理；
+- 统一错误分类和快照测试。
+
+验收：超过 100 页、嵌套块、大页面和部分无权限页面不会静默漏数据。
+
+### P1：飞书导入
+
+- OpenConnector 生命周期与页面模式解耦；
+- 飞书 OAuth 和统一连接状态；
+- Drive/Wiki 发现、Markdown 主读、blocks fallback；
+- 进入既有领域投影、Markdown 和 ingest 链路。
+
+验收：重新启动后连接可恢复；单文档失败不阻断批次；结构降级可见。
+
+### P2：安全副本导出
+
+- Context Doc 来源映射；
+- export outbox 和异步任务续跑；
+- Notion/飞书 `create_copy`；
+- 图片处理、重复副本提示和导出结果入口。
+
+验收：崩溃恢复不会无条件重发；不覆盖已有远端内容；失败可重试。
+
+### P3：Notion 镜像更新
+
+- 基线、远端预检和冲突状态；
+- `replace_content`，保持子页面删除保护；
+- 冲突三选一 UI。
+
+验收：两端同时编辑时不自动覆盖；删除不传播。
+
+### P4：连接运行时收敛
+
+- 统计 Nango 与 OpenConnector 的成功率、授权恢复率和 Provider 覆盖；
+- 对单个 Provider 做双跑校验；
+- 达到等价后再迁移存量连接；
+- 最后删除对应 Nango 路径，不做一次性全栈替换。
+
+## 10. 待验证事项
+
+1. 数据源默认页面下启动 OpenConnector sidecar 的资源占用和故障降级。
+2. 飞书 `fetch_document` 未公开端点的长期稳定性、限流和大文档表现。
+3. 飞书 blocks 转 Markdown 对表格、分栏、白板和媒体的保真边界。
+4. 飞书 Markdown import task 对图片、本地附件和超大内容的行为。
+5. Notion Markdown 截断补拉后的顺序重建方式，不能简单追加到全文末尾。
+6. Nango 与 OpenConnector 同时存在时的账号去重、断开连接和重授权 UX。
+7. 当前导入记录与 Context Doc 之间采用复制还是持续跟随的产品文案。
+
+## 11. 核验记录与参考
+
+### 11.1 本次核验
+
+- 使用 lark-cli 1.0.84 读取本方案飞书文档，文档 ID 为 `RLrpdlFGEoNhJExbkxucS3jhnMc`，首次读取时修订号为 55。
+- lark-cli 全文 Markdown 回读成功；回读格式会规范化表格分隔线和空白，因此内容哈希必须在规范化后计算。
+- 仓库相关测试：`feishu-wiki.test.ts`、`sync-providers.test.ts`、`managed-document-sync.test.ts`、`connector-agent-sync.test.ts`，共 23 个用例通过。
+
+### 11.2 官方资料
+
+- [Notion Markdown 内容 API](https://developers.notion.com/guides/data-apis/working-with-markdown-content)
+- [Notion 连接 capabilities](https://developers.notion.com/reference/capabilities)
+- [Notion Search API](https://developers.notion.com/reference/post-search)
+- [Notion 请求与限流](https://developers.notion.com/reference/request-limits)
+- [Notion 2026-03-11 升级指南](https://developers.notion.com/guides/get-started/upgrade-guide-2026-03-11)
+- [飞书订阅云文档事件](https://open.feishu.cn/document/server-docs/docs/drive-v1/event/subscribe?lang=zh-CN)
+- [飞书获取文档所有块](https://open.feishu.cn/document/server-docs/docs/docs/docx-v1/document/list?lang=zh-CN)
+- [飞书创建导入任务](https://open.feishu.cn/document/server-docs/docs/drive-v1/import_task/create?lang=zh-CN)
+- [飞书 OAuth 获取与刷新 user_access_token](https://open.feishu.cn/document/authentication-management/access-token/refresh-user-access-token?lang=zh-CN)
+
+### 11.3 仓库依据
+
+- `apps/gateway/src/modules/connectors/sync-providers/notion.ts`
+- `apps/gateway/src/modules/connectors/sync-providers/feishu-wiki.ts`
+- `apps/gateway/src/modules/connectors/document-sync.ts`
+- `apps/gateway/src/modules/connectors/service.ts`
+- `apps/desktop/src/renderer/src/components/pages/sources/ConnectSourceMenu.tsx`
+- `apps/desktop/src/shared/page-mode.ts`
+- 固定版本 `@oomol-lab/open-connector@5719a69468c698c7cb8108e062ff64ecef8a2e65`

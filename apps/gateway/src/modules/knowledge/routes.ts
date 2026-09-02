@@ -1255,5 +1255,65 @@ export function knowledgeRoutes(service: KnowledgeService): FastifyPluginAsyncTy
         return { matched: result.matched, replayed: result.replayed };
       },
     );
+
+    // ───────────────────── M3 知识整理偏好（统计/洞察/用户接管/开关） ─────────────────────
+    const preferencesOf = (reply: { code: (status: number) => { send(payload: unknown): unknown } }) => {
+      const preferences = service.getKnowledgePreferences();
+      if (preferences) return preferences;
+      void reply.code(503).send(errorOf("knowledge_preferences_unavailable"));
+      return null;
+    };
+
+    app.get(
+      "/v1/knowledge/preferences",
+      { schema: { tags: ["knowledge"] } },
+      async (request, reply) => {
+        const preferences = preferencesOf(reply);
+        return preferences ? preferences.getPreferences() : undefined;
+      },
+    );
+
+    app.put(
+      "/v1/knowledge/preferences/user-content",
+      {
+        schema: {
+          tags: ["knowledge"],
+          body: Type.Object({ content: Type.String({ maxLength: 2_000 }) }),
+        },
+      },
+      async (request, reply) => {
+        const preferences = preferencesOf(reply);
+        return preferences ? preferences.updateUserPreference(request.body.content) : undefined;
+      },
+    );
+
+    app.put(
+      "/v1/knowledge/preferences/settings",
+      {
+        schema: {
+          tags: ["knowledge"],
+          body: Type.Object({
+            learningEnabled: Type.Optional(Type.Boolean()),
+            injectionEnabled: Type.Optional(Type.Boolean()),
+          }, { additionalProperties: false }),
+        },
+      },
+      async (request, reply) => {
+        const preferences = preferencesOf(reply);
+        return preferences ? preferences.updateSettings(request.body) : undefined;
+      },
+    );
+
+    app.post(
+      "/v1/knowledge/preferences/refresh",
+      { schema: { tags: ["knowledge"] } },
+      async (request, reply) => {
+        const preferences = preferencesOf(reply);
+        if (!preferences) return undefined;
+        await preferences.refreshNow();
+        await preferences.regenerateInsight();
+        return preferences.getPreferences();
+      },
+    );
   };
 }

@@ -13,7 +13,7 @@ import { HomeView } from './components/HomeView'
 import { PortedDetail } from './components/PortedDetail'
 import type { DetailPane } from './components/RoomIconSidebar'
 import {
-  mergeAutoKnowledgeRooms,
+  mergeKnowledgeRooms,
   shouldDeleteRoomFromKnowledge,
   shouldSyncRoomToKnowledge,
 } from './knowledgeRoomSync'
@@ -55,11 +55,6 @@ export function PortedContextRoom({
   const detailPaneByRoomIdRef = useRef<Record<string, DetailPane>>({})
   const [homeView, setHomeView] = useState<'home' | 'all'>('home')
   const [vaults, setVaults] = useState<ObsidianVaultBinding[]>([])
-  const [initialObject, setInitialObject] = useState<{
-    kind: 'file' | 'mail' | 'meeting'
-    id: string
-    roomId: string
-  } | null>(null)
   const activeRoom = state.rooms.find((room) => room.id === activeRoomId) ?? null
   // 手动合并（首页/全部列表两个视图共用）：选择对话框 + manualPair 版合并中心。
   const [manualMergeRoom, setManualMergeRoom] = useState<ContextRoomRecord | null>(null)
@@ -196,9 +191,10 @@ export function PortedContextRoom({
     }
 
     try {
-      const remote = await knowledge.listRooms('auto')
+      // 全量拉取（origin=user 出生后晋升 Room 也在此名单；未知 id 才落本地）。
+      const remote = await knowledge.listRooms()
       setState((current) => {
-        const rooms = mergeAutoKnowledgeRooms(current.rooms, current.deletedRooms, remote.items)
+        const rooms = mergeKnowledgeRooms(current.rooms, current.deletedRooms, remote.items)
         return rooms === current.rooms ? current : { ...current, rooms }
       })
     } catch {
@@ -263,15 +259,9 @@ export function PortedContextRoom({
   useEffect(() => {
     if (homeRequest === handledHomeRequest.current) return
     handledHomeRequest.current = homeRequest
-    setInitialObject(null)
     setHomeView('home')
     onShowHome()
   }, [homeRequest, onShowHome])
-
-  useEffect(() => {
-    if (!activeRoomId || initialObject?.roomId !== activeRoomId) return
-    setInitialObject(null)
-  }, [activeRoomId, initialObject])
 
   const updateRoom = (updater: (room: ContextRoomRecord) => ContextRoomRecord) => {
     if (!activeRoomId) return
@@ -291,7 +281,6 @@ export function PortedContextRoom({
   const openRoom = (roomId: string) => {
     const room = state.rooms.find((item) => item.id === roomId)
     if (!room) return
-    setInitialObject(null)
     onOpenRoomTab({ id: room.id, title: room.title })
   }
 
@@ -349,12 +338,10 @@ export function PortedContextRoom({
         onDeleteDocumentPermanently={roomDocuments.deleteDocumentPermanently}
         onEmptyTrash={roomDocuments.emptyTrash}
         initialActivePane={detailPaneByRoomIdRef.current[activeRoom.id] ?? 'overview'}
-        initialObject={initialObject?.roomId === activeRoom.id ? initialObject : null}
         onActivePaneChange={(pane) => {
           detailPaneByRoomIdRef.current[activeRoom.id] = pane
         }}
         onBack={() => {
-          setInitialObject(null)
           onShowHome()
         }}
         onOpenRoom={openRoom}
@@ -387,20 +374,6 @@ export function PortedContextRoom({
     <HomeView
       rooms={state.rooms}
       deletedRooms={state.deletedRooms}
-      onCreateRoom={async (draft, duplicateOverrideToken) => {
-        const api = window.nxcore?.contextRooms
-        if (!api?.create) throw new Error(t('contextRoom:roomDialogs.serviceUnavailable'))
-        const result = await api.create({
-          title: draft.name,
-          description: draft.description,
-          ...(duplicateOverrideToken ? { duplicateOverrideToken } : {}),
-        })
-        const refreshed = await refreshFromBackend()
-        const room = refreshed?.rooms.find((item) => item.id === result.room.id)
-        if (!room) throw new Error(t('contextRoom:roomDialogs.createFailed'))
-        onOpenRoomTab({ id: room.id, title: room.title })
-        return room.id
-      }}
       onMountObsidian={async () => {
         const binding = await window.nxcore?.obsidian.pickAndMount()
         if (!binding) return
@@ -410,20 +383,6 @@ export function PortedContextRoom({
       onRenameRoom={renameRoom}
       onDeleteRoom={deleteRoom}
       onRestoreRoom={restoreRoom}
-      onOpenRecommendationSource={(source) => {
-        if (!source.roomId) return
-        if (source.objectId) {
-          setInitialObject({
-            kind: source.type === '文件' ? 'file' : source.type === '邮件' ? 'mail' : 'meeting',
-            id: source.objectId,
-            roomId: source.roomId,
-          })
-        } else {
-          setInitialObject(null)
-        }
-        const room = state.rooms.find((item) => item.id === source.roomId)
-        if (room) onOpenRoomTab({ id: room.id, title: room.title })
-      }}
       onOpenDetail={openRoom}
       onShowAll={() => setHomeView('all')}
       onFocusAgent={onFocusAgent}

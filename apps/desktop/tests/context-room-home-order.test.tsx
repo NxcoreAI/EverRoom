@@ -23,11 +23,9 @@ function room(id: string, title: string, updatedAt?: string) {
 }
 
 const handlers = {
-  onCreateRoom: vi.fn().mockResolvedValue(undefined),
   onRenameRoom: vi.fn(),
   onDeleteRoom: vi.fn(),
   onRestoreRoom: vi.fn(),
-  onOpenRecommendationSource: vi.fn(),
   onOpenDetail: vi.fn(),
   onShowAll: vi.fn(),
   onFocusAgent: vi.fn(),

@@ -60,6 +60,15 @@ function mergePreview(): RoomMergePreview {
     targetRoom: { id: 'room-a', title: '校园生活', data: { id: 'room-a', title: '校园生活' } },
     recommendedTargetRoomId: 'room-a',
     impact,
+    sketch: {
+      background: 'A 房背景\n\nB 房背景',
+      goal: '共同目标',
+      status: '进行中',
+      materialsCount: 2,
+      filesCount: 1,
+      memoriesCount: 3,
+      entitiesTop: ['校园', '社团'],
+    },
     conflicts: [],
     excluded: [],
     previewHash: 'hash-1',
@@ -149,6 +158,10 @@ describe('RoomDuplicateCenter', () => {
 
     // 默认标题 = A 侧标题；推荐 chips = A、B、A + B（标题相同则去重、组合项不重复）。
     expect(renderer!.root.findByType('input').props.value).toBe('校园生活')
+    // M2-B：预览页渲染确定性合并预演（标注预演非最终）。
+    expect(textNodes(renderer!, '合并后预览')).toHaveLength(1)
+    expect(textNodes(renderer!, '预演，非最终内容')).toHaveLength(1)
+    expect(textNodes(renderer!, 'A 房背景')).toHaveLength(1)
     const chips = renderer!.root
       .findAll((node) => node.props.className === 'context-room-merge-suggestions')[0]!
       .findAllByType('button')

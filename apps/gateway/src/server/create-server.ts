@@ -80,6 +80,7 @@ import { DocumentHistoryBackfillWorker } from "../modules/ingest/document-histor
 import { loadPolicyOverrides, loadProjectDefaults } from "../modules/ingest/policy.js";
 import { knowledgeRoutes } from "../modules/knowledge/routes.js";
 import { KnowledgeService } from "../modules/knowledge/service.js";
+import { KnowledgePreferences } from "../modules/knowledge/preferences.js";
 import { KnowledgeLlm } from "../modules/knowledge/llm.js";
 import { cliConnectorRoutes, connectorSyncRoutes, nangoConnectorRoutes } from "../modules/connectors/routes.js";
 import { ConnectorMarkdownService } from "../modules/connectors/markdown-service.js";
@@ -582,9 +583,20 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     mergeKnowledge: (sourceRoomId, targetRoomId) => knowledgeService.mergeRoomKnowledge(sourceRoomId, targetRoomId),
     rebuildRelations: () => knowledgeService.rebuildRoomRelations(),
     wikiFileCount: (roomId) => knowledgeService.roomWikiFileCount(roomId),
+    // M2-B：合并完成 → 新 Room 占位简报自动再生成（守卫在 refreshBriefIfPlaceholder 内）。
+    onMergeCompleted: (newRoomId) => contextRoomService.refreshBriefIfPlaceholder(newRoomId),
   });
   contextRoomService.setDuplicateService(roomDuplicateService);
   knowledgeService.setRoomDuplicateIndexTrigger(() => roomDuplicateService.requestRebuild());
+  // M3 知识整理偏好：统计（确定性）+ 洞察（LLM 修订式，失败保旧）+ 建议性注入
+  // （extract/judgeEntityIdentity；开关关闭=不注入）。job 延迟 3 分钟首跑。
+  const knowledgePreferences = new KnowledgePreferences(
+    db,
+    () => knowledgeService.currentLlm(),
+    app.log,
+  );
+  knowledgeService.setKnowledgePreferences(knowledgePreferences);
+  knowledgePreferences.start();
   // 手动建 Room：enrich 实体回写时认领到本 Room，使后续资料路由能命中（与推荐晋升同语义）
   contextRoomService.setRoomEntityClaimer((roomId, entities) =>
     knowledgeService.claimRoomEntities(roomId, entities));
@@ -622,6 +634,30 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   // doc-writer 输出的跨字段校验（doc-writer-subagent-plan §3.4）：baseVersion 回显、
   // hunks 目标 ∈ blockIndex、分块预算。须在首次 dispatch 前注册。
   subagentRuntimeManager.registerAgentResultValidator("doc-writer", createDocWriterResultValidator());
+  // room-corrector 输出校验：edits 的 targetClaimId 必须来自网关组装的 claims 快照
+  //（服务端 applyCitations 还有二次强校验，这里提前拒绝省一次转发）。
+  subagentRuntimeManager.registerAgentResultValidator("room-corrector", (invocationInput, result) => {
+    const input = invocationInput !== null && typeof invocationInput === "object" && !Array.isArray(invocationInput)
+      ? invocationInput as Record<string, unknown>
+      : {};
+    const known = new Set(
+      Array.isArray(input.claims)
+        ? input.claims
+          .filter((entry): entry is Record<string, unknown> =>
+            entry !== null && typeof entry === "object" && !Array.isArray(entry))
+          .map((entry) => String(entry.claimId ?? ""))
+          .filter(Boolean)
+        : [],
+    );
+    const edits = Array.isArray(result.edits) ? result.edits : [];
+    for (const edit of edits) {
+      if (edit === null || typeof edit !== "object" || Array.isArray(edit)) continue;
+      const claimId = (edit as Record<string, unknown>).targetClaimId;
+      if (typeof claimId === "string" && claimId && known.size > 0 && !known.has(claimId)) {
+        throw new Error(`room_corrector_target_claim_not_in_snapshot: ${claimId}`);
+      }
+    }
+  });
   for (const developerAgent of subagentRegistry.listAvailable()) {
     agentResolver.register({
       id: developerAgent.id,
@@ -701,6 +737,29 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
             // 写作风格生成段迁移（§7）：主 Agent 不再注入，doc-writer dispatch 全 task 附加。
             writingStyleProvider: {
               getGenerationPromptSection: () => writingStyleService.getGenerationPromptSection(),
+            },
+            // room_correction_draft 的组装数据源：总览投影的 claims 快照（主 Agent 不再
+            // 经 context_get 携带全量总览；引用/模糊纠正的计算归 room-corrector 子 Agent）。
+            resolveRoomCorrectionContext: (roomId) => {
+              try {
+                const projection = roomOverviewService.get(roomId);
+                const claims = (["overview", "status", "nextSteps", "timeline", "entities"] as const)
+                  .flatMap((key) => projection[key].map((claim) => ({
+                    claimId: claim.id,
+                    section: key === "nextSteps" ? "next_steps" as const : key,
+                    text: claim.text,
+                    origin: claim.origin,
+                    corrected: claim.corrected,
+                    evidence: claim.evidence.slice(0, 3).map((item) => ({
+                      sourceKind: item.sourceKind,
+                      sourceId: item.sourceId,
+                      sourceTitle: item.sourceTitle ?? null,
+                    })),
+                  })));
+                return { claims };
+              } catch {
+                return null;
+              }
             },
          })
         : []),
@@ -1009,6 +1068,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     await diaryService.dispose();
     roomDuplicateService.dispose();
     knowledgeService.dispose();
+    knowledgePreferences.dispose();
     await asrService.dispose();
     await agentResolver.dispose();
     await notificationMcpHost.close();

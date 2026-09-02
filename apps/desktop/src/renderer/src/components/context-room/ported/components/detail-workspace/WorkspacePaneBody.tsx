@@ -69,6 +69,7 @@ export function WorkspacePaneBody({
     return (
       <ResourceTree
         room={room}
+        rooms={rooms}
         selectedId={selectedResourceId}
         backendDocuments={backendDocuments}
         trashedDocuments={trashedDocuments}
@@ -140,6 +141,7 @@ export function WorkspacePaneBody({
   return (
     <MailsPane
       room={room}
+      rooms={rooms}
       onSelect={(id) => onOpenObject({ kind: 'mail', id })}
       detail={ownedDetail}
       onCloseDetail={onCloseObject}

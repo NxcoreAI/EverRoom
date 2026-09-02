@@ -50,6 +50,8 @@ export interface RouterDeps {
   llm: KnowledgeLlm | null;
   embedding: { client: EmbeddingClient; model: string } | null;
   thresholds: RouterThresholds;
+  /** M3 注入点：知识整理偏好摘要提供者（注入开关关闭时返回空串=不注入）。 */
+  preferenceDigest?: () => string;
   logger: {
     info(bindings: Record<string, unknown>, message: string): void;
     warn(bindings: Record<string, unknown>, message: string): void;
@@ -221,7 +223,7 @@ export class KnowledgeRouter {
     }
     let extraction;
     try {
-      extraction = await this.deps.llm.extract(envelope.title, envelope.markdown);
+      extraction = await this.deps.llm.extract(envelope.title, envelope.markdown, this.deps.preferenceDigest?.() || undefined);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       // 速率限制、输出截断与调用超时都是瞬时态：抛错交 worker 退避重试，不落 awaiting_review——

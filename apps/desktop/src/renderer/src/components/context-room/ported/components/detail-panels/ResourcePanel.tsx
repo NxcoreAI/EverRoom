@@ -27,10 +27,12 @@ import type {
 } from '../../types';
 import { uiText } from '../../adapters';
 import { markdownDocumentTitle, parseMarkdownDocument } from '../detail-editor/markdownImport';
+import { ResourceCorrectionMenu } from '../ResourceCorrection';
 import { PanelEmptyState } from './PanelEmptyState';
 
 export function ResourceTree({
   room,
+  rooms,
   backendDocuments,
   trashedDocuments,
   knowledgeFiles,
@@ -41,8 +43,11 @@ export function ResourceTree({
   onRestoreDocument,
   onDeleteDocumentPermanently,
   onEmptyTrash,
+  onCorrected,
 }: {
   room: ContextRoomRecord;
+  /** 归入纠正（改归其他 Room）的目标候选。 */
+  rooms: ContextRoomRecord[];
   backendDocuments: RoomDocument[];
   trashedDocuments: RoomDocument[];
   knowledgeFiles: KnowledgeFileDto[];
@@ -53,6 +58,8 @@ export function ResourceTree({
   onRestoreDocument: (document: RoomDocument) => Promise<void>;
   onDeleteDocumentPermanently: (document: RoomDocument) => Promise<void>;
   onEmptyTrash: (roomId: string) => Promise<void>;
+  /** 纠正完成后的就地刷新钩子（资料清单随 knowledge-changed 自刷新，可缺省）。 */
+  onCorrected?: () => void;
 }) {
   const { locale, t } = useLocale();
   const library = useMemo(
@@ -364,6 +371,14 @@ export function ResourceTree({
                         )}
                       </button>
                     )}
+                    {resource.kind === 'knowledge-file' && !trashed ? (
+                      <ResourceCorrectionMenu
+                        room={room}
+                        rooms={rooms}
+                        target={{ sourceKind: 'file', sourceId: resource.fileId, title: resource.name }}
+                        onCorrected={onCorrected}
+                      />
+                    ) : null}
                     {backendDocument && !trashed ? (
                       <Popover.Root
                         open={documentToDelete?.id === backendDocument.id}

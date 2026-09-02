@@ -184,6 +184,48 @@ describe('context room agent routes', () => {
     noAgent.sqlite.close()
   })
 
+  it('auto-refreshes the merge placeholder brief once and skips user-edited briefs', async () => {
+    const dispatch = vi.fn(async (_input: RoomAgentDispatchInput) => completedInvocation(JSON.stringify({
+      background: '合并后的真实背景',
+      goal: '共同目标',
+      status: '进行中',
+      risks: [],
+      decisions: [],
+    })))
+    const roomAgent = fakeDispatcher({ dispatch })
+    const { app, service, db, sqlite } = await harness(roomAgent)
+    void app
+    const created = await service.createRoom({ title: '合并占位', description: '资料' })
+    const placeholderRoom = (background: string) => ({
+      id: created.room.id,
+      title: '合并占位',
+      kind: '主题',
+      data: {
+        id: created.room.id,
+        title: '合并占位',
+        brief: { background, goal: '', status: '', risks: [], decisions: [] },
+        briefPlaceholder: '合并自「A」与「B」',
+      },
+    })
+    // 占位原文匹配 → 自动再生成，幂等键固定，生成后清除标志。
+    service.saveSnapshot({ rooms: [placeholderRoom('合并自「A」与「B」')], deletedRooms: [] })
+    expect(await service.refreshBriefIfPlaceholder(created.room.id)).toBe(true)
+    // createRoom 也会经同一 dispatcher 发 room-enrich，这里按任务过滤断言。
+    const briefRefreshCalls = () => dispatch.mock.calls.map(([input]) => input).filter((input) => input.task === 'brief-refresh')
+    expect(briefRefreshCalls()).toEqual([expect.objectContaining({
+      idempotencyKey: `merge-brief:${created.room.id}`,
+    })])
+    const refreshedData = service.getSnapshot().rooms[0]!.data as Record<string, unknown>
+    expect((refreshedData.brief as Record<string, unknown>).background).toBe('合并后的真实背景')
+    expect(refreshedData.briefPlaceholder).toBeUndefined()
+
+    // 用户手改（背景 ≠ 占位原文）→ 跳过，不再 dispatch。
+    service.saveSnapshot({ rooms: [placeholderRoom('用户手改的背景')], deletedRooms: [] })
+    expect(await service.refreshBriefIfPlaceholder(created.room.id)).toBe(false)
+    expect(briefRefreshCalls()).toHaveLength(1)
+    sqlite.close()
+  })
+
   it('refreshes a Room brief and maps service errors to status codes', async () => {
     const roomAgent = fakeDispatcher({
       dispatch: vi.fn(async () => completedInvocation(JSON.stringify({

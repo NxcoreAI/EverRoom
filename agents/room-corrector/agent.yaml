@@ -1,0 +1,22 @@
+schemaVersion: 1
+id: room-corrector
+name: Room Corrector
+description: 承接 Context Room 总览的纠正计算——引用纠正（选区+评论→逐 claim 编辑）与模糊纠正（用户请求→提案），输出结构化 edits 或 proposal
+mode: dispatch_only
+enabled: true
+
+systemPrompt: ./SYSTEM.md
+
+skills:
+  - ./skills/correction
+
+mcp: []
+
+inputSchema: ./schemas/input.schema.json
+outputSchema: ./schemas/output.schema.json
+
+policy:
+  allowedCallers: [primary-agent]
+  maxConcurrency: 2
+  timeoutSeconds: 120
+  maxToolCalls: 8

@@ -1,8 +1,9 @@
-import { createHash } from "node:crypto";
-import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { createHash, randomUUID } from "node:crypto";
+import { and, asc, desc, eq, gt, inArray, isNull, sql } from "drizzle-orm";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
 import {
   agentRuns,
+  documentOperationItems,
   documentOperations,
   documentVersions,
   documents,
@@ -12,6 +13,7 @@ import {
   writingStyleProfiles,
   writingStyleSettings,
   writingStyleSignals,
+  writingStyleInsights,
   writingStyleUserContent,
 } from "../../infrastructure/database/schema.js";
 import {
@@ -30,12 +32,17 @@ import {
   classifyInstruction,
   clipSignal,
   computeRevisionDelta,
+  INSTRUCTION_CATEGORIES,
   instructionCategoryLabel,
   plainTextOf,
 } from "./signals.js";
 
 export const WRITING_STYLE_MIN_CHARS = 500;
 export const WRITING_STYLE_USER_CONTENT_MAX = 2_000;
+/** 协作轮收口：最近一条行为信号安静多久算"用户对当前结果满意"（横幅触发）。 */
+export const WRITING_STYLE_INSIGHT_QUIET_MS = 5 * 60 * 1000;
+/** 一轮协作至少产生多少条行为信号才值得蒸馏洞察。 */
+export const WRITING_STYLE_INSIGHT_MIN_SIGNALS = 2;
 
 export type WritingStyleOrigin = "user" | "agent";
 export type WritingStyleConfidenceTier = "empty" | "sparse" | "established" | "mature";
@@ -79,6 +86,12 @@ export interface WritingStyleBehaviorDto {
   averageLenDeltaRatio: number | null;
   /** 用户手改中感叹号净变化。 */
   exclamationDelta: number;
+  /** 审阅拒绝的提案项总数（review_decision 信号）。 */
+  reviewRejectedCount: number;
+  /** 审阅接受的提案项总数。 */
+  reviewAcceptedCount: number;
+  /** 被拒绝提案的摘录（≤3 条，截断）。 */
+  reviewSamples: string[];
 }
 
 export interface WritingStyleCorpusEntryDto {
@@ -92,12 +105,24 @@ export interface WritingStyleCorpusEntryDto {
   extractedAt: string;
 }
 
+export interface WritingStyleInsightDto {
+  id: string;
+  /** 偏好陈述（summary 按行拆分）。 */
+  preferences: string[];
+  status: "pending" | "snoozed" | "confirmed";
+  llmGenerated: boolean;
+  createdAt: string;
+  resolvedAt: string | null;
+}
+
 export class WritingStyleServiceError extends Error {
   constructor(
     readonly code:
       | "writing_style_content_invalid"
       | "writing_style_settings_invalid"
-      | "writing_style_not_found",
+      | "writing_style_not_found"
+      | "writing_style_insight_not_found"
+      | "writing_style_insight_resolved",
     message: string,
   ) {
     super(`[${code}] ${message}`);
@@ -106,6 +131,17 @@ export class WritingStyleServiceError extends Error {
 
 function toIso(value: Date | null | undefined): string | null {
   return value ? value.toISOString() : null;
+}
+
+function insightDto(row: typeof writingStyleInsights.$inferSelect): WritingStyleInsightDto {
+  return {
+    id: row.id,
+    preferences: row.summary.split("\n").map((line) => line.trim()).filter(Boolean),
+    status: row.status,
+    llmGenerated: row.llmGenerated,
+    createdAt: row.createdAt.toISOString(),
+    resolvedAt: toIso(row.resolvedAt),
+  };
 }
 
 /** sketch 集合指纹：LLM 消费过的语料快照（id:contentHash 排序哈希）。 */
@@ -147,24 +183,57 @@ export function buildProfileTextFromSystem(
   return lines.join("\n").slice(0, WRITING_STYLE_USER_CONTENT_MAX);
 }
 
-/** 行为偏好文本行（无需 LLM 即可进画像）。 */
+/** 指令类目 → 偏好陈述（画像行与洞察回退共用；用户决策 §4：总结偏好而非计数）。 */
+export const CATEGORY_PREFERENCE_PHRASES: Record<string, string> = {
+  concise: "偏好精炼的表达，常主动压缩篇幅",
+  detail: "偏好充分展开的细节与例证",
+  formal: "偏好正式、严谨的书面语气",
+  casual: "偏好轻松口语化的表达",
+  structured: "偏好分点与结构化组织",
+  paragraph: "偏好连贯的段落叙述，不喜欢过度列表化",
+  tone_soft: "偏好委婉、商量的语气",
+  tone_direct: "偏好直接、果断的表述",
+  punctuation: "对标点使用有明确要求",
+};
+
+/** 显示名（"更简洁"）→ 类目 id（"concise"）：instructionCounts 只带显示名。 */
+function instructionLabelToCategory(label: string): string | null {
+  for (const category of INSTRUCTION_CATEGORIES) {
+    if (instructionCategoryLabel(category.id) === label) return category.id;
+  }
+  return null;
+}
+
+/** 行为偏好文本行（无需 LLM 即可进画像）。陈述偏好结论，不罗列次数（用户决策 §4）。 */
 function behaviorPreferenceLines(behavior: {
   instructionCounts: Array<{ label: string; count: number }>;
   recentInstructions: string[];
   revisionCount: number;
   averageLenDeltaRatio: number | null;
   exclamationDelta: number;
+  reviewRejectedCount: number;
+  reviewAcceptedCount: number;
 }): string[] {
   const lines: string[] = [];
-  if (behavior.instructionCounts.length > 0) {
-    lines.push(`- 你的修改指令偏好：${behavior.instructionCounts.slice(0, 4).map((entry) => `${entry.label}（${entry.count} 次）`).join("、")}`);
-  }
+  const statements = behavior.instructionCounts
+    .slice(0, 3)
+    .map((entry) => {
+      const category = instructionLabelToCategory(entry.label);
+      return category ? CATEGORY_PREFERENCE_PHRASES[category] : undefined;
+    })
+    .filter((phrase): phrase is string => Boolean(phrase));
+  if (statements.length > 0) lines.push(`- 修改偏好：${statements.join("；")}`);
   if (behavior.revisionCount > 0 && behavior.averageLenDeltaRatio !== null) {
-    const direction = behavior.averageLenDeltaRatio <= -0.1 ? "改短" : behavior.averageLenDeltaRatio >= 0.1 ? "改长" : "保持长度微调";
-    lines.push(`- 你常亲自修改 Agent 的输出（${behavior.revisionCount} 次），倾向${direction}（平均 ${Math.round(behavior.averageLenDeltaRatio * 100)}%）`);
+    const direction = behavior.averageLenDeltaRatio <= -0.1
+      ? "把输出改得更精炼"
+      : behavior.averageLenDeltaRatio >= 0.1 ? "把输出改得更充分" : "对措辞做小幅打磨";
+    lines.push(`- 常亲自修改 Agent 的输出并${direction}`);
   }
   if (behavior.exclamationDelta <= -2) {
-    lines.push(`- 你累计删掉了 ${Math.abs(behavior.exclamationDelta)} 个感叹号——少用感叹`);
+    lines.push("- 偏好克制的标点使用，会删去多余的感叹号");
+  }
+  if (behavior.reviewRejectedCount >= 2) {
+    lines.push("- 对不贴合预期的提案倾向整项拒绝而非将就修改");
   }
   for (const instruction of behavior.recentInstructions.slice(0, 2)) {
     lines.push(`- 样例指令：「${instruction}」`);
@@ -242,6 +311,9 @@ export class WritingStyleService {
       revisionCount: behavior.revisionCount,
       averageLenDeltaRatio: behavior.averageLenDeltaRatio,
       exclamationDelta: behavior.exclamationDelta,
+      reviewRejectedCount: behavior.reviewRejectedCount,
+      reviewAcceptedCount: behavior.reviewAcceptedCount,
+      reviewSamples: behavior.reviewSamples,
     };
   }
 
@@ -659,6 +731,9 @@ export class WritingStyleService {
           averageLenDeltaRatio: behavior.averageLenDeltaRatio,
           exclamationDelta: behavior.exclamationDelta,
           revisionSamples: behavior.revisionSamples,
+          reviewRejectedCount: behavior.reviewRejectedCount,
+          reviewAcceptedCount: behavior.reviewAcceptedCount,
+          reviewSamples: behavior.reviewSamples,
         },
       });
       this.db.update(writingStyleProfiles).set({
@@ -726,20 +801,51 @@ export class WritingStyleService {
         .where(inArray(agentRuns.id, terminalEdits.map((operation) => operation.runId)))
         .all()
         .map((row) => [row.id, row.prompt]));
+      // review_decision：审阅层的逐项接受/拒绝（doc-writer 方案 §4.1 扩展）——
+      // 用户拒绝了哪些提案项，是"生成内容是否贴合预期"最直接的反馈。
+      const reviewItems = new Map<string, Array<typeof documentOperationItems.$inferSelect>>();
+      for (const item of this.db.select().from(documentOperationItems)
+        .where(inArray(documentOperationItems.operationId, terminalEdits.map((operation) => operation.id)))
+        .all()) {
+        const list = reviewItems.get(item.operationId) ?? [];
+        list.push(item);
+        reviewItems.set(item.operationId, list);
+      }
       for (const operation of terminalEdits) {
-        const id = `edit:${operation.id}`;
-        if (existing.has(id)) continue;
         const prompt = prompts.get(operation.runId)?.trim() ?? "";
-        if (!prompt) continue;
-        inserts.push({
-          id,
-          type: "edit_instruction",
-          documentId: operation.documentId,
-          roomId: operation.roomId,
-          instruction: clipSignal(prompt, 400),
-          category: classifyInstruction(prompt),
-          createdAt: now,
-        });
+        const id = `edit:${operation.id}`;
+        if (prompt && !existing.has(id)) {
+          inserts.push({
+            id,
+            type: "edit_instruction",
+            documentId: operation.documentId,
+            roomId: operation.roomId,
+            instruction: clipSignal(prompt, 400),
+            category: classifyInstruction(prompt),
+            createdAt: now,
+          });
+        }
+        const items = reviewItems.get(operation.id) ?? [];
+        const applied = items.filter((item) => item.status === "applied").length;
+        const rejected = items.filter((item) => item.status === "rejected").length;
+        const reviewId = `rvw:${operation.id}`;
+        if (rejected >= 1 && !existing.has(reviewId)) {
+          const rejectedSamples = items
+            .filter((item) => item.status === "rejected" && item.markdown?.trim())
+            .slice(0, 3)
+            .map((item, index) => `【拒绝项${index + 1}】${item.markdown!.trim()}`)
+            .join("\n");
+          inserts.push({
+            id: reviewId,
+            type: "review_decision",
+            documentId: operation.documentId,
+            roomId: operation.roomId,
+            ...(prompt ? { instruction: clipSignal(prompt, 400), category: classifyInstruction(prompt) } : {}),
+            after: rejectedSamples ? clipSignal(rejectedSamples, 600) : null,
+            deltaMeta: { applied, rejected },
+            createdAt: now,
+          });
+        }
       }
     }
 
@@ -815,6 +921,9 @@ export class WritingStyleService {
     let exclamationDelta = 0;
     const revisionSamples: Array<{ before: string; after: string }> = [];
     const ratioSamples: number[] = [];
+    let reviewRejectedCount = 0;
+    let reviewAcceptedCount = 0;
+    const reviewSamples: string[] = [];
     for (const row of rows) {
       if (row.type === "revision_delta") {
         revisionCount += 1;
@@ -825,6 +934,15 @@ export class WritingStyleService {
         if (lenBefore > 0) ratioSamples.push((lenAfter - lenBefore) / lenBefore);
         if (revisionSamples.length < 3 && row.before && row.after) {
           revisionSamples.push({ before: clipSignal(row.before, 160), after: clipSignal(row.after, 160) });
+        }
+        continue;
+      }
+      if (row.type === "review_decision") {
+        const meta = row.deltaMeta ?? {};
+        reviewRejectedCount += meta.rejected ?? 0;
+        reviewAcceptedCount += meta.applied ?? 0;
+        if (reviewSamples.length < 3 && row.after) {
+          reviewSamples.push(clipSignal(row.after.split("\n")[0] ?? "", 160));
         }
         continue;
       }
@@ -847,21 +965,29 @@ export class WritingStyleService {
       revisionCount,
       averageLenDeltaRatio,
       exclamationDelta,
+      reviewRejectedCount,
+      reviewAcceptedCount,
+      reviewSamples,
       instructionSamples,
       revisionSamples,
     };
   }
 
   /**
-   * 启动兜底：统计画像已存在但画像文本为空（如升级到"单一画像"模型前已回填过
-   * 语料、此后无新 refresh）时补生成。接管或已有文本时 no-op。
+   * 启动兜底：统计画像已存在但画像文本为空时补生成；未接管且语料指纹
+   * （sketch 集 + 信号集）落后于文本生成指纹时重生成——行为信号不经过
+   * extract 阈值（§10），新信号触发画像重生成的自动入口只有这里与
+   * worker 的 autoRefreshOnSignalGrowth。接管时 no-op。
    */
   ensureProfileTextInitialized(): void {
     // 启动兜底同时捕获行为信号（升级库：让指令/手改历史立即可见）。
     this.scanSignals();
     const row = this.textRow();
     if (row?.userEdited) return;
-    if (row && row.content.trim().length > 0) return;
+    const cursor = this.currentCursor();
+    const hasText = Boolean(row && row.content.trim().length > 0);
+    // 文本已是最新指纹（语料与信号集都未变）时无需重生成。
+    if (hasText && row!.generatedFromCursor && row!.generatedFromCursor === cursor) return;
     const profile = this.db.select().from(writingStyleProfiles)
       .where(eq(writingStyleProfiles.ownerId, "local-user")).get();
     if (!profile) return;
@@ -878,6 +1004,186 @@ export class WritingStyleService {
   }
 
   /**
+   * drain 周期兜底：捕获新行为信号，画像指纹（sketch 集 + 信号集）落后时
+   * 入队一次 refresh（单例 ID 去重）。extract 阈值只覆盖语料增量，信号
+   * 增长（审阅拒绝/手改/指令回溯）走这里与启动兜底收敛，避免画像文本
+   * 长期停留在旧指纹。接管后 refresh 仍入队（统计与"有新沉淀"提示需要），
+   * 文本覆盖由 maintainProfileText 的接管守卫拦下。
+   */
+  autoRefreshOnSignalGrowth(): void {
+    this.scanSignals();
+    const row = this.textRow();
+    const cursor = this.currentCursor();
+    const hasText = Boolean(row && row.content.trim().length > 0);
+    if (hasText && row!.generatedFromCursor && row!.generatedFromCursor === cursor) return;
+    if (!hasText) {
+      // 尚无画像文本：维持"初次生成需语料"的口径，交给启动兜底与 extract 阈值。
+      const profile = this.db.select().from(writingStyleProfiles)
+        .where(eq(writingStyleProfiles.ownerId, "local-user")).get();
+      const aggregate = (profile?.statsJson as unknown as { aggregate?: WritingStyleAggregate } | null)?.aggregate;
+      if (!aggregate || aggregate.sketchCount === 0) return;
+    }
+    const inFlight = this.db.select({ id: jobs.id }).from(jobs)
+      .where(and(eq(jobs.type, WRITING_STYLE_REFRESH_JOB_TYPE), inArray(jobs.status, ["pending", "running"])))
+      .limit(1).all();
+    if (inFlight.length > 0) return;
+    this.db.transaction((tx) => enqueueWritingStyleRefresh(tx, new Date()));
+  }
+
+  // ─── 协作轮洞察（v2：横幅确认式沉淀）───
+
+  /** 已确认洞察的画像行（用户显式意图层，置于行为偏好区最前）。 */
+  confirmedInsightLines(): string[] {
+    return this.db.select().from(writingStyleInsights)
+      .where(eq(writingStyleInsights.status, "confirmed"))
+      .orderBy(desc(writingStyleInsights.resolvedAt))
+      .limit(6).all()
+      .flatMap((row) => row.summary.split("\n").map((line) => line.trim()).filter(Boolean))
+      .map((line) => `- ${line}`.slice(0, 120));
+  }
+
+  listInsights(): WritingStyleInsightDto[] {
+    return this.db.select().from(writingStyleInsights)
+      .orderBy(desc(writingStyleInsights.createdAt))
+      .limit(50).all().map(insightDto);
+  }
+
+  /**
+   * 协作轮收口蒸馏：最近一条行为信号安静 ≥5 分钟且自上一条洞察以来新信号
+   * ≥2 条时，把这一轮信号蒸馏成偏好陈述（LLM 优先，失败回退规则式），
+   * 落为 pending 洞察等用户在横幅/记忆页确认。一次只保留一条未决洞察。
+   */
+  async maybeDistillInsight(now: Date = new Date()): Promise<boolean> {
+    const unresolved = this.db.select({ id: writingStyleInsights.id }).from(writingStyleInsights)
+      .where(inArray(writingStyleInsights.status, ["pending", "snoozed"]))
+      .limit(1).all();
+    if (unresolved.length > 0) return false;
+    const last = this.db.select().from(writingStyleInsights)
+      .orderBy(desc(writingStyleInsights.createdAt))
+      .limit(1).get();
+    const since = last?.createdAt ?? new Date(0);
+    const round = this.db.select().from(writingStyleSignals)
+      .where(gt(writingStyleSignals.createdAt, since))
+      .orderBy(asc(writingStyleSignals.createdAt))
+      .limit(60).all();
+    if (round.length < WRITING_STYLE_INSIGHT_MIN_SIGNALS) return false;
+    const newest = round[round.length - 1]!.createdAt;
+    if (now.getTime() - newest.getTime() < WRITING_STYLE_INSIGHT_QUIET_MS) return false;
+
+    const instructions = round
+      .filter((row) => row.instruction?.trim())
+      .map((row) => clipSignal(row.instruction!, 120))
+      .slice(-8);
+    const revisions = round.filter((row) => row.type === "revision_delta");
+    const revisionSamples = revisions
+      .filter((row) => row.before && row.after)
+      .slice(-3)
+      .map((row) => ({ before: clipSignal(row.before!, 100), after: clipSignal(row.after!, 100) }));
+    const ratios: number[] = [];
+    let exclamationDelta = 0;
+    for (const row of revisions) {
+      const meta = row.deltaMeta ?? {};
+      exclamationDelta += meta.exclamationDelta ?? 0;
+      if ((meta.lenBefore ?? 0) > 0) ratios.push(((meta.lenAfter ?? 0) - (meta.lenBefore ?? 0)) / meta.lenBefore!);
+    }
+    const reviewRows = round.filter((row) => row.type === "review_decision");
+    const reviewRejectedCount = reviewRows.reduce((sum, row) => sum + (row.deltaMeta?.rejected ?? 0), 0);
+    const reviewAcceptedCount = reviewRows.reduce((sum, row) => sum + (row.deltaMeta?.applied ?? 0), 0);
+    const reviewSamples = reviewRows
+      .filter((row) => row.after)
+      .slice(0, 2)
+      .map((row) => clipSignal((row.after ?? "").split("\n")[0] ?? "", 100));
+    const evidence = {
+      instructions,
+      revisionSamples,
+      averageLenDeltaRatio: ratios.length > 0
+        ? Math.round((ratios.reduce((sum, value) => sum + value, 0) / ratios.length) * 100) / 100
+        : null,
+      exclamationDelta,
+      reviewRejectedCount,
+      reviewAcceptedCount,
+      reviewSamples,
+    };
+
+    let preferences: string[] = [];
+    let llmGenerated = false;
+    if (this.llm) {
+      try {
+        preferences = await this.llm.summarizeBehaviorRound(evidence);
+        llmGenerated = preferences.length > 0;
+      } catch {
+        preferences = [];
+      }
+    }
+    if (preferences.length === 0) {
+      // 回退：指令类目 → 偏好陈述（与画像行同一张映射表），叠加手改方向。
+      const categories = [...new Set(instructions.map((instruction) => classifyInstruction(instruction)))];
+      const statements = categories
+        .map((category) => (category ? CATEGORY_PREFERENCE_PHRASES[category] : undefined))
+        .filter((phrase): phrase is string => Boolean(phrase))
+        .slice(0, 3);
+      if (evidence.averageLenDeltaRatio !== null && evidence.averageLenDeltaRatio <= -0.1) {
+        statements.push("倾向把 Agent 的输出改得更精炼");
+      } else if (evidence.averageLenDeltaRatio !== null && evidence.averageLenDeltaRatio >= 0.1) {
+        statements.push("倾向把 Agent 的输出改得更充分");
+      }
+      if (reviewRejectedCount >= 2) statements.push("对不贴合预期的提案倾向整项拒绝");
+      preferences = statements.slice(0, 4);
+    }
+    if (preferences.length === 0) return false;
+
+    this.db.insert(writingStyleInsights).values({
+      id: `insight:${randomUUID()}`,
+      summary: preferences.join("\n").slice(0, 500),
+      signalIds: round.map((row) => row.id),
+      status: "pending",
+      llmGenerated,
+      createdAt: now,
+    }).run();
+    return true;
+  }
+
+  /** 横幅"稍后"：保留在记忆页可找回（status=snoozed，确认入口不丢失）。 */
+  snoozeInsight(insightId: string): WritingStyleInsightDto {
+    const row = this.db.select().from(writingStyleInsights)
+      .where(eq(writingStyleInsights.id, insightId)).get();
+    if (!row) throw new WritingStyleServiceError("writing_style_insight_not_found", "洞察不存在");
+    if (row.status === "confirmed") throw new WritingStyleServiceError("writing_style_insight_resolved", "洞察已确认");
+    this.db.update(writingStyleInsights)
+      .set({ status: "snoozed" })
+      .where(eq(writingStyleInsights.id, insightId)).run();
+    return insightDto({ ...row, status: "snoozed" });
+  }
+
+  /**
+   * 确认写入画像：接管态把确认的偏好直接追加进用户文本（用户显式确认过这段
+   * 内容，追加不违背接管语义）；未接管态重生成系统文本（已确认洞察置于
+   * 行为偏好区最前，优先于系统归纳）。
+   */
+  confirmInsight(insightId: string): WritingStyleInsightDto {
+    const row = this.db.select().from(writingStyleInsights)
+      .where(eq(writingStyleInsights.id, insightId)).get();
+    if (!row) throw new WritingStyleServiceError("writing_style_insight_not_found", "洞察不存在");
+    if (row.status === "confirmed") return insightDto(row);
+    const resolvedAt = new Date();
+    this.db.update(writingStyleInsights)
+      .set({ status: "confirmed", resolvedAt })
+      .where(eq(writingStyleInsights.id, insightId)).run();
+    const lines = row.summary.split("\n").map((line) => line.trim()).filter(Boolean);
+    const text = this.textRow();
+    if (text?.userEdited) {
+      const merged = `${text.content}\n${lines.map((line) => `- ${line}`).join("\n")}`
+        .slice(0, WRITING_STYLE_USER_CONTENT_MAX);
+      this.db.update(writingStyleUserContent)
+        .set({ content: merged, updatedAt: resolvedAt })
+        .where(eq(writingStyleUserContent.ownerId, "local-user")).run();
+    } else {
+      this.regenerateProfileText();
+    }
+    return insightDto({ ...row, status: "confirmed", resolvedAt });
+  }
+
+  /**
    * 自动维护画像文本：仅在用户未接管（userEdited=false）且有样本时重写。
    * 编辑即接管——refresh 永不覆盖用户版本，只通过 systemUpdateAvailable 提示。
    */
@@ -888,16 +1194,22 @@ export class WritingStyleService {
   ): void {
     // 行为信号独立于文档统计：语料为 0 但已有行为信号时也生成画像文本。
     const behavior = this.aggregateSignals();
-    const hasBehavior = behavior.recentInstructions.length > 0 || behavior.revisionCount > 0;
+    const hasBehavior = behavior.recentInstructions.length > 0 || behavior.revisionCount > 0
+      || behavior.reviewRejectedCount > 0 || this.confirmedInsightLines().length > 0;
     if (derived.aggregate.sketchCount === 0 && !hasBehavior) return;
     const row = this.textRow();
     if (row?.userEdited) return;
+    // 已确认的协作洞察是用户显式意图层：置于行为偏好区最前，优先于系统归纳。
+    const confirmed = this.confirmedInsightLines();
     const content = buildProfileTextFromSystem(
       derived.sections,
       qualitative
         ?? (this.db.select().from(writingStyleProfiles).where(eq(writingStyleProfiles.ownerId, "local-user")).get()
           ?.qualitativeJson as unknown as WritingStyleQualitative | null),
-      behaviorPreferenceLines(behavior),
+      [
+        ...confirmed,
+        ...behaviorPreferenceLines(behavior),
+      ],
     );
     if (!content) return;
     const now = new Date();

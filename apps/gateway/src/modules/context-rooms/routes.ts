@@ -34,9 +34,13 @@ export function contextRoomRoutes(
       { schema: { tags: ["context-rooms"] } },
       // 房间列表的“更新时间”合并投影变化时间：日程/待办/纠正等变化不回写 rooms 表，
       // 出口取 max(快照 updatedAt, 投影最后变化时间)，桌面首页卡片时间才跟随数据变化。
-      async () => overviews
-        ? applyOverviewFreshnessToSnapshot(service.getSnapshot(), overviews.latestProjectionTimes())
-        : service.getSnapshot(),
+      async () => {
+        const snapshot = overviews
+          ? applyOverviewFreshnessToSnapshot(service.getSnapshot(), overviews.latestProjectionTimes())
+          : service.getSnapshot();
+        // M2-A 红点随快照下发：桌面端随 snapshot 轮询刷新，替代原 listDuplicateCandidates+5s 补拉。
+        return duplicates ? { ...snapshot, duplicateOpenCount: duplicates.actionableOpenCount() } : snapshot;
+      },
     );
 
     app.post(
@@ -251,6 +255,25 @@ export function contextRoomRoutes(
         } catch (error) {
           return reply.code(409).send({ error: error instanceof Error ? error.message : "context_room_merge_cannot_cancel" });
         }
+      },
+    );
+
+    // 定向重复检查（M2-A 候选发现时机）：单 Room vs 全库活跃 Room 即时评估；
+    // 晋升完成/认领后由桌面端主动调用，返回新浮现的可操作候选数。
+    app.post(
+      "/v1/context-rooms/:roomId/check-duplicates",
+      {
+        schema: {
+          tags: ["context-rooms"],
+          params: Type.Object({ roomId: Type.String({ minLength: 1, maxLength: 128 }) }),
+        },
+      },
+      async (request, reply) => {
+        if (!duplicates) return reply.code(503).send({ error: "room_duplicate_service_unavailable" });
+        if (!service.resolveRoomId(request.params.roomId)) {
+          return reply.code(404).send({ error: "context_room_not_found" });
+        }
+        return duplicates.requestTargetedAssess(request.params.roomId);
       },
     );
 

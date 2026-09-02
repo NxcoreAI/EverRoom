@@ -449,7 +449,7 @@ describe("gateway server", () => {
     await app.close();
 
     expect(empty.statusCode).toBe(200);
-    expect(empty.json()).toEqual({ rooms: [], deletedRooms: [], updatedAt: null });
+    expect(empty.json()).toEqual({ rooms: [], deletedRooms: [], updatedAt: null, duplicateOpenCount: 0 });
     expect(saved.statusCode).toBe(200);
     expect(loaded.json()).toMatchObject({
       rooms: [{ id: "room-active", title: "活动 Room", kind: "项目" }],

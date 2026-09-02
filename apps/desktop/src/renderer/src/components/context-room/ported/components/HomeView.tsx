@@ -8,7 +8,6 @@ import {
   Search,
   Trash2,
 } from 'lucide-react';
-import type { RoomDuplicateCandidate } from '@nxcore/agent-contract';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocale } from '../../../../i18n/LocaleContext';
 import obsidianLogo from '../../../../assets/obsidian.svg';
@@ -19,18 +18,12 @@ import { ReferenceDialog } from './shared';
 import { KnowledgePendingPanel } from './KnowledgePendingPanel';
 import { RoomCard } from './RoomCard';
 import { RoomCreationStudio } from './RoomCreationStudio';
-import { RoomLifecycleDialogs, type DraftRoom } from './RoomDialogs';
+import { RoomLifecycleDialogs } from './RoomDialogs';
 import { isMergeRecommendationCandidate, RoomDuplicateCenter } from './RoomDuplicateCenter';
 import { RoomGraphCanvas, type RoomGraphCanvasHandle } from './RoomGraphCanvas';
 import { RoomNodeInspector } from './RoomGraphInspector';
 import { CreateRoomRelationDialog, RoomRelationInspector } from './RoomRelationControls';
 import { useRoomRelationGraph } from '../hooks/useRoomRelationGraph';
-import {
-  RoomRecommendationDialog,
-  RoomRecommendations,
-  type RoomRecommendation,
-  type RoomRecommendationSource,
-} from './RoomRecommendations';
 import { roomKindIcon, roomKindTone } from './utils';
 
 function RoomGraph({
@@ -154,12 +147,10 @@ function RoomGraph({
 export function HomeView({
   rooms,
   deletedRooms,
-  onCreateRoom,
   onMountObsidian,
   onRenameRoom,
   onDeleteRoom,
   onRestoreRoom,
-  onOpenRecommendationSource,
   onOpenDetail,
   onShowAll,
   onFocusAgent,
@@ -168,13 +159,10 @@ export function HomeView({
 }: {
   rooms: ContextRoomRecord[];
   deletedRooms: ContextRoomRecord[];
-  /** 失败路径抛错；返回新建 Room 的 id。 */
-  onCreateRoom: (draft: DraftRoom, duplicateOverrideToken?: string) => Promise<string | null>;
   onMountObsidian: () => Promise<void>;
   onRenameRoom: (roomId: string, name: string) => void;
   onDeleteRoom: (roomId: string) => void;
   onRestoreRoom: (roomId: string) => void;
-  onOpenRecommendationSource: (source: RoomRecommendationSource) => void;
   onOpenDetail: (roomId: string) => void;
   onShowAll: () => void;
   onFocusAgent: () => void;
@@ -184,15 +172,9 @@ export function HomeView({
 }) {
   const { t } = useLocale();
   const [query, setQuery] = useState('');
-  const [recommendation, setRecommendation] = useState<RoomRecommendation | null>(null);
   const [newRoomOpen, setNewRoomOpen] = useState(false);
   const [duplicateCenterOpen, setDuplicateCenterOpen] = useState(false);
   const [duplicateCandidateCount, setDuplicateCandidateCount] = useState(0);
-  const [creationReview, setCreationReview] = useState<{
-    draft: DraftRoom;
-    candidates: RoomDuplicateCandidate[];
-    overrideToken: string;
-  } | null>(null);
   const [renameRoom, setRenameRoom] = useState<ContextRoomRecord | null>(null);
   const [deleteRoom, setDeleteRoom] = useState<ContextRoomRecord | null>(null);
   const [deletedRoomsOpen, setDeletedRoomsOpen] = useState(false);
@@ -223,29 +205,17 @@ export function HomeView({
       });
     };
     refreshDuplicateCount();
-    // rooms 变化会触发网关防抖重建候选（含 LLM 同一性判定），首次读取可能拿到
-    // 重建前的旧候选；延迟补拉一次对齐重建后的结果，避免红点与弹窗不一致。
-    const trailingRefresh = setTimeout(refreshDuplicateCount, 5_000);
-    return () => { active = false; clearTimeout(trailingRefresh); };
+    // M2-A 红点收敛：网关候选重建（250ms 防抖 + LLM 同一性重评耗时数秒）后，
+    // 一次性补拉永远存在时间窗——改为 15s 低频轮询收敛；弹窗内的
+    // onCandidateCountChange 负责用户操作后的即时同步。
+    const interval = window.setInterval(refreshDuplicateCount, 15_000);
+    return () => { active = false; window.clearInterval(interval); };
   }, [rooms]);
-
-  const submitRoom = async (draft: DraftRoom): Promise<void> => {
-    const api = window.nxcore?.contextRooms;
-    if (!api) throw new Error(t('contextRoom:roomDialogs.serviceUnavailable'));
-    const review = await api.checkDuplicates({ title: draft.name, description: draft.description });
-    if (review.candidates.length && review.overrideToken) {
-      setCreationReview({ draft, candidates: review.candidates, overrideToken: review.overrideToken });
-      return;
-    }
-    await onCreateRoom(draft);
-  };
 
   return (
     <div className="context-room-app">
       <main className="context-room-home" data-testid="context-room-page">
         <div className="context-room-home-layout">
-          <RoomRecommendations onSelect={setRecommendation} />
-
           <section className="context-room-home-section">
             <div className="context-room-my-toolbar" data-testid="context-room-list-toolbar">
               <div className="context-room-my-title">
@@ -325,62 +295,8 @@ export function HomeView({
         </div>
       </main>
 
-      <ReferenceDialog
-        open={Boolean(recommendation)}
-        onOpenChange={(open) => !open && setRecommendation(null)}
-        title={t('contextRoom:home.recommendedRoomDetails')}
-      >
-        {recommendation ? (
-          <RoomRecommendationDialog
-            recommendation={recommendation}
-            onClose={() => setRecommendation(null)}
-            onOpenSource={(source) => {
-              setRecommendation(null);
-              onOpenRecommendationSource(source);
-            }}
-            onCreate={async (draft) => {
-              await submitRoom(draft);
-              setRecommendation(null);
-            }}
-          />
-        ) : null}
-      </ReferenceDialog>
-
       <ReferenceDialog open={newRoomOpen} onOpenChange={setNewRoomOpen} title={t('contextRoom:home.newContextRoom')}>
         <RoomCreationStudio open={newRoomOpen} onOpenChange={setNewRoomOpen} />
-      </ReferenceDialog>
-      <ReferenceDialog
-        open={Boolean(creationReview)}
-        onOpenChange={(open) => !open && setCreationReview(null)}
-        title={t('contextRoom:home.similarRoomsFound')}
-      >
-        {creationReview ? (
-          <div className="context-room-create-duplicate-review">
-            <header><span>{t('contextRoom:home.creationReviewEyebrow')}</span><h2>{t('contextRoom:home.creationReviewTitle')}</h2></header>
-            <p>{t('contextRoom:home.creationReviewBody')}</p>
-            <div>
-              {creationReview.candidates.map((candidate) => (
-                <button key={candidate.id} type="button" onClick={() => { setCreationReview(null); onOpenDetail(candidate.roomBId) }}>
-                  <span><b>{candidate.roomB.title}</b><small>{candidate.reasons[0] ?? t('contextRoom:home.topicSimilarFallback')}</small></span>
-                  <ArrowRight aria-hidden="true" />
-                </button>
-              ))}
-            </div>
-            <footer>
-              <button type="button" onClick={() => setCreationReview(null)}>{t('contextRoom:shared.cancel')}</button>
-              <button
-                type="button"
-                className="context-room-primary-button"
-                onClick={async () => {
-                  const review = creationReview;
-                  await onCreateRoom(review.draft, review.overrideToken);
-                  setCreationReview(null);
-                  setNewRoomOpen(false);
-                }}
-              >{t('contextRoom:home.stillCreate')}</button>
-            </footer>
-          </div>
-        ) : null}
       </ReferenceDialog>
       <RoomDuplicateCenter
         open={duplicateCenterOpen}

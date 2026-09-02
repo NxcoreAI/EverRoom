@@ -1,8 +1,7 @@
 import { createHash } from "node:crypto";
 import { Type } from "@sinclair/typebox";
 import type { PiAgentRuntimeTool } from "@nxcore/agent-runtime-pi";
-import { formatRoomContextDigest, type RoomContextDigest } from "../context-rooms/room-context-digest.js";
-import {
+import { formatRoomContextDigest, type RoomContextDigest } from "../context-rooms/room-context-digest.js";import {
   DOC_WRITER_AGENT_ID,
   DOC_WRITER_TASK_LABELS,
   DOCUMENT_MARKDOWN_MAX_CHARS,
@@ -10,6 +9,7 @@ import {
   type DocWriterTask,
   type DocumentDraftSnapshot,
 } from "./document-draft.js";
+import { docWriterDraftFromStructuredOutput } from "./doc-writer-content.js";
 import { SubagentOrchestrator } from "./orchestrator.js";
 import { SubagentRegistry } from "./registry.js";
 
@@ -105,6 +105,17 @@ export function createSubagentPiTools(
     ) => { readReceipt: string; expiresAt: string };
     /** 写作风格生成段（§7 迁移）：对 doc-writer 全部 task 无条件附加，provider 自查开关。 */
     writingStyleProvider?: { getGenerationPromptSection(): string | null };
+    /** room_correction_draft 的组装数据源：读权威总览投影的 claims。 */
+    resolveRoomCorrectionContext?: (roomId: string) => {
+      claims: Array<{
+        claimId: string;
+        section: "overview" | "status" | "next_steps" | "timeline" | "entities";
+        text: string;
+        origin: string;
+        corrected: boolean;
+        evidence: Array<{ sourceKind: string; sourceId: string; sourceTitle: string | null }>;
+      }>;
+    } | null;
   } = {},
 ): PiAgentRuntimeTool[] {
   const tools: PiAgentRuntimeTool[] = [
@@ -361,7 +372,10 @@ export function createSubagentPiTools(
         + "并已为本 run 签发读取凭证，可直接 patch_begin；draft-create 传入 instruction 与可选 material，返回 title。"
         + "落库方式：write_append 传返回的 invocationId 与 chunkIndex（0 起）、patch_hunk 传 invocationId 与 itemIndex（0 起），"
         + "正文由服务端从 doc-writer 结果转交，不得在工具参数中复写正文；write_begin 的 title 使用返回值。"
-        + "rewrite 返回 replacementText，逐字作为回复片段呈现。正文内容必须来自本工具的调用链，不得自行撰写或改写。",
+        + "rewrite 返回 replacementText，逐字作为回复片段呈现。"
+        + "用户要求调整、润色或修改刚生成的内容时，传 previousInvocationId（此前 document_draft 返回的 invocationId），"
+        + "doc-writer 会基于上一稿增量修改而非从头重写。"
+        + "正文内容必须来自本工具的调用链，不得自行撰写或改写。",
       parameters: Type.Object({
         task: Type.Union([
           Type.Literal("draft-create"),
@@ -414,6 +428,36 @@ export function createSubagentPiTools(
           ? snapshot.blocks.filter((block) => block.depth === 0)
           : [];
         const documentTruncated = snapshot !== null && snapshot.markdown.length > DOCUMENT_MARKDOWN_MAX_CHARS;
+        // 增量迭代：previousInvocationId 回读本会话内上一次 doc-writer 产出注入，
+        // "再简洁一点"类跟进指令在上一稿上修改而非从头重写（doc-writer 方案 §4 占位落地）。
+        const previousInvocationId = typeof params.previousInvocationId === "string"
+          ? params.previousInvocationId.trim()
+          : "";
+        let previousDraft: string | null = null;
+        if (previousInvocationId) {
+          const prior = orchestrator.getInvocation(previousInvocationId);
+          const priorStructured = prior?.result?.structuredOutput;
+          const normalized = prior
+            && prior.agentDefinitionId === DOC_WRITER_AGENT_ID
+            && prior.source === "primary_agent"
+            && prior.parentSessionId === run.sessionId
+            && prior.status === "completed"
+            && priorStructured !== null
+            && typeof priorStructured === "object"
+            && !Array.isArray(priorStructured)
+            ? docWriterDraftFromStructuredOutput(priorStructured as Record<string, unknown>)
+            : null;
+          if (normalized) {
+            const body = normalized.kind === "draft-edit"
+              ? normalized.items.map((item, index) =>
+                `${index + 1}. [${item.operation}] ${JSON.stringify(item.target)}\n${item.markdown}`).join("\n\n")
+              : normalized.chunks.join("");
+            if (body.trim()) {
+              previousDraft = (normalized.title ? `【上一稿标题】${normalized.title}\n\n` : "") + body;
+              if (previousDraft.length > 50_000) previousDraft = `${previousDraft.slice(0, 50_000)}\n…（超长截断）`;
+            }
+          }
+        }
         const input = {
           task,
           instruction,
@@ -453,6 +497,7 @@ export function createSubagentPiTools(
             ? { blockType: params.blockType.trim() }
             : {}),
           ...(responseLanguage ? { responseLanguage } : {}),
+          ...(previousDraft ? { previousInvocationId, previousDraft } : {}),
           ...(writingStyle ? { writingStyle } : {}),
         };
         if (task === "rewrite" && typeof input.selectedText !== "string") {
@@ -610,7 +655,144 @@ export function createSubagentPiTools(
               }
               : {}),
             ...(readReceiptExpiresAt ? { readReceiptExpiresAt } : {}),
+            ...(previousInvocationId ? { previousDraftApplied: Boolean(previousDraft) } : {}),
             digest: structured.digest ?? null,
+          }),
+          details: invocation,
+        };
+      },
+    });
+  }
+  const roomCorrector = registry.get("room-corrector");
+  if (roomCorrector) {
+    const correctionTaskLabels = {
+      "citation-correction": "计算总览引用纠正",
+      "general-correction": "计算总览修改提案",
+    } as const;
+    tools.push({
+      name: "room_correction_draft",
+      label: "Draft room overview correction",
+      description: "调度 room-corrector 子 Agent 计算 Room 总览的纠正："
+        + "citation-correction（用户从总览选区附带评论发起的引用纠正）传入 instruction（用户评论）与 selectedText（选区原文），"
+        + "返回逐 claim 的 edits——逐字转发给 context_room_correction_apply_citation 同轮原子应用；"
+        + "general-correction（用户对总览的明确修改请求，如“更新建议下一步”“把简介改成……”）传入 instruction，"
+        + "返回单条 proposal 字段——逐字转发给 context_room_correction_propose，用户明确请求的修改同轮立即 apply。"
+        + "claims 快照由网关组装，无需先调用 context_room_context_get；返回的 edits/proposal 不得改写、增删或摊平字段。",
+      parameters: Type.Object({
+        task: Type.Union([
+          Type.Literal("citation-correction"),
+          Type.Literal("general-correction"),
+        ]),
+        instruction: Type.String({ minLength: 1, maxLength: 4_000 }),
+        roomId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+        selectedText: Type.Optional(Type.String({ minLength: 1, maxLength: 20_000 })),
+      }, { additionalProperties: false }),
+      execute: async (run, params, signal) => {
+        const task = String(params.task ?? "");
+        const label = correctionTaskLabels[task as keyof typeof correctionTaskLabels];
+        if (!label) throw new Error("room_correction_draft_task_invalid");
+        const instruction = String(params.instruction ?? "").trim();
+        const selectedText = typeof params.selectedText === "string" && params.selectedText.trim()
+          ? params.selectedText
+          : null;
+        if (task === "citation-correction" && !selectedText) {
+          throw new Error("room_correction_draft_selected_text_required");
+        }
+        const explicitRoomId = typeof params.roomId === "string" ? params.roomId.trim() : "";
+        if (explicitRoomId && run.roomId && explicitRoomId !== run.roomId) {
+          throw new Error("ROOM_SELECTION_MISMATCH: The correction target differs from the Room already bound to this run");
+        }
+        const roomId = explicitRoomId || run.roomId;
+        if (!roomId) throw new Error("ROOM_SELECTION_REQUIRED: Select a Context Room first");
+        if (!options.resolveRoomCorrectionContext) throw new Error("room_correction_draft_context_unavailable");
+        const context = options.resolveRoomCorrectionContext(roomId);
+        if (!context) throw new Error("context_room_not_found");
+        const input = {
+          task,
+          instruction,
+          roomId,
+          ...(selectedText ? { selectedText } : {}),
+          claims: context.claims.slice(0, 400).map((claim) => ({
+            claimId: claim.claimId,
+            section: claim.section,
+            text: claim.text.slice(0, 1_000),
+            origin: claim.origin,
+            corrected: claim.corrected,
+            evidence: claim.evidence.slice(0, 3),
+          })),
+          ...(typeof run.responseLanguage === "string" && run.responseLanguage.trim()
+            ? { responseLanguage: run.responseLanguage.trim() }
+            : {}),
+        };
+        let invocation;
+        try {
+          invocation = await orchestrator.dispatch({
+            agentId: "room-corrector",
+            task: label,
+            input,
+            idempotencyKey: dispatchKey(run.runId, "room-corrector", label, input),
+            source: "primary_agent",
+            parentSessionId: run.sessionId,
+            parentRunId: run.runId,
+            ...(signal ? { signal } : {}),
+          });
+        } catch (error) {
+          const errorCode = error instanceof Error ? error.message : String(error);
+          const retryable = errorCode === "subagent_concurrency_limit"
+            || errorCode === "subagent_global_concurrency_limit";
+          return {
+            content: JSON.stringify({
+              status: "failed",
+              errorCode,
+              retryable,
+              message: retryable
+                ? "room-corrector 调度被并发限额拒绝；如实告知用户可稍后重试。"
+                : "room-corrector 调度失败；如实告知用户。",
+            }),
+            details: { errorCode },
+          };
+        }
+        if (invocation.status !== "completed") {
+          return {
+            content: JSON.stringify({
+              invocationId: invocation.id,
+              status: invocation.status,
+              errorCode: invocation.errorCode ?? invocation.errorMessage ?? invocation.status,
+              retryable: invocation.status === "timed_out" || invocation.status === "cancelled",
+              message: `room-corrector 未完成（${invocation.status}）；如实告知用户。`,
+            }),
+            details: invocation,
+          };
+        }
+        const structured = invocation.result?.structuredOutput !== null
+          && typeof invocation.result?.structuredOutput === "object"
+          && !Array.isArray(invocation.result.structuredOutput)
+          ? invocation.result.structuredOutput as Record<string, unknown>
+          : extractJsonObject(invocation.result?.text ?? "");
+        if (!structured || typeof structured.kind !== "string" || structured.kind !== task) {
+          return {
+            content: JSON.stringify({
+              invocationId: invocation.id,
+              status: "completed",
+              errorCode: "room_corrector_result_invalid",
+              retryable: true,
+              message: "room-corrector 未提交匹配任务的结构化结果；可调整 instruction 后重试。",
+            }),
+            details: invocation,
+          };
+        }
+        return {
+          content: JSON.stringify({
+            invocationId: invocation.id,
+            agentId: invocation.agentDefinitionId,
+            status: "completed",
+            kind: task,
+            roomId,
+            ...(Array.isArray(structured.edits) ? { edits: structured.edits } : {}),
+            ...(structured.proposal && typeof structured.proposal === "object" && !Array.isArray(structured.proposal)
+              ? { proposal: structured.proposal }
+              : {}),
+            summary: typeof structured.summary === "string" ? structured.summary : null,
           }),
           details: invocation,
         };

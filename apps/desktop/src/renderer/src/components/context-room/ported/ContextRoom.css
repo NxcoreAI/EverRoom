@@ -697,6 +697,83 @@
   line-height: 17px;
 }
 
+.context-room-panel-empty[data-error='true'] .context-room-panel-empty-icon {
+  border-color: var(--cr-danger);
+  color: var(--cr-danger);
+}
+
+.context-room-panel-empty-action {
+  margin-top: 12px;
+  min-height: 28px;
+  padding: 0 12px;
+  border: 1px solid var(--cr-border-strong);
+  border-radius: 6px;
+  background: var(--cr-surface);
+  color: var(--cr-text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.context-room-panel-empty-action:hover {
+  background: var(--cr-surface-hover);
+}
+
+/* 资料条目归入纠正：资料树知识文件行 + 邮件行尾的菜单按钮。 */
+.context-room-resource-correct-button {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  align-self: center;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--cr-tertiary);
+  cursor: pointer;
+}
+
+.context-room-resource-correct-button:hover {
+  background: var(--cr-surface-hover);
+  color: var(--cr-text);
+}
+
+.context-room-resource-correct-button svg,
+.context-room-resource-correct-button .context-room-resource-correct-button svg {
+  width: 14px;
+  height: 14px;
+}
+
+.context-room-resource-row .context-room-resource-correct-button {
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.context-room-resource-row:hover .context-room-resource-correct-button,
+.context-room-resource-row:focus-within .context-room-resource-correct-button {
+  opacity: 1;
+}
+
+.context-room-mail-row {
+  display: flex;
+  align-items: center;
+}
+
+.context-room-mail-row .context-room-resource-correct-button {
+  margin-right: 8px;
+}
+
+.context-room-merge-picker-create {
+  border-top: 1px dashed var(--cr-border);
+}
+
+.context-room-merge-picker-create b {
+  color: var(--cr-blue);
+  font-weight: 500;
+}
+
 .context-room-panel-empty.is-compact {
   min-height: 104px;
   padding: 16px 12px;
@@ -3973,7 +4050,8 @@
   border-bottom: 1px solid var(--cr-border);
 }
 
-.context-room-mail-list > button.is-selected {
+.context-room-mail-list > button.is-selected,
+.context-room-mail-row > button.is-selected {
   background: var(--cr-surface-hover);
   box-shadow: inset 2px 0 0 var(--cr-blue);
 }
@@ -4090,7 +4168,8 @@
 
 .context-room-compact-pane > button,
 .context-room-memory-pane > div > button,
-.context-room-mail-list > button {
+.context-room-mail-list > button,
+.context-room-mail-row > button:not(.context-room-resource-correct-button) {
   display: flex;
   width: calc(100% - 16px);
   min-width: 0;
@@ -4104,7 +4183,8 @@
 
 .context-room-compact-pane > button:hover,
 .context-room-memory-pane > div > button:hover,
-.context-room-mail-list > button:hover {
+.context-room-mail-list > button:hover,
+.context-room-mail-row > button:not(.context-room-resource-correct-button):hover {
   background: var(--cr-surface-hover);
 }
 
@@ -11394,20 +11474,6 @@
   justify-content: center;
 }
 
-.context-room-home-card-origin {
-  display: inline-block;
-  margin-left: 6px;
-  padding: 1px 6px;
-  border: 1px solid var(--cr-border);
-  border-radius: 999px;
-  background: var(--cr-surface-secondary);
-  color: var(--cr-muted);
-  font-size: 10px;
-  font-weight: 500;
-  line-height: 1.6;
-  vertical-align: 1px;
-}
-
 .context-room-knowledge-panel {
   display: flex;
   flex-direction: column;
@@ -13035,4 +13101,73 @@
   margin: 0;
   color: var(--cr-muted);
   font-size: 12px;
+}
+
+/* 合并预演 sketch（M2-B）：确定性拼接的产物概览，标注预演非最终。 */
+.context-room-merge-sketch {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px dashed var(--cr-border);
+  border-radius: 8px;
+  background: var(--cr-surface-secondary);
+}
+
+.context-room-merge-sketch h3 {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0;
+  color: var(--cr-text);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.context-room-merge-sketch h3 small {
+  color: var(--cr-muted);
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.context-room-merge-sketch-brief {
+  margin: 0;
+  max-height: 96px;
+  overflow-y: auto;
+  color: var(--cr-text);
+  font-size: 12px;
+  line-height: 18px;
+  white-space: pre-line;
+}
+
+.context-room-merge-sketch dl {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin: 0;
+}
+
+.context-room-merge-sketch dl > div {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.context-room-merge-sketch dt {
+  color: var(--cr-muted);
+  font-size: 11px;
+}
+
+.context-room-merge-sketch dd {
+  margin: 0;
+  color: var(--cr-text);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.context-room-merge-sketch-entities {
+  flex-basis: 100%;
+}
+
+.context-room-merge-sketch-entities dd {
+  font-weight: 400;
 }

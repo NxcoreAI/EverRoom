@@ -318,6 +318,86 @@ describe("createSubagentPiTools document_draft", () => {
     expect(payload).toMatchObject({ status: "failed", errorCode: "subagent_concurrency_limit", retryable: true });
   });
 
+  it("previousInvocationId 回读本会话上一稿注入 previousDraft；跨会话回退为普通生成", async () => {
+    const makePrior = (parentSessionId: string): SubagentInvocation => ({
+      id: "prior-inv",
+      agentDefinitionId: "doc-writer",
+      agentRevisionId: "rev-1",
+      source: "primary_agent",
+      parentSessionId,
+      parentRunId: "run-0",
+      task: "起草新文档正文",
+      input: { task: "draft-create" },
+      status: "completed",
+      result: {
+        text: "",
+        structuredOutput: {
+          kind: "draft-create",
+          title: "上一稿标题",
+          appendChunks: ["## 旧第一节\n\n旧内容。"],
+          digest: { summary: "s" },
+        },
+      },
+      errorCode: null,
+      errorMessage: null,
+      createdAt: new Date().toISOString(),
+      startedAt: new Date().toISOString(),
+      completedAt: new Date().toISOString(),
+    });
+    const runTool = async (prior: SubagentInvocation | null) => {
+      const dispatch = vi.fn(async (_input: Record<string, unknown>) => ({
+        id: "invocation-2",
+        agentDefinitionId: "doc-writer",
+        agentRevisionId: "revision-1",
+        source: "primary_agent",
+        parentSessionId: "session-1",
+        parentRunId: "run-1",
+        task: "起草新文档正文",
+        input: null,
+        status: "completed",
+        result: {
+          text: "",
+          structuredOutput: { kind: "draft-create", title: "T", contentMarkdown: "新稿", digest: { summary: "s" } },
+        },
+        errorCode: null,
+        errorMessage: null,
+        createdAt: new Date().toISOString(),
+        startedAt: new Date().toISOString(),
+        completedAt: new Date().toISOString(),
+      } as unknown as SubagentInvocation));
+      const orchestrator = {
+        dispatch,
+        getInvocation: (id: string) => (id === "prior-inv" ? prior : null),
+      } as unknown as SubagentOrchestrator & { dispatch: ReturnType<typeof vi.fn> };
+      const tools = createSubagentPiTools(registryWith(["doc-writer"]), orchestrator, {});
+      const tool = tools.find((candidate) => candidate.name === "document_draft")!;
+      const result = await tool.execute(baseRun as never, {
+        task: "draft-create",
+        instruction: "再简洁一点",
+        previousInvocationId: "prior-inv",
+      } as never, undefined);
+      return {
+        input: (dispatch.mock.calls[0]![0] as { input: Record<string, unknown> }).input,
+        payload: JSON.parse((result as { content: string }).content),
+      };
+    };
+
+    // 本会话上一稿：注入 previousDraft（标题 + 正文）。
+    const same = await runTool(makePrior("session-1"));
+    expect(same.input.previousInvocationId).toBe("prior-inv");
+    expect(same.input.previousDraft).toContain("上一稿标题");
+    expect(same.input.previousDraft).toContain("旧内容");
+    expect(same.payload.previousDraftApplied).toBe(true);
+
+    // 跨会话 / 不存在的 invocation：不注入，回普通生成。
+    const foreign = await runTool(makePrior("session-other"));
+    expect(foreign.input).not.toHaveProperty("previousDraft");
+    expect(foreign.payload.previousDraftApplied).toBe(false);
+    const missing = await runTool(null);
+    expect(missing.input).not.toHaveProperty("previousDraft");
+    expect(missing.payload.previousDraftApplied).toBe(false);
+  });
+
   it("终态非 completed / 结构化结果缺失时返回结构化错误", async () => {
     const tools = createSubagentPiTools(registryWith(["doc-writer"]), orchestratorReturning({
       status: "timed_out",

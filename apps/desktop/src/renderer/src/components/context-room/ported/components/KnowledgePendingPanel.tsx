@@ -26,6 +26,7 @@ import {
 } from '../../../../../../shared/knowledge';
 import { localizedUiText } from '../adapters';
 import { waitForKnowledgeEntityPromotion } from '../knowledgePromotion';
+import { UnmatchedDocsSection } from './UnmatchedDocsSection';
 import {
   ROOM_RECOMMENDATION_RUN_EVENT,
   type RoomRecommendationRunPayload,
@@ -67,6 +68,12 @@ function promotionLabel(progress: KnowledgePromotionProgressDto, t: Translate): 
 
 /** 仅展示证据分最高的三个待创建候选。 */
 const RECOMMEND_LIMIT = 3;
+
+/**
+ * 证据进度条的真值分母：达到该证据分即视为凑满（clamp 到 1）。与网关
+ * recommendationPathOf 的双路径阈值对齐（standard 2.4 / strong 2.0）。
+ */
+const EVIDENCE_READY_SCORE: Record<'standard' | 'strong', number> = { standard: 2.4, strong: 2.0 };
 
 /** 推荐生成会话轮询节奏：2s 一拍，路由或候选实体任一增长即视为有进度。 */
 const RUN_POLL_INTERVAL_MS = 2_000;
@@ -230,6 +237,8 @@ export function KnowledgePendingPanel({
   const [busy, setBusy] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loaded, setLoaded] = useState(false);
+  /** 知识服务不可用：与「确实没有推荐」区分展示，附重试入口。 */
+  const [loadError, setLoadError] = useState(false);
   const activePromotionsRef = useRef(new Map<string, string>());
   const promotionControllers = useRef(new Map<string, AbortController>());
   const selectionInitializedRef = useRef(false);
@@ -283,6 +292,7 @@ export function KnowledgePendingPanel({
       setRecent(recentData.items);
       setSuppressed(suppressedData.items);
       setLoaded(true);
+      setLoadError(false);
       const previous = activePromotionsRef.current;
       const completed = rooms.items.filter((entity) =>
         previous.has(entity.id) && entity.promotion?.status === 'completed');
@@ -292,6 +302,23 @@ export function KnowledgePendingPanel({
         showToast({ title: translateRef.current('contextRoom:knowledgePending.roomCreated'), message: translateRef.current('contextRoom:knowledgePending.nameIsReadyToUse', { name: entity.name }) });
         // md 上传文件自动转为可编辑云文档（幂等；补跑兜路由决策落库窗口）
         scheduleRoomMarkdownImport(entity.roomId);
+        // M2-A：晋升完成即时定向查重，新候选以 toast 引导去首页合并中心处理。
+        const promotedRoomId = entity.roomId;
+        if (promotedRoomId) {
+          void (async () => {
+            try {
+              const result = await window.nxcore?.contextRooms?.checkRoomDuplicates?.(promotedRoomId);
+              if ((result?.newCandidates ?? 0) > 0) {
+                showToast({
+                  title: translateRef.current('contextRoom:knowledgePending.duplicatesDetectedTitle'),
+                  message: translateRef.current('contextRoom:knowledgePending.duplicatesDetectedBody', { name: entity.name, count: result!.newCandidates }),
+                });
+              }
+            } catch {
+              // 查重是增强提示：失败静默（合并中心仍会常规发现）。
+            }
+          })();
+        }
       }
       for (const entity of failed) {
         showToast({ title: translateRef.current('contextRoom:knowledgePending.creationFailed'), message: entity.promotion?.error ?? undefined });
@@ -300,7 +327,9 @@ export function KnowledgePendingPanel({
         window.setTimeout(() => window.dispatchEvent(new CustomEvent('everroom:knowledge-changed')), 0);
       }
     } catch {
-      setLoaded(true); // 知识服务不可用：面板静默为空
+      // 知识服务不可用：面板显性报错（不再静默为空——用户会把故障误读为"没有资料"）
+      setLoaded(true);
+      setLoadError(true);
     }
   }, []);
 
@@ -874,7 +903,19 @@ export function KnowledgePendingPanel({
         </div>
       ) : null}
 
-      {recommended.length === 0 && !runActive ? (
+      {loadError && recommended.length === 0 && !runActive ? (
+        <div className="context-room-knowledge-empty" data-error="true">
+          <AlertCircle aria-hidden="true" />
+          <h3>{t('contextRoom:knowledgePending.loadFailedTitle')}</h3>
+          <p>{t('contextRoom:knowledgePending.loadFailedBody')}</p>
+          <button type="button" className="context-room-knowledge-empty-cta" onClick={() => void refresh()}>
+            <span className="context-room-knowledge-empty-cta-icon">
+              <RefreshCw aria-hidden="true" />
+            </span>
+            <span>{t('contextRoom:knowledgePending.loadFailedRetry')}</span>
+          </button>
+        </div>
+      ) : recommended.length === 0 && !runActive ? (
         <div className="context-room-knowledge-empty">
           <Inbox aria-hidden="true" />
           <h3>{t('contextRoom:knowledgePending.understandingResources')}</h3>
@@ -905,7 +946,8 @@ export function KnowledgePendingPanel({
           </div>
           <h3 className="context-room-knowledge-group">{t('contextRoom:knowledgePending.highConfidenceRecommendations')}</h3>
           {visibleRecommended.map((entity) => {
-            const scoreRatio = 1;
+            const scoreRatio = Math.min(1, entity.evidenceScore
+              / EVIDENCE_READY_SCORE[entity.readinessPath === 'strong' ? 'strong' : 'standard']);
             const promotion = entity.promotion;
             const isPromotionActive = promotion?.status === 'queued' || promotion?.status === 'running';
             const creationPercent = promotion ? promotionPercent(promotion) : 0;
@@ -1043,6 +1085,8 @@ export function KnowledgePendingPanel({
           </div>
         </details>
       ) : null}
+
+      <UnmatchedDocsSection />
 
       {recent.length > 0 ? (
         <details className="context-room-knowledge-history">

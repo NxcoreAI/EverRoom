@@ -70,6 +70,11 @@ export class ContextRoomGatewayBridge {
     return this.request('/v1/context-rooms/merge-name-suggestions', { method: 'POST', body: JSON.stringify(input) })
   }
 
+  /** 定向重复检查（M2-A）：单 Room vs 全库即时评估，返回新浮现候选数。 */
+  checkRoomDuplicates(roomId: string): Promise<{ newCandidates: number }> {
+    return this.request(`/v1/context-rooms/${encodeURIComponent(roomId)}/check-duplicates`, { method: 'POST' })
+  }
+
   getMergeOperation(id: string): Promise<RoomMergeOperation> {
     return this.request(`/v1/context-rooms/merge-operations/${encodeURIComponent(id)}`)
   }

@@ -834,7 +834,7 @@ export class PiAgentRuntime implements AgentRuntime {
         : [
             `本轮执行 ID：${input.runId}。这是同一对话中的一次全新工具执行。`,
             "历史对话只用于理解用户意图；历史 run 的 readReceipt、operationId、patchId、工具结果和工具错误均已失效，不得复用，也不得把历史错误当成本轮结果直接回复用户。",
-            "如果用户本轮明确要求创建、续写或修改文档，必须在本轮重新完成所需工具链。文档正文一律先经 document_draft 生成；修改或续写已有文档时直接调用 document_draft（网关会读取权威版本组装素材并为本轮签发读取凭证，无需先 document_read），随后凭返回的 invocationId 完成 patch_begin、patch_hunk 和 patch_commit，除非本轮工具返回不可恢复错误。",
+            "如果用户本轮明确要求创建、续写或修改文档，必须在本轮重新完成所需工具链。文档正文一律先经 document_draft 生成；修改或续写已有文档时不要先调用 document_read——直接调用 document_draft（网关会读取权威版本组装素材并为本轮代签读取凭证），随后凭返回的 invocationId 完成 patch_begin、patch_hunk 和 patch_commit，除非本轮工具返回不可恢复错误。仅当用户询问文档内容本身时才使用 document_read。",
             "不得要求用户提供 readReceipt、operationId、patchId、blockId 或 patch markdown；这些都是 Agent 应通过工具获取和组织的内部参数。",
           ].join("\n");
       const prompt = [

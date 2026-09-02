@@ -64,7 +64,7 @@ export function createRoomOverviewAgentTools(service: RoomOverviewService): PiAg
   const contextGet: PiAgentRuntimeTool = {
     name: "context_room_context_get",
     label: "读取 Room 总览上下文",
-    description: "读取当前 Room 的权威总览、事实来源、已应用纠正，以及当前会话仍待确认的纠正 proposal。回答 Room 问题、提出纠正或处理用户确认前调用。",
+    description: "读取当前 Room 的权威总览、事实来源、最近已应用纠正（最多 20 条，另附历史总数）与当前会话仍待确认的纠正 proposal。回答 Room 问题、提出纠正或处理用户确认前调用。",
     parameters: Type.Object({ roomId: Type.Optional(Type.String({ maxLength: 128 })) }, { additionalProperties: false }),
     execute: async (input, params) => {
       const roomId = resolveRoomId(input, params);
@@ -73,7 +73,14 @@ export function createRoomOverviewAgentTools(service: RoomOverviewService): PiAg
       const appliedCorrections = corrections.filter((item) => item.status === "applied");
       const pendingCorrections = corrections.filter((item) =>
         item.status === "proposed" && item.sessionId === input.sessionId);
-      const payload = { overview, corrections: appliedCorrections, pendingCorrections };
+      // 已应用纠正随 Room 寿命只增不减；全量进上下文会持续膨胀，
+      // 这里只回最近 20 条 + 历史总数（纠正溯源仍可经 REST 查询全量）。
+      const payload = {
+        overview,
+        corrections: appliedCorrections.slice(-20),
+        appliedCorrectionCount: appliedCorrections.length,
+        pendingCorrections,
+      };
       return { content: JSON.stringify(payload), details: { roomId, ...payload } };
     },
   };

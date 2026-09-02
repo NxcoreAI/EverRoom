@@ -64,6 +64,10 @@ export interface EntityIdentityInput {
   kind: string;
   /** 依据句样本（≤5 条，调用方裁剪）。 */
   evidenceSamples: string[];
+  /** 可信系统注入的 pair 级历史（M2-C）：用户在此前的合并判定，供判定参考。 */
+  priorVerdictNote?: string;
+  /** 知识整理偏好摘要（M3）：建议性参考，注入开关关闭时缺省。 */
+  preferenceDigest?: string;
 }
 
 export interface JudgeResult {
@@ -108,15 +112,8 @@ export class KnowledgeLlm {
   constructor(private readonly agentResolver: AgentResolver) {}
 
   /** ③′ 实体抽取：一次调用出 summary + 开放实体列表。 */
-  async extract(title: string, markdown: string): Promise<ExtractionResult> {
-    const prompt = [
-      `资料标题：${title}`,
-      "",
-      markdown.slice(0, 12_000),
-      "",
-      "请给出抽取 JSON。",
-    ].join("\n");
-    return this.chatJson("entity-extraction", prompt, parseExtractionResponse);
+  async extract(title: string, markdown: string, preferenceDigest?: string): Promise<ExtractionResult> {
+    return this.chatJson("entity-extraction", buildExtractionPrompt(title, markdown, preferenceDigest), parseExtractionResponse);
   }
 
   /** Room 当前文档集合 → 只读的详情投影，不参与资料归属判决。连接器来源带 label 标注类型。 */
@@ -140,16 +137,7 @@ export class KnowledgeLlm {
 
   /** 模糊带同一性判定（4.2/4.5）：双方是否同一实体。 */
   async judgeEntityIdentity(a: EntityIdentityInput, b: EntityIdentityInput): Promise<JudgeResult> {
-    const prompt = [
-      "实体 A：",
-      ...identityLines(a),
-      "",
-      "实体 B：",
-      ...identityLines(b),
-      "",
-      "请给出同一性判定 JSON。",
-    ].join("\n");
-    return this.chatJson("entity-identity", prompt, parseJudgeResponse);
+    return this.chatJson("entity-identity", buildIdentityPrompt(a, b), parseJudgeResponse);
   }
 
   /** 转正登记（4.4 步骤 3）：依据句 + 资料摘要 → Room 身份材料。 */
@@ -179,6 +167,11 @@ export class KnowledgeLlm {
    */
   async chatForFilter(prompt: string): Promise<string> {
     return this.chat("ingest-filter", prompt);
+  }
+
+  /** 知识整理偏好洞察（M3）：修订式重写的直调通道，失败抛 KnowledgeLlmError。 */
+  async chatForPreferences(prompt: string): Promise<string> {
+    return this.chat("knowledge-preferences", prompt);
   }
 
   /**
@@ -279,6 +272,47 @@ function identityLines(input: EntityIdentityInput): string[] {
     lines.push(...input.evidenceSamples.slice(0, 5).map((line) => `  - ${line}`));
   }
   return lines;
+}
+
+/** 实体抽取 prompt 构造（M3 导出为纯函数便于测试）：偏好 digest 为建议性参考。 */
+export function buildExtractionPrompt(title: string, markdown: string, preferenceDigest?: string): string {
+  return [
+    ...(preferenceDigest
+      ? [
+          "【整理偏好（建议性参考，可信系统注入）】",
+          preferenceDigest,
+          "以上偏好只用于在模糊处偏向用户关心的主题，不得因此忽略资料中明确出现的其他实体。",
+          "",
+        ]
+      : []),
+    `资料标题：${title}`,
+    "",
+    markdown.slice(0, 12_000),
+    "",
+    "请给出抽取 JSON。",
+  ].join("\n");
+}
+
+/** 同一性判定 prompt 构造（M3 导出为纯函数便于测试）。 */
+export function buildIdentityPrompt(a: EntityIdentityInput, b: EntityIdentityInput): string {
+  return [
+    ...(a.preferenceDigest
+      ? [
+          `【整理偏好（建议性参考）：${a.preferenceDigest}】`,
+          "",
+        ]
+      : []),
+    "实体 A：",
+    ...identityLines(a),
+    "",
+    "实体 B：",
+    ...identityLines(b),
+    "",
+    ...(a.priorVerdictNote
+      ? [`历史参考（可信注入）：${a.priorVerdictNote}。若身份材料足以推翻该历史结论仍可判同一，但须在 reason 中给出依据。`, ""]
+      : []),
+    "请给出同一性判定 JSON。",
+  ].join("\n");
 }
 
 /** 剥围栏 + 定位 JSON 对象主体（导出供单测复用）。 */

@@ -1,6 +1,7 @@
 # 写作风格沉淀与应用（Writing Style Profile）
 
-> 状态：**M1–M3 全部实现（2026-08-31）；2026-09-01 增补行为信号（§4.1：改写指令/修改原话/手改 diff 三类回溯）与漏洞修复（生成开关文案、清空语义、死代码清理、旧表迁移）。M1 管道+存储+REST+记忆页 tab（含用户风格编辑）；M2 补全/生成注入 + §7.4 合成；M3 LLM 定性层 + 语料列表/排除 + 定性展示。实现备注：生成侧经 runtimePrompt 每 run 组装注入（语义等同 §7.2 的 executionContexts 方案，且不改 runtime 契约）；补全侧注入块由 gateway 统一合成（§7.4 单一实现），renderer 只取用；LLM 定性层用隔离内部 Pi runtime 直调（runtime-factory `createWritingStyleRuntime`，ingest-filter 同款），不建 agent bundle
+> 状态：**M1–M3 全部实现（2026-08-31）；2026-09-01 增补行为信号（§4.1：改写指令/修改原话/手改 diff 三类回溯）与漏洞修复（生成开关文案、清空语义、死代码清理、旧表迁移）。M1 管道+存储+REST+记忆页 tab（含用户风格编辑）；M2 补全/生成注入 + §7.4 合成；M3 LLM 定性层 + 语料列表/排除 + 定性展示。实现备注：生成侧经 runtimePrompt 每 run 组装注入（语义等同 §7.2 的 executionContexts 方案，且不改 runtime 契约）；补全侧注入块由 gateway 统一合成（§7.4 单一实现），renderer 只取用；LLM 定性层用隔离内部 Pi runtime 直调（runtime-factory `createWritingStyleRuntime`，ingest-filter 同款），不建 agent bundle。2026-09-02 生成注入随 doc-writer 方案迁移（doc-writer-subagent-plan §7）：注入点收至 doc-writer dispatch 输入（全 task 无条件附加），主 Agent 四信号门整体退役删除（详见 §7.2 修订）
+> **v2 协作洞察（2026-09-02 晚，用户四项决策，未提交）**：①纯 agent 文档不入语料（既有资格判定维持，重心确认为行为信号：手改 + 指令）；②一轮协作安静收尾（最近信号 ≥5 分钟无新增）且新信号 ≥2 条时蒸馏 pending 洞察，智能区（AgentPanel）顶部横幅展示该轮偏好陈述，确认写入画像 / 稍后关闭；③"稍后"（snoozed）的洞察回记忆页写作风格 tab 可找回确认；④行为提炼陈述偏好结论而非计数（画像行为行改偏好陈述、LLM 蒸馏 prompt 同口径"总结偏好不要罗列次数"）。实现：迁移 0052 `writing_style_insights` 表；service `maybeDistillInsight`（worker drain 周期触发，一次只留一条未决）/`snoozeInsight`/`confirmInsight`（接管态把确认偏好追加进用户文本，未接管态重生成且已确认洞察置于行为区最前）；REST `/v1/writing-style/insights[/:id/confirm|snooze]`；`WritingStyleLlm.summarizeBehaviorRound`（LLM 优先，失败回退类目偏好陈述）；画像停更缺口修复（§10 修订）。桌面：AgentPanel 横幅（45s 轮询 + focus 刷新）、记忆页"协作洞察"区（待确认/稍后/已写入）、IPC 全链。
 > 关联文档：[agent-document-development-sop.md](agent-document-development-sop.md)（规范真源，本方案不触碰其约束）、[knowledge-room-agent-plan.md](knowledge-room-agent-plan.md)（增量刷新管线参照）
 
 ## 1. 背景与目标
@@ -52,7 +53,8 @@ jobs: writing-style.refresh
    ▼
 注入（各自独立开关，存 writing_style_settings）
    ├─ 补全：renderer 读 profile → prompt 动态段新增 <WRITING_STYLE> 标签（cursor-completion 子进程零改动）
-   └─ 生成：AgentService run 上下文 → system prompt 追加风格段；划词改写 dispatch 输入同样附加
+   └─ 生成（2026-09-02 迁移后）：doc-writer dispatch 输入 writingStyle 字段（对话流 document_draft 组装 /
+      编辑器静默流 DocWriterAgentDispatcher），全 task 无条件附加——主 Agent 不再接触风格内容
 ```
 
 模块落点：`apps/gateway/src/modules/writing-style/`（新），渲染器 `pages/memory/WritingStylePane.tsx`（新）+ `detail-editor/documentCursorCompletionAgent.ts`（小改）。
@@ -141,18 +143,19 @@ export const WRITING_STYLE_REFRESH_JOB_TYPE = "writing-style.refresh";
 
 首次开启功能（任一开关从 off → on，或首次进入记忆页写作风格 tab 发现 profile 为空）时做**存量回填**：为所有合格文档各入队一个 extract job，复用同一条增量管线，不写独立的全量批处理路径。
 
-### 4.1 行为信号（2026-09-01 扩展：从"用户怎么写/怎么改"提炼）
+### 4.1 行为信号（2026-09-01 扩展；2026-09-02 增补第四类）
 
-静态文档只是结果，行为才是最强的风格信号。新增 `writing_style_signals` 表（迁移 0045）与三类信号，全部在 refresh/启动兜底时**只读回溯**（不动文档提交链路）：
+静态文档只是结果，行为才是最强的风格信号。`writing_style_signals` 表（迁移 0047）与四类信号，全部在 refresh/启动兜底时**只读回溯**（不动文档提交链路）：
 
 1. **rewrite_instruction**：划词改写的 `input.instruction`（selection-rewrite operation，completed）——用户对改写的显式要求原话。
-2. **edit_instruction**：document.edit/continue 的 operation（completed）经 runId 反查 `agent_runs.prompt`——用户让 agent 改文档时说的原话。
+2. **edit_instruction**：document.edit/continue 的 operation（completed）经 runId 反查 `agent_runs.prompt`——用户让 agent 改文档时说的原话。（doc-writer 迁移后 operation 仍属主 Agent run，join 存活，有回归测试守之。）
 3. **revision_delta**：`doc_versions` 中 agent 版本（sourceTransactionId 非空）→ 下一个用户版本（null）的手改对；连续 agent 版本取最后一个配对；做方向性轻统计（lenBefore/After、句长中位数、感叹号净变化）+ before/after 摘录（快照被 Yjs 淘汰的版本跳过；配对文本 <24 字过滤噪音）。
+4. **review_decision**（2026-09-02 增补，doc-writer 架构的独有信号）：document.edit/continue operation 的审阅层逐项决策——`document_operation_items` 中 applied/rejected 计数与被拒项 markdown 摘录（≤3 项）。用户拒绝了哪些提案项，是"生成内容是否贴合预期"最直接的反馈；仅 rejected ≥1 时落信号（id `rvw:{operationId}`，与 edit_instruction 同 operation 但不重复计入指令归类）。列复用：deltaMeta 存 {applied, rejected}，after 存拒绝摘录；type 枚举加值即可，无迁移。
 
 **消费方式**（归类统计 + LLM 证据）：
 - `signals.ts` 表驱动归类（concise/formal/casual/structured/detail/tone_soft/tone_direct/punctuation 等，未命中仍采样）；
-- 归类计数直接进画像文本的"行为偏好"段（无需 LLM 即可见，如"修改指令「更简洁」8 次；你常把 Agent 输出改短（平均 -15%）"）与记忆页摘要；
-- 指令原话采样 + revision 样例（≤3 对）作为定性 LLM 的"用户行为证据"区，并标注**最强信号优先于统计**；
+- 归类计数直接进画像文本的"行为偏好"段（无需 LLM 即可见，如"修改指令「更简洁」8 次；你常把 Agent 输出改短（平均 -15%）；审阅中拒绝过 N 个提案项——提案不贴合预期时倾向整项拒绝"）与记忆页摘要（reviewRejectedCount ≥2 时显示）；
+- 指令原话采样 + revision 样例（≤3 对）+ review 拒绝摘录（≤3 条）作为定性 LLM 的"用户行为证据"区，并标注**最强信号优先于统计**；
 - 语料指纹（cursor）= sketch 集 + 信号集：新行为信号会触发画像重生成与"有新沉淀"提示；仅行为信号、无文档语料时也生成画像文本。
 
 ## 5. 统计层设计（StyleAnalyzer，确定性）
@@ -222,9 +225,10 @@ merge(sketches) = Σ(count_i × w_i) / Σ(w_i)，w = 1（时间衰减为后续�
 ### 7.2 生成注入（开关 generationEnabled，服务端强制）
 
 - **读取与强制**：开关在 gateway 侧读取（`writing_style_settings`），不信任 renderer 传参——生成发生在 gateway，此处天然可服务端强制。
-- **main agent**：经 `runtimePrompt` 把注入块并入每 run 的 prompt（`agent/service.ts`，provider 由 create-server 接线，开关 gateway 强制读取）。**2026-09-01 修订（用户决策）：作用范围从"全部主 Agent 轮次（含纯对话问答）"收窄为"文档写作轮"**——四信号门控（`modules/agent/writing-style-gate.ts`）：①编辑器有活动文档 ②本轮带选区 ③写作意图启发式（`document-intent.ts` 的 `requestsWorkspaceDocument`，即澄清卡片预检同款正则）④本会话已用过 write/patch 写作工具（`agent_events` 的 tool.completed 查询）；纯对话轮不注入，UI 开关文案同步修订。原取舍理由（"文档相关轮次无法精确判定"）由信号③④组合覆盖主要场景，残余漏注入面（无编辑器上下文、措辞不含文档关键词、且是会话首次写作请求）可接受。
-- **划词改写**：`room-agent.ts` `dispatchDetached`（:323）组装 task input 时，开关开启则把 `digestGeneration` 附加到 context-room 子 agent 的输入上下文。
-- **关闭语义**：开关关闭时 executionContext 不携带该字段，system prompt 与 dispatch 输入中无任何风格内容（验收：关闭后不注入）。
+- **2026-09-02 修订（doc-writer 迁移后现状）**：全部正文内容生成收编 doc-writer 子 agent（doc-writer-subagent-plan M1–M3，含划词改写）后，注入点从主 Agent prompt 收至 **doc-writer 的 dispatch 输入 `writingStyle` 字段，全 task 无条件附加**——doc-writer 的任务天然全部是写作任务，无需信号门；开关关闭时 provider 返回 null 不附字段，关闭即不注入。覆盖面由"启发式判定写作轮"变为**构造性全覆盖**（所有正文必经 doc-writer，风格只需维护一个注入点）。
+- **注入点**：对话流（新建/修改/续写/对话内划词）= `document_draft` 工具网关侧组装（`subagents/tools.ts`，provider 经 create-server 注入）；编辑器静默流（划词改写）= `DocWriterAgentDispatcher.dispatchDetached`（`subagents/doc-writer-dispatcher.ts`，M2 自 ContextRoomAgentDispatcher 迁入换绑）。
+- **历史（已退役）**：2026-09-01 曾以四信号门控（①编辑器有活动文档 ②本轮带选区 ③写作意图启发式 `requestsWorkspaceDocument` ④本会话已用过 write/patch 工具；`modules/agent/writing-style-gate.ts`）把主 Agent 注入收窄到"文档写作轮"；2026-09-02 随迁移整体退役删除。`document-intent.ts` 的 `requestsWorkspaceDocument` 保留（澄清预检与 intent 复检仍在消费）。
+- **关闭语义**：开关关闭时 dispatch 输入无 writingStyle 字段，主 Agent 与 doc-writer 侧均无任何风格内容（验收：关闭后不注入）。
 
 ### 7.3 开关与置信的交互
 
@@ -298,7 +302,7 @@ writingStyle: {
 - **入队时机**：`enqueueWritingStyleExtract` 与 `enqueueDocumentIngest` 同事务（在 `core/commit-service.ts` `applyPrepared` 的 outbox 附近追加，只加一行入队，不改提交语义）。删除路径同理挂 `document.delete`。
 - **调度**：`WritingStyleWorker` 参照 `DocumentOutboxWorker`（`modules/ingest/document-outbox-worker.ts`）实现：同文档旧版本 job 直接 `superseded` 完成；新 job 需过 debounce 窗口（v1 取 60s，比编辑保存的 300ms 防抖宽得多，风格不赶实时）；失败指数退避重试（5s 起，上限 5 分钟，attempts ≥ 5 转 `failed`）。
 - **幂等**：extract 前比对 `doc_versions` 的 contentHash 与 sketch 已存 hash，相同则 `skipped`。
-- **refresh 合并触发**：extract 成功后检查自 `llmMaterialCursor` 起的增量是否达到 §6 阈值，达到则入队 refresh（refresh job 本身以 `writing-style:refresh` 单例 ID 去重，进行中则跳过）。
+- **refresh 合并触发**：extract 成功后检查自 `llmMaterialCursor` 起的增量是否达到 §6 阈值，达到则入队 refresh（refresh job 本身以 `writing-style:refresh` 单例 ID 去重，进行中则跳过）。**2026-09-02 缺口修复：行为信号增长不经过 extract 阈值，原实现导致画像文本在"无语料增量、有信号增量"时长期停留旧指纹**——补两条自动入口：①启动兜底 `ensureProfileTextInitialized` 由"已有文本即早退"改为"未接管且语料指纹（sketch 集+信号集）落后于文本生成指纹时重生成"；②worker 每个 drain 周期末尾 `autoRefreshOnSignalGrowth`（scanSignals + 指纹比对，落后则入队 refresh，单例去重；接管后 refresh 仍入队供统计与"有新沉淀"提示，文本覆盖由接管守卫拦下）。
 - **重算**：`recompute` 清空 sketches + profileVersion 重置，为全部合格文档重新入队 extract（与存量回填同路径）。**用户正文表不在重算范围内**——物理隔离保证重算零触碰。
 - **崩溃一致性**：全部状态在 SQLite，job 状态机与既有 worker 语义一致；启动时无需专门恢复逻辑（pending job 自然被 drain）。
 
@@ -360,6 +364,5 @@ writingStyle: {
 - `apps/desktop/src/main/gateway/`：新增 writing-style bridge；`main/index.ts` IPC handler
 - `apps/desktop/src/preload/index.ts`：`writingStyle` API 面
 - `apps/desktop/src/renderer/src/components/context-room/ported/components/detail-editor/documentCursorCompletionAgent.ts`：prompt 新增 `<WRITING_STYLE>` 标签（开关判断）
-- `apps/gateway/src/modules/agent/service.ts` + `runtime-factory.ts`：run 上下文附带 style digest + system 段注入
-- `apps/gateway/src/modules/context-rooms/room-agent.ts`：dispatchDetached 输入附加
+- 生成注入（2026-09-02 迁移后）：`apps/gateway/src/modules/subagents/tools.ts`（document_draft 组装附加）+ `apps/gateway/src/modules/subagents/doc-writer-dispatcher.ts`（划词改写 dispatchDetached 附加）；原主 Agent 侧接线（agent/service.ts provider、writing-style-gate.ts 四信号门）已删除
 - i18n locale 文件（`memory:` 命名空间，zh-CN / en-US）

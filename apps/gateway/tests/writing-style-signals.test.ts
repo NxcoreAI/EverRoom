@@ -7,6 +7,7 @@ import { createDatabase, type DatabaseClient } from "../src/infrastructure/datab
 import {
   agentRuns,
   agentSessions,
+  documentOperationItems,
   documentOperations,
   documentVersions,
   documents,
@@ -113,7 +114,7 @@ describe("classifyInstruction 表驱动归类", () => {
   });
 });
 
-describe("scanSignals 三类回溯", () => {
+describe("scanSignals 四类回溯", () => {
   it("划词改写 instruction → rewrite_instruction 并归类", async () => {
     const { database, service } = await setup();
     seedDocument(database, "doc-1");
@@ -188,6 +189,73 @@ describe("scanSignals 三类回溯", () => {
     expect(behavior.revisionCount).toBe(1);
     expect(behavior.revisionSamples[0]?.before).toContain("第二稿");
   });
+
+  it("审阅层拒绝 → review_decision（拒绝计数与摘录；全接受不产生信号）", async () => {
+    const { database, service } = await setup();
+    seedDocument(database, "doc-1");
+    seedOperation(database, {
+      id: "op-edit-reject",
+      capabilityId: "document.edit",
+      documentId: "doc-1",
+      status: "completed",
+      operationInput: { hunks: [] },
+      runPrompt: "把总结段改得更详细一点，补充例子",
+    });
+    const now = new Date();
+    const seedItem = (sequence: number, status: "applied" | "rejected", markdown: string): void => {
+      database.db.insert(documentOperationItems).values({
+        id: `item-${sequence}`,
+        operationId: "op-edit-reject",
+        sequence,
+        operation: "replace",
+        target: { blockId: "b1" },
+        beforeJson: [],
+        afterJson: [],
+        markdown,
+        contentHash: `hash-${sequence}`,
+        status,
+        createdAt: now,
+        updatedAt: now,
+      }).run();
+    };
+    seedItem(1, "applied", "接受的第一处修改。");
+    seedItem(2, "rejected", "被拒绝的过度展开段落，写得非常啰嗦。");
+    seedItem(3, "rejected", "另一处被拒绝的提案内容。");
+    // 全接受的续写操作不产生 review_decision。
+    seedOperation(database, {
+      id: "op-cont-ok",
+      capabilityId: "document.continue",
+      documentId: "doc-1",
+      status: "completed",
+      operationInput: {},
+      runPrompt: "续写一段",
+    });
+    database.db.insert(documentOperationItems).values({
+      id: "item-cont-1",
+      operationId: "op-cont-ok",
+      sequence: 1,
+      operation: "insert",
+      target: { at: "end" },
+      beforeJson: [],
+      afterJson: [],
+      markdown: "接受的续写内容。",
+      contentHash: "hash-cont",
+      status: "applied",
+      createdAt: now,
+      updatedAt: now,
+    }).run();
+
+    // edit_instruction（2 个 prompt）+ review_decision（1 个，仅 op-edit-reject）。
+    expect(service.scanSignals()).toBe(3);
+    const behavior = service.aggregateSignals();
+    expect(behavior.reviewRejectedCount).toBe(2);
+    expect(behavior.reviewAcceptedCount).toBe(1);
+    expect(behavior.reviewSamples[0]).toContain("被拒绝");
+    // review_decision 的 instruction 不重复计入指令归类（edit_instruction 已计）。
+    expect(behavior.instructionCounts.find((entry) => entry.label === "更详细")?.count).toBe(1);
+    // 幂等。
+    expect(service.scanSignals()).toBe(0);
+  });
 });
 
 describe("行为信号进画像", () => {
@@ -204,9 +272,11 @@ describe("行为信号进画像", () => {
     await service.refreshProfile();
     const text = service.getProfileText();
     expect(text.content).toContain("行为偏好");
-    expect(text.content).toContain("更简洁");
+    // 偏好陈述化（用户决策 §4）：不罗列次数，直接陈述偏好结论。
+    expect(text.content).toContain("偏好精炼的表达");
+    expect(text.content).not.toContain("1 次");
     expect(text.content).toContain("精简一点");
-    // profile DTO 的 behavior 摘要可用。
+    // profile DTO 的 behavior 摘要可用（计数仍供记忆页明细）。
     expect(service.getProfile().behavior.instructionCounts).toContainEqual({ label: "更简洁", count: 1 });
   });
 

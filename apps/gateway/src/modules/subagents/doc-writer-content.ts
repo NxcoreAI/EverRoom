@@ -53,6 +53,45 @@ function itemsOf(output: Record<string, unknown>): DocWriterDraftItem[] | null {
   return items;
 }
 
+/**
+ * 把 doc-writer invocation 的 structuredOutput 归一化为草稿内容。
+ * resolver（write/patch 引用转交）与 document_draft（previousInvocationId
+ * 增量迭代回读上一稿）共用同一归一化。
+ */
+export function docWriterDraftFromStructuredOutput(
+  output: Record<string, unknown>,
+): DocWriterDraftContent | null {
+  const kind = typeof output.kind === "string" ? output.kind : "";
+  const title = typeof output.title === "string" && output.title.trim() ? output.title : null;
+  const baseVersion = typeof output.baseVersion === "number" ? output.baseVersion : null;
+  if (kind === "draft-create") {
+    const chunks = chunksOf(output);
+    if (!chunks) return null;
+    return { kind, title, baseVersion: null, chunks, items: [] };
+  }
+  if (kind === "draft-continue") {
+    const chunks = chunksOf(output);
+    if (!chunks) return null;
+    return {
+      kind,
+      title: null,
+      baseVersion,
+      chunks,
+      items: chunks.map((markdown) => ({
+        operation: "insert" as const,
+        target: { at: "end" } as DocumentMutationTarget,
+        markdown,
+      })),
+    };
+  }
+  if (kind === "draft-edit") {
+    const items = itemsOf(output);
+    if (!items) return null;
+    return { kind, title: null, baseVersion, chunks: [], items };
+  }
+  return null;
+}
+
 export function createDocWriterDraftResolver(deps: {
   getInvocation: (invocationId: string) => SubagentInvocation | null;
 }): DocWriterDraftResolver {
@@ -65,41 +104,6 @@ export function createDocWriterDraftResolver(deps: {
     if (invocation.status !== "completed" || !invocation.result) return null;
     const output = structuredOutputOf(invocation);
     if (!output) return null;
-    const kind = typeof output.kind === "string" ? output.kind : "";
-    const title = typeof output.title === "string" && output.title.trim() ? output.title : null;
-    const baseVersion = typeof output.baseVersion === "number" ? output.baseVersion : null;
-    if (kind === "draft-create") {
-      const chunks = chunksOf(output);
-      if (!chunks) return null;
-      const content: DocWriterDraftContent = {
-        kind,
-        title,
-        baseVersion: null,
-        chunks,
-        items: [],
-      };
-      return content;
-    }
-    if (kind === "draft-continue") {
-      const chunks = chunksOf(output);
-      if (!chunks) return null;
-      return {
-        kind,
-        title: null,
-        baseVersion,
-        chunks,
-        items: chunks.map((markdown) => ({
-          operation: "insert" as const,
-          target: { at: "end" } as DocumentMutationTarget,
-          markdown,
-        })),
-      };
-    }
-    if (kind === "draft-edit") {
-      const items = itemsOf(output);
-      if (!items) return null;
-      return { kind, title: null, baseVersion, chunks: [], items };
-    }
-    return null;
+    return docWriterDraftFromStructuredOutput(output);
   };
 }

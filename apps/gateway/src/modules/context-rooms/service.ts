@@ -831,6 +831,63 @@ export class ContextRoomService {
     return { names };
   }
 
+  /**
+   * M2-B：合并完成后的简报自动再生成。仅当 brief 仍是由合并写入的占位
+   * （data.briefPlaceholder 标志存在且 background 与其原文完全相等）时执行——
+   * 用户手改即失配跳过（编辑即接管）；Agent 不可用/失败保留占位不阻塞。
+   * 幂等键固定 merge-brief:${roomId}：重复回调命中同一 invocation。
+   */
+  async refreshBriefIfPlaceholder(roomId: string): Promise<boolean> {
+    const resolved = this.resolveRoomId(roomId);
+    if (!resolved) return false;
+    if (!this.roomAgent) return false;
+    const row = this.db.select().from(contextRooms)
+      .where(eq(contextRooms.id, resolved)).get();
+    if (!row) return false;
+    const data = (row.data ?? {}) as Record<string, unknown>;
+    const placeholder = typeof data.briefPlaceholder === "string" ? data.briefPlaceholder : null;
+    if (!placeholder) return false;
+    const brief = row.data.brief && typeof row.data.brief === "object" && !Array.isArray(row.data.brief)
+      ? row.data.brief as Record<string, unknown>
+      : {};
+    if (typeof brief.background !== "string" || brief.background !== placeholder) return false;
+    const invocation = await this.roomAgent.dispatch({
+      task: "brief-refresh",
+      taskInput: {
+        roomId: resolved,
+        roomTitle: row.title,
+        currentBrief: {
+          background: brief.background,
+          goal: typeof brief.goal === "string" ? brief.goal : "",
+          status: typeof brief.status === "string" ? brief.status : "",
+          risks: Array.isArray(brief.risks) ? brief.risks : [],
+          decisions: Array.isArray(brief.decisions) ? brief.decisions : [],
+        },
+      },
+      idempotencyKey: `merge-brief:${resolved}`,
+    });
+    const content = invocation.status === "completed" ? invocationText(invocation) : null;
+    if (!content) return false;
+    const parsed = parseBriefRefresh(content);
+    const now = new Date();
+    const nextData = { ...data } as Record<string, unknown>;
+    delete nextData.briefPlaceholder;
+    nextData.brief = {
+      ...(row.data.brief && typeof row.data.brief === "object" && !Array.isArray(row.data.brief)
+        ? row.data.brief as Record<string, unknown>
+        : {}),
+      ...(parsed.background ? { background: parsed.background } : {}),
+      ...(parsed.goal ? { goal: parsed.goal } : {}),
+      ...(parsed.status ? { status: parsed.status } : {}),
+      risks: parsed.risks,
+      decisions: parsed.decisions,
+    };
+    nextData.updatedAt = now.toISOString();
+    this.db.update(contextRooms).set({ data: nextData as typeof row.data, updatedAt: now })
+      .where(eq(contextRooms.id, resolved)).run();
+    return true;
+  }
+
   saveSnapshot(input: SaveContextRoomSnapshotInput): ContextRoomSnapshot {
     const active = input.rooms.map(canonicalItem);
     const deleted = input.deletedRooms.map(canonicalItem);

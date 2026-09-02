@@ -8,6 +8,7 @@ import { CoreProfilePane } from './memory/CoreProfilePane'
 import { WritingStylePane } from './memory/WritingStylePane'
 import { DocumentPane } from './memory/DocumentPane'
 import { FilterRulesPane } from './memory/FilterRulesPane'
+import { OrganizationPreferencePane } from './memory/OrganizationPreferencePane'
 import { IngestLedgerPane } from './memory/IngestLedgerPane'
 import { MemoryDisabledView, MemoryUnreachableView } from './memory/MemoryStatusViews'
 import type { MemorySearchResult } from './memory/MemorySearchResults'
@@ -32,6 +33,8 @@ const TABS: Array<{ id: MemoryTabId; label: string; level: string }> = [
   { id: 'ledger', label: 'memory:memory.ledger', level: '' },
   // 过滤规则 = 过滤器判定偏好（用户偏好可编辑 + 系统洞察只读）
   { id: 'filter-rules', label: 'memory:memory.filterRules', level: '' },
+  // 整理偏好 = 知识整理习惯学习（M3）：合并/路由/晋升信号的统计与洞察 + 用户接管
+  { id: 'org-preferences', label: 'memory:memory.organizationPreferences', level: '' },
 ]
 
 export function MemoryPage({ focusAtomicId }: { focusAtomicId?: string | null } = {}) {
@@ -181,6 +184,7 @@ export function MemoryPage({ focusAtomicId }: { focusAtomicId?: string | null } 
           {tab === 'writing-style' ? <WritingStylePane /> : null}
           {tab === 'ledger' ? <IngestLedgerPane /> : null}
           {tab === 'filter-rules' ? <FilterRulesPane /> : null}
+          {tab === 'org-preferences' ? <OrganizationPreferencePane /> : null}
           {tab === 'conversation' ? (
             <ConversationPane focusSessionId={conversationFocus} />
           ) : null}

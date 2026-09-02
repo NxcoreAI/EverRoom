@@ -47,6 +47,10 @@ export interface WritingStyleBehaviorDto {
   /** 平均长度变化比（负 = 用户改短）；null = 无样本。 */
   averageLenDeltaRatio: number | null
   exclamationDelta: number
+  /** 审阅拒绝的提案项总数（review_decision 信号）。 */
+  reviewRejectedCount: number
+  /** 审阅接受的提案项总数。 */
+  reviewAcceptedCount: number
 }
 
 export interface WritingStyleCorpusEntryDto {
@@ -58,4 +62,14 @@ export interface WritingStyleCorpusEntryDto {
   excluded: boolean
   status: string
   extractedAt: string
+}
+
+/** 协作轮洞察（v2）：pending=横幅待确认，snoozed=稍后（记忆页可找回），confirmed=已并入画像。 */
+export interface WritingStyleInsightDto {
+  id: string
+  preferences: string[]
+  status: 'pending' | 'snoozed' | 'confirmed'
+  llmGenerated: boolean
+  createdAt: string
+  resolvedAt: string | null
 }

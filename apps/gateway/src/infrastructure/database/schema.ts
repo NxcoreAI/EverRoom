@@ -1295,6 +1295,10 @@ export const roomDuplicateCandidates = sqliteTable(
     llmVerdict: text("llm_verdict", { enum: ["same", "different", "unavailable"] }),
     reasons: text("reasons", { mode: "json" }).$type<string[]>().notNull(),
     status: text("status", { enum: ["open", "related", "distinct", "merged"] }).notNull().default("open"),
+    // 用户终审台账（M2-C 判定消费）：最近一次 related/distinct 判定的时间与
+    // 结论，供证据修订后的降级重现与 LLM 同一性判定注入历史使用。
+    decidedStatus: text("decided_status", { enum: ["related", "distinct"] }),
+    decidedAt: integer("decided_at", { mode: "timestamp_ms" }),
     evidenceRevision: text("evidence_revision").notNull(),
     scoringVersion: integer("scoring_version").notNull().default(1),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
@@ -2507,13 +2511,12 @@ export const writingStyleProfiles = sqliteTable("writing_style_profiles", {
 
 // 行为信号（方案 §4 扩展）：用户让 agent 改文档的原话、划词改写 instruction、
 // 用户对 agent 输出的手改 diff。refresh 时只读回溯写入，与 sketches 平行。
-export const writingStyleSignals = sqliteTable(
-  "writing_style_signals",
+export const writingStyleSignals = sqliteTable(  "writing_style_signals",
   {
-    // 幂等键：`rw:{operationId}` / `edit:{operationId}` / `rev:{documentId}:{version}`
+    // 幂等键：`rw:{operationId}` / `edit:{operationId}` / `rev:{documentId}:{version}` / `rvw:{operationId}`
     id: text("id").primaryKey(),
     type: text("type", {
-      enum: ["rewrite_instruction", "edit_instruction", "revision_delta"],
+      enum: ["rewrite_instruction", "edit_instruction", "revision_delta", "review_decision"],
     })
       .notNull(),
     documentId: text("document_id"),
@@ -2535,9 +2538,61 @@ export const writingStyleSignals = sqliteTable(
   (table) => [index("writing_style_signals_type_idx").on(table.type)],
 );
 
+// 协作轮洞察（写作风格 v2）：一轮文档协作安静收尾后，把该轮行为信号
+// 蒸馏成偏好陈述待用户确认；pending=横幅待确认，snoozed=稍后（记忆页可
+// 找回），confirmed=已并入画像（用户显式意图层，重生成时高优先进文本）。
+export const writingStyleInsights = sqliteTable("writing_style_insights", {
+  id: text("id").primaryKey(),
+  /** 洞察正文：偏好陈述 2-4 条（LLM 蒸馏，失败回退规则式陈述），≤500 字。 */
+  summary: text("summary").notNull(),
+  /** 覆盖的行为信号 id 集（JSON 数组，溯源与防重用）。 */
+  signalIds: text("signal_ids", { mode: "json" }).$type<string[]>(),
+  status: text("status", {
+    enum: ["pending", "snoozed", "confirmed"],
+  })
+    .notNull()
+    .default("pending"),
+  llmGenerated: integer("llm_generated", { mode: "boolean" }).notNull().default(false),
+  createdAt: integer("created_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+  resolvedAt: integer("resolved_at", { mode: "timestamp_ms" }),
+}, (table) => [index("writing_style_insights_status_idx").on(table.status)]);
+
 // 风格画像正文：系统生成初稿、用户可直接在其上编辑（画像式）。
 // userEdited = true 后 refresh 永不自动覆盖（编辑即接管）；generatedFromCursor
 // 记录生成时语料指纹，用于"系统有新沉淀"提示与重新生成判断。
+/**
+ * 知识整理偏好（M3 习惯学习）：三段式，参照 writing_style_profiles +
+ * 过滤规则双段。统计段为确定性可复现快照；洞察段由 LLM 修订式重写
+ * （失败保旧）；用户偏好段编辑即接管，注入时优先于系统洞察。
+ */
+export const knowledgePreferences = sqliteTable("knowledge_preferences", {
+  ownerId: text("owner_id").primaryKey().default("local-user"),
+  statsJson: text("stats_json", { mode: "json" }).$type<Record<string, unknown>>(),
+  insight: text("insight"),
+  userPreference: text("user_preference").notNull().default(""),
+  userEdited: integer("user_edited", { mode: "boolean" }).notNull().default(false),
+  /** 洞察素材指纹（统计 JSON sha256）：不变则跳过 LLM 重写。 */
+  llmMaterialCursor: text("llm_material_cursor"),
+  lastRefreshedAt: integer("last_refreshed_at", { mode: "timestamp_ms" }),
+  lastLlmAt: integer("last_llm_at", { mode: "timestamp_ms" }),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
+/** 学习总开关与注入开关分离（writing_style_settings 同款哲学）：关注入=行为回到 M2。 */
+export const knowledgePreferenceSettings = sqliteTable("knowledge_preference_settings", {
+  ownerId: text("owner_id").primaryKey().default("local-user"),
+  learningEnabled: integer("learning_enabled", { mode: "boolean" }).notNull().default(true),
+  injectionEnabled: integer("injection_enabled", { mode: "boolean" }).notNull().default(true),
+  configVersion: integer("config_version").notNull().default(1),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
 export const writingStyleUserContent = sqliteTable("writing_style_user_content", {
   ownerId: text("owner_id").primaryKey().default("local-user"),
   content: text("content").notNull().default(""),

@@ -2,13 +2,15 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { afterEach, describe, expect, it } from "vitest";
 import { createDatabase, type DatabaseClient } from "../src/infrastructure/database/client.js";
 import {
   documentVersions,
   documents,
+  jobs,
   roomDocumentLinks,
+  writingStyleSignals,
 } from "../src/infrastructure/database/schema.js";
 import {
   WritingStyleService,
@@ -192,6 +194,152 @@ describe("WritingStyleService 聚合与刷新", () => {
   it("排除不存在的文档报 404 语义错误", async () => {
     const { service } = await setup();
     expect(() => service.setExclusion("missing", true)).toThrow("writing_style_not_found");
+  });
+});
+
+describe("行为信号增长触发画像更新（§4.1/§10 缺口修复）", () => {
+  async function prepared(): Promise<{ database: DatabaseClient; service: WritingStyleService }> {
+    const { database, service } = await setup();
+    seedDocument(database, { id: "doc-1", roomId: "room-1", seed: "风控" });
+    service.extractDocument("doc-1", "room-1", 1);
+    await service.refreshProfile();
+    return { database, service };
+  }
+
+  function addSignal(database: DatabaseClient, id: string): void {
+    database.db.insert(writingStyleSignals).values({
+      id,
+      type: "rewrite_instruction",
+      documentId: null,
+      roomId: null,
+      instruction: "再短一点",
+      category: "concise",
+      createdAt: new Date(),
+    }).run();
+  }
+
+  it("启动兜底：信号增长后未接管的画像文本重生成并吸收新信号", async () => {
+    const { database, service } = await prepared();
+    const before = service.getProfileText().content;
+    expect(before).not.toContain("再短一点");
+
+    addSignal(database, "rw:signal-late-1");
+    service.ensureProfileTextInitialized();
+
+    const after = service.getProfileText();
+    expect(after.content).not.toBe(before);
+    expect(after.content).toContain("再短一点");
+    expect(after.userEdited).toBe(false);
+    // 指纹已重新对齐：再跑一次兜底不再改写。
+    const synced = after.content;
+    service.ensureProfileTextInitialized();
+    expect(service.getProfileText().content).toBe(synced);
+  });
+
+  it("启动兜底：接管后的画像文本永不被信号增长覆盖", async () => {
+    const { database, service } = await prepared();
+    service.replaceUserContent("我的自定义风格版本。");
+    addSignal(database, "rw:signal-late-2");
+    service.ensureProfileTextInitialized();
+    expect(service.getProfileText().content).toBe("我的自定义风格版本。");
+  });
+
+  it("worker 兜底：指纹落后时入队 refresh（单例去重），指纹同步后不再入队", async () => {
+    const { database, service } = await prepared();
+    const pendingRefresh = () => database.db.select({ id: jobs.id }).from(jobs)
+      .where(and(eq(jobs.type, "writing-style.refresh"), eq(jobs.status, "pending"))).all();
+
+    addSignal(database, "rw:signal-late-3");
+    service.autoRefreshOnSignalGrowth();
+    expect(pendingRefresh().length).toBe(1);
+    // 单例去重：重复触发不产生第二个 pending。
+    service.autoRefreshOnSignalGrowth();
+    expect(pendingRefresh().length).toBe(1);
+
+    // worker 消费（服务侧重算 + job 落定）后指纹重新对齐，不再入队。
+    await service.refreshProfile();
+    database.db.update(jobs).set({ status: "completed", updatedAt: new Date() })
+      .where(eq(jobs.type, "writing-style.refresh")).run();
+    service.autoRefreshOnSignalGrowth();
+    expect(pendingRefresh().length).toBe(0);
+    expect(service.getProfileText().content).toContain("再短一点");
+  });
+});
+
+describe("协作轮洞察（v2：横幅确认式沉淀）", () => {
+  function seedSignals(database: DatabaseClient, ids: string[], at: Date): void {
+    for (const id of ids) {
+      database.db.insert(writingStyleSignals).values({
+        id,
+        type: id.startsWith("rev:") ? "revision_delta" : "rewrite_instruction",
+        documentId: null,
+        roomId: null,
+        ...(id.startsWith("rev:") ? {} : { instruction: "写短一点，再简洁一些" }),
+        category: id.startsWith("rev:") ? null : "concise",
+        ...(id.startsWith("rev:") ? { before: "原文摘录", after: "改后摘录", deltaMeta: { lenBefore: 100, lenAfter: 60, exclamationDelta: 0 } } : {}),
+        createdAt: at,
+      }).run();
+    }
+  }
+
+  it("未达安静窗口或信号不足时不蒸馏；安静后走偏好陈述回退", async () => {
+    const { database, service } = await setup();
+    const at = new Date(Date.now() - 10 * 60 * 1000);
+    seedSignals(database, ["rw:a"], at);
+    // 单条信号不蒸馏。
+    expect(await service.maybeDistillInsight()).toBe(false);
+    seedSignals(database, ["rw:b"], at);
+    // 两条但最近信号仍在安静窗口内（now = 信号后 1 分钟）。
+    expect(await service.maybeDistillInsight(new Date(at.getTime() + 60 * 1000))).toBe(false);
+    // 安静收口后蒸馏（无 LLM → 偏好陈述回退，不罗列次数）。
+    expect(await service.maybeDistillInsight()).toBe(true);
+    const insight = service.listInsights()[0]!;
+    expect(insight.status).toBe("pending");
+    expect(insight.llmGenerated).toBe(false);
+    expect(insight.preferences.join("\n")).toContain("精炼");
+  });
+
+  it("完整生命周期：蒸馏 → 横幅稍后（snoozed 可找回）→ 记忆页确认写入画像", async () => {
+    const { database, service } = await setup();
+    const quiet = new Date(Date.now() - 10 * 60 * 1000);
+    seedSignals(database, ["rw:d", "rw:e", "rev:f1"], quiet);
+
+    expect(await service.maybeDistillInsight()).toBe(true);
+    let insights = service.listInsights();
+    expect(insights).toHaveLength(1);
+    expect(insights[0]!.status).toBe("pending");
+    expect(insights[0]!.preferences.length).toBeGreaterThan(0);
+    expect(insights[0]!.preferences.join("\n")).toContain("精炼");
+
+    // 未决洞察存在时不重复蒸馏。
+    seedSignals(database, ["rw:g"], quiet);
+    expect(await service.maybeDistillInsight()).toBe(false);
+
+    // 稍后：横幅关闭但记忆页可找回。
+    const snoozed = service.snoozeInsight(insights[0]!.id);
+    expect(snoozed.status).toBe("snoozed");
+    expect(service.listInsights()[0]!.status).toBe("snoozed");
+
+    // 确认：写入画像文本（未接管态 → 重生成，已确认洞察置于行为偏好区最前）。
+    const confirmed = service.confirmInsight(insights[0]!.id);
+    expect(confirmed.status).toBe("confirmed");
+    const text = service.getProfileText();
+    expect(text.userEdited).toBe(false);
+    expect(text.content).toContain("精炼");
+    expect(text.content.indexOf("精炼")).toBeLessThan(text.content.indexOf("样例指令") >= 0 ? text.content.indexOf("样例指令") : text.content.length);
+  });
+
+  it("接管态确认：偏好直接追加进用户文本，不解除接管", async () => {
+    const { database, service } = await setup();
+    seedSignals(database, ["rw:h", "rw:i"], new Date(Date.now() - 10 * 60 * 1000));
+    await service.maybeDistillInsight();
+    service.replaceUserContent("我的自定义风格。");
+    const insight = service.listInsights()[0]!;
+    service.confirmInsight(insight.id);
+    const text = service.getProfileText();
+    expect(text.userEdited).toBe(true);
+    expect(text.content).toContain("我的自定义风格。");
+    expect(text.content).not.toBe("我的自定义风格。");
   });
 });
 

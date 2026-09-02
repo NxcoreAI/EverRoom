@@ -574,4 +574,79 @@ describe('RoomDuplicateService', () => {
     expect(result).toMatchObject({ status: 'completed', progress: 100, commitReached: true })
     sqlite.close()
   })
+
+  it('demotes a user-rejected pair to pending when evidence changes, and annotates it', async () => {
+    const { db, duplicates, roomsService, sqlite } = await harness()
+    roomsService.saveSnapshot({
+      rooms: [
+        { id: 'room-a', title: '校园生活', kind: '主题', data: { id: 'room-a', title: '校园生活' } },
+        { id: 'room-b', title: '校园生活', kind: '主题', data: { id: 'room-b', title: '校园生活' } },
+      ],
+      deletedRooms: [],
+    })
+    await duplicates.rebuildCandidates()
+    const candidate = duplicates.listCandidates('open')[0]!
+    expect(duplicates.updateCandidate(candidate.id, 'distinct')?.status).toBe('distinct')
+
+    // 证据不变：判定保留（preserveDecision 语义不受 M2-C 影响）。
+    await duplicates.rebuildCandidates()
+    expect(duplicates.listCandidates()[0]?.status).toBe('distinct')
+
+    // 证据变化：重开为 pending（不再高置信静默复活），reason 标注用户曾判定。
+    seedMembership(db, 'room-a', 'new-evidence', 'primary')
+    await duplicates.rebuildCandidates()
+    const reopened = duplicates.listCandidates('open')[0]!
+    expect(reopened.status).toBe('open')
+    expect(reopened.confidence).toBe('pending')
+    expect(reopened.reasons.some((reason) => reason.includes('用户曾'))).toBe(true)
+    sqlite.close()
+  })
+
+  it('dampens duplicate score for names repeatedly judged distinct across pairs', async () => {
+    const { duplicates, roomsService, sqlite } = await harness()
+    const room = (id: string, title: string) => ({ id, title, kind: '主题', data: { id, title } })
+    roomsService.saveSnapshot({
+      rooms: [room('room-p', '重复主题'), room('room-q', '重复主题甲'), room('room-r', '重复主题乙')],
+      deletedRooms: [],
+    })
+    await duplicates.rebuildCandidates()
+    const all = duplicates.listCandidates()
+    duplicates.updateCandidate(all.find((c) => c.roomAId === 'room-p' && c.roomBId === 'room-q')!.id, 'distinct')
+    duplicates.updateCandidate(all.find((c) => c.roomAId === 'room-p' && c.roomBId === 'room-r')!.id, 'distinct')
+
+    // 「重复主题」已跨 2 个配对被判非重复：新配对（room-p vs room-s）应带罚分注记。
+    roomsService.saveSnapshot({
+      rooms: [room('room-p', '重复主题'), room('room-q', '重复主题甲'), room('room-r', '重复主题乙'), room('room-s', '重复主题丙')],
+      deletedRooms: [],
+    })
+    await duplicates.rebuildCandidates()
+    const penalized = duplicates.listCandidates().find((c) =>
+      (c.roomAId === 'room-p' && c.roomBId === 'room-s') || (c.roomAId === 'room-s' && c.roomBId === 'room-p'))
+    expect(penalized).toBeTruthy()
+    expect(penalized!.reasons).toContain('名称历史上多次被判非重复，综合分已下调')
+    sqlite.close()
+  })
+
+  it('targeted assess reports newly actionable candidates once', async () => {
+    const { duplicates, roomsService, sqlite } = await harness()
+    roomsService.saveSnapshot({
+      rooms: [
+        { id: 'room-old', title: '定向检查', kind: '主题', data: { id: 'room-old', title: '定向检查' } },
+      ],
+      deletedRooms: [],
+    })
+    roomsService.saveSnapshot({
+      rooms: [
+        { id: 'room-old', title: '定向检查', kind: '主题', data: { id: 'room-old', title: '定向检查' } },
+        { id: 'room-new', title: '定向检查', kind: '主题', data: { id: 'room-new', title: '定向检查' } },
+      ],
+      deletedRooms: [],
+    })
+    const first = await duplicates.requestTargetedAssess('room-new')
+    expect(first).toEqual({ newCandidates: 1 })
+    // 已 open 且可操作：再次定向检查不再计为“新浮现”。
+    const second = await duplicates.requestTargetedAssess('room-new')
+    expect(second).toEqual({ newCandidates: 0 })
+    sqlite.close()
+  })
 })

@@ -111,7 +111,12 @@
     "previousInvocationId": {
       "type": "string",
       "maxLength": 64,
-      "description": "Reserved for incremental iteration; references the previous invocation of this task."
+      "description": "Incremental iteration: references the previous doc-writer invocation whose output is supplied below."
+    },
+    "previousDraft": {
+      "type": "string",
+      "maxLength": 50000,
+      "description": "Your own output from a previous invocation in this conversation (title line + draft body). Apply the instruction as a delta on it: keep untouched parts stable and output the full revised product, do not rewrite from scratch."
     }
   },
   "required": ["task"],

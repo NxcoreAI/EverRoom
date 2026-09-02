@@ -8,6 +8,7 @@ import type {
   RoomMergeImpactCounts,
   RoomMergeOperation,
   RoomMergePreview,
+  RoomMergeSketch,
 } from "@nxcore/agent-contract";
 import { and, eq, inArray, isNull, or } from "drizzle-orm";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
@@ -58,6 +59,8 @@ export interface RoomIdentityJudgeInput {
   aliases: string[];
   kind: string;
   evidenceSamples: string[];
+  /** pair 级历史判定（可信注入）：M2-C 判定消费。 */
+  priorVerdictNote?: string;
 }
 
 export interface RoomDuplicateServiceOptions {
@@ -65,6 +68,8 @@ export interface RoomDuplicateServiceOptions {
   mergeKnowledge?: (sourceRoomId: string, targetRoomId: string) => Promise<void>;
   rebuildRelations?: () => void;
   wikiFileCount?: (roomId: string) => Promise<number>;
+  /** 合并链终态后回调（M2-B：新 Room 占位简报的自动再生成宿主在 context-rooms service）。 */
+  onMergeCompleted?: (newRoomId: string) => void;
 }
 
 interface RoomFacts {
@@ -95,6 +100,14 @@ interface PairAssessment {
   llmVerdict: "same" | "different" | "unavailable" | null;
   reasons: string[];
   evidenceRevision: string;
+}
+
+/** 用户对某配对的既往终审（M2-C 判定台账的消费形态）。 */
+interface PriorDecision {
+  status: "related" | "distinct";
+  decidedAt: Date;
+  /** 判定时的证据指纹；与当前评估不一致即「证据已变化」（降级重现的触发条件）。 */
+  storedRevision: string;
 }
 
 interface OverrideEntry {
@@ -361,7 +374,13 @@ export class RoomDuplicateService {
       .where(and(eq(roomRelations.roomAId, roomAId), eq(roomRelations.roomBId, roomBId))).get() ?? null;
   }
 
-  private async assess(a: RoomFacts, b: RoomFacts, cached?: AssessmentCache | null): Promise<PairAssessment | null> {
+  private async assess(
+    a: RoomFacts,
+    b: RoomFacts,
+    cached?: AssessmentCache | null,
+    priorDecision?: PriorDecision | null,
+    penalties?: Map<string, number>,
+  ): Promise<PairAssessment | null> {
     // 用户 pin/手动标注的关系表达「相关但不同」，是反合并证据：整对跳过，
     // 不再进入候选池（此前的 open 候选会随 rebuild 清理删除）。
     const relation = this.relationBetween(a.context.id, b.context.id);
@@ -375,7 +394,16 @@ export class RoomDuplicateService {
     const relatedByGraph = Boolean(relation && relation.autoScore >= 1);
     if (nameScore < 0.6 && centroidScore < 0.82 && contentOverlap < 0.35 && entityOverlap < 0.4 && !relatedByGraph) return null;
 
-    const duplicateScore = round(nameScore * 0.3 + centroidScore * 0.3 + contentOverlap * 0.25 + entityOverlap * 0.15);
+    const rawDuplicateScore = round(nameScore * 0.3 + centroidScore * 0.3 + contentOverlap * 0.25 + entityOverlap * 0.15);
+    // 模式罚分（M2-C）：某名称已被用户判「非重复」≥2 次（不同配对），压低其
+    // 后续配对的加权分——跨对泛化的确定性统计，不自动回写任何规则。
+    // 罚分不进 evidenceRevision：判定台账变化不是证据变化，不得破坏
+    // preserveDecision 的指纹稳定性。
+    const distinctPenalty = Math.max(
+      penalties?.get(normalizeEntityName(a.context.title)) ?? 0,
+      penalties?.get(normalizeEntityName(b.context.title)) ?? 0,
+    );
+    const duplicateScore = distinctPenalty >= 2 ? round(rawDuplicateScore * 0.8) : rawDuplicateScore;
     const sameKind = (a.context.kind ?? "") === (b.context.kind ?? "");
     const exactName = nameScore === 1;
     const evidenceRevision = hash({
@@ -399,7 +427,7 @@ export class RoomDuplicateService {
         centroid: b.centroid,
         centroidModel: b.centroidModel,
       },
-      nameScore, centroidScore, contentOverlap, entityOverlap, duplicateScore,
+      nameScore, centroidScore, contentOverlap, entityOverlap, duplicateScore: rawDuplicateScore,
     });
     const reasons: string[] = [];
     if (exactName) reasons.push("规范化标题或别名相同");
@@ -409,6 +437,14 @@ export class RoomDuplicateService {
     if (contentOverlap >= 0.35) reasons.push(`合格资料重叠 ${Math.round(contentOverlap * 100)}%`);
     if (entityOverlap >= 0.4) reasons.push(`规范化实体重叠 ${Math.round(entityOverlap * 100)}%`);
     if (relatedByGraph) reasons.push("关系图谱存在共享资料或实体依据");
+    if (distinctPenalty >= 2) reasons.push("名称历史上多次被判非重复，综合分已下调");
+    const revisionChanged = priorDecision ? priorDecision.storedRevision !== evidenceRevision : false;
+    if (priorDecision && revisionChanged) {
+      reasons.unshift(`用户曾于 ${priorDecision.decidedAt.toISOString().slice(0, 10)} 判定为非重复；证据已变化，降级待复核`);
+    }
+    const priorVerdictNote = priorDecision
+      ? `用户曾于 ${priorDecision.decidedAt.toISOString().slice(0, 10)} 在合并中心判定这两个主题为「${priorDecision.status === "distinct" ? "非重复" : "相关但不同"}」`
+      : undefined;
 
     let confidence: PairAssessment["confidence"] = "related";
     let llmVerdict: PairAssessment["llmVerdict"] = null;
@@ -437,7 +473,13 @@ export class RoomDuplicateService {
         } else {
           try {
             const judged = await this.options.judgeIdentity(
-              { name: a.context.title, aliases: a.aliases, kind: a.context.kind ?? "议题", evidenceSamples: a.evidenceSamples },
+              {
+                name: a.context.title,
+                aliases: a.aliases,
+                kind: a.context.kind ?? "议题",
+                evidenceSamples: a.evidenceSamples,
+                ...(priorVerdictNote ? { priorVerdictNote } : {}),
+              },
               { name: b.context.title, aliases: b.aliases, kind: b.context.kind ?? "议题", evidenceSamples: b.evidenceSamples },
             );
             reasons.push(judged.reason);
@@ -456,11 +498,74 @@ export class RoomDuplicateService {
         confidence = "pending";
       }
     }
+    // M2-C 降级重现：用户判过非重复的配对在证据修订后不再以高/中置信静默
+    // 复活——固定降为 pending 待复核（unchanged-revision 的保留语义不受影响）。
+    if (priorDecision && revisionChanged && (confidence === "high" || confidence === "medium")) {
+      confidence = "pending";
+    }
     return { nameScore, centroidScore, contentOverlap, entityOverlap, duplicateScore, confidence, llmVerdict, reasons, evidenceRevision };
+  }
+
+  /** 模式罚分数据：规范名 → 被判 distinct 的配对数（≥2 视为跨对泛化信号）。 */
+  private distinctNamePenalties(): Map<string, number> {
+    const counts = new Map<string, number>();
+    const titleById = new Map(this.activeContextRows().map((row) => [row.id, row.title]));
+    const rows = this.db.select({
+      roomAId: roomDuplicateCandidates.roomAId,
+      roomBId: roomDuplicateCandidates.roomBId,
+    }).from(roomDuplicateCandidates)
+      .where(eq(roomDuplicateCandidates.decidedStatus, "distinct")).all();
+    for (const row of rows) {
+      // 同名对只计一次（两侧归一名相同）；跨配对累积才构成模式信号。
+      const names = new Set([row.roomAId, row.roomBId]
+        .map((roomId) => titleById.get(roomId))
+        .filter((title): title is string => Boolean(title))
+        .map((title) => normalizeEntityName(title)));
+      for (const key of names) {
+        counts.set(key, (counts.get(key) ?? 0) + 1);
+      }
+    }
+    return counts;
+  }
+
+  /** 候选行落库（rebuild 与定向评估共用）：保留既有用户判定台账。 */
+  private upsertCandidate(
+    existing: typeof roomDuplicateCandidates.$inferSelect | undefined,
+    roomAId: string,
+    roomBId: string,
+    assessment: PairAssessment,
+  ): void {
+    const preserveDecision = existing
+      && (existing.status === "distinct" || existing.status === "related")
+      && existing.evidenceRevision === assessment.evidenceRevision;
+    const now = new Date();
+    this.db.insert(roomDuplicateCandidates).values({
+      id: existing?.id ?? `room-duplicate-${hash(`${roomAId}:${roomBId}`).slice(0, 20)}`,
+      roomAId,
+      roomBId,
+      ...assessment,
+      status: preserveDecision ? existing.status : "open",
+      decidedStatus: existing?.decidedStatus ?? null,
+      decidedAt: existing?.decidedAt ?? null,
+      scoringVersion: SCORING_VERSION,
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+    }).onConflictDoUpdate({
+      target: [roomDuplicateCandidates.roomAId, roomDuplicateCandidates.roomBId],
+      set: {
+        ...assessment,
+        status: preserveDecision ? existing!.status : "open",
+        decidedStatus: existing?.decidedStatus ?? null,
+        decidedAt: existing?.decidedAt ?? null,
+        scoringVersion: SCORING_VERSION,
+        updatedAt: now,
+      },
+    }).run();
   }
 
   async rebuildCandidates(): Promise<number> {
     const facts = this.activeContextRows().map((row) => this.factsFor(row));
+    const penalties = this.distinctNamePenalties();
     const seen = new Set<string>();
     let count = 0;
     for (let left = 0; left < facts.length; left += 1) {
@@ -468,34 +573,12 @@ export class RoomDuplicateService {
         const a = facts[left]!;
         const b = facts[right]!;
         const [roomAId, roomBId] = sortedPair(a.context.id, b.context.id);
-        const pairKey = `${roomAId}:${roomBId}`;
         const existing = this.db.select().from(roomDuplicateCandidates)
           .where(and(eq(roomDuplicateCandidates.roomAId, roomAId), eq(roomDuplicateCandidates.roomBId, roomBId))).get();
-        const assessment = await this.assess(a, b, existing);
+        const assessment = await this.assess(a, b, existing, this.priorDecisionOf(existing), penalties);
         if (!assessment) continue;
-        seen.add(pairKey);
-        const preserveDecision = existing
-          && (existing.status === "distinct" || existing.status === "related")
-          && existing.evidenceRevision === assessment.evidenceRevision;
-        const now = new Date();
-        this.db.insert(roomDuplicateCandidates).values({
-          id: existing?.id ?? `room-duplicate-${hash(pairKey).slice(0, 20)}`,
-          roomAId,
-          roomBId,
-          ...assessment,
-          status: preserveDecision ? existing.status : "open",
-          scoringVersion: SCORING_VERSION,
-          createdAt: existing?.createdAt ?? now,
-          updatedAt: now,
-        }).onConflictDoUpdate({
-          target: [roomDuplicateCandidates.roomAId, roomDuplicateCandidates.roomBId],
-          set: {
-            ...assessment,
-            status: preserveDecision ? existing!.status : "open",
-            scoringVersion: SCORING_VERSION,
-            updatedAt: now,
-          },
-        }).run();
+        seen.add(`${roomAId}:${roomBId}`);
+        this.upsertCandidate(existing, roomAId, roomBId, assessment);
         count += 1;
       }
     }
@@ -505,6 +588,54 @@ export class RoomDuplicateService {
       }
     }
     return count;
+  }
+
+  /**
+   * 定向评估（M2-A 候选发现时机）：单一 Room vs 全部活跃 Room，复用 assess、
+   * 判定台账与 LLM 缓存——供晋升完成/用户认领后即时检查，免去全量两两。
+   * 返回本次新浮现的可操作 open 候选数（含证据修订后降级重现的）。
+   */
+  async requestTargetedAssess(roomId: string): Promise<{ newCandidates: number }> {
+    const rows = this.activeContextRows();
+    const targetRow = rows.find((row) => row.id === roomId);
+    if (!targetRow) return { newCandidates: 0 };
+    const target = this.factsFor(targetRow);
+    const penalties = this.distinctNamePenalties();
+    let newCandidates = 0;
+    for (const row of rows) {
+      if (row.id === roomId) continue;
+      const [roomAId, roomBId] = sortedPair(roomId, row.id);
+      const existing = this.db.select().from(roomDuplicateCandidates)
+        .where(and(eq(roomDuplicateCandidates.roomAId, roomAId), eq(roomDuplicateCandidates.roomBId, roomBId))).get();
+      const assessment = await this.assess(target, this.factsFor(row), existing, this.priorDecisionOf(existing), penalties);
+      if (!assessment) continue;
+      const wasActionable = existing?.status === "open"
+        && ["high", "medium", "pending"].includes(existing.confidence);
+      this.upsertCandidate(existing, roomAId, roomBId, assessment);
+      const stored = this.db.select({ status: roomDuplicateCandidates.status, confidence: roomDuplicateCandidates.confidence })
+        .from(roomDuplicateCandidates)
+        .where(and(eq(roomDuplicateCandidates.roomAId, roomAId), eq(roomDuplicateCandidates.roomBId, roomBId))).get();
+      const isActionable = stored?.status === "open" && ["high", "medium", "pending"].includes(stored.confidence);
+      if (isActionable && !wasActionable) newCandidates += 1;
+    }
+    return { newCandidates };
+  }
+
+  /** 红点口径：open 且置信度可操作（high/medium/pending）的候选数，随快照下发。 */
+  actionableOpenCount(): number {
+    return this.db.select({ status: roomDuplicateCandidates.status, confidence: roomDuplicateCandidates.confidence })
+      .from(roomDuplicateCandidates).where(eq(roomDuplicateCandidates.status, "open")).all()
+      .filter((row) => ["high", "medium", "pending"].includes(row.confidence)).length;
+  }
+
+  /** 从既有候选行提取用户既往判定（无判定返回 null；证据是否已变由 assess 内部比对指纹）。 */
+  private priorDecisionOf(existing: typeof roomDuplicateCandidates.$inferSelect | undefined): PriorDecision | null {
+    if (!existing?.decidedStatus || !existing.decidedAt) return null;
+    return {
+      status: existing.decidedStatus,
+      decidedAt: existing.decidedAt,
+      storedRevision: existing.evidenceRevision,
+    };
   }
 
   private candidateDto(row: typeof roomDuplicateCandidates.$inferSelect): RoomDuplicateCandidate | null {
@@ -547,7 +678,10 @@ export class RoomDuplicateService {
   }
 
   updateCandidate(id: string, status: "related" | "distinct"): RoomDuplicateCandidate | null {
-    const updated = this.db.update(roomDuplicateCandidates).set({ status, updatedAt: new Date() })
+    // M2-C 判定台账：用户终审落 decided_status/decided_at，供后续评估消费
+    //（LLM 历史注入 + 证据修订后的降级重现 + 名称模式罚分）。
+    const updated = this.db.update(roomDuplicateCandidates)
+      .set({ status, decidedStatus: status, decidedAt: new Date(), updatedAt: new Date() })
       .where(eq(roomDuplicateCandidates.id, id)).returning().get();
     return updated ? this.candidateDto(updated) : null;
   }
@@ -586,10 +720,11 @@ export class RoomDuplicateService {
       centroidModel: null,
     };
     const candidates: RoomDuplicateCandidate[] = [];
+    const penalties = this.distinctNamePenalties();
     for (const row of this.activeContextRows()) {
       if (row.id === input.excludeRoomId) continue;
       const facts = this.factsFor(row);
-      const assessment = await this.assess(pseudo, facts);
+      const assessment = await this.assess(pseudo, facts, null, null, penalties);
       if (!assessment || !["high", "medium", "pending"].includes(assessment.confidence)) continue;
       candidates.push({
         id: `creation:${row.id}`,
@@ -710,11 +845,45 @@ export class RoomDuplicateService {
       sources: [[a.id, a.updatedAt.toISOString(), a.lifecycle], [b.id, b.updatedAt.toISOString(), b.lifecycle]],
       impact, conflicts, scoringVersion: SCORING_VERSION, mode: "merge-into-new",
     });
+    // M2-B 合并预演 sketch：确定性拼接两源产物概览（零 LLM），预览页"合并后
+    // 预览"区块的数据源；标注为预演而非最终形态。
+    const briefText = (row: ContextRow) => {
+      const brief = row.data?.brief && typeof row.data.brief === "object" && !Array.isArray(row.data.brief)
+        ? row.data.brief as Record<string, unknown>
+        : {};
+      return {
+        background: typeof brief.background === "string" ? brief.background : "",
+        goal: typeof brief.goal === "string" ? brief.goal : "",
+        status: typeof brief.status === "string" ? brief.status : "",
+      };
+    };
+    const mentionWeights = new Map<string, number>();
+    for (const roomId of [a.id, b.id]) {
+      for (const mention of this.db.select({ entityId: roomEntityMentions.entityId, salience: roomEntityMentions.salience })
+        .from(roomEntityMentions).where(eq(roomEntityMentions.roomId, roomId)).all()) {
+        mentionWeights.set(mention.entityId,
+          (mentionWeights.get(mention.entityId) ?? 0) + 1 + (mention.salience ?? 0));
+      }
+    }
+    const topEntityIds = [...mentionWeights.entries()].sort((x, y) => y[1] - x[1]).slice(0, 5).map(([id]) => id);
+    const entitiesTop = topEntityIds.length > 0
+      ? this.db.select({ name: entities.name }).from(entities)
+        .where(inArray(entities.id, topEntityIds)).all().map((row) => row.name)
+      : [];
+    const sketch: RoomMergeSketch = {
+      background: [briefText(a).background, briefText(b).background].filter(Boolean).join("\n\n").slice(0, 2_000),
+      goal: [briefText(a).goal, briefText(b).goal].filter(Boolean).join("；").slice(0, 500),
+      status: [briefText(a).status, briefText(b).status].filter(Boolean).join("；").slice(0, 500),
+      materialsCount: arrayOf(a.data.materials).length + arrayOf(b.data.materials).length,
+      filesCount: arrayOf(a.data.fileItems).length + arrayOf(b.data.fileItems).length,
+      memoriesCount: arrayOf(a.data.memoryItems).length + arrayOf(b.data.memoryItems).length,
+      entitiesTop,
+    };
     return {
       sourceRoom: roomSnapshot(a),
       targetRoom: { ...roomSnapshot(b), id: "new", title: "（新建 Room）" },
       recommendedTargetRoomId: "new",
-      impact, conflicts, excluded, previewHash, generatedAt,
+      impact, conflicts, excluded, sketch, previewHash, generatedAt,
     };
   }
 
@@ -760,6 +929,9 @@ export class RoomDuplicateService {
         data: {
           id: newRoomId, title, kind,
           brief: { background: `合并自「${a.title}」与「${b.title}」`, goal: "", status: "", risks: [], decisions: [] },
+          // M2-B 占位守卫：记录占位背景原文——自动 brief-refresh 仅当标志存在且
+          // 背景仍是这段原文时触发（用户手改即失配跳过；不用前缀匹配防误判）。
+          briefPlaceholder: `合并自「${a.title}」与「${b.title}」`,
           stats: {}, materials: [], memoryItems: [], actionItems: [], timeline: [], fileItems: [], people: [], graphEdges: [],
         },
         position: Math.max(a.position ?? 0, b.position ?? 0) + 1,
@@ -799,6 +971,8 @@ export class RoomDuplicateService {
         this.db.update(roomDuplicateCandidates).set({ status: "merged", updatedAt: new Date() })
           .where(eq(roomDuplicateCandidates.id, candidate.id)).run();
       }
+      // M2-B：合并完成 → 新 Room 占位简报自动再生成（失败保占位，不阻塞终态）。
+      void Promise.resolve(this.options.onMergeCompleted?.(newRoomId)).catch(() => undefined);
     }
     return settled;
   }

@@ -338,6 +338,27 @@ export function RoomDuplicateCenter({
               <dl>{impactRows(preview).map(([label, count]) => <div key={label} data-zero={count === 0}><dt>{t(`contextRoom:duplicateCenter.impact.${label}`)}</dt><dd>{count}</dd></div>)}</dl>
             </section>
 
+            {preview.sketch ? (
+              <section className="context-room-merge-sketch" aria-label={t('contextRoom:duplicateCenter.mergeSketchTitle')}>
+                <h3>
+                  {t('contextRoom:duplicateCenter.mergeSketchTitle')}
+                  <small>{t('contextRoom:duplicateCenter.mergeSketchNote')}</small>
+                </h3>
+                {preview.sketch.background ? <p className="context-room-merge-sketch-brief">{preview.sketch.background}</p> : null}
+                <dl>
+                  <div><dt>{t('contextRoom:duplicateCenter.sketch.materials')}</dt><dd>{preview.sketch.materialsCount}</dd></div>
+                  <div><dt>{t('contextRoom:duplicateCenter.sketch.files')}</dt><dd>{preview.sketch.filesCount}</dd></div>
+                  <div><dt>{t('contextRoom:duplicateCenter.sketch.memories')}</dt><dd>{preview.sketch.memoriesCount}</dd></div>
+                  {preview.sketch.entitiesTop.length > 0 ? (
+                    <div className="context-room-merge-sketch-entities">
+                      <dt>{t('contextRoom:duplicateCenter.sketch.entities')}</dt>
+                      <dd>{preview.sketch.entitiesTop.join(' · ')}</dd>
+                    </div>
+                  ) : null}
+                </dl>
+              </section>
+            ) : null}
+
             <div className="context-room-merge-notes">
               {preview.conflicts.map((item) => <p key={`c-${item}`}><TriangleAlert aria-hidden="true" /> {item}</p>)}
               {preview.excluded.map((item) => <p key={`e-${item}`}><Info aria-hidden="true" /> {item}</p>)}

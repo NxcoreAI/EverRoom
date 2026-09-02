@@ -1,0 +1,73 @@
+{
+  "type": "object",
+  "properties": {
+    "task": {
+      "type": "string",
+      "enum": ["citation-correction", "general-correction"],
+      "description": "The correction task to execute."
+    },
+    "instruction": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4000,
+      "description": "The user's comment or modification request; the highest authority."
+    },
+    "roomId": {
+      "type": "string",
+      "maxLength": 128,
+      "description": "Target room id, injected by the gateway."
+    },
+    "roomTitle": {
+      "type": "string",
+      "maxLength": 120,
+      "description": "Room title for context framing."
+    },
+    "selectedText": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 20000,
+      "description": "The overview selection the user commented on, for citation-correction; carries claim ids and cited text."
+    },
+    "claims": {
+      "type": "array",
+      "maxItems": 400,
+      "items": {
+        "type": "object",
+        "properties": {
+          "claimId": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "section": {
+            "type": "string",
+            "enum": ["overview", "status", "next_steps", "timeline", "entities"]
+          },
+          "text": { "type": "string", "maxLength": 1000 },
+          "origin": { "type": "string", "enum": ["fact", "inference", "user"] },
+          "corrected": { "type": "boolean" },
+          "evidence": {
+            "type": "array",
+            "maxItems": 3,
+            "items": {
+              "type": "object",
+              "properties": {
+                "sourceKind": { "type": "string", "maxLength": 100 },
+                "sourceId": { "type": "string", "maxLength": 256 },
+                "sourceTitle": { "type": ["string", "null"], "maxLength": 500 }
+              },
+              "required": ["sourceKind", "sourceId"],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": ["claimId", "section", "text"],
+        "additionalProperties": false
+      },
+      "description": "Authoritative overview claims snapshot assembled by the gateway; edits must reference these claimIds."
+    },
+    "responseLanguage": {
+      "type": "string",
+      "maxLength": 35,
+      "description": "BCP-47 language tag for natural-language output."
+    }
+  },
+  "required": ["task", "instruction", "claims"],
+  "additionalProperties": false
+}

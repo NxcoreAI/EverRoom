@@ -281,6 +281,28 @@ export interface KnowledgeAttachInput {
   createEntity?: { name: string; kind: string }
 }
 
+/** M3 知识整理偏好统计（确定性层，只读回溯三类信号的可复现快照）。 */
+export interface KnowledgePreferenceStatsDto {
+  corrections: { reverts: number; manualLinks: number }
+  mergeVerdicts: {
+    distinct: number
+    related: number
+    topDistinctNames: Array<{ name: string; count: number }>
+  }
+  promotion: { suppressed: number; promotedRooms: number }
+  generatedAt: string
+}
+
+/** M3 知识整理偏好（三段式）：统计 + 系统洞察（只读）+ 用户偏好（编辑即接管）。 */
+export interface KnowledgePreferencesDto {
+  stats: KnowledgePreferenceStatsDto | null
+  insight: string | null
+  userPreference: string
+  userEdited: boolean
+  settings: { learningEnabled: boolean; injectionEnabled: boolean }
+  materialCursor: string | null
+}
+
 export interface KnowledgeFileUploadResult {
   filename: string
   title: string

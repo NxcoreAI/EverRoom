@@ -46,7 +46,9 @@ describe('renderer i18n', () => {
   it('localizes persisted Room defaults without translating user content', () => {
     const t = (message: string, values?: Record<string, string | number>) => translate('en-US', message, values)
     expect(localizedUiText('待补充 Room 的背景和资料范围。', t)).toBe('Add the Room background and resource scope.')
-    expect(localizedUiText('资料归类时判定为新主题，自动创建的 Room。', t)).toBe('This Room was created automatically when the material was classified as a new topic.')
+    // 晋升 Room 出生即 user（认领已废除）：新背景文案 + 旧字符串读取兼容同键。
+    expect(localizedUiText('由知识推荐确认创建的 Room。', t)).toBe('Room created from a confirmed knowledge recommendation.')
+    expect(localizedUiText('资料归类时判定为新主题，自动创建的 Room。', t)).toBe('Room created from a confirmed knowledge recommendation.')
     expect(localizedUiText('来自《交付方案》', t)).toBe('From “交付方案”')
     expect(localizedUiText('用户结论（已编辑）', t)).toBe('用户结论 (edited)')
     expect(localizedUiText('用户填写的 Room 背景', t)).toBe('用户填写的 Room 背景')

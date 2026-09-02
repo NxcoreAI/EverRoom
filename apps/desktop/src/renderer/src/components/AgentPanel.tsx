@@ -5,6 +5,7 @@ import { AgentChatView } from '@/components/agent/AgentChatView'
 import { AgentComposer } from '@/components/agent/AgentComposer'
 import { AgentSessionSwitcher } from '@/components/agent/AgentSessionSwitcher'
 import { AgentToolbar } from '@/components/agent/AgentToolbar'
+import { WritingStyleInsightBanner } from '@/components/agent/WritingStyleInsightBanner'
 import {
   agentSessionLinkDestination,
   navigationKey,
@@ -483,6 +484,8 @@ export function AgentPanel({
           }}
         />
       </AgentToolbar>
+
+      <WritingStyleInsightBanner />
 
       <AgentChatView
         activeDocument={activeDocument}
