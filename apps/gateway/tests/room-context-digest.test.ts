@@ -285,21 +285,23 @@ describe("formatRoomContextDigest 投喂文本组装", () => {
   });
 });
 
-describe("context-room input schema 不再接受 material-analysis", () => {
+describe("context-room input schema 不再接受 material-analysis 与 selection-rewrite", () => {
   const schema = JSON.parse(readFileSync(
     resolve("..", "..", "agents", "context-room", "schemas", "input.schema.json"),
     "utf8",
   )) as { properties: { task: { enum: string[] } } };
 
-  it("task 枚举已移除 material-analysis，保留其余四类", () => {
+  it("task 枚举只保留 Room 整理/总览/简报/合并命名（rewrite 已迁 doc-writer）", () => {
     expect(schema.properties.task.enum).not.toContain("material-analysis");
-    expect(schema.properties.task.enum).toEqual(["room-enrich", "room-overview", "brief-refresh", "selection-rewrite"]);
+    expect(schema.properties.task.enum).not.toContain("selection-rewrite");
+    expect(schema.properties.task.enum).toEqual(["room-enrich", "room-overview", "brief-refresh", "merge-name"]);
   });
 
-  it("material-analysis 校验失败，既有任务通过", () => {
+  it("material-analysis 与 selection-rewrite 校验失败，既有任务通过", () => {
     const validate = new Ajv({ strict: false, allErrors: true }).compile(schema);
     expect(validate({ task: "material-analysis", roomId: "room-1" })).toBe(false);
+    expect(validate({ task: "selection-rewrite", selectedText: "原文" })).toBe(false);
     expect(validate({ task: "room-overview", roomId: "room-1" })).toBe(true);
-    expect(validate({ task: "selection-rewrite", selectedText: "原文" })).toBe(true);
+    expect(validate({ task: "merge-name", roomA: { title: "A" }, roomB: { title: "B" } })).toBe(true);
   });
 });

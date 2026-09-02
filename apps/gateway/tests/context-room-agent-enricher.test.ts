@@ -5,12 +5,15 @@ import {
   CONTEXT_ROOM_AGENT_ID,
   ContextRoomAgentDispatcher,
   fallbackContextRoomEnrichment,
-  isSelectionRewriteInvocationAuthorized,
   parseBriefRefresh,
   parseContextRoomEnrichment,
   parseMergeNameSuggestions,
   parseRoomOverviewSynthesis,
 } from '../src/modules/context-rooms/room-agent.js'
+import {
+  DOC_WRITER_AGENT_ID,
+  isSelectionRewriteInvocationAuthorized,
+} from '../src/modules/subagents/doc-writer-dispatcher.js'
 
 function invocation(overrides: Partial<SubagentInvocation>): SubagentInvocation {
   const now = Date.now()
@@ -155,7 +158,10 @@ describe('ContextRoomAgentDispatcher', () => {
       taskInput: { roomId: 'room-1', title: 'T', description: 'D' },
       idempotencyKey: 'room-enrich:room-1',
     })
-    await dispatcher.dispatchDetached({ task: 'selection-rewrite', taskInput: { selectedText: 'x' } })
+    await dispatcher.dispatchDetached({
+      task: 'merge-name',
+      taskInput: { roomA: { title: 'A' }, roomB: { title: 'B' } },
+    })
 
     expect(orchestrator.dispatch).toHaveBeenCalledWith(expect.objectContaining({
       agentId: 'context-room',
@@ -165,22 +171,25 @@ describe('ContextRoomAgentDispatcher', () => {
       source: 'internal_workflow',
     }))
     expect(orchestrator.startDetached).toHaveBeenCalledWith(expect.objectContaining({
-      task: '改写文档选区',
-      input: expect.objectContaining({ task: 'selection-rewrite' }),
+      task: '为合并后的新 Context Room 推荐名称',
+      input: expect.objectContaining({ task: 'merge-name' }),
       idempotencyKey: expect.stringMatching(/^room-agent:/),
     }))
   })
 })
 
-describe('isSelectionRewriteInvocationAuthorized', () => {
+describe('isSelectionRewriteInvocationAuthorized（M2：换绑 doc-writer）', () => {
   const options = { capabilityId: 'document.selection-rewrite', roomId: 'room-1' }
 
-  it('accepts a completed internal context-room invocation for the same room', () => {
-    expect(isSelectionRewriteInvocationAuthorized(invocation({}), options)).toBe(true)
+  it('accepts a completed internal doc-writer invocation for the same room', () => {
+    expect(isSelectionRewriteInvocationAuthorized(
+      invocation({ agentDefinitionId: DOC_WRITER_AGENT_ID }),
+      options,
+    )).toBe(true)
   })
 
   it('rejects other capabilities, agents, sources, and non-terminal runs', () => {
-    expect(isSelectionRewriteInvocationAuthorized(invocation({}), {
+    expect(isSelectionRewriteInvocationAuthorized(invocation({ agentDefinitionId: DOC_WRITER_AGENT_ID }), {
       capabilityId: 'document.continue',
       roomId: 'room-1',
     })).toBe(false)
@@ -188,18 +197,32 @@ describe('isSelectionRewriteInvocationAuthorized', () => {
       invocation({ agentDefinitionId: 'content-analyst' }),
       options,
     )).toBe(false)
-    expect(isSelectionRewriteInvocationAuthorized(invocation({ source: 'primary_agent' }), options)).toBe(false)
-    expect(isSelectionRewriteInvocationAuthorized(invocation({ status: 'running', result: null }), options)).toBe(false)
+    // M2 迁移后 context-room 不再是改写内容生产者。
+    expect(isSelectionRewriteInvocationAuthorized(
+      invocation({}),
+      options,
+    )).toBe(false)
+    expect(isSelectionRewriteInvocationAuthorized(
+      invocation({ agentDefinitionId: DOC_WRITER_AGENT_ID, source: 'primary_agent' }),
+      options,
+    )).toBe(false)
+    expect(isSelectionRewriteInvocationAuthorized(
+      invocation({ agentDefinitionId: DOC_WRITER_AGENT_ID, status: 'running', result: null }),
+      options,
+    )).toBe(false)
     expect(isSelectionRewriteInvocationAuthorized(null, options)).toBe(false)
   })
 
   it('rejects invocations outside the operation grace window or bound to another room', () => {
-    expect(isSelectionRewriteInvocationAuthorized(invocation({}), {
-      ...options,
-      now: new Date(Date.now() + 11 * 60 * 1000),
-    })).toBe(false)
     expect(isSelectionRewriteInvocationAuthorized(
-      invocation({ input: { roomId: 'room-2' } }),
+      invocation({ agentDefinitionId: DOC_WRITER_AGENT_ID }),
+      {
+        ...options,
+        now: new Date(Date.now() + 11 * 60 * 1000),
+      },
+    )).toBe(false)
+    expect(isSelectionRewriteInvocationAuthorized(
+      invocation({ agentDefinitionId: DOC_WRITER_AGENT_ID, input: { roomId: 'room-2' } }),
       options,
     )).toBe(false)
   })

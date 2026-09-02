@@ -21,6 +21,12 @@
       "maxLength": 120,
       "description": "Optional room title for context framing."
     },
+    "roomId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "Target room id injected by the gateway; binds selection-rewrite provenance to the room."
+    },
     "documentName": {
       "type": "string",
       "maxLength": 200,

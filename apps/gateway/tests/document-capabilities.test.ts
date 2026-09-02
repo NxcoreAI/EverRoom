@@ -928,15 +928,16 @@ async function createInvocationRewriteHarness(name: string) {
   const documents = new DocumentService(database.db, broker, undefined, applied);
   const operations = new DocumentOperationService(database.db, broker);
   const invocations = new Map<string, SubagentInvocation>();
-  // 以假 invocation 表装配真 resolver：授权判定对齐 isSelectionRewriteInvocationAuthorized 的核心规则。
+  // 以假 invocation 表装配真 resolver：授权判定对齐 isSelectionRewriteInvocationAuthorized
+  // 的核心规则（M2 后内容生产者为 doc-writer）。
   documents.resolveSelectionRewriteContent = createSelectionRewriteContentResolver({
     getInvocation: (invocationId) => invocations.get(invocationId) ?? null,
     isInvocationAuthorized: (invocation, roomId) => Boolean(invocation
-      && invocation.agentDefinitionId === "context-room"
+      && invocation.agentDefinitionId === "doc-writer"
       && invocation.source === "internal_workflow"
       && invocation.status === "completed"
       && (invocation.input as { roomId?: unknown }).roomId === roomId),
-    getDocument: (documentId) => documents.get(documentId),
+    getDocument: (documentId) => documents.get(documentId) ?? null,
   });
   const registry = createBuiltinDocumentCapabilityRegistry(documents, undefined, operations);
   disposables.push(() => database.sqlite.close());
@@ -955,14 +956,14 @@ function seedSelectionRewriteInvocation(
 ): SubagentInvocation {
   const invocation: SubagentInvocation = {
     id: randomUUID(),
-    agentDefinitionId: "context-room",
-    agentRevisionId: "context-room-rev-1",
+    agentDefinitionId: "doc-writer",
+    agentRevisionId: "doc-writer-rev-1",
     source: "internal_workflow",
     parentSessionId: null,
     parentRunId: null,
-    task: "改写文档选区",
+    task: "改写选中文本",
     input: {
-      task: "selection-rewrite",
+      task: "rewrite",
       roomId: input.roomId,
       documentName: "Rewrite target",
       selectedText: input.selectedText,
@@ -1077,6 +1078,40 @@ describe("selection-rewrite invocation 绑定（改写信任收口）", () => {
       originalText: "被选中的文本",
       replacementText: "**全新改写**",
     }));
+  });
+
+  it("doc-writer invocation 优先读 structuredOutput.replacementText，text 仅作迁移期回退", async () => {
+    const { documents, operations, registry, invocations } = await createInvocationRewriteHarness("selection-structured-output");
+    const document = await importRewriteTargetDocument(documents);
+    const invocation = seedSelectionRewriteInvocation(invocations, {
+      roomId: "room-invocation",
+      selectedText: "被选中的文本",
+      text: "doc-writer 的最终文本不再是替换片段",
+      instruction: "更简洁一点",
+    }, {
+      result: {
+        text: "doc-writer 的最终文本不再是替换片段",
+        structuredOutput: { kind: "rewrite", replacementText: "**结构化替换**", digest: { summary: "s" } },
+      },
+    });
+
+    const operation = await registry.start({
+      capabilityId: "document.selection-rewrite",
+      context: {
+        roomId: "room-invocation",
+        documentId: document.id,
+        sessionId: invocation.id,
+        runId: invocation.id,
+      },
+      input: { baseVersion: document.version, invocationId: invocation.id },
+    });
+
+    expect(operation.input).toMatchObject({
+      invocationId: invocation.id,
+      originalText: "被选中的文本",
+      replacementText: "**结构化替换**",
+    });
+    expect(operation.items[0]!.markdown).toBe("**结构化替换**");
   });
 
   it("用户编辑过替换文本时按用户文本重建并记 userModified（Agent 提案 + 用户修改）", async () => {

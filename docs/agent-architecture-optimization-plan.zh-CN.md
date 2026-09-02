@@ -50,7 +50,7 @@ Agent 边界的划分依据是**交互形态**，不是"文档 vs 房间"：
 
 ## 3. 优化项 A：改写信任收口（M1）
 
-> **2026-09-02 修订**：M1 已落地（renderer 已改传 `invocationId`，服务端 `resolveSelectionRewriteContent` 从 invocation 完成态重建内容并复核授权；`proposedContentJson` 仅为存量 in-flight 兼容路径）。后续演进见 [doc-writer-subagent-plan.zh-CN.md](doc-writer-subagent-plan.zh-CN.md) §8：selection-rewrite 的内容生产者将从 context-room 迁至 doc-writer 子 agent，授权函数 `isSelectionRewriteInvocationAuthorized` 随迁并换绑 agentDefinitionId；`proposedContentJson` 迁移兼容路径与宽限期语义不变。
+> **2026-09-02 修订**：M1 已落地（renderer 已改传 `invocationId`，服务端 `resolveSelectionRewriteContent` 从 invocation 完成态重建内容并复核授权；`proposedContentJson` 仅为存量 in-flight 兼容路径）。**同日 M2 演进已落地**（见 [doc-writer-subagent-plan.zh-CN.md](doc-writer-subagent-plan.zh-CN.md) §8）：selection-rewrite 的内容生产者已从 context-room 迁至 doc-writer 子 agent 的 rewrite task，授权函数 `isSelectionRewriteInvocationAuthorized` 随迁并换绑 agentDefinitionId（现校验 `doc-writer`）；REST 契约不变，resolver/renderer 改为 structuredOutput.replacementText 优先、text 迁移期回退；`proposedContentJson` 迁移兼容路径与宽限期语义不变。
 
 ### 3.1 现状链路与缺口
 

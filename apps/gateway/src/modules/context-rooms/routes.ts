@@ -2,7 +2,7 @@ import type { FastifyPluginAsyncTypebox } from "@fastify/type-provider-typebox";
 import { Type } from "@sinclair/typebox";
 import type { ContextRoomService } from "./service.js";
 import { DuplicateReviewRequiredError, type RoomDuplicateService } from "./duplicate-service.js";
-import type { RoomAgentDispatcher } from "./room-agent.js";
+import type { DocWriterDispatcher } from "../subagents/doc-writer-dispatcher.js";
 import { applyOverviewFreshnessToSnapshot, type RoomOverviewService } from "./overview-service.js";
 
 const RoomData = Type.Object({}, { additionalProperties: true });
@@ -25,7 +25,7 @@ const CorrectionOperation = Type.Union([
 export function contextRoomRoutes(
   service: ContextRoomService,
   duplicates?: RoomDuplicateService,
-  roomAgent?: RoomAgentDispatcher,
+  docWriter?: DocWriterDispatcher,
   overviews?: RoomOverviewService,
 ): FastifyPluginAsyncTypebox {
   return async (app) => {
@@ -609,7 +609,7 @@ export function contextRoomRoutes(
         },
       },
       async (request, reply) => {
-        if (!roomAgent) {
+        if (!docWriter) {
           return reply.code(503).send({ error: "context_room_agent_not_configured" });
         }
         const body = request.body;
@@ -618,10 +618,11 @@ export function contextRoomRoutes(
         }
         // 框架无排队（方案 §5.1）：并发限额与 schema 校验失败是可诊断的硬错误，
         // 直接冒 500 会在桌面端变成笼统的 "An internal gateway error occurred"，这里显式透出错误码。
+        // M2（doc-writer-subagent-plan §8）：REST 契约不变，内部改派 doc-writer 的 rewrite task。
         let invocationId: string;
         try {
-          invocationId = await roomAgent.dispatchDetached({
-            task: "selection-rewrite",
+          invocationId = await docWriter.dispatchDetached({
+            task: "rewrite",
             taskInput: {
               selectedText: body.selectedText,
               ...(body.instruction?.trim() ? { instruction: body.instruction.trim() } : {}),

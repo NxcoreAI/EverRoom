@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import type { SubagentInvocation } from "@nxcore/agent-contract";
-import { SELECTION_REWRITE_OPERATION_GRACE_MS } from "../agent/service.js";
 import type { SubagentOrchestrator } from "../subagents/orchestrator.js";
 
 export const CONTEXT_ROOM_AGENT_ID = "context-room";
@@ -8,18 +7,18 @@ export const CONTEXT_ROOM_AGENT_ID = "context-room";
 export const CONTEXT_ROOM_KINDS = ["人物", "项目", "主题", "长期目标", "议题", "事件"] as const;
 export type ContextRoomKind = typeof CONTEXT_ROOM_KINDS[number];
 
+// selection-rewrite 已迁往 doc-writer 子 Agent 的 rewrite task
+// （doc-writer-subagent-plan §8/M2）；此处只保留 Room 整理/总览/简报/合并命名四类。
 export type ContextRoomAgentTask =
   | "room-enrich"
   | "room-overview"
   | "brief-refresh"
-  | "selection-rewrite"
   | "merge-name";
 
 const TASK_LABELS: Record<ContextRoomAgentTask, string> = {
   "room-enrich": "整理新创建的 Context Room",
   "room-overview": "生成 Context Room 总览",
   "brief-refresh": "再生成 Context Room 简报",
-  "selection-rewrite": "改写文档选区",
   "merge-name": "为合并后的新 Context Room 推荐名称",
 };
 
@@ -337,8 +336,6 @@ export interface RoomAgentDispatcher {
 export class ContextRoomAgentDispatcher implements RoomAgentDispatcher {
   constructor(
     private readonly orchestrator: SubagentOrchestrator,
-    /** 划词改写的写作风格注入段（方案 §7.2）：provider 自查生成开关，关闭返回 null。 */
-    private readonly writingStyleProvider: { getGenerationPromptSection(): string | null } | null = null,
   ) {}
 
   dispatch(input: RoomAgentDispatchInput): Promise<SubagentInvocation> {
@@ -350,16 +347,12 @@ export class ContextRoomAgentDispatcher implements RoomAgentDispatcher {
   }
 
   private toDispatchInput(input: RoomAgentDispatchInput) {
-    const writingStyle = input.task === "selection-rewrite"
-      ? this.writingStyleProvider?.getGenerationPromptSection() ?? null
-      : null;
     return {
       agentId: CONTEXT_ROOM_AGENT_ID,
       task: TASK_LABELS[input.task],
       input: {
         task: input.task,
         ...input.taskInput,
-        ...(writingStyle ? { writingStyle } : {}),
       },
       idempotencyKey: input.idempotencyKey ?? `room-agent:${randomUUID()}`,
       source: "internal_workflow" as const,
@@ -372,30 +365,4 @@ export class ContextRoomAgentDispatcher implements RoomAgentDispatcher {
 export function invocationText(invocation: SubagentInvocation | null | undefined): string | null {
   const result = invocation?.result;
   return typeof result?.text === "string" && result.text.trim() ? result.text : null;
-}
-
-/**
- * 校验 document.selection-rewrite 操作的子 Agent 调用溯源：
- * 必须是 context-room 子 Agent 的 internal_workflow 调用、已 completed、
- * 在宽限期内，且（入参带 roomId 时）与操作目标 Room 一致。
- * 对齐 agent/service.ts 中主 Agent 会话溯源的 completedSelectionRewriteMatches 规则。
- */
-export function isSelectionRewriteInvocationAuthorized(
-  invocation: SubagentInvocation | null | undefined,
-  options: { capabilityId: string; roomId: string; now?: Date },
-): boolean {
-  if (!invocation || options.capabilityId !== "document.selection-rewrite") return false;
-  if (invocation.agentDefinitionId !== CONTEXT_ROOM_AGENT_ID) return false;
-  if (invocation.source !== "internal_workflow") return false;
-  if (invocation.status !== "completed" || !invocation.completedAt) return false;
-  const completedAt = new Date(invocation.completedAt).getTime();
-  if (!Number.isFinite(completedAt)) return false;
-  const now = options.now?.getTime() ?? Date.now();
-  if (now - completedAt > SELECTION_REWRITE_OPERATION_GRACE_MS) return false;
-  const input = invocation.input;
-  if (input && typeof input === "object" && !Array.isArray(input)) {
-    const inputRoomId = (input as Record<string, unknown>).roomId;
-    if (typeof inputRoomId === "string" && inputRoomId !== options.roomId) return false;
-  }
-  return true;
 }

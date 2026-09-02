@@ -48,7 +48,8 @@ import { DocumentServiceError } from "../modules/documents/errors.js";
 import { contextRoomRoutes } from "../modules/context-rooms/routes.js";
 import { RoomDuplicateService } from "../modules/context-rooms/duplicate-service.js";
 import { ContextRoomService } from "../modules/context-rooms/service.js";
-import { ContextRoomAgentDispatcher, isSelectionRewriteInvocationAuthorized } from "../modules/context-rooms/room-agent.js";
+import { ContextRoomAgentDispatcher } from "../modules/context-rooms/room-agent.js";
+import { DocWriterAgentDispatcher, isSelectionRewriteInvocationAuthorized } from "../modules/subagents/doc-writer-dispatcher.js";
 import { createContextRoomAgentTools } from "../modules/context-rooms/room-agent-tools.js";
 import { buildRoomContextDigest } from "../modules/context-rooms/room-context-digest.js";
 import { RoomOverviewService } from "../modules/context-rooms/overview-service.js";
@@ -645,7 +646,10 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     writingStyleRuntime ? new WritingStyleLlm(writingStyleRuntime) : null,
     app.log,
   );
-  const contextRoomAgentDispatcher = new ContextRoomAgentDispatcher(
+  const contextRoomAgentDispatcher = new ContextRoomAgentDispatcher(subagentOrchestrator);
+  // doc-writer 调度封装（doc-writer-subagent-plan §8/M2）：编辑器划词改写迁入
+  // rewrite task；写作风格注入段对 doc-writer 全部 task 附加。
+  const docWriterDispatcher = new DocWriterAgentDispatcher(
     subagentOrchestrator,
     { getGenerationPromptSection: () => writingStyleService.getGenerationPromptSection() },
   );
@@ -657,6 +661,8 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   // CapabilityBackend 注入 resolver——从 subagent_invocations 完成态取替换文本并复核授权。
   // 与 writingStyleProvider 同款 provider 注入模式；documents 模块不直接依赖
   // subagents / context-rooms，模块边界只在此装配点跨越。
+  // M2：内容生产者已迁至 doc-writer，授权判定随迁（isSelectionRewriteInvocationAuthorized
+  // 现校验 agentDefinitionId === "doc-writer"）；结果优先读 structuredOutput.replacementText。
   documentService.resolveSelectionRewriteContent = createSelectionRewriteContentResolver({
     getInvocation: (invocationId) => subagentOrchestrator.getInvocation(invocationId),
     isInvocationAuthorized: (invocation, roomId) => isSelectionRewriteInvocationAuthorized(
@@ -1026,7 +1032,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   await app.register(contextRoomRoutes(
     contextRoomService,
     roomDuplicateService,
-    subagentConfig.enabled ? contextRoomAgentDispatcher : undefined,
+    subagentConfig.enabled ? docWriterDispatcher : undefined,
     roomOverviewService,
   ));
   await app.register(documentMcpRoutes(documentMcpHost));
@@ -1036,7 +1042,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     documentOperationService,
     documentMcpHost.capabilities,
     (context) => {
-      // dispatch 子 Agent（context-room 划词改写）溯源：按 completed Invocation 校验。
+      // dispatch 子 Agent（doc-writer 划词改写，M2 迁移）溯源：按 completed Invocation 校验。
       if (context.invocationId) {
         if (!isSelectionRewriteInvocationAuthorized(
           subagentOrchestrator.getInvocation(context.invocationId),

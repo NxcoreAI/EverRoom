@@ -9,6 +9,7 @@ import { createDatabase } from '../src/infrastructure/database/client.js'
 import { contextRoomRoutes } from '../src/modules/context-rooms/routes.js'
 import type { RoomAgentDispatcher, RoomAgentDispatchInput } from '../src/modules/context-rooms/room-agent.js'
 import { CONTEXT_ROOM_AGENT_ID } from '../src/modules/context-rooms/room-agent.js'
+import type { DocWriterDispatcher } from '../src/modules/subagents/doc-writer-dispatcher.js'
 import { ContextRoomService } from '../src/modules/context-rooms/service.js'
 
 const temporaryDirectories: string[] = []
@@ -46,21 +47,28 @@ function fakeDispatcher(overrides: Partial<RoomAgentDispatcher> = {}): RoomAgent
   }
 }
 
-async function harness(roomAgent?: RoomAgentDispatcher) {
+function fakeDocWriter(overrides: Partial<DocWriterDispatcher> = {}): DocWriterDispatcher {
+  return {
+    dispatchDetached: vi.fn(async () => 'invocation-detached'),
+    ...overrides,
+  }
+}
+
+async function harness(roomAgent?: RoomAgentDispatcher, docWriter?: DocWriterDispatcher) {
   const dataDir = await mkdtemp(join(tmpdir(), 'nxcore-context-room-routes-'))
   temporaryDirectories.push(dataDir)
   const database = createDatabase(join(dataDir, 'gateway.sqlite'), resolve('drizzle'))
   const service = new ContextRoomService(database.db)
   if (roomAgent) service.setRoomAgentDispatcher(roomAgent)
   const app = Fastify().withTypeProvider<TypeBoxTypeProvider>()
-  await app.register(contextRoomRoutes(service, undefined, roomAgent))
+  await app.register(contextRoomRoutes(service, undefined, docWriter))
   return { app, service, ...database }
 }
 
 describe('context room agent routes', () => {
-  it('dispatches selection rewrites and returns the invocation id immediately', async () => {
-    const roomAgent = fakeDispatcher({ dispatchDetached: vi.fn(async () => 'invocation-rewrite-1') })
-    const { app, sqlite } = await harness(roomAgent)
+  it('dispatches selection rewrites to doc-writer (M2) and returns the invocation id immediately', async () => {
+    const docWriter = fakeDocWriter({ dispatchDetached: vi.fn(async () => 'invocation-rewrite-1') })
+    const { app, sqlite } = await harness(undefined, docWriter)
 
     const response = await app.inject({
       method: 'POST',
@@ -79,8 +87,8 @@ describe('context room agent routes', () => {
 
     expect(response.statusCode).toBe(200)
     expect(response.json()).toEqual({ invocationId: 'invocation-rewrite-1' })
-    expect(roomAgent.dispatchDetached).toHaveBeenCalledWith({
-      task: 'selection-rewrite',
+    expect(docWriter.dispatchDetached).toHaveBeenCalledWith({
+      task: 'rewrite',
       taskInput: {
         selectedText: '原文',
         instruction: '更简洁',
@@ -96,7 +104,7 @@ describe('context room agent routes', () => {
   })
 
   it('rejects invalid selection rewrite bodies and missing agents', async () => {
-    const { app, sqlite } = await harness(fakeDispatcher())
+    const { app, sqlite } = await harness(undefined, fakeDocWriter())
 
     expect((await app.inject({
       method: 'POST',
