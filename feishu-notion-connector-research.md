@@ -174,48 +174,37 @@
 
 ### 4.1 总体架构与数据流
 
-**组件架构图**（★ = 本需求新增；未标注 = 现有可复用/已就位，对照 §1.3；退役的 Nango 侧不在图内）：
+**组件架构图**（★ = 本需求新增；未标注 = 复用/已就位，见 §1.3；Nango 退役侧不在图内）：
 
 ```
 ┌─ 桌面端（Electron）
-│   连接管理 UI：授权入口 · 连接状态/needs_connection 徽标 · 重授权（ConnectorConsolePage/ConnectorSyncPage 骨架）
-│   导出对话框：目标选择 + mode + 冲突三选一 ★
-│   open-connector supervisor（oo 进程管理）
-│   open-connector-secret-store（Electron safeStorage → OO_CONFIG_DIR/OO_DATA_DIR）
-└────────┬──────────────────────────────────────────────────────────
-         │ cliConnector IPC + REST（连接发起/状态/作业进度/导出）
-         ▼
-┌─ 网关（gateway.sqlite）
-│   REST：/v1/cli-connectors/*（连接） · /v1/connector-exports/* ★（导出）
-│   【导入管线 · 复用为主】
-│     service.ts 作业 seed/调度（seed 列表加 feishu）
-│     document-sync.ts reconcile→incremental 双作业（扩展 feishu + edit_time 水位）
-│     防回环拦截：拉取结果进投影之前查 connector_export_targets ★（§4.4.2 单一入口）
-│     domain-projection 幂等 upsert + contentHash 跳过
-│     ConnectorMarkdownService 双向 hash 幂等 + outbox 退避
-│     IngestService → rooms / memory / files
-│   【导出管线 · ★全新】
-│     connector_export_targets 映射表 ★（§4.4.1）
-│     export outbox：lease + 退避 [30s,2m,10m,1h]，复用 markdown-service 模式 ★
-│     导出执行器：独立服务，不进导入作业只读白名单 ★（§4.4.6）
-└────────┬──────────────────────────────────────────────────────────
-         │ oo CLI 动作调用（拉取/发现/写入）
-         ▼
-┌─ open-connector 运行时（vendored，pin 5719a69/v1.3.5；桌面 supervisor 托管进程与凭据注入）
-│   feishu provider（OAuth authen/v2 + 动作均已就位）
-│     读：fetch_document（markdown/局部读） · search_documents
-│     发现：list_wiki_spaces / list_wiki_nodes · list_drive_files
-│     写：create_document / update_document · submit_drive_import（+ get_drive_task_status 轮询）
-│   notion provider（OAuth + 动作均已就位）
-│     读：retrieve_page_markdown（truncated/unknown_block_ids 补拉逻辑在网关侧）
-│     写：create_page · update_page_markdown
-└────────┬──────────────────────────────────────────────────────────
-         │ HTTPS（user_access_token；刷新轮换由 oo CLI 自管）
-         ▼
+│    连接管理 UI · ★导出对话框
+│    open-connector supervisor · secret-store
+└─────────┬────────────────────────────
+          │ IPC · REST
+          ▼
+┌─ 网关 gateway
+│    REST：/v1/cli-connectors/* · ★/v1/connector-exports/*
+│
+│    导入（复用为主）：
+│      作业调度 → document-sync 双作业 → ★防回环拦截
+│        → domain-projection → markdown-service → ingest
+│        → rooms / memory / files
+│
+│    导出（★全新）：
+│      ★导出映射表 → ★export outbox → ★导出执行器
+└─────────┬────────────────────────────
+          │ oo CLI 动作调用
+          ▼
+┌─ open-connector 运行时（pin 5719a69）
+│    feishu provider：读 fetch_document ｜ 发现 list_wiki_* / list_drive_files ｜ 写 submit_drive_import 等
+│    notion provider：读 retrieve_page_markdown ｜ 写 create_page / update_page_markdown
+└─────────┬────────────────────────────
+          │ HTTPS（user_access_token）
+          ▼
 ┌─ 外部平台
-│   飞书开放平台：OAuth(authen v2) · docs_ai fetch（未公开端点，兜底 docs-v1 /content 10MB）· drive import_tasks
-│   Notion API：OAuth(capabilities) · Markdown API（Notion-Version 2026-03-11）
-└──────────────────────────────────────────────────────────────────
+│    飞书开放平台 ｜ Notion API
+└────────────────────────────────
 ```
 
 **数据流**：
