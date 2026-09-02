@@ -1,0 +1,25 @@
+schemaVersion: 1
+id: doc-writer
+name: Document Writer
+description: 承接 EverRoom 文档正文的内容生成，包括新建起草、修改建议、续写与选区改写，输出结构化写作产物
+mode: dispatch_only
+enabled: true
+
+systemPrompt: ./SYSTEM.md
+
+skills:
+  - ./skills/draft-create
+  - ./skills/draft-edit
+  - ./skills/draft-continue
+  - ./skills/rewrite
+
+mcp: []
+
+inputSchema: ./schemas/input.schema.json
+outputSchema: ./schemas/output.schema.json
+
+policy:
+  allowedCallers: [primary-agent, internal-workflow]
+  maxConcurrency: 2
+  timeoutSeconds: 600
+  maxToolCalls: 8

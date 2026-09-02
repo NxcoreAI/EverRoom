@@ -50,6 +50,8 @@ Agent 边界的划分依据是**交互形态**，不是"文档 vs 房间"：
 
 ## 3. 优化项 A：改写信任收口（M1）
 
+> **2026-09-02 修订**：M1 已落地（renderer 已改传 `invocationId`，服务端 `resolveSelectionRewriteContent` 从 invocation 完成态重建内容并复核授权；`proposedContentJson` 仅为存量 in-flight 兼容路径）。后续演进见 [doc-writer-subagent-plan.zh-CN.md](doc-writer-subagent-plan.zh-CN.md) §8：selection-rewrite 的内容生产者将从 context-room 迁至 doc-writer 子 agent，授权函数 `isSelectionRewriteInvocationAuthorized` 随迁并换绑 agentDefinitionId；`proposedContentJson` 迁移兼容路径与宽限期语义不变。
+
 ### 3.1 现状链路与缺口
 
 ```
@@ -135,6 +137,8 @@ M1/M2 尚未上线，但评估不必等真机数据——代码事实已足以�
 orchestrator 单点加 per-task priority（interaction / background）。启用条件 = T2 命中，作为最小补救手段记录在此。
 
 ## 6. doc-agent 触发线与拆分蓝图（D4）
+
+> **2026-09-02 标注**：D4 已由 [doc-writer-subagent-plan.zh-CN.md](doc-writer-subagent-plan.zh-CN.md) 落地（范围比本蓝图更大：不只承接 selection-rewrite 静默流，还把对话流的新建/修改/续写内容生成一并收编至 doc-writer 子 agent，主 agent 只做编排与落库）。本节触发线描述保留作历史记录。
 
 **暂不拆分。** 触发线三条，命中任一即启动拆分：
 

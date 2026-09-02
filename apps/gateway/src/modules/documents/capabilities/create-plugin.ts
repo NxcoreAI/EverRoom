@@ -48,7 +48,7 @@ export function createPlugin(
   const begin: DocumentCapabilityTool = {
     name: "context_room_write_begin",
     title: "开始创建 Room 文档",
-    description: "仅当用户已经明确要求在工作区创建、保存或写入文档时调用。当前视口已绑定 Room 时省略 roomId；未绑定时，必须先根据文档标题、主题、拟写内容与可用 Room 的标题、类型、背景、目标和状态判断，只有存在明确唯一匹配时才填写该 Room 的 ID。无法可靠确定唯一 Room 时不得调用本工具，应调用 context_room_list 并提供最可能相关的 candidateRoomIds，等待用户选择。若句子的创建对象是 Room、Context Room 或房间，不得调用本工具；即使用途说明中出现“文档/文件/项目”，也应调用 context_room_create。工具可用、当前位于文档页面，或用户只要求分析、总结、整理、写方案、起草、润色，都不代表要创建文档。调用前根据上下文确定文档类型、目标读者、期望结果和格式约束，明确准备写入正文的核心内容、重点或结论，形成连贯提纲，并拟定能够准确概括正文的具体标题；上下文足够时不要机械追问。",
+    description: "仅当用户已经明确要求在工作区创建、保存或写入文档时调用。正文内容与标题必须来自 document_draft 的返回值（title 与 appendChunks 逐字转发），不得自行撰写。当前视口已绑定 Room 时省略 roomId；未绑定时，必须先根据文档标题、主题、拟写内容与可用 Room 的标题、类型、背景、目标和状态判断，只有存在明确唯一匹配时才填写该 Room 的 ID。无法可靠确定唯一 Room 时不得调用本工具，应调用 context_room_list 并提供最可能相关的 candidateRoomIds，等待用户选择。若句子的创建对象是 Room、Context Room 或房间，不得调用本工具；即使用途说明中出现“文档/文件/项目”，也应调用 context_room_create。工具可用、当前位于文档页面，或用户只要求分析、总结、整理、写方案、起草、润色，都不代表要创建文档。",
     inputSchema: {
       type: "object", additionalProperties: false,
       properties: {
@@ -122,7 +122,7 @@ export function createPlugin(
   const append: DocumentCapabilityTool = {
     name: "context_room_write_append",
     title: "流式追加 Room 文档正文",
-    description: "按严格连续 sequence 追加本次新增的 Markdown 正文，不得重发累计全文。context_room_write_begin.title 会由文档界面单独渲染为页面顶部 H1，不属于 Markdown 正文；正文不得再次输出同名标题、等价标题或任何一级标题（#）。正文通常先写一小段引言，再进入 ## 主章节；子章节使用 ###，更深层级依次使用 ####。编号章节例如“2. xxx”必须写成“## 2. xxx”，“2.1 xxx”必须写成“### 2.1 xxx”，不要把主章节写成普通数字列表而让子章节变成更大的标题。标题必须唯一且能准确描述本节。使用标准 Markdown：围栏代码块标注语言，链接使用有意义的说明文字。表格只用于真正的行列数据，每张表必须使用连续行完整输出，表头后只能有一行分隔线，所有行列数一致；表格行之间不得插入空行，不得用空表、全空行或重复分隔线制造间距。除非用户明确要求简短版本，否则正文应为充实、完整的长篇内容。",
+    description: "按严格连续 sequence 追加本次新增的 Markdown 正文，不得重发累计全文。text 必须来自 document_draft 返回的 appendChunks（按顺序逐字转发），不得改写、增删或合并。正文不得包含标题或一级标题（#）：context_room_write_begin.title 由界面单独渲染为页面顶部 H1；主章节从 ## 开始，子章节依次递进。",
     inputSchema: {
       type: "object", additionalProperties: false,
       properties: {
@@ -314,11 +314,7 @@ export function createPlugin(
       "只在用户明确要求创建、保存或写入工作区文档时使用创建工具。",
       "当前视口没有绑定 Room 时，先使用文档标题、主题和拟写内容，对照可用 Room 的标题、类型、背景、目标、状态及内容摘要判断归属。存在明确唯一匹配时，在 context_room_write_begin.roomId 中填写其 ID 并直接创建；无法可靠确定唯一目标时，调用 context_room_list，仅提交最可能相关的 2 至 5 个 candidateRoomIds，然后停止创建并等待用户选择。不得仅凭列表顺序、最近使用或宽泛词语猜测 Room。",
       "若被创建的对象是 Room、Context Room 或房间，不得使用文档创建工具；用途从句中出现文档、文件或项目不代表创建文档。“创建一个管理项目文档的 Context Room”应调用 context_room_create，“在 Context Room 里创建一份项目文档”才使用文档创建工具。",
-      "写作前根据已有上下文确定文档类型、目标读者、期望结果与约束，并在内部形成连贯提纲；上下文足够时直接写，不要为了流程机械追问。",
-      "文档标题与正文严格分离：context_room_write_begin.title 是唯一页面标题，并由界面以 H1 展示；后续 context_room_write_append 只能生成正文，不得再次写出标题、同义标题或任何 # 一级标题。正文主章节从 ## 开始，子章节从 ### 开始；编号章节必须保持对应层级，例如 2. 使用 ##、2.1 使用 ###。",
-      "正文通常以简短引言开头；标题应唯一、完整且有描述性。使用标准 Markdown，代码围栏标注语言，链接文字说明目标内容，表格只用于真正的行列数据。",
-      "Markdown 表格必须连续、完整且列数一致：表头后只写一行分隔线，表格行之间不留空行，禁止输出空表、全空行或重复分隔线来制造视觉间距。",
-      "除非用户明确要求简短版本，正文应充分展开。提交前通读全文，修正层级、衔接、重复、矛盾、缺失上下文、无依据断言、套话和低质量链接，再调用提交工具。",
+      "正文内容与标题必须来自 document_draft 的返回值并逐字转发：write_begin 使用其 title，write_append 按顺序转发其 appendChunks，不得自行撰写、改写或增删。",
     ],
     tools: [begin, append, commit, abort],
   };

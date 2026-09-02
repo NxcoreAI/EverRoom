@@ -1,0 +1,122 @@
+{
+  "type": "object",
+  "properties": {
+    "kind": {
+      "type": "string",
+      "enum": ["draft-create", "draft-edit", "draft-continue", "rewrite"],
+      "description": "The task kind this result answers; must match the input task."
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120,
+      "description": "Document title, required for draft-create."
+    },
+    "contentMarkdown": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Full body markdown for draft-create as a single string; the gateway chunks it. Alternative to appendChunks."
+    },
+    "appendChunks": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 },
+      "description": "Body chunks in order, each cut at a natural paragraph boundary and at most 48 KiB; concatenation is the full body."
+    },
+    "baseVersion": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Echo of the input baseVersion, required for draft-edit and draft-continue."
+    },
+    "hunks": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 50,
+      "items": {
+        "type": "object",
+        "properties": {
+          "operation": { "type": "string", "enum": ["insert", "replace", "delete"] },
+          "target": {
+            "oneOf": [
+              {
+                "type": "object", "additionalProperties": false,
+                "properties": { "at": { "const": "end" } }, "required": ["at"]
+              },
+              {
+                "type": "object", "additionalProperties": false,
+                "properties": {
+                  "blockId": { "type": "string", "minLength": 1, "maxLength": 64 },
+                  "edge": { "enum": ["before", "after"] }
+                },
+                "required": ["blockId", "edge"]
+              },
+              {
+                "type": "object", "additionalProperties": false,
+                "properties": {
+                  "blockId": { "type": "string", "minLength": 1, "maxLength": 64 },
+                  "fromOffset": { "type": "integer", "minimum": 0 },
+                  "toOffset": { "type": "integer", "minimum": 0 }
+                },
+                "required": ["blockId"]
+              },
+              {
+                "type": "object", "additionalProperties": false,
+                "properties": {
+                  "fromBlockId": { "type": "string", "minLength": 1, "maxLength": 64 },
+                  "toBlockId": { "type": "string", "minLength": 1, "maxLength": 64 }
+                },
+                "required": ["fromBlockId", "toBlockId"]
+              }
+            ]
+          },
+          "markdown": { "type": "string", "maxLength": 65536 }
+        },
+        "required": ["operation", "target"],
+        "additionalProperties": false
+      },
+      "description": "Minimal patch hunks for draft-edit; targets must reference blockIds from the input blockIndex."
+    },
+    "replacementText": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 20000,
+      "description": "The replacement fragment itself, required for rewrite."
+    },
+    "digest": {
+      "type": "object",
+      "properties": {
+        "outline": { "type": "array", "maxItems": 100, "items": { "type": "string", "maxLength": 300 } },
+        "charCount": { "type": "integer", "minimum": 0 },
+        "summary": { "type": "string", "maxLength": 500 }
+      },
+      "required": ["summary"],
+      "additionalProperties": false,
+      "description": "Short report of the produced content for orchestration and user-facing summaries."
+    }
+  },
+  "required": ["kind", "digest"],
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": { "properties": { "kind": { "const": "draft-create" } }, "required": ["kind"] },
+      "then": {
+        "anyOf": [
+          { "required": ["title", "appendChunks"] },
+          { "required": ["title", "contentMarkdown"] }
+        ]
+      }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "draft-edit" } }, "required": ["kind"] },
+      "then": { "required": ["baseVersion", "hunks"] }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "draft-continue" } }, "required": ["kind"] },
+      "then": { "required": ["baseVersion", "appendChunks"] }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "rewrite" } }, "required": ["kind"] },
+      "then": { "required": ["replacementText"] }
+    }
+  ]
+}

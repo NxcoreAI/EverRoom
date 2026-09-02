@@ -791,10 +791,10 @@ export function reviewPlugins(
   const tools = [beginTool(backend, operations, reads), hunkTool(backend, operations, reads), commitTool(operations), abortTool(operations)];
   return [
     { manifest: manifest("document.edit", "mutation", "atomic_review", "atomic-diff", true, true),
-      promptGuidelines: ["修改已有文档前必须先读取权威版本；Gateway 会在当前 run 内自动绑定读取凭证和唯一运行中的 Patch，后续工具无需搬运 readReceipt、operationId 或 patchId。重写、润色、扩写、替换或删除已有内容必须使用 kind=edit，kind=continue 只追加全新内容。Agent 只能生成提案，不能直接应用。edit 应选择用户要求修改的最小 target，replace Markdown 只包含该 target 的替换片段，不得重发未修改的全文。单次工具失败若返回 retryable=true，应修正参数并重试；最终回复以最后一次工具结果为准，不能把已恢复的失败说成整轮失败。patch_commit 后必须按返回的 state/applied/documentChanged 描述状态；awaiting_review 时只能说修改建议已准备好、等待用户审阅，不能声称正文已修改。"], tools,
+      promptGuidelines: ["修改已有文档的内容必须先调用 document_draft(task=draft-edit) 生成修改提案：网关会读取权威版本组装素材并为本 run 签发读取凭证，返回的 hunks 与 baseVersion 逐字转发给 patch 工具，不得自行撰写、改写或补写 hunk。Gateway 会在当前 run 内自动绑定读取凭证和唯一运行中的 Patch，后续工具无需搬运 readReceipt、operationId 或 patchId。重写、润色、扩写、替换或删除已有内容必须使用 kind=edit，kind=continue 只追加全新内容。Agent 只能生成提案，不能直接应用。单次工具失败若返回 retryable=true，应修正参数并重试；最终回复以最后一次工具结果为准，不能把已恢复的失败说成整轮失败。patch_commit 后必须按返回的 state/applied/documentChanged 描述状态；awaiting_review 时只能说修改建议已准备好、等待用户审阅，不能声称正文已修改。"], tools,
       command: (operation, command) => editCommand(backend, operation, command) },
     { manifest: manifest("document.continue", "mutation", "incremental_review", "continuation", true, true),
-      promptGuidelines: ["continue 只用于追加原文中不存在的全新内容，不能用于重写、润色、扩写或替换已有段落。普通续写默认插入文末；长篇内容可按连续 sequence 分批生成，每批只能发送该批新增片段，禁止发送累计内容、原文或全文，最终由用户逐块接受。"], tools: [],
+      promptGuidelines: ["continue 只用于追加原文中不存在的全新内容，不能用于重写、润色、扩写或替换已有段落；追加内容必须来自 document_draft(task=draft-continue) 的 appendChunks 并逐字转发。普通续写默认插入文末；长篇内容可分多次调用 document_draft 再按连续 sequence 分批转发，每批只能发送该批新增片段，禁止发送累计内容、原文或全文，最终由用户逐块接受。"], tools: [],
       command: (operation, command) => continuationCommand(backend, operation, command) },
   ];
 }

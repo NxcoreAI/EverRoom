@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SubagentInvocation, TiptapJsonContent } from "@nxcore/agent-contract";
 import type { DocumentCapabilityPlugin } from "../src/modules/documents/capabilities/types.js";
 import { createBuiltinDocumentCapabilityRegistry } from "../src/modules/documents/capabilities/builtins.js";
+import { DocumentReadAuthority } from "../src/modules/documents/capabilities/read-authority.js";
 import {
   buildSelectionRewriteProposedContent,
   createSelectionRewriteContentResolver,
@@ -107,22 +108,20 @@ describe("document capability registry", () => {
     })).rejects.toMatchObject({ code: "DOCUMENT_TRASHED", statusCode: 409 })
   })
 
-  it("tells document creation agents to keep the page title out of the Markdown body", () => {
+  it("tells document agents the body comes from document_draft and keeps the page title out of the Markdown body", () => {
     const registry = createBuiltinDocumentCapabilityRegistry({} as never);
 
-    expect(registry.promptGuidelines().join(" ")).toMatch(
-      /title 是唯一页面标题.*append 只能生成正文.*正文主章节从 ## 开始.*2\.1 使用 ###/,
-    );
-    expect(registry.promptGuidelines().join(" ")).toMatch(
-      /目标读者.*连贯提纲.*简短引言.*围栏标注语言.*提交前通读全文.*重复.*矛盾/,
-    );
-    expect(registry.promptGuidelines().join(" ")).toMatch(
-      /Markdown 表格.*连续.*完整.*列数一致.*禁止输出空表.*全空行.*重复分隔线/,
-    );
-    expect(registry.listTools().find((tool) => tool.name === "context_room_write_append")?.description)
-      .toMatch(/title.*页面顶部 H1.*不属于 Markdown 正文.*任何一级标题.*2\.1.*###/);
-    expect(registry.listTools().find((tool) => tool.name === "context_room_write_append")?.description)
-      .toMatch(/一小段引言.*标题必须唯一.*代码块标注语言.*链接.*表格/);
+    // 写作规则已迁往 doc-writer（doc-writer-subagent-plan §6）：create/edit/continue
+    // 指引只保留路由、审阅语义与“内容必须来自 document_draft 并逐字转发”的编排纪律。
+    const guidelines = registry.promptGuidelines().join(" ");
+    expect(guidelines).toMatch(/正文内容与标题必须来自 document_draft 的返回值并逐字转发.*write_append.*appendChunks/);
+    expect(guidelines).toMatch(/document_draft\(task=draft-edit\).*hunks 与 baseVersion 逐字转发/);
+    expect(guidelines).toMatch(/draft-continue.*appendChunks.*逐字转发/);
+    // 标题/正文分离的机械底线保留在 append 工具 description（子 Agent 不可用时的降级护栏）。
+    const appendDescription = registry.listTools()
+      .find((tool) => tool.name === "context_room_write_append")?.description ?? "";
+    expect(appendDescription).toMatch(/appendChunks.*逐字转发/);
+    expect(appendDescription).toMatch(/不得包含标题或一级标题.*主章节从 ## 开始/);
   });
 
   it("rejects duplicate capability and tool registrations", () => {
@@ -1387,5 +1386,67 @@ describe("selection-rewrite 内容重建（服务端）", () => {
       caught = error;
     }
     expect(caught).toMatchObject({ code: "SELECTION_NOT_FOUND" });
+  });
+});
+
+describe("共享读凭证与代发（doc-writer-subagent-plan §5.3）", () => {
+  it("document_draft 代发的 receipt 与 document_read 签发的满足同一个 requireLatest；未签发仍被拒", async () => {
+    const { documents, operations } = await createReviewHarness("shared-read-authority");
+    const document = await documents.import({
+      id: "doc-shared-reads",
+      roomId: "room-1",
+      title: "Shared reads target",
+      contentJson: {
+        type: "doc",
+        content: [
+          { type: "paragraph", content: [{ type: "text", text: "Rewrite this summary." }] },
+          { type: "paragraph", content: [{ type: "text", text: "Keep this detailed context unchanged. ".repeat(8) }] },
+        ],
+      },
+    });
+    // create-server 同款装配：registry 由共享 authority 构建（builtins 第 4 参）。
+    const sharedReads = new DocumentReadAuthority((documentId) => documents.get(documentId) ?? null);
+    const registry = createBuiltinDocumentCapabilityRegistry(documents, undefined, operations, sharedReads);
+    const targetId = documents.listBlocks(document.id).filter((block) => block.depth === 0)[0]!.blockId;
+    const topLevelBlockIds = documents.listBlocks(document.id)
+      .filter((block) => block.depth === 0)
+      .map((block) => block.blockId);
+
+    // 未签发：patch_begin 直接被 read-authority 拒绝。
+    const bareContext = { agentSessionId: "session-proxy", runId: "run-proxy", roomId: "room-1" };
+    await expect(registry.execute("context_room_patch_begin", {
+      documentId: document.id,
+      baseVersion: document.version,
+      kind: "edit",
+      summary: "should fail without read",
+    }, bareContext)).rejects.toThrow(/DOCUMENT_READ_REQUIRED|Read the current document/);
+
+    // document_draft 的代发路径：dispatch 返回后以主 run 名义签发（顶层块集）。
+    sharedReads.issue(bareContext, document.id, document.version, topLevelBlockIds);
+    const begun = await registry.execute("context_room_patch_begin", {
+      documentId: document.id,
+      baseVersion: document.version,
+      kind: "edit",
+      summary: "Replace the summary via proxy receipt",
+    }, bareContext);
+    const operationId = String(begun.structuredContent.operationId);
+    await registry.execute("context_room_patch_hunk", {
+      operationId,
+      sequence: 1,
+      operation: "replace",
+      target: { blockId: targetId },
+      markdown: "替换后的总结段落。",
+    }, bareContext);
+    await registry.execute("context_room_patch_commit", { operationId, finalSequence: 1 }, bareContext);
+    expect(operations.get(operationId)?.status).toBe("awaiting_review");
+
+    // 跨 run：另一 run 持有同 token 上下文也不满足（receipt 绑定 sessionId+runId）。
+    const otherRun = { agentSessionId: "session-proxy", runId: "run-other", roomId: "room-1" };
+    await expect(registry.execute("context_room_patch_begin", {
+      documentId: document.id,
+      baseVersion: document.version,
+      kind: "edit",
+      summary: "cross run",
+    }, otherRun)).rejects.toThrow(/DOCUMENT_READ_REQUIRED|Read the current document/);
   });
 });

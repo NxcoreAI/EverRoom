@@ -2,6 +2,14 @@ import { createHash } from "node:crypto";
 import { Type } from "@sinclair/typebox";
 import type { PiAgentRuntimeTool } from "@nxcore/agent-runtime-pi";
 import { formatRoomContextDigest, type RoomContextDigest } from "../context-rooms/room-context-digest.js";
+import {
+  DOC_WRITER_AGENT_ID,
+  DOC_WRITER_TASK_LABELS,
+  DOCUMENT_MARKDOWN_MAX_CHARS,
+  splitIntoAppendChunks,
+  type DocWriterTask,
+  type DocumentDraftSnapshot,
+} from "./document-draft.js";
 import { SubagentOrchestrator } from "./orchestrator.js";
 import { SubagentRegistry } from "./registry.js";
 
@@ -86,6 +94,17 @@ export function createSubagentPiTools(
     resolveFileMarkdown?: (fileId: string) => Promise<string | null>;
     /** Room 材料共享投影（方案 §4.2 B2）：room_analysis 网关侧组装 content 的数据源。 */
     resolveRoomContext?: (roomId: string) => Promise<RoomContextDigest | null>;
+    /** doc-writer 组装数据源（doc-writer-subagent-plan §4）：读权威文档快照。 */
+    resolveDocumentForDraft?: (documentId: string, roomId: string) => DocumentDraftSnapshot;
+    /** 代发读凭证（§5.3）：与 document_read 同构地以主 run 名义签发 receipt。 */
+    issueDraftReadReceipt?: (
+      context: { agentSessionId: string; runId: string; roomId: string },
+      documentId: string,
+      version: number,
+      blockIds: string[],
+    ) => { readReceipt: string; expiresAt: string };
+    /** 写作风格生成段（§7 迁移）：对 doc-writer 全部 task 无条件附加，provider 自查开关。 */
+    writingStyleProvider?: { getGenerationPromptSection(): string | null };
   } = {},
 ): PiAgentRuntimeTool[] {
   const tools: PiAgentRuntimeTool[] = [
@@ -326,6 +345,246 @@ export function createSubagentPiTools(
             ...(normalized.warning ? { warning: normalized.warning } : {}),
             result: invocation.result,
             error: invocation.errorMessage,
+          }),
+          details: invocation,
+        };
+      },
+    });
+  }
+  const docWriter = registry.get(DOC_WRITER_AGENT_ID);
+  if (docWriter) {
+    tools.push({
+      name: "document_draft",
+      label: "Draft document content",
+      description: "调度 doc-writer 子 Agent 产出文档正文内容（起草、修改提案、续写、选区改写），"
+        + "返回可直接逐字转发给 context_room_write_* / context_room_patch_* 工具的结构化产物。"
+        + "draft-edit 与 draft-continue 只传 documentId（网关读取权威文档组装素材），返回 hunks/appendChunks 与 baseVersion，"
+        + "并已为本 run 签发读取凭证，可直接 patch_begin；draft-create 传入 instruction 与可选 material，返回 title 与 appendChunks。"
+        + "正文内容必须来自本工具的返回值，不得自行撰写或改写。",
+      parameters: Type.Object({
+        task: Type.Union([
+          Type.Literal("draft-create"),
+          Type.Literal("draft-edit"),
+          Type.Literal("draft-continue"),
+          Type.Literal("rewrite"),
+        ]),
+        instruction: Type.String({ minLength: 1, maxLength: 16_000 }),
+        documentId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+        roomId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+        material: Type.Optional(Type.String({ maxLength: 100_000 })),
+        selectedText: Type.Optional(Type.String({ minLength: 1, maxLength: 20_000 })),
+        contextBefore: Type.Optional(Type.String({ maxLength: 4_000 })),
+        contextAfter: Type.Optional(Type.String({ maxLength: 4_000 })),
+        blockType: Type.Optional(Type.String({ maxLength: 64 })),
+        responseLanguage: Type.Optional(Type.String({ minLength: 2, maxLength: 35 })),
+      }, { additionalProperties: false }),
+      execute: async (run, params, signal) => {
+        const task = String(params.task ?? "") as DocWriterTask;
+        const instruction = String(params.instruction ?? "").trim();
+        if (!DOC_WRITER_TASK_LABELS[task]) throw new Error("document_draft_task_invalid");
+        const material = typeof params.material === "string" && params.material.trim() ? params.material : null;
+        const responseLanguage = typeof params.responseLanguage === "string" && params.responseLanguage.trim()
+          ? params.responseLanguage.trim()
+          : null;
+        const explicitRoomId = typeof params.roomId === "string" ? params.roomId.trim() : "";
+        if (explicitRoomId && run.roomId && explicitRoomId !== run.roomId) {
+          throw new Error("ROOM_SELECTION_MISMATCH: The document target differs from the Room already bound to this run");
+        }
+        const roomId = explicitRoomId || run.roomId || run.activeDocument?.roomId?.trim() || "";
+
+        let snapshot: DocumentDraftSnapshot | null = null;
+        if (task === "draft-edit" || task === "draft-continue") {
+          const documentId = typeof params.documentId === "string" ? params.documentId.trim() : "";
+          if (!documentId) throw new Error("document_draft_document_id_required");
+          if (!roomId) throw new Error("ROOM_SELECTION_REQUIRED: Select a Context Room first");
+          if (!options.resolveDocumentForDraft) throw new Error("document_draft_document_access_unavailable");
+          try {
+            snapshot = options.resolveDocumentForDraft(documentId, roomId);
+          } catch (error) {
+            const detail = error instanceof Error ? error.message : String(error);
+            const code = (error as { code?: string } | null)?.code;
+            throw new Error(`document_draft_document_unavailable: ${code ?? ""} ${detail}`.trim());
+          }
+        }
+
+        const writingStyle = options.writingStyleProvider?.getGenerationPromptSection() ?? null;
+        const roomTitle = roomId ? run.availableRooms?.find((room) => room.id === roomId) : undefined;
+        const topLevelBlocks = snapshot
+          ? snapshot.blocks.filter((block) => block.depth === 0)
+          : [];
+        const documentTruncated = snapshot !== null && snapshot.markdown.length > DOCUMENT_MARKDOWN_MAX_CHARS;
+        const input = {
+          task,
+          instruction,
+          ...(material ? { material } : {}),
+          ...(roomTitle?.title?.trim() ? { roomTitle: roomTitle.title.trim().slice(0, 120) } : {}),
+          ...(snapshot
+            ? {
+              documentId: snapshot.document.id,
+              documentName: snapshot.document.title.slice(0, 200),
+              documentMarkdown: documentTruncated
+                ? snapshot.markdown.slice(0, DOCUMENT_MARKDOWN_MAX_CHARS)
+                : snapshot.markdown,
+              ...(documentTruncated ? { documentTruncated: true } : {}),
+              blockIndex: topLevelBlocks.slice(0, 2_000).map((block) => ({
+                blockId: block.blockId,
+                type: block.type.slice(0, 64),
+                ordinal: block.ordinal,
+                ...(block.textPreview ? { textPreview: block.textPreview.slice(0, 400) } : {}),
+              })),
+              outline: topLevelBlocks
+                .filter((block) => block.type.toLowerCase().includes("heading") && block.textPreview)
+                .slice(0, 100)
+                .map((block) => block.textPreview.slice(0, 300)),
+              baseVersion: snapshot.document.version,
+            }
+            : {}),
+          ...(typeof params.selectedText === "string" && params.selectedText
+            ? { selectedText: params.selectedText }
+            : {}),
+          ...(typeof params.contextBefore === "string" && params.contextBefore.trim()
+            ? { contextBefore: params.contextBefore }
+            : {}),
+          ...(typeof params.contextAfter === "string" && params.contextAfter.trim()
+            ? { contextAfter: params.contextAfter }
+            : {}),
+          ...(typeof params.blockType === "string" && params.blockType.trim()
+            ? { blockType: params.blockType.trim() }
+            : {}),
+          ...(responseLanguage ? { responseLanguage } : {}),
+          ...(writingStyle ? { writingStyle } : {}),
+        };
+        if (task === "rewrite" && typeof input.selectedText !== "string") {
+          throw new Error("document_draft_selected_text_required");
+        }
+        const taskLabel = DOC_WRITER_TASK_LABELS[task];
+
+        let invocation;
+        try {
+          invocation = await orchestrator.dispatch({
+            agentId: DOC_WRITER_AGENT_ID,
+            task: taskLabel,
+            input,
+            idempotencyKey: dispatchKey(run.runId, DOC_WRITER_AGENT_ID, taskLabel, input),
+            source: "primary_agent",
+            parentSessionId: run.sessionId,
+            parentRunId: run.runId,
+            ...(signal ? { signal } : {}),
+          });
+        } catch (error) {
+          const errorCode = error instanceof Error ? error.message : String(error);
+          const retryable = errorCode === "subagent_concurrency_limit"
+            || errorCode === "subagent_global_concurrency_limit";
+          return {
+            content: JSON.stringify({
+              status: "failed",
+              errorCode,
+              retryable,
+              message: retryable
+                ? "doc-writer 调度被并发限额拒绝；如实告知用户可稍后重试，禁止自行改写正文。"
+                : "doc-writer 调度失败；如实告知用户，禁止自行改写正文。",
+            }),
+            details: { errorCode },
+          };
+        }
+        if (invocation.status !== "completed") {
+          return {
+            content: JSON.stringify({
+              invocationId: invocation.id,
+              status: invocation.status,
+              errorCode: invocation.errorCode ?? invocation.errorMessage ?? invocation.status,
+              retryable: invocation.status === "timed_out" || invocation.status === "cancelled",
+              message: `doc-writer 未完成（${invocation.status}）；如实告知用户，禁止自行改写正文。`,
+            }),
+            details: invocation,
+          };
+        }
+        const structured = invocation.result?.structuredOutput !== null
+          && typeof invocation.result?.structuredOutput === "object"
+          && !Array.isArray(invocation.result.structuredOutput)
+          ? invocation.result.structuredOutput as Record<string, unknown>
+          : extractJsonObject(invocation.result?.text ?? "");
+        if (!structured || typeof structured.kind !== "string" || structured.kind !== task) {
+          return {
+            content: JSON.stringify({
+              invocationId: invocation.id,
+              status: "completed",
+              errorCode: "doc_writer_result_invalid",
+              retryable: true,
+              message: "doc-writer 未提交匹配任务的结构化结果；可调整 instruction 后重新调用 document_draft。",
+            }),
+            details: invocation,
+          };
+        }
+
+        let title: string | null = null;
+        let appendChunks: string[] | null = null;
+        if (task === "draft-create" || task === "draft-continue") {
+          if (typeof structured.title === "string" && structured.title.trim()) {
+            title = structured.title.trim();
+          }
+          if (Array.isArray(structured.appendChunks)) {
+            appendChunks = structured.appendChunks.map((chunk) => String(chunk));
+          } else if (typeof structured.contentMarkdown === "string" && structured.contentMarkdown) {
+            appendChunks = splitIntoAppendChunks(structured.contentMarkdown);
+          }
+        }
+
+        // 版本复核 + 代发读凭证（§5.3）：与 document_read 同构，主 Agent 无需读全文即可 patch_begin。
+        let readReceiptExpiresAt: string | null = null;
+        if (snapshot) {
+          let fresh: DocumentDraftSnapshot | null = null;
+          try {
+            fresh = options.resolveDocumentForDraft
+              ? options.resolveDocumentForDraft(snapshot.document.id, roomId)
+              : null;
+          } catch {
+            fresh = null;
+          }
+          if (!fresh || fresh.document.version !== snapshot.document.version) {
+            return {
+              content: JSON.stringify({
+                invocationId: invocation.id,
+                status: "conflict",
+                errorCode: "DOCUMENT_CONFLICT",
+                retryable: true,
+                message: "文档在生成期间发生变化；请重新调用 document_draft 获取基于最新版本的提案。",
+                expectedVersion: snapshot.document.version,
+                currentVersion: fresh?.document.version ?? null,
+              }),
+              details: invocation,
+            };
+          }
+          if (options.issueDraftReadReceipt) {
+            const receipt = options.issueDraftReadReceipt(
+              { agentSessionId: run.sessionId, runId: run.runId, roomId: snapshot.document.roomId },
+              snapshot.document.id,
+              snapshot.document.version,
+              fresh.blocks.filter((block) => block.depth === 0).map((block) => block.blockId),
+            );
+            readReceiptExpiresAt = receipt.expiresAt;
+          }
+        }
+
+        return {
+          content: JSON.stringify({
+            invocationId: invocation.id,
+            agentId: invocation.agentDefinitionId,
+            status: "completed",
+            kind: task,
+            ...(title ? { title } : {}),
+            ...(appendChunks ? { appendChunks } : {}),
+            ...(Array.isArray(structured.hunks) ? { hunks: structured.hunks } : {}),
+            ...(typeof structured.replacementText === "string" ? { replacementText: structured.replacementText } : {}),
+            ...(snapshot
+              ? {
+                baseVersion: snapshot.document.version,
+                documentId: snapshot.document.id,
+                roomId: snapshot.document.roomId,
+              }
+              : {}),
+            ...(readReceiptExpiresAt ? { readReceiptExpiresAt } : {}),
+            digest: structured.digest ?? null,
           }),
           details: invocation,
         };

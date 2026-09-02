@@ -26,6 +26,8 @@ import { documentRoutes } from "../modules/documents/routes.js";
 import { documentOperationRoutes } from "../modules/documents/operations/routes.js";
 import { DocumentService } from "../modules/documents/service.js";
 import { createSelectionRewriteContentResolver } from "../modules/documents/capabilities/selection-rewrite-content.js";
+import { createBuiltinDocumentCapabilityRegistry } from "../modules/documents/capabilities/builtins.js";
+import { DocumentReadAuthority } from "../modules/documents/capabilities/read-authority.js";
 import { ExternalDocumentProjectionService } from "../modules/documents/external-projections/service.js";
 import { externalDocumentProjectionRoutes } from "../modules/documents/external-projections/routes.js";
 import {
@@ -118,6 +120,7 @@ import { SubagentRegistry } from "../modules/subagents/registry.js";
 import { SubagentRuntimeManager } from "../modules/subagents/runtime-manager.js";
 import { SubagentOrchestrator } from "../modules/subagents/orchestrator.js";
 import { createSubagentPiTools } from "../modules/subagents/tools.js";
+import { createDocWriterResultValidator } from "../modules/subagents/document-draft.js";
 import { LocalAgentRuntimeRegistry } from "../modules/local-agents/runtime-registry.js";
 import { subagentRoutes } from "../modules/subagents/routes.js";
 import { AgentStatusService } from "../modules/agent/status-service.js";
@@ -519,10 +522,19 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     }
   }, 30_000);
   documentOperationExpiryTimer.unref();
+  // 共享读凭证权威（doc-writer-subagent-plan §5.3）：document_draft 代发的 receipt 与
+  // patch_begin 的 requireLatest 必须落在同一实例；registry 由 create-server 显式构建后
+  // 注入 host，避免 host 内部自建私有实例。
+  const documentReadAuthority = new DocumentReadAuthority((documentId) => documentService.get(documentId));
   const documentMcpHost = new DocumentMcpHost(
     documentService,
     contextRoomService,
-    undefined,
+    createBuiltinDocumentCapabilityRegistry(
+      documentService,
+      contextRoomService,
+      documentOperationService,
+      documentReadAuthority,
+    ),
     documentOperationService,
     (diagnostic) => {
       const { level, event, ...fields } = diagnostic;
@@ -605,6 +617,9 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     "context-room",
     () => createContextRoomAgentTools({ db, memory: memoryService, overview: roomOverviewService }),
   );
+  // doc-writer 输出的跨字段校验（doc-writer-subagent-plan §3.4）：baseVersion 回显、
+  // hunks 目标 ∈ blockIndex、分块预算。须在首次 dispatch 前注册。
+  subagentRuntimeManager.registerAgentResultValidator("doc-writer", createDocWriterResultValidator());
   for (const developerAgent of subagentRegistry.listAvailable()) {
     agentResolver.register({
       id: developerAgent.id,
@@ -666,6 +681,15 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
             // 分析任务合并（方案 §4.2 B2）：room_analysis 网关侧组装材料的数据源
             // （Room 不存在时 buildRoomContextDigest 抛 context_room_not_found，语义一致）。
             resolveRoomContext: async (roomId) => buildRoomContextDigest(db, roomId),
+            // document_draft 组装与代发凭证（doc-writer-subagent-plan §4/§5.3）：
+            // 读权威文档快照 + 以主 run 名义签发 read receipt（与 document_read 同构）。
+            resolveDocumentForDraft: (documentId, roomId) => documentService.readDocumentForAgent(documentId, roomId),
+            issueDraftReadReceipt: (context, documentId, version, blockIds) =>
+              documentReadAuthority.issue(context, documentId, version, blockIds),
+            // 写作风格生成段迁移（§7）：主 Agent 不再注入，doc-writer dispatch 全 task 附加。
+            writingStyleProvider: {
+              getGenerationPromptSection: () => writingStyleService.getGenerationPromptSection(),
+            },
          })
         : []),
       ...createNotificationPiTools(notificationMcpHost),
@@ -1203,9 +1227,8 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   documentHistoryBackfillWorker.start();
   writingStyleWorker = new WritingStyleWorker(db, writingStyleService, app.log);
   writingStyleWorker.start();
-  agentService.writingStyleProvider = {
-    getGenerationPromptSection: () => writingStyleService.getGenerationPromptSection(),
-  };
+  // 写作风格生成注入已迁移至 doc-writer（doc-writer-subagent-plan §7）：
+  // 主 Agent 不再持有 writingStyleProvider，四信号门控随 writing-style-gate.ts 退役。
   await app.register(writingStyleRoutes(writingStyleService));
   cliConnectorMarkdownService = new ConnectorMarkdownService(
     db,
