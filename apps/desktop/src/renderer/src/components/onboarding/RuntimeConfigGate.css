@@ -512,3 +512,6 @@
     justify-content: center;
   }
 }
+
+/* 扫码登录入口（复用 QrLoginPanel 自带样式） */
+.runtime-config-gate-qr-login { margin-top: 14px; display: flex; justify-content: center; }

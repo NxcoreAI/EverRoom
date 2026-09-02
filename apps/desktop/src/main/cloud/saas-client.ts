@@ -16,6 +16,8 @@ import type {
   CloudDevice,
   CloudOidcProvider,
   CreateAsrJobInput,
+  QrLoginPresentation,
+  QrLoginStatusPayload,
 } from '../../shared/sources'
 import type { RealityTag } from '@nxcore/reality-contract'
 import type { AgentSession, AgentSessionSnapshot } from '@nxcore/agent-contract'
@@ -73,7 +75,43 @@ interface LoginResult {
   refreshToken: string
   user: { id: string; tenantId: string; email?: string | null; phone?: string | null; name?: string }
   device: { id: string; name?: string; platform?: string }
+  session?: { id: string; leaseExpiresAt?: string }
   registration?: { accountCreated: boolean; invitationApplied: boolean }
+}
+
+/** 设备额度已满时服务端返回的准入挑战：桌面需展示设备列表并让用户选择替换。 */
+export interface AdmissionRequired {
+  admissionRequired: true
+  reason: 'DEVICE_LIMIT_REACHED'
+  maxDevices: number
+  admissionToken: string
+  expiresAt: string
+  devices: CloudDevice[]
+}
+
+export type LoginOutcome = LoginResult | AdmissionRequired
+
+/** 扫码登录 pending 会话：桌面交换凭证只存在于主进程内存。 */
+interface PendingQrLogin {
+  sessionId: string
+  desktopExchangeToken: string
+  expiresAt: string
+  inFlight: boolean
+}
+
+/** createSession 响应（主进程消费后剥掉 desktopExchangeToken 才给 renderer）。 */
+interface QrLoginSessionCreated {
+  qrLoginSessionId: string
+  qrScanToken: string
+  desktopExchangeToken: string
+  confirmationCode: string
+  expiresAt: string
+  status: 'pending_scan'
+}
+
+export function isAdmissionRequired(outcome: LoginOutcome | null | undefined): outcome is AdmissionRequired {
+  return outcome !== null && outcome !== undefined && typeof outcome === 'object'
+    && (outcome as AdmissionRequired).admissionRequired === true
 }
 
 interface CloudJob {
@@ -410,6 +448,8 @@ function saasCompatibleSession(
 export class SaasClient {
   private accessToken: string | null = null
   private account: LoginResult | null = null
+  private pendingAdmission: AdmissionRequired | null = null
+  private pendingQrLogin: PendingQrLogin | null = null
   private subscription: CloudAccountStatus['subscription'] | null = null
   private subscriptionLoadedAt = 0
   private subscriptionRetryAfter = 0
@@ -435,7 +475,9 @@ export class SaasClient {
     private readonly recordingsDirectory: string,
     private readonly openExternal: (url: string) => Promise<void>,
   ) {
-    this.baseUrl = normalizeSaasApiUrl(env('NXCORE_SAAS_API_URL', 'http://127.0.0.1:4100/api/v1'))
+    // 开发默认与手机 App 的 dev 默认（http://192.168.1.99:4100）保持同一 origin，
+    // 保证扫码登录的环境校验在两端默认配置下直接通过。
+    this.baseUrl = normalizeSaasApiUrl(env('NXCORE_SAAS_API_URL', 'http://192.168.1.99:4100/api/v1'))
     this.logtoIssuer = env('NXCORE_LOGTO_ISSUER', 'https://auth.nxcore.ai/oidc').replace(/\/+$/, '')
     this.logtoAppId = env('NXCORE_LOGTO_APP_ID', 'typreqzzbz3anel9aq1z8')
     this.connectorIds = {
@@ -467,6 +509,131 @@ export class SaasClient {
     return this.request<CloudDevice[]>('/app/devices')
   }
 
+  /** 当前待处理的设备准入挑战（额度已满时登录/刷新返回）。 */
+  get admissionChallenge(): AdmissionRequired | null {
+    return this.pendingAdmission
+  }
+
+  /** 放弃当前准入挑战（用户取消设备选择）。 */
+  clearAdmissionChallenge(): void {
+    this.pendingAdmission = null
+  }
+
+  /**
+   * 设备替换：选择一个在线设备下线，为当前桌面腾出额度。成功后接受新会话。
+   * admissionToken 短时效（默认 5 分钟），过期后需要重新登录获取。
+   */
+  async replaceDeviceAdmission(admissionToken: string, replaceDeviceId: string): Promise<CloudAccountStatus> {
+    await this.initialize()
+    const data = await this.publicRequest<LoginResult>('/app/auth/device-admission/replace', {
+      method: 'POST',
+      data: { admissionToken, replaceDeviceId },
+    })
+    this.pendingAdmission = null
+    await this.acceptSession(data)
+    await this.loadSubscription()
+    return this.currentStatus()
+  }
+
+  // ---- 扫码登录（手机 App 扫码登录桌面端）----
+  // 双凭证隔离：qrScanToken 进入二维码；desktopExchangeToken 只保留在主进程
+  // 内存（PendingQrLogin），不进入 renderer、磁盘或日志。
+
+  /** 当前 pending 扫码会话（含桌面交换凭证），仅主进程可见。 */
+  get pendingQrLoginSession(): PendingQrLogin | null {
+    return this.pendingQrLogin
+  }
+
+  async createQrLoginSession(): Promise<QrLoginPresentation> {
+    await this.initialize()
+    // 同一时间只允许一个 pending 会话；新建前 best-effort 取消旧会话。
+    await this.cancelPendingQrLogin()
+    const details = await this.deviceDetails()
+    const data = await this.publicRequest<QrLoginSessionCreated>('/app/auth/qr-login/sessions', {
+      method: 'POST',
+      data: {
+        deviceKey: details.deviceKey,
+        deviceName: details.deviceName,
+        platform: details.platform,
+        appVersion: details.appVersion,
+      },
+    })
+    this.pendingQrLogin = {
+      sessionId: data.qrLoginSessionId,
+      desktopExchangeToken: data.desktopExchangeToken,
+      expiresAt: data.expiresAt,
+      inFlight: false,
+    }
+    // origin 用主进程真实 SaaS 源（与手机 App 配置的环境一致）；由主进程统一组装，
+    // renderer 不再自行拼接，避免未登录时拿到占位符或空 origin 生成必然失效的二维码。
+    const qrPayload = JSON.stringify({
+      version: 1,
+      type: 'qr-login',
+      origin: new URL(this.baseUrl).origin,
+      qrLoginSessionId: data.qrLoginSessionId,
+      qrScanToken: data.qrScanToken,
+    })
+    // renderer 只拿到二维码载荷与展示信息，绝不包含桌面交换凭证。
+    return {
+      qrLoginSessionId: data.qrLoginSessionId,
+      qrScanToken: data.qrScanToken,
+      qrPayload,
+      confirmationCode: data.confirmationCode,
+      expiresAt: data.expiresAt,
+      status: 'pending_scan',
+    }
+  }
+
+  async getQrLoginStatus(sessionId?: string): Promise<QrLoginStatusPayload> {
+    await this.initialize()
+    const pending = this.requirePendingQrLogin(sessionId)
+    const payload = await this.publicRequest<QrLoginStatusPayload>(`/app/auth/qr-login/sessions/${encodeURIComponent(pending.sessionId)}/status`, {
+      method: 'POST',
+      data: { desktopExchangeToken: pending.desktopExchangeToken },
+    })
+    if (!['pending_scan', 'scanned', 'confirmed'].includes(payload.status)) {
+      // 终态：清空内存凭证。
+      this.pendingQrLogin = null
+    }
+    return payload
+  }
+
+  async exchangeQrLoginSession(sessionId?: string): Promise<CloudAccountStatus> {
+    await this.initialize()
+    const pending = this.requirePendingQrLogin(sessionId)
+    const data = await this.publicRequest<{ status: 'exchanged'; login: LoginOutcome }>(`/app/auth/qr-login/sessions/${encodeURIComponent(pending.sessionId)}/exchange`, {
+      method: 'POST',
+      data: { desktopExchangeToken: pending.desktopExchangeToken },
+    })
+    this.pendingQrLogin = null
+    return this.completeLoginOutcome(data.login)
+  }
+
+  async cancelQrLoginSession(sessionId?: string): Promise<void> {
+    await this.initialize()
+    const target = sessionId ? (this.pendingQrLogin?.sessionId === sessionId ? this.pendingQrLogin : null) : this.pendingQrLogin
+    this.pendingQrLogin = null
+    if (!target) return
+    await this.publicRequest(`/app/auth/qr-login/sessions/${encodeURIComponent(target.sessionId)}/cancel`, {
+      method: 'POST',
+      data: { desktopExchangeToken: target.desktopExchangeToken },
+    }).catch(() => undefined)
+  }
+
+  private cancelPendingQrLogin(): Promise<void> {
+    return this.cancelQrLoginSession()
+  }
+
+  /** renderer 传来的 session id 必须与主进程内存中的 pending 会话一致。 */
+  private requirePendingQrLogin(sessionId?: string): PendingQrLogin {
+    const pending = this.pendingQrLogin
+    if (!pending) throw new Error('当前没有进行中的扫码登录会话。')
+    if (sessionId !== undefined && sessionId !== pending.sessionId) {
+      throw new Error('扫码登录会话不匹配。')
+    }
+    return pending
+  }
+
   async getRuntimeConfig(): Promise<SaasRuntimeConfig> {
     await this.initialize()
     return this.request<SaasRuntimeConfig>('/app/runtime-config')
@@ -494,6 +661,14 @@ export class SaasClient {
   async notificationPreferences(): Promise<NotificationPreferences> {
     await this.initialize()
     return this.request('/app/notifications/preferences')
+  }
+
+  /** 在线租约续期（SessionLeaseKeeper 每 30 秒调用）。未登录时静默跳过。 */
+  async renewSessionLease(): Promise<boolean> {
+    await this.initialize()
+    if (!this.account || !this.accessToken) return false
+    await this.request('/app/session/lease', { method: 'PUT' })
+    return true
   }
 
   async updateNotificationPreferences(input: Partial<NotificationPreferences>): Promise<NotificationPreferences> {
@@ -541,7 +716,7 @@ export class SaasClient {
   async login(identifier: string, password: string): Promise<CloudAccountStatus> {
     await this.initialize()
     if (!identifier.trim() || !password) throw new Error('请输入账号和密码。')
-    const data = await this.publicRequest<LoginResult>('/app/auth/password-login', {
+    const data = await this.publicRequest<LoginOutcome>('/app/auth/password-login', {
       method: 'POST',
       data: {
         identifier: identifier.trim(),
@@ -549,7 +724,17 @@ export class SaasClient {
         ...(await this.deviceDetails()),
       },
     })
-    await this.acceptSession(data)
+    return this.completeLoginOutcome(data)
+  }
+
+  /** 登录结果归一：额度未满直接接受会话；已满保留挑战交给设备准入 UI。 */
+  private async completeLoginOutcome(outcome: LoginOutcome): Promise<CloudAccountStatus> {
+    if (isAdmissionRequired(outcome)) {
+      this.pendingAdmission = outcome
+      return this.currentStatus()
+    }
+    this.pendingAdmission = null
+    await this.acceptSession(outcome)
     await this.loadSubscription()
     return this.currentStatus()
   }
@@ -720,6 +905,8 @@ export class SaasClient {
     await this.initialize()
     this.cancelOidcLogin()
     this.stopLoopbackServer()
+    await this.cancelPendingQrLogin()
+    this.pendingAdmission = null
     const refreshToken = await this.credentials.getPlainText(REFRESH_TOKEN_KEY)
     if (refreshToken) {
       await this.publicRequest('/app/auth/logout', {
@@ -1024,19 +1211,28 @@ export class SaasClient {
       }
       if (this.pendingOidcLogin !== pending) return
       const claims = this.validateIdToken(token.id_token, pending.nonce)
-      const data = await this.publicRequest<LoginResult>('/app/auth/oidc/logto', {
+      const data = await this.publicRequest<LoginOutcome>('/app/auth/oidc/logto', {
         method: 'POST',
         headers: { Authorization: `Bearer ${token.id_token}` },
         data: { ...(await this.deviceDetails()), ...(pending.invitationCode ? { invitationCode: pending.invitationCode } : {}) },
       })
       if (this.pendingOidcLogin !== pending) return
-      if (claims.email_verified === true && typeof claims.email === 'string') {
-        data.user.email = claims.email
+      let status: CloudAccountStatus
+      if (isAdmissionRequired(data)) {
+        // 设备额度已满：不建立会话，保留挑战给设备准入 UI 处理。
+        this.pendingAdmission = data
+        status = this.currentStatus()
+      } else {
+        if (claims.email_verified === true && typeof claims.email === 'string') {
+          data.user.email = claims.email
+        }
+        if (typeof claims.name === 'string' && claims.name.trim()) data.user.name = claims.name.trim()
+        this.pendingAdmission = null
+        await this.acceptSession(data)
+        await this.loadSubscription()
+        status = this.currentStatus()
       }
-      if (typeof claims.name === 'string' && claims.name.trim()) data.user.name = claims.name.trim()
-      await this.acceptSession(data)
-      await this.loadSubscription()
-      this.resolveOidcLogin(pending, this.currentStatus())
+      this.resolveOidcLogin(pending, status)
     } catch (error) {
       this.rejectOidcLogin(
         pending,
@@ -1081,6 +1277,7 @@ export class SaasClient {
       ...(this.account ? { user: this.account.user, device: this.account.device } : {}),
       ...(this.subscription ? { subscription: this.subscription } : {}),
       ...(this.account?.registration ? { registration: this.account.registration } : {}),
+      ...(this.pendingAdmission ? { admission: { ...this.pendingAdmission } } : {}),
     }
   }
 
@@ -1098,10 +1295,16 @@ export class SaasClient {
   }
 
   private async refresh(refreshToken: string): Promise<void> {
-    const data = await this.publicRequest<LoginResult>('/app/auth/refresh', {
+    const data = await this.publicRequest<LoginOutcome>('/app/auth/refresh', {
       method: 'POST',
       data: { refreshToken },
     })
+    if (isAdmissionRequired(data)) {
+      // 额度被其他设备占满：保留挑战并判定会话失效，由上层进入设备准入 UI。
+      this.pendingAdmission = data
+      throw new SaasRequestError('设备额度已被其他在线设备占满。', 409)
+    }
+    this.pendingAdmission = null
     await this.acceptSession(data)
   }
 

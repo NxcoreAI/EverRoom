@@ -144,7 +144,7 @@
   "contextRoomState.roomNotSynced": "Room 暂未同步",
   "contextRoomState.localContentPreserved": "本地内容已保留，连接恢复后会自动重试。",
   "contextRoomState.invalidSnapshot": "Room 快照格式无效",
-  "memory.factSourceCount": "{{count}} 个来源陈述",
+  "memory.factSourceCount": "{count} 个来源陈述",
   "memory.factType.attribute": "属性",
   "memory.factType.relation": "关系",
   "memory.noRelatedFacts": "暂无关联事实",
