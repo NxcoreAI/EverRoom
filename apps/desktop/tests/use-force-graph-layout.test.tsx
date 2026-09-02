@@ -175,6 +175,75 @@ describe('useForceGraphLayout', () => {
     expect(created[1]!.terminated).toBe(true)
   })
 
+  it('seeds the rebuilt layout with the previous converged positions by node id', async () => {
+    const created: FakeForceGraphWorker[] = []
+    const workerFactory = () => {
+      const worker = new FakeForceGraphWorker()
+      created.push(worker)
+      return worker
+    }
+    const nodes = [{ id: 'a' }, { id: 'b' }]
+    const nextNodes = [{ id: 'a' }, { id: 'b' }, { id: 'c' }]
+
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(
+        <ForceGraphLayoutProbe nodes={nodes} edges={[]} label="Test graph" workerFactory={workerFactory} />,
+      )
+    })
+    const firstInitialize = created[0]!.posted[0]
+    if (firstInitialize?.type !== 'initialize') throw new Error('worker not initialized')
+    created[0]!.emitReady(2)
+    await act(async () => {})
+    // Worker 发布收敛坐标：a=(10,20)、b=(30,40)，revision 前进（>0 才可继承）。
+    new Float32Array(firstInitialize.positionsBuffer).set([10, 20, 30, 40])
+    Atomics.add(new Int32Array(firstInitialize.controlBuffer), ForceGraphControlIndex.Revision, 2)
+
+    await act(async () => {
+      renderer.update(
+        <ForceGraphLayoutProbe nodes={nextNodes} edges={[]} label="Test graph" workerFactory={workerFactory} />,
+      )
+    })
+    const secondInitialize = created[1]!.posted[0]
+    if (secondInitialize?.type !== 'initialize') throw new Error('second worker not initialized')
+    // 数据刷新重建：同 id 节点继承旧坐标（布局不失忆）；新节点 c 回落传入的初始站位。
+    expect(secondInitialize.nodes).toEqual([
+      { id: 'a', x: 10, y: 20 },
+      { id: 'b', x: 30, y: 40 },
+      { id: 'c' },
+    ])
+
+    await act(async () => { renderer.unmount() })
+  })
+
+  it('does not seed from a worker that never published positions', async () => {
+    const created: FakeForceGraphWorker[] = []
+    const workerFactory = () => {
+      const worker = new FakeForceGraphWorker()
+      created.push(worker)
+      return worker
+    }
+    const nodes = [{ id: 'a', x: 5, y: 6 }]
+
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(
+        <ForceGraphLayoutProbe nodes={nodes} edges={[]} label="Test graph" workerFactory={workerFactory} />,
+      )
+    })
+    // Worker 从未发布（revision=0，缓冲全 0）：重建不得继承全 0 坐标。
+    await act(async () => {
+      renderer.update(
+        <ForceGraphLayoutProbe nodes={nodes} edges={[]} label="Test graph" workerFactory={workerFactory} />,
+      )
+    })
+    const secondInitialize = created[1]!.posted[0]
+    if (secondInitialize?.type !== 'initialize') throw new Error('second worker not initialized')
+    expect(secondInitialize.nodes).toEqual(nodes)
+
+    await act(async () => { renderer.unmount() })
+  })
+
   it('uses the options world size as the natural floor for resize', async () => {
     const created: FakeForceGraphWorker[] = []
     const workerFactory = () => {

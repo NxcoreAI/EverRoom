@@ -83,6 +83,9 @@ export interface PixiPointerEvent {
 
 export interface PixiViewport extends PixiContainer {
   cursor?: string
+  /** 视口平移位置（Pixi Container 的 x/y）：脏检查用——平移改变可视矩形与箭头尺寸，需要重画。 */
+  x?: number
+  y?: number
   scale?: { x: number; y: number }
   plugins?: {
     pause(name: string): void

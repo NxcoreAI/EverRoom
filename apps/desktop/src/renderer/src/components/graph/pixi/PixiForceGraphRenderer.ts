@@ -239,6 +239,20 @@ export function createPixiForceGraphRenderer(
   const focusAlpha = 0.16
   const alphaLerp = 0.22
 
+  // 帧脏检查：共享坐标（revision）、悬停/选中边、视口变换（平移/缩放/屏幕尺寸）
+  // 或透明度动画任一变化才重画精灵与边。布局稳定且无交互的空闲帧整段跳过
+  // （分屏多图谱同屏时不再每帧全量重画边）；Pixi 自身的舞台渲染不受影响，
+  // tint 等直接改动属性的路径照常显示。哨兵初值保证创建后的第一帧必画。
+  let lastDrawnRevision: number | null = null
+  let lastDrawnHoveredIndex: number | null | undefined = undefined
+  let lastDrawnSelectedEdgeId: string | null | undefined = undefined
+  let lastViewportX = Number.NaN
+  let lastViewportY = Number.NaN
+  let lastViewportScale = Number.NaN
+  let lastScreenWidth = Number.NaN
+  let lastScreenHeight = Number.NaN
+  let alphaAnimating = false
+
   const drawEdge = (edge: (typeof edges)[number], arrow = edge.directed) => {
     const sourceX = positions[edge.source * 2]
     const sourceY = positions[edge.source * 2 + 1]
@@ -377,6 +391,25 @@ export function createPixiForceGraphRenderer(
     if (destroyed) return
     const startRevision = options.revision?.() ?? 0
     if ((startRevision & 1) === 1) return
+    if (!alphaAnimating
+      && lastDrawnRevision === startRevision
+      && lastDrawnHoveredIndex === hoveredIndex
+      && lastDrawnSelectedEdgeId === selectedEdgeId
+      && lastViewportX === (viewport.x ?? 0)
+      && lastViewportY === (viewport.y ?? 0)
+      && lastViewportScale === (viewport.scale?.x ?? 1)
+      && lastScreenWidth === screenWidth
+      && lastScreenHeight === screenHeight) {
+      return
+    }
+    lastDrawnRevision = startRevision
+    lastDrawnHoveredIndex = hoveredIndex
+    lastDrawnSelectedEdgeId = selectedEdgeId
+    lastViewportX = viewport.x ?? 0
+    lastViewportY = viewport.y ?? 0
+    lastViewportScale = viewport.scale?.x ?? 1
+    lastScreenWidth = screenWidth
+    lastScreenHeight = screenHeight
     // Worker 首帧坐标就绪后再补初始居中（见下方 centerOnMount 说明）。
     // 居中用的是当时的 screenWidth/screenHeight，连「宿主未布局」的欠账一起还清。
     if (centerOnFirstTickPending && startRevision > 0) {
@@ -384,11 +417,14 @@ export function createPixiForceGraphRenderer(
       centerOnLayoutPending = false
       centerOnContent()
     }
+    let animating = false
     for (let index = 0; index < sprites.length; index += 1) {
       setSpritePosition(sprites[index]!, positions[index * 2] ?? 0, positions[index * 2 + 1] ?? 0)
       const sprite = sprites[index]!
       const targetAlpha = nodeAlphaTargets[index] ?? 1
-      const nextAlpha = (sprite.alpha ?? 1) + (targetAlpha - (sprite.alpha ?? 1)) * alphaLerp
+      const currentAlpha = sprite.alpha ?? 1
+      if (Math.abs(targetAlpha - currentAlpha) >= 0.01) animating = true
+      const nextAlpha = currentAlpha + (targetAlpha - currentAlpha) * alphaLerp
       sprite.alpha = Math.abs(targetAlpha - nextAlpha) < 0.01 ? targetAlpha : nextAlpha
       const iconSprite = iconSprites[index]
       if (iconSprite) {
@@ -396,6 +432,7 @@ export function createPixiForceGraphRenderer(
         iconSprite.alpha = sprite.alpha
       }
     }
+    alphaAnimating = animating
     edgeGraphics.clear()
     for (const edge of edges) {
       const selected = Boolean(edge.id && edge.id === selectedEdgeId)

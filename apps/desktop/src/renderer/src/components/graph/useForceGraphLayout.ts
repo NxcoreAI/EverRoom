@@ -13,6 +13,18 @@ export interface ForceGraphViewportHandle {
   fitView(minScale?: number): void
 }
 
+/** 从已终结控制器的快照收集最后发布的坐标（id → 坐标），供下一代布局继承。 */
+function collectSeedPositions(controller: ForceGraphLayoutController): Map<string, { x: number; y: number }> {
+  const { nodeIds, positions } = controller.snapshot
+  const seed = new Map<string, { x: number; y: number }>()
+  nodeIds.forEach((id, index) => {
+    const x = positions[index * 2]
+    const y = positions[index * 2 + 1]
+    if (Number.isFinite(x) && Number.isFinite(y)) seed.set(id, { x, y })
+  })
+  return seed
+}
+
 export interface ForceGraphSettleFitOptions {
   /** fitView 的最小缩放；1 = 只居中不缩小（紧凑面板），缺省 = 整体适配。 */
   minScale?: number
@@ -80,6 +92,7 @@ export function useForceGraphLayout({
   settleFit,
 }: UseForceGraphLayoutInput): UseForceGraphLayoutResult {
   const [controller, setController] = useState<ForceGraphLayoutController | null>(null)
+  const controllerRef = useRef<ForceGraphLayoutController | null>(null)
   const settleTimersRef = useRef<Array<ReturnType<typeof setTimeout>>>([])
   const followRafRef = useRef<number | null>(null)
   const worldRef = useRef({ height: 0, width: 0 })
@@ -111,9 +124,22 @@ export function useForceGraphLayout({
   useEffect(() => {
     let next: ForceGraphLayoutController
     let workerFailed = false
+    // 布局记忆：数据刷新触发的重建按 id 继承上一代已收敛的坐标（d3-force 吃
+    // 初始 x/y，从平衡位重启几乎不动），否则后台同步一次图就整体洗牌跳动；
+    // 新节点回落使用面提供的初始站位。dispose 只停 Worker，快照仍持有最后
+    // 一次发布的坐标；revision=0 说明从未发布过（缓冲全 0），不继承。
+    const previous = controllerRef.current
+    let seededNodes = nodes
+    if (previous && previous.revision() > 0) {
+      const seed = collectSeedPositions(previous)
+      seededNodes = nodes.map((node) => {
+        const position = seed.get(node.id)
+        return position ? { ...node, x: position.x, y: position.y } : node
+      })
+    }
     try {
       next = new ForceGraphLayoutController({
-        nodes,
+        nodes: seededNodes,
         edges,
         options,
         // Worker 死亡（加载失败/初始化抛错/运行中崩溃）时拆掉控制器：
@@ -134,6 +160,7 @@ export function useForceGraphLayout({
       return
     }
     worldRef.current = { height: naturalWorldHeight, width: naturalWorldWidth }
+    controllerRef.current = next
     setController(next)
     // onFatal 已负责日志；这里只消化 ready 的拒绝，避免未处理 Promise。
     void next.ready.catch(() => {})
