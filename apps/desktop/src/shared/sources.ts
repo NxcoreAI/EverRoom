@@ -876,10 +876,9 @@ export interface NxcoreDesktopApi {
     checkDuplicates(input: RoomDuplicateCheckInput): Promise<RoomDuplicateCheckResult>
     listDuplicateCandidates(status?: RoomDuplicateCandidateStatus): Promise<{ items: RoomDuplicateCandidate[] }>
     updateDuplicateCandidate(id: string, status: 'related' | 'distinct'): Promise<RoomDuplicateCandidate>
-    previewMerge(sourceRoomId: string, targetRoomId: string): Promise<RoomMergePreview>
-    previewMergeIntoNew(sourceAId: string, sourceBId: string): Promise<RoomMergePreview>
-    startMergeIntoNew(input: { sourceAId: string; sourceBId: string; title: string; kind?: string; previewHash: string; idempotencyKey: string; wait?: boolean }): Promise<RoomMergeOperation>
-    startMerge(input: { sourceRoomId: string; targetRoomId: string; previewHash: string; idempotencyKey: string; wait?: boolean }): Promise<RoomMergeOperation>
+    previewMerge(sourceAId: string, sourceBId: string): Promise<RoomMergePreview>
+    startMerge(input: { sourceAId: string; sourceBId: string; title: string; kind?: string; previewHash: string; idempotencyKey: string; wait?: boolean }): Promise<RoomMergeOperation>
+    suggestMergeNames(input: { sourceAId: string; sourceBId: string; responseLanguage?: string }): Promise<{ names: string[] }>
     getMergeOperation(id: string): Promise<RoomMergeOperation>
     retryMerge(id: string): Promise<RoomMergeOperation>
     cancelMerge(id: string): Promise<RoomMergeOperation>

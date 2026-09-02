@@ -8,6 +8,7 @@ import { useRoomDocumentsState } from '../RoomDocumentsProvider'
 import { useLocale } from '../../../i18n/LocaleContext'
 import { ReferenceDialog } from './components/shared'
 import { RoomDuplicateCenter } from './components/RoomDuplicateCenter'
+import { RoomMergePartnerPicker } from './components/RoomMergePartnerPicker'
 import { HomeView } from './components/HomeView'
 import { PortedDetail } from './components/PortedDetail'
 import type { DetailPane } from './components/RoomIconSidebar'
@@ -88,15 +89,16 @@ export function PortedContextRoom({
             </div>
           </header>
           <p>{t('contextRoom:home.manualMergeHint', { title: manualMergeRoom?.title ?? '' })}</p>
-          <label>
-            <span>{t('contextRoom:home.manualMergePartner')}</span>
-            <select value={manualMergePartnerId} onChange={(event) => setManualMergePartnerId(event.target.value)}>
-              <option value="">{t('contextRoom:home.manualMergePick')}</option>
-              {state.rooms.filter((room) => room.id !== manualMergeRoom?.id).map((room) => (
-                <option key={room.id} value={room.id}>{room.title}</option>
-              ))}
-            </select>
-          </label>
+          <RoomMergePartnerPicker
+            rooms={state.rooms.map((room) => ({
+              id: room.id,
+              title: room.title,
+              ...(room.kind ? { kind: room.kind } : {}),
+            }))}
+            excludeRoomId={manualMergeRoom?.id}
+            value={manualMergePartnerId}
+            onChange={setManualMergePartnerId}
+          />
           <footer>
             <button type="button" onClick={() => { setManualMergeRoom(null); setManualMergePartnerId(''); }}>{t('contextRoom:duplicateCenter.cancel')}</button>
             <button

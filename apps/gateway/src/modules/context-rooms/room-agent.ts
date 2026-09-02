@@ -12,13 +12,15 @@ export type ContextRoomAgentTask =
   | "room-enrich"
   | "room-overview"
   | "brief-refresh"
-  | "selection-rewrite";
+  | "selection-rewrite"
+  | "merge-name";
 
 const TASK_LABELS: Record<ContextRoomAgentTask, string> = {
   "room-enrich": "整理新创建的 Context Room",
   "room-overview": "生成 Context Room 总览",
   "brief-refresh": "再生成 Context Room 简报",
   "selection-rewrite": "改写文档选区",
+  "merge-name": "为合并后的新 Context Room 推荐名称",
 };
 
 export interface ContextRoomEnrichment {
@@ -193,6 +195,27 @@ export function parseBriefRefresh(content: string): ContextRoomBriefRefresh {
     risks: textArray(value.risks, 6, 300),
     decisions: textArray(value.decisions, 6, 300),
   };
+}
+
+/**
+ * 解析 merge-name 任务输出：{"names": ["...", "..."]}。名称即新 Room 标题：
+ * 去重（忽略大小写）、截断到 120（对齐标题上限）、最多 3 条。
+ */
+export function parseMergeNameSuggestions(content: string): string[] {
+  const value = objectFromOutput(content);
+  const names = Array.isArray(value.names) ? value.names : [];
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const item of names) {
+    const name = text(item, 120);
+    if (!name) continue;
+    const key = name.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(name);
+    if (result.length >= 3) break;
+  }
+  return result;
 }
 
 export function parseRoomOverviewSynthesis(content: string): ContextRoomOverviewSynthesis {

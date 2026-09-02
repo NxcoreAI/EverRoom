@@ -3,7 +3,7 @@
   "properties": {
     "task": {
       "type": "string",
-      "enum": ["room-enrich", "room-overview", "brief-refresh", "selection-rewrite"],
+      "enum": ["room-enrich", "room-overview", "brief-refresh", "selection-rewrite", "merge-name"],
       "description": "The room task to execute."
     },
     "title": {
@@ -37,6 +37,14 @@
     "currentBrief": {
       "type": "object",
       "description": "Current room brief for brief-refresh; user-edited fields are authoritative."
+    },
+    "roomA": {
+      "type": "object",
+      "description": "First source room for merge-name: title, optional kind, background."
+    },
+    "roomB": {
+      "type": "object",
+      "description": "Second source room for merge-name: title, optional kind, background."
     },
     "selectedText": {
       "type": "string",

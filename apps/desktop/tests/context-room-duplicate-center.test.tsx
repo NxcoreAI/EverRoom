@@ -84,10 +84,11 @@ describe('RoomDuplicateCenter', () => {
   it('returns to the candidate list when reopened after closing from the merge preview', async () => {
     const api = {
       listDuplicateCandidates: vi.fn(async () => ({ items: [duplicateCandidate()] })),
-      previewMergeIntoNew: vi.fn(async () => mergePreview()),
+      previewMerge: vi.fn(async () => mergePreview()),
       startMerge: vi.fn(),
       getMergeOperation: vi.fn(),
       retryMerge: vi.fn(),
+      suggestMergeNames: vi.fn(async () => ({ names: [] })),
       cancelMerge: vi.fn(),
       updateDuplicateCandidate: vi.fn(),
     }
@@ -109,8 +110,8 @@ describe('RoomDuplicateCenter', () => {
     await act(async () => {
       buttonByText(renderer!, '查看合并影响')!.props.onClick()
     })
-    expect(api.previewMergeIntoNew).toHaveBeenCalledWith('room-a', 'room-b')
-    expect(textNodes(renderer!, '将迁移到主 Room')).toHaveLength(1)
+    expect(api.previewMerge).toHaveBeenCalledWith('room-a', 'room-b')
+    expect(textNodes(renderer!, '将迁移到新 Room')).toHaveLength(1)
 
     // 从合并预览直接关闭弹窗，再次打开应回到候选列表，而不是残留上一次的预览。
     await act(async () => {
@@ -119,9 +120,90 @@ describe('RoomDuplicateCenter', () => {
     await act(async () => {
       renderer!.update(<RoomDuplicateCenter open {...props} />)
     })
-    expect(textNodes(renderer!, '将迁移到主 Room')).toHaveLength(0)
+    expect(textNodes(renderer!, '将迁移到新 Room')).toHaveLength(0)
     expect(textNodes(renderer!, '校园生活记录').length).toBeGreaterThan(0)
     expect(buttonByText(renderer!, '查看合并影响')).toBeTruthy()
+  })
+
+  it('suggests names for the new room and applies the picked suggestion to the title input', async () => {
+    const api = {
+      listDuplicateCandidates: vi.fn(async () => ({ items: [duplicateCandidate()] })),
+      previewMerge: vi.fn(async () => mergePreview()),
+      suggestMergeNames: vi.fn(async () => ({ names: [] })),
+      startMerge: vi.fn(),
+      getMergeOperation: vi.fn(),
+      retryMerge: vi.fn(),
+      cancelMerge: vi.fn(),
+      updateDuplicateCandidate: vi.fn(),
+    }
+    ;(globalThis as { window?: unknown }).window = { nxcore: { contextRooms: api } }
+    let renderer: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(
+        <RoomDuplicateCenter open onOpenChange={() => undefined} onMerged={async () => undefined} />,
+      )
+    })
+    await act(async () => {
+      buttonByText(renderer!, '查看合并影响')!.props.onClick()
+    })
+
+    // 默认标题 = A 侧标题；推荐 chips = A、B、A + B（标题相同则去重、组合项不重复）。
+    expect(renderer!.root.findByType('input').props.value).toBe('校园生活')
+    const chips = renderer!.root
+      .findAll((node) => node.props.className === 'context-room-merge-suggestions')[0]!
+      .findAllByType('button')
+    expect(chips.map((chip) => chip.children.flatMap((child) => (typeof child === 'string' ? [child] : [])).join('')))
+      .toEqual(['校园生活', '校园生活记录', '校园生活 + 校园生活记录'])
+    expect(textNodes(renderer!, '两个来源 Room 的名称会自动保留为新 Room 的别名')).toHaveLength(1)
+
+    await act(async () => {
+      chips[1]!.props.onClick()
+    })
+    expect(renderer!.root.findByType('input').props.value).toBe('校园生活记录')
+  })
+
+  it('appends agent-suggested names once they resolve and applies them on click', async () => {
+    let resolveNames: (value: { names: string[] }) => void = () => undefined
+    const api = {
+      listDuplicateCandidates: vi.fn(async () => ({ items: [duplicateCandidate()] })),
+      previewMerge: vi.fn(async () => mergePreview()),
+      suggestMergeNames: vi.fn(() => new Promise<{ names: string[] }>((resolve) => { resolveNames = resolve })),
+      startMerge: vi.fn(),
+      getMergeOperation: vi.fn(),
+      retryMerge: vi.fn(),
+      cancelMerge: vi.fn(),
+      updateDuplicateCandidate: vi.fn(),
+    }
+    ;(globalThis as { window?: unknown }).window = { nxcore: { contextRooms: api } }
+    let renderer: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(
+        <RoomDuplicateCenter open onOpenChange={() => undefined} onMerged={async () => undefined} />,
+      )
+    })
+    await act(async () => {
+      buttonByText(renderer!, '查看合并影响')!.props.onClick()
+    })
+    // 请求立即发出；Agent 未返回前显示生成中，不渲染 Agent chips。
+    expect(api.suggestMergeNames).toHaveBeenCalledWith({
+      sourceAId: 'room-a', sourceBId: 'room-b', responseLanguage: 'zh-CN',
+    })
+    expect(textNodes(renderer!, 'Agent 正在生成…')).toHaveLength(1)
+
+    // 与机械推荐重名的候选（校园生活）被去重，只补位新名字。
+    await act(async () => {
+      resolveNames({ names: ['校园生活', '校园全景图'] })
+    })
+    expect(textNodes(renderer!, 'Agent 推荐：')).toHaveLength(1)
+    const agentChips = renderer!.root
+      .findAll((node) => node.props.className === 'context-room-merge-suggestions' && node.props['data-source'] === 'agent')[0]!
+      .findAllByType('button')
+    expect(agentChips.map((chip) => chip.children.join(''))).toEqual(['校园全景图'])
+
+    await act(async () => {
+      agentChips[0]!.props.onClick()
+    })
+    expect(renderer!.root.findByType('input').props.value).toBe('校园全景图')
   })
 
   it('clears the reported count when the service returns no merge-worthy candidates', async () => {
@@ -131,6 +213,7 @@ describe('RoomDuplicateCenter', () => {
       startMerge: vi.fn(),
       getMergeOperation: vi.fn(),
       retryMerge: vi.fn(),
+      suggestMergeNames: vi.fn(async () => ({ names: [] })),
       cancelMerge: vi.fn(),
       updateDuplicateCandidate: vi.fn(),
     }

@@ -20,6 +20,7 @@ import {
   invocationText,
   parseBriefRefresh,
   parseContextRoomEnrichment,
+  parseMergeNameSuggestions,
   type ContextRoomEnrichment,
   type RoomAgentDispatcher,
 } from "./room-agent.js";
@@ -779,6 +780,55 @@ export class ContextRoomService {
     const updated = this.db.update(contextRooms).set({ data, updatedAt: now })
       .where(eq(contextRooms.id, resolved)).returning().get();
     return snapshotItem(updated ?? row);
+  }
+
+  /**
+   * 合并命名推荐：dispatch context-room 子 Agent（merge-name 任务）等待终态，
+   * 返回 2-3 个新 Room 名称候选。两侧标题/类型/简报背景作为输入；幂等键随
+   * updatedAt 变化——资料未变时重复调用命中同一 invocation，不重复跑 Agent。
+   */
+  async suggestMergeNames(
+    sourceAId: string,
+    sourceBId: string,
+    responseLanguage?: string,
+  ): Promise<{ names: string[] }> {
+    const resolvedA = this.resolveRoomId(sourceAId);
+    const resolvedB = this.resolveRoomId(sourceBId);
+    if (!resolvedA || !resolvedB) throw new Error("context_room_not_found");
+    if (!this.roomAgent) throw new Error("context_room_agent_not_configured");
+    const load = (roomId: string) => {
+      const row = this.db.select().from(contextRooms).where(eq(contextRooms.id, roomId)).get();
+      if (!row) return null;
+      const brief = row.data.brief && typeof row.data.brief === "object" && !Array.isArray(row.data.brief)
+        ? row.data.brief as Record<string, unknown>
+        : {};
+      return {
+        title: row.title,
+        ...(row.kind ? { kind: row.kind } : {}),
+        background: typeof brief.background === "string" ? brief.background.slice(0, 2_000) : "",
+        updatedAt: row.updatedAt.getTime(),
+      };
+    };
+    const a = load(resolvedA);
+    const b = load(resolvedB);
+    if (!a || !b) throw new Error("context_room_not_found");
+    const [firstId, secondId] = resolvedA < resolvedB ? [resolvedA, resolvedB] : [resolvedB, resolvedA];
+    const first = resolvedA < resolvedB ? a : b;
+    const second = resolvedA < resolvedB ? b : a;
+    const invocation = await this.roomAgent.dispatch({
+      task: "merge-name",
+      taskInput: {
+        roomA: { title: first.title, ...(first.kind ? { kind: first.kind } : {}), background: first.background },
+        roomB: { title: second.title, ...(second.kind ? { kind: second.kind } : {}), background: second.background },
+        ...(responseLanguage?.trim() ? { responseLanguage: responseLanguage.trim().slice(0, 35) } : {}),
+      },
+      // 配对序归一：A/B 调换顺序的两次预览命中同一 invocation。
+      idempotencyKey: `merge-name:${firstId}:${first.updatedAt}:${secondId}:${second.updatedAt}`,
+    });
+    const content = invocation.status === "completed" ? invocationText(invocation) : null;
+    const names = content ? parseMergeNameSuggestions(content) : [];
+    if (names.length === 0) throw new Error("context_room_merge_name_failed");
+    return { names };
   }
 
   saveSnapshot(input: SaveContextRoomSnapshotInput): ContextRoomSnapshot {

@@ -127,8 +127,9 @@ describe('ContextRoomGatewayBridge snapshots', () => {
     await bridge.checkDuplicates({ title: '校园生活', description: '校园资料' })
     await bridge.listDuplicateCandidates('open')
     await bridge.updateDuplicateCandidate('candidate-1', 'distinct')
-    await bridge.previewMerge('room-source', 'room-target')
-    await bridge.startMerge({ sourceRoomId: 'room-source', targetRoomId: 'room-target', previewHash: 'hash', idempotencyKey: 'key' })
+    await bridge.previewMerge('room-a', 'room-b')
+    await bridge.startMerge({ sourceAId: 'room-a', sourceBId: 'room-b', title: '合并 Room', previewHash: 'hash', idempotencyKey: 'key' })
+    await bridge.suggestMergeNames({ sourceAId: 'room-a', sourceBId: 'room-b', responseLanguage: 'zh-CN' })
     await bridge.getMergeOperation('operation-1')
     await bridge.retryMerge('operation-1')
     await bridge.cancelMerge('operation-1')
@@ -137,8 +138,9 @@ describe('ContextRoomGatewayBridge snapshots', () => {
       { method: 'POST', path: '/v1/context-rooms/duplicate-check', body: JSON.stringify({ title: '校园生活', description: '校园资料' }) },
       { method: 'GET', path: '/v1/context-rooms/duplicate-candidates?status=open', body: '' },
       { method: 'PATCH', path: '/v1/context-rooms/duplicate-candidates/candidate-1', body: JSON.stringify({ status: 'distinct' }) },
-      { method: 'POST', path: '/v1/context-rooms/merge-preview', body: JSON.stringify({ sourceRoomId: 'room-source', targetRoomId: 'room-target' }) },
-      { method: 'POST', path: '/v1/context-rooms/merge-operations', body: JSON.stringify({ sourceRoomId: 'room-source', targetRoomId: 'room-target', previewHash: 'hash', idempotencyKey: 'key' }) },
+      { method: 'POST', path: '/v1/context-rooms/merge-preview', body: JSON.stringify({ sourceAId: 'room-a', sourceBId: 'room-b' }) },
+      { method: 'POST', path: '/v1/context-rooms/merge-operations', body: JSON.stringify({ sourceAId: 'room-a', sourceBId: 'room-b', title: '合并 Room', previewHash: 'hash', idempotencyKey: 'key', wait: true }) },
+      { method: 'POST', path: '/v1/context-rooms/merge-name-suggestions', body: JSON.stringify({ sourceAId: 'room-a', sourceBId: 'room-b', responseLanguage: 'zh-CN' }) },
       { method: 'GET', path: '/v1/context-rooms/merge-operations/operation-1', body: '' },
       { method: 'POST', path: '/v1/context-rooms/merge-operations/operation-1/retry', body: '' },
       { method: 'POST', path: '/v1/context-rooms/merge-operations/operation-1/cancel', body: '' },

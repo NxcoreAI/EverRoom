@@ -646,115 +646,14 @@ export class RoomDuplicateService {
     return { unassignedRuns, crossRoomSessions };
   }
 
-  async previewMerge(sourceRoomId: string, targetRoomId: string): Promise<RoomMergePreview> {
-    if (sourceRoomId === targetRoomId) throw new Error("context_room_merge_same_room");
-    const source = this.roomOrThrow(sourceRoomId);
-    const target = this.roomOrThrow(targetRoomId);
-    const memberships = this.db.select().from(roomSourceMemberships).where(eq(roomSourceMemberships.roomId, sourceRoomId)).all();
-    const sessionImpact = this.sessionImpact(sourceRoomId);
-    const impact: RoomMergeImpactCounts = {
-      documents: this.db.select().from(roomDocumentLinks).where(eq(roomDocumentLinks.roomId, sourceRoomId)).all().length,
-      externalSources: memberships.filter((item) => item.sourceKind !== "everroom-doc").length,
-      wikiFiles: await this.options.wikiFileCount?.(sourceRoomId).catch(() => 0) ?? 0,
-      localMemories: arrayOf(source.data.memoryItems).length,
-      attributedMemories: this.db.select().from(roomMemoryAttributions).where(eq(roomMemoryAttributions.roomId, sourceRoomId)).all().length,
-      agentRuns: this.db.select().from(agentRuns).where(eq(agentRuns.roomId, sourceRoomId)).all().length,
-      sessionLinks: this.db.select().from(agentSessionLinks).where(eq(agentSessionLinks.sourceRoomId, sourceRoomId)).all().length,
-      entities: new Set(this.db.select({ entityId: roomEntityMentions.entityId }).from(roomEntityMentions)
-        .where(eq(roomEntityMentions.roomId, sourceRoomId)).all().map((item) => item.entityId)).size,
-      relations: this.db.select().from(roomRelations).where(or(
-        eq(roomRelations.roomAId, sourceRoomId), eq(roomRelations.roomBId, sourceRoomId),
-      )).all().length,
-      ...sessionImpact,
-    };
-    const conflicts: string[] = [];
-    if (normalizeEntityName(source.title) !== normalizeEntityName(target.title)) conflicts.push("来源 Room 名称将作为主 Room 别名保留");
-    if (source.kind && target.kind && source.kind !== target.kind) conflicts.push("Room 类型不同，将保留主 Room 类型");
-    for (const field of ARRAY_FIELDS) {
-      const targetIds = new Set(arrayOf(target.data[field]).map(itemKey));
-      const overlap = arrayOf(source.data[field]).filter((item) => targetIds.has(itemKey(item))).length;
-      if (overlap > 0) conflicts.push(`${field} 中 ${overlap} 项将按稳定 ID 折叠`);
-    }
-    const excluded = [
-      `${impact.unassignedRuns} 个无 Room 归属的旧 Agent run 不迁移`,
-      `${impact.crossRoomSessions} 个跨 Room 会话不整体迁移`,
-      "全局或缺少明确 provenance 的 MemoryCore 记忆不迁移",
-    ];
-    const generatedAt = new Date().toISOString();
-    const previewHash = hash({
-      source: [source.id, source.updatedAt.toISOString(), source.lifecycle],
-      target: [target.id, target.updatedAt.toISOString(), target.lifecycle],
-      impact,
-      conflicts,
-      scoringVersion: SCORING_VERSION,
-    });
-    return {
-      sourceRoom: roomSnapshot(source),
-      targetRoom: roomSnapshot(target),
-      recommendedTargetRoomId: targetRoomId,
-      impact,
-      conflicts,
-      excluded,
-      previewHash,
-      generatedAt,
-    };
-  }
-
-  async startMerge(input: {
-    sourceRoomId: string;
-    targetRoomId: string;
-    previewHash: string;
-    idempotencyKey: string;
-    /** 等待合并终态再返回（本地 sqlite 事务秒级完成；超时兜底返回当前态）。 */
-    wait?: boolean;
-  }): Promise<RoomMergeOperation> {
-    const existing = this.db.select().from(roomMergeOperations)
-      .where(eq(roomMergeOperations.idempotencyKey, input.idempotencyKey)).get();
-    if (existing) return operationDto(existing);
-    const preview = await this.previewMerge(input.sourceRoomId, input.targetRoomId);
-    if (preview.previewHash !== input.previewHash) throw new Error("context_room_merge_preview_stale");
-    const busy = this.db.select().from(roomMergeOperations)
-      .where(and(inArray(roomMergeOperations.status, ["queued", "running", "failed"]), or(
-        eq(roomMergeOperations.sourceRoomId, input.sourceRoomId),
-        eq(roomMergeOperations.targetRoomId, input.sourceRoomId),
-        eq(roomMergeOperations.sourceRoomId, input.targetRoomId),
-        eq(roomMergeOperations.targetRoomId, input.targetRoomId),
-      ))).get();
-    if (busy) throw new Error("context_room_merge_busy");
-    const now = new Date();
-    const id = `room-merge-${randomUUID()}`;
-    const inserted = this.db.transaction((tx) => {
-      tx.update(contextRooms).set({ lifecycle: "merging", updatedAt: now })
-        .where(and(eq(contextRooms.id, input.sourceRoomId), eq(contextRooms.lifecycle, "active"))).run();
-      tx.update(rooms).set({ lifecycle: "merging", updatedAt: now })
-        .where(eq(rooms.id, input.sourceRoomId)).run();
-      return tx.insert(roomMergeOperations).values({
-        id,
-        sourceRoomId: input.sourceRoomId,
-        targetRoomId: input.targetRoomId,
-        idempotencyKey: input.idempotencyKey,
-        previewHash: input.previewHash,
-        status: "queued",
-        stage: "queued",
-        progress: 0,
-        impact: preview.impact as unknown as Record<string, unknown>,
-        confirmedAt: now,
-        createdAt: now,
-        updatedAt: now,
-      }).returning().get();
-    });
-    this.runMerge(id);
-    return this.settleOperation(id, input.wait);
-  }
-
   /**
-   * 新建式合并（用户语义变更 2026-09-01）：不并入现有 Room，而是新建一个
-   * Room 收编两个旧 Room，旧的双双退役（merged 指向新 Room）。实现为：
-   * 建新 target（收养 sourceA 的实体）→ 依次执行两段既有 executeMerge
+   * 合并预览（新建式）：不并入任何现有 Room，而是新建一个 Room 收编两个旧
+   * Room，旧的双双退役（merged 指向新 Room）。2026-09-01 语义变更；
+   * 2026-09-02 起「并入现有 Room」路径废弃删除，这是唯一合并方式。
+   * 实现为：建新 target（收养 sourceA 的实体）→ 依次执行两段 executeMerge
    * （A→新、B→新）——全部资源搬移/软删/候选清理逻辑零改动复用。
-   * 幂等：idempotencyKey 命中已完成链时直接返回终态 operation。
    */
-  async previewMergeIntoNew(sourceAId: string, sourceBId: string): Promise<RoomMergePreview> {
+  async previewMerge(sourceAId: string, sourceBId: string): Promise<RoomMergePreview> {
     if (sourceAId === sourceBId) throw new Error("context_room_merge_same_room");
     const a = this.roomOrThrow(sourceAId);
     const b = this.roomOrThrow(sourceBId);
@@ -819,7 +718,7 @@ export class RoomDuplicateService {
     };
   }
 
-  async startMergeIntoNew(input: {
+  async startMerge(input: {
     sourceAId: string;
     sourceBId: string;
     title: string;
@@ -834,7 +733,7 @@ export class RoomDuplicateService {
     if (existing) return operationDto(existing);
     const title = input.title.trim().slice(0, 120);
     if (!title) throw new Error("context_room_merge_title_required");
-    const preview = await this.previewMergeIntoNew(input.sourceAId, input.sourceBId);
+    const preview = await this.previewMerge(input.sourceAId, input.sourceBId);
     if (preview.previewHash !== input.previewHash) throw new Error("context_room_merge_preview_stale");
     const busy = this.db.select().from(roomMergeOperations)
       .where(and(inArray(roomMergeOperations.status, ["queued", "running", "failed"]), or(

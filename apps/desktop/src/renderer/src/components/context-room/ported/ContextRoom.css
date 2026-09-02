@@ -12875,16 +12875,6 @@
   font-weight: 600;
 }
 
-.context-room-manual-merge select {
-  height: 38px;
-  border: 1px solid var(--cr-border-strong);
-  border-radius: 6px;
-  padding: 0 10px;
-  background: var(--cr-surface);
-  color: var(--cr-text);
-  font: inherit;
-}
-
 .context-room-manual-merge footer {
   display: flex;
   justify-content: flex-end;
@@ -12900,4 +12890,149 @@
   border: 1px solid var(--cr-border);
   border-radius: 6px;
   font: inherit;
+}
+
+/* 手动合并：伙伴选择器（搜索 + 列表单选）。 */
+.context-room-merge-picker {
+  display: grid;
+  gap: 8px;
+}
+
+.context-room-merge-picker label {
+  display: grid;
+  gap: 6px;
+}
+
+.context-room-merge-picker label > span {
+  color: var(--cr-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.context-room-merge-picker-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.context-room-merge-picker-search svg {
+  position: absolute;
+  left: 10px;
+  width: 14px;
+  height: 14px;
+  color: var(--cr-muted);
+  pointer-events: none;
+}
+
+.context-room-merge-picker-search input {
+  width: 100%;
+  height: 38px;
+  border: 1px solid var(--cr-border-strong);
+  border-radius: 6px;
+  padding: 0 10px 0 32px;
+  background: var(--cr-surface);
+  color: var(--cr-text);
+  font: inherit;
+}
+
+.context-room-merge-picker-list {
+  display: grid;
+  gap: 2px;
+  max-height: 236px;
+  overflow-y: auto;
+  border: 1px solid var(--cr-border);
+  border-radius: 6px;
+  padding: 6px;
+  background: var(--cr-surface);
+}
+
+.context-room-merge-picker-list button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 34px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--cr-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.context-room-merge-picker-list button:hover {
+  background: var(--cr-surface-hover);
+}
+
+.context-room-merge-picker-list button[data-selected='true'] {
+  background: var(--cr-blue-soft);
+}
+
+.context-room-merge-picker-list button small {
+  flex-shrink: 0;
+  color: var(--cr-muted);
+  font-size: 12px;
+}
+
+.context-room-merge-picker-empty {
+  padding: 14px 10px;
+  margin: 0;
+  color: var(--cr-muted);
+  font-size: 13px;
+  text-align: center;
+}
+
+/* 合并预览：新 Room 命名推荐 chips + 别名提示。 */
+.context-room-merge-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.context-room-merge-suggestions small {
+  color: var(--cr-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.context-room-merge-suggestions button {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--cr-border);
+  border-radius: 999px;
+  background: var(--cr-surface);
+  color: var(--cr-text);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.context-room-merge-suggestions button:hover {
+  background: var(--cr-surface-hover);
+}
+
+.context-room-merge-suggestions button[data-active='true'] {
+  border-color: var(--cr-blue);
+  background: var(--cr-blue-soft);
+}
+
+.context-room-merge-suggestions .context-room-merge-suggestions-loading {
+  width: 13px;
+  height: 13px;
+  color: var(--cr-muted);
+  animation: context-room-spin 900ms linear infinite;
+}
+
+.context-room-merge-alias-hint {
+  margin: 0;
+  color: var(--cr-muted);
+  font-size: 12px;
 }

@@ -55,24 +55,19 @@ export class ContextRoomGatewayBridge {
     })
   }
 
-  previewMerge(sourceRoomId: string, targetRoomId: string): Promise<RoomMergePreview> {
-    return this.request('/v1/context-rooms/merge-preview', {
-      method: 'POST', body: JSON.stringify({ sourceRoomId, targetRoomId }),
-    })
+  /** 合并（新建式，唯一路径）：新建 Room 收编两个旧 Room，旧的双双退役。 */
+  previewMerge(sourceAId: string, sourceBId: string): Promise<RoomMergePreview> {
+    return this.request('/v1/context-rooms/merge-preview', { method: 'POST', body: JSON.stringify({ sourceAId, sourceBId }) })
   }
 
-  /** 新建式合并：新建 Room 收编两个旧 Room（wait 默认 true，请求内等待终态）。 */
-  previewMergeIntoNew(sourceAId: string, sourceBId: string): Promise<RoomMergePreview> {
-    return this.request('/v1/context-rooms/merge-preview-new', { method: 'POST', body: JSON.stringify({ sourceAId, sourceBId }) })
-  }
-
-  startMergeIntoNew(input: { sourceAId: string; sourceBId: string; title: string; kind?: string; previewHash: string; idempotencyKey: string; wait?: boolean }): Promise<RoomMergeOperation> {
-    return this.request('/v1/context-rooms/merge-operations-new', { method: 'POST', body: JSON.stringify({ ...input, wait: input.wait ?? true }) })
-  }
-
-  startMerge(input: { sourceRoomId: string; targetRoomId: string; previewHash: string; idempotencyKey: string; wait?: boolean }): Promise<RoomMergeOperation> {
-    // wait=true：在请求内等待合并终态（本地事务秒级），渲染层免轮询。
+  startMerge(input: { sourceAId: string; sourceBId: string; title: string; kind?: string; previewHash: string; idempotencyKey: string; wait?: boolean }): Promise<RoomMergeOperation> {
+    // wait 默认 true：在请求内等待合并终态（本地事务秒级），渲染层免轮询。
     return this.request('/v1/context-rooms/merge-operations', { method: 'POST', body: JSON.stringify({ ...input, wait: input.wait ?? true }) })
+  }
+
+  /** 合并命名推荐：dispatch context-room 子 Agent，等待终态返回名称候选。 */
+  suggestMergeNames(input: { sourceAId: string; sourceBId: string; responseLanguage?: string }): Promise<{ names: string[] }> {
+    return this.request('/v1/context-rooms/merge-name-suggestions', { method: 'POST', body: JSON.stringify(input) })
   }
 
   getMergeOperation(id: string): Promise<RoomMergeOperation> {

@@ -8,6 +8,7 @@ import {
   isSelectionRewriteInvocationAuthorized,
   parseBriefRefresh,
   parseContextRoomEnrichment,
+  parseMergeNameSuggestions,
   parseRoomOverviewSynthesis,
 } from '../src/modules/context-rooms/room-agent.js'
 
@@ -105,6 +106,14 @@ describe('Context Room Agent enrichment parsing', () => {
       risks: ['风险一'],
       decisions: ['决策一'],
     })
+  })
+
+  it('parses merge name suggestions with dedupe, trim and caps', () => {
+    expect(parseMergeNameSuggestions(JSON.stringify({
+      names: ['  校园生活全景  ', '校园生活全景', 'Campus Life Digest', '', '第三', '第四', { not: 'string' }],
+    }))).toEqual(['校园生活全景', 'Campus Life Digest', '第三'])
+    expect(parseMergeNameSuggestions('{"names": []}')).toEqual([])
+    expect(() => parseMergeNameSuggestions('没有结构化结果')).toThrow('invalid JSON')
   })
 
   it('parses structured overview claims and remains compatible with legacy strings', () => {

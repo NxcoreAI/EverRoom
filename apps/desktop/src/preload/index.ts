@@ -324,13 +324,12 @@ const api: NxcoreDesktopApi = {
       invokeQuietly('context-rooms:list-duplicate-candidates', status),
     updateDuplicateCandidate: (id: string, status: 'related' | 'distinct') =>
       invokeQuietly('context-rooms:update-duplicate-candidate', id, status),
-    previewMerge: (sourceRoomId: string, targetRoomId: string) =>
-      invokeQuietly('context-rooms:preview-merge', sourceRoomId, targetRoomId),
-    startMerge: (input) => invokeQuietly('context-rooms:start-merge', input),
-    previewMergeIntoNew: (sourceAId: string, sourceBId: string) =>
-      invokeQuietly('context-rooms:preview-merge-into-new', sourceAId, sourceBId),
-    startMergeIntoNew: (input: { sourceAId: string; sourceBId: string; title: string; kind?: string; previewHash: string; idempotencyKey: string; wait?: boolean }) =>
-      invokeQuietly('context-rooms:start-merge-into-new', input),
+    previewMerge: (sourceAId: string, sourceBId: string) =>
+      invokeQuietly('context-rooms:preview-merge', sourceAId, sourceBId),
+    startMerge: (input: { sourceAId: string; sourceBId: string; title: string; kind?: string; previewHash: string; idempotencyKey: string; wait?: boolean }) =>
+      invokeQuietly('context-rooms:start-merge', input),
+    suggestMergeNames: (input: { sourceAId: string; sourceBId: string; responseLanguage?: string }) =>
+      invokeQuietly('context-rooms:suggest-merge-names', input),
     getMergeOperation: (id: string) => invokeQuietly('context-rooms:get-merge-operation', id),
     retryMerge: (id: string) => invokeQuietly('context-rooms:retry-merge', id),
     cancelMerge: (id: string) => invokeQuietly('context-rooms:cancel-merge', id),

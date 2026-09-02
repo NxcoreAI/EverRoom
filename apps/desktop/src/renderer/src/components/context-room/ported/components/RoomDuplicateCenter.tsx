@@ -1,6 +1,6 @@
 import type { RoomDuplicateCandidate, RoomMergeOperation, RoomMergePreview } from '@nxcore/agent-contract'
 import { ArrowRight, Check, GitMerge, Info, Loader2, RefreshCw, Sparkles, Split, TriangleAlert } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { useLocale, type Translate } from '@/i18n/LocaleContext'
 import { ReferenceDialog } from './shared'
@@ -43,7 +43,7 @@ export function RoomDuplicateCenter({
   /** 手动合并模式：直接进入这一对的预览（跳过候选列表；关闭即退出）。 */
   manualPair?: { roomAId: string; roomA: { id: string; title: string }; roomBId: string; roomB: { id: string; title: string } } | null
 }) {
-  const { t } = useLocale()
+  const { t, locale } = useLocale()
   const api = window.nxcore?.contextRooms
   const [items, setItems] = useState<RoomDuplicateCandidate[]>([])
   const [loading, setLoading] = useState(false)
@@ -53,6 +53,11 @@ export function RoomDuplicateCenter({
   const [preview, setPreview] = useState<RoomMergePreview | null>(null)
   const [operation, setOperation] = useState<RoomMergeOperation | null>(null)
   const [newRoomTitle, setNewRoomTitle] = useState('')
+  // Agent 命名推荐：请求随预览打开异步发出（LLM 数秒），回来前机械推荐先可用；
+  // seq 保证换配对/关闭后的迟到响应不再写入。
+  const [agentNames, setAgentNames] = useState<string[]>([])
+  const [agentNamesPending, setAgentNamesPending] = useState(false)
+  const agentNameSeqRef = useRef(0)
 
   const reload = async () => {
     if (!api) return
@@ -94,6 +99,9 @@ export function RoomDuplicateCenter({
     if (open) return
     // 关闭弹窗时回到列表态，避免下次打开看到上一次的合并预览残留；
     // 合并进行中（queued/running）保留进度视图，重开可继续跟踪。
+    agentNameSeqRef.current += 1
+    setAgentNames([])
+    setAgentNamesPending(false)
     if (!operation || (operation.status !== 'queued' && operation.status !== 'running')) {
       setPreview(null)
       setSelected(null)
@@ -110,9 +118,33 @@ export function RoomDuplicateCenter({
     setOperation(null)
     setLoading(true)
     setError(null)
+    // Agent 命名推荐独立于预览加载：预览秒回，Agent 推荐数秒后补位。
+    const seq = ++agentNameSeqRef.current
+    setAgentNames([])
+    setAgentNamesPending(true)
+    void api.suggestMergeNames({
+      sourceAId: candidate.roomAId,
+      sourceBId: candidate.roomBId,
+      responseLanguage: locale,
+    })
+      .then((result) => {
+        if (agentNameSeqRef.current !== seq) return
+        setAgentNames(Array.isArray(result?.names)
+          ? result.names.flatMap((name) => (typeof name === 'string' && name.trim() ? [name.trim()] : []))
+          : [])
+      })
+      .catch(() => {
+        // 推荐是增强能力：Agent 不可用/超时/解析失败一律静默降级，机械推荐仍在。
+        if (agentNameSeqRef.current !== seq) return
+        setAgentNames([])
+      })
+      .finally(() => {
+        if (agentNameSeqRef.current !== seq) return
+        setAgentNamesPending(false)
+      })
     try {
       // 新建式合并：新建 Room 收编两个旧 Room，预览为两源聚合影响（不再选保留方向）。
-      setPreview(await api.previewMergeIntoNew(candidate.roomAId, candidate.roomBId))
+      setPreview(await api.previewMerge(candidate.roomAId, candidate.roomBId))
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t('contextRoom:duplicateCenter.previewFailed'))
     } finally {
@@ -120,12 +152,29 @@ export function RoomDuplicateCenter({
     }
   }
 
+  /** 新 Room 命名推荐：两侧标题 + 组合名（去重、超长不提供组合项）。 */
+  const nameSuggestions = useMemo(() => {
+    if (!selected) return []
+    const a = selected.roomA.title.trim()
+    const b = selected.roomB.title.trim()
+    const suggestions = [...new Set([a, b].filter(Boolean))]
+    const combined = `${a} + ${b}`
+    if (a && b && a.toLowerCase() !== b.toLowerCase() && combined.length <= 120) suggestions.push(combined)
+    return suggestions
+  }, [selected])
+
+  /** Agent 推荐：与机械推荐重名（忽略大小写）的候选不重复展示。 */
+  const agentOnlyNames = useMemo(() => {
+    const base = new Set(nameSuggestions.map((name) => name.toLowerCase()))
+    return agentNames.filter((name) => name && !base.has(name.toLowerCase()))
+  }, [agentNames, nameSuggestions])
+
   const confirmMerge = async () => {
     if (!api || !preview || !selected || !newRoomTitle.trim()) return
     setLoading(true)
     setError(null)
     try {
-      const result = await api.startMergeIntoNew({
+      const result = await api.startMerge({
         sourceAId: selected.roomAId,
         sourceBId: selected.roomBId,
         title: newRoomTitle.trim(),
@@ -258,6 +307,31 @@ export function RoomDuplicateCenter({
                 placeholder={t('contextRoom:duplicateCenter.newRoomTitlePlaceholder')}
               />
             </label>
+
+            {!operation && nameSuggestions.length > 0 ? (
+              <div className="context-room-merge-suggestions">
+                <small>{t('contextRoom:duplicateCenter.newRoomNameSuggestion')}</small>
+                {nameSuggestions.map((name) => (
+                  <button key={name} type="button" data-active={newRoomTitle.trim() === name} onClick={() => setNewRoomTitle(name)}>
+                    {name}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+            {!operation && (agentNamesPending || agentOnlyNames.length > 0) ? (
+              <div className="context-room-merge-suggestions" data-source="agent">
+                <small>{agentNamesPending
+                  ? t('contextRoom:duplicateCenter.agentNameLoading')
+                  : t('contextRoom:duplicateCenter.agentNameSuggestion')}</small>
+                {agentNamesPending ? <Loader2 aria-hidden="true" className="context-room-merge-suggestions-loading" /> : null}
+                {agentOnlyNames.map((name) => (
+                  <button key={name} type="button" data-active={newRoomTitle.trim() === name} onClick={() => setNewRoomTitle(name)}>
+                    {name}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+            {!operation ? <p className="context-room-merge-alias-hint">{t('contextRoom:duplicateCenter.newRoomAliasHint')}</p> : null}
 
             <section className="context-room-merge-impact">
               <h3>{t('contextRoom:duplicateCenter.willMigrate')}</h3>
