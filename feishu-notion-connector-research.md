@@ -22,18 +22,43 @@
 
 ## 1. 代码库现状（本仓库调研结论）
 
-### 1.1 已有
-- **Notion 导入已具备双路径**：目标路径 = CLI 路径（open-connector notion provider + document-sync reconcile/incremental 双作业，`last_edited_time` 水位 + `notion-document-sync-v1` prompt profile）；存量路径 = Nango（sync-providers/notion.ts：search + blocks→markdown + 授权自举/首同步直启），仅维持存量连接，随 Nango 退役迁移、不再投入。
+### 1.1 已有（现状：Nango 为主，CLI 路径起步）
+- **Notion 导入全链路已可用（Nango 路径）**：[sync-providers/notion.ts](apps/gateway/src/modules/connectors/sync-providers/notion.ts)：search + blocks→markdown + 授权/自举/首同步直启；另有 CLI 路径（OpenConnector）的 reconcile/incremental 双作业（`last_edited_time` 水位）与 `notion-document-sync-v1` prompt profile。
 - **飞书 wiki 导入（api-token 版）已在网关注册**：[sync-providers/feishu-wiki.ts](apps/gateway/src/modules/connectors/sync-providers/feishu-wiki.ts)（自建应用 `tenant_access_token` → wiki spaces → 节点树 → docx raw_content，凭据 `appId:appSecret`），但桌面 UI 仍是 disabled 占位（ConnectSourceMenu.tsx:95-97）。
 - **同步基础设施全部可复用**：ConnectorManager/SyncEngine/Repository（lease + fenceToken + cursor 防并发）、domain-projection 幂等 upsert（唯一键 `ownerId+service+connectionName+sourceRecordId` + contentHash 跳过）、ConnectorMarkdownService（双向 hash 幂等、outbox 退避 `[30s,2m,10m,1h]`、10 次进 dead）、IngestService（`connector-document` sourceKind 已含）。
-- 内嵌 Nango（modules/connector，127.0.0.1:3003）现承担 gmail/outlook/google-*/notion 存量连接的 OAuth 获取与刷新，Connect UI 现成——**退役对象**：新能力一律不依赖 Nango，其 UI/通道的迁移随退役工作项处理。
+- **CLI 路径（OpenConnector）底座已在运行**：vendored open-connector（pin `5719a69`）+ 网关 `/v1/cli-connectors/*`（`service.ts`/`document-sync.ts`）+ 桌面 cliConnector IPC + open-connector supervisor/secret-store（safeStorage），notion/gmail 连接已跑通。
+- 内嵌 Nango（modules/connector，127.0.0.1:3003）承担 gmail/outlook/google-*/notion 的 OAuth 获取与刷新，Connect UI 现成——现状授权主力，终态退役（§1.3）。
 
-### 1.2 缺口（= 本需求工作量所在）
-1. 飞书**用户级 OAuth**（区别于现有应用级 api-token）：OpenConnector feishu provider 已声明式实现用户授权（§0），缺口只在网关把 CLI 连接与作业接起来；Nango 侧不新增 feishu provider（其 providers.yaml 无 feishu/lark 定义、`SyncProviderNangoMeta.credential` union 只有 `google|notion|outlook|none`——退役路径，保持现状即可）。
-2. 飞书云文档（个人云空间 + wiki）的发现与导入**缺的是网关接线**：OpenConnector provider 动作（`fetch_document`/`list_drive_files`/`list_wiki_*`）已就位，但 document-sync 作业、seed、UI 入口均未接；direct 引擎的 feishu-wiki（raw_content 纯文本，不满足"正文结构完整"）是退役路径，不投入。
+### 1.2 缺口（对现状 Nango 栈而言）
+1. 飞书**用户级 OAuth**（区别于现有应用级 api-token）：内嵌 Nango providers.yaml **无 feishu/lark 定义**（26874 行里 0 命中）；`SyncProviderNangoMeta.credential` union 只有 `google|notion|outlook|none`——在 Nango 上扩飞书需要自定义 provider。
+2. 飞书云文档（个人云空间，非 wiki）的发现与导入 provider 不存在；现有 feishu-wiki 用 raw_content 纯文本，**不满足"正文结构完整"**，需换 blocks→Markdown 或 markdown 直读。
 3. **导出方向是全新能力**：现有同步作业强制只读（allowedActions 白名单拒绝写动作）；唯一写回是 Agent 工具的 Notion `create_page`（open-connector-tools.ts），无批量/结构化导出管线。
 4. 桌面 UI：飞书入口 disabled；docs 类菜单不消费 `api-token` 通道；无导出 UI。
-5. 内嵌 Nango 的 notion 代理钉在 `Notion-Version: 2022-06-28`（providers.yaml:15516）——仅影响将被退役的 Nango 路径，不做兼容投入；OpenConnector notion provider 已使用 2026-03-11（§3.1）。
+5. 内嵌 Nango 的 notion 代理配置钉在 `Notion-Version: 2022-06-28`（providers.yaml:15516），在 Nango 路径上调 Markdown API 需要按请求覆盖版本头或升级定义。
+
+### 1.3 迁移到 OpenConnector：可复用 / 需修改 / 不迁移
+
+终态连接器栈只保留 OpenConnector（`oo` CLI）一条路径（§0）。对照现状逐层拆解：
+
+**可复用（零改动或近零改动）**
+1. **投影与入库管线**（引擎无关，只消费规范化后的 Canonical 文档）：domain-projection 幂等 upsert（唯一键 + contentHash 跳过）、document-store、ConnectorMarkdownService（双向 hash 幂等、outbox 退避）、IngestService（`connector-document`）——上游是 Nango 还是 oo CLI 对这层无感。
+2. **document-sync.ts 确定性作业框架**（本就是 CLI 路径）：reconcile→incremental 双作业、`last_edited_time` 水位 + contentHash 幂等跳过、Notion 页面→Canonical 字段映射（`notionPageToDocument` 等）——切 markdown 拉取时照用，只换取数调用。
+3. **调度与并发基建**：`service.ts` 作业 seed/调度、Repository 的 lease + fenceToken + cursor 防并发——引擎无关。
+4. **桌面 CLI 路径底座**：open-connector supervisor + `open-connector-secret-store`（safeStorage）+ cliConnector IPC + ConnectorConsolePage/ConnectorSyncPage 骨架——notion/gmail 已跑通，feishu 直接插入。
+5. **Notion 域知识**：错误分类（`notionPageIsDeleted` 等）、`notion-document-sync-v1` prompt profile、scope/发现逻辑可平移。
+
+**需修改 / 新增**
+1. **Notion 取数切换**：blocks 分页拉取 → provider `retrieve_page_markdown`；网关新增 `truncated`/`unknown_block_ids` 迭代补拉；Notion-Version 随 provider 变为 2026-03-11（block 定位/trash 语义差异需回归测试）。
+2. **授权与存量连接迁移**：Notion 存量连接从 Nango credentials 迁到 OpenConnector 连接（重授权引导 + 双跑核对后切换，列入 M3）；capabilities 一次定稿。
+3. **飞书接入（新增）**：feishu provider OAuth（已就位）+ document-sync 扩展 feishu 作业（`fetch_document`/`list_drive_files`/`list_wiki_*` + `edit_time` 水位）+ 桌面入口启用 + scopes 审计（`docs:document.content:read`，§4.2）。
+4. **导出管线（新增）**：`connector_export_targets` + export outbox + 执行器调 provider 写动作 + REST/UI——两条路径都不存在，全新建。
+
+**不迁移 / 直接废弃**
+1. **内嵌 Nango 全家**：modules/connector 运行时（providers.yaml/runner/bootstrap）、nango-authorization/bootstrap/executor/agent-tools、`/v1/nango-connectors/*`、Nango Connect UI——整包退役；gmail/outlook/google-* 存量连接迁移是独立退役工作项（不在本需求内）。
+2. **sync-providers 的 nango 引擎分支与 direct 引擎 feishu-wiki**：`SyncProviderNangoMeta`/`SyncEngineKind="nango"` 分支、feishu-wiki（tenant token + raw_content）不再投入——feishu-wiki 由 provider 动作路径直接取代，不改造不迁移。
+3. **§1.2 缺口 1/5 的 Nango 侧解法**（自定义 feishu provider、覆盖 Notion-Version 头）：不做——迁移后这两个缺口自然消失（feishu 授权与动作 provider 已就位；Notion-Version 已是 2026-03-11）。
+
+本需求工作量 = "需修改/新增"全集；§4 方案按此展开。
 
 ---
 
