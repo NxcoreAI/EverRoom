@@ -24,3 +24,4 @@ export type {
   ForceGraphNode,
   ForceGraphOptions,
 } from './layout/forceGraphProtocol'
+export { scaleForceGraphWorld } from './layout/forceGraphWorld'
