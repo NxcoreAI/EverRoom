@@ -95,6 +95,44 @@ describe('ObsidianVaultService', () => {
     await service.shutdown()
   })
 
+  it('does not surface Vaults removed from the Obsidian registry even though their directories remain on disk', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'everroom-obsidian-removed-'))
+    temporaryDirectories.push(root)
+    const home = join(root, 'home')
+    const keptVault = join(home, 'Documents', 'Kept Vault')
+    const removedVault = join(home, 'Documents', 'Removed Vault')
+    const nestedVault = join(keptVault, 'Nested Vault')
+    const registryDirectory = join(home, '.config', 'obsidian')
+    await Promise.all([keptVault, removedVault, nestedVault].map((path) => mkdir(join(path, '.obsidian'), { recursive: true })))
+    await writeFile(join(keptVault, 'kept.md'), '# Kept')
+    await writeFile(join(removedVault, 'removed.md'), '# Removed')
+    await writeFile(join(nestedVault, 'nested.md'), '# Nested')
+    await mkdir(registryDirectory, { recursive: true })
+    const registryPath = join(registryDirectory, 'obsidian.json')
+    await writeFile(registryPath, JSON.stringify({ vaults: {
+      kept: { path: keptVault },
+      removed: { path: removedVault },
+      nested: { path: nestedVault },
+    } }))
+    const service = new ObsidianVaultService(join(root, 'data'), vi.fn(async () => undefined), {
+      platform: 'linux', homeDirectory: home,
+    })
+    await service.initialize()
+    expect((await service.discover()).map((candidate) => candidate.name).sort()).toEqual(['Kept Vault', 'Nested Vault', 'Removed Vault'])
+
+    await writeFile(registryPath, JSON.stringify({ vaults: { kept: { path: keptVault } } }))
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      const names = (await service.discover()).map((candidate) => candidate.name)
+      if (!names.includes('Removed Vault') && !names.includes('Nested Vault')) break
+      await new Promise((resolveWait) => setTimeout(resolveWait, 50))
+    }
+
+    const candidates = await service.discover()
+    expect(candidates.map((candidate) => candidate.name)).toEqual(['Kept Vault'])
+    expect(candidates.every((candidate) => candidate.discoveredFrom !== 'scan')).toBe(true)
+    await service.shutdown()
+  })
+
   it('keeps old and new Vault paths excluded when the Obsidian registry changes', async () => {
     const root = await mkdtemp(join(tmpdir(), 'everroom-obsidian-registry-watch-'))
     temporaryDirectories.push(root)

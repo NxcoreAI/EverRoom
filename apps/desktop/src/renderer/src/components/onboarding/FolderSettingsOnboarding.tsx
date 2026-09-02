@@ -66,25 +66,38 @@ export function FolderSettingsOnboarding({ open, onClose, memoryReady = false, s
     setChecking(true)
     setError(null)
     const api = window.nxcore?.sources
-    const obsidian = window.nxcore?.obsidian
     if (!api?.listDefaultLocalFolders) {
       setChecking(false)
       setError(t('surface:settings.folderGuide.unavailable'))
       return
     }
-    void Promise.all([
-      api.listDefaultLocalFolders(),
-      obsidian?.discover().catch(() => []) ?? Promise.resolve([]),
-    ]).then(([statuses, vaults]) => {
+    void api.listDefaultLocalFolders().then((statuses) => {
       const connected = statuses.filter((item) => item.connected).map((item) => item.folder)
       setConnectedFolders(connected)
       setSelectedFolders(DEFAULT_FOLDERS)
-      setObsidianVaults(vaults)
-      setObsidianSelected(vaults.length > 0)
     }).catch((cause) => {
       setError(cause instanceof Error ? cause.message : t('surface:settings.folderGuide.failed'))
     }).finally(() => setChecking(false))
   }, [open, showReady, t])
+
+  useEffect(() => {
+    if (!open || checking || mode !== 'form' || error) return
+    const obsidian = window.nxcore?.obsidian
+    if (!obsidian?.discover) return
+    let cancelled = false
+    const timer = window.setTimeout(() => {
+      if (cancelled) return
+      void obsidian.discover().then((vaults) => {
+        if (cancelled) return
+        setObsidianVaults(vaults)
+        setObsidianSelected(vaults.length > 0)
+      }).catch(() => undefined)
+    }, 200)
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [open, checking])
 
   useEffect(() => {
     if (!open) return

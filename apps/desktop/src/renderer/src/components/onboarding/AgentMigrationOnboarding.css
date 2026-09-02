@@ -111,8 +111,6 @@
   white-space: nowrap;
 }
 
-.agent-migration-item-history { width: 15px; height: 15px; flex: 0 0 auto; color: var(--subtle); }
-
 .agent-migration-actions { display: grid; justify-items: center; gap: 8px; }
 
 .agent-migration-continue {

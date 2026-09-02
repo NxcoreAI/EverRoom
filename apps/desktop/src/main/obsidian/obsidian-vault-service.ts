@@ -310,8 +310,11 @@ export class ObsidianVaultService {
 
   async discover(): Promise<ObsidianVaultCandidate[]> {
     this.startRegistryWatcher()
-    const registered = await discoverRegisteredObsidianVaultPaths(this.discoveryOptions)
-    const scanned = await this.scanCommonVaultLocations()
+    const registry = await readObsidianRegistry(this.discoveryOptions)
+    const registered = registry.vaults
+    // 注册表可用时它是唯一事实来源：已在 Obsidian 中移除的 Vault（磁盘上仍残留
+    // .obsidian 目录）不再凭扫描结果进入候选列表。磁盘扫描仅作未安装 Obsidian 的回退。
+    const scanned = registry.authoritative ? [] : await this.scanCommonVaultLocations()
     const byRoot = new Map<string, DiscoveredVault>()
     let rootsChanged = false
     for (const item of [...registered, ...scanned]) {
@@ -953,9 +956,21 @@ export class ObsidianVaultService {
     if (notify) this.emit(vault)
   }
 
-  private startWatching(vaultId: string): void {
+  private startWatching(vaultId: string, attempt = 0): void {
     if (this.watchers.has(vaultId)) return
+    if (this.shuttingDown) return
     const vault = this.requireVault(vaultId)
+    const retryWatching = (delay: number) => {
+      // 系统级 FSEvents 故障（如 EMFILE）不代表 Vault 不可读：目录扫描正常时保持
+      // connected，仅重试 watcher 并周期性兜底扫描，避免把可用的来源误报为
+      // 「离线，只读缓存」，也保证 watcher 不可用期间外部修改仍能被发现。
+      const timer = setTimeout(() => {
+        this.scanTimers.delete(vaultId)
+        void this.scan(vaultId).catch(() => undefined)
+        this.startWatching(vaultId, attempt + 1)
+      }, delay)
+      this.scanTimers.set(vaultId, timer)
+    }
     try {
       const watcher = watch(vault.rootPath, { recursive: true }, () => {
         const previous = this.scanTimers.get(vaultId)
@@ -966,14 +981,20 @@ export class ObsidianVaultService {
         }, 250))
       })
       watcher.on('error', () => {
-        vault.status = 'offline'
         watcher.close()
         this.watchers.delete(vaultId)
-        this.emit(vault)
+        void access(vault.rootPath)
+          .then(() => retryWatching(Math.min(1_000 * 2 ** attempt, 30_000)))
+          .catch(() => {
+            vault.status = 'offline'
+            this.emit(vault)
+          })
       })
       this.watchers.set(vaultId, watcher)
     } catch {
-      vault.status = 'offline'
+      void access(vault.rootPath)
+        .then(() => retryWatching(Math.min(1_000 * 2 ** attempt, 30_000)))
+        .catch(() => { vault.status = 'offline' })
     }
   }
 
