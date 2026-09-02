@@ -52,12 +52,9 @@
               },
               {
                 "type": "object", "additionalProperties": false,
-                "properties": {
-                  "blockId": { "type": "string", "minLength": 1, "maxLength": 64 },
-                  "fromOffset": { "type": "integer", "minimum": 0 },
-                  "toOffset": { "type": "integer", "minimum": 0 }
-                },
-                "required": ["blockId"]
+                "properties": { "blockId": { "type": "string", "minLength": 1, "maxLength": 64 } },
+                "required": ["blockId"],
+                "description": "Whole-block target: replace or delete the block. The only way to modify block content — inline fromOffset/toOffset is deliberately not offered because blockIndex textPreview is truncated and offsets cannot be aligned reliably."
               },
               {
                 "type": "object", "additionalProperties": false,
