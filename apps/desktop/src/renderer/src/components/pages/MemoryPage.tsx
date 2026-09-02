@@ -146,9 +146,12 @@ export function MemoryPage({ focusAtomicId }: { focusAtomicId?: string | null } 
               data-active={tab === entry.id && !search}
               onClick={() => { setTab(entry.id); setSearch(null) }}
             >
-              {t(entry.label)}
-              {entry.level ? <span className="mem-level-badge">{entry.level}</span> : null}
-              {count !== null ? <span className="mem-tab-count">{count}</span> : null}
+              <span className="mem-tab-name">
+                {t(entry.label)}
+                {entry.level ? <span className="mem-level-badge">{entry.level}</span> : null}
+              </span>
+              {/* 数量固定占一行（无数量的 tab 留空行），保证各 tab 等高、下划线对齐 */}
+              <span className="mem-tab-count">{count !== null ? count : ''}</span>
             </button>
           )
         })}

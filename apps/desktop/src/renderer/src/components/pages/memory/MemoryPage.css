@@ -76,25 +76,34 @@
   to { transform: rotate(360deg); }
 }
 
-/* 顶部 tab 导航（页面内不再放竖向侧栏，避免与应用侧边栏重复） */
+/* 顶部 tab 导航（页面内不再放竖向侧栏，避免与应用侧边栏重复）。
+   名称与数量分行：名称行 + 固定高度的数量行，所有 tab 等高，下划线连续。 */
 .mem-tabs {
   display: flex;
-  align-items: center;
+  align-items: stretch;
   gap: 2px;
   border-bottom: 1px solid var(--border);
 }
 
 .mem-tabs button {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 7px 10px;
   border: none;
   border-bottom: 2px solid transparent;
   background: transparent;
   color: var(--muted);
   font-size: 13px;
   cursor: pointer;
+}
+
+.mem-tab-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 18px;
 }
 
 .mem-tabs button:hover {
@@ -122,7 +131,10 @@
 }
 
 .mem-tab-count {
+  display: block;
+  min-height: 14px;
   font-size: 11px;
+  line-height: 14px;
   color: var(--subtle);
   font-variant-numeric: tabular-nums;
 }
