@@ -1,0 +1,94 @@
+{
+  "type": "object",
+  "properties": {
+    "kind": {
+      "type": "string",
+      "enum": ["citation-correction", "general-correction"],
+      "description": "The task kind this result answers; must match the input task."
+    },
+    "edits": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "properties": {
+          "operation": {
+            "type": "string",
+            "enum": ["content_replace", "content_add", "content_suppress", "fact_correct", "fact_add", "source_remove", "source_reassign"]
+          },
+          "section": {
+            "type": "string",
+            "enum": ["overview", "status", "next_steps", "timeline", "entities"]
+          },
+          "targetClaimId": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "targetSource": {
+            "type": "object",
+            "properties": {
+              "sourceKind": { "type": "string", "minLength": 1, "maxLength": 100 },
+              "sourceId": { "type": "string", "minLength": 1, "maxLength": 256 },
+              "sourceTitle": { "type": ["string", "null"], "maxLength": 500 }
+            },
+            "required": ["sourceKind", "sourceId"],
+            "additionalProperties": false
+          },
+          "targetRoomId": { "type": "string", "maxLength": 128 },
+          "originalText": { "type": "string", "minLength": 1, "maxLength": 4000 },
+          "replacementText": { "type": "string", "maxLength": 4000 },
+          "rationale": { "type": "string", "minLength": 1, "maxLength": 2000 }
+        },
+        "required": ["operation", "section", "targetClaimId", "originalText", "rationale"],
+        "additionalProperties": false
+      },
+      "description": "One independent edit per hit claim, for citation-correction; must mirror the apply-citation contract."
+    },
+    "proposal": {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string",
+          "enum": ["content_replace", "content_add", "content_suppress", "fact_correct", "fact_add", "source_remove", "source_reassign"]
+        },
+        "section": {
+          "type": "string",
+          "enum": ["overview", "status", "next_steps", "timeline", "entities"]
+        },
+        "targetClaimId": { "type": "string", "maxLength": 200 },
+        "targetSource": {
+          "type": "object",
+          "properties": {
+            "sourceKind": { "type": "string", "minLength": 1, "maxLength": 100 },
+            "sourceId": { "type": "string", "minLength": 1, "maxLength": 256 },
+            "sourceTitle": { "type": ["string", "null"], "maxLength": 500 }
+          },
+          "required": ["sourceKind", "sourceId"],
+          "additionalProperties": false
+        },
+        "targetRoomId": { "type": "string", "maxLength": 128 },
+        "originalText": { "type": "string", "maxLength": 4000 },
+        "replacementText": { "type": "string", "maxLength": 4000 },
+        "rationale": { "type": "string", "minLength": 1, "maxLength": 2000 }
+      },
+      "required": ["operation", "section", "rationale"],
+      "additionalProperties": false,
+      "description": "Single proposal fields, for general-correction; must mirror the propose contract."
+    },
+    "summary": {
+      "type": "string",
+      "maxLength": 500,
+      "description": "Short report of what was computed and why, for orchestration and the user-facing reply."
+    }
+  },
+  "required": ["kind", "summary"],
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": { "properties": { "kind": { "const": "citation-correction" } }, "required": ["kind"] },
+      "then": { "required": ["edits"] }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "general-correction" } }, "required": ["kind"] },
+      "then": { "required": ["proposal"] }
+    }
+  ]
+}

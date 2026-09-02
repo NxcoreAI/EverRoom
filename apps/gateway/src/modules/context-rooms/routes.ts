@@ -2,7 +2,7 @@ import type { FastifyPluginAsyncTypebox } from "@fastify/type-provider-typebox";
 import { Type } from "@sinclair/typebox";
 import type { ContextRoomService } from "./service.js";
 import { DuplicateReviewRequiredError, type RoomDuplicateService } from "./duplicate-service.js";
-import type { RoomAgentDispatcher } from "./room-agent.js";
+import type { DocWriterDispatcher } from "../subagents/doc-writer-dispatcher.js";
 import { applyOverviewFreshnessToSnapshot, type RoomOverviewService } from "./overview-service.js";
 
 const RoomData = Type.Object({}, { additionalProperties: true });
@@ -25,7 +25,7 @@ const CorrectionOperation = Type.Union([
 export function contextRoomRoutes(
   service: ContextRoomService,
   duplicates?: RoomDuplicateService,
-  roomAgent?: RoomAgentDispatcher,
+  docWriter?: DocWriterDispatcher,
   overviews?: RoomOverviewService,
 ): FastifyPluginAsyncTypebox {
   return async (app) => {
@@ -34,9 +34,13 @@ export function contextRoomRoutes(
       { schema: { tags: ["context-rooms"] } },
       // 房间列表的“更新时间”合并投影变化时间：日程/待办/纠正等变化不回写 rooms 表，
       // 出口取 max(快照 updatedAt, 投影最后变化时间)，桌面首页卡片时间才跟随数据变化。
-      async () => overviews
-        ? applyOverviewFreshnessToSnapshot(service.getSnapshot(), overviews.latestProjectionTimes())
-        : service.getSnapshot(),
+      async () => {
+        const snapshot = overviews
+          ? applyOverviewFreshnessToSnapshot(service.getSnapshot(), overviews.latestProjectionTimes())
+          : service.getSnapshot();
+        // M2-A 红点随快照下发：桌面端随 snapshot 轮询刷新，替代原 listDuplicateCandidates+5s 补拉。
+        return duplicates ? { ...snapshot, duplicateOpenCount: duplicates.actionableOpenCount() } : snapshot;
+      },
     );
 
     app.post(
@@ -158,76 +162,26 @@ export function contextRoomRoutes(
       },
     );
 
+    // 合并（新建式，2026-09-01 语义变更；2026-09-02 起唯一路径）：新建 Room
+    // 收编两个旧 Room，旧的双双退役。不再提供「并入现有 Room」。
     app.post(
       "/v1/context-rooms/merge-preview",
       {
         schema: {
           tags: ["context-rooms"],
           body: Type.Object({
-            sourceRoomId: Type.String({ minLength: 1, maxLength: 128 }),
-            targetRoomId: Type.String({ minLength: 1, maxLength: 128 }),
+            sourceAId: Type.String({ minLength: 1, maxLength: 128 }),
+            sourceBId: Type.String({ minLength: 1, maxLength: 128 }),
           }),
         },
       },
       async (request, reply) => {
         if (!duplicates) return reply.code(503).send({ error: "room_duplicate_service_unavailable" });
         try {
-          return await duplicates.previewMerge(request.body.sourceRoomId, request.body.targetRoomId);
+          return await duplicates.previewMerge(request.body.sourceAId, request.body.sourceBId);
         } catch (error) {
           const code = error instanceof Error ? error.message : "context_room_merge_preview_failed";
           return reply.code(code === "context_room_not_mergeable" ? 404 : 409).send({ error: code });
-        }
-      },
-    );
-
-    // 新建式合并（2026-09-01 语义变更）：新建 Room 收编两个旧 Room，旧的双双退役。
-    app.post(
-      "/v1/context-rooms/merge-preview-new",
-      {
-        schema: {
-          tags: ["context-rooms"],
-          body: Type.Object({
-            sourceAId: Type.String({ minLength: 1, maxLength: 128 }),
-            sourceBId: Type.String({ minLength: 1, maxLength: 128 }),
-          }),
-        },
-      },
-      async (request, reply) => duplicates
-        ? duplicates.previewMergeIntoNew(request.body.sourceAId, request.body.sourceBId)
-        : reply.code(503).send({ error: "room_duplicate_service_unavailable" }),
-    );
-
-    app.post(
-      "/v1/context-rooms/merge-operations-new",
-      {
-        schema: {
-          tags: ["context-rooms"],
-          body: Type.Object({
-            sourceAId: Type.String({ minLength: 1, maxLength: 128 }),
-            sourceBId: Type.String({ minLength: 1, maxLength: 128 }),
-            title: Type.String({ minLength: 1, maxLength: 120 }),
-            kind: Type.Optional(Type.String({ minLength: 1, maxLength: 24 })),
-            previewHash: Type.String({ minLength: 64, maxLength: 64 }),
-            idempotencyKey: Type.String({ minLength: 1, maxLength: 128 }),
-            wait: Type.Optional(Type.Boolean()),
-          }),
-        },
-      },
-      async (request, reply) => {
-        if (!duplicates) return reply.code(503).send({ error: "room_duplicate_service_unavailable" });
-        try {
-          return await duplicates.startMergeIntoNew(request.body);
-        } catch (error) {
-          if (error instanceof Error && error.message === "context_room_merge_busy") {
-            return reply.code(409).send({ error: "room_merge_busy", message: "A merge is already in progress for these rooms" });
-          }
-          if (error instanceof Error && error.message === "context_room_merge_preview_stale") {
-            return reply.code(409).send({ error: "preview_stale", message: "Room contents changed since the preview" });
-          }
-          if (error instanceof Error && error.message === "context_room_merge_title_required") {
-            return reply.code(400).send({ error: "invalid_title", message: "New room title cannot be blank" });
-          }
-          throw error;
         }
       },
     );
@@ -238,8 +192,10 @@ export function contextRoomRoutes(
         schema: {
           tags: ["context-rooms"],
           body: Type.Object({
-            sourceRoomId: Type.String({ minLength: 1, maxLength: 128 }),
-            targetRoomId: Type.String({ minLength: 1, maxLength: 128 }),
+            sourceAId: Type.String({ minLength: 1, maxLength: 128 }),
+            sourceBId: Type.String({ minLength: 1, maxLength: 128 }),
+            title: Type.String({ minLength: 1, maxLength: 120 }),
+            kind: Type.Optional(Type.String({ minLength: 1, maxLength: 24 })),
             previewHash: Type.String({ minLength: 64, maxLength: 64 }),
             idempotencyKey: Type.String({ minLength: 1, maxLength: 128 }),
             // 桌面端置 true：REST 调用内等待合并终态（秒级本地事务），免轮询。
@@ -252,7 +208,16 @@ export function contextRoomRoutes(
         try {
           return await duplicates.startMerge(request.body);
         } catch (error) {
-          return reply.code(409).send({ error: error instanceof Error ? error.message : "context_room_merge_failed" });
+          if (error instanceof Error && error.message === "context_room_merge_busy") {
+            return reply.code(409).send({ error: "room_merge_busy", message: "A merge is already in progress for these rooms" });
+          }
+          if (error instanceof Error && error.message === "context_room_merge_preview_stale") {
+            return reply.code(409).send({ error: "preview_stale", message: "Room contents changed since the preview" });
+          }
+          if (error instanceof Error && error.message === "context_room_merge_title_required") {
+            return reply.code(400).send({ error: "invalid_title", message: "New room title cannot be blank" });
+          }
+          throw error;
         }
       },
     );
@@ -289,6 +254,59 @@ export function contextRoomRoutes(
             ?? reply.code(404).send({ error: "context_room_merge_not_found" });
         } catch (error) {
           return reply.code(409).send({ error: error instanceof Error ? error.message : "context_room_merge_cannot_cancel" });
+        }
+      },
+    );
+
+    // 定向重复检查（M2-A 候选发现时机）：单 Room vs 全库活跃 Room 即时评估；
+    // 晋升完成/认领后由桌面端主动调用，返回新浮现的可操作候选数。
+    app.post(
+      "/v1/context-rooms/:roomId/check-duplicates",
+      {
+        schema: {
+          tags: ["context-rooms"],
+          params: Type.Object({ roomId: Type.String({ minLength: 1, maxLength: 128 }) }),
+        },
+      },
+      async (request, reply) => {
+        if (!duplicates) return reply.code(503).send({ error: "room_duplicate_service_unavailable" });
+        if (!service.resolveRoomId(request.params.roomId)) {
+          return reply.code(404).send({ error: "context_room_not_found" });
+        }
+        return duplicates.requestTargetedAssess(request.params.roomId);
+      },
+    );
+
+    // 合并命名推荐：dispatch context-room 子 Agent（merge-name 任务）等待终态。
+    // 同步等待对齐 refresh-brief 惯例；桌面端在合并预览打开后异步请求，失败静默降级。
+    app.post(
+      "/v1/context-rooms/merge-name-suggestions",
+      {
+        schema: {
+          tags: ["context-rooms"],
+          body: Type.Object({
+            sourceAId: Type.String({ minLength: 1, maxLength: 128 }),
+            sourceBId: Type.String({ minLength: 1, maxLength: 128 }),
+            responseLanguage: Type.Optional(Type.String({ minLength: 2, maxLength: 35 })),
+          }, { additionalProperties: false }),
+        },
+      },
+      async (request, reply) => {
+        try {
+          return await service.suggestMergeNames(
+            request.body.sourceAId,
+            request.body.sourceBId,
+            request.body.responseLanguage,
+          );
+        } catch (error) {
+          const code = error instanceof Error ? error.message : "context_room_merge_name_failed";
+          if (code === "context_room_not_found") {
+            return reply.code(404).send({ error: code, message: "Context Room not found" });
+          }
+          if (code === "context_room_agent_not_configured") {
+            return reply.code(503).send({ error: code, message: "Context Room agent is not available" });
+          }
+          return reply.code(502).send({ error: code, message: "Context Room merge name suggestion failed" });
         }
       },
     );
@@ -614,7 +632,7 @@ export function contextRoomRoutes(
         },
       },
       async (request, reply) => {
-        if (!roomAgent) {
+        if (!docWriter) {
           return reply.code(503).send({ error: "context_room_agent_not_configured" });
         }
         const body = request.body;
@@ -623,10 +641,11 @@ export function contextRoomRoutes(
         }
         // 框架无排队（方案 §5.1）：并发限额与 schema 校验失败是可诊断的硬错误，
         // 直接冒 500 会在桌面端变成笼统的 "An internal gateway error occurred"，这里显式透出错误码。
+        // M2（doc-writer-subagent-plan §8）：REST 契约不变，内部改派 doc-writer 的 rewrite task。
         let invocationId: string;
         try {
-          invocationId = await roomAgent.dispatchDetached({
-            task: "selection-rewrite",
+          invocationId = await docWriter.dispatchDetached({
+            task: "rewrite",
             taskInput: {
               selectedText: body.selectedText,
               ...(body.instruction?.trim() ? { instruction: body.instruction.trim() } : {}),

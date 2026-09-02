@@ -109,6 +109,7 @@ import type {
   KnowledgeRoomProposalDto,
   KnowledgeRoomRelationDto,
   KnowledgeRoomRelationVisibility,
+  KnowledgePreferencesDto,
   KnowledgeRouteStatusDto,
   CreateKnowledgeRoomRelationInput,
   UpdateKnowledgeRoomRelationInput,
@@ -891,6 +892,9 @@ export interface NxcoreDesktopApi {
     backfill(): Promise<{ queuedDocuments: number }>
     corpus(): Promise<{ documents: Array<import('./writing-style').WritingStyleCorpusEntryDto> }>
     setExclusion(documentId: string, excluded: boolean): Promise<{ ok: boolean }>
+    insights(): Promise<{ insights: Array<import('./writing-style').WritingStyleInsightDto> }>
+    snoozeInsight(insightId: string): Promise<import('./writing-style').WritingStyleInsightDto>
+    confirmInsight(insightId: string): Promise<import('./writing-style').WritingStyleInsightDto>
   }
   agentSchedules: {
     list(): Promise<AgentScheduledTask[]>
@@ -906,10 +910,10 @@ export interface NxcoreDesktopApi {
     checkDuplicates(input: RoomDuplicateCheckInput): Promise<RoomDuplicateCheckResult>
     listDuplicateCandidates(status?: RoomDuplicateCandidateStatus): Promise<{ items: RoomDuplicateCandidate[] }>
     updateDuplicateCandidate(id: string, status: 'related' | 'distinct'): Promise<RoomDuplicateCandidate>
-    previewMerge(sourceRoomId: string, targetRoomId: string): Promise<RoomMergePreview>
-    previewMergeIntoNew(sourceAId: string, sourceBId: string): Promise<RoomMergePreview>
-    startMergeIntoNew(input: { sourceAId: string; sourceBId: string; title: string; kind?: string; previewHash: string; idempotencyKey: string; wait?: boolean }): Promise<RoomMergeOperation>
-    startMerge(input: { sourceRoomId: string; targetRoomId: string; previewHash: string; idempotencyKey: string; wait?: boolean }): Promise<RoomMergeOperation>
+    previewMerge(sourceAId: string, sourceBId: string): Promise<RoomMergePreview>
+    startMerge(input: { sourceAId: string; sourceBId: string; title: string; kind?: string; previewHash: string; idempotencyKey: string; wait?: boolean }): Promise<RoomMergeOperation>
+    suggestMergeNames(input: { sourceAId: string; sourceBId: string; responseLanguage?: string }): Promise<{ names: string[] }>
+    checkRoomDuplicates(roomId: string): Promise<{ newCandidates: number }>
     getMergeOperation(id: string): Promise<RoomMergeOperation>
     retryMerge(id: string): Promise<RoomMergeOperation>
     cancelMerge(id: string): Promise<RoomMergeOperation>
@@ -1164,6 +1168,11 @@ export interface NxcoreDesktopApi {
     /** on-demand Room 推荐（创建入口「智能推荐」页签）：描述 + 已导入文件 → 推荐卡。 */
     proposeRooms(input: { description: string; fileEntryIds: string[] }): Promise<{ items: KnowledgeRoomProposalDto[] }>
     revertDecision(decisionId: string): Promise<{ ok: boolean }>
+    /** M3 知识整理偏好：统计/洞察/用户接管/开关。 */
+    getPreferences(): Promise<KnowledgePreferencesDto>
+    updatePreferenceContent(content: string): Promise<KnowledgePreferencesDto>
+    updatePreferenceSettings(input: { learningEnabled?: boolean; injectionEnabled?: boolean }): Promise<KnowledgePreferencesDto>
+    refreshPreferences(): Promise<KnowledgePreferencesDto>
   }
   files: {
     list(limit?: number, offset?: number): Promise<{ items: FileCatalogDto[]; total: number }>

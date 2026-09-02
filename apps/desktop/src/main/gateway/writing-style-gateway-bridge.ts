@@ -1,5 +1,6 @@
 import type {
   WritingStyleCorpusEntryDto,
+  WritingStyleInsightDto,
   WritingStyleProfileDto,
   WritingStyleSettingsDto,
   WritingStyleUserContentDto,
@@ -68,6 +69,19 @@ export class WritingStyleGatewayBridge {
       method: 'POST',
       body: JSON.stringify({ excluded }),
     })
+  }
+
+  /** 协作轮洞察（v2）：pending 供智能区横幅，snoozed/confirmed 供记忆页。 */
+  insights(): Promise<{ insights: WritingStyleInsightDto[] }> {
+    return this.request('/v1/writing-style/insights')
+  }
+
+  snoozeInsight(insightId: string): Promise<WritingStyleInsightDto> {
+    return this.request(`/v1/writing-style/insights/${encodeURIComponent(insightId)}/snooze`, { method: 'POST' })
+  }
+
+  confirmInsight(insightId: string): Promise<WritingStyleInsightDto> {
+    return this.request(`/v1/writing-style/insights/${encodeURIComponent(insightId)}/confirm`, { method: 'POST' })
   }
 
   private async request<T>(path: string, init?: RequestInit): Promise<T> {

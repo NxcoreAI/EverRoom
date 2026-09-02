@@ -135,7 +135,16 @@ export async function streamSelectionRewrite(
       const invocation = await api.getSubagentInvocation(invocationId)
       if (invocation.status === 'completed') {
         settled = true
-        const output = sanitizeSelectionRewriteOutput(invocation.result?.text ?? '', { preserveWhitespace })
+        // M2（doc-writer-subagent-plan §8）：doc-writer invocation 的替换文本在
+        // structuredOutput.replacementText；text 回退兼容迁移期存量的 context-room invocation。
+        const structured = invocation.result?.structuredOutput
+        const structuredReplacement = structured && typeof structured === 'object' && !Array.isArray(structured)
+          ? (structured as { replacementText?: unknown }).replacementText
+          : null
+        const rawText = typeof structuredReplacement === 'string' && structuredReplacement
+          ? structuredReplacement
+          : (invocation.result?.text ?? '')
+        const output = sanitizeSelectionRewriteOutput(rawText, { preserveWhitespace })
         if (!output) throw new Error(i18n.t('contextRoom:selectionRewriteAgent.noReplacementText'))
         options.onText(output)
         return { replacementText: output, invocationId }

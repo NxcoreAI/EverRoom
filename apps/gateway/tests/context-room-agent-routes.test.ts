@@ -7,8 +7,9 @@ import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createDatabase } from '../src/infrastructure/database/client.js'
 import { contextRoomRoutes } from '../src/modules/context-rooms/routes.js'
-import type { RoomAgentDispatcher } from '../src/modules/context-rooms/room-agent.js'
+import type { RoomAgentDispatcher, RoomAgentDispatchInput } from '../src/modules/context-rooms/room-agent.js'
 import { CONTEXT_ROOM_AGENT_ID } from '../src/modules/context-rooms/room-agent.js'
+import type { DocWriterDispatcher } from '../src/modules/subagents/doc-writer-dispatcher.js'
 import { ContextRoomService } from '../src/modules/context-rooms/service.js'
 
 const temporaryDirectories: string[] = []
@@ -46,21 +47,28 @@ function fakeDispatcher(overrides: Partial<RoomAgentDispatcher> = {}): RoomAgent
   }
 }
 
-async function harness(roomAgent?: RoomAgentDispatcher) {
+function fakeDocWriter(overrides: Partial<DocWriterDispatcher> = {}): DocWriterDispatcher {
+  return {
+    dispatchDetached: vi.fn(async () => 'invocation-detached'),
+    ...overrides,
+  }
+}
+
+async function harness(roomAgent?: RoomAgentDispatcher, docWriter?: DocWriterDispatcher) {
   const dataDir = await mkdtemp(join(tmpdir(), 'nxcore-context-room-routes-'))
   temporaryDirectories.push(dataDir)
   const database = createDatabase(join(dataDir, 'gateway.sqlite'), resolve('drizzle'))
   const service = new ContextRoomService(database.db)
   if (roomAgent) service.setRoomAgentDispatcher(roomAgent)
   const app = Fastify().withTypeProvider<TypeBoxTypeProvider>()
-  await app.register(contextRoomRoutes(service, undefined, roomAgent))
+  await app.register(contextRoomRoutes(service, undefined, docWriter))
   return { app, service, ...database }
 }
 
 describe('context room agent routes', () => {
-  it('dispatches selection rewrites and returns the invocation id immediately', async () => {
-    const roomAgent = fakeDispatcher({ dispatchDetached: vi.fn(async () => 'invocation-rewrite-1') })
-    const { app, sqlite } = await harness(roomAgent)
+  it('dispatches selection rewrites to doc-writer (M2) and returns the invocation id immediately', async () => {
+    const docWriter = fakeDocWriter({ dispatchDetached: vi.fn(async () => 'invocation-rewrite-1') })
+    const { app, sqlite } = await harness(undefined, docWriter)
 
     const response = await app.inject({
       method: 'POST',
@@ -79,8 +87,8 @@ describe('context room agent routes', () => {
 
     expect(response.statusCode).toBe(200)
     expect(response.json()).toEqual({ invocationId: 'invocation-rewrite-1' })
-    expect(roomAgent.dispatchDetached).toHaveBeenCalledWith({
-      task: 'selection-rewrite',
+    expect(docWriter.dispatchDetached).toHaveBeenCalledWith({
+      task: 'rewrite',
       taskInput: {
         selectedText: '原文',
         instruction: '更简洁',
@@ -96,7 +104,7 @@ describe('context room agent routes', () => {
   })
 
   it('rejects invalid selection rewrite bodies and missing agents', async () => {
-    const { app, sqlite } = await harness(fakeDispatcher())
+    const { app, sqlite } = await harness(undefined, fakeDocWriter())
 
     expect((await app.inject({
       method: 'POST',
@@ -118,6 +126,103 @@ describe('context room agent routes', () => {
     })).statusCode).toBe(503)
     await noAgent.app.close()
     noAgent.sqlite.close()
+    sqlite.close()
+  })
+
+  it('suggests merge names for two rooms and maps service errors to status codes', async () => {
+    const dispatch = vi.fn(async (_input: RoomAgentDispatchInput) => completedInvocation(JSON.stringify({
+      names: ['校园生活全景', '校园生活'],
+    })))
+    const roomAgent = fakeDispatcher({ dispatch })
+    const { app, service, sqlite } = await harness(roomAgent)
+    const a = await service.createRoom({ title: '校园生活', description: '校园活动' })
+    const b = await service.createRoom({ title: '校园生活记录', description: '活动记录' })
+
+    const ok = await app.inject({
+      method: 'POST',
+      url: '/v1/context-rooms/merge-name-suggestions',
+      payload: { sourceAId: a.room.id, sourceBId: b.room.id, responseLanguage: 'zh-CN' },
+    })
+    expect(ok.statusCode).toBe(200)
+    expect(ok.json()).toEqual({ names: ['校园生活全景', '校园生活'] })
+    expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({
+      task: 'merge-name',
+      taskInput: expect.objectContaining({ responseLanguage: 'zh-CN' }),
+    }))
+
+    // 幂等键配对序归一：A/B 调换顺序的两次请求命中同一 invocation 键。
+    // （createRoom 也会经同一 dispatcher 发 room-enrich，这里按任务过滤。）
+    expect((await app.inject({
+      method: 'POST',
+      url: '/v1/context-rooms/merge-name-suggestions',
+      payload: { sourceAId: b.room.id, sourceBId: a.room.id },
+    })).statusCode).toBe(200)
+    const mergeNameCalls = dispatch.mock.calls.map(([input]) => input).filter((input) => input.task === 'merge-name')
+    expect(mergeNameCalls).toHaveLength(2)
+    const call = mergeNameCalls[0]!
+    const { roomA, roomB } = call.taskInput as { roomA: { title: string }; roomB: { title: string } }
+    expect(new Set([roomA.title, roomB.title])).toEqual(new Set(['校园生活', '校园生活记录']))
+    expect(mergeNameCalls[1]!.idempotencyKey).toBe(call.idempotencyKey)
+
+    expect((await app.inject({
+      method: 'POST',
+      url: '/v1/context-rooms/merge-name-suggestions',
+      payload: { sourceAId: a.room.id, sourceBId: 'room-missing' },
+    })).statusCode).toBe(404)
+    await app.close()
+    sqlite.close()
+
+    const noAgent = await harness()
+    const na = await noAgent.service.createRoom({ title: '校园生活', description: '校园活动' })
+    const nb = await noAgent.service.createRoom({ title: '校园生活记录', description: '活动记录' })
+    expect((await noAgent.app.inject({
+      method: 'POST',
+      url: '/v1/context-rooms/merge-name-suggestions',
+      payload: { sourceAId: na.room.id, sourceBId: nb.room.id },
+    })).statusCode).toBe(503)
+    await noAgent.app.close()
+    noAgent.sqlite.close()
+  })
+
+  it('auto-refreshes the merge placeholder brief once and skips user-edited briefs', async () => {
+    const dispatch = vi.fn(async (_input: RoomAgentDispatchInput) => completedInvocation(JSON.stringify({
+      background: '合并后的真实背景',
+      goal: '共同目标',
+      status: '进行中',
+      risks: [],
+      decisions: [],
+    })))
+    const roomAgent = fakeDispatcher({ dispatch })
+    const { app, service, db, sqlite } = await harness(roomAgent)
+    void app
+    const created = await service.createRoom({ title: '合并占位', description: '资料' })
+    const placeholderRoom = (background: string) => ({
+      id: created.room.id,
+      title: '合并占位',
+      kind: '主题',
+      data: {
+        id: created.room.id,
+        title: '合并占位',
+        brief: { background, goal: '', status: '', risks: [], decisions: [] },
+        briefPlaceholder: '合并自「A」与「B」',
+      },
+    })
+    // 占位原文匹配 → 自动再生成，幂等键固定，生成后清除标志。
+    service.saveSnapshot({ rooms: [placeholderRoom('合并自「A」与「B」')], deletedRooms: [] })
+    expect(await service.refreshBriefIfPlaceholder(created.room.id)).toBe(true)
+    // createRoom 也会经同一 dispatcher 发 room-enrich，这里按任务过滤断言。
+    const briefRefreshCalls = () => dispatch.mock.calls.map(([input]) => input).filter((input) => input.task === 'brief-refresh')
+    expect(briefRefreshCalls()).toEqual([expect.objectContaining({
+      idempotencyKey: `merge-brief:${created.room.id}`,
+    })])
+    const refreshedData = service.getSnapshot().rooms[0]!.data as Record<string, unknown>
+    expect((refreshedData.brief as Record<string, unknown>).background).toBe('合并后的真实背景')
+    expect(refreshedData.briefPlaceholder).toBeUndefined()
+
+    // 用户手改（背景 ≠ 占位原文）→ 跳过，不再 dispatch。
+    service.saveSnapshot({ rooms: [placeholderRoom('用户手改的背景')], deletedRooms: [] })
+    expect(await service.refreshBriefIfPlaceholder(created.room.id)).toBe(false)
+    expect(briefRefreshCalls()).toHaveLength(1)
     sqlite.close()
   })
 

@@ -76,25 +76,34 @@
   to { transform: rotate(360deg); }
 }
 
-/* 顶部 tab 导航（页面内不再放竖向侧栏，避免与应用侧边栏重复） */
+/* 顶部 tab 导航（页面内不再放竖向侧栏，避免与应用侧边栏重复）。
+   名称与数量分行：名称行 + 固定高度的数量行，所有 tab 等高，下划线连续。 */
 .mem-tabs {
   display: flex;
-  align-items: center;
+  align-items: stretch;
   gap: 2px;
   border-bottom: 1px solid var(--border);
 }
 
 .mem-tabs button {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 7px 10px;
   border: none;
   border-bottom: 2px solid transparent;
   background: transparent;
   color: var(--muted);
   font-size: 13px;
   cursor: pointer;
+}
+
+.mem-tab-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 18px;
 }
 
 .mem-tabs button:hover {
@@ -122,7 +131,10 @@
 }
 
 .mem-tab-count {
+  display: block;
+  min-height: 14px;
   font-size: 11px;
+  line-height: 14px;
   color: var(--subtle);
   font-variant-numeric: tabular-nums;
 }
@@ -860,6 +872,29 @@
   margin: 0 0 8px;
   font-size: 11.5px;
   color: var(--subtle);
+}
+
+/* 整理偏好（M3）：开关行 + 统计列表 */
+.mem-rules-switches {
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+  margin: 6px 0;
+}
+
+.mem-rules-switches label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.mem-rules-stats {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  font-size: 12px;
+  line-height: 1.8;
 }
 
 /* 文档删除确认：展示级联损失（派生记忆预览） */
@@ -1819,4 +1854,45 @@ button.mem-search-item:hover {
   font-size: 11px;
   background: rgba(59 130 246 / 0.15);
   color: rgb(59 130 246);
+}
+
+/* 协作洞察（写作风格 v2）：待确认/已写入的偏好陈述列表。 */
+.mem-writing-style-insights {
+  list-style: none;
+  margin: 8px 0 12px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mem-writing-style-insights > li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid var(--border, #dcdfe4);
+  border-radius: 10px;
+  padding: 8px 12px;
+}
+
+.mem-writing-style-insights > li[data-status="confirmed"] {
+  opacity: 0.75;
+}
+
+.mem-writing-style-insight-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.mem-writing-style-insight-body > ul {
+  margin: 0;
+  padding-left: 16px;
+}
+
+.mem-writing-style-insight-meta {
+  font-size: 12px;
+  color: var(--text-secondary, #5f6368);
 }

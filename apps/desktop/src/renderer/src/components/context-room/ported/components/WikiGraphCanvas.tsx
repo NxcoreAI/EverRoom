@@ -3,6 +3,7 @@ import { useMemo, useRef } from 'react'
 import type { KnowledgeWikiGraphDto } from '../../../../../../shared/knowledge'
 import {
   PixiForceGraphCanvas,
+  scaleForceGraphWorld,
   type PixiForceGraphCanvasHandle,
   type PixiForceGraphCanvasNode,
   type PixiForceGraphEdge,
@@ -17,13 +18,16 @@ function nodeRadius(node: KnowledgeWikiGraphDto['nodes'][number]) {
   return Math.min(28, 18 + node.inLinks * 2)
 }
 
-function initialPositions(count: number) {
+function initialPositions(count: number, width: number, height: number) {
   const positions = new Float32Array(count * 2)
+  const centerX = width / 2
+  const centerY = height / 2
+  const ring = Math.min(width, height) * 0.31
   for (let index = 0; index < count; index += 1) {
     const angle = index * Math.PI * (3 - Math.sqrt(5))
-    const distance = 130 * Math.sqrt(index / Math.max(1, count - 1))
-    positions[index * 2] = 320 + Math.cos(angle) * distance
-    positions[index * 2 + 1] = 210 + Math.sin(angle) * distance
+    const distance = ring * Math.sqrt(index / Math.max(1, count - 1))
+    positions[index * 2] = centerX + Math.cos(angle) * distance
+    positions[index * 2 + 1] = centerY + Math.sin(angle) * distance
   }
   return positions
 }
@@ -55,7 +59,16 @@ export function WikiGraphCanvas({ graph, selectedPath, onSelectPage }: {
     const target = nodeIndex.get(edge.target)
     return source === undefined || target === undefined ? [] : [{ source, target }]
   }), [graph.edges, nodeIndex])
-  const fallbackPositions = useMemo(() => initialPositions(nodes.length), [nodes.length])
+  // 布局世界随页面数缩放（每页约 120×120 活动面积，节点半径 18~28）：
+  // 页面多时不被塞进固定矩形里互相挤压；面板只是视口。
+  const layoutDimensions = useMemo(
+    () => scaleForceGraphWorld(graph.nodes.length, { spacing: 120 }),
+    [graph.nodes.length],
+  )
+  const fallbackPositions = useMemo(
+    () => initialPositions(nodes.length, layoutDimensions.width, layoutDimensions.height),
+    [layoutDimensions, nodes.length],
+  )
   const layoutNodes = useMemo(
     () => graph.nodes.map((node) => ({ id: node.id, radius: nodeRadius(node) })),
     [graph.nodes],
@@ -71,6 +84,7 @@ export function WikiGraphCanvas({ graph, selectedPath, onSelectPage }: {
   const layout = useForceGraphLayout({
     nodes: layoutNodes,
     edges: layoutEdges,
+    options: layoutDimensions,
     label: 'Wiki force graph',
     canvasRef,
     settleFit: SETTLE_FIT,

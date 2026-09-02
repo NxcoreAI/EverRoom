@@ -23,29 +23,37 @@ interface SimulationEdge extends SimulationLinkDatum<SimulationNode> {
   target: string | SimulationNode
 }
 
-function nodeBounds(node: SimulationNode, width: number, height: number, padding: number) {
+/** 布局世界矩形：minX/minY 可为负（向左/上拖拽扩张时不平移坐标系）。 */
+interface WorldRect {
+  maxX: number
+  maxY: number
+  minX: number
+  minY: number
+}
+
+function nodeBounds(node: SimulationNode, world: WorldRect, padding: number) {
+  const width = world.maxX - world.minX
+  const height = world.maxY - world.minY
   const xMargin = Math.min(node.radius + padding, width / 2)
   const yMargin = Math.min(node.radius + padding, height / 2)
   return {
-    maxX: width - xMargin,
-    maxY: height - yMargin,
-    minX: xMargin,
-    minY: yMargin,
+    maxX: world.maxX - xMargin,
+    maxY: world.maxY - yMargin,
+    minX: world.minX + xMargin,
+    minY: world.minY + yMargin,
   }
 }
 
 function createBoundsForce(
-  getWidth: () => number,
-  getHeight: () => number,
+  getWorld: () => WorldRect,
   padding: number,
 ) {
   let simulationNodes: SimulationNode[] = []
   const force = () => {
-    const width = getWidth()
-    const height = getHeight()
+    const world = getWorld()
     for (const node of simulationNodes) {
       if (!Number.isFinite(node.x) || !Number.isFinite(node.y)) continue
-      const { maxX, maxY, minX, minY } = nodeBounds(node, width, height, padding)
+      const { maxX, maxY, minX, minY } = nodeBounds(node, world, padding)
       const projectedX = node.x! + (node.vx ?? 0)
       const projectedY = node.y! + (node.vy ?? 0)
       if (projectedX < minX) {
@@ -121,13 +129,11 @@ export function createForceGraphSimulation({
   const simulationEdges: SimulationEdge[] = edges.map((edge) => ({ ...edge }))
   const nodeById = new Map(simulationNodes.map((node) => [node.id, node]))
 
-  let width = options.width
-  let height = options.height
-  let simulation: Simulation<SimulationNode, SimulationEdge>
+  const world: WorldRect = { minX: 0, minY: 0, maxX: options.width, maxY: options.height }
 
-  const centerX = forceX<SimulationNode>(width / 2)
+  const centerX = forceX<SimulationNode>((world.minX + world.maxX) / 2)
     .strength(options.centerStrength)
-  const centerY = forceY<SimulationNode>(height / 2)
+  const centerY = forceY<SimulationNode>((world.minY + world.maxY) / 2)
     .strength(options.centerStrength)
   const edgeDegree = (edge: SimulationEdge) => {
     const source = typeof edge.source === 'string' ? degreeById.get(edge.source) ?? 0 : edge.source.degree
@@ -141,6 +147,7 @@ export function createForceGraphSimulation({
     ))
     .strength((edge) => options.linkStrength / Math.pow(edgeDegree(edge), options.degreeBias * 0.5))
 
+  let simulation: Simulation<SimulationNode, SimulationEdge>
   simulation = forceSimulation<SimulationNode>(simulationNodes)
     .velocityDecay(options.velocityDecay)
     .force('charge', forceManyBody<SimulationNode>().strength((node) => (
@@ -155,7 +162,7 @@ export function createForceGraphSimulation({
     .force('link', links)
     .force('center-x', centerX)
     .force('center-y', centerY)
-    .force('bounds', createBoundsForce(() => width, () => height, options.collisionPadding))
+    .force('bounds', createBoundsForce(() => world, options.collisionPadding))
     .on('tick', () => publish(simulationNodes))
     .on('end', settled)
 
@@ -165,18 +172,26 @@ export function createForceGraphSimulation({
     drag(id, x, y) {
       const node = nodeById.get(id)
       if (!node || !Number.isFinite(x) || !Number.isFinite(y)) return
-      const { maxX, maxY, minX, minY } = nodeBounds(
-        node,
-        width,
-        height,
-        options.collisionPadding,
-      )
-      const boundedX = Math.min(maxX, Math.max(minX, x))
-      const boundedY = Math.min(maxY, Math.max(minY, y))
-      node.fx = boundedX
-      node.fy = boundedY
-      node.x = boundedX
-      node.y = boundedY
+      // 拖出当前世界：扩张世界矩形以容纳落点（含半径与碰撞边距），不再钳制。
+      // 中心力换到新世界中心，其余节点随斥力在更大空间里铺开，缓解拥挤。
+      const margin = node.radius + options.collisionPadding
+      const nextMinX = Math.min(world.minX, x - margin)
+      const nextMinY = Math.min(world.minY, y - margin)
+      const nextMaxX = Math.max(world.maxX, x + margin)
+      const nextMaxY = Math.max(world.maxY, y + margin)
+      if (nextMinX !== world.minX || nextMinY !== world.minY
+        || nextMaxX !== world.maxX || nextMaxY !== world.maxY) {
+        world.minX = nextMinX
+        world.minY = nextMinY
+        world.maxX = nextMaxX
+        world.maxY = nextMaxY
+        centerX.x((world.minX + world.maxX) / 2)
+        centerY.y((world.minY + world.maxY) / 2)
+      }
+      node.fx = x
+      node.fy = y
+      node.x = x
+      node.y = y
       simulation.alphaTarget(0.08).restart()
     },
     release(id) {
@@ -190,13 +205,22 @@ export function createForceGraphSimulation({
       simulation.alpha(Math.max(0, Math.min(1, alpha))).restart()
     },
     resize(nextWidth, nextHeight) {
-      const resizedWidth = Math.max(1, nextWidth)
-      const resizedHeight = Math.max(1, nextHeight)
-      if (resizedWidth === width && resizedHeight === height) return
-      width = resizedWidth
-      height = resizedHeight
-      centerX.x(width / 2)
-      centerY.y(height / 2)
+      // 基准矩形 [0,w]×[0,h] 与当前世界取并：面板/自适应尺寸只抬高空间下限，
+      // 不收回拖拽已扩张（或更大面板已给过）的空间，避免节点群被拉回挤压。
+      const baseWidth = Math.max(1, nextWidth)
+      const baseHeight = Math.max(1, nextHeight)
+      const nextMinX = Math.min(world.minX, 0)
+      const nextMinY = Math.min(world.minY, 0)
+      const nextMaxX = Math.max(world.maxX, baseWidth)
+      const nextMaxY = Math.max(world.maxY, baseHeight)
+      if (nextMinX === world.minX && nextMinY === world.minY
+        && nextMaxX === world.maxX && nextMaxY === world.maxY) return
+      world.minX = nextMinX
+      world.minY = nextMinY
+      world.maxX = nextMaxX
+      world.maxY = nextMaxY
+      centerX.x((world.minX + world.maxX) / 2)
+      centerY.y((world.minY + world.maxY) / 2)
       simulation.alpha(Math.max(simulation.alpha(), 0.08)).restart()
     },
     step(iterations = 1) {

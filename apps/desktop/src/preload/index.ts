@@ -306,6 +306,9 @@ const api: NxcoreDesktopApi = {
     backfill: () => invoke('writing-style:backfill'),
     corpus: () => invoke('writing-style:list-corpus'),
     setExclusion: (documentId, excluded) => invoke('writing-style:set-exclusion', documentId, excluded),
+    insights: () => invoke('writing-style:list-insights'),
+    snoozeInsight: (insightId) => invoke('writing-style:snooze-insight', insightId),
+    confirmInsight: (insightId) => invoke('writing-style:confirm-insight', insightId),
   },
   agentSchedules: {
     list: () => invoke('agent-scheduler:list'),
@@ -324,13 +327,13 @@ const api: NxcoreDesktopApi = {
       invokeQuietly('context-rooms:list-duplicate-candidates', status),
     updateDuplicateCandidate: (id: string, status: 'related' | 'distinct') =>
       invokeQuietly('context-rooms:update-duplicate-candidate', id, status),
-    previewMerge: (sourceRoomId: string, targetRoomId: string) =>
-      invokeQuietly('context-rooms:preview-merge', sourceRoomId, targetRoomId),
-    startMerge: (input) => invokeQuietly('context-rooms:start-merge', input),
-    previewMergeIntoNew: (sourceAId: string, sourceBId: string) =>
-      invokeQuietly('context-rooms:preview-merge-into-new', sourceAId, sourceBId),
-    startMergeIntoNew: (input: { sourceAId: string; sourceBId: string; title: string; kind?: string; previewHash: string; idempotencyKey: string; wait?: boolean }) =>
-      invokeQuietly('context-rooms:start-merge-into-new', input),
+    previewMerge: (sourceAId: string, sourceBId: string) =>
+      invokeQuietly('context-rooms:preview-merge', sourceAId, sourceBId),
+    startMerge: (input: { sourceAId: string; sourceBId: string; title: string; kind?: string; previewHash: string; idempotencyKey: string; wait?: boolean }) =>
+      invokeQuietly('context-rooms:start-merge', input),
+    suggestMergeNames: (input: { sourceAId: string; sourceBId: string; responseLanguage?: string }) =>
+      invokeQuietly('context-rooms:suggest-merge-names', input),
+    checkRoomDuplicates: (roomId: string) => invokeQuietly('context-rooms:check-room-duplicates', roomId),
     getMergeOperation: (id: string) => invokeQuietly('context-rooms:get-merge-operation', id),
     retryMerge: (id: string) => invokeQuietly('context-rooms:retry-merge', id),
     cancelMerge: (id: string) => invokeQuietly('context-rooms:cancel-merge', id),
@@ -669,6 +672,14 @@ const api: NxcoreDesktopApi = {
     proposeRooms: (input: { description: string; fileEntryIds: string[] }) =>
       invoke('knowledge:rooms:propose', input),
     revertDecision: (decisionId) => invoke('knowledge:route:revert', decisionId),
+    getPreferences: (): Promise<import('../shared/knowledge').KnowledgePreferencesDto> =>
+      invoke('knowledge:preferences:get'),
+    updatePreferenceContent: (content: string): Promise<import('../shared/knowledge').KnowledgePreferencesDto> =>
+      invoke('knowledge:preferences:user-content', content),
+    updatePreferenceSettings: (input: { learningEnabled?: boolean; injectionEnabled?: boolean }): Promise<import('../shared/knowledge').KnowledgePreferencesDto> =>
+      invoke('knowledge:preferences:settings', input),
+    refreshPreferences: (): Promise<import('../shared/knowledge').KnowledgePreferencesDto> =>
+      invoke('knowledge:preferences:refresh'),
     listRoomFiles: (roomId: string) => invoke('knowledge:files:list', roomId),
     readFileMarkdown: (fileId: string) => invoke('knowledge:files:markdown', fileId),
     revealFile: (fileId: string) => invoke('knowledge:files:reveal', fileId),

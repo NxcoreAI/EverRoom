@@ -309,6 +309,8 @@ export interface ContextRoomSnapshot {
   rooms: ContextRoomSnapshotItem[];
   deletedRooms: ContextRoomSnapshotItem[];
   updatedAt: string | null;
+  /** 待处理合并候选数（红点口径：open 且 high/medium/pending）；无重复检测服务时缺省。 */
+  duplicateOpenCount?: number;
 }
 
 export interface SaveContextRoomSnapshotInput {
@@ -608,11 +610,23 @@ export interface RoomMergeImpactCounts {
   crossRoomSessions: number;
 }
 
+/** 合并预演 sketch（M2-B）：确定性拼接两源 Room 的产物概览，非最终结果。 */
+export interface RoomMergeSketch {
+  background: string;
+  goal: string;
+  status: string;
+  materialsCount: number;
+  filesCount: number;
+  memoriesCount: number;
+  entitiesTop: string[];
+}
+
 export interface RoomMergePreview {
   sourceRoom: ContextRoomSnapshotItem;
   targetRoom: ContextRoomSnapshotItem;
   recommendedTargetRoomId: string;
   impact: RoomMergeImpactCounts;
+  sketch?: RoomMergeSketch;
   conflicts: string[];
   excluded: string[];
   previewHash: string;

@@ -190,6 +190,24 @@ export class KnowledgeGatewayBridge {
     return this.request(`/v1/knowledge/route/${encodeURIComponent(decisionId)}/revert`, { method: 'POST' })
   }
 
+  // ───────────────────── M3 知识整理偏好 ─────────────────────
+
+  getKnowledgePreferences(): Promise<import('../../shared/knowledge').KnowledgePreferencesDto> {
+    return this.request('/v1/knowledge/preferences')
+  }
+
+  updateKnowledgePreferenceContent(content: string): Promise<import('../../shared/knowledge').KnowledgePreferencesDto> {
+    return this.request('/v1/knowledge/preferences/user-content', { method: 'PUT', body: JSON.stringify({ content }) })
+  }
+
+  updateKnowledgePreferenceSettings(input: { learningEnabled?: boolean; injectionEnabled?: boolean }): Promise<import('../../shared/knowledge').KnowledgePreferencesDto> {
+    return this.request('/v1/knowledge/preferences/settings', { method: 'PUT', body: JSON.stringify(input) })
+  }
+
+  async refreshKnowledgePreferences(): Promise<import('../../shared/knowledge').KnowledgePreferencesDto> {
+    return this.request('/v1/knowledge/preferences/refresh', { method: 'POST' })
+  }
+
   uploadFile(input: {
     filename: string
     contentBase64: string

@@ -513,7 +513,7 @@ describe("PiAgentRuntime", () => {
       const reusedRunRequest = JSON.stringify(requestBodies[2]);
       expect(reusedRunRequest).toContain("本轮执行 ID：run-room-b");
       expect(reusedRunRequest).toContain("历史 run 的 readReceipt、operationId、patchId、工具结果和工具错误均已失效");
-      expect(reusedRunRequest).toContain("document_read 成功只是第一步");
+      expect(reusedRunRequest).toContain("不要先调用 document_read");
       expect(reusedRunRequest).toContain("不得要求用户提供 readReceipt、operationId、patchId、blockId 或 patch markdown");
       expect(reusedRunRequest).toContain("工具调用、文档全文、块标识、读取凭证、Operation 标识和工具错误均已移除");
       expect(reusedRunRequest).toContain("用户：创建文档");

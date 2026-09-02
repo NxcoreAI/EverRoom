@@ -101,6 +101,26 @@ export class WritingStyleWorker {
         await this.process(job);
       }
     }
+    // drain 周期兜底：行为信号增长不经过 extract 阈值（方案 §4.1/§10 缺口的修复），
+    // 在此捕获并按画像指纹落后入队 refresh。
+    try {
+      this.service.autoRefreshOnSignalGrowth();
+    } catch (error) {
+      this.logger.warn(
+        { event: "writing-style.signal.refresh_enqueue_failed", error: error instanceof Error ? error.message : String(error) },
+        "writing style signal growth refresh failed",
+      );
+    }
+    // 协作轮收口：安静 ≥5 分钟且有未蒸馏的新行为信号时，蒸馏 pending 洞察
+    // 供智能区横幅/记忆页确认（写作风格 v2）。
+    try {
+      await this.service.maybeDistillInsight();
+    } catch (error) {
+      this.logger.warn(
+        { event: "writing-style.insight.distill_failed", error: error instanceof Error ? error.message : String(error) },
+        "writing style insight distillation failed",
+      );
+    }
   }
 
   private retryReady(job: typeof jobs.$inferSelect, attempts: number): boolean {

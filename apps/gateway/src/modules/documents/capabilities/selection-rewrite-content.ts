@@ -341,7 +341,17 @@ export function createSelectionRewriteContentResolver(
       ? rawInput as Record<string, unknown>
       : {};
     const selectedText = typeof input.selectedText === "string" ? input.selectedText : "";
-    const resultText = invocation.result?.text;
+    // M2（doc-writer-subagent-plan §8）：doc-writer 带 outputSchema，替换文本在
+    // structuredOutput.replacementText；text 回退兼容迁移期存量的 context-room invocation。
+    const structured = invocation.result?.structuredOutput;
+    const structuredReplacement = structured !== null
+      && typeof structured === "object"
+      && !Array.isArray(structured)
+      ? (structured as Record<string, unknown>).replacementText
+      : null;
+    const resultText = typeof structuredReplacement === "string" && structuredReplacement
+      ? structuredReplacement
+      : invocation.result?.text;
     if (!selectedText || typeof resultText !== "string") return null;
     const document = getDocument(documentId);
     if (!document || document.roomId !== roomId || document.deletedAt) return null;

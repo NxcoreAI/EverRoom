@@ -449,7 +449,7 @@ describe("gateway server", () => {
     await app.close();
 
     expect(empty.statusCode).toBe(200);
-    expect(empty.json()).toEqual({ rooms: [], deletedRooms: [], updatedAt: null });
+    expect(empty.json()).toEqual({ rooms: [], deletedRooms: [], updatedAt: null, duplicateOpenCount: 0 });
     expect(saved.statusCode).toBe(200);
     expect(loaded.json()).toMatchObject({
       rooms: [{ id: "room-active", title: "活动 Room", kind: "项目" }],
@@ -496,7 +496,7 @@ describe("gateway server", () => {
       method: "POST",
       url: "/v1/context-rooms/merge-preview",
       headers,
-      payload: { sourceRoomId: createdRoomId, targetRoomId: "room-existing" },
+      payload: { sourceAId: createdRoomId, sourceBId: "room-existing" },
     });
     const previewHash = preview.json<{ previewHash: string }>().previewHash;
     const started = await app.inject({
@@ -504,8 +504,9 @@ describe("gateway server", () => {
       url: "/v1/context-rooms/merge-operations",
       headers,
       payload: {
-        sourceRoomId: createdRoomId,
-        targetRoomId: "room-existing",
+        sourceAId: createdRoomId,
+        sourceBId: "room-existing",
+        title: "合并后的校园生活",
         previewHash,
         idempotencyKey: "server-merge-test",
       },
@@ -533,7 +534,11 @@ describe("gateway server", () => {
     expect(preview.statusCode).toBe(200);
     expect(started.statusCode).toBe(200);
     expect(operation).toMatchObject({ status: "completed", commitReached: true });
-    expect(snapshot.rooms.map((room) => room.id)).toEqual(["room-existing"]);
+    // 新建式合并：两个旧 Room 双双退役，快照只剩承载内容的新 Room。
+    const snapshotRoomIds = snapshot.rooms.map((room) => room.id);
+    expect(snapshotRoomIds).toHaveLength(1);
+    expect(snapshotRoomIds).not.toContain(createdRoomId);
+    expect(snapshotRoomIds).not.toContain("room-existing");
   });
 
   it("supports the complete authenticated document CRUD lifecycle", async () => {

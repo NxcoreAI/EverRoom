@@ -6,6 +6,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SubagentInvocation, TiptapJsonContent } from "@nxcore/agent-contract";
 import type { DocumentCapabilityPlugin } from "../src/modules/documents/capabilities/types.js";
 import { createBuiltinDocumentCapabilityRegistry } from "../src/modules/documents/capabilities/builtins.js";
+import { DocumentReadAuthority } from "../src/modules/documents/capabilities/read-authority.js";
+import { createDocWriterDraftResolver } from "../src/modules/subagents/doc-writer-content.js";
 import {
   buildSelectionRewriteProposedContent,
   createSelectionRewriteContentResolver,
@@ -107,22 +109,20 @@ describe("document capability registry", () => {
     })).rejects.toMatchObject({ code: "DOCUMENT_TRASHED", statusCode: 409 })
   })
 
-  it("tells document creation agents to keep the page title out of the Markdown body", () => {
+  it("tells document agents the body comes from document_draft and keeps the page title out of the Markdown body", () => {
     const registry = createBuiltinDocumentCapabilityRegistry({} as never);
 
-    expect(registry.promptGuidelines().join(" ")).toMatch(
-      /title 是唯一页面标题.*append 只能生成正文.*正文主章节从 ## 开始.*2\.1 使用 ###/,
-    );
-    expect(registry.promptGuidelines().join(" ")).toMatch(
-      /目标读者.*连贯提纲.*简短引言.*围栏标注语言.*提交前通读全文.*重复.*矛盾/,
-    );
-    expect(registry.promptGuidelines().join(" ")).toMatch(
-      /Markdown 表格.*连续.*完整.*列数一致.*禁止输出空表.*全空行.*重复分隔线/,
-    );
-    expect(registry.listTools().find((tool) => tool.name === "context_room_write_append")?.description)
-      .toMatch(/title.*页面顶部 H1.*不属于 Markdown 正文.*任何一级标题.*2\.1.*###/);
-    expect(registry.listTools().find((tool) => tool.name === "context_room_write_append")?.description)
-      .toMatch(/一小段引言.*标题必须唯一.*代码块标注语言.*链接.*表格/);
+    // 写作规则已迁往 doc-writer（doc-writer-subagent-plan §6）：create/edit/continue
+    // 指引只保留路由、审阅语义与“内容凭 invocationId 引用转交”的编排纪律（M3/V2）。
+    const guidelines = registry.promptGuidelines().join(" ");
+    expect(guidelines).toMatch(/正文内容与标题必须来自 document_draft：write_begin 使用其返回的 title.*invocationId 与 chunkIndex.*引用转交/);
+    expect(guidelines).toMatch(/document_draft\(task=draft-edit\).*invocationId 与 itemIndex.*引用转交/);
+    expect(guidelines).toMatch(/draft-continue.*invocationId 与 itemIndex.*引用转交/);
+    // 标题/正文分离的机械底线保留在 append 工具 description（子 Agent 不可用时的降级护栏）。
+    const appendDescription = registry.listTools()
+      .find((tool) => tool.name === "context_room_write_append")?.description ?? "";
+    expect(appendDescription).toMatch(/invocationId 与 chunkIndex.*服务端从 doc-writer 结果转交/);
+    expect(appendDescription).toMatch(/不得包含标题或一级标题.*主章节从 ## 开始/);
   });
 
   it("rejects duplicate capability and tool registrations", () => {
@@ -929,15 +929,16 @@ async function createInvocationRewriteHarness(name: string) {
   const documents = new DocumentService(database.db, broker, undefined, applied);
   const operations = new DocumentOperationService(database.db, broker);
   const invocations = new Map<string, SubagentInvocation>();
-  // 以假 invocation 表装配真 resolver：授权判定对齐 isSelectionRewriteInvocationAuthorized 的核心规则。
+  // 以假 invocation 表装配真 resolver：授权判定对齐 isSelectionRewriteInvocationAuthorized
+  // 的核心规则（M2 后内容生产者为 doc-writer）。
   documents.resolveSelectionRewriteContent = createSelectionRewriteContentResolver({
     getInvocation: (invocationId) => invocations.get(invocationId) ?? null,
     isInvocationAuthorized: (invocation, roomId) => Boolean(invocation
-      && invocation.agentDefinitionId === "context-room"
+      && invocation.agentDefinitionId === "doc-writer"
       && invocation.source === "internal_workflow"
       && invocation.status === "completed"
       && (invocation.input as { roomId?: unknown }).roomId === roomId),
-    getDocument: (documentId) => documents.get(documentId),
+    getDocument: (documentId) => documents.get(documentId) ?? null,
   });
   const registry = createBuiltinDocumentCapabilityRegistry(documents, undefined, operations);
   disposables.push(() => database.sqlite.close());
@@ -956,14 +957,14 @@ function seedSelectionRewriteInvocation(
 ): SubagentInvocation {
   const invocation: SubagentInvocation = {
     id: randomUUID(),
-    agentDefinitionId: "context-room",
-    agentRevisionId: "context-room-rev-1",
+    agentDefinitionId: "doc-writer",
+    agentRevisionId: "doc-writer-rev-1",
     source: "internal_workflow",
     parentSessionId: null,
     parentRunId: null,
-    task: "改写文档选区",
+    task: "改写选中文本",
     input: {
-      task: "selection-rewrite",
+      task: "rewrite",
       roomId: input.roomId,
       documentName: "Rewrite target",
       selectedText: input.selectedText,
@@ -1078,6 +1079,40 @@ describe("selection-rewrite invocation 绑定（改写信任收口）", () => {
       originalText: "被选中的文本",
       replacementText: "**全新改写**",
     }));
+  });
+
+  it("doc-writer invocation 优先读 structuredOutput.replacementText，text 仅作迁移期回退", async () => {
+    const { documents, operations, registry, invocations } = await createInvocationRewriteHarness("selection-structured-output");
+    const document = await importRewriteTargetDocument(documents);
+    const invocation = seedSelectionRewriteInvocation(invocations, {
+      roomId: "room-invocation",
+      selectedText: "被选中的文本",
+      text: "doc-writer 的最终文本不再是替换片段",
+      instruction: "更简洁一点",
+    }, {
+      result: {
+        text: "doc-writer 的最终文本不再是替换片段",
+        structuredOutput: { kind: "rewrite", replacementText: "**结构化替换**", digest: { summary: "s" } },
+      },
+    });
+
+    const operation = await registry.start({
+      capabilityId: "document.selection-rewrite",
+      context: {
+        roomId: "room-invocation",
+        documentId: document.id,
+        sessionId: invocation.id,
+        runId: invocation.id,
+      },
+      input: { baseVersion: document.version, invocationId: invocation.id },
+    });
+
+    expect(operation.input).toMatchObject({
+      invocationId: invocation.id,
+      originalText: "被选中的文本",
+      replacementText: "**结构化替换**",
+    });
+    expect(operation.items[0]!.markdown).toBe("**结构化替换**");
   });
 
   it("用户编辑过替换文本时按用户文本重建并记 userModified（Agent 提案 + 用户修改）", async () => {
@@ -1387,5 +1422,337 @@ describe("selection-rewrite 内容重建（服务端）", () => {
       caught = error;
     }
     expect(caught).toMatchObject({ code: "SELECTION_NOT_FOUND" });
+  });
+});
+
+describe("共享读凭证与代发（doc-writer-subagent-plan §5.3）", () => {
+  it("document_draft 代发的 receipt 与 document_read 签发的满足同一个 requireLatest；未签发仍被拒", async () => {
+    const { documents, operations } = await createReviewHarness("shared-read-authority");
+    const document = await documents.import({
+      id: "doc-shared-reads",
+      roomId: "room-1",
+      title: "Shared reads target",
+      contentJson: {
+        type: "doc",
+        content: [
+          { type: "paragraph", content: [{ type: "text", text: "Rewrite this summary." }] },
+          { type: "paragraph", content: [{ type: "text", text: "Keep this detailed context unchanged. ".repeat(8) }] },
+        ],
+      },
+    });
+    // create-server 同款装配：registry 由共享 authority 构建（builtins 第 4 参）。
+    const sharedReads = new DocumentReadAuthority((documentId) => documents.get(documentId) ?? null);
+    const registry = createBuiltinDocumentCapabilityRegistry(documents, undefined, operations, sharedReads);
+    const targetId = documents.listBlocks(document.id).filter((block) => block.depth === 0)[0]!.blockId;
+    const topLevelBlockIds = documents.listBlocks(document.id)
+      .filter((block) => block.depth === 0)
+      .map((block) => block.blockId);
+
+    // 未签发：patch_begin 直接被 read-authority 拒绝。
+    const bareContext = { agentSessionId: "session-proxy", runId: "run-proxy", roomId: "room-1" };
+    await expect(registry.execute("context_room_patch_begin", {
+      documentId: document.id,
+      baseVersion: document.version,
+      kind: "edit",
+      summary: "should fail without read",
+    }, bareContext)).rejects.toThrow(/DOCUMENT_READ_REQUIRED|Read the current document/);
+
+    // document_draft 的代发路径：dispatch 返回后以主 run 名义签发（顶层块集）。
+    sharedReads.issue(bareContext, document.id, document.version, topLevelBlockIds);
+    const begun = await registry.execute("context_room_patch_begin", {
+      documentId: document.id,
+      baseVersion: document.version,
+      kind: "edit",
+      summary: "Replace the summary via proxy receipt",
+    }, bareContext);
+    const operationId = String(begun.structuredContent.operationId);
+    await registry.execute("context_room_patch_hunk", {
+      operationId,
+      sequence: 1,
+      operation: "replace",
+      target: { blockId: targetId },
+      markdown: "替换后的总结段落。",
+    }, bareContext);
+    await registry.execute("context_room_patch_commit", { operationId, finalSequence: 1 }, bareContext);
+    expect(operations.get(operationId)?.status).toBe("awaiting_review");
+
+    // 跨 run：另一 run 持有同 token 上下文也不满足（receipt 绑定 sessionId+runId）。
+    const otherRun = { agentSessionId: "session-proxy", runId: "run-other", roomId: "room-1" };
+    await expect(registry.execute("context_room_patch_begin", {
+      documentId: document.id,
+      baseVersion: document.version,
+      kind: "edit",
+      summary: "cross run",
+    }, otherRun)).rejects.toThrow(/DOCUMENT_READ_REQUIRED|Read the current document/);
+  });
+});
+
+describe("doc-writer 引用透传（doc-writer-subagent-plan M3/V2）", () => {
+  function seedDocWriterDraftInvocation(
+    invocations: Map<string, SubagentInvocation>,
+    overrides: {
+      runId?: string;
+      kind: "draft-create" | "draft-edit" | "draft-continue";
+      structuredOutput: Record<string, unknown>;
+    },
+  ): SubagentInvocation {
+    const now = Date.now();
+    const invocation: SubagentInvocation = {
+      id: randomUUID(),
+      agentDefinitionId: "doc-writer",
+      agentRevisionId: "doc-writer-rev-1",
+      source: "primary_agent",
+      parentSessionId: "session-draft",
+      parentRunId: overrides.runId ?? "run-draft",
+      task: "起草新文档正文",
+      input: { task: overrides.kind },
+      status: "completed",
+      result: { text: "", structuredOutput: overrides.structuredOutput },
+      errorCode: null,
+      errorMessage: null,
+      createdAt: new Date(now - 5_000).toISOString(),
+      startedAt: new Date(now - 4_000).toISOString(),
+      completedAt: new Date(now - 1_000).toISOString(),
+    };
+    invocations.set(invocation.id, invocation);
+    return invocation;
+  }
+
+  async function createDraftHarness(name: string) {
+    const harness = await createReviewHarness(name);
+    const invocations = new Map<string, SubagentInvocation>();
+    harness.documents.resolveDocWriterDraft = createDocWriterDraftResolver({
+      getInvocation: (invocationId) => invocations.get(invocationId) ?? null,
+    });
+    return { ...harness, invocations };
+  }
+
+  it("resolver：contentMarkdown 服务端分块拼接逐字节一致；continue 映射为文末 insert；越权/异源/未完成返回 null", () => {
+    const invocations = new Map<string, SubagentInvocation>();
+    const body = "## 第一节\n\n内容甲。\n\n## 第二节\n\n内容乙。";
+    const source = seedDocWriterDraftInvocation(invocations, {
+      kind: "draft-create",
+      structuredOutput: { kind: "draft-create", title: "T", contentMarkdown: body, digest: { summary: "s" } },
+    });
+    const resolve = createDocWriterDraftResolver({ getInvocation: (id) => invocations.get(id) ?? null });
+    const create = resolve(source.id, { runId: "run-draft" })!;
+    expect(create.chunks.join("")).toBe(body);
+    expect(create.title).toBe("T");
+
+    const continuation = seedDocWriterDraftInvocation(invocations, {
+      kind: "draft-continue",
+      structuredOutput: {
+        kind: "draft-continue",
+        baseVersion: 2,
+        appendChunks: ["\n\n## 新章节\n\n新内容。"],
+        digest: { summary: "s" },
+      },
+    });
+    const cont = resolve(continuation.id, { runId: "run-draft" })!;
+    expect(cont.baseVersion).toBe(2);
+    expect(cont.items).toEqual([{
+      operation: "insert",
+      target: { at: "end" },
+      markdown: "\n\n## 新章节\n\n新内容。",
+    }]);
+
+    // 授权矩阵：其他 run、非 doc-writer、非 primary_agent、未完成 → null。
+    expect(resolve(continuation.id, { runId: "run-other" })).toBeNull();
+    invocations.set("foreign-agent", {
+      ...continuation,
+      id: "foreign-agent",
+      agentDefinitionId: "content-analyst",
+    });
+    expect(resolve("foreign-agent", { runId: "run-draft" })).toBeNull();
+    invocations.set("internal-source", {
+      ...continuation,
+      id: "internal-source",
+      source: "internal_workflow",
+      parentRunId: null,
+    });
+    expect(resolve("internal-source", { runId: "run-draft" })).toBeNull();
+    invocations.set("running", { ...continuation, id: "running", status: "running", result: null });
+    expect(resolve("running", { runId: "run-draft" })).toBeNull();
+    expect(resolve("missing", { runId: "run-draft" })).toBeNull();
+  });
+
+  it("write_append 凭 invocationId+chunkIndex 转交正文并完成创建（参数不携带正文）", async () => {
+    const { documents, registry, invocations } = await createDraftHarness("draft-reference-create");
+    const context = { agentSessionId: "session-draft", runId: "run-draft", roomId: "room-1" };
+    const invocation = seedDocWriterDraftInvocation(invocations, {
+      kind: "draft-create",
+      structuredOutput: {
+        kind: "draft-create",
+        title: "引用创建",
+        appendChunks: ["## 第一节\n\n正文甲。", "\n\n## 第二节\n\n正文乙。"],
+        digest: { summary: "s" },
+      },
+    });
+    const started = await registry.execute("context_room_write_begin", {
+      mode: "create",
+      title: "引用创建",
+      format: "markdown",
+    }, context);
+    const operationId = String(started.structuredContent.operationId);
+    await registry.execute("context_room_write_append", {
+      operationId,
+      sequence: 1,
+      invocationId: invocation.id,
+      chunkIndex: 0,
+    }, context);
+    await registry.execute("context_room_write_append", {
+      operationId,
+      sequence: 2,
+      invocationId: invocation.id,
+      chunkIndex: 1,
+    }, context);
+    const committed = await registry.execute("context_room_write_commit", {
+      operationId,
+      finalSequence: 2,
+    }, context);
+    const documentId = String(committed.structuredContent.docId);
+    const document = documents.get(documentId);
+    expect(document).toMatchObject({ roomId: "room-1", title: "引用创建", version: 1, status: "active" });
+    expect(JSON.stringify(document?.contentJson)).toContain("正文甲");
+    expect(JSON.stringify(document?.contentJson)).toContain("正文乙");
+  });
+
+  it("write_append：text 与 invocationId 互斥；越界 chunkIndex 与越权 invocation 被拒", async () => {
+    const { registry, invocations } = await createDraftHarness("draft-reference-guard");
+    const context = { agentSessionId: "session-draft", runId: "run-draft", roomId: "room-1" };
+    const invocation = seedDocWriterDraftInvocation(invocations, {
+      kind: "draft-create",
+      structuredOutput: {
+        kind: "draft-create",
+        title: "T",
+        appendChunks: ["唯一一块"],
+        digest: { summary: "s" },
+      },
+    });
+    const started = await registry.execute("context_room_write_begin", {
+      mode: "create",
+      title: "T",
+      format: "markdown",
+    }, context);
+    const operationId = String(started.structuredContent.operationId);
+    await expect(registry.execute("context_room_write_append", {
+      operationId,
+      sequence: 1,
+      invocationId: invocation.id,
+      chunkIndex: 0,
+      text: "直写文本",
+    }, context)).rejects.toMatchObject({ code: "INVALID_REQUEST" });
+    await expect(registry.execute("context_room_write_append", {
+      operationId,
+      sequence: 1,
+      invocationId: invocation.id,
+      chunkIndex: 3,
+    }, context)).rejects.toMatchObject({ code: "DOC_WRITER_CHUNK_INDEX_OUT_OF_RANGE" });
+    const foreign = seedDocWriterDraftInvocation(invocations, {
+      runId: "run-other",
+      kind: "draft-create",
+      structuredOutput: {
+        kind: "draft-create",
+        title: "T",
+        appendChunks: ["另一 run 的草稿"],
+        digest: { summary: "s" },
+      },
+    });
+    await expect(registry.execute("context_room_write_append", {
+      operationId,
+      sequence: 1,
+      invocationId: foreign.id,
+      chunkIndex: 0,
+    }, context)).rejects.toMatchObject({ code: "DOC_WRITER_DRAFT_UNAVAILABLE" });
+  });
+
+  it("patch_hunk 凭 invocationId+itemIndex 转交 edit hunk 并进入审阅（直连字段不携带）", async () => {
+    const { documents, operations, registry, invocations } = await createDraftHarness("draft-reference-edit");
+    const context = { agentSessionId: "session-draft", runId: "run-draft", roomId: "room-1" };
+    const document = await documents.import({
+      id: "doc-reference-edit",
+      roomId: "room-1",
+      title: "Editable",
+      contentJson: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "替换这段总结。" }] }] },
+    });
+    const targetId = documents.listBlocks(document.id).filter((block) => block.depth === 0)[0]!.blockId;
+    await registry.execute("context_room_document_read", { documentId: document.id }, context);
+    const invocation = seedDocWriterDraftInvocation(invocations, {
+      kind: "draft-edit",
+      structuredOutput: {
+        kind: "draft-edit",
+        baseVersion: document.version,
+        hunks: [{ operation: "replace", target: { blockId: targetId }, markdown: "替换后的引用内容。" }],
+        digest: { summary: "s" },
+      },
+    });
+    const begun = await registry.execute("context_room_patch_begin", {
+      documentId: document.id,
+      baseVersion: document.version,
+      kind: "edit",
+      summary: "引用透传替换",
+    }, context);
+    const operationId = String(begun.structuredContent.operationId);
+    await registry.execute("context_room_patch_hunk", {
+      operationId,
+      sequence: 1,
+      invocationId: invocation.id,
+      itemIndex: 0,
+    }, context);
+    await registry.execute("context_room_patch_commit", { operationId, finalSequence: 1 }, context);
+    const prepared = operations.get(operationId)!;
+    expect(prepared.status).toBe("awaiting_review");
+    expect(prepared.items[0]).toMatchObject({
+      operation: "replace",
+      markdown: "替换后的引用内容。",
+      target: { blockId: targetId },
+    });
+  });
+
+  it("patch_hunk 凭 invocationId 转交 continue 追加块（insert / at:end）", async () => {
+    const { documents, operations, registry, invocations } = await createDraftHarness("draft-reference-continue");
+    const context = { agentSessionId: "session-draft", runId: "run-draft", roomId: "room-1" };
+    const document = await documents.import({
+      id: "doc-reference-continue",
+      roomId: "room-1",
+      title: "Continuable",
+      contentJson: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "既有内容。" }] }] },
+    });
+    await registry.execute("context_room_document_read", { documentId: document.id }, context);
+    const invocation = seedDocWriterDraftInvocation(invocations, {
+      kind: "draft-continue",
+      structuredOutput: {
+        kind: "draft-continue",
+        baseVersion: document.version,
+        appendChunks: ["## 续写章节\n\n新增内容。"],
+        digest: { summary: "s" },
+      },
+    });
+    const begun = await registry.execute("context_room_patch_begin", {
+      documentId: document.id,
+      baseVersion: document.version,
+      kind: "continue",
+      summary: "引用透传续写",
+    }, context);
+    const operationId = String(begun.structuredContent.operationId);
+    await registry.execute("context_room_patch_hunk", {
+      operationId,
+      sequence: 1,
+      invocationId: invocation.id,
+      itemIndex: 0,
+    }, context);
+    await registry.execute("context_room_patch_commit", { operationId, finalSequence: 2 }, context);
+    const prepared = operations.get(operationId)!;
+    // continuation 按解析出的节点逐个成项：标题 + 段落两块，target 链式续接。
+    expect(prepared.items[0]).toMatchObject({
+      operation: "insert",
+      markdown: "## 续写章节",
+      target: { at: "end" },
+    });
+    expect(prepared.items[1]).toMatchObject({
+      operation: "insert",
+      markdown: "新增内容。",
+      target: { blockId: expect.any(String), edge: "after" },
+    });
   });
 });

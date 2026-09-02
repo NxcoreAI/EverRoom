@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: context-room
 name: Context Room Agent
-description: 承接 Context Room 的创建整理、动态总览、简报再生成与划词改写
+description: 承接 Context Room 的创建整理、动态总览、简报再生成与合并命名
 mode: dispatch_only
 enabled: true
 
@@ -11,7 +11,7 @@ skills:
   - ./skills/room-enrichment
   - ./skills/room-overview
   - ./skills/brief-refresh
-  - ./skills/selection-rewrite
+  - ./skills/merge-name
 
 mcp: []
 

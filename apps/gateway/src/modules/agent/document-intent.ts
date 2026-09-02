@@ -3,8 +3,9 @@
  *
  * 消费方：
  * - `ambiguousDocumentTopic`（service.ts）：无 Room 上下文时的澄清卡片预检。
- * - `writing-style-gate.ts`：写作风格生成注入的信号③。
  * - intent 复检（service.ts 运行时执行上下文）。
+ * （写作风格生成注入的信号③消费方已随 writing-style-gate.ts 退役，
+ * 见 docs/doc-writer-subagent-plan.zh-CN.md §7。）
  *
  * 注意：只判定“这句话是否在要 Agent 写/建文档”，不判定 Room 归属。
  */

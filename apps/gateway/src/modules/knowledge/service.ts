@@ -433,6 +433,22 @@ export class KnowledgeService {
   private promotionDraining = false;
   private promotionDrainRequested = false;
   private roomDuplicateIndexTrigger: (() => void) | null = null;
+  /** M3 知识整理偏好（注入摘要与统计/洞察宿主），装配后生效。 */
+  private knowledgePreferences: import("./preferences.js").KnowledgePreferences | null = null;
+
+  setKnowledgePreferences(preferences: import("./preferences.js").KnowledgePreferences): void {
+    this.knowledgePreferences = preferences;
+  }
+
+  /** M3：整理偏好实例（装配后非空；REST 层据此判定 503）。 */
+  getKnowledgePreferences(): import("./preferences.js").KnowledgePreferences | null {
+    return this.knowledgePreferences;
+  }
+
+  /** M3：整理偏好的 LLM 提供者入口（结构兼容 chatForPreferences；replaceLlm 后自动跟随）。 */
+  currentLlm(): import("./llm.js").KnowledgeLlm | null {
+    return this.llm;
+  }
 
   constructor(
     private readonly db: GatewayDatabase,
@@ -471,6 +487,8 @@ export class KnowledgeService {
         mergeAutoDice: config.mergeAutoDice,
         mergeJudgeDice: config.mergeJudgeDice,
       },
+      // M3 注入点：路由抽取的建议性偏好摘要（开关关闭时空串）。
+      preferenceDigest: () => this.knowledgePreferences?.digestForInjection() ?? "",
       logger: {
         info: (bindings, message) => this.logger.info(bindings, message),
         warn: (bindings, message) => this.logger.warn(bindings, message),
@@ -662,11 +680,16 @@ export class KnowledgeService {
 
   /** Room duplicate service reuses the existing identity judge; it never auto-merges Rooms. */
   async judgeRoomIdentity(
-    a: { name: string; aliases: string[]; kind: string; evidenceSamples: string[] },
-    b: { name: string; aliases: string[]; kind: string; evidenceSamples: string[] },
+    a: { name: string; aliases: string[]; kind: string; evidenceSamples: string[]; priorVerdictNote?: string },
+    b: { name: string; aliases: string[]; kind: string; evidenceSamples: string[]; priorVerdictNote?: string },
   ): Promise<{ same: boolean; reason: string }> {
     if (!this.llm) throw new Error("knowledge_identity_judge_unavailable");
-    return this.llm.judgeEntityIdentity(a, b);
+    // M3 注入点：整理偏好摘要（建议性；注入开关关闭返回空串 → 不注入，行为回到 M2）。
+    const digest = this.knowledgePreferences?.digestForInjection() || undefined;
+    return this.llm.judgeEntityIdentity(
+      { ...a, ...(digest ? { preferenceDigest: digest } : {}) },
+      b,
+    );
   }
 
   /** Page count is used only by the user-facing merge impact preview. */
@@ -1742,7 +1765,9 @@ export class KnowledgeService {
       id: roomId,
       title: registration.name,
       kind: entity.kind,
-      origin: "auto",
+      // origin 出生即 user：确认晋升=用户亲手点的，「认领」环节已废除（2026-09-02）；
+      // 历史 auto 行由迁移 0051 统一翻为 user。
+      origin: "user",
       summary: registration.summary || null,
       aliases: registration.aliases.length > 0 ? registration.aliases : null,
       entityId: entity.id,

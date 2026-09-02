@@ -72,6 +72,35 @@ export function writingStyleRoutes(service: WritingStyleService): FastifyPluginA
       return { documents: service.listCorpus() };
     });
 
+    // 协作轮洞察（v2）：pending 供智能区横幅轮询；snoozed 可回记忆页找回确认。
+    app.get("/v1/writing-style/insights", { schema: { tags: ["writing-style"] } }, async () => {
+      return { insights: service.listInsights() };
+    });
+
+    app.post("/v1/writing-style/insights/:id/snooze", { schema: { tags: ["writing-style"] } }, async (request, reply) => {
+      const { id } = request.params as { id: string };
+      try {
+        return service.snoozeInsight(id);
+      } catch (error) {
+        if (error instanceof WritingStyleServiceError) {
+          return reply.status(errorStatus(error.code)).send({ error: error.code, message: error.message });
+        }
+        throw error;
+      }
+    });
+
+    app.post("/v1/writing-style/insights/:id/confirm", { schema: { tags: ["writing-style"] } }, async (request, reply) => {
+      const { id } = request.params as { id: string };
+      try {
+        return service.confirmInsight(id);
+      } catch (error) {
+        if (error instanceof WritingStyleServiceError) {
+          return reply.status(errorStatus(error.code)).send({ error: error.code, message: error.message });
+        }
+        throw error;
+      }
+    });
+
     app.post("/v1/writing-style/documents/:documentId/exclusion", { schema: { tags: ["writing-style"], body: ExclusionBody } }, async (request, reply) => {
       const { documentId } = request.params as { documentId: string };
       try {

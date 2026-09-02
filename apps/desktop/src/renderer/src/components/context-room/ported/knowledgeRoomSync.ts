@@ -24,20 +24,25 @@ export function shouldDeleteRoomFromKnowledge(room: ContextRoomRecord): boolean 
   return !isDemoContextRoomId(room.id)
 }
 
-export function createAutoContextRoom(dto: KnowledgeRoomDto): ContextRoomRecord {
+/**
+ * 网关知识 Room → 本地记录。晋升创建的 Room 出生即 user——确认晋升本来就是
+ * 用户亲手点的，「认领」环节已废除（2026-09-02）；origin=auto 仅对迁移前的
+ * 遗留行保留读取兼容，且不再附带「等待认领」占位文案。
+ */
+export function createKnowledgeContextRoom(dto: KnowledgeRoomDto): ContextRoomRecord {
   const id = dto.id
   return createEmptyContextRoom({
     id,
     title: dto.title,
     kind: coerceKnowledgeKind(dto.kind),
-    origin: 'auto',
-    background: dto.summary || '资料归类时判定为新主题，自动创建的 Room。',
-    goal: '确认归属并补充背景。',
-    briefStatus: '自动创建，等待认领。',
+    origin: dto.origin === 'auto' ? 'auto' : 'user',
+    background: dto.summary || '由知识推荐确认创建的 Room。',
+    goal: '',
+    briefStatus: '',
   })
 }
 
-export function mergeAutoKnowledgeRooms(
+export function mergeKnowledgeRooms(
   rooms: ContextRoomRecord[],
   deletedRooms: ContextRoomRecord[],
   incoming: KnowledgeRoomDto[],
@@ -48,6 +53,6 @@ export function mergeAutoKnowledgeRooms(
   ])
   const additions = incoming
     .filter((room) => !knownIds.has(room.id))
-    .map(createAutoContextRoom)
+    .map(createKnowledgeContextRoom)
   return additions.length > 0 ? [...additions, ...rooms] : rooms
 }

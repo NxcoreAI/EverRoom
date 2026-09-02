@@ -18,6 +18,10 @@ export interface WritingStyleBehaviorEvidence {
   averageLenDeltaRatio: number | null;
   exclamationDelta: number;
   revisionSamples: Array<{ before: string; after: string }>;
+  /** 审阅层拒绝统计（review_decision 信号）：拒绝/接受的提案项数与拒绝摘录。 */
+  reviewRejectedCount: number;
+  reviewAcceptedCount: number;
+  reviewSamples: string[];
 }
 
 export interface WritingStyleEvidence {
@@ -71,7 +75,7 @@ function buildPrompt(input: WritingStyleEvidence): string {
     ...(input.evidenceLines.length > 0
       ? input.evidenceLines.map((line) => `- ${line}`)
       : ["（无）"]),
-    ...(input.behavior && (input.behavior.instructionCounts.length > 0 || input.behavior.revisionCount > 0) ? [
+    ...(input.behavior && (input.behavior.instructionCounts.length > 0 || input.behavior.revisionCount > 0 || input.behavior.reviewRejectedCount > 0) ? [
       "",
       "用户行为证据（用户如何要求 Agent 修改、以及亲自改 Agent 输出的方向）——这是最强信号，优先于统计：",
       ...input.behavior.instructionCounts.map((entry) => `- 修改指令「${entry.label}」出现 ${entry.count} 次`),
@@ -83,6 +87,10 @@ function buildPrompt(input: WritingStyleEvidence): string {
           `  - Agent 原文：${sample.before}`,
           `  - 用户改为：${sample.after}`,
         ]),
+      ] : []),
+      ...(input.behavior.reviewRejectedCount > 0 ? [
+        `- 用户在审阅中拒绝过 ${input.behavior.reviewRejectedCount} 个 Agent 修改提案项（另接受 ${input.behavior.reviewAcceptedCount} 项）`,
+        ...input.behavior.reviewSamples.slice(0, 2).map((sample) => `- 被拒绝的提案摘录：${sample}`),
       ] : []),
     ] : []),
     "",
@@ -134,6 +142,80 @@ export function parseQualitative(content: string): WritingStyleQualitative {
   };
 }
 
+/** 协作轮洞察蒸馏的输入证据（§4.1 行为信号的一轮切片）。 */
+export interface WritingStyleRoundEvidence {
+  /** 指令原话（≤8 条，截断）。 */
+  instructions: string[];
+  /** 手改对（≤3 对，摘录已截断）。 */
+  revisionSamples: Array<{ before: string; after: string }>;
+  /** 手改方向：平均长度变化比（负=改短）与感叹号净变化。 */
+  averageLenDeltaRatio: number | null;
+  exclamationDelta: number;
+  /** 审阅拒绝统计。 */
+  reviewRejectedCount: number;
+  reviewAcceptedCount: number;
+  reviewSamples: string[];
+}
+
+const INSIGHT_CONTRACT = [
+  "输出一个 JSON 对象（不要 Markdown 围栏、解释或额外字段），结构：",
+  '{"preferences": string[]}',
+  "preferences=从这轮协作行为归纳出的用户写作/协作偏好，2-4 条；每条一句完整的话（≤40 字），陈述稳定的偏好结论。",
+  "硬约束：总结偏好而不是罗列次数、复述指令或转述样例；两条证据指向同一偏好时合并为一条；证据不足以得出任何偏好时返回空数组；全部用中文。",
+].join("\n");
+
+function buildRoundPrompt(input: WritingStyleRoundEvidence): string {
+  const lines: string[] = [
+    "任务：从用户与 Agent 的一轮文档协作行为（用户下的修改指令、亲手做的修改、审阅时的取舍）归纳用户的写作偏好（内部工作流，不面向用户）。",
+    "",
+    INSIGHT_CONTRACT,
+    "",
+    "本轮行为证据：",
+    ...input.instructions.map((instruction) => `- 修改指令原话：「${instruction}」`),
+    ...(input.revisionSamples.length > 0 ? [
+      ...input.revisionSamples.flatMap((sample) => [
+        `- 用户亲手把 Agent 输出的一段改为：`,
+        `  - 原文：${sample.before}`,
+        `  - 改为：${sample.after}`,
+      ]),
+    ] : []),
+    ...(input.averageLenDeltaRatio !== null
+      ? [`- 用户亲手修改的平均长度变化：${Math.round(input.averageLenDeltaRatio * 100)}%（负=改短）`]
+      : []),
+    ...(input.exclamationDelta !== 0 ? [`- 感叹号净变化：${input.exclamationDelta}`] : []),
+    ...(input.reviewRejectedCount > 0 ? [
+      `- 审阅取舍：拒绝了 ${input.reviewRejectedCount} 个修改提案项、接受 ${input.reviewAcceptedCount} 项`,
+      ...input.reviewSamples.map((sample) => `  - 被拒绝的提案摘录：${sample}`),
+    ] : []),
+    "",
+    "请给出偏好 JSON。",
+  ];
+  return lines.join("\n");
+}
+
+/** 校验 + 收敛洞察输出（宽松解析：剥围栏、定位 JSON 主体；preferences ≤4 条、每条 ≤60 字）。 */
+export function parseInsight(content: string): string[] {
+  const stripped = content.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+  const start = stripped.indexOf("{");
+  const end = stripped.lastIndexOf("}");
+  if (start < 0 || end <= start) throw new WritingStyleLlmError("no JSON object found");
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stripped.slice(start, end + 1));
+  } catch (error) {
+    throw new WritingStyleLlmError(`invalid JSON: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (typeof parsed !== "object" || parsed === null) throw new WritingStyleLlmError("payload is not an object");
+  const preferences = (parsed as Record<string, unknown>).preferences;
+  if (!Array.isArray(preferences)) throw new WritingStyleLlmError("preferences 缺失或不是数组");
+  return preferences
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0)
+    .map((item) => (item.length <= 60 ? item : item.slice(0, 60)))
+    .slice(0, 4);
+}
+
 /**
  * 直接调用内部 runtime（对齐 knowledge 模块 this.llm 模式，方案 §6）：
  * 不建 dispatch_only agent bundle，runtime 由 runtime-factory 构建隔离的
@@ -156,6 +238,27 @@ export class WritingStyleLlm {
       });
       try {
         return parseQualitative(content.slice(0, MAX_RESPONSE_CHARS));
+      } catch (error) {
+        lastError = error instanceof Error ? error.message : String(error);
+      }
+    }
+    throw new WritingStyleLlmError(`LLM response unparsable: ${lastError}`);
+  }
+
+  /** 协作轮洞察蒸馏：把一轮行为信号归纳为偏好陈述（§4.1/用户决策：总结偏好而非计数）。 */
+  async summarizeBehaviorRound(input: WritingStyleRoundEvidence): Promise<string[]> {
+    let lastError = "";
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const prompt = lastError
+        ? `${buildRoundPrompt(input)}\n\n上一次输出无法解析：${lastError}\n请严格只输出合法 JSON。`
+        : buildRoundPrompt(input);
+      const content = await invokeRuntime(this.runtime, prompt, {
+        sessionId: `writing-style-insight:${randomUUID()}`,
+        pageLabel: "Writing style internal workflow",
+        timeoutMs: CHAT_TIMEOUT_MS,
+      });
+      try {
+        return parseInsight(content.slice(0, MAX_RESPONSE_CHARS));
       } catch (error) {
         lastError = error instanceof Error ? error.message : String(error);
       }

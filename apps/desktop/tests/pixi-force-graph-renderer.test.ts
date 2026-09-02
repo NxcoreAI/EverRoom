@@ -575,11 +575,15 @@ describe('PixiForceGraphRenderer', () => {
       positions: new Float32Array(Array.from({ length: 40 }, (_, index) => index * 5)),
     })
     const viewport = fakes.viewports[0]!
+    // 可视矩形只随相机变换变化（真实 Viewport 由 transform 推导 bounds）：
+    // 每次裁剪变化伴随 scale 变化，帧脏检查据此触发重画。
+    viewport.scale.x = 0.9
     viewport.visibleBounds = { x: 0, y: 0, width: 500, height: 500 }
     fakes.ticker.tick()
     expect(renderer.activeLabelCount()).toBe(2)
     expect(renderer.createdLabelCount()).toBe(2)
 
+    viewport.scale.x = 1
     viewport.visibleBounds = { x: 1000, y: 1000, width: 10, height: 10 }
     fakes.ticker.tick()
     expect(renderer.activeLabelCount()).toBe(0)
@@ -703,19 +707,22 @@ describe('PixiForceGraphRenderer', () => {
     expect(fakes.texts).toHaveLength(100)
   })
 
-  it('reads shared coordinates on each shared ticker tick and strokes all edges once', async () => {
+  it('reads shared coordinates when the revision advances and strokes all edges once', async () => {
     const fakes = createFakes()
     const positions = new Float32Array([10, 20, 30, 40, 50, 60])
+    let revision = 0
     const renderer = await createPixiForceGraphRenderer({
       dependencies: fakes.dependencies,
       edges: [{ source: 0, target: 1 }, { source: 1, target: 2 }],
       host: createHost(),
       nodes: [{}, {}, {}],
       positions,
+      revision: () => revision,
     })
     const edgeGraphics = fakes.graphics.find((item) => !item.generated)!
     edgeGraphics.operations.length = 0
     positions.set([11, 22, 33, 44, 55, 66])
+    revision = 2
     fakes.ticker.tick()
 
     expect(renderer.sprites.map((sprite) => [sprite.x, sprite.y])).toEqual([
@@ -732,6 +739,45 @@ describe('PixiForceGraphRenderer', () => {
       'moveTo:33,44',
       'lineTo:55,66',
     ])
+  })
+
+  it('skips redrawing while coordinates, camera and hover state are unchanged', async () => {
+    const fakes = createFakes()
+    const positions = new Float32Array([10, 20, 30, 40, 50, 60])
+    let revision = 2
+    const renderer = await createPixiForceGraphRenderer({
+      dependencies: fakes.dependencies,
+      edges: [{ source: 0, target: 1 }, { source: 1, target: 2 }],
+      host: createHost(),
+      nodes: [{}, {}, {}],
+      positions,
+      revision: () => revision,
+    })
+    const edgeGraphics = fakes.graphics.find((item) => !item.generated)!
+    edgeGraphics.operations.length = 0
+
+    // 静止帧：revision、悬停、相机均无变化，整段重画被跳过。
+    fakes.ticker.tick()
+    expect(edgeGraphics.operations).toEqual([])
+    // 坐标原地改动但没有 revision 前进（共享内存未发布）：同样跳过，不读过期值。
+    positions.set([11, 22, 33, 44, 55, 66])
+    fakes.ticker.tick()
+    expect(renderer.sprites.map((sprite) => [sprite.x, sprite.y])).toEqual([
+      [10, 20],
+      [30, 40],
+      [50, 60],
+    ])
+    expect(edgeGraphics.operations).toEqual([])
+
+    // revision 前进（Worker 发布新坐标）：恢复重画，精灵与边都更新。
+    revision = 4
+    fakes.ticker.tick()
+    expect(renderer.sprites.map((sprite) => [sprite.x, sprite.y])).toEqual([
+      [11, 22],
+      [33, 44],
+      [55, 66],
+    ])
+    expect(edgeGraphics.operations).toContain('clear')
   })
 
   it('skips an in-progress shared-memory revision and updates on the next stable revision', async () => {

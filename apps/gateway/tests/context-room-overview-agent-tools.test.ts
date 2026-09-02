@@ -72,8 +72,11 @@ describe('Context Room overview Agent tools', () => {
 
     expect(bundle.tools).toContain('context_room_overview_regenerate')
     expect(bundle.tools).toContain('context_room_correction_apply_citation')
+    expect(bundle.tools).toContain('room_correction_draft')
     expect(bundle.systemPrompt).toContain('从 pendingCorrections 取得当前会话的精确 proposal id')
-    expect(bundle.systemPrompt).toContain('不得要求二次确认')
+    // 纠正计算已归 room-corrector 子 Agent：主 Agent 逐字转发，不再自带全套编辑规则。
+    expect(bundle.systemPrompt).toContain('room_correction_draft(task=citation-correction)')
+    expect(bundle.systemPrompt).toContain('edits 逐字转发给 context_room_correction_apply_citation')
   })
 
   it('returns applied corrections and only the current session pending proposals', async () => {
@@ -90,6 +93,8 @@ describe('Context Room overview Agent tools', () => {
     const payload = JSON.parse(result.content)
 
     expect(payload.corrections).toEqual([applied])
+    // 瘦身：已应用纠正只回最近 20 条 + 历史总数，不再全量进上下文。
+    expect(payload.appliedCorrectionCount).toBe(1)
     expect(payload.pendingCorrections).toEqual([current])
     expect(JSON.stringify(payload)).not.toContain('proposal-other')
     expect(JSON.stringify(payload)).not.toContain('correction-revoked')

@@ -13,6 +13,22 @@ vi.mock('../src/renderer/src/i18n/LocaleContext', async (importOriginal) => {
 })
 
 import type { RoomMail, RoomMailDetail } from '@nxcore/agent-contract'
+import type { ReactNode } from 'react'
+
+// 无 DOM 环境：邮件行尾的归入纠正菜单（Radix DropdownMenu）替换为透传，
+// 本文件只测邮件行本身；纠正流程在 context-room-resource-correction.test.tsx 覆盖。
+vi.mock('@radix-ui/react-dropdown-menu', () => {
+  const passthrough = ({ children }: { children?: ReactNode }) => children ?? null
+  return {
+    Root: passthrough,
+    Trigger: ({ children }: { children?: ReactNode }) => children ?? null,
+    Portal: passthrough,
+    Content: passthrough,
+    Item: ({ children, onSelect }: { children?: ReactNode; onSelect?: () => void }) => (
+      <button type="button" onClick={onSelect}>{children}</button>
+    ),
+  }
+})
 
 import { createContextRoomFixture } from './context-room-fixture'
 import { MailsPane } from '../src/renderer/src/components/context-room/ported/components/detail-panels/ActivityPanes'
@@ -59,7 +75,7 @@ async function renderMailsPane(
   let renderer: TestRenderer.ReactTestRenderer | null = null
   await act(async () => {
     renderer = TestRenderer.create(
-      <MailsPane room={room} onSelect={() => {}} onUpdateRoom={() => {}} />,
+      <MailsPane room={room} rooms={[]} onSelect={() => {}} onUpdateRoom={() => {}} />,
     )
   })
   return { renderer: renderer!, listMails, readMail }
@@ -174,7 +190,7 @@ describe('邮箱面板：连接器邮件叠加', () => {
     let renderer: TestRenderer.ReactTestRenderer | null = null
     await act(async () => {
       renderer = TestRenderer.create(
-        <MailsPane room={room} onSelect={() => {}} onUpdateRoom={() => {}} />,
+        <MailsPane room={room} rooms={[]} onSelect={() => {}} onUpdateRoom={() => {}} />,
       )
     })
     expect(mailTitles(renderer!)).toEqual(['本地邮件'])

@@ -9,8 +9,7 @@ import { createDatabase, type DatabaseClient } from "../src/infrastructure/datab
 import { documents, roomDocumentLinks, documentVersions } from "../src/infrastructure/database/schema.js";
 import { WritingStyleService } from "../src/modules/writing-style/service.js";
 import { composeWritingStyleBlock } from "../src/modules/writing-style/compose.js";
-import { shouldInjectGenerationWritingStyle } from "../src/modules/agent/writing-style-gate.js";
-import { ContextRoomAgentDispatcher } from "../src/modules/context-rooms/room-agent.js";
+import { DocWriterAgentDispatcher } from "../src/modules/subagents/doc-writer-dispatcher.js";
 import type { SubagentOrchestrator } from "../src/modules/subagents/orchestrator.js";
 
 const temporaryDirectories: string[] = [];
@@ -114,7 +113,7 @@ describe("WritingStyleService 生成注入段", () => {
   });
 });
 
-describe("ContextRoomAgentDispatcher 划词改写注入", () => {
+describe("DocWriterAgentDispatcher 划词改写注入（M2 迁移：rewrite 归 doc-writer）", () => {
   function stubOrchestrator(): { orchestrator: SubagentOrchestrator; inputs: Array<Record<string, unknown>> } {
     const inputs: Array<Record<string, unknown>> = [];
     const orchestrator = {
@@ -130,40 +129,41 @@ describe("ContextRoomAgentDispatcher 划词改写注入", () => {
     return { orchestrator, inputs };
   }
 
-  it("selection-rewrite 任务注入 writingStyle，其他任务不注入", async () => {
+  it("rewrite dispatch 注入 writingStyle 且改派 doc-writer", async () => {
     const { orchestrator, inputs } = stubOrchestrator();
-    const dispatcher = new ContextRoomAgentDispatcher(orchestrator, {
+    const dispatcher = new DocWriterAgentDispatcher(orchestrator, {
       getGenerationPromptSection: () => "<writing_style>\n用户明确要求：少用感叹号\n</writing_style>",
     });
-    await dispatcher.dispatchDetached({ task: "selection-rewrite", taskInput: { selectedText: "原文" } });
-    await dispatcher.dispatchDetached({ task: "room-overview", taskInput: { roomId: "room-1" } });
-    expect((inputs[0]?.input as Record<string, unknown>).writingStyle).toContain("少用感叹号");
-    expect(inputs[1]?.input).not.toHaveProperty("writingStyle");
+    await dispatcher.dispatchDetached({ task: "rewrite", taskInput: { selectedText: "原文" } });
+    const dispatched = inputs[0]!;
+    expect(dispatched).toMatchObject({ agentId: "doc-writer", source: "internal_workflow" });
+    expect((dispatched.input as Record<string, unknown>).writingStyle).toContain("少用感叹号");
+    expect((dispatched.input as Record<string, unknown>).task).toBe("rewrite");
   });
 
   it("provider 返回 null 时不注入字段", async () => {
     const { orchestrator, inputs } = stubOrchestrator();
-    const dispatcher = new ContextRoomAgentDispatcher(orchestrator, {
+    const dispatcher = new DocWriterAgentDispatcher(orchestrator, {
       getGenerationPromptSection: () => null,
     });
-    await dispatcher.dispatchDetached({ task: "selection-rewrite", taskInput: { selectedText: "原文" } });
+    await dispatcher.dispatchDetached({ task: "rewrite", taskInput: { selectedText: "原文" } });
     expect(inputs[0]?.input).not.toHaveProperty("writingStyle");
   });
 
-  it("注入 writingStyle 后派发载荷必须通过 agent input schema 真实校验（回归：2026-09-01 线上 subagent_input_schema_invalid）", async () => {
+  it("注入 writingStyle 后派发载荷必须通过 doc-writer input schema 真实校验（回归：2026-09-01 线上 subagent_input_schema_invalid）", async () => {
     const schema = JSON.parse(readFileSync(
-      join(process.cwd(), "..", "..", "agents", "context-room", "schemas", "input.schema.json"),
+      join(process.cwd(), "..", "..", "agents", "doc-writer", "schemas", "input.schema.json"),
       "utf8",
     )) as Record<string, unknown>;
     const ajv = new Ajv({ strict: false, allErrors: true });
     const validate = ajv.compile(schema);
     const { orchestrator, inputs } = stubOrchestrator();
-    const dispatcher = new ContextRoomAgentDispatcher(orchestrator, {
+    const dispatcher = new DocWriterAgentDispatcher(orchestrator, {
       getGenerationPromptSection: () => "<writing_style>\n少用感叹号\n</writing_style>",
     });
-    // 覆盖 REST 路由会传入的全部字段（routes.ts selection-rewrite body 的完整形态）。
+    // 覆盖 REST 路由会传入的全部字段（routes.ts selection-rewrite body 的完整形态，M2 改派后）。
     await dispatcher.dispatchDetached({
-      task: "selection-rewrite",
+      task: "rewrite",
       taskInput: {
         selectedText: "原文",
         instruction: "更正式一点",
@@ -181,36 +181,53 @@ describe("ContextRoomAgentDispatcher 划词改写注入", () => {
   });
 });
 
-describe("shouldInjectGenerationWritingStyle 四信号门控（§7.2 修订）", () => {
-  it("纯问答轮（四信号全空）不注入", () => {
-    expect(shouldInjectGenerationWritingStyle({ prompt: "今天天气怎么样", context: null }, false)).toBe(false);
+describe("document_draft 组装注入（doc-writer-subagent-plan §7 迁移：四信号门已退役）", () => {
+  it("注入 writingStyle 后 draft-edit 组装载荷必须通过 doc-writer 真实 input schema", () => {
+    const schema = JSON.parse(readFileSync(
+      join(process.cwd(), "..", "..", "agents", "doc-writer", "schemas", "input.schema.json"),
+      "utf8",
+    )) as Record<string, unknown>;
+    const ajv = new Ajv({ strict: false, allErrors: true });
+    const validate = ajv.compile(schema);
+    // document_draft handler 对 draft-edit 会组装的完整字段形态（§4 步骤 1）。
+    const payload = {
+      task: "draft-edit",
+      instruction: "把结论部分改得更果断",
+      documentId: "doc-1",
+      documentName: "周报",
+      documentMarkdown: "# 周报\n\n## 本周进展\n\n完成了文档写作子 Agent 的接线。",
+      blockIndex: [{ blockId: "b1", type: "heading", ordinal: 1, textPreview: "周报" }],
+      outline: ["周报", "本周进展"],
+      baseVersion: 3,
+      writingStyle: "<writing_style>\n冷静克制，多用短句。\n</writing_style>",
+      responseLanguage: "zh-CN",
+    };
+    expect(validate(payload)).toBe(true);
   });
 
-  it("编辑器有活动文档时注入", () => {
-    expect(shouldInjectGenerationWritingStyle(
-      { prompt: "接着说", context: { activeDocument: { roomId: "room-1" } } },
-      false,
-    )).toBe(true);
-  });
-
-  it("带选区时注入", () => {
-    expect(shouldInjectGenerationWritingStyle(
-      { prompt: "这段什么意思", context: { selectedText: "某段原文" } },
-      false,
-    )).toBe(true);
-  });
-
-  it("写作意图启发式命中时注入（无编辑器上下文）", () => {
-    expect(shouldInjectGenerationWritingStyle({ prompt: "帮我写一份会议纪要文档", context: null }, false)).toBe(true);
-  });
-
-  it("否定式与咨询式写作请求不注入", () => {
-    expect(shouldInjectGenerationWritingStyle({ prompt: "不要帮我写文档", context: null }, false)).toBe(false);
-    expect(shouldInjectGenerationWritingStyle({ prompt: "如何创建文档", context: null }, false)).toBe(false);
-  });
-
-  it("本会话已用过写作工具时注入（无论本轮问什么）", () => {
-    expect(shouldInjectGenerationWritingStyle({ prompt: "再补充一点背景", context: null }, true)).toBe(true);
+  it("draft-create 与 rewrite 载荷同样通过 schema（material 与选区字段形态）", () => {
+    const schema = JSON.parse(readFileSync(
+      join(process.cwd(), "..", "..", "agents", "doc-writer", "schemas", "input.schema.json"),
+      "utf8",
+    )) as Record<string, unknown>;
+    const ajv = new Ajv({ strict: false, allErrors: true });
+    const validate = ajv.compile(schema);
+    expect(validate({
+      task: "draft-create",
+      instruction: "起草一份接口设计文档",
+      material: "素材摘录……",
+      roomTitle: "工程实践",
+      writingStyle: "<writing_style>\n短句收尾。\n</writing_style>",
+    })).toBe(true);
+    expect(validate({
+      task: "rewrite",
+      instruction: "更正式一点",
+      selectedText: "原文片段",
+      contextBefore: "之前的上下文",
+      contextAfter: "之后的上下文",
+      blockType: "paragraph",
+      writingStyle: "<writing_style>\n短句收尾。\n</writing_style>",
+    })).toBe(true);
   });
 });
 

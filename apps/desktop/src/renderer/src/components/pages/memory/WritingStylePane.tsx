@@ -4,6 +4,7 @@ import { useLocale } from '@/i18n/LocaleContext'
 
 import type {
   WritingStyleCorpusEntryDto,
+  WritingStyleInsightDto,
   WritingStyleProfileDto,
   WritingStyleSettingsDto,
 } from '../../../../../shared/writing-style'
@@ -30,6 +31,9 @@ export function WritingStylePane() {
   const profile = useAsyncData<WritingStyleProfileDto>(() => window.nxcore!.writingStyle.profile())
   const settings = useAsyncData<WritingStyleSettingsDto>(() => window.nxcore!.writingStyle.settings())
   const content = useAsyncData(() => window.nxcore!.writingStyle.userContent())
+  const insights = useAsyncData<{ insights: WritingStyleInsightDto[] }>(
+    () => window.nxcore!.writingStyle.insights(),
+  )
 
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
@@ -135,6 +139,20 @@ export function WritingStylePane() {
       await window.nxcore!.writingStyle.setExclusion(documentId, excluded)
       corpus.refresh()
       profile.refresh()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t('memory:writingStyle.saveFailed'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const confirmInsight = async (insightId: string): Promise<void> => {
+    setBusy(true)
+    setError(null)
+    try {
+      await window.nxcore!.writingStyle.confirmInsight(insightId)
+      insights.refresh()
+      content.refresh()
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t('memory:writingStyle.saveFailed'))
     } finally {
@@ -261,6 +279,12 @@ export function WritingStylePane() {
                     percent: Math.round(profileData.behavior.averageLenDeltaRatio * 100),
                   })}</li>
                 ) : null}
+                {profileData.behavior.reviewRejectedCount >= 2 ? (
+                  <li>{t('memory:writingStyle.behaviorReview', {
+                    rejected: profileData.behavior.reviewRejectedCount,
+                    accepted: profileData.behavior.reviewAcceptedCount,
+                  })}</li>
+                ) : null}
                 {profileData.behavior.recentInstructions.slice(0, 2).map((instruction) => (
                   <li key={instruction}>{t('memory:writingStyle.behaviorSample', { instruction })}</li>
                 ))}
@@ -301,6 +325,40 @@ export function WritingStylePane() {
           hint={t('memory:writingStyle.emptyProfileHint')}
         />
       )}
+
+      {(insights.data?.insights ?? []).length > 0 ? (
+        <>
+          <h3 className="mem-rules-heading">{t('memory:writingStyle.insightTitle')}</h3>
+          <p className="mem-rules-hint">{t('memory:writingStyle.insightHint')}</p>
+          <ul className="mem-writing-style-insights">
+            {(insights.data?.insights ?? []).filter((insight) => insight.status !== 'confirmed').map((insight) => (
+              <li key={insight.id} data-status={insight.status}>
+                <div className="mem-writing-style-insight-body">
+                  <ul>
+                    {insight.preferences.map((preference) => <li key={preference}>{preference}</li>)}
+                  </ul>
+                  {insight.status === 'snoozed'
+                    ? <span className="mem-writing-style-insight-meta">{t('memory:writingStyle.insightSnoozed')}</span>
+                    : null}
+                </div>
+                <button type="button" disabled={busy} onClick={() => void confirmInsight(insight.id)}>
+                  {t('memory:writingStyle.insightConfirm')}
+                </button>
+              </li>
+            ))}
+            {(insights.data?.insights ?? []).filter((insight) => insight.status === 'confirmed').slice(0, 5).map((insight) => (
+              <li key={insight.id} data-status="confirmed">
+                <div className="mem-writing-style-insight-body">
+                  <ul>
+                    {insight.preferences.map((preference) => <li key={preference}>{preference}</li>)}
+                  </ul>
+                  <span className="mem-writing-style-insight-meta">{t('memory:writingStyle.insightConfirmed')}</span>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : null}
 
       <h3 className="mem-rules-heading">{t('memory:writingStyle.corpusTitle')}</h3>
       <div className="mem-toolbar-actions mem-writing-style-edit-entry">

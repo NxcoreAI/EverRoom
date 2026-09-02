@@ -61,15 +61,6 @@ async function seedMembership(
   }).run()
 }
 
-async function waitForMerge(duplicates: RoomDuplicateService, operationId: string) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    const operation = duplicates.getOperation(operationId)
-    if (operation?.status === 'completed' || operation?.status === 'failed') return operation
-    await new Promise((resolvePromise) => setTimeout(resolvePromise, 5))
-  }
-  throw new Error('merge did not settle')
-}
-
 describe('RoomDuplicateService', () => {
   it('blocks a similar creation and accepts only the scoped short-lived override token', async () => {
     const { duplicates, roomsService, sqlite } = await harness()
@@ -409,30 +400,33 @@ describe('RoomDuplicateService', () => {
     }).run()
 
     const preview = await duplicates.previewMerge('room-source', 'room-target')
-    expect(preview.impact).toMatchObject({ documents: 1, localMemories: 1, attributedMemories: 1, agentRuns: 1 })
-    const queued = await duplicates.startMerge({
-      sourceRoomId: 'room-source',
-      targetRoomId: 'room-target',
+    // 新建式合并聚合两个来源的影响：localMemories 双方各 1 条。
+    expect(preview.impact).toMatchObject({ documents: 1, localMemories: 2, attributedMemories: 1, agentRuns: 1 })
+    const settled = await duplicates.startMerge({
+      sourceAId: 'room-source',
+      sourceBId: 'room-target',
+      title: '合并后的校园项目',
       previewHash: preview.previewHash,
       idempotencyKey: 'merge-key',
+      wait: true,
     })
-    const completed = await waitForMerge(duplicates, queued.id)
-    expect(completed).toMatchObject({ status: 'completed', progress: 100, commitReached: true })
+    expect(settled).toMatchObject({ status: 'completed', progress: 100, commitReached: true })
 
-    expect(db.select().from(roomDocumentLinks).where(eq(roomDocumentLinks.documentId, 'document-source')).get()?.roomId).toBe('room-target')
-    expect(db.select().from(roomMemoryAttributions).where(eq(roomMemoryAttributions.memoryId, 'memory-core-1')).get()?.roomId).toBe('room-target')
-    expect(db.select().from(agentRuns).where(eq(agentRuns.id, 'run-1')).get()?.roomId).toBe('room-target')
+    const newRoomId = settled.targetRoomId
+    expect(db.select().from(roomDocumentLinks).where(eq(roomDocumentLinks.documentId, 'document-source')).get()?.roomId).toBe(newRoomId)
+    expect(db.select().from(roomMemoryAttributions).where(eq(roomMemoryAttributions.memoryId, 'memory-core-1')).get()?.roomId).toBe(newRoomId)
+    expect(db.select().from(agentRuns).where(eq(agentRuns.id, 'run-1')).get()?.roomId).toBe(newRoomId)
     expect(db.select().from(contextRooms).where(eq(contextRooms.id, 'room-source')).get()).toMatchObject({
       lifecycle: 'merged',
-      mergedIntoRoomId: 'room-target',
-      data: { lifecycle: 'merged', mergedIntoRoomId: 'room-target' },
+      mergedIntoRoomId: newRoomId,
+      data: { lifecycle: 'merged', mergedIntoRoomId: newRoomId },
     })
-    expect(roomsService.getSnapshot().rooms.map((room) => room.id)).toEqual(['room-target'])
+    expect(roomsService.getSnapshot().rooms.map((room) => room.id)).toEqual([newRoomId])
     expect(roomsService.getSnapshot().rooms[0]?.data.memoryItems).toEqual([
-      { id: 'memory-target', content: '主记忆' },
       { id: 'memory-source', content: '来源记忆' },
+      { id: 'memory-target', content: '主记忆' },
     ])
-    expect(roomsService.resolveRoomId('room-source')).toBe('room-target')
+    expect(roomsService.resolveRoomId('room-source')).toBe(newRoomId)
     sqlite.close()
   })
 
@@ -458,15 +452,17 @@ describe('RoomDuplicateService', () => {
     })
     const preview = await failing.previewMerge('room-s', 'room-t')
     const settled = await failing.startMerge({
-      sourceRoomId: 'room-s',
-      targetRoomId: 'room-t',
+      sourceAId: 'room-s',
+      sourceBId: 'room-t',
+      title: '合并房',
       previewHash: preview.previewHash,
       idempotencyKey: 'merge-session-key',
       wait: true,
     })
     // 数据已搬迁（commit 已达）：失败恢复补完定稿，而非卡在 merging。
     expect(settled).toMatchObject({ status: 'completed', commitReached: true })
-    expect(db.select().from(agentSessions).where(eq(agentSessions.id, 'session-src')).get()?.roomId).toBe('room-t')
+    const newRoomId = settled.targetRoomId
+    expect(db.select().from(agentSessions).where(eq(agentSessions.id, 'session-src')).get()?.roomId).toBe(newRoomId)
     expect(db.select().from(contextRooms).where(eq(contextRooms.id, 'room-s')).get()?.lifecycle).toBe('merged')
     sqlite.close()
   })
@@ -524,10 +520,10 @@ describe('RoomDuplicateService', () => {
     db.insert(roomDocumentLinks).values({ roomId: 'room-x', documentId: 'doc-x', linkedAt: now }).run()
     db.insert(roomDocumentLinks).values({ roomId: 'room-y', documentId: 'doc-y', linkedAt: now }).run()
 
-    const preview = await duplicates.previewMergeIntoNew('room-x', 'room-y')
+    const preview = await duplicates.previewMerge('room-x', 'room-y')
     expect(preview.impact.documents).toBe(2)
     expect(preview.recommendedTargetRoomId).toBe('new')
-    const settled = await duplicates.startMergeIntoNew({
+    const settled = await duplicates.startMerge({
       sourceAId: 'room-x', sourceBId: 'room-y', title: 'Java 综合',
       previewHash: preview.previewHash, idempotencyKey: 'merge-new-key', wait: true,
     })
@@ -547,7 +543,7 @@ describe('RoomDuplicateService', () => {
     expect(db.select().from(roomDocumentLinks).where(eq(roomDocumentLinks.documentId, 'doc-y')).get()?.roomId).toBe(newRoom.id)
     expect((newRoom.data.memoryItems as Array<{ id: string }>).map((item) => item.id).sort()).toEqual(['mx', 'my'])
     // 幂等：同 idempotencyKey 重放返回既有终态，不再新建。
-    const replay = await duplicates.startMergeIntoNew({
+    const replay = await duplicates.startMerge({
       sourceAId: 'room-x', sourceBId: 'room-y', title: 'Java 综合',
       previewHash: preview.previewHash, idempotencyKey: 'merge-new-key', wait: true,
     })
@@ -567,14 +563,90 @@ describe('RoomDuplicateService', () => {
     })
     const preview = await duplicates.previewMerge('room-w1', 'room-w2')
     const result = await duplicates.startMerge({
-      sourceRoomId: 'room-w1',
-      targetRoomId: 'room-w2',
+      sourceAId: 'room-w1',
+      sourceBId: 'room-w2',
+      title: '等待合并',
       previewHash: preview.previewHash,
       idempotencyKey: 'merge-wait-key',
       wait: true,
     })
     // wait=true：请求内等待本地事务完成，直接返回终态，调用方无需轮询。
     expect(result).toMatchObject({ status: 'completed', progress: 100, commitReached: true })
+    sqlite.close()
+  })
+
+  it('demotes a user-rejected pair to pending when evidence changes, and annotates it', async () => {
+    const { db, duplicates, roomsService, sqlite } = await harness()
+    roomsService.saveSnapshot({
+      rooms: [
+        { id: 'room-a', title: '校园生活', kind: '主题', data: { id: 'room-a', title: '校园生活' } },
+        { id: 'room-b', title: '校园生活', kind: '主题', data: { id: 'room-b', title: '校园生活' } },
+      ],
+      deletedRooms: [],
+    })
+    await duplicates.rebuildCandidates()
+    const candidate = duplicates.listCandidates('open')[0]!
+    expect(duplicates.updateCandidate(candidate.id, 'distinct')?.status).toBe('distinct')
+
+    // 证据不变：判定保留（preserveDecision 语义不受 M2-C 影响）。
+    await duplicates.rebuildCandidates()
+    expect(duplicates.listCandidates()[0]?.status).toBe('distinct')
+
+    // 证据变化：重开为 pending（不再高置信静默复活），reason 标注用户曾判定。
+    seedMembership(db, 'room-a', 'new-evidence', 'primary')
+    await duplicates.rebuildCandidates()
+    const reopened = duplicates.listCandidates('open')[0]!
+    expect(reopened.status).toBe('open')
+    expect(reopened.confidence).toBe('pending')
+    expect(reopened.reasons.some((reason) => reason.includes('用户曾'))).toBe(true)
+    sqlite.close()
+  })
+
+  it('dampens duplicate score for names repeatedly judged distinct across pairs', async () => {
+    const { duplicates, roomsService, sqlite } = await harness()
+    const room = (id: string, title: string) => ({ id, title, kind: '主题', data: { id, title } })
+    roomsService.saveSnapshot({
+      rooms: [room('room-p', '重复主题'), room('room-q', '重复主题甲'), room('room-r', '重复主题乙')],
+      deletedRooms: [],
+    })
+    await duplicates.rebuildCandidates()
+    const all = duplicates.listCandidates()
+    duplicates.updateCandidate(all.find((c) => c.roomAId === 'room-p' && c.roomBId === 'room-q')!.id, 'distinct')
+    duplicates.updateCandidate(all.find((c) => c.roomAId === 'room-p' && c.roomBId === 'room-r')!.id, 'distinct')
+
+    // 「重复主题」已跨 2 个配对被判非重复：新配对（room-p vs room-s）应带罚分注记。
+    roomsService.saveSnapshot({
+      rooms: [room('room-p', '重复主题'), room('room-q', '重复主题甲'), room('room-r', '重复主题乙'), room('room-s', '重复主题丙')],
+      deletedRooms: [],
+    })
+    await duplicates.rebuildCandidates()
+    const penalized = duplicates.listCandidates().find((c) =>
+      (c.roomAId === 'room-p' && c.roomBId === 'room-s') || (c.roomAId === 'room-s' && c.roomBId === 'room-p'))
+    expect(penalized).toBeTruthy()
+    expect(penalized!.reasons).toContain('名称历史上多次被判非重复，综合分已下调')
+    sqlite.close()
+  })
+
+  it('targeted assess reports newly actionable candidates once', async () => {
+    const { duplicates, roomsService, sqlite } = await harness()
+    roomsService.saveSnapshot({
+      rooms: [
+        { id: 'room-old', title: '定向检查', kind: '主题', data: { id: 'room-old', title: '定向检查' } },
+      ],
+      deletedRooms: [],
+    })
+    roomsService.saveSnapshot({
+      rooms: [
+        { id: 'room-old', title: '定向检查', kind: '主题', data: { id: 'room-old', title: '定向检查' } },
+        { id: 'room-new', title: '定向检查', kind: '主题', data: { id: 'room-new', title: '定向检查' } },
+      ],
+      deletedRooms: [],
+    })
+    const first = await duplicates.requestTargetedAssess('room-new')
+    expect(first).toEqual({ newCandidates: 1 })
+    // 已 open 且可操作：再次定向检查不再计为“新浮现”。
+    const second = await duplicates.requestTargetedAssess('room-new')
+    expect(second).toEqual({ newCandidates: 0 })
     sqlite.close()
   })
 })

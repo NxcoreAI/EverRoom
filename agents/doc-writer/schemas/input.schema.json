@@ -1,0 +1,124 @@
+{
+  "type": "object",
+  "properties": {
+    "task": {
+      "type": "string",
+      "enum": ["draft-create", "draft-edit", "draft-continue", "rewrite"],
+      "description": "The writing task to execute."
+    },
+    "instruction": {
+      "type": "string",
+      "maxLength": 16000,
+      "description": "User instruction for this writing task; always the highest priority."
+    },
+    "material": {
+      "type": "string",
+      "maxLength": 100000,
+      "description": "Source material excerpts assembled by the caller, mainly for draft-create."
+    },
+    "roomTitle": {
+      "type": "string",
+      "maxLength": 120,
+      "description": "Optional room title for context framing."
+    },
+    "roomId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "Target room id injected by the gateway; binds selection-rewrite provenance to the room."
+    },
+    "documentName": {
+      "type": "string",
+      "maxLength": 200,
+      "description": "Name of the target document."
+    },
+    "documentId": {
+      "type": "string",
+      "maxLength": 128,
+      "description": "Target document id, injected by the gateway for draft-edit and draft-continue."
+    },
+    "documentMarkdown": {
+      "type": "string",
+      "maxLength": 200000,
+      "description": "Authoritative document snapshot assembled by the gateway, for draft-edit and draft-continue."
+    },
+    "documentTruncated": {
+      "type": "boolean",
+      "description": "True when documentMarkdown was truncated at the assembly budget."
+    },
+    "blockIndex": {
+      "type": "array",
+      "maxItems": 2000,
+      "items": {
+        "type": "object",
+        "properties": {
+          "blockId": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "type": { "type": "string", "maxLength": 64 },
+          "ordinal": { "type": "integer" },
+          "textPreview": { "type": "string", "maxLength": 400 }
+        },
+        "required": ["blockId", "ordinal"],
+        "additionalProperties": false
+      },
+      "description": "Top-level block index of the snapshot; draft-edit targets must reference these blockIds."
+    },
+    "outline": {
+      "type": "array",
+      "maxItems": 100,
+      "items": { "type": "string", "maxLength": 300 },
+      "description": "Heading outline of the document snapshot."
+    },
+    "baseVersion": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Document version of the snapshot; must be echoed in the result for draft-edit and draft-continue."
+    },
+    "selectedText": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 20000,
+      "description": "The selected fragment to rewrite, required for rewrite."
+    },
+    "contextBefore": {
+      "type": "string",
+      "maxLength": 4000,
+      "description": "Document text before the selection, style context only."
+    },
+    "contextAfter": {
+      "type": "string",
+      "maxLength": 4000,
+      "description": "Document text after the selection, style context only."
+    },
+    "blockType": {
+      "type": "string",
+      "maxLength": 64,
+      "description": "Markdown block type of the selection, e.g. heading, bulletList, codeBlock."
+    },
+    "formatContext": {
+      "type": "object",
+      "description": "Editor format context of the selection (marks, list nesting, code language)."
+    },
+    "responseLanguage": {
+      "type": "string",
+      "maxLength": 35,
+      "description": "BCP-47 language tag for natural-language output."
+    },
+    "writingStyle": {
+      "type": "string",
+      "maxLength": 2000,
+      "description": "Trusted writing-style guidance section injected by the gateway; the user instruction always takes priority."
+    },
+    "previousInvocationId": {
+      "type": "string",
+      "maxLength": 64,
+      "description": "Incremental iteration: references the previous doc-writer invocation whose output is supplied below."
+    },
+    "previousDraft": {
+      "type": "string",
+      "maxLength": 50000,
+      "description": "Your own output from a previous invocation in this conversation (title line + draft body). Apply the instruction as a delta on it: keep untouched parts stable and output the full revised product, do not rewrite from scratch."
+    }
+  },
+  "required": ["task"],
+  "additionalProperties": false
+}

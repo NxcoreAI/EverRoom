@@ -21,6 +21,7 @@ import { useRoomMails } from '../../hooks/useRoomMails';
 import { CalendarProviderIcon } from '../CalendarProviderIcon';
 import { MailProviderIcon } from '../MailProviderIcon';
 import { ObjectDetailView, type DetailObject } from '../ObjectDetailView';
+import { ResourceCorrectionMenu } from '../ResourceCorrection';
 import { MarkdownBody } from './MarkdownBody';
 import {
   preferRoomOverviewProjection,
@@ -497,12 +498,15 @@ function MailDetailPanel({
 
 export function MailsPane({
   room,
+  rooms,
   onSelect,
   detail,
   onCloseDetail,
   onUpdateRoom,
 }: {
   room: ContextRoomRecord;
+  /** 归入纠正（改归其他 Room）的目标候选。 */
+  rooms: ContextRoomRecord[];
   onSelect: (id: string) => void;
   /** 受控详情态：详情在邮箱面板内展示（替代原全屏弹窗）。 */
   detail?: WorkspaceObjectPreview | null;
@@ -596,21 +600,27 @@ export function MailsPane({
               </button>
             ))}
             {connectorRows.map(({ mail, time, sender }) => (
-              <button
-                type="button"
-                key={`mail-${mail.sourceId}`}
-                data-connector-source="mail"
-                aria-pressed={selectedMailId === mail.sourceId}
-                className={selectedMailId === mail.sourceId ? 'is-selected' : ''}
-                onClick={() => void openConnectorMail(mail.sourceId)}
-              >
-                <MailProviderIcon provider={mail.provider} />
-                <span>
-                  <span className="context-room-mail-meta"><b>{sender}</b><time>{time}</time></span>
-                  <strong>{mail.subject}</strong>
-                  <small>{mail.snippet ?? ''}</small>
-                </span>
-              </button>
+              <div className="context-room-mail-row" key={`mail-${mail.sourceId}`}>
+                <button
+                  type="button"
+                  data-connector-source="mail"
+                  aria-pressed={selectedMailId === mail.sourceId}
+                  className={selectedMailId === mail.sourceId ? 'is-selected' : ''}
+                  onClick={() => void openConnectorMail(mail.sourceId)}
+                >
+                  <MailProviderIcon provider={mail.provider} />
+                  <span>
+                    <span className="context-room-mail-meta"><b>{sender}</b><time>{time}</time></span>
+                    <strong>{mail.subject}</strong>
+                    <small>{mail.snippet ?? ''}</small>
+                  </span>
+                </button>
+                <ResourceCorrectionMenu
+                  room={room}
+                  rooms={rooms}
+                  target={{ sourceKind: 'mail', sourceId: mail.sourceId, title: mail.subject }}
+                />
+              </div>
             ))}
           </div>
           {selectedMailId ? (

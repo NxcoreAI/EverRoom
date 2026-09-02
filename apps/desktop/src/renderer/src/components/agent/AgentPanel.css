@@ -428,3 +428,107 @@
     transition: none;
   }
 }
+
+/* 协作洞察横幅（写作风格 v2）：白色圆角卡片、单行高度，详情默认折叠。 */
+.agent-insight-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 10px 0;
+  padding: 3px 6px 3px 4px;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  font-size: 12px;
+  line-height: 1.35;
+  min-height: 30px;
+}
+
+.agent-insight-banner-confirmed {
+  justify-content: center;
+  border-style: dashed;
+  box-shadow: none;
+  padding: 3px 10px;
+  color: var(--text-secondary, #5f6368);
+}
+
+.agent-insight-banner-head {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border: none;
+  background: transparent;
+  padding: 2px 6px;
+  border-radius: 7px;
+  cursor: pointer;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+}
+
+.agent-insight-banner-head:hover {
+  background: rgba(0, 0, 0, 0.03);
+}
+
+.agent-insight-banner-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.agent-insight-banner[data-expanded='true'] {
+  flex-wrap: wrap;
+}
+
+.agent-insight-banner[data-expanded='true'] .agent-insight-banner-head {
+  flex: 1 1 100%;
+}
+
+.agent-insight-banner-list {
+  flex: 1 1 100%;
+  margin: 0 0 3px;
+  padding: 2px 10px 2px 26px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: var(--text-secondary, #5f6368);
+  list-style: disc;
+}
+
+.agent-insight-banner-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.agent-insight-banner-primary,
+.agent-insight-banner-secondary {
+  border: none;
+  border-radius: 7px;
+  padding: 3px 9px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.agent-insight-banner-primary {
+  background: var(--accent, #4f7cff);
+  color: #fff;
+}
+
+.agent-insight-banner-primary:disabled,
+.agent-insight-banner-secondary:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.agent-insight-banner-secondary {
+  background: transparent;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  color: var(--text-secondary, #5f6368);
+}

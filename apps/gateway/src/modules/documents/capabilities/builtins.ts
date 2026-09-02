@@ -12,9 +12,12 @@ export function createBuiltinDocumentCapabilityRegistry(
   backend: CapabilityBackend,
   rooms?: DocumentRoomRegistry,
   operations?: DocumentOperationService,
+  /** 共享读凭证权威（doc-writer-subagent-plan §5.3）：传入则复用（document_draft 代发
+   *  的 receipt 与 patch_begin 的 requireLatest 必须查同一个实例），缺省自建（测试兼容）。 */
+  sharedReads?: DocumentReadAuthority,
 ): DocumentCapabilityRegistry {
   const registry = new DocumentCapabilityRegistry(operations);
-  const reads = new DocumentReadAuthority((documentId) => backend.get(documentId));
+  const reads = sharedReads ?? new DocumentReadAuthority((documentId) => backend.get(documentId));
   for (const plugin of queryPlugins(backend, rooms, reads)) registry.register(plugin);
   for (const plugin of reviewPlugins(backend, operations, reads)) registry.register(plugin);
   registry.register(createPlugin(backend, operations));

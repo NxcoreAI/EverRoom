@@ -26,6 +26,8 @@ import { documentRoutes } from "../modules/documents/routes.js";
 import { documentOperationRoutes } from "../modules/documents/operations/routes.js";
 import { DocumentService } from "../modules/documents/service.js";
 import { createSelectionRewriteContentResolver } from "../modules/documents/capabilities/selection-rewrite-content.js";
+import { createBuiltinDocumentCapabilityRegistry } from "../modules/documents/capabilities/builtins.js";
+import { DocumentReadAuthority } from "../modules/documents/capabilities/read-authority.js";
 import { ExternalDocumentProjectionService } from "../modules/documents/external-projections/service.js";
 import { externalDocumentProjectionRoutes } from "../modules/documents/external-projections/routes.js";
 import {
@@ -46,7 +48,8 @@ import { DocumentServiceError } from "../modules/documents/errors.js";
 import { contextRoomRoutes } from "../modules/context-rooms/routes.js";
 import { RoomDuplicateService } from "../modules/context-rooms/duplicate-service.js";
 import { ContextRoomService } from "../modules/context-rooms/service.js";
-import { ContextRoomAgentDispatcher, isSelectionRewriteInvocationAuthorized } from "../modules/context-rooms/room-agent.js";
+import { ContextRoomAgentDispatcher } from "../modules/context-rooms/room-agent.js";
+import { DocWriterAgentDispatcher, isSelectionRewriteInvocationAuthorized } from "../modules/subagents/doc-writer-dispatcher.js";
 import { createContextRoomAgentTools } from "../modules/context-rooms/room-agent-tools.js";
 import { buildRoomContextDigest } from "../modules/context-rooms/room-context-digest.js";
 import { RoomOverviewService } from "../modules/context-rooms/overview-service.js";
@@ -77,6 +80,7 @@ import { DocumentHistoryBackfillWorker } from "../modules/ingest/document-histor
 import { loadPolicyOverrides, loadProjectDefaults } from "../modules/ingest/policy.js";
 import { knowledgeRoutes } from "../modules/knowledge/routes.js";
 import { KnowledgeService } from "../modules/knowledge/service.js";
+import { KnowledgePreferences } from "../modules/knowledge/preferences.js";
 import { KnowledgeLlm } from "../modules/knowledge/llm.js";
 import { cliConnectorRoutes, connectorSyncRoutes, nangoConnectorRoutes } from "../modules/connectors/routes.js";
 import { ConnectorMarkdownService } from "../modules/connectors/markdown-service.js";
@@ -118,6 +122,8 @@ import { SubagentRegistry } from "../modules/subagents/registry.js";
 import { SubagentRuntimeManager } from "../modules/subagents/runtime-manager.js";
 import { SubagentOrchestrator } from "../modules/subagents/orchestrator.js";
 import { createSubagentPiTools } from "../modules/subagents/tools.js";
+import { createDocWriterResultValidator } from "../modules/subagents/document-draft.js";
+import { createDocWriterDraftResolver } from "../modules/subagents/doc-writer-content.js";
 import { LocalAgentRuntimeRegistry } from "../modules/local-agents/runtime-registry.js";
 import { subagentRoutes } from "../modules/subagents/routes.js";
 import { AgentStatusService } from "../modules/agent/status-service.js";
@@ -519,10 +525,19 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     }
   }, 30_000);
   documentOperationExpiryTimer.unref();
+  // 共享读凭证权威（doc-writer-subagent-plan §5.3）：document_draft 代发的 receipt 与
+  // patch_begin 的 requireLatest 必须落在同一实例；registry 由 create-server 显式构建后
+  // 注入 host，避免 host 内部自建私有实例。
+  const documentReadAuthority = new DocumentReadAuthority((documentId) => documentService.get(documentId));
   const documentMcpHost = new DocumentMcpHost(
     documentService,
     contextRoomService,
-    undefined,
+    createBuiltinDocumentCapabilityRegistry(
+      documentService,
+      contextRoomService,
+      documentOperationService,
+      documentReadAuthority,
+    ),
     documentOperationService,
     (diagnostic) => {
       const { level, event, ...fields } = diagnostic;
@@ -568,9 +583,20 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     mergeKnowledge: (sourceRoomId, targetRoomId) => knowledgeService.mergeRoomKnowledge(sourceRoomId, targetRoomId),
     rebuildRelations: () => knowledgeService.rebuildRoomRelations(),
     wikiFileCount: (roomId) => knowledgeService.roomWikiFileCount(roomId),
+    // M2-B：合并完成 → 新 Room 占位简报自动再生成（守卫在 refreshBriefIfPlaceholder 内）。
+    onMergeCompleted: (newRoomId) => contextRoomService.refreshBriefIfPlaceholder(newRoomId),
   });
   contextRoomService.setDuplicateService(roomDuplicateService);
   knowledgeService.setRoomDuplicateIndexTrigger(() => roomDuplicateService.requestRebuild());
+  // M3 知识整理偏好：统计（确定性）+ 洞察（LLM 修订式，失败保旧）+ 建议性注入
+  // （extract/judgeEntityIdentity；开关关闭=不注入）。job 延迟 3 分钟首跑。
+  const knowledgePreferences = new KnowledgePreferences(
+    db,
+    () => knowledgeService.currentLlm(),
+    app.log,
+  );
+  knowledgeService.setKnowledgePreferences(knowledgePreferences);
+  knowledgePreferences.start();
   // 手动建 Room：enrich 实体回写时认领到本 Room，使后续资料路由能命中（与推荐晋升同语义）
   contextRoomService.setRoomEntityClaimer((roomId, entities) =>
     knowledgeService.claimRoomEntities(roomId, entities));
@@ -605,6 +631,33 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     "context-room",
     () => createContextRoomAgentTools({ db, memory: memoryService, overview: roomOverviewService }),
   );
+  // doc-writer 输出的跨字段校验（doc-writer-subagent-plan §3.4）：baseVersion 回显、
+  // hunks 目标 ∈ blockIndex、分块预算。须在首次 dispatch 前注册。
+  subagentRuntimeManager.registerAgentResultValidator("doc-writer", createDocWriterResultValidator());
+  // room-corrector 输出校验：edits 的 targetClaimId 必须来自网关组装的 claims 快照
+  //（服务端 applyCitations 还有二次强校验，这里提前拒绝省一次转发）。
+  subagentRuntimeManager.registerAgentResultValidator("room-corrector", (invocationInput, result) => {
+    const input = invocationInput !== null && typeof invocationInput === "object" && !Array.isArray(invocationInput)
+      ? invocationInput as Record<string, unknown>
+      : {};
+    const known = new Set(
+      Array.isArray(input.claims)
+        ? input.claims
+          .filter((entry): entry is Record<string, unknown> =>
+            entry !== null && typeof entry === "object" && !Array.isArray(entry))
+          .map((entry) => String(entry.claimId ?? ""))
+          .filter(Boolean)
+        : [],
+    );
+    const edits = Array.isArray(result.edits) ? result.edits : [];
+    for (const edit of edits) {
+      if (edit === null || typeof edit !== "object" || Array.isArray(edit)) continue;
+      const claimId = (edit as Record<string, unknown>).targetClaimId;
+      if (typeof claimId === "string" && claimId && known.size > 0 && !known.has(claimId)) {
+        throw new Error(`room_corrector_target_claim_not_in_snapshot: ${claimId}`);
+      }
+    }
+  });
   for (const developerAgent of subagentRegistry.listAvailable()) {
     agentResolver.register({
       id: developerAgent.id,
@@ -630,7 +683,10 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     writingStyleRuntime ? new WritingStyleLlm(writingStyleRuntime) : null,
     app.log,
   );
-  const contextRoomAgentDispatcher = new ContextRoomAgentDispatcher(
+  const contextRoomAgentDispatcher = new ContextRoomAgentDispatcher(subagentOrchestrator);
+  // doc-writer 调度封装（doc-writer-subagent-plan §8/M2）：编辑器划词改写迁入
+  // rewrite task；写作风格注入段对 doc-writer 全部 task 附加。
+  const docWriterDispatcher = new DocWriterAgentDispatcher(
     subagentOrchestrator,
     { getGenerationPromptSection: () => writingStyleService.getGenerationPromptSection() },
   );
@@ -642,6 +698,8 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   // CapabilityBackend 注入 resolver——从 subagent_invocations 完成态取替换文本并复核授权。
   // 与 writingStyleProvider 同款 provider 注入模式；documents 模块不直接依赖
   // subagents / context-rooms，模块边界只在此装配点跨越。
+  // M2：内容生产者已迁至 doc-writer，授权判定随迁（isSelectionRewriteInvocationAuthorized
+  // 现校验 agentDefinitionId === "doc-writer"）；结果优先读 structuredOutput.replacementText。
   documentService.resolveSelectionRewriteContent = createSelectionRewriteContentResolver({
     getInvocation: (invocationId) => subagentOrchestrator.getInvocation(invocationId),
     isInvocationAuthorized: (invocation, roomId) => isSelectionRewriteInvocationAuthorized(
@@ -649,6 +707,11 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       { capabilityId: "document.selection-rewrite", roomId },
     ),
     getDocument: (documentId) => documentService.get(documentId),
+  });
+  // 引用透传（doc-writer-subagent-plan M3/V2）：write_append / patch_hunk 的
+  // invocationId → 草稿内容解析；授权绑定本 run 的 document_draft 派发。
+  documentService.resolveDocWriterDraft = createDocWriterDraftResolver({
+    getInvocation: (invocationId) => subagentOrchestrator.getInvocation(invocationId),
   });
   let resolveFileMarkdown: ((fileId: string) => Promise<string | null>) | undefined;
   let resolveAgentConversation: ((threadId: string, query: string) => Promise<string | null>) | undefined;
@@ -666,6 +729,38 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
             // 分析任务合并（方案 §4.2 B2）：room_analysis 网关侧组装材料的数据源
             // （Room 不存在时 buildRoomContextDigest 抛 context_room_not_found，语义一致）。
             resolveRoomContext: async (roomId) => buildRoomContextDigest(db, roomId),
+            // document_draft 组装与代发凭证（doc-writer-subagent-plan §4/§5.3）：
+            // 读权威文档快照 + 以主 run 名义签发 read receipt（与 document_read 同构）。
+            resolveDocumentForDraft: (documentId, roomId) => documentService.readDocumentForAgent(documentId, roomId),
+            issueDraftReadReceipt: (context, documentId, version, blockIds) =>
+              documentReadAuthority.issue(context, documentId, version, blockIds),
+            // 写作风格生成段迁移（§7）：主 Agent 不再注入，doc-writer dispatch 全 task 附加。
+            writingStyleProvider: {
+              getGenerationPromptSection: () => writingStyleService.getGenerationPromptSection(),
+            },
+            // room_correction_draft 的组装数据源：总览投影的 claims 快照（主 Agent 不再
+            // 经 context_get 携带全量总览；引用/模糊纠正的计算归 room-corrector 子 Agent）。
+            resolveRoomCorrectionContext: (roomId) => {
+              try {
+                const projection = roomOverviewService.get(roomId);
+                const claims = (["overview", "status", "nextSteps", "timeline", "entities"] as const)
+                  .flatMap((key) => projection[key].map((claim) => ({
+                    claimId: claim.id,
+                    section: key === "nextSteps" ? "next_steps" as const : key,
+                    text: claim.text,
+                    origin: claim.origin,
+                    corrected: claim.corrected,
+                    evidence: claim.evidence.slice(0, 3).map((item) => ({
+                      sourceKind: item.sourceKind,
+                      sourceId: item.sourceId,
+                      sourceTitle: item.sourceTitle ?? null,
+                    })),
+                  })));
+                return { claims };
+              } catch {
+                return null;
+              }
+            },
          })
         : []),
       ...createNotificationPiTools(notificationMcpHost),
@@ -973,6 +1068,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     await diaryService.dispose();
     roomDuplicateService.dispose();
     knowledgeService.dispose();
+    knowledgePreferences.dispose();
     await asrService.dispose();
     await agentResolver.dispose();
     await notificationMcpHost.close();
@@ -1002,7 +1098,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   await app.register(contextRoomRoutes(
     contextRoomService,
     roomDuplicateService,
-    subagentConfig.enabled ? contextRoomAgentDispatcher : undefined,
+    subagentConfig.enabled ? docWriterDispatcher : undefined,
     roomOverviewService,
   ));
   await app.register(documentMcpRoutes(documentMcpHost));
@@ -1012,7 +1108,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     documentOperationService,
     documentMcpHost.capabilities,
     (context) => {
-      // dispatch 子 Agent（context-room 划词改写）溯源：按 completed Invocation 校验。
+      // dispatch 子 Agent（doc-writer 划词改写，M2 迁移）溯源：按 completed Invocation 校验。
       if (context.invocationId) {
         if (!isSelectionRewriteInvocationAuthorized(
           subagentOrchestrator.getInvocation(context.invocationId),
@@ -1203,9 +1299,8 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   documentHistoryBackfillWorker.start();
   writingStyleWorker = new WritingStyleWorker(db, writingStyleService, app.log);
   writingStyleWorker.start();
-  agentService.writingStyleProvider = {
-    getGenerationPromptSection: () => writingStyleService.getGenerationPromptSection(),
-  };
+  // 写作风格生成注入已迁移至 doc-writer（doc-writer-subagent-plan §7）：
+  // 主 Agent 不再持有 writingStyleProvider，四信号门控随 writing-style-gate.ts 退役。
   await app.register(writingStyleRoutes(writingStyleService));
   cliConnectorMarkdownService = new ConnectorMarkdownService(
     db,

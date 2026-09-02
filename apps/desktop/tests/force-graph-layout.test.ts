@@ -10,6 +10,7 @@ import {
   type ForceGraphWorkerResponse,
 } from '../src/renderer/src/components/graph/layout/forceGraphProtocol'
 import { createForceGraphSimulation } from '../src/renderer/src/components/graph/layout/forceGraphSimulation'
+import { scaleForceGraphWorld } from '../src/renderer/src/components/graph/layout/forceGraphWorld'
 import {
   roomGraphLayoutDimensions,
   roomGraphLayoutOptions,
@@ -134,12 +135,12 @@ describe('force graph shared layout', () => {
       .toBeGreaterThanOrEqual(78)
   })
 
-  it('keeps nodes inside the simulation viewport after a large drag', () => {
+  it('expands the simulation world when a drag reaches beyond its bounds', () => {
     let latest: number[] = []
     const simulation = createForceGraphSimulation({
       nodes: [
         { id: 'a', radius: 20, x: 100, y: 100 },
-        { id: 'b', radius: 20, x: -200, y: 900 },
+        { id: 'b', radius: 20, x: 300, y: 200 },
       ],
       edges: [{ source: 'a', target: 'b' }],
       options: { ...DEFAULT_FORCE_GRAPH_OPTIONS, width: 640, height: 420 },
@@ -148,18 +149,51 @@ describe('force graph shared layout', () => {
       },
       settled: vi.fn(),
     })
+    simulation.step(60)
 
+    // 拖出世界（640×420 矩形之外、含负坐标方向）：不再钳制，节点钉在指针落点。
     simulation.drag('a', 2000, -500)
+    simulation.step(10)
+    expect(latest.slice(0, 2)).toEqual([2000, -500])
+
+    // 扩张是持久的：松手演化后，把另一个节点拖到原世界外同样不再被钳回。
+    simulation.release('a')
     simulation.step(40)
+    simulation.drag('b', 1900, -400)
+    simulation.step(10)
+    expect(latest.slice(2, 4)).toEqual([1900, -400])
+    expect(latest.every(Number.isFinite)).toBe(true)
     simulation.stop()
-    expect(latest[0]).toBeGreaterThanOrEqual(32)
-    expect(latest[0]).toBeLessThanOrEqual(608)
-    expect(latest[1]).toBeGreaterThanOrEqual(32)
-    expect(latest[1]).toBeLessThanOrEqual(388)
-    expect(latest[2]).toBeGreaterThanOrEqual(32)
-    expect(latest[2]).toBeLessThanOrEqual(608)
-    expect(latest[3]).toBeGreaterThanOrEqual(32)
-    expect(latest[3]).toBeLessThanOrEqual(388)
+  })
+
+  it('does not shrink the world back when the panel reports a smaller size', () => {
+    let latest: number[] = []
+    const simulation = createForceGraphSimulation({
+      nodes: [
+        { id: 'a', radius: 20, x: 100, y: 100 },
+        { id: 'b', radius: 20, x: 300, y: 200 },
+      ],
+      edges: [{ source: 'a', target: 'b' }],
+      options: { ...DEFAULT_FORCE_GRAPH_OPTIONS, width: 640, height: 420 },
+      publish: (nodes) => {
+        latest = nodes.flatMap((node) => [node.x ?? 0, node.y ?? 0])
+      },
+      settled: vi.fn(),
+    })
+    simulation.step(60)
+
+    // 拖拽把世界扩到原界外；随后面板缩小触发的 resize 只抬下限、不收回空间。
+    simulation.drag('a', 1600, 300)
+    simulation.step(5)
+    simulation.release('a')
+    simulation.step(20)
+    simulation.resize(500, 400)
+    simulation.step(5)
+    // 世界仍容纳扩张：节点仍可被钉在原界外（若空间被收回，落点会被钳回 608 内）。
+    simulation.drag('a', 1600, 300)
+    simulation.step(5)
+    expect(latest.slice(0, 2)).toEqual([1600, 300])
+    simulation.stop()
   })
 
   it('keeps a small drag local instead of scattering the surrounding graph', () => {
@@ -345,6 +379,22 @@ describe('force graph shared layout', () => {
       publish: vi.fn(),
       settled: vi.fn(),
     })).toThrow('known -> missing')
+  })
+
+  it('scales the layout world with node count between the default floor and caps', () => {
+    // 少量节点：不低于内核默认世界 640×420（面板只是视口，小面板不压世界）。
+    expect(scaleForceGraphWorld(2)).toEqual({ height: 420, width: 640 })
+    expect(scaleForceGraphWorld(0, { spacing: 96 })).toEqual({ height: 420, width: 640 })
+    // 节点增多：面积 = 节点数 × spacing²，保持默认宽高比，超出默认世界。
+    const scaled = scaleForceGraphWorld(48, { spacing: 96 })
+    expect(scaled.width).toBeGreaterThan(640)
+    expect(scaled.height).toBeGreaterThan(420)
+    expect(scaled.width / scaled.height).toBeCloseTo(640 / 420, 0)
+    // 海量节点：封顶防失控。
+    expect(scaleForceGraphWorld(5000, { spacing: 96 })).toEqual({ height: 1600, width: 2400 })
+    // 自定义上限生效。
+    expect(scaleForceGraphWorld(5000, { spacing: 120, maxWidth: 3200, maxHeight: 2100 }).width)
+      .toBe(3200)
   })
 
   it('publishes worker ticks through shared memory without coordinate messages', async () => {

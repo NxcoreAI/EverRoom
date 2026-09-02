@@ -73,6 +73,135 @@ const digestFixture: RoomContextDigest = {
   }],
 }
 
+describe('createSubagentPiTools room_correction_draft', () => {
+  const claimContext = {
+    claims: [
+      {
+        claimId: 'claim-1',
+        section: 'overview' as const,
+        text: '社团已登记并确认场地。',
+        origin: 'fact',
+        corrected: false,
+        evidence: [{ sourceKind: 'everroom-doc', sourceId: 'doc-1', sourceTitle: '活动登记表' }],
+      },
+      {
+        claimId: 'claim-2',
+        section: 'next_steps' as const,
+        text: '下一步发布评审通知。',
+        origin: 'inference',
+        corrected: true,
+        evidence: [],
+      },
+    ],
+  }
+
+  it('registers only when room-corrector exists; citation 路径组装 claims 并透传 edits', async () => {
+    const withCorrector = createSubagentPiTools(
+      registryWith(['room-corrector']),
+      orchestratorReturning({}) as never,
+      { resolveRoomCorrectionContext: () => claimContext },
+    )
+    expect(withCorrector.map((tool) => tool.name)).toContain('room_correction_draft')
+    expect(createSubagentPiTools(registryWith([]), orchestratorReturning({}))
+      .map((tool) => tool.name)).not.toContain('room_correction_draft')
+
+    const orchestrator = orchestratorReturning({
+      result: {
+        text: '',
+        structuredOutput: {
+          kind: 'citation-correction',
+          edits: [{
+            operation: 'content_replace',
+            section: 'overview',
+            targetClaimId: 'claim-1',
+            originalText: '社团已登记并确认场地。',
+            replacementText: '社团已完成登记、付款与场地确认。',
+            rationale: '按用户评论补充付款状态',
+          }],
+          summary: '修正了 overview 的一条 claim',
+        },
+      },
+    })
+    const tools = createSubagentPiTools(registryWith(['room-corrector']), orchestrator, {
+      resolveRoomCorrectionContext: () => claimContext,
+    })
+    const tool = tools.find((candidate) => candidate.name === 'room_correction_draft')!
+    const result = await tool.execute(
+      { ...run, roomId: 'room-1', responseLanguage: 'zh-CN' } as never,
+      {
+        task: 'citation-correction',
+        instruction: '场地已经确认了，也付过款了',
+        selectedText: '【引用】claim-1 社团已登记并确认场地。【用户评论】补充付款',
+      } as never,
+      undefined,
+    )
+
+    const dispatched = orchestrator.dispatch.mock.calls[0]![0] as Record<string, unknown>
+    expect(dispatched).toMatchObject({ agentId: 'room-corrector', task: '计算总览引用纠正', source: 'primary_agent' })
+    const input = dispatched.input as Record<string, unknown>
+    expect(input.task).toBe('citation-correction')
+    expect(input.selectedText).toContain('社团已登记')
+    // 网关组装：claims 快照原样进入（含 nextSteps→next_steps 的 section 映射在 resolver 侧完成）。
+    expect(input.claims).toEqual(claimContext.claims)
+    expect(input.responseLanguage).toBe('zh-CN')
+
+    const payload = JSON.parse((result as { content: string }).content)
+    expect(payload).toMatchObject({
+      status: 'completed',
+      kind: 'citation-correction',
+      roomId: 'room-1',
+      edits: [{ operation: 'content_replace', targetClaimId: 'claim-1' }],
+      summary: '修正了 overview 的一条 claim',
+    })
+  })
+
+  it('general-correction 返回 proposal；citation 缺 selectedText 直接拒绝', async () => {
+    const orchestrator = orchestratorReturning({
+      result: {
+        text: '',
+        structuredOutput: {
+          kind: 'general-correction',
+          proposal: {
+            operation: 'content_replace',
+            section: 'overview',
+            targetClaimId: 'claim-2',
+            originalText: '下一步发布评审通知。',
+            replacementText: '下一步完成发布评审并归档结论。',
+            rationale: '用户要求更新建议',
+          },
+          summary: '更新了 next_steps 建议',
+        },
+      },
+    })
+    const tools = createSubagentPiTools(registryWith(['room-corrector']), orchestrator, {
+      resolveRoomCorrectionContext: () => claimContext,
+    })
+    const tool = tools.find((candidate) => candidate.name === 'room_correction_draft')!
+    const result = await tool.execute({ ...run, roomId: 'room-1' } as never, {
+      task: 'general-correction',
+      instruction: '更新建议下一步',
+    } as never, undefined)
+    const payload = JSON.parse((result as { content: string }).content)
+    expect(payload.proposal).toMatchObject({ operation: 'content_replace', section: 'overview' })
+
+    await expect(tool.execute({ ...run, roomId: 'room-1' } as never, {
+      task: 'citation-correction',
+      instruction: '改一下',
+    } as never, undefined)).rejects.toThrow('room_correction_draft_selected_text_required')
+  })
+
+  it('room 不存在与并发拒绝的失败语义', async () => {
+    const tools = createSubagentPiTools(registryWith(['room-corrector']), orchestratorReturning({}), {
+      resolveRoomCorrectionContext: () => null,
+    })
+    const tool = tools.find((candidate) => candidate.name === 'room_correction_draft')!
+    await expect(tool.execute({ ...run, roomId: 'room-1' } as never, {
+      task: 'general-correction',
+      instruction: 'x',
+    } as never, undefined)).rejects.toThrow('context_room_not_found')
+  })
+})
+
 describe('createSubagentPiTools room_analysis', () => {
   it('registers room_analysis only when the content-analyst agent exists', () => {
     const withAnalyst = createSubagentPiTools(

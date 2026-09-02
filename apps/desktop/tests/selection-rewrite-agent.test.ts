@@ -86,6 +86,36 @@ describe('selection rewrite Agent dispatch', () => {
     expect(api.cancelSubagentInvocation).not.toHaveBeenCalled()
   })
 
+  it('prefers structuredOutput.replacementText over text（M2：doc-writer 迁移双读）', async () => {
+    const api: SelectionRewriteAgentApi = {
+      dispatchSelectionRewrite: vi.fn().mockResolvedValue({ invocationId: 'invocation-1' }),
+      getSubagentInvocation: vi.fn().mockResolvedValue(invocation({
+        status: 'completed',
+        completedAt: '2026-08-15T00:00:02.000Z',
+        agentDefinitionId: 'doc-writer',
+        task: '改写选中文本',
+        result: {
+          text: '最终文本不再是替换片段',
+          structuredOutput: { kind: 'rewrite', replacementText: '结构化替换内容', digest: { summary: 's' } },
+        },
+      })),
+      cancelSubagentInvocation: vi.fn().mockResolvedValue(invocation({ status: 'cancelled' })),
+    }
+
+    const result = await streamSelectionRewrite(api, {
+      roomId: 'room-1',
+      documentName: '计划',
+      selectedText: '原文',
+      instruction: '重写',
+    }, {
+      signal: new AbortController().signal,
+      onText: () => {},
+      pollIntervalMs: 0,
+    })
+
+    expect(result).toEqual({ replacementText: '结构化替换内容', invocationId: 'invocation-1' })
+  })
+
   it('preserves code indentation for a code-block rewrite', async () => {
     const api: SelectionRewriteAgentApi = {
       dispatchSelectionRewrite: vi.fn().mockResolvedValue({ invocationId: 'invocation-1' }),

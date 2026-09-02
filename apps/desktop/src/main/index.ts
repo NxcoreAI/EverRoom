@@ -292,9 +292,9 @@ const CONTEXT_ROOM_CHANNELS = {
   listDuplicateCandidates: 'context-rooms:list-duplicate-candidates',
   updateDuplicateCandidate: 'context-rooms:update-duplicate-candidate',
   previewMerge: 'context-rooms:preview-merge',
-  previewMergeIntoNew: 'context-rooms:preview-merge-into-new',
-  startMergeIntoNew: 'context-rooms:start-merge-into-new',
   startMerge: 'context-rooms:start-merge',
+  suggestMergeNames: 'context-rooms:suggest-merge-names',
+  checkRoomDuplicates: 'context-rooms:check-room-duplicates',
   getMergeOperation: 'context-rooms:get-merge-operation',
   retryMerge: 'context-rooms:retry-merge',
   cancelMerge: 'context-rooms:cancel-merge',
@@ -501,6 +501,10 @@ const KNOWLEDGE_CHANNELS = {
   routeStatus: 'knowledge:route:status',
   proposeRooms: 'knowledge:rooms:propose',
   revertDecision: 'knowledge:route:revert',
+  getPreferences: 'knowledge:preferences:get',
+  updatePreferenceContent: 'knowledge:preferences:user-content',
+  updatePreferenceSettings: 'knowledge:preferences:settings',
+  refreshPreferences: 'knowledge:preferences:refresh',
   listRoomFiles: 'knowledge:files:list',
   readFileMarkdown: 'knowledge:files:markdown',
   revealFile: 'knowledge:files:reveal',
@@ -577,6 +581,9 @@ const WRITING_STYLE_CHANNELS = {
   backfill: 'writing-style:backfill',
   corpus: 'writing-style:list-corpus',
   setExclusion: 'writing-style:set-exclusion',
+  insights: 'writing-style:list-insights',
+  snoozeInsight: 'writing-style:snooze-insight',
+  confirmInsight: 'writing-style:confirm-insight',
 } as const
 
 const AGENT_SCHEDULER_CHANNELS = {
@@ -1625,10 +1632,10 @@ function registerContextRoomHandlers(bridge: ContextRoomGatewayBridge): void {
   handle(CONTEXT_ROOM_CHANNELS.checkDuplicates, (_event, input) => bridge.checkDuplicates(input))
   handle(CONTEXT_ROOM_CHANNELS.listDuplicateCandidates, (_event, status) => bridge.listDuplicateCandidates(status))
   handle(CONTEXT_ROOM_CHANNELS.updateDuplicateCandidate, (_event, id, status) => bridge.updateDuplicateCandidate(id, status))
-  handle(CONTEXT_ROOM_CHANNELS.previewMerge, (_event, sourceRoomId, targetRoomId) => bridge.previewMerge(sourceRoomId, targetRoomId))
-  handle(CONTEXT_ROOM_CHANNELS.previewMergeIntoNew, (_event, sourceAId: string, sourceBId: string) => bridge.previewMergeIntoNew(sourceAId, sourceBId))
-  handle(CONTEXT_ROOM_CHANNELS.startMergeIntoNew, (_event, input: Parameters<typeof bridge.startMergeIntoNew>[0]) => bridge.startMergeIntoNew(input))
-  handle(CONTEXT_ROOM_CHANNELS.startMerge, (_event, input) => bridge.startMerge(input))
+  handle(CONTEXT_ROOM_CHANNELS.previewMerge, (_event, sourceAId: string, sourceBId: string) => bridge.previewMerge(sourceAId, sourceBId))
+  handle(CONTEXT_ROOM_CHANNELS.startMerge, (_event, input: Parameters<typeof bridge.startMerge>[0]) => bridge.startMerge(input))
+  handle(CONTEXT_ROOM_CHANNELS.suggestMergeNames, (_event, input: Parameters<typeof bridge.suggestMergeNames>[0]) => bridge.suggestMergeNames(input))
+  handle(CONTEXT_ROOM_CHANNELS.checkRoomDuplicates, (_event, roomId: string) => bridge.checkRoomDuplicates(roomId))
   handle(CONTEXT_ROOM_CHANNELS.getMergeOperation, (_event, id) => bridge.getMergeOperation(id))
   handle(CONTEXT_ROOM_CHANNELS.retryMerge, (_event, id) => bridge.retryMerge(id))
   handle(CONTEXT_ROOM_CHANNELS.cancelMerge, (_event, id) => bridge.cancelMerge(id))
@@ -1991,6 +1998,10 @@ function registerKnowledgeHandlers(bridge: KnowledgeGatewayBridge): void {
   handle(KNOWLEDGE_CHANNELS.proposeRooms, (_event, input: { description: string; fileEntryIds: string[] }) =>
     bridge.proposeRooms(input))
   handle(KNOWLEDGE_CHANNELS.revertDecision, (_event, decisionId) => bridge.revertDecision(decisionId))
+  handle(KNOWLEDGE_CHANNELS.getPreferences, () => bridge.getKnowledgePreferences())
+  handle(KNOWLEDGE_CHANNELS.updatePreferenceContent, (_event, content: string) => bridge.updateKnowledgePreferenceContent(content))
+  handle(KNOWLEDGE_CHANNELS.updatePreferenceSettings, (_event, input: { learningEnabled?: boolean; injectionEnabled?: boolean }) => bridge.updateKnowledgePreferenceSettings(input))
+  handle(KNOWLEDGE_CHANNELS.refreshPreferences, () => bridge.refreshKnowledgePreferences())
   handle(KNOWLEDGE_CHANNELS.listRoomFiles, (_event, roomId: string) => bridge.listRoomFiles(roomId))
   handle(KNOWLEDGE_CHANNELS.readFileMarkdown, (_event, fileId: string) => bridge.readFileMarkdown(fileId))
   handle(KNOWLEDGE_CHANNELS.revealFile, (_event, fileId: string) => bridge.revealFile(fileId))
@@ -2529,6 +2540,18 @@ function registerWritingStyleHandlers(): void {
       throw new Error('写作风格语料参数无效。')
     }
     return writingStyleGatewayBridge.setExclusion(documentId, excluded)
+  })
+  handle(WRITING_STYLE_CHANNELS.insights, () => {
+    if (!writingStyleGatewayBridge) throw new Error('写作风格服务尚未就绪。')
+    return writingStyleGatewayBridge.insights()
+  })
+  handle(WRITING_STYLE_CHANNELS.snoozeInsight, (_event, insightId: unknown) => {
+    if (!writingStyleGatewayBridge || typeof insightId !== 'string') throw new Error('写作风格洞察参数无效。')
+    return writingStyleGatewayBridge.snoozeInsight(insightId)
+  })
+  handle(WRITING_STYLE_CHANNELS.confirmInsight, (_event, insightId: unknown) => {
+    if (!writingStyleGatewayBridge || typeof insightId !== 'string') throw new Error('写作风格洞察参数无效。')
+    return writingStyleGatewayBridge.confirmInsight(insightId)
   })
 }
 
