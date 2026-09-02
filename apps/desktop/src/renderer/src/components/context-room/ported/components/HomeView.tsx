@@ -164,6 +164,7 @@ export function HomeView({
   onShowAll,
   onFocusAgent,
   onRefreshRooms,
+  onManualMerge,
 }: {
   rooms: ContextRoomRecord[];
   deletedRooms: ContextRoomRecord[];
@@ -178,6 +179,8 @@ export function HomeView({
   onShowAll: () => void;
   onFocusAgent: () => void;
   onRefreshRooms: () => Promise<void>;
+  /** 手动合并入口：对话框与预览由 PortedContextRoom 宿主。 */
+  onManualMerge?: (room: ContextRoomRecord) => void;
 }) {
   const { t } = useLocale();
   const [query, setQuery] = useState('');
@@ -296,6 +299,7 @@ export function HomeView({
                   onOpen={onOpenDetail}
                   onRename={() => setRenameRoom(room)}
                   onDelete={() => setDeleteRoom(room)}
+                  onMerge={onManualMerge ? () => onManualMerge(room) : undefined}
                 />
               ))}
               {!visibleRooms.length ? (

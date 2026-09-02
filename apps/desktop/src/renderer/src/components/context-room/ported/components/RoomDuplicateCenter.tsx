@@ -1,5 +1,5 @@
 import type { RoomDuplicateCandidate, RoomMergeOperation, RoomMergePreview } from '@nxcore/agent-contract'
-import { ArrowRight, Check, GitMerge, Loader2, RefreshCw, Split, TriangleAlert } from 'lucide-react'
+import { ArrowRight, Check, GitMerge, Info, Loader2, RefreshCw, Sparkles, Split, TriangleAlert } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 
 import { useLocale, type Translate } from '@/i18n/LocaleContext'
@@ -34,11 +34,14 @@ export function RoomDuplicateCenter({
   onOpenChange,
   onMerged,
   onCandidateCountChange,
+  manualPair,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   onMerged: () => Promise<void>
   onCandidateCountChange?: (count: number) => void
+  /** 手动合并模式：直接进入这一对的预览（跳过候选列表；关闭即退出）。 */
+  manualPair?: { roomAId: string; roomA: { id: string; title: string }; roomBId: string; roomB: { id: string; title: string } } | null
 }) {
   const { t } = useLocale()
   const api = window.nxcore?.contextRooms
@@ -49,6 +52,7 @@ export function RoomDuplicateCenter({
   const [targetRoomId, setTargetRoomId] = useState<string>('')
   const [preview, setPreview] = useState<RoomMergePreview | null>(null)
   const [operation, setOperation] = useState<RoomMergeOperation | null>(null)
+  const [newRoomTitle, setNewRoomTitle] = useState('')
 
   const reload = async () => {
     if (!api) return
@@ -71,6 +75,22 @@ export function RoomDuplicateCenter({
   }, [open])
 
   useEffect(() => {
+    // 手动模式：打开即进入该对的合并预览，不走候选列表。
+    if (open && manualPair) {
+      void beginPreview({
+        id: `manual:${manualPair.roomAId}:${manualPair.roomBId}`,
+        roomAId: manualPair.roomAId, roomBId: manualPair.roomBId,
+        roomA: manualPair.roomA, roomB: manualPair.roomB,
+        nameScore: 0, centroidScore: 0, contentOverlap: 0, entityOverlap: 0,
+        duplicateScore: 0, confidence: 'pending', llmVerdict: null,
+        reasons: [t('contextRoom:duplicateCenter.manualPairReason')],
+        status: 'open', updatedAt: new Date().toISOString(),
+      } as RoomDuplicateCandidate)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- beginPreview 为组件内闭包，触发点仅为打开/配对变化
+  }, [open, manualPair])
+
+  useEffect(() => {
     if (open) return
     // 关闭弹窗时回到列表态，避免下次打开看到上一次的合并预览残留；
     // 合并进行中（queued/running）保留进度视图，重开可继续跟踪。
@@ -82,36 +102,17 @@ export function RoomDuplicateCenter({
     }
   }, [open, operation])
 
-  const sourceRoomId = useMemo(() => {
-    if (!selected || !targetRoomId) return ''
-    return selected.roomAId === targetRoomId ? selected.roomBId : selected.roomAId
-  }, [selected, targetRoomId])
-
   const beginPreview = async (candidate: RoomDuplicateCandidate) => {
     if (!api) return
-    const target = candidate.roomAId
     setSelected(candidate)
-    setTargetRoomId(target)
+    setTargetRoomId('')
+    setNewRoomTitle(candidate.roomA.title)
     setOperation(null)
     setLoading(true)
     setError(null)
     try {
-      setPreview(await api.previewMerge(candidate.roomBId, target))
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : t('contextRoom:duplicateCenter.previewFailed'))
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const switchTarget = async (nextTarget: string) => {
-    if (!api || !selected) return
-    const source = selected.roomAId === nextTarget ? selected.roomBId : selected.roomAId
-    setTargetRoomId(nextTarget)
-    setLoading(true)
-    setError(null)
-    try {
-      setPreview(await api.previewMerge(source, nextTarget))
+      // 新建式合并：新建 Room 收编两个旧 Room，预览为两源聚合影响（不再选保留方向）。
+      setPreview(await api.previewMergeIntoNew(candidate.roomAId, candidate.roomBId))
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t('contextRoom:duplicateCenter.previewFailed'))
     } finally {
@@ -120,13 +121,14 @@ export function RoomDuplicateCenter({
   }
 
   const confirmMerge = async () => {
-    if (!api || !preview || !sourceRoomId || !targetRoomId) return
+    if (!api || !preview || !selected || !newRoomTitle.trim()) return
     setLoading(true)
     setError(null)
     try {
-      const result = await api.startMerge({
-        sourceRoomId,
-        targetRoomId,
+      const result = await api.startMergeIntoNew({
+        sourceAId: selected.roomAId,
+        sourceBId: selected.roomBId,
+        title: newRoomTitle.trim(),
         previewHash: preview.previewHash,
         idempotencyKey: crypto.randomUUID(),
         wait: true,
@@ -236,25 +238,36 @@ export function RoomDuplicateCenter({
           </div>
         ) : (
           <div className="context-room-merge-preview">
+            {/* 合并示意：两个源 Room 汇入新 Room（视觉锚点，一眼看懂方向）。 */}
+            <div className="context-room-merge-flow" aria-hidden="true">
+              <div className="context-room-merge-flow-sources">
+                <div className="context-room-merge-flow-room" data-retiring><GitMerge aria-hidden="true" /><b>{selected?.roomA.title}</b><small>{t('contextRoom:duplicateCenter.willRetire')}</small></div>
+                <div className="context-room-merge-flow-room" data-retiring><GitMerge aria-hidden="true" /><b>{selected?.roomB.title}</b><small>{t('contextRoom:duplicateCenter.willRetire')}</small></div>
+              </div>
+              <div className="context-room-merge-flow-arrow"><ArrowRight aria-hidden="true" /></div>
+              <div className="context-room-merge-flow-room" data-new><Sparkles aria-hidden="true" /><b>{newRoomTitle.trim() || t('contextRoom:duplicateCenter.newRoomTitlePlaceholder')}</b><small>{t('contextRoom:duplicateCenter.willCreate')}</small></div>
+            </div>
+
             <label>
-              <span>{t('contextRoom:duplicateCenter.keepAsPrimary')}</span>
-              <select value={targetRoomId} onChange={(event) => void switchTarget(event.target.value)} disabled={Boolean(operation)}>
-                <option value={selected?.roomAId}>{selected?.roomA.title}</option>
-                <option value={selected?.roomBId}>{selected?.roomB.title}</option>
-              </select>
+              <span>{t('contextRoom:duplicateCenter.newRoomTitle')}</span>
+              <input
+                value={newRoomTitle}
+                onChange={(event) => setNewRoomTitle(event.target.value)}
+                disabled={Boolean(operation)}
+                maxLength={120}
+                placeholder={t('contextRoom:duplicateCenter.newRoomTitlePlaceholder')}
+              />
             </label>
 
             <section className="context-room-merge-impact">
               <h3>{t('contextRoom:duplicateCenter.willMigrate')}</h3>
-              <dl>{impactRows(preview).map(([label, count]) => <div key={label}><dt>{t(`contextRoom:duplicateCenter.impact.${label}`)}</dt><dd>{count}</dd></div>)}</dl>
+              <dl>{impactRows(preview).map(([label, count]) => <div key={label} data-zero={count === 0}><dt>{t(`contextRoom:duplicateCenter.impact.${label}`)}</dt><dd>{count}</dd></div>)}</dl>
             </section>
 
-            <section className="context-room-merge-excluded">
-              <h3>{t('contextRoom:duplicateCenter.willNotMigrate')}</h3>
-              {preview.excluded.map((item) => <p key={item}>{item}</p>)}
-            </section>
-
-            {preview.conflicts.length ? <section className="context-room-merge-conflicts"><h3>{t('contextRoom:duplicateCenter.conflictHandling')}</h3>{preview.conflicts.map((item) => <p key={item}>{item}</p>)}</section> : null}
+            <div className="context-room-merge-notes">
+              {preview.conflicts.map((item) => <p key={`c-${item}`}><TriangleAlert aria-hidden="true" /> {item}</p>)}
+              {preview.excluded.map((item) => <p key={`e-${item}`}><Info aria-hidden="true" /> {item}</p>)}
+            </div>
 
             {operation ? (
               <div className="context-room-merge-operation" data-status={operation.status}>
@@ -267,11 +280,16 @@ export function RoomDuplicateCenter({
             )}
 
             <footer>
-              <button type="button" onClick={() => { setPreview(null); setSelected(null); setOperation(null) }} disabled={loading}>{t('contextRoom:duplicateCenter.back')}</button>
+              {/* 手动模式：返回=关闭整个对话框（onOpenChange(false) 清 manualPair）；
+                  推荐模式：返回=回到候选列表。手动模式下清内部状态会掉进推荐列表。 */}
+              <button type="button" onClick={() => {
+                if (manualPair) onOpenChange(false)
+                else { setPreview(null); setSelected(null); setOperation(null) }
+              }} disabled={loading}>{t('contextRoom:duplicateCenter.back')}</button>
               {operation?.status === 'failed' && !operation.commitReached
                 ? <button type="button" onClick={() => void cancelOperation()} disabled={loading}>{t('contextRoom:duplicateCenter.cancelMerge')}</button>
                 : null}
-              {!operation ? <button type="button" className="context-room-danger-button" onClick={() => void confirmMerge()} disabled={loading}>{t('contextRoom:duplicateCenter.mergeInto', { title: preview.targetRoom.title })}</button> : null}
+              {!operation ? <button type="button" className="context-room-danger-button" onClick={() => void confirmMerge()} disabled={loading || !newRoomTitle.trim()}>{t('contextRoom:duplicateCenter.mergeIntoNew')}</button> : null}
             </footer>
           </div>
         )}

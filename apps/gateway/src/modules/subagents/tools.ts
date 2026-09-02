@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { Type } from "@sinclair/typebox";
 import type { PiAgentRuntimeTool } from "@nxcore/agent-runtime-pi";
+import { formatRoomContextDigest, type RoomContextDigest } from "../context-rooms/room-context-digest.js";
 import { SubagentOrchestrator } from "./orchestrator.js";
 import { SubagentRegistry } from "./registry.js";
 
@@ -81,7 +82,11 @@ function normalizeDocumentSummary(result: { text: string; structuredOutput?: unk
 export function createSubagentPiTools(
   registry: SubagentRegistry,
   orchestrator: SubagentOrchestrator,
-  options: { resolveFileMarkdown?: (fileId: string) => Promise<string | null> } = {},
+  options: {
+    resolveFileMarkdown?: (fileId: string) => Promise<string | null>;
+    /** Room 材料共享投影（方案 §4.2 B2）：room_analysis 网关侧组装 content 的数据源。 */
+    resolveRoomContext?: (roomId: string) => Promise<RoomContextDigest | null>;
+  } = {},
 ): PiAgentRuntimeTool[] {
   const tools: PiAgentRuntimeTool[] = [
     {
@@ -199,9 +204,10 @@ export function createSubagentPiTools(
         "分析提供的材料并提炼可核验结论",
       ),
     });
-  }
-  const contextRoomAgent = registry.get("context-room");
-  if (contextRoomAgent) {
+
+    // 分析任务合并（方案 §4.2 B2）：Room 材料由网关侧组装成 content 投喂
+    // content-analyst（context-room 的 material-analysis 任务已废弃），
+    // 对主 Agent 的工具名、描述、参数与返回结构保持不变。
     tools.push({
       name: "room_analysis",
       label: "Analyze room materials",
@@ -212,22 +218,31 @@ export function createSubagentPiTools(
         responseLanguage: Type.Optional(Type.String({ minLength: 2, maxLength: 35 })),
       }, { additionalProperties: false }),
       execute: async (run, params, signal) => {
+        const roomId = String(params.roomId ?? "").trim();
+        if (!options.resolveRoomContext) throw new Error("room_analysis_room_context_unavailable");
+        const digest = await options.resolveRoomContext(roomId);
+        if (!digest) throw new Error("context_room_not_found");
+        // content-analyst 为纯投喂制（input：content/question/sourceLabel/context），
+        // focus 作为问题、responseLanguage 折入问题作答语言要求。
+        const focus = typeof params.focus === "string" ? params.focus.trim() : "";
+        const responseLanguage = typeof params.responseLanguage === "string"
+          ? params.responseLanguage.trim()
+          : "";
+        const question = [
+          focus || "分析该 Room 的资料并提炼可核验结论",
+          ...(responseLanguage ? [`请用 ${responseLanguage} 回答`] : []),
+        ].join("；");
         const input = {
-          task: "material-analysis" as const,
-          roomId: String(params.roomId),
-          ...(typeof params.focus === "string" && params.focus.trim()
-            ? { instruction: params.focus.trim() }
-            : {}),
-          ...(typeof params.responseLanguage === "string" && params.responseLanguage.trim()
-            ? { responseLanguage: params.responseLanguage.trim() }
-            : {}),
+          content: formatRoomContextDigest(digest),
+          question,
+          sourceLabel: digest.room.title,
         };
         const task = "分析指定 Context Room 的资料并提炼可核验结论";
         const invocation = await orchestrator.dispatch({
-          agentId: "context-room",
+          agentId: "content-analyst",
           task,
           input,
-          idempotencyKey: dispatchKey(run.runId, "context-room", task, input),
+          idempotencyKey: dispatchKey(run.runId, "content-analyst", task, input),
           source: "primary_agent",
           parentSessionId: run.sessionId,
           parentRunId: run.runId,

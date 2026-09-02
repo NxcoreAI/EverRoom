@@ -313,16 +313,18 @@ export function useTiptapSelectionRewrite({
         },
         input: {
           baseVersion,
-          proposedContentJson: proposedSelectionRewriteContent(
-            editor,
-            current.from,
-            current.to,
-            current.replacementText,
-            current.formatContext,
-          ),
+          // 改写信任收口（方案 §3）：改传 invocationId，完整提议内容由服务端
+          // 从 invocation 完成态解析；其余仅为展示字段，预览读 operation 的 before/after。
+          invocationId: current.invocationId,
           originalText: current.originalText,
           replacementText: current.replacementText,
           instruction: current.instruction.trim() || t('contextRoom:selectionRewriteAgent.defaultInstruction'),
+          // 出路二（预览编辑诚实记账）：预览文本被用户编辑过时，服务端按用户文本
+          // 重建改写内容，归因记"Agent 提案 + 用户修改"（userModified），编辑不再被丢弃。
+          ...(current.registeredReplacementText !== null
+            && current.registeredReplacementText !== current.replacementText
+            ? { userEditedReplacementText: current.replacementText }
+            : {}),
         },
       })
       if (!operation) throw new Error(t('contextRoom:tiptapSelectionRewrite.theDocumentOperationServiceIsUnavailable'))

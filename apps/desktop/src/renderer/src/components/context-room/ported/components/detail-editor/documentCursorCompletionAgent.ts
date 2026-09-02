@@ -63,6 +63,12 @@ export interface DocumentCursorCompletionRequest {
   completionMode?: DocumentCursorCompletionMode
   /** regenerate 场景带上被用户拒绝的上一次建议，模型据此避开重复。 */
   avoidText?: string
+  /**
+   * 写作风格注入块（§7.4 合成产物，含 <writing_style> 标签）。
+   * 动态段的一部分：固定指令段不受影响，前缀缓存命中不受干扰。
+   * 调用方自查补全开关——关闭时完全不传（不构造标签）。
+   */
+  writingStyleBlock?: string
 }
 
 export interface DocumentCursorCompletionSuggestion {
@@ -252,6 +258,11 @@ interface StreamDocumentCursorCompletionOptions {
   firstSuggestionMs?: number
   /** 会话/订阅复用通道；缺省时退回每次建删会话的旧路径。 */
   channel?: DocumentCursorCompletionSessionChannel
+  /**
+   * 写作风格注入块解析器（§7.1）：缓存实现由调用方注入，本模块保持 window 无关
+   * （ported 模块纯净性）。缺省不注入风格。
+   */
+  resolveWritingStyleBlock?: () => Promise<string | null>
 }
 
 export function buildDocumentCursorCompletionPrompt(
@@ -296,6 +307,12 @@ export function buildDocumentCursorCompletionPrompt(
       formatContext: input.formatContext,
     }),
     '</EDITOR_CONTEXT>',
+    ...(input.writingStyleBlock ? [
+      '',
+      '<WRITING_STYLE>',
+      input.writingStyleBlock,
+      '</WRITING_STYLE>',
+    ] : []),
   ].join('\n')
 }
 
@@ -348,7 +365,7 @@ function truncateParagraphCompletion(output: string): string {
  * 即认定整条输出在复述指令而非给内容，作废处理（parse 返回空 → no_completion，
  * 不进熔断、不留 ghost）。误伤面可忽略：全大写尖括号标签不会是正常文档内容。
  */
-const PROMPT_TEMPLATE_MARKER = /<\/?(?:PREFIX|SUFFIX|EDITOR_CONTEXT|TIPTAP_NEARBY_BLOCKS|CURRENT_BLOCK_SUFFIX)>|<CURSOR\s*\/?>/iu
+const PROMPT_TEMPLATE_MARKER = /<\/?(?:PREFIX|SUFFIX|EDITOR_CONTEXT|TIPTAP_NEARBY_BLOCKS|CURRENT_BLOCK_SUFFIX|WRITING_STYLE|writing_style)>|<CURSOR\s*\/?>/iu
 
 export function sanitizeDocumentCursorCompletion(
   value: string,
@@ -715,6 +732,9 @@ export async function streamDocumentCursorCompletion(
 
   try {
     throwIfAborted(options.signal)
+    // 风格块走 TTL 缓存解析：命中时零 IPC 开销，失败静默为不注入。
+    const writingStyleBlock = await (options.resolveWritingStyleBlock?.() ?? Promise.resolve(null))
+    throwIfAborted(options.signal)
     let run: AgentRun
     let rebuiltSession = false
     let busyRetries = 0
@@ -729,7 +749,10 @@ export async function streamDocumentCursorCompletion(
       if (channel) await channel.ensureSubscribed()
       try {
         run = await api.startRun(session.id, {
-          prompt: buildDocumentCursorCompletionPrompt(input, options.responseLanguage),
+          prompt: buildDocumentCursorCompletionPrompt(
+            writingStyleBlock ? { ...input, writingStyleBlock } : input,
+            options.responseLanguage,
+          ),
           idempotencyKey: crypto.randomUUID(),
           responseLanguage: options.responseLanguage,
           captureMemory: false,

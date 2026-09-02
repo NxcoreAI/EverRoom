@@ -12,15 +12,13 @@ export type ContextRoomAgentTask =
   | "room-enrich"
   | "room-overview"
   | "brief-refresh"
-  | "selection-rewrite"
-  | "material-analysis";
+  | "selection-rewrite";
 
 const TASK_LABELS: Record<ContextRoomAgentTask, string> = {
   "room-enrich": "整理新创建的 Context Room",
   "room-overview": "生成 Context Room 总览",
   "brief-refresh": "再生成 Context Room 简报",
   "selection-rewrite": "改写文档选区",
-  "material-analysis": "分析 Context Room 资料",
 };
 
 export interface ContextRoomEnrichment {
@@ -314,7 +312,11 @@ export interface RoomAgentDispatcher {
  * 统一 agentId / source / task 文案，业务侧只关心任务与结构化输入。
  */
 export class ContextRoomAgentDispatcher implements RoomAgentDispatcher {
-  constructor(private readonly orchestrator: SubagentOrchestrator) {}
+  constructor(
+    private readonly orchestrator: SubagentOrchestrator,
+    /** 划词改写的写作风格注入段（方案 §7.2）：provider 自查生成开关，关闭返回 null。 */
+    private readonly writingStyleProvider: { getGenerationPromptSection(): string | null } | null = null,
+  ) {}
 
   dispatch(input: RoomAgentDispatchInput): Promise<SubagentInvocation> {
     return this.orchestrator.dispatch(this.toDispatchInput(input));
@@ -325,10 +327,17 @@ export class ContextRoomAgentDispatcher implements RoomAgentDispatcher {
   }
 
   private toDispatchInput(input: RoomAgentDispatchInput) {
+    const writingStyle = input.task === "selection-rewrite"
+      ? this.writingStyleProvider?.getGenerationPromptSection() ?? null
+      : null;
     return {
       agentId: CONTEXT_ROOM_AGENT_ID,
       task: TASK_LABELS[input.task],
-      input: { task: input.task, ...input.taskInput },
+      input: {
+        task: input.task,
+        ...input.taskInput,
+        ...(writingStyle ? { writingStyle } : {}),
+      },
       idempotencyKey: input.idempotencyKey ?? `room-agent:${randomUUID()}`,
       source: "internal_workflow" as const,
       parentSessionId: null,

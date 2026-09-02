@@ -84,7 +84,7 @@ describe('RoomDuplicateCenter', () => {
   it('returns to the candidate list when reopened after closing from the merge preview', async () => {
     const api = {
       listDuplicateCandidates: vi.fn(async () => ({ items: [duplicateCandidate()] })),
-      previewMerge: vi.fn(async () => mergePreview()),
+      previewMergeIntoNew: vi.fn(async () => mergePreview()),
       startMerge: vi.fn(),
       getMergeOperation: vi.fn(),
       retryMerge: vi.fn(),
@@ -109,7 +109,7 @@ describe('RoomDuplicateCenter', () => {
     await act(async () => {
       buttonByText(renderer!, '查看合并影响')!.props.onClick()
     })
-    expect(api.previewMerge).toHaveBeenCalledWith('room-b', 'room-a')
+    expect(api.previewMergeIntoNew).toHaveBeenCalledWith('room-a', 'room-b')
     expect(textNodes(renderer!, '将迁移到主 Room')).toHaveLength(1)
 
     // 从合并预览直接关闭弹窗，再次打开应回到候选列表，而不是残留上一次的预览。

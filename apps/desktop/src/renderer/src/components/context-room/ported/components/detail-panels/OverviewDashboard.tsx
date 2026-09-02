@@ -194,6 +194,13 @@ export function OverviewDashboard({
 }) {
   const { locale, t } = useLocale();
   const { refreshFromBackend } = useContextRoomState();
+  // 合并完成/投影生成的过渡窗口，room 数组字段可能缺失（裸 .length/.map 会崩渲染，
+  // 即"合并后首次点开 Room 报错要求刷新"）：入口一次性归一化，宁可空面板不可白屏。
+  const materials = room.materials ?? [];
+  const actionItems = room.actionItems ?? [];
+  const timeline = room.timeline ?? [];
+  const people = room.people ?? [];
+  const fileItems = room.fileItems ?? [];
   const dashboardRef = useRef<HTMLElement>(null);
   const [overviewProjection, setOverviewProjection] = useState<RoomOverviewProjection | null>(null);
   const [regeneratingBrief, setRegeneratingBrief] = useState(false);
@@ -215,7 +222,7 @@ export function OverviewDashboard({
   const dashboard = DASHBOARD_COPY[room.id] ?? {
     aiStatus: overviewProjection?.status.map((item) => item.text).join('\n')
       || room.generatedContext?.status || room.brief.status,
-    nextSteps: overviewProjection?.nextSteps.length
+    nextSteps: overviewProjection?.nextSteps?.length
       ? overviewProjection.nextSteps
         // 已完成的本地助手待办不进「接下来」建议（面板专属「已完成」分组）。
         .filter((item) => !(item.data?.kind === 'next_step' && item.data.itemType === 'task' && item.data.status === 'completed'))
@@ -226,14 +233,14 @@ export function OverviewDashboard({
           dueAt: item.data?.kind === 'next_step' ? item.data.dueAt : null,
           itemType: item.data?.kind === 'next_step' ? item.data.itemType : 'suggestion',
         }))
-      : room.generatedContext?.nextSteps.length
+      : room.generatedContext?.nextSteps?.length
         ? room.generatedContext.nextSteps.map((item, index) => ({
             id: `generated-${index}`, text: item, owner: null, dueAt: null, itemType: 'suggestion',
           }))
-      : room.actionItems.slice(0, 4).map((item) => ({
+      : actionItems.slice(0, 4).map((item) => ({
           id: item.id, text: item.title, owner: item.owner || null, dueAt: item.deadline || null, itemType: 'task',
         })),
-    entities: overviewProjection?.entities.length
+    entities: overviewProjection?.entities?.length
       ? overviewProjection.entities.map((entity) => ({
           id: entity.id,
           text: entity.text,
@@ -242,18 +249,18 @@ export function OverviewDashboard({
             ? `${entity.data.entityKind} · ${entity.text} · ${entity.data.mentionCount}`
             : entity.text,
         }))
-      : room.generatedContext?.entities.length
+      : room.generatedContext?.entities?.length
       ? room.generatedContext.entities.map((entity) => ({
           label: entity.name,
           description: `${t(uiText(entity.kind))} · ${entity.description}`,
         }))
-      : room.people.map((person) => ({ label: person.name, description: person.role })),
+      : people.map((person) => ({ label: person.name, description: person.role })),
   };
   const library = useMemo(
     () => createContextRoomResourceLibrary(room, backendDocuments, [], knowledgeFiles, locale),
     [backendDocuments, knowledgeFiles, locale, room],
   );
-  const projectedTimeline: TimelineEntry[] = overviewProjection?.timeline.length
+  const projectedTimeline: TimelineEntry[] = overviewProjection?.timeline?.length
     ? overviewProjection.timeline.map((item) => ({
         id: item.id,
         time: item.occurredAt ?? null,
@@ -266,7 +273,7 @@ export function OverviewDashboard({
         evidence: item.evidence,
         eventType: item.data?.kind === 'timeline' ? item.data.eventType : null,
       }))
-    : room.timeline.map((item, index) => ({
+    : timeline.map((item, index) => ({
         id: `local:${index}:${item.time}:${item.title}`,
         time: item.time || null,
         title: item.title,
@@ -295,9 +302,9 @@ export function OverviewDashboard({
   const recentDocuments = [...backendDocuments]
     .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
     .slice(0, 3);
-  const recentMaterials = room.materials.slice(0, Math.max(0, 3 - recentDocuments.length));
-  const todayMeeting = room.materials.find((item) => item.type === '会议' && isTodayLabel(item.time));
-  const openTasks = room.actionItems.filter((item) => !item.completed && item.status !== '已完成').slice(0, 3);
+  const recentMaterials = materials.slice(0, Math.max(0, 3 - recentDocuments.length));
+  const todayMeeting = materials.find((item) => item.type === '会议' && isTodayLabel(item.time));
+  const openTasks = actionItems.filter((item) => !item.completed && item.status !== '已完成').slice(0, 3);
   // 确定性投影叠加：连接器日历/待办 claim（只读展示，不参与本地任务勾选）。
   const projectionNextSteps = overviewProjection?.nextSteps ?? [];
   const projectionSchedules = projectionNextSteps.filter((item) =>
@@ -343,11 +350,11 @@ export function OverviewDashboard({
       recordRoomOverviewDiagnostic('load.completed', {
         roomId: room.id,
         revision: projection.revision,
-        overviewCount: projection.overview.length,
-        statusCount: projection.status.length,
-        nextStepsCount: projection.nextSteps.length,
-        timelineCount: projection.timeline.length,
-        entityCount: projection.entities.length,
+        overviewCount: projection.overview?.length ?? 0,
+        statusCount: projection.status?.length ?? 0,
+        nextStepsCount: projection.nextSteps?.length ?? 0,
+        timelineCount: projection.timeline?.length ?? 0,
+        entityCount: projection.entities?.length ?? 0,
       });
     } catch (error) {
       recordRoomOverviewDiagnostic('load.failed', {
@@ -459,7 +466,7 @@ export function OverviewDashboard({
         <span data-icon-tone={roomKindTone(room.kind)}><Icon aria-hidden="true" /></span>
         <div>
           <h1>{room.title}</h1>
-          <p><CalendarDays aria-hidden="true" />{t('contextRoom:overviewDashboard.updatedTime', { time: updatedTime })} <i /> {t('contextRoom:overviewDashboard.countResources', { count: backendDocuments.length + room.materials.length + room.fileItems.length })}</p>
+          <p><CalendarDays aria-hidden="true" />{t('contextRoom:overviewDashboard.updatedTime', { time: updatedTime })} <i /> {t('contextRoom:overviewDashboard.countResources', { count: backendDocuments.length + materials.length + fileItems.length })}</p>
         </div>
         <b>{t(uiText(room.status))}</b>
       </header>

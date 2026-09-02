@@ -224,15 +224,19 @@ export class KnowledgeRouter {
       extraction = await this.deps.llm.extract(envelope.title, envelope.markdown);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      // 速率限制与输出截断都是瞬时态：抛错交 worker 退避重试，不落 awaiting_review——
-      // 否则该资料被永久定罪为"抽取失败"，限速过后也不会重新抽取。
-      if (KnowledgeLlm.isRateLimited(error) || KnowledgeLlm.isTruncated(error)) {
+      // 速率限制、输出截断与调用超时都是瞬时态：抛错交 worker 退避重试，不落 awaiting_review——
+      // 否则该资料被永久定罪为"抽取失败"，条件恢复后也不会重新抽取。
+      const transient = KnowledgeLlm.isRateLimited(error)
+        || KnowledgeLlm.isTruncated(error)
+        || KnowledgeLlm.isTimedOut(error);
+      if (transient) {
         this.deps.logger.warn(
           {
             event: "knowledge.router.extract.retryable",
             sourceId: envelope.ref.id,
             rateLimited: KnowledgeLlm.isRateLimited(error),
             truncated: KnowledgeLlm.isTruncated(error),
+            timedOut: KnowledgeLlm.isTimedOut(error),
           },
           "entity extraction transiently failed, job will retry",
         );

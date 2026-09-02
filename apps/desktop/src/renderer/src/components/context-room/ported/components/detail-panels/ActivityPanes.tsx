@@ -11,8 +11,8 @@ import {
   Paperclip,
   X,
 } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
-import type { RoomOverviewClaim, RoomOverviewProjection } from '@nxcore/agent-contract';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { RoomMailDetail, RoomOverviewClaim, RoomOverviewProjection } from '@nxcore/agent-contract';
 import { useLocale } from '../../../../../i18n/LocaleContext';
 
 import type { ContextRoomRecord } from '../../types';
@@ -21,6 +21,7 @@ import { useRoomMails } from '../../hooks/useRoomMails';
 import { CalendarProviderIcon } from '../CalendarProviderIcon';
 import { MailProviderIcon } from '../MailProviderIcon';
 import { ObjectDetailView, type DetailObject } from '../ObjectDetailView';
+import { MarkdownBody } from './MarkdownBody';
 import {
   preferRoomOverviewProjection,
   ROOM_OVERVIEW_CHANGED_EVENT,
@@ -437,6 +438,63 @@ export function TasksPane({
   );
 }
 
+/** 连接器邮件详情（邮件面板下半区）：身份头 + 元信息 + 正文滚动区。 */
+function MailDetailPanel({
+  state,
+  locale,
+  onClose,
+}: {
+  state: { loading: boolean; detail: RoomMailDetail | null; error: boolean };
+  locale: string;
+  onClose: () => void;
+}) {
+  const { t } = useLocale();
+  if (state.loading) {
+    return (
+      <aside className="context-room-mail-detail" data-testid="context-room-mail-detail">
+        <p className="context-room-mail-detail-hint">{t('contextRoom:activityPanes.loadingMailBody')}</p>
+      </aside>
+    );
+  }
+  if (state.error || !state.detail) {
+    return (
+      <aside className="context-room-mail-detail" data-testid="context-room-mail-detail">
+        <p className="context-room-mail-detail-hint">{t('contextRoom:activityPanes.mailBodyUnavailable')}</p>
+      </aside>
+    );
+  }
+  const detail = state.detail;
+  const when = detail.sentAt && !Number.isNaN(Date.parse(detail.sentAt))
+    ? new Date(detail.sentAt).toLocaleString(locale)
+    : null;
+  return (
+    <aside className="context-room-mail-detail" data-testid="context-room-mail-detail">
+      <header>
+        <MailProviderIcon provider={detail.provider} />
+        <div className="context-room-mail-detail-title">
+          <strong title={detail.subject}>{detail.subject}</strong>
+          <small>
+            {detail.senderName ?? t('contextRoom:objectDetail.defaultSender')}
+            {detail.senderAddress ? ` <${detail.senderAddress}>` : ''}
+          </small>
+        </div>
+        <button type="button" aria-label={t('contextRoom:activityPanes.closeMailDetail')} onClick={onClose}>
+          <X aria-hidden="true" />
+        </button>
+      </header>
+      <p className="context-room-mail-detail-meta">
+        {when ? <time>{t('contextRoom:activityPanes.sentAt')}：{when}</time> : null}
+        {detail.hasAttachments ? (
+          <span><Paperclip aria-hidden="true" />{t('contextRoom:activityPanes.hasAttachments')}</span>
+        ) : null}
+      </p>
+      <div className="context-room-mail-detail-body">
+        <MarkdownBody markdown={detail.body} />
+      </div>
+    </aside>
+  );
+}
+
 export function MailsPane({
   room,
   onSelect,
@@ -455,6 +513,47 @@ export function MailsPane({
   // 连接器邮件叠加：路由引擎归类的 Gmail/Outlook 邮件（专用全量端点，sentAt 倒序）。
   // 本地 LLM 快照邮件按「主题 + 同日」去重，保留真实发件人/时间的连接器版本。
   const { mails: connectorMails } = useRoomMails(room.id);
+  // 下半区详情：点击连接器邮件拉取全文（会话内缓存，Room 切换即失效）。
+  const [selectedMailId, setSelectedMailId] = useState<string | null>(null);
+  const [mailDetailState, setMailDetailState] = useState<{ loading: boolean; detail: RoomMailDetail | null; error: boolean }>({
+    loading: false,
+    detail: null,
+    error: false,
+  });
+  const mailDetailCache = useRef(new Map<string, RoomMailDetail>());
+  const mailDetailSeq = useRef(0);
+
+  useEffect(() => {
+    setSelectedMailId(null);
+    setMailDetailState({ loading: false, detail: null, error: false });
+    mailDetailCache.current.clear();
+    mailDetailSeq.current += 1;
+  }, [room.id]);
+
+  const openConnectorMail = useCallback(async (sourceId: string) => {
+    setSelectedMailId(sourceId);
+    const cached = mailDetailCache.current.get(sourceId);
+    if (cached) {
+      setMailDetailState({ loading: false, detail: cached, error: false });
+      return;
+    }
+    const seq = mailDetailSeq.current + 1;
+    mailDetailSeq.current = seq;
+    setMailDetailState({ loading: true, detail: null, error: false });
+    try {
+      const fetched = await window.nxcore?.contextRooms?.readMail(room.id, sourceId);
+      if (!fetched) throw new Error('mail_detail_unavailable');
+      mailDetailCache.current.set(sourceId, fetched);
+      if (mailDetailSeq.current === seq) {
+        setMailDetailState({ loading: false, detail: fetched, error: false });
+      }
+    } catch {
+      if (mailDetailSeq.current === seq) {
+        setMailDetailState({ loading: false, detail: null, error: true });
+      }
+    }
+  }, [room.id]);
+
   const detailObject = detail ? resolvePaneDetailObject(room, detail) : null;
   if (detail && detailObject && onCloseDetail) {
     return (
@@ -480,5 +579,51 @@ export function MailsPane({
     const time = when && !Number.isNaN(when.getTime()) ? when.toLocaleString(locale) : '';
     return { mail, time, sender: mail.senderName ?? mail.senderAddress ?? t('contextRoom:objectDetail.defaultSender') };
   });
-  return <div className="context-room-mail-pane"><header><h2>{t('contextRoom:activityPanes.roomEmail')}</h2><span>{mails.length + connectorRows.length}</span></header>{mails.length + connectorRows.length ? <>{mails.map((mail) => <button type="button" className={mail.unread ? 'is-unread' : ''} key={mail.id} onClick={() => onSelect(mail.id)}><Mail aria-hidden="true" /><span><span className="context-room-mail-meta"><b>{mail.folder === 'sent' ? mail.recipient ?? t('contextRoom:activityPanes.to') : mail.sender ?? t('contextRoom:objectDetail.defaultSender')}</b><time>{mail.time}</time></span><strong>{mail.title}</strong><small>{localizedUiText(mail.summary, t)}</small></span></button>)}{connectorRows.map(({ mail, time, sender }) => <Popover.Root key={`mail-${mail.sourceId}`}><Popover.Trigger asChild><button type="button" data-connector-source="mail"><MailProviderIcon provider={mail.provider} /><span><span className="context-room-mail-meta"><b>{sender}</b><time>{time}</time></span><strong>{mail.subject}</strong><small>{mail.snippet ?? ''}</small></span></button></Popover.Trigger><Popover.Portal><Popover.Content className="context-room-schedule-popover" side="right" align="start" sideOffset={8} collisionPadding={12}><header><h3>{mail.subject}</h3><Popover.Close aria-label={t('contextRoom:activityPanes.closeScheduleDetails')}><X aria-hidden="true" /></Popover.Close></header><p><MailProviderIcon provider={mail.provider} />{t('contextRoom:activityPanes.sentAt')}：{time}</p><dl><div><dt>{t('contextRoom:activityPanes.sender')}</dt><dd>{sender}{mail.senderAddress && mail.senderName ? `（${mail.senderAddress}）` : ''}</dd></div><div><dt>{t('contextRoom:activityPanes.emailSummary')}</dt><dd>{mail.snippet ?? '—'}</dd></div></dl>{mail.hasAttachments ? <p className="context-room-mail-attachments"><Paperclip aria-hidden="true" />{t('contextRoom:activityPanes.hasAttachments')}</p> : null}</Popover.Content></Popover.Portal></Popover.Root>)}</> : <PanelEmptyState icon={Mail} title={t('contextRoom:activityPanes.noEmailYet')} description={t('contextRoom:activityPanes.emailRelatedToThisRoomAppearsHere')} />}</div>;
+  return (
+    <div className={`context-room-mail-pane${selectedMailId ? ' has-detail' : ''}`}>
+      <header><h2>{t('contextRoom:activityPanes.roomEmail')}</h2><span>{mails.length + connectorRows.length}</span></header>
+      {mails.length + connectorRows.length ? (
+        <>
+          <div className="context-room-mail-list">
+            {mails.map((mail) => (
+              <button type="button" className={mail.unread ? 'is-unread' : ''} key={mail.id} onClick={() => onSelect(mail.id)}>
+                <Mail aria-hidden="true" />
+                <span>
+                  <span className="context-room-mail-meta"><b>{mail.folder === 'sent' ? mail.recipient ?? t('contextRoom:activityPanes.to') : mail.sender ?? t('contextRoom:objectDetail.defaultSender')}</b><time>{mail.time}</time></span>
+                  <strong>{mail.title}</strong>
+                  <small>{localizedUiText(mail.summary, t)}</small>
+                </span>
+              </button>
+            ))}
+            {connectorRows.map(({ mail, time, sender }) => (
+              <button
+                type="button"
+                key={`mail-${mail.sourceId}`}
+                data-connector-source="mail"
+                aria-pressed={selectedMailId === mail.sourceId}
+                className={selectedMailId === mail.sourceId ? 'is-selected' : ''}
+                onClick={() => void openConnectorMail(mail.sourceId)}
+              >
+                <MailProviderIcon provider={mail.provider} />
+                <span>
+                  <span className="context-room-mail-meta"><b>{sender}</b><time>{time}</time></span>
+                  <strong>{mail.subject}</strong>
+                  <small>{mail.snippet ?? ''}</small>
+                </span>
+              </button>
+            ))}
+          </div>
+          {selectedMailId ? (
+            <MailDetailPanel
+              state={mailDetailState}
+              locale={locale}
+              onClose={() => setSelectedMailId(null)}
+            />
+          ) : null}
+        </>
+      ) : (
+        <PanelEmptyState icon={Mail} title={t('contextRoom:activityPanes.noEmailYet')} description={t('contextRoom:activityPanes.emailRelatedToThisRoomAppearsHere')} />
+      )}
+    </div>
+  );
 }

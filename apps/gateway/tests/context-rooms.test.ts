@@ -1228,6 +1228,43 @@ describe('RoomOverviewService', () => {
     })
   })
 
+  it('reads a single routed mail with the full body; mails outside the room are rejected', async () => {
+    const { service, db } = await createHarness()
+    service.saveSnapshot({
+      rooms: [{ id: 'room-mail', title: 'Mail Room', data: { id: 'room-mail', title: 'Mail Room' } }],
+      deletedRooms: [],
+    })
+    db.insert(connectorEmails).values([{
+      id: 'mail-1', ownerId: 'local-user', service: 'gmail', connectionName: 'default',
+      sourceRecordId: 'rec-mail-1', syncedAt: new Date('2026-08-20T08:00:00.000Z'), schemaVersion: 1, promptVersion: 1,
+      contentHash: 'hash-mail-1', extensionPayload: null,
+      messageId: 'msg-mail-1', threadId: null, senderName: '张三', senderAddress: 'zhang@example.com',
+      recipients: [{ address: 'me@example.com' }], subject: '发布评审通知',
+      sentAt: new Date('2026-08-21T02:00:00.000Z'), bodyText: '第一行正文\n\n第二段', labels: [], hasAttachments: true,
+    }]).run()
+    db.insert(roomSourceMemberships).values([
+      { id: 'mail-m-1', roomId: 'room-mail', sourceKind: 'mail', sourceId: 'mail-1', sourceVersion: 1, evidenceGroupKey: 'm1', role: 'primary', sourceTitle: '发布评审通知' },
+    ]).run()
+    const overviews = new RoomOverviewService(db, service)
+
+    const detail = overviews.readRoomMail('room-mail', 'mail-1')
+    expect(detail).toMatchObject({
+      sourceId: 'mail-1',
+      subject: '发布评审通知',
+      senderName: '张三',
+      senderAddress: 'zhang@example.com',
+      sentAt: '2026-08-21T02:00:00.000Z',
+      hasAttachments: true,
+      provider: 'gmail',
+      origin: 'domain',
+      body: '第一行正文\n\n第二段',
+    })
+
+    // 跨房隔离：未挂到该 Room 的邮件/不存在的 Room 都是 404 语义
+    expect(() => overviews.readRoomMail('room-mail', 'mail-other')).toThrowError('mail_not_in_room')
+    expect(() => overviews.readRoomMail('room-not-exist', 'mail-1')).toThrowError('context_room_not_found')
+  })
+
   it('falls back to route snapshots for connector-ref mails, parsing sender and time from markdown', async () => {
     const { service, db } = await createHarness()
     service.saveSnapshot({
