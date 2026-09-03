@@ -152,16 +152,16 @@ export class NangoAuthorizationService {
     return this.snapshot(attempt);
   }
 
-  private async complete(attempt: StoredAttempt, nangoConnectionId: string): Promise<void> {
+  private async complete(attempt: StoredAttempt, connectionName: string): Promise<void> {
     try {
       const existing = this.manager.repository.listConnections().find((connection) =>
-        connection.nangoConfigKey === attempt.configKey &&
-        connection.nangoConnectionId === nangoConnectionId,
+        connection.service === attempt.configKey &&
+        connection.connectionName === connectionName,
       );
       attempt.connection = existing ?? await this.manager.register({
         provider: attempt.provider,
-        nangoConfigKey: attempt.configKey,
-        nangoConnectionId,
+        service: attempt.configKey,
+        connectionName,
         // Notion migrations must begin immediately after OAuth. Other providers
         // retain the filter-preference gate used by their existing onboarding.
         deferFirstSync: attempt.provider !== "notion",

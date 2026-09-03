@@ -179,8 +179,8 @@ describe("sync engine gating", () => {
 
     const connection = await manager.register({
       provider: "ics-calendar",
-      nangoConfigKey: "direct",
-      nangoConnectionId: "webcal:abc",
+      service: "direct",
+      connectionName: "webcal:abc",
       authMethod: "webcal-url",
       credentialsRef: "https://cal.example.com/holidays.ics",
     });
@@ -229,7 +229,7 @@ describe("webcal connection route", () => {
     const created = await app.inject({ method: "POST", url: "/v1/connectors/connections", payload });
     expect(created.statusCode).toBe(201);
     const body = created.json();
-    expect(body).toMatchObject({ provider: "ics-calendar", authMethod: "webcal-url", nangoConfigKey: "direct" });
+    expect(body).toMatchObject({ provider: "ics-calendar", authMethod: "webcal-url", service: "direct" });
     expect(JSON.stringify(body)).not.toContain("sekret");
     // 幂等：同 URL 再订阅返回既有连接（200）。
     const again = await app.inject({ method: "POST", url: "/v1/connectors/connections", payload });

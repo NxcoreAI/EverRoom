@@ -6,6 +6,14 @@ import {
   nangoAuthorizationErrorMessage,
   type NangoAuthorizationService,
 } from "./nango-authorization.js";
+import type { ConnectorProvider } from "@nxcore/connector-contract";
+import type { ConnectorAuthorizationAttempt } from "@nxcore/connector-contract";
+
+/** Seam4 授权缝：start/status 同契约，Nango（回退）与 OpenConnector 实现共用。 */
+export interface AuthorizationLike {
+  start(provider: ConnectorProvider): Promise<ConnectorAuthorizationAttempt & { authorizationUrl: string }>;
+  status(id: string): Promise<ConnectorAuthorizationAttempt | null>;
+}
 import { normalizeWebcalUrl } from "./auth-channels/types.js";
 import { SYNC_PROVIDERS, syncProviderNames, syncProviderOf } from "./sync-providers/index.js";
 const pageParams = (query: any) => {
@@ -22,7 +30,8 @@ export const nangoConnectorRoutes =
   (
     manager: ConnectorManager,
     enabled: boolean,
-    authorization?: NangoAuthorizationService,
+    /** Seam4：Nango（回退）或 OpenConnector 授权服务（同 start/status 契约）。 */
+    authorization?: AuthorizationLike,
   ): FastifyPluginAsync =>
   async (app) => {
     // M3b：旧前缀弃用告警（直接命中 /v1/nango-connectors/* 时打头；
@@ -110,8 +119,8 @@ export const nangoConnectorRoutes =
       const b = req.body as any;
       if (
         !isConnectorProvider(b?.provider, syncProviderNames()) ||
-        typeof b?.nangoConnectionId !== "string" ||
-        typeof b?.nangoConfigKey !== "string"
+        typeof b?.connectionName !== "string" ||
+        typeof b?.service !== "string"
       )
         return reply.code(400).send({ error: "invalid_connection" });
       try {
@@ -149,7 +158,7 @@ export const nangoConnectorRoutes =
       const connectionKey = `${definition.auth.channel}:${createHash("sha256").update(credentials).digest("hex").slice(0, 24)}`;
       const existing = manager.repository
         .listConnections()
-        .find((connection) => connection.provider === definition.provider && connection.nangoConnectionId === connectionKey);
+        .find((connection) => connection.provider === definition.provider && connection.connectionName === connectionKey);
       if (existing) {
         const { credentialsRef: _omitted, ...safe } = existing;
         return reply.code(200).send(safe);
@@ -157,8 +166,8 @@ export const nangoConnectorRoutes =
       try {
         const connection = await manager.register({
           provider: definition.provider,
-          nangoConfigKey: "direct",
-          nangoConnectionId: connectionKey,
+          service: "direct",
+          connectionName: connectionKey,
           authMethod: definition.auth.channel,
           credentialsRef: credentials,
         });

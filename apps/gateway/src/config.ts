@@ -275,6 +275,8 @@ export interface OpenConnectorCliConfig {
   executable: string;
   baseUrl: string;
   runtimeToken?: string;
+  /** 本地模式由 supervisor 生成；SaaS 模式由转发层管理（Seam4 授权流用）。 */
+  adminToken?: string;
   configDirectory: string;
   dataDirectory: string;
 }
@@ -1157,6 +1159,9 @@ export function loadConfig(
           baseUrl: cliConnectorUrl.replace(/\/$/, ''),
           ...(env.NXCORE_CLI_CONNECTOR_RUNTIME_TOKEN?.trim()
             ? { runtimeToken: env.NXCORE_CLI_CONNECTOR_RUNTIME_TOKEN.trim() }
+            : {}),
+          ...(env.NXCORE_CLI_CONNECTOR_ADMIN_TOKEN?.trim()
+            ? { adminToken: env.NXCORE_CLI_CONNECTOR_ADMIN_TOKEN.trim() }
             : {}),
           configDirectory: env.NXCORE_CLI_CONNECTOR_CONFIG_DIR?.trim() || join(dataDir, 'open-connector', 'oo-config'),
           dataDirectory: env.NXCORE_CLI_CONNECTOR_DATA_DIR?.trim() || join(dataDir, 'open-connector', 'oo-data'),

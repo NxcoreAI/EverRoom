@@ -110,8 +110,8 @@ export class SyncEngine {
     scope: {
       id: string;
       provider: string;
-      nangoConnectionId: string;
-      nangoConfigKey?: string;
+      connectionName: string;
+      service?: string;
       providerScopeId: string;
       sourceCursor: string | null;
     },
@@ -139,8 +139,8 @@ export class SyncEngine {
       {
         ...scope,
         provider: scope.provider,
-        nangoConnectionId: scope.nangoConnectionId,
-        ...(scope.nangoConfigKey ? { nangoConfigKey: scope.nangoConfigKey } : {}),
+        connectionName: scope.connectionName,
+        ...(scope.service ? { service: scope.service } : {}),
       },
       mode,
     );

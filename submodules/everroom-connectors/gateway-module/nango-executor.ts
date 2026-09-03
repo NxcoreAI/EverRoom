@@ -109,14 +109,14 @@ export class NangoExecutor implements ConnectorExecutor {
 
   async discoverScopes(connection: {
     provider: string;
-    nangoConnectionId: string;
-    nangoConfigKey?: string;
+    connectionName: string;
+    service?: string;
   }) {
     const definition = syncProviderOf(connection.provider);
     if (!definition) throw new Error(`unknown_connector_provider: ${connection.provider}`);
     const ctx = this.context(
-      connection.nangoConnectionId,
-      connection.nangoConfigKey,
+      connection.connectionName,
+      connection.service,
       definition.auth.nango?.configKeyDefault ?? definition.provider,
     );
     // 引擎边界：SyncScopeSeed → ConnectorExecutor 的 {id, displayName} 形状
@@ -130,8 +130,8 @@ export class NangoExecutor implements ConnectorExecutor {
   async *pull(
     scope: {
       provider: string;
-      nangoConnectionId: string;
-      nangoConfigKey?: string;
+      connectionName: string;
+      service?: string;
       providerScopeId: string;
       sourceCursor: string | null;
     },
@@ -140,7 +140,7 @@ export class NangoExecutor implements ConnectorExecutor {
     const definition = syncProviderOf(scope.provider);
     if (!definition || !definition.pull) throw new Error(`unknown_connector_provider: ${scope.provider}`);
     const ctx: SyncPullContext = {
-      ...this.context(scope.nangoConnectionId, scope.nangoConfigKey, definition.auth.nango?.configKeyDefault ?? definition.provider),
+      ...this.context(scope.connectionName, scope.service, definition.auth.nango?.configKeyDefault ?? definition.provider),
       providerScopeId: scope.providerScopeId,
       sourceCursor: scope.sourceCursor,
     };

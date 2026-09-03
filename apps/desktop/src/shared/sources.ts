@@ -807,7 +807,7 @@ export interface NxcoreDesktopApi {
     providers(): Promise<ConnectorProvidersResponse>
     startAuthorization(provider: string): Promise<ConnectorAuthorizationAttempt>
     authorizationStatus(id: string): Promise<ConnectorAuthorizationAttempt>
-    registerConnection(input: { provider: string; nangoConfigKey: string; nangoConnectionId: string; filters?: Record<string, unknown> }): Promise<ConnectorConnection>
+    registerConnection(input: { provider: string; service: string; connectionName: string; filters?: Record<string, unknown> }): Promise<ConnectorConnection>
     createWebcalSubscription(url: string): Promise<ConnectorConnection>
     disableConnection(id: string): Promise<void>
     enableConnection(id: string): Promise<void>

@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { OoCliBridge } from '../../../../submodules/everroom-connectors/desktop-host/open-connector/oo-cli-bridge'
+import { OoCliBridge } from '@nxcore/desktop-connector-host/oo-cli-bridge'
 
 const temporaryDirectories: string[] = []
 

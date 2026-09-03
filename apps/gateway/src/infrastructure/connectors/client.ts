@@ -4,7 +4,7 @@ import Database from "better-sqlite3";
 
 export interface ConnectorDatabase { sqlite: Database.Database; close(): void; }
 const schema = `
-CREATE TABLE IF NOT EXISTS connector_connections (id TEXT PRIMARY KEY, provider TEXT NOT NULL, nango_config_key TEXT NOT NULL, nango_connection_id TEXT NOT NULL, account_identity_hash TEXT, status TEXT NOT NULL DEFAULT 'active', filters_json TEXT NOT NULL DEFAULT '{}', auth_method TEXT NOT NULL DEFAULT 'nango-oauth', credentials_ref TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(provider,nango_connection_id));
+CREATE TABLE IF NOT EXISTS connector_connections (id TEXT PRIMARY KEY, provider TEXT NOT NULL, service TEXT NOT NULL, connection_name TEXT NOT NULL, account_identity_hash TEXT, status TEXT NOT NULL DEFAULT 'active', filters_json TEXT NOT NULL DEFAULT '{}', auth_method TEXT NOT NULL DEFAULT 'nango-oauth', credentials_ref TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(provider,connection_name));
 CREATE TABLE IF NOT EXISTS sync_scopes (id TEXT PRIMARY KEY, connection_id TEXT NOT NULL REFERENCES connector_connections(id), provider_scope_id TEXT NOT NULL, display_name TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'idle', source_cursor TEXT, delivery_cursor INTEGER NOT NULL DEFAULT 0, checkpoint_revision INTEGER NOT NULL DEFAULT 0, lease_owner TEXT, lease_expires_at TEXT, fence_token INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL, UNIQUE(connection_id,provider_scope_id));
 CREATE TABLE IF NOT EXISTS sync_runs (id TEXT PRIMARY KEY, scope_id TEXT NOT NULL REFERENCES sync_scopes(id), mode TEXT NOT NULL, status TEXT NOT NULL, processed INTEGER NOT NULL DEFAULT 0, failed INTEGER NOT NULL DEFAULT 0, error TEXT, started_at TEXT NOT NULL, finished_at TEXT);
 CREATE TABLE IF NOT EXISTS sync_failures (id TEXT PRIMARY KEY, run_id TEXT, scope_id TEXT, kind TEXT NOT NULL, message TEXT NOT NULL, provider_item_id TEXT, created_at TEXT NOT NULL);
@@ -37,6 +37,12 @@ function migrate(sqlite: Database.Database): void {
   }
   if (!connectionColumns.some((column) => column.name === "credentials_ref")) {
     sqlite.exec("ALTER TABLE connector_connections ADD COLUMN credentials_ref TEXT");
+  }
+  // Seam5（连接器统一 P1）：nango_config_key/nango_connection_id → service/connection_name。
+  // 旧库（列存在）探测式 RENAME + 回填；新库建表即为新列。
+  if (connectionColumns.some((column) => column.name === "nango_config_key")) {
+    sqlite.exec("ALTER TABLE connector_connections RENAME COLUMN nango_config_key TO service");
+    sqlite.exec("ALTER TABLE connector_connections RENAME COLUMN nango_connection_id TO connection_name");
   }
 }
 

@@ -287,8 +287,8 @@ describe("external call budgets", () => {
         getConnection: () => ({
           id: "connection-1",
           status: "active",
-          nangoConnectionId: "nango-1",
-          nangoConfigKey: "gmail",
+          connectionName: "nango-1",
+          service: "gmail",
         }),
         getScope: () => ({ id: "scope-1" }),
       },

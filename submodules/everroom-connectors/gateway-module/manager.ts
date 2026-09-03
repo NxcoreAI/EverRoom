@@ -47,8 +47,9 @@ export class ConnectorManager {
   private readonly engine: SyncEngine;
   async register(input: {
     provider: ConnectorProvider;
-    nangoConfigKey: string;
-    nangoConnectionId: string;
+    /** oo 标识（Seam5：service/connectionName）。 */
+    service: string;
+    connectionName: string;
     filters?: Record<string, unknown>;
     authMethod?: "nango-oauth" | "api-token" | "webcal-url" | "password" | "manual-import";
     credentialsRef?: string | null;
@@ -145,8 +146,8 @@ export class ConnectorManager {
         {
           ...scope,
           provider: connection.provider,
-          nangoConnectionId: connection.nangoConnectionId,
-          nangoConfigKey: connection.nangoConfigKey,
+          connectionName: connection.connectionName,
+          service: connection.service,
         },
         connection,
         mode,

@@ -272,8 +272,8 @@ export function createNangoPiTools(
         const invoke = async (markDispatched: () => void) => {
           markDispatched();
           return executor.proxyGet(
-            connection.nangoConnectionId,
-            connection.nangoConfigKey,
+            connection.connectionName,
+            connection.service,
             target.toString(),
           );
         };

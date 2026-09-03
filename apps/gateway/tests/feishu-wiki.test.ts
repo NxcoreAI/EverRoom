@@ -109,7 +109,7 @@ describe("generic connection endpoint (api-token)", () => {
     const payload = { provider: "feishu-wiki", credentials: "cli_app:sekret" };
     const created = await app.inject({ method: "POST", url: "/v1/connectors/connections", payload });
     expect(created.statusCode).toBe(201);
-    expect(created.json()).toMatchObject({ provider: "feishu-wiki", authMethod: "api-token", nangoConfigKey: "direct" });
+    expect(created.json()).toMatchObject({ provider: "feishu-wiki", authMethod: "api-token", service: "direct" });
     expect(created.json().credentialsRef).toBeUndefined();
     const again = await app.inject({ method: "POST", url: "/v1/connectors/connections", payload });
     expect(again.statusCode).toBe(200);

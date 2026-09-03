@@ -203,8 +203,8 @@ export class OpenConnectorSyncExecutor implements ConnectorExecutor {
   async *pull(
     scope: {
       provider: ConnectorProvider;
-      nangoConnectionId: string;
-      nangoConfigKey?: string;
+      connectionName: string;
+      service?: string;
       providerScopeId: string;
       sourceCursor: string | null;
     },
@@ -216,7 +216,7 @@ export class OpenConnectorSyncExecutor implements ConnectorExecutor {
       throw new Error(`provider_engine_not_oauth: ${scope.provider}`);
     }
     const ctx = {
-      connectionId: scope.nangoConnectionId,
+      connectionId: scope.connectionName,
       proxyGet: async (url: string, headers?: Record<string, string>): Promise<any> => {
         void headers;
         return this.request("GET", url);

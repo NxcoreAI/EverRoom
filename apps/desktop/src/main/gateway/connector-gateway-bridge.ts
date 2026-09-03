@@ -21,8 +21,8 @@ const FAULT_POINTS = new Set(['before_page_commit', 'after_page_commit_before_cu
 
 export interface ConnectorConnectionInput {
   provider: string
-  nangoConfigKey: string
-  nangoConnectionId: string
+  service: string
+  connectionName: string
   filters?: Record<string, unknown>
 }
 
@@ -72,8 +72,8 @@ export class NangoConnectorGatewayBridge {
 
   registerConnection(input: ConnectorConnectionInput): Promise<ConnectorConnection> {
     if (!/^[a-z][a-z0-9-]*$/.test(input.provider)) throw new Error('不支持的连接提供方。')
-    if (!input.nangoConfigKey.trim() || !input.nangoConnectionId.trim()) throw new Error('连接配置不能为空。')
-    return this.request('/v1/nango-connectors/connections', { method: 'POST', data: { ...input, nangoConfigKey: input.nangoConfigKey.trim(), nangoConnectionId: input.nangoConnectionId.trim() } })
+    if (!input.service.trim() || !input.connectionName.trim()) throw new Error('连接配置不能为空。')
+    return this.request('/v1/nango-connectors/connections', { method: 'POST', data: { ...input, service: input.service.trim(), connectionName: input.connectionName.trim() } })
   }
 
   async startAuthorization(provider: string): Promise<ConnectorAuthorizationAttempt> {

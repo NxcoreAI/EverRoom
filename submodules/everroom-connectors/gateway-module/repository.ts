@@ -40,7 +40,7 @@ export class ConnectorRepository {
     return (
       this.sqlite
         .prepare(
-          "SELECT id,provider,nango_config_key as nangoConfigKey,nango_connection_id as nangoConnectionId,account_identity_hash as accountIdentityHash,status,filters_json as filters,auth_method as authMethod,credentials_ref as credentialsRef,created_at as createdAt,updated_at as updatedAt FROM connector_connections ORDER BY created_at",
+          "SELECT id,provider,service,connection_name as connectionName,account_identity_hash as accountIdentityHash,status,filters_json as filters,auth_method as authMethod,credentials_ref as credentialsRef,created_at as createdAt,updated_at as updatedAt FROM connector_connections ORDER BY created_at",
         )
         .all() as any[]
     ).map((r) => ({ ...r, filters: JSON.parse(r.filters) }));
@@ -50,8 +50,8 @@ export class ConnectorRepository {
   }
   registerConnection(input: {
     provider: string;
-    nangoConfigKey: string;
-    nangoConnectionId: string;
+    service: string;
+    connectionName: string;
     filters?: Record<string, unknown>;
     authMethod?: "nango-oauth" | "api-token" | "webcal-url" | "password" | "manual-import";
     credentialsRef?: string | null;
@@ -60,13 +60,13 @@ export class ConnectorRepository {
       t = now();
     this.sqlite
       .prepare(
-        "INSERT INTO connector_connections(id,provider,nango_config_key,nango_connection_id,filters_json,auth_method,credentials_ref,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO connector_connections(id,provider,service,connection_name,filters_json,auth_method,credentials_ref,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
       )
       .run(
         id,
         input.provider,
-        input.nangoConfigKey,
-        input.nangoConnectionId,
+        input.service,
+        input.connectionName,
         JSON.stringify(input.filters ?? {}),
         input.authMethod ?? "nango-oauth",
         input.credentialsRef ?? null,

@@ -115,6 +115,7 @@ import { ConnectorDomainProjection, backfillDomainProjection, rewriteConnectorRe
 import { SYNC_PROVIDERS, assertSyncProvidersValid } from "@nxcore/connectors-module/sync-providers/index.js";
 import { SyncEngine } from "@nxcore/connectors-module/sync-engine.js";
 import { OpenConnectorSyncExecutor } from "@nxcore/connectors-module/open-connector-sync-executor.js";
+import { OpenConnectorAuthorizationService } from "@nxcore/connectors-module/open-connector-authorization.js";
 import { NangoExecutor } from "@nxcore/connectors-module/nango-executor.js";
 import { NangoAuthorizationService } from "@nxcore/connectors-module/nango-authorization.js";
 import { bootstrapNangoWhenReady } from "@nxcore/connectors-module/nango-bootstrap.js";
@@ -384,20 +385,22 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   const nangoAgentTools = nangoExecutor instanceof NangoExecutor
     ? { manager: nangoConnectorManager, executor: nangoExecutor }
     : null;
-  const nangoConnectorAuthorization = nangoConnectorConfig.enabled && "providerConfigKeys" in nangoConnectorConfig
-    ? new NangoAuthorizationService(
-        nangoConnectorConfig.nangoUrl,
-        resolveNangoSecret,
-        // 阶段二：provider → configKey 装配由注册表驱动（新增 provider 免改此处）。
-        Object.fromEntries(SYNC_PROVIDERS.map((definition) => [
-          definition.provider,
-          nangoConnectorConfig.providerConfigKeys[definition.provider]
-            ?? definition.auth.nango?.configKeyDefault
-            ?? "",
-        ])),
-        nangoConnectorManager,
-      )
-    : undefined;
+  const nangoConnectorAuthorization = ooSyncExecutor && config.cliConnector?.adminToken
+    ? new OpenConnectorAuthorizationService(config.cliConnector, nangoConnectorManager)
+    : nangoConnectorConfig.enabled && "providerConfigKeys" in nangoConnectorConfig
+      ? new NangoAuthorizationService(
+          nangoConnectorConfig.nangoUrl,
+          resolveNangoSecret,
+          // 阶段二：provider → configKey 装配由注册表驱动（新增 provider 免改此处）。
+          Object.fromEntries(SYNC_PROVIDERS.map((definition) => [
+            definition.provider,
+            nangoConnectorConfig.providerConfigKeys[definition.provider]
+              ?? definition.auth.nango?.configKeyDefault
+              ?? "",
+          ])),
+          nangoConnectorManager,
+        )
+      : undefined;
   // When the configured value is a bootstrap placeholder, wait for the
   // dashboard API key before polling. Nango rejects non-UUID secrets with a
   // noisy 401 on every scheduled sync.

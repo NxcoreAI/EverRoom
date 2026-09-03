@@ -44,10 +44,10 @@ describe("sync provider registry", () => {
 
   it("rejects unknown providers at the engine boundary", async () => {
     const executor = new NangoExecutor("https://nango.local", "secret");
-    await expect(executor.discoverScopes({ provider: "feishu", nangoConnectionId: "c", nangoConfigKey: "k" }))
+    await expect(executor.discoverScopes({ provider: "feishu", connectionName: "c", service: "k" }))
       .rejects.toThrow("unknown_connector_provider: feishu");
     await expect(async () => {
-      for await (const _page of executor.pull({ provider: "feishu", nangoConnectionId: "c", nangoConfigKey: "k", providerScopeId: "me", sourceCursor: null }, "full")) break;
+      for await (const _page of executor.pull({ provider: "feishu", connectionName: "c", service: "k", providerScopeId: "me", sourceCursor: null }, "full")) break;
     }).rejects.toThrow("unknown_connector_provider: feishu");
   });
 
@@ -57,7 +57,7 @@ describe("sync provider registry", () => {
     const connectors = createConnectorDatabase(join(dir, "connectors.sqlite"));
     const repo = new ConnectorRepository(connectors.sqlite);
     const manager = new ConnectorManager(repo, null);
-    const connection = await manager.register({ provider: "google-docs", nangoConfigKey: "docs", nangoConnectionId: "c" });
+    const connection = await manager.register({ provider: "google-docs", service: "docs", connectionName: "c" });
     // 旧实现的兜底 ternary 会给出 inbox/Inbox；注册表给出 provider 自己的种子。
     expect(repo.listScopes().filter((scope) => scope.connectionId === connection.id))
       .toEqual([expect.objectContaining({ providerScopeId: "documents", displayName: "Google Docs" })]);
@@ -72,7 +72,7 @@ describe("provider metadata endpoint", () => {
     dirs.push(dir);
     const connectors = createConnectorDatabase(join(dir, "connectors.sqlite"));
     const repo = new ConnectorRepository(connectors.sqlite);
-    repo.registerConnection({ provider: "gmail", nangoConfigKey: "google-mail", nangoConnectionId: "c" });
+    repo.registerConnection({ provider: "gmail", service: "google-mail", connectionName: "c" });
     const manager = new ConnectorManager(repo, null);
     const app = Fastify();
     await app.register(nangoConnectorRoutes(manager, true));
