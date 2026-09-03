@@ -11,7 +11,7 @@
 export * from "./types.js";
 export { SYNC_PROVIDERS, assertSyncProvidersValid } from "./sync-providers/index.js";
 export { ConnectorManager } from "./manager.js";
-export { ConnectorSyncService, runOpenConnector } from "./service.js";
+export { ConnectorSyncService } from "./service.js";
 export { ConnectorMarkdownService } from "./markdown-service.js";
 export { projectDomainRecords } from "./domain-projection.js";
 export { nangoConnectorRoutes, cliConnectorRoutes } from "./routes.js";

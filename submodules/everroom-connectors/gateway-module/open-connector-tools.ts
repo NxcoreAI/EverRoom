@@ -5,6 +5,7 @@ import type {
 } from '@nxcore/agent-runtime-pi';
 import type { StartRuntimeRunInput } from '@nxcore/agent-runtime';
 import type { OpenConnectorCliConfig } from "./host-types.js";
+import { OpenConnectorHttpClient } from "./open-connector-http-client.js";
 import {
   ExternalCallBudgetExceededError,
   type ExternalCallBudgetService,
@@ -173,6 +174,35 @@ function connectorEnvironment(config: OpenConnectorCliConfig): NodeJS.ProcessEnv
   };
 }
 
+/**
+ * Seam 3 传输缝：oo CLI 子进程 → OpenConnectorHttpClient。
+ * 契约：输入语义化调用（不再是 CLI args 数组），返回封套 data。
+ */
+export type OoHttpRunner = (
+  config: OpenConnectorCliConfig,
+  call:
+    | { kind: 'apps'; service?: string }
+    | { kind: 'search'; query: string }
+    | { kind: 'schema'; service: string; action: string }
+    | { kind: 'run'; service: string; action: string; input: Record<string, unknown>; connectionName?: string | undefined },
+  signal?: AbortSignal,
+) => Promise<unknown>;
+
+export const runOoHttp: OoHttpRunner = (config, call, signal) => {
+  const client = new OpenConnectorHttpClient(config);
+  switch (call.kind) {
+    case 'apps':
+      return call.service ? client.listAppsByService(call.service, { signal }) : client.listApps({ signal });
+    case 'search':
+      return client.searchActions(call.query, { signal });
+    case 'schema':
+      return client.getAction(call.service, call.action, { signal });
+    case 'run':
+      return client.runAction(call.service, call.action, call.input, { ...(call.connectionName ? { connectionName: call.connectionName } : {}), signal });
+  }
+};
+
+/** @deprecated 仅测试注入兼容；生产链路已走 runOoHttp。 */
 export function runOo(
   config: OpenConnectorCliConfig,
   arguments_: string[],
@@ -259,11 +289,7 @@ function textResult(data: unknown): { content: string; details: unknown } {
   return { content, details: limited };
 }
 
-export type OoRunner = (
-  config: OpenConnectorCliConfig,
-  arguments_: string[],
-  signal?: AbortSignal,
-) => Promise<unknown>;
+export type OoRunner = OoHttpRunner;
 
 interface ConnectorApp {
   connectionName: string;
@@ -471,7 +497,7 @@ function chooseConnectionName(
 
 export function createOpenConnectorPiTools(
   config: OpenConnectorCliConfig,
-  runner: OoRunner = runOo,
+  runner: OoRunner = runOoHttp,
   budget?: ExternalCallBudgetService,
 ): PiAgentRuntimeTool[] {
   const observedNotionIds = new Map<string, Set<string>>();
@@ -509,8 +535,9 @@ export function createOpenConnectorPiTools(
     const actionKey = `${service}.${name}`;
     const runSchemas = schemaCache.get(runKey) ?? new Map<string, unknown>();
     if (runSchemas.has(actionKey)) return runSchemas.get(actionKey);
+    const [schemaService, schemaName] = actionKey.split('.');
     const schema = compactActionSchema(
-      await runner(config, ['connector', 'schema', actionKey], signal),
+      await runner(config, { kind: 'schema', service: schemaService ?? service, action: schemaName ?? name }, signal),
       service,
       name,
     );
@@ -562,13 +589,7 @@ export function createOpenConnectorPiTools(
           : null;
         const result = await external(input, 'connector_search', () => runner(
           config,
-          [
-            'connector',
-            'search',
-            '--json',
-            '--',
-            connectorSearchQuery(originalPrompt, String(params.query), service),
-          ],
+          { kind: 'search', query: connectorSearchQuery(originalPrompt, String(params.query), service ?? '') },
           signal,
         ));
         return textResult(connectorSearchResults(result, service, exactAction));
@@ -632,11 +653,10 @@ export function createOpenConnectorPiTools(
         'Call this before connector_run and use only a connectionName returned by this tool.',
         'If the result is empty, do not call connector_run; tell the user to connect the service in the Connector Web Console.',
       ],
-      execute: async (input, params, signal) => textResult(await external(input, 'connector_apps', () => runner(
-        config,
-        ['connector', 'apps', String(params.service), '--json'],
-        signal,
-      ))),
+      execute: async (input, params, signal) => textResult(await external(input, 'connector_apps', () => {
+        const service = textValue(params.service);
+        return runner(config, { kind: 'apps', ...(service ? { service } : {}) }, signal);
+      })),
       classifyFailure: (error: unknown, _input: StartRuntimeRunInput, params: Record<string, unknown>) => classify('apps', error, params),
     },
     {
@@ -704,24 +724,14 @@ export function createOpenConnectorPiTools(
             const reason = error instanceof Error ? error.message : String(error);
             throw new Error(`Connector action "${service}.${name}" could not be verified and was not executed: ${reason}. Call connector_search, copy its exact service and name, inspect connector_schema, and retry in this turn.`);
           }
-          const apps = await runner(config, ['connector', 'apps', service, '--json'], signal);
+          const apps = await runner(config, { kind: 'apps', service }, signal);
           const connectionName = chooseConnectionName(
             service,
             textValue(params.connectionName),
             apps,
           );
-          return runner(config, [
-            'connector',
-            'run',
-            service,
-            '--action',
-            name,
-            '--data',
-            data,
-            '--connection-name',
-            connectionName,
-            '--json',
-          ], signal);
+          void data;
+          return runner(config, { kind: 'run', service, action: name, input: JSON.parse(data) as Record<string, unknown>, connectionName }, signal);
         });
         if (service === 'notion') rememberNotionIds(input.runId, result);
         return textResult(result);

@@ -140,10 +140,9 @@ describe("ConnectorSyncService", () => {
       }]),
     });
     const database = createDatabase(join(directory, "gateway.sqlite"), config.migrationsDir);
-    const calls: string[][] = [];
-    const service = new ConnectorSyncService(database.db, config, logger, async (_config, args) => {
-      calls.push(args);
-      if (args[1] === "apps") return [];
+    const calls: Array<[string, string]> = [];
+    const service = new ConnectorSyncService(database.db, config, logger, async (_config, service, action) => {
+      calls.push([service, action]);
       return {
         data: {
           messages: [{
@@ -160,17 +159,17 @@ describe("ConnectorSyncService", () => {
           nextPageToken: null,
         },
       };
-    });
+    }, async () => []);
 
     try {
       await service.initialize();
       await new Promise<void>((resolve) => setImmediate(resolve));
-      expect(calls.filter((args) => args[1] === "run")).toHaveLength(1);
+      expect(calls.filter(([svc, action]) => svc === "gmail" && action === "fetch_emails")).toHaveLength(1);
       expect(service.status("local-user").recordCount).toBe(1);
       expect(service.queryRecords({ ownerId: "local-user", service: "gmail", dataset: "email" })).toHaveLength(1);
 
       await service.triggerJob("mail-recent");
-      expect(calls.filter((args) => args[1] === "run")).toHaveLength(2);
+      expect(calls.filter(([svc, action]) => svc === "gmail" && action === "fetch_emails")).toHaveLength(2);
       expect(service.status("local-user").recordCount).toBe(1);
       expect(service.getJob("mail-recent")?.lastError).toBeNull();
     } finally {
@@ -198,7 +197,7 @@ describe("ConnectorSyncService", () => {
     let calls = 0;
     const service = new ConnectorSyncService(database.db, config, logger, async () => {
       calls += 1;
-      return [];
+      return {};
     });
 
     try {

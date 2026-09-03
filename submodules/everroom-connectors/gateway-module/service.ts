@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { and, asc, desc, eq, gte, isNull, lt, lte, or, like } from "drizzle-orm";
 import type { AgentRuntime, StartRuntimeRunInput } from "@nxcore/agent-runtime";
+import { OpenConnectorHttpClient } from "./open-connector-http-client.js";
 import type { ConnectorSyncJobConfig, GatewayConfig, OpenConnectorCliConfig } from "./host-types.js";
 import type { GatewayDatabase } from "./host-types.js";
 import type { FilesService } from "./ports.js";
@@ -20,7 +21,6 @@ import {
   connectorSyncRuns,
   connectorTodos,
 } from "../../../apps/gateway/src/infrastructure/database/schema.js";
-import { spawn } from "node:child_process";
 import {
   connectorResultData,
   gmailHistoryDelta,
@@ -59,7 +59,6 @@ const NOTION_RECONCILE_INTERVAL_MS = 12 * 60 * 60 * 1_000;
 const GOOGLE_DOCS_INCREMENTAL_INTERVAL_MS = 5 * 60 * 1_000;
 const GOOGLE_DOCS_RECONCILE_INTERVAL_MS = 24 * 60 * 60 * 1_000;
 const MAX_CONNECTOR_PAGES = 10_000;
-const MAX_OPEN_CONNECTOR_OUTPUT_BYTES = 64 * 1024 * 1024;
 const MAX_EXPORTED_DOCUMENT_BYTES = 32 * 1024 * 1024;
 
 const BUILTIN_PROMPT_PROFILES = [
@@ -187,9 +186,36 @@ export interface ConnectorSyncJobSummary {
   running: boolean;
 }
 
-export interface ConnectorSyncRunner {
-  (config: OpenConnectorCliConfig, args: string[], signal?: AbortSignal): Promise<unknown>;
+/**
+ * Seam 2 传输缝：action 执行器。默认实现走 OpenConnectorHttpClient（HTTP 直连），
+ * 测试可注入 fake。取代旧 spawn CLI runner。
+ */
+export interface ConnectorActionRunner {
+  (
+    config: OpenConnectorCliConfig,
+    service: string,
+    action: string,
+    input: Record<string, unknown>,
+    options?: { connectionName?: string },
+  ): Promise<Record<string, unknown>>;
 }
+
+async function listConnectorAppsHttp(config: OpenConnectorCliConfig): Promise<unknown> {
+  return new OpenConnectorHttpClient(config).listApps();
+}
+
+async function runConnectorActionHttp(
+  config: OpenConnectorCliConfig,
+  service: string,
+  action: string,
+  input: Record<string, unknown>,
+  options: { connectionName?: string } = {},
+): Promise<Record<string, unknown>> {
+  const client = new OpenConnectorHttpClient(config);
+  return client.runAction(service, action, input, options) as Promise<Record<string, unknown>>;
+}
+
+
 
 function objectValue(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -199,20 +225,6 @@ function objectValue(value: unknown): Record<string, unknown> {
 
 function textValue(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
-}
-
-function redactText(value: string, secret?: string): string {
-  return secret ? value.split(secret).join("<redacted>") : value;
-}
-
-function redactValue(value: unknown, secret?: string): unknown {
-  if (!secret) return value;
-  if (typeof value === "string") return redactText(value, secret);
-  if (Array.isArray(value)) return value.map((item) => redactValue(item, secret));
-  if (value && typeof value === "object") {
-    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, redactValue(item, secret)]));
-  }
-  return value;
 }
 
 function stableJson(value: unknown): string {
@@ -323,7 +335,8 @@ export class ConnectorSyncService {
     private readonly db: GatewayDatabase,
     private readonly config: GatewayConfig,
     private readonly logger: ConnectorSyncLogger,
-    private readonly runner: ConnectorSyncRunner = runOpenConnector,
+    private readonly runner: ConnectorActionRunner = runConnectorActionHttp,
+    private readonly appsProbe: (config: OpenConnectorCliConfig) => Promise<unknown> = listConnectorAppsHttp,
   ) {}
 
   attachAgentRuntime(runtime: AgentRuntime, options: { disposeRuntime?: boolean } = {}): void {
@@ -1531,10 +1544,7 @@ export class ConnectorSyncService {
   ): Promise<Record<string, unknown>> {
     const connector = this.config.cliConnector;
     if (!connector) throw new Error("OpenConnector runtime is unavailable");
-    const args = ["connector", "run", job.service, "--action", action, "--data", JSON.stringify(input)];
-    if (job.connectionName) args.push("--connection-name", job.connectionName);
-    args.push("--json");
-    return connectorResultData(await this.runner(connector, args));
+    return connectorResultData(await this.runner(connector, job.service, action, input, job.connectionName ? { connectionName: job.connectionName } : {}));
   }
 
   private completeGmailRun(
@@ -1981,7 +1991,7 @@ export class ConnectorSyncService {
     if (!connector) return;
     let result: unknown;
     try {
-      result = await this.runner(connector, ["connector", "apps", "--json"]);
+      result = await this.appsProbe(connector);
     } catch (error) {
       this.logger.warn({ error: error instanceof Error ? error.message : String(error) }, "connector account discovery failed");
       return;
@@ -2244,10 +2254,7 @@ export class ConnectorSyncService {
       if (!job.action) throw new Error("Connector sync Agent runtime is unavailable and no legacy action is configured");
       const connector = this.config.cliConnector;
       if (!connector) throw new Error("OpenConnector runtime is unavailable");
-      const args = ["connector", "run", job.service, "--action", job.action, "--data", JSON.stringify(job.input)];
-      if (job.connectionName) args.push("--connection-name", job.connectionName);
-      args.push("--json");
-      const result = await this.runner(connector, args);
+      const result = connectorResultData(await this.runner(connector, job.service, job.action, job.input, job.connectionName ? { connectionName: job.connectionName } : {}));
       const items = recordItems(result);
       const syncedAt = new Date();
       let inserted = 0;
@@ -2744,65 +2751,4 @@ function resourceTypeFromDataset(dataset: string): ConnectorResourceType | null 
   if (/task|todo/.test(normalized)) return "todo";
   if (/calendar|event|schedule/.test(normalized)) return "calendar";
   return null;
-}
-
-export async function runOpenConnector(
-  config: OpenConnectorCliConfig,
-  args: string[],
-  signal?: AbortSignal,
-): Promise<unknown> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(config.executable, args, {
-      env: {
-        ...process.env,
-        OO_CONNECTOR_URL: config.baseUrl,
-        ...(config.runtimeToken ? { OO_CONNECTOR_TOKEN: config.runtimeToken } : {}),
-        OO_CONFIG_DIR: config.configDirectory,
-        OO_DATA_DIR: config.dataDirectory,
-        NO_COLOR: "1",
-      },
-      shell: false,
-      windowsHide: true,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    let stdout = "";
-    let stderr = "";
-    let settled = false;
-    let timeout: ReturnType<typeof setTimeout>;
-    const finish = (error?: Error): void => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      signal?.removeEventListener("abort", abort);
-      if (error) reject(error);
-      else {
-        try {
-          resolve(redactValue(stdout.trim() ? JSON.parse(stdout) : null, config.runtimeToken));
-        } catch {
-          reject(new Error("OpenConnector sync returned invalid JSON"));
-        }
-      }
-    };
-    timeout = setTimeout(() => {
-      child.kill("SIGTERM");
-      finish(new Error("OpenConnector sync timed out"));
-    }, 120_000);
-    const abort = (): void => {
-      child.kill("SIGTERM");
-      finish(new Error("OpenConnector sync cancelled"));
-    };
-    signal?.addEventListener("abort", abort, { once: true });
-    child.stdout.setEncoding("utf8");
-    child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (chunk: string) => {
-      stdout += chunk;
-      if (Buffer.byteLength(stdout) > MAX_OPEN_CONNECTOR_OUTPUT_BYTES) {
-        child.kill("SIGTERM");
-        finish(new Error("OpenConnector sync output exceeded 64 MiB"));
-      }
-    });
-    child.stderr.on("data", (chunk: string) => { stderr += redactText(chunk, config.runtimeToken); });
-    child.once("error", finish);
-    child.once("close", (code) => finish(code === 0 ? undefined : new Error(stderr.trim() || `oo exited with code ${String(code)}`)));
-  });
 }

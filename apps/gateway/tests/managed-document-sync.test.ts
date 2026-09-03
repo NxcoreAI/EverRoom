@@ -30,11 +30,9 @@ describe("managed document connector sync", () => {
     const database = createDatabase(join(directory, "gateway.sqlite"), config.migrationsDir);
     let searchMode: "page" | "empty" = "page";
     let revision = 1;
-    const service = new ConnectorSyncService(database.db, config, logger, async (_connector, args) => {
-      if (args[1] === "apps") {
-        return [{ service: "notion", connectionName: "workspace", displayName: "Product", status: "active" }];
-      }
-      const action = args[args.indexOf("--action") + 1];
+    const service = new ConnectorSyncService(
+      database.db, config, logger,
+      async (_connector, _svc, action) => {
       if (action === "search") {
         return { data: {
           object: "list",
@@ -47,7 +45,9 @@ describe("managed document connector sync", () => {
         return { data: { markdown: `## 方案\r\n\r\n正文 v${String(revision)}  ` } };
       }
       throw new Error(`Unexpected connector action: ${String(action)}`);
-    });
+      },
+      async () => [{ service: "notion", connectionName: "workspace", displayName: "Product", status: "active" }]);
+
 
     try {
       await service.initialize();
@@ -97,11 +97,9 @@ describe("managed document connector sync", () => {
       `<html><body><h2>正文 v${String(revision)}</h2><table><tr><td>A</td><td>B</td></tr></table><script>bad()</script></body></html>`,
       { status: 200, headers: { "content-type": "text/html" } },
     )));
-    const service = new ConnectorSyncService(database.db, config, logger, async (_connector, args) => {
-      if (args[1] === "apps") {
-        return [{ service: "googledrive", connectionName: "drive", displayName: "me@example.com", status: "active" }];
-      }
-      const action = args[args.indexOf("--action") + 1];
+    const service = new ConnectorSyncService(
+      database.db, config, logger,
+      async (_connector, _svc, action) => {
       if (action === "changes.getStartPageToken") return { data: { startPageToken: "100", kind: "drive#startPageToken" } };
       if (action === "files.list") return { data: { files: [googleDocument(revision)], nextPageToken: null } };
       if (action === "files.export") return { data: {
@@ -123,7 +121,9 @@ describe("managed document connector sync", () => {
         newStartPageToken: "101",
       } };
       throw new Error(`Unexpected connector action: ${String(action)}`);
-    });
+      },
+      async () => [{ service: "googledrive", connectionName: "drive", displayName: "me@example.com", status: "active" }]);
+
 
     try {
       await service.initialize();

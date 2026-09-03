@@ -93,8 +93,7 @@ describe("ConnectorSyncService Agent ingestion", () => {
     });
     const database = createDatabase(join(directory, "gateway.sqlite"), config.migrationsDir);
     const connectorInputs: Record<string, unknown>[] = [];
-    const service = new ConnectorSyncService(database.db, config, logger, async (_connector, args) => {
-      const input = JSON.parse(args[args.indexOf("--data") + 1]!) as Record<string, unknown>;
+    const service = new ConnectorSyncService(database.db, config, logger, async (_connector, _service, _action, input) => {
       connectorInputs.push(input);
       const page = input.pageToken ? 2 : 1;
       return {
@@ -180,11 +179,9 @@ describe("ConnectorSyncService Agent ingestion", () => {
       NXCORE_CLI_CONNECTOR_SYNC_INTERVAL_MS: "600000",
     });
     const database = createDatabase(join(directory, "gateway.sqlite"), config.migrationsDir);
-    const service = new ConnectorSyncService(database.db, config, logger, async (_connector, args) => {
-      if (args[1] === "apps") {
-        return [{ service: "gmail", connectionName: "default", displayName: "mail@example.com", status: "active" }];
-      }
-      const action = args[args.indexOf("--action") + 1];
+    const service = new ConnectorSyncService(
+      database.db, config, logger,
+      async (_connector, _svc, action, _input) => {
       if (action === "get_profile") return { data: { emailAddress: "mail@example.com", historyId: "100" } };
       if (action === "fetch_emails") {
         return { data: { messages: [gmailMessage("message-1", "Initial")], nextPageToken: null } };
@@ -203,7 +200,9 @@ describe("ConnectorSyncService Agent ingestion", () => {
       }
       if (action === "fetch_message_by_message_id") return { data: gmailMessage("message-2", "Incremental") };
       throw new Error(`Unexpected connector action: ${String(action)}`);
-    });
+      },
+      async () => [{ service: "gmail", connectionName: "default", displayName: "mail@example.com", status: "active" }]);
+
 
     try {
       await service.initialize();
