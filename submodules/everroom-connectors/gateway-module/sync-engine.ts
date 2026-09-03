@@ -83,14 +83,13 @@ async function directPostJson<T>(url: string, body: unknown, headers: Record<str
 }
 
 /**
- * SyncEngine（阶段三）：按 SyncProvider.engine 分发拉取——OAuth 源走 Nango 代理，
- * 直连源走引擎 HTTP。Nango secret 未就绪期间（桌面冷启动自举窗口）canServe 对
- * nango 源返回 false，避免 401 噪音；direct 源不受影响。
+ * SyncEngine：按 SyncProvider.engine 分发拉取——OAuth 源走 oo executor
+ * （OpenConnectorSyncExecutor，P3 后唯一执行器），直连源走引擎 HTTP。
  */
 export class SyncEngine {
   private nangoReady = true;
   constructor(
-    private readonly nango: ConnectorExecutor | null,
+    private readonly executor: ConnectorExecutor | null,
     /** 连接凭据解析（webcal-url = 订阅 URL；由 repository 的 credentials_ref 列提供）。 */
     private readonly credentialsOf: (connection: ConnectorConnection) => string | null,
   ) {}
@@ -103,7 +102,7 @@ export class SyncEngine {
     const definition = syncProviderOf(provider);
     if (!definition) return false;
     if (definition.engine === "direct") return typeof definition.pullDirect === "function";
-    return this.nango !== null && this.nangoReady;
+    return this.executor !== null && this.nangoReady;
   }
 
   async *pull(
@@ -134,8 +133,8 @@ export class SyncEngine {
       yield* definition.pullDirect(ctx, mode);
       return;
     }
-    if (!this.nango) throw new Error("connectors_disabled");
-    yield* this.nango.pull(
+    if (!this.executor) throw new Error("connectors_disabled");
+    yield* this.executor.pull(
       {
         ...scope,
         provider: scope.provider,

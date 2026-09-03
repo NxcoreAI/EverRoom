@@ -2,10 +2,7 @@ import type { FastifyPluginAsync } from "fastify";
 import { createHash } from "node:crypto";
 import { isConnectorProvider, isSyncMode } from "@nxcore/connector-contract";
 import type { ConnectorManager } from "./manager.js";
-import {
-  nangoAuthorizationErrorMessage,
-  type NangoAuthorizationService,
-} from "./nango-authorization.js";
+
 import type { ConnectorProvider } from "@nxcore/connector-contract";
 import type { ConnectorAuthorizationAttempt } from "@nxcore/connector-contract";
 
@@ -92,10 +89,7 @@ export const nangoConnectorRoutes =
       } catch (error) {
         return reply.code(502).send({
           error: "authorization_start_failed",
-          message: nangoAuthorizationErrorMessage(
-            error,
-            "Unable to start Nango authorization",
-          ),
+          message: (error instanceof Error ? error.message : String(error)),
         });
       }
     });
@@ -107,10 +101,7 @@ export const nangoConnectorRoutes =
       } catch (error) {
         return reply.code(502).send({
           error: "authorization_status_failed",
-          message: nangoAuthorizationErrorMessage(
-            error,
-            "Unable to read Nango authorization status",
-          ),
+          message: (error instanceof Error ? error.message : String(error)),
         });
       }
     });

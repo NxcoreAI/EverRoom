@@ -6,7 +6,7 @@
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "node scripts/prepare-open-connector.mjs && node scripts/prepare-oo-cli.mjs && node scripts/prepare-genoffice-runtime.mjs && node scripts/dev.mjs",
-    "build": "node scripts/prepare-nango-runtime.mjs && node scripts/prepare-genoffice-runtime.mjs && electron-vite build",
+    "build": "node scripts/prepare-genoffice-runtime.mjs && electron-vite build",
     "prepare:genoffice": "node scripts/prepare-genoffice-runtime.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
@@ -163,15 +163,6 @@
         "to": "oo",
         "filter": [
           "**/*"
-        ]
-      },
-      {
-        "from": "build/nango-runtime",
-        "to": "nango",
-        "filter": [
-          "**/*",
-          "!**/.env*",
-          "!**/*.{map,ts,tsx,mts,cts}"
         ]
       },
       {

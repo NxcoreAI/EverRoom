@@ -36,7 +36,6 @@ import { AsrGatewayBridge } from './gateway/asr-gateway-bridge'
 import { GatewaySupervisor } from './gateway/gateway-supervisor'
 import { RuntimeConfigBridge, type RuntimeMemoryConfig } from './gateway/runtime-config-bridge'
 import { cursorCompletionEnvFromConfig } from './gateway/cursor-completion-env'
-import { NangoSupervisor } from './gateway/nango-supervisor'
 import { MemoryGatewayBridge } from './gateway/memory-gateway-bridge'
 import { KnowledgeServiceSupervisor } from './knowledge/knowledge-supervisor'
 import { knowledgeServiceLlmEnv } from './knowledge/llm-env'
@@ -713,7 +712,6 @@ let connectorModeStoreRef: ReturnType<typeof createConnectorModeStore> | null = 
 const activeConnectorModeStore = () => connectorModeStoreRef
 let openConnectorConsoleWindow: BrowserWindow | null = null
 let memoryCoreSupervisor: MemoryCoreSupervisor | null = null
-let nangoSupervisor: NangoSupervisor | null = null
 let knowledgeServiceSupervisor: KnowledgeServiceSupervisor | null = null
 let agentGatewayBridge: AgentGatewayBridge | null = null
 let cursorCompletionAgentBridge: AgentGatewayBridge | null = null
@@ -1241,7 +1239,7 @@ function registerGatewayHandlers(): void {
       ? gatewaySupervisor.getStatus()
       : { state: 'starting', pid: null, baseUrl: null, version: null, message: null })
   ipcMain.handle(CONNECTOR_CHANNELS.runtimeStatus, () =>
-    nangoSupervisor?.getStatus() ?? { state: 'starting', message: null })
+    ({ state: 'disabled', message: 'nango runtime removed (P3); link-A runs on OpenConnector' }))
 }
 
 function registerRuntimeConfigHandlers(client: SaasClient): void {
@@ -2857,12 +2855,6 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       console.error('Managed Knowledge service failed to start; wiki tools stay disabled.', error)
       return null
     })
-    // Gateway 配置要求 URL 和 SECRET 成对出现；兼容旧版 Nango 变量名。
-    // P2-5：Nango supervisor 路径删除后 nangoUrl 恒为空（P3 连 env 兼容一并删）。
-    // URL 为空时 SECRET 必须同步留空，否则 Gateway 校验"URL/SECRET 成对"失败退出。
-    const nangoUrl = ''
-    const nangoSecret = ''
-    const nangoBootstrapPending = '0'
     agentNotificationBridgeServer = new AgentNotificationBridgeServer(
       () => saasClient,
       (local) => {
@@ -2912,11 +2904,6 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
             NXCORE_MEMORY_API_KEY: memoryCore.apiKey,
           }
           : {}),
-        NXCORE_NANGO_CONNECTOR_URL: nangoUrl,
-        NXCORE_NANGO_CONNECTOR_SECRET: nangoSecret,
-        NXCORE_NANGO_BOOTSTRAP_PENDING: nangoBootstrapPending,
-        NXCORE_NANGO_URL: nangoUrl,
-        NXCORE_NANGO_SECRET: nangoSecret,
         ...(knowledge
           ? {
             NXCORE_KNOWLEDGE_ENABLED: 'true',
@@ -3234,7 +3221,6 @@ app.on('before-quit', (event) => {
   const connectorConsole = openConnectorConsoleWindow
   const cursorCompletion = cursorCompletionSupervisor
   const memoryCore = memoryCoreSupervisor
-  const nango = nangoSupervisor
   const knowledgeService = knowledgeServiceSupervisor
   const agentBridge = agentGatewayBridge
   const statusReporter = agentStatusReporter
@@ -3258,7 +3244,6 @@ app.on('before-quit', (event) => {
   openConnectorConsoleWindow = null
   cursorCompletionSupervisor = null
   memoryCoreSupervisor = null
-  nangoSupervisor = null
   knowledgeServiceSupervisor = null
   agentGatewayBridge = null
   agentStatusReporter = null
@@ -3303,7 +3288,6 @@ app.on('before-quit', (event) => {
     connectorRuntime?.shutdown(),
     cursorCompletion?.shutdown(),
     memoryCore?.shutdown(),
-    nango?.shutdown(),
     knowledgeService?.shutdown(),
   ]).then(async () => {
     await flushDesktopLogs()

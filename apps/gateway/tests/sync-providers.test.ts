@@ -4,11 +4,11 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Fastify from "fastify";
+import { OpenConnectorSyncExecutor } from "@nxcore/connectors-module/open-connector-sync-executor.js";
 import { afterEach, describe, expect, it } from "vitest";
 import { createConnectorDatabase } from "../src/infrastructure/connectors/client.js";
 import { ConnectorRepository } from "@nxcore/connectors-module/repository.js";
 import { ConnectorManager } from "@nxcore/connectors-module/manager.js";
-import { NangoExecutor } from "@nxcore/connectors-module/nango-executor.js";
 import { nangoConnectorRoutes } from "@nxcore/connectors-module/routes.js";
 import {
   SYNC_PROVIDERS,
@@ -37,15 +37,8 @@ describe("sync provider registry", () => {
     expect(syncProviderOf("gmail")?.auth.nango?.oauthScopes).toContain("https://www.googleapis.com/auth/gmail.readonly");
   });
 
-  it("keeps the nango executor free of provider literals (registry dispatch only)", async () => {
-    const source = await readFile(resolve("../../submodules/everroom-connectors/gateway-module/nango-executor.ts"), "utf8");
-    expect(source).not.toMatch(/"gmail"|"outlook"|"google-docs"|"notion"|"google-calendar"/);
-  });
-
   it("rejects unknown providers at the engine boundary", async () => {
-    const executor = new NangoExecutor("https://nango.local", "secret");
-    await expect(executor.discoverScopes({ provider: "feishu", connectionName: "c", service: "k" }))
-      .rejects.toThrow("unknown_connector_provider: feishu");
+    const executor = new OpenConnectorSyncExecutor({ config: { executable: "oo", baseUrl: "http://127.0.0.1:3000", configDirectory: "/tmp", dataDirectory: "/tmp" } });
     await expect(async () => {
       for await (const _page of executor.pull({ provider: "feishu", connectionName: "c", service: "k", providerScopeId: "me", sourceCursor: null }, "full")) break;
     }).rejects.toThrow("unknown_connector_provider: feishu");
