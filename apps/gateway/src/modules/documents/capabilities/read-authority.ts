@@ -109,6 +109,24 @@ export class DocumentReadAuthority {
     return receipt;
   }
 
+  /** 本 run 读过的文档（按 documentId 去重，保留最新版本）——供 document_draft 兜底推断素材来源。 */
+  documentsReadByRun(runId: string): Array<{ roomId: string; documentId: string; version: number }> {
+    this.prune();
+    const seen = new Map<string, { roomId: string; documentId: string; version: number }>();
+    for (const receipt of this.receipts.values()) {
+      if (receipt.runId !== runId) continue;
+      const existing = seen.get(receipt.documentId);
+      if (!existing || existing.version < receipt.version) {
+        seen.set(receipt.documentId, {
+          roomId: receipt.roomId,
+          documentId: receipt.documentId,
+          version: receipt.version,
+        });
+      }
+    }
+    return [...seen.values()];
+  }
+
   assertTargets(receipt: DocumentReadReceipt, blockIds: Iterable<string>): void {
     const invalidBlockIds = [...blockIds].filter((blockId) => !receipt.blockIds.has(blockId));
     if (!invalidBlockIds.length) return;

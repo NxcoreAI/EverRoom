@@ -15,6 +15,12 @@ const ExclusionBody = Type.Object({
   excluded: Type.Boolean(),
 });
 
+const CompletionFeedbackBody = Type.Object({
+  accepted: Type.Optional(Type.Integer({ minimum: 0 })),
+  rejected: Type.Optional(Type.Integer({ minimum: 0 })),
+  samples: Type.Optional(Type.Array(Type.String({ maxLength: 200 }), { maxItems: 3 })),
+});
+
 function errorStatus(code: string): number {
   if (code === "writing_style_not_found") return 404;
   return 400;
@@ -70,6 +76,19 @@ export function writingStyleRoutes(service: WritingStyleService): FastifyPluginA
 
     app.get("/v1/writing-style/corpus", { schema: { tags: ["writing-style"] } }, async () => {
       return { documents: service.listCorpus() };
+    });
+
+    // 补全反馈（v2 缺口补齐）：渲染端批量上报接受/拒绝计数与样例，单行累加。
+    app.post("/v1/writing-style/completion-feedback", {
+      schema: { tags: ["writing-style"], body: CompletionFeedbackBody },
+    }, async (request) => {
+      const body = request.body as { accepted?: number; rejected?: number; samples?: string[] };
+      service.recordCompletionFeedback({
+        accepted: body.accepted ?? 0,
+        rejected: body.rejected ?? 0,
+        samples: body.samples ?? [],
+      });
+      return { ok: true };
     });
 
     // 协作轮洞察（v2）：pending 供智能区横幅轮询；snoozed 可回记忆页找回确认。

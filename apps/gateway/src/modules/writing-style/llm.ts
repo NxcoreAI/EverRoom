@@ -3,11 +3,13 @@ import { randomUUID } from "node:crypto";
 import { invokeRuntime } from "../agent/invoke.js";
 import type { SupportedToken } from "./analyzer.js";
 
-/** LLM 定性层产物（方案 §6：语气/口头禅/偏好 do-dont/一句话画像）。 */
+/** LLM 定性层产物（方案 §6；2026-09-02 修订：规则化 + 原文范例）。 */
 export interface WritingStyleQualitative {
   tone: string[];
   phrases: string[];
   preferences: { do: string[]; dont: string[] };
+  /** 代表性原文句（≤2 条，逐字取自采样证据，供生成器做少样本锚定）。 */
+  examples: string[];
   summary: string;
 }
 
@@ -22,6 +24,10 @@ export interface WritingStyleBehaviorEvidence {
   reviewRejectedCount: number;
   reviewAcceptedCount: number;
   reviewSamples: string[];
+  /** 光标补全接受/拒绝累计（completion_feedback 信号）与接受样例。 */
+  completionAccepted: number;
+  completionRejected: number;
+  completionSamples: string[];
 }
 
 export interface WritingStyleEvidence {
@@ -50,14 +56,21 @@ const MAX_ARRAY_ITEMS = 6;
 
 const OUTPUT_CONTRACT = [
   "输出一个 JSON 对象（不要 Markdown 围栏、解释或额外字段），结构：",
-  '{"tone": string[], "phrases": string[], "preferences": {"do": string[], "dont": string[]}, "summary": string}',
-  "tone=语气特征（≤4 条）；phrases=高频口头禅/惯用语（≤5 条）；do/dont=表达偏好（各 ≤4 条，短句祈使式）；summary=一句话画像（≤60 字）。",
+  '{"tone": string[], "phrases": string[], "preferences": {"do": string[], "dont": string[]}, "examples": string[], "summary": string}',
+  [
+    "tone=语气特征（≤4 条，名词短语）；phrases=高频口头禅/惯用语（≤5 条）。",
+    "do/dont=表达偏好（各 ≤4 条）：每条必须是可以直接执行、且能据此判断一段文字是否偏离该用户风格的**写作规则**，",
+    "把统计数字转写成规则（如句长中位 14 字 →「多用 15 字以内的短句收束」），",
+    "禁止纯形容词（「自然」「流畅」「专业」这类无法检验的词）；dont 同时充当反标记（永远不出现什么）。",
+    "examples=最能代表该风格的原文句子（≤2 条，每条 ≤80 字）：**逐字复制**下方采样证据中的原句，禁止改写、截断拼合或自造。",
+    "summary=一句话画像（≤60 字）。",
+  ].join("\n"),
   "硬约束：只陈述下方统计与采样证据能支撑的结论；某类证据不足时对应数组返回空、summary 返回空串；禁止推断职业、身份等统计以外的信息；全部用中文。",
 ].join("\n");
 
 function buildPrompt(input: WritingStyleEvidence): string {
   const lines: string[] = [
-    "任务：基于统计与采样证据，归纳这位用户的写作风格定性画像（内部工作流，不面向用户）。",
+    "任务：基于统计与采样证据，归纳这位用户的写作风格定性画像（内部工作流，不面向用户）。产出将作为可执行的写作规则注入为该用户生成内容的模型——请据此决定每条输出的可操作性。",
     "",
     OUTPUT_CONTRACT,
     "",
@@ -75,7 +88,7 @@ function buildPrompt(input: WritingStyleEvidence): string {
     ...(input.evidenceLines.length > 0
       ? input.evidenceLines.map((line) => `- ${line}`)
       : ["（无）"]),
-    ...(input.behavior && (input.behavior.instructionCounts.length > 0 || input.behavior.revisionCount > 0 || input.behavior.reviewRejectedCount > 0) ? [
+    ...(input.behavior && (input.behavior.instructionCounts.length > 0 || input.behavior.revisionCount > 0 || input.behavior.reviewRejectedCount > 0 || input.behavior.completionAccepted + input.behavior.completionRejected > 0) ? [
       "",
       "用户行为证据（用户如何要求 Agent 修改、以及亲自改 Agent 输出的方向）——这是最强信号，优先于统计：",
       ...input.behavior.instructionCounts.map((entry) => `- 修改指令「${entry.label}」出现 ${entry.count} 次`),
@@ -91,6 +104,10 @@ function buildPrompt(input: WritingStyleEvidence): string {
       ...(input.behavior.reviewRejectedCount > 0 ? [
         `- 用户在审阅中拒绝过 ${input.behavior.reviewRejectedCount} 个 Agent 修改提案项（另接受 ${input.behavior.reviewAcceptedCount} 项）`,
         ...input.behavior.reviewSamples.slice(0, 2).map((sample) => `- 被拒绝的提案摘录：${sample}`),
+      ] : []),
+      ...(input.behavior.completionAccepted + input.behavior.completionRejected >= 10 ? [
+        `- 光标补全接受 ${input.behavior.completionAccepted} 次、拒绝 ${input.behavior.completionRejected} 次`,
+        ...input.behavior.completionSamples.slice(0, 2).map((sample) => `- 用户接受的补全样例：${sample}`),
       ] : []),
     ] : []),
     "",
@@ -138,6 +155,9 @@ export function parseQualitative(content: string): WritingStyleQualitative {
       do: coerceStringArray(preferencesRecord.do, "preferences.do"),
       dont: coerceStringArray(preferencesRecord.dont, "preferences.dont"),
     },
+    examples: coerceStringArray(root.examples, "examples")
+      .map((item) => (item.length <= 80 ? item : item.slice(0, 80)))
+      .slice(0, 2),
     summary,
   };
 }
@@ -155,18 +175,27 @@ export interface WritingStyleRoundEvidence {
   reviewRejectedCount: number;
   reviewAcceptedCount: number;
   reviewSamples: string[];
+  /** 光标补全接受/拒绝累计与接受样例（整体口径，非仅本轮）。 */
+  completionAccepted: number;
+  completionRejected: number;
+  completionSamples: string[];
 }
 
 const INSIGHT_CONTRACT = [
   "输出一个 JSON 对象（不要 Markdown 围栏、解释或额外字段），结构：",
   '{"preferences": string[]}',
-  "preferences=从这轮协作行为归纳出的用户写作/协作偏好，2-4 条；每条一句完整的话（≤40 字），陈述稳定的偏好结论。",
-  "硬约束：总结偏好而不是罗列次数、复述指令或转述样例；两条证据指向同一偏好时合并为一条；证据不足以得出任何偏好时返回空数组；全部用中文。",
+  "preferences=从这轮协作行为归纳出的用户写作/协作偏好，2-4 条；每条一句完整的话（≤40 字）。",
+  [
+    "每条偏好必须**可执行**：能据此判断一段新文案或一条新提案是否贴合该用户——",
+    "优先用方向性表述（改向什么/远离什么，如「把总结段从铺陈改为结论先行」），",
+    "禁止纯形容词（「自然」「简洁」这类无法检验的词）；",
+    "两条证据指向同一偏好时合并为一条；证据不足以得出任何偏好时返回空数组；全部用中文。",
+  ].join("\n"),
 ].join("\n");
 
 function buildRoundPrompt(input: WritingStyleRoundEvidence): string {
   const lines: string[] = [
-    "任务：从用户与 Agent 的一轮文档协作行为（用户下的修改指令、亲手做的修改、审阅时的取舍）归纳用户的写作偏好（内部工作流，不面向用户）。",
+    "任务：从用户与 Agent 的一轮文档协作行为（用户下的修改指令、亲手做的修改、审阅时的取舍）归纳用户的写作偏好（内部工作流，不面向用户）。产出将用于约束后续为该用户生成内容的方式。",
     "",
     INSIGHT_CONTRACT,
     "",
@@ -186,6 +215,10 @@ function buildRoundPrompt(input: WritingStyleRoundEvidence): string {
     ...(input.reviewRejectedCount > 0 ? [
       `- 审阅取舍：拒绝了 ${input.reviewRejectedCount} 个修改提案项、接受 ${input.reviewAcceptedCount} 项`,
       ...input.reviewSamples.map((sample) => `  - 被拒绝的提案摘录：${sample}`),
+    ] : []),
+    ...(input.completionAccepted + input.completionRejected >= 10 ? [
+      `- 光标补全（写作时的续写建议）累计接受 ${input.completionAccepted} 次、拒绝 ${input.completionRejected} 次`,
+      ...input.completionSamples.slice(0, 2).map((sample) => `  - 接受的补全样例：${sample}`),
     ] : []),
     "",
     "请给出偏好 JSON。",

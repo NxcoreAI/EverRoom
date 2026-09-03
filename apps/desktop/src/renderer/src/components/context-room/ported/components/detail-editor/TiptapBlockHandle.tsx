@@ -2,6 +2,7 @@ import DragHandle from '@tiptap/extension-drag-handle-react'
 import type { Node } from '@tiptap/pm/model'
 import type { Editor } from '@tiptap/react'
 import {
+  Brain,
   Copy,
   GripVertical,
   Heading1,
@@ -23,10 +24,12 @@ export function TiptapBlockHandle({
   editor,
   onDraggingChange,
   onCopyBlockReference,
+  onAddMemoryIndex,
 }: {
   editor: Editor
   onDraggingChange: (dragging: boolean) => void
   onCopyBlockReference?: (blockId: string, textPreview: string) => void | Promise<void>
+  onAddMemoryIndex?: (node: Node, pos: number) => void
 }) {
   const { t } = useLocale()
   const [activeNode, setActiveNode] = useState<Node | null>(null)
@@ -131,6 +134,16 @@ export function TiptapBlockHandle({
             <i />
             {onCopyBlockReference ? (
               <button type="button" role="menuitem" onClick={copyBlockReference}><Link2 />{t('contextRoom:tiptapBlockHandle.copyBlockReference')}</button>
+            ) : null}
+            {onAddMemoryIndex ? (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  if (activeNode && activePos >= 0) onAddMemoryIndex(activeNode, activePos)
+                  setMenuOpen(false)
+                }}
+              ><Brain />{t('contextRoom:tiptapBlockHandle.addMemoryIndex')}</button>
             ) : null}
             <button type="button" role="menuitem" onClick={duplicateBlock}><Copy />{t('contextRoom:tiptapBlockHandle.duplicateBlock')}</button>
             <button type="button" role="menuitem" data-danger="true" onClick={deleteBlock}><Trash2 />{t('contextRoom:tiptapBlockHandle.deleteBlock')}</button>

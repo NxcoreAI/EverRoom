@@ -16,6 +16,38 @@
       "maxLength": 100000,
       "description": "Source material excerpts assembled by the caller, mainly for draft-create."
     },
+    "materialSources": {
+      "type": "array",
+      "maxItems": 50,
+      "items": {
+        "type": "object",
+        "properties": {
+          "roomId": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "documentId": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "blockId": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "label": { "type": "string", "maxLength": 200 },
+          "textPreview": { "type": "string", "maxLength": 400 }
+        },
+        "required": ["roomId", "documentId", "blockId"],
+        "additionalProperties": false
+      },
+      "description": "Source document blocks (from the caller's document_read) that back the draft; cite them as block index marks. For draft-edit this includes rewrite requests that only append index marks to existing paragraphs."
+    },
+    "memoryIndex": {
+      "type": "array",
+      "maxItems": 50,
+      "items": {
+        "type": "object",
+        "properties": {
+          "memoryId": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "contentPreview": { "type": "string", "maxLength": 200 },
+          "type": { "type": "string", "maxLength": 32 }
+        },
+        "required": ["memoryId", "contentPreview"],
+        "additionalProperties": false
+      },
+      "description": "Room memory items injected by the gateway; cite them as memory index marks when the draft restates them."
+    },
     "roomTitle": {
       "type": "string",
       "maxLength": 120,

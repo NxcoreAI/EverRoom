@@ -462,6 +462,38 @@ describe("document operation kernel", () => {
     expect(service.list({ sessionId: "another-session" })).toEqual([]);
   });
 
+  it("清理迁移放行：conflicted 的 operation.cancel 可达 cancelled，其余终态命令仍被拒", async () => {
+    const { db, service } = await createHarness();
+    const now = new Date();
+    db.insert(documents).values({
+      id: "doc-1", title: "Target", contentJson: { type: "doc", content: [] },
+      version: 1, status: "active", createdAt: now, updatedAt: now,
+    }).run();
+    db.insert(roomDocumentLinks).values({ roomId: "room-1", documentId: "doc-1", linkedAt: now }).run();
+    createReviewOperation(service, { id: "winner", documentId: "doc-1", status: "awaiting_review" });
+    createReviewOperation(service, { id: "stuck", documentId: "doc-1", status: "awaiting_review" });
+    service.conflictOtherActive("doc-1", 2, "winner");
+    expect(service.get("stuck")?.status).toBe("conflicted");
+
+    // 桌面"关闭此次修改"对 conflicted 发的就是 operation.cancel。
+    const cancelled = await service.execute("stuck", {
+      commandId: "stuck:cleanup",
+      expectedRevision: service.get("stuck")!.revision,
+      type: "operation.cancel",
+    }, () => ({ status: "cancelled", complete: true }));
+    expect(cancelled.operation.status).toBe("cancelled");
+    expect(cancelled.duplicate).toBe(false);
+
+    // cancelled 是绝对终态：再发任何命令仍被拒（OPERATION_FINALIZED）。
+    await expect(service.execute("stuck", {
+      commandId: "stuck:after-cleanup",
+      expectedRevision: cancelled.operation.revision,
+      type: "operation.cancel",
+    }, () => ({ status: "cancelled", complete: true }))).rejects.toMatchObject({
+      code: "OPERATION_FINALIZED",
+    });
+  });
+
   it("propagates manual saves and history restores to pending Operations", async () => {
     const { db, broker, service } = await createHarness();
     const documentsService = new DocumentService(

@@ -1,7 +1,10 @@
 # 写作风格沉淀与应用（Writing Style Profile）
 
 > 状态：**M1–M3 全部实现（2026-08-31）；2026-09-01 增补行为信号（§4.1：改写指令/修改原话/手改 diff 三类回溯）与漏洞修复（生成开关文案、清空语义、死代码清理、旧表迁移）。M1 管道+存储+REST+记忆页 tab（含用户风格编辑）；M2 补全/生成注入 + §7.4 合成；M3 LLM 定性层 + 语料列表/排除 + 定性展示。实现备注：生成侧经 runtimePrompt 每 run 组装注入（语义等同 §7.2 的 executionContexts 方案，且不改 runtime 契约）；补全侧注入块由 gateway 统一合成（§7.4 单一实现），renderer 只取用；LLM 定性层用隔离内部 Pi runtime 直调（runtime-factory `createWritingStyleRuntime`，ingest-filter 同款），不建 agent bundle。2026-09-02 生成注入随 doc-writer 方案迁移（doc-writer-subagent-plan §7）：注入点收至 doc-writer dispatch 输入（全 task 无条件附加），主 Agent 四信号门整体退役删除（详见 §7.2 修订）
+> **v2 增补（2026-09-02 深夜，未提交）：节奏放缓 + 补全反馈缺口**：①提炼节奏——extract 去抖从 60s 提到 **5 分钟安静窗**（每文档单键 + 新保存重置窗口：持续保存的文档不断推后提炼，停笔 ≥5 分钟才统计一次，会话末捕获，与协作洞察的 5 分钟收口对齐；解决"按保存点逐次提炼过于频繁"）；②completion_feedback 第五类信号——渲染端显式接受（Tab/按钮）/拒绝（Esc/菜单）光标补全的计数与接受样例批量上报（60s 或 ≥5 条触发，失败静默），gateway 单行固定 id 累加（不逐次成行）；消费进画像行为行（≥10 次且接受率 ≥80%→"补全建议贴合你的行文，常直接接受"，≤40%→"倾向自己措辞"）、LLM 定性证据与轮次蒸馏证据。纯手改版本对（user→user）按评估暂不做（保存粒度噪声大，恰是频率问题的放大器）。
+
 > **v2 协作洞察（2026-09-02 晚，用户四项决策，未提交）**：①纯 agent 文档不入语料（既有资格判定维持，重心确认为行为信号：手改 + 指令）；②一轮协作安静收尾（最近信号 ≥5 分钟无新增）且新信号 ≥2 条时蒸馏 pending 洞察，智能区（AgentPanel）顶部横幅展示该轮偏好陈述，确认写入画像 / 稍后关闭；③"稍后"（snoozed）的洞察回记忆页写作风格 tab 可找回确认；④行为提炼陈述偏好结论而非计数（画像行为行改偏好陈述、LLM 蒸馏 prompt 同口径"总结偏好不要罗列次数"）。实现：迁移 0052 `writing_style_insights` 表；service `maybeDistillInsight`（worker drain 周期触发，一次只留一条未决）/`snoozeInsight`/`confirmInsight`（接管态把确认偏好追加进用户文本，未接管态重生成且已确认洞察置于行为区最前）；REST `/v1/writing-style/insights[/:id/confirm|snooze]`；`WritingStyleLlm.summarizeBehaviorRound`（LLM 优先，失败回退类目偏好陈述）；画像停更缺口修复（§10 修订）。桌面：AgentPanel 横幅（45s 轮询 + focus 刷新）、记忆页"协作洞察"区（待确认/稍后/已写入）、IPC 全链。
+> **离线快照（2026-09-03，未提交）**：记忆页写作风格 tab 增加渲染端离线兜底——`useSnapshottedAsyncData`（useMemoryData.ts，通用钩子，其他记忆 tab 可陆续接入）：成功拉取时把最后一份好数据写 localStorage（`mem-snapshot:*`，≤512KB/源）；失败时回落快照 + 顶部"离线快照（更新于 …）"横幅 + 每 30s 自动重试，网关恢复即回实时。只读兜底不做离线写回。覆盖 profile/settings/user-content/insights 四个源；corpus（语料列表）不入快照。
 > 关联文档：[agent-document-development-sop.md](agent-document-development-sop.md)（规范真源，本方案不触碰其约束）、[knowledge-room-agent-plan.md](knowledge-room-agent-plan.md)（增量刷新管线参照）
 
 ## 1. 背景与目标
@@ -193,6 +196,9 @@ merge(sketches) = Σ(count_i × w_i) / Σ(w_i)，w = 1（时间衰减为后续�
 **信号支持度**（防少量样本过度确定的第二道闸）：任一信号进入注入摘要的条件是 `出现的文档数 ≥ 2` **且** `出现率 ≥ 30%`。单篇文档的高频词只进 sketch，不进 profile 摘要。
 
 ## 6. LLM 定性层
+
+> **2026-09-02 prompt 修订（基于外部调研：written-voice-replication 的 25 维管线、ClickUp 写作 Skill 指南、stylometry 方法页）**：①do/dont 从"短句祈使式"升级为**可执行写作规则**——每条须能据此判断一段文字是否偏离该用户风格，统计数字转写为规则（句长中位 14 字→「多用 15 字以内短句收束」），明令禁止"自然/流畅/专业"类不可检验形容词；②输出新增 **examples 字段（≤2 条原文范例）**：逐字复制采样证据中最能代表风格的原句（禁止改写/自造），随画像以「范例：「…」」行注入——少样本锚定是调研中公认最强的风格载体；③任务声明点明产出用途（"将作为可执行写作规则注入生成器"）；④轮次蒸馏 prompt 同口径收紧（偏好须可执行、优先方向性表述"改向什么/远离什么"）。旧库定性行无 examples 字段向后兼容（缺省空数组）。刻意**不采纳**的：numeric-profile 独立数字档案（我们的统计层已承担，注入预算不重复携带）、per-register 条件语音（单用户文档场景语域稳定）、Tier1/Tier2 分层（画像文本已按行为→定性→统计分层）。
+
 
 - **触发条件**：`llmMaterialCursor` 之后新增 ≥ 2 个 extracted sketch 或 ≥ 5000 字，且总量 ≥ 3 篇 / ≥ 3000 字。不满足则只刷新统计层。
 - **输入**：聚合统计 JSON + 采样证据（top 高频词各附 1 个原句、开篇/结尾示例各 3、典型长短句各 3）。**不送全文**——控制成本与隐私面。

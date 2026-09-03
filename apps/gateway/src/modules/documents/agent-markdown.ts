@@ -5,6 +5,7 @@ import { MarkdownManager } from "@tiptap/markdown";
 import StarterKit from "@tiptap/starter-kit";
 import type { TiptapJsonContent } from "@nxcore/agent-contract";
 import { tiptapText } from "./content-model.js";
+import { BlockIndexMarkHeadless } from "./block-index-mark.js";
 
 export const agentDocumentMarkdown = new MarkdownManager({
   extensions: [
@@ -12,6 +13,7 @@ export const agentDocumentMarkdown = new MarkdownManager({
     TaskList,
     TaskItem.configure({ nested: true }),
     TableKit.configure({ table: { resizable: false } }),
+    BlockIndexMarkHeadless,
   ],
 });
 

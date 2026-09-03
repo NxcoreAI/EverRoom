@@ -10,6 +10,7 @@ import {
   documents,
   jobs,
   roomDocumentLinks,
+  writingStyleProfiles,
   writingStyleSignals,
 } from "../src/infrastructure/database/schema.js";
 import {
@@ -263,6 +264,72 @@ describe("行为信号增长触发画像更新（§4.1/§10 缺口修复）", ()
     service.autoRefreshOnSignalGrowth();
     expect(pendingRefresh().length).toBe(0);
     expect(service.getProfileText().content).toContain("再短一点");
+  });
+});
+
+describe("补全反馈信号（v2 缺口补齐）", () => {
+  it("批量上报单行累加：计数合并、样例保留最近 3 条，聚合计入 DTO 与画像行", async () => {
+    const { service } = await setup();
+    service.recordCompletionFeedback({ accepted: 6, rejected: 0, samples: ["第一个样例", "第二个样例"] });
+    service.recordCompletionFeedback({ accepted: 4, rejected: 1, samples: ["第三个样例", "更老的被挤出"] });
+
+    const behavior = service.aggregateSignals();
+    expect(behavior.completionAccepted).toBe(10);
+    expect(behavior.completionRejected).toBe(1);
+    // 样例只留最近 3 条且去重。
+    const samples = behavior.completionSamples.join("|");
+    expect(samples).toContain("第二个样例");
+    expect(samples).toContain("第三个样例");
+    expect(samples).not.toContain("第一个样例");
+
+    // ≥10 次且接受率 ≥80% → 画像出现"常直接接受"偏好陈述（不罗列次数）。
+    await service.refreshProfile();
+    const text = service.getProfileText();
+    expect(text.content).toContain("补全建议贴合你的行文");
+    expect(text.content).not.toContain("10 次");
+  });
+
+  it("拒绝为主时画像呈现'倾向自己措辞'；不足 10 次不出行", async () => {
+    const { service } = await setup();
+    service.recordCompletionFeedback({ accepted: 1, rejected: 6 });
+    await service.refreshProfile();
+    expect(service.getProfileText().content).not.toContain("补全建议贴合");
+
+    service.recordCompletionFeedback({ accepted: 1, rejected: 12 });
+    await service.refreshProfile();
+    expect(service.getProfileText().content).toContain("倾向自己措辞");
+  });
+});
+
+describe("老结构定性行兼容（2026-09-02 前无 examples 字段）", () => {
+  it("qualitativeJson 缺 examples 时不崩：getProfile 可用、画像文本无范例行", async () => {
+    const { database, service } = await setup();
+    const now = new Date();
+    database.db.insert(writingStyleProfiles).values({
+      ownerId: "local-user",
+      profileVersion: 1,
+      statsJson: null,
+      qualitativeJson: {
+        tone: ["冷静克制"],
+        phrases: ["值得注意的是"],
+        preferences: { do: ["短句收尾"], dont: [] },
+        summary: "工程笔记型。",
+        // 无 examples 字段（老结构）
+      } as never,
+      sampleDocumentCount: 3,
+      sampleCharCount: 5000,
+      confidenceTier: "established",
+      lastRefreshedAt: now,
+      updatedAt: now,
+    }).run();
+
+    const profile = service.getProfile();
+    expect(profile.sections.qualitative).toContain("语气：冷静克制");
+    expect(profile.sections.qualitative.some((line) => line.startsWith("范例："))).toBe(false);
+
+    const regenerated = service.regenerateProfileText();
+    expect(regenerated.content).toContain("工程笔记型");
+    expect(regenerated.content).not.toContain("范例：");
   });
 });
 

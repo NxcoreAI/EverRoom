@@ -1,11 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
   createEverroomBlockReferenceUrl,
+  createEverroomMemoryIndexUrl,
+  everroomBlockIndexUrl,
+  formatBlockIndexMarkMarkdown,
   freshenDocumentContent,
   hasEmbeddedDocumentImages,
   normalizeDocumentContent,
   normalizeDocumentFragment,
+  parseBlockIndexMarkMarkdown,
   parseEverroomBlockReferenceUrl,
+  parseEverroomMemoryIndexUrl,
   stripDocumentTitle,
 } from "../src/index.js";
 
@@ -168,5 +173,91 @@ describe("document model", () => {
       fallbackPreview: "来源内容",
     });
     expect(rewrittenLinks?.[1]).toBe("everroom://room/room-1/doc-other/source");
+  });
+
+  it("round trips memory index URLs and keeps them disjoint from block reference URLs", () => {
+    const memory = {
+      roomId: "room-1",
+      memoryId: "room-1-memory-2",
+      fallbackTitle: "  用户偏好  ",
+      fallbackPreview: "偏好简述",
+    };
+    const url = createEverroomMemoryIndexUrl(memory);
+    expect(url).toContain("everroom://memory/room-1/room-1-memory-2?");
+    expect(parseEverroomMemoryIndexUrl(url)).toEqual({
+      ...memory,
+      fallbackTitle: "用户偏好",
+    });
+    // The memory host must never be readable as a document block reference
+    // (3-segment room URL) and vice versa.
+    expect(parseEverroomBlockReferenceUrl(url)).toBeNull();
+    expect(parseEverroomMemoryIndexUrl(
+      createEverroomBlockReferenceUrl({ roomId: "r", documentId: "d", blockId: "b" }),
+    )).toBeNull();
+    expect(parseEverroomMemoryIndexUrl("everroom://memory/only-one")).toBeNull();
+    expect(parseEverroomMemoryIndexUrl("https://example.com")).toBeNull();
+  });
+
+  it("round trips block index mark markdown for both target kinds", () => {
+    const documentTarget = {
+      kind: "document" as const,
+      roomId: "room-1",
+      documentId: "doc-2",
+      blockId: "block-9",
+    };
+    const memoryTarget = {
+      kind: "memory" as const,
+      roomId: "room-1",
+      memoryId: "room-1-memory-3",
+    };
+
+    const documentMarkdown = formatBlockIndexMarkMarkdown(documentTarget, "来源 [草稿]");
+    expect(documentMarkdown).toBe(
+      "^[来源 \\[草稿\\]](everroom://room/room-1/doc-2/block-9)",
+    );
+    const parsedDocument = parseBlockIndexMarkMarkdown(`${documentMarkdown}后续文本`);
+    expect(parsedDocument?.target).toEqual({
+      ...documentTarget,
+      fallbackTitle: "来源 [草稿]",
+      fallbackPreview: null,
+    });
+    expect(parsedDocument?.label).toBe("来源 [草稿]");
+    expect(parsedDocument?.raw).toBe(documentMarkdown);
+
+    const memoryMarkdown = formatBlockIndexMarkMarkdown(memoryTarget, "记忆项");
+    expect(memoryMarkdown).toBe("^[记忆项](everroom://memory/room-1/room-1-memory-3)");
+    const parsedMemory = parseBlockIndexMarkMarkdown(memoryMarkdown);
+    expect(parsedMemory?.target).toEqual({
+      ...memoryTarget,
+      fallbackTitle: "记忆项",
+      fallbackPreview: null,
+    });
+
+    // Fallback title fills an empty label; url query carries title through.
+    expect(formatBlockIndexMarkMarkdown(
+      { ...memoryTarget, fallbackTitle: "备用标题" },
+      "",
+    )).toContain("^[备用标题](everroom://memory/room-1/room-1-memory-3?title=");
+  });
+
+  it("rejects non-index markdown shapes without throwing", () => {
+    expect(parseBlockIndexMarkMarkdown("[标题](everroom://room/r/d/b)")).toBeNull();
+    expect(parseBlockIndexMarkMarkdown("^[标题](https://example.com)")).toBeNull();
+    expect(parseBlockIndexMarkMarkdown("^[标题](everroom://room/only/two)")).toBeNull();
+    expect(parseBlockIndexMarkMarkdown("普通文本")).toBeNull();
+  });
+
+  it("keeps everroomBlockIndexUrl aligned with each target kind", () => {
+    expect(everroomBlockIndexUrl({
+      kind: "document",
+      roomId: "r",
+      documentId: "d",
+      blockId: "b",
+    })).toBe("everroom://room/r/d/b");
+    expect(everroomBlockIndexUrl({
+      kind: "memory",
+      roomId: "r",
+      memoryId: "m",
+    })).toBe("everroom://memory/r/m");
   });
 });

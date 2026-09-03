@@ -60,6 +60,14 @@ function freshenPastedNode(
       && remap.has(node.attrs.targetBlockId)
       ? { targetBlockId: remap.get(node.attrs.targetBlockId) }
       : {}),
+    // 同文档粘贴时,块索引标记的文档目标跟随块 id 重定向;记忆目标保持不变。
+    ...(node.type.name === 'blockIndexMark'
+      && node.attrs.kind === 'document'
+      && (!sourceDocumentId || node.attrs.targetDocumentId === sourceDocumentId)
+      && typeof node.attrs.targetBlockId === 'string'
+      && remap.has(node.attrs.targetBlockId)
+      ? { targetBlockId: remap.get(node.attrs.targetBlockId) }
+      : {}),
   }
   const marks = node.marks.map((mark) => mark.type.name === 'link'
     ? mark.type.create({ ...mark.attrs, href: remapEverroomUrl(mark.attrs.href, remap) })
