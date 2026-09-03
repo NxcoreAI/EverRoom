@@ -5,13 +5,14 @@
   "type": "module",
   "main": "./out/main/index.js",
   "scripts": {
-    "dev": "node scripts/prepare-open-connector.mjs && node scripts/prepare-oo-cli.mjs && node scripts/prepare-genoffice-runtime.mjs && node scripts/dev.mjs",
+    "dev": "node scripts/prepare-open-connector.mjs && node scripts/prepare-oo-cli.mjs && node scripts/prepare-lark-cli.mjs && node scripts/prepare-genoffice-runtime.mjs && node scripts/dev.mjs",
     "build": "node scripts/prepare-nango-runtime.mjs && node scripts/prepare-genoffice-runtime.mjs && electron-vite build",
     "prepare:genoffice": "node scripts/prepare-genoffice-runtime.mjs",
+    "prepare:lark-cli": "node scripts/prepare-lark-cli.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "package:mac": "node scripts/prepare-open-connector.mjs && node scripts/prepare-oo-cli.mjs && pnpm run build && electron-builder --mac dmg zip --arm64",
-    "package:win": "node scripts/prepare-open-connector.mjs && node scripts/prepare-oo-cli.mjs && pnpm run build && node scripts/generate-packaged-env.mjs && electron-builder --win nsis --x64 --publish never --config.npmRebuild=false"
+    "package:mac": "node scripts/prepare-open-connector.mjs && node scripts/prepare-oo-cli.mjs && node scripts/prepare-lark-cli.mjs && pnpm run build && electron-builder --mac dmg zip --arm64",
+    "package:win": "node scripts/prepare-open-connector.mjs && node scripts/prepare-oo-cli.mjs && node scripts/prepare-lark-cli.mjs && pnpm run build && node scripts/generate-packaged-env.mjs && electron-builder --win nsis --x64 --publish never --config.npmRebuild=false"
   },
   "dependencies": {
     "@codemirror/commands": "^6.11.0",
@@ -68,6 +69,7 @@
     "@electron/asar": "3.4.1",
     "@oomol-lab/oo-cli": "1.7.5",
     "@oomol-lab/open-connector": "https://codeload.github.com/oomol-lab/open-connector/tar.gz/5719a69468c698c7cb8108e062ff64ecef8a2e65",
+    "@larksuite/cli": "1.0.93",
     "@sentry/vite-plugin": "5.4.0",
     "@types/better-sqlite3": "^9.6.0",
     "@types/d3-force": "^3.0.10",
@@ -160,6 +162,13 @@
       {
         "from": "build/oo",
         "to": "oo",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "build/lark-cli",
+        "to": "lark-cli",
         "filter": [
           "**/*"
         ]

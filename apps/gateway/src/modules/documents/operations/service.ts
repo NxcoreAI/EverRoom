@@ -331,7 +331,13 @@ export class DocumentOperationService {
         });
       }
       if (TERMINAL_DOCUMENT_OPERATION_STATUSES.has(operation.status)) {
-        throw new DocumentServiceError("OPERATION_FINALIZED", `Document operation is ${operation.status}`, 409);
+        // conflicted 不是绝对终态：state-machine 允许 conflicted → cancelled 的
+        // 清理迁移（SOP §3.3"conflicted 仅允许清理为 cancelled"）。终态闸必须为
+        // 这一条命令放行，否则冲突提案永远无法关闭（桌面"关闭此次修改"即此路径）。
+        const conflictedCleanup = operation.status === "conflicted" && command.type === "operation.cancel";
+        if (!conflictedCleanup) {
+          throw new DocumentServiceError("OPERATION_FINALIZED", `Document operation is ${operation.status}`, 409);
+        }
       }
 
       const mutation = await handler(operation, command);

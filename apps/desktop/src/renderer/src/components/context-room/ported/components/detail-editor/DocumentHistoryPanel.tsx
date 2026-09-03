@@ -8,6 +8,7 @@ import { Check, ChevronDown, Clock3, History, X } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import { showToast } from '../../../../../state/toast'
 import { useLocale } from '../../../../../i18n/LocaleContext'
+import { DocumentImportHistorySection } from './DocumentImportHistorySection'
 
 const HISTORY_PAGE_SIZE = 100
 
@@ -252,6 +253,14 @@ export function DocumentHistoryPanel({
                     {loadingMore ? t('contextRoom:documentHistory.loading') : t('contextRoom:documentHistory.loadEarlier')}
                   </button>
                 ) : null}
+                {currentDocument && (
+                  <DocumentImportHistorySection
+                    roomId={currentDocument.roomId}
+                    currentDocument={currentDocument}
+                    refreshSignal={refreshSignal}
+                    onApplied={onClearDiff}
+                  />
+                )}
               </aside>
             </div>
           </div>

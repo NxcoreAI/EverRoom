@@ -1,9 +1,12 @@
 import type { DocumentDiffResult, DocumentVersionSnapshot, RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract'
+import type { ResolveDocumentBlockReferencesInput } from '@nxcore/agent-contract'
+import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
 import Image from '@tiptap/extension-image'
 import TaskItem from '@tiptap/extension-task-item'
 import TaskList from '@tiptap/extension-task-list'
 import { TableKit } from '@tiptap/extension-table'
 import TableOfContents, { type TableOfContentData } from '@tiptap/extension-table-of-contents'
+import { DocumentExportStatus } from './DocumentExportStatus'
 import { Markdown } from '@tiptap/markdown'
 import { TextSelection } from '@tiptap/pm/state'
 import { EditorContent, useEditor, type Editor, type JSONContent } from '@tiptap/react'
@@ -94,6 +97,13 @@ import {
   insertDocumentBlockReference,
 } from './DocumentBlockReference'
 import { DocumentBlockReferencePicker } from './DocumentBlockReferencePicker'
+import { BlockIndexMark } from './BlockIndexMark'
+import { BlockIndexPicker } from './BlockIndexPicker'
+import {
+  insertBlockIndexMark,
+  type BlockIndexTarget,
+} from './blockIndexLink'
+import { requestRoomMemoryNavigation } from './blockIndexNavigation'
 import {
   createEverroomBlockReferenceUrl,
   parseEverroomBlockReferenceUrl,
@@ -251,6 +261,10 @@ export function TiptapDocumentEditor({
   const documentId = resource?.kind === 'cloud-doc' ? resource.binding.docId : room.cloudDoc.docId
   const documentIdRef = useRef(documentId)
   documentIdRef.current = documentId
+  // The editor instance is keyed on [documentId, locale]; room props would go
+  // stale in extension options captured at creation, so read memory items live.
+  const roomRef = useRef(room)
+  roomRef.current = room
   const persistedName = backendDocument?.title ?? resource?.name ?? room.cloudDoc.title ?? room.title
   const initialDraft = useState(() => readDocumentDraftRecord(documentId))[0]
   const canRecoverInitialDraft = !backendDocument?.activeTransactionId
@@ -280,6 +294,9 @@ export function TiptapDocumentEditor({
   const initializingEditor = useRef(true)
   const agentTransactionRef = useRef(backendDocument?.activeTransactionId ?? null)
   const agentSaveInvalidationRef = useRef(0)
+  // 审阅期硬锁的保存闸（2026-09-03）：有 awaiting_review 提案时延迟用户保存，
+  // 提案解决后由解锁 effect 补跑——防止防抖保存在提案落地 1 秒后把它挤成 conflicted。
+  const editorLockedForReviewRef = useRef(false)
   const backendRef = useRef(backendDocument)
   const editorRef = useRef<Editor | null>(null)
   const onBackendChangeRef = useRef(onBackendDocumentChange)
@@ -308,6 +325,8 @@ export function TiptapDocumentEditor({
   const [tableOfContents, setTableOfContents] = useState<TableOfContentData>([])
   const [blockDragging, setBlockDragging] = useState(false)
   const [referencePickerOpen, setReferencePickerOpen] = useState(false)
+  const [indexPickerOpen, setIndexPickerOpen] = useState(false)
+  const pendingIndexHostBlockIdRef = useRef<string | null>(null)
   const [cursorCompletionEnabled, setCursorCompletionEnabled] = useState(
     () => loadDocumentCursorCompletionSettings().enabled,
   )
@@ -387,6 +406,7 @@ export function TiptapDocumentEditor({
           return
         }
         if (currentDocument.activeTransactionId || presentingStreamRef.current) return
+        if (editorLockedForReviewRef.current) return
 
         pendingSave.current = null
         try {
@@ -577,6 +597,26 @@ export function TiptapDocumentEditor({
     }, delay)
   }
 
+  const resolveDocumentBlockReferences = useCallback(
+    async (input: ResolveDocumentBlockReferencesInput) => {
+      const documents = window.nxcore?.documents
+      if (!documents) throw new Error(t('contextRoom:tiptapDocumentEditor.documentReferenceServiceUnavailable'))
+      return documents.resolveBlockReferences(input)
+    },
+    [t],
+  )
+
+  const navigateDocumentBlockReference = useCallback((
+    target: Parameters<typeof requestDocumentBlockNavigation>[0],
+    resolution: { status: string } | null,
+  ) => {
+    if (resolution && resolution.status !== 'available' && resolution.status !== 'block_missing') {
+      showToast({ title: t('contextRoom:tiptapDocumentEditor.referenceTemporarilyUnavailable'), message: t(resolution.status === 'document_trashed' ? 'contextRoom:tiptapDocumentEditor.theTargetDocumentIsInTrash' : 'contextRoom:tiptapDocumentEditor.theTargetDocumentIsUnavailable') })
+      return
+    }
+    requestDocumentBlockNavigation(target)
+  }, [t])
+
   const editor = useEditor({
     extensions: [
       StarterKit.configure({
@@ -599,18 +639,18 @@ export function TiptapDocumentEditor({
       StableBlockIds.configure({ documentId }),
       DocumentBlockReference.configure({
         sourceRoomId: room.id,
-        resolveReferences: async (input) => {
-          const documents = window.nxcore?.documents
-          if (!documents) throw new Error(t('contextRoom:tiptapDocumentEditor.documentReferenceServiceUnavailable'))
-          return documents.resolveBlockReferences(input)
-        },
-        onNavigate: (target, resolution) => {
-          if (resolution && resolution.status !== 'available' && resolution.status !== 'block_missing') {
-            showToast({ title: t('contextRoom:tiptapDocumentEditor.referenceTemporarilyUnavailable'), message: t(resolution.status === 'document_trashed' ? 'contextRoom:tiptapDocumentEditor.theTargetDocumentIsInTrash' : 'contextRoom:tiptapDocumentEditor.theTargetDocumentIsUnavailable') })
-            return
-          }
-          requestDocumentBlockNavigation(target)
-        },
+        resolveReferences: resolveDocumentBlockReferences,
+        onNavigate: navigateDocumentBlockReference,
+      }),
+      BlockIndexMark.configure({
+        sourceRoomId: room.id,
+        resolveReferences: resolveDocumentBlockReferences,
+        onNavigateDocument: navigateDocumentBlockReference,
+        getMemoryItems: () => roomRef.current?.memoryItems ?? [],
+        onNavigateMemory: (target) => requestRoomMemoryNavigation({
+          roomId: target.roomId,
+          memoryId: target.memoryId,
+        }),
       }),
       DocumentOperationReviewExtension,
       DocumentContinuationExtension,
@@ -719,7 +759,16 @@ export function TiptapDocumentEditor({
   useEffect(() => {
     if (!editor || editor.isDestroyed) return
     editor.setEditable(!historyView && !writing && !documentOperations.locked)
-  }, [documentOperations.locked, editor, historyView, writing])
+    // 同步保存闸 + 解锁补跑：锁定期被延迟的用户保存在锁释放后按防抖节奏补存。
+    const wasLocked = editorLockedForReviewRef.current
+    editorLockedForReviewRef.current = documentOperations.locked
+    if (wasLocked && !documentOperations.locked && pendingSave.current && saveTimer.current === null) {
+      saveTimer.current = window.setTimeout(() => {
+        saveTimer.current = null
+        void persistPendingSave()
+      }, 300)
+    }
+  }, [documentOperations.locked, editor, historyView, writing, persistPendingSave])
 
   useEffect(() => {
     historyRestoreRequestRef.current += 1
@@ -869,7 +918,10 @@ export function TiptapDocumentEditor({
   useEffect(() => {
     if (!editor) return
     if (editor.isEditable === editorLocked) editor.setEditable(!editorLocked, false)
-    if (editorLocked) setReferencePickerOpen(false)
+    if (editorLocked) {
+      setReferencePickerOpen(false)
+      setIndexPickerOpen(false)
+    }
   }, [editor, editorLocked])
 
   useEffect(() => {
@@ -893,6 +945,48 @@ export function TiptapDocumentEditor({
     if (!documents) throw new Error(t('contextRoom:tiptapDocumentEditor.documentBlockServiceUnavailable'))
     return documents.listBlocks(targetDocumentId)
   }, [])
+
+  const openBlockIndexPicker = useCallback((node: ProseMirrorNode) => {
+    pendingIndexHostBlockIdRef.current = typeof node.attrs?.id === 'string' ? node.attrs.id : null
+    setIndexPickerOpen(true)
+  }, [])
+
+  const insertBlockIndexTarget = useCallback((target: BlockIndexTarget) => {
+    const currentEditor = editorRef.current
+    setIndexPickerOpen(false)
+    if (!currentEditor || currentEditor.isDestroyed) return
+    const hostBlockId = pendingIndexHostBlockIdRef.current
+    let hostPos: number | null = null
+    let hostNode: ProseMirrorNode | null = null
+    if (hostBlockId) {
+      currentEditor.state.doc.descendants((node, pos) => {
+        if (hostNode) return false
+        if (typeof node.attrs?.id === 'string' && node.attrs.id === hostBlockId) {
+          hostPos = pos
+          hostNode = node
+          return false
+        }
+        return true
+      })
+    }
+    if (!hostNode || hostPos == null) {
+      // The host block vanished while the picker was open; fall back to the
+      // textblock holding the current selection.
+      const { $from } = currentEditor.state.selection
+      if ($from.parent.isTextblock && $from.parent.type.name !== 'codeBlock') {
+        hostNode = $from.parent
+        hostPos = $from.before()
+      }
+    }
+    const inserted = hostNode != null && hostPos != null
+      && insertBlockIndexMark(currentEditor, hostPos, hostNode, target)
+    if (!inserted) {
+      showToast({
+        title: t('contextRoom:blockIndexMark.cannotAttachHere'),
+        message: t('contextRoom:blockIndexMark.cannotAttachHereDetail'),
+      })
+    }
+  }, [t])
 
   const copyBlockReference = useCallback(async (blockId: string, textPreview: string) => {
     const url = createEverroomBlockReferenceUrl({
@@ -1239,6 +1333,7 @@ export function TiptapDocumentEditor({
             <span>{t('contextRoom:tiptapDocumentEditor.agentThinking')}</span>
           </div>
         ) : null}
+        <DocumentExportStatus documentId={documentId} />
         {editor ? (
           <TiptapDocumentActions
             editor={editor}
@@ -1356,6 +1451,7 @@ export function TiptapDocumentEditor({
             editor={editor}
             onDraggingChange={handleBlockDraggingChange}
             onCopyBlockReference={copyBlockReference}
+            onAddMemoryIndex={openBlockIndexPicker}
           />
           <TiptapSlashCommandMenu
             editor={editor}
@@ -1384,6 +1480,14 @@ export function TiptapDocumentEditor({
             insertDocumentBlockReference(editor, reference)
             setReferencePickerOpen(false)
           }}
+        />
+      ) : null}
+      {editor && indexPickerOpen && !editorLocked ? (
+        <BlockIndexPicker
+          roomId={room.id}
+          memoryItems={roomRef.current?.memoryItems ?? []}
+          onSelect={insertBlockIndexTarget}
+          onClose={() => setIndexPickerOpen(false)}
         />
       ) : null}
     </div>

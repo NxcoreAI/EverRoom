@@ -15,6 +15,7 @@ screenshots/
 
 
 apps/desktop/build/oo/
+apps/desktop/build/lark-cli/
 apps/desktop/build/open-connector/
 apps/desktop/build/nango-runtime/
 apps/desktop/build/genoffice-runtime/

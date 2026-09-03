@@ -1,7 +1,7 @@
 import type { InlineExtension } from "@earendil-works/pi-coding-agent";
 import { MemoryCoreClient } from "./client.js";
 import { formatRecallResult } from "./format.js";
-import type { MemoryCaptureMessage, MemoryRuntimeConfig } from "./types.js";
+import type { MemoryCaptureMessage, MemoryRuntimeConfig, RoomMemorySnapshot } from "./types.js";
 
 const TAG = "[pi-memory]";
 
@@ -19,6 +19,8 @@ export interface MemoryRunContext {
   captureEnabled: boolean;
   /** 轻量运行可关闭自动召回，避免将历史记忆注入本轮上下文。 */
   recallEnabled: boolean;
+  /** 本轮绑定 Room 的甄选记忆快照（gateway 注入，已按预算裁好；无 Room 或不可用为空）。 */
+  roomMemories?: RoomMemorySnapshot[];
 }
 
 export interface MemoryLogger {
@@ -79,6 +81,7 @@ export function createMemoryExtension(options: MemoryExtensionOptions): InlineEx
             coreContent: core.status === "fulfilled" ? core.value?.content ?? null : null,
             scenarios: scenarios.status === "fulfilled" ? scenarios.value : [],
             conversationHits: conversations.status === "fulfilled" ? conversations.value : [],
+            roomMemories: run.roomMemories ?? [],
           },
           config.charBudget,
         );

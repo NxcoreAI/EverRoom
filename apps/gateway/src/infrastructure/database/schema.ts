@@ -10,6 +10,15 @@ import {
 } from "drizzle-orm/sqlite-core";
 import type {
   AgentNavigationTarget,
+  AgentDocumentExportMode,
+  AgentDocumentExportStatus,
+  AgentDocumentExportTarget,
+  AgentAuthChallengeView,
+  CanonicalComment,
+  DocumentImportRunStatus,
+  ExternalCommentsStatus,
+  ExternalDocumentProvider,
+  ExternalDocumentWarning,
   DocumentOperationCommandInput,
   DocumentOperationInteractionMode,
   DocumentOperationItemStatus,
@@ -1248,6 +1257,201 @@ export const documentBlockReferences = sqliteTable(
   ],
 );
 
+// ═══════════════════ 外部文档导入（feishu-notion-document-export-plan.md） ═══════════════════
+// 飞书/Notion 文档经 OpenConnector 只读导入：来源登记、不可变快照（正文/评论内容
+// 存 files 模块 sha256 内容寻址存储，表内只留 artifact 引用）、导入任务与 Room
+// 关联。document_import_sources 只用于识别"同一来源再次导入"和审计，不代表持续
+// 同步关系。
+
+/** 外部文档来源登记（owner + provider + remote id 唯一）。 */
+export const documentImportSources = sqliteTable(
+  "document_import_sources",
+  {
+    id: text("id").primaryKey(),
+    ownerId: text("owner_id").notNull().default("local-user"),
+    provider: text("provider", { enum: ["feishu", "notion"] }).$type<ExternalDocumentProvider>().notNull(),
+    remoteDocumentId: text("remote_document_id").notNull(),
+    sourceUrl: text("source_url"),
+    displayTitle: text("display_title"),
+    externalAccountRef: text("external_account_ref"),
+    lastSeenRevision: text("last_seen_revision"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("document_import_sources_owner_remote_idx").on(
+      table.ownerId,
+      table.provider,
+      table.remoteDocumentId,
+    ),
+    index("document_import_sources_provider_idx").on(table.provider),
+  ],
+);
+
+/** 导入任务：一次"搜索→读取→预览→（可选）提交到 Room"的完整过程。 */
+export const documentImportRuns = sqliteTable(
+  "document_import_runs",
+  {
+    id: text("id").primaryKey(),
+    requestId: text("request_id").notNull(),
+    ownerId: text("owner_id").notNull().default("local-user"),
+    provider: text("provider", { enum: ["feishu", "notion"] }).$type<ExternalDocumentProvider>().notNull(),
+    sourceId: text("source_id").references(() => documentImportSources.id, { onDelete: "cascade" }),
+    remoteDocumentId: text("remote_document_id").notNull(),
+    targetRoomId: text("target_room_id"),
+    targetDocumentId: text("target_document_id"),
+    actionRefsJson: text("action_refs_json", { mode: "json" }).$type<string[]>().notNull().default([]),
+    snapshotId: text("snapshot_id"),
+    status: text("status", {
+      enum: ["searching", "reading", "preview", "committing", "succeeded", "failed", "cancelled"],
+    }).$type<DocumentImportRunStatus>().notNull().default("searching"),
+    warningsJson: text("warnings_json", { mode: "json" }).$type<ExternalDocumentWarning[]>().notNull().default([]),
+    errorCode: text("error_code"),
+    errorMessage: text("error_message"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    completedAt: integer("completed_at", { mode: "timestamp_ms" }),
+  },
+  (table) => [
+    index("document_import_runs_owner_created_idx").on(table.ownerId, table.createdAt),
+    index("document_import_runs_source_idx").on(table.sourceId),
+    index("document_import_runs_target_idx").on(table.targetRoomId, table.targetDocumentId),
+  ],
+);
+
+/** 不可变外部快照；artifact_ref 指向 files CAS 中的 CanonicalDocumentArtifact JSON。 */
+export const documentImportSnapshots = sqliteTable(
+  "document_import_snapshots",
+  {
+    id: text("id").primaryKey(),
+    sourceId: text("source_id")
+      .notNull()
+      .references(() => documentImportSources.id, { onDelete: "cascade" }),
+    importRunId: text("import_run_id")
+      .notNull()
+      .references(() => documentImportRuns.id, { onDelete: "cascade" }),
+    artifactRef: text("artifact_ref").notNull(),
+    contentHash: text("content_hash").notNull(),
+    sourceRevision: text("source_revision"),
+    commentsStatus: text("comments_status", {
+      enum: ["complete", "partial", "unavailable", "failed"],
+    }).$type<ExternalCommentsStatus>().notNull(),
+    commentsHash: text("comments_hash"),
+    capturedAt: integer("captured_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    warningsJson: text("warnings_json", { mode: "json" }).$type<ExternalDocumentWarning[]>().notNull().default([]),
+  },
+  (table) => [
+    index("document_import_snapshots_source_idx").on(table.sourceId, table.capturedAt),
+    index("document_import_snapshots_run_idx").on(table.importRunId),
+    index("document_import_snapshots_content_idx").on(table.contentHash),
+  ],
+);
+
+/** 快照随附的评论记录（只读，不参与正文版本编号）。 */
+export const documentImportComments = sqliteTable(
+  "document_import_comments",
+  {
+    id: text("id").primaryKey(),
+    snapshotId: text("snapshot_id")
+      .notNull()
+      .references(() => documentImportSnapshots.id, { onDelete: "cascade" }),
+    remoteCommentId: text("remote_comment_id").notNull(),
+    parentRemoteCommentId: text("parent_remote_comment_id"),
+    authorJson: text("author_json", { mode: "json" }).$type<{ name: string | null } | null>(),
+    body: text("body").notNull(),
+    quotedText: text("quoted_text"),
+    anchorJson: text("anchor_json", { mode: "json" }).$type<CanonicalComment["anchor"]>(),
+    status: text("status", { enum: ["open", "resolved", "unknown"] }).notNull().default("unknown"),
+    sourceUrl: text("source_url"),
+    locationStatus: text("location_status", {
+      enum: ["located", "unlocated", "unsupported"],
+    }).$type<CanonicalComment["locationStatus"]>().notNull().default("unlocated"),
+    commentCreatedAt: integer("comment_created_at", { mode: "timestamp_ms" }),
+    commentUpdatedAt: integer("comment_updated_at", { mode: "timestamp_ms" }),
+  },
+  (table) => [
+    uniqueIndex("document_import_comments_snapshot_remote_idx").on(table.snapshotId, table.remoteCommentId),
+    index("document_import_comments_snapshot_idx").on(table.snapshotId),
+  ],
+);
+
+/** 导入与 Room 文档的关联；relation=candidate 表示"再次导入候选"，不覆盖当前版本。 */
+export const documentRoomImports = sqliteTable(
+  "document_room_imports",
+  {
+    id: text("id").primaryKey(),
+    roomId: text("room_id").notNull(),
+    documentId: text("document_id")
+      .notNull()
+      .references(() => documents.id, { onDelete: "cascade" }),
+    importRunId: text("import_run_id")
+      .notNull()
+      .references(() => documentImportRuns.id, { onDelete: "cascade" }),
+    snapshotId: text("snapshot_id")
+      .notNull()
+      .references(() => documentImportSnapshots.id, { onDelete: "cascade" }),
+    importedVersion: integer("imported_version"),
+    relation: text("relation", { enum: ["primary", "candidate"] }).notNull().default("primary"),
+    /** relation=candidate 时物化出的临时候选文档；应用后保留供追溯。 */
+    candidateDocumentId: text("candidate_document_id"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("document_room_imports_room_document_idx").on(table.roomId, table.documentId),
+    index("document_room_imports_run_idx").on(table.importRunId),
+  ],
+);
+
+// ═══════════════════ Agent 文档导出（一次性发布，无远端 binding） ═══════════════════
+
+/** 一次性导出任务：记录由哪个 Room 文档版本、何时、以何种 CLI/skill 写到哪里。 */
+export const agentDocumentExports = sqliteTable(
+  "agent_document_exports",
+  {
+    id: text("id").primaryKey(),
+    requestId: text("request_id").notNull(),
+    ownerId: text("owner_id").notNull().default("local-user"),
+    roomId: text("room_id").notNull(),
+    documentId: text("document_id")
+      .notNull()
+      .references(() => documents.id, { onDelete: "cascade" }),
+    version: integer("version").notNull(),
+    provider: text("provider", { enum: ["feishu", "notion"] }).$type<ExternalDocumentProvider>().notNull(),
+    mode: text("mode", { enum: ["create", "update", "export_file"] }).$type<AgentDocumentExportMode>().notNull(),
+    targetJson: text("target_json", { mode: "json" }).$type<AgentDocumentExportTarget | null>(),
+    rendererVersion: text("renderer_version"),
+    payloadHash: text("payload_hash"),
+    payloadMarkdownRef: text("payload_markdown_ref"),
+    cliSkillRef: text("cli_skill_ref"),
+    status: text("status", {
+      enum: [
+        "preparing",
+        "environment_not_ready",
+        "awaiting_auth",
+        "awaiting_confirmation",
+        "running",
+        "succeeded",
+        "failed",
+        "needs_review",
+        "cancelled",
+      ],
+    }).$type<AgentDocumentExportStatus>().notNull().default("preparing"),
+    challengeJson: text("challenge_json", { mode: "json" }).$type<AgentAuthChallengeView | null>(),
+    confirmationJson: text("confirmation_json", { mode: "json" }).$type<Record<string, unknown> | null>(),
+    remoteResultJson: text("remote_result_json", { mode: "json" }).$type<Record<string, unknown> | null>(),
+    warningsJson: text("warnings_json", { mode: "json" }).$type<ExternalDocumentWarning[]>().notNull().default([]),
+    errorCode: text("error_code"),
+    errorMessage: text("error_message"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    completedAt: integer("completed_at", { mode: "timestamp_ms" }),
+  },
+  (table) => [
+    index("agent_document_exports_owner_created_idx").on(table.ownerId, table.createdAt),
+    index("agent_document_exports_document_idx").on(table.documentId),
+  ],
+);
+
 // ═══════════════════ Knowledge 路由层（docs/entity-room-plan.md） ═══════════════════
 // Room 注册表：Room 长期只存在于渲染器 localStorage，gateway 侧此前无实体表。
 // 渲染器 Room 打开/创建/改名时上报 upsert（origin=user），删除时写 deletedAt；
@@ -1371,6 +1575,10 @@ export const roomMemoryAttributions = sqliteTable(
     sourceKind: text("source_kind").notNull(),
     sourceId: text("source_id"),
     confidence: text("confidence", { enum: ["explicit", "derived"] }).notNull().default("explicit"),
+    /** 绑定时的记忆内容快照（Room 记忆注入/工具过滤的数据源；绑定未带快照为 null）。 */
+    content: text("content"),
+    memoryType: text("memory_type"),
+    memoryUpdatedAt: text("memory_updated_at"),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
     updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
   },
@@ -1379,6 +1587,17 @@ export const roomMemoryAttributions = sqliteTable(
     index("room_memory_attributions_room_idx").on(table.roomId),
   ],
 );
+
+/**
+ * 记忆自动绑定的永久压制表：用户清除过归属行的记忆不再被 worker 自动绑回
+ * （手动重绑不受影响）。行由 assignAtomicRoom 清除分支写入，deleteAtomic 随记忆清理。
+ */
+export const roomMemorySuppressions = sqliteTable("room_memory_suppressions", {
+  memoryId: text("memory_id").primaryKey(),
+  /** 被清除的归属行当时的 roomId（审计用；Room 可能已删/合并，松引用不建 FK）。 */
+  roomId: text("room_id").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+});
 
 /**
  * 实体注册表（entity-room-plan §3.1）：弱 Room 的本体，也是 Room 的"户口"。
@@ -2516,7 +2735,7 @@ export const writingStyleSignals = sqliteTable(  "writing_style_signals",
     // 幂等键：`rw:{operationId}` / `edit:{operationId}` / `rev:{documentId}:{version}` / `rvw:{operationId}`
     id: text("id").primaryKey(),
     type: text("type", {
-      enum: ["rewrite_instruction", "edit_instruction", "revision_delta", "review_decision"],
+      enum: ["rewrite_instruction", "edit_instruction", "revision_delta", "review_decision", "completion_feedback"],
     })
       .notNull(),
     documentId: text("document_id"),

@@ -143,6 +143,32 @@ export function useAgentSession(
     })
   }, [])
 
+  // 聊天入口导出：document_export 返回 awaiting_auth 时自动拉起本地授权流程，
+  // 与"···"菜单导出面板的行为一致（方案 §6.4 两入口同一链路）。
+  const autoStartExportAuth = useCallback((event: AgentEvent) => {
+    const payload = event.payload as { name?: unknown; result?: unknown }
+    if (payload.name !== 'document_export') return
+    let summary: unknown = payload.result
+    if (typeof summary === 'string') {
+      try {
+        summary = JSON.parse(summary)
+      } catch {
+        return
+      }
+    }
+    if (!summary || typeof summary !== 'object') return
+    const view = summary as {
+      status?: unknown
+      runId?: unknown
+      challenge?: { provider?: unknown; phase?: unknown }
+    }
+    if (view.status !== 'awaiting_auth' || !view.challenge) return
+    const provider = view.challenge.provider === 'notion' ? 'notion' : 'feishu'
+    const phase = view.challenge.phase === 'app_setup' ? 'app_setup' : 'user_auth'
+    const exportRunId = typeof view.runId === 'string' ? view.runId : undefined
+    void window.nxcore?.agentAuth.start({ provider, phase, exportRunId }).catch(() => undefined)
+  }, [])
+
   const applyEvent = useCallback((event: AgentEvent) => {
     const lastSequence = sequenceByRun.current.get(event.runId) ?? 0
     if (event.seq <= lastSequence) return
@@ -218,6 +244,7 @@ export function useAgentSession(
       event.type === 'tool.failed'
     ) {
       updateToolCall(event)
+      if (event.type === 'tool.completed') autoStartExportAuth(event)
       return
     }
     if (event.type === 'reasoning.delta') {

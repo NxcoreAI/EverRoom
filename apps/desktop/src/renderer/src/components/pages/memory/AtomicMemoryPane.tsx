@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { useLocale } from '@/i18n/LocaleContext'
 
 import type { MemoryAtomicItemDto, MemoryAtomicProvenanceDto, MemoryAtomicType } from '../../../../../shared/memory'
+import { RoomAssignControl } from './RoomAssignControl'
 import { MemoryEmptyView } from './MemoryStatusViews'
 import { formatDate, memoryFailureText, useAsyncData } from './useMemoryData'
 
@@ -161,6 +162,11 @@ function AtomicDetail({ item, onSaved, onDeleted, onOpenDocument, onOpenConversa
     <div className="mem-atomic-detail">
       <div className="mem-atomic-detail-meta">
         <span className="mem-type-badge" data-type={item.type}>{t(typeLabel(item.type))}</span>
+        {item.roomId ? (
+          <span className="mem-room-chip" data-available={Boolean(item.roomTitle)}>
+            {item.roomTitle ?? t('memory:atomicMemory.roomUnavailable')}
+          </span>
+        ) : null}
         {item.background ? <span className="mem-source">{t('memory:atomicMemory.sourceScenarioScene', { scene: item.background })}</span> : null}
         <span className="mem-time">{t('memory:atomicMemory.createdCreatedUpdatedUpdated', { created: formatDate(item.createdAt, locale), updated: formatDate(item.updatedAt, locale) })}</span>
         <span className="mem-atomic-detail-actions">
@@ -181,6 +187,13 @@ function AtomicDetail({ item, onSaved, onDeleted, onOpenDocument, onOpenConversa
           )}
         </span>
       </div>
+      <RoomAssignControl
+        memoryId={item.id}
+        roomId={item.roomId}
+        roomTitle={item.roomTitle}
+        snapshot={item}
+        onChanged={onSaved}
+      />
       {editing ? (
         <div className="mem-atomic-editor">
           <textarea value={draft} onChange={(event) => setDraft(event.target.value)} rows={4} maxLength={8192} />
@@ -280,6 +293,11 @@ export function AtomicMemoryPane({ focusItemId, onOpenDocument, onOpenConversati
                 onClick={() => setExpandedId(expandedId === item.id ? null : item.id)}
               >
                 <span className="mem-type-badge" data-type={item.type}>{t(typeLabel(item.type))}</span>
+                {item.roomId ? (
+                  <span className="mem-room-chip" data-available={Boolean(item.roomTitle)}>
+                    {item.roomTitle ?? t('memory:atomicMemory.roomUnavailable')}
+                  </span>
+                ) : null}
                 <span className="mem-atomic-text">{item.content}</span>
                 <span className="mem-time">{formatDate(item.updatedAt, locale)}</span>
               </button>

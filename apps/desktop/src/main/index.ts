@@ -107,6 +107,13 @@ import {
   OpenConnectorSupervisor,
   type OpenConnectorConnection,
 } from './open-connector/open-connector-supervisor'
+import { LarkAuthRunner } from './agent-auth/lark-auth-runner'
+import { AgentAuthController } from './agent-auth/controller'
+import { ExternalDocumentsGatewayBridge } from './gateway/external-documents-gateway-bridge'
+import type {
+  AgentAuthStartInput,
+  DesktopAgentAuthChallenge,
+} from '../shared/agent-auth'
 import { DESKTOP_PAGE_MODE_ENV, resolveDesktopPageMode } from '../shared/page-mode'
 import { BrowserExtensionService } from './browser-extension/browser-extension-service'
 import { CLIPPER_ASSET_SCHEME, type BrowserExtensionStatus } from '../shared/browser-extension'
@@ -266,6 +273,30 @@ const OPEN_CONNECTOR_CHANNELS = {
   execute: 'open-connector:execute',
   cancel: 'open-connector:cancel',
   openConsole: 'open-connector:open-console',
+} as const
+
+const AGENT_AUTH_CHANNELS = {
+  status: 'agent-auth:status',
+  start: 'agent-auth:start',
+  resume: 'agent-auth:resume',
+  cancel: 'agent-auth:cancel',
+} as const
+
+const EXTERNAL_DOCUMENT_CHANNELS = {
+  importSearch: 'external-documents:import-search',
+  importPreview: 'external-documents:import-preview',
+  importCommit: 'external-documents:import-commit',
+  importRun: 'external-documents:import-run',
+  cancelImportRun: 'external-documents:cancel-import-run',
+  importHistory: 'external-documents:import-history',
+  checkExternalUpdate: 'external-documents:check-external-update',
+  applyCandidate: 'external-documents:apply-candidate',
+  createExport: 'external-documents:create-export',
+  getExport: 'external-documents:get-export',
+  confirmExport: 'external-documents:confirm-export',
+  retryExport: 'external-documents:retry-export',
+  cancelExport: 'external-documents:cancel-export',
+  listExports: 'external-documents:list-exports',
 } as const
 
 const CONNECTOR_SYNC_CHANNELS = {
@@ -443,6 +474,7 @@ const MEMORY_CHANNELS = {
   searchAtomic: 'memory:search-atomic',
   updateAtomic: 'memory:update-atomic',
   deleteAtomic: 'memory:delete-atomic',
+  setAtomicRoom: 'memory:set-atomic-room',
   listScenarios: 'memory:list-scenarios',
   readScenario: 'memory:read-scenario',
   readCore: 'memory:read-core',
@@ -584,6 +616,7 @@ const WRITING_STYLE_CHANNELS = {
   insights: 'writing-style:list-insights',
   snoozeInsight: 'writing-style:snooze-insight',
   confirmInsight: 'writing-style:confirm-insight',
+  completionFeedback: 'writing-style:completion-feedback',
 } as const
 
 const AGENT_SCHEDULER_CHANNELS = {
@@ -632,6 +665,8 @@ function installIpcRouters(): void {
     GATEWAY_CHANNELS,
     RUNTIME_CONFIG_CHANNELS,
     OPEN_CONNECTOR_CHANNELS,
+    AGENT_AUTH_CHANNELS,
+    EXTERNAL_DOCUMENT_CHANNELS,
     CONNECTOR_SYNC_CHANNELS,
     CONTEXT_ROOM_CHANNELS,
     AGENT_CHANNELS,
@@ -705,6 +740,7 @@ let clipperAssetBridge: FilesGatewayBridge | null = null
 let runtimeConfigBridge: RuntimeConfigBridge | null = null
 let cursorCompletionSupervisor: GatewaySupervisor | null = null
 let ooCliBridge: OoCliBridge | null = null
+let agentAuthController: AgentAuthController | null = null
 let openConnectorSupervisor: OpenConnectorSupervisor | null = null
 let openConnectorConsoleWindow: BrowserWindow | null = null
 let memoryCoreSupervisor: MemoryCoreSupervisor | null = null
@@ -1497,6 +1533,17 @@ function resolveOoCliExecutable(): string {
   return packagedCandidates.find((candidate) => existsSync(candidate)) ?? 'oo'
 }
 
+function resolveLarkCliExecutable(): string {
+  const configured = process.env.NXCORE_LARK_CLI_PATH?.trim()
+  if (configured) return configured
+  const executableName = process.platform === 'win32' ? 'lark-cli.exe' : 'lark-cli'
+  const packagedCandidates = [
+    join(process.resourcesPath, 'lark-cli', `${process.platform}-${process.arch}`, executableName),
+    join(app.getAppPath(), 'build', 'lark-cli', `${process.platform}-${process.arch}`, executableName),
+  ]
+  return packagedCandidates.find((candidate) => existsSync(candidate)) ?? 'lark-cli'
+}
+
 function createOoCliBridge(connection: OpenConnectorConnection): OoCliBridge {
   const root = join(dataDirectory, 'open-connector')
   return new OoCliBridge({
@@ -1623,6 +1670,102 @@ function registerOpenConnectorHandlers(): void {
     return ooCliBridge.cancel(requestId)
   })
   handle(OPEN_CONNECTOR_CHANNELS.openConsole, () => openConnectorManagementConsole())
+}
+
+function registerAgentAuthHandlers(): void {
+  handle(AGENT_AUTH_CHANNELS.status, () => {
+    if (!agentAuthController) {
+      return {
+        feishu: {
+          cliState: 'missing' as const,
+          cliPath: resolveLarkCliExecutable(),
+          appConfigured: null,
+          userAuthorized: null,
+          userName: null,
+          message: '授权控制器尚未就绪。',
+        },
+        activeChallenge: null,
+      }
+    }
+    return agentAuthController.status()
+  })
+  handle(AGENT_AUTH_CHANNELS.start, (_event, input: unknown) => {
+    if (!agentAuthController) throw new Error('授权控制器尚未就绪。')
+    const value = input as AgentAuthStartInput
+    if (!value || typeof value !== 'object') throw new Error('无效的授权请求。')
+    if (value.provider !== 'feishu' && value.provider !== 'notion') throw new Error('provider 只支持 feishu 或 notion。')
+    if (value.phase !== 'app_setup' && value.phase !== 'user_auth') throw new Error('phase 只支持 app_setup 或 user_auth。')
+    return agentAuthController.start({
+      provider: value.provider,
+      phase: value.phase,
+      exportRunId: typeof value.exportRunId === 'string' && value.exportRunId.trim()
+        ? value.exportRunId.trim()
+        : undefined,
+    }) as Promise<DesktopAgentAuthChallenge>
+  })
+  handle(AGENT_AUTH_CHANNELS.resume, (_event, challengeId: unknown) => {
+    if (!agentAuthController) throw new Error('授权控制器尚未就绪。')
+    if (typeof challengeId !== 'string' || !challengeId.trim()) throw new Error('无效的授权流程标识。')
+    return agentAuthController.resume(challengeId.trim())
+  })
+  handle(AGENT_AUTH_CHANNELS.cancel, (_event, challengeId: unknown) => {
+    if (!agentAuthController) return null
+    if (challengeId !== undefined && typeof challengeId !== 'string') throw new Error('无效的授权流程标识。')
+    return agentAuthController.cancel(typeof challengeId === 'string' ? challengeId : undefined)
+  })
+}
+
+function registerExternalDocumentHandlers(bridge: ExternalDocumentsGatewayBridge): void {
+  handle(EXTERNAL_DOCUMENT_CHANNELS.importSearch, (_event, provider: unknown, query: unknown) => {
+    if (typeof provider !== 'string' || typeof query !== 'string') throw new Error('无效的导入搜索请求。')
+    return bridge.importSearch(provider as 'feishu' | 'notion', query)
+  })
+  handle(EXTERNAL_DOCUMENT_CHANNELS.importPreview, (_event, provider: unknown, remoteDocumentId: unknown) => {
+    if (typeof provider !== 'string' || typeof remoteDocumentId !== 'string') throw new Error('无效的导入预览请求。')
+    return bridge.importPreview(provider as 'feishu' | 'notion', remoteDocumentId)
+  })
+  handle(EXTERNAL_DOCUMENT_CHANNELS.importCommit, (_event, input: unknown) => bridge.importCommit(input as never))
+  handle(EXTERNAL_DOCUMENT_CHANNELS.importRun, (_event, runId: unknown) => {
+    if (typeof runId !== 'string') throw new Error('无效的导入任务标识。')
+    return bridge.importRun(runId)
+  })
+  handle(EXTERNAL_DOCUMENT_CHANNELS.cancelImportRun, (_event, runId: unknown) => {
+    if (typeof runId !== 'string') throw new Error('无效的导入任务标识。')
+    return bridge.cancelImportRun(runId)
+  })
+  handle(EXTERNAL_DOCUMENT_CHANNELS.importHistory, (_event, roomId: unknown, documentId: unknown) => {
+    if (typeof roomId !== 'string' || typeof documentId !== 'string') throw new Error('无效的文档标识。')
+    return bridge.importHistory(roomId, documentId)
+  })
+  handle(EXTERNAL_DOCUMENT_CHANNELS.checkExternalUpdate, (_event, roomId: unknown, documentId: unknown) => {
+    if (typeof roomId !== 'string' || typeof documentId !== 'string') throw new Error('无效的文档标识。')
+    return bridge.checkExternalUpdate(roomId, documentId)
+  })
+  handle(EXTERNAL_DOCUMENT_CHANNELS.applyCandidate, (_event, roomImportId: unknown) => {
+    if (typeof roomImportId !== 'string') throw new Error('无效的导入关联标识。')
+    return bridge.applyCandidate(roomImportId)
+  })
+  handle(EXTERNAL_DOCUMENT_CHANNELS.createExport, (_event, input: unknown) => bridge.createExport(input as never))
+  handle(EXTERNAL_DOCUMENT_CHANNELS.getExport, (_event, exportId: unknown) => {
+    if (typeof exportId !== 'string') throw new Error('无效的导出任务标识。')
+    return bridge.getExport(exportId)
+  })
+  handle(EXTERNAL_DOCUMENT_CHANNELS.confirmExport, (_event, exportId: unknown) => {
+    if (typeof exportId !== 'string') throw new Error('无效的导出任务标识。')
+    return bridge.confirmExport(exportId)
+  })
+  handle(EXTERNAL_DOCUMENT_CHANNELS.retryExport, (_event, exportId: unknown) => {
+    if (typeof exportId !== 'string') throw new Error('无效的导出任务标识。')
+    return bridge.retryExport(exportId)
+  })
+  handle(EXTERNAL_DOCUMENT_CHANNELS.cancelExport, (_event, exportId: unknown) => {
+    if (typeof exportId !== 'string') throw new Error('无效的导出任务标识。')
+    return bridge.cancelExport(exportId)
+  })
+  handle(EXTERNAL_DOCUMENT_CHANNELS.listExports, (_event, documentId: unknown) => {
+    if (documentId !== undefined && typeof documentId !== 'string') throw new Error('无效的文档标识。')
+    return bridge.listExports(typeof documentId === 'string' ? documentId : undefined)
+  })
 }
 
 function registerContextRoomHandlers(bridge: ContextRoomGatewayBridge): void {
@@ -2233,6 +2376,13 @@ function registerMemoryHandlers(bridge: MemoryGatewayBridge): void {
       bridge.updateAtomic(id, content, background),
   )
   handle(MEMORY_CHANNELS.deleteAtomic, (_event, ids: string[]) => bridge.deleteAtomic(ids))
+  handle(MEMORY_CHANNELS.setAtomicRoom, (
+    _event,
+    id: string,
+    roomId: string | null,
+    snapshot?: { content: string; type: string; memoryUpdatedAt: string },
+  ) =>
+    bridge.setAtomicRoom(id, roomId, snapshot))
   handle(MEMORY_CHANNELS.listScenarios, (_event, pathPrefix?: string) =>
     bridge.listScenarios(pathPrefix))
   handle(MEMORY_CHANNELS.readScenario, (_event, path: string) => bridge.readScenario(path))
@@ -2553,6 +2703,19 @@ function registerWritingStyleHandlers(): void {
     if (!writingStyleGatewayBridge || typeof insightId !== 'string') throw new Error('写作风格洞察参数无效。')
     return writingStyleGatewayBridge.confirmInsight(insightId)
   })
+  handle(WRITING_STYLE_CHANNELS.completionFeedback, (_event, input: unknown) => {
+    if (!writingStyleGatewayBridge || !input || typeof input !== 'object') throw new Error('写作风格补全反馈参数无效。')
+    const { accepted, rejected, samples } = input as { accepted?: unknown; rejected?: unknown; samples?: unknown }
+    if (typeof accepted !== 'number' || typeof rejected !== 'number'
+      || !Array.isArray(samples) && samples !== undefined) {
+      throw new Error('写作风格补全反馈参数无效。')
+    }
+    return writingStyleGatewayBridge.reportCompletionFeedback({
+      accepted,
+      rejected,
+      samples: Array.isArray(samples) ? samples.filter((sample): sample is string => typeof sample === 'string') : [],
+    })
+  })
 }
 
 function registerPerceptionAndDiaryHandlers(): void {
@@ -2819,6 +2982,20 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   }
   registerBrowserExtensionHandlers(browserExtensionService)
   registerOpenConnectorHandlers()
+  // Agent 授权引导（飞书 lark-cli）：不依赖 gateway/OpenConnector，尽早可用。
+  agentAuthController = new AgentAuthController(
+    new LarkAuthRunner(resolveLarkCliExecutable()),
+    {
+      onEvent: (frame) => {
+        for (const window of BrowserWindow.getAllWindows()) {
+          if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
+            window.webContents.send('agent-auth:event', frame)
+          }
+        }
+      },
+    },
+  )
+  registerAgentAuthHandlers()
   createWindow()
   const connectorPageEnabled = desktopPageMode === 'connectors'
   const configuredNangoUrl =
@@ -2916,6 +3093,8 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         ...(ooCliBridge ? ooCliBridge.environment() : {}),
         NXCORE_CLI_CONNECTOR_AGENT_MODE: ooCliBridge ? 'local' : 'direct',
         NXCORE_CLI_CONNECTOR_SYNC_ENABLED: ooCliBridge ? 'true' : 'false',
+        // 飞书导出：lark-cli 路径注入 gateway（网关只执行写入命令，授权在桌面本地）。
+        ...(agentAuthController ? agentAuthController.gatewayEnvironment() : {}),
         ...(memoryCore
           ? {
             NXCORE_MEMORY_ENABLED: 'true',
@@ -2992,6 +3171,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     registerMemoryHandlers(memoryGatewayBridge)
     documentGatewayBridge = new DocumentGatewayBridge(gatewaySupervisor)
     registerDocumentHandlers(documentGatewayBridge, documentAssets, obsidianVaultService)
+    registerExternalDocumentHandlers(new ExternalDocumentsGatewayBridge(gatewaySupervisor))
     registerDocumentPdfExportHandler()
     registerKnowledgeHandlers(new KnowledgeGatewayBridge(gatewaySupervisor))
     registerMcpHandlers(new McpGatewayBridge(gatewaySupervisor))
@@ -3290,6 +3470,8 @@ app.on('before-quit', (event) => {
   privateSyncScheduler = null
   agentNotificationBridgeServer = null
   macosPushNotifications = null
+  agentAuthController?.shutdown()
+  agentAuthController = null
   privateSync?.stop()
   void notificationBridge?.stop()
   pushNotificationsService?.stop()

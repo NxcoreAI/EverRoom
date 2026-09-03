@@ -1612,5 +1612,18 @@
   "qrLogin.ended.expired": "二维码已过期，请刷新后重试。",
   "qrLogin.ended.exchanged": "本次会话已完成兑换。",
   "qrLogin.ended.error": "出现错误。",
-  "qrLogin.exchanging": "正在完成登录…"
+  "qrLogin.exchanging": "正在完成登录…",
+  "agentAuthCard.phaseAppSetup": "应用初始化",
+  "agentAuthCard.phaseUserAuth": "账号授权",
+  "agentAuthCard.feishu": "飞书",
+  "agentAuthCard.notion": "Notion",
+  "agentAuthCard.cancel": "取消授权",
+  "agentAuthCard.openLink": "打开链接",
+  "agentAuthCard.openConsole": "打开连接器管理",
+  "agentAuthCard.qrAlt": "授权二维码",
+  "agentAuthCard.resumeCheck": "我已完成授权",
+  "agentAuthCard.completedTitle": "飞书授权已完成",
+  "agentAuthCard.completedBadge": "已授权",
+  "agentAuthCard.dismiss": "关闭",
+  "agentAuthCard.restart": "重新发起授权"
 }

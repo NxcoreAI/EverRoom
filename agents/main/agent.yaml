@@ -5,6 +5,8 @@ name: Main Agent
 description: 处理用户对话、管理 Context Room 工作区并调度受控的内部子 Agent
 runtime: pi
 systemPrompt: ./SYSTEM.md
+skills:
+  - ./skills/document-export
 
 capabilities:
   - conversation.respond
@@ -62,3 +64,4 @@ tools:
   - content_analysis
   - send_notification
   - room_analysis
+  - document_export

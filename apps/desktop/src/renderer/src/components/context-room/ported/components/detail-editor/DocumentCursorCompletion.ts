@@ -20,6 +20,7 @@ import {
   validatedDocumentCursorReplacement,
 } from './documentCursorCompletionAgent'
 import { loadCompletionWritingStyleBlock } from './writingStyleInjection'
+import { recordCompletionAcceptance, recordCompletionRejection } from './completionStyleFeedback'
 import {
   documentCursorCompletionSnippet,
   nextDocumentCursorCompletionRequestId,
@@ -1369,7 +1370,10 @@ export function useDocumentCursorCompletion({
     }
     // 气泡"接受/拒绝"菜单项经 CustomEvent 冒泡到这里；事务与 Tab/Esc 键同一通路。
     const handleAccept = () => {
+      // 接受样例要在应用前取（accept 会清掉补全状态）；仅显式接受计入反馈。
+      const acceptedCompletion = currentDocumentCursorCompletion(editor)
       if (!acceptDocumentCursorCompletion(editor)) return
+      recordCompletionAcceptance(acceptedCompletion?.text)
       clearCompletionTimers(timers.current, 'accepted')
       const activeRequest = requestRef.current
       if (activeRequest) abortCompletionRequest(activeRequest, 'accepted')
@@ -1380,6 +1384,7 @@ export function useDocumentCursorCompletion({
     }
     const handleDismiss = () => {
       if (!dismissDocumentCursorCompletion(editor, 'menu')) return
+      recordCompletionRejection()
       clearCompletionTimers(timers.current, 'dismissed')
       const activeRequest = requestRef.current
       if (activeRequest) abortCompletionRequest(activeRequest, 'dismissed')

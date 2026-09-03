@@ -71,6 +71,13 @@ export class WritingStyleGatewayBridge {
     })
   }
 
+  reportCompletionFeedback(input: { accepted: number; rejected: number; samples?: string[] }): Promise<{ ok: boolean }> {
+    return this.request('/v1/writing-style/completion-feedback', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    })
+  }
+
   /** 协作轮洞察（v2）：pending 供智能区横幅，snoozed/confirmed 供记忆页。 */
   insights(): Promise<{ insights: WritingStyleInsightDto[] }> {
     return this.request('/v1/writing-style/insights')

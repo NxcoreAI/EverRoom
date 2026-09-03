@@ -245,6 +245,35 @@ const api: NxcoreDesktopApi = {
       return () => ipcRenderer.removeListener('cli-connector:event', handleEvent)
     },
   },
+  agentAuth: {
+    status: () => invokeQuietly('agent-auth:status'),
+    start: (input) => invoke('agent-auth:start', input),
+    resume: (challengeId) => invokeQuietly('agent-auth:resume', challengeId),
+    cancel: (challengeId) => invokeQuietly('agent-auth:cancel', challengeId),
+    onEvent: (listener) => {
+      const handleEvent = (_event: Electron.IpcRendererEvent, frame: Parameters<typeof listener>[0]) => {
+        listener(frame)
+      }
+      ipcRenderer.on('agent-auth:event', handleEvent)
+      return () => ipcRenderer.removeListener('agent-auth:event', handleEvent)
+    },
+  },
+  externalDocuments: {
+    importSearch: (provider, query) => invoke('external-documents:import-search', provider, query),
+    importPreview: (provider, remoteDocumentId) => invoke('external-documents:import-preview', provider, remoteDocumentId),
+    importCommit: (input) => invoke('external-documents:import-commit', input),
+    importRun: (runId) => invokeQuietly('external-documents:import-run', runId),
+    cancelImportRun: (runId) => invoke('external-documents:cancel-import-run', runId),
+    importHistory: (roomId, documentId) => invokeQuietly('external-documents:import-history', roomId, documentId),
+    checkExternalUpdate: (roomId, documentId) => invoke('external-documents:check-external-update', roomId, documentId),
+    applyCandidate: (roomImportId) => invoke('external-documents:apply-candidate', roomImportId),
+    createExport: (input) => invoke('external-documents:create-export', input),
+    getExport: (exportId) => invokeQuietly('external-documents:get-export', exportId),
+    confirmExport: (exportId) => invoke('external-documents:confirm-export', exportId),
+    retryExport: (exportId) => invoke('external-documents:retry-export', exportId),
+    cancelExport: (exportId) => invoke('external-documents:cancel-export', exportId),
+    listExports: (documentId) => invokeQuietly('external-documents:list-exports', documentId),
+  },
   cliConnectorSync: {
     status: () => invokeQuietly('cli-connector-sync:status'),
     accounts: () => invokeQuietly('cli-connector-sync:accounts'),
@@ -309,6 +338,7 @@ const api: NxcoreDesktopApi = {
     insights: () => invoke('writing-style:list-insights'),
     snoozeInsight: (insightId) => invoke('writing-style:snooze-insight', insightId),
     confirmInsight: (insightId) => invoke('writing-style:confirm-insight', insightId),
+    reportCompletionFeedback: (input) => invoke('writing-style:completion-feedback', input),
   },
   agentSchedules: {
     list: () => invoke('agent-scheduler:list'),
@@ -441,6 +471,12 @@ const api: NxcoreDesktopApi = {
     updateAtomic: (id: string, content: string, background?: string) =>
       invoke('memory:update-atomic', id, content, background),
     deleteAtomic: (ids: string[]) => invoke('memory:delete-atomic', ids),
+    /** 指派/清除原子记忆的 Room 归属（roomId=null 清除）；snapshot 为绑定时的记忆快照。 */
+    setAtomicRoom: (
+      id: string,
+      roomId: string | null,
+      snapshot?: { content: string; type: string; memoryUpdatedAt: string },
+    ) => invoke('memory:set-atomic-room', id, roomId, snapshot),
     listScenarios: (pathPrefix?: string) => invoke('memory:list-scenarios', pathPrefix),
     readScenario: (path: string) => invoke('memory:read-scenario', path),
     readCore: () => invoke('memory:read-core'),

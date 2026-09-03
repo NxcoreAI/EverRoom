@@ -1,7 +1,7 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import type { DocumentDiffResult, DocumentVersionSnapshot, RoomDocument } from '@nxcore/agent-contract'
 import type { Editor } from '@tiptap/react'
-import { ChevronRight, Download, Ellipsis, FileText, Trash2 } from 'lucide-react'
+import { ChevronRight, Download, Ellipsis, ExternalLink, FileDown, FileText, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import { useLocale } from '../../../../../i18n/LocaleContext'
 
@@ -10,6 +10,9 @@ import { ActionConfirmDialog } from '../../components/shared'
 import { createDocxBlob, docxExportFileName } from './tiptapDocxExport'
 import { exportEditorPdf } from './tiptapPdfExport'
 import { DocumentHistoryPanel } from './DocumentHistoryPanel'
+import { ExternalExportDialog } from './ExternalExportDialog'
+import { ExternalImportDialog } from './ExternalImportDialog'
+import { externalDocumentFeatures } from './externalDocumentFeatures'
 
 export function markdownExportFileName(documentName: string, untitled = '无标题文档'): string {
   const safeName = documentName
@@ -68,6 +71,8 @@ export function TiptapDocumentActions({
   const { t } = useLocale()
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [exportingPdf, setExportingPdf] = useState(false)
+  const [exportProvider, setExportProvider] = useState<'feishu' | 'notion' | null>(null)
+  const [importOpen, setImportOpen] = useState(false)
 
   const exportMarkdown = () => {
     const untitled = t('contextRoom:documentOperationCenter.untitledDocument')
@@ -178,6 +183,31 @@ export function TiptapDocumentActions({
               </DropdownMenu.Portal>
             </DropdownMenu.Sub>
             <DropdownMenu.Separator className="context-room-document-actions-separator" />
+            {externalDocumentFeatures.feishuExport && (
+              <DropdownMenu.Item
+                disabled={!backendDocument}
+                onSelect={() => setExportProvider('feishu')}
+              >
+                <ExternalLink aria-hidden="true" />
+                {t('contextRoom:tiptapDocumentActions.exportToFeishu')}
+              </DropdownMenu.Item>
+            )}
+            {externalDocumentFeatures.notionExport && (
+              <DropdownMenu.Item
+                disabled={!backendDocument}
+                onSelect={() => setExportProvider('notion')}
+              >
+                <ExternalLink aria-hidden="true" />
+                {t('contextRoom:tiptapDocumentActions.exportToNotion')}
+              </DropdownMenu.Item>
+            )}
+            {externalDocumentFeatures.externalImport && (
+              <DropdownMenu.Item onSelect={() => setImportOpen(true)}>
+                <FileDown aria-hidden="true" />
+                {t('contextRoom:tiptapDocumentActions.importFromExternal')}
+              </DropdownMenu.Item>
+            )}
+            <DropdownMenu.Separator className="context-room-document-actions-separator" />
             <DropdownMenu.Item
               className="danger"
               disabled={deleteDisabled}
@@ -203,6 +233,25 @@ export function TiptapDocumentActions({
         danger
         onConfirm={() => void deleteDocument()}
       />
+      {exportProvider && backendDocument && (
+        <ExternalExportDialog
+          open
+          onClose={() => setExportProvider(null)}
+          provider={exportProvider}
+          roomId={backendDocument.roomId}
+          documentId={documentId}
+          documentName={documentName}
+          currentVersion={backendDocument.version}
+          backendDocument={backendDocument}
+        />
+      )}
+      {importOpen && backendDocument && (
+        <ExternalImportDialog
+          open
+          onClose={() => setImportOpen(false)}
+          roomId={backendDocument.roomId}
+        />
+      )}
     </div>
   )
 }

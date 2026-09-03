@@ -92,6 +92,12 @@ export interface WritingStyleBehaviorDto {
   reviewAcceptedCount: number;
   /** 被拒绝提案的摘录（≤3 条，截断）。 */
   reviewSamples: string[];
+  /** 接受的光标补全次数（completion_feedback 累计）。 */
+  completionAccepted: number;
+  /** 拒绝的光标补全次数。 */
+  completionRejected: number;
+  /** 接受的补全样例（≤3 条，截断）。 */
+  completionSamples: string[];
 }
 
 export interface WritingStyleCorpusEntryDto {
@@ -153,6 +159,36 @@ function sketchSetCursor(rows: Array<typeof writingStyleDocumentSketches.$inferS
   return createHash("sha256").update(material).digest("hex");
 }
 
+/**
+ * 归一化 DB 里的定性 JSON：容忍老结构（2026-09-02 前无 examples 字段）与
+ * 字段缺失——读取侧唯一入口，避免每个消费点各自防御。
+ */
+export function normalizeQualitative(raw: unknown): WritingStyleQualitative | null {
+  if (raw === null || raw === undefined) return null;
+  if (typeof raw !== "object" || Array.isArray(raw)) return null;
+  const record = raw as Record<string, unknown>;
+  const stringArray = (value: unknown): string[] => {
+    if (value === undefined || value === null) return [];
+    if (!Array.isArray(value)) return [];
+    return value.filter((item): item is string => typeof item === "string" && Boolean(item.trim()));
+  };
+  const preferences = typeof record.preferences === "object" && record.preferences !== null
+    && !Array.isArray(record.preferences)
+    ? record.preferences as Record<string, unknown>
+    : {};
+  const summary = typeof record.summary === "string" ? record.summary : "";
+  return {
+    tone: stringArray(record.tone),
+    phrases: stringArray(record.phrases),
+    preferences: {
+      do: stringArray(preferences.do),
+      dont: stringArray(preferences.dont),
+    },
+    examples: stringArray(record.examples).slice(0, 2),
+    summary,
+  };
+}
+
 function qualitativeDisplayLines(qualitative: WritingStyleQualitative | null): string[] {
   if (!qualitative) return [];
   const lines: string[] = [];
@@ -161,6 +197,10 @@ function qualitativeDisplayLines(qualitative: WritingStyleQualitative | null): s
   if (qualitative.preferences.do.length > 0) lines.push(`倾向：${qualitative.preferences.do.join("；")}`);
   if (qualitative.preferences.dont.length > 0) lines.push(`避免：${qualitative.preferences.dont.join("；")}`);
   if (qualitative.summary) lines.push(qualitative.summary);
+  // 原文范例（少样本锚定）：让生成器"见字如见人"，比形容词更能携带风格。
+  for (const example of qualitative.examples.slice(0, 2)) {
+    lines.push(`范例：「${example}」`);
+  }
   return lines;
 }
 
@@ -213,6 +253,8 @@ function behaviorPreferenceLines(behavior: {
   exclamationDelta: number;
   reviewRejectedCount: number;
   reviewAcceptedCount: number;
+  completionAccepted: number;
+  completionRejected: number;
 }): string[] {
   const lines: string[] = [];
   const statements = behavior.instructionCounts
@@ -234,6 +276,12 @@ function behaviorPreferenceLines(behavior: {
   }
   if (behavior.reviewRejectedCount >= 2) {
     lines.push("- 对不贴合预期的提案倾向整项拒绝而非将就修改");
+  }
+  const completionTotal = behavior.completionAccepted + behavior.completionRejected;
+  if (completionTotal >= 10) {
+    const rate = behavior.completionAccepted / completionTotal;
+    if (rate >= 0.8) lines.push("- 补全建议贴合你的行文，常直接接受");
+    else if (rate <= 0.4) lines.push("- 倾向自己措辞，常拒绝补全建议");
   }
   for (const instruction of behavior.recentInstructions.slice(0, 2)) {
     lines.push(`- 样例指令：「${instruction}」`);
@@ -314,6 +362,9 @@ export class WritingStyleService {
       reviewRejectedCount: behavior.reviewRejectedCount,
       reviewAcceptedCount: behavior.reviewAcceptedCount,
       reviewSamples: behavior.reviewSamples,
+      completionAccepted: behavior.completionAccepted,
+      completionRejected: behavior.completionRejected,
+      completionSamples: behavior.completionSamples,
     };
   }
 
@@ -396,7 +447,7 @@ export class WritingStyleService {
     const derived = deriveWritingStyleProfile(
       ((profile?.statsJson as unknown as { aggregate?: WritingStyleAggregate } | null)?.aggregate) ?? EMPTY_AGGREGATE,
     );
-    const qualitative = (profile?.qualitativeJson as unknown as WritingStyleQualitative | null) ?? null;
+    const qualitative = normalizeQualitative(profile?.qualitativeJson);
     const content = buildProfileTextFromSystem(derived.sections, qualitative, behaviorPreferenceLines(this.aggregateSignals()));
     const now = new Date();
     this.db.insert(writingStyleUserContent)
@@ -433,7 +484,7 @@ export class WritingStyleService {
     }
     const aggregate = (row.statsJson as unknown as { aggregate?: WritingStyleAggregate } | null)?.aggregate;
     const derived = deriveWritingStyleProfile(aggregate ?? EMPTY_AGGREGATE);
-    const qualitative = row.qualitativeJson as unknown as WritingStyleQualitative | null;
+    const qualitative = normalizeQualitative(row.qualitativeJson);
     return {
       profileVersion: row.profileVersion,
       confidenceTier: row.confidenceTier,
@@ -734,6 +785,9 @@ export class WritingStyleService {
           reviewRejectedCount: behavior.reviewRejectedCount,
           reviewAcceptedCount: behavior.reviewAcceptedCount,
           reviewSamples: behavior.reviewSamples,
+          completionAccepted: behavior.completionAccepted,
+          completionRejected: behavior.completionRejected,
+          completionSamples: behavior.completionSamples,
         },
       });
       this.db.update(writingStyleProfiles).set({
@@ -924,6 +978,9 @@ export class WritingStyleService {
     let reviewRejectedCount = 0;
     let reviewAcceptedCount = 0;
     const reviewSamples: string[] = [];
+    let completionAccepted = 0;
+    let completionRejected = 0;
+    const completionSamples: string[] = [];
     for (const row of rows) {
       if (row.type === "revision_delta") {
         revisionCount += 1;
@@ -943,6 +1000,15 @@ export class WritingStyleService {
         reviewAcceptedCount += meta.applied ?? 0;
         if (reviewSamples.length < 3 && row.after) {
           reviewSamples.push(clipSignal(row.after.split("\n")[0] ?? "", 160));
+        }
+        continue;
+      }
+      if (row.type === "completion_feedback") {
+        const meta = row.deltaMeta ?? {};
+        completionAccepted += meta.accepted ?? 0;
+        completionRejected += meta.rejected ?? 0;
+        for (const line of (row.after ?? "").split("\n").filter(Boolean)) {
+          if (completionSamples.length < 3) completionSamples.push(clipSignal(line, 160));
         }
         continue;
       }
@@ -968,6 +1034,9 @@ export class WritingStyleService {
       reviewRejectedCount,
       reviewAcceptedCount,
       reviewSamples,
+      completionAccepted,
+      completionRejected,
+      completionSamples,
       instructionSamples,
       revisionSamples,
     };
@@ -998,7 +1067,7 @@ export class WritingStyleService {
       .all();
     this.maintainProfileText(
       deriveWritingStyleProfile(aggregate),
-      profile.qualitativeJson as unknown as WritingStyleQualitative | null,
+      normalizeQualitative(profile.qualitativeJson),
       rows,
     );
   }
@@ -1028,6 +1097,50 @@ export class WritingStyleService {
       .limit(1).all();
     if (inFlight.length > 0) return;
     this.db.transaction((tx) => enqueueWritingStyleRefresh(tx, new Date()));
+  }
+
+  // ─── 补全反馈（v2 缺口补齐：接受/拒绝光标补全是最即时的偏好反馈）───
+
+  /**
+   * 渲染端批量上报补全接受/拒绝计数与接受样例。单行固定 id 累加（不按次成行，
+   * 补全频率高、逐次落行会淹没有效信号）；样例保留最近 3 条。
+   */
+  recordCompletionFeedback(input: { accepted: number; rejected: number; samples?: string[] }): void {
+    const accepted = Math.max(0, Math.floor(input.accepted));
+    const rejected = Math.max(0, Math.floor(input.rejected));
+    if (accepted + rejected <= 0) return;
+    const id = "completion-feedback";
+    const now = new Date();
+    const existing = this.db.select().from(writingStyleSignals)
+      .where(eq(writingStyleSignals.id, id)).get();
+    const freshSamples = (input.samples ?? [])
+      .filter((sample) => typeof sample === "string" && sample.trim())
+      .map((sample) => clipSignal(sample.trim(), 120))
+      .slice(0, 3);
+    if (existing) {
+      const meta = existing.deltaMeta ?? {};
+      const mergedSamples = [...(existing.after ?? "").split("\n").filter(Boolean), ...freshSamples]
+        .slice(-3)
+        .join("\n");
+      this.db.update(writingStyleSignals).set({
+        deltaMeta: {
+          accepted: (meta.accepted ?? 0) + accepted,
+          rejected: (meta.rejected ?? 0) + rejected,
+        },
+        after: mergedSamples || existing.after,
+        createdAt: existing.createdAt,
+      }).where(eq(writingStyleSignals.id, id)).run();
+    } else {
+      this.db.insert(writingStyleSignals).values({
+        id,
+        type: "completion_feedback",
+        documentId: null,
+        roomId: null,
+        after: freshSamples.join("\n") || null,
+        deltaMeta: { accepted, rejected },
+        createdAt: now,
+      }).run();
+    }
   }
 
   // ─── 协作轮洞察（v2：横幅确认式沉淀）───
@@ -1093,6 +1206,13 @@ export class WritingStyleService {
       .filter((row) => row.after)
       .slice(0, 2)
       .map((row) => clipSignal((row.after ?? "").split("\n")[0] ?? "", 100));
+    // 补全反馈是全局累计单行：作为整体口径并入轮次证据（非仅本轮）。
+    const completion = this.db.select().from(writingStyleSignals)
+      .where(eq(writingStyleSignals.id, "completion-feedback")).get();
+    const completionAccepted = completion?.deltaMeta?.accepted ?? 0;
+    const completionRejected = completion?.deltaMeta?.rejected ?? 0;
+    const completionSamples = (completion?.after ?? "").split("\n").filter(Boolean).slice(0, 2)
+      .map((sample) => clipSignal(sample, 100));
     const evidence = {
       instructions,
       revisionSamples,
@@ -1103,6 +1223,9 @@ export class WritingStyleService {
       reviewRejectedCount,
       reviewAcceptedCount,
       reviewSamples,
+      completionAccepted,
+      completionRejected,
+      completionSamples,
     };
 
     let preferences: string[] = [];
@@ -1195,7 +1318,8 @@ export class WritingStyleService {
     // 行为信号独立于文档统计：语料为 0 但已有行为信号时也生成画像文本。
     const behavior = this.aggregateSignals();
     const hasBehavior = behavior.recentInstructions.length > 0 || behavior.revisionCount > 0
-      || behavior.reviewRejectedCount > 0 || this.confirmedInsightLines().length > 0;
+      || behavior.reviewRejectedCount > 0 || this.confirmedInsightLines().length > 0
+      || behavior.completionAccepted + behavior.completionRejected > 0;
     if (derived.aggregate.sketchCount === 0 && !hasBehavior) return;
     const row = this.textRow();
     if (row?.userEdited) return;
@@ -1204,8 +1328,7 @@ export class WritingStyleService {
     const content = buildProfileTextFromSystem(
       derived.sections,
       qualitative
-        ?? (this.db.select().from(writingStyleProfiles).where(eq(writingStyleProfiles.ownerId, "local-user")).get()
-          ?.qualitativeJson as unknown as WritingStyleQualitative | null),
+        ?? normalizeQualitative(this.db.select().from(writingStyleProfiles).where(eq(writingStyleProfiles.ownerId, "local-user")).get()?.qualitativeJson),
       [
         ...confirmed,
         ...behaviorPreferenceLines(behavior),

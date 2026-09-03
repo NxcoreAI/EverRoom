@@ -1,6 +1,11 @@
 import { join } from "node:path";
 import { FakeAgentRuntime } from "@nxcore/agent-runtime/testing";
-import { PiAgentRuntime, type PiAgentRuntimeTool } from "@nxcore/agent-runtime-pi";
+import {
+  PiAgentRuntime,
+  type PiAgentRuntimeTool,
+  type RoomMemorySearch,
+  type RoomMemorySnapshot,
+} from "@nxcore/agent-runtime-pi";
 import { UnconfiguredAgentRuntime, type AgentRuntime } from "@nxcore/agent-runtime";
 import { bundledAgentDefinitionsDir, type GatewayConfig } from "../../config.js";
 import type { DocumentMcpHost } from "../documents/mcp-host.js";
@@ -32,6 +37,17 @@ export interface AgentRuntimeIntegrationOptions {
     pageLabel: string;
     roomId: string | null;
   }) => Promise<string[]>;
+  /** 限定 Room 记忆注入：run 绑定 Room 时取该 Room 的甄选记忆快照（memory 模块注入）。 */
+  resolveRoomMemories?: (input: {
+    runId: string;
+    sessionId: string;
+    runtimeSessionRef: string | null;
+    prompt: string;
+    pageLabel: string;
+    roomId: string | null;
+  }) => Promise<RoomMemorySnapshot[]>;
+  /** memory_search 的 room_id 过滤（Room 绑定记忆快照内检索）。 */
+  roomMemorySearch?: RoomMemorySearch;
 }
 
 function agentDirectories(config: GatewayConfig, agentId: string) {
@@ -120,6 +136,12 @@ export function createAgentRuntime(
     promptGuidelines: mcpHost.capabilities.promptGuidelines(),
     ...(knowledge?.resolveKnowledgeWikiIds
       ? { resolveKnowledgeWikiIds: knowledge.resolveKnowledgeWikiIds }
+      : {}),
+    ...(knowledge?.resolveRoomMemories
+      ? { resolveRoomMemories: knowledge.resolveRoomMemories }
+      : {}),
+    ...(knowledge?.roomMemorySearch
+      ? { roomMemorySearch: knowledge.roomMemorySearch }
       : {}),
     onRunFinished: async (input, outcome) => {
       routedRoomByRun.delete(input.runId);

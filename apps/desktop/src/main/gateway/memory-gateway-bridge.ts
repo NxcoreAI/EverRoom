@@ -81,6 +81,18 @@ export class MemoryGatewayBridge {
     return this.request('/v1/memory/atomic', { method: 'DELETE', body: JSON.stringify({ ids }) })
   }
 
+  /** 指派/清除原子记忆的 Room 归属（roomId=null 清除）；snapshot 为绑定时的记忆快照。 */
+  setAtomicRoom(
+    id: string,
+    roomId: string | null,
+    snapshot?: { content: string; type: string; memoryUpdatedAt: string },
+  ): Promise<{ memoryId: string; roomId: string | null }> {
+    return this.request(`/v1/memory/atomic/${encodeURIComponent(id)}/room`, {
+      method: 'PUT',
+      body: JSON.stringify({ roomId, ...snapshot }),
+    })
+  }
+
   listScenarios(pathPrefix?: string): Promise<{ entries: MemoryScenarioEntryDto[]; total: number }> {
     const query = pathPrefix ? `?${new URLSearchParams({ pathPrefix })}` : ''
     return this.request(`/v1/memory/scenario${query}`)

@@ -14,7 +14,7 @@ import type {
   SaveRoomDocumentInput,
   TiptapJsonContent,
 } from "@nxcore/agent-contract";
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 import { freshenDocumentContent } from "@nxcore/document-model";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
 import {
@@ -616,6 +616,34 @@ export class DocumentService {
     return normalized.changed || tables.changed
       ? agentDocumentMarkdown.serialize(tables.content)
       : markdown;
+  }
+
+  /**
+   * dispatch 期"agent 修改中"软租约（doc-writer 方案增补）：document_draft 在
+   * doc-writer 计算期间占用文档，走既有 activeTransactionId 通路——编辑器
+   * writing 态自动只读、手动保存服务端 DOCUMENT_BUSY。命名空间
+   * `agent-modification:*`，绝不覆盖/清除 Operation Kernel 的真实租约；
+   * patch_begin 接管前必须清掉（Kernel 租约获取要求 NULL）。
+   */
+  setAgentModificationLease(documentId: string, value: string | null): void {
+    const document = this.get(documentId);
+    if (!document) return;
+    if (value === null) {
+      if (!document.activeTransactionId?.startsWith("agent-modification:")) return;
+      this.db.update(documents).set({ activeTransactionId: null }).where(eq(documents.id, documentId)).run();
+    } else {
+      if (document.activeTransactionId) return; // 真实租约或并发标记在场，让位
+      this.db.update(documents).set({ activeTransactionId: value }).where(eq(documents.id, documentId)).run();
+    }
+    this.publish(document.roomId, documentId, null, "document.changed", { document: this.get(documentId) });
+  }
+
+  /** 启动清扫：崩溃残留的软租约（不属于任何 building Operation 的标记）。 */
+  clearOrphanModificationLeases(): number {
+    const rows = this.db.select({ id: documents.id }).from(documents)
+      .where(sql`${documents.activeTransactionId} LIKE 'agent-modification:%'`).all();
+    for (const row of rows) this.setAgentModificationLease(row.id, null);
+    return rows.length;
   }
 
   prepareAgentDocumentFinalize(input: {

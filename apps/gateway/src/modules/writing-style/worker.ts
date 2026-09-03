@@ -11,8 +11,11 @@ import type { WritingStyleService } from "./service.js";
 
 const WORKER_JOB_TYPES = [WRITING_STYLE_EXTRACT_JOB_TYPE, WRITING_STYLE_REFRESH_JOB_TYPE] as const;
 const MAX_ATTEMPTS = 5;
-/** 风格不赶实时：编辑保存 300ms 防抖之后，这里再留一个安静窗口。 */
-const DEFAULT_DEBOUNCE_MS = 60_000;
+/** 风格不赶实时：编辑保存 300ms 防抖之后，这里留"停笔"安静窗口。
+ * 每文档单键 + 新保存重置窗口（jobs.ts 淘汰重建）：持续保存的文档会不断
+ * 推后提炼，直到用户停笔 ≥5 分钟才统计一次（会话末捕获，用户决策：
+ * 按保存点逐次提炼过于频繁；窗口与协作洞察的 5 分钟收口对齐）。 */
+const DEFAULT_DEBOUNCE_MS = 5 * 60_000;
 
 interface WritingStyleLogger {
   info(bindings: Record<string, unknown>, message: string): void;

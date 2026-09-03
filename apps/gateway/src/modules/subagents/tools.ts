@@ -87,6 +87,59 @@ function normalizeDocumentSummary(result: { text: string; structuredOutput?: unk
     : { summary: null, outputFormat: null };
 }
 
+interface MaterialSourceEntry {
+  roomId: string;
+  documentId: string;
+  blockId: string;
+  label?: string;
+  textPreview?: string;
+}
+
+/**
+ * 块索引兜底推断（blockIndexMark）：主 agent 以自由文本 material 引用 Room 文档时，
+ * 用本 run 的 document_read 台账定位素材文档，取其顶层块中确实出现在 material 里的
+ * 部分（去空白后前 80 字符包含匹配），作为 materialSources 候选注入 doc-writer。
+ * 匹配不上就不注入——宁缺毋滥，避免误挂。
+ */
+export function inferMaterialSourcesFromReads(
+  reads: { documentsReadByRun(runId: string): Array<{ roomId: string; documentId: string; version: number }> },
+  readDocument: (documentId: string, roomId: string) => {
+    document: { title: string };
+    blocks: Array<{ blockId: string; depth: number; textPreview: string }>;
+  } | null,
+  runId: string,
+  roomId: string | undefined,
+  material: string,
+): MaterialSourceEntry[] {
+  const normalizedMaterial = material.replace(/\s+/g, "");
+  if (!runId || normalizedMaterial.length < 20) return [];
+  const entries: MaterialSourceEntry[] = [];
+  for (const read of reads.documentsReadByRun(runId)) {
+    if (roomId && read.roomId !== roomId) continue;
+    let snapshot;
+    try {
+      snapshot = readDocument(read.documentId, read.roomId);
+    } catch {
+      continue;
+    }
+    if (!snapshot) continue;
+    for (const block of snapshot.blocks) {
+      if (block.depth !== 0) continue;
+      const probe = block.textPreview.replace(/\s+/g, "").slice(0, 80);
+      if (probe.length < 20 || !normalizedMaterial.includes(probe)) continue;
+      entries.push({
+        roomId: read.roomId,
+        documentId: read.documentId,
+        blockId: block.blockId,
+        label: snapshot.document.title.slice(0, 200),
+        textPreview: block.textPreview.slice(0, 400),
+      });
+      if (entries.length >= 50) return entries;
+    }
+  }
+  return entries;
+}
+
 export function createSubagentPiTools(
   registry: SubagentRegistry,
   orchestrator: SubagentOrchestrator,
@@ -96,6 +149,17 @@ export function createSubagentPiTools(
     resolveRoomContext?: (roomId: string) => Promise<RoomContextDigest | null>;
     /** doc-writer 组装数据源（doc-writer-subagent-plan §4）：读权威文档快照。 */
     resolveDocumentForDraft?: (documentId: string, roomId: string) => DocumentDraftSnapshot;
+    /** 块索引标记（blockIndexMark）：Room 内记忆项权威数据，gateway 注入 memoryIndex。 */
+    resolveRoomMemoryItems?: (roomId: string) => Array<{ id: string; content: string; type: string }>;
+    /**
+     * 块索引兜底（blockIndexMark）：主 agent 以自由文本 material 引用 Room 文档、
+     * 却没传 materialSources 时，从本 run 的 document_read 台账推断来源块。
+     */
+    inferMaterialSources?: (
+      runId: string,
+      roomId: string | undefined,
+      material: string,
+    ) => Array<{ roomId: string; documentId: string; blockId: string; label?: string; textPreview?: string }>;
     /** 代发读凭证（§5.3）：与 document_read 同构地以主 run 名义签发 receipt。 */
     issueDraftReadReceipt?: (
       context: { agentSessionId: string; runId: string; roomId: string },
@@ -103,6 +167,8 @@ export function createSubagentPiTools(
       version: number,
       blockIds: string[],
     ) => { readReceipt: string; expiresAt: string };
+    /** dispatch 期"agent 修改中"软租约：占用文档（编辑器只读、保存被拒），patch_begin 接管前清除。 */
+    setDocumentModificationLease?: (documentId: string, value: string | null) => void;
     /** 写作风格生成段（§7 迁移）：对 doc-writer 全部 task 无条件附加，provider 自查开关。 */
     writingStyleProvider?: { getGenerationPromptSection(): string | null };
     /** room_correction_draft 的组装数据源：读权威总览投影的 claims。 */
@@ -375,6 +441,11 @@ export function createSubagentPiTools(
         + "rewrite 返回 replacementText，逐字作为回复片段呈现。"
         + "用户要求调整、润色或修改刚生成的内容时，传 previousInvocationId（此前 document_draft 返回的 invocationId），"
         + "doc-writer 会基于上一稿增量修改而非从头重写。"
+        + "materialSources（draft-create / draft-edit 可选）：引用了 Room 文档块的素材来源列表（roomId/documentId/blockId 取自 document_read 的 blocks），"
+        + "doc-writer 会在对应正文段末附 ^[...](everroom://...) 索引标记；只传确实被素材支撑的来源；"
+        + "未传时网关会按本 run 的 document_read 记录对照 material 自动推断补齐。"
+        + "用户要求为既有文档补建来源索引时：先 document_read 该文档与来源文档，再以 task=draft-edit 传 materialSources，"
+        + "instruction 要求仅为确有来源支撑的存量段落在段末追加索引标记，其余正文保持原样。"
         + "正文内容必须来自本工具的调用链，不得自行撰写或改写。",
       parameters: Type.Object({
         task: Type.Union([
@@ -387,6 +458,13 @@ export function createSubagentPiTools(
         documentId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         roomId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         material: Type.Optional(Type.String({ maxLength: 100_000 })),
+        materialSources: Type.Optional(Type.Array(Type.Object({
+          roomId: Type.String({ minLength: 1, maxLength: 128 }),
+          documentId: Type.String({ minLength: 1, maxLength: 128 }),
+          blockId: Type.String({ minLength: 1, maxLength: 128 }),
+          label: Type.Optional(Type.String({ maxLength: 200 })),
+          textPreview: Type.Optional(Type.String({ maxLength: 400 })),
+        }, { additionalProperties: false }), { maxItems: 50 })),
         selectedText: Type.Optional(Type.String({ minLength: 1, maxLength: 20_000 })),
         contextBefore: Type.Optional(Type.String({ maxLength: 4_000 })),
         contextAfter: Type.Optional(Type.String({ maxLength: 4_000 })),
@@ -421,6 +499,56 @@ export function createSubagentPiTools(
             throw new Error(`document_draft_document_unavailable: ${code ?? ""} ${detail}`.trim());
           }
         }
+
+        // 块索引标记（blockIndexMark）：主 Agent 从 document_read 拿到的来源块透传给
+        // doc-writer，供正文段落末尾附 ^[...](everroom://...) 索引标记；id 必须来自权威数据。
+        const materialSources = Array.isArray(params.materialSources)
+          ? params.materialSources.flatMap((item) => {
+            const entryRoomId = String(item.roomId ?? "").trim();
+            const documentId = String(item.documentId ?? "").trim();
+            const blockId = String(item.blockId ?? "").trim();
+            if (!entryRoomId || !documentId || !blockId) return [];
+            if (roomId && entryRoomId !== roomId) {
+              throw new Error("ROOM_SELECTION_MISMATCH: materialSources must reference blocks in the target Room");
+            }
+            return [{
+              roomId: entryRoomId,
+              documentId,
+              blockId,
+              ...(typeof item.label === "string" && item.label.trim()
+                ? { label: item.label.trim().slice(0, 200) }
+                : {}),
+              ...(typeof item.textPreview === "string" && item.textPreview.trim()
+                ? { textPreview: item.textPreview.trim().slice(0, 400) }
+                : {}),
+            }];
+          }).slice(0, 50)
+          : [];
+        // 兜底（blockIndexMark）：主 agent 读了文档当素材却没传 materialSources 时，
+        // 从本 run 的读取台账确定性推断；显式传入的来源优先，不做覆盖。
+        const materialText = typeof params.material === "string" ? params.material : "";
+        const inferredSources = materialSources.length === 0 && materialText.trim() && options.inferMaterialSources
+          ? options.inferMaterialSources(run.runId, roomId, materialText)
+          : [];
+        const resolvedMaterialSources = [
+          ...materialSources,
+          ...inferredSources.flatMap((item) => [{
+            roomId: item.roomId,
+            documentId: item.documentId,
+            blockId: item.blockId,
+            ...(item.label ? { label: item.label.slice(0, 200) } : {}),
+            ...(item.textPreview ? { textPreview: item.textPreview.slice(0, 400) } : {}),
+          }]),
+        ].slice(0, 50);
+        // memoryIndex 由 gateway 从 Room 权威数据注入，主 Agent 不经手记忆 id。
+        const memoryIndex = roomId && options.resolveRoomMemoryItems
+          && options.resolveRoomMemoryItems(roomId).length > 0
+          ? options.resolveRoomMemoryItems(roomId).slice(0, 50).map((item) => ({
+            memoryId: item.id,
+            contentPreview: item.content.slice(0, 200),
+            ...(item.type ? { type: item.type.slice(0, 32) } : {}),
+          }))
+          : [];
 
         const writingStyle = options.writingStyleProvider?.getGenerationPromptSection() ?? null;
         const roomTitle = roomId ? run.availableRooms?.find((room) => room.id === roomId) : undefined;
@@ -462,6 +590,8 @@ export function createSubagentPiTools(
           task,
           instruction,
           ...(material ? { material } : {}),
+          ...(resolvedMaterialSources.length ? { materialSources: resolvedMaterialSources } : {}),
+          ...(memoryIndex.length ? { memoryIndex } : {}),
           ...(roomTitle?.title?.trim() ? { roomTitle: roomTitle.title.trim().slice(0, 120) } : {}),
           ...(snapshot
             ? {
@@ -505,6 +635,12 @@ export function createSubagentPiTools(
         }
         const taskLabel = DOC_WRITER_TASK_LABELS[task];
 
+        // dispatch 期软租约（用户决策：agent 修改中文档不可编辑）：占用文档期间
+        // 编辑器 writing 态只读、手动保存被拒；patch_begin 接管前必须清除
+        //（Kernel 租约获取要求 NULL），失败路径同样在 finally 清除。
+        const leaseValue = snapshot ? `agent-modification:${run.runId}` : null;
+        if (leaseValue) options.setDocumentModificationLease?.(snapshot!.document.id, leaseValue);
+
         let invocation;
         try {
           invocation = await orchestrator.dispatch({
@@ -532,6 +668,8 @@ export function createSubagentPiTools(
             }),
             details: { errorCode },
           };
+        } finally {
+          if (leaseValue && snapshot) options.setDocumentModificationLease?.(snapshot.document.id, null);
         }
         if (invocation.status !== "completed") {
           return {

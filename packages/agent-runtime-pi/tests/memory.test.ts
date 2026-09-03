@@ -292,6 +292,52 @@ describe("formatRecallResult", () => {
     expect(result!.length).toBeLessThan(300);
     expect(result).toContain("已截断");
   });
+
+  it("renders the Room memories section outside the character budget", () => {
+    const roomContent = "R".repeat(300);
+    const globalContent = "G".repeat(500);
+    const result = formatRecallResult(
+      {
+        atomicItems: [{ id: "a", type: "t", content: globalContent, created_at: "", updated_at: "" }],
+        coreContent: null,
+        scenarios: [],
+        roomMemories: [{ memoryId: "m1", type: "fact", content: roomContent, updatedAt: "2026-09-01T00:00:00Z" }],
+      },
+      200,
+    );
+    expect(result).toContain("[Room 记忆]");
+    expect(result).toContain("用户为当前 Context Room 甄选");
+    expect(result).toContain(roomContent);
+    expect(result).toContain("（fact）");
+    expect(result).toContain("[2026-09-01]");
+    expect(result).toContain("已截断");
+    // Room 段完整保留在截断之前。
+    expect(result!.indexOf("[Room 记忆]")).toBeLessThan(result!.indexOf("已截断"));
+    expect(result!.indexOf(roomContent)).toBeLessThan(result!.indexOf("已截断"));
+  });
+
+  it("returns room-only recall when all global paths are empty", () => {
+    const result = formatRecallResult(
+      {
+        atomicItems: [],
+        coreContent: null,
+        scenarios: [],
+        roomMemories: [{ memoryId: "m", type: "", content: "Room 甄选记忆", updatedAt: "" }],
+      },
+      2000,
+    );
+    expect(result).toContain("[Room 记忆]");
+    expect(result).toContain("Room 甄选记忆");
+    expect(result).not.toContain("[相关记忆]");
+  });
+
+  it("omits the room section when roomMemories is empty or absent", () => {
+    const withEmpty = formatRecallResult(
+      { atomicItems: [], coreContent: "画像", scenarios: [], roomMemories: [] },
+      2000,
+    );
+    expect(withEmpty).not.toContain("[Room 记忆]");
+  });
 });
 
 describe("extractCapturableMessages", () => {
@@ -480,5 +526,47 @@ describe("memory tools", () => {
     const result = await tool!.execute("call-4", { query: "q" }, undefined, undefined, {} as never);
     const text = (result.content as Array<{ type: string; text: string }>)[0]!.text;
     expect(text).toContain("记忆检索失败");
+  });
+
+  it("memory_search routes to the room provider when room_id is set", async () => {
+    const client = new MemoryCoreClient(config);
+    const searchSpy = vi.spyOn(client, "searchAtomic").mockResolvedValue([]);
+    const roomSearch = vi.fn(async (_roomId: string, _query: string, _limit: number) => [
+      { id: "m1", type: "fact", content: "Room 绑定记忆", created_at: "", updated_at: "2026-09-01T00:00:00Z" },
+    ]);
+    const [tool] = createMemoryTools(client, () => "sess-1", roomSearch);
+    const result = await tool!.execute("call-room", { query: "绑定", room_id: "room-a" }, undefined, undefined, {} as never);
+    expect(roomSearch).toHaveBeenCalledWith("room-a", "绑定", 5);
+    expect(searchSpy).not.toHaveBeenCalled();
+    const text = (result.content as Array<{ type: string; text: string }>)[0]!.text;
+    expect(text).toContain("Room 绑定记忆");
+    expect(text).toContain("[2026-09-01]");
+  });
+
+  it("memory_search applies the time range locally on the room path", async () => {
+    const client = new MemoryCoreClient(config);
+    const roomSearch = vi.fn(async () => [
+      { id: "m1", type: "fact", content: "九月的记忆", created_at: "", updated_at: "2026-09-01T00:00:00Z" },
+      { id: "m2", type: "fact", content: "八月的记忆", created_at: "", updated_at: "2026-08-01T00:00:00Z" },
+    ]);
+    const [tool] = createMemoryTools(client, () => "sess-1", roomSearch);
+    const result = await tool!.execute(
+      "call-room-range",
+      { query: "记忆", room_id: "room-a", time_start: "2026-08-15T00:00:00Z" },
+      undefined,
+      undefined,
+      {} as never,
+    );
+    const text = (result.content as Array<{ type: string; text: string }>)[0]!.text;
+    expect(text).toContain("九月的记忆");
+    expect(text).not.toContain("八月的记忆");
+  });
+
+  it("memory_search reports an unavailable room filter without a provider", async () => {
+    const client = new MemoryCoreClient(config);
+    const [tool] = createMemoryTools(client, () => "sess-1");
+    const result = await tool!.execute("call-room-noop", { query: "绑定", room_id: "room-a" }, undefined, undefined, {} as never);
+    const text = (result.content as Array<{ type: string; text: string }>)[0]!.text;
+    expect(text).toContain("Room 记忆过滤未配置");
   });
 });
