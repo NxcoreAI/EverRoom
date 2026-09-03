@@ -3,7 +3,7 @@ import TurndownService from "turndown";
 import ExcelJS from "exceljs";
 import JSZip from "jszip";
 import { extractText } from "unpdf";
-import { destroyPdfDocument, openPdfDocument } from "../document-understanding/pdf.js";
+import { destroyPdfDocument, openPdfDocument } from "../../../apps/gateway/src/modules/document-understanding/pdf.js";
 import { execFile } from "node:child_process";
 import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -11,7 +11,7 @@ import { extname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { convertRawEmailToMarkdown } from "./email-content.js";
-import { IngestError } from "./types.js";
+import { IngestError } from "../../../apps/gateway/src/modules/ingest/types.js";
 
 /**
  * U2 格式扩展（unified-ingest-plan §5.3）：office/html/csv/eml -> markdown，

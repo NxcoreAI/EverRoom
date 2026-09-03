@@ -285,8 +285,8 @@ import {
   type ConnectorSyncJobInput,
   type ConnectorSyncService,
 } from "./service.js";
-import type { IngestService } from "../ingest/service.js";
-import type { RefSourceKind } from "../ingest/types.js";
+import type { IngestService } from "./ports.js";
+import type { RefSourceKind } from "./ports.js";
 import type { ConnectorMarkdownService } from "./markdown-service.js";
 
 const JobParams = Type.Object({ id: Type.String({ minLength: 1, maxLength: 128 }) });

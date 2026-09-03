@@ -6,16 +6,16 @@ import { join } from "node:path";
 import Fastify from "fastify";
 import { afterEach, describe, expect, it } from "vitest";
 import { createConnectorDatabase } from "../src/infrastructure/connectors/client.js";
-import { ConnectorRepository } from "../src/modules/connectors/repository.js";
-import { ConnectorManager } from "../src/modules/connectors/manager.js";
-import { NangoExecutor } from "../src/modules/connectors/nango-executor.js";
-import { nangoConnectorRoutes } from "../src/modules/connectors/routes.js";
+import { ConnectorRepository } from "@nxcore/connectors-module/repository.js";
+import { ConnectorManager } from "@nxcore/connectors-module/manager.js";
+import { NangoExecutor } from "@nxcore/connectors-module/nango-executor.js";
+import { nangoConnectorRoutes } from "@nxcore/connectors-module/routes.js";
 import {
   SYNC_PROVIDERS,
   assertSyncProvidersValid,
   syncProviderOf,
   syncProviderNames,
-} from "../src/modules/connectors/sync-providers/index.js";
+} from "@nxcore/connectors-module/sync-providers/index.js";
 
 const dirs: string[] = [];
 afterEach(async () => Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true }))));
@@ -38,7 +38,7 @@ describe("sync provider registry", () => {
   });
 
   it("keeps the nango executor free of provider literals (registry dispatch only)", async () => {
-    const source = await readFile(resolve("src/modules/connectors/nango-executor.ts"), "utf8");
+    const source = await readFile(resolve("../../submodules/everroom-connectors/gateway-module/nango-executor.ts"), "utf8");
     expect(source).not.toMatch(/"gmail"|"outlook"|"google-docs"|"notion"|"google-calendar"/);
   });
 

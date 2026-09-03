@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createOpenConnectorPiTools } from '../src/modules/agent/open-connector-tools.js';
+import { createOpenConnectorPiTools } from '@nxcore/connectors-module/open-connector-tools.js';
 
 type Runner = Parameters<typeof createOpenConnectorPiTools>[1];
 

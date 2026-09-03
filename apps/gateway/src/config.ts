@@ -9,7 +9,7 @@ import { Value } from "@sinclair/typebox/value";
 import type { KnowledgeRuntimeConfig, MemoryRuntimeConfig } from "@nxcore/agent-runtime-pi";
 // 阶段二：注册表只被用于「读取元数据」（env 名/默认 configKey），provider 文件本身
 // 无副作用依赖，可安全进入 config 层（新增 provider 时 config 解析自动跟随注册表）。
-import { SYNC_PROVIDERS } from "./modules/connectors/sync-providers/index.js";
+import { SYNC_PROVIDERS } from "@nxcore/connectors-module/sync-providers/index.js";
 
 const LogLevelSchema = Type.Union([
   Type.Literal("fatal"),

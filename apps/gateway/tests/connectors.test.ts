@@ -4,14 +4,14 @@ import { dirname, join, resolve } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import { createConnectorDatabase } from "../src/infrastructure/connectors/client.js";
-import { ConnectorRepository } from "../src/modules/connectors/repository.js";
-import { normalizeGmailMessage, gmailHistoryChanges } from "../src/modules/connectors/providers/gmail.js";
-import { normalizeOutlookMessage } from "../src/modules/connectors/providers/outlook.js";
+import { ConnectorRepository } from "@nxcore/connectors-module/repository.js";
+import { normalizeGmailMessage, gmailHistoryChanges } from "@nxcore/connectors-module/providers/gmail.js";
+import { normalizeOutlookMessage } from "@nxcore/connectors-module/providers/outlook.js";
 import { createServer } from "../src/server/create-server.js";
-import { NangoExecutor, nangoProxyRequest } from "../src/modules/connectors/nango-executor.js";
-import { NangoAuthorizationService, nangoAuthorizationErrorMessage } from "../src/modules/connectors/nango-authorization.js";
-import { ConnectorManager } from "../src/modules/connectors/manager.js";
-import { ConnectorDocumentStore } from "../src/modules/connectors/document-store.js";
+import { NangoExecutor, nangoProxyRequest } from "@nxcore/connectors-module/nango-executor.js";
+import { NangoAuthorizationService, nangoAuthorizationErrorMessage } from "@nxcore/connectors-module/nango-authorization.js";
+import { ConnectorManager } from "@nxcore/connectors-module/manager.js";
+import { ConnectorDocumentStore } from "@nxcore/connectors-module/document-store.js";
 import { loadConfig } from "../src/config.js";
 import { createDatabase } from "../src/infrastructure/database/client.js";
 const dirs:string[]=[];
@@ -61,7 +61,7 @@ import {
 import {
   ConnectorConfigVersionConflictError,
   ConnectorSyncService,
-} from "../src/modules/connectors/service.js";
+} from "@nxcore/connectors-module/service.js";
 
 const logger = {
   info: () => undefined,

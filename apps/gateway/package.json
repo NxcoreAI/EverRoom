@@ -69,7 +69,8 @@
     "unpdf": "^1.8.1",
     "ws": "^8.18.3",
     "yaml": "2.9.0",
-    "yjs": "^13.6.32"
+    "yjs": "^13.6.32",
+    "@nxcore/connectors-module": "workspace:*"
   },
   "devDependencies": {
     "@types/ali-oss": "^6.23.3",

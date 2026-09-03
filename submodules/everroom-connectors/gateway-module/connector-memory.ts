@@ -1,5 +1,5 @@
 import type { NormalizedAddress, NormalizedCalendarEvent, NormalizedMail } from "@nxcore/connector-contract";
-import { htmlToMarkdown } from "../ingest/converters.js";
+import { htmlToMarkdown } from "./converters.js";
 
 /**
  * 连接器统一格式 → 记忆文档 markdown（每封邮件/每个日程一篇，

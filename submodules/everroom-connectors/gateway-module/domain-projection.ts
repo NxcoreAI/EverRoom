@@ -8,7 +8,7 @@ import type {
   NormalizedMail,
   NormalizedMailChange,
 } from "@nxcore/connector-contract";
-import type { GatewayDatabase } from "../../infrastructure/database/client.js";
+import type { GatewayDatabase } from "./host-types.js";
 import {
   connectorCalendarEvents,
   connectorEmails,
@@ -18,7 +18,7 @@ import {
   roomMemoryAttributions,
   roomSourceMemberships,
   routeDecisions,
-} from "../../infrastructure/database/schema.js";
+} from "../../../apps/gateway/src/infrastructure/database/schema.js";
 
 /**
  * 域投影（connector-platform-refactor-plan 阶段一）：Nango 拉取路径的

@@ -17,9 +17,9 @@ import {
   connectorSyncRuns,
   connectorTodos,
 } from "../src/infrastructure/database/schema.js";
-import { ConnectorSyncService } from "../src/modules/connectors/service.js";
-import { createConnectorDataPiTools } from "../src/modules/connectors/pi-tools.js";
-import { createConnectorSyncAgentTools } from "../src/modules/connectors/agent-tools.js";
+import { ConnectorSyncService } from "@nxcore/connectors-module/service.js";
+import { createConnectorDataPiTools } from "@nxcore/connectors-module/pi-tools.js";
+import { createConnectorSyncAgentTools } from "@nxcore/connectors-module/agent-tools.js";
 
 const logger = { info: () => undefined, warn: () => undefined, error: () => undefined };
 

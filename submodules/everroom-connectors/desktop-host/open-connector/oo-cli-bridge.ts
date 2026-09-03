@@ -7,7 +7,7 @@ import type {
   OpenConnectorCommandResult,
   OpenConnectorExecutionInput,
   OpenConnectorStatus,
-} from '../../shared/open-connector'
+} from '../../../../apps/desktop/src/shared/open-connector'
 
 const DEFAULT_TIMEOUT_MS = 120_000
 const MAX_OUTPUT_BYTES = 4 * 1024 * 1024

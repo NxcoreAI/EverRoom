@@ -1,9 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
 import { and, asc, desc, eq, gte, isNull, lt, lte, or, like } from "drizzle-orm";
 import type { AgentRuntime, StartRuntimeRunInput } from "@nxcore/agent-runtime";
-import type { ConnectorSyncJobConfig, GatewayConfig, OpenConnectorCliConfig } from "../../config.js";
-import type { GatewayDatabase } from "../../infrastructure/database/client.js";
-import type { FilesService } from "../files/service.js";
+import type { ConnectorSyncJobConfig, GatewayConfig, OpenConnectorCliConfig } from "./host-types.js";
+import type { GatewayDatabase } from "./host-types.js";
+import type { FilesService } from "./ports.js";
 import {
   connectorAuditEvents,
   connectorAccounts,
@@ -19,7 +19,7 @@ import {
   connectorSyncJobs,
   connectorSyncRuns,
   connectorTodos,
-} from "../../infrastructure/database/schema.js";
+} from "../../../apps/gateway/src/infrastructure/database/schema.js";
 import { spawn } from "node:child_process";
 import {
   connectorResultData,

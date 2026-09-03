@@ -1,4 +1,4 @@
-import type { OpenConnectorConnectionSummary } from '../../shared/open-connector'
+import type { OpenConnectorConnectionSummary } from '../../../../apps/desktop/src/shared/open-connector'
 
 interface ResponseEnvelope<T> {
   success?: boolean

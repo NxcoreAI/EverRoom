@@ -4,11 +4,11 @@ import type {
   PiAgentRuntimeToolFailurePolicy,
 } from '@nxcore/agent-runtime-pi';
 import type { StartRuntimeRunInput } from '@nxcore/agent-runtime';
-import type { OpenConnectorCliConfig } from '../../config.js';
+import type { OpenConnectorCliConfig } from "./host-types.js";
 import {
   ExternalCallBudgetExceededError,
   type ExternalCallBudgetService,
-} from '../external-calls/service.js';
+} from "./ports.js";
 
 const OUTPUT_LIMIT = 4 * 1024 * 1024;
 const MODEL_CONTEXT_OUTPUT_LIMIT = 64 * 1024;
@@ -173,7 +173,7 @@ function connectorEnvironment(config: OpenConnectorCliConfig): NodeJS.ProcessEnv
   };
 }
 
-function runOo(
+export function runOo(
   config: OpenConnectorCliConfig,
   arguments_: string[],
   signal?: AbortSignal,
@@ -259,7 +259,7 @@ function textResult(data: unknown): { content: string; details: unknown } {
   return { content, details: limited };
 }
 
-type OoRunner = (
+export type OoRunner = (
   config: OpenConnectorCliConfig,
   arguments_: string[],
   signal?: AbortSignal,

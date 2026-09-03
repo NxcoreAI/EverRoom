@@ -102,11 +102,11 @@ import {
   DocumentAssetStore,
   DOCUMENT_ASSET_SCHEME,
 } from './document-asset-store'
-import { OoCliBridge } from './open-connector/oo-cli-bridge'
+import { OoCliBridge } from '../../../../submodules/everroom-connectors/desktop-host/open-connector/oo-cli-bridge'
 import {
   OpenConnectorSupervisor,
   type OpenConnectorConnection,
-} from './open-connector/open-connector-supervisor'
+} from '../../../../submodules/everroom-connectors/desktop-host/open-connector/open-connector-supervisor'
 import { DESKTOP_PAGE_MODE_ENV, resolveDesktopPageMode } from '../shared/page-mode'
 import { BrowserExtensionService } from './browser-extension/browser-extension-service'
 import { CLIPPER_ASSET_SCHEME, type BrowserExtensionStatus } from '../shared/browser-extension'

@@ -62,7 +62,8 @@
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
     "tar-stream": "^3.2.1",
-    "ws": "^8.18.3"
+    "ws": "^8.18.3",
+    "@nxcore/connectors-module": "workspace:*"
   },
   "devDependencies": {
     "@electron/asar": "3.4.1",

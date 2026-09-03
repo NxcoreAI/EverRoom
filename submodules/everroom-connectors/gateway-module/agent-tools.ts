@@ -1,7 +1,7 @@
 import type { StartRuntimeRunInput } from "@nxcore/agent-runtime";
 import type { PiAgentRuntimeTool } from "@nxcore/agent-runtime-pi";
-import type { OpenConnectorCliConfig } from "../../config.js";
-import { createOpenConnectorPiTools } from "../agent/open-connector-tools.js";
+import type { OpenConnectorCliConfig } from "./host-types.js";
+import { createOpenConnectorPiTools } from "./open-connector-tools.js";
 import type { ConnectorSyncService } from "./service.js";
 
 const nullableString = { type: ["string", "null"] };

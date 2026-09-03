@@ -9,11 +9,11 @@ import {
   connectorDocuments,
   connectorMarkdownOutbox,
 } from "../src/infrastructure/database/schema.js";
-import { ConnectorSyncService } from "../src/modules/connectors/service.js";
+import { ConnectorSyncService } from "@nxcore/connectors-module/service.js";
 import {
   googleDocsHtmlToMarkdown,
   notionPageToDocument,
-} from "../src/modules/connectors/document-sync.js";
+} from "@nxcore/connectors-module/document-sync.js";
 
 const logger = { info: () => undefined, warn: () => undefined, error: () => undefined };
 

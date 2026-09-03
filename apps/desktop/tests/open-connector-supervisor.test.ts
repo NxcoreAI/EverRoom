@@ -11,7 +11,7 @@ vi.mock('electron', () => ({
   },
 }))
 
-import { OpenConnectorSupervisor } from '../src/main/open-connector/open-connector-supervisor'
+import { OpenConnectorSupervisor } from '../../../../submodules/everroom-connectors/desktop-host/open-connector/open-connector-supervisor'
 
 const temporaryDirectories: string[] = []
 const supervisors: OpenConnectorSupervisor[] = []

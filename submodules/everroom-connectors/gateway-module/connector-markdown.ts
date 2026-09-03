@@ -4,7 +4,7 @@ import type {
   connectorEmails,
   connectorRecords,
   connectorTodos,
-} from "../../infrastructure/database/schema.js";
+} from "../../../apps/gateway/src/infrastructure/database/schema.js";
 import { convertEmailBody, type EmailBodyConversion } from "./email-content.js";
 
 type ConnectorEmail = typeof connectorEmails.$inferSelect;

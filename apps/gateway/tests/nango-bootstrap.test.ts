@@ -1,7 +1,7 @@
 import type { AxiosInstance } from "axios";
 import { describe, expect, it, vi } from "vitest";
 
-import { ensureIntegration } from "../src/modules/connectors/nango-bootstrap.js";
+import { ensureIntegration } from "@nxcore/connectors-module/nango-bootstrap.js";
 
 describe("Nango integration bootstrap", () => {
   it("creates and repairs OAuth scopes without redundant updates", async () => {

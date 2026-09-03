@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { chmod, mkdir, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { and, asc, eq, isNull, lte, or } from "drizzle-orm";
-import type { GatewayDatabase } from "../../infrastructure/database/client.js";
+import type { GatewayDatabase } from "./host-types.js";
 import {
   connectorCalendarEvents,
   connectorDocuments,
@@ -11,16 +11,16 @@ import {
   connectorMarkdownOutbox,
   connectorRecords,
   connectorTodos,
-} from "../../infrastructure/database/schema.js";
-import type { IngestService } from "../ingest/service.js";
-import type { RefSourceKind } from "../ingest/types.js";
+} from "../../../apps/gateway/src/infrastructure/database/schema.js";
+import type { IngestService } from "./ports.js";
+import type { RefSourceKind } from "./ports.js";
 import {
   connectorCalendarEventToMarkdown,
   connectorDocumentToMarkdown,
   connectorEmailToMarkdown,
   connectorGenericRecordToMarkdown,
   connectorTodoToMarkdown,
-} from "../ingest/connector-markdown.js";
+} from "./connector-markdown.js";
 
 const WORK_INTERVAL_MS = 2_000;
 const LEASE_MS = 60_000;

@@ -9,9 +9,9 @@ import {
   ExternalCallBudgetExceededError,
   ExternalCallBudgetService,
 } from "../src/modules/external-calls/service.js";
-import { createOpenConnectorPiTools } from "../src/modules/agent/open-connector-tools.js";
+import { createOpenConnectorPiTools } from "@nxcore/connectors-module/open-connector-tools.js";
 import { createWebSearchPiTools } from "../src/modules/agent/web-search-tools.js";
-import { createNangoPiTools } from "../src/modules/connectors/nango-agent-tools.js";
+import { createNangoPiTools } from "@nxcore/connectors-module/nango-agent-tools.js";
 import { AgentResolver } from "../src/modules/agent/resolver.js";
 import { auth } from "../src/server/auth.js";
 

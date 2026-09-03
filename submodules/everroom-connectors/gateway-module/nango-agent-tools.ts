@@ -6,10 +6,12 @@ import type { StartRuntimeRunInput } from "@nxcore/agent-runtime";
 import type { ConnectorManager } from "./manager.js";
 import { syncProviderOf } from "./sync-providers/index.js";
 import type { NangoExecutor } from "./nango-executor.js";
-import {
-  ExternalCallBudgetExceededError,
-  type ExternalCallBudgetService,
-} from "../external-calls/service.js";
+import { type ExternalCallBudgetService } from "./ports.js";
+
+/** 宿主与模块内的 ExternalCallBudgetExceededError 结构等价判定（跨 instanceof 不可靠）。 */
+function isExternalCallBudgetExceeded(error: unknown): boolean {
+  return error instanceof Error && (error as { code?: unknown }).code === "EXTERNAL_CALL_BUDGET_EXCEEDED";
+}
 
 const MODEL_CONTEXT_OUTPUT_LIMIT = 64 * 1024;
 const PLACEHOLDER_PATTERN = /(?:\byour_username\b|\busername_here\b|\breplace_me\b|<\s*(?:username|paste\b|insert\b|粘贴|填写|替换)[^>]*>|\{\{\s*[^}]+\s*\}\})/i;
@@ -87,7 +89,7 @@ function nangoFailurePolicy(
   operation: "list" | "trigger" | "request",
   error: unknown,
 ): PiAgentRuntimeToolFailurePolicy {
-  if (error instanceof ExternalCallBudgetExceededError) {
+  if (isExternalCallBudgetExceeded(error)) {
     return {
       category: "external_call_budget_exceeded",
       recoverable: true,

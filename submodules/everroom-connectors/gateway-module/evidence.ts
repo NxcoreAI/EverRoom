@@ -2,7 +2,7 @@ import type {
   connectorCalendarEvents,
   connectorDocuments,
   connectorEmails,
-} from "../../infrastructure/database/schema.js";
+} from "../../../apps/gateway/src/infrastructure/database/schema.js";
 
 export interface ConnectorEvidence {
   sourceId: string;

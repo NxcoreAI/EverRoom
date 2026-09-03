@@ -12,14 +12,14 @@ import {
   routeDecisions,
   roomSourceMemberships,
 } from "../src/infrastructure/database/schema.js";
-import { ConnectorRepository } from "../src/modules/connectors/repository.js";
-import { ConnectorManager } from "../src/modules/connectors/manager.js";
+import { ConnectorRepository } from "@nxcore/connectors-module/repository.js";
+import { ConnectorManager } from "@nxcore/connectors-module/manager.js";
 import {
   ConnectorDomainProjection,
   backfillDomainProjection,
   parseConnectorSourceRef,
   rewriteConnectorRefIdentities,
-} from "../src/modules/connectors/domain-projection.js";
+} from "@nxcore/connectors-module/domain-projection.js";
 
 const dirs: string[] = [];
 afterEach(async () => Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true }))));
