@@ -826,6 +826,8 @@ export interface NxcoreDesktopApi {
     execute(input: OpenConnectorExecutionInput): Promise<OpenConnectorCommandResult>
     cancel(requestId: string): Promise<boolean>
     openConsole(): Promise<void>
+    mode(): Promise<{ mode: 'saas' | 'local'; switchedAt: string | null }>
+    setMode(mode: 'saas' | 'local'): Promise<{ mode: 'saas' | 'local'; switchedAt: string | null }>
     onEvent(listener: (event: OpenConnectorCommandEvent) => void): () => void
   }
   cliConnectorSync: {

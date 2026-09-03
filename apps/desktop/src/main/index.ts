@@ -103,6 +103,7 @@ import {
   DOCUMENT_ASSET_SCHEME,
 } from './document-asset-store'
 import { OoCliBridge } from '@nxcore/desktop-connector-host/oo-cli-bridge'
+import { createConnectorModeStore, defaultSaasApiBaseUrl } from '@nxcore/desktop-connector-host/connector-mode-store'
 import {
   OpenConnectorSupervisor,
   type OpenConnectorConnection,
@@ -266,6 +267,8 @@ const OPEN_CONNECTOR_CHANNELS = {
   execute: 'open-connector:execute',
   cancel: 'open-connector:cancel',
   openConsole: 'open-connector:open-console',
+  mode: 'open-connector:mode',
+  setMode: 'open-connector:set-mode',
 } as const
 
 const CONNECTOR_SYNC_CHANNELS = {
@@ -706,6 +709,8 @@ let runtimeConfigBridge: RuntimeConfigBridge | null = null
 let cursorCompletionSupervisor: GatewaySupervisor | null = null
 let ooCliBridge: OoCliBridge | null = null
 let openConnectorSupervisor: OpenConnectorSupervisor | null = null
+let connectorModeStoreRef: ReturnType<typeof createConnectorModeStore> | null = null
+const activeConnectorModeStore = () => connectorModeStoreRef
 let openConnectorConsoleWindow: BrowserWindow | null = null
 let memoryCoreSupervisor: MemoryCoreSupervisor | null = null
 let nangoSupervisor: NangoSupervisor | null = null
@@ -1580,22 +1585,15 @@ async function openConnectorManagementConsole(): Promise<void> {
 }
 
 function registerOpenConnectorHandlers(): void {
+  handle(OPEN_CONNECTOR_CHANNELS.mode, async () => activeConnectorModeStore()?.read() ?? { mode: 'saas', switchedAt: null })
+  handle(OPEN_CONNECTOR_CHANNELS.setMode, async (_event, mode: unknown) => {
+    const store = activeConnectorModeStore()
+    if (!store) throw new Error('connector mode store unavailable')
+    const next = mode === 'local' ? 'local' as const : mode === 'saas' ? 'saas' as const : null
+    if (!next) throw new Error('invalid connector mode')
+    return store.write(next)
+  })
   handle(OPEN_CONNECTOR_CHANNELS.status, () => {
-    if (desktopPageMode !== 'connectors') {
-      return {
-        baseUrl: '',
-        managed: false,
-        gatewayPid: null,
-        gatewayVersion: null,
-        gatewayState: 'unreachable' as const,
-        gatewayMessage: '连接器页面未启用。',
-        runtimeTokenConfigured: false,
-        cliState: 'missing' as const,
-        cliVersion: null,
-        cliPath: resolveOoCliExecutable(),
-        cliMessage: '连接器页面未启用。',
-      }
-    }
     if (ooCliBridge) return ooCliBridge.status()
     const status = openConnectorSupervisor?.getStatus()
     return {
@@ -2820,14 +2818,14 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   registerBrowserExtensionHandlers(browserExtensionService)
   registerOpenConnectorHandlers()
   createWindow()
-  const connectorPageEnabled = desktopPageMode === 'connectors'
-  const configuredNangoUrl =
-    process.env.NXCORE_NANGO_CONNECTOR_URL?.trim() || process.env.NXCORE_NANGO_URL?.trim() || ''
-  const configuredNangoSecret =
-    process.env.NXCORE_NANGO_CONNECTOR_SECRET?.trim() || process.env.NXCORE_NANGO_SECRET?.trim() || ''
-  const nangoSecretIsUuidV4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(configuredNangoSecret)
+  // P2-5：desktopPageMode sources/connectors 分叉消除——连接器栈在任意页面模式可用
+  const connectorPageEnabled = true
+  const connectorModeStore = connectorModeStoreRef ?? createConnectorModeStore(dataDirectory)
+  connectorModeStoreRef = connectorModeStore
+  const connectorModeState = await connectorModeStore.read()
   try {
-    if (connectorPageEnabled) {
+    // SaaS 模式（默认）：不拉本地实例；local 模式且 connectors 页启用时拉起
+    if (connectorPageEnabled && connectorModeState.mode === 'local') {
       openConnectorSupervisor = new OpenConnectorSupervisor(join(dataDirectory, 'open-connector'))
       const openConnector = await openConnectorSupervisor.start().catch((error) => {
         console.error('Managed OpenConnector failed to start; connector tools stay disabled.', error)
@@ -2838,6 +2836,10 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         attachOpenConnectorBridge(ooCliBridge)
       }
     }
+    if (connectorPageEnabled && connectorModeState.mode === 'saas') {
+      // SaaS 连接层：gateway env 由下方工厂注入转发层 URL（鉴权由 SaaS 转发层终结）
+      console.info('[connector-mode] saas mode: gateway connectors proxied via EverRoomSass')
+    }
     // 先拉起/探测 MemoryCore(独立可复用),再把连接信息注入 gateway 的记忆配置,
     // 让队友拉代码后无需手工部署即可使用记忆功能。
     memoryCoreSupervisor = new MemoryCoreSupervisor(dataDirectory)
@@ -2845,15 +2847,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       console.error('Managed MemoryCore failed to start; memory stays disabled.', error)
       return null
     })
-    // Nango 是数据源专用的可选后台依赖。先让 Gateway 起来，Nango 在后台
-    // 构建/启动；连接器页面会通过运行状态轮询感知它何时可用。
-    if (!connectorPageEnabled) {
-      nangoSupervisor = new NangoSupervisor()
-      void nangoSupervisor.start().catch((error) => {
-        console.error('Managed Nango failed to start; data source connectors stay disabled.', error)
-        return null
-      })
-    }
+    // P2-5：Nango supervisor 启动分支删除（Seam1 后取数走 oo；P3 删 Nango 全家）。
     // Knowledge Service(Wiki)与 MemoryCore 同款托管;失败仅禁用 wiki 工具,不阻塞启动。
     knowledgeServiceSupervisor = new KnowledgeServiceSupervisor(dataDirectory)
     // 冷启动先带 .env 透传起 KS（gateway 未起，runtime config 读不到）；
@@ -2864,17 +2858,11 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       return null
     })
     // Gateway 配置要求 URL 和 SECRET 成对出现；兼容旧版 Nango 变量名。
-    // The selected page owns the connector runtime. Explicitly clear the
-    // other connector's URL so a user-level env override cannot re-enable it.
-    // URL 为空时（packaged-env.json 缺失或 Nango 未就绪）SECRET 必须同步留空，
-    // 否则 Gateway 校验"URL/SECRET 成对"失败会以 code=1 退出，应用闪退。
-    const nangoUrl = connectorPageEnabled
-      ? ''
-      : nangoSupervisor?.gatewayBaseUrl() ?? configuredNangoUrl
-    const nangoSecret = nangoUrl && nangoSupervisor && !nangoSecretIsUuidV4
-      ? randomUUID()
-      : nangoUrl ? configuredNangoSecret : ''
-    const nangoBootstrapPending = nangoUrl && nangoSupervisor && !nangoSecretIsUuidV4 ? '1' : '0'
+    // P2-5：Nango supervisor 路径删除后 nangoUrl 恒为空（P3 连 env 兼容一并删）。
+    // URL 为空时 SECRET 必须同步留空，否则 Gateway 校验"URL/SECRET 成对"失败退出。
+    const nangoUrl = ''
+    const nangoSecret = ''
+    const nangoBootstrapPending = '0'
     agentNotificationBridgeServer = new AgentNotificationBridgeServer(
       () => saasClient,
       (local) => {
@@ -2914,6 +2902,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
           }
           : {}),
         ...(ooCliBridge ? ooCliBridge.environment() : {}),
+        ...connectorModeStore.gatewayEnv(connectorModeState, defaultSaasApiBaseUrl()),
         NXCORE_CLI_CONNECTOR_AGENT_MODE: ooCliBridge ? 'local' : 'direct',
         NXCORE_CLI_CONNECTOR_SYNC_ENABLED: ooCliBridge ? 'true' : 'false',
         ...(memoryCore

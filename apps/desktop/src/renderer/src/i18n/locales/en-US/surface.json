@@ -1612,5 +1612,14 @@
   "qrLogin.ended.expired": "The QR code expired. Refresh and try again.",
   "qrLogin.ended.exchanged": "This session was already exchanged.",
   "qrLogin.ended.error": "Something went wrong.",
-  "qrLogin.exchanging": "Finishing sign-in…"
+  "qrLogin.exchanging": "Finishing sign-in…",
+  "settings.connectorModeTitle": "Connector layer",
+  "settings.connectorModeNavDescription": "Where the connector layer runs",
+  "settings.connectorModeDescription": "Choose where third-party connectors (Gmail/Notion/Calendar…) run; existing connections must be re-authorized after switching.",
+  "settings.connectorModeSaasTitle": "Cloud (default)",
+  "settings.connectorModeSaasDescription": "OpenConnector hosted by EverRoomSass with centrally managed OAuth for hundreds of services.",
+  "settings.connectorModeSaasLoginRequired": "Sign in to your EverRoom account first (Settings → EverRoom account) to use the cloud connector layer.",
+  "settings.connectorModeLocalTitle": "Local",
+  "settings.connectorModeLocalDescription": "Run OpenConnector on this machine; credentials and data stay local (privacy fallback).",
+  "settings.connectorModeSwitchedNotice": "Connector layer switched. Restart the app to apply; existing connections need re-authorization."
 }

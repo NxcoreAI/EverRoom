@@ -237,6 +237,8 @@ const api: NxcoreDesktopApi = {
     execute: (input) => invokeQuietly('cli-connector:execute', input),
     cancel: (requestId) => invokeQuietly('cli-connector:cancel', requestId),
     openConsole: () => invokeQuietly('cli-connector:open-console'),
+    mode: () => invokeQuietly('open-connector:mode'),
+    setMode: (mode: 'saas' | 'local') => invokeQuietly('open-connector:set-mode', mode),
     onEvent: (listener) => {
       const handleEvent = (_event: Electron.IpcRendererEvent, frame: Parameters<typeof listener>[0]) => {
         listener(frame)

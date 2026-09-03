@@ -1612,5 +1612,14 @@
   "qrLogin.ended.expired": "二维码已过期，请刷新后重试。",
   "qrLogin.ended.exchanged": "本次会话已完成兑换。",
   "qrLogin.ended.error": "出现错误。",
-  "qrLogin.exchanging": "正在完成登录…"
+  "qrLogin.exchanging": "正在完成登录…",
+  "settings.connectorModeTitle": "连接层模式",
+  "settings.connectorModeNavDescription": "第三方服务连接层的运行位置",
+  "settings.connectorModeDescription": "选择第三方服务（Gmail/Notion/日历…）的连接层运行位置；切换后已有连接需重新授权。",
+  "settings.connectorModeSaasTitle": "云端连接层（默认）",
+  "settings.connectorModeSaasDescription": "OpenConnector 由 EverRoomSass 托管，数百个服务的 OAuth 配置统一管理，无需本地运行。",
+  "settings.connectorModeSaasLoginRequired": "使用云端连接层需要先登录 EverRoom 账号（设置 → EverRoom 账号）。",
+  "settings.connectorModeLocalTitle": "本地连接层",
+  "settings.connectorModeLocalDescription": "在本机启动 OpenConnector 服务，凭据与数据完全留在本地（隐私兜底）。",
+  "settings.connectorModeSwitchedNotice": "连接层已切换，重启应用后生效；已有连接需要重新授权。"
 }
