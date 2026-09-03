@@ -40,6 +40,7 @@ await rm(stagingDirectory, { recursive: true, force: true })
 
 for (const entry of [
   'package.json',
+  'package-lock.json',
   'tsconfig.json',
   'LICENSE.txt',
   'NOTICE.md',
@@ -55,7 +56,10 @@ for (const entry of [
 }
 
 try {
-  await run('npm', ['install', '--include=dev', '--ignore-scripts', '--no-audit', '--no-fund'], stagingDirectory)
+  // npm ci + lockfile: 浮动 install 会解析到 registry 最新版本，
+  // 曾因新发布的 @vitest/browser-playwright@5.0.0（peerDep 要求 vitest@5.0.0）
+  // 触发 npm arborist "Cannot read properties of null (reading 'edgesOut')" 崩溃。
+  await run('npm', ['ci', '--include=dev', '--ignore-scripts', '--no-audit', '--no-fund'], stagingDirectory)
   await run(process.execPath, ['scripts/ensure-generated.ts'], stagingDirectory)
   await applyEverRoomBranding(stagingDirectory)
   await run('npm', ['run', 'build:web'], stagingDirectory)
