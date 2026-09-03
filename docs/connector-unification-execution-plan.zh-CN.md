@@ -1,6 +1,7 @@
 # 连接器统一整改执行方向 v1
 
-> 状态：已定稿（决策见 §10）
+> 状态：**已执行**（P0-P3 完成，2026-09-03；实施提交见 §11）
+> 待办：P4-2 submodule 独立仓库化（待 remote）、P4-4 打包验收
 > 日期：2026-09-03
 > 前置文档：《连接器架构统一设计 v3》（connector-platform-refactor-plan 同源提案，下称「设计 v3」）
 > 决策输入：2026-09-03 评审（A–G 共 21 项，全部落定，见 §10）
@@ -249,3 +250,26 @@ submodule 位 `modules/connector`（nango fork）、`prepare-nango-runtime.mjs`�
 | E1 | 以实际代码为准（client 文件不存在） | F3 | 设置页区块留宿主 |
 | E2 | ics/feishu-wiki 暂不处理 | G1/G2 | 里程碑重排与验收更新确认 |
 | E3 | 不做无游标降级策略 | | |
+
+---
+
+## 11. 实施记录（2026-09-03）
+
+| 阶段 | 提交 | 内容 |
+|---|---|---|
+| P1-1 | `9cdbd09` | submodule 拆分（gateway-module/connector-contract/desktop-host），宿主 alias 三处接线 |
+| P1-2/3 | `81c94f4` | OpenConnectorHttpClient + Seam2/3（spawn→HTTP） |
+| P1-4 | `ffed812` | Seam1 链路A取数（OpenConnectorSyncExecutor URL→action 路由） |
+| P1-5/6 | `f7dda10` | Seam4 oo 授权流 + Seam5 service/connectionName 迁移 |
+| P2-1/2 | EverRoomSass `a843218` | ConnectorProxyModule（映射表/转发/回调/admin 页）+ docker |
+| P2-4/5 | `34dfcc6` | 设置页连接层模式（默认 SaaS）+ desktopPageMode 分叉消除 |
+| P3 | `615c1c0` | Nango 全家删除（fork/supervisor/脚本/env/打包，-810M） |
+
+关键实施偏差（相对本文档）：
+1. **JWT 直连方案作废**：P0-V5 发现 oo JWT 无租户隔离，改映射表方案
+   （P0 findings §2，用户 2026-09-03 决策）；oo 侧不配 JWT。
+2. **授权流本地模式**：oo `POST /api/oauth/authorizations` 为 admin 面端点，
+   `OpenConnectorCliConfig` 增加 `adminToken`（supervisor 生成 → env 注入）。
+3. **outlook**：按 E3 保持无增量（无降级），适配器保留待上游 delta action。
+4. host-types/ports 采用「类型借用 + 少量逃逸路径」过渡形态（host-stubs 方案
+   因 TS subpath-imports 限制放弃）；完全自包含化列为后续独立仓库化时的工作项。
