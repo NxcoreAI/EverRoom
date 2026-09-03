@@ -1273,6 +1273,245 @@ export interface SaveRoomDocumentInput {
   contentJson: TiptapJsonContent;
 }
 
+/* ---- 外部文档导入（飞书 / Notion，OpenConnector 读通道）与 Agent 导出 ---- */
+
+export type ExternalDocumentProvider = "feishu" | "notion";
+
+export interface ExternalDocumentWarning {
+  code: string;
+  message: string;
+}
+
+export interface ExternalDocumentSearchResultItem {
+  provider: ExternalDocumentProvider;
+  remoteDocumentId: string;
+  title: string;
+  sourceUrl: string | null;
+  updatedAt: string | null;
+  ownerName: string | null;
+}
+
+export interface ExternalDocumentSearchResponse {
+  provider: ExternalDocumentProvider;
+  items: ExternalDocumentSearchResultItem[];
+  warnings: ExternalDocumentWarning[];
+}
+
+export type ExternalCommentsStatus = "complete" | "partial" | "unavailable" | "failed";
+
+export interface CanonicalAsset {
+  id: string;
+  kind: "image" | "file";
+  name: string | null;
+  sourceUrl: string | null;
+  contentHash: string | null;
+  mimeType: string | null;
+  bytes: number | null;
+  warning: string | null;
+}
+
+export interface CanonicalCommentAnchor {
+  blockId: string | null;
+  quotedText: string | null;
+}
+
+export interface CanonicalComment {
+  id: string;
+  parentId: string | null;
+  authorName: string | null;
+  body: string;
+  createdAt: string | null;
+  updatedAt: string | null;
+  resolved: boolean | null;
+  anchor: CanonicalCommentAnchor | null;
+  sourceUrl: string | null;
+  locationStatus: "located" | "unlocated" | "unsupported";
+}
+
+/** 外部来源文档的规范化中间格式；导入、快照与 diff 都以它为准。 */
+export interface CanonicalDocumentArtifact {
+  provider: ExternalDocumentProvider;
+  remoteDocumentId: string;
+  sourceUrl: string | null;
+  title: string;
+  bodyMarkdown: string;
+  assets: CanonicalAsset[];
+  comments: CanonicalComment[];
+  commentsStatus: ExternalCommentsStatus;
+  sourceRevision: string | null;
+  sourceUpdatedAt: string | null;
+  warnings: ExternalDocumentWarning[];
+}
+
+export interface ExternalDocumentCommentView {
+  id: string;
+  parentId: string | null;
+  authorName: string | null;
+  body: string;
+  quotedText: string | null;
+  resolved: boolean | null;
+  sourceUrl: string | null;
+  locationStatus: CanonicalComment["locationStatus"];
+  createdAt: string | null;
+  updatedAt: string | null;
+}
+
+export interface ExternalDocumentPreview {
+  runId: string;
+  provider: ExternalDocumentProvider;
+  remoteDocumentId: string;
+  title: string;
+  bodyExcerpt: string;
+  sourceUrl: string | null;
+  sourceRevision: string | null;
+  sourceUpdatedAt: string | null;
+  comments: ExternalDocumentCommentView[];
+  commentsStatus: ExternalCommentsStatus;
+  warnings: ExternalDocumentWarning[];
+}
+
+export type DocumentImportRunStatus =
+  | "searching"
+  | "reading"
+  | "preview"
+  | "committing"
+  | "succeeded"
+  | "failed"
+  | "cancelled";
+
+export interface DocumentImportRunView {
+  id: string;
+  requestId: string;
+  provider: ExternalDocumentProvider;
+  remoteDocumentId: string;
+  sourceId: string | null;
+  snapshotId: string | null;
+  targetRoomId: string | null;
+  targetDocumentId: string | null;
+  status: DocumentImportRunStatus;
+  warnings: ExternalDocumentWarning[];
+  errorCode: string | null;
+  errorMessage: string | null;
+  commentsStatus: ExternalCommentsStatus | null;
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+}
+
+export interface DocumentImportHistoryEntry {
+  roomImportId: string;
+  importRunId: string;
+  snapshotId: string;
+  relation: "primary" | "candidate";
+  importedVersion: number | null;
+  candidateDocumentId: string | null;
+  provider: ExternalDocumentProvider;
+  remoteDocumentId: string;
+  displayTitle: string;
+  sourceUrl: string | null;
+  sourceRevision: string | null;
+  capturedAt: string;
+  commentsStatus: ExternalCommentsStatus;
+  warnings: ExternalDocumentWarning[];
+}
+
+export interface DocumentImportCommentDiffSummary {
+  comparable: boolean;
+  added: number;
+  resolved: number;
+  modified: number;
+  removed: number;
+  reason: string | null;
+}
+
+export type AgentDocumentExportMode = "create" | "update" | "export_file";
+
+export type AgentDocumentExportStatus =
+  | "preparing"
+  | "environment_not_ready"
+  | "awaiting_auth"
+  | "awaiting_confirmation"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "needs_review"
+  | "cancelled";
+
+export interface AgentDocumentExportTarget {
+  /** update 模式：用户明确提供的远端文档 URL 或 ID。 */
+  remoteUrl?: string;
+  remoteDocumentId?: string;
+  /** create 模式：可选的父位置（文件夹/知识库节点/父页面 URL 或 token）。 */
+  parentUrl?: string;
+  parentId?: string;
+  /** update 模式写入范围：append 追加到文末（默认，不破坏远端）；replace_document 替换整篇（需确认）。 */
+  writeScope?: "append" | "replace_document";
+}
+
+export interface AgentAuthChallengeStep {
+  id: string;
+  title: string;
+  description: string | null;
+  action: "open_url" | "show_qr" | "wait_local_result" | "run_cli_check" | "user_confirm";
+  url?: string;
+  completed: boolean;
+}
+
+/** CLI/skill 未配置/未授权时返回给 Agent 的结构化授权挑战。 */
+export interface AgentAuthChallengeView {
+  id: string;
+  provider: ExternalDocumentProvider;
+  operation: "export";
+  phase: "environment" | "app_setup" | "user_auth";
+  status: "required" | "pending" | "authorized" | "expired" | "failed";
+  reason:
+    | "not_connected"
+    | "missing_scope"
+    | "expired"
+    | "app_setup_required"
+    | "environment_not_ready";
+  title: string;
+  steps: AgentAuthChallengeStep[];
+  verificationUrl: string | null;
+  localResumeHandle: string | null;
+  expiresAt: string | null;
+}
+
+export interface AgentDocumentExportConfirmation {
+  targetTitle: string;
+  targetUrl: string;
+  roomVersion: number;
+  writeScope: string;
+  remoteRevision: string | null;
+  warnings: ExternalDocumentWarning[];
+}
+
+export interface AgentDocumentExportRunView {
+  id: string;
+  requestId: string;
+  roomId: string;
+  documentId: string;
+  version: number;
+  documentTitle: string | null;
+  provider: ExternalDocumentProvider;
+  mode: AgentDocumentExportMode;
+  target: AgentDocumentExportTarget | null;
+  payloadHash: string | null;
+  rendererVersion: string | null;
+  cliSkillRef: string | null;
+  status: AgentDocumentExportStatus;
+  challenge: AgentAuthChallengeView | null;
+  confirmation: AgentDocumentExportConfirmation | null;
+  remoteUrl: string | null;
+  remoteRevision: string | null;
+  warnings: ExternalDocumentWarning[];
+  errorCode: string | null;
+  errorMessage: string | null;
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+}
+
 export interface AgentSessionSnapshot {
   session: AgentSession;
   participants: AgentSessionParticipant[];

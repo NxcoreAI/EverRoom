@@ -61,9 +61,24 @@ import type {
   SubmitPendingAgentIntentInput,
   StartDocumentOperationInput,
   UpdateAgentSessionInput,
+  AgentDocumentExportMode,
+  AgentDocumentExportRunView,
+  AgentDocumentExportTarget,
+  DocumentImportCommentDiffSummary,
+  DocumentImportHistoryEntry,
+  DocumentImportRunView,
+  ExternalDocumentPreview,
+  ExternalDocumentProvider,
+  ExternalDocumentSearchResponse,
 } from '@nxcore/agent-contract'
 import type { BrowserExtensionMessage, BrowserExtensionStatus } from './browser-extension'
 import type { ObsidianVaultApi } from './obsidian'
+import type {
+  AgentAuthEnvironmentStatus,
+  AgentAuthEventFrame,
+  AgentAuthStartInput,
+  DesktopAgentAuthChallenge,
+} from './agent-auth'
 import type { LocalAgentHistoryImportResult, LocalAgentInstallation, LocalAgentWorkspaceBinding } from './local-agents'
 import type { MigrationApi } from './migrations'
 import type { BrowserExtensionClipperCapture, BrowserExtensionClipperListInput, BrowserExtensionClipperListResult } from './browser-extension'
@@ -828,6 +843,49 @@ export interface NxcoreDesktopApi {
     openConsole(): Promise<void>
     onEvent(listener: (event: OpenConnectorCommandEvent) => void): () => void
   }
+  agentAuth: {
+    status(): Promise<AgentAuthEnvironmentStatus>
+    start(input: AgentAuthStartInput): Promise<DesktopAgentAuthChallenge>
+    resume(challengeId: string): Promise<DesktopAgentAuthChallenge | null>
+    cancel(challengeId?: string): Promise<DesktopAgentAuthChallenge | null>
+    onEvent(listener: (frame: AgentAuthEventFrame) => void): () => void
+  }
+  externalDocuments: {
+    importSearch(provider: ExternalDocumentProvider, query: string): Promise<ExternalDocumentSearchResponse>
+    importPreview(provider: ExternalDocumentProvider, remoteDocumentId: string): Promise<ExternalDocumentPreview>
+    importCommit(input: { runId: string; roomId: string; targetDocumentId?: string }): Promise<{
+      run: DocumentImportRunView
+      roomImportId: string
+      relation: 'primary' | 'candidate'
+      documentId: string
+    }>
+    importRun(runId: string): Promise<DocumentImportRunView>
+    cancelImportRun(runId: string): Promise<DocumentImportRunView>
+    importHistory(roomId: string, documentId: string): Promise<{
+      entries: DocumentImportHistoryEntry[]
+      commentDiff: DocumentImportCommentDiffSummary | null
+    }>
+    checkExternalUpdate(roomId: string, documentId: string): Promise<{
+      run: DocumentImportRunView
+      roomImportId: string
+      relation: 'primary' | 'candidate'
+      documentId: string
+    }>
+    applyCandidate(roomImportId: string): Promise<{ documentId: string; version: number }>
+    createExport(input: {
+      roomId: string
+      documentId: string
+      version?: number
+      provider: ExternalDocumentProvider
+      mode: AgentDocumentExportMode
+      target?: AgentDocumentExportTarget | null
+    }): Promise<AgentDocumentExportRunView>
+    getExport(exportId: string): Promise<AgentDocumentExportRunView>
+    confirmExport(exportId: string): Promise<AgentDocumentExportRunView>
+    retryExport(exportId: string): Promise<AgentDocumentExportRunView>
+    cancelExport(exportId: string): Promise<AgentDocumentExportRunView>
+    listExports(documentId?: string): Promise<{ items: AgentDocumentExportRunView[] }>
+  }
   cliConnectorSync: {
     status(): Promise<ConnectorSyncStatus>
     accounts(): Promise<ConnectorAccount[]>
@@ -895,6 +953,7 @@ export interface NxcoreDesktopApi {
     insights(): Promise<{ insights: Array<import('./writing-style').WritingStyleInsightDto> }>
     snoozeInsight(insightId: string): Promise<import('./writing-style').WritingStyleInsightDto>
     confirmInsight(insightId: string): Promise<import('./writing-style').WritingStyleInsightDto>
+    reportCompletionFeedback(input: { accepted: number; rejected: number; samples?: string[] }): Promise<{ ok: boolean }>
   }
   agentSchedules: {
     list(): Promise<AgentScheduledTask[]>
@@ -991,6 +1050,12 @@ export interface NxcoreDesktopApi {
     searchAtomic(query: string, limit?: number): Promise<{ items: MemoryAtomicItemDto[] }>
     updateAtomic(id: string, content: string, background?: string): Promise<{ id: string; version: number; updatedAt: string }>
     deleteAtomic(ids: string[]): Promise<{ deletedCount: number }>
+    /** 指派/清除原子记忆的 Room 归属（roomId=null 清除）。 */
+    setAtomicRoom(
+      id: string,
+      roomId: string | null,
+      snapshot?: { content: string; type: string; memoryUpdatedAt: string },
+    ): Promise<{ memoryId: string; roomId: string | null }>
     listScenarios(pathPrefix?: string): Promise<{ entries: MemoryScenarioEntryDto[]; total: number }>
     readScenario(path: string): Promise<MemoryScenarioContentDto>
     readCore(): Promise<MemoryCoreDto>

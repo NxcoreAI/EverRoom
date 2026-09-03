@@ -162,7 +162,7 @@ function normalizedGmailReadInput(
   return normalized;
 }
 
-function connectorEnvironment(config: OpenConnectorCliConfig): NodeJS.ProcessEnv {
+export function connectorEnvironment(config: OpenConnectorCliConfig): NodeJS.ProcessEnv {
   return {
     ...process.env,
     OO_CONNECTOR_URL: config.baseUrl,
@@ -173,7 +173,7 @@ function connectorEnvironment(config: OpenConnectorCliConfig): NodeJS.ProcessEnv
   };
 }
 
-function runOo(
+export function runOo(
   config: OpenConnectorCliConfig,
   arguments_: string[],
   signal?: AbortSignal,

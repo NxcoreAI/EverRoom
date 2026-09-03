@@ -116,6 +116,8 @@ const RawConfigSchema = Type.Object(
     memoryUserId: Type.String({ minLength: 1 }),
     memoryRecallLimit: Type.Integer({ minimum: 1, maximum: 50 }),
     memoryCharBudget: Type.Integer({ minimum: 200 }),
+    memoryRoomDeriveEnabled: Type.Boolean(),
+    memoryRoomDeriveIntervalMs: Type.Integer({ minimum: 10_000 }),
     knowledgeEnabled: Type.Boolean(),
     knowledgeBaseUrl: Type.String(),
     knowledgeServiceId: Type.String({ minLength: 1 }),
@@ -296,6 +298,11 @@ export interface ConnectorSyncJobConfig {
   intervalMs?: number;
 }
 
+export interface MemoryRoomDeriveConfig {
+  enabled: boolean;
+  intervalMs: number;
+}
+
 export interface GatewayConfig {
   host: string;
   port: number;
@@ -316,6 +323,8 @@ export interface GatewayConfig {
   /** Backward-compatible aliases retained for merged clients/tests. */
   connectorSyncOwnerId?: string;
   memory: MemoryRuntimeConfig | null;
+  /** 新 L1 记忆自动绑定 Room（推导 worker）：缺省视为开启（enabled=true/300s），仅 gateway 侧消费。 */
+  memoryRoomDerive?: MemoryRoomDeriveConfig;
   pi: PiRuntimeConfig | null;
   cursorCompletionPi: PiRuntimeConfig | null;
   knowledge: KnowledgeGatewayConfig | null;
@@ -352,6 +361,8 @@ export interface GatewayConfig {
     providerConfigKeys: Record<string, string>;
   };
   cliConnector?: OpenConnectorCliConfig | null;
+  /** Agent 飞书导出用 lark-cli（发行包预装；桌面注入 NXCORE_LARK_CLI_PATH）。 */
+  larkCli?: { executable: string } | null;
   notificationBridge?: { baseUrl: string; token: string } | null;
 }
 
@@ -798,6 +809,13 @@ export function loadConfig(
       "NXCORE_MEMORY_CHAR_BUDGET",
       env.NXCORE_MEMORY_CHAR_BUDGET ?? "2000",
     ),
+    memoryRoomDeriveEnabled: env.NXCORE_MEMORY_ROOM_DERIVE_ENABLED == null
+      ? true
+      : parseBoolean("NXCORE_MEMORY_ROOM_DERIVE_ENABLED", env.NXCORE_MEMORY_ROOM_DERIVE_ENABLED.trim()),
+    memoryRoomDeriveIntervalMs: parsePositiveInteger(
+      "NXCORE_MEMORY_ROOM_DERIVE_INTERVAL_MS",
+      env.NXCORE_MEMORY_ROOM_DERIVE_INTERVAL_MS ?? "300000",
+    ),
     knowledgeEnabled: env.NXCORE_KNOWLEDGE_ENABLED == null
       ? false
       : parseBoolean("NXCORE_KNOWLEDGE_ENABLED", env.NXCORE_KNOWLEDGE_ENABLED.trim()),
@@ -1098,6 +1116,10 @@ export function loadConfig(
     externalCallWorkspaceId: rawConfig.externalCallWorkspaceId,
     diaryMaxTokens: rawConfig.diaryMaxTokens,
     memory,
+    memoryRoomDerive: {
+      enabled: rawConfig.memoryRoomDeriveEnabled,
+      intervalMs: rawConfig.memoryRoomDeriveIntervalMs,
+    },
     databasePath: join(dataDir, "database", "gateway.sqlite"),
     migrationsDir: resolve(
       values["migrations-dir"] ?? env.NXCORE_GATEWAY_MIGRATIONS_DIR ?? defaultMigrationsDir(),
@@ -1165,6 +1187,9 @@ export function loadConfig(
     notificationBridge: rawConfig.notificationBridgeUrl
       ? { baseUrl: rawConfig.notificationBridgeUrl.replace(/\/$/, ""), token: rawConfig.notificationBridgeToken }
       : null,
+    larkCli: {
+      executable: firstEnvValue(env, "NXCORE_LARK_CLI_PATH")?.trim() || "lark-cli",
+    },
     pi,
     cursorCompletionPi,
     backgroundPi: pi

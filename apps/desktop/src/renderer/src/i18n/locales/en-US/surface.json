@@ -1612,5 +1612,18 @@
   "qrLogin.ended.expired": "The QR code expired. Refresh and try again.",
   "qrLogin.ended.exchanged": "This session was already exchanged.",
   "qrLogin.ended.error": "Something went wrong.",
-  "qrLogin.exchanging": "Finishing sign-in…"
+  "qrLogin.exchanging": "Finishing sign-in…",
+  "agentAuthCard.phaseAppSetup": "App setup",
+  "agentAuthCard.phaseUserAuth": "Account authorization",
+  "agentAuthCard.feishu": "Feishu",
+  "agentAuthCard.notion": "Notion",
+  "agentAuthCard.cancel": "Cancel authorization",
+  "agentAuthCard.openLink": "Open link",
+  "agentAuthCard.openConsole": "Open connector console",
+  "agentAuthCard.qrAlt": "Authorization QR code",
+  "agentAuthCard.resumeCheck": "I have finished authorization",
+  "agentAuthCard.completedTitle": "Feishu authorization completed",
+  "agentAuthCard.completedBadge": "Authorized",
+  "agentAuthCard.dismiss": "Dismiss",
+  "agentAuthCard.restart": "Restart authorization"
 }

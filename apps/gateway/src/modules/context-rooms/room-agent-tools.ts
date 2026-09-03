@@ -35,21 +35,30 @@ export function createContextRoomAgentTools(deps: {
   const memorySearch: PiAgentRuntimeTool = {
     name: "memory_search",
     label: "记忆检索",
-    description: "检索长期记忆（L1 原子记忆：用户偏好、事实、约束、决策）。整理 Room 前必须先用标题与描述调用。",
+    description:
+      "检索长期记忆（L1 原子记忆：用户偏好、事实、约束、决策）。整理 Room 前必须先用标题与描述调用。任务 input 带 roomId 时优先传 room_id 在该 Room 的绑定记忆（用户甄选）中检索，再全局补充。",
     parameters: Type.Object({
       query: Type.String({ minLength: 1, maxLength: 500 }),
       limit: Type.Optional(Type.Number({ minimum: 1, maximum: 20 })),
+      room_id: Type.Optional(Type.String({ minLength: 1, maxLength: 100 })),
     }, { additionalProperties: false }),
     execute: async (_run, params) => {
       if (!memory?.enabled) {
         return { content: "记忆检索不可用（Memory 未配置）。", details: { count: 0, enabled: false } };
       }
       try {
-        const { items } = await memory.searchAtomic(String(params.query ?? ""), Number(params.limit ?? 5));
-        const text = items.length === 0
-          ? "没有匹配的长期记忆。"
-          : items.map((item) => `- ${item.content}${item.updatedAt ? `（${item.updatedAt}）` : ""}`).join("\n");
-        return { content: text, details: { count: items.length } };
+        const roomId = typeof params.room_id === "string" && params.room_id ? params.room_id : null;
+        const lines = roomId
+          ? (await memory.searchRoomMemories(roomId, String(params.query ?? ""), Number(params.limit ?? 5)))
+            .map((item) => `- ${item.content}${item.updatedAt ? `（${item.updatedAt}）` : ""}`)
+          : (await memory.searchAtomic(String(params.query ?? ""), Number(params.limit ?? 5))).items
+            .map((item) => `- ${item.content}${item.updatedAt ? `（${item.updatedAt}）` : ""}`);
+        const text = lines.length === 0
+          ? roomId
+            ? "该 Room 没有匹配的绑定记忆（可去掉 room_id 全局检索）。"
+            : "没有匹配的长期记忆。"
+          : lines.join("\n");
+        return { content: text, details: { count: lines.length, roomId } };
       } catch (error) {
         return {
           content: memoryToolErrorText("记忆检索", error),

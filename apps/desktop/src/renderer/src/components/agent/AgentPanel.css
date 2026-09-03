@@ -431,18 +431,23 @@
 
 /* 协作洞察横幅（写作风格 v2）：白色圆角卡片、单行高度，详情默认折叠。 */
 .agent-insight-banner {
+  position: absolute;
+  z-index: 25;
+  top: 60px;
+  left: 10px;
+  right: 10px;
   display: flex;
   align-items: center;
   gap: 8px;
-  margin: 6px 10px 0;
-  padding: 3px 6px 3px 4px;
+  padding: 7px 8px 7px 6px;
   border: 1px solid rgba(0, 0, 0, 0.06);
   border-radius: 10px;
   background: #fff;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  /* 悬浮卡：不占智能区布局（absolute 脱流），高投影盖在会话内容之上 */
+  box-shadow: 0 8px 24px rgba(16, 21, 30, 0.16);
   font-size: 12px;
   line-height: 1.35;
-  min-height: 30px;
+  min-height: 42px;
 }
 
 .agent-insight-banner-confirmed {
@@ -461,7 +466,7 @@
   gap: 4px;
   border: none;
   background: transparent;
-  padding: 2px 6px;
+  padding: 5px 8px;
   border-radius: 7px;
   cursor: pointer;
   text-align: left;
@@ -511,13 +516,13 @@
 .agent-insight-banner-secondary {
   border: none;
   border-radius: 7px;
-  padding: 3px 9px;
+  padding: 5px 11px;
   font-size: 12px;
   cursor: pointer;
 }
 
 .agent-insight-banner-primary {
-  background: var(--accent, #4f7cff);
+  background: var(--accent, #3d6ff6);
   color: #fff;
 }
 
@@ -531,4 +536,164 @@
   background: transparent;
   border: 1px solid rgba(0, 0, 0, 0.1);
   color: var(--text-secondary, #5f6368);
+}
+
+/* Agent 授权引导步骤卡片（AuthChallenge，飞书/Notion 导出） */
+.agent-auth-challenge {
+  margin: 8px 12px 0;
+  border: 1px solid var(--border, #d8dee4);
+  border-radius: 12px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--bg-secondary, #f7f8fa);
+  font-size: 13px;
+}
+
+.agent-auth-challenge header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.agent-auth-challenge header div {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.agent-auth-challenge header small {
+  color: var(--muted, #6a737d);
+  font-size: 11px;
+}
+
+.agent-auth-challenge header button {
+  border: none;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  padding: 4px;
+  display: inline-flex;
+}
+
+.agent-auth-challenge-message {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted, #6a737d);
+}
+
+.agent-auth-challenge-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.agent-auth-challenge-steps li {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.agent-auth-challenge-steps li[data-completed='true'] {
+  opacity: 0.65;
+}
+
+.agent-auth-challenge-step-state {
+  display: inline-flex;
+  margin-top: 2px;
+}
+
+.agent-auth-challenge-step-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1.5px solid var(--muted, #6a737d);
+  display: inline-block;
+}
+
+.agent-auth-challenge-steps b {
+  display: block;
+  font-weight: 600;
+}
+
+.agent-auth-challenge-steps small {
+  display: block;
+  color: var(--muted, #6a737d);
+  font-size: 11px;
+}
+
+.agent-auth-challenge-steps a {
+  font-size: 12px;
+  color: var(--accent, #3d6ff6);
+  word-break: break-all;
+}
+
+.agent-auth-challenge-console {
+  border: 1px solid var(--border, #d8dee4);
+  border-radius: 6px;
+  background: none;
+  color: inherit;
+  font-size: 12px;
+  padding: 3px 8px;
+  cursor: pointer;
+  margin-top: 2px;
+}
+
+.agent-auth-challenge-footer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.agent-auth-challenge-qr {
+  width: 110px;
+  height: 110px;
+  border-radius: 8px;
+  border: 1px solid var(--border, #d8dee4);
+}
+
+.agent-auth-challenge-actions {
+  flex: 1;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.agent-auth-challenge-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 8px;
+  padding: 7px 14px;
+  cursor: pointer;
+  font-size: 13px;
+  border: none;
+  background: var(--accent, #3d6ff6);
+  color: #fff;
+}
+
+.agent-auth-challenge-actions button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+/* 授权卡片完成态（保留在会话流中显示） */
+.agent-auth-challenge[data-completed='true'] {
+  border-color: #1a7f37;
+}
+
+.agent-auth-challenge-icon {
+  display: inline-flex;
+}
+
+.agent-auth-challenge[data-completed='true'] .agent-auth-challenge-icon {
+  color: #1a7f37;
+}
+
+.agent-auth-challenge-message[data-completed='true'] {
+  color: #1a7f37;
 }

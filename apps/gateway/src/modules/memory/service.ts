@@ -1,4 +1,5 @@
 import type { FastifyBaseLogger } from "fastify";
+import { randomUUID } from "node:crypto";
 import {
   MemoryCoreClient,
   MemoryCoreError,
@@ -7,14 +8,40 @@ import {
   type MemoryPipelineStatus,
   type MemoryRuntimeConfig,
 } from "@nxcore/agent-runtime-pi";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { FilesService } from "../files/service.js";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
-import { agentSessions, gatewayMetadata } from "../../infrastructure/database/schema.js";
+import {
+  agentSessions,
+  contextRooms,
+  gatewayMetadata,
+  roomMemoryAttributions,
+  roomMemorySuppressions,
+} from "../../infrastructure/database/schema.js";
 import { MemoryGatewayError } from "./errors.js";
 
 /** UI 浏览场景的超时：比 agent 注入流程（3s）宽松，但仍在交互可接受范围。 */
 const BROWSE_TIMEOUT_MS = 10_000;
+
+/** Room 记忆注入预算（listRoomMemories 的取数上限；注入段不受全局 recall charBudget 截断）。 */
+const ROOM_MEMORY_MAX_ITEMS = 20;
+const ROOM_MEMORY_ITEM_MAX_CHARS = 500;
+const ROOM_MEMORY_TOTAL_MAX_CHARS = 4_000;
+
+/** Room 绑定记忆快照：agent-runtime-pi 的 RoomMemorySnapshot 同形（注入与工具过滤的数据源）。 */
+export interface RoomMemorySnapshot {
+  memoryId: string;
+  type: string;
+  content: string;
+  updatedAt: string;
+}
+
+/** 绑定时随归属行落库的记忆快照（调用方列表项在手；缺省则行快照为空，注入时跳过）。 */
+export interface RoomMemorySnapshotInput {
+  content?: string | undefined;
+  type?: string | undefined;
+  memoryUpdatedAt?: string | undefined;
+}
 
 /** MemoryCore `/v3/conversation/add` 的真实请求约束。 */
 const CONVERSATION_IMPORT_MAX_MESSAGES = 100;
@@ -73,6 +100,10 @@ export interface MemoryAtomicDto {
   background: string | null;
   createdAt: string;
   updatedAt: string;
+  /** 用户指派的 Room 归属（room_memory_attributions）；null = 未绑定。 */
+  roomId: string | null;
+  /** 绑定 Room 的当前标题；roomId 非空而为 null ⇒ Room 已软删/消失（归属数据保留）。 */
+  roomTitle: string | null;
 }
 
 /** 渲染层 DTO：L0 对话消息。 */
@@ -264,6 +295,7 @@ export interface MemoryAtomicProvenanceDto {
   type: string;
   content: string;
   kind: string;
+  room: { roomId: string | null; roomTitle: string | null };
   session: { sessionId: string | null; sessionKey: string | null } | null;
   document: {
     documentId: string;
@@ -300,6 +332,14 @@ export interface MemoryImportDocumentResult {
 }
 
 /**
+ * Room 归属的写入侧依赖（结构性满足：ContextRoomService；先例 agent/service.ts 的 AgentRoomRegistry）。
+ * 读侧 enrichment 直接查 schema，不走此接口。
+ */
+export interface MemoryRoomRegistry {
+  resolveRoomId(roomId: string): string | null;
+}
+
+/**
  * MemoryCore 的 gateway 侧门面：注入隔离三元组，把 snake_case 的 v3 响应
  * 映射为稳定的 camelCase DTO；未配置记忆时所有方法抛 memory_disabled。
  */
@@ -309,6 +349,7 @@ export class MemoryService {
   /** md 导入的资产化通道（modules/files，U9 唯一字节入口）；未配置记忆时为 null。 */
   private readonly files: FilesService | null;
   private readonly db: GatewayDatabase | null;
+  private readonly roomRegistry: MemoryRoomRegistry | null;
   private readonly onboardingRequests = new Map<string, Promise<MemoryOnboardingResult>>();
 
   constructor(
@@ -316,11 +357,13 @@ export class MemoryService {
     private readonly logger: FastifyBaseLogger,
     /** md 导入的资产化落点：gateway 数据库（uploaded_files/parsed_contents）与对象库根。 */
     assets: { db: GatewayDatabase; dataDir: string } | null,
+    roomRegistry: MemoryRoomRegistry | null = null,
   ) {
     this.config = config;
     this.client = config ? new MemoryClientWithTimeout(config) : null;
     this.files = assets ? new FilesService(assets.db, assets.dataDir) : null;
     this.db = assets?.db ?? null;
+    this.roomRegistry = roomRegistry;
   }
 
   get enabled(): boolean {
@@ -441,24 +484,22 @@ export class MemoryService {
       timeStart: options.timeStart,
       timeEnd: options.timeEnd,
     }));
-    return {
-      items: page.items.map((item) => ({
-        id: item.id,
-        type: item.type,
-        content: item.content,
-        background: item.background ?? null,
-        createdAt: item.created_at,
-        updatedAt: item.updated_at,
-      })),
-      total: page.total,
-    };
+    const items = await this.attachRoom(page.items.map((item) => ({
+      id: item.id,
+      type: item.type,
+      content: item.content,
+      background: item.background ?? null,
+      createdAt: item.created_at,
+      updatedAt: item.updated_at,
+    })));
+    return { items, total: page.total };
   }
 
   async searchAtomic(query: string, limit: number): Promise<{ items: (MemoryAtomicDto & { score: number })[] }> {
     const client = this.require();
     const items = await this.call(() => client.searchAtomic(query, limit));
     return {
-      items: items.map((item) => ({
+      items: await this.attachRoom(items.map((item) => ({
         id: item.id,
         type: item.type,
         content: item.content,
@@ -466,7 +507,7 @@ export class MemoryService {
         createdAt: item.created_at,
         updatedAt: item.updated_at,
         score: item.score ?? 0,
-      })),
+      }))),
     };
   }
 
@@ -477,13 +518,209 @@ export class MemoryService {
   ): Promise<{ id: string; version: number; updatedAt: string }> {
     const client = this.require();
     const result = await this.call(() => client.updateAtomic(id, content, background));
+    // 编辑成功后顺带刷新归属行快照（行不存在则跳过；尽力而为，不阻断编辑）。
+    if (this.db) {
+      try {
+        this.db
+          .update(roomMemoryAttributions)
+          .set({ content, memoryUpdatedAt: result.updated_at })
+          .where(eq(roomMemoryAttributions.memoryId, id))
+          .run();
+      } catch (error) {
+        this.logger.warn({ err: error, memoryId: id }, "room memory snapshot refresh failed");
+      }
+    }
     return { id: result.id, version: result.version, updatedAt: result.updated_at };
   }
 
   async deleteAtomic(ids: string[]): Promise<{ deletedCount: number }> {
     const client = this.require();
     const result = await this.call(() => client.deleteAtomic(ids));
+    // 记忆本体删除后清理 Room 归属行与压制行（防孤儿）；清理失败不阻断已成功的删除。
+    if (this.db && ids.length > 0) {
+      try {
+        this.db.delete(roomMemoryAttributions).where(inArray(roomMemoryAttributions.memoryId, ids)).run();
+        this.db.delete(roomMemorySuppressions).where(inArray(roomMemorySuppressions.memoryId, ids)).run();
+      } catch (error) {
+        this.logger.warn({ err: error }, "room memory attribution cleanup failed");
+      }
+    }
     return { deletedCount: result.deleted_count };
+  }
+
+  /**
+   * 指派/清除单条 L1 记忆的 Room 归属（room_memory_attributions，sourceKind=user）。
+   * - roomId=null：删除归属行并写入永久压制（该记忆不再被 worker 自动绑回），幂等。
+   * - 非空：经 roomRegistry.resolveRoomId 解析合并链后落**终点** id（与 agent_runs.roomId 同策略）；
+   *   记忆不存在或 Room 不可解析（软删/不存在）均抛 404；snapshot 随行落库供注入取数。
+   */
+  async assignAtomicRoom(
+    memoryId: string,
+    roomId: string | null,
+    snapshot?: RoomMemorySnapshotInput,
+  ): Promise<{ memoryId: string; roomId: string | null }> {
+    const client = this.require();
+    if (roomId === null) {
+      if (this.db) {
+        const existing = this.db.select({ roomId: roomMemoryAttributions.roomId })
+          .from(roomMemoryAttributions)
+          .where(eq(roomMemoryAttributions.memoryId, memoryId))
+          .get();
+        this.db.delete(roomMemoryAttributions).where(eq(roomMemoryAttributions.memoryId, memoryId)).run();
+        if (existing) {
+          this.db.insert(roomMemorySuppressions)
+            .values({ memoryId, roomId: existing.roomId, createdAt: new Date() })
+            .onConflictDoNothing({ target: roomMemorySuppressions.memoryId })
+            .run();
+        }
+      }
+      return { memoryId, roomId: null };
+    }
+    if (!this.db || !this.roomRegistry) {
+      throw new MemoryGatewayError("memory_error", "gateway database is not available", 503);
+    }
+    try {
+      await client.atomicProvenance(memoryId);
+    } catch (error) {
+      // call() 会把 HTTP 错误统一映射为 502，存在性校验需要在映射前识别 404。
+      if (error instanceof MemoryCoreError) {
+        if (error.kind === "http" && error.status === 404) {
+          throw new MemoryGatewayError("memory_error", `atomic memory not found: ${memoryId}`, 404);
+        }
+        this.mapFailure(error);
+      }
+      throw error;
+    }
+    const resolved = this.roomRegistry.resolveRoomId(roomId);
+    if (!resolved) {
+      throw new MemoryGatewayError("memory_error", `context room not available: ${roomId}`, 404);
+    }
+    const now = new Date();
+    // 带快照则落库；换绑不带快照时保留既有快照列（不清空，注入取数不中断）。
+    const snapshotColumns = snapshot
+      ? {
+          content: snapshot.content ?? null,
+          memoryType: snapshot.type ?? null,
+          memoryUpdatedAt: snapshot.memoryUpdatedAt ?? null,
+        }
+      : null;
+    this.db
+      .insert(roomMemoryAttributions)
+      .values({
+        id: randomUUID(),
+        roomId: resolved,
+        memoryId,
+        sourceKind: "user",
+        sourceId: null,
+        confidence: "explicit",
+        ...(snapshotColumns ?? { content: null, memoryType: null, memoryUpdatedAt: null }),
+        createdAt: now,
+        updatedAt: now,
+      })
+      .onConflictDoUpdate({
+        target: roomMemoryAttributions.memoryId,
+        set: {
+          roomId: resolved,
+          sourceKind: "user",
+          sourceId: null,
+          confidence: "explicit",
+          ...(snapshotColumns ?? {}),
+          updatedAt: now,
+        },
+      })
+      .run();
+    return { memoryId, roomId: resolved };
+  }
+
+  /**
+   * Room 绑定记忆清单（注入数据源）：按 memoryUpdatedAt 倒序，跳过无快照行，
+   * 预算裁剪（20 条 / 单条 500 字 / 总量 4000 字）；Room 不可解析返回空。
+   */
+  async listRoomMemories(roomId: string): Promise<RoomMemorySnapshot[]> {
+    if (!this.db || !this.roomRegistry) return [];
+    const resolved = this.roomRegistry.resolveRoomId(roomId);
+    if (!resolved) return [];
+    const rows = this.db
+      .select({
+        memoryId: roomMemoryAttributions.memoryId,
+        type: roomMemoryAttributions.memoryType,
+        content: roomMemoryAttributions.content,
+        memoryUpdatedAt: roomMemoryAttributions.memoryUpdatedAt,
+      })
+      .from(roomMemoryAttributions)
+      .where(eq(roomMemoryAttributions.roomId, resolved))
+      .all()
+      .filter((row): row is { memoryId: string; type: string; content: string; memoryUpdatedAt: string } =>
+        Boolean(row.content))
+      .sort((a, b) => (a.memoryUpdatedAt < b.memoryUpdatedAt ? 1 : -1));
+    const items: RoomMemorySnapshot[] = [];
+    let total = 0;
+    for (const row of rows) {
+      if (items.length >= ROOM_MEMORY_MAX_ITEMS || total >= ROOM_MEMORY_TOTAL_MAX_CHARS) break;
+      const content = row.content.length > ROOM_MEMORY_ITEM_MAX_CHARS
+        ? `${row.content.slice(0, ROOM_MEMORY_ITEM_MAX_CHARS)}…`
+        : row.content;
+      items.push({
+        memoryId: row.memoryId,
+        type: row.type ?? "",
+        content,
+        updatedAt: row.memoryUpdatedAt,
+      });
+      total += content.length;
+    }
+    return items;
+  }
+
+  /**
+   * Room 绑定记忆检索（memory_search 的 room_id 过滤）：在 listRoomMemories 上做
+   * 本地词法过滤（query 切小写词元，AND 子串匹配）。绑定集是用户甄选的小集合，
+   * 无需向量检索；Room 不可解析或无匹配返回空。
+   */
+  async searchRoomMemories(roomId: string, query: string, limit: number): Promise<RoomMemorySnapshot[]> {
+    const tokens = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    if (tokens.length === 0) return [];
+    const items = await this.listRoomMemories(roomId);
+    return items
+      .filter((item) => {
+        const haystack = item.content.toLowerCase();
+        return tokens.every((token) => haystack.includes(token));
+      })
+      .slice(0, limit);
+  }
+
+  /** 落合并链终点（与 assignAtomicRoom 同策略）；未装配 registry 返回 null。供推导 worker 使用。 */
+  resolveRoom(roomId: string): string | null {
+    return this.roomRegistry?.resolveRoomId(roomId) ?? null;
+  }
+
+  /**
+   * 推导 worker 的落库（confidence=derived）：sourceKind=conversation、sourceId=来源会话 id、
+   * 快照三列取列表项。onConflictDoNothing——与并发手动绑定竞态时 explicit 胜。
+   */
+  insertDerivedAttribution(
+    item: Pick<MemoryAtomicDto, "id" | "type" | "content" | "updatedAt">,
+    sessionId: string,
+    roomId: string,
+  ): void {
+    if (!this.db) return;
+    const now = new Date();
+    this.db
+      .insert(roomMemoryAttributions)
+      .values({
+        id: randomUUID(),
+        roomId,
+        memoryId: item.id,
+        sourceKind: "conversation",
+        sourceId: sessionId,
+        confidence: "derived",
+        content: item.content,
+        memoryType: item.type,
+        memoryUpdatedAt: item.updatedAt,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .onConflictDoNothing({ target: roomMemoryAttributions.memoryId })
+      .run();
   }
 
   async listScenarios(pathPrefix?: string): Promise<{ entries: MemoryScenarioEntryDto[]; total: number }> {
@@ -733,11 +970,40 @@ export class MemoryService {
   async atomicProvenance(memoryId: string): Promise<MemoryAtomicProvenanceDto> {
     const client = this.require();
     const provenance = await this.call(() => client.atomicProvenance(memoryId));
+    const [room] = await this.attachRoom([{ id: provenance.memory_id }]);
+    return this.mapProvenanceDto(provenance, room);
+  }
+
+  /**
+   * 404-safe 溯源（推导 worker 用）：记忆不存在（MemoryCore http 404）返回 null 而非 502，
+   * 其余错误照常映射。直调 client 模式与 assignAtomicRoom 的存在性校验一致。
+   */
+  async atomicProvenanceOrNull(memoryId: string): Promise<MemoryAtomicProvenanceDto | null> {
+    const client = this.require();
+    let provenance;
+    try {
+      provenance = await client.atomicProvenance(memoryId);
+    } catch (error) {
+      if (error instanceof MemoryCoreError) {
+        if (error.kind === "http" && error.status === 404) return null;
+        this.mapFailure(error);
+      }
+      throw error;
+    }
+    const [room] = await this.attachRoom([{ id: provenance.memory_id }]);
+    return this.mapProvenanceDto(provenance, room);
+  }
+
+  private mapProvenanceDto(
+    provenance: Awaited<ReturnType<MemoryCoreClient["atomicProvenance"]>>,
+    room: { roomId: string | null; roomTitle: string | null } | undefined,
+  ): MemoryAtomicProvenanceDto {
     return {
       memoryId: provenance.memory_id,
       type: provenance.type,
       content: provenance.content,
       kind: provenance.kind,
+      room: { roomId: room?.roomId ?? null, roomTitle: room?.roomTitle ?? null },
       session: provenance.session
         ? {
           sessionId: provenance.session.session_id ?? null,
@@ -1148,6 +1414,41 @@ export class MemoryService {
       capturedAt: record.capturedAt,
       accepted: true,
     };
+  }
+
+  /**
+   * 批量附加 Room 归属：查 room_memory_attributions + context_rooms，拼 roomId/roomTitle。
+   * Room 仅在 active 且未软删时给出标题（归属行保留，恢复 Room 即恢复展示）；
+   * 无 db（测试/降级装配）时统一返回 null/null，不影响记忆读取。
+   */
+  private async attachRoom<T extends { id: string }>(
+    items: T[],
+  ): Promise<Array<T & { roomId: string | null; roomTitle: string | null }>> {
+    if (!this.db || items.length === 0) {
+      return items.map((item) => ({ ...item, roomId: null, roomTitle: null }));
+    }
+    const memoryIds = items.map((item) => item.id);
+    const attributions = this.db
+      .select({ memoryId: roomMemoryAttributions.memoryId, roomId: roomMemoryAttributions.roomId })
+      .from(roomMemoryAttributions)
+      .where(inArray(roomMemoryAttributions.memoryId, memoryIds))
+      .all();
+    const roomIds = [...new Set(attributions.map((row) => row.roomId))];
+    const rooms = roomIds.length > 0
+      ? this.db
+        .select({ id: contextRooms.id, title: contextRooms.title, lifecycle: contextRooms.lifecycle, deletedAt: contextRooms.deletedAt })
+        .from(contextRooms)
+        .where(inArray(contextRooms.id, roomIds))
+        .all()
+      : [];
+    const roomById = new Map(rooms.map((room) => [room.id, room]));
+    const roomIdByMemory = new Map(attributions.map((row) => [row.memoryId, row.roomId]));
+    return items.map((item) => {
+      const roomId = roomIdByMemory.get(item.id) ?? null;
+      const room = roomId ? roomById.get(roomId) : undefined;
+      const available = room ? room.deletedAt === null && room.lifecycle === "active" : false;
+      return { ...item, roomId, roomTitle: available && room ? room.title : null };
+    });
   }
 
   private require(): MemoryCoreClient {

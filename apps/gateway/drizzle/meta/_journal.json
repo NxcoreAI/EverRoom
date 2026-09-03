@@ -351,6 +351,27 @@
       "when": 1788360000000,
       "tag": "0052_writing_style_insights",
       "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "6",
+      "when": 1788532800000,
+      "tag": "0053_room_memory_snapshots",
+      "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "6",
+      "when": 1788619200000,
+      "tag": "0054_document_import_export",
+      "breakpoints": true
+    },
+    {
+      "idx": 55,
+      "version": "6",
+      "when": 1788705600000,
+      "tag": "0055_room_memory_suppressions",
+      "breakpoints": true
     }
   ]
 }

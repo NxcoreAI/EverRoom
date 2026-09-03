@@ -3,6 +3,7 @@ import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type R
 
 import { AgentExecutionTimeline } from './AgentExecutionTimeline'
 import { AgentShellApproval } from './AgentShellApproval'
+import { AgentAuthChallengeCard } from './AgentAuthChallengeCard'
 import type { PendingShellApproval } from './agentShellApprovals'
 import type { AgentRunActivity } from './agentRunActivity'
 import { parseAgentDocumentIntentResult, type AgentDocumentIntentResult } from './agentDocumentIntent'
@@ -764,6 +765,7 @@ export function AgentChatView({
             resolvingApprovalIds={resolvingApprovalIds}
             onResolve={onResolveApproval}
           />
+          <AgentAuthChallengeCard />
           {pendingDocumentIntent ? (
             <DocumentIntentClarification
               busy={loading || submitting || activeRunPending}
