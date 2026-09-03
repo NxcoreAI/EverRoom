@@ -35,15 +35,25 @@ import everroomFullLogo from '../../renderer/src/assets/everroom-full.png'
 const REFRESH_TOKEN_KEY = 'everroom:saas:refresh-token'
 const DEVICE_KEY_KEY = 'everroom:saas:device-key'
 
-// 读取硬件级设备标识（IOPlatformUUID）。它由主板固件决定，重装应用、清空
-// 应用数据、系统大版本升级都不会变化，只有更换整机才会变。
+// 读取硬件级设备标识：macOS 用 IOPlatformUUID（主板固件决定），Windows 用
+// 注册表 MachineGuid（系统安装时生成）。两者都由系统保证：重装应用、清空
+// 应用数据、系统大版本升级都不会变化，只有更换整机/重装系统才会变。
 let cachedHardwareKey: string | null | undefined
 function hardwareDeviceKey(): string | null {
   if (cachedHardwareKey !== undefined) return cachedHardwareKey
   try {
-    const output = execSync('ioreg -d 2 -l', { encoding: 'utf8', timeout: 5_000 })
-    const match = output.match(/"IOPlatformUUID" = "([0-9A-Fa-f-]+)"/)
-    cachedHardwareKey = match ? `hw-${match[1].toLowerCase()}` : null
+    if (process.platform === 'win32') {
+      const output = execSync(
+        'reg query "HKLM\\SOFTWARE\\Microsoft\\Cryptography" /v MachineGuid',
+        { encoding: 'utf8', timeout: 5_000 },
+      )
+      const match = output.match(/MachineGuid\s+REG_SZ\s+([0-9A-Fa-f-]+)/)
+      cachedHardwareKey = match ? `win-${match[1].toLowerCase()}` : null
+    } else {
+      const output = execSync('ioreg -d 2 -l', { encoding: 'utf8', timeout: 5_000 })
+      const match = output.match(/"IOPlatformUUID" = "([0-9A-Fa-f-]+)"/)
+      cachedHardwareKey = match ? `mac-${match[1].toLowerCase()}` : null
+    }
   } catch {
     cachedHardwareKey = null
   }
@@ -1380,19 +1390,21 @@ export class SaasClient {
   }
 
   private async deviceKey(): Promise<string> {
-    // 设备标识锚定到硬件（IOPlatformUUID）：重装应用、清空应用数据后仍是同一台设备，
-    // 避免同一台机器在服务端裂变成多行设备记录。凭据存储里的旧随机 key 会被
-    // 硬件锚定值取代（下一次登录 UPSERT 到新 key，旧设备行自然沉寂）。
+    // 设备标识锚定到硬件（macOS: IOPlatformUUID / Windows: MachineGuid）：
+    // 重装应用、清空应用数据后仍是同一台设备，避免同一台机器在服务端裂变
+    // 成多行设备记录。凭据存储里的旧随机 key 会被硬件锚定值取代（下一次
+    // 登录 UPSERT 到新 key，旧设备行由服务端清理任务归档）。
     const stable = hardwareDeviceKey()
     if (stable) {
       const existing = await this.credentials.getPlainText(DEVICE_KEY_KEY)
       if (existing !== stable) await this.credentials.setPlainText(DEVICE_KEY_KEY, stable)
       return stable
     }
-    // 兜底：读不到硬件标识（异常系统）时退回随机 key。
+    // 兜底：读不到硬件标识（异常系统）时退回随机 key，前缀跟随当前平台。
+    const prefix = process.platform === 'win32' ? 'win-' : 'mac-'
     const existing = await this.credentials.getPlainText(DEVICE_KEY_KEY)
-    if (existing && existing.startsWith('hw-')) return existing
-    const value = `hw-${randomUUID()}`
+    if (existing && existing.startsWith(prefix)) return existing
+    const value = `${prefix}${randomUUID()}`
     await this.credentials.setPlainText(DEVICE_KEY_KEY, value)
     return value
   }

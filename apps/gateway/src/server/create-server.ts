@@ -114,6 +114,7 @@ import { ConnectorManager } from "@nxcore/connectors-module/manager.js";
 import { ConnectorDomainProjection, backfillDomainProjection, rewriteConnectorRefIdentities } from "@nxcore/connectors-module/domain-projection.js";
 import { SYNC_PROVIDERS, assertSyncProvidersValid } from "@nxcore/connectors-module/sync-providers/index.js";
 import { SyncEngine } from "@nxcore/connectors-module/sync-engine.js";
+import { OpenConnectorSyncExecutor } from "@nxcore/connectors-module/open-connector-sync-executor.js";
 import { NangoExecutor } from "@nxcore/connectors-module/nango-executor.js";
 import { NangoAuthorizationService } from "@nxcore/connectors-module/nango-authorization.js";
 import { bootstrapNangoWhenReady } from "@nxcore/connectors-module/nango-bootstrap.js";
@@ -360,9 +361,14 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       });
   }
   const nangoConnectorDb = createConnectorDatabase(nangoConnectorConfig.enabled ? nangoConnectorConfig.databasePath : ":memory:");
-  const nangoExecutor = nangoConnectorConfig.enabled
-    ? new NangoExecutor(nangoConnectorConfig.nangoUrl, resolveNangoSecret)
+  // Seam 1（连接器统一 P1）：链路A取数传输切 OpenConnector action；
+  // Nango 保留回退（P3 整体删除）。
+  const ooSyncExecutor = config.cliConnector
+    ? new OpenConnectorSyncExecutor({ config: config.cliConnector, logger: app.log })
     : null;
+  const nangoExecutor = ooSyncExecutor ?? (nangoConnectorConfig.enabled
+    ? new NangoExecutor(nangoConnectorConfig.nangoUrl, resolveNangoSecret)
+    : null);
   // 阶段三：拉取引擎（nango 代理 + direct 直连双路）；direct 凭据取连接的 credentialsRef。
   const nangoSyncEngine = new SyncEngine(
     nangoExecutor,
@@ -375,7 +381,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     nangoSyncEngine,
   );
   // Nango 连接器的 agent 工具（连接发现 / 触发同步 / 只读代理请求）。
-  const nangoAgentTools = nangoExecutor
+  const nangoAgentTools = nangoExecutor instanceof NangoExecutor
     ? { manager: nangoConnectorManager, executor: nangoExecutor }
     : null;
   const nangoConnectorAuthorization = nangoConnectorConfig.enabled && "providerConfigKeys" in nangoConnectorConfig

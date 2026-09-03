@@ -13,7 +13,7 @@
     "build": "tsup && node scripts/copy-migrations.mjs",
     "start": "node dist/serve.js",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run --exclude tests/memory-doc-pipeline.test.ts && vitest run tests/memory-doc-pipeline.test.ts",
+    "test": "vitest run --exclude tests/memory-doc-pipeline.test.ts && vitest run tests/memory-doc-pipeline.test.ts && vitest run --dir ../../submodules/everroom-connectors/gateway-module",
     "test:watch": "vitest",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/bin/migrate.ts"
