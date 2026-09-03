@@ -131,22 +131,48 @@ function prepareMacElectron() {
 </dict>
 </plist>
 `)
-  // Profile 必须嵌入 app 才能让 aps-environment entitlement 通过 AMFI 校验。
-  // EVERROOM_MAC_DEV_PROFILE 指向 .provisionprofile；默认找 Xcode profile 目录里最新的。
-  const profileSource = process.env.EVERROOM_MAC_DEV_PROFILE ?? findNewestProfile(join(process.env.HOME ?? '', 'Library/Developer/Xcode/UserData/Provisioning/Profiles'))
-  if (profileSource) {
-    copyFileSync(profileSource, join(brandedApp, 'Contents/embedded.provisionprofile'))
-    console.log(`[desktop] embedded provisioning profile: ${profileSource}`)
+  // macOS 26 (Tahoe)：无 embedded provisioning profile 时携带 aps-environment/
+  // application-identifier/keychain-access-groups 这组 entitlements 会导致 GPU
+  // helper 进程被系统 SIGKILL（签名验证失败）。因此按 profile 有无分级：
+  // 有 profile → 全套（APNs 推送可用）；无 profile → 仅 cs.* 运行时三项。
+  const runtimeEntitlements = join(cacheDirectory, 'dev-runtime-entitlements.plist')
+  writeFileSync(runtimeEntitlements, `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.cs.allow-jit</key><true/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key><true/>
+  <key>com.apple.security.cs.disable-library-validation</key><true/>
+</dict>
+</plist>
+`)
+  // macOS 26 (Tahoe)：开发证书 + provisioning 类 entitlements（aps-environment/
+  // application-identifier/keychain-access-groups，即使 embedded profile 完全匹配）
+  // 会导致 GPU helper 进程被系统 SIGKILL（GPU process isn't usable）。
+  // 实验结论（2026-09-03）：同二进制 adhoc 签名或仅 cs.* entitlements 均正常。
+  // 因此 dev 默认只用 cs.* 运行时三项；需要调试 APNs 推送时显式设
+  // EVERROOM_MAC_DEV_PUSH=1 恢复全套（代价：本机 GPU 可能不可用）。
+  const wantDevPush = process.env.EVERROOM_MAC_DEV_PUSH === '1'
+  let effectiveEntitlements = runtimeEntitlements
+  if (wantDevPush) {
+    const profileSource = process.env.EVERROOM_MAC_DEV_PROFILE ?? findNewestProfile(join(process.env.HOME ?? '', 'Library/Developer/Xcode/UserData/Provisioning/Profiles'))
+    if (profileSource) {
+      copyFileSync(profileSource, join(brandedApp, 'Contents/embedded.provisionprofile'))
+      effectiveEntitlements = devEntitlements
+      console.log(`[desktop] embedded provisioning profile: ${profileSource}`)
+    } else {
+      console.warn('[desktop] EVERROOM_MAC_DEV_PUSH=1 but no provisioning profile found; falling back to runtime-only entitlements.')
+    }
   } else {
-    console.warn('[desktop] no macOS development provisioning profile found; APNs entitlement may be rejected.')
+    console.log('[desktop] dev entitlements: runtime-only (set EVERROOM_MAC_DEV_PUSH=1 to enable APNs debugging; may trigger macOS 26 GPU kills)')
   }
   const devIdentity = process.env.EVERROOM_MAC_SIGN_IDENTITY ?? findDevelopmentIdentity()
   let signing
   if (devIdentity) {
     console.log(`[desktop] signing dev Electron with: ${devIdentity}`)
-    signing = spawnSync('/usr/bin/codesign', ['--force', '--deep', '--timestamp=none', '--entitlements', devEntitlements, '--sign', devIdentity, brandedApp], { stdio: 'inherit' })
+    signing = spawnSync('/usr/bin/codesign', ['--force', '--deep', '--timestamp=none', '--entitlements', effectiveEntitlements, '--sign', devIdentity, brandedApp], { stdio: 'inherit' })
     if (signing.status !== 0) {
-      console.warn(`[desktop] entitlements signing failed (exit ${signing.status}); retrying without entitlements. APNs push will be unavailable until a provisioning profile is provided.`)
+      console.warn(`[desktop] entitlements signing failed (exit ${signing.status}); retrying without entitlements.`)
       signing = spawnSync('/usr/bin/codesign', ['--force', '--deep', '--sign', devIdentity, brandedApp], { stdio: 'inherit' })
     }
   } else {
