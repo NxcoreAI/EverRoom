@@ -12,12 +12,13 @@ const desktopDirectory = dirname(import.meta.dirname)
 const buildDirectory = join(desktopDirectory, 'build')
 const targetDirectory = join(buildDirectory, 'open-connector')
 const markerPath = join(targetDirectory, '.everroom-runtime.json')
+const lockfilePath = join(import.meta.dirname, 'open-connector-package-lock.json')
 const everroomLogoPath = join(desktopDirectory, 'src', 'renderer', 'src', 'assets', 'nxcore-logo.svg')
 const everroomIconPath = join(desktopDirectory, 'build', 'icon.png')
 
 const sourceManifest = JSON.parse(await readFile(sourcePackagePath, 'utf8'))
 const expectedMarker = JSON.stringify({
-  runtimeFormat: 1,
+  runtimeFormat: 2,
   brandingVersion: 2,
   revision: OPEN_CONNECTOR_REVISION,
   version: sourceManifest.version,
@@ -40,7 +41,6 @@ await rm(stagingDirectory, { recursive: true, force: true })
 
 for (const entry of [
   'package.json',
-  'package-lock.json',
   'tsconfig.json',
   'LICENSE.txt',
   'NOTICE.md',
@@ -54,6 +54,7 @@ for (const entry of [
     dereference: true,
   })
 }
+await cp(lockfilePath, join(stagingDirectory, 'package-lock.json'))
 
 try {
   // npm ci + lockfile: 浮动 install 会解析到 registry 最新版本，
