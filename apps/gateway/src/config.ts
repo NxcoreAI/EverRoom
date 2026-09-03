@@ -493,8 +493,11 @@ function validateConnectorEndpoint(name: string, value: string): void {
     throw new Error(`Invalid ${name}: expected an absolute HTTP(S) URL`);
   }
   const loopback = url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '::1';
-  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && loopback)) {
-    throw new Error(`Invalid ${name}: plain HTTP is only allowed for loopback addresses`);
+  // 私有网段（10.x/172.16-31.x/192.168.x/*.local）放行明文 HTTP：SaaS 转发层的
+  // dev 内网地址（NXCORE_SAAS_API_URL）经 connector-mode 注入到本配置。
+  const privateNetwork = /^(?:10\.|172\.(?:1[6-9]|2\d|3[01])\.|192\.168\.|.+\.local$)/.test(url.hostname);
+  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && (loopback || privateNetwork))) {
+    throw new Error(`Invalid ${name}: plain HTTP is only allowed for loopback or private network addresses`);
   }
   if (url.username || url.password || url.search || url.hash) {
     throw new Error(`Invalid ${name}: credentials, query, and fragment are not allowed`);
