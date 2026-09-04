@@ -66,8 +66,9 @@ import { DiaryGatewayBridge } from './gateway/diary-gateway-bridge'
 import { WritingStyleGatewayBridge } from './gateway/writing-style-gateway-bridge'
 import { AgentSchedulerGatewayBridge } from './gateway/agent-scheduler-gateway-bridge'
 import { ConnectorGatewayBridge } from './gateway/connector-gateway-bridge'
+import { SaasConnectorBridge } from './gateway/saas-connector-bridge'
 import { RecordingStore } from './recording/recording-store'
-import { isSaasRateLimitError, OIDC_CALLBACK_URL, SaasClient, SaasRequestError } from './cloud/saas-client'
+import { isSaasRateLimitError, OIDC_CALLBACK_URL, SaasClient, SaasRequestError, type ConnectorOoSession } from './cloud/saas-client'
 import { AgentStatusReporter } from './cloud/agent-status-reporter'
 import { SessionLeaseKeeper } from './cloud/session-lease-keeper'
 import { RemoteAgentCommandClient } from './cloud/remote-agent-command-client'
@@ -102,7 +103,7 @@ import {
   DOCUMENT_ASSET_SCHEME,
 } from './document-asset-store'
 import { OoCliBridge } from '@nxcore/desktop-connector-host/oo-cli-bridge'
-import { createConnectorModeStore, defaultSaasApiBaseUrl } from '@nxcore/desktop-connector-host/connector-mode-store'
+import { createConnectorModeStore } from '@nxcore/desktop-connector-host/connector-mode-store'
 import {
   OpenConnectorSupervisor,
   type OpenConnectorConnection,
@@ -710,6 +711,14 @@ let ooCliBridge: OoCliBridge | null = null
 let openConnectorSupervisor: OpenConnectorSupervisor | null = null
 let connectorModeStoreRef: ReturnType<typeof createConnectorModeStore> | null = null
 const activeConnectorModeStore = () => connectorModeStoreRef
+// SaaS 连接层（connector-mode = 'saas'）：oo 会话由登录后向 SaaS 换取
+// （POST /app/connectors/oo/token → {baseUrl, token}），客户端直连 oo 数据面。
+let connectorOoGatewayEnv: Record<string, string> = {}
+let connectorOoAppliedEnvJson = '{}'
+let connectorOoSessionCache: { userId: string; session: ConnectorOoSession | null } | null = null
+let connectorOoUserId: string | null = null
+let saasConnectorBridge: SaasConnectorBridge | null = null
+let connectorReconcileTimer: NodeJS.Timeout | null = null
 let openConnectorConsoleWindow: BrowserWindow | null = null
 let memoryCoreSupervisor: MemoryCoreSupervisor | null = null
 let knowledgeServiceSupervisor: KnowledgeServiceSupervisor | null = null
@@ -1522,6 +1531,115 @@ function attachOpenConnectorBridge(bridge: OoCliBridge): void {
   })
 }
 
+// ---- SaaS 连接层（connector-mode = 'saas'）----
+// 登录 EverRoom 后从 SaaS 换取 oo 用户会话（SaaS 代发并登记用户 runtime token），
+// 桌面与 gateway 均持该 token 直连 oo 数据面；连接层不再经 SaaS 转发。
+let connectorOoLoginSeen = false
+
+/** 按 userId 去重换取 oo 会话；成功才缓存，失败返回 null 并由下次账号事件重试。 */
+async function fetchConnectorOoSession(userId: string): Promise<ConnectorOoSession | null> {
+  if (connectorOoSessionCache?.userId === userId) return connectorOoSessionCache.session
+  const session = await saasClient?.connectorOoSession().catch((error: unknown) => {
+    console.warn('[connector-mode] obtaining oo session from EverRoomSass failed:', error instanceof Error ? error.message : error)
+    return null
+  }) ?? null
+  connectorOoSessionCache = session ? { userId, session } : null
+  return session
+}
+
+/**
+ * 应用 oo 会话：重建直连 oo 的 bridge，并让 gateway env 跟随。
+ * gateway 已在运行且 env 变化时重启之（各 bridge 经 ensureConnection/
+ * recoverConnection 自愈，与 dev 热重载同路径）；启动期调用时 gateway 未起，
+ * env 在首次 spawn 生效，无需重启。
+ */
+async function applyConnectorOoSession(session: ConnectorOoSession | null): Promise<void> {
+  ooCliBridge?.shutdown()
+  ooCliBridge = session
+    ? createOoCliBridge({ baseUrl: session.baseUrl, runtimeToken: session.token, managed: false, pid: null, version: null })
+    : null
+  if (ooCliBridge) attachOpenConnectorBridge(ooCliBridge)
+  if (!session) connectorOoSessionCache = null
+  connectorOoGatewayEnv = session
+    ? {
+      NXCORE_CLI_CONNECTOR_URL: session.baseUrl,
+      NXCORE_CLI_CONNECTOR_RUNTIME_TOKEN: session.token,
+      NXCORE_CLI_CONNECTOR_MANAGED: 'false',
+    }
+    : {}
+  const nextJson = JSON.stringify(connectorOoGatewayEnv)
+  if (nextJson === connectorOoAppliedEnvJson) return
+  connectorOoAppliedEnvJson = nextJson
+  const supervisor = gatewaySupervisor
+  if (!supervisor?.isRunning()) {
+    // 启动期：env 随首次 spawn 生效，gateway 就绪后由 scheduleSaasConnectorReconcile 对账。
+    scheduleSaasConnectorReconcile(20_000)
+    return
+  }
+  try {
+    await supervisor.shutdown()
+    const gateway = await supervisor.start()
+    console.info(`[connector-mode] gateway restarted to apply oo session env (gateway at ${gateway.baseUrl})`)
+    scheduleSaasConnectorReconcile()
+  } catch (error) {
+    console.error('[connector-mode] gateway restart for oo session env failed:', error)
+  }
+}
+
+/**
+ * 连接注册对账：oo 租户里已有、而 gateway 注册表（连接器列表/scope/同步的
+ * 数据源）缺失的连接，补调 register。覆盖两类缺口——重启前完成的授权
+ * （pending 表不跨重启）与注册时 gateway 暂不可达的授权。只对注册表认识的
+ * provider 补注册（oo 的公共 no_auth 应用不在其中，不产生噪音连接）。
+ */
+async function reconcileSaasConnectorConnections(attempt = 1): Promise<void> {
+  const bridge = saasConnectorBridge
+  const session = connectorOoSessionCache?.session
+  if (!bridge || !session) return
+  try {
+    const [status, providersResponse, appsResponse] = await Promise.all([
+      bridge.status(),
+      bridge.providers(),
+      fetch(`${session.baseUrl}/v1/apps`, {
+        headers: { authorization: `Bearer ${session.token}` },
+        signal: AbortSignal.timeout(5_000),
+      })
+        .then((response) => (response.ok ? response.json() as Promise<{ data?: unknown[] } | null> : null))
+        .catch(() => null),
+    ])
+    if (!Array.isArray(appsResponse?.data)) return
+    const knownProviders = new Set(providersResponse.providers.map((item) => item.provider))
+    const registered = new Set(status.connections.map((item) => item.provider))
+    for (const value of appsResponse.data) {
+      const account = (value ?? {}) as { service?: unknown; alias?: unknown; connectionName?: unknown; status?: unknown }
+      const service = typeof account.service === 'string' ? account.service : ''
+      const connectionName = typeof account.alias === 'string' ? account.alias
+        : typeof account.connectionName === 'string' ? account.connectionName : ''
+      const activeStatus = typeof account.status === 'string' ? account.status.toLowerCase() : ''
+      if (!service || !connectionName || !knownProviders.has(service)) continue
+      if (activeStatus && !['active', 'connected', 'ready'].includes(activeStatus)) continue
+      if (registered.has(service)) continue
+      await bridge.registerConnection({ provider: service, service, connectionName }).catch((error: unknown) => {
+        console.warn('[connector-mode] connector reconcile register failed:', error instanceof Error ? error.message : error)
+      })
+    }
+  } catch (error) {
+    console.warn('[connector-mode] connector reconcile failed:', error instanceof Error ? error.message : error)
+    // gateway 刚拉起时可能尚未就绪：退避重试，最多三轮。
+    if (attempt < 3) scheduleSaasConnectorReconcile(30_000, attempt + 1)
+  }
+}
+
+function scheduleSaasConnectorReconcile(delayMs = 2_000, attempt = 1): void {
+  // saasConnectorBridge 仅在 saas 模式下创建，作为模式判据。
+  if (!saasConnectorBridge) return
+  if (connectorReconcileTimer) clearTimeout(connectorReconcileTimer)
+  connectorReconcileTimer = setTimeout(() => {
+    connectorReconcileTimer = null
+    void reconcileSaasConnectorConnections(attempt)
+  }, delayMs)
+}
+
 function openConnectorExternalUrl(value: string): void {
   try {
     const url = new URL(value)
@@ -1591,8 +1709,28 @@ function registerOpenConnectorHandlers(): void {
     if (!next) throw new Error('invalid connector mode')
     return store.write(next)
   })
-  handle(OPEN_CONNECTOR_CHANNELS.status, () => {
+  handle(OPEN_CONNECTOR_CHANNELS.status, async () => {
     if (ooCliBridge) return ooCliBridge.status()
+    const mode = (await activeConnectorModeStore()?.read())?.mode ?? 'saas'
+    if (mode === 'saas') {
+      // SaaS 连接层尚未拿到 oo 会话（未登录 / SaaS 暂不可达）：
+      // 给出可读状态，避免永远停在 'starting' 的假态。
+      return {
+        baseUrl: connectorOoSessionCache?.session?.baseUrl ?? '',
+        managed: false,
+        gatewayPid: null,
+        gatewayVersion: null,
+        gatewayState: 'unreachable' as const,
+        gatewayMessage: connectorOoLoginSeen
+          ? '云端连接层暂不可用，请稍后重试。'
+          : '登录 EverRoom 后将自动连接云端连接层。',
+        runtimeTokenConfigured: false,
+        cliState: 'checking' as const,
+        cliVersion: null,
+        cliPath: resolveOoCliExecutable(),
+        cliMessage: null,
+      }
+    }
     const status = openConnectorSupervisor?.getStatus()
     return {
       baseUrl: status?.baseUrl ?? '',
@@ -2816,6 +2954,13 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   registerBrowserExtensionHandlers(browserExtensionService)
   registerOpenConnectorHandlers()
   createWindow()
+  // SaaS 客户端先于连接器栈构造：saas 连接层在 gateway 启动前就需要登录态换 oo 会话。
+  const credentials = new CredentialStore(join(app.getPath('userData'), 'credentials.json'))
+  await credentials.initialize()
+  const recordingsDirectory=join(dataDirectory,'recordings')
+  recordingStore = new RecordingStore(recordingsDirectory)
+  saasClient=new SaasClient(credentials,app,recordingsDirectory,(url)=>shell.openExternal(url))
+  void saasClient.initialize()
   // P2-5：desktopPageMode sources/connectors 分叉消除——连接器栈在任意页面模式可用
   const connectorPageEnabled = true
   const connectorModeStore = connectorModeStoreRef ?? createConnectorModeStore(dataDirectory)
@@ -2835,8 +2980,17 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       }
     }
     if (connectorPageEnabled && connectorModeState.mode === 'saas') {
-      // SaaS 连接层：gateway env 由下方工厂注入转发层 URL（鉴权由 SaaS 转发层终结）
-      console.info('[connector-mode] saas mode: gateway connectors proxied via EverRoomSass')
+      // SaaS 连接层：已登录则先向 SaaS 换 oo 会话（bridge 与 gateway env 工厂都用它）；
+      // 未登录/暂不可达时不阻断启动，由账号事件钩子补拉。
+      await saasClient.initialize()
+      const account = await saasClient.status().catch(() => null)
+      connectorOoLoginSeen = Boolean(account?.authenticated)
+      connectorOoUserId = account?.authenticated ? account.user?.id ?? null : null
+      await applyConnectorOoSession(
+        account?.authenticated && account.user?.id
+          ? await fetchConnectorOoSession(account.user.id)
+          : null,
+      )
     }
     // 先拉起/探测 MemoryCore(独立可复用),再把连接信息注入 gateway 的记忆配置,
     // 让队友拉代码后无需手工部署即可使用记忆功能。
@@ -2894,9 +3048,14 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
           }
           : {}),
         ...(ooCliBridge ? ooCliBridge.environment() : {}),
-        ...connectorModeStore.gatewayEnv(connectorModeState, defaultSaasApiBaseUrl()),
-        NXCORE_CLI_CONNECTOR_AGENT_MODE: ooCliBridge ? 'local' : 'direct',
-        NXCORE_CLI_CONNECTOR_SYNC_ENABLED: ooCliBridge ? 'true' : 'false',
+        ...connectorOoGatewayEnv,
+        // agent 工具与同步 worker 按连接层模式分流：local=本地同步库工具+同步 worker；
+        // saas=直连 oo 的在线工具（cliConnector 即 oo 会话），与原 saas 转发行为对齐。
+        NXCORE_CLI_CONNECTOR_AGENT_MODE: connectorModeState.mode === 'local' ? 'local' : 'direct',
+        // 同步 worker 两种模式都开：saas 模式下 cliConnector 即 oo 用户会话，
+        // worker 负责账号发现（/v1/apps）并自动建同步任务；关掉则数据永不落地。
+        NXCORE_CLI_CONNECTOR_SYNC_ENABLED: 'true',
+        NXCORE_CLI_CONNECTOR_SYNC_INTERVAL_MS: connectorModeState.mode === 'saas' ? '30000' : '300000',
         ...(memoryCore
           ? {
             NXCORE_MEMORY_ENABLED: 'true',
@@ -2962,7 +3121,28 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     realityGatewayBridge = new RealityGatewayBridge(gatewaySupervisor)
     registerRealityHandlers(realityGatewayBridge)
     connectorGatewayBridge = new ConnectorGatewayBridge(gatewaySupervisor, (url) => shell.openExternal(url))
-    registerConnectorHandlers(connectorGatewayBridge)
+    // saas 连接层：授权面走 SaaS 代发起 + oo 数据面探测（客户端不持 oo admin
+    // token，gateway 无法代发起）；其余数据面通道仍走 gateway。local 模式不变。
+    saasConnectorBridge = new SaasConnectorBridge(gatewaySupervisor, (url) => shell.openExternal(url), {
+      startAuthorization: (service) => {
+        const client = saasClient
+        if (!client) return Promise.reject(new Error('SaaS 客户端尚未就绪。'))
+        // 预热 oo 会话：启动期换会话失败（如 SaaS 短暂不可用）后没有重试时机，
+        // 授权完成前必须把探测会话与 gateway env 补齐。
+        if (connectorOoUserId && !connectorOoSessionCache) {
+          void fetchConnectorOoSession(connectorOoUserId)
+            .then((session) => applyConnectorOoSession(session))
+            .catch(() => undefined)
+        }
+        return client.startConnectorAuthorization(service)
+      },
+      ooSession: () => {
+        const session = connectorOoSessionCache?.session
+        return session ? { baseUrl: session.baseUrl, token: session.token } : null
+      },
+    })
+    const connectorIpcBridge = connectorModeState.mode === 'saas' ? saasConnectorBridge : connectorGatewayBridge
+    registerConnectorHandlers(connectorIpcBridge)
     // Agent status reporting is attached after the authenticated SaaS client is created below.
     const memoryGatewayBridge = new MemoryGatewayBridge(gatewaySupervisor)
     registerMemoryHandlers(memoryGatewayBridge)
@@ -2987,12 +3167,6 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     })
     registerFilesHandlers(filesGatewayBridge, highRiskImports)
     registerIngestHandlers(new IngestGatewayBridge(gatewaySupervisor))
-    const credentials = new CredentialStore(join(app.getPath('userData'), 'credentials.json'))
-    await credentials.initialize()
-    const recordingsDirectory=join(dataDirectory,'recordings')
-    recordingStore = new RecordingStore(recordingsDirectory)
-    saasClient=new SaasClient(credentials,app,recordingsDirectory,(url)=>shell.openExternal(url))
-    void saasClient.initialize()
     macosPushNotifications = new MacosPushNotificationService(() => saasClient, openAgentNotificationTarget)
     macosPushNotifications.install()
     registerNotificationHandlers(saasClient)
@@ -3092,6 +3266,12 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     for (const url of queuedProtocolUrls.splice(0)) saasClient.handleOidcCallback(url)
     let lastAccountId = initialAccount?.user?.id ?? null
     registerAccountHandlers(saasClient, (account) => {
+      // saas 连接层跟随登录态：登录（或切换账号）后换 oo 会话，登出即拆除。
+      connectorOoLoginSeen = account.authenticated
+      connectorOoUserId = account.authenticated ? account.user?.id ?? null : null
+      void (account.authenticated && account.user?.id
+        ? fetchConnectorOoSession(account.user.id).then((session) => applyConnectorOoSession(session))
+        : applyConnectorOoSession(null))
       if (account.authenticated) {
         void saasClient?.getRuntimeConfig().then(async (config) => {
           const snapshot = await runtimeConfigBridge?.saveSaas(config.config)

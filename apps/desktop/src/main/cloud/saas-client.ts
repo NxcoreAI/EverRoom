@@ -180,6 +180,20 @@ export interface SaasRuntimeConfig {
   config: Record<string, unknown>
 }
 
+/**
+ * SaaS 代发的 oo（OpenConnector 多租户实例）用户会话：登录后经
+ * `POST /app/connectors/oo/token` 换取，之后客户端持 token 直连 oo 数据面
+ * （actions / apps / 连接查询），不再经 SaaS 转发。
+ */
+export interface ConnectorOoSession {
+  /** oo 直连基地址（SaaS CONNECTOR_OO_PUBLIC_BASE_URL 下发）。 */
+  baseUrl: string
+  /** 本用户在 oo 上的租户 id（u + userId 去连字符），信息性。 */
+  tenantId: string
+  /** oo 用户 runtime token（oct_…），租户锁定在该 token 内。 */
+  token: string
+}
+
 export interface KeyringResponse {
   userId: string
   initialized: boolean
@@ -647,6 +661,45 @@ export class SaasClient {
   async getRuntimeConfig(): Promise<SaasRuntimeConfig> {
     await this.initialize()
     return this.request<SaasRuntimeConfig>('/app/runtime-config')
+  }
+
+  /**
+   * 换取 oo 用户会话（SaaS 侧幂等：已登记直接返回，否则代发并登记）。
+   * 未登录时抛错；oo token 与 EverRoom 会话生命周期解耦（持久稳定），无需缓存。
+   */
+  async connectorOoSession(): Promise<ConnectorOoSession> {
+    await this.initialize()
+    const session = await this.request<Partial<ConnectorOoSession>>('/app/connectors/oo/token', { method: 'POST' })
+    if (
+      !session || typeof session !== 'object'
+      || typeof session.baseUrl !== 'string' || !session.baseUrl.trim()
+      || typeof session.token !== 'string' || !session.token.trim()
+    ) {
+      throw new Error('SaaS 返回了无效的 oo 连接会话。')
+    }
+    return {
+      baseUrl: session.baseUrl.trim().replace(/\/+$/, ''),
+      tenantId: typeof session.tenantId === 'string' ? session.tenantId : '',
+      token: session.token,
+    }
+  }
+
+  /**
+   * SaaS 代发起 oo OAuth 授权（oo admin token 由 SaaS 持有，客户端不经手），
+   * 返回 provider 授权页地址；授权回调落在 SaaS 公网回调并回写 oo 用户租户。
+   */
+  async startConnectorAuthorization(service: string): Promise<{ authorizationUrl: string }> {
+    await this.initialize()
+    const result = await this.request<{ authorizationUrl?: unknown }>('/app/connectors/authorizations', {
+      method: 'POST',
+      data: { service },
+    })
+    const authorizationUrl =
+      result && typeof result === 'object' && typeof result.authorizationUrl === 'string'
+        ? result.authorizationUrl.trim()
+        : ''
+    if (!authorizationUrl) throw new Error('SaaS 返回了无效的授权地址。')
+    return { authorizationUrl }
   }
 
   async reportAgentStatus(input: {
