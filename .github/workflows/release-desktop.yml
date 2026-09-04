@@ -132,7 +132,7 @@ jobs:
           printf '%s' "$APPLE_API_KEY_BASE64" | base64 --decode > "$RUNNER_TEMP/AuthKey.p8"
           echo "APPLE_API_KEY=$RUNNER_TEMP/AuthKey.p8" >> "$GITHUB_ENV"
           security cms -D -i apps/desktop/build/embedded.provisionprofile > "$RUNNER_TEMP/everroom-profile.plist"
-          /usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.application-identifier' "$RUNNER_TEMP/everroom-profile.plist" | grep -E '^.+\.com\.nxcore\.ce$'
+          /usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.application-identifier' "$RUNNER_TEMP/everroom-profile.plist" | grep -E '^.+\.ai\.nxcore\.everroom$'
           /usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.developer.aps-environment' "$RUNNER_TEMP/everroom-profile.plist" | grep -Fx production
 
       - name: Build app and bundled runtimes
