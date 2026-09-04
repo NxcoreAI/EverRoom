@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { routeProxyUrlForTest } from "./open-connector-sync-executor.js";
+import { adaptActionOutputForSyncAdapter, routeProxyUrlForTest } from "./open-connector-sync-executor.js";
 
 describe("open-connector-sync-executor URL 路由", () => {
   it("routes gmail REST URLs to actions with translated query params", () => {
@@ -26,7 +26,8 @@ describe("open-connector-sync-executor URL 路由", () => {
     )).toEqual({
       service: "gmail",
       action: "fetch_message_by_message_id",
-      input: { messageId: "abc123", detail: "full" },
+      // oo 的入参属性是 format（schema 禁未知字段，REST 的 detail 会被拒绝）。
+      input: { messageId: "abc123", format: "full" },
     });
 
     expect(routeProxyUrlForTest(
@@ -39,19 +40,20 @@ describe("open-connector-sync-executor URL 路由", () => {
     });
   });
 
-  it("routes notion search and block children", () => {
+  it("routes notion search and block children with oo schema input names", () => {
     expect(routeProxyUrlForTest("https://api.notion.com/v1/search", "POST", { page_size: 100, filter: { property: "object", value: "page" } }))
       .toEqual({
         service: "notion",
         action: "search",
-        input: { page_size: 100, filter: { property: "object", value: "page" } },
+        // oo 的 search 入参是 camelCase 且 query 必填（空串 = Notion 全量搜索）。
+        input: { query: "", pageSize: 100, filter: { property: "object", value: "page" } },
       });
 
     expect(routeProxyUrlForTest("https://api.notion.com/v1/blocks/abc123/children?page_size=100", "GET"))
       .toEqual({
         service: "notion",
         action: "list_block_children",
-        input: { block_id: "abc123", page_size: 100 },
+        input: { blockId: "abc123", pageSize: 100 },
       });
   });
 
@@ -115,5 +117,60 @@ describe("open-connector-sync-executor URL 路由", () => {
   it("returns null for unknown hosts and paths", () => {
     expect(routeProxyUrlForTest("https://example.com/api", "GET")).toBeNull();
     expect(routeProxyUrlForTest("https://gmail.googleapis.com/gmail/v1/users/me/labels", "GET")).toBeNull();
+  });
+});
+
+describe("open-connector-sync-executor 输出翻译回 REST 形状", () => {
+  it("maps oo normalized message back to the Gmail REST resource shape", () => {
+    const adapted = adaptActionOutputForSyncAdapter("gmail", "fetch_message_by_message_id", {
+      messageId: "m1",
+      threadId: "t1",
+      labelIds: ["INBOX", "UNREAD"],
+      subject: "安全提醒",
+      sender: "no-reply@google.com",
+      to: "me@gmail.com",
+      preview: { subject: "安全提醒", body: "snip" },
+      payload: { headers: [{ name: "Subject", value: "安全提醒" }] },
+      messageText: "body",
+      attachmentList: [],
+      messageTimestamp: "2026-09-04T18:20:22.000Z",
+    }) as Record<string, unknown>;
+
+    expect(adapted.id).toBe("m1");
+    expect(adapted.threadId).toBe("t1");
+    expect(adapted.labelIds).toEqual(["INBOX", "UNREAD"]);
+    expect(adapted.snippet).toBe("snip");
+    // 原始 payload 无损透传，正文/附件由适配器从 payload 提取。
+    expect(adapted.payload).toEqual({ headers: [{ name: "Subject", value: "安全提醒" }] });
+    // ISO 时间戳还原为 REST 的毫秒 internalDate（2026-09-04T18:20:22Z）。
+    expect(adapted.internalDate).toBe(String(Date.parse("2026-09-04T18:20:22.000Z")));
+  });
+
+  it("maps list item ids and passes other actions through unchanged", () => {
+    const list = adaptActionOutputForSyncAdapter("gmail", "fetch_emails", {
+      messages: [{ messageId: "m1", threadId: "t1" }, { messageId: "m2", threadId: "t2" }],
+      nextPageToken: "n1",
+      resultSizeEstimate: 2,
+    }) as { messages: Array<{ id?: string; threadId?: string }>; nextPageToken: string };
+
+    // 适配器只消费 messages[].id。
+    expect(list.messages.map((message) => message.id)).toEqual(["m1", "m2"]);
+    expect(list.nextPageToken).toBe("n1");
+
+    // list_history / 非 gmail 输出即 REST 形状，原样透传。
+    const history = { history: [], historyId: "112459", nextPageToken: null };
+    expect(adaptActionOutputForSyncAdapter("gmail", "list_history", history)).toBe(history);
+    expect(adaptActionOutputForSyncAdapter("notion", "search", { results: [] })).toEqual({ results: [] });
+  });
+
+  it("maps oo outlook list_messages envelope back to the Graph shape", () => {
+    const adapted = adaptActionOutputForSyncAdapter("outlook", "list_messages", {
+      messages: [{ id: "o1", subject: "Re: Budget" }],
+      nextLink: "https://graph.microsoft.com/v1.0/me/messages?$skipToken=n1",
+    }) as { value: unknown[]; "@odata.nextLink"?: string };
+
+    // 适配器消费 value/@odata.nextLink（Graph 信封）；格式映射的输入随之稳定。
+    expect(adapted.value).toEqual([{ id: "o1", subject: "Re: Budget" }]);
+    expect(adapted["@odata.nextLink"]).toBe("https://graph.microsoft.com/v1.0/me/messages?$skipToken=n1");
   });
 });

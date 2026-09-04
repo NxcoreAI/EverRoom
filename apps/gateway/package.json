@@ -31,6 +31,7 @@
     "@nxcore/agent-runtime": "workspace:*",
     "@nxcore/agent-runtime-pi": "workspace:*",
     "@nxcore/connector-contract": "workspace:*",
+    "@nxcore/connectors-module": "workspace:*",
     "@nxcore/document-model": "workspace:*",
     "@nxcore/reality-contract": "workspace:*",
     "@sinclair/typebox": "^0.34.52",
@@ -51,6 +52,7 @@
     "fastify": "^5.11.3",
     "fastify-plugin": "^6.0.0",
     "html-to-text": "^10.0.0",
+    "jsonata": "^2.2.2",
     "jszip": "^3.10.1",
     "mailparser": "^3.9.15",
     "mammoth": "^1.12.1",
@@ -69,8 +71,7 @@
     "unpdf": "^1.8.1",
     "ws": "^8.18.3",
     "yaml": "2.9.0",
-    "yjs": "^13.6.32",
-    "@nxcore/connectors-module": "workspace:*"
+    "yjs": "^13.6.32"
   },
   "devDependencies": {
     "@types/ali-oss": "^6.23.3",

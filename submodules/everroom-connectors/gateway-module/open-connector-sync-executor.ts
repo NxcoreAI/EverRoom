@@ -10,19 +10,18 @@
  *   google-docs: googledrive files.list / files.export（docs export 走 drive）
  *   outlook: list_messages / get_message（无 delta，待上游）
  *
- * action 输出与 REST 原生响应字段一致（上游 action 即 REST 结构化包装），
- * 适配器对响应字段的消费保持不变；仅 outlook 的 Prefer 头语义不可透传
- * （oo action 内部自理 ImmutableId）。
+ * gmail 的 message 类 action 输出是 oo 规范化形状，在 request() 出口翻译回
+ * REST 形状（adaptActionOutputForSyncAdapter），适配器对响应字段的消费保持
+ * 不变；其余 action 输出即 REST 结构化包装。入参一律按 oo action schema 的
+ * 属性名（camelCase / format）发送——schema 禁未知字段。仅 outlook 的 Prefer
+ * 头语义不可透传（oo action 内部自理 ImmutableId），delta 语义待上游。
  */
 import type { ConnectorProvider, SyncMode } from "@nxcore/connector-contract";
 import type { OpenConnectorCliConfig } from "./host-types.js";
 import { OpenConnectorHttpClient, envelopeData } from "./open-connector-http-client.js";
 import type { ConnectorExecutor, PullPage } from "./types.js";
 import { syncProviderOf } from "./sync-providers/index.js";
-import { normalizeGmailMessage } from "./providers/gmail.js";
-import { gmailHistoryChanges } from "./providers/gmail.js";
-import { normalizeOutlookMessage } from "./providers/outlook.js";
-import type { NormalizedMailChange } from "@nxcore/connector-contract";
+import type { FormatMapperPort } from "./format-mapper-port.js";
 
 interface RouteResult {
   service: string;
@@ -59,10 +58,11 @@ export function routeProxyUrlForTest(rawUrl: string, method: "GET" | "POST", bod
     }
     const messageMatch = /^\/gmail\/v1\/users\/me\/messages\/([^/]+)$/.exec(path);
     if (messageMatch) {
+      // oo 的入参属性是 format（不是 REST 的 format 查询参数），schema 禁未知字段。
       return {
         service: "gmail",
         action: "fetch_message_by_message_id",
-        input: { messageId: decodeURIComponent(messageMatch[1]!), detail: "full" },
+        input: { messageId: decodeURIComponent(messageMatch[1]!), format: "full" },
       };
     }
     if (path === "/gmail/v1/users/me/history") {
@@ -81,14 +81,14 @@ export function routeProxyUrlForTest(rawUrl: string, method: "GET" | "POST", bod
   if (url.hostname === "api.notion.com") {
     if (path === "/v1/search") {
       const payload = (body ?? {}) as Record<string, unknown>;
-      return {
-        service: "notion",
-        action: "search",
-        input: {
-          page_size: num("page_size", 100) ?? (typeof payload.page_size === "number" ? payload.page_size : 100),
-          ...(payload.filter ? { filter: payload.filter } : {}),
-        },
+      // oo 的 search 入参是 camelCase 且 query 必填（空串等价 Notion 的全量搜索）。
+      const input: Record<string, unknown> = {
+        query: typeof payload.query === "string" ? payload.query : "",
+        pageSize: typeof payload.page_size === "number" ? payload.page_size : 100,
       };
+      if (payload.filter) input.filter = payload.filter;
+      if (payload.sort) input.sort = payload.sort;
+      return { service: "notion", action: "search", input };
     }
     const childrenMatch = /^\/v1\/blocks\/([^/]+)\/children$/.exec(path);
     if (childrenMatch) {
@@ -96,8 +96,8 @@ export function routeProxyUrlForTest(rawUrl: string, method: "GET" | "POST", bod
         service: "notion",
         action: "list_block_children",
         input: {
-          block_id: decodeURIComponent(childrenMatch[1]!),
-          page_size: num("page_size", 100) ?? 100,
+          blockId: decodeURIComponent(childrenMatch[1]!),
+          pageSize: num("page_size", 100) ?? 100,
         },
       };
     }
@@ -195,9 +195,15 @@ export interface OpenConnectorSyncExecutorOptions {
 
 export class OpenConnectorSyncExecutor implements ConnectorExecutor {
   private readonly client: OpenConnectorHttpClient;
+  private formatMapper: FormatMapperPort | null = null;
 
   constructor(private readonly options: OpenConnectorSyncExecutorOptions) {
     this.client = new OpenConnectorHttpClient(options.config);
+  }
+
+  /** 格式映射端口（apps/gateway 注入）；缺席时 provider 的 ctx.normalize* 会抛错。 */
+  setFormatMapper(mapper: FormatMapperPort | null): void {
+    this.formatMapper = mapper;
   }
 
   async *pull(
@@ -215,6 +221,7 @@ export class OpenConnectorSyncExecutor implements ConnectorExecutor {
     if (definition.engine !== "nango" || typeof definition.pull !== "function") {
       throw new Error(`provider_engine_not_oauth: ${scope.provider}`);
     }
+    if (!this.formatMapper) throw new Error("format_mapper_not_wired");
     const ctx = {
       connectionId: scope.connectionName,
       proxyGet: async (url: string, headers?: Record<string, string>): Promise<any> => {
@@ -222,6 +229,8 @@ export class OpenConnectorSyncExecutor implements ConnectorExecutor {
         return this.request("GET", url);
       },
       proxyPost: async (url: string, body: unknown): Promise<any> => this.request("POST", url, body),
+      normalizeMail: (raw: unknown) => this.formatMapper!.normalizeMail(scope.provider, raw),
+      normalizeCalendar: (raw: unknown) => this.formatMapper!.normalizeCalendar(scope.provider, raw),
     };
     // 复用适配器的 pull 生成器（URL 会被上面的路由翻译为 action）
     yield* (definition.pull as NonNullable<typeof definition.pull>)(ctx as never, mode);
@@ -233,6 +242,64 @@ export class OpenConnectorSyncExecutor implements ConnectorExecutor {
       throw new Error(`open_connector_route_unsupported: ${url.slice(0, 160)}`);
     }
     const envelope = await this.client.runAction(routed.service, routed.action, routed.input, {});
-    return envelopeData(envelope);
+    return adaptActionOutputForSyncAdapter(routed.service, routed.action, envelopeData(envelope));
   }
+}
+
+/**
+ * oo 的 gmail message 类 action 输出是 oo 规范化形状（messageId/preview/payload/...），
+ * 而同步适配器（sync-providers/gmail.ts）消费 provider 原生 REST 字段
+ * （messages[].id、Gmail REST 资源形状——格式映射体系的映射输入）。
+ * 在 oo 适配边界把输出翻译回 REST 形状，适配器保持 REST/Nango 语义不变。
+ */
+export function adaptActionOutputForSyncAdapter(service: string, action: string, data: unknown): unknown {
+  if (service === "outlook" && action === "list_messages") {
+    // oo 的 outlook 输出信封是 { messages, nextLink }，翻回 Graph 的
+    // { value, @odata.nextLink } 信封，适配器保持 REST 语义不变。
+    const page = (data ?? {}) as { messages?: unknown[]; value?: unknown[]; nextLink?: unknown };
+    return {
+      ...page,
+      value: page.value ?? page.messages ?? [],
+      ...(page.nextLink != null ? { "@odata.nextLink": page.nextLink } : {}),
+    };
+  }
+  if (service !== "gmail") return data;
+  if (action === "fetch_message_by_message_id") return gmailMessageResourceFromAction(data);
+  if (action === "fetch_emails") {
+    const page = (data ?? {}) as { messages?: Array<Record<string, unknown>> };
+    return {
+      ...page,
+      messages: (page.messages ?? []).map((message) => ({
+        id: message.messageId,
+        threadId: message.threadId,
+      })),
+    };
+  }
+  return data;
+}
+
+/**
+ * oo 规范化邮件 → Gmail REST 资源形状（Gmail REST 即格式映射的输入）。
+ * oo 保留了原始 payload（headers/body.data/parts），正文与附件得以无损透传；
+ * 时间戳从 ISO 还原为 REST 的毫秒 internalDate。
+ */
+function gmailMessageResourceFromAction(output: unknown): unknown {
+  const message = (output ?? {}) as {
+    messageId?: unknown;
+    threadId?: unknown;
+    labelIds?: unknown;
+    preview?: { body?: unknown };
+    payload?: unknown;
+    messageTimestamp?: unknown;
+  };
+  const parsedAt =
+    typeof message.messageTimestamp === "string" ? Date.parse(message.messageTimestamp) : Number.NaN;
+  return {
+    id: message.messageId,
+    threadId: message.threadId,
+    labelIds: message.labelIds,
+    snippet: message.preview?.body,
+    payload: message.payload,
+    ...(Number.isFinite(parsedAt) ? { internalDate: String(parsedAt) } : {}),
+  };
 }

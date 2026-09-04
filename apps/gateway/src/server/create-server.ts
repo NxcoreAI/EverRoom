@@ -40,7 +40,8 @@ import {
   registerTranscriptionSummaryAgent,
 } from "../modules/agent/runtime-factory.js";
 import { BUILTIN_AGENT_IDS } from "../modules/agent/resolver.js";
-import { registerWebSearchAgentIfMissing } from "../modules/agent/runtime-factory.js";
+import { registerWebSearchAgentIfMissing, registerConnectorMapperAgent } from "../modules/agent/runtime-factory.js";
+import { FormatMappingService } from "../modules/connectors/format-mapping-service.js";
 import { loadBuiltinAgentBundle } from "../modules/agent/builtin-bundles.js";
 import { OpenAiCompletionAgentRuntime } from "../modules/agent/openai-completion-runtime.js";
 import { UnconfiguredAgentRuntime, type AgentRuntime } from "@nxcore/agent-runtime";
@@ -362,6 +363,9 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   // 幂等回填 connectors.sqlite 存量（唯一键 upsert，重复执行产出 unchanged）。
   const connectorDomainOwner = config.connectorSyncOwnerId ?? "local-user";
   nangoConnectorManager.setDomainProjection(new ConnectorDomainProjection(db, connectorDomainOwner));
+  // 格式映射体系：agent 生成的 JSONata 映射缓存直通；未就绪时同步 pending，后台生成。
+  const formatMappingService = new FormatMappingService(db, app.log);
+  nangoConnectorManager.setFormatMapper(formatMappingService);
   if (nangoConnectorConfig.enabled) {
     const backfillTimer = setTimeout(() => {
       try {
@@ -564,6 +568,11 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     cliConnectorSyncService.attachAgentRuntime(agentResolver.resolve(BUILTIN_AGENT_IDS.connectorSync), {
       disposeRuntime: false,
     });
+  }
+  // 格式映射 agent：就绪即 attach（映射生成依赖它；未配置 AI 时保持 pending 语义）。
+  registerConnectorMapperAgent(agentResolver, config, formatMappingService);
+  if (agentResolver.has(BUILTIN_AGENT_IDS.connectorMapper)) {
+    formatMappingService.attachAgentRuntime(agentResolver.resolve(BUILTIN_AGENT_IDS.connectorMapper));
   }
   await cliConnectorSyncService.initialize();
   const subagentConfig = config.subagents ?? {
@@ -859,6 +868,12 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
           const connector = agentResolver.reload(BUILTIN_AGENT_IDS.connectorSync);
           cliConnectorSyncService.replaceAgentRuntime(connector.current);
           await connector.previous?.dispose();
+        }
+        // 格式映射 agent 热替换（初始 attach 见 registerConnectorMapperAgent 处）。
+        if (agentResolver.has(BUILTIN_AGENT_IDS.connectorMapper)) {
+          const mapper = agentResolver.reload(BUILTIN_AGENT_IDS.connectorMapper);
+          formatMappingService.attachAgentRuntime(mapper.current);
+          await mapper.previous?.dispose();
         }
         // 过滤器/洞察 job 持有的冻结 runtime 同步热替换。
         const nextFilterRuntime = buildIngestFilterRuntime();

@@ -31,5 +31,82 @@ export interface WikiDocumentSummary { id:string; fileName:string; title:string;
 export interface WikiDocumentPreview extends WikiDocumentSummary { content:string; }
 export interface NormalizedCalendarEvent { providerEventId:string; title:string; description?:string; startsAt:string; endsAt:string; /** 全天事件标记（ICS VALUE=DATE 等；缺省视为 false）。 */ allDay?:boolean; timeZone?:string; location?:string; status?:string; organizer?:NormalizedAddress; attendees?:NormalizedAddress[]; recurrence?:Record<string,unknown>; providerRevision?:string; }
 export interface ConnectorJsonRecord<T = unknown> { schemaVersion:1; type:"mail"|"calendar"; provider:ConnectorProvider; connectionId:string; data:T; }
+/**
+ * 通用 schema（格式映射体系）：Normalized* 契约的 JSON Schema 形式化。
+ * agent 对比「provider 原始格式样本 ↔ 本 schema」产出 JSONata 映射；
+ * 映射求值结果在入库前按本 schema 校验（ajv）。字段语义与 Normalized* 严格一致，
+ * 不得在此之外的 widening（新增可选字段走 Normalized* + 本 schema 同步演进）。
+ * 地址 role 收敛为闭集枚举——投影层 recipientsOf 过滤 to/cc/bcc 依赖此约定。
+ */
+export const CANONICAL_ADDRESS_ROLES = ["from", "sender", "to", "cc", "bcc", "reply-to"] as const;
+/** 仅日程（organizer/attendees）使用的角色。 */
+export const CANONICAL_CALENDAR_ADDRESS_ROLES = [...CANONICAL_ADDRESS_ROLES, "organizer", "attendee"] as const;
+export type CanonicalAddressRole = (typeof CANONICAL_ADDRESS_ROLES)[number];
+export const CanonicalAddressSchema = {
+  type: "object",
+  properties: {
+    // role 超集：邮件六角色 + 日程的 organizer/attendee（日程组织者/参与人语义）。
+    role: { type: "string", enum: [...CANONICAL_CALENDAR_ADDRESS_ROLES] },
+    displayName: { type: "string" },
+    address: { type: "string" },
+  },
+  required: ["role", "address"],
+  additionalProperties: false,
+} as const;
+export const CanonicalMailSchema = {
+  type: "object",
+  properties: {
+    providerMessageId: { type: "string", minLength: 1 },
+    providerThreadId: { type: "string" },
+    subject: { type: "string" },
+    snippet: { type: "string" },
+    textBody: { type: "string" },
+    htmlBody: { type: "string" },
+    receivedAt: { type: "string" },
+    sentAt: { type: "string" },
+    isRead: { type: "boolean" },
+    isStarred: { type: "boolean" },
+    isDraft: { type: "boolean" },
+    providerRevision: { type: "string" },
+    addresses: { type: "array", items: CanonicalAddressSchema },
+    memberships: { type: "array", items: { type: "string" } },
+    attachments: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          providerId: { type: "string" },
+          filename: { type: "string" },
+          mimeType: { type: "string" },
+          size: { type: "number" },
+          inline: { type: "boolean" },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ["providerMessageId"],
+  additionalProperties: false,
+} as const;
+export const CanonicalCalendarEventSchema = {
+  type: "object",
+  properties: {
+    providerEventId: { type: "string", minLength: 1 },
+    title: { type: "string" },
+    description: { type: "string" },
+    startsAt: { type: "string" },
+    endsAt: { type: "string" },
+    allDay: { type: "boolean" },
+    timeZone: { type: "string" },
+    location: { type: "string" },
+    status: { type: "string" },
+    organizer: CanonicalAddressSchema,
+    attendees: { type: "array", items: CanonicalAddressSchema },
+    recurrence: { type: "object" },
+    providerRevision: { type: "string" },
+  },
+  required: ["providerEventId", "title", "startsAt", "endsAt"],
+  additionalProperties: false,
+} as const;
 export function isConnectorProvider(value: unknown, known: readonly string[] = BUILTIN_PROVIDERS): value is ConnectorProvider { return typeof value === "string" && known.includes(value); }
 export function isSyncMode(value: unknown): value is SyncMode { return value === "full" || value === "incremental" || value === "rebuild"; }

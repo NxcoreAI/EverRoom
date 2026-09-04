@@ -339,6 +339,9 @@ importers:
       html-to-text:
         specifier: ^10.0.0
         version: 10.0.0
+      jsonata:
+        specifier: ^2.2.2
+        version: 2.2.2
       jszip:
         specifier: ^3.10.1
         version: 3.10.1
@@ -6543,9 +6546,6 @@ packages:
   js-tiktoken@1.0.21:
     resolution: {integrity: sha512-biOj/6M5qdgx5TKjDnFT1ymSpM5tbd3ylwDtrQvFQSu0Z7bBYko2dF+W/aUkXUPuk6IVpRxk/3Q2sHOzGlS36g==}
 
-  js-tokens@3.0.0:
-    resolution: {integrity: sha512-poXEQHPMmTrYZuJgNRll2sbc3kJsSU1m/g1Q93IE6txNj3p6xOOOmdj1G/zCVGawYSPzTkSoWGg1otqbeqKJeg==}
-
   js-tokens@4.0.0:
     resolution: {integrity: sha512-RdJUflcE3cUzKiMqQgsCu06FPu9UdIJO0beYbPhHN4k6apgJtifcoCtT9bcxOpYBtpD2kCM6Sbzg4CausW/PKQ==}
 
@@ -6594,6 +6594,10 @@ packages:
     resolution: {integrity: sha512-XmOWe7eyHYH14cLdVPoyg+GOH3rYX++KpzrylJwSW98t3Nk+U8XOl8FWKOgwtzdb8lXGf6zYwDUzeHMWfxasyg==}
     engines: {node: '>=6'}
     hasBin: true
+
+  jsonata@2.2.2:
+    resolution: {integrity: sha512-XDFH2PuaAXv0AXJEWwElXbqADmKFGKMLMkFb+qOz0EhjQW2EIJ6pgtordLU+4u3IVERyBfqy6bi6kZKEncvRqA==}
+    engines: {node: '>= 8'}
 
   jsonfile@4.0.0:
     resolution: {integrity: sha512-m6F1R3z8jjlf2imQHS2Qez5sjKWQzbuuhuJ/FKYFRZvPE3PuHcSMVZzfsLhGVOkfd20obL5SWEBew5ShlquNxg==}
@@ -15367,8 +15371,6 @@ snapshots:
     dependencies:
       base64-js: 1.5.1
 
-  js-tokens@3.0.0: {}
-
   js-tokens@4.0.0: {}
 
   js-yaml@4.3.1:
@@ -15413,6 +15415,8 @@ snapshots:
     optional: true
 
   json5@2.2.3: {}
+
+  jsonata@2.2.2: {}
 
   jsonfile@4.0.0:
     optionalDependencies:
@@ -15570,7 +15574,7 @@ snapshots:
 
   loose-envify@1.4.0:
     dependencies:
-      js-tokens: 3.0.0
+      js-tokens: 4.0.0
 
   lop@0.4.2:
     dependencies:

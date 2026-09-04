@@ -24,6 +24,4 @@ export {
   connectorTodoToMarkdown,
   connectorGenericRecordToMarkdown,
 } from "./connector-markdown.js";
-export { normalizeGmailMessage } from "./providers/gmail.js";
-export { normalizeOutlookMessage } from "./providers/outlook.js";
 export { parseIcsCalendar } from "./ics.js";

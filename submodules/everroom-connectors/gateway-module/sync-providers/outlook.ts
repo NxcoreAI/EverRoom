@@ -1,5 +1,5 @@
+import type { NormalizedMailChange } from "@nxcore/connector-contract";
 import type { SyncProviderDefinition } from "./types.js";
-import { normalizeOutlookMessage } from "../providers/outlook.js";
 
 /** Outlook：scope = 邮件文件夹（递归发现）；游标 = Graph deltaLink（cursor 即 URL）。 */
 export const outlookSyncProvider: SyncProviderDefinition = {
@@ -50,8 +50,11 @@ export const outlookSyncProvider: SyncProviderDefinition = {
     do {
       const data = await ctx.proxyGet(url, { Prefer: 'IdType="ImmutableId"' });
       url = data["@odata.nextLink"] ?? "";
+      const changes: NormalizedMailChange[] = [];
+      for (const raw of data.value ?? [])
+        changes.push(await ctx.normalizeMail(raw));
       yield {
-        changes: (data.value ?? []).map(normalizeOutlookMessage),
+        changes,
         ...(url
           ? { continuation: url }
           : data["@odata.deltaLink"]

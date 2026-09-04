@@ -1,0 +1,16 @@
+schemaVersion: 1
+kind: builtin
+id: connector-mapper
+name: Connector Format Mapper
+description: 对比数据源原始格式与 canonical schema，产出可复用的 JSONata 字段映射
+runtime: pi
+systemPrompt: ./SYSTEM.md
+
+capabilities:
+  - connector.format-mapping
+
+tools:
+  - submit_format_mapping
+
+skills:
+  - ./skills/canonical-schema

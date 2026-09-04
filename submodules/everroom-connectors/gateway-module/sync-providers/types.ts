@@ -1,4 +1,4 @@
-import type { SyncMode } from "@nxcore/connector-contract";
+import type { SyncMode, NormalizedMailChange, NormalizedCalendarChange } from "@nxcore/connector-contract";
 import type { PullPage } from "../types.js";
 
 /**
@@ -23,6 +23,10 @@ export interface PullContext {
   configKey: string;
   proxyGet<T = any>(url: string, headers?: Record<string, string>): Promise<T>;
   proxyPost<T = any>(url: string, body: unknown): Promise<T>;
+  /** 归一化映射（格式映射体系）：provider 原始记录 → canonical 契约。 */
+  /** 映射未就绪时抛 FormatMappingPendingError（run 失败码 format_mapping_pending）。 */
+  normalizeMail(raw: unknown): Promise<NormalizedMailChange>;
+  normalizeCalendar(raw: unknown): Promise<NormalizedCalendarChange>;
 }
 
 /** 拉取上下文：scope 级（游标与 provider scope id）。 */

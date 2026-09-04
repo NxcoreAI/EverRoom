@@ -18,7 +18,7 @@ fences) stays isolated per path.
 - Route entry point: `nangoConnectorRoutes`
 - Main implementation: `manager.ts`, `repository.ts`, `nango-*.ts`,
   `sync-providers/*` (provider registry — adding a source means one file plus
-  one registry line), `providers/*`, `connector-memory.ts`, and
+  one registry line), `format-mapper-port.ts`, `connector-memory.ts`, and
   `document-store.ts`
 - Persistence: the isolated `connectors.sqlite` database for sync state and
   raw normalized records (`connector_records`); projected content lives in the
@@ -27,6 +27,39 @@ fences) stays isolated per path.
 The embedded Nango source under `../connector/` uses native `NANGO_*`
 variables. Those variables belong to the Nango child process and are not
 EverRoom configuration inputs.
+
+## Format mapping (归一化映射体系)
+
+Mail/calendar normalization is no longer code-written per provider. The
+built-in `providers/gmail.ts` / `providers/outlook.ts` normalizers were
+removed; sync providers call `ctx.normalizeMail(raw)` /
+`ctx.normalizeCalendar(raw)` (see `sync-providers/*`) and the engine binds
+those to the `FormatMapperPort` (`format-mapper-port.ts`), implemented by the
+gateway host (`apps/gateway` `FormatMappingService`).
+
+Data flow:
+
+1. canonical schema: `CanonicalMailSchema` / `CanonicalCalendarEventSchema`
+   (in `connector-contract`) formalize the `NormalizedMail` /
+   `NormalizedCalendarEvent` contracts. Address roles are a closed enum
+   (`CANONICAL_ADDRESS_ROLES`, plus `organizer`/`attendee` for calendar) —
+   `domain-projection.ts` `recipientsOf` relies on this convention.
+2. first sight of an unknown provider format: the raw record is captured as a
+   sample, the run fails with `format_mapping_pending:<service>:<kind>` and
+   the cursor does not advance (retry on the next sync tick).
+3. a background agent (gateway builtin `connector-mapper`) compares the
+   samples against the canonical schema and submits a reusable JSONata mapping
+   (`{record?: {field: expr}, isTombstone?: expr, tombstoneId?: expr}`) via
+   the `submit_format_mapping` tool; the service replays all captured samples
+   through the mapping and ajv-validates against the canonical schema before
+   activating it (stored in `gateway.sqlite` `connector_format_mappings`).
+4. subsequent syncs take the cached fast path: evaluate the mapping per raw
+   record, validate, done — no agent call.
+
+Deletion/cancellation records (Gmail trash, Graph `@removed`, calendar
+`status=cancelled`) are expressed by `isTombstone`/`tombstoneId` expressions,
+not code. If no agent runtime is configured, affected sources stay pending —
+the run error message explains this and sync retries each tick.
 
 ## CLI connector (OpenConnector)
 

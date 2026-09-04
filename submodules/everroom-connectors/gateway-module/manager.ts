@@ -34,6 +34,10 @@ export class ConnectorManager {
   setDomainProjection(projection: ConnectorDomainProjection | null) {
     this.domainProjection = projection;
   }
+  /** 格式映射端口（格式映射体系）：转发给取数执行器装配到 PullContext。 */
+  setFormatMapper(mapper: import("./format-mapper-port.js").FormatMapperPort | null) {
+    this.executor?.setFormatMapper?.(mapper);
+  }
   constructor(
     public readonly repository: ConnectorRepository,
     private readonly executor: ConnectorExecutor | null,
