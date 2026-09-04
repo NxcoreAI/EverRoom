@@ -568,7 +568,3 @@
   text-decoration-thickness: 2px !important;
   text-underline-offset: 3px !important;
 }
-
-.context-room-imported-comments-debug {
-  font-size: 9px; color: var(--muted, #6a737d); opacity: 0.7; font-variant-numeric: tabular-nums;
-}

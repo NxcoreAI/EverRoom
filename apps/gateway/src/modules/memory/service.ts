@@ -674,13 +674,13 @@ export class MemoryService {
   /**
    * Room 归因记忆全量列表（无 prompt 预算）：doc-writer memoryIndex 注入、回溯
    * worker、桌面记忆卡共用。同一查询但不做 20 条/4000 字裁剪，仅条数上限与单条
-   * 2000 字安全截断；返回 {id,content,type} 与 contextRoomService.listMemoryItems
-   * 同形，消费点可直接换源。
+   * 2000 字安全截断；返回 {id,content,type} 与原 contextRoomService.listMemoryItems
+   * 同形（同步契约），消费点可直接换源。
    */
-  async listRoomAttributedMemories(
+  listRoomAttributedMemories(
     roomId: string,
     limit = 200,
-  ): Promise<Array<{ id: string; content: string; type: string }>> {
+  ): Array<{ id: string; content: string; type: string }> {
     if (!this.db || !this.roomRegistry) return [];
     const resolved = this.roomRegistry.resolveRoomId(roomId);
     if (!resolved) return [];

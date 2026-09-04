@@ -204,8 +204,6 @@ export function ImportedCommentsPanel({
         textDecorationColor: 'rgba(61, 111, 246, 0.55)',
         textDecorationThickness: '2px',
         textUnderlineOffset: '3px',
-        background: 'rgba(61, 111, 246, 0.08)',
-        borderRadius: '3px',
       }
       const clearAnchorStyle = (element: Element): void => {
         element.classList.remove(ANCHORED_UNDERLINE_CLASS)
@@ -214,8 +212,6 @@ export function ImportedCommentsPanel({
         style.textDecorationColor = ''
         style.textDecorationThickness = ''
         style.textUnderlineOffset = ''
-        style.background = ''
-        style.borderRadius = ''
       }
       const nextHosts = new Set<Element>()
       for (const anchor of next) {
@@ -299,8 +295,6 @@ export function ImportedCommentsPanel({
       style.textDecorationColor = ''
       style.textDecorationThickness = ''
       style.textUnderlineOffset = ''
-      style.background = ''
-      style.borderRadius = ''
     }
     underlinedRef.current.clear()
   }, [])
@@ -433,13 +427,6 @@ export function ImportedCommentsPanel({
         <strong>{t('contextRoom:importedComments.panelTitle')}</strong>
         <span className="context-room-imported-comments-count">
           {total > 0 ? t('contextRoom:importedComments.count', { count: String(total) }) : ''}
-        </span>
-        {/* 临时自诊断：定位锚定问题后移除 */}
-        <span
-          className="context-room-imported-comments-debug"
-          title="anchored=已定位数 scroller=滚动容器 editor=编辑器"
-        >
-          {`a:${String(anchored.length)}/u:${String(unanchored.length)} s:${scrollerOf() ? 1 : 0} e:${editor ? 1 : 0}`}
         </span>
         <button type="button" aria-label={t('contextRoom:importedComments.close')} onClick={onClose}>
           <X aria-hidden="true" />
