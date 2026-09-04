@@ -515,6 +515,11 @@ export function createSubagentPiTools(
           throw new Error("ROOM_SELECTION_MISMATCH: The document target differs from the Room already bound to this run");
         }
         const roomId = explicitRoomId || run.roomId || run.activeDocument?.roomId?.trim() || "";
+        // 子 run 将按该 roomId 绑定文档工具（orchestrator 透传），显式传入的房间必须是真实存在的 Room。
+        if (explicitRoomId && !run.roomId && Array.isArray(run.availableRooms) && run.availableRooms.length > 0
+          && !run.availableRooms.some((room) => room.id === explicitRoomId)) {
+          throw new Error("ROOM_SELECTION_REQUIRED: Choose one valid Room from available_rooms or call context_room_list");
+        }
 
         let snapshot: DocumentDraftSnapshot | null = null;
         if (task === "draft-edit" || task === "draft-continue") {
@@ -620,6 +625,9 @@ export function createSubagentPiTools(
         const input = {
           task,
           instruction,
+          // Room 透传：orchestrator 用它绑定子 run 的文档工具（pi-tools input.roomId），
+          // doc-writer 素材自取的 context_room_document_read 依赖该绑定，缺失即 409。
+          ...(roomId ? { roomId } : {}),
           ...(material ? { material } : {}),
           ...(resolvedMaterialSources.length ? { materialSources: resolvedMaterialSources } : {}),
           ...(memoryIndex.length ? { memoryIndex } : {}),
