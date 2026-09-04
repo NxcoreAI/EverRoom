@@ -5,6 +5,18 @@
   width: 0;
 }
 
+/* 悬停/预览打开时高亮 chip 所属的宿主文本块（段落/标题）。预览打开态由
+   NodeViewWrapper 的 data-preview-open 标记，指针移入浮层后高亮保持。 */
+.context-room-tiptap-content :is(p, h1, h2, h3, h4, h5, h6):has(
+    > .context-room-block-index-mark:hover .context-room-block-index-chip
+  ),
+.context-room-tiptap-content :is(p, h1, h2, h3, h4, h5, h6):has(
+    > .context-room-block-index-mark[data-preview-open="true"]
+  ) {
+  background: color-mix(in srgb, var(--room-color, #2563eb) 6%, transparent);
+  border-radius: 6px;
+}
+
 .context-room-block-index-chip {
   align-items: center;
   background: color-mix(in srgb, var(--room-color, #2563eb) 8%, #fff);
@@ -164,4 +176,11 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* hover 索引 chip（或预览浮层打开期间）时，chip 所属文本块整体浅蓝提示；
+   纯 CSS :has 实现，PM 重绘自动跟随，移开即消失。 */
+[data-block-id]:has(.context-room-block-index-mark:hover),
+[data-block-id]:has(.context-room-block-index-mark[data-preview-open="true"]) {
+  background-color: color-mix(in srgb, #60a5fa 12%, transparent);
 }

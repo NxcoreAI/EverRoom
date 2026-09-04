@@ -273,6 +273,8 @@ const api: NxcoreDesktopApi = {
     retryExport: (exportId) => invoke('external-documents:retry-export', exportId),
     cancelExport: (exportId) => invoke('external-documents:cancel-export', exportId),
     listExports: (documentId) => invokeQuietly('external-documents:list-exports', documentId),
+    importDiff: (roomImportId) => invoke('external-documents:import-diff', roomImportId),
+    searchExportTargets: (provider, query) => invoke('external-documents:search-export-targets', provider, query),
   },
   cliConnectorSync: {
     status: () => invokeQuietly('cli-connector-sync:status'),
@@ -580,6 +582,11 @@ const api: NxcoreDesktopApi = {
     listVersions: (documentId, options) => invoke('documents:list-versions', documentId, options),
     getVersionSnapshot: (documentId, version) => invoke('documents:get-version-snapshot', documentId, version),
     getDiff: (documentId, fromVersion, toVersion) => invoke('documents:get-diff', documentId, fromVersion, toVersion),
+    versionChangeSummary: (documentId, version) => invoke('documents:version-change-summary', documentId, version),
+    listDocumentComments: (documentId) => invoke('documents:list-document-comments', documentId),
+    createDocumentComment: (documentId, input) => invoke('documents:create-document-comment', documentId, input),
+    resolveDocumentComment: (documentId, commentId, resolved) => invoke('documents:resolve-document-comment', documentId, commentId, resolved),
+    deleteDocumentComment: (documentId, commentId) => invoke('documents:delete-document-comment', documentId, commentId),
     restoreVersion: (documentId, version, baseVersion) =>
       invoke('documents:restore-version', documentId, version, baseVersion),
     resolveBlockReferences: (input) => invoke('documents:resolve-block-references', input),

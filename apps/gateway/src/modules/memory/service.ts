@@ -701,6 +701,7 @@ export class MemoryService {
     item: Pick<MemoryAtomicDto, "id" | "type" | "content" | "updatedAt">,
     sessionId: string,
     roomId: string,
+    sourceKind: "conversation" | "document" | "source" = "conversation",
   ): void {
     if (!this.db) return;
     const now = new Date();
@@ -710,7 +711,7 @@ export class MemoryService {
         id: randomUUID(),
         roomId,
         memoryId: item.id,
-        sourceKind: "conversation",
+        sourceKind,
         sourceId: sessionId,
         confidence: "derived",
         content: item.content,

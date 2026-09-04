@@ -47,6 +47,10 @@
   "agentChat.shellApproveSession": "本会话允许",
   "agentChat.shellResolving": "正在提交...",
   "agentComposer.addAttachment": "添加附件",
+  "agentComposer.roomFocus": "当前房间",
+  "agentComposer.roomFocusOn": "已聚焦",
+  "agentComposer.roomFocusOff": "未聚焦",
+  "agentComposer.roomFocusTitle": "仅注入本房间甄选记忆与你的核心画像；不再召回全局长期记忆与历史对话",
   "agentComposer.agentIsWorking": "Agent 正在处理...",
   "agentComposer.askAboutThisPageOrDescribeAnAction": "基于当前页面提问，或描述需要执行的操作",
   "agentComposer.attachmentsAddedToTheComposer": "附件已添加到输入区",
@@ -1622,8 +1626,9 @@
   "agentAuthCard.openConsole": "打开连接器管理",
   "agentAuthCard.qrAlt": "授权二维码",
   "agentAuthCard.resumeCheck": "我已完成授权",
-  "agentAuthCard.completedTitle": "飞书授权已完成",
+  "agentAuthCard.completedTitle": "授权已完成",
   "agentAuthCard.completedBadge": "已授权",
   "agentAuthCard.dismiss": "关闭",
-  "agentAuthCard.restart": "重新发起授权"
+  "agentAuthCard.restart": "重新发起授权",
+  "agentAuthCard.successTitle": "{provider}授权成功"
 }

@@ -13171,3 +13171,25 @@
 .context-room-merge-sketch-entities dd {
   font-weight: 400;
 }
+
+/* 版本条目：AI 概览标题行（Vxx 徽标已移除） */
+.context-room-history-version-summary {
+  display: block;
+  font-size: 11px;
+  color: var(--muted, #6a737d);
+  line-height: 1.5;
+  margin-top: 1px;
+  min-height: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.context-room-history-version-summary[data-loaded='false'] {
+  min-height: 14px;
+}
+.context-room-history-version-summary::before {
+  content: '✦ ';
+  color: var(--accent, #3d6ff6);
+  font-size: 9px;
+  vertical-align: 1px;
+}

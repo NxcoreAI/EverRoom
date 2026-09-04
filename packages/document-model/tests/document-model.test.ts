@@ -233,11 +233,12 @@ describe("document model", () => {
       fallbackPreview: null,
     });
 
-    // Fallback title fills an empty label; url query carries title through.
+    // Fallback title fills an empty label; redundant title query is omitted
+    // (label already carries it — writing both would grow on every round trip).
     expect(formatBlockIndexMarkMarkdown(
       { ...memoryTarget, fallbackTitle: "备用标题" },
       "",
-    )).toContain("^[备用标题](everroom://memory/room-1/room-1-memory-3?title=");
+    )).toBe("^[备用标题](everroom://memory/room-1/room-1-memory-3)");
   });
 
   it("rejects non-index markdown shapes without throwing", () => {

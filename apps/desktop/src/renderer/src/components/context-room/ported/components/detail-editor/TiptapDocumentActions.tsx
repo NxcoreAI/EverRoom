@@ -1,8 +1,8 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import type { DocumentDiffResult, DocumentVersionSnapshot, RoomDocument } from '@nxcore/agent-contract'
 import type { Editor } from '@tiptap/react'
-import { ChevronRight, Download, Ellipsis, ExternalLink, FileDown, FileText, Trash2 } from 'lucide-react'
-import { useState } from 'react'
+import { ChevronRight, Download, Ellipsis, ExternalLink, FileDown, FileText, MessageSquare, Trash2 } from 'lucide-react'
+import { useEffect, useState } from 'react'
 import { useLocale } from '../../../../../i18n/LocaleContext'
 
 import { showToast } from '../../../../../state/toast'
@@ -54,6 +54,8 @@ export function TiptapDocumentActions({
   onCloseDiff,
   historyPanelCloseSignal,
   historyRefreshSignal,
+  commentsOpen,
+  onToggleComments,
 }: {
   editor: Editor
   documentName: string
@@ -67,12 +69,25 @@ export function TiptapDocumentActions({
   onCloseDiff: () => void
   historyPanelCloseSignal: number
   historyRefreshSignal: number
+  commentsOpen?: boolean
+  onToggleComments?: () => void
 }) {
   const { t } = useLocale()
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [exportingPdf, setExportingPdf] = useState(false)
   const [exportProvider, setExportProvider] = useState<'feishu' | 'notion' | null>(null)
   const [importOpen, setImportOpen] = useState(false)
+
+  // Agent 聊天路径缺参数时（document_export 返回 needs_input），自动弹出本文档的导出面板补齐。
+  useEffect(() => {
+    const openExportPanel = (event: Event): void => {
+      const detail = (event as CustomEvent<{ documentId?: string; provider?: string }>).detail
+      if (!backendDocument || detail?.documentId !== documentId) return
+      if (detail.provider === 'feishu' || detail.provider === 'notion') setExportProvider(detail.provider)
+    }
+    window.addEventListener('everroom:open-export-panel', openExportPanel)
+    return () => window.removeEventListener('everroom:open-export-panel', openExportPanel)
+  }, [backendDocument, documentId])
 
   const exportMarkdown = () => {
     const untitled = t('contextRoom:documentOperationCenter.untitledDocument')
@@ -252,6 +267,18 @@ export function TiptapDocumentActions({
           roomId={backendDocument.roomId}
         />
       )}
+      {backendDocument && onToggleComments ? (
+        <button
+          type="button"
+          className={commentsOpen ? 'is-active' : ''}
+          aria-label={t('contextRoom:importedComments.open')}
+          title={t('contextRoom:importedComments.open')}
+          aria-pressed={Boolean(commentsOpen)}
+          onClick={onToggleComments}
+        >
+          <MessageSquare aria-hidden="true" />
+        </button>
+      ) : null}
     </div>
   )
 }

@@ -31,6 +31,8 @@ export interface StartRuntimeRunInput {
   roomSelectionRequired?: boolean;
   captureMemory?: boolean;
   recallMemory?: boolean;
+  /** Defaults to "global". Room focus mode narrows recall to core profile + Room memories. */
+  memoryScope?: "room" | "global";
   toolsEnabled?: boolean;
   activeDocument?: AgentActiveDocumentContext;
   /** Prior Agent chat made available to Main as an on-demand, read-only context source. */

@@ -6,6 +6,7 @@ import type {
   DesktopAgentAuthChallenge,
 } from '../../shared/agent-auth'
 import { extractVerificationUrl, LarkAuthRunner } from './lark-auth-runner'
+import { NtnAuthRunner } from './ntn-auth-runner'
 
 /**
  * Agent 授权引导控制器（本地、内存态）。飞书两阶段（应用初始化 → 用户 OAuth）
@@ -19,6 +20,12 @@ const CHALLENGE_TTL_MS = 30 * 60_000
 export interface AgentAuthEnvironment {
   environment?: NodeJS.ProcessEnv
   onEvent?: (frame: AgentAuthEventFrame) => void
+  /** 非 token 状态的加密持久化（B-8）：重启后恢复为过期卡片，可一键重新发起。 */
+  persist?: {
+    save(state: string): void
+    load(): string | null
+    clear(): void
+  }
 }
 
 export class AgentAuthController {
@@ -26,12 +33,91 @@ export class AgentAuthController {
   private challenge: DesktopAgentAuthChallenge | null = null
   private deviceCode: string | null = null
   private activeRequestId: string | null = null
+  private activeNtnRequestId: string | null = null
   private environmentCache: AgentAuthEnvironmentStatus['feishu'] | null = null
 
   constructor(
     private readonly runner: LarkAuthRunner,
     private readonly options: AgentAuthEnvironment = {},
-  ) {}
+    private readonly ntn?: NtnAuthRunner | null,
+  ) {
+    this.restorePersistedChallenge()
+  }
+
+  /** 重启恢复（§7.4）：只恢复未完成的过期卡片；已完成的授权在钥匙串里，不弹卡。 */
+  private restorePersistedChallenge(): void {
+    const raw = this.options.persist?.load()
+    if (!raw) return
+    try {
+      const saved = JSON.parse(raw) as Partial<DesktopAgentAuthChallenge>
+      if (!saved.id || !saved.provider) {
+        this.options.persist?.clear()
+        return
+      }
+      // 历史遗留：授权成功/取消的记录没有恢复价值，直接清掉。
+      if (saved.status === 'authorized' || saved.status === 'cancelled') {
+        this.options.persist?.clear()
+        return
+      }
+      this.challenge = {
+        id: saved.id,
+        provider: saved.provider,
+        phase: saved.phase === 'app_setup' ? 'app_setup' : 'user_auth',
+        status: 'expired',
+        reason: typeof saved.reason === 'string' ? saved.reason : 'not_connected',
+        title: typeof saved.title === 'string' ? saved.title : '重新发起授权',
+        verificationUrl: null,
+        steps: Array.isArray(saved.steps) ? saved.steps : [],
+        exportRunId: typeof saved.exportRunId === 'string' ? saved.exportRunId : null,
+        message: '应用重启，授权流程未完成；点击重新发起授权继续',
+        startedAt: typeof saved.startedAt === 'string' ? saved.startedAt : new Date().toISOString(),
+        expiresAt: null,
+      }
+      // 恢复后立即核对钥匙串真实状态：凭据其实已可用（如上次授权成功但状态
+      // 未写回、或用户在应用外完成授权）→ 静默撤掉过期卡，不打扰用户。
+      void this.dismissRestoredChallengeIfAuthorized(this.challenge.id, this.challenge.provider)
+    } catch {
+      this.options.persist?.clear()
+    }
+  }
+
+  private async dismissRestoredChallengeIfAuthorized(challengeId: string, provider: 'feishu' | 'notion'): Promise<void> {
+    try {
+      let authorized = false
+      if (provider === 'feishu') {
+        const status = await this.runner.authStatus()
+        authorized = status.userAuthorized === true
+      } else if (this.ntn) {
+        const status = await this.ntn.whoami()
+        authorized = status.authenticated
+      }
+      if (!authorized) return
+      // 仅当这张卡未被用户新发起的流程替换时才撤。
+      if (this.challenge?.id !== challengeId || this.challenge.status !== 'expired') return
+      this.challenge = null
+      this.options.persist?.clear()
+      this.emit({ type: 'challenge.removed', challengeId })
+    } catch {
+      // 真实状态检查失败时保留过期卡（用户可手动重新发起或关闭）。
+    }
+  }
+
+  private persistChallenge(): void {
+    const persist = this.options.persist
+    if (!persist) return
+    if (!this.challenge) {
+      persist.clear()
+      return
+    }
+    // 授权成功/已取消不再落盘：凭据在系统钥匙串，重启后不该再弹任何引导卡。
+    if (this.challenge.status === 'authorized' || this.challenge.status === 'cancelled') {
+      persist.clear()
+      return
+    }
+    // 只持久化非 token 状态：verificationUrl 与 device code 不落盘。
+    const { verificationUrl: _url, ...rest } = this.challenge
+    persist.save(JSON.stringify(rest))
+  }
 
   onEvent(listener: (frame: AgentAuthEventFrame) => void): () => void {
     this.listeners.add(listener)
@@ -39,7 +125,10 @@ export class AgentAuthController {
   }
 
   gatewayEnvironment(): Record<string, string> {
-    return this.runner.gatewayEnvironment()
+    return {
+      ...this.runner.gatewayEnvironment(),
+      ...(this.ntn ? this.ntn.gatewayEnvironment() : {}),
+    }
   }
 
   async status(): Promise<AgentAuthEnvironmentStatus> {
@@ -59,42 +148,23 @@ export class AgentAuthController {
         ? this.startFeishuAppSetup(input.exportRunId ?? null)
         : this.startFeishuUserAuth(input.exportRunId ?? null)
     }
-    // Notion：导出授权 = OpenConnector 连接，由用户在连接器管理界面完成；
-    // 这里只生成卡片引导，完成与否由用户重试导出时的只读检查判定。
-    return this.beginChallenge({
-      provider: 'notion',
-      phase: 'user_auth',
-      reason: 'not_connected',
-      title: 'Notion Agent 导出授权未建立',
-      exportRunId: input.exportRunId ?? null,
-      steps: [
-        {
-          id: 'connect',
-          title: '打开连接器管理并建立 Notion 连接',
-          description: '该授权与导入连接是两套凭据域；如两者都需要，请分别完成。',
-          action: 'open_connector_console',
-          completed: false,
-        },
-        {
-          id: 'retry',
-          title: '回到导出面板重新发起导出',
-          description: null,
-          action: 'user_confirm',
-          completed: false,
-        },
-      ],
-    })
+    // Notion（macOS）：走官方 ntn CLI 两步登录（--no-browser 出 URL+校验码 → poll 等待）。
+    if (!this.ntn) throw new Error('当前平台不支持 Notion 导出（ntn 仅随 macOS 发行）。')
+    return this.startNotionLogin(input.exportRunId ?? null)
   }
 
   cancel(challengeId?: string): DesktopAgentAuthChallenge | null {
     if (!this.challenge) return null
     if (challengeId && this.challenge.id !== challengeId) return this.currentChallenge()
     if (this.activeRequestId) this.runner.cancel(this.activeRequestId)
+    if (this.activeNtnRequestId && this.ntn) this.ntn.cancel(this.activeNtnRequestId)
     this.updateChallenge({ status: 'cancelled', message: '用户取消了授权' })
     const removed = this.challenge
     this.challenge = null
     this.deviceCode = null
     this.activeRequestId = null
+    this.activeNtnRequestId = null
+    this.options.persist?.clear()
     this.emit({ type: 'challenge.removed', challengeId: removed.id })
     return null
   }
@@ -119,7 +189,7 @@ export class AgentAuthController {
           // 授权开始时才移除），不自动消失。
           this.updateChallenge({
             status: 'authorized',
-            message: `已完成授权${status.userName ? `（${status.userName}）` : ''}，可回到导出面板重新发起导出`,
+            message: `${status.userName ? `以授权账号：${status.userName}，` : ''}导出将自动继续`,
             verificationUrl: null,
             steps: this.challenge.steps.map((step) => ({ ...step, completed: true })),
           })
@@ -133,11 +203,29 @@ export class AgentAuthController {
         })
       }
     }
+    if (this.challenge.provider === 'notion' && this.ntn) {
+      try {
+        const status = await this.ntn.whoami()
+        if (status.authenticated) {
+          this.updateChallenge({
+            status: 'authorized',
+            message: `${status.userName ? `以授权账号：${status.userName}，` : ''}导出将自动继续`,
+            verificationUrl: null,
+            steps: this.challenge.steps.map((step) => ({ ...step, completed: true })),
+          })
+        }
+      } catch (error) {
+        this.updateChallenge({
+          message: `状态检查失败：${error instanceof Error ? error.message : String(error)}`,
+        })
+      }
+    }
     return this.currentChallenge()
   }
 
   shutdown(): void {
     this.runner.shutdown()
+    this.ntn?.shutdown()
     this.listeners.clear()
   }
 
@@ -265,6 +353,75 @@ export class AgentAuthController {
     return challenge
   }
 
+  /** Notion 两步登录：--no-browser 出 URL+校验码 → 卡片展示 → poll 等待浏览器确认。 */
+  private startNotionLogin(exportRunId: string | null): DesktopAgentAuthChallenge {
+    const challenge = this.beginChallenge({
+      provider: 'notion',
+      phase: 'user_auth',
+      reason: 'not_connected',
+      title: '登录 Notion 账号',
+      exportRunId,
+      steps: [
+        {
+          id: 'open-browser',
+          title: '打开授权页面并确认校验码一致',
+          description: '浏览器页面会显示同样的校验码，确认一致后再授权',
+          action: 'open_url',
+          completed: false,
+        },
+        {
+          id: 'wait-local',
+          title: '本地等待授权完成',
+          description: '凭据由官方 ntn CLI 存入系统钥匙串，不经过 EverRoom 服务端',
+          action: 'wait_local_result',
+          completed: false,
+        },
+      ],
+    })
+    void this.ntn!.loginNoBrowser()
+      .then((result) => {
+        if (this.challenge?.id !== challenge.id) return
+        this.updateChallenge({
+          verificationUrl: result.verificationUrl,
+          steps: this.challenge.steps.map((step) => (
+            step.id === 'open-browser'
+              ? {
+                ...step,
+                url: result.verificationUrl ?? undefined,
+                description: result.verificationCode
+                  ? `校验码：${result.verificationCode}（请与浏览器页面显示一致）`
+                  : step.description,
+              }
+              : step
+          )),
+        })
+        const pollId = this.ntn!.newRequestId('ntn-poll')
+        this.activeNtnRequestId = pollId
+        return this.ntn!.loginPoll(pollId)
+      })
+      .then((outcome) => {
+        if (!outcome || this.challenge?.id !== challenge.id) return
+        this.activeNtnRequestId = null
+        if (outcome.code === 0) {
+          void this.resume(challenge.id)
+        } else {
+          this.updateChallenge({
+            status: 'failed',
+            message: outcome.stderr.trim().split('\n')[0] || 'Notion 授权未完成（超时或被拒绝）',
+          })
+        }
+      })
+      .catch((error: unknown) => {
+        if (this.challenge?.id !== challenge.id) return
+        this.activeNtnRequestId = null
+        this.updateChallenge({
+          status: 'failed',
+          message: error instanceof Error ? error.message : String(error),
+        })
+      })
+    return challenge
+  }
+
   private beginChallenge(input: {
     provider: DesktopAgentAuthChallenge['provider']
     phase: DesktopAgentAuthChallenge['phase']
@@ -288,6 +445,7 @@ export class AgentAuthController {
       startedAt: startedAt.toISOString(),
       expiresAt: new Date(startedAt.getTime() + CHALLENGE_TTL_MS).toISOString(),
     }
+    this.persistChallenge()
     this.emitChallenge()
     return this.challenge
   }
@@ -295,6 +453,7 @@ export class AgentAuthController {
   private updateChallenge(patch: Partial<DesktopAgentAuthChallenge>): void {
     if (!this.challenge) return
     this.challenge = { ...this.challenge, ...patch }
+    this.persistChallenge()
     this.emitChallenge()
   }
 

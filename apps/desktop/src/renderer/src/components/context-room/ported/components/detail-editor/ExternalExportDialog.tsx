@@ -4,7 +4,7 @@ import type {
   ExternalDocumentProvider,
   RoomDocument,
 } from '@nxcore/agent-contract'
-import { ExternalLink, Loader2, X } from 'lucide-react'
+import { ExternalLink, Loader2, Search, X } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocale } from '../../../../../i18n/LocaleContext'
 import { showToast } from '../../../../../state/toast'
@@ -43,6 +43,9 @@ export function ExternalExportDialog({
   const [parentUrl, setParentUrl] = useState('')
   const [run, setRun] = useState<AgentDocumentExportRunView | null>(null)
   const [busy, setBusy] = useState(false)
+  const [targetQuery, setTargetQuery] = useState('')
+  const [targetResults, setTargetResults] = useState<Array<{ remoteId: string; title: string; url: string; updatedAt: string | null; ownerName: string | null }>>([])
+  const [searchingTargets, setSearchingTargets] = useState(false)
 
   const external = window.nxcore?.externalDocuments
   const providerLabel = provider === 'feishu'
@@ -52,27 +55,24 @@ export function ExternalExportDialog({
   const TERMINAL_STATUSES = ['succeeded', 'failed', 'needs_review', 'cancelled', 'environment_not_ready']
   const authStartedRef = useRef(false)
   const prevStatusRef = useRef<string | null>(null)
-  const runRef = useRef<AgentDocumentExportRunView | null>(null)
-  runRef.current = run
-  const retriedRunIdRef = useRef<string | null>(null)
 
-  // 授权成功事件 → 自动恢复原任务（重新预检并继续，方案 §4.3）。
-  useEffect(() => {
-    const api = window.nxcore?.agentAuth
-    if (!api) return
-    return api.onEvent((frame) => {
-      if (frame.type !== 'challenge.updated') return
-      const challengeFrame = frame.challenge
-      if (challengeFrame.status !== 'authorized' || challengeFrame.provider !== provider) return
-      const current = runRef.current
-      if (!current || current.status !== 'awaiting_auth') return
-      if (retriedRunIdRef.current === current.id) return
-      retriedRunIdRef.current = current.id
-      void external?.retryExport(current.id)
-        .then((next) => setRun(next))
-        .catch(() => undefined)
+  /** awaiting_auth：拉起智能区授权卡并自动收起弹窗（授权完成后由编辑器顶栏自动重试导出）。 */
+  const redirectAuth = (next: AgentDocumentExportRunView) => {
+    if (!next.challenge) return
+    if (!authStartedRef.current) {
+      authStartedRef.current = true
+      void window.nxcore?.agentAuth.start({
+        provider: next.provider,
+        phase: next.challenge.phase === 'app_setup' ? 'app_setup' : 'user_auth',
+        exportRunId: next.id,
+      }).catch(() => undefined)
+    }
+    showToast({
+      title: t('contextRoom:externalExportDialog.authRedirectTitle'),
+      message: t('contextRoom:externalExportDialog.authRedirectMessage'),
     })
-  }, [provider, external])
+    onClose()
+  }
 
   // 导出任务是网关后台异步驱动的：创建接口立即返回 preparing，这里轮询真实状态，
   // 进度条按各阶段推进（授权 35% / 确认 55% / 写入 85% / 完成 100%）。
@@ -82,13 +82,9 @@ export function ExternalExportDialog({
     const timer = window.setInterval(() => {
       void external?.getExport(exportId).then((next) => {
         setRun(next)
-        if (next.status === 'awaiting_auth' && next.challenge && !authStartedRef.current) {
-          authStartedRef.current = true
-          void window.nxcore?.agentAuth.start({
-            provider: next.provider,
-            phase: next.challenge.phase === 'app_setup' ? 'app_setup' : 'user_auth',
-            exportRunId: next.id,
-          }).catch(() => undefined)
+        if (next.status === 'awaiting_auth') {
+          redirectAuth(next)
+          return
         }
         if (prevStatusRef.current !== 'succeeded' && next.status === 'succeeded') {
           showToast({ title: t('contextRoom:externalExportDialog.exportSucceeded') })
@@ -134,14 +130,7 @@ export function ExternalExportDialog({
         })
       setRun(next)
       prevStatusRef.current = next.status
-      if (next.status === 'awaiting_auth' && next.challenge) {
-        authStartedRef.current = true
-        void window.nxcore?.agentAuth.start({
-          provider: next.provider,
-          phase: next.challenge.phase === 'app_setup' ? 'app_setup' : 'user_auth',
-          exportRunId: next.id,
-        }).catch(() => undefined)
-      }
+      if (next.status === 'awaiting_auth') redirectAuth(next)
     } catch (error) {
       showToast({
         title: t('contextRoom:externalExportDialog.exportFailed'),
@@ -149,6 +138,22 @@ export function ExternalExportDialog({
       })
     } finally {
       setBusy(false)
+    }
+  }
+
+  const searchTargets = async () => {
+    if (!external || !targetQuery.trim()) return
+    setSearchingTargets(true)
+    try {
+      const response = await external.searchExportTargets(provider, targetQuery.trim())
+      setTargetResults(response.items)
+    } catch (error) {
+      showToast({
+        title: t('contextRoom:externalExportDialog.targetSearchFailed'),
+        message: error instanceof Error ? error.message : undefined,
+      })
+    } finally {
+      setSearchingTargets(false)
     }
   }
 
@@ -203,11 +208,13 @@ export function ExternalExportDialog({
   const targetPercent = progress.percent
   useEffect(() => {
     let raf = 0
+    // 目标变化时先播种一个可见起点（≥12%），首帧就是主题蓝填充而不是空轨道。
+    setDisplayPercent((current) => (current < 12 && targetPercent > 12 ? 12 : current))
     const step = () => {
       setDisplayPercent((current) => {
         const diff = targetPercent - current
         if (Math.abs(diff) < 0.4) return targetPercent
-        return current + diff * 0.035 + Math.sign(diff) * 0.12
+        return current + diff * 0.06 + Math.sign(diff) * 0.35
       })
       raf = window.requestAnimationFrame(step)
     }
@@ -313,6 +320,36 @@ export function ExternalExportDialog({
                       onChange={(event) => setTargetUrl(event.target.value)}
                     />
                   </label>
+                  <div className="context-room-external-export-target-search">
+                    <input
+                      type="text"
+                      value={targetQuery}
+                      placeholder={t('contextRoom:externalExportDialog.targetSearchPlaceholder')}
+                      onChange={(event) => setTargetQuery(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') void searchTargets()
+                      }}
+                    />
+                    <button type="button" disabled={searchingTargets || !targetQuery.trim()} onClick={() => void searchTargets()}>
+                      {searchingTargets ? <Loader2 className="spin" aria-hidden="true" /> : <Search aria-hidden="true" />}
+                      {t('contextRoom:externalExportDialog.targetSearch')}
+                    </button>
+                  </div>
+                  {targetResults.length > 0 && (
+                    <ul className="context-room-external-export-target-results">
+                      {targetResults.map((item) => (
+                        <li key={item.remoteId}>
+                          <button type="button" onClick={() => {
+                            setTargetUrl(item.url)
+                            setTargetResults([])
+                          }}>
+                            <strong>{item.title}</strong>
+                            <span>{item.updatedAt ?? item.ownerName ?? item.remoteId}</span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                   <label>
                     <span>{t('contextRoom:externalExportDialog.writeScopeLabel')}</span>
                     <select value={writeScope} onChange={(event) => setWriteScope(event.target.value as 'append' | 'replace_document')}>
@@ -367,11 +404,6 @@ export function ExternalExportDialog({
                     <p key={warning.code} className="context-room-external-export-warning">⚠ {warning.message}</p>
                   ))}
                 </div>
-              )}
-              {challenge && (
-                <p className="context-room-external-export-hint">
-                  {t('contextRoom:externalExportDialog.authHint')}
-                </p>
               )}
               {run.status === 'environment_not_ready' && (
                 <p className="context-room-external-export-warning">

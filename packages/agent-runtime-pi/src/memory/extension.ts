@@ -1,7 +1,14 @@
 import type { InlineExtension } from "@earendil-works/pi-coding-agent";
 import { MemoryCoreClient } from "./client.js";
 import { formatRecallResult } from "./format.js";
-import type { MemoryCaptureMessage, MemoryRuntimeConfig, RoomMemorySnapshot } from "./types.js";
+import type {
+  MemoryAtomicItem,
+  MemoryCaptureMessage,
+  MemoryConversationHit,
+  MemoryRuntimeConfig,
+  MemoryScenarioEntry,
+  RoomMemorySnapshot,
+} from "./types.js";
 
 const TAG = "[pi-memory]";
 
@@ -19,6 +26,8 @@ export interface MemoryRunContext {
   captureEnabled: boolean;
   /** 轻量运行可关闭自动召回，避免将历史记忆注入本轮上下文。 */
   recallEnabled: boolean;
+  /** 房间聚焦模式时为当前 Room id：召回降为 L3 画像 + Room 记忆，memory_search 锁定当前 Room。 */
+  focusRoomId?: string;
   /** 本轮绑定 Room 的甄选记忆快照（gateway 注入，已按预算裁好；无 Room 或不可用为空）。 */
   roomMemories?: RoomMemorySnapshot[];
 }
@@ -56,11 +65,14 @@ export function createMemoryExtension(options: MemoryExtensionOptions): InlineEx
         if (!run || run.cancelled || !run.recallEnabled) return;
 
         const query = run.originalPrompt.slice(0, RECALL_QUERY_MAX_CHARS);
+        // 房间聚焦：L1/L2/L0 用已决空数组短路（不发请求），仅保留 L3 画像；
+        // Room 记忆由 run 上下文携带，见 formatRecallResult 的 roomMemories 段。
+        const focused = Boolean(run.focusRoomId);
         const [atomic, core, scenarios, conversations] = await Promise.allSettled([
-          client.searchAtomic(query, config.recallLimit),
+          focused ? Promise.resolve<MemoryAtomicItem[]>([]) : client.searchAtomic(query, config.recallLimit),
           client.readCore(),
-          client.listScenarios(),
-          client.searchConversation(query, config.recallLimit),
+          focused ? Promise.resolve<MemoryScenarioEntry[]>([]) : client.listScenarios(),
+          focused ? Promise.resolve<MemoryConversationHit[]>([]) : client.searchConversation(query, config.recallLimit),
         ]);
         if (atomic.status === "rejected") {
           log.warn(`${TAG} L1 recall failed: ${String(atomic.reason)}`);

@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { AgentAuthController } from '../src/main/agent-auth/controller'
 import { LarkAuthRunner } from '../src/main/agent-auth/lark-auth-runner'
+import { NtnAuthRunner } from '../src/main/agent-auth/ntn-auth-runner'
 import type { AgentAuthEventFrame } from '../src/shared/agent-auth'
 
 /** 假 lark-cli：auth status 按 APP_STATE 环境变量返回；login --no-wait 输出设备码契约。 */
@@ -53,6 +54,37 @@ exit 3
   return { path, stateFile: async () => stateFile }
 }
 
+/** 假 ntn：login --no-browser 打 URL+校验码退出；login poll 立即成功；whoami 已登录。 */
+async function writeFakeNtnCli(): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), 'nxcore-ntn-'))
+  const path = join(dir, 'ntn')
+  const script = `#!/bin/bash
+if [ "$1" = "--version" ]; then echo "ntn 0.23.1-test"; exit 0; fi
+if [ "$1" = "whoami" ]; then
+  echo '{"id":"user-1","name":"Notion 测试用户","user":{"name":"Notion 测试用户"}}'
+  exit 0
+fi
+if [ "$1" = "login" ] && [ "$2" = "--no-browser" ]; then
+  echo 'Open this URL in your browser to log in:'
+  echo ''
+  echo '  https://app.notion.com/workers/cli-login?verificationCode=ABC-123'
+  echo ''
+  echo 'Confirm that this verification code matches what you see in the browser:'
+  echo ''
+  echo '  ABC-123'
+  exit 0
+fi
+if [ "$1" = "login" ] && [ "$2" = "poll" ]; then
+  exit 0
+fi
+echo 'error: unsupported' >&2
+exit 3
+`
+  await writeFile(path, script, 'utf8')
+  await chmod(path, 0o755)
+  return path
+}
+
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
@@ -65,8 +97,12 @@ describe('agent auth controller', () => {
     controllers.length = 0
   })
 
-  function createController(fakePath: string): AgentAuthController {
-    const controller = new AgentAuthController(new LarkAuthRunner(fakePath))
+  function createController(fakePath: string, ntnPath?: string, persist?: { save(state: string): void; load(): string | null; clear(): void }): AgentAuthController {
+    const controller = new AgentAuthController(
+      new LarkAuthRunner(fakePath),
+      persist ? { persist } : {},
+      ntnPath ? new NtnAuthRunner(ntnPath) : null,
+    )
     controllers.push(controller)
     return controller
   }
@@ -128,10 +164,114 @@ describe('agent auth controller', () => {
     expect(status.activeChallenge).toBeNull()
   })
 
-  it('notion challenge guides to connector console without local CLI flow', async () => {
-    const controller = createController('/nonexistent/lark-cli-xyz')
+  it('notion login challenge surfaces url + verification code and completes', async () => {
+    const ntnPath = await writeFakeNtnCli()
+    const controller = createController('/nonexistent/lark-cli-xyz', ntnPath)
+    const events: AgentAuthEventFrame[] = []
+    controller.onEvent((frame) => events.push(frame))
+
     const challenge = await controller.start({ provider: 'notion', phase: 'user_auth' })
     expect(challenge.status).toBe('pending')
-    expect(challenge.steps[0]!.action).toBe('open_connector_console')
+
+    // login --no-browser → 卡片带出 URL 与校验码 → poll 立即成功 → resume 判定已授权
+    let urlSeen = false
+    let codeSeen = false
+    let authorized: (typeof challenge) | null = null
+    for (let attempt = 0; attempt < 50 && !authorized; attempt += 1) {
+      await delay(100)
+      for (const frame of events) {
+        if (frame.type !== 'challenge.updated') continue
+        if (frame.challenge.verificationUrl === 'https://app.notion.com/workers/cli-login?verificationCode=ABC-123') urlSeen = true
+        if (frame.challenge.steps.some((step) => step.description?.includes('ABC-123'))) codeSeen = true
+        if (frame.challenge.status === 'authorized') authorized = frame.challenge
+      }
+    }
+    expect(urlSeen).toBe(true)
+    expect(codeSeen).toBe(true)
+    expect(authorized?.status).toBe('authorized')
+    expect(authorized?.message).toContain('Notion')
+    const status = await controller.status()
+    expect(status.activeChallenge?.status).toBe('authorized')
+  })
+
+  it('restores persisted challenge as expired after restart', async () => {
+    const { path } = await writeFakeLarkCli()
+    let saved: string | null = null
+    const persist = {
+      save: (state: string): void => { saved = state },
+      load: (): string | null => saved,
+      clear: (): void => { saved = null },
+    }
+    const first = createController(path, undefined, persist)
+    const challenge = await first.start({ provider: 'feishu', phase: 'user_auth' })
+    expect(challenge.status).toBe('pending')
+    expect(saved).toBeTruthy()
+    first.shutdown()
+
+    // “重启”：新控制器从持久化恢复 → 过期卡片，可重新发起
+    const second = new AgentAuthController(new LarkAuthRunner(path), { persist })
+    controllers.push(second)
+    const status = await second.status()
+    expect(status.activeChallenge?.status).toBe('expired')
+    expect(status.activeChallenge?.verificationUrl).toBeNull()
+    const restarted = await second.start({ provider: 'feishu', phase: 'user_auth' })
+    expect(restarted.status).toBe('pending')
+  })
+
+  it('does not restore an authorized challenge after restart', async () => {
+    const { path } = await writeFakeLarkCli()
+    let saved: string | null = null
+    const persist = {
+      save: (state: string): void => { saved = state },
+      load: (): string | null => saved,
+      clear: (): void => { saved = null },
+    }
+    const first = createController(path, undefined, persist)
+    await first.start({ provider: 'feishu', phase: 'user_auth' })
+    // 等异步 login 流程落定（fake 立即完成/失败并写持久化）。
+    await delay(500)
+    // 模拟授权成功：直接把持久化内容改成 authorized（持久化层本不该再写，
+    // 这里覆盖历史遗留文件的场景）。
+    saved = JSON.stringify({ ...JSON.parse(saved ?? '{}'), status: 'authorized' })
+    first.shutdown()
+
+    const second = new AgentAuthController(new LarkAuthRunner(path), { persist })
+    controllers.push(second)
+    const status = await second.status()
+    expect(status.activeChallenge).toBeNull()
+    expect(saved).toBeNull()
+  })
+
+  it('dismisses a restored pending challenge when keychain is already authorized', async () => {
+    const { path } = await writeFakeLarkCli()
+    // 让 fake lark 处于已登录状态（app-ready）
+    await import('node:fs/promises').then((fs) => fs.writeFile(join(path, '..', 'state'), 'app-ready', 'utf8'))
+    let saved: string | null = null
+    const persist = {
+      save: (state: string): void => { saved = state },
+      load: (): string | null => saved,
+      clear: (): void => { saved = null },
+    }
+    // 未完成的 pending 记录（模拟重启时落盘的是进行中状态）
+    saved = JSON.stringify({
+      id: 'challenge-x', provider: 'feishu', phase: 'user_auth', status: 'pending',
+      reason: 'not_connected', title: '授权飞书账号', steps: [], exportRunId: null,
+      startedAt: new Date().toISOString(),
+    })
+    const controller = new AgentAuthController(new LarkAuthRunner(path), { persist })
+    controllers.push(controller)
+    // 恢复后异步核对钥匙串 → 已授权则静默撤卡
+    await delay(600)
+    const status = await controller.status()
+    expect(status.activeChallenge).toBeNull()
+    expect(saved).toBeNull()
+  })
+
+  it('notion without ntn runner rejects with platform message', async () => {
+    const controller = createController('/nonexistent/lark-cli-xyz')
+    const error = await controller.start({ provider: 'notion', phase: 'user_auth' })
+      .then(() => null, (caught: unknown) => caught)
+    expect(error).toBeInstanceOf(Error)
+    expect((error as Error).message).toContain('macOS')
   })
 })

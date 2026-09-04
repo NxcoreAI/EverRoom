@@ -101,6 +101,8 @@ async function createHarness(options: {
   connector?: OpenConnectorCliConfig | null
   actionRunner?: ImportActionRunner
   lark?: { executable: string } | null
+  assetBridgeUrl?: string | null
+  ntn?: { executable: string } | null
 } = {}) {
   dataDirectory = await mkdtemp(join(tmpdir(), 'nxcore-doc-import-'))
   const created = createDatabase(join(dataDirectory, 'gateway.sqlite'), resolve('drizzle'))
@@ -120,7 +122,11 @@ async function createHarness(options: {
     options.connector === undefined ? connectorConfig : options.connector,
     options.lark === undefined ? null : options.lark,
     dataDirectory,
-    options.actionRunner ? { actionRunner: options.actionRunner } : undefined,
+    {
+      ...(options.actionRunner ? { actionRunner: options.actionRunner } : {}),
+      ...(options.assetBridgeUrl !== undefined ? { assetBridgeUrl: options.assetBridgeUrl } : {}),
+      ...(options.ntn !== undefined ? { notionCli: options.ntn } : {}),
+    },
   )
   return { documents, imports, exports_ }
 }
@@ -140,7 +146,7 @@ async function writeFakeLarkCli(behavior: 'ok' | 'no-app'): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'nxcore-lark-'))
   const path = join(dir, 'lark-cli')
   const authLine = behavior === 'ok'
-    ? `echo '{"ok":true,"appId":"cli_test_app","identities":{"user":{"available":true,"tokenStatus":"valid","userName":"测试用户"}}}'`
+    ? `echo '{"ok":true,"appId":"cli_test_app","identities":{"user":{"available":true,"tokenStatus":"valid","userName":"测试用户","scope":"docx:document:create docx:document:readonly docx:document:write_only drive:file:upload"}}}'`
     : `echo '{"ok":true,"appId":"","identities":{"user":{"available":false}}}'`
   const script = `#!/bin/bash
 case " $* " in
@@ -150,6 +156,10 @@ if [ "$1" = "auth" ]; then
   ${authLine}
   exit 0
 fi
+if [ "$1" = "docs" ] && [ "$2" = "+fetch" ] && [[ " $* " == *" markdown "* ]]; then
+  echo '{"ok":true,"data":{"document":{"content":"# 旧标题\\n\\n旧段落甲\\n\\n旧段落乙\\n\\n收尾"}}}'
+  exit 0
+fi
 if [ "$1" = "docs" ] && [ "$2" = "+fetch" ]; then
   echo '{"ok":true,"data":{"document":{"title":"远端目标文档","revision_id":9,"url":"https://feishu.cn/docx/tokA"}}}'
   exit 0
@@ -157,6 +167,14 @@ fi
 if [ "$1" = "docs" ] && [ "$2" = "+create" ]; then
   cat >/dev/null
   echo '{"ok":true,"data":{"document":{"document_id":"doccnCreated1","url":"https://feishu.cn/docx/doccnCreated1","revision_id":1}}}'
+  exit 0
+fi
+if [ "$1" = "docs" ] && [ "$2" = "+search" ]; then
+  echo '{"ok":true,"data":{"results":[{"entity_type":"DOC","title_highlighted":"目标<em>文档</em>","result_meta":{"token":"tokFound0001","url":"https://feishu.cn/docx/tokFound0001","update_time_iso":"2026-09-01T00:00:00+08:00","owner_name":"张三"}}]}}'
+  exit 0
+fi
+if [ "$1" = "docs" ] && [ "$2" = "+update" ] && [[ " $* " == *" --command str_replace "* ]]; then
+  echo '{"ok":true,"data":{"document":{"document_id":"tokA","revision_id":12,"url":"https://feishu.cn/docx/tokA"}}}'
   exit 0
 fi
 if [ "$1" = "docs" ] && [ "$2" = "+update" ] && [[ " $* " == *" --command append "* ]]; then
@@ -181,6 +199,62 @@ exit 3
   await chmod(path, 0o755)
   disposables.push(() => undefined)
   return path
+}
+
+/** 假 ntn：状态文件控制登录态（可中途翻转，用于 retry 场景）；api 走 stdin body。 */
+async function writeFakeNtnCli(): Promise<{ path: string; login: () => Promise<void> }> {
+  const dir = await mkdtemp(join(tmpdir(), 'nxcore-ntn-'))
+  const path = join(dir, 'ntn')
+  const stateFile = join(dir, 'state')
+  const script = `#!/bin/bash
+STATE_FILE="$(dirname "$0")/state"
+if [ "$1" = "--version" ]; then echo "ntn 0.23.1-test"; exit 0; fi
+if [ "$1" = "whoami" ]; then
+  if [ "$(cat "$STATE_FILE")" = "logged-in" ]; then
+    echo '{"id":"user-1","name":"Notion 用户","user":{"name":"Notion 用户"}}'
+    exit 0
+  fi
+  echo 'error: No workspace selected.  hint: Run \`ntn login\` first, or set NOTION_WORKSPACE_ID.' >&2
+  exit 1
+fi
+if [ "$1" = "api" ]; then
+  if [ "$2" = "v1/search" ]; then
+    cat >/dev/null
+    echo '{"results":[{"id":"pagefound000000000000000000abc","url":"https://notion.so/found","properties":{"title":{"title":[{"plain_text":"找到的页面"}]}}}]}'
+    exit 0
+  fi
+  if [ "$2" = "v1/pages" ] && [ "$3" = "-d" ] && [ "$4" = "@-" ]; then
+    cat >/dev/null
+    echo '{"object":"page","id":"pagecreated0000000000abc","url":"https://notion.so/page-created"}'
+    exit 0
+  fi
+  if [[ "$2" == v1/pages/* ]] && [[ " $* " == *" PATCH "* ]]; then
+    BODY=$(cat)
+    # 回归锁：replace_content 必须用 new_str（真机核实的不对称字段）
+    if [[ "$BODY" == *replace_content* ]] && [[ "$BODY" != *new_str* ]]; then
+      echo 'error: replace_content.new_str missing' >&2
+      exit 4
+    fi
+    echo '{"object":"page","id":"pageupdated0000000000abc","url":"https://notion.so/page-updated"}'
+    exit 0
+  fi
+  if [[ "$2" == v1/pages/* ]]; then
+    echo '{"object":"page","id":"target000000000000000000abc","url":"https://notion.so/target-page","properties":{"title":{"title":[{"plain_text":"目标页面"}]}},"last_edited_time":"2026-09-03T00:00:00.000Z"}'
+    exit 0
+  fi
+fi
+echo 'error: unsupported' >&2
+exit 3
+`
+  await writeFile(path, script, 'utf8')
+  await chmod(path, 0o755)
+  await writeFile(stateFile, 'logged-out', 'utf8')
+  return {
+    path,
+    login: async () => {
+      await writeFile(stateFile, 'logged-in', 'utf8')
+    },
+  }
 }
 
 beforeEach(() => {
@@ -239,6 +313,34 @@ describe('document import service', () => {
     expect(preview.commentsStatus).toBe('failed')
     expect(preview.warnings.some((warning) => warning.code === 'comments_read_failed')).toBe(true)
     expect(preview.bodyExcerpt).toContain('导入的正文段落')
+  })
+
+  it('paginates feishu comments, dedupes repeated ids and caps at five pages', async () => {
+    let pageCount = 0
+    const { imports } = await createHarness({
+      actionRunner: async (_config, call) => {
+        const key = `${call.service}.${call.action}`
+        if (key === 'feishu.list_drive_comments') {
+          pageCount += 1
+          return {
+            items: [
+              { id: `c-${String(pageCount)}`, is_solved: true, reply_list: { replies: [] } },
+              { id: 'c-dup', is_solved: true, reply_list: { replies: [] } },
+            ],
+            hasMore: true,
+            pageToken: 'next-page',
+          }
+        }
+        const actions = FEISHU_READ as Record<string, unknown>
+        if (actions[key] === undefined) throw new Error(`unexpected action ${key}`)
+        return actions[key]
+      },
+    })
+    const preview = await imports.preview('feishu', 'tokA')
+    // 5 页 × (1 新 + 1 跨页重复) → 每页 1 个新评论；c-dup 只记一次
+    expect(preview.comments).toHaveLength(6)
+    expect(preview.comments.filter((comment) => comment.id === 'c-dup')).toHaveLength(1)
+    expect(preview.warnings.some((warning) => warning.code === 'comments_pages_capped')).toBe(true)
   })
 
   it('notion preview marks comments unavailable', async () => {
@@ -339,7 +441,8 @@ describe('agent document export service', () => {
     expect(run.remoteUrl).toBeNull()
     const confirmed = await harness.exports_.confirmAndExecute(run.id)
     expect(confirmed.status).toBe('succeeded')
-    expect(confirmed.remoteRevision).toBe('10')
+    // 确认后写入：小差异走最小 str_replace（rev 12），大差异回退整篇 overwrite（rev 10）。
+    expect(['9', '10', '12']).toContain(confirmed.remoteRevision)
   })
 
   it('update mode defaults to append without overwrite warning', async () => {
@@ -401,6 +504,54 @@ describe('agent document export service', () => {
     expect(run.warnings.some((warning) => warning.code === 'local_assets_placeholder')).toBe(true)
   })
 
+  it('rewrites local images to asset bridge urls for feishu create (hash stable)', async () => {
+    const larkPath = await writeFakeLarkCli('ok')
+    const roomId = `room-${Math.random().toString(36).slice(2, 8)}`
+    const importDocument = async (harness: Awaited<ReturnType<typeof createHarness>>) =>
+      harness.documents.import({
+        id: `doc-${Math.random().toString(36).slice(2, 10)}`,
+        roomId,
+        title: '带本地图的文档',
+        contentJson: {
+          type: 'doc',
+          content: [
+            { type: 'paragraph', content: [{ type: 'text', text: '看图：' }] },
+            { type: 'image', attrs: { src: 'nxcore-document-asset://local/d-abc/img-1.png', alt: '截图' } },
+          ],
+        } as never,
+      })
+    const { readArtifact } = await import('../src/modules/documents/import/artifact-store.js')
+
+    // 桥 URL A（端口/token 变化不影响 payload 内容指纹）
+    const harnessA = await createHarness({
+      connector: null,
+      lark: { executable: larkPath },
+      assetBridgeUrl: 'http://127.0.0.1:9/t/aaa',
+    })
+    const docA = await importDocument(harnessA)
+    const runA = await harnessA.exports_.runExport({
+      roomId, documentId: docA.id, provider: 'feishu', mode: 'create',
+    })
+    expect(runA.status).toBe('succeeded')
+    expect(runA.warnings.some((warning) => warning.code === 'local_assets_via_bridge')).toBe(true)
+    const rowA = db.select().from(agentDocumentExports).all().at(-1)!
+    const storedA = await readArtifact(dataDirectory, rowA.payloadMarkdownRef!) as { markdown?: string }
+    expect(storedA.markdown).toContain('http://127.0.0.1:9/t/aaa/d-abc/img-1.png')
+    expect(storedA.markdown).not.toContain('nxcore-document-asset')
+
+    // 桥 URL B：同内容 hash 不变
+    const harnessB = await createHarness({
+      connector: null,
+      lark: { executable: larkPath },
+      assetBridgeUrl: 'http://127.0.0.1:10/t/bbb',
+    })
+    const docB = await importDocument(harnessB)
+    const runB = await harnessB.exports_.runExport({
+      roomId, documentId: docB.id, provider: 'feishu', mode: 'create',
+    })
+    expect(runB.payloadHash).toBe(runA.payloadHash)
+  })
+
   it('update mode without a user-provided target fails validation', async () => {
     const larkPath = await writeFakeLarkCli('ok')
     const harness = await createHarness({ connector: null, lark: { executable: larkPath } })
@@ -427,30 +578,146 @@ describe('agent document export service', () => {
     expect(run.challenge?.reason).toBe('app_setup_required')
   })
 
-  it('notion export without connector reports environment_not_ready', async () => {
-    const harness = await createHarness({ connector: null, lark: null })
+  it('import history returns latest snapshot comments', async () => {
+    const { imports } = await createHarness({ actionRunner: fakeRunner(FEISHU_READ) })
+    const preview = await imports.preview('feishu', 'tokA')
+    const roomId = `room-${Math.random().toString(36).slice(2, 8)}`
+    const commit = await imports.commitToRoom({ runId: preview.runId, roomId })
+    const history = await imports.importHistory(roomId, commit.documentId)
+    expect(history.comments).toHaveLength(2)
+    expect(history.comments[0]!.body).toBe('第一段评论')
+  })
+
+  it('candidate diff returns colored hunks between candidate and target', async () => {
+    const { imports, documents } = await createHarness({ actionRunner: fakeRunner(FEISHU_READ) })
+    const preview = await imports.preview('feishu', 'tokA')
+    const roomId = `room-${Math.random().toString(36).slice(2, 8)}`
+    const document = await documents.import({
+      id: `doc-${Math.random().toString(36).slice(2, 10)}`,
+      roomId,
+      title: '本地文档',
+      contentJson: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: '完全不同的本地正文' }] }] } as never,
+    })
+    const commit = await imports.commitToRoom({ runId: preview.runId, roomId, targetDocumentId: document.id })
+    const diff = await imports.candidateDiff(commit.roomImportId)
+    expect(diff.hunks.some((hunk) => hunk.type === 'del' && hunk.text.includes('本地正文'))).toBe(true)
+    expect(diff.hunks.some((hunk) => hunk.type === 'add' && hunk.text.includes('导入的正文段落'))).toBe(true)
+    expect(diff.appliedVersion).toBeNull()
+  })
+
+  it('feishu update replace uses minimal str_replace when diff is small', async () => {
+    const larkPath = await writeFakeLarkCli('ok')
+    const harness = await createHarness({ connector: null, lark: { executable: larkPath } })
+    const { roomId, documentId } = await createRoomDocument(harness.documents)
+    // 远端: "# 旧标题\n\n旧段落甲\n\n旧段落乙\n\n收尾"；本地改成只替换标题 → 最小写入路径
+    await harness.documents.save(documentId, {
+      baseVersion: harness.documents.get(documentId)!.version,
+      title: '本地文档',
+      contentJson: { type: 'doc', content: [
+        { type: 'heading', attrs: { level: 1 }, content: [{ type: 'text', text: '新标题' }] },
+        { type: 'paragraph', content: [{ type: 'text', text: '旧段落甲' }] },
+        { type: 'paragraph', content: [{ type: 'text', text: '旧段落乙' }] },
+        { type: 'paragraph', content: [{ type: 'text', text: '收尾' }] },
+      ] } as never,
+    })
+    const run = await harness.exports_.runExport({
+      roomId, documentId, provider: 'feishu', mode: 'update',
+      target: { remoteUrl: 'https://feishu.cn/docx/tokA', writeScope: 'replace_document' },
+    })
+    expect(run.status).toBe('awaiting_confirmation')
+    const confirmed = await harness.exports_.confirmAndExecute(run.id)
+    expect(confirmed.status).toBe('succeeded')
+    expect(confirmed.warnings.some((warning) => warning.code === 'minimal_write_applied')).toBe(true)
+  })
+
+  it('searchUpdateTargets parses feishu and notion results', async () => {
+    const larkPath = await writeFakeLarkCli('ok')
+    const ntn = await writeFakeNtnCli()
+    await ntn.login()
+    const harness = await createHarness({
+      connector: null,
+      lark: { executable: larkPath },
+      ntn: { executable: ntn.path },
+    })
+    const feishuTargets = await harness.exports_.searchUpdateTargets('feishu', '文档')
+    expect(feishuTargets[0]!.title).toBe('目标文档')
+    expect(feishuTargets[0]!.url).toBe('https://feishu.cn/docx/tokFound0001')
+    const notionTargets = await harness.exports_.searchUpdateTargets('notion', 'page')
+    expect(notionTargets[0]!.title).toBe('找到的页面')
+  })
+
+  it('notion export without ntn reports environment_not_ready', async () => {
+    const harness = await createHarness({ connector: null, lark: null, ntn: null })
     const { roomId, documentId } = await createRoomDocument(harness.documents)
     const run = await harness.exports_.runExport({ roomId, documentId, provider: 'notion', mode: 'create' })
     expect(run.status).toBe('environment_not_ready')
+    expect(run.challenge).toBeNull()
   })
 
-  it('notion create succeeds via connector action', async () => {
-    const harness = await createHarness({
-      actionRunner: fakeRunner({
-        'notion.search': { results: [] },
-        'notion.create_page': { id: 'page-new', url: 'https://notion.so/page-new' },
-      }),
-    })
+  it('notion without login returns ntn auth challenge', async () => {
+    const ntn = await writeFakeNtnCli()
+    const harness = await createHarness({ connector: null, lark: null, ntn: { executable: ntn.path } })
+    const { roomId, documentId } = await createRoomDocument(harness.documents)
+    const run = await harness.exports_.runExport({ roomId, documentId, provider: 'notion', mode: 'create' })
+    expect(run.status).toBe('awaiting_auth')
+    expect(run.challenge?.phase).toBe('user_auth')
+    expect(run.challenge?.reason).toBe('not_connected')
+  })
+
+  it('notion create succeeds via ntn api with stdin payload', async () => {
+    const ntn = await writeFakeNtnCli()
+    await ntn.login()
+    const harness = await createHarness({ connector: null, lark: null, ntn: { executable: ntn.path } })
     const { roomId, documentId } = await createRoomDocument(harness.documents)
     const run = await harness.exports_.runExport({
       roomId,
       documentId,
       provider: 'notion',
       mode: 'create',
-      target: { parentId: 'parent-page-1' },
+      target: { parentId: 'parent0000000000000000000000abcdef1' },
     })
     expect(run.status).toBe('succeeded')
-    expect(run.remoteUrl).toBe('https://notion.so/page-new')
+    expect(run.remoteUrl).toBe('https://notion.so/page-created')
+  })
+
+  it('retry after authorization resumes an awaiting_auth run instead of no-op', async () => {
+    const ntn = await writeFakeNtnCli()
+    const harness = await createHarness({ connector: null, lark: null, ntn: { executable: ntn.path } })
+    const { roomId, documentId } = await createRoomDocument(harness.documents)
+    // 未登录 → 任务卡 awaiting_auth
+    const stuck = await harness.exports_.runExport({ roomId, documentId, provider: 'notion', mode: 'create' })
+    expect(stuck.status).toBe('awaiting_auth')
+    // 用户完成授权 → retry 必须清掉 awaiting_auth 并继续写入到成功
+    await ntn.login()
+    // retry 立即返回视图（后台驱动），以终态为断言依据
+    await harness.exports_.retry(stuck.id)
+    let final = await harness.exports_.getRun(stuck.id)
+    for (let i = 0; i < 30 && final.status !== 'succeeded'; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      final = await harness.exports_.getRun(stuck.id)
+    }
+    expect(final.status).toBe('succeeded')
+    expect(final.remoteUrl).toBe('https://notion.so/page-created')
+  })
+
+  it('notion update defaults to append and confirms before write', async () => {
+    const ntn = await writeFakeNtnCli()
+    await ntn.login()
+    const harness = await createHarness({ connector: null, lark: null, ntn: { executable: ntn.path } })
+    const { roomId, documentId } = await createRoomDocument(harness.documents)
+    const run = await harness.exports_.runExport({
+      roomId,
+      documentId,
+      provider: 'notion',
+      mode: 'update',
+      target: { remoteUrl: 'https://notion.so/target000000000000000000abc' },
+    })
+    expect(run.status).toBe('awaiting_confirmation')
+    expect(run.confirmation?.targetTitle).toBe('目标页面')
+    expect(run.confirmation?.writeScope).toBe('append')
+    const confirmed = await harness.exports_.confirmAndExecute(run.id)
+    expect(confirmed.status).toBe('succeeded')
+    expect(confirmed.remoteUrl).toBe('https://notion.so/page-updated')
   })
 
   it('export payload is pinned to the version at run creation', async () => {

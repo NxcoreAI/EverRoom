@@ -67,6 +67,7 @@ import type {
   DocumentImportCommentDiffSummary,
   DocumentImportHistoryEntry,
   DocumentImportRunView,
+  ExternalDocumentCommentView,
   ExternalDocumentPreview,
   ExternalDocumentProvider,
   ExternalDocumentSearchResponse,
@@ -160,6 +161,18 @@ import type {
   CloudAgentSessionSummary,
   NotificationPreferences,
 } from './notifications'
+
+export interface LocalDocumentComment {
+  id: string
+  parentId: string | null
+  blockId: string | null
+  quotedText: string | null
+  body: string
+  authorName: string
+  resolved: boolean
+  createdAt: string
+  updatedAt: string
+}
 
 export interface EvidenceBlock {
   id: string
@@ -864,6 +877,17 @@ export interface NxcoreDesktopApi {
     importHistory(roomId: string, documentId: string): Promise<{
       entries: DocumentImportHistoryEntry[]
       commentDiff: DocumentImportCommentDiffSummary | null
+      comments: ExternalDocumentCommentView[]
+    }>
+    importDiff(roomImportId: string): Promise<{
+      candidateTitle: string
+      currentTitle: string
+      appliedVersion: number | null
+      hunks: Array<{ type: 'ctx' | 'add' | 'del'; text: string }>
+      commentsComparable: boolean
+    }>
+    searchExportTargets(provider: ExternalDocumentProvider, query: string): Promise<{
+      items: Array<{ remoteId: string; title: string; url: string; updatedAt: string | null; ownerName: string | null }>
     }>
     checkExternalUpdate(roomId: string, documentId: string): Promise<{
       run: DocumentImportRunView
@@ -1138,6 +1162,11 @@ export interface NxcoreDesktopApi {
     listVersions(documentId: string, options?: DocumentVersionListOptions): Promise<DocumentVersionSummary[]>
     getVersionSnapshot(documentId: string, version: number): Promise<DocumentVersionSnapshot>
     getDiff(documentId: string, fromVersion: number | null, toVersion: number): Promise<DocumentDiffResult>
+    versionChangeSummary(documentId: string, version: number): Promise<{ version: number; summary: string; source: 'ai' | 'local' }>
+    listDocumentComments(documentId: string): Promise<{ items: LocalDocumentComment[] }>
+    createDocumentComment(documentId: string, input: { body: string; parentId?: string | null; blockId?: string | null; quotedText?: string | null }): Promise<LocalDocumentComment>
+    resolveDocumentComment(documentId: string, commentId: string, resolved: boolean): Promise<LocalDocumentComment>
+    deleteDocumentComment(documentId: string, commentId: string): Promise<void>
     restoreVersion(documentId: string, version: number, baseVersion: number): Promise<RoomDocument>
     resolveBlockReferences(input: ResolveDocumentBlockReferencesInput): Promise<ResolveDocumentBlockReferencesResult>
     listOperations(filters?: {

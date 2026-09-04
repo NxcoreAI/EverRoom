@@ -3,7 +3,7 @@ import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type R
 
 import { AgentExecutionTimeline } from './AgentExecutionTimeline'
 import { AgentShellApproval } from './AgentShellApproval'
-import { AgentAuthChallengeCard } from './AgentAuthChallengeCard'
+import { AgentAuthChallengeCard, useAgentAuthChallenge } from './AgentAuthChallengeCard'
 import type { PendingShellApproval } from './agentShellApprovals'
 import type { AgentRunActivity } from './agentRunActivity'
 import { parseAgentDocumentIntentResult, type AgentDocumentIntentResult } from './agentDocumentIntent'
@@ -455,6 +455,18 @@ export function AgentChatView({
     }
     return null
   }, [activeRunId, dismissedRoomSelections, messages, runCompletedAtByRun, runStartedAtByRun, toolCallsByRun])
+  // 授权卡片按时间插进消息流：挑战出现时锚定 startedAt，新消息自然把它顶上去。
+  const authChallenge = useAgentAuthChallenge()
+  const authCardInsertIndex = useMemo(() => {
+    if (!authChallenge) return -1
+    const startedAt = Date.parse(authChallenge.startedAt)
+    if (Number.isNaN(startedAt)) return messages.length
+    for (let index = 0; index < messages.length; index += 1) {
+      if (Date.parse(messages[index]!.createdAt) > startedAt) return index
+    }
+    return messages.length
+  }, [authChallenge?.id, authChallenge?.startedAt, messages])
+
   const pendingDocumentIntent = useMemo(() => {
     const candidates = Object.values(toolCallsByRun)
       .flat()
@@ -678,6 +690,7 @@ export function AgentChatView({
             if (message.role === 'user') {
               return (
                 <Fragment key={message.id}>
+                  {index === authCardInsertIndex ? <AgentAuthChallengeCard /> : null}
                   <article
                     className="agent-message"
                     data-agent-message-id={message.id}
@@ -690,8 +703,9 @@ export function AgentChatView({
             }
 
             return (
+              <Fragment key={message.id}>
+              {index === authCardInsertIndex ? <AgentAuthChallengeCard /> : null}
               <div
-                key={message.id}
                 className="agent-assistant-turn"
                 data-agent-message-id={message.id}
                 data-notification-target={String(highlightedNotificationTarget?.messageId === message.id)}
@@ -735,8 +749,10 @@ export function AgentChatView({
                   </div>
                 ) : null}
               </div>
+              </Fragment>
             )
           })}
+          {authCardInsertIndex >= messages.length ? <AgentAuthChallengeCard /> : null}
           {activeRunId && !activeHasAssistant ? (
             <div className="agent-assistant-turn is-pending">
               {!activeRunHasUserMessage ? (
@@ -765,7 +781,6 @@ export function AgentChatView({
             resolvingApprovalIds={resolvingApprovalIds}
             onResolve={onResolveApproval}
           />
-          <AgentAuthChallengeCard />
           {pendingDocumentIntent ? (
             <DocumentIntentClarification
               busy={loading || submitting || activeRunPending}

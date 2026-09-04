@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { Type } from "@sinclair/typebox";
 import type { PiAgentRuntimeTool } from "@nxcore/agent-runtime-pi";
+import { buildIndexProbe, normalizeIndexText } from "@nxcore/document-model";
 import { formatRoomContextDigest, type RoomContextDigest } from "../context-rooms/room-context-digest.js";import {
   DOC_WRITER_AGENT_ID,
   DOC_WRITER_TASK_LABELS,
@@ -17,6 +18,34 @@ function dispatchKey(runId: string, agentId: string, task: string, input: unknow
   return createHash("sha256")
     .update(JSON.stringify({ runId, agentId, task, input }))
     .digest("hex");
+}
+
+const CONCURRENCY_RETRY_DELAYS_MS = [500, 1_500];
+
+function isConcurrencyLimitError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message === "subagent_concurrency_limit" || message === "subagent_global_concurrency_limit";
+}
+
+/**
+ * 并发限额短退避重试（2026-09-04）：框架无排队，并行调用簇下后到的 dispatch
+ * 会在 <1s 内被硬拒。为同步型分析工具吸收秒级瞬时高峰；重试仍失败则原样抛出
+ * （调用方继续走既有的 retryable 失败语义）。
+ */
+async function dispatchWithConcurrencyRetry<T>(
+  dispatch: () => Promise<T>,
+): Promise<T> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await dispatch();
+    } catch (error) {
+      const delay = CONCURRENCY_RETRY_DELAYS_MS[attempt];
+      if (delay === undefined || !isConcurrencyLimitError(error) || typeof AbortSignal === "undefined") {
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
 }
 
 function parseJsonObject(value: string): Record<string, unknown> | null {
@@ -111,7 +140,7 @@ export function inferMaterialSourcesFromReads(
   roomId: string | undefined,
   material: string,
 ): MaterialSourceEntry[] {
-  const normalizedMaterial = material.replace(/\s+/g, "");
+  const normalizedMaterial = normalizeIndexText(material);
   if (!runId || normalizedMaterial.length < 20) return [];
   const entries: MaterialSourceEntry[] = [];
   for (const read of reads.documentsReadByRun(runId)) {
@@ -125,8 +154,8 @@ export function inferMaterialSourcesFromReads(
     if (!snapshot) continue;
     for (const block of snapshot.blocks) {
       if (block.depth !== 0) continue;
-      const probe = block.textPreview.replace(/\s+/g, "").slice(0, 80);
-      if (probe.length < 20 || !normalizedMaterial.includes(probe)) continue;
+      const probe = buildIndexProbe(block.textPreview);
+      if (!probe || !normalizedMaterial.includes(probe)) continue;
       entries.push({
         roomId: read.roomId,
         documentId: read.documentId,
@@ -260,7 +289,7 @@ export function createSubagentPiTools(
           ? { sourceLabel: params.sourceLabel }
           : {}),
       };
-      const invocation = await orchestrator.dispatch({
+      const invocation = await dispatchWithConcurrencyRetry(() => orchestrator.dispatch({
         agentId: "content-analyst",
         task,
         input,
@@ -269,7 +298,7 @@ export function createSubagentPiTools(
         parentSessionId: run.sessionId,
         parentRunId: run.runId,
         ...(signal ? { signal } : {}),
-      });
+      }));
       return {
         content: JSON.stringify({
           invocationId: invocation.id,
@@ -334,7 +363,7 @@ export function createSubagentPiTools(
           sourceLabel: digest.room.title,
         };
         const task = "分析指定 Context Room 的资料并提炼可核验结论";
-        const invocation = await orchestrator.dispatch({
+        const invocation = await dispatchWithConcurrencyRetry(() => orchestrator.dispatch({
           agentId: "content-analyst",
           task,
           input,
@@ -343,7 +372,7 @@ export function createSubagentPiTools(
           parentSessionId: run.sessionId,
           parentRunId: run.runId,
           ...(signal ? { signal } : {}),
-        });
+        }));
         const structured = invocation.result?.structuredOutput !== null
           && typeof invocation.result?.structuredOutput === "object"
           && !Array.isArray(invocation.result.structuredOutput)
@@ -446,6 +475,8 @@ export function createSubagentPiTools(
         + "未传时网关会按本 run 的 document_read 记录对照 material 自动推断补齐。"
         + "用户要求为既有文档补建来源索引时：先 document_read 该文档与来源文档，再以 task=draft-edit 传 materialSources，"
         + "instruction 要求仅为确有来源支撑的存量段落在段末追加索引标记，其余正文保持原样。"
+        + "禁止在 instruction 中手写 everroom:// 链接或 blockId（截短的 id 会被网关拒绝）；"
+        + "来源块一律经 materialSources 传递，id 完整照抄 document_read 的 blocks，doc-writer 自会生成标记语法。"
         + "正文内容必须来自本工具的调用链，不得自行撰写或改写。",
       parameters: Type.Object({
         task: Type.Union([

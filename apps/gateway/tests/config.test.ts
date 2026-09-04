@@ -16,7 +16,7 @@ describe("loadConfig", () => {
       enabled: true,
       definitionsDir: resolve("../..", "agents"),
       defaultTimeoutMs: 300_000,
-      maxConcurrent: 4,
+      maxConcurrent: 8,
     });
   });
 

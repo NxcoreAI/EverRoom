@@ -1,5 +1,6 @@
 import { useEditorState, type Editor } from '@tiptap/react'
 import { BubbleMenu } from '@tiptap/react/menus'
+import { MessageSquarePlus } from 'lucide-react'
 import { TextSelection } from '@tiptap/pm/state'
 import {
   ArrowUp,
@@ -27,6 +28,8 @@ import { useLocale } from '../../../../../i18n/LocaleContext'
 import { showToast } from '../../../../../state/toast'
 import { EditorIconButton } from './EditorIconButton'
 import { DOCUMENT_IMAGE_ACCEPT, storeDocumentImageFile } from './documentImageAssets'
+import { blockIndexTargetFromClipboardText } from './blockIndexLink'
+import { handleBlockIndexPaste } from './BlockIndexMark'
 import {
   clearSelectionRewritePromptDecoration,
   showSelectionRewritePromptDecoration,
@@ -50,14 +53,20 @@ function clampImagePreviewScale(scale: number): number {
 export function TiptapBubbleToolbar({
   editor,
   documentId,
+  sourceRoomId,
   onAskAi,
 }: {
   editor: Editor
   documentId: string
+  sourceRoomId: string
   onAskAi: (instruction: string) => void
 }) {
   const { t } = useLocale()
   const [linkOpen, setLinkOpen] = useState(false)
+  const [commentOpen, setCommentOpen] = useState(false)
+  const [commentDraft, setCommentDraft] = useState('')
+  const [commentSubmitting, setCommentSubmitting] = useState(false)
+  const commentSelectionRef = useRef<{ from: number; to: number; quotedText: string } | null>(null)
   const [linkValue, setLinkValue] = useState('')
   const [askAiOpen, setAskAiOpen] = useState(false)
   const [askAiInstruction, setAskAiInstruction] = useState('')
@@ -97,6 +106,17 @@ export function TiptapBubbleToolbar({
   }
 
   const applyLink = () => {
+    const raw = linkValue.trim()
+    // 块/记忆链接不落文字链接——挂成索引 chip（复用粘贴路径的校验与 toast）。
+    if (blockIndexTargetFromClipboardText(raw)) {
+      handleBlockIndexPaste(
+        editor.view,
+        { clipboardData: { getData: (type: string) => (type === 'text/plain' ? raw : '') } },
+        { sourceRoomId },
+      )
+      setLinkOpen(false)
+      return
+    }
     const href = normalizeLink(linkValue)
     if (!href) return
     editor.chain().focus().extendMarkRange('link').setLink({ href }).run()
@@ -217,7 +237,7 @@ export function TiptapBubbleToolbar({
           })
         }}
       />
-      {toolbarState.imageActive ? imageAltOpen ? (
+      {!commentOpen || toolbarState.imageActive ? toolbarState.imageActive ? imageAltOpen ? (
         <form className="context-room-tiptap-bubble-link" onSubmit={(event) => { event.preventDefault(); applyImageAlt() }}>
           <input
             autoFocus
@@ -338,8 +358,66 @@ export function TiptapBubbleToolbar({
             <Sparkles aria-hidden="true" />
             <span>Ask AI</span>
           </button>
+          <span className="context-room-tiptap-bubble-divider" />
+          <EditorIconButton
+            label={t('contextRoom:tiptapBubbleToolbar.addComment')}
+            onClick={() => {
+              const { from, to } = editor.state.selection
+              commentSelectionRef.current = { from, to, quotedText: editor.state.doc.textBetween(from, to, ' ').slice(0, 500) }
+              setLinkOpen(false)
+              setAskAiOpen(false)
+              setCommentDraft('')
+              setCommentOpen(true)
+            }}
+          ><MessageSquarePlus aria-hidden="true" /></EditorIconButton>
         </>
-      )}
+      ) : null}
+      {commentOpen && !toolbarState.imageActive ? (
+        <form
+          className="context-room-tiptap-bubble-comment"
+          onSubmit={(event) => {
+            event.preventDefault()
+            const selection = commentSelectionRef.current
+            const body = commentDraft.trim()
+            if (!selection || !body || commentSubmitting) return
+            setCommentSubmitting(true)
+            void window.nxcore?.documents.createDocumentComment(documentId, {
+              body,
+              quotedText: selection.quotedText || null,
+            })
+              .then(() => {
+                setCommentOpen(false)
+                setCommentDraft('')
+                showToast({ title: t('contextRoom:tiptapBubbleToolbar.commentAdded') })
+              })
+              .catch((error: unknown) => {
+                showToast({
+                  title: t('contextRoom:tiptapBubbleToolbar.commentFailed'),
+                  message: error instanceof Error ? error.message : undefined,
+                })
+              })
+              .finally(() => setCommentSubmitting(false))
+          }}
+        >
+          <input
+            autoFocus
+            aria-label={t('contextRoom:tiptapBubbleToolbar.commentInput')}
+            placeholder={t('contextRoom:tiptapBubbleToolbar.commentPlaceholder')}
+            value={commentDraft}
+            maxLength={4000}
+            onChange={(event) => setCommentDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') {
+                event.preventDefault()
+                setCommentOpen(false)
+              }
+            }}
+          />
+          <button type="submit" disabled={commentSubmitting || !commentDraft.trim()}>
+            {t('contextRoom:tiptapBubbleToolbar.commentSubmit')}
+          </button>
+        </form>
+      ) : null}
       </BubbleMenu>
       {imagePreview && typeof document !== 'undefined' ? createPortal(
         <div

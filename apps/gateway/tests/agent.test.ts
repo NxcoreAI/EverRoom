@@ -376,6 +376,32 @@ describe("agent gateway", () => {
     await app.close();
   });
 
+  it("rejects an unknown memoryScope value at the run schema boundary", async () => {
+    const config = await testConfig();
+    const app = await createServer(config);
+    const headers = { authorization: `Bearer ${config.authToken}` };
+    const session = (await app.inject({
+      method: "POST",
+      url: "/v1/agent/sessions",
+      headers,
+      payload: { pageLabel: "首页" },
+    })).json<AgentSession>();
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/v1/agent/sessions/${session.id}/runs`,
+      headers,
+      payload: {
+        prompt: "聚焦模式枚举校验",
+        idempotencyKey: "memory-scope-schema-key",
+        memoryScope: "galaxy",
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    await app.close();
+  });
+
   it("moves a cancelled run to a terminal state", async () => {
     const config = await testConfig();
     const app = await createServer(config);

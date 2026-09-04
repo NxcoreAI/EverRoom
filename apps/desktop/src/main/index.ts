@@ -7,7 +7,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { pipeline } from 'node:stream/promises'
 import { loadEnvFile } from 'node:process'
 
-import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, nativeTheme, Notification, protocol, shell, systemPreferences } from 'electron'
+import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, nativeTheme, Notification, protocol, safeStorage, shell, systemPreferences } from 'electron'
 import type {
   ImportRoomDocumentInput,
   DocumentOperationCommandInput,
@@ -110,6 +110,9 @@ import {
 import { LarkAuthRunner } from './agent-auth/lark-auth-runner'
 import { AgentAuthController } from './agent-auth/controller'
 import { ExternalDocumentsGatewayBridge } from './gateway/external-documents-gateway-bridge'
+import { startDocumentAssetBridge, type DocumentAssetBridge } from './document-asset-bridge'
+import { NtnAuthRunner } from './agent-auth/ntn-auth-runner'
+import { createAgentAuthPersistence } from './agent-auth/persistence'
 import type {
   AgentAuthStartInput,
   DesktopAgentAuthChallenge,
@@ -297,6 +300,8 @@ const EXTERNAL_DOCUMENT_CHANNELS = {
   retryExport: 'external-documents:retry-export',
   cancelExport: 'external-documents:cancel-export',
   listExports: 'external-documents:list-exports',
+  importDiff: 'external-documents:import-diff',
+  searchExportTargets: 'external-documents:search-export-targets',
 } as const
 
 const CONNECTOR_SYNC_CHANNELS = {
@@ -383,6 +388,11 @@ const DOCUMENT_CHANNELS = {
   listVersions: 'documents:list-versions',
   getVersionSnapshot: 'documents:get-version-snapshot',
   getDiff: 'documents:get-diff',
+  versionChangeSummary: 'documents:version-change-summary',
+  listDocumentComments: 'documents:list-document-comments',
+  createDocumentComment: 'documents:create-document-comment',
+  resolveDocumentComment: 'documents:resolve-document-comment',
+  deleteDocumentComment: 'documents:delete-document-comment',
   restoreVersion: 'documents:restore-version',
   resolveBlockReferences: 'documents:resolve-block-references',
   listOperations: 'documents:list-operations',
@@ -741,6 +751,7 @@ let runtimeConfigBridge: RuntimeConfigBridge | null = null
 let cursorCompletionSupervisor: GatewaySupervisor | null = null
 let ooCliBridge: OoCliBridge | null = null
 let agentAuthController: AgentAuthController | null = null
+let documentAssetBridge: DocumentAssetBridge | null = null
 let openConnectorSupervisor: OpenConnectorSupervisor | null = null
 let openConnectorConsoleWindow: BrowserWindow | null = null
 let memoryCoreSupervisor: MemoryCoreSupervisor | null = null
@@ -836,7 +847,8 @@ ipcMain.on('app:set-locale', (_event, locale: unknown) => setDesktopLocale(local
 function logRendererDiagnostic(input: unknown): void {
   if (!input || typeof input !== 'object') return
   const value = input as { module?: unknown; level?: unknown; event?: unknown }
-  if (value.module !== 'document-cursor-completion' && value.module !== 'context-room-overview') return
+  if (value.module !== 'document-cursor-completion' && value.module !== 'context-room-overview'
+    && value.module !== 'block-index-mark' && value.module !== 'document-focus') return
   if (value.level !== 'info' && value.level !== 'warn' && value.level !== 'error') return
   if (!value.event || typeof value.event !== 'object' || Array.isArray(value.event)) return
   try {
@@ -844,7 +856,7 @@ function logRendererDiagnostic(input: unknown): void {
     if (serialized.length > 16_000) return
     const event = JSON.parse(serialized) as Record<string, unknown>
     if (value.module === 'document-cursor-completion') logDocumentCursorCompletion(value.level, event)
-    else logLocalDesktop('context-room-overview', value.level, event)
+    else logLocalDesktop(value.module, value.level, event)
   } catch {
     // Ignore malformed renderer diagnostics rather than affecting the editor.
   }
@@ -1544,6 +1556,18 @@ function resolveLarkCliExecutable(): string {
   return packagedCandidates.find((candidate) => existsSync(candidate)) ?? 'lark-cli'
 }
 
+/** ntn（Notion 官方 CLI）随包分发，当前仅 macOS 支持 Notion 导出；其余平台返回 null。 */
+function resolveNtnCliExecutable(): string | null {
+  const configured = process.env.NXCORE_NTN_CLI_PATH?.trim()
+  if (configured) return configured
+  if (process.platform !== 'darwin') return null
+  const packagedCandidates = [
+    join(process.resourcesPath, 'ntn', `${process.platform}-${process.arch}`, 'ntn'),
+    join(app.getAppPath(), 'build', 'ntn', `${process.platform}-${process.arch}`, 'ntn'),
+  ]
+  return packagedCandidates.find((candidate) => existsSync(candidate)) ?? null
+}
+
 function createOoCliBridge(connection: OpenConnectorConnection): OoCliBridge {
   const root = join(dataDirectory, 'open-connector')
   return new OoCliBridge({
@@ -1761,6 +1785,14 @@ function registerExternalDocumentHandlers(bridge: ExternalDocumentsGatewayBridge
   handle(EXTERNAL_DOCUMENT_CHANNELS.cancelExport, (_event, exportId: unknown) => {
     if (typeof exportId !== 'string') throw new Error('无效的导出任务标识。')
     return bridge.cancelExport(exportId)
+  })
+  handle(EXTERNAL_DOCUMENT_CHANNELS.importDiff, (_event, roomImportId: unknown) => {
+    if (typeof roomImportId !== 'string') throw new Error('无效的导入关联标识。')
+    return bridge.importDiff(roomImportId)
+  })
+  handle(EXTERNAL_DOCUMENT_CHANNELS.searchExportTargets, (_event, provider: unknown, query: unknown) => {
+    if (typeof provider !== 'string' || typeof query !== 'string') throw new Error('无效的目标搜索请求。')
+    return bridge.searchExportTargets(provider as 'feishu' | 'notion', query)
   })
   handle(EXTERNAL_DOCUMENT_CHANNELS.listExports, (_event, documentId: unknown) => {
     if (documentId !== undefined && typeof documentId !== 'string') throw new Error('无效的文档标识。')
@@ -2020,6 +2052,11 @@ function registerDocumentHandlers(
     listVersions: (_event, documentId, options) => bridge.listVersions(documentId, options),
     getVersionSnapshot: (_event, documentId, version) => bridge.getVersionSnapshot(documentId, version),
     getDiff: (_event, documentId, fromVersion, toVersion) => bridge.getDiff(documentId, fromVersion, toVersion),
+    versionChangeSummary: (_event, documentId, version) => bridge.versionChangeSummary(documentId, version),
+    listDocumentComments: (_event, documentId) => bridge.listDocumentComments(documentId),
+    createDocumentComment: (_event, documentId, input) => bridge.createDocumentComment(documentId, input),
+    resolveDocumentComment: (_event, documentId, commentId, resolved) => bridge.resolveDocumentComment(documentId, commentId, resolved),
+    deleteDocumentComment: (_event, documentId, commentId) => bridge.deleteDocumentComment(documentId, commentId),
     restoreVersion: (_event, documentId, version, baseVersion) =>
       bridge.restoreVersion(documentId, version, baseVersion),
     resolveBlockReferences: (_event, input) => bridge.resolveBlockReferences(input),
@@ -2927,8 +2964,13 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   await cleanupLegacyGatewaySecretKey(join(dataDirectory, 'security'))
   // 窗口先显示,Gateway 等服务在后台初始化,状态由左下角 Gateway 指示器呈现。
   const documentAssets = new DocumentAssetStore(join(dataDirectory, 'document-assets'))
-  await documentAssets.initialize().catch((error) => {
+  await documentAssets.initialize().catch((error: unknown) => {
     console.error('Failed to initialize local document assets', error)
+  })
+  // 文档资产本地桥：飞书导出时 lark-cli 经此下载本地图并上传（token 只进网关 env）。
+  documentAssetBridge = await startDocumentAssetBridge(documentAssets).catch((error: unknown) => {
+    console.warn('Document asset bridge unavailable; exports degrade to placeholders.', error)
+    return null
   })
   obsidianVaultService = new ObsidianVaultService(dataDirectory, (path) => shell.trashItem(path))
   await obsidianVaultService.initialize().catch((error) => {
@@ -2993,7 +3035,12 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
           }
         }
       },
+      // 非 token 授权状态加密落盘（safeStorage；不可用时退化为不持久化）。
+      persist: safeStorage.isEncryptionAvailable()
+        ? createAgentAuthPersistence(join(dataDirectory, 'agent-auth', 'challenge.bin'))
+        : undefined,
     },
+    resolveNtnCliExecutable() ? new NtnAuthRunner(resolveNtnCliExecutable()!) : null,
   )
   registerAgentAuthHandlers()
   createWindow()
@@ -3095,6 +3142,10 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         NXCORE_CLI_CONNECTOR_SYNC_ENABLED: ooCliBridge ? 'true' : 'false',
         // 飞书导出：lark-cli 路径注入 gateway（网关只执行写入命令，授权在桌面本地）。
         ...(agentAuthController ? agentAuthController.gatewayEnvironment() : {}),
+        // 文档资产桥：网关把本地图改写为该 loopback URL，lark-cli markdown 导入自动下载。
+        ...(documentAssetBridge
+          ? { NXCORE_DOCUMENT_ASSET_BRIDGE_URL: documentAssetBridge.baseUrl }
+          : {}),
         ...(memoryCore
           ? {
             NXCORE_MEMORY_ENABLED: 'true',
@@ -3472,6 +3523,8 @@ app.on('before-quit', (event) => {
   macosPushNotifications = null
   agentAuthController?.shutdown()
   agentAuthController = null
+  void documentAssetBridge?.stop()
+  documentAssetBridge = null
   privateSync?.stop()
   void notificationBridge?.stop()
   pushNotificationsService?.stop()

@@ -67,6 +67,11 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   available: boolean
   loading: boolean
   selectedExternalConversation: ExternalConversationSummary | null
+  /** 视口在 Context Room 内时展示「聚焦当前房间」开关。 */
+  roomFocusVisible?: boolean
+  roomFocusEnabled?: boolean
+  roomFocusRoomTitle?: string
+  onToggleRoomFocus?: (next: boolean) => void
   onChange: (value: string) => void
   onSelectExternalConversation: (conversation: ExternalConversationSummary | null) => void
   onClearContext: () => void
@@ -83,6 +88,10 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   loading,
   resetKey,
   selectedExternalConversation,
+  roomFocusVisible = false,
+  roomFocusEnabled = false,
+  roomFocusRoomTitle,
+  onToggleRoomFocus,
   value,
   onChange,
   onClearContext,
@@ -502,6 +511,20 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
           >
             <Plus aria-hidden="true" />
           </button>
+          {roomFocusVisible && onToggleRoomFocus ? (
+            <button
+              type="button"
+              className="agent-room-focus-toggle"
+              data-active={String(roomFocusEnabled)}
+              aria-pressed={roomFocusEnabled}
+              title={t('surface:agentComposer.roomFocusTitle')}
+              disabled={controlsDisabled}
+              onClick={() => onToggleRoomFocus(!roomFocusEnabled)}
+            >
+              {roomFocusRoomTitle ? <span className="agent-room-focus-name">{roomFocusRoomTitle}</span> : null}
+              <span>{roomFocusEnabled ? t('surface:agentComposer.roomFocusOn') : t('surface:agentComposer.roomFocusOff')}</span>
+            </button>
+          ) : null}
           <span className="agent-composer-context" title={contextSummary}>
             <span>{contextSummary}</span>
             {hasSelectedText ? (
