@@ -481,6 +481,7 @@ const MEMORY_CHANNELS = {
   /** 渲染层记忆引导结束（完成/跳过/放行）→ 解除云端同步延迟。 */
   onboardingFinished: 'memory:onboarding-finished',
   listAtomic: 'memory:list-atomic',
+  listRoomMemories: 'memory:list-room-memories',
   searchAtomic: 'memory:search-atomic',
   updateAtomic: 'memory:update-atomic',
   deleteAtomic: 'memory:delete-atomic',
@@ -2405,6 +2406,8 @@ function registerMemoryHandlers(bridge: MemoryGatewayBridge): void {
     bridge.startOnboarding(input))
   handle(MEMORY_CHANNELS.listAtomic, (_event, options: MemoryAtomicListOptions) =>
     bridge.listAtomic(options))
+  handle(MEMORY_CHANNELS.listRoomMemories, (_event, roomId: string) =>
+    bridge.listRoomMemories(roomId))
   handle(MEMORY_CHANNELS.searchAtomic, (_event, query: string, limit?: number) =>
     bridge.searchAtomic(query, limit))
   handle(

@@ -672,6 +672,40 @@ export class MemoryService {
   }
 
   /**
+   * Room 归因记忆全量列表（无 prompt 预算）：doc-writer memoryIndex 注入、回溯
+   * worker、桌面记忆卡共用。同一查询但不做 20 条/4000 字裁剪，仅条数上限与单条
+   * 2000 字安全截断；返回 {id,content,type} 与 contextRoomService.listMemoryItems
+   * 同形，消费点可直接换源。
+   */
+  async listRoomAttributedMemories(
+    roomId: string,
+    limit = 200,
+  ): Promise<Array<{ id: string; content: string; type: string }>> {
+    if (!this.db || !this.roomRegistry) return [];
+    const resolved = this.roomRegistry.resolveRoomId(roomId);
+    if (!resolved) return [];
+    return this.db
+      .select({
+        memoryId: roomMemoryAttributions.memoryId,
+        type: roomMemoryAttributions.memoryType,
+        content: roomMemoryAttributions.content,
+        memoryUpdatedAt: roomMemoryAttributions.memoryUpdatedAt,
+      })
+      .from(roomMemoryAttributions)
+      .where(eq(roomMemoryAttributions.roomId, resolved))
+      .all()
+      .filter((row): row is { memoryId: string; type: string | null; content: string; memoryUpdatedAt: string } =>
+        Boolean(row.content))
+      .sort((a, b) => (a.memoryUpdatedAt < b.memoryUpdatedAt ? 1 : -1))
+      .slice(0, Math.max(1, limit))
+      .map((row) => ({
+        id: row.memoryId,
+        content: row.content.length > 2000 ? `${row.content.slice(0, 2000)}…` : row.content,
+        type: row.type ?? "",
+      }));
+  }
+
+  /**
    * Room 绑定记忆检索（memory_search 的 room_id 过滤）：在 listRoomMemories 上做
    * 本地词法过滤（query 切小写词元，AND 子串匹配）。绑定集是用户甄选的小集合，
    * 无需向量检索；Room 不可解析或无匹配返回空。

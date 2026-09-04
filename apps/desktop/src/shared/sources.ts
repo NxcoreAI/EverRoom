@@ -1071,6 +1071,8 @@ export interface NxcoreDesktopApi {
     /** 引导结束通知（fire-and-forget）：解除主进程云端同步延迟。 */
     onboardingFinished(): void
     listAtomic(options: MemoryAtomicListOptions): Promise<MemoryAtomicPageDto>
+    /** Room 归属记忆列表（room_memory_attributions 快照直读）。 */
+    listRoomMemories(roomId: string): Promise<MemoryRoomMemoriesPageDto>
     searchAtomic(query: string, limit?: number): Promise<{ items: MemoryAtomicItemDto[] }>
     updateAtomic(id: string, content: string, background?: string): Promise<{ id: string; version: number; updatedAt: string }>
     deleteAtomic(ids: string[]): Promise<{ deletedCount: number }>
@@ -1347,6 +1349,7 @@ import type {
   MemoryOnboardingInput,
   MemoryOnboardingResultDto,
   MemoryOverviewDto,
+  MemoryRoomMemoriesPageDto,
   MemoryScenarioContentDto,
   MemoryScenarioEntryDto,
 } from './memory'

@@ -442,7 +442,9 @@
   flex-direction: column;
   position: sticky;
   top: 0;
-  height: 100%;
+  /* 高度由 JS 按真实滚动容器视口高内联设定（父容器自动高度下 100% 会塌缩） */
+  align-self: flex-start;
+  max-height: none;
 }
 .context-room-imported-comments-dock header {
   display: flex; align-items: center; gap: 8px;
@@ -452,11 +454,36 @@
 .context-room-imported-comments-dock header button {
   border: none; background: none; color: inherit; cursor: pointer; padding: 4px; display: inline-flex;
 }
+/* 飞书式锚定层：不独立滚动，track 与编辑器共坐标系（JS translateY 跟随） */
 .context-room-imported-comments-layer {
-  flex: 1; overflow-y: auto; padding: 10px 12px; position: relative;
+  flex: 1; overflow: hidden; position: relative;
 }
-.context-room-imported-comment-floating { position: relative; margin-bottom: 10px; }
-.context-room-imported-comments-unanchored { margin-top: 14px; padding-top: 10px; border-top: 1px dashed var(--border-strong, #ccd3dd); }
+.context-room-imported-comments-track {
+  position: absolute; top: 0; left: 0; width: 100%;
+  will-change: transform;
+}
+.context-room-imported-comment-floating {
+  position: absolute; left: 10px; right: 10px;
+  margin-bottom: 0;
+  cursor: pointer;
+  transition: box-shadow 0.15s ease;
+}
+.context-room-imported-comment-floating:hover {
+  box-shadow: 0 3px 12px rgb(15 23 42 / 0.14);
+  border-color: color-mix(in srgb, var(--accent, #3d6ff6) 45%, var(--border, #d8dee4));
+}
+/* 悬停卡片时正文锚点文本高亮（编辑器内元素类，由 JS 增删） */
+.context-room-comment-anchor-hovering {
+  background: color-mix(in srgb, var(--accent, #3d6ff6) 12%, transparent) !important;
+  border-radius: 3px;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent, #3d6ff6) 18%, transparent);
+}
+.context-room-imported-comments-unanchored {
+  position: absolute; left: 10px; right: 10px; bottom: 0;
+  max-height: 42%; overflow-y: auto;
+  padding: 8px 2px 6px; border-top: 1px dashed var(--border-strong, #ccd3dd);
+  background: var(--surface, #fff);
+}
 .context-room-imported-comments-unanchored-label {
   font-size: 11px; color: #b35900; margin-bottom: 8px; display: flex; align-items: center; gap: 4px;
 }
@@ -528,3 +555,20 @@
   font-size: 11px; padding: 2px 0 0; align-self: flex-start;
 }
 .context-room-imported-comment-source { width: 13px; height: 13px; flex-shrink: 0; }
+
+.context-room-imported-comments-no-anchor-hint {
+  position: absolute; top: 10px; left: 10px; right: 10px;
+  font-size: 11px; color: var(--muted, #6a737d);
+}
+
+/* 已定位评论的锚定文本：面板打开期间常驻下划线（飞书式指向标记） */
+.context-room-comment-anchored {
+  text-decoration: underline !important;
+  text-decoration-color: color-mix(in srgb, var(--accent, #3d6ff6) 55%, transparent) !important;
+  text-decoration-thickness: 2px !important;
+  text-underline-offset: 3px !important;
+}
+
+.context-room-imported-comments-debug {
+  font-size: 9px; color: var(--muted, #6a737d); opacity: 0.7; font-variant-numeric: tabular-nums;
+}

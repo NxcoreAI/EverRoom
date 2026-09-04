@@ -1370,5 +1370,6 @@
   "tiptapBubbleToolbar.commentPlaceholder": "对选中内容添加评论…",
   "tiptapBubbleToolbar.commentSubmit": "提交",
   "tiptapBubbleToolbar.commentAdded": "评论已添加",
-  "tiptapBubbleToolbar.commentFailed": "评论添加失败"
+  "tiptapBubbleToolbar.commentFailed": "评论添加失败",
+  "importedComments.anchorUnavailable": "正文定位暂不可用，评论显示在下方未定位区"
 }

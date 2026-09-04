@@ -66,7 +66,7 @@ export function TiptapBubbleToolbar({
   const [commentOpen, setCommentOpen] = useState(false)
   const [commentDraft, setCommentDraft] = useState('')
   const [commentSubmitting, setCommentSubmitting] = useState(false)
-  const commentSelectionRef = useRef<{ from: number; to: number; quotedText: string } | null>(null)
+  const commentSelectionRef = useRef<{ from: number; to: number; blockId: string | null; quotedText: string } | null>(null)
   const [linkValue, setLinkValue] = useState('')
   const [askAiOpen, setAskAiOpen] = useState(false)
   const [askAiInstruction, setAskAiInstruction] = useState('')
@@ -362,8 +362,17 @@ export function TiptapBubbleToolbar({
           <EditorIconButton
             label={t('contextRoom:tiptapBubbleToolbar.addComment')}
             onClick={() => {
-              const { from, to } = editor.state.selection
-              commentSelectionRef.current = { from, to, quotedText: editor.state.doc.textBetween(from, to, ' ').slice(0, 500) }
+              const { from, to, $from } = editor.state.selection
+              // 捕获选区所在块的稳定块 id（data-block-id），锚定优先走块而不是文本匹配。
+              let blockId: string | null = null
+              for (let depth = $from.depth; depth >= 1; depth -= 1) {
+                const candidate = $from.node(depth)?.attrs?.id
+                if (typeof candidate === 'string' && candidate.trim()) {
+                  blockId = candidate.trim()
+                  break
+                }
+              }
+              commentSelectionRef.current = { from, to, blockId, quotedText: editor.state.doc.textBetween(from, to, ' ').slice(0, 500) }
               setLinkOpen(false)
               setAskAiOpen(false)
               setCommentDraft('')
@@ -383,11 +392,13 @@ export function TiptapBubbleToolbar({
             setCommentSubmitting(true)
             void window.nxcore?.documents.createDocumentComment(documentId, {
               body,
+              blockId: selection.blockId,
               quotedText: selection.quotedText || null,
             })
               .then(() => {
                 setCommentOpen(false)
                 setCommentDraft('')
+                window.dispatchEvent(new CustomEvent('everroom:document-comments-changed', { detail: { documentId } }))
                 showToast({ title: t('contextRoom:tiptapBubbleToolbar.commentAdded') })
               })
               .catch((error: unknown) => {

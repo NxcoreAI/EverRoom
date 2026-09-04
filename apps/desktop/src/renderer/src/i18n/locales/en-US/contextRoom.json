@@ -1370,5 +1370,6 @@
   "tiptapBubbleToolbar.commentPlaceholder": "Comment on the selection…",
   "tiptapBubbleToolbar.commentSubmit": "Submit",
   "tiptapBubbleToolbar.commentAdded": "Comment added",
-  "tiptapBubbleToolbar.commentFailed": "Failed to add comment"
+  "tiptapBubbleToolbar.commentFailed": "Failed to add comment",
+  "importedComments.anchorUnavailable": "Text anchoring unavailable; comments are listed under Unlocated below"
 }

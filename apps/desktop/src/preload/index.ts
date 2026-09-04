@@ -14,6 +14,7 @@ import type {
   MemoryConversationListOptions,
   MemoryDocumentRewriteInput,
   MemoryOnboardingInput,
+  MemoryRoomMemoriesPageDto,
 } from '../shared/memory'
 import type { IngestPipelines } from '../shared/ingest'
 import type { McpServersSnapshot } from '../shared/mcp'
@@ -469,6 +470,8 @@ const api: NxcoreDesktopApi = {
     /** 引导结束通知（fire-and-forget）：解除主进程云端同步延迟。 */
     onboardingFinished: () => { ipcRenderer.send('memory:onboarding-finished') },
     listAtomic: (options: MemoryAtomicListOptions) => invoke('memory:list-atomic', options),
+    listRoomMemories: (roomId: string): Promise<MemoryRoomMemoriesPageDto> =>
+      invoke('memory:list-room-memories', roomId),
     searchAtomic: (query: string, limit?: number) => invoke('memory:search-atomic', query, limit),
     updateAtomic: (id: string, content: string, background?: string) =>
       invoke('memory:update-atomic', id, content, background),

@@ -800,7 +800,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
             // 块索引标记（blockIndexMark）：Room 内记忆项权威数据，gateway 注入 memoryIndex；
             // 主 agent 以自由文本 material 引用 Room 文档却没传 materialSources 时，
             // 从本 run 的 document_read 台账兜底推断来源块（确定性注入，不依赖主 agent 自觉）。
-            resolveRoomMemoryItems: (roomId) => contextRoomService.listMemoryItems(roomId),
+            resolveRoomMemoryItems: (roomId) => memoryService.listRoomAttributedMemories(roomId),
             inferMaterialSources: (runId, roomId, material) => inferMaterialSourcesFromReads(
               documentReadAuthority,
               (documentId, docRoomId) => {
@@ -1457,7 +1457,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
         scanIntervalMs: config.documentIndexBackfill?.scanIntervalMs ?? 60_000,
         quietWindowMs: config.documentIndexBackfill?.quietWindowMs ?? 300_000,
         rescanMs: config.documentIndexBackfill?.rescanMs ?? 24 * 60 * 60_000,
-        listMemoryItems: (roomId) => contextRoomService.listMemoryItems(roomId),
+        listMemoryItems: (roomId) => memoryService.listRoomAttributedMemories(roomId),
       },
     );
     documentIndexBackfillWorker.start();
