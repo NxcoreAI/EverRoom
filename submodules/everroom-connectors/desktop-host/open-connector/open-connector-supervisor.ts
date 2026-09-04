@@ -149,7 +149,7 @@ export class OpenConnectorSupervisor {
     try {
       if (this.environment().NXCORE_CLI_CONNECTOR_MANAGED === 'false') {
         const baseUrl = normalizedBaseUrl(
-          this.environment().NXCORE_CLI_CONNECTOR_URL?.trim() || 'http://127.0.0.1:3000',
+          this.environment().NXCORE_CLI_CONNECTOR_URL?.trim() || 'http://127.0.0.1:34217',
         )
         this.connection = {
           baseUrl,
