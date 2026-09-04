@@ -1,4 +1,4 @@
-import { Ban, HardDrive, Plus, RefreshCw, RotateCcw, Trash2, XCircle } from 'lucide-react'
+import { ArrowLeft, Ban, ChevronRight, HardDrive, RefreshCw, RotateCcw, Trash2, XCircle } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 
 import type {
@@ -9,10 +9,10 @@ import type {
   SourceChangeEvent,
   SourceFileSummary,
 } from '../../../../shared/sources'
+import type { ConnectorStatus, ConnectorConnection, SyncRun, SyncScope } from '@nxcore/connector-contract'
 import type { ObsidianVaultBinding, ObsidianVaultCandidate } from '../../../../shared/obsidian'
 import type { MigrationRun, MigrationSource } from '@nxcore/agent-contract'
-import { PageHeader } from './PageHeader'
-import { ConnectSourceMenu, type ConnectorProviderId } from './sources/ConnectSourceMenu'
+import { ConnectGrid, type ConnectorProviderId } from './sources/ConnectGrid'
 import { EvidenceSearch } from './sources/EvidenceSearch'
 import { EvidenceViewer } from './sources/EvidenceViewer'
 import { FilterPreferenceGuideDialog } from './sources/FilterPreferenceGuideDialog'
@@ -23,11 +23,14 @@ import { MarkdownSourceDialog } from './sources/MarkdownSourceDialog'
 import { MarkdownPreviewDialog } from './sources/MarkdownPreviewDialog'
 import { ObsidianImportDialog } from './sources/ObsidianImportDialog'
 import { describeSync } from './sources/sourceFormatters'
-import { SourceTable } from './sources/SourceTable'
+import { CloudSourceCard, LocalSourceCard, ObsidianSourceCard } from './sources/SourceCard'
+import { SourceDrawer, type DrawerTarget } from './sources/SourceDrawer'
+import { IngestFeed } from './sources/IngestFeed'
 import { SourceIcon } from './sources/SourceIcon'
 import { ConnectorSection } from './ConnectorPage'
 import { PRODUCT_NAME } from '@/components/ui/brand'
 import { useLocale } from '@/i18n/LocaleContext'
+import './SourcesPage.css'
 
 const EMPTY_GITHUB_FORM: GitHubConnectionInput = {
   repository: '',
@@ -62,7 +65,6 @@ export function SourcesPage() {
   const [loading, setLoading] = useState(Boolean(api))
   const [busyId, setBusyId] = useState<string | null>(null)
   const [deletionProgress, setDeletionProgress] = useState<DeletionProgress | null>(null)
-  const [expandedSourceId, setExpandedSourceId] = useState<string | null>(null)
   const [filesBySource, setFilesBySource] = useState<Record<string, SourceFileSummary[]>>({})
   const [filesLoadingId, setFilesLoadingId] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
@@ -73,7 +75,6 @@ export function SourcesPage() {
   const [markdownPreview, setMarkdownPreview] = useState<{ sourceId: string; fileId: string; data: MarkdownPreview } | null>(null)
   const [previewError, setPreviewError] = useState<string | null>(null)
   const [activeEvidenceId, setActiveEvidenceId] = useState<string | null>(null)
-  const [connectMenuOpen, setConnectMenuOpen] = useState(false)
   const [githubOpen, setGithubOpen] = useState(false)
   const [webcalOpen, setWebcalOpen] = useState(false)
   const [webcalUrl, setWebcalUrl] = useState('')
@@ -82,13 +83,36 @@ export function SourcesPage() {
   const [githubForm, setGithubForm] = useState(EMPTY_GITHUB_FORM)
   const [markdownSource, setMarkdownSource] = useState<'google-docs' | 'notion' | null>(null)
   const [markdownForm, setMarkdownForm] = useState({ ids: '', token: '' })
-  const [connectorsEnabled, setConnectorsEnabled] = useState(false)
+  const [connectorStatus, setConnectorStatus] = useState<ConnectorStatus | null>(null)
+  const [cloudBusyId, setCloudBusyId] = useState<string | null>(null)
+  const [drawer, setDrawer] = useState<DrawerTarget | null>(null)
+  // 二级页（页内下钻,不占全局导航）：最近进入全量 / 全部连接器。
+  const [subPage, setSubPage] = useState<null | 'ingest' | 'connectors'>(null)
+  const [migrationsOpen, setMigrationsOpen] = useState(false)
+  const [engineOpen, setEngineOpen] = useState(false)
   const [migrationSources, setMigrationSources] = useState<MigrationSource[]>([])
   const [migrationRuns, setMigrationRuns] = useState<MigrationRun[]>([])
   const [obsidianImportOpen, setObsidianImportOpen] = useState(false)
-  const [obsidianExpanded, setObsidianExpanded] = useState(false)
   const obsidianDiscoveryRequestRef = useRef(0)
   const obsidianCandidateIdsRef = useRef(new Set<string>())
+  const connectorsEnabled = connectorStatus?.enabled ?? false
+  const connections = connectorStatus?.connections ?? []
+  const scopes = connectorStatus?.scopes ?? []
+  const runs = connectorStatus?.runs ?? []
+
+  // 云服务卡与抽屉的数据源：页面级轮询（维护区的引擎视图自行轮询,互不影响）。
+  const refreshConnectorStatus = useCallback(async () => {
+    try {
+      setConnectorStatus(await window.nxcore?.nangoConnector.status() ?? null)
+    } catch { /* 网关暂不可达时保留上一次状态 */ }
+  }, [])
+  useEffect(() => {
+    const tick = () => { if (!document.hidden) void refreshConnectorStatus() }
+    tick()
+    const timer = window.setInterval(tick, 5_000)
+    document.addEventListener('visibilitychange', tick)
+    return () => { window.clearInterval(timer); document.removeEventListener('visibilitychange', tick) }
+  }, [refreshConnectorStatus])
 
   const refreshMigrations = useCallback(async () => {
     if (!window.nxcore?.migrations) return
@@ -105,7 +129,7 @@ export function SourcesPage() {
   }, [refreshMigrations])
 
   const importOpenClaw = async () => {
-    setConnectMenuOpen(false); setBusyId('migration-openclaw'); setMessage(null)
+    setBusyId('migration-openclaw'); setMessage(null)
     try {
       const discovered = await window.nxcore!.migrations.discover()
       const run = discovered.length === 1
@@ -118,7 +142,7 @@ export function SourcesPage() {
   }
 
   const importLocalAgentHistory = async (provider: 'codex' | 'claude') => {
-    setConnectMenuOpen(false); setBusyId(`migration-${provider}`); setMessage(null)
+    setBusyId(`migration-${provider}`); setMessage(null)
     try {
       const discovered = await window.nxcore!.migrations.localAgentSources(provider)
       const run = discovered.length
@@ -131,14 +155,13 @@ export function SourcesPage() {
   }
 
   const importNotionZip = async () => {
-    setConnectMenuOpen(false); setBusyId('migration-notion'); setMessage(null)
+    setBusyId('migration-notion'); setMessage(null)
     try { const run = await window.nxcore!.migrations.importNotionZip(); if (run) setMessage(t('surface:sources.notionMigrationCompleted', { count: run.pagesCompleted })); await refreshMigrations() }
     catch (error) { setMessage(error instanceof Error ? error.message : t('surface:sources.migrationFailed')) }
     finally { setBusyId(null) }
   }
 
   const mountObsidian = async () => {
-    setConnectMenuOpen(false)
     setObsidianImportOpen(true)
   }
 
@@ -146,18 +169,16 @@ export function SourcesPage() {
     const obsidian = window.nxcore?.obsidian
     if (!obsidian) return
     const refreshVaults = () => void obsidian.list().then(setVaults).catch(() => undefined)
-    const refreshDiscovery = (expandNewProjects = false) => {
+    const refreshDiscovery = () => {
       const request = ++obsidianDiscoveryRequestRef.current
       void obsidian.discover().then((candidates) => {
         if (request !== obsidianDiscoveryRequestRef.current) return
-        const hasNewProject = candidates.some((candidate) => !candidate.mountedVaultId && !obsidianCandidateIdsRef.current.has(candidate.id))
         obsidianCandidateIdsRef.current = new Set(candidates.map((candidate) => candidate.id))
         setObsidianCandidates(candidates)
-        if (expandNewProjects && hasNewProject) setObsidianExpanded(true)
       }).catch(() => undefined)
     }
     const unsubscribeChanged = obsidian.onChanged(refreshVaults)
-    const unsubscribeDiscovery = obsidian.onDiscoveryChanged(() => refreshDiscovery(true))
+    const unsubscribeDiscovery = obsidian.onDiscoveryChanged(() => refreshDiscovery())
     refreshVaults()
     refreshDiscovery()
     return () => {
@@ -223,10 +244,6 @@ export function SourcesPage() {
       setBusyId(null)
     }
   }
-
-  useEffect(() => {
-    void window.nxcore?.nangoConnector.status().then((status) => setConnectorsEnabled(status.enabled)).catch(() => undefined)
-  }, [])
 
   // 授权确认由 gateway 在 status 轮询中完成（Nango 确认后自动注册连接），
   // 桌面端必须持续轮询 authorizationStatus 直到终态，否则连接永远不会登记。
@@ -294,7 +311,6 @@ export function SourcesPage() {
   }, [maybeGuide])
 
   const connectConnector = async (provider: ConnectorProviderId) => {
-    setConnectMenuOpen(false)
     setMessage(null)
     try {
       const attempt = await window.nxcore?.nangoConnector.startAuthorization(provider)
@@ -331,7 +347,6 @@ export function SourcesPage() {
       const nextSources = await api.list()
       const sourceIds = new Set(nextSources.map((source) => source.id))
       setSources(nextSources)
-      setExpandedSourceId((current) => current && sourceIds.has(current) ? current : null)
       setFilesBySource((current) => Object.fromEntries(Object.entries(current).filter(([sourceId]) => sourceIds.has(sourceId))))
       return nextSources
     } catch {
@@ -350,7 +365,6 @@ export function SourcesPage() {
     } catch (loadError) {
       const nextError = loadError instanceof Error ? loadError.message : t('surface:sources.failedToLoadTheFileList')
       if (nextError.includes('数据源不存在或已断开')) {
-        setExpandedSourceId((current) => current === sourceId ? null : current)
         setFilesBySource((current) => {
           const next = { ...current }
           delete next[sourceId]
@@ -376,24 +390,19 @@ export function SourcesPage() {
       }
       if (event.deletion && !terminalDeletion) return
       void loadSources().then((nextSources) => {
-        if (event.filesChanged && expandedSourceId === event.sourceId && nextSources?.some((source) => source.id === event.sourceId)) {
+        if (event.filesChanged && drawer?.type === 'local' && drawer.source.id === event.sourceId && nextSources?.some((source) => source.id === event.sourceId)) {
           void loadFiles(event.sourceId, false)
         }
       })
     })
-  }, [api, expandedSourceId, loadFiles, loadSources])
-
-  useEffect(() => {
-    if (expandedSourceId) void loadFiles(expandedSourceId)
-  }, [expandedSourceId, loadFiles])
+  }, [api, drawer, loadFiles, loadSources])
 
   const runAction = async (id: string, action: () => Promise<unknown>) => {
     setBusyId(id)
     setMessage(null)
     try {
       await action()
-      const nextSources = await loadSources()
-      if (expandedSourceId === id && nextSources?.some((source) => source.id === id)) await loadFiles(id)
+      await loadSources()
     } catch {
     } finally {
       setBusyId(null)
@@ -413,7 +422,6 @@ export function SourcesPage() {
     } catch {
     } finally {
       setBusyId(null)
-      setConnectMenuOpen(false)
     }
   }
 
@@ -430,7 +438,6 @@ export function SourcesPage() {
         syncIssues: githubForm.syncIssues,
       })
       setGithubOpen(false)
-      setConnectMenuOpen(false)
       setGithubForm((current) => ({ ...current, token: '' }))
       setMessage(describeSync(result, t))
       await loadSources()
@@ -449,7 +456,7 @@ export function SourcesPage() {
       const result = markdownSource === 'google-docs'
         ? await api.addGoogleDocs({ documentIds: ids, token: markdownForm.token })
         : await api.addNotion({ pageIds: ids, token: markdownForm.token })
-      setMarkdownSource(null); setMarkdownForm({ ids: '', token: '' }); setConnectMenuOpen(false); setMessage(describeSync(result, t)); await loadSources()
+      setMarkdownSource(null); setMarkdownForm({ ids: '', token: '' }); setMessage(describeSync(result, t)); await loadSources()
     } catch {
     } finally { setBusyId(null) }
   }
@@ -491,7 +498,6 @@ export function SourcesPage() {
       delete next[source.id]
       return next
     })
-    if (expandedSourceId === source.id) setExpandedSourceId(null)
     setMessage(t('surface:sources.clearingFolderDocumentData'))
     void api.disconnect(source.id, true).catch((error) => {
       setBusyId(null)
@@ -514,31 +520,248 @@ export function SourcesPage() {
     }
   }
 
+  // ── 云服务卡/抽屉操作（与引擎视图同源的 API,页面级入口）──
+  const runCloudAction = async (id: string, action: () => Promise<unknown>) => {
+    setCloudBusyId(id)
+    setMessage(null)
+    try {
+      await action()
+      await refreshConnectorStatus()
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : t('surface:connector.operationFailed'))
+    } finally {
+      setCloudBusyId(null)
+    }
+  }
+  const syncConnection = (connection: ConnectorConnection) => {
+    const connectionScopes = scopes.filter((item) => item.connectionId === connection.id)
+    void runCloudAction(connection.id, () => Promise.all(connectionScopes.map((scope) => window.nxcore!.nangoConnector.triggerSync(scope.id, 'incremental'))))
+  }
+  const toggleConnectionEnabled = (connection: ConnectorConnection) => {
+    if (connection.status === 'active' && !window.confirm(t('surface:connector.disablingThisConnectionStopsAutomaticSyncContinue'))) return
+    void runCloudAction(connection.id, () => connection.status === 'active'
+      ? window.nxcore!.nangoConnector.disableConnection(connection.id)
+      : window.nxcore!.nangoConnector.enableConnection(connection.id))
+  }
+  const purgeConnectionData = (connection: ConnectorConnection) => {
+    if (!window.confirm(t('surface:connector.clearThisConnectorSLocalDataThisCannot'))) return
+    void runCloudAction(connection.id, () => window.nxcore!.nangoConnector.purgeConnection(connection.id))
+  }
+  const syncScopeNow = (scope: SyncScope) => {
+    void runCloudAction(scope.connectionId, () => window.nxcore!.nangoConnector.triggerSync(scope.id, scope.state === 'resync_required' ? 'rebuild' : 'incremental'))
+  }
+
+  // ── 详情抽屉 ──
+  const drawerSource = drawer?.type === 'local' ? sources.find((source) => source.id === drawer.source.id) ?? null : null
+  const drawerFiles = drawerSource ? filesBySource[drawerSource.id] ?? [] : []
+  const drawerScopes = drawer?.type === 'cloud' ? scopes.filter((item) => item.connectionId === drawer.connection.id) : []
+  const drawerScopeIds = new Set(drawerScopes.map((item) => item.id))
+  const drawerRuns: SyncRun[] = drawer?.type === 'cloud' ? runs.filter((item) => drawerScopeIds.has(item.scopeId)) : []
+  useEffect(() => {
+    if (drawer?.type === 'local') void loadFiles(drawer.source.id)
+  }, [drawer, loadFiles])
+  useEffect(() => {
+    if (!drawer) return
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') setDrawer(null) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [drawer])
+  useEffect(() => {
+    if (!subPage) return
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') setSubPage(null) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [subPage])
+  useEffect(() => {
+    if (drawer?.type === 'local' && !drawerSource) setDrawer(null)
+    if (drawer?.type === 'cloud' && !connections.some((item) => item.id === drawer.connection.id)) setDrawer(null)
+  }, [connections, drawer, drawerSource])
+
+  // ── 脉搏行（全部由现有状态计算）──
+  const obsidianPending = obsidianCandidates.filter((candidate) => !candidate.mountedVaultId)
+  const hasObsidian = vaults.length + obsidianPending.length > 0
+  const sourceCount = sources.length + (hasObsidian ? 1 : 0) + connections.length
+  const attentionCount
+    = sources.filter((source) => source.status === 'error' || source.status === 'disconnected').length
+    + connections.filter((connection) => connection.status === 'error').length
+    + (vaults.some((vault) => vault.status !== 'connected') ? 1 : 0)
+
   return (
-    <div className="page">
-      <PageHeader title={t('surface:sources.sources')} action={t('surface:sources.connectSource')} actionDisabled={busyId === 'new'} onAction={() => setConnectMenuOpen((open) => !open)} />
-      {api && connectMenuOpen ? <ConnectSourceMenu busy={Boolean(busyId)} onLocalFolder={() => void addLocalFolder()} onObsidian={() => void mountObsidian()} onGitHub={() => { setConnectMenuOpen(false); setGithubOpen(true) }} onGoogleDocs={() => { setConnectMenuOpen(false); setMarkdownSource('google-docs') }} onNotion={() => { setConnectMenuOpen(false); setMarkdownSource('notion') }} onNotionZip={() => void importNotionZip()} onOpenClaw={() => void importOpenClaw()} onLocalAgentHistory={(provider) => void importLocalAgentHistory(provider)} connectorsEnabled={connectorsEnabled} onConnectorProvider={(provider) => void connectConnector(provider)} providers={connectorProviders} onWebcalSubscription={() => { setConnectMenuOpen(false); setWebcalOpen(true) }} /> : null}
+    <div className="page src-page">
+      {subPage ? (
+        <header className="src-head">
+          <div>
+            <button type="button" className="src-back" onClick={() => setSubPage(null)}>
+              <ArrowLeft aria-hidden="true" strokeWidth={1.8} />{t('surface:sources.back')}
+            </button>
+            <h1>{t(subPage === 'ingest' ? 'surface:sources.recentIngest' : 'surface:sources.connectSource')}</h1>
+          </div>
+        </header>
+      ) : (
+        <header className="src-head">
+          <div>
+            <h1>{t('surface:sources.sources')}</h1>
+            <p className="src-pulse">
+              <span><i className="dot" aria-hidden="true" />&nbsp;{t('surface:sources.countSources', { count: sourceCount })}</span>
+              {attentionCount > 0 ? (
+                <>
+                  <span className="sep" aria-hidden="true" />
+                  <span><i className="dot danger" aria-hidden="true" />&nbsp;{t('surface:sources.countNeedsAttention', { count: attentionCount })}</span>
+                </>
+              ) : null}
+            </p>
+          </div>
+          <div className="src-head-actions">
+            {api && sources.length > 0 ? (
+              <div className="src-search-wrap">
+                <EvidenceSearch query={searchQuery} results={searchResults} searching={searching} onQueryChange={setSearchQuery} onSearch={(event) => void searchEvidence(event)} onClear={() => { setSearchQuery(''); setSearchResults(null) }} onOpen={(result) => void openEvidence(result.sourceId, result.fileId, result.id)} />
+              </div>
+            ) : null}
+          </div>
+        </header>
+      )}
       {!api ? <div className="source-notice"><HardDrive aria-hidden="true" strokeWidth={1.8} /><div><strong>{t('surface:sources.connectLocalFoldersInTheDesktopApp')}</strong><span>{t('surface:sources.theWebVersionNeverRequestsOrReadsLocal')}</span></div></div> : null}
       {deletionProgress ? <div className="source-feedback source-delete-progress" role="status"><div className="source-delete-progress-copy"><strong>{deletionProgress.message}</strong><span className="source-delete-progress-track"><span style={{ width: `${deletionProgress.percent}%` }} /></span></div><b>{deletionProgress.percent}%</b></div> : message ? <div className="source-feedback" role="status">{message}</div> : null}
       {previewError ? <div className="source-feedback" role="alert">{previewError}</div> : null}
-      {api && sources.length > 0 ? <EvidenceSearch query={searchQuery} results={searchResults} searching={searching} onQueryChange={setSearchQuery} onSearch={(event) => void searchEvidence(event)} onClear={() => { setSearchQuery(''); setSearchResults(null) }} onOpen={(result) => void openEvidence(result.sourceId, result.fileId, result.id)} /> : null}
-      {api && !loading && sources.length === 0 && vaults.length === 0 && obsidianCandidates.length === 0 ? <div className="sources-empty"><span className="sources-empty-icon"><HardDrive aria-hidden="true" strokeWidth={1.8} /></span><strong>{t('surface:sources.noSourcesConnectedYet')}</strong><p>{t('surface:sources.connectASourceAndProductWillTrackVersions', { product: PRODUCT_NAME })}</p><button type="button" className="primary-button" disabled={busyId === 'new'} onClick={() => void addLocalFolder()}><Plus aria-hidden="true" strokeWidth={1.8} />{t('surface:sources.connectFolder')}</button></div> : null}
-      {api && (loading || sources.length > 0 || vaults.length > 0 || obsidianCandidates.length > 0) ? <SourceTable sources={sources} vaults={vaults} obsidianCandidates={obsidianCandidates} loading={loading} busyId={busyId} expandedSourceId={expandedSourceId} filesBySource={filesBySource} filesLoadingId={filesLoadingId} onToggleFiles={(id) => setExpandedSourceId((current) => current === id ? null : id)} onSync={(source) => void runAction(source.id, async () => { const result = await api.sync(source.id); setMessage(describeSync(result, t)) })} onTogglePaused={(source) => void runAction(source.id, () => api.setPaused(source.id, source.status === 'connected'))} onClear={clearSourceData} onOpenEvidence={(sourceId, fileId) => void openEvidence(sourceId, fileId)} onPreviewFile={(sourceId, fileId) => void previewFile(sourceId, fileId)} onShowFile={showFile} obsidianExpanded={obsidianExpanded} onToggleObsidian={() => setObsidianExpanded((current) => !current)} onRescanObsidian={() => void rescanObsidian()} onOpenVaultRoom={(vault) => window.dispatchEvent(new CustomEvent('nxcore:room:open', { detail: { id: vault.roomId, title: vault.name } }))} onDisconnectVault={(vault) => void disconnectVault(vault)} onImportObsidianCandidate={(candidate) => void importObsidianCandidate(candidate)} /> : null}
-      <div className="sources-connector-heading migration-heading"><h2>{t('surface:sources.migrationRecords')}</h2><p>{t('surface:sources.notionAiChatUnavailable')}</p></div>
-      {migrationSources.length ? <div className="data-table migration-table">
-        <div className="table-head"><span>{t('surface:sourceTable.name')}</span><span>{t('surface:sources.importMethod')}</span><span>{t('surface:sourceTable.status')}</span><span>{t('surface:sources.importedContent')}</span><span>{t('surface:sourceTable.actions')}</span></div>
-        {migrationSources.map((source) => { const run = migrationRuns.find((item) => item.sourceId === source.id); const busy = run?.status === 'running' || run?.status === 'queued'; return <div className="table-row" key={source.id}>
-           <span className="name-cell"><span className="item-icon" data-source-kind={source.provider}><SourceIcon kind={source.provider} /></span><span className="source-name-copy"><strong>{source.displayName}</strong><small>{source.provider === 'claude' ? 'Claude Code' : source.provider === 'codex' ? 'Codex' : source.provider === 'openclaw' ? 'OpenClaw' : 'Notion'}</small></span></span>
-          <span>{source.transport}</span><span className="status-cell" data-status={source.status}><span className={`status-dot ${source.status === 'completed' ? 'active' : ''}`} />{run?.phase ?? source.status}</span>
-          <span className="migration-counts">{run ? <><strong>{source.provider === 'notion' ? run.pagesCompleted : run.threadsCompleted}</strong><small>{source.provider === 'notion' ? t('surface:sources.pages') : t('surface:sources.conversationsAndMessages', { count: run.messagesCompleted })}</small></> : '—'}</span>
-          <span className="source-actions">{busy ? <button className="icon-button" title={t('surface:sources.cancelImport')} onClick={() => void window.nxcore!.migrations.cancel(run!.id)}><XCircle /></button> : <button className="icon-button" title={t('surface:sources.reimport')} onClick={() => void window.nxcore!.migrations.reimport(source.id).then(() => refreshMigrations())}><RefreshCw /></button>} {run?.status === 'failed' ? <button className="icon-button" title={t('surface:sources.retry')} onClick={() => void window.nxcore!.migrations.retry(run.id).then(() => refreshMigrations())}><RotateCcw /></button> : null}<button className="icon-button danger" title={t('surface:sources.clearLocalCopy')} onClick={() => { if (window.confirm(t('surface:sources.clearMigrationConfirm'))) void window.nxcore!.migrations.clear(source.id).then(() => refreshMigrations()) }}><Trash2 /></button></span>
-          {run?.error ? <span className="migration-error"><Ban />{run.error}</span> : null}
-        </div> })}
-      </div> : <div className="migration-empty">{t('surface:sources.noMigrationRecords')}</div>}
-      <div className="sources-connector-heading">
-        <h2>{t('surface:sources.connectors')}</h2>
-      </div>
-      <ConnectorSection />
+      {/* 二级页正文（主页分区在下方 {!subPage && …} 中整体让位） */}
+      {subPage === 'ingest' ? (
+        <section className="src-zone">
+          <IngestFeed refreshKey={sources.length} limit={200} />
+        </section>
+      ) : null}
+      {subPage === 'connectors' ? (
+        <section className="src-zone">
+          <ConnectGrid
+            busy={Boolean(busyId)}
+            onLocalFolder={() => void addLocalFolder()}
+            onObsidian={() => void mountObsidian()}
+            onGitHub={() => setGithubOpen(true)}
+            onGoogleDocs={() => setMarkdownSource('google-docs')}
+            onNotion={() => setMarkdownSource('notion')}
+            onNotionZip={() => void importNotionZip()}
+            onOpenClaw={() => void importOpenClaw()}
+            onLocalAgentHistory={(provider) => void importLocalAgentHistory(provider)}
+            connectorsEnabled={connectorsEnabled}
+            onConnectorProvider={(provider) => void connectConnector(provider)}
+            providers={connectorProviders}
+            onWebcalSubscription={() => setWebcalOpen(true)}
+          />
+        </section>
+      ) : null}
+      {!subPage && api ? (
+        <>
+          <section className="src-zone">
+            <header className="src-zone-head"><h2>{t('surface:sources.connectSource')}</h2></header>
+            <ConnectGrid
+              busy={Boolean(busyId)}
+              limit={6}
+              onViewAll={() => { setDrawer(null); setSubPage('connectors') }}
+              onLocalFolder={() => void addLocalFolder()}
+              onObsidian={() => void mountObsidian()}
+              onGitHub={() => setGithubOpen(true)}
+              onGoogleDocs={() => setMarkdownSource('google-docs')}
+              onNotion={() => setMarkdownSource('notion')}
+              onNotionZip={() => void importNotionZip()}
+              onOpenClaw={() => void importOpenClaw()}
+              onLocalAgentHistory={(provider) => void importLocalAgentHistory(provider)}
+              connectorsEnabled={connectorsEnabled}
+              onConnectorProvider={(provider) => void connectConnector(provider)}
+              providers={connectorProviders}
+              onWebcalSubscription={() => setWebcalOpen(true)}
+            />
+          </section>
+          {loading ? <div className="src-feed-empty" role="status">{t('surface:sourceTable.loadingSources')}</div> : null}
+          {!loading && (sources.length > 0 || hasObsidian) ? (
+            <section className="src-zone">
+              <header className="src-zone-head"><h2>{t('surface:sources.localSources')}</h2><small>{sources.length + (hasObsidian ? 1 : 0)}</small></header>
+              <div className="src-cards">
+                {sources.map((source) => (
+                  <LocalSourceCard key={source.id} source={source} busy={busyId === source.id} onOpen={() => setDrawer({ type: 'local', source })} onSync={() => void runAction(source.id, async () => { const result = await api.sync(source.id); setMessage(describeSync(result, t)) })} onTogglePaused={() => void runAction(source.id, () => api.setPaused(source.id, source.status === 'connected'))} onClear={() => clearSourceData(source)} />
+                ))}
+                {hasObsidian ? (
+                  <ObsidianSourceCard vaults={vaults} candidates={obsidianCandidates} busy={busyId === 'obsidian'} onOpen={() => setDrawer({ type: 'obsidian' })} onRescan={() => void rescanObsidian()} />
+                ) : null}
+              </div>
+            </section>
+          ) : null}
+          {!loading && connections.length > 0 ? (
+            <section className="src-zone">
+              <header className="src-zone-head"><h2>{t('surface:sources.cloudSources')}</h2><small>{connections.length}</small></header>
+              <div className="src-cards">
+                {connections.map((connection) => {
+                  const connectionScopes = scopes.filter((item) => item.connectionId === connection.id)
+                  const connectionScopeIds = new Set(connectionScopes.map((item) => item.id))
+                  return (
+                    <CloudSourceCard key={connection.id} connection={connection} scopes={connectionScopes} runs={runs.filter((run) => connectionScopeIds.has(run.scopeId))} busy={cloudBusyId === connection.id} onOpen={() => setDrawer({ type: 'cloud', connection })} onSync={() => syncConnection(connection)} onToggleEnabled={() => toggleConnectionEnabled(connection)} onPurge={() => purgeConnectionData(connection)} />
+                  )
+                })}
+              </div>
+            </section>
+          ) : null}
+          <section className="src-zone">
+            <header className="src-zone-head"><h2>{t('surface:sources.recentIngest')}</h2></header>
+            <IngestFeed refreshKey={sources.length} onViewAll={() => { setDrawer(null); setSubPage('ingest') }} />
+          </section>
+        </>
+      ) : null}
+      {!subPage ? (
+      <section className="src-zone">
+        <header className="src-zone-head"><h2>{t('surface:sources.maintenance')}</h2></header>
+        <div className="src-maint">
+          <button type="button" className="src-maint-row" data-open={String(migrationsOpen)} aria-expanded={migrationsOpen} onClick={() => setMigrationsOpen((open) => !open)}>
+            <ChevronRight className="chev" aria-hidden="true" strokeWidth={1.8} />
+            <strong>{t('surface:sources.migrationRecords')}</strong>
+            {migrationSources.length ? <span className="count">{migrationSources.length}</span> : null}
+          </button>
+          {migrationsOpen ? (
+            <div className="src-maint-body">
+              {migrationSources.length ? <div className="data-table migration-table">
+                <div className="table-head"><span>{t('surface:sourceTable.name')}</span><span>{t('surface:sources.importMethod')}</span><span>{t('surface:sourceTable.status')}</span><span>{t('surface:sources.importedContent')}</span><span>{t('surface:sourceTable.actions')}</span></div>
+                {migrationSources.map((source) => { const run = migrationRuns.find((item) => item.sourceId === source.id); const busy = run?.status === 'running' || run?.status === 'queued'; return <div className="table-row" key={source.id}>
+                   <span className="name-cell"><span className="item-icon" data-source-kind={source.provider}><SourceIcon kind={source.provider} /></span><span className="source-name-copy"><strong>{source.displayName}</strong><small>{source.provider === 'claude' ? 'Claude Code' : source.provider === 'codex' ? 'Codex' : source.provider === 'openclaw' ? 'OpenClaw' : 'Notion'}</small></span></span>
+                  <span>{source.transport}</span><span className="status-cell" data-status={source.status}><span className={`status-dot ${source.status === 'completed' ? 'active' : ''}`} />{run?.phase ?? source.status}</span>
+                  <span className="migration-counts">{run ? <><strong>{source.provider === 'notion' ? run.pagesCompleted : run.threadsCompleted}</strong><small>{source.provider === 'notion' ? t('surface:sources.pages') : t('surface:sources.conversationsAndMessages', { count: run.messagesCompleted })}</small></> : '—'}</span>
+                  <span className="source-actions">{busy ? <button className="icon-button" title={t('surface:sources.cancelImport')} onClick={() => void window.nxcore!.migrations.cancel(run!.id)}><XCircle /></button> : <button className="icon-button" title={t('surface:sources.reimport')} onClick={() => void window.nxcore!.migrations.reimport(source.id).then(() => refreshMigrations())}><RefreshCw /></button>} {run?.status === 'failed' ? <button className="icon-button" title={t('surface:sources.retry')} onClick={() => void window.nxcore!.migrations.retry(run.id).then(() => refreshMigrations())}><RotateCcw /></button> : null}<button className="icon-button danger" title={t('surface:sources.clearLocalCopy')} onClick={() => { if (window.confirm(t('surface:sources.clearMigrationConfirm'))) void window.nxcore!.migrations.clear(source.id).then(() => refreshMigrations()) }}><Trash2 /></button></span>
+                  {run?.error ? <span className="migration-error"><Ban />{run.error}</span> : null}
+                </div> })}
+              </div> : <div className="migration-empty">{t('surface:sources.noMigrationRecords')}</div>}
+            </div>
+          ) : null}
+          <button type="button" className="src-maint-row" data-open={String(engineOpen)} aria-expanded={engineOpen} onClick={() => setEngineOpen((open) => !open)}>
+            <ChevronRight className="chev" aria-hidden="true" strokeWidth={1.8} />
+            <strong>{t('surface:sources.connectorEngine')}</strong>
+          </button>
+          {engineOpen ? <div className="src-maint-body"><ConnectorSection /></div> : null}
+        </div>
+      </section>
+      ) : null}
+      {drawer ? (
+        <SourceDrawer
+          target={drawer}
+          open
+          files={drawerFiles}
+          filesLoading={drawerSource != null && filesLoadingId === drawerSource.id}
+          vaults={vaults}
+          obsidianCandidates={obsidianCandidates}
+          scopes={drawerScopes}
+          runs={drawerRuns}
+          busyId={drawer.type === 'cloud' ? cloudBusyId : drawerSource ? busyId : null}
+          onClose={() => setDrawer(null)}
+          onSync={() => { if (drawerSource && api) void runAction(drawerSource.id, async () => { const result = await api.sync(drawerSource.id); setMessage(describeSync(result, t)) }) }}
+          onTogglePaused={() => { if (drawerSource && api) void runAction(drawerSource.id, () => api.setPaused(drawerSource.id, drawerSource.status === 'connected')) }}
+          onClear={() => { if (drawerSource) clearSourceData(drawerSource) }}
+          onOpenEvidence={(sourceId, fileId) => void openEvidence(sourceId, fileId)}
+          onPreviewFile={(sourceId, fileId) => void previewFile(sourceId, fileId)}
+          onShowFile={showFile}
+          onRescanObsidian={() => void rescanObsidian()}
+          onOpenVaultRoom={(vault) => window.dispatchEvent(new CustomEvent('nxcore:room:open', { detail: { id: vault.roomId, title: vault.name } }))}
+          onDisconnectVault={(vault) => void disconnectVault(vault)}
+          onImportObsidianCandidate={(candidate) => void importObsidianCandidate(candidate)}
+          onScopeSync={(scope) => syncScopeNow(scope)}
+          onToggleEnabled={(connection) => toggleConnectionEnabled(connection)}
+          onPurge={(connection) => purgeConnectionData(connection)}
+        />
+      ) : null}
       {evidenceDocument ? <EvidenceViewer evidence={evidenceDocument} activeBlockId={activeEvidenceId} onClose={() => { setEvidenceDocument(null); setActiveEvidenceId(null) }} onShowFile={() => showFile(evidenceDocument.sourceId, evidenceDocument.fileId)} /> : null}
       {markdownPreview ? <MarkdownPreviewDialog preview={markdownPreview.data} onClose={() => setMarkdownPreview(null)} onShowFile={() => showFile(markdownPreview.sourceId, markdownPreview.fileId)} /> : null}
       {githubOpen ? <GitHubConnectDialog values={githubForm} busy={busyId === 'new'} onChange={setGithubForm} onClose={() => setGithubOpen(false)} onSubmit={(event) => void addGitHub(event)} /> : null}
