@@ -1996,11 +1996,14 @@ export class ConnectorSyncService {
       this.logger.warn({ error: error instanceof Error ? error.message : String(error) }, "connector account discovery failed");
       return;
     }
-    const accounts = Array.isArray(result) ? result : [];
+    // OpenConnectorHttpClient 返回完整封套 { success, data }；oo 运行时的
+    // 连接名字段是 alias（connectionName 为历史兼容名）。两者都兼容读取。
+    const envelope = objectValue(result);
+    const accounts = Array.isArray(result) ? result : Array.isArray(envelope.data) ? envelope.data : [];
     for (const value of accounts) {
       const account = objectValue(value);
       const service = textValue(account.service);
-      const connectionName = textValue(account.connectionName) ?? textValue(account.name);
+      const connectionName = textValue(account.connectionName) ?? textValue(account.alias) ?? textValue(account.name);
       const status = textValue(account.status)?.toLowerCase();
       if (!service || !connectionName || status && !["active", "connected", "ready"].includes(status)) continue;
       const displayName = textValue(account.displayName) ?? textValue(account.accountLabel) ?? connectionName;
