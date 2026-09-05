@@ -56,6 +56,7 @@ export function TiptapDocumentActions({
   historyRefreshSignal,
   commentsOpen,
   onToggleComments,
+  commentsDisabled,
 }: {
   editor: Editor
   documentName: string
@@ -71,6 +72,8 @@ export function TiptapDocumentActions({
   historyRefreshSignal: number
   commentsOpen?: boolean
   onToggleComments?: () => void
+  /** 历史版本 diff 等模式下编辑器内容被隐藏，锚点不可用，禁用评论入口。 */
+  commentsDisabled?: boolean
 }) {
   const { t } = useLocale()
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
@@ -272,8 +275,9 @@ export function TiptapDocumentActions({
           type="button"
           className={commentsOpen ? 'is-active' : ''}
           aria-label={t('contextRoom:importedComments.open')}
-          title={t('contextRoom:importedComments.open')}
+          title={commentsDisabled ? t('contextRoom:importedComments.unavailableInDiff') : t('contextRoom:importedComments.open')}
           aria-pressed={Boolean(commentsOpen)}
+          disabled={commentsDisabled}
           onClick={onToggleComments}
         >
           <MessageSquare aria-hidden="true" />

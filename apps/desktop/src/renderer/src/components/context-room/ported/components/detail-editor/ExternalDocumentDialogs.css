@@ -499,10 +499,6 @@
 .context-room-imported-comment header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; border: none; padding: 0; }
 .context-room-imported-comment header time { color: var(--muted, #6a737d); font-size: 11px; flex: 1; }
 .context-room-imported-comment-resolved { color: #1a7f37; font-style: normal; display: inline-flex; align-items: center; gap: 3px; }
-.context-room-imported-comment-quote {
-  margin: 0 0 6px; padding: 4px 8px; border-left: 2px solid var(--border-strong, #ccd3dd);
-  color: var(--muted, #6a737d); background: var(--surface-alt, #f9fafb); border-radius: 0 6px 6px 0;
-}
 .context-room-imported-comment p { margin: 0; white-space: pre-wrap; word-break: break-word; }
 .context-room-imported-comment-replies { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
 .context-room-imported-comment-reply { padding: 6px 8px; background: var(--surface-alt, #f9fafb); border-radius: 8px; }
@@ -518,29 +514,6 @@
 .context-room-imported-comments-empty p { margin: 0; font-size: 13px; }
 .context-room-imported-comments-empty small { font-size: 11px; max-width: 240px; line-height: 1.5; }
 
-/* 评论面板：本地评论 + composer */
-.context-room-imported-comments-composer {
-  display: flex; gap: 8px; padding: 10px 12px 0; align-items: flex-end;
-}
-.context-room-imported-comments-composer textarea {
-  flex: 1; resize: vertical; min-height: 44px; max-height: 120px;
-  padding: 7px 10px; border: 1px solid var(--border, #d8dee4); border-radius: 8px;
-  background: var(--bg, #fff); color: inherit; font-size: 12px; font-family: inherit;
-}
-.context-room-imported-comments-composer button {
-  display: inline-flex; align-items: center; gap: 4px; padding: 7px 12px;
-  border: none; border-radius: 8px; background: var(--accent, #3d6ff6); color: #fff;
-  cursor: pointer; font-size: 12px;
-}
-.context-room-imported-comments-composer button:disabled { opacity: 0.5; cursor: default; }
-.context-room-imported-comments-replying {
-  display: flex; align-items: center; gap: 6px; padding: 6px 12px 0;
-  font-size: 11px; color: var(--muted, #6a737d);
-}
-.context-room-imported-comments-replying button {
-  border: none; background: none; color: inherit; cursor: pointer; padding: 2px; display: inline-flex;
-}
-.context-room-imported-comments-local-list { margin-bottom: 6px; }
 .context-room-imported-comments-section-label {
   font-size: 11px; color: var(--muted, #6a737d); margin-bottom: 6px; font-weight: 600;
 }
@@ -550,10 +523,6 @@
 }
 .context-room-imported-comment-action:hover { color: var(--text, #151a22); background: var(--hover, #e8ecf1); }
 .context-room-imported-comment-action.danger:hover { color: #c62828; }
-.context-room-imported-comment-reply-button {
-  border: none; background: none; color: var(--accent, #3d6ff6); cursor: pointer;
-  font-size: 11px; padding: 2px 0 0; align-self: flex-start;
-}
 .context-room-imported-comment-source { width: 13px; height: 13px; flex-shrink: 0; }
 
 .context-room-imported-comments-no-anchor-hint {
@@ -561,10 +530,19 @@
   font-size: 11px; color: var(--muted, #6a737d);
 }
 
-/* 已定位评论的锚定文本：面板打开期间常驻下划线（飞书式指向标记） */
-.context-room-comment-anchored {
+/* 评论锚点装饰（ProseMirror inline decoration）：黄色下划线，与手动 <u> 下划线（正文色）区分 */
+.context-room-comment-anchor {
   text-decoration: underline !important;
-  text-decoration-color: color-mix(in srgb, var(--accent, #3d6ff6) 55%, transparent) !important;
+  text-decoration-color: #ffe000 !important;
   text-decoration-thickness: 2px !important;
   text-underline-offset: 3px !important;
+  cursor: pointer;
 }
+/* 装饰范围包住自带 <u> 下划线格式时，u 自身装饰色会屏蔽外层传播（装饰传播规则），显式覆盖 */
+.context-room-comment-anchor u { text-decoration-color: #ffe000 !important; }
+/* 点击正文评论装饰后闪亮对应卡片 */
+@keyframes context-room-comment-card-flash {
+  0%, 100% { box-shadow: 0 3px 12px rgb(15 23 42 / 0); }
+  30% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent, #3d6ff6) 55%, transparent); }
+}
+.context-room-imported-comment-floating.is-flash { animation: context-room-comment-card-flash 1.2s ease; }

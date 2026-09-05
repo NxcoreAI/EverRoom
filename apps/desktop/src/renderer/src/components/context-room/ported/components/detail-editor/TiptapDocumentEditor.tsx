@@ -8,6 +8,7 @@ import { TableKit } from '@tiptap/extension-table'
 import TableOfContents, { type TableOfContentData } from '@tiptap/extension-table-of-contents'
 import { DocumentExportStatus } from './DocumentExportStatus'
 import { ImportedCommentsPanel } from './ImportedCommentsPanel'
+import { CommentAnchors } from './commentAnchorDecorations'
 import { Markdown } from '@tiptap/markdown'
 import { TextSelection } from '@tiptap/pm/state'
 import { EditorContent, useEditor, type Editor, type JSONContent } from '@tiptap/react'
@@ -644,6 +645,7 @@ export function TiptapDocumentEditor({
         resize: DOCUMENT_IMAGE_RESIZE_OPTIONS,
       }),
       StableBlockIds.configure({ documentId }),
+      CommentAnchors,
       documentReferenceFlashExtension(),
       DocumentBlockReference.configure({
         sourceRoomId: room.id,
@@ -1373,6 +1375,11 @@ export function TiptapDocumentEditor({
 
   const [commentsOpen, setCommentsOpen] = useState(false)
 
+  // 历史 diff 模式下编辑器内容被隐藏（rect 归零），评论锚点会失真：进入 diff 时收起面板。
+  useEffect(() => {
+    if (historyView) setCommentsOpen(false)
+  }, [historyView])
+
   const awaitingFirstContent = isAgentDocumentAwaitingContent(backendDocument)
     || Boolean(operationStreamPending && streamingDocument?.chunks.length === 0)
   return (
@@ -1411,6 +1418,7 @@ export function TiptapDocumentEditor({
             historyRefreshSignal={historyRefreshSignal}
             commentsOpen={commentsOpen}
             onToggleComments={() => setCommentsOpen((current) => !current)}
+            commentsDisabled={historyDiffActive}
           />
         ) : null}
       </div>
@@ -1505,14 +1513,16 @@ export function TiptapDocumentEditor({
           <EditorContent editor={editor} />
         </div>
         </div>
-        {commentsOpen && backendDocument ? (
-          <ImportedCommentsPanel
-            editor={editor}
-            roomId={backendDocument.roomId}
-            documentId={documentId}
-            onClose={() => setCommentsOpen(false)}
-          />
-        ) : null}
+        {/* 评论面板不依赖 backendDocument：文档列表闪断（rooms/gateway 抖动）会让它变 null，
+            一旦用它做挂载条件，面板会被反复卸载并把正文标记擦掉。编辑器在就常驻。 */}
+        <ImportedCommentsPanel
+          editor={editor}
+          roomId={backendDocument?.roomId ?? room.id}
+          documentId={documentId}
+          collapsed={!commentsOpen}
+          onOpen={() => setCommentsOpen(true)}
+          onClose={() => setCommentsOpen(false)}
+        />
         </div>
       </div>
       {editor && !editorLocked ? (
