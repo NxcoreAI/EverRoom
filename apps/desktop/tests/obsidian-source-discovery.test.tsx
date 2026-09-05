@@ -1,6 +1,12 @@
 import TestRenderer, { act } from 'react-test-renderer'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+// react-test-renderer 无法把 portal 挂到真实 DOM 容器——透传为普通子树
+vi.mock('react-dom', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  createPortal: (children: React.ReactNode) => children,
+}))
+
 import type { ObsidianVaultBinding, ObsidianVaultCandidate } from '../src/shared/obsidian'
 import { ObsidianImportDialog } from '../src/renderer/src/components/pages/sources/ObsidianImportDialog'
 import { ObsidianSourceCard } from '../src/renderer/src/components/pages/sources/SourceCard'

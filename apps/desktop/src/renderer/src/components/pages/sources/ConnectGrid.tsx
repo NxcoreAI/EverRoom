@@ -14,6 +14,10 @@ type ConnectItem = {
   glyph?: boolean
   label: string
   group: 'local' | 'cloud' | 'import'
+  /** cloud 组条目对应的连接 provider——已连接的不再出现在"待连接"里。 */
+  provider?: string
+  /** 已连接仍保留入口（webcal 按地址建连,可继续添加新订阅）。 */
+  alwaysVisible?: boolean
   onSelect: () => void
 }
 
@@ -50,6 +54,7 @@ export function ConnectGrid({
   onConnectorProvider,
   providers,
   onWebcalSubscription,
+  connectedProviders,
 }: {
   busy: boolean
   limit?: number
@@ -67,6 +72,8 @@ export function ConnectGrid({
   /** 网关注册表元数据（缺省回落静态清单）——mail/calendar OAuth 与 webcal 订阅由它驱动。 */
   providers?: ConnectorProviderSummary[]
   onWebcalSubscription?: () => void
+  /** 已有连接的 provider 集合：这些条目从"待连接"中隐藏（OAuth 单槽位,换账号从已连接卡片的「更换账号」进）。 */
+  connectedProviders?: ReadonlySet<string>
 }) {
   const { t } = useLocale()
   const metadata = providers ?? FALLBACK_CONNECTOR_PROVIDERS
@@ -75,14 +82,15 @@ export function ConnectGrid({
   const webcalFeeds = metadata.filter((item) => item.authChannel === 'webcal-url' && !item.comingSoon)
   const cloud: ConnectItem[] = connectorsEnabled && onConnectorProvider
     ? [
-        { key: 'google-docs', icon: 'google-docs', label: 'Google Docs', group: 'cloud', onSelect: () => onConnectorProvider('google-docs') },
-        { key: 'notion', icon: 'notion', label: 'Notion', group: 'cloud', onSelect: () => onConnectorProvider('notion') },
+        { key: 'google-docs', icon: 'google-docs', label: 'Google Docs', group: 'cloud', provider: 'google-docs', onSelect: () => onConnectorProvider('google-docs') },
+        { key: 'notion', icon: 'notion', label: 'Notion', group: 'cloud', provider: 'notion', onSelect: () => onConnectorProvider('notion') },
         // 注册表驱动：mail/calendar 类 OAuth 源（新增 provider 自动出现）。
         ...oauthFeeds.map((item) => ({
           key: `oauth-${item.provider}`,
           icon: (item.iconKey as SourceIconKind) ?? 'web-page',
           label: item.label,
           group: 'cloud' as const,
+          provider: item.provider,
           onSelect: () => onConnectorProvider(item.provider),
         })),
         // webcal-url 通道：订阅任意网站发布的日历（无 OAuth）。
@@ -92,6 +100,8 @@ export function ConnectGrid({
           glyph: true,
           label: t('surface:connectSourceMenu.webcalSubscription'),
           group: 'cloud' as const,
+          provider: item.provider,
+          alwaysVisible: true,
           onSelect: onWebcalSubscription,
         })) : []),
       ]
@@ -99,11 +109,14 @@ export function ConnectGrid({
         { key: 'google-docs', icon: 'google-docs', label: 'Google Docs', group: 'cloud', onSelect: onGoogleDocs },
         { key: 'notion', icon: 'notion', label: 'Notion', group: 'cloud', onSelect: onNotion },
       ]
+  const visibleCloud = connectedProviders
+    ? cloud.filter((item) => !item.provider || item.alwaysVisible || !connectedProviders.has(item.provider))
+    : cloud
   const items: ConnectItem[] = [
     { key: 'local-folder', icon: 'local-folder', glyph: true, label: t('surface:connectSourceMenu.localFolder'), group: 'local', onSelect: onLocalFolder },
     { key: 'obsidian', icon: 'obsidian-vault', label: 'Obsidian', group: 'local', onSelect: onObsidian },
     { key: 'github', icon: 'github', label: 'GitHub', group: 'local', onSelect: onGitHub },
-    ...cloud,
+    ...visibleCloud,
     { key: 'notion-zip', icon: 'notion', label: 'Notion ZIP', group: 'import', onSelect: onNotionZip },
     { key: 'claude', icon: 'claude', label: 'Claude Code', group: 'import', onSelect: () => onLocalAgentHistory('claude') },
     { key: 'codex', icon: 'codex', label: 'Codex', group: 'import', onSelect: () => onLocalAgentHistory('codex') },

@@ -1,4 +1,4 @@
-import { ArrowLeft, Ban, ChevronRight, HardDrive, RefreshCw, RotateCcw, Trash2, XCircle } from 'lucide-react'
+import { ArrowLeft, HardDrive } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 
 import type {
@@ -11,7 +11,6 @@ import type {
 } from '../../../../shared/sources'
 import type { ConnectorStatus, ConnectorConnection, SyncRun, SyncScope } from '@nxcore/connector-contract'
 import type { ObsidianVaultBinding, ObsidianVaultCandidate } from '../../../../shared/obsidian'
-import type { MigrationRun, MigrationSource } from '@nxcore/agent-contract'
 import { ConnectGrid, type ConnectorProviderId } from './sources/ConnectGrid'
 import { EvidenceSearch } from './sources/EvidenceSearch'
 import { EvidenceViewer } from './sources/EvidenceViewer'
@@ -27,7 +26,6 @@ import { CloudSourceCard, LocalSourceCard, ObsidianSourceCard } from './sources/
 import { SourceDrawer, type DrawerTarget } from './sources/SourceDrawer'
 import { IngestFeed } from './sources/IngestFeed'
 import { SourceIcon } from './sources/SourceIcon'
-import { ConnectorSection } from './ConnectorPage'
 import { PRODUCT_NAME } from '@/components/ui/brand'
 import { useLocale } from '@/i18n/LocaleContext'
 import './SourcesPage.css'
@@ -88,10 +86,6 @@ export function SourcesPage() {
   const [drawer, setDrawer] = useState<DrawerTarget | null>(null)
   // 二级页（页内下钻,不占全局导航）：最近进入全量 / 全部连接器。
   const [subPage, setSubPage] = useState<null | 'ingest' | 'connectors'>(null)
-  const [migrationsOpen, setMigrationsOpen] = useState(false)
-  const [engineOpen, setEngineOpen] = useState(false)
-  const [migrationSources, setMigrationSources] = useState<MigrationSource[]>([])
-  const [migrationRuns, setMigrationRuns] = useState<MigrationRun[]>([])
   const [obsidianImportOpen, setObsidianImportOpen] = useState(false)
   const obsidianDiscoveryRequestRef = useRef(0)
   const obsidianCandidateIdsRef = useRef(new Set<string>())
@@ -99,8 +93,10 @@ export function SourcesPage() {
   const connections = connectorStatus?.connections ?? []
   const scopes = connectorStatus?.scopes ?? []
   const runs = connectorStatus?.runs ?? []
+  // 已连接的 provider 集合：待连接区隐藏这些条目（OAuth 单槽位,换账号从已连接卡片的「更换账号」进）
+  const connectedProviders = new Set(connections.map((item) => item.provider))
 
-  // 云服务卡与抽屉的数据源：页面级轮询（维护区的引擎视图自行轮询,互不影响）。
+  // 云服务卡与抽屉的数据源：页面级轮询。
   const refreshConnectorStatus = useCallback(async () => {
     try {
       setConnectorStatus(await window.nxcore?.nangoConnector.status() ?? null)
@@ -114,20 +110,6 @@ export function SourcesPage() {
     return () => { window.clearInterval(timer); document.removeEventListener('visibilitychange', tick) }
   }, [refreshConnectorStatus])
 
-  const refreshMigrations = useCallback(async () => {
-    if (!window.nxcore?.migrations) return
-    const [nextSources, nextRuns] = await Promise.all([window.nxcore.migrations.sources(), window.nxcore.migrations.runs()])
-    setMigrationSources(nextSources); setMigrationRuns(nextRuns)
-  }, [])
-
-  useEffect(() => {
-    void refreshMigrations().catch(() => undefined)
-    return window.nxcore?.migrations.onProgress(({ run }) => {
-      setMigrationRuns((current) => [run, ...current.filter((item) => item.id !== run.id)])
-      void window.nxcore?.migrations.sources().then(setMigrationSources).catch(() => undefined)
-    })
-  }, [refreshMigrations])
-
   const importOpenClaw = async () => {
     setBusyId('migration-openclaw'); setMessage(null)
     try {
@@ -136,7 +118,6 @@ export function SourcesPage() {
         ? await window.nxcore!.migrations.importOpenClaw(discovered[0]!.id)
         : await window.nxcore!.migrations.chooseOpenClaw()
       if (run) setMessage(t('surface:sources.migrationCompleted', { count: run.messagesCompleted }))
-      await refreshMigrations()
     } catch (error) { setMessage(error instanceof Error ? error.message : t('surface:sources.migrationFailed')) }
     finally { setBusyId(null) }
   }
@@ -149,14 +130,13 @@ export function SourcesPage() {
         ? await window.nxcore!.migrations.importLocalAgentMigration(provider, discovered[0]!.id)
         : await window.nxcore!.migrations.chooseLocalAgentDirectory(provider)
       if (run) setMessage(t('surface:sources.localAgentMigrationCompleted', { count: run.messagesCompleted }))
-      await refreshMigrations()
     } catch (error) { setMessage(error instanceof Error ? error.message : t('surface:sources.migrationFailed')) }
     finally { setBusyId(null) }
   }
 
   const importNotionZip = async () => {
     setBusyId('migration-notion'); setMessage(null)
-    try { const run = await window.nxcore!.migrations.importNotionZip(); if (run) setMessage(t('surface:sources.notionMigrationCompleted', { count: run.pagesCompleted })); await refreshMigrations() }
+    try { const run = await window.nxcore!.migrations.importNotionZip(); if (run) setMessage(t('surface:sources.notionMigrationCompleted', { count: run.pagesCompleted })) }
     catch (error) { setMessage(error instanceof Error ? error.message : t('surface:sources.migrationFailed')) }
     finally { setBusyId(null) }
   }
@@ -321,6 +301,15 @@ export function SourcesPage() {
     } catch (error) {
       setMessage(error instanceof Error ? error.message : t('surface:sources.failedToOpenTheAuthorizationPage'))
     }
+  }
+
+  // webcal 连接按地址建连、无账号概念；OAuth 连接单槽位——重授权会顶替同 provider 现有连接。
+  const isWebcalConnection = (connection: ConnectorConnection) =>
+    connectorProviders.find((item) => item.provider === connection.provider)?.authChannel === 'webcal-url'
+
+  // 已连接卡片的「更换账号」：重新走一次授权,新账号自动顶替旧连接。
+  const replaceAccountFor = (connection: ConnectorConnection) => {
+    if (connectorsEnabled) void connectConnector(connection.provider)
   }
 
   // WebCal/ICS 订阅（webcal-url 通道）：无 OAuth，提交地址即建连（幂等）。
@@ -594,7 +583,7 @@ export function SourcesPage() {
             <button type="button" className="src-back" onClick={() => setSubPage(null)}>
               <ArrowLeft aria-hidden="true" strokeWidth={1.8} />{t('surface:sources.back')}
             </button>
-            <h1>{t(subPage === 'ingest' ? 'surface:sources.recentIngest' : 'surface:sources.connectSource')}</h1>
+            <h1>{t(subPage === 'ingest' ? 'surface:sources.recentIngest' : 'surface:sources.pendingConnect')}</h1>
           </div>
         </header>
       ) : (
@@ -633,6 +622,7 @@ export function SourcesPage() {
         <section className="src-zone">
           <ConnectGrid
             busy={Boolean(busyId)}
+            connectedProviders={connectedProviders}
             onLocalFolder={() => void addLocalFolder()}
             onObsidian={() => void mountObsidian()}
             onGitHub={() => setGithubOpen(true)}
@@ -651,10 +641,11 @@ export function SourcesPage() {
       {!subPage && api ? (
         <>
           <section className="src-zone">
-            <header className="src-zone-head"><h2>{t('surface:sources.connectSource')}</h2></header>
+            <header className="src-zone-head"><h2>{t('surface:sources.pendingConnect')}</h2></header>
             <ConnectGrid
               busy={Boolean(busyId)}
               limit={6}
+              connectedProviders={connectedProviders}
               onViewAll={() => { setDrawer(null); setSubPage('connectors') }}
               onLocalFolder={() => void addLocalFolder()}
               onObsidian={() => void mountObsidian()}
@@ -671,9 +662,9 @@ export function SourcesPage() {
             />
           </section>
           {loading ? <div className="src-feed-empty" role="status">{t('surface:sourceTable.loadingSources')}</div> : null}
-          {!loading && (sources.length > 0 || hasObsidian) ? (
+          {!loading && (sources.length > 0 || hasObsidian || connections.length > 0) ? (
             <section className="src-zone">
-              <header className="src-zone-head"><h2>{t('surface:sources.localSources')}</h2><small>{sources.length + (hasObsidian ? 1 : 0)}</small></header>
+              <header className="src-zone-head"><h2>{t('surface:sources.connectedSources')}</h2><small>{sources.length + (hasObsidian ? 1 : 0) + connections.length}</small></header>
               <div className="src-cards">
                 {sources.map((source) => (
                   <LocalSourceCard key={source.id} source={source} busy={busyId === source.id} onOpen={() => setDrawer({ type: 'local', source })} onSync={() => void runAction(source.id, async () => { const result = await api.sync(source.id); setMessage(describeSync(result, t)) })} onTogglePaused={() => void runAction(source.id, () => api.setPaused(source.id, source.status === 'connected'))} onClear={() => clearSourceData(source)} />
@@ -681,18 +672,11 @@ export function SourcesPage() {
                 {hasObsidian ? (
                   <ObsidianSourceCard vaults={vaults} candidates={obsidianCandidates} busy={busyId === 'obsidian'} onOpen={() => setDrawer({ type: 'obsidian' })} onRescan={() => void rescanObsidian()} />
                 ) : null}
-              </div>
-            </section>
-          ) : null}
-          {!loading && connections.length > 0 ? (
-            <section className="src-zone">
-              <header className="src-zone-head"><h2>{t('surface:sources.cloudSources')}</h2><small>{connections.length}</small></header>
-              <div className="src-cards">
                 {connections.map((connection) => {
                   const connectionScopes = scopes.filter((item) => item.connectionId === connection.id)
                   const connectionScopeIds = new Set(connectionScopes.map((item) => item.id))
                   return (
-                    <CloudSourceCard key={connection.id} connection={connection} scopes={connectionScopes} runs={runs.filter((run) => connectionScopeIds.has(run.scopeId))} busy={cloudBusyId === connection.id} onOpen={() => setDrawer({ type: 'cloud', connection })} onSync={() => syncConnection(connection)} onToggleEnabled={() => toggleConnectionEnabled(connection)} onPurge={() => purgeConnectionData(connection)} />
+                    <CloudSourceCard key={connection.id} connection={connection} scopes={connectionScopes} runs={runs.filter((run) => connectionScopeIds.has(run.scopeId))} busy={cloudBusyId === connection.id} onOpen={() => setDrawer({ type: 'cloud', connection })} onSync={() => syncConnection(connection)} onToggleEnabled={() => toggleConnectionEnabled(connection)} onPurge={() => purgeConnectionData(connection)} onReplaceAccount={isWebcalConnection(connection) ? undefined : () => replaceAccountFor(connection)} />
                   )
                 })}
               </div>
@@ -703,37 +687,6 @@ export function SourcesPage() {
             <IngestFeed refreshKey={sources.length} onViewAll={() => { setDrawer(null); setSubPage('ingest') }} />
           </section>
         </>
-      ) : null}
-      {!subPage ? (
-      <section className="src-zone">
-        <header className="src-zone-head"><h2>{t('surface:sources.maintenance')}</h2></header>
-        <div className="src-maint">
-          <button type="button" className="src-maint-row" data-open={String(migrationsOpen)} aria-expanded={migrationsOpen} onClick={() => setMigrationsOpen((open) => !open)}>
-            <ChevronRight className="chev" aria-hidden="true" strokeWidth={1.8} />
-            <strong>{t('surface:sources.migrationRecords')}</strong>
-            {migrationSources.length ? <span className="count">{migrationSources.length}</span> : null}
-          </button>
-          {migrationsOpen ? (
-            <div className="src-maint-body">
-              {migrationSources.length ? <div className="data-table migration-table">
-                <div className="table-head"><span>{t('surface:sourceTable.name')}</span><span>{t('surface:sources.importMethod')}</span><span>{t('surface:sourceTable.status')}</span><span>{t('surface:sources.importedContent')}</span><span>{t('surface:sourceTable.actions')}</span></div>
-                {migrationSources.map((source) => { const run = migrationRuns.find((item) => item.sourceId === source.id); const busy = run?.status === 'running' || run?.status === 'queued'; return <div className="table-row" key={source.id}>
-                   <span className="name-cell"><span className="item-icon" data-source-kind={source.provider}><SourceIcon kind={source.provider} /></span><span className="source-name-copy"><strong>{source.displayName}</strong><small>{source.provider === 'claude' ? 'Claude Code' : source.provider === 'codex' ? 'Codex' : source.provider === 'openclaw' ? 'OpenClaw' : 'Notion'}</small></span></span>
-                  <span>{source.transport}</span><span className="status-cell" data-status={source.status}><span className={`status-dot ${source.status === 'completed' ? 'active' : ''}`} />{run?.phase ?? source.status}</span>
-                  <span className="migration-counts">{run ? <><strong>{source.provider === 'notion' ? run.pagesCompleted : run.threadsCompleted}</strong><small>{source.provider === 'notion' ? t('surface:sources.pages') : t('surface:sources.conversationsAndMessages', { count: run.messagesCompleted })}</small></> : '—'}</span>
-                  <span className="source-actions">{busy ? <button className="icon-button" title={t('surface:sources.cancelImport')} onClick={() => void window.nxcore!.migrations.cancel(run!.id)}><XCircle /></button> : <button className="icon-button" title={t('surface:sources.reimport')} onClick={() => void window.nxcore!.migrations.reimport(source.id).then(() => refreshMigrations())}><RefreshCw /></button>} {run?.status === 'failed' ? <button className="icon-button" title={t('surface:sources.retry')} onClick={() => void window.nxcore!.migrations.retry(run.id).then(() => refreshMigrations())}><RotateCcw /></button> : null}<button className="icon-button danger" title={t('surface:sources.clearLocalCopy')} onClick={() => { if (window.confirm(t('surface:sources.clearMigrationConfirm'))) void window.nxcore!.migrations.clear(source.id).then(() => refreshMigrations()) }}><Trash2 /></button></span>
-                  {run?.error ? <span className="migration-error"><Ban />{run.error}</span> : null}
-                </div> })}
-              </div> : <div className="migration-empty">{t('surface:sources.noMigrationRecords')}</div>}
-            </div>
-          ) : null}
-          <button type="button" className="src-maint-row" data-open={String(engineOpen)} aria-expanded={engineOpen} onClick={() => setEngineOpen((open) => !open)}>
-            <ChevronRight className="chev" aria-hidden="true" strokeWidth={1.8} />
-            <strong>{t('surface:sources.connectorEngine')}</strong>
-          </button>
-          {engineOpen ? <div className="src-maint-body"><ConnectorSection /></div> : null}
-        </div>
-      </section>
       ) : null}
       {drawer ? (
         <SourceDrawer
@@ -760,6 +713,7 @@ export function SourcesPage() {
           onScopeSync={(scope) => syncScopeNow(scope)}
           onToggleEnabled={(connection) => toggleConnectionEnabled(connection)}
           onPurge={(connection) => purgeConnectionData(connection)}
+          onReplaceAccount={drawer.type === 'cloud' && !isWebcalConnection(drawer.connection) ? () => replaceAccountFor(drawer.connection) : undefined}
         />
       ) : null}
       {evidenceDocument ? <EvidenceViewer evidence={evidenceDocument} activeBlockId={activeEvidenceId} onClose={() => { setEvidenceDocument(null); setActiveEvidenceId(null) }} onShowFile={() => showFile(evidenceDocument.sourceId, evidenceDocument.fileId)} /> : null}

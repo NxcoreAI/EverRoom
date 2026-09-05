@@ -1,5 +1,6 @@
-import { ExternalLink, Eraser, Eye, File, FolderOpen, Import, Pause, Play, RefreshCw, Trash2, Unplug, Wrench, X } from 'lucide-react'
+import { ArrowLeftRight, ExternalLink, Eraser, Eye, File, FolderOpen, Import, Pause, Play, RefreshCw, Trash2, Unplug, Wrench, X } from 'lucide-react'
 import type { ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 
 import type { DataSourceSummary, SourceFileSummary } from '../../../../../shared/sources'
 import type { ConnectorConnection, SyncRun, SyncScope } from '@nxcore/connector-contract'
@@ -14,7 +15,7 @@ export type DrawerTarget =
   | { type: 'obsidian' }
   | { type: 'cloud'; connection: ConnectorConnection }
 
-/** connector 状态/模式 → 既有 i18n key（与 ConnectorPage 的映射一致）。 */
+/** connector 状态/模式 → 既有 i18n key。 */
 const CONNECTOR_STATUS_KEYS: Record<string, string> = {
   active: 'surface:connector.active',
   disabled: 'surface:connector.statusDisabled',
@@ -36,6 +37,21 @@ function statusTone(value: string): StateTone {
   if (value === 'running' || value === 'queued') return 'run'
   if (value === 'disabled') return 'paused'
   return 'danger'
+}
+
+/**
+ * run 展示态：失败不直接报红。有进度=部分同步；瞬时网络错误=自动重试；
+ * 格式映射未就绪=准备中（后台生成后自动续传）；其余才报失败。原始错误留 title。
+ */
+function runPresentation(run: SyncRun, t: Translate): { tone: StateTone; label: string } {
+  if (run.status === 'running' || run.status === 'queued') return { tone: 'run', label: t('surface:connector.statusRunning') }
+  if (run.status === 'completed') return { tone: 'ok', label: t('surface:connector.statusCompleted') }
+  if (run.status === 'interrupted') return { tone: 'paused', label: t('surface:connector.statusPartial') }
+  const error = run.error ?? ''
+  if (run.processed > 0) return { tone: 'paused', label: t('surface:connector.statusPartial') }
+  if (error.includes('format_mapping_pending')) return { tone: 'run', label: t('surface:connector.mappingPreparing') }
+  if (/timed out|econn|network|http response|socket/i.test(error)) return { tone: 'paused', label: t('surface:connector.runRetrySoon') }
+  return { tone: 'danger', label: t('surface:connector.statusFailed') }
 }
 
 function StatePill({ tone, label }: { tone: StateTone; label: string }) {
@@ -83,6 +99,7 @@ export function SourceDrawer({
   onScopeSync,
   onToggleEnabled,
   onPurge,
+  onReplaceAccount,
 }: {
   target: DrawerTarget
   open: boolean
@@ -107,6 +124,8 @@ export function SourceDrawer({
   onScopeSync: (scope: SyncScope) => void
   onToggleEnabled: (connection: ConnectorConnection) => void
   onPurge: (connection: ConnectorConnection) => void
+  /** 云抽屉：重新授权同一 provider（单槽位:新账号顶替现有连接）；缺省不显示。 */
+  onReplaceAccount?: () => void
 }) {
   const { locale, t } = useLocale()
   const logo = (kind: SourceIconKind, glyph = false) => (
@@ -248,6 +267,9 @@ export function SourceDrawer({
     const { connection } = target
     const busy = busyId === connection.id
     const active = connection.status === 'active'
+    // 邮箱是单槽位 OAuth（一个 token 一个邮箱），"同步范围"对用户无意义；
+    // 日历类按"每个日历"建 scope，保留展示。
+    const mailbox = connection.provider === 'gmail' || connection.provider === 'outlook'
     const lastRun = runs.length ? runs.reduce((latest, run) => (run.startedAt > latest.startedAt ? run : latest)) : null
     const running = runs.some((run) => run.status === 'running' || run.status === 'queued')
     content = (
@@ -262,55 +284,67 @@ export function SourceDrawer({
           </>,
           <>
             {active ? <button type="button" className="src-mini-btn" disabled={busy || !scopes.length} onClick={onSync}><RefreshCw aria-hidden="true" strokeWidth={1.8} />{t('surface:connector.incrementalSync')}</button> : null}
+            {onReplaceAccount ? <button type="button" className="src-mini-btn" disabled={busy} onClick={onReplaceAccount}><ArrowLeftRight aria-hidden="true" strokeWidth={1.8} />{t('surface:sources.replaceAccount')}</button> : null}
             <button type="button" className="src-mini-btn" disabled={busy} onClick={() => onToggleEnabled(connection)}>{active ? <Pause aria-hidden="true" strokeWidth={1.8} /> : <Play aria-hidden="true" strokeWidth={1.8} />}{t(active ? 'surface:connector.disableConnection' : 'surface:sourceCard.enableConnection')}</button>
             <button type="button" className="src-mini-btn danger" disabled={busy} onClick={() => onPurge(connection)}><Trash2 aria-hidden="true" strokeWidth={1.8} />{t('surface:connector.clearLocalData')}</button>
           </>,
         )}
         {stats([
-          { value: scopes.length.toLocaleString(), label: t('surface:sourceCard.scopes') },
-          ...(lastRun ? [{ value: `${lastRun.processed.toLocaleString()}${lastRun.failed ? ` / ${lastRun.failed}` : ''}`, label: t('surface:sourceCard.lastSynced') }] : []),
+          ...(!mailbox ? [{ value: scopes.length.toLocaleString(), label: t('surface:sourceCard.scopes') }] : []),
+          ...(lastRun ? [{ value: lastRun.processed.toLocaleString(), label: t('surface:sourceCard.lastSynced') }] : []),
         ])}
         <div className="src-drawer-list">
-          <div className="src-list-head"><h4>{t('surface:sourceCard.scopes')} · {scopes.length.toLocaleString()}</h4></div>
-          {scopes.length === 0 ? <div className="src-feed-empty">{t('surface:sourceCard.noScopes')}</div> : null}
-          {scopes.map((scope) => (
-            <div key={scope.id} className="src-scope-row">
-              <span className="src-file-copy">
-                <strong>{scope.displayName}</strong>
-                <small>{formatDate(scope.updatedAt, locale, t)}</small>
-              </span>
-              <StateDot value={scope.state} t={t} />
-              <span className="src-file-actions">
-                <button type="button" className="icon-button" aria-label={t(scope.state === 'resync_required' ? 'surface:connector.rebuildScope' : 'surface:connector.incrementalSync')} title={t(scope.state === 'resync_required' ? 'surface:connector.rebuildScope' : 'surface:connector.incrementalSync')} disabled={busy || scope.state === 'running' || scope.state === 'disabled'} onClick={() => onScopeSync(scope)}>
-                  {scope.state === 'resync_required' ? <Wrench aria-hidden="true" strokeWidth={1.8} /> : <Play aria-hidden="true" strokeWidth={1.8} />}
-                </button>
-              </span>
-            </div>
-          ))}
+          {!mailbox ? (
+            <>
+              <div className="src-list-head"><h4>{t('surface:sourceCard.scopes')} · {scopes.length.toLocaleString()}</h4></div>
+              {scopes.length === 0 ? <div className="src-feed-empty">{t('surface:sourceCard.noScopes')}</div> : null}
+              {scopes.map((scope) => (
+                <div key={scope.id} className="src-scope-row">
+                  <span className="src-file-copy">
+                    <strong>{scope.displayName}</strong>
+                    <small>{formatDate(scope.updatedAt, locale, t)}</small>
+                  </span>
+                  <StateDot value={scope.state} t={t} />
+                  <span className="src-file-actions">
+                    <button type="button" className="icon-button" aria-label={t(scope.state === 'resync_required' ? 'surface:connector.rebuildScope' : 'surface:connector.incrementalSync')} title={t(scope.state === 'resync_required' ? 'surface:connector.rebuildScope' : 'surface:connector.incrementalSync')} disabled={busy || scope.state === 'running' || scope.state === 'disabled'} onClick={() => onScopeSync(scope)}>
+                      {scope.state === 'resync_required' ? <Wrench aria-hidden="true" strokeWidth={1.8} /> : <Play aria-hidden="true" strokeWidth={1.8} />}
+                    </button>
+                  </span>
+                </div>
+              ))}
+            </>
+          ) : null}
           <div className="src-list-head"><h4>{t('surface:sourceCard.runs')} · {runs.length.toLocaleString()}</h4></div>
           {runs.length === 0 ? <div className="src-feed-empty">{t('surface:sourceCard.noRuns')}</div> : null}
-          {runs.slice(0, 10).map((run) => (
-            <div key={run.id} className="src-run-row">
-              <span className="src-file-copy">
-                <strong>{t(CONNECTOR_STATUS_KEYS[run.mode] ?? run.mode)} · {t('surface:connector.processedProcessedFailedFailed', { processed: run.processed.toLocaleString(), failed: run.failed })}</strong>
-                <small>{formatDate(run.finishedAt ?? run.startedAt, locale, t)}</small>
-                {run.error ? <code className="src-run-error">{run.error}</code> : null}
-              </span>
-              <StateDot value={run.status} t={t} />
-            </div>
-          ))}
+          {runs.map((run) => {
+            const shown = runPresentation(run, t)
+            return (
+              <div key={run.id} className="src-run-row" title={run.error || undefined}>
+                <span className="src-file-copy">
+                  <strong>{t(CONNECTOR_STATUS_KEYS[run.mode] ?? run.mode)} · {t('surface:connector.countRecords', { count: run.processed.toLocaleString() })}{run.failed > 0 ? ` · ${t('surface:connector.countFailed', { count: run.failed.toLocaleString() })}` : ''}</strong>
+                  <small>{formatDate(run.finishedAt ?? run.startedAt, locale, t)}</small>
+                </span>
+                <StatePill tone={shown.tone} label={shown.label} />
+              </div>
+            )
+          })}
         </div>
       </>
     )
   }
 
-  return (
+  // Portal 到 body：抽屉/遮罩是 fixed 定位,必须脱离 .page（滚动容器 +
+  // workspace-content-enter 入场动画会在挂载瞬间建立包含块/位移,造成显示异常）。
+  // node 测试环境没有 document——直接返回子树（react-test-renderer 里等价）。
+  if (typeof document === 'undefined') return content
+  return createPortal(
     <>
       <div className="src-scrim" data-open={String(open)} onClick={onClose} />
       <aside className="src-drawer" data-open={String(open)} role="dialog" aria-modal="true" aria-label={t('surface:sourceCard.sourceDetails')}>
         {content}
       </aside>
-    </>
+    </>,
+    document.body,
   )
 }
 

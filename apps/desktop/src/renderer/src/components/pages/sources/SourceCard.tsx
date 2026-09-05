@@ -1,4 +1,4 @@
-import { AlertTriangle, Eraser, Pause, Play, RefreshCw, Trash2 } from 'lucide-react'
+import { AlertTriangle, ArrowLeftRight, Eraser, Pause, Play, RefreshCw, Trash2 } from 'lucide-react'
 import type { ReactNode } from 'react'
 
 import type { DataSourceSummary } from '../../../../../shared/sources'
@@ -193,6 +193,7 @@ export function CloudSourceCard({
   onSync,
   onToggleEnabled,
   onPurge,
+  onReplaceAccount,
 }: CardProps & {
   connection: ConnectorConnection
   scopes: SyncScope[]
@@ -200,6 +201,8 @@ export function CloudSourceCard({
   onSync: () => void
   onToggleEnabled: () => void
   onPurge: () => void
+  /** 重新授权同一 provider（单槽位:新账号顶替现有连接）；缺省不显示。 */
+  onReplaceAccount?: () => void
 }) {
   const { locale, t } = useLocale()
   const active = connection.status === 'active'
@@ -222,6 +225,7 @@ export function CloudSourceCard({
       onOpen={onOpen}
       actions={
         <>
+          {onReplaceAccount ? <button type="button" className="src-mini-btn" aria-label={t('surface:sources.replaceAccount')} title={t('surface:sources.replaceAccount')} disabled={busy} onClick={onReplaceAccount}><ArrowLeftRight aria-hidden="true" strokeWidth={1.8} /></button> : null}
           {active ? <button type="button" className="src-mini-btn" disabled={busy || !scopes.length} onClick={onSync}><RefreshCw aria-hidden="true" strokeWidth={1.8} />{t('surface:connector.incrementalSync')}</button> : null}
           <button type="button" className="src-mini-btn" aria-label={t(active ? 'surface:connector.disableConnection' : 'surface:sourceCard.enableConnection')} title={t(active ? 'surface:connector.disableConnection' : 'surface:sourceCard.enableConnection')} disabled={busy} onClick={onToggleEnabled}>
             {active ? <Pause aria-hidden="true" strokeWidth={1.8} /> : <Play aria-hidden="true" strokeWidth={1.8} />}

@@ -54,7 +54,15 @@ const base = {
     { id: 'conn-gmail', provider: 'gmail', service: 'gmail', connectionName: 'work@gmail.com', status: 'active', updatedAt: '2026-09-04T10:00:00.000Z' },
   ], scopes: [
     { id: 'sc-1', connectionId: 'conn-gmail', provider: 'gmail', label: 'INBOX', state: 'idle', updatedAt: '2026-09-04T10:00:00.000Z' },
-  ], runs: [] }) },
+  ], runs: [
+    { id: 'r1', scopeId: 'sc-1', mode: 'incremental', status: 'completed', processed: 3200, failed: 0, error: null, startedAt: '2026-09-05T08:30:00.000Z', finishedAt: '2026-09-05T08:33:00.000Z' },
+    { id: 'r2', scopeId: 'sc-1', mode: 'incremental', status: 'failed', processed: 100, failed: 0, error: 'OpenConnector sync timed out after 60000ms', startedAt: '2026-09-05T07:10:00.000Z', finishedAt: '2026-09-05T07:11:00.000Z' },
+    { id: 'r3', scopeId: 'sc-1', mode: 'full', status: 'failed', processed: 0, failed: 0, error: 'format_mapping_pending:gmail:mail', startedAt: '2026-09-05T06:40:00.000Z', finishedAt: '2026-09-05T06:40:05.000Z' },
+    { id: 'r4', scopeId: 'sc-1', mode: 'incremental', status: 'failed', processed: 0, failed: 0, error: 'request failed: ECONNRESET', startedAt: '2026-09-05T05:20:00.000Z', finishedAt: '2026-09-05T05:20:30.000Z' },
+    { id: 'r5', scopeId: 'sc-1', mode: 'full', status: 'interrupted', processed: 45, failed: 0, error: null, startedAt: '2026-09-05T04:00:00.000Z', finishedAt: '2026-09-05T04:02:00.000Z' },
+    { id: 'r6', scopeId: 'sc-1', mode: 'incremental', status: 'failed', processed: 0, failed: 0, error: 'reauthorization_required: token expired', startedAt: '2026-09-05T03:00:00.000Z', finishedAt: '2026-09-05T03:00:10.000Z' },
+    { id: 'r7', scopeId: 'sc-1', mode: 'incremental', status: 'running', processed: 120, failed: 0, error: null, startedAt: '2026-09-05T09:00:00.000Z', finishedAt: null },
+  ] }) },
   ingest: { listEvents: async (q) => ({ items: Array.from({ length: Math.min(q.limit, 8) }, (_, i) => ({ id: 'e' + i, sourceKind: 'file', title: '事件 ' + i, filterStatus: 'passed', createdAt: '2026-09-05T0' + i + ':00:00.000Z', updatedAt: '2026-09-05T0' + i + ':00:00.000Z' })), total: 8 }) },
   migrations: { sources: async () => [], runs: async () => [], onProgress: () => () => {} },
   obsidian: { list: async () => [], discover: async () => [], onChanged: () => () => {}, onDiscoveryChanged: () => () => {} },

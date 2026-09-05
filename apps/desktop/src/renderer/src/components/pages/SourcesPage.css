@@ -290,9 +290,11 @@
   display: inline-flex;
   gap: 6px;
   opacity: 0;
+  /* 不可见时不得吞掉卡片的点击（右下角命中区） */
+  pointer-events: none;
   transition: opacity 0.12s ease;
 }
-.src-card:hover .src-card-actions, .src-card:focus-within .src-card-actions { opacity: 1; }
+.src-card:hover .src-card-actions, .src-card:focus-within .src-card-actions { opacity: 1; pointer-events: auto; }
 .src-card:hover .src-card-time, .src-card:focus-within .src-card-time { visibility: hidden; }
 .src-mini-btn {
   display: inline-flex;
@@ -374,45 +376,6 @@
   cursor: pointer;
 }
 .src-feed-more:hover { background: var(--surface-alt); color: var(--text); }
-
-/* ── 维护区 ───────────────────────────────────────────── */
-.src-maint {
-  border: 1px dashed var(--border-strong);
-  border-radius: 9px;
-  background: color-mix(in srgb, var(--surface) 55%, transparent);
-  overflow: hidden;
-}
-.src-maint-row {
-  display: flex;
-  width: 100%;
-  align-items: center;
-  gap: 9px;
-  min-height: 44px;
-  padding: 8px 14px;
-  border: 0;
-  border-top: 1px solid var(--border);
-  background: transparent;
-  font-family: inherit;
-  font-size: 12px;
-  color: var(--muted);
-  text-align: left;
-  cursor: pointer;
-}
-.src-maint-row:first-child { border-top: 0; }
-.src-maint-row:hover { background: var(--surface-alt); }
-.src-maint-row > svg.chev { width: 13px; height: 13px; flex: none; transition: transform 0.15s ease; }
-.src-maint-row[data-open="true"] > svg.chev { transform: rotate(90deg); }
-.src-maint-row strong { color: var(--text); font-size: 12px; font-weight: 600; }
-.src-maint-row .count {
-  padding: 0 7px;
-  border-radius: 9px;
-  background: var(--chrome);
-  color: var(--muted);
-  font-size: 10.5px;
-}
-.src-maint-body { display: none; padding: 2px 14px 12px 36px; }
-.src-maint-row[data-open="true"] + .src-maint-body { display: block; }
-.src-maint .migration-table { margin: 0; border: 0; box-shadow: none; }
 
 /* ── 详情抽屉 ─────────────────────────────────────────── */
 .src-scrim {
@@ -526,18 +489,6 @@
 .src-scope-row, .src-run-row { padding: 9px 2px; border-top: 1px solid var(--border); display: flex; align-items: center; gap: 10px; }
 .src-scope-row:first-of-type, .src-run-row:first-of-type { border-top: 0; }
 .src-run-row small { color: var(--subtle); font-size: 10.5px; }
-.src-run-error {
-  display: block;
-  margin-top: 4px;
-  padding: 6px 8px;
-  border-radius: 6px;
-  background: var(--surface-alt);
-  border: 1px solid var(--border);
-  color: var(--danger);
-  font-size: 11px;
-  font-family: ui-monospace, "SF Mono", Menlo, monospace;
-  white-space: pre-wrap;
-}
 
 /* ── 响应式 & 动效偏好 ────────────────────────────────── */
 @media (max-width: 900px) {
