@@ -110,11 +110,7 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-          # Include the Nango submodule lockfile so the shared pnpm store also
-          # persists the staging deps downloaded by prepare-nango-runtime.mjs.
-          cache-dependency-path: |
-            pnpm-lock.yaml
-            apps/gateway/src/modules/connector/package-lock.json
+          cache-dependency-path: pnpm-lock.yaml
 
       - name: Install dependencies
         if: steps.candidate.outputs.pending == 'true'
@@ -125,7 +121,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.npm
-          key: npm-tarballs-${{ runner.os }}-${{ hashFiles('apps/gateway/src/modules/connector/package-lock.json', 'apps/desktop/vendor/genoffice/package-lock.json') }}
+          key: npm-tarballs-${{ runner.os }}-${{ hashFiles('apps/desktop/vendor/genoffice/package-lock.json') }}
           restore-keys: npm-tarballs-${{ runner.os }}-
 
       - name: Cache Rust build for xlsx sidecar
