@@ -122,7 +122,9 @@ export function findPendingAgentDocumentSelection(
     .filter((tool) => tool.name === 'context_room_document_list' && tool.status === 'completed')
     .flatMap((tool) => {
       const result = parseAgentDocumentSelectionResult(tool.result)
-      return result ? [{ tool, result }] : []
+      // 空列表不弹卡片：没有可选对象时弹"选择要编辑的文档"只会造成困惑
+      // （也覆盖修复前入库的旧结果——其候选缺 roomId，解析后恒为空）
+      return result && result.documents.length > 0 ? [{ tool, result }] : []
     })
     .sort((left, right) => (
       timestamp(right.tool.completedAt ?? right.tool.startedAt)

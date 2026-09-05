@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { AllRoomsViewSkeleton } from '../AllRoomsViewSkeleton'
 import type { ContextRoomRecord } from './types'
@@ -21,6 +21,8 @@ import { scheduleRoomMarkdownSweep } from '../knowledgeMarkdownImport'
 import type { ObsidianVaultBinding } from '../../../../../shared/obsidian'
 import { createEmptyContextRoom } from './contextRoomFactory'
 import { ObsidianVaultRoom } from '../obsidian/ObsidianVaultRoom'
+import { mergeRoomMemoryItems } from './attributedRoomMemories'
+import type { MemoryRoomMemoryItemDto } from '../../../../../shared/memory'
 
 const AllRoomsView = lazy(() =>
   import('./components/AllRoomsView').then((module) => ({ default: module.AllRoomsView })),
@@ -263,6 +265,30 @@ export function PortedContextRoom({
     onShowHome()
   }, [homeRequest, onShowHome])
 
+  // Room 归属记忆（gateway room_memory_attributions）：快照记忆卡恒空，建联链路
+  // （chip 预览/跳转、选择器、记忆卡）用快照+归因合并视图；失败静默降级为仅快照。
+  const [attributedMemoriesByRoom, setAttributedMemoriesByRoom] = useState<
+    Record<string, MemoryRoomMemoryItemDto[]>
+  >({})
+  useEffect(() => {
+    if (!activeRoomId) return
+    let cancelled = false
+    window.nxcore?.memory.listRoomMemories(activeRoomId)
+      .then((page) => {
+        if (!cancelled) {
+          setAttributedMemoriesByRoom((current) => ({ ...current, [activeRoomId]: page.items }))
+        }
+      })
+      .catch(() => undefined)
+    return () => { cancelled = true }
+  }, [activeRoomId])
+  const activeRoomWithMemories = useMemo(
+    () => activeRoom
+      ? mergeRoomMemoryItems(activeRoom, attributedMemoriesByRoom[activeRoom.id] ?? [])
+      : null,
+    [activeRoom, attributedMemoriesByRoom],
+  )
+
   const updateRoom = (updater: (room: ContextRoomRecord) => ContextRoomRecord) => {
     if (!activeRoomId) return
     setState((current) => {
@@ -324,7 +350,7 @@ export function PortedContextRoom({
     return (
       <PortedDetail
         key={activeRoom.id}
-        room={activeRoom}
+        room={activeRoomWithMemories ?? activeRoom}
         rooms={state.rooms}
         backendDocuments={roomDocuments.documentsByRoom[activeRoom.id] ?? []}
         trashedDocuments={roomDocuments.trashedDocumentsByRoom[activeRoom.id] ?? []}

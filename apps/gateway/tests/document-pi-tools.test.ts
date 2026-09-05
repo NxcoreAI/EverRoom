@@ -123,4 +123,53 @@ describe('Document Pi tool routing', () => {
     })).rejects.toThrow('ROOM_SELECTION_REQUIRED')
     expect(callTool).not.toHaveBeenCalled()
   })
+
+  describe('context_room_document_list selectionRequired 意图闸门', () => {
+    function documentListHarness() {
+      const callTool = vi.fn(async (): Promise<DocumentMcpToolResult> => ({
+        content: [{ type: 'text', text: JSON.stringify({
+          roomId: 'room-a',
+          selectionRequired: true,
+          documents: [{ id: 'doc-1', roomId: 'room-a', title: '第一篇', version: 1 }],
+        }) }],
+        structuredContent: {
+          roomId: 'room-a',
+          selectionRequired: true,
+          documents: [{ id: 'doc-1', roomId: 'room-a', title: '第一篇', version: 1 }],
+        },
+      }))
+      const host = {
+        listTools: () => [{
+          name: 'context_room_document_list',
+          title: '列出当前 Room 的文档',
+          description: '列出文档。',
+          inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+        }],
+        callTool,
+      } as unknown as DocumentMcpHost
+      const tool = createDocumentPiTools(host)[0]
+      if (!tool) throw new Error('context_room_document_list tool was not created')
+      return { callTool, tool }
+    }
+
+    it('无文档修改诉求的运行把 selectionRequired 压为 false（content 与 details 同步）', async () => {
+      const { callTool, tool } = documentListHarness()
+      const input = runtimeInput('总结一下这个房间里的所有文档')
+
+      const result = await tool.execute(input, {})
+
+      expect(callTool).toHaveBeenCalledOnce()
+      expect(result.details).toMatchObject({ selectionRequired: false })
+      expect(JSON.parse(result.content)).toMatchObject({ selectionRequired: false })
+    })
+
+    it('有修改诉求的运行保持 selectionRequired = true', async () => {
+      const { tool } = documentListHarness()
+      const input = runtimeInput('帮我修改一下房间里的文档')
+
+      await expect(tool.execute(input, {})).resolves.toMatchObject({
+        details: { selectionRequired: true },
+      })
+    })
+  })
 })

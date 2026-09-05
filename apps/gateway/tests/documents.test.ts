@@ -1408,3 +1408,73 @@ describe('document transactions', () => {
     expect((reconnected[0]?.result as { tools?: unknown[] }).tools).toHaveLength(12)
   })
 })
+
+describe('document version change summary', () => {
+  it('important change (title + blocks) generates summary at commit time and persists', async () => {
+    const harness = await createHarness()
+    const roomId = `room-s-${Math.random().toString(36).slice(2, 8)}`
+    const document = await harness.service.import({
+      id: `doc-s-${Math.random().toString(36).slice(2, 10)}`,
+      roomId,
+      title: '初始标题',
+      contentJson: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: '第一段正文内容' }] }] } as never,
+    })
+    // v1 重要（首版）→ 保存时自动生成
+    const committed = await harness.service.maybeGenerateSummaryOnCommit(document.id, 1)
+    expect(committed.generated).toBe(true)
+    expect(committed.summary).toContain('初始版本')
+    // 落库后懒加载端点直接返回缓存
+    const cached = await harness.service.versionChangeSummary(document.id, 1)
+    expect(cached.summary).toBe(committed.summary)
+    // 重要变更：改标题 + 加两个块
+    await harness.service.save(document.id, {
+      baseVersion: 1,
+      title: '新标题',
+      contentJson: { type: 'doc', content: [
+        { type: 'paragraph', content: [{ type: 'text', text: '第一段正文内容' }] },
+        { type: 'heading', attrs: { level: 2 }, content: [{ type: 'text', text: '新增小节' }] },
+        { type: 'paragraph', content: [{ type: 'text', text: '小节下的内容' }] },
+      ] } as never,
+    })
+    const important = await harness.service.maybeGenerateSummaryOnCommit(document.id, 2)
+    expect(important.generated).toBe(true)
+    expect(important.summary).toContain('新标题')
+    // listVersions 带上概览
+    const versions = harness.service.listVersions(document.id, { limit: 10 })
+    expect(versions[0]!.changeSummary).toBe(important.summary)
+    expect(versions[1]!.changeSummary).toBe(committed.summary)
+  })
+
+  it('minor change skips save-time generation and backfills lazily', async () => {
+    const harness = await createHarness()
+    const roomId = `room-m-${Math.random().toString(36).slice(2, 8)}`
+    const document = await harness.service.import({
+      id: `doc-m-${Math.random().toString(36).slice(2, 10)}`,
+      roomId,
+      title: '标题',
+      contentJson: { type: 'doc', content: [
+        { type: 'paragraph', content: [{ type: 'text', text: '甲' }] },
+        { type: 'paragraph', content: [{ type: 'text', text: '乙' }] },
+        { type: 'paragraph', content: [{ type: 'text', text: '丙' }] },
+      ] } as never,
+    })
+    await harness.service.maybeGenerateSummaryOnCommit(document.id, 1)
+    // 仅改一段 → 不重要：保存时不生成
+    await harness.service.save(document.id, {
+      baseVersion: 1,
+      title: '标题',
+      contentJson: { type: 'doc', content: [
+        { type: 'paragraph', content: [{ type: 'text', text: '甲' }] },
+        { type: 'paragraph', content: [{ type: 'text', text: '乙改' }] },
+        { type: 'paragraph', content: [{ type: 'text', text: '丙' }] },
+      ] } as never,
+    })
+    const skipped = await harness.service.maybeGenerateSummaryOnCommit(document.id, 2)
+    expect(skipped.generated).toBe(false)
+    expect(harness.service.listVersions(document.id, { limit: 10 })[0]!.changeSummary).toBeNull()
+    // 用户打开面板 → 懒加载生成并回填
+    const lazy = await harness.service.versionChangeSummary(document.id, 2)
+    expect(lazy.summary.length).toBeGreaterThan(0)
+    expect(harness.service.listVersions(document.id, { limit: 10 })[0]!.changeSummary).toBe(lazy.summary)
+  })
+})

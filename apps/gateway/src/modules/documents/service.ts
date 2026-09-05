@@ -14,8 +14,9 @@ import type {
   SaveRoomDocumentInput,
   TiptapJsonContent,
 } from "@nxcore/agent-contract";
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 import { freshenDocumentContent } from "@nxcore/document-model";
+import type { AgentRuntime } from "@nxcore/agent-runtime";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
 import {
   documentVersions,
@@ -292,6 +293,151 @@ export class DocumentService {
 
   listBlockBacklinks(documentId: string, blockId?: string): DocumentBlockBacklink[] {
     return this.queryService.listBlockBacklinks(documentId, blockId);
+  }
+
+  /**
+   * 版本变更概览（历史面板"AI 概览标题"）：AI 可用时用 background 模型对
+   * diff 摘要生成一句话标题（如"标题更改为《X》"）；不可用/失败时退回本地
+   * 规则摘要（标题对比 + 段落增删计数 + 首个变更小标题）。
+   */
+  async versionChangeSummary(
+    documentId: string,
+    version: number,
+    runtime?: AgentRuntime | null,
+  ): Promise<{ version: number; summary: string; source: "ai" | "local" }> {
+    // 已生成过（保存时自动生成或先前懒加载回填）直接返回。
+    const cached = this.repository.getVersion(documentId, version);
+    if (cached?.changeSummary) {
+      return {
+        version,
+        summary: cached.changeSummary,
+        source: (cached.changeSummarySource as "ai" | "local") ?? "local",
+      };
+    }
+    const evidence = this.computeChangeEvidence(documentId, version);
+    const result = await this.generateChangeSummary(documentId, version, evidence, runtime);
+    // 懒加载结果回填落库（下次 listVersions 直接带上）。
+    this.repository.updateVersionChangeSummary(documentId, version, result.summary, result.source);
+    return result;
+  }
+
+  /**
+   * 保存时自动生成入口（重要变更才调用）：由 change-summary worker 在
+   * document.changed 事件后异步驱动，不阻塞保存事务。
+   */
+  async maybeGenerateSummaryOnCommit(
+    documentId: string,
+    version: number,
+    runtime?: AgentRuntime | null,
+  ): Promise<{ generated: boolean; summary?: string }> {
+    const existing = this.repository.getVersion(documentId, version);
+    if (!existing) return { generated: false };
+    if (existing.changeSummary) return { generated: false, summary: existing.changeSummary };
+    const evidence = this.computeChangeEvidence(documentId, version);
+    if (!evidence.important) return { generated: false };
+    const result = await this.generateChangeSummary(documentId, version, evidence, runtime);
+    this.repository.updateVersionChangeSummary(documentId, version, result.summary, result.source);
+    return { generated: true, summary: result.summary };
+  }
+
+  /** 重要性判定：标题变更 / 小节增删 / 变更块 ≥3 / 首个版本。 */
+  private computeChangeEvidence(documentId: string, version: number): {
+    important: boolean;
+    localSummary: string;
+    aiEvidence: string;
+  } {
+    const target = this.getVersionSnapshot(documentId, version);
+    if (!target) throw new DocumentServiceError("NOT_FOUND", `版本 ${String(version)} 不存在`, 404);
+    const previousVersion = version - 1;
+    const previous = previousVersion >= 1 ? this.getVersionSnapshot(documentId, previousVersion) : null;
+
+    const titleChanged = previous !== null && previous.title !== target.title;
+    const localParts: string[] = [];
+    if (!previous) localParts.push("初始版本");
+    if (titleChanged) localParts.push(`标题更改为《${target.title}》`);
+    const diff = previous ? this.diff(documentId, previousVersion, version) : null;
+    let addedText = "";
+    let removedText = "";
+    let added = 0;
+    let removed = 0;
+    let headingChanged = false;
+    if (diff) {
+      for (const block of diff.blocks) {
+        if (block.status === "removed") {
+          removed += 1;
+          if (!removedText) removedText = this.plainExcerpt(block.before);
+          if (block.type === "heading") headingChanged = true;
+        } else if (block.status === "added" || block.status === "modified") {
+          added += 1;
+          if (!addedText) {
+            const heading = this.firstHeadingText(block.after);
+            addedText = heading ?? this.plainExcerpt(block.after);
+          }
+          if (block.type === "heading") headingChanged = true;
+        }
+      }
+    }
+    if (added > 0 || removed > 0) {
+      const parts: string[] = [];
+      if (added > 0) parts.push(`新增/修改 ${String(added)} 段`);
+      if (removed > 0) parts.push(`删除 ${String(removed)} 段`);
+      if (addedText) parts.push(`「${addedText.slice(0, 30)}」`);
+      localParts.push(parts.join("，"));
+    } else if (!titleChanged && previous) {
+      localParts.push("无重点改动");
+    }
+    const important = !previous || titleChanged || headingChanged || added + removed >= 3;
+    const aiEvidence = [
+      `旧标题：${previous?.title ?? "（无）"}`,
+      `新标题：${target.title}`,
+      `变更统计：新增/修改 ${String(added)} 段，删除 ${String(removed)} 段`,
+      addedText ? `新增内容摘录：${addedText.slice(0, 200)}` : null,
+      removedText ? `删除内容摘录：${removedText.slice(0, 120)}` : null,
+    ].filter(Boolean).join("\n");
+    return { important, localSummary: localParts.join("；") || "无重点改动", aiEvidence };
+  }
+
+  private async generateChangeSummary(
+    documentId: string,
+    version: number,
+    evidence: { localSummary: string; aiEvidence: string },
+    runtime?: AgentRuntime | null,
+  ): Promise<{ version: number; summary: string; source: "ai" | "local" }> {
+    if (!runtime) return { version, summary: evidence.localSummary, source: "local" };
+    try {
+      const { invokeRuntime } = await import("../agent/invoke.js");
+      const content = await invokeRuntime(runtime, [
+        "任务：为文档版本变更生成一句概览标题（内部 UI 用）。输入是本地计算的变更证据。",
+        "要求：中文，≤24 字，一个短语；优先点出最重要的变化（标题变更>新增章节>内容增删）。",
+        "禁止编造证据中没有的内容；无实质变化时输出「细微调整」。",
+        "只输出这一句话本身，不要任何前后缀、引号或解释。",
+        "",
+        evidence.aiEvidence,
+      ].join("\n\n"), { sessionId: `doc-summary-${documentId}`, pageLabel: "internal", timeoutMs: 20_000 });
+      const summary = content.trim().split("\n")[0]?.trim().slice(0, 40) ?? "";
+      if (summary) return { version, summary, source: "ai" };
+    } catch {
+      // AI 失败退回本地摘要。
+    }
+    return { version, summary: evidence.localSummary, source: "local" };
+  }
+
+  private firstHeadingText(node: TiptapJsonContent | undefined): string | null {
+    if (!node) return null;
+    if (node.type === "heading") {
+      const text = tiptapText(node);
+      return text.trim() ? text.trim() : null;
+    }
+    for (const child of node.content ?? []) {
+      const found = this.firstHeadingText(child);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  private plainExcerpt(node: TiptapJsonContent | undefined): string {
+    if (!node) return "";
+    return tiptapText(node).replace(/\s+/g, " ").trim();
   }
 
   listVersions(documentId: string, options: { limit?: number; beforeVersion?: number } = {}): DocumentVersionSummary[] {
@@ -616,6 +762,34 @@ export class DocumentService {
     return normalized.changed || tables.changed
       ? agentDocumentMarkdown.serialize(tables.content)
       : markdown;
+  }
+
+  /**
+   * dispatch 期"agent 修改中"软租约（doc-writer 方案增补）：document_draft 在
+   * doc-writer 计算期间占用文档，走既有 activeTransactionId 通路——编辑器
+   * writing 态自动只读、手动保存服务端 DOCUMENT_BUSY。命名空间
+   * `agent-modification:*`，绝不覆盖/清除 Operation Kernel 的真实租约；
+   * patch_begin 接管前必须清掉（Kernel 租约获取要求 NULL）。
+   */
+  setAgentModificationLease(documentId: string, value: string | null): void {
+    const document = this.get(documentId);
+    if (!document) return;
+    if (value === null) {
+      if (!document.activeTransactionId?.startsWith("agent-modification:")) return;
+      this.db.update(documents).set({ activeTransactionId: null }).where(eq(documents.id, documentId)).run();
+    } else {
+      if (document.activeTransactionId) return; // 真实租约或并发标记在场，让位
+      this.db.update(documents).set({ activeTransactionId: value }).where(eq(documents.id, documentId)).run();
+    }
+    this.publish(document.roomId, documentId, null, "document.changed", { document: this.get(documentId) });
+  }
+
+  /** 启动清扫：崩溃残留的软租约（不属于任何 building Operation 的标记）。 */
+  clearOrphanModificationLeases(): number {
+    const rows = this.db.select({ id: documents.id }).from(documents)
+      .where(sql`${documents.activeTransactionId} LIKE 'agent-modification:%'`).all();
+    for (const row of rows) this.setAgentModificationLease(row.id, null);
+    return rows.length;
   }
 
   prepareAgentDocumentFinalize(input: {

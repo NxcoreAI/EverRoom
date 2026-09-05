@@ -1,6 +1,7 @@
 import type { FastifyPluginAsyncTypebox } from "@fastify/type-provider-typebox";
 import { Type } from "@sinclair/typebox";
 import { DocumentServiceError, type DocumentService } from "./service.js";
+import type { DocumentIndexBackfillReadTrigger } from "./index-backfill/read-trigger.js";
 const IdParams = Type.Object({ id: Type.String({ minLength: 1, maxLength: 128 }) });
 const JsonDocument = Type.Object({ type: Type.Literal("doc") }, { additionalProperties: true });
 const BlockReference = Type.Object({
@@ -11,7 +12,11 @@ function errorPayload(error: DocumentServiceError) {
   return { error: error.code, message: error.message, ...error.details };
 }
 
-export function documentRoutes(service: DocumentService): FastifyPluginAsyncTypebox {
+export function documentRoutes(
+  service: DocumentService,
+  summaryRuntime?: import("@nxcore/agent-runtime").AgentRuntime | null,
+  indexBackfillReadTrigger?: DocumentIndexBackfillReadTrigger | null,
+): FastifyPluginAsyncTypebox {
   return async (app) => {
     app.get(
       "/v1/documents",
@@ -30,8 +35,12 @@ export function documentRoutes(service: DocumentService): FastifyPluginAsyncType
     app.get(
       "/v1/documents/:id",
       { schema: { tags: ["documents"], params: IdParams } },
-      async (request, reply) => service.get(request.params.id)
-        ?? reply.code(404).send({ error: "not_found", message: "Document not found" }),
+      async (request, reply) => {
+        const document = service.get(request.params.id);
+        if (!document) return reply.code(404).send({ error: "not_found", message: "Document not found" });
+        indexBackfillReadTrigger?.trigger(document);
+        return document;
+      },
     );
 
     app.get(
@@ -41,6 +50,7 @@ export function documentRoutes(service: DocumentService): FastifyPluginAsyncType
         try {
           const document = service.get(request.params.id);
           if (!document) return reply.code(404).send({ error: "not_found", message: "Document not found" });
+          indexBackfillReadTrigger?.trigger(document);
           return {
             documentId: document.id,
             roomId: document.roomId,
@@ -96,6 +106,29 @@ export function documentRoutes(service: DocumentService): FastifyPluginAsyncType
           return service.listVersions(request.params.id, request.query);
         } catch (error) {
           if (error instanceof DocumentServiceError) return reply.code(error.statusCode).send(errorPayload(error));
+          throw error;
+        }
+      },
+    );
+
+    app.get(
+      "/v1/documents/:id/versions/:version/change-summary",
+      {
+        schema: {
+          tags: ["documents"],
+          params: Type.Object({
+            id: Type.String({ minLength: 1, maxLength: 128 }),
+            version: Type.Integer({ minimum: 1 }),
+          }),
+        },
+      },
+      async (request, reply) => {
+        try {
+          return await service.versionChangeSummary(request.params.id, request.params.version, summaryRuntime ?? null);
+        } catch (error) {
+          if (error instanceof DocumentServiceError) {
+            return reply.code(error.statusCode).send({ error: error.code, message: error.message, ...(error.details ?? {}) });
+          }
           throw error;
         }
       },

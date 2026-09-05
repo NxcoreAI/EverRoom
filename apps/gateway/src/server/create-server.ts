@@ -25,14 +25,23 @@ import { createNotificationPiTools } from "../modules/notifications/pi-tools.js"
 import { documentRoutes } from "../modules/documents/routes.js";
 import { documentOperationRoutes } from "../modules/documents/operations/routes.js";
 import { DocumentService } from "../modules/documents/service.js";
+import { DocumentCommentService } from "../modules/documents/comments.js";
+import { documentCommentRoutes } from "../modules/documents/comment-routes.js";
 import { createSelectionRewriteContentResolver } from "../modules/documents/capabilities/selection-rewrite-content.js";
 import { createBuiltinDocumentCapabilityRegistry } from "../modules/documents/capabilities/builtins.js";
 import { DocumentReadAuthority } from "../modules/documents/capabilities/read-authority.js";
 import { ExternalDocumentProjectionService } from "../modules/documents/external-projections/service.js";
 import { externalDocumentProjectionRoutes } from "../modules/documents/external-projections/routes.js";
+import { DocumentImportService } from "../modules/documents/import/service.js";
+import { documentImportRoutes } from "../modules/documents/import/routes.js";
+import { AgentDocumentExportService } from "../modules/documents/agent-export/service.js";
+import { agentDocumentExportRoutes } from "../modules/documents/agent-export/routes.js";
+import { createDocumentExportPiTools } from "../modules/documents/agent-export/tools.js";
+import { createDocumentImportPiTools } from "../modules/documents/import/tools.js";
 import {
   createAgentResolver,
   createIngestFilterAgentRuntime,
+  createIndexBackfillRuntime,
   createWritingStyleRuntime,
   registerConnectorSyncAgent,
   registerDiaryAgent,
@@ -52,6 +61,9 @@ import { ContextRoomService } from "../modules/context-rooms/service.js";
 import { ContextRoomAgentDispatcher } from "../modules/context-rooms/room-agent.js";
 import { DocWriterAgentDispatcher, isSelectionRewriteInvocationAuthorized } from "../modules/subagents/doc-writer-dispatcher.js";
 import { createContextRoomAgentTools } from "../modules/context-rooms/room-agent-tools.js";
+import { createDocumentPiTools } from "../modules/documents/pi-tools.js";
+import { createWebSearchPiTools } from "../modules/agent/web-search-tools.js";
+import { createDocWriterAgentTools } from "../modules/subagents/doc-writer-tools.js";
 import { buildRoomContextDigest } from "../modules/context-rooms/room-context-digest.js";
 import { RoomOverviewService } from "../modules/context-rooms/overview-service.js";
 import { createRoomOverviewAgentTools } from "../modules/context-rooms/overview-agent-tools.js";
@@ -63,6 +75,10 @@ import type { AsrProvider } from "../modules/asr/types.js";
 import { MemoryGatewayError } from "../modules/memory/errors.js";
 import { memoryRoutes } from "../modules/memory/routes.js";
 import { MemoryService } from "../modules/memory/service.js";
+import { RoomMemoryDeriveWorker } from "../modules/memory/room-derive-worker.js";
+import { DocumentIndexBackfillWorker } from "../modules/documents/index-backfill/worker.js";
+import { DocumentIndexBackfillReadTrigger } from "../modules/documents/index-backfill/read-trigger.js";
+import { IndexBackfillLlm } from "../modules/documents/index-backfill/llm.js";
 import { DataMigrationService } from "../modules/data-migrations/service.js";
 import { dataMigrationRoutes } from "../modules/data-migrations/routes.js";
 import { filesRoutes } from "../modules/files/routes.js";
@@ -121,7 +137,7 @@ import { ConnectorDocumentStore } from "@nxcore/connectors-module/document-store
 import { SubagentRegistry } from "../modules/subagents/registry.js";
 import { SubagentRuntimeManager } from "../modules/subagents/runtime-manager.js";
 import { SubagentOrchestrator } from "../modules/subagents/orchestrator.js";
-import { createSubagentPiTools } from "../modules/subagents/tools.js";
+import { createSubagentPiTools, inferMaterialSourcesFromReads } from "../modules/subagents/tools.js";
 import { createDocWriterResultValidator } from "../modules/subagents/document-draft.js";
 import { createDocWriterDraftResolver } from "../modules/subagents/doc-writer-content.js";
 import { LocalAgentRuntimeRegistry } from "../modules/local-agents/runtime-registry.js";
@@ -449,8 +465,8 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   await app.register(auth, { token: config.authToken });
   await app.register(systemRoutes);
   await app.register(runtimeConfigRoutes(runtimeConfigManager));
-  const memoryService = new MemoryService(config.memory, app.log, { db, dataDir: config.dataDir });
   const contextRoomService = new ContextRoomService(db);
+  const memoryService = new MemoryService(config.memory, app.log, { db, dataDir: config.dataDir }, contextRoomService);
   const roomOverviewService = new RoomOverviewService(db, contextRoomService);
   const documentEventBroker = new DocumentEventBroker();
   const documentOperationService = new DocumentOperationService(db, documentEventBroker);
@@ -474,6 +490,11 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   ), (error, documentId, currentVersion) => {
     app.log.warn({ err: error, documentId, currentVersion }, "document after-commit observer failed");
   });
+  // dispatch 期软租约的崩溃残留清扫（agent-modification:* 不属于任何 Operation）。
+  const orphanLeases = documentService.clearOrphanModificationLeases();
+  if (orphanLeases > 0) {
+    app.log.info({ orphanLeases }, "agent modification leases cleared after restart");
+  }
   const recoveredDocumentOperations = documentOperationService.recoverInterrupted();
   if (recoveredDocumentOperations > 0) {
     app.log.info({ recoveredDocumentOperations }, "interrupted document operations recovered");
@@ -485,6 +506,27 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     }
   }, 30_000);
   documentOperationExpiryTimer.unref();
+  // 外部文档导入（OpenConnector 只读）与 Agent 一次性导出（飞书 lark-cli / Notion
+  // OpenConnector）：与导入连接、导出授权两套凭据域解耦，Gateway 不保存任何 CLI token。
+  const documentImportService = new DocumentImportService(
+    db,
+    documentService,
+    config.cliConnector ?? null,
+    config.dataDir,
+    { assetBridgeUrl: config.documentAssetBridgeUrl ?? null },
+  );
+  const agentDocumentExportService = new AgentDocumentExportService(
+    db,
+    documentService,
+    config.cliConnector ?? null,
+    config.larkCli ?? null,
+    config.dataDir,
+    {
+      logger: { info: (obj, msg) => app.log.info(obj, msg), warn: (obj, msg) => app.log.warn(obj, msg) },
+      assetBridgeUrl: config.documentAssetBridgeUrl ?? null,
+      notionCli: config.notionCli ?? null,
+    },
+  );
   // 共享读凭证权威（doc-writer-subagent-plan §5.3）：document_draft 代发的 receipt 与
   // patch_begin 的 requireLatest 必须落在同一实例；registry 由 create-server 显式构建后
   // 注入 host，避免 host 内部自建私有实例。
@@ -599,6 +641,20 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   // doc-writer 输出的跨字段校验（doc-writer-subagent-plan §3.4）：baseVersion 回显、
   // hunks 目标 ∈ blockIndex、分块预算。须在首次 dispatch 前注册。
   subagentRuntimeManager.registerAgentResultValidator("doc-writer", createDocWriterResultValidator());
+  // doc-writer 研究工具面（用户决策：与主 Agent 同等的工具使用）——检索/读取/
+  // 分析类全给，写入/调度/通知类由工厂内 allowlist 拒绝。须在首次 dispatch 前注册。
+  subagentRuntimeManager.registerAgentTools("doc-writer", () => createDocWriterAgentTools({
+    roomTools: createContextRoomAgentTools({ db, memory: memoryService, overview: roomOverviewService }),
+    documentTools: createDocumentPiTools(documentMcpHost),
+    analysisTools: subagentConfig.enabled
+      ? createSubagentPiTools(subagentRegistry, subagentOrchestrator, {
+          resolveRoomContext: async (roomId) => buildRoomContextDigest(db, roomId),
+        })
+      : [],
+    webSearchTools: config.webSearch
+      ? createWebSearchPiTools(agentResolver, externalCalls)
+      : [],
+  }));
   // room-corrector 输出校验：edits 的 targetClaimId 必须来自网关组装的 claims 快照
   //（服务端 applyCitations 还有二次强校验，这里提前拒绝省一次转发）。
   subagentRuntimeManager.registerAgentResultValidator("room-corrector", (invocationInput, result) => {
@@ -642,6 +698,8 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   // Room 创建整理走 internal_workflow 异步调度；logger 供失败降级日志。
   // 写作风格服务提前创建（仅需 db）：dispatcher 与 agentService 的注入
   // provider 在此接线，worker/路由仍在文档 worker 附近启动注册。
+  // 版本变更概览（历史面板 AI 概览标题）复用 background 模型；失败由服务退回本地规则摘要。
+  const versionSummaryRuntime = createWritingStyleRuntime(config);
   const writingStyleRuntime = createWritingStyleRuntime(config);
   const writingStyleService = new WritingStyleService(
     db,
@@ -688,6 +746,8 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     externalCalls,
     tools: [
       ...createRoomOverviewAgentTools(roomOverviewService),
+      ...createDocumentExportPiTools(agentDocumentExportService),
+      ...createDocumentImportPiTools(documentImportService),
       ...(subagentConfig.enabled
         ? createSubagentPiTools(subagentRegistry, subagentOrchestrator, {
             resolveFileMarkdown: async (fileId) => resolveFileMarkdown?.(fileId) ?? null,
@@ -697,6 +757,28 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
             // document_draft 组装与代发凭证（doc-writer-subagent-plan §4/§5.3）：
             // 读权威文档快照 + 以主 run 名义签发 read receipt（与 document_read 同构）。
             resolveDocumentForDraft: (documentId, roomId) => documentService.readDocumentForAgent(documentId, roomId),
+            // dispatch 期软租约：agent 修改中文档只读（编辑器 writing 态 + 保存
+            // DOCUMENT_BUSY），patch_begin 接管前由工具侧清除。
+            setDocumentModificationLease: (documentId, value) =>
+              documentService.setAgentModificationLease(documentId, value),
+            // 块索引标记：Room 记忆项由 gateway 注入 memoryIndex，主 Agent 不经手记忆 id。
+            // 块索引标记（blockIndexMark）：Room 内记忆项权威数据，gateway 注入 memoryIndex；
+            // 主 agent 以自由文本 material 引用 Room 文档却没传 materialSources 时，
+            // 从本 run 的 document_read 台账兜底推断来源块（确定性注入，不依赖主 agent 自觉）。
+            resolveRoomMemoryItems: (roomId) => memoryService.listRoomAttributedMemories(roomId),
+            inferMaterialSources: (runId, roomId, material) => inferMaterialSourcesFromReads(
+              documentReadAuthority,
+              (documentId, docRoomId) => {
+                try {
+                  return documentService.readDocumentForAgent(documentId, docRoomId);
+                } catch {
+                  return null;
+                }
+              },
+              runId,
+              roomId,
+              material,
+            ),
             issueDraftReadReceipt: (context, documentId, version, blockIds) =>
               documentReadAuthority.issue(context, documentId, version, blockIds),
             // 写作风格生成段迁移（§7）：主 Agent 不再注入，doc-writer dispatch 全 task 附加。
@@ -743,7 +825,21 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
           },
         }
       : {}),
-  }, cliConnectorSyncService);
+    // 限定 Room 记忆注入：run 绑定 Room 时取该 Room 的甄选记忆（归属表快照）。
+    resolveRoomMemories: async (input) => (
+      input.roomId ? memoryService.listRoomMemories(input.roomId) : []
+    ),
+    roomMemorySearch: async (roomId, query, limit) => {
+      const snapshots = await memoryService.searchRoomMemories(roomId, query, limit);
+      return snapshots.map((item) => ({
+        id: item.memoryId,
+        type: item.type,
+        content: item.content,
+        created_at: item.updatedAt,
+        updated_at: item.updatedAt,
+      }));
+    },
+  }, cliConnectorSyncService, nangoAgentTools);
   const agentRuntime = agentResolver.resolve(BUILTIN_AGENT_IDS.primary);
   const localAgentRuntimeRegistry = new LocalAgentRuntimeRegistry();
   app.log.info(
@@ -1014,6 +1110,8 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   let documentOutboxWorker: DocumentOutboxWorker | null = null;
   let documentHistoryBackfillWorker: DocumentHistoryBackfillWorker | null = null;
   let writingStyleWorker: WritingStyleWorker | null = null;
+  let roomMemoryDeriveWorker: RoomMemoryDeriveWorker | null = null;
+  let documentIndexBackfillWorker: DocumentIndexBackfillWorker | null = null;
   app.addHook("onClose", async () => {
     // Stop producers while all ingest/classification dependencies are still alive.
     await clipperService.dispose();
@@ -1030,6 +1128,8 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     await documentOutboxWorker?.dispose();
     await documentHistoryBackfillWorker?.dispose();
     await writingStyleWorker?.dispose();
+    await roomMemoryDeriveWorker?.dispose();
+    await documentIndexBackfillWorker?.dispose();
     filterInsightJob?.dispose();
     ingestService.disposeFilter();
     await cliConnectorSyncService.dispose();
@@ -1074,7 +1174,36 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   ));
   await app.register(documentMcpRoutes(documentMcpHost));
   await app.register(notificationMcpRoutes(notificationMcpHost));
-  await app.register(documentRoutes(documentService));
+  // 版本概览 worker：保存（document.changed）后异步判定重要性并自动生成
+  // （标题变更/小节增删/变更块 ≥3/首版）；不重要版本等历史面板懒加载。
+  const summaryPending = new Set<string>();
+  documentEventBroker.listen((event) => {
+    if (event.type !== "document.changed") return
+    const document = (event.payload as { document?: { id?: unknown; version?: unknown } }).document
+    const documentId = typeof document?.id === "string" ? document.id : null
+    const version = typeof document?.version === "number" ? document.version : null
+    if (!documentId || version === null || version < 1) return
+    const key = `${documentId}:${String(version)}`
+    if (summaryPending.has(key)) return
+    summaryPending.add(key)
+    // 稍等片刻让保存事务与事件可见，再后台生成；失败静默（懒加载兜底）。
+    const timer = setTimeout(() => {
+      summaryPending.delete(key)
+      void documentService.maybeGenerateSummaryOnCommit(documentId, version, versionSummaryRuntime)
+        .catch(() => undefined)
+    }, 1_500)
+    timer.unref?.()
+  })
+  // 文档读取触发：UI 打开文档即投递回溯任务，热文档不等游标扫描/24h 重扫。
+  const indexBackfillReadTrigger = config.documentIndexBackfill?.enabled !== false
+    ? new DocumentIndexBackfillReadTrigger(
+      db,
+      app.log,
+      config.documentIndexBackfill?.readTriggerCooldownMs ?? 1_800_000,
+    )
+    : null;
+  await app.register(documentRoutes(documentService, versionSummaryRuntime, indexBackfillReadTrigger));
+  await app.register(documentCommentRoutes(new DocumentCommentService(db, (documentId) => Boolean(documentService.get(documentId)))));
   await app.register(documentOperationRoutes(
     documentOperationService,
     documentMcpHost.capabilities,
@@ -1096,6 +1225,8 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     externalDocumentProjectionService,
     (context) => agentService.validateDocumentOperationContext(context),
   ));
+  await app.register(documentImportRoutes(documentImportService));
+  await app.register(agentDocumentExportRoutes(agentDocumentExportService));
   await app.register(asrRoutes(asrService));
   await app.register(memoryRoutes(memoryService));
   await app.register(dataMigrationRoutes(dataMigrationService));
@@ -1270,6 +1401,46 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   documentHistoryBackfillWorker.start();
   writingStyleWorker = new WritingStyleWorker(db, writingStyleService, app.log);
   writingStyleWorker.start();
+  // 新记忆自动绑定 Room（推导 worker）：构造不以 config.memory 为前提——runtime
+  // config 可事后热注入，drain 内自查 memory.enabled 兜底。
+  if (config.memoryRoomDerive?.enabled !== false) {
+    roomMemoryDeriveWorker = new RoomMemoryDeriveWorker(db, memoryService, app.log, {
+      intervalMs: config.memoryRoomDerive?.intervalMs ?? 300_000,
+    });
+    roomMemoryDeriveWorker.start();
+    app.log.info(
+      { intervalMs: config.memoryRoomDerive?.intervalMs ?? 300_000 },
+      "memory room derive worker enabled",
+    );
+  }
+  // 文档索引回溯（blockIndexMark）：确定性匹配 + LLM 兜底给存量文档补挂来源索引；
+  // 安静窗避开用户编辑，零新增标记不写库，未配置 AI 时只跑确定性。
+  if (config.documentIndexBackfill?.enabled !== false) {
+    const indexBackfillRuntime = config.documentIndexBackfill?.llmEnabled === false
+      ? null
+      : createIndexBackfillRuntime(config);
+    documentIndexBackfillWorker = new DocumentIndexBackfillWorker(
+      db,
+      documentService,
+      indexBackfillRuntime ? new IndexBackfillLlm(indexBackfillRuntime) : null,
+      app.log,
+      {
+        scanIntervalMs: config.documentIndexBackfill?.scanIntervalMs ?? 60_000,
+        quietWindowMs: config.documentIndexBackfill?.quietWindowMs ?? 300_000,
+        rescanMs: config.documentIndexBackfill?.rescanMs ?? 24 * 60 * 60_000,
+        listMemoryItems: (roomId) => memoryService.listRoomAttributedMemories(roomId),
+      },
+    );
+    documentIndexBackfillWorker.start();
+    app.log.info(
+      {
+        scanIntervalMs: config.documentIndexBackfill?.scanIntervalMs ?? 60_000,
+        quietWindowMs: config.documentIndexBackfill?.quietWindowMs ?? 300_000,
+        llm: indexBackfillRuntime !== null,
+      },
+      "document index backfill worker enabled",
+    );
+  }
   // 写作风格生成注入已迁移至 doc-writer（doc-writer-subagent-plan §7）：
   // 主 Agent 不再持有 writingStyleProvider，四信号门控随 writing-style-gate.ts 退役。
   await app.register(writingStyleRoutes(writingStyleService));

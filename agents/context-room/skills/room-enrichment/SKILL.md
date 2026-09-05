@@ -9,7 +9,7 @@ description: Organize a newly created Context Room from its title and descriptio
 
 ## 步骤
 
-1. 必须先分别调用 `memory_search` 和 `conversation_search`，使用标题与描述检索相关长期记忆和历史对话，再整理 Room。即使某个检索没有结果也必须调用。
+1. 必须先分别调用 `memory_search` 和 `conversation_search`，使用标题与描述检索相关长期记忆和历史对话，再整理 Room。即使某个检索没有结果也必须调用。输入带 `roomId` 时，`memory_search` 先传 `room_id` 在该 Room 的绑定记忆（用户甄选集合）中检索，再补一次全局检索。
 2. 基于用户描述与检索结果整理 Room；不得编造记忆中没有的事实。`facts` 只能包含检索结果明确支持的事实；没有证据就返回空数组。
 3. `background`、`goal` 和 `overview` 保留用户描述的含义，用召回记忆补全相关背景，不得擅自改变目标。
 

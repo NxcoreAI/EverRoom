@@ -164,6 +164,9 @@ describe('Agent Room overview citation submission', () => {
       undefined,
       undefined,
       undefined,
+      undefined,
+      undefined,
+      undefined,
     )
     expect(onClearRoomCitations).toHaveBeenCalledTimes(1)
   })
@@ -181,6 +184,9 @@ describe('Agent Room overview citation submission', () => {
       '最近状态不准确，请结合新文档调整',
       '',
       'room-1',
+      undefined,
+      undefined,
+      undefined,
       undefined,
       undefined,
       undefined,
@@ -210,6 +216,9 @@ describe('Agent Room overview citation submission', () => {
       '我对「产品发布」Room 总览选区的评论如下，请据此纠正或澄清总览中的对应内容：\n引用 1（Room 简介「这是一段过长的总览内容」）：写短一点',
       '引用 1\n区块：overview\n引用文本：这是一段过长的总览内容\n用户评论：写短一点',
       'room-1',
+      undefined,
+      undefined,
+      undefined,
       undefined,
       undefined,
       undefined,

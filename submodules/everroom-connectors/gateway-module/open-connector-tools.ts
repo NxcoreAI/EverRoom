@@ -163,7 +163,7 @@ function normalizedGmailReadInput(
   return normalized;
 }
 
-function connectorEnvironment(config: OpenConnectorCliConfig): NodeJS.ProcessEnv {
+export function connectorEnvironment(config: OpenConnectorCliConfig): NodeJS.ProcessEnv {
   return {
     ...process.env,
     OO_CONNECTOR_URL: config.baseUrl,

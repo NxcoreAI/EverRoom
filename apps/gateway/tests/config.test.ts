@@ -16,7 +16,7 @@ describe("loadConfig", () => {
       enabled: true,
       definitionsDir: resolve("../..", "agents"),
       defaultTimeoutMs: 300_000,
-      maxConcurrent: 4,
+      maxConcurrent: 8,
     });
   });
 
@@ -27,6 +27,21 @@ describe("loadConfig", () => {
     });
     expect(config.externalCallUserId).toBe("user-a");
     expect(config.externalCallWorkspaceId).toBe("workspace-a");
+  });
+
+  it("defaults memory room derive on and honours overrides", () => {
+    const defaults = loadConfig(["--token", "0123456789abcdef"], {});
+    expect(defaults.memoryRoomDerive).toEqual({ enabled: true, intervalMs: 300_000 });
+
+    const disabled = loadConfig(["--token", "0123456789abcdef"], {
+      NXCORE_MEMORY_ROOM_DERIVE_ENABLED: "false",
+    });
+    expect(disabled.memoryRoomDerive?.enabled).toBe(false);
+
+    const faster = loadConfig(["--token", "0123456789abcdef"], {
+      NXCORE_MEMORY_ROOM_DERIVE_INTERVAL_MS: "60000",
+    });
+    expect(faster.memoryRoomDerive?.intervalMs).toBe(60_000);
   });
 
   it("loads the filesystem subagent directory and execution limits", () => {

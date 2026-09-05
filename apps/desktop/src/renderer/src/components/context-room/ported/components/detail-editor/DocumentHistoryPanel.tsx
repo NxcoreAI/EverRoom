@@ -8,6 +8,7 @@ import { Check, ChevronDown, Clock3, History, X } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import { showToast } from '../../../../../state/toast'
 import { useLocale } from '../../../../../i18n/LocaleContext'
+import { DocumentImportHistorySection } from './DocumentImportHistorySection'
 
 const HISTORY_PAGE_SIZE = 100
 
@@ -60,6 +61,8 @@ export function DocumentHistoryPanel({
   const [collapsedDates, setCollapsedDates] = useState<Set<string>>(() => new Set())
   const [loading, setLoading] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
+  const [summaries, setSummaries] = useState<Record<number, string>>({})
+  const summaryRequestedRef = useRef<Set<number>>(new Set())
   const [hasMore, setHasMore] = useState(false)
   const historyRequestGenerationRef = useRef(0)
   const versionGroups = useMemo(() => {
@@ -88,6 +91,13 @@ export function DocumentHistoryPanel({
       .then((result) => {
         if (cancelled || historyRequestGenerationRef.current !== requestGeneration) return
         setVersions(result)
+        // 保存时已自动生成的重要变更概览立即显示；其余保持空待懒加载。
+        const prefilled: Record<number, string> = {}
+        for (const version of result) {
+          if (version.changeSummary) prefilled[version.version] = version.changeSummary
+          summaryRequestedRef.current.delete(version.version)
+        }
+        setSummaries((current) => ({ ...prefilled, ...current }))
         setHasMore(result.length === HISTORY_PAGE_SIZE)
         setSelected(null)
         setCollapsedDates(new Set())
@@ -151,6 +161,25 @@ export function DocumentHistoryPanel({
       setOpen(false)
     }
   }, [closeSignal])
+
+  // AI 概览标题：按需加载（每版本一次，缓存；AI 不可用时网关回本地规则摘要）。
+  useEffect(() => {
+    if (!open) return
+    const documents = window.nxcore?.documents
+    if (!documents) return
+    const pending = versions
+      .filter((version) => !version.changeSummary && !summaryRequestedRef.current.has(version.version))
+      .slice(0, 4)
+    if (pending.length === 0) return
+    for (const version of pending) summaryRequestedRef.current.add(version.version)
+    for (const version of pending) {
+      void documents.versionChangeSummary(documentId, version.version)
+        .then((result) => {
+          setSummaries((current) => ({ ...current, [version.version]: result.summary }))
+        })
+        .catch(() => undefined)
+    }
+  }, [open, versions, documentId])
 
   const closePanel = (event: MouseEvent<HTMLButtonElement>) => {
     event.preventDefault()
@@ -231,10 +260,16 @@ export function DocumentHistoryPanel({
                           <span className="context-room-history-version-rail" aria-hidden="true"><i /></span>
                           <span className="context-room-history-version-copy">
                             <span className="context-room-history-version-topline">
-                              <b>V{version.version}</b>
                               {version.version === currentDocument?.version ? <em><Check aria-hidden="true" />{t('contextRoom:documentHistory.current')}</em> : null}
                             </span>
                             <span className="context-room-history-version-title">{version.title || t('contextRoom:documentHistory.untitled')}</span>
+                            <span
+                              className="context-room-history-version-summary"
+                              data-loaded={String(Boolean(summaries[version.version]))}
+                              title={version.version === 1 ? undefined : t('contextRoom:documentHistory.summaryTitle')}
+                            >
+                              {summaries[version.version] ?? ''}
+                            </span>
                             <span className="context-room-history-version-meta"><Clock3 aria-hidden="true" />{versionDate(version, locale)}</span>
                           </span>
                         </button>
@@ -252,6 +287,14 @@ export function DocumentHistoryPanel({
                     {loadingMore ? t('contextRoom:documentHistory.loading') : t('contextRoom:documentHistory.loadEarlier')}
                   </button>
                 ) : null}
+                {currentDocument && (
+                  <DocumentImportHistorySection
+                    roomId={currentDocument.roomId}
+                    currentDocument={currentDocument}
+                    refreshSignal={refreshSignal}
+                    onApplied={onClearDiff}
+                  />
+                )}
               </aside>
             </div>
           </div>

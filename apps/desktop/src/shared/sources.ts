@@ -61,9 +61,25 @@ import type {
   SubmitPendingAgentIntentInput,
   StartDocumentOperationInput,
   UpdateAgentSessionInput,
+  AgentDocumentExportMode,
+  AgentDocumentExportRunView,
+  AgentDocumentExportTarget,
+  DocumentImportCommentDiffSummary,
+  DocumentImportHistoryEntry,
+  DocumentImportRunView,
+  ExternalDocumentCommentView,
+  ExternalDocumentPreview,
+  ExternalDocumentProvider,
+  ExternalDocumentSearchResponse,
 } from '@nxcore/agent-contract'
 import type { BrowserExtensionMessage, BrowserExtensionStatus } from './browser-extension'
 import type { ObsidianVaultApi } from './obsidian'
+import type {
+  AgentAuthEnvironmentStatus,
+  AgentAuthEventFrame,
+  AgentAuthStartInput,
+  DesktopAgentAuthChallenge,
+} from './agent-auth'
 import type { LocalAgentHistoryImportResult, LocalAgentInstallation, LocalAgentWorkspaceBinding } from './local-agents'
 import type { MigrationApi } from './migrations'
 import type { BrowserExtensionClipperCapture, BrowserExtensionClipperListInput, BrowserExtensionClipperListResult } from './browser-extension'
@@ -145,6 +161,18 @@ import type {
   CloudAgentSessionSummary,
   NotificationPreferences,
 } from './notifications'
+
+export interface LocalDocumentComment {
+  id: string
+  parentId: string | null
+  blockId: string | null
+  quotedText: string | null
+  body: string
+  authorName: string
+  resolved: boolean
+  createdAt: string
+  updatedAt: string
+}
 
 export interface EvidenceBlock {
   id: string
@@ -830,6 +858,60 @@ export interface NxcoreDesktopApi {
     setMode(mode: 'saas' | 'local'): Promise<{ mode: 'saas' | 'local'; switchedAt: string | null }>
     onEvent(listener: (event: OpenConnectorCommandEvent) => void): () => void
   }
+  agentAuth: {
+    status(): Promise<AgentAuthEnvironmentStatus>
+    start(input: AgentAuthStartInput): Promise<DesktopAgentAuthChallenge>
+    resume(challengeId: string): Promise<DesktopAgentAuthChallenge | null>
+    cancel(challengeId?: string): Promise<DesktopAgentAuthChallenge | null>
+    onEvent(listener: (frame: AgentAuthEventFrame) => void): () => void
+  }
+  externalDocuments: {
+    importSearch(provider: ExternalDocumentProvider, query: string): Promise<ExternalDocumentSearchResponse>
+    importPreview(provider: ExternalDocumentProvider, remoteDocumentId: string): Promise<ExternalDocumentPreview>
+    importCommit(input: { runId: string; roomId: string; targetDocumentId?: string }): Promise<{
+      run: DocumentImportRunView
+      roomImportId: string
+      relation: 'primary' | 'candidate'
+      documentId: string
+    }>
+    importRun(runId: string): Promise<DocumentImportRunView>
+    cancelImportRun(runId: string): Promise<DocumentImportRunView>
+    importHistory(roomId: string, documentId: string): Promise<{
+      entries: DocumentImportHistoryEntry[]
+      commentDiff: DocumentImportCommentDiffSummary | null
+      comments: ExternalDocumentCommentView[]
+    }>
+    importDiff(roomImportId: string): Promise<{
+      candidateTitle: string
+      currentTitle: string
+      appliedVersion: number | null
+      hunks: Array<{ type: 'ctx' | 'add' | 'del'; text: string }>
+      commentsComparable: boolean
+    }>
+    searchExportTargets(provider: ExternalDocumentProvider, query: string): Promise<{
+      items: Array<{ remoteId: string; title: string; url: string; updatedAt: string | null; ownerName: string | null }>
+    }>
+    checkExternalUpdate(roomId: string, documentId: string): Promise<{
+      run: DocumentImportRunView
+      roomImportId: string
+      relation: 'primary' | 'candidate'
+      documentId: string
+    }>
+    applyCandidate(roomImportId: string): Promise<{ documentId: string; version: number }>
+    createExport(input: {
+      roomId: string
+      documentId: string
+      version?: number
+      provider: ExternalDocumentProvider
+      mode: AgentDocumentExportMode
+      target?: AgentDocumentExportTarget | null
+    }): Promise<AgentDocumentExportRunView>
+    getExport(exportId: string): Promise<AgentDocumentExportRunView>
+    confirmExport(exportId: string): Promise<AgentDocumentExportRunView>
+    retryExport(exportId: string): Promise<AgentDocumentExportRunView>
+    cancelExport(exportId: string): Promise<AgentDocumentExportRunView>
+    listExports(documentId?: string): Promise<{ items: AgentDocumentExportRunView[] }>
+  }
   cliConnectorSync: {
     status(): Promise<ConnectorSyncStatus>
     accounts(): Promise<ConnectorAccount[]>
@@ -897,6 +979,7 @@ export interface NxcoreDesktopApi {
     insights(): Promise<{ insights: Array<import('./writing-style').WritingStyleInsightDto> }>
     snoozeInsight(insightId: string): Promise<import('./writing-style').WritingStyleInsightDto>
     confirmInsight(insightId: string): Promise<import('./writing-style').WritingStyleInsightDto>
+    reportCompletionFeedback(input: { accepted: number; rejected: number; samples?: string[] }): Promise<{ ok: boolean }>
   }
   agentSchedules: {
     list(): Promise<AgentScheduledTask[]>
@@ -990,9 +1073,17 @@ export interface NxcoreDesktopApi {
     /** 引导结束通知（fire-and-forget）：解除主进程云端同步延迟。 */
     onboardingFinished(): void
     listAtomic(options: MemoryAtomicListOptions): Promise<MemoryAtomicPageDto>
+    /** Room 归属记忆列表（room_memory_attributions 快照直读）。 */
+    listRoomMemories(roomId: string): Promise<MemoryRoomMemoriesPageDto>
     searchAtomic(query: string, limit?: number): Promise<{ items: MemoryAtomicItemDto[] }>
     updateAtomic(id: string, content: string, background?: string): Promise<{ id: string; version: number; updatedAt: string }>
     deleteAtomic(ids: string[]): Promise<{ deletedCount: number }>
+    /** 指派/清除原子记忆的 Room 归属（roomId=null 清除）。 */
+    setAtomicRoom(
+      id: string,
+      roomId: string | null,
+      snapshot?: { content: string; type: string; memoryUpdatedAt: string },
+    ): Promise<{ memoryId: string; roomId: string | null }>
     listScenarios(pathPrefix?: string): Promise<{ entries: MemoryScenarioEntryDto[]; total: number }>
     readScenario(path: string): Promise<MemoryScenarioContentDto>
     readCore(): Promise<MemoryCoreDto>
@@ -1075,6 +1166,11 @@ export interface NxcoreDesktopApi {
     listVersions(documentId: string, options?: DocumentVersionListOptions): Promise<DocumentVersionSummary[]>
     getVersionSnapshot(documentId: string, version: number): Promise<DocumentVersionSnapshot>
     getDiff(documentId: string, fromVersion: number | null, toVersion: number): Promise<DocumentDiffResult>
+    versionChangeSummary(documentId: string, version: number): Promise<{ version: number; summary: string; source: 'ai' | 'local' }>
+    listDocumentComments(documentId: string): Promise<{ items: LocalDocumentComment[] }>
+    createDocumentComment(documentId: string, input: { body: string; parentId?: string | null; blockId?: string | null; quotedText?: string | null }): Promise<LocalDocumentComment>
+    resolveDocumentComment(documentId: string, commentId: string, resolved: boolean): Promise<LocalDocumentComment>
+    deleteDocumentComment(documentId: string, commentId: string): Promise<void>
     restoreVersion(documentId: string, version: number, baseVersion: number): Promise<RoomDocument>
     resolveBlockReferences(input: ResolveDocumentBlockReferencesInput): Promise<ResolveDocumentBlockReferencesResult>
     listOperations(filters?: {
@@ -1255,6 +1351,7 @@ import type {
   MemoryOnboardingInput,
   MemoryOnboardingResultDto,
   MemoryOverviewDto,
+  MemoryRoomMemoriesPageDto,
   MemoryScenarioContentDto,
   MemoryScenarioEntryDto,
 } from './memory'

@@ -12,12 +12,13 @@ const desktopDirectory = dirname(import.meta.dirname)
 const buildDirectory = join(desktopDirectory, 'build')
 const targetDirectory = join(buildDirectory, 'open-connector')
 const markerPath = join(targetDirectory, '.everroom-runtime.json')
+const lockfilePath = join(import.meta.dirname, 'open-connector-package-lock.json')
 const everroomLogoPath = join(desktopDirectory, 'src', 'renderer', 'src', 'assets', 'nxcore-logo.svg')
 const everroomIconPath = join(desktopDirectory, 'build', 'icon.png')
 
 const sourceManifest = JSON.parse(await readFile(sourcePackagePath, 'utf8'))
 const expectedMarker = JSON.stringify({
-  runtimeFormat: 1,
+  runtimeFormat: 2,
   brandingVersion: 2,
   revision: OPEN_CONNECTOR_REVISION,
   version: sourceManifest.version,
@@ -53,9 +54,13 @@ for (const entry of [
     dereference: true,
   })
 }
+await cp(lockfilePath, join(stagingDirectory, 'package-lock.json'))
 
 try {
-  await run('npm', ['install', '--include=dev', '--ignore-scripts', '--no-audit', '--no-fund'], stagingDirectory)
+  // npm ci + lockfile: 浮动 install 会解析到 registry 最新版本，
+  // 曾因新发布的 @vitest/browser-playwright@5.0.0（peerDep 要求 vitest@5.0.0）
+  // 触发 npm arborist "Cannot read properties of null (reading 'edgesOut')" 崩溃。
+  await run('npm', ['ci', '--include=dev', '--ignore-scripts', '--no-audit', '--no-fund'], stagingDirectory)
   await run(process.execPath, ['scripts/ensure-generated.ts'], stagingDirectory)
   await applyEverRoomBranding(stagingDirectory)
   await run('npm', ['run', 'build:web'], stagingDirectory)

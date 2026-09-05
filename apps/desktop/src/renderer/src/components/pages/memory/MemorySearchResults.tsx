@@ -68,6 +68,11 @@ export function MemorySearchResults({ query, result, onClear, onOpenAtomic }: {
                   <li key={item.id}>
                     <button type="button" className="mem-search-item" onClick={onOpenAtomic}>
                       <span className="mem-type-badge" data-type={item.type}>{t(TYPE_LABELS[item.type] ?? item.type)}</span>
+                      {item.roomId ? (
+                        <span className="mem-room-chip" data-available={Boolean(item.roomTitle)}>
+                          {item.roomTitle ?? t('memory:atomicMemory.roomUnavailable')}
+                        </span>
+                      ) : null}
                       <span className="mem-atomic-text"><Highlighted text={item.content} query={query} /></span>
                       <span className="mem-time">{formatDate(item.updatedAt, locale)}</span>
                     </button>

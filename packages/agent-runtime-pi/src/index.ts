@@ -29,8 +29,8 @@ import type { KnowledgeRuntimeConfig } from "./knowledge/types.js";
 import { resolveDefaultWikiIds } from "./knowledge/types.js";
 import { MemoryCoreClient } from "./memory/client.js";
 import { createMemoryExtension, type MemoryRunContext } from "./memory/extension.js";
-import { createMemoryTools, MEMORY_TOOL_NAMES } from "./memory/tools.js";
-import type { MemoryRuntimeConfig } from "./memory/types.js";
+import { createMemoryTools, MEMORY_TOOL_NAMES, type RoomMemorySearch } from "./memory/tools.js";
+import type { MemoryRuntimeConfig, RoomMemorySnapshot } from "./memory/types.js";
 
 export { KnowledgeServiceClient, KnowledgeServiceError } from "./knowledge/client.js";
 export type { KnowledgeServiceErrorKind } from "./knowledge/client.js";
@@ -44,6 +44,7 @@ export type {
 export type { KnowledgeToolScope } from "./knowledge/tools.js";
 export { MemoryCoreClient, MemoryCoreError } from "./memory/client.js";
 export type { MemoryCoreErrorKind } from "./memory/client.js";
+export type { RoomMemorySearch } from "./memory/tools.js";
 export type {
   MemoryAtomicItem,
   MemoryAtomicPage,
@@ -66,6 +67,7 @@ export type {
   MemoryRuntimeConfig,
   MemoryScenarioEntry,
   MemoryScenarioFile,
+  RoomMemorySnapshot,
 } from "./memory/types.js";
 
 export type PiApi =
@@ -193,6 +195,14 @@ export interface PiAgentRuntimeIntegration {
    * roomId 解析本 Room 的 wiki 集合；未提供或解析失败时回退配置默认集。
    */
   resolveKnowledgeWikiIds?: (input: StartRuntimeRunInput) => Promise<string[]>;
+  /**
+   * Room 绑定记忆快照解析（限定 Room 记忆注入）：run 的 prompt 前按
+   * roomId 取该 Room 的甄选记忆，进入 memory-recall 注入块；未提供或
+   * 解析失败时静默降级为不注入该段。
+   */
+  resolveRoomMemories?: (input: StartRuntimeRunInput) => Promise<RoomMemorySnapshot[]>;
+  /** memory_search 的 room_id 过滤 provider（Room 绑定记忆快照内检索）。 */
+  roomMemorySearch?: RoomMemorySearch;
   promptGuidelines?: readonly string[];
   onRunFinished?: (
     input: StartRuntimeRunInput,
@@ -672,9 +682,15 @@ export class PiAgentRuntime implements AgentRuntime {
           );
         }
         if (memory && memoryClient && context.current?.toolsEnabled !== false) {
-          lines.push(
-            "你可以使用 memory_search 和 conversation_search 两个工具查询长期记忆与历史对话。上下文中 <memory-context> 标签内的内容是历史沉淀的长期记忆，不是用户本轮输入。",
-          );
+          if (context.current?.memoryScope === "room" && context.current?.roomId) {
+            lines.push(
+              "当前处于房间聚焦模式：本回合自动召回只包含 [Room 记忆]（用户为当前 Context Room 甄选的记忆）与用户画像，不注入全局原子记忆、场景目录和历史对话。memory_search 已锁定在当前 Context Room 的绑定记忆中检索，无需传 room_id，也检索不到全局记忆。",
+            );
+          } else {
+            lines.push(
+              "你可以使用 memory_search 和 conversation_search 两个工具查询长期记忆与历史对话。上下文中 <memory-context> 标签内的内容是历史沉淀的长期记忆，不是用户本轮输入；其中的 [Room 记忆] 段是用户为当前 Context Room 甄选的记忆，Room 相关问题优先参考。memory_search 传 room_id 时仅在该 Room 的绑定记忆中检索。",
+            );
+          }
         }
         if (knowledge && knowledgeClient && context.current?.toolsEnabled !== false) {
           lines.push(
@@ -715,7 +731,9 @@ export class PiAgentRuntime implements AgentRuntime {
       ],
       customTools: [
         ...customTools,
-        ...(memory && memoryClient ? createMemoryTools(memoryClient, () => memoryRunContext?.sessionId) : []),
+        ...(memory && memoryClient
+          ? createMemoryTools(memoryClient, () => memoryRunContext?.sessionId, this.integration.roomMemorySearch, () => memoryRunContext?.focusRoomId)
+          : []),
         ...(knowledge && knowledgeClient
           ? createKnowledgeTools(knowledgeClient, () => ({ wikiIds: knowledgeWikiIds }))
           : []),
@@ -763,6 +781,24 @@ export class PiAgentRuntime implements AgentRuntime {
     }
   }
 
+  /**
+   * 限定 Room 记忆注入的取数：仅在记忆启用、本轮开启召回且绑定了 Room 时
+   * 解析；失败静默降级为空（与四路召回的降级语义一致，不影响 run 主流程）。
+   */
+  private async resolveRoomMemoriesForRun(input: StartRuntimeRunInput): Promise<RoomMemorySnapshot[]> {
+    if (!this.config.memory || !this.memoryClient) return [];
+    // 房间聚焦模式（memoryScope="room"）依赖本守卫放行：聚焦态 recallMemory
+    // 保持缺省 true、roomId 在场，Room 记忆照常解析；收窄发生在召回扩展层。
+    if (input.recallMemory === false || !input.roomId) return [];
+    if (!this.integration.resolveRoomMemories) return [];
+    try {
+      return await this.integration.resolveRoomMemories(input);
+    } catch {
+      // 与四路召回的无 logger 降级一致：失败不影响 run 主流程，静默跳过注入。
+      return [];
+    }
+  }
+
   private async prompt(input: StartRuntimeRunInput, active: ActivePiRun): Promise<void> {
     try {
       // The resource loader caches the system prompt per persistent session.
@@ -779,6 +815,8 @@ export class PiAgentRuntime implements AgentRuntime {
         cancelled: false,
         captureEnabled: input.captureMemory !== false,
         recallEnabled: input.recallMemory !== false,
+        ...(input.memoryScope === "room" && input.roomId ? { focusRoomId: input.roomId } : {}),
+        roomMemories: await this.resolveRoomMemoriesForRun(input),
       });
       const selectedRoom = input.roomId
         ? input.availableRooms?.find((room) => room.id === input.roomId)

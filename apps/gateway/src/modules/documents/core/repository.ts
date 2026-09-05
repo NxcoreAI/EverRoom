@@ -59,6 +59,18 @@ export class DocumentRepository {
     return result ? toRoomDocument(result.document, result.roomId) : null;
   }
 
+  updateVersionChangeSummary(
+    documentId: string,
+    version: number,
+    summary: string,
+    source: "ai" | "local",
+  ): void {
+    this.db.update(documentVersions)
+      .set({ changeSummary: summary, changeSummarySource: source })
+      .where(and(eq(documentVersions.documentId, documentId), eq(documentVersions.version, version)))
+      .run();
+  }
+
   getVersion(documentId: string, version: number): DocumentVersionRow | null {
     return this.db.select().from(documentVersions).where(and(
       eq(documentVersions.documentId, documentId),

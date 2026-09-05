@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { DocumentOperation, DocumentOperationCommandInput, DocumentOperationItem, DocumentMutationTarget, TiptapJsonContent } from "@nxcore/agent-contract";
 import { agentDocumentMarkdown, sanitizeAgentDocumentTables } from "../agent-markdown.js";
+import { BLOCK_INDEX_MARK_NODE } from "../block-index-mark.js";
 import { applyDocumentMutation, findBlockPath, mutationTargetBlockIds, targetsOverlap, tiptapText } from "../content-model.js";
 import { DocumentContentEngine } from "../core/index.js";
 import { DocumentServiceError } from "../errors.js";
@@ -192,9 +193,83 @@ function repeatsExistingDocument(base: TiptapJsonContent, fragment: TiptapJsonCo
     && matchedCharacters / proposedCharacters >= 0.4;
 }
 
+/**
+ * 块级索引标记是零文本 inline atom，对 tiptapText 不可见。等价比较若不把
+ * 标记算进去，"仅在段末追加索引标记"的替换会被误判为 EDIT_NO_CHANGE。
+ */
+function indexMarkSignature(node: TiptapJsonContent): string {
+  const marks: string[] = [];
+  const visit = (current: TiptapJsonContent): void => {
+    if (current.type === BLOCK_INDEX_MARK_NODE) {
+      marks.push(`${current.attrs?.kind ?? ""}:${current.attrs?.targetDocumentId ?? ""}:`
+        + `${current.attrs?.targetBlockId ?? ""}:${current.attrs?.targetMemoryId ?? ""}`);
+      return;
+    }
+    (current.content ?? []).forEach(visit);
+  };
+  visit(node);
+  return marks.join("|");
+}
+
 function comparableBlock(node: TiptapJsonContent): string {
   const headingLevel = node.type === "heading" ? Number(node.attrs?.level ?? 0) : 0;
-  return `${node.type ?? ""}:${headingLevel}:${normalizedBlockText(node)}`;
+  return `${node.type ?? ""}:${headingLevel}:${normalizedBlockText(node)}#${indexMarkSignature(node)}`;
+}
+
+/**
+ * 校验 hunk 片段里 blockIndexMark 的目标块真实存在（同 Room）。目标文档不存在、
+ * 已删或 blockId 对不上都拒绝——把"静默悬空标记"变成可重试的明确报错。
+ */
+function validateIndexMarkTargets(backend: CapabilityBackend, roomId: string, fragment: TiptapJsonContent[]): void {
+  const invalid: Array<{ documentId: string; blockId: string }> = [];
+  const byDocument = new Map<string, Set<string>>();
+  const visit = (node: TiptapJsonContent): void => {
+    if (node.type === BLOCK_INDEX_MARK_NODE) {
+      const kind = node.attrs?.kind === "memory" ? "memory" : "document";
+      if (kind !== "document") return;
+      const documentId = String(node.attrs?.targetDocumentId ?? "");
+      const blockId = String(node.attrs?.targetBlockId ?? "");
+      if (!documentId || !blockId) {
+        invalid.push({ documentId, blockId });
+        return;
+      }
+      if (!byDocument.has(documentId)) byDocument.set(documentId, new Set());
+      byDocument.get(documentId)!.add(blockId);
+      return;
+    }
+    (node.content ?? []).forEach(visit);
+  };
+  fragment.forEach(visit);
+  if (!byDocument.size) {
+    if (invalid.length) throw indexMarkTargetError(invalid);
+    return;
+  }
+  for (const [documentId, blockIds] of byDocument) {
+    let known: Set<string>;
+    try {
+      known = new Set(backend.readDocumentForAgent(documentId, roomId).blocks.map((block) => block.blockId));
+    } catch (error) {
+      if (error instanceof DocumentServiceError
+        && (error.code === "NOT_FOUND" || error.code === "DOCUMENT_TRASHED" || error.code === "DOCUMENT_DELETED" || error.code === "ROOM_MISMATCH")) {
+        for (const blockId of blockIds) invalid.push({ documentId, blockId });
+        continue;
+      }
+      throw error;
+    }
+    for (const blockId of blockIds) {
+      if (!known.has(blockId)) invalid.push({ documentId, blockId });
+    }
+  }
+  if (invalid.length) throw indexMarkTargetError(invalid);
+}
+
+function indexMarkTargetError(invalid: Array<{ documentId: string; blockId: string }>): DocumentServiceError {
+  return new DocumentServiceError(
+    "INDEX_MARK_TARGET_NOT_FOUND",
+    `blockIndexMark targets do not exist in this Room; copy block ids verbatim from document_read (invalid: ${invalid.map((item) => `${item.documentId}/${item.blockId}`).join(", ")})`,
+    409,
+    { retryable: true, nextAction: "document_draft", invalidTargets: invalid },
+  );
 }
 
 function equivalentContextBlock(left: TiptapJsonContent, right: TiptapJsonContent): boolean {
@@ -564,6 +639,9 @@ function hunkTool(
             expectedSequence: sequence, doNotRepeatPreviousArguments: true },
         );
       }
+      // 块索引标记的目标必须是本 Room 内真实存在的块（id 照抄 document_read）。
+      // Agent 手写/截短的 id 在此被拒绝并给出可重试的明确原因，而不是落成悬空标记。
+      validateIndexMarkTargets(backend, document.roomId, after);
       const applied = applyDocumentMutation(proposedContent(document.contentJson, current.items), kind, normalized.target, after);
       if (!continuation && kind === "replace" && equivalentContent(applied.before, after)) {
         throw new DocumentServiceError(

@@ -181,6 +181,42 @@ describe('AgentComposer external conversation command', () => {
     expect(renderer.root.findAllByProps({ className: 'agent-prompt-voice' })).toHaveLength(0)
   })
 
+  it('renders the room focus chip only inside a Room and reports its state', () => {
+    const hidden = renderComposer()
+    expect(hidden.renderer.root.findAllByProps({ className: 'agent-room-focus-toggle' })).toHaveLength(0)
+
+    const onToggleRoomFocus = vi.fn()
+    const { renderer } = renderComposer({
+      roomFocusVisible: true,
+      roomFocusEnabled: false,
+      roomFocusRoomTitle: '产品规划',
+      onToggleRoomFocus,
+    })
+    const toggle = renderer.root.findByProps({ className: 'agent-room-focus-toggle' })
+    expect(toggle.props['aria-pressed']).toBe(false)
+    expect(toggle.props['data-active']).toBe('false')
+    expect(toggle.findAllByType('span').map((span) => String(span.props.children ?? '')))
+      .toEqual(['产品规划', '未聚焦'])
+
+    act(() => toggle.props.onClick())
+    expect(onToggleRoomFocus).toHaveBeenCalledWith(true)
+
+    const enabled = renderComposer({
+      roomFocusVisible: true,
+      roomFocusEnabled: true,
+      roomFocusRoomTitle: '产品规划',
+      onToggleRoomFocus,
+    })
+    const activeToggle = enabled.renderer.root.findByProps({ className: 'agent-room-focus-toggle' })
+    expect(activeToggle.props['aria-pressed']).toBe(true)
+    expect(activeToggle.props['data-active']).toBe('true')
+    expect(activeToggle.findAllByType('span').map((span) => String(span.props.children ?? '')))
+      .toEqual(['产品规划', '已聚焦'])
+
+    act(() => activeToggle.props.onClick())
+    expect(onToggleRoomFocus).toHaveBeenCalledWith(false)
+  })
+
   it('ignores stale search responses and never loads previews on hover', async () => {
     let resolveInitial!: (value: { items: ExternalConversationSummary[]; nextCursor: null }) => void
     const initial = new Promise<{ items: ExternalConversationSummary[]; nextCursor: null }>((resolve) => { resolveInitial = resolve })

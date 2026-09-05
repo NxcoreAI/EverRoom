@@ -114,6 +114,14 @@ const RawConfigSchema = Type.Object(
     memoryUserId: Type.String({ minLength: 1 }),
     memoryRecallLimit: Type.Integer({ minimum: 1, maximum: 50 }),
     memoryCharBudget: Type.Integer({ minimum: 200 }),
+    memoryRoomDeriveEnabled: Type.Boolean(),
+    memoryRoomDeriveIntervalMs: Type.Integer({ minimum: 10_000 }),
+    documentIndexBackfillEnabled: Type.Boolean(),
+    documentIndexBackfillScanIntervalMs: Type.Integer({ minimum: 1_000 }),
+    documentIndexBackfillQuietWindowMs: Type.Integer({ minimum: 0 }),
+    documentIndexBackfillLlmEnabled: Type.Boolean(),
+    documentIndexBackfillRescanMs: Type.Integer({ minimum: 0 }),
+    documentIndexBackfillReadTriggerCooldownMs: Type.Integer({ minimum: 0 }),
     knowledgeEnabled: Type.Boolean(),
     knowledgeBaseUrl: Type.String(),
     knowledgeServiceId: Type.String({ minLength: 1 }),
@@ -296,6 +304,22 @@ export interface ConnectorSyncJobConfig {
   intervalMs?: number;
 }
 
+export interface MemoryRoomDeriveConfig {
+  enabled: boolean;
+  intervalMs: number;
+}
+
+export interface DocumentIndexBackfillConfig {
+  enabled: boolean;
+  scanIntervalMs: number;
+  quietWindowMs: number;
+  llmEnabled: boolean;
+  /** 全量重扫周期：游标走完一遍后隔这么久归零重走（复检覆盖宿主未动的文档）。 */
+  rescanMs: number;
+  /** 读取触发冷却：同一文档两次因被读取而入队的最小间隔。 */
+  readTriggerCooldownMs: number;
+}
+
 export interface GatewayConfig {
   host: string;
   port: number;
@@ -316,6 +340,9 @@ export interface GatewayConfig {
   /** Backward-compatible aliases retained for merged clients/tests. */
   connectorSyncOwnerId?: string;
   memory: MemoryRuntimeConfig | null;
+  /** 新 L1 记忆自动绑定 Room（推导 worker）：缺省视为开启（enabled=true/300s），仅 gateway 侧消费。 */
+  memoryRoomDerive?: MemoryRoomDeriveConfig;
+  documentIndexBackfill?: DocumentIndexBackfillConfig;
   pi: PiRuntimeConfig | null;
   cursorCompletionPi: PiRuntimeConfig | null;
   knowledge: KnowledgeGatewayConfig | null;
@@ -338,6 +365,12 @@ export interface GatewayConfig {
     pollingIntervalMs: number;
   };
   cliConnector?: OpenConnectorCliConfig | null;
+  /** Agent 飞书导出用 lark-cli（发行包预装；桌面注入 NXCORE_LARK_CLI_PATH）。 */
+  larkCli?: { executable: string } | null;
+  /** Notion 导出用官方 ntn CLI（macOS 随包；桌面注入 NXCORE_NTN_CLI_PATH）。 */
+  notionCli?: { executable: string } | null;
+  /** 桌面文档资产本地桥（loopback）；飞书导出时本地图改写为该 URL 前缀由 lark-cli 下载。 */
+  documentAssetBridgeUrl?: string | null;
   notificationBridge?: { baseUrl: string; token: string } | null;
 }
 
@@ -670,7 +703,7 @@ export function loadConfig(
     ),
     subagentMaxConcurrent: parsePositiveInteger(
       "NXCORE_SUBAGENT_MAX_CONCURRENT",
-      env.NXCORE_SUBAGENT_MAX_CONCURRENT ?? "4",
+      env.NXCORE_SUBAGENT_MAX_CONCURRENT ?? "8",
     ),
     cliConnectorAgentMode: env.NXCORE_CLI_CONNECTOR_AGENT_MODE ?? "direct",
     cliConnectorSyncEnabled: env.NXCORE_CLI_CONNECTOR_SYNC_ENABLED == null
@@ -784,6 +817,35 @@ export function loadConfig(
     memoryCharBudget: parsePositiveInteger(
       "NXCORE_MEMORY_CHAR_BUDGET",
       env.NXCORE_MEMORY_CHAR_BUDGET ?? "2000",
+    ),
+    memoryRoomDeriveEnabled: env.NXCORE_MEMORY_ROOM_DERIVE_ENABLED == null
+      ? true
+      : parseBoolean("NXCORE_MEMORY_ROOM_DERIVE_ENABLED", env.NXCORE_MEMORY_ROOM_DERIVE_ENABLED.trim()),
+    memoryRoomDeriveIntervalMs: parsePositiveInteger(
+      "NXCORE_MEMORY_ROOM_DERIVE_INTERVAL_MS",
+      env.NXCORE_MEMORY_ROOM_DERIVE_INTERVAL_MS ?? "300000",
+    ),
+    documentIndexBackfillEnabled: env.NXCORE_DOCUMENT_INDEX_BACKFILL_ENABLED == null
+      ? true
+      : parseBoolean("NXCORE_DOCUMENT_INDEX_BACKFILL_ENABLED", env.NXCORE_DOCUMENT_INDEX_BACKFILL_ENABLED.trim()),
+    documentIndexBackfillScanIntervalMs: parsePositiveInteger(
+      "NXCORE_DOCUMENT_INDEX_BACKFILL_SCAN_INTERVAL_MS",
+      env.NXCORE_DOCUMENT_INDEX_BACKFILL_SCAN_INTERVAL_MS ?? "60000",
+    ),
+    documentIndexBackfillQuietWindowMs: parsePositiveInteger(
+      "NXCORE_DOCUMENT_INDEX_BACKFILL_QUIET_WINDOW_MS",
+      env.NXCORE_DOCUMENT_INDEX_BACKFILL_QUIET_WINDOW_MS ?? "300000",
+    ),
+    documentIndexBackfillLlmEnabled: env.NXCORE_DOCUMENT_INDEX_BACKFILL_LLM_ENABLED == null
+      ? true
+      : parseBoolean("NXCORE_DOCUMENT_INDEX_BACKFILL_LLM_ENABLED", env.NXCORE_DOCUMENT_INDEX_BACKFILL_LLM_ENABLED.trim()),
+    documentIndexBackfillRescanMs: parseNonNegativeInteger(
+      "NXCORE_DOCUMENT_INDEX_BACKFILL_RESCAN_MS",
+      env.NXCORE_DOCUMENT_INDEX_BACKFILL_RESCAN_MS ?? "86400000",
+    ),
+    documentIndexBackfillReadTriggerCooldownMs: parseNonNegativeInteger(
+      "NXCORE_DOCUMENT_INDEX_BACKFILL_READ_TRIGGER_COOLDOWN_MS",
+      env.NXCORE_DOCUMENT_INDEX_BACKFILL_READ_TRIGGER_COOLDOWN_MS ?? "1800000",
     ),
     knowledgeEnabled: env.NXCORE_KNOWLEDGE_ENABLED == null
       ? false
@@ -1083,6 +1145,18 @@ export function loadConfig(
     externalCallWorkspaceId: rawConfig.externalCallWorkspaceId,
     diaryMaxTokens: rawConfig.diaryMaxTokens,
     memory,
+    memoryRoomDerive: {
+      enabled: rawConfig.memoryRoomDeriveEnabled,
+      intervalMs: rawConfig.memoryRoomDeriveIntervalMs,
+    },
+    documentIndexBackfill: {
+      enabled: rawConfig.documentIndexBackfillEnabled,
+      scanIntervalMs: rawConfig.documentIndexBackfillScanIntervalMs,
+      quietWindowMs: rawConfig.documentIndexBackfillQuietWindowMs,
+      llmEnabled: rawConfig.documentIndexBackfillLlmEnabled,
+      rescanMs: rawConfig.documentIndexBackfillRescanMs,
+      readTriggerCooldownMs: rawConfig.documentIndexBackfillReadTriggerCooldownMs,
+    },
     databasePath: join(dataDir, "database", "gateway.sqlite"),
     migrationsDir: resolve(
       values["migrations-dir"] ?? env.NXCORE_GATEWAY_MIGRATIONS_DIR ?? defaultMigrationsDir(),
@@ -1130,6 +1204,13 @@ export function loadConfig(
       : null,
     notificationBridge: rawConfig.notificationBridgeUrl
       ? { baseUrl: rawConfig.notificationBridgeUrl.replace(/\/$/, ""), token: rawConfig.notificationBridgeToken }
+      : null,
+    larkCli: {
+      executable: firstEnvValue(env, "NXCORE_LARK_CLI_PATH")?.trim() || "lark-cli",
+    },
+    documentAssetBridgeUrl: firstEnvValue(env, "NXCORE_DOCUMENT_ASSET_BRIDGE_URL")?.trim() || null,
+    notionCli: firstEnvValue(env, "NXCORE_NTN_CLI_PATH")?.trim()
+      ? { executable: firstEnvValue(env, "NXCORE_NTN_CLI_PATH")!.trim() }
       : null,
     pi,
     cursorCompletionPi,

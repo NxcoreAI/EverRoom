@@ -9,12 +9,27 @@ export interface MemoryAtomicItemDto {
   background: string | null
   createdAt: string
   updatedAt: string
+  /** 用户指派的 Room 归属；null = 未绑定。 */
+  roomId: string | null
+  /** 绑定 Room 的当前标题；roomId 非空而为 null ⇒ Room 已软删/消失。 */
+  roomTitle: string | null
   score?: number
 }
 
 export interface MemoryAtomicPageDto {
   items: MemoryAtomicItemDto[]
   total: number
+}
+
+/** Room 归属记忆列表项（gateway room_memory_attributions 快照列直读）。 */
+export interface MemoryRoomMemoryItemDto {
+  memoryId: string
+  type: string
+  content: string
+}
+
+export interface MemoryRoomMemoriesPageDto {
+  items: MemoryRoomMemoryItemDto[]
 }
 
 export interface MemoryConversationMessageDto {
@@ -183,6 +198,7 @@ export interface MemoryAtomicProvenanceDto {
   type: string
   content: string
   kind: string
+  room: { roomId: string | null; roomTitle: string | null }
   session: { sessionId: string | null; sessionKey: string | null } | null
   document: {
     documentId: string

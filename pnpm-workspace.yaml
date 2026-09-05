@@ -4,6 +4,13 @@ packages:
   - "submodules/everroom-connectors/gateway-module"
   - "submodules/everroom-connectors/connector-contract"
 
+# electron-vite 从 .pnpm store 路径 require.resolve('electron/package.json')，
+# 需要根 node_modules 有 electron 链接（pnpm 11 默认不再把它挂进隐藏 hoist 层）。
+publicHoistPattern:
+  - '*eslint*'
+  - '*prettier*'
+  - electron
+
 overrides:
   "app-builder-lib>@electron/get": "3.1.0"
   "better-sqlite3": "13.0.3"
@@ -20,6 +27,8 @@ allowBuilds:
   esbuild: true
   protobufjs: true
   '@tencentdb-agent-memory/memory-tencentdb-v2@git+https://github.com/NxcoreAI/TencentDB-Agent-Memory.git#f65f83e550cc4a13d51cbef8550f0b1755073ea4&path:MemoryCore(patch_hash=351b45cf8e7bc7b80b1feff362fb4100900a4301b00d7dd3fa34c572f331e7e6)': false
+  '@larksuite/cli': true
+  ntn: true
 
 minimumReleaseAgeExclude:
   - '@earendil-works/pi-agent-core@0.84.2'
@@ -29,6 +38,7 @@ minimumReleaseAgeExclude:
   - '@earendil-works/pi-protocol@0.84.2'
   - '@earendil-works/pi-telemetry@0.84.2'
   - '@earendil-works/pi-tui@0.84.2'
+  - ntn@0.23.1
 
 patchedDependencies:
   '@electron/osx-sign@1.3.3': patches/@electron__osx-sign@1.3.3.patch

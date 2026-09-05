@@ -3,7 +3,12 @@
   "properties": {
     "task": {
       "type": "string",
-      "enum": ["room-enrich", "room-overview", "brief-refresh", "merge-name"],
+      "enum": [
+        "room-enrich",
+        "room-overview",
+        "brief-refresh",
+        "merge-name"
+      ],
       "description": "The room task to execute."
     },
     "title": {
@@ -22,7 +27,7 @@
       "type": "string",
       "minLength": 1,
       "maxLength": 128,
-      "description": "Target room id, required for room-overview and brief-refresh."
+      "description": "Target room id. Required for room-overview and brief-refresh; also passed for room-enrich (memory_search may use it as room_id)."
     },
     "roomTitle": {
       "type": "string",
@@ -60,6 +65,8 @@
       "description": "Additional trusted generation constraints supplied by the internal workflow."
     }
   },
-  "required": ["task"],
+  "required": [
+    "task"
+  ],
   "additionalProperties": false
 }

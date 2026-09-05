@@ -16,6 +16,7 @@ import type {
   MemoryOnboardingInput,
   MemoryOnboardingResultDto,
   MemoryOverviewDto,
+  MemoryRoomMemoriesPageDto,
   MemoryScenarioContentDto,
   MemoryScenarioEntryDto,
 } from '../../shared/memory'
@@ -59,6 +60,10 @@ export class MemoryGatewayBridge {
     return this.request(`/v1/memory/atomic?${this.query(options)}`)
   }
 
+  listRoomMemories(roomId: string): Promise<MemoryRoomMemoriesPageDto> {
+    return this.request(`/v1/memory/rooms/${encodeURIComponent(roomId)}/memories`)
+  }
+
   searchAtomic(query: string, limit = 10): Promise<{ items: MemoryAtomicPageDto['items'] }> {
     return this.request('/v1/memory/atomic/search', {
       method: 'POST',
@@ -79,6 +84,18 @@ export class MemoryGatewayBridge {
 
   deleteAtomic(ids: string[]): Promise<{ deletedCount: number }> {
     return this.request('/v1/memory/atomic', { method: 'DELETE', body: JSON.stringify({ ids }) })
+  }
+
+  /** 指派/清除原子记忆的 Room 归属（roomId=null 清除）；snapshot 为绑定时的记忆快照。 */
+  setAtomicRoom(
+    id: string,
+    roomId: string | null,
+    snapshot?: { content: string; type: string; memoryUpdatedAt: string },
+  ): Promise<{ memoryId: string; roomId: string | null }> {
+    return this.request(`/v1/memory/atomic/${encodeURIComponent(id)}/room`, {
+      method: 'PUT',
+      body: JSON.stringify({ roomId, ...snapshot }),
+    })
   }
 
   listScenarios(pathPrefix?: string): Promise<{ entries: MemoryScenarioEntryDto[]; total: number }> {

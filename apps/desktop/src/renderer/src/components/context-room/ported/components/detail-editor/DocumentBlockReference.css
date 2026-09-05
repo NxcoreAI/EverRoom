@@ -244,10 +244,10 @@
   color: #b91c1c;
 }
 
-[data-block-id][data-reference-target="true"] {
+/* 引用跳转闪烁：静态浅蓝底保证在任何动画设置（含减少动态效果）下都可见，动画只负责淡出。 */
+[data-block-id].context-room-reference-flash-target {
+  background-color: color-mix(in srgb, #60a5fa 20%, transparent);
   animation: context-room-reference-flash 1.8s ease-out;
-  outline: 2px solid color-mix(in srgb, var(--room-color, #2563eb) 72%, #fff);
-  outline-offset: 4px;
 }
 
 @media (max-width: 640px) {
@@ -269,6 +269,6 @@
 }
 
 @keyframes context-room-reference-flash {
-  0%, 35% { background-color: color-mix(in srgb, var(--room-color, #2563eb) 18%, transparent); }
+  0%, 55% { background-color: color-mix(in srgb, #60a5fa 20%, transparent); }
   100% { background-color: transparent; }
 }

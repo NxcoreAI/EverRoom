@@ -26,6 +26,14 @@ export interface MemoryAtomicItem {
   updated_at: string;
 }
 
+/** Room 绑定记忆快照（gateway room_memory_attributions 的内容快照列）。 */
+export interface RoomMemorySnapshot {
+  memoryId: string;
+  type: string;
+  content: string;
+  updatedAt: string;
+}
+
 /** L1 原子记忆分页查询（/v3/atomic/query）入参。 */
 export interface MemoryAtomicQuery {
   type?: "episodic" | "persona" | "instruction" | undefined;

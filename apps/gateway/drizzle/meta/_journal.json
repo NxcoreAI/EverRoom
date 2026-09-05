@@ -355,8 +355,50 @@
     {
       "idx": 53,
       "version": "6",
-      "when": 1788360001000,
-      "tag": "0053_connector_format_mappings",
+      "when": 1788532800000,
+      "tag": "0053_room_memory_snapshots",
+      "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "6",
+      "when": 1788619200000,
+      "tag": "0054_document_import_export",
+      "breakpoints": true
+    },
+    {
+      "idx": 55,
+      "version": "6",
+      "when": 1788705600000,
+      "tag": "0055_room_memory_suppressions",
+      "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "6",
+      "when": 1788792000000,
+      "tag": "0056_documents_updated_idx",
+      "breakpoints": true
+    },
+    {
+      "idx": 57,
+      "version": "6",
+      "when": 1788880800000,
+      "tag": "0057_version_change_summary",
+      "breakpoints": true
+    },
+    {
+      "idx": 58,
+      "version": "6",
+      "when": 1788882000000,
+      "tag": "0058_document_comments",
+      "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "6",
+      "when": 1788968400000,
+      "tag": "0059_connector_format_mappings",
       "breakpoints": true
     }
   ]

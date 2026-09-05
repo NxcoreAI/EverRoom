@@ -175,6 +175,35 @@ describe('Agent document selection result', () => {
     ], new Set())).toBeNull()
   })
 
+  it('never surfaces a picker when the latest selection result has no usable documents', () => {
+    // 空列表（Room 无文档）与修复前入库的旧结果（候选缺 roomId 被丢弃）都不应弹卡片
+    const emptyResult = {
+      id: 'tool-empty',
+      runId: 'run-empty',
+      name: 'context_room_document_list',
+      status: 'completed',
+      result: { selectionRequired: true, documents: [] },
+      startedAt: '2026-08-17T03:00:00.000Z',
+      completedAt: '2026-08-17T03:00:02.000Z',
+    }
+    const legacyResult = {
+      id: 'tool-legacy',
+      runId: 'run-legacy',
+      name: 'context_room_document_list',
+      status: 'completed',
+      result: { selectionRequired: true, documents: [{ id: 'doc-1', title: '旧结果缺 roomId' }] },
+      startedAt: '2026-08-17T02:00:00.000Z',
+      completedAt: '2026-08-17T02:00:02.000Z',
+    }
+    const messages = [
+      { runId: 'run-empty', role: 'user', content: '看看文档', createdAt: '2026-08-17T03:00:00.000Z' },
+      { runId: 'run-legacy', role: 'user', content: '更早的消息', createdAt: '2026-08-17T02:00:00.000Z' },
+    ]
+
+    expect(findPendingAgentDocumentSelection([emptyResult], messages, new Set())).toBeNull()
+    expect(findPendingAgentDocumentSelection([legacyResult, emptyResult], messages, new Set())).toBeNull()
+  })
+
   it('replays the original prompt with the freshly fetched authoritative document context', () => {
     expect(buildAgentDocumentSelectionRunRequest('  把错误处理章节补充两个示例  ', {
       id: 'doc-authoritative',

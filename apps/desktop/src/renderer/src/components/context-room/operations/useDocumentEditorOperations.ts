@@ -206,6 +206,10 @@ export function useDocumentEditorOperations(documentId: string): DocumentEditorO
     () => presentDocumentOperation<DocumentOperationReviewView>(atomicEntry, 'atomic-diff') ?? undefined,
     [atomicEntry],
   )
+  // 审阅期硬锁（summary 级，不吃 detail 加载延迟）：该文档有 awaiting_review 提案
+  // 即锁编辑——防止用户编辑/保存把提案挤成 conflicted（2026-09-03 用户决策）。
+  const reviewPending = operations.operations.some((entry) =>
+    entry.summary.documentId === documentId && entry.summary.status === 'awaiting_review')
   const continuationReview = useMemo(
     () => presentDocumentOperation<DocumentOperationReviewView>(continuationEntry, 'continuation') ?? undefined,
     [continuationEntry],
@@ -417,7 +421,7 @@ export function useDocumentEditorOperations(documentId: string): DocumentEditorO
       atomicDiff,
       continuation,
       streamingDocument,
-      locked: Boolean(atomicDiff || continuation || streamingDocument?.active),
+      locked: Boolean(atomicDiff || continuation || streamingDocument?.active || reviewPending),
       completionBlocked,
       commands: {
         closeAtomicDiff,

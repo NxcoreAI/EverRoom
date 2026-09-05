@@ -9,7 +9,7 @@ import type {
   WritingStyleSettingsDto,
 } from '../../../../../shared/writing-style'
 import { MemoryEmptyView } from './MemoryStatusViews'
-import { formatDate, memoryFailureText, useAsyncData } from './useMemoryData'
+import { formatDate, memoryFailureText, useAsyncData, useSnapshottedAsyncData } from './useMemoryData'
 import { invalidateCompletionWritingStyleCache } from '../../context-room/ported/components/detail-editor/writingStyleInjection'
 
 const TIER_LABEL: Record<WritingStyleProfileDto['confidenceTier'], string> = {
@@ -28,10 +28,22 @@ const USER_CONTENT_MAX = 2_000
  */
 export function WritingStylePane() {
   const { locale, t } = useLocale()
-  const profile = useAsyncData<WritingStyleProfileDto>(() => window.nxcore!.writingStyle.profile())
-  const settings = useAsyncData<WritingStyleSettingsDto>(() => window.nxcore!.writingStyle.settings())
-  const content = useAsyncData(() => window.nxcore!.writingStyle.userContent())
-  const insights = useAsyncData<{ insights: WritingStyleInsightDto[] }>(
+  // 离线快照（2026-09-03）：网关断联时回落到本地最后一份好数据，
+  // 恢复后自动回到实时（useSnapshottedAsyncData 的 stale 重试）。
+  const profile = useSnapshottedAsyncData<WritingStyleProfileDto>(
+    'writing-style:profile',
+    () => window.nxcore!.writingStyle.profile(),
+  )
+  const settings = useSnapshottedAsyncData<WritingStyleSettingsDto>(
+    'writing-style:settings',
+    () => window.nxcore!.writingStyle.settings(),
+  )
+  const content = useSnapshottedAsyncData(
+    'writing-style:user-content',
+    () => window.nxcore!.writingStyle.userContent(),
+  )
+  const insights = useSnapshottedAsyncData<{ insights: WritingStyleInsightDto[] }>(
+    'writing-style:insights',
     () => window.nxcore!.writingStyle.insights(),
   )
 
@@ -163,7 +175,7 @@ export function WritingStylePane() {
   if (profile.loading || settings.loading) {
     return <p className="mem-loading">{t('memory:writingStyle.loading')}</p>
   }
-  if (profile.failure) {
+  if (profile.failure && !profile.data) {
     return <div className="mem-pane-error">{memoryFailureText(profile.failure, t)}</div>
   }
 
@@ -173,6 +185,22 @@ export function WritingStylePane() {
 
   return (
     <div className="mem-core">
+      {profile.stale || content.stale || insights.stale ? (
+        <div className="mem-offline-snapshot" role="status">
+          {t('memory:writingStyle.offlineSnapshot', {
+            time: formatDate(
+              new Date(
+                Math.max(
+                  profile.snapshotAt ?? 0,
+                  content.snapshotAt ?? 0,
+                  insights.snapshotAt ?? 0,
+                ),
+              ).toISOString(),
+              locale,
+            ),
+          })}
+        </div>
+      ) : null}
       <div className="mem-toolbar">
         <span className="mem-count">
           {t('memory:writingStyle.sampleCount', { count: profileData?.sampleDocumentCount ?? 0 })}

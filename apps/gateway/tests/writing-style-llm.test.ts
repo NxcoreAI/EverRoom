@@ -7,7 +7,7 @@ import type { AgentRuntime } from "@nxcore/agent-runtime";
 import { createDatabase, type DatabaseClient } from "../src/infrastructure/database/client.js";
 import { documentVersions, documents, roomDocumentLinks } from "../src/infrastructure/database/schema.js";
 import { WritingStyleService } from "../src/modules/writing-style/service.js";
-import { WritingStyleLlm, parseQualitative } from "../src/modules/writing-style/llm.js";
+import { WritingStyleLlm, parseQualitative, type WritingStyleEvidence } from "../src/modules/writing-style/llm.js";
 import { analyzeWritingStyle } from "../src/modules/writing-style/analyzer.js";
 
 const temporaryDirectories: string[] = [];
@@ -17,6 +17,7 @@ const QUALITATIVE_JSON = JSON.stringify({
   tone: ["冷静克制", "偏书面"],
   phrases: ["值得注意的是"],
   preferences: { do: ["短句收尾"], dont: ["避免长定语从句"] },
+  examples: ["本文采用渐进披露原则，先给出最小可用集合。", "第二条范例句会被截断到八十字以内" + "长".repeat(100)],
   summary: "工程笔记型作者，重结构与可核查性。",
 });
 
@@ -88,14 +89,36 @@ describe("parseQualitative", () => {
     expect(parsed.tone).toEqual(["冷静克制", "偏书面"]);
     expect(parsed.preferences.dont).toEqual(["避免长定语从句"]);
     expect(parsed.summary).toContain("工程笔记");
+    // 原文范例（2026-09-02 修订）：≤2 条、每条 ≤80 字。
+    expect(parsed.examples).toHaveLength(2);
+    expect(parsed.examples[0]).toContain("渐进披露");
+    expect(parsed.examples[1]!.length).toBeLessThanOrEqual(80);
   });
 
-  it("非 JSON / 缺字段抛错（供重试反馈）", () => {
+  it("非 JSON / 缺字段抛错（供重试反馈）；examples 缺省兼容旧库定性行", () => {
     expect(() => parseQualitative("不是 JSON")).toThrow();
     expect(() => parseQualitative('{"tone": "应是数组"}')).toThrow();
     expect(() => parseQualitative('{"tone": [], "phrases": []}')).not.toThrow();
+    expect(parseQualitative('{"tone": [], "phrases": [], "summary": ""}').examples).toEqual([]);
   });
 
+  it("提炼 prompt 携带规则化与原文范例要求（回归锚）", () => {
+    const runtime = fakeRuntime([QUALITATIVE_JSON]);
+    const llm = new WritingStyleLlm(runtime.runtime as never);
+    const evidence: WritingStyleEvidence = {
+      sections: { vocabulary: ["高频用词：使用"], sentence: [], structure: [] },
+      supportedTokens: [],
+      sketchCount: 3,
+      charCount: 4000,
+      evidenceLines: ["开篇：本文采用渐进披露原则。"],
+    };
+    void llm.summarize(evidence);
+    const prompt = runtime.calls[0]!;
+    expect(prompt).toContain("可以直接执行");
+    expect(prompt).toContain("禁止纯形容词");
+    expect(prompt).toContain("逐字复制");
+    expect(prompt).toContain('"examples"');
+  });
 });
 
 describe("analyzer 采样证据", () => {

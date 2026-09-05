@@ -50,6 +50,8 @@ const AtomicDtoSchema = Type.Object({
   background: Type.Union([Type.String(), Type.Null()]),
   createdAt: Type.String(),
   updatedAt: Type.String(),
+  roomId: Type.Union([Type.String(), Type.Null()]),
+  roomTitle: Type.Union([Type.String(), Type.Null()]),
 });
 
 const ConversationMessageDtoSchema = Type.Object({
@@ -126,6 +128,10 @@ const ProvenanceDtoSchema = Type.Object({
   type: Type.String(),
   content: Type.String(),
   kind: Type.String(),
+  room: Type.Object({
+    roomId: Type.Union([Type.String(), Type.Null()]),
+    roomTitle: Type.Union([Type.String(), Type.Null()]),
+  }),
   session: Type.Union([
     Type.Object({ sessionId: Type.Union([Type.String(), Type.Null()]), sessionKey: Type.Union([Type.String(), Type.Null()]) }),
     Type.Null(),
@@ -251,6 +257,68 @@ export function memoryRoutes(service: MemoryService): FastifyPluginAsyncTypebox 
         request.body.content,
         request.body.background,
       ),
+    );
+
+    app.put(
+      "/v1/memory/atomic/:id/room",
+      {
+        schema: {
+          tags: ["memory"],
+          params: Type.Object({ id: Type.String({ minLength: 1, maxLength: 200 }) }),
+          body: Type.Object({
+            roomId: Type.Union([
+              Type.String({ minLength: 1, maxLength: 100 }),
+              Type.Null(),
+            ]),
+            // 绑定时的记忆快照（Room 记忆注入的数据源）；清除绑定（roomId=null）时忽略。
+            content: Type.Optional(Type.String({ maxLength: 8_192 })),
+            type: Type.Optional(Type.String({ maxLength: 50 })),
+            memoryUpdatedAt: Type.Optional(Type.String({ maxLength: 64 })),
+          }),
+          response: {
+            200: Type.Object({
+              memoryId: Type.String(),
+              roomId: Type.Union([Type.String(), Type.Null()]),
+            }),
+          },
+        },
+      },
+      async (request) => service.assignAtomicRoom(request.params.id, request.body.roomId, {
+        content: request.body.content,
+        type: request.body.type,
+        memoryUpdatedAt: request.body.memoryUpdatedAt,
+      }),
+    );
+
+    // Room 归属记忆列表（桌面记忆卡喂料）：直读 room_memory_attributions 快照列，
+    // 不依赖 MemoryCore 存活；与注入/回溯 worker 共用同一数据源。
+    app.get(
+      "/v1/memory/rooms/:roomId/memories",
+      {
+        schema: {
+          tags: ["memory"],
+          params: Type.Object({ roomId: Type.String({ minLength: 1, maxLength: 200 }) }),
+          response: {
+            200: Type.Object({
+              items: Type.Array(Type.Object({
+                memoryId: Type.String(),
+                type: Type.String(),
+                content: Type.String(),
+              })),
+            }),
+          },
+        },
+      },
+      async (request) => {
+        const items = await service.listRoomAttributedMemories(request.params.roomId);
+        return {
+          items: items.map((item) => ({
+            memoryId: item.id,
+            type: item.type,
+            content: item.content,
+          })),
+        };
+      },
     );
 
     app.delete(
