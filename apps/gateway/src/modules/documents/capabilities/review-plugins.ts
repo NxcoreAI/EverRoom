@@ -14,6 +14,12 @@ import { integerArg, record, stringArg, success, type DocumentCapabilityPlugin, 
 const CHUNK_MAX_BYTES = 64 * 1024;
 const OPERATION_MAX_BYTES = 2 * 1024 * 1024;
 const OPERATION_TTL_MS = 10 * 60 * 1000;
+/** patch_begin 注入的 Room 记忆清单上限与预览长度（与 doc-writer memoryIndex 同口径）。 */
+const PATCH_MEMORY_INDEX_LIMIT = 50;
+const PATCH_MEMORY_PREVIEW_CHARS = 200;
+/** 409 自纠提示：随 INDEX_MARK_TARGET_NOT_FOUND 回传的目标文档块清单上限与预览长度。 */
+const INDEX_MARK_HINT_BLOCK_LIMIT = 40;
+const INDEX_MARK_HINT_PREVIEW_CHARS = 80;
 
 function kernel(value?: DocumentOperationService): DocumentOperationService {
   if (!value) throw new Error("DOCUMENT_OPERATION_KERNEL_REQUIRED: mutation tools require the Operation Kernel");
@@ -244,10 +250,12 @@ function validateIndexMarkTargets(backend: CapabilityBackend, roomId: string, fr
     if (invalid.length) throw indexMarkTargetError(invalid);
     return;
   }
+  const blocksByDocument = new Map<string, Array<{ blockId: string; textPreview: string }>>();
   for (const [documentId, blockIds] of byDocument) {
-    let known: Set<string>;
+    let blocks: Array<{ blockId: string; textPreview: string }>;
     try {
-      known = new Set(backend.readDocumentForAgent(documentId, roomId).blocks.map((block) => block.blockId));
+      blocks = backend.readDocumentForAgent(documentId, roomId).blocks
+        .map((block) => ({ blockId: block.blockId, textPreview: block.textPreview }));
     } catch (error) {
       if (error instanceof DocumentServiceError
         && (error.code === "NOT_FOUND" || error.code === "DOCUMENT_TRASHED" || error.code === "DOCUMENT_DELETED" || error.code === "ROOM_MISMATCH")) {
@@ -256,19 +264,37 @@ function validateIndexMarkTargets(backend: CapabilityBackend, roomId: string, fr
       }
       throw error;
     }
+    blocksByDocument.set(documentId, blocks);
+    const known = new Set(blocks.map((block) => block.blockId));
     for (const blockId of blockIds) {
       if (!known.has(blockId)) invalid.push({ documentId, blockId });
     }
   }
-  if (invalid.length) throw indexMarkTargetError(invalid);
+  if (!invalid.length) return;
+  const invalidDocuments = new Set(invalid.map((item) => item.documentId));
+  const availableTargets = [...blocksByDocument.entries()]
+    .filter(([documentId, blocks]) => invalidDocuments.has(documentId) && blocks.length > 0)
+    .map(([documentId, blocks]) => ({
+      documentId,
+      blockCount: blocks.length,
+      truncated: blocks.length > INDEX_MARK_HINT_BLOCK_LIMIT,
+      blocks: blocks.slice(0, INDEX_MARK_HINT_BLOCK_LIMIT).map((block) => ({
+        blockId: block.blockId,
+        textPreview: block.textPreview.slice(0, INDEX_MARK_HINT_PREVIEW_CHARS),
+      })),
+    }));
+  throw indexMarkTargetError(invalid, availableTargets);
 }
 
-function indexMarkTargetError(invalid: Array<{ documentId: string; blockId: string }>): DocumentServiceError {
+function indexMarkTargetError(
+  invalid: Array<{ documentId: string; blockId: string }>,
+  availableTargets: Array<{ documentId: string; blockCount: number; truncated: boolean; blocks: Array<{ blockId: string; textPreview: string }> }> = [],
+): DocumentServiceError {
   return new DocumentServiceError(
     "INDEX_MARK_TARGET_NOT_FOUND",
-    `blockIndexMark targets do not exist in this Room; copy block ids verbatim from document_read (invalid: ${invalid.map((item) => `${item.documentId}/${item.blockId}`).join(", ")})`,
+    `blockIndexMark targets do not exist in this Room; copy block ids verbatim from document_read, or pick a valid blockId from availableTargets (invalid: ${invalid.map((item) => `${item.documentId}/${item.blockId}`).join(", ")})`,
     409,
-    { retryable: true, nextAction: "document_draft", invalidTargets: invalid },
+    { retryable: true, nextAction: "document_draft", invalidTargets: invalid, ...(availableTargets.length ? { availableTargets } : {}) },
   );
 }
 
@@ -384,10 +410,11 @@ function beginTool(
   backend: CapabilityBackend,
   operations: DocumentOperationService | undefined,
   reads: DocumentReadAuthority,
+  resolveRoomMemoryItems?: (roomId: string) => Array<{ id: string; content: string; type: string }>,
 ): DocumentCapabilityTool {
   return {
     name: "context_room_patch_begin", title: "开始准备文档修改建议",
-    description: "必须先在当前 run 调用 context_room_document_read；Gateway 会自动使用本轮读取凭证。重写、润色、扩写、替换或删除已有段落必须使用 kind=edit，并只覆盖用户要求修改的最小正文范围；kind=continue 只用于在原文后新增全新内容，不能用于改写已有内容。",
+    description: "必须先在当前 run 调用 context_room_document_read；Gateway 会自动使用本轮读取凭证。重写、润色、扩写、替换或删除已有段落必须使用 kind=edit，并只覆盖用户要求修改的最小正文范围；kind=continue 只用于在原文后新增全新内容，不能用于改写已有内容。返回的 memoryIndex 是本 Room 归属记忆清单：直写模式给段落挂记忆索引标记时 memoryId 只能照抄 memoryIndex，写法 ^[短标题](everroom://memory/{roomId}/{memoryId})；文档来源标记的 blockId 只能来自本 run 对该来源文档的 document_read，禁止用宿主文档的块 id 或会话历史拼装。",
     inputSchema: { type: "object", additionalProperties: false, properties: {
       documentId: { type: "string" }, baseVersion: { type: "integer", minimum: 0 },
       readReceipt: { type: "string", minLength: 1, description: "兼容字段；Gateway 默认使用当前 run 最近一次有效的文档读取。" },
@@ -426,9 +453,23 @@ function beginTool(
         expiresAt,
         acquireDocumentLease: true,
       });
+      // 记忆清单是辅助数据：读取失败只降级为不注入，不拖垮 patch_begin。
+      let memoryIndex: Array<Record<string, unknown>> = [];
+      if (resolveRoomMemoryItems) {
+        try {
+          memoryIndex = resolveRoomMemoryItems(document.roomId).slice(0, PATCH_MEMORY_INDEX_LIMIT).map((item) => ({
+            memoryId: item.id,
+            contentPreview: item.content.slice(0, PATCH_MEMORY_PREVIEW_CHARS),
+            ...(item.type ? { type: item.type.slice(0, 32) } : {}),
+          }));
+        } catch {
+          memoryIndex = [];
+        }
+      }
       return success({ operationId: operation.id, patchId: operation.id, state: operation.status, documentId: document.id,
         readReceiptResolved: !readReceipt, baseVersion, nextSequence: 1,
-        nextAction: "context_room_patch_hunk", expiresAt: expiresAt.toISOString() });
+        nextAction: "context_room_patch_hunk", expiresAt: expiresAt.toISOString(),
+        ...(memoryIndex.length ? { memoryIndex, memoryIndexCount: memoryIndex.length } : {}) });
     },
   };
 }
@@ -440,7 +481,7 @@ function hunkTool(
 ): DocumentCapabilityTool {
   return {
     name: "context_room_patch_hunk", title: "追加可审阅的文档修改项",
-    description: "按严格连续 sequence 追加修改项。优先以引用方式转交：传 document_draft 返回的 invocationId 与 itemIndex（0 起，按顺序逐项），operation/target/markdown 由服务端从 doc-writer 结果转交，参数中不携带正文；显式 target/markdown 仅供无法引用 invocation 的调用方直写。edit 必须使用能表达用户改动的最小 target；replace 的 markdown 只能是该 target 的新内容，绝不能复制 document_read 返回的完整 markdown、文档标题或未修改的后续章节。continue 仅能 insert 全新内容；每批 markdown 只能包含本批新增片段，禁止发送累计内容、原文或全文。",
+    description: "按严格连续 sequence 追加修改项。优先以引用方式转交：传 document_draft 返回的 invocationId 与 itemIndex（0 起，按顺序逐项），operation/target/markdown 由服务端从 doc-writer 结果转交，参数中不携带正文；显式 target/markdown 仅供无法引用 invocation 的调用方直写。edit 必须使用能表达用户改动的最小 target；replace 的 markdown 只能是该 target 的新内容，绝不能复制 document_read 返回的完整 markdown、文档标题或未修改的后续章节。continue 仅能 insert 全新内容；每批 markdown 只能包含本批新增片段，禁止发送累计内容、原文或全文。块索引标记：文档来源标记的 blockId 只能取自本 run 对该来源文档的 document_read 返回（宿主文档自身的块 id 不可用作来源）；记忆标记的 memoryId 只能照抄 patch_begin 返回的 memoryIndex，禁止凭会话历史拼装。",
     inputSchema: { type: "object", additionalProperties: false, properties: {
       operationId: { type: "string", description: "兼容字段；省略时 Gateway 使用当前 run 唯一运行中的 Patch。" },
       patchId: { type: "string", description: "兼容旧 Agent 会话的别名；通常无需传入。" },
@@ -906,8 +947,9 @@ export function reviewPlugins(
   backend: CapabilityBackend,
   operations: DocumentOperationService | undefined,
   reads: DocumentReadAuthority,
+  resolveRoomMemoryItems?: (roomId: string) => Array<{ id: string; content: string; type: string }>,
 ): DocumentCapabilityPlugin[] {
-  const tools = [beginTool(backend, operations, reads), hunkTool(backend, operations, reads), commitTool(operations), abortTool(operations)];
+  const tools = [beginTool(backend, operations, reads, resolveRoomMemoryItems), hunkTool(backend, operations, reads), commitTool(operations), abortTool(operations)];
   return [
     { manifest: manifest("document.edit", "mutation", "atomic_review", "atomic-diff", true, true),
       promptGuidelines: ["修改已有文档的内容必须先调用 document_draft(task=draft-edit) 生成修改提案：网关会读取权威版本组装素材并为本 run 签发读取凭证；patch_begin 后 patch_hunk 凭返回的 invocationId 与 itemIndex（0 起，按顺序逐项）引用转交，operation/target/markdown 由服务端从 doc-writer 结果取用，不得在工具参数中复写或补写。Gateway 会在当前 run 内自动绑定读取凭证和唯一运行中的 Patch，后续工具无需搬运 readReceipt、operationId 或 patchId。重写、润色、扩写、替换或删除已有内容必须使用 kind=edit，kind=continue 只追加全新内容。Agent 只能生成提案，不能直接应用。单次工具失败若返回 retryable=true，应修正参数并重试；最终回复以最后一次工具结果为准，不能把已恢复的失败说成整轮失败。patch_commit 后必须按返回的 state/applied/documentChanged 描述状态；awaiting_review 时只能说修改建议已准备好、等待用户审阅，不能声称正文已修改。"], tools,

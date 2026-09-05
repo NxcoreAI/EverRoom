@@ -579,6 +579,8 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       contextRoomService,
       documentOperationService,
       documentReadAuthority,
+      // patch_begin 注入 memoryIndex：直写模式挂记忆索引标记时 memoryId 有权威来源可抄。
+      (roomId) => memoryService.listRoomAttributedMemories(roomId),
     ),
     documentOperationService,
     (diagnostic) => {
