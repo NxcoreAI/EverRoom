@@ -41,7 +41,7 @@ afterEach(async () => {
 });
 
 describe("patch hunk block index marks", () => {
-  it("仅追加索引标记的替换不再被误判 EDIT_NO_CHANGE，且落库保留标记", async () => {
+  it("仅追加索引标记的替换被 patch_commit 自动应用，落库保留标记", async () => {
     const { documents, operations, registry } = await createHarness();
     const source = await documents.import({
       id: "doc-source",
@@ -78,15 +78,10 @@ describe("patch hunk block index marks", () => {
     }, context);
     const storedItem = operations.get(operationId)!.items[0]!;
     expect(JSON.stringify(storedItem.after)).toContain("blockIndexMark");
-    await registry.execute("context_room_patch_commit", { operationId, finalSequence: 1 }, context);
-    // patch_commit 仅置 awaiting_review；用户在 UI 点接受后走 review.apply 真正写入。
-    const awaiting = operations.get(operationId)!;
-    await operations.execute(operationId, {
-      commandId: `${operationId}:apply`,
-      expectedRevision: awaiting.revision,
-      type: "review.apply",
-      payload: { acceptedItemIds: [storedItem.id] },
-    }, (operation, command) => registry.command(operation, command));
+    const committed = await registry.execute("context_room_patch_commit", { operationId, finalSequence: 1 }, context);
+    // 正文零改动、仅段末追加索引标记的提案由 patch_commit 直接自动应用。
+    expect(committed.structuredContent).toMatchObject({ state: "completed", applied: true, documentChanged: true });
+    expect(operations.get(operationId)!.status).toBe("completed");
 
     const updated = documents.get(target.id)!;
     expect(updated.version).toBe(target.version + 1);
@@ -99,6 +94,57 @@ describe("patch hunk block index marks", () => {
       targetBlockId: sourceBlockId,
     });
     expect(updated.contentJson.content?.[1]?.type).toBe("paragraph");
+  });
+
+  it("正文有改动的提案不被自动应用，保持 awaiting_review 由用户接受", async () => {
+    const { documents, operations, registry } = await createHarness();
+    const source = await documents.import({
+      id: "doc-source",
+      roomId: "room-1",
+      title: "来源文档",
+      contentJson: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: SOURCE_TEXT }] }] },
+    });
+    const target = await documents.import({
+      id: "doc-target",
+      roomId: "room-1",
+      title: "目标文档",
+      contentJson: { type: "doc", content: [
+        { type: "paragraph", content: [{ type: "text", text: SOURCE_TEXT }] },
+      ] },
+    });
+    const sourceBlockId = documents.listBlocks(source.id)[0]!.blockId;
+    const targetBlockId = documents.listBlocks(target.id)[0]!.blockId;
+    const context = { agentSessionId: "session-mark-3", runId: "run-mark-3", roomId: "room-1" };
+    await registry.execute("context_room_document_read", { documentId: target.id }, context);
+    const begun = await registry.execute("context_room_patch_begin", {
+      documentId: target.id,
+      baseVersion: target.version,
+      kind: "edit",
+      summary: "改写正文并附来源索引标记",
+    }, context);
+    const operationId = String(begun.structuredContent.operationId);
+    await registry.execute("context_room_patch_hunk", {
+      operationId,
+      sequence: 1,
+      operation: "replace",
+      target: { blockId: targetBlockId },
+      markdown: `PyTorch 是主流深度学习框架，以动态图与自动求导著称。^[来源文档](everroom://room/room-1/${source.id}/${sourceBlockId})`,
+    }, context);
+    const storedItem = operations.get(operationId)!.items[0]!;
+    const committed = await registry.execute("context_room_patch_commit", { operationId, finalSequence: 1 }, context);
+    expect(committed.structuredContent).toMatchObject({ state: "awaiting_review" });
+    expect(documents.get(target.id)!.version).toBe(target.version);
+    // 用户在 UI 点接受后走 review.apply 真正写入。
+    const awaiting = operations.get(operationId)!;
+    await operations.execute(operationId, {
+      commandId: `${operationId}:apply`,
+      expectedRevision: awaiting.revision,
+      type: "review.apply",
+      payload: { acceptedItemIds: [storedItem.id] },
+    }, (operation, command) => registry.command(operation, command));
+    const updated = documents.get(target.id)!;
+    expect(updated.version).toBe(target.version + 1);
+    expect(JSON.stringify(updated.contentJson)).toContain("blockIndexMark");
     expect(operations.get(operationId)!.status).toBe("completed");
   });
 

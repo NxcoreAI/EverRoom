@@ -16,4 +16,4 @@ description: Produce minimal patch hunks against the supplied document snapshot 
 5. 修改列表、引用或任务列表的内部内容时，同样替换其顶层父块并给出完整替换 markdown。
 6. target 中的 blockId 只能来自 blockIndex，不确定归属时先对照 ordinal 与 textPreview 再定。
 7. documentMarkdown 中段落末尾的 `^[...](everroom://...)` 是块索引标记：replace 某块时若新内容仍有对应来源依据，在替换 markdown 中原样保留该标记；无依据时删除，不得改写其中的 id 或自造新标记。
-8. 输入携带 materialSources 且被替换块确实整合了某来源内容时，可在替换 markdown 的段末附对应索引标记（id 照抄输入）。仅为补挂索引的改写必须保持正文原样，只在段末追加标记。
+8. 输入携带 materialSources 或 memoryIndex 且被替换块确实整合了某来源内容时，按 SYSTEM.md 块索引标记规则在替换 markdown 的段末附对应索引标记（文档块与记忆项两类；id 照抄输入，禁止自造）。仅为补挂索引的改写必须保持正文原样，只在段末追加标记。

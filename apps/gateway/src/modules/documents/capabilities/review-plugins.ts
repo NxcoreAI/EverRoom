@@ -217,14 +217,36 @@ function indexMarkSignature(node: TiptapJsonContent): string {
   return marks.join("|");
 }
 
-function comparableBlock(node: TiptapJsonContent): string {
+function indexFreeComparableBlock(node: TiptapJsonContent): string {
   const headingLevel = node.type === "heading" ? Number(node.attrs?.level ?? 0) : 0;
-  return `${node.type ?? ""}:${headingLevel}:${normalizedBlockText(node)}#${indexMarkSignature(node)}`;
+  return `${node.type ?? ""}:${headingLevel}:${normalizedBlockText(node)}`;
+}
+
+function comparableBlock(node: TiptapJsonContent): string {
+  return `${indexFreeComparableBlock(node)}#${indexMarkSignature(node)}`;
+}
+
+/**
+ * “仅为既有段落补挂索引标记”的提案：每个修改项都是整块 replace，去标记文本与
+ * 原块完全一致且仅新增了块索引标记。正文零改动 ⇒ patch_commit 可直接自动应用，
+ * 无需人工审阅（insert/delete 或任何文本差异都不算）。
+ */
+function isIndexMarksOnlyItems(items: DocumentOperationItem[]): boolean {
+  return items.length > 0 && items.every((item) => {
+    if (item.operation !== "replace" || !item.target) return false;
+    if (item.before.length !== item.after.length) return false;
+    return item.before.every((beforeNode, index) => {
+      const afterNode = item.after[index]!;
+      return indexFreeComparableBlock(beforeNode) === indexFreeComparableBlock(afterNode)
+        && indexMarkSignature(beforeNode) !== indexMarkSignature(afterNode);
+    });
+  });
 }
 
 /**
  * 校验 hunk 片段里 blockIndexMark 的目标块真实存在（同 Room）。目标文档不存在、
- * 已删或 blockId 对不上都拒绝——把"静默悬空标记"变成可重试的明确报错。
+ * 已删或 blockId 对不上都拒绝——把"静默悬空标记"变成可重试的明确报错，并随错误
+ * 回传出问题文档的当前块清单（截断），调用方不重读也能直接换用合法 id 自纠。
  */
 function validateIndexMarkTargets(backend: CapabilityBackend, roomId: string, fragment: TiptapJsonContent[]): void {
   const invalid: Array<{ documentId: string; blockId: string }> = [];
@@ -781,10 +803,10 @@ function hunkTool(
   };
 }
 
-function commitTool(operations?: DocumentOperationService): DocumentCapabilityTool {
+function commitTool(backend: CapabilityBackend, operations?: DocumentOperationService): DocumentCapabilityTool {
   return {
     name: "context_room_patch_commit", title: "提交文档修改建议供用户审阅",
-    description: "完成所有修改项后仅转为待用户审阅，不会写入正文。工具成功只代表提案已准备好；Agent 的最终回复必须以本工具返回的 state/applied/documentChanged 为准。state=awaiting_review 时必须说明仍需用户接受，不能声称文档已修改。",
+    description: "完成所有修改项后仅转为待用户审阅，不会写入正文。例外：所有修改项均为段末追加索引标记且正文零改动时，网关直接自动应用并返回 state=completed/applied=true。工具成功只代表提案已处理；Agent 的最终回复必须以本工具返回的 state/applied/documentChanged 为准。state=awaiting_review 时必须说明仍需用户接受，不能声称文档已修改。",
     inputSchema: { type: "object", additionalProperties: false, properties: {
       operationId: { type: "string", description: "兼容字段；省略时 Gateway 使用当前 run 唯一运行中的 Patch。" },
       patchId: { type: "string", description: "兼容旧 Agent 会话的别名；通常无需传入。" },
@@ -809,6 +831,36 @@ function commitTool(operations?: DocumentOperationService): DocumentCapabilityTo
         commandId: `${operation.id}:prepare:${finalSequence}`, expectedRevision: operation.revision,
         type: "operation.prepare", payload: { finalSequence },
       }, () => ({ status: "awaiting_review", expiresAt: null }));
+      // 纯索引补挂提案（正文零改动）自动应用，跳过人工审阅；自动应用失败则降级为
+      // 正常待审阅，提案本身不受影响。
+      const autoApplyItems = prepared.operation.items;
+      if (isIndexMarksOnlyItems(autoApplyItems)) {
+        try {
+          const applied = await service.execute(operation.id, {
+            commandId: `${operation.id}:auto-apply:${finalSequence}`,
+            expectedRevision: prepared.operation.revision,
+            type: "review.apply",
+            payload: { acceptedItemIds: autoApplyItems.map((item) => item.id) },
+          }, (pendingOperation, command) => editCommand(backend, pendingOperation, command));
+          return success({ operationId: operation.id, patchId: operation.id,
+            operationIdCorrected: resolvedOperation.operationIdCorrected,
+            finalSequence, finalSequenceCorrected,
+            state: "completed", applied: true, documentChanged: true,
+            documentVersion: applied.document?.version ?? operation.baseVersion, nextAction: "none",
+            message: "所有修改项仅为段末追加索引标记（正文零改动），已自动应用，无需用户审阅。最终回复请告知用户索引已补挂完成。",
+            patch: {
+              id: operation.id, roomId: operation.roomId, documentId: operation.documentId, documentTitle: operation.documentTitle,
+              baseVersion: operation.baseVersion, kind: operation.capabilityId === "document.continue" ? "continue" : "edit",
+              status: "applied", summary: operation.summary, hunkCount: autoApplyItems.length,
+              addedCharacters: autoApplyItems.reduce((sum, item) => sum + tiptapText({ type: "doc", content: item.after }).length, 0),
+              deletedCharacters: autoApplyItems.reduce((sum, item) => sum + tiptapText({ type: "doc", content: item.before }).length, 0),
+              createdAt: operation.createdAt, updatedAt: applied.operation.updatedAt,
+            }, navigation: { pageId: "rooms", title: operation.documentTitle, action: "opened", roomId: operation.roomId,
+              objectId: operation.documentId, objectType: "document" } });
+        } catch {
+          // 降级：保持 awaiting_review，由用户在审阅 UI 手动接受/拒绝。
+        }
+      }
       return success({ operationId: operation.id, patchId: operation.id,
         operationIdCorrected: resolvedOperation.operationIdCorrected,
         finalSequence, finalSequenceCorrected,
@@ -949,7 +1001,7 @@ export function reviewPlugins(
   reads: DocumentReadAuthority,
   resolveRoomMemoryItems?: (roomId: string) => Array<{ id: string; content: string; type: string }>,
 ): DocumentCapabilityPlugin[] {
-  const tools = [beginTool(backend, operations, reads, resolveRoomMemoryItems), hunkTool(backend, operations, reads), commitTool(operations), abortTool(operations)];
+  const tools = [beginTool(backend, operations, reads, resolveRoomMemoryItems), hunkTool(backend, operations, reads), commitTool(backend, operations), abortTool(operations)];
   return [
     { manifest: manifest("document.edit", "mutation", "atomic_review", "atomic-diff", true, true),
       promptGuidelines: ["修改已有文档的内容必须先调用 document_draft(task=draft-edit) 生成修改提案：网关会读取权威版本组装素材并为本 run 签发读取凭证；patch_begin 后 patch_hunk 凭返回的 invocationId 与 itemIndex（0 起，按顺序逐项）引用转交，operation/target/markdown 由服务端从 doc-writer 结果取用，不得在工具参数中复写或补写。Gateway 会在当前 run 内自动绑定读取凭证和唯一运行中的 Patch，后续工具无需搬运 readReceipt、operationId 或 patchId。重写、润色、扩写、替换或删除已有内容必须使用 kind=edit，kind=continue 只追加全新内容。Agent 只能生成提案，不能直接应用。单次工具失败若返回 retryable=true，应修正参数并重试；最终回复以最后一次工具结果为准，不能把已恢复的失败说成整轮失败。patch_commit 后必须按返回的 state/applied/documentChanged 描述状态；awaiting_review 时只能说修改建议已准备好、等待用户审阅，不能声称正文已修改。"], tools,
