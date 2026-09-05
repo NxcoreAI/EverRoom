@@ -436,7 +436,7 @@ export class PiAgentRuntime implements AgentRuntime {
     }
     compactHistoricalToolState(handle.session);
     handle.context.current = input;
-    handle.session.setActiveToolsByName(input.toolsEnabled === false ? [] : handle.toolNames);
+    handle.session.setActiveToolsByName(this.activeToolNamesFor(input, handle.toolNames));
     handle.activeRunId = input.runId;
     const queue = new AsyncEventQueue<RuntimeEvent>();
     const active: ActivePiRun = {
@@ -684,7 +684,7 @@ export class PiAgentRuntime implements AgentRuntime {
         if (memory && memoryClient && context.current?.toolsEnabled !== false) {
           if (context.current?.memoryScope === "room" && context.current?.roomId) {
             lines.push(
-              "当前处于房间聚焦模式：本回合自动召回只包含 [Room 记忆]（用户为当前 Context Room 甄选的记忆）与用户画像，不注入全局原子记忆、场景目录和历史对话。memory_search 已锁定在当前 Context Room 的绑定记忆中检索，无需传 room_id，也检索不到全局记忆。",
+              "当前处于房间聚焦模式：本回合自动召回只包含 [Room 记忆]（用户为当前 Context Room 甄选的记忆）与用户画像，不注入全局原子记忆、场景目录和历史对话，跨会话历史检索（conversation_search）在本回合不可用。memory_search 已锁定在当前 Context Room 的绑定记忆中检索，无需传 room_id，也检索不到全局记忆。",
             );
           } else {
             lines.push(
@@ -782,8 +782,23 @@ export class PiAgentRuntime implements AgentRuntime {
   }
 
   /**
+   * 本回合实际激活的工具名单：toolsEnabled=false 全隐藏；房间聚焦回合剔除
+   * conversation_search——跨会话历史检索是全局记忆旁路（会捞回 room-memory:/
+   * document: 合成会话的蒸馏原文），聚焦语义下结构性禁用，非聚焦回合恢复。
+   */
+  private activeToolNamesFor(input: StartRuntimeRunInput, toolNames: string[]): string[] {
+    if (input.toolsEnabled === false) return [];
+    if (input.memoryScope === "room" && input.roomId) {
+      return toolNames.filter((name) => name !== "conversation_search");
+    }
+    return toolNames;
+  }
+
+  /**
    * 限定 Room 记忆注入的取数：仅在记忆启用、本轮开启召回且绑定了 Room 时
    * 解析；失败静默降级为空（与四路召回的降级语义一致，不影响 run 主流程）。
+   * 聚焦模式（memoryScope='room'）依赖本守卫放行：recallMemory 保持缺省
+   * true 且 roomId 在场，Room 记忆照常注入——不得用 recallMemory=false 表达聚焦。
    */
   private async resolveRoomMemoriesForRun(input: StartRuntimeRunInput): Promise<RoomMemorySnapshot[]> {
     if (!this.config.memory || !this.memoryClient) return [];
@@ -806,7 +821,7 @@ export class PiAgentRuntime implements AgentRuntime {
       // system prompt before the model sees the next request.
       await active.handle.session.reload();
       active.handle.session.setActiveToolsByName(
-        input.toolsEnabled === false ? [] : active.handle.toolNames,
+        this.activeToolNamesFor(input, active.handle.toolNames),
       );
       active.handle.setMemoryRunContext({
         sessionId: input.sessionId,

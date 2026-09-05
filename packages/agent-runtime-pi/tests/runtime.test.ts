@@ -880,4 +880,109 @@ describe("PiAgentRuntime", () => {
       ]);
     }
   });
+
+  it("deactivates conversation_search for a focused room run and restores it by default", async () => {
+    const requestBodies: unknown[] = [];
+    const endpoint = createServer((request, response) => {
+      let raw = "";
+      request.on("data", (chunk: string) => { raw += chunk; });
+      request.on("end", () => {
+        if (request.url?.includes("/chat/completions")) requestBodies.push(JSON.parse(raw));
+        response.writeHead(200, { "content-type": "text/event-stream" });
+        response.write(`data: ${JSON.stringify({
+          id: "chatcmpl-focus-tools",
+          object: "chat.completion.chunk",
+          created: 1,
+          model: "nxcore-test-model",
+          choices: [{ index: 0, delta: { content: "好的" }, finish_reason: null }],
+        })}\n\n`);
+        response.write(`data: ${JSON.stringify({
+          id: "chatcmpl-focus-tools",
+          object: "chat.completion.chunk",
+          created: 1,
+          model: "nxcore-test-model",
+          choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+        })}\n\n`);
+        response.end("data: [DONE]\n\n");
+      });
+    });
+    // MemoryCore 全端点 500：聚焦回合只余 L3 readCore（降级为空），不影响工具名单断言。
+    const memoryCore = createServer((_request, response) => {
+      response.writeHead(500, { "content-type": "application/json" });
+      response.end(JSON.stringify({ error: "memory core unavailable" }));
+    });
+    await Promise.all([
+      new Promise<void>((resolvePromise) => endpoint.listen(0, "127.0.0.1", resolvePromise)),
+      new Promise<void>((resolvePromise) => memoryCore.listen(0, "127.0.0.1", resolvePromise)),
+    ]);
+    const address = endpoint.address();
+    const memoryAddress = memoryCore.address();
+    if (!address || typeof address === "string" || !memoryAddress || typeof memoryAddress === "string") {
+      throw new Error("Test endpoints did not bind TCP ports");
+    }
+
+    const dataDir = await mkdtemp(join(tmpdir(), "nxcore-pi-focus-tools-test-"));
+    temporaryDirectories.push(dataDir);
+    const runtime = new PiAgentRuntime({
+      provider: "nxcore-test-provider",
+      model: "nxcore-test-model",
+      baseUrl: `http://127.0.0.1:${address.port}/v1`,
+      apiKey: "nxcore-test-key",
+      api: "openai-completions",
+      maxTokens: 1024,
+      contextWindow: 8192,
+      temperature: 0.3,
+      reasoning: "off",
+      sessionsDir: join(dataDir, "sessions"),
+      workingDirectory: join(dataDir, "workspace"),
+      agentDirectory: join(dataDir, "config"),
+      memory: {
+        baseUrl: `http://127.0.0.1:${memoryAddress.port}`,
+        apiKey: "memory-key",
+        serviceId: "everroom",
+        teamId: "everroom",
+        agentId: "pi-agent",
+        userId: "local-user",
+        recallLimit: 5,
+        charBudget: 2000,
+      },
+    });
+
+    try {
+      const focused = await runtime.start({
+        runId: "run-focus-tools",
+        sessionId: "agent-session",
+        runtimeSessionRef: null,
+        prompt: "只看这个房间的记忆",
+        pageLabel: "Room A",
+        roomId: "room-a",
+        memoryScope: "room",
+        availableRooms: [{ id: "room-a", title: "Room A" }],
+      });
+      for await (const event of focused.events) { /* drain */ }
+      const unfocused = await runtime.start({
+        runId: "run-focus-tools-default",
+        sessionId: "agent-session",
+        runtimeSessionRef: focused.runtimeSessionRef,
+        prompt: "再问一句",
+        pageLabel: "Room A",
+        roomId: "room-a",
+      });
+      for await (const event of unfocused.events) { /* drain */ }
+
+      const focusedTools = JSON.stringify(requestBodies[0] && (requestBodies[0] as { tools?: unknown }).tools);
+      expect(focusedTools).toContain("memory_search");
+      expect(focusedTools).not.toContain("conversation_search");
+      expect(focusedTools).toContain('"name":"bash"');
+      const defaultTools = JSON.stringify(requestBodies[1] && (requestBodies[1] as { tools?: unknown }).tools);
+      expect(defaultTools).toContain("memory_search");
+      expect(defaultTools).toContain("conversation_search");
+    } finally {
+      await runtime.dispose();
+      await Promise.all([
+        new Promise<void>((resolvePromise, reject) => endpoint.close((error) => error ? reject(error) : resolvePromise())),
+        new Promise<void>((resolvePromise, reject) => memoryCore.close((error) => error ? reject(error) : resolvePromise())),
+      ]);
+    }
+  });
 });
