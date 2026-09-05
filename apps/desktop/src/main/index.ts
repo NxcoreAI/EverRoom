@@ -7,7 +7,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { pipeline } from 'node:stream/promises'
 import { loadEnvFile } from 'node:process'
 
-import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, nativeTheme, Notification, protocol, safeStorage, shell, systemPreferences } from 'electron'
+import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, nativeTheme, Notification, protocol, shell, systemPreferences } from 'electron'
 import type {
   ImportRoomDocumentInput,
   DocumentOperationCommandInput,
@@ -3172,10 +3172,8 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
           }
         }
       },
-      // 非 token 授权状态加密落盘（safeStorage；不可用时退化为不持久化）。
-      persist: safeStorage.isEncryptionAvailable()
-        ? createAgentAuthPersistence(join(dataDirectory, 'agent-auth', 'challenge.bin'))
-        : undefined,
+      // 非 token 授权状态加密落盘（本地静态密钥，不依赖 safeStorage/钥匙串）。
+      persist: createAgentAuthPersistence(join(dataDirectory, 'agent-auth', 'challenge.bin')),
     },
     resolveNtnCliExecutable() ? new NtnAuthRunner(resolveNtnCliExecutable()!) : null,
   )

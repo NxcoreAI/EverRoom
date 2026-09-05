@@ -1,7 +1,8 @@
 import { createCipheriv, createDecipheriv, createHash, createPrivateKey, createPublicKey, diffieHellman, generateKeyPairSync, hkdfSync, randomBytes, type KeyObject } from 'node:crypto'
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
-import { safeStorage } from 'electron'
+
+import { decryptLocalSecret, encryptLocalSecret } from './local-secret-cipher'
 
 import type { AccountKeyringStatus } from '../../shared/sources'
 import type { KeyringResponse, PairingSessionResponse, SaasClient } from '../cloud/saas-client'
@@ -9,7 +10,10 @@ import type { KeyringResponse, PairingSessionResponse, SaasClient } from '../clo
 const PACKAGE_ALGORITHM = 'X25519-HKDF-SHA256-AES-256-GCM' as const
 const X25519_SPKI_PREFIX = Buffer.from('302a300506032b656e032100', 'hex')
 
+// v2：本地静态密钥（local-secret-cipher，AES-256-GCM）。v1 是 safeStorage/钥匙串密文，
+// 弃用钥匙串后无法再解，读到旧格式一律视为未初始化，设备需重新批准。
 interface StoredKeyringFile {
+  version: 2
   publicKey: string
   privateKey: string
   umks: Record<string, { umkId: string; version: number; value: string }>
@@ -61,12 +65,6 @@ function verificationCode(publicKey: string): string {
   return digest.match(/.{1,4}/g)!.join('-')
 }
 
-function isBasicTextStorage(): boolean {
-  // Electron only exposes the selected storage backend at runtime on Linux.
-  if (process.platform !== 'linux') return false
-  return safeStorage.getSelectedStorageBackend?.() === 'basic_text'
-}
-
 export class AccountKeyringService {
   private loaded = false
   private file: StoredKeyringFile | null = null
@@ -76,26 +74,18 @@ export class AccountKeyringService {
   async initialize(): Promise<void> {
     if (this.loaded) return
     this.loaded = true
-    if (!safeStorage.isEncryptionAvailable() || isBasicTextStorage()) return
     try {
       const parsed = JSON.parse(await readFile(this.filePath, 'utf8')) as Partial<StoredKeyringFile>
-      if (typeof parsed.publicKey === 'string' && typeof parsed.privateKey === 'string') {
-        this.file = { publicKey: parsed.publicKey, privateKey: parsed.privateKey, umks: parsed.umks ?? {} }
+      if (parsed.version === 2 && typeof parsed.publicKey === 'string' && typeof parsed.privateKey === 'string') {
+        this.file = { version: 2, publicKey: parsed.publicKey, privateKey: parsed.privateKey, umks: parsed.umks ?? {} }
       }
     } catch {
-      // First launch or an unreadable keyring file.
+      // First launch, or a legacy safeStorage/钥匙串 keyring file we can no longer decrypt.
     }
-  }
-
-  isAvailable(): boolean {
-    return safeStorage.isEncryptionAvailable() && !isBasicTextStorage()
   }
 
   async status(client: SaasClient, userId: string): Promise<AccountKeyringStatus> {
     await this.initialize()
-    if (!this.isAvailable()) {
-      return { enabled: false, reason: '系统密钥环不可用，无法启用端到端同步。', initialized: false, umkId: null, activeVersion: null, deviceStatus: 'unregistered', verificationCode: null }
-    }
     const material = await this.ensureMaterial()
     await client.registerKeyAgreement(material.publicKey)
     let keyring = await client.getKeyring()
@@ -114,7 +104,13 @@ export class AccountKeyringService {
     }
     if (keyring.currentDevice.status === 'ready' && keyring.currentDevice.keyPackage) {
       const packageData = keyring.currentDevice.keyPackage
-      const umk = this.openPackage(packageData, keyring.currentDevice.deviceId, material.privateKey)
+      let umk: Buffer
+      try {
+        umk = this.openPackage(packageData, keyring.currentDevice.deviceId, material.privateKey)
+      } catch {
+        // 密钥材料对不上（如从 v1 钥匙串密文迁移后本地密钥已重置），引导重新批准。
+        throw new Error('UMK 校验失败，请在 iPhone 上重新批准此设备。')
+      }
       if (keyId(umk) !== keyring.umkId || packageData.umkId !== keyring.umkId || packageData.umkVersion !== keyring.activeVersion) {
         throw new Error('UMK 校验失败，请在 iPhone 上重新批准此设备。')
       }
@@ -138,7 +134,7 @@ export class AccountKeyringService {
       .map(([, value]) => value)
       .sort((left, right) => right.version - left.version)[0]
     if (!entry) return null
-    return { value: Buffer.from(safeStorage.decryptString(Buffer.from(entry.value, 'base64')), 'base64'), umkId: entry.umkId, version: entry.version }
+    return { value: decryptLocalSecret(entry.value), umkId: entry.umkId, version: entry.version }
   }
 
   async getVerificationCode(): Promise<string | null> {
@@ -165,12 +161,12 @@ export class AccountKeyringService {
 
   private async ensureMaterial(): Promise<KeyringMaterial> {
     if (this.file?.privateKey && this.file.publicKey) {
-      return { publicKey: this.file.publicKey, privateKey: Buffer.from(safeStorage.decryptString(Buffer.from(this.file.privateKey, 'base64')), 'base64') }
+      return { publicKey: this.file.publicKey, privateKey: decryptLocalSecret(this.file.privateKey) }
     }
     const pair = generateKeyPairSync('x25519')
     const publicKey = rawPublicKey(pair.publicKey)
     const privateKey = pair.privateKey.export({ format: 'der', type: 'pkcs8' })
-    this.file = { publicKey, privateKey: safeStorage.encryptString(privateKey.toString('base64')).toString('base64'), umks: this.file?.umks ?? {} }
+    this.file = { version: 2, publicKey, privateKey: encryptLocalSecret(privateKey), umks: this.file?.umks ?? {} }
     await this.persist()
     return { publicKey, privateKey }
   }
@@ -199,7 +195,7 @@ export class AccountKeyringService {
   private async saveUmk(userId: string, umkId: string, version: number, value: Buffer): Promise<void> {
     await this.initialize()
     if (!this.file) return
-    this.file.umks[`${userId}:${umkId}:${version}`] = { umkId, version, value: safeStorage.encryptString(value.toString('base64')).toString('base64') }
+    this.file.umks[`${userId}:${umkId}:${version}`] = { umkId, version, value: encryptLocalSecret(value) }
     await this.persist()
   }
 
