@@ -59,3 +59,64 @@ describe('SaasClient invitation code contract', () => {
     })
   })
 })
+
+describe('SaasClient connector oo session contract', () => {
+  function buildClient(request: ReturnType<typeof vi.fn>): SaasClient {
+    const client = Object.create(SaasClient.prototype) as SaasClient
+    Object.defineProperty(client, 'initialize', { value: vi.fn(async () => undefined) })
+    Object.defineProperty(client, 'request', { value: request })
+    return client
+  }
+
+  it('posts to the oo token endpoint and normalizes the returned session', async () => {
+    const request = vi.fn(async () => ({
+      baseUrl: 'http://127.0.0.1:3000/',
+      tenantId: 'u0b6f9a1e22c34d5e8f901a2b3c4d5e6f',
+      token: 'oct_user-token',
+    }))
+    const client = buildClient(request)
+
+    await expect(client.connectorOoSession()).resolves.toEqual({
+      baseUrl: 'http://127.0.0.1:3000',
+      tenantId: 'u0b6f9a1e22c34d5e8f901a2b3c4d5e6f',
+      token: 'oct_user-token',
+    })
+    expect(request).toHaveBeenCalledWith('/app/connectors/oo/token', { method: 'POST' })
+  })
+
+  it('rejects a session without a usable base url or token', async () => {
+    const client = buildClient(vi.fn(async () => ({ baseUrl: '', token: 'oct_x' })))
+    await expect(client.connectorOoSession()).rejects.toThrow('SaaS 返回了无效的 oo 连接会话。')
+
+    const missingToken = buildClient(vi.fn(async () => ({ baseUrl: 'http://127.0.0.1:3000' })))
+    await expect(missingToken.connectorOoSession()).rejects.toThrow('SaaS 返回了无效的 oo 连接会话。')
+  })
+})
+
+describe('SaasClient connector authorization contract', () => {
+  function buildClient(request: ReturnType<typeof vi.fn>): SaasClient {
+    const client = Object.create(SaasClient.prototype) as SaasClient
+    Object.defineProperty(client, 'initialize', { value: vi.fn(async () => undefined) })
+    Object.defineProperty(client, 'request', { value: request })
+    return client
+  }
+
+  it('posts the service and returns the SaaS-provided authorization url', async () => {
+    const request = vi.fn(async () => ({ service: 'gmail', authorizationUrl: 'https://accounts.google.com/o/oauth2/x' }))
+    const client = buildClient(request)
+
+    await expect(client.startConnectorAuthorization('gmail')).resolves.toEqual({
+      authorizationUrl: 'https://accounts.google.com/o/oauth2/x',
+    })
+    expect(request).toHaveBeenCalledWith('/app/connectors/authorizations', {
+      method: 'POST',
+      data: { service: 'gmail' },
+    })
+  })
+
+  it('rejects a response without an authorization url', async () => {
+    const client = buildClient(vi.fn(async () => ({ service: 'gmail' })))
+    await expect(client.startConnectorAuthorization('gmail')).rejects.toThrow('SaaS 返回了无效的授权地址。')
+  })
+})
+

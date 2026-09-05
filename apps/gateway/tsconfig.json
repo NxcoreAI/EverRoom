@@ -18,6 +18,15 @@
     "sourceMap": true,
     "outDir": "dist"
   },
+  "baseUrl": ".",
+  "paths": {
+    // everroom-connectors submodule 类型注入缝（见 submodules/everroom-connectors/gateway-module/host-types.ts）
+    "#gateway/config": ["src/config.ts"],
+    "#gateway/database": ["src/infrastructure/database/client.ts"],
+    "#gateway/schema": ["src/infrastructure/database/schema.ts"],
+    "@nxcore/connectors-module": ["../../submodules/everroom-connectors/gateway-module/index.ts"],
+    "@nxcore/connectors-module/*": ["../../submodules/everroom-connectors/gateway-module/*.ts"]
+  },
   "include": ["src/**/*.ts", "tests/**/*.ts", "drizzle.config.ts", "tsup.config.ts"],
   "exclude": ["src/modules/connector/**"]
 }

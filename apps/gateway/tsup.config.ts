@@ -1,4 +1,8 @@
 import { defineConfig } from "tsup";
+import { resolve } from "node:path";
+
+const submoduleGateway = (p: string) =>
+  resolve(__dirname, "../../submodules/everroom-connectors/gateway-module", p);
 
 export default defineConfig({
   entry: [
@@ -22,6 +26,12 @@ export default defineConfig({
       "globalThis.__dirname = __nxcoreDirname(globalThis.__filename);",
     ].join("\n"),
   },
-  noExternal: [/^(?!(better-sqlite3|@napi-rs\/canvas)$).*/],
+  esbuildOptions(options) {
+    options.alias = {
+      ...(options.alias ?? {}),
+      "@nxcore/connectors-module": submoduleGateway("."),
+    };
+  },
+  noExternal: [/^(?!(better-sqlite3|@napi-rs\/canvas)$).*/, /^@nxcore\/connectors-module/],
   external: ["better-sqlite3", "@napi-rs/canvas"],
 });

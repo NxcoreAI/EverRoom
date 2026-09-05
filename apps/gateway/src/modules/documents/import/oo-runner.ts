@@ -1,5 +1,5 @@
 import type { OpenConnectorCliConfig } from "../../../config.js";
-import { runOo } from "../../agent/open-connector-tools.js";
+import { runOo } from "@nxcore/connectors-module/open-connector-tools.js";
 
 /**
  * 导入链路专用的 OpenConnector 调用层：只做读操作（search / apps / run 只读

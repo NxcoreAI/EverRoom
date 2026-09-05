@@ -6,7 +6,7 @@
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "node scripts/prepare-open-connector.mjs && node scripts/prepare-oo-cli.mjs && node scripts/prepare-lark-cli.mjs && node scripts/prepare-ntn.mjs && node scripts/prepare-genoffice-runtime.mjs && node scripts/dev.mjs",
-    "build": "node scripts/prepare-nango-runtime.mjs && node scripts/prepare-genoffice-runtime.mjs && electron-vite build",
+    "build": "node scripts/prepare-genoffice-runtime.mjs && electron-vite build",
     "prepare:genoffice": "node scripts/prepare-genoffice-runtime.mjs",
     "prepare:lark-cli": "node scripts/prepare-lark-cli.mjs",
     "typecheck": "tsc --noEmit",
@@ -65,6 +65,7 @@
     "remark-gfm": "^4.0.1",
     "tar-stream": "^3.2.1",
     "ws": "^8.18.3",
+    "@nxcore/connectors-module": "workspace:*",
     "ntn": "0.23.1"
   },
   "devDependencies": {
@@ -82,7 +83,7 @@
     "@types/tar-stream": "^3.1.4",
     "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^4.3.4",
-    "electron": "^39.2.7",
+    "electron": "^40.10.6",
     "electron-builder": "^26.0.12",
     "electron-vite": "^4.0.0",
     "react-test-renderer": "18.3.1",
@@ -180,15 +181,6 @@
         "to": "ntn",
         "filter": [
           "**/*"
-        ]
-      },
-      {
-        "from": "build/nango-runtime",
-        "to": "nango",
-        "filter": [
-          "**/*",
-          "!**/.env*",
-          "!**/*.{map,ts,tsx,mts,cts}"
         ]
       },
       {

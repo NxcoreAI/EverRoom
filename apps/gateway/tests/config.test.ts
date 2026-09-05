@@ -126,12 +126,9 @@ describe("loadConfig", () => {
     });
 
     expect(config.cliConnector).toBeNull();
+    // P3：Nango env 全族忽略；link-A 编排恒可用，仅 poll 周期仍读 env
     expect(config.nangoConnector).toMatchObject({
       enabled: true,
-      nangoUrl: "http://127.0.0.1:3003",
-      nangoSecret: "legacy-secret",
-      gmailConfigKey: "legacy-gmail",
-      googleClientId: "legacy-google-id",
       pollingIntervalMs: 120_000,
     });
   });
@@ -389,13 +386,10 @@ describe("loadConfig", () => {
     })).toThrow("NXCORE_ASR_ALIYUN_OSS_REGION");
   });
 
-  it("loads Nango connectors only from complete, safe configuration", () => {
-    expect(loadConfig(["--token", "0123456789abcdef"], {}).nangoConnector?.enabled).toBe(false);
-    const enabled=loadConfig(["--token", "0123456789abcdef"],{NXCORE_NANGO_CONNECTOR_URL:"http://127.0.0.1:3003",NXCORE_NANGO_CONNECTOR_SECRET:"secret"});
-    expect(enabled.nangoConnector).toMatchObject({enabled:true,nangoUrl:"http://127.0.0.1:3003",pollingIntervalMs:300000});
-    expect(enabled.nangoConnector?.databasePath).toContain("connectors.sqlite");
-    expect(()=>loadConfig(["--token", "0123456789abcdef"],{NXCORE_NANGO_CONNECTOR_URL:"https://nango.example.com"})).toThrow("requires both");
-    expect(()=>loadConfig(["--token", "0123456789abcdef"],{NXCORE_NANGO_CONNECTOR_URL:"http://nango.example.com",NXCORE_NANGO_CONNECTOR_SECRET:"secret"})).toThrow("must use HTTPS");
+  it("keeps link-A connector orchestration always enabled after Nango removal (P3)", () => {
+    const config = loadConfig(["--token", "0123456789abcdef"], {});
+    expect(config.nangoConnector).toMatchObject({ enabled: true, pollingIntervalMs: 300000 });
+    expect(config.nangoConnector?.databasePath).toContain("connectors.sqlite");
   });
 
   it("falls back to NXCORE_AI_* for the knowledge arbitration LLM", () => {

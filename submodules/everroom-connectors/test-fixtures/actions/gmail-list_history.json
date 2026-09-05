@@ -1,0 +1,12 @@
+{
+  "action": "gmail.list_history",
+  "input": { "startHistoryId": "100", "pageToken": null, "maxResults": null },
+  "output": {
+    "history": [
+      { "messagesAdded": [{ "message": { "id": "message-2" } }] },
+      { "messagesDeleted": [{ "message": { "id": "message-1" } }] }
+    ],
+    "historyId": "101",
+    "nextPageToken": null
+  }
+}

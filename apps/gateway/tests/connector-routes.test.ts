@@ -1,8 +1,8 @@
 import Fastify from "fastify";
 import type { TypeBoxTypeProvider } from "@fastify/type-provider-typebox";
 import { describe, expect, it, vi } from "vitest";
-import { cliConnectorRoutes } from "../src/modules/connectors/routes.js";
-import type { ConnectorSyncService } from "../src/modules/connectors/service.js";
+import { cliConnectorRoutes } from "@nxcore/connectors-module/routes.js";
+import type { ConnectorSyncService } from "@nxcore/connectors-module/service.js";
 import type { IngestService } from "../src/modules/ingest/service.js";
 
 describe("connector data routes", () => {

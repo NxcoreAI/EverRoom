@@ -9,9 +9,8 @@ import {
   ExternalCallBudgetExceededError,
   ExternalCallBudgetService,
 } from "../src/modules/external-calls/service.js";
-import { createOpenConnectorPiTools } from "../src/modules/agent/open-connector-tools.js";
+import { createOpenConnectorPiTools } from "@nxcore/connectors-module/open-connector-tools.js";
 import { createWebSearchPiTools } from "../src/modules/agent/web-search-tools.js";
-import { createNangoPiTools } from "../src/modules/connectors/nango-agent-tools.js";
 import { AgentResolver } from "../src/modules/agent/resolver.js";
 import { auth } from "../src/server/auth.js";
 
@@ -277,53 +276,7 @@ describe("external call budgets", () => {
     expect(service.listAudits({ subjectScope: "workspace", subjectId: "workspace-a" }).total).toBe(4);
   });
 
-  it("meters only the Nango request that reaches the connector provider", async () => {
-    const { service } = harness();
-    service.upsertPolicy(policy("CONNECTOR", 1));
-    const manager = {
-      repository: {
-        listConnections: () => [],
-        listScopes: () => [],
-        getConnection: () => ({
-          id: "connection-1",
-          status: "active",
-          nangoConnectionId: "nango-1",
-          nangoConfigKey: "gmail",
-        }),
-        getScope: () => ({ id: "scope-1" }),
-      },
-      trigger: () => ({ id: "sync-1", scopeId: "scope-1", mode: "incremental", status: "queued" }),
-    };
-    const proxyGet = vi.fn(async () => ({ messages: [] }));
-    const tools = createNangoPiTools(manager as never, { proxyGet } as never, service);
-    const input = {
-      runId: "run-1", sessionId: "session-1", runtimeSessionRef: null,
-      prompt: "mail", pageLabel: "test", roomId: null,
-    };
-
-    await tools.find((tool) => tool.name === "nango_connections")!.execute(input, {});
-    await tools.find((tool) => tool.name === "nango_sync_trigger")!.execute(input, { scopeId: "scope-1" });
-    const request = tools.find((tool) => tool.name === "nango_request")!;
-    await request.execute(input, {
-      connectionId: "connection-1",
-      url: "https://gmail.googleapis.com/gmail/v1/users/me/messages",
-      query: { q: "CANARY_QUERY" },
-    });
-    const blocked = await request.execute(input, {
-      connectionId: "connection-1",
-      url: "https://gmail.googleapis.com/gmail/v1/users/me/messages",
-    }).catch((error: unknown) => error);
-
-    expect(blocked).toBeInstanceOf(ExternalCallBudgetExceededError);
-    expect(request.classifyFailure?.(blocked, input, {}))
-      .toMatchObject({ category: "external_call_budget_exceeded", recoverable: true });
-    expect(proxyGet).toHaveBeenCalledOnce();
-    expect(service.listUsage({ service: "CONNECTOR" }).items[0]).toMatchObject({ consumedCalls: 1, atLimit: true });
-    const audits = service.listAudits({ service: "CONNECTOR" });
-    expect(audits.items.map((item) => item.tool)).toEqual(["nango_request", "nango_request"]);
-    expect(JSON.stringify(audits)).not.toContain("CANARY_QUERY");
-  });
-
+  
   it("hooks MCP budgets around both direct and proxy client.callTool paths", () => {
     const patch = readFileSync(resolve(import.meta.dirname, "../../../patches/pi-mcp-adapter@2.26.1.patch"), "utf8");
     expect(patch.match(/state\.callTool\(\{ server:/g)).toHaveLength(2);

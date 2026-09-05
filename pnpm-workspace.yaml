@@ -1,6 +1,8 @@
 packages:
   - "apps/*"
   - "packages/*"
+  - "submodules/everroom-connectors/gateway-module"
+  - "submodules/everroom-connectors/connector-contract"
 
 # electron-vite 从 .pnpm store 路径 require.resolve('electron/package.json')，
 # 需要根 node_modules 有 electron 链接（pnpm 11 默认不再把它挂进隐藏 hoist 层）。

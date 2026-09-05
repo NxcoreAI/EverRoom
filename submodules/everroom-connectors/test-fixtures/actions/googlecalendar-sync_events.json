@@ -1,0 +1,9 @@
+{
+  "action": "googlecalendar.sync_events",
+  "input": { "calendarId": "primary", "syncToken": "token-1", "showDeleted": true, "singleEvents": true, "maxResults": 250 },
+  "output": {
+    "events": [{ "id": "evt-1", "status": "confirmed", "summary": "Weekly sync", "start": { "dateTime": "2026-09-01T10:00:00+08:00" }, "end": { "dateTime": "2026-09-01T11:00:00+08:00" } }],
+    "nextPageToken": null,
+    "nextSyncToken": "token-2"
+  }
+}

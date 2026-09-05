@@ -12,14 +12,14 @@ import {
   routeDecisions,
   roomSourceMemberships,
 } from "../src/infrastructure/database/schema.js";
-import { ConnectorRepository } from "../src/modules/connectors/repository.js";
-import { ConnectorManager } from "../src/modules/connectors/manager.js";
+import { ConnectorRepository } from "@nxcore/connectors-module/repository.js";
+import { ConnectorManager } from "@nxcore/connectors-module/manager.js";
 import {
   ConnectorDomainProjection,
   backfillDomainProjection,
   parseConnectorSourceRef,
   rewriteConnectorRefIdentities,
-} from "../src/modules/connectors/domain-projection.js";
+} from "@nxcore/connectors-module/domain-projection.js";
 
 const dirs: string[] = [];
 afterEach(async () => Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true }))));
@@ -199,7 +199,7 @@ describe("manager domain projection wiring", () => {
   it("projects synced mail (including tombstones) into the main database while keeping the memory sink", async () => {
     const { connectors, main } = await setupBoth();
     const repo = new ConnectorRepository(connectors.sqlite);
-    const connection = repo.registerConnection({ provider: "gmail", nangoConfigKey: "g", nangoConnectionId: "nango-c" });
+    const connection = repo.registerConnection({ provider: "gmail", service: "g", connectionName: "nango-c" });
     const scope = repo.ensureScope(connection.id, "me", "Mailbox");
     const executor = {
       async *pull() {
@@ -229,7 +229,7 @@ describe("manager domain projection wiring", () => {
   it("soft-fails when the projection throws: run completes and a sync failure is recorded", async () => {
     const { connectors, main } = await setupBoth();
     const repo = new ConnectorRepository(connectors.sqlite);
-    const connection = repo.registerConnection({ provider: "gmail", nangoConfigKey: "g", nangoConnectionId: "nango-c" });
+    const connection = repo.registerConnection({ provider: "gmail", service: "g", connectionName: "nango-c" });
     const scope = repo.ensureScope(connection.id, "me", "Mailbox");
     const executor = { async *pull() { yield { changes: [mailChange] }; } } as any;
     const manager = new ConnectorManager(repo, executor);
@@ -254,7 +254,7 @@ describe("connector domain backfill", () => {
   it("replays connector_records through the same projection, idempotently", async () => {
     const { connectors, main } = await setupBoth();
     const repo = new ConnectorRepository(connectors.sqlite);
-    const connection = repo.registerConnection({ provider: "gmail", nangoConfigKey: "g", nangoConnectionId: "nango-c" });
+    const connection = repo.registerConnection({ provider: "gmail", service: "g", connectionName: "nango-c" });
     const scope = repo.ensureScope(connection.id, "me", "Mailbox");
     const fence = repo.acquireLease(scope.id, "owner")!;
     const run = repo.createRun(scope.id, "full");

@@ -12,7 +12,7 @@ import { FilesService } from "../src/modules/files/service.js";
 import { storageRelPath } from "../src/modules/files/storage.js";
 import { filesRoutes } from "../src/modules/files/routes.js";
 import { FileClusteringService } from "../src/modules/files/clustering-service.js";
-import { ConnectorSyncService } from "../src/modules/connectors/service.js";
+import { ConnectorSyncService } from "@nxcore/connectors-module/service.js";
 
 const temporaryDirectories: string[] = [];
 

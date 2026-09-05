@@ -1,6 +1,3 @@
-[submodule "apps/gateway/src/modules/connector"]
-	path = apps/gateway/src/modules/connector
-	url = https://github.com/NxcoreAI/nango
 [submodule "apps/desktop/vendor/genoffice"]
 	path = apps/desktop/vendor/genoffice
 	url = https://github.com/NxcoreAI/genoffice.git

@@ -452,6 +452,30 @@ export const connectorTodos = sqliteTable(
   ],
 );
 
+/**
+ * 格式映射体系：provider 原始格式 → canonical schema 的 JSONata 映射（缓存复用）。
+ * 每 (service, record_kind) 一行；agent 首次见到该格式时后台生成，之后同步直通。
+ */
+export const connectorFormatMappings = sqliteTable(
+  "connector_format_mappings",
+  {
+    id: text("id").primaryKey(),
+    service: text("service").notNull(),
+    recordKind: text("record_kind").notNull(),
+    version: integer("version").notNull().default(0),
+    status: text("status").notNull().$type<"generating" | "active" | "failed">(),
+    mappingJson: text("mapping_json", { mode: "json" }).$type<Record<string, unknown>>(),
+    samplesJson: text("samples_json", { mode: "json" }).$type<unknown[]>().notNull().default([]),
+    error: text("error"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    activatedAt: integer("activated_at", { mode: "timestamp_ms" }),
+  },
+  (table) => [
+    uniqueIndex("connector_format_mappings_service_kind_idx").on(table.service, table.recordKind),
+  ],
+);
+
 export const connectorMarkdownArtifacts = sqliteTable(
   "connector_markdown_artifacts",
   {

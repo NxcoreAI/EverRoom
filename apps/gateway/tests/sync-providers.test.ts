@@ -4,18 +4,18 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Fastify from "fastify";
+import { OpenConnectorSyncExecutor } from "@nxcore/connectors-module/open-connector-sync-executor.js";
 import { afterEach, describe, expect, it } from "vitest";
 import { createConnectorDatabase } from "../src/infrastructure/connectors/client.js";
-import { ConnectorRepository } from "../src/modules/connectors/repository.js";
-import { ConnectorManager } from "../src/modules/connectors/manager.js";
-import { NangoExecutor } from "../src/modules/connectors/nango-executor.js";
-import { nangoConnectorRoutes } from "../src/modules/connectors/routes.js";
+import { ConnectorRepository } from "@nxcore/connectors-module/repository.js";
+import { ConnectorManager } from "@nxcore/connectors-module/manager.js";
+import { nangoConnectorRoutes } from "@nxcore/connectors-module/routes.js";
 import {
   SYNC_PROVIDERS,
   assertSyncProvidersValid,
   syncProviderOf,
   syncProviderNames,
-} from "../src/modules/connectors/sync-providers/index.js";
+} from "@nxcore/connectors-module/sync-providers/index.js";
 
 const dirs: string[] = [];
 afterEach(async () => Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true }))));
@@ -37,17 +37,10 @@ describe("sync provider registry", () => {
     expect(syncProviderOf("gmail")?.auth.nango?.oauthScopes).toContain("https://www.googleapis.com/auth/gmail.readonly");
   });
 
-  it("keeps the nango executor free of provider literals (registry dispatch only)", async () => {
-    const source = await readFile(resolve("src/modules/connectors/nango-executor.ts"), "utf8");
-    expect(source).not.toMatch(/"gmail"|"outlook"|"google-docs"|"notion"|"google-calendar"/);
-  });
-
   it("rejects unknown providers at the engine boundary", async () => {
-    const executor = new NangoExecutor("https://nango.local", "secret");
-    await expect(executor.discoverScopes({ provider: "feishu", nangoConnectionId: "c", nangoConfigKey: "k" }))
-      .rejects.toThrow("unknown_connector_provider: feishu");
+    const executor = new OpenConnectorSyncExecutor({ config: { executable: "oo", baseUrl: "http://127.0.0.1:3000", configDirectory: "/tmp", dataDirectory: "/tmp" } });
     await expect(async () => {
-      for await (const _page of executor.pull({ provider: "feishu", nangoConnectionId: "c", nangoConfigKey: "k", providerScopeId: "me", sourceCursor: null }, "full")) break;
+      for await (const _page of executor.pull({ provider: "feishu", connectionName: "c", service: "k", providerScopeId: "me", sourceCursor: null }, "full")) break;
     }).rejects.toThrow("unknown_connector_provider: feishu");
   });
 
@@ -57,7 +50,7 @@ describe("sync provider registry", () => {
     const connectors = createConnectorDatabase(join(dir, "connectors.sqlite"));
     const repo = new ConnectorRepository(connectors.sqlite);
     const manager = new ConnectorManager(repo, null);
-    const connection = await manager.register({ provider: "google-docs", nangoConfigKey: "docs", nangoConnectionId: "c" });
+    const connection = await manager.register({ provider: "google-docs", service: "docs", connectionName: "c" });
     // 旧实现的兜底 ternary 会给出 inbox/Inbox；注册表给出 provider 自己的种子。
     expect(repo.listScopes().filter((scope) => scope.connectionId === connection.id))
       .toEqual([expect.objectContaining({ providerScopeId: "documents", displayName: "Google Docs" })]);
@@ -72,7 +65,7 @@ describe("provider metadata endpoint", () => {
     dirs.push(dir);
     const connectors = createConnectorDatabase(join(dir, "connectors.sqlite"));
     const repo = new ConnectorRepository(connectors.sqlite);
-    repo.registerConnection({ provider: "gmail", nangoConfigKey: "google-mail", nangoConnectionId: "c" });
+    repo.registerConnection({ provider: "gmail", service: "google-mail", connectionName: "c" });
     const manager = new ConnectorManager(repo, null);
     const app = Fastify();
     await app.register(nangoConnectorRoutes(manager, true));

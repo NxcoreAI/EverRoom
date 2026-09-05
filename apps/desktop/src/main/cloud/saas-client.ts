@@ -35,15 +35,25 @@ import everroomFullLogo from '../../renderer/src/assets/everroom-full.png'
 const REFRESH_TOKEN_KEY = 'everroom:saas:refresh-token'
 const DEVICE_KEY_KEY = 'everroom:saas:device-key'
 
-// 读取硬件级设备标识（IOPlatformUUID）。它由主板固件决定，重装应用、清空
-// 应用数据、系统大版本升级都不会变化，只有更换整机才会变。
+// 读取硬件级设备标识：macOS 用 IOPlatformUUID（主板固件决定），Windows 用
+// 注册表 MachineGuid（系统安装时生成）。两者都由系统保证：重装应用、清空
+// 应用数据、系统大版本升级都不会变化，只有更换整机/重装系统才会变。
 let cachedHardwareKey: string | null | undefined
 function hardwareDeviceKey(): string | null {
   if (cachedHardwareKey !== undefined) return cachedHardwareKey
   try {
-    const output = execSync('ioreg -d 2 -l', { encoding: 'utf8', timeout: 5_000 })
-    const match = output.match(/"IOPlatformUUID" = "([0-9A-Fa-f-]+)"/)
-    cachedHardwareKey = match ? `hw-${match[1].toLowerCase()}` : null
+    if (process.platform === 'win32') {
+      const output = execSync(
+        'reg query "HKLM\\SOFTWARE\\Microsoft\\Cryptography" /v MachineGuid',
+        { encoding: 'utf8', timeout: 5_000 },
+      )
+      const match = output.match(/MachineGuid\s+REG_SZ\s+([0-9A-Fa-f-]+)/)
+      cachedHardwareKey = match ? `win-${match[1].toLowerCase()}` : null
+    } else {
+      const output = execSync('ioreg -d 2 -l', { encoding: 'utf8', timeout: 5_000 })
+      const match = output.match(/"IOPlatformUUID" = "([0-9A-Fa-f-]+)"/)
+      cachedHardwareKey = match ? `mac-${match[1].toLowerCase()}` : null
+    }
   } catch {
     cachedHardwareKey = null
   }
@@ -168,6 +178,20 @@ export interface SaasRuntimeConfig {
   planName: string
   updatedAt: string
   config: Record<string, unknown>
+}
+
+/**
+ * SaaS 代发的 oo（OpenConnector 多租户实例）用户会话：登录后经
+ * `POST /app/connectors/oo/token` 换取，之后客户端持 token 直连 oo 数据面
+ * （actions / apps / 连接查询），不再经 SaaS 转发。
+ */
+export interface ConnectorOoSession {
+  /** oo 直连基地址（SaaS CONNECTOR_OO_PUBLIC_BASE_URL 下发）。 */
+  baseUrl: string
+  /** 本用户在 oo 上的租户 id（u + userId 去连字符），信息性。 */
+  tenantId: string
+  /** oo 用户 runtime token（oct_…），租户锁定在该 token 内。 */
+  token: string
 }
 
 export interface KeyringResponse {
@@ -637,6 +661,45 @@ export class SaasClient {
   async getRuntimeConfig(): Promise<SaasRuntimeConfig> {
     await this.initialize()
     return this.request<SaasRuntimeConfig>('/app/runtime-config')
+  }
+
+  /**
+   * 换取 oo 用户会话（SaaS 侧幂等：已登记直接返回，否则代发并登记）。
+   * 未登录时抛错；oo token 与 EverRoom 会话生命周期解耦（持久稳定），无需缓存。
+   */
+  async connectorOoSession(): Promise<ConnectorOoSession> {
+    await this.initialize()
+    const session = await this.request<Partial<ConnectorOoSession>>('/app/connectors/oo/token', { method: 'POST' })
+    if (
+      !session || typeof session !== 'object'
+      || typeof session.baseUrl !== 'string' || !session.baseUrl.trim()
+      || typeof session.token !== 'string' || !session.token.trim()
+    ) {
+      throw new Error('SaaS 返回了无效的 oo 连接会话。')
+    }
+    return {
+      baseUrl: session.baseUrl.trim().replace(/\/+$/, ''),
+      tenantId: typeof session.tenantId === 'string' ? session.tenantId : '',
+      token: session.token,
+    }
+  }
+
+  /**
+   * SaaS 代发起 oo OAuth 授权（oo admin token 由 SaaS 持有，客户端不经手），
+   * 返回 provider 授权页地址；授权回调落在 SaaS 公网回调并回写 oo 用户租户。
+   */
+  async startConnectorAuthorization(service: string): Promise<{ authorizationUrl: string }> {
+    await this.initialize()
+    const result = await this.request<{ authorizationUrl?: unknown }>('/app/connectors/authorizations', {
+      method: 'POST',
+      data: { service },
+    })
+    const authorizationUrl =
+      result && typeof result === 'object' && typeof result.authorizationUrl === 'string'
+        ? result.authorizationUrl.trim()
+        : ''
+    if (!authorizationUrl) throw new Error('SaaS 返回了无效的授权地址。')
+    return { authorizationUrl }
   }
 
   async reportAgentStatus(input: {
@@ -1380,19 +1443,21 @@ export class SaasClient {
   }
 
   private async deviceKey(): Promise<string> {
-    // 设备标识锚定到硬件（IOPlatformUUID）：重装应用、清空应用数据后仍是同一台设备，
-    // 避免同一台机器在服务端裂变成多行设备记录。凭据存储里的旧随机 key 会被
-    // 硬件锚定值取代（下一次登录 UPSERT 到新 key，旧设备行自然沉寂）。
+    // 设备标识锚定到硬件（macOS: IOPlatformUUID / Windows: MachineGuid）：
+    // 重装应用、清空应用数据后仍是同一台设备，避免同一台机器在服务端裂变
+    // 成多行设备记录。凭据存储里的旧随机 key 会被硬件锚定值取代（下一次
+    // 登录 UPSERT 到新 key，旧设备行由服务端清理任务归档）。
     const stable = hardwareDeviceKey()
     if (stable) {
       const existing = await this.credentials.getPlainText(DEVICE_KEY_KEY)
       if (existing !== stable) await this.credentials.setPlainText(DEVICE_KEY_KEY, stable)
       return stable
     }
-    // 兜底：读不到硬件标识（异常系统）时退回随机 key。
+    // 兜底：读不到硬件标识（异常系统）时退回随机 key，前缀跟随当前平台。
+    const prefix = process.platform === 'win32' ? 'win-' : 'mac-'
     const existing = await this.credentials.getPlainText(DEVICE_KEY_KEY)
-    if (existing && existing.startsWith('hw-')) return existing
-    const value = `hw-${randomUUID()}`
+    if (existing && existing.startsWith(prefix)) return existing
+    const value = `${prefix}${randomUUID()}`
     await this.credentials.setPlainText(DEVICE_KEY_KEY, value)
     return value
   }

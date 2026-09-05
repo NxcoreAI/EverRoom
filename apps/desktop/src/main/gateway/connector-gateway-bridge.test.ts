@@ -33,13 +33,13 @@ describe('NangoConnectorGatewayBridge input boundary', () => {
   it('rejects malformed providers before issuing a request', () => {
     expect(() => bridge().registerConnection({
       provider: 'IMAP!' as string,
-      nangoConfigKey: 'mail',
-      nangoConnectionId: 'connection-1',
+      service: 'mail',
+      connectionName: 'connection-1',
     })).toThrow('不支持的连接提供方')
     expect(() => bridge().registerConnection({
       provider: '../evil' as string,
-      nangoConfigKey: 'mail',
-      nangoConnectionId: 'connection-1',
+      service: 'mail',
+      connectionName: 'connection-1',
     })).toThrow('不支持的连接提供方')
   })
 
