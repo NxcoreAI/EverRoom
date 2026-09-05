@@ -101,6 +101,15 @@ function indexTargetFromUrl(url: string): BlockIndexTarget | null {
 }
 
 /**
+ * 块/记忆链接不自动落成文字链接（Link mark）——它们只能通过粘贴或工具栏
+ * 挂成索引 chip。挂在 Link 扩展的 shouldAutoLink 上，同时过滤 autolink
+ * 与"选中文本粘贴转链接"，不影响已有内容里遗留链接的解析与点击。
+ */
+export function isAutoLinkableUrl(url: string): boolean {
+  return !url.startsWith('everroom:')
+}
+
+/**
  * Finds the textblock that should host an index mark for the given top-level
  * block: the last non-code textblock inside it (headings/paragraphs directly,
  * lists/blockquotes via their last item). Returns null for blocks with no

@@ -1,6 +1,7 @@
 import type {
   AgentDocumentExportRunView,
   CanonicalDocumentArtifact,
+  ExternalDocumentCommentView,
   DocumentImportCommentDiffSummary,
   DocumentImportHistoryEntry,
   DocumentImportRunView,
@@ -56,6 +57,7 @@ export class ExternalDocumentsGatewayBridge {
   async importHistory(roomId: string, documentId: string): Promise<{
     entries: DocumentImportHistoryEntry[]
     commentDiff: DocumentImportCommentDiffSummary | null
+    comments: ExternalDocumentCommentView[]
   }> {
     return this.request(
       `/v1/rooms/${encodeURIComponent(roomId)}/documents/${encodeURIComponent(documentId)}/import-history`,
@@ -77,6 +79,25 @@ export class ExternalDocumentsGatewayBridge {
   async applyCandidate(roomImportId: string): Promise<{ documentId: string; version: number }> {
     return this.request(`/v1/document-import/room-imports/${encodeURIComponent(roomImportId)}/apply`, {
       method: 'POST',
+    })
+  }
+
+  async importDiff(roomImportId: string): Promise<{
+    candidateTitle: string
+    currentTitle: string
+    appliedVersion: number | null
+    hunks: Array<{ type: 'ctx' | 'add' | 'del'; text: string }>
+    commentsComparable: boolean
+  }> {
+    return this.request(`/v1/document-import/room-imports/${encodeURIComponent(roomImportId)}/diff`)
+  }
+
+  async searchExportTargets(provider: ExternalDocumentProvider, query: string): Promise<{
+    items: Array<{ remoteId: string; title: string; url: string; updatedAt: string | null; ownerName: string | null }>
+  }> {
+    return this.request('/v1/agent/document-exports/search-targets', {
+      method: 'POST',
+      body: JSON.stringify({ provider, query }),
     })
   }
 

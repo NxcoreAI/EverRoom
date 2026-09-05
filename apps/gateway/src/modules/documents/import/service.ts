@@ -3,6 +3,7 @@ import { and, desc, eq } from "drizzle-orm";
 import type {
   CanonicalDocumentArtifact,
   DocumentImportCommentDiffSummary,
+  ExternalDocumentCommentView,
   DocumentImportHistoryEntry,
   DocumentImportRunView,
   ExternalDocumentPreview,
@@ -73,14 +74,17 @@ function warningsOf(value: unknown): ExternalDocumentWarning[] {
 export class DocumentImportService {
   private readonly actionRunner: ImportActionRunner;
 
+  private readonly assetBridgeUrl: string | null;
+
   constructor(
     private readonly db: GatewayDatabase,
     private readonly documents: DocumentService,
     private readonly connectorConfig: OpenConnectorCliConfig | null,
     private readonly dataDir: string,
-    options?: { actionRunner?: ImportActionRunner },
+    options?: { actionRunner?: ImportActionRunner; assetBridgeUrl?: string | null },
   ) {
     this.actionRunner = options?.actionRunner ?? runImportConnectorAction;
+    this.assetBridgeUrl = options?.assetBridgeUrl?.replace(/\/$/, "") ?? null;
   }
 
   async search(provider: ExternalDocumentProvider, query: string): Promise<ExternalDocumentSearchResponse> {
@@ -144,6 +148,15 @@ export class DocumentImportService {
       throw mapped;
     }
 
+    // 分页边界可能出现重复远端 id：按 id 去重（快照、预览与入库共用同一列表）。
+    artifact = {
+      ...artifact,
+      comments: [...new Map(artifact.comments.map((comment) => [comment.id, comment])).values()],
+    };
+    // 远端图片物化（B-9）：经桌面资产桥 PUT 落 DocumentAssetStore，改写为本机
+    // nxcore-document-asset:// URL（编辑器原生可渲染）；失败保留远端链接并告警。
+    artifact = await this.materializeRemoteAssets(artifact, runId);
+
     const artifactRef = await storeArtifact(this.dataDir, artifact);
     const sourceId = await this.upsertSource(artifact);
     const snapshotId = randomUUID();
@@ -161,7 +174,11 @@ export class DocumentImportService {
         : null,
       warningsJson: artifact.warnings,
     }).run();
+    // 分页边界可能出现重复远端 id；按 remote id 去重（表上有唯一索引兜底）。
+    const seenCommentIds = new Set<string>();
     for (const comment of artifact.comments) {
+      if (seenCommentIds.has(comment.id)) continue;
+      seenCommentIds.add(comment.id);
       this.db.insert(documentImportComments).values({
         id: randomUUID(),
         snapshotId,
@@ -346,6 +363,7 @@ export class DocumentImportService {
   async importHistory(roomId: string, documentId: string): Promise<{
     entries: DocumentImportHistoryEntry[];
     commentDiff: DocumentImportCommentDiffSummary | null;
+    comments: ExternalDocumentCommentView[];
   }> {
     const rows = this.db.select({
       roomImport: documentRoomImports,
@@ -379,7 +397,77 @@ export class DocumentImportService {
     const commentDiff = rows.length >= 2
       ? this.commentDiffSummary(rows.map((row) => row.snapshot.id))
       : null;
-    return { entries, commentDiff };
+    // 最新快照的评论（只读面板数据，B-1）；无记录时返回空。
+    const comments = rows[0]
+      ? this.db.select().from(documentImportComments)
+        .where(eq(documentImportComments.snapshotId, rows[0].snapshot.id))
+        .orderBy(documentImportComments.parentRemoteCommentId, documentImportComments.remoteCommentId)
+        .all()
+        .slice(0, 200)
+        .map((row) => ({
+          id: row.remoteCommentId,
+          parentId: row.parentRemoteCommentId,
+          authorName: row.authorJson?.name ?? null,
+          body: row.body,
+          quotedText: row.quotedText,
+          resolved: row.status === "resolved" ? true : row.status === "open" ? false : null,
+          sourceUrl: row.sourceUrl,
+          locationStatus: row.locationStatus,
+          createdAt: row.commentCreatedAt?.toISOString() ?? null,
+          updatedAt: row.commentUpdatedAt?.toISOString() ?? null,
+        }))
+      : [];
+    return { entries, commentDiff, comments };
+  }
+
+  /** 候选 vs 当前文档的行级 diff（B-2）：服务端算 hunks，前端只渲染。 */
+  async candidateDiff(roomImportId: string): Promise<{
+    candidateTitle: string;
+    currentTitle: string;
+    appliedVersion: number | null;
+    hunks: Array<{ type: "ctx" | "add" | "del"; text: string }>;
+    commentsComparable: boolean;
+  }> {
+    const { diffLines } = await import("diff");
+    const row = this.db.select().from(documentRoomImports).where(eq(documentRoomImports.id, roomImportId)).get();
+    if (!row) throw new ImportServiceError("NOT_FOUND", "导入关联记录不存在", 404);
+    const snapshot = this.db.select().from(documentImportSnapshots).where(eq(documentImportSnapshots.id, row.snapshotId)).get();
+    if (!snapshot) throw new ImportServiceError("SNAPSHOT_MISSING", "导入快照缺失", 409);
+    const artifact = await this.loadArtifact(snapshot.artifactRef);
+    const target = this.documents.get(row.documentId);
+    if (!target) throw new ImportServiceError("NOT_FOUND", "目标文档不存在", 404);
+    const currentSnapshot = this.documents.getVersionSnapshot(row.documentId, target.version);
+    if (!currentSnapshot) throw new ImportServiceError("NOT_FOUND", "当前版本快照缺失", 409);
+    const { agentDocumentMarkdown } = await import("../agent-markdown.js");
+    const currentMarkdown = agentDocumentMarkdown.serialize(currentSnapshot.contentJson);
+    const parts = diffLines(currentMarkdown, artifact.bodyMarkdown);
+    // 折叠未变更区域：仅保留变更行 ±3 行上下文。
+    const KEEP_CTX = 3;
+    const keep = new Array<boolean>(parts.length).fill(false);
+    parts.forEach((part, index) => {
+      if (part.added || part.removed) {
+        for (let near = index - KEEP_CTX; near <= index + KEEP_CTX; near += 1) {
+          if (near >= 0 && near < parts.length) keep[near] = true;
+        }
+      }
+    });
+    const hunks: Array<{ type: "ctx" | "add" | "del"; text: string }> = [];
+    for (let index = 0; index < parts.length; index += 1) {
+      const part = parts[index];
+      if (!part || !keep[index]) continue;
+      const type = part.added ? "add" : part.removed ? "del" : "ctx";
+      const last = hunks.at(-1);
+      const text = part.value.replace(/\n$/, "");
+      if (last && last.type === type) last.text += `\n${text}`;
+      else hunks.push({ type, text });
+    }
+    return {
+      candidateTitle: `${artifact.title}（外部更新候选）`,
+      currentTitle: target.title,
+      appliedVersion: row.importedVersion,
+      hunks,
+      commentsComparable: snapshot.commentsStatus === "complete",
+    };
   }
 
   getRun(runId: string): DocumentImportRunView {
@@ -446,6 +534,60 @@ export class DocumentImportService {
     }
     const removed = older.filter((row) => !newerIds.has(row.remoteCommentId)).length;
     return { comparable: true, added, resolved, modified, removed, reason: null };
+  }
+
+  private async materializeRemoteAssets(
+    artifact: CanonicalDocumentArtifact,
+    runId: string,
+  ): Promise<CanonicalDocumentArtifact> {
+    if (!this.assetBridgeUrl) return artifact;
+    const bridge = this.assetBridgeUrl;
+    const syntheticDocId = `import-${runId.slice(0, 12)}`;
+    const warnings: ExternalDocumentWarning[] = [...artifact.warnings];
+    let materialized = 0;
+    let failed = 0;
+    const bodyMarkdown = await replaceAsync(artifact.bodyMarkdown, /!\[([^\]]*)\]\(\s*(https?:\/\/[^)\s]+)[^)]*\)/g,
+      async (full: string, alt: string, url: string) => {
+        if (materialized + failed >= 10) return full;
+        try {
+          const response = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+          if (!response.ok) throw new Error(`HTTP ${String(response.status)}`);
+          const mime = ((response.headers.get("content-type") ?? "").split(";")[0] ?? "").trim();
+          if (!["image/png", "image/jpeg", "image/gif", "image/webp"].includes(mime)) {
+            throw new Error(`不支持的图片类型 ${mime}`);
+          }
+          const bytes = new Uint8Array(await response.arrayBuffer());
+          if (bytes.byteLength > 5 * 1024 * 1024) throw new Error("图片超过 5MB");
+          const put = await fetch(`${bridge}?doc=${encodeURIComponent(syntheticDocId)}`, {
+            method: "PUT",
+            headers: { "Content-Type": mime },
+            body: bytes,
+            signal: AbortSignal.timeout(15_000),
+          });
+          if (!put.ok) throw new Error(`资产桥 PUT ${String(put.status)}`);
+          const stored = await put.json() as { src?: unknown };
+          const src = typeof stored.src === "string" ? stored.src : null;
+          if (!src) throw new Error("资产桥未返回 src");
+          materialized += 1;
+          return `![${alt}](${src})`;
+        } catch {
+          failed += 1;
+          return full;
+        }
+      });
+    if (materialized > 0) {
+      warnings.push({
+        code: "remote_assets_materialized",
+        message: `${String(materialized)} 张远端图片已下载为本机资产`,
+      });
+    }
+    if (failed > 0) {
+      warnings.push({
+        code: "asset_materialize_failed",
+        message: `${String(failed)} 张远端图片下载失败，保留原链接`,
+      });
+    }
+    return { ...artifact, bodyMarkdown, warnings };
   }
 
   private async loadArtifact(ref: string): Promise<CanonicalDocumentArtifact> {
@@ -543,4 +685,21 @@ type DocumentImportRunStatusLike = DocumentImportRunView["status"];
 
 function artifactCommentsEmpty(): CanonicalDocumentArtifact["comments"] {
   return [];
+}
+
+
+/** 顺序执行的异步正则替换（物化远端图片用）。 */
+async function replaceAsync(
+  source: string,
+  pattern: RegExp,
+  replacer: (match: string, ...groups: string[]) => Promise<string>,
+): Promise<string> {
+  const tasks: Array<Promise<string>> = [];
+  source.replace(pattern, (match: string, ...groups: string[]) => {
+    tasks.push(replacer(match, ...groups.slice(0, -2)));
+    return match;
+  });
+  const results = await Promise.all(tasks);
+  let cursor = 0;
+  return source.replace(pattern, () => results[cursor++] ?? "");
 }

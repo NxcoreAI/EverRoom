@@ -298,26 +298,6 @@ export class ContextRoomService {
     };
   }
 
-  /** Room 内记忆项（room.data.memoryItems），供 doc-writer memoryIndex 注入使用。 */
-  listMemoryItems(roomId: string): Array<{ id: string; content: string; type: string }> {
-    const resolved = this.resolveRoomId(roomId);
-    if (!resolved) return [];
-    const row = this.db.select().from(contextRooms)
-      .where(eq(contextRooms.id, resolved)).get();
-    if (!row || row.deletedAt !== null) return [];
-    const items = Array.isArray(row.data.memoryItems) ? row.data.memoryItems : [];
-    return items.flatMap((item) => {
-      if (typeof item !== "object" || item === null || Array.isArray(item)) return [];
-      const record = item as Record<string, unknown>;
-      if (typeof record.id !== "string" || typeof record.content !== "string") return [];
-      return [{
-        id: record.id,
-        content: record.content,
-        type: typeof record.type === "string" ? record.type : "",
-      }];
-    });
-  }
-
   listReferences(): AgentRoomReference[] {
     return this.db.select().from(contextRooms)
       .where(and(isNull(contextRooms.deletedAt), eq(contextRooms.lifecycle, "active")))

@@ -1,9 +1,20 @@
-import { and, desc, eq, inArray, isNotNull, lte } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, lte, ne } from "drizzle-orm";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
-import { agentRuns, gatewayMetadata, roomMemorySuppressions } from "../../infrastructure/database/schema.js";
+import {
+  agentRuns,
+  gatewayMetadata,
+  roomDocumentLinks,
+  roomMemorySuppressions,
+  roomSourceMemberships,
+} from "../../infrastructure/database/schema.js";
 import type { MemoryAtomicDto, MemoryService } from "./service.js";
 
-const CURSOR_KEY = "memory.room-derive.v1:cursor";
+/**
+ * 游标版本 v2：v1 只做对话链推导，document/source 链上线后全量重扫一次
+ * （已绑行/压制行跳过是幂等的，重扫只为补历史 unbound 项）；此后新增推导链
+ * 仍按此模式升版本回填。
+ */
+const CURSOR_KEY = "memory.room-derive.v2:cursor";
 
 /** MemoryCore /v3/atomic/query 的 limit 上限。 */
 const PAGE_SIZE_MAX = 100;
@@ -30,13 +41,18 @@ interface DeriveCursor {
 
 /**
  * 新 L1 记忆的 Room 自动绑定 worker：定时增量扫描 MemoryCore（listAtomic 的
- * timeStart=游标），对无归属且未压制的记忆做 provenance→run→roomId 推导，写
- * confidence=derived 归属行（快照随行落库，注入/工具取数与手动绑定同源）。
+ * timeStart=游标），对无归属且未压制的记忆按来源推导 Room，写 confidence=derived
+ * 归属行（快照随行落库，注入/工具取数与手动绑定同源）。
  *
- * 推导链：provenance.session.sessionId（agent 对话捕获时传的就是 gateway
- * agent_sessions.id）→ 该会话中 createdAt ≤ 记忆创建时间、最新一条带 roomId 的
- * run → resolveRoom 落合并链终点。合成 session id（wiki:/onboarding:）与无带
- * Room 的 run 都查不到映射行，属稳定终态，直接跳过不重试。
+ * 推导链（按 provenance 来源分派，任何一步落空都是稳定终态，跳过不重试）：
+ * - 对话：session = gateway agent_sessions.id（agent 捕获时传的就是它）→ 该会话中
+ *   createdAt ≤ 记忆创建时间、最新一条带 roomId 的 run → resolveRoom 落合并链终点。
+ * - Room 内文档（划词改写捕获）：session 为合成 id `document:{gateway文档id}` →
+ *   room_doc_links 挂到该文档的 Room。
+ * - Room 资料（wiki 同步捕获 `wiki:{sourceId}:…` / 统一 ingest 导入的
+ *   document 来源记忆，后者经 callerRef=sourceId）→ room_source_memberships
+ *   挂到该知识源的 Room（excluded 证据不算）。
+ * - onboarding: 等其余合成会话与无来源：跳过。
  *
  * 游标正确性（MemoryCore 固定 ORDER BY updated_time DESC 分页）：逐页向下扫保证
  * 「已检查集是结果集的连续前缀」——扫尽时游标上收到 max(examined)（避免每轮全量
@@ -44,8 +60,7 @@ interface DeriveCursor {
  * 停在老位置时会被跳过项占满预算死循环）时，游标落在**首个未检查项**的
  * updated_time（DESC 序它比已检查项都旧，time_start 含端点保证下轮可见）实现
  * 同位重试/续扫。新提炼/被编辑的记忆 updated_time 最新、永远排在队首，必然被
- * 看到；同刻并列由「已有归属/压制行跳过」幂等吸收。将来增加 document 来源推导
- * 时需换游标 key 版本或清游标做一次性回填（旧 document 派生记忆的游标已越过）。
+ * 看到；同刻并列由「已有归属/压制行跳过」幂等吸收。
  */
 export class RoomMemoryDeriveWorker {
   private timer: NodeJS.Timeout | null = null;
@@ -175,9 +190,30 @@ export class RoomMemoryDeriveWorker {
   private async deriveOne(item: MemoryAtomicDto): Promise<boolean> {
     const provenance = await this.memory.atomicProvenanceOrNull(item.id);
     if (!provenance) return false; // 记忆已删（404）→ 已处理。
-    const sessionId = provenance.session?.sessionId;
-    if (!sessionId) return false; // document 来源 / 无会话：本期终态跳过（见类注释）。
 
+    const sessionId = provenance.session?.sessionId;
+    if (typeof sessionId === "string" && sessionId.startsWith("document:")) {
+      // 划词改写捕获的合成会话：documentId 即 gateway 文档 id，经 room_doc_links 归属。
+      return this.deriveFromDocument(item, sessionId, sessionId.slice("document:".length));
+    }
+    if (typeof sessionId === "string" && sessionId.startsWith("wiki:")) {
+      // Room 资料同步捕获的合成会话：wiki:{sourceId}:{documentId}。
+      const sourceId = sessionId.split(":")[1] ?? "";
+      return sourceId ? this.deriveFromSource(item, sessionId, sourceId) : false;
+    }
+    if (sessionId) {
+      return this.deriveFromConversation(item, sessionId);
+    }
+    // 无会话的 document 来源记忆（统一 ingest 导入）：callerRef = 知识 sourceId。
+    const callerRef = provenance.document?.callerRef;
+    if (callerRef) {
+      return this.deriveFromSource(item, `source:${callerRef}`, callerRef);
+    }
+    return false;
+  }
+
+  /** 对话链：gateway 会话 → 记忆创建前最新一条带 roomId 的 run。 */
+  private deriveFromConversation(item: MemoryAtomicDto, sessionId: string): boolean {
     const memoryCreatedAt = Date.parse(item.createdAt);
     if (!Number.isFinite(memoryCreatedAt)) return false;
     const run = this.db.select({ roomId: agentRuns.roomId })
@@ -197,7 +233,51 @@ export class RoomMemoryDeriveWorker {
 
     this.memory.insertDerivedAttribution(item, sessionId, resolved);
     this.logger.info(
-      { memoryId: item.id, roomId: resolved, sessionId },
+      { memoryId: item.id, roomId: resolved, sessionId, sourceKind: "conversation" },
+      "memory room derive attributed",
+    );
+    return true;
+  }
+
+  /** Room 内文档链：gateway 文档 id → room_doc_links（多 Room 取最新挂载）。 */
+  private deriveFromDocument(item: MemoryAtomicDto, sourceId: string, documentId: string): boolean {
+    const linked = this.db.select({ roomId: roomDocumentLinks.roomId })
+      .from(roomDocumentLinks)
+      .where(eq(roomDocumentLinks.documentId, documentId))
+      .orderBy(desc(roomDocumentLinks.linkedAt))
+      .limit(1)
+      .get();
+    if (!linked?.roomId) return false;
+
+    const resolved = this.memory.resolveRoom(linked.roomId);
+    if (!resolved) return false;
+
+    this.memory.insertDerivedAttribution(item, sourceId, resolved, "document");
+    this.logger.info(
+      { memoryId: item.id, roomId: resolved, documentId, sourceKind: "document" },
+      "memory room derive attributed",
+    );
+    return true;
+  }
+
+  /** Room 资料链：知识 sourceId → room_source_memberships（excluded 证据不算）。 */
+  private deriveFromSource(item: MemoryAtomicDto, sourceId: string, knowledgeSourceId: string): boolean {
+    const membership = this.db.select({ roomId: roomSourceMemberships.roomId })
+      .from(roomSourceMemberships)
+      .where(and(
+        eq(roomSourceMemberships.sourceId, knowledgeSourceId),
+        ne(roomSourceMemberships.qualityLevel, "excluded"),
+      ))
+      .limit(1)
+      .get();
+    if (!membership?.roomId) return false;
+
+    const resolved = this.memory.resolveRoom(membership.roomId);
+    if (!resolved) return false;
+
+    this.memory.insertDerivedAttribution(item, sourceId, resolved, "source");
+    this.logger.info(
+      { memoryId: item.id, roomId: resolved, knowledgeSourceId, sourceKind: "source" },
       "memory room derive attributed",
     );
     return true;

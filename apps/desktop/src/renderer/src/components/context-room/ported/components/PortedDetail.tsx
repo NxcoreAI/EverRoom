@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocale } from '../../../../i18n/LocaleContext'
 
 import { consumeDocumentFocusRequest } from '../documentFocus'
+import { logDocumentFocusDiagnostic } from './detail-editor/documentBlockNavigation'
 import { onRoomMemoryNavigation } from './detail-editor/blockIndexNavigation'
 import { isMarkdownFileName } from '../../knowledgeMarkdownImport'
 import { officePreviewKindForFileName } from '../../../../../../shared/sources'
@@ -156,6 +157,15 @@ export function PortedDetail({
       documentFocusRequestId,
     )
     handledDocumentFocusKey.current = decision.handledKey
+    logDocumentFocusDiagnostic({
+      at: 'detail-decision',
+      roomId: room.id,
+      focusedDocumentId,
+      requestId: documentFocusRequestId,
+      documentAvailable: Boolean(resource),
+      shouldOpen: decision.shouldOpen,
+      selectedResourceId,
+    })
     if (decision.shouldOpen && resource && resource.id !== selectedResourceId) openResource(resource)
   }, [documentFocusRequestId, focusedDocumentId, library.resources, openResource, room.id, selectedResourceId])
 

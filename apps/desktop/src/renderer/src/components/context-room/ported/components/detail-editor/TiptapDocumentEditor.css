@@ -1616,3 +1616,32 @@ textarea.context-room-tiptap-rewrite-text:disabled {
     font-size: 26px;
   }
 }
+
+/* 划词评论输入框（气泡工具栏内联形态，复用 link 表单样式基因） */
+.context-room-tiptap-bubble-comment {
+  display: flex;
+  gap: 6px;
+  padding: 6px 4px 2px;
+  align-items: center;
+}
+.context-room-tiptap-bubble-comment input {
+  flex: 1;
+  min-width: 180px;
+  font-size: 12px;
+  padding: 5px 9px;
+  border: 1px solid var(--border, #d8dee4);
+  border-radius: 7px;
+  background: var(--bg, #fff);
+  color: inherit;
+  font-family: inherit;
+}
+.context-room-tiptap-bubble-comment button {
+  border: none;
+  border-radius: 7px;
+  background: var(--accent, #3d6ff6);
+  color: #fff;
+  font-size: 12px;
+  padding: 5px 11px;
+  cursor: pointer;
+}
+.context-room-tiptap-bubble-comment button:disabled { opacity: 0.5; cursor: default; }

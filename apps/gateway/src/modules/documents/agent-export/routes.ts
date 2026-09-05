@@ -100,6 +100,24 @@ export function agentDocumentExportRoutes(service: AgentDocumentExportService): 
       }
     });
 
+    app.post("/v1/agent/document-exports/search-targets", {
+      schema: {
+        tags: ["agent-document-exports"],
+        body: Type.Object({
+          provider: providerSchema,
+          query: Type.String({ minLength: 1, maxLength: 120 }),
+        }, { additionalProperties: false }),
+      },
+    }, async (request, reply) => {
+      try {
+        return { items: await service.searchUpdateTargets(request.body.provider, request.body.query) };
+      } catch (error) {
+        const mapped = errorPayload(error);
+        if (mapped) return reply.code(mapped.status).send(mapped.body);
+        throw error;
+      }
+    });
+
     app.post("/v1/agent/document-exports/:id/cancel", {
       schema: { tags: ["agent-document-exports"] },
     }, async (request, reply) => {

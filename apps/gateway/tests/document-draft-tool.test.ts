@@ -185,6 +185,49 @@ describe("createSubagentPiTools document_draft", () => {
     expect(payload).not.toHaveProperty("baseVersion");
   });
 
+  it("Room 透传：dispatch input 携带 run.roomId，子 run 文档工具据此绑定", async () => {
+    const orchestrator = orchestratorReturning({});
+    const tools = createSubagentPiTools(registryWith(["doc-writer"]), orchestrator, {});
+    const tool = tools.find((candidate) => candidate.name === "document_draft")!;
+    await tool.execute(baseRun as never, {
+      task: "draft-create",
+      instruction: "起草文档",
+    } as never, undefined);
+    const input = (orchestrator.dispatch.mock.calls[0]![0] as { input: Record<string, unknown> }).input;
+    expect(input.roomId).toBe("room-1");
+  });
+
+  it("Room 透传：run 无任何房间信息时 input 不含 roomId（历史行为不变）", async () => {
+    const orchestrator = orchestratorReturning({});
+    const tools = createSubagentPiTools(registryWith(["doc-writer"]), orchestrator, {});
+    const tool = tools.find((candidate) => candidate.name === "document_draft")!;
+    await tool.execute({ ...baseRun, roomId: undefined } as never, {
+      task: "draft-create",
+      instruction: "起草文档",
+    } as never, undefined);
+    const input = (orchestrator.dispatch.mock.calls[0]![0] as { input: Record<string, unknown> }).input;
+    expect(input).not.toHaveProperty("roomId");
+  });
+
+  it("Room 透传：显式 roomId 不在 availableRooms 时拒绝；命中则放行", async () => {
+    const orchestrator = orchestratorReturning({});
+    const tools = createSubagentPiTools(registryWith(["doc-writer"]), orchestrator, {});
+    const tool = tools.find((candidate) => candidate.name === "document_draft")!;
+    const availableRooms = [{ id: "room-1", title: "Room 1" }, { id: "room-2", title: "Room 2" }];
+    await expect(tool.execute(
+      { ...baseRun, roomId: undefined, availableRooms } as never,
+      { task: "draft-create", instruction: "起草文档", roomId: "room-ghost" } as never,
+      undefined,
+    )).rejects.toThrow("ROOM_SELECTION_REQUIRED");
+    await tool.execute(
+      { ...baseRun, roomId: undefined, availableRooms } as never,
+      { task: "draft-create", instruction: "起草文档", roomId: "room-2" } as never,
+      undefined,
+    );
+    const input = (orchestrator.dispatch.mock.calls[0]![0] as { input: Record<string, unknown> }).input;
+    expect(input.roomId).toBe("room-2");
+  });
+
   it("draft-create：contentMarkdown 单串返回分块计数（字节精确性由 resolver 测试覆盖）", async () => {
     const body = "## 第一节\n\n内容甲。\n\n## 第二节\n\n内容乙。";
     const orchestrator = orchestratorReturning({

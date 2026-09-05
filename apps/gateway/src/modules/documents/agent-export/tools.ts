@@ -65,8 +65,19 @@ export function createDocumentExportPiTools(
       if (mode === "export_file" && provider !== "feishu") {
         throw new Error("export_file 目前仅支持飞书（lark-cli markdown 域）");
       }
-      if (mode === "update" && !params.target) {
-        throw new Error("update 模式必须提供用户明确指定的目标文档（target.remoteUrl 或 target.remoteDocumentId）");
+      const missing: string[] = [];
+      if (mode === "update" && !params.target) missing.push("target");
+      if (missing.length > 0) {
+        // 参数缺失不硬报错：返回 needs_input，渲染层自动弹出导出面板补齐（§6.4）。
+        const summary = {
+          status: "needs_input",
+          missing,
+          roomId: String(params.roomId),
+          documentId: String(params.documentId),
+          provider,
+          mode: mode as CreateExportInput["mode"],
+        };
+        return { content: JSON.stringify(summary), details: summary };
       }
       const input: CreateExportInput = {
         roomId: String(params.roomId),

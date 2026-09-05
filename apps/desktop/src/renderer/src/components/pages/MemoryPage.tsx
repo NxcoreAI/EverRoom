@@ -28,7 +28,7 @@ const TABS: Array<{ id: MemoryTabId; label: string; level: string }> = [
   { id: 'scenario', label: 'memory:memory.scenarios', level: 'L2' },
   { id: 'core', label: 'memory:memory.profile', level: 'L3' },
   // 写作风格 = 从用户文档自动沉淀的表达偏好（系统段只读）+ 用户指令段可编辑
-  { id: 'writing-style', label: 'memory:memory.writingStyle', level: 'L3' },
+  { id: 'writing-style', label: 'memory:memory.writingStyle', level: '' },
   // 导入记录 = 统一引擎台账（全源进入记录 + 过滤闸状态，误杀恢复入口）
   { id: 'ledger', label: 'memory:memory.ledger', level: '' },
   // 过滤规则 = 过滤器判定偏好（用户偏好可编辑 + 系统洞察只读）

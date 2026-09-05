@@ -290,6 +290,37 @@ export function memoryRoutes(service: MemoryService): FastifyPluginAsyncTypebox 
       }),
     );
 
+    // Room 归属记忆列表（桌面记忆卡喂料）：直读 room_memory_attributions 快照列，
+    // 不依赖 MemoryCore 存活；与注入/回溯 worker 共用同一数据源。
+    app.get(
+      "/v1/memory/rooms/:roomId/memories",
+      {
+        schema: {
+          tags: ["memory"],
+          params: Type.Object({ roomId: Type.String({ minLength: 1, maxLength: 200 }) }),
+          response: {
+            200: Type.Object({
+              items: Type.Array(Type.Object({
+                memoryId: Type.String(),
+                type: Type.String(),
+                content: Type.String(),
+              })),
+            }),
+          },
+        },
+      },
+      async (request) => {
+        const items = await service.listRoomAttributedMemories(request.params.roomId);
+        return {
+          items: items.map((item) => ({
+            memoryId: item.id,
+            type: item.type,
+            content: item.content,
+          })),
+        };
+      },
+    );
+
     app.delete(
       "/v1/memory/atomic",
       {

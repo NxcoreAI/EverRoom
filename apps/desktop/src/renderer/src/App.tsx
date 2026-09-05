@@ -41,7 +41,7 @@ import {
   clearRoomOverviewCitation,
   type RoomOverviewCitation,
 } from '@/components/context-room/roomOverviewCitation'
-import { onDocumentBlockNavigation } from '@/components/context-room/ported/components/detail-editor/documentBlockNavigation'
+import { logDocumentFocusDiagnostic, onDocumentBlockNavigation } from '@/components/context-room/ported/components/detail-editor/documentBlockNavigation'
 import { onDocumentOperationNavigation } from '@/components/context-room/operations/documentOperationNavigation'
 import { useLocale } from '@/i18n/LocaleContext'
 import { workspaceTabSwipeTarget } from '@/workspaceTabSwipe'
@@ -473,6 +473,7 @@ export function App() {
   }) => {
     if (manualMemoryOnboardingRef.current) return
     const room = availableContextRooms.find((item) => item.id === target.roomId)
+    logDocumentFocusDiagnostic({ at: 'app-request', ...target, hasRoomTab: Boolean(room) })
     if (room) openContextRoomTab(room)
     else {
       setActivePage('rooms')

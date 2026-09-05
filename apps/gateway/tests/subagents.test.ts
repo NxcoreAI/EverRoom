@@ -1,7 +1,8 @@
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { UnconfiguredAgentRuntime } from "@nxcore/agent-runtime";
+import { UnconfiguredAgentRuntime, type AgentRuntime, type StartRuntimeRunInput } from "@nxcore/agent-runtime";
+import { FakeAgentRuntime } from "@nxcore/agent-runtime/testing";
 import { afterEach, describe, expect, it } from "vitest";
 import type { GatewayConfig, SubagentFrameworkConfig } from "../src/config.js";
 import { createDatabase } from "../src/infrastructure/database/client.js";
@@ -205,6 +206,58 @@ describe("filesystem subagent framework", () => {
     });
     controller.abort();
     await expect(cancelledPromise).resolves.toMatchObject({ status: "cancelled" });
+    await orchestrator.dispose();
+    fixture.database.sqlite.close();
+  }, 15_000);
+
+  it("透传 dispatch input 的 roomId 到 runtime.start（子 run 文档工具绑定）", async () => {
+    const fixture = await createFixture();
+    await fixture.registry.initialize();
+
+    class RecordingFakeRuntime extends FakeAgentRuntime {
+      readonly startedInputs: StartRuntimeRunInput[] = [];
+      override async start(input: StartRuntimeRunInput): Promise<Awaited<ReturnType<AgentRuntime["start"]>>> {
+        this.startedInputs.push(input);
+        return super.start(input);
+      }
+    }
+    class RecordingRuntimeManager extends SubagentRuntimeManager {
+      private readonly recording = new RecordingFakeRuntime();
+      override acquire(_revision: Parameters<SubagentRuntimeManager["acquire"]>[0]): AgentRuntime {
+        return this.recording;
+      }
+    }
+    const runtimeManager = new RecordingRuntimeManager({ agentRuntime: "fake" } as GatewayConfig, fixture.config);
+    const orchestrator = new SubagentOrchestrator(
+      fixture.database.db,
+      fixture.config,
+      fixture.registry,
+      runtimeManager,
+      logger,
+    );
+    orchestrator.initialize();
+
+    const recording = (runtimeManager as RecordingRuntimeManager)["recording"];
+    await orchestrator.dispatch({
+      agentId: "researcher",
+      task: "Research",
+      input: { topic: "EverRoom", roomId: "room-9" },
+      idempotencyKey: "room-passthrough",
+      source: "primary_agent",
+      parentRunId: "run-room",
+    });
+    expect(recording.startedInputs.at(-1)?.roomId).toBe("room-9");
+
+    await orchestrator.dispatch({
+      agentId: "researcher",
+      task: "Research",
+      input: { topic: "EverRoom" },
+      idempotencyKey: "room-absent",
+      source: "primary_agent",
+      parentRunId: "run-noroom",
+    });
+    expect(recording.startedInputs.at(-1)?.roomId).toBeNull();
+
     await orchestrator.dispose();
     fixture.database.sqlite.close();
   }, 15_000);

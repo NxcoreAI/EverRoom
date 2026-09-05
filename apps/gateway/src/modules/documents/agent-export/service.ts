@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { diffLines } from "diff";
 import { desc, eq } from "drizzle-orm";
 import type {
   AgentAuthChallengeView,
@@ -24,6 +25,13 @@ import {
   larkCliVersion,
   runLarkCli,
 } from "./lark-cli.js";
+import {
+  NtnCliError,
+  type NtnCliConfig,
+  ntnCliVersion,
+  ntnWhoami,
+  runNtnCli,
+} from "./ntn-cli.js";
 
 export const EXPORT_RENDERER_VERSION = "tiptap-markdown/agent-v1";
 export const EXPORT_PAYLOAD_LIMIT_BYTES = 512 * 1024;
@@ -100,6 +108,76 @@ function feishuDocTokenOf(target: AgentDocumentExportTarget): string {
   return match?.[1] ?? raw;
 }
 
+/** str_replace 最小写入规划（B-3）：行级 diff → 唯一定位的替换命令；全有或全无。 */
+export function planStrReplaceCommands(
+  remoteMarkdown: string,
+  targetMarkdown: string,
+): { commands: Array<{ pattern: string; replacement: string }>; applicable: boolean } {
+  const MAX_HUNKS = 12;
+  return planViaDiffLines(remoteMarkdown, targetMarkdown, MAX_HUNKS);
+}
+
+function planViaDiffLines(
+  remoteMarkdown: string,
+  targetMarkdown: string,
+  maxHunks: number,
+): { commands: Array<{ pattern: string; replacement: string }>; applicable: boolean } {
+  const parts = diffLines(remoteMarkdown, targetMarkdown);
+  const commands: Array<{ pattern: string; replacement: string }> = [];
+  let pendingOld: string[] = [];
+  let pendingNew: string[] = [];
+  const flush = (): void => {
+    if (pendingOld.length === 0 && pendingNew.length === 0) return;
+    // 成对替换（old→new）与纯删除（old→空）可用 str_replace；纯插入不可定位 → 放弃。
+    if (pendingOld.length === 0) {
+      commands.length = 0;
+      throw new Error("unpositioned-insert");
+    }
+    commands.push({
+      pattern: pendingOld.join("\n"),
+      replacement: pendingNew.join("\n"),
+    });
+    pendingOld = [];
+    pendingNew = [];
+  };
+  try {
+    for (const part of parts) {
+      const segment = part.value.replace(/\n$/, "");
+      const lines = segment ? segment.split("\n") : [];
+      if (part.added) pendingNew.push(...lines);
+      else if (part.removed) pendingOld.push(...lines);
+      else {
+        flush();
+      }
+    }
+    flush();
+  } catch {
+    return { commands: [], applicable: false };
+  }
+  if (commands.length === 0 || commands.length > maxHunks) {
+    return { commands: [], applicable: false };
+  }
+  for (const command of commands) {
+    if (command.pattern.trim().length < 2) {
+      return { commands: [], applicable: false };
+    }
+    const first = remoteMarkdown.indexOf(command.pattern);
+    if (first < 0 || remoteMarkdown.indexOf(command.pattern, first + 1) >= 0) {
+      return { commands: [], applicable: false };
+    }
+  }
+  return { commands, applicable: true };
+}
+
+function extractMarkdownBody(data: unknown): string | null {
+  const root = objectValue(data);
+  const nested = objectValue(root.document);
+  const direct = [root, nested, objectValue(root.data)]
+    .map((source) => (typeof source.content === "string" && source.content.trim() ? source.content : null))
+    .find(Boolean);
+  return direct ?? null;
+}
+
 function notionPageIdOf(target: AgentDocumentExportTarget): string {
   const raw = target.remoteDocumentId?.trim() || target.remoteUrl?.trim() || "";
   if (!raw) {
@@ -116,6 +194,8 @@ function notionPageIdOf(target: AgentDocumentExportTarget): string {
 export class AgentDocumentExportService {
   private readonly connectorAction: ImportActionRunner;
   private readonly logger: { info: (obj: object, msg: string) => void; warn: (obj: object, msg: string) => void } | null;
+  private readonly assetBridgeUrl: string | null;
+  private readonly notionCli: NtnCliConfig | null;
 
   constructor(
     private readonly db: GatewayDatabase,
@@ -126,10 +206,14 @@ export class AgentDocumentExportService {
     options?: {
       actionRunner?: ImportActionRunner;
       logger?: { info: (obj: object, msg: string) => void; warn: (obj: object, msg: string) => void };
+      assetBridgeUrl?: string | null;
+      notionCli?: NtnCliConfig | null;
     },
   ) {
     this.connectorAction = options?.actionRunner ?? runImportConnectorAction;
     this.logger = options?.logger ?? null;
+    this.assetBridgeUrl = options?.assetBridgeUrl ?? null;
+    this.notionCli = options?.notionCli ?? null;
   }
 
   /** 创建导出任务并执行前置检查；create 模式在授权就绪时直接完成写入。 */
@@ -206,7 +290,10 @@ export class AgentDocumentExportService {
     if (!snapshot) {
       throw new ExportServiceError("VERSION_NOT_FOUND", `版本 ${String(version)} 不存在`, 404);
     }
-    const prepared = this.materializeLocalAssets(snapshot.contentJson);
+    const prepared = this.materializeLocalAssets(snapshot.contentJson, {
+      rewriteToBridge: input.mode !== "export_file",
+    });
+    const originalMarkdown = agentDocumentMarkdown.serialize(snapshot.contentJson).trim();
     const markdown = agentDocumentMarkdown.serialize(prepared.content).trim();
     if (!markdown) {
       throw new ExportServiceError("EXPORT_PAYLOAD_EMPTY", "文档内容为空，无法导出", 422);
@@ -214,7 +301,8 @@ export class AgentDocumentExportService {
     if (Buffer.byteLength(markdown, "utf8") > EXPORT_PAYLOAD_LIMIT_BYTES) {
       throw new ExportServiceError("EXPORT_PAYLOAD_TOO_LARGE", "导出内容超过 512 KiB 上限", 422);
     }
-    const payloadHash = sha256Of(markdown);
+    // 内容指纹用改写前的正文（桥 URL 含每次启动变化的端口/token，不参与 hash）。
+    const payloadHash = sha256Of(originalMarkdown || markdown);
     const payloadMarkdownRef = await storeArtifact(this.dataDir, {
       kind: "export-payload",
       documentId: input.documentId,
@@ -235,7 +323,7 @@ export class AgentDocumentExportService {
       rendererVersion: EXPORT_RENDERER_VERSION,
       payloadHash,
       payloadMarkdownRef,
-      cliSkillRef: input.provider === "feishu" ? "lark-cli:docs" : "open-connector:notion",
+      cliSkillRef: input.provider === "feishu" ? "lark-cli:docs" : "ntn:pages",
       status: "preparing",
       warningsJson: prepared.warnings,
     }).run();
@@ -247,12 +335,18 @@ export class AgentDocumentExportService {
    * 无法上传到远端；且 markdown 序列化会静默丢弃非 http 图片节点。导出前把这类
    * 节点替换为可见占位并记录告警（方案 §10：不允许静默降级）。
    */
-  private materializeLocalAssets(content: TiptapJsonContent): {
+  private materializeLocalAssets(
+    content: TiptapJsonContent,
+    options: { rewriteToBridge: boolean },
+  ): {
     content: TiptapJsonContent;
     warnings: ExternalDocumentWarning[];
   } {
     const warnings: ExternalDocumentWarning[] = [];
-    let count = 0;
+    let placeholderCount = 0;
+    let rewrittenCount = 0;
+    const bridge = this.assetBridgeUrl?.replace(/\/$/, "") ?? null;
+    const rewrite = options.rewriteToBridge && bridge !== null;
     const walk = (value: unknown): unknown => {
       if (Array.isArray(value)) return value.map(walk);
       if (!value || typeof value !== "object") return value;
@@ -260,8 +354,14 @@ export class AgentDocumentExportService {
       if (node.type === "image") {
         const src = typeof node.attrs?.src === "string" ? node.attrs.src.trim() : "";
         if (src && !/^https?:\/\//i.test(src)) {
-          count += 1;
-          const alt = typeof node.attrs?.alt === "string" && node.attrs.alt.trim() ? node.attrs.alt.trim() : String(count);
+          // nxcore-document-asset://local/<key>/<file> → <bridge>/<key>/<file>
+          const assetPath = /^nxcore-document-asset:\/\/local\/(.+)$/i.exec(src)?.[1];
+          if (rewrite && assetPath) {
+            rewrittenCount += 1;
+            return { ...node, attrs: { ...node.attrs, src: `${bridge}/${assetPath}` } };
+          }
+          placeholderCount += 1;
+          const alt = typeof node.attrs?.alt === "string" && node.attrs.alt.trim() ? node.attrs.alt.trim() : String(placeholderCount);
           return {
             type: "paragraph",
             content: [{ type: "text", text: `（本地图片「${alt}」未随导出上传）` }],
@@ -276,10 +376,16 @@ export class AgentDocumentExportService {
       return next;
     };
     const result = walk(content) as TiptapJsonContent;
-    if (count > 0) {
+    if (placeholderCount > 0) {
       warnings.push({
         code: "local_assets_placeholder",
-        message: `${String(count)} 张本地图片无法上传到远端，已替换为占位文本`,
+        message: `${String(placeholderCount)} 张本地图片无法上传到远端，已替换为占位文本`,
+      });
+    }
+    if (rewrittenCount > 0) {
+      warnings.push({
+        code: "local_assets_via_bridge",
+        message: `${String(rewrittenCount)} 张本地图片将通过本机资产桥随导出上传`,
       });
     }
     return { content: result, warnings };
@@ -343,35 +449,52 @@ export class AgentDocumentExportService {
             ]),
         });
       }
+      // 权限预检（§6.2）：已登录但应用未授予本次操作所需 scope → 引导重新
+      // 授权补齐（lark-cli 重新 login 会按请求域增量申请）。
+      const requiredScopes = this.requiredFeishuScopes(run.mode);
+      const granted = new Set((auth.scope ?? "").split(/\s+/).filter(Boolean));
+      const missingScopes = requiredScopes.filter((scope) => !granted.has(scope));
+      if (missingScopes.length > 0) {
+        return this.transition(runId, "awaiting_auth", {
+          challenge: challengeOf(run, "user_auth", "missing_scope",
+            "飞书应用缺少导出所需权限", [
+              { id: "auth-login", title: "重新授权以补齐权限", description: `缺少：${missingScopes.join("、")}；重新扫码授权即可补齐`, action: "run_cli_check", completed: false },
+            ]),
+        });
+      }
     } else {
-      if (!this.connectorConfig) {
+      // Notion（macOS）：官方 ntn CLI 链路，与 OpenConnector 导入连接相互独立。
+      if (!this.notionCli) {
         return this.transition(runId, "environment_not_ready", {
           errorCode: "ENVIRONMENT_NOT_READY",
-          errorMessage: "OpenConnector 不可用，Notion 导出通道未就绪",
-          warnings: [{ code: "environment_not_ready", message: "导出环境未就绪：OpenConnector 不可用" }],
+          errorMessage: "当前平台不支持 Notion 导出（ntn 仅随 macOS 发行包提供）",
+          warnings: [{ code: "environment_not_ready", message: "导出环境未就绪：ntn 不可用" }],
+        });
+      }
+      const versionOk = await ntnCliVersion(this.notionCli);
+      if (!versionOk) {
+        return this.transition(runId, "environment_not_ready", {
+          errorCode: "ENVIRONMENT_NOT_READY",
+          errorMessage: "ntn 版本自检失败",
+          warnings: [{ code: "environment_not_ready", message: "导出环境未就绪：ntn 版本自检失败" }],
         });
       }
       try {
-        await this.connectorAction(this.connectorConfig, {
-          service: "notion",
-          action: "search",
-          input: { query: "", page_size: 1 },
-        });
+        await ntnWhoami(this.notionCli);
       } catch (error) {
-        if (error instanceof ImportConnectorError
-          && (error.code === "no_connection" || error.code === "authentication_required")) {
+        if (error instanceof NtnCliError && error.kind === "auth_required") {
           return this.transition(runId, "awaiting_auth", {
             challenge: challengeOf(run, "user_auth", "not_connected",
-              "Notion Agent 导出授权未建立", [
-                { id: "connect", title: "建立 Notion 导出授权", description: "与导入连接相互独立，需单独完成一次授权", action: "run_cli_check", completed: false },
+              "Notion 账号未登录", [
+                { id: "ntn-login", title: "登录 Notion 账号", description: "官方 ntn CLI 浏览器授权，凭据存本机钥匙串", action: "run_cli_check", completed: false },
               ]),
           });
         }
-        if (error instanceof ImportConnectorError && error.code === "cli_unavailable") {
+        if (error instanceof NtnCliError && error.kind === "environment") {
           return this.transition(runId, "environment_not_ready", {
             errorCode: "ENVIRONMENT_NOT_READY",
             errorMessage: error.detail,
-            warnings: [{ code: "environment_not_ready", message: "导出环境未就绪：oo CLI 不可用" }],
+            warnings: [{ code: "environment_not_ready", message: "导出环境未就绪：ntn 不可用" }],
           });
         }
         return this.transition(runId, "failed", {
@@ -379,6 +502,13 @@ export class AgentDocumentExportService {
           errorMessage: error instanceof Error ? error.message : String(error),
         });
       }
+    }
+
+    // 授权/环境检查全部通过：retry 恢复的任务此前停在 awaiting_auth /
+    // environment_not_ready，先回到 preparing，调用方（runFrom）才不会把
+    // 旧状态误判为"仍在等待授权"而提前返回。
+    if (run.status === "awaiting_auth" || run.status === "environment_not_ready") {
+      this.transition(runId, "preparing", {});
     }
 
     if (run.mode === "update") {
@@ -421,6 +551,16 @@ export class AgentDocumentExportService {
       return await this.executeNotion(runId, run.mode, title, markdown, target);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      // 写入期发现权限不足：转为授权挑战（重新授权后 retry 自动续跑），不标失败。
+      if (error instanceof LarkCliError && error.kind === "scope_missing") {
+        this.logger?.warn({ exportRunId: runId, message }, "agent document export missing scope");
+        return this.transition(runId, "awaiting_auth", {
+          challenge: challengeOf(run, "user_auth", "missing_scope",
+            "飞书应用缺少导出所需权限", [
+              { id: "auth-login", title: "重新授权以补齐权限", description: `写入被拒：${error.detail}`, action: "run_cli_check", completed: false },
+            ]),
+        });
+      }
       const uncertain = /timed? out|timeout|cancelled/i.test(message);
       this.logger?.warn(
         { exportRunId: runId, provider: run.provider, mode: run.mode, uncertain, message },
@@ -431,6 +571,61 @@ export class AgentDocumentExportService {
         errorMessage: message,
       });
     }
+  }
+
+  /** 各导出模式所需的飞书 scope（与 lark-cli docs/drive 域对应）。 */
+  private requiredFeishuScopes(mode: AgentDocumentExportMode): string[] {
+    if (mode === "create") return ["docx:document:create"];
+    if (mode === "update") return ["docx:document:readonly", "docx:document:write_only"];
+    return ["drive:file:upload"];
+  }
+
+  /** update 目标搜索（B-4）：飞书 docs +search / Notion api v1/search，供导出面板选择。 */
+  async searchUpdateTargets(provider: ExternalDocumentProvider, query: string): Promise<
+    Array<{ remoteId: string; title: string; url: string; updatedAt: string | null; ownerName: string | null }>
+  > {
+    const trimmed = query.trim();
+    if (!trimmed) return [];
+    if (provider === "feishu") {
+      const config = this.requireLark();
+      const { data } = await runLarkCli(config, ["docs", "+search", "--query", trimmed.slice(0, 60), "--json"], {
+        timeoutMs: 30_000,
+      });
+      const results = Array.isArray(objectValue(data).results) ? objectValue(data).results as Array<Record<string, unknown>> : [];
+      return results.flatMap((item) => {
+        const meta = objectValue(item.result_meta);
+        const token = textValue(meta.token);
+        const url = textValue(meta.url);
+        if (!token || !url) return [];
+        const highlighted = typeof item.title_highlighted === "string" ? item.title_highlighted : "";
+        return [{
+          remoteId: token,
+          title: highlighted.replace(/<[^>]+>/g, "").trim() || `未命名 ${token.slice(0, 8)}`,
+          url,
+          updatedAt: textValue(meta.update_time_iso),
+          ownerName: textValue(meta.owner_name),
+        }];
+      }).slice(0, 10);
+    }
+    const config = this.notionCli;
+    if (!config) {
+      throw new ExportServiceError("ENVIRONMENT_NOT_READY", "ntn 未配置（仅 macOS 支持 Notion 导出）", 503);
+    }
+    const { raw } = await runNtnCli(config, [
+      "api", "v1/search", "-d", JSON.stringify({ query: trimmed, page_size: 10 }),
+    ], { timeoutMs: 30_000 });
+    const results = Array.isArray(raw.results) ? raw.results as Array<Record<string, unknown>> : [];
+    return results.flatMap((item) => {
+      const id = textValue(item.id);
+      if (!id) return [];
+      return [{
+        remoteId: id,
+        title: this.notionTitleOf(item) ?? `Untitled ${id.slice(0, 8)}`,
+        url: textValue(item.url) ?? `https://notion.so/${id}`,
+        updatedAt: textValue(item.last_edited_time),
+        ownerName: null,
+      }];
+    }).slice(0, 10);
   }
 
   getRun(runId: string): AgentDocumentExportRunView {
@@ -488,7 +683,53 @@ export class AgentDocumentExportService {
         ], { stdin: markdown });
         return this.finishSuccess(runId, data, "feishu");
       }
+      // 最小写入优先（方案 §6.2）：fetch 全文 → 行级 diff → str_replace 命令；
+      // 纯插入/定位不唯一/超限 → 回退整篇 overwrite（已经用户确认）。
       const revision = await this.fetchFeishuRevision(docToken);
+      let remoteMarkdown: string | null = null;
+      try {
+        const fetched = await runLarkCli(config, [
+          "docs", "+fetch", "--doc", docToken, "--scope", "full", "--doc-format", "markdown",
+        ], { timeoutMs: 60_000 });
+        remoteMarkdown = extractMarkdownBody(fetched.data);
+      } catch {
+        remoteMarkdown = null;
+      }
+      if (remoteMarkdown !== null) {
+        const plan = planStrReplaceCommands(remoteMarkdown, markdown);
+        if (plan.applicable) {
+          let first = true;
+          for (const command of plan.commands) {
+            const args = [
+              "docs", "+update",
+              "--command", "str_replace",
+              "--doc", docToken,
+              "--pattern", command.pattern,
+              ...(command.replacement ? ["--content", command.replacement] : []),
+              "--revision-id", first ? String(revision ?? -1) : "-1",
+            ];
+            await runLarkCli(config, args);
+            first = false;
+          }
+          this.logger?.info(
+            { exportRunId: runId, commands: plan.commands.length },
+            "agent document export applied minimal str_replace writes",
+          );
+          const verify = await runLarkCli(config, [
+            "docs", "+fetch", "--doc", docToken, "--scope", "outline", "--detail", "simple",
+          ], { timeoutMs: 30_000 });
+          return this.transition(runId, "succeeded", {
+            remoteResultJson: {
+              url: target.remoteUrl ?? feishuFieldOf(verify.data, ["url"], ["url"]),
+              id: docToken,
+              revision: feishuFieldOf(verify.data, ["revisionId", "revision"], ["revision_id"]),
+            },
+            warnings: [
+              { code: "minimal_write_applied", message: `以 ${String(plan.commands.length)} 处最小范围替换完成更新，未改动其余内容` },
+            ],
+          });
+        }
+      }
       const { data } = await runLarkCli(config, [
         "docs", "+update",
         "--command", "overwrite",
@@ -520,30 +761,40 @@ export class AgentDocumentExportService {
     markdown: string,
     target: AgentDocumentExportTarget,
   ): Promise<AgentDocumentExportRunView> {
-    const config = this.requireConnector();
+    const config = this.notionCli;
+    if (!config) {
+      throw new ExportServiceError("ENVIRONMENT_NOT_READY", "ntn 未配置（仅 macOS 支持 Notion 导出）", 503);
+    }
     if (mode === "create") {
-      const parentId = target.parentId?.trim() || target.parentUrl?.trim() || null;
-      const input: Record<string, unknown> = parentId
-        ? { parentId: notionPageIdOf({ remoteDocumentId: parentId }), title, markdown }
-        : { title, markdown };
-      const data = await this.connectorAction(config, {
-        service: "notion",
-        action: "create_page",
-        input,
+      const parent = target.parentId?.trim() || target.parentUrl?.trim() || null;
+      // 官方 Markdown Content API：POST /v1/pages {parent, properties.title, markdown}；
+      // 正文经 `ntn api -d @-` 走 stdin，不进 argv。
+      const body: Record<string, unknown> = parent
+        ? { parent: { page_id: notionPageIdOf({ remoteDocumentId: parent }) } }
+        : {};
+      body.properties = { title: { title: [{ type: "text", text: { content: title } }] } };
+      body.markdown = markdown;
+      const { raw } = await runNtnCli(config, ["api", "v1/pages", "-d", "@-"], {
+        stdin: JSON.stringify(body),
       });
-      return this.finishSuccess(runId, data, "notion");
+      return this.finishSuccess(runId, raw, "notion");
     }
     if (mode === "update") {
       const pageId = notionPageIdOf(target);
       const append = (target.writeScope ?? "append") === "append";
-      const data = await this.connectorAction(config, {
-        service: "notion",
-        action: "update_page_markdown",
-        input: append
-          ? { pageId, type: "insert_content", insert_content: { content: markdown } }
-          : { pageId, type: "replace_content", replace_content: { content: markdown } },
-      });
-      return this.finishSuccess(runId, data, "notion");
+      // Markdown Content API 字段不对称（2026-09-04 真机核实）：insert 用 content，replace 用 new_str。
+      const body = append
+        ? { type: "insert_content", insert_content: { content: markdown } }
+        : { type: "replace_content", replace_content: { new_str: markdown } };
+      const { raw } = await runNtnCli(config, [
+        "api", `v1/pages/${pageId}/markdown`, "-X", "PATCH", "-d", "@-",
+      ], { stdin: JSON.stringify(body) });
+      // PATCH 响应只带 id 不带 url，构造页面链接供结果展示。
+      const pageIdValue = textValue(raw.id);
+      return this.finishSuccess(runId, {
+        ...raw,
+        ...(textValue(raw.url) ? {} : pageIdValue ? { url: `https://notion.so/${pageIdValue}` } : {}),
+      }, "notion");
     }
     throw new ExportServiceError("EXPORT_MODE_UNSUPPORTED", "Notion 通道暂不支持 export_file 模式", 422);
   }
@@ -589,18 +840,34 @@ export class AgentDocumentExportService {
         };
       }
       const pageId = notionPageIdOf(target);
-      const data = await this.connectorAction(this.requireConnector(), {
-        service: "notion",
-        action: "retrieve_page",
-        input: { pageId },
-      });
-      const root = objectValue(data);
+      if (!this.notionCli) {
+        return new ExportServiceError("ENVIRONMENT_NOT_READY", "ntn 未配置（仅 macOS 支持 Notion 导出）", 503);
+      }
+      let raw: Record<string, unknown> = {};
+      try {
+        const fetched = await runNtnCli(this.notionCli, ["api", `v1/pages/${pageId}`], {
+          timeoutMs: 30_000,
+        });
+        raw = fetched.raw;
+      } catch (preflightError) {
+        // 集成未被分享到目标页面（object_not_found/404）是最常见原因，给可操作文案。
+        const detail = preflightError instanceof Error ? preflightError.message : String(preflightError);
+        if (/object_not_found|Could not find|HTTP 404/i.test(detail)) {
+          return new ExportServiceError(
+            "EXPORT_TARGET_UNSHARED",
+            "无法读取目标页面：该页面可能未与 Notion 集成共享。请在 Notion 中打开页面 → 右上角 ··· → Connections 添加集成后重试。",
+            422,
+          );
+        }
+        throw preflightError;
+      }
+      const root = objectValue(raw);
       return {
-        targetTitle: textValue(root.title) ?? textValue(objectValue(root.properties).title) ?? "Notion 页面",
+        targetTitle: this.notionTitleOf(root) ?? "Notion 页面",
         targetUrl: textValue(root.url) ?? `https://notion.so/${pageId}`,
         roomVersion: run.version,
         writeScope: append ? "append" : "replace_content",
-        remoteRevision: textValue(root.lastEditedTime) ?? textValue(root.last_edited_time),
+        remoteRevision: textValue(root.last_edited_time),
         warnings: append ? [] : [{
           code: "overwrite_warning",
           message: "将用 Room 版本替换目标页面的 Markdown 内容",
@@ -610,9 +877,8 @@ export class AgentDocumentExportService {
       if (error instanceof LarkCliError && error.kind === "auth_required") {
         return new ExportServiceError("EXPORT_AUTH_REQUIRED", `目标预检需要授权：${error.detail}`, 422);
       }
-      if (error instanceof ImportConnectorError
-        && (error.code === "no_connection" || error.code === "authentication_required")) {
-        return new ExportServiceError("EXPORT_AUTH_REQUIRED", "Notion 导出授权未建立", 422);
+      if (error instanceof NtnCliError && error.kind === "auth_required") {
+        return new ExportServiceError("EXPORT_AUTH_REQUIRED", "Notion 目标预检需要授权", 422);
       }
       return new ExportServiceError(
         "EXPORT_TARGET_UNREACHABLE",
@@ -641,6 +907,21 @@ export class AgentDocumentExportService {
         revision: remoteRevision,
       },
     });
+  }
+
+  /** Notion 页面标题：properties.title[].plain_text（任意属性键的 title 类型）。 */
+  private notionTitleOf(root: Record<string, unknown>): string | null {
+    const properties = objectValue(root.properties);
+    for (const value of Object.values(properties)) {
+      const property = objectValue(value);
+      const segments = Array.isArray(property.title) ? property.title : [];
+      const text = segments
+        .map((segment) => textValue(objectValue(segment).plain_text) ?? textValue(objectValue(segment).text))
+        .filter(Boolean)
+        .join("");
+      if (text) return text;
+    }
+    return textValue(root.title);
   }
 
   private loadRun(runId: string) {

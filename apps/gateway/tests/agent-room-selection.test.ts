@@ -624,6 +624,35 @@ describe('Agent Room selection', () => {
     sqlite.close()
   })
 
+  it('forwards memoryScope only when the focused Room resolves', async () => {
+    const runtime = new RecordingRuntime()
+    const { rooms: roomRegistry, service, sqlite } = await createHarness({ runtime })
+    const session = service.createSession({ pageLabel: '首页', roomId: null })
+    const rooms = [{ id: 'room-b', title: '后端进阶', kind: '主题' }]
+    roomRegistry.saveSnapshot({
+      rooms: rooms.map((room) => ({ ...room, data: room })),
+      deletedRooms: [],
+    })
+
+    await service.startRun(session.id, {
+      prompt: '只看这个房间的记忆回答',
+      idempotencyKey: 'focused-room-run',
+      memoryScope: 'room',
+      context: { rooms, selectedRoomId: 'room-b' },
+    })
+    await service.startRun(session.id, {
+      prompt: '聚焦但未选房间应降级',
+      idempotencyKey: 'focused-without-room-run',
+      memoryScope: 'room',
+      context: { rooms },
+    })
+
+    expect(runtime.starts[0]).toMatchObject({ roomId: 'room-b', memoryScope: 'room' })
+    expect(runtime.starts[1]?.memoryScope).toBeUndefined()
+    expect(runtime.starts[1]?.roomId).toBeNull()
+    sqlite.close()
+  })
+
   it('lets the Agent infer a Room for an English document creation request', async () => {
     const { rooms: roomRegistry, runtime, service, sqlite } = await createHarness()
     const session = service.createSession({ pageLabel: 'Home', roomId: null })

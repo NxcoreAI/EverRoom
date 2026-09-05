@@ -10,9 +10,12 @@ import {
   agentRuns,
   agentSessions,
   contextRooms,
+  documents,
   gatewayMetadata,
+  roomDocumentLinks,
   roomMemoryAttributions,
   roomMemorySuppressions,
+  roomSourceMemberships,
 } from "../src/infrastructure/database/schema.js";
 import { ContextRoomService } from "../src/modules/context-rooms/service.js";
 import { MemoryService } from "../src/modules/memory/service.js";
@@ -39,6 +42,8 @@ interface FakeMemoryRow {
   created_at: string;
   updated_at: string;
   session_id: string | null;
+  /** 无会话的 document 来源记忆（统一 ingest 导入）：caller_ref = 知识 sourceId。 */
+  document_caller_ref?: string;
 }
 
 interface HarnessOptions {
@@ -92,10 +97,20 @@ async function harness(options: HarnessOptions = {}) {
       if (options.provenanceFailFor?.includes(row.id)) {
         return new Response(JSON.stringify({ code: 1, message: "boom" }), { status: 500 });
       }
+      const document = row.document_caller_ref
+        ? {
+            document_id: `mc-${row.id}`,
+            title: "导入文档",
+            caller_ref: row.document_caller_ref,
+            version: 1,
+            session_id: row.session_id ?? undefined,
+          }
+        : null;
       return jsonResponse({
-        memory_id: row.id, type: row.type, content: row.content, kind: "conversation",
-        session: row.session_id ? { session_id: row.session_id } : null,
-        document: null, anchor_message_ids: [], anchors: [],
+        memory_id: row.id, type: row.type, content: row.content,
+        kind: document ? "document" : "conversation",
+        session: row.session_id && !document ? { session_id: row.session_id } : null,
+        document, anchor_message_ids: [], anchors: [],
       });
     }
     return jsonResponse({});
@@ -143,7 +158,7 @@ function seedRun(db: DatabaseClient["db"], sessionId: string, roomId: string | n
 
 function cursorValue(db: DatabaseClient["db"]): string | null {
   const row = db.select({ value: gatewayMetadata.value }).from(gatewayMetadata)
-    .where(eq(gatewayMetadata.key, "memory.room-derive.v1:cursor")).get();
+    .where(eq(gatewayMetadata.key, "memory.room-derive.v2:cursor")).get();
   if (!row?.value) return null;
   return (JSON.parse(row.value) as { updatedAt: string | null }).updatedAt;
 }
@@ -300,5 +315,66 @@ describe("RoomMemoryDeriveWorker", () => {
     await worker.drain();
     expect(fetchMock.mock.calls.filter((call) => String(call[0]).endsWith("/v3/atomic/query")).length)
       .toBe(queryCalls);
+  });
+
+  it("derives document: rewrite sessions through room_doc_links", async () => {
+    const at = "2026-09-03T10:00:00.000Z";
+    const { worker, db } = await harness({
+      memories: [
+        { ...memory("m-rewrite", at, "document:doc-1") },
+        { ...memory("m-unlinked", at, "document:doc-none") },
+      ],
+    });
+    const now = new Date();
+    db.insert(documents).values({ id: "doc-1", title: "文档一", contentJson: {} }).run();
+    db.insert(roomDocumentLinks).values([
+      { roomId: "room-live", documentId: "doc-1", linkedAt: now },
+      { roomId: "room-old", documentId: "doc-1", linkedAt: new Date(now.getTime() - 1) },
+    ]).run();
+
+    await worker.drain();
+    const rows = db.select().from(roomMemoryAttributions).all();
+    // doc-1 挂过两个 Room（合并源 + 上线项目）：取最新挂载 room-live。
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      memoryId: "m-rewrite",
+      roomId: "room-live",
+      sourceKind: "document",
+      sourceId: "document:doc-1",
+      confidence: "derived",
+    });
+  });
+
+  it("derives wiki: sessions and ingest callerRef through room_source_memberships", async () => {
+    const at = "2026-09-03T10:00:00.000Z";
+    const { worker, db } = await harness({
+      memories: [
+        { ...memory("m-wiki", at, "wiki:src-1:doc-9") },
+        { ...memory("m-ingest", at, null), document_caller_ref: "src-1" },
+        { ...memory("m-excluded", at, "wiki:src-x:doc-8") },
+      ],
+    });
+    const now = new Date();
+    db.insert(roomSourceMemberships).values([
+      {
+        id: "mem-1", roomId: "room-live", sourceKind: "file", sourceId: "src-1",
+        sourceVersion: 1, evidenceGroupKey: "gk-1", role: "primary", qualityLevel: "normal", createdAt: now, updatedAt: now,
+      },
+      {
+        id: "mem-2", roomId: "room-live", sourceKind: "file", sourceId: "src-x",
+        sourceVersion: 1, evidenceGroupKey: "gk-2", role: "mention", qualityLevel: "excluded", createdAt: now, updatedAt: now,
+      },
+    ]).run();
+
+    await worker.drain();
+    const rows = db.select().from(roomMemoryAttributions).all();
+    // wiki 会话与 ingest callerRef 都映射到知识源；excluded 证据不绑。
+    expect(rows).toHaveLength(2);
+    expect(rows.find((row) => row.memoryId === "m-wiki")).toMatchObject({
+      roomId: "room-live", sourceKind: "source", sourceId: "wiki:src-1:doc-9",
+    });
+    expect(rows.find((row) => row.memoryId === "m-ingest")).toMatchObject({
+      roomId: "room-live", sourceKind: "source", sourceId: "source:src-1",
+    });
   });
 });

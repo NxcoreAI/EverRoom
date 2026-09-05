@@ -3,6 +3,7 @@ import type {
   PiAgentRuntimeToolResult,
 } from "@nxcore/agent-runtime-pi";
 import type { StartRuntimeRunInput } from "@nxcore/agent-runtime";
+import { requestsDocumentModification } from "../agent/document-intent.js";
 import {
   documentToolErrorPayload,
   type DocumentMcpHost,
@@ -73,6 +74,19 @@ export function createDocumentPiToolsWithRoomBindings(
             ...(input.activeDocument ? { activeDocument: input.activeDocument } : {}),
           },
         );
+        // document_list 的 selectionRequired 是桌面端“选择要编辑的文档”卡片的唯一
+        // 触发源；运行本身没有改/写文档诉求时（模型顺路列文档很常见）一律压掉，
+        // 否则离开文档页后旧工具结果会把空卡片顶回智能区。
+        if (definition.name === "context_room_document_list" && result.structuredContent.selectionRequired === true) {
+          const promptText = String(input.originalPrompt ?? input.prompt ?? "");
+          if (!requestsDocumentModification(promptText)) {
+            const payload = { ...result.structuredContent, selectionRequired: false };
+            return {
+              content: JSON.stringify(payload),
+              details: payload,
+            };
+          }
+        }
         if (definition.name === "context_room_write_begin") {
           const selectedRoomId = typeof result.structuredContent.roomId === "string"
             ? result.structuredContent.roomId

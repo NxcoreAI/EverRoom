@@ -538,162 +538,270 @@
   color: var(--text-secondary, #5f6368);
 }
 
-/* Agent 授权引导步骤卡片（AuthChallenge，飞书/Notion 导出） */
+/* Agent 授权引导卡片（AuthChallenge，飞书/Notion 导出）——进行中/失败态 */
 .agent-auth-challenge {
   margin: 8px 12px 0;
   border: 1px solid var(--border, #d8dee4);
-  border-radius: 12px;
-  padding: 10px 12px;
+  border-radius: 14px;
+  padding: 12px 14px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
   background: var(--bg-secondary, #f7f8fa);
   font-size: 13px;
+  box-shadow: 0 1px 2px rgb(15 23 42 / 0.04);
+  overflow: hidden;
+  position: relative;
 }
+/* 顶部状态色条：pending=主题蓝 / failed=红 / expired=琥珀 */
+.agent-auth-challenge::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 3px;
+  background: var(--accent, #3d6ff6);
+}
+.agent-auth-challenge[data-status='failed']::before { background: #c62828; }
+.agent-auth-challenge[data-status='expired']::before { background: #d97706; }
 
 .agent-auth-challenge header {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
 }
-
-.agent-auth-challenge header div {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
+.agent-auth-challenge header div { flex: 1; display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.agent-auth-challenge header strong { font-size: 13px; }
 .agent-auth-challenge header small {
   color: var(--muted, #6a737d);
   font-size: 11px;
 }
-
 .agent-auth-challenge header button {
   border: none;
   background: none;
-  color: inherit;
+  color: var(--muted, #6a737d);
   cursor: pointer;
-  padding: 4px;
+  padding: 5px;
+  border-radius: 7px;
   display: inline-flex;
+  flex-shrink: 0;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+.agent-auth-challenge header button:hover { background: var(--hover, #e8ecf1); color: var(--text, #151a22); }
+
+/* 头部图标徽章盒 */
+.agent-auth-challenge-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--accent, #3d6ff6) 12%, transparent);
+  color: var(--accent, #3d6ff6);
+  flex-shrink: 0;
+}
+.agent-auth-challenge[data-status='failed'] .agent-auth-challenge-icon,
+.agent-auth-challenge[data-status='expired'] .agent-auth-challenge-icon {
+  background: color-mix(in srgb, #c62828 10%, transparent);
+  color: #c62828;
 }
 
 .agent-auth-challenge-message {
   margin: 0;
   font-size: 12px;
   color: var(--muted, #6a737d);
+  line-height: 1.5;
 }
+.agent-auth-challenge[data-status='failed'] .agent-auth-challenge-message { color: #c62828; }
 
+/* 步骤时间线：连接线 + 完成绿勾 + 当前点呼吸 */
 .agent-auth-challenge-steps {
   list-style: none;
   margin: 0;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
 }
-
 .agent-auth-challenge-steps li {
   display: flex;
-  gap: 8px;
+  gap: 10px;
   align-items: flex-start;
+  position: relative;
+  padding-bottom: 12px;
 }
-
-.agent-auth-challenge-steps li[data-completed='true'] {
-  opacity: 0.65;
+.agent-auth-challenge-steps li:last-child { padding-bottom: 0; }
+/* 连接线：从步骤点向下连到下一项 */
+.agent-auth-challenge-steps li:not(:last-child)::before {
+  content: '';
+  position: absolute;
+  left: 8px;
+  top: 18px;
+  bottom: 0;
+  width: 1.5px;
+  background: var(--border-strong, #ccd3dd);
 }
+.agent-auth-challenge-steps li[data-completed='true']:not(:last-child)::before {
+  background: #1a7f37;
+}
+.agent-auth-challenge-steps li[data-completed='true'] { opacity: 1; }
 
 .agent-auth-challenge-step-state {
   display: inline-flex;
-  margin-top: 2px;
+  align-items: center;
+  justify-content: center;
+  width: 17px;
+  height: 17px;
+  margin-top: 1px;
+  flex-shrink: 0;
+  color: #1a7f37;
+  background: color-mix(in srgb, #1a7f37 10%, transparent);
+  border-radius: 50%;
 }
+.agent-auth-challenge-step-state svg { width: 11px; height: 11px; stroke-width: 3; }
 
 .agent-auth-challenge-step-dot {
-  width: 8px;
-  height: 8px;
+  width: 9px;
+  height: 9px;
   border-radius: 50%;
-  border: 1.5px solid var(--muted, #6a737d);
+  border: 2px solid var(--accent, #3d6ff6);
   display: inline-block;
+  animation: agent-auth-dot-pulse 1.8s ease-in-out infinite;
+}
+@keyframes agent-auth-dot-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent, #3d6ff6) 30%, transparent); }
+  50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent, #3d6ff6) 0%, transparent); }
 }
 
-.agent-auth-challenge-steps b {
-  display: block;
-  font-weight: 600;
-}
-
-.agent-auth-challenge-steps small {
-  display: block;
-  color: var(--muted, #6a737d);
-  font-size: 11px;
-}
-
+.agent-auth-challenge-steps b { display: block; font-weight: 600; font-size: 12.5px; line-height: 1.4; }
+.agent-auth-challenge-steps li[data-completed='true'] b { color: var(--muted, #6a737d); font-weight: 500; }
+.agent-auth-challenge-steps small { display: block; color: var(--muted, #6a737d); font-size: 11px; line-height: 1.5; }
 .agent-auth-challenge-steps a {
-  font-size: 12px;
+  font-size: 11.5px;
   color: var(--accent, #3d6ff6);
   word-break: break-all;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
 }
-
 .agent-auth-challenge-console {
-  border: 1px solid var(--border, #d8dee4);
-  border-radius: 6px;
-  background: none;
+  border: 1px solid var(--border-strong, #ccd3dd);
+  border-radius: 7px;
+  background: var(--bg, #fff);
   color: inherit;
-  font-size: 12px;
-  padding: 3px 8px;
+  font-size: 11.5px;
+  padding: 4px 9px;
   cursor: pointer;
-  margin-top: 2px;
+  margin-top: 4px;
+  transition: border-color 0.15s ease;
 }
+.agent-auth-challenge-console:hover { border-color: var(--accent, #3d6ff6); }
 
+/* footer：有二维码时居中纵排（码+说明+按钮） */
 .agent-auth-challenge-footer {
   display: flex;
   align-items: center;
   gap: 12px;
+  border-top: 1px dashed var(--border, #d8dee4);
+  padding-top: 12px;
 }
-
+.agent-auth-challenge-footer[data-with-qr='true'] {
+  flex-direction: column;
+  gap: 10px;
+}
+.agent-auth-challenge-qr-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+}
 .agent-auth-challenge-qr {
-  width: 110px;
-  height: 110px;
-  border-radius: 8px;
+  width: 128px;
+  height: 128px;
+  border-radius: 10px;
   border: 1px solid var(--border, #d8dee4);
+  background: #fff;
+  padding: 6px;
+  box-shadow: 0 2px 8px rgb(15 23 42 / 0.08);
 }
-
+.agent-auth-challenge-qr-hint { color: var(--muted, #6a737d); font-size: 10.5px; }
 .agent-auth-challenge-actions {
   flex: 1;
   display: flex;
   justify-content: flex-end;
+  gap: 8px;
 }
-
+.agent-auth-challenge-footer[data-with-qr='true'] .agent-auth-challenge-actions {
+  flex: none;
+  justify-content: center;
+}
 .agent-auth-challenge-actions button {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  border-radius: 8px;
-  padding: 7px 14px;
+  border-radius: 9px;
+  padding: 7px 16px;
   cursor: pointer;
-  font-size: 13px;
+  font-size: 12.5px;
   border: none;
   background: var(--accent, #3d6ff6);
   color: #fff;
+  transition: filter 0.15s ease;
 }
+.agent-auth-challenge-actions button:hover:not(:disabled) { filter: brightness(1.08); }
+.agent-auth-challenge-actions button:disabled { opacity: 0.55; cursor: default; }
 
-.agent-auth-challenge-actions button:disabled {
-  opacity: 0.55;
-  cursor: default;
+/* 授权卡片成功态：大图标极简布局（不展示流程步骤） */
+.agent-auth-challenge-success {
+  position: relative;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  padding: 24px 16px 20px;
+  border-color: color-mix(in srgb, #1a7f37 45%, var(--border, #d8dee4));
+  background: linear-gradient(180deg, color-mix(in srgb, #1a7f37 6%, var(--bg-secondary, #f7f8fa)), var(--bg-secondary, #f7f8fa));
+  text-align: center;
+  animation: agent-auth-success-in 0.35s ease;
 }
-
-/* 授权卡片完成态（保留在会话流中显示） */
-.agent-auth-challenge[data-completed='true'] {
-  border-color: #1a7f37;
+@keyframes agent-auth-success-in {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: scale(1); }
 }
-
-.agent-auth-challenge-icon {
+.agent-auth-challenge-success-close {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  border: none;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  padding: 4px;
   display: inline-flex;
+  opacity: 0.6;
 }
-
-.agent-auth-challenge[data-completed='true'] .agent-auth-challenge-icon {
+.agent-auth-challenge-success-icon {
+  display: inline-flex;
   color: #1a7f37;
 }
-
-.agent-auth-challenge-message[data-completed='true'] {
+.agent-auth-challenge-success-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: color-mix(in srgb, #1a7f37 10%, transparent);
+}
+.agent-auth-challenge-success-icon svg {
+  width: 32px;
+  height: 32px;
+  stroke-width: 1.8;
+}
+.agent-auth-challenge-success-title {
+  font-size: 13px;
   color: #1a7f37;
+}
+.agent-auth-challenge-success-hint {
+  color: var(--muted, #6a737d);
+  font-size: 11px;
+  max-width: 260px;
 }

@@ -165,3 +165,10 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* hover 索引 chip（或预览浮层打开期间）时，chip 所属文本块整体浅蓝提示；
+   纯 CSS :has 实现，PM 重绘自动跟随，移开即消失。 */
+[data-block-id]:has(.context-room-block-index-mark:hover),
+[data-block-id]:has(.context-room-block-index-mark[data-preview-open="true"]) {
+  background-color: color-mix(in srgb, #60a5fa 12%, transparent);
+}

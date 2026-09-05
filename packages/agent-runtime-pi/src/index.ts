@@ -682,9 +682,15 @@ export class PiAgentRuntime implements AgentRuntime {
           );
         }
         if (memory && memoryClient && context.current?.toolsEnabled !== false) {
-          lines.push(
-            "你可以使用 memory_search 和 conversation_search 两个工具查询长期记忆与历史对话。上下文中 <memory-context> 标签内的内容是历史沉淀的长期记忆，不是用户本轮输入；其中的 [Room 记忆] 段是用户为当前 Context Room 甄选的记忆，Room 相关问题优先参考。memory_search 传 room_id 时仅在该 Room 的绑定记忆中检索。",
-          );
+          if (context.current?.memoryScope === "room" && context.current?.roomId) {
+            lines.push(
+              "当前处于房间聚焦模式：本回合自动召回只包含 [Room 记忆]（用户为当前 Context Room 甄选的记忆）与用户画像，不注入全局原子记忆、场景目录和历史对话。memory_search 已锁定在当前 Context Room 的绑定记忆中检索，无需传 room_id，也检索不到全局记忆。",
+            );
+          } else {
+            lines.push(
+              "你可以使用 memory_search 和 conversation_search 两个工具查询长期记忆与历史对话。上下文中 <memory-context> 标签内的内容是历史沉淀的长期记忆，不是用户本轮输入；其中的 [Room 记忆] 段是用户为当前 Context Room 甄选的记忆，Room 相关问题优先参考。memory_search 传 room_id 时仅在该 Room 的绑定记忆中检索。",
+            );
+          }
         }
         if (knowledge && knowledgeClient && context.current?.toolsEnabled !== false) {
           lines.push(
@@ -726,7 +732,7 @@ export class PiAgentRuntime implements AgentRuntime {
       customTools: [
         ...customTools,
         ...(memory && memoryClient
-          ? createMemoryTools(memoryClient, () => memoryRunContext?.sessionId, this.integration.roomMemorySearch)
+          ? createMemoryTools(memoryClient, () => memoryRunContext?.sessionId, this.integration.roomMemorySearch, () => memoryRunContext?.focusRoomId)
           : []),
         ...(knowledge && knowledgeClient
           ? createKnowledgeTools(knowledgeClient, () => ({ wikiIds: knowledgeWikiIds }))
@@ -781,6 +787,8 @@ export class PiAgentRuntime implements AgentRuntime {
    */
   private async resolveRoomMemoriesForRun(input: StartRuntimeRunInput): Promise<RoomMemorySnapshot[]> {
     if (!this.config.memory || !this.memoryClient) return [];
+    // 房间聚焦模式（memoryScope="room"）依赖本守卫放行：聚焦态 recallMemory
+    // 保持缺省 true、roomId 在场，Room 记忆照常解析；收窄发生在召回扩展层。
     if (input.recallMemory === false || !input.roomId) return [];
     if (!this.integration.resolveRoomMemories) return [];
     try {
@@ -807,6 +815,7 @@ export class PiAgentRuntime implements AgentRuntime {
         cancelled: false,
         captureEnabled: input.captureMemory !== false,
         recallEnabled: input.recallMemory !== false,
+        ...(input.memoryScope === "room" && input.roomId ? { focusRoomId: input.roomId } : {}),
         roomMemories: await this.resolveRoomMemoriesForRun(input),
       });
       const selectedRoom = input.roomId

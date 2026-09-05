@@ -7,6 +7,7 @@ import TaskList from '@tiptap/extension-task-list'
 import { TableKit } from '@tiptap/extension-table'
 import TableOfContents, { type TableOfContentData } from '@tiptap/extension-table-of-contents'
 import { DocumentExportStatus } from './DocumentExportStatus'
+import { ImportedCommentsPanel } from './ImportedCommentsPanel'
 import { Markdown } from '@tiptap/markdown'
 import { TextSelection } from '@tiptap/pm/state'
 import { EditorContent, useEditor, type Editor, type JSONContent } from '@tiptap/react'
@@ -101,6 +102,7 @@ import { BlockIndexMark } from './BlockIndexMark'
 import { BlockIndexPicker } from './BlockIndexPicker'
 import {
   insertBlockIndexMark,
+  isAutoLinkableUrl,
   type BlockIndexTarget,
 } from './blockIndexLink'
 import { requestRoomMemoryNavigation } from './blockIndexNavigation'
@@ -111,7 +113,10 @@ import {
 } from './documentBlockReferenceLink'
 import {
   documentBlockFocusRequestKey,
-  focusDocumentBlock,
+  documentReferenceFlashExtension,
+  findDocumentBlockElement,
+  flashDocumentBlock,
+  logDocumentFocusDiagnostic,
   requestDocumentBlockNavigation,
 } from './documentBlockNavigation'
 import { showToast } from '@/state/toast'
@@ -610,6 +615,7 @@ export function TiptapDocumentEditor({
     target: Parameters<typeof requestDocumentBlockNavigation>[0],
     resolution: { status: string } | null,
   ) => {
+    logDocumentFocusDiagnostic({ at: 'navigate-request', ...target, resolutionStatus: resolution?.status ?? null })
     if (resolution && resolution.status !== 'available' && resolution.status !== 'block_missing') {
       showToast({ title: t('contextRoom:tiptapDocumentEditor.referenceTemporarilyUnavailable'), message: t(resolution.status === 'document_trashed' ? 'contextRoom:tiptapDocumentEditor.theTargetDocumentIsInTrash' : 'contextRoom:tiptapDocumentEditor.theTargetDocumentIsUnavailable') })
       return
@@ -627,6 +633,7 @@ export function TiptapDocumentEditor({
           autolink: true,
           defaultProtocol: 'https',
           protocols: ['everroom'],
+          shouldAutoLink: isAutoLinkableUrl,
         },
       }),
       TaskList,
@@ -637,6 +644,7 @@ export function TiptapDocumentEditor({
         resize: DOCUMENT_IMAGE_RESIZE_OPTIONS,
       }),
       StableBlockIds.configure({ documentId }),
+      documentReferenceFlashExtension(),
       DocumentBlockReference.configure({
         sourceRoomId: room.id,
         resolveReferences: resolveDocumentBlockReferences,
@@ -1221,7 +1229,21 @@ export function TiptapDocumentEditor({
   }, [backendDocument?.version, documentId, editor])
 
   useEffect(() => {
-    if (!editor || !backendDocument || !focusedBlockId || editor.isDestroyed) return
+    if (!editor || !backendDocument || !focusedBlockId || editor.isDestroyed) {
+      // 只在有跳转请求时记录，避免常规文档加载/流式写入刷日志。
+      if (focusedBlockId) {
+        logDocumentFocusDiagnostic({
+          at: 'effect-skip',
+          documentId,
+          focusedBlockId,
+          requestId: documentFocusRequestId,
+          hasEditor: Boolean(editor),
+          hasBackendDocument: Boolean(backendDocument),
+          editorDestroyed: editor?.isDestroyed ?? null,
+        })
+      }
+      return
+    }
     const requestKey = documentBlockFocusRequestKey(
       documentId,
       focusedBlockId,
@@ -1238,6 +1260,15 @@ export function TiptapDocumentEditor({
       })
       let resolution = (await resolve()).resolutions[0]
       if (cancelled) return
+      logDocumentFocusDiagnostic({
+        at: 'resolve',
+        documentId,
+        blockId: focusedBlockId,
+        requestId: documentFocusRequestId,
+        status: resolution?.status ?? null,
+        version: resolution?.version ?? null,
+        backendVersion: backendDocument.version,
+      })
       if (!resolution || resolution.status !== 'available') {
         handledBlockFocusKey.current = requestKey
         if (resolution?.status === 'block_missing') {
@@ -1248,8 +1279,36 @@ export function TiptapDocumentEditor({
       if ((resolution.version ?? 0) > backendDocument.version) return
       await new Promise<void>((resolveFrame) => window.requestAnimationFrame(() => resolveFrame()))
       if (cancelled) return
-      const result = focusDocumentBlock(editor.view.dom, focusedBlockId)
+      const blockCount = editor.view.dom.querySelectorAll('[data-block-id]').length
+      const result = flashDocumentBlock(editor, focusedBlockId)
+      logDocumentFocusDiagnostic({
+        at: 'focus',
+        documentId,
+        blockId: focusedBlockId,
+        result,
+        blockCount,
+      })
       if (result === 'focused') {
+        // 落点回读：确认类名/动画/背景在真实渲染里是否生效（诊断 document-focus 模块）。
+        window.setTimeout(() => {
+          if (editor.isDestroyed) return
+          const el = findDocumentBlockElement(editor.view.dom, focusedBlockId)
+          if (!el) {
+            logDocumentFocusDiagnostic({ at: 'flash-check', documentId, blockId: focusedBlockId, elementMissing: true })
+            return
+          }
+          const style = window.getComputedStyle(el)
+          logDocumentFocusDiagnostic({
+            at: 'flash-check',
+            documentId,
+            blockId: focusedBlockId,
+            className: el.className,
+            animationName: style.animationName,
+            animationDuration: style.animationDuration,
+            backgroundColor: style.backgroundColor,
+            connected: el.isConnected,
+          })
+        }, 250)
         handledBlockFocusKey.current = requestKey
         return
       }
@@ -1312,6 +1371,8 @@ export function TiptapDocumentEditor({
     }
   }
 
+  const [commentsOpen, setCommentsOpen] = useState(false)
+
   const awaitingFirstContent = isAgentDocumentAwaitingContent(backendDocument)
     || Boolean(operationStreamPending && streamingDocument?.chunks.length === 0)
   return (
@@ -1348,6 +1409,8 @@ export function TiptapDocumentEditor({
             onCloseDiff={closeHistoryDiff}
             historyPanelCloseSignal={historyPanelCloseSignal}
             historyRefreshSignal={historyRefreshSignal}
+            commentsOpen={commentsOpen}
+            onToggleComments={() => setCommentsOpen((current) => !current)}
           />
         ) : null}
       </div>
@@ -1397,6 +1460,8 @@ export function TiptapDocumentEditor({
             </button>
           </div>
         ) : null}
+        <div className={historyView ? 'context-room-doc-columns history' : 'context-room-doc-columns'} data-comments-open={String(commentsOpen)}>
+        <div className="context-room-doc-editor-col">
         {historyView ? (
           editor ? (
             <DocumentHistoryDiffView
@@ -1439,12 +1504,23 @@ export function TiptapDocumentEditor({
         <div className={historyView ? 'context-room-history-editor-source' : undefined}>
           <EditorContent editor={editor} />
         </div>
+        </div>
+        {commentsOpen && backendDocument ? (
+          <ImportedCommentsPanel
+            editor={editor}
+            roomId={backendDocument.roomId}
+            documentId={documentId}
+            onClose={() => setCommentsOpen(false)}
+          />
+        ) : null}
+        </div>
       </div>
       {editor && !editorLocked ? (
         <>
           <TiptapBubbleToolbar
             editor={editor}
             documentId={documentId}
+            sourceRoomId={room.id}
             onAskAi={selectionRewrite.requestRewrite}
           />
           <TiptapBlockHandle

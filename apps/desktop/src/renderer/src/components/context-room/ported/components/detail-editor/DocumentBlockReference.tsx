@@ -90,6 +90,13 @@ function DocumentBlockReferenceView(props: NodeViewProps) {
   const [loading, setLoading] = useState(true)
   const resolveSequence = useRef(0)
 
+  // tiptap v3 里 props.extension.options 每次渲染都是新引用——直接进 useCallback
+  // 依赖会让 resolve 身份每渲染一变，挂载 effect 无限重跑（同款问题在
+  // BlockIndexMark 真机 79 秒打出 4.6 万次 IPC）。回调经 ref 取最新值。
+  const resolveReferencesRef = useRef(options.resolveReferences)
+  resolveReferencesRef.current = options.resolveReferences
+  const sourceRoomId = options.sourceRoomId
+
   const resolve = useCallback(async () => {
     const sequence = ++resolveSequence.current
     if (!reference.roomId || !reference.documentId || !reference.blockId) {
@@ -99,7 +106,7 @@ function DocumentBlockReferenceView(props: NodeViewProps) {
       }
       return
     }
-    if (!isSameRoomBlockReference(options.sourceRoomId, reference)) {
+    if (!isSameRoomBlockReference(sourceRoomId, reference)) {
       if (sequence === resolveSequence.current) {
         setLoading(false)
         setResolution({
@@ -114,15 +121,16 @@ function DocumentBlockReferenceView(props: NodeViewProps) {
       }
       return
     }
-    if (!options.resolveReferences) {
+    const resolveReferences = resolveReferencesRef.current
+    if (!resolveReferences) {
       setLoading(false)
       return
     }
     setLoading(true)
     try {
       const result = await resolveDocumentBlockReference(
-        options.resolveReferences,
-        options.sourceRoomId,
+        resolveReferences,
+        sourceRoomId,
         reference,
       )
       if (sequence === resolveSequence.current) setResolution(result)
@@ -132,7 +140,7 @@ function DocumentBlockReferenceView(props: NodeViewProps) {
       if (sequence === resolveSequence.current) setLoading(false)
     }
   }, [
-    options,
+    sourceRoomId,
     reference.blockId,
     reference.documentId,
     reference.roomId,

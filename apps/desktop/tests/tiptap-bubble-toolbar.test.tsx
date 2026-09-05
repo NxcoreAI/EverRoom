@@ -104,7 +104,7 @@ describe('TiptapBubbleToolbar', () => {
 
     let renderer: TestRenderer.ReactTestRenderer
     act(() => {
-      renderer = TestRenderer.create(<TiptapBubbleToolbar editor={editor} documentId="doc-1" onAskAi={vi.fn()} />)
+      renderer = TestRenderer.create(<TiptapBubbleToolbar editor={editor} documentId="doc-1" sourceRoomId="room-1" onAskAi={vi.fn()} />)
     })
 
     act(() => {
@@ -129,7 +129,7 @@ describe('TiptapBubbleToolbar', () => {
     let renderer: TestRenderer.ReactTestRenderer
     act(() => {
       renderer = TestRenderer.create(
-        <TiptapBubbleToolbar editor={editor as never} documentId="doc-1" onAskAi={vi.fn()} />,
+        <TiptapBubbleToolbar editor={editor as never} documentId="doc-1" sourceRoomId="room-1" onAskAi={vi.fn()} />,
       )
     })
 
@@ -166,7 +166,7 @@ describe('TiptapBubbleToolbar', () => {
     let renderer: TestRenderer.ReactTestRenderer
     act(() => {
       renderer = TestRenderer.create(
-        <TiptapBubbleToolbar editor={editor as never} documentId="doc-1" onAskAi={vi.fn()} />,
+        <TiptapBubbleToolbar editor={editor as never} documentId="doc-1" sourceRoomId="room-1" onAskAi={vi.fn()} />,
       )
     })
 
@@ -200,7 +200,7 @@ describe('TiptapBubbleToolbar', () => {
     let renderer: TestRenderer.ReactTestRenderer
     act(() => {
       renderer = TestRenderer.create(
-        <TiptapBubbleToolbar editor={editor as never} documentId="doc-1" onAskAi={vi.fn()} />,
+        <TiptapBubbleToolbar editor={editor as never} documentId="doc-1" sourceRoomId="room-1" onAskAi={vi.fn()} />,
       )
     })
 
@@ -231,7 +231,7 @@ describe('TiptapBubbleToolbar', () => {
     let renderer: TestRenderer.ReactTestRenderer
     act(() => {
       renderer = TestRenderer.create(
-        <TiptapBubbleToolbar editor={editor as never} documentId="doc-1" onAskAi={vi.fn()} />,
+        <TiptapBubbleToolbar editor={editor as never} documentId="doc-1" sourceRoomId="room-1" onAskAi={vi.fn()} />,
       )
     })
 

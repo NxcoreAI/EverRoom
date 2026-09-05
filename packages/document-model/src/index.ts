@@ -207,6 +207,20 @@ export function formatBlockIndexMarkMarkdown(target: EverroomBlockIndexTarget, l
 const BLOCK_INDEX_MARK_PATTERN =
   /^\^\[((?:\\.|[^\]])*)\]\((everroom:\/\/[^\s)]+)(?:\s+["'][^)]*["'])?\)/;
 
+/** 块索引匹配原语：去除全部空白，消除排版差异对包含判断的干扰。 */
+export function normalizeIndexText(text: string): string {
+  return text.replace(/\s+/g, "");
+}
+
+/**
+ * 块索引匹配原语：来源块的匹配探针（归一化后前 80 字符）。
+ * 短于 20 字符的探针特异性不足，返回 null（宁缺毋滥）。
+ */
+export function buildIndexProbe(textPreview: string): string | null {
+  const probe = normalizeIndexText(textPreview).slice(0, 80);
+  return probe.length >= 20 ? probe : null;
+}
+
 export function parseBlockIndexMarkMarkdown(
   text: string,
 ): { target: EverroomBlockIndexTarget; label: string | null; raw: string } | null {

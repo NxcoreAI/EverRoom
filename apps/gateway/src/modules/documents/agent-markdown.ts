@@ -1,3 +1,4 @@
+import Image from "@tiptap/extension-image";
 import { TableKit } from "@tiptap/extension-table";
 import TaskItem from "@tiptap/extension-task-item";
 import TaskList from "@tiptap/extension-task-list";
@@ -10,6 +11,8 @@ import { BlockIndexMarkHeadless } from "./block-index-mark.js";
 export const agentDocumentMarkdown = new MarkdownManager({
   extensions: [
     StarterKit,
+    // 图片节点（Room 文档截图等）：缺了它 markdown 序列化会静默丢图。
+    Image,
     TaskList,
     TaskItem.configure({ nested: true }),
     TableKit.configure({ table: { resizable: false } }),

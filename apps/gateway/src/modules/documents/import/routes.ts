@@ -133,6 +133,18 @@ export function documentImportRoutes(service: DocumentImportService): FastifyPlu
       }
     });
 
+    app.get("/v1/document-import/room-imports/:id/diff", {
+      schema: { tags: ["document-import"] },
+    }, async (request, reply) => {
+      try {
+        return await service.candidateDiff((request.params as { id: string }).id);
+      } catch (error) {
+        const mapped = errorPayload(error);
+        if (mapped) return reply.code(mapped.status).send(mapped.body);
+        throw error;
+      }
+    });
+
     app.post("/v1/document-import/room-imports/:id/apply", {
       schema: { tags: ["document-import"] },
     }, async (request, reply) => {

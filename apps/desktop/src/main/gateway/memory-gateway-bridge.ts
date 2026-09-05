@@ -16,6 +16,7 @@ import type {
   MemoryOnboardingInput,
   MemoryOnboardingResultDto,
   MemoryOverviewDto,
+  MemoryRoomMemoriesPageDto,
   MemoryScenarioContentDto,
   MemoryScenarioEntryDto,
 } from '../../shared/memory'
@@ -57,6 +58,10 @@ export class MemoryGatewayBridge {
 
   listAtomic(options: MemoryAtomicListOptions): Promise<MemoryAtomicPageDto> {
     return this.request(`/v1/memory/atomic?${this.query(options)}`)
+  }
+
+  listRoomMemories(roomId: string): Promise<MemoryRoomMemoriesPageDto> {
+    return this.request(`/v1/memory/rooms/${encodeURIComponent(roomId)}/memories`)
   }
 
   searchAtomic(query: string, limit = 10): Promise<{ items: MemoryAtomicPageDto['items'] }> {

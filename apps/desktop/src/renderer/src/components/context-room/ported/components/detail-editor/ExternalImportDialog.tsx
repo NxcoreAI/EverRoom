@@ -182,6 +182,16 @@ export function ExternalImportDialog({
                 <button type="button" className="secondary" onClick={() => setPreview(null)}>
                   {t('contextRoom:externalImportDialog.backToResults')}
                 </button>
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={() => {
+                    showToast({ title: t('contextRoom:externalImportDialog.snapshotOnlySaved') })
+                    onClose()
+                  }}
+                >
+                  {t('contextRoom:externalImportDialog.snapshotOnly')}
+                </button>
                 <button type="button" className="primary" disabled={committing} onClick={() => void joinRoom()}>
                   {committing && <Loader2 className="spin" aria-hidden="true" />}
                   {t('contextRoom:externalImportDialog.joinRoom')}
