@@ -60,14 +60,7 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-          # Include the Nango submodule lockfile: the pnpm store is shared with
-          # the staging `pnpm install` in prepare-nango-runtime.mjs, whose deps
-          # are not covered by the root lockfile. Without this, the store cache
-          # key never changes when those deps change, the exact-key hit skips
-          # the post-job save, and the staging deps re-download every run.
-          cache-dependency-path: |
-            pnpm-lock.yaml
-            apps/gateway/src/modules/connector/package-lock.json
+          cache-dependency-path: pnpm-lock.yaml
 
       - name: Validate release tag
         shell: bash
@@ -92,14 +85,13 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # Tarball cache for the `npm ci` runs inside prepare-nango-runtime.mjs
-      # (Nango submodule) and prepare-genoffice-runtime.mjs (genoffice
-      # submodule). The pnpm store above only covers pnpm installs.
+      # Tarball cache for the `npm ci` run inside prepare-genoffice-runtime.mjs
+      # (genoffice submodule). The pnpm store above only covers pnpm installs.
       - name: Cache npm tarballs for submodule builds
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.npm
-          key: npm-tarballs-${{ runner.os }}-${{ hashFiles('apps/gateway/src/modules/connector/package-lock.json', 'apps/desktop/vendor/genoffice/package-lock.json') }}
+          key: npm-tarballs-${{ runner.os }}-${{ hashFiles('apps/desktop/vendor/genoffice/package-lock.json') }}
           restore-keys: npm-tarballs-${{ runner.os }}-
 
       # prepare-genoffice-runtime.mjs builds the Rust xlsx sidecar (cargo
@@ -143,7 +135,6 @@ jobs:
           pnpm --filter @nxcore/desktop exec node scripts/prepare-open-connector.mjs
           pnpm --filter @nxcore/desktop exec node scripts/prepare-oo-cli.mjs
           pnpm --filter @nxcore/desktop exec node scripts/generate-packaged-env.mjs
-          test -f apps/desktop/build/nango-runtime/packages/server/dist/server.js
 
       - name: Package macOS arm64
         shell: bash
@@ -177,17 +168,11 @@ jobs:
           resources="$app_path/Contents/Resources"
           forbidden='(^|/)(\.env($|\.)|(__tests__|tests?)(/|$)|[^/]*(\.test|\.spec)\.[^/]+$|(test|spec)\.[^/]+$)|\.map$'
 
-          # nango/ ships a vendored runtime whose compiled dist imports
-          # *.test.js and whose node_modules contains test fixtures — both
-          # required at runtime, so it is exempt from the loose-file audit.
-          loose_files="$(find "$resources" -type f -not -path "$resources/nango/*" -print)"
+          loose_files="$(find "$resources" -type f -print)"
           if printf '%s\n' "$loose_files" | grep -Eiq "$forbidden"; then
             printf '%s\n' "$loose_files" | grep -Ei "$forbidden" >&2
             exit 1
           fi
-          nango_loose="$(find "$resources/nango" -type f -print)"
-          printf '%s\n' "$nango_loose" | grep -Eiq '\.env($|\.)' && { printf '%s\n' "$nango_loose" | grep -Ei '\.env($|\.)' >&2; exit 1; }
-          printf '%s\n' "$nango_loose" | grep -Ei '\.(map|ts|tsx|mts|cts)$' && { printf '%s\n' "$nango_loose" | grep -Ei '\.(map|ts|tsx|mts|cts)$' >&2; exit 1; }
           unexpected_typescript="$(printf '%s\n' "$loose_files" | grep -Ei '\.(ts|tsx|mts|cts)$' | grep -Ev "^$resources/open-connector/" || true)"
           test -z "$unexpected_typescript" || { printf '%s\n' "$unexpected_typescript" >&2; exit 1; }
 
@@ -208,7 +193,6 @@ jobs:
           test -x "$resources/app.asar.unpacked/node_modules/@esbuild/darwin-arm64/bin/esbuild"
           test -f "$resources/app.asar.unpacked/node_modules/better-sqlite3/prebuilds/darwin-arm64.node"
           test -f "$resources/open-connector/src/server/index.ts"
-          test -f "$resources/nango/packages/server/dist/server.js"
           test -f "$resources/open-connector/dist/web/index.html"
           test -x "$resources/oo/darwin-arm64/oo"
           "$resources/oo/darwin-arm64/oo" --version
@@ -276,9 +260,7 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-          cache-dependency-path: |
-            pnpm-lock.yaml
-            apps/gateway/src/modules/connector/package-lock.json
+          cache-dependency-path: pnpm-lock.yaml
 
       - name: Validate release tag
         shell: bash
@@ -307,7 +289,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.npm
-          key: npm-tarballs-${{ runner.os }}-${{ hashFiles('apps/gateway/src/modules/connector/package-lock.json', 'apps/desktop/vendor/genoffice/package-lock.json') }}
+          key: npm-tarballs-${{ runner.os }}-${{ hashFiles('apps/desktop/vendor/genoffice/package-lock.json') }}
           restore-keys: npm-tarballs-${{ runner.os }}-
 
       - name: Cache Rust build for xlsx sidecar
@@ -325,7 +307,6 @@ jobs:
           pnpm --filter @nxcore/desktop exec node scripts/prepare-open-connector.mjs
           pnpm --filter @nxcore/desktop exec node scripts/prepare-oo-cli.mjs
           pnpm --filter @nxcore/desktop exec node scripts/generate-packaged-env.mjs
-          test -f apps/desktop/build/nango-runtime/packages/server/dist/server.js
 
       - name: Package Windows x64
         shell: bash
