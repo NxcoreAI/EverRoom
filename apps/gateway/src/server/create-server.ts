@@ -839,7 +839,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
         updated_at: item.updatedAt,
       }));
     },
-  }, cliConnectorSyncService, nangoAgentTools);
+  }, cliConnectorSyncService);
   const agentRuntime = agentResolver.resolve(BUILTIN_AGENT_IDS.primary);
   const localAgentRuntimeRegistry = new LocalAgentRuntimeRegistry();
   app.log.info(

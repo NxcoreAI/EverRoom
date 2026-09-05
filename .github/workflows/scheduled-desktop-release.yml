@@ -48,10 +48,10 @@ jobs:
       NXCORE_BROWSER_EXTENSION_ID: ${{ vars.NXCORE_BROWSER_EXTENSION_ID }}
 
     steps:
-      - name: Check out main
+      - name: Check out release branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: main
+          ref: ${{ inputs.channel == 'alpha' && 'alpha' || 'dev' }}
           fetch-depth: 0
           persist-credentials: false
           submodules: recursive
@@ -180,7 +180,7 @@ jobs:
             exit 0
           fi
           message="EverRoom 每日发布检查失败
-          分支：main
+          分支：${{ inputs.channel == 'alpha' && 'alpha' || 'dev' }}
           提交：$(git log -1 --pretty='%h %s (%an)')
           日志：https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           payload="$(jq -n --arg text "$message" '{msg_type:"text",content:{text:$text}}')"

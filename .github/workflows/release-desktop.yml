@@ -81,9 +81,11 @@ jobs:
             echo "Tag $GITHUB_REF_NAME does not match desktop version $version" >&2
             exit 1
           }
-          git fetch origin main --no-tags
-          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || {
-            echo "Tagged commit must be on main" >&2
+          git fetch origin main dev alpha --no-tags
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main ||
+            git merge-base --is-ancestor "$GITHUB_SHA" origin/dev ||
+            git merge-base --is-ancestor "$GITHUB_SHA" origin/alpha || {
+            echo "Tagged commit must be on main, dev, or alpha" >&2
             exit 1
           }
 
@@ -290,9 +292,11 @@ jobs:
             echo "Tag $GITHUB_REF_NAME does not match desktop version $version" >&2
             exit 1
           }
-          git fetch origin main --no-tags
-          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || {
-            echo "Tagged commit must be on main" >&2
+          git fetch origin main dev alpha --no-tags
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main ||
+            git merge-base --is-ancestor "$GITHUB_SHA" origin/dev ||
+            git merge-base --is-ancestor "$GITHUB_SHA" origin/alpha || {
+            echo "Tagged commit must be on main, dev, or alpha" >&2
             exit 1
           }
 
