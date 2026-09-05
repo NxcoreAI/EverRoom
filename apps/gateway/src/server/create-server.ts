@@ -644,6 +644,8 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   // 手动建 Room：enrich 实体回写时认领到本 Room，使后续资料路由能命中（与推荐晋升同语义）
   contextRoomService.setRoomEntityClaimer((roomId, entities) =>
     knowledgeService.claimRoomEntities(roomId, entities));
+  // 记忆条目确认晋升：经合成会话交 MemoryCore 蒸馏（worker room-memory: 链回填归属）。
+  contextRoomService.setMemoryPromoter((input) => memoryService.captureRoomMemoryItem(input));
   roomDuplicateService.initialize();
   const cliConnectorSyncService = new ConnectorSyncService(db, config, app.log);
   let cliConnectorMarkdownService: ConnectorMarkdownService | null = null;
@@ -1460,6 +1462,17 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
         quietWindowMs: config.documentIndexBackfill?.quietWindowMs ?? 300_000,
         rescanMs: config.documentIndexBackfill?.rescanMs ?? 24 * 60 * 60_000,
         listMemoryItems: (roomId) => memoryService.listRoomAttributedMemories(roomId),
+        // 复检存在性 = 归属 ∪ 快照条目（禁用 shadow / legacy id 的已挂标记不误摘）；
+        // 归属在前（漂移探针用最新快照内容），候选生成仍只走 listMemoryItems。
+        listAllMemoryItems: (roomId) => {
+          const attributed = memoryService.listRoomAttributedMemories(roomId);
+          const attributedIds = new Set(attributed.map((item) => item.id));
+          return [
+            ...attributed,
+            ...contextRoomService.listSnapshotMemoryItems(roomId)
+              .filter((item) => !attributedIds.has(item.id)),
+          ];
+        },
       },
     );
     documentIndexBackfillWorker.start();

@@ -667,5 +667,33 @@ export function contextRoomRoutes(
         return { invocationId };
       },
     );
+
+    // 记忆条目晋升（待确认→已确认）：合成会话捕获交 MemoryCore 蒸馏，worker 回填归属。
+    app.post(
+      "/v1/context-rooms/:roomId/memories/:itemId/promote",
+      {
+        schema: {
+          tags: ["context-rooms"],
+          params: Type.Object({
+            roomId: Type.String({ minLength: 1, maxLength: 128 }),
+            itemId: Type.String({ minLength: 1, maxLength: 256 }),
+          }),
+        },
+      },
+      async (request, reply) => {
+        try {
+          return await service.promoteMemoryItem(request.params.roomId, request.params.itemId);
+        } catch (error) {
+          const code = error instanceof Error ? error.message : "context_room_memory_promote_failed";
+          if (code === "context_room_not_found" || code === "context_room_memory_item_not_found") {
+            return reply.code(404).send({ error: code, message: "Context Room or memory item not found" });
+          }
+          if (code === "context_room_memory_not_configured") {
+            return reply.code(503).send({ error: code, message: "Memory promotion is not available" });
+          }
+          return reply.code(502).send({ error: code, message: "Context Room memory promotion failed" });
+        }
+      },
+    );
   };
 }

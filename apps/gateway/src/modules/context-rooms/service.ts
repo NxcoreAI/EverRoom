@@ -251,6 +251,7 @@ export class ContextRoomService {
   private duplicateService: RoomDuplicateService | null = null;
   private roomAgent: RoomAgentDispatcher | null = null;
   private roomAgentLogger: ((bindings: Record<string, unknown>, message: string) => void) | null = null;
+  private memoryPromoter: ((input: { roomId: string; itemId: string; content: string; type?: string }) => Promise<boolean>) | null = null;
   private roomEntityClaimer:
     ((roomId: string, entities: Array<{ name: string; kind: string }>) => number | void) | null = null;
 
@@ -282,6 +283,16 @@ export class ContextRoomService {
   ): void {
     this.roomAgent = dispatcher;
     this.roomAgentLogger = logger ?? null;
+  }
+
+  /**
+   * 注入记忆晋升捕获回调（create-server 接 MemoryService.captureRoomMemoryItem）：
+   * 记忆条目确认晋升时经合成会话交 MemoryCore 蒸馏，worker 的 room-memory: 链回填。
+   */
+  setMemoryPromoter(
+    promoter: ((input: { roomId: string; itemId: string; content: string; type?: string }) => Promise<boolean>) | null,
+  ): void {
+    this.memoryPromoter = promoter;
   }
 
   getSnapshot(): ContextRoomSnapshot {
@@ -658,6 +669,7 @@ export class ContextRoomService {
         type: fact.type,
         status: "已确认",
         sources: [{ type: "记忆", name: "创建时记忆召回" }],
+        ...(fact.memoryId ? { memoryId: fact.memoryId } : {}),
       });
     }
     const timeline = Array.isArray(data.timeline) ? [...data.timeline] : [];
@@ -733,6 +745,75 @@ export class ContextRoomService {
         "context room entity claim failed; enrichment kept",
       );
     }
+  }
+
+  /**
+   * 记忆条目晋升（待确认→已确认）：经注入的捕获回调交 MemoryCore 蒸馏，成功后落
+   * promotionSessionId（幂等防重）并翻已确认；room-derive-worker 的 room-memory: 链
+   * 回填归属行与条目 memoryId。已带 memoryId / promotionSessionId 的条目直接返回。
+   */
+  async promoteMemoryItem(roomId: string, itemId: string): Promise<{ promotionSessionId: string | null }> {
+    const resolved = this.resolveRoomId(roomId);
+    if (!resolved) throw new Error("context_room_not_found");
+    if (!this.memoryPromoter) throw new Error("context_room_memory_not_configured");
+    const row = this.db.select().from(contextRooms)
+      .where(eq(contextRooms.id, resolved)).get();
+    if (!row || row.deletedAt !== null) throw new Error("context_room_not_found");
+    const data = isRecord(row.data) ? { ...row.data } : {};
+    const memoryItems = Array.isArray(data.memoryItems) ? [...data.memoryItems] : [];
+    const index = memoryItems.findIndex((item) => isRecord(item) && item.id === itemId);
+    if (index < 0) throw new Error("context_room_memory_item_not_found");
+    const existing = memoryItems[index] as Record<string, unknown>;
+    if (typeof existing.memoryId === "string" && existing.memoryId) {
+      return { promotionSessionId: null };
+    }
+    if (typeof existing.promotionSessionId === "string" && existing.promotionSessionId) {
+      return { promotionSessionId: existing.promotionSessionId };
+    }
+    const content = typeof existing.content === "string" ? existing.content : "";
+    const type = typeof existing.type === "string" ? existing.type : undefined;
+    let captured = false;
+    try {
+      captured = await this.memoryPromoter(
+        type !== undefined ? { roomId: resolved, itemId, content, type } : { roomId: resolved, itemId, content },
+      );
+    } catch (error) {
+      this.roomAgentLogger?.(
+        { roomId: resolved, itemId, error: error instanceof Error ? error.message : String(error) },
+        "context room memory promotion capture failed",
+      );
+      throw new Error("context_room_memory_capture_failed");
+    }
+    if (!captured) throw new Error("context_room_memory_capture_failed");
+    const promotionSessionId = `room-memory:${resolved}:${itemId}`.slice(0, 100);
+    memoryItems[index] = { ...existing, status: "已确认", promotionSessionId };
+    Object.assign(data, { memoryItems });
+    this.db.update(contextRooms).set({ data, updatedAt: new Date() })
+      .where(eq(contextRooms.id, resolved)).run();
+    return { promotionSessionId };
+  }
+
+  /**
+   * 快照记忆条目（data.memoryItems 原样，不限 status）：回溯 worker 复检的存在性
+   * 判定源之一——legacy id 与禁用 shadow 的已挂标记靠它不被误摘。候选生成不用它。
+   */
+  listSnapshotMemoryItems(roomId: string): Array<{ id: string; content: string; type: string }> {
+    const resolved = this.resolveRoomId(roomId);
+    if (!resolved) return [];
+    const row = this.db.select().from(contextRooms)
+      .where(eq(contextRooms.id, resolved)).get();
+    if (!row || row.deletedAt !== null) return [];
+    const items = Array.isArray(row.data.memoryItems) ? row.data.memoryItems : [];
+    return items.flatMap((item) => {
+      if (typeof item !== "object" || item === null || Array.isArray(item)) return [];
+      const record = item as Record<string, unknown>;
+      if (typeof record.id !== "string" || typeof record.content !== "string") return [];
+      return [{
+        id: record.id,
+        content: record.content,
+        type: typeof record.type === "string" ? record.type : "",
+      }];
+    });
   }
 
   /** 调度子 Agent 再生成 Room 简报并回写；返回更新后的 Room 快照。 */

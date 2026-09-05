@@ -2,6 +2,7 @@ import { and, desc, eq, inArray, isNotNull, lte, ne } from "drizzle-orm";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
 import {
   agentRuns,
+  contextRooms,
   gatewayMetadata,
   roomDocumentLinks,
   roomMemorySuppressions,
@@ -10,11 +11,11 @@ import {
 import type { MemoryAtomicDto, MemoryService } from "./service.js";
 
 /**
- * 游标版本 v2：v1 只做对话链推导，document/source 链上线后全量重扫一次
- * （已绑行/压制行跳过是幂等的，重扫只为补历史 unbound 项）；此后新增推导链
- * 仍按此模式升版本回填。
+ * 游标版本 v3：v2 上线 document/source 链时全量重扫一次；v3 上线 room-memory: 晋升链
+ * （历史晋升捕获的记忆游标已越过）再全量重扫一次。已绑行/压制行跳过是幂等的。
+ * 此后新增推导链仍按此模式升版本回填。
  */
-const CURSOR_KEY = "memory.room-derive.v2:cursor";
+const CURSOR_KEY = "memory.room-derive.v3:cursor";
 
 /** MemoryCore /v3/atomic/query 的 limit 上限。 */
 const PAGE_SIZE_MAX = 100;
@@ -52,6 +53,8 @@ interface DeriveCursor {
  * - Room 资料（wiki 同步捕获 `wiki:{sourceId}:…` / 统一 ingest 导入的
  *   document 来源记忆，后者经 callerRef=sourceId）→ room_source_memberships
  *   挂到该知识源的 Room（excluded 证据不算）。
+ * - Room 记忆条目晋升（`room-memory:{roomId}:{itemId}` 合成会话）→ Room 直接
+ *   归属，并把蒸馏 memoryId 回写条目（渲染层合并视图据此去重）。
  * - onboarding: 等其余合成会话与无来源：跳过。
  *
  * 游标正确性（MemoryCore 固定 ORDER BY updated_time DESC 分页）：逐页向下扫保证
@@ -192,6 +195,10 @@ export class RoomMemoryDeriveWorker {
     if (!provenance) return false; // 记忆已删（404）→ 已处理。
 
     const sessionId = provenance.session?.sessionId;
+    if (typeof sessionId === "string" && sessionId.startsWith("room-memory:")) {
+      // 记忆条目晋升捕获的合成会话：room-memory:{roomId}:{itemId}，Room 直接可解析。
+      return this.deriveFromRoomMemoryItem(item, sessionId);
+    }
     if (typeof sessionId === "string" && sessionId.startsWith("document:")) {
       // 划词改写捕获的合成会话：documentId 即 gateway 文档 id，经 room_doc_links 归属。
       return this.deriveFromDocument(item, sessionId, sessionId.slice("document:".length));
@@ -281,6 +288,54 @@ export class RoomMemoryDeriveWorker {
       "memory room derive attributed",
     );
     return true;
+  }
+
+  /**
+   * 晋升链：room-memory:{roomId}:{itemId} → Room 直接归属，并把蒸馏出的 memoryId
+   * 回写条目（合并视图据此去重，条目只显示归因版本）。条目回写失败只记日志——
+   * 归属行已落，渲染层合并视图仍能展示，条目 memoryId 缺失只影响去重。
+   */
+  private deriveFromRoomMemoryItem(item: MemoryAtomicDto, sessionId: string): boolean {
+    const roomId = sessionId.split(":")[1] ?? "";
+    if (!roomId) return false;
+    const resolved = this.memory.resolveRoom(roomId);
+    if (!resolved) return false;
+
+    this.memory.insertDerivedAttribution(item, sessionId, resolved, "room_item");
+    this.writeBackRoomMemoryItemLink(resolved, sessionId, item.id);
+    this.logger.info(
+      { memoryId: item.id, roomId: resolved, sessionId, sourceKind: "room_item" },
+      "memory room derive attributed",
+    );
+    return true;
+  }
+
+  private writeBackRoomMemoryItemLink(roomId: string, sessionId: string, memoryId: string): void {
+    try {
+      const row = this.db.select({ data: contextRooms.data })
+        .from(contextRooms)
+        .where(eq(contextRooms.id, roomId))
+        .get();
+      if (!row || !row.data || !Array.isArray(row.data.memoryItems)) return;
+      const items = row.data.memoryItems as Array<Record<string, unknown>>;
+      let changed = false;
+      for (const entry of items) {
+        if (entry.promotionSessionId === sessionId && entry.memoryId !== memoryId) {
+          entry.memoryId = memoryId;
+          changed = true;
+        }
+      }
+      if (!changed) return;
+      this.db.update(contextRooms)
+        .set({ data: row.data, updatedAt: new Date() })
+        .where(eq(contextRooms.id, roomId))
+        .run();
+    } catch (error) {
+      this.logger.warn(
+        { roomId, sessionId, error: error instanceof Error ? error.message : String(error) },
+        "memory room derive room item writeback failed",
+      );
+    }
   }
 
   private readCursor(): DeriveCursor {

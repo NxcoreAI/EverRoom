@@ -21,6 +21,8 @@ import { type ReactNode, useMemo, useState } from 'react';
 import { useLocale } from '../../../../i18n/LocaleContext';
 
 import { cn, localizedUiText, uiText } from '../adapters';
+import { dispatchRoomMemoryChanged } from '../../roomMemoryChange';
+import { disableRoomMemoryItem, enableRoomMemoryItem } from '../roomMemoryItemActions';
 import type {
   ContextRoomActionItem,
   ContextRoomFileItem,
@@ -1115,42 +1117,73 @@ function MemoryDetail({
                 <button
                   type="button"
                   className="context-room-primary"
-                  onClick={() =>
-                    onUpdateRoom((current) => ({
-                      ...current,
-                      memoryItems: current.memoryItems.map((item) =>
-                        item.id === activeMemory.id ? { ...item, status: '已确认' } : item
-                      ),
-                    }))
-                  }
+                  onClick={() => {
+                    const confirmStatus = () =>
+                      onUpdateRoom((current) => ({
+                        ...current,
+                        memoryItems: current.memoryItems.map((item) =>
+                          item.id === activeMemory.id ? { ...item, status: '已确认' } : item
+                        ),
+                      }));
+                    // 晋升：经 gateway 合成会话交 MemoryCore 蒸馏（worker 回填归属与
+                    // memoryId）。API 不可用/失败时退化为本地确认（不阻塞用户）。
+                    if (!window.nxcore?.contextRooms?.promoteMemoryItem || activeMemory.memoryId) {
+                      confirmStatus();
+                      return;
+                    }
+                    void window.nxcore.contextRooms.promoteMemoryItem(room.id, activeMemory.id)
+                      .then(() => {
+                        confirmStatus();
+                        dispatchRoomMemoryChanged();
+                      })
+                      .catch((error) => {
+                        console.error('[room-memory] promote failed', error);
+                        confirmStatus();
+                      });
+                  }}
                 >
                   {t('contextRoom:objectDetail.confirmMemory')}
                 </button>
               ) : null}
-              <button
-                type="button"
-                className="context-room-secondary"
-                onClick={() =>
-                  onUpdateRoom((current) => ({
-                    ...current,
-                    memoryItems: current.memoryItems.map((item) =>
-                      item.id === activeMemory.id
-                        ? { ...item, content: `${item.content}（已编辑）` }
-                        : item
-                    ),
-                  }))
-                }
-              >
-                {t('contextRoom:objectDetail.edit')}
-              </button>
-              <button
-                type="button"
-                className="context-room-ghost"
-                disabled={activeMemory.status === '已禁用'}
-                onClick={() => setDisableConfirmOpen(true)}
-              >
-                {t(activeMemory.status === '已禁用' ? 'contextRoom:objectDetail.disabled' : 'contextRoom:objectDetail.disable')}
-              </button>
+              {!activeMemory.attributed ? (
+                <button
+                  type="button"
+                  className="context-room-secondary"
+                  onClick={() =>
+                    onUpdateRoom((current) => ({
+                      ...current,
+                      memoryItems: current.memoryItems.map((item) =>
+                        item.id === activeMemory.id
+                          ? { ...item, content: `${item.content}（已编辑）` }
+                          : item
+                      ),
+                    }))
+                  }
+                >
+                  {t('contextRoom:objectDetail.edit')}
+                </button>
+              ) : null}
+              {activeMemory.status === '已禁用' ? (
+                <button
+                  type="button"
+                  className="context-room-secondary"
+                  onClick={() => {
+                    void enableRoomMemoryItem(room.id, activeMemory)
+                      .then((mutator) => onUpdateRoom(mutator))
+                      .catch((error) => console.error('[room-memory] enable failed', error));
+                  }}
+                >
+                  {t('contextRoom:objectDetail.enable')}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="context-room-secondary"
+                  onClick={() => setDisableConfirmOpen(true)}
+                >
+                  {t('contextRoom:objectDetail.disable')}
+                </button>
+              )}
             </div>
           </Panel>
         </div>
@@ -1168,14 +1201,11 @@ function MemoryDetail({
         risk={t('contextRoom:objectDetail.disablingDoesNotDeleteTheSourceYouCan')}
         confirmLabel={t('contextRoom:objectDetail.confirmDisable')}
         danger
-        onConfirm={() =>
-          onUpdateRoom((current) => ({
-            ...current,
-            memoryItems: current.memoryItems.map((item) =>
-              item.id === activeMemory.id ? { ...item, status: '已禁用' } : item
-            ),
-          }))
-        }
+        onConfirm={() => {
+          void disableRoomMemoryItem(activeMemory)
+            .then((mutator) => onUpdateRoom(mutator))
+            .catch((error) => console.error('[room-memory] disable failed', error));
+        }}
       />
     </section>
   );

@@ -30,7 +30,8 @@ export interface ContextRoomEnrichment {
   status: string;
   nextSteps: string[];
   entities: Array<{ name: string; kind: string; description: string }>;
-  facts: Array<{ content: string; type: string }>;
+  /** memoryId：来自 memory_search 结果行首 id（逐字复制）；非检索来源的事实省略。 */
+  facts: Array<{ content: string; type: string; memoryId?: string }>;
 }
 
 export interface ContextRoomBriefRefresh {
@@ -171,7 +172,12 @@ export function parseContextRoomEnrichment(
     const record = item as Record<string, unknown>;
     const content = text(record.content, 600);
     if (!content) return [];
-    return [{ content, type: text(record.type, 40) || "事实" }];
+    const memoryId = typeof record.memoryId === "string" && record.memoryId ? text(record.memoryId, 128) : undefined;
+    return [{
+      content,
+      type: text(record.type, 40) || "事实",
+      ...(memoryId ? { memoryId } : {}),
+    }];
   }).slice(0, 20) : [];
   return {
     kind,

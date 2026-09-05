@@ -116,6 +116,14 @@ export class ContextRoomGatewayBridge {
     return this.request(`/v1/context-rooms/${encodeURIComponent(roomId)}/refresh-brief`, { method: 'POST' })
   }
 
+  /** 记忆条目晋升（待确认→已确认）：MemoryCore 蒸馏后 worker 回填归属。 */
+  promoteMemoryItem(roomId: string, itemId: string): Promise<{ promotionSessionId: string | null }> {
+    return this.request(
+      `/v1/context-rooms/${encodeURIComponent(roomId)}/memories/${encodeURIComponent(itemId)}/promote`,
+      { method: 'POST' },
+    )
+  }
+
   overview(roomId: string): Promise<RoomOverviewProjection> {
     return this.request(`/v1/context-rooms/${encodeURIComponent(roomId)}/overview`)
   }

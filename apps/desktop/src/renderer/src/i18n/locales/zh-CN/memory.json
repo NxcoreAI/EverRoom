@@ -11,6 +11,7 @@
   "atomicMemory.room": "所属 Room",
   "atomicMemory.roomUnbound": "未绑定",
   "atomicMemory.roomUnavailable": "Room 已不可用",
+  "atomicMemory.openRoom": "打开 Room",
   "atomicMemory.selectRoom": "选择 Room",
   "atomicMemory.roomSearchPlaceholder": "搜索 Room…",
   "atomicMemory.roomNoMatch": "没有匹配的 Room",

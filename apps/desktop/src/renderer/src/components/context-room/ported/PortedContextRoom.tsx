@@ -22,6 +22,7 @@ import type { ObsidianVaultBinding } from '../../../../../shared/obsidian'
 import { createEmptyContextRoom } from './contextRoomFactory'
 import { ObsidianVaultRoom } from '../obsidian/ObsidianVaultRoom'
 import { mergeRoomMemoryItems } from './attributedRoomMemories'
+import { ROOM_MEMORY_CHANGED_EVENT } from '../roomMemoryChange'
 import type { MemoryRoomMemoryItemDto } from '../../../../../shared/memory'
 
 const AllRoomsView = lazy(() =>
@@ -273,14 +274,31 @@ export function PortedContextRoom({
   useEffect(() => {
     if (!activeRoomId) return
     let cancelled = false
-    window.nxcore?.memory.listRoomMemories(activeRoomId)
-      .then((page) => {
-        if (!cancelled) {
-          setAttributedMemoriesByRoom((current) => ({ ...current, [activeRoomId]: page.items }))
-        }
-      })
-      .catch(() => undefined)
-    return () => { cancelled = true }
+    const load = () => {
+      void window.nxcore?.memory.listRoomMemories(activeRoomId)
+        .then((page) => {
+          if (!cancelled) {
+            setAttributedMemoriesByRoom((current) => ({ ...current, [activeRoomId]: page.items }))
+          }
+        })
+        .catch(() => undefined)
+    }
+    load()
+    // 归属记忆变更（绑定/解绑/编辑/晋升）后防抖重拉：合并视图无持久条目，刷新即同步。
+    let timer: number | null = null
+    const refresh = () => {
+      if (timer !== null) window.clearTimeout(timer)
+      timer = window.setTimeout(() => {
+        timer = null
+        load()
+      }, 500)
+    }
+    window.addEventListener(ROOM_MEMORY_CHANGED_EVENT, refresh)
+    return () => {
+      cancelled = true
+      window.removeEventListener(ROOM_MEMORY_CHANGED_EVENT, refresh)
+      if (timer !== null) window.clearTimeout(timer)
+    }
   }, [activeRoomId])
   const activeRoomWithMemories = useMemo(
     () => activeRoom

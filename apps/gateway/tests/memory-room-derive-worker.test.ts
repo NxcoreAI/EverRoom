@@ -158,7 +158,7 @@ function seedRun(db: DatabaseClient["db"], sessionId: string, roomId: string | n
 
 function cursorValue(db: DatabaseClient["db"]): string | null {
   const row = db.select({ value: gatewayMetadata.value }).from(gatewayMetadata)
-    .where(eq(gatewayMetadata.key, "memory.room-derive.v2:cursor")).get();
+    .where(eq(gatewayMetadata.key, "memory.room-derive.v3:cursor")).get();
   if (!row?.value) return null;
   return (JSON.parse(row.value) as { updatedAt: string | null }).updatedAt;
 }
@@ -376,5 +376,64 @@ describe("RoomMemoryDeriveWorker", () => {
     expect(rows.find((row) => row.memoryId === "m-ingest")).toMatchObject({
       roomId: "room-live", sourceKind: "source", sourceId: "source:src-1",
     });
+  });
+
+  it("derives room-memory: promotion sessions with attribution and item writeback", async () => {
+    const at = "2026-09-03T10:00:00.000Z";
+    const sessionId = "room-memory:room-live:room-live-memory-1";
+    const { worker, db } = await harness({
+      memories: [memory("m-promoted", at, sessionId)],
+    });
+    // 晋升条目：promotionSessionId 已由 promote API 落库，等 worker 回填 memoryId。
+    const roomRow = db.select().from(contextRooms).where(eq(contextRooms.id, "room-live")).get();
+    db.update(contextRooms).set({
+      data: {
+        ...roomRow!.data,
+        memoryItems: [{
+          id: "room-live-memory-1",
+          content: "用户偏好事实",
+          type: "人物偏好",
+          status: "已确认",
+          promotionSessionId: sessionId,
+        }],
+      },
+    }).where(eq(contextRooms.id, "room-live")).run();
+
+    await worker.drain();
+
+    const rows = db.select().from(roomMemoryAttributions).all();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      memoryId: "m-promoted",
+      roomId: "room-live",
+      sourceKind: "room_item",
+      sourceId: sessionId,
+      confidence: "derived",
+      content: "记忆 m-promoted",
+    });
+    const updated = db.select().from(contextRooms).where(eq(contextRooms.id, "room-live")).get();
+    expect(updated!.data.memoryItems).toEqual([expect.objectContaining({
+      id: "room-live-memory-1",
+      memoryId: "m-promoted",
+    })]);
+  });
+
+  it("room-memory: writeback is idempotent and survives missing items", async () => {
+    const at = "2026-09-03T10:00:00.000Z";
+    const { worker, db } = await harness({
+      memories: [
+        memory("m-1", at, "room-memory:room-live:item-gone"),
+        memory("m-2", at, "room-memory:room-old:item-old"),
+      ],
+    });
+
+    await worker.drain();
+
+    // 条目不存在（room-live 无该条目）或 Room 已合并（room-old → resolveRoom 指向
+    // room-new 但条目在 room-old 行上）：归属仍落，回写跳过不报错。
+    const rows = db.select().from(roomMemoryAttributions).all();
+    expect(rows).toHaveLength(2);
+    expect(rows.find((row) => row.memoryId === "m-1")?.roomId).toBe("room-live");
+    expect(rows.find((row) => row.memoryId === "m-2")?.roomId).toBe("room-new");
   });
 });

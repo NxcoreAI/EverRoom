@@ -59,6 +59,7 @@ async function createHarness(options: {
   quietWindowMs?: number;
   rescanMs?: number;
   listMemoryItems?: (roomId: string) => Array<{ id: string; content: string; type: string }>;
+  listAllMemoryItems?: (roomId: string) => Array<{ id: string; content: string; type: string }>;
 } = {}) {
   const dataDir = await mkdtemp(join(tmpdir(), "nxcore-index-backfill-test-"));
   temporaryDirectories.push(dataDir);
@@ -85,6 +86,7 @@ async function createHarness(options: {
       retryBaseDelayMs: 0,
       ...(options.rescanMs === undefined ? {} : { rescanMs: options.rescanMs }),
       ...(options.listMemoryItems ? { listMemoryItems: options.listMemoryItems } : {}),
+      ...(options.listAllMemoryItems ? { listAllMemoryItems: options.listAllMemoryItems } : {}),
     },
   );
   return { database, documents, worker, logger };
@@ -382,6 +384,37 @@ describe("document index backfill worker", () => {
     await wait(1_100);
     await worker.drain();
     expect(findMarkNodes(documents.get(target.id)!.contentJson)).toHaveLength(0);
+  });
+
+  it("快照条目（禁用 shadow/legacy id）经 listAllMemoryItems 并集保住已挂标记，且不产生新标记", async () => {
+    const snapshotItems = [{ id: "room-1-memory-9", content: MEMORY_CONTENT, type: "事实" }];
+    const { documents, worker } = await createHarness({
+      rescanMs: 0,
+      // 归属清单为空（条目已禁用解绑/legacy），存在性走快照并集。
+      listMemoryItems: () => [],
+      listAllMemoryItems: () => snapshotItems,
+    });
+    const marked = await importDocument(documents, "doc-marked", bodyWithMarks(
+      [`${MEMORY_CONTENT}已挂标的复述段落。`],
+      [{
+        kind: "memory",
+        targetRoomId: "room-1",
+        targetDocumentId: "",
+        targetBlockId: "",
+        targetMemoryId: "room-1-memory-9",
+        fallbackTitle: "事实",
+        fallbackPreview: MEMORY_CONTENT.slice(0, 50),
+      }],
+    ));
+    const quotable = await importDocument(documents, "doc-quotable", body([
+      `${MEMORY_CONTENT}未挂标的复述段落。`,
+    ]));
+    await worker.drain();
+
+    // 复检存在性命中最照条目 → 已挂标记不摘。
+    expect(findMarkNodes(documents.get(marked.id)!.contentJson)).toHaveLength(1);
+    // 候选生成只用归属清单（空）→ 不为快照条目补挂新标记。
+    expect(findMarkNodes(documents.get(quotable.id)!.contentJson)).toHaveLength(0);
   });
 
   it("段落漂移经 LLM 复验确认失联后摘除；复验入参携带当前来源文本", async () => {

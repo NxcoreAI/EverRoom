@@ -2,6 +2,7 @@ import { Search, X } from 'lucide-react'
 import { useMemo, useState, type KeyboardEvent } from 'react'
 
 import { useContextRoomState } from '@/components/context-room/ContextRoomStateProvider'
+import { dispatchRoomMemoryChanged } from '@/components/context-room/roomMemoryChange'
 import { useLocale } from '@/i18n/LocaleContext'
 
 /**
@@ -45,6 +46,7 @@ export function RoomAssignControl({ memoryId, roomId, roomTitle, snapshot, onCha
       )
       setOpen(false)
       setQuery('')
+      dispatchRoomMemoryChanged()
       onChanged()
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t('memory:atomicMemory.roomAssignFailed'))

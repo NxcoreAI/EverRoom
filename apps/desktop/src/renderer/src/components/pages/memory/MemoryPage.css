@@ -481,6 +481,17 @@
   color: var(--subtle);
 }
 
+.mem-room-chip-link {
+  cursor: pointer;
+}
+
+.mem-room-chip-link:hover,
+.mem-room-chip-link:focus-visible {
+  background: var(--accent-soft);
+  color: var(--accent-strong, var(--accent));
+  outline: none;
+}
+
 .mem-room-assign {
   margin: 0 0 10px;
 }

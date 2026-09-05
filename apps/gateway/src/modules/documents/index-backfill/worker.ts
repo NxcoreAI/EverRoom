@@ -67,8 +67,16 @@ export interface DocumentIndexBackfillWorkerOptions {
   maxEnqueuePerScan?: number;
   /** 全量重扫周期（游标回绕）；0 表示每轮扫描都从头重走（测试用）。 */
   rescanMs?: number;
-  /** Room 记忆项投影（contextRoomService.listMemoryItems）；缺省则跳过记忆来源。 */
+  /**
+   * Room 记忆项投影（Room 归属清单，候选与复检默认源）；缺省则跳过记忆来源。
+   * 候选生成只用它：禁用/晋升未回链的快照条目不再产生新标记。
+   */
   listMemoryItems?: (roomId: string) => Array<{ id: string; content: string; type: string }>;
+  /**
+   * 复检存在性判定源（含 data.memoryItems 快照条目——禁用 shadow 与 legacy id）：
+   * 归属清单 ∪ 快照条目，防止已挂标记被误摘（memory_missing）。缺省回退 listMemoryItems。
+   */
+  listAllMemoryItems?: (roomId: string) => Array<{ id: string; content: string; type: string }>;
 }
 
 interface ScanCursor {
@@ -483,9 +491,9 @@ export class DocumentIndexBackfillWorker {
     throw lastError;
   }
 
-  /** 记忆项读取（复检用）；抛错返回 null 表示不可判定，不据此摘除。 */
+  /** 记忆项读取（复检用，含快照条目）；抛错返回 null 表示不可判定，不据此摘除。 */
   private readMemoryItems(roomId: string): Array<{ id: string; content: string; type: string }> | null {
-    const listMemoryItems = this.options.listMemoryItems;
+    const listMemoryItems = this.options.listAllMemoryItems ?? this.options.listMemoryItems;
     if (!listMemoryItems) return null;
     try {
       return listMemoryItems(roomId);

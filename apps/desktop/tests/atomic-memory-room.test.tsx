@@ -79,19 +79,22 @@ describe('AtomicMemoryPane room attribution', () => {
     setAtomicRoomMock.mockResolvedValue({ memoryId: 'memory-a', roomId: 'room-live' })
     ;(globalThis as { window?: unknown }).window = {
       nxcore: { memory: { listAtomic: listAtomicMock, setAtomicRoom: setAtomicRoomMock } },
+      dispatchEvent: vi.fn(),
     }
   })
 
   it('renders the room chip in list rows for bound memories only', async () => {
     const renderer = await renderPane()
 
-    const chips = renderer.root.findAllByProps({ className: 'mem-room-chip' })
-    expect(chips).toHaveLength(2)
-    expect(chips[0]!.props['data-available']).toBe(true)
-    expect(textOf(chips[0]!)).toBe('上线项目')
-    // 绑定行保留但 Room 已不可用：灰 chip，data-available=false。
-    expect(chips[1]!.props['data-available']).toBe(false)
-    expect(textOf(chips[1]!)).toBe('Room 已不可用')
+    // 可用 chip 是跳转链接（mem-room-chip-link）；不可用 chip 纯展示。
+    const linkChips = renderer.root.findAllByProps({ className: 'mem-room-chip mem-room-chip-link' })
+    expect(linkChips).toHaveLength(1)
+    expect(textOf(linkChips[0]!)).toBe('上线项目')
+    expect(linkChips[0]!.props.title).toBe('打开 Room')
+    // 绑定行保留但 Room 已不可用：灰 chip。
+    const plainChips = renderer.root.findAllByProps({ className: 'mem-room-chip' })
+    expect(plainChips).toHaveLength(1)
+    expect(textOf(plainChips[0]!)).toBe('Room 已不可用')
   })
 
   it('shows the assign control in the detail view and reloads after a pick', async () => {
