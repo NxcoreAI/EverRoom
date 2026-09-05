@@ -63,6 +63,17 @@ description: canonical schema 字段语义与各 provider 原始格式要点（g
   `$count($filter(labelIds, function($v){$v='UNREAD'})) = 0`。
 - **`$append` 只接受 2 个参数**：多段拼接需嵌套并数组包裹：
   `[$append($append(a, b), c)]`。
+- **`$flatten` 不可用**（T1006 "Attempted to invoke a non-function"）。展平一层
+  数组的数组用 `$reduce($blocks, $append, [])`（`$append` 会拼接第二参数的元素）。
+- **对象构造器不对函数调用结果扇出**：`{'address': $split(value, ',')}` 得到的
+  `address` 是数组而非多条目。逐条目产出必须显式 `$map(..., function($p){ {...} })`。
+- **多地址头**（`To: a@x.com, "Li, Si" <b@y.com>`）：禁止按逗号 `$split`（引号显示名
+  含逗号会切碎），也禁止 `$match(...)` 不取 `.match`（address 会变成数组）。用
+  `$match($h.value, /[\w.+-]+@[\w.-]+/).match` 逐匹配提取，配 `$map` 构造条目、
+  `$reduce($blocks, $append, [])` 展平。
+- **总表达式纪律**：每个 record 表达式对所有真实记录都不能抛错——可选路径先
+  `$exists(...)` 守卫（`$exists(x) ? f(x) : undefined`），否则一条形状不同的
+  真实邮件就会让整轮 run 以 format_mapping_pending 失败。
 - 递归下降收集 MIME 节点用 `**[mimeType='text/plain'][0].body.data`
   （`($**)` 语法不合法）。
 - 无匹配的字段表达式返回 undefined，服务端自动略过该字段；不要用占位值

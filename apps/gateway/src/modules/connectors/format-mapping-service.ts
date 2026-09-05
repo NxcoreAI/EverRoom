@@ -24,8 +24,7 @@ const RECORD_KINDS = ["mail", "calendar"] as const;
 export type FormatRecordKind = (typeof RECORD_KINDS)[number];
 
 const MAX_SAMPLES = 8;
-const APPLY_FAILURE_LIMIT = 5;
-const GENERATION_TIMEOUT_MS = 120_000;
+const GENERATION_TIMEOUT_MS = 300_000;
 const MAX_MAPPING_FIELDS = 40;
 const MAX_EXPR_LENGTH = 4_000;
 
@@ -46,6 +45,17 @@ async function evalExpr(expr: ReturnType<typeof jsonata>, input: unknown): Promi
   return result === null ? undefined : result;
 }
 
+/** jsonata 编译/求值抛的是普通对象（非 Error 实例），String() 会变成 [object Object]。 */
+function fmtError(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+}
+
 /**
  * JSONata 求值产物可能是 null-prototype 对象（对象构造 `{...}` 生成）或内部
  * Sequence 数组；克隆为普通 JS 结构，避免下游（投影层/测试深度比较）踩原型坑。
@@ -64,7 +74,6 @@ export class FormatMappingService implements FormatMapperPort {
   private agentRuntime: import("@nxcore/agent-runtime").AgentRuntime | null = null;
   private readonly compiled = new Map<string, CompiledMapping>();
   private readonly generating = new Map<string, Promise<void>>();
-  private readonly applyFailures = new Map<string, number>();
   private readonly mailValidate: ReturnType<Ajv["compile"]>;
   private readonly calendarValidate: ReturnType<Ajv["compile"]>;
 
@@ -129,24 +138,16 @@ export class FormatMappingService implements FormatMapperPort {
   private async normalize(provider: string, kind: FormatRecordKind, raw: unknown): Promise<NormalizedMailChange | NormalizedCalendarChange> {
     const row = this.getRow(provider, kind);
     if (row?.status === "active" && row.mappingJson) {
-      const key = `${provider}:${kind}`;
       try {
         const compiled = await this.compiledFor(row);
-        const change = await this.apply(compiled, raw, kind);
-        this.applyFailures.delete(key);
-        return change;
+        return await this.apply(compiled, raw, kind);
       } catch (error) {
-        const failures = (this.applyFailures.get(key) ?? 0) + 1;
-        this.applyFailures.set(key, failures);
-        const message = error instanceof Error ? error.message : String(error);
-        this.log?.warn({}, `[format-mapping] ${key} 应用失败 ${failures}/${APPLY_FAILURE_LIMIT}: ${message}`);
-        if (failures >= APPLY_FAILURE_LIMIT) {
-          this.compiled.delete(key);
-          this.applyFailures.delete(key);
-          this.markFailed(provider, kind, `mapping_apply_failed: ${message}`);
-          this.kickGeneration(provider, kind, "apply_failures");
-        }
-        throw new FormatMappingPendingError(provider, kind, `映射应用失败（${failures}/${APPLY_FAILURE_LIMIT}）`);
+        // 应用失败是确定性的（同一 raw 必然复现），多次重试无意义：立即捕获崩溃
+        // 样本并失效重生成——否则过拟合映射会让该源永久卡死在 pending。
+        this.captureSample(provider, kind, raw);
+        this.markFailed(provider, kind, `mapping_apply_failed: ${fmtError(error)}`);
+        this.kickGeneration(provider, kind, "apply_failed");
+        throw new FormatMappingPendingError(provider, kind, "映射应用失败，已失效并安排重新生成");
       }
     }
     this.captureSample(provider, kind, raw);
@@ -160,7 +161,7 @@ export class FormatMappingService implements FormatMapperPort {
     if (this.generating.has(key)) return;
     const task = this.runGeneration(service, kind, reason)
       .catch((error) => {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = fmtError(error);
         this.log?.warn({ service, kind }, `[format-mapping] 生成失败: ${message}`);
       })
       .finally(() => this.generating.delete(key));
@@ -192,19 +193,30 @@ export class FormatMappingService implements FormatMapperPort {
       captureMemory: false,
       recallMemory: false,
     });
-    await Promise.race([
-      (async () => {
-        for await (const event of runtimeRun.events) {
-          if (event.type === "run.failed" || event.type === "run.cancelled" || event.type === "run.interrupted") {
-            const message = (event.payload as { message?: unknown }).message;
-            throw new Error(typeof message === "string" ? message : "format-mapping agent run failed");
+    // 失败/超时即取消 runtime run：不取消的话 agent 会继续迭代（烧 token），
+    // 其迟到提交还会在废弃生成之上反复激活新版本。
+    try {
+      await Promise.race([
+        (async () => {
+          for await (const event of runtimeRun.events) {
+            if (event.type === "run.failed" || event.type === "run.cancelled" || event.type === "run.interrupted") {
+              const message = (event.payload as { message?: unknown }).message;
+              throw new Error(typeof message === "string" ? message : "format-mapping agent run failed");
+            }
           }
-        }
-      })(),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error(`format_mapping_generation_timeout:${GENERATION_TIMEOUT_MS}ms`)), GENERATION_TIMEOUT_MS),
-      ),
-    ]);
+        })(),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error(`format_mapping_generation_timeout:${GENERATION_TIMEOUT_MS}ms`)), GENERATION_TIMEOUT_MS),
+        ),
+      ]);
+    } catch (error) {
+      try {
+        await this.agentRuntime.cancel(runId);
+      } catch {
+        // 取消失败不影响失败语义（run 可能已自行结束）。
+      }
+      throw error;
+    }
     const after = this.getRow(service, kind);
     if (after && after.status !== "active") {
       this.markFailed(service, kind, "agent_finished_without_valid_submission");
@@ -231,14 +243,14 @@ export class FormatMappingService implements FormatMapperPort {
       try {
         compiled.record.push([field, jsonata(String(exprText))]);
       } catch (error) {
-        errors.push(`字段 ${field} 表达式编译失败: ${error instanceof Error ? error.message : String(error)}`);
+        errors.push(`字段 ${field} 表达式编译失败: ${fmtError(error)}`);
       }
     }
     try {
       if (spec.isTombstone) compiled.isTombstone = jsonata(spec.isTombstone);
       if (spec.tombstoneId) compiled.tombstoneId = jsonata(spec.tombstoneId);
     } catch (error) {
-      errors.push(`tombstone 表达式编译失败: ${error instanceof Error ? error.message : String(error)}`);
+      errors.push(`tombstone 表达式编译失败: ${fmtError(error)}`);
     }
     if (errors.length > 0) return { ok: false, errors };
     const validate = this.validatorFor(kind as FormatRecordKind);
@@ -260,7 +272,7 @@ export class FormatMappingService implements FormatMapperPort {
           errors.push(`样本#${i}: canonical 校验失败 — ${detail}`);
         }
       } catch (error) {
-        errors.push(`样本#${i} 求值异常: ${error instanceof Error ? error.message : String(error)}`);
+        errors.push(`样本#${i} 求值异常: ${fmtError(error)}`);
       }
     }
     if (errors.length > 0) return { ok: false, errors };
@@ -307,7 +319,7 @@ export class FormatMappingService implements FormatMapperPort {
       samples.push({ __hash: hash, raw });
       this.updateRow(service, kind, { samplesJson: samples });
     } catch (error) {
-      this.log?.warn({ service, kind }, `[format-mapping] 样本捕获失败: ${error instanceof Error ? error.message : String(error)}`);
+      this.log?.warn({ service, kind }, `[format-mapping] 样本捕获失败: ${fmtError(error)}`);
     }
   }
 
@@ -364,7 +376,6 @@ export class FormatMappingService implements FormatMapperPort {
     });
     this.compiled.delete(`${service}:${kind}:v${row.version}`);
     this.compiled.delete(`${service}:${kind}:v${version}`);
-    this.applyFailures.delete(`${service}:${kind}`);
     this.log?.info({ service, kind, version }, "[format-mapping] 映射已激活");
     return version;
   }
