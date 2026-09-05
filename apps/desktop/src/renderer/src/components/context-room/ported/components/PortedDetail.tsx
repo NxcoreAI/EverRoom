@@ -109,6 +109,21 @@ export function PortedDetail({
     ? room.memoryItems.find((item) => item.id === selectedMemoryId) ?? null
     : null
 
+  // 选中云文档即拉一次 GET /v1/documents/:id：落在网关 read-trigger 上，
+  // 让正在阅读的文档 ~5s 内被建联/复检（Room 列表返回自带 contentJson，
+  // 不补这一下主路径永远不触发）。本地按 docId 去重，同一文档一次挂载只拉一次；
+  // 网关侧另有 30 分钟冷却兜底。
+  const touchedDocumentIds = useRef(new Set<string>())
+  useEffect(() => {
+    const resource = selectedResource
+    if (!resource || resource.kind !== 'cloud-doc' || resource.trashed) return
+    if (touchedDocumentIds.current.has(resource.binding.docId)) return
+    const documents = window.nxcore?.documents
+    if (!documents) return
+    touchedDocumentIds.current.add(resource.binding.docId)
+    void documents.get(resource.binding.docId).catch(() => undefined)
+  }, [selectedResource])
+
   const openResource = useCallback((resource: ContextRoomResource) => {
     if (resource.roomId !== room.id) return
     // Office 可预览文件：顶栏新标签打开内嵌只读预览，不在编辑栏内展示
