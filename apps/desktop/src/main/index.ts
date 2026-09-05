@@ -1,6 +1,7 @@
 import { createReadStream, readFileSync } from 'node:fs'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { basename, extname, join, parse, resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { existsSync, accessSync, constants as fsConstants } from 'node:fs'
 import { access } from 'node:fs/promises'
 import { createHash, randomUUID } from 'node:crypto'
@@ -1591,12 +1592,12 @@ function attachOpenConnectorBridge(bridge: OoCliBridge): void {
   })
 }
 
-function openConnectorExternalUrl(value: string): void {
+function openExternalUrl(value: string): void {
   try {
     const url = new URL(value)
     if (url.protocol === 'http:' || url.protocol === 'https:') void shell.openExternal(url.toString())
   } catch {
-    // Ignore malformed or unsupported external navigation from the console.
+    // 忽略格式非法或协议不受支持的外部导航（仅放行 http/https）。
   }
 }
 
@@ -1636,13 +1637,13 @@ async function openConnectorManagementConsole(): Promise<void> {
     }),
   )
   window.webContents.setWindowOpenHandler(({ url }) => {
-    openConnectorExternalUrl(url)
+    openExternalUrl(url)
     return { action: 'deny' }
   })
   window.webContents.on('will-navigate', (event, url) => {
     if (new URL(url).origin === origin) return
     event.preventDefault()
-    openConnectorExternalUrl(url)
+    openExternalUrl(url)
   })
   window.once('ready-to-show', () => window.show())
   window.once('closed', () => {
@@ -2856,6 +2857,17 @@ function registerPerceptionAndDiaryHandlers(): void {
   })
 }
 
+function isAppWindowNavigationAllowed(url: string): boolean {
+  try {
+    if (process.env.ELECTRON_RENDERER_URL) {
+      return new URL(url).origin === new URL(process.env.ELECTRON_RENDERER_URL).origin
+    }
+    return new URL(url).href === pathToFileURL(join(__dirname, '../renderer/index.html')).href
+  } catch {
+    return false
+  }
+}
+
 function createWindow(): BrowserWindow {
   const window = new BrowserWindow({
     width: 1440,
@@ -2941,8 +2953,17 @@ function createWindow(): BrowserWindow {
   window.webContents.on('did-finish-load', () => sendPendingAgentNotificationTarget())
 
   window.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url)
+    openExternalUrl(url)
     return { action: 'deny' }
+  })
+
+  // 同窗口导航只放行应用自身页面（dev 服务器 origin / 生产 index.html）。
+  // 文档里的外链（Notion/飞书导入等）不得把主窗口带去远端页面——否则该页面
+  // 会拿到 preload 暴露的网关桥；拦截后降级为系统浏览器打开。
+  window.webContents.on('will-navigate', (event, url) => {
+    if (isAppWindowNavigationAllowed(url)) return
+    event.preventDefault()
+    openExternalUrl(url)
   })
 
   if (process.env.ELECTRON_RENDERER_URL) {
