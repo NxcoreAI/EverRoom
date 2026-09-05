@@ -120,6 +120,8 @@ export function useAgentSession(
   const [runCompletedAtByRun, setRunCompletedAtByRun] = useState<Record<string, string>>({})
   const [reasoningByRun, setReasoningByRun] = useState<Record<string, string>>({})
   const [agentIdByRun, setAgentIdByRun] = useState<Record<string, string>>({})
+  /** 每个 run 实际使用的记忆范围；重试(replaceRunId)据此还原原 run 的聚焦态，未知(重启后)回退当前开关。 */
+  const [memoryScopeByRun, setMemoryScopeByRun] = useState<Record<string, 'room' | 'global'>>({})
   const [activeRunId, setActiveRunId] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [scopeReady, setScopeReady] = useState(false)
@@ -766,6 +768,7 @@ export function useAgentSession(
       setMessages((current) => current.map((item) => item.id === optimisticId
         ? { ...item, sessionId: currentSessionId }
         : item))
+      const effectiveMemoryScope = memoryScope && selectedRoomId ? ('room' as const) : undefined
       const run = await api!.startRun(currentSessionId, {
         prompt: message,
         idempotencyKey: crypto.randomUUID(),
@@ -773,9 +776,12 @@ export function useAgentSession(
         invocationMode: 'explicit_switch',
         ...(replaceRunId ? { replaceRunId } : {}),
         responseLanguage: locale,
-        ...(memoryScope && selectedRoomId ? { memoryScope } : {}),
+        ...(effectiveMemoryScope ? { memoryScope: effectiveMemoryScope } : {}),
         context: buildAgentRunContext(rooms, selectedText, selectedRoomId, activeDocument, pageLabel, attachments, referencedConversationId),
       })
+      setMemoryScopeByRun((current) => current[run.id] === (effectiveMemoryScope ?? 'global')
+        ? current
+        : { ...current, [run.id]: effectiveMemoryScope ?? 'global' })
       setAgentIdByRun((current) => current[run.id] === selectedAgentId
         ? current
         : { ...current, [run.id]: selectedAgentId })
@@ -895,6 +901,7 @@ export function useAgentSession(
   return {
     activeRunId,
     agentIdByRun,
+    memoryScopeByRun,
     activityByRun,
     connected,
     createSession,

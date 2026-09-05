@@ -51,6 +51,7 @@
   "agentComposer.roomFocusOn": "Focused",
   "agentComposer.roomFocusOff": "Not focused",
   "agentComposer.roomFocusTitle": "Recall only this room's curated memories plus your core profile; global memory and past-conversation recall are skipped",
+  "agentComposer.roomFocusUnavailable": "This room is no longer available (merged or deleted); this run will use global memory",
   "agentComposer.agentIsWorking": "Agent is working...",
   "agentComposer.askAboutThisPageOrDescribeAnAction": "Ask about this page or describe an action",
   "agentComposer.attachmentsAddedToTheComposer": "Attachments added to the composer",
