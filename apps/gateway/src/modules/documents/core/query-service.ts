@@ -58,6 +58,8 @@ export class DocumentQueryService {
       createdAt: version.createdAt.toISOString(),
       title: version.title,
       yjsBackfilled: yjsVersions.get(version.version) ?? false,
+      changeSummary: version.changeSummary ?? null,
+      changeSummarySource: (version.changeSummarySource as DocumentVersionSummary["changeSummarySource"]) ?? null,
     }));
   }
 

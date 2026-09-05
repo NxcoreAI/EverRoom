@@ -21,6 +21,17 @@ export interface MemoryAtomicPageDto {
   total: number
 }
 
+/** Room 归属记忆列表项（gateway room_memory_attributions 快照列直读）。 */
+export interface MemoryRoomMemoryItemDto {
+  memoryId: string
+  type: string
+  content: string
+}
+
+export interface MemoryRoomMemoriesPageDto {
+  items: MemoryRoomMemoryItemDto[]
+}
+
 export interface MemoryConversationMessageDto {
   id: string
   role: 'user' | 'assistant'

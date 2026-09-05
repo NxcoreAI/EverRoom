@@ -345,12 +345,28 @@ export function createFeishuImportAdapter(run: ImportActionFn): ExternalDocument
     };
   },
   async readComments(remoteDocumentId) {
-    const result = await run({
-      service: "feishu",
-      action: "list_drive_comments",
-      input: { fileToken: remoteDocumentId, fileType: "docx", pageSize: 100 },
-    });
-    return feishuComments(result);
+    // Drive v1 评论分页：{items, hasMore, pageToken}；上限 5 页防御异常循环。
+    const merged = { items: [] as unknown[] };
+    const warnings: ExternalDocumentWarning[] = [];
+    let pageToken: string | undefined;
+    for (let page = 0; page < 5; page += 1) {
+      const result = objectValue(await run({
+        service: "feishu",
+        action: "list_drive_comments",
+        input: { fileToken: remoteDocumentId, fileType: "docx", pageSize: 100, ...(pageToken ? { pageToken } : {}) },
+      }));
+      const items = Array.isArray(result.items) ? result.items : [];
+      merged.items.push(...items);
+      if (result.hasMore !== true) break;
+      const nextToken = textValue(result.pageToken);
+      if (!nextToken) break;
+      pageToken = nextToken;
+      if (page === 4) {
+        warnings.push({ code: "comments_pages_capped", message: "评论超过 5 页，仅导入前 5 页" });
+      }
+    }
+    const parsed = feishuComments(merged);
+    return { ...parsed, warnings: [...warnings, ...parsed.warnings] };
   },
   };
 }

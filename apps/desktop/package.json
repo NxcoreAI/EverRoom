@@ -5,14 +5,15 @@
   "type": "module",
   "main": "./out/main/index.js",
   "scripts": {
-    "dev": "node scripts/prepare-open-connector.mjs && node scripts/prepare-oo-cli.mjs && node scripts/prepare-lark-cli.mjs && node scripts/prepare-genoffice-runtime.mjs && node scripts/dev.mjs",
+    "dev": "node scripts/prepare-open-connector.mjs && node scripts/prepare-oo-cli.mjs && node scripts/prepare-lark-cli.mjs && node scripts/prepare-ntn.mjs && node scripts/prepare-genoffice-runtime.mjs && node scripts/dev.mjs",
     "build": "node scripts/prepare-nango-runtime.mjs && node scripts/prepare-genoffice-runtime.mjs && electron-vite build",
     "prepare:genoffice": "node scripts/prepare-genoffice-runtime.mjs",
     "prepare:lark-cli": "node scripts/prepare-lark-cli.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "package:mac": "node scripts/prepare-open-connector.mjs && node scripts/prepare-oo-cli.mjs && node scripts/prepare-lark-cli.mjs && pnpm run build && electron-builder --mac dmg zip --arm64",
-    "package:win": "node scripts/prepare-open-connector.mjs && node scripts/prepare-oo-cli.mjs && node scripts/prepare-lark-cli.mjs && pnpm run build && node scripts/generate-packaged-env.mjs && electron-builder --win nsis --x64 --publish never --config.npmRebuild=false"
+    "package:mac": "node scripts/prepare-open-connector.mjs && node scripts/prepare-oo-cli.mjs && node scripts/prepare-lark-cli.mjs && node scripts/prepare-ntn.mjs && pnpm run build && electron-builder --mac dmg zip --arm64",
+    "package:win": "node scripts/prepare-open-connector.mjs && node scripts/prepare-oo-cli.mjs && node scripts/prepare-lark-cli.mjs && node scripts/prepare-ntn.mjs && pnpm run build && node scripts/generate-packaged-env.mjs && electron-builder --win nsis --x64 --publish never --config.npmRebuild=false",
+    "prepare:ntn": "node scripts/prepare-ntn.mjs"
   },
   "dependencies": {
     "@codemirror/commands": "^6.11.0",
@@ -63,7 +64,8 @@
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
     "tar-stream": "^3.2.1",
-    "ws": "^8.18.3"
+    "ws": "^8.18.3",
+    "ntn": "0.23.1"
   },
   "devDependencies": {
     "@electron/asar": "3.4.1",
@@ -169,6 +171,13 @@
       {
         "from": "build/lark-cli",
         "to": "lark-cli",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "build/ntn",
+        "to": "ntn",
         "filter": [
           "**/*"
         ]

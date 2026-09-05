@@ -70,6 +70,7 @@ function createEditorWithMark(): { editor: Editor; node: ProseMirrorNode; pos: n
 
 const chipElement = () => document.querySelector<HTMLElement>('.context-room-block-index-chip')
 const popoverInBody = () => document.querySelector('.context-room-block-index-popover')
+const wrapperElement = () => document.querySelector<HTMLElement>('.context-room-block-index-mark')
 
 afterEach(() => {
   vi.useRealTimers()
@@ -142,6 +143,8 @@ describe('BlockIndexMarkView popover (real Radix)', () => {
     expect(popoverInBody()).not.toBeNull()
     expect(resolveReferences).toHaveBeenCalledTimes(1)
     expect(popoverInBody()?.textContent).toContain('目标文档')
+    // 预览打开期间宿主块保持高亮标记(CSS :has 消费)。
+    expect(wrapperElement()?.getAttribute('data-preview-open')).toBe('true')
 
     // 移出 120ms 后关闭。
     await act(async () => {
@@ -149,5 +152,6 @@ describe('BlockIndexMarkView popover (real Radix)', () => {
       await vi.advanceTimersByTimeAsync(200)
     })
     expect(popoverInBody()).toBeNull()
+    expect(wrapperElement()?.getAttribute('data-preview-open')).toBeNull()
   })
 })

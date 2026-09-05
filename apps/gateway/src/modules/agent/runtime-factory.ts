@@ -248,6 +248,22 @@ export function createWritingStyleRuntime(config: GatewayConfig): AgentRuntime |
   });
 }
 
+/** 文档索引回溯（blockIndexMark）的 LLM 兜底：writing-style 同款隔离内部 runtime。 */
+export function createIndexBackfillRuntime(config: GatewayConfig): AgentRuntime | null {
+  if (config.agentRuntime === "fake" || !isPiRuntimeConfigured(config.backgroundPi)) return null;
+  const { mcp: _mcp, ...pi } = config.backgroundPi!;
+  return new PiAgentRuntime({
+    ...pi,
+    includeBashTool: false,
+    builtinTools: [],
+    maxToolCallsPerRun: 1,
+    runtimeRole: "internal",
+    sessionsDir: join(pi.sessionsDir, "index-backfill"),
+    workingDirectory: join(pi.workingDirectory, "index-backfill"),
+    agentDirectory: join(pi.agentDirectory, "index-backfill"),
+  });
+}
+
 /** 日记使用隔离的 Pi Runtime，只暴露来源清单读取工具。 */
 export function createDiaryAgentRuntime(
   config: GatewayConfig,

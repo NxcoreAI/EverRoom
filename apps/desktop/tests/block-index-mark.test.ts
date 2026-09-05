@@ -12,6 +12,7 @@ import {
   findIndexMarkHost,
   fromBlockIndexMarkNodeAttrs,
   insertBlockIndexMark,
+  isAutoLinkableUrl,
   toBlockIndexMarkNodeAttrs,
 } from '../src/renderer/src/components/context-room/ported/components/detail-editor/blockIndexLink'
 import {
@@ -225,6 +226,14 @@ describe('block index mark', () => {
       '说明文字 everroom://room/room-1/doc-2/block-7',
     )).toBeNull()
     expect(blockIndexTargetFromClipboardText('[外部](https://example.com)')).toBeNull()
+  })
+
+  it('excludes everroom links from autolink/paste-to-link while keeping web links', () => {
+    expect(isAutoLinkableUrl('everroom://room/room-1/doc-2/block-7')).toBe(false)
+    expect(isAutoLinkableUrl('everroom://memory/room-1/room-1-memory-2')).toBe(false)
+    expect(isAutoLinkableUrl('https://example.com/page')).toBe(true)
+    expect(isAutoLinkableUrl('mailto:a@b.com')).toBe(true)
+    expect(isAutoLinkableUrl('example.com/page')).toBe(true)
   })
 
   it('remaps same-document mark targets when pasting copied blocks', () => {

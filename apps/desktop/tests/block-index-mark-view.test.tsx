@@ -155,6 +155,75 @@ describe('BlockIndexMarkView', () => {
     view.unmount()
   })
 
+  it('解析在途时打开预览允许重试,loading 不得永久卡死', async () => {
+    vi.useFakeTimers()
+    const { editor, node, pos } = createEditorWithMark('document')
+    let releaseWarmup: (value: unknown) => void = () => {}
+    const warmupGate = new Promise((resolve) => { releaseWarmup = resolve })
+    let call = 0
+    const resolveReferences = vi.fn(() => {
+      call += 1
+      if (call === 1) return warmupGate
+      return Promise.resolve({
+        resolutions: [{
+          roomId: 'room-1',
+          documentId: 'doc-2',
+          blockId: 'block-7',
+          status: 'available',
+          title: '目标文档',
+          textPreview: '目标块内容',
+          version: 3,
+        }],
+      })
+    })
+    const view = renderView({
+      editor,
+      node,
+      pos,
+      options: {
+        sourceRoomId: 'room-1',
+        resolveReferences,
+        onNavigateDocument: vi.fn(),
+      },
+    })
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(resolveReferences).toHaveBeenCalledTimes(1)
+
+    // 预热仍在途时打开预览:打开态无结果必须允许重试解析——这是 loading
+    // 卡死时的唯一自愈入口(2026-09-04 真机"预览永远正在加载引用")。
+    await act(async () => {
+      view.root().findByProps({ className: 'context-room-block-index-chip' }).props.onMouseEnter()
+      await vi.advanceTimersByTimeAsync(220)
+    })
+    expect(resolveReferences).toHaveBeenCalledTimes(2)
+
+    // 重试解析落地,预览显示结果且 loading 清除。
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    const content = view.root().findByProps({ 'data-popover-content': '' })
+    const textMatches = content.findAll((element) => Array.isArray(element.children)
+      && element.children.includes('目标文档'))
+    expect(textMatches.length).toBeGreaterThan(0)
+
+    // 被顶掉的预热解析迟到最后才落地,不得破坏已显示的结果。
+    await act(async () => {
+      releaseWarmup(null)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    const contentAfter = view.root().findByProps({ 'data-popover-content': '' })
+    const stillThere = contentAfter.findAll((element) => Array.isArray(element.children)
+      && element.children.includes('目标文档'))
+    expect(stillThere.length).toBeGreaterThan(0)
+
+    view.unmount()
+  })
+
   it('点击 chip 走文档跳转回调,携带解析结果', async () => {
     vi.useFakeTimers()
     const { editor, node, pos } = createEditorWithMark('document')
@@ -343,5 +412,17 @@ describe('handleBlockIndexPaste', () => {
     expect(paste(editor, '[外部](https://example.com)')).toBe(false)
     expect((editor.getJSON().content?.[0]?.content ?? [])
       .some((child) => child.type === BLOCK_INDEX_MARK_NODE)).toBe(false)
+  })
+
+  it('选区内粘贴块链接:选中文本原样保留,挂 chip 不落文字链接', () => {
+    const editor = createEditorWithParagraph()
+    // 选中"宿主段落"全部四个字符(块链接过去会经 Link pasteHandler 变成文字链接)。
+    editor.commands.setTextSelection({ from: 1, to: 5 })
+    expect(paste(editor, 'everroom://room/room-1/doc-2/block-7')).toBe(true)
+    const children = editor.getJSON().content?.[0]?.content ?? []
+    expect(children[0]).toMatchObject({ type: 'text', text: '宿主段落' })
+    expect(children[children.length - 1]).toMatchObject({ type: BLOCK_INDEX_MARK_NODE })
+    expect(children.some((child) => (child.marks ?? []).some((mark) => mark.type === 'link')))
+      .toBe(false)
   })
 })

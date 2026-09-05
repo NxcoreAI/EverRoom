@@ -10,7 +10,7 @@ import { useLocale } from '../../i18n/LocaleContext'
  * 手动关闭或下一次授权开始时替换。数据来自桌面本地 agent-auth 控制器（IPC），
  * device code 等敏感值不经过本组件。
  */
-function useAgentAuthChallenge(): DesktopAgentAuthChallenge | null {
+export function useAgentAuthChallenge(): DesktopAgentAuthChallenge | null {
   const [challenge, setChallenge] = useState<DesktopAgentAuthChallenge | null>(null)
   useEffect(() => {
     const api = window.nxcore?.agentAuth
@@ -108,6 +108,39 @@ export function AgentAuthChallengeCard() {
     ? t('surface:agentAuthCard.phaseAppSetup')
     : t('surface:agentAuthCard.phaseUserAuth')
 
+  // 授权成功：极简成功态——大图标 + 一句话，不再展示步骤流程。
+  if (completed) {
+    return (
+      <section
+        ref={cardRef}
+        className="agent-auth-challenge agent-auth-challenge-success"
+        data-status="authorized"
+        data-completed="true"
+      >
+        <button
+          type="button"
+          className="agent-auth-challenge-success-close"
+          aria-label={t('surface:agentAuthCard.dismiss')}
+          title={t('surface:agentAuthCard.dismiss')}
+          onClick={() => void api?.cancel(challenge.id)}
+        >
+          <X aria-hidden="true" />
+        </button>
+        <span className="agent-auth-challenge-success-icon" aria-hidden="true">
+          <BadgeCheck aria-hidden="true" />
+        </span>
+        <strong className="agent-auth-challenge-success-title">
+          {t('surface:agentAuthCard.successTitle', {
+            provider: challenge.provider === 'feishu'
+              ? t('surface:agentAuthCard.feishu')
+              : t('surface:agentAuthCard.notion'),
+          })}
+        </strong>
+        {challenge.message && <small className="agent-auth-challenge-success-hint">{challenge.message}</small>}
+      </section>
+    )
+  }
+
   return (
     <section
       ref={cardRef}
@@ -118,27 +151,26 @@ export function AgentAuthChallengeCard() {
     >
       <header>
         <span className="agent-auth-challenge-icon" aria-hidden="true">
-          {completed ? <BadgeCheck aria-hidden="true" /> : <ShieldQuestion aria-hidden="true" />}
+          <ShieldQuestion size={16} aria-hidden="true" />
         </span>
         <div>
-          <strong>{completed ? t('surface:agentAuthCard.completedTitle') : challenge.title}</strong>
+          <strong>{challenge.title}</strong>
           <small>
             {challenge.provider === 'feishu' ? t('surface:agentAuthCard.feishu') : t('surface:agentAuthCard.notion')}
             {' · '}
             {phaseLabel}
-            {completed ? ` · ${t('surface:agentAuthCard.completedBadge')}` : ''}
           </small>
         </div>
         <button
           type="button"
-          aria-label={terminal ? t('surface:agentAuthCard.dismiss') : t('surface:agentAuthCard.cancel')}
-          title={terminal ? t('surface:agentAuthCard.dismiss') : t('surface:agentAuthCard.cancel')}
+          aria-label={t('surface:agentAuthCard.cancel')}
+          title={t('surface:agentAuthCard.cancel')}
           onClick={() => void api?.cancel(challenge.id)}
         >
           <X aria-hidden="true" />
         </button>
       </header>
-      {challenge.message && <p className="agent-auth-challenge-message" data-completed={String(completed)}>{challenge.message}</p>}
+      {challenge.message && <p className="agent-auth-challenge-message">{challenge.message}</p>}
       <ol className="agent-auth-challenge-steps">
         {challenge.steps.map((step) => (
           <li key={step.id} data-completed={String(step.completed)}>
@@ -167,9 +199,15 @@ export function AgentAuthChallengeCard() {
         ))}
       </ol>
       {!completed && (
-        <div className="agent-auth-challenge-footer">
+        <div
+          className="agent-auth-challenge-footer"
+          data-with-qr={String(Boolean(qrDataUrl && challenge.verificationUrl))}
+        >
           {qrDataUrl && challenge.verificationUrl && (
-            <img className="agent-auth-challenge-qr" src={qrDataUrl} alt={t('surface:agentAuthCard.qrAlt')} />
+            <div className="agent-auth-challenge-qr-wrap">
+              <img className="agent-auth-challenge-qr" src={qrDataUrl} alt={t('surface:agentAuthCard.qrAlt')} />
+              <small className="agent-auth-challenge-qr-hint">{t('surface:agentAuthCard.qrAlt')}</small>
+            </div>
           )}
           <div className="agent-auth-challenge-actions">
             {challenge.status === 'pending' && (

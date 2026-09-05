@@ -66,6 +66,35 @@ async function createReviewHarness(name: string) {
 }
 
 describe("document capability registry", () => {
+  it("context_room_document_list 每条候选文档都携带 roomId（桌面端选择卡片依赖它过滤）", async () => {
+    const { documents, registry } = await createReviewHarness("document-list-room-id")
+    await documents.import({
+      id: "doc-list-a",
+      roomId: "room-1",
+      title: "第一篇",
+      contentJson: {
+        type: "doc",
+        content: [{ type: "paragraph", content: [{ type: "text", text: "Alpha" }] }],
+      },
+    })
+    await documents.import({
+      id: "doc-list-b",
+      roomId: "room-1",
+      title: "第二篇",
+      contentJson: {
+        type: "doc",
+        content: [{ type: "paragraph", content: [{ type: "text", text: "Beta" }] }],
+      },
+    })
+    const context = { agentSessionId: "session-list", runId: "run-list", roomId: "room-1" }
+
+    const result = await registry.execute("context_room_document_list", {}, context)
+    const listed = (result.structuredContent as { documents: Array<{ id: string; roomId?: string }> })
+      .documents
+    expect(listed.map((document) => document.id).sort()).toEqual(["doc-list-a", "doc-list-b"])
+    expect(listed.every((document) => document.roomId === "room-1")).toBe(true)
+  })
+
   it("blocks Agent reads, patches, and selection rewrites after a document enters trash", async () => {
     const { documents, registry } = await createReviewHarness("trashed-agent-document")
     const document = await documents.import({

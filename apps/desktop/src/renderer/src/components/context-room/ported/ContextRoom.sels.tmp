@@ -1,0 +1,1670 @@
+.context-room-action-confirm
+.context-room-action-confirm > footer
+.context-room-action-confirm > footer button
+.context-room-action-confirm > header
+.context-room-action-confirm h2
+.context-room-action-confirm-body
+.context-room-action-confirm-body > p
+.context-room-action-confirm-risk
+.context-room-action-confirm-risk svg
+.context-room-action-confirm-row
+.context-room-action-confirm-row > b
+.context-room-action-confirm-row > span
+.context-room-add-room
+.context-room-add-room svg
+.context-room-add-room:hover
+.context-room-agent-action
+.context-room-agent-resource
+.context-room-agent-resource .context-room-preview-icon
+.context-room-agent-resource .lucide-loader-circle
+.context-room-agent-resource > span:last-child
+.context-room-agent-resource h3
+.context-room-agent-resource small
+.context-room-all
+.context-room-all-back
+.context-room-all-back svg
+.context-room-all-back:focus-visible
+.context-room-all-grid
+.context-room-all-header
+.context-room-all-header > div
+.context-room-all-header > div > span
+.context-room-all-header h1
+.context-room-all-header p
+.context-room-all-layout
+.context-room-all-load-more
+.context-room-all-load-more > span:not(.context-room-all-loading-card)
+.context-room-all-loading-card
+.context-room-all-search
+.context-room-all::-webkit-scrollbar
+.context-room-app
+.context-room-app *
+.context-room-app *::after
+.context-room-app [data-icon-tone='ai'] > svg
+.context-room-brief-grid
+.context-room-brief-item
+.context-room-brief-label
+.context-room-card
+.context-room-card-actions
+.context-room-card-brief
+.context-room-card-grid
+.context-room-card-hint
+.context-room-card-menu
+.context-room-card-menu [role='menuitem']
+.context-room-card-menu [role='menuitem'].danger
+.context-room-card-menu [role='menuitem'][data-highlighted]
+.context-room-card-menu svg
+.context-room-card-menu-button
+.context-room-card-meta
+.context-room-card-meta time
+.context-room-card-open
+.context-room-card-stats
+.context-room-card-stats span
+.context-room-card-stats svg
+.context-room-card-top
+.context-room-card-top h3
+.context-room-citation-badge
+.context-room-citation-badge svg
+.context-room-citation-badge:focus-visible
+.context-room-citation-badge:hover
+.context-room-citation-comment
+.context-room-citation-comment > span
+.context-room-citation-comment > span svg
+.context-room-citation-comment button
+.context-room-citation-comment button svg
+.context-room-citation-comment button:focus-visible
+.context-room-citation-comment button:hover
+.context-room-citation-comment input
+.context-room-citation-comment input:focus
+.context-room-citation-comment-add
+.context-room-citation-comment-cancel
+.context-room-citation-edit
+.context-room-citation-edit-revoke
+.context-room-compact-list
+.context-room-compact-row
+.context-room-compact-row > b
+.context-room-confirm-card
+.context-room-content-empty
+.context-room-create-duplicate-review
+.context-room-create-duplicate-review > div
+.context-room-create-duplicate-review > div > button
+.context-room-create-duplicate-review > div > button small
+.context-room-create-duplicate-review > div > button span
+.context-room-create-duplicate-review > footer
+.context-room-create-duplicate-review > header
+.context-room-create-duplicate-review > p
+.context-room-create-duplicate-review button
+.context-room-create-duplicate-review h2
+.context-room-create-duplicate-review header span
+.context-room-creation-body
+.context-room-creation-description
+.context-room-creation-description > span
+.context-room-creation-description textarea
+.context-room-creation-description textarea:focus
+.context-room-creation-dropzone
+.context-room-creation-dropzone b
+.context-room-creation-dropzone small
+.context-room-creation-dropzone-icon
+.context-room-creation-dropzone-icon svg
+.context-room-creation-dropzone:disabled
+.context-room-creation-dropzone:hover:not(:disabled)
+.context-room-creation-file-remove
+.context-room-creation-file-remove svg
+.context-room-creation-file-remove:disabled
+.context-room-creation-file-remove:hover:not(:disabled)
+.context-room-creation-filelist-count
+.context-room-creation-files
+.context-room-creation-files li
+.context-room-creation-files li > span
+.context-room-creation-files li > svg
+.context-room-creation-files li:hover
+.context-room-creation-files ul
+.context-room-creation-footer
+.context-room-creation-footer > button.context-room-creation-submit
+.context-room-creation-footer > button.context-room-creation-submit svg
+.context-room-creation-header
+.context-room-creation-header > p
+.context-room-creation-header h2
+.context-room-creation-progress
+.context-room-creation-progress small
+.context-room-creation-progress-bar
+.context-room-creation-progress-bar > div
+.context-room-creation-progress-heading
+.context-room-creation-progress-heading strong
+.context-room-creation-progress-heading svg
+.context-room-creation-progress[data-status='failed'] .context-room-creation-progress-bar > div
+.context-room-creation-progress[data-status='failed'] small
+.context-room-creation-step-body
+.context-room-creation-step-body b
+.context-room-creation-step-body small
+.context-room-creation-step-icon
+.context-room-creation-step-icon svg
+.context-room-creation-steps
+.context-room-creation-steps li
+.context-room-creation-steps li:not(:first-child)::before
+.context-room-creation-steps li[data-state='active']
+.context-room-creation-steps li[data-state='active'] .context-room-creation-step-icon
+.context-room-creation-steps li[data-state='active']::before
+.context-room-creation-steps li[data-state='done'] .context-room-creation-step-icon
+.context-room-creation-steps li[data-state='failed']
+.context-room-creation-steps li[data-state='failed'] .context-room-creation-step-icon
+.context-room-creation-studio
+.context-room-creation-tabpanel
+.context-room-danger
+.context-room-danger-button
+.context-room-dashboard
+.context-room-dashboard-bottom
+.context-room-dashboard-bottom > article
+.context-room-dashboard-bottom article > .context-room-panel-empty
+.context-room-dashboard-bottom article > button
+.context-room-dashboard-bottom article > button span
+.context-room-dashboard-bottom article > button[data-item-type='schedule']
+.context-room-dashboard-bottom article > button[data-item-type='schedule'] svg
+.context-room-dashboard-bottom article > div
+.context-room-dashboard-bottom article > header
+.context-room-dashboard-empty
+.context-room-dashboard-entities
+.context-room-dashboard-entities span
+.context-room-dashboard-grid
+.context-room-dashboard-grid article > header .context-room-dashboard-regenerate
+.context-room-dashboard-grid article > header .context-room-dashboard-regenerate svg
+.context-room-dashboard-grid article > header .context-room-dashboard-regenerate svg[data-spin='true']
+.context-room-dashboard-grid article > header .context-room-dashboard-regenerate:disabled
+.context-room-dashboard-grid article > header .context-room-dashboard-regenerate:hover:not(:disabled)
+.context-room-dashboard-grid article > header em
+.context-room-dashboard-grid article > small
+.context-room-dashboard-grid article > ul
+.context-room-dashboard-grid article li
+.context-room-dashboard-grid article li + li
+.context-room-dashboard-grid article li svg
+.context-room-dashboard-hero
+.context-room-dashboard-hero > b
+.context-room-dashboard-hero > div
+.context-room-dashboard-hero > span
+.context-room-dashboard-hero > span svg
+.context-room-dashboard-hero h1
+.context-room-dashboard-hero p
+.context-room-dashboard-hero p i
+.context-room-dashboard-hero p svg
+.context-room-dashboard-task
+.context-room-dashboard-task > button:first-child
+.context-room-dashboard-task > button:first-child i
+.context-room-dashboard-task > button:last-child
+.context-room-dashboard-task b
+.context-room-dashboard-task time
+.context-room-dashboard-task:hover
+.context-room-dashboard-timeline
+.context-room-dashboard-timeline .context-room-timeline-peer button
+.context-room-dashboard-timeline .context-room-timeline-peer button svg
+.context-room-dashboard-timeline .context-room-timeline-peer button:hover
+.context-room-dashboard-timeline .context-room-timeline-peer button[aria-expanded='true'] svg
+.context-room-dashboard-timeline > header
+.context-room-dashboard-timeline > header span
+.context-room-dashboard-timeline > header svg
+.context-room-dashboard-timeline > ol
+.context-room-dashboard-timeline > ol > li
+.context-room-dashboard-timeline > ol > li + li
+.context-room-dashboard-timeline > ol > li > div
+.context-room-dashboard-timeline > ol > li > i
+.context-room-dashboard-timeline > ol > li > i[data-kind='done']
+.context-room-dashboard-timeline > ol > li > i[data-kind='warn']
+.context-room-dashboard-timeline > ol > li::before
+.context-room-dashboard-timeline > ol > li:last-child::before
+.context-room-dashboard-timeline li
+.context-room-dashboard-timeline li > div
+.context-room-dashboard-timeline li > div > div:first-child
+.context-room-dashboard-timeline li > i
+.context-room-dashboard-timeline li b
+.context-room-dashboard-timeline li button
+.context-room-dashboard-timeline li button:hover
+.context-room-dashboard-timeline li p
+.context-room-dashboard-timeline li time
+.context-room-dashboard-timeline li:last-child > div
+.context-room-dashboard-timeline ol
+.context-room-data-head
+.context-room-data-head > b
+.context-room-data-item
+.context-room-data-list
+.context-room-delete-confirm
+.context-room-delete-confirm > p
+.context-room-delete-confirm footer
+.context-room-delete-confirm h2
+.context-room-delete-room-body
+.context-room-delete-room-dialog
+.context-room-delete-room-dialog .context-room-danger-button svg
+.context-room-delete-room-dialog .context-room-danger-button:hover
+.context-room-delete-room-dialog > footer
+.context-room-delete-room-dialog > footer button
+.context-room-delete-room-dialog > header
+.context-room-delete-room-dialog h2
+.context-room-delete-room-dialog header p
+.context-room-delete-room-dialog-shell .context-room-dialog-close:focus-visible
+.context-room-delete-room-identity
+.context-room-delete-room-identity > div
+.context-room-delete-room-identity > span
+.context-room-delete-room-identity small
+.context-room-delete-room-identity strong
+.context-room-delete-room-identity svg
+.context-room-delete-room-recovery
+.context-room-delete-room-recovery p
+.context-room-delete-room-recovery svg
+.context-room-delete-room-stats
+.context-room-delete-room-stats > span
+.context-room-delete-room-stats > span + span
+.context-room-delete-room-stats b
+.context-room-delete-room-stats small
+.context-room-delete-room-stats svg
+.context-room-delete-room-symbol
+.context-room-delete-room-symbol svg
+.context-room-delete-room-target
+.context-room-deleted-dialog
+.context-room-deleted-dialog > header span
+.context-room-deleted-dialog h2
+.context-room-deleted-list
+.context-room-deleted-list article
+.context-room-deleted-list article > button
+.context-room-deleted-list article > span:nth-child(2)
+.context-room-deleted-list b
+.context-room-deleted-list small
+.context-room-detail-layout
+.context-room-detail-meta
+.context-room-detail-secondary
+.context-room-detail-title
+.context-room-detail-title .context-room-page-title
+.context-room-detail-title > div:last-child
+.context-room-dialog-close
+.context-room-dialog-close:hover
+.context-room-dialog-content
+.context-room-dialog-content *
+.context-room-dialog-content [data-icon-tone='ai']
+.context-room-dialog-content [data-icon-tone='calendar']
+.context-room-dialog-content [data-icon-tone='communication']
+.context-room-dialog-content [data-icon-tone='data']
+.context-room-dialog-content [data-icon-tone='document']
+.context-room-dialog-content [data-icon-tone='memory']
+.context-room-dialog-content [data-icon-tone='people']
+.context-room-dialog-content [data-icon-tone='room']
+.context-room-dialog-content [data-icon-tone='task']
+.context-room-dialog-overlay
+.context-room-document-actions
+.context-room-document-actions > button
+.context-room-document-actions > button svg
+.context-room-document-actions > button:focus-visible
+.context-room-document-actions > button:hover
+.context-room-document-actions > button[data-state='open']
+.context-room-document-actions-menu
+.context-room-document-actions-menu [role='menuitem'][data-disabled]
+.context-room-document-actions-separator
+.context-room-document-actions-submenu-icon
+.context-room-document-card
+.context-room-document-create-arrow
+.context-room-document-create-popover
+.context-room-document-create-popover .context-room-document-import
+.context-room-document-create-popover .context-room-document-import svg
+.context-room-document-create-popover .context-room-document-import-input
+.context-room-document-create-popover .context-room-document-import:disabled
+.context-room-document-create-popover .context-room-document-import:hover:not(:disabled)
+.context-room-document-create-popover footer
+.context-room-document-create-popover footer button
+.context-room-document-create-popover footer button.is-primary
+.context-room-document-create-popover footer button.is-primary:hover:not(:disabled)
+.context-room-document-create-popover footer button:disabled
+.context-room-document-create-popover footer button:hover:not(:disabled)
+.context-room-document-create-popover input
+.context-room-document-create-popover input:focus
+.context-room-document-create-popover label
+.context-room-document-create-popover small
+.context-room-document-delete-arrow
+.context-room-document-delete-popover
+.context-room-document-delete-popover > small
+.context-room-document-delete-popover > span
+.context-room-document-delete-popover footer
+.context-room-document-delete-popover footer button
+.context-room-document-delete-popover footer button.is-danger
+.context-room-document-delete-popover footer button.is-danger:hover:not(:disabled)
+.context-room-document-delete-popover footer button:disabled
+.context-room-document-delete-popover footer button:hover:not(:disabled)
+.context-room-document-delete-popover p
+.context-room-document-folder
+.context-room-document-folder > small
+.context-room-document-folder > span
+.context-room-document-folder > svg:first-child
+.context-room-document-folder > svg:first-child.is-expanded
+.context-room-document-folder > svg:nth-child(2)
+.context-room-document-folder:focus-visible
+.context-room-document-grid
+.context-room-document-icon
+.context-room-document-item
+.context-room-document-item > span
+.context-room-document-item > svg
+.context-room-document-item b
+.context-room-document-item small
+.context-room-document-item.is-selected
+.context-room-document-item:focus-visible
+.context-room-document-library
+.context-room-document-library > header
+.context-room-document-library > header > div
+.context-room-document-library > header button
+.context-room-document-library > header button svg
+.context-room-document-library > header button:focus-visible
+.context-room-document-library > header span
+.context-room-document-library > header strong
+.context-room-document-library > label
+.context-room-document-library > label input
+.context-room-document-library > label input::placeholder
+.context-room-document-library > label svg
+.context-room-document-library > label:focus-within
+.context-room-document-mobile-back
+.context-room-document-mobile-back svg
+.context-room-document-surface
+.context-room-document-title
+.context-room-document-tree
+.context-room-document-tree > p
+.context-room-document-tree > section + section
+.context-room-document-workspace
+.context-room-document-workspace.is-immersive
+.context-room-document-workspace:not(.is-immersive)
+.context-room-document-workspace:not(.is-immersive) .context-room-document-library
+.context-room-document-workspace:not(.is-immersive) .context-room-document-surface
+.context-room-duplicate-alert
+.context-room-duplicate-button
+.context-room-duplicate-center > header
+.context-room-duplicate-empty
+.context-room-duplicate-list
+.context-room-duplicate-list article
+.context-room-duplicate-list article:first-child
+.context-room-duplicate-list button svg
+.context-room-duplicate-list footer
+.context-room-duplicate-meta
+.context-room-duplicate-meta small
+.context-room-duplicate-meta span
+.context-room-duplicate-meta span[data-confidence='high']
+.context-room-duplicate-pair
+.context-room-duplicate-pair b
+.context-room-duplicate-pair svg
+.context-room-editor
+.context-room-editor .ProseMirror
+.context-room-editor .ProseMirror > * + *
+.context-room-editor .ProseMirror blockquote
+.context-room-editor .ProseMirror h2
+.context-room-editor .ProseMirror h6
+.context-room-editor .ProseMirror ol
+.context-room-editor .ProseMirror p
+.context-room-editor .ProseMirror-focused
+.context-room-editor-card
+.context-room-editor-card:hover
+.context-room-embedded-cloud-doc
+.context-room-embedded-cloud-doc > :last-child
+.context-room-embedded-doc-status
+.context-room-embedded-doc-status b
+.context-room-empty
+.context-room-empty-actions
+.context-room-evidence
+.context-room-evidence summary
+.context-room-evidence summary::-webkit-details-marker
+.context-room-evidence-list
+.context-room-evidence-list .context-room-tag
+.context-room-evidence:focus-within .context-room-evidence-list
+.context-room-external-file-actions
+.context-room-external-file-body
+.context-room-external-file-body > p
+.context-room-external-state
+.context-room-external-state > button
+.context-room-external-state > span
+.context-room-external-state b
+.context-room-external-state small
+.context-room-file-item
+.context-room-file-item:hover
+.context-room-file-reveal
+.context-room-file-reveal svg
+.context-room-file-reveal:hover
+.context-room-form-error
+.context-room-ghost
+.context-room-ghost:hover
+.context-room-graph-canvas
+.context-room-graph-canvas canvas
+.context-room-graph-degraded
+.context-room-graph-filterbar
+.context-room-graph-filterbar button
+.context-room-graph-filterbar button[aria-pressed='true']
+.context-room-graph-fit-button
+.context-room-graph-fit-button:hover
+.context-room-graph-heading
+.context-room-graph-icon-button
+.context-room-graph-icon-button svg
+.context-room-graph-index-state
+.context-room-graph-index-state[data-status='building']
+.context-room-graph-index-state[data-status='degraded']
+.context-room-graph-inspector-footer
+.context-room-graph-inspector-footer > .context-room-primary
+.context-room-graph-inspector-footer > .context-room-primary svg
+.context-room-graph-inspector-header
+.context-room-graph-inspector-header > div
+.context-room-graph-inspector-header button
+.context-room-graph-inspector-header button svg
+.context-room-graph-inspector-header button:hover
+.context-room-graph-inspector-header h3
+.context-room-graph-inspector-header small
+.context-room-graph-inspector-header::before
+.context-room-graph-inspector-icon
+.context-room-graph-inspector-icon svg
+.context-room-graph-inspector-scroll
+.context-room-graph-inspector-scroll p
+.context-room-graph-legend
+.context-room-graph-legend span
+.context-room-graph-legend span:last-child
+.context-room-graph-loading
+.context-room-graph-loading svg
+.context-room-graph-panel
+.context-room-graph-state
+.context-room-graph-tool-button:disabled
+.context-room-graph-tool-button[aria-pressed='true']
+.context-room-graph-toolbar
+.context-room-head-actions
+.context-room-history-body
+.context-room-history-body > aside
+.context-room-history-body > aside button
+.context-room-history-body > aside button.is-selected
+.context-room-history-body > section
+.context-room-history-body pre
+.context-room-history-date-group
+.context-room-history-date-group::before
+.context-room-history-date-group[data-collapsed='true']::before
+.context-room-history-date-toggle
+.context-room-history-date-toggle small
+.context-room-history-date-toggle span
+.context-room-history-date-toggle svg
+.context-room-history-date-toggle:hover
+.context-room-history-date-toggle[aria-expanded='false'] svg
+.context-room-history-diff
+.context-room-history-diff article
+.context-room-history-diff article[data-diff-status='added']
+.context-room-history-diff article[data-diff-status='removed']
+.context-room-history-diff mark
+.context-room-history-diff mark[data-diff-type='delete']
+.context-room-history-diff mark[data-diff-type='insert']
+.context-room-history-diff-banner
+.context-room-history-diff-banner > span
+.context-room-history-diff-banner button
+.context-room-history-diff-banner button.context-room-history-diff-exit
+.context-room-history-diff-banner button.context-room-history-diff-restore
+.context-room-history-diff-banner button.context-room-history-diff-restore:hover
+.context-room-history-diff-banner button:focus-visible
+.context-room-history-diff-banner button:hover
+.context-room-history-diff-banner small
+.context-room-history-diff-banner svg
+.context-room-history-diff-block
+.context-room-history-diff-block.is-added
+.context-room-history-diff-block.is-added::before
+.context-room-history-diff-block.is-modified
+.context-room-history-diff-block.is-modified::before
+.context-room-history-diff-block.is-removed
+.context-room-history-diff-block.is-removed::before
+.context-room-history-diff-block.is-unchanged
+.context-room-history-diff-block::before
+.context-room-history-diff-column-header
+.context-room-history-diff-content
+.context-room-history-diff-context
+.context-room-history-diff-context > span:last-child
+.context-room-history-diff-context small
+.context-room-history-diff-context strong
+.context-room-history-diff-context-icon
+.context-room-history-diff-context-icon svg
+.context-room-history-diff-empty
+.context-room-history-diff-legend
+.context-room-history-diff-legend .is-added i
+.context-room-history-diff-legend .is-removed i
+.context-room-history-diff-legend i
+.context-room-history-diff-legend span
+.context-room-history-diff-note
+.context-room-history-diff-note > div
+.context-room-history-diff-note > svg
+.context-room-history-diff-note span
+.context-room-history-diff-note strong
+.context-room-history-diff-title-block
+.context-room-history-diff-title-block h1
+.context-room-history-diff-title-block h1.is-added
+.context-room-history-diff-title-block h1.is-removed
+.context-room-history-diff-view
+.context-room-history-editor-source
+.context-room-history-empty
+.context-room-history-heading
+.context-room-history-heading small
+.context-room-history-heading strong
+.context-room-history-list-heading
+.context-room-history-list-heading small
+.context-room-history-load-more
+.context-room-history-load-more:disabled
+.context-room-history-loading
+.context-room-history-loading span
+.context-room-history-loading span:nth-child(2)
+.context-room-history-loading span:nth-child(3)
+.context-room-history-overlay
+.context-room-history-panel
+.context-room-history-panel > header
+.context-room-history-placeholder
+.context-room-history-placeholder span
+.context-room-history-placeholder strong
+.context-room-history-placeholder svg
+.context-room-history-restore
+.context-room-history-restore svg
+.context-room-history-restore:disabled
+.context-room-history-restore:hover:not(:disabled)
+.context-room-history-selected-body
+.context-room-history-selected-icon
+.context-room-history-selected-icon svg
+.context-room-history-selected-title
+.context-room-history-selected-title > div
+.context-room-history-selected-title small
+.context-room-history-selected-title strong
+.context-room-history-stats
+.context-room-history-stats > div
+.context-room-history-stats dd
+.context-room-history-stats dt
+.context-room-history-toolbar
+.context-room-history-toolbar button
+.context-room-history-toolbar button:disabled
+.context-room-history-version
+.context-room-history-version-copy
+.context-room-history-version-meta
+.context-room-history-version-meta svg
+.context-room-history-version-rail
+.context-room-history-version-rail i
+.context-room-history-version-title
+.context-room-history-version-topline
+.context-room-history-version-topline b
+.context-room-history-version-topline em
+.context-room-history-version-topline em svg
+.context-room-history-version.is-selected
+.context-room-history-version.is-selected .context-room-history-version-rail i
+.context-room-history-version:hover
+.context-room-history-version[data-current='true'] .context-room-history-version-rail i
+.context-room-home
+.context-room-home .context-room-home-grid:not(.context-room-recommendation-grid)
+.context-room-home .context-room-recommendation-card
+.context-room-home .context-room-recommendation-grid
+.context-room-home-card
+.context-room-home-card-body
+.context-room-home-card-body b
+.context-room-home-card-icon
+.context-room-home-card-icon svg
+.context-room-home-card-time
+.context-room-home-card-time svg
+.context-room-home-card:focus-within
+.context-room-home-empty
+.context-room-home-empty h3
+.context-room-home-empty p
+.context-room-home-empty svg
+.context-room-home-grid
+.context-room-home-header
+.context-room-home-layout
+.context-room-home-search
+.context-room-home-search input
+.context-room-home-search svg
+.context-room-home-search:focus-within
+.context-room-home-section
+.context-room-home-section + .context-room-home-section
+.context-room-home-section-title
+.context-room-home-section-title > span
+.context-room-home::-webkit-scrollbar
+.context-room-icon-button
+.context-room-icon-button:disabled
+.context-room-inline-notice
+.context-room-inspector-empty
+.context-room-inspector-highlight
+.context-room-inspector-highlight b
+.context-room-inspector-section
+.context-room-inspector-section h4
+.context-room-kbd
+.context-room-knowledge-attach
+.context-room-knowledge-attach svg
+.context-room-knowledge-batchbar
+.context-room-knowledge-batchbar .context-room-knowledge-defer
+.context-room-knowledge-batchbar > span
+.context-room-knowledge-batchbar label
+.context-room-knowledge-card
+.context-room-knowledge-card > footer
+.context-room-knowledge-card > header
+.context-room-knowledge-card > header input
+.context-room-knowledge-card > header strong
+.context-room-knowledge-confirm
+.context-room-knowledge-confirm:disabled
+.context-room-knowledge-confirm:hover:not(:disabled)
+.context-room-knowledge-create
+.context-room-knowledge-create svg
+.context-room-knowledge-create:disabled
+.context-room-knowledge-create:hover:not(:disabled)
+.context-room-knowledge-defer
+.context-room-knowledge-defer svg
+.context-room-knowledge-defer:disabled
+.context-room-knowledge-defer:hover:not(:disabled)
+.context-room-knowledge-detail
+.context-room-knowledge-empty
+.context-room-knowledge-empty h3
+.context-room-knowledge-empty p
+.context-room-knowledge-empty svg
+.context-room-knowledge-empty-cta
+.context-room-knowledge-empty-cta-icon
+.context-room-knowledge-empty-cta-icon svg
+.context-room-knowledge-empty-cta:focus-visible
+.context-room-knowledge-empty-cta:hover
+.context-room-knowledge-expand
+.context-room-knowledge-expand svg
+.context-room-knowledge-expand[aria-expanded='true'] svg
+.context-room-knowledge-group
+.context-room-knowledge-history
+.context-room-knowledge-history .context-room-knowledge-recent
+.context-room-knowledge-history > summary
+.context-room-knowledge-history > summary small
+.context-room-knowledge-history > summary svg
+.context-room-knowledge-history > summary::-webkit-details-marker
+.context-room-knowledge-history-content
+.context-room-knowledge-history[open] > summary svg
+.context-room-knowledge-link
+.context-room-knowledge-link em
+.context-room-knowledge-link-title
+.context-room-knowledge-links
+.context-room-knowledge-list
+.context-room-knowledge-newentity
+.context-room-knowledge-newentity input
+.context-room-knowledge-newentity input::placeholder
+.context-room-knowledge-overlay
+.context-room-knowledge-overlay .spin
+.context-room-knowledge-overlay-actions
+.context-room-knowledge-overlay-bar
+.context-room-knowledge-overlay-bar > div
+.context-room-knowledge-overlay-card
+.context-room-knowledge-overlay-card .context-room-creation-steps
+.context-room-knowledge-overlay-card > header
+.context-room-knowledge-overlay-card > header > svg
+.context-room-knowledge-overlay-card > header strong
+.context-room-knowledge-overlay-details
+.context-room-knowledge-overlay-details li
+.context-room-knowledge-overlay-details li > small
+.context-room-knowledge-overlay-details li > span
+.context-room-knowledge-overlay-details li > svg
+.context-room-knowledge-overlay-details ul
+.context-room-knowledge-overlay-details-more
+.context-room-knowledge-overlay-dismiss
+.context-room-knowledge-overlay-dismiss:hover
+.context-room-knowledge-overlay-note
+.context-room-knowledge-overlay-retry
+.context-room-knowledge-overlay[data-phase='failed'] > .context-room-knowledge-overlay-card > .context-room-knowledge-overlay-bar > div
+.context-room-knowledge-overlay[data-phase='failed'] > .context-room-knowledge-overlay-card > header > svg
+.context-room-knowledge-overlay[data-phase='timeout'] > .context-room-knowledge-overlay-card > header > svg
+.context-room-knowledge-panel
+.context-room-knowledge-panel .context-room-my-title
+.context-room-knowledge-progress
+.context-room-knowledge-progress-bar
+.context-room-knowledge-progress-fill
+.context-room-knowledge-reason
+.context-room-knowledge-recent
+.context-room-knowledge-recent h3
+.context-room-knowledge-recent-room
+.context-room-knowledge-recent-row
+.context-room-knowledge-recent-title
+.context-room-knowledge-revert
+.context-room-knowledge-revert svg
+.context-room-knowledge-revert:disabled
+.context-room-knowledge-revert:hover:not(:disabled)
+.context-room-knowledge-select
+.context-room-knowledge-showmore
+.context-room-knowledge-showmore svg
+.context-room-knowledge-summary
+.context-room-knowledge-tag
+.context-room-legend-document
+.context-room-legend-dot
+.context-room-legend-event
+.context-room-legend-fact
+.context-room-legend-person
+.context-room-legend-room
+.context-room-library-empty
+.context-room-link
+.context-room-list-toolbar
+.context-room-list-toolbar .context-room-segmented button
+.context-room-mail-attachment
+.context-room-mail-attachment small
+.context-room-mail-body
+.context-room-mail-body p
+.context-room-mail-derived-section
+.context-room-mail-derived-section > h3
+.context-room-mail-detail
+.context-room-mail-detail > header
+.context-room-mail-detail > header > button
+.context-room-mail-detail > header > button:hover
+.context-room-mail-detail-actions
+.context-room-mail-detail-body
+.context-room-mail-detail-hint
+.context-room-mail-detail-meta
+.context-room-mail-detail-meta span
+.context-room-mail-detail-title
+.context-room-mail-detail-title small
+.context-room-mail-detail-title strong
+.context-room-mail-header
+.context-room-mail-layout
+.context-room-mail-list
+.context-room-mail-list-item
+.context-room-mail-list-item > span:last-child
+.context-room-mail-list-item > strong
+.context-room-mail-list-meta
+.context-room-mail-list-meta b
+.context-room-mail-list-meta time
+.context-room-mail-meta b
+.context-room-mail-meta time
+.context-room-mail-pane
+.context-room-mail-pane .context-room-mail-meta
+.context-room-mail-pane > button
+.context-room-mail-pane > button > span
+.context-room-mail-pane > button.is-unread b
+.context-room-mail-pane > button.is-unread::before
+.context-room-mail-pane > header
+.context-room-mail-pane b
+.context-room-mail-pane button span
+.context-room-mail-pane h2
+.context-room-mail-pane img.source-icon
+.context-room-mail-pane small
+.context-room-mail-pane strong
+.context-room-mail-pane svg
+.context-room-mail-pane time
+.context-room-mail-pane.has-detail
+.context-room-mail-pane.has-detail .context-room-mail-list
+.context-room-mail-reply
+.context-room-mail-reply .context-room-panel-head h2
+.context-room-mail-reply textarea
+.context-room-mail-row
+.context-room-mail-row .context-room-resource-correct-button
+.context-room-mail-row > button.is-selected
+.context-room-mail-row > button:not(.context-room-resource-correct-button)
+.context-room-mail-row > button:not(.context-room-resource-correct-button):hover
+.context-room-mail-shell
+.context-room-mail-subject
+.context-room-mail-suggestion
+.context-room-mail-suggestion b
+.context-room-mail-suggestion span
+.context-room-mail-summary
+.context-room-mail-summary::before
+.context-room-mail-task-candidate
+.context-room-mail-task-candidate::before
+.context-room-manual-merge
+.context-room-manual-merge > p
+.context-room-manual-merge footer
+.context-room-manual-merge footer button
+.context-room-manual-merge header h2
+.context-room-manual-merge header span
+.context-room-manual-merge label
+.context-room-manual-merge label span
+.context-room-meeting-actions article
+.context-room-meeting-actions article button
+.context-room-meeting-actions b
+.context-room-meeting-actions span
+.context-room-meeting-facts
+.context-room-meeting-facts > span
+.context-room-meeting-facts > span + span
+.context-room-meeting-facts b
+.context-room-meeting-facts small
+.context-room-meeting-hero
+.context-room-meeting-hero > span
+.context-room-meeting-hero h1
+.context-room-meeting-hero p
+.context-room-meeting-hero svg
+.context-room-meeting-panel
+.context-room-meeting-reference
+.context-room-meeting-tabs
+.context-room-meeting-tabs button
+.context-room-meeting-tabs button[aria-selected='true']
+.context-room-meeting-tabs button[aria-selected='true']::after
+.context-room-memory-content
+.context-room-memory-detail-empty
+.context-room-memory-detail-graph
+.context-room-memory-detail-graph > button
+.context-room-memory-detail-graph > button:hover
+.context-room-memory-detail-graph > span
+.context-room-memory-detail-graph::before
+.context-room-memory-detail-icon
+.context-room-memory-detail-icon svg
+.context-room-memory-detail-list
+.context-room-memory-detail-list b
+.context-room-memory-detail-list small
+.context-room-memory-detail-panel .context-room-panel-head h2
+.context-room-memory-detail-row-icon svg
+.context-room-memory-detail-section-head
+.context-room-memory-detail-section-head small
+.context-room-memory-entity-mention
+.context-room-memory-entity-status
+.context-room-memory-entity-status[data-status='promoting']
+.context-room-memory-entity-status[data-status='room']
+.context-room-memory-entity-status[data-status='suppressed']
+.context-room-memory-filters
+.context-room-memory-graph-stage
+.context-room-memory-inline-action
+.context-room-memory-inline-detail .context-room-memory-detail-list button
+.context-room-memory-inline-detail .context-room-memory-detail-list button > span:last-child
+.context-room-memory-inline-detail .context-room-memory-detail-list button:hover
+.context-room-memory-inline-detail .context-room-memory-detail-row-icon
+.context-room-memory-inline-detail .context-room-memory-source-row
+.context-room-memory-inline-detail .context-room-memory-source-row > span:last-child
+.context-room-memory-inline-detail > footer
+.context-room-memory-inline-detail > footer button
+.context-room-memory-inline-detail > header
+.context-room-memory-inline-detail > header > span:last-child
+.context-room-memory-inline-detail > header h3
+.context-room-memory-inline-detail > header small
+.context-room-memory-inline-detail > section
+.context-room-memory-inline-detail p
+.context-room-memory-layout
+.context-room-memory-list
+.context-room-memory-list > button
+.context-room-memory-list > button > span:last-child
+.context-room-memory-list > button > span:nth-child(2)
+.context-room-memory-list > button b
+.context-room-memory-list > button:not(:last-child)::after
+.context-room-memory-list > button[aria-pressed='true']
+.context-room-memory-list-pane
+.context-room-memory-list-pane .context-room-panel-head
+.context-room-memory-list-pane .context-room-panel-head h2
+.context-room-memory-meta
+.context-room-memory-meta b
+.context-room-memory-meta span
+.context-room-memory-overview
+.context-room-memory-overview > .context-room-memory-inline-detail
+.context-room-memory-pane > :last-child:not(header)
+.context-room-memory-pane > header button
+.context-room-memory-source-label
+.context-room-memory-title
+.context-room-memory-usage
+.context-room-merge-alias-hint
+.context-room-merge-conflicts p
+.context-room-merge-flow
+.context-room-merge-flow-arrow
+.context-room-merge-flow-arrow svg
+.context-room-merge-flow-room
+.context-room-merge-flow-room b
+.context-room-merge-flow-room small
+.context-room-merge-flow-room svg
+.context-room-merge-flow-room[data-new]
+.context-room-merge-flow-room[data-new] svg
+.context-room-merge-flow-room[data-retiring]
+.context-room-merge-flow-sources
+.context-room-merge-impact dd
+.context-room-merge-impact dl
+.context-room-merge-impact dl > div
+.context-room-merge-impact dl > div[data-zero='true']
+.context-room-merge-impact dt
+.context-room-merge-notes
+.context-room-merge-notes p
+.context-room-merge-notes p svg
+.context-room-merge-operation
+.context-room-merge-operation div
+.context-room-merge-operation small
+.context-room-merge-operation[data-status='completed']
+.context-room-merge-operation[data-status='running'] > svg
+.context-room-merge-picker
+.context-room-merge-picker label
+.context-room-merge-picker label > span
+.context-room-merge-picker-create
+.context-room-merge-picker-create b
+.context-room-merge-picker-empty
+.context-room-merge-picker-list
+.context-room-merge-picker-list button
+.context-room-merge-picker-list button small
+.context-room-merge-picker-list button:hover
+.context-room-merge-picker-list button[data-selected='true']
+.context-room-merge-picker-search
+.context-room-merge-picker-search input
+.context-room-merge-picker-search svg
+.context-room-merge-preview
+.context-room-merge-preview > footer
+.context-room-merge-preview > label
+.context-room-merge-preview h3
+.context-room-merge-preview section
+.context-room-merge-preview select
+.context-room-merge-sketch
+.context-room-merge-sketch dd
+.context-room-merge-sketch dl
+.context-room-merge-sketch dl > div
+.context-room-merge-sketch dt
+.context-room-merge-sketch h3
+.context-room-merge-sketch h3 small
+.context-room-merge-sketch-brief
+.context-room-merge-sketch-entities
+.context-room-merge-sketch-entities dd
+.context-room-merge-suggestions
+.context-room-merge-suggestions .context-room-merge-suggestions-loading
+.context-room-merge-suggestions button
+.context-room-merge-suggestions button:hover
+.context-room-merge-suggestions button[data-active='true']
+.context-room-merge-suggestions small
+.context-room-merge-warning > svg
+.context-room-merge-warning p
+.context-room-middle-divider
+.context-room-middle-divider::before
+.context-room-middle-divider:focus
+.context-room-mobile-back
+.context-room-mobile-back svg
+.context-room-my-actions
+.context-room-my-actions .context-room-add-room .obsidian-app-icon
+.context-room-my-actions .context-room-add-room svg
+.context-room-my-card
+.context-room-my-title
+.context-room-my-title .context-room-home-section-title
+.context-room-my-title h2
+.context-room-my-toolbar
+.context-room-nav-count
+.context-room-new-room-button
+.context-room-new-room-button svg
+.context-room-node-context-list
+.context-room-node-context-list :where(dt, dd)
+.context-room-node-context-list > div
+.context-room-node-context-list dd
+.context-room-node-context-list dt
+.context-room-node-meta
+.context-room-node-meta > span
+.context-room-node-meta svg
+.context-room-node-overview
+.context-room-node-overview p
+.context-room-node-people
+.context-room-node-people > span
+.context-room-node-people b
+.context-room-node-people small
+.context-room-node-people svg
+.context-room-node-resources
+.context-room-node-resources > div
+.context-room-node-resources > div > span
+.context-room-node-resources > div > svg
+.context-room-node-resources b
+.context-room-node-resources small
+.context-room-node-signals > div + div
+.context-room-node-signals > div > span
+.context-room-node-signals > div[data-kind='risk'] > span
+.context-room-node-signals ul
+.context-room-node-stat
+.context-room-node-stat b
+.context-room-node-stat span
+.context-room-node-stat svg
+.context-room-node-stats
+.context-room-object-app-header
+.context-room-object-app-header .context-room-page-title
+.context-room-object-back
+.context-room-object-detail-grid
+.context-room-object-facts
+.context-room-object-facts > span
+.context-room-object-facts > span:last-child
+.context-room-object-facts b
+.context-room-object-facts small
+.context-room-object-header
+.context-room-object-icon
+.context-room-object-icon[data-icon-tone]
+.context-room-object-label
+.context-room-object-lifecycle
+.context-room-object-lifecycle button
+.context-room-object-meta
+.context-room-object-reference-header
+.context-room-object-reference-titles
+.context-room-object-reference-titles .context-room-object-back
+.context-room-object-shell > .context-room-object-header
+.context-room-object-shell > .context-room-object-header .context-room-page-title
+.context-room-object-summary
+.context-room-object-summary > div
+.context-room-object-summary p
+.context-room-object-topbar
+.context-room-object-topbar .context-room-page-actions
+.context-room-object-topbar .context-room-page-actions > button
+.context-room-object-value
+.context-room-office-render-surface
+.context-room-office-render-surface.is-docx .docx-wrapper
+.context-room-office-render-surface.is-docx .docx-wrapper > section.docx
+.context-room-office-render-surface.is-loading::before
+.context-room-office-render-surface.is-pdf
+.context-room-office-render-surface.is-pdf canvas
+.context-room-office-render-surface.is-xlsx
+.context-room-office-render-surface.is-xlsx > div
+.context-room-office-viewer
+.context-room-office-viewer-error
+.context-room-office-viewer-error .context-room-office-preview
+.context-room-office-viewer-error > p
+.context-room-office-viewer-error > strong
+.context-room-office-viewer-header
+.context-room-office-viewer-header .context-room-preview-icon
+.context-room-office-viewer-header .context-room-preview-icon svg
+.context-room-office-viewer-header > div
+.context-room-office-viewer-header h1
+.context-room-office-viewer-header p
+.context-room-office-viewer-state
+.context-room-office-viewer-state svg
+.context-room-office-viewer-state.is-error
+.context-room-office-viewer-state.is-loading
+.context-room-office-viewer.is-pptx
+.context-room-office-viewer.is-pptx .context-room-office-render-surface
+.context-room-operation-shell
+.context-room-page
+.context-room-page-actions > button
+.context-room-page-header
+.context-room-page-subtitle
+.context-room-page-title
+.context-room-page::-webkit-scrollbar
+.context-room-pane
+.context-room-pane-drag-preview
+.context-room-pane-drag-preview svg
+.context-room-panel
+.context-room-panel-divider
+.context-room-panel-empty
+.context-room-panel-empty h3
+.context-room-panel-empty p
+.context-room-panel-empty-action
+.context-room-panel-empty-action:hover
+.context-room-panel-empty-icon
+.context-room-panel-empty-icon svg
+.context-room-panel-empty.is-compact
+.context-room-panel-empty.is-compact .context-room-panel-empty-icon
+.context-room-panel-empty.is-compact .context-room-panel-empty-icon svg
+.context-room-panel-empty.is-compact h3
+.context-room-panel-empty.is-compact p
+.context-room-panel-empty[data-error='true'] .context-room-panel-empty-icon
+.context-room-panel-head
+.context-room-panel-head > :last-child
+.context-room-panel-head > :last-child:not(h2)
+.context-room-panel-head h2
+.context-room-pptx-viewer
+.context-room-pptx-viewer > section
+.context-room-pptx-viewer > section > div
+.context-room-pptx-viewer > section svg
+.context-room-pptx-viewer nav
+.context-room-pptx-viewer nav button
+.context-room-pptx-viewer nav button > span:first-child
+.context-room-pptx-viewer nav button > span:last-child
+.context-room-pptx-viewer nav button.is-active
+.context-room-preview-panel
+.context-room-preview-section
+.context-room-preview-section > span
+.context-room-preview-section h2
+.context-room-preview-section p
+.context-room-preview-sections
+.context-room-primary
+.context-room-primary svg
+.context-room-primary-button
+.context-room-primary:hover
+.context-room-progress
+.context-room-progress span
+.context-room-recommendation-actions
+.context-room-recommendation-actions > button
+.context-room-recommendation-card
+.context-room-recommendation-card h3
+.context-room-recommendation-card p
+.context-room-recommendation-card:hover
+.context-room-recommendation-count
+.context-room-recommendation-count b
+.context-room-recommendation-count svg
+.context-room-recommendation-dialog > header
+.context-room-recommendation-dialog > header button
+.context-room-recommendation-dialog > header button svg
+.context-room-recommendation-dialog > header span
+.context-room-recommendation-dialog section h3
+.context-room-recommendation-facts
+.context-room-recommendation-facts b
+.context-room-recommendation-facts span
+.context-room-recommendation-grid
+.context-room-recommendation-main
+.context-room-recommendation-meta
+.context-room-recommendation-meta time
+.context-room-recommendation-processed
+.context-room-recommendation-source-list
+.context-room-recommendation-source-list b
+.context-room-recommendation-source-list button
+.context-room-recommendation-source-list button span
+.context-room-recommendation-source-list button:disabled
+.context-room-recommendation-source-list svg
+.context-room-recommendation-stats
+.context-room-recommendation-stats > div
+.context-room-recommendation-stats b
+.context-room-recommendation-stats span
+.context-room-recommendations
+.context-room-reference-fields
+.context-room-reference-fields label
+.context-room-reference-fields label > span
+.context-room-reference-fields textarea
+.context-room-reference-fields textarea:focus
+.context-room-reference-form
+.context-room-reference-form > h2
+.context-room-reference-form-actions
+.context-room-reference-layout
+.context-room-reference-layout .context-room-page-header
+.context-room-related-empty-header
+.context-room-related-empty-header > div
+.context-room-related-empty-header h2
+.context-room-related-empty-header span
+.context-room-related-graph
+.context-room-related-graph > header
+.context-room-related-graph > header .context-room-related-graph-actions > button
+.context-room-related-graph > header .context-room-related-graph-actions > button:hover
+.context-room-related-graph > header > button
+.context-room-related-graph > header > button svg
+.context-room-related-graph > header > button:hover
+.context-room-related-graph > header > div
+.context-room-related-graph h2
+.context-room-related-graph span
+.context-room-related-graph-actions
+.context-room-related-graph-actions button svg
+.context-room-related-graph-canvas
+.context-room-related-inline-detail
+.context-room-related-inline-detail > .context-room-primary
+.context-room-related-inline-detail > .context-room-primary svg
+.context-room-related-inline-detail > header
+.context-room-related-inline-detail > header div
+.context-room-related-inline-detail > header h3
+.context-room-related-inline-detail > header small
+.context-room-related-inline-detail > section > div
+.context-room-related-inline-detail > section > span
+.context-room-related-inline-detail > section svg
+.context-room-related-inline-detail > section time
+.context-room-related-inline-detail dd
+.context-room-related-inline-detail dl
+.context-room-related-inline-detail dl > div
+.context-room-related-inline-detail dt
+.context-room-related-inline-detail h3
+.context-room-related-inline-detail p
+.context-room-related-list-header h2
+.context-room-related-list-header span
+.context-room-related-rooms-pane
+.context-room-related-rooms-pane > .context-room-related-list-header
+.context-room-related-rooms-pane > .context-room-room-graph-inspector
+.context-room-related-rooms-pane > button
+.context-room-related-rooms-pane > button > svg
+.context-room-relation-checkbox
+.context-room-relation-checkbox input
+.context-room-relation-create
+.context-room-relation-create :where(input, select, textarea)
+.context-room-relation-create > header
+.context-room-relation-create > header > svg
+.context-room-relation-create > label:not(.context-room-relation-checkbox)
+.context-room-relation-create footer
+.context-room-relation-create footer button
+.context-room-relation-create h2
+.context-room-relation-create label > span
+.context-room-relation-create p
+.context-room-relation-create textarea
+.context-room-relation-endpoints
+.context-room-relation-endpoints > div
+.context-room-relation-endpoints > svg
+.context-room-relation-endpoints b
+.context-room-relation-endpoints small
+.context-room-relation-error
+.context-room-relation-evidence
+.context-room-relation-evidence > button
+.context-room-relation-evidence > button svg
+.context-room-relation-evidence > button:hover
+.context-room-relation-evidence > div
+.context-room-relation-evidence b
+.context-room-relation-evidence h4
+.context-room-relation-evidence p
+.context-room-relation-evidence small
+.context-room-relation-evidence span
+.context-room-relation-footer-actions
+.context-room-relation-footer-actions button
+.context-room-relation-footer-actions button.context-room-primary
+.context-room-relation-footer-actions button.is-danger
+.context-room-relation-footer-actions button:hover
+.context-room-relation-footer-actions button:not(.context-room-primary)
+.context-room-relation-footer-actions svg
+.context-room-relation-form
+.context-room-relation-form > h4
+.context-room-relation-metrics
+.context-room-relation-metrics > div
+.context-room-relation-metrics b
+.context-room-resource-correct-button
+.context-room-resource-correct-button .context-room-resource-correct-button svg
+.context-room-resource-correct-button:hover
+.context-room-resource-delete
+.context-room-resource-delete svg
+.context-room-resource-delete:disabled
+.context-room-resource-delete:focus-visible
+.context-room-resource-delete:hover:not(:disabled)
+.context-room-resource-error
+.context-room-resource-folder
+.context-room-resource-folder small
+.context-room-resource-folder span
+.context-room-resource-folder svg
+.context-room-resource-folder svg:first-child
+.context-room-resource-folder svg:first-child.is-open
+.context-room-resource-folder-add
+.context-room-resource-folder-add svg
+.context-room-resource-folder-add svg.is-spinning
+.context-room-resource-folder-add.is-danger:hover:not(:disabled)
+.context-room-resource-folder-add:disabled
+.context-room-resource-folder-add:hover:not(:disabled)
+.context-room-resource-folder-empty
+.context-room-resource-folder-row
+.context-room-resource-folder-row:focus-within .context-room-resource-folder-add
+.context-room-resource-item
+.context-room-resource-item > span
+.context-room-resource-item > svg
+.context-room-resource-item b
+.context-room-resource-item small
+.context-room-resource-item.is-selected
+.context-room-resource-item.is-trashed
+.context-room-resource-item:hover
+.context-room-resource-row
+.context-room-resource-row .context-room-resource-correct-button
+.context-room-resource-row .context-room-resource-item
+.context-room-resource-row.is-trash
+.context-room-resource-row:focus-within .context-room-resource-correct-button
+.context-room-resource-scroll
+.context-room-resource-scroll > .context-room-panel-empty
+.context-room-resource-trash-actions
+.context-room-resource-trash-actions > button:hover:not(:disabled)
+.context-room-resource-trash-actions > span > button
+.context-room-resource-trash-actions > span > button:hover:not(:disabled)
+.context-room-resource-trash-actions button:disabled
+.context-room-resource-trash-actions svg
+.context-room-resource-tree
+.context-room-resource-tree > label
+.context-room-resource-tree > label input
+.context-room-resource-tree > label svg
+.context-room-room-form
+.context-room-room-form button:disabled
+.context-room-room-form label
+.context-room-room-form label > span
+.context-room-room-form select
+.context-room-room-form textarea
+.context-room-room-form textarea:focus
+.context-room-room-graph-canvas
+.context-room-room-graph-inspector
+.context-room-room-graph-inspector[data-relation-type='blocks']
+.context-room-room-graph-inspector[data-relation-type='custom']
+.context-room-room-graph-inspector[data-relation-type='depends_on']
+.context-room-room-graph-inspector[data-relation-type='mixed']
+.context-room-room-graph-inspector[data-relation-type='owns']
+.context-room-room-graph-inspector[data-relation-type='part_of']
+.context-room-room-graph-inspector[data-relation-type='related']
+.context-room-room-graph-inspector[data-relation-type='shared_entity']
+.context-room-room-graph-inspector[data-relation-type='shared_evidence']
+.context-room-room-graph-inspector[data-relation-type='supports']
+.context-room-room-graph-layout
+.context-room-room-graph-layout > .context-room-room-graph-inspector
+.context-room-room-graph-layout.is-selected
+.context-room-room-graph-node[data-icon-tone] > span
+.context-room-room-graph-node[data-icon-tone].is-active > span
+.context-room-room-graph-toolbar
+.context-room-room-graph-toolbar .context-room-home-search
+.context-room-room-graph-toolbar > :nth-child(n + 4)
+.context-room-room-graph-toolbar select
+.context-room-room-graph-toolbar select:hover
+.context-room-room-grid
+.context-room-room-icon
+.context-room-schedule-attachments
+.context-room-schedule-attachments > div
+.context-room-schedule-attachments > span
+.context-room-schedule-attachments small
+.context-room-schedule-attachments svg
+.context-room-schedule-date
+.context-room-schedule-date button
+.context-room-schedule-date button:disabled
+.context-room-schedule-date button:last-child
+.context-room-schedule-date span
+.context-room-schedule-date svg
+.context-room-schedule-group > header
+.context-room-schedule-group > header b
+.context-room-schedule-item
+.context-room-schedule-item > span:nth-child(2)
+.context-room-schedule-item b
+.context-room-schedule-item small
+.context-room-schedule-item time
+.context-room-schedule-item-icon
+.context-room-schedule-item-icon img.source-icon
+.context-room-schedule-item-icon svg
+.context-room-schedule-item:hover
+.context-room-schedule-pane > article
+.context-room-schedule-pane > article b
+.context-room-schedule-pane > article small
+.context-room-schedule-pane > article span
+.context-room-schedule-pane > article time
+.context-room-schedule-pane > header > div
+.context-room-schedule-pane > header > div button
+.context-room-schedule-pane > header > div button[aria-pressed='true']
+.context-room-schedule-pane > header button
+.context-room-schedule-pane > header button[aria-pressed='true']
+.context-room-schedule-popover
+.context-room-schedule-popover :where(button, [role='button'])
+.context-room-schedule-popover > button:last-child
+.context-room-schedule-popover > header
+.context-room-schedule-popover > header button
+.context-room-schedule-popover > header button:hover
+.context-room-schedule-popover > header svg
+.context-room-schedule-popover > p
+.context-room-schedule-popover > p svg
+.context-room-schedule-popover dd
+.context-room-schedule-popover dl
+.context-room-schedule-popover dl > div
+.context-room-schedule-popover dt
+.context-room-schedule-popover h3
+.context-room-search
+.context-room-search input
+.context-room-search:focus-within
+.context-room-secondary
+.context-room-section-head
+.context-room-section-head h2
+.context-room-section-kicker
+.context-room-segmented
+.context-room-segmented button
+.context-room-segmented button[aria-pressed='true']
+.context-room-selection-to-agent
+.context-room-selection-to-agent svg
+.context-room-selection-to-agent:focus-visible
+.context-room-selection-to-agent:hover
+.context-room-show-all
+.context-room-show-all small
+.context-room-show-all svg
+.context-room-show-all:focus-visible
+.context-room-side-tab
+.context-room-side-tab > span:not(.context-room-nav-count)
+.context-room-side-tab svg
+.context-room-side-tab[aria-pressed='true']
+.context-room-side-tab[aria-pressed='true'] svg
+.context-room-side-tabs
+.context-room-side-tabs::-webkit-scrollbar
+.context-room-small
+.context-room-source-card
+.context-room-source-card b
+.context-room-source-card span
+.context-room-source-health
+.context-room-standard-card
+.context-room-subsection-heading
+.context-room-subsection-heading h2
+.context-room-tab-menu
+.context-room-tab-menu [role='menu'] > div:first-child
+.context-room-tab-menu [role='menuitem']:focus
+.context-room-tab-menu [role='menuitem'][data-disabled]
+.context-room-tab-menu [role='menuitemcheckbox']
+.context-room-tag
+.context-room-tag.bg-amber-50
+.context-room-tag.bg-emerald-50
+.context-room-tag.bg-red-50
+.context-room-tag.bg-sky-50
+.context-room-tag.bg-violet-50
+.context-room-tag.bg-zinc-50
+.context-room-task-brief
+.context-room-task-check
+.context-room-task-check > span
+.context-room-task-check svg
+.context-room-task-completed
+.context-room-task-context-label
+.context-room-task-context-panel
+.context-room-task-context-panel .context-room-agent-action
+.context-room-task-context-panel .context-room-object-lifecycle
+.context-room-task-context-panel .context-room-object-lifecycle button
+.context-room-task-context-panel .context-room-panel-head
+.context-room-task-context-panel .context-room-source-card
+.context-room-task-context-panel .context-room-source-card > svg
+.context-room-task-context-panel button svg
+.context-room-task-fact
+.context-room-task-fact dd
+.context-room-task-fact dt
+.context-room-task-fact-icon
+.context-room-task-fact-icon svg
+.context-room-task-fact:first-child
+.context-room-task-facts
+.context-room-task-main
+.context-room-task-meta
+.context-room-task-meta > span
+.context-room-task-meta > span:first-child
+.context-room-task-meta > span:last-child
+.context-room-task-meta svg
+.context-room-task-progress
+.context-room-task-progress-overview
+.context-room-task-progress-overview .context-room-progress
+.context-room-task-progress-overview > div:first-child
+.context-room-task-progress-overview span
+.context-room-task-progress-overview strong
+.context-room-task-reference
+.context-room-task-reference .context-room-object-detail-grid
+.context-room-task-reference .context-room-object-reference-header
+.context-room-task-reference .context-room-object-reference-titles .context-room-object-back
+.context-room-task-reference .context-room-page-actions
+.context-room-task-reference .context-room-page-actions > button
+.context-room-task-reference .context-room-page-actions svg
+.context-room-task-reference .context-room-page-title
+.context-room-task-reference .context-room-task-fact
+.context-room-task-reference .context-room-task-fact-wide
+.context-room-task-reference .context-room-task-fact:first-child
+.context-room-task-reference .context-room-task-facts
+.context-room-task-reference aside
+.context-room-task-room-context
+.context-room-task-room-context > svg
+.context-room-task-room-context b
+.context-room-task-room-context span
+.context-room-task-row
+.context-room-task-row b
+.context-room-task-row.is-done .context-room-task-check > span
+.context-room-task-row.is-done b
+.context-room-task-row:hover
+.context-room-task-row:hover .context-room-task-check > span
+.context-room-task-section
+.context-room-task-section-toggle
+.context-room-task-section-toggle span
+.context-room-task-section-toggle svg
+.context-room-task-section-toggle[aria-expanded='true'] svg
+.context-room-task-source
+.context-room-task-status-panel .context-room-subsection-heading
+.context-room-task-status-panel .context-room-subsection-heading h2
+.context-room-task-status-panel .context-room-subsection-heading h2 span
+.context-room-task-status-panel .context-room-timeline
+.context-room-task-status-panel .context-room-timeline-item
+.context-room-task-status-panel .context-room-timeline-item::before
+.context-room-task-status-panel .context-room-timeline-item:not(:last-child)::after
+.context-room-task-status-panel .context-room-timeline-time
+.context-room-task-timeline-copy
+.context-room-task-timeline-copy b
+.context-room-task-timeline-copy span
+.context-room-timeline
+.context-room-timeline-done::before
+.context-room-timeline-info::before
+.context-room-timeline-item
+.context-room-timeline-item::before
+.context-room-timeline-item:not(:last-child)::after
+.context-room-timeline-material
+.context-room-timeline-material svg
+.context-room-timeline-material.is-plain
+.context-room-timeline-materials
+.context-room-timeline-peer
+.context-room-timeline-peer > div
+.context-room-timeline-peer > div > div:first-child
+.context-room-timeline-peer > i
+.context-room-timeline-peer b
+.context-room-timeline-peer p
+.context-room-timeline-peer time
+.context-room-timeline-peers
+.context-room-timeline-time
+.context-room-timeline-toolbar
+.context-room-timeline-toolbar > div
+.context-room-timeline-toolbar > div button
+.context-room-timeline-toolbar > div button:hover
+.context-room-timeline-toolbar > div button[aria-pressed='true']
+.context-room-timeline-toolbar > span
+.context-room-timeline-toolbar button
+.context-room-timeline-toolbar button[aria-pressed='true']
+.context-room-timeline-toolbar nav
+.context-room-timeline-toolbar nav button
+.context-room-timeline-toolbar nav button:disabled
+.context-room-timeline-toolbar nav button:hover:not(:disabled)
+.context-room-timeline-toolbar nav button:last-child
+.context-room-timeline-toolbar nav span
+.context-room-timeline-toolbar nav svg
+.context-room-timeline-warn::before
+.context-room-tiptap-content .document-history-diff-added
+.context-room-tiptap-content .document-history-diff-modified
+.context-room-transcript-list
+.context-room-transcript-list article
+.context-room-transcript-list article + article
+.context-room-transcript-list b
+.context-room-transcript-list p
+.context-room-transcript-list time
+.context-room-undo
+.context-room-undo > span
+.context-room-undo button
+.context-room-undo button:hover
+.context-room-undo svg
+.context-room-visually-hidden
+.context-room-wiki-actions
+.context-room-wiki-back
+.context-room-wiki-back svg
+.context-room-wiki-back:hover
+.context-room-wiki-files
+.context-room-wiki-files h3
+.context-room-wiki-files li
+.context-room-wiki-files ul
+.context-room-wiki-graph .context-room-graph-canvas
+.context-room-wiki-graph-hint
+.context-room-wiki-graph-hint span + span::before
+.context-room-wiki-graph-wrap
+.context-room-wiki-graph-wrap .context-room-graph-shell
+.context-room-wiki-header
+.context-room-wiki-item
+.context-room-wiki-item-body
+.context-room-wiki-item-body span
+.context-room-wiki-item-body strong
+.context-room-wiki-item-icon
+.context-room-wiki-item-icon svg
+.context-room-wiki-item:hover
+.context-room-wiki-list
+.context-room-wiki-markdown
+.context-room-wiki-markdown > :first-child
+.context-room-wiki-markdown > :last-child
+.context-room-wiki-markdown a
+.context-room-wiki-markdown blockquote
+.context-room-wiki-markdown code
+.context-room-wiki-markdown h3
+.context-room-wiki-markdown h4
+.context-room-wiki-markdown h6
+.context-room-wiki-markdown input[type='checkbox']
+.context-room-wiki-markdown li
+.context-room-wiki-markdown li > p
+.context-room-wiki-markdown li.task-list-item
+.context-room-wiki-markdown ol
+.context-room-wiki-markdown ol > li
+.context-room-wiki-markdown p
+.context-room-wiki-markdown pre
+.context-room-wiki-markdown pre code
+.context-room-wiki-markdown table
+.context-room-wiki-markdown td
+.context-room-wiki-markdown th
+.context-room-wiki-markdown ul > li
+.context-room-wiki-markdown ul.contains-task-list
+.context-room-wiki-pane
+.context-room-wiki-pane > header
+.context-room-wiki-pane > header h2
+.context-room-wiki-reader
+.context-room-wiki-reader > .context-room-wiki-markdown
+.context-room-wiki-reader-body
+.context-room-wiki-reader-body > .context-room-wiki-markdown
+.context-room-wiki-reader-heading
+.context-room-wiki-reader-heading strong
+.context-room-wiki-reader-pane
+.context-room-wiki-reader-pane > header
+.context-room-wiki-reader-pane > header span
+.context-room-wiki-reader-pane > header strong
+.context-room-wiki-reader-toolbar
+.context-room-wiki-refresh
+.context-room-wiki-refresh svg
+.context-room-wiki-refresh:hover
+.context-room-wiki-reveal
+.context-room-wiki-reveal svg
+.context-room-wiki-reveal:hover
+.context-room-wiki-title
+.context-room-wiki-title span
+.context-room-wiki-toggle
+.context-room-wiki-toggle button
+.context-room-wiki-toggle button svg
+.context-room-wiki-toggle button.is-active
+.context-room-wiki-toggle button:hover
+.context-room-wiki-tree-caret
+.context-room-wiki-tree-children
+.context-room-wiki-tree-name
+.context-room-wiki-tree-node
+.context-room-wiki-tree-node svg
+.context-room-wiki-tree-node:hover
+.context-room-wiki-tree-node[data-directory='true']
+.context-room-wiki-tree-node[data-selected='true']
+.context-room-wiki-tree-wrap
+.context-room-wiki-upload
+.context-room-wiki-upload span
+.context-room-wiki-upload svg
+.context-room-wiki-upload:disabled
+.context-room-wiki-upload:hover:not(:disabled)
+.context-room-workspace
+.context-room-workspace-content
+.context-room-workspace-empty
+.context-room-workspace-layout
+.context-room-workspace-layout > *
+.context-room-workspace-layout > :nth-child(2)
+.context-room-workspace-layout > :nth-child(3)
+.context-room-workspace-layout > :nth-child(n + 4)
+.context-room-workspace-layout.is-middle-hidden
+.context-room-workspace-layout.is-middle-hidden .context-room-middle-divider
+.context-room-workspace-layout.is-mobile-content .context-room-workspace-content
+.context-room-workspace-layout.is-mobile-content .context-room-workspace-middle
+.context-room-workspace-layout.is-overview
+.context-room-workspace-layout:not(.is-overview)
+.context-room-workspace-layout:not(.is-overview).has-task-pane
+.context-room-workspace-middle
+.context-room-workspace-middle.is-pane-drop-bottom::after
+.context-room-workspace-middle.is-pane-drop-top::after
+.context-room-workspace-panel
+.context-room-workspace-panel > header
+.context-room-workspace-panel > header button
+.context-room-workspace-panel > header button:hover
+.context-room-workspace-panel > header svg
+.context-room-workspace-panel-body
+.context-room-workspace-panel-body .context-room-object-page
+.context-room-workspace-panel-body .context-room-task-facts
+.context-room-workspace-panel.has-divider
+.context-room-workspace-panel.is-active > header
+.context-room-workspace-panel.is-drop-target
+.context-room-workspace-tabs
+.context-room-workspace-tabs > .context-room-workspace-tabs-footer
+.context-room-workspace-tabs > .context-room-workspace-tabs-footer:hover
+.context-room-workspace-tabs [data-radix-collection-item]
+.context-room-workspace-tabs button
+.context-room-workspace-tabs button.is-dragging
+.context-room-workspace-tabs button.is-drop-after::after
+.context-room-workspace-tabs button.is-drop-before::before
+.context-room-workspace-tabs button:hover
+.context-room-workspace-tabs button[aria-pressed='true']
+.context-room-workspace-tabs button[data-icon-tone]
+.context-room-workspace-tabs button[data-icon-tone]:hover
+.context-room-workspace-tabs button[data-icon-tone][aria-pressed='true']
+.context-room-workspace-tabs button[data-pane-id]
+.context-room-workspace-tabs button[data-pane-id]:active
+.context-room-workspace-tabs svg
+.document-history-diff-inline
+.document-history-diff-inline.is-deleted
+.document-history-diff-inline.is-inserted
+::highlight(room-overview-citation)
+::highlight(room-overview-citation-pending)
+@container context-room-all (max-width: 620px)
+@container context-room-all (max-width: 860px)
+@container context-room-detail-content (max-width: 480px)
+@container context-room-detail-content (max-width: 520px)
+@container context-room-detail-content (max-width: 720px)
+@container context-room-shell (max-width: 1280px)
+@container context-room-shell (max-width: 620px)
+@container context-room-shell (max-width: 759px)
+@container context-room-shell (max-width: 860px)
+@container context-room-shell (max-width: 900px)
+@container context-room-shell (max-width: 979px)
+@container context-room-shell (min-width: 521px) and (max-width: 759px)
+@container context-room-wiki-pane (max-width: 180px)
+@container context-room-wiki-pane (max-width: 280px)
+@font-face
+@keyframes context-room-content-enter
+@keyframes context-room-creation-spin
+@keyframes context-room-history-pulse
+@keyframes context-room-history-slide-in
+@keyframes context-room-load-more
+@keyframes context-room-spin
+@media (max-width: 460px)
+@media (max-width: 640px)
+@media (max-width: 680px)
+@media (max-width: 720px)
+@media (max-width: 760px)
+@media (min-width: 1100px)
+@media (prefers-reduced-motion: reduce)
+from
+to

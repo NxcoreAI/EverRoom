@@ -55,6 +55,15 @@ function withResolveTimeout(promise: Promise<DocumentBlockResolution | null>): P
   })
 }
 
+/** 诊断日志走 app:diagnostic-log → desktop-*.log,用于真机排查预览加载问题。 */
+function logMarkDiagnostic(event: Record<string, unknown>): void {
+  try {
+    window.nxcore?.diagnostics?.log({ module: 'block-index-mark', level: 'info', event })
+  } catch {
+    // 诊断失败不影响交互。
+  }
+}
+
 export interface BlockIndexMarkOptions {
   sourceRoomId: string
   resolveReferences?: (
@@ -172,6 +181,7 @@ export function BlockIndexMarkView(props: NodeViewProps) {  const { t } = useLoc
   const openTimer = useRef<number | null>(null)
   const closeTimer = useRef<number | null>(null)
   const resolveSequence = useRef(0)
+  const pendingResolveCount = useRef(0)
 
   const getPos = props.getPos
 
@@ -210,11 +220,27 @@ export function BlockIndexMarkView(props: NodeViewProps) {  const { t } = useLoc
   const fallbackTitle = target?.fallbackTitle ?? null
   const fallbackPreview = target?.fallbackPreview ?? null
 
+  // tiptap v3 里 props.extension.options 每次渲染都是新引用——直接进 useCallback
+  // 依赖会让 resolve 身份每渲染一变,预热 effect 无限重跑(真机 79 秒 4.6 万次
+  // IPC,预览永远显示"正在加载引用",2026-09-04 日志实锤)。回调一律经 ref 取
+  // 最新值,依赖收敛为原始值。
+  const resolveReferencesRef = useRef(options.resolveReferences)
+  resolveReferencesRef.current = options.resolveReferences
+  const getMemoryItemsRef = useRef(options.getMemoryItems)
+  getMemoryItemsRef.current = options.getMemoryItems
+  const sourceRoomId = options.sourceRoomId
+
   const resolve = useCallback(async () => {
     const sequence = ++resolveSequence.current
+    const startedAt = performance.now()
+    let branch: 'memory' | 'invalid' | 'no-resolver' | 'ipc' = 'ipc'
+    if (kind === 'memory') branch = 'memory'
+    else if (kind !== 'document' || !targetRoomId || !targetDocumentId || !targetBlockId) branch = 'invalid'
+    else if (!resolveReferencesRef.current || sourceRoomId !== targetRoomId) branch = 'no-resolver'
+    logMarkDiagnostic({ at: 'resolve', seq: sequence, branch, targetBlockId, targetDocumentId })
     if (kind === 'memory') {
       const item = targetMemoryId
-        ? options.getMemoryItems?.().find((memoryItem) => memoryItem.id === targetMemoryId) ?? null
+        ? getMemoryItemsRef.current?.().find((memoryItem) => memoryItem.id === targetMemoryId) ?? null
         : null
       if (sequence === resolveSequence.current) setMemory(item)
       return
@@ -223,7 +249,8 @@ export function BlockIndexMarkView(props: NodeViewProps) {  const { t } = useLoc
       if (sequence === resolveSequence.current) setResolution(null)
       return
     }
-    if (!options.resolveReferences || options.sourceRoomId !== targetRoomId) {
+    const resolveReferences = resolveReferencesRef.current
+    if (!resolveReferences || sourceRoomId !== targetRoomId) {
       if (sequence === resolveSequence.current) {
         setResolution({
           roomId: targetRoomId,
@@ -238,32 +265,58 @@ export function BlockIndexMarkView(props: NodeViewProps) {  const { t } = useLoc
       return
     }
     setLoading(true)
+    pendingResolveCount.current += 1
+    let outcome: string | null = null
     try {
       const result = await withResolveTimeout(resolveDocumentBlockReference(
-        options.resolveReferences,
-        options.sourceRoomId,
+        resolveReferences,
+        sourceRoomId,
         { roomId: targetRoomId, documentId: targetDocumentId, blockId: targetBlockId },
       ))
+      outcome = result?.status ?? 'null'
       if (sequence === resolveSequence.current) setResolution(result)
     } catch {
+      outcome = 'error'
       if (sequence === resolveSequence.current) setResolution(null)
     } finally {
-      if (sequence === resolveSequence.current) setLoading(false)
+      pendingResolveCount.current = Math.max(0, pendingResolveCount.current - 1)
+      // 清除 loading 不能带 sequence 守卫：被更新的 resolve 顶掉的旧解析若跳过
+      // 清除，loading 永久卡在 true，预览永远停在"正在加载引用"（2026-09-04 真机）。
+      // 早退分支只递增 sequence、不碰 loading，同样依赖这里兜底。
+      if (pendingResolveCount.current === 0) setLoading(false)
+      logMarkDiagnostic({
+        at: 'resolve-settled',
+        seq: sequence,
+        outcome,
+        superseded: sequence !== resolveSequence.current,
+        pending: pendingResolveCount.current,
+        ms: Math.round(performance.now() - startedAt),
+      })
     }
-  }, [kind, options, targetDocumentId, targetMemoryId, targetBlockId, targetRoomId])
+  }, [kind, sourceRoomId, targetDocumentId, targetMemoryId, targetBlockId, targetRoomId])
 
   // 挂载即预热解析(与 documentBlockReference 卡片一致):hover 之前结果已就绪,
   // 预览打开时不再等 IPC。resolve 依赖稳定,本 effect 每次挂载只跑一次。
   useEffect(() => {
+    logMarkDiagnostic({
+      at: 'mount',
+      kind,
+      targetBlockId,
+      targetDocumentId,
+      sourceRoomId: options.sourceRoomId,
+      hasResolver: Boolean(options.resolveReferences),
+    })
     void resolve()
   }, [resolve])
 
   useEffect(() => {
     if (!open) return
-    // 已有结果(或正在解析)则不重复发 IPC;刷新交给 focus/失效事件。
-    if (loading || resolution !== null) return
+    // 只要还没有结果就允许（重新）解析，即使上一次仍在途——loading 一旦因
+    // 任何路径卡住，这里是唯一自愈入口，预览不许永远停在"正在加载引用"。
+    logMarkDiagnostic({ at: 'open', hasResolution: resolution !== null })
+    if (resolution !== null) return
     void resolve()
-  }, [open, resolve, resolution, loading])
+  }, [open, resolve, resolution])
 
   useEffect(() => {
     const refreshOnFocus = () => {
@@ -350,7 +403,12 @@ export function BlockIndexMarkView(props: NodeViewProps) {  const { t } = useLoc
   const overflowBadge = layout.ordinal === MAX_STACKED_CHIPS
 
   return (
-    <NodeViewWrapper as="span" className="context-room-block-index-mark" contentEditable={false}>
+    <NodeViewWrapper
+      as="span"
+      className="context-room-block-index-mark"
+      contentEditable={false}
+      data-preview-open={open ? 'true' : undefined}
+    >
       <Popover.Root open={open} onOpenChange={setOpen}>
         <Popover.Anchor asChild>
           {overflow ? (

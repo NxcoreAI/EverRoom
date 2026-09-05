@@ -47,6 +47,10 @@
   "agentChat.shellApproveSession": "Allow for this session",
   "agentChat.shellResolving": "Submitting...",
   "agentComposer.addAttachment": "Add attachment",
+  "agentComposer.roomFocus": "This room",
+  "agentComposer.roomFocusOn": "Focused",
+  "agentComposer.roomFocusOff": "Not focused",
+  "agentComposer.roomFocusTitle": "Recall only this room's curated memories plus your core profile; global memory and past-conversation recall are skipped",
   "agentComposer.agentIsWorking": "Agent is working...",
   "agentComposer.askAboutThisPageOrDescribeAnAction": "Ask about this page or describe an action",
   "agentComposer.attachmentsAddedToTheComposer": "Attachments added to the composer",
@@ -1622,8 +1626,9 @@
   "agentAuthCard.openConsole": "Open connector console",
   "agentAuthCard.qrAlt": "Authorization QR code",
   "agentAuthCard.resumeCheck": "I have finished authorization",
-  "agentAuthCard.completedTitle": "Feishu authorization completed",
+  "agentAuthCard.completedTitle": "Authorization completed",
   "agentAuthCard.completedBadge": "Authorized",
   "agentAuthCard.dismiss": "Dismiss",
-  "agentAuthCard.restart": "Restart authorization"
+  "agentAuthCard.restart": "Restart authorization",
+  "agentAuthCard.successTitle": "{provider} authorized"
 }

@@ -959,7 +959,9 @@ export const documents = sqliteTable("documents", {
   updatedAt: integer("updated_at", { mode: "timestamp_ms" })
     .notNull()
     .$defaultFn(() => new Date()),
-});
+}, (table) => [
+  index("documents_updated_idx").on(table.updatedAt),
+]);
 
 export const roomDocumentLinks = sqliteTable(
   "room_doc_links",
@@ -992,6 +994,9 @@ export const documentVersions = sqliteTable(
     contentJson: text("content_json", { mode: "json" }),
     contentSchemaVersion: integer("content_schema_version").notNull().default(1),
     sourceTransactionId: text("source_transaction_id"),
+    /** 变更概览（重要变更保存时自动生成；其余懒加载回填）。source: ai|local。 */
+    changeSummary: text("change_summary"),
+    changeSummarySource: text("change_summary_source"),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .notNull()
       .$defaultFn(() => new Date()),
@@ -1399,6 +1404,31 @@ export const documentRoomImports = sqliteTable(
   (table) => [
     index("document_room_imports_room_document_idx").on(table.roomId, table.documentId),
     index("document_room_imports_run_idx").on(table.importRunId),
+  ],
+);
+
+// ═══════════════════ 文档本地评论（与外部导入评论共用面板） ═══════════════════
+
+/** 文档本地评论：正文内用户手动添加，支持回复与解决；与导入的飞书评论相互独立。 */
+export const documentComments = sqliteTable(
+  "document_comments",
+  {
+    id: text("id").primaryKey(),
+    documentId: text("document_id")
+      .notNull()
+      .references(() => documents.id, { onDelete: "cascade" }),
+    parentId: text("parent_id"),
+    blockId: text("block_id"),
+    quotedText: text("quoted_text"),
+    body: text("body").notNull(),
+    authorName: text("author_name").notNull().default("我"),
+    resolved: integer("resolved", { mode: "boolean" }).notNull().default(false),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("document_comments_document_idx").on(table.documentId, table.createdAt),
+    index("document_comments_parent_idx").on(table.parentId),
   ],
 );
 

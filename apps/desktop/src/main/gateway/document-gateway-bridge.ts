@@ -113,6 +113,34 @@ export class DocumentGatewayBridge {
     return this.request(`/v1/documents/${encodeURIComponent(documentId)}/versions${suffix}`)
   }
 
+  listDocumentComments(documentId: string): Promise<{ items: Array<{ id: string; parentId: string | null; blockId: string | null; quotedText: string | null; body: string; authorName: string; resolved: boolean; createdAt: string; updatedAt: string }> }> {
+    return this.request(`/v1/documents/${encodeURIComponent(documentId)}/comments`)
+  }
+
+  createDocumentComment(documentId: string, input: { body: string; parentId?: string | null; blockId?: string | null; quotedText?: string | null }): Promise<{ id: string; parentId: string | null; blockId: string | null; quotedText: string | null; body: string; authorName: string; resolved: boolean; createdAt: string; updatedAt: string }> {
+    return this.request(`/v1/documents/${encodeURIComponent(documentId)}/comments`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    })
+  }
+
+  resolveDocumentComment(documentId: string, commentId: string, resolved: boolean): Promise<unknown> {
+    return this.request(`/v1/documents/${encodeURIComponent(documentId)}/comments/${encodeURIComponent(commentId)}/resolve`, {
+      method: 'POST',
+      body: JSON.stringify({ resolved }),
+    })
+  }
+
+  deleteDocumentComment(documentId: string, commentId: string): Promise<void> {
+    return this.request(`/v1/documents/${encodeURIComponent(documentId)}/comments/${encodeURIComponent(commentId)}`, {
+      method: 'DELETE',
+    }).then(() => undefined)
+  }
+
+  async versionChangeSummary(documentId: string, version: number): Promise<{ version: number; summary: string; source: 'ai' | 'local' }> {
+    return this.request(`/v1/documents/${encodeURIComponent(documentId)}/versions/${String(version)}/change-summary`)
+  }
+
   getVersionSnapshot(documentId: string, version: number): Promise<DocumentVersionSnapshot> {
     return this.request(`/v1/documents/${encodeURIComponent(documentId)}/versions/${String(version)}`)
   }

@@ -22,4 +22,5 @@ policy:
   allowedCallers: [primary-agent, internal-workflow]
   maxConcurrency: 2
   timeoutSeconds: 600
-  maxToolCalls: 8
+  # 素材自取预算（2026-09-03）：研究工具（记忆/文档/Room 上下文/分析/联网）+ skill read + 提交。
+  maxToolCalls: 24

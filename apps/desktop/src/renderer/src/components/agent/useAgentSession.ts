@@ -160,7 +160,18 @@ export function useAgentSession(
     const view = summary as {
       status?: unknown
       runId?: unknown
+      documentId?: unknown
+      roomId?: unknown
+      provider?: unknown
+      mode?: unknown
       challenge?: { provider?: unknown; phase?: unknown }
+    }
+    // 参数缺失：弹出对应文档的导出面板让用户补齐（方案 §6.4）。
+    if (view.status === 'needs_input' && typeof view.documentId === 'string') {
+      window.dispatchEvent(new CustomEvent('everroom:open-export-panel', {
+        detail: { documentId: view.documentId, provider: view.provider },
+      }))
+      return
     }
     if (view.status !== 'awaiting_auth' || !view.challenge) return
     const provider = view.challenge.provider === 'notion' ? 'notion' : 'feishu'
@@ -689,6 +700,7 @@ export function useAgentSession(
     attachments?: AgentFileAttachment[],
     targetAgentId?: string,
     referencedConversationId?: string,
+    memoryScope?: 'room',
   ): Promise<string | null> => {
     const message = prompt.trim()
     if ((!message && !attachments?.length) || activeRunId || loading || sending) return null
@@ -761,6 +773,7 @@ export function useAgentSession(
         invocationMode: 'explicit_switch',
         ...(replaceRunId ? { replaceRunId } : {}),
         responseLanguage: locale,
+        ...(memoryScope && selectedRoomId ? { memoryScope } : {}),
         context: buildAgentRunContext(rooms, selectedText, selectedRoomId, activeDocument, pageLabel, attachments, referencedConversationId),
       })
       setAgentIdByRun((current) => current[run.id] === selectedAgentId

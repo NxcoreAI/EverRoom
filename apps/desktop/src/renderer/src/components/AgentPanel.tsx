@@ -86,6 +86,7 @@ export function AgentPanel({
   const [composerResetKey, setComposerResetKey] = useState(0)
   const [localAgents, setLocalAgents] = useState<LocalAgentInstallation[]>([])
   const [selectedExternalConversation, setSelectedExternalConversation] = useState<ExternalConversationSummary | null>(null)
+  const [roomFocusEnabled, setRoomFocusEnabled] = useState(false)
   const [notificationRunTarget, setNotificationRunTarget] = useState<{ key: string; runId: string } | null>(null)
   const composerRef = useRef<HTMLTextAreaElement>(null)
   const previousSessionIdRef = useRef<string | null>(null)
@@ -113,6 +114,9 @@ export function AgentPanel({
   const contextSummary = roomCitations.length
     ? `${roomCitations[0]?.roomTitle ?? pageLabel} · ${t('surface:agentComposer.countReferences', { count: roomCitations.length })}`
     : `${pageLabel} · ${t('surface:agent.noTextSelected')}`
+  const roomFocusRoomTitle = roomId
+    ? rooms.find((room) => room.id === roomId)?.title ?? t('surface:agentComposer.roomFocus')
+    : undefined
   const citationPrompt = buildRoomOverviewCitationPrompt(roomCitations, locale)
   const session = useAgentSession(pageLabel, roomId, rooms)
   const agentAvailable = Boolean(window.nxcore?.agent)
@@ -172,6 +176,11 @@ export function AgentPanel({
   const selectExternalConversation = useCallback((conversation: ExternalConversationSummary | null) => {
     setSelectedExternalConversation(conversation)
   }, [])
+
+  // 房间聚焦粘性：仅限「当前会话 + 当前房间」；切会话/切房间即重置为关。
+  useEffect(() => {
+    setRoomFocusEnabled(false)
+  }, [roomId, session.sessionId])
 
 
   useEffect(() => {
@@ -351,6 +360,7 @@ export function AgentPanel({
       // selectedRoomId 只在 Room 仍存在时提交：Room 已合并/删除/同步丢失时
       // 提交死 id 会被网关 409 拒绝（room_not_available），转而以全局会话运行。
       const validRoomId = roomId && rooms.some((room) => room.id === roomId) ? roomId : undefined
+      const memoryScope = roomFocusEnabled && validRoomId ? ('room' as const) : undefined
       if (externalConversation) {
         await session.sendPrompt(
           submittedPrompt || t('surface:agentComposer.analyzeUploadedFiles'),
@@ -361,6 +371,7 @@ export function AgentPanel({
           attachments,
           undefined,
           externalConversation?.id,
+          memoryScope,
         )
       } else {
         await session.sendPrompt(
@@ -370,6 +381,9 @@ export function AgentPanel({
           activeDocumentContext,
           replaceRunId,
           attachments,
+          undefined,
+          undefined,
+          memoryScope,
         )
       }
       if (externalConversation) setSelectedExternalConversation(null)
@@ -444,6 +458,10 @@ export function AgentPanel({
       hasSubmittableContext={Boolean(citationPrompt)}
       resetKey={composerResetKey}
       selectedExternalConversation={selectedExternalConversation}
+      roomFocusVisible={Boolean(roomId)}
+      roomFocusEnabled={roomFocusEnabled}
+      roomFocusRoomTitle={roomFocusRoomTitle}
+      onToggleRoomFocus={setRoomFocusEnabled}
       value={draft}
       active={Boolean(session.activeRunId)}
       loading={session.loading || submitting}

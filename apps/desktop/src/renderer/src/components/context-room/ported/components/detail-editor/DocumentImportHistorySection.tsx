@@ -3,8 +3,9 @@ import type {
   DocumentImportHistoryEntry,
   RoomDocument,
 } from '@nxcore/agent-contract'
-import { CloudDownload, Loader2 } from 'lucide-react'
+import { CloudDownload, GitCompareArrows, Loader2 } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
+import { CandidateDiffDialog } from './CandidateDiffDialog'
 import { useLocale } from '../../../../../i18n/LocaleContext'
 import { showToast } from '../../../../../state/toast'
 import './ExternalDocumentDialogs.css'
@@ -29,6 +30,7 @@ export function DocumentImportHistorySection({
   const [commentDiff, setCommentDiff] = useState<DocumentImportCommentDiffSummary | null>(null)
   const [loading, setLoading] = useState(false)
   const [busyKey, setBusyKey] = useState<string | null>(null)
+  const [diffEntryId, setDiffEntryId] = useState<string | null>(null)
 
   const external = window.nxcore?.externalDocuments
 
@@ -88,6 +90,7 @@ export function DocumentImportHistorySection({
       showToast({
         title: t('contextRoom:importHistory.appliedAsVersion', { version: String(result.version) }),
       })
+      setDiffEntryId(null)
       onApplied?.()
       load()
     } catch (error) {
@@ -98,6 +101,11 @@ export function DocumentImportHistorySection({
     } finally {
       setBusyKey(null)
     }
+  }
+
+  const applyFromDiff = async (roomImportId: string) => {
+    const entry = entries.find((candidate) => candidate.roomImportId === roomImportId)
+    if (entry) await applyCandidate(entry)
   }
 
   return (
@@ -141,19 +149,38 @@ export function DocumentImportHistorySection({
               </span>
             </div>
             {entry.relation === 'candidate' && entry.importedVersion === null && (
-              <button
-                type="button"
-                className="context-room-import-history-apply"
-                disabled={busyKey !== null}
-                onClick={() => void applyCandidate(entry)}
-              >
-                {busyKey === entry.roomImportId && <Loader2 className="spin" aria-hidden="true" />}
-                {t('contextRoom:importHistory.applyThisVersion')}
-              </button>
+              <>
+                <button
+                  type="button"
+                  className="context-room-import-history-diff"
+                  disabled={busyKey !== null}
+                  onClick={() => setDiffEntryId(entry.roomImportId)}
+                >
+                  <GitCompareArrows aria-hidden="true" />
+                  {t('contextRoom:importHistory.compareDiff')}
+                </button>
+                <button
+                  type="button"
+                  className="context-room-import-history-apply"
+                  disabled={busyKey !== null}
+                  onClick={() => void applyCandidate(entry)}
+                >
+                  {busyKey === entry.roomImportId && <Loader2 className="spin" aria-hidden="true" />}
+                  {t('contextRoom:importHistory.applyThisVersion')}
+                </button>
+              </>
             )}
           </li>
         ))}
       </ul>
+      {diffEntryId && (
+        <CandidateDiffDialog
+          roomImportId={diffEntryId}
+          currentDocument={currentDocument}
+          onClose={() => setDiffEntryId(null)}
+          onApply={applyFromDiff}
+        />
+      )}
     </section>
   )
 }

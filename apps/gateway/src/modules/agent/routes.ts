@@ -326,6 +326,7 @@ export function agentRoutes(
             responseLanguage: Type.Optional(ResponseLanguage),
             captureMemory: Type.Optional(Type.Boolean()),
             recallMemory: Type.Optional(Type.Boolean()),
+            memoryScope: Type.Optional(Type.Union([Type.Literal("room"), Type.Literal("global")])),
             toolsEnabled: Type.Optional(Type.Boolean()),
             context: Type.Optional(Type.Object({
               pageLabel: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),

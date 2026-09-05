@@ -153,6 +153,31 @@ describe("memory room attribution", () => {
       .toMatchObject({ roomId: "room-b" });
   });
 
+  it("lists attributed memories without prompt budget, skipping empty snapshots", async () => {
+    const { service, db } = await harness();
+    const now = new Date();
+    db.insert(roomMemoryAttributions).values([
+      { id: "attr-1", roomId: "room-live", memoryId: "memory-a", sourceKind: "user", confidence: "explicit", content: "记忆 A 快照", memoryType: "episodic", memoryUpdatedAt: "2026-09-02T00:00:00.000Z", createdAt: now, updatedAt: now },
+      { id: "attr-2", roomId: "room-live", memoryId: "memory-b", sourceKind: "internal_workflow", confidence: "derived", content: null, createdAt: now, updatedAt: now },
+    ]).run();
+
+    expect(service.listRoomAttributedMemories("room-live")).toEqual([
+      { id: "memory-a", content: "记忆 A 快照", type: "episodic" },
+    ]);
+  });
+  it("lists through the merge chain and returns empty for unavailable rooms", async () => {
+    const { service, db } = await harness();
+    const now = new Date();
+    db.insert(roomMemoryAttributions).values({
+      id: "attr-merge", roomId: "room-b", memoryId: "memory-c", sourceKind: "user", confidence: "explicit", content: "记忆 C 快照", memoryType: "instruction", memoryUpdatedAt: "2026-09-03T00:00:00.000Z", createdAt: now, updatedAt: now,
+    }).run();
+
+    expect(service.listRoomAttributedMemories("room-a")).toEqual([
+      { id: "memory-c", content: "记忆 C 快照", type: "instruction" },
+    ]);
+    expect(service.listRoomAttributedMemories("room-gone")).toEqual([]);
+  });
+
   it("rejects unavailable rooms and missing memories with 404", async () => {
     const { service } = await harness();
 
