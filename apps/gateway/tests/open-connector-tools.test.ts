@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { createOpenConnectorPiTools } from '../src/modules/agent/open-connector-tools.js';
+import { createOpenConnectorPiTools } from '@nxcore/connectors-module/open-connector-tools.js';
 
-type Runner = Parameters<typeof createOpenConnectorPiTools>[1];
+type Runner = NonNullable<Parameters<typeof createOpenConnectorPiTools>[1]>;
 
 function tools() {
   return createOpenConnectorPiTools({
@@ -94,9 +94,9 @@ describe('OpenConnector Pi tools', () => {
   });
 
   it('normalizes a broad Chinese Gmail search into a precise catalog query', async () => {
-    const calls: string[][] = [];
-    const runner: Runner = async (_config, args) => {
-      calls.push(args);
+    const calls: Parameters<Runner>[1][] = [];
+    const runner: Runner = async (_config, call) => {
+      calls.push(call);
       return [{ service: 'gmail', name: 'fetch_emails' }];
     };
     const search = toolsWithRunner(runner).find((tool) => tool.name === 'connector_search');
@@ -105,13 +105,13 @@ describe('OpenConnector Pi tools', () => {
       originalPrompt: '查看 Gmail 中最近 5 封邮件',
       prompt: '包含 Notion 和 GitHub 示例的系统路由说明',
     } as never, { service: 'gmail', query: 'messages' });
-    expect(calls).toEqual([['connector', 'search', '--json', '--', 'list recent Gmail messages']]);
+    expect(calls).toEqual([{ kind: 'search', query: 'list recent Gmail messages' }]);
   });
 
   it('uses the structured service and filters cross-provider search results', async () => {
-    const calls: string[][] = [];
-    const runner: Runner = async (_config, args) => {
-      calls.push(args);
+    const calls: Parameters<Runner>[1][] = [];
+    const runner: Runner = async (_config, call) => {
+      calls.push(call);
       return [
         { service: 'wordpress', name: 'create_page' },
         { service: 'notion', name: 'create_page' },
@@ -125,14 +125,14 @@ describe('OpenConnector Pi tools', () => {
       prompt: '外部服务路由规则包含 Gmail、GitHub 和 Notion 示例',
     } as never, { service: 'notion', query: 'create_page' });
 
-    expect(calls).toEqual([['connector', 'search', '--json', '--', 'create page notion']]);
+    expect(calls).toEqual([{ kind: 'search', query: 'create page notion' }]);
     expect(result.details).toEqual([{ service: 'notion', name: 'create_page' }]);
   });
 
   it('derives a precise Notion page action when the model searches only for the provider', async () => {
-    const calls: string[][] = [];
-    const runner: Runner = async (_config, args) => {
-      calls.push(args);
+    const calls: Parameters<Runner>[1][] = [];
+    const runner: Runner = async (_config, call) => {
+      calls.push(call);
       return [{ service: 'notion', name: 'create_page' }];
     };
     const search = toolsWithRunner(runner).find((tool) => tool.name === 'connector_search');
@@ -142,13 +142,13 @@ describe('OpenConnector Pi tools', () => {
       prompt: '路由说明包含 Gmail、GitHub、Notion 和邮件示例',
     } as never, { service: 'notion', query: 'Notion' });
 
-    expect(calls).toEqual([['connector', 'search', '--json', '--', 'create page notion']]);
+    expect(calls).toEqual([{ kind: 'search', query: 'create page notion' }]);
   });
 
   it('rejects a Notion resource action that conflicts with the original request', async () => {
-    const calls: string[][] = [];
-    const runner: Runner = async (_config, args) => {
-      calls.push(args);
+    const calls: Parameters<Runner>[1][] = [];
+    const runner: Runner = async (_config, call) => {
+      calls.push(call);
       return {};
     };
     const run = toolsWithRunner(runner).find((tool) => tool.name === 'connector_run');
@@ -165,9 +165,9 @@ describe('OpenConnector Pi tools', () => {
   });
 
   it('rejects an invented Notion parent ID before executing the connector', async () => {
-    const calls: string[][] = [];
-    const runner: Runner = async (_config, args) => {
-      calls.push(args);
+    const calls: Parameters<Runner>[1][] = [];
+    const runner: Runner = async (_config, call) => {
+      calls.push(call);
       return {};
     };
     const run = toolsWithRunner(runner).find((tool) => tool.name === 'connector_run');
@@ -185,9 +185,9 @@ describe('OpenConnector Pi tools', () => {
   });
 
   it('rejects a guessed action before execution when schema preflight fails', async () => {
-    const calls: string[][] = [];
-    const runner: Runner = async (_config, args) => {
-      calls.push(args);
+    const calls: Parameters<Runner>[1][] = [];
+    const runner: Runner = async (_config, call) => {
+      calls.push(call);
       throw new Error('HTTP 404');
     };
     const run = toolsWithRunner(runner).find((tool) => tool.name === 'connector_run');
@@ -198,13 +198,13 @@ describe('OpenConnector Pi tools', () => {
       connectionName: 'default',
       input: { maxResults: 5 },
     })).rejects.toThrow('gmail.list_messages" could not be verified and was not executed');
-    expect(calls).toEqual([['connector', 'schema', 'gmail.list_messages']]);
+    expect(calls).toEqual([{ kind: 'schema', service: 'gmail', action: 'list_messages' }]);
   });
 
   it('caches and compacts an action schema within one run', async () => {
-    const calls: string[][] = [];
-    const runner: Runner = async (_config, args) => {
-      calls.push(args);
+    const calls: Parameters<Runner>[1][] = [];
+    const runner: Runner = async (_config, call) => {
+      calls.push(call);
       return {
         service: 'notion',
         name: 'create_page',
@@ -225,7 +225,7 @@ describe('OpenConnector Pi tools', () => {
     const first = await schema!.execute(input, { service: 'notion', name: 'create_page' });
     const second = await schema!.execute(input, { service: 'notion', name: 'create_page' });
 
-    expect(calls).toEqual([['connector', 'schema', 'notion.create_page']]);
+    expect(calls).toEqual([{ kind: 'schema', service: 'notion', action: 'create_page' }]);
     expect(first.content).toContain('inputSchema');
     expect(first.content).not.toContain('outputSchema');
     expect(first.content).toContain('EverRoom converts it');
@@ -234,13 +234,13 @@ describe('OpenConnector Pi tools', () => {
   });
 
   it('normalizes a simple Notion workspace title to the official property shape', async () => {
-    const calls: string[][] = [];
-    const runner: Runner = async (_config, args) => {
-      calls.push(args);
-      if (args[1] === 'schema') {
+    const calls: Parameters<Runner>[1][] = [];
+    const runner: Runner = async (_config, call) => {
+      calls.push(call);
+      if (call.kind === 'schema') {
         return { service: 'notion', name: 'create_page', inputSchema: { type: 'object' } };
       }
-      if (args[1] === 'apps') return [{ connectionName: 'default', status: 'active' }];
+      if (call.kind === 'apps') return [{ connectionName: 'default', status: 'active' }];
       return { id: '11fdc7b70354494eaea1574d264ca301' };
     };
     const connectorTools = toolsWithRunner(runner);
@@ -261,15 +261,13 @@ describe('OpenConnector Pi tools', () => {
     });
 
     expect(calls).toEqual([
-      ['connector', 'schema', 'notion.create_page'],
-      ['connector', 'apps', 'notion', '--json'],
-      [
-        'connector', 'run', 'notion',
-        '--action', 'create_page',
-        '--data', '{"parent":{"workspace":true},"properties":{"title":{"title":[{"type":"text","text":{"content":"父页面"}}]}}}',
-        '--connection-name', 'default',
-        '--json',
-      ],
+      { kind: 'schema', service: 'notion', action: 'create_page' },
+      { kind: 'apps', service: 'notion' },
+      {
+        kind: 'run', service: 'notion', action: 'create_page',
+        input: { parent: { workspace: true }, properties: { title: { title: [{ type: 'text', text: { content: '父页面' } }] } } },
+        connectionName: 'default',
+      },
     ]);
   });
 
@@ -373,10 +371,10 @@ describe('OpenConnector Pi tools', () => {
   });
 
   it('rejects execution when the service has no active connection', async () => {
-    const calls: string[][] = [];
-    const runner: Runner = async (_config, args) => {
-      calls.push(args);
-      if (args[1] === 'schema') return { service: 'gmail', name: 'fetch_emails' };
+    const calls: Parameters<Runner>[1][] = [];
+    const runner: Runner = async (_config, call) => {
+      calls.push(call);
+      if (call.kind === 'schema') return { service: 'gmail', name: 'fetch_emails' };
       return [];
     };
     const run = toolsWithRunner(runner).find((tool) => tool.name === 'connector_run');
@@ -387,14 +385,14 @@ describe('OpenConnector Pi tools', () => {
       input: { maxResults: 5, detail: 'summary' },
     })).rejects.toThrow('has no active connection');
     expect(calls).toEqual([
-      ['connector', 'schema', 'gmail.fetch_emails'],
-      ['connector', 'apps', 'gmail', '--json'],
+      { kind: 'schema', service: 'gmail', action: 'fetch_emails' },
+      { kind: 'apps', service: 'gmail' },
     ]);
   });
 
   it('rejects a connection name that was not returned by connector apps', async () => {
-    const runner: Runner = async (_config, args) => {
-      if (args[1] === 'schema') return { service: 'gmail', name: 'fetch_emails' };
+    const runner: Runner = async (_config, call) => {
+      if (call.kind === 'schema') return { service: 'gmail', name: 'fetch_emails' };
       return [{ connectionName: 'personal', status: 'active' }];
     };
     const run = toolsWithRunner(runner).find((tool) => tool.name === 'connector_run');
@@ -408,11 +406,11 @@ describe('OpenConnector Pi tools', () => {
   });
 
   it('runs a verified action with the exact default connection returned by connector apps', async () => {
-    const calls: string[][] = [];
-    const runner: Runner = async (_config, args) => {
-      calls.push(args);
-      if (args[1] === 'schema') return { service: 'gmail', name: 'fetch_emails' };
-      if (args[1] === 'apps') {
+    const calls: Parameters<Runner>[1][] = [];
+    const runner: Runner = async (_config, call) => {
+      calls.push(call);
+      if (call.kind === 'schema') return { service: 'gmail', name: 'fetch_emails' };
+      if (call.kind === 'apps') {
         return [{
           connectionName: 'mail-account',
           isDefault: true,
@@ -429,24 +427,22 @@ describe('OpenConnector Pi tools', () => {
       input: { maxResults: 5, detail: 'summary' },
     })).resolves.toMatchObject({ details: { data: { messages: [] } } });
     expect(calls).toEqual([
-      ['connector', 'schema', 'gmail.fetch_emails'],
-      ['connector', 'apps', 'gmail', '--json'],
-      [
-        'connector', 'run', 'gmail',
-        '--action', 'fetch_emails',
-        '--data', '{"maxResults":5,"detail":"summary"}',
-        '--connection-name', 'mail-account',
-        '--json',
-      ],
+      { kind: 'schema', service: 'gmail', action: 'fetch_emails' },
+      { kind: 'apps', service: 'gmail' },
+      {
+        kind: 'run', service: 'gmail', action: 'fetch_emails',
+        input: { maxResults: 5, detail: 'summary' },
+        connectionName: 'mail-account',
+      },
     ]);
   });
 
   it('preserves Gmail date and subject constraints and removes invented mailbox filters', async () => {
-    const calls: string[][] = [];
-    const runner: Runner = async (_config, args) => {
-      calls.push(args);
-      if (args[1] === 'schema') return { service: 'gmail', name: 'fetch_emails' };
-      if (args[1] === 'apps') return [{ connectionName: 'default', status: 'active' }];
+    const calls: Parameters<Runner>[1][] = [];
+    const runner: Runner = async (_config, call) => {
+      calls.push(call);
+      if (call.kind === 'schema') return { service: 'gmail', name: 'fetch_emails' };
+      if (call.kind === 'apps') return [{ connectionName: 'default', status: 'active' }];
       return { data: { messages: [] } };
     };
     const run = toolsWithRunner(runner).find((tool) => tool.name === 'connector_run');
@@ -460,6 +456,6 @@ describe('OpenConnector Pi tools', () => {
       input: { query: 'in:inbox is:unread subject:"会议"', maxResults: 50, detail: 'summary' },
     });
 
-    expect(calls[2]).toContain('{"query":"subject:\\"会议\\" newer_than:7d","maxResults":10,"detail":"summary"}');
+    expect(calls[2]).toMatchObject({ kind: 'run', input: { query: 'subject:"会议" newer_than:7d', maxResults: 10, detail: 'summary' } });
   });
 });

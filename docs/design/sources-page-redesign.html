@@ -1,0 +1,923 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>数据源 · 重设计草图 — EverRoom</title>
+<style>
+  /* ── 沿用 app 现有 tokens ─────────────────────────────── */
+  :root {
+    --bg: #f6f7f9;
+    --chrome: #eef1f4;
+    --surface: #ffffff;
+    --surface-alt: #f9fafb;
+    --text: #151a22;
+    --muted: #536070;
+    --subtle: #8490a0;
+    --border: #e1e5eb;
+    --border-strong: #ccd3dd;
+    --hover: #e8ecf1;
+    --accent: #3d6ff6;
+    --accent-strong: #1e47c4;
+    --accent-soft: rgba(61, 111, 246, 0.14);
+    --danger: #c83232;
+    --ok: #239f91;
+    --warn-bg: #fdf3f3;
+    --shadow: 0 1px 1px rgba(21, 26, 34, 0.04), 0 8px 22px rgba(21, 26, 34, 0.07);
+    --raised-shadow: 0 1px 2px rgba(21, 26, 34, 0.06);
+    --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    font-family: var(--font);
+    font-size: 13px;
+    color: var(--text);
+    background: var(--bg);
+    -webkit-font-smoothing: antialiased;
+  }
+  button { font-family: inherit; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+
+  /* ── app 外壳示意（侧栏做旧，页面是主角） ─────────────── */
+  .shell { display: flex; height: 100vh; overflow: hidden; }
+  .nav {
+    flex: 0 0 216px;
+    padding: 14px 10px;
+    border-right: 1px solid var(--border);
+    background: var(--chrome);
+    overflow-y: auto;
+    opacity: 0.92;
+  }
+  .nav-brand { display: flex; align-items: center; gap: 8px; padding: 2px 8px 14px; font-size: 13px; font-weight: 700; letter-spacing: 0.01em; }
+  .nav-brand i { width: 18px; height: 18px; border-radius: 5px; background: linear-gradient(135deg, var(--accent), #7aa0ff); }
+  .nav-group { margin-bottom: 14px; }
+  .nav-group > small { display: block; padding: 0 8px 6px; color: var(--subtle); font-size: 10px; font-weight: 600; letter-spacing: 0.08em; }
+  .nav-item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 5px 8px; border-radius: 6px;
+    color: var(--muted); font-size: 12.5px;
+  }
+  .nav-item svg { width: 14px; height: 14px; opacity: 0.75; }
+  .nav-item[data-active="true"] { background: var(--selected, #e7edfc); color: var(--accent-strong); font-weight: 600; }
+  .nav-item[data-active="true"] svg { opacity: 1; }
+
+  /* ── 页面画布 ─────────────────────────────────────────── */
+  .page { flex: 1; overflow-y: auto; padding: 26px 34px 56px; }
+
+  .page-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; margin-bottom: 22px; }
+  .page-head h1 { margin: 0 0 6px; font-size: 21px; font-weight: 650; line-height: 1.2; }
+  .pulse { display: flex; align-items: center; gap: 10px; margin: 0; color: var(--muted); font-size: 12px; }
+  .pulse b { font-variant-numeric: tabular-nums; font-weight: 650; color: var(--text); }
+  .pulse .sep { width: 1px; height: 10px; background: var(--border-strong); }
+  .dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--subtle); }
+  .dot.ok { background: var(--ok); }
+  .dot.run { background: var(--accent); animation: pulse 1.6s ease-in-out infinite; }
+  .dot.paused { background: var(--subtle); }
+  .dot.danger { background: var(--danger); }
+  @keyframes pulse { 50% { opacity: 0.35; } }
+
+  .head-actions { display: flex; align-items: center; gap: 8px; }
+  .search {
+    display: inline-flex; align-items: center; gap: 7px;
+    width: 250px; height: 34px; padding: 0 10px;
+    border: 1px solid var(--border); border-radius: 7px;
+    background: var(--surface); color: var(--subtle);
+  }
+  .search:focus-within { border-color: var(--accent); }
+  .search svg { width: 14px; height: 14px; flex: none; }
+  .search input { width: 100%; border: 0; background: transparent; outline: none; font-size: 12px; color: var(--text); }
+  .search input::placeholder { color: var(--subtle); }
+
+  .btn-primary {
+    display: inline-flex; align-items: center; gap: 6px;
+    height: 34px; padding: 0 13px;
+    border: 0; border-radius: 7px;
+    background: var(--accent); color: #fff;
+    font-size: 12px; font-weight: 650; cursor: pointer;
+  }
+  .btn-primary:hover { background: var(--accent-strong); }
+  .btn-primary svg { width: 14px; height: 14px; }
+  .btn-primary .chev { width: 12px; height: 12px; margin-left: 2px; opacity: 0.8; }
+
+  /* ── 连接菜单（分类重组） ─────────────────────────────── */
+  .connect-wrap { position: relative; }
+  .connect-menu {
+    position: absolute; z-index: 40; top: calc(100% + 6px); right: 0;
+    width: 300px; padding: 6px;
+    border: 1px solid var(--border-strong); border-radius: 10px;
+    background: var(--surface); box-shadow: 0 14px 34px rgba(0, 0, 0, 0.14);
+  }
+  .connect-menu[hidden] { display: none; }
+  .connect-group > small { display: block; padding: 8px 10px 4px; color: var(--subtle); font-size: 10px; font-weight: 650; letter-spacing: 0.08em; }
+  .connect-item {
+    display: flex; align-items: center; gap: 10px;
+    width: 100%; padding: 5px 10px;
+    border: 0; border-radius: 7px; background: transparent;
+    cursor: pointer; text-align: left;
+  }
+  .connect-item:hover { background: var(--hover); }
+  .connect-item img, .connect-item .glyph { width: 20px; height: 20px; flex: none; }
+  .connect-item .glyph { display: grid; place-items: center; border-radius: 5px; background: var(--accent-soft); color: var(--accent-strong); }
+  .connect-item .glyph svg { width: 12px; height: 12px; }
+  .connect-item strong { font-size: 12px; font-weight: 600; }
+
+  /* ── 分区 ─────────────────────────────────────────────── */
+  .zone { margin-bottom: 26px; }
+  .zone-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 10px; }
+  .zone-head h2 { margin: 0; font-size: 12px; font-weight: 650; letter-spacing: 0.05em; color: var(--muted); }
+  .zone-head small { color: var(--subtle); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .link-btn { border: 0; background: none; padding: 0; color: var(--accent); font-size: 11.5px; cursor: pointer; }
+  .link-btn:hover { color: var(--accent-strong); }
+
+  /* ── 来源卡片 ─────────────────────────────────────────── */
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(252px, 1fr)); gap: 12px; }
+  .card {
+    position: relative; overflow: hidden;
+    display: flex; flex-direction: column; gap: 10px;
+    padding: 13px 14px 11px;
+    border: 1px solid var(--border); border-radius: 9px;
+    background: var(--surface); box-shadow: var(--raised-shadow);
+    cursor: pointer; text-align: left;
+  }
+  .card::before { content: ""; position: absolute; inset: 0 0 auto; height: 2px; background: transparent; }
+  .card:hover { border-color: var(--border-strong); box-shadow: var(--shadow); }
+  .card[data-status="syncing"]::before {
+    background: linear-gradient(90deg, transparent 0%, var(--accent) 45%, transparent 90%);
+    background-size: 45% 100%; background-repeat: no-repeat;
+    animation: sweep 1.8s linear infinite;
+  }
+  @keyframes sweep { from { background-position: -45% 0; } to { background-position: 145% 0; } }
+  .card[data-status="attention"]::before { background: var(--danger); }
+  .card[data-status="attention"] { border-color: color-mix(in srgb, var(--danger) 28%, var(--border)); }
+
+  .card-head { display: flex; align-items: center; gap: 10px; }
+  .card-logo { width: 30px; height: 30px; flex: none; display: grid; place-items: center; border-radius: 8px; background: var(--surface-alt); border: 1px solid var(--border); }
+  .card-logo img { width: 17px; height: 17px; }
+  .card-logo .glyph { width: 15px; height: 15px; color: var(--muted); }
+  .card-title { flex: 1; min-width: 0; }
+  .card-title h3 { margin: 0; font-size: 13px; font-weight: 650; line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .card-title small { display: block; color: var(--subtle); font-size: 11px; line-height: 1.4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .state { display: inline-flex; align-items: center; gap: 5px; flex: none; font-size: 11px; color: var(--muted); }
+  .state[data-tone="ok"] .dot { background: var(--ok); }
+  .state[data-tone="run"] { color: var(--accent-strong); }
+  .state[data-tone="paused"] { color: var(--subtle); }
+  .state[data-tone="danger"] { color: var(--danger); font-weight: 600; }
+
+  .card-stats { display: flex; gap: 22px; }
+  .card-stats > div { display: grid; gap: 1px; }
+  .card-stats b { font-size: 15px; font-weight: 650; font-variant-numeric: tabular-nums; line-height: 1.2; }
+  .card-stats small { color: var(--subtle); font-size: 10.5px; }
+  .card[data-status="attention"] .card-stats { opacity: 0.45; }
+
+  .card-error {
+    display: flex; align-items: center; gap: 8px;
+    padding: 7px 10px; border-radius: 7px;
+    background: var(--warn-bg); color: var(--danger); font-size: 11.5px;
+  }
+  .card-error svg { width: 13px; height: 13px; flex: none; }
+  .card-error button { margin-left: auto; flex: none; border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent); border-radius: 6px; background: var(--surface); color: var(--danger); font-size: 11px; font-weight: 600; padding: 3px 9px; cursor: pointer; }
+  .card-error button:hover { background: #fbecec; }
+
+  .card-chip { justify-self: start; display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; border-radius: 10px; background: #fff7e8; color: #9a6a12; font-size: 11px; }
+
+  .card-foot { display: flex; align-items: flex-end; gap: 10px; margin-top: auto; }
+  .ticks { display: inline-flex; align-items: flex-end; gap: 3px; height: 16px; padding-bottom: 1px; }
+  .ticks i { width: 5px; height: calc(3px + var(--v, 0) * 13px); border-radius: 1.5px; background: var(--ok); opacity: calc(0.35 + var(--v, 0) * 0.65); }
+  .ticks i.zero { background: var(--border-strong); opacity: 1; }
+  .ticks-label { color: var(--subtle); font-size: 10.5px; padding-bottom: 1px; }
+  .card-time { margin-left: auto; color: var(--subtle); font-size: 11px; white-space: nowrap; }
+
+  .card-actions {
+    position: absolute; inset: auto 10px 10px auto;
+    display: inline-flex; gap: 6px;
+    opacity: 0; transition: opacity 0.12s ease;
+  }
+  .card:hover .card-actions, .card:focus-within .card-actions { opacity: 1; }
+  .mini-btn {
+    display: inline-flex; align-items: center; gap: 5px;
+    height: 26px; padding: 0 10px;
+    border: 1px solid var(--border); border-radius: 6px;
+    background: var(--surface); color: var(--muted);
+    font-size: 11px; cursor: pointer; box-shadow: var(--raised-shadow);
+  }
+  .mini-btn:hover { background: var(--surface-alt); color: var(--text); }
+  .mini-btn svg { width: 12px; height: 12px; }
+  .mini-btn.danger:hover { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 35%, transparent); }
+  .card-foot:has(~ .card-actions) { padding-right: 0; }
+  .card:hover .card-time, .card:focus-within .card-time { visibility: hidden; }
+
+  /* ── 同步活动 ─────────────────────────────────────────── */
+  .feed { border: 1px solid var(--border); border-radius: 9px; background: var(--surface); box-shadow: var(--raised-shadow); overflow: hidden; }
+  .feed-row {
+    display: grid; width: 100%;
+    grid-template-columns: 26px minmax(160px, 1.4fr) 58px minmax(140px, 1fr) 86px 92px;
+    align-items: center; gap: 12px;
+    min-height: 46px; padding: 8px 14px;
+    border-top: 1px solid var(--border);
+    background: transparent; border-left: 0; border-right: 0; border-bottom: 0;
+    font-family: inherit; font-size: 12px; color: var(--text);
+    text-align: left; cursor: default;
+  }
+  .feed-row:first-child { border-top: 0; }
+  .feed-row[data-expandable] { cursor: pointer; }
+  .feed-row[data-expandable]:hover { background: var(--surface-alt); }
+  .feed-row img { width: 16px; height: 16px; grid-column: 1; }
+  .feed-row .glyph { width: 16px; height: 16px; color: var(--muted); }
+  .feed-name { display: grid; gap: 1px; min-width: 0; }
+  .feed-name strong { font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .feed-name small { color: var(--subtle); font-size: 10.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .mode { justify-self: start; padding: 1px 8px; border-radius: 9px; background: var(--chrome); color: var(--muted); font-size: 10.5px; }
+  .feed-counts { color: var(--muted); font-size: 11.5px; font-variant-numeric: tabular-nums; display: grid; gap: 4px; }
+  .feed-counts b { color: var(--text); font-weight: 600; }
+  .progress { height: 3px; border-radius: 2px; background: var(--chrome); overflow: hidden; }
+  .progress i { display: block; height: 100%; width: 61%; border-radius: 2px; background: var(--accent); }
+  .feed-time { color: var(--subtle); font-size: 11px; text-align: right; white-space: nowrap; }
+  .feed-state { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--muted); justify-self: end; }
+  .feed-state[data-tone="ok"] .dot { background: var(--ok); }
+  .feed-state[data-tone="run"] { color: var(--accent-strong); }
+  .feed-state[data-tone="danger"] { color: var(--danger); font-weight: 600; }
+  .spinner { width: 11px; height: 11px; border-radius: 50%; border: 1.5px solid var(--accent-soft); border-top-color: var(--accent); animation: spin 0.9s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .feed-detail {
+    grid-column: 1 / -1; display: none;
+    padding: 4px 0 10px 38px;
+  }
+  .feed-row[data-open="true"] + .feed-detail { display: block; }
+  .feed-detail code {
+    display: block; padding: 8px 10px; border-radius: 6px;
+    background: var(--surface-alt); border: 1px solid var(--border);
+    color: var(--danger); font-size: 11px; font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    white-space: pre-wrap;
+  }
+  .feed-detail .mini-btn { margin-top: 8px; }
+
+  /* ── 维护区 ───────────────────────────────────────────── */
+  .maint { border: 1px dashed var(--border-strong); border-radius: 9px; overflow: hidden; background: color-mix(in srgb, var(--surface) 55%, transparent); }
+  .maint-row {
+    display: flex; width: 100%; align-items: center; gap: 9px;
+    min-height: 44px; padding: 8px 14px;
+    border: 0; border-top: 1px solid var(--border);
+    background: transparent; font-family: inherit; font-size: 12px; color: var(--muted);
+    text-align: left; cursor: pointer;
+  }
+  .maint-row:first-child { border-top: 0; }
+  .maint-row:hover { background: var(--surface-alt); }
+  .maint-row > svg { width: 13px; height: 13px; flex: none; transition: transform 0.15s ease; }
+  .maint-row[data-open="true"] > svg.chev { transform: rotate(90deg); }
+  .maint-row strong { color: var(--text); font-size: 12px; font-weight: 600; }
+  .maint-row .count { padding: 0 7px; border-radius: 9px; background: var(--chrome); color: var(--muted); font-size: 10.5px; }
+  .maint-row .link-btn { margin-left: auto; }
+  .maint-body { display: none; padding: 2px 14px 12px 36px; }
+  .maint-row[data-open="true"] + .maint-body { display: block; }
+  .mig-item { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--border); }
+  .mig-item:first-child { border-top: 0; }
+  .mig-item img { width: 16px; height: 16px; }
+  .mig-item .mig-copy { flex: 1; display: grid; gap: 1px; }
+  .mig-item strong { font-size: 12px; font-weight: 600; }
+  .mig-item small { color: var(--subtle); font-size: 11px; }
+
+  /* ── 详情抽屉 ─────────────────────────────────────────── */
+  .scrim { position: fixed; inset: 0; z-index: 60; background: rgba(21, 26, 34, 0.18); opacity: 0; pointer-events: none; transition: opacity 0.18s ease; }
+  .scrim[data-open="true"] { opacity: 1; pointer-events: auto; }
+  .drawer {
+    position: fixed; z-index: 61; top: 0; right: 0; bottom: 0;
+    width: 432px; max-width: 100vw;
+    display: flex; flex-direction: column;
+    background: var(--surface); border-left: 1px solid var(--border);
+    box-shadow: -12px 0 34px rgba(21, 26, 34, 0.10);
+    transform: translateX(105%); transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .drawer[data-open="true"] { transform: none; }
+  .drawer-head { padding: 18px 20px 14px; border-bottom: 1px solid var(--border); }
+  .drawer-head .top { display: flex; align-items: center; gap: 11px; }
+  .drawer-head .card-logo { width: 34px; height: 34px; }
+  .drawer-head h3 { flex: 1; margin: 0; font-size: 15px; font-weight: 650; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .drawer-close { border: 0; background: none; padding: 4px; border-radius: 6px; color: var(--subtle); cursor: pointer; }
+  .drawer-close:hover { background: var(--hover); color: var(--text); }
+  .drawer-close svg { width: 15px; height: 15px; display: block; }
+  .drawer-sub { margin-top: 8px; color: var(--subtle); font-size: 11.5px; word-break: break-all; }
+  .drawer-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 14px; margin-top: 9px; color: var(--muted); font-size: 11.5px; }
+  .drawer-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 13px; }
+  .drawer-stats { display: flex; gap: 26px; padding: 14px 20px; border-bottom: 1px solid var(--border); }
+  .drawer-stats b { display: block; font-size: 16px; font-weight: 650; font-variant-numeric: tabular-nums; }
+  .drawer-stats small { color: var(--subtle); font-size: 10.5px; }
+  .drawer-list { flex: 1; overflow-y: auto; padding: 6px 20px 20px; }
+  .list-head { display: flex; align-items: baseline; justify-content: space-between; padding: 12px 0 6px; }
+  .list-head h4 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: 0.06em; color: var(--muted); }
+  .file-row { display: flex; align-items: center; gap: 10px; padding: 9px 2px; border-top: 1px solid var(--border); }
+  .file-row:first-of-type { border-top: 0; }
+  .file-glyph { width: 26px; height: 26px; flex: none; display: grid; place-items: center; border-radius: 6px; background: var(--surface-alt); color: var(--subtle); }
+  .file-glyph svg { width: 13px; height: 13px; }
+  .file-copy { flex: 1; min-width: 0; }
+  .file-copy strong { display: block; font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .file-copy small { display: block; color: var(--subtle); font-size: 10.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .file-badge { flex: none; font-size: 10.5px; padding: 1px 8px; border-radius: 9px; background: var(--chrome); color: var(--muted); }
+  .file-badge[data-tone="new"] { background: color-mix(in srgb, var(--ok) 14%, white); color: #1c7a6e; }
+  .file-badge[data-tone="mod"] { background: var(--accent-soft); color: var(--accent-strong); }
+  .file-meta { flex: none; width: 64px; text-align: right; color: var(--subtle); font-size: 10.5px; font-variant-numeric: tabular-nums; }
+
+  /* 草图水印 */
+  .draft-chip {
+    position: fixed; z-index: 70; right: 14px; bottom: 12px;
+    padding: 4px 10px; border-radius: 12px;
+    background: rgba(21, 26, 34, 0.72); color: #fff;
+    font-size: 10.5px; letter-spacing: 0.04em;
+  }
+
+  @media (max-width: 900px) {
+    .nav { display: none; }
+    .page { padding: 18px 16px 48px; }
+    .page-head { flex-direction: column; }
+    .feed-row { grid-template-columns: 20px 1fr 58px 92px; }
+    .feed-counts, .feed-time { display: none; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+</style>
+</head>
+<body>
+<div class="shell">
+
+  <!-- 侧栏：仅示意 app 环境 -->
+  <aside class="nav" aria-hidden="true">
+    <div class="nav-brand"><i></i>EverRoom</div>
+    <div class="nav-group"><small>核心工作</small>
+      <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>首页</div>
+      <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h20v18H2z" opacity="0"/><path d="M12 7v14"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/></svg>Context Room</div>
+      <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg>文档</div>
+      <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M2 10v3M6 6v11M10 3v18M14 8v8M18 5v13M22 10v3"/></svg>现实感知</div>
+    </div>
+    <div class="nav-group"><small>上下文</small>
+      <div class="nav-item" data-active="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.45-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.55 6a2 2 0 0 1-1.94 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/></svg>数据源</div>
+      <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>文件</div>
+      <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 14c.2-1 .7-1.7 1.5-2.5A5.5 5.5 0 1 0 7 8"/><path d="M9 18h6"/><path d="M10 22h4"/></svg>灵感</div>
+      <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/></svg>记忆</div>
+      <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 7v14"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/></svg>Wiki</div>
+      <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/></svg>连接器</div>
+    </div>
+    <div class="nav-group"><small>执行</small>
+      <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 6v6l4 2"/><circle cx="12" cy="12" r="10"/></svg>办公室</div>
+      <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>日记</div>
+      <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m3 6 6.5 6.5L13 9l8 8"/><path d="M17 17h4v-4"/></svg>定时任务</div>
+    </div>
+    <div class="nav-group"><small>系统</small>
+      <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>设置</div>
+    </div>
+  </aside>
+
+  <!-- ═══════════ 页面本体 ═══════════ -->
+  <main class="page">
+
+    <header class="page-head">
+      <div>
+        <h1>数据源</h1>
+        <p class="pulse">
+          <span><i class="dot ok"></i>&nbsp;9 个来源</span>
+          <span class="sep"></span>
+          <span>昨日引入 <b>216</b> 条</span>
+          <span class="sep"></span>
+          <span><i class="dot danger"></i>&nbsp;1 个需要注意</span>
+        </p>
+      </div>
+      <div class="head-actions">
+        <label class="search">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+          <input type="search" placeholder="搜索证据…">
+        </label>
+        <div class="connect-wrap">
+          <button class="btn-primary" id="connectBtn" aria-expanded="false">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14M12 5v14"/></svg>
+            连接数据源
+            <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+          </button>
+          <div class="connect-menu" id="connectMenu" hidden>
+            <div class="connect-group"><small>本地</small>
+              <button class="connect-item"><span class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg></span><strong>识别文件夹</strong></button>
+              <button class="connect-item"><img src="assets/source-icons/obsidian.svg" alt=""><strong>Obsidian</strong></button>
+              <button class="connect-item"><img src="assets/source-icons/github.svg" alt=""><strong>GitHub</strong></button>
+            </div>
+            <div class="connect-group"><small>云服务</small>
+              <button class="connect-item"><img src="assets/source-icons/gmail.svg" alt=""><strong>Gmail</strong></button>
+              <button class="connect-item"><img src="assets/source-icons/outlook.svg" alt=""><strong>Outlook</strong></button>
+              <button class="connect-item"><img src="assets/source-icons/google-calendar.svg" alt=""><strong>Google 日历</strong></button>
+              <button class="connect-item"><img src="assets/source-icons/notion.svg" alt=""><strong>Notion</strong></button>
+              <button class="connect-item"><img src="assets/source-icons/google-docs.svg" alt=""><strong>Google Docs</strong></button>
+              <button class="connect-item"><span class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v4M16 2v4"/><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M3 10h18"/></svg></span><strong>日历订阅（WebCal）</strong></button>
+            </div>
+            <div class="connect-group"><small>本地导入</small>
+              <button class="connect-item"><img src="assets/source-icons/notion.svg" alt=""><strong>Notion ZIP</strong></button>
+              <button class="connect-item"><img src="assets/source-icons/claude.svg" alt=""><strong>Claude Code</strong></button>
+              <button class="connect-item"><img src="assets/source-icons/codex.svg" alt=""><strong>Codex</strong></button>
+              <button class="connect-item"><img src="assets/source-icons/openclaw.svg" alt=""><strong>OpenClaw</strong></button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <!-- 本地来源 -->
+    <section class="zone">
+      <header class="zone-head"><h2>本地来源</h2><small>4</small></header>
+      <div class="cards">
+
+        <article class="card" data-status="ok" data-src="documents" tabindex="0" role="button" aria-haspopup="dialog">
+          <header class="card-head">
+            <span class="card-logo"><svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg></span>
+            <div class="card-title"><h3>Documents</h3><small>~/Documents/EverRoom-Notes</small></div>
+            <span class="state" data-tone="ok"><i class="dot ok"></i>已同步</span>
+          </header>
+          <div class="card-stats">
+            <div><b>128</b><small>文件</small></div>
+            <div><b>4,102</b><small>证据段</small></div>
+            <div><b>310</b><small>版本</small></div>
+          </div>
+          <footer class="card-foot">
+            <span class="ticks" title="近 7 日每日引入"><i style="--v:.9"></i><i style="--v:.4"></i><i style="--v:.7"></i><i style="--v:.25"></i><i style="--v:1"></i><i style="--v:.5"></i><i style="--v:.35"></i></span>
+            <span class="ticks-label">近 7 日</span>
+            <span class="card-time">2 分钟前同步</span>
+          </footer>
+          <span class="card-actions">
+            <button class="mini-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v5h-5"/></svg>同步</button>
+            <button class="mini-btn" title="暂停同步"><svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg></button>
+            <button class="mini-btn danger" title="清除文档数据并保留目录"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
+          </span>
+        </article>
+
+        <article class="card" data-status="ok" data-src="obsidian" tabindex="0" role="button" aria-haspopup="dialog">
+          <header class="card-head">
+            <span class="card-logo"><img src="assets/source-icons/obsidian.svg" alt=""></span>
+            <div class="card-title"><h3>Obsidian</h3><small>持续监听 3 个项目</small></div>
+            <span class="state" data-tone="ok"><i class="dot ok"></i>已同步</span>
+          </header>
+          <div class="card-stats">
+            <div><b>520</b><small>文件</small></div>
+            <div><b>3,981</b><small>证据段</small></div>
+            <div><b>98</b><small>版本</small></div>
+          </div>
+          <span class="card-chip"><i class="dot" style="background:#d98c2f"></i>新发现 1 个项目 · 待导入</span>
+          <footer class="card-foot">
+            <span class="ticks" title="近 7 日每日引入"><i style="--v:.6"></i><i style="--v:.8"></i><i style="--v:.3"></i><i style="--v:.6"></i><i style="--v:.75"></i><i style="--v:.45"></i><i style="--v:.2"></i></span>
+            <span class="ticks-label">近 7 日</span>
+            <span class="card-time">18 分钟前同步</span>
+          </footer>
+          <span class="card-actions">
+            <button class="mini-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v5h-5"/></svg>重新扫描</button>
+            <button class="mini-btn" title="断开"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
+          </span>
+        </article>
+
+        <article class="card" data-status="syncing" data-src="github" tabindex="0" role="button" aria-haspopup="dialog">
+          <header class="card-head">
+            <span class="card-logo"><img src="assets/source-icons/github.svg" alt=""></span>
+            <div class="card-title"><h3>connector-core</h3><small>github.com/everroom/connector-core</small></div>
+            <span class="state" data-tone="run"><i class="dot run"></i>同步中</span>
+          </header>
+          <div class="card-stats">
+            <div><b>1,024</b><small>文件</small></div>
+            <div><b>8,913</b><small>证据段</small></div>
+            <div><b>426</b><small>版本</small></div>
+          </div>
+          <footer class="card-foot">
+            <span class="ticks" title="近 7 日每日引入"><i style="--v:.5"></i><i style="--v:.9"></i><i style="--v:.6"></i><i style="--v:.8"></i><i style="--v:.55"></i><i style="--v:.7"></i><i class="zero"></i></span>
+            <span class="ticks-label">近 7 日</span>
+            <span class="card-time">全量同步 · 61%</span>
+          </footer>
+          <span class="card-actions">
+            <button class="mini-btn"><svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>暂停</button>
+          </span>
+        </article>
+
+        <article class="card" data-status="paused" data-src="backup" tabindex="0" role="button" aria-haspopup="dialog">
+          <header class="card-head">
+            <span class="card-logo"><svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg></span>
+            <div class="card-title"><h3>项目备份</h3><small>~/Archive/work-backup</small></div>
+            <span class="state" data-tone="paused"><i class="dot paused"></i>已暂停</span>
+          </header>
+          <div class="card-stats">
+            <div><b>2,341</b><small>文件</small></div>
+            <div><b>11,208</b><small>证据段</small></div>
+            <div><b>1,043</b><small>版本</small></div>
+          </div>
+          <footer class="card-foot">
+            <span class="ticks" title="近 7 日每日引入"><i class="zero"></i><i class="zero"></i><i class="zero"></i><i class="zero"></i><i class="zero"></i><i class="zero"></i><i class="zero"></i></span>
+            <span class="ticks-label">近 7 日</span>
+            <span class="card-time">暂停于 3 天前</span>
+          </footer>
+          <span class="card-actions">
+            <button class="mini-btn"><svg viewBox="0 0 24 24" fill="currentColor"><polygon points="6 3 20 12 6 21 6 3"/></svg>恢复同步</button>
+            <button class="mini-btn danger" title="清除文档数据并保留目录"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
+          </span>
+        </article>
+      </div>
+    </section>
+
+    <!-- 云服务 -->
+    <section class="zone">
+      <header class="zone-head"><h2>云服务</h2><small>5</small></header>
+      <div class="cards">
+
+        <article class="card" data-status="attention" data-src="gmail" tabindex="0" role="button" aria-haspopup="dialog">
+          <header class="card-head">
+            <span class="card-logo"><img src="assets/source-icons/gmail.svg" alt=""></span>
+            <div class="card-title"><h3>Gmail</h3><small>xjwang@gmail.com</small></div>
+            <span class="state" data-tone="danger"><i class="dot danger"></i>需要注意</span>
+          </header>
+          <div class="card-error">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+            OAuth 授权已过期，已暂停收信
+            <button type="button">重新授权</button>
+          </div>
+          <div class="card-stats">
+            <div><b>12,408</b><small>邮件</small></div>
+            <div><b>96,211</b><small>证据段</small></div>
+          </div>
+          <footer class="card-foot">
+            <span class="ticks" title="近 7 日每日引入"><i style="--v:.8"></i><i style="--v:.6"></i><i style="--v:.7"></i><i class="zero"></i><i class="zero"></i><i class="zero"></i><i class="zero"></i></span>
+            <span class="ticks-label">近 7 日</span>
+            <span class="card-time">4 天前同步</span>
+          </footer>
+        </article>
+
+        <article class="card" data-status="ok" data-src="outlook" tabindex="0" role="button" aria-haspopup="dialog">
+          <header class="card-head">
+            <span class="card-logo"><img src="assets/source-icons/outlook.svg" alt=""></span>
+            <div class="card-title"><h3>Outlook</h3><small>work@company.com</small></div>
+            <span class="state" data-tone="ok"><i class="dot ok"></i>已同步</span>
+          </header>
+          <div class="card-stats">
+            <div><b>8,214</b><small>邮件</small></div>
+            <div><b>61,077</b><small>证据段</small></div>
+          </div>
+          <footer class="card-foot">
+            <span class="ticks" title="近 7 日每日引入"><i style="--v:.7"></i><i style="--v:.5"></i><i style="--v:.85"></i><i style="--v:.6"></i><i style="--v:.9"></i><i style="--v:.4"></i><i style="--v:.55"></i></span>
+            <span class="ticks-label">近 7 日</span>
+            <span class="card-time">5 分钟前同步</span>
+          </footer>
+          <span class="card-actions">
+            <button class="mini-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v5h-5"/></svg>同步</button>
+            <button class="mini-btn danger" title="清理本地数据"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
+          </span>
+        </article>
+
+        <article class="card" data-status="ok" data-src="gcal" tabindex="0" role="button" aria-haspopup="dialog">
+          <header class="card-head">
+            <span class="card-logo"><img src="assets/source-icons/google-calendar.svg" alt=""></span>
+            <div class="card-title"><h3>Google 日历</h3><small>主日历 · 工作 · 2 个日历</small></div>
+            <span class="state" data-tone="ok"><i class="dot ok"></i>已同步</span>
+          </header>
+          <div class="card-stats">
+            <div><b>1,892</b><small>日程</small></div>
+            <div><b>9,344</b><small>证据段</small></div>
+          </div>
+          <footer class="card-foot">
+            <span class="ticks" title="近 7 日每日引入"><i style="--v:.4"></i><i style="--v:.3"></i><i style="--v:.6"></i><i style="--v:.5"></i><i style="--v:.35"></i><i style="--v:.45"></i><i style="--v:.25"></i></span>
+            <span class="ticks-label">近 7 日</span>
+            <span class="card-time">1 小时前同步</span>
+          </footer>
+          <span class="card-actions">
+            <button class="mini-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v5h-5"/></svg>同步</button>
+            <button class="mini-btn danger" title="清理本地数据"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
+          </span>
+        </article>
+
+        <article class="card" data-status="ok" data-src="notion" tabindex="0" role="button" aria-haspopup="dialog">
+          <header class="card-head">
+            <span class="card-logo"><img src="assets/source-icons/notion.svg" alt=""></span>
+            <div class="card-title"><h3>Notion</h3><small>个人空间 · 12 个页面树</small></div>
+            <span class="state" data-tone="ok"><i class="dot ok"></i>已同步</span>
+          </header>
+          <div class="card-stats">
+            <div><b>312</b><small>文档</small></div>
+            <div><b>8,033</b><small>证据段</small></div>
+          </div>
+          <footer class="card-foot">
+            <span class="ticks" title="近 7 日每日引入"><i style="--v:.5"></i><i style="--v:.6"></i><i style="--v:.4"></i><i style="--v:.7"></i><i style="--v:.3"></i><i style="--v:.5"></i><i style="--v:.4"></i></span>
+            <span class="ticks-label">近 7 日</span>
+            <span class="card-time">26 分钟前同步</span>
+          </footer>
+          <span class="card-actions">
+            <button class="mini-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v5h-5"/></svg>同步</button>
+            <button class="mini-btn danger" title="清理本地数据"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
+          </span>
+        </article>
+
+        <article class="card" data-status="paused" data-src="gdocs" tabindex="0" role="button" aria-haspopup="dialog">
+          <header class="card-head">
+            <span class="card-logo"><img src="assets/source-icons/google-docs.svg" alt=""></span>
+            <div class="card-title"><h3>Google Docs</h3><small>docs 收集 · 7 个文档</small></div>
+            <span class="state" data-tone="paused"><i class="dot paused"></i>已暂停</span>
+          </header>
+          <div class="card-stats">
+            <div><b>87</b><small>文档</small></div>
+            <div><b>2,214</b><small>证据段</small></div>
+          </div>
+          <footer class="card-foot">
+            <span class="ticks" title="近 7 日每日引入"><i class="zero"></i><i class="zero"></i><i style="--v:.3"></i><i class="zero"></i><i class="zero"></i><i class="zero"></i><i class="zero"></i></span>
+            <span class="ticks-label">近 7 日</span>
+            <span class="card-time">暂停于 6 天前</span>
+          </footer>
+          <span class="card-actions">
+            <button class="mini-btn"><svg viewBox="0 0 24 24" fill="currentColor"><polygon points="6 3 20 12 6 21 6 3"/></svg>恢复</button>
+            <button class="mini-btn danger" title="清理本地数据"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
+          </span>
+        </article>
+      </div>
+    </section>
+
+    <!-- 同步活动 -->
+    <section class="zone">
+      <header class="zone-head"><h2>同步活动</h2></header>
+      <div class="feed">
+        <div class="feed-row">
+          <img src="assets/source-icons/gmail.svg" alt="">
+          <span class="feed-name"><strong>Gmail · 收件箱</strong><small>xjwang@gmail.com</small></span>
+          <span class="mode">增量</span>
+          <span class="feed-counts"><span><b>128</b> 条 · 0 失败</span></span>
+          <span class="feed-time">5 分钟前</span>
+          <span class="feed-state" data-tone="ok"><i class="dot ok"></i>已完成</span>
+        </div>
+        <div class="feed-row">
+          <span class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg></span>
+          <span class="feed-name"><strong>Documents</strong><small>~/Documents/EverRoom-Notes</small></span>
+          <span class="mode">增量</span>
+          <span class="feed-counts"><span>新增 <b>2</b> · 修改 <b>5</b></span></span>
+          <span class="feed-time">12 分钟前</span>
+          <span class="feed-state" data-tone="ok"><i class="dot ok"></i>已完成</span>
+        </div>
+        <div class="feed-row">
+          <img src="assets/source-icons/github.svg" alt="">
+          <span class="feed-name"><strong>connector-core</strong></span>
+          <span class="mode">全量</span>
+          <span class="feed-counts"><span class="progress"><i></i></span><span>61% · 已处理 <b>625</b></span></span>
+          <span class="feed-time">刚刚</span>
+          <span class="feed-state" data-tone="run"><span class="spinner"></span>进行中</span>
+        </div>
+        <div class="feed-row">
+          <img src="assets/source-icons/google-calendar.svg" alt="">
+          <span class="feed-name"><strong>Google 日历 · 主日历</strong><small>work@company.com</small></span>
+          <span class="mode">增量</span>
+          <span class="feed-counts"><span><b>42</b> 个日程</span></span>
+          <span class="feed-time">1 小时前</span>
+          <span class="feed-state" data-tone="ok"><i class="dot ok"></i>已完成</span>
+        </div>
+        <div class="feed-row" data-expandable="true" aria-expanded="false" tabindex="0" role="button">
+          <img src="assets/source-icons/outlook.svg" alt="">
+          <span class="feed-name"><strong>Outlook · 收件箱</strong></span>
+          <span class="mode">增量</span>
+          <span class="feed-counts"><span><b>1,024</b> 条 · <b>2</b> 失败</span></span>
+          <span class="feed-time">2 小时前</span>
+          <span class="feed-state" data-tone="danger"><i class="dot danger"></i>2 失败</span>
+        </div>
+        <div class="feed-detail">
+          <code>AttachmentReadError: winmail.dat (编码不支持)
+AttachmentReadError: Q3-report.xlsm (宏文件已按策略跳过)</code>
+          <button class="mini-btn">重新同步</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 维护 -->
+    <section class="zone">
+      <header class="zone-head"><h2>维护</h2></header>
+      <div class="maint">
+        <button class="maint-row" data-open="false" aria-expanded="false">
+          <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+          <strong>迁移记录</strong><span class="count">2</span>
+        </button>
+        <div class="maint-body">
+          <div class="mig-item"><img src="assets/source-icons/notion.svg" alt=""><span class="mig-copy"><strong>Notion 导出包</strong><small>已导入 1,204 页 · 9 月 1 日</small></span><button class="mini-btn">重新导入</button><button class="mini-btn danger">清除</button></div>
+          <div class="mig-item"><img src="assets/source-icons/claude.svg" alt=""><span class="mig-copy"><strong>Claude Code 历史</strong><small>已导入 862 条对话 · 8 月 28 日</small></span><button class="mini-btn">重新导入</button><button class="mini-btn danger">清除</button></div>
+        </div>
+        <button class="maint-row" aria-expanded="false">
+          <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+          <strong>连接器引擎</strong>
+          <span class="link-btn">查看详情</span>
+        </button>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<!-- 详情抽屉 -->
+<div class="scrim" id="scrim"></div>
+<aside class="drawer" id="drawer" role="dialog" aria-modal="true" aria-label="来源详情">
+  <div class="drawer-head">
+    <div class="top">
+      <span class="card-logo" id="dLogo"></span>
+      <h3 id="dName">Documents</h3>
+      <button class="drawer-close" id="dClose" aria-label="关闭"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+    </div>
+    <div class="drawer-sub" id="dPath">~/Documents/EverRoom-Notes</div>
+    <div class="drawer-meta" id="dMeta"></div>
+    <div class="drawer-actions" id="dActions"></div>
+  </div>
+  <div class="drawer-stats" id="dStats"></div>
+  <div class="drawer-list">
+    <div class="list-head"><h4 id="dListTitle">文件 · 128</h4></div>
+    <div id="dList"></div>
+  </div>
+</aside>
+
+<span class="draft-chip">重设计草图 · 仅示意</span>
+
+<script>
+  // 示例数据（仅草图用）
+  const SOURCES = {
+    documents: {
+      name: 'Documents', path: '~/Documents/EverRoom-Notes',
+      meta: [['ok', '已同步'], null, '2 分钟前同步', '版本 310'],
+      stats: [['128', '文件'], ['4,102', '证据段'], ['310', '版本']],
+      listTitle: '文件 · 128',
+      actions: ['同步', '暂停', '在访达中显示', '清除数据'],
+      items: [
+        { g: 'file', title: '会议笔记.md', sub: 'sync/weekly', badge: ['已修改', 'mod'], meta: '今天 14:32 · 18 KB' },
+        { g: 'file', title: '产品路线图.md', sub: 'sync/planning', badge: ['新增', 'new'], meta: '昨天 09:10 · 42 KB' },
+        { g: 'file', title: '面试记录.md', sub: 'sync/hiring', badge: ['未变化', ''], meta: '9 月 2 日 · 12 KB' },
+        { g: 'file', title: '架构决策.md', sub: 'sync/adr', badge: ['未变化', ''], meta: '9 月 1 日 · 8 KB' },
+      ],
+    },
+    obsidian: {
+      name: 'Obsidian', path: '持续监听 3 个项目 · 新发现 1 个',
+      meta: [['ok', '已同步'], null, '18 分钟前同步'],
+      stats: [['520', '文件'], ['3,981', '证据段'], ['98', '版本']],
+      listTitle: '项目 · 4',
+      actions: ['重新扫描', '导入新项目'],
+      items: [
+        { g: 'vault', title: 'Zettelkasten', sub: '持续进入记忆 · 312 篇笔记', badge: ['已连接', ''], meta: '今天 10:02' },
+        { g: 'vault', title: '工作日志', sub: '持续进入记忆 · 148 篇笔记', badge: ['已连接', ''], meta: '今天 10:02' },
+        { g: 'vault', title: '读书笔记', sub: '已挂载到现有 Room · 60 篇笔记', badge: ['已连接', ''], meta: '昨天 21:40' },
+        { g: 'vault', title: '碎片想法', sub: '尚未进入 EverRoom · 37 篇笔记', badge: ['待导入', 'new'], meta: '新发现' },
+      ],
+    },
+    github: {
+      name: 'connector-core', path: 'github.com/everroom/connector-core',
+      meta: [['run', '全量同步中 · 61%'], null, '主分支'],
+      stats: [['1,024', '文件'], ['8,913', '证据段'], ['426', '版本']],
+      listTitle: '文件 · 1,024',
+      actions: ['暂停'],
+      items: [
+        { g: 'file', title: 'index.ts', sub: 'src', badge: ['已修改', 'mod'], meta: '今天 11:20 · 34 KB' },
+        { g: 'file', title: 'README.md', sub: '', badge: ['新增', 'new'], meta: '今天 11:20 · 6 KB' },
+        { g: 'file', title: 'package.json', sub: '', badge: ['未变化', ''], meta: '9 月 3 日 · 2 KB' },
+      ],
+    },
+    backup: {
+      name: '项目备份', path: '~/Archive/work-backup',
+      meta: [['paused', '已暂停'], null, '暂停于 3 天前'],
+      stats: [['2,341', '文件'], ['11,208', '证据段'], ['1,043', '版本']],
+      listTitle: '文件 · 2,341',
+      actions: ['恢复同步', '清除数据'],
+      items: [
+        { g: 'file', title: '旧版方案.docx', sub: '2024/proposals', badge: ['未变化', ''], meta: '2024-12-02 · 320 KB' },
+        { g: 'file', title: '归档笔记.md', sub: 'notes', badge: ['未变化', ''], meta: '2024-11-18 · 22 KB' },
+      ],
+    },
+    gmail: {
+      name: 'Gmail', path: 'xjwang@gmail.com',
+      meta: [['danger', 'OAuth 授权已过期'], null, '4 天前同步'],
+      stats: [['12,408', '邮件'], ['96,211', '证据段']],
+      listTitle: '最近同步的邮件',
+      actions: ['重新授权'],
+      items: [
+        { g: 'mail', title: 'Re: 合同评审意见', sub: '来自legal@partner.co · 14 段', badge: ['已解析', ''], meta: '9 月 1 日' },
+        { g: 'mail', title: '周报 · 第 35 周', sub: '来自team@everroom.app · 8 段', badge: ['已解析', ''], meta: '9 月 1 日' },
+        { g: 'mail', title: '服务器告警', sub: '来自ops@monitor.io · 3 段', badge: ['已解析', ''], meta: '8 月 31 日' },
+      ],
+    },
+    outlook: {
+      name: 'Outlook', path: 'work@company.com',
+      meta: [['ok', '已同步'], null, '5 分钟前同步'],
+      stats: [['8,214', '邮件'], ['61,077', '证据段']],
+      listTitle: '最近同步的邮件',
+      actions: ['同步', '清理本地数据'],
+      items: [
+        { g: 'mail', title: 'Q4 排期确认', sub: '来自pm@company.com · 21 段', badge: ['已解析', ''], meta: '今天 09:41' },
+        { g: 'mail', title: 'Re: 设计评审纪要', sub: '来自design@company.com · 12 段', badge: ['已解析', ''], meta: '今天 08:15' },
+        { g: 'mail', title: '出差报销流程更新', sub: '来自hr@company.com · 6 段', badge: ['已解析', ''], meta: '昨天 17:30' },
+      ],
+    },
+    gcal: {
+      name: 'Google 日历', path: '主日历 · 工作 · 2 个日历',
+      meta: [['ok', '已同步'], null, '1 小时前同步'],
+      stats: [['1,892', '日程'], ['9,344', '证据段']],
+      listTitle: '最近同步的日程',
+      actions: ['同步', '清理本地数据'],
+      items: [
+        { g: 'cal', title: '连接器单周评审', sub: '14:00 – 15:00 · 6 人参与', badge: ['已确认', ''], meta: '今天' },
+        { g: 'cal', title: '1:1 与产品', sub: '10:00 – 10:30', badge: ['已确认', ''], meta: '今天' },
+        { g: 'cal', title: '全员会', sub: '16:00 – 17:00 · 会议室 A', badge: ['已确认', ''], meta: '昨天' },
+      ],
+    },
+    notion: {
+      name: 'Notion', path: '个人空间 · 12 个页面树',
+      meta: [['ok', '已同步'], null, '26 分钟前同步'],
+      stats: [['312', '文档'], ['8,033', '证据段']],
+      listTitle: '最近同步的文档',
+      actions: ['同步', '清理本地数据'],
+      items: [
+        { g: 'doc', title: '产品需求文档 · 连接器统一', sub: '48 段', badge: ['已修改', 'mod'], meta: '今天 13:05' },
+        { g: 'doc', title: '每周复盘', sub: '16 段', badge: ['新增', 'new'], meta: '昨天 20:22' },
+        { g: 'doc', title: '阅读清单', sub: '9 段', badge: ['未变化', ''], meta: '9 月 2 日' },
+      ],
+    },
+    gdocs: {
+      name: 'Google Docs', path: 'docs 收集 · 7 个文档',
+      meta: [['paused', '已暂停'], null, '暂停于 6 天前'],
+      stats: [['87', '文档'], ['2,214', '证据段']],
+      listTitle: '文档 · 87',
+      actions: ['恢复', '清理本地数据'],
+      items: [
+        { g: 'doc', title: 'EverRoom 发布说明', sub: '32 段', badge: ['未变化', ''], meta: '8 月 28 日' },
+        { g: 'doc', title: '访谈提纲', sub: '11 段', badge: ['未变化', ''], meta: '8 月 25 日' },
+      ],
+    },
+  };
+
+  const GLYPHS = {
+    file: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg>',
+    vault: '<img src="assets/source-icons/obsidian.svg" alt="" style="width:14px;height:14px">',
+    mail: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>',
+    cal: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v4M16 2v4"/><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M3 10h18"/></svg>',
+    doc: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg>',
+  };
+  const LOGOS = {
+    documents: '<svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>',
+    backup: '<svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>',
+    obsidian: '<img src="assets/source-icons/obsidian.svg" alt="">',
+    github: '<img src="assets/source-icons/github.svg" alt="">',
+    gmail: '<img src="assets/source-icons/gmail.svg" alt="">',
+    outlook: '<img src="assets/source-icons/outlook.svg" alt="">',
+    gcal: '<img src="assets/source-icons/google-calendar.svg" alt="">',
+    notion: '<img src="assets/source-icons/notion.svg" alt="">',
+    gdocs: '<img src="assets/source-icons/google-docs.svg" alt="">',
+  };
+
+  const scrim = document.getElementById('scrim');
+  const drawer = document.getElementById('drawer');
+  function openDrawer(id) {
+    const s = SOURCES[id];
+    if (!s) return;
+    document.getElementById('dLogo').innerHTML = LOGOS[id] || '';
+    document.getElementById('dName').textContent = s.name;
+    document.getElementById('dPath').textContent = s.path;
+    document.getElementById('dMeta').innerHTML = s.meta.map((m) => m
+      ? (Array.isArray(m) ? `<span style="display:inline-flex;align-items:center;gap:5px"><i class="dot ${m[0]}"></i>${m[1]}</span>` : m)
+      : '<span class="sep" style="width:1px;height:10px;background:var(--border-strong)"></span>').join('');
+    document.getElementById('dActions').innerHTML = s.actions.map((a, i) =>
+      `<button class="mini-btn${a.includes('清除') ? ' danger' : ''}" type="button">${a}</button>`).join('');
+    document.getElementById('dStats').innerHTML = s.stats.map(([n, l]) => `<div><b>${n}</b><small>${l}</small></div>`).join('');
+    document.getElementById('dListTitle').textContent = s.listTitle;
+    document.getElementById('dList').innerHTML = s.items.map((it) => `
+      <div class="file-row">
+        <span class="file-glyph">${GLYPHS[it.g]}</span>
+        <span class="file-copy"><strong>${it.title}</strong><small>${it.sub || '&nbsp;'}</small></span>
+        ${it.badge[0] ? `<span class="file-badge" data-tone="${it.badge[1]}">${it.badge[0]}</span>` : ''}
+        <span class="file-meta">${it.meta}</span>
+      </div>`).join('');
+    scrim.dataset.open = 'true';
+    drawer.dataset.open = 'true';
+  }
+  function closeDrawer() { scrim.dataset.open = 'false'; drawer.dataset.open = 'false'; }
+  document.getElementById('dClose').addEventListener('click', closeDrawer);
+  scrim.addEventListener('click', closeDrawer);
+  window.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeDrawer(); toggleMenu(false); } });
+
+  document.querySelectorAll('.card').forEach((card) => {
+    card.addEventListener('click', (e) => { if (e.target.closest('button')) return; openDrawer(card.dataset.src); });
+    card.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target === card) openDrawer(card.dataset.src); });
+  });
+
+  // 失败行展开
+  const failRow = document.querySelector('.feed-row[data-expandable]');
+  failRow.addEventListener('click', () => {
+    const open = failRow.getAttribute('data-open') !== 'true';
+    failRow.setAttribute('data-open', String(open));
+    failRow.setAttribute('aria-expanded', String(open));
+  });
+
+  // 连接菜单
+  const btn = document.getElementById('connectBtn');
+  const menu = document.getElementById('connectMenu');
+  function toggleMenu(force) {
+    const open = force !== undefined ? force : menu.hidden;
+    menu.hidden = !open;
+    btn.setAttribute('aria-expanded', String(open));
+  }
+  btn.addEventListener('click', (e) => { e.stopPropagation(); toggleMenu(); });
+  window.addEventListener('click', (e) => { if (!menu.hidden && !menu.contains(e.target)) toggleMenu(false); });
+
+  // 维护区折叠
+  document.querySelectorAll('.maint-row[data-open]').forEach((row) => {
+    row.addEventListener('click', () => {
+      const open = row.getAttribute('data-open') !== 'true';
+      row.setAttribute('data-open', String(open));
+      row.setAttribute('aria-expanded', String(open));
+    });
+  });
+</script>
+</body>
+</html>

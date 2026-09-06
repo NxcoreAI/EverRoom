@@ -12,7 +12,7 @@ import {
   connectorRecords,
   connectorTodos,
 } from "../src/infrastructure/database/schema.js";
-import { ConnectorMarkdownService } from "../src/modules/connectors/markdown-service.js";
+import { ConnectorMarkdownService } from "@nxcore/connectors-module/markdown-service.js";
 import type { IngestService } from "../src/modules/ingest/service.js";
 
 const logger = { info: vi.fn(), warn: vi.fn() };

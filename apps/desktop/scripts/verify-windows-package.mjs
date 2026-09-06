@@ -3,7 +3,7 @@
 // Node standard library + the repo's existing @electron/asar only.
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
-import { join, relative, resolve, sep } from 'node:path'
+import { join, relative, resolve } from 'node:path'
 import { listPackage } from '@electron/asar'
 
 const desktopRoot = resolve(import.meta.dirname, '..')
@@ -51,22 +51,12 @@ expectFile(join(resourcesRoot, 'packaged-env.json'), 'packaged-env.json')
 expectFile(join(resourcesRoot, 'app.asar'), 'app.asar')
 
 // --- Loose files under resources -------------------------------------------
-// nango/ ships a vendored runtime whose compiled dist imports *.test.js and
-// whose node_modules holds test fixtures — required at runtime, exempt from the
-// loose-file audit (same exemption as the macOS step) and audited separately.
-const nangoRoot = join(resourcesRoot, 'nango')
-const looseFiles = filesUnder(resourcesRoot).filter((path) => !path.startsWith(nangoRoot + sep))
+const looseFiles = filesUnder(resourcesRoot)
 for (const path of looseFiles) {
   const normalized = relative(resourcesRoot, path).split('\\').join('/')
   if (forbidden.test(normalized)) fail(`Forbidden loose file: ${normalized}`)
   if (typescript.test(normalized) && !normalized.startsWith('open-connector/')) {
     fail(`Unexpected TypeScript in package: ${normalized}`)
-  }
-}
-for (const path of filesUnder(join(resourcesRoot, 'nango'))) {
-  const normalized = relative(resourcesRoot, path).split('\\').join('/')
-  if (/(^|\/)\.env($|\.)/i.test(normalized) || /\.(map|ts|tsx|mts|cts)$/i.test(normalized)) {
-    fail(`Forbidden file in nango runtime: ${normalized}`)
   }
 }
 
@@ -121,12 +111,9 @@ expectFile(join(resourcesRoot, 'gateway', 'node_modules', 'better-sqlite3', 'pre
 const canvasNode = filesUnder(join(resourcesRoot, 'gateway', 'node_modules', '@napi-rs')).filter((path) => path.endsWith('.node'))
 if (canvasNode.length === 0) fail('gateway @napi-rs/canvas win32-x64 native is missing')
 
-// OpenConnector, Nango (with Windows embedded PostgreSQL), oo CLI, GenOffice.
+// OpenConnector, oo CLI, GenOffice.
 expectFile(join(resourcesRoot, 'open-connector', 'src', 'server', 'index.ts'), 'open-connector entry')
 expectFile(join(resourcesRoot, 'open-connector', 'dist', 'web', 'index.html'), 'open-connector web dist')
-expectFile(join(resourcesRoot, 'nango', 'packages', 'server', 'dist', 'server.js'), 'nango server entry')
-const postgresBin = filesUnder(join(resourcesRoot, 'nango')).filter((path) => /[\\/]postgres\.exe$/.test(path))
-if (postgresBin.length === 0) fail('nango windows-x64 embedded PostgreSQL (postgres.exe) is missing')
 const ooExe = join(resourcesRoot, 'oo', 'win32-x64', 'oo.exe')
 expectFile(ooExe, 'oo CLI win32-x64')
 expectFile(join(resourcesRoot, 'genoffice', 'native', 'xlsx-sidecar.exe'), 'genoffice xlsx-sidecar.exe')

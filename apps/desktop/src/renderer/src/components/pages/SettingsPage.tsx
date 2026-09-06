@@ -14,6 +14,7 @@ import {
   Laptop,
   Mic,
   MonitorSpeaker,
+  Plug,
   Puzzle,
   RefreshCw,
   ShieldCheck,
@@ -27,6 +28,7 @@ import { useEffect, useState } from 'react'
 import QRCode from 'qrcode'
 
 import { useAccount } from '@/state/AccountContext'
+import { ConnectorModeSection } from '@/components/settings/ConnectorModeSection'
 import { loadRealitySettings, saveRealitySettings, type RealitySettings } from '@/state/realitySettings'
 import {
   loadDocumentCursorCompletionSettings,
@@ -52,6 +54,7 @@ import './SettingsPage.css'
 
 const SETTINGS_NAV = [
   { id: 'settings-account', label: 'surface:settings.navigationAccount', description: 'surface:settings.navigationAccountDescription', icon: Cloud },
+  { id: 'settings-connector-mode', label: 'surface:settings.connectorModeTitle', description: 'surface:settings.connectorModeNavDescription', icon: Plug },
   { id: 'settings-notifications', label: 'surface:settings.notifications', description: 'surface:settings.notificationsDescription', icon: Bell },
   { id: 'settings-models', label: 'surface:settings.navigationModels', description: 'surface:settings.navigationModelsDescription', icon: Brain },
   { id: 'settings-runtime-config', label: 'surface:settings.navigationRuntimeConfig', description: 'surface:settings.navigationRuntimeConfigDescription', icon: ShieldCheck },
@@ -700,6 +703,7 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
         ) : null}
       </section>
 
+      <ConnectorModeSection />
       <section id="settings-account" className="cloud-account-section settings-anchor-section" aria-labelledby="cloud-account-title">
         <header className="cloud-account-header">
           <span className="cloud-account-icon"><Cloud aria-hidden="true" /></span>

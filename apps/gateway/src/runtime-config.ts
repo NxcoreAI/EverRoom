@@ -61,7 +61,6 @@ const SECRET_KEYS = new Set([
   "apiKey",
   "accessKeySecret",
   "stsToken",
-  "nangoSecret",
   "clientSecret",
 ]);
 

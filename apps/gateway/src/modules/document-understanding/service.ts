@@ -5,7 +5,7 @@ import { and, eq } from "drizzle-orm";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
 import { fileEntries, parsedDocuments } from "../../infrastructure/database/schema.js";
 import type { FilesService } from "../files/service.js";
-import { converterOfExtension } from "../ingest/converters.js";
+import { converterOfExtension } from "@nxcore/connectors-module/converters.js";
 import type { DocumentOcrClient } from "../perception/vlm-client.js";
 import { extractOoxmlAssets } from "./assets.js";
 import { extractPdfAssets, parsePdfNative, renderPdfPage, storePageAsset } from "./pdf.js";

@@ -6,14 +6,14 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createConnectorDatabase } from "../src/infrastructure/connectors/client.js";
 import { createDatabase } from "../src/infrastructure/database/client.js";
 import { connectorCalendarEvents } from "../src/infrastructure/database/schema.js";
-import { ConnectorRepository } from "../src/modules/connectors/repository.js";
-import { ConnectorManager } from "../src/modules/connectors/manager.js";
-import { SyncEngine } from "../src/modules/connectors/sync-engine.js";
-import { nangoConnectorRoutes } from "../src/modules/connectors/routes.js";
-import { ConnectorDomainProjection } from "../src/modules/connectors/domain-projection.js";
-import { parseIcsCalendar, unfoldIcsLines } from "../src/modules/connectors/ics.js";
-import { icsCalendarSyncProvider } from "../src/modules/connectors/sync-providers/ics-calendar.js";
-import { normalizeWebcalUrl } from "../src/modules/connectors/auth-channels/types.js";
+import { ConnectorRepository } from "@nxcore/connectors-module/repository.js";
+import { ConnectorManager } from "@nxcore/connectors-module/manager.js";
+import { SyncEngine } from "@nxcore/connectors-module/sync-engine.js";
+import { nangoConnectorRoutes } from "@nxcore/connectors-module/routes.js";
+import { ConnectorDomainProjection } from "@nxcore/connectors-module/domain-projection.js";
+import { parseIcsCalendar, unfoldIcsLines } from "@nxcore/connectors-module/ics.js";
+import { icsCalendarSyncProvider } from "@nxcore/connectors-module/sync-providers/ics-calendar.js";
+import { normalizeWebcalUrl } from "@nxcore/connectors-module/auth-channels/types.js";
 
 const dirs: string[] = [];
 afterEach(async () => Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true }))));
@@ -179,8 +179,8 @@ describe("sync engine gating", () => {
 
     const connection = await manager.register({
       provider: "ics-calendar",
-      nangoConfigKey: "direct",
-      nangoConnectionId: "webcal:abc",
+      service: "direct",
+      connectionName: "webcal:abc",
       authMethod: "webcal-url",
       credentialsRef: "https://cal.example.com/holidays.ics",
     });
@@ -229,7 +229,7 @@ describe("webcal connection route", () => {
     const created = await app.inject({ method: "POST", url: "/v1/connectors/connections", payload });
     expect(created.statusCode).toBe(201);
     const body = created.json();
-    expect(body).toMatchObject({ provider: "ics-calendar", authMethod: "webcal-url", nangoConfigKey: "direct" });
+    expect(body).toMatchObject({ provider: "ics-calendar", authMethod: "webcal-url", service: "direct" });
     expect(JSON.stringify(body)).not.toContain("sekret");
     // 幂等：同 URL 再订阅返回既有连接（200）。
     const again = await app.inject({ method: "POST", url: "/v1/connectors/connections", payload });

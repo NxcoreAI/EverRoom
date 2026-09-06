@@ -4,12 +4,12 @@ import { join } from "node:path";
 import Fastify from "fastify";
 import { afterEach, describe, expect, it } from "vitest";
 import { createConnectorDatabase } from "../src/infrastructure/connectors/client.js";
-import { ConnectorRepository } from "../src/modules/connectors/repository.js";
-import { ConnectorManager } from "../src/modules/connectors/manager.js";
-import { SyncEngine } from "../src/modules/connectors/sync-engine.js";
-import { nangoConnectorRoutes } from "../src/modules/connectors/routes.js";
-import { feishuWikiSyncProvider } from "../src/modules/connectors/sync-providers/feishu-wiki.js";
-import { apiTokenAuthChannel } from "../src/modules/connectors/auth-channels/types.js";
+import { ConnectorRepository } from "@nxcore/connectors-module/repository.js";
+import { ConnectorManager } from "@nxcore/connectors-module/manager.js";
+import { SyncEngine } from "@nxcore/connectors-module/sync-engine.js";
+import { nangoConnectorRoutes } from "@nxcore/connectors-module/routes.js";
+import { feishuWikiSyncProvider } from "@nxcore/connectors-module/sync-providers/feishu-wiki.js";
+import { apiTokenAuthChannel } from "@nxcore/connectors-module/auth-channels/types.js";
 
 const dirs: string[] = [];
 afterEach(async () => Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true }))));
@@ -109,7 +109,7 @@ describe("generic connection endpoint (api-token)", () => {
     const payload = { provider: "feishu-wiki", credentials: "cli_app:sekret" };
     const created = await app.inject({ method: "POST", url: "/v1/connectors/connections", payload });
     expect(created.statusCode).toBe(201);
-    expect(created.json()).toMatchObject({ provider: "feishu-wiki", authMethod: "api-token", nangoConfigKey: "direct" });
+    expect(created.json()).toMatchObject({ provider: "feishu-wiki", authMethod: "api-token", service: "direct" });
     expect(created.json().credentialsRef).toBeUndefined();
     const again = await app.inject({ method: "POST", url: "/v1/connectors/connections", payload });
     expect(again.statusCode).toBe(200);

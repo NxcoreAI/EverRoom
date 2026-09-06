@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2023"],
+    "types": ["node"],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "verbatimModuleSyntax": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      // 宿主类型注入缝：EverRoomMac 下由根 tsconfig 覆盖为真实路径（见根 tsconfig 注释）
+      "#gateway/config": ["./host-stubs/config.ts"],
+      "#gateway/database": ["./host-stubs/database.ts"],
+      "#gateway/schema": ["./host-stubs/schema.ts"]
+    }
+  },
+  "include": ["**/*.ts"],
+  "exclude": ["node_modules"]
+}

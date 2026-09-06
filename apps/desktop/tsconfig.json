@@ -2,7 +2,11 @@
   "compilerOptions": {
     "target": "ES2022",
     "useDefineForClassFields": true,
-    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ],
     "allowJs": false,
     "skipLibCheck": true,
     "esModuleInterop": true,
@@ -17,10 +21,31 @@
     "jsx": "react-jsx",
     "baseUrl": ".",
     "paths": {
-      "@/*": ["src/renderer/src/*"],
-      "@nxcore/connector-contract": ["../../packages/connector-contract/src/index.ts"]
+      "@/*": [
+        "src/renderer/src/*"
+      ],
+      "@nxcore/connector-contract": [
+        "../../submodules/everroom-connectors/connector-contract/src/index.ts"
+      ],
+      "@nxcore/connectors-module": [
+        "../../submodules/everroom-connectors/gateway-module/index.ts"
+      ],
+      "@nxcore/connectors-module/*": [
+        "../../submodules/everroom-connectors/gateway-module/*.ts"
+      ],
+      "@nxcore/desktop-connector-host": [
+        "../../submodules/everroom-connectors/desktop-host/open-connector/index.ts"
+      ],
+      "@nxcore/desktop-connector-host/*": [
+        "../../submodules/everroom-connectors/desktop-host/open-connector/*.ts"
+      ]
     },
-    "types": ["node"]
+    "types": [
+      "node"
+    ]
   },
-  "include": ["src", "electron.vite.config.ts"]
+  "include": [
+    "src",
+    "electron.vite.config.ts"
+  ]
 }

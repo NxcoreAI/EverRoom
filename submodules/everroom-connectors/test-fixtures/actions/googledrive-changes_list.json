@@ -1,0 +1,9 @@
+{
+  "action": "googledrive.changes.list",
+  "input": { "pageToken": "100", "pageSize": 100, "includeRemoved": true },
+  "output": {
+    "changes": [{ "id": "change-1", "changeType": "file", "removed": false, "fileId": "doc-1", "file": { "id": "doc-1", "name": "Plan", "mimeType": "application/vnd.google-apps.document", "trashed": false } }],
+    "nextPageToken": null,
+    "newStartPageToken": "101"
+  }
+}

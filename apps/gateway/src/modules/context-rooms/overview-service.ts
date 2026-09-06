@@ -15,7 +15,7 @@ import type { GatewayDatabase } from "../../infrastructure/database/client.js";
 import {
   parseConnectorSourceRef,
   type ConnectorSourceRef,
-} from "../connectors/domain-projection.js";
+} from "@nxcore/connectors-module/domain-projection.js";
 import {
   connectorCalendarEvents,
   connectorEmails,

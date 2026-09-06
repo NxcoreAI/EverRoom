@@ -1,0 +1,21 @@
+{
+  "action": "gmail.fetch_emails",
+  "input": { "query": "-in:spam -in:trash", "detail": "full", "maxResults": 100, "pageToken": null, "includeSpamTrash": false },
+  "output": {
+    "messages": [
+      {
+        "messageId": "18c2f4a9e3b1d0e2",
+        "threadId": "18c2f4a9e3b1d0e2",
+        "labelIds": ["INBOX", "UNREAD"],
+        "subject": "Budget approval",
+        "sender": "Zhang San <zhangsan@example.com>",
+        "to": "me@example.com",
+        "messageTimestamp": "1724054400000",
+        "messageText": "Please approve the Q3 budget.",
+        "attachmentList": []
+      }
+    ],
+    "nextPageToken": null,
+    "resultSizeEstimate": 1
+  }
+}

@@ -41,7 +41,7 @@ import {
   sniffAsMarkdown,
   truncateUtf8,
 } from "./normalizers.js";
-import { converterOfExtension } from "./converters.js";
+import { converterOfExtension } from "@nxcore/connectors-module/converters.js";
 import { emptyPolicyLayers, resolvePipelines, validatePipelines, type PolicyLayers } from "./policy.js";
 import {
   connectorCalendarEventToMarkdown,
@@ -49,7 +49,7 @@ import {
   connectorEmailToMarkdown,
   connectorGenericRecordToMarkdown,
   connectorTodoToMarkdown,
-} from "./connector-markdown.js";
+} from "@nxcore/connectors-module/connector-markdown.js";
 import { IngestFilterService, type FilterItem } from "./filter-agent.js";
 
 /**

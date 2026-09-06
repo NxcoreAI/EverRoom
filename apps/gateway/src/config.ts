@@ -9,7 +9,7 @@ import { Value } from "@sinclair/typebox/value";
 import type { KnowledgeRuntimeConfig, MemoryRuntimeConfig } from "@nxcore/agent-runtime-pi";
 // 阶段二：注册表只被用于「读取元数据」（env 名/默认 configKey），provider 文件本身
 // 无副作用依赖，可安全进入 config 层（新增 provider 时 config 解析自动跟随注册表）。
-import { SYNC_PROVIDERS } from "./modules/connectors/sync-providers/index.js";
+import { SYNC_PROVIDERS } from "@nxcore/connectors-module/sync-providers/index.js";
 
 const LogLevelSchema = Type.Union([
   Type.Literal("fatal"),
@@ -104,8 +104,6 @@ const RawConfigSchema = Type.Object(
     asrAliyunOssAccessKeySecret: Type.String(),
     asrAliyunOssStsToken: Type.String(),
     asrAliyunOssPrefix: Type.String({ minLength: 1 }),
-    nangoUrl: Type.String(),
-    nangoSecret: Type.String(),
     nangoConnectorPollMs: Type.Integer({ minimum: 1000 }),
     memoryEnabled: Type.Boolean(),
     memoryBaseUrl: Type.String(),
@@ -283,6 +281,8 @@ export interface OpenConnectorCliConfig {
   executable: string;
   baseUrl: string;
   runtimeToken?: string;
+  /** 本地模式由 supervisor 生成；SaaS 模式由转发层管理（Seam4 授权流用）。 */
+  adminToken?: string;
   configDirectory: string;
   dataDirectory: string;
 }
@@ -358,25 +358,11 @@ export interface GatewayConfig {
   vlm?: VlmConfig | null;
   asrInputDir: string;
   asr: AliyunAsrConfig | null;
+  /** 链路A连接编排（P3 Nango 删除后仅剩编排自身配置；命名遗留 P4 清理）。 */
   nangoConnector?: {
     enabled: boolean;
     databasePath: string;
-    nangoUrl: string;
-    nangoSecret: string;
-    gmailConfigKey: string;
-    outlookConfigKey: string;
-    googleDocsConfigKey: string;
-    notionConfigKey: string;
-    googleCalendarConfigKey: string;
-    googleClientId: string;
-    googleClientSecret: string;
-    notionClientId: string;
-    notionClientSecret: string;
-    outlookClientId: string;
-    outlookClientSecret: string;
     pollingIntervalMs: number;
-    /** 阶段二：注册表驱动的 provider → configKey（新增 provider 免改此接口）。 */
-    providerConfigKeys: Record<string, string>;
   };
   cliConnector?: OpenConnectorCliConfig | null;
   /** Agent 飞书导出用 lark-cli（发行包预装；桌面注入 NXCORE_LARK_CLI_PATH）。 */
@@ -540,8 +526,11 @@ function validateConnectorEndpoint(name: string, value: string): void {
     throw new Error(`Invalid ${name}: expected an absolute HTTP(S) URL`);
   }
   const loopback = url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '::1';
-  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && loopback)) {
-    throw new Error(`Invalid ${name}: plain HTTP is only allowed for loopback addresses`);
+  // 私有网段（10.x/172.16-31.x/192.168.x/*.local）放行明文 HTTP：SaaS 转发层的
+  // dev 内网地址（NXCORE_SAAS_API_URL）经 connector-mode 注入到本配置。
+  const privateNetwork = /^(?:10\.|172\.(?:1[6-9]|2\d|3[01])\.|192\.168\.|.+\.local$)/.test(url.hostname);
+  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && (loopback || privateNetwork))) {
+    throw new Error(`Invalid ${name}: plain HTTP is only allowed for loopback or private network addresses`);
   }
   if (url.username || url.password || url.search || url.hash) {
     throw new Error(`Invalid ${name}: credentials, query, and fragment are not allowed`);
@@ -808,11 +797,9 @@ export function loadConfig(
     asrAliyunOssAccessKeySecret: env.NXCORE_ASR_ALIYUN_OSS_ACCESS_KEY_SECRET?.trim() ?? "",
     asrAliyunOssStsToken: env.NXCORE_ASR_ALIYUN_OSS_STS_TOKEN?.trim() ?? "",
     asrAliyunOssPrefix: env.NXCORE_ASR_ALIYUN_OSS_PREFIX?.trim() ?? "nxcore-asr",
-    nangoUrl: firstEnvValue(env, "NXCORE_NANGO_CONNECTOR_URL", "NXCORE_NANGO_URL"),
-    nangoSecret: firstEnvValue(env, "NXCORE_NANGO_CONNECTOR_SECRET", "NXCORE_NANGO_SECRET"),
     nangoConnectorPollMs: parsePositiveInteger(
-      "NXCORE_NANGO_CONNECTOR_POLL_MS",
-      firstEnvValue(env, "NXCORE_NANGO_CONNECTOR_POLL_MS", "NXCORE_CONNECTOR_POLL_MS") || "300000",
+      "NXCORE_CONNECTOR_POLL_MS",
+      env.NXCORE_CONNECTOR_POLL_MS?.trim() || "300000",
     ),
     memoryEnabled: env.NXCORE_MEMORY_ENABLED == null
       ? false
@@ -991,8 +978,6 @@ export function loadConfig(
       throw new Error(`Aliyun OSS configuration requires: ${missing.join(", ")}`);
     }
   }
-  if (Boolean(rawConfig.nangoUrl) !== Boolean(rawConfig.nangoSecret)) throw new Error("Nango connector configuration requires both NXCORE_NANGO_CONNECTOR_URL and NXCORE_NANGO_CONNECTOR_SECRET");
-  if (rawConfig.nangoUrl) { const u=new URL(rawConfig.nangoUrl); if (u.protocol!=="https:" && !(u.protocol==="http:" && ["localhost","127.0.0.1","::1"].includes(u.hostname))) throw new Error("NXCORE_NANGO_CONNECTOR_URL must use HTTPS except for loopback development"); }
   if (Boolean(rawConfig.notificationBridgeUrl)!==Boolean(rawConfig.notificationBridgeToken)) throw new Error("Notification bridge configuration requires URL and token together");
   if(rawConfig.notificationBridgeUrl){const u=new URL(rawConfig.notificationBridgeUrl);if(u.protocol!=="http:"||!["localhost","127.0.0.1","::1"].includes(u.hostname))throw new Error("NXCORE_NOTIFICATION_BRIDGE_URL must be a loopback HTTP endpoint");}
 
@@ -1198,32 +1183,10 @@ export function loadConfig(
         }
       : null,
     nangoConnector: {
-      enabled: Boolean(rawConfig.nangoUrl),
+      // P3：Nango runtime 删除——链路A编排恒可用（executor 走 oo）。
+      enabled: true,
       databasePath: join(dataDir,"database","connectors.sqlite"),
-      nangoUrl: rawConfig.nangoUrl,
-      nangoSecret: rawConfig.nangoSecret,
-      gmailConfigKey: firstEnvValue(env, "NXCORE_NANGO_CONNECTOR_GMAIL_CONFIG_KEY", "NXCORE_NANGO_GMAIL_CONFIG_KEY") || "google-mail",
-      outlookConfigKey: firstEnvValue(env, "NXCORE_NANGO_CONNECTOR_OUTLOOK_CONFIG_KEY", "NXCORE_NANGO_OUTLOOK_CONFIG_KEY") || "microsoft-mail",
-      googleDocsConfigKey: firstEnvValue(env, "NXCORE_NANGO_CONNECTOR_GOOGLE_DOCS_CONFIG_KEY") || "google-drive",
-      notionConfigKey: firstEnvValue(env, "NXCORE_NANGO_CONNECTOR_NOTION_CONFIG_KEY") || "notion",
-      googleCalendarConfigKey: firstEnvValue(env, "NXCORE_NANGO_CONNECTOR_GOOGLE_CALENDAR_CONFIG_KEY") || "google-calendar",
-      googleClientId: firstEnvValue(env, "NXCORE_NANGO_CONNECTOR_GOOGLE_CLIENT_ID", "NXCORE_NANGO_GOOGLE_CLIENT_ID"),
-      googleClientSecret: firstEnvValue(env, "NXCORE_NANGO_CONNECTOR_GOOGLE_CLIENT_SECRET", "NXCORE_NANGO_GOOGLE_CLIENT_SECRET"),
-      notionClientId: firstEnvValue(env, "NXCORE_NANGO_CONNECTOR_NOTION_CLIENT_ID", "NXCORE_NANGO_NOTION_CLIENT_ID"),
-      notionClientSecret: firstEnvValue(env, "NXCORE_NANGO_CONNECTOR_NOTION_CLIENT_SECRET", "NXCORE_NANGO_NOTION_CLIENT_SECRET"),
-      outlookClientId: firstEnvValue(env, "NXCORE_NANGO_CONNECTOR_OUTLOOK_CLIENT_ID", "NXCORE_NANGO_OUTLOOK_CLIENT_ID"),
-      outlookClientSecret: firstEnvValue(env, "NXCORE_NANGO_CONNECTOR_OUTLOOK_CLIENT_SECRET", "NXCORE_NANGO_OUTLOOK_CLIENT_SECRET"),
       pollingIntervalMs: rawConfig.nangoConnectorPollMs,
-      // 阶段二：configKey 由 SyncProvider 注册表驱动（env 覆盖 + 默认值）；
-      // 上面的 legacy 命名字段保留为既有消费方（bootstrap/授权装配）的兼容出口。
-      providerConfigKeys: Object.fromEntries(
-        SYNC_PROVIDERS.map((definition) => [
-          definition.provider,
-          firstEnvValue(env, ...(definition.auth.nango?.configKeyEnv ?? []))
-            || definition.auth.nango?.configKeyDefault
-            || "",
-        ]),
-      ) as Record<string, string>,
     },
     cliConnector: cliConnectorUrl
       ? {
@@ -1231,6 +1194,9 @@ export function loadConfig(
           baseUrl: cliConnectorUrl.replace(/\/$/, ''),
           ...(env.NXCORE_CLI_CONNECTOR_RUNTIME_TOKEN?.trim()
             ? { runtimeToken: env.NXCORE_CLI_CONNECTOR_RUNTIME_TOKEN.trim() }
+            : {}),
+          ...(env.NXCORE_CLI_CONNECTOR_ADMIN_TOKEN?.trim()
+            ? { adminToken: env.NXCORE_CLI_CONNECTOR_ADMIN_TOKEN.trim() }
             : {}),
           configDirectory: env.NXCORE_CLI_CONNECTOR_CONFIG_DIR?.trim() || join(dataDir, 'open-connector', 'oo-config'),
           dataDirectory: env.NXCORE_CLI_CONNECTOR_DATA_DIR?.trim() || join(dataDir, 'open-connector', 'oo-data'),

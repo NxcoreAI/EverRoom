@@ -1,0 +1,18 @@
+{
+  "$comment": "POST /v1/actions/{service}.{action} 响应封套（@oomol-lab/open-connector@1.3.5 src/server/api/runtime-api.ts）",
+  "success": {
+    "success": true,
+    "message": "OK",
+    "data": "<action output object>",
+    "meta": { "executionId": "uuid", "actionId": "gmail.fetch_emails", "auditPersisted": true }
+  },
+  "failure": {
+    "success": false,
+    "message": "Action execution failed.",
+    "data": null,
+    "errorCode": "provider_error",
+    "meta": { "executionId": "uuid", "actionId": "gmail.fetch_emails", "auditPersisted": false }
+  },
+  "errorCodes": ["invalid_input", "unknown_action", "provider_error", "connection_not_found", "oauth_refresh_unavailable", "idempotency_key_conflict"],
+  "connectionNameSources": ["body.connectionName", "body.alias", "header x-oomol-connector-alias", "query connectionName|alias"]
+}

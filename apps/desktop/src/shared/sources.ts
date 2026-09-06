@@ -835,7 +835,7 @@ export interface NxcoreDesktopApi {
     providers(): Promise<ConnectorProvidersResponse>
     startAuthorization(provider: string): Promise<ConnectorAuthorizationAttempt>
     authorizationStatus(id: string): Promise<ConnectorAuthorizationAttempt>
-    registerConnection(input: { provider: string; nangoConfigKey: string; nangoConnectionId: string; filters?: Record<string, unknown> }): Promise<ConnectorConnection>
+    registerConnection(input: { provider: string; service: string; connectionName: string; filters?: Record<string, unknown> }): Promise<ConnectorConnection>
     createWebcalSubscription(url: string): Promise<ConnectorConnection>
     disableConnection(id: string): Promise<void>
     enableConnection(id: string): Promise<void>
@@ -854,6 +854,8 @@ export interface NxcoreDesktopApi {
     execute(input: OpenConnectorExecutionInput): Promise<OpenConnectorCommandResult>
     cancel(requestId: string): Promise<boolean>
     openConsole(): Promise<void>
+    mode(): Promise<{ mode: 'saas' | 'local'; switchedAt: string | null }>
+    setMode(mode: 'saas' | 'local'): Promise<{ mode: 'saas' | 'local'; switchedAt: string | null }>
     onEvent(listener: (event: OpenConnectorCommandEvent) => void): () => void
   }
   agentAuth: {
