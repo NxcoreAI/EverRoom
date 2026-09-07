@@ -82,6 +82,18 @@ jobs:
             exit 1
           }
 
+      - name: Configure private git credentials
+        shell: bash
+        env:
+          VYITEC_USER: ${{ secrets.VYITEC_USER }}
+          VYITEC_TOKEN: ${{ secrets.VYITEC_TOKEN }}
+        run: |
+          cred_dir="$RUNNER_TEMP/vyitec-creds"
+          mkdir -p "$cred_dir"
+          printf 'protocol=https\nhost=code.vyitec.com\nusername=%s\npassword=%s\n' \
+            "$VYITEC_USER" "$VYITEC_TOKEN" > "$cred_dir/creds"
+          git config --global credential.helper "!f() { test \"$1\" = get && cat \"$RUNNER_TEMP/vyitec-creds/creds\"; }; f"
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
@@ -281,6 +293,18 @@ jobs:
             echo "Tagged commit must be on main, dev, or alpha" >&2
             exit 1
           }
+
+      - name: Configure private git credentials
+        shell: bash
+        env:
+          VYITEC_USER: ${{ secrets.VYITEC_USER }}
+          VYITEC_TOKEN: ${{ secrets.VYITEC_TOKEN }}
+        run: |
+          cred_dir="$RUNNER_TEMP/vyitec-creds"
+          mkdir -p "$cred_dir"
+          printf 'protocol=https\nhost=code.vyitec.com\nusername=%s\npassword=%s\n' \
+            "$VYITEC_USER" "$VYITEC_TOKEN" > "$cred_dir/creds"
+          git config --global credential.helper "!f() { test \"$1\" = get && cat \"$RUNNER_TEMP/vyitec-creds/creds\"; }; f"
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
