@@ -360,6 +360,7 @@ export interface CloudAccountStatus {
   registration?: {
     accountCreated: boolean
     invitationApplied: boolean
+    invitationRejected?: 'pro_plan_active'
   }
   /** 设备额度已满时的准入挑战：renderer 展示设备列表并选择替换。 */
   admission?: {
