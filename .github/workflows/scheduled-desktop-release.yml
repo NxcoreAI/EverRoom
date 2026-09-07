@@ -48,10 +48,10 @@ jobs:
       NXCORE_BROWSER_EXTENSION_ID: ${{ vars.NXCORE_BROWSER_EXTENSION_ID }}
 
     steps:
-      - name: Check out main
+      - name: Check out release branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: main
+          ref: ${{ inputs.channel == 'alpha' && 'alpha' || 'dev' }}
           fetch-depth: 0
           persist-credentials: false
           submodules: recursive
@@ -110,11 +110,7 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-          # Include the Nango submodule lockfile so the shared pnpm store also
-          # persists the staging deps downloaded by prepare-nango-runtime.mjs.
-          cache-dependency-path: |
-            pnpm-lock.yaml
-            apps/gateway/src/modules/connector/package-lock.json
+          cache-dependency-path: pnpm-lock.yaml
 
       - name: Install dependencies
         if: steps.candidate.outputs.pending == 'true'
@@ -125,7 +121,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.npm
-          key: npm-tarballs-${{ runner.os }}-${{ hashFiles('apps/gateway/src/modules/connector/package-lock.json', 'apps/desktop/vendor/genoffice/package-lock.json') }}
+          key: npm-tarballs-${{ runner.os }}-${{ hashFiles('apps/desktop/vendor/genoffice/package-lock.json') }}
           restore-keys: npm-tarballs-${{ runner.os }}-
 
       - name: Cache Rust build for xlsx sidecar
@@ -180,7 +176,7 @@ jobs:
             exit 0
           fi
           message="EverRoom 每日发布检查失败
-          分支：main
+          分支：${{ inputs.channel == 'alpha' && 'alpha' || 'dev' }}
           提交：$(git log -1 --pretty='%h %s (%an)')
           日志：https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           payload="$(jq -n --arg text "$message" '{msg_type:"text",content:{text:$text}}')"
