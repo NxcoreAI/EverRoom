@@ -6,9 +6,10 @@ import type { GatewaySupervisor } from '../src/main/gateway/gateway-supervisor'
 function buildBridge(
   startAuthorization: (service: string) => Promise<{ authorizationUrl: string }>,
   ooSession: () => { baseUrl: string; token: string } | null,
+  oauthConfigs: () => Promise<Array<{ service: string; displayName: string | null; iconUrl: string | null }>> = async () => [],
 ): { bridge: SaasConnectorBridge; openExternal: ReturnType<typeof vi.fn> } {
   const openExternal = vi.fn(async () => undefined)
-  const bridge = new SaasConnectorBridge({} as GatewaySupervisor, openExternal, { startAuthorization, ooSession })
+  const bridge = new SaasConnectorBridge({} as GatewaySupervisor, openExternal, { startAuthorization, ooSession, oauthConfigs })
   return { bridge, openExternal }
 }
 
@@ -92,5 +93,49 @@ describe('SaasConnectorBridge authorization flow', () => {
 
     // 未知 id 走 gateway 原路径（委托父类）。
     await expect(bridge.authorizationStatus('nango-flow-id').catch((error: unknown) => error)).resolves.toBeDefined()
+  })
+
+  it('translates provider names to oo service names across the authorization chain', async () => {
+    const startAuthorization = vi.fn(async () => ({ authorizationUrl: 'https://accounts.google.com/x' }))
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ success: true, data: [{ service: 'googledrive' }] }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const { bridge } = buildBridge(startAuthorization, () => ({
+      baseUrl: 'http://127.0.0.1:3000',
+      token: 'oct_user-token',
+    }))
+    const register = vi.spyOn(bridge, 'registerConnection').mockResolvedValue({ id: 'conn-1' } as never)
+
+    await bridge.startAuthorization('google-docs')
+    // SaaS/oo 按 oo service 名索引（Google 系无连字符），attempt 仍用 provider 名。
+    expect(startAuthorization).toHaveBeenCalledWith('googledrive')
+
+    const started = await bridge.startAuthorization('google-docs')
+    await bridge.authorizationStatus(started.id)
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://127.0.0.1:3000/v1/apps/services/googledrive',
+      expect.objectContaining({ headers: { authorization: 'Bearer oct_user-token' } }),
+    )
+    expect(register).toHaveBeenCalledWith({ provider: 'google-docs', service: 'googledrive', connectionName: 'default' })
+  })
+})
+
+describe('SaasConnectorBridge.configuredProviders', () => {
+  it('maps oo service names to registry provider names and drops unknown services', async () => {
+    const { bridge } = buildBridge(async () => ({ authorizationUrl: 'https://x.example/x' }), () => null, async () => [
+      { service: 'gmail', displayName: 'Gmail', iconUrl: null },
+      { service: 'googledrive', displayName: 'Google Drive', iconUrl: null },
+      { service: 'googlecalendar', displayName: 'Google Calendar', iconUrl: null },
+      { service: 'discord', displayName: 'Discord', iconUrl: null },
+    ])
+
+    await expect(bridge.configuredProviders()).resolves.toEqual(['gmail', 'google-docs', 'google-calendar'])
+  })
+
+  it('propagates SaaS failures so the renderer can fall back', async () => {
+    const { bridge } = buildBridge(async () => ({ authorizationUrl: 'https://x.example/x' }), () => null, async () => {
+      throw new Error('登录已过期，请重新登录。')
+    })
+
+    await expect(bridge.configuredProviders()).rejects.toThrow('登录已过期，请重新登录。')
   })
 })

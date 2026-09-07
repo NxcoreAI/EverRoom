@@ -217,6 +217,7 @@ const api: NxcoreDesktopApi = {
     runtimeStatus: () => invokeQuietly('nango-connector:runtime-status'),
     status: () => invoke('nango-connector:status'),
     providers: () => invoke('nango-connector:providers'),
+    oauthConfigs: () => invokeQuietly<string[] | null>('nango-connector:oauth-configs'),
     startAuthorization: (provider) => invoke('nango-connector:start-authorization', provider),
     authorizationStatus: (id) => invoke('nango-connector:authorization-status', id),
     registerConnection: (input) => invoke('nango-connector:register-connection', input),

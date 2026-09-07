@@ -834,6 +834,8 @@ export interface NxcoreDesktopApi {
     runtimeStatus(): Promise<NangoRuntimeStatus>
     status(): Promise<ConnectorStatus>
     providers(): Promise<ConnectorProvidersResponse>
+    /** SaaS 已配置 OAuth 的 provider 名单；null = 不可用（local 模式/未登录/旧主进程），渲染层回落注册表全量。 */
+    oauthConfigs?(): Promise<string[] | null>
     startAuthorization(provider: string): Promise<ConnectorAuthorizationAttempt>
     authorizationStatus(id: string): Promise<ConnectorAuthorizationAttempt>
     registerConnection(input: { provider: string; service: string; connectionName: string; filters?: Record<string, unknown> }): Promise<ConnectorConnection>

@@ -55,6 +55,7 @@ export function ConnectGrid({
   providers,
   onWebcalSubscription,
   connectedProviders,
+  configuredProviders,
 }: {
   busy: boolean
   limit?: number
@@ -74,37 +75,44 @@ export function ConnectGrid({
   onWebcalSubscription?: () => void
   /** 已有连接的 provider 集合：这些条目从"待连接"中隐藏（OAuth 单槽位,换账号从已连接卡片的「更换账号」进）。 */
   connectedProviders?: ReadonlySet<string>
+  /** SaaS 已配置 OAuth 的 provider 集合：非 null 时云端组只显示这些；null（未登录/local 模式/拉取失败）回落注册表展示。 */
+  configuredProviders?: ReadonlySet<string> | null
 }) {
   const { t } = useLocale()
   const metadata = providers ?? FALLBACK_CONNECTOR_PROVIDERS
-  const oauthFeeds = metadata.filter((item) =>
-    item.authChannel === 'nango-oauth' && !item.comingSoon && (item.category === 'mail' || item.category === 'calendar'))
+  const cloudOAuthItem = (item: ConnectorProviderSummary): ConnectItem => ({
+    key: `oauth-${item.provider}`,
+    icon: (item.iconKey as SourceIconKind) ?? 'web-page',
+    label: item.label,
+    group: 'cloud',
+    provider: item.provider,
+    onSelect: () => onConnectorProvider?.(item.provider),
+  })
+  const oauthPool = metadata.filter((item) => item.authChannel === 'nango-oauth' && !item.comingSoon)
   const webcalFeeds = metadata.filter((item) => item.authChannel === 'webcal-url' && !item.comingSoon)
+  const webcalItems: ConnectItem[] = onWebcalSubscription
+    ? webcalFeeds.map((item) => ({
+        key: `webcal-${item.provider}`,
+        icon: 'ics-calendar' as SourceIconKind,
+        glyph: true,
+        label: t('surface:connectSourceMenu.webcalSubscription'),
+        group: 'cloud' as const,
+        provider: item.provider,
+        alwaysVisible: true,
+        onSelect: onWebcalSubscription,
+      }))
+    : []
+  const oauthItems: ConnectItem[] = configuredProviders
+    ? // SaaS 已配置名单驱动：全类别 OAuth 源（注册表本身含 google-docs/notion，无需硬编码）。
+      oauthPool.filter((item) => configuredProviders.has(item.provider)).map(cloudOAuthItem)
+    : // 名单不可用：mail/calendar 注册表项 + 硬编码 docs 两条（原行为）。
+      [
+          { key: 'google-docs', icon: 'google-docs', label: 'Google Docs', group: 'cloud', provider: 'google-docs', onSelect: () => onConnectorProvider?.('google-docs') },
+          { key: 'notion', icon: 'notion', label: 'Notion', group: 'cloud', provider: 'notion', onSelect: () => onConnectorProvider?.('notion') },
+          ...oauthPool.filter((item) => item.category === 'mail' || item.category === 'calendar').map(cloudOAuthItem),
+        ]
   const cloud: ConnectItem[] = connectorsEnabled && onConnectorProvider
-    ? [
-        { key: 'google-docs', icon: 'google-docs', label: 'Google Docs', group: 'cloud', provider: 'google-docs', onSelect: () => onConnectorProvider('google-docs') },
-        { key: 'notion', icon: 'notion', label: 'Notion', group: 'cloud', provider: 'notion', onSelect: () => onConnectorProvider('notion') },
-        // 注册表驱动：mail/calendar 类 OAuth 源（新增 provider 自动出现）。
-        ...oauthFeeds.map((item) => ({
-          key: `oauth-${item.provider}`,
-          icon: (item.iconKey as SourceIconKind) ?? 'web-page',
-          label: item.label,
-          group: 'cloud' as const,
-          provider: item.provider,
-          onSelect: () => onConnectorProvider(item.provider),
-        })),
-        // webcal-url 通道：订阅任意网站发布的日历（无 OAuth）。
-        ...(onWebcalSubscription ? webcalFeeds.map((item) => ({
-          key: `webcal-${item.provider}`,
-          icon: 'ics-calendar' as SourceIconKind,
-          glyph: true,
-          label: t('surface:connectSourceMenu.webcalSubscription'),
-          group: 'cloud' as const,
-          provider: item.provider,
-          alwaysVisible: true,
-          onSelect: onWebcalSubscription,
-        })) : []),
-      ]
+    ? [...oauthItems, ...webcalItems]
     : [
         { key: 'google-docs', icon: 'google-docs', label: 'Google Docs', group: 'cloud', onSelect: onGoogleDocs },
         { key: 'notion', icon: 'notion', label: 'Notion', group: 'cloud', onSelect: onNotion },
