@@ -604,6 +604,9 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     knowledgeService.claimRoomEntities(roomId, entities));
   roomDuplicateService.initialize();
   const cliConnectorSyncService = new ConnectorSyncService(db, config, app.log);
+  // 统一链路（ConnectorManager）接管 gmail 同步后，旧链路 managed-gmail 任务整体让位：
+  // 双链路对同一邮箱各自全量会互抢 Gmail 250 units/min 的用户配额（connector-unification）。
+  cliConnectorSyncService.setManagedGmailGate(() => nangoConnectorManager.hasActiveConnection("gmail"));
   let cliConnectorMarkdownService: ConnectorMarkdownService | null = null;
   registerConnectorSyncAgent(agentResolver, config, cliConnectorSyncService);
   if (agentResolver.has(BUILTIN_AGENT_IDS.connectorSync)) {
@@ -839,7 +842,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
         updated_at: item.updatedAt,
       }));
     },
-  }, cliConnectorSyncService, nangoAgentTools);
+  }, cliConnectorSyncService);
   const agentRuntime = agentResolver.resolve(BUILTIN_AGENT_IDS.primary);
   const localAgentRuntimeRegistry = new LocalAgentRuntimeRegistry();
   app.log.info(
