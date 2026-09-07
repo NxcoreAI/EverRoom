@@ -11,9 +11,6 @@ import { bundledAgentDefinitionsDir, type GatewayConfig } from "../../config.js"
 import type { DocumentMcpHost } from "../documents/mcp-host.js";
 import { createDocumentPiToolsWithRoomBindings } from "../documents/pi-tools.js";
 import { createOpenConnectorPiTools } from "@nxcore/connectors-module/open-connector-tools.js";
-import { createConnectorDataPiTools } from "@nxcore/connectors-module/pi-tools.js";
-import { createConnectorSyncAgentTools } from "@nxcore/connectors-module/agent-tools.js";
-import type { ConnectorSyncService } from "@nxcore/connectors-module/service.js";
 import type { FormatMappingService } from "../connectors/format-mapping-service.js";
 import type { ConnectorManager } from "@nxcore/connectors-module/manager.js";
 import type { DiaryAgentGenerator } from "../diary/agent-generator.js";
@@ -101,7 +98,6 @@ export function createAgentRuntime(
   config: GatewayConfig,
   mcpHost: DocumentMcpHost,
   knowledge?: AgentRuntimeIntegrationOptions,
-  connectorSync?: ConnectorSyncService,
 ): AgentRuntime {
   const bundle = builtin(BUILTIN_AGENT_IDS.primary);
   if (config.agentRuntime === "fake") return new FakeAgentRuntime();
@@ -123,9 +119,7 @@ export function createAgentRuntime(
     tools: [
       ...(knowledge?.tools ?? []),
       ...createDocumentPiToolsWithRoomBindings(mcpHost, routedRoomByRun),
-      ...(config.cliConnectorAgentMode === "local" && connectorSync
-        ? createConnectorDataPiTools(connectorSync, config.cliConnectorSyncOwnerId ?? "local-user")
-        : config.cliConnector ? createOpenConnectorPiTools(config.cliConnector, undefined, knowledge?.externalCalls) : []),
+      ...(config.cliConnector ? createOpenConnectorPiTools(config.cliConnector, undefined, knowledge?.externalCalls) : []),
       ...(config.webSearch && knowledge?.agentResolver
         ? createWebSearchPiTools(knowledge.agentResolver, knowledge.externalCalls)
         : []),
@@ -156,28 +150,6 @@ export function createAgentRuntime(
           }),
         }
       : {}),
-  });
-}
-
-export function createConnectorSyncAgentRuntime(
-  config: GatewayConfig,
-  connectorSync: ConnectorSyncService,
-): AgentRuntime | null {
-  const bundle = builtin(BUILTIN_AGENT_IDS.connectorSync);
-  if (config.agentRuntime === "fake" || !isPiRuntimeConfigured(config.backgroundPi) || !config.cliConnector) return null;
-  const { memory: _memory, ...pi } = config.backgroundPi!;
-  return new PiAgentRuntime({
-    ...withAgentDirectories(config, BUILTIN_AGENT_IDS.connectorSync, {
-      ...pi,
-      includeBashTool: false,
-      maxToolCallsPerRun: 128,
-      runtimeRole: "internal",
-      skillsEnabled: true,
-      skillPrompts: bundle.skillPrompts,
-    }),
-    systemPrompt: bundle.systemPrompt,
-  }, {
-    tools: createConnectorSyncAgentTools(config.cliConnector, connectorSync),
   });
 }
 
@@ -430,7 +402,6 @@ export function registerPrimaryAgent(
   config: GatewayConfig,
   mcpHost: DocumentMcpHost,
   integrations: AgentRuntimeIntegrationOptions,
-  connectorSync?: ConnectorSyncService,
 ): void {
   const bundle = builtin(BUILTIN_AGENT_IDS.primary);
   resolver.register(definition(config, {
@@ -441,25 +412,7 @@ export function registerPrimaryAgent(
     config,
     mcpHost,
     { ...integrations, agentResolver: resolver },
-    connectorSync,
   ));
-}
-
-export function registerConnectorSyncAgent(
-  resolver: AgentResolver,
-  config: GatewayConfig,
-  connectorSync: ConnectorSyncService,
-): void {
-  const bundle = builtin(BUILTIN_AGENT_IDS.connectorSync);
-  if (config.agentRuntime !== "fake" && (!config.backgroundPi || !config.cliConnector)) return;
-  resolver.register(definition(config, {
-    id: BUILTIN_AGENT_IDS.connectorSync,
-    name: bundle.name,
-    description: bundle.description,
-  }), () => createConnectorSyncAgentRuntime(config, connectorSync)
-    // 降级占位：注册守卫放行了但工厂因 AI 未配置返回 null（fake 模式除外），
-    // 同步请求得到 runtime_config_not_ready 而不是假成功。
-    ?? new UnconfiguredAgentRuntime(BUILTIN_AGENT_IDS.connectorSync));
 }
 
 export function createConnectorMapperAgentRuntime(

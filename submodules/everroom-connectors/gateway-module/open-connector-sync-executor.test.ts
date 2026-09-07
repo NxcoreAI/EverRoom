@@ -12,7 +12,9 @@ describe("open-connector-sync-executor URL 路由", () => {
     )).toEqual({
       service: "gmail",
       action: "fetch_emails",
-      input: { detail: "full", maxResults: 100, query: "-in:spam -in:trash" },
+      // detail=ids：oo 的 ids 分支不逐封 hydration（一页一个 list action）；
+      // 全文由适配器逐封 pace 着取，避免单 action 内 100 次上游调用撞 120s 超时。
+      input: { detail: "ids", maxResults: 100, query: "-in:spam -in:trash" },
     });
 
     expect(routeProxyUrlForTest(
@@ -114,6 +116,69 @@ describe("open-connector-sync-executor URL 路由", () => {
       .toEqual({ service: "outlook", action: "get_message", input: { messageId: "abc" } });
   });
 
+  it("routes outlook folder-scoped delta to sync_messages, keeping tokens in deltaLink", () => {
+    // 初始全量枚举（无 token）
+    expect(routeProxyUrlForTest(
+      "https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages/delta",
+      "GET",
+    )).toEqual({
+      service: "outlook",
+      action: "sync_messages",
+      input: {
+        mailFolderId: "inbox",
+        deltaLink: "https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages/delta",
+      },
+    });
+
+    // deltaLink/skiptoken 续拉（token 留在完整 URL 内透传）
+    const resume = "https://graph.microsoft.com/v1.0/me/mailFolders/AAEx%3D/messages/delta?$deltatoken=abc";
+    expect(routeProxyUrlForTest(resume, "GET")).toEqual({
+      service: "outlook",
+      action: "sync_messages",
+      input: { mailFolderId: "AAEx=", deltaLink: resume },
+    });
+
+    // Graph 的 OData 括号形式 mailFolders('{id}')
+    expect(routeProxyUrlForTest(
+      "https://graph.microsoft.com/v1.0/me/mailFolders('AAEx%3D')/messages/delta?$skiptoken=n1",
+      "GET",
+    )).toMatchObject({
+      service: "outlook",
+      action: "sync_messages",
+      input: { mailFolderId: "AAEx=" },
+    });
+  });
+
+  it("routes outlook folder-scoped message list and child folders", () => {
+    expect(routeProxyUrlForTest(
+      "https://graph.microsoft.com/v1.0/me/mailFolders/sentitems/messages?$top=50&$select=id,subject",
+      "GET",
+    )).toEqual({
+      service: "outlook",
+      action: "list_messages",
+      input: { mailFolderId: "sentitems", top: 50, select: ["id", "subject"] },
+    });
+
+    expect(routeProxyUrlForTest(
+      "https://graph.microsoft.com/v1.0/me/mailFolders/inbox/childFolders?includeHiddenFolders=false",
+      "GET",
+    )).toEqual({
+      service: "outlook",
+      action: "list_mail_folders",
+      input: { parentFolderId: "inbox", includeHiddenFolders: false },
+    });
+
+    // 根级文件夹列表（discoverScopes 起点）
+    expect(routeProxyUrlForTest(
+      "https://graph.microsoft.com/v1.0/me/mailFolders?includeHiddenFolders=false",
+      "GET",
+    )).toEqual({
+      service: "outlook",
+      action: "list_mail_folders",
+      input: { includeHiddenFolders: false },
+    });
+  });
+
   it("returns null for unknown hosts and paths", () => {
     expect(routeProxyUrlForTest("https://example.com/api", "GET")).toBeNull();
     expect(routeProxyUrlForTest("https://gmail.googleapis.com/gmail/v1/users/me/labels", "GET")).toBeNull();
@@ -172,5 +237,30 @@ describe("open-connector-sync-executor 输出翻译回 REST 形状", () => {
     // 适配器消费 value/@odata.nextLink（Graph 信封）；格式映射的输入随之稳定。
     expect(adapted.value).toEqual([{ id: "o1", subject: "Re: Budget" }]);
     expect(adapted["@odata.nextLink"]).toBe("https://graph.microsoft.com/v1.0/me/messages?$skipToken=n1");
+  });
+
+  it("maps oo outlook sync_messages delta envelope back to the Graph shape", () => {
+    const page = adaptActionOutputForSyncAdapter("outlook", "sync_messages", {
+      messages: [{ id: "o1" }, { id: "o2", "@removed": { reason: "deleted" } }],
+      nextLink: null,
+      deltaLink: "https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages/delta?$deltatoken=t1",
+    }) as { value: unknown[]; "@odata.nextLink"?: string; "@odata.deltaLink"?: string };
+
+    expect(page.value).toHaveLength(2);
+    expect(page["@odata.nextLink"]).toBeUndefined();
+    expect(page["@odata.deltaLink"]).toBe(
+      "https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages/delta?$deltatoken=t1",
+    );
+  });
+
+  it("maps oo outlook list_mail_folders envelope back to the Graph shape", () => {
+    const page = adaptActionOutputForSyncAdapter("outlook", "list_mail_folders", {
+      mailFolders: [{ id: "f1", displayName: "Inbox" }],
+      nextLink: "https://graph.microsoft.com/v1.0/me/mailFolders?$skipToken=n1",
+    }) as { value: unknown[]; "@odata.nextLink"?: string };
+
+    // discoverScopes 消费 value/@odata.nextLink。
+    expect(page.value).toEqual([{ id: "f1", displayName: "Inbox" }]);
+    expect(page["@odata.nextLink"]).toBe("https://graph.microsoft.com/v1.0/me/mailFolders?$skipToken=n1");
   });
 });

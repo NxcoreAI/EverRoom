@@ -113,9 +113,12 @@ export class SyncEngine {
       service?: string;
       providerScopeId: string;
       sourceCursor: string | null;
+      continuation?: string | null;
     },
     connection: ConnectorConnection,
     mode: Parameters<ConnectorExecutor["pull"]>[1],
+    /** 全量断点续传游标（仅 full；provider 自解释）。 */
+    continuation?: string | null,
   ): AsyncGenerator<PullPage> {
     const definition = syncProviderOf(scope.provider);
     if (!definition) throw new Error(`unknown_connector_provider: ${scope.provider}`);
@@ -140,6 +143,7 @@ export class SyncEngine {
         provider: scope.provider,
         connectionName: scope.connectionName,
         ...(scope.service ? { service: scope.service } : {}),
+        continuation: continuation ?? null,
       },
       mode,
     );

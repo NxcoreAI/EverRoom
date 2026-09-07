@@ -63,6 +63,14 @@ export class NangoConnectorGatewayBridge {
     return this.request('/v1/nango-connectors/providers')
   }
 
+  /**
+   * SaaS 侧已配置 OAuth 的 provider 名单（「待连接」网格只显示这些）。
+   * 仅 saas 连接层有实现；local 模式返回 null，渲染层回落注册表全量展示。
+   */
+  configuredProviders(): Promise<string[] | null> {
+    return Promise.resolve(null)
+  }
+
   /** WebCal/ICS 日历订阅（webcal-url 通道）：同 URL 幂等，网关不回显 URL 令牌。 */
   createWebcalSubscription(url: string, provider = 'ics-calendar'): Promise<ConnectorConnection> {
     const trimmed = url.trim()
@@ -160,6 +168,16 @@ export class NangoConnectorGatewayBridge {
     if (type !== 'mail' && type !== 'calendar') throw new Error('无效的数据记录类型。')
     const result = await this.request<{ items?: ConnectorJsonRecord[] } | ConnectorJsonRecord[]>(`/v1/nango-connectors/connections/${this.id(connectionId)}/records`, { params: { type, ...page } })
     return Array.isArray(result) ? result : (result.items ?? [])
+  }
+
+  /** 连接的已同步记录总数（records 端点 total；limit=1 只为取计数）。 */
+  async recordTotals(connectionId: string): Promise<{ mail: number; calendar: number }> {
+    const total = (type: 'mail' | 'calendar') =>
+      this.request<{ items?: ConnectorJsonRecord[]; total?: number }>(`/v1/nango-connectors/connections/${this.id(connectionId)}/records`, { params: { type, limit: 1 } })
+        .then((result) => (Array.isArray(result) ? 0 : result.total ?? 0))
+        .catch(() => 0)
+    const [mail, calendar] = await Promise.all([total('mail'), total('calendar')])
+    return { mail, calendar }
   }
 
   armFault(point: string): Promise<void> {

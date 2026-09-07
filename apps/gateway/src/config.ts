@@ -25,10 +25,6 @@ const AgentRuntimeSchema = Type.Union([
   Type.Literal("fake"),
   Type.Literal("pi"),
 ]);
-const CliConnectorAgentModeSchema = Type.Union([
-  Type.Literal("direct"),
-  Type.Literal("local"),
-]);
 const AsrProviderSchema = Type.Union([Type.Literal("disabled"), Type.Literal("aliyun")]);
 const AiApiSchema = Type.Union([
   Type.Literal("openai-completions"),
@@ -58,11 +54,6 @@ const RawConfigSchema = Type.Object(
     subagentsDir: Type.String(),
     subagentTimeoutMs: Type.Integer({ minimum: 1_000 }),
     subagentMaxConcurrent: Type.Integer({ minimum: 1, maximum: 64 }),
-    cliConnectorAgentMode: CliConnectorAgentModeSchema,
-    cliConnectorSyncEnabled: Type.Boolean(),
-    cliConnectorSyncJobsJson: Type.String(),
-    cliConnectorSyncIntervalMs: Type.Integer({ minimum: 5_000 }),
-    cliConnectorSyncOwnerId: Type.String({ minLength: 1, maxLength: 128 }),
     externalCallUserId: Type.String({ minLength: 1, maxLength: 200 }),
     externalCallWorkspaceId: Type.String({ minLength: 1, maxLength: 200 }),
     aiProvider: Type.String(),
@@ -161,7 +152,6 @@ const RawConfigSchema = Type.Object(
 
 export type LogLevel = typeof LogLevelSchema.static;
 export type AgentRuntimeMode = typeof AgentRuntimeSchema.static;
-export type CliConnectorAgentMode = typeof CliConnectorAgentModeSchema.static;
 export type AiApi = typeof AiApiSchema.static;
 export type AiReasoning = typeof AiReasoningSchema.static;
 
@@ -287,23 +277,6 @@ export interface OpenConnectorCliConfig {
   dataDirectory: string;
 }
 
-export interface ConnectorSyncJobConfig {
-  id: string;
-  ownerId: string;
-  service: string;
-  action?: string;
-  allowedActions: string[];
-  dataset: string;
-  resourceType: "email" | "document" | "calendar" | "todo" | "generic";
-  connectionName?: string;
-  input: Record<string, unknown>;
-  goal: string;
-  prompt?: string;
-  promptVersion: number;
-  schemaVersion: number;
-  intervalMs?: number;
-}
-
 export interface MemoryRoomDeriveConfig {
   enabled: boolean;
   intervalMs: number;
@@ -330,15 +303,8 @@ export interface GatewayConfig {
   logLevel: LogLevel;
   authToken: string;
   agentRuntime: AgentRuntimeMode;
-  cliConnectorAgentMode?: CliConnectorAgentMode;
-  cliConnectorSyncEnabled?: boolean;
-  cliConnectorSyncIntervalMs?: number;
-  cliConnectorSyncJobs?: ConnectorSyncJobConfig[];
-  cliConnectorSyncOwnerId?: string;
   externalCallUserId?: string;
   externalCallWorkspaceId?: string;
-  /** Backward-compatible aliases retained for merged clients/tests. */
-  connectorSyncOwnerId?: string;
   memory: MemoryRuntimeConfig | null;
   /** 新 L1 记忆自动绑定 Room（推导 worker）：缺省视为开启（enabled=true/300s），仅 gateway 侧消费。 */
   memoryRoomDerive?: MemoryRoomDeriveConfig;
@@ -553,97 +519,6 @@ function inferMcpWebSocketUrl(baseUrl: string): string {
   return url.toString();
 }
 
-function parseConnectorSyncJobs(value: string): ConnectorSyncJobConfig[] {
-  if (!value.trim()) return [];
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(value);
-  } catch {
-    throw new Error("NXCORE_CLI_CONNECTOR_SYNC_JOBS must be valid JSON");
-  }
-  if (!Array.isArray(parsed)) throw new Error("NXCORE_CLI_CONNECTOR_SYNC_JOBS must be a JSON array");
-  return parsed.map((item, index) => {
-    if (!item || typeof item !== "object" || Array.isArray(item)) {
-      throw new Error(`NXCORE_CLI_CONNECTOR_SYNC_JOBS[${String(index)}] must be an object`);
-    }
-    const job = item as Record<string, unknown>;
-    const required = ["id", "ownerId", "service", "dataset"] as const;
-    for (const key of required) {
-      if (typeof job[key] !== "string" || !job[key].trim()) {
-        throw new Error(`NXCORE_CLI_CONNECTOR_SYNC_JOBS[${String(index)}].${key} is required`);
-      }
-    }
-    if (job.input !== undefined && (!job.input || typeof job.input !== "object" || Array.isArray(job.input))) {
-      throw new Error(`NXCORE_CLI_CONNECTOR_SYNC_JOBS[${String(index)}].input must be an object`);
-    }
-    if (job.intervalMs !== undefined && (!Number.isInteger(job.intervalMs) || Number(job.intervalMs) < 5_000)) {
-      throw new Error(`NXCORE_CLI_CONNECTOR_SYNC_JOBS[${String(index)}].intervalMs must be at least 5000`);
-    }
-    const resourceType = typeof job.resourceType === "string"
-      ? job.resourceType.trim()
-      : inferConnectorResourceType(String(job.dataset));
-    if (resourceType !== "email" && resourceType !== "document" && resourceType !== "calendar"
-      && resourceType !== "todo" && resourceType !== "generic") {
-      throw new Error(`NXCORE_CLI_CONNECTOR_SYNC_JOBS[${String(index)}].resourceType must be email, document, calendar, todo, or generic`);
-    }
-    const action = typeof job.action === "string" && job.action.trim() ? job.action.trim() : undefined;
-    if (job.allowedActions !== undefined && (!Array.isArray(job.allowedActions)
-      || job.allowedActions.some((item) => typeof item !== "string" || !item.trim()))) {
-      throw new Error(`NXCORE_CLI_CONNECTOR_SYNC_JOBS[${String(index)}].allowedActions must be an array of action names`);
-    }
-    const allowedActions = [...new Set([
-      ...(action ? [action] : []),
-      ...((job.allowedActions as string[] | undefined) ?? []).map((item) => item.trim()),
-    ])];
-    if (allowedActions.length === 0) {
-      throw new Error(`NXCORE_CLI_CONNECTOR_SYNC_JOBS[${String(index)}] requires action or allowedActions`);
-    }
-    if (resourceType !== "generic") {
-      const unsafeAction = allowedActions.find(isObviouslyMutatingConnectorAction);
-      if (unsafeAction) {
-        throw new Error(`NXCORE_CLI_CONNECTOR_SYNC_JOBS[${String(index)}] action "${unsafeAction}" is not read-only`);
-      }
-    }
-    return {
-      id: String(job.id).trim(),
-      ownerId: String(job.ownerId).trim(),
-      service: String(job.service).trim(),
-      ...(action ? { action } : {}),
-      allowedActions,
-      dataset: String(job.dataset).trim(),
-      resourceType: resourceType ?? "generic",
-      ...(typeof job.connectionName === "string" && job.connectionName.trim()
-        ? { connectionName: job.connectionName.trim() }
-        : {}),
-      input: (job.input as Record<string, unknown> | undefined) ?? {},
-      goal: typeof job.goal === "string" && job.goal.trim()
-        ? job.goal.trim()
-        : `同步已授权 ${String(job.service).trim()} 中的 ${resourceType} 数据到 EverRoom 本地数据库。`,
-      ...(typeof job.prompt === "string" && job.prompt.trim() ? { prompt: job.prompt.trim() } : {}),
-      promptVersion: Number.isInteger(job.promptVersion) && Number(job.promptVersion) > 0
-        ? Number(job.promptVersion)
-        : 1,
-      schemaVersion: Number.isInteger(job.schemaVersion) && Number(job.schemaVersion) > 0
-        ? Number(job.schemaVersion)
-        : 1,
-      ...(job.intervalMs !== undefined ? { intervalMs: Number(job.intervalMs) } : {}),
-    };
-  });
-}
-
-function inferConnectorResourceType(dataset: string): "email" | "document" | "calendar" | "todo" | "generic" {
-  const normalized = dataset.trim().toLowerCase();
-  if (/mail|email|message/.test(normalized)) return "email";
-  if (/doc|page|file/.test(normalized)) return "document";
-  if (/task|todo/.test(normalized)) return "todo";
-  if (/calendar|event|schedule/.test(normalized)) return "calendar";
-  return "generic";
-}
-
-function isObviouslyMutatingConnectorAction(action: string): boolean {
-  return /^(?:send|create|update|delete|remove|modify|mark|archive|trash|move|share|invite|reply|upload|post|put|patch|add|set)(?:_|-)/i.test(action);
-}
-
 function defaultMigrationsDir(): string {
   const moduleDirectory = dirname(fileURLToPath(import.meta.url));
   const candidates = [
@@ -705,16 +580,6 @@ export function loadConfig(
       "NXCORE_SUBAGENT_MAX_CONCURRENT",
       env.NXCORE_SUBAGENT_MAX_CONCURRENT ?? "8",
     ),
-    cliConnectorAgentMode: env.NXCORE_CLI_CONNECTOR_AGENT_MODE ?? "direct",
-    cliConnectorSyncEnabled: env.NXCORE_CLI_CONNECTOR_SYNC_ENABLED == null
-      ? false
-      : parseBoolean("NXCORE_CLI_CONNECTOR_SYNC_ENABLED", env.NXCORE_CLI_CONNECTOR_SYNC_ENABLED.trim()),
-    cliConnectorSyncJobsJson: env.NXCORE_CLI_CONNECTOR_SYNC_JOBS?.trim() ?? "",
-    cliConnectorSyncIntervalMs: parsePositiveInteger(
-      "NXCORE_CLI_CONNECTOR_SYNC_INTERVAL_MS",
-      env.NXCORE_CLI_CONNECTOR_SYNC_INTERVAL_MS ?? "300000",
-    ),
-    cliConnectorSyncOwnerId: env.NXCORE_CLI_CONNECTOR_SYNC_OWNER_ID?.trim() || "local-user",
     externalCallUserId: env.NXCORE_EXTERNAL_CALL_USER_ID?.trim() || "local-user",
     externalCallWorkspaceId: env.NXCORE_EXTERNAL_CALL_WORKSPACE_ID?.trim() || "local-workspace",
     aiProvider: env.NXCORE_AI_PROVIDER?.trim() ?? "",
@@ -1126,7 +991,6 @@ export function loadConfig(
   }
   const cliConnectorUrl = env.NXCORE_CLI_CONNECTOR_URL?.trim();
   if (cliConnectorUrl) validateConnectorEndpoint("NXCORE_CLI_CONNECTOR_URL", cliConnectorUrl);
-  const cliConnectorSyncJobs = parseConnectorSyncJobs(rawConfig.cliConnectorSyncJobsJson);
 
   return {
     host: rawConfig.host,
@@ -1135,12 +999,6 @@ export function loadConfig(
     logLevel: rawConfig.logLevel,
     authToken: rawConfig.authToken,
     agentRuntime: rawConfig.agentRuntime,
-    cliConnectorAgentMode: rawConfig.cliConnectorAgentMode,
-    cliConnectorSyncEnabled: rawConfig.cliConnectorSyncEnabled,
-    cliConnectorSyncIntervalMs: rawConfig.cliConnectorSyncIntervalMs,
-    cliConnectorSyncJobs,
-    cliConnectorSyncOwnerId: rawConfig.cliConnectorSyncOwnerId,
-    connectorSyncOwnerId: rawConfig.cliConnectorSyncOwnerId,
     externalCallUserId: rawConfig.externalCallUserId,
     externalCallWorkspaceId: rawConfig.externalCallWorkspaceId,
     diaryMaxTokens: rawConfig.diaryMaxTokens,

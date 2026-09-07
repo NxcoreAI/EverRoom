@@ -71,7 +71,7 @@
   "devDependencies": {
     "@electron/asar": "3.4.1",
     "@oomol-lab/oo-cli": "1.7.5",
-    "@oomol-lab/open-connector": "https://codeload.github.com/oomol-lab/open-connector/tar.gz/5719a69468c698c7cb8108e062ff64ecef8a2e65",
+    "@oomol-lab/open-connector": "git+https://code.vyitec.com/nexcore/everroom-openconnector.git#bd4213af4c96af24f1f6fa4a66765cb425a8291f",
     "@larksuite/cli": "1.0.93",
     "@sentry/vite-plugin": "5.4.0",
     "@types/better-sqlite3": "^9.6.0",

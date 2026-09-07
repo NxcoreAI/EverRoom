@@ -60,7 +60,6 @@ import { cleanupLegacyGatewaySecretKey } from './security/gateway-secret-key'
 import { FilesGatewayBridge } from './gateway/files-gateway-bridge'
 import { IngestGatewayBridge } from './gateway/ingest-gateway-bridge'
 import { ContextRoomGatewayBridge } from './gateway/context-room-gateway-bridge'
-import { ConnectorSyncGatewayBridge } from './gateway/connector-sync-gateway-bridge'
 import { RealityGatewayBridge } from './gateway/reality-gateway-bridge'
 import { PerceptionGatewayBridge } from './gateway/perception-gateway-bridge'
 import { DiaryGatewayBridge } from './gateway/diary-gateway-bridge'
@@ -72,6 +71,7 @@ import { RecordingStore } from './recording/recording-store'
 import { isSaasRateLimitError, OIDC_CALLBACK_URL, SaasClient, SaasRequestError, type ConnectorOoSession } from './cloud/saas-client'
 import { AgentStatusReporter } from './cloud/agent-status-reporter'
 import { SessionLeaseKeeper } from './cloud/session-lease-keeper'
+import { AiRelayKeeper, type AiRelayKeeperEvent } from './cloud/ai-relay-keeper'
 import { RemoteAgentCommandClient } from './cloud/remote-agent-command-client'
 import { AgentNotificationBridgeServer } from './cloud/agent-notification-bridge'
 import { MacosPushNotificationService } from './cloud/macos-push-notifications'
@@ -119,7 +119,6 @@ import type {
   AgentAuthStartInput,
   DesktopAgentAuthChallenge,
 } from '../shared/agent-auth'
-import { DESKTOP_PAGE_MODE_ENV, resolveDesktopPageMode } from '../shared/page-mode'
 import { BrowserExtensionService } from './browser-extension/browser-extension-service'
 import { CLIPPER_ASSET_SCHEME, type BrowserExtensionStatus } from '../shared/browser-extension'
 import { OBSIDIAN_VAULT_ASSET_SCHEME } from '../shared/obsidian'
@@ -165,7 +164,6 @@ const appDataDirectory = app.getPath('appData')
 const defaultDataDirectory = join(appDataDirectory, APP_NAME)
 const envFilePath = process.env.NXCORE_ENV_FILE?.trim() || join(defaultDataDirectory, '.env')
 if (existsSync(envFilePath)) loadEnvFile(envFilePath)
-const desktopPageMode = resolveDesktopPageMode(process.env[DESKTOP_PAGE_MODE_ENV])
 const dataDirectory = process.env.NXCORE_DATA_DIR?.trim() || defaultDataDirectory
 const resolvedDataDirectory = resolve(dataDirectory)
 
@@ -271,7 +269,7 @@ const RUNTIME_CONFIG_CHANNELS = {
 } as const
 
 const CONNECTOR_CHANNELS = {
-  runtimeStatus: 'nango-connector:runtime-status', status: 'nango-connector:status', providers: 'nango-connector:providers', startAuthorization: 'nango-connector:start-authorization', authorizationStatus: 'nango-connector:authorization-status', registerConnection: 'nango-connector:register-connection', createWebcalSubscription: 'nango-connector:create-webcal-subscription', disableConnection: 'nango-connector:disable-connection', enableConnection: 'nango-connector:enable-connection', purgeConnection: 'nango-connector:purge-connection', triggerSync: 'nango-connector:trigger-sync', cancelRun: 'nango-connector:cancel-run', listScopes: 'nango-connector:list-scopes', listRuns: 'nango-connector:list-runs', listMail: 'nango-connector:list-mail', listFailures: 'nango-connector:list-failures', listDocuments: 'nango-connector:list-documents', readDocument: 'nango-connector:read-document', listRecords: 'nango-connector:list-records', armFault: 'nango-connector:arm-fault',
+  runtimeStatus: 'nango-connector:runtime-status', status: 'nango-connector:status', providers: 'nango-connector:providers', oauthConfigs: 'nango-connector:oauth-configs', startAuthorization: 'nango-connector:start-authorization', authorizationStatus: 'nango-connector:authorization-status', registerConnection: 'nango-connector:register-connection', createWebcalSubscription: 'nango-connector:create-webcal-subscription', disableConnection: 'nango-connector:disable-connection', enableConnection: 'nango-connector:enable-connection', purgeConnection: 'nango-connector:purge-connection', triggerSync: 'nango-connector:trigger-sync', cancelRun: 'nango-connector:cancel-run', listScopes: 'nango-connector:list-scopes', listRuns: 'nango-connector:list-runs', listMail: 'nango-connector:list-mail', listFailures: 'nango-connector:list-failures', listDocuments: 'nango-connector:list-documents', readDocument: 'nango-connector:read-document', listRecords: 'nango-connector:list-records', recordTotals: 'nango-connector:record-totals', armFault: 'nango-connector:arm-fault',
 } as const
 const OPEN_CONNECTOR_CHANNELS = {
   status: 'open-connector:status',
@@ -312,22 +310,6 @@ const EXTERNAL_DOCUMENT_CHANNELS = {
   importDiff: 'external-documents:import-diff',
   importStructuredDiff: 'external-documents:import-structured-diff',
   searchExportTargets: 'external-documents:search-export-targets',
-} as const
-
-const CONNECTOR_SYNC_CHANNELS = {
-  status: 'connector-sync:status',
-  accounts: 'connector-sync:accounts',
-  promptProfiles: 'connector-sync:prompt-profiles',
-  jobs: 'connector-sync:jobs',
-  createJob: 'connector-sync:create-job',
-  updateJob: 'connector-sync:update-job',
-  runJob: 'connector-sync:run-job',
-  setJobPaused: 'connector-sync:set-job-paused',
-  archiveJob: 'connector-sync:archive-job',
-  runs: 'connector-sync:runs',
-  quarantine: 'connector-sync:quarantine',
-  data: 'connector-sync:data',
-  record: 'connector-sync:record',
 } as const
 
 const CONTEXT_ROOM_CHANNELS = {
@@ -692,7 +674,6 @@ function installIpcRouters(): void {
     OPEN_CONNECTOR_CHANNELS,
     AGENT_AUTH_CHANNELS,
     EXTERNAL_DOCUMENT_CHANNELS,
-    CONNECTOR_SYNC_CHANNELS,
     CONTEXT_ROOM_CHANNELS,
     AGENT_CHANNELS,
     CURSOR_COMPLETION_AGENT_CHANNELS,
@@ -798,6 +779,7 @@ let privateAudioSync: PrivateAudioSyncService | null = null
 let saasClient: SaasClient | null = null
 let agentStatusReporter: AgentStatusReporter | null = null
 let sessionLeaseKeeper: SessionLeaseKeeper | null = null
+let aiRelayKeeper: AiRelayKeeper | null = null
 let remoteAgentCommandClient: RemoteAgentCommandClient | null = null
 let agentNotificationBridgeServer: AgentNotificationBridgeServer | null = null
 let macosPushNotifications: MacosPushNotificationService | null = null
@@ -1538,6 +1520,8 @@ async function syncKnowledgeServiceEnvironment(snapshot: RuntimeConfigSnapshot):
 function registerConnectorHandlers(bridge: ConnectorGatewayBridge): void {
   ipcMain.handle(CONNECTOR_CHANNELS.status, () => bridge.status())
   ipcMain.handle(CONNECTOR_CHANNELS.providers, () => bridge.providers())
+  // saas 连接层返回 SaaS 已配置 OAuth 的 provider 名单，local 模式返回 null（渲染层回落注册表）。
+  ipcMain.handle(CONNECTOR_CHANNELS.oauthConfigs, () => bridge.configuredProviders())
   ipcMain.handle(CONNECTOR_CHANNELS.startAuthorization, (_event, provider) => bridge.startAuthorization(provider))
   ipcMain.handle(CONNECTOR_CHANNELS.authorizationStatus, (_event, id) => bridge.authorizationStatus(id))
   ipcMain.handle(CONNECTOR_CHANNELS.registerConnection, (_event, input) => bridge.registerConnection(input))
@@ -1554,6 +1538,7 @@ function registerConnectorHandlers(bridge: ConnectorGatewayBridge): void {
   ipcMain.handle(CONNECTOR_CHANNELS.listDocuments, (_event, connectionId) => bridge.documents(connectionId))
   ipcMain.handle(CONNECTOR_CHANNELS.readDocument, (_event, connectionId, documentId) => bridge.document(connectionId, documentId))
   ipcMain.handle(CONNECTOR_CHANNELS.listRecords, (_event, connectionId, type) => bridge.records(connectionId, type))
+  ipcMain.handle(CONNECTOR_CHANNELS.recordTotals, (_event, connectionId) => bridge.recordTotals(connectionId))
   ipcMain.handle(CONNECTOR_CHANNELS.armFault, (_event, point) => {
     if (process.env.NXCORE_CONNECTOR_DEBUG_FAULTS !== '1') throw new Error('故障注入未启用。')
     return bridge.armFault(point)
@@ -2070,23 +2055,6 @@ function registerMigrationHandlers(coordinator: MigrationCoordinator): void {
   coordinator.onProgress((progress) => BrowserWindow.getAllWindows().forEach((window) => window.webContents.send(MIGRATION_CHANNELS.progress, progress)))
 }
 
-function registerConnectorSyncHandlers(bridge: ConnectorSyncGatewayBridge): void {
-  handle(CONNECTOR_SYNC_CHANNELS.status, () => bridge.status())
-  handle(CONNECTOR_SYNC_CHANNELS.accounts, () => bridge.accounts())
-  handle(CONNECTOR_SYNC_CHANNELS.promptProfiles, () => bridge.promptProfiles())
-  handle(CONNECTOR_SYNC_CHANNELS.jobs, () => bridge.jobs())
-  handle(CONNECTOR_SYNC_CHANNELS.createJob, (_event, input) => bridge.createJob(input))
-  handle(CONNECTOR_SYNC_CHANNELS.updateJob, (_event, id, input) => bridge.updateJob(id, input))
-  handle(CONNECTOR_SYNC_CHANNELS.runJob, (_event, id) => bridge.runJob(id))
-  handle(CONNECTOR_SYNC_CHANNELS.setJobPaused, (_event, id, paused, configVersion) =>
-    bridge.setJobPaused(id, paused, configVersion))
-  handle(CONNECTOR_SYNC_CHANNELS.archiveJob, (_event, id, configVersion) => bridge.archiveJob(id, configVersion))
-  handle(CONNECTOR_SYNC_CHANNELS.runs, (_event, jobId) => bridge.runs(jobId))
-  handle(CONNECTOR_SYNC_CHANNELS.quarantine, (_event, runId) => bridge.quarantine(runId))
-  handle(CONNECTOR_SYNC_CHANNELS.data, (_event, query) => bridge.data(query))
-  handle(CONNECTOR_SYNC_CHANNELS.record, (_event, id) => bridge.record(id))
-}
-
 function registerAgentHandlers(bridge: AgentGatewayBridge, migrationCoordinator: MigrationCoordinator): void {
   const localAgentDiscovery = createLocalAgentDiscovery()
   let localAgents: LocalAgentInstallation[] = []
@@ -2524,7 +2492,7 @@ function registerFilesHandlers(
     FILES_CHANNELS.resolveHighRiskReview,
     (_event, id: unknown, accepted: unknown) => {
       if (typeof id !== 'string' || id.length < 1 || id.length > 100 || typeof accepted !== 'boolean') {
-        throw new Error('无效的高风险文件确认请求。')
+        throw new Error('无效的文件确认请求。')
       }
       return highRiskImports.resolve(id, accepted)
     },
@@ -2804,6 +2772,8 @@ function registerAccountHandlers(
     client.clearAdmissionChallenge()
     return { dismissed: true }
   })
+  // 中转额度视图（订阅周期开窗）；未配置/未登录场景由 SettingsPage 静默降级。
+  handle('ai-relay:status', () => rateLimitAware(() => client.aiGatewayStatus()))
   handle(ACCOUNT_CHANNELS.logout, () => rateLimitAware(async () => {
     await beforeLogout?.()
     const connection = gatewaySupervisor?.isRunning() ? gatewaySupervisor.getConnection() : null
@@ -3296,14 +3266,13 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   recordingStore = new RecordingStore(recordingsDirectory)
   saasClient=new SaasClient(credentials,app,recordingsDirectory,(url)=>shell.openExternal(url))
   void saasClient.initialize()
-  // P2-5：desktopPageMode sources/connectors 分叉消除——连接器栈在任意页面模式可用
-  const connectorPageEnabled = true
+  // 连接器栈在所有页面可用（sources/connectors 页面模式分叉已删除）
   const connectorModeStore = connectorModeStoreRef ?? createConnectorModeStore(dataDirectory)
   connectorModeStoreRef = connectorModeStore
   const connectorModeState = await connectorModeStore.read()
   try {
-    // SaaS 模式（默认）：不拉本地实例；local 模式且 connectors 页启用时拉起
-    if (connectorPageEnabled && connectorModeState.mode === 'local') {
+    // SaaS 模式（默认）：不拉本地实例；local 模式拉起
+    if (connectorModeState.mode === 'local') {
       openConnectorSupervisor = new OpenConnectorSupervisor(join(dataDirectory, 'open-connector'))
       const openConnector = await openConnectorSupervisor.start().catch((error) => {
         console.error('Managed OpenConnector failed to start; connector tools stay disabled.', error)
@@ -3314,7 +3283,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         attachOpenConnectorBridge(ooCliBridge)
       }
     }
-    if (connectorPageEnabled && connectorModeState.mode === 'saas') {
+    if (connectorModeState.mode === 'saas') {
       // SaaS 连接层：已登录则先向 SaaS 换 oo 会话（bridge 与 gateway env 工厂都用它）；
       // 未登录/暂不可达时不阻断启动，由账号事件钩子补拉。
       await saasClient.initialize()
@@ -3384,13 +3353,6 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
           : {}),
         ...(ooCliBridge ? ooCliBridge.environment() : {}),
         ...connectorOoGatewayEnv,
-        // agent 工具与同步 worker 按连接层模式分流：local=本地同步库工具+同步 worker；
-        // saas=直连 oo 的在线工具（cliConnector 即 oo 会话），与原 saas 转发行为对齐。
-        NXCORE_CLI_CONNECTOR_AGENT_MODE: connectorModeState.mode === 'local' ? 'local' : 'direct',
-        // 同步 worker 两种模式都开：saas 模式下 cliConnector 即 oo 用户会话，
-        // worker 负责账号发现（/v1/apps）并自动建同步任务；关掉则数据永不落地。
-        NXCORE_CLI_CONNECTOR_SYNC_ENABLED: 'true',
-        NXCORE_CLI_CONNECTOR_SYNC_INTERVAL_MS: connectorModeState.mode === 'saas' ? '30000' : '300000',
         // 飞书导出：lark-cli 路径注入 gateway（网关只执行写入命令，授权在桌面本地）。
         ...(agentAuthController ? agentAuthController.gatewayEnvironment() : {}),
         // 文档资产桥：网关把本地图改写为该 loopback URL，lark-cli markdown 导入自动下载。
@@ -3457,7 +3419,6 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       },
     )
     registerContextRoomHandlers(new ContextRoomGatewayBridge(gatewaySupervisor))
-    registerConnectorSyncHandlers(new ConnectorSyncGatewayBridge(gatewaySupervisor))
     realityGatewayBridge = new RealityGatewayBridge(gatewaySupervisor)
     registerRealityHandlers(realityGatewayBridge)
     connectorGatewayBridge = new ConnectorGatewayBridge(gatewaySupervisor, (url) => shell.openExternal(url))
@@ -3479,6 +3440,11 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       ooSession: () => {
         const session = connectorOoSessionCache?.session
         return session ? { baseUrl: session.baseUrl, token: session.token } : null
+      },
+      oauthConfigs: () => {
+        const client = saasClient
+        if (!client) return Promise.reject(new Error('SaaS 客户端尚未就绪。'))
+        return client.connectorOAuthConfigs()
       },
     })
     const connectorIpcBridge = connectorModeState.mode === 'saas' ? saasConnectorBridge : connectorGatewayBridge
@@ -3541,6 +3507,13 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         }
       }).catch(() => undefined)
     })
+    aiRelayKeeper = new AiRelayKeeper(saasClient, gatewaySupervisor, runtimeConfigBridge, (event: AiRelayKeeperEvent) => {
+      for (const target of BrowserWindow.getAllWindows()) {
+        if (!target.isDestroyed() && !target.webContents.isDestroyed()) {
+          target.webContents.send(`ai-relay:${event.type}`, event)
+        }
+      }
+    })
     const keyring = new AccountKeyringService(join(dataDirectory, 'account-keyring.json'))
     privateAudioSync = new PrivateAudioSyncService(saasClient, keyring, recordingsDirectory, join(dataDirectory, 'private-audio-sync.json'))
     void privateAudioSync.drainPending().catch(() => undefined)
@@ -3584,6 +3557,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     }
     privateSyncScheduler.setAuthenticated(Boolean(initialAccount?.authenticated))
     if (initialAccount?.authenticated) remoteAgentCommandClient.start()
+    if (initialAccount?.authenticated) aiRelayKeeper?.start()
     if (initialAccount?.authenticated) void macosPushNotifications.registerAuthenticatedDevice()
     privateAudioSync.setEventResolver((recordingId) => privateTranscriptionSync!.eventIdForSegment(recordingId))
     // 物化闸门已下沉到 service.materialize（见 setMaterializeGate 注释），
@@ -3634,6 +3608,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         remoteAgentCommandClient?.stop()
         agentStatusReporter?.reset()
         sessionLeaseKeeper?.stop()
+        aiRelayKeeper?.stop()
         lastAccountId = null
       } else {
         if (lastAccountId !== account.user?.id) agentStatusReporter?.reset()
@@ -3641,6 +3616,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         remoteAgentCommandClient?.start()
         agentStatusReporter?.reportNow()
         sessionLeaseKeeper?.reset()
+        aiRelayKeeper?.start()
         transcriptionProcessingCoordinator?.wake()
         void macosPushNotifications?.registerAuthenticatedDevice()
       }
@@ -3746,6 +3722,7 @@ app.on('before-quit', (event) => {
   const agentBridge = agentGatewayBridge
   const statusReporter = agentStatusReporter
   const leaseKeeper = sessionLeaseKeeper
+  const relayKeeper = aiRelayKeeper
   const remoteCommands = remoteAgentCommandClient
   const cursorCompletionBridge = cursorCompletionAgentBridge
   const documentBridge = documentGatewayBridge
@@ -3799,6 +3776,7 @@ app.on('before-quit', (event) => {
   agentBridge?.dispose()
   statusReporter?.stop()
   leaseKeeper?.stop()
+  relayKeeper?.stop()
   remoteCommands?.stop()
   cursorCompletionBridge?.dispose()
   documentBridge?.dispose()

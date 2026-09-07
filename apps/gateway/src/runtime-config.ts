@@ -44,6 +44,12 @@ export interface RuntimeConfig {
 
 export type RuntimeConfigSource = "user" | "saas" | "default";
 
+/** relay 激活时的槽位重写目标：proxyOrigin + gateway 自身 token。 */
+export interface RuntimeConfigRelayOverride {
+  proxyOrigin: string;
+  token: string;
+}
+
 export interface RuntimeConfigSnapshot {
   config: RuntimeConfig;
   source: RuntimeConfigSource;
@@ -197,6 +203,13 @@ export class RuntimeConfigManager {
     private readonly secrets: SecretStore,
     defaultPath = defaultConfigPath(),
     private readonly environmentSearch: RuntimeAiConfig | null = null,
+    /**
+     * AI 中转覆盖提供者（ai-relay 会话激活时返回重写目标）。在 resolve 出口
+     * 统一重写 LLM 槽位，使探测端点、边车 env 派生、GatewayConfig 三条消费
+     * 路径自动全部指向本地 /ai-relay 代理出口；selectedSource === "user"
+     * （用户显式 BYOK）时不重写。
+     */
+    private readonly relayOverride: (() => RuntimeConfigRelayOverride | null) | null = null,
   ) {
     if (environmentSearch?.apiKey) registerSecret(environmentSearch.apiKey);
     this.migrateSearchSecrets();
@@ -219,7 +232,12 @@ export class RuntimeConfigManager {
     const previous = this.db.select().from(runtimeConfigStore).where(eq(runtimeConfigStore.source, source)).get();
     const candidate = clone(input) as Record<string, unknown>;
     const searchSecret = this.extractSearchSecret(source, candidate);
-    const config = validateConfig(preserveMasked(candidate, previous?.payload));
+    // saas 来源是 SaaS forUser() 下发的权威完整配置（未脱敏全量），原样入库：
+    // 平台清除槽位密钥必须真实生效，不能被旧值掩码回填。user 来源仍是
+    // 脱敏回传语义（******** 保留旧值）。
+    const config = source === "saas"
+      ? validateConfig(candidate)
+      : validateConfig(preserveMasked(candidate, previous?.payload));
     this.secrets.update({ [`search:${source}`]: searchSecret });
     const version = Math.max(this.current.configVersion, previous?.configVersion ?? 0) + 1;
     const now = new Date();
@@ -301,6 +319,7 @@ export class RuntimeConfigManager {
     }
     const updatedAt = selected?.updatedAt?.toISOString() ?? new Date().toISOString();
     const version = Math.max(minimumVersion, selected?.configVersion ?? 1);
+    this.rewriteSlotsForRelay(config, selectedSource);
     return {
       config: { ...config, configVersion: version, updatedAt },
       source: selectedSource,
@@ -367,6 +386,44 @@ export class RuntimeConfigManager {
       payload.webSearch = webSearch as RuntimeAiConfig;
       this.db.update(runtimeConfigStore).set({ payload }).where(eq(runtimeConfigStore.source, source)).run();
     }
+  }
+
+  /**
+   * 用当前 default + 存储 + relay 会话重算并重发 onChange（不写库）。
+   * ai-relay 会话 PUT/DELETE 后调用，让槽位重写即时生效。
+   */
+  refresh(): RuntimeConfigSnapshot {
+    this.current = this.resolve(this.defaultConfig(), this.current.configVersion);
+    this.emit();
+    return this.snapshot();
+  }
+
+  /**
+   * relay 激活且非 user 源时，把 LLM 槽位重写到本地代理出口（幂等不必要——
+   * resolve 每次从存储载荷重建）。仅重写已配置（baseUrl 非空）的槽位；
+   * asr 与 memory/knowledge 服务地址不重写。路径保留原 pathname 前缀
+   * （原 https://host/v1 → ${proxyOrigin}/ai-relay/v1），代理按同样后缀转发。
+   */
+  private rewriteSlotsForRelay(config: RuntimeConfig, selectedSource: RuntimeConfigSource): void {
+    const override = this.relayOverride?.() ?? null;
+    if (!override || selectedSource === "user") return;
+    const proxyBase = `${override.proxyOrigin.replace(/\/+$/, "")}/ai-relay`;
+    const rewrite = (slot: unknown): void => {
+      if (!slot || typeof slot !== "object") return;
+      const item = slot as Record<string, unknown>;
+      if (typeof item.baseUrl !== "string" || !item.baseUrl.trim()) return;
+      try {
+        item.baseUrl = `${proxyBase}${new URL(item.baseUrl).pathname}`;
+      } catch {
+        return;
+      }
+      item.apiKey = override.token;
+    };
+    for (const slot of [config.primary, config.background, config.cursorCompletion, config.vlm, config.webSearch]) {
+      rewrite(slot);
+    }
+    rewrite(config.knowledge?.llm);
+    rewrite(config.knowledge?.embedding);
   }
 
   private selectedSource(): RuntimeConfigSource | null {

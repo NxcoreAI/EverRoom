@@ -51,8 +51,32 @@ function runPresentation(run: SyncRun, t: Translate): { tone: StateTone; label: 
   const error = run.error ?? ''
   if (run.processed > 0) return { tone: 'paused', label: t('surface:connector.statusPartial') }
   if (error.includes('format_mapping_pending')) return { tone: 'run', label: t('surface:connector.mappingPreparing') }
+  if (error === 'scope_busy') return { tone: 'paused', label: t('surface:connector.runSkippedBusy') }
   if (/timed out|econn|network|http response|socket/i.test(error)) return { tone: 'paused', label: t('surface:connector.runRetrySoon') }
   return { tone: 'danger', label: t('surface:connector.statusFailed') }
+}
+
+/**
+ * 同因连续失败的 run（如映射生成期间的轮询重试）合并为一行 ×N：
+ * 每次重试都是一条独立记录，但对用户是一段相同的「等待」。
+ */
+export function groupRuns(runs: SyncRun[]): Array<{ run: SyncRun; attempts: number }> {
+  const groups: Array<{ run: SyncRun; attempts: number }> = []
+  for (const run of runs) {
+    const last = groups[groups.length - 1]
+    if (
+      last
+      && run.status === 'failed' && last.run.status === 'failed'
+      && run.mode === last.run.mode
+      && run.processed === 0 && last.run.processed === 0
+      && (run.error ?? '') === (last.run.error ?? '')
+    ) {
+      last.attempts += 1
+      continue
+    }
+    groups.push({ run, attempts: 1 })
+  }
+  return groups
 }
 
 function StatePill({ tone, label }: { tone: StateTone; label: string }) {
@@ -85,6 +109,7 @@ export function SourceDrawer({
   obsidianCandidates,
   scopes,
   runs,
+  totals,
   busyId,
   onClose,
   onSync,
@@ -110,6 +135,8 @@ export function SourceDrawer({
   obsidianCandidates: ObsidianVaultCandidate[]
   scopes: SyncScope[]
   runs: SyncRun[]
+  /** 云抽屉：连接已同步记录总数（mail/calendar）；缺省隐藏对应统计。 */
+  totals?: { mail: number; calendar: number }
   busyId: string | null
   onClose: () => void
   onSync: () => void
@@ -268,11 +295,15 @@ export function SourceDrawer({
     const { connection } = target
     const busy = busyId === connection.id
     const active = connection.status === 'active'
-    // 邮箱是单槽位 OAuth（一个 token 一个邮箱），"同步范围"对用户无意义；
-    // 日历类按"每个日历"建 scope，保留展示。
+    // 单槽位 OAuth（一个账号一条连接）对用户没有"同步范围"概念：
+    // 只有 Google Calendar 按"每个日历"建 scope，作为「日历」列表展示。
+    const calendarScopes = connection.provider === 'google-calendar'
     const mailbox = connection.provider === 'gmail' || connection.provider === 'outlook'
     const lastRun = runs.length ? runs.reduce((latest, run) => (run.startedAt > latest.startedAt ? run : latest)) : null
     const running = runs.some((run) => run.status === 'running' || run.status === 'queued')
+    // 增量同步依赖全量落下的游标：初始（全量）同步完成前不允许手动增量
+    // （与网关轮询的 full→incremental 判据一致：scope.sourceCursor）。
+    const initialSyncDone = scopes.length > 0 && scopes.every((scope) => scope.state === 'disabled' || scope.sourceCursor)
     content = (
       <>
         {head(
@@ -284,15 +315,20 @@ export function SourceDrawer({
             <span>{formatDate(connection.updatedAt, locale, t)}</span>
           </>,
           <>
-            {active ? <button type="button" className="src-mini-btn" disabled={busy || !scopes.length} onClick={onSync}><RefreshCw aria-hidden="true" strokeWidth={1.8} />{t('surface:connector.incrementalSync')}</button> : null}
+            {active ? <button type="button" className="src-mini-btn" disabled={busy || running || !initialSyncDone} onClick={onSync}><RefreshCw aria-hidden="true" strokeWidth={1.8} />{t('surface:connector.incrementalSync')}</button> : null}
             {onReplaceAccount ? <button type="button" className="src-mini-btn" disabled={busy} onClick={onReplaceAccount}><ArrowLeftRight aria-hidden="true" strokeWidth={1.8} />{t('surface:sources.replaceAccount')}</button> : null}
             <button type="button" className="src-mini-btn" disabled={busy} onClick={() => onToggleEnabled(connection)}>{active ? <Pause aria-hidden="true" strokeWidth={1.8} /> : <Play aria-hidden="true" strokeWidth={1.8} />}{t(active ? 'surface:connector.disableConnection' : 'surface:sourceCard.enableConnection')}</button>
             <button type="button" className="src-mini-btn danger" disabled={busy} onClick={() => onPurge(connection)}><Trash2 aria-hidden="true" strokeWidth={1.8} />{t('surface:connector.clearLocalData')}</button>
           </>,
         )}
         {stats([
-          ...(!mailbox ? [{ value: scopes.length.toLocaleString(), label: t('surface:sourceCard.scopes') }] : []),
-          ...(lastRun ? [{ value: lastRun.processed.toLocaleString(), label: t('surface:sourceCard.lastSynced') }] : []),
+          ...(calendarScopes ? [
+            ...(totals ? [{ value: totals.calendar.toLocaleString(), label: t('surface:connector.calendar') }] : []),
+            { value: scopes.length.toLocaleString(), label: t('surface:connector.calendars') },
+          ] : [
+            ...(mailbox && totals ? [{ value: totals.mail.toLocaleString(), label: t('surface:sourceCard.syncedItems') }] : []),
+            ...(lastRun ? [{ value: lastRun.processed.toLocaleString(), label: t('surface:sourceCard.lastSynced') }] : []),
+          ]),
         ])}
         {(connection.provider === 'notion' || connection.provider === 'feishu') ? (
           <div className="src-drawer-doc-import">
@@ -305,10 +341,10 @@ export function SourceDrawer({
           </div>
         ) : null}
         <div className="src-drawer-list">
-          {!mailbox ? (
+          {calendarScopes ? (
             <>
-              <div className="src-list-head"><h4>{t('surface:sourceCard.scopes')} · {scopes.length.toLocaleString()}</h4></div>
-              {scopes.length === 0 ? <div className="src-feed-empty">{t('surface:sourceCard.noScopes')}</div> : null}
+              <div className="src-list-head"><h4>{t('surface:connector.calendars')} · {scopes.length.toLocaleString()}</h4></div>
+              {scopes.length === 0 ? <div className="src-feed-empty">{t('surface:connector.noCalendars')}</div> : null}
               {scopes.map((scope) => (
                 <div key={scope.id} className="src-scope-row">
                   <span className="src-file-copy">
@@ -327,12 +363,15 @@ export function SourceDrawer({
           ) : null}
           <div className="src-list-head"><h4>{t('surface:sourceCard.runs')} · {runs.length.toLocaleString()}</h4></div>
           {runs.length === 0 ? <div className="src-feed-empty">{t('surface:sourceCard.noRuns')}</div> : null}
-          {runs.map((run) => {
+          {groupRuns(runs).map(({ run, attempts }) => {
             const shown = runPresentation(run, t)
+            const countLabel = run.processed > 0
+              ? t('surface:connector.countRecords', { count: run.processed.toLocaleString() })
+              : run.status === 'completed' ? t('surface:connector.noNewChanges') : null
             return (
               <div key={run.id} className="src-run-row" title={run.error || undefined}>
                 <span className="src-file-copy">
-                  <strong>{t(CONNECTOR_STATUS_KEYS[run.mode] ?? run.mode)} · {t('surface:connector.countRecords', { count: run.processed.toLocaleString() })}{run.failed > 0 ? ` · ${t('surface:connector.countFailed', { count: run.failed.toLocaleString() })}` : ''}</strong>
+                  <strong>{t(CONNECTOR_STATUS_KEYS[run.mode] ?? run.mode)}{countLabel ? ` · ${countLabel}` : ''}{run.failed > 0 ? ` · ${t('surface:connector.countFailed', { count: run.failed.toLocaleString() })}` : ''}{attempts > 1 ? ` · ${t('surface:connector.attemptCount', { count: attempts.toLocaleString() })}` : ''}</strong>
                   <small>{formatDate(run.finishedAt ?? run.startedAt, locale, t)}</small>
                 </span>
                 <StatePill tone={shown.tone} label={shown.label} />

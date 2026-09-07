@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 
-const OPEN_CONNECTOR_REVISION = '5719a69468c698c7cb8108e062ff64ecef8a2e65'
+const OPEN_CONNECTOR_REVISION = 'bd4213af4c96af24f1f6fa4a66765cb425a8291f'
 const require = createRequire(import.meta.url)
 const sourcePackagePath = require.resolve('@oomol-lab/open-connector/package.json')
 const sourceDirectory = dirname(sourcePackagePath)

@@ -146,7 +146,6 @@ async function createHarness(options: {
     rooms,
     { validateActiveDocumentContext: (context) => context },
     options.completedMessageResolver,
-    'direct',
     options.disposeRuntime ?? true,
     options.targetRuntime ? () => options.targetRuntime! : undefined,
   )

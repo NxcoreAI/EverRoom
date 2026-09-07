@@ -50,7 +50,6 @@ import {
   createIndexBackfillRuntime,
   createImportClassifierRuntime,
   createWritingStyleRuntime,
-  registerConnectorSyncAgent,
   registerDiaryAgent,
   registerPrimaryAgent,
   registerTranscriptionSummaryAgent,
@@ -106,9 +105,7 @@ import { knowledgeRoutes } from "../modules/knowledge/routes.js";
 import { KnowledgeService } from "../modules/knowledge/service.js";
 import { KnowledgePreferences } from "../modules/knowledge/preferences.js";
 import { KnowledgeLlm } from "../modules/knowledge/llm.js";
-import { cliConnectorRoutes, connectorSyncRoutes, nangoConnectorRoutes } from "@nxcore/connectors-module/routes.js";
-import { ConnectorMarkdownService } from "@nxcore/connectors-module/markdown-service.js";
-import { ConnectorSyncService } from "@nxcore/connectors-module/service.js";
+import { nangoConnectorRoutes } from "@nxcore/connectors-module/routes.js";
 import { processingRoutes } from "../modules/processing/routes.js";
 import { TranscriptionSummaryService } from "../modules/processing/service.js";
 import { RealityError } from "../modules/reality/errors.js";
@@ -153,6 +150,8 @@ import { AgentStatusService } from "../modules/agent/status-service.js";
 import { createReferencedAgentConversationTools } from "../modules/agent/reference-tools.js";
 import { RuntimeConfigManager } from "../runtime-config.js";
 import { runtimeConfigRoutes } from "../modules/runtime-config/routes.js";
+import { AiRelaySessionStore } from "../modules/ai-relay/session.js";
+import { aiRelayRoutes } from "../modules/ai-relay/routes.js";
 import { WritingStyleService } from "../modules/writing-style/service.js";
 import { WritingStyleLlm } from "../modules/writing-style/llm.js";
 import { writingStyleRoutes } from "../modules/writing-style/routes.js";
@@ -322,12 +321,16 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   );
   const mcpConfigManager = new McpConfigManager(config, secretStore);
   const externalCalls = new ExternalCallBudgetService(sqlite, undefined, {
-    userId: config.externalCallUserId ?? config.cliConnectorSyncOwnerId ?? "local-user",
+    userId: config.externalCallUserId ?? "local-user",
     workspaceId: config.externalCallWorkspaceId ?? "local-workspace",
   });
+  const aiRelaySessions = new AiRelaySessionStore();
   const runtimeConfigManager = new RuntimeConfigManager(db, secretStore, undefined, config.webSearch
     ? { provider: "openai-compatible", api: "openai-completions", ...config.webSearch }
-    : null);
+    : null, () => {
+      const session = aiRelaySessions.current();
+      return session ? { proxyOrigin: session.proxyOrigin, token: config.authToken } : null;
+    });
   const initialRuntimeSnapshot = runtimeConfigManager.snapshot();
   applyRuntimeConfig(config, initialRuntimeSnapshot.config);
   const redactedRuntimeSnapshot = runtimeConfigManager.snapshot(true);
@@ -384,7 +387,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   // 阶段一域投影（connector-platform-refactor-plan）：Nango 拉取的邮件/日程
   // 与 CLI 推送路径同落主库 connector_* 域表，Room 读侧单轨；启动后延迟 1s
   // 幂等回填 connectors.sqlite 存量（唯一键 upsert，重复执行产出 unchanged）。
-  const connectorDomainOwner = config.connectorSyncOwnerId ?? "local-user";
+  const connectorDomainOwner = "local-user";
   nangoConnectorManager.setDomainProjection(new ConnectorDomainProjection(db, connectorDomainOwner));
   // 格式映射体系：agent 生成的 JSONata 映射缓存直通；未就绪时同步 pending，后台生成。
   const formatMappingService = new FormatMappingService(db, app.log);
@@ -472,6 +475,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   await app.register(auth, { token: config.authToken });
   await app.register(systemRoutes);
   await app.register(runtimeConfigRoutes(runtimeConfigManager));
+  await app.register(aiRelayRoutes({ sessions: aiRelaySessions, runtimeConfigManager }));
   const contextRoomService = new ContextRoomService(db);
   const memoryService = new MemoryService(config.memory, app.log, { db, dataDir: config.dataDir }, contextRoomService);
   const roomOverviewService = new RoomOverviewService(db, contextRoomService);
@@ -622,20 +626,11 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   // 记忆条目确认晋升：经合成会话交 MemoryCore 蒸馏（worker room-memory: 链回填归属）。
   contextRoomService.setMemoryPromoter((input) => memoryService.captureRoomMemoryItem(input));
   roomDuplicateService.initialize();
-  const cliConnectorSyncService = new ConnectorSyncService(db, config, app.log);
-  let cliConnectorMarkdownService: ConnectorMarkdownService | null = null;
-  registerConnectorSyncAgent(agentResolver, config, cliConnectorSyncService);
-  if (agentResolver.has(BUILTIN_AGENT_IDS.connectorSync)) {
-    cliConnectorSyncService.attachAgentRuntime(agentResolver.resolve(BUILTIN_AGENT_IDS.connectorSync), {
-      disposeRuntime: false,
-    });
-  }
   // 格式映射 agent：就绪即 attach（映射生成依赖它；未配置 AI 时保持 pending 语义）。
   registerConnectorMapperAgent(agentResolver, config, formatMappingService);
   if (agentResolver.has(BUILTIN_AGENT_IDS.connectorMapper)) {
     formatMappingService.attachAgentRuntime(agentResolver.resolve(BUILTIN_AGENT_IDS.connectorMapper));
   }
-  await cliConnectorSyncService.initialize();
   const subagentConfig = config.subagents ?? {
     enabled: true,
     definitionsDir: bundledAgentDefinitionsDir(),
@@ -860,7 +855,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
         updated_at: item.updatedAt,
       }));
     },
-  }, cliConnectorSyncService);
+  });
   const agentRuntime = agentResolver.resolve(BUILTIN_AGENT_IDS.primary);
   const localAgentRuntimeRegistry = new LocalAgentRuntimeRegistry();
   app.log.info(
@@ -885,7 +880,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     contextRoomService,
     documentService,
     documentMcpHost,
-    config.cliConnectorAgentMode ?? "direct",
     false,
     (target) => localAgentRuntimeRegistry.resolve(target),
   );
@@ -980,12 +974,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
           const { previous } = agentResolver.reload(agentId);
           await previous?.dispose();
         }
-        // 连接器同步 agent（初始 attach 见下方 registerConnectorSyncAgent 处）。
-        if (agentResolver.has(BUILTIN_AGENT_IDS.connectorSync)) {
-          const connector = agentResolver.reload(BUILTIN_AGENT_IDS.connectorSync);
-          cliConnectorSyncService.replaceAgentRuntime(connector.current);
-          await connector.previous?.dispose();
-        }
         // 格式映射 agent 热替换（初始 attach 见 registerConnectorMapperAgent 处）。
         if (agentResolver.has(BUILTIN_AGENT_IDS.connectorMapper)) {
           const mapper = agentResolver.reload(BUILTIN_AGENT_IDS.connectorMapper);
@@ -1045,7 +1033,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     "multimodal-document-parser",
     createDocumentAnalysisResultValidator(documentUnderstandingService),
   );
-  cliConnectorSyncService.setFilesService(filesService);
   const fileClusteringService = new FileClusteringService(
     db,
     agentResolver.has(BUILTIN_AGENT_IDS.knowledge) ? agentResolver : null,
@@ -1153,8 +1140,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     await documentIndexBackfillWorker?.dispose();
     filterInsightJob?.dispose();
     ingestService.disposeFilter();
-    await cliConnectorSyncService.dispose();
-    await cliConnectorMarkdownService?.dispose();
     await perceptionService.dispose();
     await agentSchedulerService.dispose();
     await diaryService.dispose();
@@ -1510,13 +1495,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   // 写作风格生成注入已迁移至 doc-writer（doc-writer-subagent-plan §7）：
   // 主 Agent 不再持有 writingStyleProvider，四信号门控随 writing-style-gate.ts 退役。
   await app.register(writingStyleRoutes(writingStyleService));
-  cliConnectorMarkdownService = new ConnectorMarkdownService(
-    db,
-    config.dataDir,
-    ingestService,
-    app.log,
-  );
-  await cliConnectorMarkdownService.initialize();
   await app.register(ingestRoutes(
     ingestService,
     filterRulesStore,
@@ -1562,8 +1540,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     reply.code(404).send({ error: "not_found", path: request.url });
   });
   if (config.knowledge) await app.register(knowledgeRoutes(knowledgeService));
-  await app.register(cliConnectorRoutes(cliConnectorSyncService, ingestService, cliConnectorMarkdownService));
-  await app.register(connectorSyncRoutes(cliConnectorSyncService));
 
   return app;
 }
