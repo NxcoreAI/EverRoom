@@ -82,6 +82,8 @@ export function SourcesPage() {
   const [markdownSource, setMarkdownSource] = useState<'google-docs' | 'notion' | null>(null)
   const [markdownForm, setMarkdownForm] = useState({ ids: '', token: '' })
   const [connectorStatus, setConnectorStatus] = useState<ConnectorStatus | null>(null)
+  // 各连接的已同步记录总数（mail/calendar）：抽屉/卡片统计用。
+  const [recordTotals, setRecordTotals] = useState<Record<string, { mail: number; calendar: number }>>({})
   const [cloudBusyId, setCloudBusyId] = useState<string | null>(null)
   const [drawer, setDrawer] = useState<DrawerTarget | null>(null)
   // 二级页（页内下钻,不占全局导航）：最近进入全量 / 全部连接器。
@@ -99,7 +101,13 @@ export function SourcesPage() {
   // 云服务卡与抽屉的数据源：页面级轮询。
   const refreshConnectorStatus = useCallback(async () => {
     try {
-      setConnectorStatus(await window.nxcore?.nangoConnector.status() ?? null)
+      const next = await window.nxcore?.nangoConnector.status() ?? null
+      setConnectorStatus(next)
+      if (next?.connections.length && window.nxcore?.nangoConnector.recordTotals) {
+        const entries = await Promise.all(next.connections.map(async (connection) =>
+          [connection.id, await window.nxcore!.nangoConnector.recordTotals(connection.id)] as const))
+        setRecordTotals(Object.fromEntries(entries))
+      }
     } catch { /* 网关暂不可达时保留上一次状态 */ }
   }, [])
   useEffect(() => {
@@ -678,7 +686,7 @@ export function SourcesPage() {
                   const connectionScopes = scopes.filter((item) => item.connectionId === connection.id)
                   const connectionScopeIds = new Set(connectionScopes.map((item) => item.id))
                   return (
-                    <CloudSourceCard key={connection.id} connection={connection} scopes={connectionScopes} runs={runs.filter((run) => connectionScopeIds.has(run.scopeId))} busy={cloudBusyId === connection.id} onOpen={() => setDrawer({ type: 'cloud', connection })} onSync={() => syncConnection(connection)} onToggleEnabled={() => toggleConnectionEnabled(connection)} onPurge={() => purgeConnectionData(connection)} onReplaceAccount={isWebcalConnection(connection) ? undefined : () => replaceAccountFor(connection)} />
+                    <CloudSourceCard key={connection.id} connection={connection} scopes={connectionScopes} runs={runs.filter((run) => connectionScopeIds.has(run.scopeId))} totals={recordTotals[connection.id]} busy={cloudBusyId === connection.id} onOpen={() => setDrawer({ type: 'cloud', connection })} onSync={() => syncConnection(connection)} onToggleEnabled={() => toggleConnectionEnabled(connection)} onPurge={() => purgeConnectionData(connection)} onReplaceAccount={isWebcalConnection(connection) ? undefined : () => replaceAccountFor(connection)} />
                   )
                 })}
               </div>
@@ -700,6 +708,7 @@ export function SourcesPage() {
           obsidianCandidates={obsidianCandidates}
           scopes={drawerScopes}
           runs={drawerRuns}
+          totals={drawer.type === 'cloud' ? recordTotals[drawer.connection.id] : undefined}
           busyId={drawer.type === 'cloud' ? cloudBusyId : drawerSource ? busyId : null}
           onClose={() => setDrawer(null)}
           onSync={() => { if (drawerSource && api) void runAction(drawerSource.id, async () => { const result = await api.sync(drawerSource.id); setMessage(describeSync(result, t)) }) }}

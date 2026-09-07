@@ -83,7 +83,6 @@ export function App() {
   const { t } = useLocale()
   const { state: contextRoomState, backendReady: contextRoomBackendReady } = useContextRoomState()
   const isMacDesktop = detectMacDesktop()
-  const pageMode = window.nxcore?.pageMode ?? 'sources'
   const [activePage, setActivePage] = useState<PageId>(readInitialPage)
   const [contextRoomTabs, setContextRoomTabs] = useState<ContextRoomWorkspaceTab[]>([])
   const [activeContextRoomId, setActiveContextRoomId] = useState<string | null>(null)
@@ -266,8 +265,6 @@ export function App() {
   }, [])
 
   const navigate = (page: PageId) => {
-    if (page === 'sources' && pageMode === 'connectors') page = 'connectors'
-    if (page === 'connectors' && pageMode === 'sources') page = 'sources'
     if (agentNavigationTimerRef.current !== null) {
       window.clearTimeout(agentNavigationTimerRef.current)
       agentNavigationTimerRef.current = null

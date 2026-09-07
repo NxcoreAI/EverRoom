@@ -3,6 +3,13 @@ import { describe, expect, it, vi } from 'vitest'
 import { NotificationMcpHost, SEND_NOTIFICATION_TOOL } from '../src/modules/notifications/mcp-host.js'
 
 describe('notification MCP tool', () => {
+  it('mandates notifications for user requests and actual Room document changes', () => {
+    const guidelines = SEND_NOTIFICATION_TOOL.guidelines.join('\n')
+    expect(guidelines).toContain('用户明确要求通知')
+    expect(guidelines).toContain('documentChanged=true')
+    expect(guidelines).toContain('context_room_write_commit')
+  })
+
   it('exposes only user-visible content and injects trusted run context', async () => {
     const send = vi.fn(async () => ({ notificationId: 'n1', deliveryCount: 2 }))
     const host = new NotificationMcpHost({ send } as never)

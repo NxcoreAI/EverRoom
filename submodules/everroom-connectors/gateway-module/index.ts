@@ -11,10 +11,8 @@
 export * from "./types.js";
 export { SYNC_PROVIDERS, assertSyncProvidersValid } from "./sync-providers/index.js";
 export { ConnectorManager } from "./manager.js";
-export { ConnectorSyncService } from "./service.js";
-export { ConnectorMarkdownService } from "./markdown-service.js";
 export { projectDomainRecords } from "./domain-projection.js";
-export { nangoConnectorRoutes, cliConnectorRoutes } from "./routes.js";
+export { nangoConnectorRoutes } from "./routes.js";
 export { htmlToMarkdown, converterOfExtension } from "./converters.js";
 export { convertEmailBody, convertRawEmailToMarkdown } from "./email-content.js";
 export {

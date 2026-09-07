@@ -18,10 +18,9 @@ import type {
 } from '../shared/memory'
 import type { IngestPipelines } from '../shared/ingest'
 import type { McpServersSnapshot } from '../shared/mcp'
-import type { CloudAccountStatus, DesktopRequestError, NxcoreDesktopApi, RoomAgentSelectionRewriteInput } from '../shared/sources'
+import type { AiRelayKeeperEventType, CloudAccountStatus, DesktopRequestError, NxcoreDesktopApi, RoomAgentSelectionRewriteInput } from '../shared/sources'
 import type { BrowserExtensionMessage, BrowserExtensionStatus } from '../shared/browser-extension'
 import { isCursorCompletionAgentErrorPayload } from '../shared/cursor-completion'
-import { DESKTOP_PAGE_MODE_ENV, resolveDesktopPageMode } from '../shared/page-mode'
 import {
   isDesktopLocale,
   translateDesktopMessage,
@@ -134,7 +133,6 @@ async function invokeQuietly<T>(channel: string, ...args: unknown[]): Promise<T>
 
 const api: NxcoreDesktopApi = {
   platform: process.platform,
-  pageMode: resolveDesktopPageMode(process.env[DESKTOP_PAGE_MODE_ENV]),
   app: {
     clearUserData: () => ipcRenderer.invoke('app:clear-user-data'),
   },
@@ -233,6 +231,7 @@ const api: NxcoreDesktopApi = {
     documents: (connectionId) => invoke('nango-connector:list-documents', connectionId),
     document: (connectionId, documentId) => invoke('nango-connector:read-document', connectionId, documentId),
     records: (connectionId, type) => invoke('nango-connector:list-records', connectionId, type),
+    recordTotals: (connectionId) => invoke('nango-connector:record-totals', connectionId),
   },
   cliConnector: {
     status: () => invokeQuietly('cli-connector:status'),
@@ -279,23 +278,6 @@ const api: NxcoreDesktopApi = {
     listExports: (documentId) => invokeQuietly('external-documents:list-exports', documentId),
     importDiff: (roomImportId) => invoke('external-documents:import-diff', roomImportId),
     searchExportTargets: (provider, query) => invoke('external-documents:search-export-targets', provider, query),
-  },
-  cliConnectorSync: {
-    status: () => invokeQuietly('cli-connector-sync:status'),
-    accounts: () => invokeQuietly('cli-connector-sync:accounts'),
-    promptProfiles: () => invokeQuietly('cli-connector-sync:prompt-profiles'),
-    jobs: () => invokeQuietly('cli-connector-sync:jobs'),
-    createJob: (input) => invokeQuietly('cli-connector-sync:create-job', input),
-    updateJob: (id, input) => invokeQuietly('cli-connector-sync:update-job', id, input),
-    runJob: (id) => invokeQuietly('cli-connector-sync:run-job', id),
-    setJobPaused: (id, paused, configVersion) =>
-      invokeQuietly('cli-connector-sync:set-job-paused', id, paused, configVersion),
-    archiveJob: (id, configVersion) => invokeQuietly('cli-connector-sync:archive-job', id, configVersion),
-    runs: (jobId) => invokeQuietly('cli-connector-sync:runs', jobId),
-    quarantine: (runId) => invokeQuietly('cli-connector-sync:quarantine', runId),
-    data: (query) => invokeQuietly('cli-connector-sync:data', query),
-    record: (id) => invokeQuietly('cli-connector-sync:record', id),
-    ingestRecords: (recordIds) => invokeQuietly('cli-connector-sync:ingest-records', recordIds),
   },
   mcp: {
     listServers: () => invoke('mcp:servers:list'),
@@ -411,6 +393,24 @@ const api: NxcoreDesktopApi = {
       const handle = (_event: Electron.IpcRendererEvent, status: CloudAccountStatus) => listener(status)
       ipcRenderer.on('account:admission-required', handle)
       return () => ipcRenderer.removeListener('account:admission-required', handle)
+    },
+  },
+  aiRelay: {
+    status: () => invokeQuietly('ai-relay:status'),
+    onEvent: (listener: (event: { type: AiRelayKeeperEventType }) => void) => {
+      const handle = (_event: Electron.IpcRendererEvent, value: unknown) => {
+        const eventType = value && typeof value === 'object' ? (value as { type?: unknown }).type : null
+        if (eventType !== 'quota-exhausted' && eventType !== 'fallback-user' && eventType !== 'fallback-restored') return
+        listener({ type: eventType })
+      }
+      for (const channel of ['ai-relay:quota-exhausted', 'ai-relay:fallback-user', 'ai-relay:fallback-restored']) {
+        ipcRenderer.on(channel, handle)
+      }
+      return () => {
+        for (const channel of ['ai-relay:quota-exhausted', 'ai-relay:fallback-user', 'ai-relay:fallback-restored']) {
+          ipcRenderer.removeListener(channel, handle)
+        }
+      }
     },
   },
   notifications: {
