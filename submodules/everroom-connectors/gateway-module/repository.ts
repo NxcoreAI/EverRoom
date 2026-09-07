@@ -498,6 +498,27 @@ export class ConnectorRepository {
       .prepare("UPDATE sync_runs SET status=?,error=?,finished_at=? WHERE id=?")
       .run(status, error ?? null, now(), id);
   }
+  /** 全量断点续传游标（provider 自解释串）：失败/中断时由 manager 落库，下轮 full 续跑。 */
+  saveRunCursor(runId: string, cursor: string | null) {
+    this.sqlite.prepare("UPDATE sync_runs SET cursor=? WHERE id=?").run(cursor, runId);
+  }
+  /** 最近一个带断点的失败/中断 full run（续传源；调用方排除当前 run）。 */
+  latestResumableRun(scopeId: string, excludeRunId: string): { id: string; cursor: string } | null {
+    const row = this.sqlite
+      .prepare(
+        "SELECT id,cursor FROM sync_runs WHERE scope_id=? AND id!=? AND cursor IS NOT NULL AND status IN ('failed','interrupted') ORDER BY started_at DESC LIMIT 1",
+      )
+      .get(scopeId, excludeRunId) as { id: string; cursor: string } | undefined;
+    return row ?? null;
+  }
+  /** 全量跑通后清空 scope 下所有断点（防止续传源查到远古游标）。 */
+  clearResumableCursors(scopeId: string) {
+    this.sqlite
+      .prepare(
+        "UPDATE sync_runs SET cursor=NULL WHERE scope_id=? AND cursor IS NOT NULL AND status IN ('failed','interrupted')",
+      )
+      .run(scopeId);
+  }
   messages(
     connectionId: string,
     opts: { limit?: number; offset?: number; provider?: string } = {},
