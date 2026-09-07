@@ -6,7 +6,7 @@ export interface ConnectorDatabase { sqlite: Database.Database; close(): void; }
 const schema = `
 CREATE TABLE IF NOT EXISTS connector_connections (id TEXT PRIMARY KEY, provider TEXT NOT NULL, service TEXT NOT NULL, connection_name TEXT NOT NULL, account_identity_hash TEXT, status TEXT NOT NULL DEFAULT 'active', filters_json TEXT NOT NULL DEFAULT '{}', auth_method TEXT NOT NULL DEFAULT 'nango-oauth', credentials_ref TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(provider,connection_name));
 CREATE TABLE IF NOT EXISTS sync_scopes (id TEXT PRIMARY KEY, connection_id TEXT NOT NULL REFERENCES connector_connections(id), provider_scope_id TEXT NOT NULL, display_name TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'idle', source_cursor TEXT, delivery_cursor INTEGER NOT NULL DEFAULT 0, checkpoint_revision INTEGER NOT NULL DEFAULT 0, lease_owner TEXT, lease_expires_at TEXT, fence_token INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL, UNIQUE(connection_id,provider_scope_id));
-CREATE TABLE IF NOT EXISTS sync_runs (id TEXT PRIMARY KEY, scope_id TEXT NOT NULL REFERENCES sync_scopes(id), mode TEXT NOT NULL, status TEXT NOT NULL, processed INTEGER NOT NULL DEFAULT 0, failed INTEGER NOT NULL DEFAULT 0, error TEXT, started_at TEXT NOT NULL, finished_at TEXT);
+CREATE TABLE IF NOT EXISTS sync_runs (id TEXT PRIMARY KEY, scope_id TEXT NOT NULL REFERENCES sync_scopes(id), mode TEXT NOT NULL, status TEXT NOT NULL, processed INTEGER NOT NULL DEFAULT 0, failed INTEGER NOT NULL DEFAULT 0, error TEXT, cursor TEXT, started_at TEXT NOT NULL, finished_at TEXT);
 CREATE TABLE IF NOT EXISTS sync_failures (id TEXT PRIMARY KEY, run_id TEXT, scope_id TEXT, kind TEXT NOT NULL, message TEXT NOT NULL, provider_item_id TEXT, created_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS mail_threads (id TEXT PRIMARY KEY, connection_id TEXT NOT NULL, provider_thread_id TEXT NOT NULL, subject TEXT, updated_at TEXT NOT NULL, UNIQUE(connection_id,provider_thread_id));
 CREATE TABLE IF NOT EXISTS mail_messages (id TEXT PRIMARY KEY, connection_id TEXT NOT NULL, provider_message_id TEXT NOT NULL, provider_thread_id TEXT, subject TEXT, snippet TEXT, text_body TEXT, html_body TEXT, received_at TEXT, sent_at TEXT, is_read INTEGER NOT NULL DEFAULT 0, is_starred INTEGER NOT NULL DEFAULT 0, is_draft INTEGER NOT NULL DEFAULT 0, is_tombstone INTEGER NOT NULL DEFAULT 0, provider_revision TEXT, updated_at TEXT NOT NULL, UNIQUE(connection_id,provider_message_id));
@@ -43,6 +43,11 @@ function migrate(sqlite: Database.Database): void {
   if (connectionColumns.some((column) => column.name === "nango_config_key")) {
     sqlite.exec("ALTER TABLE connector_connections RENAME COLUMN nango_config_key TO service");
     sqlite.exec("ALTER TABLE connector_connections RENAME COLUMN nango_connection_id TO connection_name");
+  }
+  // 全量断点续传：sync_runs 落页级 continuation（provider 自解释串），失败 full run 下轮续跑。
+  const runColumns = sqlite.prepare("PRAGMA table_info(sync_runs)").all() as Array<{ name: string }>;
+  if (!runColumns.some((column) => column.name === "cursor")) {
+    sqlite.exec("ALTER TABLE sync_runs ADD COLUMN cursor TEXT");
   }
 }
 
