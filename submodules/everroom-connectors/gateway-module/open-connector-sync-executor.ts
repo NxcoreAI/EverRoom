@@ -8,13 +8,14 @@
  *   notion: search / list_block_children
  *   google-calendar: list_calendars / list_events（syncToken 透传）
  *   google-docs: googledrive files.list / files.export（docs export 走 drive）
- *   outlook: list_messages / get_message（无 delta，待上游）
+ *   outlook: list_messages / get_message / sync_messages（delta） / list_mail_folders
+ *   （含文件夹级消息列表与 childFolders 递归）
  *
  * gmail 的 message 类 action 输出是 oo 规范化形状，在 request() 出口翻译回
  * REST 形状（adaptActionOutputForSyncAdapter），适配器对响应字段的消费保持
  * 不变；其余 action 输出即 REST 结构化包装。入参一律按 oo action schema 的
- * 属性名（camelCase / format）发送——schema 禁未知字段。仅 outlook 的 Prefer
- * 头语义不可透传（oo action 内部自理 ImmutableId），delta 语义待上游。
+ * 属性名（camelCase / format）发送——schema 禁未知字段。outlook 的 Prefer
+ * 头语义不可透传（oo 的 sync_messages 内部自理 ImmutableId）。
  */
 import type { ConnectorProvider, SyncMode } from "@nxcore/connector-contract";
 import type { OpenConnectorCliConfig } from "./host-types.js";
@@ -182,8 +183,53 @@ export function routeProxyUrlForTest(rawUrl: string, method: "GET" | "POST", bod
       if (nextLink) input.nextLink = nextLink;
       return { service: "outlook", action: "list_messages", input };
     }
+    // 文件夹级 delta（初始全量枚举与 deltaLink/skiptoken 续拉同为该路径形态；
+    // Graph 的 OData 括号形式 mailFolders('{id}') 也要认）。
+    const deltaMatch =
+      /^\/v1\.0\/me\/mailFolders\((['"]?)([^)'"]+)\1\)\/messages\/delta$/.exec(path) ??
+      /^\/v1\.0\/me\/mailFolders\/([^/]+)\/messages\/delta$/.exec(path);
+    if (deltaMatch) {
+      return {
+        service: "outlook",
+        action: "sync_messages",
+        input: { mailFolderId: decodeURIComponent(deltaMatch[2] ?? deltaMatch[1]!), deltaLink: rawUrl },
+      };
+    }
+    // 文件夹级消息列表（非 delta）。
+    const folderMessagesMatch =
+      /^\/v1\.0\/me\/mailFolders\((['"]?)([^)'"]+)\1\)\/messages$/.exec(path) ??
+      /^\/v1\.0\/me\/mailFolders\/([^/]+)\/messages$/.exec(path);
+    if (folderMessagesMatch) {
+      const input: Record<string, unknown> = {
+        mailFolderId: decodeURIComponent(folderMessagesMatch[2] ?? folderMessagesMatch[1]!),
+      };
+      const top = num("$top") ?? num("top");
+      if (top) input.top = top;
+      const filter = q.get("$filter") ?? q.get("filter");
+      if (filter) input.filter = filter;
+      const orderby = q.get("$orderby") ?? q.get("orderby");
+      if (orderby) input.orderby = orderby;
+      const select = q.get("$select") ?? q.get("select");
+      if (select) input.select = select.split(",").map((item) => item.trim());
+      return { service: "outlook", action: "list_messages", input };
+    }
+    // 子文件夹枚举（discoverScopes 递归用）。
+    const childFoldersMatch =
+      /^\/v1\.0\/me\/mailFolders\((['"]?)([^)'"]+)\1\)\/childFolders$/.exec(path) ??
+      /^\/v1\.0\/me\/mailFolders\/([^/]+)\/childFolders$/.exec(path);
+    if (childFoldersMatch) {
+      const input: Record<string, unknown> = {
+        parentFolderId: decodeURIComponent(childFoldersMatch[2] ?? childFoldersMatch[1]!),
+      };
+      if (q.get("includeHiddenFolders") === "false") input.includeHiddenFolders = false;
+      return { service: "outlook", action: "list_mail_folders", input };
+    }
     if (path === "/v1.0/me/mailFolders" || path.endsWith("/mailFolders")) {
-      return { service: "outlook", action: "list_mail_folders", input: {} };
+      const input: Record<string, unknown> = {};
+      if (q.get("includeHiddenFolders") === "false") input.includeHiddenFolders = false;
+      const nextLink = q.get("nextLink");
+      if (nextLink) input.nextLink = nextLink;
+      return { service: "outlook", action: "list_mail_folders", input };
     }
     return null;
   }
@@ -209,6 +255,28 @@ export class OpenConnectorSyncExecutor implements ConnectorExecutor {
     this.formatMapper = mapper;
   }
 
+  /** 在线 scope 发现：provider 适配器的 discoverScopes（文件夹/日历表枚举）走同一 URL 路由。 */
+  async discoverScopes(connection: {
+    provider: ConnectorProvider;
+    connectionName: string;
+    service: string;
+  }): Promise<Array<{ id: string; displayName: string }>> {
+    const definition = syncProviderOf(connection.provider);
+    if (!definition?.discoverScopes) return [];
+    const scopes = await definition.discoverScopes({
+      connectionId: connection.connectionName,
+      configKey: definition.auth.nango?.configKeyDefault ?? "",
+      proxyGet: async (url: string, headers?: Record<string, string>): Promise<any> => {
+        void headers;
+        return this.request("GET", url);
+      },
+      proxyPost: async (url: string, body: unknown): Promise<any> => this.request("POST", url, body),
+      normalizeMail: (raw: unknown) => this.formatMapper!.normalizeMail(connection.provider, raw),
+      normalizeCalendar: (raw: unknown) => this.formatMapper!.normalizeCalendar(connection.provider, raw),
+    });
+    return scopes.map((scope) => ({ id: scope.providerScopeId, displayName: scope.displayName }));
+  }
+
   async *pull(
     scope: {
       provider: ConnectorProvider;
@@ -228,6 +296,9 @@ export class OpenConnectorSyncExecutor implements ConnectorExecutor {
     if (!this.formatMapper) throw new Error("format_mapper_not_wired");
     const ctx = {
       connectionId: scope.connectionName,
+      configKey: definition.auth.nango?.configKeyDefault ?? "",
+      providerScopeId: scope.providerScopeId,
+      sourceCursor: scope.sourceCursor,
       proxyGet: async (url: string, headers?: Record<string, string>): Promise<any> => {
         void headers;
         return this.request("GET", url);
@@ -238,7 +309,7 @@ export class OpenConnectorSyncExecutor implements ConnectorExecutor {
       continuation: scope.continuation ?? null,
     };
     // 复用适配器的 pull 生成器（URL 会被上面的路由翻译为 action）
-    yield* (definition.pull as NonNullable<typeof definition.pull>)(ctx as never, mode);
+    yield* (definition.pull as NonNullable<typeof definition.pull>)(ctx, mode);
   }
 
   private async request(method: "GET" | "POST", url: string, body?: unknown): Promise<unknown> {
@@ -258,6 +329,22 @@ export class OpenConnectorSyncExecutor implements ConnectorExecutor {
  * 在 oo 适配边界把输出翻译回 REST 形状，适配器保持 REST/Nango 语义不变。
  */
 export function adaptActionOutputForSyncAdapter(service: string, action: string, data: unknown): unknown {
+  if (service === "outlook" && action === "sync_messages") {
+    // oo 的 delta 输出是 { messages, nextLink, deltaLink }，翻回 Graph delta 信封
+    // { value, @odata.nextLink, @odata.deltaLink }，适配器保持 REST 语义不变。
+    const page = (data ?? {}) as {
+      messages?: unknown[];
+      value?: unknown[];
+      nextLink?: unknown;
+      deltaLink?: unknown;
+    };
+    return {
+      ...page,
+      value: page.value ?? page.messages ?? [],
+      ...(page.nextLink != null ? { "@odata.nextLink": page.nextLink } : {}),
+      ...(page.deltaLink != null ? { "@odata.deltaLink": page.deltaLink } : {}),
+    };
+  }
   if (service === "outlook" && action === "list_messages") {
     // oo 的 outlook 输出信封是 { messages, nextLink }，翻回 Graph 的
     // { value, @odata.nextLink } 信封，适配器保持 REST 语义不变。
@@ -265,6 +352,15 @@ export function adaptActionOutputForSyncAdapter(service: string, action: string,
     return {
       ...page,
       value: page.value ?? page.messages ?? [],
+      ...(page.nextLink != null ? { "@odata.nextLink": page.nextLink } : {}),
+    };
+  }
+  if (service === "outlook" && action === "list_mail_folders") {
+    // 同上：{ mailFolders, nextLink } → { value, @odata.nextLink }（discoverScopes 消费）。
+    const page = (data ?? {}) as { mailFolders?: unknown[]; value?: unknown[]; nextLink?: unknown };
+    return {
+      ...page,
+      value: page.value ?? page.mailFolders ?? [],
       ...(page.nextLink != null ? { "@odata.nextLink": page.nextLink } : {}),
     };
   }

@@ -38,10 +38,6 @@ export class ConnectorManager {
   setFormatMapper(mapper: import("./format-mapper-port.js").FormatMapperPort | null) {
     this.executor?.setFormatMapper?.(mapper);
   }
-  /** 链路B让位判定：该 provider 是否存在 active 连接（create-server 注入 managed-gmail gate 用）。 */
-  hasActiveConnection(provider: ConnectorProvider): boolean {
-    return this.repository.listConnections().some((c) => c.provider === provider && c.status === "active");
-  }
   constructor(
     public readonly repository: ConnectorRepository,
     private readonly executor: ConnectorExecutor | null,

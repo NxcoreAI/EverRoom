@@ -10,6 +10,7 @@ import type { AxiosRequestConfig, AxiosResponse } from 'axios'
 import type { App } from 'electron'
 
 import type {
+  AiGatewayStatus,
   AsrJob,
   AsrResult,
   CloudAccountStatus,
@@ -179,6 +180,15 @@ export interface SaasRuntimeConfig {
   updatedAt: string
   config: Record<string, unknown>
 }
+
+/** SaaS 签发的 new-api 中转短期令牌（`POST /app/ai-gateway/tokens`）。 */
+export interface AiGatewayToken {
+  token: string
+  expiresAt: string
+  /** 中转站推理根地址（无 /v1）。 */
+  baseUrl: string
+}
+
 
 /**
  * SaaS 代发的 oo（OpenConnector 多租户实例）用户会话：登录后经
@@ -750,6 +760,27 @@ export class SaasClient {
     return true
   }
 
+  /** new-api 中转短期令牌（TTL 25min，由 AiRelayKeeper 每 ~20min 续签）。 */
+  async issueAiGatewayToken(): Promise<AiGatewayToken> {
+    await this.initialize()
+    const issued = await this.request<Partial<AiGatewayToken>>('/app/ai-gateway/tokens', { method: 'POST' })
+    if (
+      !issued || typeof issued !== 'object'
+      || typeof issued.token !== 'string' || !issued.token.trim()
+      || typeof issued.expiresAt !== 'string' || !Number.isFinite(Date.parse(issued.expiresAt))
+      || typeof issued.baseUrl !== 'string' || !issued.baseUrl.trim()
+    ) {
+      throw new Error('SaaS 返回了无效的中转令牌。')
+    }
+    return { token: issued.token, expiresAt: issued.expiresAt, baseUrl: issued.baseUrl.trim().replace(/\/+$/, '') }
+  }
+
+  /** 中转额度状态（未配置/无订阅记录时 data 可能为 null）。 */
+  async aiGatewayStatus(): Promise<AiGatewayStatus | null> {
+    await this.initialize()
+    return this.request<AiGatewayStatus | null>('/app/ai-gateway/status')
+  }
+
   async updateNotificationPreferences(input: Partial<NotificationPreferences>): Promise<NotificationPreferences> {
     await this.initialize()
     return this.request('/app/notifications/preferences', { method: 'PUT', data: input })
@@ -986,7 +1017,7 @@ export class SaasClient {
     this.stopLoopbackServer()
     await this.cancelPendingQrLogin()
     this.pendingAdmission = null
-    const refreshToken = await this.credentials.getPlainText(REFRESH_TOKEN_KEY)
+    const refreshToken = await this.credentials.getSecureText(REFRESH_TOKEN_KEY)
     if (refreshToken) {
       await this.publicRequest('/app/auth/logout', {
         method: 'POST',
@@ -1257,7 +1288,7 @@ export class SaasClient {
   }
 
   private async restoreSession(): Promise<void> {
-    const refreshToken = await this.credentials.getPlainText(REFRESH_TOKEN_KEY)
+    const refreshToken = await this.credentials.getSecureText(REFRESH_TOKEN_KEY)
     if (!refreshToken) return
     try {
       await this.refresh(refreshToken)
@@ -1406,7 +1437,7 @@ export class SaasClient {
     this.subscriptionLoadedAt = 0
     this.subscriptionRetryAfter = 0
     this.subscriptionPromise = null
-    await this.credentials.setPlainText(REFRESH_TOKEN_KEY, data.refreshToken)
+    await this.credentials.setSecureText(REFRESH_TOKEN_KEY, data.refreshToken)
     await this.credentials.setPlainText(ACCOUNT_PROFILE_KEY, JSON.stringify({
       userId: data.user.id,
       email: data.user.email,
@@ -1482,7 +1513,7 @@ export class SaasClient {
     this.requireLogin()
     let response = await this.send(path, config, this.accessToken!)
     if (response.status === 401) {
-      const refreshToken = await this.credentials.getPlainText(REFRESH_TOKEN_KEY)
+      const refreshToken = await this.credentials.getSecureText(REFRESH_TOKEN_KEY)
       if (!refreshToken) throw new Error('登录已过期，请重新登录。')
       await this.refresh(refreshToken)
       response = await this.send(path, config, this.accessToken!)
@@ -1494,7 +1525,7 @@ export class SaasClient {
     this.requireLogin()
     let response = await this.send(path, config, this.accessToken!)
     if (response.status === 401) {
-      const refreshToken = await this.credentials.getPlainText(REFRESH_TOKEN_KEY)
+      const refreshToken = await this.credentials.getSecureText(REFRESH_TOKEN_KEY)
       if (!refreshToken) throw new Error('登录已过期，请重新登录。')
       await this.refresh(refreshToken)
       response = await this.send(path, config, this.accessToken!)

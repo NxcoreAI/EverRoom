@@ -170,6 +170,16 @@ export class NangoConnectorGatewayBridge {
     return Array.isArray(result) ? result : (result.items ?? [])
   }
 
+  /** 连接的已同步记录总数（records 端点 total；limit=1 只为取计数）。 */
+  async recordTotals(connectionId: string): Promise<{ mail: number; calendar: number }> {
+    const total = (type: 'mail' | 'calendar') =>
+      this.request<{ items?: ConnectorJsonRecord[]; total?: number }>(`/v1/nango-connectors/connections/${this.id(connectionId)}/records`, { params: { type, limit: 1 } })
+        .then((result) => (Array.isArray(result) ? 0 : result.total ?? 0))
+        .catch(() => 0)
+    const [mail, calendar] = await Promise.all([total('mail'), total('calendar')])
+    return { mail, calendar }
+  }
+
   armFault(point: string): Promise<void> {
     if (!FAULT_POINTS.has(point)) throw new Error('无效的故障注入点。')
     return this.request('/v1/nango-connectors/debug/faults', { method: 'POST', data: { point } })

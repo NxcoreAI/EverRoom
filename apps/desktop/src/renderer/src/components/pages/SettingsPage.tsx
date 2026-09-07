@@ -37,7 +37,7 @@ import {
 } from '@/state/documentCursorCompletionSettings'
 import appleLogo from '@/assets/apple-logo.svg'
 import googleLogo from '@/assets/google-logo.svg'
-import type { CloudOidcProvider } from '../../../../shared/sources'
+import type { AiGatewayStatus, CloudOidcProvider } from '../../../../shared/sources'
 import type { AccountKeyringStatus, CloudDevice, PerceptionSettings, WindowScreenshotStatus } from '../../../../shared/sources'
 import type { BrowserExtensionStatus } from '../../../../shared/browser-extension'
 import type { NotificationPreferences } from '../../../../shared/notifications'
@@ -146,6 +146,7 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
   const [extensionError, setExtensionError] = useState<string | null>(null)
   const [notificationPreferences, setNotificationPreferences] = useState<NotificationPreferences | null>(null)
   const [notificationBusy, setNotificationBusy] = useState(false)
+  const [aiRelayStatus, setAiRelayStatus] = useState<AiGatewayStatus | null>(null)
   const redeemCode = useRedeemCode()
 
   useEffect(() => {
@@ -212,6 +213,25 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
       .then((preferences) => { if (!cancelled) setNotificationPreferences(preferences) })
       .catch(() => undefined)
     return () => { cancelled = true }
+  }, [account?.authenticated, account?.user?.id])
+
+  // LLM 中转余量：随订阅区拉取一次 + 额度尽事件即时刷新（保持最小 UI，无独立页面）。
+  useEffect(() => {
+    if (!account?.authenticated || !window.nxcore) {
+      setAiRelayStatus(null)
+      return
+    }
+    let cancelled = false
+    const refresh = () => {
+      void window.nxcore?.aiRelay.status()
+        .then((status) => { if (!cancelled) setAiRelayStatus(status) })
+        .catch(() => undefined)
+    }
+    refresh()
+    const removeListener = window.nxcore.aiRelay.onEvent((event) => {
+      if (event.type === 'quota-exhausted' || event.type === 'fallback-restored') refresh()
+    })
+    return () => { cancelled = true; removeListener() }
   }, [account?.authenticated, account?.user?.id])
 
   const updateNotificationPreference = (input: Partial<NotificationPreferences>) => {
@@ -812,6 +832,27 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
                     })}
                   </small>
                 </div>
+                {aiRelayStatus?.configured && aiRelayStatus.llmCredits !== null ? (
+                  <div className="cloud-subscription-quota">
+                    <div>
+                      <span>{t('surface:settings.llmRemaining')}</span>
+                      <strong>{aiRelayStatus.remainingCredits.toLocaleString(locale)}</strong>
+                    </div>
+                    <progress
+                      aria-label={t('surface:settings.llmRemaining')}
+                      max={Math.max(1, aiRelayStatus.llmCredits)}
+                      value={Math.min(Math.max(0, aiRelayStatus.remainingCredits), aiRelayStatus.llmCredits)}
+                    />
+                    <small>
+                      {aiRelayStatus.remainingCredits <= 0
+                        ? t('surface:settings.llmQuotaExhausted')
+                        : t('surface:settings.usedUsedTotalTotal', {
+                            used: Number(aiRelayStatus.usedCredits || '0').toLocaleString(locale),
+                            total: aiRelayStatus.llmCredits.toLocaleString(locale),
+                          })}
+                    </small>
+                  </div>
+                ) : null}
                 <div className="cloud-subscription-period">
                   <span><CalendarClock aria-hidden="true" />{t('surface:settings.periodEnds')}</span>
                   <strong>{formatPeriodEnd(account.subscription.periodEnd, locale)}</strong>

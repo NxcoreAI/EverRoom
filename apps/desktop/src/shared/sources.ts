@@ -140,20 +140,6 @@ import type {
   OpenConnectorExecutionInput,
   OpenConnectorStatus,
 } from './open-connector'
-import type {
-  ConnectorAccount,
-  ConnectorDataPage,
-  ConnectorDataQuery,
-  ConnectorDataRecord,
-  ConnectorIngestResult,
-  ConnectorPromptProfile,
-  ConnectorQuarantinedRecord,
-  ConnectorSyncJob,
-  ConnectorSyncJobInput,
-  ConnectorSyncRun,
-  ConnectorSyncStatus,
-} from './connector-sync'
-import type { DesktopPageMode } from './page-mode'
 import type { DesktopLocale } from './i18n/desktop'
 import type {
   AgentNotificationTarget,
@@ -381,6 +367,18 @@ export interface CloudDevice {
   lastSeenAt: string
   createdAt?: string
 }
+
+/** 中转额度视图（`GET /app/ai-gateway/status`，按订阅周期开窗）。 */
+export interface AiGatewayStatus {
+  configured: boolean
+  subscriptionStatus: string | null
+  llmCredits: number | null
+  usedCredits: string
+  remainingCredits: number
+  periodEnd: string | null
+}
+
+export type AiRelayKeeperEventType = 'quota-exhausted' | 'fallback-user' | 'fallback-restored'
 
 /** 扫码登录 renderer 可见的展示信息（二维码载荷要素，无桌面交换凭证）。 */
 export interface QrLoginPresentation {
@@ -780,7 +778,6 @@ export interface RoomLocalActionResult {
 
 export interface NxcoreDesktopApi {
   platform: string
-  pageMode: DesktopPageMode
   app: {
     clearUserData(): Promise<void>
   }
@@ -851,6 +848,7 @@ export interface NxcoreDesktopApi {
     documents(connectionId: string): Promise<WikiDocumentSummary[]>
     document(connectionId: string, documentId: string): Promise<WikiDocumentPreview>
     records(connectionId: string, type: 'mail' | 'calendar'): Promise<ConnectorJsonRecord[]>
+    recordTotals(connectionId: string): Promise<{ mail: number; calendar: number }>
   }
   cliConnector: {
     status(): Promise<OpenConnectorStatus>
@@ -914,22 +912,6 @@ export interface NxcoreDesktopApi {
     retryExport(exportId: string): Promise<AgentDocumentExportRunView>
     cancelExport(exportId: string): Promise<AgentDocumentExportRunView>
     listExports(documentId?: string): Promise<{ items: AgentDocumentExportRunView[] }>
-  }
-  cliConnectorSync: {
-    status(): Promise<ConnectorSyncStatus>
-    accounts(): Promise<ConnectorAccount[]>
-    promptProfiles(): Promise<ConnectorPromptProfile[]>
-    jobs(): Promise<ConnectorSyncJob[]>
-    createJob(input: ConnectorSyncJobInput): Promise<ConnectorSyncJob>
-    updateJob(id: string, input: Partial<ConnectorSyncJobInput> & { configVersion: number }): Promise<ConnectorSyncJob>
-    runJob(id: string): Promise<ConnectorSyncJob>
-    setJobPaused(id: string, paused: boolean, configVersion: number): Promise<ConnectorSyncJob>
-    archiveJob(id: string, configVersion: number): Promise<ConnectorSyncJob>
-    runs(jobId: string): Promise<ConnectorSyncRun[]>
-    quarantine(runId: string): Promise<ConnectorQuarantinedRecord[]>
-    data(query: ConnectorDataQuery): Promise<ConnectorDataPage>
-    record(id: string): Promise<ConnectorDataRecord>
-    ingestRecords(recordIds: string[]): Promise<ConnectorIngestResult>
   }
   mcp: {
     listServers(): Promise<McpServersSnapshot>
@@ -1036,6 +1018,11 @@ export interface NxcoreDesktopApi {
     replaceDeviceAdmission(input: { admissionToken: string; replaceDeviceId: string }): Promise<CloudAccountStatus>
     dismissDeviceAdmission(): Promise<{ dismissed: boolean }>
     onAdmissionRequired(listener: (status: CloudAccountStatus) => void): () => void
+  }
+  aiRelay: {
+    /** 中转额度视图（订阅周期开窗）；未登录/未配置时为 null。 */
+    status(): Promise<AiGatewayStatus | null>
+    onEvent(listener: (event: { type: AiRelayKeeperEventType }) => void): () => void
   }
   notifications: {
     preferences(): Promise<NotificationPreferences>

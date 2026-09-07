@@ -36,7 +36,6 @@ export function Sidebar({
   onNavigate: (page: PageId) => void
 }) {
   const { t, formatNumber } = useLocale()
-  const pageMode = window.nxcore?.pageMode ?? 'sources'
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(() => new Set())
   const [gatewayStatus, setGatewayStatus] = useState<GatewayStatus>(INITIAL_GATEWAY_STATUS)
   const [runtimeConfigStatus, setRuntimeConfigStatus] = useState<'checking' | 'testing' | null>(null)
@@ -128,7 +127,7 @@ export function Sidebar({
   return (
     <aside className="sidebar">
       <nav className="sidebar-nav" aria-label={t('surface:sidebar.mainNavigation')}>
-        {navigationSectionsForMode(pageMode, window.nxcore?.office.testAvailable === true).map((section) => (
+        {navigationSectionsForMode(window.nxcore?.office.testAvailable === true).map((section) => (
           <section
             key={section.id}
             className="nav-section"
