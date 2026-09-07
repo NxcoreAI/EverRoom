@@ -90,6 +90,7 @@ jobs:
         run: |
           cred_file="$RUNNER_TEMP/vyitec-creds"
           printf 'https://%s:%s@code.vyitec.com\n' "$VYITEC_USER" "$VYITEC_TOKEN" > "$cred_file"
+          git config --global credential.helper ""
           git config --global credential.helper "store --file=$cred_file"
 
       - name: Install dependencies
@@ -300,6 +301,7 @@ jobs:
         run: |
           cred_file="$RUNNER_TEMP/vyitec-creds"
           printf 'https://%s:%s@code.vyitec.com\n' "$VYITEC_USER" "$VYITEC_TOKEN" > "$cred_file"
+          git config --global credential.helper ""
           git config --global credential.helper "store --file=$cred_file"
 
       - name: Install dependencies
