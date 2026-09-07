@@ -78,7 +78,6 @@ export async function createCursorCompletionServer(config: GatewayConfig) {
     undefined,
     undefined,
     undefined,
-    "direct",
     false,
   );
   await agentService.initialize();

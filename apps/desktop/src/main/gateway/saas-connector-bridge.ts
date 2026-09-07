@@ -11,10 +11,34 @@ export interface SaasConnectorBridgeDeps {
   startAuthorization: (service: string) => Promise<{ authorizationUrl: string }>
   /** 当前 oo 会话；未登录或会话未就绪时为 null。 */
   ooSession: () => { baseUrl: string; token: string } | null
+  /** 已配置 OAuth 的服务清单（GET /app/connectors/oauth-configs 最小投影）；未登录时由调用方抛错。 */
+  oauthConfigs: () => Promise<Array<{ service: string; displayName: string | null; iconUrl: string | null }>>
 }
 
 const AUTHORIZATION_TTL_MS = 15 * 60_000
 const PROBE_TIMEOUT_MS = 5_000
+
+/**
+ * oo service（oo 目录/配置列表的命名，Google 系无连字符）↔ EverRoom provider
+ * （注册表/连接注册表的命名）。与 gateway 侧 SERVICE_OF_PROVIDER
+ * （everroom-connectors gateway-module/open-connector-authorization.ts）保持同值。
+ */
+const PROVIDER_OF_SERVICE: Record<string, string> = {
+  gmail: 'gmail',
+  outlook: 'outlook',
+  notion: 'notion',
+  googlecalendar: 'google-calendar',
+  googledrive: 'google-docs',
+}
+
+const SERVICE_OF_PROVIDER: Record<string, string> = Object.fromEntries(
+  Object.entries(PROVIDER_OF_SERVICE).map(([service, provider]) => [provider, service]),
+)
+
+/** EverRoom provider → oo service；未知 provider 原样返回（多数 provider 与 service 同名）。 */
+export function serviceOfProvider(provider: string): string {
+  return SERVICE_OF_PROVIDER[provider] ?? provider
+}
 
 interface PendingAttempt {
   provider: string
@@ -46,7 +70,8 @@ export class SaasConnectorBridge extends ConnectorGatewayBridge {
 
   async startAuthorization(provider: string): Promise<ConnectorAuthorizationAttempt> {
     if (!/^[a-z][a-z0-9-]*$/.test(provider)) throw new Error('不支持的连接提供方。')
-    const { authorizationUrl } = await this.deps.startAuthorization(provider)
+    // SaaS/oo 按 oo service 名索引（Google 系无连字符），桌面各链路只认 provider 名。
+    const { authorizationUrl } = await this.deps.startAuthorization(serviceOfProvider(provider))
     const url = new URL(authorizationUrl)
     if (url.protocol !== 'https:' && url.protocol !== 'http:') {
       throw new Error('SaaS 返回了不安全的授权地址。')
@@ -77,9 +102,10 @@ export class SaasConnectorBridge extends ConnectorGatewayBridge {
     }
     const session = this.deps.ooSession()
     if (!session) return base
+    const service = serviceOfProvider(attempt.provider)
     try {
       const response = await fetch(
-        `${session.baseUrl}/v1/apps/services/${encodeURIComponent(attempt.provider)}`,
+        `${session.baseUrl}/v1/apps/services/${encodeURIComponent(service)}`,
         { headers: { authorization: `Bearer ${session.token}` }, signal: AbortSignal.timeout(PROBE_TIMEOUT_MS) },
       )
       if (response.ok) {
@@ -93,7 +119,7 @@ export class SaasConnectorBridge extends ConnectorGatewayBridge {
           try {
             const connection = await this.registerConnection({
               provider: attempt.provider,
-              service: attempt.provider,
+              service,
               connectionName: 'default',
             })
             this.pending.delete(id)
@@ -112,5 +138,14 @@ export class SaasConnectorBridge extends ConnectorGatewayBridge {
       // oo 暂不可达：保持 pending，由渲染层轮询兜底。
     }
     return base
+  }
+
+  /** 已配置 OAuth 的服务 → 桌面 provider 名清单；未知 service（无适配器）丢弃。 */
+  async configuredProviders(): Promise<string[]> {
+    const configs = await this.deps.oauthConfigs()
+    const providers = configs
+      .map((config) => PROVIDER_OF_SERVICE[config.service])
+      .filter((provider): provider is string => Boolean(provider))
+    return [...new Set(providers)]
   }
 }

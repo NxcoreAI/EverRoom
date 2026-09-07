@@ -188,6 +188,7 @@ export function CloudSourceCard({
   connection,
   scopes,
   runs,
+  totals,
   busy,
   onOpen,
   onSync,
@@ -198,6 +199,8 @@ export function CloudSourceCard({
   connection: ConnectorConnection
   scopes: SyncScope[]
   runs: SyncRun[]
+  /** 连接已同步记录总数（mail/calendar）；缺省隐藏对应统计。 */
+  totals?: { mail: number; calendar: number }
   onSync: () => void
   onToggleEnabled: () => void
   onPurge: () => void
@@ -206,9 +209,13 @@ export function CloudSourceCard({
 }) {
   const { locale, t } = useLocale()
   const active = connection.status === 'active'
+  const mailbox = connection.provider === 'gmail' || connection.provider === 'outlook'
+  const calendarScopes = connection.provider === 'google-calendar'
   const lastRun = runs.length ? runs.reduce((latest, run) => (run.startedAt > latest.startedAt ? run : latest)) : null
   const running = scopes.some((scope) => scope.state === 'running')
     || runs.some((run) => run.status === 'running' || run.status === 'queued')
+  // 增量同步依赖全量落下的游标：初始（全量）同步完成前不可用。
+  const initialSyncDone = scopes.length > 0 && scopes.every((scope) => scope.state === 'disabled' || scope.sourceCursor)
   const tone = connection.status === 'error' ? 'attention' : running ? 'syncing' : active ? 'ok' : 'paused'
   const stateLabel = running
     ? t('surface:sourceTable.syncing')
@@ -226,7 +233,7 @@ export function CloudSourceCard({
       actions={
         <>
           {onReplaceAccount ? <button type="button" className="src-mini-btn" aria-label={t('surface:sources.replaceAccount')} title={t('surface:sources.replaceAccount')} disabled={busy} onClick={onReplaceAccount}><ArrowLeftRight aria-hidden="true" strokeWidth={1.8} /></button> : null}
-          {active ? <button type="button" className="src-mini-btn" disabled={busy || !scopes.length} onClick={onSync}><RefreshCw aria-hidden="true" strokeWidth={1.8} />{t('surface:connector.incrementalSync')}</button> : null}
+          {active ? <button type="button" className="src-mini-btn" disabled={busy || running || !initialSyncDone} onClick={onSync}><RefreshCw aria-hidden="true" strokeWidth={1.8} />{t('surface:connector.incrementalSync')}</button> : null}
           <button type="button" className="src-mini-btn" aria-label={t(active ? 'surface:connector.disableConnection' : 'surface:sourceCard.enableConnection')} title={t(active ? 'surface:connector.disableConnection' : 'surface:sourceCard.enableConnection')} disabled={busy} onClick={onToggleEnabled}>
             {active ? <Pause aria-hidden="true" strokeWidth={1.8} /> : <Play aria-hidden="true" strokeWidth={1.8} />}
           </button>
@@ -240,8 +247,13 @@ export function CloudSourceCard({
         <div className="src-card-error"><AlertTriangle aria-hidden="true" strokeWidth={1.8} />{t('surface:connector.reauthorizationRequired')}</div>
       ) : null}
       <Stats items={[
-        { value: scopes.length.toLocaleString(), label: t('surface:sourceCard.scopes') },
-        ...(lastRun ? [{ value: `${lastRun.processed.toLocaleString()}${lastRun.failed ? ` / ${lastRun.failed}` : ''}`, label: t('surface:sourceCard.lastSynced') }] : []),
+        ...(calendarScopes ? [
+          ...(totals ? [{ value: totals.calendar.toLocaleString(), label: t('surface:connector.calendar') }] : []),
+          { value: scopes.length.toLocaleString(), label: t('surface:connector.calendars') },
+        ] : [
+          ...(mailbox && totals ? [{ value: totals.mail.toLocaleString(), label: t('surface:sourceCard.syncedItems') }] : []),
+          ...(!mailbox && lastRun ? [{ value: `${lastRun.processed.toLocaleString()}${lastRun.failed ? ` / ${lastRun.failed}` : ''}`, label: t('surface:sourceCard.lastSynced') }] : []),
+        ]),
       ]} />
     </CardShell>
   )

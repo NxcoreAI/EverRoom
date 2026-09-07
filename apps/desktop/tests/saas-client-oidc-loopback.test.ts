@@ -18,6 +18,8 @@ function createClient(loopbackSupported: boolean): SaasClient {
   const credentials = {
     getPlainText: vi.fn(async () => null),
     setPlainText: vi.fn(async () => undefined),
+    getSecureText: vi.fn(async () => null),
+    setSecureText: vi.fn(async () => undefined),
     delete: vi.fn(async () => undefined),
     set: vi.fn(async () => 'credential-key'),
   } satisfies Partial<CredentialStore> as unknown as CredentialStore

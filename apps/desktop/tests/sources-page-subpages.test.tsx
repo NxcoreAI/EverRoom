@@ -33,6 +33,7 @@ function mockWindow(
   sources: DataSourceSummary[] = [],
   connector?: { connections?: Array<{ id: string; provider: string; service: string; connectionName: string; status: 'active' | 'disabled' | 'error'; updatedAt: string }>; scopes?: unknown[]; runs?: unknown[] },
   startAuthorization?: ReturnType<typeof vi.fn>,
+  oauthConfigs?: () => Promise<string[] | null>,
 ) {
   const listEvents = vi.fn(async (query: { limit: number }) => ({ items: EVENTS.slice(0, query.limit), total: EVENTS.length }))
   Object.assign(globalThis.window, {
@@ -45,6 +46,7 @@ function mockWindow(
       nangoConnector: {
         status: vi.fn(async () => ({ enabled: true, connections: connector?.connections ?? [], scopes: connector?.scopes ?? [], runs: connector?.runs ?? [] })),
         startAuthorization: startAuthorization ?? vi.fn(async () => ({ id: 'auth-x' })),
+        ...(oauthConfigs ? { oauthConfigs } : {}),
       },
       ingest: { listEvents },
       migrations: {
@@ -206,5 +208,31 @@ describe('SourcesPage second-level pages', () => {
       .map((node) => String(node.props.children[1].props.children))
     expect(subLabels).toContain('日历订阅（WebCal）')
     expect(subLabels).not.toContain('Gmail')
+  })
+
+  it('SaaS 已配置 OAuth 名单驱动待连接云端组：名单内展示、名单外隐藏', async () => {
+    // 预置"已引导"标记，避免触发首次连接引导弹窗。
+    localStorage.setItem('nxcore:filter-guide:guided', '[]')
+    // 桥层已把 oo service 映射为 provider 名（googledrive→google-docs），渲染层只认 provider。
+    mockWindow([], undefined, undefined, async () => ['gmail', 'google-docs'])
+    renderer = await mount()
+
+    // 主页 6 格 = 本地3 + Gmail + Google Docs + Notion ZIP；名单外（Outlook/Notion 硬编码两条）不出现。
+    const mainLabels = renderer.root.findAllByProps({ className: 'src-connect-tile' })
+      .map((node) => String(node.props.children[1].props.children))
+    expect(mainLabels).toContain('Gmail')
+    expect(mainLabels).toContain('Google Docs')
+    expect(mainLabels).not.toContain('Outlook')
+    expect(mainLabels).not.toContain('Notion')
+
+    // 二级页全量视图同样只含名单内云端源 + webcal 订阅入口。
+    click(renderer.root.findByProps({ className: 'src-connect-more' }))
+    const subLabels = renderer.root.findAllByProps({ className: 'src-connect-tile' })
+      .map((node) => String(node.props.children[1].props.children))
+    expect(subLabels).toContain('Gmail')
+    expect(subLabels).toContain('Google Docs')
+    expect(subLabels).toContain('日历订阅（WebCal）')
+    expect(subLabels).not.toContain('Outlook')
+    expect(subLabels).not.toContain('Notion')
   })
 })

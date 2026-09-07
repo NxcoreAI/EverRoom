@@ -69,6 +69,46 @@ describe('NangoConnectorGatewayBridge input boundary', () => {
     await expect(bridge().records('connection-1', 'document' as 'mail')).rejects.toThrow('无效的数据记录类型')
   })
 
+  it('fetches per-connection record totals from the records endpoint', async () => {
+    const paths: string[] = []
+    const server = createServer((request, response) => {
+      paths.push(request.url ?? '')
+      json(response, {
+        items: [{}],
+        total: request.url?.includes('type=mail') ? 600 : 12,
+        limit: 1,
+        offset: 0,
+      })
+    })
+    servers.push(server)
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    const { port } = server.address() as AddressInfo
+    const testBridge = new NangoConnectorGatewayBridge({
+      getConnection: () => ({ pid: 1, baseUrl: `http://127.0.0.1:${String(port)}`, token: 'test-token', version: 'test' }),
+    } as GatewaySupervisor)
+
+    await expect(testBridge.recordTotals('connection-1')).resolves.toEqual({ mail: 600, calendar: 12 })
+    expect(paths).toEqual([
+      '/v1/nango-connectors/connections/connection-1/records?type=mail&limit=1',
+      '/v1/nango-connectors/connections/connection-1/records?type=calendar&limit=1',
+    ])
+  })
+
+  it('treats record-total fetch failures as zero instead of breaking the poll', async () => {
+    const server = createServer((request, response) => {
+      response.writeHead(500, { 'Content-Type': 'application/json' })
+      response.end(JSON.stringify({ error: 'boom' }))
+    })
+    servers.push(server)
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    const { port } = server.address() as AddressInfo
+    const testBridge = new NangoConnectorGatewayBridge({
+      getConnection: () => ({ pid: 1, baseUrl: `http://127.0.0.1:${String(port)}`, token: 'test-token', version: 'test' }),
+    } as GatewaySupervisor)
+
+    await expect(testBridge.recordTotals('connection-1')).resolves.toEqual({ mail: 0, calendar: 0 })
+  })
+
   it('sends valid JSON for bodyless connector POST actions', async () => {
     const requests: Array<{ path: string; contentType?: string; body: string }> = []
     const server = createServer(async (request, response) => {

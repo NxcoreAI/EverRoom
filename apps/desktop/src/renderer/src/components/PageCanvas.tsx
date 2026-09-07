@@ -13,7 +13,6 @@ import { MemoryPage } from './pages/MemoryPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { SourcesPage } from './pages/SourcesPage'
 import { WikiPage } from './pages/WikiPage'
-import { ConnectorSyncPage } from './pages/ConnectorSyncPage'
 import { AgentStatusPage } from './pages/AgentStatusPage'
 import { AgentSchedulesPage } from './pages/AgentSchedulesPage'
 import { useLocale } from '@/i18n/LocaleContext'
@@ -106,7 +105,6 @@ export function PageCanvas({
   if (page === 'inspiration') content = <InspirationPage />
   if (page === 'memory') content = <MemoryPage focusAtomicId={memoryFocusId} />
   if (page === 'wiki') content = <WikiPage />
-  if (page === 'connectors') content = <ConnectorSyncPage />
   if (page === 'diary') {
     content = (
       <Suspense fallback={<DiaryPageSkeleton />}>

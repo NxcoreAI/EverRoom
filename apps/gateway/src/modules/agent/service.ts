@@ -331,7 +331,6 @@ function participantHandoffPrompt(messages: AgentMessage[]): string | null {
 function runtimePrompt(
   input: StartAgentRunInput,
   pageLabel: string,
-  connectorMode: "direct" | "local",
   handoff: string | null = null,
   externalContext: string | null = null,
 ): string {
@@ -352,9 +351,7 @@ function runtimePrompt(
       ? "本轮包含由 Room 总览选区交互生成的引用纠正。调用 room_correction_draft(task=citation-correction)，instruction 传用户评论、selectedText 传选区原文；把返回的 edits 逐字转发给 context_room_correction_apply_citation 在当前回合原子保存并应用（edits 及其字段不得改写、增删或摊平到根参数）。禁止把多条 claim 拼成一个 originalText，禁止创建待确认 proposal，禁止要求用户再次确认。"
       : null;
   const connectorRouting = EXTERNAL_CONNECTOR_REQUEST.test(input.prompt)
-    ? connectorMode === "local"
-      ? "外部服务数据规则：普通 Agent 只能查询 EverRoom 已同步到本地的连接器数据。使用 connector_data_search 获取数据，并用 connector_sync_status 解释最后同步时间、新鲜度或缺失原因。禁止声称进行了实时第三方调用；本地没有数据或数据已过期时，明确告知用户需要授权、同步或使用专用 CLI Agent。"
-      : "外部服务路由规则：当用户请求读取、搜索、创建、发送或管理 Gmail、GitHub、Notion、Google Drive、Slack、Dropbox、日历、云盘等第三方服务中的数据时，必须在当前回合立即使用对应 connector 工具完成请求；不要只描述将要调用工具，也不要调用 context_room_* 或文档工具。"
+    ? "外部服务路由规则：当用户请求读取、搜索、创建、发送或管理 Gmail、GitHub、Notion、Google Drive、Slack、Dropbox、日历、云盘等第三方服务中的数据时，必须在当前回合立即使用对应 connector 工具完成请求；不要只描述将要调用工具，也不要调用 context_room_* 或文档工具。"
     : null;
   const attachmentContext = attachments.length
     ? [
@@ -483,7 +480,6 @@ export class AgentService {
     private readonly roomRegistry?: AgentRoomRegistry,
     private readonly documentRegistry?: AgentDocumentRegistry,
     private readonly completedMessageResolver?: AgentCompletedMessageResolver,
-    private readonly connectorMode: "direct" | "local" = "direct",
     private readonly disposeRuntime = true,
     private readonly resolveTargetRuntime?: (target: NonNullable<StartAgentRunInput["localAgent"]>) => AgentRuntime,
   ) {
@@ -1350,7 +1346,6 @@ export class AgentService {
         prompt: runtimePrompt(
           input,
           runPageLabel,
-          this.connectorMode,
           selectedAgentId === MAIN_AGENT_ID ? participantHandoffPrompt(priorMessages) : null,
           externalContext,
         ),

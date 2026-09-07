@@ -9,7 +9,12 @@ import type { NotificationBridgeClient } from "./bridge-client.js";
 export const SEND_NOTIFICATION_TOOL={
   name:"send_notification",
   title:"发送系统通知",
-  description:"自主决定是否向用户的 iOS、macOS 或两端发送一条 EverRoom 系统通知。标题和摘要会显示在锁屏或系统通知中心；详细内容在用户点击后从对应 Agent 会话加载。",
+  description:"向用户的 iOS、macOS 或两端发送一条 EverRoom 系统通知。标题和摘要会显示在锁屏或系统通知中心；详细内容在用户点击后从对应 Agent 会话加载。",
+  guidelines:[
+    "两类场景必须调用本工具推送通知，不能省略、也不能只在回复里口头说明：(1) 用户明确要求通知、提醒或要求完成后告知；(2) 本 run 内 Context Room 文档发生实际变更：context_room_patch_commit 返回 documentChanged=true，或 context_room_write_commit 成功提交新文档。patch_commit 返回 awaiting_review 时只是修改提案待用户审阅，不算文档变更，不触发必推。",
+    "其余场景自主决定：仅当结果需要用户离开对话后回来处理（长任务完成、后台任务结束、等待审阅或补充输入）时才发送；中间过程、琐碎进展和同一 run 内的重复进展不要发送。",
+    "title 必须简短且脱离上下文也能独立理解；body 只写一句话摘要，不得包含正文、密钥或其他敏感原文。用户未指定平台时默认同时投递 ios 与 macos。",
+  ],
   inputSchema:{type:"object",properties:{
     title:{type:"string",minLength:1,maxLength:80,description:"简短、可独立理解的通知标题。"},
     body:{type:"string",minLength:1,maxLength:120,description:"不包含正文、密钥或敏感原文的短摘要。"},
@@ -57,7 +62,7 @@ export class NotificationMcpHost{
   async close(){const sessions=await Promise.allSettled(this.sessions.values());this.sessions.clear();await Promise.all(sessions.flatMap(result=>result.status==="fulfilled"?[result.value.server.close().catch(()=>undefined)]:[]));}
   private async createSession(context:DocumentExecutionContext):Promise<HostSession>{
     const transport=new ExchangeTransport();const holder={server:null as unknown as Server,transport,context:structuredClone(context)};
-    const server=new Server({name:"everroom-notifications",version:"1.0.0"},{capabilities:{tools:{}},instructions:SEND_NOTIFICATION_TOOL.description});holder.server=server;
+    const server=new Server({name:"everroom-notifications",version:"1.0.0"},{capabilities:{tools:{}},instructions:[SEND_NOTIFICATION_TOOL.description,...SEND_NOTIFICATION_TOOL.guidelines].join(" ")});holder.server=server;
     server.setRequestHandler(ListToolsRequestSchema,async()=>({tools:this.listTools()}));
     server.setRequestHandler(CallToolRequestSchema,async request=>{try{return await this.callTool(request.params.name,(request.params.arguments??{}) as Record<string,unknown>,holder.context);}catch(error){return{content:[{type:"text" as const,text:JSON.stringify({error:error instanceof Error?error.message:String(error)})}],isError:true};}});
     await server.connect(transport);return holder;

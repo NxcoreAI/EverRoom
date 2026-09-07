@@ -43,16 +43,23 @@ export const outlookSyncProvider: SyncProviderDefinition = {
     return scopes;
   },
   async *pull(ctx, mode) {
+    // delta 协议统一两种模式：无 token 的初始 delta 枚举即全量，
+    // deltaLink（sourceCursor）续拉即增量。全量断点续传优先接 lastContinuation。
     let url =
-      mode === "incremental" && ctx.sourceCursor
+      ctx.continuation ??
+      (mode === "incremental" && ctx.sourceCursor
         ? ctx.sourceCursor
-        : `https://graph.microsoft.com/v1.0/me/mailFolders/${encodeURIComponent(ctx.providerScopeId)}/messages/delta`;
+        : `https://graph.microsoft.com/v1.0/me/mailFolders/${encodeURIComponent(ctx.providerScopeId)}/messages/delta`);
     do {
-      const data = await ctx.proxyGet(url, { Prefer: 'IdType="ImmutableId"' });
+      const data = await ctx.proxyGet(url);
       url = data["@odata.nextLink"] ?? "";
       const changes: NormalizedMailChange[] = [];
-      for (const raw of data.value ?? [])
-        changes.push(await ctx.normalizeMail(raw));
+      for (const raw of data.value ?? []) {
+        const record = raw as { id?: unknown; "@removed"?: unknown };
+        if (record["@removed"] && typeof record.id === "string")
+          changes.push({ kind: "tombstone", providerMessageId: record.id });
+        else changes.push(await ctx.normalizeMail(raw));
+      }
       yield {
         changes,
         ...(url

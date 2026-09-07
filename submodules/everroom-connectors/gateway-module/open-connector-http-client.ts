@@ -34,6 +34,10 @@ export interface OpenConnectorHttpError extends Error {
 const DEFAULT_TIMEOUT_MS = 120_000;
 const RETRYABLE_STATUS = new Set([408, 429, 500, 502, 503, 504]);
 const MAX_RETRIES = 3;
+/** 配额类错误（Gmail 403 quota exceeded 等）无论状态码都可重试，但退避按配额窗口滚动。 */
+const QUOTA_ERROR_RE = /quota exceeded|rate ?limit/i;
+const QUOTA_BACKOFF_BASE_MS = 65_000;
+const QUOTA_BACKOFF_CAP_MS = 260_000;
 
 function redactText(value: string, secret?: string): string {
   return secret ? value.split(secret).join("<redacted>") : value;
@@ -178,13 +182,20 @@ export class OpenConnectorHttpClient {
 
     const payload = await response.json().catch(() => null);
     const envelope = objectValue(payload);
+    const message = typeof envelope.message === "string" ? envelope.message : "";
+    // 配额超限（如 Gmail 403 "quota exceeded"）状态码不固定（403/429/5xx 均见），
+    // 按消息判定可重试，退避让配额窗口滚动（65s 起步）。
+    const quotaLimited = QUOTA_ERROR_RE.test(message);
+    if (quotaLimited && attempt < MAX_RETRIES) {
+      await this.backoff(attempt, options.signal, QUOTA_BACKOFF_BASE_MS, QUOTA_BACKOFF_CAP_MS);
+      return this.request(method, path, body, options, attempt + 1);
+    }
+
     const redacted = redactValue(envelope, this.config.runtimeToken);
 
     if (!response.ok || envelope.success === false) {
       const error = new Error(
-        typeof envelope.message === "string" && envelope.message
-          ? envelope.message
-          : `OpenConnector request failed (HTTP ${String(response.status)})`,
+        message || `OpenConnector request failed (HTTP ${String(response.status)})`,
       ) as OpenConnectorHttpError;
       Object.assign(error, {
         status: response.status,
@@ -203,8 +214,8 @@ export class OpenConnectorHttpClient {
     return this.request("GET", path, undefined, options);
   }
 
-  private backoff(attempt: number, signal?: AbortSignal): Promise<void> {
-    const delay = Math.min(1_000 * 2 ** attempt, 8_000);
+  private backoff(attempt: number, signal?: AbortSignal, baseMs = 1_000, capMs = 8_000): Promise<void> {
+    const delay = Math.min(baseMs * 2 ** attempt, capMs);
     return new Promise((resolve, reject) => {
       const timer = setTimeout(resolve, delay);
       signal?.addEventListener("abort", () => {

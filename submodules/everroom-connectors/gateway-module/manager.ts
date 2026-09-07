@@ -135,6 +135,12 @@ export class ConnectorManager {
       return;
     }
     const base = this.repository.getScope(scope.id)!.checkpointRevision;
+    // 全量断点续传：接续上一轮 full run 失败/中断前落下的 continuation（rebuild 不续传）。
+    const priorContinuation =
+      mode === "full" ? (this.repository.latestResumableRun(scope.id, run.id)?.cursor ?? null) : null;
+    // 本 run 最后收到的页级续传点：失败时落库供下轮续跑；成功后清空 scope 下全部断点。
+    let lastContinuation: string | null = null;
+    let yieldedPages = 0;
     // 域投影软失败计数：run 结束时记一条汇总 sync_failures，不阻断 ingest。
     let projectionFailures = 0;
     const project = (action: () => unknown) => {
@@ -155,8 +161,11 @@ export class ConnectorManager {
         },
         connection,
         mode,
+        priorContinuation,
       )) {
         if (this.cancelled.has(run.id)) throw new Error("cancelled");
+        if (page.continuation) lastContinuation = page.continuation;
+        yieldedPages += 1;
         this.repository.applyPage(scope.id, run.id, fence, page.changes);
         this.repository.applyCalendarPage(scope.id, run.id, fence, page.calendarChanges ?? []);
         // 域投影先于 memorySink（M4）：投影返回行 id 随 memorySink 透传，
@@ -222,12 +231,20 @@ export class ConnectorManager {
           this.repository.casCursor(scope.id, base, fence, page.terminalCursor);
       }
       this.repository.finishRun(run.id, "completed");
+      // 全量跑通 → 清空 scope 下失败/中断 run 的断点（防止后续查到远古游标）。
+      if (mode === "full") this.repository.clearResumableCursors(scope.id);
     } catch (error) {
+      // 断点续传：本 run 收到过续传点 → 落库供下轮续跑；续传 run 一页未出 → 游标
+      // 已失效（如 pageToken 过期），连同旧 run 的断点一并清空自愈，下轮从第 0 页重来。
+      if (mode === "full" && yieldedPages > 0 && lastContinuation)
+        this.repository.saveRunCursor(run.id, lastContinuation);
+      else if (mode === "full" && priorContinuation && yieldedPages === 0)
+        this.repository.clearResumableCursors(scope.id);
+      // oo 的错误带 status 属性（OpenConnectorHttpError）；axios 形状兼容保留。
+      const status = (error as any)?.status ?? (error as any)?.response?.status;
       if (
-        ((error as any)?.response?.status === 404 &&
-          connection.provider === "gmail") ||
-        ((error as any)?.response?.status === 410 &&
-          (connection.provider === "outlook" || connection.provider === "google-calendar"))
+        (status === 404 && connection.provider === "gmail") ||
+        (status === 410 && (connection.provider === "outlook" || connection.provider === "google-calendar"))
       )
         this.repository.markResyncRequired(scope.id);
       this.repository.finishRun(
