@@ -86,7 +86,7 @@ interface LoginResult {
   user: { id: string; tenantId: string; email?: string | null; phone?: string | null; name?: string }
   device: { id: string; name?: string; platform?: string }
   session?: { id: string; leaseExpiresAt?: string }
-  registration?: { accountCreated: boolean; invitationApplied: boolean }
+  registration?: { accountCreated: boolean; invitationApplied: boolean; invitationRejected?: 'pro_plan_active' }
 }
 
 /** 设备额度已满时服务端返回的准入挑战：桌面需展示设备列表并让用户选择替换。 */

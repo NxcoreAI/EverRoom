@@ -48,7 +48,7 @@ import { LocalModelSettingsSection } from '@/components/settings/LocalModelSetti
 import { LocalAgentSettingsSection } from '@/components/settings/LocalAgentSettingsSection'
 import { UsageAndBudgetSettingsSection } from '@/components/settings/UsageAndBudgetSettingsSection'
 import { RuntimeConfigSettingsSection } from '@/components/settings/RuntimeConfigSettingsSection'
-import { InvitationCodeField, useInvitationCode } from '@/components/account/InvitationCodeField'
+import { RedeemCodeField, useRedeemCode } from '@/components/account/RedeemCodeField'
 import { QrLoginPanel } from '@/components/account/QrLoginPanel'
 import './SettingsPage.css'
 
@@ -146,7 +146,7 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
   const [extensionError, setExtensionError] = useState<string | null>(null)
   const [notificationPreferences, setNotificationPreferences] = useState<NotificationPreferences | null>(null)
   const [notificationBusy, setNotificationBusy] = useState(false)
-  const invitation = useInvitationCode()
+  const redeemCode = useRedeemCode()
 
   useEffect(() => {
     const api = window.nxcore?.browserExtension
@@ -318,13 +318,16 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
 
   const loginWithOidc = async (provider: CloudOidcProvider) => {
     if (!window.nxcore) return
-    let invitationCode:string|undefined
-    try { invitationCode=await invitation.prepare() } catch { return }
+    let redeemCodeValue:string|undefined
+    try { redeemCodeValue=await redeemCode.prepare() } catch { return }
     setPending(provider)
     try {
-      const nextAccount=await window.nxcore.account.loginWithOidc(provider,invitationCode)
+      const nextAccount=await window.nxcore.account.loginWithOidc(provider,redeemCodeValue)
       setAccount(nextAccount)
-      if(invitationCode&&nextAccount.registration)window.alert(t(nextAccount.registration.invitationApplied?'surface:settings.invitationCodeApplied':'surface:settings.invitationCodeExistingUser'))
+      if(redeemCodeValue&&nextAccount.registration){
+        window.alert(t(nextAccount.registration.invitationRejected==='pro_plan_active'?'surface:settings.redeemCodeProActive':'surface:settings.redeemCodeApplied'))
+        redeemCode.reset()
+      }
       try {
         window.sessionStorage.setItem('everroom:post-login-memory-check', '1')
         window.sessionStorage.setItem('everroom:post-login-room-check', '1')
@@ -333,7 +336,7 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
       }
       window.dispatchEvent(new CustomEvent('everroom-post-login-onboarding-check'))
     } catch (error) {
-      if(invitationCode&&error instanceof Error&&/invitation code/i.test(error.message))invitation.markInvalid()
+      if(redeemCodeValue&&error instanceof Error&&/invitation code/i.test(error.message))redeemCode.markInvalid()
       // The preload request interceptor reports the error globally.
     } finally {
       setPending(null)
@@ -877,7 +880,7 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
           </div>
         ) : (
           <div className="cloud-login-content">
-            <InvitationCodeField value={invitation.code} state={invitation.state} open={invitation.open} disabled={isBusy} onChange={invitation.change} onToggle={()=>invitation.setOpen(value=>!value)}/>
+            <RedeemCodeField value={redeemCode.code} state={redeemCode.state} open={redeemCode.open} disabled={isBusy} onChange={redeemCode.change} onToggle={()=>redeemCode.setOpen(value=>!value)}/>
             <div className="social-login-grid" aria-label={t('surface:settings.quickSignIn')}>
               <button
                 className="social-login-button apple-login"
