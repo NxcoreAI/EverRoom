@@ -234,18 +234,22 @@ const api: NxcoreDesktopApi = {
     recordTotals: (connectionId) => invoke('nango-connector:record-totals', connectionId),
   },
   cliConnector: {
-    status: () => invokeQuietly('cli-connector:status'),
-    execute: (input) => invokeQuietly('cli-connector:execute', input),
-    cancel: (requestId) => invokeQuietly('cli-connector:cancel', requestId),
-    openConsole: () => invokeQuietly('cli-connector:open-console'),
+    // 通道名与主进程 OPEN_CONNECTOR_CHANNELS 对齐（open-connector:*；统一改名前的
+    // cli-connector:* 在主进程无注册，调用会报 No handler registered）。
+    status: () => invokeQuietly('open-connector:status'),
+    execute: (input) => invokeQuietly('open-connector:execute', input),
+    cancel: (requestId) => invokeQuietly('open-connector:cancel', requestId),
+    openConsole: () => invokeQuietly('open-connector:open-console'),
+    /** 发起 provider OAuth（本地直调运行时 / SaaS 代发起），返回授权页 URL 并由主进程打开。 */
+    startAuthorization: (service: string) => invokeQuietly('open-connector:start-authorization', service),
     mode: () => invokeQuietly('open-connector:mode'),
     setMode: (mode: 'saas' | 'local') => invokeQuietly('open-connector:set-mode', mode),
     onEvent: (listener) => {
       const handleEvent = (_event: Electron.IpcRendererEvent, frame: Parameters<typeof listener>[0]) => {
         listener(frame)
       }
-      ipcRenderer.on('cli-connector:event', handleEvent)
-      return () => ipcRenderer.removeListener('cli-connector:event', handleEvent)
+      ipcRenderer.on('open-connector:event', handleEvent)
+      return () => ipcRenderer.removeListener('open-connector:event', handleEvent)
     },
   },
   agentAuth: {
@@ -263,6 +267,10 @@ const api: NxcoreDesktopApi = {
   },
   externalDocuments: {
     importSearch: (provider, query) => invoke('external-documents:import-search', provider, query),
+    importList: (provider, connectionName, cachedOnly) => invoke('external-documents:import-list', provider, connectionName, cachedOnly),
+    importBatch: (input) => invoke('external-documents:import-batch', input),
+    importBatchStatus: (batchId) => invokeQuietly('external-documents:import-batch-status', batchId),
+    cancelImportBatch: (batchId) => invoke('external-documents:cancel-import-batch', batchId),
     importPreview: (provider, remoteDocumentId) => invoke('external-documents:import-preview', provider, remoteDocumentId),
     importCommit: (input) => invoke('external-documents:import-commit', input),
     importRun: (runId) => invokeQuietly('external-documents:import-run', runId),
@@ -277,6 +285,7 @@ const api: NxcoreDesktopApi = {
     cancelExport: (exportId) => invoke('external-documents:cancel-export', exportId),
     listExports: (documentId) => invokeQuietly('external-documents:list-exports', documentId),
     importDiff: (roomImportId) => invoke('external-documents:import-diff', roomImportId),
+    importStructuredDiff: (roomImportId) => invoke('external-documents:import-structured-diff', roomImportId),
     searchExportTargets: (provider, query) => invoke('external-documents:search-export-targets', provider, query),
   },
   mcp: {
@@ -362,6 +371,8 @@ const api: NxcoreDesktopApi = {
     cancelSubagentInvocation: (invocationId: string) =>
       invokeQuietly('context-rooms:cancel-subagent-invocation', invocationId),
     refreshBrief: (roomId: string) => invokeQuietly('context-rooms:refresh-brief', roomId),
+    promoteMemoryItem: (roomId: string, itemId: string) =>
+      invokeQuietly('context-rooms:promote-memory-item', roomId, itemId),
     overview: (roomId: string) => invokeQuietly('context-rooms:overview', roomId),
     refreshOverview: (roomId: string) => invokeQuietly('context-rooms:refresh-overview', roomId),
     listMails: (roomId: string) => invokeQuietly('context-rooms:list-mails', roomId),
@@ -593,6 +604,9 @@ const api: NxcoreDesktopApi = {
     createDocumentComment: (documentId, input) => invoke('documents:create-document-comment', documentId, input),
     resolveDocumentComment: (documentId, commentId, resolved) => invoke('documents:resolve-document-comment', documentId, commentId, resolved),
     deleteDocumentComment: (documentId, commentId) => invoke('documents:delete-document-comment', documentId, commentId),
+    getOverview: (documentId) => invoke('documents:get-overview', documentId),
+    generateOverview: (documentId) => invoke('documents:generate-overview', documentId),
+    getSectionPreview: (documentId, input) => invoke('documents:get-section-preview', documentId, input),
     restoreVersion: (documentId, version, baseVersion) =>
       invoke('documents:restore-version', documentId, version, baseVersion),
     resolveBlockReferences: (input) => invoke('documents:resolve-block-references', input),

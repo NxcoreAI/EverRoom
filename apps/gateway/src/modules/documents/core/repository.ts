@@ -8,6 +8,8 @@ import type { GatewayDatabase } from "../../../infrastructure/database/client.js
 import {
   documentBlockReferences,
   documentBlocks,
+  documentRoomImports,
+  documentSectionPreviews,
   documentVersions,
   documentYjsVersions,
   documents,
@@ -38,7 +40,7 @@ export class DocumentRepository {
   constructor(readonly db: GatewayDatabase) {}
 
   list(roomId: string, trashed = false): RoomDocument[] {
-    return this.db.select({ document: documents })
+    const rows = this.db.select({ document: documents })
       .from(roomDocumentLinks)
       .innerJoin(documents, eq(roomDocumentLinks.documentId, documents.id))
       .where(and(
@@ -48,6 +50,18 @@ export class DocumentRepository {
       .orderBy(asc(roomDocumentLinks.linkedAt))
       .all()
       .map(({ document }) => toRoomDocument(document, roomId));
+    // 外部更新候选是版本面板导入历史的临时物化，不作为普通文档出现在 Room
+    // 文档列表（应用/未应用均隐藏；diff 与内容查看走导入历史和文档直取）。
+    const candidateIds = new Set(
+      this.db.select({ id: documentRoomImports.candidateDocumentId })
+        .from(documentRoomImports)
+        .where(isNotNull(documentRoomImports.candidateDocumentId))
+        .all()
+        .map((row) => row.id),
+    );
+    return candidateIds.size > 0
+      ? rows.filter((document) => !candidateIds.has(document.id))
+      : rows;
   }
 
   get(documentId: string): RoomDocument | null {
@@ -68,6 +82,79 @@ export class DocumentRepository {
     this.db.update(documentVersions)
       .set({ changeSummary: summary, changeSummarySource: source })
       .where(and(eq(documentVersions.documentId, documentId), eq(documentVersions.version, version)))
+      .run();
+  }
+
+  /** 文档速览 3 列（overview_text 为 canonical 三段式文本）；无行返回 null。 */
+  getOverview(documentId: string): {
+    overviewText: string | null;
+    overviewVersion: number | null;
+    overviewGeneratedAt: Date | null;
+  } | null {
+    const row = this.db.select({
+      overviewText: documents.overviewText,
+      overviewVersion: documents.overviewVersion,
+      overviewGeneratedAt: documents.overviewGeneratedAt,
+    }).from(documents).where(eq(documents.id, documentId)).get();
+    return row ?? null;
+  }
+
+  /** 只写速览 3 列；不触碰 content_json / version / updated_at。 */
+  updateDocumentOverview(documentId: string, text: string, version: number): void {
+    this.db.update(documents)
+      .set({
+        overviewText: text,
+        overviewVersion: version,
+        overviewGeneratedAt: new Date(),
+      })
+      .where(eq(documents.id, documentId))
+      .run();
+  }
+
+  getSectionPreview(documentId: string, blockId: string): {
+    headingText: string;
+    previewText: string;
+    contentHash: string;
+    generatedAt: Date;
+  } | null {
+    return this.db.select({
+      headingText: documentSectionPreviews.headingText,
+      previewText: documentSectionPreviews.previewText,
+      contentHash: documentSectionPreviews.contentHash,
+      generatedAt: documentSectionPreviews.generatedAt,
+    }).from(documentSectionPreviews)
+      .where(and(
+        eq(documentSectionPreviews.documentId, documentId),
+        eq(documentSectionPreviews.blockId, blockId),
+      ))
+      .get() ?? null;
+  }
+
+  /** 章节预览 upsert：同 (documentId, blockId) 覆盖；只写本表。 */
+  upsertSectionPreview(documentId: string, input: {
+    blockId: string;
+    headingText: string;
+    previewText: string;
+    contentHash: string;
+  }): void {
+    this.db.insert(documentSectionPreviews)
+      .values({
+        documentId,
+        blockId: input.blockId,
+        headingText: input.headingText,
+        previewText: input.previewText,
+        contentHash: input.contentHash,
+        generatedAt: new Date(),
+      })
+      .onConflictDoUpdate({
+        target: [documentSectionPreviews.documentId, documentSectionPreviews.blockId],
+        set: {
+          headingText: input.headingText,
+          previewText: input.previewText,
+          contentHash: input.contentHash,
+          generatedAt: new Date(),
+        },
+      })
       .run();
   }
 

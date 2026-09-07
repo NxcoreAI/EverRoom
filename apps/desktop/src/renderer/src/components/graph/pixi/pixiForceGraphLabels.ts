@@ -11,7 +11,12 @@ export interface PixiForceGraphLabelManager {
   activeCount(): number
   createdCount(): number
   destroy(): void
-  update(hoveredIndex: number | null): void
+  /**
+   * @param related 悬停聚焦时的关联节点集（悬停节点 + 其连线邻居）：
+   * 提供时只显示关联节点的标签，其余节点标签隐藏（聚焦虚化语义）；
+   * 悬停为 null 或未提供时按缩放阈值显示视口内全部标签。
+   */
+  update(hoveredIndex: number | null, related?: ReadonlySet<number> | null): void
 }
 
 const LABEL_STYLE: Record<string, unknown> = {
@@ -20,6 +25,19 @@ const LABEL_STYLE: Record<string, unknown> = {
   fontSize: 12,
   fontWeight: '500',
   padding: 2,
+}
+
+/** 标签分档样式（labelTier 越小越醒目）；每档独立对象，创建时整体应用。 */
+const LABEL_TIER_STYLES: Array<Record<string, unknown>> = [
+  { ...LABEL_STYLE, fill: 0x111827, fontSize: 15, fontWeight: '700' },
+  { ...LABEL_STYLE, fill: 0x1f2937, fontSize: 13, fontWeight: '600' },
+  { ...LABEL_STYLE },
+]
+
+function labelTierOf(node: PixiForceGraphNode | undefined): number {
+  const tier = node?.labelTier
+  if (!Number.isFinite(tier as number) || (tier as number) < 0) return LABEL_TIER_STYLES.length - 1
+  return Math.min(LABEL_TIER_STYLES.length - 1, Math.floor(tier as number))
 }
 
 function textResolution(baseResolution: number, scale: number): number {
@@ -47,9 +65,23 @@ export function createPixiForceGraphLabelManager({
   const layer = new dependencies.Container()
   layer.interactiveChildren = false
   const active = new Map<number, PixiText>()
-  const pool: PixiText[] = []
+  // 按档分池：池内文本样式固定，跨档复用会闪错样式，换池即换档。
+  const pools = new Map<number, PixiText[]>()
+  const poolFor = (tier: number): PixiText[] => {
+    let pool = pools.get(tier)
+    if (!pool) {
+      pool = []
+      pools.set(tier, pool)
+    }
+    return pool
+  }
   const desired: number[] = []
   const desiredMarks = new Uint32Array(nodes.length)
+  // 标签常显节点（labelPinned）：聚焦模式下仍显示，作为高层结构锚点。
+  const pinnedIndexes: number[] = []
+  nodes.forEach((node, index) => {
+    if (node.labelPinned && node.label) pinnedIndexes.push(index)
+  })
   let mark = 0
   let created = 0
   let currentResolution = textResolution(baseResolution, viewport.scale?.x ?? 1)
@@ -61,10 +93,11 @@ export function createPixiForceGraphLabelManager({
   }
 
   const acquire = (index: number) => {
-    let label = pool.pop()
+    const tier = labelTierOf(nodes[index])
+    let label = poolFor(tier).pop()
     if (!label) {
       if (created >= maxLabels) return null
-      label = new dependencies.Text('', LABEL_STYLE)
+      label = new dependencies.Text('', LABEL_TIER_STYLES[tier]!)
       label.resolution = currentResolution
       label.roundPixels = true
       label.anchor?.set(0.5, 0)
@@ -81,7 +114,7 @@ export function createPixiForceGraphLabelManager({
     layer,
     activeCount: () => active.size,
     createdCount: () => created,
-    update(hoveredIndex) {
+    update(hoveredIndex, related) {
       if (mark === 0xffffffff) {
         desiredMarks.fill(0)
         mark = 1
@@ -97,18 +130,24 @@ export function createPixiForceGraphLabelManager({
         currentResolution = nextResolution
         for (const label of active.values()) label.resolution = currentResolution
       }
-      const bounds = viewport.getVisibleBounds?.()
-      if (scale >= scaleThreshold && bounds) {
-        const right = bounds.x + bounds.width
-        const bottom = bounds.y + bounds.height
-        for (let index = 0; index < nodes.length && desired.length < maxLabels; index += 1) {
-          const x = positions[index * 2]
-          const y = positions[index * 2 + 1]
-          if (!Number.isFinite(x) || !Number.isFinite(y)) continue
-          const radius = nodes[index]?.radius ?? 18
-          if (x! + radius >= bounds.x && x! - radius <= right
-            && y! + radius >= bounds.y && y! - radius <= bottom) {
-            addDesired(index)
+      if (hoveredIndex !== null && related) {
+        // 聚焦模式：只保留关联节点（悬停 + 连线邻居）与常显节点的标签。
+        for (const index of related) addDesired(index)
+        for (const index of pinnedIndexes) addDesired(index)
+      } else {
+        const bounds = viewport.getVisibleBounds?.()
+        if (scale >= scaleThreshold && bounds) {
+          const right = bounds.x + bounds.width
+          const bottom = bounds.y + bounds.height
+          for (let index = 0; index < nodes.length && desired.length < maxLabels; index += 1) {
+            const x = positions[index * 2]
+            const y = positions[index * 2 + 1]
+            if (!Number.isFinite(x) || !Number.isFinite(y)) continue
+            const radius = nodes[index]?.radius ?? 18
+            if (x! + radius >= bounds.x && x! - radius <= right
+              && y! + radius >= bounds.y && y! - radius <= bottom) {
+              addDesired(index)
+            }
           }
         }
       }
@@ -117,7 +156,7 @@ export function createPixiForceGraphLabelManager({
         if (desiredMarks[index] === mark) continue
         active.delete(index)
         label.visible = false
-        pool.push(label)
+        poolFor(labelTierOf(nodes[index])).push(label)
       }
       for (const index of desired) {
         const label = active.get(index) ?? acquire(index)
@@ -129,7 +168,7 @@ export function createPixiForceGraphLabelManager({
     },
     destroy() {
       active.clear()
-      pool.length = 0
+      for (const pool of pools.values()) pool.length = 0
       layer.destroy({ children: true })
     },
   }

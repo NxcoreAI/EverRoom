@@ -68,7 +68,6 @@ export function PortedDetail({
   const [selectedObject, setSelectedObject] = useState<WorkspaceObjectPreview | null>(null)
   /** WikiPane 打开过的 wiki 页资源（静态 library 不含它们，编辑栏解析时并入）。 */
   const [wikiPageResources, setWikiPageResources] = useState<ContextRoomWikiPageResource[]>([])
-  const [selectedMemoryId, setSelectedMemoryId] = useState<string | null>(null)
   const [obsidianImportOpen, setObsidianImportOpen] = useState(false)
   const handledDocumentFocusKey = useRef<string | null>(null)
   const [standaloneObject, setStandaloneObject] = useState<DetailObject | null>(() => {
@@ -105,9 +104,25 @@ export function PortedDetail({
       ?? findWikiPageResource(room.id, selectedResourceId)
       ?? null)
     : null
-  const selectedMemory = selectedMemoryId
-    ? room.memoryItems.find((item) => item.id === selectedMemoryId) ?? null
-    : null
+
+  // 选中云文档即拉一次 GET /v1/documents/:id：落在网关 read-trigger 上，
+  // 让正在阅读的文档 ~5s 内被建联/复检（Room 列表返回自带 contentJson，
+  // 不补这一下主路径永远不触发）。本地按 docId 去重，同一文档一次挂载只拉一次；
+  // 网关侧另有 30 分钟冷却兜底。
+  const touchedDocumentIds = useRef(new Set<string>())
+  useEffect(() => {
+    const resource = selectedResource
+    if (!resource || resource.kind !== 'cloud-doc' || resource.trashed) return
+    if (touchedDocumentIds.current.has(resource.binding.docId)) return
+    const documents = window.nxcore?.documents
+    if (!documents) return
+    touchedDocumentIds.current.add(resource.binding.docId)
+    void documents.get(resource.binding.docId).catch(() => {
+      // 失败（如网关重启窗口期）回滚记账，本挂载内下次选中还会重试；
+      // 与网关侧触发器"入队失败撤销冷却"同语义。
+      touchedDocumentIds.current.delete(resource.binding.docId)
+    })
+  }, [selectedResource])
 
   const openResource = useCallback((resource: ContextRoomResource) => {
     if (resource.roomId !== room.id) return
@@ -139,6 +154,13 @@ export function PortedDetail({
     layout.setMobileContent(true)
   }, [layout, room.id])
 
+  /** 建联图谱等面板按文档 id 在右区打开文档（资源按 binding.docId 解析）。 */
+  const openDocumentById = useCallback((documentId: string) => {
+    const resource = library.resources.find((candidate) =>
+      candidate.kind === 'cloud-doc' && candidate.binding.docId === documentId)
+    if (resource) openResource(resource)
+  }, [library.resources, openResource])
+
   const createDocument = useCallback(async (title: string, contentJson?: TiptapJsonContent) => {
     const document = await onCreateDocument(room.id, title, contentJson)
     const resource = createContextRoomResourceLibrary(room, [document], [], locale).resources.find((candidate) =>
@@ -169,12 +191,15 @@ export function PortedDetail({
     if (decision.shouldOpen && resource && resource.id !== selectedResourceId) openResource(resource)
   }, [documentFocusRequestId, focusedDocumentId, library.resources, openResource, room.id, selectedResourceId])
 
-  // 块索引标记 → Room 记忆项：同 Room 目标打开记忆详情（整树切 ObjectDetailView）。
+  // 块索引标记 → Room 记忆项：同 Room 目标直接切到建联图谱并聚焦该记忆节点
+  // （不再整树切 ObjectDetailView 临时详情页；图谱里能看到这条记忆的全部引用关系）。
+  const [linkGraphFocusNodeId, setLinkGraphFocusNodeId] = useState<string | null>(null)
   useEffect(() => onRoomMemoryNavigation((target) => {
     if (target.roomId !== room.id) return
     if (!room.memoryItems.some((item) => item.id === target.memoryId)) return
-    setSelectedMemoryId(target.memoryId)
-  }), [room.id, room.memoryItems])
+    setLinkGraphFocusNodeId(`memory:${target.memoryId}`)
+    layout.switchPane('linkGraph')
+  }), [room.id, room.memoryItems, layout])
 
   useEffect(() => {
     if (selectedResourceId
@@ -242,17 +267,6 @@ export function PortedDetail({
       : item),
   }))
 
-  if (selectedMemory) {
-    return (
-      <ObjectDetailView
-        room={room}
-        object={{ kind: 'memory', value: selectedMemory }}
-        onBack={() => setSelectedMemoryId(null)}
-        onUpdateRoom={onUpdateRoom}
-      />
-    )
-  }
-
   if (standaloneObject) {
     return (
       <ObjectDetailView
@@ -288,7 +302,8 @@ export function PortedDetail({
           onEmptyTrash={onEmptyTrash}
           onSelectResource={openResource}
           onOpenWikiPage={openWikiPage}
-          onOpenMemory={setSelectedMemoryId}
+          onOpenDocument={openDocumentById}
+          linkGraphFocusNodeId={linkGraphFocusNodeId}
           onOpenObject={openObject}
           onOpenSource={openSource}
           onCloseObject={() => {

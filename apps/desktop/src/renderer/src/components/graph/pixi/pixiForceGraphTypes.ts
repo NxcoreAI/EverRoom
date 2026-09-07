@@ -8,7 +8,7 @@ export interface PixiTexture {
 }
 
 export interface PixiGraphics {
-  beginFill(color: number | string): PixiGraphics
+  beginFill(color: number | string, alpha?: number): PixiGraphics
   drawCircle(x: number, y: number, radius: number): PixiGraphics
   endFill(): PixiGraphics
   clear(): PixiGraphics
@@ -141,11 +141,46 @@ export interface PixiForceGraphDependencies {
 }
 
 export interface PixiForceGraphNode {
+  /** 节点 id（锚点父引用、选中态查找用）；画布层节点必带。 */
+  id?: string
   color?: number | string
   /** 图标名，含义由使用面定义；渲染层只负责按名取纹理（见 PixiForceGraphIconTextureFactory）。 */
   icon?: string
+  /**
+   * 标签常显：聚焦模式（悬停时只显示关联节点标签）下不隐藏该节点标签——
+   * 用于高层结构节点（如 Room 根、文档主节点），悬停其卫星节点时仍作上下文锚点。
+   */
+  labelPinned?: boolean
+  /**
+   * 标签层级（0 最醒目，越大越弱；缺省 2）：控制字号/字重/颜色分档，
+   * 表达节点的结构等级（如 0=Room 根、1=文档主节点、2=块/记忆）。
+   */
+  labelTier?: number
   label?: string
   radius?: number
+  /**
+   * 节点背景场：以节点为圆心绘制半透明圆（如文档节点的"轨道场"），画在
+   * 连线与节点之下。仅视觉，不参与布局碰撞（碰撞半径仍用 radius + 传给
+   * 布局器的物理半径）。
+   */
+  field?: {
+    radius: number
+    color?: number | string
+    alpha?: number
+  }
+  /**
+   * 锚点节点（如文档轨道场内的卫星块）：不进力导向模拟，位置每帧解析为
+   * 父节点位置 + 偏移。父节点必须在同一节点表内。拖拽锚点只改偏移，并被
+   * maxDistance 钳制（不会脱离父节点的场）。positions 传布局（非锚点）
+   * 坐标缓冲，锚点槽位由渲染层写入。
+   */
+  anchor?: {
+    parentId: string
+    dx: number
+    dy: number
+    /** 偏移半径上限（场的半径），拖拽钳制用；缺省不钳制。 */
+    maxDistance?: number
+  }
 }
 
 export interface PixiForceGraphEdge {
@@ -167,6 +202,12 @@ export interface PixiForceGraphRendererOptions {
     appendChild(child: unknown): void
   }
   positions: Float32Array
+  /**
+   * 布局坐标缓冲（Worker/静态布局写入，按"非锚点节点"的次序索引）。存在
+   * 锚点节点时必传：渲染层按非锚点次序映射到 positions 的全量表槽位，
+   * 并把锚点槽位解析为 父节点位置 + 偏移。无锚点时省略（positions 即布局缓冲）。
+   */
+  layoutPositions?: Float32Array
   nodes: readonly PixiForceGraphNode[]
   edges: readonly PixiForceGraphEdge[]
   dependencies: PixiForceGraphDependencies

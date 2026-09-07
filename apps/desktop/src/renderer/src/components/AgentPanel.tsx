@@ -16,6 +16,7 @@ import {
   type AgentSessionRouteRequest,
 } from '@/components/agent/agentNavigation'
 import { useAgentSession } from '@/components/agent/useAgentSession'
+import { loadRoomFocus, saveRoomFocus } from '@/components/agent/roomFocusStore'
 import type { ContextRoomWorkspaceTab } from '@/components/context-room/contextRoomTabs'
 import type { LocalAgentInstallation } from '../../../shared/local-agents'
 import {
@@ -31,6 +32,7 @@ import { recordRoomOverviewDiagnostic } from '@/components/context-room/roomOver
 import { useContextRoomState } from '@/components/context-room/ContextRoomStateProvider'
 import type { PageId } from '@/data/navigation'
 import { useLocale } from '@/i18n/LocaleContext'
+import { showToast } from '@/state/toast'
 import { useActiveDocument } from '@/state/ActiveDocumentContext'
 import {
   buildAgentDocumentSelectionRunRequest,
@@ -86,7 +88,7 @@ export function AgentPanel({
   const [composerResetKey, setComposerResetKey] = useState(0)
   const [localAgents, setLocalAgents] = useState<LocalAgentInstallation[]>([])
   const [selectedExternalConversation, setSelectedExternalConversation] = useState<ExternalConversationSummary | null>(null)
-  const [roomFocusEnabled, setRoomFocusEnabled] = useState(false)
+  const [roomFocusEnabled, setRoomFocusEnabled] = useState(() => (roomId ? loadRoomFocus(roomId) : false))
   const [notificationRunTarget, setNotificationRunTarget] = useState<{ key: string; runId: string } | null>(null)
   const composerRef = useRef<HTMLTextAreaElement>(null)
   const previousSessionIdRef = useRef<string | null>(null)
@@ -177,10 +179,15 @@ export function AgentPanel({
     setSelectedExternalConversation(conversation)
   }, [])
 
-  // 房间聚焦粘性：仅限「当前会话 + 当前房间」；切会话/切房间即重置为关。
+  // 房间聚焦是 per-Room 持久偏好（非会话态）：切房间/回到房间恢复各自上次的选择。
   useEffect(() => {
-    setRoomFocusEnabled(false)
-  }, [roomId, session.sessionId])
+    setRoomFocusEnabled(roomId ? loadRoomFocus(roomId) : false)
+  }, [roomId])
+
+  const toggleRoomFocus = useCallback((next: boolean) => {
+    setRoomFocusEnabled(next)
+    if (roomId) saveRoomFocus(roomId, next)
+  }, [roomId])
 
 
   useEffect(() => {
@@ -360,7 +367,18 @@ export function AgentPanel({
       // selectedRoomId 只在 Room 仍存在时提交：Room 已合并/删除/同步丢失时
       // 提交死 id 会被网关 409 拒绝（room_not_available），转而以全局会话运行。
       const validRoomId = roomId && rooms.some((room) => room.id === roomId) ? roomId : undefined
-      const memoryScope = roomFocusEnabled && validRoomId ? ('room' as const) : undefined
+      // 重试优先还原原 run 的记忆范围（含"原 run 是全局"的情况），本会话内未知
+      // （应用重启后的旧 run）才回退当前开关；聚焦需房间仍有效，失效则全局运行。
+      const priorScope = replaceRunId ? session.memoryScopeByRun[replaceRunId] : undefined
+      const wantsRoomFocus = priorScope === 'room' || (priorScope === undefined && roomFocusEnabled)
+      const memoryScope = wantsRoomFocus && validRoomId ? ('room' as const) : undefined
+      if (roomFocusEnabled && roomId && !validRoomId) {
+        // 房间已失效（他端合并/删除/同步滞后）而 chip 仍显示已聚焦：提示后按全局
+        // 运行，并同步关闭/清除该房间的持久聚焦，不让 chip 继续失真。
+        showToast({ title: t('surface:agentComposer.roomFocusUnavailable') })
+        setRoomFocusEnabled(false)
+        saveRoomFocus(roomId, false)
+      }
       if (externalConversation) {
         await session.sendPrompt(
           submittedPrompt || t('surface:agentComposer.analyzeUploadedFiles'),
@@ -461,7 +479,7 @@ export function AgentPanel({
       roomFocusVisible={Boolean(roomId)}
       roomFocusEnabled={roomFocusEnabled}
       roomFocusRoomTitle={roomFocusRoomTitle}
-      onToggleRoomFocus={setRoomFocusEnabled}
+      onToggleRoomFocus={toggleRoomFocus}
       value={draft}
       active={Boolean(session.activeRunId)}
       loading={session.loading || submitting}

@@ -58,4 +58,24 @@ describe('document comments', () => {
     expect(() => comments.delete(document.id, 'ghost'))
       .toThrowError(expect.objectContaining({ code: 'NOT_FOUND' }) as never)
   })
+
+  it('authorName 默认"我"、显式署名落库、超长截断', async () => {
+    const dataDirectory = await mkdtemp(join(tmpdir(), 'nxcore-comments-author-'))
+    const created = createDatabase(join(dataDirectory, 'gateway.sqlite'), resolve('drizzle'))
+    closeDatabase = () => created.sqlite.close()
+    const documents = new DocumentService(created.db, new DocumentEventBroker())
+    const comments = new DocumentCommentService(created.db, (documentId) => Boolean(documents.get(documentId)))
+    const document = await documents.import({
+      id: `doc-ca-${Math.random().toString(36).slice(2, 10)}`,
+      roomId: 'room-ca',
+      title: '署名测试',
+      contentJson: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: '正文' }] }] } as never,
+    })
+
+    expect(comments.create({ documentId: document.id, body: '默认' }).authorName).toBe('我')
+    expect(comments.create({ documentId: document.id, body: 'AI', authorName: '  AI 审阅  ' }).authorName).toBe('AI 审阅')
+    expect(comments.create({ documentId: document.id, body: '空', authorName: '   ' }).authorName).toBe('我')
+    expect(comments.create({ documentId: document.id, body: '长', authorName: 'x'.repeat(80) }).authorName)
+      .toBe('x'.repeat(60))
+  })
 })

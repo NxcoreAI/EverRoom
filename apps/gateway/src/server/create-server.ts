@@ -27,6 +27,8 @@ import { documentOperationRoutes } from "../modules/documents/operations/routes.
 import { DocumentService } from "../modules/documents/service.js";
 import { DocumentCommentService } from "../modules/documents/comments.js";
 import { documentCommentRoutes } from "../modules/documents/comment-routes.js";
+import { documentOverviewRoutes } from "../modules/documents/overview-routes.js";
+import { documentSectionPreviewRoutes } from "../modules/documents/section-preview-routes.js";
 import { createSelectionRewriteContentResolver } from "../modules/documents/capabilities/selection-rewrite-content.js";
 import { createBuiltinDocumentCapabilityRegistry } from "../modules/documents/capabilities/builtins.js";
 import { DocumentReadAuthority } from "../modules/documents/capabilities/read-authority.js";
@@ -34,14 +36,19 @@ import { ExternalDocumentProjectionService } from "../modules/documents/external
 import { externalDocumentProjectionRoutes } from "../modules/documents/external-projections/routes.js";
 import { DocumentImportService } from "../modules/documents/import/service.js";
 import { documentImportRoutes } from "../modules/documents/import/routes.js";
+import { DocumentBatchImportService } from "../modules/documents/import/batch-service.js";
+import { documentImportBatchRoutes } from "../modules/documents/import/batch-routes.js";
+import { RoomAssignmentClassifier } from "../modules/documents/import/room-classifier.js";
 import { AgentDocumentExportService } from "../modules/documents/agent-export/service.js";
 import { agentDocumentExportRoutes } from "../modules/documents/agent-export/routes.js";
 import { createDocumentExportPiTools } from "../modules/documents/agent-export/tools.js";
 import { createDocumentImportPiTools } from "../modules/documents/import/tools.js";
 import {
   createAgentResolver,
+  createDocumentOverviewRuntime,
   createIngestFilterAgentRuntime,
   createIndexBackfillRuntime,
+  createImportClassifierRuntime,
   createWritingStyleRuntime,
   registerDiaryAgent,
   registerPrimaryAgent,
@@ -510,19 +517,23 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     }
   }, 30_000);
   documentOperationExpiryTimer.unref();
-  // 外部文档导入（OpenConnector 只读）与 Agent 一次性导出（飞书 lark-cli / Notion
-  // OpenConnector）：与导入连接、导出授权两套凭据域解耦，Gateway 不保存任何 CLI token。
+  // 外部文档导入（OpenConnector 只读，HTTP 直连）与 Agent 一次性导出（飞书
+  // lark-cli / Notion 官方 ntn CLI）：与导入连接、导出授权两套凭据域解耦，
+  // Gateway 不保存任何 CLI token。
   const documentImportService = new DocumentImportService(
     db,
     documentService,
     config.cliConnector ?? null,
     config.dataDir,
-    { assetBridgeUrl: config.documentAssetBridgeUrl ?? null },
+    {
+      assetBridgeUrl: config.documentAssetBridgeUrl ?? null,
+      // Notion 行内评论按块查询走官方 ntn（macOS；缺省自动跳过并告警）。
+      notionCli: config.notionCli ?? null,
+    },
   );
   const agentDocumentExportService = new AgentDocumentExportService(
     db,
     documentService,
-    config.cliConnector ?? null,
     config.larkCli ?? null,
     config.dataDir,
     {
@@ -535,6 +546,8 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   // patch_begin 的 requireLatest 必须落在同一实例；registry 由 create-server 显式构建后
   // 注入 host，避免 host 内部自建私有实例。
   const documentReadAuthority = new DocumentReadAuthority((documentId) => documentService.get(documentId));
+  // 评论服务在 host 之前构建并共享单实例：registry 的 AI 审阅工具与 REST 路由共用。
+  const documentCommentService = new DocumentCommentService(db, (documentId) => Boolean(documentService.get(documentId)));
   const documentMcpHost = new DocumentMcpHost(
     documentService,
     contextRoomService,
@@ -543,6 +556,10 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       contextRoomService,
       documentOperationService,
       documentReadAuthority,
+      // patch_begin 注入 memoryIndex：直写模式挂块索引标记时 memoryId 有权威来源可抄。
+      (roomId) => memoryService.listRoomAttributedMemories(roomId),
+      documentCommentService,
+      (event) => documentService.broker.publish(event),
     ),
     documentOperationService,
     (diagnostic) => {
@@ -606,6 +623,8 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   // 手动建 Room：enrich 实体回写时认领到本 Room，使后续资料路由能命中（与推荐晋升同语义）
   contextRoomService.setRoomEntityClaimer((roomId, entities) =>
     knowledgeService.claimRoomEntities(roomId, entities));
+  // 记忆条目确认晋升：经合成会话交 MemoryCore 蒸馏（worker room-memory: 链回填归属）。
+  contextRoomService.setMemoryPromoter((input) => memoryService.captureRoomMemoryItem(input));
   roomDuplicateService.initialize();
   // 格式映射 agent：就绪即 attach（映射生成依赖它；未配置 AI 时保持 pending 语义）。
   registerConnectorMapperAgent(agentResolver, config, formatMappingService);
@@ -696,6 +715,8 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   // 版本变更概览（历史面板 AI 概览标题）复用 background 模型；失败由服务退回本地规则摘要。
   const versionSummaryRuntime = createWritingStyleRuntime(config);
   const writingStyleRuntime = createWritingStyleRuntime(config);
+  // 文档速览（文章级 AI 摘要）：独立隔离 runtime；未配置时路由层置 aiAvailable=false。
+  const documentOverviewRuntime = createDocumentOverviewRuntime(config);
   const writingStyleService = new WritingStyleService(
     db,
     writingStyleRuntime ? new WritingStyleLlm(writingStyleRuntime) : null,
@@ -1159,8 +1180,9 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   ));
   await app.register(documentMcpRoutes(documentMcpHost));
   await app.register(notificationMcpRoutes(notificationMcpHost));
-  // 版本概览 worker：保存（document.changed）后异步判定重要性并自动生成
-  // （标题变更/小节增删/变更块 ≥3/首版）；不重要版本等历史面板懒加载。
+  // 版本概览 worker：保存（document.changed）后异步判定重要性。重要变更
+  // （标题变更/小节增删/变更块 ≥3/首版）直接生成 AI 概览；不重要变更先把
+  // 本地规则摘要落库占位，等历史面板打开时懒加载升级为 AI 概览。
   const summaryPending = new Set<string>();
   documentEventBroker.listen((event) => {
     if (event.type !== "document.changed") return
@@ -1188,7 +1210,9 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     )
     : null;
   await app.register(documentRoutes(documentService, versionSummaryRuntime, indexBackfillReadTrigger));
-  await app.register(documentCommentRoutes(new DocumentCommentService(db, (documentId) => Boolean(documentService.get(documentId)))));
+  await app.register(documentCommentRoutes(documentCommentService));
+  await app.register(documentOverviewRoutes(documentService, documentOverviewRuntime));
+  await app.register(documentSectionPreviewRoutes(documentService, documentOverviewRuntime));
   await app.register(documentOperationRoutes(
     documentOperationService,
     documentMcpHost.capabilities,
@@ -1301,6 +1325,37 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   );
   // 启动恢复：进程被杀时 pending 滞留的过滤事件重新入队（幂等）
   ingestService.recoverPendingFilters();
+  // 连接器页批量导入（fire-and-forget + DB 状态行，蓝本 runFrom）；启动时把
+  // 进程死亡遗留的 running 批置 failed。auto 模式 = 归房+孵化混合：分类器用
+  // 隔离内部 runtime（缺席则 UI 侧按 BATCH_AUTO_UNAVAILABLE 禁用），孵化走
+  // ingestConnector cloud-doc（knowledge 弱实体 → 待处理面板晋升）。
+  const documentBatchImportService = new DocumentBatchImportService(
+    db,
+    documentImportService,
+    app.log,
+    {
+      classifier: new RoomAssignmentClassifier(createImportClassifierRuntime(config)),
+      roster: () => Promise.resolve(knowledgeService.listRooms().map((room) => ({
+        id: room.id,
+        title: room.title,
+        kind: room.kind,
+        aliases: room.aliases,
+      }))),
+      incubate: async (unit) => {
+        await ingestService.ingestConnector({
+          kind: "cloud-doc",
+          sourceId: unit.sourceId,
+          dataType: "document",
+          title: unit.title,
+          markdown: unit.markdown,
+          entrySignals: { sourceTag: unit.sourceTag },
+        });
+      },
+      requireRouter: () => knowledgeService.routerEnabled,
+    },
+  );
+  documentBatchImportService.recoverInterrupted();
+  await app.register(documentImportBatchRoutes(documentBatchImportService));
   filesService.setVersionIngestor(async (input) => {
     await documentUnderstandingService.parseVersion(input.fileEntryId, input.fileVersionId);
     const versionContext = filesService.getVersionContext(input.fileEntryId, input.fileVersionId);
@@ -1414,6 +1469,17 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
         quietWindowMs: config.documentIndexBackfill?.quietWindowMs ?? 300_000,
         rescanMs: config.documentIndexBackfill?.rescanMs ?? 24 * 60 * 60_000,
         listMemoryItems: (roomId) => memoryService.listRoomAttributedMemories(roomId),
+        // 复检存在性 = 归属 ∪ 快照条目（禁用 shadow / legacy id 的已挂标记不误摘）；
+        // 归属在前（漂移探针用最新快照内容），候选生成仍只走 listMemoryItems。
+        listAllMemoryItems: (roomId) => {
+          const attributed = memoryService.listRoomAttributedMemories(roomId);
+          const attributedIds = new Set(attributed.map((item) => item.id));
+          return [
+            ...attributed,
+            ...contextRoomService.listSnapshotMemoryItems(roomId)
+              .filter((item) => !attributedIds.has(item.id)),
+          ];
+        },
       },
     );
     documentIndexBackfillWorker.start();

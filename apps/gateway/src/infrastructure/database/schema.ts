@@ -15,8 +15,12 @@ import type {
   AgentDocumentExportTarget,
   AgentAuthChallengeView,
   CanonicalComment,
+  DocumentImportBatchItemView,
+  DocumentImportBatchMode,
+  DocumentImportBatchStatus,
   DocumentImportRunStatus,
   ExternalCommentsStatus,
+  ExternalDocumentListItem,
   ExternalDocumentProvider,
   ExternalDocumentWarning,
   DocumentOperationCommandInput,
@@ -828,8 +832,27 @@ export const documents = sqliteTable("documents", {
   updatedAt: integer("updated_at", { mode: "timestamp_ms" })
     .notNull()
     .$defaultFn(() => new Date()),
+  overviewText: text("overview_text"),
+  overviewVersion: integer("overview_version"),
+  overviewGeneratedAt: integer("overview_generated_at", { mode: "timestamp_ms" }),
 }, (table) => [
   index("documents_updated_idx").on(table.updatedAt),
+]);
+
+/** 章节刻度线 hover 的 AI 章节预览：content_hash 命中即缓存，正文变化才重生成。 */
+export const documentSectionPreviews = sqliteTable("document_section_previews", {
+  documentId: text("document_id")
+    .notNull()
+    .references(() => documents.id, { onDelete: "cascade" }),
+  blockId: text("block_id").notNull(),
+  headingText: text("heading_text").notNull(),
+  previewText: text("preview_text").notNull(),
+  contentHash: text("content_hash").notNull(),
+  generatedAt: integer("generated_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+}, (table) => [
+  primaryKey({ columns: [table.documentId, table.blockId] }),
 ]);
 
 export const roomDocumentLinks = sqliteTable(
@@ -1274,6 +1297,61 @@ export const documentRoomImports = sqliteTable(
     index("document_room_imports_room_document_idx").on(table.roomId, table.documentId),
     index("document_room_imports_run_idx").on(table.importRunId),
   ],
+);
+
+/** 连接器页批量导入：一次批量一行，逐项结果内联 JSON（≤50 项整行读写）。 */
+export const documentImportBatches = sqliteTable(
+  "document_import_batches",
+  {
+    id: text("id").primaryKey(),
+    requestId: text("request_id").notNull(),
+    ownerId: text("owner_id").notNull().default("local-user"),
+    provider: text("provider", { enum: ["feishu", "notion"] }).$type<ExternalDocumentProvider>().notNull(),
+    connectionName: text("connection_name"),
+    mode: text("mode", { enum: ["room", "auto"] }).$type<DocumentImportBatchMode>().notNull(),
+    targetRoomId: text("target_room_id"),
+    status: text("status", {
+      enum: ["running", "completed", "failed", "cancelled"],
+    }).$type<DocumentImportBatchStatus>().notNull().default("running"),
+    total: integer("total").notNull(),
+    processed: integer("processed").notNull().default(0),
+    succeeded: integer("succeeded").notNull().default(0),
+    failed: integer("failed").notNull().default(0),
+    itemsJson: text("items_json", { mode: "json" })
+      .$type<DocumentImportBatchItemView[]>()
+      .notNull()
+      .default([]),
+    cancelRequested: integer("cancel_requested", { mode: "boolean" }).notNull().default(false),
+    errorCode: text("error_code"),
+    errorMessage: text("error_message"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    completedAt: integer("completed_at", { mode: "timestamp_ms" }),
+  },
+  (table) => [index("document_import_batches_owner_created_idx").on(table.ownerId, table.createdAt)],
+);
+
+/** 连接器页全量列举缓存：每 (provider, connectionName) 一行，面板打开先回显
+ * 上次结果再按需刷新，避免每次进入都全量拉取远端。 */
+export const documentImportListCache = sqliteTable(
+  "document_import_list_cache",
+  {
+    provider: text("provider", { enum: ["feishu", "notion"] }).$type<ExternalDocumentProvider>().notNull(),
+    /** 空 = 默认连接语义；与列表请求的 connectionName 一致。 */
+    connectionName: text("connection_name").notNull().default(""),
+    itemsJson: text("items_json", { mode: "json" })
+      .$type<ExternalDocumentListItem[]>()
+      .notNull()
+      .default([]),
+    truncated: integer("truncated", { mode: "boolean" }).notNull().default(false),
+    warningsJson: text("warnings_json", { mode: "json" })
+      .$type<ExternalDocumentWarning[]>()
+      .notNull()
+      .default([]),
+    itemCount: integer("item_count").notNull().default(0),
+    fetchedAt: integer("fetched_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [primaryKey({ columns: [table.provider, table.connectionName] })],
 );
 
 // ═══════════════════ 文档本地评论（与外部导入评论共用面板） ═══════════════════

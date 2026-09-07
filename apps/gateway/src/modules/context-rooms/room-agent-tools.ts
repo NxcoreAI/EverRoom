@@ -48,11 +48,12 @@ export function createContextRoomAgentTools(deps: {
       }
       try {
         const roomId = typeof params.room_id === "string" && params.room_id ? params.room_id : null;
+        // 行首带记忆 id：enrich 的 facts 据此回填 memoryId（条目与归属关联的来源）。
         const lines = roomId
           ? (await memory.searchRoomMemories(roomId, String(params.query ?? ""), Number(params.limit ?? 5)))
-            .map((item) => `- ${item.content}${item.updatedAt ? `（${item.updatedAt}）` : ""}`)
+            .map((item) => `- [${item.memoryId}] ${item.content}${item.updatedAt ? `（${item.updatedAt}）` : ""}`)
           : (await memory.searchAtomic(String(params.query ?? ""), Number(params.limit ?? 5))).items
-            .map((item) => `- ${item.content}${item.updatedAt ? `（${item.updatedAt}）` : ""}`);
+            .map((item) => `- [${item.id}] ${item.content}${item.updatedAt ? `（${item.updatedAt}）` : ""}`);
         const text = lines.length === 0
           ? roomId
             ? "该 Room 没有匹配的绑定记忆（可去掉 room_id 全局检索）。"

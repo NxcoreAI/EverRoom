@@ -221,7 +221,7 @@ describe('createEntityFactGraphData', () => {
       .forEach((node) => expect(connectedIds).toContain(node.id))
   })
 
-  it('caps entity and fact node counts at the raised limits', () => {
+  it('renders all entities and facts up to the safety bound', () => {
     const room = createContextRoomFixture()
     room.people = Array.from({ length: 40 }, (_, index) => ({
       name: `人物${String(index)}`,
@@ -236,7 +236,19 @@ describe('createEntityFactGraphData', () => {
     }))
     const graph = createEntityFactGraphData(room)
 
-    expect(graph.nodes.filter((node) => node.kind === 'entity')).toHaveLength(24)
-    expect(graph.nodes.filter((node) => node.kind === 'fact')).toHaveLength(24)
+    // 根 + 40 人物全量展示，事实 30 条全量展示（上限只是性能保险，不做内容截取）。
+    expect(graph.nodes.filter((node) => node.kind === 'entity')).toHaveLength(41)
+    expect(graph.nodes.filter((node) => node.kind === 'fact')).toHaveLength(30)
+
+    // 安全上限仍兜底：超大规模时截断防画布冻结。
+    const hugeRoom = createContextRoomFixture()
+    hugeRoom.people = Array.from({ length: 600 }, (_, index) => ({
+      name: `人物${String(index)}`,
+      role: '角色',
+      avatar: '人',
+    }))
+    hugeRoom.memoryItems = []
+    const hugeGraph = createEntityFactGraphData(hugeRoom)
+    expect(hugeGraph.nodes.filter((node) => node.kind === 'entity')).toHaveLength(500)
   })
 })

@@ -407,8 +407,32 @@ export class YjsHistoryService {
     const to = this.materialize(db, documentId, toVersion);
     if (!to) return null;
     const from = fromVersion === null ? null : this.materialize(db, documentId, fromVersion);
-    const beforeBlocks = from ? blocksOfDocument(from.content) : [];
-    const afterBlocks = blocksOfDocument(to.content);
+    return this.diffContents(
+      documentId,
+      from ? from.content : null,
+      to.content,
+      {
+        fromVersion,
+        toVersion,
+        yjsBackfilled: to.yjsBackfilled && (from?.yjsBackfilled ?? true),
+      },
+    );
+  }
+
+  /**
+   * 任意两份内容快照的结构化 diff（版本 diff 的核心，供跨文档比较复用——
+   * 如外部导入候选 vs 当前版本）。meta 控制版本号回填与 yjs 标记。
+   */
+  diffContents(
+    documentId: string,
+    fromContent: TiptapJsonContent | null,
+    toContent: TiptapJsonContent,
+    meta: { fromVersion: number | null; toVersion: number; yjsBackfilled?: boolean },
+  ): DocumentDiffResult {
+    const beforeBlocks = fromContent ? blocksOfDocument(fromContent) : [];
+    const afterBlocks = blocksOfDocument(toContent);
+    const fromVersion = meta.fromVersion;
+    const toVersion = meta.toVersion;
     if (beforeBlocks.length > MAX_DIFF_BLOCKS
       || afterBlocks.length > MAX_DIFF_BLOCKS
       || beforeBlocks.length * afterBlocks.length > MAX_DIFF_LCS_CELLS) {
@@ -421,11 +445,11 @@ export class YjsHistoryService {
           status: "modified",
           type: "doc",
           path: [],
-          ...(from ? { before: from.content } : {}),
-          after: to.content,
-          textDiff: inlineDiff(from ? textOfNode(from.content) : "", textOfNode(to.content)),
+          ...(fromContent ? { before: fromContent } : {}),
+          after: toContent,
+          textDiff: inlineDiff(fromContent ? textOfNode(fromContent) : "", textOfNode(toContent)),
         }],
-        yjsBackfilled: to.yjsBackfilled && (from?.yjsBackfilled ?? true),
+        yjsBackfilled: meta.yjsBackfilled ?? true,
         truncated: true,
         truncatedReason: "too_large",
       };
@@ -530,7 +554,7 @@ export class YjsHistoryService {
       fromVersion,
       toVersion,
       blocks,
-      yjsBackfilled: to.yjsBackfilled && (from?.yjsBackfilled ?? true),
+      yjsBackfilled: meta.yjsBackfilled ?? true,
     };
   }
 

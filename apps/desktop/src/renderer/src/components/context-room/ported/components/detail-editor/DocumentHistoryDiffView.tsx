@@ -185,12 +185,15 @@ export function DocumentHistoryDiffView({
   diff,
   currentTitle,
   currentContent,
+  rangeLabel,
 }: {
   editor: Editor
   snapshot: DocumentVersionSnapshot
   diff: DocumentDiffResult
   currentTitle: string
   currentContent?: TiptapJsonContent
+  /** 覆盖默认的 V{from}→V{to} 区间文案（导入候选 diff 用"当前版本 → 导入版本"）。 */
+  rangeLabel?: string
 }) {
   const { t } = useLocale()
   const contentRef = useRef<HTMLDivElement>(null)
@@ -245,7 +248,7 @@ export function DocumentHistoryDiffView({
   return (
     <div className="context-room-history-diff-view" role="region" aria-label={t('contextRoom:documentHistory.diffAria')}>
       <div className="context-room-history-diff-column-header">
-        {t('contextRoom:documentHistory.diffRange', { fromVersion: snapshot.version, toVersion: diff.toVersion })}
+        {rangeLabel ?? t('contextRoom:documentHistory.diffRange', { fromVersion: snapshot.version, toVersion: diff.toVersion })}
         {diff.truncated ? ` · ${t('contextRoom:documentHistory.truncated')}` : ''}
       </div>
       <div className="context-room-history-diff-title-block">

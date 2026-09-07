@@ -1,10 +1,14 @@
 import type {
   AgentDocumentExportRunView,
+  ImportCandidateDiffView,
   CanonicalDocumentArtifact,
   ExternalDocumentCommentView,
+  DocumentImportBatchMode,
+  DocumentImportBatchView,
   DocumentImportCommentDiffSummary,
   DocumentImportHistoryEntry,
   DocumentImportRunView,
+  ExternalDocumentListResponse,
   ExternalDocumentPreview,
   ExternalDocumentProvider,
   ExternalDocumentSearchResponse,
@@ -24,6 +28,50 @@ export class ExternalDocumentsGatewayBridge {
     return this.request('/v1/document-import/search', {
       method: 'POST',
       body: JSON.stringify({ provider, query }),
+    })
+  }
+
+  /** 连接器页按连接全量列举（同步调用，几百篇数秒级；上限截断见 truncated）。 */
+  async importList(
+    provider: ExternalDocumentProvider,
+    connectionName?: string,
+    cachedOnly?: boolean,
+  ): Promise<ExternalDocumentListResponse> {
+    return this.request('/v1/document-import/list', {
+      method: 'POST',
+      body: JSON.stringify({
+        provider,
+        ...(connectionName ? { connectionName } : {}),
+        ...(cachedOnly ? { cachedOnly: true } : {}),
+      }),
+    })
+  }
+
+  async importBatch(input: {
+    provider: ExternalDocumentProvider
+    connectionName?: string
+    remoteDocumentIds: string[]
+    mode: DocumentImportBatchMode
+    roomId?: string
+  }): Promise<{ batchId: string; total: number }> {
+    return this.request('/v1/document-import/batch', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    })
+  }
+
+  async importBatchStatus(batchId: string): Promise<DocumentImportBatchView> {
+    return this.request(`/v1/document-import/batch/${encodeURIComponent(batchId)}`)
+  }
+
+  async importStructuredDiff(roomImportId: string): Promise<ImportCandidateDiffView> {
+    return this.request(`/v1/document-import/room-imports/${encodeURIComponent(roomImportId)}/diff-structured`)
+  }
+
+  async cancelImportBatch(batchId: string): Promise<DocumentImportBatchView> {
+    return this.request(`/v1/document-import/batch/${encodeURIComponent(batchId)}/cancel`, {
+      method: 'POST',
+      body: JSON.stringify({}),
     })
   }
 

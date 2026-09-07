@@ -7,6 +7,7 @@ import type { ConnectorConnection, SyncRun, SyncScope } from '@nxcore/connector-
 import type { ObsidianVaultBinding, ObsidianVaultCandidate } from '../../../../../shared/obsidian'
 import { EVIDENCE_STATUS_LABELS, FILE_STATUS_LABELS, formatBytes, formatDate } from './sourceFormatters'
 import { SourceIcon, type SourceIconKind } from './SourceIcon'
+import { ConnectorDocumentImportPanel } from '../ConnectorDocumentImportPanel'
 import { providerIconKind, providerLabel, SOURCE_STATUS_TONES, type StateTone } from './sourceKinds'
 import { useLocale, type Translate } from '@/i18n/LocaleContext'
 
@@ -329,6 +330,16 @@ export function SourceDrawer({
             ...(lastRun ? [{ value: lastRun.processed.toLocaleString(), label: t('surface:sourceCard.lastSynced') }] : []),
           ]),
         ])}
+        {(connection.provider === 'notion' || connection.provider === 'feishu') ? (
+          <div className="src-drawer-doc-import">
+            <div className="src-list-head"><h4>{t('surface:connectorSync.documentImport')}</h4></div>
+            <ConnectorDocumentImportPanel
+              provider={connection.provider}
+              connectionName={connection.connectionName || undefined}
+              embedded
+            />
+          </div>
+        ) : null}
         <div className="src-drawer-list">
           {calendarScopes ? (
             <>

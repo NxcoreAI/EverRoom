@@ -3,11 +3,46 @@ import { useEffect, useState } from 'react'
 import { useLocale } from '@/i18n/LocaleContext'
 
 import type { MemoryAtomicItemDto, MemoryAtomicProvenanceDto, MemoryAtomicType } from '../../../../../shared/memory'
+import { dispatchRoomMemoryChanged } from '@/components/context-room/roomMemoryChange'
 import { RoomAssignControl } from './RoomAssignControl'
 import { MemoryEmptyView } from './MemoryStatusViews'
 import { formatDate, memoryFailureText, useAsyncData } from './useMemoryData'
 
 const PAGE_SIZE = 50
+
+/** Room chip：标题在手时可点跳转对应 Room（App 监听 nxcore:room:open）；Room 已消失则纯展示。 */
+function RoomChipNav({ roomId, roomTitle, stopPropagation }: {
+  roomId: string
+  roomTitle: string | null
+  stopPropagation?: boolean
+}) {
+  const { t } = useLocale()
+  if (!roomTitle) {
+    return (
+      <span className="mem-room-chip">{t('memory:atomicMemory.roomUnavailable')}</span>
+    )
+  }
+  return (
+    <span
+      className="mem-room-chip mem-room-chip-link"
+      role="link"
+      tabIndex={0}
+      title={t('memory:atomicMemory.openRoom')}
+      onClick={(event) => {
+        if (stopPropagation) event.stopPropagation()
+        window.dispatchEvent(new CustomEvent('nxcore:room:open', { detail: { id: roomId, title: roomTitle } }))
+      }}
+      onKeyDown={(event) => {
+        if (event.key !== 'Enter' && event.key !== ' ') return
+        event.preventDefault()
+        if (stopPropagation) event.stopPropagation()
+        window.dispatchEvent(new CustomEvent('nxcore:room:open', { detail: { id: roomId, title: roomTitle } }))
+      }}
+    >
+      {roomTitle}
+    </span>
+  )
+}
 
 const TYPE_FILTERS: Array<{ value: MemoryAtomicType | 'all'; label: string }> = [
   { value: 'all', label: 'memory:atomicMemory.all' },
@@ -136,6 +171,7 @@ function AtomicDetail({ item, onSaved, onDeleted, onOpenDocument, onOpenConversa
     try {
       await window.nxcore!.memory.updateAtomic(item.id, content, item.background ?? undefined)
       setEditing(false)
+      if (item.roomId) dispatchRoomMemoryChanged()
       onSaved()
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t('memory:atomicMemory.saveFailed'))
@@ -149,6 +185,7 @@ function AtomicDetail({ item, onSaved, onDeleted, onOpenDocument, onOpenConversa
     setError(null)
     try {
       await window.nxcore!.memory.deleteAtomic([item.id])
+      if (item.roomId) dispatchRoomMemoryChanged()
       onDeleted()
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t('memory:atomicMemory.deleteFailed'))
@@ -162,11 +199,7 @@ function AtomicDetail({ item, onSaved, onDeleted, onOpenDocument, onOpenConversa
     <div className="mem-atomic-detail">
       <div className="mem-atomic-detail-meta">
         <span className="mem-type-badge" data-type={item.type}>{t(typeLabel(item.type))}</span>
-        {item.roomId ? (
-          <span className="mem-room-chip" data-available={Boolean(item.roomTitle)}>
-            {item.roomTitle ?? t('memory:atomicMemory.roomUnavailable')}
-          </span>
-        ) : null}
+        {item.roomId ? <RoomChipNav roomId={item.roomId} roomTitle={item.roomTitle} /> : null}
         {item.background ? <span className="mem-source">{t('memory:atomicMemory.sourceScenarioScene', { scene: item.background })}</span> : null}
         <span className="mem-time">{t('memory:atomicMemory.createdCreatedUpdatedUpdated', { created: formatDate(item.createdAt, locale), updated: formatDate(item.updatedAt, locale) })}</span>
         <span className="mem-atomic-detail-actions">
@@ -293,11 +326,7 @@ export function AtomicMemoryPane({ focusItemId, onOpenDocument, onOpenConversati
                 onClick={() => setExpandedId(expandedId === item.id ? null : item.id)}
               >
                 <span className="mem-type-badge" data-type={item.type}>{t(typeLabel(item.type))}</span>
-                {item.roomId ? (
-                  <span className="mem-room-chip" data-available={Boolean(item.roomTitle)}>
-                    {item.roomTitle ?? t('memory:atomicMemory.roomUnavailable')}
-                  </span>
-                ) : null}
+                {item.roomId ? <RoomChipNav roomId={item.roomId} roomTitle={item.roomTitle} stopPropagation /> : null}
                 <span className="mem-atomic-text">{item.content}</span>
                 <span className="mem-time">{formatDate(item.updatedAt, locale)}</span>
               </button>
