@@ -48,7 +48,10 @@ export function routeProxyUrlForTest(rawUrl: string, method: "GET" | "POST", bod
   if (url.hostname === "gmail.googleapis.com") {
     if (path === "/gmail/v1/users/me/profile") return { service: "gmail", action: "get_profile", input: {} };
     if (path === "/gmail/v1/users/me/messages") {
-      const input: Record<string, unknown> = { detail: "full", maxResults: num("maxResults", 100) ?? 100 };
+      // detail=ids：oo 的 ids 分支不做逐封 hydration（一页一个 list action，5 units）。
+      // 逐封取全文由适配器自己 pace 着做——full 整页 hydration 在单 action 内会撞 120s 超时，
+      // 且与后续逐封 get 双倍烧配额（Gmail 每用户 250 units/min）。
+      const input: Record<string, unknown> = { detail: "ids", maxResults: num("maxResults", 100) ?? 100 };
       const query = q.get("q");
       if (query) input.query = query;
       if (q.get("includeSpamTrash") === "true") input.includeSpamTrash = true;
@@ -213,6 +216,7 @@ export class OpenConnectorSyncExecutor implements ConnectorExecutor {
       service?: string;
       providerScopeId: string;
       sourceCursor: string | null;
+      continuation?: string | null;
     },
     mode: SyncMode,
   ): AsyncGenerator<PullPage> {
@@ -231,6 +235,7 @@ export class OpenConnectorSyncExecutor implements ConnectorExecutor {
       proxyPost: async (url: string, body: unknown): Promise<any> => this.request("POST", url, body),
       normalizeMail: (raw: unknown) => this.formatMapper!.normalizeMail(scope.provider, raw),
       normalizeCalendar: (raw: unknown) => this.formatMapper!.normalizeCalendar(scope.provider, raw),
+      continuation: scope.continuation ?? null,
     };
     // 复用适配器的 pull 生成器（URL 会被上面的路由翻译为 action）
     yield* (definition.pull as NonNullable<typeof definition.pull>)(ctx as never, mode);

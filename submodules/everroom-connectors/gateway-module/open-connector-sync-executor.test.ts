@@ -12,7 +12,9 @@ describe("open-connector-sync-executor URL 路由", () => {
     )).toEqual({
       service: "gmail",
       action: "fetch_emails",
-      input: { detail: "full", maxResults: 100, query: "-in:spam -in:trash" },
+      // detail=ids：oo 的 ids 分支不逐封 hydration（一页一个 list action）；
+      // 全文由适配器逐封 pace 着取，避免单 action 内 100 次上游调用撞 120s 超时。
+      input: { detail: "ids", maxResults: 100, query: "-in:spam -in:trash" },
     });
 
     expect(routeProxyUrlForTest(

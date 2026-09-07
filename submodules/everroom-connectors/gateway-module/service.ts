@@ -382,6 +382,18 @@ export class ConnectorSyncService {
     return this.config.cliConnectorSyncOwnerId ?? this.config.connectorSyncOwnerId ?? "local-user";
   }
 
+  /**
+   * 统一链路（ConnectorManager）接管 gmail 同步时置位：managed-gmail 任务让位——
+   * 既有任务暂停、不再补建、轮询与手动触发跳过，避免双链路对同一邮箱抢 Gmail 配额。
+   */
+  setManagedGmailGate(gate: (() => boolean) | null): void {
+    this.managedGmailGate = gate;
+  }
+  private managedGmailGate: (() => boolean) | null = null;
+  private managedGmailJobsYield(): boolean {
+    return this.managedGmailGate?.() ?? false;
+  }
+
   close(): void {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
@@ -1197,6 +1209,7 @@ export class ConnectorSyncService {
       .where(and(eq(connectorSyncJobs.status, "active"), eq(connectorSyncJobs.scheduleType, "interval")))
       .orderBy(desc(connectorSyncJobs.priority), asc(connectorSyncJobs.createdAt)).all()
       .filter((job) => {
+        if (job.id.startsWith("managed-gmail-") && this.managedGmailJobsYield()) return false;
         const state = this.jobState(job.id);
         if (gmailSyncMode(job.input) === "incremental" && !textValue(state?.checkpoint?.historyId)) return false;
         if (managedDocumentSyncMode(job.input) === "incremental" && !this.hasDocumentIncrementalCheckpoint(job, state?.checkpoint)) {
@@ -1209,6 +1222,8 @@ export class ConnectorSyncService {
 
   private async runJob(job: typeof connectorSyncJobs.$inferSelect): Promise<void> {
     if (!this.config.cliConnector || this.running.has(job.id)) return;
+    // 统一链路接管 gmail 时，managed 任务的手动"立即同步"也不跑（防双烧配额）。
+    if (job.id.startsWith("managed-gmail-") && this.managedGmailJobsYield()) return;
     const startedAt = new Date();
     if (!this.acquireLease(job.id, startedAt)) return;
     this.running.add(job.id);
@@ -2029,6 +2044,17 @@ export class ConnectorSyncService {
   }
 
   private ensureManagedGmailJobs(connectionName: string, displayName: string, now: Date): void {
+    if (this.managedGmailJobsYield()) {
+      // 统一链路接管：managed gmail 任务一律暂停且不再补建（existing 分支的恢复逻辑不适用）。
+      for (const mode of ["bootstrap", "incremental"] as const) {
+        const id = this.managedGmailJobId(connectionName, mode);
+        this.db.update(connectorSyncJobs).set({ status: "paused", enabled: false, nextRunAt: null, updatedAt: now })
+          .where(and(eq(connectorSyncJobs.id, id), eq(connectorSyncJobs.status, "active"))).run();
+        this.db.update(connectorSyncJobStates).set({ nextRunAt: null, updatedAt: now })
+          .where(eq(connectorSyncJobStates.jobId, id)).run();
+      }
+      return;
+    }
     const definitions = [
       {
         mode: "bootstrap" as const,

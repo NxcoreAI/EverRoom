@@ -33,6 +33,8 @@ export interface PullContext {
 export interface SyncPullContext extends PullContext {
   providerScopeId: string;
   sourceCursor: string | null;
+  /** 全量断点续传游标（provider 自解释；仅 full 模式由 manager 传入）。 */
+  continuation?: string | null;
 }
 
 /** 直连引擎的 HTTP 响应（带缓存协商头，供 ETag/Last-Modified 增量）。 */
