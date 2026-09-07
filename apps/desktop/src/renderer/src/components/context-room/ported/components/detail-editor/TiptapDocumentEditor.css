@@ -700,6 +700,175 @@ textarea.context-room-tiptap-rewrite-text:disabled {
   color: var(--cr-muted);
 }
 
+/* 文档速览卡：标题下方、正文上方的可折叠窄卡，与标题同列对齐。 */
+.context-room-document-overview {
+  width: min(100%, 720px);
+  margin: 0 auto;
+  padding: 14px clamp(24px, 8cqw, 72px) 0;
+}
+
+.context-room-document-overview-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 12px;
+  border: 1px solid color-mix(in srgb, var(--cr-blue) 55%, transparent);
+  border-radius: 10px;
+  /* !important 是承重墙：真机上此按钮 background 被一个未定位到的样式源
+     覆盖成白底（同文件同选择器强度的 body div 着色正常，全仓 CSS 扫描与
+     insertCSS 均未找到来源）。移除前先在真机确认 header 仍为浅蓝。 */
+  background: color-mix(in srgb, var(--cr-blue) 9%, var(--cr-surface)) !important;
+  color: var(--cr-muted);
+  font-size: 12px;
+  line-height: 1.45;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 160ms ease-out, background-color 160ms ease-out;
+}
+
+.context-room-document-overview[data-expanded='true'] .context-room-document-overview-bar {
+  border-radius: 10px 10px 0 0;
+}
+
+.context-room-document-overview-bar:disabled {
+  cursor: default;
+}
+
+.context-room-document-overview-bar:not(:disabled):hover {
+  border-color: var(--cr-blue);
+}
+
+.context-room-document-overview-bar > svg {
+  color: var(--cr-blue);
+}
+
+.context-room-document-overview-label {
+  flex-shrink: 0;
+  font-weight: 600;
+  color: var(--cr-text);
+}
+
+.context-room-document-overview-hint {
+  flex: 1;
+  min-width: 0;
+  color: var(--cr-muted);
+}
+
+.context-room-document-overview-topic-preview {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--cr-muted);
+}
+
+.context-room-document-overview-stale-badge {
+  flex-shrink: 0;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, #b45309 14%, transparent);
+  color: #b45309;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.context-room-document-overview-chevron {
+  flex-shrink: 0;
+  margin-left: auto;
+  color: var(--cr-muted);
+  transition: transform 180ms ease-out;
+}
+
+.context-room-document-overview[data-expanded='true'] .context-room-document-overview-chevron {
+  transform: rotate(180deg);
+}
+
+.context-room-document-overview-skeleton {
+  flex: 1;
+  height: 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--cr-muted) 20%, transparent);
+  animation: context-room-overview-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes context-room-overview-pulse {
+  50% { opacity: 0.45; }
+}
+
+.context-room-overview-spinning {
+  animation: context-room-agent-write-spin 1s linear infinite;
+}
+
+.context-room-document-overview-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--cr-blue) 55%, transparent);
+  border-top: 0;
+  border-radius: 0 0 10px 10px;
+  background: color-mix(in srgb, var(--cr-blue) 9%, var(--cr-surface));
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.context-room-document-overview-topic {
+  font-weight: 650;
+  color: var(--cr-text);
+}
+
+.context-room-document-overview-points {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--cr-text);
+}
+
+.context-room-document-overview-points li + li {
+  margin-top: 2px;
+}
+
+.context-room-document-overview-conclusion {
+  color: color-mix(in srgb, var(--cr-text) 88%, transparent);
+}
+
+.context-room-document-overview-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--cr-tertiary, var(--cr-muted));
+}
+
+.context-room-document-overview-retry {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  padding: 3px 9px;
+  border: 1px solid var(--cr-border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--cr-text);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 160ms ease-out, color 160ms ease-out;
+}
+
+.context-room-document-overview-retry:not(:disabled):hover {
+  border-color: var(--cr-blue);
+  color: var(--cr-blue);
+}
+
+.context-room-document-overview-retry:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .context-room-tiptap-scroll::-webkit-scrollbar {
   width: 9px;
   height: 9px;

@@ -25,13 +25,14 @@ export function documentCommentRoutes(service: DocumentCommentService): FastifyP
           parentId: Type.Optional(Type.Union([Type.String(idText), Type.Null()])),
           blockId: Type.Optional(Type.Union([Type.String(idText), Type.Null()])),
           quotedText: Type.Optional(Type.String({ maxLength: 500 })),
+          authorName: Type.Optional(Type.String({ maxLength: 60 })),
         }, { additionalProperties: false }),
       },
     }, async (request, reply) => {
       const { id } = request.params;
-      const { body, parentId, blockId, quotedText } = request.body;
+      const { body, parentId, blockId, quotedText, authorName } = request.body;
       try {
-        return service.create({ documentId: id, body, parentId: parentId ?? null, blockId: blockId ?? null, quotedText: quotedText ?? null });
+        return service.create({ documentId: id, body, parentId: parentId ?? null, blockId: blockId ?? null, quotedText: quotedText ?? null, authorName: authorName ?? null });
       } catch (error) {
         if (error instanceof DocumentServiceError) {
           return reply.code(error.statusCode).send({ error: error.code, message: error.message, ...(error.details ?? {}) });

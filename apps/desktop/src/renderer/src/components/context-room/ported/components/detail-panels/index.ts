@@ -1,6 +1,7 @@
 export { MemoryPane } from './MemoryPane'
 export { RelationsPane } from './RelationsPane'
 export { MailsPane, SchedulePane, TasksPane } from './ActivityPanes'
+export { LinkGraphPane } from './LinkGraphPane'
 /** 面板内详情子视图的选中对象：任务/会议/邮件各有归属面板，文档始终占右侧内容区。 */
 export type WorkspaceObjectPreview =
   | { kind: 'task'; id: string }

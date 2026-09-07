@@ -17,7 +17,7 @@ import {
   DocumentIndexBackfillWorker,
   type DocumentIndexBackfillDocuments,
 } from "../src/modules/documents/index-backfill/worker.js";
-import { DOCUMENT_INDEX_BACKFILL_JOB_TYPE } from "../src/modules/documents/index-backfill/jobs.js";
+import { DOCUMENT_INDEX_BACKFILL_JOB_TYPE, enqueueDocumentIndexBackfill } from "../src/modules/documents/index-backfill/jobs.js";
 import { jobs } from "../src/infrastructure/database/schema.js";
 import type { TiptapJsonContent } from "@nxcore/agent-contract";
 
@@ -114,6 +114,22 @@ function backdateCreation(db: ReturnType<typeof createDatabase>["db"], documentI
     .run();
 }
 
+/** 把文档 updatedAt 回拨到安静窗之外（只让该文档被扫描入队）。 */
+function backdateUpdate(db: ReturnType<typeof createDatabase>["db"], documentId: string, ms: number): void {
+  db.update(documentsTable)
+    .set({ updatedAt: new Date(Date.now() - ms) })
+    .where(eq(documentsTable.id, documentId))
+    .run();
+}
+
+function targetJobRow(db: ReturnType<typeof createDatabase>["db"], documentId: string) {
+  const row = db.select().from(jobs)
+    .where(eq(jobs.id, `document-index-backfill:${documentId}`))
+    .all()[0];
+  if (!row) throw new Error(`job row missing for ${documentId}`);
+  return row;
+}
+
 function findMarkNodes(content: TiptapJsonContent): Array<Record<string, unknown>> {
   const marks: Array<Record<string, unknown>> = [];
   const visit = (node: TiptapJsonContent) => {
@@ -181,7 +197,8 @@ describe("document index backfill worker", () => {
     const deterministicOnly = findMarkNodes(documents.get(target.id)!.contentJson);
     expect(deterministicOnly).toHaveLength(1);
 
-    // LLM 抛错：剩余改写段不挂，job 正常完成，已落的确定性结果不动。
+    // LLM 抛错且确定性无新命中：本轮空转转退避重试（不再正常完成），
+    // 已落的确定性结果不动。
     const throwing = new DocumentIndexBackfillWorker(
       database.db,
       documents,
@@ -192,7 +209,87 @@ describe("document index backfill worker", () => {
     await wait(1_100);
     await throwing.drain();
     expect(findMarkNodes(documents.get(target.id)!.contentJson)).toHaveLength(1);
-    expect(worker).toBeDefined();
+    const retryRow = targetJobRow(database.db, target.id);
+    expect(retryRow.status).toBe("pending");
+    expect((retryRow.payload as { attempts?: number }).attempts).toBe(1);
+  });
+
+  it("LLM 判决失败且确定性无命中时转为退避重试；LLM 恢复后补挂完成", async () => {
+    const { database, documents } = await createHarness({ quietWindowMs: 300_000 });
+    const source = await importDocument(documents, "doc-source", body([SOURCE_PARAGRAPH, "无关段落，长度补齐到下限以上避免误配。"]));
+    const target = await importDocument(documents, "doc-target", body([REWRITTEN_PARAGRAPH]));
+    backdateCreation(database.db, source.id, 60_000);
+    backdateUpdate(database.db, target.id, 400_000);
+
+    type JudgeInput = { documents: Array<{ blockId: string }> };
+    type JudgeVerdict = { paragraphOrdinal: number; sourceId: string; confidence: number };
+    let judgeImpl: (input: JudgeInput) => Promise<JudgeVerdict[]> = async () => {
+      throw new Error("llm down");
+    };
+    const worker = new DocumentIndexBackfillWorker(
+      database.db,
+      documents,
+      { available: true, judge: (input: JudgeInput) => judgeImpl(input) } as unknown as IndexBackfillLlm,
+      { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      { quietWindowMs: 300_000, scanIntervalMs: 1_000, pollIntervalMs: 60_000, retryBaseDelayMs: 0 },
+    );
+
+    await worker.drain();
+    // 空转轮不正常完成：转待重试（attempts=1），否则下次 LLM 机会要等 30min 冷却或 24h 重扫。
+    const degraded = targetJobRow(database.db, target.id);
+    expect(degraded.status).toBe("pending");
+    expect((degraded.payload as { attempts?: number }).attempts).toBe(1);
+    expect(findMarkNodes(documents.get(target.id)!.contentJson)).toHaveLength(0);
+
+    // LLM 恢复：重试轮里回显真实候选 blockId，挂上标记并正常完成。
+    judgeImpl = async (input) => {
+      const blockId = input.documents[0]?.blockId;
+      if (!blockId) throw new Error("source candidate missing");
+      return [{ paragraphOrdinal: 0, sourceId: `doc:${blockId}`, confidence: 0.95 }];
+    };
+    await worker.drain();
+    expect(targetJobRow(database.db, target.id).status).toBe("completed");
+    const marks = findMarkNodes(documents.get(target.id)!.contentJson);
+    expect(marks).toHaveLength(1);
+    expect(marks[0]).toMatchObject({ kind: "document", targetDocumentId: source.id });
+  });
+
+  it("任务运行中被重新入队替换时，旧定稿不把新 pending 行写成完成", async () => {
+    const { database, documents } = await createHarness({ quietWindowMs: 300_000 });
+    const source = await importDocument(documents, "doc-source", body([SOURCE_PARAGRAPH, "无关段落，长度补齐到下限以上避免误配。"]));
+    const target = await importDocument(documents, "doc-target", body([REWRITTEN_PARAGRAPH]));
+    backdateCreation(database.db, source.id, 60_000);
+    backdateUpdate(database.db, target.id, 400_000);
+
+    type JudgeVerdict = { paragraphOrdinal: number; sourceId: string; confidence: number };
+    let releaseJudge!: (verdicts: JudgeVerdict[]) => void;
+    const judgeGate = new Promise<JudgeVerdict[]>((resolve) => { releaseJudge = resolve; });
+    const judge = vi.fn(() => judgeGate);
+    const worker = new DocumentIndexBackfillWorker(
+      database.db,
+      documents,
+      { available: true, judge } as unknown as IndexBackfillLlm,
+      { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      { quietWindowMs: 300_000, scanIntervalMs: 60_000, pollIntervalMs: 60_000, retryBaseDelayMs: 0 },
+    );
+
+    const draining = worker.drain();
+    await vi.waitFor(() => expect(judge).toHaveBeenCalledTimes(1));
+
+    // 读取触发重新入队：删除 running 行、插入同 id 的全新 pending 行。
+    enqueueDocumentIndexBackfill(database.db, {
+      documentId: target.id,
+      roomId: "room-1",
+      version: documents.get(target.id)!.version,
+    }, new Date());
+
+    releaseJudge([]); // 空判决：旧轮 marks:0 收尾
+    await draining;
+    // 旧定稿被 status 守护挡住：新 pending 行未被没跑就写成 completed。
+    expect(targetJobRow(database.db, target.id).status).toBe("pending");
+
+    await worker.drain(); // 下一轮正常消费新行
+    expect(targetJobRow(database.db, target.id).status).toBe("completed");
   });
 
   it("安静窗内的文档不入队；占用租约的文档处理时跳过", async () => {

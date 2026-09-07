@@ -2,13 +2,22 @@ import type {
   DocumentDiffResult,
   DocumentVersionSnapshot,
   DocumentVersionSummary,
+  ImportCandidateDiffView,
   RoomDocument,
 } from '@nxcore/agent-contract'
-import { Check, ChevronDown, Clock3, History, X } from 'lucide-react'
+import { Check, ChevronDown, Clock3, CloudDownload, History, X } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import { showToast } from '../../../../../state/toast'
 import { useLocale } from '../../../../../i18n/LocaleContext'
-import { DocumentImportHistorySection } from './DocumentImportHistorySection'
+import { SourceIcon } from '../../../../pages/sources/SourceIcon'
+
+/** 时间轴上的"导入版本"卡片数据（未应用候选）。 */
+interface PendingImportVersion {
+  roomImportId: string
+  provider: 'feishu' | 'notion'
+  title: string
+  capturedAt: string
+}
 
 const HISTORY_PAGE_SIZE = 100
 
@@ -48,7 +57,11 @@ export function DocumentHistoryPanel({
 }: {
   documentId: string
   currentDocument: RoomDocument | null
-  onShowDiff: (snapshot: DocumentVersionSnapshot, diff: DocumentDiffResult) => void
+  onShowDiff: (
+    snapshot: DocumentVersionSnapshot,
+    diff: DocumentDiffResult,
+    importCandidate?: ImportCandidateDiffView['candidate'],
+  ) => void
   onClearDiff: () => void
   onCloseDiff: () => void
   closeSignal: number
@@ -57,7 +70,9 @@ export function DocumentHistoryPanel({
   const { locale, t } = useLocale()
   const [open, setOpen] = useState(false)
   const [versions, setVersions] = useState<DocumentVersionSummary[]>([])
+  const [pendingImports, setPendingImports] = useState<PendingImportVersion[]>([])
   const [selected, setSelected] = useState<number | null>(null)
+  const [selectedImportId, setSelectedImportId] = useState<string | null>(null)
   const [collapsedDates, setCollapsedDates] = useState<Set<string>>(() => new Set())
   const [loading, setLoading] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
@@ -65,16 +80,25 @@ export function DocumentHistoryPanel({
   const summaryRequestedRef = useRef<Set<number>>(new Set())
   const [hasMore, setHasMore] = useState(false)
   const historyRequestGenerationRef = useRef(0)
-  const versionGroups = useMemo(() => {
-    const groups = new Map<string, DocumentVersionSummary[]>()
-    for (const version of versions) {
-      const key = dateKey(version)
+  // 统一时间轴：本地版本与导入候选按时间混排（导入按捕获时间插入对应
+  // 日期分组），UI 上共用同一条版本时间轴。
+  const timelineGroups = useMemo(() => {
+    const items: Array<{ kind: 'version'; version: DocumentVersionSummary; at: number }
+      | { kind: 'import'; candidate: PendingImportVersion; at: number }> = [
+      ...versions.map((version) => ({ kind: 'version' as const, version, at: Date.parse(version.createdAt) || 0 })),
+      ...pendingImports.map((candidate) => ({ kind: 'import' as const, candidate, at: Date.parse(candidate.capturedAt) || 0 })),
+    ]
+    items.sort((left, right) => right.at - left.at)
+    const groups = new Map<string, typeof items>()
+    for (const item of items) {
+      const date = new Date(item.at || Date.now())
+      const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
       const group = groups.get(key)
-      if (group) group.push(version)
-      else groups.set(key, [version])
+      if (group) group.push(item)
+      else groups.set(key, [item])
     }
     return [...groups.entries()]
-  }, [versions])
+  }, [pendingImports, versions])
 
   useEffect(() => {
     const requestGeneration = historyRequestGenerationRef.current + 1
@@ -91,15 +115,17 @@ export function DocumentHistoryPanel({
       .then((result) => {
         if (cancelled || historyRequestGenerationRef.current !== requestGeneration) return
         setVersions(result)
-        // 保存时已自动生成的重要变更概览立即显示；其余保持空待懒加载。
+        // 保存时已落库的概览立即显示（重要变更为 AI 概览，不重要变更为本地
+        // 规则摘要占位）；非 AI 的稍后由懒加载升级。服务端值比会话内缓存新。
         const prefilled: Record<number, string> = {}
         for (const version of result) {
           if (version.changeSummary) prefilled[version.version] = version.changeSummary
           summaryRequestedRef.current.delete(version.version)
         }
-        setSummaries((current) => ({ ...prefilled, ...current }))
+        setSummaries((current) => ({ ...current, ...prefilled }))
         setHasMore(result.length === HISTORY_PAGE_SIZE)
         setSelected(null)
+        setSelectedImportId(null)
         setCollapsedDates(new Set())
       })
       .catch((error: unknown) => {
@@ -162,13 +188,92 @@ export function DocumentHistoryPanel({
     }
   }, [closeSignal])
 
-  // AI 概览标题：按需加载（每版本一次，缓存；AI 不可用时网关回本地规则摘要）。
+  // 外部导入：候选混排进时间轴；"检查外部更新"按钮（仅导入过的文档显示）
+  // 也在本面板内。顺带做陈旧检测——服务端版本比当前高（外部应用过候选）
+  // 时触发文档数据刷新，让编辑器同步新内容。
+  const [hasImportSource, setHasImportSource] = useState(false)
+  const [importRefreshTick, setImportRefreshTick] = useState(0)
+  const [checkingUpdate, setCheckingUpdate] = useState(false)
+  useEffect(() => {
+    if (!open || !currentDocument) return
+    let cancelled = false
+    void window.nxcore?.externalDocuments?.importHistory(currentDocument.roomId, currentDocument.id)
+      .then((result) => {
+        if (cancelled) return
+        setPendingImports(result.entries
+          .filter((entry) => entry.relation === 'candidate' && entry.importedVersion === null)
+          .map((entry) => ({
+            roomImportId: entry.roomImportId,
+            provider: entry.provider,
+            title: entry.displayTitle,
+            capturedAt: entry.capturedAt,
+          })))
+        setHasImportSource(result.entries.length > 0)
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setPendingImports([])
+          setHasImportSource(false)
+        }
+      })
+    const documents = window.nxcore?.documents
+    if (documents) {
+      void documents.get(currentDocument.id)
+        .then((latest) => {
+          if (cancelled || latest.version <= currentDocument.version) return
+          window.dispatchEvent(new CustomEvent('everroom:documents-refresh', {
+            detail: { roomId: currentDocument.roomId, documentId: currentDocument.id },
+          }))
+        })
+        .catch(() => undefined)
+    }
+    return () => { cancelled = true }
+  }, [currentDocument, open, refreshSignal, importRefreshTick])
+
+  const checkExternalUpdate = () => {
+    const external = window.nxcore?.externalDocuments
+    if (!external || !currentDocument || checkingUpdate) return
+    setCheckingUpdate(true)
+    void external.checkExternalUpdate(currentDocument.roomId, currentDocument.id)
+      .then((result) => {
+        showToast({
+          title: result.noChange
+            ? t('contextRoom:importHistory.noRemoteUpdate')
+            : t('contextRoom:importHistory.candidateCreated'),
+          message: result.noChange ? undefined : t('contextRoom:importHistory.compareThenApply'),
+        })
+        setImportRefreshTick((value) => value + 1)
+      })
+      .catch((error: unknown) => {
+        showToast({ title: t('contextRoom:importHistory.checkFailed'), message: error instanceof Error ? error.message : undefined })
+      })
+      .finally(() => setCheckingUpdate(false))
+  }
+
+  const openImportDiff = (roomImportId: string) => {
+    const external = window.nxcore?.externalDocuments
+    if (!external) return
+    setSelected(null)
+    setSelectedImportId(roomImportId)
+    void external.importStructuredDiff(roomImportId)
+      .then((result) => {
+        onShowDiff(result.snapshot, result.diff, result.candidate)
+      })
+      .catch((error: unknown) => {
+        setSelectedImportId(null)
+        showToast({ title: t('contextRoom:importHistory.checkFailed'), message: error instanceof Error ? error.message : undefined })
+      })
+  }
+
+  // AI 概览标题：面板打开后按批懒加载（每批 4 个，每版本一次，缓存）。
+  // 没有摘要的版本生成概览；只有本地占位摘要（不重要变更保存时落库）的
+  // 版本升级为 AI 概览。summaries 变化会带动下一批继续，避免首批之后停摆。
   useEffect(() => {
     if (!open) return
     const documents = window.nxcore?.documents
     if (!documents) return
     const pending = versions
-      .filter((version) => !version.changeSummary && !summaryRequestedRef.current.has(version.version))
+      .filter((version) => version.changeSummarySource !== 'ai' && !summaryRequestedRef.current.has(version.version))
       .slice(0, 4)
     if (pending.length === 0) return
     for (const version of pending) summaryRequestedRef.current.add(version.version)
@@ -179,7 +284,7 @@ export function DocumentHistoryPanel({
         })
         .catch(() => undefined)
     }
-  }, [open, versions, documentId])
+  }, [open, versions, documentId, summaries])
 
   const closePanel = (event: MouseEvent<HTMLButtonElement>) => {
     event.preventDefault()
@@ -219,11 +324,23 @@ export function DocumentHistoryPanel({
               <aside>
                 <div className="context-room-history-list-heading">
                   <span>{t('contextRoom:documentHistory.versionList')}</span>
-                  <small>{t('contextRoom:documentHistory.versionCount', { count: versions.length })}</small>
+                  <small>{t('contextRoom:documentHistory.versionCount', { count: versions.length + pendingImports.length })}</small>
+                  {hasImportSource ? (
+                    <button
+                      type="button"
+                      className="context-room-history-import-check"
+                      disabled={checkingUpdate}
+                      onClick={checkExternalUpdate}
+                      title={t('contextRoom:importHistory.checkExternalUpdate')}
+                    >
+                      {checkingUpdate ? <span className="context-room-history-import-check-spin" aria-hidden="true" /> : <CloudDownload aria-hidden="true" />}
+                      {t('contextRoom:importHistory.checkExternalUpdate')}
+                    </button>
+                  ) : null}
                 </div>
                 {loading ? <div className="context-room-history-loading" role="status"><span /><span /><span /></div> : null}
-                {!loading && !versions.length ? <p className="context-room-history-empty">{t('contextRoom:documentHistory.empty')}</p> : null}
-                {!loading && versionGroups.map(([key, group]) => {
+                {!loading && !versions.length && !pendingImports.length ? <p className="context-room-history-empty">{t('contextRoom:documentHistory.empty')}</p> : null}
+                {!loading && timelineGroups.map(([key, group]) => {
                   const collapsed = collapsedDates.has(key)
                   return (
                     <section
@@ -246,7 +363,31 @@ export function DocumentHistoryPanel({
                         <span>{dateLabel(key, locale, t)}</span>
                         <small>{group.length}</small>
                       </button>
-                      {!collapsed ? group.map((version) => (
+                      {!collapsed ? group.map((item) => item.kind === 'import' ? (
+                        <button
+                          type="button"
+                          key={`import-${item.candidate.roomImportId}`}
+                          className={`context-room-history-version context-room-history-import-version${selectedImportId === item.candidate.roomImportId ? ' is-selected' : ''}`}
+                          onClick={() => openImportDiff(item.candidate.roomImportId)}
+                        >
+                          <span className="context-room-history-version-rail is-import" aria-hidden="true"><CloudDownload aria-hidden="true" /></span>
+                          <span className="context-room-history-version-copy">
+                            <span className="context-room-history-version-topline">
+                              <em className="context-room-history-import-badge">
+                                <SourceIcon kind={item.candidate.provider} className="glyph" aria-hidden="true" />
+                                {t('contextRoom:importHistory.pendingImportVersion')}
+                              </em>
+                            </span>
+                            <span className="context-room-history-version-title">{item.candidate.title}</span>
+                            <span className="context-room-history-version-summary" data-loaded="true">
+                              {t('contextRoom:importHistory.importCandidateSummary')}
+                            </span>
+                            <span className="context-room-history-version-meta"><Clock3 aria-hidden="true" />{new Date(item.candidate.capturedAt).toLocaleString(locale, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                          </span>
+                        </button>
+                      ) : (() => {
+                        const version = item.version
+                        return (
                         <button
                           type="button"
                           key={version.version}
@@ -254,6 +395,7 @@ export function DocumentHistoryPanel({
                           data-current={String(version.version === currentDocument?.version)}
                           onClick={() => {
                             setSelected(version.version)
+                            setSelectedImportId(null)
                             if (version.version === currentDocument?.version) onClearDiff()
                           }}
                         >
@@ -268,12 +410,13 @@ export function DocumentHistoryPanel({
                               data-loaded={String(Boolean(summaries[version.version]))}
                               title={version.version === 1 ? undefined : t('contextRoom:documentHistory.summaryTitle')}
                             >
-                              {summaries[version.version] ?? ''}
+                              {summaries[version.version] ?? <i className="context-room-history-summary-skeleton" aria-hidden="true" />}
                             </span>
                             <span className="context-room-history-version-meta"><Clock3 aria-hidden="true" />{versionDate(version, locale)}</span>
                           </span>
                         </button>
-                      )) : null}
+                        )
+                      })()) : null}
                     </section>
                   )
                   })}
@@ -287,15 +430,7 @@ export function DocumentHistoryPanel({
                     {loadingMore ? t('contextRoom:documentHistory.loading') : t('contextRoom:documentHistory.loadEarlier')}
                   </button>
                 ) : null}
-                {currentDocument && (
-                  <DocumentImportHistorySection
-                    roomId={currentDocument.roomId}
-                    currentDocument={currentDocument}
-                    refreshSignal={refreshSignal}
-                    onApplied={onClearDiff}
-                  />
-                )}
-              </aside>
+</aside>
             </div>
           </div>
         </div>

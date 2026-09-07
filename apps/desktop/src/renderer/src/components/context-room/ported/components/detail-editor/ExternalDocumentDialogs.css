@@ -358,7 +358,8 @@
 .context-room-external-export-progress {
   height: 10px;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--border, #d8dee4) 88%, #6a737d);
+  /* 轨道用主题蓝浅色调：白色卡片上近白的 --border 灰轨道会与背景融成一片 */
+  background: color-mix(in srgb, var(--accent, #3d6ff6) 22%, transparent);
   box-shadow: inset 0 1px 2px rgb(15 23 42 / 0.08);
 }
 
@@ -503,6 +504,14 @@
 .context-room-imported-comment-replies { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
 .context-room-imported-comment-reply { padding: 6px 8px; background: var(--surface-alt, #f9fafb); border-radius: 8px; }
 .context-room-imported-comment-reply strong { font-size: 11px; }
+/* AI 审阅评论署名徽标（区别于用户"我"与飞书导入评论） */
+.context-room-imported-comment-ai-author {
+  display: inline-flex; align-items: center; gap: 3px;
+  font-size: 11px; font-weight: 600; color: #7c5cff; flex-shrink: 0;
+}
+.context-room-imported-comment-ai-author svg { flex-shrink: 0; }
+.context-room-ai-review-spinning { animation: context-room-ai-review-spin 1s linear infinite; }
+@keyframes context-room-ai-review-spin { to { transform: rotate(360deg); } }
 /* 按钮激活态 */
 .context-room-document-actions button.is-active { color: var(--accent, #3d6ff6); }
 /* 评论面板空态 */

@@ -501,3 +501,31 @@
   .src-page *, .src-scrim, .src-drawer { animation: none !important; transition: none !important; }
 }
 
+
+/* ── 飞书/Notion 云文档批量导入对话框（内嵌连接器页同款面板） ── */
+
+/* ── 云源抽屉内的文档批量导入面板（Notion/飞书连接） ── */
+.src-drawer-doc-import { display: grid; gap: 4px; margin: 10px 0 4px; padding-top: 10px; border-top: 1px dashed var(--border); }
+.src-drawer-doc-import .connector-sync-section { gap: 0; padding: 0; border: 0; }
+.src-drawer-doc-import .connector-doc-list { max-height: 320px; }
+/* 抽屉窄版适配：双行行结构、表头只留全选+计数、操作条纵向铺满 */
+.src-drawer-doc-import .connector-doc-list { max-height: 340px; border-radius: 6px; }
+.src-drawer-doc-import .connector-doc-list[data-embedded='true'] .connector-doc-row { grid-template-columns: 20px minmax(0, 1fr); grid-template-rows: auto auto; row-gap: 3px; padding: 8px 6px; }
+.src-drawer-doc-import .connector-doc-list[data-embedded='true'] .connector-doc-row-head { grid-template-columns: 20px minmax(0, 1fr) auto; grid-template-rows: auto; }
+.src-drawer-doc-import .connector-doc-head-count { color: var(--muted); font-size: 9px; font-variant-numeric: tabular-nums; }
+.src-drawer-doc-import .connector-doc-main { display: flex; grid-column: 2; align-items: flex-start; justify-content: space-between; gap: 8px; min-width: 0; }
+.src-drawer-doc-import .connector-doc-meta { grid-column: 2; overflow: hidden; color: var(--muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.src-drawer-doc-import .connector-doc-meta:empty { display: none; }
+.src-drawer-doc-import .connector-doc-toolbar { padding: 4px 0 8px; gap: 8px; }
+.src-drawer-doc-import .connector-doc-filter { padding: 6px 0; }
+.src-drawer-doc-import .connector-doc-actions { flex-direction: column; align-items: stretch; gap: 7px; padding: 10px 0 2px; }
+.src-drawer-doc-import .connector-doc-actions > span:first-child { margin-right: 0; text-align: center; }
+.src-drawer-doc-import .connector-doc-actions .primary-button,
+.src-drawer-doc-import .connector-doc-actions .secondary-button { width: 100%; justify-content: center; }
+.src-drawer-doc-import .connector-doc-actions .connector-doc-progress { justify-content: center; }
+.src-drawer-doc-import .connector-doc-connect-hint { flex-direction: column; align-items: stretch; gap: 8px; }
+.src-drawer-doc-import .connector-doc-connect-hint .connector-doc-connect-actions { justify-content: stretch; }
+.src-drawer-doc-import .connector-doc-connect-hint .connector-doc-connect-actions .primary-button,
+.src-drawer-doc-import .connector-doc-connect-hint .connector-doc-connect-actions .secondary-button { flex: 1; }
+.src-drawer-doc-import .connector-doc-warning { margin: 4px 0; }
+.connector-doc-fetched-at { margin: 2px 0 0; }

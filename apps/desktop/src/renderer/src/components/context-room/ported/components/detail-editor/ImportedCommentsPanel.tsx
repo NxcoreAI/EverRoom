@@ -1,6 +1,6 @@
 import type { ExternalDocumentCommentView } from '@nxcore/agent-contract'
 import type { Editor } from '@tiptap/react'
-import { Check, MessageSquare, Trash2, X } from 'lucide-react'
+import { Check, LoaderCircle, MessageSquare, Sparkles, Trash2, X } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useLocale } from '../../../../../i18n/LocaleContext'
 import type { LocalDocumentComment } from '../../../../../../../shared/sources'
@@ -37,6 +37,9 @@ export function ImportedCommentsPanel({
   onClose,
   collapsed = false,
   onOpen,
+  aiReviewRunning,
+  aiReviewDisabled,
+  onAiReview,
 }: {
   editor: Editor | null
   roomId: string
@@ -45,9 +48,14 @@ export function ImportedCommentsPanel({
   /** 收起态：不渲染停靠栏，但仍在正文标记有评论的文本，点击标记展开面板。 */
   collapsed?: boolean
   onOpen?: () => void
+  /** AI 审阅：一键让 agent 读文档并落评论建议（按钮在面板头部）。 */
+  aiReviewRunning?: boolean
+  aiReviewDisabled?: boolean
+  onAiReview?: () => void
 }) {
   const { t, locale } = useLocale()
   const [comments, setComments] = useState<ExternalDocumentCommentView[] | null>(null)
+  const [importProvider, setImportProvider] = useState<'feishu' | 'notion'>('feishu')
   const [localComments, setLocalComments] = useState<LocalDocumentComment[] | null>(null)
   const layerRef = useRef<HTMLDivElement | null>(null)
   const trackRef = useRef<HTMLDivElement | null>(null)
@@ -85,7 +93,12 @@ export function ImportedCommentsPanel({
     setComments(null)
     void window.nxcore?.externalDocuments.importHistory(roomId, documentId)
       .then((result) => {
-        if (!cancelled) setComments(result.comments)
+        if (!cancelled) {
+          setComments(result.comments)
+          const provider = result.entries.find((entry) => entry.relation === 'primary')?.provider
+            ?? result.entries[0]?.provider
+          if (provider === 'notion') setImportProvider('notion')
+        }
       })
       .catch(() => {
         if (!cancelled) setComments([])
@@ -98,6 +111,21 @@ export function ImportedCommentsPanel({
   useEffect(() => {
     reloadLocalComments()
   }, [reloadLocalComments])
+
+  // 面板展开时兜底刷新（覆盖 websocket 断连窗口；agent 落评论主要靠下面的推送）。
+  useEffect(() => {
+    if (!collapsed) reloadLocalComments()
+  }, [collapsed, reloadLocalComments])
+
+  // 服务端（agent）落评论经文档事件推送实时刷新。
+  useEffect(() => {
+    const unsubscribe = window.nxcore?.documents.onEvent?.((frame) => {
+      const event = frame?.event
+      if (!event || event.type !== 'document.comments.changed' || event.documentId !== documentId) return
+      reloadLocalComments()
+    })
+    return typeof unsubscribe === 'function' ? unsubscribe : undefined
+  }, [documentId, reloadLocalComments])
 
   // 划词气泡等入口新增/变更评论时实时刷新（documentId 匹配才刷）。
   useEffect(() => {
@@ -392,6 +420,12 @@ export function ImportedCommentsPanel({
         >
           <header>
                         <time>{formatTime(comment.createdAt)}</time>
+            {comment.authorName && comment.authorName !== '我' ? (
+              <span className="context-room-imported-comment-ai-author">
+                <Sparkles size={11} aria-hidden="true" />
+                {comment.authorName}
+              </span>
+            ) : null}
             {comment.resolved && (
               <em className="context-room-imported-comment-resolved">
                 <Check size={11} aria-hidden="true" />
@@ -410,6 +444,7 @@ export function ImportedCommentsPanel({
             <div className="context-room-imported-comment-replies">
               {localRepliesOf(comment.id).map((reply) => (
                 <div key={reply.id} className="context-room-imported-comment-reply">
+                  {reply.authorName && reply.authorName !== '我' ? <strong>{reply.authorName}</strong> : null}
                                     <p>{reply.body}</p>
                 </div>
               ))}
@@ -435,7 +470,7 @@ export function ImportedCommentsPanel({
         onClick={() => scrollToAnchor(anchor)}
       >
         <header>
-          <SourceIcon kind="feishu" className="context-room-imported-comment-source" />
+          <SourceIcon kind={importProvider} className="context-room-imported-comment-source" />
                     <time>{formatTime(comment.createdAt)}</time>
           {comment.resolved === true && (
             <em className="context-room-imported-comment-resolved">
@@ -474,6 +509,21 @@ export function ImportedCommentsPanel({
         <span className="context-room-imported-comments-count">
           {total > 0 ? t('contextRoom:importedComments.count', { count: String(total) }) : ''}
         </span>
+        {onAiReview ? (
+          <button
+            type="button"
+            className={aiReviewRunning ? 'is-active' : ''}
+            aria-label={t('contextRoom:aiReviewAgent.action')}
+            title={t('contextRoom:aiReviewAgent.action')}
+            aria-pressed={Boolean(aiReviewRunning)}
+            disabled={aiReviewDisabled}
+            onClick={onAiReview}
+          >
+            {aiReviewRunning
+              ? <LoaderCircle className="context-room-ai-review-spinning" aria-hidden="true" />
+              : <Sparkles size={14} aria-hidden="true" />}
+          </button>
+        ) : null}
         <button type="button" aria-label={t('contextRoom:importedComments.close')} onClick={onClose}>
           <X aria-hidden="true" />
         </button>
@@ -516,6 +566,12 @@ export function ImportedCommentsPanel({
                             <article className="context-room-imported-comment" data-resolved={String(comment.resolved)}>
                               <header>
                                                                 <time>{formatTime(comment.createdAt)}</time>
+                                {comment.authorName && comment.authorName !== '我' ? (
+                                  <span className="context-room-imported-comment-ai-author">
+                                    <Sparkles size={11} aria-hidden="true" />
+                                    {comment.authorName}
+                                  </span>
+                                ) : null}
                                 {comment.resolved && (
                                   <em className="context-room-imported-comment-resolved">
                                     <Check size={11} aria-hidden="true" />
@@ -539,7 +595,7 @@ export function ImportedCommentsPanel({
                           return (
                             <article className="context-room-imported-comment" data-resolved={String(comment.resolved === true)}>
                               <header>
-                                <SourceIcon kind="feishu" className="context-room-imported-comment-source" />
+                                <SourceIcon kind={importProvider} className="context-room-imported-comment-source" />
                                                                 <time>{formatTime(comment.createdAt)}</time>
                               </header>
                               <p>{comment.body}</p>

@@ -259,6 +259,17 @@ export function PortedContextRoom({
     void roomDocuments.refreshRoom(activeRoomId).catch(() => undefined)
   }, [activeRoomId, roomDocuments.refreshRoom])
 
+  // 文档版本外部更新（导入候选应用/网关侧提交）：刷新对应 Room 的文档快照，
+  // 开着的编辑器随 backendDocument 新版本同步内容。
+  useEffect(() => {
+    const onDocumentsRefresh = (event: Event): void => {
+      const roomId = (event as CustomEvent<{ roomId?: string }>).detail?.roomId
+      if (roomId) void roomDocuments.refreshRoom(roomId).catch(() => undefined)
+    }
+    window.addEventListener('everroom:documents-refresh', onDocumentsRefresh)
+    return () => window.removeEventListener('everroom:documents-refresh', onDocumentsRefresh)
+  }, [roomDocuments.refreshRoom])
+
   useEffect(() => {
     if (homeRequest === handledHomeRequest.current) return
     handledHomeRequest.current = homeRequest

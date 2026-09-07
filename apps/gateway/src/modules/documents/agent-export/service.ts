@@ -13,11 +13,9 @@ import type {
 } from "@nxcore/agent-contract";
 import type { GatewayDatabase } from "../../../infrastructure/database/client.js";
 import { agentDocumentExports } from "../../../infrastructure/database/schema.js";
-import type { OpenConnectorCliConfig } from "../../../config.js";
 import { agentDocumentMarkdown } from "../agent-markdown.js";
 import type { DocumentService } from "../service.js";
 import { readArtifact, storeArtifact } from "../import/artifact-store.js";
-import { runImportConnectorAction, ImportConnectorError, type ImportActionRunner } from "../import/oo-runner.js";
 import {
   LarkCliError,
   type LarkCliConfig,
@@ -188,11 +186,10 @@ function notionPageIdOf(target: AgentDocumentExportTarget): string {
 }
 
 /**
- * Agent 一次性导出：固定 Room 版本 → Markdown → CLI/skill 单次写入。
- * 只做审计记录，不建远端 binding、不自动重试不确定的写入。
+ * Agent 一次性导出：固定 Room 版本 → Markdown → CLI 单次写入（飞书 lark-cli /
+ * Notion 官方 ntn CLI）。只做审计记录，不建远端 binding、不自动重试不确定的写入。
  */
 export class AgentDocumentExportService {
-  private readonly connectorAction: ImportActionRunner;
   private readonly logger: { info: (obj: object, msg: string) => void; warn: (obj: object, msg: string) => void } | null;
   private readonly assetBridgeUrl: string | null;
   private readonly notionCli: NtnCliConfig | null;
@@ -200,17 +197,14 @@ export class AgentDocumentExportService {
   constructor(
     private readonly db: GatewayDatabase,
     private readonly documents: DocumentService,
-    private readonly connectorConfig: OpenConnectorCliConfig | null,
     private readonly lark: LarkCliConfig | null,
     private readonly dataDir: string,
     options?: {
-      actionRunner?: ImportActionRunner;
       logger?: { info: (obj: object, msg: string) => void; warn: (obj: object, msg: string) => void };
       assetBridgeUrl?: string | null;
       notionCli?: NtnCliConfig | null;
     },
   ) {
-    this.connectorAction = options?.actionRunner ?? runImportConnectorAction;
     this.logger = options?.logger ?? null;
     this.assetBridgeUrl = options?.assetBridgeUrl ?? null;
     this.notionCli = options?.notionCli ?? null;
@@ -940,13 +934,6 @@ export class AgentDocumentExportService {
       throw new ExportServiceError("ENVIRONMENT_NOT_READY", "lark-cli 未配置", 503);
     }
     return this.lark;
-  }
-
-  private requireConnector(): OpenConnectorCliConfig {
-    if (!this.connectorConfig) {
-      throw new ExportServiceError("ENVIRONMENT_NOT_READY", "OpenConnector 未配置", 503);
-    }
-    return this.connectorConfig;
   }
 
   private transition(

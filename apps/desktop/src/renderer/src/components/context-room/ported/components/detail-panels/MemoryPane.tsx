@@ -25,13 +25,11 @@ import { PanelEmptyState } from './PanelEmptyState';
 
 export function MemoryPane({
   room,
-  onOpenMemory,
   onUpdateRoom,
   onOpenRoom,
   onOpenSource,
 }: {
   room: ContextRoomRecord;
-  onOpenMemory: (id: string) => void;
   onUpdateRoom: (updater: (room: ContextRoomRecord) => ContextRoomRecord) => void;
   /** 实体已建 Room 时从内联详情卡跳转（详情只在本面板内展示）。 */
   onOpenRoom: (roomId: string) => void;
@@ -196,10 +194,9 @@ export function MemoryPane({
               <div className="context-room-memory-detail-list">
                 {selectedMemory
                   ? selectedMemory.sources?.map((source) => (
-                      <button
-                        type="button"
+                      <div
+                        className="context-room-memory-detail-row"
                         key={`${source.type}-${source.name}`}
-                        onClick={() => onOpenMemory(selectedMemory.id)}
                       >
                         <span className="context-room-memory-detail-row-icon">
                           <Link2 aria-hidden="true" />
@@ -208,7 +205,7 @@ export function MemoryPane({
                           <b>{source.name}</b>
                           <small>{t(uiText(source.type))}</small>
                         </span>
-                      </button>
+                      </div>
                     ))
                   : selectedAppliedFact
                     ? selectedAppliedFact.sources.map((source) => {

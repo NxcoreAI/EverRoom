@@ -1023,6 +1023,42 @@ export interface DocumentVersionListOptions {
   beforeVersion?: number;
 }
 
+/** 文档速览（文章级 AI 摘要）：首次打开自动生成一次，正文更新后手动重新生成。 */
+export interface DocumentOverviewView {
+  documentId: string;
+  /** 三段式速览；topic/conclusion 为 null 表示从未生成。 */
+  topic: string | null;
+  points: string[];
+  conclusion: string | null;
+  /** 生成时的文档版本；落后于当前 version 即「已过期」。 */
+  generatedAtVersion: number | null;
+  generatedAt: string | null;
+  /** 空短判定（基于当前正文纯文本长度）。 */
+  eligible: boolean;
+  reason: "ok" | "empty" | "too_short";
+  /** 路由层注入：AI 未配置时前端跳过自动生成，只显示静态提示。 */
+  aiAvailable: boolean;
+}
+
+/** 章节预览请求：正文与哈希由渲染层从编辑器现算随请求携带，网关不解析章节结构。 */
+export interface DocumentSectionPreviewInput {
+  /** 章节 heading 的 blockId（TOC item.id）。 */
+  blockId: string;
+  headingText: string;
+  sectionMarkdown: string;
+  /** sectionMarkdown 的 SHA-256 hex；命中持久缓存时网关不重调 LLM。 */
+  contentHash: string;
+}
+
+/** 章节预览结果：cached=true 表示命中持久缓存（正文 hash 未变）。 */
+export interface DocumentSectionPreviewResult {
+  documentId: string;
+  blockId: string;
+  preview: string;
+  generatedAt: string;
+  cached: boolean;
+}
+
 export interface DocumentVersionSnapshot {
   documentId: string;
   version: number;
@@ -1247,7 +1283,8 @@ export type DocumentMutationTarget =
 export type DocumentEventType =
   | "document.changed"
   | "document.operation.changed"
-  | "document.deleted";
+  | "document.deleted"
+  | "document.comments.changed";
 
 export interface DocumentEvent<T = unknown> {
   id: string;
@@ -1300,6 +1337,29 @@ export interface ExternalDocumentSearchResponse {
   provider: ExternalDocumentProvider;
   items: ExternalDocumentSearchResultItem[];
   warnings: ExternalDocumentWarning[];
+}
+
+/** 连接器页全量列举的单条文档（drive=飞书云空间、wiki=飞书知识库、page=Notion 页面）。 */
+export interface ExternalDocumentListItem {
+  provider: ExternalDocumentProvider;
+  remoteDocumentId: string;
+  title: string;
+  sourceUrl: string | null;
+  updatedAt: string | null;
+  ownerName: string | null;
+  origin: "drive" | "wiki" | "page";
+  wikiSpaceName: string | null;
+  /** 该来源已有落 Room 的导入记录（重导入走现有候选版本语义）。 */
+  imported: boolean;
+}
+
+export interface ExternalDocumentListResponse {
+  provider: ExternalDocumentProvider;
+  items: ExternalDocumentListItem[];
+  truncated: boolean;
+  warnings: ExternalDocumentWarning[];
+  /** 缓存回显时为上次拉取时间（ISO）；实时拉取为 null。 */
+  fetchedAt: string | null;
 }
 
 export type ExternalCommentsStatus = "complete" | "partial" | "unavailable" | "failed";
@@ -1418,6 +1478,59 @@ export interface DocumentImportHistoryEntry {
   capturedAt: string;
   commentsStatus: ExternalCommentsStatus;
   warnings: ExternalDocumentWarning[];
+}
+
+/** 候选 vs 当前版本的结构化 diff（复用版本 diff 契约；版本时间轴"导入版本"卡片的 diff 数据源）。 */
+export interface ImportCandidateDiffView {
+  candidate: {
+    roomImportId: string;
+    provider: ExternalDocumentProvider;
+    title: string;
+    capturedAt: string;
+  };
+  snapshot: DocumentVersionSnapshot;
+  diff: DocumentDiffResult;
+}
+
+/** 批量导入去向：room=用户指定 Room；auto=AI 归房+孵化混合。 */
+export type DocumentImportBatchMode = "room" | "auto";
+
+export type DocumentImportBatchStatus = "running" | "completed" | "failed" | "cancelled";
+
+export type DocumentImportBatchItemStatus =
+  | "pending"
+  | "imported"
+  | "incubated"
+  | "failed"
+  | "skipped";
+
+export interface DocumentImportBatchItemView {
+  remoteDocumentId: string;
+  title: string | null;
+  status: DocumentImportBatchItemStatus;
+  roomId: string | null;
+  documentId: string | null;
+  importRunId: string | null;
+  error: string | null;
+}
+
+export interface DocumentImportBatchView {
+  id: string;
+  provider: ExternalDocumentProvider;
+  connectionName: string | null;
+  mode: DocumentImportBatchMode;
+  targetRoomId: string | null;
+  status: DocumentImportBatchStatus;
+  total: number;
+  processed: number;
+  succeeded: number;
+  failed: number;
+  items: DocumentImportBatchItemView[];
+  errorCode: string | null;
+  errorMessage: string | null;
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string | null;
 }
 
 export interface DocumentImportCommentDiffSummary {

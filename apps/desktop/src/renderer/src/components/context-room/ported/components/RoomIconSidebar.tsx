@@ -6,6 +6,7 @@ import {
   CheckSquare2,
   FileText,
   Mail,
+  Network,
   Share2,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
@@ -16,6 +17,7 @@ export type DetailPane =
   | 'documents'
   | 'relations'
   | 'memories'
+  | 'linkGraph'
   | 'wiki'
   | 'schedule'
   | 'tasks'
@@ -26,6 +28,7 @@ export const DETAIL_TABS = [
   { id: 'documents', label: 'contextRoom:roomSidebar.documents', icon: FileText, tone: 'document' },
   { id: 'relations', label: 'contextRoom:roomSidebar.relations', icon: Share2, tone: 'data' },
   { id: 'memories', label: 'contextRoom:roomSidebar.memories', icon: Bookmark, tone: 'memory' },
+  { id: 'linkGraph', label: 'contextRoom:roomSidebar.linkGraph', icon: Network, tone: 'data' },
   { id: 'wiki', label: 'contextRoom:roomSidebar.wiki', icon: BookOpen, tone: 'data' },
   { id: 'schedule', label: 'contextRoom:roomSidebar.schedule', icon: CalendarDays, tone: 'calendar' },
   { id: 'tasks', label: 'contextRoom:roomSidebar.tasks', icon: CheckSquare2, tone: 'task' },

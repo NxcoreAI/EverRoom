@@ -261,6 +261,38 @@ export function createIndexBackfillRuntime(config: GatewayConfig): AgentRuntime 
   });
 }
 
+/** 批量导入归房分类器：index-backfill 同款隔离内部 runtime（无工具、单次调用）。 */
+export function createImportClassifierRuntime(config: GatewayConfig): AgentRuntime | null {
+  if (config.agentRuntime === "fake" || !isPiRuntimeConfigured(config.backgroundPi)) return null;
+  const { mcp: _mcp, ...pi } = config.backgroundPi!;
+  return new PiAgentRuntime({
+    ...pi,
+    includeBashTool: false,
+    builtinTools: [],
+    maxToolCallsPerRun: 1,
+    runtimeRole: "internal",
+    sessionsDir: join(pi.sessionsDir, "import-classifier"),
+    workingDirectory: join(pi.workingDirectory, "import-classifier"),
+    agentDirectory: join(pi.agentDirectory, "import-classifier"),
+  });
+}
+
+/** 文档速览（文章级 AI 摘要）：index-backfill 同款隔离内部 runtime（无工具、单次调用）。 */
+export function createDocumentOverviewRuntime(config: GatewayConfig): AgentRuntime | null {
+  if (config.agentRuntime === "fake" || !isPiRuntimeConfigured(config.backgroundPi)) return null;
+  const { mcp: _mcp, ...pi } = config.backgroundPi!;
+  return new PiAgentRuntime({
+    ...pi,
+    includeBashTool: false,
+    builtinTools: [],
+    maxToolCallsPerRun: 1,
+    runtimeRole: "internal",
+    sessionsDir: join(pi.sessionsDir, "document-overview"),
+    workingDirectory: join(pi.workingDirectory, "document-overview"),
+    agentDirectory: join(pi.agentDirectory, "document-overview"),
+  });
+}
+
 /** 日记使用隔离的 Pi Runtime，只暴露来源清单读取工具。 */
 export function createDiaryAgentRuntime(
   config: GatewayConfig,

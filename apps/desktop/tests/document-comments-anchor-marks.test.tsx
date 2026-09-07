@@ -55,7 +55,10 @@ beforeEach(() => {
   })
   importHistoryMock.mockResolvedValue({ comments: [] })
   ;(window as unknown as { nxcore?: unknown }).nxcore = {
-    documents: { listDocumentComments: listMock },
+    documents: {
+      listDocumentComments: listMock,
+      onEvent: () => () => undefined,
+    },
     externalDocuments: { importHistory: importHistoryMock },
   }
   host = document.createElement('div')

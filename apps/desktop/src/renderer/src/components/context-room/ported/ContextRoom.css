@@ -13193,3 +13193,69 @@
   font-size: 9px;
   vertical-align: 1px;
 }
+/* 概览尚未生成时的流光占位条；本地占位/AI 概览落地后替换为文本 */
+.context-room-history-version-summary[data-loaded='false']::before {
+  content: none;
+}
+.context-room-history-summary-skeleton {
+  display: block;
+  width: 72%;
+  height: 8px;
+  margin-top: 4px;
+  border-radius: 999px;
+  background: linear-gradient(100deg,
+    color-mix(in srgb, var(--cr-muted, #6a737d) 15%, transparent) 36%,
+    color-mix(in srgb, var(--cr-muted, #6a737d) 40%, transparent) 50%,
+    color-mix(in srgb, var(--cr-muted, #6a737d) 15%, transparent) 64%);
+  background-size: 220% 100%;
+  animation: context-room-history-shimmer 1.4s ease-in-out infinite;
+}
+@keyframes context-room-history-shimmer {
+  from { background-position: 100% 0; }
+  to { background-position: 0% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .context-room-history-summary-skeleton { animation: none; }
+}
+
+
+/* 记忆来源行（静态展示，无跳转）：与按钮行同款外观。 */
+.context-room-memory-inline-detail .context-room-memory-detail-list .context-room-memory-detail-row {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  padding: 6px 8px;
+  border: 1px solid var(--cr-border);
+  border-radius: 6px;
+  background: var(--cr-surface);
+  color: var(--cr-muted);
+  text-align: left;
+}
+
+/* 建联图谱头部筛选下拉。 */
+.context-room-link-graph-filter {
+  min-height: 26px;
+  padding: 2px 6px;
+  border: 1px solid var(--cr-border);
+  border-radius: 6px;
+  background: var(--cr-surface);
+  color: var(--cr-muted);
+  font-size: 12px;
+}
+
+/* 版本时间轴的"导入版本"卡片（外部更新候选） */
+.context-room-history-version.context-room-history-import-version { border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border)); border-radius: 8px; }
+.context-room-history-import-version .context-room-history-version-rail.is-import { display: grid; place-items: center; color: var(--accent); }
+.context-room-history-import-version .context-room-history-version-rail.is-import svg { width: 13px; height: 13px; }
+.context-room-history-import-badge { display: inline-flex; align-items: center; gap: 5px; padding: 2px 7px; border-radius: 999px; background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); font-size: 9px; font-style: normal; font-weight: 650; }
+.context-room-history-import-badge svg, .context-room-history-import-badge img { width: 12px; height: 12px; }
+
+/* 时间轴标题行的"检查外部更新"按钮（导入过的文档显示） */
+.context-room-history-import-check { display: inline-flex; align-items: center; gap: 5px; margin-left: auto; padding: 3px 9px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); color: var(--muted); font: inherit; font-size: 9px; cursor: pointer; }
+.context-room-history-import-check:hover:not(:disabled) { color: var(--text); border-color: var(--border-strong); }
+.context-room-history-import-check:disabled { opacity: 0.6; cursor: default; }
+.context-room-history-import-check svg { width: 11px; height: 11px; }
+.context-room-history-import-check-spin { width: 11px; height: 11px; border: 2px solid var(--border-strong); border-top-color: var(--accent); border-radius: 50%; animation: context-room-spin 0.8s linear infinite; }

@@ -2,6 +2,7 @@ import {
   Archive,
   CalendarDays,
   Database,
+  FileDown,
   FileText,
   History,
   LoaderCircle,
@@ -28,11 +29,12 @@ import type {
 } from '../../../../shared/connector-sync'
 import type { OpenConnectorConnectionSummary } from '../../../../shared/open-connector'
 import { ConnectorConsolePage } from './ConnectorConsolePage'
+import { ConnectorDocumentImportPanel } from './ConnectorDocumentImportPanel'
 import { PageHeader } from './PageHeader'
 import { useLocale, type AppLocale, type Translate } from '@/i18n/LocaleContext'
 import './ConnectorSyncPage.css'
 
-type Tab = 'accounts' | 'jobs' | 'runs' | 'data' | 'developer'
+type Tab = 'accounts' | 'documents' | 'jobs' | 'runs' | 'data' | 'developer'
 
 interface JobDraft {
   id: string | null
@@ -55,6 +57,7 @@ interface JobDraft {
 
 const TABS: Array<{ id: Tab; label: string; icon: typeof Database }> = [
   { id: 'accounts', label: 'surface:connectorSync.accounts', icon: Unplug },
+  { id: 'documents', label: 'surface:connectorSync.documentImport', icon: FileDown },
   { id: 'jobs', label: 'surface:connectorSync.syncJobs', icon: RefreshCw },
   { id: 'runs', label: 'surface:connectorSync.runHistory', icon: History },
   { id: 'data', label: 'surface:connectorSync.localData', icon: Database },
@@ -292,6 +295,10 @@ export function ConnectorSyncPage() {
             ))}
           </div>
         </section>
+      ) : null}
+
+      {!loading && tab === 'documents' ? (
+        <ConnectorDocumentImportPanel connections={connections.filter((item) => item.service === 'feishu' || item.service === 'notion')} />
       ) : null}
 
       {!loading && tab === 'jobs' ? (

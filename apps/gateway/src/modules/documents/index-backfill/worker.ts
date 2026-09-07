@@ -267,6 +267,7 @@ export class DocumentIndexBackfillWorker {
 
     const deterministic = matchDeterministic(targets, allCandidates);
     let llmPlanned: PlannedIndexMark[] = [];
+    let llmDegraded = false;
     const remaining = targets.filter((target) => !deterministic.has(target.ordinal));
     if (remaining.length && this.llm?.available) {
       try {
@@ -301,6 +302,7 @@ export class DocumentIndexBackfillWorker {
           });
         }
       } catch (error) {
+        llmDegraded = true;
         this.logger.warn(
           {
             event: "document.index-backfill.llm_degraded",
@@ -317,7 +319,14 @@ export class DocumentIndexBackfillWorker {
       paragraphOrdinal: ordinal,
       candidate,
     }));
-    if (!initialPlanned.length && !llmPlanned.length) return { marks: 0 };
+    if (!initialPlanned.length && !llmPlanned.length) {
+      // LLM 判决失败且确定性无命中 = 本轮空转：按可重试错误定稿走退避重试，
+      // 否则任务正常完成后，下一次 LLM 机会要等重读触发（30min 冷却）或 24h
+      // 全量重扫。确定性有命中或 LLM 正常判空时仍正常完成（前者落库会 bump
+      // updatedAt，游标扫描自然安排复检）。
+      if (llmDegraded) throw new Error("index backfill LLM judge degraded with no deterministic match");
+      return { marks: 0 };
+    }
 
     // CAS 落库：每轮重读重算确定性匹配；LLM 结论按段落 blockId 对位重放，
     // 段落已不存在或已被标记则丢弃。
@@ -597,12 +606,18 @@ export class DocumentIndexBackfillWorker {
   }
 
   private complete(jobId: string, result: Record<string, unknown>): void {
+    // 定稿只认领自己抢到的 running 行：入队会先删后插同 id（见
+    // enqueueDocumentIndexBackfill），running 行可能已被替换成新的 pending 行，
+    // 不加守护会把新任务没跑就写成 completed。
     this.db.update(jobs).set({
       status: "completed",
       result,
       error: null,
       updatedAt: new Date(),
-    }).where(eq(jobs.id, jobId)).run();
+    }).where(and(
+      eq(jobs.id, jobId),
+      eq(jobs.status, "running"),
+    )).run();
   }
 
   private handleProcessError(
@@ -616,7 +631,10 @@ export class DocumentIndexBackfillWorker {
         result: { skipped: error.reason },
         error: null,
         updatedAt: new Date(),
-      }).where(eq(jobs.id, job.id)).run();
+      }).where(and(
+        eq(jobs.id, job.id),
+        eq(jobs.status, "running"),
+      )).run();
       return;
     }
     if (error instanceof DocumentServiceError
@@ -633,7 +651,10 @@ export class DocumentIndexBackfillWorker {
       payload: { ...payload, attempts },
       error: { message, attempts },
       updatedAt: new Date(),
-    }).where(eq(jobs.id, job.id)).run();
+    }).where(and(
+      eq(jobs.id, job.id),
+      eq(jobs.status, "running"),
+    )).run();
     const bindings = { event: "document.index-backfill.failed", jobId: job.id, attempts, error: message };
     if (terminal) this.logger.error(bindings, "document index backfill job failed permanently");
     else this.logger.warn(bindings, "document index backfill job scheduled for retry");
