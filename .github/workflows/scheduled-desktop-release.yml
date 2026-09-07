@@ -119,9 +119,10 @@ jobs:
           VYITEC_USER: ${{ secrets.VYITEC_USER }}
           VYITEC_TOKEN: ${{ secrets.VYITEC_TOKEN }}
         run: |
-          cred_file="$RUNNER_TEMP/vyitec-creds"
-          printf 'https://%s:%s@code.vyitec.com\n' "$VYITEC_USER" "$VYITEC_TOKEN" > "$cred_file"
-          git config --global credential.helper "store --file=$cred_file"
+          # 用 URL 重写注入凭证（insteadOf），与 release-desktop.yml 保持一致；
+          # 不依赖 credential helper（Windows 预置 GCM 行为不可控）。
+          printf 'https://%s:%s@code.vyitec.com' "$VYITEC_USER" "$VYITEC_TOKEN" > "$RUNNER_TEMP/vyitec-url"
+          git config --global url."$(cat "$RUNNER_TEMP/vyitec-url")/".insteadOf "https://code.vyitec.com/"
 
       - name: Install dependencies
         if: steps.candidate.outputs.pending == 'true'

@@ -88,10 +88,12 @@ jobs:
           VYITEC_USER: ${{ secrets.VYITEC_USER }}
           VYITEC_TOKEN: ${{ secrets.VYITEC_TOKEN }}
         run: |
-          cred_file="$RUNNER_TEMP/vyitec-creds"
-          printf 'https://%s:%s@code.vyitec.com\n' "$VYITEC_USER" "$VYITEC_TOKEN" > "$cred_file"
-          git config --global credential.helper ""
-          git config --global credential.helper "store --file=$cred_file"
+          # 用 URL 重写注入凭证（insteadOf）：任何 git 调用（含 pnpm spawn 的
+          # clone）访问 code.vyitec.com 时自动改写为带凭证的 URL。不走
+          # credential helper——Windows runner 预置的 GCM 会抢跑且在无交互
+          # 环境弹窗失败，helper 链行为在三个平台不可控。
+          printf 'https://%s:%s@code.vyitec.com' "$VYITEC_USER" "$VYITEC_TOKEN" > "$RUNNER_TEMP/vyitec-url"
+          git config --global url."$(cat "$RUNNER_TEMP/vyitec-url")/".insteadOf "https://code.vyitec.com/"
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -299,10 +301,12 @@ jobs:
           VYITEC_USER: ${{ secrets.VYITEC_USER }}
           VYITEC_TOKEN: ${{ secrets.VYITEC_TOKEN }}
         run: |
-          cred_file="$RUNNER_TEMP/vyitec-creds"
-          printf 'https://%s:%s@code.vyitec.com\n' "$VYITEC_USER" "$VYITEC_TOKEN" > "$cred_file"
-          git config --global credential.helper ""
-          git config --global credential.helper "store --file=$cred_file"
+          # 用 URL 重写注入凭证（insteadOf）：任何 git 调用（含 pnpm spawn 的
+          # clone）访问 code.vyitec.com 时自动改写为带凭证的 URL。不走
+          # credential helper——Windows runner 预置的 GCM 会抢跑且在无交互
+          # 环境弹窗失败，helper 链行为在三个平台不可控。
+          printf 'https://%s:%s@code.vyitec.com' "$VYITEC_USER" "$VYITEC_TOKEN" > "$RUNNER_TEMP/vyitec-url"
+          git config --global url."$(cat "$RUNNER_TEMP/vyitec-url")/".insteadOf "https://code.vyitec.com/"
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
