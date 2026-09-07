@@ -88,11 +88,9 @@ jobs:
           VYITEC_USER: ${{ secrets.VYITEC_USER }}
           VYITEC_TOKEN: ${{ secrets.VYITEC_TOKEN }}
         run: |
-          cred_dir="$RUNNER_TEMP/vyitec-creds"
-          mkdir -p "$cred_dir"
-          printf 'protocol=https\nhost=code.vyitec.com\nusername=%s\npassword=%s\n' \
-            "$VYITEC_USER" "$VYITEC_TOKEN" > "$cred_dir/creds"
-          git config --global credential.helper "!f() { test \"$1\" = get && cat \"$RUNNER_TEMP/vyitec-creds/creds\"; }; f"
+          cred_file="$RUNNER_TEMP/vyitec-creds"
+          printf 'https://%s:%s@code.vyitec.com\n' "$VYITEC_USER" "$VYITEC_TOKEN" > "$cred_file"
+          git config --global credential.helper "store --file=$cred_file"
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -300,11 +298,9 @@ jobs:
           VYITEC_USER: ${{ secrets.VYITEC_USER }}
           VYITEC_TOKEN: ${{ secrets.VYITEC_TOKEN }}
         run: |
-          cred_dir="$RUNNER_TEMP/vyitec-creds"
-          mkdir -p "$cred_dir"
-          printf 'protocol=https\nhost=code.vyitec.com\nusername=%s\npassword=%s\n' \
-            "$VYITEC_USER" "$VYITEC_TOKEN" > "$cred_dir/creds"
-          git config --global credential.helper "!f() { test \"$1\" = get && cat \"$RUNNER_TEMP/vyitec-creds/creds\"; }; f"
+          cred_file="$RUNNER_TEMP/vyitec-creds"
+          printf 'https://%s:%s@code.vyitec.com\n' "$VYITEC_USER" "$VYITEC_TOKEN" > "$cred_file"
+          git config --global credential.helper "store --file=$cred_file"
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
