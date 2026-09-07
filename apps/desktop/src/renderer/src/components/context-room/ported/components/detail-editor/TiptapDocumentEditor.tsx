@@ -1642,7 +1642,15 @@ export function TiptapDocumentEditor({
         onChange={selectionRewrite.updateReplacementText}
         onRetry={selectionRewrite.retry}
       />
-      {editor ? <TiptapContentScale items={tableOfContents} /> : null}
+      {editor ? (
+        <TiptapContentScale
+          items={tableOfContents}
+          documentId={documentId}
+          editor={editor}
+          prepareDocument={flushDocumentVersion}
+          locked={editorLocked}
+        />
+      ) : null}
       {editor && referencePickerOpen && !editorLocked ? (
         <DocumentBlockReferencePicker
           roomId={room.id}
