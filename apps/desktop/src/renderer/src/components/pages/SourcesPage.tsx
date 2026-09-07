@@ -77,7 +77,7 @@ export function SourcesPage() {
   const [webcalOpen, setWebcalOpen] = useState(false)
   const [webcalUrl, setWebcalUrl] = useState('')
   const [webcalError, setWebcalError] = useState<string | null>(null)
-  const { providers: connectorProviders } = useConnectorProviders()
+  const { providers: connectorProviders, configuredProviders } = useConnectorProviders()
   const [githubForm, setGithubForm] = useState(EMPTY_GITHUB_FORM)
   const [markdownSource, setMarkdownSource] = useState<'google-docs' | 'notion' | null>(null)
   const [markdownForm, setMarkdownForm] = useState({ ids: '', token: '' })
@@ -634,6 +634,7 @@ export function SourcesPage() {
             connectorsEnabled={connectorsEnabled}
             onConnectorProvider={(provider) => void connectConnector(provider)}
             providers={connectorProviders}
+            configuredProviders={configuredProviders}
             onWebcalSubscription={() => setWebcalOpen(true)}
           />
         </section>
@@ -658,6 +659,7 @@ export function SourcesPage() {
               connectorsEnabled={connectorsEnabled}
               onConnectorProvider={(provider) => void connectConnector(provider)}
               providers={connectorProviders}
+              configuredProviders={configuredProviders}
               onWebcalSubscription={() => setWebcalOpen(true)}
             />
           </section>

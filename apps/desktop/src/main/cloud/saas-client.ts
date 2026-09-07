@@ -702,6 +702,22 @@ export class SaasClient {
     return { authorizationUrl }
   }
 
+  /** 已配置 OAuth 的服务清单（`GET /app/connectors/oauth-configs`，桌面端只取最小投影）。 */
+  async connectorOAuthConfigs(): Promise<Array<{ service: string; displayName: string | null; iconUrl: string | null }>> {
+    await this.initialize()
+    const result = await this.request<{ services?: unknown }>('/app/connectors/oauth-configs')
+    const services = result && typeof result === 'object' && Array.isArray(result.services) ? result.services : []
+    return services.flatMap((item) => {
+      if (!item || typeof item !== 'object' || typeof (item as { service?: unknown }).service !== 'string') return []
+      const service = item as { service: string; displayName?: unknown; iconUrl?: unknown }
+      return [{
+        service: service.service,
+        displayName: typeof service.displayName === 'string' ? service.displayName : null,
+        iconUrl: typeof service.iconUrl === 'string' ? service.iconUrl : null,
+      }]
+    })
+  }
+
   async reportAgentStatus(input: {
     state: 'idle' | 'running' | 'error'
     sessionId?: string

@@ -63,6 +63,14 @@ export class NangoConnectorGatewayBridge {
     return this.request('/v1/nango-connectors/providers')
   }
 
+  /**
+   * SaaS 侧已配置 OAuth 的 provider 名单（「待连接」网格只显示这些）。
+   * 仅 saas 连接层有实现；local 模式返回 null，渲染层回落注册表全量展示。
+   */
+  configuredProviders(): Promise<string[] | null> {
+    return Promise.resolve(null)
+  }
+
   /** WebCal/ICS 日历订阅（webcal-url 通道）：同 URL 幂等，网关不回显 URL 令牌。 */
   createWebcalSubscription(url: string, provider = 'ics-calendar'): Promise<ConnectorConnection> {
     const trimmed = url.trim()
