@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { FastifyPluginAsyncTypebox } from "@fastify/type-provider-typebox";
 import { Type, type Static } from "@sinclair/typebox";
@@ -238,7 +238,12 @@ export class McpConfigManager {
     const temporary = `${path}.${process.pid}.tmp`;
     try {
       writeFileSync(temporary, `${JSON.stringify({ mcpServers: this.servers, secretKeys: this.secretIndex }, null, 2)}\n`, { mode: 0o600 });
-      renameSync(temporary, path);
+      try {
+        renameSync(temporary, path);
+      } catch {
+        // 同 secret-store：Windows 过滤驱动下 rename 报 EXDEV/EPERM 时降级 copy+delete。
+        copyFileSync(temporary, path);
+      }
       chmodSync(path, 0o600);
     } finally {
       if (existsSync(temporary)) unlinkSync(temporary);

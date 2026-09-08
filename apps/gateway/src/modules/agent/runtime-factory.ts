@@ -162,6 +162,10 @@ export function createBackgroundAgentRuntime(config: GatewayConfig): AgentRuntim
   const { memory: _memory, ...pi } = config.backgroundPi!;
   return new PiAgentRuntime({
     ...withAgentDirectories(config, BUILTIN_AGENT_IDS.transcriptionSummary, pi),
+    // 后台总结是机器对机器 JSON 提取：不继承 primary 的 reasoning——
+    // 推理既白烧输出预算（长转写 JSON 更易 maxTokens 截断），且部分代理
+    // （litellm anthropic 协议）直接拒绝 reasoning_effort 参数。
+    reasoning: "off",
     runtimeRole: "internal",
     skillsEnabled: true,
     skillPrompts: bundle.skillPrompts,
