@@ -11,6 +11,7 @@
   "atomicMemory.room": "Room",
   "atomicMemory.roomUnbound": "Unassigned",
   "atomicMemory.roomUnavailable": "Room unavailable",
+  "atomicMemory.openRoom": "Open room",
   "atomicMemory.selectRoom": "Select a room",
   "atomicMemory.roomSearchPlaceholder": "Search rooms…",
   "atomicMemory.roomNoMatch": "No matching rooms",

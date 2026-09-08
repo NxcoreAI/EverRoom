@@ -1,9 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull } from "drizzle-orm";
 import type {
+  CanonicalComment,
   CanonicalDocumentArtifact,
   DocumentImportCommentDiffSummary,
   ExternalDocumentCommentView,
+  ExternalDocumentListItem,
+  ExternalDocumentListResponse,
   DocumentImportHistoryEntry,
   DocumentImportRunView,
   ExternalDocumentPreview,
@@ -15,6 +18,7 @@ import type {
 import type { GatewayDatabase } from "../../../infrastructure/database/client.js";
 import {
   documentImportComments,
+  documentImportListCache,
   documentImportRuns,
   documentImportSnapshots,
   documentImportSources,
@@ -26,6 +30,7 @@ import type { DocumentService } from "../service.js";
 import { artifactHashOf, readArtifact, storeArtifact } from "./artifact-store.js";
 import { ImportConnectorError, runImportConnectorAction, type ImportActionRunner } from "./oo-runner.js";
 import { importAdapterOf, type ExternalDocumentProviderAdapter, type ImportActionFn } from "./providers.js";
+import { runNtnCli, type NtnCliConfig } from "../agent-export/ntn-cli.js";
 
 export class ImportServiceError extends Error {
   readonly code: string;
@@ -49,9 +54,11 @@ export interface CommitImportInput {
 
 export interface CommitImportResult {
   run: DocumentImportRunView;
-  roomImportId: string;
+  roomImportId: string | null;
   /** primary：新建文档版本 1；candidate：物化候选文档，待用户应用。 */
   relation: "primary" | "candidate";
+  /** 远端内容与该文档最近一次已应用快照相同：未创建任何记录（防空候选堆积）。 */
+  noChange?: boolean;
   documentId: string;
   document: RoomDocument;
 }
@@ -60,6 +67,129 @@ function isoToDateOrNull(value: string | null): Date | null {
   if (!value) return null;
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? null : date;
+}
+
+/** Notion 行内评论标记（含 markdown 转义形态）。URL 各段含 page/discussion/
+ * comment id；线程根评论的 id 即 discussion id，故按"id 是否出现在 url 集"匹配，
+ * 回复经 parentId 继承同一锚点。 */
+const DISCUSSION_SPAN_PATTERN = /\\?<span\s+discussion-urls="([^"]*)"\s*\\?>([\s\S]*?)\\?<\/span\s*\\?>/g;
+
+function anchorDiscussionSpans(markdown: string, comments: CanonicalComment[]): {
+  markdown: string;
+  comments: CanonicalComment[];
+} {
+  // 剥离与评论无关：标记不该以字面进编辑器（即使评论列表为空，如已解决
+  // 的评论 Notion API 不返回但 span 仍在正文里）。
+  if (!/<span\s+discussion-urls/i.test(markdown.replace(/\\/g, ""))) {
+    return { markdown, comments };
+  }
+  const quotes: Array<{ ids: Set<string>; text: string }> = [];
+  const cleaned = markdown.replace(DISCUSSION_SPAN_PATTERN, (_match, urls: string, text: string) => {
+    const ids = new Set(String(urls).split(/[\s/]+/).filter((part) => part.length >= 4 && !part.endsWith(":")));
+    const trimmed = String(text).trim();
+    if (trimmed) quotes.push({ ids, text: trimmed });
+    return String(text);
+  });
+  if (quotes.length === 0) return { markdown, comments };
+  const byParent = new Map<string, CanonicalComment[]>();
+  for (const comment of comments) {
+    if (!comment.parentId) continue;
+    const group = byParent.get(comment.parentId);
+    if (group) group.push(comment);
+    else byParent.set(comment.parentId, [comment]);
+  }
+  const applyAnchor = (comment: CanonicalComment, text: string): void => {
+    if (comment.anchor?.quotedText) return;
+    comment.anchor = { blockId: comment.anchor?.blockId ?? null, quotedText: text };
+    comment.locationStatus = "located";
+    for (const reply of byParent.get(comment.id) ?? []) applyAnchor(reply, text);
+  };
+  for (const comment of comments) {
+    const hit = quotes.find((quote) => quote.ids.has(comment.id));
+    if (hit) applyAnchor(comment, hit.text);
+  }
+  return { markdown: cleaned, comments };
+}
+
+/** 从讨论标记 URL 提取 blockId（结构：discussion://{pageId}/{blockId}/{discussionId}，
+ * 真机核实第二段即评论父块 id）。用于行内评论按块查询。 */
+function discussionSpanBlockIds(markdown: string): Array<{ blockId: string; text: string }> {
+  const found: Array<{ blockId: string; text: string }> = [];
+  const seen = new Set<string>();
+  const unescaped = markdown.replace(/\\/g, "");
+  const pattern = /<span\s+discussion-urls="([^"]*)"\s*>([\s\S]*?)<\/span\s*>/g;
+  for (const match of unescaped.matchAll(pattern)) {
+    // 结构：discussion://{pageId}/{blockId}/{discussionId}；先滤掉 scheme 段。
+    const parts = String(match[1]).split(/[\s/]+/).filter((part) => part && !part.endsWith(":"));
+    const blockId = parts[1];
+    const text = String(match[2] ?? "").trim();
+    if (!blockId || blockId.length < 8 || seen.has(blockId) || !text) continue;
+    seen.add(blockId);
+    found.push({ blockId, text });
+  }
+  return found;
+}
+
+/** ntn v1/comments 结果（新版顶层 rich_text 形状）→ CanonicalComment，按
+ * discussion_id 分组（最早为根）并直接落锚点（quotedText=span 文本）。 */
+function notionInlineCommentsOf(
+  raw: Array<Record<string, unknown>>,
+  anchorsByBlock: Map<string, string>,
+): CanonicalComment[] {
+  const parsed: Array<{ id: string; discussionId: string | null; createdAt: number; comment: CanonicalComment }> = [];
+  for (const record of raw) {
+    const id = typeof record.id === "string" && record.id.trim() ? record.id.trim() : null;
+    const richText = Array.isArray(record.rich_text) ? record.rich_text : [];
+    const body = richText
+      .map((segment) => {
+        const item = segment && typeof segment === "object" ? segment as Record<string, unknown> : {};
+        const text = item.text && typeof item.text === "object" ? (item.text as Record<string, unknown>).content : null;
+        return typeof text === "string" ? text : (typeof item.plain_text === "string" ? item.plain_text : "");
+      })
+      .join("")
+      .trim();
+    if (!id || !body) continue;
+    const createdBy = record.created_by && typeof record.created_by === "object"
+      ? record.created_by as Record<string, unknown> : {};
+    const displayName = record.display_name && typeof record.display_name === "object"
+      ? record.display_name as Record<string, unknown> : {};
+    const parent = record.parent && typeof record.parent === "object"
+      ? record.parent as Record<string, unknown> : {};
+    const blockId = typeof parent.block_id === "string" ? parent.block_id : null;
+    const quotedText = blockId ? anchorsByBlock.get(blockId) ?? null : null;
+    const createdAtMs = Date.parse(String(record.created_time ?? ""));
+    parsed.push({
+      id,
+      discussionId: typeof record.discussion_id === "string" ? record.discussion_id : null,
+      createdAt: Number.isFinite(createdAtMs) ? createdAtMs : 0,
+      comment: {
+        id,
+        parentId: null,
+        authorName: (typeof displayName.resolved_name === "string" && displayName.resolved_name.trim())
+          || (typeof createdBy.name === "string" && createdBy.name.trim())
+          || null,
+        body,
+        createdAt: typeof record.created_time === "string" ? record.created_time : null,
+        updatedAt: typeof record.last_edited_time === "string" ? record.last_edited_time : null,
+        resolved: null,
+        anchor: blockId ? { blockId, quotedText } : null,
+        sourceUrl: null,
+        locationStatus: quotedText ? "located" : "unlocated",
+      },
+    });
+  }
+  parsed.sort((left, right) => left.createdAt - right.createdAt);
+  const threadRoot = new Map<string, string>();
+  for (const item of parsed) {
+    if (!item.discussionId || threadRoot.has(item.discussionId)) continue;
+    threadRoot.set(item.discussionId, item.id);
+  }
+  for (const item of parsed) {
+    if (!item.discussionId) continue;
+    const rootId = threadRoot.get(item.discussionId);
+    if (rootId && rootId !== item.id) item.comment.parentId = rootId;
+  }
+  return parsed.map((item) => item.comment);
 }
 
 function warningsOf(value: unknown): ExternalDocumentWarning[] {
@@ -76,19 +206,32 @@ export class DocumentImportService {
 
   private readonly assetBridgeUrl: string | null;
 
+  private readonly notionCli: NtnCliConfig | null;
+
   constructor(
     private readonly db: GatewayDatabase,
     private readonly documents: DocumentService,
     private readonly connectorConfig: OpenConnectorCliConfig | null,
     private readonly dataDir: string,
-    options?: { actionRunner?: ImportActionRunner; assetBridgeUrl?: string | null },
+    options?: {
+      actionRunner?: ImportActionRunner;
+      assetBridgeUrl?: string | null;
+      /** Notion 行内（块级）评论兜底：OpenConnector 动作只覆盖页面级评论，
+       * 行内评论须按 block_id 查询（官方 CLI；macOS）。缺省时跳过并告警。 */
+      notionCli?: NtnCliConfig | null;
+    },
   ) {
     this.actionRunner = options?.actionRunner ?? runImportConnectorAction;
     this.assetBridgeUrl = options?.assetBridgeUrl?.replace(/\/$/, "") ?? null;
+    this.notionCli = options?.notionCli ?? null;
   }
 
-  async search(provider: ExternalDocumentProvider, query: string): Promise<ExternalDocumentSearchResponse> {
-    const adapter = this.adapterOf(provider);
+  async search(
+    provider: ExternalDocumentProvider,
+    query: string,
+    connectionName?: string,
+  ): Promise<ExternalDocumentSearchResponse> {
+    const adapter = this.adapterOf(provider, connectionName);
     return adapter.searchDocuments(query.trim())
       .then((result) => ({ provider, items: result.items, warnings: result.warnings }))
       .catch((error) => {
@@ -96,8 +239,148 @@ export class DocumentImportService {
       });
   }
 
-  async preview(provider: ExternalDocumentProvider, remoteDocumentId: string): Promise<ExternalDocumentPreview> {
-    const adapter = this.adapterOf(provider);
+  /**
+   * 按连接全量列举可导入文档（连接器页批量导入入口）。列举本身在 provider
+   * 适配层完成；这里回填 imported 标记——该来源已有落 Room 的导入记录时置
+   * true（重导入走现有候选版本语义，UI 仅提示不禁选）。成功结果写入列举
+   * 缓存，供面板下次打开直接回显。
+   */
+  async listAllDocuments(
+    provider: ExternalDocumentProvider,
+    connectionName?: string,
+  ): Promise<ExternalDocumentListResponse> {
+    const adapter = this.adapterOf(provider, connectionName);
+    const listed = await adapter.listAllDocuments().catch((error) => {
+      throw this.mapConnectorError(error);
+    });
+    const items = this.markImported(provider, listed.items);
+    const fetchedAt = new Date();
+    this.db
+      .insert(documentImportListCache)
+      .values({
+        provider,
+        connectionName: connectionName ?? "",
+        itemsJson: items,
+        truncated: listed.truncated,
+        warningsJson: listed.warnings,
+        itemCount: items.length,
+        fetchedAt,
+      })
+      .onConflictDoUpdate({
+        target: [documentImportListCache.provider, documentImportListCache.connectionName],
+        set: {
+          itemsJson: items,
+          truncated: listed.truncated,
+          warningsJson: listed.warnings,
+          itemCount: items.length,
+          fetchedAt,
+        },
+      })
+      .run();
+    return { provider, items, truncated: listed.truncated, warnings: listed.warnings, fetchedAt: null };
+  }
+
+  /**
+   * 读取上次列举缓存（面板打开时的即时回显；imported 标记按当前库重算，
+   * 导入后无需重拉）。无缓存返回 null，由调用方引导手动加载。
+   */
+  getCachedList(
+    provider: ExternalDocumentProvider,
+    connectionName?: string,
+  ): ExternalDocumentListResponse | null {
+    const row = this.db
+      .select()
+      .from(documentImportListCache)
+      .where(and(
+        eq(documentImportListCache.provider, provider),
+        eq(documentImportListCache.connectionName, connectionName ?? ""),
+      ))
+      .get();
+    if (!row) return null;
+    const items = this.markImported(provider, row.itemsJson);
+    return {
+      provider,
+      items,
+      truncated: row.truncated,
+      warnings: row.warningsJson,
+      fetchedAt: row.fetchedAt.toISOString(),
+    };
+  }
+
+  /** imported 标记回填：该来源已有落 Room 的导入记录时置 true。 */
+  private markImported(
+    provider: ExternalDocumentProvider,
+    items: ExternalDocumentListItem[],
+  ): ExternalDocumentListItem[] {
+    const remoteIds = [...new Set(items.map((item) => item.remoteDocumentId))];
+    if (remoteIds.length === 0) return items;
+    const sources = this.db.select({
+      id: documentImportSources.id,
+      remoteDocumentId: documentImportSources.remoteDocumentId,
+    }).from(documentImportSources)
+      .where(and(
+        eq(documentImportSources.ownerId, "local-user"),
+        eq(documentImportSources.provider, provider),
+        inArray(documentImportSources.remoteDocumentId, remoteIds),
+      )).all();
+    const sourceIds = sources.map((source) => source.id);
+    const landedSourceIds = new Set(sourceIds.length > 0
+      ? this.db.select({ sourceId: documentImportRuns.sourceId })
+        .from(documentRoomImports)
+        .innerJoin(documentImportRuns, eq(documentRoomImports.importRunId, documentImportRuns.id))
+        .where(inArray(documentImportRuns.sourceId, sourceIds))
+        .all()
+        .map((row) => row.sourceId)
+      : []);
+    const landedRemoteIds = new Set(
+      sources.filter((source) => landedSourceIds.has(source.id)).map((source) => source.remoteDocumentId),
+    );
+    for (const item of items) {
+      if (landedRemoteIds.has(item.remoteDocumentId)) item.imported = true;
+    }
+    return items;
+  }
+
+  /**
+   * 批量导入 auto 模式的全文读取器：从已完成的 preview run 拿回完整 markdown
+   * （preview DTO 只有 4000 字符摘录）。供孵化投喂使用，不进 REST 面。
+   */
+  async getRunMarkdown(runId: string): Promise<{
+    provider: ExternalDocumentProvider;
+    remoteDocumentId: string;
+    title: string;
+    bodyMarkdown: string;
+    sourceUrl: string | null;
+  }> {
+    const run = this.db.select().from(documentImportRuns)
+      .where(eq(documentImportRuns.id, runId)).get();
+    if (!run) {
+      throw new ImportServiceError("IMPORT_RUN_NOT_FOUND", `导入记录不存在：${runId}`, 404);
+    }
+    if (!run.snapshotId) {
+      throw new ImportServiceError("IMPORT_RUN_NOT_SNAPSHOTTED", `导入记录尚未完成读取：${runId}`, 409);
+    }
+    const snapshot = this.db.select().from(documentImportSnapshots)
+      .where(eq(documentImportSnapshots.id, run.snapshotId)).get();
+    if (!snapshot) {
+      throw new ImportServiceError("IMPORT_SNAPSHOT_NOT_FOUND", `导入快照不存在：${run.snapshotId}`, 404);
+    }
+    const artifact = await this.loadArtifact(snapshot.artifactRef);
+    return {
+      provider: artifact.provider,
+      remoteDocumentId: artifact.remoteDocumentId,
+      title: artifact.title,
+      bodyMarkdown: artifact.bodyMarkdown,
+      sourceUrl: artifact.sourceUrl,
+    };
+  }
+
+  async preview(
+    provider: ExternalDocumentProvider,
+    remoteDocumentId: string,
+    connectionName?: string,
+  ): Promise<ExternalDocumentPreview> {
+    const adapter = this.adapterOf(provider, connectionName);
     const config = this.requireConfig();
     const runId = randomUUID();
     const now = new Date();
@@ -129,14 +412,49 @@ export class DocumentImportService {
           message: error instanceof Error ? error.message : String(error),
         });
       }
+      // Notion 行内（块级）评论兜底：list_page_comments 只覆盖页面级评论，
+      // 行内评论须按 block_id 查询（blockId 在讨论标记 URL 第二段，真机核实）。
+      // 用官方 ntn CLI 精确查询被评论的块；缺 ntn/未登录时告警跳过不阻断。
+      if (provider === "notion" && this.notionCli) {
+        const spans = discussionSpanBlockIds(read.bodyMarkdown);
+        if (spans.length > 0) {
+          try {
+            const anchorsByBlock = new Map(spans.map((span) => [span.blockId, span.text]));
+            const existingIds = new Set(comments.map((comment) => comment.id));
+            for (const span of spans) {
+              const { raw } = await runNtnCli(this.notionCli, [
+                "api", "v1/comments", `block_id==${span.blockId}`, "page_size==100",
+              ]);
+              const results = raw && Array.isArray((raw as Record<string, unknown>).results)
+                ? ((raw as Record<string, unknown>).results as Array<Record<string, unknown>>)
+                : [];
+              for (const comment of notionInlineCommentsOf(results, anchorsByBlock)) {
+                if (!existingIds.has(comment.id)) {
+                  existingIds.add(comment.id);
+                  comments.push(comment);
+                }
+              }
+            }
+          } catch (error) {
+            warnings.push({
+              code: "notion_inline_comments_skipped",
+              message: `行内评论读取跳过（需要 ntn 已登录）：${error instanceof Error ? error.message : String(error)}`,
+            });
+          }
+        }
+      }
+      // Notion 行内评论标记：<span discussion-urls="discussion://…">正文</span>。
+      // 剥外壳保留正文（否则标记会以字面文本进编辑器），并按讨论 id 把引用
+      // 文本回填为评论锚点——评论卡可停靠在正文对应位置而非"未定位区"。
+      const anchored = anchorDiscussionSpans(read.bodyMarkdown, comments);
       artifact = {
         provider,
         remoteDocumentId,
         sourceUrl: read.sourceUrl,
         title: read.title.slice(0, 120),
-        bodyMarkdown: read.bodyMarkdown,
+        bodyMarkdown: anchored.markdown,
         assets: read.assets,
-        comments,
+        comments: anchored.comments,
         commentsStatus,
         sourceRevision: read.sourceRevision,
         sourceUpdatedAt: read.sourceUpdatedAt,
@@ -242,7 +560,61 @@ export class DocumentImportService {
     const artifact = await this.loadArtifact(snapshot.artifactRef);
     const contentJson = agentDocumentMarkdown.parse(artifact.bodyMarkdown) as RoomDocument["contentJson"];
 
-    const isCandidate = input.targetDocumentId !== undefined;
+    // 来源去重（方案 §3.1）：未显式指定目标文档时，若该 Room 已导入过同一来源
+    // （relation=primary 且文档仍存在），自动转为该文档的候选版本，不重复落新文档。
+    let targetDocumentId = input.targetDocumentId ?? null;
+    if (!targetDocumentId && run.sourceId) {
+      const existing = this.db.select({ documentId: documentRoomImports.documentId })
+        .from(documentRoomImports)
+        .innerJoin(documentImportRuns, eq(documentRoomImports.importRunId, documentImportRuns.id))
+        .where(and(
+          eq(documentRoomImports.roomId, input.roomId),
+          eq(documentImportRuns.sourceId, run.sourceId),
+          eq(documentRoomImports.relation, "primary"),
+        ))
+        .orderBy(desc(documentRoomImports.createdAt))
+        .all()
+        .map((row) => row.documentId)
+        .find((documentId) => Boolean(this.documents.get(documentId)));
+      targetDocumentId = existing ?? null;
+    }
+
+    const isCandidate = targetDocumentId !== null;
+
+    // 无变化守卫（防空候选堆积）：候选路径下，新快照内容与该文档最近一次
+    // 已应用快照（primary 或已应用 candidate，按 content_hash）相同时，
+    // 不物化候选、不落 roomImport——调用方据此提示"远端无更新"。
+    if (isCandidate && targetDocumentId) {
+      const lastApplied = this.db.select({ snapshotId: documentRoomImports.snapshotId })
+        .from(documentRoomImports)
+        .where(and(
+          eq(documentRoomImports.documentId, targetDocumentId),
+          isNotNull(documentRoomImports.importedVersion),
+        ))
+        .orderBy(desc(documentRoomImports.createdAt))
+        .get();
+      if (lastApplied) {
+        const lastSnapshot = this.db.select({ contentHash: documentImportSnapshots.contentHash })
+          .from(documentImportSnapshots)
+          .where(eq(documentImportSnapshots.id, lastApplied.snapshotId))
+          .get();
+        if (lastSnapshot && lastSnapshot.contentHash === snapshot.contentHash) {
+          const current = this.documents.get(targetDocumentId);
+          if (current) {
+            this.finishRun(run.id, "succeeded");
+            return {
+              run: this.getRun(run.id),
+              roomImportId: null,
+              relation: "candidate",
+              noChange: true,
+              documentId: targetDocumentId,
+              document: current,
+            };
+          }
+        }
+      }
+    }
+
     const roomImportId = randomUUID();
     let document: RoomDocument;
     let candidateDocumentId: string | null = null;
@@ -251,7 +623,7 @@ export class DocumentImportService {
     this.db.update(documentImportRuns).set({
       status: "committing",
       targetRoomId: input.roomId,
-      targetDocumentId: input.targetDocumentId ?? null,
+      targetDocumentId: targetDocumentId,
       updatedAt: new Date(),
     }).where(eq(documentImportRuns.id, run.id)).run();
 
@@ -278,7 +650,7 @@ export class DocumentImportService {
     this.db.insert(documentRoomImports).values({
       id: roomImportId,
       roomId: input.roomId,
-      documentId: input.targetDocumentId ?? document.id,
+      documentId: targetDocumentId ?? document.id,
       importRunId: run.id,
       snapshotId: snapshot.id,
       importedVersion,
@@ -421,6 +793,70 @@ export class DocumentImportService {
   }
 
   /** 候选 vs 当前文档的行级 diff（B-2）：服务端算 hunks，前端只渲染。 */
+  /**
+   * 候选 vs 当前版本的结构化 diff（复用版本 diff 核心算法与渲染契约）：
+   * 版本时间轴的"导入版本"卡片点击后进入既有 diff UI 的数据源。
+   * before=当前版本内容，after=候选内容；toVersion 回填当前版本号（编辑器以
+   * toVersion 判定 diff 视图是否仍有效）。快照为候选伪版本（version=当前版本号）。
+   */
+  async candidateStructuredDiff(roomImportId: string): Promise<{
+    candidate: { roomImportId: string; provider: ExternalDocumentProvider; title: string; capturedAt: string };
+    snapshot: {
+      documentId: string;
+      version: number;
+      title: string;
+      contentJson: RoomDocument["contentJson"];
+      contentSchemaVersion: number;
+      sourceTransactionId: string | null;
+      createdAt: string;
+      yjsBackfilled: boolean;
+    };
+    diff: import("@nxcore/agent-contract").DocumentDiffResult;
+  }> {
+    const row = this.db.select().from(documentRoomImports).where(eq(documentRoomImports.id, roomImportId)).get();
+    if (!row) throw new ImportServiceError("NOT_FOUND", "导入关联记录不存在", 404);
+    if (row.relation !== "candidate") throw new ImportServiceError("NOT_A_CANDIDATE", "只有候选导入才能对比差异", 409);
+    if (row.importedVersion !== null) throw new ImportServiceError("CANDIDATE_ALREADY_APPLIED", "该候选版本已应用", 409);
+    if (!row.candidateDocumentId) throw new ImportServiceError("SNAPSHOT_MISSING", "候选文档缺失", 409);
+    const run = this.db.select().from(documentImportRuns).where(eq(documentImportRuns.id, row.importRunId)).get();
+    const source = run?.sourceId
+      ? this.db.select().from(documentImportSources).where(eq(documentImportSources.id, run.sourceId)).get()
+      : null;
+    if (!source) throw new ImportServiceError("IMPORT_RUN_NOT_FOUND", "导入来源记录缺失", 409);
+    const snapshotRow = this.db.select().from(documentImportSnapshots).where(eq(documentImportSnapshots.id, row.snapshotId)).get();
+    if (!snapshotRow) throw new ImportServiceError("SNAPSHOT_MISSING", "导入快照缺失", 409);
+    const target = this.documents.get(row.documentId);
+    if (!target) throw new ImportServiceError("NOT_FOUND", "目标文档不存在", 404);
+    const candidateDocument = this.documents.get(row.candidateDocumentId);
+    const candidateContent = candidateDocument?.contentJson
+      ?? agentDocumentMarkdown.parse((await this.loadArtifact(snapshotRow.artifactRef)).bodyMarkdown) as RoomDocument["contentJson"];
+    const cleanTitle = (candidateDocument?.title ?? snapshotRow.contentHash.slice(0, 8)).replace(/（外部更新候选）\s*$/, "");
+    return {
+      candidate: {
+        roomImportId,
+        provider: source.provider,
+        title: cleanTitle,
+        capturedAt: snapshotRow.capturedAt.toISOString(),
+      },
+      snapshot: {
+        documentId: target.id,
+        version: target.version,
+        title: cleanTitle,
+        contentJson: candidateContent,
+        contentSchemaVersion: candidateDocument?.contentSchemaVersion ?? 1,
+        sourceTransactionId: null,
+        createdAt: snapshotRow.capturedAt.toISOString(),
+        yjsBackfilled: true,
+      },
+      diff: this.documents.diffContents(
+        target.id,
+        target.contentJson,
+        candidateContent,
+        { fromVersion: target.version, toVersion: target.version },
+      ),
+    };
+  }
+
   async candidateDiff(roomImportId: string): Promise<{
     candidateTitle: string;
     currentTitle: string;
@@ -642,16 +1078,25 @@ export class DocumentImportService {
     if (!this.connectorConfig) {
       throw new ImportServiceError(
         "OPEN_CONNECTOR_UNAVAILABLE",
-        "OpenConnector 尚未迁移或不可用，导入入口暂不可用",
+        "OpenConnector 连接层未配置或不可用，导入入口暂不可用",
         503,
       );
     }
     return this.connectorConfig;
   }
 
-  private adapterOf(provider: ExternalDocumentProvider): ExternalDocumentProviderAdapter {
+  private adapterOf(provider: ExternalDocumentProvider, connectionName?: string): ExternalDocumentProviderAdapter {
     const config = this.requireConfig();
-    const run: ImportActionFn = (call, signal) => this.actionRunner(config, call, signal);
+    // 连接器页按连接列举/批量导入：入口解析出的连接名显式注入每个 action 调用
+    // （call 自带 connectionName 时以 call 为准），避免长任务中途连接解析漂移。
+    const run: ImportActionFn = (call, signal) => {
+      const resolvedConnection = call.connectionName ?? connectionName;
+      return this.actionRunner(
+        config,
+        resolvedConnection ? { ...call, connectionName: resolvedConnection } : call,
+        signal,
+      );
+    };
     return importAdapterOf(provider, run);
   }
 
@@ -668,8 +1113,8 @@ export class DocumentImportService {
       if (error.code === "action_not_found") {
         return new ImportServiceError("IMPORT_ACTION_MISSING", `OpenConnector 动作不可用：${error.detail}`, 502);
       }
-      if (error.code === "cli_unavailable") {
-        return new ImportServiceError("OPEN_CONNECTOR_UNAVAILABLE", `OpenConnector CLI 不可用：${error.detail}`, 503);
+      if (error.code === "connector_unavailable") {
+        return new ImportServiceError("OPEN_CONNECTOR_UNAVAILABLE", `OpenConnector 服务不可用：${error.detail}`, 503);
       }
       return new ImportServiceError("IMPORT_READ_FAILED", `外部文档读取失败：${error.detail}`, 502);
     }

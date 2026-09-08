@@ -450,15 +450,18 @@ function connectorFailurePolicy(
 
 function connectorApps(value: unknown): ConnectorApp[] {
   const root = objectValue(value);
+  // runOoHttp 返回完整封套 { success, data }；oo 运行时的连接名字段是
+  // alias（connectionName 为历史兼容名）。与 service.ts 账号发现同口径。
   const items = Array.isArray(value)
     ? value
-    : Array.isArray(root.connections) ? root.connections
-      : Array.isArray(root.apps) ? root.apps
-        : [];
+    : Array.isArray(root.data) ? root.data
+      : Array.isArray(root.connections) ? root.connections
+        : Array.isArray(root.apps) ? root.apps
+          : [];
 
   return items.flatMap((item) => {
     const app = objectValue(item);
-    const connectionName = textValue(app.connectionName) ?? textValue(app.name);
+    const connectionName = textValue(app.connectionName) ?? textValue(app.alias) ?? textValue(app.name);
     if (!connectionName) return [];
     return [{
       connectionName,

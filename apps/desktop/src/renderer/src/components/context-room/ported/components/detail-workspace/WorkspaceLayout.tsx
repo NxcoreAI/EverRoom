@@ -66,7 +66,8 @@ export function WorkspaceLayout({
   onEmptyTrash,
   onSelectResource,
   onOpenWikiPage,
-  onOpenMemory,
+  onOpenDocument,
+  linkGraphFocusNodeId,
   onOpenObject,
   onOpenSource,
   onCloseObject,
@@ -127,7 +128,10 @@ export function WorkspaceLayout({
   onEmptyTrash: (roomId: string) => Promise<void>;
   onSelectResource: (resource: ContextRoomResource) => void;
   onOpenWikiPage: (resource: ContextRoomWikiPageResource) => void;
-  onOpenMemory: (memoryId: string) => void;
+  /** 建联图谱等面板按文档 id 在右区打开文档。 */
+  onOpenDocument: (documentId: string) => void;
+  /** 索引 chip 跳转：建联图谱聚焦节点 id（memory:{id} / doc:{id}）。 */
+  linkGraphFocusNodeId?: string | null;
   onOpenObject: (target: WorkspaceObjectPreview) => void;
   /** 记忆图谱来源行跳转（文档右区打开 / 邮件进面板详情）。 */
   onOpenSource: (source: RoomAppliedEntitySource) => void;
@@ -321,7 +325,8 @@ export function WorkspaceLayout({
                         onRestoreDocument={onRestoreDocument}
                         onDeleteDocumentPermanently={onDeleteDocumentPermanently}
                         onEmptyTrash={onEmptyTrash}
-                        onOpenMemory={onOpenMemory}
+                        onOpenDocument={onOpenDocument}
+                        linkGraphFocusNodeId={linkGraphFocusNodeId}
                         onToggleTask={onToggleTask}
                         onUpdateRoom={onUpdateRoom}
                         onOpenObject={onOpenObject}

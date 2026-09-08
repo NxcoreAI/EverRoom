@@ -700,6 +700,175 @@ textarea.context-room-tiptap-rewrite-text:disabled {
   color: var(--cr-muted);
 }
 
+/* 文档速览卡：标题下方、正文上方的可折叠窄卡，与标题同列对齐。 */
+.context-room-document-overview {
+  width: min(100%, 720px);
+  margin: 0 auto;
+  padding: 14px clamp(24px, 8cqw, 72px) 0;
+}
+
+.context-room-document-overview-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 12px;
+  border: 1px solid color-mix(in srgb, var(--cr-blue) 55%, transparent);
+  border-radius: 10px;
+  /* !important 是承重墙：真机上此按钮 background 被一个未定位到的样式源
+     覆盖成白底（同文件同选择器强度的 body div 着色正常，全仓 CSS 扫描与
+     insertCSS 均未找到来源）。移除前先在真机确认 header 仍为浅蓝。 */
+  background: color-mix(in srgb, var(--cr-blue) 9%, var(--cr-surface)) !important;
+  color: var(--cr-muted);
+  font-size: 12px;
+  line-height: 1.45;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 160ms ease-out, background-color 160ms ease-out;
+}
+
+.context-room-document-overview[data-expanded='true'] .context-room-document-overview-bar {
+  border-radius: 10px 10px 0 0;
+}
+
+.context-room-document-overview-bar:disabled {
+  cursor: default;
+}
+
+.context-room-document-overview-bar:not(:disabled):hover {
+  border-color: var(--cr-blue);
+}
+
+.context-room-document-overview-bar > svg {
+  color: var(--cr-blue);
+}
+
+.context-room-document-overview-label {
+  flex-shrink: 0;
+  font-weight: 600;
+  color: var(--cr-text);
+}
+
+.context-room-document-overview-hint {
+  flex: 1;
+  min-width: 0;
+  color: var(--cr-muted);
+}
+
+.context-room-document-overview-topic-preview {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--cr-muted);
+}
+
+.context-room-document-overview-stale-badge {
+  flex-shrink: 0;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, #b45309 14%, transparent);
+  color: #b45309;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.context-room-document-overview-chevron {
+  flex-shrink: 0;
+  margin-left: auto;
+  color: var(--cr-muted);
+  transition: transform 180ms ease-out;
+}
+
+.context-room-document-overview[data-expanded='true'] .context-room-document-overview-chevron {
+  transform: rotate(180deg);
+}
+
+.context-room-document-overview-skeleton {
+  flex: 1;
+  height: 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--cr-muted) 20%, transparent);
+  animation: context-room-overview-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes context-room-overview-pulse {
+  50% { opacity: 0.45; }
+}
+
+.context-room-overview-spinning {
+  animation: context-room-agent-write-spin 1s linear infinite;
+}
+
+.context-room-document-overview-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--cr-blue) 55%, transparent);
+  border-top: 0;
+  border-radius: 0 0 10px 10px;
+  background: color-mix(in srgb, var(--cr-blue) 9%, var(--cr-surface));
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.context-room-document-overview-topic {
+  font-weight: 650;
+  color: var(--cr-text);
+}
+
+.context-room-document-overview-points {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--cr-text);
+}
+
+.context-room-document-overview-points li + li {
+  margin-top: 2px;
+}
+
+.context-room-document-overview-conclusion {
+  color: color-mix(in srgb, var(--cr-text) 88%, transparent);
+}
+
+.context-room-document-overview-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--cr-tertiary, var(--cr-muted));
+}
+
+.context-room-document-overview-retry {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  padding: 3px 9px;
+  border: 1px solid var(--cr-border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--cr-text);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 160ms ease-out, color 160ms ease-out;
+}
+
+.context-room-document-overview-retry:not(:disabled):hover {
+  border-color: var(--cr-blue);
+  color: var(--cr-blue);
+}
+
+.context-room-document-overview-retry:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .context-room-tiptap-scroll::-webkit-scrollbar {
   width: 9px;
   height: 9px;
@@ -786,36 +955,102 @@ textarea.context-room-tiptap-rewrite-text:disabled {
   background: var(--cr-blue);
 }
 
-.context-room-tiptap-scale-preview {
-  position: absolute;
-  top: 50%;
-  right: 28px;
-  z-index: 30;
-  width: 224px;
-  padding: 7px 9px;
-  border: 1px solid var(--cr-border);
-  border-radius: 6px;
-  background: var(--cr-surface);
-  box-shadow: 0 8px 24px rgba(22, 27, 38, 0.14);
-  opacity: 0;
-  pointer-events: none;
-  overflow: hidden;
-  color: var(--cr-text);
-  font-size: 11px;
-  font-weight: 600;
-  text-align: left;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  transform: translate(4px, -50%);
-  transition: opacity 100ms ease, transform 100ms ease;
-  visibility: hidden;
+/* 章节 hover 的 AI 预览卡（Radix Popover）：浅蓝基因与文档速览卡一致。
+   Popover 经 Portal 挂到 body，拿不到 .context-room-app 内的 --cr-* 变量，
+   所有 var 都带全局回退值，否则 color-mix 非法、背景会透明。 */
+.context-room-tiptap-scale-popover-root {
+  z-index: 1400;
+  outline: 0;
 }
 
-.context-room-tiptap-content-scale button:hover .context-room-tiptap-scale-preview,
-.context-room-tiptap-content-scale button:focus-visible .context-room-tiptap-scale-preview {
-  opacity: 1;
-  transform: translate(0, -50%);
-  visibility: visible;
+.context-room-tiptap-scale-popover {
+  width: 264px;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--cr-surface, #ffffff);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.32);
+  color: var(--cr-text, #151a22);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.context-room-tiptap-scale-popover header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  color: var(--cr-blue, #408cf0);
+}
+
+.context-room-tiptap-scale-popover header strong {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--cr-text, #151a22);
+  font-size: 12px;
+}
+
+.context-room-tiptap-scale-popover-ai-badge {
+  flex-shrink: 0;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--cr-blue-soft, rgba(64, 140, 240, 0.1));
+  color: var(--cr-blue, #408cf0);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 600;
+}
+
+.context-room-tiptap-scale-popover-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.context-room-tiptap-scale-popover-text {
+  margin: 0;
+  color: var(--cr-text, #151a22);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 5;
+  overflow: hidden;
+}
+
+.context-room-tiptap-scale-popover footer {
+  margin-top: 2px;
+  color: var(--cr-tertiary, #9ca3af);
+  font-size: 11px;
+}
+
+.context-room-tiptap-scale-popover-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--cr-muted, #6b7280);
+}
+
+.context-room-tiptap-scale-popover-retry {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  padding: 2px 8px;
+  border: 1px solid var(--cr-border, #e5e7eb);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--cr-text, #151a22);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.context-room-tiptap-scale-popover-retry:hover {
+  border-color: var(--cr-blue, #408cf0);
+  color: var(--cr-blue, #408cf0);
 }
 
 .context-room-tiptap-scroll .tiptap {

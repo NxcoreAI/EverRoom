@@ -47,6 +47,9 @@ import type {
   DocumentOperationSummary,
   DocumentBlockList,
   DocumentBlockBacklinkList,
+  DocumentOverviewView,
+  DocumentSectionPreviewInput,
+  DocumentSectionPreviewResult,
   DocumentVersionSummary,
   DocumentVersionListOptions,
   DocumentVersionSnapshot,
@@ -65,12 +68,16 @@ import type {
   AgentDocumentExportRunView,
   AgentDocumentExportTarget,
   DocumentImportCommentDiffSummary,
+  DocumentImportBatchMode,
+  DocumentImportBatchView,
   DocumentImportHistoryEntry,
   DocumentImportRunView,
   ExternalDocumentCommentView,
+  ExternalDocumentListResponse,
   ExternalDocumentPreview,
   ExternalDocumentProvider,
   ExternalDocumentSearchResponse,
+  ImportCandidateDiffView,
 } from '@nxcore/agent-contract'
 import type { BrowserExtensionMessage, BrowserExtensionStatus } from './browser-extension'
 import type { ObsidianVaultApi } from './obsidian'
@@ -865,6 +872,8 @@ export interface NxcoreDesktopApi {
     execute(input: OpenConnectorExecutionInput): Promise<OpenConnectorCommandResult>
     cancel(requestId: string): Promise<boolean>
     openConsole(): Promise<void>
+    /** 发起 provider OAuth（本地直调运行时 / SaaS 代发起），返回授权页 URL 并由主进程打开。 */
+    startAuthorization(service: string): Promise<{ authorizationUrl: string }>
     mode(): Promise<{ mode: 'saas' | 'local'; switchedAt: string | null }>
     setMode(mode: 'saas' | 'local'): Promise<{ mode: 'saas' | 'local'; switchedAt: string | null }>
     onEvent(listener: (event: OpenConnectorCommandEvent) => void): () => void
@@ -878,11 +887,24 @@ export interface NxcoreDesktopApi {
   }
   externalDocuments: {
     importSearch(provider: ExternalDocumentProvider, query: string): Promise<ExternalDocumentSearchResponse>
+    /** 连接器页按连接全量列举（飞书云空间+知识库 / Notion 共享页面）；cachedOnly 时读上次缓存。 */
+    importList(provider: ExternalDocumentProvider, connectionName?: string, cachedOnly?: boolean): Promise<ExternalDocumentListResponse>
+    importBatch(input: {
+      provider: ExternalDocumentProvider
+      connectionName?: string
+      remoteDocumentIds: string[]
+      mode: DocumentImportBatchMode
+      roomId?: string
+    }): Promise<{ batchId: string; total: number }>
+    importBatchStatus(batchId: string): Promise<DocumentImportBatchView>
+    cancelImportBatch(batchId: string): Promise<DocumentImportBatchView>
     importPreview(provider: ExternalDocumentProvider, remoteDocumentId: string): Promise<ExternalDocumentPreview>
     importCommit(input: { runId: string; roomId: string; targetDocumentId?: string }): Promise<{
       run: DocumentImportRunView
-      roomImportId: string
+      roomImportId: string | null
       relation: 'primary' | 'candidate'
+      /** 远端内容与已应用快照相同：未创建候选/记录。 */
+      noChange?: boolean
       documentId: string
     }>
     importRun(runId: string): Promise<DocumentImportRunView>
@@ -899,13 +921,16 @@ export interface NxcoreDesktopApi {
       hunks: Array<{ type: 'ctx' | 'add' | 'del'; text: string }>
       commentsComparable: boolean
     }>
+    /** 候选 vs 当前版本的结构化 diff（复用版本 diff UI 契约）。 */
+    importStructuredDiff(roomImportId: string): Promise<ImportCandidateDiffView>
     searchExportTargets(provider: ExternalDocumentProvider, query: string): Promise<{
       items: Array<{ remoteId: string; title: string; url: string; updatedAt: string | null; ownerName: string | null }>
     }>
     checkExternalUpdate(roomId: string, documentId: string): Promise<{
       run: DocumentImportRunView
-      roomImportId: string
+      roomImportId: string | null
       relation: 'primary' | 'candidate'
+      noChange?: boolean
       documentId: string
     }>
     applyCandidate(roomImportId: string): Promise<{ documentId: string; version: number }>
@@ -1001,6 +1026,8 @@ export interface NxcoreDesktopApi {
     getSubagentInvocation(invocationId: string): Promise<SubagentInvocation>
     cancelSubagentInvocation(invocationId: string): Promise<SubagentInvocation>
     refreshBrief(roomId: string): Promise<ContextRoomSnapshotItem>
+    /** 记忆条目晋升（待确认→已确认）：MemoryCore 蒸馏后 worker 回填归属。 */
+    promoteMemoryItem(roomId: string, itemId: string): Promise<{ promotionSessionId: string | null }>
     overview(roomId: string): Promise<RoomOverviewProjection>
     refreshOverview(roomId: string): Promise<RoomOverviewProjection>
     listMails(roomId: string): Promise<{ items: RoomMail[] }>
@@ -1171,6 +1198,9 @@ export interface NxcoreDesktopApi {
     createDocumentComment(documentId: string, input: { body: string; parentId?: string | null; blockId?: string | null; quotedText?: string | null }): Promise<LocalDocumentComment>
     resolveDocumentComment(documentId: string, commentId: string, resolved: boolean): Promise<LocalDocumentComment>
     deleteDocumentComment(documentId: string, commentId: string): Promise<void>
+    getOverview(documentId: string): Promise<DocumentOverviewView>
+    generateOverview(documentId: string): Promise<DocumentOverviewView>
+    getSectionPreview(documentId: string, input: DocumentSectionPreviewInput): Promise<DocumentSectionPreviewResult>
     restoreVersion(documentId: string, version: number, baseVersion: number): Promise<RoomDocument>
     resolveBlockReferences(input: ResolveDocumentBlockReferencesInput): Promise<ResolveDocumentBlockReferencesResult>
     listOperations(filters?: {

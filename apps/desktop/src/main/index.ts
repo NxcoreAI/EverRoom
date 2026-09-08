@@ -1,6 +1,7 @@
 import { createReadStream, readFileSync } from 'node:fs'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { basename, extname, join, parse, resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { existsSync, accessSync, constants as fsConstants } from 'node:fs'
 import { access } from 'node:fs/promises'
 import { createHash, randomUUID } from 'node:crypto'
@@ -278,6 +279,7 @@ const OPEN_CONNECTOR_CHANNELS = {
   openConsole: 'open-connector:open-console',
   mode: 'open-connector:mode',
   setMode: 'open-connector:set-mode',
+  startAuthorization: 'open-connector:start-authorization',
 } as const
 
 const AGENT_AUTH_CHANNELS = {
@@ -289,6 +291,10 @@ const AGENT_AUTH_CHANNELS = {
 
 const EXTERNAL_DOCUMENT_CHANNELS = {
   importSearch: 'external-documents:import-search',
+  importList: 'external-documents:import-list',
+  importBatch: 'external-documents:import-batch',
+  importBatchStatus: 'external-documents:import-batch-status',
+  cancelImportBatch: 'external-documents:cancel-import-batch',
   importPreview: 'external-documents:import-preview',
   importCommit: 'external-documents:import-commit',
   importRun: 'external-documents:import-run',
@@ -303,6 +309,7 @@ const EXTERNAL_DOCUMENT_CHANNELS = {
   cancelExport: 'external-documents:cancel-export',
   listExports: 'external-documents:list-exports',
   importDiff: 'external-documents:import-diff',
+  importStructuredDiff: 'external-documents:import-structured-diff',
   searchExportTargets: 'external-documents:search-export-targets',
 } as const
 
@@ -324,6 +331,7 @@ const CONTEXT_ROOM_CHANNELS = {
   getSubagentInvocation: 'context-rooms:get-subagent-invocation',
   cancelSubagentInvocation: 'context-rooms:cancel-subagent-invocation',
   refreshBrief: 'context-rooms:refresh-brief',
+  promoteMemoryItem: 'context-rooms:promote-memory-item',
   overview: 'context-rooms:overview',
   refreshOverview: 'context-rooms:refresh-overview',
   listMails: 'context-rooms:list-mails',
@@ -379,6 +387,9 @@ const DOCUMENT_CHANNELS = {
   createDocumentComment: 'documents:create-document-comment',
   resolveDocumentComment: 'documents:resolve-document-comment',
   deleteDocumentComment: 'documents:delete-document-comment',
+  getOverview: 'documents:get-overview',
+  generateOverview: 'documents:generate-overview',
+  getSectionPreview: 'documents:get-section-preview',
   restoreVersion: 'documents:restore-version',
   resolveBlockReferences: 'documents:resolve-block-references',
   listOperations: 'documents:list-operations',
@@ -736,6 +747,8 @@ let clipperAssetBridge: FilesGatewayBridge | null = null
 let runtimeConfigBridge: RuntimeConfigBridge | null = null
 let cursorCompletionSupervisor: GatewaySupervisor | null = null
 let ooCliBridge: OoCliBridge | null = null
+/** OpenConnector 控制台地址（local=本地运行时；SaaS=oo 会话 baseUrl）；bridge 未建时为 null。 */
+let connectorConsoleBaseUrl: string | null = null
 let agentAuthController: AgentAuthController | null = null
 let documentAssetBridge: DocumentAssetBridge | null = null
 let openConnectorSupervisor: OpenConnectorSupervisor | null = null
@@ -1580,6 +1593,8 @@ function resolveNtnCliExecutable(): string | null {
 
 function createOoCliBridge(connection: OpenConnectorConnection): OoCliBridge {
   const root = join(dataDirectory, 'open-connector')
+  // 控制台兜底地址：SaaS 模式没有 supervisor，openConsole 用它打开 SaaS 侧控制台。
+  connectorConsoleBaseUrl = connection.baseUrl
   return new OoCliBridge({
     executable: resolveOoCliExecutable(),
     baseUrl: connection.baseUrl,
@@ -1627,6 +1642,7 @@ async function applyConnectorOoSession(session: ConnectorOoSession | null): Prom
   ooCliBridge = session
     ? createOoCliBridge({ baseUrl: session.baseUrl, runtimeToken: session.token, managed: false, pid: null, version: null })
     : null
+  if (!session) connectorConsoleBaseUrl = null
   if (ooCliBridge) attachOpenConnectorBridge(ooCliBridge)
   if (!session) connectorOoSessionCache = null
   connectorOoGatewayEnv = session
@@ -1723,20 +1739,22 @@ function scheduleSaasConnectorReconcile(delayMs = 2_000, attempt = 1): void {
   }, delayMs)
 }
 
-function openConnectorExternalUrl(value: string): void {
-  try {
+function openExternalUrl(value: string): void {  try {
     const url = new URL(value)
     if (url.protocol === 'http:' || url.protocol === 'https:') void shell.openExternal(url.toString())
   } catch {
-    // Ignore malformed or unsupported external navigation from the console.
+    // 忽略格式非法或协议不受支持的外部导航（仅放行 http/https）。
   }
 }
 
 async function openConnectorManagementConsole(): Promise<void> {
   const connection = openConnectorSupervisor?.getConnection()
-  if (!connection) throw new Error('OpenConnector 尚未就绪。')
-  if (!connection.managed || !connection.adminToken) {
-    await shell.openExternal(`${connection.baseUrl}/`)
+  // SaaS 模式不拉本地 supervisor：回退到 oo 会话 bridge 记录的 baseUrl（浏览器
+  // 打开 SaaS 侧控制台）；两者皆无（未登录/运行时未起）才视为未就绪。
+  const fallbackBaseUrl = connection?.baseUrl ?? connectorConsoleBaseUrl
+  if (!fallbackBaseUrl) throw new Error('OpenConnector 尚未就绪（未登录 SaaS 或本地运行时未启动）。')
+  if (!connection?.managed || !connection?.adminToken) {
+    await shell.openExternal(`${fallbackBaseUrl}/`)
     return
   }
   if (openConnectorConsoleWindow && !openConnectorConsoleWindow.isDestroyed()) {
@@ -1768,13 +1786,13 @@ async function openConnectorManagementConsole(): Promise<void> {
     }),
   )
   window.webContents.setWindowOpenHandler(({ url }) => {
-    openConnectorExternalUrl(url)
+    openExternalUrl(url)
     return { action: 'deny' }
   })
   window.webContents.on('will-navigate', (event, url) => {
     if (new URL(url).origin === origin) return
     event.preventDefault()
-    openConnectorExternalUrl(url)
+    openExternalUrl(url)
   })
   window.once('ready-to-show', () => window.show())
   window.once('closed', () => {
@@ -1840,6 +1858,54 @@ function registerOpenConnectorHandlers(): void {
     return ooCliBridge.cancel(requestId)
   })
   handle(OPEN_CONNECTOR_CHANNELS.openConsole, () => openConnectorManagementConsole())
+  // 一键发起 provider OAuth：本地模式直调运行时（adminToken）；SaaS 模式由
+  // SaaS 代发起（桌面只持 runtime token，admin 面在服务端）。返回授权页并在
+  // 系统浏览器打开；完成后由调用方轮询连接状态感知新连接。
+  handle(OPEN_CONNECTOR_CHANNELS.startAuthorization, async (_event, service: unknown) => {
+    if (typeof service !== 'string' || !/^[a-z][a-z0-9_-]{1,63}$/.test(service)) {
+      throw new Error('无效的服务标识。')
+    }
+    let authorizationUrl: string | null = null
+    const connection = openConnectorSupervisor?.getConnection()
+    if (connection?.managed && connection.adminToken) {
+      const response = await fetch(new URL('/api/oauth/authorizations', connection.baseUrl), {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${connection.adminToken}` },
+        body: JSON.stringify({ service }),
+        signal: AbortSignal.timeout(20_000),
+      })
+      const payload = await response.json().catch(() => null) as {
+        authorizationUrl?: unknown
+        error?: { code?: unknown } | null
+      } | null
+      if (!response.ok || typeof payload?.authorizationUrl !== 'string') {
+        // 飞书等 provider 走"用户自建应用"模式：先在控制台配 OAuth client 才能发起。
+        if (payload?.error?.code === 'oauth_client_config_required') {
+          throw new Error(
+            `尚未配置 ${service} 的应用凭据（OAuth client）。请在连接器管理中为 ${service} 填入自建应用的 App ID/Secret，`
+            + `并把回调地址 ${new URL('/oauth/callback', connection.baseUrl).toString()} 加入该应用的重定向 URL 白名单后重试。`,
+          )
+        }
+        throw new Error(`OpenConnector 授权发起失败（HTTP ${String(response.status)}）。`)
+      }
+      authorizationUrl = payload.authorizationUrl
+    } else {
+      const client = saasClient
+      if (!client) throw new Error('尚未登录 SaaS，无法发起授权；请先登录或切换本地连接器模式。')
+      try {
+        authorizationUrl = (await client.startConnectorAuthorization(service)).authorizationUrl
+      } catch (error) {
+        throw new Error(
+          `SaaS 代发起 ${service} 授权失败（${error instanceof Error ? error.message : String(error)}）。`
+          + '该平台可能尚未在 SaaS 侧开放；可切换本地连接器模式并使用自建应用凭据。',
+        )
+      }
+    }
+    const url = new URL(authorizationUrl)
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') throw new Error('授权地址协议不受支持。')
+    await shell.openExternal(url.toString())
+    return { authorizationUrl: url.toString() }
+  })
 }
 
 function registerAgentAuthHandlers(): void {
@@ -1890,6 +1956,21 @@ function registerExternalDocumentHandlers(bridge: ExternalDocumentsGatewayBridge
     if (typeof provider !== 'string' || typeof query !== 'string') throw new Error('无效的导入搜索请求。')
     return bridge.importSearch(provider as 'feishu' | 'notion', query)
   })
+  handle(EXTERNAL_DOCUMENT_CHANNELS.importList, (_event, provider: unknown, connectionName: unknown, cachedOnly: unknown) => {
+    if (typeof provider !== 'string') throw new Error('无效的文档列举请求。')
+    if (connectionName !== undefined && typeof connectionName !== 'string') throw new Error('无效的连接名。')
+    if (cachedOnly !== undefined && typeof cachedOnly !== 'boolean') throw new Error('无效的缓存参数。')
+    return bridge.importList(provider as 'feishu' | 'notion', connectionName, cachedOnly)
+  })
+  handle(EXTERNAL_DOCUMENT_CHANNELS.importBatch, (_event, input: unknown) => bridge.importBatch(input as never))
+  handle(EXTERNAL_DOCUMENT_CHANNELS.importBatchStatus, (_event, batchId: unknown) => {
+    if (typeof batchId !== 'string') throw new Error('无效的批量导入标识。')
+    return bridge.importBatchStatus(batchId)
+  })
+  handle(EXTERNAL_DOCUMENT_CHANNELS.cancelImportBatch, (_event, batchId: unknown) => {
+    if (typeof batchId !== 'string') throw new Error('无效的批量导入标识。')
+    return bridge.cancelImportBatch(batchId)
+  })
   handle(EXTERNAL_DOCUMENT_CHANNELS.importPreview, (_event, provider: unknown, remoteDocumentId: unknown) => {
     if (typeof provider !== 'string' || typeof remoteDocumentId !== 'string') throw new Error('无效的导入预览请求。')
     return bridge.importPreview(provider as 'feishu' | 'notion', remoteDocumentId)
@@ -1910,6 +1991,10 @@ function registerExternalDocumentHandlers(bridge: ExternalDocumentsGatewayBridge
   handle(EXTERNAL_DOCUMENT_CHANNELS.checkExternalUpdate, (_event, roomId: unknown, documentId: unknown) => {
     if (typeof roomId !== 'string' || typeof documentId !== 'string') throw new Error('无效的文档标识。')
     return bridge.checkExternalUpdate(roomId, documentId)
+  })
+  handle(EXTERNAL_DOCUMENT_CHANNELS.importStructuredDiff, (_event, roomImportId: unknown) => {
+    if (typeof roomImportId !== 'string') throw new Error('无效的导入关联标识。')
+    return bridge.importStructuredDiff(roomImportId)
   })
   handle(EXTERNAL_DOCUMENT_CHANNELS.applyCandidate, (_event, roomImportId: unknown) => {
     if (typeof roomImportId !== 'string') throw new Error('无效的导入关联标识。')
@@ -1966,6 +2051,8 @@ function registerContextRoomHandlers(bridge: ContextRoomGatewayBridge): void {
   handle(CONTEXT_ROOM_CHANNELS.cancelSubagentInvocation, (_event, invocationId) =>
     bridge.cancelSubagentInvocation(invocationId))
   handle(CONTEXT_ROOM_CHANNELS.refreshBrief, (_event, roomId) => bridge.refreshBrief(roomId))
+  handle(CONTEXT_ROOM_CHANNELS.promoteMemoryItem, (_event, roomId: string, itemId: string) =>
+    bridge.promoteMemoryItem(roomId, itemId))
   handle(CONTEXT_ROOM_CHANNELS.overview, (_event, roomId) => bridge.overview(roomId))
   handle(CONTEXT_ROOM_CHANNELS.refreshOverview, (_event, roomId) => bridge.refreshOverview(roomId))
   handle(CONTEXT_ROOM_CHANNELS.listMails, (_event, roomId) => bridge.listMails(roomId))
@@ -2186,6 +2273,9 @@ function registerDocumentHandlers(
     createDocumentComment: (_event, documentId, input) => bridge.createDocumentComment(documentId, input),
     resolveDocumentComment: (_event, documentId, commentId, resolved) => bridge.resolveDocumentComment(documentId, commentId, resolved),
     deleteDocumentComment: (_event, documentId, commentId) => bridge.deleteDocumentComment(documentId, commentId),
+    getOverview: (_event, documentId) => bridge.getDocumentOverview(documentId),
+    generateOverview: (_event, documentId) => bridge.generateDocumentOverview(documentId),
+    getSectionPreview: (_event, documentId, input) => bridge.getSectionPreview(documentId, input),
     restoreVersion: (_event, documentId, version, baseVersion) =>
       bridge.restoreVersion(documentId, version, baseVersion),
     resolveBlockReferences: (_event, input) => bridge.resolveBlockReferences(input),
@@ -2986,6 +3076,17 @@ function registerPerceptionAndDiaryHandlers(): void {
   })
 }
 
+function isAppWindowNavigationAllowed(url: string): boolean {
+  try {
+    if (process.env.ELECTRON_RENDERER_URL) {
+      return new URL(url).origin === new URL(process.env.ELECTRON_RENDERER_URL).origin
+    }
+    return new URL(url).href === pathToFileURL(join(__dirname, '../renderer/index.html')).href
+  } catch {
+    return false
+  }
+}
+
 function createWindow(): BrowserWindow {
   const window = new BrowserWindow({
     width: 1440,
@@ -3071,8 +3172,17 @@ function createWindow(): BrowserWindow {
   window.webContents.on('did-finish-load', () => sendPendingAgentNotificationTarget())
 
   window.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url)
+    openExternalUrl(url)
     return { action: 'deny' }
+  })
+
+  // 同窗口导航只放行应用自身页面（dev 服务器 origin / 生产 index.html）。
+  // 文档里的外链（Notion/飞书导入等）不得把主窗口带去远端页面——否则该页面
+  // 会拿到 preload 暴露的网关桥；拦截后降级为系统浏览器打开。
+  window.webContents.on('will-navigate', (event, url) => {
+    if (isAppWindowNavigationAllowed(url)) return
+    event.preventDefault()
+    openExternalUrl(url)
   })
 
   if (process.env.ELECTRON_RENDERER_URL) {
@@ -3654,6 +3764,7 @@ app.on('before-quit', (event) => {
   browserExtensionService = null
   gatewaySupervisor = null
   ooCliBridge = null
+  connectorConsoleBaseUrl = null
   openConnectorSupervisor = null
   openConnectorConsoleWindow = null
   cursorCompletionSupervisor = null

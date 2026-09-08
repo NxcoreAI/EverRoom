@@ -28,7 +28,7 @@ export class DocumentQueryService {
     private readonly db: GatewayDatabase,
     private readonly repository: DocumentRepository,
     private readonly engine: DocumentContentEngine,
-    private readonly yjsHistory: YjsHistoryService = new YjsHistoryService(),
+    readonly yjsHistory: YjsHistoryService = new YjsHistoryService(),
   ) {}
 
   list(roomId: string, trashed = false): RoomDocument[] {

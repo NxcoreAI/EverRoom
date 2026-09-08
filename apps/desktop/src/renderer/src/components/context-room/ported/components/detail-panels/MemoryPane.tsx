@@ -15,6 +15,7 @@ import { useLocale } from '../../../../../i18n/LocaleContext';
 
 import { formatRoomUpdatedTime } from '../../roomUpdatedTime';
 import type { ContextRoomRecord } from '../../types';
+import { disableRoomMemoryItem, enableRoomMemoryItem } from '../../roomMemoryItemActions';
 import { useRoomAppliedEntities } from '../../useRoomAppliedEntities';
 import { localizedUiText, uiText } from '../../adapters';
 import { EntityFactGraphCanvas } from '../EntityFactGraphCanvas';
@@ -24,13 +25,11 @@ import { PanelEmptyState } from './PanelEmptyState';
 
 export function MemoryPane({
   room,
-  onOpenMemory,
   onUpdateRoom,
   onOpenRoom,
   onOpenSource,
 }: {
   room: ContextRoomRecord;
-  onOpenMemory: (id: string) => void;
   onUpdateRoom: (updater: (room: ContextRoomRecord) => ContextRoomRecord) => void;
   /** 实体已建 Room 时从内联详情卡跳转（详情只在本面板内展示）。 */
   onOpenRoom: (roomId: string) => void;
@@ -195,10 +194,9 @@ export function MemoryPane({
               <div className="context-room-memory-detail-list">
                 {selectedMemory
                   ? selectedMemory.sources?.map((source) => (
-                      <button
-                        type="button"
+                      <div
+                        className="context-room-memory-detail-row"
                         key={`${source.type}-${source.name}`}
-                        onClick={() => onOpenMemory(selectedMemory.id)}
                       >
                         <span className="context-room-memory-detail-row-icon">
                           <Link2 aria-hidden="true" />
@@ -207,7 +205,7 @@ export function MemoryPane({
                           <b>{source.name}</b>
                           <small>{t(uiText(source.type))}</small>
                         </span>
-                      </button>
+                      </div>
                     ))
                   : selectedAppliedFact
                     ? selectedAppliedFact.sources.map((source) => {
@@ -297,14 +295,27 @@ export function MemoryPane({
             ) : null}
             {selectedMemory ? (
               <footer>
-                <button
-                  type="button"
-                  className="context-room-ghost"
-                  disabled={selectedMemory.status === '已禁用'}
-                  onClick={() => setDisableConfirmOpen(true)}
-                >
-                  {t(selectedMemory.status === '已禁用' ? 'contextRoom:memory.disabled' : 'contextRoom:memory.disable')}
-                </button>
+                {selectedMemory.status === '已禁用' ? (
+                  <button
+                    type="button"
+                    className="context-room-ghost"
+                    onClick={() => {
+                      void enableRoomMemoryItem(room.id, selectedMemory)
+                        .then((mutator) => onUpdateRoom(mutator))
+                        .catch((error) => console.error('[room-memory] enable failed', error));
+                    }}
+                  >
+                    {t('contextRoom:memory.enable')}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="context-room-ghost"
+                    onClick={() => setDisableConfirmOpen(true)}
+                  >
+                    {t('contextRoom:memory.disable')}
+                  </button>
+                )}
               </footer>
             ) : null}
           </article>
@@ -330,14 +341,11 @@ export function MemoryPane({
           risk={t('contextRoom:memory.disablingDoesNotDeleteTheSourceYouCan')}
           confirmLabel={t('contextRoom:memory.confirmDisable')}
           danger
-          onConfirm={() =>
-            onUpdateRoom((current) => ({
-              ...current,
-              memoryItems: current.memoryItems.map((item) =>
-                item.id === selectedMemory.id ? { ...item, status: '已禁用' } : item
-              ),
-            }))
-          }
+          onConfirm={() => {
+            void disableRoomMemoryItem(selectedMemory)
+              .then((mutator) => onUpdateRoom(mutator))
+              .catch((error) => console.error('[room-memory] disable failed', error));
+          }}
         />
       ) : null}
     </div>

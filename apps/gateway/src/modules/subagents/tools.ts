@@ -473,8 +473,9 @@ export function createSubagentPiTools(
         + "materialSources（draft-create / draft-edit 可选）：引用了 Room 文档块的素材来源列表（roomId/documentId/blockId 取自 document_read 的 blocks），"
         + "doc-writer 会在对应正文段末附 ^[...](everroom://...) 索引标记；只传确实被素材支撑的来源；"
         + "未传时网关会按本 run 的 document_read 记录对照 material 自动推断补齐。"
+        + "Room 记忆来源（memoryIndex）由网关按房间自动注入，主 Agent 不经手记忆 id、不传参。"
         + "用户要求为既有文档补建来源索引时：先 document_read 该文档与来源文档，再以 task=draft-edit 传 materialSources，"
-        + "instruction 要求仅为确有来源支撑的存量段落在段末追加索引标记，其余正文保持原样。"
+        + "instruction 要求仅为确有来源支撑的存量段落在段末追加索引标记，文档来源与记忆来源两类标记均按规则补挂，其余正文保持原样。"
         + "禁止在 instruction 中手写 everroom:// 链接或 blockId（截短的 id 会被网关拒绝）；"
         + "来源块一律经 materialSources 传递，id 完整照抄 document_read 的 blocks，doc-writer 自会生成标记语法。"
         + "正文内容必须来自本工具的调用链，不得自行撰写或改写。",

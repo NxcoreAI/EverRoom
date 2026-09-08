@@ -21,10 +21,10 @@ import { type ReactNode, useMemo, useState } from 'react';
 import { useLocale } from '../../../../i18n/LocaleContext';
 
 import { cn, localizedUiText, uiText } from '../adapters';
+import { dispatchRoomMemoryChanged } from '../../roomMemoryChange';
 import type {
   ContextRoomActionItem,
   ContextRoomFileItem,
-  ContextRoomMemoryItem,
   ContextRoomMaterial,
   ContextRoomRecord,
 } from '../types';
@@ -35,8 +35,7 @@ export type DetailObject =
   | { kind: 'task'; value: ContextRoomActionItem }
   | { kind: 'mail'; value: ContextRoomMaterial }
   | { kind: 'meeting'; value: ContextRoomMaterial }
-  | { kind: 'material'; value: ContextRoomMaterial }
-  | { kind: 'memory'; value: ContextRoomMemoryItem };
+  | { kind: 'material'; value: ContextRoomMaterial };
 
 function statusVariant(status: string): 'default' | 'info' | 'ai' | 'warn' | 'success' | 'danger' {
   if (status === '候选' || status === '待确认') return 'warn';
@@ -964,223 +963,6 @@ function MaterialDetail({
     </section>
   );
 }
-
-function MemoryDetail({
-  room,
-  memory,
-  onBack,
-  onUpdateRoom,
-}: {
-  room: ContextRoomRecord;
-  memory: ContextRoomMemoryItem;
-  onBack: () => void;
-  onUpdateRoom: (updater: RoomUpdater) => void;
-}) {
-  const { t } = useLocale();
-  const [filter, setFilter] = useState(memory.status);
-  const [viewMode, setViewMode] = useState<'list' | 'graph'>('list');
-  const [selectedMemoryId, setSelectedMemoryId] = useState(memory.id);
-  const [disableConfirmOpen, setDisableConfirmOpen] = useState(false);
-  const visibleMemories = room.memoryItems.filter((item) =>
-    ['待确认', '已确认', '已禁用'].includes(filter) ? item.status === filter : item.type === filter
-  );
-  const activeMemory = visibleMemories.find((item) => item.id === selectedMemoryId) ?? memory;
-  const memoryFilters = [
-    { label: '待确认', icon: Clock3 },
-    { label: '已确认', icon: CheckCircle2 },
-    { label: '已禁用', icon: Slash },
-    { label: '人物偏好', icon: User },
-    { label: '项目结论', icon: GitBranch },
-    { label: '表达偏好', icon: FileText },
-  ];
-
-  return (
-    <section className="context-room-memory-reference" data-testid="context-room-memory-reference">
-      <button
-        type="button"
-        aria-label={t('contextRoom:objectDetail.backToContextRoomDetails')}
-        className="context-room-visually-hidden"
-        onClick={onBack}
-      >
-        {t('contextRoom:objectDetail.backToRoom')}
-      </button>
-      <header className="context-room-page-header context-room-object-app-header">
-        <div>
-          <h1 className="context-room-page-title">{t('contextRoom:objectDetail.memory')}</h1>
-        </div>
-        <div className="context-room-segmented" aria-label={t('contextRoom:objectDetail.memoryView')}>
-          <button
-            type="button"
-            aria-pressed={viewMode === 'list'}
-            onClick={() => setViewMode('list')}
-          >
-            {t('contextRoom:objectDetail.list')}
-          </button>
-          <button
-            type="button"
-            aria-pressed={viewMode === 'graph'}
-            onClick={() => setViewMode('graph')}
-          >
-            {t('contextRoom:objectDetail.graph')}
-          </button>
-        </div>
-      </header>
-      {viewMode === 'graph' ? (
-        <div className="context-room-memory-detail-graph" data-icon-tone="memory">
-          <span>{room.title}</span>
-          {room.memoryItems.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => {
-                setSelectedMemoryId(item.id);
-                setViewMode('list');
-              }}
-            >
-              {t(uiText(item.type))}
-            </button>
-          ))}
-        </div>
-      ) : (
-        <div className="context-room-memory-layout">
-          <nav className="context-room-side-tabs context-room-memory-filters" aria-label={t('contextRoom:objectDetail.memoryFilters')}>
-            {memoryFilters.map(({ label, icon: FilterIcon }, index) => (
-              <button
-                key={label}
-                type="button"
-                className="context-room-side-tab"
-                data-icon-tone="memory"
-                aria-pressed={filter === label}
-                onClick={() => {
-                  setFilter(label);
-                  const next = room.memoryItems.find((item) =>
-                    index < 3 ? item.status === label : item.type === label
-                  );
-                  if (next) setSelectedMemoryId(next.id);
-                }}
-              >
-                <FilterIcon className="size-4" aria-hidden="true" />
-                <span>{t(uiText(label))}</span>
-                {index < 3 ? (
-                  <span className="context-room-nav-count">
-                    {room.memoryItems.filter((item) => item.status === label).length}
-                  </span>
-                ) : null}
-              </button>
-            ))}
-          </nav>
-          <section className="context-room-panel context-room-memory-list-pane">
-            <div className="context-room-panel-head">
-              <h2>{t('contextRoom:objectDetail.memoryList')}</h2>
-            </div>
-            <div className="context-room-memory-list">
-              {visibleMemories.map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  aria-pressed={activeMemory.id === item.id}
-                  onClick={() => setSelectedMemoryId(item.id)}
-                >
-                  <b>{localizedUiText(item.content, t)}</b>
-                  <span>
-                    {t(uiText(item.type))} · {room.title}
-                  </span>
-                  <Tag variant={statusVariant(uiText(item.status))}>{t(uiText(item.status))}</Tag>
-                </button>
-              ))}
-            </div>
-          </section>
-          <Panel
-            title={localizedUiText(activeMemory.content, t)}
-            action={<Tag variant={statusVariant(uiText(activeMemory.status))}>{t(uiText(activeMemory.status))}</Tag>}
-            className="context-room-memory-detail-panel"
-          >
-            <p className="context-room-memory-content">{localizedUiText(activeMemory.content, t)}</p>
-            <div className="context-room-object-label context-room-memory-source-label">{t('contextRoom:objectDetail.sources')}</div>
-            <div className="context-room-source-card" data-icon-tone="ai">
-              <Sparkles className="size-4" aria-hidden="true" />
-              <div>
-                <b>{room.recentSource?.name ?? room.title}</b>
-                <span>{room.recentSource?.type ?? 'Room'}</span>
-              </div>
-            </div>
-            <div className="context-room-memory-meta">
-              <span>{t('contextRoom:objectDetail.type')}</span>
-              <b>{t(uiText(activeMemory.type))}</b>
-              <span>{t('contextRoom:objectDetail.scope')}</span>
-              <b>{room.title}</b>
-            </div>
-            <div className="context-room-object-lifecycle">
-              {activeMemory.status === '待确认' ? (
-                <button
-                  type="button"
-                  className="context-room-primary"
-                  onClick={() =>
-                    onUpdateRoom((current) => ({
-                      ...current,
-                      memoryItems: current.memoryItems.map((item) =>
-                        item.id === activeMemory.id ? { ...item, status: '已确认' } : item
-                      ),
-                    }))
-                  }
-                >
-                  {t('contextRoom:objectDetail.confirmMemory')}
-                </button>
-              ) : null}
-              <button
-                type="button"
-                className="context-room-secondary"
-                onClick={() =>
-                  onUpdateRoom((current) => ({
-                    ...current,
-                    memoryItems: current.memoryItems.map((item) =>
-                      item.id === activeMemory.id
-                        ? { ...item, content: `${item.content}（已编辑）` }
-                        : item
-                    ),
-                  }))
-                }
-              >
-                {t('contextRoom:objectDetail.edit')}
-              </button>
-              <button
-                type="button"
-                className="context-room-ghost"
-                disabled={activeMemory.status === '已禁用'}
-                onClick={() => setDisableConfirmOpen(true)}
-              >
-                {t(activeMemory.status === '已禁用' ? 'contextRoom:objectDetail.disabled' : 'contextRoom:objectDetail.disable')}
-              </button>
-            </div>
-          </Panel>
-        </div>
-      )}
-      <ActionConfirmDialog
-        open={disableConfirmOpen}
-        onOpenChange={setDisableConfirmOpen}
-        title={t('contextRoom:objectDetail.disableMemory')}
-        summary={t('contextRoom:objectDetail.agentWillNoLongerUseThisMemoryIn')}
-        rows={[
-          { label: t('contextRoom:objectDetail.memoryType'), value: t(uiText(activeMemory.type)) },
-          { label: t('contextRoom:objectDetail.scope'), value: room.title },
-        ]}
-        sources={activeMemory.sources ?? []}
-        risk={t('contextRoom:objectDetail.disablingDoesNotDeleteTheSourceYouCan')}
-        confirmLabel={t('contextRoom:objectDetail.confirmDisable')}
-        danger
-        onConfirm={() =>
-          onUpdateRoom((current) => ({
-            ...current,
-            memoryItems: current.memoryItems.map((item) =>
-              item.id === activeMemory.id ? { ...item, status: '已禁用' } : item
-            ),
-          }))
-        }
-      />
-    </section>
-  );
-}
-
 export function ObjectDetailView({
   room,
   object,
@@ -1215,14 +997,6 @@ export function ObjectDetailView({
         ) : null}
         {object.kind === 'material' ? (
           <MaterialDetail room={room} material={object.value} onBack={onBack} />
-        ) : null}
-        {object.kind === 'memory' ? (
-          <MemoryDetail
-            room={room}
-            memory={object.value}
-            onBack={onBack}
-            onUpdateRoom={onUpdateRoom}
-          />
         ) : null}
     </>
   );

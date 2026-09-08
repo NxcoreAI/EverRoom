@@ -5,6 +5,9 @@ import type {
   DocumentBlockBacklink,
   DocumentBlockSummary,
   DocumentEvent,
+  DocumentOverviewView,
+  DocumentSectionPreviewInput,
+  DocumentSectionPreviewResult,
   DocumentVersionSummary,
   DocumentVersionSnapshot,
   DocumentDiffResult,
@@ -44,6 +47,18 @@ import {
   type AtomicDocumentCommitInput,
 } from "./core/index.js";
 import { agentDocumentMarkdown, sanitizeAgentDocumentTables } from "./agent-markdown.js";
+import {
+  canonicalOverviewText,
+  invokeOverviewGeneration,
+  overviewEligibility,
+  parseCanonicalOverview,
+  type ParsedOverview,
+} from "./overview.js";
+import {
+  invokeSectionPreviewGeneration,
+  sectionEligibility,
+  sectionPlainText,
+} from "./section-preview.js";
 import type { SelectionRewriteContentResolver } from "./capabilities/selection-rewrite-content.js";
 import type { DocWriterDraftResolver } from "./capabilities/doc-writer-content.js";
 
@@ -296,7 +311,9 @@ export class DocumentService {
   }
 
   /**
-   * 版本变更概览（历史面板"AI 概览标题"）：AI 可用时用 background 模型对
+   * 版本变更概览（历史面板"AI 概览标题"，也是懒加载升级入口）：已有 AI
+   * 概览直接返回缓存；只有本地摘要（不重要变更保存时的占位，或先前 AI
+   * 失败的回退）或没有摘要时才重新生成。AI 可用时用 background 模型对
    * diff 摘要生成一句话标题（如"标题更改为《X》"）；不可用/失败时退回本地
    * 规则摘要（标题对比 + 段落增删计数 + 首个变更小标题）。
    */
@@ -305,14 +322,11 @@ export class DocumentService {
     version: number,
     runtime?: AgentRuntime | null,
   ): Promise<{ version: number; summary: string; source: "ai" | "local" }> {
-    // 已生成过（保存时自动生成或先前懒加载回填）直接返回。
+    // AI 概览已生成过（保存时自动生成或先前懒加载回填）直接返回；本地
+    // 占位摘要不走缓存，让面板每次打开都能升级重试 AI。
     const cached = this.repository.getVersion(documentId, version);
-    if (cached?.changeSummary) {
-      return {
-        version,
-        summary: cached.changeSummary,
-        source: (cached.changeSummarySource as "ai" | "local") ?? "local",
-      };
+    if (cached?.changeSummary && cached.changeSummarySource === "ai") {
+      return { version, summary: cached.changeSummary, source: "ai" };
     }
     const evidence = this.computeChangeEvidence(documentId, version);
     const result = await this.generateChangeSummary(documentId, version, evidence, runtime);
@@ -322,8 +336,10 @@ export class DocumentService {
   }
 
   /**
-   * 保存时自动生成入口（重要变更才调用）：由 change-summary worker 在
-   * document.changed 事件后异步驱动，不阻塞保存事务。
+   * 保存时自动生成入口：由 change-summary worker 在 document.changed 事件后
+   * 异步驱动，不阻塞保存事务。重要变更生成 AI 概览；不重要变更不调 AI，
+   * 先把本地规则摘要（变更内容摘录）落库占位，等历史面板打开时再懒加载
+   * 升级为 AI 概览（versionChangeSummary）。
    */
   async maybeGenerateSummaryOnCommit(
     documentId: string,
@@ -334,10 +350,179 @@ export class DocumentService {
     if (!existing) return { generated: false };
     if (existing.changeSummary) return { generated: false, summary: existing.changeSummary };
     const evidence = this.computeChangeEvidence(documentId, version);
-    if (!evidence.important) return { generated: false };
+    if (!evidence.important) {
+      this.repository.updateVersionChangeSummary(documentId, version, evidence.localSummary, "local");
+      return { generated: false, summary: evidence.localSummary };
+    }
     const result = await this.generateChangeSummary(documentId, version, evidence, runtime);
     this.repository.updateVersionChangeSummary(documentId, version, result.summary, result.source);
     return { generated: true, summary: result.summary };
+  }
+
+  /**
+   * 文档速览读取：overview 3 列 + 基于当前正文的空短判定。落库值是
+   * canonical 三段式文本，读回解析必成功；极端情况（库被外部改动）解析
+   * 失败时降级为原文当主题，绝不让 GET 500。
+   */
+  getDocumentOverview(documentId: string): Omit<DocumentOverviewView, "aiAvailable"> {
+    const document = this.get(documentId);
+    if (!document) throw new DocumentServiceError("NOT_FOUND", `Document ${documentId} not found`, 404);
+    const eligibility = overviewEligibility(
+      tiptapText(documentBodyContent(document.contentJson)).trim().length,
+    );
+    const row = this.repository.getOverview(documentId);
+    if (!row?.overviewText) {
+      return {
+        documentId,
+        topic: null,
+        points: [],
+        conclusion: null,
+        generatedAtVersion: null,
+        generatedAt: null,
+        ...eligibility,
+      };
+    }
+    let parsed: ParsedOverview | null;
+    try {
+      parsed = parseCanonicalOverview(row.overviewText);
+    } catch {
+      // canonical 落库值理论上必可解析；被外部改动时降级为原文当主题。
+      parsed = { topic: row.overviewText.trim(), points: [], conclusion: "" };
+    }
+    return {
+      documentId,
+      topic: parsed.topic,
+      points: parsed.points,
+      conclusion: parsed.conclusion || null,
+      generatedAtVersion: row.overviewVersion,
+      generatedAt: row.overviewGeneratedAt?.toISOString() ?? null,
+      ...eligibility,
+    };
+  }
+
+  /**
+   * 文档速览生成：整篇正文 →「主题/要点/结论」。同步调用（两次尝试，
+   * 第二次带解析反馈）；生成只写 overview 3 列，不触碰 content_json /
+   * version——速览绝不修改正文。AI 未配置 / 空短文档是调用方需展示的
+   * 明确状态（503 / 422），不是内部错误。
+   */
+  async generateDocumentOverview(
+    documentId: string,
+    runtime?: AgentRuntime | null,
+  ): Promise<Omit<DocumentOverviewView, "aiAvailable">> {
+    const document = this.get(documentId);
+    if (!document) throw new DocumentServiceError("NOT_FOUND", `Document ${documentId} not found`, 404);
+    if (document.deletedAt) throw new DocumentServiceError("DOCUMENT_TRASHED", "Document is in trash", 409);
+    const eligibility = overviewEligibility(
+      tiptapText(documentBodyContent(document.contentJson)).trim().length,
+    );
+    if (!eligibility.eligible) {
+      throw new DocumentServiceError(
+        "DOCUMENT_OVERVIEW_TOO_SHORT",
+        eligibility.reason === "empty" ? "文档没有正文内容，无法生成速览" : "文档内容过短，无需生成速览",
+        422,
+        { reason: eligibility.reason },
+      );
+    }
+    if (!runtime) {
+      throw new DocumentServiceError("DOCUMENT_OVERVIEW_AI_UNAVAILABLE", "AI 服务未配置，无法生成文档速览", 503);
+    }
+    // 优先 markdown 序列化（保留标题/列表结构，摘要质量更高），失败回退纯文本。
+    let contentMarkdown: string;
+    try {
+      contentMarkdown = agentDocumentMarkdown.serialize(documentBodyContent(document.contentJson));
+    } catch {
+      contentMarkdown = tiptapText(documentBodyContent(document.contentJson));
+    }
+    let parsed: ParsedOverview;
+    try {
+      parsed = await invokeOverviewGeneration(runtime, {
+        title: document.title,
+        contentMarkdown,
+        sessionId: `doc-overview-${documentId}`,
+      });
+    } catch (error) {
+      throw new DocumentServiceError(
+        "DOCUMENT_OVERVIEW_GENERATION_FAILED",
+        error instanceof Error ? error.message : "速览生成失败，请稍后重试",
+        502,
+      );
+    }
+    this.repository.updateDocumentOverview(documentId, canonicalOverviewText(parsed), document.version);
+    return {
+      documentId,
+      topic: parsed.topic,
+      points: parsed.points,
+      conclusion: parsed.conclusion,
+      generatedAtVersion: document.version,
+      generatedAt: new Date().toISOString(),
+      eligible: true,
+      reason: "ok",
+    };
+  }
+
+  /**
+   * 章节刻度线 hover 的 AI 章节预览：正文 markdown 与 contentHash 由渲染层
+   * 随请求携带（网关不解析章节结构）。contentHash 命中持久缓存直接返回
+   * （优先于 AI 未配置——撤配置后旧预览仍可看）；未命中且正文没变才不重
+   * 生成。只写 document_section_previews 表，不触碰 documents 行。
+   */
+  async getOrGenerateSectionPreview(
+    documentId: string,
+    input: DocumentSectionPreviewInput,
+    runtime?: AgentRuntime | null,
+  ): Promise<DocumentSectionPreviewResult> {
+    const document = this.get(documentId);
+    if (!document) throw new DocumentServiceError("NOT_FOUND", `Document ${documentId} not found`, 404);
+    if (document.deletedAt) throw new DocumentServiceError("DOCUMENT_TRASHED", "Document is in trash", 409);
+    const eligibility = sectionEligibility(sectionPlainText(input.sectionMarkdown).length);
+    if (!eligibility.eligible) {
+      throw new DocumentServiceError(
+        "SECTION_PREVIEW_TOO_SHORT",
+        eligibility.reason === "empty" ? "章节没有正文内容，无法生成预览" : "章节内容过短，无需生成预览",
+        422,
+        { reason: eligibility.reason },
+      );
+    }
+    const cached = this.repository.getSectionPreview(documentId, input.blockId);
+    if (cached && cached.contentHash === input.contentHash) {
+      return {
+        documentId,
+        blockId: input.blockId,
+        preview: cached.previewText,
+        generatedAt: cached.generatedAt.toISOString(),
+        cached: true,
+      };
+    }
+    if (!runtime) {
+      throw new DocumentServiceError("SECTION_PREVIEW_AI_UNAVAILABLE", "AI 服务未配置，无法生成章节预览", 503);
+    }
+    let preview: string;
+    try {
+      preview = await invokeSectionPreviewGeneration(runtime, {
+        headingText: input.headingText,
+        sectionMarkdown: input.sectionMarkdown,
+      }, `doc-section-preview-${documentId}-${input.blockId}`);
+    } catch (error) {
+      throw new DocumentServiceError(
+        "SECTION_PREVIEW_GENERATION_FAILED",
+        error instanceof Error ? error.message : "章节预览生成失败，请稍后重试",
+        502,
+      );
+    }
+    this.repository.upsertSectionPreview(documentId, {
+      blockId: input.blockId,
+      headingText: input.headingText,
+      previewText: preview,
+      contentHash: input.contentHash,
+    });
+    return {
+      documentId,
+      blockId: input.blockId,
+      preview,
+      generatedAt: new Date().toISOString(),
+      cached: false,
+    };
   }
 
   /** 重要性判定：标题变更 / 小节增删 / 变更块 ≥3 / 首个版本。 */
@@ -452,6 +637,19 @@ export class DocumentService {
   diff(documentId: string, fromVersion: number | null, toVersion: number): DocumentDiffResult | null {
     if (!this.get(documentId)) throw new DocumentServiceError("NOT_FOUND", "Document not found", 404);
     return this.queryService.diff(documentId, fromVersion, toVersion);
+  }
+
+  /**
+   * 任意两份内容快照的结构化 diff（版本 diff 核心；外部导入候选 vs 当前版本
+   * 等跨文档比较复用同一算法与渲染契约）。meta 里 toVersion 仅作展示回填。
+   */
+  diffContents(
+    documentId: string,
+    fromContent: TiptapJsonContent | null,
+    toContent: TiptapJsonContent,
+    meta: { fromVersion: number | null; toVersion: number },
+  ): DocumentDiffResult {
+    return this.queryService.yjsHistory.diffContents(documentId, fromContent, toContent, meta);
   }
 
   backfillYjsHistory(documentId: string, maxVersions = 50): number {

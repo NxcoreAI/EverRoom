@@ -400,6 +400,34 @@
       "when": 1788968400000,
       "tag": "0059_connector_format_mappings",
       "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "6",
+      "when": 1789054800000,
+      "tag": "0060_document_import_batches",
+      "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "6",
+      "when": 1789062000000,
+      "tag": "0061_document_import_list_cache",
+      "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "6",
+      "when": 1789148400000,
+      "tag": "0062_document_overview",
+      "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "6",
+      "when": 1789234800000,
+      "tag": "0063_document_section_previews",
+      "breakpoints": true
     }
   ]
 }

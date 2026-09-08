@@ -99,6 +99,62 @@ export function createPixiForceGraphRenderer(
     (largest, node) => Math.max(largest, positiveDimension(node.radius ?? nodeRadius, nodeRadius)),
     nodeRadius,
   )
+  // —— 场与锚点（可选能力；无 field/anchor 节点时零开销）——
+  const fieldIndexes = nodes.reduce<number[]>((list, node, index) => {
+    if (node.field) list.push(index)
+    return list
+  }, [])
+  const indexById = new Map(nodes.map((node, index) => [node.id ?? String(index), index]))
+  interface AnchorEntry { index: number; parentIndex: number; dx: number; dy: number; maxDistance: number }
+  const anchors: AnchorEntry[] = []
+  const anchorSlotByNodeIndex = new Map<number, number>()
+  const anchorOffsetStore = new Float32Array(nodes.length * 2)
+  const workerIndexByNodeIndex = new Int32Array(nodes.length).fill(-1)
+  let workerRank = 0
+  nodes.forEach((node, index) => {
+    const anchorSpec = node.anchor
+    if (anchorSpec && options.layoutPositions && indexById.has(anchorSpec.parentId)) {
+      const slot = anchors.length
+      anchorSlotByNodeIndex.set(index, slot)
+      anchors.push({
+        index,
+        parentIndex: indexById.get(anchorSpec.parentId)!,
+        dx: anchorSpec.dx,
+        dy: anchorSpec.dy,
+        maxDistance: anchorSpec.maxDistance && anchorSpec.maxDistance > 0
+          ? anchorSpec.maxDistance
+          : Number.POSITIVE_INFINITY,
+      })
+      anchorOffsetStore[slot * 2] = anchorSpec.dx
+      anchorOffsetStore[slot * 2 + 1] = anchorSpec.dy
+      return
+    }
+    if (options.layoutPositions) workerIndexByNodeIndex[index] = workerRank
+    workerRank += 1
+  })
+  // 锚点偏移被拖拽改写时递增；×2 叠加保持 Worker revision 的奇偶语义
+  // （奇数 = Worker 正在写坐标，渲染层据此跳帧）。
+  let anchorEpoch = 0
+  const effectiveRevision = () => (options.revision?.() ?? 0) + anchorEpoch * 2
+  /** 布局（非锚点）坐标映射进全量表槽位，锚点槽位解析为 父节点位置 + 偏移。 */
+  const syncAnchorPositions = () => {
+    const layout = options.layoutPositions
+    if (!layout) return
+    for (let index = 0; index < nodes.length; index += 1) {
+      const workerIndex = workerIndexByNodeIndex[index]
+      if (workerIndex >= 0) {
+        positions[index * 2] = layout[workerIndex * 2] ?? 0
+        positions[index * 2 + 1] = layout[workerIndex * 2 + 1] ?? 0
+      }
+    }
+    for (let slot = 0; slot < anchors.length; slot += 1) {
+      const anchor = anchors[slot]!
+      const parentX = positions[anchor.parentIndex * 2] ?? 0
+      const parentY = positions[anchor.parentIndex * 2 + 1] ?? 0
+      positions[anchor.index * 2] = parentX + anchorOffsetStore[slot * 2]
+      positions[anchor.index * 2 + 1] = parentY + anchorOffsetStore[slot * 2 + 1]
+    }
+  }
   const hostWidth = host.clientWidth
   const hostHeight = host.clientHeight
   const width = positiveDimension(hostWidth, 640)
@@ -126,6 +182,7 @@ export function createPixiForceGraphRenderer(
   })
   app.stage.addChild(viewport)
 
+  const fieldGraphics = new dependencies.Graphics()
   const edgeGraphics = new dependencies.Graphics()
   const particleContainer = new dependencies.ParticleContainer(
     Math.max(1, nodes.length),
@@ -133,6 +190,8 @@ export function createPixiForceGraphRenderer(
     16384,
     true,
   )
+  // 场垫底、边其次、节点与标签在上。
+  viewport.addChild(fieldGraphics)
   viewport.addChild(edgeGraphics)
   viewport.addChild(particleContainer)
   const iconKinds = [...new Set(nodes.flatMap((node) => node.icon ? [node.icon] : []))]
@@ -236,6 +295,22 @@ export function createPixiForceGraphRenderer(
   let centerOnFirstTickPending = false
   const nodeAlphaTargets = new Float32Array(sprites.length)
   nodeAlphaTargets.fill(1)
+  // 场的当前透明度（向 base × 节点聚焦系数插值）：悬停聚焦时无关场随之虚化。
+  const fieldCurrentAlpha = new Float32Array(nodes.length)
+  nodes.forEach((node, index) => {
+    fieldCurrentAlpha[index] = node.field
+      ? (Number.isFinite(node.field.alpha) ? node.field.alpha! : 0.12)
+      : 0
+  })
+  /** 悬停节点的关联集（自身 + 连线邻居）：节点透明度与标签聚焦共用。 */
+  const relatedIndexesFor = (index: number): ReadonlySet<number> => {
+    const related = new Set<number>([index])
+    for (const edge of edges) {
+      if (edge.source === index) related.add(edge.target)
+      else if (edge.target === index) related.add(edge.source)
+    }
+    return related
+  }
   const focusAlpha = 0.16
   const alphaLerp = 0.22
 
@@ -305,7 +380,7 @@ export function createPixiForceGraphRenderer(
   const hitTest = (x: number, y: number) => findNearestGraphNode({
     nodes,
     positions,
-    revision: options.revision,
+    revision: effectiveRevision,
     scale: viewport.scale?.x ?? 1,
     x,
     y,
@@ -314,7 +389,28 @@ export function createPixiForceGraphRenderer(
     const point = worldPoint(event)
     if (dragIndex !== null) {
       if (dragStart && Math.hypot(point.x - dragStart.x, point.y - dragStart.y) > 3) dragMoved = true
-      if (dragMoved) options.onNodeDrag?.(dragIndex, point.x, point.y)
+      if (dragMoved) {
+        // 锚点节点：只改偏移并钳制在 maxDistance（场）内，不进 Worker 模拟。
+        const anchorSlot = anchorSlotByNodeIndex.get(dragIndex)
+        if (anchorSlot !== undefined) {
+          const anchor = anchors[anchorSlot]!
+          const parentX = positions[anchor.parentIndex * 2] ?? 0
+          const parentY = positions[anchor.parentIndex * 2 + 1] ?? 0
+          let dx = point.x - parentX
+          let dy = point.y - parentY
+          const length = Math.hypot(dx, dy)
+          if (anchor.maxDistance !== Number.POSITIVE_INFINITY && length > anchor.maxDistance) {
+            const clampScale = anchor.maxDistance / (length || 1)
+            dx *= clampScale
+            dy *= clampScale
+          }
+          anchorOffsetStore[anchorSlot * 2] = dx
+          anchorOffsetStore[anchorSlot * 2 + 1] = dy
+          anchorEpoch += 1
+          return
+        }
+        options.onNodeDrag?.(dragIndex, point.x, point.y)
+      }
       return
     }
     const hit = hitTest(point.x, point.y)
@@ -329,7 +425,7 @@ export function createPixiForceGraphRenderer(
       const edgeIndex = findNearestGraphEdge({
         edges,
         positions,
-        revision: options.revision,
+        revision: effectiveRevision,
         scale: viewport.scale?.x ?? 1,
         x: point.x,
         y: point.y,
@@ -359,7 +455,7 @@ export function createPixiForceGraphRenderer(
     dragStart = null
     viewport.plugins?.resume('drag')
     viewport.cursor = hoveredIndex === null ? 'grab' : 'pointer'
-    if (dragMoved) options.onNodeRelease?.(releasedIndex)
+    if (dragMoved && !anchorSlotByNodeIndex.has(releasedIndex)) options.onNodeRelease?.(releasedIndex)
     if (!dragMoved) {
       const selectedAt = Date.now()
       options.onNodeSelect?.(releasedIndex)
@@ -389,7 +485,8 @@ export function createPixiForceGraphRenderer(
 
   const drawFrame = () => {
     if (destroyed) return
-    const startRevision = options.revision?.() ?? 0
+    if (anchors.length > 0) syncAnchorPositions()
+    const startRevision = effectiveRevision()
     if ((startRevision & 1) === 1) return
     if (!alphaAnimating
       && lastDrawnRevision === startRevision
@@ -431,8 +528,31 @@ export function createPixiForceGraphRenderer(
         setSpritePosition(iconSprite, positions[index * 2] ?? 0, positions[index * 2 + 1] ?? 0)
         iconSprite.alpha = sprite.alpha
       }
+      if (fieldIndexes.length > 0 && nodes[index]?.field) {
+        const base = Number.isFinite(nodes[index]!.field!.alpha) ? nodes[index]!.field!.alpha! : 0.12
+        const targetFieldAlpha = base * (nodeAlphaTargets[index] ?? 1)
+        const currentFieldAlpha = fieldCurrentAlpha[index] ?? 0
+        if (Math.abs(targetFieldAlpha - currentFieldAlpha) >= 0.004) animating = true
+        fieldCurrentAlpha[index] = Math.abs(targetFieldAlpha - currentFieldAlpha) < 0.004
+          ? targetFieldAlpha
+          : currentFieldAlpha + (targetFieldAlpha - currentFieldAlpha) * alphaLerp
+      }
     }
     alphaAnimating = animating
+    // 背景场：垫在连线与节点之下（层级在 viewport.addChild 时已定）。
+    fieldGraphics.clear()
+    for (const index of fieldIndexes) {
+      const field = nodes[index]!.field!
+      const x = positions[index * 2]
+      const y = positions[index * 2 + 1]
+      if (!Number.isFinite(x) || !Number.isFinite(y)) continue
+      const alpha = fieldCurrentAlpha[index] ?? 0.12
+      if (alpha <= 0.004) continue
+      fieldGraphics.lineStyle(1, field.color ?? 0x408cf0, Math.min(0.5, alpha * 3))
+      fieldGraphics.beginFill(field.color ?? 0x408cf0, alpha)
+      fieldGraphics.drawCircle(x!, y!, field.radius)
+      fieldGraphics.endFill()
+    }
     edgeGraphics.clear()
     for (const edge of edges) {
       const selected = Boolean(edge.id && edge.id === selectedEdgeId)
@@ -451,15 +571,16 @@ export function createPixiForceGraphRenderer(
         }
       }
     }
-    labelManager.update(hoveredIndex)
+    labelManager.update(hoveredIndex, hoveredIndex !== null ? relatedIndexesFor(hoveredIndex) : null)
     edgeLabelManager.update(hoveredIndex, selectedEdgeId)
-    const endRevision = options.revision?.() ?? startRevision
+    const endRevision = effectiveRevision()
     if (startRevision !== endRevision || (endRevision & 1) === 1) return
     // A concurrent Worker tick may invalidate this read. Keep the most recent
     // frame on screen and retry instead of flashing the whole graph invisible.
     particleContainer.renderable = true
     for (const iconContainer of iconParticleContainers) iconContainer.renderable = true
     edgeGraphics.renderable = true
+    fieldGraphics.renderable = true
     labelManager.layer.renderable = true
   }
   dependencies.Ticker.shared.add(drawFrame)
@@ -474,7 +595,10 @@ export function createPixiForceGraphRenderer(
       const x = positions[index * 2]
       const y = positions[index * 2 + 1]
       if (!Number.isFinite(x) || !Number.isFinite(y)) return
-      const radius = positiveDimension(node.radius ?? nodeRadius, nodeRadius)
+      const radius = Math.max(
+        positiveDimension(node.radius ?? nodeRadius, nodeRadius),
+        node.field ? node.field.radius : 0,
+      )
       minX = Math.min(minX, x! - radius)
       minY = Math.min(minY, y! - radius)
       maxX = Math.max(maxX, x! + radius)
@@ -591,6 +715,7 @@ export function createPixiForceGraphRenderer(
         if (icon) iconParticleContainerByKind.get(icon)?.removeChild?.(sprite)
         sprite.destroy()
       }
+      viewport.removeChild?.(fieldGraphics)
       viewport.removeChild?.(edgeGraphics)
       viewport.removeChild?.(particleContainer)
       for (const iconContainer of iconParticleContainers) viewport.removeChild?.(iconContainer)
@@ -599,6 +724,7 @@ export function createPixiForceGraphRenderer(
       particleContainer.destroy({ children: false })
       for (const iconContainer of iconParticleContainers) iconContainer.destroy({ children: false })
       edgeGraphics.destroy()
+      fieldGraphics.destroy()
       labelManager.destroy()
       edgeLabelManager.destroy()
       app.stage.removeChild?.(viewport)

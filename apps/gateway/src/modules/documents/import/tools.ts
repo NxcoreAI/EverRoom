@@ -19,7 +19,7 @@ export function createDocumentImportPiTools(imports: DocumentImportService): PiA
         return {
           category: "import_environment_unavailable",
           recoverable: false,
-          instruction: "导入通道等待 OpenConnector 迁入后开放；向用户说明当前暂不支持外部文档导入。",
+          instruction: "OpenConnector 服务不可用（未启动或连接失败）；引导用户重启应用或检查连接器状态，不要臆测文档内容。",
           retryKey: "document_import:environment",
         };
       }
