@@ -4,6 +4,7 @@ import type { TableOfContentData, TableOfContentDataItem } from '@tiptap/extensi
 import { useEffect, useRef, useState } from 'react'
 import { useLocale } from '../../../../../i18n/LocaleContext'
 import { SectionPreviewCard } from './SectionPreviewCard'
+import { jumpToSectionHeading } from './scaleMarkerNavigation'
 import { useSectionPreviews } from './useSectionPreviews'
 
 /**
@@ -80,6 +81,14 @@ function ScaleMarker({ item, previews }: {
       closeTimer.current = null
     }
   }
+  const closeNow = () => {
+    if (openTimer.current !== null) {
+      window.clearTimeout(openTimer.current)
+      openTimer.current = null
+    }
+    cancelClose()
+    setOpen(false)
+  }
 
   return (
     <Popover.Root open={open} onOpenChange={setOpen}>
@@ -94,7 +103,11 @@ function ScaleMarker({ item, previews }: {
           onMouseLeave={scheduleClose}
           onFocus={scheduleOpen}
           onBlur={scheduleClose}
-          onClick={() => item.editor.chain().focus().setTextSelection(item.pos + 1).scrollIntoView().run()}
+          onClick={() => {
+            // 点击是导航动作：收起 hover 卡，按 id 解析最新位置后跳转。
+            closeNow()
+            jumpToSectionHeading(item.editor, item.id, item.pos)
+          }}
         />
       </Popover.Anchor>
       <Popover.Portal>

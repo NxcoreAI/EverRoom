@@ -131,10 +131,7 @@ export function DocumentOverviewCard({
           ) : null}
           <footer className="context-room-document-overview-footer">
             <span>
-              {t('contextRoom:documentQuickView.basedOnVersion', {
-                version: view.generatedAtVersion != null ? String(view.generatedAtVersion) : '?',
-                time: generatedAtText,
-              })}
+              {t('contextRoom:documentQuickView.generatedAt', { time: generatedAtText })}
             </span>
             <button
               type="button"

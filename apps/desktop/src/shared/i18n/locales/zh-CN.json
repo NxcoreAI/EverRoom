@@ -24,6 +24,8 @@
   "error.network.files": "读取本地文件",
   "error.network.connectors": "访问连接器服务",
   "error.network.service": "访问本地服务",
+  "error.gatewayStart.title": "EverRoom 启动失败",
+  "error.gatewayStart.body": "本地服务初始化未完成，应用即将退出。\n\n{error}\n\n日志目录：{logs}",
   "error.rateLimited.title": "操作稍后继续",
   "error.rateLimited.message": "请求过于频繁，请稍后重试。",
   "error.screenshot.windowUnavailable": "当前应用窗口不可用。",

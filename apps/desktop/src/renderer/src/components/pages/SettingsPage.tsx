@@ -1081,7 +1081,7 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
           </div>
         </div>
         <div className="reality-setting-row">
-          <div><strong>{t('surface:settings.recordingSource')}</strong><small>{t('surface:settings.computerAudioRequiresMacosSystemPermission')}</small></div>
+          <div><strong>{t('surface:settings.recordingSource')}</strong><small>{t(window.nxcore?.platform === 'win32' ? 'surface:settings.computerAudioUnavailableOnWindows' : 'surface:settings.computerAudioRequiresMacosSystemPermission')}</small></div>
           <div className="segmented-control reality-source-setting" aria-label={t('surface:settings.realityPerceptionRecordingSource')}>
             <button type="button" data-active={String(realitySettings.audioSource === 'microphone')} onClick={() => updateRealitySettings({ audioSource: 'microphone' })}><Mic aria-hidden="true" />{t('surface:settings.microphone')}</button>
             <button type="button" data-active={String(realitySettings.audioSource === 'system')} disabled={window.nxcore?.platform !== 'darwin'} onClick={() => updateRealitySettings({ audioSource: 'system' })}><MonitorSpeaker aria-hidden="true" />{t('surface:settings.computerAudio')}</button>

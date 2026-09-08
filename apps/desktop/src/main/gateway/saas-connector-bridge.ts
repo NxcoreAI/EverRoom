@@ -29,6 +29,7 @@ const PROVIDER_OF_SERVICE: Record<string, string> = {
   notion: 'notion',
   googlecalendar: 'google-calendar',
   googledrive: 'google-docs',
+  feishu: 'feishu',
 }
 
 const SERVICE_OF_PROVIDER: Record<string, string> = Object.fromEntries(

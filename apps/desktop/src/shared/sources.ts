@@ -796,6 +796,13 @@ export interface NxcoreDesktopApi {
   app: {
     clearUserData(): Promise<void>
   }
+  window: {
+    minimize(): Promise<void>
+    toggleMaximize(): Promise<void>
+    close(): Promise<void>
+    getState(): Promise<{ maximized: boolean }>
+    onMaximizedChange(listener: (maximized: boolean) => void): () => void
+  }
   office: {
     testAvailable: boolean
     /** 激活指定 Office 预览实例并隐藏其余实例；null = 全部隐藏（标签仍保留）。 */

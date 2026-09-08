@@ -372,13 +372,13 @@ export function DocumentHistoryPanel({
                         >
                           <span className="context-room-history-version-rail is-import" aria-hidden="true"><CloudDownload aria-hidden="true" /></span>
                           <span className="context-room-history-version-copy">
-                            <span className="context-room-history-version-topline">
+                            <span className="context-room-history-import-title-row">
+                              <span className="context-room-history-version-title">{item.candidate.title}</span>
                               <em className="context-room-history-import-badge">
                                 <SourceIcon kind={item.candidate.provider} className="glyph" aria-hidden="true" />
                                 {t('contextRoom:importHistory.pendingImportVersion')}
                               </em>
                             </span>
-                            <span className="context-room-history-version-title">{item.candidate.title}</span>
                             <span className="context-room-history-version-summary" data-loaded="true">
                               {t('contextRoom:importHistory.importCandidateSummary')}
                             </span>

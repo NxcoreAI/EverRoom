@@ -1,6 +1,6 @@
 import type { ExternalDocumentCommentView } from '@nxcore/agent-contract'
 import type { Editor } from '@tiptap/react'
-import { Check, LoaderCircle, MessageSquare, Sparkles, Trash2, X } from 'lucide-react'
+import { Check, ChevronDown, LoaderCircle, MessageSquare, Sparkles, Trash2, X } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useLocale } from '../../../../../i18n/LocaleContext'
 import type { LocalDocumentComment } from '../../../../../../../shared/sources'
@@ -55,6 +55,8 @@ export function ImportedCommentsPanel({
 }) {
   const { t, locale } = useLocale()
   const [comments, setComments] = useState<ExternalDocumentCommentView[] | null>(null)
+  // 未定位评论默认收起：正文锚定评论才是主视图，未定位区只是兜底检索入口。
+  const [unlocatedCollapsed, setUnlocatedCollapsed] = useState(true)
   const [importProvider, setImportProvider] = useState<'feishu' | 'notion'>('feishu')
   const [localComments, setLocalComments] = useState<LocalDocumentComment[] | null>(null)
   const layerRef = useRef<HTMLDivElement | null>(null)
@@ -552,10 +554,18 @@ export function ImportedCommentsPanel({
               </div>
             )}
             {unanchored.length > 0 && (
-              <div className="context-room-imported-comments-unanchored">
-                <div className="context-room-imported-comments-section-label">
+              <div className="context-room-imported-comments-unanchored" data-collapsed={String(unlocatedCollapsed)}>
+                <button
+                  type="button"
+                  className="context-room-imported-comments-section-label context-room-imported-comments-unanchored-toggle"
+                  aria-expanded={!unlocatedCollapsed}
+                  onClick={() => setUnlocatedCollapsed((value) => !value)}
+                >
+                  <ChevronDown className="context-room-imported-comments-unanchored-chevron" aria-hidden="true" data-collapsed={String(unlocatedCollapsed)} />
                   {t('contextRoom:importedComments.unlocatedSection')}
-                </div>
+                  <small>{String(unanchored.length)}</small>
+                </button>
+                {!unlocatedCollapsed ? (<div className="context-room-imported-comments-unanchored-list">
                 {unanchored.map((anchor) => (
                   <div key={anchor.id} data-kind={anchor.kind}>
                     {anchor.kind === 'local'
@@ -604,6 +614,7 @@ export function ImportedCommentsPanel({
                         })()}
                   </div>
                 ))}
+                </div>) : null}
               </div>
             )}
           </>

@@ -179,6 +179,12 @@ function applyRuntimeConfig(config: GatewayConfig, runtime: RuntimeConfig): void
   apply(config.pi as unknown as Record<string, unknown> | null, runtime.primary);
   apply(config.backgroundPi as unknown as Record<string, unknown> | null, runtime.background);
   apply(config.cursorCompletionPi as unknown as Record<string, unknown> | null, runtime.cursorCompletion);
+  // background/cursorCompletion 对齐 env 构建语义（config.ts 的 {...pi} 拷贝）：
+  // runtime 段只携带部分覆盖（默认配置里这两段仅预置 api）时，四要素缺失项
+  // 继承 primary——否则 patch 永远凑不齐 isPiRuntimeConfigured，后台转写总结
+  // runtime 一直停留在未配置占位，任务永远 runtime_config_not_ready。
+  inheritPrimaryDefaults(config.pi, config.backgroundPi);
+  inheritPrimaryDefaults(config.pi, config.cursorCompletionPi);
   // webSearch：boot 时 config.webSearch 仅由 env 构造（config.ts 的
   // NXCORE_WEB_SEARCH_API_KEY 门），env 未配时为 null 且 apply 无法从 null
   // 构造——runtime 四要素齐全时直接构造，让云端下发的搜索配置真正生效。
@@ -264,6 +270,22 @@ function applyRuntimeConfig(config: GatewayConfig, runtime: RuntimeConfig): void
     if (llmBaseUrl && llmApiKey && llmModel) {
       config.knowledge.llm = { baseUrl: llmBaseUrl, apiKey: llmApiKey, model: llmModel };
     }
+  }
+}
+
+/**
+ * 派生段（background/cursorCompletion）四要素缺省继承 primary：与 env 构建
+ * 语义（config.ts 的 backgroundPi = {...pi, model: 背景模型}）一致。runtime
+ * config 的派生段只带部分覆盖（默认配置仅预置 api）时靠 patch 凑不齐
+ * isPiRuntimeConfigured，派生 runtime 会永远停留在 UnconfiguredAgentRuntime。
+ */
+function inheritPrimaryDefaults(
+  primary: GatewayConfig["pi"],
+  target: GatewayConfig["pi"],
+): void {
+  if (!primary || !target) return;
+  for (const key of ["provider", "model", "baseUrl", "apiKey"] as const) {
+    if (!target[key] && primary[key]) target[key] = primary[key];
   }
 }
 

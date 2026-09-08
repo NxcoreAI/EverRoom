@@ -1,0 +1,46 @@
+.window-controls {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 2px;
+  margin-left: 8px;
+  -webkit-app-region: no-drag;
+}
+
+.window-control {
+  display: inline-flex;
+  width: 40px;
+  height: 32px;
+  flex: 0 0 40px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.window-control:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.window-control:active {
+  background: var(--border-strong);
+}
+
+.window-control-close:hover {
+  background: var(--danger);
+  color: #ffffff;
+}
+
+.window-control-close:active {
+  background: #a82626;
+  color: #ffffff;
+}
+
+.window-control svg {
+  width: 14px;
+  height: 14px;
+}

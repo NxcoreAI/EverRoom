@@ -11,6 +11,7 @@ import {
 import { useEffect, useMemo, useState } from 'react'
 
 import { ProductBrand } from '@/components/ui/ProductBrand'
+import { WindowControls } from '@/components/WindowControls'
 import { useLocale } from '@/i18n/LocaleContext'
 import type { DefaultLocalFolder } from '../../../../shared/sources'
 import type { ObsidianVaultCandidate } from '../../../../shared/obsidian'
@@ -26,6 +27,12 @@ interface FolderSettingsOnboardingProps {
 }
 
 const DEFAULT_FOLDERS: DefaultLocalFolder[] = ['documents', 'desktop']
+
+// macOS 的「文稿」在 Windows 上叫「文档」；桌面两边同名。
+const folderLabelKey = (folder: DefaultLocalFolder): string =>
+  folder === 'documents' && window.nxcore?.platform === 'win32'
+    ? 'surface:settings.folderGuide.documents.windows'
+    : `surface:settings.folderGuide.${folder}`
 
 export function FolderSettingsOnboarding({ open, onClose, memoryReady = false, showReady = false, onNavigateStage }: FolderSettingsOnboardingProps) {
   const { locale, preference, setLocale, t } = useLocale()
@@ -195,6 +202,7 @@ export function FolderSettingsOnboarding({ open, onClose, memoryReady = false, s
             <button type="button" data-active={preference === 'zh-CN'} onClick={() => setLocale('zh-CN')}>中文</button>
             <button type="button" data-active={preference === 'en-US'} onClick={() => setLocale('en-US')}>EN</button>
           </div>
+          <WindowControls />
         </div>
       </header>
       <main className="folder-settings-onboarding-main" aria-live="polite">
@@ -236,7 +244,7 @@ export function FolderSettingsOnboarding({ open, onClose, memoryReady = false, s
                     <label className="folder-settings-onboarding-option" key={folder} data-connected={String(connected)}>
                       <input type="checkbox" checked={selectedFolders.includes(folder)} onChange={(event) => toggleFolder(folder, event.target.checked)} disabled={busy || connected} />
                       <span className="folder-settings-onboarding-folder-icon"><FolderOpen aria-hidden="true" /></span>
-                      <span><strong>{t(`surface:settings.folderGuide.${folder}`)}</strong></span>
+                      <span><strong>{t(folderLabelKey(folder))}</strong></span>
                       {connected ? <Check aria-hidden="true" /> : <X className="folder-settings-onboarding-failed-icon" aria-hidden="true" />}
                     </label>
                   )

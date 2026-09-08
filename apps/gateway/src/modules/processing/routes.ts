@@ -15,6 +15,8 @@ export function processingRoutes(service: TranscriptionSummaryService): FastifyP
             sourceRecordId: Type.String({ minLength: 1, maxLength: 100 }),
             transcript: Type.String({ minLength: 1, maxLength: 2_000_000 }),
             language: Type.Optional(Type.String({ minLength: 2, maxLength: 20 })),
+            // 桌面端校验失败后的定向修复提示（第二次尝试携带）。
+            repairHint: Type.Optional(Type.String({ minLength: 1, maxLength: 2_000 })),
           }),
         },
       },

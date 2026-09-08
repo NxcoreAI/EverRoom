@@ -69,7 +69,7 @@ describe('DocumentOverviewCard', () => {
     expect(json).toContain('模块分层重构')
     expect(json).toContain('网关进程拆分')
     expect(json).toContain('架构已趋于稳定')
-    expect(json).toContain('documentQuickView.basedOnVersion')
+    expect(json).toContain('documentQuickView.generatedAt')
     expect(json).toContain('documentQuickView.regenerate')
     expect(json).not.toContain('documentQuickView.staleBadge')
   })

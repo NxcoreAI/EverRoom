@@ -27,13 +27,20 @@ function localComment(overrides: Partial<LocalDocumentComment> & Pick<LocalDocum
   }
 }
 
-async function renderPanel() {
+async function renderPanel(options: { expandUnlocated?: boolean } = {}) {
   let renderer!: TestRenderer.ReactTestRenderer
   await act(async () => {
     renderer = TestRenderer.create(
       <ImportedCommentsPanel editor={null} roomId="room-1" documentId="doc-1" onClose={() => {}} />,
     )
   })
+  // 未定位区默认折叠；需要断言其内容的用例先点开折叠头。
+  if (options.expandUnlocated) {
+    const toggle = renderer.root.findByProps({ 'aria-expanded': false })
+    await act(async () => {
+      toggle.props.onClick()
+    })
+  }
   return renderer
 }
 
@@ -100,7 +107,7 @@ describe('ImportedCommentsPanel', () => {
   })
 
   it('unanchored local cards expose the resolve toggle', async () => {
-    const renderer = await renderPanel()
+    const renderer = await renderPanel({ expandUnlocated: true })
     const resolveButton = renderer.root.findAllByProps({ title: '解决/重新打开' })
     expect(resolveButton.length).toBeGreaterThan(0)
 
@@ -111,7 +118,7 @@ describe('ImportedCommentsPanel', () => {
   })
 
   it('renders local comment bodies in the unlocated section when no editor is available', async () => {
-    const renderer = await renderPanel()
+    const renderer = await renderPanel({ expandUnlocated: true })
     const section = renderer.root.findByProps({ className: 'context-room-imported-comments-unanchored' })
     expect(textOf(section)).toContain('评论 comment-a')
   })
@@ -123,7 +130,7 @@ describe('ImportedCommentsPanel', () => {
         localComment({ id: 'ai', body: 'AI 建议', authorName: 'AI 审阅' }),
       ],
     })
-    const renderer = await renderPanel()
+    const renderer = await renderPanel({ expandUnlocated: true })
     const badges = renderer.root.findAllByProps({ className: 'context-room-imported-comment-ai-author' })
     expect(badges).toHaveLength(1)
     expect(textOf(badges[0]!)).toBe('AI 审阅')

@@ -26,6 +26,10 @@ import { WebContentsLifecycle } from './web-contents-lifecycle'
 
 const AGENT_EVENT_CHANNEL = 'agent:event'
 const http = createLoggedHttpClient('gateway-agent')
+// 长转写分块总结 = 最多几十次串行 LLM 调用，10 分钟必超时；默认放宽到 45 分钟，
+// 可用 NXCORE_TRANSCRIPT_SUMMARY_TIMEOUT_MS 按模型速度调。
+const TRANSCRIPT_SUMMARY_TIMEOUT_MS = Number(process.env.NXCORE_TRANSCRIPT_SUMMARY_TIMEOUT_MS)
+  || 45 * 60_000
 const RECOVERABLE_CONNECTION_ERROR_CODES = new Set([
   'ECONNREFUSED',
   'ECONNRESET',
@@ -218,11 +222,12 @@ export class AgentGatewayBridge {
     sourceRecordId: string
     transcript: string
     language?: string
+    repairHint?: string
   }): Promise<{ content: string }> {
     return this.request('/v1/processing/transcription-summary', {
       method: 'POST',
       data: input,
-      timeout: 10 * 60_000,
+      timeout: TRANSCRIPT_SUMMARY_TIMEOUT_MS,
     })
   }
 
