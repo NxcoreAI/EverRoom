@@ -103,10 +103,17 @@ async function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
   return invokeWithRecovery<T>(channel, args, 0)
 }
 
+/** 网关重启窗口期各桥接层经 getConnection() 抛出的"尚未就绪"——同样可自愈。 */
+function isGatewayNotReady(error: unknown): boolean {
+  const raw = error instanceof Error ? error.message : String(error)
+  return /尚未就绪|not ready/i.test(raw)
+}
+
 /**
- * 网关瞬断（进程崩溃/重启）自愈：网络类失败先让主进程拉起/恢复 gateway 连接
- * （in-flight 去重，风暴时只触发一次恢复），成功后重试原请求一次；仍失败才走
- * 原有错误弹窗——把"永久弹窗等用户手动重启"变成"短暂等待后自愈"（issue #179）。
+ * 网关瞬断（进程崩溃/重启）自愈：网络类失败或"尚未就绪"先让主进程拉起/恢复
+ * gateway 连接（in-flight 去重，风暴时只触发一次恢复），成功后重试原请求一次；
+ * 仍失败才走原有错误弹窗——把"永久弹窗等用户手动重启"变成"短暂等待后自愈"
+ * （issue #179）。
  */
 async function invokeWithRecovery<T>(channel: string, args: unknown[], attempt: number): Promise<T> {
   try {
@@ -118,7 +125,7 @@ async function invokeWithRecovery<T>(channel: string, args: unknown[], attempt: 
     throw new Error(notice.message)
   } catch (error) {
     if (error instanceof Error && isRateLimitMessage(error.message)) throw error
-    if (attempt === 0 && networkErrorDetail(channel, error)) {
+    if (attempt === 0 && (networkErrorDetail(channel, error) || isGatewayNotReady(error))) {
       try {
         const recovered = await ipcRenderer.invoke('gateway:recover') as { ok: boolean } | undefined
         if (recovered?.ok) return await invokeWithRecovery<T>(channel, args, 1)
