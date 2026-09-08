@@ -56,6 +56,22 @@ function logOnboarding(event: string, details: Record<string, unknown> = {}) {
   console.info(`[onboarding] ${event}`, details)
 }
 
+function logContextRoomTabsDiagnostic(
+  event: string,
+  detail: Record<string, unknown> = {},
+  level: 'info' | 'warn' = 'info',
+): void {
+  try {
+    window.nxcore?.diagnostics?.log({
+      module: 'context-room-tabs',
+      level,
+      event: { ...detail, event, time: new Date().toISOString() },
+    })
+  } catch {
+    // 诊断失败不影响标签同步本身。
+  }
+}
+
 function detectMacDesktop(): boolean {
   const isElectron = Boolean(window.nxcore) || navigator.userAgent.includes('Electron')
   const isMac =
@@ -558,13 +574,30 @@ export function App() {
   }, [openOfficeTab])
 
   const syncContextRoomTabs = useCallback((rooms: ContextRoomWorkspaceTab[]) => {
+    // 全空投影是网关启动/快照刷新窗口的瞬时态，不是真实清空——本地删除 Room
+    // 会把它挪进 deletedRooms（届时投影为空但删除记录在场）。保留现有标签与
+    // 活跃 Room，等非空快照再同步；否则重启后首次进 Room 会被瞬时空态弹回首页。
+    if (rooms.length === 0 && contextRoomState.deletedRooms.length === 0) {
+      logContextRoomTabsDiagnostic('sync.ignored_empty_projection', {
+        deletedRoomCount: contextRoomState.deletedRooms.length,
+      })
+      return
+    }
     const roomById = new Map(rooms.map((room) => [room.id, room]))
     setContextRoomTabs((current) => current.flatMap((tab) => {
       const room = roomById.get(tab.id)
       return room ? [room] : []
     }))
-    setActiveContextRoomId((current) => current && roomById.has(current) ? current : null)
-  }, [])
+    setActiveContextRoomId((current) => {
+      if (current && !roomById.has(current)) {
+        logContextRoomTabsDiagnostic('sync.active_room_missing', {
+          activeRoomId: current,
+          projectedRoomCount: rooms.length,
+        }, 'warn')
+      }
+      return current && roomById.has(current) ? current : null
+    })
+  }, [contextRoomState.deletedRooms.length])
 
   const showContextRoomHome = useCallback(() => {
     setActiveContextRoomId(null)
