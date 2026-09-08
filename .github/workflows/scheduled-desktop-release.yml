@@ -9,9 +9,10 @@ on:
       channel:
         description: Release channel
         required: true
-        default: nightly
+        default: auto
         type: choice
         options:
+          - auto
           - nightly
           - alpha
 
@@ -48,6 +49,8 @@ jobs:
       NXCORE_BROWSER_EXTENSION_ID: ${{ vars.NXCORE_BROWSER_EXTENSION_ID }}
 
     steps:
+      # auto（每日默认）：扫上个正式 tag 以来的提交，含 feat: 则发正式版（latest），
+      # 否则发 nightly；nightly：强制夜间通道；alpha：从 alpha 分支发正式版。
       - name: Check out release branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -61,7 +64,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_CHANNEL: ${{ inputs.channel || 'nightly' }}
+          RELEASE_CHANNEL: ${{ inputs.channel || 'auto' }}
         run: |
           version="$(node -p "require('./apps/desktop/package.json').version")"
           [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
@@ -69,7 +72,33 @@ jobs:
             exit 1
           }
           git fetch origin 'refs/tags/desktop-v*:refs/tags/desktop-v*'
-          if [[ "$RELEASE_CHANNEL" == "alpha" ]]; then
+
+          # --- Determine channel (auto scans commits since last stable tag) ---
+          channel="$RELEASE_CHANNEL"
+          feat_commits=""
+          if [[ "$channel" == "auto" ]]; then
+            last_stable="$(git tag --list 'desktop-v[0-9]*.[0-9]*.[0-9]*' --sort=-version:refname | grep -Ev 'nightly|alpha|beta|rc' | head -n 1)"
+            if [[ -z "$last_stable" ]]; then
+              range="HEAD"
+            else
+              range="$last_stable..HEAD"
+            fi
+            # 仅匹配提交标题（%s）的 conventional feat 前缀，避免正文行误命中。
+            feat_commits="$(git log --no-merges --format='%h %s' "$range" | grep -Ei '^[0-9a-f]{7,40} feat(\([^)]*\))?!?:' || true)"
+
+            stable_tag="desktop-v$version"
+            if [[ -n "$feat_commits" ]] && ! git show-ref --verify --quiet "refs/tags/$stable_tag"; then
+              channel="stable"
+              echo "::notice::feat commits detected since ${last_stable:-beginning}: publishing stable $stable_tag"
+              echo "$feat_commits" | head -n 5 | sed 's/^/  /'
+            elif [[ -n "$feat_commits" ]] && git show-ref --verify --quiet "refs/tags/$stable_tag"; then
+              echo "::warning::feat commits detected but $stable_tag already exists; falling back to nightly. Bump the desktop version to publish a stable release."
+              echo "feat-pending=true" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
+          # --- Resolve tag per channel ---
+          if [[ "$channel" == "stable" || "$channel" == "alpha" ]]; then
             tag="desktop-v$version"
             if git show-ref --verify --quiet "refs/tags/$tag"; then
               test "$(git rev-list -n 1 "$tag")" = "$(git rev-parse HEAD)" || {
@@ -191,6 +220,25 @@ jobs:
           分支：${{ inputs.channel == 'alpha' && 'alpha' || 'dev' }}
           提交：$(git log -1 --pretty='%h %s (%an)')
           日志：https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          payload="$(jq -n --arg text "$message" '{msg_type:"text",content:{text:$text}}')"
+          curl --fail --silent --show-error \
+            -H 'Content-Type: application/json' \
+            --data "$payload" \
+            "$FEISHU_WEBHOOK_URL" >/dev/null
+
+      - name: Notify Feishu when stable falls back to nightly
+        if: steps.candidate.outputs.pending == 'true' && steps.candidate.outputs.feat-pending == 'true'
+        shell: bash
+        env:
+          FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_RELEASE_WEBHOOK }}
+        run: |
+          if [[ -z "$FEISHU_WEBHOOK_URL" ]]; then
+            echo "::warning::FEISHU_RELEASE_WEBHOOK is not configured; skipping notification."
+            exit 0
+          fi
+          version="$(node -p "require('./apps/desktop/package.json').version")"
+          message="EverRoom 检出 feat 提交但版本 $version 已发布正式版，本次降级为 nightly。
+          请在合入 feat 后顺手升级 apps/desktop/package.json 版本号，次日将自动补发正式版。"
           payload="$(jq -n --arg text "$message" '{msg_type:"text",content:{text:$text}}')"
           curl --fail --silent --show-error \
             -H 'Content-Type: application/json' \
