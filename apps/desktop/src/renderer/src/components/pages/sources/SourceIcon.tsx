@@ -44,11 +44,14 @@ const SOURCE_LOGOS: Record<BrandedSourceIconKind, string> = {
   feishu: feishuLogo,
 }
 
+/** 素材自带底板（深色圆角块/白色圆/PNG 图）——可 100% 填满容器；其余是裸标,需留边防顶角。 */
+const TILE_ICON_KINDS = new Set<SourceIconKind>(['github', 'notion', 'claude', 'codex', 'openclaw', 'feishu'])
+
 export function SourceIcon({ kind, className = '' }: { kind: SourceIconKind; className?: string }) {
   const classes = `source-icon ${className}`.trim()
   if (kind === 'local-folder') return <FolderOpen className={classes} aria-hidden="true" strokeWidth={1.8} />
   if (kind === 'web-page') return <Globe className={classes} aria-hidden="true" strokeWidth={1.8} />
   if (kind === 'ics-calendar') return <CalendarDays className={classes} aria-hidden="true" strokeWidth={1.8} />
 
-  return <img className={classes} src={SOURCE_LOGOS[kind]} alt="" aria-hidden="true" />
+  return <img className={classes} data-fill={TILE_ICON_KINDS.has(kind) ? 'tile' : 'mark'} src={SOURCE_LOGOS[kind]} alt="" aria-hidden="true" />
 }

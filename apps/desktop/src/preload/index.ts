@@ -218,6 +218,7 @@ const api: NxcoreDesktopApi = {
     oauthConfigs: () => invokeQuietly<string[] | null>('nango-connector:oauth-configs'),
     startAuthorization: (provider) => invoke('nango-connector:start-authorization', provider),
     authorizationStatus: (id) => invoke('nango-connector:authorization-status', id),
+    remoteAccount: (provider) => invoke('nango-connector:remote-account', provider),
     registerConnection: (input) => invoke('nango-connector:register-connection', input),
     createWebcalSubscription: (url) => invoke('nango-connector:create-webcal-subscription', url),
     disableConnection: (id) => invoke('nango-connector:disable-connection', id),

@@ -31,19 +31,39 @@ export const CONNECTION_STATUS_TONES: Record<ConnectorProviderSummary['category'
   error: 'danger',
 }
 
-/** provider 注册名 → 品牌图标（未知 provider 回退通用网页图标）。 */
-const PROVIDER_ICON_KINDS = new Set(['gmail', 'outlook', 'google-calendar', 'google-docs', 'notion', 'feishu', 'ics-calendar'])
+/** provider 注册名 → 品牌图标。key 为归一化形式（小写、去 -_/ 等分隔符）：
+ *  网关注册表用连字符（google-calendar），oo 同步链落库的 service 用无分隔符
+ *  （googlecalendar），两套命名并存（详见 connector 命名分裂）。 */
+const PROVIDER_ICON_KINDS: Record<string, SourceIconKind> = {
+  gmail: 'gmail',
+  outlook: 'outlook',
+  googlecalendar: 'google-calendar',
+  googledocs: 'google-docs',
+  googledrive: 'google-docs',
+  notion: 'notion',
+  feishu: 'feishu',
+  github: 'github',
+  claude: 'claude',
+  codex: 'codex',
+  openclaw: 'openclaw',
+  icscalendar: 'ics-calendar',
+}
+function normalizeProvider(provider: string): string {
+  return provider.toLowerCase().replace(/[-_.\s/]+/g, '')
+}
 export function providerIconKind(provider: string): SourceIconKind {
-  return (PROVIDER_ICON_KINDS.has(provider) ? provider : 'web-page') as SourceIconKind
+  return PROVIDER_ICON_KINDS[normalizeProvider(provider)] ?? 'web-page'
 }
 
 export function providerLabel(provider: string): string {
-  switch (provider) {
+  switch (normalizeProvider(provider)) {
     case 'gmail': return 'Gmail'
     case 'outlook': return 'Outlook'
-    case 'google-docs': return 'Google Docs'
-    case 'google-calendar': return 'Google Calendar'
+    case 'googledocs': return 'Google Docs'
+    case 'googlecalendar': return 'Google Calendar'
+    case 'googledrive': return 'Google Drive'
     case 'notion': return 'Notion'
+    case 'feishu': return 'Feishu'
     default: return provider
   }
 }

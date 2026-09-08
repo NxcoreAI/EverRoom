@@ -1235,6 +1235,12 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       if (config.knowledge?.roomWikisEnabled) knowledgeService.requestFileCleanup(fileId);
     },
     deleteMemoryDocuments: (fileId) => memoryService.deleteDocumentsByCallerRef(fileId),
+    // 整源清理级联（桌面「清空数据源」→ DELETE /v1/local-file-references）：
+    // 记忆一次批量扫描；台账软删 + knowledge 批量清理由 ingest 统一收口。
+    deleteMemoryDocumentsBatch: (fileEntryIds) => memoryService.deleteDocumentsByCallerRefs({ refs: fileEntryIds }),
+    cleanupIngestSources: (fileEntryIds) => {
+      ingestService.cleanupSources(fileEntryIds.map((id) => ({ sourceKind: "file" as const, sourceId: id })));
+    },
   }, fileClusteringService));
   await app.register(clipperRoutes(clipperService));
   await app.register(documentUnderstandingRoutes(documentUnderstandingService));

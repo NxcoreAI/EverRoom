@@ -58,7 +58,25 @@ const base = {
     { id: 'r1', scopeId: 'sc-1', mode: 'incremental', status: 'completed', processed: 3200, failed: 0, error: null, startedAt: '2026-09-05T08:30:00.000Z', finishedAt: '2026-09-05T08:33:00.000Z' },
     { id: 'r7', scopeId: 'sc-1', mode: 'incremental', status: 'running', processed: 120, failed: 0, error: null, startedAt: '2026-09-05T09:00:00.000Z', finishedAt: null },
   ] }), providers: async () => null, oauthConfigs: async () => null, recordTotals: async () => ({ mail: 3210, calendar: 0 }) },
-  ingest: { listEvents: async (q) => ({ items: Array.from({ length: Math.min(q.limit, 8) }, (_, i) => ({ id: 'e' + i, sourceKind: 'file', title: '事件 ' + i, filterStatus: 'passed', createdAt: '2026-09-05T0' + i + ':00:00.000Z', updatedAt: '2026-09-05T0' + i + ':00:00.000Z' })), total: 8 }) },
+  ingest: { listEvents: async (q) => {
+    const limit = q?.limit ?? 50
+    const offset = q?.offset ?? 0
+    const all = Array.from({ length: 137 }, (_, i) => {
+      const kind = i % 3
+      const at = new Date(Date.now() - i * 3600_000).toISOString()
+      return {
+        id: 'e' + i,
+        sourceKind: kind === 0 ? 'mail' : kind === 1 ? 'file' : 'calendar-event',
+        provider: kind === 0 ? 'gmail' : kind === 1 ? null : 'googlecalendar',
+        sourceLabel: kind === 0 ? 'work@gmail.com' : kind === 1 ? '本地文件夹' : '个人日历',
+        title: kind === 0 ? '周会纪要：连接器统一排期 ' + i : kind === 1 ? '产品笔记 ' + i + '.md' : '与设计师同步 ' + i,
+        filterStatus: i % 7 === 0 ? 'filtered' : i % 5 === 0 ? 'pending' : 'passed',
+        createdAt: at,
+        updatedAt: at,
+      }
+    })
+    return { items: all.slice(offset, offset + limit), total: all.length }
+  } },
   migrations: { sources: async () => [], runs: async () => [], onProgress: () => () => {} },
   obsidian: { list: async () => [], discover: async () => [], onChanged: () => () => {}, onDiscoveryChanged: () => () => {} },
 }

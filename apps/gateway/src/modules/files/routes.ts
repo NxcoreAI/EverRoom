@@ -545,6 +545,26 @@ export function filesRoutes(
     );
 
     app.delete(
+      "/v1/local-file-references",
+      {
+        schema: {
+          tags: ["files"],
+          querystring: Type.Object({ localSourceId: Type.String({ minLength: 1 }) }),
+          response: {
+            200: Type.Object({
+              entries: Type.Integer(),
+              deletedMemoryDocuments: Type.Array(Type.String()),
+            }),
+          },
+        },
+      },
+      async (request) => {
+        const result = await service.purgeLocalSource(request.query.localSourceId, deletionHooks);
+        return { entries: result.entries, deletedMemoryDocuments: result.memoryDeleted };
+      },
+    );
+
+    app.delete(
       "/v1/files/:id",
       {
         schema: {

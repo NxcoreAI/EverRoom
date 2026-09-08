@@ -602,6 +602,12 @@ export class FilesGatewayBridge {
     })
   }
 
+  /** 整源级联清理：该源在理解引擎的全部文件条目 + 记忆/台账/Room 归属。 */
+  purgeLocalSource(localSourceId: string): Promise<{ entries: number; deletedMemoryDocuments: string[] }> {
+    const query = new URLSearchParams({ localSourceId })
+    return this.request(`/v1/local-file-references?${query.toString()}`, { method: 'DELETE' })
+  }
+
   async projectVaultNote(input: {
     filePath: string
     vaultId: string

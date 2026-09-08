@@ -96,9 +96,12 @@ export function aiRelayRoutes(options: {
       const method = request.method.toUpperCase();
       const hasBody = method !== "GET" && method !== "HEAD";
       const controller = new AbortController();
-      // 客户端断开时中断上游请求；正常完成后触发是空操作。
-      request.raw.on("close", () => {
-        if (request.raw.aborted || request.raw.destroyed) controller.abort(new Error("client aborted"));
+      // 客户端断开时中断上游请求。不能监听 request.raw 的 close/destroyed：
+      // fastify 5 消费完请求体即销毁该流（destroyed=true 且立即 close），每个
+      // 正常请求都会在建连前被误判为断开并 abort 上游 fetch（表现为无限挂起）。
+      // 改看响应流：响应未写完（writableEnded=false）就 close 才是真断开。
+      reply.raw.on("close", () => {
+        if (!reply.raw.writableEnded) controller.abort(new Error("client aborted"));
       });
       try {
         const upstream = await fetch(target, {

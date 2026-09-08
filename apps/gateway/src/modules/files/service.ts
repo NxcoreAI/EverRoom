@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { readFile, rm, stat } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { Readable } from "node:stream";
-import { and, desc, eq, isNull, ne } from "drizzle-orm";
+import { and, desc, eq, isNull, ne, or } from "drizzle-orm";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
 import {
   fileBlobs,
@@ -137,6 +137,10 @@ export interface FileDeletionHooks {
   requestKnowledgeCleanup?(fileId: string): void;
   /** 记忆链路：按 caller_ref 删 MemoryCore 文档；返回删除的 documentId 列表。 */
   deleteMemoryDocuments?(fileId: string): Promise<string[]>;
+  /** 批量版（整源清理用）：一次扫描删多 caller_ref，避免逐文件全量扫描。 */
+  deleteMemoryDocumentsBatch?(fileEntryIds: string[]): Promise<string[]>;
+  /** 批量台账/knowledge 清理（ingest.cleanupSources 同语义）。 */
+  cleanupIngestSources?(fileEntryIds: string[]): void;
 }
 
 export interface FileDeletionResult {
@@ -586,6 +590,30 @@ export class FilesService {
       .where(eq(fileVersions.fileEntryId, entry.id)).all();
     await Promise.all([...new Set(hashes.map((row) => row.contentHash))].map((hash) => this.collectLocalMirror(hash)));
     return true;
+  }
+
+  /**
+   * 整源级联清理（桌面端「清空数据源数据」）：按 localSourceId（local-folder/
+   * obsidian）或 connector+connectionId（GitHub/GDocs/Notion 导出）锚点收集该源
+   * 全部 catalog 条目，记忆批量删 + 台账/knowledge 批量清 + 逐条目录/对象回收。
+   * 记忆删除失败抛错（整体保留、可重试）；其余步骤幂等。
+   */
+  async purgeLocalSource(localSourceId: string, hooks?: FileDeletionHooks): Promise<{ entries: number; memoryDeleted: string[] }> {
+    const entries = this.db.select({ id: fileEntries.id }).from(fileEntries)
+      .where(and(
+        isNull(fileEntries.deletedAt),
+        or(
+          eq(fileEntries.localSourceId, localSourceId),
+          and(eq(fileEntries.sourceKind, "connector"), eq(fileEntries.connectionId, localSourceId)),
+        ),
+      ))
+      .all();
+    if (entries.length === 0) return { entries: 0, memoryDeleted: [] };
+    const ids = entries.map((row) => row.id);
+    const memoryDeleted = hooks?.deleteMemoryDocumentsBatch ? await hooks.deleteMemoryDocumentsBatch(ids) : [];
+    hooks?.cleanupIngestSources?.(ids);
+    for (const id of ids) await this.deleteCatalogEntry(id);
+    return { entries: ids.length, memoryDeleted };
   }
 
   renameCatalogEntry(fileEntryId: string, displayName: string): CatalogFileDto | null {

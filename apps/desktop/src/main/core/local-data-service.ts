@@ -50,6 +50,12 @@ export interface LocalFileExportTarget {
     sourceModifiedAt: string
   }): Promise<FileImportAcceptedDto>
   markLocalFileMissing?(input: { localSourceId: string; localItemId: string }): Promise<unknown>
+  /**
+   * 整源级联清理（网关侧）：删除该源导出到理解引擎的全部文件条目及其
+   * 记忆/台账/Room 归属。失败抛错以中断本地清理（可重试）——否则本地
+   * 记录先删，网关侧数据将成为无法定位的孤儿。
+   */
+  purgeLocalSource?(localSourceId: string): Promise<unknown>
   importConnectorFile(input: {
     filePath: string
     sourceKey: string
@@ -937,6 +943,9 @@ export class LocalDataService {
   }
 
   private async clearSourceData(id: string): Promise<void> {
+    // 网关级联先行：该源导出的文件条目 + 记忆/台账/Room 归属整体清理。
+    // 失败抛错中断本地清理（disconnect 侧已兜底通知"清理失败，请重试"）。
+    await this.fileExports?.purgeLocalSource?.(id)
     await this.highRiskImports?.discardAutoSource(id)
     const objectHashes = this.database.prepare(`
       SELECT DISTINCT source_versions.object_hash AS object_hash
