@@ -100,6 +100,15 @@ function rateLimitNotice(value: unknown): DesktopRequestError | null {
 }
 
 async function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
+  return invokeWithRecovery<T>(channel, args, 0)
+}
+
+/**
+ * 网关瞬断（进程崩溃/重启）自愈：网络类失败先让主进程拉起/恢复 gateway 连接
+ * （in-flight 去重，风暴时只触发一次恢复），成功后重试原请求一次；仍失败才走
+ * 原有错误弹窗——把"永久弹窗等用户手动重启"变成"短暂等待后自愈"（issue #179）。
+ */
+async function invokeWithRecovery<T>(channel: string, args: unknown[], attempt: number): Promise<T> {
   try {
     const result = await ipcRenderer.invoke(channel, ...args) as T
     const notice = rateLimitNotice(result)
@@ -109,6 +118,14 @@ async function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
     throw new Error(notice.message)
   } catch (error) {
     if (error instanceof Error && isRateLimitMessage(error.message)) throw error
+    if (attempt === 0 && networkErrorDetail(channel, error)) {
+      try {
+        const recovered = await ipcRenderer.invoke('gateway:recover') as { ok: boolean } | undefined
+        if (recovered?.ok) return await invokeWithRecovery<T>(channel, args, 1)
+      } catch {
+        // 恢复通道自身失败：走原始错误路径。
+      }
+    }
     const detail = requestError(channel, error)
     reportRequestError(detail)
     throw new Error(detail.message)
