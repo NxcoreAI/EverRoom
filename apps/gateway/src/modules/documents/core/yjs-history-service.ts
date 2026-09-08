@@ -184,7 +184,14 @@ function comparableBlockNode(node: TiptapJsonContent): TiptapJsonContent {
     if (Object.keys(attrs).length) normalized.attrs = attrs;
     else delete normalized.attrs;
   }
-  if (node.content) normalized.content = node.content.map(comparableBlockNode);
+  if (node.content) {
+    // blockIndexMark（块索引/记忆建联锚点）是零宽内联元数据，由 index-backfill
+    // 异步补挂：同一文本的块有无此标记不构成语义差异。导入候选与当前文档一侧
+    // 被回溯补挂另一侧没有时，历史/候选 diff 不得把整块判为已修改。
+    const content = node.content.filter((child) => child.type !== "blockIndexMark");
+    if (content.length) normalized.content = content.map(comparableBlockNode);
+    else delete normalized.content;
+  }
   return normalized;
 }
 

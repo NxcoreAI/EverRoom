@@ -107,7 +107,7 @@ async function waitBatch(batch: DocumentBatchImportService, batchId: string) {
 describe('document-import list', () => {
   it('feishu：云空间目录递归 + docx 过滤 + wiki 空间树（obj_token 为 remoteDocumentId）', async () => {
     const actions: FakeAction = {
-      ...feishuReadActions(['tokA', 'tokB', 'tokW1', 'tokW2']),
+      ...feishuReadActions(['tokA', 'tokB', 'tokW1aaaaaaaaaa', 'tokW2']),
       'feishu.list_drive_files': (input: Record<string, unknown>) => {
         if (!input.folderToken) {
           return {
@@ -131,7 +131,7 @@ describe('document-import list', () => {
         }
         return {
           items: [
-            { node_token: 'n1', obj_token: 'tokW1', obj_type: 'docx', title: '顶层节点', has_child: true },
+            { node_token: 'n1', obj_token: 'tokW1aaaaaaaaaa', obj_type: 'docx', title: '顶层节点', has_child: true },
             { node_token: 'n3', obj_token: 'tokN1', obj_type: 'sheet', title: '表格节点不入列', has_child: false },
           ],
           hasMore: false,
@@ -141,11 +141,45 @@ describe('document-import list', () => {
     const { imports } = makeServices(fakeRunner(actions))
     const response = await imports.listAllDocuments('feishu')
     const byId = new Map(response.items.map((item) => [item.remoteDocumentId, item]))
-    expect([...byId.keys()].sort()).toEqual(['tokA', 'tokB', 'tokW1', 'tokW2'])
+    expect([...byId.keys()].sort()).toEqual(['tokA', 'tokB', 'tokW1aaaaaaaaaa', 'tokW2'])
     expect(byId.get('tokA')).toMatchObject({ origin: 'drive', ownerName: '张三', sourceUrl: 'https://f.cn/docx/tokA' })
-    expect(byId.get('tokW1')).toMatchObject({ origin: 'wiki', wikiSpaceName: '知识库一' })
+    expect(byId.get('tokW1aaaaaaaaaa')).toMatchObject({ origin: 'wiki', wikiSpaceName: '知识库一' })
     expect(byId.get('tokW2')).toMatchObject({ origin: 'wiki', wikiSpaceName: '知识库一' })
     expect(response.truncated).toBe(false)
+  })
+
+  it('云空间列举 403 时降级：搜索兜底列文档 + wiki 树回填归属 + wiki 照常', async () => {
+    const seenSearchInputs: Array<Record<string, unknown>> = []
+    const actions: FakeAction = {
+      'feishu.list_drive_files': () => {
+        throw new ImportConnectorError('authentication_required', 'Feishu 99991679: drive:drive:readonly required')
+      },
+      'feishu.search_documents': (input: Record<string, unknown>) => {
+        seenSearchInputs.push(input)
+        if (input.pageToken === 'st-2') return { results: [], hasMore: false }
+        return {
+          results: [
+            { title: '云文档甲', type: 'docx', url: 'https://f.cn/docx/tokS1aaaaaaaaaa', owner_name: '张三' },
+            { title: '知识库文档（搜索兜底列出）', type: 'docx', url: 'https://f.cn/docx/tokW1aaaaaaaaaa' },
+          ],
+          total: 2,
+          hasMore: true,
+          pageToken: 'st-2',
+        }
+      },
+      'feishu.list_wiki_spaces': { items: [{ space_id: 'sp1', name: '知识库一' }], hasMore: false },
+      'feishu.list_wiki_nodes': { items: [{ node_token: 'n1', obj_token: 'tokW1aaaaaaaaaa', obj_type: 'docx', title: '知识库文档', has_child: false }], hasMore: false },
+    }
+    const { imports } = makeServices(fakeRunner(actions))
+    const response = await imports.listAllDocuments('feishu')
+    const byId = new Map(response.items.map((item) => [item.remoteDocumentId, item]))
+    // 搜索兜底列出云文档 + wiki 文档；wiki 树把后者回填为知识库归属。
+    expect(byId.get('tokS1aaaaaaaaaa')).toMatchObject({ origin: 'drive', ownerName: '张三' })
+    expect(byId.get('tokW1aaaaaaaaaa')).toMatchObject({ origin: 'wiki', wikiSpaceName: '知识库一', title: '知识库文档（搜索兜底列出）' })
+    // 分页翻页正常。
+    expect(seenSearchInputs).toHaveLength(2)
+    expect(seenSearchInputs[1]).toMatchObject({ pageToken: 'st-2', query: '' })
+    expect(response.warnings.some((warning) => warning.code === 'feishu_drive_listing_degraded')).toBe(true)
   })
 
   it('feishu：drive 与 wiki 同 token 去重（drive 优先）', async () => {

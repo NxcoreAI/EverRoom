@@ -1,13 +1,15 @@
 import type {
   AgentDocumentExportRunView,
+  DocumentImportHistoryEntry,
   DocumentVersionSummary,
   ExternalDocumentProvider,
   RoomDocument,
 } from '@nxcore/agent-contract'
-import { ExternalLink, Loader2, Search, X } from 'lucide-react'
+import { ExternalLink, Loader2, Search, X , Plus, Replace} from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocale } from '../../../../../i18n/LocaleContext'
 import { showToast } from '../../../../../state/toast'
+import { SourceIcon } from '../../../../pages/sources/SourceIcon'
 import './ExternalDocumentDialogs.css'
 
 /**
@@ -37,10 +39,14 @@ export function ExternalExportDialog({
   const { t } = useLocale()
   const [versions, setVersions] = useState<DocumentVersionSummary[]>([])
   const [version, setVersion] = useState<number>(currentVersion)
-  const [mode, setMode] = useState<'create' | 'update' | 'export_file'>('create')
+  /** overwrite_source 是 update 的预设形态：目标固定为本文档的导入来源。 */
+  const [mode, setMode] = useState<'create' | 'update' | 'export_file' | 'overwrite_source'>('create')
   const [writeScope, setWriteScope] = useState<'append' | 'replace_document'>('append')
   const [targetUrl, setTargetUrl] = useState('')
+  /** 已选目标的展示标题（搜索选中时记录；手贴 URL 时为空，卡片回退显示链接）。 */
+  const [targetTitle, setTargetTitle] = useState('')
   const [parentUrl, setParentUrl] = useState('')
+  const [importSource, setImportSource] = useState<DocumentImportHistoryEntry | null>(null)
   const [run, setRun] = useState<AgentDocumentExportRunView | null>(null)
   const [busy, setBusy] = useState(false)
   const [targetQuery, setTargetQuery] = useState('')
@@ -104,10 +110,25 @@ export function ExternalExportDialog({
     setWriteScope('append')
     setTargetUrl('')
     setParentUrl('')
+    setImportSource(null)
     void window.nxcore?.documents.listVersions(documentId, { limit: 30 })
       .then((items) => setVersions(items))
       .catch(() => setVersions([]))
-  }, [open, currentVersion, documentId])
+    // 导入来源绑定 = 最近一次已应用的导入（primary 必有 importedVersion，候选
+    // 应用后才有）。未应用的候选没有改写文档内容，不构成覆盖目标。
+    void external?.importHistory(roomId, documentId)
+      .then((result) => {
+        if (!result) return
+        const applied = result.entries.find((entry) => entry.importedVersion !== null && entry.provider === provider) ?? null
+        setImportSource(applied)
+        if (applied) {
+          setMode((current) => (current === 'create' ? 'overwrite_source' : current))
+          // 覆盖源语义默认替换写入：自动选中也要落这个默认（radio 手选分支已带）。
+          setWriteScope((current) => (current === 'append' ? 'replace_document' : current))
+        }
+      })
+      .catch(() => setImportSource(null))
+  }, [open, currentVersion, documentId, roomId, provider, external])
 
   const confirmation = run?.confirmation ?? null
   const challenge = run?.challenge ?? null
@@ -123,10 +144,16 @@ export function ExternalExportDialog({
           documentId,
           version,
           provider,
-          mode,
-          target: mode === 'update'
-            ? { remoteUrl: targetUrl.trim() || undefined, writeScope }
-            : { parentUrl: parentUrl.trim() || undefined },
+          mode: mode === 'overwrite_source' ? 'update' : mode,
+          target: mode === 'overwrite_source' && importSource
+            ? {
+                remoteDocumentId: importSource.remoteDocumentId,
+                ...(importSource.sourceUrl ? { remoteUrl: importSource.sourceUrl } : {}),
+                writeScope,
+              }
+            : mode === 'update'
+              ? { remoteUrl: targetUrl.trim() || undefined, writeScope }
+              : { parentUrl: parentUrl.trim() || undefined },
         })
       setRun(next)
       prevStatusRef.current = next.status
@@ -277,6 +304,20 @@ export function ExternalExportDialog({
                 </select>
               </label>
               <div className="context-room-external-export-mode">
+                {importSource && (
+                  <label className="context-room-external-export-mode-option">
+                    <input
+                      type="radio"
+                      name={`export-mode-${provider}`}
+                      checked={mode === 'overwrite_source'}
+                      onChange={() => {
+                        setMode('overwrite_source')
+                        setWriteScope('replace_document')
+                      }}
+                    />
+                    <span>{t('contextRoom:externalExportDialog.modeOverwriteSource')}</span>
+                  </label>
+                )}
                 <label className="context-room-external-export-mode-option">
                   <input
                     type="radio"
@@ -308,58 +349,148 @@ export function ExternalExportDialog({
                 )}
               </div>
               {mode === 'update' && (
-                <>
-                  <label>
-                    <span>{t('contextRoom:externalExportDialog.targetUrlLabel')}</span>
-                    <input
-                      type="text"
-                      value={targetUrl}
-                      placeholder={provider === 'feishu'
-                        ? t('contextRoom:externalExportDialog.feishuUrlPlaceholder')
-                        : t('contextRoom:externalExportDialog.notionUrlPlaceholder')}
-                      onChange={(event) => setTargetUrl(event.target.value)}
-                    />
-                  </label>
-                  <div className="context-room-external-export-target-search">
-                    <input
-                      type="text"
-                      value={targetQuery}
-                      placeholder={t('contextRoom:externalExportDialog.targetSearchPlaceholder')}
-                      onChange={(event) => setTargetQuery(event.target.value)}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter') void searchTargets()
-                      }}
-                    />
-                    <button type="button" disabled={searchingTargets || !targetQuery.trim()} onClick={() => void searchTargets()}>
-                      {searchingTargets ? <Loader2 className="spin" aria-hidden="true" /> : <Search aria-hidden="true" />}
-                      {t('contextRoom:externalExportDialog.targetSearch')}
+                <div className="context-room-external-export-target">
+                  {targetUrl.trim() ? (
+                    <div className="context-room-external-export-target-selected">
+                      <span className="context-room-external-export-target-selected-icon"><SourceIcon kind={provider} aria-hidden="true" /></span>
+                      <span className="context-room-external-export-target-selected-copy">
+                        <strong>{targetTitle || targetUrl}</strong>
+                        <a href={targetUrl} target="_blank" rel="noreferrer">
+                          {targetUrl} <ExternalLink size={11} aria-hidden="true" />
+                        </a>
+                      </span>
+                      <button
+                        type="button"
+                        className="context-room-external-export-target-clear"
+                        title={t('contextRoom:externalExportDialog.targetClear')}
+                        aria-label={t('contextRoom:externalExportDialog.targetClear')}
+                        onClick={() => {
+                          setTargetUrl('')
+                          setTargetTitle('')
+                          setTargetResults([])
+                        }}
+                      >
+                        <X size={13} aria-hidden="true" />
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="context-room-external-export-target-search">
+                        <input
+                          type="text"
+                          value={targetQuery}
+                          placeholder={t('contextRoom:externalExportDialog.targetSearchPlaceholder')}
+                          onChange={(event) => setTargetQuery(event.target.value)}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter') void searchTargets()
+                          }}
+                        />
+                        <button type="button" disabled={searchingTargets || !targetQuery.trim()} onClick={() => void searchTargets()}>
+                          {searchingTargets ? <Loader2 className="spin" aria-hidden="true" /> : <Search aria-hidden="true" />}
+                          {t('contextRoom:externalExportDialog.targetSearch')}
+                        </button>
+                      </div>
+                      {targetResults.length > 0 ? (
+                        <ul className="context-room-external-export-target-results">
+                          {targetResults.map((item) => (
+                            <li key={item.remoteId}>
+                              <button type="button" onClick={() => {
+                                setTargetUrl(item.url)
+                                setTargetTitle(item.title)
+                                setTargetResults([])
+                                setTargetQuery('')
+                              }}>
+                                <SourceIcon kind={provider} aria-hidden="true" />
+                                <span className="context-room-external-export-target-result-copy">
+                                  <strong>{item.title}</strong>
+                                  <span>{item.updatedAt ?? item.ownerName ?? item.remoteId}</span>
+                                </span>
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <label className="context-room-external-export-target-manual">
+                          <span>{t('contextRoom:externalExportDialog.targetManualHint')}</span>
+                          <input
+                            type="text"
+                            value={targetUrl}
+                            placeholder={provider === 'feishu'
+                              ? t('contextRoom:externalExportDialog.feishuUrlPlaceholder')
+                              : t('contextRoom:externalExportDialog.notionUrlPlaceholder')}
+                            onChange={(event) => {
+                              setTargetUrl(event.target.value)
+                              setTargetTitle('')
+                            }}
+                          />
+                        </label>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
+              {mode === 'overwrite_source' && importSource && (
+                <div className="context-room-external-export-confirmation">
+                  <p>
+                    {t('contextRoom:externalExportDialog.sourceDocLabel')}:{' '}
+                    {importSource.sourceUrl ? (
+                      <a href={importSource.sourceUrl} target="_blank" rel="noreferrer">
+                        {importSource.displayTitle} <ExternalLink size={12} aria-hidden="true" />
+                      </a>
+                    ) : (
+                      importSource.displayTitle
+                    )}
+                    {importSource.importedVersion !== null && (
+                      <span className="context-room-external-export-hint">
+                        {t('contextRoom:externalExportDialog.sourceAppliedAsVersion', { version: String(importSource.importedVersion) })}
+                      </span>
+                    )}
+                  </p>
+                  <p className="context-room-external-export-hint">
+                    {t('contextRoom:externalExportDialog.overwriteSourceHint', { provider: providerLabel })}
+                  </p>
+                </div>
+              )}
+              {(mode === 'update' || mode === 'overwrite_source') && (
+                <div className="context-room-external-export-scope">
+                  <span className="context-room-external-export-scope-label">
+                    {t('contextRoom:externalExportDialog.writeScopeLabel')}
+                  </span>
+                  <div className="context-room-external-export-scope-options">
+                    <button
+                      type="button"
+                      className="context-room-external-export-scope-option"
+                      data-active={String(writeScope === 'append')}
+                      onClick={() => setWriteScope('append')}
+                    >
+                      <Plus aria-hidden="true" />
+                      <span>
+                        <strong>{t('contextRoom:externalExportDialog.writeScopeAppend')}</strong>
+                        <small>{t('contextRoom:externalExportDialog.writeScopeAppendHint')}</small>
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      className="context-room-external-export-scope-option"
+                      data-active={String(writeScope === 'replace_document')}
+                      data-danger="true"
+                      onClick={() => setWriteScope('replace_document')}
+                    >
+                      <Replace aria-hidden="true" />
+                      <span>
+                        <strong>{t('contextRoom:externalExportDialog.writeScopeReplace')}</strong>
+                        <small>{t('contextRoom:externalExportDialog.writeScopeReplaceHint')}</small>
+                      </span>
                     </button>
                   </div>
-                  {targetResults.length > 0 && (
-                    <ul className="context-room-external-export-target-results">
-                      {targetResults.map((item) => (
-                        <li key={item.remoteId}>
-                          <button type="button" onClick={() => {
-                            setTargetUrl(item.url)
-                            setTargetResults([])
-                          }}>
-                            <strong>{item.title}</strong>
-                            <span>{item.updatedAt ?? item.ownerName ?? item.remoteId}</span>
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
+                  {writeScope === 'replace_document' && (
+                    <p className="context-room-external-export-scope-warning">
+                      {t('contextRoom:externalExportDialog.writeScopeReplaceWarning')}
+                    </p>
                   )}
-                  <label>
-                    <span>{t('contextRoom:externalExportDialog.writeScopeLabel')}</span>
-                    <select value={writeScope} onChange={(event) => setWriteScope(event.target.value as 'append' | 'replace_document')}>
-                      <option value="append">{t('contextRoom:externalExportDialog.writeScopeAppend')}</option>
-                      <option value="replace_document">{t('contextRoom:externalExportDialog.writeScopeReplace')}</option>
-                    </select>
-                  </label>
-                </>
+                </div>
               )}
-              {mode !== 'update' && (
+              {mode !== 'update' && mode !== 'overwrite_source' && (
                 <label>
                   <span>{t('contextRoom:externalExportDialog.parentUrlLabel')}</span>
                   <input
@@ -380,7 +511,7 @@ export function ExternalExportDialog({
                 <button
                   type="button"
                   className="primary"
-                  disabled={busy || (mode === 'update' && !targetUrl.trim())}
+                  disabled={busy || (mode === 'update' && !targetUrl.trim()) || (mode === 'overwrite_source' && !importSource)}
                   onClick={() => void startExport()}
                 >
                   {busy && <Loader2 className="spin" aria-hidden="true" />}

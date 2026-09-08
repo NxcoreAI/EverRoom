@@ -1,4 +1,4 @@
-import { Bot, FileDown, LoaderCircle, RefreshCw, Search, X } from 'lucide-react'
+import { ArrowUpRight, BookOpen, Bot, Boxes, FileDown, FileText, Files, FolderOpen, Info, LoaderCircle, PlugZap, RefreshCw, Search, TriangleAlert, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import type {
@@ -8,6 +8,7 @@ import type {
 } from '@nxcore/agent-contract'
 import type { KnowledgeRoomDto } from '../../../../shared/knowledge'
 import type { OpenConnectorConnectionSummary } from '../../../../shared/open-connector'
+import { SourceIcon } from './sources/SourceIcon'
 import { showToast } from '../../state/toast'
 import { useLocale, type AppLocale, type Translate } from '@/i18n/LocaleContext'
 // 面板样式随组件自带：数据源页抽屉等场景不会加载 ConnectorSyncPage 模块。
@@ -289,8 +290,60 @@ export function ConnectorDocumentImportPanel({
       || room.aliases.some((alias) => alias.toLowerCase().includes(keyword)))
   }, [rooms, roomQuery])
 
+  const originIcon = (origin: ExternalDocumentListItem['origin']) =>
+    origin === 'wiki' ? <BookOpen aria-hidden="true" /> : origin === 'drive' ? <FolderOpen aria-hidden="true" /> : <FileText aria-hidden="true" />
+
+  const renderRow = (item: ExternalDocumentListItem) => {
+    const status = batchStatusById.get(item.remoteDocumentId)
+    const originLabel = t({
+      drive: 'surface:connectorSync.originDrive',
+      wiki: 'surface:connectorSync.originWiki',
+      page: 'surface:connectorSync.originPage',
+    }[item.origin])
+    const meta = [originLabel, item.ownerName, item.updatedAt ? formatTime(item.updatedAt, locale) : null].filter(Boolean).join(' · ')
+    return (
+      <label key={item.remoteDocumentId} className="connector-doc-row" data-selected={String(selected.has(item.remoteDocumentId))}>
+        <input
+          type="checkbox"
+          checked={selected.has(item.remoteDocumentId)}
+          onChange={() => toggleItem(item.remoteDocumentId)}
+          disabled={batchRunning}
+          aria-label={item.title}
+        />
+        <span className="connector-doc-origin-icon" data-origin={item.origin}>{originIcon(item.origin)}</span>
+        <span className="connector-doc-main">
+          <span className="connector-doc-title">
+            <strong>{item.title}</strong>
+            {item.wikiSpaceName ? <small>{item.wikiSpaceName}</small> : null}
+          </span>
+          <span className="connector-doc-meta">{meta}</span>
+        </span>
+        <span className="connector-doc-state">
+          {status && status.status !== 'pending' ? <em data-status={status.status}>{batchItemStatusKey(status.status, t)}</em> : null}
+          {status && status.status === 'pending' && batchRunning ? <em data-status="queued">{t('surface:connectorSync.batchItemPending')}</em> : null}
+          {item.imported ? <em className="connector-doc-imported">{t('surface:connectorSync.importedBadge')}</em> : null}
+        </span>
+        {item.sourceUrl ? (
+          <a
+            className="connector-doc-link"
+            href={item.sourceUrl}
+            target="_blank"
+            rel="noreferrer"
+            title={t('surface:connectorSync.openSource')}
+            aria-label={`${item.title} · ${t('surface:connectorSync.openSource')}`}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <ArrowUpRight aria-hidden="true" />
+          </a>
+        ) : null}
+      </label>
+    )
+  }
+
+  const batchPercent = batch && batch.total > 0 ? Math.round((batch.processed / batch.total) * 100) : 0
+
   return (
-    <section className="connector-sync-section">
+    <section className="connector-sync-section" data-embedded={String(embedded)}>
       {embedded ? null : (
         <div className="connector-section-heading">
           <div>
@@ -302,7 +355,8 @@ export function ConnectorDocumentImportPanel({
 
       <div className="connector-doc-toolbar">
         {lockedProvider ? (
-          <span className="connector-doc-locked-provider">
+          <span className="connector-doc-provider-chip">
+            <SourceIcon kind={lockedProvider} />
             {t(lockedProvider === 'feishu' ? 'surface:connectorSync.providerFeishu' : 'surface:connectorSync.providerNotion')}
           </span>
         ) : (
@@ -324,26 +378,25 @@ export function ConnectorDocumentImportPanel({
             ))}
           </select>
         ) : null}
-        <button type="button" className="secondary-button" disabled={listLoading || batchRunning} onClick={() => void loadDocuments()}>
+        <button
+          type="button"
+          className="connector-icon-btn"
+          disabled={listLoading || batchRunning}
+          title={t(items.length > 0 ? 'surface:connectorSync.reloadDocuments' : 'surface:connectorSync.loadDocuments')}
+          aria-label={t(items.length > 0 ? 'surface:connectorSync.reloadDocuments' : 'surface:connectorSync.loadDocuments')}
+          onClick={() => void loadDocuments()}
+        >
           {listLoading ? <LoaderCircle className="spin" /> : <RefreshCw />}
-          {t(listLoading ? 'surface:connectorSync.loadingDocuments' : items.length > 0 ? 'surface:connectorSync.reloadDocuments' : 'surface:connectorSync.loadDocuments')}
         </button>
       </div>
 
-      {fetchedAt && items.length > 0 ? (
-        <p className="connector-doc-hint connector-doc-fetched-at">
-          {t('surface:connectorSync.listFetchedAt', { time: new Date(fetchedAt).toLocaleString(locale) })}
-        </p>
-      ) : null}
-
-      {provider === 'notion' ? (
-        <p className="connector-doc-hint">{t('surface:connectorSync.notionScopeHint')}</p>
-      ) : null}
       {connectionMissing ? (
         <div className="connector-doc-connect-hint">
+          <PlugZap aria-hidden="true" />
           <span>{t(authorizing ? 'surface:connectorSync.authorizingHint' : 'surface:connectorSync.noConnectionHint')}</span>
           <div className="connector-doc-connect-actions">
             <button type="button" className="primary-button" disabled={authorizing} onClick={goAuthorize}>
+              {authorizing ? <LoaderCircle className="spin" /> : null}
               {t('surface:connectorSync.goAuthorize')}
             </button>
             <button type="button" className="secondary-button" onClick={openConsole}>
@@ -352,12 +405,33 @@ export function ConnectorDocumentImportPanel({
           </div>
         </div>
       ) : null}
-      {truncated ? <div className="connector-doc-warning">{t('surface:connectorSync.listTruncated')}</div> : null}
-      {warnings.length > 0 ? <div className="connector-doc-warning">{warnings.join('；')}</div> : null}
-      {listError ? <div className="connector-sync-alert" role="alert"><span>{listError}</span><button type="button" onClick={() => setListError(null)}><X /></button></div> : null}
+      {truncated || warnings.length > 0 ? (
+        <div className="connector-doc-warning">
+          <TriangleAlert aria-hidden="true" />
+          <span>{[truncated ? t('surface:connectorSync.listTruncated') : null, ...warnings].filter(Boolean).join('；')}</span>
+        </div>
+      ) : null}
+      {listError ? (
+        <div className="connector-sync-alert" role="alert">
+          <span>{listError}</span>
+          <button type="button" onClick={() => setListError(null)} aria-label="dismiss"><X /></button>
+        </div>
+      ) : null}
 
       {items.length > 0 ? (
         <>
+          <div className="connector-doc-meta-row">
+            <span>
+              {fetchedAt
+                ? t('surface:connectorSync.docListMeta', { count: String(items.length), time: new Date(fetchedAt).toLocaleString(locale, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) })
+                : t('surface:connectorSync.docListMetaNoTime', { count: String(items.length) })}
+            </span>
+            {provider === 'notion' ? (
+              <span className="connector-doc-info" role="note" title={t('surface:connectorSync.notionScopeHint')}>
+                <Info aria-hidden="true" />
+              </span>
+            ) : null}
+          </div>
           <div className="connector-doc-filter">
             <Search aria-hidden="true" />
             <input
@@ -365,112 +439,84 @@ export function ConnectorDocumentImportPanel({
               onChange={(event) => setFilter(event.target.value)}
               placeholder={t('surface:connectorSync.filterDocuments')}
             />
+            {filter ? (
+              <button
+                type="button"
+                className="connector-doc-filter-clear"
+                onClick={() => setFilter('')}
+                aria-label={t('surface:connectorSync.filterClear')}
+                title={t('surface:connectorSync.filterClear')}
+              >
+                <X aria-hidden="true" />
+              </button>
+            ) : null}
           </div>
-          <div className="connector-doc-list" data-embedded={String(embedded)}>
-            {embedded ? (
-              <label className="connector-doc-row connector-doc-row-head">
-                <input
-                  type="checkbox"
-                  checked={allVisibleSelected}
-                  onChange={toggleVisible}
-                  aria-label={t('surface:connectorSync.selectAllDocuments')}
-                />
-                <span className="connector-doc-title">{t('surface:connectorSync.selectAllDocuments')}</span>
-                <span className="connector-doc-head-count">{t('surface:connectorSync.selectedCount', { count: String(selected.size) })}</span>
-              </label>
+          <div className="connector-doc-list" data-embedded={String(embedded)} data-running={String(batchRunning)}>
+            <label className="connector-doc-row connector-doc-row-head">
+              <input
+                type="checkbox"
+                checked={allVisibleSelected}
+                onChange={toggleVisible}
+                disabled={batchRunning || visibleSelectableIds.length === 0}
+                aria-label={t('surface:connectorSync.selectAllDocuments')}
+              />
+              <span>{t('surface:connectorSync.selectAllDocuments')}</span>
+              <span className="connector-doc-head-count">{t('surface:connectorSync.selectedCount', { count: String(selected.size) })}</span>
+            </label>
+            {visibleItems.length === 0 ? (
+              <div className="connector-doc-list-empty">
+                <span>{t('surface:connectorSync.filterNoMatch', { query: filter.trim() })}</span>
+                <button type="button" onClick={() => setFilter('')}>{t('surface:connectorSync.filterClear')}</button>
+              </div>
             ) : (
-              <label className="connector-doc-row connector-doc-row-head">
-                <input
-                  type="checkbox"
-                  checked={allVisibleSelected}
-                  onChange={toggleVisible}
-                  aria-label={t('surface:connectorSync.selectAllDocuments')}
-                />
-                <span className="connector-doc-title">{t('surface:connectorSync.documentTitle')}</span>
-                <span className="connector-doc-origin">{t('surface:connectorSync.documentOrigin')}</span>
-                <span className="connector-doc-updated">{t('surface:connectorSync.documentUpdated')}</span>
-                <span className="connector-doc-state">{t('surface:connectorSync.documentState')}</span>
-              </label>
+              visibleItems.map(renderRow)
             )}
-            {visibleItems.map((item) => {
-              const status = batchStatusById.get(item.remoteDocumentId)
-              const originLabel = t({
-                drive: 'surface:connectorSync.originDrive',
-                wiki: 'surface:connectorSync.originWiki',
-                page: 'surface:connectorSync.originPage',
-              }[item.origin])
-              if (embedded) {
-                return (
-                  <label key={item.remoteDocumentId} className="connector-doc-row" data-selected={String(selected.has(item.remoteDocumentId))}>
-                    <input
-                      type="checkbox"
-                      checked={selected.has(item.remoteDocumentId)}
-                      onChange={() => toggleItem(item.remoteDocumentId)}
-                      disabled={batchRunning}
-                    />
-                    <span className="connector-doc-main">
-                      <span className="connector-doc-title">
-                        <strong>{item.title}</strong>
-                        {item.wikiSpaceName ? <small>{item.wikiSpaceName}</small> : null}
-                      </span>
-                      <span className="connector-doc-state">
-                        {status && status.status !== 'pending' ? <em data-status={status.status}>{batchItemStatusKey(status.status, t)}</em> : null}
-                        {item.imported ? <em className="connector-doc-imported">{t('surface:connectorSync.importedBadge')}</em> : null}
-                      </span>
-                    </span>
-                    <span className="connector-doc-meta">
-                      {originLabel}{item.updatedAt ? ` · ${formatTime(item.updatedAt, locale)}` : ''}
-                    </span>
-                  </label>
-                )
-              }
-              return (
-                <label key={item.remoteDocumentId} className="connector-doc-row" data-selected={String(selected.has(item.remoteDocumentId))}>
-                  <input
-                    type="checkbox"
-                    checked={selected.has(item.remoteDocumentId)}
-                    onChange={() => toggleItem(item.remoteDocumentId)}
-                    disabled={batchRunning}
-                  />
-                  <span className="connector-doc-title">
-                    <strong>{item.title}</strong>
-                    {item.wikiSpaceName ? <small>{item.wikiSpaceName}</small> : null}
-                  </span>
-                  <span className="connector-doc-origin">{originLabel}</span>
-                  <span className="connector-doc-updated">{formatTime(item.updatedAt, locale)}</span>
-                  <span className="connector-doc-state">
-                    {status && status.status !== 'pending' ? <em data-status={status.status}>{batchItemStatusKey(status.status, t)}</em> : null}
-                    {item.imported ? <em className="connector-doc-imported">{t('surface:connectorSync.importedBadge')}</em> : null}
-                  </span>
-                </label>
-              )
-            })}
           </div>
 
           <div className="connector-doc-actions">
-            <span>{t('surface:connectorSync.selectedCount', { count: String(selected.size) })}</span>
-            {batchRunning ? (
-              <>
-                <span className="connector-doc-progress">
-                  <LoaderCircle className="spin" />{t('surface:connectorSync.batchProgress', {
-                    processed: String(batch!.processed),
-                    total: String(batch!.total),
-                  })}
-                </span>
-                <button type="button" className="secondary-button" onClick={() => {
-                  if (!external) return
-                  void external.cancelImportBatch(batch!.id).then(setBatch).catch(() => undefined)
-                }}>
-                  {t('surface:connectorSync.batchCancel')}
-                </button>
-              </>
+            {batchRunning && batch ? (
+              <div className="connector-doc-progress">
+                <div className="connector-doc-progress-row">
+                  <LoaderCircle className="spin" aria-hidden="true" />
+                  <strong>{t('surface:connectorSync.batchProgress', {
+                    processed: String(batch.processed),
+                    total: String(batch.total),
+                  })}</strong>
+                  <span>{t('surface:connectorSync.batchProgressDetail', {
+                    succeeded: String(batch.succeeded),
+                    failed: String(batch.failed),
+                  })}</span>
+                  <button type="button" className="connector-text-btn" onClick={() => {
+                    if (!external) return
+                    void external.cancelImportBatch(batch.id).then(setBatch).catch(() => undefined)
+                  }}>
+                    {t('surface:connectorSync.batchCancel')}
+                  </button>
+                </div>
+                <div className="connector-doc-progress-track"><div style={{ width: `${batchPercent}%` }} /></div>
+              </div>
             ) : (
               <>
-                <button type="button" className="primary-button" disabled={selected.size === 0} onClick={() => void openRoomPicker()}>
+                <span className="connector-doc-count" data-active={String(selected.size > 0)}>
+                  {t('surface:connectorSync.selectedCount', { count: String(selected.size) })}
+                </span>
+                <button
+                  type="button"
+                  className="primary-button"
+                  disabled={selected.size === 0}
+                  title={t('surface:connectorSync.importToRoomTooltip')}
+                  onClick={() => void openRoomPicker()}
+                >
                   <FileDown aria-hidden="true" />
                   {t('surface:connectorSync.importToRoom')}
                 </button>
-                <button type="button" className="secondary-button" disabled={selected.size === 0 || autoDisabled} onClick={() => void startBatch('auto')}>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  disabled={selected.size === 0 || autoDisabled}
+                  title={t(autoDisabled ? 'surface:connectorSync.autoClassifyUnavailable' : 'surface:connectorSync.aiClassifyTooltip')}
+                  onClick={() => void startBatch('auto')}
+                >
                   <Bot aria-hidden="true" />
                   {t('surface:connectorSync.aiAutoClassify')}
                 </button>
@@ -479,7 +525,7 @@ export function ConnectorDocumentImportPanel({
           </div>
           {batch && batch.status !== 'running' && batch.items.some((item) => item.status === 'failed') ? (
             <div className="connector-doc-failures">
-              <strong>{t('surface:connectorSync.batchFailedItems')}</strong>
+              <strong><TriangleAlert aria-hidden="true" />{t('surface:connectorSync.batchFailedItems')}</strong>
               {batch.items.filter((item) => item.status === 'failed').map((item) => (
                 <div key={item.remoteDocumentId}>
                   <span>{item.title ?? item.remoteDocumentId}</span>
@@ -489,11 +535,20 @@ export function ConnectorDocumentImportPanel({
             </div>
           ) : null}
         </>
-      ) : !listLoading && !listError ? (
-        <div className="connector-sync-empty">
-          {items.length === 0 && (truncated || warnings.length > 0)
+      ) : listLoading ? (
+        <div className="connector-doc-skeleton" aria-busy="true" aria-label={t('surface:connectorSync.loadingDocuments')}>
+          {[0, 1, 2, 3, 4].map((index) => <span key={index} style={{ animationDelay: `${index * 120}ms` }} />)}
+        </div>
+      ) : !listError ? (
+        <div className="connector-doc-empty">
+          <Files aria-hidden="true" />
+          <p>{items.length === 0 && (truncated || warnings.length > 0)
             ? t('surface:connectorSync.documentListEmpty')
-            : t('surface:connectorSync.documentListEmptyHint')}
+            : t('surface:connectorSync.documentListEmptyHint')}</p>
+          <button type="button" className="primary-button" disabled={batchRunning} onClick={() => void loadDocuments()}>
+            <RefreshCw aria-hidden="true" />
+            {t('surface:connectorSync.loadDocuments')}
+          </button>
         </div>
       ) : null}
 
@@ -503,8 +558,13 @@ export function ConnectorDocumentImportPanel({
         }}>
           <section className="connector-room-picker" role="dialog" aria-modal="true" aria-label={t('surface:connectorSync.chooseTargetRoom')}>
             <header>
-              <span>{t('surface:connectorSync.chooseTargetRoom')}</span>
-              <button type="button" onClick={() => setRoomPickerOpen(false)}><X /></button>
+              <div className="connector-room-picker-title">
+                <FileDown aria-hidden="true" />
+                <span>{t('surface:connectorSync.chooseTargetRoomCount', { count: String(selected.size) })}</span>
+              </div>
+              <button type="button" className="connector-icon-btn" onClick={() => setRoomPickerOpen(false)} aria-label={t('surface:connectorSync.chooseTargetRoom')}>
+                <X />
+              </button>
             </header>
             <div className="connector-doc-filter">
               <Search aria-hidden="true" />
@@ -525,8 +585,12 @@ export function ConnectorDocumentImportPanel({
                   setRoomPickerOpen(false)
                   void startBatch('room', room.id)
                 }}>
-                  <strong>{room.title}</strong>
-                  <small>{room.kind}</small>
+                  <span className="connector-room-icon"><Boxes aria-hidden="true" /></span>
+                  <span className="connector-room-copy">
+                    <strong>{room.title}</strong>
+                    <small>{room.kind}</small>
+                  </span>
+                  <ArrowUpRight className="connector-room-go" aria-hidden="true" />
                 </button>
               ))}
             </div>

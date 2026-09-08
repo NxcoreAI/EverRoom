@@ -358,22 +358,25 @@ export class RoomRelationRegistry {
       }
     }
 
-    const membershipKeys = new Map(this.db.select().from(roomSourceMemberships).all().map((row) => [
-      `${row.roomId}\u0000${row.sourceKind}\u0000${row.sourceId}`,
-      row.sourceVersion,
-    ]));
-    for (const mention of this.db.select().from(roomEntityMentions).all()) {
-      const version = membershipKeys.get(`${mention.roomId}\u0000${mention.sourceKind}\u0000${mention.sourceId}`);
-      if (version === undefined || version !== mention.sourceVersion) {
+    // 只回收「membership 已整体消失」的孤儿投影行。版本不匹配的 mentions/facts
+    // 是「来源已更新、relation-index 尚未跑完」的暂态：重索引成功时
+    // replaceSource 会整体重写该来源的投影；启动时把旧版本数据清掉会让依赖
+    // 它的关系边跌破阈值被清（图谱边消失，LLM 恢复重索引后才回来）。
+    const membershipKeys = new Set(this.db.select().from(roomSourceMemberships).all().map((row) =>
+      `${row.roomId}\u0000${row.sourceKind}\u0000${row.sourceId}`));
+    for (const mention of this.db.select({
+      id: roomEntityMentions.id, roomId: roomEntityMentions.roomId,
+      sourceKind: roomEntityMentions.sourceKind, sourceId: roomEntityMentions.sourceId,
+    }).from(roomEntityMentions).all()) {
+      if (!membershipKeys.has(`${mention.roomId}\u0000${mention.sourceKind}\u0000${mention.sourceId}`)) {
         this.db.delete(roomEntityMentions).where(eq(roomEntityMentions.id, mention.id)).run();
       }
     }
     for (const factRow of this.db.select({
       id: roomEntityFacts.id, roomId: roomEntityFacts.roomId, sourceKind: roomEntityFacts.sourceKind,
-      sourceId: roomEntityFacts.sourceId, sourceVersion: roomEntityFacts.sourceVersion,
+      sourceId: roomEntityFacts.sourceId,
     }).from(roomEntityFacts).all()) {
-      const version = membershipKeys.get(`${factRow.roomId}\u0000${factRow.sourceKind}\u0000${factRow.sourceId}`);
-      if (version === undefined || version !== factRow.sourceVersion) {
+      if (!membershipKeys.has(`${factRow.roomId}\u0000${factRow.sourceKind}\u0000${factRow.sourceId}`)) {
         this.db.delete(roomEntityFacts).where(eq(roomEntityFacts.id, factRow.id)).run();
       }
     }
@@ -681,14 +684,21 @@ export class RoomRelationRegistry {
       }).run();
       existing.delete(key);
     }
+    // 消失的边对不再硬删：统一置零隐藏（graph() 的 autoScore >= minScore /
+    // manualPresent 闸保证不可见），投影数据回来时同一行原地复活——重索引
+    // 失败或启动清理造成的瞬时低谷不会物化成删除。端点 Room 行已彻底不存在
+    // 于 rooms 表（真删除）才清行，防僵尸行无限累积。
+    const knownRoomIds = new Set(this.db.select({ id: rooms.id }).from(rooms).all().map((row) => row.id));
     for (const current of existing.values()) {
-      if (manualPresent(current) || current.hidden) {
-        this.db.update(roomRelations).set({
-          autoScore: 0, autoType: null, strength: current.pinned || current.manualType ? "weak" : null,
-          sharedSourceCount: 0, sharedEntityCount: 0, directMentionCount: 0,
-          topReasons: null, scoringVersion: ROOM_RELATION_SCORING_VERSION, updatedAt: now,
-        }).where(eq(roomRelations.id, current.id)).run();
-      } else this.db.delete(roomRelations).where(eq(roomRelations.id, current.id)).run();
+      if (!knownRoomIds.has(current.roomAId) || !knownRoomIds.has(current.roomBId)) {
+        this.db.delete(roomRelations).where(eq(roomRelations.id, current.id)).run();
+        continue;
+      }
+      this.db.update(roomRelations).set({
+        autoScore: 0, autoType: null, strength: current.pinned || current.manualType ? "weak" : null,
+        sharedSourceCount: 0, sharedEntityCount: 0, directMentionCount: 0,
+        topReasons: null, scoringVersion: ROOM_RELATION_SCORING_VERSION, updatedAt: now,
+      }).where(eq(roomRelations.id, current.id)).run();
     }
     const revision = this.revision() + 1;
     this.setMetadata("room-relations:revision", String(revision));

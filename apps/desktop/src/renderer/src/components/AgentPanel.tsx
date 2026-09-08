@@ -256,6 +256,23 @@ export function AgentPanel({
       const projectionToolName = isRoomOverviewProjectionToolName(tool.name) ? tool.name : null
       if (!createsProposal && !projectionToolName) continue
       if (handledOverviewToolIdsRef.current.has(tool.id)) continue
+      // 只重放当前活跃 run 的实时结果；会话水合载入的历史工具（重启/换会话
+      // 恢复）不再重发——面板需要时会自行拉取最新投影，而陈旧结果的重发会
+      // 触发全量快照刷新，重启后首次进 Room 曾因此被弹回首页。语义与上方
+      // 导航重放的 live 判定（replayNavigationMode）保持一致。
+      if (tool.runId !== session.activeRunId) {
+        if (tool.status === 'completed' || tool.status === 'error' || tool.status === 'stopped') {
+          handledOverviewToolIdsRef.current.add(tool.id)
+          recordRoomOverviewDiagnostic('replay.skipped_historical_tool', {
+            roomId,
+            toolName: tool.name,
+            toolId: tool.id,
+            runId: tool.runId,
+            status: tool.status,
+          })
+        }
+        continue
+      }
       if (tool.status === 'error' || tool.status === 'stopped') {
         handledOverviewToolIdsRef.current.add(tool.id)
         recordRoomOverviewDiagnostic('correction.tool_failed', {
@@ -280,7 +297,7 @@ export function AgentPanel({
       }
       if (projectionToolName) publishRoomOverviewChanged(tool.result, roomId, projectionToolName)
     }
-  }, [roomId, session.toolCallsByRun])
+  }, [roomId, session.activeRunId, session.toolCallsByRun])
 
   useEffect(() => {
     if (!navigationRequest || navigationRequest.target.pageId !== pageId) return
