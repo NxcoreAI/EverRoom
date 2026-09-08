@@ -64,14 +64,20 @@ function processAlive(pid: number): boolean {
 
 function commandLineOf(pid: number): string | null {
   if (process.platform === 'win32') {
+    // 新版 Windows 11 已移除 wmic；Get-CimInstance 是全版本可用的替代。
     const result = spawnSync(
-      'wmic',
-      ['process', 'where', `processid=${String(pid)}`, 'get', 'CommandLine', '/value'],
-      { encoding: 'utf8', windowsHide: true, timeout: 10_000 },
+      'powershell.exe',
+      [
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
+        `(Get-CimInstance Win32_Process -Filter "ProcessId=${String(pid)}").CommandLine`,
+      ],
+      { encoding: 'utf8', windowsHide: true, timeout: 15_000 },
     )
     if (result.status !== 0) return null
-    const match = result.stdout.match(/^CommandLine=(.+)$/m)
-    return match ? match[1]!.trim() : null
+    const commandLine = result.stdout.trim()
+    return commandLine || null
   }
   const result = spawnSync('ps', ['-p', String(pid), '-o', 'command='], { encoding: 'utf8', timeout: 10_000 })
   if (result.status !== 0) return null
