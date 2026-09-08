@@ -2,9 +2,11 @@ import { mkdir } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 
 import { app } from 'electron'
+
+import { forgetProcessRecord, registerProcessRecord } from '../process-cleanup'
 
 /**
  * 托管 TencentDB Agent Memory(Knowledge Service / Wiki 引擎)的子进程管理器。
@@ -110,12 +112,16 @@ export class KnowledgeServiceSupervisor {
     this.child = child
     this.stopping = false
     child.stdin.end()
+    // pid 登记：父进程被强杀后残留实例占住 8421，下次启动 probe 会误判「复用
+    // 外部实例」（issue #179）。
+    registerProcessRecord(join(this.dataDirectory, 'runtime'), 'knowledge', child.pid, serverEntry)
     child.stdout.setEncoding('utf8')
     child.stderr.setEncoding('utf8')
     child.stdout.on('data', (chunk: string) => process.stdout.write(`[knowledge] ${chunk}`))
     child.stderr.on('data', (chunk: string) => process.stderr.write(`[knowledge] ${chunk}`))
     child.on('exit', (code, signal) => {
       this.child = null
+      forgetProcessRecord(join(this.dataDirectory, 'runtime'), 'knowledge')
       if (!this.stopping) {
         this.lastError = `Knowledge service 进程已退出（code=${String(code)}, signal=${String(signal)}）`
         console.error(this.lastError)
@@ -239,6 +245,15 @@ export class KnowledgeServiceSupervisor {
   }
 
   private killChild(child: ChildProcessWithoutNullStreams, signal: NodeJS.Signals): boolean {
+    // Windows：tsx wrapper fork 的孙进程只有 taskkill /T 能整树回收（issue #179）。
+    if (process.platform === 'win32' && child.pid) {
+      try {
+        execFileSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' })
+        return true
+      } catch {
+        return false
+      }
+    }
     try {
       return child.kill(signal)
     } catch {

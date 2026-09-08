@@ -24,6 +24,8 @@
   "error.network.files": "Read local files",
   "error.network.connectors": "Access connector service",
   "error.network.service": "Access local service",
+  "error.gatewayStart.title": "EverRoom failed to start",
+  "error.gatewayStart.body": "Local services failed to initialize. The app will exit.\n\n{error}\n\nLogs: {logs}",
   "error.rateLimited.title": "Operation will resume shortly",
   "error.rateLimited.message": "Too many requests. Try again later.",
   "error.screenshot.windowUnavailable": "The application window is unavailable.",

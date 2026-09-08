@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { AgentRuntime } from "@nxcore/agent-runtime";
 
 export interface TranscriptionSummaryInput {
@@ -6,6 +6,8 @@ export interface TranscriptionSummaryInput {
   sourceRecordId: string;
   transcript: string;
   language?: string;
+  /** 桌面端校验失败后的定向修复提示（第二次尝试时携带），拼进最终生成提示。 */
+  repairHint?: string;
 }
 
 export interface TranscriptionSummaryOutput {
@@ -14,10 +16,24 @@ export interface TranscriptionSummaryOutput {
 
 const SINGLE_PASS_MAX_CHARS = 24_000;
 const CHUNK_MAX_CHARS = 30_000;
-const MAX_CHUNKS = 20;
+// 超长转写按 30k/块切块；块数超限时优先合并最短的相邻块，避免旧逻辑
+// “均分合并”产生 60 万字符巨块撑爆模型上下文。
+const MAX_CHUNKS = 40;
+const MAX_CACHED_JOBS = 5;
+
+interface CachedChunkRun {
+  chunkFingerprints: string[];
+  partials: Array<string | undefined>;
+}
+
+function chunkFingerprint(chunk: string): string {
+  return `${chunk.length}:${createHash("sha256").update(chunk).digest("hex").slice(0, 16)}`;
+}
 
 export class TranscriptionSummaryService {
   private readonly activeJobs = new Set<string>();
+  /** 按 jobId 缓存已完成的分段提取：SaaS 重排队后同任务重试时跳过已完成块，断点续跑。 */
+  private readonly chunkRunCache = new Map<string, CachedChunkRun>();
 
   constructor(
     private runtime: AgentRuntime,
@@ -35,29 +51,77 @@ export class TranscriptionSummaryService {
     this.activeJobs.add(input.jobId);
     try {
       const transcript = normalizeTranscript(input.transcript);
+      const startedAt = Date.now();
       if (transcript.length <= SINGLE_PASS_MAX_CHARS) {
-        return { content: await this.runOnce(input, summaryPrompt({ ...input, transcript })) };
+        const content = await this.runOnce(input, summaryPrompt({ ...input, transcript }));
+        this.logStage(input.jobId, "单次总结", startedAt, `${transcript.length} 字`);
+        return { content };
       }
 
       const chunks = splitTranscript(transcript);
+      const fingerprints = chunks.map(chunkFingerprint);
+      let cached = this.chunkRunCache.get(input.jobId);
+      if (
+        !cached
+        || cached.chunkFingerprints.length !== chunks.length
+        || cached.chunkFingerprints.some((fingerprint, index) => fingerprint !== fingerprints[index])
+      ) {
+        cached = { chunkFingerprints: fingerprints, partials: chunks.map(() => undefined) };
+      }
       const partials: string[] = [];
       for (let index = 0; index < chunks.length; index += 1) {
-        const partial = await this.runOnce(
-          input,
-          chunkPrompt({ ...input, transcript: chunks[index]! }, index, chunks.length),
-          `分段提取 ${index + 1}/${chunks.length}`,
+        const cachedPartial = cached.partials[index];
+        if (typeof cachedPartial === "string") {
+          partials.push(cachedPartial);
+          console.info(
+            `[transcription-summary] job=${input.jobId} 分段提取 ${index + 1}/${chunks.length} 命中缓存，跳过`,
+          );
+          continue;
+        }
+        const chunkStartedAt = Date.now();
+        const partial = compactPartial(
+          await this.runOnce(
+            input,
+            chunkPrompt({ ...input, transcript: chunks[index]! }, index, chunks.length),
+            `分段提取 ${index + 1}/${chunks.length}`,
+          ),
         );
-        partials.push(compactPartial(partial));
+        cached.partials[index] = partial;
+        this.chunkRunCache.set(input.jobId, cached);
+        this.trimChunkRunCache();
+        this.logStage(
+          input.jobId,
+          `分段提取 ${index + 1}/${chunks.length}`,
+          chunkStartedAt,
+          `${chunks[index]!.length} 字`,
+        );
+        partials.push(partial);
       }
-      return {
-        content: await this.runOnce(
-          input,
-          synthesisPrompt({ ...input, transcript }, partials),
-          "全篇综合",
-        ),
-      };
+      const synthesisStartedAt = Date.now();
+      const content = await this.runOnce(
+        input,
+        synthesisPrompt({ ...input, transcript }, partials),
+        "全篇综合",
+      );
+      this.logStage(input.jobId, "全篇综合", synthesisStartedAt, `${partials.length} 段合并`);
+      // 综合成功即整单完成，清掉缓存避免占用内存。
+      this.chunkRunCache.delete(input.jobId);
+      return { content };
     } finally {
       this.activeJobs.delete(input.jobId);
+    }
+  }
+
+  private logStage(jobId: string, stage: string, startedAt: number, detail: string): void {
+    const seconds = ((Date.now() - startedAt) / 1000).toFixed(1);
+    console.info(`[transcription-summary] job=${jobId} ${stage} 完成 | ${detail} | ${seconds}s`);
+  }
+
+  private trimChunkRunCache(): void {
+    while (this.chunkRunCache.size > MAX_CACHED_JOBS) {
+      const oldest = this.chunkRunCache.keys().next().value;
+      if (oldest === undefined) break;
+      this.chunkRunCache.delete(oldest);
     }
   }
 
@@ -120,6 +184,7 @@ function summaryPrompt(input: TranscriptionSummaryInput): string {
     "overview 要说明发生了什么、涉及谁/什么、讨论过程、结果和后续；keyPoints 必须是具体事实，不能写空泛的‘进行了讨论’。",
     "如果 ASR 文本含糊，保留不确定性，并把无法确认的内容放入 unresolvedQuestions；不要把不确定内容写成决定或行动项。",
     detailGuidance,
+    ...repairHintLines(input),
     `输出语言：${input.language || "zh-CN"}。`,
     `源记录：${input.sourceRecordId}`,
     "<transcript>",
@@ -153,6 +218,7 @@ function synthesisPrompt(input: TranscriptionSummaryInput, partials: string[]): 
     "下面的分段结果是对同一份转写的中间提取，不是新的事实来源；请合并去重，并以分段结果中明确出现的内容为准。",
     "覆盖整场内容，尤其检查最后一段中的决定、行动项和未决问题。不要把推测、重复表达或模型自己的解释写进结果。",
     "输出必须是 Skill 要求的完整 JSON 对象，不要 Markdown、解释或额外字段。overview 要独立可读，keyPoints 要具体，decisions/actionItems/unresolvedQuestions 只能保留有证据的内容。",
+    ...repairHintLines(input),
     summaryDetailGuidance(input.transcript),
     `输出语言：${input.language || "zh-CN"}。`,
     "<partial-summaries>",
@@ -162,6 +228,14 @@ function synthesisPrompt(input: TranscriptionSummaryInput, partials: string[]): 
     `原始转写总字符数：${input.transcript.length}。已按时间顺序分段处理 ${partials.length} 段。`,
     "</transcript-coverage>",
   ].join("\n");
+}
+
+function repairHintLines(input: TranscriptionSummaryInput): string[] {
+  if (!input.repairHint) return [];
+  return [
+    `上一轮输出未通过调用方校验：${input.repairHint}`,
+    "请在修正该问题的同时保持其余字段同等质量，仍然只输出一个完整的 JSON 对象。",
+  ];
 }
 
 function summaryDetailGuidance(transcript: string): string {
@@ -210,11 +284,21 @@ function splitTranscript(transcript: string): string[] {
   if (current.length) chunks.push(current.join("\n"));
   if (chunks.length <= MAX_CHUNKS) return chunks;
 
-  // Keep the full transcript covered while bounding the number of model calls.
-  const merged: string[] = [];
-  const groupSize = Math.ceil(chunks.length / MAX_CHUNKS);
-  for (let index = 0; index < chunks.length; index += groupSize) {
-    merged.push(chunks.slice(index, index + groupSize).join("\n"));
+  // 块数超限时贪心合并「最短的相邻两块」，既保证覆盖全部转写，又把单块
+  // 长度压在尽可能小的水平（旧逻辑均分合并会把单块推到几十万字符，
+  // 直接超出模型上下文导致输出截断、JSON 解析失败）。
+  const merged = [...chunks];
+  while (merged.length > MAX_CHUNKS) {
+    let bestIndex = 0;
+    let bestCost = Number.POSITIVE_INFINITY;
+    for (let index = 0; index < merged.length - 1; index += 1) {
+      const cost = merged[index]!.length + merged[index + 1]!.length;
+      if (cost < bestCost) {
+        bestCost = cost;
+        bestIndex = index;
+      }
+    }
+    merged.splice(bestIndex, 2, `${merged[bestIndex]}\n${merged[bestIndex + 1]}`);
   }
   return merged;
 }

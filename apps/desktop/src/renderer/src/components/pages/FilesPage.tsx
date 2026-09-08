@@ -432,7 +432,7 @@ export function FilesPage({
       try {
         await filesApi.reveal(file.id)
       } catch (error) {
-        setMessage(error instanceof Error ? error.message : t('surface:files.unableToRevealOriginal'))
+        setMessage(error instanceof Error ? error.message : t(window.nxcore?.platform === 'win32' ? 'surface:files.unableToRevealOriginal.windows' : 'surface:files.unableToRevealOriginal'))
       }
     })
   }
@@ -594,7 +594,7 @@ export function FilesPage({
                     </button>
                     <div className="file-document-preview" aria-hidden="true"><span /><span /><span /></div>
                     <div className="file-document-meta"><span className="file-document-status"><span className={`status-dot${file.processingState === 'ready' ? ' active' : ''}`} />{file.processingState === 'ready' ? t('surface:files.parsed') : file.processingState === 'failed' ? t('surface:files.failed') : file.processingState === 'missing' ? t('surface:files.originalMissing') : t('surface:files.processing')}</span><span>{formatBytes(file.bytes)}</span><span>{formatDate(file.updatedAt, locale, t)}</span></div>
-                    <div className="file-document-actions"><span>{file.sourceKind === 'web-clipper' ? t('surface:files.clipperSource') : file.sourceLabel}</span><span className="files-actions"><button type="button" className="icon-button" aria-label={t('surface:files.revealName', { name: file.originalName })} title={t('surface:files.showInFileManager')} disabled={busyId === file.id} onClick={() => revealOriginal(file)}><FolderOpen aria-hidden="true" strokeWidth={1.8} /></button><button type="button" className="icon-button danger" aria-label={t('surface:files.deleteName', { name: file.originalName })} title={t('surface:files.deleteAndRemovePipelineData')} disabled={busyId === file.id} onClick={() => deleteFile(file)}><Trash2 aria-hidden="true" strokeWidth={1.8} /></button></span></div>
+                    <div className="file-document-actions"><span>{file.sourceKind === 'web-clipper' ? t('surface:files.clipperSource') : file.sourceLabel}</span><span className="files-actions"><button type="button" className="icon-button" aria-label={t(window.nxcore?.platform === 'win32' ? 'surface:files.revealName.windows' : 'surface:files.revealName', { name: file.originalName })} title={t(window.nxcore?.platform === 'win32' ? 'surface:files.showInFileManager.windows' : 'surface:files.showInFileManager')} disabled={busyId === file.id} onClick={() => revealOriginal(file)}><FolderOpen aria-hidden="true" strokeWidth={1.8} /></button><button type="button" className="icon-button danger" aria-label={t('surface:files.deleteName', { name: file.originalName })} title={t('surface:files.deleteAndRemovePipelineData')} disabled={busyId === file.id} onClick={() => deleteFile(file)}><Trash2 aria-hidden="true" strokeWidth={1.8} /></button></span></div>
                   </article>
                 }}
               />

@@ -35,6 +35,7 @@ import { AccountKeyringService } from './security/account-keyring-service'
 import { AgentGatewayBridge } from './gateway/agent-gateway-bridge'
 import { AsrGatewayBridge } from './gateway/asr-gateway-bridge'
 import { GatewaySupervisor } from './gateway/gateway-supervisor'
+import { cleanupStaleProcessRecords, installExitCleanupHook } from './process-cleanup'
 import { RuntimeConfigBridge, type RuntimeMemoryConfig } from './gateway/runtime-config-bridge'
 import { cursorCompletionEnvFromConfig } from './gateway/cursor-completion-env'
 import { MemoryGatewayBridge } from './gateway/memory-gateway-bridge'
@@ -741,6 +742,8 @@ function registerBrowserExtensionHandlers(service: BrowserExtensionService): voi
 let localDataService: LocalDataService | null = null
 let obsidianVaultService: ObsidianVaultService | null = null
 let gatewaySupervisor: GatewaySupervisor | null = null
+/** gateway:recover 的 in-flight 去重（网络失败风暴时并发请求只触发一次恢复）。 */
+let gatewayRecoverInFlight: Promise<{ ok: boolean; reason?: 'not-started' | 'recover-failed' }> | null = null
 let browserExtensionService: BrowserExtensionService | null = null
 let clipperAssetBridge: FilesGatewayBridge | null = null
 let runtimeConfigBridge: RuntimeConfigBridge | null = null
@@ -852,6 +855,24 @@ ipcMain.handle('app:clear-user-data', () => {
 })
 ipcMain.on('app:set-locale', (_event, locale: unknown) => setDesktopLocale(locale))
 
+// Windows 自绘标题栏的窗口控制（macOS 用系统红绿灯按钮，不经过这里）。
+ipcMain.handle('window:minimize', (event) => {
+  BrowserWindow.fromWebContents(event.sender)?.minimize()
+})
+ipcMain.handle('window:toggle-maximize', (event) => {
+  const window = BrowserWindow.fromWebContents(event.sender)
+  if (!window) return
+  if (window.isMaximized()) window.unmaximize()
+  else window.maximize()
+})
+ipcMain.handle('window:close', (event) => {
+  BrowserWindow.fromWebContents(event.sender)?.close()
+})
+ipcMain.handle('window:get-state', (event) => {
+  const window = BrowserWindow.fromWebContents(event.sender)
+  return { maximized: window?.isMaximized() ?? false }
+})
+
 function logRendererDiagnostic(input: unknown): void {
   if (!input || typeof input !== 'object') return
   const value = input as { module?: unknown; level?: unknown; event?: unknown }
@@ -894,7 +915,12 @@ ipcMain.handle('office:instance:close', (event, id: unknown) => {
 
 function focusMainWindow(): void {
   const window = BrowserWindow.getAllWindows()[0]
-  if (!window || window.isDestroyed()) return
+  // 窗口已销毁（如 before-quit 异步清理挂起后用户再点图标）：重建窗口，
+  // 否则第二实例退出 + 第一实例无窗 = 点图标零反应（issue #179）。
+  if (!window || window.isDestroyed()) {
+    void createWindow()
+    return
+  }
   if (window.isMinimized()) window.restore()
   window.show()
   window.focus()
@@ -1291,6 +1317,24 @@ function registerGatewayHandlers(): void {
     gatewaySupervisor
       ? gatewaySupervisor.getStatus()
       : { state: 'starting', pid: null, baseUrl: null, version: null, message: null })
+
+  // 渲染端网络类失败后的自愈入口：拉起/恢复 gateway 连接后由 preload 重试原请求。
+  // in-flight 去重防止并发失败风暴触发重复重启。
+  ipcMain.handle('gateway:recover', () => {
+    if (!gatewaySupervisor) return { ok: false, reason: 'not-started' as const }
+    if (!gatewayRecoverInFlight) {
+      gatewayRecoverInFlight = gatewaySupervisor.ensureConnection()
+        .then(() => ({ ok: true as const }))
+        .catch((error: unknown) => {
+          console.error('[gateway] 网络失败后自动恢复连接未成功：', error)
+          return { ok: false as const, reason: 'recover-failed' as const }
+        })
+        .finally(() => {
+          gatewayRecoverInFlight = null
+        })
+    }
+    return gatewayRecoverInFlight
+  })
   ipcMain.handle(CONNECTOR_CHANNELS.runtimeStatus, () =>
     ({ state: 'disabled', message: 'nango runtime removed (P3); link-A runs on OpenConnector' }))
 }
@@ -3070,8 +3114,11 @@ function createWindow(): BrowserWindow {
     show: false,
     title: 'Everroom',
     backgroundColor: '#f5f5f5',
-    titleBarStyle: 'hiddenInset',
-    trafficLightPosition: { x: 14, y: 17 },
+    // macOS 走 hiddenInset + 系统红绿灯；Windows 隐藏整条系统标题栏，
+    // 由渲染端 TopBar/引导页头部绘制 EverRoom 风格的自绘窗口按钮。
+    ...(process.platform === 'darwin'
+      ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 14, y: 17 } }
+      : { titleBarStyle: 'hidden' as const }),
     webPreferences: {
       preload: join(__dirname, '../preload/index.cjs'),
       contextIsolation: true,
@@ -3079,6 +3126,11 @@ function createWindow(): BrowserWindow {
       sandbox: true,
     },
   })
+  const sendMaximizedChanged = () => {
+    if (!window.isDestroyed()) window.webContents.send('window:maximized-changed', window.isMaximized())
+  }
+  window.on('maximize', sendMaximizedChanged)
+  window.on('unmaximize', sendMaximizedChanged)
 
   installCrossOriginIsolation(window.webContents.session, process.env.ELECTRON_RENDERER_URL)
 
@@ -3144,6 +3196,12 @@ function createWindow(): BrowserWindow {
   }
   window.once('ready-to-show', () => window.show())
   window.webContents.on('did-finish-load', () => sendPendingAgentNotificationTarget())
+  // 渲染进程崩溃（OOM/原生崩溃）默认留下永久白屏窗口；记日志并整页重载。
+  window.webContents.on('render-process-gone', (_event, details) => {
+    if (window.isDestroyed()) return
+    console.error(`[window] 渲染进程异常退出（reason=${details.reason}），正在重载页面。`)
+    window.webContents.reload()
+  })
 
   window.webContents.setWindowOpenHandler(({ url }) => {
     openExternalUrl(url)
@@ -3179,6 +3237,15 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   }
   // 主密钥改内置（gateway 端默认值），清掉 Keychain 时代的遗留文件再拉起网关。
   await cleanupLegacyGatewaySecretKey(join(dataDirectory, 'security'))
+  // 先清上次残留的受管子进程树（父进程被强杀后 gateway/memory-core/knowledge
+  // 会残留并锁 SQLite/端口，导致新实例启动超时或被 probe 误复用，issue #179）。
+  const staleProcesses = await cleanupStaleProcessRecords(join(dataDirectory, 'runtime'))
+  if (staleProcesses.length > 0) {
+    console.warn(`[startup] 已清理上次残留进程：${staleProcesses.join('、')}`)
+  }
+  // 退出兜底（win32）：崩溃/强杀路径 before-quit 不会执行，exit 钩子同步击杀
+  // 仍存活的受管子进程；POSIX 正常退出已有进程组语义，不注册。
+  installExitCleanupHook()
   // 窗口先显示,Gateway 等服务在后台初始化,状态由左下角 Gateway 指示器呈现。
   const documentAssets = new DocumentAssetStore(join(dataDirectory, 'document-assets'))
   await documentAssets.initialize().catch((error: unknown) => {
@@ -3696,6 +3763,15 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     await knowledgeServiceSupervisor?.shutdown()
     knowledgeServiceSupervisor = null
     console.error('Failed to initialize Everroom desktop services', error)
+    // 静默退出 = 用户看到白屏数分钟后应用消失且毫无提示（issue #179）。
+    // 用原生错误框告知原因与日志位置，再退出。
+    const failureDetail = error instanceof Error ? error.message : String(error)
+    dialog.showErrorBox(
+      desktopText('error.gatewayStart.title'),
+      desktopText('error.gatewayStart.body')
+        .replace('{error}', failureDetail)
+        .replace('{logs}', join(dataDirectory, 'logs')),
+    )
     app.quit()
     return
   }

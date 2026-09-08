@@ -1,8 +1,11 @@
 // 临时配置：在纯浏览器里跑真实 renderer，注入 mock window.nxcore 以复现页面交互（验证后删除）。
-import { resolve } from 'node:path'
+import { resolve, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import react from '@vitejs/plugin-react'
 import { defineConfig, type Plugin } from 'vite'
+
+const here = dirname(fileURLToPath(import.meta.url))
 
 function nxcoreMock(): Plugin {
   return {
@@ -79,6 +82,14 @@ const tickBatch = () => {
   return batchState
 }
 const base = {
+  platform: ${JSON.stringify(process.env.MOCK_PLATFORM || 'win32')},
+  window: {
+    minimize: async () => {},
+    toggleMaximize: async () => {},
+    close: async () => {},
+    getState: async () => ({ maximized: false }),
+    onMaximizedChange: () => () => {},
+  },
   locale: { system: 'zh-CN', getSystem: async () => 'zh-CN' },
   sources: {
     list: async () => sources,
@@ -152,7 +163,7 @@ window.nxcore = new Proxy(Object.fromEntries(Object.entries(base).map(([k, v]) =
 }
 
 export default defineConfig({
-  root: resolve('src/renderer'),
+  root: resolve(here, 'src/renderer'),
   server: {
     port: 5181,
     strictPort: true,
@@ -163,7 +174,7 @@ export default defineConfig({
   },
   resolve: {
     dedupe: ['react', 'react-dom'],
-    alias: { '@': resolve('src/renderer/src') },
+    alias: { '@': resolve(here, 'src/renderer/src') },
   },
   plugins: [react(), nxcoreMock()],
 })

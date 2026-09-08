@@ -1,5 +1,5 @@
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { registerSecret } from "./secret-redaction.js";
 
@@ -111,7 +111,14 @@ export class SecretStore {
     const temporary = `${this.filePath}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
     try {
       writeFileSync(temporary, `${JSON.stringify(envelope)}\n`, { encoding: "utf8", mode: 0o600 });
-      renameSync(temporary, this.filePath);
+      try {
+        renameSync(temporary, this.filePath);
+      } catch {
+        // Windows 杀软/同步过滤驱动会对刚写入的文件短暂加锁，同目录 rename
+        // 报 EXDEV/EPERM（credentials.enc 是 runtime config 持久化必经路径）。
+        // 降级 copy+delete：copy 不需要源文件独占删除权限，成功率高得多。
+        copyFileSync(temporary, this.filePath);
+      }
       chmodSync(this.filePath, 0o600);
     } finally {
       if (existsSync(temporary)) unlinkSync(temporary);

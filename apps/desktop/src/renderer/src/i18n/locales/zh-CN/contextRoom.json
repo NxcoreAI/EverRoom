@@ -1438,5 +1438,6 @@
   "linkGraph.filterLabel": "建联类型筛选",
   "linkGraph.filterAll": "全部",
   "linkGraph.filterDocuments": "仅文档",
-  "linkGraph.filterMemories": "仅记忆"
+  "linkGraph.filterMemories": "仅记忆",
+  "onboarding.successBody.windows": "背景已经准备好。文件应用会在后台持续识别文档和桌面中的支持格式；其他目录可在“数据源”中添加。"
 }

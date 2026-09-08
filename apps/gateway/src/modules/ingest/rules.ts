@@ -12,7 +12,7 @@
  * fail-open 精神：缺文件/坏标记段回落工程默认并 warn，绝不阻塞过滤。
  */
 
-import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Logger } from "pino";
@@ -233,12 +233,17 @@ function replaceSegment(content: string, start: string, end: string, segment: st
   return `${content.slice(0, startIndex)}${start}\n${segment}\n${content.slice(endIndex)}`;
 }
 
-/** 原子写：temp 文件 + rename（洞察 job 与 PUT 共用）。 */
+/** 原子写：temp 文件 + rename（洞察 job 与 PUT 共用）；rename 被过滤驱动拒时降级 copy+delete。 */
 async function atomicWrite(path: string, content: string): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   const temp = `${path}.tmp-${process.pid}-${Date.now()}`;
   await writeFile(temp, content, "utf8");
-  await rename(temp, path);
+  try {
+    await rename(temp, path);
+  } catch {
+    await copyFile(temp, path);
+    await rm(temp, { force: true });
+  }
 }
 
 /** 按字节截断（不撕裂多字节字符；截断即告警由调用方负责）。 */
