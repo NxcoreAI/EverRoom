@@ -136,6 +136,17 @@ const api: NxcoreDesktopApi = {
   app: {
     clearUserData: () => ipcRenderer.invoke('app:clear-user-data'),
   },
+  window: {
+    minimize: () => ipcRenderer.invoke('window:minimize'),
+    toggleMaximize: () => ipcRenderer.invoke('window:toggle-maximize'),
+    close: () => ipcRenderer.invoke('window:close'),
+    getState: () => ipcRenderer.invoke('window:get-state'),
+    onMaximizedChange: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, maximized: boolean) => listener(maximized)
+      ipcRenderer.on('window:maximized-changed', handler)
+      return () => ipcRenderer.removeListener('window:maximized-changed', handler)
+    },
+  },
   office: {
     testAvailable: Boolean(process.env.ELECTRON_RENDERER_URL),
     setActiveInstance: (id) => ipcRenderer.invoke('office:instance:set-active', id),

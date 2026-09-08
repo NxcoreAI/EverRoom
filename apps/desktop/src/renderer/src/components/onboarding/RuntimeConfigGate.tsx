@@ -13,6 +13,7 @@ import type { RuntimeConfigSnapshot, RuntimeConfigTestResult } from '../../../..
 import appleLogo from '@/assets/apple-logo.svg'
 import googleLogo from '@/assets/google-logo.svg'
 import { ProductBrand } from '@/components/ui/ProductBrand'
+import { WindowControls } from '@/components/WindowControls'
 import { RedeemCodeField, useRedeemCode } from '@/components/account/RedeemCodeField'
 import { QrLoginPanel } from '@/components/account/QrLoginPanel'
 import { useLocale } from '@/i18n/LocaleContext'
@@ -221,6 +222,7 @@ export function RuntimeConfigGate({ children }: { children: ReactNode }) {
             <button type="button" data-active={preference === 'zh-CN'} onClick={() => setLocale('zh-CN')}>中文</button>
             <button type="button" data-active={preference === 'en-US'} onClick={() => setLocale('en-US')}>EN</button>
           </div>
+          <WindowControls />
         </div>
       </header>
 

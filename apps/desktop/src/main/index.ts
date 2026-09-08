@@ -852,6 +852,24 @@ ipcMain.handle('app:clear-user-data', () => {
 })
 ipcMain.on('app:set-locale', (_event, locale: unknown) => setDesktopLocale(locale))
 
+// Windows 自绘标题栏的窗口控制（macOS 用系统红绿灯按钮，不经过这里）。
+ipcMain.handle('window:minimize', (event) => {
+  BrowserWindow.fromWebContents(event.sender)?.minimize()
+})
+ipcMain.handle('window:toggle-maximize', (event) => {
+  const window = BrowserWindow.fromWebContents(event.sender)
+  if (!window) return
+  if (window.isMaximized()) window.unmaximize()
+  else window.maximize()
+})
+ipcMain.handle('window:close', (event) => {
+  BrowserWindow.fromWebContents(event.sender)?.close()
+})
+ipcMain.handle('window:get-state', (event) => {
+  const window = BrowserWindow.fromWebContents(event.sender)
+  return { maximized: window?.isMaximized() ?? false }
+})
+
 function logRendererDiagnostic(input: unknown): void {
   if (!input || typeof input !== 'object') return
   const value = input as { module?: unknown; level?: unknown; event?: unknown }
@@ -3070,8 +3088,11 @@ function createWindow(): BrowserWindow {
     show: false,
     title: 'Everroom',
     backgroundColor: '#f5f5f5',
-    titleBarStyle: 'hiddenInset',
-    trafficLightPosition: { x: 14, y: 17 },
+    // macOS 走 hiddenInset + 系统红绿灯；Windows 隐藏整条系统标题栏，
+    // 由渲染端 TopBar/引导页头部绘制 EverRoom 风格的自绘窗口按钮。
+    ...(process.platform === 'darwin'
+      ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 14, y: 17 } }
+      : { titleBarStyle: 'hidden' as const }),
     webPreferences: {
       preload: join(__dirname, '../preload/index.cjs'),
       contextIsolation: true,
@@ -3079,6 +3100,11 @@ function createWindow(): BrowserWindow {
       sandbox: true,
     },
   })
+  const sendMaximizedChanged = () => {
+    if (!window.isDestroyed()) window.webContents.send('window:maximized-changed', window.isMaximized())
+  }
+  window.on('maximize', sendMaximizedChanged)
+  window.on('unmaximize', sendMaximizedChanged)
 
   installCrossOriginIsolation(window.webContents.session, process.env.ELECTRON_RENDERER_URL)
 
