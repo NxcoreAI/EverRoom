@@ -13250,8 +13250,11 @@
 .context-room-history-version.context-room-history-import-version { border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border)); border-radius: 8px; }
 .context-room-history-import-version .context-room-history-version-rail.is-import { display: grid; place-items: center; color: var(--accent); }
 .context-room-history-import-version .context-room-history-version-rail.is-import svg { width: 13px; height: 13px; }
-.context-room-history-import-badge { display: inline-flex; align-items: center; gap: 5px; padding: 2px 7px; border-radius: 999px; background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); font-size: 9px; font-style: normal; font-weight: 650; }
-.context-room-history-import-badge svg, .context-room-history-import-badge img { width: 12px; height: 12px; }
+.context-room-history-import-badge { display: inline-flex; align-items: center; flex-shrink: 0; gap: 5px; padding: 3px 9px; border-radius: 999px; background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); font-size: 10px; font-style: normal; font-weight: 650; }
+.context-room-history-import-badge svg, .context-room-history-import-badge img { width: 14px; height: 14px; }
+/* 外部更新徽章与标题同一行：徽章不收缩，标题占余宽并保省略 */
+.context-room-history-import-title-row { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.context-room-history-import-title-row .context-room-history-version-title { flex: 1; min-width: 0; }
 
 /* 时间轴标题行的"检查外部更新"按钮（导入过的文档显示） */
 .context-room-history-import-check { display: inline-flex; align-items: center; gap: 5px; margin-left: auto; padding: 3px 9px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); color: var(--muted); font: inherit; font-size: 9px; cursor: pointer; }
@@ -13259,3 +13262,11 @@
 .context-room-history-import-check:disabled { opacity: 0.6; cursor: default; }
 .context-room-history-import-check svg { width: 11px; height: 11px; }
 .context-room-history-import-check-spin { width: 11px; height: 11px; border: 2px solid var(--border-strong); border-top-color: var(--accent); border-radius: 50%; animation: context-room-spin 0.8s linear infinite; }
+
+/* 未定位评论折叠头 */
+.context-room-imported-comments-unanchored-toggle { display: flex; align-items: center; gap: 6px; width: 100%; padding: 0; border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 10px; font-weight: 600; cursor: pointer; text-align: left; }
+.context-room-imported-comments-unanchored-toggle:hover { color: var(--text); }
+.context-room-imported-comments-unanchored-toggle small { margin-left: auto; font-size: 9px; font-variant-numeric: tabular-nums; }
+.context-room-imported-comments-unanchored-chevron { width: 12px; height: 12px; transition: transform 160ms ease; }
+.context-room-imported-comments-unanchored-chevron[data-collapsed='true'] { transform: rotate(-90deg); }
+.context-room-imported-comments-unanchored[data-collapsed='true'] { padding-bottom: 0; }

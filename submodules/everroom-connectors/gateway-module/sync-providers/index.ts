@@ -4,6 +4,7 @@ import { outlookSyncProvider } from "./outlook.js";
 import { googleCalendarSyncProvider } from "./google-calendar.js";
 import { googleDocsSyncProvider } from "./google-docs.js";
 import { notionSyncProvider } from "./notion.js";
+import { feishuSyncProvider } from "./feishu.js";
 import { icsCalendarSyncProvider } from "./ics-calendar.js";
 import { feishuWikiSyncProvider } from "./feishu-wiki.js";
 
@@ -21,6 +22,8 @@ export const SYNC_PROVIDERS: readonly SyncProviderDefinition[] = [
   googleCalendarSyncProvider,
   googleDocsSyncProvider,
   notionSyncProvider,
+  // 飞书 OAuth 用户连接（SaaS 已配置 OAuth client）；轻量根目录镜像，导入走导入面板。
+  feishuSyncProvider,
   // 阶段三首试点：非 OAuth 直连源（webcal-url 通道 + direct 引擎）。
   icsCalendarSyncProvider,
   // 阶段三第二试点：飞书自建应用（api-token 通道 + direct 引擎）。

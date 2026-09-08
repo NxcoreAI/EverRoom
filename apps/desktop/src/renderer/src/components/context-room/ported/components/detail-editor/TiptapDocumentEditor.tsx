@@ -556,6 +556,7 @@ export function TiptapDocumentEditor({
         removeDocumentDraft(requestDocumentId)
         const latest = await documents.get(requestDocumentId)
         if (isCurrentRequest() && latest) refreshAuthoritativeDocument(latest)
+        setOverviewRefreshSignal((value) => value + 1)
         setHistoryRefreshSignal((value) => value + 1)
         showToast({ title: t('contextRoom:importHistory.appliedAsVersion', { version: String(applied.version) }) })
       } catch (error: unknown) {
@@ -1438,11 +1439,15 @@ export function TiptapDocumentEditor({
   // 文档速览：首次打开自动生成一次；此后正文版本超过 generatedAtVersion
   // 显示「已过期」，由用户手动重新生成。生成前 flush 本地保存锁权威版本。
   const [overviewExpanded, setOverviewExpanded] = useState(false)
+  // 应用导入候选后正文被外部替换（服务端已清速览列）：bump 信号让速览重拉，
+  // 落回无速览态即自动对新正文重新生成。
+  const [overviewRefreshSignal, setOverviewRefreshSignal] = useState(0)
   const overview = useDocumentOverview({
     documentId,
     backendDocument,
     prepareDocument: flushDocumentVersion,
     locked: editorLocked,
+    refreshSignal: overviewRefreshSignal,
   })
   // 生成完成后展开一次（每次挂载限一次），让首屏速览直接可见。
   const overviewPrevStateRef = useRef<string | null>(null)

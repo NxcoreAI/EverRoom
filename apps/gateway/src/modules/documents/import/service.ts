@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
+import { diffChars } from "diff";
 import { and, desc, eq, inArray, isNotNull } from "drizzle-orm";
 import type {
   CanonicalComment,
   CanonicalDocumentArtifact,
+  DocumentDiffResult,
   DocumentImportCommentDiffSummary,
   ExternalDocumentCommentView,
   ExternalDocumentListItem,
@@ -14,6 +16,7 @@ import type {
   ExternalDocumentSearchResponse,
   ExternalDocumentWarning,
   RoomDocument,
+  TiptapJsonContent,
 } from "@nxcore/agent-contract";
 import type { GatewayDatabase } from "../../../infrastructure/database/client.js";
 import {
@@ -23,6 +26,7 @@ import {
   documentImportSnapshots,
   documentImportSources,
   documentRoomImports,
+  documents,
 } from "../../../infrastructure/database/schema.js";
 import type { OpenConnectorCliConfig } from "../../../config.js";
 import { agentDocumentMarkdown } from "../agent-markdown.js";
@@ -109,6 +113,143 @@ function anchorDiscussionSpans(markdown: string, comments: CanonicalComment[]): 
     if (hit) applyAnchor(comment, hit.text);
   }
   return { markdown: cleaned, comments };
+}
+
+const CONTAINER_BLOCK_TYPES = new Set(["orderedList", "bulletList", "table"]);
+
+function textOfDiffNode(node: Record<string, unknown>): string {
+  const parts: string[] = [];
+  const walk = (value: unknown): void => {
+    if (!value || typeof value !== "object") return;
+    const record = value as Record<string, unknown>;
+    if (typeof record.text === "string") parts.push(record.text);
+    if (Array.isArray(record.content)) record.content.forEach(walk);
+  };
+  walk(node);
+  return parts.join("");
+}
+
+function childKeyOf(node: Record<string, unknown>): string {
+  return `${String(node.type ?? "")}\u0000${textOfDiffNode(node)}`;
+}
+
+function charSpansOf(before: string, after: string): Array<{ type: "equal" | "insert" | "delete"; text: string }> {
+  return diffChars(before, after).map((part) => ({
+    type: part.added ? "insert" as const : part.removed ? "delete" as const : "equal" as const,
+    text: part.value,
+  })).filter((span) => span.text.length > 0);
+}
+
+/**
+ * 容器块细化（候选 diff 专用）：顶层列表/表格是单个 diff 单位——一项/一格
+ * 的改动会被渲染成整块"删除+新增"。这里把 modified 容器按子块（列表项/
+ * 表格行）做 LCS：变更的子块独立成块（外面包一层同类型容器保证渲染器可
+ * 序列化），未变的子块直接省略。unchanged 容器不受影响。
+ */
+function refineContainerDiff(diff: DocumentDiffResult): DocumentDiffResult {
+  if (!diff.blocks.some((block) => block.status === "modified"
+    && CONTAINER_BLOCK_TYPES.has(block.type) && block.before && block.after)) {
+    return diff;
+  }
+  const out: DocumentDiffResult["blocks"] = [];
+  for (const block of diff.blocks) {
+    if (block.status !== "modified" || !block.before || !block.after) {
+      // 文本级零差异的 modified（嵌套属性/结构噪声）：降级，避免渲染整块增删。
+      if (block.status === "modified"
+        && block.textDiff.every((span) => span.type === "equal" || span.text.length === 0)) {
+        const { before: noiseBefore, ...noiseRest } = block;
+        void noiseBefore;
+        out.push({ ...noiseRest, status: "unchanged", after: (block.after ?? block.before) as TiptapJsonContent });
+      } else {
+        out.push(block);
+      }
+      continue;
+    }
+    if (!CONTAINER_BLOCK_TYPES.has(block.type)) {
+      out.push(block);
+      continue;
+    }
+    const beforeNode = block.before as unknown as Record<string, unknown>;
+    const afterNode = block.after as unknown as Record<string, unknown>;
+    const beforeChildren = Array.isArray(beforeNode.content)
+      ? (beforeNode.content as Array<Record<string, unknown>>) : [];
+    const afterChildren = Array.isArray(afterNode.content)
+      ? (afterNode.content as Array<Record<string, unknown>>) : [];
+    // 子块 LCS（type+text 为键）：复用块对齐思路，O(n·m) 对列表/表格规模足够。
+    const beforeKeys = beforeChildren.map(childKeyOf);
+    const afterKeys = afterChildren.map(childKeyOf);
+    const width = afterChildren.length + 1;
+    const table: number[][] = Array.from({ length: beforeChildren.length + 1 }, () => new Array<number>(width).fill(0));
+    for (let i = beforeChildren.length - 1; i >= 0; i -= 1) {
+      for (let j = afterChildren.length - 1; j >= 0; j -= 1) {
+        table[i]![j]! = beforeKeys[i] === afterKeys[j]
+          ? table[i + 1]![j + 1]! + 1
+          : Math.max(table[i + 1]![j]!, table[i]![j + 1]!);
+      }
+    }
+    const pairs: Array<{ before: number; after: number }> = [];
+    let i = 0;
+    let j = 0;
+    while (i < beforeChildren.length && j < afterChildren.length) {
+      if (beforeKeys[i] === afterKeys[j]) {
+        pairs.push({ before: i, after: j });
+        i += 1; j += 1;
+      } else if (table[i + 1]![j]! >= table[i]![j + 1]!) i += 1;
+      else j += 1;
+    }
+    const matchedBefore = new Set(pairs.map((pair) => pair.before));
+    const matchedAfter = new Set(pairs.map((pair) => pair.after));
+    const emit = (status: "added" | "removed" | "modified",
+      beforeChild: Record<string, unknown> | null,
+      afterChild: Record<string, unknown> | null,
+      ordinal: number): void => {
+      const wrap = (child: Record<string, unknown> | null) => child
+        ? { type: block.type, content: [child] } as unknown as TiptapJsonContent : undefined;
+      const beforeNode = wrap(beforeChild);
+      const afterNode = wrap(afterChild);
+      out.push({
+        blockId: `${block.blockId}:${String(ordinal)}`,
+        status,
+        type: block.type,
+        path: [...block.path, ordinal],
+        ...(beforeNode ? { before: beforeNode } : {}),
+        ...(afterNode ? { after: afterNode } : {}),
+        textDiff: charSpansOf(
+          beforeChild ? textOfDiffNode(beforeChild) : "",
+          afterChild ? textOfDiffNode(afterChild) : "",
+        ),
+        unstableMatch: true,
+      });
+    };
+    let emitted = 0;
+    for (const pair of pairs) {
+      const beforeChild = beforeChildren[pair.before]!;
+      const afterChild = afterChildren[pair.after]!;
+      if (beforeKeys[pair.before] === afterKeys[pair.after]) continue;
+      emit("modified", beforeChild, afterChild, emitted);
+      emitted += 1;
+    }
+    beforeChildren.forEach((child, index) => {
+      if (!matchedBefore.has(index)) {
+        emit("removed", child, null, emitted);
+        emitted += 1;
+      }
+    });
+    afterChildren.forEach((child, index) => {
+      if (!matchedAfter.has(index)) {
+        emit("added", null, child, emitted);
+        emitted += 1;
+      }
+    });
+    if (emitted === 0) {
+      // 全部子块文本一致：差异只是嵌套 id/属性噪声（候选重导入会重新生成
+      // 所有嵌套 UUID），降级为 unchanged——整块"删除+新增"是纯视觉噪声。
+      const { before: dropBefore, ...dropRest } = block;
+      void dropBefore;
+      out.push({ ...dropRest, status: "unchanged", after: (block.after ?? block.before) as TiptapJsonContent });
+    }
+  }
+  return { ...diff, blocks: out };
 }
 
 /** 从讨论标记 URL 提取 blockId（结构：discussion://{pageId}/{blockId}/{discussionId}，
@@ -728,6 +869,12 @@ export class DocumentImportService {
       title: artifact.title,
       contentJson,
     });
+    // 应用外部更新后失效 AI 速览：标题已随 save 更新，旧摘要不得冒充新内容。
+    // 按产品懒生成策略，速览在下次读取/打开时对新正文自动重生成。
+    this.db.update(documents)
+      .set({ overviewText: null, overviewVersion: null, overviewGeneratedAt: null })
+      .where(eq(documents.id, row.documentId))
+      .run();
     this.db.update(documentRoomImports).set({ importedVersion: saved.version }).where(eq(documentRoomImports.id, roomImportId)).run();
     return { document: saved, version: saved.version };
   }
@@ -848,12 +995,12 @@ export class DocumentImportService {
         createdAt: snapshotRow.capturedAt.toISOString(),
         yjsBackfilled: true,
       },
-      diff: this.documents.diffContents(
+      diff: refineContainerDiff(this.documents.diffContents(
         target.id,
         target.contentJson,
         candidateContent,
         { fromVersion: target.version, toVersion: target.version },
-      ),
+      )),
     };
   }
 

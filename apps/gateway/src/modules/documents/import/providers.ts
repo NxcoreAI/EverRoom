@@ -288,6 +288,8 @@ interface ListingState {
   byId: Map<string, ExternalDocumentListItem>;
   truncated: boolean;
   warnings: ExternalDocumentWarning[];
+  /** 搜索兜底列出的 token（wiki 树只对这些回填归属；drive BFS 条目 drive 优先）。 */
+  searchTokens: Set<string>;
 }
 
 function listingPush(state: ListingState, item: ExternalDocumentListItem): void {
@@ -351,6 +353,49 @@ function pageTokenOf(value: Record<string, unknown>): string | null {
   return firstText(value, ["pageToken", "page_token"]);
 }
 
+/** 云空间列举降级：Search v2 空查询分页（≤20/页），覆盖个人空间+共享给
+ * 当前用户的文档（不含知识库，由 wiki 树负责）；origin 统一标 drive。 */
+async function feishuListBySearch(run: ImportActionFn, state: ListingState, signal?: AbortSignal): Promise<void> {
+  let pageToken: string | null = null;
+  for (let page = 0; page < 25; page += 1) {
+    signal?.throwIfAborted();
+    const result = objectValue(await run({
+      service: "feishu",
+      action: "search_documents",
+      input: {
+        query: "",
+        pageSize: 20,
+        ...(pageToken ? { pageToken } : {}),
+      },
+    }, signal));
+    let unparsed = 0;
+    for (const record of Array.isArray(result.results) ? result.results.map(objectValue) : []) {
+      const mapped = mapFeishuSearchItem(record);
+      if (!mapped) {
+        unparsed += 1;
+        continue;
+      }
+      state.searchTokens.add(mapped.remoteDocumentId);
+      listingPush(state, {
+        provider: "feishu",
+        remoteDocumentId: mapped.remoteDocumentId,
+        title: mapped.title,
+        sourceUrl: mapped.sourceUrl,
+        updatedAt: mapped.updatedAt,
+        ownerName: mapped.ownerName,
+        origin: "drive",
+        wikiSpaceName: null,
+        imported: false,
+      });
+    }
+    if (unparsed > 0) {
+      state.warnings.push({ code: "list_unparsed_items", message: `${String(unparsed)} 条搜索结果无法解析，已跳过` });
+    }
+    pageToken = pageTokenOf(result);
+    if (result.hasMore !== true || !pageToken || state.truncated) break;
+  }
+}
+
 async function feishuListWiki(run: ImportActionFn, state: ListingState, signal?: AbortSignal): Promise<void> {
   const spaces: Array<{ spaceId: string; name: string | null }> = [];
   let spacesPageToken: string | null = null;
@@ -394,6 +439,12 @@ async function feishuListWiki(run: ImportActionFn, state: ListingState, signal?:
         const objToken = firstText(node, ["obj_token", "objToken"]);
         const nodeToken = firstText(node, ["node_token", "nodeToken"]);
         if (firstText(node, ["obj_type", "objType"]) === "docx" && objToken) {
+          const existing = state.searchTokens.has(objToken) ? state.byId.get(objToken) : undefined;
+          if (existing && existing.origin === "drive" && !existing.wikiSpaceName) {
+            // 搜索兜底列出的 wiki 文档：回填知识库归属（wiki 树信息更具体）。
+            existing.origin = "wiki";
+            existing.wikiSpaceName = space.name;
+          }
           listingPush(state, {
             provider: "feishu",
             remoteDocumentId: objToken,
@@ -580,9 +631,32 @@ export function createFeishuImportAdapter(run: ImportActionFn): ExternalDocument
     return { ...parsed, warnings: [...warnings, ...parsed.warnings] };
   },
   async listAllDocuments(signal) {
-    const state: ListingState = { byId: new Map(), truncated: false, warnings: [] };
+    const state: ListingState = { byId: new Map(), truncated: false, warnings: [], searchTokens: new Set() };
     // 云空间先列（根目录递归），wiki 空间树随后；同 token 以 drive 记录优先。
-    await feishuListDrive(run, state, signal);
+    // 云空间权限不足（99991679：token 未含 drive:drive[:readonly]，授权 scope
+    // 集固定于授权时刻）不整体失败——降级继续拉知识库，云空间缺位明确告警。
+    try {
+      await feishuListDrive(run, state, signal);
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      // 上游 list_drive_files 声明 drive:drive.metadata:readonly 但飞书该端点
+      // 实际要求 drive:drive[:readonly]，运行时 OAuth 并集不含该 scope →
+      // 99991679 且重授权无解。降级：Search v2 空查询列举（search:docs:read，
+      // token 已含）+ 知识库树照常。
+      state.warnings.push({
+        code: "feishu_drive_listing_degraded",
+        message: `云空间目录列举不可用（${error instanceof Error ? error.message : String(error)}），已改用搜索列举云文档`,
+      });
+      try {
+        await feishuListBySearch(run, state, signal);
+      } catch (searchError) {
+        if (signal?.aborted) throw searchError;
+        state.warnings.push({
+          code: "feishu_drive_listing_failed",
+          message: `云空间文档列举失败（${searchError instanceof Error ? searchError.message : String(searchError)}），本次仅导入知识库文档`,
+        });
+      }
+    }
     await feishuListWiki(run, state, signal);
     if (state.truncated) {
       state.warnings.push({
@@ -758,7 +832,7 @@ export function createNotionImportAdapter(run: ImportActionFn): ExternalDocument
   },
   async listAllDocuments(signal) {
     // 空 query 全量列举（仅覆盖已共享给该连接的页面）；结果为空时明示范围提示。
-    const state: ListingState = { byId: new Map(), truncated: false, warnings: [] };
+    const state: ListingState = { byId: new Map(), truncated: false, warnings: [], searchTokens: new Set() };
     await notionListPages(run, state, signal);
     if (state.byId.size === 0) {
       state.warnings.push({

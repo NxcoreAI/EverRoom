@@ -5,13 +5,17 @@ import { showToast } from '../../../../../state/toast'
 
 /**
  * 文档速览（文章级 AI 摘要）状态机：挂载 GET → 无速览且 eligible 且
- * aiAvailable 时自动生成一次（生成前先 flush 本地防抖保存，锁定权威
- * version）；此后正文版本超过 generatedAtVersion 派生「已过期」，由用户
- * 手动重新生成。在途生成以 documentId 记在模块级 Map，编辑器重挂载不
- * 中断、不重复触发（useDocumentAiReview 同款模式）。
+ * aiAvailable 时立即自动生成；正文版本超过 generatedAtVersion（已过期）
+ * 时也自动重新生成（等正文稳定的去抖——连续编辑每 300ms 防抖保存都会
+ * bump version，不能每版都调 LLM；锁定期挂起，解锁后补触发）。生成前先
+ * flush 本地防抖保存锁定权威 version；在途生成以 documentId 记在模块级
+ * Map，编辑器重挂载不中断、不重复触发（useDocumentAiReview 同款模式）。
  */
 
 const inFlightOverviews = new Map<string, Promise<DocumentOverviewView | null>>()
+
+/** 过期重生成的去抖：版本变化后等正文稳定再触发（毫秒）。 */
+const OVERVIEW_REGEN_SETTLE_MS = 2500
 
 export type DocumentOverviewStatus =
   | { state: 'idle' }
@@ -31,6 +35,7 @@ export function useDocumentOverview({
   backendDocument,
   prepareDocument,
   locked,
+  refreshSignal = 0,
 }: {
   documentId: string
   backendDocument: RoomDocument | null
@@ -38,6 +43,8 @@ export function useDocumentOverview({
   prepareDocument: () => Promise<number>
   /** editorLocked：锁定期间不自动生成，解锁后 effect 自动补触发。 */
   locked: boolean
+  /** 外部强制重拉信号（如应用导入候选后——服务端已清速览列，重拉落回无速览态即自动重新生成）。 */
+  refreshSignal?: number
 }): { status: DocumentOverviewStatus; regenerate: () => void } {
   const { t } = useLocale()
   const [view, setView] = useState<DocumentOverviewView | null>(null)
@@ -72,6 +79,14 @@ export function useDocumentOverview({
     lastEvaluatedVersionRef.current = null
     void refresh()
   }, [refresh])
+
+  // 外部信号（应用导入候选等正文被外部替换的场景）：强制重拉速览。
+  const signalRef = useRef(refreshSignal)
+  useEffect(() => {
+    if (refreshSignal === signalRef.current) return
+    signalRef.current = refreshSignal
+    void refresh()
+  }, [refreshSignal, refresh])
 
   // 换文档时跟随可能在途的生成（上一实例/其它挂载发起）。
   useEffect(() => {
@@ -121,13 +136,41 @@ export function useDocumentOverview({
     return task
   }, [documentId, prepareDocument, refresh])
 
-  // 自动生成（仅首次）：无速览 + eligible + AI 可用 + 解锁 + 无在途 + 本挂载未失败过。
+  // 自动生成（无速览的首次进入）：无速览 + eligible + AI 可用 + 解锁 + 无在途 + 本挂载未失败过。
   useEffect(() => {
     if (!loaded || locked || !backendDocument) return
     if (!view || view.topic || !view.eligible || !view.aiAvailable) return
     if (failure || inFlightOverviews.has(documentId)) return
     void generate()
   }, [backendDocument, documentId, failure, generate, loaded, locked, view])
+
+  // 过期自动重生成（进入已过期的文档 / 正文有修改）：版本变化后等正文
+  // 稳定再触发；锁定期（Agent 写入/审阅/历史 diff）定时器被清理，解锁后
+  // effect 重跑补触发。失败不自动重试（用户手动或下次版本变化）。
+  const regenTimerRef = useRef<number | null>(null)
+  const isStale = Boolean(
+    view?.topic
+    && view.generatedAtVersion != null
+    && backendDocument
+    && backendDocument.version > view.generatedAtVersion,
+  )
+  useEffect(() => {
+    if (!loaded || locked || !isStale) return
+    if (!view || !view.eligible || !view.aiAvailable) return
+    if (failure || inFlightOverviews.has(documentId)) return
+    if (regenTimerRef.current !== null) window.clearTimeout(regenTimerRef.current)
+    regenTimerRef.current = window.setTimeout(() => {
+      regenTimerRef.current = null
+      if (inFlightOverviews.has(documentId)) return
+      void generate()
+    }, OVERVIEW_REGEN_SETTLE_MS)
+    return () => {
+      if (regenTimerRef.current !== null) {
+        window.clearTimeout(regenTimerRef.current)
+        regenTimerRef.current = null
+      }
+    }
+  }, [backendDocument, documentId, failure, generate, isStale, loaded, locked, view])
 
   // 尚无速览时正文版本变化（如打开时是空文档，后来写长了）→ 重新评估空短。
   const contentVersion = backendDocument?.version ?? null
