@@ -44,10 +44,12 @@ export interface RuntimeConfig {
 
 export type RuntimeConfigSource = "user" | "saas" | "default";
 
-/** relay 激活时的槽位重写目标：proxyOrigin + gateway 自身 token。 */
+/** relay 激活时的槽位重写目标：proxyOrigin + gateway 自身 token + 中转站 API 前缀。 */
 export interface RuntimeConfigRelayOverride {
   proxyOrigin: string;
   token: string;
+  /** 中转站 OpenAI 兼容前缀（如 /v1）；缺省 /v1。 */
+  pathPrefix?: string;
 }
 
 export interface RuntimeConfigSnapshot {
@@ -401,22 +403,21 @@ export class RuntimeConfigManager {
   /**
    * relay 激活且非 user 源时，把 LLM 槽位重写到本地代理出口（幂等不必要——
    * resolve 每次从存储载荷重建）。仅重写已配置（baseUrl 非空）的槽位；
-   * asr 与 memory/knowledge 服务地址不重写。路径保留原 pathname 前缀
-   * （原 https://host/v1 → ${proxyOrigin}/ai-relay/v1），代理按同样后缀转发。
+   * asr 与 memory/knowledge 服务地址不重写。host 与路径整体换成中转站出口
+   * （路径 = 会话 baseUrl 推导的规范前缀，缺省 /v1），不继承旧槽位的
+   * pathname——过渡期下发的是旧方案直连地址（如 dashscope 的
+   * /compatible-mode/v1），两套方案互不依赖：旧客户端直连旧地址，新客户端
+   * relay 激活时走代理出口，relay 失效即原样回退旧地址。
    */
   private rewriteSlotsForRelay(config: RuntimeConfig, selectedSource: RuntimeConfigSource): void {
     const override = this.relayOverride?.() ?? null;
     if (!override || selectedSource === "user") return;
-    const proxyBase = `${override.proxyOrigin.replace(/\/+$/, "")}/ai-relay`;
+    const proxyBase = `${override.proxyOrigin.replace(/\/+$/, "")}/ai-relay${override.pathPrefix ?? "/v1"}`;
     const rewrite = (slot: unknown): void => {
       if (!slot || typeof slot !== "object") return;
       const item = slot as Record<string, unknown>;
       if (typeof item.baseUrl !== "string" || !item.baseUrl.trim()) return;
-      try {
-        item.baseUrl = `${proxyBase}${new URL(item.baseUrl).pathname}`;
-      } catch {
-        return;
-      }
+      item.baseUrl = proxyBase;
       item.apiKey = override.token;
     };
     for (const slot of [config.primary, config.background, config.cursorCompletion, config.vlm, config.webSearch]) {

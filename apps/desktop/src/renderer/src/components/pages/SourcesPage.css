@@ -183,13 +183,26 @@
   background: transparent;
 }
 .src-card:hover { border-color: var(--border-strong); box-shadow: var(--shadow); }
-.src-card[data-tone="syncing"]::before {
-  background: linear-gradient(90deg, transparent 0%, var(--accent) 45%, transparent 90%);
-  background-size: 45% 100%;
-  background-repeat: no-repeat;
-  animation: src-sweep 1.8s linear infinite;
+/* 同步中流光：SVG 描边环沿周长匀速流动（conic 角速度旋转在宽扁卡上拐角处线速度会骤增；
+   dashoffset 的 keyframes 不能含 var()/calc()，Chromium 会丢弃该声明导致空动画，故每条 rect 各配显式关键帧）。 */
+.src-card-ring { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+.src-card-ring rect {
+  x: 0.5px;
+  y: 0.5px;
+  width: calc(100% - 1px);
+  height: calc(100% - 1px);
+  rx: 8.5px;
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1px;
+  stroke-linecap: round;
 }
-@keyframes src-sweep { from { background-position: -45% 0; } to { background-position: 145% 0; } }
+.src-card-ring rect:nth-child(1) { stroke-dasharray: 11 89; animation: src-ring-flow-1 2.4s linear infinite; }
+.src-card-ring rect:nth-child(2) { stroke-dasharray: 7 93; opacity: 0.55; animation: src-ring-flow-2 2.4s linear infinite; }
+.src-card-ring rect:nth-child(3) { stroke-dasharray: 4 96; opacity: 0.3; animation: src-ring-flow-3 2.4s linear infinite; }
+@keyframes src-ring-flow-1 { from { stroke-dashoffset: 0; } to { stroke-dashoffset: -100; } }
+@keyframes src-ring-flow-2 { from { stroke-dashoffset: 12; } to { stroke-dashoffset: -88; } }
+@keyframes src-ring-flow-3 { from { stroke-dashoffset: 20; } to { stroke-dashoffset: -80; } }
 .src-card[data-tone="attention"]::before { background: var(--danger); }
 .src-card[data-tone="attention"] { border-color: color-mix(in srgb, var(--danger) 28%, var(--border)); }
 .src-card-head { display: flex; align-items: center; gap: 10px; }

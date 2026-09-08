@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir, rename, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { ConnectorProvider, NormalizedDocument, WikiDocumentPreview, WikiDocumentSummary } from "@nxcore/connector-contract";
@@ -55,6 +55,11 @@ export class ConnectorDocumentStore {
     if (metadata.size > MAX_PREVIEW_BYTES) throw new Error("document_too_large");
     const content = await readFile(path, "utf8");
     return { id: documentId, fileName, title: this.title(content, fileName), size: metadata.size, modifiedAt: metadata.mtime.toISOString(), content };
+  }
+
+  /** 连接删除级联：整目录移除该连接的全部落盘文档（不存在时为 no-op）。 */
+  async purge(provider: ConnectorProvider, connectionId: string): Promise<void> {
+    await rm(this.connectionDirectory(provider, connectionId), { recursive: true, force: true });
   }
 
   private connectionDirectory(provider: ConnectorProvider, connectionId: string): string {

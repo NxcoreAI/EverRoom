@@ -99,6 +99,7 @@ import { KnowledgeService } from "../modules/knowledge/service.js";
 import { KnowledgePreferences } from "../modules/knowledge/preferences.js";
 import { KnowledgeLlm } from "../modules/knowledge/llm.js";
 import { nangoConnectorRoutes } from "@nxcore/connectors-module/routes.js";
+import { purgeConnectorConnectionCascade } from "../modules/connectors/connection-purge.js";
 import { processingRoutes } from "../modules/processing/routes.js";
 import { TranscriptionSummaryService } from "../modules/processing/service.js";
 import { RealityError } from "../modules/reality/errors.js";
@@ -322,7 +323,17 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     ? { provider: "openai-compatible", api: "openai-completions", ...config.webSearch }
     : null, () => {
       const session = aiRelaySessions.current();
-      return session ? { proxyOrigin: session.proxyOrigin, token: config.authToken } : null;
+      if (!session) return null;
+      // 槽位重写目标的 API 前缀由会话 baseUrl 决定：根部署 → /v1；已带
+      // /v1 结尾不重复；子路径部署 → /<sub>/v1。旧槽位路径不参与。
+      let base = "";
+      try {
+        base = new URL(session.baseUrl).pathname.replace(/\/+$/, "");
+      } catch {
+        // 非法 baseUrl 按根处理
+      }
+      const pathPrefix = base.endsWith("/v1") ? base : `${base}/v1`;
+      return { proxyOrigin: session.proxyOrigin, token: config.authToken, pathPrefix };
     });
   const initialRuntimeSnapshot = runtimeConfigManager.snapshot();
   applyRuntimeConfig(config, initialRuntimeSnapshot.config);
@@ -358,10 +369,13 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     nangoExecutor,
     (connection) => connection.credentialsRef ?? null,
   );
+  const nangoConnectorDocumentStore = nangoConnectorConfig.enabled
+    ? new ConnectorDocumentStore(resolve(config.dataDir, "connectors", "documents"))
+    : null;
   const nangoConnectorManager = new ConnectorManager(
     new ConnectorRepository(nangoConnectorDb.sqlite),
     nangoExecutor,
-    nangoConnectorConfig.enabled ? new ConnectorDocumentStore(resolve(config.dataDir, "connectors", "documents")) : null,
+    nangoConnectorDocumentStore,
     nangoSyncEngine,
   );
   // Nango 连接器的 agent 工具（连接发现 / 触发同步 / 只读代理请求）。
@@ -1440,7 +1454,29 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   await app.register(diaryRoutes(diaryService));
   await app.register(agentSchedulerRoutes(agentSchedulerService));
   await app.register(agentSchedulerMcpRoutes(agentSchedulerService));
-  await app.register(nangoConnectorRoutes(nangoConnectorManager, nangoConnectorConfig.enabled, nangoConnectorAuthorization));
+  await app.register(nangoConnectorRoutes(
+    nangoConnectorManager,
+    nangoConnectorConfig.enabled,
+    nangoConnectorAuthorization,
+    // 连接删除级联：先清 gateway.sqlite 下游（域表/记忆/台账/knowledge/落盘文档），
+    // 再由路由内 repository.purgeConnection 收尾 connectors.sqlite。失败抛错则
+    // 连接保留（路由 500），各步幂等、重试安全。
+    async (id) => {
+      const connection = nangoConnectorManager.repository.getConnection(id);
+      if (!connection) return;
+      await purgeConnectorConnectionCascade(
+        {
+          db,
+          memory: memoryService,
+          knowledge: knowledgeService,
+          documentStore: nangoConnectorDocumentStore,
+          ownerId: connectorDomainOwner,
+          log: app.log,
+        },
+        connection,
+      );
+    },
+  ));
 
   // 阶段三 M3b：REST 前缀泛化——/v1/connectors/* 为主入口。Fastify v5 路由先于
   // onRequest（改写 URL 无效），别名经 404 兜底内部转发（app.inject 不走网络，

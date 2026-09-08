@@ -58,6 +58,13 @@ function CardShell({
         if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onOpen() }
       }}
     >
+      {tone === 'syncing' ? (
+        <svg className="src-card-ring" aria-hidden="true" focusable="false">
+          <rect pathLength="100" />
+          <rect pathLength="100" />
+          <rect pathLength="100" />
+        </svg>
+      ) : null}
       <header className="src-card-head">
         <span className="src-card-logo">{logo}</span>
         <div className="src-card-title">

@@ -38,11 +38,11 @@ export function parseGmailResume(raw: string | null | undefined): GmailResumeCur
 }
 
 /**
- * 配额节奏：Gmail 每用户 250 units/min，messages.get=5 units。
- * 1400ms ≈ 43 封/分 ≈ 215 units，给 list/history 页调用留余量。
- * 千封级全量约 23–25 分钟（配额硬下限附近），属一次性成本；测试可置 0。
+ * 配额节奏：Gmail 每用户配额是 250 units/秒（messages.get=5 units），串行逐封
+ * 请求被网络往返自然压在个位数封/秒，远低于配额；quota 403 由 HttpClient
+ * 滚动退避兜底，因此默认不限速。
  */
-export const gmailPace: { minIntervalMs: number } = { minIntervalMs: 1400 };
+export const gmailPace: { minIntervalMs: number } = { minIntervalMs: 0 };
 
 function createPacer() {
   let lastAt = 0;
