@@ -12,6 +12,8 @@ import {
   ingestEvents,
   jobs,
   roomEntityFacts,
+  roomEntityMentions,
+  roomRelations,
   roomSourceMemberships,
   rooms,
 } from '../src/infrastructure/database/schema.js'
@@ -320,6 +322,59 @@ describe('RoomRelationRegistry', () => {
     addRooms(db, 1)
     db.insert(jobs).values({ id: 'job-index', type: ROOM_RELATION_INDEX_JOB_TYPE, status: 'pending', payload: {} }).run()
     expect(registry.graph().indexing).toEqual({ status: 'building', pendingSources: 1 })
+    sqlite.close()
+  })
+
+  it('keeps pending-reindex mentions across rebuildFromFacts and only purges orphaned projections', async () => {
+    const { db, registry, sqlite } = await harness()
+    addRooms(db, 2)
+    db.update(rooms).set({ entityId: 'entity-room-0' }).where(eq(rooms.id, 'room-0')).run()
+    db.insert(entities).values({ id: 'entity-room-0', name: 'Room 0', kind: '项目', status: 'room', roomId: 'room-0' }).run()
+
+    addIngest(db, { id: 'doc-x', sourceKind: 'file' })
+    registry.replaceSource({ sourceKind: 'file', sourceId: 'doc-x', sourceVersion: 1, sourceTitle: 'Rollout notes', roomIds: ['room-1'], mentions: [{ entityId: 'entity-room-0', salience: 0.8, evidence: 'Room 0 owns the rollout' }] })
+    expect(registry.graph().edges[0]).toMatchObject({ directMentionCount: 1 })
+
+    // 来源已更新（版本 2）而 relation-index 尚未跑完：启动回填不得清掉旧版本
+    // 提及——否则依赖它的边跌破阈值被清，直到重索引完成后才回来。
+    db.update(roomSourceMemberships).set({ sourceVersion: 2, entityIndexed: false }).where(eq(roomSourceMemberships.sourceId, 'doc-x')).run()
+    registry.rebuildFromFacts()
+    expect(db.select().from(roomEntityMentions).all()).toHaveLength(1)
+    expect(registry.graph().edges[0]).toMatchObject({ directMentionCount: 1 })
+
+    // membership 整体消失（来源与 Room 解绑）才回收孤儿提及。
+    db.delete(roomSourceMemberships).where(eq(roomSourceMemberships.sourceId, 'doc-x')).run()
+    registry.rebuildFromFacts()
+    expect(db.select().from(roomEntityMentions).all()).toHaveLength(0)
+    expect(registry.graph().edges).toEqual([])
+    sqlite.close()
+  })
+
+  it('zero-hides disappeared auto relations instead of deleting and revives them when data returns', async () => {
+    const { db, registry, sqlite } = await harness()
+    addRooms(db, 4)
+    addIngest(db, { id: 'doc-shared', sourceKind: 'file' })
+    registry.replaceSource({ sourceKind: 'file', sourceId: 'doc-shared', sourceVersion: 1, sourceTitle: 'Shared brief', roomIds: ['room-2', 'room-3'], mentions: [] })
+    const edge = registry.graph().edges[0]!
+    expect(edge).toMatchObject({ score: 1.1, type: 'shared_evidence' })
+
+    // 来源被移除：边在图上消失，但行保留置零（瞬时低谷不物化成删除）。
+    registry.removeSource('file', 'doc-shared')
+    expect(registry.graph().edges).toEqual([])
+    const zeroed = db.select().from(roomRelations).all()
+    expect(zeroed).toHaveLength(1)
+    expect(zeroed[0]).toMatchObject({ id: edge.id, autoScore: 0 })
+
+    // 数据回来：同一确定性 id 的行原地复活。
+    addIngest(db, { id: 'doc-shared-2', sourceKind: 'file' })
+    registry.replaceSource({ sourceKind: 'file', sourceId: 'doc-shared-2', sourceVersion: 1, sourceTitle: 'Shared brief', roomIds: ['room-2', 'room-3'], mentions: [] })
+    expect(registry.graph().edges[0]).toMatchObject({ id: edge.id, score: 1.1 })
+    expect(db.select().from(roomRelations).all()).toHaveLength(1)
+
+    // 端点 Room 行彻底不存在后才真正清行。
+    db.delete(rooms).where(eq(rooms.id, 'room-3')).run()
+    registry.recomputeAll()
+    expect(db.select().from(roomRelations).all()).toHaveLength(0)
     sqlite.close()
   })
 })
