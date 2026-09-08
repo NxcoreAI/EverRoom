@@ -21,6 +21,7 @@ import {
 
 import type { MemoryAtomicItemDto, MemoryOnboardingResultDto } from '../../../../shared/memory'
 import { ProductBrand } from '@/components/ui/ProductBrand'
+import { WindowControls } from '@/components/WindowControls'
 import { useLocale } from '@/i18n/LocaleContext'
 import {
   candidateOnboardingMemories,
@@ -451,6 +452,7 @@ export function MemoryOnboardingGate({ children, suppressOnboarding = false, onF
             <button type="button" data-active={preference === 'en-US'} onClick={() => setLocale('en-US')}>EN</button>
           </div>
           {mode !== 'success' ? <button type="button" className="memory-onboarding-skip" onClick={skip}>{t('memory:onboarding.skip')}</button> : null}
+          <WindowControls />
         </div>
       </header>
 

@@ -1429,5 +1429,6 @@
   "linkGraph.filterLabel": "Link type filter",
   "linkGraph.filterAll": "All",
   "linkGraph.filterDocuments": "Documents",
-  "linkGraph.filterMemories": "Memories"
+  "linkGraph.filterMemories": "Memories",
+  "onboarding.successBody.windows": "The context is in place. The file app will keep recognizing supported files in Documents and Desktop in the background; add other folders from Sources."
 }
