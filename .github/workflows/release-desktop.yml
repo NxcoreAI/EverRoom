@@ -434,45 +434,69 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Notify Feishu
+      - name: Collect release summary
+        id: summary
         shell: bash
         env:
-          FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_RELEASE_WEBHOOK }}
           PUBLISH_RESULT: ${{ needs.publish.result }}
         run: |
-          if [[ -z "$FEISHU_WEBHOOK_URL" ]]; then
-            echo "::warning::FEISHU_RELEASE_WEBHOOK is not configured; skipping notification."
-            exit 0
-          fi
+          version="${GITHUB_REF_NAME#desktop-v}"
+          version="${version%%-*}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
           previous_tag="$(git describe --tags --match 'desktop-v*' --abbrev=0 "$GITHUB_SHA^" 2>/dev/null || true)"
           if [[ -n "$previous_tag" ]]; then
-            commits="$(git log --no-merges --pretty='- %h %s (%an)' "$previous_tag..$GITHUB_SHA" -n 20)"
+            commits="$(git log --no-merges --pretty='- %h %s (%an)' "$previous_tag..$GITHUB_SHA" -n 10)"
           else
-            commits="$(git log --no-merges --pretty='- %h %s (%an)' "$GITHUB_SHA" -n 20)"
+            commits="$(git log --no-merges --pretty='- %h %s (%an)' "$GITHUB_SHA" -n 10)"
           fi
           [[ -n "$commits" ]] || commits="- 本版本仅包含合并提交"
+          {
+            echo "commits<<RELEASE_COMMITS_EOF"
+            echo "$commits"
+            echo "RELEASE_COMMITS_EOF"
+          } >> "$GITHUB_OUTPUT"
 
+          repo_url="https://github.com/$GITHUB_REPOSITORY"
           if [[ "$PUBLISH_RESULT" == "success" ]]; then
-            status="成功"
-            target="https://github.com/$GITHUB_REPOSITORY/releases/tag/$GITHUB_REF_NAME"
+            buttons="$(jq -nc --arg dmg "$repo_url/releases/download/$GITHUB_REF_NAME/EverRoom-$version-arm64.dmg" \
+              --arg exe "$repo_url/releases/download/$GITHUB_REF_NAME/EverRoom-$version-windows-x64.exe" \
+              --arg rel "$repo_url/releases/tag/$GITHUB_REF_NAME" '[
+                {text:"⬇ macOS .dmg", url:$dmg, type:"default"},
+                {text:"⬇ Windows .exe", url:$exe, type:"default"},
+                {text:"查看 Release", url:$rel, type:"primary"}
+              ]')"
           else
-            status="失败"
-            target="https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            buttons="$(jq -nc --arg log "$repo_url/actions/runs/$GITHUB_RUN_ID" '[
+              {text:"查看构建日志", url:$log, type:"primary"}
+            ]')"
           fi
+          echo "buttons=$buttons" >> "$GITHUB_OUTPUT"
 
-          message="EverRoom 桌面端发布$status
-          版本：$GITHUB_REF_NAME
-          提交：
-          $commits
-          地址：$target"
-          payload="$(jq -n --arg text "$message" '{msg_type:"text",content:{text:$text}}')"
-          response="$(curl --fail --silent --show-error \
-            -H 'Content-Type: application/json' \
-            --data "$payload" \
-            "$FEISHU_WEBHOOK_URL")"
-          code="$(jq -r '.code // .StatusCode // -1' <<< "$response")"
-          test "$code" = "0" || {
-            echo "Feishu rejected the notification with code $code" >&2
-            exit 1
-          }
+      - name: Notify Feishu (success)
+        if: needs.publish.result == 'success'
+        uses: ./.github/actions/feishu-card
+        with:
+          webhook-url: ${{ secrets.FEISHU_RELEASE_WEBHOOK }}
+          template: green
+          title: 🚀 ${{ github.ref_name }} 发布成功
+          body: |
+            **自上版以来的提交：**
+            ${{ steps.summary.outputs.commits }}
+          buttons: ${{ steps.summary.outputs.buttons }}
+          note: ${{ github.repository }}
+
+      - name: Notify Feishu (failure)
+        if: needs.publish.result != 'success'
+        uses: ./.github/actions/feishu-card
+        with:
+          webhook-url: ${{ secrets.FEISHU_RELEASE_WEBHOOK }}
+          template: red
+          title: 🚀 ${{ github.ref_name }} 发布失败
+          body: |
+            构建或发布未成功，请查看日志排查。
+
+            **涉及的提交：**
+            ${{ steps.summary.outputs.commits }}
+          buttons: ${{ steps.summary.outputs.buttons }}
+          note: ${{ github.repository }}
