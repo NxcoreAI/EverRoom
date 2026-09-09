@@ -24,7 +24,7 @@ jobs:
       contents: read
       pull-requests: write
     env:
-      ANTHROPIC_BASE_URL: https://litellm.vyitec.com/anthropic
+      ANTHROPIC_BASE_URL: https://open.bigmodel.cn/api/anthropic
 
     steps:
       - name: Inspect pull request
@@ -91,7 +91,7 @@ jobs:
         if: steps.pr.outputs.eligible == 'true'
         uses: anthropics/claude-code-action@v1
         with:
-          anthropic_api_key: ${{ secrets.CODEX_RELAY_API_KEY }}
+          anthropic_api_key: ${{ secrets.GLM_ANTHROPIC_API_KEY }}
           github_token: ${{ github.token }}
           show_full_output: true
           prompt: |
@@ -137,7 +137,7 @@ jobs:
       contents: read
       issues: write
     env:
-      ANTHROPIC_BASE_URL: https://litellm.vyitec.com/anthropic
+      ANTHROPIC_BASE_URL: https://open.bigmodel.cn/api/anthropic
 
     steps:
       - name: Check out repository
@@ -148,7 +148,7 @@ jobs:
       - name: Analyze issue
         uses: anthropics/claude-code-action@v1
         with:
-          anthropic_api_key: ${{ secrets.CODEX_RELAY_API_KEY }}
+          anthropic_api_key: ${{ secrets.GLM_ANTHROPIC_API_KEY }}
           github_token: ${{ github.token }}
           prompt: |
             REPO: ${{ github.repository }}
