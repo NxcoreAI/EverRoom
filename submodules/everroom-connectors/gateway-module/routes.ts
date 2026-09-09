@@ -29,6 +29,12 @@ export const nangoConnectorRoutes =
     enabled: boolean,
     /** Seam4：Nango（回退）或 OpenConnector 授权服务（同 start/status 契约）。 */
     authorization?: AuthorizationLike,
+    /**
+     * 连接删除级联（host 注入）：在 repository.purgeConnection 之前调用，
+     * 清理域投影/记忆/台账等 host 侧数据。失败抛错则连接保留、路由 500，
+     * 用户重试安全（各步幂等）。
+     */
+    onPurge?: (id: string) => Promise<void>,
   ): FastifyPluginAsync =>
   async (app) => {
     // M3b：旧前缀弃用告警（直接命中 /v1/nango-connectors/* 时打头；
@@ -180,7 +186,9 @@ export const nangoConnectorRoutes =
     });
     app.delete("/v1/nango-connectors/connections/:id", async (req, reply) => {
       if (!enabled) return unavailable(reply);
-      manager.repository.purgeConnection((req.params as any).id);
+      const id = (req.params as any).id;
+      if (onPurge) await onPurge(id);
+      manager.repository.purgeConnection(id);
       return { ok: true };
     });
     app.get("/v1/nango-connectors/scopes", async () => scopes());

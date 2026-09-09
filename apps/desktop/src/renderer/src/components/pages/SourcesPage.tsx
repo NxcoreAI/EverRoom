@@ -9,7 +9,7 @@ import type {
   SourceChangeEvent,
   SourceFileSummary,
 } from '../../../../shared/sources'
-import type { ConnectorStatus, ConnectorConnection, SyncRun, SyncScope } from '@nxcore/connector-contract'
+import type { ConnectorRemoteAccount, ConnectorStatus, ConnectorConnection, SyncRun, SyncScope } from '@nxcore/connector-contract'
 import type { ObsidianVaultBinding, ObsidianVaultCandidate } from '../../../../shared/obsidian'
 import { ConnectGrid, type ConnectorProviderId } from './sources/ConnectGrid'
 import { EvidenceSearch } from './sources/EvidenceSearch'
@@ -17,6 +17,7 @@ import { EvidenceViewer } from './sources/EvidenceViewer'
 import { FilterPreferenceGuideDialog } from './sources/FilterPreferenceGuideDialog'
 import { GitHubConnectDialog, type GitHubConnectionInput } from './sources/GitHubConnectDialog'
 import { WebcalSubscriptionDialog } from './sources/WebcalSubscriptionDialog'
+import { ReconnectAccountDialog } from './sources/ReconnectAccountDialog'
 import { useConnectorProviders } from './sources/useConnectorProviders'
 import { MarkdownSourceDialog } from './sources/MarkdownSourceDialog'
 import { MarkdownPreviewDialog } from './sources/MarkdownPreviewDialog'
@@ -24,8 +25,8 @@ import { ObsidianImportDialog } from './sources/ObsidianImportDialog'
 import { describeSync } from './sources/sourceFormatters'
 import { CloudSourceCard, LocalSourceCard, ObsidianSourceCard } from './sources/SourceCard'
 import { SourceDrawer, type DrawerTarget } from './sources/SourceDrawer'
-import { IngestFeed } from './sources/IngestFeed'
-import { SourceIcon } from './sources/SourceIcon'
+import { IngestFeed, IngestLedger } from './sources/IngestFeed'
+import { SourceIcon, type SourceIconKind } from './sources/SourceIcon'
 import { PRODUCT_NAME } from '@/components/ui/brand'
 import { useLocale } from '@/i18n/LocaleContext'
 import './SourcesPage.css'
@@ -139,13 +140,6 @@ export function SourcesPage() {
         : await window.nxcore!.migrations.chooseLocalAgentDirectory(provider)
       if (run) setMessage(t('surface:sources.localAgentMigrationCompleted', { count: run.messagesCompleted }))
     } catch (error) { setMessage(error instanceof Error ? error.message : t('surface:sources.migrationFailed')) }
-    finally { setBusyId(null) }
-  }
-
-  const importNotionZip = async () => {
-    setBusyId('migration-notion'); setMessage(null)
-    try { const run = await window.nxcore!.migrations.importNotionZip(); if (run) setMessage(t('surface:sources.notionMigrationCompleted', { count: run.pagesCompleted })) }
-    catch (error) { setMessage(error instanceof Error ? error.message : t('surface:sources.migrationFailed')) }
     finally { setBusyId(null) }
   }
 
@@ -298,8 +292,10 @@ export function SourcesPage() {
     }).catch(() => undefined)
   }, [maybeGuide])
 
-  const connectConnector = async (provider: ConnectorProviderId) => {
-    setMessage(null)
+  // 远端旧授权选择（本地已删、oo 租户凭据仍活跃）：null = 弹窗关闭。
+  const [reconnectChoice, setReconnectChoice] = useState<ConnectorRemoteAccount | null>(null)
+
+  const startAuthorizationFlow = async (provider: ConnectorProviderId) => {
     try {
       const attempt = await window.nxcore?.nangoConnector.startAuthorization(provider)
       if (attempt) {
@@ -309,6 +305,27 @@ export function SourcesPage() {
     } catch (error) {
       setMessage(error instanceof Error ? error.message : t('surface:sources.failedToOpenTheAuthorizationPage'))
     }
+  }
+
+  const connectConnector = async (provider: ConnectorProviderId) => {
+    setMessage(null)
+    // 本地无连接但远端租户有活跃旧授权（删除不上行）→ 先让用户选：
+    // 免授权复用旧账号，或重新授权切换账号（oo select_account 弹账号选择器）。
+    const account = await window.nxcore?.nangoConnector.remoteAccount(provider).catch(() => null) ?? null
+    if (account) { setReconnectChoice(account); return }
+    await startAuthorizationFlow(provider)
+  }
+
+  // 复用远端旧授权：免 OAuth 直接注册连接，注册后立即触发首同步（不等轮询兜底）。
+  const reuseRemoteAccount = (account: ConnectorRemoteAccount) => {
+    setReconnectChoice(null)
+    void runCloudAction(account.provider, async () => {
+      await window.nxcore!.nangoConnector.registerConnection({ provider: account.provider, service: account.service, connectionName: 'default' })
+      setMessage(t('surface:sources.connectionCreatedSyncScopesAreBeingInitialized'))
+      const status = await window.nxcore!.nangoConnector.status()
+      const connection = status.connections.find((item) => item.provider === account.provider && item.status === 'active')
+      if (connection) await Promise.all(status.scopes.filter((scope) => scope.connectionId === connection.id).map((scope) => window.nxcore!.nangoConnector.triggerSync(scope.id, 'full')))
+    })
   }
 
   // webcal 连接按地址建连、无账号概念；OAuth 连接单槽位——重授权会顶替同 provider 现有连接。
@@ -623,7 +640,7 @@ export function SourcesPage() {
       {/* 二级页正文（主页分区在下方 {!subPage && …} 中整体让位） */}
       {subPage === 'ingest' ? (
         <section className="src-zone">
-          <IngestFeed refreshKey={sources.length} limit={200} />
+          <IngestLedger refreshKey={sources.length} />
         </section>
       ) : null}
       {subPage === 'connectors' ? (
@@ -636,7 +653,6 @@ export function SourcesPage() {
             onGitHub={() => setGithubOpen(true)}
             onGoogleDocs={() => setMarkdownSource('google-docs')}
             onNotion={() => setMarkdownSource('notion')}
-            onNotionZip={() => void importNotionZip()}
             onOpenClaw={() => void importOpenClaw()}
             onLocalAgentHistory={(provider) => void importLocalAgentHistory(provider)}
             connectorsEnabled={connectorsEnabled}
@@ -661,7 +677,6 @@ export function SourcesPage() {
               onGitHub={() => setGithubOpen(true)}
               onGoogleDocs={() => setMarkdownSource('google-docs')}
               onNotion={() => setMarkdownSource('notion')}
-              onNotionZip={() => void importNotionZip()}
               onOpenClaw={() => void importOpenClaw()}
               onLocalAgentHistory={(provider) => void importLocalAgentHistory(provider)}
               connectorsEnabled={connectorsEnabled}
@@ -677,16 +692,16 @@ export function SourcesPage() {
               <header className="src-zone-head"><h2>{t('surface:sources.connectedSources')}</h2><small>{sources.length + (hasObsidian ? 1 : 0) + connections.length}</small></header>
               <div className="src-cards">
                 {sources.map((source) => (
-                  <LocalSourceCard key={source.id} source={source} busy={busyId === source.id} onOpen={() => setDrawer({ type: 'local', source })} onSync={() => void runAction(source.id, async () => { const result = await api.sync(source.id); setMessage(describeSync(result, t)) })} onTogglePaused={() => void runAction(source.id, () => api.setPaused(source.id, source.status === 'connected'))} onClear={() => clearSourceData(source)} />
+                  <LocalSourceCard key={source.id} source={source} onOpen={() => setDrawer({ type: 'local', source })} />
                 ))}
                 {hasObsidian ? (
-                  <ObsidianSourceCard vaults={vaults} candidates={obsidianCandidates} busy={busyId === 'obsidian'} onOpen={() => setDrawer({ type: 'obsidian' })} onRescan={() => void rescanObsidian()} />
+                  <ObsidianSourceCard vaults={vaults} candidates={obsidianCandidates} onOpen={() => setDrawer({ type: 'obsidian' })} />
                 ) : null}
                 {connections.map((connection) => {
                   const connectionScopes = scopes.filter((item) => item.connectionId === connection.id)
                   const connectionScopeIds = new Set(connectionScopes.map((item) => item.id))
                   return (
-                    <CloudSourceCard key={connection.id} connection={connection} scopes={connectionScopes} runs={runs.filter((run) => connectionScopeIds.has(run.scopeId))} totals={recordTotals[connection.id]} busy={cloudBusyId === connection.id} onOpen={() => setDrawer({ type: 'cloud', connection })} onSync={() => syncConnection(connection)} onToggleEnabled={() => toggleConnectionEnabled(connection)} onPurge={() => purgeConnectionData(connection)} onReplaceAccount={isWebcalConnection(connection) ? undefined : () => replaceAccountFor(connection)} />
+                    <CloudSourceCard key={connection.id} connection={connection} scopes={connectionScopes} runs={runs.filter((run) => connectionScopeIds.has(run.scopeId))} totals={recordTotals[connection.id]} onOpen={() => setDrawer({ type: 'cloud', connection })} />
                   )
                 })}
               </div>
@@ -711,7 +726,10 @@ export function SourcesPage() {
           totals={drawer.type === 'cloud' ? recordTotals[drawer.connection.id] : undefined}
           busyId={drawer.type === 'cloud' ? cloudBusyId : drawerSource ? busyId : null}
           onClose={() => setDrawer(null)}
-          onSync={() => { if (drawerSource && api) void runAction(drawerSource.id, async () => { const result = await api.sync(drawerSource.id); setMessage(describeSync(result, t)) }) }}
+          onSync={() => {
+            if (drawer?.type === 'cloud') { syncConnection(drawer.connection); return }
+            if (drawerSource && api) void runAction(drawerSource.id, async () => { const result = await api.sync(drawerSource.id); setMessage(describeSync(result, t)) })
+          }}
           onTogglePaused={() => { if (drawerSource && api) void runAction(drawerSource.id, () => api.setPaused(drawerSource.id, drawerSource.status === 'connected')) }}
           onClear={() => { if (drawerSource) clearSourceData(drawerSource) }}
           onOpenEvidence={(sourceId, fileId) => void openEvidence(sourceId, fileId)}
@@ -731,6 +749,18 @@ export function SourcesPage() {
       {markdownPreview ? <MarkdownPreviewDialog preview={markdownPreview.data} onClose={() => setMarkdownPreview(null)} onShowFile={() => showFile(markdownPreview.sourceId, markdownPreview.fileId)} /> : null}
       {githubOpen ? <GitHubConnectDialog values={githubForm} busy={busyId === 'new'} onChange={setGithubForm} onClose={() => setGithubOpen(false)} onSubmit={(event) => void addGitHub(event)} /> : null}
       {webcalOpen ? <WebcalSubscriptionDialog url={webcalUrl} busy={busyId === 'new'} error={webcalError} onUrlChange={setWebcalUrl} onClose={() => setWebcalOpen(false)} onSubmit={(event) => void submitWebcalSubscription(event)} /> : null}
+      {reconnectChoice ? (() => {
+        const summary = connectorProviders.find((item) => item.provider === reconnectChoice.provider)
+        return <ReconnectAccountDialog
+          account={reconnectChoice}
+          label={summary?.label ?? reconnectChoice.provider}
+          iconKey={(summary?.iconKey ?? 'web-page') as SourceIconKind}
+          busy={cloudBusyId === reconnectChoice.provider}
+          onClose={() => setReconnectChoice(null)}
+          onReuse={reuseRemoteAccount}
+          onSwitch={(account) => { setReconnectChoice(null); void startAuthorizationFlow(account.provider) }}
+        />
+      })() : null}
       {markdownSource ? <MarkdownSourceDialog kind={markdownSource} value={markdownForm} busy={busyId === 'new'} onChange={setMarkdownForm} onClose={() => setMarkdownSource(null)} onSubmit={(event) => void addMarkdownSource(event)} /> : null}
       {guideProvider ? <FilterPreferenceGuideDialog provider={guideProvider} onClose={closeGuide} /> : null}
       {obsidianImportOpen ? <ObsidianImportDialog target={{ kind: 'memory' }} onClose={() => setObsidianImportOpen(false)} onImported={(result) => {

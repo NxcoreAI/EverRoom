@@ -159,7 +159,7 @@ export function SourceDrawer({
   const logo = (kind: SourceIconKind, glyph = false) => (
     <span className="src-card-logo"><SourceIcon kind={kind} className={glyph ? 'glyph' : ''} /></span>
   )
-  const head = (logoNode: ReactNode, name: string, sub: string, meta: ReactNode, actions: ReactNode) => (
+  const head = (logoNode: ReactNode, name: string, sub: string, meta: ReactNode, primary: ReactNode, secondary?: ReactNode) => (
     <div className="src-drawer-head">
       <div className="top">
         {logoNode}
@@ -168,7 +168,10 @@ export function SourceDrawer({
       </div>
       <div className="src-drawer-sub">{sub}</div>
       <div className="src-drawer-meta">{meta}</div>
-      <div className="src-drawer-actions">{actions}</div>
+      <div className="src-drawer-actions">
+        {primary}
+        {secondary ? <div className="src-drawer-actions-row">{secondary}</div> : null}
+      </div>
     </div>
   )
   const stats = (items: Array<{ value: string; label: string }>) => (
@@ -181,7 +184,6 @@ export function SourceDrawer({
   if (target.type === 'local') {
     const { source } = target
     const busy = busyId === source.id
-    const resumable = source.status === 'paused' || source.status === 'disconnected' || source.status === 'error'
     content = (
       <>
         {head(
@@ -193,9 +195,11 @@ export function SourceDrawer({
             <span>{formatDate(source.lastSyncedAt, locale, t)}</span>
             {source.lastError ? <span className="src-meta-error" title={source.lastError}>{source.lastError}</span> : null}
           </>,
+          source.status === 'connected'
+            ? <button type="button" className="src-mini-btn primary" disabled={busy} onClick={onSync}><RefreshCw aria-hidden="true" strokeWidth={1.8} />{t('surface:sourceCard.syncNow')}</button>
+            : <button type="button" className="src-mini-btn primary" disabled={busy} onClick={onTogglePaused}><Play aria-hidden="true" strokeWidth={1.8} />{t('surface:sourceTable.resumeSync')}</button>,
           <>
-            {source.status === 'connected' ? <button type="button" className="src-mini-btn" disabled={busy} onClick={onSync}><RefreshCw aria-hidden="true" strokeWidth={1.8} />{t('surface:sourceCard.syncNow')}</button> : null}
-            <button type="button" className="src-mini-btn" disabled={busy} onClick={onTogglePaused}>{resumable ? <Play aria-hidden="true" strokeWidth={1.8} /> : <Pause aria-hidden="true" strokeWidth={1.8} />}{t(resumable ? 'surface:sourceTable.resumeSync' : 'surface:sourceTable.pauseSync')}</button>
+            {source.status === 'connected' ? <button type="button" className="src-mini-btn" disabled={busy} onClick={onTogglePaused}><Pause aria-hidden="true" strokeWidth={1.8} />{t('surface:sourceTable.pauseSync')}</button> : null}
             <button type="button" className="src-mini-btn danger" disabled={busy} onClick={onClear}><Eraser aria-hidden="true" strokeWidth={1.8} />{t('surface:sourceTable.clearDataKeepFolder')}</button>
           </>,
         )}
@@ -249,7 +253,7 @@ export function SourceDrawer({
             <StatePill tone={partlyOffline ? 'danger' : pending.length > 0 ? 'paused' : 'ok'} label={t(partlyOffline ? 'surface:sources.partlyOffline' : pending.length > 0 ? 'surface:sources.pendingImport' : 'surface:sourceTable.synced')} />
             {updatedAt ? <span>{formatDate(updatedAt, locale, t)}</span> : null}
           </>,
-          <button type="button" className="src-mini-btn" disabled={busyId === 'obsidian'} onClick={onRescanObsidian}><RefreshCw aria-hidden="true" strokeWidth={1.8} />{t('surface:sources.rescanObsidian')}</button>,
+          <button type="button" className="src-mini-btn primary" disabled={busyId === 'obsidian'} onClick={onRescanObsidian}><RefreshCw aria-hidden="true" strokeWidth={1.8} />{t('surface:sources.rescanObsidian')}</button>,
         )}
         {stats([
           { value: fileCount.toLocaleString(), label: t('surface:sourceTable.files') },
@@ -314,10 +318,14 @@ export function SourceDrawer({
             <StateDot value={running ? 'running' : connection.status} t={t} />
             <span>{formatDate(connection.updatedAt, locale, t)}</span>
           </>,
+          connection.status === 'error' && onReplaceAccount
+            ? <button type="button" className="src-mini-btn primary" disabled={busy} onClick={onReplaceAccount}><ArrowLeftRight aria-hidden="true" strokeWidth={1.8} />{t('surface:sources.replaceAccount')}</button>
+            : active
+              ? <button type="button" className="src-mini-btn primary" disabled={busy || running || !initialSyncDone} onClick={onSync}><RefreshCw aria-hidden="true" strokeWidth={1.8} />{t('surface:connector.incrementalSync')}</button>
+              : <button type="button" className="src-mini-btn primary" disabled={busy} onClick={() => onToggleEnabled(connection)}><Play aria-hidden="true" strokeWidth={1.8} />{t('surface:sourceCard.enableConnection')}</button>,
           <>
-            {active ? <button type="button" className="src-mini-btn" disabled={busy || running || !initialSyncDone} onClick={onSync}><RefreshCw aria-hidden="true" strokeWidth={1.8} />{t('surface:connector.incrementalSync')}</button> : null}
-            {onReplaceAccount ? <button type="button" className="src-mini-btn" disabled={busy} onClick={onReplaceAccount}><ArrowLeftRight aria-hidden="true" strokeWidth={1.8} />{t('surface:sources.replaceAccount')}</button> : null}
-            <button type="button" className="src-mini-btn" disabled={busy} onClick={() => onToggleEnabled(connection)}>{active ? <Pause aria-hidden="true" strokeWidth={1.8} /> : <Play aria-hidden="true" strokeWidth={1.8} />}{t(active ? 'surface:connector.disableConnection' : 'surface:sourceCard.enableConnection')}</button>
+            {onReplaceAccount && connection.status !== 'error' ? <button type="button" className="src-mini-btn" disabled={busy} onClick={onReplaceAccount}><ArrowLeftRight aria-hidden="true" strokeWidth={1.8} />{t('surface:sources.replaceAccount')}</button> : null}
+            {active ? <button type="button" className="src-mini-btn" disabled={busy} onClick={() => onToggleEnabled(connection)}><Pause aria-hidden="true" strokeWidth={1.8} />{t('surface:connector.disableConnection')}</button> : null}
             <button type="button" className="src-mini-btn danger" disabled={busy} onClick={() => onPurge(connection)}><Trash2 aria-hidden="true" strokeWidth={1.8} />{t('surface:connector.clearLocalData')}</button>
           </>,
         )}

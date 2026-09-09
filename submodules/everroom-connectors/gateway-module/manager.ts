@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type {
+  ConnectorConnection,
   ConnectorProvider,
   SyncMode,
   SyncRun,
@@ -66,24 +67,7 @@ export class ConnectorManager {
   }) {
     const c = this.repository.registerConnection(input);
     try {
-      // 兜底 scope 种子来自注册表（executor 缺席/发现失败时；正常路径走 discoverScopes）。
-      const fallbackScopes =
-        syncProviderOf(input.provider)?.defaultScopes.map((scope) => ({
-          id: scope.providerScopeId,
-          displayName: scope.displayName,
-        })) ?? [];
-      const scopes = this.executor?.discoverScopes
-        ? await this.executor.discoverScopes(c)
-        : fallbackScopes;
-      // 重复注册（重装/重连）时 scope 已存在——只有新建的 scope 才需要首同步
-      const knownBefore = new Set(
-        this.repository.listScopes().filter((s) => s.connectionId === c.id).map((s) => s.providerScopeId),
-      );
-      const created: string[] = [];
-      for (const scope of scopes) {
-        const ensured = this.repository.ensureScope(c.id, scope.id, scope.displayName);
-        if (!knownBefore.has(scope.id)) created.push(ensured.id);
-      }
+      const created = await this.ensureScopesForConnection(c);
       // 首次连接立即触发全量同步：不等轮询周期（默认 5 分钟）——
       // "连接成功但什么都不发生"是最迷惑的首次体验。失败静默，轮询兜底。
       if (created.length > 0 && this.executor && !input.deferFirstSync) {
@@ -99,6 +83,52 @@ export class ConnectorManager {
     } catch (error) {
       this.repository.purgeConnection(c.id);
       throw error;
+    }
+  }
+  /**
+   * 为连接建齐 scope：在线发现（outlook 文件夹/日历表）优先；provider 没有
+   * discoverScopes 实现（gmail/notion/google-docs 等单邮箱类）时发现结果为空，
+   * 必须回退注册表 defaultScopes——否则连接零 scope，同步按钮/轮询/首同步
+   * 全部无目标，连接永远不跑数据。返回本次新建（非已存在）的 scope id。
+   */
+  private async ensureScopesForConnection(c: ConnectorConnection): Promise<string[]> {
+    const fallbackScopes =
+      syncProviderOf(c.provider)?.defaultScopes.map((scope) => ({
+        id: scope.providerScopeId,
+        displayName: scope.displayName,
+      })) ?? [];
+    const discovered = this.executor?.discoverScopes
+      ? await this.executor.discoverScopes(c)
+      : null;
+    const scopes = discovered && discovered.length > 0 ? discovered : fallbackScopes;
+    // 重复注册（重装/重连）时 scope 已存在——只有新建的 scope 才需要首同步
+    const knownBefore = new Set(
+      this.repository.listScopes().filter((s) => s.connectionId === c.id).map((s) => s.providerScopeId),
+    );
+    const created: string[] = [];
+    for (const scope of scopes) {
+      const ensured = this.repository.ensureScope(c.id, scope.id, scope.displayName);
+      if (!knownBefore.has(scope.id)) created.push(ensured.id);
+    }
+    return created;
+  }
+  /**
+   * 存量自愈：空发现回归时期注册的连接（scope 为空）补建 scope 并触发首同步。
+   * 否则这类连接永远无法开始同步——UI 同步按钮对空 scope 列表是无操作。
+   */
+  private async healScopelessConnections(): Promise<void> {
+    const allScopes = this.repository.listScopes();
+    for (const connection of this.repository.listConnections()) {
+      if (connection.status !== "active") continue;
+      if (allScopes.some((s) => s.connectionId === connection.id)) continue;
+      if (!this.engine.canServe(connection.provider)) continue;
+      try {
+        for (const scopeId of await this.ensureScopesForConnection(connection)) {
+          this.trigger(scopeId, "full");
+        }
+      } catch {
+        // 轮询周期会重试
+      }
     }
   }
   trigger(scopeId: string, mode: SyncMode): SyncRun {
@@ -297,6 +327,8 @@ export class ConnectorManager {
     this.timer = setInterval(poll, intervalMs);
     this.timer.unref();
     queueMicrotask(poll);
+    // 启动自愈先于首轮轮询：scope 为空的存量连接先补建 scope（否则轮询永远跳过它们）。
+    queueMicrotask(() => void this.healScopelessConnections());
   }
   async dispose() {
     if (this.timer) clearInterval(this.timer);

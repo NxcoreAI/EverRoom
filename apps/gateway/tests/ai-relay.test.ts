@@ -278,6 +278,26 @@ describe("runtime config relay slot rewrite", () => {
     expect(asr.apiKey).toBe("asr-key");
   });
 
+  it("rewrites legacy upstream paths to the canonical relay prefix instead of inheriting them", async () => {
+    const { manager } = await managerWithPayload({
+      schemaVersion: 1,
+      primary: { provider: "openai-compatible", api: "openai-completions", model: "qwen-plus", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", apiKey: "legacy-key" },
+      background: { provider: "openai-compatible", api: "openai-completions", model: "qwen-flash", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", apiKey: "legacy-key" },
+      asr: { provider: "aliyun", model: "qwen-audio-3.0-asr-flash-filetrans", baseUrl: "https://dashscope.aliyuncs.com/api/v1", apiKey: "asr-key" },
+    });
+
+    const snapshot = manager.snapshot(false);
+    // 过渡期下发的是旧方案直连地址：relay 激活时 host/path 整体换成中转站
+    // 出口（默认 /v1），不继承 /compatible-mode/v1——否则 new-api 会 404。
+    expect(snapshot.config.primary?.baseUrl).toBe("http://127.0.0.1:49152/ai-relay/v1");
+    expect(snapshot.config.primary?.apiKey).toBe("gw-self-token-51");
+    expect(snapshot.config.background?.baseUrl).toBe("http://127.0.0.1:49152/ai-relay/v1");
+    // asr 不重写：旧方案直连地址原样保留（relay 失效回退时同样直接可用）。
+    const slotOf = (name: string): Record<string, unknown> =>
+      (snapshot.config as unknown as Record<string, Record<string, unknown> | undefined>)[name]!;
+    expect(slotOf("asr").baseUrl).toBe("https://dashscope.aliyuncs.com/api/v1");
+  });
+
   it("does not rewrite when the user source is explicitly selected", async () => {
     const sessions = new AiRelaySessionStore();
     const { manager } = await managerWithPayload({

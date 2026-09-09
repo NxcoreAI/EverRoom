@@ -152,6 +152,10 @@ export interface IngestEventDto {
   /** 判定快照（含 reason/category/confidence；恢复误杀的依据）。 */
   filterVerdict: IngestFilterVerdictDto | null
   originChannel: string
+  /** 来源标识（网关读取时反查源头表）：connector 事件为 provider（gmail 等）；file 事件为文件来源。 */
+  provider: string | null
+  /** 来源显示名（连接名 / 文件来源标签）；缺省时渲染端按类型回落。 */
+  sourceLabel: string | null
   createdAt: string
   updatedAt: string
 }

@@ -67,7 +67,8 @@ import { DiaryGatewayBridge } from './gateway/diary-gateway-bridge'
 import { WritingStyleGatewayBridge } from './gateway/writing-style-gateway-bridge'
 import { AgentSchedulerGatewayBridge } from './gateway/agent-scheduler-gateway-bridge'
 import { ConnectorGatewayBridge } from './gateway/connector-gateway-bridge'
-import { SaasConnectorBridge } from './gateway/saas-connector-bridge'
+import { providerOfService, SaasConnectorBridge } from './gateway/saas-connector-bridge'
+import { createConnectorTombstoneStore } from './core/connector-tombstone-store'
 import { RecordingStore } from './recording/recording-store'
 import { isSaasRateLimitError, OIDC_CALLBACK_URL, SaasClient, SaasRequestError, type ConnectorOoSession } from './cloud/saas-client'
 import { AgentStatusReporter } from './cloud/agent-status-reporter'
@@ -270,7 +271,7 @@ const RUNTIME_CONFIG_CHANNELS = {
 } as const
 
 const CONNECTOR_CHANNELS = {
-  runtimeStatus: 'nango-connector:runtime-status', status: 'nango-connector:status', providers: 'nango-connector:providers', oauthConfigs: 'nango-connector:oauth-configs', startAuthorization: 'nango-connector:start-authorization', authorizationStatus: 'nango-connector:authorization-status', registerConnection: 'nango-connector:register-connection', createWebcalSubscription: 'nango-connector:create-webcal-subscription', disableConnection: 'nango-connector:disable-connection', enableConnection: 'nango-connector:enable-connection', purgeConnection: 'nango-connector:purge-connection', triggerSync: 'nango-connector:trigger-sync', cancelRun: 'nango-connector:cancel-run', listScopes: 'nango-connector:list-scopes', listRuns: 'nango-connector:list-runs', listMail: 'nango-connector:list-mail', listFailures: 'nango-connector:list-failures', listDocuments: 'nango-connector:list-documents', readDocument: 'nango-connector:read-document', listRecords: 'nango-connector:list-records', recordTotals: 'nango-connector:record-totals', armFault: 'nango-connector:arm-fault',
+  runtimeStatus: 'nango-connector:runtime-status', status: 'nango-connector:status', providers: 'nango-connector:providers', oauthConfigs: 'nango-connector:oauth-configs', startAuthorization: 'nango-connector:start-authorization', authorizationStatus: 'nango-connector:authorization-status', remoteAccount: 'nango-connector:remote-account', registerConnection: 'nango-connector:register-connection', createWebcalSubscription: 'nango-connector:create-webcal-subscription', disableConnection: 'nango-connector:disable-connection', enableConnection: 'nango-connector:enable-connection', purgeConnection: 'nango-connector:purge-connection', triggerSync: 'nango-connector:trigger-sync', cancelRun: 'nango-connector:cancel-run', listScopes: 'nango-connector:list-scopes', listRuns: 'nango-connector:list-runs', listMail: 'nango-connector:list-mail', listFailures: 'nango-connector:list-failures', listDocuments: 'nango-connector:list-documents', readDocument: 'nango-connector:read-document', listRecords: 'nango-connector:list-records', recordTotals: 'nango-connector:record-totals', armFault: 'nango-connector:arm-fault',
 } as const
 const OPEN_CONNECTOR_CHANNELS = {
   status: 'open-connector:status',
@@ -763,6 +764,7 @@ let connectorOoAppliedEnvJson = '{}'
 let connectorOoSessionCache: { userId: string; session: ConnectorOoSession | null } | null = null
 let connectorOoUserId: string | null = null
 let saasConnectorBridge: SaasConnectorBridge | null = null
+const connectorTombstones = createConnectorTombstoneStore(dataDirectory)
 let connectorReconcileTimer: NodeJS.Timeout | null = null
 let openConnectorConsoleWindow: BrowserWindow | null = null
 let memoryCoreSupervisor: MemoryCoreSupervisor | null = null
@@ -1568,11 +1570,21 @@ function registerConnectorHandlers(bridge: ConnectorGatewayBridge): void {
   ipcMain.handle(CONNECTOR_CHANNELS.oauthConfigs, () => bridge.configuredProviders())
   ipcMain.handle(CONNECTOR_CHANNELS.startAuthorization, (_event, provider) => bridge.startAuthorization(provider))
   ipcMain.handle(CONNECTOR_CHANNELS.authorizationStatus, (_event, id) => bridge.authorizationStatus(id))
+  ipcMain.handle(CONNECTOR_CHANNELS.remoteAccount, (_event, provider) => bridge.remoteAccount(provider))
   ipcMain.handle(CONNECTOR_CHANNELS.registerConnection, (_event, input) => bridge.registerConnection(input))
   ipcMain.handle(CONNECTOR_CHANNELS.createWebcalSubscription, (_event, url) => bridge.createWebcalSubscription(url))
   ipcMain.handle(CONNECTOR_CHANNELS.disableConnection, (_event, id) => bridge.disableConnection(id))
   ipcMain.handle(CONNECTOR_CHANNELS.enableConnection, (_event, id) => bridge.enableConnection(id))
-  ipcMain.handle(CONNECTOR_CHANNELS.purgeConnection, (_event, id) => bridge.purgeConnection(id))
+  ipcMain.handle(CONNECTOR_CHANNELS.purgeConnection, async (_event, id) => {
+    // saas 模式删除不上行（远端 oo 凭据保留）：purge 前取 provider 记墓碑，
+    // 否则重登录后 reconcile 对账会把连接自动补注册复活。
+    const userId = connectorOoSessionCache?.userId
+    const provider = userId
+      ? (await bridge.status().catch(() => null))?.connections.find((item) => item.id === id)?.provider
+      : null
+    await bridge.purgeConnection(id)
+    if (userId && provider) await connectorTombstones.add(userId, provider)
+  })
   ipcMain.handle(CONNECTOR_CHANNELS.triggerSync, (_event, id, mode) => bridge.triggerSync(id, mode))
   ipcMain.handle(CONNECTOR_CHANNELS.cancelRun, (_event, id) => bridge.cancelRun(id))
   ipcMain.handle(CONNECTOR_CHANNELS.listScopes, (_event, connectionId) => bridge.scopes(connectionId))
@@ -1708,11 +1720,16 @@ async function applyConnectorOoSession(session: ConnectorOoSession | null): Prom
  * 数据源）缺失的连接，补调 register。覆盖两类缺口——重启前完成的授权
  * （pending 表不跨重启）与注册时 gateway 暂不可达的授权。只对注册表认识的
  * provider 补注册（oo 的公共 no_auth 应用不在其中，不产生噪音连接）。
+ *
+ * 用户主动 purge 过的 provider 有墓碑（远端凭据仍在），对账跳过不复活——
+ * 重连由数据源页弹窗显式选择（使用旧账号免授权复活 / 切换其他账号重新授权）。
  */
 async function reconcileSaasConnectorConnections(attempt = 1): Promise<void> {
   const bridge = saasConnectorBridge
-  const session = connectorOoSessionCache?.session
-  if (!bridge || !session) return
+  const cache = connectorOoSessionCache
+  const session = cache?.session
+  if (!bridge || !session || !cache?.userId) return
+  const userId = cache.userId
   try {
     const [status, providersResponse, appsResponse] = await Promise.all([
       bridge.status(),
@@ -1725,6 +1742,8 @@ async function reconcileSaasConnectorConnections(attempt = 1): Promise<void> {
         .catch(() => null),
     ])
     if (!Array.isArray(appsResponse?.data)) return
+    // oo service（googlecalendar 等）↔ 注册表 provider（google-calendar）命名
+    // 分裂：对账必须先映射，Google 系才能命中注册表白名单。
     const knownProviders = new Set(providersResponse.providers.map((item) => item.provider))
     const registered = new Set(status.connections.map((item) => item.provider))
     for (const value of appsResponse.data) {
@@ -1733,10 +1752,17 @@ async function reconcileSaasConnectorConnections(attempt = 1): Promise<void> {
       const connectionName = typeof account.alias === 'string' ? account.alias
         : typeof account.connectionName === 'string' ? account.connectionName : ''
       const activeStatus = typeof account.status === 'string' ? account.status.toLowerCase() : ''
-      if (!service || !connectionName || !knownProviders.has(service)) continue
+      if (!service || !connectionName) continue
+      const provider = providerOfService(service)
+      if (!provider || !knownProviders.has(provider)) continue
       if (activeStatus && !['active', 'connected', 'ready'].includes(activeStatus)) continue
-      if (registered.has(service)) continue
-      await bridge.registerConnection({ provider: service, service, connectionName }).catch((error: unknown) => {
+      if (registered.has(provider)) {
+        // 连接已回到本地注册表（用户显式重连成功）：清墓碑，恢复对账自愈。
+        await connectorTombstones.remove(userId, provider)
+        continue
+      }
+      if (await connectorTombstones.has(userId, provider)) continue
+      await bridge.registerConnection({ provider, service, connectionName }).catch((error: unknown) => {
         console.warn('[connector-mode] connector reconcile register failed:', error instanceof Error ? error.message : error)
       })
     }

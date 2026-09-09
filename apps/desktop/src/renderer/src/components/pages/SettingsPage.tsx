@@ -37,7 +37,7 @@ import {
 } from '@/state/documentCursorCompletionSettings'
 import appleLogo from '@/assets/apple-logo.svg'
 import googleLogo from '@/assets/google-logo.svg'
-import type { AiGatewayStatus, CloudOidcProvider } from '../../../../shared/sources'
+import { formatLlmUsd, type AiGatewayStatus, type CloudOidcProvider } from '../../../../shared/sources'
 import type { AccountKeyringStatus, CloudDevice, PerceptionSettings, WindowScreenshotStatus } from '../../../../shared/sources'
 import type { BrowserExtensionStatus } from '../../../../shared/browser-extension'
 import type { NotificationPreferences } from '../../../../shared/notifications'
@@ -836,7 +836,7 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
                   <div className="cloud-subscription-quota">
                     <div>
                       <span>{t('surface:settings.llmRemaining')}</span>
-                      <strong>{aiRelayStatus.remainingCredits.toLocaleString(locale)}</strong>
+                      <strong>{formatLlmUsd(aiRelayStatus.remainingCredits, locale)}</strong>
                     </div>
                     <progress
                       aria-label={t('surface:settings.llmRemaining')}
@@ -847,8 +847,8 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
                       {aiRelayStatus.remainingCredits <= 0
                         ? t('surface:settings.llmQuotaExhausted')
                         : t('surface:settings.usedUsedTotalTotal', {
-                            used: Number(aiRelayStatus.usedCredits || '0').toLocaleString(locale),
-                            total: aiRelayStatus.llmCredits.toLocaleString(locale),
+                            used: formatLlmUsd(Number(aiRelayStatus.usedCredits || '0'), locale),
+                            total: formatLlmUsd(aiRelayStatus.llmCredits, locale),
                           })}
                     </small>
                   </div>

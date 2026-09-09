@@ -1,4 +1,4 @@
-import { AlertTriangle, ArrowLeftRight, Eraser, Pause, Play, RefreshCw, Trash2 } from 'lucide-react'
+import { AlertTriangle } from 'lucide-react'
 import type { ReactNode } from 'react'
 
 import type { DataSourceSummary } from '../../../../../shared/sources'
@@ -16,8 +16,6 @@ import {
 } from './sourceKinds'
 import { useLocale } from '@/i18n/LocaleContext'
 
-type CardProps = { busy: boolean; onOpen: () => void }
-
 /** 状态 pill（色点 + 文案）。 */
 function StatePill({ tone, label }: { tone: StateTone; label: string }) {
   return (
@@ -28,7 +26,7 @@ function StatePill({ tone, label }: { tone: StateTone; label: string }) {
   )
 }
 
-/** 卡片骨架：头（logo/名称/状态）+ 内容 + 底部时间。 */
+/** 卡片骨架：头（logo/名称/状态）+ 内容 + 底部时间。操作一律进抽屉，卡面不放按钮。 */
 function CardShell({
   tone,
   logo,
@@ -37,10 +35,8 @@ function CardShell({
   state,
   children,
   time,
-  actions,
-  busy,
   onOpen,
-}: CardProps & {
+}: {
   tone: 'ok' | 'syncing' | 'paused' | 'attention'
   logo: ReactNode
   name: string
@@ -48,7 +44,7 @@ function CardShell({
   state: ReactNode
   children?: ReactNode
   time?: ReactNode
-  actions?: ReactNode
+  onOpen: () => void
 }) {
   return (
     <article className="src-card" data-tone={tone} role="button" tabIndex={0} aria-haspopup="dialog"
@@ -58,6 +54,13 @@ function CardShell({
         if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onOpen() }
       }}
     >
+      {tone === 'syncing' ? (
+        <svg className="src-card-ring" aria-hidden="true" focusable="false">
+          <rect pathLength="100" />
+          <rect pathLength="100" />
+          <rect pathLength="100" />
+        </svg>
+      ) : null}
       <header className="src-card-head">
         <span className="src-card-logo">{logo}</span>
         <div className="src-card-title">
@@ -70,12 +73,11 @@ function CardShell({
       <footer className="src-card-foot">
         <span className="src-card-time">{time}</span>
       </footer>
-      {actions ? <span className="src-card-actions" onClick={(event) => event.stopPropagation()}>{actions}</span> : null}
     </article>
   )
 }
 
-/** 统计三连：数字 + 单位（单位是数据标签,非功能说明）。 */
+/** 统计行：安静的内联「数字 + 单位」，读起来像一句话而非仪表盘。 */
 function Stats({ items }: { items: Array<{ value: string; label: string }> }) {
   return (
     <div className="src-card-stats">
@@ -89,21 +91,12 @@ function Stats({ items }: { items: Array<{ value: string; label: string }> }) {
 /** 本地来源卡（识别文件夹/GitHub 等本地数据源）。 */
 export function LocalSourceCard({
   source,
-  busy,
   onOpen,
-  onSync,
-  onTogglePaused,
-  onClear,
-}: CardProps & {
+}: {
   source: DataSourceSummary
-  onSync: () => void
-  onTogglePaused: () => void
-  onClear: () => void
+  onOpen: () => void
 }) {
   const { locale, t } = useLocale()
-  const busyAction = busy || source.status === 'syncing'
-  const resumable = source.status === 'paused' || source.status === 'disconnected' || source.status === 'error'
-  const syncable = source.status === 'connected'
   return (
     <CardShell
       tone={localCardTone(source.status)}
@@ -112,19 +105,7 @@ export function LocalSourceCard({
       subtitle={source.rootPath}
       state={<StatePill tone={SOURCE_STATUS_TONES[source.status]} label={t(`surface:sourceTable.${source.status === 'connected' ? 'synced' : source.status === 'syncing' ? 'syncing' : source.status === 'paused' ? 'paused' : source.status === 'disconnected' ? 'disconnected' : 'syncFailed'}`)} />}
       time={source.lastSyncedAt ? t('surface:sourceCard.syncedAtTime', { time: formatDate(source.lastSyncedAt, locale, t) }) : t('surface:sourceFormatters.notSyncedYet')}
-      busy={busy}
       onOpen={onOpen}
-      actions={
-        <>
-          {syncable ? <button type="button" className="src-mini-btn" disabled={busyAction} onClick={onSync}><RefreshCw aria-hidden="true" strokeWidth={1.8} />{t('surface:sourceCard.syncNow')}</button> : null}
-          <button type="button" className="src-mini-btn" aria-label={t(resumable ? 'surface:sourceTable.resumeSync' : 'surface:sourceTable.pauseSync')} title={t(resumable ? 'surface:sourceTable.resumeSync' : 'surface:sourceTable.pauseSync')} disabled={busy} onClick={onTogglePaused}>
-            {resumable ? <Play aria-hidden="true" strokeWidth={1.8} /> : <Pause aria-hidden="true" strokeWidth={1.8} />}
-          </button>
-          <button type="button" className="src-mini-btn danger" aria-label={t('surface:sourceTable.clearDataName', { name: source.name })} title={t('surface:sourceTable.clearDataKeepFolder')} disabled={busy} onClick={onClear}>
-            <Eraser aria-hidden="true" strokeWidth={1.8} />
-          </button>
-        </>
-      }
     >
       <Stats items={[
         { value: source.fileCount.toLocaleString(), label: t('surface:sourceTable.files') },
@@ -139,13 +120,11 @@ export function LocalSourceCard({
 export function ObsidianSourceCard({
   vaults,
   candidates,
-  busy,
   onOpen,
-  onRescan,
-}: CardProps & {
+}: {
   vaults: ObsidianVaultBinding[]
   candidates: ObsidianVaultCandidate[]
-  onRescan: () => void
+  onOpen: () => void
 }) {
   const { locale, t } = useLocale()
   const pending = candidates.filter((candidate) => !candidate.mountedVaultId)
@@ -165,13 +144,7 @@ export function ObsidianSourceCard({
         : t('surface:sources.obsidianWatchedProjects', { count: vaults.length })}
       state={<StatePill tone={partlyOffline ? 'danger' : pending.length > 0 ? 'paused' : 'ok'} label={t(partlyOffline ? 'surface:sources.partlyOffline' : pending.length > 0 ? 'surface:sources.pendingImport' : 'surface:sourceTable.synced')} />}
       time={updatedAt ? t('surface:sourceCard.syncedAtTime', { time: formatDate(updatedAt, locale, t) }) : undefined}
-      busy={busy}
       onOpen={onOpen}
-      actions={
-        <button type="button" className="src-mini-btn" disabled={busy} onClick={onRescan}>
-          <RefreshCw aria-hidden="true" strokeWidth={1.8} />{t('surface:sources.rescanObsidian')}
-        </button>
-      }
     >
       <Stats items={[
         { value: fileCount.toLocaleString(), label: t('surface:sourceTable.files') },
@@ -189,34 +162,22 @@ export function CloudSourceCard({
   scopes,
   runs,
   totals,
-  busy,
   onOpen,
-  onSync,
-  onToggleEnabled,
-  onPurge,
-  onReplaceAccount,
-}: CardProps & {
+}: {
   connection: ConnectorConnection
   scopes: SyncScope[]
   runs: SyncRun[]
   /** 连接已同步记录总数（mail/calendar）；缺省隐藏对应统计。 */
   totals?: { mail: number; calendar: number }
-  onSync: () => void
-  onToggleEnabled: () => void
-  onPurge: () => void
-  /** 重新授权同一 provider（单槽位:新账号顶替现有连接）；缺省不显示。 */
-  onReplaceAccount?: () => void
+  onOpen: () => void
 }) {
   const { locale, t } = useLocale()
-  const active = connection.status === 'active'
   const mailbox = connection.provider === 'gmail' || connection.provider === 'outlook'
   const calendarScopes = connection.provider === 'google-calendar'
   const lastRun = runs.length ? runs.reduce((latest, run) => (run.startedAt > latest.startedAt ? run : latest)) : null
   const running = scopes.some((scope) => scope.state === 'running')
     || runs.some((run) => run.status === 'running' || run.status === 'queued')
-  // 增量同步依赖全量落下的游标：初始（全量）同步完成前不可用。
-  const initialSyncDone = scopes.length > 0 && scopes.every((scope) => scope.state === 'disabled' || scope.sourceCursor)
-  const tone = connection.status === 'error' ? 'attention' : running ? 'syncing' : active ? 'ok' : 'paused'
+  const tone = connection.status === 'error' ? 'attention' : running ? 'syncing' : connection.status === 'active' ? 'ok' : 'paused'
   const stateLabel = running
     ? t('surface:sourceTable.syncing')
     : t(`surface:connector.${connection.status === 'active' ? 'active' : connection.status === 'disabled' ? 'statusDisabled' : 'reauthorizationRequired'}`)
@@ -228,20 +189,7 @@ export function CloudSourceCard({
       subtitle={connection.connectionName}
       state={<StatePill tone={running ? 'run' : CONNECTION_STATUS_TONES[connection.status]} label={stateLabel} />}
       time={lastRun?.finishedAt || lastRun?.startedAt ? t('surface:sourceCard.syncedAtTime', { time: formatDate(lastRun.finishedAt ?? lastRun.startedAt, locale, t) }) : t('surface:connector.notSyncedYet')}
-      busy={busy}
       onOpen={onOpen}
-      actions={
-        <>
-          {onReplaceAccount ? <button type="button" className="src-mini-btn" aria-label={t('surface:sources.replaceAccount')} title={t('surface:sources.replaceAccount')} disabled={busy} onClick={onReplaceAccount}><ArrowLeftRight aria-hidden="true" strokeWidth={1.8} /></button> : null}
-          {active ? <button type="button" className="src-mini-btn" disabled={busy || running || !initialSyncDone} onClick={onSync}><RefreshCw aria-hidden="true" strokeWidth={1.8} />{t('surface:connector.incrementalSync')}</button> : null}
-          <button type="button" className="src-mini-btn" aria-label={t(active ? 'surface:connector.disableConnection' : 'surface:sourceCard.enableConnection')} title={t(active ? 'surface:connector.disableConnection' : 'surface:sourceCard.enableConnection')} disabled={busy} onClick={onToggleEnabled}>
-            {active ? <Pause aria-hidden="true" strokeWidth={1.8} /> : <Play aria-hidden="true" strokeWidth={1.8} />}
-          </button>
-          <button type="button" className="src-mini-btn danger" aria-label={t('surface:connector.clearLocalData')} title={t('surface:connector.clearLocalData')} disabled={busy} onClick={onPurge}>
-            <Trash2 aria-hidden="true" strokeWidth={1.8} />
-          </button>
-        </>
-      }
     >
       {connection.status === 'error' && connection.updatedAt ? (
         <div className="src-card-error"><AlertTriangle aria-hidden="true" strokeWidth={1.8} />{t('surface:connector.reauthorizationRequired')}</div>

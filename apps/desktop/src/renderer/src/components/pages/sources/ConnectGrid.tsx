@@ -27,7 +27,7 @@ function Grid({ items, busy }: { items: ConnectItem[]; busy: boolean }) {
       {items.map((item) => (
         <button key={item.key} type="button" className="src-connect-tile" disabled={busy} onClick={item.onSelect}>
           <span className="src-connect-tile-icon"><SourceIcon kind={item.icon} className={item.glyph ? 'glyph' : ''} /></span>
-          <span className="src-connect-tile-label">{item.label}</span>
+          <span className="src-connect-tile-label"><span>{item.label}</span></span>
         </button>
       ))}
     </div>
@@ -47,7 +47,6 @@ export function ConnectGrid({
   onGitHub,
   onGoogleDocs,
   onNotion,
-  onNotionZip,
   onOpenClaw,
   onLocalAgentHistory,
   connectorsEnabled,
@@ -65,7 +64,6 @@ export function ConnectGrid({
   onGitHub: () => void
   onGoogleDocs: () => void
   onNotion: () => void
-  onNotionZip: () => void
   onOpenClaw: () => void
   onLocalAgentHistory: (provider: 'codex' | 'claude') => void
   connectorsEnabled?: boolean
@@ -125,7 +123,6 @@ export function ConnectGrid({
     { key: 'obsidian', icon: 'obsidian-vault', label: 'Obsidian', group: 'local', onSelect: onObsidian },
     { key: 'github', icon: 'github', label: 'GitHub', group: 'local', onSelect: onGitHub },
     ...visibleCloud,
-    { key: 'notion-zip', icon: 'notion', label: 'Notion ZIP', group: 'import', onSelect: onNotionZip },
     { key: 'claude', icon: 'claude', label: 'Claude Code', group: 'import', onSelect: () => onLocalAgentHistory('claude') },
     { key: 'codex', icon: 'codex', label: 'Codex', group: 'import', onSelect: () => onLocalAgentHistory('codex') },
     { key: 'openclaw', icon: 'openclaw', label: 'OpenClaw', group: 'import', onSelect: onOpenClaw },

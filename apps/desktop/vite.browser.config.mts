@@ -105,11 +105,6 @@ const base = {
     { id: 'sc-1', connectionId: 'conn-gmail', provider: 'gmail', label: 'INBOX', state: 'idle', updatedAt: '2026-09-04T10:00:00.000Z' },
   ], runs: [
     { id: 'r1', scopeId: 'sc-1', mode: 'incremental', status: 'completed', processed: 3200, failed: 0, error: null, startedAt: '2026-09-05T08:30:00.000Z', finishedAt: '2026-09-05T08:33:00.000Z' },
-    { id: 'r2', scopeId: 'sc-1', mode: 'incremental', status: 'failed', processed: 100, failed: 0, error: 'OpenConnector sync timed out after 60000ms', startedAt: '2026-09-05T07:10:00.000Z', finishedAt: '2026-09-05T07:11:00.000Z' },
-    { id: 'r3', scopeId: 'sc-1', mode: 'full', status: 'failed', processed: 0, failed: 0, error: 'format_mapping_pending:gmail:mail', startedAt: '2026-09-05T06:40:00.000Z', finishedAt: '2026-09-05T06:40:05.000Z' },
-    { id: 'r4', scopeId: 'sc-1', mode: 'incremental', status: 'failed', processed: 0, failed: 0, error: 'request failed: ECONNRESET', startedAt: '2026-09-05T05:20:00.000Z', finishedAt: '2026-09-05T05:20:30.000Z' },
-    { id: 'r5', scopeId: 'sc-1', mode: 'full', status: 'interrupted', processed: 45, failed: 0, error: null, startedAt: '2026-09-05T04:00:00.000Z', finishedAt: '2026-09-05T04:02:00.000Z' },
-    { id: 'r6', scopeId: 'sc-1', mode: 'incremental', status: 'failed', processed: 0, failed: 0, error: 'reauthorization_required: token expired', startedAt: '2026-09-05T03:00:00.000Z', finishedAt: '2026-09-05T03:00:10.000Z' },
     { id: 'r7', scopeId: 'sc-1', mode: 'incremental', status: 'running', processed: 120, failed: 0, error: null, startedAt: '2026-09-05T09:00:00.000Z', finishedAt: null },
   ] }),
     providers: async () => ({ providers: [
@@ -122,7 +117,7 @@ const base = {
       { provider: 'ics-calendar', label: '日历订阅（WebCal/ICS）', category: 'calendar', iconKey: 'ics-calendar', dataTypes: ['calendar'], authChannel: 'webcal-url', connected: false, comingSoon: false },
     ] }),
     oauthConfigs: async () => null,
-    recordTotals: async () => ({ mail: 3200, calendar: 0 }) },
+    recordTotals: async () => ({ mail: 3210, calendar: 0 }) },
   cliConnector: {
     execute: async (req) => req.command?.kind === 'apps'
       ? { data: [
@@ -147,12 +142,33 @@ const base = {
     { id: 'room-4', title: '周会', kind: 'meeting', aliases: [], description: null },
     { id: 'room-5', title: '营销', kind: 'topic', aliases: [], description: null },
   ] }) },
-  ingest: { listEvents: async (q) => ({ items: Array.from({ length: Math.min(q.limit, 8) }, (_, i) => ({ id: 'e' + i, sourceKind: 'file', title: '事件 ' + i, filterStatus: 'passed', createdAt: '2026-09-05T0' + i + ':00:00.000Z', updatedAt: '2026-09-05T0' + i + ':00:00.000Z' })), total: 8 }),
+  ingest: {
+    listEvents: async (q) => {
+      const limit = q?.limit ?? 50
+      const offset = q?.offset ?? 0
+      const all = Array.from({ length: 137 }, (_, i) => {
+        const kind = i % 3
+        const at = new Date(Date.now() - i * 3600_000).toISOString()
+        return {
+          id: 'e' + i,
+          sourceKind: kind === 0 ? 'mail' : kind === 1 ? 'file' : 'calendar-event',
+          provider: kind === 0 ? 'gmail' : kind === 1 ? null : 'googlecalendar',
+          sourceLabel: kind === 0 ? 'work@gmail.com' : kind === 1 ? '本地文件夹' : '个人日历',
+          title: kind === 0 ? '周会纪要：连接器统一排期 ' + i : kind === 1 ? '产品笔记 ' + i + '.md' : '与设计师同步 ' + i,
+          filterStatus: i % 7 === 0 ? 'filtered' : i % 5 === 0 ? 'pending' : 'passed',
+          createdAt: at,
+          updatedAt: at,
+        }
+      })
+      return { items: all.slice(offset, offset + limit), total: all.length }
+    },
     getFilterRules: async () => ({ preference: '', insight: '', updatedAt: null }),
     updateFilterPreference: async (content) => ({ preference: content, insight: '', updatedAt: null }) },
   migrations: { sources: async () => [], runs: async () => [], onProgress: () => () => {} },
   obsidian: { list: async () => [], discover: async () => [], onChanged: () => () => {}, onDiscoveryChanged: () => () => {} },
 }
+// 预览窗格 document.hidden 恒为 true 会挡住页面轮询;强制视为可见。
+Object.defineProperty(document, 'hidden', { get: () => false })
 window.nxcore = new Proxy(Object.fromEntries(Object.entries(base).map(([k, v]) => [k, v && typeof v === 'object' ? face(v) : v])), {
   get: (target, prop) => prop in target ? target[prop] : magic(String(prop)),
 })

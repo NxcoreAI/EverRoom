@@ -21,6 +21,8 @@ export interface ConnectorProviderSummary { provider:ConnectorProvider; label:st
 export interface ConnectorProvidersResponse { enabled:boolean; providers:ConnectorProviderSummary[]; }
 export type ConnectorAuthorizationState = "pending" | "connected" | "failed" | "expired";
 export interface ConnectorAuthorizationAttempt { id:string; provider:ConnectorProvider; status:ConnectorAuthorizationState; expiresAt:string; connection:ConnectorConnection|null; error:string|null; }
+/** 远端 oo 租户里仍活跃的旧授权（本地已删）：重连弹窗「使用旧账号 / 切换其他账号」用。 */
+export interface ConnectorRemoteAccount { provider:ConnectorProvider; /** oo service 名（registerConnection 直通用）。 */ service:string; /** 凭据校验拉取的账号身份（邮箱/显示名）；null = oo 未提供明文。 */ displayName:string|null; }
 export interface NormalizedAddress { role:string; displayName?:string; address:string; }
 export interface NormalizedAttachment { providerId?:string; filename?:string; mimeType?:string; size?:number; inline?:boolean; }
 export interface NormalizedMail { providerMessageId:string; providerThreadId?:string; subject?:string; snippet?:string; textBody?:string; htmlBody?:string; receivedAt?:string; sentAt?:string; isRead?:boolean; isStarred?:boolean; isDraft?:boolean; providerRevision?:string; addresses?:NormalizedAddress[]; memberships?:string[]; attachments?:NormalizedAttachment[]; }
