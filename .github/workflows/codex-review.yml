@@ -93,6 +93,7 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.CODEX_RELAY_API_KEY }}
           github_token: ${{ github.token }}
+          show_full_output: true
           prompt: |
             REPO: ${{ github.repository }}
             PR NUMBER: ${{ steps.pr.outputs.number }}
