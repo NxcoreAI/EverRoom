@@ -1,13 +1,12 @@
-name: Notify Feishu when pull request is merged
+name: Notify Feishu when pull request is opened
 
 on:
   pull_request_target:
-    branches: [main]
-    types: [closed]
+    types: [opened, ready_for_review]
   workflow_dispatch:
     inputs:
       pr_number:
-        description: Merged pull request number to preview the notification for
+        description: Pull request number to preview the notification for
         required: true
         type: string
 
@@ -16,12 +15,14 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: notify-pr-merged
+  group: notify-pr-opened
   cancel-in-progress: false
 
 jobs:
   notify:
-    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true
+    # Draft PRs are silent on "opened"; they notify once marked ready for
+    # review via the ready_for_review event.
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.draft != true
     runs-on: ubuntu-24.04
     steps:
       - name: Check out base branch
@@ -36,7 +37,8 @@ jobs:
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         with:
           # workflow_dispatch has no PR in the payload; fetch it by number.
-          # Restrict to merged PRs so the preview cannot report an open PR.
+          # The webhook payload lacks additions/deletions, so the REST API
+          # is always used to fetch the diff stats.
           script: |
             let number = context.payload.pull_request?.number
               ?? Number(context.payload.inputs?.pr_number);
@@ -49,30 +51,34 @@ jobs:
               repo: context.repo.repo,
               pull_number: number,
             });
-            if (!pr.merged) {
-              core.setFailed('Pull request is not merged.');
+            if (pr.draft) {
+              core.notice('Pull request is a draft; skipping notification.');
+              core.setOutput('skip', 'true');
               return;
             }
+            core.setOutput('skip', 'false');
             core.setOutput('title', pr.title);
             core.setOutput('url', pr.html_url);
             core.setOutput('author', pr.user.login);
             core.setOutput('number', pr.number);
-            core.setOutput('merged_by', pr.merged_by?.login ?? 'unknown');
             core.setOutput('head', pr.head.ref);
             core.setOutput('base', pr.base.ref);
-            core.setOutput('merge_commit_sha', pr.merge_commit_sha?.slice(0, 7) ?? '');
+            core.setOutput('additions', pr.additions);
+            core.setOutput('deletions', pr.deletions);
+            core.setOutput('files', pr.changed_files);
 
       - name: Notify Feishu
+        if: steps.pr.outputs.skip != 'true'
         uses: ./.github/actions/feishu-card
         with:
           webhook-url: ${{ secrets.FEISHU_RELEASE_WEBHOOK }}
-          template: green
-          title: ✅ PR #${{ steps.pr.outputs.number }} 已合并进 ${{ steps.pr.outputs.base }}
+          template: turquoise
+          title: 🔀 新 PR #${{ steps.pr.outputs.number }} 请求评审
           body: |
             **${{ steps.pr.outputs.title }}**
 
-            作者：${{ steps.pr.outputs.author }} · 合并人：${{ steps.pr.outputs.merged_by }}
+            作者：${{ steps.pr.outputs.author }}
             分支：${{ steps.pr.outputs.head }} -> ${{ steps.pr.outputs.base }}
-            squash 提交：${{ steps.pr.outputs.merge_commit_sha }}
-          buttons: '[{"text":"查看 PR","url":"${{ steps.pr.outputs.url }}","type":"primary"}]'
+            规模：+${{ steps.pr.outputs.additions }} / −${{ steps.pr.outputs.deletions }} · ${{ steps.pr.outputs.files }} 个文件
+          buttons: '[{"text":"开始评审","url":"${{ steps.pr.outputs.url }}","type":"primary"}]'
           note: ${{ github.repository }}

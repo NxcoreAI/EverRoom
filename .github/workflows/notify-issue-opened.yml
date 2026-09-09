@@ -1,0 +1,88 @@
+name: Notify Feishu when issue is opened
+
+on:
+  issues:
+    types: [opened]
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: Issue number to preview the notification for
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  issues: read
+
+concurrency:
+  group: notify-issue-opened
+  cancel-in-progress: false
+
+jobs:
+  notify:
+    # Skip issues created by the Feishu -> GitHub bridge bot to avoid an
+    # echo loop: Feishu message creates the issue, which would notify the
+    # same Feishu group again.
+    if: github.event_name == 'workflow_dispatch' || github.event.issue.user.login != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out default branch
+        # Local composite action requires a checkout.
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Resolve issue
+        id: issue
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        with:
+          # workflow_dispatch has no issue in the payload; fetch it by number.
+          script: |
+            let issue = context.payload.issue;
+            if (!issue && context.payload.inputs?.issue_number) {
+              const { data } = await github.rest.issues.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: Number(context.payload.inputs.issue_number),
+              });
+              issue = data;
+            }
+            if (!issue || issue.pull_request) {
+              core.setFailed('Issue not found or is a pull request.');
+              return;
+            }
+            core.setOutput('title', issue.title);
+            core.setOutput('url', issue.html_url);
+            core.setOutput('author', issue.user.login);
+            core.setOutput('number', issue.number);
+
+            const labels = issue.labels.map((l) => l.name).filter(Boolean);
+            core.setOutput('labels', labels.join(' · '));
+
+            const body = String(issue.body ?? '').trim();
+            const text = body
+              .replace(/<!--[\s\S]*?-->/g, '')
+              .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
+              .replace(/\[([^\]]*)\]\(([^)]*)\)/g, '$1 ($2)')
+              .replace(/[#*`>]/g, '')
+              .replace(/\r/g, '')
+              .replace(/\n{2,}/g, '\n')
+              .trim();
+            const summary = text.length > 200 ? `${text.slice(0, 200)}…` : text;
+            core.setOutput('summary', summary);
+
+      - name: Notify Feishu
+        uses: ./.github/actions/feishu-card
+        with:
+          webhook-url: ${{ secrets.FEISHU_RELEASE_WEBHOOK }}
+          template: blue
+          title: 🐛 新 Issue #${{ steps.issue.outputs.number }}
+          body: |
+            **${{ steps.issue.outputs.title }}**
+
+            提交人：${{ steps.issue.outputs.author }}
+            ${{ steps.issue.outputs.labels && format('标签：{0}', steps.issue.outputs.labels) || '' }}
+
+            ${{ steps.issue.outputs.summary }}
+          buttons: '[{"text":"查看 Issue","url":"${{ steps.issue.outputs.url }}","type":"primary"}]'
+          note: ${{ github.repository }}

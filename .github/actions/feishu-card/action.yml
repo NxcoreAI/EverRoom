@@ -1,0 +1,103 @@
+name: 'Send Feishu card'
+description: 'Assemble and send an interactive message card to a Feishu custom bot webhook.'
+
+inputs:
+  webhook-url:
+    description: 'Feishu bot webhook URL.'
+    required: true
+  template:
+    description: 'Card color template: blue, green, red, grey, or turquoise.'
+    required: true
+  title:
+    description: 'Card header title (plain text).'
+    required: true
+  body:
+    description: 'Card body content in lark_md, multiple lines allowed. Empty to omit the body element.'
+    required: false
+    default: ''
+  buttons:
+    description: 'JSON array of {"text": "...", "url": "...", "type": "primary|default"}. Empty to omit buttons.'
+    required: false
+    default: ''
+  note:
+    description: 'Grey note line shown at the card bottom. Empty to omit.'
+    required: false
+    default: ''
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Send Feishu card
+      shell: bash
+      env:
+        FEISHU_WEBHOOK_URL: ${{ inputs.webhook-url }}
+        CARD_TEMPLATE: ${{ inputs.template }}
+        CARD_TITLE: ${{ inputs.title }}
+        CARD_BODY: ${{ inputs.body }}
+        CARD_BUTTONS: ${{ inputs.buttons }}
+        CARD_NOTE: ${{ inputs.note }}
+      run: |
+        if [[ -z "$FEISHU_WEBHOOK_URL" ]]; then
+          echo "::warning::Feishu webhook URL is not configured; skipping notification."
+          exit 0
+        fi
+
+        case "$CARD_TEMPLATE" in
+          blue|green|red|grey|turquoise) template="$CARD_TEMPLATE" ;;
+          *) echo "Unknown card template: $CARD_TEMPLATE" >&2; exit 1 ;;
+        esac
+
+        declare -a elements=()
+        if [[ -n "$CARD_BODY" ]]; then
+          body_json="$(jq -Rn --arg md "$CARD_BODY" '{tag:"div", text:{tag:"lark_md", content:$md}}')"
+          elements+=("$body_json")
+        fi
+        if [[ -n "$CARD_BUTTONS" ]]; then
+          echo "$CARD_BUTTONS" | jq -e 'type == "array"' >/dev/null || {
+            echo "buttons must be a JSON array" >&2; exit 1;
+          }
+          # One action element holding all buttons so they render in a row.
+          actions_json="$(jq -nc --argjson acts "$CARD_BUTTONS" '{
+            tag:"action",
+            actions:[$acts[] | {
+              tag:"button",
+              text:{tag:"plain_text", content:.text},
+              type:(.type // "default"),
+              url:.url
+            }]
+          }')"
+          elements+=("$actions_json")
+        fi
+        if [[ -n "$CARD_NOTE" ]]; then
+          # Legacy card schema: note.content must be a plain string.
+          note_json="$(jq -Rn --arg note "$CARD_NOTE" '{tag:"note", content:$note}')"
+          elements+=("$note_json")
+        fi
+
+        header_json="$(jq -Rn --arg title "$CARD_TITLE" '{
+          title:{tag:"plain_text", content:$title}
+        }')"
+        # Elements may be objects (markdown/note) or arrays (button groups);
+        # flatten everything into a single card elements array.
+        all_elements="$(printf '%s\n' "${elements[@]}" | jq -sc '[ .[] | if type == "array" then .[] else . end ]')"
+        payload="$(jq -nc \
+          --arg template "$template" \
+          --argjson header "$header_json" \
+          --argjson elements "$all_elements" '{
+            msg_type:"interactive",
+            card:{
+              config:{wide_markdown_mode:true},
+              header:{template:$template, title:($header.title)},
+              elements:$elements
+            }
+          }')"
+
+        response="$(curl --fail --silent --show-error \
+          -H 'Content-Type: application/json' \
+          --data "$payload" \
+          "$FEISHU_WEBHOOK_URL")"
+        code="$(jq -r '.code // .StatusCode // -1' <<< "$response")"
+        test "$code" = "0" || {
+          echo "Feishu rejected the card with code $code" >&2
+          exit 1
+        }
