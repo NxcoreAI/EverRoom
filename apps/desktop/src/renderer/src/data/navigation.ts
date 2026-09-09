@@ -12,13 +12,11 @@ import {
   NotebookPen,
   ListTodo,
   Lightbulb,
-  PlugZap,
   Settings,
   FilePenLine,
 } from 'lucide-react'
-import type { DesktopPageMode } from '../../../shared/page-mode'
 
-export type PageId = 'home' | 'office' | 'office-document' | 'office-test' | 'rooms' | 'docs' | 'recording' | 'sources' | 'files' | 'inspiration' | 'memory' | 'wiki' | 'connectors' | 'diary' | 'schedules' | 'settings'
+export type PageId = 'home' | 'office' | 'office-document' | 'office-test' | 'rooms' | 'docs' | 'recording' | 'sources' | 'files' | 'inspiration' | 'memory' | 'wiki' | 'diary' | 'schedules' | 'settings'
 
 export interface NavigationItem {
   id: PageId
@@ -53,7 +51,6 @@ export const navigationSections: NavigationSection[] = [
       { id: 'inspiration', label: 'surface:navigation.inspiration', icon: Lightbulb, tone: 'orange' },
       { id: 'memory', label: 'surface:navigation.memory', icon: Brain, tone: 'orange' },
       { id: 'wiki', label: 'surface:navigation.wiki', icon: BookOpenText, tone: 'indigo' },
-      { id: 'connectors', label: 'surface:navigation.connectors', icon: PlugZap, tone: 'green' },
     ],
   },
   {
@@ -89,15 +86,13 @@ const officeDocumentItem: NavigationItem = {
 }
 
 export function navigationSectionsForMode(
-  mode: DesktopPageMode,
   includeOfficeTest = false,
 ): NavigationSection[] {
-  const disabledPage: PageId = mode === 'sources' ? 'connectors' : 'sources'
   return navigationSections
     .map((section) => ({
       ...section,
       items: [
-        ...section.items.filter((item) => item.id !== disabledPage),
+        ...section.items,
         ...(includeOfficeTest && section.id === 'execution' ? [officeTestItem] : []),
       ],
     }))
@@ -131,8 +126,6 @@ const LEGACY_PAGE_LABEL_KEYS: Record<string, string> = {
   '记忆': 'surface:navigation.memory',
   'Memory': 'surface:navigation.memory',
   'Wiki': 'surface:navigation.wiki',
-  '连接器': 'surface:navigation.connectors',
-  'Connectors': 'surface:navigation.connectors',
   '办公室': 'surface:navigation.office',
   'Office': 'surface:navigation.office',
   'Agent 状态': 'surface:navigation.office',

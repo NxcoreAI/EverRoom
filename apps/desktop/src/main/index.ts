@@ -1,13 +1,14 @@
 import { createReadStream, readFileSync } from 'node:fs'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { basename, extname, join, parse, resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { existsSync, accessSync, constants as fsConstants } from 'node:fs'
 import { access } from 'node:fs/promises'
 import { createHash, randomUUID } from 'node:crypto'
 import { pipeline } from 'node:stream/promises'
 import { loadEnvFile } from 'node:process'
 
-import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, nativeTheme, Notification, protocol, safeStorage, shell, systemPreferences } from 'electron'
+import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, nativeTheme, Notification, protocol, shell, systemPreferences } from 'electron'
 import type {
   ImportRoomDocumentInput,
   DocumentOperationCommandInput,
@@ -34,9 +35,9 @@ import { AccountKeyringService } from './security/account-keyring-service'
 import { AgentGatewayBridge } from './gateway/agent-gateway-bridge'
 import { AsrGatewayBridge } from './gateway/asr-gateway-bridge'
 import { GatewaySupervisor } from './gateway/gateway-supervisor'
+import { cleanupStaleProcessRecords, installExitCleanupHook } from './process-cleanup'
 import { RuntimeConfigBridge, type RuntimeMemoryConfig } from './gateway/runtime-config-bridge'
 import { cursorCompletionEnvFromConfig } from './gateway/cursor-completion-env'
-import { NangoSupervisor } from './gateway/nango-supervisor'
 import { MemoryGatewayBridge } from './gateway/memory-gateway-bridge'
 import { KnowledgeServiceSupervisor } from './knowledge/knowledge-supervisor'
 import { knowledgeServiceLlmEnv } from './knowledge/llm-env'
@@ -60,17 +61,19 @@ import { cleanupLegacyGatewaySecretKey } from './security/gateway-secret-key'
 import { FilesGatewayBridge } from './gateway/files-gateway-bridge'
 import { IngestGatewayBridge } from './gateway/ingest-gateway-bridge'
 import { ContextRoomGatewayBridge } from './gateway/context-room-gateway-bridge'
-import { ConnectorSyncGatewayBridge } from './gateway/connector-sync-gateway-bridge'
 import { RealityGatewayBridge } from './gateway/reality-gateway-bridge'
 import { PerceptionGatewayBridge } from './gateway/perception-gateway-bridge'
 import { DiaryGatewayBridge } from './gateway/diary-gateway-bridge'
 import { WritingStyleGatewayBridge } from './gateway/writing-style-gateway-bridge'
 import { AgentSchedulerGatewayBridge } from './gateway/agent-scheduler-gateway-bridge'
 import { ConnectorGatewayBridge } from './gateway/connector-gateway-bridge'
+import { providerOfService, SaasConnectorBridge } from './gateway/saas-connector-bridge'
+import { createConnectorTombstoneStore } from './core/connector-tombstone-store'
 import { RecordingStore } from './recording/recording-store'
-import { isSaasRateLimitError, OIDC_CALLBACK_URL, SaasClient, SaasRequestError } from './cloud/saas-client'
+import { isSaasRateLimitError, OIDC_CALLBACK_URL, SaasClient, SaasRequestError, type ConnectorOoSession } from './cloud/saas-client'
 import { AgentStatusReporter } from './cloud/agent-status-reporter'
 import { SessionLeaseKeeper } from './cloud/session-lease-keeper'
+import { AiRelayKeeper, type AiRelayKeeperEvent } from './cloud/ai-relay-keeper'
 import { RemoteAgentCommandClient } from './cloud/remote-agent-command-client'
 import { AgentNotificationBridgeServer } from './cloud/agent-notification-bridge'
 import { MacosPushNotificationService } from './cloud/macos-push-notifications'
@@ -102,11 +105,12 @@ import {
   DocumentAssetStore,
   DOCUMENT_ASSET_SCHEME,
 } from './document-asset-store'
-import { OoCliBridge } from './open-connector/oo-cli-bridge'
+import { OoCliBridge } from '@nxcore/desktop-connector-host/oo-cli-bridge'
+import { createConnectorModeStore } from '@nxcore/desktop-connector-host/connector-mode-store'
 import {
   OpenConnectorSupervisor,
   type OpenConnectorConnection,
-} from './open-connector/open-connector-supervisor'
+} from '@nxcore/desktop-connector-host/open-connector-supervisor'
 import { LarkAuthRunner } from './agent-auth/lark-auth-runner'
 import { AgentAuthController } from './agent-auth/controller'
 import { ExternalDocumentsGatewayBridge } from './gateway/external-documents-gateway-bridge'
@@ -117,7 +121,6 @@ import type {
   AgentAuthStartInput,
   DesktopAgentAuthChallenge,
 } from '../shared/agent-auth'
-import { DESKTOP_PAGE_MODE_ENV, resolveDesktopPageMode } from '../shared/page-mode'
 import { BrowserExtensionService } from './browser-extension/browser-extension-service'
 import { CLIPPER_ASSET_SCHEME, type BrowserExtensionStatus } from '../shared/browser-extension'
 import { OBSIDIAN_VAULT_ASSET_SCHEME } from '../shared/obsidian'
@@ -163,7 +166,6 @@ const appDataDirectory = app.getPath('appData')
 const defaultDataDirectory = join(appDataDirectory, APP_NAME)
 const envFilePath = process.env.NXCORE_ENV_FILE?.trim() || join(defaultDataDirectory, '.env')
 if (existsSync(envFilePath)) loadEnvFile(envFilePath)
-const desktopPageMode = resolveDesktopPageMode(process.env[DESKTOP_PAGE_MODE_ENV])
 const dataDirectory = process.env.NXCORE_DATA_DIR?.trim() || defaultDataDirectory
 const resolvedDataDirectory = resolve(dataDirectory)
 
@@ -269,13 +271,16 @@ const RUNTIME_CONFIG_CHANNELS = {
 } as const
 
 const CONNECTOR_CHANNELS = {
-  runtimeStatus: 'nango-connector:runtime-status', status: 'nango-connector:status', providers: 'nango-connector:providers', startAuthorization: 'nango-connector:start-authorization', authorizationStatus: 'nango-connector:authorization-status', registerConnection: 'nango-connector:register-connection', createWebcalSubscription: 'nango-connector:create-webcal-subscription', disableConnection: 'nango-connector:disable-connection', enableConnection: 'nango-connector:enable-connection', purgeConnection: 'nango-connector:purge-connection', triggerSync: 'nango-connector:trigger-sync', cancelRun: 'nango-connector:cancel-run', listScopes: 'nango-connector:list-scopes', listRuns: 'nango-connector:list-runs', listMail: 'nango-connector:list-mail', listFailures: 'nango-connector:list-failures', listDocuments: 'nango-connector:list-documents', readDocument: 'nango-connector:read-document', listRecords: 'nango-connector:list-records', armFault: 'nango-connector:arm-fault',
+  runtimeStatus: 'nango-connector:runtime-status', status: 'nango-connector:status', providers: 'nango-connector:providers', oauthConfigs: 'nango-connector:oauth-configs', startAuthorization: 'nango-connector:start-authorization', authorizationStatus: 'nango-connector:authorization-status', remoteAccount: 'nango-connector:remote-account', registerConnection: 'nango-connector:register-connection', createWebcalSubscription: 'nango-connector:create-webcal-subscription', disableConnection: 'nango-connector:disable-connection', enableConnection: 'nango-connector:enable-connection', purgeConnection: 'nango-connector:purge-connection', triggerSync: 'nango-connector:trigger-sync', cancelRun: 'nango-connector:cancel-run', listScopes: 'nango-connector:list-scopes', listRuns: 'nango-connector:list-runs', listMail: 'nango-connector:list-mail', listFailures: 'nango-connector:list-failures', listDocuments: 'nango-connector:list-documents', readDocument: 'nango-connector:read-document', listRecords: 'nango-connector:list-records', recordTotals: 'nango-connector:record-totals', armFault: 'nango-connector:arm-fault',
 } as const
 const OPEN_CONNECTOR_CHANNELS = {
   status: 'open-connector:status',
   execute: 'open-connector:execute',
   cancel: 'open-connector:cancel',
   openConsole: 'open-connector:open-console',
+  mode: 'open-connector:mode',
+  setMode: 'open-connector:set-mode',
+  startAuthorization: 'open-connector:start-authorization',
 } as const
 
 const AGENT_AUTH_CHANNELS = {
@@ -287,6 +292,10 @@ const AGENT_AUTH_CHANNELS = {
 
 const EXTERNAL_DOCUMENT_CHANNELS = {
   importSearch: 'external-documents:import-search',
+  importList: 'external-documents:import-list',
+  importBatch: 'external-documents:import-batch',
+  importBatchStatus: 'external-documents:import-batch-status',
+  cancelImportBatch: 'external-documents:cancel-import-batch',
   importPreview: 'external-documents:import-preview',
   importCommit: 'external-documents:import-commit',
   importRun: 'external-documents:import-run',
@@ -301,23 +310,8 @@ const EXTERNAL_DOCUMENT_CHANNELS = {
   cancelExport: 'external-documents:cancel-export',
   listExports: 'external-documents:list-exports',
   importDiff: 'external-documents:import-diff',
+  importStructuredDiff: 'external-documents:import-structured-diff',
   searchExportTargets: 'external-documents:search-export-targets',
-} as const
-
-const CONNECTOR_SYNC_CHANNELS = {
-  status: 'connector-sync:status',
-  accounts: 'connector-sync:accounts',
-  promptProfiles: 'connector-sync:prompt-profiles',
-  jobs: 'connector-sync:jobs',
-  createJob: 'connector-sync:create-job',
-  updateJob: 'connector-sync:update-job',
-  runJob: 'connector-sync:run-job',
-  setJobPaused: 'connector-sync:set-job-paused',
-  archiveJob: 'connector-sync:archive-job',
-  runs: 'connector-sync:runs',
-  quarantine: 'connector-sync:quarantine',
-  data: 'connector-sync:data',
-  record: 'connector-sync:record',
 } as const
 
 const CONTEXT_ROOM_CHANNELS = {
@@ -338,6 +332,7 @@ const CONTEXT_ROOM_CHANNELS = {
   getSubagentInvocation: 'context-rooms:get-subagent-invocation',
   cancelSubagentInvocation: 'context-rooms:cancel-subagent-invocation',
   refreshBrief: 'context-rooms:refresh-brief',
+  promoteMemoryItem: 'context-rooms:promote-memory-item',
   overview: 'context-rooms:overview',
   refreshOverview: 'context-rooms:refresh-overview',
   listMails: 'context-rooms:list-mails',
@@ -393,6 +388,9 @@ const DOCUMENT_CHANNELS = {
   createDocumentComment: 'documents:create-document-comment',
   resolveDocumentComment: 'documents:resolve-document-comment',
   deleteDocumentComment: 'documents:delete-document-comment',
+  getOverview: 'documents:get-overview',
+  generateOverview: 'documents:generate-overview',
+  getSectionPreview: 'documents:get-section-preview',
   restoreVersion: 'documents:restore-version',
   resolveBlockReferences: 'documents:resolve-block-references',
   listOperations: 'documents:list-operations',
@@ -678,7 +676,6 @@ function installIpcRouters(): void {
     OPEN_CONNECTOR_CHANNELS,
     AGENT_AUTH_CHANNELS,
     EXTERNAL_DOCUMENT_CHANNELS,
-    CONNECTOR_SYNC_CHANNELS,
     CONTEXT_ROOM_CHANNELS,
     AGENT_CHANNELS,
     CURSOR_COMPLETION_AGENT_CHANNELS,
@@ -746,17 +743,31 @@ function registerBrowserExtensionHandlers(service: BrowserExtensionService): voi
 let localDataService: LocalDataService | null = null
 let obsidianVaultService: ObsidianVaultService | null = null
 let gatewaySupervisor: GatewaySupervisor | null = null
+/** gateway:recover 的 in-flight 去重（网络失败风暴时并发请求只触发一次恢复）。 */
+let gatewayRecoverInFlight: Promise<{ ok: boolean; reason?: 'not-started' | 'recover-failed' }> | null = null
 let browserExtensionService: BrowserExtensionService | null = null
 let clipperAssetBridge: FilesGatewayBridge | null = null
 let runtimeConfigBridge: RuntimeConfigBridge | null = null
 let cursorCompletionSupervisor: GatewaySupervisor | null = null
 let ooCliBridge: OoCliBridge | null = null
+/** OpenConnector 控制台地址（local=本地运行时；SaaS=oo 会话 baseUrl）；bridge 未建时为 null。 */
+let connectorConsoleBaseUrl: string | null = null
 let agentAuthController: AgentAuthController | null = null
 let documentAssetBridge: DocumentAssetBridge | null = null
 let openConnectorSupervisor: OpenConnectorSupervisor | null = null
+let connectorModeStoreRef: ReturnType<typeof createConnectorModeStore> | null = null
+const activeConnectorModeStore = () => connectorModeStoreRef
+// SaaS 连接层（connector-mode = 'saas'）：oo 会话由登录后向 SaaS 换取
+// （POST /app/connectors/oo/token → {baseUrl, token}），客户端直连 oo 数据面。
+let connectorOoGatewayEnv: Record<string, string> = {}
+let connectorOoAppliedEnvJson = '{}'
+let connectorOoSessionCache: { userId: string; session: ConnectorOoSession | null } | null = null
+let connectorOoUserId: string | null = null
+let saasConnectorBridge: SaasConnectorBridge | null = null
+const connectorTombstones = createConnectorTombstoneStore(dataDirectory)
+let connectorReconcileTimer: NodeJS.Timeout | null = null
 let openConnectorConsoleWindow: BrowserWindow | null = null
 let memoryCoreSupervisor: MemoryCoreSupervisor | null = null
-let nangoSupervisor: NangoSupervisor | null = null
 let knowledgeServiceSupervisor: KnowledgeServiceSupervisor | null = null
 let agentGatewayBridge: AgentGatewayBridge | null = null
 let cursorCompletionAgentBridge: AgentGatewayBridge | null = null
@@ -773,6 +784,7 @@ let privateAudioSync: PrivateAudioSyncService | null = null
 let saasClient: SaasClient | null = null
 let agentStatusReporter: AgentStatusReporter | null = null
 let sessionLeaseKeeper: SessionLeaseKeeper | null = null
+let aiRelayKeeper: AiRelayKeeper | null = null
 let remoteAgentCommandClient: RemoteAgentCommandClient | null = null
 let agentNotificationBridgeServer: AgentNotificationBridgeServer | null = null
 let macosPushNotifications: MacosPushNotificationService | null = null
@@ -845,6 +857,24 @@ ipcMain.handle('app:clear-user-data', () => {
 })
 ipcMain.on('app:set-locale', (_event, locale: unknown) => setDesktopLocale(locale))
 
+// Windows 自绘标题栏的窗口控制（macOS 用系统红绿灯按钮，不经过这里）。
+ipcMain.handle('window:minimize', (event) => {
+  BrowserWindow.fromWebContents(event.sender)?.minimize()
+})
+ipcMain.handle('window:toggle-maximize', (event) => {
+  const window = BrowserWindow.fromWebContents(event.sender)
+  if (!window) return
+  if (window.isMaximized()) window.unmaximize()
+  else window.maximize()
+})
+ipcMain.handle('window:close', (event) => {
+  BrowserWindow.fromWebContents(event.sender)?.close()
+})
+ipcMain.handle('window:get-state', (event) => {
+  const window = BrowserWindow.fromWebContents(event.sender)
+  return { maximized: window?.isMaximized() ?? false }
+})
+
 function logRendererDiagnostic(input: unknown): void {
   if (!input || typeof input !== 'object') return
   const value = input as { module?: unknown; level?: unknown; event?: unknown }
@@ -887,7 +917,12 @@ ipcMain.handle('office:instance:close', (event, id: unknown) => {
 
 function focusMainWindow(): void {
   const window = BrowserWindow.getAllWindows()[0]
-  if (!window || window.isDestroyed()) return
+  // 窗口已销毁（如 before-quit 异步清理挂起后用户再点图标）：重建窗口，
+  // 否则第二实例退出 + 第一实例无窗 = 点图标零反应（issue #179）。
+  if (!window || window.isDestroyed()) {
+    void createWindow()
+    return
+  }
   if (window.isMinimized()) window.restore()
   window.show()
   window.focus()
@@ -1284,8 +1319,26 @@ function registerGatewayHandlers(): void {
     gatewaySupervisor
       ? gatewaySupervisor.getStatus()
       : { state: 'starting', pid: null, baseUrl: null, version: null, message: null })
+
+  // 渲染端网络类失败后的自愈入口：拉起/恢复 gateway 连接后由 preload 重试原请求。
+  // in-flight 去重防止并发失败风暴触发重复重启。
+  ipcMain.handle('gateway:recover', () => {
+    if (!gatewaySupervisor) return { ok: false, reason: 'not-started' as const }
+    if (!gatewayRecoverInFlight) {
+      gatewayRecoverInFlight = gatewaySupervisor.ensureConnection()
+        .then(() => ({ ok: true as const }))
+        .catch((error: unknown) => {
+          console.error('[gateway] 网络失败后自动恢复连接未成功：', error)
+          return { ok: false as const, reason: 'recover-failed' as const }
+        })
+        .finally(() => {
+          gatewayRecoverInFlight = null
+        })
+    }
+    return gatewayRecoverInFlight
+  })
   ipcMain.handle(CONNECTOR_CHANNELS.runtimeStatus, () =>
-    nangoSupervisor?.getStatus() ?? { state: 'starting', message: null })
+    ({ state: 'disabled', message: 'nango runtime removed (P3); link-A runs on OpenConnector' }))
 }
 
 function registerRuntimeConfigHandlers(client: SaasClient): void {
@@ -1513,13 +1566,25 @@ async function syncKnowledgeServiceEnvironment(snapshot: RuntimeConfigSnapshot):
 function registerConnectorHandlers(bridge: ConnectorGatewayBridge): void {
   ipcMain.handle(CONNECTOR_CHANNELS.status, () => bridge.status())
   ipcMain.handle(CONNECTOR_CHANNELS.providers, () => bridge.providers())
+  // saas 连接层返回 SaaS 已配置 OAuth 的 provider 名单，local 模式返回 null（渲染层回落注册表）。
+  ipcMain.handle(CONNECTOR_CHANNELS.oauthConfigs, () => bridge.configuredProviders())
   ipcMain.handle(CONNECTOR_CHANNELS.startAuthorization, (_event, provider) => bridge.startAuthorization(provider))
   ipcMain.handle(CONNECTOR_CHANNELS.authorizationStatus, (_event, id) => bridge.authorizationStatus(id))
+  ipcMain.handle(CONNECTOR_CHANNELS.remoteAccount, (_event, provider) => bridge.remoteAccount(provider))
   ipcMain.handle(CONNECTOR_CHANNELS.registerConnection, (_event, input) => bridge.registerConnection(input))
   ipcMain.handle(CONNECTOR_CHANNELS.createWebcalSubscription, (_event, url) => bridge.createWebcalSubscription(url))
   ipcMain.handle(CONNECTOR_CHANNELS.disableConnection, (_event, id) => bridge.disableConnection(id))
   ipcMain.handle(CONNECTOR_CHANNELS.enableConnection, (_event, id) => bridge.enableConnection(id))
-  ipcMain.handle(CONNECTOR_CHANNELS.purgeConnection, (_event, id) => bridge.purgeConnection(id))
+  ipcMain.handle(CONNECTOR_CHANNELS.purgeConnection, async (_event, id) => {
+    // saas 模式删除不上行（远端 oo 凭据保留）：purge 前取 provider 记墓碑，
+    // 否则重登录后 reconcile 对账会把连接自动补注册复活。
+    const userId = connectorOoSessionCache?.userId
+    const provider = userId
+      ? (await bridge.status().catch(() => null))?.connections.find((item) => item.id === id)?.provider
+      : null
+    await bridge.purgeConnection(id)
+    if (userId && provider) await connectorTombstones.add(userId, provider)
+  })
   ipcMain.handle(CONNECTOR_CHANNELS.triggerSync, (_event, id, mode) => bridge.triggerSync(id, mode))
   ipcMain.handle(CONNECTOR_CHANNELS.cancelRun, (_event, id) => bridge.cancelRun(id))
   ipcMain.handle(CONNECTOR_CHANNELS.listScopes, (_event, connectionId) => bridge.scopes(connectionId))
@@ -1529,6 +1594,7 @@ function registerConnectorHandlers(bridge: ConnectorGatewayBridge): void {
   ipcMain.handle(CONNECTOR_CHANNELS.listDocuments, (_event, connectionId) => bridge.documents(connectionId))
   ipcMain.handle(CONNECTOR_CHANNELS.readDocument, (_event, connectionId, documentId) => bridge.document(connectionId, documentId))
   ipcMain.handle(CONNECTOR_CHANNELS.listRecords, (_event, connectionId, type) => bridge.records(connectionId, type))
+  ipcMain.handle(CONNECTOR_CHANNELS.recordTotals, (_event, connectionId) => bridge.recordTotals(connectionId))
   ipcMain.handle(CONNECTOR_CHANNELS.armFault, (_event, point) => {
     if (process.env.NXCORE_CONNECTOR_DEBUG_FAULTS !== '1') throw new Error('故障注入未启用。')
     return bridge.armFault(point)
@@ -1571,6 +1637,8 @@ function resolveNtnCliExecutable(): string | null {
 
 function createOoCliBridge(connection: OpenConnectorConnection): OoCliBridge {
   const root = join(dataDirectory, 'open-connector')
+  // 控制台兜底地址：SaaS 模式没有 supervisor，openConsole 用它打开 SaaS 侧控制台。
+  connectorConsoleBaseUrl = connection.baseUrl
   return new OoCliBridge({
     executable: resolveOoCliExecutable(),
     baseUrl: connection.baseUrl,
@@ -1591,20 +1659,146 @@ function attachOpenConnectorBridge(bridge: OoCliBridge): void {
   })
 }
 
-function openConnectorExternalUrl(value: string): void {
+// ---- SaaS 连接层（connector-mode = 'saas'）----
+// 登录 EverRoom 后从 SaaS 换取 oo 用户会话（SaaS 代发并登记用户 runtime token），
+// 桌面与 gateway 均持该 token 直连 oo 数据面；连接层不再经 SaaS 转发。
+let connectorOoLoginSeen = false
+
+/** 按 userId 去重换取 oo 会话；成功才缓存，失败返回 null 并由下次账号事件重试。 */
+async function fetchConnectorOoSession(userId: string): Promise<ConnectorOoSession | null> {
+  if (connectorOoSessionCache?.userId === userId) return connectorOoSessionCache.session
+  const session = await saasClient?.connectorOoSession().catch((error: unknown) => {
+    console.warn('[connector-mode] obtaining oo session from EverRoomSass failed:', error instanceof Error ? error.message : error)
+    return null
+  }) ?? null
+  connectorOoSessionCache = session ? { userId, session } : null
+  return session
+}
+
+/**
+ * 应用 oo 会话：重建直连 oo 的 bridge，并让 gateway env 跟随。
+ * gateway 已在运行且 env 变化时重启之（各 bridge 经 ensureConnection/
+ * recoverConnection 自愈，与 dev 热重载同路径）；启动期调用时 gateway 未起，
+ * env 在首次 spawn 生效，无需重启。
+ */
+async function applyConnectorOoSession(session: ConnectorOoSession | null): Promise<void> {
+  ooCliBridge?.shutdown()
+  ooCliBridge = session
+    ? createOoCliBridge({ baseUrl: session.baseUrl, runtimeToken: session.token, managed: false, pid: null, version: null })
+    : null
+  if (!session) connectorConsoleBaseUrl = null
+  if (ooCliBridge) attachOpenConnectorBridge(ooCliBridge)
+  if (!session) connectorOoSessionCache = null
+  connectorOoGatewayEnv = session
+    ? {
+      NXCORE_CLI_CONNECTOR_URL: session.baseUrl,
+      NXCORE_CLI_CONNECTOR_RUNTIME_TOKEN: session.token,
+      NXCORE_CLI_CONNECTOR_MANAGED: 'false',
+    }
+    : {}
+  const nextJson = JSON.stringify(connectorOoGatewayEnv)
+  if (nextJson === connectorOoAppliedEnvJson) return
+  connectorOoAppliedEnvJson = nextJson
+  const supervisor = gatewaySupervisor
+  if (!supervisor?.isRunning()) {
+    // 启动期：env 随首次 spawn 生效，gateway 就绪后由 scheduleSaasConnectorReconcile 对账。
+    scheduleSaasConnectorReconcile(20_000)
+    return
+  }
   try {
+    await supervisor.shutdown()
+    const gateway = await supervisor.start()
+    console.info(`[connector-mode] gateway restarted to apply oo session env (gateway at ${gateway.baseUrl})`)
+    scheduleSaasConnectorReconcile()
+  } catch (error) {
+    console.error('[connector-mode] gateway restart for oo session env failed:', error)
+  }
+}
+
+/**
+ * 连接注册对账：oo 租户里已有、而 gateway 注册表（连接器列表/scope/同步的
+ * 数据源）缺失的连接，补调 register。覆盖两类缺口——重启前完成的授权
+ * （pending 表不跨重启）与注册时 gateway 暂不可达的授权。只对注册表认识的
+ * provider 补注册（oo 的公共 no_auth 应用不在其中，不产生噪音连接）。
+ *
+ * 用户主动 purge 过的 provider 有墓碑（远端凭据仍在），对账跳过不复活——
+ * 重连由数据源页弹窗显式选择（使用旧账号免授权复活 / 切换其他账号重新授权）。
+ */
+async function reconcileSaasConnectorConnections(attempt = 1): Promise<void> {
+  const bridge = saasConnectorBridge
+  const cache = connectorOoSessionCache
+  const session = cache?.session
+  if (!bridge || !session || !cache?.userId) return
+  const userId = cache.userId
+  try {
+    const [status, providersResponse, appsResponse] = await Promise.all([
+      bridge.status(),
+      bridge.providers(),
+      fetch(`${session.baseUrl}/v1/apps`, {
+        headers: { authorization: `Bearer ${session.token}` },
+        signal: AbortSignal.timeout(5_000),
+      })
+        .then((response) => (response.ok ? response.json() as Promise<{ data?: unknown[] } | null> : null))
+        .catch(() => null),
+    ])
+    if (!Array.isArray(appsResponse?.data)) return
+    // oo service（googlecalendar 等）↔ 注册表 provider（google-calendar）命名
+    // 分裂：对账必须先映射，Google 系才能命中注册表白名单。
+    const knownProviders = new Set(providersResponse.providers.map((item) => item.provider))
+    const registered = new Set(status.connections.map((item) => item.provider))
+    for (const value of appsResponse.data) {
+      const account = (value ?? {}) as { service?: unknown; alias?: unknown; connectionName?: unknown; status?: unknown }
+      const service = typeof account.service === 'string' ? account.service : ''
+      const connectionName = typeof account.alias === 'string' ? account.alias
+        : typeof account.connectionName === 'string' ? account.connectionName : ''
+      const activeStatus = typeof account.status === 'string' ? account.status.toLowerCase() : ''
+      if (!service || !connectionName) continue
+      const provider = providerOfService(service)
+      if (!provider || !knownProviders.has(provider)) continue
+      if (activeStatus && !['active', 'connected', 'ready'].includes(activeStatus)) continue
+      if (registered.has(provider)) {
+        // 连接已回到本地注册表（用户显式重连成功）：清墓碑，恢复对账自愈。
+        await connectorTombstones.remove(userId, provider)
+        continue
+      }
+      if (await connectorTombstones.has(userId, provider)) continue
+      await bridge.registerConnection({ provider, service, connectionName }).catch((error: unknown) => {
+        console.warn('[connector-mode] connector reconcile register failed:', error instanceof Error ? error.message : error)
+      })
+    }
+  } catch (error) {
+    console.warn('[connector-mode] connector reconcile failed:', error instanceof Error ? error.message : error)
+    // gateway 刚拉起时可能尚未就绪：退避重试，最多三轮。
+    if (attempt < 3) scheduleSaasConnectorReconcile(30_000, attempt + 1)
+  }
+}
+
+function scheduleSaasConnectorReconcile(delayMs = 2_000, attempt = 1): void {
+  // saasConnectorBridge 仅在 saas 模式下创建，作为模式判据。
+  if (!saasConnectorBridge) return
+  if (connectorReconcileTimer) clearTimeout(connectorReconcileTimer)
+  connectorReconcileTimer = setTimeout(() => {
+    connectorReconcileTimer = null
+    void reconcileSaasConnectorConnections(attempt)
+  }, delayMs)
+}
+
+function openExternalUrl(value: string): void {  try {
     const url = new URL(value)
     if (url.protocol === 'http:' || url.protocol === 'https:') void shell.openExternal(url.toString())
   } catch {
-    // Ignore malformed or unsupported external navigation from the console.
+    // 忽略格式非法或协议不受支持的外部导航（仅放行 http/https）。
   }
 }
 
 async function openConnectorManagementConsole(): Promise<void> {
   const connection = openConnectorSupervisor?.getConnection()
-  if (!connection) throw new Error('OpenConnector 尚未就绪。')
-  if (!connection.managed || !connection.adminToken) {
-    await shell.openExternal(`${connection.baseUrl}/`)
+  // SaaS 模式不拉本地 supervisor：回退到 oo 会话 bridge 记录的 baseUrl（浏览器
+  // 打开 SaaS 侧控制台）；两者皆无（未登录/运行时未起）才视为未就绪。
+  const fallbackBaseUrl = connection?.baseUrl ?? connectorConsoleBaseUrl
+  if (!fallbackBaseUrl) throw new Error('OpenConnector 尚未就绪（未登录 SaaS 或本地运行时未启动）。')
+  if (!connection?.managed || !connection?.adminToken) {
+    await shell.openExternal(`${fallbackBaseUrl}/`)
     return
   }
   if (openConnectorConsoleWindow && !openConnectorConsoleWindow.isDestroyed()) {
@@ -1636,13 +1830,13 @@ async function openConnectorManagementConsole(): Promise<void> {
     }),
   )
   window.webContents.setWindowOpenHandler(({ url }) => {
-    openConnectorExternalUrl(url)
+    openExternalUrl(url)
     return { action: 'deny' }
   })
   window.webContents.on('will-navigate', (event, url) => {
     if (new URL(url).origin === origin) return
     event.preventDefault()
-    openConnectorExternalUrl(url)
+    openExternalUrl(url)
   })
   window.once('ready-to-show', () => window.show())
   window.once('closed', () => {
@@ -1652,23 +1846,36 @@ async function openConnectorManagementConsole(): Promise<void> {
 }
 
 function registerOpenConnectorHandlers(): void {
-  handle(OPEN_CONNECTOR_CHANNELS.status, () => {
-    if (desktopPageMode !== 'connectors') {
+  handle(OPEN_CONNECTOR_CHANNELS.mode, async () => activeConnectorModeStore()?.read() ?? { mode: 'saas', switchedAt: null })
+  handle(OPEN_CONNECTOR_CHANNELS.setMode, async (_event, mode: unknown) => {
+    const store = activeConnectorModeStore()
+    if (!store) throw new Error('connector mode store unavailable')
+    const next = mode === 'local' ? 'local' as const : mode === 'saas' ? 'saas' as const : null
+    if (!next) throw new Error('invalid connector mode')
+    return store.write(next)
+  })
+  handle(OPEN_CONNECTOR_CHANNELS.status, async () => {
+    if (ooCliBridge) return ooCliBridge.status()
+    const mode = (await activeConnectorModeStore()?.read())?.mode ?? 'saas'
+    if (mode === 'saas') {
+      // SaaS 连接层尚未拿到 oo 会话（未登录 / SaaS 暂不可达）：
+      // 给出可读状态，避免永远停在 'starting' 的假态。
       return {
-        baseUrl: '',
+        baseUrl: connectorOoSessionCache?.session?.baseUrl ?? '',
         managed: false,
         gatewayPid: null,
         gatewayVersion: null,
         gatewayState: 'unreachable' as const,
-        gatewayMessage: '连接器页面未启用。',
+        gatewayMessage: connectorOoLoginSeen
+          ? '云端连接层暂不可用，请稍后重试。'
+          : '登录 EverRoom 后将自动连接云端连接层。',
         runtimeTokenConfigured: false,
-        cliState: 'missing' as const,
+        cliState: 'checking' as const,
         cliVersion: null,
         cliPath: resolveOoCliExecutable(),
-        cliMessage: '连接器页面未启用。',
+        cliMessage: null,
       }
     }
-    if (ooCliBridge) return ooCliBridge.status()
     const status = openConnectorSupervisor?.getStatus()
     return {
       baseUrl: status?.baseUrl ?? '',
@@ -1695,6 +1902,54 @@ function registerOpenConnectorHandlers(): void {
     return ooCliBridge.cancel(requestId)
   })
   handle(OPEN_CONNECTOR_CHANNELS.openConsole, () => openConnectorManagementConsole())
+  // 一键发起 provider OAuth：本地模式直调运行时（adminToken）；SaaS 模式由
+  // SaaS 代发起（桌面只持 runtime token，admin 面在服务端）。返回授权页并在
+  // 系统浏览器打开；完成后由调用方轮询连接状态感知新连接。
+  handle(OPEN_CONNECTOR_CHANNELS.startAuthorization, async (_event, service: unknown) => {
+    if (typeof service !== 'string' || !/^[a-z][a-z0-9_-]{1,63}$/.test(service)) {
+      throw new Error('无效的服务标识。')
+    }
+    let authorizationUrl: string | null = null
+    const connection = openConnectorSupervisor?.getConnection()
+    if (connection?.managed && connection.adminToken) {
+      const response = await fetch(new URL('/api/oauth/authorizations', connection.baseUrl), {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${connection.adminToken}` },
+        body: JSON.stringify({ service }),
+        signal: AbortSignal.timeout(20_000),
+      })
+      const payload = await response.json().catch(() => null) as {
+        authorizationUrl?: unknown
+        error?: { code?: unknown } | null
+      } | null
+      if (!response.ok || typeof payload?.authorizationUrl !== 'string') {
+        // 飞书等 provider 走"用户自建应用"模式：先在控制台配 OAuth client 才能发起。
+        if (payload?.error?.code === 'oauth_client_config_required') {
+          throw new Error(
+            `尚未配置 ${service} 的应用凭据（OAuth client）。请在连接器管理中为 ${service} 填入自建应用的 App ID/Secret，`
+            + `并把回调地址 ${new URL('/oauth/callback', connection.baseUrl).toString()} 加入该应用的重定向 URL 白名单后重试。`,
+          )
+        }
+        throw new Error(`OpenConnector 授权发起失败（HTTP ${String(response.status)}）。`)
+      }
+      authorizationUrl = payload.authorizationUrl
+    } else {
+      const client = saasClient
+      if (!client) throw new Error('尚未登录 SaaS，无法发起授权；请先登录或切换本地连接器模式。')
+      try {
+        authorizationUrl = (await client.startConnectorAuthorization(service)).authorizationUrl
+      } catch (error) {
+        throw new Error(
+          `SaaS 代发起 ${service} 授权失败（${error instanceof Error ? error.message : String(error)}）。`
+          + '该平台可能尚未在 SaaS 侧开放；可切换本地连接器模式并使用自建应用凭据。',
+        )
+      }
+    }
+    const url = new URL(authorizationUrl)
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') throw new Error('授权地址协议不受支持。')
+    await shell.openExternal(url.toString())
+    return { authorizationUrl: url.toString() }
+  })
 }
 
 function registerAgentAuthHandlers(): void {
@@ -1745,6 +2000,21 @@ function registerExternalDocumentHandlers(bridge: ExternalDocumentsGatewayBridge
     if (typeof provider !== 'string' || typeof query !== 'string') throw new Error('无效的导入搜索请求。')
     return bridge.importSearch(provider as 'feishu' | 'notion', query)
   })
+  handle(EXTERNAL_DOCUMENT_CHANNELS.importList, (_event, provider: unknown, connectionName: unknown, cachedOnly: unknown) => {
+    if (typeof provider !== 'string') throw new Error('无效的文档列举请求。')
+    if (connectionName !== undefined && typeof connectionName !== 'string') throw new Error('无效的连接名。')
+    if (cachedOnly !== undefined && typeof cachedOnly !== 'boolean') throw new Error('无效的缓存参数。')
+    return bridge.importList(provider as 'feishu' | 'notion', connectionName, cachedOnly)
+  })
+  handle(EXTERNAL_DOCUMENT_CHANNELS.importBatch, (_event, input: unknown) => bridge.importBatch(input as never))
+  handle(EXTERNAL_DOCUMENT_CHANNELS.importBatchStatus, (_event, batchId: unknown) => {
+    if (typeof batchId !== 'string') throw new Error('无效的批量导入标识。')
+    return bridge.importBatchStatus(batchId)
+  })
+  handle(EXTERNAL_DOCUMENT_CHANNELS.cancelImportBatch, (_event, batchId: unknown) => {
+    if (typeof batchId !== 'string') throw new Error('无效的批量导入标识。')
+    return bridge.cancelImportBatch(batchId)
+  })
   handle(EXTERNAL_DOCUMENT_CHANNELS.importPreview, (_event, provider: unknown, remoteDocumentId: unknown) => {
     if (typeof provider !== 'string' || typeof remoteDocumentId !== 'string') throw new Error('无效的导入预览请求。')
     return bridge.importPreview(provider as 'feishu' | 'notion', remoteDocumentId)
@@ -1765,6 +2035,10 @@ function registerExternalDocumentHandlers(bridge: ExternalDocumentsGatewayBridge
   handle(EXTERNAL_DOCUMENT_CHANNELS.checkExternalUpdate, (_event, roomId: unknown, documentId: unknown) => {
     if (typeof roomId !== 'string' || typeof documentId !== 'string') throw new Error('无效的文档标识。')
     return bridge.checkExternalUpdate(roomId, documentId)
+  })
+  handle(EXTERNAL_DOCUMENT_CHANNELS.importStructuredDiff, (_event, roomImportId: unknown) => {
+    if (typeof roomImportId !== 'string') throw new Error('无效的导入关联标识。')
+    return bridge.importStructuredDiff(roomImportId)
   })
   handle(EXTERNAL_DOCUMENT_CHANNELS.applyCandidate, (_event, roomImportId: unknown) => {
     if (typeof roomImportId !== 'string') throw new Error('无效的导入关联标识。')
@@ -1821,6 +2095,8 @@ function registerContextRoomHandlers(bridge: ContextRoomGatewayBridge): void {
   handle(CONTEXT_ROOM_CHANNELS.cancelSubagentInvocation, (_event, invocationId) =>
     bridge.cancelSubagentInvocation(invocationId))
   handle(CONTEXT_ROOM_CHANNELS.refreshBrief, (_event, roomId) => bridge.refreshBrief(roomId))
+  handle(CONTEXT_ROOM_CHANNELS.promoteMemoryItem, (_event, roomId: string, itemId: string) =>
+    bridge.promoteMemoryItem(roomId, itemId))
   handle(CONTEXT_ROOM_CHANNELS.overview, (_event, roomId) => bridge.overview(roomId))
   handle(CONTEXT_ROOM_CHANNELS.refreshOverview, (_event, roomId) => bridge.refreshOverview(roomId))
   handle(CONTEXT_ROOM_CHANNELS.listMails, (_event, roomId) => bridge.listMails(roomId))
@@ -1847,23 +2123,6 @@ function registerMigrationHandlers(coordinator: MigrationCoordinator): void {
   handle(MIGRATION_CHANNELS.conversations, (_event, input) => new MigrationsGatewayBridge(gatewaySupervisor!).conversations(input))
   handle(MIGRATION_CHANNELS.preview, (_event, id: string) => new MigrationsGatewayBridge(gatewaySupervisor!).preview(id))
   coordinator.onProgress((progress) => BrowserWindow.getAllWindows().forEach((window) => window.webContents.send(MIGRATION_CHANNELS.progress, progress)))
-}
-
-function registerConnectorSyncHandlers(bridge: ConnectorSyncGatewayBridge): void {
-  handle(CONNECTOR_SYNC_CHANNELS.status, () => bridge.status())
-  handle(CONNECTOR_SYNC_CHANNELS.accounts, () => bridge.accounts())
-  handle(CONNECTOR_SYNC_CHANNELS.promptProfiles, () => bridge.promptProfiles())
-  handle(CONNECTOR_SYNC_CHANNELS.jobs, () => bridge.jobs())
-  handle(CONNECTOR_SYNC_CHANNELS.createJob, (_event, input) => bridge.createJob(input))
-  handle(CONNECTOR_SYNC_CHANNELS.updateJob, (_event, id, input) => bridge.updateJob(id, input))
-  handle(CONNECTOR_SYNC_CHANNELS.runJob, (_event, id) => bridge.runJob(id))
-  handle(CONNECTOR_SYNC_CHANNELS.setJobPaused, (_event, id, paused, configVersion) =>
-    bridge.setJobPaused(id, paused, configVersion))
-  handle(CONNECTOR_SYNC_CHANNELS.archiveJob, (_event, id, configVersion) => bridge.archiveJob(id, configVersion))
-  handle(CONNECTOR_SYNC_CHANNELS.runs, (_event, jobId) => bridge.runs(jobId))
-  handle(CONNECTOR_SYNC_CHANNELS.quarantine, (_event, runId) => bridge.quarantine(runId))
-  handle(CONNECTOR_SYNC_CHANNELS.data, (_event, query) => bridge.data(query))
-  handle(CONNECTOR_SYNC_CHANNELS.record, (_event, id) => bridge.record(id))
 }
 
 function registerAgentHandlers(bridge: AgentGatewayBridge, migrationCoordinator: MigrationCoordinator): void {
@@ -2058,6 +2317,9 @@ function registerDocumentHandlers(
     createDocumentComment: (_event, documentId, input) => bridge.createDocumentComment(documentId, input),
     resolveDocumentComment: (_event, documentId, commentId, resolved) => bridge.resolveDocumentComment(documentId, commentId, resolved),
     deleteDocumentComment: (_event, documentId, commentId) => bridge.deleteDocumentComment(documentId, commentId),
+    getOverview: (_event, documentId) => bridge.getDocumentOverview(documentId),
+    generateOverview: (_event, documentId) => bridge.generateDocumentOverview(documentId),
+    getSectionPreview: (_event, documentId, input) => bridge.getSectionPreview(documentId, input),
     restoreVersion: (_event, documentId, version, baseVersion) =>
       bridge.restoreVersion(documentId, version, baseVersion),
     resolveBlockReferences: (_event, input) => bridge.resolveBlockReferences(input),
@@ -2300,7 +2562,7 @@ function registerFilesHandlers(
     FILES_CHANNELS.resolveHighRiskReview,
     (_event, id: unknown, accepted: unknown) => {
       if (typeof id !== 'string' || id.length < 1 || id.length > 100 || typeof accepted !== 'boolean') {
-        throw new Error('无效的高风险文件确认请求。')
+        throw new Error('无效的文件确认请求。')
       }
       return highRiskImports.resolve(id, accepted)
     },
@@ -2580,6 +2842,8 @@ function registerAccountHandlers(
     client.clearAdmissionChallenge()
     return { dismissed: true }
   })
+  // 中转额度视图（订阅周期开窗）；未配置/未登录场景由 SettingsPage 静默降级。
+  handle('ai-relay:status', () => rateLimitAware(() => client.aiGatewayStatus()))
   handle(ACCOUNT_CHANNELS.logout, () => rateLimitAware(async () => {
     await beforeLogout?.()
     const connection = gatewaySupervisor?.isRunning() ? gatewaySupervisor.getConnection() : null
@@ -2856,6 +3120,17 @@ function registerPerceptionAndDiaryHandlers(): void {
   })
 }
 
+function isAppWindowNavigationAllowed(url: string): boolean {
+  try {
+    if (process.env.ELECTRON_RENDERER_URL) {
+      return new URL(url).origin === new URL(process.env.ELECTRON_RENDERER_URL).origin
+    }
+    return new URL(url).href === pathToFileURL(join(__dirname, '../renderer/index.html')).href
+  } catch {
+    return false
+  }
+}
+
 function createWindow(): BrowserWindow {
   const window = new BrowserWindow({
     width: 1440,
@@ -2865,8 +3140,11 @@ function createWindow(): BrowserWindow {
     show: false,
     title: 'Everroom',
     backgroundColor: '#f5f5f5',
-    titleBarStyle: 'hiddenInset',
-    trafficLightPosition: { x: 14, y: 17 },
+    // macOS 走 hiddenInset + 系统红绿灯；Windows 隐藏整条系统标题栏，
+    // 由渲染端 TopBar/引导页头部绘制 EverRoom 风格的自绘窗口按钮。
+    ...(process.platform === 'darwin'
+      ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 14, y: 17 } }
+      : { titleBarStyle: 'hidden' as const }),
     webPreferences: {
       preload: join(__dirname, '../preload/index.cjs'),
       contextIsolation: true,
@@ -2874,6 +3152,11 @@ function createWindow(): BrowserWindow {
       sandbox: true,
     },
   })
+  const sendMaximizedChanged = () => {
+    if (!window.isDestroyed()) window.webContents.send('window:maximized-changed', window.isMaximized())
+  }
+  window.on('maximize', sendMaximizedChanged)
+  window.on('unmaximize', sendMaximizedChanged)
 
   installCrossOriginIsolation(window.webContents.session, process.env.ELECTRON_RENDERER_URL)
 
@@ -2939,10 +3222,25 @@ function createWindow(): BrowserWindow {
   }
   window.once('ready-to-show', () => window.show())
   window.webContents.on('did-finish-load', () => sendPendingAgentNotificationTarget())
+  // 渲染进程崩溃（OOM/原生崩溃）默认留下永久白屏窗口；记日志并整页重载。
+  window.webContents.on('render-process-gone', (_event, details) => {
+    if (window.isDestroyed()) return
+    console.error(`[window] 渲染进程异常退出（reason=${details.reason}），正在重载页面。`)
+    window.webContents.reload()
+  })
 
   window.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url)
+    openExternalUrl(url)
     return { action: 'deny' }
+  })
+
+  // 同窗口导航只放行应用自身页面（dev 服务器 origin / 生产 index.html）。
+  // 文档里的外链（Notion/飞书导入等）不得把主窗口带去远端页面——否则该页面
+  // 会拿到 preload 暴露的网关桥；拦截后降级为系统浏览器打开。
+  window.webContents.on('will-navigate', (event, url) => {
+    if (isAppWindowNavigationAllowed(url)) return
+    event.preventDefault()
+    openExternalUrl(url)
   })
 
   if (process.env.ELECTRON_RENDERER_URL) {
@@ -2965,6 +3263,15 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   }
   // 主密钥改内置（gateway 端默认值），清掉 Keychain 时代的遗留文件再拉起网关。
   await cleanupLegacyGatewaySecretKey(join(dataDirectory, 'security'))
+  // 先清上次残留的受管子进程树（父进程被强杀后 gateway/memory-core/knowledge
+  // 会残留并锁 SQLite/端口，导致新实例启动超时或被 probe 误复用，issue #179）。
+  const staleProcesses = await cleanupStaleProcessRecords(join(dataDirectory, 'runtime'))
+  if (staleProcesses.length > 0) {
+    console.warn(`[startup] 已清理上次残留进程：${staleProcesses.join('、')}`)
+  }
+  // 退出兜底（win32）：崩溃/强杀路径 before-quit 不会执行，exit 钩子同步击杀
+  // 仍存活的受管子进程；POSIX 正常退出已有进程组语义，不注册。
+  installExitCleanupHook()
   // 窗口先显示,Gateway 等服务在后台初始化,状态由左下角 Gateway 指示器呈现。
   const documentAssets = new DocumentAssetStore(join(dataDirectory, 'document-assets'))
   await documentAssets.initialize().catch((error: unknown) => {
@@ -3038,23 +3345,27 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
           }
         }
       },
-      // 非 token 授权状态加密落盘（safeStorage；不可用时退化为不持久化）。
-      persist: safeStorage.isEncryptionAvailable()
-        ? createAgentAuthPersistence(join(dataDirectory, 'agent-auth', 'challenge.bin'))
-        : undefined,
+      // 非 token 授权状态加密落盘（本地静态密钥，不依赖 safeStorage/钥匙串）。
+      persist: createAgentAuthPersistence(join(dataDirectory, 'agent-auth', 'challenge.bin')),
     },
     resolveNtnCliExecutable() ? new NtnAuthRunner(resolveNtnCliExecutable()!) : null,
   )
   registerAgentAuthHandlers()
   createWindow()
-  const connectorPageEnabled = desktopPageMode === 'connectors'
-  const configuredNangoUrl =
-    process.env.NXCORE_NANGO_CONNECTOR_URL?.trim() || process.env.NXCORE_NANGO_URL?.trim() || ''
-  const configuredNangoSecret =
-    process.env.NXCORE_NANGO_CONNECTOR_SECRET?.trim() || process.env.NXCORE_NANGO_SECRET?.trim() || ''
-  const nangoSecretIsUuidV4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(configuredNangoSecret)
+  // SaaS 客户端先于连接器栈构造：saas 连接层在 gateway 启动前就需要登录态换 oo 会话。
+  const credentials = new CredentialStore(join(app.getPath('userData'), 'credentials.json'))
+  await credentials.initialize()
+  const recordingsDirectory=join(dataDirectory,'recordings')
+  recordingStore = new RecordingStore(recordingsDirectory)
+  saasClient=new SaasClient(credentials,app,recordingsDirectory,(url)=>shell.openExternal(url))
+  void saasClient.initialize()
+  // 连接器栈在所有页面可用（sources/connectors 页面模式分叉已删除）
+  const connectorModeStore = connectorModeStoreRef ?? createConnectorModeStore(dataDirectory)
+  connectorModeStoreRef = connectorModeStore
+  const connectorModeState = await connectorModeStore.read()
   try {
-    if (connectorPageEnabled) {
+    // SaaS 模式（默认）：不拉本地实例；local 模式拉起
+    if (connectorModeState.mode === 'local') {
       openConnectorSupervisor = new OpenConnectorSupervisor(join(dataDirectory, 'open-connector'))
       const openConnector = await openConnectorSupervisor.start().catch((error) => {
         console.error('Managed OpenConnector failed to start; connector tools stay disabled.', error)
@@ -3065,6 +3376,19 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         attachOpenConnectorBridge(ooCliBridge)
       }
     }
+    if (connectorModeState.mode === 'saas') {
+      // SaaS 连接层：已登录则先向 SaaS 换 oo 会话（bridge 与 gateway env 工厂都用它）；
+      // 未登录/暂不可达时不阻断启动，由账号事件钩子补拉。
+      await saasClient.initialize()
+      const account = await saasClient.status().catch(() => null)
+      connectorOoLoginSeen = Boolean(account?.authenticated)
+      connectorOoUserId = account?.authenticated ? account.user?.id ?? null : null
+      await applyConnectorOoSession(
+        account?.authenticated && account.user?.id
+          ? await fetchConnectorOoSession(account.user.id)
+          : null,
+      )
+    }
     // 先拉起/探测 MemoryCore(独立可复用),再把连接信息注入 gateway 的记忆配置,
     // 让队友拉代码后无需手工部署即可使用记忆功能。
     memoryCoreSupervisor = new MemoryCoreSupervisor(dataDirectory)
@@ -3072,15 +3396,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       console.error('Managed MemoryCore failed to start; memory stays disabled.', error)
       return null
     })
-    // Nango 是数据源专用的可选后台依赖。先让 Gateway 起来，Nango 在后台
-    // 构建/启动；连接器页面会通过运行状态轮询感知它何时可用。
-    if (!connectorPageEnabled) {
-      nangoSupervisor = new NangoSupervisor()
-      void nangoSupervisor.start().catch((error) => {
-        console.error('Managed Nango failed to start; data source connectors stay disabled.', error)
-        return null
-      })
-    }
+    // P2-5：Nango supervisor 启动分支删除（Seam1 后取数走 oo；P3 删 Nango 全家）。
     // Knowledge Service(Wiki)与 MemoryCore 同款托管;失败仅禁用 wiki 工具,不阻塞启动。
     knowledgeServiceSupervisor = new KnowledgeServiceSupervisor(dataDirectory)
     // 冷启动先带 .env 透传起 KS（gateway 未起，runtime config 读不到）；
@@ -3090,18 +3406,6 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       console.error('Managed Knowledge service failed to start; wiki tools stay disabled.', error)
       return null
     })
-    // Gateway 配置要求 URL 和 SECRET 成对出现；兼容旧版 Nango 变量名。
-    // The selected page owns the connector runtime. Explicitly clear the
-    // other connector's URL so a user-level env override cannot re-enable it.
-    // URL 为空时（packaged-env.json 缺失或 Nango 未就绪）SECRET 必须同步留空，
-    // 否则 Gateway 校验"URL/SECRET 成对"失败会以 code=1 退出，应用闪退。
-    const nangoUrl = connectorPageEnabled
-      ? ''
-      : nangoSupervisor?.gatewayBaseUrl() ?? configuredNangoUrl
-    const nangoSecret = nangoUrl && nangoSupervisor && !nangoSecretIsUuidV4
-      ? randomUUID()
-      : nangoUrl ? configuredNangoSecret : ''
-    const nangoBootstrapPending = nangoUrl && nangoSupervisor && !nangoSecretIsUuidV4 ? '1' : '0'
     agentNotificationBridgeServer = new AgentNotificationBridgeServer(
       () => saasClient,
       (local) => {
@@ -3141,26 +3445,19 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
           }
           : {}),
         ...(ooCliBridge ? ooCliBridge.environment() : {}),
-        NXCORE_CLI_CONNECTOR_AGENT_MODE: ooCliBridge ? 'local' : 'direct',
-        NXCORE_CLI_CONNECTOR_SYNC_ENABLED: ooCliBridge ? 'true' : 'false',
+        ...connectorOoGatewayEnv,
         // 飞书导出：lark-cli 路径注入 gateway（网关只执行写入命令，授权在桌面本地）。
         ...(agentAuthController ? agentAuthController.gatewayEnvironment() : {}),
         // 文档资产桥：网关把本地图改写为该 loopback URL，lark-cli markdown 导入自动下载。
         ...(documentAssetBridge
           ? { NXCORE_DOCUMENT_ASSET_BRIDGE_URL: documentAssetBridge.baseUrl }
-          : {}),
-        ...(memoryCore
+          : {}),        ...(memoryCore
           ? {
             NXCORE_MEMORY_ENABLED: 'true',
             NXCORE_MEMORY_BASE_URL: memoryCore.baseUrl,
             NXCORE_MEMORY_API_KEY: memoryCore.apiKey,
           }
           : {}),
-        NXCORE_NANGO_CONNECTOR_URL: nangoUrl,
-        NXCORE_NANGO_CONNECTOR_SECRET: nangoSecret,
-        NXCORE_NANGO_BOOTSTRAP_PENDING: nangoBootstrapPending,
-        NXCORE_NANGO_URL: nangoUrl,
-        NXCORE_NANGO_SECRET: nangoSecret,
         ...(knowledge
           ? {
             NXCORE_KNOWLEDGE_ENABLED: 'true',
@@ -3215,11 +3512,36 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       },
     )
     registerContextRoomHandlers(new ContextRoomGatewayBridge(gatewaySupervisor))
-    registerConnectorSyncHandlers(new ConnectorSyncGatewayBridge(gatewaySupervisor))
     realityGatewayBridge = new RealityGatewayBridge(gatewaySupervisor)
     registerRealityHandlers(realityGatewayBridge)
     connectorGatewayBridge = new ConnectorGatewayBridge(gatewaySupervisor, (url) => shell.openExternal(url))
-    registerConnectorHandlers(connectorGatewayBridge)
+    // saas 连接层：授权面走 SaaS 代发起 + oo 数据面探测（客户端不持 oo admin
+    // token，gateway 无法代发起）；其余数据面通道仍走 gateway。local 模式不变。
+    saasConnectorBridge = new SaasConnectorBridge(gatewaySupervisor, (url) => shell.openExternal(url), {
+      startAuthorization: (service) => {
+        const client = saasClient
+        if (!client) return Promise.reject(new Error('SaaS 客户端尚未就绪。'))
+        // 预热 oo 会话：启动期换会话失败（如 SaaS 短暂不可用）后没有重试时机，
+        // 授权完成前必须把探测会话与 gateway env 补齐。
+        if (connectorOoUserId && !connectorOoSessionCache) {
+          void fetchConnectorOoSession(connectorOoUserId)
+            .then((session) => applyConnectorOoSession(session))
+            .catch(() => undefined)
+        }
+        return client.startConnectorAuthorization(service)
+      },
+      ooSession: () => {
+        const session = connectorOoSessionCache?.session
+        return session ? { baseUrl: session.baseUrl, token: session.token } : null
+      },
+      oauthConfigs: () => {
+        const client = saasClient
+        if (!client) return Promise.reject(new Error('SaaS 客户端尚未就绪。'))
+        return client.connectorOAuthConfigs()
+      },
+    })
+    const connectorIpcBridge = connectorModeState.mode === 'saas' ? saasConnectorBridge : connectorGatewayBridge
+    registerConnectorHandlers(connectorIpcBridge)
     // Agent status reporting is attached after the authenticated SaaS client is created below.
     const memoryGatewayBridge = new MemoryGatewayBridge(gatewaySupervisor)
     registerMemoryHandlers(memoryGatewayBridge)
@@ -3245,12 +3567,6 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     })
     registerFilesHandlers(filesGatewayBridge, highRiskImports)
     registerIngestHandlers(new IngestGatewayBridge(gatewaySupervisor))
-    const credentials = new CredentialStore(join(app.getPath('userData'), 'credentials.json'))
-    await credentials.initialize()
-    const recordingsDirectory=join(dataDirectory,'recordings')
-    recordingStore = new RecordingStore(recordingsDirectory)
-    saasClient=new SaasClient(credentials,app,recordingsDirectory,(url)=>shell.openExternal(url))
-    void saasClient.initialize()
     macosPushNotifications = new MacosPushNotificationService(() => saasClient, openAgentNotificationTarget)
     macosPushNotifications.install()
     registerNotificationHandlers(saasClient)
@@ -3283,6 +3599,13 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
           }
         }
       }).catch(() => undefined)
+    })
+    aiRelayKeeper = new AiRelayKeeper(saasClient, gatewaySupervisor, runtimeConfigBridge, (event: AiRelayKeeperEvent) => {
+      for (const target of BrowserWindow.getAllWindows()) {
+        if (!target.isDestroyed() && !target.webContents.isDestroyed()) {
+          target.webContents.send(`ai-relay:${event.type}`, event)
+        }
+      }
     })
     const keyring = new AccountKeyringService(join(dataDirectory, 'account-keyring.json'))
     privateAudioSync = new PrivateAudioSyncService(saasClient, keyring, recordingsDirectory, join(dataDirectory, 'private-audio-sync.json'))
@@ -3327,6 +3650,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     }
     privateSyncScheduler.setAuthenticated(Boolean(initialAccount?.authenticated))
     if (initialAccount?.authenticated) remoteAgentCommandClient.start()
+    if (initialAccount?.authenticated) aiRelayKeeper?.start()
     if (initialAccount?.authenticated) void macosPushNotifications.registerAuthenticatedDevice()
     privateAudioSync.setEventResolver((recordingId) => privateTranscriptionSync!.eventIdForSegment(recordingId))
     // 物化闸门已下沉到 service.materialize（见 setMaterializeGate 注释），
@@ -3350,6 +3674,12 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     for (const url of queuedProtocolUrls.splice(0)) saasClient.handleOidcCallback(url)
     let lastAccountId = initialAccount?.user?.id ?? null
     registerAccountHandlers(saasClient, (account) => {
+      // saas 连接层跟随登录态：登录（或切换账号）后换 oo 会话，登出即拆除。
+      connectorOoLoginSeen = account.authenticated
+      connectorOoUserId = account.authenticated ? account.user?.id ?? null : null
+      void (account.authenticated && account.user?.id
+        ? fetchConnectorOoSession(account.user.id).then((session) => applyConnectorOoSession(session))
+        : applyConnectorOoSession(null))
       if (account.authenticated) {
         void saasClient?.getRuntimeConfig().then(async (config) => {
           const snapshot = await runtimeConfigBridge?.saveSaas(config.config)
@@ -3371,6 +3701,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         remoteAgentCommandClient?.stop()
         agentStatusReporter?.reset()
         sessionLeaseKeeper?.stop()
+        aiRelayKeeper?.stop()
         lastAccountId = null
       } else {
         if (lastAccountId !== account.user?.id) agentStatusReporter?.reset()
@@ -3378,6 +3709,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         remoteAgentCommandClient?.start()
         agentStatusReporter?.reportNow()
         sessionLeaseKeeper?.reset()
+        aiRelayKeeper?.start()
         transcriptionProcessingCoordinator?.wake()
         void macosPushNotifications?.registerAuthenticatedDevice()
       }
@@ -3457,6 +3789,15 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     await knowledgeServiceSupervisor?.shutdown()
     knowledgeServiceSupervisor = null
     console.error('Failed to initialize Everroom desktop services', error)
+    // 静默退出 = 用户看到白屏数分钟后应用消失且毫无提示（issue #179）。
+    // 用原生错误框告知原因与日志位置，再退出。
+    const failureDetail = error instanceof Error ? error.message : String(error)
+    dialog.showErrorBox(
+      desktopText('error.gatewayStart.title'),
+      desktopText('error.gatewayStart.body')
+        .replace('{error}', failureDetail)
+        .replace('{logs}', join(dataDirectory, 'logs')),
+    )
     app.quit()
     return
   }
@@ -3479,11 +3820,11 @@ app.on('before-quit', (event) => {
   const connectorConsole = openConnectorConsoleWindow
   const cursorCompletion = cursorCompletionSupervisor
   const memoryCore = memoryCoreSupervisor
-  const nango = nangoSupervisor
   const knowledgeService = knowledgeServiceSupervisor
   const agentBridge = agentGatewayBridge
   const statusReporter = agentStatusReporter
   const leaseKeeper = sessionLeaseKeeper
+  const relayKeeper = aiRelayKeeper
   const remoteCommands = remoteAgentCommandClient
   const cursorCompletionBridge = cursorCompletionAgentBridge
   const documentBridge = documentGatewayBridge
@@ -3499,11 +3840,11 @@ app.on('before-quit', (event) => {
   browserExtensionService = null
   gatewaySupervisor = null
   ooCliBridge = null
+  connectorConsoleBaseUrl = null
   openConnectorSupervisor = null
   openConnectorConsoleWindow = null
   cursorCompletionSupervisor = null
   memoryCoreSupervisor = null
-  nangoSupervisor = null
   knowledgeServiceSupervisor = null
   agentGatewayBridge = null
   agentStatusReporter = null
@@ -3537,6 +3878,7 @@ app.on('before-quit', (event) => {
   agentBridge?.dispose()
   statusReporter?.stop()
   leaseKeeper?.stop()
+  relayKeeper?.stop()
   remoteCommands?.stop()
   cursorCompletionBridge?.dispose()
   documentBridge?.dispose()
@@ -3552,7 +3894,6 @@ app.on('before-quit', (event) => {
     connectorRuntime?.shutdown(),
     cursorCompletion?.shutdown(),
     memoryCore?.shutdown(),
-    nango?.shutdown(),
     knowledgeService?.shutdown(),
   ]).then(async () => {
     await flushDesktopLogs()

@@ -2,6 +2,7 @@ import { Check, ChevronRight, Languages, Mic } from 'lucide-react'
 import type { ReactNode } from 'react'
 
 import { ProductBrand } from '@/components/ui/ProductBrand'
+import { WindowControls } from '@/components/WindowControls'
 import { useLocale } from '@/i18n/LocaleContext'
 import './OnboardingFlowChrome.css'
 
@@ -35,6 +36,7 @@ export function OnboardingFlowChrome({ stage, completedStages = new Set(), onSta
           <button type="button" data-active={preference === 'zh-CN'} onClick={() => setLocale('zh-CN')}>中文</button>
           <button type="button" data-active={preference === 'en-US'} onClick={() => setLocale('en-US')}>EN</button>
         </div>
+        <WindowControls />
       </header>
       <nav className="onboarding-flow-sequence" aria-label={t('surface:settings.folderGuide.eyebrow')}>
         {item('folder', t('surface:settings.folderGuide.eyebrow'))}

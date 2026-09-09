@@ -13,11 +13,9 @@ import type {
 } from "@nxcore/agent-contract";
 import type { GatewayDatabase } from "../../../infrastructure/database/client.js";
 import { agentDocumentExports } from "../../../infrastructure/database/schema.js";
-import type { OpenConnectorCliConfig } from "../../../config.js";
 import { agentDocumentMarkdown } from "../agent-markdown.js";
 import type { DocumentService } from "../service.js";
 import { readArtifact, storeArtifact } from "../import/artifact-store.js";
-import { runImportConnectorAction, ImportConnectorError, type ImportActionRunner } from "../import/oo-runner.js";
 import {
   LarkCliError,
   type LarkCliConfig,
@@ -187,12 +185,21 @@ function notionPageIdOf(target: AgentDocumentExportTarget): string {
   return (match?.[1] ?? raw).replaceAll("-", "");
 }
 
+/** 写入落地校验指纹：markdown 末尾首条 ≥8 字符的行（截前 80 字符），在回显内容里查找。 */
+function markdownWriteProbe(markdown: string): string | null {
+  const lines = markdown.trimEnd().split("\n");
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const line = lines[index]!.trim();
+    if (line.length >= 8) return line.slice(0, 80);
+  }
+  return null;
+}
+
 /**
- * Agent 一次性导出：固定 Room 版本 → Markdown → CLI/skill 单次写入。
- * 只做审计记录，不建远端 binding、不自动重试不确定的写入。
+ * Agent 一次性导出：固定 Room 版本 → Markdown → CLI 单次写入（飞书 lark-cli /
+ * Notion 官方 ntn CLI）。只做审计记录，不建远端 binding、不自动重试不确定的写入。
  */
 export class AgentDocumentExportService {
-  private readonly connectorAction: ImportActionRunner;
   private readonly logger: { info: (obj: object, msg: string) => void; warn: (obj: object, msg: string) => void } | null;
   private readonly assetBridgeUrl: string | null;
   private readonly notionCli: NtnCliConfig | null;
@@ -200,17 +207,14 @@ export class AgentDocumentExportService {
   constructor(
     private readonly db: GatewayDatabase,
     private readonly documents: DocumentService,
-    private readonly connectorConfig: OpenConnectorCliConfig | null,
     private readonly lark: LarkCliConfig | null,
     private readonly dataDir: string,
     options?: {
-      actionRunner?: ImportActionRunner;
       logger?: { info: (obj: object, msg: string) => void; warn: (obj: object, msg: string) => void };
       assetBridgeUrl?: string | null;
       notionCli?: NtnCliConfig | null;
     },
   ) {
-    this.connectorAction = options?.actionRunner ?? runImportConnectorAction;
     this.logger = options?.logger ?? null;
     this.assetBridgeUrl = options?.assetBridgeUrl ?? null;
     this.notionCli = options?.notionCli ?? null;
@@ -789,12 +793,43 @@ export class AgentDocumentExportService {
       const { raw } = await runNtnCli(config, [
         "api", `v1/pages/${pageId}/markdown`, "-X", "PATCH", "-d", "@-",
       ], { stdin: JSON.stringify(body) });
-      // PATCH 响应只带 id 不带 url，构造页面链接供结果展示。
       const pageIdValue = textValue(raw.id);
-      return this.finishSuccess(runId, {
-        ...raw,
-        ...(textValue(raw.url) ? {} : pageIdValue ? { url: `https://notion.so/${pageIdValue}` } : {}),
-      }, "notion");
+      // 结果链接：优先响应 url → 调用方目标 URL（覆盖导入来源时即源页面真实
+      // 地址）→ www.notion.so/{id} 合成。勿用裸 notion.so：新版工作区页面挂在
+      // app.notion.com，经典域链接打不开。
+      const resultUrl = textValue(raw.url)
+        ?? textValue(target.remoteUrl ?? null)
+        ?? (pageIdValue ? `https://www.notion.so/${pageIdValue}` : null);
+      if (!pageIdValue && !resultUrl) {
+        return this.finishSuccess(runId, raw, "notion");
+      }
+      // 写入落地校验（2026-09-08 真机核实）：markdown PATCH 成功时响应回显整页
+      // 内容（含本次写入）。回显里找不到本段正文结尾指纹 = 写入被静默丢弃
+      // （旧 ntn 曾返回带 id 的 200 但实际未写）——标 needs_review 人工核查，
+      // 不当成功也不自动重发。
+      const echoedMarkdown = typeof raw.markdown === "string" && raw.markdown.trim() ? raw.markdown : null;
+      const probe = markdownWriteProbe(markdown);
+      if (echoedMarkdown && probe && !echoedMarkdown.includes(probe)) {
+        return this.transition(runId, "needs_review", {
+          errorCode: "EXPORT_WRITE_NOT_APPLIED",
+          errorMessage: "Notion 返回成功但页面内容未包含本次写入，可能未真正落盘，请打开页面人工核查",
+          remoteResultJson: {
+            ...(resultUrl ? { url: resultUrl } : {}),
+            ...(pageIdValue ? { id: pageIdValue } : {}),
+          },
+        });
+      }
+      const unknownBlocks = Array.isArray(raw.unknown_block_ids) ? raw.unknown_block_ids.length : 0;
+      return this.transition(runId, "succeeded", {
+        remoteResultJson: {
+          ...(resultUrl ? { url: resultUrl } : {}),
+          ...(pageIdValue ? { id: pageIdValue } : {}),
+          revision: textValue(raw.last_edited_time ?? null),
+        },
+        ...(unknownBlocks > 0 ? {
+          warnings: [{ code: "notion_unknown_blocks", message: `${String(unknownBlocks)} 个块 Notion 无法识别，写入时被跳过` }],
+        } : {}),
+      });
     }
     throw new ExportServiceError("EXPORT_MODE_UNSUPPORTED", "Notion 通道暂不支持 export_file 模式", 422);
   }
@@ -851,11 +886,12 @@ export class AgentDocumentExportService {
         raw = fetched.raw;
       } catch (preflightError) {
         // 集成未被分享到目标页面（object_not_found/404）是最常见原因，给可操作文案。
+        // ntn 走登录账号而非集成身份，账号无权访问同样落 404，两种成因都提示。
         const detail = preflightError instanceof Error ? preflightError.message : String(preflightError);
         if (/object_not_found|Could not find|HTTP 404/i.test(detail)) {
           return new ExportServiceError(
             "EXPORT_TARGET_UNSHARED",
-            "无法读取目标页面：该页面可能未与 Notion 集成共享。请在 Notion 中打开页面 → 右上角 ··· → Connections 添加集成后重试。",
+            "无法读取目标页面：可能是 ntn 登录的 Notion 账号无权访问该页面，或页面未与集成共享。请在 Notion 中检查页面权限（右上角 ··· → Connections / 与登录账号共享）后重试。",
             422,
           );
         }
@@ -864,7 +900,9 @@ export class AgentDocumentExportService {
       const root = objectValue(raw);
       return {
         targetTitle: this.notionTitleOf(root) ?? "Notion 页面",
-        targetUrl: textValue(root.url) ?? `https://notion.so/${pageId}`,
+        targetUrl: textValue(root.url)
+          ?? textValue(target.remoteUrl ?? null)
+          ?? `https://www.notion.so/${pageId}`,
         roomVersion: run.version,
         writeScope: append ? "append" : "replace_content",
         remoteRevision: textValue(root.last_edited_time),
@@ -940,13 +978,6 @@ export class AgentDocumentExportService {
       throw new ExportServiceError("ENVIRONMENT_NOT_READY", "lark-cli 未配置", 503);
     }
     return this.lark;
-  }
-
-  private requireConnector(): OpenConnectorCliConfig {
-    if (!this.connectorConfig) {
-      throw new ExportServiceError("ENVIRONMENT_NOT_READY", "OpenConnector 未配置", 503);
-    }
-    return this.connectorConfig;
   }
 
   private transition(

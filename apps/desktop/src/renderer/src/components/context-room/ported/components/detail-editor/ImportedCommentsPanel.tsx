@@ -1,10 +1,15 @@
 import type { ExternalDocumentCommentView } from '@nxcore/agent-contract'
 import type { Editor } from '@tiptap/react'
-import { Check, MessageSquare, Trash2, X } from 'lucide-react'
+import { Check, ChevronDown, LoaderCircle, MessageSquare, Sparkles, Trash2, X } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useLocale } from '../../../../../i18n/LocaleContext'
 import type { LocalDocumentComment } from '../../../../../../../shared/sources'
 import { SourceIcon } from '../../../../pages/sources/SourceIcon'
+import {
+  COMMENT_ANCHOR_CLICKED_EVENT,
+  resolveCommentRanges,
+  setCommentAnchorRanges,
+} from './commentAnchorDecorations'
 import './ExternalDocumentDialogs.css'
 
 /**
@@ -12,10 +17,10 @@ import './ExternalDocumentDialogs.css'
  * 在正文对应高度；卡片层与编辑器共用同一滚动坐标系（translateY 跟随编辑器
  * scrollTop），正文滚动时卡片同步移动。悬停卡片高亮锚定文本，点击卡片滚动
  * 编辑器到锚点；未命中锚点的评论固定在面板底部"未定位评论"区。
+ * 收起态（collapsed）不渲染停靠栏，但仍标记有评论的正文文本，点击标记展开面板。
  */
 
 const HOVER_HIGHLIGHT_CLASS = 'context-room-comment-anchor-hovering'
-const ANCHORED_UNDERLINE_CLASS = 'context-room-comment-anchored'
 
 interface ThreadAnchor {
   id: string
@@ -30,20 +35,35 @@ export function ImportedCommentsPanel({
   roomId,
   documentId,
   onClose,
+  collapsed = false,
+  onOpen,
+  aiReviewRunning,
+  aiReviewDisabled,
+  onAiReview,
 }: {
   editor: Editor | null
   roomId: string
   documentId: string
   onClose: () => void
+  /** 收起态：不渲染停靠栏，但仍在正文标记有评论的文本，点击标记展开面板。 */
+  collapsed?: boolean
+  onOpen?: () => void
+  /** AI 审阅：一键让 agent 读文档并落评论建议（按钮在面板头部）。 */
+  aiReviewRunning?: boolean
+  aiReviewDisabled?: boolean
+  onAiReview?: () => void
 }) {
   const { t, locale } = useLocale()
   const [comments, setComments] = useState<ExternalDocumentCommentView[] | null>(null)
+  // 未定位评论默认收起：正文锚定评论才是主视图，未定位区只是兜底检索入口。
+  const [unlocatedCollapsed, setUnlocatedCollapsed] = useState(true)
+  const [importProvider, setImportProvider] = useState<'feishu' | 'notion'>('feishu')
   const [localComments, setLocalComments] = useState<LocalDocumentComment[] | null>(null)
   const layerRef = useRef<HTMLDivElement | null>(null)
   const trackRef = useRef<HTMLDivElement | null>(null)
   const cardRefs = useRef(new Map<string, HTMLElement>())
   const hoverHostRef = useRef<Element | null>(null)
-  const underlinedRef = useRef(new Set<Element>())
+  const pendingFlashRef = useRef<string | null>(null)
   const [anchors, setAnchors] = useState<ThreadAnchor[]>([])
   const [laidTops, setLaidTops] = useState<Record<string, number>>({})
   const [contentHeight, setContentHeight] = useState(0)
@@ -75,7 +95,12 @@ export function ImportedCommentsPanel({
     setComments(null)
     void window.nxcore?.externalDocuments.importHistory(roomId, documentId)
       .then((result) => {
-        if (!cancelled) setComments(result.comments)
+        if (!cancelled) {
+          setComments(result.comments)
+          const provider = result.entries.find((entry) => entry.relation === 'primary')?.provider
+            ?? result.entries[0]?.provider
+          if (provider === 'notion') setImportProvider('notion')
+        }
       })
       .catch(() => {
         if (!cancelled) setComments([])
@@ -88,6 +113,21 @@ export function ImportedCommentsPanel({
   useEffect(() => {
     reloadLocalComments()
   }, [reloadLocalComments])
+
+  // 面板展开时兜底刷新（覆盖 websocket 断连窗口；agent 落评论主要靠下面的推送）。
+  useEffect(() => {
+    if (!collapsed) reloadLocalComments()
+  }, [collapsed, reloadLocalComments])
+
+  // 服务端（agent）落评论经文档事件推送实时刷新。
+  useEffect(() => {
+    const unsubscribe = window.nxcore?.documents.onEvent?.((frame) => {
+      const event = frame?.event
+      if (!event || event.type !== 'document.comments.changed' || event.documentId !== documentId) return
+      reloadLocalComments()
+    })
+    return typeof unsubscribe === 'function' ? unsubscribe : undefined
+  }, [documentId, reloadLocalComments])
 
   // 划词气泡等入口新增/变更评论时实时刷新（documentId 匹配才刷）。
   useEffect(() => {
@@ -114,7 +154,7 @@ export function ImportedCommentsPanel({
     const scroller = scrollerOf()
     const layer = layerRef.current
     const fallbackFor = (id: string, kind: ThreadAnchor['kind']): ThreadAnchor => ({ id, kind, top: null, host: null })
-    if (!dom || !scroller || !layer) {
+    if (!dom || !scroller) {
       const result: ThreadAnchor[] = []
       for (const comment of localComments ?? []) {
         if (comment.parentId === null) result.push(fallbackFor(comment.id, 'local'))
@@ -147,35 +187,41 @@ export function ImportedCommentsPanel({
       }
       return nodes[0]?.parentElement ?? null
     }
-    const layerTop = layer.getBoundingClientRect().top
+    // 停靠栏未渲染（收起态）时 layer 为空：只定位 host 不算坐标，标记仍然成立。
+    const layerTop = layer ? layer.getBoundingClientRect().top : 0
     const toAnchor = (host: Element | null): { top: number; host: Element } | null => {
-      if (!host) return null
+      if (!host || !layer) return null
       // layer 坐标 + 当前 scrollTop：滚动不变量（滚动时只更新 translateY）。
       const top = host.getBoundingClientRect().top - layerTop + scroller.scrollTop
       return { top, host }
     }
+    // 同一段文字出现多次时按出现顺序依次锚定：第二条同文评论锚到第二处，避免全挤到首处。
+    const quoteCursor = new Map<string, number>()
     const anchorOf = (
       id: string,
       kind: ThreadAnchor['kind'],
       quotedText: string | null,
       blockId: string | null,
     ): ThreadAnchor => {
-      // 优先按稳定块 id 锚定（data-block-id，随块移动，正文编辑后仍有效）。
+      // 优先按稳定块 id 定位（data-block-id，随块移动，正文编辑后仍有效），失败退化到引用文本匹配。
+      let host: Element | null = null
       if (blockId) {
-        const blockHost = dom.querySelector(`[data-block-id="${CSS.escape(blockId)}"]`)
-        const anchored = toAnchor(blockHost)
-        if (anchored) return { id, kind, ...anchored }
+        host = dom.querySelector(`[data-block-id="${CSS.escape(blockId)}"]`)
       }
-      // 退化：引用文本匹配（阈值 ≥2，覆盖短选区）。
-      const quote = quotedText ? normalize(quotedText).slice(0, 80) : ''
-      if (quote.length >= 2) {
-        const hit = normalizedFull.indexOf(quote)
-        if (hit >= 0) {
-          const anchored = toAnchor(nodeAtNormalized(hit))
-          if (anchored) return { id, kind, ...anchored }
+      if (!host) {
+        const quote = quotedText ? normalize(quotedText).slice(0, 80) : ''
+        if (quote.length >= 2) {
+          const hit = normalizedFull.indexOf(quote, quoteCursor.get(quote) ?? 0)
+          if (hit >= 0) {
+            quoteCursor.set(quote, hit + quote.length)
+            host = nodeAtNormalized(hit)
+          }
         }
       }
-      return fallbackFor(id, kind)
+      if (!host) return fallbackFor(id, kind)
+      const anchored = toAnchor(host)
+      if (anchored) return { id, kind, ...anchored }
+      return { id, kind, top: null, host }
     }
     const result: ThreadAnchor[] = []
     for (const comment of localComments ?? []) {
@@ -197,34 +243,6 @@ export function ImportedCommentsPanel({
       const scroller = scrollerOf()
       setContentHeight(scroller ? scroller.scrollHeight : 0)
       setDockHeight(scroller ? scroller.clientHeight : 0)
-      // 已定位评论的锚定文本常驻下划线（与锚点计算同一 pass，重算时同步增删）。
-      // 同时写 class + 内联样式：内联绕过样式表加载问题，任何环境下必然可见。
-      const ANCHOR_STYLE: Partial<CSSStyleDeclaration> = {
-        textDecoration: 'underline',
-        textDecorationColor: 'rgba(61, 111, 246, 0.55)',
-        textDecorationThickness: '2px',
-        textUnderlineOffset: '3px',
-      }
-      const clearAnchorStyle = (element: Element): void => {
-        element.classList.remove(ANCHORED_UNDERLINE_CLASS)
-        const style = (element as HTMLElement).style
-        style.textDecoration = ''
-        style.textDecorationColor = ''
-        style.textDecorationThickness = ''
-        style.textUnderlineOffset = ''
-      }
-      const nextHosts = new Set<Element>()
-      for (const anchor of next) {
-        if (anchor.top !== null && anchor.host) nextHosts.add(anchor.host)
-      }
-      for (const element of underlinedRef.current) {
-        if (!nextHosts.has(element)) clearAnchorStyle(element)
-      }
-      for (const element of nextHosts) {
-        element.classList.add(ANCHORED_UNDERLINE_CLASS)
-        Object.assign((element as HTMLElement).style, ANCHOR_STYLE)
-      }
-      underlinedRef.current = nextHosts
     }
     recompute()
     const onResize = (): void => recompute()
@@ -234,11 +252,21 @@ export function ImportedCommentsPanel({
       onUpdate = () => recompute()
       editor.on('update', onUpdate)
     }
+    // 图片异步加载/字体替换等纯布局变化不触发 editor update，ResizeObserver 兜底重算。
+    let resizeObserver: ResizeObserver | null = null
+    const editorDom = editor?.view?.dom ?? null
+    if (editorDom && typeof ResizeObserver !== 'undefined') {
+      resizeObserver = new ResizeObserver(() => recompute())
+      resizeObserver.observe(editorDom)
+      const scroller = scrollerOf()
+      if (scroller) resizeObserver.observe(scroller)
+    }
     return () => {
       window.removeEventListener('resize', onResize)
       if (editor && onUpdate) editor.off('update', onUpdate)
+      resizeObserver?.disconnect()
     }
-  }, [computeAnchors, editor, scrollerOf])
+  }, [computeAnchors, editor, scrollerOf, collapsed])
 
   // 滚动跟随：卡片层与编辑器共用滚动坐标系，只平移不重排。
   useEffect(() => {
@@ -251,6 +279,60 @@ export function ImportedCommentsPanel({
     scroller.addEventListener('scroll', onScroll, { passive: true })
     return () => scroller.removeEventListener('scroll', onScroll)
   }, [scrollerOf, anchors])
+
+  // 评论 → PM 行内装饰（黄色下划线，与手动 <u> 区分）：装饰随文档编辑自动映射，
+  // 不再需要 DOM 涂标记与自愈观察器；评论列表变化或正文更新时重新解析范围。
+  useEffect(() => {
+    if (!editor) return
+    const sync = (): void => {
+      const threads = [
+        ...(localComments ?? []).filter((comment) => comment.parentId === null)
+          .map((comment) => ({ id: comment.id, blockId: comment.blockId, quotedText: comment.quotedText })),
+        ...(comments ?? []).filter((comment) => comment.parentId === null)
+          .map((comment) => ({ id: comment.id, blockId: null, quotedText: comment.quotedText })),
+      ]
+      setCommentAnchorRanges(editor, resolveCommentRanges(editor.state.doc, threads))
+    }
+    sync()
+    const onUpdate = (): void => sync()
+    editor.on('update', onUpdate)
+    return () => {
+      editor.off('update', onUpdate)
+      if (!editor.isDestroyed) setCommentAnchorRanges(editor, [])
+    }
+  }, [editor, comments, localComments])
+
+  // 点击正文评论装饰：收起态展开面板（展开后闪亮对应卡片），展开态直接闪亮卡片。
+  const flashCard = useCallback((threadId: string): void => {
+    const card = cardRefs.current.get(threadId)
+    if (!card) return
+    card.classList.add('is-flash')
+    window.setTimeout(() => card.classList.remove('is-flash'), 1200)
+  }, [])
+
+  useEffect(() => {
+    if (!collapsed && pendingFlashRef.current) {
+      const threadId = pendingFlashRef.current
+      pendingFlashRef.current = null
+      const timer = window.setTimeout(() => flashCard(threadId), 200)
+      return () => window.clearTimeout(timer)
+    }
+  }, [collapsed, flashCard])
+
+  useEffect(() => {
+    const onAnchorClicked = (event: Event): void => {
+      const commentId = (event as CustomEvent<{ commentId?: string }>).detail?.commentId
+      if (!commentId) return
+      if (collapsed) {
+        pendingFlashRef.current = commentId
+        onOpen?.()
+      } else {
+        flashCard(commentId)
+      }
+    }
+    window.addEventListener(COMMENT_ANCHOR_CLICKED_EVENT, onAnchorClicked)
+    return () => window.removeEventListener(COMMENT_ANCHOR_CLICKED_EVENT, onAnchorClicked)
+  }, [collapsed, onOpen, flashCard])
 
   const anchored = useMemo(
     () => anchors.filter((anchor) => anchor.top !== null).sort((a, b) => (a.top ?? 0) - (b.top ?? 0)),
@@ -288,15 +370,6 @@ export function ImportedCommentsPanel({
 
   useEffect(() => () => {
     setHoverHost(null)
-    for (const element of underlinedRef.current) {
-      element.classList.remove(ANCHORED_UNDERLINE_CLASS)
-      const style = (element as HTMLElement).style
-      style.textDecoration = ''
-      style.textDecorationColor = ''
-      style.textDecorationThickness = ''
-      style.textUnderlineOffset = ''
-    }
-    underlinedRef.current.clear()
   }, [])
 
 
@@ -349,6 +422,12 @@ export function ImportedCommentsPanel({
         >
           <header>
                         <time>{formatTime(comment.createdAt)}</time>
+            {comment.authorName && comment.authorName !== '我' ? (
+              <span className="context-room-imported-comment-ai-author">
+                <Sparkles size={11} aria-hidden="true" />
+                {comment.authorName}
+              </span>
+            ) : null}
             {comment.resolved && (
               <em className="context-room-imported-comment-resolved">
                 <Check size={11} aria-hidden="true" />
@@ -367,6 +446,7 @@ export function ImportedCommentsPanel({
             <div className="context-room-imported-comment-replies">
               {localRepliesOf(comment.id).map((reply) => (
                 <div key={reply.id} className="context-room-imported-comment-reply">
+                  {reply.authorName && reply.authorName !== '我' ? <strong>{reply.authorName}</strong> : null}
                                     <p>{reply.body}</p>
                 </div>
               ))}
@@ -392,7 +472,7 @@ export function ImportedCommentsPanel({
         onClick={() => scrollToAnchor(anchor)}
       >
         <header>
-          <SourceIcon kind="feishu" className="context-room-imported-comment-source" />
+          <SourceIcon kind={importProvider} className="context-room-imported-comment-source" />
                     <time>{formatTime(comment.createdAt)}</time>
           {comment.resolved === true && (
             <em className="context-room-imported-comment-resolved">
@@ -417,6 +497,9 @@ export function ImportedCommentsPanel({
 
   const total = (comments?.length ?? 0) + (localComments?.length ?? 0)
 
+  // 收起态：不渲染停靠栏，锚点装饰与点击展开逻辑在上面的 effects 里继续工作。
+  if (collapsed) return null
+
   return (
     <aside
       className="context-room-imported-comments-dock"
@@ -428,6 +511,21 @@ export function ImportedCommentsPanel({
         <span className="context-room-imported-comments-count">
           {total > 0 ? t('contextRoom:importedComments.count', { count: String(total) }) : ''}
         </span>
+        {onAiReview ? (
+          <button
+            type="button"
+            className={aiReviewRunning ? 'is-active' : ''}
+            aria-label={t('contextRoom:aiReviewAgent.action')}
+            title={t('contextRoom:aiReviewAgent.action')}
+            aria-pressed={Boolean(aiReviewRunning)}
+            disabled={aiReviewDisabled}
+            onClick={onAiReview}
+          >
+            {aiReviewRunning
+              ? <LoaderCircle className="context-room-ai-review-spinning" aria-hidden="true" />
+              : <Sparkles size={14} aria-hidden="true" />}
+          </button>
+        ) : null}
         <button type="button" aria-label={t('contextRoom:importedComments.close')} onClick={onClose}>
           <X aria-hidden="true" />
         </button>
@@ -456,10 +554,18 @@ export function ImportedCommentsPanel({
               </div>
             )}
             {unanchored.length > 0 && (
-              <div className="context-room-imported-comments-unanchored">
-                <div className="context-room-imported-comments-section-label">
+              <div className="context-room-imported-comments-unanchored" data-collapsed={String(unlocatedCollapsed)}>
+                <button
+                  type="button"
+                  className="context-room-imported-comments-section-label context-room-imported-comments-unanchored-toggle"
+                  aria-expanded={!unlocatedCollapsed}
+                  onClick={() => setUnlocatedCollapsed((value) => !value)}
+                >
+                  <ChevronDown className="context-room-imported-comments-unanchored-chevron" aria-hidden="true" data-collapsed={String(unlocatedCollapsed)} />
                   {t('contextRoom:importedComments.unlocatedSection')}
-                </div>
+                  <small>{String(unanchored.length)}</small>
+                </button>
+                {!unlocatedCollapsed ? (<div className="context-room-imported-comments-unanchored-list">
                 {unanchored.map((anchor) => (
                   <div key={anchor.id} data-kind={anchor.kind}>
                     {anchor.kind === 'local'
@@ -470,7 +576,22 @@ export function ImportedCommentsPanel({
                             <article className="context-room-imported-comment" data-resolved={String(comment.resolved)}>
                               <header>
                                                                 <time>{formatTime(comment.createdAt)}</time>
-                                <button type="button" className="context-room-imported-comment-action" title={t('contextRoom:importedComments.delete')} onClick={() => void deleteLocal(comment.id)}>
+                                {comment.authorName && comment.authorName !== '我' ? (
+                                  <span className="context-room-imported-comment-ai-author">
+                                    <Sparkles size={11} aria-hidden="true" />
+                                    {comment.authorName}
+                                  </span>
+                                ) : null}
+                                {comment.resolved && (
+                                  <em className="context-room-imported-comment-resolved">
+                                    <Check size={11} aria-hidden="true" />
+                                    {t('contextRoom:importedComments.resolved')}
+                                  </em>
+                                )}
+                                <button type="button" className="context-room-imported-comment-action" title={t('contextRoom:importedComments.resolve')} onClick={() => void resolveLocal(comment.id, !comment.resolved)}>
+                                  <Check size={12} aria-hidden="true" />
+                                </button>
+                                <button type="button" className="context-room-imported-comment-action danger" title={t('contextRoom:importedComments.delete')} onClick={() => void deleteLocal(comment.id)}>
                                   <Trash2 size={12} aria-hidden="true" />
                                 </button>
                               </header>
@@ -484,7 +605,7 @@ export function ImportedCommentsPanel({
                           return (
                             <article className="context-room-imported-comment" data-resolved={String(comment.resolved === true)}>
                               <header>
-                                <SourceIcon kind="feishu" className="context-room-imported-comment-source" />
+                                <SourceIcon kind={importProvider} className="context-room-imported-comment-source" />
                                                                 <time>{formatTime(comment.createdAt)}</time>
                               </header>
                               <p>{comment.body}</p>
@@ -493,6 +614,7 @@ export function ImportedCommentsPanel({
                         })()}
                   </div>
                 ))}
+                </div>) : null}
               </div>
             )}
           </>

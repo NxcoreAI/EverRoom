@@ -27,6 +27,8 @@ import { documentOperationRoutes } from "../modules/documents/operations/routes.
 import { DocumentService } from "../modules/documents/service.js";
 import { DocumentCommentService } from "../modules/documents/comments.js";
 import { documentCommentRoutes } from "../modules/documents/comment-routes.js";
+import { documentOverviewRoutes } from "../modules/documents/overview-routes.js";
+import { documentSectionPreviewRoutes } from "../modules/documents/section-preview-routes.js";
 import { createSelectionRewriteContentResolver } from "../modules/documents/capabilities/selection-rewrite-content.js";
 import { createBuiltinDocumentCapabilityRegistry } from "../modules/documents/capabilities/builtins.js";
 import { DocumentReadAuthority } from "../modules/documents/capabilities/read-authority.js";
@@ -34,22 +36,27 @@ import { ExternalDocumentProjectionService } from "../modules/documents/external
 import { externalDocumentProjectionRoutes } from "../modules/documents/external-projections/routes.js";
 import { DocumentImportService } from "../modules/documents/import/service.js";
 import { documentImportRoutes } from "../modules/documents/import/routes.js";
+import { DocumentBatchImportService } from "../modules/documents/import/batch-service.js";
+import { documentImportBatchRoutes } from "../modules/documents/import/batch-routes.js";
+import { RoomAssignmentClassifier } from "../modules/documents/import/room-classifier.js";
 import { AgentDocumentExportService } from "../modules/documents/agent-export/service.js";
 import { agentDocumentExportRoutes } from "../modules/documents/agent-export/routes.js";
 import { createDocumentExportPiTools } from "../modules/documents/agent-export/tools.js";
 import { createDocumentImportPiTools } from "../modules/documents/import/tools.js";
 import {
   createAgentResolver,
+  createDocumentOverviewRuntime,
   createIngestFilterAgentRuntime,
   createIndexBackfillRuntime,
+  createImportClassifierRuntime,
   createWritingStyleRuntime,
-  registerConnectorSyncAgent,
   registerDiaryAgent,
   registerPrimaryAgent,
   registerTranscriptionSummaryAgent,
 } from "../modules/agent/runtime-factory.js";
 import { BUILTIN_AGENT_IDS } from "../modules/agent/resolver.js";
-import { registerWebSearchAgentIfMissing } from "../modules/agent/runtime-factory.js";
+import { registerWebSearchAgentIfMissing, registerConnectorMapperAgent } from "../modules/agent/runtime-factory.js";
+import { FormatMappingService } from "../modules/connectors/format-mapping-service.js";
 import { loadBuiltinAgentBundle } from "../modules/agent/builtin-bundles.js";
 import { OpenAiCompletionAgentRuntime } from "../modules/agent/openai-completion-runtime.js";
 import { UnconfiguredAgentRuntime, type AgentRuntime } from "@nxcore/agent-runtime";
@@ -98,9 +105,8 @@ import { knowledgeRoutes } from "../modules/knowledge/routes.js";
 import { KnowledgeService } from "../modules/knowledge/service.js";
 import { KnowledgePreferences } from "../modules/knowledge/preferences.js";
 import { KnowledgeLlm } from "../modules/knowledge/llm.js";
-import { cliConnectorRoutes, connectorSyncRoutes, nangoConnectorRoutes } from "../modules/connectors/routes.js";
-import { ConnectorMarkdownService } from "../modules/connectors/markdown-service.js";
-import { ConnectorSyncService } from "../modules/connectors/service.js";
+import { nangoConnectorRoutes } from "@nxcore/connectors-module/routes.js";
+import { purgeConnectorConnectionCascade } from "../modules/connectors/connection-purge.js";
 import { processingRoutes } from "../modules/processing/routes.js";
 import { TranscriptionSummaryService } from "../modules/processing/service.js";
 import { RealityError } from "../modules/reality/errors.js";
@@ -125,15 +131,14 @@ import { auth } from "./auth.js";
 import { createGatewayLogger } from "./logger.js";
 import "./types.js";
 import { createConnectorDatabase } from "../infrastructure/connectors/client.js";
-import { ConnectorRepository } from "../modules/connectors/repository.js";
-import { ConnectorManager } from "../modules/connectors/manager.js";
-import { ConnectorDomainProjection, backfillDomainProjection, rewriteConnectorRefIdentities } from "../modules/connectors/domain-projection.js";
-import { SYNC_PROVIDERS, assertSyncProvidersValid } from "../modules/connectors/sync-providers/index.js";
-import { SyncEngine } from "../modules/connectors/sync-engine.js";
-import { NangoExecutor } from "../modules/connectors/nango-executor.js";
-import { NangoAuthorizationService } from "../modules/connectors/nango-authorization.js";
-import { bootstrapNangoWhenReady } from "../modules/connectors/nango-bootstrap.js";
-import { ConnectorDocumentStore } from "../modules/connectors/document-store.js";
+import { ConnectorRepository } from "@nxcore/connectors-module/repository.js";
+import { ConnectorManager } from "@nxcore/connectors-module/manager.js";
+import { ConnectorDomainProjection, backfillDomainProjection, rewriteConnectorRefIdentities } from "@nxcore/connectors-module/domain-projection.js";
+import { SYNC_PROVIDERS, assertSyncProvidersValid } from "@nxcore/connectors-module/sync-providers/index.js";
+import { SyncEngine } from "@nxcore/connectors-module/sync-engine.js";
+import { OpenConnectorSyncExecutor } from "@nxcore/connectors-module/open-connector-sync-executor.js";
+import { OpenConnectorAuthorizationService } from "@nxcore/connectors-module/open-connector-authorization.js";
+import { ConnectorDocumentStore } from "@nxcore/connectors-module/document-store.js";
 import { SubagentRegistry } from "../modules/subagents/registry.js";
 import { SubagentRuntimeManager } from "../modules/subagents/runtime-manager.js";
 import { SubagentOrchestrator } from "../modules/subagents/orchestrator.js";
@@ -146,6 +151,8 @@ import { AgentStatusService } from "../modules/agent/status-service.js";
 import { createReferencedAgentConversationTools } from "../modules/agent/reference-tools.js";
 import { RuntimeConfigManager } from "../runtime-config.js";
 import { runtimeConfigRoutes } from "../modules/runtime-config/routes.js";
+import { AiRelaySessionStore } from "../modules/ai-relay/session.js";
+import { aiRelayRoutes } from "../modules/ai-relay/routes.js";
 import { WritingStyleService } from "../modules/writing-style/service.js";
 import { WritingStyleLlm } from "../modules/writing-style/llm.js";
 import { writingStyleRoutes } from "../modules/writing-style/routes.js";
@@ -172,6 +179,12 @@ function applyRuntimeConfig(config: GatewayConfig, runtime: RuntimeConfig): void
   apply(config.pi as unknown as Record<string, unknown> | null, runtime.primary);
   apply(config.backgroundPi as unknown as Record<string, unknown> | null, runtime.background);
   apply(config.cursorCompletionPi as unknown as Record<string, unknown> | null, runtime.cursorCompletion);
+  // background/cursorCompletion 对齐 env 构建语义（config.ts 的 {...pi} 拷贝）：
+  // runtime 段只携带部分覆盖（默认配置里这两段仅预置 api）时，四要素缺失项
+  // 继承 primary——否则 patch 永远凑不齐 isPiRuntimeConfigured，后台转写总结
+  // runtime 一直停留在未配置占位，任务永远 runtime_config_not_ready。
+  inheritPrimaryDefaults(config.pi, config.backgroundPi);
+  inheritPrimaryDefaults(config.pi, config.cursorCompletionPi);
   // webSearch：boot 时 config.webSearch 仅由 env 构造（config.ts 的
   // NXCORE_WEB_SEARCH_API_KEY 门），env 未配时为 null 且 apply 无法从 null
   // 构造——runtime 四要素齐全时直接构造，让云端下发的搜索配置真正生效。
@@ -260,6 +273,22 @@ function applyRuntimeConfig(config: GatewayConfig, runtime: RuntimeConfig): void
   }
 }
 
+/**
+ * 派生段（background/cursorCompletion）四要素缺省继承 primary：与 env 构建
+ * 语义（config.ts 的 backgroundPi = {...pi, model: 背景模型}）一致。runtime
+ * config 的派生段只带部分覆盖（默认配置仅预置 api）时靠 patch 凑不齐
+ * isPiRuntimeConfigured，派生 runtime 会永远停留在 UnconfiguredAgentRuntime。
+ */
+function inheritPrimaryDefaults(
+  primary: GatewayConfig["pi"],
+  target: GatewayConfig["pi"],
+): void {
+  if (!primary || !target) return;
+  for (const key of ["provider", "model", "baseUrl", "apiKey"] as const) {
+    if (!target[key] && primary[key]) target[key] = primary[key];
+  }
+}
+
 /** 从 GatewayConfig 构造 gateway 侧 embedding 客户端（未配置返回 null）。 */
 function embeddingFromConfig(
   config: GatewayConfig,
@@ -315,12 +344,26 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   );
   const mcpConfigManager = new McpConfigManager(config, secretStore);
   const externalCalls = new ExternalCallBudgetService(sqlite, undefined, {
-    userId: config.externalCallUserId ?? config.cliConnectorSyncOwnerId ?? "local-user",
+    userId: config.externalCallUserId ?? "local-user",
     workspaceId: config.externalCallWorkspaceId ?? "local-workspace",
   });
+  const aiRelaySessions = new AiRelaySessionStore();
   const runtimeConfigManager = new RuntimeConfigManager(db, secretStore, undefined, config.webSearch
     ? { provider: "openai-compatible", api: "openai-completions", ...config.webSearch }
-    : null);
+    : null, () => {
+      const session = aiRelaySessions.current();
+      if (!session) return null;
+      // 槽位重写目标的 API 前缀由会话 baseUrl 决定：根部署 → /v1；已带
+      // /v1 结尾不重复；子路径部署 → /<sub>/v1。旧槽位路径不参与。
+      let base = "";
+      try {
+        base = new URL(session.baseUrl).pathname.replace(/\/+$/, "");
+      } catch {
+        // 非法 baseUrl 按根处理
+      }
+      const pathPrefix = base.endsWith("/v1") ? base : `${base}/v1`;
+      return { proxyOrigin: session.proxyOrigin, token: config.authToken, pathPrefix };
+    });
   const initialRuntimeSnapshot = runtimeConfigManager.snapshot();
   applyRuntimeConfig(config, initialRuntimeSnapshot.config);
   const redactedRuntimeSnapshot = runtimeConfigManager.snapshot(true);
@@ -341,72 +384,32 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   const nangoConnectorConfig = config.nangoConnector ?? { enabled:false, databasePath:resolve(config.dataDir,"database","connectors.sqlite"), nangoUrl:"", nangoSecret:"", gmailConfigKey:"", outlookConfigKey:"", googleDocsConfigKey:"", notionConfigKey:"", googleCalendarConfigKey:"", googleClientId:"", googleClientSecret:"", notionClientId:"", notionClientSecret:"", outlookClientId:"", outlookClientSecret:"", pollingIntervalMs:300_000, providerConfigKeys:{} };
   // 阶段二：注册表启动自检（补偿 union 放宽后丢失的编译期穷尽性）——违例拒启。
   assertSyncProvidersValid();
-  // Nango 自举（必要时创建 API key、按 .env 凭据补建 Google/Notion integration）。
-  // 桌面端 Gateway 先于托管 Nango ready（首次启动含依赖安装 + 构建），启动时同步
-  // 自举必失败且 placeholder secret 一直生效；改为后台自举：立即开始等待 Nango
-  // ready（最长 10 分钟，覆盖冷启动）并自举，secret 惰性 getter 在完成前返回
-  // 配置值，完成后自动切换到自举结果。
-  let nangoSecretResolved: string | null = null;
-  const isNangoSecretFormatValid = (secret: string): boolean =>
-    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(secret.trim());
-  const configuredNangoSecretValid = isNangoSecretFormatValid(nangoConnectorConfig.nangoSecret);
-  const nangoBootstrapPending = process.env.NXCORE_NANGO_BOOTSTRAP_PENDING === "1";
-  const resolveNangoSecret = (): string =>
-    nangoSecretResolved ?? (configuredNangoSecretValid ? nangoConnectorConfig.nangoSecret : "");
   const pollingIntervalMs = "pollingIntervalMs" in nangoConnectorConfig
     ? nangoConnectorConfig.pollingIntervalMs
     : 300_000;
-  if (nangoConnectorConfig.enabled) {
-    void bootstrapNangoWhenReady(nangoConnectorConfig)
-      .then((secret) => {
-        if (isNangoSecretFormatValid(secret)) {
-          nangoSecretResolved = secret;
-          // 引擎放行 OAuth 源（轮询循环自 M3 起常开，由 canServe 门控跳过未就绪源）。
-          nangoSyncEngine.setNangoReady(true);
-          app.log.info({ module: "nango-bootstrap" }, "Nango secret resolved after deferred bootstrap");
-        } else {
-          app.log.warn({ module: "nango-bootstrap" }, "Nango bootstrap returned no valid UUID v4 secret; connector polling remains disabled");
-        }
-      })
-      .catch((error) => {
-        app.log.warn(
-          { module: "nango-bootstrap", error: error instanceof Error ? error.message : String(error) },
-          "Deferred Nango bootstrap failed; falling back to configured secret",
-        );
-      });
-  }
   const nangoConnectorDb = createConnectorDatabase(nangoConnectorConfig.enabled ? nangoConnectorConfig.databasePath : ":memory:");
-  const nangoExecutor = nangoConnectorConfig.enabled
-    ? new NangoExecutor(nangoConnectorConfig.nangoUrl, resolveNangoSecret)
+  // Seam 1（连接器统一 P1，P3 Nango 删除定稿）：链路A取数走 OpenConnector action。
+  const ooSyncExecutor = config.cliConnector
+    ? new OpenConnectorSyncExecutor({ config: config.cliConnector, logger: app.log })
     : null;
+  const nangoExecutor = ooSyncExecutor;
   // 阶段三：拉取引擎（nango 代理 + direct 直连双路）；direct 凭据取连接的 credentialsRef。
   const nangoSyncEngine = new SyncEngine(
     nangoExecutor,
     (connection) => connection.credentialsRef ?? null,
   );
+  const nangoConnectorDocumentStore = nangoConnectorConfig.enabled
+    ? new ConnectorDocumentStore(resolve(config.dataDir, "connectors", "documents"))
+    : null;
   const nangoConnectorManager = new ConnectorManager(
     new ConnectorRepository(nangoConnectorDb.sqlite),
     nangoExecutor,
-    nangoConnectorConfig.enabled ? new ConnectorDocumentStore(resolve(config.dataDir, "connectors", "documents")) : null,
+    nangoConnectorDocumentStore,
     nangoSyncEngine,
   );
   // Nango 连接器的 agent 工具（连接发现 / 触发同步 / 只读代理请求）。
-  const nangoAgentTools = nangoExecutor
-    ? { manager: nangoConnectorManager, executor: nangoExecutor }
-    : null;
-  const nangoConnectorAuthorization = nangoConnectorConfig.enabled && "providerConfigKeys" in nangoConnectorConfig
-    ? new NangoAuthorizationService(
-        nangoConnectorConfig.nangoUrl,
-        resolveNangoSecret,
-        // 阶段二：provider → configKey 装配由注册表驱动（新增 provider 免改此处）。
-        Object.fromEntries(SYNC_PROVIDERS.map((definition) => [
-          definition.provider,
-          nangoConnectorConfig.providerConfigKeys[definition.provider]
-            ?? definition.auth.nango?.configKeyDefault
-            ?? "",
-        ])),
-        nangoConnectorManager,
-      )
+  const nangoConnectorAuthorization = ooSyncExecutor && config.cliConnector?.adminToken
+    ? new OpenConnectorAuthorizationService(config.cliConnector, nangoConnectorManager)
     : undefined;
   // When the configured value is a bootstrap placeholder, wait for the
   // dashboard API key before polling. Nango rejects non-UUID secrets with a
@@ -414,14 +417,17 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   if (nangoConnectorConfig.enabled) {
     // 轮询常开：引擎门控在 secret 未就绪期间跳过 OAuth 源（无 401 噪音），
     // direct 源（WebCal 订阅）不受 Nango 冷启动影响、立即按周期同步。
-    nangoSyncEngine.setNangoReady(configuredNangoSecretValid && !nangoBootstrapPending);
+    nangoSyncEngine.setNangoReady(true); // P3：Nango 门控移除，oo executor 即绪即放行
     nangoConnectorManager.startPolling(pollingIntervalMs);
   }
   // 阶段一域投影（connector-platform-refactor-plan）：Nango 拉取的邮件/日程
   // 与 CLI 推送路径同落主库 connector_* 域表，Room 读侧单轨；启动后延迟 1s
   // 幂等回填 connectors.sqlite 存量（唯一键 upsert，重复执行产出 unchanged）。
-  const connectorDomainOwner = config.connectorSyncOwnerId ?? "local-user";
+  const connectorDomainOwner = "local-user";
   nangoConnectorManager.setDomainProjection(new ConnectorDomainProjection(db, connectorDomainOwner));
+  // 格式映射体系：agent 生成的 JSONata 映射缓存直通；未就绪时同步 pending，后台生成。
+  const formatMappingService = new FormatMappingService(db, app.log);
+  nangoConnectorManager.setFormatMapper(formatMappingService);
   if (nangoConnectorConfig.enabled) {
     const backfillTimer = setTimeout(() => {
       try {
@@ -505,6 +511,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   await app.register(auth, { token: config.authToken });
   await app.register(systemRoutes);
   await app.register(runtimeConfigRoutes(runtimeConfigManager));
+  await app.register(aiRelayRoutes({ sessions: aiRelaySessions, runtimeConfigManager }));
   const contextRoomService = new ContextRoomService(db);
   const memoryService = new MemoryService(config.memory, app.log, { db, dataDir: config.dataDir }, contextRoomService);
   const roomOverviewService = new RoomOverviewService(db, contextRoomService);
@@ -546,19 +553,23 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     }
   }, 30_000);
   documentOperationExpiryTimer.unref();
-  // 外部文档导入（OpenConnector 只读）与 Agent 一次性导出（飞书 lark-cli / Notion
-  // OpenConnector）：与导入连接、导出授权两套凭据域解耦，Gateway 不保存任何 CLI token。
+  // 外部文档导入（OpenConnector 只读，HTTP 直连）与 Agent 一次性导出（飞书
+  // lark-cli / Notion 官方 ntn CLI）：与导入连接、导出授权两套凭据域解耦，
+  // Gateway 不保存任何 CLI token。
   const documentImportService = new DocumentImportService(
     db,
     documentService,
     config.cliConnector ?? null,
     config.dataDir,
-    { assetBridgeUrl: config.documentAssetBridgeUrl ?? null },
+    {
+      assetBridgeUrl: config.documentAssetBridgeUrl ?? null,
+      // Notion 行内评论按块查询走官方 ntn（macOS；缺省自动跳过并告警）。
+      notionCli: config.notionCli ?? null,
+    },
   );
   const agentDocumentExportService = new AgentDocumentExportService(
     db,
     documentService,
-    config.cliConnector ?? null,
     config.larkCli ?? null,
     config.dataDir,
     {
@@ -571,6 +582,8 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   // patch_begin 的 requireLatest 必须落在同一实例；registry 由 create-server 显式构建后
   // 注入 host，避免 host 内部自建私有实例。
   const documentReadAuthority = new DocumentReadAuthority((documentId) => documentService.get(documentId));
+  // 评论服务在 host 之前构建并共享单实例：registry 的 AI 审阅工具与 REST 路由共用。
+  const documentCommentService = new DocumentCommentService(db, (documentId) => Boolean(documentService.get(documentId)));
   const documentMcpHost = new DocumentMcpHost(
     documentService,
     contextRoomService,
@@ -579,6 +592,10 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       contextRoomService,
       documentOperationService,
       documentReadAuthority,
+      // patch_begin 注入 memoryIndex：直写模式挂块索引标记时 memoryId 有权威来源可抄。
+      (roomId) => memoryService.listRoomAttributedMemories(roomId),
+      documentCommentService,
+      (event) => documentService.broker.publish(event),
     ),
     documentOperationService,
     (diagnostic) => {
@@ -642,16 +659,14 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   // 手动建 Room：enrich 实体回写时认领到本 Room，使后续资料路由能命中（与推荐晋升同语义）
   contextRoomService.setRoomEntityClaimer((roomId, entities) =>
     knowledgeService.claimRoomEntities(roomId, entities));
+  // 记忆条目确认晋升：经合成会话交 MemoryCore 蒸馏（worker room-memory: 链回填归属）。
+  contextRoomService.setMemoryPromoter((input) => memoryService.captureRoomMemoryItem(input));
   roomDuplicateService.initialize();
-  const cliConnectorSyncService = new ConnectorSyncService(db, config, app.log);
-  let cliConnectorMarkdownService: ConnectorMarkdownService | null = null;
-  registerConnectorSyncAgent(agentResolver, config, cliConnectorSyncService);
-  if (agentResolver.has(BUILTIN_AGENT_IDS.connectorSync)) {
-    cliConnectorSyncService.attachAgentRuntime(agentResolver.resolve(BUILTIN_AGENT_IDS.connectorSync), {
-      disposeRuntime: false,
-    });
+  // 格式映射 agent：就绪即 attach（映射生成依赖它；未配置 AI 时保持 pending 语义）。
+  registerConnectorMapperAgent(agentResolver, config, formatMappingService);
+  if (agentResolver.has(BUILTIN_AGENT_IDS.connectorMapper)) {
+    formatMappingService.attachAgentRuntime(agentResolver.resolve(BUILTIN_AGENT_IDS.connectorMapper));
   }
-  await cliConnectorSyncService.initialize();
   const subagentConfig = config.subagents ?? {
     enabled: true,
     definitionsDir: bundledAgentDefinitionsDir(),
@@ -736,6 +751,8 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   // 版本变更概览（历史面板 AI 概览标题）复用 background 模型；失败由服务退回本地规则摘要。
   const versionSummaryRuntime = createWritingStyleRuntime(config);
   const writingStyleRuntime = createWritingStyleRuntime(config);
+  // 文档速览（文章级 AI 摘要）：独立隔离 runtime；未配置时路由层置 aiAvailable=false。
+  const documentOverviewRuntime = createDocumentOverviewRuntime(config);
   const writingStyleService = new WritingStyleService(
     db,
     writingStyleRuntime ? new WritingStyleLlm(writingStyleRuntime) : null,
@@ -874,7 +891,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
         updated_at: item.updatedAt,
       }));
     },
-  }, cliConnectorSyncService, nangoAgentTools);
+  });
   const agentRuntime = agentResolver.resolve(BUILTIN_AGENT_IDS.primary);
   const localAgentRuntimeRegistry = new LocalAgentRuntimeRegistry();
   app.log.info(
@@ -899,7 +916,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     contextRoomService,
     documentService,
     documentMcpHost,
-    config.cliConnectorAgentMode ?? "direct",
     false,
     (target) => localAgentRuntimeRegistry.resolve(target),
   );
@@ -994,11 +1010,11 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
           const { previous } = agentResolver.reload(agentId);
           await previous?.dispose();
         }
-        // 连接器同步 agent（初始 attach 见下方 registerConnectorSyncAgent 处）。
-        if (agentResolver.has(BUILTIN_AGENT_IDS.connectorSync)) {
-          const connector = agentResolver.reload(BUILTIN_AGENT_IDS.connectorSync);
-          cliConnectorSyncService.replaceAgentRuntime(connector.current);
-          await connector.previous?.dispose();
+        // 格式映射 agent 热替换（初始 attach 见 registerConnectorMapperAgent 处）。
+        if (agentResolver.has(BUILTIN_AGENT_IDS.connectorMapper)) {
+          const mapper = agentResolver.reload(BUILTIN_AGENT_IDS.connectorMapper);
+          formatMappingService.attachAgentRuntime(mapper.current);
+          await mapper.previous?.dispose();
         }
         // 过滤器/洞察 job 持有的冻结 runtime 同步热替换。
         const nextFilterRuntime = buildIngestFilterRuntime();
@@ -1053,7 +1069,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     "multimodal-document-parser",
     createDocumentAnalysisResultValidator(documentUnderstandingService),
   );
-  cliConnectorSyncService.setFilesService(filesService);
   const fileClusteringService = new FileClusteringService(
     db,
     agentResolver.has(BUILTIN_AGENT_IDS.knowledge) ? agentResolver : null,
@@ -1161,8 +1176,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     await documentIndexBackfillWorker?.dispose();
     filterInsightJob?.dispose();
     ingestService.disposeFilter();
-    await cliConnectorSyncService.dispose();
-    await cliConnectorMarkdownService?.dispose();
     await perceptionService.dispose();
     await agentSchedulerService.dispose();
     await diaryService.dispose();
@@ -1203,8 +1216,9 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   ));
   await app.register(documentMcpRoutes(documentMcpHost));
   await app.register(notificationMcpRoutes(notificationMcpHost));
-  // 版本概览 worker：保存（document.changed）后异步判定重要性并自动生成
-  // （标题变更/小节增删/变更块 ≥3/首版）；不重要版本等历史面板懒加载。
+  // 版本概览 worker：保存（document.changed）后异步判定重要性。重要变更
+  // （标题变更/小节增删/变更块 ≥3/首版）直接生成 AI 概览；不重要变更先把
+  // 本地规则摘要落库占位，等历史面板打开时懒加载升级为 AI 概览。
   const summaryPending = new Set<string>();
   documentEventBroker.listen((event) => {
     if (event.type !== "document.changed") return
@@ -1232,7 +1246,9 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     )
     : null;
   await app.register(documentRoutes(documentService, versionSummaryRuntime, indexBackfillReadTrigger));
-  await app.register(documentCommentRoutes(new DocumentCommentService(db, (documentId) => Boolean(documentService.get(documentId)))));
+  await app.register(documentCommentRoutes(documentCommentService));
+  await app.register(documentOverviewRoutes(documentService, documentOverviewRuntime));
+  await app.register(documentSectionPreviewRoutes(documentService, documentOverviewRuntime));
   await app.register(documentOperationRoutes(
     documentOperationService,
     documentMcpHost.capabilities,
@@ -1265,6 +1281,12 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       if (config.knowledge?.roomWikisEnabled) knowledgeService.requestFileCleanup(fileId);
     },
     deleteMemoryDocuments: (fileId) => memoryService.deleteDocumentsByCallerRef(fileId),
+    // 整源清理级联（桌面「清空数据源」→ DELETE /v1/local-file-references）：
+    // 记忆一次批量扫描；台账软删 + knowledge 批量清理由 ingest 统一收口。
+    deleteMemoryDocumentsBatch: (fileEntryIds) => memoryService.deleteDocumentsByCallerRefs({ refs: fileEntryIds }),
+    cleanupIngestSources: (fileEntryIds) => {
+      ingestService.cleanupSources(fileEntryIds.map((id) => ({ sourceKind: "file" as const, sourceId: id })));
+    },
   }, fileClusteringService));
   await app.register(clipperRoutes(clipperService));
   await app.register(documentUnderstandingRoutes(documentUnderstandingService));
@@ -1345,6 +1367,37 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   );
   // 启动恢复：进程被杀时 pending 滞留的过滤事件重新入队（幂等）
   ingestService.recoverPendingFilters();
+  // 连接器页批量导入（fire-and-forget + DB 状态行，蓝本 runFrom）；启动时把
+  // 进程死亡遗留的 running 批置 failed。auto 模式 = 归房+孵化混合：分类器用
+  // 隔离内部 runtime（缺席则 UI 侧按 BATCH_AUTO_UNAVAILABLE 禁用），孵化走
+  // ingestConnector cloud-doc（knowledge 弱实体 → 待处理面板晋升）。
+  const documentBatchImportService = new DocumentBatchImportService(
+    db,
+    documentImportService,
+    app.log,
+    {
+      classifier: new RoomAssignmentClassifier(createImportClassifierRuntime(config)),
+      roster: () => Promise.resolve(knowledgeService.listRooms().map((room) => ({
+        id: room.id,
+        title: room.title,
+        kind: room.kind,
+        aliases: room.aliases,
+      }))),
+      incubate: async (unit) => {
+        await ingestService.ingestConnector({
+          kind: "cloud-doc",
+          sourceId: unit.sourceId,
+          dataType: "document",
+          title: unit.title,
+          markdown: unit.markdown,
+          entrySignals: { sourceTag: unit.sourceTag },
+        });
+      },
+      requireRouter: () => knowledgeService.routerEnabled,
+    },
+  );
+  documentBatchImportService.recoverInterrupted();
+  await app.register(documentImportBatchRoutes(documentBatchImportService));
   filesService.setVersionIngestor(async (input) => {
     await documentUnderstandingService.parseVersion(input.fileEntryId, input.fileVersionId);
     const versionContext = filesService.getVersionContext(input.fileEntryId, input.fileVersionId);
@@ -1458,6 +1511,17 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
         quietWindowMs: config.documentIndexBackfill?.quietWindowMs ?? 300_000,
         rescanMs: config.documentIndexBackfill?.rescanMs ?? 24 * 60 * 60_000,
         listMemoryItems: (roomId) => memoryService.listRoomAttributedMemories(roomId),
+        // 复检存在性 = 归属 ∪ 快照条目（禁用 shadow / legacy id 的已挂标记不误摘）；
+        // 归属在前（漂移探针用最新快照内容），候选生成仍只走 listMemoryItems。
+        listAllMemoryItems: (roomId) => {
+          const attributed = memoryService.listRoomAttributedMemories(roomId);
+          const attributedIds = new Set(attributed.map((item) => item.id));
+          return [
+            ...attributed,
+            ...contextRoomService.listSnapshotMemoryItems(roomId)
+              .filter((item) => !attributedIds.has(item.id)),
+          ];
+        },
       },
     );
     documentIndexBackfillWorker.start();
@@ -1473,13 +1537,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   // 写作风格生成注入已迁移至 doc-writer（doc-writer-subagent-plan §7）：
   // 主 Agent 不再持有 writingStyleProvider，四信号门控随 writing-style-gate.ts 退役。
   await app.register(writingStyleRoutes(writingStyleService));
-  cliConnectorMarkdownService = new ConnectorMarkdownService(
-    db,
-    config.dataDir,
-    ingestService,
-    app.log,
-  );
-  await cliConnectorMarkdownService.initialize();
   await app.register(ingestRoutes(
     ingestService,
     filterRulesStore,
@@ -1491,7 +1548,29 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   await app.register(diaryRoutes(diaryService));
   await app.register(agentSchedulerRoutes(agentSchedulerService));
   await app.register(agentSchedulerMcpRoutes(agentSchedulerService));
-  await app.register(nangoConnectorRoutes(nangoConnectorManager, nangoConnectorConfig.enabled, nangoConnectorAuthorization));
+  await app.register(nangoConnectorRoutes(
+    nangoConnectorManager,
+    nangoConnectorConfig.enabled,
+    nangoConnectorAuthorization,
+    // 连接删除级联：先清 gateway.sqlite 下游（域表/记忆/台账/knowledge/落盘文档），
+    // 再由路由内 repository.purgeConnection 收尾 connectors.sqlite。失败抛错则
+    // 连接保留（路由 500），各步幂等、重试安全。
+    async (id) => {
+      const connection = nangoConnectorManager.repository.getConnection(id);
+      if (!connection) return;
+      await purgeConnectorConnectionCascade(
+        {
+          db,
+          memory: memoryService,
+          knowledge: knowledgeService,
+          documentStore: nangoConnectorDocumentStore,
+          ownerId: connectorDomainOwner,
+          log: app.log,
+        },
+        connection,
+      );
+    },
+  ));
 
   // 阶段三 M3b：REST 前缀泛化——/v1/connectors/* 为主入口。Fastify v5 路由先于
   // onRequest（改写 URL 无效），别名经 404 兜底内部转发（app.inject 不走网络，
@@ -1525,8 +1604,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     reply.code(404).send({ error: "not_found", path: request.url });
   });
   if (config.knowledge) await app.register(knowledgeRoutes(knowledgeService));
-  await app.register(cliConnectorRoutes(cliConnectorSyncService, ingestService, cliConnectorMarkdownService));
-  await app.register(connectorSyncRoutes(cliConnectorSyncService));
 
   return app;
 }

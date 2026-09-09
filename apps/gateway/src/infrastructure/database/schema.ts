@@ -15,8 +15,12 @@ import type {
   AgentDocumentExportTarget,
   AgentAuthChallengeView,
   CanonicalComment,
+  DocumentImportBatchItemView,
+  DocumentImportBatchMode,
+  DocumentImportBatchStatus,
   DocumentImportRunStatus,
   ExternalCommentsStatus,
+  ExternalDocumentListItem,
   ExternalDocumentProvider,
   ExternalDocumentWarning,
   DocumentOperationCommandInput,
@@ -186,143 +190,6 @@ export const connectorAccounts = sqliteTable(
   ],
 );
 
-export const connectorPromptProfiles = sqliteTable(
-  "connector_prompt_profiles",
-  {
-    id: text("id").primaryKey(),
-    service: text("service").notNull(),
-    resourceType: text("resource_type", { enum: ["email", "document", "calendar", "todo", "generic"] }).notNull(),
-    name: text("name").notNull(),
-    version: integer("version").notNull(),
-    template: text("template").notNull(),
-    schemaVersion: integer("schema_version").notNull().default(1),
-    contentHash: text("content_hash").notNull(),
-    status: text("status", { enum: ["draft", "published", "retired"] }).notNull().default("draft"),
-    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
-    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
-  },
-  (table) => [
-    uniqueIndex("connector_prompt_profiles_service_version_idx").on(table.service, table.resourceType, table.version),
-    index("connector_prompt_profiles_status_idx").on(table.status, table.service),
-  ],
-);
-
-export const connectorSyncJobs = sqliteTable(
-  "connector_sync_jobs",
-  {
-    id: text("id").primaryKey(),
-    ownerId: text("owner_id").notNull(),
-    name: text("name").notNull().default("Connector sync"),
-    service: text("service").notNull(),
-    action: text("action").notNull(),
-    allowedActions: text("allowed_actions", { mode: "json" }).$type<string[]>().notNull().default([]),
-    dataset: text("dataset").notNull(),
-    resourceType: text("resource_type", { enum: ["email", "document", "calendar", "todo", "generic"] }).notNull().default("generic"),
-    connectionName: text("connection_name"),
-    input: text("input", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
-    goal: text("goal").notNull().default(""),
-    prompt: text("prompt"),
-    promptProfileId: text("prompt_profile_id").references(() => connectorPromptProfiles.id),
-    promptOverride: text("prompt_override"),
-    promptVersion: integer("prompt_version").notNull().default(1),
-    schemaVersion: integer("schema_version").notNull().default(1),
-    checkpoint: text("checkpoint", { mode: "json" }).$type<Record<string, unknown>>(),
-    intervalMs: integer("interval_ms").notNull(),
-    scheduleType: text("schedule_type", { enum: ["manual", "interval"] }).notNull().default("interval"),
-    timezone: text("timezone").notNull().default("Asia/Shanghai"),
-    retryPolicy: text("retry_policy", { mode: "json" })
-      .$type<{ maxAttempts: number; baseDelayMs: number }>()
-      .notNull()
-      .default({ maxAttempts: 3, baseDelayMs: 30_000 }),
-    priority: integer("priority").notNull().default(0),
-    status: text("status", { enum: ["draft", "active", "paused", "archived"] }).notNull().default("active"),
-    configVersion: integer("config_version").notNull().default(1),
-    enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
-    nextRunAt: integer("next_run_at", { mode: "timestamp_ms" }),
-    lastRunAt: integer("last_run_at", { mode: "timestamp_ms" }),
-    lastSuccessAt: integer("last_success_at", { mode: "timestamp_ms" }),
-    lastError: text("last_error"),
-    createdAt: integer("created_at", { mode: "timestamp_ms" })
-      .notNull()
-      .$defaultFn(() => new Date()),
-    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
-      .notNull()
-      .$defaultFn(() => new Date()),
-  },
-  (table) => [
-    index("connector_sync_jobs_due_idx").on(table.enabled, table.nextRunAt),
-    index("connector_sync_jobs_owner_idx").on(table.ownerId),
-  ],
-);
-
-export const connectorSyncJobStates = sqliteTable(
-  "connector_sync_job_states",
-  {
-    jobId: text("job_id").primaryKey().references(() => connectorSyncJobs.id, { onDelete: "cascade" }),
-    checkpoint: text("checkpoint", { mode: "json" }).$type<Record<string, unknown>>(),
-    nextRunAt: integer("next_run_at", { mode: "timestamp_ms" }),
-    lastRunAt: integer("last_run_at", { mode: "timestamp_ms" }),
-    lastSuccessAt: integer("last_success_at", { mode: "timestamp_ms" }),
-    lastError: text("last_error"),
-    consecutiveFailures: integer("consecutive_failures").notNull().default(0),
-    leaseOwner: text("lease_owner"),
-    leaseExpiresAt: integer("lease_expires_at", { mode: "timestamp_ms" }),
-    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
-  },
-  (table) => [index("connector_sync_job_states_due_idx").on(table.nextRunAt, table.leaseExpiresAt)],
-);
-
-export const connectorSyncJobVersions = sqliteTable(
-  "connector_sync_job_versions",
-  {
-    id: text("id").primaryKey(),
-    jobId: text("job_id").notNull().references(() => connectorSyncJobs.id, { onDelete: "cascade" }),
-    version: integer("version").notNull(),
-    configSnapshot: text("config_snapshot", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
-    changedBy: text("changed_by").notNull(),
-    changeReason: text("change_reason"),
-    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
-  },
-  (table) => [uniqueIndex("connector_sync_job_versions_job_version_idx").on(table.jobId, table.version)],
-);
-
-export const connectorSyncRuns = sqliteTable(
-  "connector_sync_runs",
-  {
-    id: text("id").primaryKey(),
-    jobId: text("job_id")
-      .notNull()
-      .references(() => connectorSyncJobs.id, { onDelete: "cascade" }),
-    jobVersionId: text("job_version_id").references(() => connectorSyncJobVersions.id),
-    status: text("status", {
-      enum: ["running", "success", "failed", "blocked_runtime", "needs_connection"],
-    }).notNull(),
-    cursor: text("cursor"),
-    discovered: integer("discovered").notNull().default(0),
-    inserted: integer("inserted").notNull().default(0),
-    updated: integer("updated").notNull().default(0),
-    unchanged: integer("unchanged").notNull().default(0),
-    quarantined: integer("quarantined").notNull().default(0),
-    failed: integer("failed").notNull().default(0),
-    errorCode: text("error_code"),
-    errorMessage: text("error_message"),
-    agentModel: text("agent_model"),
-    renderedPromptHash: text("rendered_prompt_hash"),
-    promptProfileVersion: integer("prompt_profile_version"),
-    inputCheckpoint: text("input_checkpoint", { mode: "json" }).$type<Record<string, unknown>>(),
-    outputCheckpoint: text("output_checkpoint", { mode: "json" }).$type<Record<string, unknown>>(),
-    promptVersion: integer("prompt_version").notNull().default(1),
-    schemaVersion: integer("schema_version").notNull().default(1),
-    startedAt: integer("started_at", { mode: "timestamp_ms" })
-      .notNull()
-      .$defaultFn(() => new Date()),
-    finishedAt: integer("finished_at", { mode: "timestamp_ms" }),
-  },
-  (table) => [
-    index("connector_sync_runs_job_started_idx").on(table.jobId, table.startedAt),
-  ],
-);
-
 export const connectorRecords = sqliteTable(
   "connector_records",
   {
@@ -452,6 +319,30 @@ export const connectorTodos = sqliteTable(
   ],
 );
 
+/**
+ * 格式映射体系：provider 原始格式 → canonical schema 的 JSONata 映射（缓存复用）。
+ * 每 (service, record_kind) 一行；agent 首次见到该格式时后台生成，之后同步直通。
+ */
+export const connectorFormatMappings = sqliteTable(
+  "connector_format_mappings",
+  {
+    id: text("id").primaryKey(),
+    service: text("service").notNull(),
+    recordKind: text("record_kind").notNull(),
+    version: integer("version").notNull().default(0),
+    status: text("status").notNull().$type<"generating" | "active" | "failed">(),
+    mappingJson: text("mapping_json", { mode: "json" }).$type<Record<string, unknown>>(),
+    samplesJson: text("samples_json", { mode: "json" }).$type<unknown[]>().notNull().default([]),
+    error: text("error"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    activatedAt: integer("activated_at", { mode: "timestamp_ms" }),
+  },
+  (table) => [
+    uniqueIndex("connector_format_mappings_service_kind_idx").on(table.service, table.recordKind),
+  ],
+);
+
 export const connectorMarkdownArtifacts = sqliteTable(
   "connector_markdown_artifacts",
   {
@@ -506,24 +397,6 @@ export const connectorMarkdownOutbox = sqliteTable(
   (table) => [
     index("connector_markdown_outbox_due_idx").on(table.status, table.availableAt, table.leaseUntil),
     index("connector_markdown_outbox_source_idx").on(table.resourceType, table.ingestSourceId, table.createdAt),
-  ],
-);
-
-export const connectorQuarantinedRecords = sqliteTable(
-  "connector_quarantined_records",
-  {
-    id: text("id").primaryKey(),
-    ownerId: text("owner_id").notNull(),
-    jobId: text("job_id").notNull().references(() => connectorSyncJobs.id, { onDelete: "cascade" }),
-    runId: text("run_id").notNull().references(() => connectorSyncRuns.id, { onDelete: "cascade" }),
-    sourceRecordId: text("source_record_id"),
-    reason: text("reason").notNull(),
-    payload: text("payload", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
-    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
-  },
-  (table) => [
-    index("connector_quarantined_records_run_idx").on(table.runId),
-    index("connector_quarantined_records_owner_idx").on(table.ownerId, table.createdAt),
   ],
 );
 
@@ -959,8 +832,27 @@ export const documents = sqliteTable("documents", {
   updatedAt: integer("updated_at", { mode: "timestamp_ms" })
     .notNull()
     .$defaultFn(() => new Date()),
+  overviewText: text("overview_text"),
+  overviewVersion: integer("overview_version"),
+  overviewGeneratedAt: integer("overview_generated_at", { mode: "timestamp_ms" }),
 }, (table) => [
   index("documents_updated_idx").on(table.updatedAt),
+]);
+
+/** 章节刻度线 hover 的 AI 章节预览：content_hash 命中即缓存，正文变化才重生成。 */
+export const documentSectionPreviews = sqliteTable("document_section_previews", {
+  documentId: text("document_id")
+    .notNull()
+    .references(() => documents.id, { onDelete: "cascade" }),
+  blockId: text("block_id").notNull(),
+  headingText: text("heading_text").notNull(),
+  previewText: text("preview_text").notNull(),
+  contentHash: text("content_hash").notNull(),
+  generatedAt: integer("generated_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+}, (table) => [
+  primaryKey({ columns: [table.documentId, table.blockId] }),
 ]);
 
 export const roomDocumentLinks = sqliteTable(
@@ -1405,6 +1297,61 @@ export const documentRoomImports = sqliteTable(
     index("document_room_imports_room_document_idx").on(table.roomId, table.documentId),
     index("document_room_imports_run_idx").on(table.importRunId),
   ],
+);
+
+/** 连接器页批量导入：一次批量一行，逐项结果内联 JSON（≤50 项整行读写）。 */
+export const documentImportBatches = sqliteTable(
+  "document_import_batches",
+  {
+    id: text("id").primaryKey(),
+    requestId: text("request_id").notNull(),
+    ownerId: text("owner_id").notNull().default("local-user"),
+    provider: text("provider", { enum: ["feishu", "notion"] }).$type<ExternalDocumentProvider>().notNull(),
+    connectionName: text("connection_name"),
+    mode: text("mode", { enum: ["room", "auto"] }).$type<DocumentImportBatchMode>().notNull(),
+    targetRoomId: text("target_room_id"),
+    status: text("status", {
+      enum: ["running", "completed", "failed", "cancelled"],
+    }).$type<DocumentImportBatchStatus>().notNull().default("running"),
+    total: integer("total").notNull(),
+    processed: integer("processed").notNull().default(0),
+    succeeded: integer("succeeded").notNull().default(0),
+    failed: integer("failed").notNull().default(0),
+    itemsJson: text("items_json", { mode: "json" })
+      .$type<DocumentImportBatchItemView[]>()
+      .notNull()
+      .default([]),
+    cancelRequested: integer("cancel_requested", { mode: "boolean" }).notNull().default(false),
+    errorCode: text("error_code"),
+    errorMessage: text("error_message"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    completedAt: integer("completed_at", { mode: "timestamp_ms" }),
+  },
+  (table) => [index("document_import_batches_owner_created_idx").on(table.ownerId, table.createdAt)],
+);
+
+/** 连接器页全量列举缓存：每 (provider, connectionName) 一行，面板打开先回显
+ * 上次结果再按需刷新，避免每次进入都全量拉取远端。 */
+export const documentImportListCache = sqliteTable(
+  "document_import_list_cache",
+  {
+    provider: text("provider", { enum: ["feishu", "notion"] }).$type<ExternalDocumentProvider>().notNull(),
+    /** 空 = 默认连接语义；与列表请求的 connectionName 一致。 */
+    connectionName: text("connection_name").notNull().default(""),
+    itemsJson: text("items_json", { mode: "json" })
+      .$type<ExternalDocumentListItem[]>()
+      .notNull()
+      .default([]),
+    truncated: integer("truncated", { mode: "boolean" }).notNull().default(false),
+    warningsJson: text("warnings_json", { mode: "json" })
+      .$type<ExternalDocumentWarning[]>()
+      .notNull()
+      .default([]),
+    itemCount: integer("item_count").notNull().default(0),
+    fetchedAt: integer("fetched_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [primaryKey({ columns: [table.provider, table.connectionName] })],
 );
 
 // ═══════════════════ 文档本地评论（与外部导入评论共用面板） ═══════════════════

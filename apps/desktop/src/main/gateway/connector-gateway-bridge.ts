@@ -4,6 +4,7 @@ import type {
   ConnectorConnection,
   ConnectorJsonRecord,
   ConnectorProvidersResponse,
+  ConnectorRemoteAccount,
   ConnectorStatus,
   MailMessage,
   SyncMode,
@@ -21,8 +22,8 @@ const FAULT_POINTS = new Set(['before_page_commit', 'after_page_commit_before_cu
 
 export interface ConnectorConnectionInput {
   provider: string
-  nangoConfigKey: string
-  nangoConnectionId: string
+  service: string
+  connectionName: string
   filters?: Record<string, unknown>
 }
 
@@ -63,6 +64,14 @@ export class NangoConnectorGatewayBridge {
     return this.request('/v1/nango-connectors/providers')
   }
 
+  /**
+   * SaaS 侧已配置 OAuth 的 provider 名单（「待连接」网格只显示这些）。
+   * 仅 saas 连接层有实现；local 模式返回 null，渲染层回落注册表全量展示。
+   */
+  configuredProviders(): Promise<string[] | null> {
+    return Promise.resolve(null)
+  }
+
   /** WebCal/ICS 日历订阅（webcal-url 通道）：同 URL 幂等，网关不回显 URL 令牌。 */
   createWebcalSubscription(url: string, provider = 'ics-calendar'): Promise<ConnectorConnection> {
     const trimmed = url.trim()
@@ -72,8 +81,8 @@ export class NangoConnectorGatewayBridge {
 
   registerConnection(input: ConnectorConnectionInput): Promise<ConnectorConnection> {
     if (!/^[a-z][a-z0-9-]*$/.test(input.provider)) throw new Error('不支持的连接提供方。')
-    if (!input.nangoConfigKey.trim() || !input.nangoConnectionId.trim()) throw new Error('连接配置不能为空。')
-    return this.request('/v1/nango-connectors/connections', { method: 'POST', data: { ...input, nangoConfigKey: input.nangoConfigKey.trim(), nangoConnectionId: input.nangoConnectionId.trim() } })
+    if (!input.service.trim() || !input.connectionName.trim()) throw new Error('连接配置不能为空。')
+    return this.request('/v1/nango-connectors/connections', { method: 'POST', data: { ...input, service: input.service.trim(), connectionName: input.connectionName.trim() } })
   }
 
   async startAuthorization(provider: string): Promise<ConnectorAuthorizationAttempt> {
@@ -100,6 +109,11 @@ export class NangoConnectorGatewayBridge {
 
   authorizationStatus(id: string): Promise<ConnectorAuthorizationAttempt> {
     return this.request(`/v1/nango-connectors/authorizations/${this.id(id)}`)
+  }
+
+  /** 远端 oo 租户旧授权探测：仅 saas 连接层实现（直连 oo 数据面）；local 模式无远端租户。 */
+  remoteAccount(_provider: string): Promise<ConnectorRemoteAccount | null> {
+    return Promise.resolve(null)
   }
 
   async disableConnection(id: string): Promise<void> {
@@ -160,6 +174,16 @@ export class NangoConnectorGatewayBridge {
     if (type !== 'mail' && type !== 'calendar') throw new Error('无效的数据记录类型。')
     const result = await this.request<{ items?: ConnectorJsonRecord[] } | ConnectorJsonRecord[]>(`/v1/nango-connectors/connections/${this.id(connectionId)}/records`, { params: { type, ...page } })
     return Array.isArray(result) ? result : (result.items ?? [])
+  }
+
+  /** 连接的已同步记录总数（records 端点 total；limit=1 只为取计数）。 */
+  async recordTotals(connectionId: string): Promise<{ mail: number; calendar: number }> {
+    const total = (type: 'mail' | 'calendar') =>
+      this.request<{ items?: ConnectorJsonRecord[]; total?: number }>(`/v1/nango-connectors/connections/${this.id(connectionId)}/records`, { params: { type, limit: 1 } })
+        .then((result) => (Array.isArray(result) ? 0 : result.total ?? 0))
+        .catch(() => 0)
+    const [mail, calendar] = await Promise.all([total('mail'), total('calendar')])
+    return { mail, calendar }
   }
 
   armFault(point: string): Promise<void> {

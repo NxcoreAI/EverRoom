@@ -38,6 +38,8 @@ function fakeRunner(actions: FakeAction, throwers: Record<string, Error> = {}): 
     if (throwers[key]) throw throwers[key]
     const result = actions[key]
     if (result === undefined) throw new Error(`unexpected action ${key}`)
+    // 函数值按 input 动态计算（可变内容用例：无变化守卫需要内容真实变化）。
+    if (typeof result === 'function') return (result as (input: Record<string, unknown>) => unknown)(call.input)
     return result
   }
 }
@@ -90,6 +92,7 @@ const NOTION_READ: FakeAction = {
   'notion.retrieve_page': { title: 'Notion Page', url: 'https://notion.so/abc123', last_edited_time: '2026-09-01T00:00:00.000Z' },
   'notion.retrieve_page_markdown': { markdown: '# Notion Page\n\nnotion 正文' },
   'notion.search': { results: [{ id: 'page1', url: 'https://notion.so/page1', properties: { title: { title: [{ text: { content: '页面一' } }] } } }] },
+  'notion.list_page_comments': { results: [], has_more: false },
 }
 
 let dataDirectory = ''
@@ -114,16 +117,17 @@ async function createHarness(options: {
     documents,
     options.connector === undefined ? connectorConfig : options.connector,
     dataDirectory,
-    options.actionRunner ? { actionRunner: options.actionRunner } : undefined,
+    {
+      ...(options.actionRunner ? { actionRunner: options.actionRunner } : {}),
+      ...(options.ntn !== undefined ? { notionCli: options.ntn } : {}),
+    },
   )
   const exports_ = new AgentDocumentExportService(
     db,
     documents,
-    options.connector === undefined ? connectorConfig : options.connector,
     options.lark === undefined ? null : options.lark,
     dataDirectory,
     {
-      ...(options.actionRunner ? { actionRunner: options.actionRunner } : {}),
       ...(options.assetBridgeUrl !== undefined ? { assetBridgeUrl: options.assetBridgeUrl } : {}),
       ...(options.ntn !== undefined ? { notionCli: options.ntn } : {}),
     },
@@ -343,11 +347,161 @@ describe('document import service', () => {
     expect(preview.warnings.some((warning) => warning.code === 'comments_pages_capped')).toBe(true)
   })
 
-  it('notion preview marks comments unavailable', async () => {
-    const { imports } = await createHarness({ actionRunner: fakeRunner(NOTION_READ) })
+  it('notion comments via list_page_comments action: 线程分组 + 块锚点 + 分页 + 降级', async () => {
+    const seenInputs: Array<Record<string, unknown>> = []
+    const actions: FakeAction = {
+      ...NOTION_READ,
+      'notion.list_page_comments': (input: Record<string, unknown>) => {
+        seenInputs.push(input)
+        if (input.startCursor === 'cursor-2') {
+          return { results: [], has_more: false }
+        }
+        return {
+          results: [
+            {
+              id: 'nc-1',
+              discussion_id: 'd-1',
+              created_time: '2026-09-01T10:00:00.000Z',
+              last_edited_time: '2026-09-01T10:00:00.000Z',
+              created_by: { object: 'user', id: 'u-1', name: '张三' },
+              parent: { type: 'page_id', page_id: 'page1' },
+              body: { type: 'paragraph', paragraph: { rich_text: [{ text: { content: '首条评论' } }] } },
+            },
+            {
+              id: 'nc-2',
+              discussion_id: 'd-1',
+              created_time: '2026-09-02T10:00:00.000Z',
+              created_by: { object: 'user', id: 'u-2' },
+              parent: { type: 'block_id', block_id: 'block-9' },
+              body: { rich_text: [{ text: { content: '回复内容' } }] },
+            },
+            { id: '', created_by: {}, body: {} },
+          ],
+          has_more: true,
+          next_cursor: 'cursor-2',
+        }
+      },
+    }
+    const { imports } = await createHarness({ actionRunner: fakeRunner(actions) })
     const preview = await imports.preview('notion', 'page1')
-    expect(preview.commentsStatus).toBe('unavailable')
-    expect(preview.warnings.some((warning) => warning.code === 'comments_unsupported_provider')).toBe(true)
+    expect(preview.commentsStatus).toBe('complete')
+    expect(preview.comments).toHaveLength(2)
+    const first = preview.comments.find((comment) => comment.id === 'nc-1')!
+    const reply = preview.comments.find((comment) => comment.id === 'nc-2')!
+    expect(first.authorName).toBe('张三')
+    expect(first.body).toBe('首条评论')
+    expect(first.locationStatus).toBe('unlocated')
+    expect(first.resolved).toBeNull()
+    expect(reply.parentId).toBe('nc-1')
+    expect(preview.warnings.some((warning) => warning.code === 'comments_unparsed_items')).toBe(true)
+    // 两页分页：第二页带 startCursor，pageSize 驼峰。
+    expect(seenInputs).toHaveLength(2)
+    expect(seenInputs[1]).toMatchObject({ startCursor: 'cursor-2', pageId: 'page1' })
+  })
+
+  it('notion 行内评论经 ntn 按块兜底：新形状解析 + blockId 锚点 + 合并去重', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'nxcore-ntn-inline-'))
+    const ntnPath = join(dir, 'ntn')
+    const seenBlockIds: string[] = []
+    const fs = await import('node:fs')
+    fs.writeFileSync(ntnPath, `#!/bin/bash
+if [ "$1" = "api" ] && [ "$2" = "v1/comments" ]; then
+  echo "$*" >> "$(dirname "$0")/blocks.log"
+  cat <<'JSON'
+{"results":[{"id":"inline-c1","discussion_id":"disc-1","created_time":"2026-09-07T14:02:00.000Z","last_edited_time":"2026-09-07T14:02:00.000Z","created_by":{"id":"u9","object":"user"},"display_name":{"resolved_name":"danielfbaby","type":"user"},"parent":{"type":"block_id","block_id":"block-789"},"rich_text":[{"plain_text":"6666","text":{"content":"6666"}}]},{"id":"inline-r1","discussion_id":"disc-1","created_time":"2026-09-07T14:05:00.000Z","created_by":{"id":"u10"},"display_name":{"resolved_name":"回复者","type":"user"},"parent":{"type":"block_id","block_id":"block-789"},"rich_text":[{"plain_text":"回复 6666","text":{"content":"回复 6666"}}]}],"has_more":false}
+JSON
+  exit 0
+fi
+exit 1
+`, { mode: 0o755 })
+    const actions: FakeAction = {
+      ...NOTION_READ,
+      'notion.retrieve_page_markdown': () => ({
+        markdown: '# 页面\n\n## <span discussion-urls="discussion://page1/block-789/disc-1">基本概念</span>',
+      }),
+      'notion.list_page_comments': { results: [], has_more: false },
+    }
+    const { imports } = await createHarness({ actionRunner: fakeRunner(actions), ntn: { executable: ntnPath } })
+    const preview = await imports.preview('notion', 'page1')
+    // 正文剥离干净，行内评论从 ntn 合并进来（含作者名/回复线程/blockId 锚点）。
+    expect(preview.bodyExcerpt).not.toContain('<span')
+    expect(preview.comments.map((comment) => comment.id)).toEqual(['inline-c1', 'inline-r1'])
+    const root = preview.comments[0]!
+    const reply = preview.comments[1]!
+    expect(root.authorName).toBe('danielfbaby')
+    expect(root.body).toBe('6666')
+    expect(root.quotedText).toBe('基本概念')
+    expect(root.locationStatus).toBe('located')
+    expect(reply.parentId).toBe('inline-c1')
+    expect(reply.quotedText).toBe('基本概念')
+    // ntn 收到的是 span 第二段的 blockId。
+    expect(fs.readFileSync(join(dir, 'blocks.log'), 'utf8')).toContain('block_id==block-789')
+  })
+
+  it('notion 行内评论标记：剥外壳 + quotedText 锚点回填（含转义形态与回复继承）', async () => {
+    const actions: FakeAction = {
+      ...NOTION_READ,
+      'notion.retrieve_page_markdown': () => ({
+        markdown: '# 页面\n\n## 基本概念\n\n前面<span discussion-urls="discussion://page1/root-c1">基本概念</span>中间\\<span discussion-urls="discussion://page1/root-c2"\\>寄存器\\</span\\>结尾',
+      }),
+      'notion.list_page_comments': () => ({
+        results: [
+          { id: 'root-c1', discussion_id: 'root-c1', created_time: '2026-09-01T10:00:00.000Z', created_by: { id: 'u1', name: '甲' }, parent: { page_id: 'page1' }, body: { paragraph: { rich_text: [{ text: { content: '概念评论' } }] } } },
+          { id: 'reply-c1', discussion_id: 'root-c1', created_time: '2026-09-01T11:00:00.000Z', created_by: { id: 'u2' }, parent: { block_id: 'b1' }, body: { rich_text: [{ text: { content: '概念的回复' } }] } },
+          { id: 'root-c2', discussion_id: 'root-c2', created_time: '2026-09-02T10:00:00.000Z', created_by: { id: 'u3' }, parent: { page_id: 'page1' }, body: { paragraph: { rich_text: [{ text: { content: '寄存器评论' } }] } } },
+        ],
+        has_more: false,
+      }),
+    }
+    const { imports } = await createHarness({ actionRunner: fakeRunner(actions) })
+    const preview = await imports.preview('notion', 'page1')
+    // 标记剥离：正文不再含 span 字面（原始与转义形态都剥）。
+    expect(preview.bodyExcerpt).not.toContain('<span')
+    expect(preview.bodyExcerpt).toContain('基本概念')
+    expect(preview.bodyExcerpt).toContain('寄存器')
+    // 锚点：根评论命中 url 集 → quotedText + located；回复经 parentId 继承。
+    const root1 = preview.comments.find((comment) => comment.id === 'root-c1')!
+    const reply = preview.comments.find((comment) => comment.id === 'reply-c1')!
+    const root2 = preview.comments.find((comment) => comment.id === 'root-c2')!
+    expect(root1.quotedText).toBe('基本概念')
+    expect(root1.locationStatus).toBe('located')
+    expect(reply.quotedText).toBe('基本概念')
+    expect(reply.locationStatus).toBe('located')
+    expect(root2.quotedText).toBe('寄存器')
+    expect(root2.locationStatus).toBe('located')
+  })
+
+  it('candidate structured diff：复用版本 diff 契约，added 块含远端新增内容', async () => {
+    let bodySuffix = ''
+    const actions = {
+      ...FEISHU_READ,
+      'feishu.fetch_document': () => ({
+        document: {
+          document_id: 'tokA',
+          revision_id: 5,
+          title: '远端需求文档',
+          url: 'https://vyi-tech.feishu.cn/docx/tokA',
+          content: `# 远端需求文档\n\n这是导入的正文段落。\n\n![图](https://img.example.com/a.png)${bodySuffix}`,
+        },
+      }),
+    }
+    const { imports, documents } = await createHarness({ actionRunner: fakeRunner(actions) })
+    const roomId = `room-${Math.random().toString(36).slice(2, 8)}`
+    const preview = await imports.preview('feishu', 'tokA')
+    const primary = await imports.commitToRoom({ runId: preview.runId, roomId })
+    bodySuffix = '\n\n结构化 diff 专用新段落。'
+    const check = await imports.checkExternalUpdate(roomId, primary.documentId)
+    expect(check.noChange).toBeUndefined()
+    const structured = await imports.candidateStructuredDiff(check.roomImportId!)
+    expect(structured.candidate.provider).toBe('feishu')
+    expect(structured.snapshot.title).toContain('远端需求文档')
+    expect(structured.diff.blocks.some((block) => block.status === 'added'
+      && JSON.stringify(block.after ?? {}).includes('结构化 diff 专用新段落'))).toBe(true)
+    // 已应用候选 → 409
+    await imports.applyCandidate(check.roomImportId!)
+    const applied = await imports.candidateStructuredDiff(check.roomImportId!).then(() => null, (caught: unknown) => caught)
+    expect(applied).toBeInstanceOf(ImportServiceError)
+    expect((applied as ImportServiceError).code).toBe('CANDIDATE_ALREADY_APPLIED')
   })
 
   it('throws OPEN_CONNECTOR_UNAVAILABLE when connector is not configured', async () => {
@@ -376,7 +530,21 @@ describe('document import service', () => {
   })
 
   it('re-import creates a candidate, never overwrites, then apply creates v2', async () => {
-    const { imports, documents } = await createHarness({ actionRunner: fakeRunner(FEISHU_READ) })
+    // 无变化守卫：第二次拉取需内容真的变化才会物化候选（同内容 → noChange）。
+    let bodySuffix = ''
+    const actions = {
+      ...FEISHU_READ,
+      'feishu.fetch_document': () => ({
+        document: {
+          document_id: 'tokA',
+          revision_id: 5,
+          title: '远端需求文档',
+          url: 'https://vyi-tech.feishu.cn/docx/tokA',
+          content: `# 远端需求文档\n\n这是导入的正文段落。\n\n![图](https://img.example.com/a.png)${bodySuffix}`,
+        },
+      }),
+    }
+    const { imports, documents } = await createHarness({ actionRunner: fakeRunner(actions) })
     const roomId = `room-${Math.random().toString(36).slice(2, 8)}`
     // 首次导入：primary，创建文档版本 1
     const preview = await imports.preview('feishu', 'tokA')
@@ -384,6 +552,10 @@ describe('document import service', () => {
     const documentId = primary.documentId
     const before = documents.get(documentId)!
 
+    // 同内容检查 → noChange；内容变化后检查 → 候选。
+    const unchanged = await imports.checkExternalUpdate(roomId, documentId)
+    expect(unchanged.noChange).toBe(true)
+    bodySuffix = '\n\n远端更新段落。'
     const check = await imports.checkExternalUpdate(roomId, documentId)
     expect(check.relation).toBe('candidate')
     // 目标文档未被覆盖
@@ -599,7 +771,8 @@ describe('agent document export service', () => {
       contentJson: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: '完全不同的本地正文' }] }] } as never,
     })
     const commit = await imports.commitToRoom({ runId: preview.runId, roomId, targetDocumentId: document.id })
-    const diff = await imports.candidateDiff(commit.roomImportId)
+    expect(commit.noChange).toBeUndefined()
+    const diff = await imports.candidateDiff(commit.roomImportId!)
     expect(diff.hunks.some((hunk) => hunk.type === 'del' && hunk.text.includes('本地正文'))).toBe(true)
     expect(diff.hunks.some((hunk) => hunk.type === 'add' && hunk.text.includes('导入的正文段落'))).toBe(true)
     expect(diff.appliedVersion).toBeNull()

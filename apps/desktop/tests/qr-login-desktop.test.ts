@@ -28,7 +28,7 @@ describe('SaasClient QR login credential isolation', () => {
     const publicRequest = vi.fn(async () => createdResponse)
     const client = clientWith({
       publicRequest,
-      deviceDetails: vi.fn(async () => ({ deviceKey: 'hw-key', deviceName: 'Mac', platform: 'macOS' as const, appVersion: '1.0' })),
+      deviceDetails: vi.fn(async () => ({ deviceKey: 'mac-key', deviceName: 'Mac', platform: 'macOS' as const, appVersion: '1.0' })),
       cancelQrLoginSession: vi.fn(async () => undefined),
     })
     const presentation: QrLoginPresentation = await client.createQrLoginSession()
@@ -76,7 +76,7 @@ describe('SaasClient QR login credential isolation', () => {
     const cancel = vi.fn(async () => { calls.push('cancel') })
     const client = clientWith({
       publicRequest: vi.fn(async (path: string) => { calls.push(path); return createdResponse }),
-      deviceDetails: vi.fn(async () => ({ deviceKey: 'hw-key', deviceName: 'Mac', platform: 'macOS' as const, appVersion: '1.0' })),
+      deviceDetails: vi.fn(async () => ({ deviceKey: 'mac-key', deviceName: 'Mac', platform: 'macOS' as const, appVersion: '1.0' })),
       cancelQrLoginSession: cancel,
     })
     Object.defineProperty(client, 'pendingQrLogin', { value: { sessionId: 'old-session', desktopExchangeToken: 'C'.repeat(43), expiresAt: createdResponse.expiresAt, inFlight: false }, writable: true, configurable: true })
@@ -104,7 +104,7 @@ describe('SaasClient admission handling', () => {
   it('keeps the challenge instead of a session when login hits the device limit', async () => {
     const client = clientWith({
       publicRequest: vi.fn(async () => admission),
-      deviceDetails: vi.fn(async () => ({ deviceKey: 'hw-key', deviceName: 'Mac', platform: 'macOS' as const, appVersion: '1.0' })),
+      deviceDetails: vi.fn(async () => ({ deviceKey: 'mac-key', deviceName: 'Mac', platform: 'macOS' as const, appVersion: '1.0' })),
       cancelQrLoginSession: vi.fn(async () => undefined),
       currentStatus: vi.fn(() => ({ authenticated: false, apiBaseUrl: 'https://api' })),
       acceptSession: vi.fn(async () => undefined),

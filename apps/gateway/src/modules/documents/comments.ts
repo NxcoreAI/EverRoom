@@ -48,10 +48,15 @@ export class DocumentCommentService {
     parentId?: string | null;
     blockId?: string | null;
     quotedText?: string | null;
+    /** 作者署名（AI 审阅评论用）；空/缺省回落"我"。 */
+    authorName?: string | null;
   }): DocumentCommentView {
     this.assertDocument(input.documentId);
     const body = input.body.trim().slice(0, 4000);
     if (!body) throw new DocumentServiceError("COMMENT_BODY_EMPTY", "评论内容不能为空", 422);
+    const authorName = typeof input.authorName === "string" && input.authorName.trim()
+      ? input.authorName.trim().slice(0, 60)
+      : "我";
     if (input.parentId) {
       const parent = this.db.select().from(documentComments)
         .where(and(eq(documentComments.id, input.parentId), eq(documentComments.documentId, input.documentId)))
@@ -70,6 +75,7 @@ export class DocumentCommentService {
       blockId: input.blockId ?? null,
       quotedText: input.quotedText?.slice(0, 500) ?? null,
       body,
+      authorName,
       createdAt: now,
       updatedAt: now,
     }).run();

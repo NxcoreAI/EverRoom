@@ -13,7 +13,8 @@ import type { RuntimeConfigSnapshot, RuntimeConfigTestResult } from '../../../..
 import appleLogo from '@/assets/apple-logo.svg'
 import googleLogo from '@/assets/google-logo.svg'
 import { ProductBrand } from '@/components/ui/ProductBrand'
-import { InvitationCodeField, useInvitationCode } from '@/components/account/InvitationCodeField'
+import { WindowControls } from '@/components/WindowControls'
+import { RedeemCodeField, useRedeemCode } from '@/components/account/RedeemCodeField'
 import { QrLoginPanel } from '@/components/account/QrLoginPanel'
 import { useLocale } from '@/i18n/LocaleContext'
 import {
@@ -55,7 +56,7 @@ export function RuntimeConfigGate({ children }: { children: ReactNode }) {
   const [embedding, setEmbedding] = useState<ManualAiConfigFields>(emptyAiFields())
   const [manualTab, setManualTab] = useState<ManualTab>('llm')
   const [fieldError, setFieldError] = useState<string | null>(null)
-  const invitation = useInvitationCode()
+  const redeemCode = useRedeemCode()
   const [testError, setTestError] = useState<string | null>(null)
   const [oidcPending, setOidcPending] = useState<'apple' | 'google' | null>(null)
   const [checkRequest, setCheckRequest] = useState(0)
@@ -134,16 +135,19 @@ export function RuntimeConfigGate({ children }: { children: ReactNode }) {
 
   const loginWithOidc = async (provider: 'apple' | 'google') => {
     if (!window.nxcore) return
-    let invitationCode:string|undefined
-    try { invitationCode=await invitation.prepare() } catch { setTestError(t('surface:settings.invitationCodeInvalid')); return }
+    let redeemCodeValue:string|undefined
+    try { redeemCodeValue=await redeemCode.prepare() } catch { setTestError(t('surface:settings.redeemCodeInvalid')); return }
     setOidcPending(provider)
     setTestError(null)
     try {
-      const account = await window.nxcore.account.loginWithOidc(provider,invitationCode)
-      if(invitationCode&&account.registration)window.alert(t(account.registration.invitationApplied?'surface:settings.invitationCodeApplied':'surface:settings.invitationCodeExistingUser'))
+      const account = await window.nxcore.account.loginWithOidc(provider,redeemCodeValue)
+      if(redeemCodeValue&&account.registration){
+        window.alert(t(account.registration.invitationRejected==='pro_plan_active'?'surface:settings.redeemCodeProActive':'surface:settings.redeemCodeApplied'))
+        redeemCode.reset()
+      }
       await completeGateLogin()
     } catch (error) {
-      if(invitationCode&&error instanceof Error&&/invitation code/i.test(error.message))invitation.markInvalid()
+      if(redeemCodeValue&&error instanceof Error&&/invitation code/i.test(error.message))redeemCode.markInvalid()
       setTestError(t('surface:configGate.loginFailed'))
     } finally {
       setOidcPending(null)
@@ -218,6 +222,7 @@ export function RuntimeConfigGate({ children }: { children: ReactNode }) {
             <button type="button" data-active={preference === 'zh-CN'} onClick={() => setLocale('zh-CN')}>中文</button>
             <button type="button" data-active={preference === 'en-US'} onClick={() => setLocale('en-US')}>EN</button>
           </div>
+          <WindowControls />
         </div>
       </header>
 
@@ -239,7 +244,7 @@ export function RuntimeConfigGate({ children }: { children: ReactNode }) {
             <div className="runtime-config-gate-panel">
               <h1>{t('surface:configGate.loginHeading')}</h1>
 
-              <InvitationCodeField value={invitation.code} state={invitation.state} open={invitation.open} disabled={oidcPending!==null} onChange={invitation.change} onToggle={()=>invitation.setOpen(value=>!value)}/>
+              <RedeemCodeField value={redeemCode.code} state={redeemCode.state} open={redeemCode.open} disabled={oidcPending!==null} onChange={redeemCode.change} onToggle={()=>redeemCode.setOpen(value=>!value)}/>
 
               <div className="runtime-config-gate-button-row runtime-config-gate-login-row">
                 <button type="button" className="runtime-config-gate-social-button runtime-config-gate-apple-login" disabled={oidcPending !== null} onClick={() => void loginWithOidc('apple')}>

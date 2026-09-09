@@ -1778,3 +1778,70 @@
 .rc-json-details .runtime-config-editor {
   margin-top: 6px;
 }
+
+/* 连接层模式（P2-4）：SaaS / 本地 全局开关 */
+.connector-mode-options {
+  display: grid;
+  gap: 12px;
+}
+
+.connector-mode-option {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 14px 16px;
+  border: 1px solid var(--border-subtle, rgba(127, 127, 127, 0.28));
+  border-radius: 12px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.connector-mode-option:hover {
+  border-color: var(--accent, rgba(90, 140, 255, 0.6));
+}
+
+.connector-mode-option[data-active='true'] {
+  border-color: var(--accent, rgba(90, 140, 255, 0.9));
+  background: color-mix(in srgb, var(--accent, rgba(90, 140, 255, 0.9)) 10%, transparent);
+}
+
+.connector-mode-option:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.connector-mode-option-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent, rgba(90, 140, 255, 0.9)) 14%, transparent);
+  flex: none;
+}
+
+.connector-mode-option-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+}
+
+.connector-mode-option-body small {
+  opacity: 0.72;
+}
+
+.connector-mode-option-state {
+  color: var(--accent, rgba(90, 140, 255, 0.9));
+}
+
+.connector-mode-notice {
+  margin: 12px 0 0;
+  font-size: 13px;
+  opacity: 0.8;
+}

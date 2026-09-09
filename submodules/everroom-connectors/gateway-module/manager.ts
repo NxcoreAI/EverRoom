@@ -1,0 +1,337 @@
+import { randomUUID } from "node:crypto";
+import type {
+  ConnectorConnection,
+  ConnectorProvider,
+  SyncMode,
+  SyncRun,
+} from "@nxcore/connector-contract";
+import type { ConnectorExecutor } from "./types.js";
+import { ConnectorDocumentStore } from "./document-store.js";
+import { calendarEventToMarkdown, mailToMarkdown } from "./connector-memory.js";
+import type { ConnectorDomainProjection } from "./domain-projection.js";
+import { ConnectorRepository } from "./repository.js";
+import { syncProviderOf } from "./sync-providers/index.js";
+import { SyncEngine } from "./sync-engine.js";
+
+export class ConnectorManager {
+  private readonly active = new Map<string, Promise<void>>();
+  private readonly cancelled = new Set<string>();
+  private timer: NodeJS.Timeout | null = null;
+  /** 同步数据入库记忆的扇出（create-server 注入 MemoryService）；失败不阻塞同步本身。 */
+  private memorySink:
+    | ((input: { kind: "document" | "mail" | "calendar"; provider: string; connectionId: string; documentId: string; title: string; markdown: string; calendarId?: string; domainRowId?: string }) => Promise<void>)
+    | null = null;
+  /**
+   * 域投影（阶段一）：归一化记录落主库 connector_* 域表，先于 memorySink。
+   * 第一版软失败（记 sync_failures 计数，不阻断 ingest）；soak 后升硬失败。
+   */
+  private domainProjection: ConnectorDomainProjection | null = null;
+
+  setMemorySink(
+    sink: (input: { kind: "document" | "mail" | "calendar"; provider: string; connectionId: string; documentId: string; title: string; markdown: string; calendarId?: string; domainRowId?: string }) => Promise<void>,
+  ) {
+    this.memorySink = sink;
+  }
+  setDomainProjection(projection: ConnectorDomainProjection | null) {
+    this.domainProjection = projection;
+  }
+  /** 格式映射端口（格式映射体系）：转发给取数执行器装配到 PullContext。 */
+  setFormatMapper(mapper: import("./format-mapper-port.js").FormatMapperPort | null) {
+    this.executor?.setFormatMapper?.(mapper);
+  }
+  constructor(
+    public readonly repository: ConnectorRepository,
+    private readonly executor: ConnectorExecutor | null,
+    private readonly documentStore: ConnectorDocumentStore | null = null,
+    /** 阶段三：拉取引擎（nango/direct 分发）；缺省退化为仅 Nango 的引擎。 */
+    engine?: SyncEngine | null,
+  ) {
+    this.engine = engine ?? new SyncEngine(executor, () => null);
+    repository.recover();
+  }
+  private readonly engine: SyncEngine;
+  async register(input: {
+    provider: ConnectorProvider;
+    /** oo 标识（Seam5：service/connectionName）。 */
+    service: string;
+    connectionName: string;
+    filters?: Record<string, unknown>;
+    authMethod?: "nango-oauth" | "api-token" | "webcal-url" | "password" | "manual-import";
+    credentialsRef?: string | null;
+    /**
+     * 首次连接的首同步暂缓（授权流程用）：桌面端先弹过滤偏好引导，
+     * 用户设置完成后再显式触发——否则首批数据在偏好生效前就被过滤。
+     * 暂缓期间由轮询周期兜底（默认 5 分钟后无论如何开始同步）。
+     */
+    deferFirstSync?: boolean;
+  }) {
+    const c = this.repository.registerConnection(input);
+    try {
+      const created = await this.ensureScopesForConnection(c);
+      // 首次连接立即触发全量同步：不等轮询周期（默认 5 分钟）——
+      // "连接成功但什么都不发生"是最迷惑的首次体验。失败静默，轮询兜底。
+      if (created.length > 0 && this.executor && !input.deferFirstSync) {
+        for (const scopeId of created) {
+          try {
+            this.trigger(scopeId, "full");
+          } catch {
+            // 轮询周期会重试，注册流程不因首同步失败回滚连接
+          }
+        }
+      }
+      return c;
+    } catch (error) {
+      this.repository.purgeConnection(c.id);
+      throw error;
+    }
+  }
+  /**
+   * 为连接建齐 scope：在线发现（outlook 文件夹/日历表）优先；provider 没有
+   * discoverScopes 实现（gmail/notion/google-docs 等单邮箱类）时发现结果为空，
+   * 必须回退注册表 defaultScopes——否则连接零 scope，同步按钮/轮询/首同步
+   * 全部无目标，连接永远不跑数据。返回本次新建（非已存在）的 scope id。
+   */
+  private async ensureScopesForConnection(c: ConnectorConnection): Promise<string[]> {
+    const fallbackScopes =
+      syncProviderOf(c.provider)?.defaultScopes.map((scope) => ({
+        id: scope.providerScopeId,
+        displayName: scope.displayName,
+      })) ?? [];
+    const discovered = this.executor?.discoverScopes
+      ? await this.executor.discoverScopes(c)
+      : null;
+    const scopes = discovered && discovered.length > 0 ? discovered : fallbackScopes;
+    // 重复注册（重装/重连）时 scope 已存在——只有新建的 scope 才需要首同步
+    const knownBefore = new Set(
+      this.repository.listScopes().filter((s) => s.connectionId === c.id).map((s) => s.providerScopeId),
+    );
+    const created: string[] = [];
+    for (const scope of scopes) {
+      const ensured = this.repository.ensureScope(c.id, scope.id, scope.displayName);
+      if (!knownBefore.has(scope.id)) created.push(ensured.id);
+    }
+    return created;
+  }
+  /**
+   * 存量自愈：空发现回归时期注册的连接（scope 为空）补建 scope 并触发首同步。
+   * 否则这类连接永远无法开始同步——UI 同步按钮对空 scope 列表是无操作。
+   */
+  private async healScopelessConnections(): Promise<void> {
+    const allScopes = this.repository.listScopes();
+    for (const connection of this.repository.listConnections()) {
+      if (connection.status !== "active") continue;
+      if (allScopes.some((s) => s.connectionId === connection.id)) continue;
+      if (!this.engine.canServe(connection.provider)) continue;
+      try {
+        for (const scopeId of await this.ensureScopesForConnection(connection)) {
+          this.trigger(scopeId, "full");
+        }
+      } catch {
+        // 轮询周期会重试
+      }
+    }
+  }
+  trigger(scopeId: string, mode: SyncMode): SyncRun {
+    const existing = this.repository
+      .listRuns()
+      .find((r) => r.scopeId === scopeId && r.status === "running");
+    if (existing) return existing;
+    const scope = this.repository.getScope(scopeId),
+      connection = scope && this.repository.getConnection(scope.connectionId);
+    // 引擎门控：direct 源无需 Nango；nango 源在 secret 未就绪/引擎缺席时拒绝。
+    if (!connection || !this.engine.canServe(connection.provider))
+      throw new Error("connectors_disabled");
+    if (
+      !scope ||
+      connection.status !== "active" ||
+      scope.state === "disabled"
+    )
+      throw new Error("connection_disabled");
+    if (scope.state === "resync_required") mode = "rebuild";
+    const run = this.repository.createRun(scopeId, mode);
+    const task = this.execute(run, mode).finally(() =>
+      this.active.delete(scopeId),
+    );
+    this.active.set(scopeId, task);
+    return run;
+  }
+  private async execute(run: SyncRun, mode: SyncMode) {
+    const owner = randomUUID(),
+      scope = this.repository.getScope(run.scopeId)!;
+    const connection = this.repository.getConnection(scope.connectionId)!;
+    const fence = this.repository.acquireLease(scope.id, owner);
+    if (fence === null) {
+      this.repository.finishRun(run.id, "failed", "scope_busy");
+      return;
+    }
+    const base = this.repository.getScope(scope.id)!.checkpointRevision;
+    // 全量断点续传：接续上一轮 full run 失败/中断前落下的 continuation（rebuild 不续传）。
+    const priorContinuation =
+      mode === "full" ? (this.repository.latestResumableRun(scope.id, run.id)?.cursor ?? null) : null;
+    // 本 run 最后收到的页级续传点：失败时落库供下轮续跑；成功后清空 scope 下全部断点。
+    let lastContinuation: string | null = null;
+    let yieldedPages = 0;
+    // 域投影软失败计数：run 结束时记一条汇总 sync_failures，不阻断 ingest。
+    let projectionFailures = 0;
+    const project = (action: () => unknown) => {
+      if (!this.domainProjection) return;
+      try {
+        action();
+      } catch {
+        projectionFailures += 1;
+      }
+    };
+    try {
+      for await (const page of this.engine.pull(
+        {
+          ...scope,
+          provider: connection.provider,
+          connectionName: connection.connectionName,
+          service: connection.service,
+        },
+        connection,
+        mode,
+        priorContinuation,
+      )) {
+        if (this.cancelled.has(run.id)) throw new Error("cancelled");
+        if (page.continuation) lastContinuation = page.continuation;
+        yieldedPages += 1;
+        this.repository.applyPage(scope.id, run.id, fence, page.changes);
+        this.repository.applyCalendarPage(scope.id, run.id, fence, page.calendarChanges ?? []);
+        // 域投影先于 memorySink（M4）：投影返回行 id 随 memorySink 透传，
+        // ingest 的 sourceId 直接用域行 id（对齐 CLI 路径；connector ref 仅存量遗留）。
+        const projectedRowIds = new Map<string, string>();
+        for (const change of page.changes) {
+          project(() => {
+            const result = this.domainProjection!.projectMail(connection.provider, connection.id, change);
+            if (change.kind === "upsert" && result.id) projectedRowIds.set(change.message.providerMessageId, result.id);
+          });
+        }
+        for (const change of page.calendarChanges ?? []) {
+          project(() => {
+            const result = this.domainProjection!.projectCalendar(connection.provider, connection.id, change);
+            if (change.kind === "upsert" && result.id) projectedRowIds.set(change.event.providerEventId, result.id);
+          });
+        }
+        for (const change of page.changes) {
+          if (change.kind !== "upsert" || !this.memorySink) continue;
+          await this.memorySink({
+            kind: "mail",
+            provider: connection.provider,
+            connectionId: connection.id,
+            documentId: change.message.providerMessageId,
+            title: change.message.subject?.trim() || "（无主题）",
+            markdown: mailToMarkdown(change.message),
+            ...(projectedRowIds.get(change.message.providerMessageId)
+              ? { domainRowId: projectedRowIds.get(change.message.providerMessageId)! }
+              : {}),
+          }).catch(() => {});
+        }
+        for (const change of page.calendarChanges ?? []) {
+          if (change.kind !== "upsert" || !this.memorySink) continue;
+          await this.memorySink({
+            kind: "calendar",
+            provider: connection.provider,
+            connectionId: connection.id,
+            documentId: change.event.providerEventId,
+            title: change.event.title.trim() || "（无标题）",
+            markdown: calendarEventToMarkdown(change.event),
+            // scope 按"每个日历"建立：providerScopeId 即日历 id，进规则信号做日历级归因
+            calendarId: scope.providerScopeId,
+            ...(projectedRowIds.get(change.event.providerEventId)
+              ? { domainRowId: projectedRowIds.get(change.event.providerEventId)! }
+              : {}),
+          }).catch(() => {});
+        }
+        for (const document of page.documents ?? []) {
+          if (!this.documentStore) throw new Error("connector_document_store_unavailable");
+          await this.documentStore.write(connection.provider, connection.id, document);
+          if (this.memorySink)
+            await this.memorySink({
+              kind: "document",
+              provider: connection.provider,
+              connectionId: connection.id,
+              documentId: document.providerDocumentId,
+              title: document.title,
+              markdown: document.markdown,
+            }).catch(() => {});
+        }
+        this.repository.incrementRunProcessed(run.id, page.documents?.length ?? 0);
+        if (page.terminalCursor)
+          this.repository.casCursor(scope.id, base, fence, page.terminalCursor);
+      }
+      this.repository.finishRun(run.id, "completed");
+      // 全量跑通 → 清空 scope 下失败/中断 run 的断点（防止后续查到远古游标）。
+      if (mode === "full") this.repository.clearResumableCursors(scope.id);
+    } catch (error) {
+      // 断点续传：本 run 收到过续传点 → 落库供下轮续跑；续传 run 一页未出 → 游标
+      // 已失效（如 pageToken 过期），连同旧 run 的断点一并清空自愈，下轮从第 0 页重来。
+      if (mode === "full" && yieldedPages > 0 && lastContinuation)
+        this.repository.saveRunCursor(run.id, lastContinuation);
+      else if (mode === "full" && priorContinuation && yieldedPages === 0)
+        this.repository.clearResumableCursors(scope.id);
+      // oo 的错误带 status 属性（OpenConnectorHttpError）；axios 形状兼容保留。
+      const status = (error as any)?.status ?? (error as any)?.response?.status;
+      if (
+        (status === 404 && connection.provider === "gmail") ||
+        (status === 410 && (connection.provider === "outlook" || connection.provider === "google-calendar"))
+      )
+        this.repository.markResyncRequired(scope.id);
+      this.repository.finishRun(
+        run.id,
+        "failed",
+        error instanceof Error ? error.message : "sync_failed",
+      );
+    } finally {
+      this.cancelled.delete(run.id);
+      if (projectionFailures > 0) {
+        this.repository.recordFailure(run.id, scope.id, "domain_projection",
+          `域投影失败 ${projectionFailures} 条（软失败：数据仍经 markdown 进 ingest，读侧暂退化为快照解析）`, null);
+      }
+      this.repository.releaseLease(scope.id, owner, fence);
+    }
+  }
+  cancel(runId: string) {
+    this.cancelled.add(runId);
+    return this.repository.getRun(runId);
+  }
+  async listDocuments(connectionId: string) {
+    const connection = this.documentConnection(connectionId);
+    return this.documentStore!.list(connection.provider, connection.id);
+  }
+  async readDocument(connectionId: string, documentId: string) {
+    const connection = this.documentConnection(connectionId);
+    return this.documentStore!.read(connection.provider, connection.id, documentId);
+  }
+  private documentConnection(connectionId: string) {
+    const connection = this.repository.getConnection(connectionId);
+    if (!connection || (connection.provider !== "google-docs" && connection.provider !== "notion"))
+      throw new Error("document_connection_not_found");
+    if (!this.documentStore) throw new Error("connector_document_store_unavailable");
+    return connection;
+  }
+  startPolling(intervalMs: number) {
+    if (this.timer) return;
+    const poll = () => {
+      for (const scope of this.repository.listScopes()) {
+        if (scope.state === "disabled") continue;
+        // 引擎门控前置：Nango secret 未就绪期间跳过 OAuth 源（避免 401 噪音），
+        // direct 源（WebCal 订阅）不受影响照常轮询。
+        const connection = this.repository.getConnection(scope.connectionId);
+        if (!connection || !this.engine.canServe(connection.provider)) continue;
+        try {
+          this.trigger(scope.id, scope.sourceCursor ? "incremental" : "full");
+        } catch {}
+      }
+    };
+    this.timer = setInterval(poll, intervalMs);
+    this.timer.unref();
+    queueMicrotask(poll);
+    // 启动自愈先于首轮轮询：scope 为空的存量连接先补建 scope（否则轮询永远跳过它们）。
+    queueMicrotask(() => void this.healScopelessConnections());
+  }
+  async dispose() {
+    if (this.timer) clearInterval(this.timer);
+    await Promise.allSettled(this.active.values());
+  }
+}

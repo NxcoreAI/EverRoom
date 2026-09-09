@@ -15,6 +15,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useLocale } from '@/i18n/LocaleContext'
 import { useContextRoomState } from '@/components/context-room/ContextRoomStateProvider'
 import { ProductBrand } from '@/components/ui/ProductBrand'
+import { WindowControls } from '@/components/WindowControls'
 import type { ContextRoomRecord } from '@/components/context-room/ported/types'
 import { localizedRoomKind } from '@/components/context-room/ported/adapters'
 import { createRoomUsageGuide } from './roomUsageGuide'
@@ -252,6 +253,7 @@ export function RoomOnboardingGate({ children, suppressOnboarding = false, onFin
             <button type="button" data-active={preference === 'en-US'} onClick={() => setLocale('en-US')}>EN</button>
           </div>
           {mode !== 'success' ? <button type="button" className="room-onboarding-skip" onClick={skip}>{t('contextRoom:onboarding.skip')}</button> : null}
+          <WindowControls />
         </div>
       </header>
       <main className="room-onboarding-main" aria-live="polite">
@@ -312,7 +314,7 @@ export function RoomOnboardingGate({ children, suppressOnboarding = false, onFin
               <div className="room-onboarding-success-icon" aria-hidden="true"><Check /></div>
               <div>
                 <h1 id="room-onboarding-success-title">{t('contextRoom:onboarding.success')}</h1>
-                <p>{t('contextRoom:onboarding.successBody')}</p>
+                <p>{t(window.nxcore?.platform === 'win32' ? 'contextRoom:onboarding.successBody.windows' : 'contextRoom:onboarding.successBody')}</p>
               </div>
             </div>
             <div className="room-onboarding-success-panel">

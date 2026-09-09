@@ -1363,6 +1363,7 @@ describe('document transactions', () => {
       'context_room_write_append',
       'context_room_write_commit',
       'context_room_write_abort',
+      'context_room_document_comment_add',
     ])
     expect(result.tools?.find((tool) => tool.name === 'context_room_write_begin')?.description)
       .toContain('正文内容与标题必须来自 document_draft 的返回值')
@@ -1405,7 +1406,7 @@ describe('document transactions', () => {
     const reconnected = await host.exchange('mcp-session', {
       jsonrpc: '2.0', id: 4, method: 'tools/list', params: {},
     }, { agentSessionId: 'session-1', runId: 'run-1', roomId: 'room-1' })
-    expect((reconnected[0]?.result as { tools?: unknown[] }).tools).toHaveLength(12)
+    expect((reconnected[0]?.result as { tools?: unknown[] }).tools).toHaveLength(13)
   })
 })
 
@@ -1423,7 +1424,8 @@ describe('document version change summary', () => {
     const committed = await harness.service.maybeGenerateSummaryOnCommit(document.id, 1)
     expect(committed.generated).toBe(true)
     expect(committed.summary).toContain('初始版本')
-    // 落库后懒加载端点直接返回缓存
+    // 已有 AI 概览时懒加载端点直接返回缓存；无 runtime 时为本地摘要，
+    // 走升级路径重算但结果一致
     const cached = await harness.service.versionChangeSummary(document.id, 1)
     expect(cached.summary).toBe(committed.summary)
     // 重要变更：改标题 + 加两个块
@@ -1469,10 +1471,14 @@ describe('document version change summary', () => {
         { type: 'paragraph', content: [{ type: 'text', text: '丙' }] },
       ] } as never,
     })
-    const skipped = await harness.service.maybeGenerateSummaryOnCommit(document.id, 2)
-    expect(skipped.generated).toBe(false)
-    expect(harness.service.listVersions(document.id, { limit: 10 })[0]!.changeSummary).toBeNull()
-    // 用户打开面板 → 懒加载生成并回填
+    const prefilled = await harness.service.maybeGenerateSummaryOnCommit(document.id, 2)
+    expect(prefilled.generated).toBe(false)
+    // 不重要：保存时不调 AI，但先把本地规则摘要落库占位（面板立即展示）
+    const stored = harness.service.listVersions(document.id, { limit: 10 })[0]!
+    expect(stored.changeSummary).toBe(prefilled.summary)
+    expect(stored.changeSummary).toContain('新增/修改 1 段')
+    expect(stored.changeSummarySource).toBe('local')
+    // 用户打开面板 → 懒加载升级（无 AI runtime 时仍为本地摘要并回填）
     const lazy = await harness.service.versionChangeSummary(document.id, 2)
     expect(lazy.summary.length).toBeGreaterThan(0)
     expect(harness.service.listVersions(document.id, { limit: 10 })[0]!.changeSummary).toBe(lazy.summary)

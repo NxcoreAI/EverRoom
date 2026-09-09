@@ -47,6 +47,9 @@ import type {
   DocumentOperationSummary,
   DocumentBlockList,
   DocumentBlockBacklinkList,
+  DocumentOverviewView,
+  DocumentSectionPreviewInput,
+  DocumentSectionPreviewResult,
   DocumentVersionSummary,
   DocumentVersionListOptions,
   DocumentVersionSnapshot,
@@ -65,12 +68,16 @@ import type {
   AgentDocumentExportRunView,
   AgentDocumentExportTarget,
   DocumentImportCommentDiffSummary,
+  DocumentImportBatchMode,
+  DocumentImportBatchView,
   DocumentImportHistoryEntry,
   DocumentImportRunView,
   ExternalDocumentCommentView,
+  ExternalDocumentListResponse,
   ExternalDocumentPreview,
   ExternalDocumentProvider,
   ExternalDocumentSearchResponse,
+  ImportCandidateDiffView,
 } from '@nxcore/agent-contract'
 import type { BrowserExtensionMessage, BrowserExtensionStatus } from './browser-extension'
 import type { ObsidianVaultApi } from './obsidian'
@@ -99,6 +106,7 @@ import type {
   ConnectorConnection,
   ConnectorJsonRecord,
   ConnectorProvidersResponse,
+  ConnectorRemoteAccount,
   ConnectorStatus,
   MailMessage,
   SyncMode,
@@ -140,20 +148,6 @@ import type {
   OpenConnectorExecutionInput,
   OpenConnectorStatus,
 } from './open-connector'
-import type {
-  ConnectorAccount,
-  ConnectorDataPage,
-  ConnectorDataQuery,
-  ConnectorDataRecord,
-  ConnectorIngestResult,
-  ConnectorPromptProfile,
-  ConnectorQuarantinedRecord,
-  ConnectorSyncJob,
-  ConnectorSyncJobInput,
-  ConnectorSyncRun,
-  ConnectorSyncStatus,
-} from './connector-sync'
-import type { DesktopPageMode } from './page-mode'
 import type { DesktopLocale } from './i18n/desktop'
 import type {
   AgentNotificationTarget,
@@ -360,6 +354,7 @@ export interface CloudAccountStatus {
   registration?: {
     accountCreated: boolean
     invitationApplied: boolean
+    invitationRejected?: 'pro_plan_active'
   }
   /** 设备额度已满时的准入挑战：renderer 展示设备列表并选择替换。 */
   admission?: {
@@ -380,6 +375,25 @@ export interface CloudDevice {
   lastSeenAt: string
   createdAt?: string
 }
+
+/** 中转额度视图（`GET /app/ai-gateway/status`，按订阅周期开窗）。 */
+export interface AiGatewayStatus {
+  configured: boolean
+  subscriptionStatus: string | null
+  llmCredits: number | null
+  usedCredits: string
+  remainingCredits: number
+  periodEnd: string | null
+}
+
+/** LLM 额度换算：new-api 原生 quota 单位 ↔ 美元（QuotaPerUnit 默认 500000 = $1）。 */
+export const QUOTA_PER_USD = 500000
+
+export function formatLlmUsd(quota: number, locale: string): string {
+  return new Intl.NumberFormat(locale, { style: 'currency', currency: 'USD' }).format(quota / QUOTA_PER_USD)
+}
+
+export type AiRelayKeeperEventType = 'quota-exhausted' | 'fallback-user' | 'fallback-restored'
 
 /** 扫码登录 renderer 可见的展示信息（二维码载荷要素，无桌面交换凭证）。 */
 export interface QrLoginPresentation {
@@ -779,9 +793,15 @@ export interface RoomLocalActionResult {
 
 export interface NxcoreDesktopApi {
   platform: string
-  pageMode: DesktopPageMode
   app: {
     clearUserData(): Promise<void>
+  }
+  window: {
+    minimize(): Promise<void>
+    toggleMaximize(): Promise<void>
+    close(): Promise<void>
+    getState(): Promise<{ maximized: boolean }>
+    onMaximizedChange(listener: (maximized: boolean) => void): () => void
   }
   office: {
     testAvailable: boolean
@@ -833,9 +853,13 @@ export interface NxcoreDesktopApi {
     runtimeStatus(): Promise<NangoRuntimeStatus>
     status(): Promise<ConnectorStatus>
     providers(): Promise<ConnectorProvidersResponse>
+    /** SaaS 已配置 OAuth 的 provider 名单；null = 不可用（local 模式/未登录/旧主进程），渲染层回落注册表全量。 */
+    oauthConfigs?(): Promise<string[] | null>
     startAuthorization(provider: string): Promise<ConnectorAuthorizationAttempt>
     authorizationStatus(id: string): Promise<ConnectorAuthorizationAttempt>
-    registerConnection(input: { provider: string; nangoConfigKey: string; nangoConnectionId: string; filters?: Record<string, unknown> }): Promise<ConnectorConnection>
+    /** 远端 oo 租户的活跃旧授权探测（saas 模式；local/无会话返回 null）——重连弹窗选择用。 */
+    remoteAccount(provider: string): Promise<ConnectorRemoteAccount | null>
+    registerConnection(input: { provider: string; service: string; connectionName: string; filters?: Record<string, unknown> }): Promise<ConnectorConnection>
     createWebcalSubscription(url: string): Promise<ConnectorConnection>
     disableConnection(id: string): Promise<void>
     enableConnection(id: string): Promise<void>
@@ -848,12 +872,17 @@ export interface NxcoreDesktopApi {
     documents(connectionId: string): Promise<WikiDocumentSummary[]>
     document(connectionId: string, documentId: string): Promise<WikiDocumentPreview>
     records(connectionId: string, type: 'mail' | 'calendar'): Promise<ConnectorJsonRecord[]>
+    recordTotals(connectionId: string): Promise<{ mail: number; calendar: number }>
   }
   cliConnector: {
     status(): Promise<OpenConnectorStatus>
     execute(input: OpenConnectorExecutionInput): Promise<OpenConnectorCommandResult>
     cancel(requestId: string): Promise<boolean>
     openConsole(): Promise<void>
+    /** 发起 provider OAuth（本地直调运行时 / SaaS 代发起），返回授权页 URL 并由主进程打开。 */
+    startAuthorization(service: string): Promise<{ authorizationUrl: string }>
+    mode(): Promise<{ mode: 'saas' | 'local'; switchedAt: string | null }>
+    setMode(mode: 'saas' | 'local'): Promise<{ mode: 'saas' | 'local'; switchedAt: string | null }>
     onEvent(listener: (event: OpenConnectorCommandEvent) => void): () => void
   }
   agentAuth: {
@@ -865,11 +894,24 @@ export interface NxcoreDesktopApi {
   }
   externalDocuments: {
     importSearch(provider: ExternalDocumentProvider, query: string): Promise<ExternalDocumentSearchResponse>
+    /** 连接器页按连接全量列举（飞书云空间+知识库 / Notion 共享页面）；cachedOnly 时读上次缓存。 */
+    importList(provider: ExternalDocumentProvider, connectionName?: string, cachedOnly?: boolean): Promise<ExternalDocumentListResponse>
+    importBatch(input: {
+      provider: ExternalDocumentProvider
+      connectionName?: string
+      remoteDocumentIds: string[]
+      mode: DocumentImportBatchMode
+      roomId?: string
+    }): Promise<{ batchId: string; total: number }>
+    importBatchStatus(batchId: string): Promise<DocumentImportBatchView>
+    cancelImportBatch(batchId: string): Promise<DocumentImportBatchView>
     importPreview(provider: ExternalDocumentProvider, remoteDocumentId: string): Promise<ExternalDocumentPreview>
     importCommit(input: { runId: string; roomId: string; targetDocumentId?: string }): Promise<{
       run: DocumentImportRunView
-      roomImportId: string
+      roomImportId: string | null
       relation: 'primary' | 'candidate'
+      /** 远端内容与已应用快照相同：未创建候选/记录。 */
+      noChange?: boolean
       documentId: string
     }>
     importRun(runId: string): Promise<DocumentImportRunView>
@@ -886,13 +928,16 @@ export interface NxcoreDesktopApi {
       hunks: Array<{ type: 'ctx' | 'add' | 'del'; text: string }>
       commentsComparable: boolean
     }>
+    /** 候选 vs 当前版本的结构化 diff（复用版本 diff UI 契约）。 */
+    importStructuredDiff(roomImportId: string): Promise<ImportCandidateDiffView>
     searchExportTargets(provider: ExternalDocumentProvider, query: string): Promise<{
       items: Array<{ remoteId: string; title: string; url: string; updatedAt: string | null; ownerName: string | null }>
     }>
     checkExternalUpdate(roomId: string, documentId: string): Promise<{
       run: DocumentImportRunView
-      roomImportId: string
+      roomImportId: string | null
       relation: 'primary' | 'candidate'
+      noChange?: boolean
       documentId: string
     }>
     applyCandidate(roomImportId: string): Promise<{ documentId: string; version: number }>
@@ -909,22 +954,6 @@ export interface NxcoreDesktopApi {
     retryExport(exportId: string): Promise<AgentDocumentExportRunView>
     cancelExport(exportId: string): Promise<AgentDocumentExportRunView>
     listExports(documentId?: string): Promise<{ items: AgentDocumentExportRunView[] }>
-  }
-  cliConnectorSync: {
-    status(): Promise<ConnectorSyncStatus>
-    accounts(): Promise<ConnectorAccount[]>
-    promptProfiles(): Promise<ConnectorPromptProfile[]>
-    jobs(): Promise<ConnectorSyncJob[]>
-    createJob(input: ConnectorSyncJobInput): Promise<ConnectorSyncJob>
-    updateJob(id: string, input: Partial<ConnectorSyncJobInput> & { configVersion: number }): Promise<ConnectorSyncJob>
-    runJob(id: string): Promise<ConnectorSyncJob>
-    setJobPaused(id: string, paused: boolean, configVersion: number): Promise<ConnectorSyncJob>
-    archiveJob(id: string, configVersion: number): Promise<ConnectorSyncJob>
-    runs(jobId: string): Promise<ConnectorSyncRun[]>
-    quarantine(runId: string): Promise<ConnectorQuarantinedRecord[]>
-    data(query: ConnectorDataQuery): Promise<ConnectorDataPage>
-    record(id: string): Promise<ConnectorDataRecord>
-    ingestRecords(recordIds: string[]): Promise<ConnectorIngestResult>
   }
   mcp: {
     listServers(): Promise<McpServersSnapshot>
@@ -1004,6 +1033,8 @@ export interface NxcoreDesktopApi {
     getSubagentInvocation(invocationId: string): Promise<SubagentInvocation>
     cancelSubagentInvocation(invocationId: string): Promise<SubagentInvocation>
     refreshBrief(roomId: string): Promise<ContextRoomSnapshotItem>
+    /** 记忆条目晋升（待确认→已确认）：MemoryCore 蒸馏后 worker 回填归属。 */
+    promoteMemoryItem(roomId: string, itemId: string): Promise<{ promotionSessionId: string | null }>
     overview(roomId: string): Promise<RoomOverviewProjection>
     refreshOverview(roomId: string): Promise<RoomOverviewProjection>
     listMails(roomId: string): Promise<{ items: RoomMail[] }>
@@ -1031,6 +1062,11 @@ export interface NxcoreDesktopApi {
     replaceDeviceAdmission(input: { admissionToken: string; replaceDeviceId: string }): Promise<CloudAccountStatus>
     dismissDeviceAdmission(): Promise<{ dismissed: boolean }>
     onAdmissionRequired(listener: (status: CloudAccountStatus) => void): () => void
+  }
+  aiRelay: {
+    /** 中转额度视图（订阅周期开窗）；未登录/未配置时为 null。 */
+    status(): Promise<AiGatewayStatus | null>
+    onEvent(listener: (event: { type: AiRelayKeeperEventType }) => void): () => void
   }
   notifications: {
     preferences(): Promise<NotificationPreferences>
@@ -1169,6 +1205,9 @@ export interface NxcoreDesktopApi {
     createDocumentComment(documentId: string, input: { body: string; parentId?: string | null; blockId?: string | null; quotedText?: string | null }): Promise<LocalDocumentComment>
     resolveDocumentComment(documentId: string, commentId: string, resolved: boolean): Promise<LocalDocumentComment>
     deleteDocumentComment(documentId: string, commentId: string): Promise<void>
+    getOverview(documentId: string): Promise<DocumentOverviewView>
+    generateOverview(documentId: string): Promise<DocumentOverviewView>
+    getSectionPreview(documentId: string, input: DocumentSectionPreviewInput): Promise<DocumentSectionPreviewResult>
     restoreVersion(documentId: string, version: number, baseVersion: number): Promise<RoomDocument>
     resolveBlockReferences(input: ResolveDocumentBlockReferencesInput): Promise<ResolveDocumentBlockReferencesResult>
     listOperations(filters?: {

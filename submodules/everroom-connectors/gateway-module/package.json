@@ -1,0 +1,46 @@
+{
+  "name": "@nxcore/connectors-module",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "types": "./index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@nxcore/agent-runtime": "workspace:*",
+    "@nxcore/agent-runtime-pi": "workspace:*",
+    "@nxcore/connector-contract": "workspace:*",
+    "@fastify/type-provider-typebox": "^6.1.0",
+    "@sinclair/typebox": "^0.34.52",
+    "axios": "^1.19.0",
+    "better-sqlite3": "^13.0.3",
+    "drizzle-orm": "^0.45.2",
+    "email-reply-parser": "^2.3.9",
+    "exceljs": "^4.4.0",
+    "fastify": "^5.11.3",
+    "html-to-text": "^10.0.0",
+    "jszip": "^3.10.1",
+    "mailparser": "^3.9.15",
+    "mammoth": "^1.12.1",
+    "rehype-parse": "^9.0.1",
+    "rehype-remark": "^10.0.1",
+    "rehype-sanitize": "^6.0.0",
+    "remark-gfm": "^4.0.1",
+    "remark-stringify": "^11.0.0",
+    "turndown": "^7.2.4",
+    "unified": "^11.0.5",
+    "unpdf": "^1.8.1",
+    "@napi-rs/canvas": "^0.1.100",
+    "pdfjs-dist": "^6.2.108"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/html-to-text": "^9.0.4",
+    "@types/mailparser": "^3.4.6",
+    "@types/node": "^22.0.0",
+    "@types/turndown": "^5.0.6",
+    "typescript": "^5.8.0",
+    "@types/hast": "^3.0.5"
+  }
+}

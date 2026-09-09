@@ -26,10 +26,11 @@ description: Organize a newly created Context Room from its title and descriptio
   "status": "string",
   "nextSteps": ["string"],
   "entities": [{ "name": "string", "kind": "string", "description": "string" }],
-  "facts": [{ "content": "string", "type": "string" }]
+  "facts": [{ "content": "string", "type": "string", "memoryId": "string（可选）" }]
 }
 ```
 
 - `kind` 只能是列出的六种之一，无法判断时用「主题」。
 - 使用标题与描述的主要语言生成所有自然语言字段。
 - `nextSteps` 最多 8 条；`entities` 最多 12 个；`facts` 最多 20 条。
+- `facts[].memoryId`：该事实来自 `memory_search` 结果时，逐字复制结果行首方括号内的记忆 id；非检索来源（仅用户描述）的事实省略此字段，禁止编造 id。

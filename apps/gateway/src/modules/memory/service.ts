@@ -134,6 +134,13 @@ export interface SelectionRewriteMemoryInput {
   replacementText: string;
 }
 
+export interface RoomMemoryPromotionInput {
+  roomId: string;
+  itemId: string;
+  content: string;
+  type?: string;
+}
+
 export interface SourceDocumentMemoryInput {
   sourceId: string;
   sourceKind: string;
@@ -735,7 +742,7 @@ export class MemoryService {
     item: Pick<MemoryAtomicDto, "id" | "type" | "content" | "updatedAt">,
     sessionId: string,
     roomId: string,
-    sourceKind: "conversation" | "document" | "source" = "conversation",
+    sourceKind: "conversation" | "document" | "source" | "room_item" = "conversation",
   ): void {
     if (!this.db) return;
     const now = new Date();
@@ -1102,14 +1109,25 @@ export class MemoryService {
    * 文档（级联清 L0 会话/分块/派生 L1）。MemoryCore 未启用返回空列表。
    */
   async deleteDocumentsByCallerRef(callerRef: string): Promise<string[]> {
+    return this.deleteDocumentsByCallerRefs({ refs: [callerRef] });
+  }
+
+  /**
+   * 批量版（连接器删除级联用）：exact ref 集合 + 可选前缀一次分页扫描命中即删，
+   * 避免逐 ref 全量扫描的 O(N×M)。MemoryCore 未启用返回空列表。
+   */
+  async deleteDocumentsByCallerRefs(target: { refs: string[]; prefix?: string }): Promise<string[]> {
     if (!this.client || !this.enabled) return [];
     const client = this.client;
+    const refs = new Set(target.refs);
+    const matches = (callerRef: string) =>
+      refs.has(callerRef) || (target.prefix !== undefined && callerRef.startsWith(target.prefix));
     const deleted: string[] = [];
     // listDocuments 按身份键取最新版本：分页扫全量，caller_ref 命中即删
     for (let offset = 0; ; offset += 100) {
       const page = await this.call(() => client.listDocuments({ limit: 100, offset }));
       for (const item of page.documents) {
-        if (item.caller_ref !== callerRef) continue;
+        if (!matches(item.caller_ref)) continue;
         await this.call(() => client.deleteDocument(item.document_id));
         deleted.push(item.document_id);
       }
@@ -1214,6 +1232,31 @@ export class MemoryService {
     await this.call(() => client.addConversation(sessionId, [
       { role: "user", content: `[wiki:sync] 请将以下 Markdown 文档作为可检索知识保存。\n${metadata}\n标题：${input.title}`, timestamp },
       { role: "assistant", content: input.markdown, timestamp },
+    ]));
+    return true;
+  }
+
+  /**
+   * Room 记忆条目晋升捕获（待确认→已确认）：经合成会话交给 MemoryCore 蒸馏，
+   * room-derive-worker 的 `room-memory:` 链回填归属与条目 memoryId。
+   * 先捕获后落 promotionSessionId——捕获失败不落标记，用户重试不会重复蒸馏。
+   */
+  async captureRoomMemoryItem(input: RoomMemoryPromotionInput): Promise<boolean> {
+    const client = this.client;
+    if (!client) return false;
+    const sessionId = `room-memory:${input.roomId}:${input.itemId}`.slice(0, 100);
+    const timestamp = new Date().toISOString();
+    await this.call(() => client.addConversation(sessionId, [
+      {
+        role: "user",
+        content: `[room-memory:promote] 用户在 Context Room ${input.roomId} 的记忆面板确认了以下事实，请沉淀为原子记忆。`,
+        timestamp,
+      },
+      {
+        role: "assistant",
+        content: `已确认（类型：${input.type || "未分类"}）：${input.content}`,
+        timestamp,
+      },
     ]));
     return true;
   }

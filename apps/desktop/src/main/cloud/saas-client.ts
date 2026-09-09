@@ -10,6 +10,7 @@ import type { AxiosRequestConfig, AxiosResponse } from 'axios'
 import type { App } from 'electron'
 
 import type {
+  AiGatewayStatus,
   AsrJob,
   AsrResult,
   CloudAccountStatus,
@@ -35,15 +36,25 @@ import everroomFullLogo from '../../renderer/src/assets/everroom-full.png'
 const REFRESH_TOKEN_KEY = 'everroom:saas:refresh-token'
 const DEVICE_KEY_KEY = 'everroom:saas:device-key'
 
-// 读取硬件级设备标识（IOPlatformUUID）。它由主板固件决定，重装应用、清空
-// 应用数据、系统大版本升级都不会变化，只有更换整机才会变。
+// 读取硬件级设备标识：macOS 用 IOPlatformUUID（主板固件决定），Windows 用
+// 注册表 MachineGuid（系统安装时生成）。两者都由系统保证：重装应用、清空
+// 应用数据、系统大版本升级都不会变化，只有更换整机/重装系统才会变。
 let cachedHardwareKey: string | null | undefined
 function hardwareDeviceKey(): string | null {
   if (cachedHardwareKey !== undefined) return cachedHardwareKey
   try {
-    const output = execSync('ioreg -d 2 -l', { encoding: 'utf8', timeout: 5_000 })
-    const match = output.match(/"IOPlatformUUID" = "([0-9A-Fa-f-]+)"/)
-    cachedHardwareKey = match ? `hw-${match[1].toLowerCase()}` : null
+    if (process.platform === 'win32') {
+      const output = execSync(
+        'reg query "HKLM\\SOFTWARE\\Microsoft\\Cryptography" /v MachineGuid',
+        { encoding: 'utf8', timeout: 5_000 },
+      )
+      const match = output.match(/MachineGuid\s+REG_SZ\s+([0-9A-Fa-f-]+)/)
+      cachedHardwareKey = match ? `win-${match[1].toLowerCase()}` : null
+    } else {
+      const output = execSync('ioreg -d 2 -l', { encoding: 'utf8', timeout: 5_000 })
+      const match = output.match(/"IOPlatformUUID" = "([0-9A-Fa-f-]+)"/)
+      cachedHardwareKey = match ? `mac-${match[1].toLowerCase()}` : null
+    }
   } catch {
     cachedHardwareKey = null
   }
@@ -76,7 +87,7 @@ interface LoginResult {
   user: { id: string; tenantId: string; email?: string | null; phone?: string | null; name?: string }
   device: { id: string; name?: string; platform?: string }
   session?: { id: string; leaseExpiresAt?: string }
-  registration?: { accountCreated: boolean; invitationApplied: boolean }
+  registration?: { accountCreated: boolean; invitationApplied: boolean; invitationRejected?: 'pro_plan_active' }
 }
 
 /** 设备额度已满时服务端返回的准入挑战：桌面需展示设备列表并让用户选择替换。 */
@@ -168,6 +179,29 @@ export interface SaasRuntimeConfig {
   planName: string
   updatedAt: string
   config: Record<string, unknown>
+}
+
+/** SaaS 签发的 new-api 中转短期令牌（`POST /app/ai-gateway/tokens`）。 */
+export interface AiGatewayToken {
+  token: string
+  expiresAt: string
+  /** 中转站推理根地址（无 /v1）。 */
+  baseUrl: string
+}
+
+
+/**
+ * SaaS 代发的 oo（OpenConnector 多租户实例）用户会话：登录后经
+ * `POST /app/connectors/oo/token` 换取，之后客户端持 token 直连 oo 数据面
+ * （actions / apps / 连接查询），不再经 SaaS 转发。
+ */
+export interface ConnectorOoSession {
+  /** oo 直连基地址（SaaS CONNECTOR_OO_PUBLIC_BASE_URL 下发）。 */
+  baseUrl: string
+  /** 本用户在 oo 上的租户 id（u + userId 去连字符），信息性。 */
+  tenantId: string
+  /** oo 用户 runtime token（oct_…），租户锁定在该 token 内。 */
+  token: string
 }
 
 export interface KeyringResponse {
@@ -639,6 +673,61 @@ export class SaasClient {
     return this.request<SaasRuntimeConfig>('/app/runtime-config')
   }
 
+  /**
+   * 换取 oo 用户会话（SaaS 侧幂等：已登记直接返回，否则代发并登记）。
+   * 未登录时抛错；oo token 与 EverRoom 会话生命周期解耦（持久稳定），无需缓存。
+   */
+  async connectorOoSession(): Promise<ConnectorOoSession> {
+    await this.initialize()
+    const session = await this.request<Partial<ConnectorOoSession>>('/app/connectors/oo/token', { method: 'POST' })
+    if (
+      !session || typeof session !== 'object'
+      || typeof session.baseUrl !== 'string' || !session.baseUrl.trim()
+      || typeof session.token !== 'string' || !session.token.trim()
+    ) {
+      throw new Error('SaaS 返回了无效的 oo 连接会话。')
+    }
+    return {
+      baseUrl: session.baseUrl.trim().replace(/\/+$/, ''),
+      tenantId: typeof session.tenantId === 'string' ? session.tenantId : '',
+      token: session.token,
+    }
+  }
+
+  /**
+   * SaaS 代发起 oo OAuth 授权（oo admin token 由 SaaS 持有，客户端不经手），
+   * 返回 provider 授权页地址；授权回调落在 SaaS 公网回调并回写 oo 用户租户。
+   */
+  async startConnectorAuthorization(service: string): Promise<{ authorizationUrl: string }> {
+    await this.initialize()
+    const result = await this.request<{ authorizationUrl?: unknown }>('/app/connectors/authorizations', {
+      method: 'POST',
+      data: { service },
+    })
+    const authorizationUrl =
+      result && typeof result === 'object' && typeof result.authorizationUrl === 'string'
+        ? result.authorizationUrl.trim()
+        : ''
+    if (!authorizationUrl) throw new Error('SaaS 返回了无效的授权地址。')
+    return { authorizationUrl }
+  }
+
+  /** 已配置 OAuth 的服务清单（`GET /app/connectors/oauth-configs`，桌面端只取最小投影）。 */
+  async connectorOAuthConfigs(): Promise<Array<{ service: string; displayName: string | null; iconUrl: string | null }>> {
+    await this.initialize()
+    const result = await this.request<{ services?: unknown }>('/app/connectors/oauth-configs')
+    const services = result && typeof result === 'object' && Array.isArray(result.services) ? result.services : []
+    return services.flatMap((item) => {
+      if (!item || typeof item !== 'object' || typeof (item as { service?: unknown }).service !== 'string') return []
+      const service = item as { service: string; displayName?: unknown; iconUrl?: unknown }
+      return [{
+        service: service.service,
+        displayName: typeof service.displayName === 'string' ? service.displayName : null,
+        iconUrl: typeof service.iconUrl === 'string' ? service.iconUrl : null,
+      }]
+    })
+  }
+
   async reportAgentStatus(input: {
     state: 'idle' | 'running' | 'error'
     sessionId?: string
@@ -669,6 +758,27 @@ export class SaasClient {
     if (!this.account || !this.accessToken) return false
     await this.request('/app/session/lease', { method: 'PUT' })
     return true
+  }
+
+  /** new-api 中转短期令牌（TTL 25min，由 AiRelayKeeper 每 ~20min 续签）。 */
+  async issueAiGatewayToken(): Promise<AiGatewayToken> {
+    await this.initialize()
+    const issued = await this.request<Partial<AiGatewayToken>>('/app/ai-gateway/tokens', { method: 'POST' })
+    if (
+      !issued || typeof issued !== 'object'
+      || typeof issued.token !== 'string' || !issued.token.trim()
+      || typeof issued.expiresAt !== 'string' || !Number.isFinite(Date.parse(issued.expiresAt))
+      || typeof issued.baseUrl !== 'string' || !issued.baseUrl.trim()
+    ) {
+      throw new Error('SaaS 返回了无效的中转令牌。')
+    }
+    return { token: issued.token, expiresAt: issued.expiresAt, baseUrl: issued.baseUrl.trim().replace(/\/+$/, '') }
+  }
+
+  /** 中转额度状态（未配置/无订阅记录时 data 可能为 null）。 */
+  async aiGatewayStatus(): Promise<AiGatewayStatus | null> {
+    await this.initialize()
+    return this.request<AiGatewayStatus | null>('/app/ai-gateway/status')
   }
 
   async updateNotificationPreferences(input: Partial<NotificationPreferences>): Promise<NotificationPreferences> {
@@ -907,7 +1017,7 @@ export class SaasClient {
     this.stopLoopbackServer()
     await this.cancelPendingQrLogin()
     this.pendingAdmission = null
-    const refreshToken = await this.credentials.getPlainText(REFRESH_TOKEN_KEY)
+    const refreshToken = await this.credentials.getSecureText(REFRESH_TOKEN_KEY)
     if (refreshToken) {
       await this.publicRequest('/app/auth/logout', {
         method: 'POST',
@@ -1178,7 +1288,7 @@ export class SaasClient {
   }
 
   private async restoreSession(): Promise<void> {
-    const refreshToken = await this.credentials.getPlainText(REFRESH_TOKEN_KEY)
+    const refreshToken = await this.credentials.getSecureText(REFRESH_TOKEN_KEY)
     if (!refreshToken) return
     try {
       await this.refresh(refreshToken)
@@ -1327,7 +1437,7 @@ export class SaasClient {
     this.subscriptionLoadedAt = 0
     this.subscriptionRetryAfter = 0
     this.subscriptionPromise = null
-    await this.credentials.setPlainText(REFRESH_TOKEN_KEY, data.refreshToken)
+    await this.credentials.setSecureText(REFRESH_TOKEN_KEY, data.refreshToken)
     await this.credentials.setPlainText(ACCOUNT_PROFILE_KEY, JSON.stringify({
       userId: data.user.id,
       email: data.user.email,
@@ -1380,19 +1490,21 @@ export class SaasClient {
   }
 
   private async deviceKey(): Promise<string> {
-    // 设备标识锚定到硬件（IOPlatformUUID）：重装应用、清空应用数据后仍是同一台设备，
-    // 避免同一台机器在服务端裂变成多行设备记录。凭据存储里的旧随机 key 会被
-    // 硬件锚定值取代（下一次登录 UPSERT 到新 key，旧设备行自然沉寂）。
+    // 设备标识锚定到硬件（macOS: IOPlatformUUID / Windows: MachineGuid）：
+    // 重装应用、清空应用数据后仍是同一台设备，避免同一台机器在服务端裂变
+    // 成多行设备记录。凭据存储里的旧随机 key 会被硬件锚定值取代（下一次
+    // 登录 UPSERT 到新 key，旧设备行由服务端清理任务归档）。
     const stable = hardwareDeviceKey()
     if (stable) {
       const existing = await this.credentials.getPlainText(DEVICE_KEY_KEY)
       if (existing !== stable) await this.credentials.setPlainText(DEVICE_KEY_KEY, stable)
       return stable
     }
-    // 兜底：读不到硬件标识（异常系统）时退回随机 key。
+    // 兜底：读不到硬件标识（异常系统）时退回随机 key，前缀跟随当前平台。
+    const prefix = process.platform === 'win32' ? 'win-' : 'mac-'
     const existing = await this.credentials.getPlainText(DEVICE_KEY_KEY)
-    if (existing && existing.startsWith('hw-')) return existing
-    const value = `hw-${randomUUID()}`
+    if (existing && existing.startsWith(prefix)) return existing
+    const value = `${prefix}${randomUUID()}`
     await this.credentials.setPlainText(DEVICE_KEY_KEY, value)
     return value
   }
@@ -1401,7 +1513,7 @@ export class SaasClient {
     this.requireLogin()
     let response = await this.send(path, config, this.accessToken!)
     if (response.status === 401) {
-      const refreshToken = await this.credentials.getPlainText(REFRESH_TOKEN_KEY)
+      const refreshToken = await this.credentials.getSecureText(REFRESH_TOKEN_KEY)
       if (!refreshToken) throw new Error('登录已过期，请重新登录。')
       await this.refresh(refreshToken)
       response = await this.send(path, config, this.accessToken!)
@@ -1413,7 +1525,7 @@ export class SaasClient {
     this.requireLogin()
     let response = await this.send(path, config, this.accessToken!)
     if (response.status === 401) {
-      const refreshToken = await this.credentials.getPlainText(REFRESH_TOKEN_KEY)
+      const refreshToken = await this.credentials.getSecureText(REFRESH_TOKEN_KEY)
       if (!refreshToken) throw new Error('登录已过期，请重新登录。')
       await this.refresh(refreshToken)
       response = await this.send(path, config, this.accessToken!)

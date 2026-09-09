@@ -67,8 +67,16 @@ export interface DocumentIndexBackfillWorkerOptions {
   maxEnqueuePerScan?: number;
   /** 全量重扫周期（游标回绕）；0 表示每轮扫描都从头重走（测试用）。 */
   rescanMs?: number;
-  /** Room 记忆项投影（contextRoomService.listMemoryItems）；缺省则跳过记忆来源。 */
+  /**
+   * Room 记忆项投影（Room 归属清单，候选与复检默认源）；缺省则跳过记忆来源。
+   * 候选生成只用它：禁用/晋升未回链的快照条目不再产生新标记。
+   */
   listMemoryItems?: (roomId: string) => Array<{ id: string; content: string; type: string }>;
+  /**
+   * 复检存在性判定源（含 data.memoryItems 快照条目——禁用 shadow 与 legacy id）：
+   * 归属清单 ∪ 快照条目，防止已挂标记被误摘（memory_missing）。缺省回退 listMemoryItems。
+   */
+  listAllMemoryItems?: (roomId: string) => Array<{ id: string; content: string; type: string }>;
 }
 
 interface ScanCursor {
@@ -259,6 +267,7 @@ export class DocumentIndexBackfillWorker {
 
     const deterministic = matchDeterministic(targets, allCandidates);
     let llmPlanned: PlannedIndexMark[] = [];
+    let llmDegraded = false;
     const remaining = targets.filter((target) => !deterministic.has(target.ordinal));
     if (remaining.length && this.llm?.available) {
       try {
@@ -293,6 +302,7 @@ export class DocumentIndexBackfillWorker {
           });
         }
       } catch (error) {
+        llmDegraded = true;
         this.logger.warn(
           {
             event: "document.index-backfill.llm_degraded",
@@ -309,7 +319,14 @@ export class DocumentIndexBackfillWorker {
       paragraphOrdinal: ordinal,
       candidate,
     }));
-    if (!initialPlanned.length && !llmPlanned.length) return { marks: 0 };
+    if (!initialPlanned.length && !llmPlanned.length) {
+      // LLM 判决失败且确定性无命中 = 本轮空转：按可重试错误定稿走退避重试，
+      // 否则任务正常完成后，下一次 LLM 机会要等重读触发（30min 冷却）或 24h
+      // 全量重扫。确定性有命中或 LLM 正常判空时仍正常完成（前者落库会 bump
+      // updatedAt，游标扫描自然安排复检）。
+      if (llmDegraded) throw new Error("index backfill LLM judge degraded with no deterministic match");
+      return { marks: 0 };
+    }
 
     // CAS 落库：每轮重读重算确定性匹配；LLM 结论按段落 blockId 对位重放，
     // 段落已不存在或已被标记则丢弃。
@@ -483,9 +500,9 @@ export class DocumentIndexBackfillWorker {
     throw lastError;
   }
 
-  /** 记忆项读取（复检用）；抛错返回 null 表示不可判定，不据此摘除。 */
+  /** 记忆项读取（复检用，含快照条目）；抛错返回 null 表示不可判定，不据此摘除。 */
   private readMemoryItems(roomId: string): Array<{ id: string; content: string; type: string }> | null {
-    const listMemoryItems = this.options.listMemoryItems;
+    const listMemoryItems = this.options.listAllMemoryItems ?? this.options.listMemoryItems;
     if (!listMemoryItems) return null;
     try {
       return listMemoryItems(roomId);
@@ -589,12 +606,18 @@ export class DocumentIndexBackfillWorker {
   }
 
   private complete(jobId: string, result: Record<string, unknown>): void {
+    // 定稿只认领自己抢到的 running 行：入队会先删后插同 id（见
+    // enqueueDocumentIndexBackfill），running 行可能已被替换成新的 pending 行，
+    // 不加守护会把新任务没跑就写成 completed。
     this.db.update(jobs).set({
       status: "completed",
       result,
       error: null,
       updatedAt: new Date(),
-    }).where(eq(jobs.id, jobId)).run();
+    }).where(and(
+      eq(jobs.id, jobId),
+      eq(jobs.status, "running"),
+    )).run();
   }
 
   private handleProcessError(
@@ -608,7 +631,10 @@ export class DocumentIndexBackfillWorker {
         result: { skipped: error.reason },
         error: null,
         updatedAt: new Date(),
-      }).where(eq(jobs.id, job.id)).run();
+      }).where(and(
+        eq(jobs.id, job.id),
+        eq(jobs.status, "running"),
+      )).run();
       return;
     }
     if (error instanceof DocumentServiceError
@@ -625,7 +651,10 @@ export class DocumentIndexBackfillWorker {
       payload: { ...payload, attempts },
       error: { message, attempts },
       updatedAt: new Date(),
-    }).where(eq(jobs.id, job.id)).run();
+    }).where(and(
+      eq(jobs.id, job.id),
+      eq(jobs.status, "running"),
+    )).run();
     const bindings = { event: "document.index-backfill.failed", jobId: job.id, attempts, error: message };
     if (terminal) this.logger.error(bindings, "document index backfill job failed permanently");
     else this.logger.warn(bindings, "document index backfill job scheduled for retry");

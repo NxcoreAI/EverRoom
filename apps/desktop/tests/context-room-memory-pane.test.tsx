@@ -105,7 +105,7 @@ describe('MemoryPane applied entities', () => {
     let renderer: TestRenderer.ReactTestRenderer
     await act(async () => {
       renderer = TestRenderer.create(
-        <MemoryPane room={roomWithPeople()} onOpenMemory={() => undefined} onUpdateRoom={() => undefined} onOpenRoom={() => undefined} />,
+        <MemoryPane room={roomWithPeople()} onUpdateRoom={() => undefined} onOpenRoom={() => undefined} />,
       )
     })
 
@@ -132,7 +132,7 @@ describe('MemoryPane applied entities', () => {
     let renderer: TestRenderer.ReactTestRenderer
     await act(async () => {
       renderer = TestRenderer.create(
-        <MemoryPane room={roomWithPeople()} onOpenMemory={() => undefined} onUpdateRoom={() => undefined} onOpenRoom={() => undefined} />,
+        <MemoryPane room={roomWithPeople()} onUpdateRoom={() => undefined} onOpenRoom={() => undefined} />,
       )
     })
 
@@ -160,7 +160,7 @@ describe('MemoryPane applied entities', () => {
       renderer = TestRenderer.create(
         <MemoryPane
           room={roomWithPeople()}
-          onOpenMemory={() => undefined}
+         
           onUpdateRoom={() => undefined}
           onOpenRoom={() => undefined}
           onOpenSource={onOpenSource}
@@ -188,7 +188,7 @@ describe('MemoryPane applied entities', () => {
     let renderer: TestRenderer.ReactTestRenderer
     await act(async () => {
       renderer = TestRenderer.create(
-        <MemoryPane room={room} onOpenMemory={() => undefined} onUpdateRoom={() => undefined} />,
+        <MemoryPane room={room} onUpdateRoom={() => undefined} />,
       )
     })
 
@@ -224,7 +224,7 @@ describe('MemoryPane applied entities', () => {
     let renderer: TestRenderer.ReactTestRenderer
     await act(async () => {
       renderer = TestRenderer.create(
-        <MemoryPane room={roomWithPeople()} onOpenMemory={() => undefined} onUpdateRoom={() => undefined} onOpenRoom={() => undefined} />,
+        <MemoryPane room={roomWithPeople()} onUpdateRoom={() => undefined} onOpenRoom={() => undefined} />,
       )
     })
 
@@ -253,7 +253,7 @@ describe('MemoryPane applied entities', () => {
       renderer = TestRenderer.create(
         <MemoryPane
           room={roomWithPeople()}
-          onOpenMemory={() => undefined}
+         
           onUpdateRoom={() => undefined}
           onOpenRoom={onOpenRoom}
         />,
@@ -276,7 +276,7 @@ describe('MemoryPane applied entities', () => {
     let renderer: TestRenderer.ReactTestRenderer
     await act(async () => {
       renderer = TestRenderer.create(
-        <MemoryPane room={roomWithPeople()} onOpenMemory={() => undefined} onUpdateRoom={() => undefined} onOpenRoom={() => undefined} />,
+        <MemoryPane room={roomWithPeople()} onUpdateRoom={() => undefined} onOpenRoom={() => undefined} />,
       )
     })
 

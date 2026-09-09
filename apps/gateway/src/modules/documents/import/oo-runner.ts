@@ -1,9 +1,11 @@
 import type { OpenConnectorCliConfig } from "../../../config.js";
-import { runOo } from "../../agent/open-connector-tools.js";
+import { envelopeData } from "@nxcore/connectors-module/open-connector-http-client.js";
+import { runOoHttp, type OoHttpRunner } from "@nxcore/connectors-module/open-connector-tools.js";
 
 /**
- * 导入链路专用的 OpenConnector 调用层：只做读操作（search / apps / run 只读
- * action），错误统一分类成 ImportConnectorError，供上层把鉴权缺失降级为
+ * 导入链路专用的 OpenConnector 调用层：只做读操作（apps / run 只读 action），
+ * 走连接器统一后的 HTTP 传输缝（runOoHttp → 本地 OpenConnector runtime），
+ * 错误统一分类成 ImportConnectorError，供上层把鉴权缺失降级为
  * "导入连接未建立"而不是半份结果。
  */
 export type ImportConnectorErrorCode =
@@ -12,8 +14,8 @@ export type ImportConnectorErrorCode =
   | "action_not_found"
   | "invalid_input"
   | "timeout"
-  | "cli_unavailable"
-  | "cli_error";
+  | "connector_unavailable"
+  | "connector_error";
 
 export class ImportConnectorError extends Error {
   readonly code: ImportConnectorErrorCode;
@@ -53,14 +55,17 @@ function parseConnectorApps(value: unknown): ImportConnectorApp[] {
   const root = objectValue(value);
   const items = Array.isArray(value)
     ? value
-    : Array.isArray(root.connections)
-      ? root.connections
-      : Array.isArray(root.apps)
-        ? root.apps
-        : [];
+    : Array.isArray(root.data)
+      ? root.data
+      : Array.isArray(root.connections)
+        ? root.connections
+        : Array.isArray(root.apps)
+          ? root.apps
+          : [];
   return items.flatMap((item) => {
     const app = objectValue(item);
-    const connectionName = textValue(app.connectionName) ?? textValue(app.name);
+    // HTTP /v1/apps 条目的连接名在 alias；旧 CLI 形状用 connectionName/name。
+    const connectionName = textValue(app.connectionName) ?? textValue(app.alias) ?? textValue(app.name);
     if (!connectionName) return [];
     return [{
       connectionName,
@@ -77,6 +82,20 @@ function usableApps(apps: ImportConnectorApp[]): ImportConnectorApp[] {
 
 function classifyConnectorError(error: unknown): ImportConnectorError {
   const message = error instanceof Error ? error.message : String(error);
+  // OpenConnectorHttpError 携带 status/errorCode，优先按 HTTP 语义分类。
+  const status = (error as { status?: unknown }).status;
+  if (status === 401 || status === 403) {
+    return new ImportConnectorError("authentication_required", message);
+  }
+  if (status === 404) {
+    return new ImportConnectorError("action_not_found", message);
+  }
+  if (status === 400) {
+    return new ImportConnectorError("invalid_input", message);
+  }
+  if (status === 408) {
+    return new ImportConnectorError("timeout", message);
+  }
   if (/oauth|unauthori[sz]ed|forbidden|missing scope|insufficient scope|token.*expired|HTTP 401|HTTP 403/i.test(message)) {
     return new ImportConnectorError("authentication_required", message);
   }
@@ -92,34 +111,35 @@ function classifyConnectorError(error: unknown): ImportConnectorError {
   if (/timed? out/i.test(message)) {
     return new ImportConnectorError("timeout", message);
   }
-  if (/ENOENT|not found|spawn/i.test(message)) {
-    return new ImportConnectorError("cli_unavailable", message);
+  if (/连接失败|fetch failed|ECONN|ENOTFOUND|network|socket|UND_ERR/i.test(message)) {
+    return new ImportConnectorError("connector_unavailable", message);
   }
-  return new ImportConnectorError("cli_error", message);
+  return new ImportConnectorError("connector_error", message);
 }
 
-/** 可注入的 action 执行器（生产为 oo CLI 子进程；测试注入 fake）。 */
+/** 可注入的 action 执行器（生产走 runOoHttp；测试注入 fake）。 */
 export type ImportActionRunner = typeof runImportConnectorAction;
 
 export async function runImportConnectorAction(
   config: OpenConnectorCliConfig,
   call: ImportConnectorActionCall,
   signal?: AbortSignal,
-  runOoFn: (config: OpenConnectorCliConfig, arguments_: string[], signal?: AbortSignal) => Promise<unknown> = runOo,
+  runHttpFn: OoHttpRunner = runOoHttp,
 ): Promise<unknown> {
   try {
-    const connectionName = await resolveImportConnectionName(config, call.service, call.connectionName, signal, runOoFn);
-    return await runOoFn(
+    const connectionName = await resolveImportConnectionName(config, call.service, call.connectionName, signal, runHttpFn);
+    const envelope = await runHttpFn(
       config,
-      [
-        "connector", "run", call.service,
-        "--action", call.action,
-        "--data", JSON.stringify(call.input),
-        "--connection-name", connectionName,
-        "--json",
-      ],
+      {
+        kind: "run",
+        service: call.service,
+        action: call.action,
+        input: call.input,
+        connectionName,
+      },
       signal,
     );
+    return envelopeData(envelope);
   } catch (error) {
     if (error instanceof ImportConnectorError) throw error;
     throw classifyConnectorError(error);
@@ -131,11 +151,11 @@ export async function resolveImportConnectionName(
   service: string,
   requested?: string,
   signal?: AbortSignal,
-  runOoFn: (config: OpenConnectorCliConfig, arguments_: string[], signal?: AbortSignal) => Promise<unknown> = runOo,
+  runHttpFn: OoHttpRunner = runOoHttp,
 ): Promise<string> {
   let apps: unknown;
   try {
-    apps = await runOoFn(config, ["connector", "apps", service, "--json"], signal);
+    apps = await runHttpFn(config, { kind: "apps", service }, signal);
   } catch (error) {
     throw classifyConnectorError(error);
   }

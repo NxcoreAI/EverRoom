@@ -124,13 +124,20 @@ export const PixiForceGraphCanvas = forwardRef<PixiForceGraphCanvasHandle, PixiF
     let renderer: PixiForceGraphRenderer | null = null
 
     try {
+      // 锚点模式：positions 传入的是"非锚点次序"的布局缓冲，这里换出一张
+      // 全节点尺寸的坐标表交给渲染层，锚点槽位由渲染层按 父节点+偏移 写入。
+      const hasAnchors = nodes.some((node) => node.anchor)
+      const resolvedPositions = hasAnchors
+        ? new Float32Array(nodes.length * 2)
+        : positions
       const nextRenderer = createPixiForceGraphRenderer({
         centerOnMount,
         dependencies: PIXI_DEPENDENCIES,
         edges,
         host: host as unknown as Parameters<typeof createPixiForceGraphRenderer>[0]['host'],
         nodes,
-        positions,
+        positions: resolvedPositions,
+        layoutPositions: hasAnchors ? positions : undefined,
         revision,
         selectedIndex: selectedId ? nodes.findIndex((node) => node.id === selectedId) : null,
         selectedEdgeId,

@@ -14,6 +14,7 @@ import {
   Laptop,
   Mic,
   MonitorSpeaker,
+  Plug,
   Puzzle,
   RefreshCw,
   ShieldCheck,
@@ -27,6 +28,7 @@ import { useEffect, useState } from 'react'
 import QRCode from 'qrcode'
 
 import { useAccount } from '@/state/AccountContext'
+import { ConnectorModeSection } from '@/components/settings/ConnectorModeSection'
 import { loadRealitySettings, saveRealitySettings, type RealitySettings } from '@/state/realitySettings'
 import {
   loadDocumentCursorCompletionSettings,
@@ -35,7 +37,7 @@ import {
 } from '@/state/documentCursorCompletionSettings'
 import appleLogo from '@/assets/apple-logo.svg'
 import googleLogo from '@/assets/google-logo.svg'
-import type { CloudOidcProvider } from '../../../../shared/sources'
+import { formatLlmUsd, type AiGatewayStatus, type CloudOidcProvider } from '../../../../shared/sources'
 import type { AccountKeyringStatus, CloudDevice, PerceptionSettings, WindowScreenshotStatus } from '../../../../shared/sources'
 import type { BrowserExtensionStatus } from '../../../../shared/browser-extension'
 import type { NotificationPreferences } from '../../../../shared/notifications'
@@ -46,12 +48,13 @@ import { LocalModelSettingsSection } from '@/components/settings/LocalModelSetti
 import { LocalAgentSettingsSection } from '@/components/settings/LocalAgentSettingsSection'
 import { UsageAndBudgetSettingsSection } from '@/components/settings/UsageAndBudgetSettingsSection'
 import { RuntimeConfigSettingsSection } from '@/components/settings/RuntimeConfigSettingsSection'
-import { InvitationCodeField, useInvitationCode } from '@/components/account/InvitationCodeField'
+import { RedeemCodeField, useRedeemCode } from '@/components/account/RedeemCodeField'
 import { QrLoginPanel } from '@/components/account/QrLoginPanel'
 import './SettingsPage.css'
 
 const SETTINGS_NAV = [
   { id: 'settings-account', label: 'surface:settings.navigationAccount', description: 'surface:settings.navigationAccountDescription', icon: Cloud },
+  { id: 'settings-connector-mode', label: 'surface:settings.connectorModeTitle', description: 'surface:settings.connectorModeNavDescription', icon: Plug },
   { id: 'settings-notifications', label: 'surface:settings.notifications', description: 'surface:settings.notificationsDescription', icon: Bell },
   { id: 'settings-models', label: 'surface:settings.navigationModels', description: 'surface:settings.navigationModelsDescription', icon: Brain },
   { id: 'settings-runtime-config', label: 'surface:settings.navigationRuntimeConfig', description: 'surface:settings.navigationRuntimeConfigDescription', icon: ShieldCheck },
@@ -143,7 +146,8 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
   const [extensionError, setExtensionError] = useState<string | null>(null)
   const [notificationPreferences, setNotificationPreferences] = useState<NotificationPreferences | null>(null)
   const [notificationBusy, setNotificationBusy] = useState(false)
-  const invitation = useInvitationCode()
+  const [aiRelayStatus, setAiRelayStatus] = useState<AiGatewayStatus | null>(null)
+  const redeemCode = useRedeemCode()
 
   useEffect(() => {
     const api = window.nxcore?.browserExtension
@@ -209,6 +213,25 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
       .then((preferences) => { if (!cancelled) setNotificationPreferences(preferences) })
       .catch(() => undefined)
     return () => { cancelled = true }
+  }, [account?.authenticated, account?.user?.id])
+
+  // LLM 中转余量：随订阅区拉取一次 + 额度尽事件即时刷新（保持最小 UI，无独立页面）。
+  useEffect(() => {
+    if (!account?.authenticated || !window.nxcore) {
+      setAiRelayStatus(null)
+      return
+    }
+    let cancelled = false
+    const refresh = () => {
+      void window.nxcore?.aiRelay.status()
+        .then((status) => { if (!cancelled) setAiRelayStatus(status) })
+        .catch(() => undefined)
+    }
+    refresh()
+    const removeListener = window.nxcore.aiRelay.onEvent((event) => {
+      if (event.type === 'quota-exhausted' || event.type === 'fallback-restored') refresh()
+    })
+    return () => { cancelled = true; removeListener() }
   }, [account?.authenticated, account?.user?.id])
 
   const updateNotificationPreference = (input: Partial<NotificationPreferences>) => {
@@ -315,13 +338,16 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
 
   const loginWithOidc = async (provider: CloudOidcProvider) => {
     if (!window.nxcore) return
-    let invitationCode:string|undefined
-    try { invitationCode=await invitation.prepare() } catch { return }
+    let redeemCodeValue:string|undefined
+    try { redeemCodeValue=await redeemCode.prepare() } catch { return }
     setPending(provider)
     try {
-      const nextAccount=await window.nxcore.account.loginWithOidc(provider,invitationCode)
+      const nextAccount=await window.nxcore.account.loginWithOidc(provider,redeemCodeValue)
       setAccount(nextAccount)
-      if(invitationCode&&nextAccount.registration)window.alert(t(nextAccount.registration.invitationApplied?'surface:settings.invitationCodeApplied':'surface:settings.invitationCodeExistingUser'))
+      if(redeemCodeValue&&nextAccount.registration){
+        window.alert(t(nextAccount.registration.invitationRejected==='pro_plan_active'?'surface:settings.redeemCodeProActive':'surface:settings.redeemCodeApplied'))
+        redeemCode.reset()
+      }
       try {
         window.sessionStorage.setItem('everroom:post-login-memory-check', '1')
         window.sessionStorage.setItem('everroom:post-login-room-check', '1')
@@ -330,7 +356,7 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
       }
       window.dispatchEvent(new CustomEvent('everroom-post-login-onboarding-check'))
     } catch (error) {
-      if(invitationCode&&error instanceof Error&&/invitation code/i.test(error.message))invitation.markInvalid()
+      if(redeemCodeValue&&error instanceof Error&&/invitation code/i.test(error.message))redeemCode.markInvalid()
       // The preload request interceptor reports the error globally.
     } finally {
       setPending(null)
@@ -700,6 +726,7 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
         ) : null}
       </section>
 
+      <ConnectorModeSection />
       <section id="settings-account" className="cloud-account-section settings-anchor-section" aria-labelledby="cloud-account-title">
         <header className="cloud-account-header">
           <span className="cloud-account-icon"><Cloud aria-hidden="true" /></span>
@@ -805,6 +832,27 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
                     })}
                   </small>
                 </div>
+                {aiRelayStatus?.configured && aiRelayStatus.llmCredits !== null ? (
+                  <div className="cloud-subscription-quota">
+                    <div>
+                      <span>{t('surface:settings.llmRemaining')}</span>
+                      <strong>{formatLlmUsd(aiRelayStatus.remainingCredits, locale)}</strong>
+                    </div>
+                    <progress
+                      aria-label={t('surface:settings.llmRemaining')}
+                      max={Math.max(1, aiRelayStatus.llmCredits)}
+                      value={Math.min(Math.max(0, aiRelayStatus.remainingCredits), aiRelayStatus.llmCredits)}
+                    />
+                    <small>
+                      {aiRelayStatus.remainingCredits <= 0
+                        ? t('surface:settings.llmQuotaExhausted')
+                        : t('surface:settings.usedUsedTotalTotal', {
+                            used: formatLlmUsd(Number(aiRelayStatus.usedCredits || '0'), locale),
+                            total: formatLlmUsd(aiRelayStatus.llmCredits, locale),
+                          })}
+                    </small>
+                  </div>
+                ) : null}
                 <div className="cloud-subscription-period">
                   <span><CalendarClock aria-hidden="true" />{t('surface:settings.periodEnds')}</span>
                   <strong>{formatPeriodEnd(account.subscription.periodEnd, locale)}</strong>
@@ -873,7 +921,7 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
           </div>
         ) : (
           <div className="cloud-login-content">
-            <InvitationCodeField value={invitation.code} state={invitation.state} open={invitation.open} disabled={isBusy} onChange={invitation.change} onToggle={()=>invitation.setOpen(value=>!value)}/>
+            <RedeemCodeField value={redeemCode.code} state={redeemCode.state} open={redeemCode.open} disabled={isBusy} onChange={redeemCode.change} onToggle={()=>redeemCode.setOpen(value=>!value)}/>
             <div className="social-login-grid" aria-label={t('surface:settings.quickSignIn')}>
               <button
                 className="social-login-button apple-login"
@@ -1033,7 +1081,7 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
           </div>
         </div>
         <div className="reality-setting-row">
-          <div><strong>{t('surface:settings.recordingSource')}</strong><small>{t('surface:settings.computerAudioRequiresMacosSystemPermission')}</small></div>
+          <div><strong>{t('surface:settings.recordingSource')}</strong><small>{t(window.nxcore?.platform === 'win32' ? 'surface:settings.computerAudioUnavailableOnWindows' : 'surface:settings.computerAudioRequiresMacosSystemPermission')}</small></div>
           <div className="segmented-control reality-source-setting" aria-label={t('surface:settings.realityPerceptionRecordingSource')}>
             <button type="button" data-active={String(realitySettings.audioSource === 'microphone')} onClick={() => updateRealitySettings({ audioSource: 'microphone' })}><Mic aria-hidden="true" />{t('surface:settings.microphone')}</button>
             <button type="button" data-active={String(realitySettings.audioSource === 'system')} disabled={window.nxcore?.platform !== 'darwin'} onClick={() => updateRealitySettings({ audioSource: 'system' })}><MonitorSpeaker aria-hidden="true" />{t('surface:settings.computerAudio')}</button>

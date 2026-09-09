@@ -44,7 +44,7 @@ import {
 } from "../src/modules/ingest/policy.js";
 import { truncateUtf8 } from "../src/modules/ingest/normalizers.js";
 import { IngestError } from "../src/modules/ingest/types.js";
-import { converterOfExtension } from "../src/modules/ingest/converters.js";
+import { converterOfExtension } from "@nxcore/connectors-module/converters.js";
 
 const temporaryDirectories: string[] = [];
 

@@ -1,0 +1,9 @@
+{
+  "$comment": "⚠️ 无 delta 增量 action（P0 结论，E3 不降级；待上游补 deltaLink 后升级）",
+  "action": "outlook.list_messages",
+  "input": { "mailFolderId": "inbox", "top": 25, "filter": null, "orderby": null, "select": null, "nextLink": null },
+  "output": {
+    "messages": [{ "id": "AAMkAGI...", "subject": "Re: Budget", "bodyPreview": "Approved.", "isRead": true, "receivedDateTime": "2026-08-19T09:30:00Z" }],
+    "nextLink": null
+  }
+}

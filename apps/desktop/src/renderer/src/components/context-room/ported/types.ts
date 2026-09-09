@@ -129,6 +129,12 @@ export interface ContextRoomMemoryItem {
   type: string;
   status: string;
   sources?: Array<{ type: string; name: string }>;
+  /** 关联的 MemoryCore 记忆 id：attribution 条目与晋升/惰性关联后的快照条目携带。 */
+  memoryId?: string;
+  /** 合并视图注入的归属条目标记（读时物化，不落快照）。 */
+  attributed?: boolean;
+  /** 晋升合成会话 id（防重复捕获；worker 回链后补 memoryId）。 */
+  promotionSessionId?: string;
 }
 
 export interface ContextRoomFileItem {

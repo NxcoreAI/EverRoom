@@ -18,10 +18,9 @@ import type {
 } from '../shared/memory'
 import type { IngestPipelines } from '../shared/ingest'
 import type { McpServersSnapshot } from '../shared/mcp'
-import type { CloudAccountStatus, DesktopRequestError, NxcoreDesktopApi, RoomAgentSelectionRewriteInput } from '../shared/sources'
+import type { AiRelayKeeperEventType, CloudAccountStatus, DesktopRequestError, NxcoreDesktopApi, RoomAgentSelectionRewriteInput } from '../shared/sources'
 import type { BrowserExtensionMessage, BrowserExtensionStatus } from '../shared/browser-extension'
 import { isCursorCompletionAgentErrorPayload } from '../shared/cursor-completion'
-import { DESKTOP_PAGE_MODE_ENV, resolveDesktopPageMode } from '../shared/page-mode'
 import {
   isDesktopLocale,
   translateDesktopMessage,
@@ -101,6 +100,22 @@ function rateLimitNotice(value: unknown): DesktopRequestError | null {
 }
 
 async function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
+  return invokeWithRecovery<T>(channel, args, 0)
+}
+
+/** 网关重启窗口期各桥接层经 getConnection() 抛出的"尚未就绪"——同样可自愈。 */
+function isGatewayNotReady(error: unknown): boolean {
+  const raw = error instanceof Error ? error.message : String(error)
+  return /尚未就绪|not ready/i.test(raw)
+}
+
+/**
+ * 网关瞬断（进程崩溃/重启）自愈：网络类失败或"尚未就绪"先让主进程拉起/恢复
+ * gateway 连接（in-flight 去重，风暴时只触发一次恢复），成功后重试原请求一次；
+ * 仍失败才走原有错误弹窗——把"永久弹窗等用户手动重启"变成"短暂等待后自愈"
+ * （issue #179）。
+ */
+async function invokeWithRecovery<T>(channel: string, args: unknown[], attempt: number): Promise<T> {
   try {
     const result = await ipcRenderer.invoke(channel, ...args) as T
     const notice = rateLimitNotice(result)
@@ -110,6 +125,14 @@ async function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
     throw new Error(notice.message)
   } catch (error) {
     if (error instanceof Error && isRateLimitMessage(error.message)) throw error
+    if (attempt === 0 && (networkErrorDetail(channel, error) || isGatewayNotReady(error))) {
+      try {
+        const recovered = await ipcRenderer.invoke('gateway:recover') as { ok: boolean } | undefined
+        if (recovered?.ok) return await invokeWithRecovery<T>(channel, args, 1)
+      } catch {
+        // 恢复通道自身失败：走原始错误路径。
+      }
+    }
     const detail = requestError(channel, error)
     reportRequestError(detail)
     throw new Error(detail.message)
@@ -134,9 +157,19 @@ async function invokeQuietly<T>(channel: string, ...args: unknown[]): Promise<T>
 
 const api: NxcoreDesktopApi = {
   platform: process.platform,
-  pageMode: resolveDesktopPageMode(process.env[DESKTOP_PAGE_MODE_ENV]),
   app: {
     clearUserData: () => ipcRenderer.invoke('app:clear-user-data'),
+  },
+  window: {
+    minimize: () => ipcRenderer.invoke('window:minimize'),
+    toggleMaximize: () => ipcRenderer.invoke('window:toggle-maximize'),
+    close: () => ipcRenderer.invoke('window:close'),
+    getState: () => ipcRenderer.invoke('window:get-state'),
+    onMaximizedChange: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, maximized: boolean) => listener(maximized)
+      ipcRenderer.on('window:maximized-changed', handler)
+      return () => ipcRenderer.removeListener('window:maximized-changed', handler)
+    },
   },
   office: {
     testAvailable: Boolean(process.env.ELECTRON_RENDERER_URL),
@@ -217,8 +250,10 @@ const api: NxcoreDesktopApi = {
     runtimeStatus: () => invokeQuietly('nango-connector:runtime-status'),
     status: () => invoke('nango-connector:status'),
     providers: () => invoke('nango-connector:providers'),
+    oauthConfigs: () => invokeQuietly<string[] | null>('nango-connector:oauth-configs'),
     startAuthorization: (provider) => invoke('nango-connector:start-authorization', provider),
     authorizationStatus: (id) => invoke('nango-connector:authorization-status', id),
+    remoteAccount: (provider) => invoke('nango-connector:remote-account', provider),
     registerConnection: (input) => invoke('nango-connector:register-connection', input),
     createWebcalSubscription: (url) => invoke('nango-connector:create-webcal-subscription', url),
     disableConnection: (id) => invoke('nango-connector:disable-connection', id),
@@ -232,18 +267,25 @@ const api: NxcoreDesktopApi = {
     documents: (connectionId) => invoke('nango-connector:list-documents', connectionId),
     document: (connectionId, documentId) => invoke('nango-connector:read-document', connectionId, documentId),
     records: (connectionId, type) => invoke('nango-connector:list-records', connectionId, type),
+    recordTotals: (connectionId) => invoke('nango-connector:record-totals', connectionId),
   },
   cliConnector: {
-    status: () => invokeQuietly('cli-connector:status'),
-    execute: (input) => invokeQuietly('cli-connector:execute', input),
-    cancel: (requestId) => invokeQuietly('cli-connector:cancel', requestId),
-    openConsole: () => invokeQuietly('cli-connector:open-console'),
+    // 通道名与主进程 OPEN_CONNECTOR_CHANNELS 对齐（open-connector:*；统一改名前的
+    // cli-connector:* 在主进程无注册，调用会报 No handler registered）。
+    status: () => invokeQuietly('open-connector:status'),
+    execute: (input) => invokeQuietly('open-connector:execute', input),
+    cancel: (requestId) => invokeQuietly('open-connector:cancel', requestId),
+    openConsole: () => invokeQuietly('open-connector:open-console'),
+    /** 发起 provider OAuth（本地直调运行时 / SaaS 代发起），返回授权页 URL 并由主进程打开。 */
+    startAuthorization: (service: string) => invokeQuietly('open-connector:start-authorization', service),
+    mode: () => invokeQuietly('open-connector:mode'),
+    setMode: (mode: 'saas' | 'local') => invokeQuietly('open-connector:set-mode', mode),
     onEvent: (listener) => {
       const handleEvent = (_event: Electron.IpcRendererEvent, frame: Parameters<typeof listener>[0]) => {
         listener(frame)
       }
-      ipcRenderer.on('cli-connector:event', handleEvent)
-      return () => ipcRenderer.removeListener('cli-connector:event', handleEvent)
+      ipcRenderer.on('open-connector:event', handleEvent)
+      return () => ipcRenderer.removeListener('open-connector:event', handleEvent)
     },
   },
   agentAuth: {
@@ -261,6 +303,10 @@ const api: NxcoreDesktopApi = {
   },
   externalDocuments: {
     importSearch: (provider, query) => invoke('external-documents:import-search', provider, query),
+    importList: (provider, connectionName, cachedOnly) => invoke('external-documents:import-list', provider, connectionName, cachedOnly),
+    importBatch: (input) => invoke('external-documents:import-batch', input),
+    importBatchStatus: (batchId) => invokeQuietly('external-documents:import-batch-status', batchId),
+    cancelImportBatch: (batchId) => invoke('external-documents:cancel-import-batch', batchId),
     importPreview: (provider, remoteDocumentId) => invoke('external-documents:import-preview', provider, remoteDocumentId),
     importCommit: (input) => invoke('external-documents:import-commit', input),
     importRun: (runId) => invokeQuietly('external-documents:import-run', runId),
@@ -275,24 +321,8 @@ const api: NxcoreDesktopApi = {
     cancelExport: (exportId) => invoke('external-documents:cancel-export', exportId),
     listExports: (documentId) => invokeQuietly('external-documents:list-exports', documentId),
     importDiff: (roomImportId) => invoke('external-documents:import-diff', roomImportId),
+    importStructuredDiff: (roomImportId) => invoke('external-documents:import-structured-diff', roomImportId),
     searchExportTargets: (provider, query) => invoke('external-documents:search-export-targets', provider, query),
-  },
-  cliConnectorSync: {
-    status: () => invokeQuietly('cli-connector-sync:status'),
-    accounts: () => invokeQuietly('cli-connector-sync:accounts'),
-    promptProfiles: () => invokeQuietly('cli-connector-sync:prompt-profiles'),
-    jobs: () => invokeQuietly('cli-connector-sync:jobs'),
-    createJob: (input) => invokeQuietly('cli-connector-sync:create-job', input),
-    updateJob: (id, input) => invokeQuietly('cli-connector-sync:update-job', id, input),
-    runJob: (id) => invokeQuietly('cli-connector-sync:run-job', id),
-    setJobPaused: (id, paused, configVersion) =>
-      invokeQuietly('cli-connector-sync:set-job-paused', id, paused, configVersion),
-    archiveJob: (id, configVersion) => invokeQuietly('cli-connector-sync:archive-job', id, configVersion),
-    runs: (jobId) => invokeQuietly('cli-connector-sync:runs', jobId),
-    quarantine: (runId) => invokeQuietly('cli-connector-sync:quarantine', runId),
-    data: (query) => invokeQuietly('cli-connector-sync:data', query),
-    record: (id) => invokeQuietly('cli-connector-sync:record', id),
-    ingestRecords: (recordIds) => invokeQuietly('cli-connector-sync:ingest-records', recordIds),
   },
   mcp: {
     listServers: () => invoke('mcp:servers:list'),
@@ -377,6 +407,8 @@ const api: NxcoreDesktopApi = {
     cancelSubagentInvocation: (invocationId: string) =>
       invokeQuietly('context-rooms:cancel-subagent-invocation', invocationId),
     refreshBrief: (roomId: string) => invokeQuietly('context-rooms:refresh-brief', roomId),
+    promoteMemoryItem: (roomId: string, itemId: string) =>
+      invokeQuietly('context-rooms:promote-memory-item', roomId, itemId),
     overview: (roomId: string) => invokeQuietly('context-rooms:overview', roomId),
     refreshOverview: (roomId: string) => invokeQuietly('context-rooms:refresh-overview', roomId),
     listMails: (roomId: string) => invokeQuietly('context-rooms:list-mails', roomId),
@@ -408,6 +440,24 @@ const api: NxcoreDesktopApi = {
       const handle = (_event: Electron.IpcRendererEvent, status: CloudAccountStatus) => listener(status)
       ipcRenderer.on('account:admission-required', handle)
       return () => ipcRenderer.removeListener('account:admission-required', handle)
+    },
+  },
+  aiRelay: {
+    status: () => invokeQuietly('ai-relay:status'),
+    onEvent: (listener: (event: { type: AiRelayKeeperEventType }) => void) => {
+      const handle = (_event: Electron.IpcRendererEvent, value: unknown) => {
+        const eventType = value && typeof value === 'object' ? (value as { type?: unknown }).type : null
+        if (eventType !== 'quota-exhausted' && eventType !== 'fallback-user' && eventType !== 'fallback-restored') return
+        listener({ type: eventType })
+      }
+      for (const channel of ['ai-relay:quota-exhausted', 'ai-relay:fallback-user', 'ai-relay:fallback-restored']) {
+        ipcRenderer.on(channel, handle)
+      }
+      return () => {
+        for (const channel of ['ai-relay:quota-exhausted', 'ai-relay:fallback-user', 'ai-relay:fallback-restored']) {
+          ipcRenderer.removeListener(channel, handle)
+        }
+      }
     },
   },
   notifications: {
@@ -590,6 +640,9 @@ const api: NxcoreDesktopApi = {
     createDocumentComment: (documentId, input) => invoke('documents:create-document-comment', documentId, input),
     resolveDocumentComment: (documentId, commentId, resolved) => invoke('documents:resolve-document-comment', documentId, commentId, resolved),
     deleteDocumentComment: (documentId, commentId) => invoke('documents:delete-document-comment', documentId, commentId),
+    getOverview: (documentId) => invoke('documents:get-overview', documentId),
+    generateOverview: (documentId) => invoke('documents:generate-overview', documentId),
+    getSectionPreview: (documentId, input) => invoke('documents:get-section-preview', documentId, input),
     restoreVersion: (documentId, version, baseVersion) =>
       invoke('documents:restore-version', documentId, version, baseVersion),
     resolveBlockReferences: (input) => invoke('documents:resolve-block-references', input),

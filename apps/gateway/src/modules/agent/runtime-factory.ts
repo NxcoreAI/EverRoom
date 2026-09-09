@@ -10,13 +10,9 @@ import { UnconfiguredAgentRuntime, type AgentRuntime } from "@nxcore/agent-runti
 import { bundledAgentDefinitionsDir, type GatewayConfig } from "../../config.js";
 import type { DocumentMcpHost } from "../documents/mcp-host.js";
 import { createDocumentPiToolsWithRoomBindings } from "../documents/pi-tools.js";
-import { createOpenConnectorPiTools } from "./open-connector-tools.js";
-import { createConnectorDataPiTools } from "../connectors/pi-tools.js";
-import { createNangoPiTools } from "../connectors/nango-agent-tools.js";
-import { createConnectorSyncAgentTools } from "../connectors/agent-tools.js";
-import type { ConnectorSyncService } from "../connectors/service.js";
-import type { ConnectorManager } from "../connectors/manager.js";
-import type { NangoExecutor } from "../connectors/nango-executor.js";
+import { createOpenConnectorPiTools } from "@nxcore/connectors-module/open-connector-tools.js";
+import type { FormatMappingService } from "../connectors/format-mapping-service.js";
+import type { ConnectorManager } from "@nxcore/connectors-module/manager.js";
 import type { DiaryAgentGenerator } from "../diary/agent-generator.js";
 import { createWebSearchPiTools } from "./web-search-tools.js";
 import { OpenAiCompletionAgentRuntime } from "./openai-completion-runtime.js";
@@ -102,8 +98,6 @@ export function createAgentRuntime(
   config: GatewayConfig,
   mcpHost: DocumentMcpHost,
   knowledge?: AgentRuntimeIntegrationOptions,
-  connectorSync?: ConnectorSyncService,
-  nango?: { manager: ConnectorManager; executor: NangoExecutor } | null,
 ): AgentRuntime {
   const bundle = builtin(BUILTIN_AGENT_IDS.primary);
   if (config.agentRuntime === "fake") return new FakeAgentRuntime();
@@ -125,10 +119,7 @@ export function createAgentRuntime(
     tools: [
       ...(knowledge?.tools ?? []),
       ...createDocumentPiToolsWithRoomBindings(mcpHost, routedRoomByRun),
-      ...(config.cliConnectorAgentMode === "local" && connectorSync
-        ? createConnectorDataPiTools(connectorSync, config.cliConnectorSyncOwnerId ?? "local-user")
-        : config.cliConnector ? createOpenConnectorPiTools(config.cliConnector, undefined, knowledge?.externalCalls) : []),
-      ...(nango ? createNangoPiTools(nango.manager, nango.executor, knowledge?.externalCalls) : []),
+      ...(config.cliConnector ? createOpenConnectorPiTools(config.cliConnector, undefined, knowledge?.externalCalls) : []),
       ...(config.webSearch && knowledge?.agentResolver
         ? createWebSearchPiTools(knowledge.agentResolver, knowledge.externalCalls)
         : []),
@@ -162,28 +153,6 @@ export function createAgentRuntime(
   });
 }
 
-export function createConnectorSyncAgentRuntime(
-  config: GatewayConfig,
-  connectorSync: ConnectorSyncService,
-): AgentRuntime | null {
-  const bundle = builtin(BUILTIN_AGENT_IDS.connectorSync);
-  if (config.agentRuntime === "fake" || !isPiRuntimeConfigured(config.backgroundPi) || !config.cliConnector) return null;
-  const { memory: _memory, ...pi } = config.backgroundPi!;
-  return new PiAgentRuntime({
-    ...withAgentDirectories(config, BUILTIN_AGENT_IDS.connectorSync, {
-      ...pi,
-      includeBashTool: false,
-      maxToolCallsPerRun: 128,
-      runtimeRole: "internal",
-      skillsEnabled: true,
-      skillPrompts: bundle.skillPrompts,
-    }),
-    systemPrompt: bundle.systemPrompt,
-  }, {
-    tools: createConnectorSyncAgentTools(config.cliConnector, connectorSync),
-  });
-}
-
 export function createBackgroundAgentRuntime(config: GatewayConfig): AgentRuntime {
   const bundle = builtin(BUILTIN_AGENT_IDS.transcriptionSummary);
   if (config.agentRuntime === "fake") return new FakeAgentRuntime();
@@ -193,6 +162,10 @@ export function createBackgroundAgentRuntime(config: GatewayConfig): AgentRuntim
   const { memory: _memory, ...pi } = config.backgroundPi!;
   return new PiAgentRuntime({
     ...withAgentDirectories(config, BUILTIN_AGENT_IDS.transcriptionSummary, pi),
+    // 后台总结是机器对机器 JSON 提取：不继承 primary 的 reasoning——
+    // 推理既白烧输出预算（长转写 JSON 更易 maxTokens 截断），且部分代理
+    // （litellm anthropic 协议）直接拒绝 reasoning_effort 参数。
+    reasoning: "off",
     runtimeRole: "internal",
     skillsEnabled: true,
     skillPrompts: bundle.skillPrompts,
@@ -261,6 +234,38 @@ export function createIndexBackfillRuntime(config: GatewayConfig): AgentRuntime 
     sessionsDir: join(pi.sessionsDir, "index-backfill"),
     workingDirectory: join(pi.workingDirectory, "index-backfill"),
     agentDirectory: join(pi.agentDirectory, "index-backfill"),
+  });
+}
+
+/** 批量导入归房分类器：index-backfill 同款隔离内部 runtime（无工具、单次调用）。 */
+export function createImportClassifierRuntime(config: GatewayConfig): AgentRuntime | null {
+  if (config.agentRuntime === "fake" || !isPiRuntimeConfigured(config.backgroundPi)) return null;
+  const { mcp: _mcp, ...pi } = config.backgroundPi!;
+  return new PiAgentRuntime({
+    ...pi,
+    includeBashTool: false,
+    builtinTools: [],
+    maxToolCallsPerRun: 1,
+    runtimeRole: "internal",
+    sessionsDir: join(pi.sessionsDir, "import-classifier"),
+    workingDirectory: join(pi.workingDirectory, "import-classifier"),
+    agentDirectory: join(pi.agentDirectory, "import-classifier"),
+  });
+}
+
+/** 文档速览（文章级 AI 摘要）：index-backfill 同款隔离内部 runtime（无工具、单次调用）。 */
+export function createDocumentOverviewRuntime(config: GatewayConfig): AgentRuntime | null {
+  if (config.agentRuntime === "fake" || !isPiRuntimeConfigured(config.backgroundPi)) return null;
+  const { mcp: _mcp, ...pi } = config.backgroundPi!;
+  return new PiAgentRuntime({
+    ...pi,
+    includeBashTool: false,
+    builtinTools: [],
+    maxToolCallsPerRun: 1,
+    runtimeRole: "internal",
+    sessionsDir: join(pi.sessionsDir, "document-overview"),
+    workingDirectory: join(pi.workingDirectory, "document-overview"),
+    agentDirectory: join(pi.agentDirectory, "document-overview"),
   });
 }
 
@@ -401,8 +406,6 @@ export function registerPrimaryAgent(
   config: GatewayConfig,
   mcpHost: DocumentMcpHost,
   integrations: AgentRuntimeIntegrationOptions,
-  connectorSync?: ConnectorSyncService,
-  nango?: { manager: ConnectorManager; executor: NangoExecutor } | null,
 ): void {
   const bundle = builtin(BUILTIN_AGENT_IDS.primary);
   resolver.register(definition(config, {
@@ -413,26 +416,46 @@ export function registerPrimaryAgent(
     config,
     mcpHost,
     { ...integrations, agentResolver: resolver },
-    connectorSync,
-    nango,
   ));
 }
 
-export function registerConnectorSyncAgent(
+export function createConnectorMapperAgentRuntime(
+  config: GatewayConfig,
+  formatMappingService: FormatMappingService,
+): AgentRuntime | null {
+  const bundle = builtin(BUILTIN_AGENT_IDS.connectorMapper);
+  if (config.agentRuntime === "fake" || !isPiRuntimeConfigured(config.backgroundPi)) return null;
+  const { memory: _memory, mcp: _mcp, ...pi } = config.backgroundPi!;
+  return new PiAgentRuntime({
+    ...withAgentDirectories(config, BUILTIN_AGENT_IDS.connectorMapper, {
+      ...pi,
+      includeBashTool: false,
+      builtinTools: [],
+      maxToolCallsPerRun: 32,
+      runtimeRole: "internal",
+      skillsEnabled: true,
+      skillPrompts: bundle.skillPrompts,
+    }),
+    systemPrompt: bundle.systemPrompt,
+  }, {
+    tools: [formatMappingService.createSubmitTool()],
+  });
+}
+
+export function registerConnectorMapperAgent(
   resolver: AgentResolver,
   config: GatewayConfig,
-  connectorSync: ConnectorSyncService,
+  formatMappingService: FormatMappingService,
 ): void {
-  const bundle = builtin(BUILTIN_AGENT_IDS.connectorSync);
-  if (config.agentRuntime !== "fake" && (!config.backgroundPi || !config.cliConnector)) return;
+  const bundle = builtin(BUILTIN_AGENT_IDS.connectorMapper);
+  if (config.agentRuntime !== "fake" && !config.backgroundPi) return;
   resolver.register(definition(config, {
-    id: BUILTIN_AGENT_IDS.connectorSync,
+    id: BUILTIN_AGENT_IDS.connectorMapper,
     name: bundle.name,
     description: bundle.description,
-  }), () => createConnectorSyncAgentRuntime(config, connectorSync)
-    // 降级占位：注册守卫放行了但工厂因 AI 未配置返回 null（fake 模式除外），
-    // 同步请求得到 runtime_config_not_ready 而不是假成功。
-    ?? new UnconfiguredAgentRuntime(BUILTIN_AGENT_IDS.connectorSync));
+  }), () => createConnectorMapperAgentRuntime(config, formatMappingService)
+    // 未配置 AI 时注册占位：映射生成不可用，源保持 pending（不假装成功）。
+    ?? new UnconfiguredAgentRuntime(BUILTIN_AGENT_IDS.connectorMapper));
 }
 
 export function registerTranscriptionSummaryAgent(resolver: AgentResolver, config: GatewayConfig): void {

@@ -8,6 +8,9 @@ import type {
   DocumentOperationList,
   DocumentOperationStatus,
   DocumentOperationSummary,
+  DocumentOverviewView,
+  DocumentSectionPreviewInput,
+  DocumentSectionPreviewResult,
   DocumentVersionSummary,
   DocumentVersionListOptions,
   DocumentVersionSnapshot,
@@ -135,6 +138,24 @@ export class DocumentGatewayBridge {
     return this.request(`/v1/documents/${encodeURIComponent(documentId)}/comments/${encodeURIComponent(commentId)}`, {
       method: 'DELETE',
     }).then(() => undefined)
+  }
+
+  getDocumentOverview(documentId: string): Promise<DocumentOverviewView> {
+    return this.request(`/v1/documents/${encodeURIComponent(documentId)}/overview`)
+  }
+
+  generateDocumentOverview(documentId: string): Promise<DocumentOverviewView> {
+    return this.request(`/v1/documents/${encodeURIComponent(documentId)}/overview/generate`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    })
+  }
+
+  getSectionPreview(documentId: string, input: DocumentSectionPreviewInput): Promise<DocumentSectionPreviewResult> {
+    return this.request(`/v1/documents/${encodeURIComponent(documentId)}/section-preview`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    })
   }
 
   async versionChangeSummary(documentId: string, version: number): Promise<{ version: number; summary: string; source: 'ai' | 'local' }> {

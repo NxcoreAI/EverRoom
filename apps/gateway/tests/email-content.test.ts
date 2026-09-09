@@ -3,7 +3,7 @@ import {
   convertEmailBody,
   convertRawEmailToMarkdown,
   EMAIL_CONTENT_LIMITS,
-} from "../src/modules/ingest/email-content.js";
+} from "@nxcore/connectors-module/email-content.js";
 
 describe("email content conversion", () => {
   it("removes CSS, scripts, tracking pixels, Gmail quotes, and signatures while preserving GFM", () => {

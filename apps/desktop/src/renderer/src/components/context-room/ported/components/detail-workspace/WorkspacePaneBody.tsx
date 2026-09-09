@@ -3,6 +3,7 @@ import type { ContextRoomRecord, ContextRoomResource, ContextRoomWikiPageResourc
 import type { KnowledgeFileDto } from '../../../../../../../shared/knowledge';
 import type { DetailPane } from '../RoomIconSidebar';
 import {
+  LinkGraphPane,
   MailsPane,
   MemoryPane,
   RelationsPane,
@@ -27,7 +28,8 @@ export function WorkspacePaneBody({
   onRestoreDocument,
   onDeleteDocumentPermanently,
   onEmptyTrash,
-  onOpenMemory,
+  onOpenDocument,
+  linkGraphFocusNodeId,
   onOpenObject,
   onOpenSource,
   rooms,
@@ -50,7 +52,10 @@ export function WorkspacePaneBody({
   onRestoreDocument: (document: RoomDocument) => Promise<void>;
   onDeleteDocumentPermanently: (document: RoomDocument) => Promise<void>;
   onEmptyTrash: (roomId: string) => Promise<void>;
-  onOpenMemory: (id: string) => void;
+  /** 建联图谱等面板按文档 id 在右区打开文档。 */
+  onOpenDocument: (documentId: string) => void;
+  /** 索引 chip 跳转：建联图谱聚焦节点 id（memory:{id} / doc:{id}）。 */
+  linkGraphFocusNodeId?: string | null;
   onOpenObject: (target: WorkspaceObjectPreview) => void;
   onOpenSource: (source: RoomAppliedEntitySource) => void;
   rooms: ContextRoomRecord[];
@@ -99,10 +104,20 @@ export function WorkspacePaneBody({
     return (
       <MemoryPane
         room={room}
-        onOpenMemory={onOpenMemory}
         onUpdateRoom={onUpdateRoom}
         onOpenRoom={onOpenRoom}
         onOpenSource={onOpenSource}
+      />
+    );
+  }
+  if (pane === 'linkGraph') {
+    return (
+      <LinkGraphPane
+        room={room}
+        backendDocuments={backendDocuments}
+        trashedDocuments={trashedDocuments}
+        onOpenDocument={onOpenDocument}
+        focusNodeId={linkGraphFocusNodeId}
       />
     );
   }

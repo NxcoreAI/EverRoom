@@ -22,11 +22,42 @@ export function documentImportRoutes(service: DocumentImportService): FastifyPlu
         body: Type.Object({
           provider: providerSchema,
           query: Type.String({ minLength: 1, maxLength: 120 }),
+          connectionName: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         }, { additionalProperties: false }),
       },
     }, async (request, reply) => {
       try {
-        return await service.search(request.body.provider, request.body.query);
+        return await service.search(
+          request.body.provider,
+          request.body.query,
+          request.body.connectionName,
+        );
+      } catch (error) {
+        const mapped = errorPayload(error);
+        if (mapped) return reply.code(mapped.status).send(mapped.body);
+        throw error;
+      }
+    });
+
+    app.post("/v1/document-import/list", {
+      schema: {
+        tags: ["document-import"],
+        body: Type.Object({
+          provider: providerSchema,
+          connectionName: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          /** true = 只读上次列举缓存（面板打开即时回显）；未命中返回空列表。 */
+          cachedOnly: Type.Optional(Type.Boolean()),
+        }, { additionalProperties: false }),
+      },
+    }, async (request, reply) => {
+      try {
+        const { provider, connectionName, cachedOnly } = request.body;
+        if (cachedOnly) {
+          const cached = service.getCachedList(provider, connectionName);
+          if (cached) return cached;
+          return { provider, items: [], truncated: false, warnings: [], fetchedAt: null };
+        }
+        return await service.listAllDocuments(provider, connectionName);
       } catch (error) {
         const mapped = errorPayload(error);
         if (mapped) return reply.code(mapped.status).send(mapped.body);
@@ -40,11 +71,16 @@ export function documentImportRoutes(service: DocumentImportService): FastifyPlu
         body: Type.Object({
           provider: providerSchema,
           remoteDocumentId: Type.String(idText),
+          connectionName: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         }, { additionalProperties: false }),
       },
     }, async (request, reply) => {
       try {
-        return await service.preview(request.body.provider, request.body.remoteDocumentId);
+        return await service.preview(
+          request.body.provider,
+          request.body.remoteDocumentId,
+          request.body.connectionName,
+        );
       } catch (error) {
         const mapped = errorPayload(error);
         if (mapped) return reply.code(mapped.status).send(mapped.body);
@@ -138,6 +174,18 @@ export function documentImportRoutes(service: DocumentImportService): FastifyPlu
     }, async (request, reply) => {
       try {
         return await service.candidateDiff((request.params as { id: string }).id);
+      } catch (error) {
+        const mapped = errorPayload(error);
+        if (mapped) return reply.code(mapped.status).send(mapped.body);
+        throw error;
+      }
+    });
+
+    app.get("/v1/document-import/room-imports/:id/diff-structured", {
+      schema: { tags: ["document-import"] },
+    }, async (request, reply) => {
+      try {
+        return await service.candidateStructuredDiff((request.params as { id: string }).id);
       } catch (error) {
         const mapped = errorPayload(error);
         if (mapped) return reply.code(mapped.status).send(mapped.body);

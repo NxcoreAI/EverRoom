@@ -1,12 +1,12 @@
 {
   "name": "@nxcore/desktop",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "private": true,
   "type": "module",
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "node scripts/prepare-open-connector.mjs && node scripts/prepare-oo-cli.mjs && node scripts/prepare-lark-cli.mjs && node scripts/prepare-ntn.mjs && node scripts/prepare-genoffice-runtime.mjs && node scripts/dev.mjs",
-    "build": "node scripts/prepare-nango-runtime.mjs && node scripts/prepare-genoffice-runtime.mjs && electron-vite build",
+    "build": "node scripts/prepare-genoffice-runtime.mjs && electron-vite build",
     "prepare:genoffice": "node scripts/prepare-genoffice-runtime.mjs",
     "prepare:lark-cli": "node scripts/prepare-lark-cli.mjs",
     "typecheck": "tsc --noEmit",
@@ -65,12 +65,13 @@
     "remark-gfm": "^4.0.1",
     "tar-stream": "^3.2.1",
     "ws": "^8.18.3",
+    "@nxcore/connectors-module": "workspace:*",
     "ntn": "0.23.1"
   },
   "devDependencies": {
     "@electron/asar": "3.4.1",
     "@oomol-lab/oo-cli": "1.7.5",
-    "@oomol-lab/open-connector": "https://codeload.github.com/oomol-lab/open-connector/tar.gz/5719a69468c698c7cb8108e062ff64ecef8a2e65",
+    "@oomol-lab/open-connector": "git+https://code.vyitec.com/nexcore/everroom-openconnector.git#bd4213af4c96af24f1f6fa4a66765cb425a8291f",
     "@larksuite/cli": "1.0.93",
     "@sentry/vite-plugin": "5.4.0",
     "@types/better-sqlite3": "^9.6.0",
@@ -82,7 +83,7 @@
     "@types/tar-stream": "^3.1.4",
     "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^4.3.4",
-    "electron": "^39.2.7",
+    "electron": "^40.10.6",
     "electron-builder": "^26.0.12",
     "electron-vite": "^4.0.0",
     "react-test-renderer": "18.3.1",
@@ -183,15 +184,6 @@
         ]
       },
       {
-        "from": "build/nango-runtime",
-        "to": "nango",
-        "filter": [
-          "**/*",
-          "!**/.env*",
-          "!**/*.{map,ts,tsx,mts,cts}"
-        ]
-      },
-      {
         "from": "build/genoffice-runtime",
         "to": "genoffice",
         "filter": [
@@ -234,6 +226,20 @@
             "LICENSE",
             "prebuilds/darwin-arm64.node"
           ]
+        },
+        {
+          "from": "build/ntn",
+          "to": "ntn",
+          "filter": [
+            "**/*"
+          ]
+        },
+        {
+          "from": "build/lark-cli",
+          "to": "lark-cli",
+          "filter": [
+            "**/*"
+          ]
         }
       ]
     },
@@ -257,6 +263,13 @@
             "package.json",
             "LICENSE",
             "prebuilds/win32-x64.node"
+          ]
+        },
+        {
+          "from": "build/lark-cli",
+          "to": "lark-cli",
+          "filter": [
+            "**/*"
           ]
         }
       ]

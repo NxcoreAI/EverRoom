@@ -2,9 +2,11 @@ import { randomBytes } from 'node:crypto'
 import { mkdir } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 
 import { app } from 'electron'
+
+import { forgetProcessRecord, registerProcessRecord } from '../process-cleanup'
 
 /**
  * 托管 TencentDB Agent Memory(MemoryCore)HTTP gateway 的子进程管理器。
@@ -136,6 +138,9 @@ export class MemoryCoreSupervisor {
     this.child = child
     this.stopping = false
     child.stdin.end()
+    // pid 登记：父进程被强杀后残留实例占住 8420，下次启动 probe 会误判「复用
+    // 外部实例」并带不匹配 apiKey 静默 401（issue #179）。
+    registerProcessRecord(join(this.dataDirectory, 'runtime'), 'memory-core', child.pid, entryPath)
     child.stdout.setEncoding('utf8')
     child.stderr.setEncoding('utf8')
     const configuredLogLevel = memoryLogLevel()
@@ -143,6 +148,7 @@ export class MemoryCoreSupervisor {
     child.stderr.on('data', (chunk: string) => writeMemoryCoreOutput(configuredLogLevel, chunk, process.stderr))
     child.on('exit', (code, signal) => {
       this.child = null
+      forgetProcessRecord(join(this.dataDirectory, 'runtime'), 'memory-core')
       if (!this.stopping) {
         this.lastError = `MemoryCore 进程已退出（code=${String(code)}, signal=${String(signal)}）`
         console.error(this.lastError)
@@ -277,6 +283,16 @@ export class MemoryCoreSupervisor {
   }
 
   private killChild(child: ChildProcessWithoutNullStreams, signal: NodeJS.Signals): boolean {
+    // Windows 无负 PID 进程组语义，shutdown 的 process.kill(-pid) 必然失败落到
+    // 这里；detached 入口 fork 的孙进程也只有 taskkill /T 能整树回收。
+    if (process.platform === 'win32' && child.pid) {
+      try {
+        execFileSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' })
+        return true
+      } catch {
+        return false
+      }
+    }
     try {
       return child.kill(signal)
     } catch {

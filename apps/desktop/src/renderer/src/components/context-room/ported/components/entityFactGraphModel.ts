@@ -56,8 +56,9 @@ export interface EntityFactGraphData {
   rootId: string;
 }
 
-const ENTITY_LIMIT = 24;
-const FACT_LIMIT = 24;
+/** 安全上限（防极端规模冻结画布），非内容策划：正常 Room 应全量展示。 */
+const ENTITY_LIMIT = 500;
+const FACT_LIMIT = 500;
 /** Room 根节点（Room 本体），导出供详情区区分根节点与普通实体。 */
 export const ROOT_ID = 'entity:root';
 

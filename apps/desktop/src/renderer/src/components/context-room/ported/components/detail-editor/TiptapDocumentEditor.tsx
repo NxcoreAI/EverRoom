@@ -1,4 +1,4 @@
-import type { DocumentDiffResult, DocumentVersionSnapshot, RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract'
+import type { DocumentDiffResult, DocumentVersionSnapshot, ImportCandidateDiffView, RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract'
 import type { ResolveDocumentBlockReferencesInput } from '@nxcore/agent-contract'
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
 import Image from '@tiptap/extension-image'
@@ -7,7 +7,11 @@ import TaskList from '@tiptap/extension-task-list'
 import { TableKit } from '@tiptap/extension-table'
 import TableOfContents, { type TableOfContentData } from '@tiptap/extension-table-of-contents'
 import { DocumentExportStatus } from './DocumentExportStatus'
+import { DocumentOverviewCard } from './DocumentOverviewCard'
 import { ImportedCommentsPanel } from './ImportedCommentsPanel'
+import { useDocumentOverview } from './useDocumentOverview'
+import { CommentAnchors } from './commentAnchorDecorations'
+import { useDocumentAiReview } from './useDocumentAiReview'
 import { Markdown } from '@tiptap/markdown'
 import { TextSelection } from '@tiptap/pm/state'
 import { EditorContent, useEditor, type Editor, type JSONContent } from '@tiptap/react'
@@ -312,13 +316,22 @@ export function TiptapDocumentEditor({
   const revealedContinuationOperationId = useRef<string | null>(null)
   const handledBlockFocusKey = useRef<string | null>(null)
   const [saveState, setSaveState] = useState(backendDocument?.status === 'draft' ? 'Agent 正在写入' : '已保存')
-  const [historyView, setHistoryView] = useState<{ snapshot: DocumentVersionSnapshot; diff: DocumentDiffResult } | null>(null)
+  const [historyView, setHistoryView] = useState<{
+    snapshot: DocumentVersionSnapshot
+    diff: DocumentDiffResult
+    /** 导入候选 diff（版本时间轴"导入版本"卡片）：恢复按钮走 applyCandidate。 */
+    importCandidate?: ImportCandidateDiffView['candidate']
+  } | null>(null)
   const [restoringHistory, setRestoringHistory] = useState(false)
   const historyRestoreRequestRef = useRef(0)
   const [historyPanelCloseSignal, setHistoryPanelCloseSignal] = useState(0)
   const [historyRefreshSignal, setHistoryRefreshSignal] = useState(0)
-  const showHistoryDiff = useCallback((snapshot: DocumentVersionSnapshot, diff: DocumentDiffResult) => {
-    setHistoryView({ snapshot, diff })
+  const showHistoryDiff = useCallback((
+    snapshot: DocumentVersionSnapshot,
+    diff: DocumentDiffResult,
+    importCandidate?: ImportCandidateDiffView['candidate'],
+  ) => {
+    setHistoryView({ snapshot, diff, ...(importCandidate ? { importCandidate } : {}) })
   }, [])
   const clearHistoryDiff = useCallback(() => {
     setHistoryView(null)
@@ -521,6 +534,40 @@ export function TiptapDocumentEditor({
     const selectedHistory = historyView
     const documents = window.nxcore?.documents
     if (!selectedHistory || !documents || restoringHistory) return
+
+    // 导入候选：恢复按钮语义 = 应用此版本（applyCandidate），成功后刷新文档
+    // 与版本面板（与导入历史区的应用动作同链路）。
+    if (selectedHistory.importCandidate) {
+      const external = window.nxcore?.externalDocuments
+      if (!external) return
+      const requestDocumentId = documentId
+      const requestId = historyRestoreRequestRef.current + 1
+      historyRestoreRequestRef.current = requestId
+      const isCurrentRequest = () => (
+        historyRestoreRequestRef.current === requestId && documentIdRef.current === requestDocumentId
+      )
+      setRestoringHistory(true)
+      try {
+        await flushDocumentVersion()
+        if (!isCurrentRequest()) return
+        const applied = await external.applyCandidate(selectedHistory.importCandidate.roomImportId)
+        if (!isCurrentRequest()) return
+        setHistoryView(null)
+        removeDocumentDraft(requestDocumentId)
+        const latest = await documents.get(requestDocumentId)
+        if (isCurrentRequest() && latest) refreshAuthoritativeDocument(latest)
+        setOverviewRefreshSignal((value) => value + 1)
+        setHistoryRefreshSignal((value) => value + 1)
+        showToast({ title: t('contextRoom:importHistory.appliedAsVersion', { version: String(applied.version) }) })
+      } catch (error: unknown) {
+        if (isCurrentRequest()) {
+          showToast({ title: t('contextRoom:importHistory.applyFailed'), message: error instanceof Error ? error.message : undefined })
+        }
+      } finally {
+        if (isCurrentRequest()) setRestoringHistory(false)
+      }
+      return
+    }
     const requestDocumentId = documentId
     const requestId = historyRestoreRequestRef.current + 1
     historyRestoreRequestRef.current = requestId
@@ -644,6 +691,7 @@ export function TiptapDocumentEditor({
         resize: DOCUMENT_IMAGE_RESIZE_OPTIONS,
       }),
       StableBlockIds.configure({ documentId }),
+      CommentAnchors,
       documentReferenceFlashExtension(),
       DocumentBlockReference.configure({
         sourceRoomId: room.id,
@@ -782,6 +830,9 @@ export function TiptapDocumentEditor({
     historyRestoreRequestRef.current += 1
     setHistoryView(null)
     setRestoringHistory(false)
+    setOverviewExpanded(false)
+    overviewPrevStateRef.current = null
+    overviewAutoExpandedRef.current = false
   }, [documentId])
 
   useEffect(() => {
@@ -1373,6 +1424,44 @@ export function TiptapDocumentEditor({
 
   const [commentsOpen, setCommentsOpen] = useState(false)
 
+  // 历史 diff 模式下编辑器内容被隐藏（rect 归零），评论锚点会失真：进入 diff 时收起面板。
+  useEffect(() => {
+    if (historyView) setCommentsOpen(false)
+  }, [historyView])
+
+  const aiReview = useDocumentAiReview({
+    roomId: room.id,
+    documentId,
+    documentTitle: documentName,
+    backendDocument,
+  })
+
+  // 文档速览：首次打开自动生成一次；此后正文版本超过 generatedAtVersion
+  // 显示「已过期」，由用户手动重新生成。生成前 flush 本地保存锁权威版本。
+  const [overviewExpanded, setOverviewExpanded] = useState(false)
+  // 应用导入候选后正文被外部替换（服务端已清速览列）：bump 信号让速览重拉，
+  // 落回无速览态即自动对新正文重新生成。
+  const [overviewRefreshSignal, setOverviewRefreshSignal] = useState(0)
+  const overview = useDocumentOverview({
+    documentId,
+    backendDocument,
+    prepareDocument: flushDocumentVersion,
+    locked: editorLocked,
+    refreshSignal: overviewRefreshSignal,
+  })
+  // 生成完成后展开一次（每次挂载限一次），让首屏速览直接可见。
+  const overviewPrevStateRef = useRef<string | null>(null)
+  const overviewAutoExpandedRef = useRef(false)
+  useEffect(() => {
+    const state = overview.status.state
+    const previous = overviewPrevStateRef.current
+    overviewPrevStateRef.current = state
+    if (previous === 'generating' && state === 'ready' && !overviewAutoExpandedRef.current) {
+      overviewAutoExpandedRef.current = true
+      setOverviewExpanded(true)
+    }
+  }, [overview.status.state])
+
   const awaitingFirstContent = isAgentDocumentAwaitingContent(backendDocument)
     || Boolean(operationStreamPending && streamingDocument?.chunks.length === 0)
   return (
@@ -1411,6 +1500,7 @@ export function TiptapDocumentEditor({
             historyRefreshSignal={historyRefreshSignal}
             commentsOpen={commentsOpen}
             onToggleComments={() => setCommentsOpen((current) => !current)}
+            commentsDisabled={historyDiffActive}
           />
         ) : null}
       </div>
@@ -1456,7 +1546,7 @@ export function TiptapDocumentEditor({
               <X aria-hidden="true" />{t('contextRoom:documentHistory.exitDiff')}
             </button>
             <button className="context-room-history-diff-restore" type="button" disabled={restoringHistory} onClick={() => void restoreHistoryVersion()}>
-              <RotateCcw aria-hidden="true" />{t('contextRoom:documentHistory.restore')}
+              <RotateCcw aria-hidden="true" />{t(historyView.importCandidate ? 'contextRoom:importHistory.applyVersion' : 'contextRoom:documentHistory.restore')}
             </button>
           </div>
         ) : null}
@@ -1469,6 +1559,7 @@ export function TiptapDocumentEditor({
               snapshot={historyView.snapshot}
               diff={historyView.diff}
               currentTitle={backendDocument?.title ?? documentName}
+              rangeLabel={historyView.importCandidate ? t('contextRoom:importHistory.diffRangeExternal') : undefined}
               currentContent={backendDocument?.contentJson
                 ? stripDocumentTitle(backendDocument.contentJson).content
                 : undefined}
@@ -1499,20 +1590,32 @@ export function TiptapDocumentEditor({
                 }}
               />
             </div>
+            <DocumentOverviewCard
+              status={overview.status}
+              expanded={overviewExpanded}
+              onToggleExpanded={() => setOverviewExpanded((current) => !current)}
+              onRegenerate={overview.regenerate}
+              regenerateDisabled={!backendDocument || editorLocked || saveState === '正在保存...'}
+            />
           </>
         )}
         <div className={historyView ? 'context-room-history-editor-source' : undefined}>
           <EditorContent editor={editor} />
         </div>
         </div>
-        {commentsOpen && backendDocument ? (
-          <ImportedCommentsPanel
-            editor={editor}
-            roomId={backendDocument.roomId}
-            documentId={documentId}
-            onClose={() => setCommentsOpen(false)}
-          />
-        ) : null}
+        {/* 评论面板不依赖 backendDocument：文档列表闪断（rooms/gateway 抖动）会让它变 null，
+            一旦用它做挂载条件，面板会被反复卸载并把正文标记擦掉。编辑器在就常驻。 */}
+        <ImportedCommentsPanel
+          editor={editor}
+          roomId={backendDocument?.roomId ?? room.id}
+          documentId={documentId}
+          collapsed={!commentsOpen}
+          onOpen={() => setCommentsOpen(true)}
+          onClose={() => setCommentsOpen(false)}
+          aiReviewRunning={aiReview.running}
+          aiReviewDisabled={!backendDocument || writing || saveState === '正在保存...' || historyDiffActive}
+          onAiReview={() => void aiReview.start()}
+        />
         </div>
       </div>
       {editor && !editorLocked ? (
@@ -1544,7 +1647,15 @@ export function TiptapDocumentEditor({
         onChange={selectionRewrite.updateReplacementText}
         onRetry={selectionRewrite.retry}
       />
-      {editor ? <TiptapContentScale items={tableOfContents} /> : null}
+      {editor ? (
+        <TiptapContentScale
+          items={tableOfContents}
+          documentId={documentId}
+          editor={editor}
+          prepareDocument={flushDocumentVersion}
+          locked={editorLocked}
+        />
+      ) : null}
       {editor && referencePickerOpen && !editorLocked ? (
         <DocumentBlockReferencePicker
           roomId={room.id}

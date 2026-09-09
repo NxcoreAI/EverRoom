@@ -8,13 +8,13 @@ import type {
 
 export const BUILTIN_AGENT_IDS = {
   primary: "main",
-  connectorSync: "connector-sync",
   transcriptionSummary: "transcription-summary",
   diary: "diary",
   cursorCompletion: "cursor-completion",
   knowledge: "knowledge",
   webSearch: "web-search",
   ingestFilter: "ingest-filter",
+  connectorMapper: "connector-mapper",
 } as const;
 
 export type BuiltinAgentId = (typeof BUILTIN_AGENT_IDS)[keyof typeof BUILTIN_AGENT_IDS];

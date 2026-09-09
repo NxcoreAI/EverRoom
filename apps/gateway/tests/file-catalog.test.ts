@@ -6,13 +6,10 @@ import Fastify from "fastify";
 import type { TypeBoxTypeProvider } from "@fastify/type-provider-typebox";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createDatabase } from "../src/infrastructure/database/client.js";
-import { connectorCalendarEvents, connectorDocuments, connectorEmails } from "../src/infrastructure/database/schema.js";
-import type { GatewayConfig } from "../src/config.js";
 import { FilesService } from "../src/modules/files/service.js";
 import { storageRelPath } from "../src/modules/files/storage.js";
 import { filesRoutes } from "../src/modules/files/routes.js";
 import { FileClusteringService } from "../src/modules/files/clustering-service.js";
-import { ConnectorSyncService } from "../src/modules/connectors/service.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -184,59 +181,6 @@ describe("unified file catalog", () => {
     });
     expect(test.service.listCatalog().items.every((item) => item.sharedTitle === "2026 Launch Plan")).toBe(true);
     await clustering.dispose();
-    await test.service.dispose();
-    test.sqlite.close();
-  });
-
-  it("backfills connector documents without admitting mail or calendar records", async () => {
-    const test = await catalogForTest();
-    const now = new Date();
-    test.db.insert(connectorDocuments).values({
-      id: "connector-doc-1",
-      ownerId: "local-user",
-      service: "notion",
-      connectionName: "workspace-1",
-      sourceRecordId: "page-1",
-      sourceUpdatedAt: now,
-      syncedAt: now,
-      schemaVersion: 1,
-      promptVersion: 1,
-      contentHash: "connector-hash",
-      extensionPayload: {},
-      documentId: "page-1",
-      title: "Product brief",
-      documentType: "notion-page",
-      bodyText: "# Product brief\n\nScope",
-      sourceUrl: "https://notion.example/page-1",
-    }).run();
-    const common = {
-      ownerId: "local-user", service: "gmail", connectionName: "mail-1",
-      sourceUpdatedAt: now, syncedAt: now, schemaVersion: 1, promptVersion: 1,
-      contentHash: "record-hash", extensionPayload: {},
-    };
-    test.db.insert(connectorEmails).values({
-      ...common, id: "connector-mail-1", sourceRecordId: "message-1", messageId: "message-1",
-      recipients: [], subject: "Do not import me", bodyText: "mail body", labels: [], hasAttachments: false,
-    }).run();
-    test.db.insert(connectorCalendarEvents).values({
-      ...common, id: "connector-calendar-1", service: "google_calendar", sourceRecordId: "event-1",
-      eventId: "event-1", title: "Do not import me", description: "calendar body", attendees: [], allDay: false,
-    }).run();
-    const connector = new ConnectorSyncService(
-      test.db,
-      {} as GatewayConfig,
-      { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
-    );
-    connector.setFilesService(test.service);
-    await waitFor(() => test.service.listCatalog().total === 1);
-    expect(test.service.listCatalog().items[0]).toMatchObject({
-      sourceKind: "connector",
-      provider: "notion",
-      originalName: "Product brief.md",
-    });
-    expect(test.sqlite.prepare("SELECT COUNT(*) count FROM file_entries WHERE source_kind != 'connector'").get())
-      .toMatchObject({ count: 0 });
-    await connector.dispose();
     await test.service.dispose();
     test.sqlite.close();
   });

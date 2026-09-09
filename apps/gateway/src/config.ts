@@ -9,7 +9,7 @@ import { Value } from "@sinclair/typebox/value";
 import type { KnowledgeRuntimeConfig, MemoryRuntimeConfig } from "@nxcore/agent-runtime-pi";
 // 阶段二：注册表只被用于「读取元数据」（env 名/默认 configKey），provider 文件本身
 // 无副作用依赖，可安全进入 config 层（新增 provider 时 config 解析自动跟随注册表）。
-import { SYNC_PROVIDERS } from "./modules/connectors/sync-providers/index.js";
+import { SYNC_PROVIDERS } from "@nxcore/connectors-module/sync-providers/index.js";
 
 const LogLevelSchema = Type.Union([
   Type.Literal("fatal"),
@@ -24,10 +24,6 @@ const LogLevelSchema = Type.Union([
 const AgentRuntimeSchema = Type.Union([
   Type.Literal("fake"),
   Type.Literal("pi"),
-]);
-const CliConnectorAgentModeSchema = Type.Union([
-  Type.Literal("direct"),
-  Type.Literal("local"),
 ]);
 const AsrProviderSchema = Type.Union([Type.Literal("disabled"), Type.Literal("aliyun")]);
 const AiApiSchema = Type.Union([
@@ -58,11 +54,6 @@ const RawConfigSchema = Type.Object(
     subagentsDir: Type.String(),
     subagentTimeoutMs: Type.Integer({ minimum: 1_000 }),
     subagentMaxConcurrent: Type.Integer({ minimum: 1, maximum: 64 }),
-    cliConnectorAgentMode: CliConnectorAgentModeSchema,
-    cliConnectorSyncEnabled: Type.Boolean(),
-    cliConnectorSyncJobsJson: Type.String(),
-    cliConnectorSyncIntervalMs: Type.Integer({ minimum: 5_000 }),
-    cliConnectorSyncOwnerId: Type.String({ minLength: 1, maxLength: 128 }),
     externalCallUserId: Type.String({ minLength: 1, maxLength: 200 }),
     externalCallWorkspaceId: Type.String({ minLength: 1, maxLength: 200 }),
     aiProvider: Type.String(),
@@ -104,8 +95,6 @@ const RawConfigSchema = Type.Object(
     asrAliyunOssAccessKeySecret: Type.String(),
     asrAliyunOssStsToken: Type.String(),
     asrAliyunOssPrefix: Type.String({ minLength: 1 }),
-    nangoUrl: Type.String(),
-    nangoSecret: Type.String(),
     nangoConnectorPollMs: Type.Integer({ minimum: 1000 }),
     memoryEnabled: Type.Boolean(),
     memoryBaseUrl: Type.String(),
@@ -163,7 +152,6 @@ const RawConfigSchema = Type.Object(
 
 export type LogLevel = typeof LogLevelSchema.static;
 export type AgentRuntimeMode = typeof AgentRuntimeSchema.static;
-export type CliConnectorAgentMode = typeof CliConnectorAgentModeSchema.static;
 export type AiApi = typeof AiApiSchema.static;
 export type AiReasoning = typeof AiReasoningSchema.static;
 
@@ -283,25 +271,10 @@ export interface OpenConnectorCliConfig {
   executable: string;
   baseUrl: string;
   runtimeToken?: string;
+  /** 本地模式由 supervisor 生成；SaaS 模式由转发层管理（Seam4 授权流用）。 */
+  adminToken?: string;
   configDirectory: string;
   dataDirectory: string;
-}
-
-export interface ConnectorSyncJobConfig {
-  id: string;
-  ownerId: string;
-  service: string;
-  action?: string;
-  allowedActions: string[];
-  dataset: string;
-  resourceType: "email" | "document" | "calendar" | "todo" | "generic";
-  connectionName?: string;
-  input: Record<string, unknown>;
-  goal: string;
-  prompt?: string;
-  promptVersion: number;
-  schemaVersion: number;
-  intervalMs?: number;
 }
 
 export interface MemoryRoomDeriveConfig {
@@ -330,15 +303,8 @@ export interface GatewayConfig {
   logLevel: LogLevel;
   authToken: string;
   agentRuntime: AgentRuntimeMode;
-  cliConnectorAgentMode?: CliConnectorAgentMode;
-  cliConnectorSyncEnabled?: boolean;
-  cliConnectorSyncIntervalMs?: number;
-  cliConnectorSyncJobs?: ConnectorSyncJobConfig[];
-  cliConnectorSyncOwnerId?: string;
   externalCallUserId?: string;
   externalCallWorkspaceId?: string;
-  /** Backward-compatible aliases retained for merged clients/tests. */
-  connectorSyncOwnerId?: string;
   memory: MemoryRuntimeConfig | null;
   /** 新 L1 记忆自动绑定 Room（推导 worker）：缺省视为开启（enabled=true/300s），仅 gateway 侧消费。 */
   memoryRoomDerive?: MemoryRoomDeriveConfig;
@@ -358,25 +324,11 @@ export interface GatewayConfig {
   vlm?: VlmConfig | null;
   asrInputDir: string;
   asr: AliyunAsrConfig | null;
+  /** 链路A连接编排（P3 Nango 删除后仅剩编排自身配置；命名遗留 P4 清理）。 */
   nangoConnector?: {
     enabled: boolean;
     databasePath: string;
-    nangoUrl: string;
-    nangoSecret: string;
-    gmailConfigKey: string;
-    outlookConfigKey: string;
-    googleDocsConfigKey: string;
-    notionConfigKey: string;
-    googleCalendarConfigKey: string;
-    googleClientId: string;
-    googleClientSecret: string;
-    notionClientId: string;
-    notionClientSecret: string;
-    outlookClientId: string;
-    outlookClientSecret: string;
     pollingIntervalMs: number;
-    /** 阶段二：注册表驱动的 provider → configKey（新增 provider 免改此接口）。 */
-    providerConfigKeys: Record<string, string>;
   };
   cliConnector?: OpenConnectorCliConfig | null;
   /** Agent 飞书导出用 lark-cli（发行包预装；桌面注入 NXCORE_LARK_CLI_PATH）。 */
@@ -540,8 +492,11 @@ function validateConnectorEndpoint(name: string, value: string): void {
     throw new Error(`Invalid ${name}: expected an absolute HTTP(S) URL`);
   }
   const loopback = url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '::1';
-  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && loopback)) {
-    throw new Error(`Invalid ${name}: plain HTTP is only allowed for loopback addresses`);
+  // 私有网段（10.x/172.16-31.x/192.168.x/*.local）放行明文 HTTP：SaaS 转发层的
+  // dev 内网地址（NXCORE_SAAS_API_URL）经 connector-mode 注入到本配置。
+  const privateNetwork = /^(?:10\.|172\.(?:1[6-9]|2\d|3[01])\.|192\.168\.|.+\.local$)/.test(url.hostname);
+  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && (loopback || privateNetwork))) {
+    throw new Error(`Invalid ${name}: plain HTTP is only allowed for loopback or private network addresses`);
   }
   if (url.username || url.password || url.search || url.hash) {
     throw new Error(`Invalid ${name}: credentials, query, and fragment are not allowed`);
@@ -562,97 +517,6 @@ function inferMcpWebSocketUrl(baseUrl: string): string {
   url.search = "";
   url.hash = "";
   return url.toString();
-}
-
-function parseConnectorSyncJobs(value: string): ConnectorSyncJobConfig[] {
-  if (!value.trim()) return [];
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(value);
-  } catch {
-    throw new Error("NXCORE_CLI_CONNECTOR_SYNC_JOBS must be valid JSON");
-  }
-  if (!Array.isArray(parsed)) throw new Error("NXCORE_CLI_CONNECTOR_SYNC_JOBS must be a JSON array");
-  return parsed.map((item, index) => {
-    if (!item || typeof item !== "object" || Array.isArray(item)) {
-      throw new Error(`NXCORE_CLI_CONNECTOR_SYNC_JOBS[${String(index)}] must be an object`);
-    }
-    const job = item as Record<string, unknown>;
-    const required = ["id", "ownerId", "service", "dataset"] as const;
-    for (const key of required) {
-      if (typeof job[key] !== "string" || !job[key].trim()) {
-        throw new Error(`NXCORE_CLI_CONNECTOR_SYNC_JOBS[${String(index)}].${key} is required`);
-      }
-    }
-    if (job.input !== undefined && (!job.input || typeof job.input !== "object" || Array.isArray(job.input))) {
-      throw new Error(`NXCORE_CLI_CONNECTOR_SYNC_JOBS[${String(index)}].input must be an object`);
-    }
-    if (job.intervalMs !== undefined && (!Number.isInteger(job.intervalMs) || Number(job.intervalMs) < 5_000)) {
-      throw new Error(`NXCORE_CLI_CONNECTOR_SYNC_JOBS[${String(index)}].intervalMs must be at least 5000`);
-    }
-    const resourceType = typeof job.resourceType === "string"
-      ? job.resourceType.trim()
-      : inferConnectorResourceType(String(job.dataset));
-    if (resourceType !== "email" && resourceType !== "document" && resourceType !== "calendar"
-      && resourceType !== "todo" && resourceType !== "generic") {
-      throw new Error(`NXCORE_CLI_CONNECTOR_SYNC_JOBS[${String(index)}].resourceType must be email, document, calendar, todo, or generic`);
-    }
-    const action = typeof job.action === "string" && job.action.trim() ? job.action.trim() : undefined;
-    if (job.allowedActions !== undefined && (!Array.isArray(job.allowedActions)
-      || job.allowedActions.some((item) => typeof item !== "string" || !item.trim()))) {
-      throw new Error(`NXCORE_CLI_CONNECTOR_SYNC_JOBS[${String(index)}].allowedActions must be an array of action names`);
-    }
-    const allowedActions = [...new Set([
-      ...(action ? [action] : []),
-      ...((job.allowedActions as string[] | undefined) ?? []).map((item) => item.trim()),
-    ])];
-    if (allowedActions.length === 0) {
-      throw new Error(`NXCORE_CLI_CONNECTOR_SYNC_JOBS[${String(index)}] requires action or allowedActions`);
-    }
-    if (resourceType !== "generic") {
-      const unsafeAction = allowedActions.find(isObviouslyMutatingConnectorAction);
-      if (unsafeAction) {
-        throw new Error(`NXCORE_CLI_CONNECTOR_SYNC_JOBS[${String(index)}] action "${unsafeAction}" is not read-only`);
-      }
-    }
-    return {
-      id: String(job.id).trim(),
-      ownerId: String(job.ownerId).trim(),
-      service: String(job.service).trim(),
-      ...(action ? { action } : {}),
-      allowedActions,
-      dataset: String(job.dataset).trim(),
-      resourceType: resourceType ?? "generic",
-      ...(typeof job.connectionName === "string" && job.connectionName.trim()
-        ? { connectionName: job.connectionName.trim() }
-        : {}),
-      input: (job.input as Record<string, unknown> | undefined) ?? {},
-      goal: typeof job.goal === "string" && job.goal.trim()
-        ? job.goal.trim()
-        : `同步已授权 ${String(job.service).trim()} 中的 ${resourceType} 数据到 EverRoom 本地数据库。`,
-      ...(typeof job.prompt === "string" && job.prompt.trim() ? { prompt: job.prompt.trim() } : {}),
-      promptVersion: Number.isInteger(job.promptVersion) && Number(job.promptVersion) > 0
-        ? Number(job.promptVersion)
-        : 1,
-      schemaVersion: Number.isInteger(job.schemaVersion) && Number(job.schemaVersion) > 0
-        ? Number(job.schemaVersion)
-        : 1,
-      ...(job.intervalMs !== undefined ? { intervalMs: Number(job.intervalMs) } : {}),
-    };
-  });
-}
-
-function inferConnectorResourceType(dataset: string): "email" | "document" | "calendar" | "todo" | "generic" {
-  const normalized = dataset.trim().toLowerCase();
-  if (/mail|email|message/.test(normalized)) return "email";
-  if (/doc|page|file/.test(normalized)) return "document";
-  if (/task|todo/.test(normalized)) return "todo";
-  if (/calendar|event|schedule/.test(normalized)) return "calendar";
-  return "generic";
-}
-
-function isObviouslyMutatingConnectorAction(action: string): boolean {
-  return /^(?:send|create|update|delete|remove|modify|mark|archive|trash|move|share|invite|reply|upload|post|put|patch|add|set)(?:_|-)/i.test(action);
 }
 
 function defaultMigrationsDir(): string {
@@ -716,16 +580,6 @@ export function loadConfig(
       "NXCORE_SUBAGENT_MAX_CONCURRENT",
       env.NXCORE_SUBAGENT_MAX_CONCURRENT ?? "8",
     ),
-    cliConnectorAgentMode: env.NXCORE_CLI_CONNECTOR_AGENT_MODE ?? "direct",
-    cliConnectorSyncEnabled: env.NXCORE_CLI_CONNECTOR_SYNC_ENABLED == null
-      ? false
-      : parseBoolean("NXCORE_CLI_CONNECTOR_SYNC_ENABLED", env.NXCORE_CLI_CONNECTOR_SYNC_ENABLED.trim()),
-    cliConnectorSyncJobsJson: env.NXCORE_CLI_CONNECTOR_SYNC_JOBS?.trim() ?? "",
-    cliConnectorSyncIntervalMs: parsePositiveInteger(
-      "NXCORE_CLI_CONNECTOR_SYNC_INTERVAL_MS",
-      env.NXCORE_CLI_CONNECTOR_SYNC_INTERVAL_MS ?? "300000",
-    ),
-    cliConnectorSyncOwnerId: env.NXCORE_CLI_CONNECTOR_SYNC_OWNER_ID?.trim() || "local-user",
     externalCallUserId: env.NXCORE_EXTERNAL_CALL_USER_ID?.trim() || "local-user",
     externalCallWorkspaceId: env.NXCORE_EXTERNAL_CALL_WORKSPACE_ID?.trim() || "local-workspace",
     aiProvider: env.NXCORE_AI_PROVIDER?.trim() ?? "",
@@ -808,11 +662,9 @@ export function loadConfig(
     asrAliyunOssAccessKeySecret: env.NXCORE_ASR_ALIYUN_OSS_ACCESS_KEY_SECRET?.trim() ?? "",
     asrAliyunOssStsToken: env.NXCORE_ASR_ALIYUN_OSS_STS_TOKEN?.trim() ?? "",
     asrAliyunOssPrefix: env.NXCORE_ASR_ALIYUN_OSS_PREFIX?.trim() ?? "nxcore-asr",
-    nangoUrl: firstEnvValue(env, "NXCORE_NANGO_CONNECTOR_URL", "NXCORE_NANGO_URL"),
-    nangoSecret: firstEnvValue(env, "NXCORE_NANGO_CONNECTOR_SECRET", "NXCORE_NANGO_SECRET"),
     nangoConnectorPollMs: parsePositiveInteger(
-      "NXCORE_NANGO_CONNECTOR_POLL_MS",
-      firstEnvValue(env, "NXCORE_NANGO_CONNECTOR_POLL_MS", "NXCORE_CONNECTOR_POLL_MS") || "300000",
+      "NXCORE_CONNECTOR_POLL_MS",
+      env.NXCORE_CONNECTOR_POLL_MS?.trim() || "300000",
     ),
     memoryEnabled: env.NXCORE_MEMORY_ENABLED == null
       ? false
@@ -991,8 +843,6 @@ export function loadConfig(
       throw new Error(`Aliyun OSS configuration requires: ${missing.join(", ")}`);
     }
   }
-  if (Boolean(rawConfig.nangoUrl) !== Boolean(rawConfig.nangoSecret)) throw new Error("Nango connector configuration requires both NXCORE_NANGO_CONNECTOR_URL and NXCORE_NANGO_CONNECTOR_SECRET");
-  if (rawConfig.nangoUrl) { const u=new URL(rawConfig.nangoUrl); if (u.protocol!=="https:" && !(u.protocol==="http:" && ["localhost","127.0.0.1","::1"].includes(u.hostname))) throw new Error("NXCORE_NANGO_CONNECTOR_URL must use HTTPS except for loopback development"); }
   if (Boolean(rawConfig.notificationBridgeUrl)!==Boolean(rawConfig.notificationBridgeToken)) throw new Error("Notification bridge configuration requires URL and token together");
   if(rawConfig.notificationBridgeUrl){const u=new URL(rawConfig.notificationBridgeUrl);if(u.protocol!=="http:"||!["localhost","127.0.0.1","::1"].includes(u.hostname))throw new Error("NXCORE_NOTIFICATION_BRIDGE_URL must be a loopback HTTP endpoint");}
 
@@ -1141,7 +991,6 @@ export function loadConfig(
   }
   const cliConnectorUrl = env.NXCORE_CLI_CONNECTOR_URL?.trim();
   if (cliConnectorUrl) validateConnectorEndpoint("NXCORE_CLI_CONNECTOR_URL", cliConnectorUrl);
-  const cliConnectorSyncJobs = parseConnectorSyncJobs(rawConfig.cliConnectorSyncJobsJson);
 
   return {
     host: rawConfig.host,
@@ -1150,12 +999,6 @@ export function loadConfig(
     logLevel: rawConfig.logLevel,
     authToken: rawConfig.authToken,
     agentRuntime: rawConfig.agentRuntime,
-    cliConnectorAgentMode: rawConfig.cliConnectorAgentMode,
-    cliConnectorSyncEnabled: rawConfig.cliConnectorSyncEnabled,
-    cliConnectorSyncIntervalMs: rawConfig.cliConnectorSyncIntervalMs,
-    cliConnectorSyncJobs,
-    cliConnectorSyncOwnerId: rawConfig.cliConnectorSyncOwnerId,
-    connectorSyncOwnerId: rawConfig.cliConnectorSyncOwnerId,
     externalCallUserId: rawConfig.externalCallUserId,
     externalCallWorkspaceId: rawConfig.externalCallWorkspaceId,
     diaryMaxTokens: rawConfig.diaryMaxTokens,
@@ -1198,32 +1041,10 @@ export function loadConfig(
         }
       : null,
     nangoConnector: {
-      enabled: Boolean(rawConfig.nangoUrl),
+      // P3：Nango runtime 删除——链路A编排恒可用（executor 走 oo）。
+      enabled: true,
       databasePath: join(dataDir,"database","connectors.sqlite"),
-      nangoUrl: rawConfig.nangoUrl,
-      nangoSecret: rawConfig.nangoSecret,
-      gmailConfigKey: firstEnvValue(env, "NXCORE_NANGO_CONNECTOR_GMAIL_CONFIG_KEY", "NXCORE_NANGO_GMAIL_CONFIG_KEY") || "google-mail",
-      outlookConfigKey: firstEnvValue(env, "NXCORE_NANGO_CONNECTOR_OUTLOOK_CONFIG_KEY", "NXCORE_NANGO_OUTLOOK_CONFIG_KEY") || "microsoft-mail",
-      googleDocsConfigKey: firstEnvValue(env, "NXCORE_NANGO_CONNECTOR_GOOGLE_DOCS_CONFIG_KEY") || "google-drive",
-      notionConfigKey: firstEnvValue(env, "NXCORE_NANGO_CONNECTOR_NOTION_CONFIG_KEY") || "notion",
-      googleCalendarConfigKey: firstEnvValue(env, "NXCORE_NANGO_CONNECTOR_GOOGLE_CALENDAR_CONFIG_KEY") || "google-calendar",
-      googleClientId: firstEnvValue(env, "NXCORE_NANGO_CONNECTOR_GOOGLE_CLIENT_ID", "NXCORE_NANGO_GOOGLE_CLIENT_ID"),
-      googleClientSecret: firstEnvValue(env, "NXCORE_NANGO_CONNECTOR_GOOGLE_CLIENT_SECRET", "NXCORE_NANGO_GOOGLE_CLIENT_SECRET"),
-      notionClientId: firstEnvValue(env, "NXCORE_NANGO_CONNECTOR_NOTION_CLIENT_ID", "NXCORE_NANGO_NOTION_CLIENT_ID"),
-      notionClientSecret: firstEnvValue(env, "NXCORE_NANGO_CONNECTOR_NOTION_CLIENT_SECRET", "NXCORE_NANGO_NOTION_CLIENT_SECRET"),
-      outlookClientId: firstEnvValue(env, "NXCORE_NANGO_CONNECTOR_OUTLOOK_CLIENT_ID", "NXCORE_NANGO_OUTLOOK_CLIENT_ID"),
-      outlookClientSecret: firstEnvValue(env, "NXCORE_NANGO_CONNECTOR_OUTLOOK_CLIENT_SECRET", "NXCORE_NANGO_OUTLOOK_CLIENT_SECRET"),
       pollingIntervalMs: rawConfig.nangoConnectorPollMs,
-      // 阶段二：configKey 由 SyncProvider 注册表驱动（env 覆盖 + 默认值）；
-      // 上面的 legacy 命名字段保留为既有消费方（bootstrap/授权装配）的兼容出口。
-      providerConfigKeys: Object.fromEntries(
-        SYNC_PROVIDERS.map((definition) => [
-          definition.provider,
-          firstEnvValue(env, ...(definition.auth.nango?.configKeyEnv ?? []))
-            || definition.auth.nango?.configKeyDefault
-            || "",
-        ]),
-      ) as Record<string, string>,
     },
     cliConnector: cliConnectorUrl
       ? {
@@ -1231,6 +1052,9 @@ export function loadConfig(
           baseUrl: cliConnectorUrl.replace(/\/$/, ''),
           ...(env.NXCORE_CLI_CONNECTOR_RUNTIME_TOKEN?.trim()
             ? { runtimeToken: env.NXCORE_CLI_CONNECTOR_RUNTIME_TOKEN.trim() }
+            : {}),
+          ...(env.NXCORE_CLI_CONNECTOR_ADMIN_TOKEN?.trim()
+            ? { adminToken: env.NXCORE_CLI_CONNECTOR_ADMIN_TOKEN.trim() }
             : {}),
           configDirectory: env.NXCORE_CLI_CONNECTOR_CONFIG_DIR?.trim() || join(dataDir, 'open-connector', 'oo-config'),
           dataDirectory: env.NXCORE_CLI_CONNECTOR_DATA_DIR?.trim() || join(dataDir, 'open-connector', 'oo-data'),
