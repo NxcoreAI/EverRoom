@@ -189,6 +189,7 @@ export function CloudSourceCard({
   scopes,
   runs,
   totals,
+  docs,
   busy,
   onOpen,
   onSync,
@@ -201,6 +202,8 @@ export function CloudSourceCard({
   runs: SyncRun[]
   /** 连接已同步记录总数（mail/calendar）；缺省隐藏对应统计。 */
   totals?: { mail: number; calendar: number }
+  /** docs 类连接（飞书/Notion）导入侧汇总：documents=列举缓存可见数，imported=已落 Room。 */
+  docs?: { documents: number; imported: number; listed: boolean }
   onSync: () => void
   onToggleEnabled: () => void
   onPurge: () => void
@@ -211,6 +214,7 @@ export function CloudSourceCard({
   const active = connection.status === 'active'
   const mailbox = connection.provider === 'gmail' || connection.provider === 'outlook'
   const calendarScopes = connection.provider === 'google-calendar'
+  const docsProvider = connection.provider === 'feishu' || connection.provider === 'notion'
   const lastRun = runs.length ? runs.reduce((latest, run) => (run.startedAt > latest.startedAt ? run : latest)) : null
   const running = scopes.some((scope) => scope.state === 'running')
     || runs.some((run) => run.status === 'running' || run.status === 'queued')
@@ -246,15 +250,26 @@ export function CloudSourceCard({
       {connection.status === 'error' && connection.updatedAt ? (
         <div className="src-card-error"><AlertTriangle aria-hidden="true" strokeWidth={1.8} />{t('surface:connector.reauthorizationRequired')}</div>
       ) : null}
-      <Stats items={[
-        ...(calendarScopes ? [
-          ...(totals ? [{ value: totals.calendar.toLocaleString(), label: t('surface:connector.calendar') }] : []),
-          { value: scopes.length.toLocaleString(), label: t('surface:connector.calendars') },
-        ] : [
-          ...(mailbox && totals ? [{ value: totals.mail.toLocaleString(), label: t('surface:sourceCard.syncedItems') }] : []),
-          ...(!mailbox && lastRun ? [{ value: `${lastRun.processed.toLocaleString()}${lastRun.failed ? ` / ${lastRun.failed}` : ''}`, label: t('surface:sourceCard.lastSynced') }] : []),
-        ]),
-      ]} />
+      <Stats items={docsProvider
+        // docs 类连接（飞书/Notion）：统计走导入侧——列举缓存的可见文档数与已导入数；
+        // 从未列举过时给"未列举"占位，引导打开抽屉拉一次列表。
+        ? (docs
+            ? (docs.listed
+                ? [
+                    { value: docs.documents.toLocaleString(), label: t('surface:sourceCard.documentsStat') },
+                    { value: docs.imported.toLocaleString(), label: t('surface:sourceCard.importedStat') },
+                  ]
+                : [{ value: '—', label: t('surface:sourceCard.documentsStat') }, { value: '0', label: t('surface:sourceCard.importedStat') }])
+            : [{ value: '…', label: t('surface:sourceCard.documentsStat') }, { value: '…', label: t('surface:sourceCard.importedStat') }])
+        : [
+          ...(calendarScopes ? [
+            ...(totals ? [{ value: totals.calendar.toLocaleString(), label: t('surface:connector.calendar') }] : []),
+            { value: scopes.length.toLocaleString(), label: t('surface:connector.calendars') },
+          ] : [
+            ...(mailbox && totals ? [{ value: totals.mail.toLocaleString(), label: t('surface:sourceCard.syncedItems') }] : []),
+            ...(!mailbox && lastRun ? [{ value: `${lastRun.processed.toLocaleString()}${lastRun.failed ? ` / ${lastRun.failed}` : ''}`, label: t('surface:sourceCard.lastSynced') }] : []),
+          ]),
+        ]} />
     </CardShell>
   )
 }

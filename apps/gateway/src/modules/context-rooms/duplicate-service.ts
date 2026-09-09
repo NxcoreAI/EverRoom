@@ -1181,6 +1181,11 @@ export class RoomDuplicateService {
           this.moveDocumentLinks(id, sourceRoomId, targetRoomId);
           this.moveMemberships(id, sourceRoomId, targetRoomId);
           this.moveMentions(sourceRoomId, targetRoomId);
+          // 认领实体收编：源 Room 名下全部实体 roomId 重指到目标 Room。户口实体
+          // 之外还有按名认领的多条实体（claimEntitiesForRoom），漏迁会在推荐/
+          // 挂载读侧留下指向已退休 Room 的「已建 Room」残影。
+          this.db.update(entities).set({ roomId: targetRoomId, updatedAt: now })
+            .where(eq(entities.roomId, sourceRoomId)).run();
           this.db.update(roomMemoryAttributions).set({ roomId: targetRoomId, updatedAt: now })
             .where(eq(roomMemoryAttributions.roomId, sourceRoomId)).run();
           this.db.update(agentRuns).set({ roomId: targetRoomId })

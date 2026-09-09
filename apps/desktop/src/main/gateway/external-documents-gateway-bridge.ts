@@ -47,12 +47,24 @@ export class ExternalDocumentsGatewayBridge {
     })
   }
 
+  async importExistingInRoom(
+    provider: ExternalDocumentProvider,
+    roomId: string,
+    remoteDocumentIds: string[],
+  ): Promise<{ existingRemoteIds: string[] }> {
+    return this.request('/v1/document-import/existing-in-room', {
+      method: 'POST',
+      body: JSON.stringify({ provider, roomId, remoteDocumentIds }),
+    })
+  }
+
   async importBatch(input: {
     provider: ExternalDocumentProvider
     connectionName?: string
     remoteDocumentIds: string[]
     mode: DocumentImportBatchMode
     roomId?: string
+    forceNew?: boolean
   }): Promise<{ batchId: string; total: number }> {
     return this.request('/v1/document-import/batch', {
       method: 'POST',

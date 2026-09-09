@@ -2,7 +2,9 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { eq } from "drizzle-orm";
 import { createDatabase } from "../src/infrastructure/database/client.js";
+import { entities, rooms } from "../src/infrastructure/database/schema.js";
 import {
   bestMatch,
   bigramDiceSimilarity,
@@ -476,8 +478,37 @@ async function registryForTest() {
   const dataDir = await mkdtemp(join(tmpdir(), "nxcore-entity-registry-"));
   temporaryDirectories.push(dataDir);
   const { db, sqlite } = createDatabase(join(dataDir, "gateway.sqlite"), resolve("drizzle"));
-  return { registry: new EntityRegistry(db), sqlite };
+  return { db, registry: new EntityRegistry(db), sqlite };
 }
+
+describe("合并残留自愈（healMergedEntityRooms）", () => {
+  it("roomId 指向已 merged Room 的实体沿链重指到幸存 Room；幂等、不动活跃归属", async () => {
+    const { db, registry, sqlite } = await registryForTest();
+    const now = new Date();
+    // 合并链：room-old1 → room-old2 → room-final（room-old2 后续又被并入 room-final）。
+    for (const row of [
+      { id: "room-old1", title: "旧主题甲", lifecycle: "merged", mergedIntoRoomId: "room-old2" },
+      { id: "room-old2", title: "旧主题乙", lifecycle: "merged", mergedIntoRoomId: "room-final" },
+      { id: "room-final", title: "幸存主题", lifecycle: "active", mergedIntoRoomId: null },
+    ] as const) {
+      db.insert(rooms).values({ ...row, kind: "主题", origin: "user", createdAt: now, updatedAt: now }).run();
+    }
+    // 历史残留：旧版合并只迁移户口实体，认领实体的 roomId 悬在退休 Room 上。
+    const stale = registry.createEntity({ name: "悬空议题", kind: "议题" });
+    db.update(entities).set({ status: "room", roomId: "room-old1" })
+      .where(eq(entities.id, stale.id)).run();
+    const healthy = registry.createEntity({ name: "健康议题", kind: "议题" });
+    db.update(entities).set({ status: "room", roomId: "room-final" })
+      .where(eq(entities.id, healthy.id)).run();
+
+    expect(registry.healMergedEntityRooms()).toBe(1);
+    expect(registry.getEntity(stale.id)).toMatchObject({ status: "room", roomId: "room-final" });
+    expect(registry.getEntity(healthy.id)).toMatchObject({ status: "room", roomId: "room-final" });
+    // 幂等：无悬挂实体后空跑。
+    expect(registry.healMergedEntityRooms()).toBe(0);
+    sqlite.close();
+  });
+});
 
 describe("实体认领：手动建 Room（ED4 户口扩展）", () => {
   it("未绑定实体（含 kind 不同与新建）认领，已绑定他房/搁置/空名不动", async () => {

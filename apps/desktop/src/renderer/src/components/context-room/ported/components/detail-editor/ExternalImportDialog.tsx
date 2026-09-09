@@ -1,18 +1,21 @@
 import type {
+  ExternalDocumentListItem,
   ExternalDocumentPreview,
   ExternalDocumentProvider,
-  ExternalDocumentSearchResultItem,
 } from '@nxcore/agent-contract'
-import { Loader2, Search, X } from 'lucide-react'
-import { useState } from 'react'
+import { BookOpen, FileText, FolderOpen, Loader2, RefreshCw, Search, X } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useLocale } from '../../../../../i18n/LocaleContext'
 import { showToast } from '../../../../../state/toast'
+import { MarkdownBody } from '../detail-panels/MarkdownBody'
 import './ExternalDocumentDialogs.css'
 
 /**
- * "从飞书 / Notion 导入" 面板（OpenConnector 只读通道）。预览即落不可变快照；
- * "加入 Room" 通过 Document Commit Service 创建本地文档版本 1。同一来源再次
- * 导入由版本管理界面以候选版本方式处理，不覆盖当前文档。
+ * "从飞书 / Notion 导入" 面板（OpenConnector 只读通道）。文档列表与连接器页
+ * 同源（importList 按连接全量列举）：打开先回显列举缓存，"重新获取"手动全量
+ * 刷新；本地过滤替代远端搜索。预览即落不可变快照，"加入 Room" 走 Document
+ * Commit Service 创建本地文档版本 1；同一来源再次导入由版本管理界面以候选
+ * 版本方式处理，不覆盖当前文档。
  */
 export function ExternalImportDialog({
   open,
@@ -25,33 +28,77 @@ export function ExternalImportDialog({
   roomId: string
   onImported?: (documentId: string) => void
 }) {
-  const { t } = useLocale()
+  const { locale, t } = useLocale()
   const [provider, setProvider] = useState<ExternalDocumentProvider>('feishu')
-  const [query, setQuery] = useState('')
-  const [searching, setSearching] = useState(false)
-  const [items, setItems] = useState<ExternalDocumentSearchResultItem[]>([])
-  const [searchError, setSearchError] = useState<string | null>(null)
+  const [items, setItems] = useState<ExternalDocumentListItem[]>([])
+  const [fetchedAt, setFetchedAt] = useState<string | null>(null)
+  const [truncated, setTruncated] = useState(false)
+  const [warnings, setWarnings] = useState<string[]>([])
+  const [loading, setLoading] = useState(false)
+  const [listError, setListError] = useState<string | null>(null)
+  const [filter, setFilter] = useState('')
   const [preview, setPreview] = useState<ExternalDocumentPreview | null>(null)
   const [previewing, setPreviewing] = useState(false)
   const [committing, setCommitting] = useState(false)
 
   const external = window.nxcore?.externalDocuments
 
-  const search = async () => {
-    if (!external || !query.trim()) return
-    setSearching(true)
-    setSearchError(null)
-    setItems([])
+  // 打开/切换平台：重置过滤与预览态（列表由缓存回显 effect 填充）。
+  useEffect(() => {
+    if (!open) return
     setPreview(null)
+    setFilter('')
+    setListError(null)
+  }, [open, provider])
+
+  const loadList = useCallback(async () => {
+    if (!external) return
+    setLoading(true)
+    setListError(null)
     try {
-      const response = await external.importSearch(provider, query.trim())
+      const response = await external.importList(provider)
       setItems(response.items)
+      setFetchedAt(response.fetchedAt ?? new Date().toISOString())
+      setTruncated(response.truncated)
+      setWarnings(response.warnings.map((warning) => warning.message))
     } catch (error) {
-      setSearchError(error instanceof Error ? error.message : String(error))
+      setListError(error instanceof Error ? error.message : String(error))
     } finally {
-      setSearching(false)
+      setLoading(false)
     }
-  }
+  }, [external, provider])
+
+  // 缓存秒显（imported 徽标由服务端按当前库重算，导入后无需重拉）；
+  // 无缓存时自动全量拉一次，之后由"重新获取"手动刷新。
+  useEffect(() => {
+    if (!open || !external) return
+    let cancelled = false
+    void external.importList(provider, undefined, true)
+      .then((response) => {
+        if (cancelled) return
+        if (response.fetchedAt && response.items.length > 0) {
+          setItems(response.items)
+          setFetchedAt(response.fetchedAt)
+          setTruncated(response.truncated)
+          setWarnings(response.warnings.map((warning) => warning.message))
+        } else {
+          void loadList()
+        }
+      })
+      .catch(() => {
+        if (!cancelled) void loadList()
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [open, provider, external, loadList])
+
+  const visibleItems = useMemo(() => {
+    const keyword = filter.trim().toLowerCase()
+    if (!keyword) return items
+    return items.filter((item) => item.title.toLowerCase().includes(keyword)
+      || (item.wikiSpaceName ?? '').toLowerCase().includes(keyword))
+  }, [items, filter])
 
   const loadPreview = async (remoteDocumentId: string) => {
     if (!external) return
@@ -91,7 +138,22 @@ export function ExternalImportDialog({
     }
   }
 
+  const originIcon = (origin: ExternalDocumentListItem['origin']) =>
+    origin === 'wiki' ? <BookOpen aria-hidden="true" /> : origin === 'drive' ? <FolderOpen aria-hidden="true" /> : <FileText aria-hidden="true" />
+
   if (!open) return null
+
+  const metaOf = (item: ExternalDocumentListItem): string => [
+    t({
+      drive: 'contextRoom:externalImportDialog.originDrive',
+      wiki: 'contextRoom:externalImportDialog.originWiki',
+      page: 'contextRoom:externalImportDialog.originPage',
+    }[item.origin]),
+    item.wikiSpaceName,
+    item.updatedAt
+      ? new Date(item.updatedAt).toLocaleDateString(locale, { month: 'numeric', day: 'numeric' })
+      : null,
+  ].filter(Boolean).join(' · ')
 
   return (
     <div className="evidence-dialog-backdrop" role="presentation" onClick={(event) => {
@@ -117,11 +179,7 @@ export function ExternalImportDialog({
                 key={candidate}
                 type="button"
                 className={provider === candidate ? 'active' : ''}
-                onClick={() => {
-                  setProvider(candidate)
-                  setItems([])
-                  setPreview(null)
-                }}
+                onClick={() => setProvider(candidate)}
               >
                 {candidate === 'feishu'
                   ? t('contextRoom:externalImportDialog.feishu')
@@ -129,33 +187,88 @@ export function ExternalImportDialog({
               </button>
             ))}
           </div>
-          <div className="context-room-external-import-search">
-            <input
-              type="text"
-              value={query}
-              placeholder={t('contextRoom:externalImportDialog.searchPlaceholder')}
-              onChange={(event) => setQuery(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') void search()
-              }}
-            />
-            <button type="button" className="primary" disabled={searching || !query.trim()} onClick={() => void search()}>
-              {searching ? <Loader2 className="spin" aria-hidden="true" /> : <Search aria-hidden="true" />}
-              {t('contextRoom:externalImportDialog.search')}
-            </button>
-          </div>
-          {searchError && <p className="context-room-external-import-error">{searchError}</p>}
-          {items.length > 0 && !preview && (
-            <ul className="context-room-external-import-results">
-              {items.map((item) => (
-                <li key={item.remoteDocumentId}>
-                  <button type="button" onClick={() => void loadPreview(item.remoteDocumentId)}>
-                    <strong>{item.title}</strong>
-                    <span>{item.updatedAt ?? item.remoteDocumentId}</span>
+          {!preview && (
+            <>
+              <div className="context-room-external-import-toolbar">
+                <button
+                  type="button"
+                  className="context-room-external-import-refresh"
+                  disabled={loading}
+                  onClick={() => void loadList()}
+                >
+                  {loading ? <Loader2 className="spin" aria-hidden="true" /> : <RefreshCw aria-hidden="true" />}
+                  {t('contextRoom:externalImportDialog.refresh')}
+                </button>
+                <span className="context-room-external-import-meta">
+                  {fetchedAt
+                    ? t('contextRoom:externalImportDialog.listMeta', {
+                      count: String(items.length),
+                      time: new Date(fetchedAt).toLocaleString(locale, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }),
+                    })
+                    : items.length > 0
+                      ? t('contextRoom:externalImportDialog.listMetaNoTime', { count: String(items.length) })
+                      : ''}
+                </span>
+                <div className="context-room-external-import-filter">
+                  <Search aria-hidden="true" />
+                  <input
+                    type="text"
+                    value={filter}
+                    placeholder={t('contextRoom:externalImportDialog.filterPlaceholder')}
+                    onChange={(event) => setFilter(event.target.value)}
+                  />
+                  {filter ? (
+                    <button type="button" onClick={() => setFilter('')} aria-label={t('contextRoom:externalImportDialog.close')}>
+                      <X aria-hidden="true" />
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+              {listError ? <p className="context-room-external-import-error">{listError}</p> : null}
+              {listError?.includes('IMPORT_CONNECTION_REQUIRED') ? (
+                <p className="context-room-external-import-hint">{t('contextRoom:externalImportDialog.connectionHint')}</p>
+              ) : null}
+              {truncated || warnings.length > 0 ? (
+                <p className="context-room-external-import-warning">
+                  ⚠ {[truncated ? t('contextRoom:externalImportDialog.listTruncated') : null, ...warnings].filter(Boolean).join('；')}
+                </p>
+              ) : null}
+              {items.length > 0 ? (
+                <ul className="context-room-external-import-results">
+                  {visibleItems.map((item) => (
+                    <li key={item.remoteDocumentId}>
+                      <button type="button" onClick={() => void loadPreview(item.remoteDocumentId)}>
+                        <span className="context-room-external-import-item-title">
+                          <span className="context-room-external-import-item-origin" data-origin={item.origin}>
+                            {originIcon(item.origin)}
+                          </span>
+                          <strong>{item.title}</strong>
+                          {item.imported ? <em>{t('contextRoom:externalImportDialog.importedBadge')}</em> : null}
+                        </span>
+                        <span className="context-room-external-import-item-meta">{metaOf(item)}</span>
+                      </button>
+                    </li>
+                  ))}
+                  {visibleItems.length === 0 ? (
+                    <li className="context-room-external-import-filter-empty">
+                      {t('contextRoom:externalImportDialog.filterNoMatch', { query: filter.trim() })}
+                    </li>
+                  ) : null}
+                </ul>
+              ) : loading ? (
+                <p className="context-room-external-import-hint">
+                  <Loader2 className="spin" aria-hidden="true" /> {t('contextRoom:externalImportDialog.loadingList')}
+                </p>
+              ) : !listError ? (
+                <div className="context-room-external-import-empty">
+                  <FileText aria-hidden="true" />
+                  <p>{t('contextRoom:externalImportDialog.listEmpty')}</p>
+                  <button type="button" className="primary" onClick={() => void loadList()}>
+                    {t('contextRoom:externalImportDialog.loadDocuments')}
                   </button>
-                </li>
-              ))}
-            </ul>
+                </div>
+              ) : null}
+            </>
           )}
           {previewing && <p className="context-room-external-import-hint"><Loader2 className="spin" aria-hidden="true" /> {t('contextRoom:externalImportDialog.loadingPreview')}</p>}
           {preview && (
@@ -174,7 +287,9 @@ export function ExternalImportDialog({
               {preview.warnings.map((warning) => (
                 <p key={warning.code} className="context-room-external-import-warning">⚠ {warning.message}</p>
               ))}
-              <pre className="context-room-external-import-excerpt">{preview.bodyExcerpt}</pre>
+              <div className="context-room-external-import-excerpt">
+                <MarkdownBody markdown={preview.bodyExcerpt} />
+              </div>
               <p className="context-room-external-import-hint">
                 {t('contextRoom:externalImportDialog.joinHint')}
               </p>

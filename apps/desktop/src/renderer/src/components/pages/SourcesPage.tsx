@@ -84,6 +84,8 @@ export function SourcesPage() {
   const [connectorStatus, setConnectorStatus] = useState<ConnectorStatus | null>(null)
   // 各连接的已同步记录总数（mail/calendar）：抽屉/卡片统计用。
   const [recordTotals, setRecordTotals] = useState<Record<string, { mail: number; calendar: number }>>({})
+  /** docs 类连接（飞书/Notion）的导入侧汇总：文档可见数 + 已导入数（列举缓存）。 */
+  const [importSummaries, setImportSummaries] = useState<Partial<Record<'feishu' | 'notion', { documents: number; imported: number; listed: boolean }>>>({})
   const [cloudBusyId, setCloudBusyId] = useState<string | null>(null)
   const [drawer, setDrawer] = useState<DrawerTarget | null>(null)
   // 二级页（页内下钻,不占全局导航）：最近进入全量 / 全部连接器。
@@ -99,6 +101,26 @@ export function SourcesPage() {
   const connectedProviders = new Set(connections.map((item) => item.provider))
 
   // 云服务卡与抽屉的数据源：页面级轮询。
+  // docs 类连接统计走导入列举缓存（cachedOnly 秒回，不拉远端）；连接变化时重算。
+  const refreshImportSummaries = useCallback((providers: Array<'feishu' | 'notion'>) => {
+    const external = window.nxcore?.externalDocuments
+    if (!external || providers.length === 0) return
+    for (const provider of providers) {
+      void external.importList(provider, undefined, true)
+        .then((response) => {
+          const listed = Boolean(response.fetchedAt) && response.items.length > 0
+          setImportSummaries((current) => ({
+            ...current,
+            [provider]: {
+              documents: response.items.length,
+              imported: response.items.filter((item) => item.imported).length,
+              listed,
+            },
+          }))
+        })
+        .catch(() => undefined)
+    }
+  }, [])
   const refreshConnectorStatus = useCallback(async () => {
     try {
       const next = await window.nxcore?.nangoConnector.status() ?? null
@@ -110,6 +132,12 @@ export function SourcesPage() {
       }
     } catch { /* 网关暂不可达时保留上一次状态 */ }
   }, [])
+  useEffect(() => {
+    const docsProviders = (connections ?? [])
+      .map((connection) => connection.provider)
+      .filter((provider): provider is 'feishu' | 'notion' => provider === 'feishu' || provider === 'notion')
+    refreshImportSummaries([...new Set(docsProviders)])
+  }, [connections, refreshImportSummaries])
   useEffect(() => {
     const tick = () => { if (!document.hidden) void refreshConnectorStatus() }
     tick()
@@ -686,7 +714,7 @@ export function SourcesPage() {
                   const connectionScopes = scopes.filter((item) => item.connectionId === connection.id)
                   const connectionScopeIds = new Set(connectionScopes.map((item) => item.id))
                   return (
-                    <CloudSourceCard key={connection.id} connection={connection} scopes={connectionScopes} runs={runs.filter((run) => connectionScopeIds.has(run.scopeId))} totals={recordTotals[connection.id]} busy={cloudBusyId === connection.id} onOpen={() => setDrawer({ type: 'cloud', connection })} onSync={() => syncConnection(connection)} onToggleEnabled={() => toggleConnectionEnabled(connection)} onPurge={() => purgeConnectionData(connection)} onReplaceAccount={isWebcalConnection(connection) ? undefined : () => replaceAccountFor(connection)} />
+                    <CloudSourceCard key={connection.id} connection={connection} scopes={connectionScopes} runs={runs.filter((run) => connectionScopeIds.has(run.scopeId))} totals={recordTotals[connection.id]} docs={connection.provider === 'feishu' || connection.provider === 'notion' ? importSummaries[connection.provider as 'feishu' | 'notion'] : undefined} busy={cloudBusyId === connection.id} onOpen={() => setDrawer({ type: 'cloud', connection })} onSync={() => syncConnection(connection)} onToggleEnabled={() => toggleConnectionEnabled(connection)} onPurge={() => purgeConnectionData(connection)} onReplaceAccount={isWebcalConnection(connection) ? undefined : () => replaceAccountFor(connection)} />
                   )
                 })}
               </div>

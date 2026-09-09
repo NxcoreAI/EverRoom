@@ -573,6 +573,15 @@ export class KnowledgeService {
         "knowledge evidence rescored with V2 rules",
       );
     }
+    // 合并残留自愈：旧版合并只迁移户口实体，被认领实体的 roomId 悬在已
+    // merged Room 上（推荐/挂载读侧显示「已建 Room」但 Room 已不存在）。
+    const healedEntityRooms = this.entityRegistry.healMergedEntityRooms();
+    if (healedEntityRooms > 0) {
+      this.logger.warn(
+        { event: "knowledge.entity.merged_room_healed", healed: healedEntityRooms },
+        "room-bound entities repointed to surviving rooms after merges",
+      );
+    }
     // 户口实体补种：图谱重建/数据重置会让 auto Room 丢失 entity_id（direct_mention
     // 通路随之瘫痪）。每次启动幂等补种；认领优先，让既有 mentions 直接种到 Room 头上。
     const homeEntitiesBackfilled = this.entityRegistry.backfillRoomHomeEntities();
@@ -2255,6 +2264,8 @@ export class KnowledgeService {
     kind: string;
     status: string;
     roomId: string | null;
+    /** roomId 经 merged 链 canonical 化后对应的 Room 标题（无归属为 null）。 */
+    roomTitle: string | null;
     evidenceScore: number;
     sourceCount: number;
     eligibleSourceCount: number;
@@ -2279,12 +2290,19 @@ export class KnowledgeService {
           .filter((link) => link.effectiveWeight > 0)
           .sort((a, b) => b.effectiveWeight - a.effectiveWeight)
           .map((link) => link.sourceKind))].slice(0, 3);
+        // 残留防御：roomId 经 merged 链 canonical 化（合并后指向退休 Room 的
+        // 实体映射到幸存 Room），并带出标题供读侧展示归属。
+        const roomId = entity.roomId ? this.canonicalRoomId(entity.roomId) : null;
+        const roomTitle = roomId
+          ? this.db.select({ title: rooms.title }).from(rooms).where(eq(rooms.id, roomId)).get()?.title ?? null
+          : null;
         return {
         id: entity.id,
         name: entity.name,
         kind: entity.kind,
         status: entity.status,
-        roomId: entity.roomId,
+        roomId,
+        roomTitle,
         evidenceScore: entity.evidenceScore,
         sourceCount: entity.sourceCount,
         eligibleSourceCount: entity.eligibleSourceCount,
@@ -2423,7 +2441,8 @@ export class KnowledgeService {
     if (!entity) return { ok: false, error: "entity_not_found" };
     let room: { id: string; title: string; kind: string } | null = null;
     if (entity.roomId) {
-      const row = this.db.select().from(rooms).where(eq(rooms.id, entity.roomId)).get();
+      // canonical 化：合并残留的 roomId 指向退休 Room 时映射到幸存 Room。
+      const row = this.db.select().from(rooms).where(eq(rooms.id, this.canonicalRoomId(entity.roomId))).get();
       if (row && !row.deletedAt) room = { id: row.id, title: row.title, kind: row.kind };
     }
     const links = this.entityRegistry.linksOfEntity(entity.id).map((link) => ({

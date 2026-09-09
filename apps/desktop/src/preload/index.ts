@@ -268,6 +268,7 @@ const api: NxcoreDesktopApi = {
   externalDocuments: {
     importSearch: (provider, query) => invoke('external-documents:import-search', provider, query),
     importList: (provider, connectionName, cachedOnly) => invoke('external-documents:import-list', provider, connectionName, cachedOnly),
+    importExistingInRoom: (provider, roomId, remoteDocumentIds) => invoke('external-documents:import-existing-in-room', provider, roomId, remoteDocumentIds),
     importBatch: (input) => invoke('external-documents:import-batch', input),
     importBatchStatus: (batchId) => invokeQuietly('external-documents:import-batch-status', batchId),
     cancelImportBatch: (batchId) => invoke('external-documents:cancel-import-batch', batchId),

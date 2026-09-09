@@ -177,6 +177,8 @@ export interface KnowledgeEntityDto {
   kind: string
   status: string
   roomId: string | null
+  /** 归属 Room 标题（网关已按 merged 链 canonical 化；挂载/推荐读侧展示归属用）。 */
+  roomTitle: string | null
   evidenceScore: number
   sourceCount: number
   eligibleSourceCount: number

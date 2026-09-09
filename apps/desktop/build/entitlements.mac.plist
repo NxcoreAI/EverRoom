@@ -2,8 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>com.apple.developer.aps-environment</key>
-  <string>production</string>
+	<!-- aps-environment 已移除：Development 证书 + 无 provisioning profile
+	     会被 macOS 在 spawn 时拒绝（Launchd POSIX 163，2026-09-09 真机）。推送权限只在 App Store 分发补。 -->
   <key>com.apple.security.cs.allow-jit</key>
   <true/>
   <key>com.apple.security.cs.allow-unsigned-executable-memory</key>

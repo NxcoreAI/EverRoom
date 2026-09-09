@@ -1355,7 +1355,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     },
   );
   documentBatchImportService.recoverInterrupted();
-  await app.register(documentImportBatchRoutes(documentBatchImportService));
+  await app.register(documentImportBatchRoutes(documentBatchImportService, documentImportService));
   filesService.setVersionIngestor(async (input) => {
     await documentUnderstandingService.parseVersion(input.fileEntryId, input.fileVersionId);
     const versionContext = filesService.getVersionContext(input.fileEntryId, input.fileVersionId);
