@@ -89,7 +89,7 @@ jobs:
       # pnpm install 会克隆 code.vyitec.com 私有 git 依赖，CI 无凭证。
       - name: Run AI review
         if: steps.pr.outputs.eligible == 'true'
-        uses: anthropics/claude-code-action@v1
+        uses: anthropics/claude-code-action@5ccc3a35a6367cdb8e6fbd0728287467540ecfe2
         with:
           anthropic_api_key: ${{ secrets.GLM_ANTHROPIC_API_KEY }}
           github_token: ${{ github.token }}
@@ -146,7 +146,7 @@ jobs:
           persist-credentials: false
 
       - name: Analyze issue
-        uses: anthropics/claude-code-action@v1
+        uses: anthropics/claude-code-action@5ccc3a35a6367cdb8e6fbd0728287467540ecfe2
         with:
           anthropic_api_key: ${{ secrets.GLM_ANTHROPIC_API_KEY }}
           github_token: ${{ github.token }}
