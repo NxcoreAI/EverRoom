@@ -85,7 +85,7 @@ import {
   logLocalDesktop,
   logDocumentCursorCompletion,
 } from './logging/desktop-logger'
-import { configureSentry, syncSentryAccount } from './monitoring/sentry'
+import { configureSentry, isSentryRemoteDebugEnabled, syncSentryAccount } from './monitoring/sentry'
 import { PrivateTranscriptionSyncService } from './transcription/private-transcription-sync'
 import { PrivateSyncScheduler } from './transcription/private-sync-scheduler'
 import { TranscriptionProcessingCoordinator } from './transcription/processing-coordinator'
@@ -3574,6 +3574,14 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         }
       }).catch(() => undefined)
     })
+    // Sentry 门控只在账号 IPC 时同步：启动时订阅拉取失败会让整个会话静默。
+    // 未开闸时低频重试，网络恢复后自动补开（status() 内部有订阅缓存与退避）。
+    const sentryAccountResyncTimer = setInterval(() => {
+      const client = saasClient
+      if (!client || isSentryRemoteDebugEnabled()) return
+      void syncAccountMonitoring(client.status()).catch(() => undefined)
+    }, 5 * 60_000)
+    sentryAccountResyncTimer.unref()
     aiRelayKeeper = new AiRelayKeeper(saasClient, gatewaySupervisor, runtimeConfigBridge, (event: AiRelayKeeperEvent) => {
       for (const target of BrowserWindow.getAllWindows()) {
         if (!target.isDestroyed() && !target.webContents.isDestroyed()) {
