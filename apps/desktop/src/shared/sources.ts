@@ -896,12 +896,16 @@ export interface NxcoreDesktopApi {
     importSearch(provider: ExternalDocumentProvider, query: string): Promise<ExternalDocumentSearchResponse>
     /** 连接器页按连接全量列举（飞书云空间+知识库 / Notion 共享页面）；cachedOnly 时读上次缓存。 */
     importList(provider: ExternalDocumentProvider, connectionName?: string, cachedOnly?: boolean): Promise<ExternalDocumentListResponse>
+    /** 目标 Room 已导入检查：返回这批远端文档中已在该 Room 落 primary 的 remoteDocumentId。 */
+    importExistingInRoom(provider: ExternalDocumentProvider, roomId: string, remoteDocumentIds: string[]): Promise<{ existingRemoteIds: string[] }>
     importBatch(input: {
       provider: ExternalDocumentProvider
       connectionName?: string
       remoteDocumentIds: string[]
       mode: DocumentImportBatchMode
       roomId?: string
+      /** true：跳过来源去重，同来源一律新建（UI"创建新的"）。 */
+      forceNew?: boolean
     }): Promise<{ batchId: string; total: number }>
     importBatchStatus(batchId: string): Promise<DocumentImportBatchView>
     cancelImportBatch(batchId: string): Promise<DocumentImportBatchView>

@@ -293,6 +293,7 @@ const AGENT_AUTH_CHANNELS = {
 const EXTERNAL_DOCUMENT_CHANNELS = {
   importSearch: 'external-documents:import-search',
   importList: 'external-documents:import-list',
+  importExistingInRoom: 'external-documents:import-existing-in-room',
   importBatch: 'external-documents:import-batch',
   importBatchStatus: 'external-documents:import-batch-status',
   cancelImportBatch: 'external-documents:cancel-import-batch',
@@ -2005,6 +2006,10 @@ function registerExternalDocumentHandlers(bridge: ExternalDocumentsGatewayBridge
     if (connectionName !== undefined && typeof connectionName !== 'string') throw new Error('无效的连接名。')
     if (cachedOnly !== undefined && typeof cachedOnly !== 'boolean') throw new Error('无效的缓存参数。')
     return bridge.importList(provider as 'feishu' | 'notion', connectionName, cachedOnly)
+  })
+  handle(EXTERNAL_DOCUMENT_CHANNELS.importExistingInRoom, (_event, provider: unknown, roomId: unknown, ids: unknown) => {
+    if (typeof provider !== 'string' || typeof roomId !== 'string' || !Array.isArray(ids)) throw new Error('无效的已导入检查请求。')
+    return bridge.importExistingInRoom(provider as 'feishu' | 'notion', roomId, ids as string[])
   })
   handle(EXTERNAL_DOCUMENT_CHANNELS.importBatch, (_event, input: unknown) => bridge.importBatch(input as never))
   handle(EXTERNAL_DOCUMENT_CHANNELS.importBatchStatus, (_event, batchId: unknown) => {

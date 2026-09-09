@@ -1,6 +1,5 @@
 import type { TiptapJsonContent } from '@nxcore/agent-contract'
 import { hasEmbeddedDocumentImages } from '@nxcore/document-model'
-import type { ImageOptions } from '@tiptap/extension-image'
 import i18n from '@/i18n/i18next'
 import type {
   DocumentImageMimeType,
@@ -15,13 +14,6 @@ export const DOCUMENT_IMAGE_ACCEPT = 'image/png,image/jpeg,image/gif,image/webp,
 export const DOCUMENT_IMAGE_MIME_TYPES: ReadonlySet<string> = new Set(
   DOCUMENT_IMAGE_ACCEPT.split(','),
 )
-export const DOCUMENT_IMAGE_RESIZE_OPTIONS: Exclude<ImageOptions['resize'], false> = {
-  enabled: true,
-  directions: ['top', 'right', 'bottom', 'left', 'top-left', 'top-right', 'bottom-left', 'bottom-right'],
-  minWidth: 96,
-  minHeight: 48,
-  alwaysPreserveAspectRatio: false,
-}
 
 export type StoreDocumentImage = (
   documentId: string,
