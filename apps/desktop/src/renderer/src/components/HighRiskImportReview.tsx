@@ -1,4 +1,4 @@
-import { Check, ShieldAlert, X } from 'lucide-react'
+import { Check, Files, X } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 
 import type { HighRiskImportReview as HighRiskImportReviewDto } from '../../../shared/ingest'
@@ -56,7 +56,7 @@ export function HighRiskImportReview() {
 
   return (
     <aside className="high-risk-import-review" role="region" aria-live="polite">
-      <span className="high-risk-import-review-icon" aria-hidden="true"><ShieldAlert /></span>
+      <span className="high-risk-import-review-icon" aria-hidden="true"><Files /></span>
       <div className="high-risk-import-review-copy">
         <strong>{t('surface:highRiskImportReview.title')}</strong>
         <small>{t(

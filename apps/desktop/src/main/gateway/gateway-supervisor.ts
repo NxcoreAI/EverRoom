@@ -7,6 +7,7 @@ import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from 'node:c
 import { app } from 'electron'
 import type { GatewayStatus } from '../../shared/sources'
 import { createLoggedHttpClient } from '../network/http-client'
+import { forgetProcessRecord, registerProcessRecord } from '../process-cleanup'
 
 interface GatewayManifest {
   pid: number
@@ -174,6 +175,14 @@ export class GatewaySupervisor {
     this.child = child
     this.stopping = false
     child.stdin.end()
+    // pid 登记：父进程被强杀后由下次启动的 cleanupStaleProcessRecords 清理
+    // 残留进程树（残留 gateway 会锁 SQLite 导致新实例 180s 超时，issue #179）。
+    registerProcessRecord(
+      join(this.dataDirectory, 'runtime'),
+      this.options.logLabel ?? 'gateway',
+      child.pid,
+      gatewayDirectory,
+    )
 
     child.stdout.setEncoding('utf8')
     child.stderr.setEncoding('utf8')
@@ -182,6 +191,7 @@ export class GatewaySupervisor {
     child.on('exit', (code, signal) => {
       this.child = null
       this.connection = null
+      forgetProcessRecord(join(this.dataDirectory, 'runtime'), this.options.logLabel ?? 'gateway')
       if (!this.stopping) {
         this.lastError = `${this.serviceLabel()} 进程已退出（code=${String(code)}, signal=${String(signal)}）`
         console.error(this.lastError)
@@ -416,10 +426,10 @@ export class GatewaySupervisor {
         return false
       }
     }
-    // dev 模式在 Windows 用 shell:true 拉起 pnpm 链：child.kill 只能到达 cmd 壳，
-    // pnpm→tsx→serve 会存活并继续锁着 sqlite（僵尸链）。必须 taskkill /T 整树强杀；
-    // manifest 清理由调用方的 rm(manifestPath) 兜底。
-    if (process.platform === 'win32' && !app.isPackaged && child.pid) {
+    // Windows 上整树强杀：dev 的 cmd→pnpm→tsx 链和打包模式的 gateway 孙进程
+    // （其自行 fork 的 worker）都不是 child.kill 能到达的，残留会锁 sqlite
+    // （僵尸链，issue #179）；manifest 清理由调用方的 rm(manifestPath) 兜底。
+    if (process.platform === 'win32' && child.pid) {
       try {
         execFileSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' })
         return true

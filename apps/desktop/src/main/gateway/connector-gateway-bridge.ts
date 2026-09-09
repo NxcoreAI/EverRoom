@@ -4,6 +4,7 @@ import type {
   ConnectorConnection,
   ConnectorJsonRecord,
   ConnectorProvidersResponse,
+  ConnectorRemoteAccount,
   ConnectorStatus,
   MailMessage,
   SyncMode,
@@ -108,6 +109,11 @@ export class NangoConnectorGatewayBridge {
 
   authorizationStatus(id: string): Promise<ConnectorAuthorizationAttempt> {
     return this.request(`/v1/nango-connectors/authorizations/${this.id(id)}`)
+  }
+
+  /** 远端 oo 租户旧授权探测：仅 saas 连接层实现（直连 oo 数据面）；local 模式无远端租户。 */
+  remoteAccount(_provider: string): Promise<ConnectorRemoteAccount | null> {
+    return Promise.resolve(null)
   }
 
   async disableConnection(id: string): Promise<void> {

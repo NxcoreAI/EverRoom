@@ -124,6 +124,8 @@ const IngestEventDtoSchema = Type.Object({
     Type.Null(),
   ]),
   originChannel: Type.String(),
+  provider: Type.Union([Type.String(), Type.Null()]),
+  sourceLabel: Type.Union([Type.String(), Type.Null()]),
   createdAt: Type.String(),
   updatedAt: Type.String(),
 });

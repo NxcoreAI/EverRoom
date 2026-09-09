@@ -37,7 +37,7 @@ import {
 } from '@/state/documentCursorCompletionSettings'
 import appleLogo from '@/assets/apple-logo.svg'
 import googleLogo from '@/assets/google-logo.svg'
-import type { AiGatewayStatus, CloudOidcProvider } from '../../../../shared/sources'
+import { formatLlmUsd, type AiGatewayStatus, type CloudOidcProvider } from '../../../../shared/sources'
 import type { AccountKeyringStatus, CloudDevice, PerceptionSettings, WindowScreenshotStatus } from '../../../../shared/sources'
 import type { BrowserExtensionStatus } from '../../../../shared/browser-extension'
 import type { NotificationPreferences } from '../../../../shared/notifications'
@@ -836,7 +836,7 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
                   <div className="cloud-subscription-quota">
                     <div>
                       <span>{t('surface:settings.llmRemaining')}</span>
-                      <strong>{aiRelayStatus.remainingCredits.toLocaleString(locale)}</strong>
+                      <strong>{formatLlmUsd(aiRelayStatus.remainingCredits, locale)}</strong>
                     </div>
                     <progress
                       aria-label={t('surface:settings.llmRemaining')}
@@ -847,8 +847,8 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
                       {aiRelayStatus.remainingCredits <= 0
                         ? t('surface:settings.llmQuotaExhausted')
                         : t('surface:settings.usedUsedTotalTotal', {
-                            used: Number(aiRelayStatus.usedCredits || '0').toLocaleString(locale),
-                            total: aiRelayStatus.llmCredits.toLocaleString(locale),
+                            used: formatLlmUsd(Number(aiRelayStatus.usedCredits || '0'), locale),
+                            total: formatLlmUsd(aiRelayStatus.llmCredits, locale),
                           })}
                     </small>
                   </div>
@@ -1081,7 +1081,7 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
           </div>
         </div>
         <div className="reality-setting-row">
-          <div><strong>{t('surface:settings.recordingSource')}</strong><small>{t('surface:settings.computerAudioRequiresMacosSystemPermission')}</small></div>
+          <div><strong>{t('surface:settings.recordingSource')}</strong><small>{t(window.nxcore?.platform === 'win32' ? 'surface:settings.computerAudioUnavailableOnWindows' : 'surface:settings.computerAudioRequiresMacosSystemPermission')}</small></div>
           <div className="segmented-control reality-source-setting" aria-label={t('surface:settings.realityPerceptionRecordingSource')}>
             <button type="button" data-active={String(realitySettings.audioSource === 'microphone')} onClick={() => updateRealitySettings({ audioSource: 'microphone' })}><Mic aria-hidden="true" />{t('surface:settings.microphone')}</button>
             <button type="button" data-active={String(realitySettings.audioSource === 'system')} disabled={window.nxcore?.platform !== 'darwin'} onClick={() => updateRealitySettings({ audioSource: 'system' })}><MonitorSpeaker aria-hidden="true" />{t('surface:settings.computerAudio')}</button>

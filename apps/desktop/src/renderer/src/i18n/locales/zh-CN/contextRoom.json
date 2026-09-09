@@ -1455,5 +1455,6 @@
   "externalImportDialog.listTruncated": "列表超出上限已截断",
   "externalImportDialog.filterNoMatch": "没有匹配“{query}”的文档",
   "externalImportDialog.loadingList": "正在获取文档列表…",
-  "externalImportDialog.connectionHint": "该平台还没有可用的导入连接：请在「连接器」页完成连接后再重新获取。"
+  "externalImportDialog.connectionHint": "该平台还没有可用的导入连接：请在「连接器」页完成连接后再重新获取。",
+  "onboarding.successBody.windows": "背景已经准备好。文件应用会在后台持续识别文档和桌面中的支持格式；其他目录可在“数据源”中添加。"
 }

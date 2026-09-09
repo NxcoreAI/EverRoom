@@ -370,6 +370,7 @@ describe("agent gateway", () => {
     expect(response.json()).toEqual({
       error: "room_not_available",
       message: "The selected Context Room is no longer available",
+      roomId: "room-deleted",
     });
     expect(snapshot.messages).toEqual([]);
     expect(snapshot.activeRun).toBeNull();

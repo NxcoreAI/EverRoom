@@ -1455,5 +1455,6 @@
   "externalImportDialog.listTruncated": "List truncated at the limit",
   "externalImportDialog.filterNoMatch": "No documents match \"{query}\"",
   "externalImportDialog.loadingList": "Fetching document list…",
-  "externalImportDialog.connectionHint": "No import connection for this provider yet — connect it on the Connectors page, then refresh."
+  "externalImportDialog.connectionHint": "No import connection for this provider yet — connect it on the Connectors page, then refresh.",
+  "onboarding.successBody.windows": "The context is in place. The file app will keep recognizing supported files in Documents and Desktop in the background; add other folders from Sources."
 }

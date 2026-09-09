@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import type { Logger } from "pino";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
 import {
@@ -11,6 +11,7 @@ import {
   connectorRecords,
   connectorTodos,
   documents,
+  fileEntries,
   ingestEvents,
   parsedContents,
   realityEvents,
@@ -116,6 +117,10 @@ export interface IngestEventDto {
   filterStatus: "pending" | "passed" | "filtered" | "bypassed" | null;
   filterVerdict: IngestFilterVerdict | null;
   originChannel: string;
+  /** 来源标识（读取时反查源头表）：connector 事件为 provider（gmail 等）；file 事件为文件来源标签。 */
+  provider: string | null;
+  /** 来源显示名：connector 事件为 connectionName（缺省 provider）；file 事件复用文件目录口径。 */
+  sourceLabel: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -274,11 +279,20 @@ export class IngestService {
    * 软删除后的旧 hash 不参与幂等命中，因此来源恢复时会重新扇出。
    */
   async cleanupSource(sourceKind: LedgerSourceKind, sourceId: string): Promise<void> {
-    if (this.knowledge.routerEnabled) this.knowledge.requestSourceCleanup(sourceKind, sourceId);
     await this.memory.deleteDocumentsByCallerRef(sourceId);
-    this.db.update(ingestEvents).set({ deletedAt: new Date(), updatedAt: new Date() }).where(and(
-      eq(ingestEvents.sourceKind, sourceKind),
-      eq(ingestEvents.sourceId, sourceId),
+    this.cleanupSources([{ sourceKind, sourceId }]);
+  }
+
+  /**
+   * 批量版（整源删除级联用）：knowledge 批量入队 + 台账一次软删。
+   * 记忆删除不在此处（调用方已按 callerRef 集合批量先行）。
+   */
+  cleanupSources(items: Array<{ sourceKind: LedgerSourceKind; sourceId: string }>): void {
+    if (items.length === 0) return;
+    if (this.knowledge.routerEnabled) this.knowledge.requestSourceCleanups(items);
+    const now = new Date();
+    this.db.update(ingestEvents).set({ deletedAt: now, updatedAt: now }).where(and(
+      inArray(ingestEvents.sourceId, items.map((item) => item.sourceId)),
       isNull(ingestEvents.deletedAt),
     )).run();
   }
@@ -1005,12 +1019,110 @@ export class IngestService {
     const total = this.db.select({ id: ingestEvents.id }).from(ingestEvents)
       .where(where)
       .all().length;
-    return { items: rows.map(toEventDto), total };
+    const items = rows.map(toEventDto);
+    this.attachSourceIdentity(items);
+    return { items, total };
+  }
+
+  /**
+   * 台账行补来源标识（provider/sourceLabel）。sourceId 有两种形态：
+   * ① 域行 id（现行 mail/calendar，M4 身份规范化）→ 直查域表；
+   * ② connector ref `connector:{provider}:{connectionId}[:{kind}]:{recordId|documentId}`
+   *   （现行 cloud-doc——document 无域行；mail/calendar 存量遗留）→ 解析出 provider,
+   *   connectionName 按 documentId/sourceRecordId 回查域表。查不到的留空——渲染端按类型回落。
+   */
+  private attachSourceIdentity(items: IngestEventDto[]): void {
+    if (items.length === 0) return;
+    // 可读的连接名才下发：本地域表里 connection_name 实际存连接 UUID 或 'default'
+    // （账号别名只在 SaaS 云端），UUID 串到 UI 上就是乱码——置空由渲染端回落应用显示名。
+    const readable = (name: string | null): string | null =>
+      name && name !== "default" && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-/i.test(name) ? name : null;
+    const identity = new Map<string, { provider: string | null; sourceLabel: string | null }>();
+    const remember = (rows: Array<{ id: string; service: string; connectionName: string | null }>) => {
+      for (const row of rows) identity.set(row.id, { provider: row.service, sourceLabel: readable(row.connectionName) });
+    };
+    const loadById = (ids: string[], table: typeof connectorEmails | typeof connectorCalendarEvents) => {
+      if (ids.length === 0) return;
+      remember(this.db.select({ id: table.id, service: table.service, connectionName: table.connectionName })
+        .from(table).where(inArray(table.id, ids)).all());
+    };
+    const idsOf = (kind: string) => items.filter((item) => item.sourceKind === kind).map((item) => item.sourceId);
+    loadById(idsOf("mail"), connectorEmails);
+    loadById(idsOf("calendar-event"), connectorCalendarEvents);
+
+    // connector ref 形态：provider 直接从 ref 取；connectionName 按域表回查。
+    const parseRef = (sourceId: string): { provider: string; recordId: string } | null => {
+      const parts = sourceId.split(":");
+      if (parts.length < 4 || parts[0] !== "connector") return null;
+      return { provider: parts[1]!, recordId: parts[parts.length - 1]! };
+    };
+    const refItems = items.filter((item) => !identity.has(item.sourceId) && item.sourceId.startsWith("connector:"));
+
+    // cloud-doc：按 documentId 回查 connector_documents
+    const docRefs = refItems
+      .map((item) => ({ item, ref: parseRef(item.sourceId) }))
+      .filter((entry): entry is { item: IngestEventDto; ref: { provider: string; recordId: string } } => entry.ref !== null && entry.item.sourceKind === "cloud-doc");
+    if (docRefs.length > 0) {
+      const labelByDocId = new Map<string, string | null>();
+      for (const row of this.db.select({ documentId: connectorDocuments.documentId, service: connectorDocuments.service, connectionName: connectorDocuments.connectionName })
+        .from(connectorDocuments)
+        .where(inArray(connectorDocuments.documentId, docRefs.map((entry) => entry.ref.recordId))).all()) {
+        labelByDocId.set(row.documentId, readable(row.connectionName));
+      }
+      for (const { item, ref } of docRefs) {
+        item.provider = ref.provider;
+        item.sourceLabel = labelByDocId.get(ref.recordId) ?? null;
+      }
+    }
+
+    // mail/calendar 存量 ref：recordId 可能是域行 id 或 sourceRecordId，两列都查
+    const legacyRefs = refItems
+      .map((item) => ({ item, ref: parseRef(item.sourceId) }))
+      .filter((entry): entry is { item: IngestEventDto; ref: { provider: string; recordId: string } } =>
+        entry.ref !== null && (entry.item.sourceKind === "mail" || entry.item.sourceKind === "calendar-event"));
+    if (legacyRefs.length > 0) {
+      const recordIds = legacyRefs.map((entry) => entry.ref.recordId);
+      const labels = new Map<string, string>();
+      for (const table of [connectorEmails, connectorCalendarEvents] as const) {
+        for (const row of this.db.select({ id: table.id, sourceRecordId: table.sourceRecordId, service: table.service, connectionName: table.connectionName })
+          .from(table).where(inArray(table.sourceRecordId, recordIds)).all()) {
+          labels.set(row.sourceRecordId, readable(row.connectionName) ?? "");
+          labels.set(row.id, readable(row.connectionName) ?? "");
+        }
+      }
+      for (const { item, ref } of legacyRefs) {
+        item.provider = ref.provider;
+        item.sourceLabel = labels.get(ref.recordId) || null;
+      }
+    }
+
+    // file：file_entries 反查（provider/来源标签与文件目录同口径）
+    const fileIds = idsOf("file");
+    if (fileIds.length > 0) {
+      const rows = this.db.select({ id: fileEntries.id, provider: fileEntries.provider, sourceKind: fileEntries.sourceKind })
+        .from(fileEntries).where(inArray(fileEntries.id, fileIds)).all();
+      for (const row of rows) {
+        identity.set(row.id, { provider: row.provider, sourceLabel: row.provider ?? fileSourceLabelOf(row.sourceKind) });
+      }
+    }
+
+    for (const item of items) {
+      if (item.provider !== null) continue;
+      const found = identity.get(item.sourceId);
+      if (found) {
+        item.provider = found.provider;
+        item.sourceLabel = found.sourceLabel;
+      } else if (item.sourceKind === "file") {
+        item.sourceLabel = item.originChannel === "upload" ? "手动上传" : "本地文件";
+      }
+    }
   }
 
   getEvent(id: string): IngestEventDto | null {
     const row = this.db.select().from(ingestEvents).where(eq(ingestEvents.id, id)).get();
-    return row ? toEventDto(row) : null;
+    const dto = row ? toEventDto(row) : null;
+    if (dto) this.attachSourceIdentity([dto]);
+    return dto;
   }
 
   /** 事件归一化产物全文（台账详情查看用；产物缺失 404 由调用方处理）。 */
@@ -1238,6 +1350,18 @@ function formatMillis(ms: number): string {
   return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
 }
 
+/** file 事件来源标签（与 files 目录 sourceLabel 同口径）。 */
+function fileSourceLabelOf(sourceKind: string): string {
+  switch (sourceKind) {
+    case "local-folder": return "本地文件夹";
+    case "manual-upload": return "手动上传";
+    case "web-clipper": return "网页剪藏";
+    case "connector": return "连接器导入";
+    case "migration": return "迁移导入";
+    default: return "历史文件";
+  }
+}
+
 function toEventDto(row: typeof ingestEvents.$inferSelect): IngestEventDto {
   return {
     id: row.id,
@@ -1255,6 +1379,8 @@ function toEventDto(row: typeof ingestEvents.$inferSelect): IngestEventDto {
     filterStatus: row.filterStatus ?? null,
     filterVerdict: row.filterVerdict ?? null,
     originChannel: row.originChannel,
+    provider: null,
+    sourceLabel: null,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };

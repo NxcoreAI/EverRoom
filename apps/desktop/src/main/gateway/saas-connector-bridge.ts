@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 
-import type { ConnectorAuthorizationAttempt } from '@nxcore/connector-contract'
+import type { ConnectorAuthorizationAttempt, ConnectorRemoteAccount } from '@nxcore/connector-contract'
 
 import { ConnectorGatewayBridge } from './connector-gateway-bridge'
 import type { GatewaySupervisor } from './gateway-supervisor'
@@ -39,6 +39,11 @@ const SERVICE_OF_PROVIDER: Record<string, string> = Object.fromEntries(
 /** EverRoom provider → oo service；未知 provider 原样返回（多数 provider 与 service 同名）。 */
 export function serviceOfProvider(provider: string): string {
   return SERVICE_OF_PROVIDER[provider] ?? provider
+}
+
+/** oo service → EverRoom provider；未知 service（无桌面适配器）返回 null——对账/探测据此跳过。 */
+export function providerOfService(service: string): string | null {
+  return PROVIDER_OF_SERVICE[service] ?? null
 }
 
 interface PendingAttempt {
@@ -148,5 +153,35 @@ export class SaasConnectorBridge extends ConnectorGatewayBridge {
       .map((config) => PROVIDER_OF_SERVICE[config.service])
       .filter((provider): provider is string => Boolean(provider))
     return [...new Set(providers)]
+  }
+
+  /**
+   * oo 租户里该 provider 的活跃旧授权（本地已删、远端凭据仍在的场景）：
+   * displayName 来自凭据校验时拉取的账号身份（邮箱/显示名）。不可达/无旧
+   * 授权返回 null，渲染层回落直接走全新授权。
+   */
+  async remoteAccount(provider: string): Promise<ConnectorRemoteAccount | null> {
+    if (!/^[a-z][a-z0-9-]*$/.test(provider)) throw new Error('不支持的连接提供方。')
+    const session = this.deps.ooSession()
+    if (!session) return null
+    const service = serviceOfProvider(provider)
+    try {
+      const response = await fetch(
+        `${session.baseUrl}/v1/apps/services/${encodeURIComponent(service)}`,
+        { headers: { authorization: `Bearer ${session.token}` }, signal: AbortSignal.timeout(PROBE_TIMEOUT_MS) },
+      )
+      if (!response.ok) return null
+      const payload = (await response.json().catch(() => null)) as
+        | { data?: Array<{ status?: unknown; displayName?: unknown; accountLabel?: unknown }> }
+        | null
+      const active = (payload?.data ?? []).find((item) => item.status === 'active')
+      if (!active) return null
+      const displayName = typeof active.displayName === 'string' && active.displayName.trim()
+        ? active.displayName
+        : typeof active.accountLabel === 'string' && active.accountLabel.trim() ? active.accountLabel : null
+      return { provider, service, displayName }
+    } catch {
+      return null
+    }
   }
 }

@@ -50,8 +50,8 @@ export function routeProxyUrlForTest(rawUrl: string, method: "GET" | "POST", bod
     if (path === "/gmail/v1/users/me/profile") return { service: "gmail", action: "get_profile", input: {} };
     if (path === "/gmail/v1/users/me/messages") {
       // detail=ids：oo 的 ids 分支不做逐封 hydration（一页一个 list action，5 units）。
-      // 逐封取全文由适配器自己 pace 着做——full 整页 hydration 在单 action 内会撞 120s 超时，
-      // 且与后续逐封 get 双倍烧配额（Gmail 每用户 250 units/min）。
+      // 逐封取全文由适配器自己取——full 整页 hydration 在单 action 内会撞 120s 超时，
+      // 且与后续逐封 get 双倍烧配额（Gmail 每用户配额 250 units/秒）。
       const input: Record<string, unknown> = { detail: "ids", maxResults: num("maxResults", 100) ?? 100 };
       const query = q.get("q");
       if (query) input.query = query;

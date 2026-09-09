@@ -106,6 +106,7 @@ import type {
   ConnectorConnection,
   ConnectorJsonRecord,
   ConnectorProvidersResponse,
+  ConnectorRemoteAccount,
   ConnectorStatus,
   MailMessage,
   SyncMode,
@@ -383,6 +384,13 @@ export interface AiGatewayStatus {
   usedCredits: string
   remainingCredits: number
   periodEnd: string | null
+}
+
+/** LLM 额度换算：new-api 原生 quota 单位 ↔ 美元（QuotaPerUnit 默认 500000 = $1）。 */
+export const QUOTA_PER_USD = 500000
+
+export function formatLlmUsd(quota: number, locale: string): string {
+  return new Intl.NumberFormat(locale, { style: 'currency', currency: 'USD' }).format(quota / QUOTA_PER_USD)
 }
 
 export type AiRelayKeeperEventType = 'quota-exhausted' | 'fallback-user' | 'fallback-restored'
@@ -788,6 +796,13 @@ export interface NxcoreDesktopApi {
   app: {
     clearUserData(): Promise<void>
   }
+  window: {
+    minimize(): Promise<void>
+    toggleMaximize(): Promise<void>
+    close(): Promise<void>
+    getState(): Promise<{ maximized: boolean }>
+    onMaximizedChange(listener: (maximized: boolean) => void): () => void
+  }
   office: {
     testAvailable: boolean
     /** 激活指定 Office 预览实例并隐藏其余实例；null = 全部隐藏（标签仍保留）。 */
@@ -842,6 +857,8 @@ export interface NxcoreDesktopApi {
     oauthConfigs?(): Promise<string[] | null>
     startAuthorization(provider: string): Promise<ConnectorAuthorizationAttempt>
     authorizationStatus(id: string): Promise<ConnectorAuthorizationAttempt>
+    /** 远端 oo 租户的活跃旧授权探测（saas 模式；local/无会话返回 null）——重连弹窗选择用。 */
+    remoteAccount(provider: string): Promise<ConnectorRemoteAccount | null>
     registerConnection(input: { provider: string; service: string; connectionName: string; filters?: Record<string, unknown> }): Promise<ConnectorConnection>
     createWebcalSubscription(url: string): Promise<ConnectorConnection>
     disableConnection(id: string): Promise<void>

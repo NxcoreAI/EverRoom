@@ -56,8 +56,32 @@ export class ConnectorRepository {
     authMethod?: "nango-oauth" | "api-token" | "webcal-url" | "password" | "manual-import";
     credentialsRef?: string | null;
   }): ConnectorConnection {
-    const id = randomUUID(),
-      t = now();
+    const t = now();
+    // 幂等（单槽位顶替语义）：同 (provider, connectionName) 重授权/重连复用既有
+    // 行——直接 INSERT 会撞 UNIQUE(provider,connection_name) 抛错，导致重连
+    // 注册永远 409，旧连接又因数据已清而无法自愈（issue #182 同类）。
+    const existing = (
+      this.sqlite
+        .prepare(
+          "SELECT id FROM connector_connections WHERE provider=? AND connection_name=?",
+        )
+        .all(input.provider, input.connectionName) as any[]
+    )[0];
+    if (existing) {
+      this.sqlite
+        .prepare(
+          "UPDATE connector_connections SET service=?,auth_method=COALESCE(?,auth_method),credentials_ref=COALESCE(?,credentials_ref),status='active',updated_at=? WHERE id=?",
+        )
+        .run(
+          input.service,
+          input.authMethod ?? null,
+          input.credentialsRef ?? null,
+          t,
+          existing.id,
+        );
+      return this.getConnection(existing.id)!;
+    }
+    const id = randomUUID();
     this.sqlite
       .prepare(
         "INSERT INTO connector_connections(id,provider,service,connection_name,filters_json,auth_method,credentials_ref,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",

@@ -34,6 +34,10 @@ function isRemoteDebugActive(): boolean {
   return Date.now() < enabledUntil
 }
 
+export function isSentryRemoteDebugEnabled(): boolean {
+  return isRemoteDebugActive()
+}
+
 export function configureSentry(version: string, packaged: boolean): void {
   if (!Sentry) return
   const dsn = process.env.NXCORE_SENTRY_DSN?.trim() || (packaged ? PRODUCTION_DSN : '')
@@ -65,18 +69,28 @@ function applyAccountScope(account: CloudAccountStatus): void {
   if (!configured || !Sentry) return
   const eligible = isRemoteDebugEligible(account)
   Sentry.getCurrentScope().clearBreadcrumbs()
-  Sentry.setUser(eligible ? { id: account.user!.id } : null)
   if (eligible) {
+    const email = account.user!.email
+    Sentry.setUser(email ? { id: account.user!.id, email } : { id: account.user!.id })
     Sentry.setTags({
       plan: account.subscription!.planCode,
       subscription_status: account.subscription!.status,
     })
+  } else {
+    Sentry.setUser(null)
   }
 }
 
 export function syncSentryAccount(account: CloudAccountStatus): void {
   currentAccount = account
-  enabledUntil = isRemoteDebugEligible(account) ? Date.parse(account.subscription!.periodEnd) : 0
+  if (isRemoteDebugEligible(account)) {
+    enabledUntil = Date.parse(account.subscription!.periodEnd)
+  } else if (account.authenticated && !account.subscription) {
+    // 订阅拉取失败（瞬时网络/服务端故障）时保留上次判定，避免整个会话静默；
+    // 明确 free/未激活/登出才关闸。
+  } else {
+    enabledUntil = 0
+  }
   applyAccountScope(account)
 }
 

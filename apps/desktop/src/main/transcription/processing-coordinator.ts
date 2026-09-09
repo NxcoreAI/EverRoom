@@ -158,6 +158,7 @@ export class TranscriptionProcessingCoordinator {
     }
     if (!claim) return
     const { job, leaseToken } = claim
+    console.info(`[processing] claimed transcription job ${job.id} (source ${job.sourceRecordId})`)
     const stored = this.state.jobs[job.id]
     const reusable = stored
       && stored.sourceRecordId === job.sourceRecordId
@@ -187,13 +188,28 @@ export class TranscriptionProcessingCoordinator {
           const envelope = await this.client.getPrivateRecord(job.sourceRecordId)
           const source = this.readSource(envelope, job)
           const transcript = transcriptText(source)
-          const response = await this.agent.summarizeTranscription({
-            jobId: job.id,
-            sourceRecordId: job.sourceRecordId,
-            transcript,
-            language: getDesktopLocale(),
-          })
-          const summary = parseSummary(response.content, transcript)
+          console.info(`[processing] summarizing job ${job.id} | transcript ${transcript.length} chars`)
+          // 校验失败先带修复提示重试一次（网关分段缓存生效，分块路径只重跑综合），
+          // 仍不达标才 fail 给 SaaS——质量闸严格但不再"一票否决全重来"。
+          let summary: SummaryValue | undefined
+          let repairHint: string | undefined
+          for (let attempt = 0; attempt < 2 && !summary; attempt += 1) {
+            try {
+              const response = await this.agent.summarizeTranscription({
+                jobId: job.id,
+                sourceRecordId: job.sourceRecordId,
+                transcript,
+                language: getDesktopLocale(),
+                ...(repairHint ? { repairHint } : {}),
+              })
+              summary = parseSummary(response.content, transcript)
+            } catch (error) {
+              if (attempt === 1 || !(error instanceof SummaryValidationError) || !error.hint) throw error
+              repairHint = error.hint
+              console.warn(`[processing] job ${job.id} summary validation failed (${error.message}); retrying with repair hint`)
+            }
+          }
+          if (!summary) throw new Error('processing_summary_missing')
           const result = createSummary(job, summary)
           this.state.jobs[job.id]!.result = result
           this.state.jobs[job.id]!.updatedAt = new Date().toISOString()
@@ -206,6 +222,7 @@ export class TranscriptionProcessingCoordinator {
       const result = this.state.jobs[job.id]?.result
       if (!result) throw new Error('processing_result_missing')
       await this.client.completeProcessingJob(job.id, { ...result, leaseToken })
+      console.info(`[processing] completed transcription job ${job.id}`)
       delete this.state.jobs[job.id]
       await this.persist()
       try {
@@ -215,6 +232,10 @@ export class TranscriptionProcessingCoordinator {
       }
     } catch (error) {
       if (!resultReady) {
+        console.warn(
+          `[processing] transcription job ${job.id} failed (${errorCode(error)}, ${isPermanent(error) ? 'permanent' : 'retryable'})`,
+          error,
+        )
         await this.client.failProcessingJob(job.id, {
           leaseToken,
           errorCode: errorCode(error),
@@ -274,13 +295,23 @@ function transcriptText(source: SourceRecord): string {
   return `${text.slice(0, headChars)}${marker}${text.slice(-tailChars)}`
 }
 
+/** 校验类失败：携带可直接拼进下一轮提示的修复说明，供一次性 repair 重试。 */
+class SummaryValidationError extends Error {
+  constructor(code: string, readonly hint?: string) {
+    super(code)
+  }
+}
+
 function parseSummary(raw: string, transcript: string): SummaryValue {
   const trimmed = raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')
   let value: unknown
   try {
     value = JSON.parse(trimmed)
   } catch {
-    throw new Error('invalid_agent_json')
+    throw new SummaryValidationError(
+      'invalid_agent_json',
+      '回复不是可解析的纯 JSON（可能含 Markdown 围栏或说明文字）；必须从 { 开始、以 } 结束，且不含任何其他内容',
+    )
   }
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('invalid_agent_summary')
   const object = value as Record<string, unknown>
@@ -324,12 +355,18 @@ function parseSummary(raw: string, transcript: string): SummaryValue {
     representativeTags,
   }
   if (!summary.title || summary.title === '后台转写总结' || !summary.overview || !summary.keyPoints.length) {
-    throw new Error('empty_agent_summary')
+    throw new SummaryValidationError(
+      'empty_agent_summary',
+      'title/overview 为空或占位（如「后台转写总结」）、keyPoints 为空；必须输出基于转写的具体内容',
+    )
   }
   const transcriptLength = transcript.trim().length
   const minimum = summaryDetailMinimum(transcriptLength)
   if (minimum && (summary.overview.length < minimum.overview || summary.keyPoints.length < minimum.keyPoints)) {
-    throw new Error('incomplete_agent_summary')
+    throw new SummaryValidationError(
+      'incomplete_agent_summary',
+      `转写 ${transcriptLength} 字，要求 overview≥${minimum.overview} 字、keyPoints≥${minimum.keyPoints} 条；上一轮 overview ${summary.overview.length} 字、keyPoints ${summary.keyPoints.length} 条，请补足细节`,
+    )
   }
   return summary
 }

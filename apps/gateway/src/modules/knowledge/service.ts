@@ -1240,6 +1240,31 @@ export class KnowledgeService {
     this.enqueueCleanup(sourceKind, sourceId);
   }
 
+  /**
+   * 批量版（连接器删除级联用）：一次查询去重既有 pending/running 清理 job，
+   * 批内也去重，剩余整批插入——避免逐条 insertJob 的 O(n²) dedupe 扫描。
+   */
+  requestSourceCleanups(items: Array<{ sourceKind: SourceKind; sourceId: string }>): void {
+    if (items.length === 0) return;
+    const wanted = new Map<string, { sourceKind: SourceKind; sourceId: string }>();
+    for (const item of items) wanted.set(`${item.sourceKind} ${item.sourceId}`, item);
+    const active = this.db.select({ payload: jobs.payload }).from(jobs)
+      .where(and(eq(jobs.type, CLEANUP_JOB_TYPE), inArray(jobs.status, ["pending", "running"])))
+      .all();
+    for (const row of active) {
+      const payload = row.payload as CleanupJobPayload;
+      if (payload && typeof payload === "object") wanted.delete(`${payload.sourceKind} ${payload.sourceId}`);
+    }
+    if (wanted.size === 0) return;
+    this.db.insert(jobs).values([...wanted.values()].map((item) => ({
+      id: randomUUID(),
+      type: CLEANUP_JOB_TYPE,
+      status: "pending" as const,
+      payload: { sourceKind: item.sourceKind, sourceId: item.sourceId },
+    }))).run();
+    this.wake();
+  }
+
   /** 文档永久删除后的可靠清理入口，由持久化 document outbox 调用。 */
   requestDocumentCleanup(documentId: string): void {
     this.enqueueCleanup("everroom-doc", documentId);

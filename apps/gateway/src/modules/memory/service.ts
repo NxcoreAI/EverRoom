@@ -1109,14 +1109,25 @@ export class MemoryService {
    * 文档（级联清 L0 会话/分块/派生 L1）。MemoryCore 未启用返回空列表。
    */
   async deleteDocumentsByCallerRef(callerRef: string): Promise<string[]> {
+    return this.deleteDocumentsByCallerRefs({ refs: [callerRef] });
+  }
+
+  /**
+   * 批量版（连接器删除级联用）：exact ref 集合 + 可选前缀一次分页扫描命中即删，
+   * 避免逐 ref 全量扫描的 O(N×M)。MemoryCore 未启用返回空列表。
+   */
+  async deleteDocumentsByCallerRefs(target: { refs: string[]; prefix?: string }): Promise<string[]> {
     if (!this.client || !this.enabled) return [];
     const client = this.client;
+    const refs = new Set(target.refs);
+    const matches = (callerRef: string) =>
+      refs.has(callerRef) || (target.prefix !== undefined && callerRef.startsWith(target.prefix));
     const deleted: string[] = [];
     // listDocuments 按身份键取最新版本：分页扫全量，caller_ref 命中即删
     for (let offset = 0; ; offset += 100) {
       const page = await this.call(() => client.listDocuments({ limit: 100, offset }));
       for (const item of page.documents) {
-        if (item.caller_ref !== callerRef) continue;
+        if (!matches(item.caller_ref)) continue;
         await this.call(() => client.deleteDocument(item.document_id));
         deleted.push(item.document_id);
       }

@@ -16,6 +16,7 @@ import type { LucideIcon } from 'lucide-react'
 
 import type { ContextRoomWorkspaceTab } from '@/components/context-room/contextRoomTabs'
 import { ProductBrand } from '@/components/ui/ProductBrand'
+import { WindowControls } from '@/components/WindowControls'
 import { useLocale } from '@/i18n/LocaleContext'
 import type { OfficePreviewKind, OfficePreviewTab } from '../../../shared/sources'
 
@@ -156,6 +157,7 @@ export function TopBar({
         >
           {agentOpen ? <PanelRightClose aria-hidden="true" strokeWidth={1.8} /> : <PanelRightOpen aria-hidden="true" strokeWidth={1.8} />}
         </button>
+        <WindowControls />
       </div>
     </header>
   )

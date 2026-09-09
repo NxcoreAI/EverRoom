@@ -170,13 +170,6 @@ export function SourcesPage() {
     finally { setBusyId(null) }
   }
 
-  const importNotionZip = async () => {
-    setBusyId('migration-notion'); setMessage(null)
-    try { const run = await window.nxcore!.migrations.importNotionZip(); if (run) setMessage(t('surface:sources.notionMigrationCompleted', { count: run.pagesCompleted })) }
-    catch (error) { setMessage(error instanceof Error ? error.message : t('surface:sources.migrationFailed')) }
-    finally { setBusyId(null) }
-  }
-
   const mountObsidian = async () => {
     setObsidianImportOpen(true)
   }
@@ -664,7 +657,6 @@ export function SourcesPage() {
             onGitHub={() => setGithubOpen(true)}
             onGoogleDocs={() => setMarkdownSource('google-docs')}
             onNotion={() => setMarkdownSource('notion')}
-            onNotionZip={() => void importNotionZip()}
             onOpenClaw={() => void importOpenClaw()}
             onLocalAgentHistory={(provider) => void importLocalAgentHistory(provider)}
             connectorsEnabled={connectorsEnabled}
@@ -689,8 +681,7 @@ export function SourcesPage() {
               onGitHub={() => setGithubOpen(true)}
               onGoogleDocs={() => setMarkdownSource('google-docs')}
               onNotion={() => setMarkdownSource('notion')}
-              onNotionZip={() => void importNotionZip()}
-              onOpenClaw={() => void importOpenClaw()}
+                onOpenClaw={() => void importOpenClaw()}
               onLocalAgentHistory={(provider) => void importLocalAgentHistory(provider)}
               connectorsEnabled={connectorsEnabled}
               onConnectorProvider={(provider) => void connectConnector(provider)}
