@@ -972,6 +972,7 @@
   "topBar.openPages": "Open pages",
   "topBar.workspace": "Workspace",
   "useAgentSession.runFailed": "Agent run failed.",
+  "useAgentSession.runInterrupted": "Agent run was interrupted. Please try again.",
   "useAgentSession.stopFailed": "Failed to stop the Agent.",
   "useAgentSession.desktopOnly": "The Agent service is only available in the desktop app.",
   "useAgentSession.continueFailed": "Failed to continue.",

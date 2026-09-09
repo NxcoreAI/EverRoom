@@ -972,6 +972,7 @@
   "topBar.openPages": "打开的页面",
   "topBar.workspace": "工作台",
   "useAgentSession.runFailed": "Agent 运行失败。",
+  "useAgentSession.runInterrupted": "Agent 运行已中断，请重试。",
   "useAgentSession.stopFailed": "停止 Agent 失败。",
   "useAgentSession.desktopOnly": "Agent 服务仅在桌面应用中可用。",
   "useAgentSession.continueFailed": "继续处理失败。",

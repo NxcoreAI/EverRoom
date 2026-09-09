@@ -5,7 +5,7 @@ vi.mock('../context-room/RoomDocumentsProvider', () => ({
   useRoomDocumentsState: () => ({ documentsByRoom: {}, eventsByDocument: {} }),
 }))
 
-import { buildLinkedAgentRunState } from './useLinkedAgentRun'
+import { buildLinkedAgentRunState, linkedRunPollChanged } from './useLinkedAgentRun'
 
 function event(seq: number, type: AgentEvent['type'], payload: unknown = {}): AgentEvent {
   return {
@@ -99,5 +99,14 @@ describe('linked Agent run state', () => {
     expect(completed.messages[0]?.content).toBe('Document created.')
     expect(completed.completedAt).toBe(event(7, 'run.completed').occurredAt)
     expect(completed.documentPending).toBe(false)
+  })
+
+  it('reports poll changes only for new events or an updated snapshot', () => {
+    const first = [event(1, 'run.started')]
+
+    expect(linkedRunPollChanged(undefined, snapshot, first)).toBe(true)
+    expect(linkedRunPollChanged(snapshot.session.updatedAt, snapshot, [])).toBe(false)
+    expect(linkedRunPollChanged('older', snapshot, [])).toBe(true)
+    expect(linkedRunPollChanged(snapshot.session.updatedAt, snapshot, first)).toBe(true)
   })
 })

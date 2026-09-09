@@ -4,6 +4,7 @@ import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type R
 import { AgentExecutionTimeline } from './AgentExecutionTimeline'
 import { AgentShellApproval } from './AgentShellApproval'
 import { AgentAuthChallengeCard, useAgentAuthChallenge } from './AgentAuthChallengeCard'
+import { isScrolledToBottom } from './agentChatScroll'
 import type { PendingShellApproval } from './agentShellApprovals'
 import type { AgentRunActivity } from './agentRunActivity'
 import { parseAgentDocumentIntentResult, type AgentDocumentIntentResult } from './agentDocumentIntent'
@@ -390,6 +391,9 @@ export function AgentChatView({
   const handledDocumentSelectionsRef = useRef(new Set<string>())
   const { documentsByRoom } = useRoomDocumentsState()
   const conversationRef = useRef<HTMLDivElement>(null)
+  const pinnedToBottomRef = useRef(true)
+  const lastUserMessageIdRef = useRef<string | null>(null)
+  const previousSessionIdRef = useRef(currentSessionId)
   const hasConversation = messages.length > 0 || sessionLinks.length > 0 || pendingApprovals.length > 0
     || Boolean(activeRunId) || Boolean(error)
   const confirmedEmpty = scopeReady && !hasConversation
@@ -541,7 +545,30 @@ export function AgentChatView({
     }
   }, [])
 
+  // 自动滚底遵循 stick-to-bottom：用户上翻离开底部后暂停跟随，滚回底部恢复。
+  // 新用户消息与会话切换重新锚定底部（#199：此前无条件滚底，流中断后的周期
+  // state 更新会把用户反复拽回底部，表现为滚动卡死）。
   useEffect(() => {
+    if (previousSessionIdRef.current === currentSessionId) return
+    previousSessionIdRef.current = currentSessionId
+    lastUserMessageIdRef.current = null
+    pinnedToBottomRef.current = true
+  }, [currentSessionId])
+
+  useEffect(() => {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const message = messages[index]!
+      if (message.role !== 'user') continue
+      if (message.id !== lastUserMessageIdRef.current) {
+        lastUserMessageIdRef.current = message.id
+        pinnedToBottomRef.current = true
+      }
+      return
+    }
+  }, [messages])
+
+  useEffect(() => {
+    if (!pinnedToBottomRef.current) return
     const element = conversationRef.current
     if (!element || notificationTargetMessageId) return
     element.scrollTop = element.scrollHeight
@@ -651,7 +678,14 @@ export function AgentChatView({
       }}
     >
       {emptyLayout ? <div className="agent-chat-empty-heading"><h2>{t('surface:agentChat.startANewConversation')}</h2></div> : null}
-      <div ref={conversationRef} className="agent-conversation" aria-live="polite">
+      <div
+        ref={conversationRef}
+        className="agent-conversation"
+        aria-live="polite"
+        onScroll={(event) => {
+          pinnedToBottomRef.current = isScrolledToBottom(event.currentTarget)
+        }}
+      >
           {incomingLink ? (
             <>
               <SessionReference link={incomingLink} onOpen={() => onOpenSessionLink(incomingLink)} />

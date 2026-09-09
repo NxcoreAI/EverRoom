@@ -14,6 +14,7 @@ import { AgentService } from "../src/modules/agent/service.js";
 import { McpConfigManager } from "../src/modules/agent/mcp-routes.js";
 import { RuntimeConfigManager } from "../src/runtime-config.js";
 import {
+  flushRedactionDelta,
   redactDelta,
   redactSecrets,
   redactText,
@@ -229,6 +230,134 @@ describe("secret redaction", () => {
     expect(payload.run.createdAt).toBeInstanceOf(Date);
     expect(payload.list[0]).toBe(createdAt);
     expect(JSON.stringify(payload)).toContain("2026-08-27T13:00:00.000Z");
+  });
+
+  it("flushes the withheld delta tail once so interrupted output stays complete", () => {
+    const secret = "t".repeat(43);
+    registerSecret(secret);
+    const original = "plain-agent-output-without-secrets-0123456789";
+    const emitted = [
+      redactDelta("flush-scope", original.slice(0, 6)),
+      redactDelta("flush-scope", original.slice(6, 20)),
+      redactDelta("flush-scope", original.slice(20)),
+    ].join("");
+    expect(emitted.length).toBeLessThan(original.length);
+
+    const tail = flushRedactionDelta("flush-scope");
+    expect(tail.length).toBeGreaterThan(0);
+    expect(emitted + tail).toBe(redactText(original));
+    expect(emitted + tail).not.toContain(secret);
+    expect(flushRedactionDelta("flush-scope")).toBe("");
+  });
+
+  it("re-emits the withheld tail as a delta before the terminal event when a run fails mid-stream", async () => {
+    const root = await directory();
+    const secret = "t".repeat(43);
+    registerSecret(secret);
+    const full = "y".repeat(120);
+    class FailingRuntime implements AgentRuntime {
+      readonly id = "failing-runtime";
+      async getCapabilities(): Promise<RuntimeCapabilities> { return { streaming: true, reasoning: false, tools: false, steering: false, resume: false }; }
+      async start(input: StartRuntimeRunInput): Promise<RuntimeRun> {
+        async function* events() {
+          yield { type: "run.started" as const, payload: {} };
+          yield { type: "message.started" as const, payload: {} };
+          yield { type: "message.delta" as const, payload: { delta: full.slice(0, 40) } };
+          yield { type: "message.delta" as const, payload: { delta: full.slice(40, 80) } };
+          yield { type: "message.delta" as const, payload: { delta: full.slice(80) } };
+          yield { type: "run.failed" as const, payload: { message: "stream broke" } };
+        }
+        return { runId: input.runId, runtimeSessionRef: "failing-session", events: events() };
+      }
+      async resume(_input: ResumeRuntimeRunInput): Promise<RuntimeRun> { throw new Error("unsupported"); }
+      async sendInput(): Promise<void> {}
+      async cancel(): Promise<void> {}
+      async deleteSession(): Promise<void> {}
+      async dispose(): Promise<void> {}
+    }
+    const database = createDatabase(join(root, "gateway.sqlite"), resolve("drizzle"));
+    databases.push(database.sqlite);
+    const broker = new AgentEventBroker();
+    const service = new AgentService(database.db, new FailingRuntime(), broker);
+    await service.initialize();
+    const session = service.createSession({ pageLabel: "test" });
+    const frames: string[] = [];
+    broker.subscribe(session.id, { readyState: 1, send: (data) => frames.push(data) });
+    const run = await service.startRun(session.id, { prompt: "streaming prompt", idempotencyKey: "flush-run-51" });
+    const deadline = Date.now() + 2_000;
+    while (service.getRun(run.id)?.status !== "failed") {
+      if (Date.now() > deadline) throw new Error("failing run timed out");
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 10));
+    }
+
+    const events = database.db.select().from(agentEvents).all()
+      .filter((event) => event.runId === run.id)
+      .sort((left, right) => left.seq - right.seq);
+    const deltas = events
+      .filter((event) => event.type === "message.delta")
+      .map((event) => String((event.payload as { delta?: unknown }).delta))
+      .join("");
+    expect(deltas).toBe(full);
+    const failed = events.find((event) => event.type === "run.failed");
+    const lastDelta = [...events].reverse().find((event) => event.type === "message.delta");
+    expect(lastDelta?.seq).toBeLessThan(failed!.seq);
+    expect(JSON.stringify(events)).not.toContain(secret);
+    expect(frames.join("\n")).not.toContain(secret);
+    await service.dispose();
+  });
+
+  it("re-emits the withheld tail as a delta before message.completed so completed runs keep delta replay complete", async () => {
+    const root = await directory();
+    const secret = "t".repeat(43);
+    registerSecret(secret);
+    const full = "completed-agent-output-without-secrets-9876543210";
+    class CompletingRuntime implements AgentRuntime {
+      readonly id = "completing-runtime";
+      async getCapabilities(): Promise<RuntimeCapabilities> { return { streaming: true, reasoning: false, tools: false, steering: false, resume: false }; }
+      async start(input: StartRuntimeRunInput): Promise<RuntimeRun> {
+        async function* events() {
+          yield { type: "run.started" as const, payload: {} };
+          yield { type: "message.started" as const, payload: {} };
+          yield { type: "message.delta" as const, payload: { delta: full.slice(0, 10) } };
+          yield { type: "message.delta" as const, payload: { delta: full.slice(10, 30) } };
+          yield { type: "message.delta" as const, payload: { delta: full.slice(30) } };
+          yield { type: "message.completed" as const, payload: { role: "assistant", content: full } };
+          yield { type: "run.completed" as const, payload: {} };
+        }
+        return { runId: input.runId, runtimeSessionRef: "completing-session", events: events() };
+      }
+      async resume(_input: ResumeRuntimeRunInput): Promise<RuntimeRun> { throw new Error("unsupported"); }
+      async sendInput(): Promise<void> {}
+      async cancel(): Promise<void> {}
+      async deleteSession(): Promise<void> {}
+      async dispose(): Promise<void> {}
+    }
+    const database = createDatabase(join(root, "gateway.sqlite"), resolve("drizzle"));
+    databases.push(database.sqlite);
+    const broker = new AgentEventBroker();
+    const service = new AgentService(database.db, new CompletingRuntime(), broker);
+    await service.initialize();
+    const session = service.createSession({ pageLabel: "test" });
+    const run = await service.startRun(session.id, { prompt: "streaming prompt", idempotencyKey: "flush-run-52" });
+    const deadline = Date.now() + 2_000;
+    while (service.getRun(run.id)?.status !== "completed") {
+      if (Date.now() > deadline) throw new Error("completing run timed out");
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 10));
+    }
+
+    const events = database.db.select().from(agentEvents).all()
+      .filter((event) => event.runId === run.id)
+      .sort((left, right) => left.seq - right.seq);
+    const deltas = events
+      .filter((event) => event.type === "message.delta")
+      .map((event) => String((event.payload as { delta?: unknown }).delta))
+      .join("");
+    expect(deltas).toBe(full);
+    const completedAt = events.find((event) => event.type === "message.completed");
+    const lastDelta = [...events].reverse().find((event) => event.type === "message.delta");
+    expect(lastDelta?.seq).toBeLessThan(completedAt!.seq);
+    expect(JSON.stringify(events)).not.toContain(secret);
+    await service.dispose();
   });
 
   it("redacts prompts, tool args/results, split output, DB messages/events, WebSocket frames, chat, and timeline snapshots", async () => {
