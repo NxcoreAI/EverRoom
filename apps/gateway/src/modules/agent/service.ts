@@ -44,7 +44,7 @@ import { AgentEventBroker } from "./event-broker.js";
 import { issueTrustedMcpSession, revokeTrustedMcpSession } from "./mcp-session-authority.js";
 import { requestsWorkspaceDocument } from "./document-intent.js";
 import type { FilesService } from "../files/service.js";
-import { clearRedactionDelta, redactDelta, redactSecrets, redactText } from "../../security/secret-redaction.js";
+import { flushRedactionDelta, redactDelta, redactSecrets, redactText } from "../../security/secret-redaction.js";
 
 export interface AgentServiceLogger {
   info(bindings: Record<string, unknown>, message: string): void;
@@ -1544,16 +1544,30 @@ export class AgentService {
       : null;
   }
 
-  private async appendEvent(sessionId: string, runId: string, runtimeEvent: RuntimeEvent): Promise<void> {
+  private async appendEvent(
+    sessionId: string,
+    runId: string,
+    runtimeEvent: RuntimeEvent,
+    options: { skipDeltaHold?: boolean } = {},
+  ): Promise<void> {
     runtimeEvent = redactSecrets(runtimeEvent);
     const deltaScope = `agent:${runId}`;
     if (runtimeEvent.type === "message.delta") {
       const payload = runtimeEvent.payload as { delta?: unknown };
-      if (typeof payload.delta === "string") {
+      if (typeof payload.delta === "string" && !options.skipDeltaHold) {
         runtimeEvent = { ...runtimeEvent, payload: { ...payload, delta: redactDelta(deltaScope, payload.delta) } };
       }
     } else if (runtimeEvent.type === "message.completed" || runtimeEvent.type.startsWith("run.")) {
-      clearRedactionDelta(deltaScope);
+      // 扣留的尾部必须补发，否则事件流里的 delta 累加永久缺尾（#199）：
+      // 中断时前端只能展示 delta 累加；正常完成时工具型 run 的"末段答案"
+      // 也取自 delta 累加。余留已过 redactText，补发时 skipDeltaHold 防止再次扣留。
+      const tail = flushRedactionDelta(deltaScope);
+      if (tail) {
+        await this.appendEvent(sessionId, runId, {
+          type: "message.delta",
+          payload: { delta: tail },
+        }, { skipDeltaHold: true });
+      }
     }
     const runOwner = this.db.select({ agentId: agentRuns.agentId })
       .from(agentRuns).where(eq(agentRuns.id, runId)).get();

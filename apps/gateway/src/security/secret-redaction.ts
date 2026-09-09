@@ -80,6 +80,17 @@ export function clearRedactionDelta(scope: string): void {
   deltaTails.delete(scope);
 }
 
+// 流中断（run.failed/cancelled/interrupted，无 message.completed）时余留文本
+// 已过 redactText、不含完整 secret，直接丢弃会让前端输出缺尾（#199），因此
+// 释放给调用方补发。安全性：余留不含完整 secret（redactText 已替换），唯一
+// 残留风险是它以某 secret 的真前缀结尾，由调用场景的补发路径容忍——前缀
+// 片段不构成泄露。
+export function flushRedactionDelta(scope: string): string {
+  const tail = deltaTails.get(scope) ?? "";
+  deltaTails.delete(scope);
+  return tail;
+}
+
 export function resetSecretRedactionForTests(): void {
   secrets.clear();
   deltaTails.clear();
