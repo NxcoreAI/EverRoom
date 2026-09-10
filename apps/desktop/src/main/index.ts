@@ -70,7 +70,7 @@ import { ConnectorGatewayBridge } from './gateway/connector-gateway-bridge'
 import { providerOfService, SaasConnectorBridge } from './gateway/saas-connector-bridge'
 import { createConnectorTombstoneStore } from './core/connector-tombstone-store'
 import { RecordingStore } from './recording/recording-store'
-import { isSaasRateLimitError, OIDC_CALLBACK_URL, SaasClient, SaasRequestError, type ConnectorOoSession } from './cloud/saas-client'
+import { isSaasRateLimitError, OIDC_CALLBACK_URL, SaasClient, SaasRequestError, type ConnectorOoSession, type OidcCallbackOutcome } from './cloud/saas-client'
 import { AgentStatusReporter } from './cloud/agent-status-reporter'
 import { SessionLeaseKeeper } from './cloud/session-lease-keeper'
 import { AiRelayKeeper, type AiRelayKeeperEvent } from './cloud/ai-relay-keeper'
@@ -930,9 +930,29 @@ function focusMainWindow(): void {
 
 function handleProtocolUrl(url: string): void {
   if (!url.startsWith(OIDC_CALLBACK_URL)) return
-  if (saasClient) saasClient.handleOidcCallback(url)
+  let outcome: OidcCallbackOutcome = 'unrelated'
+  if (saasClient) outcome = saasClient.handleOidcCallback(url)
   else queuedProtocolUrls.push(url)
   focusMainWindow()
+  if (outcome === 'no-login-in-progress') notifyLoginCallbackDropped()
+}
+
+/**
+ * 浏览器授权已完成，但主进程已没有对应的登录（等待超时/应用重启过）：
+ * 授权码无处可用，明确告知用户重新发起登录，不再静默丢弃后让用户停在登录页。
+ */
+function notifyLoginCallbackDropped(): void {
+  const options = {
+    type: 'warning' as const,
+    title: 'EverRoom 登录',
+    message: '浏览器授权已完成，但应用内没有正在进行的登录。',
+    detail: '登录等待可能已超时或应用重启过，请回到登录页重新点击登录。',
+    buttons: ['好'],
+    defaultId: 0,
+  }
+  const window = BrowserWindow.getAllWindows()[0]
+  if (window && !window.isDestroyed()) void dialog.showMessageBox(window, options)
+  else void dialog.showMessageBox(options)
 }
 
 app.on('open-url', (event, url) => {
@@ -3674,7 +3694,9 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       const startupProtocolUrl = process.argv.find((argument) => argument.startsWith(OIDC_CALLBACK_URL))
       if (startupProtocolUrl) queuedProtocolUrls.push(startupProtocolUrl)
     }
-    for (const url of queuedProtocolUrls.splice(0)) saasClient.handleOidcCallback(url)
+    for (const url of queuedProtocolUrls.splice(0)) {
+      if (saasClient.handleOidcCallback(url) === 'no-login-in-progress') notifyLoginCallbackDropped()
+    }
     let lastAccountId = initialAccount?.user?.id ?? null
     registerAccountHandlers(saasClient, (account) => {
       // saas 连接层跟随登录态：登录（或切换账号）后换 oo 会话，登出即拆除。
