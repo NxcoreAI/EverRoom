@@ -164,7 +164,9 @@ const base = {
     },
     getFilterRules: async () => ({ preference: '', insight: '', updatedAt: null }),
     updateFilterPreference: async (content) => ({ preference: content, insight: '', updatedAt: null }) },
-  migrations: { sources: async () => [], runs: async () => [], onProgress: () => () => {} },
+  migrations: { sources: async () => [], runs: async () => [], onProgress: () => () => {}, conversations: async () => ({ items: [
+    { id: 'thread-1', provider: 'claude', sourceId: 's1', title: '历史会话示例', agentId: 'claude', externalSessionId: 'x', messageCount: 2, lastMessageAt: '2026-09-08T00:00:00.000Z', lastMessageExcerpt: '上次的结论…', available: true },
+  ], nextCursor: null }) },
   obsidian: { list: async () => [], discover: async () => [], onChanged: () => () => {}, onDiscoveryChanged: () => () => {} },
 }
 // 预览窗格 document.hidden 恒为 true 会挡住页面轮询;强制视为可见。
