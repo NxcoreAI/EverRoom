@@ -534,6 +534,11 @@ export class PiAgentRuntime implements AgentRuntime {
           contextWindow: this.config.contextWindow,
           maxTokens: this.config.maxTokens,
           samplingParams: { temperature: this.config.temperature },
+          // 本 runtime 只对接网关/自建 baseUrl：pi-ai 按 URL 自动探测会把
+          // 未知源当 OpenAI 官方，reasoning 模型的系统提示词发成 developer
+          // role，而中转上游只认 system（400: developer is not one of
+          // ['system', ...]）。system 全兼容，一律禁用 developer。
+          compat: { supportsDeveloperRole: false },
         }],
       });
       await runtime.setRuntimeApiKey(this.config.provider, this.config.apiKey);
