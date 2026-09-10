@@ -37,4 +37,11 @@ describe('buildAgentRunContext', () => {
     expect(buildAgentRunContext([], undefined, undefined, undefined, undefined, undefined, 'thread-1'))
       .toMatchObject({ referencedConversationId: 'thread-1' })
   })
+
+  it('passes @ mentioned local Agent ids as dispatch references', () => {
+    expect(buildAgentRunContext([], undefined, undefined, undefined, undefined, undefined, undefined, ['codex:/usr/local/bin/codex', 'claude:/usr/local/bin/claude']))
+      .toMatchObject({ referencedLocalAgentIds: ['codex:/usr/local/bin/codex', 'claude:/usr/local/bin/claude'] })
+    expect(buildAgentRunContext([], undefined, undefined, undefined, undefined, undefined, undefined, undefined))
+      .not.toHaveProperty('referencedLocalAgentIds')
+  })
 })

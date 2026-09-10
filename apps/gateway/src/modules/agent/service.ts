@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import type {
   AgentActiveDocumentContext,
   AgentEvent,
@@ -43,6 +43,7 @@ import {
 import { AgentEventBroker } from "./event-broker.js";
 import { issueTrustedMcpSession, revokeTrustedMcpSession } from "./mcp-session-authority.js";
 import { requestsWorkspaceDocument } from "./document-intent.js";
+import { localAgentGrant, sealDelegationPayload } from "../local-agents/delegation.js";
 import type { FilesService } from "../files/service.js";
 import { flushRedactionDelta, redactDelta, redactSecrets, redactText } from "../../security/secret-redaction.js";
 
@@ -295,21 +296,9 @@ function localAgentDelegationContext(input: {
         },
       } : {}),
     },
-    grant: request.localAgent.permissionProfile === "full_access"
-      ? { workspaceAccess: "full-access" as const, approvals: "agent-reviewed" as const, mutationAllowed: true }
-      : request.localAgent.permissionProfile === "workspace_write"
-        ? { workspaceAccess: "workspace-write" as const, approvals: "agent-reviewed" as const, mutationAllowed: true }
-        : { workspaceAccess: "read-only" as const, approvals: "disabled" as const, mutationAllowed: false },
+    grant: localAgentGrant(request.localAgent.permissionProfile),
   };
-  return {
-    ...payload,
-    provenance: {
-      source: "everroom.local-agent-delegation",
-      generatedAt: new Date().toISOString(),
-      digestAlgorithm: "sha256",
-      digest: createHash("sha256").update(JSON.stringify(payload)).digest("hex"),
-    },
-  };
+  return sealDelegationPayload(payload);
 }
 
 function participantHandoffPrompt(messages: AgentMessage[]): string | null {
@@ -1152,6 +1141,22 @@ export class AgentService {
     if (input.context?.referencedConversationId && input.context.externalConversationId) {
       throw new Error("agent_conversation_context_conflict");
     }
+    const referencedLocalAgentIds = input.context?.referencedLocalAgentIds ?? [];
+    const referencedTargets = input.referencedLocalAgents ?? [];
+    if (referencedLocalAgentIds.length || referencedTargets.length) {
+      if (selectedAgentId !== MAIN_AGENT_ID) {
+        throw new Error("referenced_local_agent_requires_main_agent");
+      }
+      if (input.context?.externalConversationId || input.context?.referencedConversationId) {
+        throw new Error("agent_conversation_context_conflict");
+      }
+      const idSet = new Set(referencedLocalAgentIds);
+      const targetIds = referencedTargets.map((target) => target.id);
+      if (referencedLocalAgentIds.length !== targetIds.length
+        || !targetIds.every((id) => idSet.has(id))) {
+        throw new Error("referenced_local_agent_target_mismatch");
+      }
+    }
     if (selectedAgentId === MAIN_AGENT_ID && input.localAgent) throw new Error("local_agent_target_invalid");
     if (selectedAgentId !== MAIN_AGENT_ID && input.localAgent?.id !== selectedAgentId) {
       throw new Error("local_agent_target_invalid");
@@ -1327,7 +1332,18 @@ export class AgentService {
             "It is a read-only context subagent and does not speak to the user. Call agent_conversation_query when the request depends on that history, then answer the user yourself as Main Agent.",
           ].join("\n")
         : null;
-      const externalContext = nativeContinuationRef ? null : importedContext ?? referencedConversationContext;
+      const referencedLocalAgentContext = referencedTargets.length
+        ? [
+            `The user mentioned ${referencedTargets.length === 1 ? "a local Agent" : `${referencedTargets.length} local Agents`} with inline @ mentions in the prompt:`,
+            ...referencedTargets.map((target) => {
+              const description = target.card?.description?.trim();
+              return `- ${target.displayName} (agentId: ${target.id})${description ? ` — ${description}` : ""}`;
+            }),
+            "You decide autonomously which of these mentioned local Agents (if any) should handle part of the request. To delegate, call local_agent_dispatch with that agentId and a task you organize yourself, wait for the result, and relay it to the user.",
+            "You remain the only speaker to the user. Do not answer in a local Agent's place and do not switch agents.",
+          ].join("\n")
+        : null;
+      const externalContext = nativeContinuationRef ? null : importedContext ?? referencedLocalAgentContext ?? referencedConversationContext;
       const responseLanguage = normalizeAgentLocale(input.responseLanguage);
       const attachments = await this.resolveAttachments(input.attachments);
       const delegationContext = targetRuntime ? localAgentDelegationContext({
@@ -1361,6 +1377,7 @@ export class AgentService {
         ...(runRoomId && input.memoryScope === "room" ? { memoryScope: "room" as const } : {}),
         toolsEnabled: input.toolsEnabled !== false,
         ...(referencedConversationId ? { referencedConversationId } : {}),
+        ...(referencedTargets.length ? { referencedLocalAgents: referencedTargets } : {}),
         ...(activeDocument ? { activeDocument } : {}),
         ...(delegationContext ? { delegationContext } : {}),
       });

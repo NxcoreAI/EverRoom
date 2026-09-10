@@ -150,6 +150,7 @@ import { LocalAgentRuntimeRegistry } from "../modules/local-agents/runtime-regis
 import { subagentRoutes } from "../modules/subagents/routes.js";
 import { AgentStatusService } from "../modules/agent/status-service.js";
 import { createReferencedAgentConversationTools } from "../modules/agent/reference-tools.js";
+import { createLocalAgentDispatchTools } from "../modules/local-agents/dispatch-tools.js";
 import { RuntimeConfigManager } from "../runtime-config.js";
 import { runtimeConfigRoutes } from "../modules/runtime-config/routes.js";
 import { AiRelaySessionStore } from "../modules/ai-relay/session.js";
@@ -803,6 +804,8 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   if (recoveredSubagentInvocations > 0) {
     app.log.info({ recoveredSubagentInvocations }, "subagent invocations interrupted after restart");
   }
+  // 提前实例化：主 Agent 的 local_agent_dispatch 工具（@ 点名本机 Agent）需要闭包它。
+  const localAgentRuntimeRegistry = new LocalAgentRuntimeRegistry();
   registerPrimaryAgent(agentResolver, config, documentMcpHost, {
     externalCalls,
     tools: [
@@ -873,6 +876,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
          })
         : []),
       ...createNotificationPiTools(notificationMcpHost),
+      ...createLocalAgentDispatchTools(localAgentRuntimeRegistry),
       ...createReferencedAgentConversationTools(async (threadId, query) => (
         resolveAgentConversation?.(threadId, query) ?? null
       )),
@@ -903,7 +907,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     },
   });
   const agentRuntime = agentResolver.resolve(BUILTIN_AGENT_IDS.primary);
-  const localAgentRuntimeRegistry = new LocalAgentRuntimeRegistry();
   app.log.info(
     {
       runtimeId: agentRuntime.id,

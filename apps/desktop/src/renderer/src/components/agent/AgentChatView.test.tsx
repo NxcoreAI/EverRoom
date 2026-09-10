@@ -282,4 +282,61 @@ describe('AgentChatView', () => {
     expect(renderer.root.findAll((node) => node.children.includes('Main Agent'))).toHaveLength(0)
     act(() => renderer.unmount())
   })
+
+  it('labels an addressed user message with a mention hint', async () => {
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(<AgentChatView
+        activeDocument={null}
+        activeRunId={null}
+        agentIdByRun={{}}
+        agentNamesById={{}}
+        activityByRun={{}}
+        availableRooms={[]}
+        composer={null}
+        currentSessionId="session-1"
+        draftHasContent={false}
+        error={null}
+        loading={false}
+        messages={[
+          {
+            id: 'user-1',
+            sessionId: 'session-1',
+            runId: 'run-1',
+            role: 'user',
+            content: '帮我整理这个需求',
+            createdAt: '2026-08-20T00:00:00.000Z',
+            referencedAgentNames: ['Codex', 'Claude Code'],
+          },
+          {
+            id: 'user-2',
+            sessionId: 'session-1',
+            runId: 'run-2',
+            role: 'user',
+            content: '再总结一下',
+            createdAt: '2026-08-20T00:00:03.000Z',
+          },
+        ]}
+        onOpenSessionLink={vi.fn()}
+        onRejectDocumentIntent={vi.fn()}
+        onRetryPrompt={vi.fn()}
+        onSelectDocument={vi.fn()}
+        onSelectPrompt={vi.fn()}
+        onSelectRoom={vi.fn().mockResolvedValue(undefined)}
+        pendingNavigationByRun={{}}
+        runCompletedAtByRun={{}}
+        runStartedAtByRun={{}}
+        scopeReady
+        sessionLinks={[]}
+        submitting={false}
+        toolCallsByRun={{}}
+      />)
+    })
+
+    const hints = renderer.root.findAllByProps({ className: 'agent-user-mention' })
+    expect(hints).toHaveLength(2)
+    expect(hints[0]!.children).toEqual(['@', 'Codex'])
+    expect(hints[1]!.children).toEqual(['@', 'Claude Code'])
+    act(() => renderer.unmount())
+  })
 })

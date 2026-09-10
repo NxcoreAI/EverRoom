@@ -12,6 +12,7 @@ import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, nativeTheme, Noti
 import type {
   ImportRoomDocumentInput,
   DocumentOperationCommandInput,
+  LocalAgentInvocationTarget,
   SaveRoomDocumentInput,
   StartAgentRunInput,
   StartDocumentOperationInput,
@@ -2241,41 +2242,39 @@ function registerAgentHandlers(bridge: AgentGatewayBridge, migrationCoordinator:
     bridge.getEvents(sessionId, runId, afterSeq))
   handle(AGENT_CHANNELS.startRun, async (_event, sessionId, input) => {
     const request = input as StartAgentRunInput
-    if (!request.targetAgentId || request.targetAgentId === 'main') {
-      const { localAgent: _discarded, ...safeRequest } = request
-      return bridge.startRun(sessionId, {
-        ...safeRequest,
-        ...(request.targetAgentId === 'main' ? { targetAgentId: 'main' } : {}),
-      })
-    }
-    let installation = localAgents.find((agent) => agent.id === request.targetAgentId)
-    if (!installation) {
-      await scanLocalAgents()
-      installation = localAgents.find((agent) => agent.id === request.targetAgentId)
-    }
-    if (!installation?.callable || !installation.invocationSupported || !installation.executablePath) {
-      throw new Error('选择的本机 Agent 当前不可调用。请重新扫描或检查安装。')
-    }
-    if (!isSafeLocalAgentPath(installation.executablePath)) {
-      throw new Error('本机 Agent 的可执行文件路径无效。')
-    }
-    const binding = request.workspaceBindingToken
-      ? workspaceBindings.get(request.workspaceBindingToken)
-      : null
-    if (request.workspaceBindingToken
-      && (!binding || binding.agentId !== installation.id || binding.sessionId !== sessionId)) {
-      throw new Error('Agent 工作区授权已失效，请重新选择。')
-    }
-    const storedBinding = binding ?? await workspaceBindingStore.find(installation.id, sessionId)
-    const validatedBinding = storedBinding
-      ? await workspaceBindingStore.validate(storedBinding)
-      : null
-    const workingDirectory = validatedBinding?.rootPath
-      ?? unboundWorkspaceRoot(installation.id, sessionId)
-    await mkdir(workingDirectory, { recursive: true })
-    return bridge.startRun(sessionId, {
-      ...request,
-      localAgent: {
+    // 本机 Agent 的 invocation target 一律由 main 进程从本机发现结果重建
+    // （渲染端传入的 localAgent 被丢弃），workspace 授权与沙箱兜底逻辑两路共用。
+    const resolveLocalAgentTarget = async (
+      targetSessionId: string,
+      agentId: string,
+      workspaceBindingToken?: string,
+    ): Promise<LocalAgentInvocationTarget> => {
+      let installation = localAgents.find((agent) => agent.id === agentId)
+      if (!installation) {
+        await scanLocalAgents()
+        installation = localAgents.find((agent) => agent.id === agentId)
+      }
+      if (!installation?.callable || !installation.invocationSupported || !installation.executablePath) {
+        throw new Error('选择的本机 Agent 当前不可调用。请重新扫描或检查安装。')
+      }
+      if (!isSafeLocalAgentPath(installation.executablePath)) {
+        throw new Error('本机 Agent 的可执行文件路径无效。')
+      }
+      const binding = workspaceBindingToken
+        ? workspaceBindings.get(workspaceBindingToken)
+        : null
+      if (workspaceBindingToken
+        && (!binding || binding.agentId !== installation.id || binding.sessionId !== targetSessionId)) {
+        throw new Error('Agent 工作区授权已失效，请重新选择。')
+      }
+      const storedBinding = binding ?? await workspaceBindingStore.find(installation.id, targetSessionId)
+      const validatedBinding = storedBinding
+        ? await workspaceBindingStore.validate(storedBinding)
+        : null
+      const workingDirectory = validatedBinding?.rootPath
+        ?? unboundWorkspaceRoot(installation.id, targetSessionId)
+      await mkdir(workingDirectory, { recursive: true })
+      return {
         id: installation.id,
         provider: installation.provider,
         displayName: installation.displayName,
@@ -2283,7 +2282,25 @@ function registerAgentHandlers(bridge: AgentGatewayBridge, migrationCoordinator:
         workingDirectory,
         permissionProfile: validatedBinding?.permissionProfile ?? 'inspect',
         card: installation.card,
-      },
+      }
+    }
+    const referencedLocalAgentIds = request.context?.referencedLocalAgentIds ?? []
+    if (!request.targetAgentId || request.targetAgentId === 'main') {
+      const { localAgent: _discarded, ...safeRequest } = request
+      return bridge.startRun(sessionId, {
+        ...safeRequest,
+        ...(request.targetAgentId === 'main' ? { targetAgentId: 'main' } : {}),
+        ...(referencedLocalAgentIds.length
+          ? {
+              referencedLocalAgents: await Promise.all(referencedLocalAgentIds.map((agentId) =>
+                resolveLocalAgentTarget(sessionId, agentId, request.workspaceBindingToken))),
+            }
+          : {}),
+      })
+    }
+    return bridge.startRun(sessionId, {
+      ...request,
+      localAgent: await resolveLocalAgentTarget(sessionId, request.targetAgentId, request.workspaceBindingToken),
     })
   })
   handle(AGENT_CHANNELS.submitPendingIntent, (_event, intentId, input) =>

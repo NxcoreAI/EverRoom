@@ -22,6 +22,7 @@ import {
   type ReducedAgentRunEvents,
 } from './agentRunActivity'
 import { buildAgentRunContext } from './agentRunContext'
+import type { MentionedAgent } from './agentMentions'
 import {
   applyShellApprovalEvent,
   reducePendingShellApprovals,
@@ -38,6 +39,8 @@ export type {
 
 export interface DisplayAgentMessage extends AgentMessage {
   streaming?: boolean
+  /** 展示用：发送时 @ 点名的本机 Agent 名字，不落库，重载后消失。 */
+  referencedAgentNames?: string[]
 }
 
 export function mergePendingAgentMessages(
@@ -702,6 +705,7 @@ export function useAgentSession(
     attachments?: AgentFileAttachment[],
     targetAgentId?: string,
     referencedConversationId?: string,
+    mentionedAgents?: MentionedAgent[],
     memoryScope?: 'room',
   ): Promise<string | null> => {
     const message = prompt.trim()
@@ -757,6 +761,7 @@ export function useAgentSession(
       authorAgentId: null,
       content: message,
       createdAt: new Date().toISOString(),
+      ...(mentionedAgents?.length ? { referencedAgentNames: mentionedAgents.map((agent) => agent.displayName) } : {}),
     }
 
     setMessages((current) => mergePendingAgentMessages(current, [optimisticMessage]))
@@ -777,7 +782,7 @@ export function useAgentSession(
         ...(replaceRunId ? { replaceRunId } : {}),
         responseLanguage: locale,
         ...(effectiveMemoryScope ? { memoryScope: effectiveMemoryScope } : {}),
-        context: buildAgentRunContext(rooms, selectedText, selectedRoomId, activeDocument, pageLabel, attachments, referencedConversationId),
+        context: buildAgentRunContext(rooms, selectedText, selectedRoomId, activeDocument, pageLabel, attachments, referencedConversationId, mentionedAgents?.map((agent) => agent.id)),
       })
       setMemoryScopeByRun((current) => current[run.id] === (effectiveMemoryScope ?? 'global')
         ? current
