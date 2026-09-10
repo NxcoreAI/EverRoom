@@ -212,7 +212,7 @@ export function RuntimeConfigSettingsSection() {
   ]
 
   return <section id="settings-runtime-config" className="reality-settings-section settings-anchor-section" aria-labelledby="runtime-config-title">
-    <header><span><ShieldCheck aria-hidden="true" /></span><div><h2 id="runtime-config-title">{t('surface:settings.navigationRuntimeConfig')}</h2><p>{t('surface:settings.rcSectionDescription')}</p></div></header>
+    <header><span><ShieldCheck aria-hidden="true" /></span><div><h2 id="runtime-config-title">{t('surface:settings.navigationRuntimeConfig')}</h2></div></header>
     <div className="runtime-config-meta">
       <span>{t('surface:settings.rcMetaSource')}：{snapshot?.source ?? '…'}</span>
       <span>{t('surface:settings.rcMetaVersion')}：{snapshot?.configVersion ?? '--'}</span>
@@ -226,8 +226,6 @@ export function RuntimeConfigSettingsSection() {
       <ShieldCheck aria-hidden="true" />
       <div>
         <strong>{t('surface:settings.rcSaasManagedTitle')}</strong>
-        <p>{t('surface:settings.rcSaasManagedBody')}</p>
-        <small>{t('surface:settings.rcSaasSecurityNote')}</small>
         {message ? <p className="runtime-config-message"><Check aria-hidden="true" />{message}</p> : null}
       </div>
       <button type="button" className="secondary-button" onClick={() => void refreshSaas()} disabled={busy !== null}>
@@ -244,11 +242,9 @@ export function RuntimeConfigSettingsSection() {
     <div className="rc-form">
       {tab === 'llm' ? <>
         <AiFieldsGroup fields={llm} onChange={updateLlm} labels={aiLabels} modelPlaceholder="gpt-4o-mini / glm-4-flash / …" />
-        <p className="rc-form-hint">{t('surface:settings.rcTabHintLlm')}</p>
       </> : null}
       {tab === 'embedding' ? <>
         <AiFieldsGroup fields={embedding} onChange={updateEmbedding} labels={aiLabels} modelPlaceholder="text-embedding-3-small / text-embedding-v4 / …" />
-        <p className="rc-form-hint">{t('surface:settings.rcTabHintEmbedding')}</p>
       </> : null}
       {tab === 'vlm' ? <>
         <label className="rc-form-field"><span>{aiLabels.model}</span>
@@ -257,7 +253,6 @@ export function RuntimeConfigSettingsSection() {
           <input value={vlm.baseUrl} placeholder="https://api.example.com/v1" onChange={(event) => updateVlm('baseUrl', event.target.value)} /></label>
         <label className="rc-form-field"><span>{aiLabels.apiKey}</span>
           <input type="password" value={vlm.apiKey} placeholder="sk-…" onChange={(event) => updateVlm('apiKey', event.target.value)} /></label>
-        <p className="rc-form-hint">{t('surface:settings.rcTabHintVlm')}</p>
       </> : null}
       {tab === 'asr' ? <>
         <label className="rc-form-field"><span>{aiLabels.model}</span>
@@ -280,7 +275,6 @@ export function RuntimeConfigSettingsSection() {
           <label className="rc-form-field"><span>{t('surface:settings.rcFieldOssPrefix')}</span>
             <input value={asr.oss.prefix} placeholder="nxcore-asr" onChange={(event) => updateOss('prefix', event.target.value)} /></label>
         </div>
-        <p className="rc-form-hint">{t('surface:settings.rcTabHintAsr')}</p>
       </> : null}
       {tab === 'search' ? <>
         <label className="rc-form-field"><span>{aiLabels.model}</span>
@@ -316,7 +310,6 @@ export function RuntimeConfigSettingsSection() {
 
     <details className="rc-json-details">
       <summary>{t('surface:settings.rcJsonAdvanced')}</summary>
-      <p className="rc-form-hint">{t('surface:settings.rcJsonHint')}</p>
       <textarea className="runtime-config-editor" value={jsonText} onChange={(event) => setJsonText(event.target.value)} spellCheck={false} aria-label="runtime config JSON" />
       <div className="runtime-config-actions">
         <button type="button" className="primary-button" onClick={() => void saveJson()} disabled={busy !== null}><Save aria-hidden="true" />JSON</button>

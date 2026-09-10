@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Cloud, HardDrive } from 'lucide-react'
+import { Cloud, HardDrive, Plug } from 'lucide-react'
 import { useAccount } from '@/state/AccountContext'
 
 type ConnectorLayerMode = 'saas' | 'local'
@@ -45,22 +45,16 @@ export function ConnectorModeSection() {
     }
   }
 
-  const options: Array<{ id: ConnectorLayerMode; icon: typeof Cloud; title: string; description: string; disabled?: boolean }> = [
+  const options: Array<{ id: ConnectorLayerMode; icon: typeof Cloud; title: string; disabled?: boolean }> = [
     {
       id: 'saas',
       icon: Cloud,
       title: t('surface:settings.connectorModeSaasTitle', { defaultValue: '云端连接层（默认）' }),
-      description: t('surface:settings.connectorModeSaasDescription', {
-        defaultValue: 'OpenConnector 由 EverRoomSass 托管，数百个服务的 OAuth 配置统一管理，无需本地运行。',
-      }),
     },
     {
       id: 'local',
       icon: HardDrive,
       title: t('surface:settings.connectorModeLocalTitle', { defaultValue: '本地连接层' }),
-      description: t('surface:settings.connectorModeLocalDescription', {
-        defaultValue: '在本机启动 OpenConnector 服务，凭据与数据完全留在本地（隐私兜底）。',
-      }),
     },
   ]
 
@@ -69,15 +63,13 @@ export function ConnectorModeSection() {
   return (
     <section id="settings-connector-mode" className="reality-settings-section settings-anchor-section" aria-labelledby="connector-mode-title">
       <header>
+        <span><Plug aria-hidden="true" /></span>
         <div>
           <h2 id="connector-mode-title">{t('surface:settings.connectorModeTitle', { defaultValue: '连接层模式' })}</h2>
-          <p>{t('surface:settings.connectorModeDescription', {
-            defaultValue: '选择第三方服务（Gmail/Notion/日历…）的连接层运行位置；切换后已有连接需重新授权。',
-          })}</p>
         </div>
       </header>
       <div className="connector-mode-options">
-        {options.map(({ id, icon: Icon, title, description }) => (
+        {options.map(({ id, icon: Icon, title }) => (
           <button
             key={id}
             type="button"
@@ -89,7 +81,6 @@ export function ConnectorModeSection() {
             <span className="connector-mode-option-icon"><Icon aria-hidden="true" /></span>
             <span className="connector-mode-option-body">
               <strong>{title}</strong>
-              <small>{description}</small>
             </span>
             <span className="connector-mode-option-state" aria-hidden="true">
               {state?.mode === id ? '●' : ''}
