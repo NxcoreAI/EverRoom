@@ -50,7 +50,7 @@
 
 /* ── Coastline scene ─────────────────────────────────────────────
    One flat seaside illustration: sky, sea, beach, coastal road.
-   Road, water, grass, clouds and the sailboat scroll in parallax;
+   Road, water, grass and clouds scroll in parallax;
    the scroll speed rises with the number of busy agents. */
 .agent-office-layout { width: 100%; }
 .coast-scene {
@@ -80,8 +80,6 @@
 @keyframes coast-scroll-1400 { to { transform: translateX(-1400px); } }
 @keyframes coast-scroll-1350 { to { transform: translateX(-1350px); } }
 @keyframes coast-scroll-1800 { to { transform: translateX(-1800px); } }
-.coast-boat-bob { animation: coast-boat-bob 5.5s ease-in-out infinite; }
-@keyframes coast-boat-bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(4px); } }
 
 .coast-masthead { position: absolute; z-index: 4; top: 20px; left: 24px; display: flex; gap: 16px; align-items: flex-start; pointer-events: none; }
 .coast-masthead p { margin: 0 0 5px; color: #4a6a60; font-size: clamp(8px, .75cqw, 11px); font-weight: 700; letter-spacing: .16em; }
@@ -168,7 +166,7 @@
 .coast-rider-tag small { max-width: 100%; height: 0; overflow: hidden; color: #7d918a; font-size: .92em; line-height: 1.35; opacity: 0; text-overflow: ellipsis; transition: height .18s ease, opacity .18s ease; white-space: nowrap; }
 .coast-rider[data-state='running'] .coast-rider-tag small { color: #177a58; }
 .coast-rider[data-state='error'] .coast-rider-tag small { color: var(--agent-red); }
-.coast-rider:hover .coast-rider-tag small { height: 1.3em; opacity: 1; transition-delay: .45s; }
+.coast-rider:hover .coast-rider-tag small, .coast-rider:focus-visible .coast-rider-tag small { height: 1.3em; opacity: 1; transition-delay: .45s; }
 .coast-rider[data-state='error']::after { position: absolute; top: 6px; right: 18px; z-index: 3; width: max(11px, 1.15cqw); height: max(11px, 1.15cqw); border-radius: 50%; background: var(--agent-red); box-shadow: 0 0 0 max(2px, .2cqw) #deeee8; color: #fff; content: '!'; font-size: max(8px, .8cqw); font-weight: 800; line-height: max(11px, 1.15cqw); text-align: center; }
 
 .agent-office-toolbar { min-height: 45px; justify-content: space-between; gap: 12px; padding: 9px 3px 8px; }
@@ -225,6 +223,6 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .agent-status-spin, .coast-scroll, .coast-boat-bob { animation: none; }
+  .agent-status-spin, .coast-scroll { animation: none; }
   .coast-rider { transition: none; }
 }

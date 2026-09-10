@@ -127,7 +127,7 @@ function CoastRider({
   useEffect(() => {
     const sway = SWAY_BY_STATE[agent.state]!
     return subscribeRider((time) => {
-      const dt = lastTime.current === null ? 0 : Math.min(time - lastTime.current, 0.05)
+      const dt = lastTime.current === null ? 0 : Math.max(0, Math.min(time - lastTime.current, 0.05))
       lastTime.current = time
       const target = slotX + Math.sin(time * sway.omega + seed * 1.7) * sway.amp
       const drift = slotX - rideX.current

@@ -3,9 +3,11 @@ export type RiderMode = 'riding' | 'swimming'
 // One shared rAF loop drives every rider on the page.
 export type Tick = (time: number) => void
 
-const REDUCED_MOTION = typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
 const subscribers = new Set<Tick>()
 let frameId = 0
+// Set once and never reset: the time base stays monotonic even when the
+// subscriber set empties and the loop restarts, so rider phase and position
+// refs that survive across re-subscriptions never see time jump backwards.
 let startAt = 0
 
 function loop(timestamp: number) {
@@ -16,10 +18,10 @@ function loop(timestamp: number) {
 }
 
 export function subscribeRider(tick: Tick): () => void {
-  if (REDUCED_MOTION) return () => {}
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return () => {}
   subscribers.add(tick)
   if (frameId === 0) {
-    startAt = performance.now()
+    if (startAt === 0) startAt = performance.now()
     frameId = requestAnimationFrame(loop)
   }
   return () => {

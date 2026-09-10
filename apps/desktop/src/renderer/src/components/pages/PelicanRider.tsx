@@ -187,7 +187,7 @@ export function PelicanRider({ speed, seed, mode }: { speed: number; seed: numbe
 
   useEffect(() => subscribeRider((time) => {
     const state = ctx.current
-    const dt = state.lastTime === null ? 0 : Math.min(time - state.lastTime, 0.05)
+    const dt = state.lastTime === null ? 0 : Math.max(0, Math.min(time - state.lastTime, 0.05))
     state.lastTime = time
     if (state.prevMode !== state.mode) {
       if (state.mode === 'riding' && state.prevMode === 'swimming') state.shakeUntil = time + 1.8
