@@ -119,7 +119,11 @@ export function createAgentRuntime(
     tools: [
       ...(knowledge?.tools ?? []),
       ...createDocumentPiToolsWithRoomBindings(mcpHost, routedRoomByRun),
-      ...(config.cliConnector ? createOpenConnectorPiTools(config.cliConnector, undefined, knowledge?.externalCalls) : []),
+      // 会话门控：cliConnector 恒在场（create-server 归一化），baseUrl 空 =
+      // 登出态，不暴露 oo 工具；会话热更新后经 hotReloadAgentRuntimes 重建。
+      ...(config.cliConnector?.baseUrl
+        ? createOpenConnectorPiTools(config.cliConnector, undefined, knowledge?.externalCalls)
+        : []),
       ...(config.webSearch && knowledge?.agentResolver
         ? createWebSearchPiTools(knowledge.agentResolver, knowledge.externalCalls)
         : []),

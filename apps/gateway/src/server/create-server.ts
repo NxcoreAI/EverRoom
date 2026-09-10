@@ -56,6 +56,7 @@ import {
 } from "../modules/agent/runtime-factory.js";
 import { BUILTIN_AGENT_IDS } from "../modules/agent/resolver.js";
 import { registerWebSearchAgentIfMissing, registerConnectorMapperAgent } from "../modules/agent/runtime-factory.js";
+import { connectorSessionRoutes } from "../modules/connectors/session-routes.js";
 import { FormatMappingService } from "../modules/connectors/format-mapping-service.js";
 import { loadBuiltinAgentBundle } from "../modules/agent/builtin-bundles.js";
 import { OpenAiCompletionAgentRuntime } from "../modules/agent/openai-completion-runtime.js";
@@ -389,9 +390,16 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     : 300_000;
   const nangoConnectorDb = createConnectorDatabase(nangoConnectorConfig.enabled ? nangoConnectorConfig.databasePath : ":memory:");
   // Seam 1（连接器统一 P1，P3 Nango 删除定稿）：链路A取数走 OpenConnector action。
-  const ooSyncExecutor = config.cliConnector
-    ? new OpenConnectorSyncExecutor({ config: config.cliConnector, logger: app.log })
-    : null;
+  // executor 恒在场（env 会话缺席时 baseUrl 留空）：登录态热更新（PUT
+  // /v1/connector-session）原地 patch 同一对象即生效，无需重启 gateway；登出态
+  // 由 SyncEngine.canServe 按 isAvailable 静默跳过（与 executor 缺席同语义）。
+  config.cliConnector ??= {
+    executable: "oo",
+    baseUrl: "",
+    configDirectory: resolve(config.dataDir, "open-connector", "oo-config"),
+    dataDirectory: resolve(config.dataDir, "open-connector", "oo-data"),
+  };
+  const ooSyncExecutor = new OpenConnectorSyncExecutor({ config: config.cliConnector, logger: app.log });
   const nangoExecutor = ooSyncExecutor;
   // 阶段三：拉取引擎（nango 代理 + direct 直连双路）；direct 凭据取连接的 credentialsRef。
   const nangoSyncEngine = new SyncEngine(
@@ -408,7 +416,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     nangoSyncEngine,
   );
   // Nango 连接器的 agent 工具（连接发现 / 触发同步 / 只读代理请求）。
-  const nangoConnectorAuthorization = ooSyncExecutor && config.cliConnector?.adminToken
+  const nangoConnectorAuthorization = config.cliConnector?.adminToken
     ? new OpenConnectorAuthorizationService(config.cliConnector, nangoConnectorManager)
     : undefined;
   // When the configured value is a bootstrap placeholder, wait for the
@@ -1001,34 +1009,41 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     if (config.knowledge?.llm) {
       knowledgeService.replaceLlm(config.knowledge.llm);
     }
-    void (async () => {
-      try {
-        const primary = agentResolver.reload(BUILTIN_AGENT_IDS.primary);
-        void agentService.replaceRuntime(primary.current);
-        const background = agentResolver.reload(BUILTIN_AGENT_IDS.transcriptionSummary);
-        void transcriptionSummaryService.replaceRuntime(background.current);
-        for (const agentId of [BUILTIN_AGENT_IDS.cursorCompletion, BUILTIN_AGENT_IDS.webSearch, BUILTIN_AGENT_IDS.knowledge]) {
-          if (!agentResolver.has(agentId)) continue;
-          const { previous } = agentResolver.reload(agentId);
-          await previous?.dispose();
-        }
-        // 格式映射 agent 热替换（初始 attach 见 registerConnectorMapperAgent 处）。
-        if (agentResolver.has(BUILTIN_AGENT_IDS.connectorMapper)) {
-          const mapper = agentResolver.reload(BUILTIN_AGENT_IDS.connectorMapper);
-          formatMappingService.attachAgentRuntime(mapper.current);
-          await mapper.previous?.dispose();
-        }
-        // 过滤器/洞察 job 持有的冻结 runtime 同步热替换。
-        const nextFilterRuntime = buildIngestFilterRuntime();
-        ingestFilterService?.replaceRuntime(nextFilterRuntime);
-        filterInsightJob?.replaceRuntime(nextFilterRuntime);
-        // 子 Agent 缓存作废（下次 acquire 以新 backgroundPi 重建）。
-        await subagentRuntimeManager.invalidate();
-      } catch (error) {
-        app.log.error({ error: error instanceof Error ? error.message : String(error) }, "runtime config reload failed");
-      }
-    })();
+    void hotReloadAgentRuntimes();
   });
+
+  /**
+   * agent runtime 全量热重载：runtime config 保存与 connector 会话变更
+   * （PUT/DELETE /v1/connector-session）共用。connector 会话变更只影响
+   * primary 的 oo pi-tools（工具列表在 createAgentRuntime 闭包里求值）。
+   */
+  async function hotReloadAgentRuntimes(): Promise<void> {
+    try {
+      const primary = agentResolver.reload(BUILTIN_AGENT_IDS.primary);
+      void agentService.replaceRuntime(primary.current);
+      const background = agentResolver.reload(BUILTIN_AGENT_IDS.transcriptionSummary);
+      void transcriptionSummaryService.replaceRuntime(background.current);
+      for (const agentId of [BUILTIN_AGENT_IDS.cursorCompletion, BUILTIN_AGENT_IDS.webSearch, BUILTIN_AGENT_IDS.knowledge]) {
+        if (!agentResolver.has(agentId)) continue;
+        const { previous } = agentResolver.reload(agentId);
+        await previous?.dispose();
+      }
+      // 格式映射 agent 热替换（初始 attach 见 registerConnectorMapperAgent 处）。
+      if (agentResolver.has(BUILTIN_AGENT_IDS.connectorMapper)) {
+        const mapper = agentResolver.reload(BUILTIN_AGENT_IDS.connectorMapper);
+        formatMappingService.attachAgentRuntime(mapper.current);
+        await mapper.previous?.dispose();
+      }
+      // 过滤器/洞察 job 持有的冻结 runtime 同步热替换。
+      const nextFilterRuntime = buildIngestFilterRuntime();
+      ingestFilterService?.replaceRuntime(nextFilterRuntime);
+      filterInsightJob?.replaceRuntime(nextFilterRuntime);
+      // 子 Agent 缓存作废（下次 acquire 以新 backgroundPi 重建）。
+      await subagentRuntimeManager.invalidate();
+    } catch (error) {
+      app.log.error({ error: error instanceof Error ? error.message : String(error) }, "runtime config reload failed");
+    }
+  }
   // 文件管理中心（U9 唯一字节入口）：对象库 + uploaded/parsed 登记；
   // 删除级联经钩子回调 knowledge（wiki 清理）与 memory（文档删除）。
   const filesService = new FilesService(db, config.dataDir);
@@ -1573,6 +1588,12 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       );
     },
   ));
+  await app.register(connectorSessionRoutes({
+    config,
+    onSessionChanged: () => {
+      void hotReloadAgentRuntimes();
+    },
+  }));
 
   // 阶段三 M3b：REST 前缀泛化——/v1/connectors/* 为主入口。Fastify v5 路由先于
   // onRequest（改写 URL 无效），别名经 404 兜底内部转发（app.inject 不走网络，

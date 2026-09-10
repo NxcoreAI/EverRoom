@@ -1222,7 +1222,8 @@ export class DocumentImportService {
   }
 
   private requireConfig(): OpenConnectorCliConfig {
-    if (!this.connectorConfig) {
+    // baseUrl 空 = 登出态（会话热更新清空）；cliConnector 对象恒在场。
+    if (!this.connectorConfig || !this.connectorConfig.baseUrl.trim()) {
       throw new ImportServiceError(
         "OPEN_CONNECTOR_UNAVAILABLE",
         "OpenConnector 连接层未配置或不可用，导入入口暂不可用",

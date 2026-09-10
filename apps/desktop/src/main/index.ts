@@ -1676,10 +1676,10 @@ async function fetchConnectorOoSession(userId: string): Promise<ConnectorOoSessi
 }
 
 /**
- * 应用 oo 会话：重建直连 oo 的 bridge，并让 gateway env 跟随。
- * gateway 已在运行且 env 变化时重启之（各 bridge 经 ensureConnection/
- * recoverConnection 自愈，与 dev 热重载同路径）；启动期调用时 gateway 未起，
- * env 在首次 spawn 生效，无需重启。
+ * 应用 oo 会话：重建直连 oo 的 bridge；gateway 侧走两条路——
+ * 运行中：热推送（PUT/DELETE /v1/connector-session，gateway 原地 patch
+ * 连接配置并热重载 agent 工具，不重启进程）；启动期调用时 gateway 未起，
+ * env 在首次 spawn 生效（extraEnvironment 每次启动求值）。
  */
 async function applyConnectorOoSession(session: ConnectorOoSession | null): Promise<void> {
   ooCliBridge?.shutdown()
@@ -1705,13 +1705,16 @@ async function applyConnectorOoSession(session: ConnectorOoSession | null): Prom
     scheduleSaasConnectorReconcile(20_000)
     return
   }
+  // 运行中热推送，不再重启 gateway：重启窗口会把登录瞬间的 refresh-saas
+  // 等在途请求报成「正在停止」，已成功的登录被渲染层显示为登录失败。
   try {
-    await supervisor.shutdown()
-    const gateway = await supervisor.start()
-    console.info(`[connector-mode] gateway restarted to apply oo session env (gateway at ${gateway.baseUrl})`)
+    const applied = await connectorGatewayBridge?.applyConnectorSession(
+      session ? { baseUrl: session.baseUrl, runtimeToken: session.token } : null,
+    )
+    console.info(`[connector-mode] oo session applied to gateway (configured=${String(applied?.configured ?? false)})`)
     scheduleSaasConnectorReconcile()
   } catch (error) {
-    console.error('[connector-mode] gateway restart for oo session env failed:', error)
+    console.error('[connector-mode] applying oo session to gateway failed:', error)
   }
 }
 
