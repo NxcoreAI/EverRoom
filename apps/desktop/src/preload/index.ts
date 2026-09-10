@@ -62,7 +62,10 @@ function networkOperation(channel: string): string {
 
 function networkErrorDetail(channel: string, error: unknown): Pick<DesktopRequestError, 'title' | 'message'> | null {
   const raw = error instanceof Error ? error.message : String(error)
-  if (!/fetch failed|failed to fetch|network error|ECONNREFUSED|ECONNRESET|ETIMEDOUT/i.test(raw)) return null
+  // timeout of 10000ms exceeded：gateway 忙碌（ingest 高峰同步写卡事件循环）时
+  // loopback axios 客户端（reality bridge / supervisor 健康探活）的响应超时原话，
+  // 与 ECONNRESET 同属可自愈的瞬断——issue #181。
+  if (!/fetch failed|failed to fetch|network error|ECONNREFUSED|ECONNRESET|ETIMEDOUT|timeout of 10000ms exceeded/i.test(raw)) return null
   return {
     title: desktopText('error.network.title'),
     message: desktopText('error.network.message')
@@ -554,7 +557,9 @@ const api: NxcoreDesktopApi = {
       invoke('memory:capture-document-rewrite', input),
   },
   reality: {
-    listEvents: (filters) => invoke('reality:list-events', filters),
+    // 列表由 RealityPage 常驻轮询（每 15s，且页面隐藏时也在跑）：走静默通道，
+    // 失败由页面内联展示，不得触发全局错误弹窗（issue #181）。
+    listEvents: (filters) => invokeQuietly('reality:list-events', filters),
     getEvent: (id) => invoke('reality:get-event', id),
     createEvent: (input) => invoke('reality:create-event', input),
     finishCapture: (id, input) => invoke('reality:finish-capture', id, input),
