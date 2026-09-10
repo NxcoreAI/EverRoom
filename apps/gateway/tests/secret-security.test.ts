@@ -223,6 +223,65 @@ describe("secret redaction", () => {
     expect(logs).not.toContain(encodeURIComponent(canary));
   });
 
+  it("flushes the held-back delta tail on completion so streamed deltas reconstruct the full answer", async () => {
+    const root = await directory();
+    // 长密钥让流式脱敏器扣住可观的尾部：不冲刷时流式累计永远缺这段结尾。
+    const canary = "tail-canary-" + "x".repeat(48);
+    registerSecret(canary);
+    const prefix = "文档已写入对应工作区。";
+    const suffix = "全文约 4600 字，可以直接打开查看和继续编辑。";
+    const full = `${prefix}${canary}${suffix}`;
+    class FlushRuntime implements AgentRuntime {
+      readonly id = "flush-runtime";
+      async getCapabilities(): Promise<RuntimeCapabilities> { return { streaming: true, reasoning: false, tools: true, steering: false, resume: false }; }
+      async start(input: StartRuntimeRunInput): Promise<RuntimeRun> {
+        async function* events() {
+          yield { type: "run.started" as const, payload: {} };
+          yield { type: "message.delta" as const, payload: { delta: full.slice(0, 20) } };
+          yield { type: "message.delta" as const, payload: { delta: full.slice(20, 40) } };
+          yield { type: "message.delta" as const, payload: { delta: full.slice(40) } };
+          yield { type: "message.completed" as const, payload: { role: "assistant", content: full } };
+          yield { type: "run.completed" as const, payload: {} };
+        }
+        return { runId: input.runId, runtimeSessionRef: "flush-session", events: events() };
+      }
+      async resume(_input: ResumeRuntimeRunInput): Promise<RuntimeRun> { throw new Error("unsupported"); }
+      async sendInput(): Promise<void> {}
+      async cancel(): Promise<void> {}
+      async deleteSession(): Promise<void> {}
+      async dispose(): Promise<void> {}
+    }
+    const database = createDatabase(join(root, "gateway.sqlite"), resolve("drizzle"));
+    databases.push(database.sqlite);
+    const broker = new AgentEventBroker();
+    const service = new AgentService(database.db, new FlushRuntime(), broker);
+    await service.initialize();
+    const session = service.createSession({ pageLabel: "test" });
+    const run = await service.startRun(session.id, { prompt: "写文档", idempotencyKey: "flush-run-52" });
+    const deadline = Date.now() + 2_000;
+    while (service.getRun(run.id)?.status === "accepted" || service.getRun(run.id)?.status === "running") {
+      if (Date.now() > deadline) throw new Error("flush run timed out");
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 10));
+    }
+
+    const events = database.db.select().from(agentEvents).where(eq(agentEvents.runId, run.id)).all()
+      .sort((left, right) => left.seq - right.seq);
+    const deltaConcat = events
+      .filter((event) => event.type === "message.delta")
+      .map((event) => String((event.payload as { delta?: unknown }).delta))
+      .join("");
+    const completed = events.find((event) => event.type === "message.completed");
+    const completedContent = String((completed!.payload as { content?: unknown }).content);
+    const flushedIndex = events.findIndex((event) => event.type === "message.delta"
+      && event.seq > (events.find((candidate) => candidate.type === "message.completed")?.seq ?? Infinity));
+    expect(flushedIndex).toBe(-1);
+    expect(deltaConcat).toBe(completedContent);
+    expect(deltaConcat).toContain(suffix);
+    expect(deltaConcat).not.toContain(canary);
+    expect(deltaConcat).toContain("[REDACTED]");
+    await service.dispose();
+  });
+
   it("keeps Date instances intact so API timestamps serialize as ISO strings", () => {
     const createdAt = new Date("2026-08-27T13:00:00.000Z");
     const payload = redactSecrets({ run: { id: "r1", createdAt, startedAt: null }, list: [createdAt] });

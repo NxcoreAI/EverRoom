@@ -44,7 +44,7 @@ import { AgentEventBroker } from "./event-broker.js";
 import { issueTrustedMcpSession, revokeTrustedMcpSession } from "./mcp-session-authority.js";
 import { requestsWorkspaceDocument } from "./document-intent.js";
 import type { FilesService } from "../files/service.js";
-import { clearRedactionDelta, redactDelta, redactSecrets, redactText } from "../../security/secret-redaction.js";
+import { flushRedactionDelta, redactDelta, redactSecrets, redactText } from "../../security/secret-redaction.js";
 
 export interface AgentServiceLogger {
   info(bindings: Record<string, unknown>, message: string): void;
@@ -1544,16 +1544,31 @@ export class AgentService {
       : null;
   }
 
-  private async appendEvent(sessionId: string, runId: string, runtimeEvent: RuntimeEvent): Promise<void> {
+  private async appendEvent(
+    sessionId: string,
+    runId: string,
+    runtimeEvent: RuntimeEvent,
+    options: { rawDelta?: boolean } = {},
+  ): Promise<void> {
     runtimeEvent = redactSecrets(runtimeEvent);
     const deltaScope = `agent:${runId}`;
     if (runtimeEvent.type === "message.delta") {
       const payload = runtimeEvent.payload as { delta?: unknown };
-      if (typeof payload.delta === "string") {
+      if (!options.rawDelta && typeof payload.delta === "string") {
         runtimeEvent = { ...runtimeEvent, payload: { ...payload, delta: redactDelta(deltaScope, payload.delta) } };
       }
     } else if (runtimeEvent.type === "message.completed" || runtimeEvent.type.startsWith("run.")) {
-      clearRedactionDelta(deltaScope);
+      // 终结事件前先冲刷脱敏器扣住的尾部增量（rawDelta 跳过再次扣留），
+      // 保证流式累计与完成正文一致；只 clear 不冲刷会让每条回复缺尾。
+      const flushed = flushRedactionDelta(deltaScope);
+      if (flushed) {
+        await this.appendEvent(
+          sessionId,
+          runId,
+          { type: "message.delta", payload: { delta: flushed } },
+          { rawDelta: true },
+        );
+      }
     }
     const runOwner = this.db.select({ agentId: agentRuns.agentId })
       .from(agentRuns).where(eq(agentRuns.id, runId)).get();

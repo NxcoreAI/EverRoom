@@ -80,6 +80,17 @@ export function clearRedactionDelta(scope: string): void {
   deltaTails.delete(scope);
 }
 
+/**
+ * 冲刷流式脱敏扣住的尾部：redactDelta 为防密钥跨增量截断，每轮扣留最长
+ * 密钥长度的尾部不吐。消息/运行终结时必须把尾巴作为最后一条增量吐出，
+ * 否则每条回复的流式累计都缺这段结尾（界面终答取流式累计，缺尾即半句截断）。
+ */
+export function flushRedactionDelta(scope: string): string {
+  const tail = deltaTails.get(scope) ?? "";
+  deltaTails.delete(scope);
+  return tail;
+}
+
 export function resetSecretRedactionForTests(): void {
   secrets.clear();
   deltaTails.clear();
