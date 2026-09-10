@@ -302,8 +302,6 @@
   "agentStatus.timedOut": "Timed out",
   "agentStatus.updatedTime": "Updated {time}",
   "agentStatus.working": "Working",
-  "appErrorDialog.close": "Close",
-  "appErrorDialog.gotIt": "Got it",
   "appErrorDialog.notice": "Notice",
   "appErrorDialog.requestNotCompleted": "Request not completed",
   "appToast.dismissNotification": "Dismiss notification",

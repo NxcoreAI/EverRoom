@@ -29,6 +29,11 @@ import {
 
 const requestErrorListeners = new Set<(error: DesktopRequestError) => void>()
 let pendingRequestError: DesktopRequestError | null = null
+let pendingRequestErrorAt = 0
+/** 无监听者（AppErrorDialog 未挂载，如登录页阶段）时错误的暂存时效：
+ * 只重放挂载间隙内的新鲜错误；陈年错误（登录页积压的登录超时等用户
+ * 早已知情并处理过）不该在进入应用后突然弹出。 */
+const PENDING_REQUEST_ERROR_TTL_MS = 10_000
 let currentLocale: DesktopLocale = 'zh-CN'
 
 function desktopText(key: Parameters<typeof translateDesktopMessage>[1]): string {
@@ -86,8 +91,10 @@ function requestError(channel: string, error: unknown): DesktopRequestError {
 
 function reportRequestError(detail: DesktopRequestError): void {
   ipcRenderer.send('app:request-error', detail)
-  if (requestErrorListeners.size === 0) pendingRequestError = detail
-  else for (const listener of requestErrorListeners) listener(detail)
+  if (requestErrorListeners.size === 0) {
+    pendingRequestError = detail
+    pendingRequestErrorAt = Date.now()
+  } else for (const listener of requestErrorListeners) listener(detail)
 }
 
 function rateLimitNotice(value: unknown): DesktopRequestError | null {
@@ -196,7 +203,7 @@ const api: NxcoreDesktopApi = {
     onRequestError: (listener) => {
       requestErrorListeners.add(listener)
       if (pendingRequestError) {
-        listener(pendingRequestError)
+        if (Date.now() - pendingRequestErrorAt <= PENDING_REQUEST_ERROR_TTL_MS) listener(pendingRequestError)
         pendingRequestError = null
       }
       return () => requestErrorListeners.delete(listener)

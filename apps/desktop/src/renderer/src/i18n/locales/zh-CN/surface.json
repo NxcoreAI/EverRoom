@@ -302,8 +302,6 @@
   "agentStatus.timedOut": "超时",
   "agentStatus.updatedTime": "更新于 {time}",
   "agentStatus.working": "正在执行",
-  "appErrorDialog.close": "关闭",
-  "appErrorDialog.gotIt": "知道了",
   "appErrorDialog.notice": "操作提示",
   "appErrorDialog.requestNotCompleted": "请求未完成",
   "appToast.dismissNotification": "关闭提示",
