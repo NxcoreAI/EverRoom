@@ -432,6 +432,9 @@ export class KnowledgeService {
   private drainRequested = false;
   private promotionDraining = false;
   private promotionDrainRequested = false;
+  private stopped = false;
+  private drainInFlight: Promise<void> | null = null;
+  private promotionDrainInFlight: Promise<void> | null = null;
   private roomDuplicateIndexTrigger: (() => void) | null = null;
   /** M3 知识整理偏好（注入摘要与统计/洞察宿主），装配后生效。 */
   private knowledgePreferences: import("./preferences.js").KnowledgePreferences | null = null;
@@ -628,9 +631,12 @@ export class KnowledgeService {
     this.wake();
   }
 
-  dispose(): void {
+  async dispose(): Promise<void> {
+    this.stopped = true;
     if (this.drainTimer) clearInterval(this.drainTimer);
     this.drainTimer = null;
+    await this.drainInFlight;
+    await this.promotionDrainInFlight;
     void this.ownedAgentResolver?.dispose();
     for (const schedule of this.pendingSchedules.values()) clearTimeout(schedule.timer);
     this.pendingSchedules.clear();
@@ -1302,28 +1308,35 @@ export class KnowledgeService {
 
   // ───────────────────────── worker（plan §5.3 + §4.4 晋升） ─────────────────────────
 
-  private async drain(): Promise<void> {
+  private drain(): Promise<void> {
     if (this.draining) {
       this.drainRequested = true;
-      return;
+      return this.drainInFlight ?? Promise.resolve();
     }
     this.draining = true;
+    this.drainInFlight = this.runDrainLoop().finally(() => {
+      this.draining = false;
+      this.drainInFlight = null;
+    });
+    return this.drainInFlight;
+  }
+
+  private async runDrainLoop(): Promise<void> {
     try {
       do {
         this.drainRequested = false;
         for (;;) {
+          if (this.stopped) return;
           const candidate = this.nextRunnableJob();
           if (!candidate) break;
           await this.processJob(candidate.job, candidate.lockKey);
         }
-      } while (this.drainRequested);
+      } while (this.drainRequested && !this.stopped);
     } catch (error) {
       this.logger.error(
         { event: "knowledge.worker.error", error: error instanceof Error ? error.message : String(error) },
         "knowledge worker drain failed",
       );
-    } finally {
-      this.draining = false;
     }
   }
 
@@ -1359,28 +1372,35 @@ export class KnowledgeService {
    * 用户触发的 Room 创建使用独立 worker。知识服务处理某个大 Wiki 时，
    * 创建任务仍可完成实体登记和 Room 落库，不被 route/ingest 的网络等待阻塞。
    */
-  private async drainPromotions(): Promise<void> {
+  private drainPromotions(): Promise<void> {
     if (this.promotionDraining) {
       this.promotionDrainRequested = true;
-      return;
+      return this.promotionDrainInFlight ?? Promise.resolve();
     }
     this.promotionDraining = true;
+    this.promotionDrainInFlight = this.runPromotionDrainLoop().finally(() => {
+      this.promotionDraining = false;
+      this.promotionDrainInFlight = null;
+    });
+    return this.promotionDrainInFlight;
+  }
+
+  private async runPromotionDrainLoop(): Promise<void> {
     try {
       do {
         this.promotionDrainRequested = false;
         for (;;) {
+          if (this.stopped) return;
           const candidate = this.nextRunnablePromotion();
           if (!candidate) break;
           await this.processJob(candidate.job, candidate.lockKey);
         }
-      } while (this.promotionDrainRequested);
+      } while (this.promotionDrainRequested && !this.stopped);
     } catch (error) {
       this.logger.error(
         { event: "knowledge.promotion_worker.error", error: error instanceof Error ? error.message : String(error) },
         "knowledge promotion worker drain failed",
       );
-    } finally {
-      this.promotionDraining = false;
     }
   }
 

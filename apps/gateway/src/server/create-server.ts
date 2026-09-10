@@ -1180,7 +1180,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     await agentSchedulerService.dispose();
     await diaryService.dispose();
     roomDuplicateService.dispose();
-    knowledgeService.dispose();
+    await knowledgeService.dispose();
     knowledgePreferences.dispose();
     await asrService.dispose();
     await agentResolver.dispose();
