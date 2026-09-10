@@ -114,6 +114,7 @@ describe('Document Pi tool routing', () => {
         inputSchema: { type: 'object', properties: { roomId: { type: 'string' } } },
       }],
       callTool,
+      roomExists: () => false,
     } as unknown as DocumentMcpHost
     const begin = createDocumentPiTools(host)[0]!
 
@@ -122,6 +123,29 @@ describe('Document Pi tool routing', () => {
       title: '产品文档',
     })).rejects.toThrow('ROOM_SELECTION_REQUIRED')
     expect(callTool).not.toHaveBeenCalled()
+  })
+
+  it('accepts a Room missing from the snapshot but present in the live registry (mid-run create)', async () => {
+    const callTool = vi.fn(async (_name: string, _params: Record<string, unknown>, context: { roomId: string | null }): Promise<DocumentMcpToolResult> => ({
+      content: [{ type: 'text', text: JSON.stringify({ roomId: context.roomId, operationId: 'operation-1' }) }],
+      structuredContent: { roomId: context.roomId, operationId: 'operation-1' },
+    }))
+    const host = {
+      listTools: () => [{
+        name: 'context_room_write_begin', title: 'Begin', description: 'Begin',
+        inputSchema: { type: 'object', properties: { roomId: { type: 'string' } } },
+      }],
+      callTool,
+      roomExists: (roomId: string) => roomId === 'room-fresh',
+    } as unknown as DocumentMcpHost
+    const begin = createDocumentPiTools(host)[0]!
+
+    await begin.execute(runtimeInput('创建一份文档'), { roomId: 'room-fresh', title: '文档' })
+
+    expect(callTool).toHaveBeenCalledOnce()
+    expect(callTool).toHaveBeenCalledWith('context_room_write_begin', expect.any(Object), expect.objectContaining({
+      roomId: 'room-fresh',
+    }))
   })
 
   describe('context_room_document_list selectionRequired 意图闸门', () => {

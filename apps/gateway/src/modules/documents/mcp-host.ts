@@ -158,6 +158,7 @@ export class DocumentMcpHost {
     lastInputSignature?: string;
     identicalFailureCount: number;
   }>();
+  private readonly roomsRegistry: DocumentRoomRegistry | undefined;
   readonly capabilities: DocumentCapabilityRegistry;
 
   constructor(
@@ -167,7 +168,17 @@ export class DocumentMcpHost {
     private readonly operations?: DocumentOperationService,
     private readonly onDiagnostic?: (diagnostic: DocumentToolDiagnostic) => void,
   ) {
+    this.roomsRegistry = rooms;
     this.capabilities = capabilities ?? createBuiltinDocumentCapabilityRegistry(documents, rooms, operations);
+  }
+
+  /**
+   * 实时房间存在性查询。run 的 availableRooms 是开跑快照，同一 run 内
+   * context_room_create 新建的房间不在其中；校验显式 roomId 时须以本方法兜底。
+   */
+  roomExists(roomId: string): boolean {
+    if (!roomId.trim()) return false;
+    return this.roomsRegistry?.listReferences().some((room) => room.id === roomId) ?? false;
   }
 
   listTools(): readonly DocumentMcpToolDefinition[] {
@@ -277,6 +288,10 @@ export class DocumentMcpHost {
       };
     }
     if (operation.status === "completed") {
+      // 成功态不替换模型正文：模型的收尾总结是有效内容，替换成干巴巴的
+      // "已完成创建。"会把"全文约 N 字"这类有用信息一并丢掉（界面另有
+      // 文档去重回退兜底长篇复述）。仅在模型没有产出任何正文时才兜底一句。
+      if (input.content.trim()) return null;
       const action = operation.capabilityId === "document.create"
         ? "创建"
         : operation.capabilityId === "document.continue" ? "续写" : "修改";

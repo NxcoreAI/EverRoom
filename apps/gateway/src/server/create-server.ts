@@ -699,6 +699,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     analysisTools: subagentConfig.enabled
       ? createSubagentPiTools(subagentRegistry, subagentOrchestrator, {
           resolveRoomContext: async (roomId) => buildRoomContextDigest(db, roomId),
+          roomExists: (roomId) => documentMcpHost.roomExists(roomId),
         })
       : [],
     webSearchTools: config.webSearch
@@ -809,6 +810,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
             // document_draft 组装与代发凭证（doc-writer-subagent-plan §4/§5.3）：
             // 读权威文档快照 + 以主 run 名义签发 read receipt（与 document_read 同构）。
             resolveDocumentForDraft: (documentId, roomId) => documentService.readDocumentForAgent(documentId, roomId),
+            roomExists: (roomId) => documentMcpHost.roomExists(roomId),
             // dispatch 期软租约：agent 修改中文档只读（编辑器 writing 态 + 保存
             // DOCUMENT_BUSY），patch_begin 接管前由工具侧清除。
             setDocumentModificationLease: (documentId, value) =>
