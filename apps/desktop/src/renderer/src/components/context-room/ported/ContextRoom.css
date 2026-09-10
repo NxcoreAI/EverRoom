@@ -2451,6 +2451,7 @@
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+  border-right: 1px solid var(--cr-border);
   background: var(--cr-surface);
   container-name: context-room-detail-content;
   container-type: inline-size;
@@ -2511,6 +2512,16 @@
   gap: 4px;
   margin-left: auto;
   flex: 0 0 auto;
+}
+
+/* 无云文档/未选中时的右上角「···」（复用文档操作按钮样式，绝对定位到角落） */
+.context-room-empty-doc-actions {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  z-index: 6;
+  min-width: 0;
+  margin-left: 0;
 }
 
 .context-room-document-actions > button {

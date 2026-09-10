@@ -9,6 +9,7 @@ import {
   agentSessions,
   contextRooms,
   documents,
+  entities,
   roomDocumentLinks,
   roomDuplicateCandidates,
   roomMemoryAttributions,
@@ -519,6 +520,18 @@ describe('RoomDuplicateService', () => {
     }
     db.insert(roomDocumentLinks).values({ roomId: 'room-x', documentId: 'doc-x', linkedAt: now }).run()
     db.insert(roomDocumentLinks).values({ roomId: 'room-y', documentId: 'doc-y', linkedAt: now }).run()
+    // 户口实体 + 按名认领的非户口实体：合并后都必须重指到新 Room，
+    // 否则挂载/推荐读侧会留下指向退休 Room 的「已建 Room」残影。
+    for (const [entityId, name, roomId] of [
+      ['ent-home-x', 'Java', 'room-x'],
+      ['ent-claimed-x', 'JVM 调优', 'room-x'],
+      ['ent-home-y', 'Java Space', 'room-y'],
+      ['ent-claimed-y', '垃圾回收', 'room-y'],
+    ] as const) {
+      db.insert(entities).values({ id: entityId, name, status: 'room', roomId, createdAt: now, updatedAt: now }).run()
+    }
+    db.update(rooms).set({ entityId: 'ent-home-x' }).where(eq(rooms.id, 'room-x')).run()
+    db.update(rooms).set({ entityId: 'ent-home-y' }).where(eq(rooms.id, 'room-y')).run()
 
     const preview = await duplicates.previewMerge('room-x', 'room-y')
     expect(preview.impact.documents).toBe(2)
@@ -541,6 +554,13 @@ describe('RoomDuplicateService', () => {
     expect(Boolean(String(brief.background ?? '').trim())).toBe(true)
     expect(db.select().from(roomDocumentLinks).where(eq(roomDocumentLinks.documentId, 'doc-x')).get()?.roomId).toBe(newRoom.id)
     expect(db.select().from(roomDocumentLinks).where(eq(roomDocumentLinks.documentId, 'doc-y')).get()?.roomId).toBe(newRoom.id)
+    // 全部实体收编到新 Room：没有任何实体再指向退休的 room-x / room-y。
+    // （本 harness 未接 mergeKnowledge，B 户口实体的并入归档不在此覆盖。）
+    const boundEntities = db.select().from(entities)
+      .where(eq(entities.status, 'room')).all()
+    expect(boundEntities.map((row) => row.id).sort())
+      .toEqual(['ent-claimed-x', 'ent-claimed-y', 'ent-home-x', 'ent-home-y'])
+    for (const row of boundEntities) expect(row.roomId).toBe(newRoom.id)
     expect((newRoom.data.memoryItems as Array<{ id: string }>).map((item) => item.id).sort()).toEqual(['mx', 'my'])
     // 幂等：同 idempotencyKey 重放返回既有终态，不再新建。
     const replay = await duplicates.startMerge({

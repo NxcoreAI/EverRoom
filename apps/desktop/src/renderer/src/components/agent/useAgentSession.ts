@@ -363,6 +363,9 @@ export function useAgentSession(
       if (event.type === 'run.failed') {
         const message = (event.payload as { message?: unknown }).message
         setError(typeof message === 'string' ? message : t('surface:useAgentSession.runFailed'))
+      } else if (event.type === 'run.interrupted') {
+        const message = (event.payload as { message?: unknown }).message
+        setError(typeof message === 'string' ? message : t('surface:useAgentSession.runInterrupted'))
       }
     }
   }, [updateToolCall])

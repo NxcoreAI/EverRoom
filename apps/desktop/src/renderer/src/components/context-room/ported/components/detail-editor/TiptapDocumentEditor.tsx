@@ -68,8 +68,8 @@ import {
   writeDocumentDraft,
 } from './documentDraftStorage'
 import { DOCUMENT_HEADING_LEVELS } from './documentHeadingLevels'
+import { installImageResizeGhost } from './documentImageResizeGhost'
 import {
-  DOCUMENT_IMAGE_RESIZE_OPTIONS,
   hasEmbeddedDocumentImages,
   localizeDocumentImages,
 } from './documentImageAssets'
@@ -686,9 +686,10 @@ export function TiptapDocumentEditor({
       TaskList,
       TaskItem.configure({ nested: true }),
       TableKit.configure({ table: { resizable: true } }),
+      // 官方 resize 交互被禁用：图片缩放走自研幽灵模式（拖动只显示半透明
+      // 预览框，松手才落库——documentImageResizeGhost.ts）。
       Image.configure({
         allowBase64: false,
-        resize: DOCUMENT_IMAGE_RESIZE_OPTIONS,
       }),
       StableBlockIds.configure({ documentId }),
       CommentAnchors,
@@ -998,6 +999,12 @@ export function TiptapDocumentEditor({
     })
     return handle.deactivate
   }, [activateDocument, backendDocument, documentId, documentName, editor, flushDocumentVersion, room.id])
+
+  // 图片缩放（幽灵模式）：拖动期间原图占位、幽灵框预览，松手才应用。
+  useEffect(() => {
+    if (!editor || editor.isDestroyed) return undefined
+    return installImageResizeGhost(editor)
+  }, [editor])
 
   const listDocumentBlocks = useCallback(async (targetDocumentId: string) => {
     const documents = window.nxcore?.documents
@@ -1396,6 +1403,15 @@ export function TiptapDocumentEditor({
     streamStates.delete(streamingDocument.operationId)
   }, [streamingDocument?.operationId])
 
+  // 大纲展开/收回时正文横向推挤，drag-handle 只在编辑器事务时重算位置——
+  // 坐标会滞留在旧位（悬在大纲面板上）。开关时立即与过渡结束后各 bump
+  // 一次 key，重挂载块手柄以重算坐标。
+  const [outlineHandleEpoch, setOutlineHandleEpoch] = useState(0)
+  const handleOutlineOpenChange = useCallback(() => {
+    setOutlineHandleEpoch((value) => value + 1)
+    window.setTimeout(() => setOutlineHandleEpoch((value) => value + 1), 220)
+  }, [])
+
   const handleBlockDraggingChange = (dragging: boolean) => {
     setBlockDragging(dragging)
     if (!dragging && editor && !editor.isDestroyed) editor.view.dom.dispatchEvent(new Event('dragend'))
@@ -1528,6 +1544,17 @@ export function TiptapDocumentEditor({
           </span>
         </div>
       ) : null}
+      {editor ? (
+        <TiptapContentScale
+          items={tableOfContents}
+          documentId={documentId}
+          documentTitle={documentName}
+          editor={editor}
+          prepareDocument={flushDocumentVersion}
+          locked={editorLocked}
+          onOutlineOpenChange={handleOutlineOpenChange}
+        />
+      ) : null}
       <div
         ref={editorInteractions.scrollRef}
         className="context-room-tiptap-scroll"
@@ -1615,6 +1642,7 @@ export function TiptapDocumentEditor({
           aiReviewRunning={aiReview.running}
           aiReviewDisabled={!backendDocument || writing || saveState === '正在保存...' || historyDiffActive}
           onAiReview={() => void aiReview.start()}
+          documentTitle={documentName}
         />
         </div>
       </div>
@@ -1627,6 +1655,7 @@ export function TiptapDocumentEditor({
             onAskAi={selectionRewrite.requestRewrite}
           />
           <TiptapBlockHandle
+            key={`block-handle-${String(outlineHandleEpoch)}`}
             editor={editor}
             onDraggingChange={handleBlockDraggingChange}
             onCopyBlockReference={copyBlockReference}
@@ -1647,15 +1676,6 @@ export function TiptapDocumentEditor({
         onChange={selectionRewrite.updateReplacementText}
         onRetry={selectionRewrite.retry}
       />
-      {editor ? (
-        <TiptapContentScale
-          items={tableOfContents}
-          documentId={documentId}
-          editor={editor}
-          prepareDocument={flushDocumentVersion}
-          locked={editorLocked}
-        />
-      ) : null}
       {editor && referencePickerOpen && !editorLocked ? (
         <DocumentBlockReferencePicker
           roomId={room.id}

@@ -1565,26 +1565,25 @@ export class AgentService {
     sessionId: string,
     runId: string,
     runtimeEvent: RuntimeEvent,
-    options: { rawDelta?: boolean } = {},
+    options: { skipDeltaHold?: boolean } = {},
   ): Promise<void> {
     runtimeEvent = redactSecrets(runtimeEvent);
     const deltaScope = `agent:${runId}`;
     if (runtimeEvent.type === "message.delta") {
       const payload = runtimeEvent.payload as { delta?: unknown };
-      if (!options.rawDelta && typeof payload.delta === "string") {
+      if (typeof payload.delta === "string" && !options.skipDeltaHold) {
         runtimeEvent = { ...runtimeEvent, payload: { ...payload, delta: redactDelta(deltaScope, payload.delta) } };
       }
     } else if (runtimeEvent.type === "message.completed" || runtimeEvent.type.startsWith("run.")) {
-      // 终结事件前先冲刷脱敏器扣住的尾部增量（rawDelta 跳过再次扣留），
-      // 保证流式累计与完成正文一致；只 clear 不冲刷会让每条回复缺尾。
-      const flushed = flushRedactionDelta(deltaScope);
-      if (flushed) {
-        await this.appendEvent(
-          sessionId,
-          runId,
-          { type: "message.delta", payload: { delta: flushed } },
-          { rawDelta: true },
-        );
+      // 扣留的尾部必须补发，否则事件流里的 delta 累加永久缺尾（#199）：
+      // 中断时前端只能展示 delta 累加；正常完成时工具型 run 的"末段答案"
+      // 也取自 delta 累加。余留已过 redactText，补发时 skipDeltaHold 防止再次扣留。
+      const tail = flushRedactionDelta(deltaScope);
+      if (tail) {
+        await this.appendEvent(sessionId, runId, {
+          type: "message.delta",
+          payload: { delta: tail },
+        }, { skipDeltaHold: true });
       }
     }
     const runOwner = this.db.select({ agentId: agentRuns.agentId })

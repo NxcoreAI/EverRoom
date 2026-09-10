@@ -147,6 +147,8 @@ jobs:
           pnpm build
           pnpm --filter @nxcore/desktop exec node scripts/prepare-open-connector.mjs
           pnpm --filter @nxcore/desktop exec node scripts/prepare-oo-cli.mjs
+          pnpm --filter @nxcore/desktop exec node scripts/prepare-lark-cli.mjs
+          pnpm --filter @nxcore/desktop exec node scripts/prepare-ntn.mjs
           pnpm --filter @nxcore/desktop exec node scripts/generate-packaged-env.mjs
 
       - name: Package macOS arm64
@@ -188,6 +190,12 @@ jobs:
           fi
           unexpected_typescript="$(printf '%s\n' "$loose_files" | grep -Ei '\.(ts|tsx|mts|cts)$' | grep -Ev "^$resources/open-connector/" || true)"
           test -z "$unexpected_typescript" || { printf '%s\n' "$unexpected_typescript" >&2; exit 1; }
+
+          # 四件套运行时必须在包内：缺失说明 prepare 脚本没跑或 extraResources
+          # 源目录不存在（electron-builder 会静默跳过），装出去导出/连接器直接废。
+          for dir in open-connector oo lark-cli ntn; do
+            test -d "$resources/$dir" || { echo "missing bundled runtime: $resources/$dir" >&2; exit 1; }
+          done
 
           asar_path="$(cd "$resources" && pwd)/app.asar"
           pnpm --filter @nxcore/desktop exec asar list "$asar_path" > "$RUNNER_TEMP/asar-files.txt"
@@ -332,6 +340,8 @@ jobs:
           pnpm build
           pnpm --filter @nxcore/desktop exec node scripts/prepare-open-connector.mjs
           pnpm --filter @nxcore/desktop exec node scripts/prepare-oo-cli.mjs
+          pnpm --filter @nxcore/desktop exec node scripts/prepare-lark-cli.mjs
+          pnpm --filter @nxcore/desktop exec node scripts/prepare-ntn.mjs
           pnpm --filter @nxcore/desktop exec node scripts/generate-packaged-env.mjs
 
       - name: Package Windows x64

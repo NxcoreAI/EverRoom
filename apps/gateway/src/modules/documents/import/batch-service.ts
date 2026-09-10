@@ -71,6 +71,8 @@ export interface CreateBatchImportInput {
   remoteDocumentIds: string[];
   mode: DocumentImportBatchMode;
   roomId?: string;
+  /** mode=room 且 true：跳过来源去重，同来源一律新建（UI"创建新的"）。 */
+  forceNew?: boolean;
 }
 
 export class BatchImportServiceError extends Error {
@@ -142,6 +144,7 @@ export class DocumentBatchImportService {
       connectionName: input.connectionName ?? null,
       mode: input.mode,
       targetRoomId,
+      forceNew: input.mode === "room" && input.forceNew === true,
       total: items.length,
       itemsJson: items,
     }).run();
@@ -275,6 +278,7 @@ export class DocumentBatchImportService {
           const committed = await this.imports.commitToRoom({
             runId: preview.runId,
             roomId: commitRoomId,
+            ...(row.forceNew ? { forceNewDocument: true } : {}),
           });
           if (committed.noChange) {
             // 远端无变化：不落候选，跳过该篇（防空候选堆积）。

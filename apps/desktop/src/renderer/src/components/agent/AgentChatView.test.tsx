@@ -222,6 +222,87 @@ describe('AgentChatView', () => {
     act(() => renderer.unmount())
   })
 
+  it('pauses auto-scroll while the user reads upward and resumes on a new user message', async () => {
+    const conversationNode = {
+      clientHeight: 400,
+      scrollHeight: 1_000,
+      scrollTop: 600,
+    }
+    const message = (id: string, role: 'user' | 'assistant') => ({
+      id,
+      sessionId: 'session-1',
+      runId: 'run-1',
+      role,
+      content: `content-${id}`,
+      createdAt: '2026-08-20T00:00:00.000Z',
+    })
+    const renderView = (messages: Parameters<typeof AgentChatView>[0]['messages']) => (
+      <AgentChatView
+        activeDocument={null}
+        activeRunId={null}
+        agentIdByRun={{}}
+        agentNamesById={{}}
+        activityByRun={{}}
+        availableRooms={[]}
+        composer={null}
+        currentSessionId="session-1"
+        draftHasContent={false}
+        error={null}
+        loading={false}
+        messages={messages}
+        onOpenSessionLink={vi.fn()}
+        onRejectDocumentIntent={vi.fn()}
+        onRetryPrompt={vi.fn()}
+        onSelectDocument={vi.fn()}
+        onSelectPrompt={vi.fn()}
+        onSelectRoom={vi.fn().mockResolvedValue(undefined)}
+        pendingNavigationByRun={{}}
+        runCompletedAtByRun={{}}
+        runStartedAtByRun={{}}
+        scopeReady
+        sessionLinks={[]}
+        submitting={false}
+        toolCallsByRun={{}}
+      />
+    )
+
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(renderView([message('user-1', 'user'), message('assistant-1', 'assistant')]), {
+        createNodeMock: (element) => element.props.className === 'agent-conversation'
+          ? conversationNode
+          : {},
+      })
+    })
+    expect(conversationNode.scrollTop).toBe(1_000)
+
+    conversationNode.scrollTop = 300
+    act(() => {
+      renderer.root.findByProps({ className: 'agent-conversation' }).props.onScroll({
+        currentTarget: conversationNode,
+      })
+    })
+    await act(async () => {
+      renderer.update(renderView([
+        message('user-1', 'user'),
+        message('assistant-1', 'assistant'),
+        message('stream-1', 'assistant'),
+      ]))
+    })
+    expect(conversationNode.scrollTop).toBe(300)
+
+    await act(async () => {
+      renderer.update(renderView([
+        message('user-1', 'user'),
+        message('assistant-1', 'assistant'),
+        message('stream-1', 'assistant'),
+        message('user-2', 'user'),
+      ]))
+    })
+    expect(conversationNode.scrollTop).toBe(1_000)
+    act(() => renderer.unmount())
+  })
+
   it('shows an unframed byline only for non-main Agent responses', async () => {
     let renderer!: TestRenderer.ReactTestRenderer
     await act(async () => {

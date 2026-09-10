@@ -87,7 +87,7 @@ import {
   logLocalDesktop,
   logDocumentCursorCompletion,
 } from './logging/desktop-logger'
-import { configureSentry, syncSentryAccount } from './monitoring/sentry'
+import { configureSentry, isSentryRemoteDebugEnabled, syncSentryAccount } from './monitoring/sentry'
 import { PrivateTranscriptionSyncService } from './transcription/private-transcription-sync'
 import { PrivateSyncScheduler } from './transcription/private-sync-scheduler'
 import { TranscriptionProcessingCoordinator } from './transcription/processing-coordinator'
@@ -294,6 +294,7 @@ const AGENT_AUTH_CHANNELS = {
 const EXTERNAL_DOCUMENT_CHANNELS = {
   importSearch: 'external-documents:import-search',
   importList: 'external-documents:import-list',
+  importExistingInRoom: 'external-documents:import-existing-in-room',
   importBatch: 'external-documents:import-batch',
   importBatchStatus: 'external-documents:import-batch-status',
   cancelImportBatch: 'external-documents:cancel-import-batch',
@@ -2030,6 +2031,10 @@ function registerExternalDocumentHandlers(bridge: ExternalDocumentsGatewayBridge
     if (cachedOnly !== undefined && typeof cachedOnly !== 'boolean') throw new Error('无效的缓存参数。')
     return bridge.importList(provider as 'feishu' | 'notion', connectionName, cachedOnly)
   })
+  handle(EXTERNAL_DOCUMENT_CHANNELS.importExistingInRoom, (_event, provider: unknown, roomId: unknown, ids: unknown) => {
+    if (typeof provider !== 'string' || typeof roomId !== 'string' || !Array.isArray(ids)) throw new Error('无效的已导入检查请求。')
+    return bridge.importExistingInRoom(provider as 'feishu' | 'notion', roomId, ids as string[])
+  })
   handle(EXTERNAL_DOCUMENT_CHANNELS.importBatch, (_event, input: unknown) => bridge.importBatch(input as never))
   handle(EXTERNAL_DOCUMENT_CHANNELS.importBatchStatus, (_event, batchId: unknown) => {
     if (typeof batchId !== 'string') throw new Error('无效的批量导入标识。')
@@ -3640,6 +3645,14 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         }
       }).catch(() => undefined)
     })
+    // Sentry 门控只在账号 IPC 时同步：启动时订阅拉取失败会让整个会话静默。
+    // 未开闸时低频重试，网络恢复后自动补开（status() 内部有订阅缓存与退避）。
+    const sentryAccountResyncTimer = setInterval(() => {
+      const client = saasClient
+      if (!client || isSentryRemoteDebugEnabled()) return
+      void syncAccountMonitoring(client.status()).catch(() => undefined)
+    }, 5 * 60_000)
+    sentryAccountResyncTimer.unref()
     aiRelayKeeper = new AiRelayKeeper(saasClient, gatewaySupervisor, runtimeConfigBridge, (event: AiRelayKeeperEvent) => {
       for (const target of BrowserWindow.getAllWindows()) {
         if (!target.isDestroyed() && !target.webContents.isDestroyed()) {

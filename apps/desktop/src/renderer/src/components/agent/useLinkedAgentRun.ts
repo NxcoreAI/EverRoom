@@ -117,6 +117,17 @@ function isTerminal(status: AgentRunStatus | null): boolean {
     || status === 'interrupted'
 }
 
+// 轮询结果是否有实质变化：被引用 run 卡在非终态时轮询每秒执行，
+// 无变化也 setState 新引用会周期性重渲染对话视图（配合滚动跟随表现
+// 为强制滚回底部，#199）。
+export function linkedRunPollChanged(
+  previousSnapshotUpdatedAt: string | undefined,
+  snapshot: AgentSessionSnapshot,
+  nextEvents: AgentEvent[],
+): boolean {
+  return nextEvents.length > 0 || snapshot.session.updatedAt !== previousSnapshotUpdatedAt
+}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'Unable to load linked Agent progress.'
 }
@@ -168,6 +179,7 @@ export function useLinkedAgentRun(link: AgentSessionLink | null): LinkedAgentRun
     let cancelled = false
     let timer: ReturnType<typeof globalThis.setTimeout> | undefined
     let afterSeq = 0
+    let lastSnapshotUpdatedAt: string | undefined
     const events: AgentEvent[] = []
 
     if (!api || !sourceSessionId || !sourceRunId) {
@@ -196,7 +208,9 @@ export function useLinkedAgentRun(link: AgentSessionLink | null): LinkedAgentRun
         linkedDataRef.current = { runKey, snapshot, events: [...events] }
         const nextState = buildLinkedAgentRunState(snapshot, sourceRunId, events, documentPendingRef.current)
         afterSeq = Math.max(afterSeq, ...nextEvents.map((event) => event.seq))
-        setState(nextState)
+        const changed = linkedRunPollChanged(lastSnapshotUpdatedAt, snapshot, nextEvents)
+        if (changed) lastSnapshotUpdatedAt = snapshot.session.updatedAt
+        setState((current) => (changed || current.error !== null) ? nextState : current)
         if (isTerminal(nextState.status)) return
       } catch (error) {
         if (cancelled) return

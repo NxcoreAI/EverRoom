@@ -107,6 +107,9 @@ export function ConnectorDocumentImportPanel({
   const [batch, setBatch] = useState<DocumentImportBatchView | null>(null)
   const [autoDisabled, setAutoDisabled] = useState(false)
   const [roomPickerOpen, setRoomPickerOpen] = useState(false)
+  /** 已导入冲突确认：选了 Room 且勾选中存在已导入文档时进入。 */
+  const [conflict, setConflict] = useState<{ roomId: string; roomTitle: string; existingRemoteIds: Set<string> } | null>(null)
+  const [conflictChecking, setConflictChecking] = useState(false)
   const [rooms, setRooms] = useState<KnowledgeRoomDto[]>([])
   const [roomsLoading, setRoomsLoading] = useState(false)
   const [roomQuery, setRoomQuery] = useState('')
@@ -179,7 +182,7 @@ export function ConnectorDocumentImportPanel({
     })
   }
 
-  const startBatch = async (mode: 'room' | 'auto', roomId?: string) => {
+  const startBatch = async (mode: 'room' | 'auto', roomId?: string, forceNew?: boolean) => {
     if (!external || selected.size === 0 || batch?.status === 'running') return
     try {
       const created = await external.importBatch({
@@ -188,6 +191,7 @@ export function ConnectorDocumentImportPanel({
         remoteDocumentIds: [...selected],
         mode,
         ...(roomId ? { roomId } : {}),
+        ...(forceNew ? { forceNew } : {}),
       })
       setSelected(new Set())
       const view = await external.importBatchStatus(created.batchId)
@@ -245,6 +249,29 @@ export function ConnectorDocumentImportPanel({
       } finally {
         setRoomsLoading(false)
       }
+    }
+  }
+
+  /** 选定目标 Room：先查勾选中已在该 Room 导入过的文档，无冲突直接开批，
+   * 有冲突弹确认（更新已有=默认候选链路 / 创建新的=跳过去重）。 */
+  const pickRoom = async (room: { id: string; title: string }) => {
+    if (!external || conflictChecking) return
+    setConflictChecking(true)
+    try {
+      const result = await external.importExistingInRoom(provider, room.id, [...selected])
+      const existing = new Set(result.existingRemoteIds)
+      if (existing.size === 0) {
+        setRoomPickerOpen(false)
+        await startBatch('room', room.id)
+      } else {
+        setConflict({ roomId: room.id, roomTitle: room.title, existingRemoteIds: existing })
+      }
+    } catch {
+      // 检查失败不拦导入：按默认（更新已有）继续。
+      setRoomPickerOpen(false)
+      await startBatch('room', room.id)
+    } finally {
+      setConflictChecking(false)
     }
   }
 
@@ -580,11 +607,78 @@ export function ConnectorDocumentImportPanel({
               {!roomsLoading && visibleRooms.length === 0 ? (
                 <div className="connector-sync-empty">{t('surface:connectorSync.noRoomsAvailable')}</div>
               ) : null}
-              {visibleRooms.map((room) => (
-                <button key={room.id} type="button" className="connector-room-row" onClick={() => {
+      {conflict ? (
+        <div className="connector-dialog-backdrop" role="presentation" onMouseDown={(event) => {
+          if (event.target === event.currentTarget) setConflict(null)
+        }}>
+          <section className="connector-conflict-confirm" role="dialog" aria-modal="true" aria-label={t('surface:connectorSync.conflictTitle')}>
+            <header>
+              <div className="connector-conflict-confirm-title">
+                <TriangleAlert aria-hidden="true" />
+                <span>{t('surface:connectorSync.conflictTitle')}</span>
+              </div>
+              <button type="button" className="connector-icon-btn" onClick={() => setConflict(null)} aria-label={t('surface:connectorSync.close')}>
+                <X />
+              </button>
+            </header>
+            <div className="connector-conflict-confirm-body">
+              <p>
+                {t('surface:connectorSync.conflictSummary', {
+                  count: String(conflict.existingRemoteIds.size),
+                  total: String(selected.size),
+                  room: conflict.roomTitle,
+                })}
+              </p>
+              <ul className="connector-conflict-confirm-list">
+                {items
+                  .filter((item) => conflict.existingRemoteIds.has(item.remoteDocumentId))
+                  .slice(0, 6)
+                  .map((item) => (
+                    <li key={item.remoteDocumentId}>
+                      <SourceIcon kind={provider} aria-hidden="true" />
+                      <span>{item.title}</span>
+                    </li>
+                  ))}
+                {conflict.existingRemoteIds.size > 6 ? (
+                  <li className="connector-conflict-confirm-more">
+                    {t('surface:connectorSync.conflictMoreCount', { count: String(conflict.existingRemoteIds.size - 6) })}
+                  </li>
+                ) : null}
+              </ul>
+              <p className="connector-conflict-confirm-hint">{t('surface:connectorSync.conflictUpdateHint')}</p>
+            </div>
+            <footer>
+              <button type="button" className="secondary-button" onClick={() => setConflict(null)}>
+                {t('surface:connectorSync.cancel')}
+              </button>
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => {
+                  setConflict(null)
                   setRoomPickerOpen(false)
-                  void startBatch('room', room.id)
-                }}>
+                  void startBatch('room', conflict.roomId, true)
+                }}
+              >
+                {t('surface:connectorSync.conflictCreateNew')}
+              </button>
+              <button
+                type="button"
+                className="primary-button"
+                onClick={() => {
+                  setConflict(null)
+                  setRoomPickerOpen(false)
+                  void startBatch('room', conflict.roomId)
+                }}
+              >
+                {t('surface:connectorSync.conflictUpdate')}
+              </button>
+            </footer>
+          </section>
+        </div>
+      ) : null}
+              {visibleRooms.map((room) => (
+                <button key={room.id} type="button" className="connector-room-row" disabled={conflictChecking} onClick={() => { void pickRoom(room) }}>
                   <span className="connector-room-icon"><Boxes aria-hidden="true" /></span>
                   <span className="connector-room-copy">
                     <strong>{room.title}</strong>

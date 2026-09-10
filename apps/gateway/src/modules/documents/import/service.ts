@@ -54,6 +54,8 @@ export interface CommitImportInput {
   roomId: string;
   /** 提供时表示"同一来源再次导入到该文档"：生成候选版本，不覆盖当前文档。 */
   targetDocumentId?: string;
+  /** true：跳过来源去重——同来源在该 Room 已有文档时仍新建（用户明确选"创建新的"）。 */
+  forceNewDocument?: boolean;
 }
 
 export interface CommitImportResult {
@@ -65,6 +67,30 @@ export interface CommitImportResult {
   noChange?: boolean;
   documentId: string;
   document: RoomDocument;
+}
+
+function objectValueish(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+/** 图片魔数嗅探：返回真实格式（远端 content-type 声明不可信）。 */
+function sniffImageMime(bytes: Uint8Array): string | null {
+  if (bytes.length >= 4 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) {
+    return "image/png";
+  }
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    return "image/jpeg";
+  }
+  if (bytes.length >= 3 && bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46) {
+    return "image/gif";
+  }
+  if (bytes.length >= 12 && bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46
+    && bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50) {
+    return "image/webp";
+  }
+  return null;
 }
 
 function isoToDateOrNull(value: string | null): Date | null {
@@ -422,6 +448,40 @@ export class DocumentImportService {
   }
 
   /**
+   * 目标 Room 已导入检查（批量导入前 UI 提示用）：返回这批远端文档中
+   * 已在该 Room 落过 primary 文档的 remoteDocumentId 集合。
+   */
+  existingInRoom(
+    provider: ExternalDocumentProvider,
+    roomId: string,
+    remoteDocumentIds: string[],
+  ): string[] {
+    if (remoteDocumentIds.length === 0) return [];
+    const sources = this.db.select({
+      id: documentImportSources.id,
+      remoteDocumentId: documentImportSources.remoteDocumentId,
+    }).from(documentImportSources)
+      .where(and(
+        eq(documentImportSources.ownerId, "local-user"),
+        eq(documentImportSources.provider, provider),
+        inArray(documentImportSources.remoteDocumentId, remoteDocumentIds),
+      )).all();
+    if (sources.length === 0) return [];
+    const byRemote = new Map(sources.map((source) => [source.id, source.remoteDocumentId]));
+    const landedSourceIds = this.db.select({ sourceId: documentImportRuns.sourceId })
+      .from(documentRoomImports)
+      .innerJoin(documentImportRuns, eq(documentRoomImports.importRunId, documentImportRuns.id))
+      .where(and(
+        eq(documentRoomImports.roomId, roomId),
+        eq(documentRoomImports.relation, "primary"),
+        inArray(documentImportRuns.sourceId, sources.map((source) => source.id)),
+      )).all()
+      .map((row) => row.sourceId)
+      .filter((id): id is string => Boolean(id));
+    return [...new Set(landedSourceIds.flatMap((id) => byRemote.get(id) ?? []))];
+  }
+
+  /**
    * 读取上次列举缓存（面板打开时的即时回显；imported 标记按当前库重算，
    * 导入后无需重拉）。无缓存返回 null，由调用方引导手动加载。
    */
@@ -614,7 +674,7 @@ export class DocumentImportService {
     };
     // 远端图片物化（B-9）：经桌面资产桥 PUT 落 DocumentAssetStore，改写为本机
     // nxcore-document-asset:// URL（编辑器原生可渲染）；失败保留远端链接并告警。
-    artifact = await this.materializeRemoteAssets(artifact, runId);
+    artifact = await this.materializeRemoteAssets(artifact, runId, provider, connectionName);
 
     const artifactRef = await storeArtifact(this.dataDir, artifact);
     const sourceId = await this.upsertSource(artifact);
@@ -703,8 +763,9 @@ export class DocumentImportService {
 
     // 来源去重（方案 §3.1）：未显式指定目标文档时，若该 Room 已导入过同一来源
     // （relation=primary 且文档仍存在），自动转为该文档的候选版本，不重复落新文档。
+    // forceNewDocument=true 跳过（批量导入"创建新的"，用户已在 UI 明确选择）。
     let targetDocumentId = input.targetDocumentId ?? null;
-    if (!targetDocumentId && run.sourceId) {
+    if (!targetDocumentId && run.sourceId && !input.forceNewDocument) {
       const existing = this.db.select({ documentId: documentRoomImports.documentId })
         .from(documentRoomImports)
         .innerJoin(documentImportRuns, eq(documentRoomImports.importRunId, documentImportRuns.id))
@@ -1119,9 +1180,47 @@ export class DocumentImportService {
     return { comparable: true, added, resolved, modified, removed, reason: null };
   }
 
+  /**
+   * 飞书图片真实地址解析：markdown 导出给的是 `feishu.cn/file/<token>` 文件页
+   * 链接（HTML，非字节），直接 fetch 必失败。先经运行时 download_docs_media
+   * 动作（带连接鉴权）把媒体落到运行时中转存储，返回的 downloadUrl 才是
+   * 可直接下载的字节地址（真机核实：image/png 200）。
+   */
+  private async resolveFeishuImageBytesUrl(
+    url: string,
+    provider: ExternalDocumentProvider,
+    connectionName?: string,
+  ): Promise<string | null> {
+    if (provider !== "feishu") return null;
+    const token = /feishu\.cn\/file\/([A-Za-z0-9]+)/.exec(url)?.[1];
+    if (!token) return null;
+    const config = this.requireConfig();
+    try {
+      const result = objectValueish(await this.actionRunner(
+        config,
+        {
+          service: "feishu",
+          action: "download_docs_media",
+          input: { token, type: "media", fileName: "image" },
+          ...(connectionName ? { connectionName } : {}),
+        },
+      ));
+      const downloadUrl = typeof result.downloadUrl === "string" && result.downloadUrl
+        ? result.downloadUrl
+        : typeof (objectValueish(result.data)).downloadUrl === "string"
+          ? (objectValueish(result.data)).downloadUrl as string
+          : null;
+      return downloadUrl;
+    } catch {
+      return null;
+    }
+  }
+
   private async materializeRemoteAssets(
     artifact: CanonicalDocumentArtifact,
     runId: string,
+    provider: ExternalDocumentProvider,
+    connectionName?: string,
   ): Promise<CanonicalDocumentArtifact> {
     if (!this.assetBridgeUrl) return artifact;
     const bridge = this.assetBridgeUrl;
@@ -1129,18 +1228,22 @@ export class DocumentImportService {
     const warnings: ExternalDocumentWarning[] = [...artifact.warnings];
     let materialized = 0;
     let failed = 0;
+    const failedReasons: string[] = [];
     const bodyMarkdown = await replaceAsync(artifact.bodyMarkdown, /!\[([^\]]*)\]\(\s*(https?:\/\/[^)\s]+)[^)]*\)/g,
       async (full: string, alt: string, url: string) => {
         if (materialized + failed >= 10) return full;
         try {
-          const response = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+          const bytesUrl = (await this.resolveFeishuImageBytesUrl(url, provider, connectionName)) ?? url;
+          const response = await fetch(bytesUrl, { signal: AbortSignal.timeout(30_000) });
           if (!response.ok) throw new Error(`HTTP ${String(response.status)}`);
-          const mime = ((response.headers.get("content-type") ?? "").split(";")[0] ?? "").trim();
-          if (!["image/png", "image/jpeg", "image/gif", "image/webp"].includes(mime)) {
-            throw new Error(`不支持的图片类型 ${mime}`);
-          }
           const bytes = new Uint8Array(await response.arrayBuffer());
           if (bytes.byteLength > 5 * 1024 * 1024) throw new Error("图片超过 5MB");
+          // 以魔数嗅探为准：远端/中转声明的 content-type 可能与真实字节不符
+          // （实测飞书中转 PNG 字节配 image/jpeg 头，资产桥签名校验会拒收 400）。
+          const headerMime = ((response.headers.get("content-type") ?? "").split(";")[0] ?? "").trim();
+          const mime = sniffImageMime(bytes)
+            ?? (["image/png", "image/jpeg", "image/gif", "image/webp"].includes(headerMime) ? headerMime : null);
+          if (!mime) throw new Error(`不支持的图片类型 ${headerMime || "unknown"}`);
           const put = await fetch(`${bridge}?doc=${encodeURIComponent(syntheticDocId)}`, {
             method: "PUT",
             headers: { "Content-Type": mime },
@@ -1153,8 +1256,9 @@ export class DocumentImportService {
           if (!src) throw new Error("资产桥未返回 src");
           materialized += 1;
           return `![${alt}](${src})`;
-        } catch {
+        } catch (error) {
           failed += 1;
+          failedReasons.push(`${url.slice(0, 60)}: ${error instanceof Error ? error.message : String(error)}`.slice(0, 160));
           return full;
         }
       });
@@ -1167,7 +1271,7 @@ export class DocumentImportService {
     if (failed > 0) {
       warnings.push({
         code: "asset_materialize_failed",
-        message: `${String(failed)} 张远端图片下载失败，保留原链接`,
+        message: `${String(failed)} 张远端图片下载失败，保留原链接；原因：${failedReasons.join("；")}`,
       });
     }
     return { ...artifact, bodyMarkdown, warnings };

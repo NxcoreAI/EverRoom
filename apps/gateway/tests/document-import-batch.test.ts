@@ -450,6 +450,61 @@ describe('document-import batch (room mode)', () => {
     expect(view.items[1]?.status).toBe('imported')
   })
 
+  it('existingInRoom 只报该 Room 已落 primary 的来源；forceNew 跳过去重一律新建', async () => {
+    insertRoom('room-exist')
+    insertRoom('room-other')
+    // 可变内容：第二批前改 tokA 内容，避免被无变化守卫拦下（内容相同→noChange 不落候选）。
+    const contentOf: Record<string, string> = {
+      tokA: '# 文档 tokA\n\n这是 tokA 的导入正文。',
+      tokB: '# 文档 tokB\n\n这是 tokB 的导入正文。',
+    }
+    const actions: FakeAction = {
+      'feishu.get_document': (input: Record<string, unknown>) => {
+        const id = String(input.documentId)
+        return { documentId: id, revisionId: 7, title: `文档 ${id}` }
+      },
+      'feishu.fetch_document': (input: Record<string, unknown>) => {
+        const id = String(input.documentId)
+        return { document: { document_id: id, revision_id: 7, title: `文档 ${id}`, url: `https://f.cn/docx/${id}`, content: contentOf[id] ?? '' } }
+      },
+      'feishu.list_drive_comments': { items: [], hasMore: false },
+    }
+    const { imports, batch } = makeServices(fakeRunner(actions))
+    const first = await batch.createBatch({
+      provider: 'feishu',
+      remoteDocumentIds: ['tokA', 'tokB'],
+      mode: 'room',
+      roomId: 'room-other',
+    })
+    expect((await waitBatch(batch, first.batchId)).status).toBe('completed')
+    // 跨 Room 隔离：room-exist 没导过为空；room-other 两篇都在。
+    expect(imports.existingInRoom('feishu', 'room-exist', ['tokA', 'tokB'])).toEqual([])
+    expect(new Set(imports.existingInRoom('feishu', 'room-other', ['tokA', 'tokB'])))
+      .toEqual(new Set(['tokA', 'tokB']))
+    // 内容变化后默认重导：转候选。
+    contentOf.tokA = '# 文档 tokA\n\n这是 tokA 的导入正文。（远端已修改）'
+    const second = await batch.createBatch({
+      provider: 'feishu',
+      remoteDocumentIds: ['tokA'],
+      mode: 'room',
+      roomId: 'room-other',
+    })
+    expect((await waitBatch(batch, second.batchId)).status).toBe('completed')
+    expect(db.select().from(documentRoomImports).all().filter((row) => row.relation === 'candidate')).toHaveLength(1)
+    // forceNew=true：同来源仍新建 primary 文档（跳过去重）。
+    const third = await batch.createBatch({
+      provider: 'feishu',
+      remoteDocumentIds: ['tokA'],
+      mode: 'room',
+      roomId: 'room-other',
+      forceNew: true,
+    })
+    const thirdView = await waitBatch(batch, third.batchId)
+    expect(thirdView.status).toBe('completed')
+    const primaries = db.select().from(documentRoomImports).all().filter((row) => row.relation === 'primary')
+    expect(primaries).toHaveLength(3)
+  })
+
   it('重复导入同一来源自动转候选版本（方案 §3.1 来源去重）', async () => {
     insertRoom('room-dup-source')
     let bodySuffix = ''

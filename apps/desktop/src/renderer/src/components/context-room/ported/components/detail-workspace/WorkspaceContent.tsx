@@ -1,16 +1,60 @@
 import type { RoomDocument } from '@nxcore/agent-contract';
-import { BookOpen, ChevronLeft, FileText } from 'lucide-react';
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
+import { BookOpen, ChevronLeft, Ellipsis, FileDown, FileText } from 'lucide-react';
+import { useState } from 'react';
 import { useLocale } from '../../../../../i18n/LocaleContext';
 
 import type { KnowledgeFileDto } from '../../../../../../../shared/knowledge';
 import { createContextRoomResourceLibrary } from '../../resources';
 import type { ContextRoomRecord, ContextRoomResource } from '../../types';
+import { ExternalImportDialog } from '../detail-editor/ExternalImportDialog';
+import { externalDocumentFeatures } from '../detail-editor/externalDocumentFeatures';
 import { DocumentContent } from '../detail-panels/DocumentPane';
 import { KnowledgeFileExternalCard } from '../detail-panels/KnowledgeFileExternalCard';
 import { KnowledgeFileReader } from '../detail-panels/KnowledgeFileReader';
 import { PanelEmptyState } from '../detail-panels/PanelEmptyState';
 import { WikiPageReader } from '../detail-panels/WikiPageReader';
 import { isMarkdownFileName } from '../../../knowledgeMarkdownImport';
+
+/**
+ * 无云文档（或未选中）时的右上角「···」：与文档打开态的操作菜单同款外壳，
+ * 但只保留无文档也有意义的动作——从飞书/Notion 导入（预览→加入本 Room）。
+ */
+function EmptyStateDocumentActions({ roomId }: { roomId: string }) {
+  const { t } = useLocale();
+  const [importOpen, setImportOpen] = useState(false);
+  if (!externalDocumentFeatures.externalImport) return null;
+  return (
+    <>
+      <DropdownMenu.Root>
+        <DropdownMenu.Trigger asChild>
+          <button
+            type="button"
+            aria-label={t('contextRoom:tiptapDocumentActions.moreDocumentActions')}
+            title={t('contextRoom:tiptapDocumentActions.moreActions')}
+          >
+            <Ellipsis aria-hidden="true" />
+          </button>
+        </DropdownMenu.Trigger>
+        <DropdownMenu.Portal>
+          <DropdownMenu.Content
+            className="context-room-card-menu context-room-document-actions-menu"
+            sideOffset={6}
+            align="end"
+          >
+            <DropdownMenu.Item onSelect={() => setImportOpen(true)}>
+              <FileDown aria-hidden="true" />
+              {t('contextRoom:tiptapDocumentActions.importFromExternal')}
+            </DropdownMenu.Item>
+          </DropdownMenu.Content>
+        </DropdownMenu.Portal>
+      </DropdownMenu.Root>
+      {importOpen ? (
+        <ExternalImportDialog open onClose={() => setImportOpen(false)} roomId={roomId} />
+      ) : null}
+    </>
+  );
+}
 
 export function WorkspaceContent({
   room,
@@ -69,16 +113,21 @@ export function WorkspaceContent({
       ) : selectedResource?.kind === 'wiki-page' ? (
         <WikiPageReader resource={selectedResource} />
       ) : (
-        <PanelEmptyState
-          className="context-room-content-empty"
-          icon={hasAvailableResources ? FileText : BookOpen}
-          title={hasAvailableResources
-            ? t('contextRoom:workspaceContent.selectAResource')
-            : t('contextRoom:workspaceContent.noDocumentsYet')}
-          description={hasAvailableResources
-            ? t('contextRoom:workspaceContent.selectADocumentFromTheResourceListOn')
-            : t('contextRoom:workspaceContent.createADocumentOrAddALocalOffice')}
-        />
+        <>
+          <div className="context-room-document-actions context-room-empty-doc-actions">
+            <EmptyStateDocumentActions roomId={room.id} />
+          </div>
+          <PanelEmptyState
+            className="context-room-content-empty"
+            icon={hasAvailableResources ? FileText : BookOpen}
+            title={hasAvailableResources
+              ? t('contextRoom:workspaceContent.selectAResource')
+              : t('contextRoom:workspaceContent.noDocumentsYet')}
+            description={hasAvailableResources
+              ? t('contextRoom:workspaceContent.selectADocumentFromTheResourceListOn')
+              : t('contextRoom:workspaceContent.createADocumentOrAddALocalOffice')}
+          />
+        </>
       )}
     </section>
   );
