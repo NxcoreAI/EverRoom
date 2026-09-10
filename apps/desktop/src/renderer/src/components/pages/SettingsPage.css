@@ -868,22 +868,6 @@
   height: 18px;
 }
 
-.oidc-login-note {
-  display: flex;
-  min-height: 20px;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  margin: 9px 0 0;
-  color: var(--muted);
-  font-size: 10px;
-}
-
-.oidc-login-note svg {
-  width: 12px;
-  height: 12px;
-}
-
 .cloud-account-session {
   display: grid;
   grid-template-columns: 40px minmax(0, 1fr) auto;

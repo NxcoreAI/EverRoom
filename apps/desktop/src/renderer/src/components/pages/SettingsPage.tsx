@@ -9,7 +9,6 @@ import {
   ExternalLink,
   LoaderCircle,
   Languages,
-  LockKeyhole,
   LogOut,
   Laptop,
   Mic,
@@ -953,13 +952,6 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
                     {t('surface:settings.signInWithGoogle')}
                   </button>
                 </div>
-
-                <p className="oidc-login-note">
-                  <LockKeyhole aria-hidden="true" />
-                  {pending === 'apple' || pending === 'google'
-                    ? t('surface:settings.completeSignInInYourBrowserYouWill')
-                    : t('surface:settings.signInIsCompletedSecurelyInYourBrowser')}
-                </p>
               </div>
             ) : null}
 

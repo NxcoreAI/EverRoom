@@ -317,11 +317,6 @@ export function RuntimeConfigGate({ children }: { children: ReactNode }) {
                       {t('surface:settings.signInWithGoogle')}
                     </button>
                   </div>
-                  <p className="runtime-config-gate-note">
-                    {oidcPending
-                      ? t('surface:settings.completeSignInInYourBrowserYouWill')
-                      : t('surface:settings.signInIsCompletedSecurelyInYourBrowser')}
-                  </p>
 
                   {testError ? <p className="runtime-config-gate-error" role="alert"><PlugZap aria-hidden="true" />{testError}</p> : null}
                 </div>
