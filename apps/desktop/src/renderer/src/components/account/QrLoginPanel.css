@@ -1,102 +1,238 @@
 /* 扫码登录面板（SettingsPage 与 RuntimeConfigGate 共用）
-   风格对齐 SettingsPage 的 cloud-login-content：无嵌套卡片边框，
-   内容居中，主操作用 primary/secondary-button，辅助操作用 link-button。 */
+   idle 态自带「或」分隔线 + 全宽入口按钮；激活后父容器收起其他登录方式，
+   面板内是单一「舞台」：二维码原地淡出、对勾弹出、确认后换头像。 */
 
-.qr-login-entry {
+/* 「或」分隔线 */
+.qr-login-divider {
   display: flex;
-  justify-content: center;
-  margin-top: 12px;
+  align-items: center;
+  gap: 12px;
+  margin: 16px 0;
+  color: var(--muted);
+  font-size: 11px;
 }
 
-/* 进行中的主面板：不再画一层边框卡片，交给父容器（cloud-login-content / gate panel） */
+.qr-login-divider::before,
+.qr-login-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+/* 全宽入口按钮：与社交登录按钮同级尺寸 */
+.qr-login-entry-button {
+  display: flex;
+  width: 100%;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  padding: 9px 16px;
+  border: 1px solid var(--border-strong, var(--border));
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--text, inherit);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.18s ease, background 0.18s ease, transform 0.12s ease;
+}
+
+.qr-login-entry-button svg { width: 17px; height: 17px; color: var(--accent); }
+
+.qr-login-entry-button:hover {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 5%, var(--surface));
+}
+
+.qr-login-entry-button:active { transform: scale(0.985); }
+
+.qr-login-entry-button:disabled { cursor: default; opacity: 0.5; }
+
+/* 父容器收起其他登录方式后重挂载的进场过渡 */
+.qr-login-methods {
+  display: flex;
+  flex-direction: column;
+  animation: qr-fade-up 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
 .qr-login-panel {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 14px;
   width: 100%;
-  margin-top: 14px;
-  padding-top: 14px;
-  border-top: 1px solid var(--border);
+  margin-top: 2px;
+  animation: qr-fade-up 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
-/* 纯状态提示（创建中/兑换中/成功/结束） */
-.qr-login-status { gap: 10px; }
-.qr-login-status .spin { width: 22px; height: 22px; color: var(--accent); }
-.qr-login-status p { margin: 0; color: var(--muted); font-size: 12px; }
-.qr-login-status strong { font-size: 13px; }
-.qr-login-status small { max-width: 320px; color: var(--muted); font-size: 10px; text-align: center; word-break: break-all; }
-.qr-login-success-icon { width: 26px; height: 26px; color: #22a06b; }
-
-.qr-login-panel .spin { animation: qr-login-spin 1s linear infinite; }
-@keyframes qr-login-spin { to { transform: rotate(360deg); } }
-
-/* 二维码：带浅色衬底，尺寸收敛与登录卡内容等宽协调 */
-.qr-login-qr {
-  position: relative;
-  padding: 10px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: #fff;
-}
-
-.qr-login-qr img { display: block; width: 180px; height: 180px; border-radius: 4px; }
-
-.qr-login-qr-badge {
-  position: absolute;
-  left: 50%;
-  bottom: -11px;
-  display: inline-flex;
+/* 每个阶段的内容块：切换时整体淡入上浮 */
+.qr-login-stage {
+  display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 4px;
-  padding: 3px 10px;
-  border: 1px solid color-mix(in srgb, #22a06b 35%, var(--border));
-  border-radius: 999px;
-  background: var(--surface);
-  color: #16845b;
-  font-size: 10px;
-  font-weight: 650;
-  transform: translateX(-50%);
+  gap: 12px;
+  animation: qr-fade-up 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
-.qr-login-qr-badge svg { width: 11px; height: 11px; }
+@keyframes qr-fade-up {
+  from { opacity: 0; transform: translateY(8px); }
+}
 
+.qr-login-stage .spin { width: 22px; height: 22px; color: var(--accent); animation: qr-login-spin 1s linear infinite; }
+@keyframes qr-login-spin { to { transform: rotate(360deg); } }
+.qr-login-stage p { margin: 0; color: var(--muted); font-size: 12px; }
+.qr-login-stage strong { font-size: 13px; }
+.qr-login-stage small { max-width: 320px; color: var(--muted); font-size: 10px; text-align: center; word-break: break-all; }
+
+/* 二维码舞台：白色衬底圆角框，四角取景框 + 呼吸扫描线 */
+.qr-login-qr-box {
+  position: relative;
+  overflow: hidden;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04), 0 10px 30px rgba(16, 24, 40, 0.07);
+}
+
+.qr-login-qr-box img {
+  display: block;
+  width: 180px;
+  height: 180px;
+  transition: opacity 0.45s ease, transform 0.45s ease, filter 0.45s ease;
+}
+
+/* 四角取景框 */
+.qr-login-corners { position: absolute; inset: 0; transition: opacity 0.4s ease; }
+
+.qr-login-corners i {
+  position: absolute;
+  width: 20px;
+  height: 20px;
+  border: 0 solid var(--accent);
+}
+
+.qr-login-corners i:nth-child(1) { top: 7px; left: 7px; border-top-width: 2.5px; border-left-width: 2.5px; border-top-left-radius: 10px; }
+.qr-login-corners i:nth-child(2) { top: 7px; right: 7px; border-top-width: 2.5px; border-right-width: 2.5px; border-top-right-radius: 10px; }
+.qr-login-corners i:nth-child(3) { bottom: 7px; left: 7px; border-bottom-width: 2.5px; border-left-width: 2.5px; border-bottom-left-radius: 10px; }
+.qr-login-corners i:nth-child(4) { bottom: 7px; right: 7px; border-bottom-width: 2.5px; border-right-width: 2.5px; border-bottom-right-radius: 10px; }
+
+.qr-login-qr-box.is-scanned .qr-login-corners { opacity: 0; }
+
+/* 扫码成功：整框轻微回弹，二维码淡出模糊 */
+.qr-login-qr-box.is-scanned { animation: qr-nudge 0.5s ease; }
+.qr-login-qr-box.is-scanned img { opacity: 0.06; transform: scale(0.9); filter: blur(3px); }
+
+@keyframes qr-nudge {
+  0% { transform: scale(1); }
+  35% { transform: scale(1.04); }
+  100% { transform: scale(1); }
+}
+
+/* 等待扫码：柔和的呼吸扫描线 */
+.qr-login-scanline {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  top: 8px;
+  height: 48px;
+  background: linear-gradient(to bottom, transparent, rgba(34, 160, 107, 0.18), transparent);
+  animation: qr-scan-sweep 2.8s ease-in-out infinite;
+}
+
+@keyframes qr-scan-sweep {
+  0% { transform: translateY(0); opacity: 0; }
+  15% { opacity: 1; }
+  85% { opacity: 1; }
+  100% { transform: translateY(132px); opacity: 0; }
+}
+
+/* 扫码成功的瞬间：对勾弹性弹出 + 一圈波纹扩散 */
+.qr-login-hit { position: absolute; inset: 0; display: grid; place-items: center; }
+
+.qr-login-hit-badge {
+  display: grid;
+  width: 96px;
+  height: 96px;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: #22a06b;
+  box-shadow: 0 10px 28px rgba(34, 160, 107, 0.4);
+  animation: qr-pop 0.55s cubic-bezier(0.3, 1.4, 0.5, 1) both;
+}
+
+.qr-login-hit-badge svg {
+  width: 44px;
+  height: 44px;
+  color: #fff;
+  stroke-dasharray: 40;
+  stroke-dashoffset: 40;
+  animation: qr-check-draw 0.4s ease-out 0.2s forwards;
+}
+
+@keyframes qr-pop {
+  0% { transform: scale(0.25); opacity: 0; }
+  55% { opacity: 1; }
+}
+
+@keyframes qr-check-draw { to { stroke-dashoffset: 0; } }
+
+.qr-login-hit-ring {
+  position: absolute;
+  width: 96px;
+  height: 96px;
+  border: 2px solid #22a06b;
+  border-radius: 50%;
+  animation: qr-ring 0.9s cubic-bezier(0.22, 1, 0.36, 1) 0.12s both;
+}
+
+@keyframes qr-ring {
+  from { transform: scale(1); opacity: 0.7; }
+  to { transform: scale(2.05); opacity: 0; }
+}
+
+/* 手机确认后：舞台里换成账号头像，与对勾同尺寸衔接 */
+.qr-login-hit-avatar {
+  display: grid;
+  width: 96px;
+  height: 96px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 34px;
+  font-weight: 700;
+  animation: qr-pop 0.5s cubic-bezier(0.3, 1.4, 0.5, 1) both;
+}
+
+/* 登录成功终态：独立使用同款对勾 */
+.qr-login-badge-standalone { margin-bottom: 2px; }
+
+/* 文案区：key 切换重挂载，同样淡入上浮 */
 .qr-login-hint {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 5px;
-  margin-top: 6px;
+  gap: 6px;
+  margin-top: 2px;
   text-align: center;
+  animation: qr-fade-up 0.35s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 .qr-login-hint strong { font-size: 13px; }
 .qr-login-hint small { color: var(--muted); font-size: 10.5px; }
 
-.qr-login-hint small:first-letter { letter-spacing: 0; }
+.qr-login-hint .qr-login-scanned-title { font-size: 14.5px; font-weight: 700; color: #16845b; }
 
-/* 确认码数字样式（保持等宽观感） */
-.qr-login-hint strong:has(+ small) { letter-spacing: 0; }
-
-.qr-login-account {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 5px;
-  margin-top: 6px;
-  text-align: center;
-}
-
-.qr-login-avatar {
-  display: grid;
-  width: 36px;
-  height: 36px;
-  place-items: center;
-  border-radius: 50%;
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-size: 15px;
-  font-weight: 650;
+/* 扫码成功后的确认码：等宽大字，方便与手机比对 */
+.qr-login-code {
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 21px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
 }
 
 .qr-login-account strong { font-size: 13px; }
@@ -154,6 +290,7 @@
 
 /* 设备准入（与 SettingsPage cloud-device-row 同构） */
 .qr-login-admission { align-items: stretch; }
+.qr-login-admission .qr-login-stage { align-items: stretch; }
 .qr-login-admission-heading { display: flex; gap: 10px; align-items: flex-start; }
 .qr-login-admission-heading svg { flex: none; width: 15px; height: 15px; margin-top: 2px; color: #b45309; }
 .qr-login-admission-heading div { display: flex; flex-direction: column; gap: 3px; }
@@ -192,3 +329,7 @@
 .qr-login-device strong { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .qr-login-device small { overflow: hidden; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .qr-login-device em { font-style: normal; font-size: 11px; font-weight: 600; color: #b45309; }
+
+@media (prefers-reduced-motion: reduce) {
+  .qr-login-panel, .qr-login-panel * { animation: none !important; transition: none !important; }
+}

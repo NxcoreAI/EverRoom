@@ -148,6 +148,7 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
   const [notificationBusy, setNotificationBusy] = useState(false)
   const [aiRelayStatus, setAiRelayStatus] = useState<AiGatewayStatus | null>(null)
   const redeemCode = useRedeemCode()
+  const [qrActive, setQrActive] = useState(false)
 
   useEffect(() => {
     const api = window.nxcore?.browserExtension
@@ -921,47 +922,53 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
           </div>
         ) : (
           <div className="cloud-login-content">
-            <RedeemCodeField value={redeemCode.code} state={redeemCode.state} open={redeemCode.open} disabled={isBusy} onChange={redeemCode.change} onToggle={()=>redeemCode.setOpen(value=>!value)}/>
-            <div className="social-login-grid" aria-label={t('surface:settings.quickSignIn')}>
-              <button
-                className="social-login-button apple-login"
-                type="button"
-                disabled={isBusy}
-                onClick={() => loginWithOidc('apple')}
-              >
-                <span className="brand-login-icon" aria-hidden="true">
-                  {pending === 'apple'
-                    ? <LoaderCircle className="spin" />
-                    : <img src={appleLogo} alt="" />}
-                </span>
-                {t('surface:settings.signInWithApple')}
-              </button>
-              <button
-                className="social-login-button google-login"
-                type="button"
-                disabled={isBusy}
-                onClick={() => loginWithOidc('google')}
-              >
-                <span className="brand-login-icon" aria-hidden="true">
-                  {pending === 'google'
-                    ? <LoaderCircle className="spin" />
-                    : <img src={googleLogo} alt="" />}
-                </span>
-                {t('surface:settings.signInWithGoogle')}
-              </button>
-            </div>
+            {!qrActive ? (
+              <div className="qr-login-methods" key="cloud-methods">
+                <RedeemCodeField value={redeemCode.code} state={redeemCode.state} open={redeemCode.open} disabled={isBusy} onChange={redeemCode.change} onToggle={()=>redeemCode.setOpen(value=>!value)}/>
+                <div className="social-login-grid" aria-label={t('surface:settings.quickSignIn')}>
+                  <button
+                    className="social-login-button apple-login"
+                    type="button"
+                    disabled={isBusy}
+                    onClick={() => loginWithOidc('apple')}
+                  >
+                    <span className="brand-login-icon" aria-hidden="true">
+                      {pending === 'apple'
+                        ? <LoaderCircle className="spin" />
+                        : <img src={appleLogo} alt="" />}
+                    </span>
+                    {t('surface:settings.signInWithApple')}
+                  </button>
+                  <button
+                    className="social-login-button google-login"
+                    type="button"
+                    disabled={isBusy}
+                    onClick={() => loginWithOidc('google')}
+                  >
+                    <span className="brand-login-icon" aria-hidden="true">
+                      {pending === 'google'
+                        ? <LoaderCircle className="spin" />
+                        : <img src={googleLogo} alt="" />}
+                    </span>
+                    {t('surface:settings.signInWithGoogle')}
+                  </button>
+                </div>
 
-            <div className="qr-login-entry">
-              <QrLoginPanel account={account} onAccountChanged={setAccount} />
-            </div>
+                <p className="oidc-login-note">
+                  <LockKeyhole aria-hidden="true" />
+                  {pending === 'apple' || pending === 'google'
+                    ? t('surface:settings.completeSignInInYourBrowserYouWill')
+                    : t('surface:settings.signInIsCompletedSecurelyInYourBrowser')}
+                </p>
+              </div>
+            ) : null}
 
-            <p className="oidc-login-note">
-              <LockKeyhole aria-hidden="true" />
-              {pending === 'apple' || pending === 'google'
-                ? t('surface:settings.completeSignInInYourBrowserYouWill')
-                : t('surface:settings.signInIsCompletedSecurelyInYourBrowser')}
-            </p>
-
+            <QrLoginPanel
+              account={account}
+              onAccountChanged={setAccount}
+              onActiveChange={setQrActive}
+              entryDisabled={isBusy}
+            />
           </div>
         )}
       </section>
