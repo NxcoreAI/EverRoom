@@ -50,6 +50,7 @@ vi.mock('../../i18n/LocaleContext', async (importOriginal) => {
 })
 
 import { AgentChatView } from './AgentChatView'
+import type { DisplayAgentMessage } from './useAgentSession'
 
 function pendingIntent(targetCapability: 'document.edit' | 'document.continue'): PendingAgentIntent {
   return {
@@ -219,6 +220,149 @@ describe('AgentChatView', () => {
     expect(onNotificationRunLocated).toHaveBeenCalledWith('notification-1')
     expect(renderer.root.findByProps({ 'data-agent-message-id': 'assistant-2' }).props['data-notification-target'])
       .toBe('true')
+    act(() => renderer.unmount())
+  })
+
+  it('stops forcing the conversation to the bottom once the user scrolls up', async () => {
+    const conversationNode = {
+      clientHeight: 400,
+      scrollHeight: 800,
+      scrollTop: 0,
+      querySelectorAll: () => [],
+    }
+    const message = (id: string, content: string): DisplayAgentMessage => ({
+      id,
+      sessionId: 'session-1',
+      runId: 'run-1',
+      role: 'assistant',
+      content,
+      createdAt: '2026-08-20T00:00:01.000Z',
+    })
+    const renderView = (messages: DisplayAgentMessage[]) => (
+      <AgentChatView
+        activeDocument={null}
+        activeRunId="run-1"
+        agentIdByRun={{}}
+        agentNamesById={{}}
+        activityByRun={{}}
+        availableRooms={[]}
+        composer={null}
+        currentSessionId="session-1"
+        draftHasContent={false}
+        error={null}
+        loading={false}
+        messages={messages}
+        onOpenSessionLink={vi.fn()}
+        onRejectDocumentIntent={vi.fn()}
+        onRetryPrompt={vi.fn()}
+        onSelectDocument={vi.fn()}
+        onSelectPrompt={vi.fn()}
+        onSelectRoom={vi.fn().mockResolvedValue(undefined)}
+        pendingNavigationByRun={{}}
+        runCompletedAtByRun={{}}
+        runStartedAtByRun={{}}
+        scopeReady
+        sessionLinks={[]}
+        submitting={false}
+        toolCallsByRun={{}}
+      />
+    )
+
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(renderView([message('assistant-1', '第一段回复')]), {
+        createNodeMock: (element) => element.props.className === 'agent-conversation'
+          ? conversationNode
+          : {},
+      })
+    })
+    // 初始渲染：默认贴底，自动滚动应把 scrollTop 拉到 scrollHeight。
+    expect(conversationNode.scrollTop).toBe(800)
+
+    // 用户向上滚动，离开底部。
+    conversationNode.scrollTop = 100
+    await act(async () => {
+      renderer.root.findByProps({ className: 'agent-conversation' }).props.onScroll()
+    })
+
+    // 流式更新继续到达，但不应再强制拉回底部。
+    conversationNode.scrollTop = 100
+    await act(async () => {
+      renderer.update(renderView([
+        message('assistant-1', '第一段回复'),
+        message('assistant-2', '第二段流式输出'),
+      ]))
+    })
+    expect(conversationNode.scrollTop).toBe(100)
+
+    act(() => renderer.unmount())
+  })
+
+  it('keeps following the newest content while the user stays at the bottom', async () => {
+    const conversationNode = {
+      clientHeight: 400,
+      scrollHeight: 800,
+      scrollTop: 0,
+      querySelectorAll: () => [],
+    }
+    const message = (id: string, content: string): DisplayAgentMessage => ({
+      id,
+      sessionId: 'session-1',
+      runId: 'run-1',
+      role: 'assistant',
+      content,
+      createdAt: '2026-08-20T00:00:01.000Z',
+    })
+    const renderView = (messages: DisplayAgentMessage[], currentSessionId = 'session-1') => (
+      <AgentChatView
+        activeDocument={null}
+        activeRunId="run-1"
+        agentIdByRun={{}}
+        agentNamesById={{}}
+        activityByRun={{}}
+        availableRooms={[]}
+        composer={null}
+        currentSessionId={currentSessionId}
+        draftHasContent={false}
+        error={null}
+        loading={false}
+        messages={messages}
+        onOpenSessionLink={vi.fn()}
+        onRejectDocumentIntent={vi.fn()}
+        onRetryPrompt={vi.fn()}
+        onSelectDocument={vi.fn()}
+        onSelectPrompt={vi.fn()}
+        onSelectRoom={vi.fn().mockResolvedValue(undefined)}
+        pendingNavigationByRun={{}}
+        runCompletedAtByRun={{}}
+        runStartedAtByRun={{}}
+        scopeReady
+        sessionLinks={[]}
+        submitting={false}
+        toolCallsByRun={{}}
+      />
+    )
+
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(renderView([message('assistant-1', '第一段回复')]), {
+        createNodeMock: (element) => element.props.className === 'agent-conversation'
+          ? conversationNode
+          : {},
+      })
+    })
+    expect(conversationNode.scrollTop).toBe(800)
+
+    // 贴底状态下内容增长（scrollHeight 变大），自动滚动应继续贴底。
+    conversationNode.scrollHeight = 1200
+    await act(async () => {
+      renderer.update(renderView([
+        message('assistant-1', '第一段回复'),
+        message('assistant-2', '第二段流式输出'),
+      ]))
+    })
+    expect(conversationNode.scrollTop).toBe(1200)
+
     act(() => renderer.unmount())
   })
 

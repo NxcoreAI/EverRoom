@@ -390,6 +390,7 @@ export function AgentChatView({
   const handledDocumentSelectionsRef = useRef(new Set<string>())
   const { documentsByRoom } = useRoomDocumentsState()
   const conversationRef = useRef<HTMLDivElement>(null)
+  const stickToBottomRef = useRef(true)
   const hasConversation = messages.length > 0 || sessionLinks.length > 0 || pendingApprovals.length > 0
     || Boolean(activeRunId) || Boolean(error)
   const confirmedEmpty = scopeReady && !hasConversation
@@ -541,9 +542,20 @@ export function AgentChatView({
     }
   }, [])
 
+  // 会话切换后重置为贴底状态并强制滚动到底一次，避免沿用上一会话的滚动位置。
+  const previousSessionRef = useRef(currentSessionId)
+  useEffect(() => {
+    if (previousSessionRef.current === currentSessionId) return
+    previousSessionRef.current = currentSessionId
+    stickToBottomRef.current = true
+    const element = conversationRef.current
+    if (element) element.scrollTop = element.scrollHeight
+  }, [currentSessionId])
+
   useEffect(() => {
     const element = conversationRef.current
     if (!element || notificationTargetMessageId) return
+    if (!stickToBottomRef.current) return
     element.scrollTop = element.scrollHeight
   }, [activeRunId, linkedRun.messages, linkedRun.reasoning, linkedRun.tools, messages, notificationTargetMessageId, pendingApprovals, toolCallsByRun])
 
@@ -651,7 +663,16 @@ export function AgentChatView({
       }}
     >
       {emptyLayout ? <div className="agent-chat-empty-heading"><h2>{t('surface:agentChat.startANewConversation')}</h2></div> : null}
-      <div ref={conversationRef} className="agent-conversation" aria-live="polite">
+      <div
+        ref={conversationRef}
+        className="agent-conversation"
+        aria-live="polite"
+        onScroll={() => {
+          const element = conversationRef.current
+          if (!element) return
+          stickToBottomRef.current = element.scrollHeight - element.scrollTop - element.clientHeight < 40
+        }}
+      >
           {incomingLink ? (
             <>
               <SessionReference link={incomingLink} onOpen={() => onOpenSessionLink(incomingLink)} />
