@@ -10,7 +10,7 @@ import {
   type AgentNavigationRequest,
   type AgentSessionRouteRequest,
 } from '@/components/agent/agentNavigation'
-import { AppErrorDialog } from '@/components/AppErrorDialog'
+import { AppErrorToast } from '@/components/AppErrorToast'
 import { AppToast } from '@/components/AppToast'
 import { RemoteAgentNotificationView } from '@/components/RemoteAgentNotificationView'
 import { HighRiskImportReview } from '@/components/HighRiskImportReview'
@@ -919,7 +919,7 @@ export function App() {
       ) : null}
       <HighRiskImportReview />
       <AppToast />
-      <AppErrorDialog />
+      <AppErrorToast />
       {remoteNotificationTarget ? (
         <RemoteAgentNotificationView target={remoteNotificationTarget} onClose={() => setRemoteNotificationTarget(null)} />
       ) : null}

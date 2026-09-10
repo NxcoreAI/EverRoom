@@ -4,4 +4,6 @@ export interface ConnectorConfig { nangoUrl:string; nangoSecret:string; gmailCon
 export interface PullPage { changes: NormalizedMailChange[]; calendarChanges?: NormalizedCalendarChange[]; documents?: NormalizedDocument[]; continuation?: string; terminalCursor?: string; }
 export interface ConnectorExecutor { discoverScopes?(connection:{provider:ConnectorProvider;connectionName:string;service:string}):Promise<Array<{id:string;displayName:string}>>; pull(scope: {provider:ConnectorProvider; connectionName:string; service?:string; providerScopeId:string; sourceCursor:string|null; /** 全量断点续传游标（provider 自解释，如 gmail 的 `resume:` JSON）；仅 full 传入。 */ continuation?:string|null}, mode:SyncMode): AsyncGenerator<PullPage>;
   /** 格式映射端口注入（可选；实现方 OpenConnectorSyncExecutor 装配到 PullContext）。 */
-  setFormatMapper?(mapper: import("./format-mapper-port.js").FormatMapperPort | null): void; }
+  setFormatMapper?(mapper: import("./format-mapper-port.js").FormatMapperPort | null): void;
+  /** 会话出席（oo executor 会话热更新后可能缺席）；缺省视为出席。 */
+  isAvailable?(): boolean; }

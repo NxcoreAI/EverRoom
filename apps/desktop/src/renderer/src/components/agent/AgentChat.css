@@ -93,6 +93,8 @@
   background: #f3f4f6;
 }
 
+.agent-user-mention { align-self: flex-end; margin: 0 4px 3px; color: #9aa2ae; font-size: 10px; }
+
 .agent-message p {
   margin: 0;
   color: #17191d;
@@ -1242,13 +1244,12 @@
   bottom: 16px;
 }
 
-.agent-mention-picker {
-  display: grid;
-  gap: 3px;
-  max-height: 168px;
-  overflow-y: auto;
-  padding: 4px;
-}
+.agent-mention-list { display: grid; gap: 2px; max-height: 246px; overflow-y: auto; padding: 5px; }
+.agent-mention-option { display: flex; min-height: 30px; align-items: center; padding: 5px 9px; border: 0; border-radius: 6px; background: transparent; color: #22272f; text-align: left; cursor: pointer; }
+.agent-mention-option:hover, .agent-mention-option[data-active='true'] { background: #f0f2f5; }
+.agent-mention-option:focus-visible { outline: 2px solid rgba(71, 84, 103, .3); outline-offset: -2px; }
+.agent-mention-option strong { min-width: 0; overflow: hidden; font-size: 12px; font-weight: 560; text-overflow: ellipsis; white-space: nowrap; }
+.agent-mention-empty { padding: 12px 4px; color: #8b93a0; font-size: 11px; text-align: center; }
 .agent-command-picker { display: grid; padding: 5px; }
 .agent-command-picker button { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; align-items: center; gap: 9px; min-height: 48px; padding: 7px 8px; border: 0; border-radius: 5px; background: #f3f5f7; color: #1d232d; text-align: left; cursor: pointer; }
 .agent-command-picker button:hover, .agent-command-picker button:focus-visible { outline: 0; background: #eceff3; }
@@ -1294,37 +1295,12 @@
 .agent-external-load-more:disabled { cursor: default; opacity: .7; }
 .agent-external-load-more svg { width: 13px; height: 13px; }
 .agent-external-inline-error { padding: 7px 9px; color: #9a5555; font-size: 10px; text-align: center; }
-.agent-external-selection { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 28px; padding: 3px 5px 3px 8px; border: 1px solid #d7ddd8; border-radius: 7px; background: #f5f8f5; color: #365c43; font-size: 11px; }
-.agent-external-selection span { display: flex; align-items: center; min-width: 0; gap: 5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.agent-external-selection svg { width: 13px; height: 13px; }.agent-external-selection button { display: grid; width: 20px; height: 20px; place-items: center; padding: 0; border: 0; background: transparent; cursor: pointer; }
-
-.agent-mention-picker button {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  min-height: 40px;
-  padding: 6px 8px;
-  border: 0;
-  border-radius: 7px;
-  background: transparent;
-  color: #17191d;
-  text-align: left;
-  cursor: pointer;
-}
-
-.agent-mention-picker button:hover,
-.agent-mention-picker button:focus-visible {
-  outline: 0;
-  background: #eef4ff;
-}
-
-.agent-mention-picker button > span:last-child {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-}
-
-.agent-mention-picker strong { font-size: 12px; font-weight: 650; }
-.agent-mention-picker small { color: #7a8492; font-size: 10px; }
+.agent-external-selection { display: inline-flex; align-self: flex-start; align-items: center; gap: 3px; min-height: 20px; padding: 0; color: #6b7480; font-size: 11px; }
+.agent-external-selection span { display: inline-flex; min-width: 0; max-width: 360px; align-items: center; overflow: hidden; font-weight: 560; text-overflow: ellipsis; white-space: nowrap; gap: 5px; }
+.agent-external-selection svg { width: 11px; height: 11px; flex: 0 0 11px; color: #8b93a0; }
+.agent-external-selection button { display: grid; width: 18px; height: 18px; flex: 0 0 18px; place-items: center; padding: 0; border: 0; border-radius: 4px; background: transparent; color: #a5adb8; cursor: pointer; }
+.agent-external-selection button:hover { background: #eef1f4; color: #56606c; }
+.agent-external-selection button:focus-visible { outline: 2px solid rgba(59, 130, 246, .34); outline-offset: 1px; }
 
 .agent-mention-icon {
   display: grid;
@@ -1398,6 +1374,45 @@
 
 .agent-prompt textarea:focus-visible {
   outline: 0;
+}
+
+.agent-composer-input {
+  position: relative;
+  display: block;
+  width: 100%;
+  flex: 0 0 auto;
+}
+
+.agent-composer-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  padding: 2px 3px;
+  color: transparent;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  pointer-events: none;
+}
+
+.agent-composer-input:has(> textarea[data-scrollable='true']) .agent-composer-overlay {
+  right: 6px;
+}
+
+.agent-composer-input textarea {
+  position: relative;
+  z-index: 1;
+}
+
+.agent-mention-token {
+  margin-inline: -0.25em;
+  padding-inline: 0.25em;
+  border-radius: 5px;
+  background: #e9f0ff;
+  box-decoration-break: clone;
 }
 
 .agent-context-citations {

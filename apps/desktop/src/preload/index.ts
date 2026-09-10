@@ -29,6 +29,11 @@ import {
 
 const requestErrorListeners = new Set<(error: DesktopRequestError) => void>()
 let pendingRequestError: DesktopRequestError | null = null
+let pendingRequestErrorAt = 0
+/** 无监听者（AppErrorDialog 未挂载，如登录页阶段）时错误的暂存时效：
+ * 只重放挂载间隙内的新鲜错误；陈年错误（登录页积压的登录超时等用户
+ * 早已知情并处理过）不该在进入应用后突然弹出。 */
+const PENDING_REQUEST_ERROR_TTL_MS = 10_000
 let currentLocale: DesktopLocale = 'zh-CN'
 
 function desktopText(key: Parameters<typeof translateDesktopMessage>[1]): string {
@@ -62,7 +67,10 @@ function networkOperation(channel: string): string {
 
 function networkErrorDetail(channel: string, error: unknown): Pick<DesktopRequestError, 'title' | 'message'> | null {
   const raw = error instanceof Error ? error.message : String(error)
-  if (!/fetch failed|failed to fetch|network error|ECONNREFUSED|ECONNRESET|ETIMEDOUT/i.test(raw)) return null
+  // timeout of 10000ms exceeded：gateway 忙碌（ingest 高峰同步写卡事件循环）时
+  // loopback axios 客户端（reality bridge / supervisor 健康探活）的响应超时原话，
+  // 与 ECONNRESET 同属可自愈的瞬断——issue #181。
+  if (!/fetch failed|failed to fetch|network error|ECONNREFUSED|ECONNRESET|ETIMEDOUT|timeout of 10000ms exceeded/i.test(raw)) return null
   return {
     title: desktopText('error.network.title'),
     message: desktopText('error.network.message')
@@ -83,8 +91,10 @@ function requestError(channel: string, error: unknown): DesktopRequestError {
 
 function reportRequestError(detail: DesktopRequestError): void {
   ipcRenderer.send('app:request-error', detail)
-  if (requestErrorListeners.size === 0) pendingRequestError = detail
-  else for (const listener of requestErrorListeners) listener(detail)
+  if (requestErrorListeners.size === 0) {
+    pendingRequestError = detail
+    pendingRequestErrorAt = Date.now()
+  } else for (const listener of requestErrorListeners) listener(detail)
 }
 
 function rateLimitNotice(value: unknown): DesktopRequestError | null {
@@ -193,7 +203,7 @@ const api: NxcoreDesktopApi = {
     onRequestError: (listener) => {
       requestErrorListeners.add(listener)
       if (pendingRequestError) {
-        listener(pendingRequestError)
+        if (Date.now() - pendingRequestErrorAt <= PENDING_REQUEST_ERROR_TTL_MS) listener(pendingRequestError)
         pendingRequestError = null
       }
       return () => requestErrorListeners.delete(listener)
@@ -555,7 +565,9 @@ const api: NxcoreDesktopApi = {
       invoke('memory:capture-document-rewrite', input),
   },
   reality: {
-    listEvents: (filters) => invoke('reality:list-events', filters),
+    // 列表由 RealityPage 常驻轮询（每 15s，且页面隐藏时也在跑）：走静默通道，
+    // 失败由页面内联展示，不得触发全局错误弹窗（issue #181）。
+    listEvents: (filters) => invokeQuietly('reality:list-events', filters),
     getEvent: (id) => invoke('reality:get-event', id),
     createEvent: (input) => invoke('reality:create-event', input),
     finishCapture: (id, input) => invoke('reality:finish-capture', id, input),

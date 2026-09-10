@@ -725,6 +725,9 @@ export function AgentChatView({
               return (
                 <Fragment key={message.id}>
                   {index === authCardInsertIndex ? <AgentAuthChallengeCard /> : null}
+                  {message.referencedAgentNames?.map((name) => (
+                    <span key={name} className="agent-user-mention">@{name}</span>
+                  ))}
                   <article
                     className="agent-message"
                     data-agent-message-id={message.id}

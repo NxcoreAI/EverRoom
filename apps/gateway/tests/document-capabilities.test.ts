@@ -19,6 +19,7 @@ import { documentOperationItems, documentOperations, documentVersions } from "..
 import { DocumentEventBroker } from "../src/modules/documents/event-broker.js";
 import { DocumentOperationService } from "../src/modules/documents/operations/service.js";
 import { DocumentService } from "../src/modules/documents/service.js";
+import { DocumentMcpHost } from "../src/modules/documents/mcp-host.js";
 import { createDocumentPiTools } from "../src/modules/documents/pi-tools.js";
 
 const temporaryDirectories: string[] = [];
@@ -724,6 +725,24 @@ describe("document capability registry", () => {
     }, context);
     const documentId = String(committed.structuredContent.docId);
     expect(committed.structuredContent).toMatchObject({ state: "completed", docId: documentId });
+
+    const host = new DocumentMcpHost(documents, undefined, undefined, operations);
+    disposables.push(() => host.close());
+    // 成功态保留模型总结：只有模型没产出正文时才兜底一句。
+    expect(host.resolveCompletedMessage({
+      sessionId: context.agentSessionId,
+      runId: context.runId,
+      content: "文档《Operation 创建》已保存，全文约 800 字，可以打开查看和继续编辑。",
+    })).toBeNull();
+    expect(host.resolveCompletedMessage({
+      sessionId: context.agentSessionId,
+      runId: context.runId,
+      content: "   ",
+    })).toMatchObject({
+      operationStatus: "completed",
+      content: "《Operation 创建》已完成创建。",
+    });
+
     expect(documents.get(documentId)).toMatchObject({
       id: documentId, roomId: "room-create", title: "Operation 创建", version: 1, status: "active",
     });

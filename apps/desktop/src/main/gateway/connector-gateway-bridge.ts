@@ -72,6 +72,19 @@ export class NangoConnectorGatewayBridge {
     return Promise.resolve(null)
   }
 
+  /**
+   * oo 会话热推送（登录换取/登出拆除）：gateway 原地 patch 连接配置并热重载
+   * agent 工具，不再重启进程。冷启动会话仍经 spawn env 注入。
+   */
+  applyConnectorSession(session: { baseUrl: string; runtimeToken?: string } | null): Promise<{ configured: boolean; baseUrl: string }> {
+    return session
+      ? this.request('/v1/connector-session', {
+        method: 'PUT',
+        data: { baseUrl: session.baseUrl, ...(session.runtimeToken ? { runtimeToken: session.runtimeToken } : {}) },
+      })
+      : this.request('/v1/connector-session', { method: 'DELETE' })
+  }
+
   /** WebCal/ICS 日历订阅（webcal-url 通道）：同 URL 幂等，网关不回显 URL 令牌。 */
   createWebcalSubscription(url: string, provider = 'ics-calendar'): Promise<ConnectorConnection> {
     const trimmed = url.trim()

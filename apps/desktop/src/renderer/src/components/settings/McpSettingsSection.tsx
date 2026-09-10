@@ -185,7 +185,7 @@ export function McpSettingsSection() {
   }
 
   return <section className="reality-settings-section mcp-settings-section" aria-labelledby="mcp-settings-title">
-    <header><span><PlugZap aria-hidden="true" /></span><div><h2 id="mcp-settings-title">{t('surface:mcpSettings.mcpServers')}</h2><p>{t('surface:mcpSettings.description')}</p></div>
+    <header><span><PlugZap aria-hidden="true" /></span><div><h2 id="mcp-settings-title">{t('surface:mcpSettings.mcpServers')}</h2></div>
       <button className="secondary-button mcp-add-button" type="button" disabled={busy || snapshot === null} onClick={() => { setEditingKey(null); setDraft(EMPTY_DRAFT()) }}><Plug aria-hidden="true" />{t('surface:mcpSettings.addServer')}</button>
     </header>
 
@@ -207,7 +207,7 @@ export function McpSettingsSection() {
         <button className="secondary-button" type="button" disabled={busy} onClick={() => { setDraft(null); setEditingKey(null) }}>{t('surface:mcpSettings.cancel')}</button></div>
     </div> : null}
 
-    {loadError ? <div className="mcp-server-empty"><small>{loadError}</small></div> : snapshot === null ? <div className="mcp-server-empty" aria-busy="true"><small>{t('surface:mcpSettings.loading')}</small></div> : entries.length === 0 ? <div className="mcp-server-empty"><strong>{t('surface:mcpSettings.noServers')}</strong><small>{t('surface:mcpSettings.noServersHint')}</small></div> : <div className="mcp-server-list">
+    {loadError ? <div className="mcp-server-empty"><small>{loadError}</small></div> : snapshot === null ? <div className="mcp-server-empty" aria-busy="true"><small>{t('surface:mcpSettings.loading')}</small></div> : entries.length === 0 ? <div className="mcp-server-empty"><strong>{t('surface:mcpSettings.noServers')}</strong></div> : <div className="mcp-server-list">
       {entries.map(([name, definition]) => <div key={name} className="mcp-server-row" data-disabled={String(Boolean(definition.disabled))}>
         <div className="mcp-server-info"><strong>{name}</strong><small title={transportSummary(definition)}>{transportSummary(definition)}</small></div>
         <div className="mcp-server-actions"><button className="settings-toggle" type="button" role="switch" aria-label={t('surface:mcpSettings.enableName', { name })} aria-checked={!definition.disabled} data-active={String(!definition.disabled)} disabled={busy} onClick={() => toggleDisabled(name, definition)}><span aria-hidden="true" />{t(!definition.disabled ? 'surface:mcpSettings.enabled' : 'surface:mcpSettings.disabled')}</button>

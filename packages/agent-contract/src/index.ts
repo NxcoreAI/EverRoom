@@ -661,6 +661,8 @@ export interface StartAgentRunInput {
   workspaceBindingToken?: string;
   /** Desktop Main-resolved target. Renderer input is discarded and replaced before Gateway dispatch. */
   localAgent?: LocalAgentInvocationTarget;
+  /** Desktop Main-resolved targets of the @ mentioned local Agents; Main stays the speaker and decides which to dispatch via local_agent_dispatch. */
+  referencedLocalAgents?: LocalAgentInvocationTarget[];
   attachments?: AgentAttachmentReference[];
   /** Completed run replaced by this regeneration request. */
   replaceRunId?: string;
@@ -689,6 +691,8 @@ export interface StartAgentRunInput {
     externalConversationId?: string;
     /** One-turn history reference for Main. It never resumes or routes to the referenced Agent. */
     referencedConversationId?: string;
+    /** Local CLI Agents explicitly addressed via inline @ mentions; Main decides which to dispatch with local_agent_dispatch. */
+    referencedLocalAgentIds?: string[];
   };
 }
 

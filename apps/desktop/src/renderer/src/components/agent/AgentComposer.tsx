@@ -9,12 +9,20 @@ import {
   type ChangeEvent,
   type FormEvent,
   type KeyboardEvent,
+  type ReactNode,
 } from 'react'
-import type { ExternalConversationSummary } from '@nxcore/agent-contract'
+import type { ExternalConversationSummary, LocalAgentInstallation } from '@nxcore/agent-contract'
 
 import { showToast } from '@/state/toast'
 import { useLocale } from '@/i18n/LocaleContext'
 import { SourceIcon } from '@/components/pages/sources/SourceIcon'
+import {
+  findMentionRanges,
+  matchMentionTrigger,
+  resolveMentions,
+  slugifyAgentToken,
+  type MentionedAgent,
+} from './agentMentions'
 
 const ACCEPTED_ATTACHMENTS = '.txt,.md,.csv,.json,.pdf,.docx,.xlsx,.pptx'
 const ATTACHMENT_PATTERN = /\.(txt|md|csv|json|pdf|docx|xlsx|pptx)$/i
@@ -67,6 +75,8 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   available: boolean
   loading: boolean
   selectedExternalConversation: ExternalConversationSummary | null
+  /** 本机已发现的 CLI Agent 候选（@ 点名弹层数据源）。 */
+  localAgents: LocalAgentInstallation[]
   /** 视口在 Context Room 内时展示「聚焦当前房间」开关。 */
   roomFocusVisible?: boolean
   roomFocusEnabled?: boolean
@@ -77,7 +87,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   onClearContext: () => void
   onRemoveContext: (id: string) => void
   onStop: () => void
-  onSubmit: (files: File[]) => void
+  onSubmit: (files: File[], mentionedAgents: MentionedAgent[]) => void
 }>(function AgentComposer({
   active,
   available,
@@ -88,6 +98,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   loading,
   resetKey,
   selectedExternalConversation,
+  localAgents,
   roomFocusVisible = false,
   roomFocusEnabled = false,
   roomFocusRoomTitle,
@@ -106,6 +117,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const externalResultsRef = useRef<HTMLDivElement>(null)
+  const agentResultsRef = useRef<HTMLDivElement>(null)
   const mountedRef = useRef(true)
   const composingRef = useRef(false)
   const externalRequestRef = useRef(0)
@@ -116,7 +128,11 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   const [externalCursor, setExternalCursor] = useState<string | null>(null)
   const [externalIndex, setExternalIndex] = useState(0)
   const [externalStatus, setExternalStatus] = useState<ExternalPickerStatus>('idle')
+  const [agentPickerOpen, setAgentPickerOpen] = useState(false)
+  const [agentIndex, setAgentIndex] = useState(0)
   const [caret, setCaret] = useState(0)
+  const overlayRef = useRef<HTMLDivElement>(null)
+  const mentionHints = useRef(new Map<string, string>())
 
   useImperativeHandle(ref, () => textareaRef.current as HTMLTextAreaElement)
 
@@ -132,6 +148,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
     textarea.style.height = `${nextHeight}px`
     textarea.dataset.scrollable = String(contentHeight > TEXTAREA_MAX_HEIGHT)
     textarea.scrollTop = stickToBottom ? textarea.scrollHeight : previousScrollTop
+    if (overlayRef.current) overlayRef.current.scrollTop = textarea.scrollTop
   }
 
   useLayoutEffect(() => {
@@ -177,26 +194,57 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
     setSlashPickerDismissed(false)
     setExternalPickerOpen(false)
     externalRequestRef.current += 1
+    setAgentPickerOpen(false)
+    mentionHints.current.clear()
     if (fileInputRef.current) fileInputRef.current.value = ''
   }, [resetKey])
 
   useEffect(() => {
-    if (!externalPickerOpen) return undefined
+    if (!externalPickerOpen && !agentPickerOpen) return undefined
     const closeOnOutsidePress = (event: PointerEvent) => {
       if (shellRef.current?.contains(event.target as Node)) return
       externalRequestRef.current += 1
       setExternalPickerOpen(false)
+      setAgentPickerOpen(false)
     }
     document.addEventListener?.('pointerdown', closeOnOutsidePress)
     return () => document.removeEventListener?.('pointerdown', closeOnOutsidePress)
-  }, [externalPickerOpen])
+  }, [externalPickerOpen, agentPickerOpen])
+
+  const submitMentions = () => resolveMentions(value, mentionHints.current, localAgents)
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    if (available) onSubmit(attachments.map(({ file }) => file))
+    if (available) onSubmit(attachments.map(({ file }) => file), submitMentions())
   }
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (agentPickerOpen) {
+      if (event.key === 'ArrowDown' && filteredAgentItems.length) {
+        event.preventDefault()
+        setAgentIndex((current) => Math.min(filteredAgentItems.length - 1, current + 1))
+        return
+      }
+      if (event.key === 'ArrowUp' && filteredAgentItems.length) {
+        event.preventDefault()
+        setAgentIndex((current) => Math.max(0, current - 1))
+        return
+      }
+      if (event.key === 'Enter' && !composingRef.current && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229) {
+        const item = filteredAgentItems[Math.min(agentIndex, filteredAgentItems.length - 1)]
+        if (item) {
+          event.preventDefault()
+          chooseAgent(item)
+        }
+        return
+      }
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        setAgentPickerOpen(false)
+        return
+      }
+      return
+    }
     if (externalPickerOpen) return
     if (event.key === 'Enter' && (composingRef.current || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229)) return
     if (slashPickerOpen && ['ArrowDown', 'ArrowUp'].includes(event.key)) { event.preventDefault(); return }
@@ -206,7 +254,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
     if (event.key === 'Escape' && slashPickerOpen) { event.preventDefault(); setSlashPickerDismissed(true); return }
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault()
-      if (available) onSubmit(attachments.map(({ file }) => file))
+      if (available) onSubmit(attachments.map(({ file }) => file), submitMentions())
     }
   }
 
@@ -244,13 +292,13 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
     })
   }
 
-  const mentionMatch = /^@([^\s\n]*)$/u.exec(value.trim())
-  const mentionQuery = mentionMatch?.[1]?.toLocaleLowerCase() ?? ''
+  const mentionTrigger = matchMentionTrigger(value, caret)
+  const mentionQuery = mentionTrigger?.query.toLocaleLowerCase() ?? ''
   const firstLineEnd = value.indexOf('\n') < 0 ? value.length : value.indexOf('\n')
   const slashMatch = /^\/([^\s\n]*)/u.exec(value)
   const slashQuery = slashMatch?.[1]?.toLocaleLowerCase() ?? ''
   const commandMatches = !slashQuery || 'continue'.startsWith(slashQuery)
-  const slashPickerOpen = Boolean(slashMatch && commandMatches && caret <= firstLineEnd && !slashPickerDismissed && !externalPickerOpen && !mentionMatch)
+  const slashPickerOpen = Boolean(slashMatch && commandMatches && caret <= firstLineEnd && !slashPickerDismissed && !externalPickerOpen && !mentionTrigger)
   const loadExternal = async (query: string, cursor?: string, append = false) => {
     const request = ++externalRequestRef.current
     setExternalStatus(append ? 'loading-more' : 'loading')
@@ -272,10 +320,10 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
       setExternalStatus('error')
     }
   }
-  const openExternalPicker = (source: 'command' | 'mention' = 'command') => {
+  const openExternalPicker = () => {
     setExternalPickerOpen(true)
     setSlashPickerDismissed(true)
-    setExternalQuery(source === 'mention' ? mentionQuery : '')
+    setExternalQuery('')
     setExternalItems([])
     setExternalCursor(null)
     setExternalIndex(0)
@@ -292,19 +340,56 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
     window.requestAnimationFrame(() => textareaRef.current?.focus())
   }
   const chooseExternal = (item: ExternalConversationSummary) => {
-    const remaining = mentionMatch
-      ? ''
-      : value.slice(firstLineEnd + (value[firstLineEnd] === '\n' ? 1 : 0))
+    const remaining = value.slice(firstLineEnd + (value[firstLineEnd] === '\n' ? 1 : 0))
     externalRequestRef.current += 1
     onChange(remaining)
     onSelectExternalConversation(item)
     setExternalPickerOpen(false)
     window.requestAnimationFrame(() => textareaRef.current?.focus())
   }
+  const chooseAgent = (item: LocalAgentInstallation) => {
+    const token = slugifyAgentToken(item.displayName)
+    const replaceStart = mentionTrigger?.replaceStart ?? caret
+    const nextValue = `${value.slice(0, replaceStart)}@${token} ${value.slice(caret)}`
+    mentionHints.current.set(token.toLocaleLowerCase(), item.id)
+    const nextCaret = replaceStart + token.length + 2
+    onChange(nextValue)
+    setCaret(nextCaret)
+    setAgentPickerOpen(false)
+    window.requestAnimationFrame(() => {
+      const textarea = textareaRef.current
+      if (!textarea) return
+      textarea.focus()
+      textarea.setSelectionRange(nextCaret, nextCaret)
+    })
+  }
+  const callableLocalAgents = localAgents.filter((agent) => agent.invocationSupported && agent.callable)
+  const agentQueryNormalized = mentionQuery.trim().toLocaleLowerCase()
+  const filteredAgentItems = agentQueryNormalized
+    ? callableLocalAgents.filter((item) => item.displayName.toLocaleLowerCase().includes(agentQueryNormalized)
+      || item.id.toLocaleLowerCase().includes(agentQueryNormalized)
+      || item.provider.toLocaleLowerCase().includes(agentQueryNormalized))
+    : callableLocalAgents
   useEffect(() => {
-    if (!mentionMatch || externalPickerOpen) return
-    openExternalPicker('mention')
-  }, [mentionMatch?.[0]])
+    if (!mentionTrigger || agentPickerOpen) return
+    setAgentPickerOpen(true)
+    setSlashPickerDismissed(true)
+  }, [mentionTrigger?.replaceStart, mentionTrigger?.query, agentPickerOpen])
+
+  useEffect(() => {
+    if (agentPickerOpen && !mentionTrigger) setAgentPickerOpen(false)
+  }, [agentPickerOpen, mentionTrigger])
+
+  useEffect(() => {
+    if (agentPickerOpen) setAgentIndex(0)
+  }, [agentPickerOpen, mentionQuery])
+
+  useEffect(() => {
+    if (!agentPickerOpen) return
+    agentResultsRef.current
+      ?.querySelector<HTMLElement>(`[data-result-index="${agentIndex}"]`)
+      ?.scrollIntoView({ block: 'nearest' })
+  }, [agentIndex, filteredAgentItems[agentIndex]?.id, agentPickerOpen])
 
   useEffect(() => {
     if (!externalPickerOpen) return undefined
@@ -321,7 +406,20 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
       ?.scrollIntoView({ block: 'nearest' })
   }, [externalIndex, externalItems[externalIndex]?.id, externalPickerOpen])
 
-  const menuOpen = slashPickerOpen || externalPickerOpen
+  const mentionRanges = findMentionRanges(value, mentionHints.current, localAgents)
+  const renderOverlaySegments = (): ReactNode[] => {
+    const nodes: ReactNode[] = []
+    let cursor = 0
+    mentionRanges.forEach((range, index) => {
+      if (range.start > cursor) nodes.push(value.slice(cursor, range.start))
+      nodes.push(<span key={`agent-mention-${index}`} className="agent-mention-token">@{range.token}</span>)
+      cursor = range.end
+    })
+    if (cursor < value.length) nodes.push(value.slice(cursor))
+    return nodes
+  }
+
+  const menuOpen = slashPickerOpen || externalPickerOpen || agentPickerOpen
   // 会话快照加载时保留本地附件。
   const controlsDisabled = active || !available
 
@@ -342,7 +440,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
     >
       {slashPickerOpen ? (
         <div className="agent-composer-popover agent-command-picker" id="agent-composer-menu" role="listbox" aria-label={t('surface:agentComposer.commands')}>
-          <button type="button" role="option" aria-selected="true" onMouseDown={(event) => event.preventDefault()} onClick={() => openExternalPicker('command')}>
+          <button type="button" role="option" aria-selected="true" onMouseDown={(event) => event.preventDefault()} onClick={() => openExternalPicker()}>
             <span className="agent-mention-icon"><History aria-hidden="true" /></span>
             <span><strong>{t('surface:agentComposer.continueExternalConversation')}</strong><small>{t('surface:agentComposer.externalConversationHint')}</small></span>
             <kbd>/continue</kbd>
@@ -352,11 +450,9 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
       {externalPickerOpen ? (
         <section className="agent-composer-popover agent-external-picker" id="agent-composer-menu" role="dialog" aria-modal="false" aria-label={t('surface:agentComposer.continueExternalConversation')}>
           <header className="agent-external-header">
-            {mentionMatch ? <span className="agent-picker-header-icon"><History aria-hidden="true" /></span> : (
-              <button type="button" className="agent-picker-icon-button" title={t('surface:agentComposer.backToCommands')} aria-label={t('surface:agentComposer.backToCommands')} onClick={backToCommands}>
-                <ArrowLeft aria-hidden="true" />
-              </button>
-            )}
+            <button type="button" className="agent-picker-icon-button" title={t('surface:agentComposer.backToCommands')} aria-label={t('surface:agentComposer.backToCommands')} onClick={backToCommands}>
+              <ArrowLeft aria-hidden="true" />
+            </button>
             <div><strong>{t('surface:agentComposer.continueExternalConversation')}</strong><small>{t('surface:agentComposer.chooseConversation')}</small></div>
             <button type="button" className="agent-picker-icon-button" title={t('surface:agentComposer.close')} aria-label={t('surface:agentComposer.close')} onClick={closeExternalPicker}>
               <X aria-hidden="true" />
@@ -429,6 +525,30 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
           </div>
         </section>
       ) : null}
+      {agentPickerOpen ? (
+        <div ref={agentResultsRef} className="agent-composer-popover agent-mention-list" id="agent-composer-menu" role="listbox" aria-label={t('surface:agentComposer.mentionAgent')}>
+          {filteredAgentItems.length === 0 ? (
+            <div className="agent-mention-empty">{t(callableLocalAgents.length === 0 ? 'surface:agentComposer.noAgents' : 'surface:agentComposer.noAgentMatches')}</div>
+          ) : (
+            filteredAgentItems.map((item, index) => (
+              <button
+                key={item.id}
+                type="button"
+                className="agent-mention-option"
+                role="option"
+                aria-selected={index === agentIndex}
+                data-active={String(index === agentIndex)}
+                data-result-index={index}
+                onMouseEnter={() => setAgentIndex(index)}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => chooseAgent(item)}
+              >
+                <strong>{item.displayName}</strong>
+              </button>
+            ))
+          )}
+        </div>
+      ) : null}
       <div className="agent-prompt" data-has-attachments={String(attachments.length > 0)}>
         {selectedExternalConversation ? <div className="agent-external-selection"><span><History />{t('surface:agentComposer.referencedConversation')} · {selectedExternalConversation.title}</span><button type="button" title={t('surface:agentComposer.removeExternalConversation')} aria-label={t('surface:agentComposer.removeExternalConversation')} onClick={() => onSelectExternalConversation(null)}><X /></button></div> : null}
         {contextItems.length > 0 ? (
@@ -449,29 +569,37 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
             ))}
           </div>
         ) : null}
-        <textarea
-          ref={textareaRef}
-          aria-label={t('surface:agentComposer.desktopAiWorkspaceInput')}
-          placeholder={active
-            ? t('surface:agentComposer.agentIsWorking')
-            : available
-              ? t('surface:agentComposer.askAboutThisPageOrDescribeAnAction')
-              : t('surface:agentComposer.syncingRoomData')}
-          rows={2}
-          value={value}
-          aria-controls={menuOpen ? 'agent-composer-menu' : undefined}
-          aria-expanded={menuOpen}
-          disabled={!available || active}
-          onChange={(event) => {
-            setSlashPickerDismissed(false)
-            setCaret(event.target.selectionStart)
-            onChange(event.target.value)
-          }}
-          onSelect={(event) => setCaret(event.currentTarget.selectionStart)}
-          onCompositionStart={() => { composingRef.current = true }}
-          onCompositionEnd={() => { composingRef.current = false }}
-          onKeyDown={handleKeyDown}
-        />
+        <div className="agent-composer-input">
+          <div ref={overlayRef} className="agent-composer-overlay" aria-hidden="true">
+            {renderOverlaySegments()}
+          </div>
+          <textarea
+            ref={textareaRef}
+            aria-label={t('surface:agentComposer.desktopAiWorkspaceInput')}
+            placeholder={active
+              ? t('surface:agentComposer.agentIsWorking')
+              : available
+                ? t('surface:agentComposer.askAboutThisPageOrDescribeAnAction')
+                : t('surface:agentComposer.syncingRoomData')}
+            rows={2}
+            value={value}
+            aria-controls={menuOpen ? 'agent-composer-menu' : undefined}
+            aria-expanded={menuOpen}
+            disabled={!available || active}
+            onChange={(event) => {
+              setSlashPickerDismissed(false)
+              setCaret(event.target.selectionStart)
+              onChange(event.target.value)
+            }}
+            onSelect={(event) => setCaret(event.currentTarget.selectionStart)}
+            onScroll={(event) => {
+              if (overlayRef.current) overlayRef.current.scrollTop = event.currentTarget.scrollTop
+            }}
+            onCompositionStart={() => { composingRef.current = true }}
+            onCompositionEnd={() => { composingRef.current = false }}
+            onKeyDown={handleKeyDown}
+          />
+        </div>
         {attachments.length > 0 ? (
           <div className="agent-attachments" aria-label={t('surface:agentComposer.localAttachments')}>
             {attachments.map((file) => (

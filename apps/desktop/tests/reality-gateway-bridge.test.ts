@@ -97,6 +97,49 @@ describe('RealityGatewayBridge requests', () => {
     expect(recoveredRequests).toEqual(['/v1/reality/events'])
   })
 
+  it('treats an axios response timeout as recoverable and retries once (issue #181)', async () => {
+    // 网关忙碌的典型形态：TCP 接受连接但事件循环卡住不回应，客户端侧表现为
+    // axios 响应超时（ECONNABORTED，"timeout of 10000ms exceeded"）。
+    const stalledServer = createServer(() => undefined)
+    const stalledPort = await listen(stalledServer)
+    const recoveredRequests: string[] = []
+    const recoveredServer = createServer((request, response) => {
+      recoveredRequests.push(request.url ?? '')
+      response.writeHead(200, { 'Content-Type': 'application/json' })
+      response.end('[]')
+    })
+    const recoveredPort = await listen(recoveredServer)
+    const staleConnection = {
+      pid: 1,
+      baseUrl: `http://127.0.0.1:${String(stalledPort)}`,
+      token: 'test-token',
+      version: 'old',
+    }
+    const recoverConnection = vi.fn(async () => ({
+      pid: 2,
+      baseUrl: `http://127.0.0.1:${String(recoveredPort)}`,
+      token: 'test-token',
+      version: 'new',
+    }))
+    const supervisor = {
+      getConnection: () => staleConnection,
+      recoverConnection,
+    } as unknown as GatewaySupervisor
+
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      const pending = new RealityGatewayBridge(supervisor).listEvents()
+      const assertion = expect(pending).resolves.toEqual([])
+      await vi.advanceTimersByTimeAsync(10_000)
+      await assertion
+    } finally {
+      vi.useRealTimers()
+    }
+
+    expect(recoverConnection).toHaveBeenCalledOnce()
+    expect(recoveredRequests).toEqual(['/v1/reality/events'])
+  })
+
   it('does not recover or retry an HTTP application error', async () => {
     let requests = 0
     const server = createServer((_request, response) => {

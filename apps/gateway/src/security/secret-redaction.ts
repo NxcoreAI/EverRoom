@@ -80,11 +80,14 @@ export function clearRedactionDelta(scope: string): void {
   deltaTails.delete(scope);
 }
 
-// 流中断（run.failed/cancelled/interrupted，无 message.completed）时余留文本
-// 已过 redactText、不含完整 secret，直接丢弃会让前端输出缺尾（#199），因此
-// 释放给调用方补发。安全性：余留不含完整 secret（redactText 已替换），唯一
-// 残留风险是它以某 secret 的真前缀结尾，由调用场景的补发路径容忍——前缀
-// 片段不构成泄露。
+/**
+ * 冲刷流式脱敏扣住的尾部：redactDelta 为防密钥跨增量截断，每轮扣留最长
+ * 密钥长度的尾部不吐。消息/运行终结（含 run.failed/cancelled 等中断，
+ * #199）时必须把尾巴作为最后一条增量吐出，否则前端流式累计缺这段结尾
+ * （界面终答取流式累计，缺尾即半句截断）。
+ * 安全性：余留文本已过 redactText、不含完整 secret，至多以某 secret 的
+ * 真前缀结尾，前缀片段不构成泄露。
+ */
 export function flushRedactionDelta(scope: string): string {
   const tail = deltaTails.get(scope) ?? "";
   deltaTails.delete(scope);
