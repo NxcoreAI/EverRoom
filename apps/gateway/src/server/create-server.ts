@@ -49,6 +49,7 @@ import {
   createIngestFilterAgentRuntime,
   createIndexBackfillRuntime,
   createImportClassifierRuntime,
+  createSessionTitleRuntime,
   createWritingStyleRuntime,
   registerDiaryAgent,
   registerPrimaryAgent,
@@ -109,6 +110,7 @@ import { KnowledgeLlm } from "../modules/knowledge/llm.js";
 import { nangoConnectorRoutes } from "@nxcore/connectors-module/routes.js";
 import { purgeConnectorConnectionCascade } from "../modules/connectors/connection-purge.js";
 import { processingRoutes } from "../modules/processing/routes.js";
+import { SessionTitleService } from "../modules/processing/session-title.js";
 import { TranscriptionSummaryService } from "../modules/processing/service.js";
 import { RealityError } from "../modules/reality/errors.js";
 import { realityRoutes } from "../modules/reality/routes.js";
@@ -949,6 +951,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     "background transcription runtime configured",
   );
   const transcriptionSummaryService = new TranscriptionSummaryService(backgroundAgentRuntime, false);
+  const sessionTitleService = new SessionTitleService(createSessionTitleRuntime(config));
   let asrProvider = Object.hasOwn(overrides, "asrProvider")
     ? overrides.asrProvider ?? null
     : createAsrProvider(config, app.log);
@@ -1562,7 +1565,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     filterRulesStore,
     filterInsightJob ? () => filterInsightJob!.refreshNow() : null,
   ));
-  await app.register(processingRoutes(transcriptionSummaryService));
+  await app.register(processingRoutes(transcriptionSummaryService, sessionTitleService));
   await app.register(realityRoutes(realityService));
   await app.register(perceptionRoutes(perceptionService));
   await app.register(diaryRoutes(diaryService));

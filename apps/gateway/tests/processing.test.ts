@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { AgentRuntime, RuntimeEvent } from "@nxcore/agent-runtime";
+import { SessionTitleService } from "../src/modules/processing/session-title.js";
 import { TranscriptionSummaryService } from "../src/modules/processing/service.js";
 
 async function* events(): AsyncIterable<RuntimeEvent> {
@@ -101,5 +102,78 @@ describe("TranscriptionSummaryService", () => {
     expect(calls.at(-1)![0].prompt).toContain("全篇记忆重建");
     expect(calls.at(-1)![0].prompt).toContain("partial-summaries");
     expect(runtime.deleteSession).toHaveBeenCalledTimes(calls.length);
+  });
+});
+
+function fakeRuntime(content: string) {
+  async function* events(): AsyncIterable<RuntimeEvent> {
+    yield { type: "message.completed", payload: { content } };
+    yield { type: "run.completed", payload: {} };
+  }
+  return {
+    start: vi.fn(async () => ({ runId: "run", runtimeSessionRef: "/tmp/title-session", events: events() })),
+    deleteSession: vi.fn(async () => undefined),
+    dispose: vi.fn(async () => undefined),
+  } as unknown as AgentRuntime;
+}
+
+describe("SessionTitleService", () => {
+  it("runs a tools-disabled one-shot and returns the normalized title", async () => {
+    const runtime = fakeRuntime("「EverRoom 导出排障」.");
+    const service = new SessionTitleService(runtime);
+
+    await expect(service.generate({
+      sessionId: "session-1",
+      userText: "帮我看下导出失败的原因",
+      assistantText: "导出失败是因为……",
+      language: "zh-CN",
+    })).resolves.toEqual({ title: "EverRoom 导出排障" });
+
+    expect(runtime.start).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: "session-title:session-1",
+      pageLabel: "会话标题生成",
+      runtimeSessionRef: null,
+      toolsEnabled: false,
+      captureMemory: false,
+      recallMemory: false,
+      responseLanguage: "zh-CN",
+    }));
+    const prompt = (runtime.start as ReturnType<typeof vi.fn>).mock.calls[0]![0].prompt as string;
+    expect(prompt).toContain("<user_message>");
+    expect(prompt).toContain("帮我看下导出失败的原因");
+    expect(prompt).toContain("<assistant_reply>");
+    expect(prompt).toContain("输出语言：zh-CN");
+    expect(runtime.deleteSession).toHaveBeenCalledWith("/tmp/title-session");
+  });
+
+  it("strips code fences and caps title length", async () => {
+    const runtime = fakeRuntime("```\n这是一个特别特别特别特别特别长的标题文本超过四十八个字符会被截断处理掉\n```");
+    const service = new SessionTitleService(runtime);
+    const { title } = await service.generate({
+      sessionId: "session-2",
+      userText: "问个问题",
+      assistantText: "回答",
+    });
+    expect(title.startsWith("```")).toBe(false);
+    expect(title.length).toBeLessThanOrEqual(48);
+  });
+
+  it("throws on empty model output", async () => {
+    const runtime = fakeRuntime("   ");
+    const service = new SessionTitleService(runtime);
+    await expect(service.generate({
+      sessionId: "session-3",
+      userText: "问个问题",
+      assistantText: "回答",
+    })).rejects.toThrow("empty content");
+  });
+
+  it("throws when runtime is unavailable", async () => {
+    const service = new SessionTitleService(null);
+    await expect(service.generate({
+      sessionId: "session-4",
+      userText: "问个问题",
+      assistantText: "回答",
+    })).rejects.toThrow("title_runtime_unavailable");
   });
 });

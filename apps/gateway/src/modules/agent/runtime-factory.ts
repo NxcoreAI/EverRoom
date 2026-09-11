@@ -257,6 +257,24 @@ export function createImportClassifierRuntime(config: GatewayConfig): AgentRunti
   });
 }
 
+/** 会话标题生成：import-classifier 同款隔离内部 runtime（无工具、单次调用）。 */
+export function createSessionTitleRuntime(config: GatewayConfig): AgentRuntime | null {
+  if (config.agentRuntime === "fake" || !isPiRuntimeConfigured(config.backgroundPi)) return null;
+  const { mcp: _mcp, ...pi } = config.backgroundPi!;
+  return new PiAgentRuntime({
+    ...pi,
+    includeBashTool: false,
+    builtinTools: [],
+    maxToolCallsPerRun: 1,
+    runtimeRole: "internal",
+    // 标题是单行机器输出：与 background runtime 同理不继承 primary reasoning。
+    reasoning: "off",
+    sessionsDir: join(pi.sessionsDir, "session-title"),
+    workingDirectory: join(pi.workingDirectory, "session-title"),
+    agentDirectory: join(pi.agentDirectory, "session-title"),
+  });
+}
+
 /** 文档速览（文章级 AI 摘要）：index-backfill 同款隔离内部 runtime（无工具、单次调用）。 */
 export function createDocumentOverviewRuntime(config: GatewayConfig): AgentRuntime | null {
   if (config.agentRuntime === "fake" || !isPiRuntimeConfigured(config.backgroundPi)) return null;
