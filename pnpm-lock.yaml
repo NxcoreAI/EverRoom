@@ -10,6 +10,7 @@ overrides:
 
 patchedDependencies:
   '@electron/osx-sign@1.3.3': 9fee0ed4985c19a73ce7269ce20a1f1d0d200189109d3f6384faeaa5f4453d79
+  '@oomol-lab/open-connector@1.3.5': 5daf1dfa31f5824f9e33ebe534bd93508428c99af031114df8fd1a3ca897d831
   '@tencentdb-agent-memory/memory-tencentdb-v2@2.0.0-beta.1-everroom.8': 351b45cf8e7bc7b80b1feff362fb4100900a4301b00d7dd3fa34c572f331e7e6
   pi-mcp-adapter@2.26.1: 804b624646c5ea098dc6653717b1bb35999d334dcc89b6d019fe44e8842966e6
   sqlite-vec@0.1.7-alpha.2: dc66b136208f29f8a7f31c0053a98bbdcb16cfbc4f88028da689fd9b66f776ac
@@ -191,7 +192,7 @@ importers:
         version: 1.7.5
       '@oomol-lab/open-connector':
         specifier: git+https://code.vyitec.com/nexcore/everroom-openconnector.git#bd4213af4c96af24f1f6fa4a66765cb425a8291f
-        version: git+https://code.vyitec.com/nexcore/everroom-openconnector.git#bd4213af4c96af24f1f6fa4a66765cb425a8291f(supports-color@8.1.1)
+        version: git+https://code.vyitec.com/nexcore/everroom-openconnector.git#bd4213af4c96af24f1f6fa4a66765cb425a8291f(patch_hash=5daf1dfa31f5824f9e33ebe534bd93508428c99af031114df8fd1a3ca897d831)(supports-color@8.1.1)
       '@sentry/vite-plugin':
         specifier: 5.4.0
         version: 5.4.0(rollup@4.62.4)(supports-color@8.1.1)
@@ -1082,7 +1083,7 @@ packages:
 
   '@esbuild-kit/core-utils@3.3.2':
     resolution: {integrity: sha512-sPRAnw9CdSsRmEtnsl2WXWdyquogVpB3yZ3dgwJfe8zrOzTsV7cJvmwrKVa+0ma5BoiGJ+BoqkMvawbayKUsqQ==}
-    deprecated: 'Merged into tsx: https://tsx.hirok.io'
+    deprecated: 'Merged into tsx: https://tsx.is'
 
   '@esbuild-kit/esm-loader@2.6.5':
     resolution: {integrity: sha512-FxEMIkJKnodyA1OaCUoEvbYRkoZlLZ4d/eXFu9Fh8CbBBgP5EmZxrfTRyN0qpXZ4vOvqnE5YdRdcrmUUXuU+dA==}
@@ -2802,6 +2803,7 @@ packages:
     engines: {node: '>= 10.0.0'}
     cpu: [arm]
     os: [linux]
+    libc: [glibc]
 
   '@parcel/watcher-linux-arm-musl@2.6.0':
     resolution: {integrity: sha512-9c6AUHgHoG+IY88MRIHupztQiQnrbqHYQjkM2btA+Bf/wQnQMuiD0Wfk1EVv3TlNT3x41uU71rn6E4xh/+zvkw==}
@@ -10820,7 +10822,7 @@ snapshots:
       '@oomol-lab/oo-cli-win32-arm64': 1.7.5
       '@oomol-lab/oo-cli-win32-x64': 1.7.5
 
-  '@oomol-lab/open-connector@git+https://code.vyitec.com/nexcore/everroom-openconnector.git#bd4213af4c96af24f1f6fa4a66765cb425a8291f(supports-color@8.1.1)':
+  '@oomol-lab/open-connector@git+https://code.vyitec.com/nexcore/everroom-openconnector.git#bd4213af4c96af24f1f6fa4a66765cb425a8291f(patch_hash=5daf1dfa31f5824f9e33ebe534bd93508428c99af031114df8fd1a3ca897d831)(supports-color@8.1.1)':
     dependencies:
       '@cfworker/json-schema': 4.1.1
       '@hono/node-server': 2.1.0(hono@4.13.2)

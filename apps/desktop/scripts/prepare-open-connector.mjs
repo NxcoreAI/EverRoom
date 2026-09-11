@@ -5,6 +5,10 @@ import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 
 const OPEN_CONNECTOR_REVISION = 'bd4213af4c96af24f1f6fa4a66765cb425a8291f'
+// runtimeFormat 3：feishu OAuth scope patch（patches/open-connector@1.3.5.patch）
+// 不改变 revision/version，已构建的运行时会因 marker 命中而跳过重建，需靠
+// bump 强制刷新，否则旧 scope 并集继续生效。
+const RUNTIME_FORMAT = 3
 const require = createRequire(import.meta.url)
 const sourcePackagePath = require.resolve('@oomol-lab/open-connector/package.json')
 const sourceDirectory = dirname(sourcePackagePath)
@@ -18,7 +22,7 @@ const everroomIconPath = join(desktopDirectory, 'build', 'icon.png')
 
 const sourceManifest = JSON.parse(await readFile(sourcePackagePath, 'utf8'))
 const expectedMarker = JSON.stringify({
-  runtimeFormat: 2,
+  runtimeFormat: RUNTIME_FORMAT,
   brandingVersion: 2,
   revision: OPEN_CONNECTOR_REVISION,
   version: sourceManifest.version,
