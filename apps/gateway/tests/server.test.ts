@@ -723,6 +723,7 @@ describe("gateway server", () => {
       "context_room_write_append",
       "context_room_write_commit",
       "context_room_write_abort",
+      "context_room_document_comment_add",
     ]);
   });
 
@@ -784,6 +785,7 @@ describe("gateway server", () => {
         "context_room_write_append",
         "context_room_write_commit",
         "context_room_write_abort",
+        "context_room_document_comment_add",
       ]);
     } finally {
       await client.close();
