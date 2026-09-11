@@ -1228,7 +1228,6 @@
   "connectorSync.batchFailedItems": "Failures",
   "connectorSync.batchStartFailed": "Failed to start batch import",
   "connectorSync.autoClassifyUnavailable": "AI auto-classify unavailable",
-  "connectorSync.autoRouterDisabled": "Knowledge router disabled; AI classify unavailable",
   "connectorSync.documentListEmpty": "No importable documents",
   "connectorSync.documentListEmptyHint": "Click “Load documents” to list everything for this connection",
   "connectorSync.batchItemPending": "Pending",

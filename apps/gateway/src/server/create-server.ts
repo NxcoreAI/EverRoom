@@ -1414,9 +1414,14 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
           title: unit.title,
           markdown: unit.markdown,
           entrySignals: { sourceTag: unit.sourceTag },
+          // knowledge router 未开启时降级 memory-only（room/wiki 管线依赖
+          // router），与文件导入同款策略——孵化仍进记忆引擎，auto 批不因
+          // 路由关闭被拒（拒绝曾让导入入口整个不可用且提示指向不存在的设置）。
+          ...(knowledgeService.routerEnabled
+            ? {}
+            : { pipelines: { room: false, wiki: false, memory: true } }),
         });
       },
-      requireRouter: () => knowledgeService.routerEnabled,
     },
   );
   documentBatchImportService.recoverInterrupted();

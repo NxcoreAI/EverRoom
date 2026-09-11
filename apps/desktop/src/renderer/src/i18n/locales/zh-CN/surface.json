@@ -1229,7 +1229,6 @@
   "connectorSync.batchFailedItems": "失败明细",
   "connectorSync.batchStartFailed": "批量导入发起失败",
   "connectorSync.autoClassifyUnavailable": "AI 自动归类暂不可用",
-  "connectorSync.autoRouterDisabled": "知识路由未启用，无法 AI 归类",
   "connectorSync.documentListEmpty": "没有可导入的文档",
   "connectorSync.documentListEmptyHint": "点击「加载文档列表」拉取该连接的全部文档",
   "connectorSync.batchItemPending": "待处理",
