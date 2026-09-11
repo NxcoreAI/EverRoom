@@ -1171,6 +1171,12 @@ export interface NxcoreDesktopApi {
     listSessionLinks(sessionId: string): Promise<AgentSessionLink[]>
     markSessionLinkReturned(linkId: string): Promise<AgentSessionLink>
     updateSession(sessionId: string, input: UpdateAgentSessionInput): Promise<AgentSession>
+    generateSessionTitle(input: {
+      sessionId: string
+      userText: string
+      assistantText: string
+      language?: string
+    }): Promise<{ title: string }>
     deleteSession(sessionId: string): Promise<void>
     getSession(sessionId: string): Promise<AgentSessionSnapshot>
     getEvents(sessionId: string, runId: string, afterSeq: number): Promise<AgentEvent[]>
