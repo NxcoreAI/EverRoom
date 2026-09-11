@@ -14,6 +14,7 @@
   "agentChat.continueCreationInTitle": "前往「{title}」继续创建",
   "agentChat.continuedCreationInTitle": "已前往「{title}」继续创建",
   "agentChat.continueDescribingWhatYouNeed": "继续补充你的具体需求",
+  "agentChat.copyPrompt": "复制提问",
   "agentChat.copyResponse": "复制回答",
   "agentChat.createDocument": "创建文档",
   "agentChat.creationComplete": "创建已完成",

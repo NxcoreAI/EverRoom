@@ -733,7 +733,19 @@ export function AgentChatView({
                     data-agent-message-id={message.id}
                     data-notification-target={String(highlightedNotificationTarget?.messageId === message.id)}
                     data-role="user"
-                  ><p>{message.content}</p></article>
+                  >
+                    <p>{message.content}</p>
+                    <button
+                      type="button"
+                      className="agent-user-copy"
+                      data-copied={String(copiedMessageId === message.id)}
+                      aria-label={t('surface:agentChat.copyPrompt')}
+                      title={t('surface:agentChat.copyPrompt')}
+                      onClick={() => void copyMessage(message.id, message.content)}
+                    >
+                      {copiedMessageId === message.id ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+                    </button>
+                  </article>
                   <RunNavigation link={link} pending={link ? undefined : pending} onOpen={onOpenSessionLink} />
                 </Fragment>
               )
