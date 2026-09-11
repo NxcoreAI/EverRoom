@@ -4,7 +4,7 @@ on:
   issues:
     types: [opened, edited, reopened]
   pull_request:
-    branches: [main]
+    branches: [main, dev]
     types: [opened, synchronize, reopened, ready_for_review]
 
 permissions:
@@ -49,7 +49,7 @@ jobs:
             const eligible = trusted
               && pr.state === 'open'
               && !pr.draft
-              && pr.base.ref === 'main'
+              && ['main', 'dev'].includes(pr.base.ref)
               && pr.head.repo?.full_name === context.payload.repository.full_name
               && pr.head.sha === context.payload.pull_request.head.sha;
 
