@@ -29,7 +29,7 @@ allowBuilds:
   '@tencentdb-agent-memory/memory-tencentdb-v2@git+https://github.com/NxcoreAI/TencentDB-Agent-Memory.git#f65f83e550cc4a13d51cbef8550f0b1755073ea4&path:MemoryCore(patch_hash=351b45cf8e7bc7b80b1feff362fb4100900a4301b00d7dd3fa34c572f331e7e6)': false
   '@larksuite/cli': true
   ntn: true
-  '@oomol-lab/open-connector@git+https://code.vyitec.com/nexcore/everroom-openconnector.git#bd4213af4c96af24f1f6fa4a66765cb425a8291f(patch_hash=5daf1dfa31f5824f9e33ebe534bd93508428c99af031114df8fd1a3ca897d831)': false
+  '@oomol-lab/open-connector@git+https://code.vyitec.com/nexcore/everroom-openconnector.git#bd4213af4c96af24f1f6fa4a66765cb425a8291f(patch_hash=6e17a3f3a85300edd042cc19665aa487aecc7f0c80184d1835862925fda3123c)': false
 
 minimumReleaseAgeExclude:
   - '@earendil-works/pi-agent-core@0.84.2'

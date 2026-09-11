@@ -1,23 +1,31 @@
 diff --git a/src/providers/feishu/definition.ts b/src/providers/feishu/definition.ts
-index 1b7486c0..7de665ed 100644
+index 1b7486c0..6f746e3f 100644
 --- a/src/providers/feishu/definition.ts
 +++ b/src/providers/feishu/definition.ts
-@@ -4,9 +4,17 @@ import { feishuActions } from "./actions.ts";
+@@ -4,9 +4,25 @@ import { feishuActions } from "./actions.ts";
  import { feishuProviderScopes } from "./scopes.ts";
  
  const service = "feishu";
 +// Request only the scopes the Feishu app has enabled as user-authorized
-+// permissions (the foundational set in scopes.ts). Deriving the OAuth scope
-+// list from every action's providerPermissions requests permissions the app
-+// has not enabled (e.g. slash command / approval), and Feishu's authorize
-+// endpoint then rejects the whole request with error 20027 before the user
-+// can even see the consent page. Missing action-level permissions surface
-+// as runtime errors instead, which keeps the authorization entry working.
++// permissions. Deriving the OAuth scope list from every action's
++// providerPermissions requests permissions the app has not enabled
++// (e.g. slash command / approval), and Feishu's authorize endpoint then
++// rejects the whole request with error 20027 before the user can even see
++// the consent page. Missing action-level permissions surface as runtime
++// errors instead, which keeps the authorization entry working.
++// The whitelist must stay a subset of the app's enabled user-authorized
++// permissions — extend the console first, then this list. Beyond the
++// foundational set in scopes.ts it covers the document import chain
++// (drive listing, wiki tree, search, comments).
  const feishuOAuthScopes = [
    feishuProviderScopes.offlineAccess,
 -  ...new Set(feishuActions.flatMap((action) => action.providerPermissions)),
 +  feishuProviderScopes.docxReadonly,
 +  feishuProviderScopes.bitableAppReadonly,
++  "drive:drive:readonly",
++  "wiki:wiki:readonly",
++  "search:docs:read",
++  "docs:document.comment:read",
  ];
  
  /**
