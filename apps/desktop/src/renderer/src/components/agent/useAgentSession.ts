@@ -23,6 +23,7 @@ import {
 } from './agentRunActivity'
 import { buildAgentRunContext } from './agentRunContext'
 import type { MentionedAgent } from './agentMentions'
+import { plainTextFromMarkdown } from './agentTextUtils'
 import {
   applyShellApprovalEvent,
   reducePendingShellApprovals,
@@ -105,6 +106,11 @@ function requestErrorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback
 }
 
+/** 网关兜底标题 = run.accepted prompt 截 48 字（与网关 service 同源）；仅当权威标题仍等于兜底值才允许 AI 替换。 */
+export function isAutoFallbackTitle(serverTitle: string | null | undefined, acceptedPrompt: string): boolean {
+  return serverTitle?.trim() === acceptedPrompt.slice(0, 48).trim()
+}
+
 export function useAgentSession(
   pageLabel: string,
   roomId: string | null,
@@ -139,6 +145,16 @@ export function useAgentSession(
   const terminalRunIdsRef = useRef(new Set<string>())
   const sessionIdRef = useRef<string | null>(null)
   const activeScopeRef = useRef(sessionScope(pageLabel, roomId))
+  /** AI 标题生成素材：runId → 网关脱敏后的用户 prompt（与兜底标题同源）。 */
+  const userPromptByRun = useRef(new Map<string, string>())
+  const assistantContentByRun = useRef(new Map<string, string>())
+  /** 当前会话见过的全部 runId，用于判定「首个 run」才自动起标题。 */
+  const sessionRunIds = useRef(new Set<string>())
+  /** sessionId → 标题任务状态，防 socket 重放/断线恢复重复触发。 */
+  const titleJobs = useRef(new Map<string, 'inflight' | 'done'>())
+  const generateTitleRef = useRef<((sessionId: string, runId: string) => void) | null>(null)
+  const localeRef = useRef(locale)
+  localeRef.current = locale
 
   const updateToolCall = useCallback((event: AgentEvent) => {
     setToolCallsByRun((current) => {
@@ -203,8 +219,10 @@ export function useAgentSession(
 
     if (event.type === 'run.accepted' || event.type === 'run.started') {
       if (event.type === 'run.accepted') {
+        sessionRunIds.current.add(event.runId)
         const prompt = (event.payload as { prompt?: unknown }).prompt
         if (typeof prompt === 'string' && prompt.trim()) {
+          userPromptByRun.current.set(event.runId, prompt)
           setMessages((current) => {
             const existing = current.find((message) =>
               message.role === 'user'
@@ -310,6 +328,7 @@ export function useAgentSession(
     }
     if (event.type === 'message.completed') {
       const content = (event.payload as { content?: unknown }).content
+      if (typeof content === 'string') assistantContentByRun.current.set(event.runId, content)
       setMessages((current) => {
         const streamId = `stream-${event.runId}`
         const existing = current.find((message) => message.id === streamId)
@@ -360,6 +379,9 @@ export function useAgentSession(
       setCurrentSession((current) => current?.id === event.sessionId
         ? { ...current, status, updatedAt: event.occurredAt }
         : current)
+      if (event.type === 'run.completed' && event.sessionId === sessionIdRef.current) {
+        generateTitleRef.current?.(event.sessionId, event.runId)
+      }
       if (event.type === 'run.failed') {
         const message = (event.payload as { message?: unknown }).message
         setError(typeof message === 'string' ? message : t('surface:useAgentSession.runFailed'))
@@ -379,10 +401,14 @@ export function useAgentSession(
     sequenceByRun.current.clear()
     eventsByRun.current.clear()
     terminalRunIdsRef.current.clear()
+    userPromptByRun.current.clear()
+    assistantContentByRun.current.clear()
+    sessionRunIds.current.clear()
     const runIds = [...new Set([
       ...snapshot.messages.map((message) => message.runId),
       ...(snapshot.activeRun ? [snapshot.activeRun.id] : []),
     ].filter((runId) => runId && runId !== 'pending'))]
+    for (const runId of runIds) sessionRunIds.current.add(runId)
     const eventGroups = api
       ? await Promise.all(runIds.map(async (runId) => ({
         runId,
@@ -515,6 +541,9 @@ export function useAgentSession(
     sessionIdRef.current = null
     sequenceByRun.current.clear()
     eventsByRun.current.clear()
+    userPromptByRun.current.clear()
+    assistantContentByRun.current.clear()
+    sessionRunIds.current.clear()
     setError(null)
 
     if (api) {
@@ -605,7 +634,11 @@ export function useAgentSession(
     return (await createSession(pendingMessages)).id
   }
 
-  const renameSession = async (sessionIdToRename: string, title: string): Promise<void> => {
+  const renameSession = async (
+    sessionIdToRename: string,
+    title: string,
+    options?: { silent?: boolean },
+  ): Promise<void> => {
     if (!api || !title.trim()) return
     try {
       const updated = await api.updateSession(sessionIdToRename, { title: title.trim() })
@@ -615,10 +648,44 @@ export function useAgentSession(
         setDisplayTitle(updated.title?.trim() ?? '')
       }
     } catch (requestError) {
+      if (options?.silent) return
       setError(requestErrorMessage(requestError, t('surface:useAgentSession.renameFailed')))
       throw requestError
     }
   }
+
+  // 会话首轮完成后自动起标题：网关兜底标题 = run.accepted 的 prompt 截 48 字
+  // （与网关 service 同源），只有权威标题仍等于该兜底值（用户未改名）才替换。
+  const maybeGenerateSessionTitle = (targetSessionId: string, runId: string): void => {
+    if (!api) return
+    if (titleJobs.current.has(targetSessionId)) return
+    if (sessionRunIds.current.size !== 1 || !sessionRunIds.current.has(runId)) return
+    const acceptedPrompt = userPromptByRun.current.get(runId)
+    if (!acceptedPrompt?.trim()) return
+    const assistantText = plainTextFromMarkdown(assistantContentByRun.current.get(runId) ?? '')
+    if (!assistantText) return
+    titleJobs.current.set(targetSessionId, 'inflight')
+    void (async () => {
+      try {
+        const snapshot = await api.getSession(targetSessionId)
+        if (!isAutoFallbackTitle(snapshot.session.title, acceptedPrompt)) return
+        const { title } = await api.generateSessionTitle({
+          sessionId: targetSessionId,
+          userText: acceptedPrompt,
+          assistantText,
+          language: localeRef.current,
+        })
+        const clean = title?.trim().slice(0, 48).trim()
+        if (!clean) return
+        await renameSession(targetSessionId, clean, { silent: true })
+      } catch {
+        // 标题生成是锦上添花：任何失败都静默保留截断兜底标题。
+      } finally {
+        titleJobs.current.set(targetSessionId, 'done')
+      }
+    })()
+  }
+  generateTitleRef.current = maybeGenerateSessionTitle
 
   const deleteSession = async (session: AgentSession): Promise<void> => {
     if (!api || session.status === 'running' || (session.id === sessionId && activeRunId)) return

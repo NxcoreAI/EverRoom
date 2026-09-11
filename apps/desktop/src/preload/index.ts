@@ -601,6 +601,7 @@ const api: NxcoreDesktopApi = {
     listSessionLinks: (sessionId) => invoke('agent:list-session-links', sessionId),
     markSessionLinkReturned: (linkId) => invoke('agent:mark-session-link-returned', linkId),
     updateSession: (sessionId, input) => invoke('agent:update-session', sessionId, input),
+    generateSessionTitle: (input) => invoke('agent:generate-session-title', input),
     deleteSession: (sessionId) => invoke('agent:delete-session', sessionId),
     getSession: (sessionId) => invoke('agent:get-session', sessionId),
     getEvents: (sessionId, runId, afterSeq) =>
