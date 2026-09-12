@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('electron', () => ({
   app: {
@@ -13,7 +13,9 @@ vi.mock('electron', () => ({
 }))
 vi.mock('../src/main/monitoring/sentry', () => ({ captureSentryLog: vi.fn() }))
 
+import { captureSentryLog } from '../src/main/monitoring/sentry'
 import {
+  captureGatewayOutputRemote,
   GatewaySupervisor,
   type GatewayConnection,
 } from '../src/main/gateway/gateway-supervisor'
@@ -219,5 +221,40 @@ describe('GatewaySupervisor connection recovery', () => {
 
     await supervisor.shutdown()
     expect(supervisor.isRunning()).toBe(false)
+  })
+})
+
+describe('captureGatewayOutputRemote', () => {
+  const captureMock = vi.mocked(captureSentryLog)
+
+  beforeEach(() => {
+    captureMock.mockClear()
+  })
+
+  it('stdout 常规行不上报；error 关键字行与 stderr 行分别按 error/warn 上报', () => {
+    captureGatewayOutputRemote('gateway', 'stdout', 'hello routine line', 1_000)
+    captureGatewayOutputRemote('gateway', 'stdout', 'ERROR: sqlite locked', 1_001)
+    captureGatewayOutputRemote('gateway', 'stderr', 'plain stderr warning', 1_002)
+
+    expect(captureMock).toHaveBeenCalledTimes(2)
+    expect(captureMock).toHaveBeenNthCalledWith(1, 'gateway-gateway', 'error', expect.objectContaining({
+      event: 'gateway.output',
+      stream: 'stdout',
+      line: 'ERROR: sqlite locked',
+    }))
+    expect(captureMock).toHaveBeenNthCalledWith(2, 'gateway-gateway', 'warn', expect.objectContaining({
+      stream: 'stderr',
+    }))
+  })
+
+  it('每分钟限频 30 条，超出丢弃', () => {
+    const base = 100_000
+    for (let index = 0; index < 35; index += 1) {
+      captureGatewayOutputRemote('gateway', 'stderr', `line ${index}`, base + index * 100)
+    }
+    expect(captureMock).toHaveBeenCalledTimes(30)
+    expect(captureMock).toHaveBeenLastCalledWith('gateway-gateway', 'warn', expect.objectContaining({
+      line: 'line 29',
+    }))
   })
 })
