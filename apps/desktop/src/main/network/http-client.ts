@@ -91,13 +91,26 @@ const chromiumFetchAdapter: AxiosAdapter = async (config) => {
     headers.set(key, String(value))
   }
 
-  const response = await net.fetch(target.toString(), {
-    method: (config.method ?? 'get').toUpperCase(),
-    headers,
-    body: config.data === undefined ? undefined : await toFetchBody(config.data),
-    signal: requestSignal(config),
-    redirect: 'follow',
-  })
+  // 网络层失败（超时/断连）原生错误不带 config，错误日志里 url/method 会全部
+  // 丢失——包成 AxiosError 把 config 带回拦截器，排障才知道是哪个调用超时。
+  let response: Response
+  try {
+    response = await net.fetch(target.toString(), {
+      method: (config.method ?? 'get').toUpperCase(),
+      headers,
+      body: config.data === undefined ? undefined : await toFetchBody(config.data),
+      signal: requestSignal(config),
+      redirect: 'follow',
+    })
+  } catch (error) {
+    if (error instanceof AxiosError) throw error
+    const source = error instanceof Error ? error : new Error(String(error))
+    const rawCode = (source as { code?: unknown }).code
+    const code = typeof rawCode === 'string' && rawCode ? rawCode
+      : source.name !== 'Error' ? source.name
+      : undefined
+    throw new AxiosError(source.message, code, config)
+  }
 
   const responseType = config.responseType ?? 'json'
   let data: unknown

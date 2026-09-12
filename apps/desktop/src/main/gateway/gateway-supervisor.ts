@@ -7,6 +7,7 @@ import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from 'node:c
 import { app } from 'electron'
 import type { GatewayStatus } from '../../shared/sources'
 import { createLoggedHttpClient } from '../network/http-client'
+import { captureSentryLog } from '../monitoring/sentry'
 import { forgetProcessRecord, registerProcessRecord } from '../process-cleanup'
 
 interface GatewayManifest {
@@ -39,20 +40,46 @@ function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds))
 }
 
+const GATEWAY_REMOTE_LOG_WINDOW_MS = 60_000
+const GATEWAY_REMOTE_LOG_LIMIT = 30
+const gatewayRemoteLogTimes: number[] = []
+
+/** 网关子进程的输出只进本地控制台；stderr/error 行抽样上报远端，卡死/崩溃时
+ *  Pro 用户排障才有网关侧现场（本地日志文件拿不到）。限频防雪崩刷屏。 */
+export function captureGatewayOutputRemote(label: string, stream: 'stdout' | 'stderr', line: string, now = Date.now()): void {
+  const errorLike = /\b(error|fatal|unhandled|uncaught)\b/i.test(line)
+  if (stream === 'stdout' && !errorLike) return
+  while (gatewayRemoteLogTimes.length > 0 && now - gatewayRemoteLogTimes[0]! > GATEWAY_REMOTE_LOG_WINDOW_MS) {
+    gatewayRemoteLogTimes.shift()
+  }
+  if (gatewayRemoteLogTimes.length >= GATEWAY_REMOTE_LOG_LIMIT) return
+  gatewayRemoteLogTimes.push(now)
+  captureSentryLog(`gateway-${label}`, errorLike ? 'error' : 'warn', {
+    event: 'gateway.output',
+    stream,
+    line: line.slice(0, 2000),
+  })
+}
+
 function forwardGatewayOutput(
   stream: NodeJS.ReadableStream,
   destination: NodeJS.WriteStream,
   label: string,
+  streamName: 'stdout' | 'stderr',
 ): void {
   let pending = ''
+  const emit = (line: string): void => {
+    destination.write(`[${label}] ${line}\n`)
+    captureGatewayOutputRemote(label, streamName, line)
+  }
   stream.on('data', (chunk: string) => {
     pending += chunk
     const lines = pending.split(/\r?\n/)
     pending = lines.pop() ?? ''
-    for (const line of lines) destination.write(`[${label}] ${line}\n`)
+    for (const line of lines) emit(line)
   })
   stream.on('end', () => {
-    if (pending) destination.write(`[${label}] ${pending}\n`)
+    if (pending) emit(pending)
   })
 }
 
@@ -186,8 +213,8 @@ export class GatewaySupervisor {
 
     child.stdout.setEncoding('utf8')
     child.stderr.setEncoding('utf8')
-    forwardGatewayOutput(child.stdout, process.stdout, this.options.logLabel ?? 'gateway')
-    forwardGatewayOutput(child.stderr, process.stderr, this.options.logLabel ?? 'gateway')
+    forwardGatewayOutput(child.stdout, process.stdout, this.options.logLabel ?? 'gateway', 'stdout')
+    forwardGatewayOutput(child.stderr, process.stderr, this.options.logLabel ?? 'gateway', 'stderr')
     child.on('exit', (code, signal) => {
       this.child = null
       this.connection = null

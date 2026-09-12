@@ -52,7 +52,10 @@ export function configureSentry(version: string, packaged: boolean): void {
       sendDefaultPii: false,
       tracesSampleRate: 0,
       integrations: (defaults) => defaults.filter(
-        ({ name }) => name !== 'MainProcessSession' && name !== 'SentryMinidump',
+        // Console：desktop-logger 已带阈值/脱敏/模块标签捕获 console，SDK 自带的
+        // 无阈值版本会把轮询类 console.debug（对象参数）以每 5 秒一条的频率刷上
+        // 远端（线上曾积累 5 万条 "[object Object]"），故移除避免重复与刷屏。
+        ({ name }) => name !== 'MainProcessSession' && name !== 'SentryMinidump' && name !== 'Console',
       ),
       beforeBreadcrumb: (breadcrumb) => isRemoteDebugActive() ? redactSentryPayload(breadcrumb) : null,
       beforeSend: (event) => isRemoteDebugActive() ? redactSentryPayload(event) : null,

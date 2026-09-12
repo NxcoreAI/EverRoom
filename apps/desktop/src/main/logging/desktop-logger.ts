@@ -141,7 +141,14 @@ function installGlobalConsole(): void {
     const actualLevel: LogLevel = level === 'log' ? 'info' : level
     const [first, ...rest] = args
     const event = typeof first === 'string' ? first : 'console event'
-    const details = rest.length === 0 ? undefined : rest.length === 1 ? rest[0] : rest
+    // Error 直接 JSON 序列化只剩 {}；name/message/stack 拆开存，远端排障才有细节。
+    const serializeConsoleArg = (value: unknown): unknown =>
+      value instanceof Error
+        ? { name: value.name, message: value.message, stack: value.stack?.split('\n').slice(0, 10).join('\n') }
+        : value
+    const details = rest.length === 0 ? undefined
+      : rest.length === 1 ? serializeConsoleArg(rest[0])
+      : rest.map(serializeConsoleArg)
     const now = new Date()
     const payload = details === undefined ? { event } : { event, details }
     const threshold = desktopLogThreshold('console')
