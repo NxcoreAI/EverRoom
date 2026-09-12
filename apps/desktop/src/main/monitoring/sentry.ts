@@ -52,10 +52,12 @@ export function configureSentry(version: string, packaged: boolean): void {
       sendDefaultPii: false,
       tracesSampleRate: 0,
       integrations: (defaults) => defaults.filter(
-        // Console：desktop-logger 已带阈值/脱敏/模块标签捕获 console，SDK 自带的
-        // 无阈值版本会把轮询类 console.debug（对象参数）以每 5 秒一条的频率刷上
-        // 远端（线上曾积累 5 万条 "[object Object]"），故移除避免重复与刷屏。
-        ({ name }) => name !== 'MainProcessSession' && name !== 'SentryMinidump' && name !== 'Console',
+        // ElectronNet：enableLogs 下它把每个 Electron 网络请求记成 info 日志，
+        // 轮询类请求曾 48 小时刷 5 万条垃圾（origin=auto.electron.net）。
+        // Console：desktop-logger 已带阈值/脱敏/模块标签捕获，SDK 自带版本无
+        // 阈值，会造成重复与刷屏。
+        ({ name }) => name !== 'MainProcessSession' && name !== 'SentryMinidump'
+          && name !== 'ElectronNet' && name !== 'Console',
       ),
       beforeBreadcrumb: (breadcrumb) => isRemoteDebugActive() ? redactSentryPayload(breadcrumb) : null,
       beforeSend: (event) => isRemoteDebugActive() ? redactSentryPayload(event) : null,
