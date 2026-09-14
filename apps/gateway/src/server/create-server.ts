@@ -761,8 +761,8 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   // 写作风格服务提前创建（仅需 db）：dispatcher 与 agentService 的注入
   // provider 在此接线，worker/路由仍在文档 worker 附近启动注册。
   // 版本变更概览（历史面板 AI 概览标题）复用 background 模型；失败由服务退回本地规则摘要。
-  const versionSummaryRuntime = createWritingStyleRuntime(config);
-  const writingStyleRuntime = createWritingStyleRuntime(config);
+  let versionSummaryRuntime = createWritingStyleRuntime(config);
+  let writingStyleRuntime = createWritingStyleRuntime(config);
   // 文档速览（文章级 AI 摘要）：独立隔离 runtime；未配置时路由层置 aiAvailable=false。
   // let + 热替换：SaaS 登录后 runtime 配置才到达，boot 快照的 null 会让速览/
   // 章节预览在首次登录后一直 503（下方 onChange 重建）。
@@ -1270,7 +1270,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       config.documentIndexBackfill?.readTriggerCooldownMs ?? 1_800_000,
     )
     : null;
-  await app.register(documentRoutes(documentService, versionSummaryRuntime, indexBackfillReadTrigger));
+  await app.register(documentRoutes(documentService, () => versionSummaryRuntime, indexBackfillReadTrigger));
   await app.register(documentCommentRoutes(documentCommentService));
   await app.register(documentOverviewRoutes(documentService, () => documentOverviewRuntime));
   await app.register(documentSectionPreviewRoutes(documentService, () => documentOverviewRuntime));
@@ -1436,6 +1436,13 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     documentOverviewRuntime = createDocumentOverviewRuntime(config);
     importRoomClassifier.replaceRuntime(createImportClassifierRuntime(config));
     sessionTitleService.replaceRuntime(createSessionTitleRuntime(config));
+    versionSummaryRuntime = createWritingStyleRuntime(config);
+    writingStyleRuntime = createWritingStyleRuntime(config);
+    writingStyleService.replaceLlm(writingStyleRuntime ? new WritingStyleLlm(writingStyleRuntime) : null);
+    const backfillRuntime = config.documentIndexBackfill?.llmEnabled === false
+      ? null
+      : createIndexBackfillRuntime(config);
+    documentIndexBackfillWorker?.replaceLlm(backfillRuntime ? new IndexBackfillLlm(backfillRuntime) : null);
   });
   filesService.setVersionIngestor(async (input) => {
     await documentUnderstandingService.parseVersion(input.fileEntryId, input.fileVersionId);
