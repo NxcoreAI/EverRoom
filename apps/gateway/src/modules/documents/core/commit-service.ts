@@ -37,6 +37,7 @@ export interface CommitDocumentInput {
   version: number;
   expectedVersion?: number;
   status?: "draft" | "active";
+  origin?: "native" | "import";
   activeTransactionId?: string | null;
   sourceTransactionId?: string;
   createdAt?: Date;
@@ -112,6 +113,7 @@ export class DocumentCommitService {
         contentSchemaVersion: normalized.schemaVersion,
         version: input.version,
         status: input.status ?? "active",
+        origin: input.origin ?? "native",
         activeTransactionId: input.activeTransactionId ?? null,
         deletedAt: null,
         createdAt: now.toISOString(),
@@ -132,6 +134,7 @@ export class DocumentCommitService {
         contentSchemaVersion: normalized.schemaVersion,
         version: input.version,
         status: input.status ?? "active",
+        origin: input.origin ?? "native",
         activeTransactionId: input.activeTransactionId ?? null,
         createdAt: now,
         updatedAt: now,

@@ -255,6 +255,7 @@ describe("document operation kernel", () => {
       contentSchemaVersion: 1,
       version: 2,
       status: "active" as const,
+      origin: "native" as const,
       activeTransactionId: null,
       deletedAt: null,
       createdAt: now,

@@ -11,6 +11,7 @@ const document: RoomDocument = {
   contentSchemaVersion: 3,
   version: 2,
   status: 'active',
+  origin: 'native',
   activeTransactionId: null,
   deletedAt: null,
   createdAt: '2026-08-20T00:00:00.000Z',

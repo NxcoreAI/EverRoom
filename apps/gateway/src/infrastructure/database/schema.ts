@@ -824,6 +824,8 @@ export const documents = sqliteTable("documents", {
   contentSchemaVersion: integer("content_schema_version").notNull().default(1),
   version: integer("version").notNull().default(0),
   status: text("status", { enum: ["draft", "active"] }).notNull().default("draft"),
+  /** native=用户在 EverRoom 创建（产物）；import=外部导入（工作资料）。 */
+  origin: text("origin", { enum: ["native", "import"] }).notNull().default("native"),
   activeTransactionId: text("active_transaction_id"),
   deletedAt: integer("deleted_at", { mode: "timestamp_ms" }),
   createdAt: integer("created_at", { mode: "timestamp_ms" })

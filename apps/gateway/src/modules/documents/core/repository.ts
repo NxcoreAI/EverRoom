@@ -29,6 +29,7 @@ export function toRoomDocument(row: DocumentRow, roomId: string): RoomDocument {
     contentSchemaVersion: row.contentSchemaVersion,
     version: row.version,
     status: row.status,
+    origin: row.origin,
     activeTransactionId: row.activeTransactionId,
     deletedAt: row.deletedAt?.toISOString() ?? null,
     createdAt: row.createdAt.toISOString(),
@@ -39,14 +40,16 @@ export function toRoomDocument(row: DocumentRow, roomId: string): RoomDocument {
 export class DocumentRepository {
   constructor(readonly db: GatewayDatabase) {}
 
-  list(roomId: string, trashed = false): RoomDocument[] {
+  list(roomId: string, trashed = false, origin?: "native" | "import"): RoomDocument[] {
+    const conditions = [
+      eq(roomDocumentLinks.roomId, roomId),
+      trashed ? isNotNull(documents.deletedAt) : isNull(documents.deletedAt),
+    ];
+    if (origin) conditions.push(eq(documents.origin, origin));
     const rows = this.db.select({ document: documents })
       .from(roomDocumentLinks)
       .innerJoin(documents, eq(roomDocumentLinks.documentId, documents.id))
-      .where(and(
-        eq(roomDocumentLinks.roomId, roomId),
-        trashed ? isNotNull(documents.deletedAt) : isNull(documents.deletedAt),
-      ))
+      .where(and(...conditions))
       .orderBy(asc(roomDocumentLinks.linkedAt))
       .all()
       .map(({ document }) => toRoomDocument(document, roomId));
