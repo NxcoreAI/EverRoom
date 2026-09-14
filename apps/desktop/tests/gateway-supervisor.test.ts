@@ -247,6 +247,17 @@ describe('captureGatewayOutputRemote', () => {
     }))
   })
 
+  it('pino warn/error 级 stdout 行上报（导入失败/ingest 重试现场），info 级不上报', () => {
+    captureGatewayOutputRemote('gateway', 'stdout', '{"level":30,"msg":"routine info"}', 2_000)
+    captureGatewayOutputRemote('gateway', 'stdout', '{"level":40,"message":"外部文档读取失败：feishu.fetch_document 未返回可识别的 Markdown 正文","msg":"document import batch item failed"}', 2_001)
+
+    expect(captureMock).toHaveBeenCalledTimes(1)
+    expect(captureMock).toHaveBeenNthCalledWith(1, 'gateway-gateway', 'warn', expect.objectContaining({
+      stream: 'stdout',
+      line: expect.stringContaining('外部文档读取失败'),
+    }))
+  })
+
   it('每分钟限频 30 条，超出丢弃', () => {
     const base = 100_000
     for (let index = 0; index < 35; index += 1) {
