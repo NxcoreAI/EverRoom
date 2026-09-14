@@ -1,12 +1,20 @@
 import { describe, expect, it } from 'vitest'
 
 import type { CloudAccountStatus } from '../src/shared/sources'
-import { isSentryLogModuleAllowed, isSentryRemoteDebugEnabled, syncSentryAccount } from '../src/main/monitoring/sentry'
+import { isSdkAutoNetLog, isSentryLogModuleAllowed, isSentryRemoteDebugEnabled, syncSentryAccount } from '../src/main/monitoring/sentry'
 
 describe('Sentry log policy', () => {
   it('always rejects document cursor completion logs', () => {
     expect(isSentryLogModuleAllowed('document-cursor-completion')).toBe(false)
     expect(isSentryLogModuleAllowed('renderer')).toBe(true)
+  })
+
+  it('drops SDK auto electron.net logs and keeps everything else', () => {
+    expect(isSdkAutoNetLog({ attributes: { 'sentry.origin': 'auto.electron.net' } })).toBe(true)
+    expect(isSdkAutoNetLog({ attributes: { 'sentry.origin': 'auto.console' } })).toBe(false)
+    expect(isSdkAutoNetLog({ attributes: {} })).toBe(false)
+    expect(isSdkAutoNetLog({})).toBe(false)
+    expect(isSdkAutoNetLog({ attributes: { 'sentry.origin': 42 } })).toBe(false)
   })
 })
 
