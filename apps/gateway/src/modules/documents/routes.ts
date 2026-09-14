@@ -14,7 +14,7 @@ function errorPayload(error: DocumentServiceError) {
 
 export function documentRoutes(
   service: DocumentService,
-  summaryRuntime?: import("@nxcore/agent-runtime").AgentRuntime | null,
+  summaryRuntime?: () => import("@nxcore/agent-runtime").AgentRuntime | null,
   indexBackfillReadTrigger?: DocumentIndexBackfillReadTrigger | null,
 ): FastifyPluginAsyncTypebox {
   return async (app) => {
@@ -124,7 +124,7 @@ export function documentRoutes(
       },
       async (request, reply) => {
         try {
-          return await service.versionChangeSummary(request.params.id, request.params.version, summaryRuntime ?? null);
+          return await service.versionChangeSummary(request.params.id, request.params.version, summaryRuntime?.() ?? null);
         } catch (error) {
           if (error instanceof DocumentServiceError) {
             return reply.code(error.statusCode).send({ error: error.code, message: error.message, ...(error.details ?? {}) });

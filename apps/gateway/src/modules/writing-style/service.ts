@@ -307,9 +307,14 @@ export class WritingStyleService {
   constructor(
     private readonly db: GatewayDatabase,
     /** LLM 定性层；null = 未配置（统计层照常，refresh 跳过定性）。 */
-    private readonly llm: WritingStyleLlm | null = null,
+    private llm: WritingStyleLlm | null = null,
     private readonly logger: { warn(bindings: Record<string, unknown>, message: string): void } = { warn: () => undefined },
   ) {}
+
+  /** LLM 热替换：SaaS 登录后 runtime 配置才到达，boot 快照的 null 会让定性层一直缺席。 */
+  replaceLlm(llm: WritingStyleLlm | null): void {
+    this.llm = llm;
+  }
 
   // ─── 设置 ───
 
