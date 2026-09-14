@@ -1,0 +1,105 @@
+/* 首次启动闪屏：极简、独立成页，不与登录页/控制台共享框架样式。 */
+
+.startup-splash {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483000;
+  display: grid;
+  place-items: center;
+  background: var(--bg);
+  -webkit-app-region: drag;
+  animation: startup-splash-fade-in 420ms ease-out both;
+}
+
+.startup-splash[data-exiting='true'] {
+  animation: startup-splash-exit 340ms cubic-bezier(0.3, 0.7, 0.2, 1) forwards;
+  pointer-events: none;
+}
+
+.startup-splash-scene {
+  display: grid;
+  justify-items: center;
+}
+
+.startup-splash-icon {
+  width: clamp(84px, 11vw, 112px);
+  height: clamp(84px, 11vw, 112px);
+  animation:
+    startup-splash-drop 760ms cubic-bezier(0.24, 1.28, 0.32, 1) both,
+    startup-splash-float 2.8s 920ms ease-in-out infinite;
+}
+
+.startup-splash-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  filter: drop-shadow(0 16px 28px rgb(15 23 42 / 16%));
+  -webkit-user-drag: none;
+}
+
+.startup-splash-shadow {
+  width: 58%;
+  height: 10px;
+  margin-top: 18px;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgb(15 23 42 / 20%), transparent 70%);
+  animation:
+    startup-splash-shadow-in 760ms ease-out both,
+    startup-splash-shadow-pulse 2.8s 920ms ease-in-out infinite;
+}
+
+.startup-splash-dots {
+  display: flex;
+  gap: 9px;
+  margin-top: 26px;
+}
+
+.startup-splash-dots i {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--accent);
+  animation: startup-splash-dot 1.05s cubic-bezier(0.36, 0.16, 0.64, 0.84) infinite;
+}
+
+.startup-splash-dots i:nth-child(2) { animation-delay: 140ms; }
+.startup-splash-dots i:nth-child(3) { animation-delay: 280ms; }
+
+/* 入场：图标从上方弹性落下（带回弹过冲），随后轻微上下悬浮。 */
+@keyframes startup-splash-drop {
+  0% { transform: translateY(-34px) scale(0.72); opacity: 0; }
+  55% { transform: translateY(0) scale(1); opacity: 1; }
+  70% { transform: translateY(-9px) scale(1.03); }
+  85% { transform: translateY(0) scale(0.99); }
+  100% { transform: translateY(0) scale(1); }
+}
+
+@keyframes startup-splash-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6px); }
+}
+
+/* 投影随悬浮呼吸（图标上浮时投影收窄变淡，落回时铺开变实）。 */
+@keyframes startup-splash-shadow-in {
+  from { opacity: 0; transform: scaleX(0.6); }
+  to { opacity: 1; }
+}
+
+@keyframes startup-splash-shadow-pulse {
+  0%, 100% { transform: scaleX(1); opacity: 1; }
+  50% { transform: scaleX(0.8); opacity: 0.55; }
+}
+
+@keyframes startup-splash-dot {
+  0%, 100% { transform: translateY(0); opacity: 0.4; }
+  40% { transform: translateY(-7px); opacity: 1; }
+}
+
+@keyframes startup-splash-fade-in {
+  from { opacity: 0; }
+}
+
+/* 退场：整体放大淡出，像推开一扇门进入应用（下方页面同步被揭示）。 */
+@keyframes startup-splash-exit {
+  to { opacity: 0; transform: scale(1.06); }
+}

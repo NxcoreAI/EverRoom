@@ -170,7 +170,9 @@ export function UnmatchedDocsSection() {
                     >
                       <b>{entity.name}</b>
                       <small>{entity.roomId
-                        ? t('contextRoom:knowledgePending.entityPromoted')
+                        ? entity.roomTitle
+                          ? t('contextRoom:knowledgePending.entityPromotedIn', { title: entity.roomTitle })
+                          : t('contextRoom:knowledgePending.entityPromoted')
                         : localizedUiText(entity.kind, t)}</small>
                     </button>
                   ))}

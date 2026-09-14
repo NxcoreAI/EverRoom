@@ -1,5 +1,5 @@
-import type { ExternalConversationSummary } from '@nxcore/agent-contract'
-import React from 'react'
+import type { ExternalConversationSummary, LocalAgentInstallation } from '@nxcore/agent-contract'
+import React, { useState } from 'react'
 import TestRenderer, { act } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -32,6 +32,39 @@ const conversation: ExternalConversationSummary = {
   available: true,
 }
 
+const codexAgent: LocalAgentInstallation = {
+  id: 'codex:/usr/local/bin/codex',
+  provider: 'codex',
+  displayName: 'Codex',
+  executablePath: '/usr/local/bin/codex',
+  version: '0.2.0',
+  status: 'verified',
+  callable: true,
+  invocationSupported: true,
+  historyAvailable: true,
+  historyPaths: ['~/.codex'],
+  card: {
+    name: 'Codex',
+    description: 'OpenAI Codex CLI',
+    version: '1.0.0',
+    supportedInterfaces: [],
+    capabilities: { streaming: true },
+    defaultInputModes: ['text/plain'],
+    defaultOutputModes: ['text/plain'],
+    skills: [],
+  },
+  lastSeenAt: '2026-09-09T00:00:00.000Z',
+}
+
+const claudeAgent: LocalAgentInstallation = {
+  ...codexAgent,
+  id: 'claude:/usr/local/bin/claude',
+  provider: 'claude',
+  displayName: 'Claude Code',
+  executablePath: '/usr/local/bin/claude',
+  historyPaths: ['~/.claude'],
+}
+
 function renderComposer(overrides: Partial<React.ComponentProps<typeof AgentComposer>> = {}) {
   const props: React.ComponentProps<typeof AgentComposer> = {
     active: false,
@@ -42,6 +75,7 @@ function renderComposer(overrides: Partial<React.ComponentProps<typeof AgentComp
     loading: false,
     resetKey: 0,
     selectedExternalConversation: null,
+    localAgents: [codexAgent, claudeAgent],
     value: '',
     onChange: vi.fn(),
     onClearContext: vi.fn(),
@@ -56,6 +90,40 @@ function renderComposer(overrides: Partial<React.ComponentProps<typeof AgentComp
   return { props, renderer }
 }
 
+/** 受控输入的 @ 流程需要 value 与 caret 一起推进，静态 props 覆盖不了。 */
+function TypingComposer({ overrides = {} }: { overrides?: Partial<React.ComponentProps<typeof AgentComposer>> } = {}) {
+  const [value, setValue] = useState('')
+  const props: React.ComponentProps<typeof AgentComposer> = {
+    active: false,
+    available: true,
+    contextSummary: '首页',
+    contextItems: [],
+    hasSelectedText: false,
+    loading: false,
+    resetKey: 0,
+    selectedExternalConversation: null,
+    localAgents: [codexAgent, claudeAgent],
+    onChange: setValue,
+    onClearContext: vi.fn(),
+    onRemoveContext: vi.fn(),
+    onSelectExternalConversation: vi.fn(),
+    onStop: vi.fn(),
+    onSubmit: vi.fn(),
+    ...overrides,
+    value,
+  }
+  return <AgentComposer {...props} />
+}
+
+function typeInto(renderer: TestRenderer.ReactTestRenderer, value: string) {
+  const textarea = renderer.root.findByProps({ 'aria-label': '桌面 AI 工作台输入框' })
+  act(() => textarea.props.onChange({ target: { value, selectionStart: value.length } }))
+}
+
+function chooseHighlightedOption(renderer: TestRenderer.ReactTestRenderer) {
+  act(() => renderer.root.findByProps({ 'data-active': 'true' }).props.onClick())
+}
+
 describe('AgentComposer external conversation command', () => {
   const conversations = vi.fn()
 
@@ -63,7 +131,9 @@ describe('AgentComposer external conversation command', () => {
     vi.useFakeTimers()
     conversations.mockResolvedValue({ items: [conversation], nextCursor: null })
     vi.stubGlobal('window', {
-      nxcore: { migrations: { conversations } },
+      nxcore: {
+        migrations: { conversations },
+      },
       requestAnimationFrame: (callback: FrameRequestCallback) => { callback(0); return 1 },
       setInterval,
       clearInterval,
@@ -139,21 +209,85 @@ describe('AgentComposer external conversation command', () => {
     expect(conversations).not.toHaveBeenCalled()
   })
 
-  it('opens previous Agent chats from @ and keeps the reference as context', async () => {
-    const onChange = vi.fn()
-    const onSelectExternalConversation = vi.fn()
-    const { renderer } = renderComposer({ value: '@claude', onChange, onSelectExternalConversation })
+  it('opens callable local agents from a mid-text @ and inserts an inline mention', () => {
+    let renderer!: TestRenderer.ReactTestRenderer
+    act(() => { renderer = TestRenderer.create(<TypingComposer />) })
 
-    await act(async () => {
-      vi.runOnlyPendingTimers()
-      await Promise.resolve()
-    })
-    expect(conversations).toHaveBeenCalledWith({ query: 'claude', cursor: undefined, limit: 20 })
-    expect(renderer.root.findByProps({ 'aria-label': '引用 Agent 会话' })).toBeTruthy()
+    typeInto(renderer, '帮我审一下 @cod')
+    expect(conversations).not.toHaveBeenCalled()
+    expect(renderer.root.findByProps({ 'aria-label': '点名 Agent' })).toBeTruthy()
 
-    act(() => renderer.root.findByProps({ 'data-active': 'true' }).props.onClick())
-    expect(onChange).toHaveBeenCalledWith('')
-    expect(onSelectExternalConversation).toHaveBeenCalledWith(conversation)
+    chooseHighlightedOption(renderer)
+    const textarea = renderer.root.findByProps({ 'aria-label': '桌面 AI 工作台输入框' })
+    expect(textarea.props.value).toBe('帮我审一下 @codex ')
+    expect(renderer.root.findAllByProps({ className: 'agent-mention-list' })).toHaveLength(0)
+    const tokens = renderer.root.findAllByProps({ className: 'agent-mention-token' })
+    expect(tokens).toHaveLength(1)
+    expect(tokens[0]!.children).toEqual(['@', 'codex'])
+    act(() => renderer.unmount())
+  })
+
+  it('filters local agents by the mention query', () => {
+    let renderer!: TestRenderer.ReactTestRenderer
+    act(() => { renderer = TestRenderer.create(<TypingComposer />) })
+    typeInto(renderer, '@')
+    expect(renderer.root.findAllByProps({ role: 'option' })).toHaveLength(2)
+
+    typeInto(renderer, '@claude')
+    const results = renderer.root.findAllByProps({ role: 'option' })
+    expect(results).toHaveLength(1)
+    expect(results[0]!.findByType('strong').children).toEqual(['Claude Code'])
+    act(() => renderer.unmount())
+  })
+
+  it('supports mentioning several agents in one draft and resolves them on submit', () => {
+    const onSubmit = vi.fn()
+    let renderer!: TestRenderer.ReactTestRenderer
+    act(() => { renderer = TestRenderer.create(<TypingComposer overrides={{ onSubmit }} />) })
+
+    typeInto(renderer, '先让 @cod')
+    chooseHighlightedOption(renderer)
+    typeInto(renderer, '先让 @codex 审，再让 @clau')
+    const options = renderer.root.findAllByProps({ role: 'option' })
+    expect(options).toHaveLength(1)
+    chooseHighlightedOption(renderer)
+
+    const textarea = renderer.root.findByProps({ 'aria-label': '桌面 AI 工作台输入框' })
+    expect(textarea.props.value).toBe('先让 @codex 审，再让 @claude-code ')
+    expect(renderer.root.findAllByProps({ className: 'agent-mention-token' })).toHaveLength(2)
+
+    act(() => textarea.props.onKeyDown({
+      key: 'Enter',
+      shiftKey: false,
+      preventDefault: vi.fn(),
+      nativeEvent: { isComposing: false, keyCode: 13 },
+    }))
+    expect(onSubmit).toHaveBeenCalledWith([], [
+      { id: 'codex:/usr/local/bin/codex', displayName: 'Codex' },
+      { id: 'claude:/usr/local/bin/claude', displayName: 'Claude Code' },
+    ])
+    act(() => renderer.unmount())
+  })
+
+  it('drops mentions whose token was edited away before submit', () => {
+    const onSubmit = vi.fn()
+    let renderer!: TestRenderer.ReactTestRenderer
+    act(() => { renderer = TestRenderer.create(<TypingComposer overrides={{ onSubmit }} />) })
+
+    typeInto(renderer, '让 @cod')
+    chooseHighlightedOption(renderer)
+    typeInto(renderer, '让 @codex 审，再让 @cl ')
+    const textarea = renderer.root.findByProps({ 'aria-label': '桌面 AI 工作台输入框' })
+    expect(renderer.root.findAllByProps({ className: 'agent-mention-token' })).toHaveLength(1)
+
+    act(() => textarea.props.onKeyDown({
+      key: 'Enter',
+      shiftKey: false,
+      preventDefault: vi.fn(),
+      nativeEvent: { isComposing: false, keyCode: 13 },
+    }))
+    expect(onSubmit).toHaveBeenCalledWith([], [{ id: 'codex:/usr/local/bin/codex', displayName: 'Codex' }])
+    act(() => renderer.unmount())
   })
 
   it('labels a selected chat as a reference instead of an active Agent', () => {

@@ -9,6 +9,7 @@ import {
   isRuntimeConfigReady,
   manualConfigFieldError,
   primaryFieldsFromSnapshot,
+  startupGateOutcome,
   type ManualAiConfigFields,
 } from './runtimeConfigGateState'
 
@@ -177,5 +178,31 @@ describe('runtime config gate state', () => {
       { provider: 'qwen', model: 'text-embedding-v4', baseUrl: 'https://api.example.com/v1', apiKey: 'sk-embed' },
       t,
     )).toBeNull()
+  })
+})
+
+describe('startupGateOutcome', () => {
+  const input = (overrides: Partial<Parameters<typeof startupGateOutcome>[0]> = {}) => ({
+    configReady: true,
+    accountResolved: true,
+    authenticated: true,
+    configSource: 'saas' as const,
+    ...overrides,
+  })
+
+  it('waits until both config and account status settle', () => {
+    expect(startupGateOutcome(input({ configReady: false }))).toBe('wait')
+    expect(startupGateOutcome(input({ accountResolved: false }))).toBe('wait')
+  })
+
+  it('enters the app once authenticated regardless of config source', () => {
+    expect(startupGateOutcome(input())).toBe('app')
+    expect(startupGateOutcome(input({ configSource: 'user' }))).toBe('app')
+  })
+
+  it('sends an expired saas session back to login but keeps manual config usable', () => {
+    expect(startupGateOutcome(input({ authenticated: false }))).toBe('login')
+    expect(startupGateOutcome(input({ authenticated: false, configSource: 'user' }))).toBe('app')
+    expect(startupGateOutcome(input({ authenticated: null, configSource: 'user' }))).toBe('app')
   })
 })

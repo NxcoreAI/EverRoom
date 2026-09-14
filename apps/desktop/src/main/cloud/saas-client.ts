@@ -70,6 +70,14 @@ const http = createLoggedHttpClient('saas', { timeout: REQUEST_TIMEOUT_MS })
 
 export const OIDC_CALLBACK_URL = 'everroom://auth/callback'
 
+/** handleOidcCallback 的处理结果，语义见方法注释。 */
+export type OidcCallbackOutcome =
+  | 'unrelated'
+  | 'accepted'
+  | 'rejected'
+  | 'stale'
+  | 'no-login-in-progress'
+
 /**
  * RFC 8252 本地回环回调:浏览器授权后直接 HTTP 302 到 127.0.0.1,不依赖自定义协议跳转。
  * Chrome 会静默拦截无用户手势的自定义协议跳转(OAuth 重定向链内没有手势),
@@ -962,25 +970,38 @@ export class SaasClient {
     server.closeIdleConnections()
   }
 
-  handleOidcCallback(rawUrl: string): boolean {
+  /**
+   * 登录回调的处理结果：
+   * - unrelated：不是登录回调地址；
+   * - accepted：授权码已接收，正在换取会话；
+   * - rejected：回调携带错误/缺授权码，当前登录已以报错收场；
+   * - stale：来自旧一轮登录（或旧浏览器页签）的迟到回调，当前登录不受影响；
+   * - no-login-in-progress：授权已完成但主进程没有对应的登录（超时/应用重启过），
+   *   授权码无处可用——调用方应明确告知用户重新发起登录，而不是静默丢弃。
+   */
+  handleOidcCallback(rawUrl: string): OidcCallbackOutcome {
     let callback: URL
     try {
       callback = new URL(rawUrl)
     } catch {
-      return false
+      return 'unrelated'
     }
     const isLoopback = callback.protocol === 'http:' && callback.hostname === OIDC_LOOPBACK_HOST
     if (
       !isLoopback && (
         callback.protocol !== 'everroom:' || callback.hostname !== 'auth' || callback.pathname !== '/callback'
       )
-    ) return false
+    ) return 'unrelated'
 
     const pending = this.pendingOidcLogin
-    if (!pending) return true
+    if (!pending) {
+      console.warn('[oidc] 收到登录回调，但当前没有正在进行的登录（可能已超时或应用重启过）。')
+      return 'no-login-in-progress'
+    }
     if (callback.searchParams.get('state') !== pending.state) {
-      this.rejectOidcLogin(pending, new Error('登录状态校验失败，请重新登录。'))
-      return true
+      // 迟到的旧回调不能打断当前登录：仅忽略，当前登录继续等待。
+      console.warn('[oidc] 登录回调 state 与当前登录不匹配，已忽略。')
+      return 'stale'
     }
 
     const oidcError = callback.searchParams.get('error')
@@ -992,18 +1013,18 @@ export class SaasClient {
         pending,
         new Error(rejectedScope ? `${message}（被拒绝的 scope: ${rejectedScope}）` : message),
       )
-      return true
+      return 'rejected'
     }
 
     const code = callback.searchParams.get('code')
     if (!code) {
       this.rejectOidcLogin(pending, new Error('Logto 登录回调缺少授权码。'))
-      return true
+      return 'rejected'
     }
 
     this.stopLoopbackServer()
     void this.completeOidcLogin(code, pending)
-    return true
+    return 'accepted'
   }
 
   cancelOidcLogin(message = '登录已取消。'): void {

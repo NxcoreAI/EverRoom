@@ -102,7 +102,8 @@ export class SyncEngine {
     const definition = syncProviderOf(provider);
     if (!definition) return false;
     if (definition.engine === "direct") return typeof definition.pullDirect === "function";
-    return this.executor !== null && this.nangoReady;
+    // 会话缺席（executor 在场但 baseUrl 空）与 executor 缺席同语义：静默跳过。
+    return this.executor !== null && (this.executor.isAvailable?.() ?? true) && this.nangoReady;
   }
 
   async *pull(
@@ -136,7 +137,7 @@ export class SyncEngine {
       yield* definition.pullDirect(ctx, mode);
       return;
     }
-    if (!this.executor) throw new Error("connectors_disabled");
+    if (!this.executor || !(this.executor.isAvailable?.() ?? true)) throw new Error("connectors_disabled");
     yield* this.executor.pull(
       {
         ...scope,

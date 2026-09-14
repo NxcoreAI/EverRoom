@@ -221,3 +221,19 @@
   .connector-doc-actions .primary-button, .connector-doc-actions .secondary-button { width: 100%; justify-content: center; }
   .connector-doc-progress { justify-items: center; }
 }
+
+/* 已导入冲突确认 */
+.connector-conflict-confirm { display: grid; overflow: hidden; width: min(480px, 92vw); grid-template-rows: auto minmax(0, 1fr) auto; max-height: min(560px, 84vh); border: 1px solid var(--border-strong); border-radius: 10px; background: var(--surface); box-shadow: 0 18px 50px rgb(0 0 0 / 18%); }
+.connector-conflict-confirm header { display: flex; min-height: 50px; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+.connector-conflict-confirm-title { display: flex; align-items: center; gap: 8px; color: #b35900; font-size: 12px; font-weight: 650; }
+.connector-conflict-confirm-title svg { width: 14px; height: 14px; }
+.connector-conflict-confirm-body { display: grid; gap: 10px; overflow: auto; padding: 14px; }
+.connector-conflict-confirm-body > p:first-child { margin: 0; font-size: 11px; line-height: 1.5; }
+.connector-conflict-confirm-list { display: grid; gap: 4px; margin: 0; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-alt); list-style: none; }
+.connector-conflict-confirm-list li { display: flex; align-items: center; gap: 7px; font-size: 10px; overflow: hidden; }
+.connector-conflict-confirm-list img, .connector-conflict-confirm-list svg { width: 13px; height: 13px; flex: 0 0 13px; }
+.connector-conflict-confirm-list li span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.connector-conflict-confirm-more { color: var(--muted) !important; }
+.connector-conflict-confirm-hint { margin: 0; color: var(--muted); font-size: 9px; line-height: 1.5; }
+.connector-conflict-confirm footer { display: flex; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--border); background: var(--surface-alt); }
+.connector-conflict-confirm footer .primary-button { flex: 1; justify-content: center; }

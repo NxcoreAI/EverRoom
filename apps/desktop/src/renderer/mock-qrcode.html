@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>QrLoginPanel repro</title>
+    <style>
+      .mock-login-card {
+        width: 360px;
+        padding: 32px 28px;
+        border: 1px solid var(--border);
+        border-radius: 20px;
+        background: var(--surface);
+        box-shadow: 0 20px 60px rgba(16, 24, 40, 0.08);
+      }
+      .mock-login-card h1 { margin: 0 0 22px; font-size: 19px; text-align: center; }
+      .mock-social-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+      .mock-social {
+        min-height: 44px;
+        border: 1px solid var(--border-strong, var(--border));
+        border-radius: 9px;
+        background: var(--surface);
+        font-size: 13px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      .mock-social.apple { border-color: #000; background: #000; color: #fff; }
+      .mock-note { margin: 10px 0 0; color: var(--muted); font-size: 10px; text-align: center; }
+    </style>
+  </head>
+  <body>
+    <div id="mock-root"></div>
+    <script type="module" src="/src/mock-qrcode-entry.tsx"></script>
+  </body>
+</html>

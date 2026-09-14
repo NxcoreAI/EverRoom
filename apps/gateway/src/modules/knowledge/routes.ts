@@ -196,6 +196,7 @@ const EntityDto = Type.Object({
   kind: Type.String(),
   status: Type.String(),
   roomId: Type.Union([Type.String(), Type.Null()]),
+  roomTitle: Type.Union([Type.String(), Type.Null()]),
   evidenceScore: Type.Number(),
   sourceCount: Type.Integer(),
   eligibleSourceCount: Type.Integer(),

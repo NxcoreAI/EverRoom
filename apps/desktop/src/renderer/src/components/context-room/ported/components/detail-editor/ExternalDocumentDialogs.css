@@ -203,6 +203,109 @@
   font-size: 13px;
 }
 
+/* 工具栏：重新获取 + 缓存时间 + 本地过滤（与连接器页同源列举） */
+.context-room-external-import-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 0 8px;
+}
+.context-room-external-import-refresh {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  font-size: 12px;
+  border: 1px solid var(--border, #d8dee4);
+  border-radius: 7px;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+}
+.context-room-external-import-refresh svg { width: 13px; height: 13px; }
+.context-room-external-import-refresh:disabled { opacity: 0.6; cursor: default; }
+.context-room-external-import-meta {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--muted, #6a737d);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.context-room-external-import-filter {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  border: 1px solid var(--border, #d8dee4);
+  border-radius: 7px;
+}
+.context-room-external-import-filter svg { width: 13px; height: 13px; opacity: 0.6; flex-shrink: 0; }
+.context-room-external-import-filter input {
+  width: 120px;
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  color: inherit;
+}
+.context-room-external-import-filter button {
+  display: inline-flex;
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--muted, #6a737d);
+  cursor: pointer;
+}
+.context-room-external-import-filter button svg { width: 12px; height: 12px; }
+.context-room-external-import-item-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+}
+.context-room-external-import-item-title strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+}
+.context-room-external-import-item-title em {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent, #3d6ff6) 12%, transparent);
+  color: var(--accent, #3d6ff6);
+}
+.context-room-external-import-item-origin { display: inline-flex; color: var(--muted, #6a737d); flex-shrink: 0; }
+.context-room-external-import-item-origin svg { width: 12px; height: 12px; }
+.context-room-external-import-item-meta {
+  font-size: 11px;
+  color: var(--muted, #6a737d);
+}
+.context-room-external-import-filter-empty {
+  padding: 10px 8px;
+  font-size: 12px;
+  color: var(--muted, #6a737d);
+  text-align: center;
+}
+.context-room-external-import-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 20px 0;
+  color: var(--muted, #6a737d);
+  font-size: 12px;
+}
+.context-room-external-import-empty svg { width: 22px; height: 22px; opacity: 0.5; }
+
 .context-room-external-import-results {
   list-style: none;
   margin: 0;
@@ -210,7 +313,7 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
-  max-height: 220px;
+  max-height: 280px;
   overflow-y: auto;
 }
 
@@ -249,13 +352,19 @@
 .context-room-external-import-excerpt {
   margin: 0;
   padding: 10px 12px;
-  max-height: 200px;
+  max-height: 300px;
   overflow-y: auto;
   border: 1px solid var(--border, #d8dee4);
   border-radius: 8px;
-  font-size: 12px;
-  white-space: pre-wrap;
-  word-break: break-word;
+  /* 复用 wiki 阅读区 MarkdownBody 渲染：弹窗内紧凑字号 */
+  font-size: 12.5px;
+}
+.context-room-external-import-excerpt .context-room-wiki-markdown {
+  font-size: 12.5px;
+  line-height: 1.65;
+}
+.context-room-external-import-excerpt .context-room-wiki-markdown pre {
+  font-size: 11.5px;
 }
 
 /* 版本面板 · 外部导入区 */
@@ -464,7 +573,7 @@
   flex-direction: column;
 }
 .context-room-imported-comments-dock {
-  width: 300px;
+  width: 260px;
   flex-shrink: 0;
   border-left: 1px solid var(--border, #d8dee4);
   background: var(--surface, #fff);
@@ -475,6 +584,20 @@
   /* 高度由 JS 按真实滚动容器视口高内联设定（父容器自动高度下 100% 会塌缩） */
   align-self: flex-start;
   max-height: none;
+  overflow: hidden;
+  /* 展开/收起：宽度过渡；收起侧 visibility 延迟到动画结束（不可聚焦/不可达） */
+  transition: width 260ms cubic-bezier(0.22, 1, 0.36, 1), border-color 260ms ease, visibility 0s 0s;
+}
+.context-room-imported-comments-dock[data-collapsed='true'] {
+  width: 0;
+  border-left-color: transparent;
+  visibility: hidden;
+  transition: width 260ms cubic-bezier(0.22, 1, 0.36, 1), border-color 260ms ease, visibility 0s 260ms;
+}
+/* 内层定宽：容器宽度动画期间内容不被挤压换行 */
+.context-room-imported-comments-dock > header,
+.context-room-imported-comments-dock > .context-room-imported-comments-layer {
+  width: 260px;
 }
 .context-room-imported-comments-dock header {
   display: flex; align-items: center; gap: 8px;
@@ -519,6 +642,21 @@
 .context-room-imported-comments-unanchored-label {
   font-size: 11px; color: #b35900; margin-bottom: 8px; display: flex; align-items: center; gap: 4px;
 }
+/* 未定位区列表：grid 行高 0fr↔1fr 展开动画；收起侧延迟隐藏保证不可聚焦 */
+.context-room-imported-comments-unanchored-list {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows 220ms cubic-bezier(0.22, 1, 0.36, 1), opacity 180ms ease, visibility 0s 0s;
+}
+.context-room-imported-comments-unanchored-list[data-open='false'] {
+  grid-template-rows: 0fr;
+  opacity: 0;
+  visibility: hidden;
+  transition: grid-template-rows 220ms cubic-bezier(0.22, 1, 0.36, 1), opacity 180ms ease, visibility 0s 220ms;
+}
+.context-room-imported-comments-unanchored-list-inner { min-height: 0; overflow: hidden; }
+.context-room-imported-comments-unanchored-chevron { transition: transform 200ms ease; }
+.context-room-imported-comments-unanchored-chevron[data-collapsed='true'] { transform: rotate(-90deg); }
 .context-room-imported-comment {
   border: 1px solid var(--border, #d8dee4);
   border-radius: 10px;

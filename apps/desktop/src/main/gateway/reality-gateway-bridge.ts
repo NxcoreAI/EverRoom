@@ -27,12 +27,15 @@ const RECOVERABLE_CONNECTION_ERROR_CODES = new Set([
   'ERR_SOCKET_CLOSED',
   // gateway 在 knowledge ingest 高峰期事件循环被同步任务卡住时，表现为 loopback 连接超时
   'ETIMEDOUT',
+  // axios 响应超时（"timeout of Nms exceeded"，code 为 ECONNABORTED）同出此因：
+  // 网关短暂忙碌并非宕机，先恢复连接再重试一次，不应直接冒泡成全局弹窗（issue #181）
+  'ECONNABORTED',
 ])
 
 function isRecoverableConnectionError(error: unknown): boolean {
   if (!isAxiosError(error)) return false
   if (error.code && RECOVERABLE_CONNECTION_ERROR_CODES.has(error.code)) return true
-  return typeof error.message === 'string' && /socket hang up/i.test(error.message)
+  return typeof error.message === 'string' && /socket hang up|timeout of \d+ms exceeded/i.test(error.message)
 }
 
 interface Subscription {

@@ -178,6 +178,8 @@ export function createSubagentPiTools(
     resolveRoomContext?: (roomId: string) => Promise<RoomContextDigest | null>;
     /** doc-writer 组装数据源（doc-writer-subagent-plan §4）：读权威文档快照。 */
     resolveDocumentForDraft?: (documentId: string, roomId: string) => DocumentDraftSnapshot;
+    /** 实时房间存在性查询：run.availableRooms 是开跑快照，校验显式 roomId 时兜底。 */
+    roomExists?: (roomId: string) => boolean;
     /** 块索引标记（blockIndexMark）：Room 内记忆项权威数据，gateway 注入 memoryIndex。 */
     resolveRoomMemoryItems?: (roomId: string) => Array<{ id: string; content: string; type: string }>;
     /**
@@ -517,8 +519,11 @@ export function createSubagentPiTools(
         }
         const roomId = explicitRoomId || run.roomId || run.activeDocument?.roomId?.trim() || "";
         // 子 run 将按该 roomId 绑定文档工具（orchestrator 透传），显式传入的房间必须是真实存在的 Room。
+        // availableRooms 是开跑快照：同一 run 内 context_room_create 新建的房间不在其中，
+        // 须以实时注册表兜底，否则"新建 Room 后立即起草文档"会被误拒。
         if (explicitRoomId && !run.roomId && Array.isArray(run.availableRooms) && run.availableRooms.length > 0
-          && !run.availableRooms.some((room) => room.id === explicitRoomId)) {
+          && !run.availableRooms.some((room) => room.id === explicitRoomId)
+          && !options.roomExists?.(explicitRoomId)) {
           throw new Error("ROOM_SELECTION_REQUIRED: Choose one valid Room from available_rooms or call context_room_list");
         }
 

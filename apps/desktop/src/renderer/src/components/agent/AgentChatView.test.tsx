@@ -34,6 +34,12 @@ vi.mock('./useLinkedAgentRun', () => ({
   }),
 }))
 
+vi.mock('../../lib/systemClipboard', () => ({
+  writeTextToClipboard: (text: string) => writeClipboardTextMock(text),
+}))
+
+const { writeClipboardTextMock } = vi.hoisted(() => ({ writeClipboardTextMock: vi.fn() }))
+
 vi.mock('../../i18n/LocaleContext', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../i18n/LocaleContext')>()
   return {
@@ -83,7 +89,10 @@ describe('AgentChatView', () => {
     })
   })
 
-  afterEach(() => vi.unstubAllGlobals())
+  afterEach(() => {
+    writeClipboardTextMock.mockReset()
+    vi.unstubAllGlobals()
+  })
 
   it.each(['document.edit', 'document.continue'] as const)(
     'selects an allowed document before submitting %s',
@@ -223,6 +232,87 @@ describe('AgentChatView', () => {
     act(() => renderer.unmount())
   })
 
+  it('pauses auto-scroll while the user reads upward and resumes on a new user message', async () => {
+    const conversationNode = {
+      clientHeight: 400,
+      scrollHeight: 1_000,
+      scrollTop: 600,
+    }
+    const message = (id: string, role: 'user' | 'assistant') => ({
+      id,
+      sessionId: 'session-1',
+      runId: 'run-1',
+      role,
+      content: `content-${id}`,
+      createdAt: '2026-08-20T00:00:00.000Z',
+    })
+    const renderView = (messages: Parameters<typeof AgentChatView>[0]['messages']) => (
+      <AgentChatView
+        activeDocument={null}
+        activeRunId={null}
+        agentIdByRun={{}}
+        agentNamesById={{}}
+        activityByRun={{}}
+        availableRooms={[]}
+        composer={null}
+        currentSessionId="session-1"
+        draftHasContent={false}
+        error={null}
+        loading={false}
+        messages={messages}
+        onOpenSessionLink={vi.fn()}
+        onRejectDocumentIntent={vi.fn()}
+        onRetryPrompt={vi.fn()}
+        onSelectDocument={vi.fn()}
+        onSelectPrompt={vi.fn()}
+        onSelectRoom={vi.fn().mockResolvedValue(undefined)}
+        pendingNavigationByRun={{}}
+        runCompletedAtByRun={{}}
+        runStartedAtByRun={{}}
+        scopeReady
+        sessionLinks={[]}
+        submitting={false}
+        toolCallsByRun={{}}
+      />
+    )
+
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(renderView([message('user-1', 'user'), message('assistant-1', 'assistant')]), {
+        createNodeMock: (element) => element.props.className === 'agent-conversation'
+          ? conversationNode
+          : {},
+      })
+    })
+    expect(conversationNode.scrollTop).toBe(1_000)
+
+    conversationNode.scrollTop = 300
+    act(() => {
+      renderer.root.findByProps({ className: 'agent-conversation' }).props.onScroll({
+        currentTarget: conversationNode,
+      })
+    })
+    await act(async () => {
+      renderer.update(renderView([
+        message('user-1', 'user'),
+        message('assistant-1', 'assistant'),
+        message('stream-1', 'assistant'),
+      ]))
+    })
+    expect(conversationNode.scrollTop).toBe(300)
+
+    await act(async () => {
+      renderer.update(renderView([
+        message('user-1', 'user'),
+        message('assistant-1', 'assistant'),
+        message('stream-1', 'assistant'),
+        message('user-2', 'user'),
+      ]))
+    })
+    expect(conversationNode.scrollTop).toBe(1_000)
+    act(() => renderer.unmount())
+  })
+
   it('shows an unframed byline only for non-main Agent responses', async () => {
     let renderer!: TestRenderer.ReactTestRenderer
     await act(async () => {
@@ -281,6 +371,113 @@ describe('AgentChatView', () => {
     expect(bylines).toHaveLength(1)
     expect(bylines[0]!.findByType('span').children).toEqual(['OpenClaw'])
     expect(renderer.root.findAll((node) => node.children.includes('Main Agent'))).toHaveLength(0)
+    act(() => renderer.unmount())
+  })
+
+  it('copies a user message from its bubble copy button', async () => {
+    writeClipboardTextMock.mockResolvedValue(undefined)
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(<AgentChatView
+        activeDocument={null}
+        activeRunId={null}
+        agentIdByRun={{}}
+        agentNamesById={{}}
+        activityByRun={{}}
+        availableRooms={[]}
+        composer={null}
+        currentSessionId="session-1"
+        draftHasContent={false}
+        error={null}
+        loading={false}
+        messages={[{
+          id: 'user-1',
+          sessionId: 'session-1',
+          runId: 'run-1',
+          role: 'user',
+          content: '帮我把这段话翻译成英文',
+          createdAt: '2026-08-20T00:00:00.000Z',
+        }]}
+        onOpenSessionLink={vi.fn()}
+        onRejectDocumentIntent={vi.fn()}
+        onRetryPrompt={vi.fn()}
+        onSelectDocument={vi.fn()}
+        onSelectPrompt={vi.fn()}
+        onSelectRoom={vi.fn().mockResolvedValue(undefined)}
+        pendingNavigationByRun={{}}
+        runCompletedAtByRun={{}}
+        runStartedAtByRun={{}}
+        scopeReady
+        sessionLinks={[]}
+        submitting={false}
+        toolCallsByRun={{}}
+      />)
+    })
+
+    const copyButton = renderer.root.findByProps({ 'aria-label': '复制提问' })
+    expect(copyButton.props['data-copied']).toBe('false')
+    await act(async () => {
+      copyButton.props.onClick()
+      await Promise.resolve()
+    })
+    expect(writeClipboardTextMock).toHaveBeenCalledWith('帮我把这段话翻译成英文')
+    expect(renderer.root.findByProps({ 'aria-label': '复制提问' }).props['data-copied']).toBe('true')
+    act(() => renderer.unmount())
+  })
+  it('labels an addressed user message with a mention hint', async () => {
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(<AgentChatView
+        activeDocument={null}
+        activeRunId={null}
+        agentIdByRun={{}}
+        agentNamesById={{}}
+        activityByRun={{}}
+        availableRooms={[]}
+        composer={null}
+        currentSessionId="session-1"
+        draftHasContent={false}
+        error={null}
+        loading={false}
+        messages={[
+          {
+            id: 'user-1',
+            sessionId: 'session-1',
+            runId: 'run-1',
+            role: 'user',
+            content: '帮我整理这个需求',
+            createdAt: '2026-08-20T00:00:00.000Z',
+            referencedAgentNames: ['Codex', 'Claude Code'],
+          },
+          {
+            id: 'user-2',
+            sessionId: 'session-1',
+            runId: 'run-2',
+            role: 'user',
+            content: '再总结一下',
+            createdAt: '2026-08-20T00:00:03.000Z',
+          },
+        ]}
+        onOpenSessionLink={vi.fn()}
+        onRejectDocumentIntent={vi.fn()}
+        onRetryPrompt={vi.fn()}
+        onSelectDocument={vi.fn()}
+        onSelectPrompt={vi.fn()}
+        onSelectRoom={vi.fn().mockResolvedValue(undefined)}
+        pendingNavigationByRun={{}}
+        runCompletedAtByRun={{}}
+        runStartedAtByRun={{}}
+        scopeReady
+        sessionLinks={[]}
+        submitting={false}
+        toolCallsByRun={{}}
+      />)
+    })
+
+    const hints = renderer.root.findAllByProps({ className: 'agent-user-mention' })
+    expect(hints).toHaveLength(2)
+    expect(hints[0]!.children).toEqual(['@', 'Codex'])
+    expect(hints[1]!.children).toEqual(['@', 'Claude Code'])
     act(() => renderer.unmount())
   })
 })

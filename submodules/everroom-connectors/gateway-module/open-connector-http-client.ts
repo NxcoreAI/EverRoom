@@ -144,6 +144,9 @@ export class OpenConnectorHttpClient {
     options: RunActionOptions = {},
     attempt = 0,
   ): Promise<unknown> {
+    // 会话热更新（PUT /v1/connector-session）登出后 baseUrl 清空：比 new URL
+    // 抛 Invalid URL 更早给出可读错误，调用方按"会话缺席"而非网络故障处理。
+    if (!this.config.baseUrl.trim()) throw new Error("open_connector_session_missing");
     const headers: Record<string, string> = { "content-type": "application/json" };
     if (this.config.runtimeToken) headers.authorization = `Bearer ${this.config.runtimeToken}`;
     if (options.idempotencyKey) headers["idempotency-key"] = options.idempotencyKey;

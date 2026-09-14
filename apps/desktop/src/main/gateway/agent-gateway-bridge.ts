@@ -231,6 +231,19 @@ export class AgentGatewayBridge {
     })
   }
 
+  generateSessionTitle(input: {
+    sessionId: string
+    userText: string
+    assistantText: string
+    language?: string
+  }): Promise<{ title: string }> {
+    return this.request('/v1/processing/session-title', {
+      method: 'POST',
+      data: input,
+      timeout: 30_000,
+    })
+  }
+
   subscribe(contents: WebContents, sessionId: string): void {
     this.unsubscribe(contents.id)
     const subscription: Subscription = {

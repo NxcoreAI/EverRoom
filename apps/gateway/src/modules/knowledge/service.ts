@@ -432,6 +432,9 @@ export class KnowledgeService {
   private drainRequested = false;
   private promotionDraining = false;
   private promotionDrainRequested = false;
+  private stopped = false;
+  private drainInFlight: Promise<void> | null = null;
+  private promotionDrainInFlight: Promise<void> | null = null;
   private roomDuplicateIndexTrigger: (() => void) | null = null;
   /** M3 知识整理偏好（注入摘要与统计/洞察宿主），装配后生效。 */
   private knowledgePreferences: import("./preferences.js").KnowledgePreferences | null = null;
@@ -573,6 +576,15 @@ export class KnowledgeService {
         "knowledge evidence rescored with V2 rules",
       );
     }
+    // 合并残留自愈：旧版合并只迁移户口实体，被认领实体的 roomId 悬在已
+    // merged Room 上（推荐/挂载读侧显示「已建 Room」但 Room 已不存在）。
+    const healedEntityRooms = this.entityRegistry.healMergedEntityRooms();
+    if (healedEntityRooms > 0) {
+      this.logger.warn(
+        { event: "knowledge.entity.merged_room_healed", healed: healedEntityRooms },
+        "room-bound entities repointed to surviving rooms after merges",
+      );
+    }
     // 户口实体补种：图谱重建/数据重置会让 auto Room 丢失 entity_id（direct_mention
     // 通路随之瘫痪）。每次启动幂等补种；认领优先，让既有 mentions 直接种到 Room 头上。
     const homeEntitiesBackfilled = this.entityRegistry.backfillRoomHomeEntities();
@@ -628,9 +640,12 @@ export class KnowledgeService {
     this.wake();
   }
 
-  dispose(): void {
+  async dispose(): Promise<void> {
+    this.stopped = true;
     if (this.drainTimer) clearInterval(this.drainTimer);
     this.drainTimer = null;
+    await this.drainInFlight;
+    await this.promotionDrainInFlight;
     void this.ownedAgentResolver?.dispose();
     for (const schedule of this.pendingSchedules.values()) clearTimeout(schedule.timer);
     this.pendingSchedules.clear();
@@ -1303,28 +1318,35 @@ export class KnowledgeService {
 
   // ───────────────────────── worker（plan §5.3 + §4.4 晋升） ─────────────────────────
 
-  private async drain(): Promise<void> {
+  private drain(): Promise<void> {
     if (this.draining) {
       this.drainRequested = true;
-      return;
+      return this.drainInFlight ?? Promise.resolve();
     }
     this.draining = true;
+    this.drainInFlight = this.runDrainLoop().finally(() => {
+      this.draining = false;
+      this.drainInFlight = null;
+    });
+    return this.drainInFlight;
+  }
+
+  private async runDrainLoop(): Promise<void> {
     try {
       do {
         this.drainRequested = false;
         for (;;) {
+          if (this.stopped) return;
           const candidate = this.nextRunnableJob();
           if (!candidate) break;
           await this.processJob(candidate.job, candidate.lockKey);
         }
-      } while (this.drainRequested);
+      } while (this.drainRequested && !this.stopped);
     } catch (error) {
       this.logger.error(
         { event: "knowledge.worker.error", error: error instanceof Error ? error.message : String(error) },
         "knowledge worker drain failed",
       );
-    } finally {
-      this.draining = false;
     }
   }
 
@@ -1360,28 +1382,35 @@ export class KnowledgeService {
    * 用户触发的 Room 创建使用独立 worker。知识服务处理某个大 Wiki 时，
    * 创建任务仍可完成实体登记和 Room 落库，不被 route/ingest 的网络等待阻塞。
    */
-  private async drainPromotions(): Promise<void> {
+  private drainPromotions(): Promise<void> {
     if (this.promotionDraining) {
       this.promotionDrainRequested = true;
-      return;
+      return this.promotionDrainInFlight ?? Promise.resolve();
     }
     this.promotionDraining = true;
+    this.promotionDrainInFlight = this.runPromotionDrainLoop().finally(() => {
+      this.promotionDraining = false;
+      this.promotionDrainInFlight = null;
+    });
+    return this.promotionDrainInFlight;
+  }
+
+  private async runPromotionDrainLoop(): Promise<void> {
     try {
       do {
         this.promotionDrainRequested = false;
         for (;;) {
+          if (this.stopped) return;
           const candidate = this.nextRunnablePromotion();
           if (!candidate) break;
           await this.processJob(candidate.job, candidate.lockKey);
         }
-      } while (this.promotionDrainRequested);
+      } while (this.promotionDrainRequested && !this.stopped);
     } catch (error) {
       this.logger.error(
         { event: "knowledge.promotion_worker.error", error: error instanceof Error ? error.message : String(error) },
         "knowledge promotion worker drain failed",
       );
-    } finally {
-      this.promotionDraining = false;
     }
   }
 
@@ -2281,6 +2310,8 @@ export class KnowledgeService {
     kind: string;
     status: string;
     roomId: string | null;
+    /** roomId 经 merged 链 canonical 化后对应的 Room 标题（无归属为 null）。 */
+    roomTitle: string | null;
     evidenceScore: number;
     sourceCount: number;
     eligibleSourceCount: number;
@@ -2305,12 +2336,19 @@ export class KnowledgeService {
           .filter((link) => link.effectiveWeight > 0)
           .sort((a, b) => b.effectiveWeight - a.effectiveWeight)
           .map((link) => link.sourceKind))].slice(0, 3);
+        // 残留防御：roomId 经 merged 链 canonical 化（合并后指向退休 Room 的
+        // 实体映射到幸存 Room），并带出标题供读侧展示归属。
+        const roomId = entity.roomId ? this.canonicalRoomId(entity.roomId) : null;
+        const roomTitle = roomId
+          ? this.db.select({ title: rooms.title }).from(rooms).where(eq(rooms.id, roomId)).get()?.title ?? null
+          : null;
         return {
         id: entity.id,
         name: entity.name,
         kind: entity.kind,
         status: entity.status,
-        roomId: entity.roomId,
+        roomId,
+        roomTitle,
         evidenceScore: entity.evidenceScore,
         sourceCount: entity.sourceCount,
         eligibleSourceCount: entity.eligibleSourceCount,
@@ -2449,7 +2487,8 @@ export class KnowledgeService {
     if (!entity) return { ok: false, error: "entity_not_found" };
     let room: { id: string; title: string; kind: string } | null = null;
     if (entity.roomId) {
-      const row = this.db.select().from(rooms).where(eq(rooms.id, entity.roomId)).get();
+      // canonical 化：合并残留的 roomId 指向退休 Room 时映射到幸存 Room。
+      const row = this.db.select().from(rooms).where(eq(rooms.id, this.canonicalRoomId(entity.roomId))).get();
       if (row && !row.deletedAt) room = { id: row.id, title: row.title, kind: row.kind };
     }
     const links = this.entityRegistry.linksOfEntity(entity.id).map((link) => ({

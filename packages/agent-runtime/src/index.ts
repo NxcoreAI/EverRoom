@@ -3,6 +3,7 @@ import type {
   AgentActiveDocumentContext,
   AgentEventType,
   LocalAgentDelegationContext,
+  LocalAgentInvocationTarget,
   AgentRoomReference,
   RuntimeCapabilities,
 } from "@nxcore/agent-contract";
@@ -37,6 +38,8 @@ export interface StartRuntimeRunInput {
   activeDocument?: AgentActiveDocumentContext;
   /** Prior Agent chat made available to Main as an on-demand, read-only context source. */
   referencedConversationId?: string;
+  /** @ mentioned local CLI Agents; Main stays the speaker and decides which to dispatch via local_agent_dispatch. */
+  referencedLocalAgents?: LocalAgentInvocationTarget[];
   /** Structured handoff for an explicitly selected external/local Agent. */
   delegationContext?: LocalAgentDelegationContext;
 }

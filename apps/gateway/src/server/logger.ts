@@ -184,7 +184,11 @@ export async function createGatewayLogger(dataDirectory: string, level: LogLevel
       },
       hooks: {
         logMethod(args, method) {
-          method.apply(this, args.map((value) => redactSecrets(value)) as Parameters<typeof method>);
+          try {
+            method.apply(this, args.map((value) => redactSecrets(value)) as Parameters<typeof method>);
+          } catch {
+            // 关闭流程销毁输出流后迟到的异步日志：丢弃，不让进程崩掉
+          }
         },
       },
     },

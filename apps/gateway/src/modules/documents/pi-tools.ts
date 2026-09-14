@@ -57,11 +57,14 @@ export function createDocumentPiToolsWithRoomBindings(
         }
         let roomId = fixedRoomId;
         if (definition.name === "context_room_write_begin" && !roomId) {
-          const selectedRoom = input.availableRooms?.find((room) => room.id === requestedRoomId);
-          if (!selectedRoom) {
+          // availableRooms 是开跑快照：同一 run 内 context_room_create 新建的房间
+          // 不在其中，须以实时注册表兜底，否则新建房间的首次写入被误拒。
+          const roomKnown = input.availableRooms?.some((room) => room.id === requestedRoomId)
+            || host.roomExists(requestedRoomId);
+          if (!roomKnown) {
             throw new Error("ROOM_SELECTION_REQUIRED: Choose one valid Room from available_rooms or call context_room_list");
           }
-          roomId = selectedRoom.id;
+          roomId = requestedRoomId;
         }
         const result = await host.callTool(
           definition.name,

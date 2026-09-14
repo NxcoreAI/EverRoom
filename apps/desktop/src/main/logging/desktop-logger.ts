@@ -148,6 +148,10 @@ function installGlobalConsole(): void {
     if (threshold === 'off' || LEVEL_ORDER[actualLevel] < LEVEL_ORDER[threshold]) return
     writeToOriginalConsole(actualLevel, formatConsoleLine(now, 'console', actualLevel, payload))
     appendLogFile(now, 'console', actualLevel, payload)
+    // console 捕获面覆盖网关监督等未走 desktop-logger 的调用方，warn+ 同样上远端。
+    if (actualLevel === 'warn' || actualLevel === 'error') {
+      captureSentryLog('console', actualLevel, payload)
+    }
   }
   console.log = (...args) => writeGlobal('log', args)
   console.info = (...args) => writeGlobal('info', args)
@@ -227,7 +231,11 @@ function writeDesktopLog(
   const threshold = desktopLogThreshold(module)
   if (threshold === 'off' || LEVEL_ORDER[level] < LEVEL_ORDER[threshold]) return
   writeToOriginalConsole(level, formatConsoleLine(now, module, level, event))
-  if (captureRemote) captureSentryLog(module, level, event)
+  // 本地为主的日志（logLocalDesktop）在 warn+ 也上远端，Pro 用户排障才有
+  // 转写/agent/网关等核心链路的现场；captureSentryLog 内部还有模块与级别门控。
+  if (captureRemote || LEVEL_ORDER[level] >= LEVEL_ORDER.warn) {
+    captureSentryLog(module, level, event)
+  }
   appendLogFile(now, module, level, event, filePrefix)
 }
 

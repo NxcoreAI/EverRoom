@@ -40,6 +40,7 @@ export function ImportedCommentsPanel({
   aiReviewRunning,
   aiReviewDisabled,
   onAiReview,
+  documentTitle,
 }: {
   editor: Editor | null
   roomId: string
@@ -52,6 +53,8 @@ export function ImportedCommentsPanel({
   aiReviewRunning?: boolean
   aiReviewDisabled?: boolean
   onAiReview?: () => void
+  /** 当前文档标题：飞书支持对标题评论——引用文本命中标题时锚到标题行。 */
+  documentTitle?: string | null
 }) {
   const { t, locale } = useLocale()
   const [comments, setComments] = useState<ExternalDocumentCommentView[] | null>(null)
@@ -217,6 +220,15 @@ export function ImportedCommentsPanel({
             host = nodeAtNormalized(hit)
           }
         }
+        // 标题评论（飞书支持对文档标题评论）：正文未命中且引用文本即标题时，
+        // 锚到编辑器上方的标题输入行——评论卡停靠在标题旁而不是进未定位区。
+        if (!host && documentTitle && quote.length >= 2) {
+          const normalizedTitle = normalize(documentTitle)
+          if (normalizedTitle === quote || normalizedTitle.includes(quote) || quote.includes(normalizedTitle)) {
+            host = dom.closest('.context-room-doc-editor-col')
+              ?.querySelector('.context-room-document-title-input') ?? null
+          }
+        }
       }
       if (!host) return fallbackFor(id, kind)
       const anchored = toAnchor(host)
@@ -233,7 +245,7 @@ export function ImportedCommentsPanel({
       result.push(anchorOf(comment.id, 'imported', comment.quotedText, null))
     }
     return result
-  }, [comments, editor, localComments, scrollerOf])
+  }, [comments, documentTitle, editor, localComments, scrollerOf])
 
   // 锚点重算时机：评论变化 / 编辑器内容更新 / 窗口缩放。
   useEffect(() => {
@@ -497,14 +509,15 @@ export function ImportedCommentsPanel({
 
   const total = (comments?.length ?? 0) + (localComments?.length ?? 0)
 
-  // 收起态：不渲染停靠栏，锚点装饰与点击展开逻辑在上面的 effects 里继续工作。
-  if (collapsed) return null
+  // 收起态保留挂载：宽度动画收起（0 ↔ 面板宽），锚点装饰与点击展开逻辑照常。
 
   return (
     <aside
       className="context-room-imported-comments-dock"
+      data-collapsed={String(collapsed)}
       style={dockHeight > 0 ? { height: `${String(dockHeight)}px` } : undefined}
       aria-label={t('contextRoom:importedComments.panelTitle')}
+      aria-hidden={collapsed}
     >
       <header>
         <strong>{t('contextRoom:importedComments.panelTitle')}</strong>
@@ -565,7 +578,8 @@ export function ImportedCommentsPanel({
                   {t('contextRoom:importedComments.unlocatedSection')}
                   <small>{String(unanchored.length)}</small>
                 </button>
-                {!unlocatedCollapsed ? (<div className="context-room-imported-comments-unanchored-list">
+                <div className="context-room-imported-comments-unanchored-list" data-open={String(!unlocatedCollapsed)}>
+                  <div className="context-room-imported-comments-unanchored-list-inner">
                 {unanchored.map((anchor) => (
                   <div key={anchor.id} data-kind={anchor.kind}>
                     {anchor.kind === 'local'
@@ -614,7 +628,8 @@ export function ImportedCommentsPanel({
                         })()}
                   </div>
                 ))}
-                </div>) : null}
+                  </div>
+                </div>
               </div>
             )}
           </>

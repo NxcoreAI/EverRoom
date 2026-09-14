@@ -125,7 +125,12 @@ export function agentToolLabel(tool: DisplayAgentToolCall, completed = tool.stat
     context_room_write_append: ['写入文档内容', '已写入文档内容'],
     context_room_write_begin: ['开始创建文档', '已开始创建文档'],
     context_room_write_commit: ['提交新文档', '已提交新文档'],
+    local_agent_dispatch: ['委派本机 Agent', '已委派本机 Agent'],
+    agent_dispatch: ['调度子 Agent', '已调度子 Agent'],
     tool_search: ['选择所需工具', '已选择所需工具'],
+    wiki_search: ['搜索知识库', '已搜索知识库'],
+    wiki_read: ['读取知识库页面', '已读取知识库页面'],
+    conversation_search: ['检索历史对话', '已检索历史对话'],
   }
   const exact = labels[name]
   if (exact) {
@@ -145,7 +150,12 @@ export function agentToolLabel(tool: DisplayAgentToolCall, completed = tool.stat
         context_room_write_append: ['surface:agentExecutionTimeline.writeDocumentContent', 'surface:agentExecutionTimeline.documentContentWritten'],
         context_room_write_begin: ['surface:agentExecutionTimeline.startDocumentCreation', 'surface:agentExecutionTimeline.documentCreationStarted'],
         context_room_write_commit: ['surface:agentExecutionTimeline.commitNewDocument', 'surface:agentExecutionTimeline.newDocumentCommitted'],
+        local_agent_dispatch: ['surface:agentExecutionTimeline.dispatchLocalAgent', 'surface:agentExecutionTimeline.localAgentDispatched'],
+        agent_dispatch: ['surface:agentExecutionTimeline.dispatchSubagent', 'surface:agentExecutionTimeline.subagentDispatched'],
         tool_search: ['surface:agentExecutionTimeline.selectRequiredTool', 'surface:agentExecutionTimeline.requiredToolSelected'],
+        wiki_search: ['surface:agentExecutionTimeline.searchWiki', 'surface:agentExecutionTimeline.wikiSearched'],
+        wiki_read: ['surface:agentExecutionTimeline.readWikiPage', 'surface:agentExecutionTimeline.wikiPageRead'],
+        conversation_search: ['surface:agentExecutionTimeline.searchConversations', 'surface:agentExecutionTimeline.conversationsSearched'],
       }
       const key = keys[name]?.[completed ? 1 : 0]
       if (key) return t(key)
@@ -183,7 +193,7 @@ export function agentToolSubject(tool: DisplayAgentToolCall): string | undefined
     if (service) return service
   }
   for (const key of [
-    'command', 'cmd', 'script', 'code', 'input',
+    'command', 'cmd', 'script', 'code', 'input', 'task',
     'query', 'search_query', 'keyword', 'prompt', 'path', 'filePath', 'title', 'documentTitle', 'url',
   ]) {
     const value = userText(tool.args[key], 80)

@@ -536,6 +536,40 @@ export class EntityRegistry {
     return backfilled;
   }
 
+  /**
+   * 合并残留自愈：roomId 指向已 merged Room 的实体，沿 mergedIntoRoomId
+   * 链重指到幸存 Room。旧版合并只迁移了户口实体（rooms.entityId），按名
+   * 认领的其余实体悬在退休 Room 上——推荐/挂载读侧显示「已建 Room」但
+   * Room 已不存在。幂等：无 merged Room 或无悬挂实体即空跑。
+   */
+  healMergedEntityRooms(): number {
+    const merged = this.db.select({ id: rooms.id, mergedIntoRoomId: rooms.mergedIntoRoomId })
+      .from(rooms)
+      .where(eq(rooms.lifecycle, "merged"))
+      .all()
+      .filter((row): row is { id: string; mergedIntoRoomId: string } => Boolean(row.mergedIntoRoomId));
+    if (merged.length === 0) return 0;
+    const redirect = new Map(merged.map((row) => [row.id, row.mergedIntoRoomId]));
+    const resolve = (roomId: string): string => {
+      const seen = new Set<string>();
+      let current = roomId;
+      while (redirect.has(current) && !seen.has(current)) {
+        seen.add(current);
+        current = redirect.get(current)!;
+      }
+      return current;
+    };
+    const now = new Date();
+    let healed = 0;
+    for (const mergedId of redirect.keys()) {
+      const survivorId = resolve(mergedId);
+      if (survivorId === mergedId) continue;
+      healed += Number(this.db.update(entities).set({ roomId: survivorId, updatedAt: now })
+        .where(eq(entities.roomId, mergedId)).run().changes);
+    }
+    return healed;
+  }
+
   private scoringOf(input: EntityLinkInput): EvidenceScoreBreakdown {
     const latestIngest = this.db.select({
       filterStatus: ingestEvents.filterStatus,

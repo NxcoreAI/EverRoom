@@ -228,6 +228,36 @@ describe("createSubagentPiTools document_draft", () => {
     expect(input.roomId).toBe("room-2");
   });
 
+  it("Room 透传：显式 roomId 不在开跑快照但实时注册表命中时放行（同 run 新建 Room）", async () => {
+    const orchestrator = orchestratorReturning({});
+    const tools = createSubagentPiTools(registryWith(["doc-writer"]), orchestrator, {
+      roomExists: (roomId) => roomId === "room-fresh",
+    });
+    const tool = tools.find((candidate) => candidate.name === "document_draft")!;
+    const availableRooms = [{ id: "room-1", title: "Room 1" }];
+    await tool.execute(
+      { ...baseRun, roomId: undefined, availableRooms } as never,
+      { task: "draft-create", instruction: "起草文档", roomId: "room-fresh" } as never,
+      undefined,
+    );
+    const input = (orchestrator.dispatch.mock.calls[0]![0] as { input: Record<string, unknown> }).input;
+    expect(input.roomId).toBe("room-fresh");
+  });
+
+  it("Room 透传：快照与实时注册表都不命中时仍拒绝（防伪造 roomId）", async () => {
+    const orchestrator = orchestratorReturning({});
+    const tools = createSubagentPiTools(registryWith(["doc-writer"]), orchestrator, {
+      roomExists: (roomId) => roomId === "room-fresh",
+    });
+    const tool = tools.find((candidate) => candidate.name === "document_draft")!;
+    const availableRooms = [{ id: "room-1", title: "Room 1" }];
+    await expect(tool.execute(
+      { ...baseRun, roomId: undefined, availableRooms } as never,
+      { task: "draft-create", instruction: "起草文档", roomId: "room-ghost" } as never,
+      undefined,
+    )).rejects.toThrow("ROOM_SELECTION_REQUIRED");
+  });
+
   it("draft-create：contentMarkdown 单串返回分块计数（字节精确性由 resolver 测试覆盖）", async () => {
     const body = "## 第一节\n\n内容甲。\n\n## 第二节\n\n内容乙。";
     const orchestrator = orchestratorReturning({

@@ -119,7 +119,11 @@ export function createAgentRuntime(
     tools: [
       ...(knowledge?.tools ?? []),
       ...createDocumentPiToolsWithRoomBindings(mcpHost, routedRoomByRun),
-      ...(config.cliConnector ? createOpenConnectorPiTools(config.cliConnector, undefined, knowledge?.externalCalls) : []),
+      // 会话门控：cliConnector 恒在场（create-server 归一化），baseUrl 空 =
+      // 登出态，不暴露 oo 工具；会话热更新后经 hotReloadAgentRuntimes 重建。
+      ...(config.cliConnector?.baseUrl
+        ? createOpenConnectorPiTools(config.cliConnector, undefined, knowledge?.externalCalls)
+        : []),
       ...(config.webSearch && knowledge?.agentResolver
         ? createWebSearchPiTools(knowledge.agentResolver, knowledge.externalCalls)
         : []),
@@ -250,6 +254,24 @@ export function createImportClassifierRuntime(config: GatewayConfig): AgentRunti
     sessionsDir: join(pi.sessionsDir, "import-classifier"),
     workingDirectory: join(pi.workingDirectory, "import-classifier"),
     agentDirectory: join(pi.agentDirectory, "import-classifier"),
+  });
+}
+
+/** 会话标题生成：import-classifier 同款隔离内部 runtime（无工具、单次调用）。 */
+export function createSessionTitleRuntime(config: GatewayConfig): AgentRuntime | null {
+  if (config.agentRuntime === "fake" || !isPiRuntimeConfigured(config.backgroundPi)) return null;
+  const { mcp: _mcp, ...pi } = config.backgroundPi!;
+  return new PiAgentRuntime({
+    ...pi,
+    includeBashTool: false,
+    builtinTools: [],
+    maxToolCallsPerRun: 1,
+    runtimeRole: "internal",
+    // 标题是单行机器输出：与 background runtime 同理不继承 primary reasoning。
+    reasoning: "off",
+    sessionsDir: join(pi.sessionsDir, "session-title"),
+    workingDirectory: join(pi.workingDirectory, "session-title"),
+    agentDirectory: join(pi.agentDirectory, "session-title"),
   });
 }
 

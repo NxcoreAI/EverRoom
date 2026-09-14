@@ -32,6 +32,32 @@ describe('Agent run activity', () => {
     expect(agentToolSubject(tool)).toBe('配置.md')
   })
 
+  it('labels dispatch tools as delegations instead of file edits (dispatch contains "patch")', () => {
+    const t = (message: string, values?: Record<string, string | number>) => translate('en-US', message, values)
+    const tool = {
+      id: 'dispatch-1', runId: 'run-1', name: 'local_agent_dispatch', args: { task: '审查这个实现' },
+      status: 'completed' as const, startedAt: new Date().toISOString(),
+    }
+    expect(agentToolLabel(tool, false, t)).toBe('Delegate to local Agent')
+    expect(agentToolLabel(tool, true, t)).toBe('Delegated to local Agent')
+    expect(agentToolLabel({ ...tool, name: 'agent_dispatch' }, true, t)).toBe('Subagent dispatched')
+    expect(agentToolSubject(tool)).toBe('审查这个实现')
+  })
+
+  it('labels knowledge tools distinctly from web search and file reads', () => {
+    const t = (message: string, values?: Record<string, string | number>) => translate('en-US', message, values)
+    const tool = {
+      id: 'wiki-1', runId: 'run-1', name: 'wiki_search', args: { query: 'OIDC 设备授权' },
+      status: 'completed' as const, startedAt: new Date().toISOString(),
+    }
+    expect(agentToolLabel(tool, false, t)).toBe('Search the knowledge base')
+    expect(agentToolLabel(tool, true, t)).toBe('Knowledge base search completed')
+    expect(agentToolLabel({ ...tool, name: 'wiki_read' }, false, t)).toBe('Read knowledge base page')
+    expect(agentToolLabel({ ...tool, name: 'wiki_read' }, true, t)).toBe('Knowledge base page read')
+    expect(agentToolLabel({ ...tool, name: 'conversation_search' }, true, t)).toBe('Past conversations searched')
+    expect(agentToolLabel({ ...tool, name: 'web_search' }, true, t)).toBe('Web search completed')
+  })
+
   it('maps connector tools to distinct timeline presentations', () => {
     const tools = [
       { name: 'connector_search', args: { service: 'gmail', query: 'find messages' } },

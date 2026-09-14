@@ -255,6 +255,11 @@ export class OpenConnectorSyncExecutor implements ConnectorExecutor {
     this.formatMapper = mapper;
   }
 
+  /** 会话出席（baseUrl 非空）：SyncEngine.canServe 据此在登出态静默跳过轮询。 */
+  isAvailable(): boolean {
+    return Boolean(this.options.config.baseUrl.trim());
+  }
+
   /** 在线 scope 发现：provider 适配器的 discoverScopes（文件夹/日历表枚举）走同一 URL 路由。 */
   async discoverScopes(connection: {
     provider: ConnectorProvider;

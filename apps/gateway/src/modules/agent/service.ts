@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import type {
   AgentActiveDocumentContext,
   AgentEvent,
@@ -43,8 +43,9 @@ import {
 import { AgentEventBroker } from "./event-broker.js";
 import { issueTrustedMcpSession, revokeTrustedMcpSession } from "./mcp-session-authority.js";
 import { requestsWorkspaceDocument } from "./document-intent.js";
+import { localAgentGrant, sealDelegationPayload } from "../local-agents/delegation.js";
 import type { FilesService } from "../files/service.js";
-import { clearRedactionDelta, redactDelta, redactSecrets, redactText } from "../../security/secret-redaction.js";
+import { flushRedactionDelta, redactDelta, redactSecrets, redactText } from "../../security/secret-redaction.js";
 
 export interface AgentServiceLogger {
   info(bindings: Record<string, unknown>, message: string): void;
@@ -295,21 +296,9 @@ function localAgentDelegationContext(input: {
         },
       } : {}),
     },
-    grant: request.localAgent.permissionProfile === "full_access"
-      ? { workspaceAccess: "full-access" as const, approvals: "agent-reviewed" as const, mutationAllowed: true }
-      : request.localAgent.permissionProfile === "workspace_write"
-        ? { workspaceAccess: "workspace-write" as const, approvals: "agent-reviewed" as const, mutationAllowed: true }
-        : { workspaceAccess: "read-only" as const, approvals: "disabled" as const, mutationAllowed: false },
+    grant: localAgentGrant(request.localAgent.permissionProfile),
   };
-  return {
-    ...payload,
-    provenance: {
-      source: "everroom.local-agent-delegation",
-      generatedAt: new Date().toISOString(),
-      digestAlgorithm: "sha256",
-      digest: createHash("sha256").update(JSON.stringify(payload)).digest("hex"),
-    },
-  };
+  return sealDelegationPayload(payload);
 }
 
 function participantHandoffPrompt(messages: AgentMessage[]): string | null {
@@ -1152,6 +1141,22 @@ export class AgentService {
     if (input.context?.referencedConversationId && input.context.externalConversationId) {
       throw new Error("agent_conversation_context_conflict");
     }
+    const referencedLocalAgentIds = input.context?.referencedLocalAgentIds ?? [];
+    const referencedTargets = input.referencedLocalAgents ?? [];
+    if (referencedLocalAgentIds.length || referencedTargets.length) {
+      if (selectedAgentId !== MAIN_AGENT_ID) {
+        throw new Error("referenced_local_agent_requires_main_agent");
+      }
+      if (input.context?.externalConversationId || input.context?.referencedConversationId) {
+        throw new Error("agent_conversation_context_conflict");
+      }
+      const idSet = new Set(referencedLocalAgentIds);
+      const targetIds = referencedTargets.map((target) => target.id);
+      if (referencedLocalAgentIds.length !== targetIds.length
+        || !targetIds.every((id) => idSet.has(id))) {
+        throw new Error("referenced_local_agent_target_mismatch");
+      }
+    }
     if (selectedAgentId === MAIN_AGENT_ID && input.localAgent) throw new Error("local_agent_target_invalid");
     if (selectedAgentId !== MAIN_AGENT_ID && input.localAgent?.id !== selectedAgentId) {
       throw new Error("local_agent_target_invalid");
@@ -1327,7 +1332,18 @@ export class AgentService {
             "It is a read-only context subagent and does not speak to the user. Call agent_conversation_query when the request depends on that history, then answer the user yourself as Main Agent.",
           ].join("\n")
         : null;
-      const externalContext = nativeContinuationRef ? null : importedContext ?? referencedConversationContext;
+      const referencedLocalAgentContext = referencedTargets.length
+        ? [
+            `The user mentioned ${referencedTargets.length === 1 ? "a local Agent" : `${referencedTargets.length} local Agents`} with inline @ mentions in the prompt:`,
+            ...referencedTargets.map((target) => {
+              const description = target.card?.description?.trim();
+              return `- ${target.displayName} (agentId: ${target.id})${description ? ` — ${description}` : ""}`;
+            }),
+            "You decide autonomously which of these mentioned local Agents (if any) should handle part of the request. To delegate, call local_agent_dispatch with that agentId and a task you organize yourself, wait for the result, and relay it to the user.",
+            "You remain the only speaker to the user. Do not answer in a local Agent's place and do not switch agents.",
+          ].join("\n")
+        : null;
+      const externalContext = nativeContinuationRef ? null : importedContext ?? referencedLocalAgentContext ?? referencedConversationContext;
       const responseLanguage = normalizeAgentLocale(input.responseLanguage);
       const attachments = await this.resolveAttachments(input.attachments);
       const delegationContext = targetRuntime ? localAgentDelegationContext({
@@ -1361,6 +1377,7 @@ export class AgentService {
         ...(runRoomId && input.memoryScope === "room" ? { memoryScope: "room" as const } : {}),
         toolsEnabled: input.toolsEnabled !== false,
         ...(referencedConversationId ? { referencedConversationId } : {}),
+        ...(referencedTargets.length ? { referencedLocalAgents: referencedTargets } : {}),
         ...(activeDocument ? { activeDocument } : {}),
         ...(delegationContext ? { delegationContext } : {}),
       });
@@ -1544,16 +1561,30 @@ export class AgentService {
       : null;
   }
 
-  private async appendEvent(sessionId: string, runId: string, runtimeEvent: RuntimeEvent): Promise<void> {
+  private async appendEvent(
+    sessionId: string,
+    runId: string,
+    runtimeEvent: RuntimeEvent,
+    options: { skipDeltaHold?: boolean } = {},
+  ): Promise<void> {
     runtimeEvent = redactSecrets(runtimeEvent);
     const deltaScope = `agent:${runId}`;
     if (runtimeEvent.type === "message.delta") {
       const payload = runtimeEvent.payload as { delta?: unknown };
-      if (typeof payload.delta === "string") {
+      if (typeof payload.delta === "string" && !options.skipDeltaHold) {
         runtimeEvent = { ...runtimeEvent, payload: { ...payload, delta: redactDelta(deltaScope, payload.delta) } };
       }
     } else if (runtimeEvent.type === "message.completed" || runtimeEvent.type.startsWith("run.")) {
-      clearRedactionDelta(deltaScope);
+      // 扣留的尾部必须补发，否则事件流里的 delta 累加永久缺尾（#199）：
+      // 中断时前端只能展示 delta 累加；正常完成时工具型 run 的"末段答案"
+      // 也取自 delta 累加。余留已过 redactText，补发时 skipDeltaHold 防止再次扣留。
+      const tail = flushRedactionDelta(deltaScope);
+      if (tail) {
+        await this.appendEvent(sessionId, runId, {
+          type: "message.delta",
+          payload: { delta: tail },
+        }, { skipDeltaHold: true });
+      }
     }
     const runOwner = this.db.select({ agentId: agentRuns.agentId })
       .from(agentRuns).where(eq(agentRuns.id, runId)).get();

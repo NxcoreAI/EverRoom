@@ -48,3 +48,79 @@
 @media (prefers-reduced-motion: reduce) {
   .app-toast { animation: none; }
 }
+
+/* ---- error 变体：顶部居中、极简红色横幅，自动消失。 ---- */
+
+.app-toast[data-variant='error'] {
+  top: 20px;
+  bottom: auto;
+  right: 50%;
+  transform: translateX(50%);
+  grid-template-columns: 28px minmax(0, 1fr) 28px;
+  border-color: color-mix(in srgb, var(--danger) 22%, transparent);
+  background: color-mix(in srgb, var(--danger) 7%, var(--surface) 93%);
+  box-shadow: 0 12px 32px color-mix(in srgb, var(--danger) 16%, rgb(20 23 27 / 10%));
+  animation: app-error-toast-in 320ms cubic-bezier(0.22, 1.2, 0.36, 1) both;
+}
+
+.app-toast[data-variant='error'] > span {
+  background: var(--danger);
+  color: #fff;
+}
+
+.app-toast[data-variant='error'] strong {
+  color: color-mix(in srgb, var(--danger) 82%, #000);
+}
+
+.app-toast[data-variant='error'] small {
+  color: var(--text);
+}
+
+.app-toast-action {
+  justify-self: start;
+  margin-top: 6px;
+  padding: 3px 10px;
+  border: none;
+  border-radius: 999px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 11px;
+  cursor: pointer;
+  transition: background 140ms ease;
+}
+
+.app-toast-action:hover {
+  background: color-mix(in srgb, var(--danger) 85%, #000);
+}
+
+/* 进场：自上而下轻落带回弹；退场：上浮淡出。translateX(50%) 居中需在各帧保留。 */
+
+@keyframes app-error-toast-in {
+  0% { opacity: 0; transform: translateX(50%) translateY(-16px) scale(0.96); }
+  65% { opacity: 1; transform: translateX(50%) translateY(0) scale(1); }
+  80% { transform: translateX(50%) translateY(2px) scale(1.005); }
+  100% { opacity: 1; transform: translateX(50%) translateY(0) scale(1); }
+}
+
+@keyframes app-error-toast-out {
+  to { opacity: 0; transform: translateX(50%) translateY(-12px) scale(0.98); }
+}
+
+/* 退场动画在进场之后声明，确保覆盖。info 与 error 各自的 out 都以 -out 结尾，
+   组件按 animationName 后缀识别退场完成。 */
+
+.app-toast[data-leaving='true'] {
+  animation: app-info-toast-out 180ms ease-in forwards;
+}
+
+.app-toast[data-variant='error'][data-leaving='true'] {
+  animation: app-error-toast-out 240ms ease-in forwards;
+}
+
+@keyframes app-info-toast-out {
+  to { opacity: 0; transform: translateY(8px); }
+}
+
+@media (max-width: 620px) {
+  .app-toast[data-variant='error'] { top: 14px; right: 50%; }
+}

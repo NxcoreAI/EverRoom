@@ -12,6 +12,7 @@ import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, nativeTheme, Noti
 import type {
   ImportRoomDocumentInput,
   DocumentOperationCommandInput,
+  LocalAgentInvocationTarget,
   SaveRoomDocumentInput,
   StartAgentRunInput,
   StartDocumentOperationInput,
@@ -70,7 +71,7 @@ import { ConnectorGatewayBridge } from './gateway/connector-gateway-bridge'
 import { providerOfService, SaasConnectorBridge } from './gateway/saas-connector-bridge'
 import { createConnectorTombstoneStore } from './core/connector-tombstone-store'
 import { RecordingStore } from './recording/recording-store'
-import { isSaasRateLimitError, OIDC_CALLBACK_URL, SaasClient, SaasRequestError, type ConnectorOoSession } from './cloud/saas-client'
+import { isSaasRateLimitError, OIDC_CALLBACK_URL, SaasClient, SaasRequestError, type ConnectorOoSession, type OidcCallbackOutcome } from './cloud/saas-client'
 import { AgentStatusReporter } from './cloud/agent-status-reporter'
 import { SessionLeaseKeeper } from './cloud/session-lease-keeper'
 import { AiRelayKeeper, type AiRelayKeeperEvent } from './cloud/ai-relay-keeper'
@@ -86,7 +87,7 @@ import {
   logLocalDesktop,
   logDocumentCursorCompletion,
 } from './logging/desktop-logger'
-import { configureSentry, syncSentryAccount } from './monitoring/sentry'
+import { configureSentry, isSentryRemoteDebugEnabled, syncSentryAccount } from './monitoring/sentry'
 import { PrivateTranscriptionSyncService } from './transcription/private-transcription-sync'
 import { PrivateSyncScheduler } from './transcription/private-sync-scheduler'
 import { TranscriptionProcessingCoordinator } from './transcription/processing-coordinator'
@@ -293,6 +294,7 @@ const AGENT_AUTH_CHANNELS = {
 const EXTERNAL_DOCUMENT_CHANNELS = {
   importSearch: 'external-documents:import-search',
   importList: 'external-documents:import-list',
+  importExistingInRoom: 'external-documents:import-existing-in-room',
   importBatch: 'external-documents:import-batch',
   importBatchStatus: 'external-documents:import-batch-status',
   cancelImportBatch: 'external-documents:cancel-import-batch',
@@ -353,6 +355,7 @@ const AGENT_CHANNELS = {
   listSessionLinks: 'agent:list-session-links',
   markSessionLinkReturned: 'agent:mark-session-link-returned',
   updateSession: 'agent:update-session',
+  generateSessionTitle: 'agent:generate-session-title',
   deleteSession: 'agent:delete-session',
   getSession: 'agent:get-session',
   getEvents: 'agent:get-events',
@@ -930,9 +933,29 @@ function focusMainWindow(): void {
 
 function handleProtocolUrl(url: string): void {
   if (!url.startsWith(OIDC_CALLBACK_URL)) return
-  if (saasClient) saasClient.handleOidcCallback(url)
+  let outcome: OidcCallbackOutcome = 'unrelated'
+  if (saasClient) outcome = saasClient.handleOidcCallback(url)
   else queuedProtocolUrls.push(url)
   focusMainWindow()
+  if (outcome === 'no-login-in-progress') notifyLoginCallbackDropped()
+}
+
+/**
+ * 浏览器授权已完成，但主进程已没有对应的登录（等待超时/应用重启过）：
+ * 授权码无处可用，明确告知用户重新发起登录，不再静默丢弃后让用户停在登录页。
+ */
+function notifyLoginCallbackDropped(): void {
+  const options = {
+    type: 'warning' as const,
+    title: 'EverRoom 登录',
+    message: '浏览器授权已完成，但应用内没有正在进行的登录。',
+    detail: '登录等待可能已超时或应用重启过，请回到登录页重新点击登录。',
+    buttons: ['好'],
+    defaultId: 0,
+  }
+  const window = BrowserWindow.getAllWindows()[0]
+  if (window && !window.isDestroyed()) void dialog.showMessageBox(window, options)
+  else void dialog.showMessageBox(options)
 }
 
 app.on('open-url', (event, url) => {
@@ -1676,10 +1699,10 @@ async function fetchConnectorOoSession(userId: string): Promise<ConnectorOoSessi
 }
 
 /**
- * 应用 oo 会话：重建直连 oo 的 bridge，并让 gateway env 跟随。
- * gateway 已在运行且 env 变化时重启之（各 bridge 经 ensureConnection/
- * recoverConnection 自愈，与 dev 热重载同路径）；启动期调用时 gateway 未起，
- * env 在首次 spawn 生效，无需重启。
+ * 应用 oo 会话：重建直连 oo 的 bridge；gateway 侧走两条路——
+ * 运行中：热推送（PUT/DELETE /v1/connector-session，gateway 原地 patch
+ * 连接配置并热重载 agent 工具，不重启进程）；启动期调用时 gateway 未起，
+ * env 在首次 spawn 生效（extraEnvironment 每次启动求值）。
  */
 async function applyConnectorOoSession(session: ConnectorOoSession | null): Promise<void> {
   ooCliBridge?.shutdown()
@@ -1705,13 +1728,16 @@ async function applyConnectorOoSession(session: ConnectorOoSession | null): Prom
     scheduleSaasConnectorReconcile(20_000)
     return
   }
+  // 运行中热推送，不再重启 gateway：重启窗口会把登录瞬间的 refresh-saas
+  // 等在途请求报成「正在停止」，已成功的登录被渲染层显示为登录失败。
   try {
-    await supervisor.shutdown()
-    const gateway = await supervisor.start()
-    console.info(`[connector-mode] gateway restarted to apply oo session env (gateway at ${gateway.baseUrl})`)
+    const applied = await connectorGatewayBridge?.applyConnectorSession(
+      session ? { baseUrl: session.baseUrl, runtimeToken: session.token } : null,
+    )
+    console.info(`[connector-mode] oo session applied to gateway (configured=${String(applied?.configured ?? false)})`)
     scheduleSaasConnectorReconcile()
   } catch (error) {
-    console.error('[connector-mode] gateway restart for oo session env failed:', error)
+    console.error('[connector-mode] applying oo session to gateway failed:', error)
   }
 }
 
@@ -2006,6 +2032,10 @@ function registerExternalDocumentHandlers(bridge: ExternalDocumentsGatewayBridge
     if (cachedOnly !== undefined && typeof cachedOnly !== 'boolean') throw new Error('无效的缓存参数。')
     return bridge.importList(provider as 'feishu' | 'notion', connectionName, cachedOnly)
   })
+  handle(EXTERNAL_DOCUMENT_CHANNELS.importExistingInRoom, (_event, provider: unknown, roomId: unknown, ids: unknown) => {
+    if (typeof provider !== 'string' || typeof roomId !== 'string' || !Array.isArray(ids)) throw new Error('无效的已导入检查请求。')
+    return bridge.importExistingInRoom(provider as 'feishu' | 'notion', roomId, ids as string[])
+  })
   handle(EXTERNAL_DOCUMENT_CHANNELS.importBatch, (_event, input: unknown) => bridge.importBatch(input as never))
   handle(EXTERNAL_DOCUMENT_CHANNELS.importBatchStatus, (_event, batchId: unknown) => {
     if (typeof batchId !== 'string') throw new Error('无效的批量导入标识。')
@@ -2205,6 +2235,7 @@ function registerAgentHandlers(bridge: AgentGatewayBridge, migrationCoordinator:
   handle(AGENT_CHANNELS.listSessionLinks, (_event, sessionId) => bridge.listSessionLinks(sessionId))
   handle(AGENT_CHANNELS.markSessionLinkReturned, (_event, linkId) => bridge.markSessionLinkReturned(linkId))
   handle(AGENT_CHANNELS.updateSession, (_event, sessionId, input) => bridge.updateSession(sessionId, input))
+  handle(AGENT_CHANNELS.generateSessionTitle, (_event, input) => bridge.generateSessionTitle(input))
   handle(AGENT_CHANNELS.deleteSession, async (_event, sessionId) => {
     await bridge.deleteSession(sessionId)
     await workspaceBindingStore.removeSession(sessionId)
@@ -2218,41 +2249,39 @@ function registerAgentHandlers(bridge: AgentGatewayBridge, migrationCoordinator:
     bridge.getEvents(sessionId, runId, afterSeq))
   handle(AGENT_CHANNELS.startRun, async (_event, sessionId, input) => {
     const request = input as StartAgentRunInput
-    if (!request.targetAgentId || request.targetAgentId === 'main') {
-      const { localAgent: _discarded, ...safeRequest } = request
-      return bridge.startRun(sessionId, {
-        ...safeRequest,
-        ...(request.targetAgentId === 'main' ? { targetAgentId: 'main' } : {}),
-      })
-    }
-    let installation = localAgents.find((agent) => agent.id === request.targetAgentId)
-    if (!installation) {
-      await scanLocalAgents()
-      installation = localAgents.find((agent) => agent.id === request.targetAgentId)
-    }
-    if (!installation?.callable || !installation.invocationSupported || !installation.executablePath) {
-      throw new Error('选择的本机 Agent 当前不可调用。请重新扫描或检查安装。')
-    }
-    if (!isSafeLocalAgentPath(installation.executablePath)) {
-      throw new Error('本机 Agent 的可执行文件路径无效。')
-    }
-    const binding = request.workspaceBindingToken
-      ? workspaceBindings.get(request.workspaceBindingToken)
-      : null
-    if (request.workspaceBindingToken
-      && (!binding || binding.agentId !== installation.id || binding.sessionId !== sessionId)) {
-      throw new Error('Agent 工作区授权已失效，请重新选择。')
-    }
-    const storedBinding = binding ?? await workspaceBindingStore.find(installation.id, sessionId)
-    const validatedBinding = storedBinding
-      ? await workspaceBindingStore.validate(storedBinding)
-      : null
-    const workingDirectory = validatedBinding?.rootPath
-      ?? unboundWorkspaceRoot(installation.id, sessionId)
-    await mkdir(workingDirectory, { recursive: true })
-    return bridge.startRun(sessionId, {
-      ...request,
-      localAgent: {
+    // 本机 Agent 的 invocation target 一律由 main 进程从本机发现结果重建
+    // （渲染端传入的 localAgent 被丢弃），workspace 授权与沙箱兜底逻辑两路共用。
+    const resolveLocalAgentTarget = async (
+      targetSessionId: string,
+      agentId: string,
+      workspaceBindingToken?: string,
+    ): Promise<LocalAgentInvocationTarget> => {
+      let installation = localAgents.find((agent) => agent.id === agentId)
+      if (!installation) {
+        await scanLocalAgents()
+        installation = localAgents.find((agent) => agent.id === agentId)
+      }
+      if (!installation?.callable || !installation.invocationSupported || !installation.executablePath) {
+        throw new Error('选择的本机 Agent 当前不可调用。请重新扫描或检查安装。')
+      }
+      if (!isSafeLocalAgentPath(installation.executablePath)) {
+        throw new Error('本机 Agent 的可执行文件路径无效。')
+      }
+      const binding = workspaceBindingToken
+        ? workspaceBindings.get(workspaceBindingToken)
+        : null
+      if (workspaceBindingToken
+        && (!binding || binding.agentId !== installation.id || binding.sessionId !== targetSessionId)) {
+        throw new Error('Agent 工作区授权已失效，请重新选择。')
+      }
+      const storedBinding = binding ?? await workspaceBindingStore.find(installation.id, targetSessionId)
+      const validatedBinding = storedBinding
+        ? await workspaceBindingStore.validate(storedBinding)
+        : null
+      const workingDirectory = validatedBinding?.rootPath
+        ?? unboundWorkspaceRoot(installation.id, targetSessionId)
+      await mkdir(workingDirectory, { recursive: true })
+      return {
         id: installation.id,
         provider: installation.provider,
         displayName: installation.displayName,
@@ -2260,7 +2289,25 @@ function registerAgentHandlers(bridge: AgentGatewayBridge, migrationCoordinator:
         workingDirectory,
         permissionProfile: validatedBinding?.permissionProfile ?? 'inspect',
         card: installation.card,
-      },
+      }
+    }
+    const referencedLocalAgentIds = request.context?.referencedLocalAgentIds ?? []
+    if (!request.targetAgentId || request.targetAgentId === 'main') {
+      const { localAgent: _discarded, ...safeRequest } = request
+      return bridge.startRun(sessionId, {
+        ...safeRequest,
+        ...(request.targetAgentId === 'main' ? { targetAgentId: 'main' } : {}),
+        ...(referencedLocalAgentIds.length
+          ? {
+              referencedLocalAgents: await Promise.all(referencedLocalAgentIds.map((agentId) =>
+                resolveLocalAgentTarget(sessionId, agentId, request.workspaceBindingToken))),
+            }
+          : {}),
+      })
+    }
+    return bridge.startRun(sessionId, {
+      ...request,
+      localAgent: await resolveLocalAgentTarget(sessionId, request.targetAgentId, request.workspaceBindingToken),
     })
   })
   handle(AGENT_CHANNELS.submitPendingIntent, (_event, intentId, input) =>
@@ -3600,6 +3647,14 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         }
       }).catch(() => undefined)
     })
+    // Sentry 门控只在账号 IPC 时同步：启动时订阅拉取失败会让整个会话静默。
+    // 未开闸时低频重试，网络恢复后自动补开（status() 内部有订阅缓存与退避）。
+    const sentryAccountResyncTimer = setInterval(() => {
+      const client = saasClient
+      if (!client || isSentryRemoteDebugEnabled()) return
+      void syncAccountMonitoring(client.status()).catch(() => undefined)
+    }, 5 * 60_000)
+    sentryAccountResyncTimer.unref()
     aiRelayKeeper = new AiRelayKeeper(saasClient, gatewaySupervisor, runtimeConfigBridge, (event: AiRelayKeeperEvent) => {
       for (const target of BrowserWindow.getAllWindows()) {
         if (!target.isDestroyed() && !target.webContents.isDestroyed()) {
@@ -3671,7 +3726,9 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       const startupProtocolUrl = process.argv.find((argument) => argument.startsWith(OIDC_CALLBACK_URL))
       if (startupProtocolUrl) queuedProtocolUrls.push(startupProtocolUrl)
     }
-    for (const url of queuedProtocolUrls.splice(0)) saasClient.handleOidcCallback(url)
+    for (const url of queuedProtocolUrls.splice(0)) {
+      if (saasClient.handleOidcCallback(url) === 'no-login-in-progress') notifyLoginCallbackDropped()
+    }
     let lastAccountId = initialAccount?.user?.id ?? null
     registerAccountHandlers(saasClient, (account) => {
       // saas 连接层跟随登录态：登录（或切换账号）后换 oo 会话，登出即拆除。

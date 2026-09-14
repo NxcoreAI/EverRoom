@@ -2,14 +2,12 @@ import {
   Activity,
   AudioLines,
   Brain,
-  Bell,
   Camera,
   CalendarClock,
   Cloud,
   ExternalLink,
   LoaderCircle,
   Languages,
-  LockKeyhole,
   LogOut,
   Laptop,
   Mic,
@@ -21,7 +19,6 @@ import {
   ShieldAlert,
   Sparkles,
   Smartphone,
-  Trash2,
   WalletCards,
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
@@ -40,11 +37,9 @@ import googleLogo from '@/assets/google-logo.svg'
 import { formatLlmUsd, type AiGatewayStatus, type CloudOidcProvider } from '../../../../shared/sources'
 import type { AccountKeyringStatus, CloudDevice, PerceptionSettings, WindowScreenshotStatus } from '../../../../shared/sources'
 import type { BrowserExtensionStatus } from '../../../../shared/browser-extension'
-import type { NotificationPreferences } from '../../../../shared/notifications'
 import { PageHeader } from './PageHeader'
 import { McpSettingsSection } from '@/components/settings/McpSettingsSection'
 import { useLocale, type AppLocale, type Translate } from '@/i18n/LocaleContext'
-import { LocalModelSettingsSection } from '@/components/settings/LocalModelSettingsSection'
 import { LocalAgentSettingsSection } from '@/components/settings/LocalAgentSettingsSection'
 import { UsageAndBudgetSettingsSection } from '@/components/settings/UsageAndBudgetSettingsSection'
 import { RuntimeConfigSettingsSection } from '@/components/settings/RuntimeConfigSettingsSection'
@@ -52,23 +47,23 @@ import { RedeemCodeField, useRedeemCode } from '@/components/account/RedeemCodeF
 import { QrLoginPanel } from '@/components/account/QrLoginPanel'
 import './SettingsPage.css'
 
-const SETTINGS_NAV = [
-  { id: 'settings-account', label: 'surface:settings.navigationAccount', description: 'surface:settings.navigationAccountDescription', icon: Cloud },
-  { id: 'settings-connector-mode', label: 'surface:settings.connectorModeTitle', description: 'surface:settings.connectorModeNavDescription', icon: Plug },
-  { id: 'settings-notifications', label: 'surface:settings.notifications', description: 'surface:settings.notificationsDescription', icon: Bell },
-  { id: 'settings-models', label: 'surface:settings.navigationModels', description: 'surface:settings.navigationModelsDescription', icon: Brain },
-  { id: 'settings-runtime-config', label: 'surface:settings.navigationRuntimeConfig', description: 'surface:settings.navigationRuntimeConfigDescription', icon: ShieldCheck },
-  { id: 'settings-token-usage', label: 'surface:settings.usageAndBudgets', description: 'surface:settings.usageAndBudgetsDescription', icon: Activity },
-  { id: 'settings-extensions', label: 'surface:settings.extensions', description: 'surface:settings.extensionsDescription', icon: Puzzle },
-  { id: 'settings-onboarding', label: 'surface:settings.onboardingSetupTitle', description: 'surface:settings.onboardingSetupDescription', icon: Sparkles },
-  { id: 'settings-reality', label: 'surface:settings.realityPerception', description: 'surface:settings.navigationRealityDescription', icon: AudioLines },
-  { id: 'settings-capture', label: 'surface:settings.windowScreenshots', description: 'surface:settings.navigationCaptureDescription', icon: Camera },
-  { id: 'settings-editor', label: 'surface:settings.documentEditing', description: 'surface:settings.navigationEditorDescription', icon: Sparkles },
-  { id: 'settings-interface', label: 'surface:settings.interfaceLanguage', description: 'surface:settings.chooseTheDisplayLanguageForEverroom', icon: Languages },
-  { id: 'settings-data', label: 'surface:settings.dataManagement', description: 'surface:settings.clearAllUserDataDescription', icon: Trash2 },
+type SettingsNavItem = { id: string; label: string; icon: typeof Cloud }
+
+const SETTINGS_NAV: SettingsNavItem[] = [
+  { id: 'settings-account', label: 'surface:settings.navigationAccount', icon: Cloud },
+  { id: 'settings-connector-mode', label: 'surface:settings.connectorModeTitle', icon: Plug },
+  { id: 'settings-models', label: 'surface:settings.navigationModels', icon: Brain },
+  { id: 'settings-runtime-config', label: 'surface:settings.navigationRuntimeConfig', icon: ShieldCheck },
+  { id: 'settings-token-usage', label: 'surface:settings.usageAndBudgets', icon: Activity },
+  { id: 'settings-extensions', label: 'surface:settings.extensions', icon: Puzzle },
+  { id: 'settings-onboarding', label: 'surface:settings.onboardingSetupTitle', icon: Sparkles },
+  { id: 'settings-reality', label: 'surface:settings.realityPerception', icon: AudioLines },
+  { id: 'settings-capture', label: 'surface:settings.windowScreenshots', icon: Camera },
+  { id: 'settings-editor', label: 'surface:settings.documentEditing', icon: Sparkles },
+  { id: 'settings-interface', label: 'surface:settings.interfaceLanguage', icon: Languages },
 ]
 
-type PendingAction = CloudOidcProvider | 'refresh' | 'logout' | 'keyring' | 'sync' | 'clear-data' | 'admission' | null
+type PendingAction = CloudOidcProvider | 'refresh' | 'logout' | 'keyring' | 'sync' | 'admission' | null
 type PairingSession = { pairingSessionId: string; pairingToken?: string; status: string; confirmationCode: string; expiresAt: string; origin?: string; targetDeviceId?: string | null; targetDeviceName?: string | null; targetPublicKey?: string | null }
 
 function formatMinutes(seconds: number, locale: AppLocale, t: Translate, rounding: 'down' | 'up' = 'down'): string {
@@ -140,14 +135,13 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
   const [perceptionSettings, setPerceptionSettings] = useState<PerceptionSettings | null>(null)
   const [perceptionBusy, setPerceptionBusy] = useState(false)
   const [lastScreenshotPath, setLastScreenshotPath] = useState<string | null>(null)
-  const [activeSetting, setActiveSetting] = useState(SETTINGS_NAV[0].id)
+  const [activeSetting, setActiveSetting] = useState<string>(SETTINGS_NAV[0].id)
   const [extensionStatus, setExtensionStatus] = useState<BrowserExtensionStatus | null>(null)
   const [extensionBusy, setExtensionBusy] = useState(false)
   const [extensionError, setExtensionError] = useState<string | null>(null)
-  const [notificationPreferences, setNotificationPreferences] = useState<NotificationPreferences | null>(null)
-  const [notificationBusy, setNotificationBusy] = useState(false)
   const [aiRelayStatus, setAiRelayStatus] = useState<AiGatewayStatus | null>(null)
   const redeemCode = useRedeemCode()
+  const [qrActive, setQrActive] = useState(false)
 
   useEffect(() => {
     const api = window.nxcore?.browserExtension
@@ -203,18 +197,6 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
     }
   }, [account?.authenticated, account?.user?.id])
 
-  useEffect(() => {
-    if (!account?.authenticated || !window.nxcore) {
-      setNotificationPreferences(null)
-      return
-    }
-    let cancelled = false
-    void window.nxcore.notifications.preferences()
-      .then((preferences) => { if (!cancelled) setNotificationPreferences(preferences) })
-      .catch(() => undefined)
-    return () => { cancelled = true }
-  }, [account?.authenticated, account?.user?.id])
-
   // LLM 中转余量：随订阅区拉取一次 + 额度尽事件即时刷新（保持最小 UI，无独立页面）。
   useEffect(() => {
     if (!account?.authenticated || !window.nxcore) {
@@ -233,14 +215,6 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
     })
     return () => { cancelled = true; removeListener() }
   }, [account?.authenticated, account?.user?.id])
-
-  const updateNotificationPreference = (input: Partial<NotificationPreferences>) => {
-    if (!window.nxcore || notificationBusy) return
-    setNotificationBusy(true)
-    void window.nxcore.notifications.updatePreferences(input)
-      .then(setNotificationPreferences)
-      .finally(() => setNotificationBusy(false))
-  }
 
   useEffect(() => {
     const removeListener = window.nxcore?.transcriptions.onSyncCompleted(({ completedAt }) => {
@@ -470,16 +444,6 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
     }
   }
 
-  const clearAllUserData = async () => {
-    if (!window.nxcore || !window.confirm(t('surface:settings.clearAllUserDataConfirm'))) return
-    setPending('clear-data')
-    try {
-      await window.nxcore.app.clearUserData()
-    } catch {
-      setPending(null)
-    }
-  }
-
   const isBusy = pending !== null
   const accountName = account?.user?.email
     || account?.user?.name
@@ -550,7 +514,7 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
 
       <div className="settings-layout">
         <nav className="settings-navigation" aria-label={t('surface:settings.settingsNavigation')}>
-          {SETTINGS_NAV.map(({ id, label, description, icon: Icon }) => (
+          {SETTINGS_NAV.map(({ id, label, icon: Icon }) => (
             <button
               key={id}
               type="button"
@@ -562,7 +526,6 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
               <span className="settings-navigation-icon"><Icon aria-hidden="true" /></span>
               <span>
                 <strong>{t(label)}</strong>
-                <small>{t(description)}</small>
               </span>
             </button>
           ))}
@@ -575,13 +538,11 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
           <span><Languages aria-hidden="true" /></span>
           <div>
             <h2 id="interface-language-settings-title">{t('surface:settings.interfaceLanguage')}</h2>
-            <p>{t('surface:settings.chooseTheDisplayLanguageForEverroom')}</p>
           </div>
         </header>
         <div className="reality-setting-row">
           <div>
             <strong>{t('surface:settings.interfaceLanguageLabel')}</strong>
-            <small>{t('surface:settings.changesApplyImmediatelyAndAreSavedOnThis')}</small>
           </div>
           <div className="segmented-control" aria-label={t('surface:settings.interfaceLanguageLabel')}>
             <button
@@ -612,38 +573,16 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
         </div>
       </section>
 
-      <section id="settings-data" className="reality-settings-section settings-anchor-section" aria-labelledby="data-management-settings-title">
-        <header>
-          <span><Trash2 aria-hidden="true" /></span>
-          <div>
-            <h2 id="data-management-settings-title">{t('surface:settings.dataManagement')}</h2>
-            <p>{t('surface:settings.clearAllUserDataDescription')}</p>
-          </div>
-        </header>
-        <div className="reality-setting-row">
-          <div>
-            <strong>{t('surface:settings.clearAllUserData')}</strong>
-            <small>{t('surface:settings.clearAllUserDataBody')}</small>
-          </div>
-          <button type="button" className="danger-button" disabled={isBusy || !window.nxcore} onClick={() => void clearAllUserData()}>
-            {pending === 'clear-data' ? <LoaderCircle className="spin" aria-hidden="true" /> : <Trash2 aria-hidden="true" />}
-            {t('surface:settings.clearAllUserData')}
-          </button>
-        </div>
-      </section>
-
       <section id="settings-onboarding" className="reality-settings-section settings-anchor-section" aria-labelledby="onboarding-settings-title">
         <header>
           <span><Sparkles aria-hidden="true" /></span>
           <div>
             <h2 id="onboarding-settings-title">{t('surface:settings.onboardingSetupTitle')}</h2>
-            <p>{t('surface:settings.onboardingSetupBody')}</p>
           </div>
         </header>
         <div className="reality-setting-row">
           <div>
             <strong>{t('surface:settings.fullOnboardingActionTitle')}</strong>
-            <small>{t('surface:settings.fullOnboardingActionBody')}</small>
           </div>
           <button type="button" className="primary-button" onClick={onStartFullOnboarding} disabled={!onStartFullOnboarding}>
             <Sparkles aria-hidden="true" />{t('surface:settings.fullOnboardingAction')}
@@ -656,7 +595,6 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
           <span><Puzzle aria-hidden="true" /></span>
           <div>
             <h2 id="browser-extension-settings-title">{t('surface:settings.extensions')}</h2>
-            <p>{t('surface:settings.extensionsBody')}</p>
           </div>
         </header>
         <div className="browser-extension-status-row">
@@ -667,9 +605,9 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
               : extensionStatus?.state === 'waiting-for-extension'
                 ? 'surface:settings.extensionWaiting'
                   : 'surface:settings.extensionNotConnected')}</strong>
-            <small>{extensionStatus?.pairedExtensionId
-              ? t('surface:settings.extensionId', { id: extensionStatus.pairedExtensionId })
-              : t('surface:settings.extensionLocalOnly')}</small>
+            {extensionStatus?.pairedExtensionId
+              ? <small>{t('surface:settings.extensionId', { id: extensionStatus.pairedExtensionId })}</small>
+              : null}
           </div>
         </div>
         {extensionStatus?.pairing ? (
@@ -714,9 +652,6 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
             </>
           ) : null}
         </div>
-        <p className="browser-extension-note">{t(extensionStatus?.mode === 'development'
-          ? 'surface:settings.extensionsDevelopmentNote'
-          : 'surface:settings.extensionsInstallNote')}</p>
         {extensionError ? <p className="browser-extension-error" role="alert">{extensionError}</p> : null}
         {extensionStatus?.lastMessage ? (
           <div className="browser-extension-last-message">
@@ -732,7 +667,6 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
           <span className="cloud-account-icon"><Cloud aria-hidden="true" /></span>
           <div>
             <h2 id="cloud-account-title">{t('surface:settings.everroomAccount')}</h2>
-            <p>{t(account?.authenticated ? 'surface:settings.cloudServicesConnected' : 'surface:settings.signInToUseSubscriptionQuotaAndHosted')}</p>
           </div>
           <div className="cloud-account-header-actions">
             {account?.authenticated ? (
@@ -900,7 +834,6 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
                   <span><ShieldCheck aria-hidden="true" /></span>
                   <div>
                     <strong>{t('surface:settings.cloudSync')}</strong>
-                    <small>{t('surface:settings.syncRecordingsTranscriptsAndSummariesAcrossSignedIn')}</small>
                   </div>
                 </div>
                 {syncedCount !== null ? <small className="cloud-keyring-result">{t('surface:settings.syncedCountTranscriptsAndFoundAudiocountAudioClips', { count: syncedCount, audioCount: syncedAudioCount ?? 0 })}</small> : null}
@@ -921,96 +854,60 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
           </div>
         ) : (
           <div className="cloud-login-content">
-            <RedeemCodeField value={redeemCode.code} state={redeemCode.state} open={redeemCode.open} disabled={isBusy} onChange={redeemCode.change} onToggle={()=>redeemCode.setOpen(value=>!value)}/>
-            <div className="social-login-grid" aria-label={t('surface:settings.quickSignIn')}>
-              <button
-                className="social-login-button apple-login"
-                type="button"
-                disabled={isBusy}
-                onClick={() => loginWithOidc('apple')}
-              >
-                <span className="brand-login-icon" aria-hidden="true">
-                  {pending === 'apple'
-                    ? <LoaderCircle className="spin" />
-                    : <img src={appleLogo} alt="" />}
-                </span>
-                {t('surface:settings.signInWithApple')}
-              </button>
-              <button
-                className="social-login-button google-login"
-                type="button"
-                disabled={isBusy}
-                onClick={() => loginWithOidc('google')}
-              >
-                <span className="brand-login-icon" aria-hidden="true">
-                  {pending === 'google'
-                    ? <LoaderCircle className="spin" />
-                    : <img src={googleLogo} alt="" />}
-                </span>
-                {t('surface:settings.signInWithGoogle')}
-              </button>
-            </div>
+            {!qrActive ? (
+              <div className="qr-login-methods" key="cloud-methods">
+                <RedeemCodeField value={redeemCode.code} state={redeemCode.state} open={redeemCode.open} disabled={isBusy} onChange={redeemCode.change} onToggle={()=>redeemCode.setOpen(value=>!value)}/>
+                <div className="social-login-grid" aria-label={t('surface:settings.quickSignIn')}>
+                  <button
+                    className="social-login-button apple-login"
+                    type="button"
+                    disabled={isBusy}
+                    onClick={() => loginWithOidc('apple')}
+                  >
+                    <span className="brand-login-icon" aria-hidden="true">
+                      {pending === 'apple'
+                        ? <LoaderCircle className="spin" />
+                        : <img src={appleLogo} alt="" />}
+                    </span>
+                    {t('surface:settings.signInWithApple')}
+                  </button>
+                  <button
+                    className="social-login-button google-login"
+                    type="button"
+                    disabled={isBusy}
+                    onClick={() => loginWithOidc('google')}
+                  >
+                    <span className="brand-login-icon" aria-hidden="true">
+                      {pending === 'google'
+                        ? <LoaderCircle className="spin" />
+                        : <img src={googleLogo} alt="" />}
+                    </span>
+                    {t('surface:settings.signInWithGoogle')}
+                  </button>
+                </div>
+              </div>
+            ) : null}
 
-            <div className="qr-login-entry">
-              <QrLoginPanel account={account} onAccountChanged={setAccount} />
-            </div>
-
-            <p className="oidc-login-note">
-              <LockKeyhole aria-hidden="true" />
-              {pending === 'apple' || pending === 'google'
-                ? t('surface:settings.completeSignInInYourBrowserYouWill')
-                : t('surface:settings.signInIsCompletedSecurelyInYourBrowser')}
-            </p>
-
+            <QrLoginPanel
+              account={account}
+              onAccountChanged={setAccount}
+              onActiveChange={setQrActive}
+              entryDisabled={isBusy}
+            />
           </div>
         )}
       </section>
-
-      {account?.authenticated && notificationPreferences ? (
-        <section id="settings-notifications" className="reality-settings-section settings-anchor-section" aria-labelledby="notification-settings-title">
-          <header>
-            <span><Bell aria-hidden="true" /></span>
-            <div>
-              <h2 id="notification-settings-title">{t('surface:settings.notifications')}</h2>
-              <p>{t('surface:settings.notificationsDescription')}</p>
-            </div>
-          </header>
-          {([
-            ['enabled', 'surface:settings.notificationsAll', false],
-            ['iosEnabled', 'surface:settings.notificationsIos', !notificationPreferences.enabled],
-            ['macosEnabled', 'surface:settings.notificationsMacos', !notificationPreferences.enabled],
-          ] as const).map(([key, label, parentDisabled]) => (
-            <div className="reality-setting-row" key={key}>
-              <div><strong>{t(label)}</strong></div>
-              <button
-                type="button"
-                className="settings-toggle"
-                role="switch"
-                aria-checked={notificationPreferences[key]}
-                data-active={String(notificationPreferences[key])}
-                disabled={notificationBusy || parentDisabled}
-                onClick={() => updateNotificationPreference({ [key]: !notificationPreferences[key] })}
-              >
-                <span aria-hidden="true" />
-                {t(notificationPreferences[key] ? 'surface:settings.notificationsOn' : 'surface:settings.notificationsOff')}
-              </button>
-            </div>
-          ))}
-        </section>
-      ) : null}
 
       <section id="settings-editor" className="reality-settings-section settings-anchor-section" aria-labelledby="document-editing-settings-title">
         <header>
           <span><Sparkles aria-hidden="true" /></span>
           <div>
             <h2 id="document-editing-settings-title">{t('surface:settings.documentEditing')}</h2>
-            <p>{t('surface:settings.manageEditorAssistanceFeatures')}</p>
           </div>
         </header>
         <div className="reality-setting-row">
           <div>
             <strong>{t('surface:settings.smartDocumentCompletion')}</strong>
-            <small>{t('surface:settings.suggestContinuationsAfterTypingDeletingOrMovingThe')}</small>
           </div>
           <button
             className="settings-toggle"
@@ -1028,10 +925,7 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
           </button>
         </div>
         <div className="reality-setting-row">
-          <div>
-            <strong>{t('surface:settings.paragraphCompletion')}</strong>
-            <small>{t('surface:settings.paragraphCompletionDescription')}</small>
-          </div>
+          <div><strong>{t('surface:settings.paragraphCompletion')}</strong></div>
           <button
             className="settings-toggle"
             type="button"
@@ -1051,8 +945,6 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
       </section>
 
       <div id="settings-models" className="settings-anchor-section settings-models-group">
-        <LocalModelSettingsSection />
-
         <LocalAgentSettingsSection />
 
         <McpSettingsSection />
@@ -1069,11 +961,10 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
           <span><AudioLines aria-hidden="true" /></span>
           <div>
             <h2 id="reality-settings-title">{t('surface:settings.realityPerception')}</h2>
-            <p>{t('surface:settings.configureAudioSourcesAndTranscriptionForListening')}</p>
           </div>
         </header>
         <div className="reality-setting-row">
-          <div><strong>{t('surface:settings.transcriptionService')}</strong><small>{t('surface:settings.autoModePrefersSaasAfterSignIn')}</small></div>
+          <div><strong>{t('surface:settings.transcriptionService')}</strong></div>
           <div className="segmented-control" aria-label={t('surface:settings.realityPerceptionTranscriptionService')}>
             {([['auto', 'surface:settings.automatic'], ['cloud', 'surface:settings.saas'], ['local', 'surface:settings.local']] as const).map(([value, label]) => (
               <button key={value} type="button" data-active={String(realitySettings.mode === value)} disabled={value === 'cloud' && !account?.authenticated} onClick={() => updateRealitySettings({ mode: value })}>{t(label)}</button>
@@ -1081,14 +972,14 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
           </div>
         </div>
         <div className="reality-setting-row">
-          <div><strong>{t('surface:settings.recordingSource')}</strong><small>{t(window.nxcore?.platform === 'win32' ? 'surface:settings.computerAudioUnavailableOnWindows' : 'surface:settings.computerAudioRequiresMacosSystemPermission')}</small></div>
+          <div><strong>{t('surface:settings.recordingSource')}</strong></div>
           <div className="segmented-control reality-source-setting" aria-label={t('surface:settings.realityPerceptionRecordingSource')}>
             <button type="button" data-active={String(realitySettings.audioSource === 'microphone')} onClick={() => updateRealitySettings({ audioSource: 'microphone' })}><Mic aria-hidden="true" />{t('surface:settings.microphone')}</button>
             <button type="button" data-active={String(realitySettings.audioSource === 'system')} disabled={window.nxcore?.platform !== 'darwin'} onClick={() => updateRealitySettings({ audioSource: 'system' })}><MonitorSpeaker aria-hidden="true" />{t('surface:settings.computerAudio')}</button>
           </div>
         </div>
         <div className="reality-setting-row">
-          <div><strong>{t('surface:settings.transcriptionLanguages')}</strong><small>{t('surface:settings.keepAtLeastOnePrimaryLanguage')}</small></div>
+          <div><strong>{t('surface:settings.transcriptionLanguages')}</strong></div>
           <div className="segmented-control" aria-label={t('surface:settings.realityPerceptionTranscriptionLanguages')}>
             {([['zh', 'surface:settings.chinese'], ['en', 'surface:settings.english']] as const).map(([value, label]) => {
               const active = realitySettings.languages.includes(value)
@@ -1103,11 +994,10 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
           <span><Camera aria-hidden="true" /></span>
           <div>
             <h2 id="screen-capture-settings-title">{t('surface:settings.windowScreenshots')}</h2>
-            <p>{t('surface:settings.onlyTheCurrentEverroomWindowIsSavedOther')}</p>
           </div>
         </header>
         <div className="reality-setting-row">
-          <div><strong>{t('surface:settings.automaticScreenshots')}</strong><small>{t('surface:settings.screenshotsAreSavedInTheProjectScreenshotsFolder')}</small></div>
+          <div><strong>{t('surface:settings.automaticScreenshots')}</strong></div>
           <button
             className="settings-toggle"
             type="button"
@@ -1122,7 +1012,7 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
           </button>
         </div>
         <div className="reality-setting-row">
-          <div><strong>{t('surface:settings.visualUnderstanding')}</strong><small>{t('surface:settings.visualUnderstandingDescription')}</small></div>
+          <div><strong>{t('surface:settings.visualUnderstanding')}</strong></div>
           <button
             className="settings-toggle"
             type="button"
@@ -1138,7 +1028,7 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
           </button>
         </div>
         <div className="reality-setting-row">
-          <div><strong>{t('surface:settings.screenshotInterval')}</strong><small>{t('surface:settings.theMinimumAutomaticScreenshotIntervalIs30Seconds')}</small></div>
+          <div><strong>{t('surface:settings.screenshotInterval')}</strong></div>
           <select
             value={screenCaptureInterval}
             disabled={screenCaptureBusy || screenCaptureStatus === null}
@@ -1156,7 +1046,7 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
           </select>
         </div>
         <div className="reality-setting-row">
-          <div><strong>{t('surface:settings.captureNow')}</strong><small>{lastScreenshotPath || t('surface:settings.useThisToConfirmTheCurrentWindowIs')}</small></div>
+          <div><strong>{t('surface:settings.captureNow')}</strong>{lastScreenshotPath ? <small>{lastScreenshotPath}</small> : null}</div>
           <button className="secondary-button" type="button" disabled={screenCaptureBusy} onClick={() => void captureWindowNow()}>
             {screenCaptureBusy ? <LoaderCircle className="spin" aria-hidden="true" /> : <Camera aria-hidden="true" />}
             {t('surface:settings.captureCurrentWindow')}

@@ -1,7 +1,7 @@
 import type { AgentEvent } from '@nxcore/agent-contract'
 import { describe, expect, it } from 'vitest'
 
-import { mergeAgentToolEvent, reduceAgentRunEvents, removeAgentRunMessages } from './useAgentSession'
+import { mergeAgentToolEvent, reduceAgentRunEvents, removeAgentRunMessages, isAutoFallbackTitle } from './useAgentSession'
 
 function event(seq: number, type: AgentEvent['type'], payload: unknown = {}): AgentEvent {
   return {
@@ -69,5 +69,19 @@ describe('agent event display state', () => {
     expect(reduced.startedAt).toBe(event(1, 'run.started').occurredAt)
     expect(reduced.completedAt).toBe(event(6, 'run.failed').occurredAt)
     expect(reduced.lastSequence).toBe(6)
+  })
+})
+
+describe('auto session title guard', () => {
+  it('allows replacement only when the persisted title equals the prompt fallback', () => {
+    const prompt = '这是一段很长很长的用户提问内容超过四十八个字符之后会被网关截断作为兜底标题使用'
+    expect(isAutoFallbackTitle(prompt.slice(0, 48), prompt)).toBe(true)
+    expect(isAutoFallbackTitle('用户手动改过的名字', prompt)).toBe(false)
+    expect(isAutoFallbackTitle(null, prompt)).toBe(false)
+  })
+
+  it('compares both sides trimmed', () => {
+    const prompt = '  你好 EverRoom  '
+    expect(isAutoFallbackTitle('你好 EverRoom', prompt)).toBe(true)
   })
 })

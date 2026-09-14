@@ -119,6 +119,7 @@ async function createHarness(options: {
     dataDirectory,
     {
       ...(options.actionRunner ? { actionRunner: options.actionRunner } : {}),
+      ...(options.assetBridgeUrl !== undefined ? { assetBridgeUrl: options.assetBridgeUrl } : {}),
       ...(options.ntn !== undefined ? { notionCli: options.ntn } : {}),
     },
   )
@@ -144,6 +145,34 @@ async function createRoomDocument(documents: DocumentService): Promise<{ roomId:
     contentJson: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: '本地正文' }] }] } as never,
   })
   return { roomId, documentId: document.id }
+}
+
+/** 假资产桥：GET /real-bytes.png 出 8 字节 PNG；PUT 记录入 puts。 */
+async function startAssetBridge(): Promise<{ baseUrl: string; puts: Array<{ mime: string; bytes: number }>; close: () => void }> {
+  const { createServer } = await import('node:http')
+  const puts: Array<{ mime: string; bytes: number }> = []
+  const server = createServer((request, response) => {
+    if (request.method === 'GET') {
+      response.writeHead(200, { 'content-type': 'image/png' })
+      response.end(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
+      return
+    }
+    if (request.method === 'PUT') {
+      const chunks: Buffer[] = []
+      request.on('data', (chunk: Buffer) => chunks.push(chunk))
+      request.on('end', () => {
+        puts.push({ mime: String(request.headers['content-type'] ?? ''), bytes: Buffer.concat(chunks).byteLength })
+        response.writeHead(200, { 'content-type': 'application/json' })
+        response.end(JSON.stringify({ src: 'nxcore-document-asset://local/img-test/stored.png' }))
+      })
+      return
+    }
+    response.writeHead(404).end()
+  })
+  await new Promise<void>((resolveListen) => server.listen(0, '127.0.0.1', resolveListen))
+  const address = server.address() as { port: number }
+  disposables.push(() => server.close())
+  return { baseUrl: `http://127.0.0.1:${String(address.port)}`, puts, close: () => server.close() }
 }
 
 async function writeFakeLarkCli(behavior: 'ok' | 'no-app'): Promise<string> {
@@ -345,6 +374,29 @@ describe('document import service', () => {
     expect(preview.comments).toHaveLength(6)
     expect(preview.comments.filter((comment) => comment.id === 'c-dup')).toHaveLength(1)
     expect(preview.warnings.some((warning) => warning.code === 'comments_pages_capped')).toBe(true)
+  })
+
+  it('飞书图片物化：feishu.cn/file 链接先经 download_docs_media 换真实字节 URL', async () => {
+    const bridge = await startAssetBridge()
+    const calls: Array<{ service: string; action: string; input: Record<string, unknown> }> = []
+    const actions: FakeAction = {
+      ...FEISHU_READ,
+      'feishu.fetch_document': () => ({
+        document: { document_id: 'tokImg', revision_id: 3, title: '带图文档', content: '# 带图文档\n\n![示意图](https://feishu.cn/file/IMGTOKEN123456)' },
+      }),
+      'feishu.download_docs_media': (input: Record<string, unknown>) => {
+        calls.push({ service: 'feishu', action: 'download_docs_media', input })
+        return { fileId: 'f1.png', downloadUrl: `${bridge.baseUrl}/real-bytes.png`, mimeType: 'image/png', sizeBytes: 8, name: 'image.png' }
+      },
+    }
+    const { imports } = await createHarness({ actionRunner: fakeRunner(actions), assetBridgeUrl: bridge.baseUrl })
+    const preview = await imports.preview('feishu', 'tokImg')
+    // 文件页 token 被送到 media 动作；下载用换回的真实字节地址；正文改写为本机资产 URL。
+    expect(calls).toHaveLength(1)
+    expect(calls[0]).toMatchObject({ input: { token: 'IMGTOKEN123456', type: 'media' } })
+    expect(preview.bodyExcerpt).not.toContain('feishu.cn/file')
+    expect(preview.warnings.some((w) => w.code === 'remote_assets_materialized')).toBe(true)
+    expect(bridge.puts.length).toBeGreaterThanOrEqual(1)
   })
 
   it('notion comments via list_page_comments action: 线程分组 + 块锚点 + 分页 + 降级', async () => {
