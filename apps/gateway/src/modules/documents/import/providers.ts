@@ -587,6 +587,16 @@ export function createFeishuImportAdapter(run: ImportActionFn): ExternalDocument
     });
     const bodyMarkdown = extractMarkdown(fetchResult);
     if (!bodyMarkdown) {
+      // fetch 成功但正文为空串（XML 探测同空）= 文档本体无内容块——与
+      // 响应形状异常分开报，空文档不是连接器故障，提示要能指导用户跳过。
+      const fetchedDoc = objectValue(objectValue(fetchResult).document);
+      const rawContent = typeof fetchedDoc.content === "string" ? fetchedDoc.content : null;
+      if (fetchedDoc && rawContent !== null && rawContent.trim() === "") {
+        throw new ImportConnectorError(
+          "content_empty",
+          `飞书文档内容为空（${remoteDocumentId}）：空文档或仅含无法转换的内容，无可导入内容，请跳过该篇`,
+        );
+      }
       throw new ImportConnectorError("connector_error", "feishu.fetch_document 未返回可识别的 Markdown 正文");
     }
     // fetch_document 的 {document:{url,title,revision_id}} 可补齐 get_document 没给的字段。

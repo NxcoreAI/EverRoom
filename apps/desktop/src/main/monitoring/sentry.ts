@@ -38,6 +38,15 @@ export function isSentryRemoteDebugEnabled(): boolean {
   return isRemoteDebugActive()
 }
 
+/** ElectronNet 自动埋点把每个 Electron 网络请求记成 info 日志（轮询请求 5s 一条，
+ *  线上 48 小时刷 5 万条）。集成层过滤在部分构建上未生效（原因未定位），这里按
+ *  origin 在出口处兜底丢弃，不依赖 SDK 集成生命周期。我们自己的 axios 日志
+ *  （module=axios，带 url/method/status）覆盖同一信息，无损失。 */
+export function isSdkAutoNetLog(log: { attributes?: Record<string, unknown> }): boolean {
+  const origin = log.attributes?.['sentry.origin']
+  return typeof origin === 'string' && origin.startsWith('auto.electron.net')
+}
+
 export function configureSentry(version: string, packaged: boolean): void {
   if (!Sentry) return
   const dsn = process.env.NXCORE_SENTRY_DSN?.trim() || (packaged ? PRODUCTION_DSN : '')
@@ -52,11 +61,19 @@ export function configureSentry(version: string, packaged: boolean): void {
       sendDefaultPii: false,
       tracesSampleRate: 0,
       integrations: (defaults) => defaults.filter(
-        ({ name }) => name !== 'MainProcessSession' && name !== 'SentryMinidump',
+        // ElectronNet：enableLogs 下它把每个 Electron 网络请求记成 info 日志，
+        // 轮询类请求曾 48 小时刷 5 万条垃圾（origin=auto.electron.net）。
+        // Console：desktop-logger 已带阈值/脱敏/模块标签捕获，SDK 自带版本无
+        // 阈值，会造成重复与刷屏。
+        ({ name }) => name !== 'MainProcessSession' && name !== 'SentryMinidump'
+          && name !== 'ElectronNet' && name !== 'Console',
       ),
       beforeBreadcrumb: (breadcrumb) => isRemoteDebugActive() ? redactSentryPayload(breadcrumb) : null,
       beforeSend: (event) => isRemoteDebugActive() ? redactSentryPayload(event) : null,
-      beforeSendLog: (log) => isRemoteDebugActive() ? redactSentryPayload(log) : null,
+      beforeSendLog: (log) => {
+        if (!isRemoteDebugActive() || isSdkAutoNetLog(log)) return null
+        return redactSentryPayload(log)
+      },
     })
     configured = true
     if (currentAccount) applyAccountScope(currentAccount)

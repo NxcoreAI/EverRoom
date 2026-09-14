@@ -6,21 +6,19 @@ import type {
 } from '@nxcore/agent-contract'
 import {
   Activity,
-  Armchair,
   Check,
   CircleAlert,
   Clock3,
-  Coffee,
-  CookingPot,
   LoaderCircle,
-  Monitor,
   RefreshCw,
   Sparkles,
 } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { useLocale, type Translate } from '@/i18n/LocaleContext'
 
 import './AgentStatusPage.css'
+import { PelicanRider } from './PelicanRider'
+import { subscribeRider, type RiderMode } from './riderTicker'
 
 type StatusFilter = 'all' | AgentWorkspaceState
 
@@ -30,19 +28,47 @@ const EMPTY_SNAPSHOT: AgentStatusSnapshot = {
   agents: [],
 }
 
-const SPRITE_COLORS = ['#2f8d72', '#c28645', '#6673b8', '#bd6571', '#4f8eaa', '#8b6aad']
-const SPRITE_COLUMNS = ['20%', '50%', '80%']
+const SPRITE_COLORS = ['#bc554c', '#c28645', '#6673b8', '#bd6571', '#4f8eaa', '#8b6aad', '#3f8f6d', '#a8683f']
+const ROAD_START = 8
+const ROAD_END = 92
+const ZONE_GAP = 2.5
+const TRANSIT_TOP = '93%'
+const SWIM_TRANSIT_TOP = '48.2%'
 
-function spritePosition(index: number, count: number, now: number, state: AgentWorkspaceState): { left: string; top: string; location: string } {
-  const row = Math.floor(index / SPRITE_COLUMNS.length)
-  const rows = Math.max(1, Math.ceil(count / SPRITE_COLUMNS.length))
-  const top = rows === 1 ? 62 : 45 + (row * 30) / (rows - 1)
-  if (state === 'running') return { left: ['36%', '50%', '64%'][index % 3]!, top: `${top}%`, location: 'work' }
-  const phase = (now / 1000 + index * 31) % 180
-  if (phase < 120) return { left: ['36%', '50%', '64%'][index % 3]!, top: `${top}%`, location: 'work' }
-  if (phase < 140) return { left: '88%', top: '27%', location: 'coffee' }
-  if (phase < 160) return { left: '12%', top: '29%', location: 'supply' }
-  return { left: '88%', top: '77%', location: 'reading' }
+// Formation depths: sprinters and cruisers alternate rows inside their zone,
+// broken-down riders pull over on the shoulder. Riders changing speed swing
+// out to the front corridor (TRANSIT_TOP) until they merge into their slot.
+const LANE_NEAR = { lane: 'near', laneTop: '88.5%' }
+const LANE_FAR = { lane: 'far', laneTop: '71%' }
+const LANE_SHOULDER = { lane: 'shoulder', laneTop: '61%' }
+// Idle pelicans leave the road and paddle on the sea in two depth rows.
+// Back-row heads sit around the horizon; the front row rides low near the
+// shoreline so the two rows read as clearly separated depths.
+const SEA_FRONT = { lane: 'sea-front', laneTop: '51.5%' }
+const SEA_BACK = { lane: 'sea-back', laneTop: '45%' }
+
+// Gentle in-place sway so each formation feels alive without leaving its zone.
+const SWAY_BY_STATE: Record<AgentWorkspaceState, { omega: number; amp: number }> = {
+  running: { omega: 0.55, amp: 1.3 },
+  idle: { omega: 0.22, amp: 1.7 },
+  error: { omega: 0, amp: 0 },
+}
+// Catching up is brisk, easing off and drifting back is lazy.
+const CATCH_UP_K = 1.0
+const DROP_BACK_K = 0.3
+const HOLD_K = 0.55
+const TRANSIT_TRIGGER = 4
+
+function stateLabel(state: AgentWorkspaceState, t: Translate): string {
+  if (state === 'running') return t('surface:agentStatus.working')
+  if (state === 'error') return t('surface:agentStatus.needsAttention')
+  return t('surface:agentStatus.ready')
+}
+
+function riderSpeed(state: AgentWorkspaceState): number {
+  if (state === 'running') return 1.05
+  if (state === 'idle') return 0.34
+  return 0
 }
 
 function elapsedLabel(date: string | null, t: Translate): string {
@@ -52,12 +78,6 @@ function elapsedLabel(date: string | null, t: Translate): string {
   if (elapsed < 3_600_000) return t('surface:agentStatus.countMinutesAgo', { count: Math.floor(elapsed / 60_000) })
   if (elapsed < 86_400_000) return t('surface:agentStatus.countHoursAgo', { count: Math.floor(elapsed / 3_600_000) })
   return t('surface:agentStatus.countDaysAgo', { count: Math.floor(elapsed / 86_400_000) })
-}
-
-function stateLabel(state: AgentWorkspaceState, t: Translate): string {
-  if (state === 'running') return t('surface:agentStatus.working')
-  if (state === 'error') return t('surface:agentStatus.needsAttention')
-  return t('surface:agentStatus.ready')
 }
 
 function runStatusLabel(status: AgentWorkspaceRunStatus, t: Translate): string {
@@ -76,97 +96,278 @@ function StateMark({ state }: { state: AgentWorkspaceState }) {
   return <Check aria-hidden="true" />
 }
 
-function OfficeSprite({
+function bubbleDetail(agent: AgentWorkspaceStatus, t: Translate): string {
+  if (agent.state === 'running') return agent.currentRun?.task ?? stateLabel('running', t)
+  if (agent.state === 'error') return stateLabel('error', t)
+  return agent.description || stateLabel('idle', t)
+}
+
+function CoastRider({
   agent,
-  index,
-  count,
-  now,
+  seed,
+  slot,
   selected,
   onSelect,
   t,
 }: {
   agent: AgentWorkspaceStatus
-  index: number
-  count: number
-  now: number
+  seed: number
+  slot: { x: number; depth: { lane: string; laneTop: string }; scale: number; mode: RiderMode }
   selected: boolean
   onSelect: () => void
   t: Translate
 }) {
-  const position = spritePosition(index, count, now, agent.state)
-  const color = SPRITE_COLORS[index % SPRITE_COLORS.length]!
+  const { x: slotX, depth, scale, mode } = slot
+  const color = SPRITE_COLORS[seed % SPRITE_COLORS.length]!
+  const buttonRef = useRef<HTMLButtonElement>(null!)
+  const rideX = useRef(slotX)
+  const transiting = useRef(false)
+  const lastTime = useRef<number | null>(null)
+
+  useEffect(() => {
+    const sway = SWAY_BY_STATE[agent.state]!
+    return subscribeRider((time) => {
+      const dt = lastTime.current === null ? 0 : Math.max(0, Math.min(time - lastTime.current, 0.05))
+      lastTime.current = time
+      const target = slotX + Math.sin(time * sway.omega + seed * 1.7) * sway.amp
+      const drift = slotX - rideX.current
+      const k = drift > 0.5 ? CATCH_UP_K : drift < -0.5 ? DROP_BACK_K : HOLD_K
+      rideX.current += (target - rideX.current) * Math.min(1, k * dt)
+
+      const button = buttonRef.current
+      const parent = button.parentElement
+      if (parent) {
+        const dx = ((rideX.current - slotX) / 100) * parent.clientWidth
+        button.style.setProperty('--ride-dx', `${dx.toFixed(1)}px`)
+      }
+
+      const shouldTransit = Math.abs(rideX.current - slotX) > TRANSIT_TRIGGER
+      if (shouldTransit !== transiting.current) {
+        transiting.current = shouldTransit
+        button.dataset.transit = String(shouldTransit)
+        button.style.top = shouldTransit ? (mode === 'swimming' ? SWIM_TRANSIT_TOP : TRANSIT_TOP) : depth.laneTop
+      }
+    })
+  }, [agent.state, slotX, depth.laneTop, seed])
+
   return (
     <button
+      ref={buttonRef}
       type="button"
-      className="office-sprite"
+      className="coast-rider"
       data-state={agent.state}
-      data-location={position.location}
+      data-mode={mode}
+      data-lane={depth.lane}
       data-selected={String(selected)}
-      style={{ left: position.left, top: position.top, '--sprite-color': color } as CSSProperties}
+      style={{ left: `${slotX}%`, top: depth.laneTop, '--sprite-color': color, '--rider-scale': scale } as CSSProperties}
       title={`${agent.name} · ${stateLabel(agent.state, t)}`}
       onClick={onSelect}
     >
-      <span className="office-sprite-bubble">{agent.state === 'idle' ? agent.name : stateLabel(agent.state, t)}</span>
-      <span className="office-sprite-head"><i /></span>
-      <span className="office-sprite-body"><i /><i /></span>
-      <span className="office-sprite-shadow" />
+      <span className="coast-rider-tag">
+        <span className="coast-rider-tag-name"><i aria-hidden="true" />{agent.name}</span>
+        <small>{bubbleDetail(agent, t)}</small>
+      </span>
+      <PelicanRider speed={riderSpeed(agent.state)} seed={seed} mode={mode} />
     </button>
   )
 }
 
-function OfficeScene({
+const GULLS = 'M240 96q7-9 14 0q7-9 14 0M560 58q6-8 12 0q6-8 12 0M905 128q5-6 10 0q5-6 10 0'
+const ROAD_MARKS = 'M0 430H58M211 433H232M385 429H470M710 432H744M946 429H1018M1180 432H1211M60 560H150M320 563H420M640 560H760M1000 563H1110'
+const ROAD_MARKS_WHITE = 'M100 500H232M517 500H649M934 500H1066'
+const ROAD_MARKS_SMALL = 'M160 384h21M490 393h17M827 382h32M1105 394h15'
+const GRASS_TUFTS = 'M0 330l-4-15M0 330l7-10M16 330l4-20M16 330l-7-9M598 336l-3-12M598 336l7-19M610 336l8-12M316 349h13M326 352h21M978 343h18'
+const WATER_LINES = 'M-210 221H-128M85 250H203M300 210H350M411 276H466M762 233H807M1017 258H1113M1271 214H1337M1485 250H1603M1700 210H1750'
+const COAST_FAR = 'M0 190Q80 158 170 172Q260 186 340 168Q420 152 505 176Q580 190 660 190ZM760 190Q830 168 905 174Q985 180 1050 162Q1120 148 1190 170Q1270 190 1350 190Z'
+const COAST_NEAR = 'M120 190Q210 172 300 180Q390 188 470 178Q540 190 620 190ZM880 190Q950 176 1030 182Q1110 188 1180 178Q1250 186 1320 190Z'
+
+function CoastScene({
   agents,
   runningCount,
-  now,
   selectedAgentId,
   onSelect,
   t,
 }: {
   agents: AgentWorkspaceStatus[]
   runningCount: number
-  now: number
   selectedAgentId: string | null
   onSelect: (agentId: string) => void
   t: Translate
 }) {
-  return (
-    <section className="office-scene" aria-label={t('surface:agentStatus.agentOffice')}>
-      <div className="office-wall" aria-hidden="true">
-        <div className="office-window"><i /><i /><i /><i /></div>
-        <div className="office-wall-shelf"><i /><i /><i /><i /></div>
-        <div className="office-clock" style={{ '--clock-minute-duration': `${runningCount > 0 ? Math.max(12, 180 / runningCount) : 180}s` } as CSSProperties} aria-label="Office clock"><i className="office-clock-hour" /><i className="office-clock-minute" /></div>
-      </div>
-      <div className="office-sign"><Activity aria-hidden="true" /> EVERROOM OFFICE</div>
+  const groups = useMemo(() => {
+    const byState: Record<AgentWorkspaceState, AgentWorkspaceStatus[]> = { running: [], idle: [], error: [] }
+    for (const agent of agents) byState[agent.state].push(agent)
+    return byState
+  }, [agents])
+  // Speed-ordered formation: idle pelicans paddle on the sea; on the road,
+  // error riders park at the back and sprinters lead up front.
+  const slots = useMemo(() => {
+    const map = new Map<string, { x: number; depth: { lane: string; laneTop: string }; scale: number; mode: RiderMode }>()
+    groups.idle.forEach((agent, index) => {
+      map.set(agent.agentId, {
+        x: 10 + (80 * (index + 0.5)) / groups.idle.length,
+        depth: index % 2 === 0 ? SEA_FRONT : SEA_BACK,
+        scale: groups.idle.length >= 7 ? 0.58 : 0.7,
+        mode: 'swimming',
+      })
+    })
+    const road = (['error', 'running'] as const).filter((state) => groups[state].length > 0)
+    const roadTotal = road.reduce((sum, state) => sum + groups[state].length, 0)
+    const roadScale = roadTotal > 12 ? 0.62 : roadTotal > 9 ? 0.8 : 1
+    const usable = ROAD_END - ROAD_START - ZONE_GAP * Math.max(0, road.length - 1)
+    let cursor = ROAD_START
+    for (const state of road) {
+      const count = groups[state].length
+      const width = (usable * count) / roadTotal
+      groups[state].forEach((agent, index) => {
+        const depth = state === 'error' ? LANE_SHOULDER : index % 2 === 0 ? LANE_NEAR : LANE_FAR
+        map.set(agent.agentId, { x: cursor + (width * (index + 0.5)) / count, depth, scale: roadScale, mode: 'riding' })
+      })
+      cursor += width + ZONE_GAP
+    }
+    return map
+  }, [groups])
+  const scrollDuration = runningCount > 0 ? Math.max(18, 84 / runningCount) : 95
 
-      <div className="office-zone office-kitchen" aria-hidden="true">
-        <span><CookingPot />{t('surface:agentStatus.supplyStation')}</span><div className="office-counter" /><div className="office-fridge" />
+  return (
+    <section className="coast-scene" aria-label={t('surface:agentStatus.agentOffice')} style={{ '--scroll-dur': `${scrollDuration}s` } as CSSProperties}>
+      <svg className="coast-scene-art" viewBox="0 0 1440 620" preserveAspectRatio="none" aria-hidden="true">
+        <defs>
+          <path id="coast-cloud" d="M0 39C-7 24 8 12 25 17C31-5 67-5 76 17C91 10 111 20 112 35C125 35 137 43 138 49H-11C-11 44-6 40 0 39Z" fill="#f6faf1" />
+        </defs>
+
+        <rect x="-10" y="-10" width="1460" height="640" fill="#deeee8" />
+        <circle cx="1150" cy="92" r="58" fill="#f6cb69" opacity=".35" />
+        <circle cx="1150" cy="92" r="44" fill="#f6cb69" />
+
+        <g className="coast-scroll coast-scroll-clouds">
+          <g opacity=".92">
+            <use href="#coast-cloud" x="150" y="46" />
+            <use href="#coast-cloud" transform="translate(620 96) scale(.8)" />
+            <use href="#coast-cloud" x="1010" y="36" />
+            <use href="#coast-cloud" transform="translate(1330 110) scale(.7)" />
+            <use href="#coast-cloud" transform="translate(470 132) scale(.6)" />
+            <use href="#coast-cloud" x="1950" y="46" />
+            <use href="#coast-cloud" transform="translate(2420 96) scale(.8)" />
+            <use href="#coast-cloud" x="2810" y="36" />
+            <use href="#coast-cloud" transform="translate(3130 110) scale(.7)" />
+            <use href="#coast-cloud" transform="translate(2270 132) scale(.6)" />
+          </g>
+        </g>
+        <g className="coast-scroll coast-scroll-gulls">
+          <path d={GULLS} fill="none" stroke="#5c7a70" strokeWidth="2.4" strokeLinecap="round" />
+          <path d={GULLS} fill="none" stroke="#5c7a70" strokeWidth="2.4" strokeLinecap="round" transform="translate(1800 0)" />
+        </g>
+
+        <rect x="-10" y="190" width="1460" height="112" fill="#8ec8c0" />
+        <path d="M-10 190H1450" fill="none" stroke="#79b6b0" strokeWidth="2" />
+        <g className="coast-scroll coast-scroll-coast">
+          <path d={COAST_FAR} fill="#b5d2b7" />
+          <path d={COAST_NEAR} fill="#a0c6ac" />
+          <Lighthouse x={300} y={172} />
+          <path d={COAST_FAR} fill="#b5d2b7" transform="translate(1350 0)" />
+          <path d={COAST_NEAR} fill="#a0c6ac" transform="translate(1350 0)" />
+          <Lighthouse x={1650} y={172} />
+        </g>
+        <g className="coast-scroll coast-scroll-water">
+          <path d={WATER_LINES} fill="none" stroke="#c5e2d4" strokeWidth="3" strokeLinecap="round" />
+          <path d={WATER_LINES} fill="none" stroke="#c5e2d4" strokeWidth="3" strokeLinecap="round" transform="translate(1400 0)" />
+        </g>
+
+        <rect x="-10" y="300" width="1460" height="54" fill="#c4d9b9" />
+        <path d="M-10 301Q60 296 130 301T270 301T410 301T550 301T690 301T830 301T970 301T1110 301T1250 301T1390 301T1530 301" fill="none" stroke="#f4f7ec" strokeWidth="3" />
+        <g className="coast-scroll coast-scroll-grass">
+          <g fill="none" strokeLinecap="round" strokeLinejoin="round">
+            <path d={GRASS_TUFTS} stroke="#78a895" strokeWidth="3" />
+            <path d={GRASS_TUFTS} stroke="#aac8a9" strokeWidth="3" transform="translate(1440 0)" />
+          </g>
+          <g fill="#f8faf1">
+            <circle cx="205" cy="344" r="1.9" /><circle cx="722" cy="338" r="1.6" /><circle cx="1238" cy="346" r="1.9" />
+            <circle cx="1645" cy="344" r="1.9" /><circle cx="2162" cy="338" r="1.6" /><circle cx="2678" cy="346" r="1.9" />
+          </g>
+          <g fill="#f4cd6d">
+            <circle cx="455" cy="340" r="1.5" /><circle cx="1005" cy="342" r="1.4" /><circle cx="1895" cy="340" r="1.5" /><circle cx="2445" cy="342" r="1.4" />
+          </g>
+          <Umbrella x={1080} y={338} />
+          <Umbrella x={2520} y={338} />
+        </g>
+
+        <rect x="-10" y="352" width="1460" height="270" fill="#f1f3e9" />
+        <path d="M-10 352H1450" fill="none" stroke="#fcfcf4" strokeWidth="5" />
+        <g className="coast-scroll coast-scroll-road">
+          <g fill="none" strokeLinecap="round">
+            <path d={ROAD_MARKS} stroke="#d5dfcc" strokeWidth="3" />
+            <path d={ROAD_MARKS_WHITE} stroke="#fffefa" strokeWidth="7" />
+            <path d={ROAD_MARKS_SMALL} stroke="#d5dfcc" strokeWidth="2" />
+            <path d={ROAD_MARKS} stroke="#d5dfcc" strokeWidth="3" transform="translate(1440 0)" />
+            <path d={ROAD_MARKS_WHITE} stroke="#fffefa" strokeWidth="7" transform="translate(1440 0)" />
+            <path d={ROAD_MARKS_SMALL} stroke="#d5dfcc" strokeWidth="2" transform="translate(1440 0)" />
+          </g>
+          <MilePost x={700} y={374} />
+          <MilePost x={2140} y={374} />
+        </g>
+      </svg>
+
+      <div className="coast-masthead" aria-hidden="true">
+        <div>
+          <p>EVERROOM COASTLINE</p>
+          <h2>Pelicans on a roll.</h2>
+        </div>
+        <div className="coast-edition">A SEASIDE LOOP<br />AGENT PELOTON · NO. 001</div>
       </div>
-      <div className="office-zone office-coffee" aria-hidden="true">
-        <span><Coffee />{t('surface:agentStatus.lounge')}</span><div className="office-sofa" /><div className="office-table" />
+
+      <div className="coast-agent-layer">
+        {agents.map((agent, seed) => {
+          const slot = slots.get(agent.agentId)
+          if (!slot) return null
+          return (
+            <CoastRider
+              key={agent.agentId}
+              agent={agent}
+              seed={seed}
+              slot={slot}
+              selected={agent.agentId === selectedAgentId}
+              onSelect={() => onSelect(agent.agentId)}
+              t={t}
+            />
+          )
+        })}
       </div>
-      <div className="office-zone office-lounge" aria-hidden="true">
-        <span><Armchair />{t('surface:agentStatus.readingCorner')}</span><div className="office-chair" /><div className="office-plant"><i /><i /><i /></div>
-      </div>
-      <div className="office-workstations">
-        <div className="office-zone-label"><Monitor aria-hidden="true" />{t('surface:agentStatus.agentWorkstations')}</div>
-        <div className="office-desks">{agents.map((agent) => <i key={`seat-${agent.agentId}`} />)}</div>
-      </div>
-      <div className="office-agent-layer">
-        {agents.map((agent, index) => (
-          <OfficeSprite
-            key={agent.agentId}
-            agent={agent}
-            index={index}
-            count={agents.length}
-            selected={agent.agentId === selectedAgentId}
-            now={now}
-            onSelect={() => onSelect(agent.agentId)}
-            t={t}
-          />
-        ))}
-      </div>
-      <div className="office-floor-path" aria-hidden="true"><i /><i /><i /><i /><i /></div>
     </section>
+  )
+}
+
+function Lighthouse({ x, y }: { x: number; y: number }) {
+  return (
+    <g transform={`translate(${x} ${y})`}>
+      <path d="M-7 0L-5-24H5L7 0Z" fill="#f6f3e6" stroke="#8fae9a" strokeWidth="1.5" />
+      <path d="M-6.6-8H6.6L6-16H-6Z" fill="#de725e" />
+      <path d="M-5-24L-4.4-30H4.4L5-24Z" fill="#4c6b60" />
+      <circle cx="0" cy="-27" r="1.9" fill="#f6cb69" />
+    </g>
+  )
+}
+
+function Umbrella({ x, y }: { x: number; y: number }) {
+  return (
+    <g transform={`translate(${x} ${y})`}>
+      <line x1="0" y1="-26" x2="0" y2="0" stroke="#8a6a52" strokeWidth="2.5" strokeLinecap="round" />
+      <path d="M-15-26A15 15 0 0 1 15-26Z" fill="#de725e" stroke="#b3584c" strokeWidth="1.2" />
+      <path d="M-15-26A15 15 0 0 1 -4-40L-4-26Z" fill="#f6f0dd" />
+      <path d="M4-40A15 15 0 0 1 15-26L4-26Z" fill="#f6f0dd" />
+      <rect x="22" y="-6" width="24" height="7" rx="2.5" fill="#8ec8c0" transform="rotate(-4 34 -2)" />
+      <rect x="22" y="-3.5" width="24" height="2.4" rx="1.2" fill="#f6f0dd" transform="rotate(-4 34 -2)" />
+      <circle cx="-20" cy="-3" r="4" fill="#f4cd6d" stroke="#d3a94e" strokeWidth="1" />
+    </g>
+  )
+}
+
+function MilePost({ x, y }: { x: number; y: number }) {
+  return (
+    <g transform={`translate(${x} ${y})`}>
+      <rect x="-2" y="0" width="4" height="14" fill="#f6f0dd" stroke="#c9c2ab" strokeWidth="1" />
+      <rect x="-4.5" y="-4" width="9" height="5" rx="1" fill="#de725e" stroke="#b3584c" strokeWidth="1" />
+    </g>
   )
 }
 
@@ -177,7 +378,6 @@ export function AgentStatusPage() {
   const [filter, setFilter] = useState<StatusFilter>('all')
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [sceneNow, setSceneNow] = useState(() => Date.now())
 
   const refresh = useCallback(async (quiet = false) => {
     const api = window.nxcore?.agent
@@ -207,11 +407,6 @@ export function AgentStatusPage() {
     const timer = window.setInterval(() => void refresh(true), 3_000)
     return () => window.clearInterval(timer)
   }, [refresh])
-
-  useEffect(() => {
-    const timer = window.setInterval(() => setSceneNow(Date.now()), 1_000)
-    return () => window.clearInterval(timer)
-  }, [])
 
   const visibleAgents = useMemo(
     () => snapshot.agents.filter((agent) => filter === 'all' || agent.state === filter),
@@ -249,7 +444,7 @@ export function AgentStatusPage() {
       </section>
 
       <div className="agent-office-layout">
-        <OfficeScene agents={visibleAgents} runningCount={snapshot.summary.running} now={sceneNow} selectedAgentId={selectedAgentId} onSelect={setSelectedAgentId} t={t} />
+        <CoastScene agents={visibleAgents} runningCount={snapshot.summary.running} selectedAgentId={selectedAgentId} onSelect={setSelectedAgentId} t={t} />
       </div>
 
       <section className="agent-office-toolbar">

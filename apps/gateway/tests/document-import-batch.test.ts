@@ -610,7 +610,6 @@ describe('document-import batch (auto mode)', () => {
   function autoPorts(options?: {
     verdicts?: Record<string, ImportClassifierVerdict>
     roster?: BatchRoomRosterEntry[]
-    requireRouter?: () => boolean
     incubated?: Array<{ sourceId: string; markdown: string; sourceTag: string }>
   }): DocumentBatchImportPorts {
     const roster = options?.roster ?? [{ id: 'room-alpha', title: 'Alpha 项目', kind: 'project', aliases: [] }]
@@ -622,7 +621,6 @@ describe('document-import batch (auto mode)', () => {
       incubate: async (unit) => {
         options?.incubated?.push({ sourceId: unit.sourceId, markdown: unit.markdown, sourceTag: unit.sourceTag })
       },
-      requireRouter: options?.requireRouter ?? (() => true),
     }
   }
 
@@ -679,7 +677,6 @@ describe('document-import batch (auto mode)', () => {
         },
       },
       incubate: async (unit) => { incubated.push(unit) },
-      requireRouter: () => true,
     }
     const { batch } = makeServices(fakeRunner(autoActions(['tokA', 'tokB', 'tokC'])), ports)
     const created = await batch.createBatch({ provider: 'feishu', remoteDocumentIds: ['tokA', 'tokB', 'tokC'], mode: 'auto' })
@@ -688,17 +685,13 @@ describe('document-import batch (auto mode)', () => {
     expect(incubated.map((unit) => unit.sourceId)).toEqual(['import:feishu:tokA', 'import:feishu:tokB', 'import:feishu:tokC'])
   })
 
-  it('roster 为空 → 全部孵化；requireRouter false → 400', async () => {
+  it('roster 为空 → 全部孵化（router 关闭不再拒绝，降级由装配层管线处理）', async () => {
     const incubated: Array<{ sourceId: string; markdown: string; sourceTag: string }> = []
     const { batch } = makeServices(fakeRunner(autoActions(['tokA'])), autoPorts({ roster: [], incubated }))
     const created = await batch.createBatch({ provider: 'feishu', remoteDocumentIds: ['tokA'], mode: 'auto' })
     const view = await waitBatch(batch, created.batchId)
     expect(view.items[0]?.status).toBe('incubated')
     expect(incubated).toHaveLength(1)
-
-    const { batch: gated } = makeServices(fakeRunner(autoActions(['tokA'])), autoPorts({ requireRouter: () => false }))
-    await expect(gated.createBatch({ provider: 'feishu', remoteDocumentIds: ['tokA'], mode: 'auto' }))
-      .rejects.toMatchObject({ code: 'BATCH_ROUTER_DISABLED' })
   })
 })
 

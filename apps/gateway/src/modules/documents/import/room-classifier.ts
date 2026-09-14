@@ -21,7 +21,12 @@ const MAX_EXCERPT_CHARS = 2_000;
 const MAX_ALIAS_CHARS = 40;
 
 export class RoomAssignmentClassifier implements RoomAssignmentClassifierPort {
-  constructor(private readonly runtime: AgentRuntime | null) {}
+  constructor(private runtime: AgentRuntime | null) {}
+
+  /** runtime 配置热替换（SaaS 登录后到达；boot 快照的 null 会静默降级全部走孵化）。 */
+  replaceRuntime(runtime: AgentRuntime | null): void {
+    this.runtime = runtime;
+  }
 
   async classify(input: {
     rooms: BatchRoomRosterEntry[];

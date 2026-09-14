@@ -22,9 +22,11 @@ import type { DocumentImportService, ImportServiceError } from "./service.js";
  * auto 模式（归房+孵化混合）通过端口注入，M1 装配缺省时返回
  * BATCH_AUTO_UNAVAILABLE：
  * - roster：Room 名册（一次/批）
- * - classifier：归房判定（≥阈值 → commitToRoom 到判定 Room）
- * - incubate：孵化投喂（cloud-doc 全文 → knowledge 弱实体管线）
- * - requireRouter：knowledge 路由开关（关则拒绝 auto 批）
+ * - classifier：归房判定（≥阈值 → commitToRoom 到判定 Room，显式归房不依赖
+ *   knowledge router）
+ * - incubate：孵化投喂（cloud-doc 全文 → knowledge 弱实体管线；router 关闭
+ *   时由装配层降级 memory-only，不在此处拒绝——拒绝会让授权后的导入入口
+ *   整个不可用，且错误提示曾指向不存在的设置开关）
  */
 
 const BATCH_MAX_ITEMS = 50;
@@ -62,7 +64,6 @@ export interface DocumentBatchImportPorts {
   }) => Promise<void>;
   roster?: () => Promise<BatchRoomRosterEntry[]>;
   classifier?: RoomAssignmentClassifierPort | null;
-  requireRouter?: () => boolean;
 }
 
 export interface CreateBatchImportInput {
@@ -115,12 +116,6 @@ export class DocumentBatchImportService {
       }
       targetRoomId = input.roomId;
     } else if (input.mode === "auto") {
-      if (this.ports.requireRouter?.() === false) {
-        throw new BatchImportServiceError(
-          "BATCH_ROUTER_DISABLED",
-          "AI 归类依赖的知识路由未启用，请先在设置中开启自动归类",
-        );
-      }
       if (!this.ports.classifier || !this.ports.incubate) {
         throw new BatchImportServiceError("BATCH_AUTO_UNAVAILABLE", "AI 自动归类当前不可用（分类器或孵化链路未配置）");
       }

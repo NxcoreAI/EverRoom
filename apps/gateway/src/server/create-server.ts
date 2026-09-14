@@ -761,10 +761,12 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   // 写作风格服务提前创建（仅需 db）：dispatcher 与 agentService 的注入
   // provider 在此接线，worker/路由仍在文档 worker 附近启动注册。
   // 版本变更概览（历史面板 AI 概览标题）复用 background 模型；失败由服务退回本地规则摘要。
-  const versionSummaryRuntime = createWritingStyleRuntime(config);
-  const writingStyleRuntime = createWritingStyleRuntime(config);
+  let versionSummaryRuntime = createWritingStyleRuntime(config);
+  let writingStyleRuntime = createWritingStyleRuntime(config);
   // 文档速览（文章级 AI 摘要）：独立隔离 runtime；未配置时路由层置 aiAvailable=false。
-  const documentOverviewRuntime = createDocumentOverviewRuntime(config);
+  // let + 热替换：SaaS 登录后 runtime 配置才到达，boot 快照的 null 会让速览/
+  // 章节预览在首次登录后一直 503（下方 onChange 重建）。
+  let documentOverviewRuntime = createDocumentOverviewRuntime(config);
   const writingStyleService = new WritingStyleService(
     db,
     writingStyleRuntime ? new WritingStyleLlm(writingStyleRuntime) : null,
@@ -1268,10 +1270,10 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       config.documentIndexBackfill?.readTriggerCooldownMs ?? 1_800_000,
     )
     : null;
-  await app.register(documentRoutes(documentService, versionSummaryRuntime, indexBackfillReadTrigger));
+  await app.register(documentRoutes(documentService, () => versionSummaryRuntime, indexBackfillReadTrigger));
   await app.register(documentCommentRoutes(documentCommentService));
-  await app.register(documentOverviewRoutes(documentService, documentOverviewRuntime));
-  await app.register(documentSectionPreviewRoutes(documentService, documentOverviewRuntime));
+  await app.register(documentOverviewRoutes(documentService, () => documentOverviewRuntime));
+  await app.register(documentSectionPreviewRoutes(documentService, () => documentOverviewRuntime));
   await app.register(documentOperationRoutes(
     documentOperationService,
     documentMcpHost.capabilities,
@@ -1394,12 +1396,13 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   // 进程死亡遗留的 running 批置 failed。auto 模式 = 归房+孵化混合：分类器用
   // 隔离内部 runtime（缺席则 UI 侧按 BATCH_AUTO_UNAVAILABLE 禁用），孵化走
   // ingestConnector cloud-doc（knowledge 弱实体 → 待处理面板晋升）。
+  const importRoomClassifier = new RoomAssignmentClassifier(createImportClassifierRuntime(config));
   const documentBatchImportService = new DocumentBatchImportService(
     db,
     documentImportService,
     app.log,
     {
-      classifier: new RoomAssignmentClassifier(createImportClassifierRuntime(config)),
+      classifier: importRoomClassifier,
       roster: () => Promise.resolve(knowledgeService.listRooms().map((room) => ({
         id: room.id,
         title: room.title,
@@ -1414,13 +1417,33 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
           title: unit.title,
           markdown: unit.markdown,
           entrySignals: { sourceTag: unit.sourceTag },
+          // knowledge router 未开启时降级 memory-only（room/wiki 管线依赖
+          // router），与文件导入同款策略——孵化仍进记忆引擎，auto 批不因
+          // 路由关闭被拒（拒绝曾让导入入口整个不可用且提示指向不存在的设置）。
+          ...(knowledgeService.routerEnabled
+            ? {}
+            : { pipelines: { room: false, wiki: false, memory: true } }),
         });
       },
-      requireRouter: () => knowledgeService.routerEnabled,
     },
   );
   documentBatchImportService.recoverInterrupted();
   await app.register(documentImportBatchRoutes(documentBatchImportService, documentImportService));
+  // SaaS 登录后 runtime 配置才到达：boot 快照的文档速览/章节预览/归房分类器/
+  // 会话标题 runtime 是 null，配置热替换时同步重建（此前首次登录后这些能力
+  // 一直 503 或静默降级，直到重启）。
+  runtimeConfigManager.onChange(() => {
+    documentOverviewRuntime = createDocumentOverviewRuntime(config);
+    importRoomClassifier.replaceRuntime(createImportClassifierRuntime(config));
+    sessionTitleService.replaceRuntime(createSessionTitleRuntime(config));
+    versionSummaryRuntime = createWritingStyleRuntime(config);
+    writingStyleRuntime = createWritingStyleRuntime(config);
+    writingStyleService.replaceLlm(writingStyleRuntime ? new WritingStyleLlm(writingStyleRuntime) : null);
+    const backfillRuntime = config.documentIndexBackfill?.llmEnabled === false
+      ? null
+      : createIndexBackfillRuntime(config);
+    documentIndexBackfillWorker?.replaceLlm(backfillRuntime ? new IndexBackfillLlm(backfillRuntime) : null);
+  });
   filesService.setVersionIngestor(async (input) => {
     await documentUnderstandingService.parseVersion(input.fileEntryId, input.fileVersionId);
     const versionContext = filesService.getVersionContext(input.fileEntryId, input.fileVersionId);

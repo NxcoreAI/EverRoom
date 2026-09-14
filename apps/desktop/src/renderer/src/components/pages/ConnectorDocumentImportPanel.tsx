@@ -106,6 +106,10 @@ export function ConnectorDocumentImportPanel({
 
   const [batch, setBatch] = useState<DocumentImportBatchView | null>(null)
   const [autoDisabled, setAutoDisabled] = useState(false)
+  /** 批次发起中的即时反馈（IPC 往返期间按钮防重入，避免"点了没反应"的观感）。 */
+  const [batchStarting, setBatchStarting] = useState(false)
+  /** 发起失败的常驻错误（toast 只显示 3.2s，易被错过后只剩静默禁用的按钮）。 */
+  const [startError, setStartError] = useState<string | null>(null)
   const [roomPickerOpen, setRoomPickerOpen] = useState(false)
   /** 已导入冲突确认：选了 Room 且勾选中存在已导入文档时进入。 */
   const [conflict, setConflict] = useState<{ roomId: string; roomTitle: string; existingRemoteIds: Set<string> } | null>(null)
@@ -183,7 +187,9 @@ export function ConnectorDocumentImportPanel({
   }
 
   const startBatch = async (mode: 'room' | 'auto', roomId?: string, forceNew?: boolean) => {
-    if (!external || selected.size === 0 || batch?.status === 'running') return
+    if (!external || selected.size === 0 || batch?.status === 'running' || batchStarting) return
+    setBatchStarting(true)
+    setStartError(null)
     try {
       const created = await external.importBatch({
         provider,
@@ -226,13 +232,11 @@ export function ConnectorDocumentImportPanel({
       const message = error instanceof Error ? error.message : String(error)
       if (message.includes('BATCH_AUTO_UNAVAILABLE')) {
         setAutoDisabled(true)
-        showToast({ title: t('surface:connectorSync.autoClassifyUnavailable'), message })
-      } else if (message.includes('BATCH_ROUTER_DISABLED')) {
-        setAutoDisabled(true)
-        showToast({ title: t('surface:connectorSync.autoRouterDisabled'), message })
-      } else {
-        showToast({ title: t('surface:connectorSync.batchStartFailed'), message })
       }
+      setStartError(message)
+      showToast({ title: t('surface:connectorSync.batchStartFailed'), message })
+    } finally {
+      setBatchStarting(false)
     }
   }
 
@@ -530,7 +534,7 @@ export function ConnectorDocumentImportPanel({
                 <button
                   type="button"
                   className="primary-button"
-                  disabled={selected.size === 0}
+                  disabled={selected.size === 0 || batchStarting}
                   title={t('surface:connectorSync.importToRoomTooltip')}
                   onClick={() => void openRoomPicker()}
                 >
@@ -540,16 +544,24 @@ export function ConnectorDocumentImportPanel({
                 <button
                   type="button"
                   className="secondary-button"
-                  disabled={selected.size === 0 || autoDisabled}
+                  disabled={selected.size === 0 || autoDisabled || batchStarting}
                   title={t(autoDisabled ? 'surface:connectorSync.autoClassifyUnavailable' : 'surface:connectorSync.aiClassifyTooltip')}
                   onClick={() => void startBatch('auto')}
                 >
-                  <Bot aria-hidden="true" />
+                  {batchStarting ? <LoaderCircle className="spin" aria-hidden="true" /> : <Bot aria-hidden="true" />}
                   {t('surface:connectorSync.aiAutoClassify')}
                 </button>
               </>
             )}
           </div>
+          {startError ? (
+            <div className="connector-doc-failures">
+              <strong><TriangleAlert aria-hidden="true" />{t('surface:connectorSync.batchStartFailed')}</strong>
+              <div>
+                <span>{startError}</span>
+              </div>
+            </div>
+          ) : null}
           {batch && batch.status !== 'running' && batch.items.some((item) => item.status === 'failed') ? (
             <div className="connector-doc-failures">
               <strong><TriangleAlert aria-hidden="true" />{t('surface:connectorSync.batchFailedItems')}</strong>

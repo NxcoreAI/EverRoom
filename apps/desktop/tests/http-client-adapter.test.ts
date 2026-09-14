@@ -88,4 +88,25 @@ describe.skipIf(lan === null)('chromium fetch adapter（经 mock net.fetch）', 
     const response = await http.get(`http://${lan}:${String(port)}/v1/blob`, { responseType: 'arraybuffer' })
     expect(Buffer.from(response.data as ArrayBuffer)).toEqual(payload)
   })
+
+  it('网络层失败包装为 AxiosError 并保留 config（超时日志不丢 url/method）', async () => {
+    const http = createLoggedHttpClient('adapter-test')
+    const netMock = (await import('electron')).net as unknown as {
+      fetch: (url: string, init?: RequestInit) => Promise<Response>
+    }
+    const original = netMock.fetch
+    netMock.fetch = async () => {
+      throw Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' })
+    }
+    try {
+      await expect(http.get(`http://${lan}:9/v1/slow`)).rejects.toMatchObject({
+        isAxiosError: true,
+        code: 'TimeoutError',
+        message: 'The operation was aborted due to timeout',
+        config: { url: expect.stringContaining('/v1/slow') },
+      })
+    } finally {
+      netMock.fetch = original
+    }
+  })
 })

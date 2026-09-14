@@ -10,10 +10,13 @@ const idText = { minLength: 1, maxLength: 128 } as const;
  * 文档速览：GET 读 overview 3 列 + 空短判定（aiAvailable 由本层注入，
  * 前端据此跳过注定 4xx 的自动生成）；POST 同步生成（两次尝试内完成，
  * 30s 级超时）。生成只写速览列，不影响正文与 version。
+ *
+ * runtime 以 getter 注入：SaaS 登录后配置才到达，boot 快照会是 null，
+ * getter 保证每次请求拿到热替换后的最新实例。
  */
 export function documentOverviewRoutes(
   service: DocumentService,
-  runtime: AgentRuntime | null,
+  runtime: () => AgentRuntime | null,
 ): FastifyPluginAsyncTypebox {
   return async (app) => {
     app.get("/v1/documents/:id/overview", {
@@ -23,7 +26,7 @@ export function documentOverviewRoutes(
       },
     }, async (request, reply) => {
       try {
-        return { ...service.getDocumentOverview(request.params.id), aiAvailable: Boolean(runtime) };
+        return { ...service.getDocumentOverview(request.params.id), aiAvailable: Boolean(runtime()) };
       } catch (error) {
         if (error instanceof DocumentServiceError) {
           return reply.code(error.statusCode).send({ error: error.code, message: error.message, ...(error.details ?? {}) });
@@ -39,7 +42,7 @@ export function documentOverviewRoutes(
       },
     }, async (request, reply) => {
       try {
-        return await service.generateDocumentOverview(request.params.id, runtime);
+        return await service.generateDocumentOverview(request.params.id, runtime());
       } catch (error) {
         if (error instanceof DocumentServiceError) {
           return reply.code(error.statusCode).send({ error: error.code, message: error.message, ...(error.details ?? {}) });

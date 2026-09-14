@@ -15,6 +15,8 @@ import type { PrivateTranscriptionSyncService } from './private-transcription-sy
 import { summaryDetailMinimum } from './summary-quality'
 
 const POLL_INTERVAL_MS = 5_000
+const MAX_POLL_INTERVAL_MS = 60_000
+const MAX_FAILURE_STREAK = 4
 const LEASE_RENEW_INTERVAL_MS = 45_000
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
@@ -68,6 +70,7 @@ export class TranscriptionProcessingCoordinator {
   private running = false
   private stopped = true
   private timer: NodeJS.Timeout | null = null
+  private failureStreak = 0
   private registeredKey: string | null = null
 
   constructor(
@@ -116,11 +119,19 @@ export class TranscriptionProcessingCoordinator {
     this.running = true
     try {
       await this.processOne()
+      this.failureStreak = 0
     } catch (error) {
+      // 系统退化（网关阻塞/SaaS 超时）时以固定 5s 重试只会放大压力（线上曾
+      // 连刷 139 次失败），指数退避，成功后归零。
+      this.failureStreak = Math.min(this.failureStreak + 1, MAX_FAILURE_STREAK)
       console.warn('Background transcription processing tick failed.', error)
     } finally {
       this.running = false
-      if (!this.stopped) this.timer = setTimeout(() => void this.tick(), POLL_INTERVAL_MS)
+      if (!this.stopped) {
+        const delay = this.failureStreak === 0 ? POLL_INTERVAL_MS
+          : Math.min(POLL_INTERVAL_MS * 2 ** this.failureStreak, MAX_POLL_INTERVAL_MS)
+        this.timer = setTimeout(() => void this.tick(), delay)
+      }
     }
   }
 

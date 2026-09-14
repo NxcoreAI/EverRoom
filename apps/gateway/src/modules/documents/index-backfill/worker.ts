@@ -94,10 +94,15 @@ export class DocumentIndexBackfillWorker {
   constructor(
     private readonly db: GatewayDatabase,
     private readonly documents: DocumentIndexBackfillDocuments,
-    private readonly llm: IndexBackfillLlm | null,
+    private llm: IndexBackfillLlm | null,
     private readonly logger: IndexBackfillLogger,
     private readonly options: DocumentIndexBackfillWorkerOptions = {},
   ) {}
+
+  /** LLM 兜底热替换：SaaS 登录后 runtime 配置才到达，boot 快照的 null 会只剩确定性匹配。 */
+  replaceLlm(llm: IndexBackfillLlm | null): void {
+    this.llm = llm;
+  }
 
   start(): void {
     if (this.timer) return;

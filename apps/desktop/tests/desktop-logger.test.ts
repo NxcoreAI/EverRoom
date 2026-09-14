@@ -94,4 +94,19 @@ describe('desktop logger isolation', () => {
       { event: 'pipeline.failed' },
     )
   })
+
+  it('serializes Error console args with name, message and stack', () => {
+    sentryMocks.captureSentryLog.mockClear()
+
+    console.error('transcription tick failed', new Error('boom'))
+
+    expect(sentryMocks.captureSentryLog).toHaveBeenCalledWith('console', 'error', expect.objectContaining({
+      event: 'transcription tick failed',
+      details: expect.objectContaining({
+        name: 'Error',
+        message: 'boom',
+        stack: expect.any(String),
+      }),
+    }))
+  })
 })
