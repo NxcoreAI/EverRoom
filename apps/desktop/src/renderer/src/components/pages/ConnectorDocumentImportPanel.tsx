@@ -135,8 +135,13 @@ export function ConnectorDocumentImportPanel({
 
   // 卸载不清 sleep 定时器（挂起 chunk 循环）：置标志让循环自行终止，
   // 已完成的分批落库、剩余分批放弃（重挂载后按 imported 徽标可辨）。
-  useEffect(() => () => {
-    unmountedRef.current = true
+  // setup 里复位：StrictMode dev 双挂载会先跑一次 cleanup，不复位则恒 true，
+  // 首次导入即被误判为已卸载而卡死在 running。
+  useEffect(() => {
+    unmountedRef.current = false
+    return () => {
+      unmountedRef.current = true
+    }
   }, [])
 
   const loadDocuments = useCallback(async () => {
@@ -232,6 +237,7 @@ export function ConnectorDocumentImportPanel({
     setSelected(new Set())
     setRun({ status: 'running', total: ids.length, processed: 0, ...agg })
     try {
+      let connectionLost = false
       for (const chunk of chunks) {
         if (runCancelRef.current || unmountedRef.current) break
         const created = await external.importBatch({
@@ -248,6 +254,7 @@ export function ConnectorDocumentImportPanel({
           break
         }
         currentBatchIdRef.current = created.batchId
+        let pollFailures = 0
         for (;;) {
           await sleep(BATCH_POLL_MS)
           if (unmountedRef.current) return
@@ -255,7 +262,13 @@ export function ConnectorDocumentImportPanel({
             await external.cancelImportBatch(created.batchId).catch(() => undefined)
           }
           const view = await external.importBatchStatus(created.batchId).catch(() => null)
-          if (!view) continue
+          if (!view) {
+            // 网关不可达/批 404 连续失败要有上限，否则 run 永远停在 running。
+            pollFailures += 1
+            if (pollFailures >= 10) throw new Error(`批量导入状态查询连续失败（${String(pollFailures)} 次），已中断`)
+            continue
+          }
+          pollFailures = 0
           if (view.status === 'running') {
             setRun((prev) => prev && prev.status === 'running'
               ? { ...prev, processed: agg.imported + agg.incubated + agg.failed + agg.skipped + view.processed }
@@ -263,13 +276,20 @@ export function ConnectorDocumentImportPanel({
             continue
           }
           mergeBatchIntoRun(agg, view)
+          // 连接级失败（token 失效/oo 不可达）网关会短路整批：继续建剩余
+          // 分批只会逐批复现同样失败，熔断整个导入。
+          if (view.errorCode === 'IMPORT_CONNECTION_REQUIRED' || view.errorCode === 'OPEN_CONNECTOR_UNAVAILABLE') {
+            connectionLost = true
+          }
           break
         }
+        if (connectionLost) break
         setRun((prev) => prev && prev.status === 'running' ? { ...prev, ...agg } : prev)
       }
       if (unmountedRef.current) return
-      const cancelled = runCancelRef.current
-      setRun({ status: cancelled ? 'cancelled' : 'completed', total: ids.length, processed: ids.length, ...agg })
+      const cancelled = runCancelRef.current || connectionLost
+      // 终态进度用实际完成数（items 全部已终态）：中途取消/熔断时不跳满。
+      setRun({ status: cancelled ? 'cancelled' : 'completed', total: ids.length, processed: agg.items.length, ...agg })
       showToast({
         title: cancelled ? t('surface:connectorSync.batchCancelled') : t('surface:connectorSync.batchCompleted'),
         message: agg.skipped > 0
@@ -327,8 +347,8 @@ export function ConnectorDocumentImportPanel({
     try {
       const ids = [...selected]
       const existing = new Set<string>()
-      for (let index = 0; index < ids.length; index += 50) {
-        const result = await external.importExistingInRoom(provider, room.id, ids.slice(index, index + 50)).catch(() => null)
+      for (let index = 0; index < ids.length; index += BATCH_CHUNK) {
+        const result = await external.importExistingInRoom(provider, room.id, ids.slice(index, index + BATCH_CHUNK)).catch(() => null)
         if (!result) continue
         for (const id of result.existingRemoteIds) existing.add(id)
       }
