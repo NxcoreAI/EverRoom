@@ -581,6 +581,25 @@ exit 1
     expect(history.entries[0]!.relation).toBe('primary')
   })
 
+  it('空文档（fetch 成功但 content 空串）报明确的 content_empty 提示而非形状异常', async () => {
+    // 形状来自线上真实响应：C7tFdfDpoo6aCKxW4oecQJtTnBc（revision 17、无标题、
+    // 零内容块——markdown/xml/outline 三种格式均空）。
+    const actions = {
+      ...FEISHU_READ,
+      'feishu.get_document': { documentId: 'tokEmpty', revisionId: 17, title: '', raw: {} },
+      'feishu.fetch_document': {
+        document: { document_id: 'tokEmpty', revision_id: 17, content: '' },
+      },
+    }
+    const { imports } = await createHarness({ actionRunner: fakeRunner(actions) })
+    const error = await imports.preview('feishu', 'tokEmpty').then(() => null, (caught: unknown) => caught)
+    expect(error).toBeInstanceOf(ImportServiceError)
+    const serviceError = error as ImportServiceError
+    expect(serviceError.code).toBe('IMPORT_READ_FAILED')
+    expect(serviceError.message).toContain('内容为空')
+    expect(serviceError.message).toContain('tokEmpty')
+  })
+
   it('re-import creates a candidate, never overwrites, then apply creates v2', async () => {
     // 无变化守卫：第二次拉取需内容真的变化才会物化候选（同内容 → noChange）。
     let bodySuffix = ''

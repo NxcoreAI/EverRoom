@@ -48,7 +48,10 @@ const gatewayRemoteLogTimes: number[] = []
  *  Pro 用户排障才有网关侧现场（本地日志文件拿不到）。限频防雪崩刷屏。 */
 export function captureGatewayOutputRemote(label: string, stream: 'stdout' | 'stderr', line: string, now = Date.now()): void {
   const errorLike = /\b(error|fatal|unhandled|uncaught)\b/i.test(line)
-  if (stream === 'stdout' && !errorLike) return
+  // pino warn 级（"level":40+，如批量导入单篇失败、ingest 重试）不含 error
+  // 字样，线上排障恰恰需要这类现场（2026-09-14 实证：导入失败 warn 全留本地）。
+  const pinoWarnLike = /"level":([45]\d)/.test(line)
+  if (stream === 'stdout' && !errorLike && !pinoWarnLike) return
   while (gatewayRemoteLogTimes.length > 0 && now - gatewayRemoteLogTimes[0]! > GATEWAY_REMOTE_LOG_WINDOW_MS) {
     gatewayRemoteLogTimes.shift()
   }

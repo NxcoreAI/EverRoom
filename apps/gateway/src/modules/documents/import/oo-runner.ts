@@ -15,7 +15,8 @@ export type ImportConnectorErrorCode =
   | "invalid_input"
   | "timeout"
   | "connector_unavailable"
-  | "connector_error";
+  | "connector_error"
+  | "content_empty";
 
 export class ImportConnectorError extends Error {
   readonly code: ImportConnectorErrorCode;
