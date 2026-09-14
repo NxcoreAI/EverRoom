@@ -186,6 +186,10 @@ export function ConnectorDocumentImportPanel({
       || (item.wikiSpaceName ?? '').toLowerCase().includes(keyword))
   }, [items, filter])
   const batchStatusById = useMemo(() => new Map((run?.items ?? []).map((item) => [item.remoteDocumentId, item])), [run])
+  /** 明细行显示名：批量项 title 常为 null（失败/跳过发生在标题回填前），回退到列表项标题。 */
+  const listTitleById = useMemo(() => new Map(items.map((item) => [item.remoteDocumentId, item.title])), [items])
+  const itemDisplayName = (item: DocumentImportBatchItemView) =>
+    item.title || listTitleById.get(item.remoteDocumentId) || item.remoteDocumentId
   const visibleSelectableIds = visibleItems.map((item) => item.remoteDocumentId)
   const allVisibleSelected = visibleSelectableIds.length > 0
     && visibleSelectableIds.every((id) => selected.has(id))
@@ -655,7 +659,7 @@ export function ConnectorDocumentImportPanel({
               <strong><TriangleAlert aria-hidden="true" />{t('surface:connectorSync.batchFailedItems')}</strong>
               {run.items.filter((item) => item.status === 'failed').map((item) => (
                 <div key={item.remoteDocumentId}>
-                  <span>{item.title ?? item.remoteDocumentId}</span>
+                  <span>{itemDisplayName(item)}</span>
                   <small>{item.error}</small>
                 </div>
               ))}
@@ -666,7 +670,7 @@ export function ConnectorDocumentImportPanel({
               <strong><Info aria-hidden="true" />{t('surface:connectorSync.batchSkippedItems')}</strong>
               {run.items.filter((item) => item.status === 'skipped' && item.error).map((item) => (
                 <div key={item.remoteDocumentId}>
-                  <span>{item.title ?? item.remoteDocumentId}</span>
+                  <span>{itemDisplayName(item)}</span>
                   <small>{item.error}</small>
                 </div>
               ))}

@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
   copyFile,
+  cp,
   lstat,
   mkdir,
   readFile,
@@ -258,6 +259,12 @@ async function materializeRevision(runtimeDir: string, digest: string, files: So
     await mkdir(dirname(revisionRoot), { recursive: true });
     await rename(temporaryRoot, revisionRoot).catch(async (error: unknown) => {
       if ((await lstat(agentDirectory).catch(() => null))?.isDirectory()) return;
+      // Windows 上同卷目录 rename 偶发 EXDEV（实测 dev 日志，机理未定位，
+      // 疑与杀软/句柄占用有关）：降级递归复制，语义不变。
+      if ((error as NodeJS.ErrnoException).code === "EXDEV") {
+        await cp(temporaryRoot, revisionRoot, { recursive: true });
+        return;
+      }
       throw error;
     });
   } finally {
