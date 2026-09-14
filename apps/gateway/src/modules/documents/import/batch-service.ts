@@ -300,6 +300,16 @@ export class DocumentBatchImportService {
         succeeded += 1;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
+        // 空文档（IMPORT_CONTENT_EMPTY）：跳过并记录原因，不算失败、不进
+        // 失败明细，其余文档照常导入。
+        if (error instanceof Error && "code" in error
+          && (error as ImportServiceError).code === "IMPORT_CONTENT_EMPTY") {
+          item.status = "skipped";
+          item.error = `空文档已跳过：${message}`;
+          processed += 1;
+          this.writeProgress(batchId, { items, processed, succeeded, failed });
+          continue;
+        }
         item.status = "failed";
         item.error = message;
         failed += 1;

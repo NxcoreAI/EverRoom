@@ -2,6 +2,7 @@ import { ArrowUpRight, BookOpen, Bot, Boxes, FileDown, FileText, Files, FolderOp
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import type {
+  DocumentImportBatchItemView,
   DocumentImportBatchView,
   ExternalDocumentListItem,
   ExternalDocumentProvider,
@@ -104,7 +105,17 @@ export function ConnectorDocumentImportPanel({
   const [filter, setFilter] = useState('')
   const [selected, setSelected] = useState<Set<string>>(new Set())
 
-  const [batch, setBatch] = useState<DocumentImportBatchView | null>(null)
+  /** 聚合批次视图：一次导入动作可能拆多批（单批上限 50），跨批聚合进度与明细。 */
+  const [run, setRun] = useState<{
+    status: 'running' | 'completed' | 'cancelled'
+    total: number
+    processed: number
+    imported: number
+    incubated: number
+    failed: number
+    skipped: number
+    items: DocumentImportBatchItemView[]
+  } | null>(null)
   const [autoDisabled, setAutoDisabled] = useState(false)
   /** 批次发起中的即时反馈（IPC 往返期间按钮防重入，避免"点了没反应"的观感）。 */
   const [batchStarting, setBatchStarting] = useState(false)
@@ -118,9 +129,11 @@ export function ConnectorDocumentImportPanel({
   const [roomsLoading, setRoomsLoading] = useState(false)
   const [roomQuery, setRoomQuery] = useState('')
   const pollRef = useRef<number | null>(null)
+  const runCancelRef = useRef(false)
+  const currentBatchIdRef = useRef<string | null>(null)
 
   useEffect(() => () => {
-    if (pollRef.current !== null) window.clearInterval(pollRef.current)
+    if (pollRef.current !== null) window.clearTimeout(pollRef.current)
   }, [])
 
   const loadDocuments = useCallback(async () => {
@@ -164,7 +177,7 @@ export function ConnectorDocumentImportPanel({
     return items.filter((item) => item.title.toLowerCase().includes(keyword)
       || (item.wikiSpaceName ?? '').toLowerCase().includes(keyword))
   }, [items, filter])
-  const batchStatusById = useMemo(() => new Map((batch?.items ?? []).map((item) => [item.remoteDocumentId, item])), [batch])
+  const batchStatusById = useMemo(() => new Map((run?.items ?? []).map((item) => [item.remoteDocumentId, item])), [run])
   const visibleSelectableIds = visibleItems.map((item) => item.remoteDocumentId)
   const allVisibleSelected = visibleSelectableIds.length > 0
     && visibleSelectableIds.every((id) => selected.has(id))
@@ -186,56 +199,93 @@ export function ConnectorDocumentImportPanel({
     })
   }
 
+  /** 单批接口上限（网关 BATCH_MAX_ITEMS + schema maxItems）：超出自动分批串行。 */
+  const BATCH_CHUNK = 50
+
+  const sleep = (ms: number) => new Promise<void>((resolve) => {
+    pollRef.current = window.setTimeout(resolve, ms)
+  })
+
+  const mergeBatchIntoRun = (
+    agg: { imported: number; incubated: number; failed: number; skipped: number; items: DocumentImportBatchItemView[] },
+    view: DocumentImportBatchView,
+  ) => {
+    agg.items.push(...view.items)
+    agg.imported += view.items.filter((item) => item.status === 'imported').length
+    agg.incubated += view.items.filter((item) => item.status === 'incubated').length
+    agg.failed += view.items.filter((item) => item.status === 'failed').length
+    agg.skipped += view.items.filter((item) => item.status === 'skipped' && item.error).length
+  }
+
   const startBatch = async (mode: 'room' | 'auto', roomId?: string, forceNew?: boolean) => {
-    if (!external || selected.size === 0 || batch?.status === 'running' || batchStarting) return
+    if (!external || selected.size === 0 || run?.status === 'running' || batchStarting) return
     setBatchStarting(true)
     setStartError(null)
+    const ids = [...selected]
+    const chunks: string[][] = []
+    for (let index = 0; index < ids.length; index += BATCH_CHUNK) chunks.push(ids.slice(index, index + BATCH_CHUNK))
+    const agg = { imported: 0, incubated: 0, failed: 0, skipped: 0, items: [] as DocumentImportBatchItemView[] }
+    runCancelRef.current = false
+    setSelected(new Set())
+    setRun({ status: 'running', total: ids.length, processed: 0, ...agg })
     try {
-      const created = await external.importBatch({
-        provider,
-        ...(connectionName ? { connectionName } : {}),
-        remoteDocumentIds: [...selected],
-        mode,
-        ...(roomId ? { roomId } : {}),
-        ...(forceNew ? { forceNew } : {}),
-      })
-      setSelected(new Set())
-      const view = await external.importBatchStatus(created.batchId)
-      setBatch(view)
-      if (pollRef.current !== null) window.clearInterval(pollRef.current)
-      pollRef.current = window.setInterval(() => {
-        void external.importBatchStatus(created.batchId)
-          .then((next) => {
-            setBatch(next)
-            if (next.status !== 'running') {
-              if (pollRef.current !== null) window.clearInterval(pollRef.current)
-              pollRef.current = null
-              const imported = next.items.filter((item) => item.status === 'imported').length
-              const incubated = next.items.filter((item) => item.status === 'incubated').length
-              const failed = next.items.filter((item) => item.status === 'failed').length
-              showToast({
-                title: next.status === 'cancelled'
-                  ? t('surface:connectorSync.batchCancelled')
-                  : t('surface:connectorSync.batchCompleted'),
-                message: t('surface:connectorSync.batchSummary', {
-                  imported: String(imported),
-                  incubated: String(incubated),
-                  failed: String(failed),
-                }),
-              })
-              void loadDocuments()
-            }
+      for (const chunk of chunks) {
+        if (runCancelRef.current) break
+        const created = await external.importBatch({
+          provider,
+          ...(connectionName ? { connectionName } : {}),
+          remoteDocumentIds: chunk,
+          mode,
+          ...(roomId ? { roomId } : {}),
+          ...(forceNew ? { forceNew } : {}),
+        })
+        currentBatchIdRef.current = created.batchId
+        for (;;) {
+          await sleep(BATCH_POLL_MS)
+          if (runCancelRef.current && currentBatchIdRef.current === created.batchId) {
+            await external.cancelImportBatch(created.batchId).catch(() => undefined)
+          }
+          const view = await external.importBatchStatus(created.batchId).catch(() => null)
+          if (!view) continue
+          if (view.status === 'running') {
+            setRun((prev) => prev && prev.status === 'running'
+              ? { ...prev, processed: agg.imported + agg.incubated + agg.failed + agg.skipped + view.processed }
+              : prev)
+            continue
+          }
+          mergeBatchIntoRun(agg, view)
+          break
+        }
+        setRun((prev) => prev && prev.status === 'running' ? { ...prev, ...agg } : prev)
+      }
+      const cancelled = runCancelRef.current
+      setRun({ status: cancelled ? 'cancelled' : 'completed', total: ids.length, processed: ids.length, ...agg })
+      showToast({
+        title: cancelled ? t('surface:connectorSync.batchCancelled') : t('surface:connectorSync.batchCompleted'),
+        message: agg.skipped > 0
+          ? t('surface:connectorSync.batchSummaryWithSkipped', {
+            imported: String(agg.imported),
+            incubated: String(agg.incubated),
+            failed: String(agg.failed),
+            skipped: String(agg.skipped),
           })
-          .catch(() => undefined)
-      }, BATCH_POLL_MS)
+          : t('surface:connectorSync.batchSummary', {
+            imported: String(agg.imported),
+            incubated: String(agg.incubated),
+            failed: String(agg.failed),
+          }),
+      })
+      void loadDocuments()
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       if (message.includes('BATCH_AUTO_UNAVAILABLE')) {
         setAutoDisabled(true)
       }
       setStartError(message)
+      setRun((prev) => prev && prev.status === 'running' ? { ...prev, status: 'cancelled' } : prev)
       showToast({ title: t('surface:connectorSync.batchStartFailed'), message })
     } finally {
+      currentBatchIdRef.current = null
       setBatchStarting(false)
     }
   }
@@ -256,30 +306,32 @@ export function ConnectorDocumentImportPanel({
     }
   }
 
-  /** 选定目标 Room：先查勾选中已在该 Room 导入过的文档，无冲突直接开批，
-   * 有冲突弹确认（更新已有=默认候选链路 / 创建新的=跳过去重）。 */
+  /** 选定目标 Room：先查勾选中已在该 Room 导入过的文档（>50 时分批查询），
+   * 无冲突直接开批，有冲突弹确认（更新已有=默认候选链路 / 创建新的=跳过去重）。 */
   const pickRoom = async (room: { id: string; title: string }) => {
     if (!external || conflictChecking) return
     setConflictChecking(true)
     try {
-      const result = await external.importExistingInRoom(provider, room.id, [...selected])
-      const existing = new Set(result.existingRemoteIds)
-      if (existing.size === 0) {
+      const ids = [...selected]
+      const existing = new Set<string>()
+      let checkFailed = false
+      for (let index = 0; index < ids.length; index += 50) {
+        const result = await external.importExistingInRoom(provider, room.id, ids.slice(index, index + 50)).catch(() => null)
+        if (!result) { checkFailed = true; break }
+        for (const id of result.existingRemoteIds) existing.add(id)
+      }
+      // 检查失败不拦导入：按默认（更新已有）继续。
+      if (checkFailed || existing.size === 0) {
         setRoomPickerOpen(false)
         await startBatch('room', room.id)
       } else {
         setConflict({ roomId: room.id, roomTitle: room.title, existingRemoteIds: existing })
       }
-    } catch {
-      // 检查失败不拦导入：按默认（更新已有）继续。
-      setRoomPickerOpen(false)
-      await startBatch('room', room.id)
     } finally {
       setConflictChecking(false)
     }
   }
 
-  const batchRunning = batch?.status === 'running'
   const connectionMissing = !listLoading
     && (activeConnections.length === 0 || Boolean(listError?.includes('IMPORT_CONNECTION_REQUIRED')))
   // 授权中轮询：主进程打开授权页后，每 3s 检查一次连接，新连接出现即提示卡消失。
@@ -371,7 +423,8 @@ export function ConnectorDocumentImportPanel({
     )
   }
 
-  const batchPercent = batch && batch.total > 0 ? Math.round((batch.processed / batch.total) * 100) : 0
+  const batchRunning = run?.status === 'running'
+  const batchPercent = run && run.total > 0 ? Math.round((run.processed / run.total) * 100) : 0
 
   return (
     <section className="connector-sync-section" data-embedded={String(embedded)}>
@@ -505,21 +558,23 @@ export function ConnectorDocumentImportPanel({
           </div>
 
           <div className="connector-doc-actions">
-            {batchRunning && batch ? (
+            {batchRunning && run ? (
               <div className="connector-doc-progress">
                 <div className="connector-doc-progress-row">
                   <LoaderCircle className="spin" aria-hidden="true" />
                   <strong>{t('surface:connectorSync.batchProgress', {
-                    processed: String(batch.processed),
-                    total: String(batch.total),
+                    processed: String(run.processed),
+                    total: String(run.total),
                   })}</strong>
                   <span>{t('surface:connectorSync.batchProgressDetail', {
-                    succeeded: String(batch.succeeded),
-                    failed: String(batch.failed),
+                    succeeded: String(run.imported + run.incubated),
+                    failed: String(run.failed),
                   })}</span>
                   <button type="button" className="connector-text-btn" onClick={() => {
-                    if (!external) return
-                    void external.cancelImportBatch(batch.id).then(setBatch).catch(() => undefined)
+                    runCancelRef.current = true
+                    if (currentBatchIdRef.current && external) {
+                      void external.cancelImportBatch(currentBatchIdRef.current).catch(() => undefined)
+                    }
                   }}>
                     {t('surface:connectorSync.batchCancel')}
                   </button>
@@ -562,10 +617,21 @@ export function ConnectorDocumentImportPanel({
               </div>
             </div>
           ) : null}
-          {batch && batch.status !== 'running' && batch.items.some((item) => item.status === 'failed') ? (
+          {run && run.status !== 'running' && run.items.some((item) => item.status === 'failed') ? (
             <div className="connector-doc-failures">
               <strong><TriangleAlert aria-hidden="true" />{t('surface:connectorSync.batchFailedItems')}</strong>
-              {batch.items.filter((item) => item.status === 'failed').map((item) => (
+              {run.items.filter((item) => item.status === 'failed').map((item) => (
+                <div key={item.remoteDocumentId}>
+                  <span>{item.title ?? item.remoteDocumentId}</span>
+                  <small>{item.error}</small>
+                </div>
+              ))}
+            </div>
+          ) : null}
+          {run && run.status !== 'running' && run.items.some((item) => item.status === 'skipped' && item.error) ? (
+            <div className="connector-doc-failures connector-doc-skipped">
+              <strong><Info aria-hidden="true" />{t('surface:connectorSync.batchSkippedItems')}</strong>
+              {run.items.filter((item) => item.status === 'skipped' && item.error).map((item) => (
                 <div key={item.remoteDocumentId}>
                   <span>{item.title ?? item.remoteDocumentId}</span>
                   <small>{item.error}</small>
