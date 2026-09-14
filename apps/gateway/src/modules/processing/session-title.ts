@@ -19,6 +19,11 @@ const TITLE_MAX_CHARS = 48;
 export class SessionTitleService {
   constructor(private runtime: AgentRuntime | null) {}
 
+  /** runtime 配置热替换（SaaS 登录后到达；boot 快照的 null 会让标题生成一直失败）。 */
+  replaceRuntime(runtime: AgentRuntime | null): void {
+    this.runtime = runtime;
+  }
+
   async generate(input: SessionTitleInput): Promise<SessionTitleOutput> {
     if (!this.runtime) throw new Error("title_runtime_unavailable");
     const prompt = titlePrompt({
