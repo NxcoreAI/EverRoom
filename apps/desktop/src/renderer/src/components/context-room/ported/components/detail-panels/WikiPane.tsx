@@ -238,7 +238,6 @@ export function WikiPane({ room, selectedResourceId, onOpenPage }: {
     <div className="context-room-wiki-pane">
       <header className="context-room-wiki-header">
         <div className="context-room-wiki-title">
-          <h2>{t('contextRoom:wiki.knowledgeBase')}</h2>
           {pages.length > 0 ? <span>{t('contextRoom:wiki.countPages', { count: pages.length })}</span> : null}
         </div>
         <div className="context-room-wiki-actions">

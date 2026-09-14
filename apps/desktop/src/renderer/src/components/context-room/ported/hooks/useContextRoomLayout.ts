@@ -7,45 +7,47 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from 'react';
 
-import { DETAIL_TABS as TABS, type DetailPane } from '../components/RoomIconSidebar';
+import {
+  BOARD_TABS,
+  DEFAULT_SUBTABS,
+  type BoardId,
+  type BoardSubtab,
+} from '../components/RoomIconSidebar';
 
 const CONTEXT_ROOM_PANE_DRAG_TYPE = 'application/x-nexcore-context-room-pane';
 
-export type PaneDropPosition = 'before' | 'after';
+export type BoardSubtabs = Record<BoardId, BoardSubtab | null>;
 
 export function useContextRoomLayout({
-  activePane,
-  initialMobileContent = false,
-  onActivePaneChange,
-  onEnterDocuments,
+  activeBoard,
+  initialSubtabs,
+  onActiveBoardChange,
 }: {
-  activePane: DetailPane;
-  initialMobileContent?: boolean;
-  onActivePaneChange: (pane: DetailPane) => void;
-  onEnterDocuments: () => void;
+  activeBoard: BoardId;
+  initialSubtabs?: Partial<BoardSubtabs>;
+  onActiveBoardChange: (board: BoardId) => void;
 }) {
-  const [panels, setPanels] = useState<DetailPane[]>(
-    activePane === 'overview' ? ['overview'] : [activePane]
+  const [panels, setPanels] = useState<BoardId[]>(
+    activeBoard === 'work' ? ['work'] : [activeBoard]
   );
-  const [tabOrder, setTabOrder] = useState<DetailPane[]>(() => TABS.map((tab) => tab.id));
+  const [subtabs, setSubtabs] = useState<BoardSubtabs>({
+    ...DEFAULT_SUBTABS,
+    ...initialSubtabs,
+  });
   const [activePanelIndex, setActivePanelIndex] = useState(0);
   const [middleHidden, setMiddleHidden] = useState(false);
   const [middleWidth, setMiddleWidth] = useState(320);
   const [panelWeights, setPanelWeights] = useState([1]);
-  const [mobileContent, setMobileContent] = useState(initialMobileContent);
-  const [draggedPane, setDraggedPane] = useState<DetailPane | null>(null);
+  const [mobileContent, setMobileContent] = useState(false);
+  const [draggedBoard, setDraggedBoard] = useState<BoardId | null>(null);
   const [paneDragPreview, setPaneDragPreview] = useState<{
-    pane: DetailPane;
+    board: BoardId;
     x: number;
     y: number;
   } | null>(null);
-  const [tabDropTarget, setTabDropTarget] = useState<{
-    pane: DetailPane;
-    position: PaneDropPosition;
-  } | null>(null);
   const [paneDropIndex, setPaneDropIndex] = useState<number | null>(null);
   const layoutRef = useRef<HTMLDivElement | null>(null);
-  const draggedPaneRef = useRef<DetailPane | null>(null);
+  const draggedBoardRef = useRef<BoardId | null>(null);
   const panePointerCleanupRef = useRef<(() => void) | null>(null);
   const suppressPaneClickRef = useRef(false);
 
@@ -57,34 +59,27 @@ export function useContextRoomLayout({
   );
 
   const clearPaneDrag = () => {
-    draggedPaneRef.current = null;
-    setDraggedPane(null);
+    draggedBoardRef.current = null;
+    setDraggedBoard(null);
     setPaneDragPreview(null);
-    setTabDropTarget(null);
     setPaneDropIndex(null);
   };
   const getDraggedPane = (event: ReactDragEvent<HTMLElement>) => {
-    const pane =
-      draggedPaneRef.current ??
-      (event.dataTransfer.getData(CONTEXT_ROOM_PANE_DRAG_TYPE) as DetailPane);
-    return TABS.some((tab) => tab.id === pane) ? pane : null;
+    const board =
+      draggedBoardRef.current ??
+      (event.dataTransfer.getData(CONTEXT_ROOM_PANE_DRAG_TYPE) as BoardId);
+    return BOARD_TABS.some((tab) => tab.id === board) ? board : null;
   };
-  const startPaneDrag = (event: ReactDragEvent<HTMLButtonElement>, pane: DetailPane) => {
-    draggedPaneRef.current = pane;
-    setDraggedPane(pane);
+  const startPaneDrag = (event: ReactDragEvent<HTMLButtonElement>, board: BoardId) => {
+    draggedBoardRef.current = board;
+    setDraggedBoard(board);
     event.dataTransfer.effectAllowed = 'move';
-    event.dataTransfer.setData(CONTEXT_ROOM_PANE_DRAG_TYPE, pane);
-    event.dataTransfer.setData('text/plain', pane);
+    event.dataTransfer.setData(CONTEXT_ROOM_PANE_DRAG_TYPE, board);
+    event.dataTransfer.setData('text/plain', board);
   };
-  const reorderTab = (dragged: DetailPane, target: DetailPane, position: PaneDropPosition) => {
-    if (dragged === target) return;
-    setTabOrder((current) => {
-      const next = current.filter((pane) => pane !== dragged);
-      const targetIndex = next.indexOf(target);
-      next.splice(targetIndex + (position === 'after' ? 1 : 0), 0, dragged);
-      return next;
-    });
-  };
+  const isOverviewWorkspace = (current: BoardId[], currentSubtabs: BoardSubtabs) =>
+    current.length === 1 && current[0] === 'work' && currentSubtabs.work === 'overview';
+
   const getPaneDropIndex = (clientY: number, target: Element | null) => {
     if (panels.length >= 2) {
       const panel = target?.closest<HTMLElement>('[data-panel-index]');
@@ -103,25 +98,27 @@ export function useContextRoomLayout({
     return rect && clientY >= rect.top + rect.height / 2 ? 1 : 0;
   };
 
-  const switchPane = (pane: DetailPane) => {
-    onActivePaneChange(pane);
-    if (pane === 'documents') onEnterDocuments();
-    if (pane === 'overview') {
-      setPanels(['overview']);
+  const switchBoard = (board: BoardId, nextSubtab?: BoardSubtab) => {
+    onActiveBoardChange(board);
+    if (nextSubtab) {
+      setSubtabs((current) => (current[board] === nextSubtab ? current : { ...current, [board]: nextSubtab }));
+    }
+    // 工作概览独占整屏：无论从哪个板块进入，都收敛为单面板（沿用旧概览布局）。
+    if (board === 'work' && (nextSubtab ?? subtabs.work) === 'overview') {
+      setPanels(['work']);
       setPanelWeights([1]);
       setActivePanelIndex(0);
       setMiddleHidden(false);
       return;
     }
-    const overview = panels.length === 1 && panels[0] === 'overview';
-    if (overview) {
-      setPanels([pane]);
+    if (isOverviewWorkspace(panels, subtabs)) {
+      setPanels([board]);
       setPanelWeights([1]);
       setActivePanelIndex(0);
       setMiddleHidden(false);
       return;
     }
-    const index = panels.indexOf(pane);
+    const index = panels.indexOf(board);
     if (index >= 0) {
       if (panels.length === 1 && !middleHidden) setMiddleHidden(true);
       else {
@@ -132,45 +129,55 @@ export function useContextRoomLayout({
     }
     setPanels((current) => {
       const replaceIndex = current.length >= 2 ? (activePanelIndex === 0 ? 1 : 0) : 0;
-      return current.map((item, indexValue) => (indexValue === replaceIndex ? pane : item));
+      return current.map((item, indexValue) => (indexValue === replaceIndex ? board : item));
     });
     setMiddleHidden(false);
   };
 
-  const dropPaneIntoWorkspace = (pane: DetailPane, dropIndex: number) => {
-    if (pane === 'overview') {
-      switchPane('overview');
+  const setBoardSubtab = (board: BoardId, nextSubtab: BoardSubtab) => {
+    setSubtabs((current) => (current[board] === nextSubtab ? current : { ...current, [board]: nextSubtab }));
+    // 概览页签只在单面板整屏布局下成立；从分屏切回概览时收敛布局。
+    if (board === 'work' && nextSubtab === 'overview') {
+      setPanels((current) => (current.length === 1 && current[0] === 'work' ? current : ['work']));
+      setPanelWeights([1]);
+      setActivePanelIndex(0);
+      setMiddleHidden(false);
+    }
+  };
+
+  const dropBoardIntoWorkspace = (board: BoardId, dropIndex: number) => {
+    if (board === 'work' && subtabs.work === 'overview') {
+      switchBoard('work', 'overview');
       return;
     }
-    onActivePaneChange(pane);
-    if (pane === 'documents') onEnterDocuments();
+    onActiveBoardChange(board);
     setMiddleHidden(false);
     setPanels((current) => {
-      const existingIndex = current.indexOf(pane);
+      const existingIndex = current.indexOf(board);
       if (existingIndex >= 0) {
         setActivePanelIndex(existingIndex);
         return current;
       }
-      if (current.length === 1 && current[0] === 'overview') {
+      if (isOverviewWorkspace(current, subtabs)) {
         setActivePanelIndex(0);
         setPanelWeights([1]);
-        return [pane];
+        return [board];
       }
       if (current.length === 1) {
         const insertBelow = dropIndex > 0;
         setActivePanelIndex(insertBelow ? 1 : 0);
         setPanelWeights([1, 1]);
-        return insertBelow ? [current[0], pane] : [pane, current[0]];
+        return insertBelow ? [current[0], board] : [board, current[0]];
       }
       const replaceIndex = Math.max(0, Math.min(dropIndex, 1));
       const next = current.slice(0, 2);
-      next[replaceIndex] = pane;
+      next[replaceIndex] = board;
       setActivePanelIndex(replaceIndex);
       return next;
     });
   };
 
-  const startPanePointerDrag = (event: ReactPointerEvent<HTMLButtonElement>, pane: DetailPane) => {
+  const startPanePointerDrag = (event: ReactPointerEvent<HTMLButtonElement>, board: BoardId) => {
     if (!event.isPrimary || event.button !== 0) return;
     panePointerCleanupRef.current?.();
     const startX = event.clientX;
@@ -179,26 +186,13 @@ export function useContextRoomLayout({
     const getDropTarget = (clientX: number, clientY: number) => document.elementFromPoint(clientX, clientY);
     const updateTarget = (clientX: number, clientY: number) => {
       const target = getDropTarget(clientX, clientY);
-      const tab = target?.closest<HTMLElement>('[data-pane-id]');
-      if (tab) {
-        const targetPane = tab.dataset.paneId as DetailPane;
-        const rect = tab.getBoundingClientRect();
-        const horizontal = getComputedStyle(tab.parentElement ?? tab).flexDirection === 'row';
-        setTabDropTarget({
-          pane: targetPane,
-          position: horizontal
-            ? clientX < rect.left + rect.width / 2 ? 'before' : 'after'
-            : clientY < rect.top + rect.height / 2 ? 'before' : 'after',
-        });
-        setPaneDropIndex(null);
-        return;
+      // 工作概览独占整屏，不能作为分屏对象拖入中栏。
+      if (board !== 'work' || subtabs.work !== 'overview') {
+        if (target?.closest('.context-room-workspace-middle')) {
+          setPaneDropIndex(getPaneDropIndex(clientY, target));
+          return;
+        }
       }
-      if (pane !== 'overview' && target?.closest('.context-room-workspace-middle')) {
-        setTabDropTarget(null);
-        setPaneDropIndex(getPaneDropIndex(clientY, target));
-        return;
-      }
-      setTabDropTarget(null);
       setPaneDropIndex(null);
     };
     const cleanup = () => {
@@ -211,24 +205,17 @@ export function useContextRoomLayout({
       if (!moved && Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY) < 6) return;
       moved = true;
       moveEvent.preventDefault();
-      draggedPaneRef.current = pane;
-      setDraggedPane(pane);
-      setPaneDragPreview({ pane, x: moveEvent.clientX, y: moveEvent.clientY });
+      draggedBoardRef.current = board;
+      setDraggedBoard(board);
+      setPaneDragPreview({ board, x: moveEvent.clientX, y: moveEvent.clientY });
       updateTarget(moveEvent.clientX, moveEvent.clientY);
     };
     const up = (upEvent: PointerEvent) => {
       if (moved) {
         const target = getDropTarget(upEvent.clientX, upEvent.clientY);
-        const tab = target?.closest<HTMLElement>('[data-pane-id]');
-        if (tab) {
-          const targetPane = tab.dataset.paneId as DetailPane;
-          const rect = tab.getBoundingClientRect();
-          const horizontal = getComputedStyle(tab.parentElement ?? tab).flexDirection === 'row';
-          reorderTab(pane, targetPane, horizontal
-            ? upEvent.clientX < rect.left + rect.width / 2 ? 'before' : 'after'
-            : upEvent.clientY < rect.top + rect.height / 2 ? 'before' : 'after');
-        } else if (pane !== 'overview' && target?.closest('.context-room-workspace-middle')) {
-          dropPaneIntoWorkspace(pane, getPaneDropIndex(upEvent.clientY, target));
+        if ((board !== 'work' || subtabs.work !== 'overview')
+          && target?.closest('.context-room-workspace-middle')) {
+          dropBoardIntoWorkspace(board, getPaneDropIndex(upEvent.clientY, target));
         }
         suppressPaneClickRef.current = true;
         window.setTimeout(() => { suppressPaneClickRef.current = false; }, 0);
@@ -243,15 +230,13 @@ export function useContextRoomLayout({
     window.addEventListener('pointercancel', cancel);
   };
 
-  const addSplit = (pane: DetailPane, position: 'replace' | 'above' | 'below') => {
-    onActivePaneChange(pane);
-    if (pane === 'documents') onEnterDocuments();
-    const overview = panels.length === 1 && panels[0] === 'overview';
-    if (overview) {
-      switchPane(pane);
+  const addSplit = (board: BoardId, position: 'replace' | 'above' | 'below') => {
+    onActiveBoardChange(board);
+    if (isOverviewWorkspace(panels, subtabs)) {
+      switchBoard(board);
       return;
     }
-    const existing = panels.indexOf(pane);
+    const existing = panels.indexOf(board);
     if (existing >= 0) {
       setActivePanelIndex(existing);
       setMiddleHidden(false);
@@ -259,8 +244,8 @@ export function useContextRoomLayout({
     }
     setPanels((current) => {
       const next = [...current];
-      if (position === 'replace' || next.length >= 2) next[activePanelIndex] = pane;
-      else next.splice(position === 'above' ? activePanelIndex : activePanelIndex + 1, 0, pane);
+      if (position === 'replace' || next.length >= 2) next[activePanelIndex] = board;
+      else next.splice(position === 'above' ? activePanelIndex : activePanelIndex + 1, 0, board);
       setPanelWeights(next.map(() => 1));
       return next;
     });
@@ -314,7 +299,8 @@ export function useContextRoomLayout({
   return {
     panels,
     setPanels,
-    tabOrder,
+    subtabs,
+    setBoardSubtab,
     activePanelIndex,
     setActivePanelIndex,
     middleHidden,
@@ -324,10 +310,8 @@ export function useContextRoomLayout({
     setPanelWeights,
     mobileContent,
     setMobileContent,
-    draggedPane,
+    draggedBoard,
     paneDragPreview,
-    tabDropTarget,
-    setTabDropTarget,
     paneDropIndex,
     setPaneDropIndex,
     layoutRef,
@@ -336,10 +320,9 @@ export function useContextRoomLayout({
     getDraggedPane,
     startPaneDrag,
     startPanePointerDrag,
-    reorderTab,
     getPaneDropIndex,
-    dropPaneIntoWorkspace,
-    switchPane,
+    dropBoardIntoWorkspace,
+    switchBoard,
     addSplit,
     startMiddleResize,
     resizeMiddleByKey,

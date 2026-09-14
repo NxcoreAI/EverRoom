@@ -175,7 +175,6 @@ export function LinkGraphPane({
   return (
     <div className="context-room-memory-pane">
       <header>
-        <h2>{t('contextRoom:linkGraph.title')}</h2>
         <select
           className="context-room-link-graph-filter"
           aria-label={t('contextRoom:linkGraph.filterLabel')}

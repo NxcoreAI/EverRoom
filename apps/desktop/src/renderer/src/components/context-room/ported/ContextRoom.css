@@ -2276,25 +2276,6 @@
   height: 19px;
 }
 
-.context-room-workspace-tabs button.is-drop-before::before,
-.context-room-workspace-tabs button.is-drop-after::after {
-  position: absolute;
-  right: 4px;
-  left: 4px;
-  height: 2px;
-  border-radius: 1px;
-  background: var(--cr-blue);
-  content: '';
-}
-
-.context-room-workspace-tabs button.is-drop-before::before {
-  top: -2px;
-}
-
-.context-room-workspace-tabs button.is-drop-after::after {
-  bottom: -2px;
-}
-
 .context-room-workspace-tabs svg {
   width: 18px;
   height: 18px;
@@ -2396,6 +2377,39 @@
   min-height: 0;
   flex: 1;
   overflow: hidden;
+}
+
+/* 板块内页签条：中栏面板列顶部，切换工作/关系板块的二级视图。 */
+.context-room-board-tabs {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 2px;
+  align-items: center;
+  padding: 6px 10px 0;
+  border-bottom: 1px solid var(--cr-border);
+  background: var(--cr-surface-secondary);
+}
+
+.context-room-board-tabs button {
+  padding: 5px 10px 6px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--cr-muted);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.context-room-board-tabs button:hover {
+  color: var(--cr-text);
+  background: var(--cr-surface-hover);
+}
+
+.context-room-board-tabs button.is-active {
+  border-bottom-color: var(--cr-blue);
+  color: var(--cr-blue);
+  font-weight: 600;
 }
 
 /* 面板内详情子视图（任务/会议/邮件）：紧凑页边距 + 事实栅格单列堆叠。 */

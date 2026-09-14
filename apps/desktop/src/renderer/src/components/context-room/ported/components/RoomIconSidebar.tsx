@@ -1,81 +1,61 @@
 import {
-  BarChart3,
+  Briefcase,
   BookOpen,
-  Bookmark,
-  CalendarDays,
-  CheckSquare2,
-  FileText,
-  Mail,
-  Network,
+  FileStack,
+  LucideIcon,
   Share2,
 } from 'lucide-react';
-import type { LucideIcon } from 'lucide-react';
-import { useLocale } from '../../../../i18n/LocaleContext';
 
-export type DetailPane =
+export type BoardId = 'work' | 'artifacts' | 'relations' | 'wiki';
+
+export type BoardSubtab =
   | 'overview'
-  | 'documents'
-  | 'relations'
-  | 'memories'
-  | 'linkGraph'
-  | 'wiki'
   | 'schedule'
   | 'tasks'
-  | 'mails';
+  | 'mails'
+  | 'materials'
+  | 'library'
+  | 'trash'
+  | 'roomRelations'
+  | 'entities'
+  | 'linkGraph';
 
-export const DETAIL_TABS = [
-  { id: 'overview', label: 'contextRoom:roomSidebar.overview', icon: BarChart3, tone: 'room' },
-  { id: 'documents', label: 'contextRoom:roomSidebar.documents', icon: FileText, tone: 'document' },
-  { id: 'relations', label: 'contextRoom:roomSidebar.relations', icon: Share2, tone: 'data' },
-  { id: 'memories', label: 'contextRoom:roomSidebar.memories', icon: Bookmark, tone: 'memory' },
-  { id: 'linkGraph', label: 'contextRoom:roomSidebar.linkGraph', icon: Network, tone: 'data' },
-  { id: 'wiki', label: 'contextRoom:roomSidebar.wiki', icon: BookOpen, tone: 'data' },
-  { id: 'schedule', label: 'contextRoom:roomSidebar.schedule', icon: CalendarDays, tone: 'calendar' },
-  { id: 'tasks', label: 'contextRoom:roomSidebar.tasks', icon: CheckSquare2, tone: 'task' },
-  { id: 'mails', label: 'contextRoom:roomSidebar.mail', icon: Mail, tone: 'communication' },
-] as const;
-
-export function RoomIconSidebar({
-  activePane,
-  onSelectPane,
-  footerAction,
-}: {
-  activePane: DetailPane;
-  onSelectPane: (pane: DetailPane) => void;
-  footerAction?: {
-    label: string;
-    icon: LucideIcon;
-    onSelect: () => void;
-  };
-}) {
-  const { t } = useLocale();
-  return (
-    <nav className="context-room-workspace-tabs" aria-label={t('contextRoom:roomSidebar.contextRoomDetail')}>
-      {DETAIL_TABS.map(({ id, label, icon: Icon, tone }) => (
-        <button
-          key={id}
-          type="button"
-          data-pane-id={id}
-          data-icon-tone={tone}
-          aria-label={t(label)}
-          aria-pressed={activePane === id}
-          title={t(label)}
-          onClick={() => onSelectPane(id)}
-        >
-          <Icon aria-hidden="true" />
-        </button>
-      ))}
-      {footerAction ? (
-        <button
-          type="button"
-          className="context-room-workspace-tabs-footer"
-          aria-label={t(footerAction.label)}
-          title={t(footerAction.label)}
-          onClick={footerAction.onSelect}
-        >
-          <footerAction.icon aria-hidden="true" />
-        </button>
-      ) : null}
-    </nav>
-  );
+export interface BoardTab {
+  id: BoardId;
+  label: string;
+  icon: LucideIcon;
+  tone: string;
 }
+
+export const BOARD_TABS = [
+  { id: 'work', label: 'contextRoom:roomBoard.work', icon: Briefcase, tone: 'room' },
+  { id: 'artifacts', label: 'contextRoom:roomBoard.artifacts', icon: FileStack, tone: 'document' },
+  { id: 'relations', label: 'contextRoom:roomBoard.relations', icon: Share2, tone: 'data' },
+  { id: 'wiki', label: 'contextRoom:roomBoard.wiki', icon: BookOpen, tone: 'data' },
+] as const satisfies readonly BoardTab[];
+
+/** 各板块内部页签；单页签或面板自带页签（wiki）的板块不渲染 BoardTabs。 */
+export const BOARD_SUBTABS: Record<BoardId, readonly { id: BoardSubtab; label: string }[]> = {
+  work: [
+    { id: 'overview', label: 'contextRoom:boardTab.overview' },
+    { id: 'schedule', label: 'contextRoom:boardTab.schedule' },
+    { id: 'tasks', label: 'contextRoom:boardTab.tasks' },
+    { id: 'mails', label: 'contextRoom:boardTab.mails' },
+    { id: 'materials', label: 'contextRoom:boardTab.materials' },
+  ],
+  artifacts: [],
+  relations: [
+    { id: 'roomRelations', label: 'contextRoom:boardTab.roomRelations' },
+    { id: 'entities', label: 'contextRoom:boardTab.entities' },
+    { id: 'linkGraph', label: 'contextRoom:boardTab.linkGraph' },
+  ],
+  wiki: [],
+};
+
+/** wiki 板块由 WikiPane 自带内部页签，无板块级页签。 */
+export const DEFAULT_SUBTABS: Record<BoardId, BoardSubtab | null> = {
+  work: 'overview',
+  artifacts: 'library',
+  relations: 'roomRelations',
+  wiki: null,
+};

@@ -61,7 +61,7 @@ export function RelationsPane({
     <div className={`context-room-related-rooms-pane${hasRelations ? '' : ' is-empty'}${selectedRelation || inspectorOpen ? ' has-inspector' : ''}`}>
       <section className="context-room-related-graph">
         <header>
-          <div><h2>{t('contextRoom:relations.roomRelationshipGraph')}</h2><span>{room.title}</span></div>
+          <div><span>{room.title}</span></div>
           <div className="context-room-related-graph-actions">
             <span className="context-room-graph-index-state" data-status={error ? 'degraded' : graph?.indexing.status ?? 'building'}>
               {error ? t('contextRoom:relations.indexDegraded') : graph?.indexing.status === 'building'

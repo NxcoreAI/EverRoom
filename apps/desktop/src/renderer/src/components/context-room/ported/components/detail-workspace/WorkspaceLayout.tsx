@@ -6,8 +6,14 @@ import { useLocale } from '../../../../../i18n/LocaleContext';
 
 import type { ContextRoomRecord, ContextRoomResource, ContextRoomWikiPageResource } from '../../types';
 import type { KnowledgeFileDto } from '../../../../../../../shared/knowledge';
-import { DETAIL_TABS as TABS, type DetailPane } from '../RoomIconSidebar';
+import {
+  BOARD_TABS as TABS,
+  type BoardId,
+  type BoardSubtab,
+} from '../RoomIconSidebar';
+import type { BoardSubtabs } from '../../hooks/useContextRoomLayout';
 import { OverviewDashboard, type WorkspaceObjectPreview } from '../detail-panels';
+import { BoardTabs } from './BoardTabs';
 import { WorkspaceContent } from './WorkspaceContent';
 import { WorkspacePaneBody } from './WorkspacePaneBody';
 
@@ -18,7 +24,8 @@ export function WorkspaceLayout({
   rooms,
   panels,
   setPanels,
-  tabOrder,
+  subtabs,
+  setBoardSubtab,
   activePanelIndex,
   setActivePanelIndex,
   middleHidden,
@@ -28,10 +35,8 @@ export function WorkspaceLayout({
   setPanelWeights,
   mobileContent,
   setMobileContent,
-  draggedPane,
+  draggedBoard,
   paneDragPreview,
-  tabDropTarget,
-  setTabDropTarget,
   paneDropIndex,
   setPaneDropIndex,
   layoutRef,
@@ -40,10 +45,9 @@ export function WorkspaceLayout({
   getDraggedPane,
   startPaneDrag,
   startPanePointerDrag,
-  reorderTab,
   getPaneDropIndex,
-  dropPaneIntoWorkspace,
-  switchPane,
+  dropBoardIntoWorkspace,
+  switchBoard,
   addSplit,
   startMiddleResize,
   resizeMiddleByKey,
@@ -78,9 +82,10 @@ export function WorkspaceLayout({
 }: {
   room: ContextRoomRecord;
   rooms: ContextRoomRecord[];
-  panels: DetailPane[];
-  setPanels: Dispatch<SetStateAction<DetailPane[]>>;
-  tabOrder: DetailPane[];
+  panels: BoardId[];
+  setPanels: Dispatch<SetStateAction<BoardId[]>>;
+  subtabs: BoardSubtabs;
+  setBoardSubtab: (board: BoardId, subtab: BoardSubtab) => void;
   activePanelIndex: number;
   setActivePanelIndex: Dispatch<SetStateAction<number>>;
   middleHidden: boolean;
@@ -90,23 +95,20 @@ export function WorkspaceLayout({
   setPanelWeights: Dispatch<SetStateAction<number[]>>;
   mobileContent: boolean;
   setMobileContent: Dispatch<SetStateAction<boolean>>;
-  draggedPane: DetailPane | null;
-  paneDragPreview: { pane: DetailPane; x: number; y: number } | null;
-  tabDropTarget: { pane: DetailPane; position: 'before' | 'after' } | null;
-  setTabDropTarget: Dispatch<SetStateAction<{ pane: DetailPane; position: 'before' | 'after' } | null>>;
+  draggedBoard: BoardId | null;
+  paneDragPreview: { board: BoardId; x: number; y: number } | null;
   paneDropIndex: number | null;
   setPaneDropIndex: Dispatch<SetStateAction<number | null>>;
   layoutRef: LayoutRef;
   suppressPaneClickRef: { current: boolean };
   clearPaneDrag: () => void;
-  getDraggedPane: (event: React.DragEvent<HTMLElement>) => DetailPane | null;
-  startPaneDrag: (event: React.DragEvent<HTMLButtonElement>, pane: DetailPane) => void;
-  startPanePointerDrag: (event: React.PointerEvent<HTMLButtonElement>, pane: DetailPane) => void;
-  reorderTab: (dragged: DetailPane, target: DetailPane, position: 'before' | 'after') => void;
+  getDraggedPane: (event: React.DragEvent<HTMLElement>) => BoardId | null;
+  startPaneDrag: (event: React.DragEvent<HTMLButtonElement>, board: BoardId) => void;
+  startPanePointerDrag: (event: React.PointerEvent<HTMLButtonElement>, board: BoardId) => void;
   getPaneDropIndex: (clientY: number, target: Element | null) => number;
-  dropPaneIntoWorkspace: (pane: DetailPane, dropIndex: number) => void;
-  switchPane: (pane: DetailPane) => void;
-  addSplit: (pane: DetailPane, position: 'replace' | 'above' | 'below') => void;
+  dropBoardIntoWorkspace: (board: BoardId, dropIndex: number) => void;
+  switchBoard: (board: BoardId, subtab?: BoardSubtab) => void;
+  addSplit: (board: BoardId, position: 'replace' | 'above' | 'below') => void;
   startMiddleResize: (event: React.PointerEvent<HTMLDivElement>) => void;
   resizeMiddleByKey: (event: React.KeyboardEvent<HTMLDivElement>) => void;
   startPanelResize: (event: React.PointerEvent<HTMLDivElement>, index: number) => void;
@@ -142,15 +144,15 @@ export function WorkspaceLayout({
   onImportObsidian: () => void;
 }) {
   const { t } = useLocale();
-  const overview = panels.length === 1 && panels[0] === 'overview';
-  const orderedTabs = tabOrder
-    .map((pane) => TABS.find((tab) => tab.id === pane))
-    .filter((tab): tab is (typeof TABS)[number] => Boolean(tab));
+  const overview = panels.length === 1 && panels[0] === 'work' && subtabs.work === 'overview';
+  const boardLabel = (board: BoardId) => TABS.find((tab) => tab.id === board)?.label ?? board;
+  // 工作概览独占整屏时不可被分屏替换。
+  const boardSplittable = (board: BoardId) => !(board === 'work' && subtabs.work === 'overview');
 
   return (
     <>
       {paneDragPreview ? (() => {
-        const previewTab = TABS.find((tab) => tab.id === paneDragPreview.pane);
+        const previewTab = TABS.find((tab) => tab.id === paneDragPreview.board);
         if (!previewTab) return null;
         const PreviewIcon = previewTab.icon;
         return (
@@ -167,11 +169,11 @@ export function WorkspaceLayout({
       })() : null}
       <div
         ref={layoutRef as React.RefObject<HTMLDivElement>}
-        className={`context-room-workspace-layout${overview ? ' is-overview' : ''}${middleHidden ? ' is-middle-hidden' : ''}${mobileContent ? ' is-mobile-content' : ''}${panels.includes('tasks') ? ' has-task-pane' : ''}`}
+        className={`context-room-workspace-layout${overview ? ' is-overview' : ''}${middleHidden ? ' is-middle-hidden' : ''}${mobileContent ? ' is-mobile-content' : ''}`}
         style={{ '--context-room-middle-width': `${String(middleWidth)}px` } as React.CSSProperties}
       >
-        <nav className="context-room-workspace-tabs" aria-label={t('contextRoom:roomSidebar.contextRoomDetail')}>
-          {orderedTabs.map(({ id, label, icon: Icon, tone }) => (
+        <nav className="context-room-workspace-tabs" aria-label={t('contextRoom:roomBoard.contextRoomDetail')}>
+          {TABS.map(({ id, label, icon: Icon, tone }) => (
             <ContextMenu.Root key={id}>
               <ContextMenu.Trigger asChild>
                 <button
@@ -182,35 +184,14 @@ export function WorkspaceLayout({
                   data-icon-tone={tone}
                   aria-pressed={panels.includes(id) && !middleHidden}
                   draggable={false}
-                  className={`${draggedPane === id ? 'is-dragging' : ''}${tabDropTarget?.pane === id ? ` is-drop-${tabDropTarget.position}` : ''}`}
+                  className={draggedBoard === id ? 'is-dragging' : ''}
                   onClick={(event) => {
                     if (suppressPaneClickRef.current) { event.preventDefault(); return; }
-                    switchPane(id);
+                    switchBoard(id);
                   }}
                   onPointerDown={(event) => startPanePointerDrag(event, id)}
                   onDragStart={(event) => startPaneDrag(event, id)}
                   onDragEnd={clearPaneDrag}
-                  onDragOver={(event) => {
-                    const pane = getDraggedPane(event);
-                    if (!pane) return;
-                    event.preventDefault();
-                    event.stopPropagation();
-                    event.dataTransfer.dropEffect = 'move';
-                    const rect = event.currentTarget.getBoundingClientRect();
-                    const horizontal = getComputedStyle(event.currentTarget.parentElement ?? event.currentTarget).flexDirection === 'row';
-                    setTabDropTarget({ pane: id, position: horizontal
-                      ? event.clientX < rect.left + rect.width / 2 ? 'before' : 'after'
-                      : event.clientY < rect.top + rect.height / 2 ? 'before' : 'after' });
-                    setPaneDropIndex(null);
-                  }}
-                  onDrop={(event) => {
-                    const pane = getDraggedPane(event);
-                    if (!pane) return;
-                    event.preventDefault();
-                    event.stopPropagation();
-                    reorderTab(pane, id, tabDropTarget?.position ?? 'before');
-                    clearPaneDrag();
-                  }}
                   onKeyDown={(event) => {
                     if ((event.shiftKey && event.key === 'F10') || event.key === 'ContextMenu') {
                       event.currentTarget.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }));
@@ -220,7 +201,7 @@ export function WorkspaceLayout({
                   <Icon aria-hidden="true" />
                 </button>
               </ContextMenu.Trigger>
-              {id !== 'overview' ? (
+              {boardSplittable(id) ? (
                 <ContextMenu.Portal>
                   <ContextMenu.Content className="context-room-tab-menu">
                     <ContextMenu.Label>“{t(label)}”</ContextMenu.Label>
@@ -252,7 +233,7 @@ export function WorkspaceLayout({
             knowledgeFiles={knowledgeFiles}
             onSelectResource={onSelectResource}
             onOpenObject={onOpenObject}
-            onOpenPane={(pane) => switchPane(pane)}
+            onOpenPane={(pane) => setBoardSubtab('work', pane)}
             onToggleTask={onToggleTask}
           />
         ) : (
@@ -260,12 +241,11 @@ export function WorkspaceLayout({
             <section
               className={`context-room-workspace-middle${paneDropIndex === 0 && panels.length === 1 ? ' is-pane-drop-top' : ''}${paneDropIndex === 1 && panels.length === 1 ? ' is-pane-drop-bottom' : ''}`}
               onDragOver={(event) => {
-                const pane = getDraggedPane(event);
-                if (!pane || pane === 'overview') return;
+                const board = getDraggedPane(event);
+                if (!board || !boardSplittable(board)) return;
                 event.preventDefault();
                 event.dataTransfer.dropEffect = 'move';
                 setPaneDropIndex(getPaneDropIndex(event.clientY, event.target as Element));
-                setTabDropTarget(null);
               }}
               onDragLeave={(event) => {
                 const nextTarget = event.relatedTarget;
@@ -273,30 +253,31 @@ export function WorkspaceLayout({
                 setPaneDropIndex(null);
               }}
               onDrop={(event) => {
-                const pane = getDraggedPane(event);
-                if (!pane || pane === 'overview') return;
+                const board = getDraggedPane(event);
+                if (!board || !boardSplittable(board)) return;
                 event.preventDefault();
-                dropPaneIntoWorkspace(pane, getPaneDropIndex(event.clientY, event.target as Element));
+                dropBoardIntoWorkspace(board, getPaneDropIndex(event.clientY, event.target as Element));
                 clearPaneDrag();
               }}
             >
-              {panels.map((pane, index) => {
-                const paneLabel = TABS.find((tab) => tab.id === pane)?.label ?? pane;
+              {panels.map((board, index) => {
+                const label = boardLabel(board);
+                const subtab = subtabs[board];
                 return (
                   <div
                     className={`context-room-workspace-panel${index === activePanelIndex ? ' is-active' : ''}${index < panels.length - 1 ? ' has-divider' : ''}${paneDropIndex === index && panels.length >= 2 ? ' is-drop-target' : ''}`}
-                    data-testid={`context-room-workspace-panel-${pane}`}
+                    data-testid={`context-room-workspace-panel-${board}`}
                     data-panel-index={index}
                     style={{ flexGrow: panelWeights[index] ?? 1 }}
-                    key={`${pane}-${String(index)}`}
+                    key={`${board}-${String(index)}`}
                     onClick={() => setActivePanelIndex(index)}
                   >
                     {panels.length > 1 ? (
                       <header>
-                        <span>{t(paneLabel)}</span>
+                        <span>{t(label)}</span>
                         <button
                           type="button"
-                          aria-label={t('contextRoom:workspaceLayout.closePanePanel', { pane: t(paneLabel) })}
+                          aria-label={t('contextRoom:workspaceLayout.closePanePanel', { pane: t(label) })}
                           onClick={(event) => {
                             event.stopPropagation();
                             setPanels((current) => current.filter((_, currentIndex) => currentIndex !== index));
@@ -308,9 +289,15 @@ export function WorkspaceLayout({
                         </button>
                       </header>
                     ) : null}
+                    <BoardTabs
+                      board={board}
+                      activeSubtab={subtab}
+                      onSelectSubtab={(nextSubtab) => setBoardSubtab(board, nextSubtab)}
+                    />
                     <div className="context-room-workspace-panel-body">
                       <WorkspacePaneBody
-                        pane={pane}
+                        board={board}
+                        subtab={subtab}
                         room={room}
                         selectedResourceId={selectedResourceId}
                         backendDocuments={backendDocuments}
@@ -326,6 +313,7 @@ export function WorkspaceLayout({
                         onDeleteDocumentPermanently={onDeleteDocumentPermanently}
                         onEmptyTrash={onEmptyTrash}
                         onOpenDocument={onOpenDocument}
+                        onOpenPane={(nextSubtab) => setBoardSubtab('work', nextSubtab)}
                         linkGraphFocusNodeId={linkGraphFocusNodeId}
                         onToggleTask={onToggleTask}
                         onUpdateRoom={onUpdateRoom}
