@@ -125,6 +125,7 @@ export function WorkspacePaneBody({
           backendDocuments={backendDocuments.filter((document) => document.origin !== 'native')}
           trashedDocuments={trashedDocuments.filter((document) => document.origin !== 'native')}
           knowledgeFiles={knowledgeFiles}
+          variant="materials"
           onSelect={onSelectResource}
           onCreateDocument={onCreateDocument}
           onDeleteDocument={onDeleteDocument}
@@ -158,6 +159,7 @@ export function WorkspacePaneBody({
         backendDocuments={backendDocuments.filter((document) => document.origin === 'native')}
         trashedDocuments={trashedDocuments.filter((document) => document.origin === 'native')}
         knowledgeFiles={[]}
+        variant="artifacts"
         onSelect={onSelectResource}
         onCreateDocument={onCreateDocument}
         onDeleteDocument={onDeleteDocument}

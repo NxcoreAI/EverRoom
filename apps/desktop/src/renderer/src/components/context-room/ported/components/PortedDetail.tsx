@@ -134,7 +134,11 @@ export function PortedDetail({
     }
     setSelectedObject(null)
     setSelectedResourceId(resource.id)
-    if (!(layout.panels.includes('work') && layout.subtabs.work === 'materials')) {
+    // 产物（用户创建文档）进产物板块；资料（导入文档/上传文件）进工作/资料。
+    if (resource.kind === 'cloud-doc'
+      && backendDocuments.find((document) => document.id === resource.binding.docId)?.origin === 'native') {
+      if (!layout.panels.includes('artifacts')) layout.switchBoard('artifacts')
+    } else if (!(layout.panels.includes('work') && layout.subtabs.work === 'materials')) {
       layout.switchBoard('work', 'materials')
     }
     layout.setMobileContent(true)
@@ -142,7 +146,7 @@ export function PortedDetail({
     if (resource.kind === 'knowledge-file' && !isMarkdownFileName(resource.originalName)) {
       void window.nxcore?.knowledge?.openFile(resource.fileId).catch(() => undefined)
     }
-  }, [layout, room.id])
+  }, [backendDocuments, layout, room.id])
 
   const openWikiPage = useCallback((resource: ContextRoomWikiPageResource) => {
     if (resource.roomId !== room.id) return

@@ -109,6 +109,7 @@ const CONTEXT_ROOM_DISPLAY_KEYS: Record<string, string> = {
   '表达偏好': 'contextRoom:display.communicationPreference',
   '客户要求': 'contextRoom:display.customerRequirement',
   '云文档': 'contextRoom:display.cloudDocuments',
+  '产物': 'contextRoom:display.artifacts',
   'Office 文件': 'contextRoom:display.officeFiles',
   '设计与附件': 'contextRoom:display.designAndAttachments',
   '回收站': 'contextRoom:display.trash',
