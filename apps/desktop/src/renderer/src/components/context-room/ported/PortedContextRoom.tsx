@@ -12,6 +12,7 @@ import { RoomMergePartnerPicker } from './components/RoomMergePartnerPicker'
 import { HomeView } from './components/HomeView'
 import { PortedDetail } from './components/PortedDetail'
 import type { BoardId } from './components/RoomIconSidebar'
+import { loadRoomWorkspaceState, saveRoomWorkspaceState } from './roomWorkspaceState'
 import {
   mergeKnowledgeRooms,
   shouldDeleteRoomFromKnowledge,
@@ -55,7 +56,6 @@ export function PortedContextRoom({
   const { t } = useLocale()
   const { state, setState, refreshFromBackend } = useContextRoomState()
   const handledHomeRequest = useRef(homeRequest)
-  const detailBoardByRoomIdRef = useRef<Record<string, BoardId>>({})
   const [homeView, setHomeView] = useState<'home' | 'all'>('home')
   const [vaults, setVaults] = useState<ObsidianVaultBinding[]>([])
   const activeRoom = state.rooms.find((room) => room.id === activeRoomId) ?? null
@@ -392,9 +392,10 @@ export function PortedContextRoom({
         onRestoreDocument={roomDocuments.restoreDocument}
         onDeleteDocumentPermanently={roomDocuments.deleteDocumentPermanently}
         onEmptyTrash={roomDocuments.emptyTrash}
-        initialActiveBoard={detailBoardByRoomIdRef.current[activeRoom.id] ?? 'work'}
+        initialActiveBoard={loadRoomWorkspaceState(activeRoom.id)?.board ?? 'work'}
+        initialSubtab={loadRoomWorkspaceState(activeRoom.id)?.subtab}
         onActiveBoardChange={(board) => {
-          detailBoardByRoomIdRef.current[activeRoom.id] = board
+          saveRoomWorkspaceState(activeRoom.id, { board })
         }}
         onBack={() => {
           onShowHome()

@@ -227,15 +227,22 @@ export function WorkspaceLayout({
         </nav>
 
         {overview ? (
-          <OverviewDashboard
-            room={room}
-            backendDocuments={backendDocuments}
-            knowledgeFiles={knowledgeFiles}
-            onSelectResource={onSelectResource}
-            onOpenObject={onOpenObject}
-            onOpenPane={(pane) => setBoardSubtab('work', pane)}
-            onToggleTask={onToggleTask}
-          />
+          <div className="context-room-overview-board">
+            <BoardTabs
+              board="work"
+              activeSubtab={subtabs.work}
+              onSelectSubtab={(nextSubtab) => setBoardSubtab('work', nextSubtab)}
+            />
+            <OverviewDashboard
+              room={room}
+              backendDocuments={backendDocuments}
+              knowledgeFiles={knowledgeFiles}
+              onSelectResource={onSelectResource}
+              onOpenObject={onOpenObject}
+              onOpenPane={(pane) => setBoardSubtab('work', pane)}
+              onToggleTask={onToggleTask}
+            />
+          </div>
         ) : (
           <>
             <section

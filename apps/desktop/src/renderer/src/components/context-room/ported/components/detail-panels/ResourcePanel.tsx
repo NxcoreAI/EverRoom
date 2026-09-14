@@ -193,6 +193,8 @@ export function ResourceTree({
           const open = expanded.has(folder.id);
           const trashFolder = folder.id.endsWith(':folder:trash');
           const documentsFolder = folder.id.endsWith(':folder:documents');
+          // 产物库只承载用户文档：外部文件归夹（Office/设计与附件）不在产物展示。
+          if (variant === 'artifacts' && !documentsFolder && !trashFolder) return null;
           return (
             <section key={folder.id}>
               <div className="context-room-resource-folder-row">

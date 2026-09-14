@@ -141,7 +141,23 @@ const base = {
     { id: 'room-3', title: '连接器', kind: 'project', aliases: ['connector', 'feishu'], description: null },
     { id: 'room-4', title: '周会', kind: 'meeting', aliases: [], description: null },
     { id: 'room-5', title: '营销', kind: 'topic', aliases: [], description: null },
-  ] }) },
+  ] }),
+    // mock-room（板块导航验证）数据面：空数据走各面板空态。
+    listRoomFiles: async () => ({ items: [] }),
+    listWikiPages: async () => ({ status: 'ready', items: [], pageCount: 0 }),
+    getWikiGraph: async () => ({ nodes: [], edges: [] }),
+    getRoomRelations: async () => ({ rooms: [], edges: [], indexing: { status: 'ready', pendingSources: 0 } }),
+    getRoomGraph: async () => ({ rooms: [], edges: [], indexing: { status: 'ready', pendingSources: 0 } }) },
+  contextRooms: {
+    overview: async (roomId) => ({ roomId, revision: 1, generatedAt: new Date().toISOString(), stale: false, overview: [], status: [], nextSteps: [], timeline: [], entities: [], appliedCorrectionIds: [] }),
+    listMails: async () => ({ items: [] }),
+    roomEntities: async () => ({ roomId: 'room-board-mock', entities: [], facts: [], updatedAt: new Date().toISOString() }),
+    completeLocalAction: async () => ({}),
+  },
+  documents: {
+    list: async () => [],
+    get: async () => null,
+  },
   ingest: {
     listEvents: async (q) => {
       const limit = q?.limit ?? 50

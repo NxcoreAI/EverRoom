@@ -16,7 +16,8 @@ import { useContextRoomLayout } from '../hooks/useContextRoomLayout'
 import { useRoomKnowledgeFiles } from '../hooks/useRoomKnowledgeFiles'
 import { ObjectDetailView } from './ObjectDetailView'
 import type { DetailObject } from './ObjectDetailView'
-import type { BoardId } from './RoomIconSidebar'
+import type { BoardId, BoardSubtab } from './RoomIconSidebar'
+import { loadRoomWorkspaceState, saveRoomWorkspaceState } from '../roomWorkspaceState'
 import type { WorkspaceObjectPreview } from './detail-panels'
 import { WorkspaceLayout } from './detail-workspace/WorkspaceLayout'
 import { ObsidianImportDialog } from '../../../pages/sources/ObsidianImportDialog'
@@ -30,6 +31,7 @@ export function PortedDetail({
   focusedBlockId,
   documentFocusRequestId,
   initialActiveBoard,
+  initialSubtab,
   initialObject,
   onActiveBoardChange,
   onBack,
@@ -50,6 +52,7 @@ export function PortedDetail({
   focusedBlockId: string | null
   documentFocusRequestId: number | null
   initialActiveBoard: BoardId
+  initialSubtab?: BoardSubtab
   initialObject?: { kind: 'file' | 'mail' | 'meeting'; id: string } | null
   onActiveBoardChange: (board: BoardId) => void
   onBack: () => void
@@ -64,7 +67,9 @@ export function PortedDetail({
 }) {
   const { locale, t } = useLocale()
   const [activeBoard, setActiveBoardState] = useState<BoardId>(initialActiveBoard)
-  const [selectedResourceId, setSelectedResourceId] = useState<string | null>(null)
+  const [selectedResourceId, setSelectedResourceId] = useState<string | null>(
+    () => loadRoomWorkspaceState(room.id)?.selectedResourceId ?? null,
+  )
   const [selectedObject, setSelectedObject] = useState<WorkspaceObjectPreview | null>(null)
   /** WikiPane 打开过的 wiki 页资源（静态 library 不含它们，编辑栏解析时并入）。 */
   const [wikiPageResources, setWikiPageResources] = useState<ContextRoomWikiPageResource[]>([])
@@ -90,8 +95,23 @@ export function PortedDetail({
   }, [onActiveBoardChange])
   const layout = useContextRoomLayout({
     activeBoard,
+    initialSubtabs: initialSubtab ? { [initialActiveBoard]: initialSubtab } : undefined,
     onActiveBoardChange: setActiveBoard,
   })
+
+  // 现场恢复：板块/页签与选中对象变化即落盘（按 Room 记忆，重启后恢复）。
+  useEffect(() => {
+    const activePanelBoard = layout.panels[layout.activePanelIndex] ?? layout.panels[0]
+    if (!activePanelBoard) return
+    saveRoomWorkspaceState(room.id, {
+      board: activePanelBoard,
+      subtab: layout.subtabs[activePanelBoard] ?? undefined,
+    })
+  }, [room.id, layout.panels, layout.activePanelIndex, layout.subtabs])
+
+  useEffect(() => {
+    saveRoomWorkspaceState(room.id, { selectedResourceId: selectedResourceId ?? undefined })
+  }, [room.id, selectedResourceId])
 
   const findWikiPageResource = useCallback(
     (roomId: string, resourceId: string) =>

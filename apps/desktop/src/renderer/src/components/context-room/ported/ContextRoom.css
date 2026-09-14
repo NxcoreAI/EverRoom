@@ -2180,6 +2180,24 @@
   grid-template-columns: 56px minmax(0, 1fr);
 }
 
+/* 概览整屏也保留板块页签条，资料/日程等页签从概览直达。 */
+.context-room-overview-board {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.context-room-overview-board .context-room-board-tabs {
+  border-bottom: 1px solid var(--cr-border);
+  padding: 6px 10px 0;
+}
+
+.context-room-overview-board > .context-room-dashboard {
+  flex: 1;
+  min-height: 0;
+}
+
 .context-room-workspace-layout.is-middle-hidden {
   grid-template-columns: 56px 0 0 minmax(0, 1fr);
 }
