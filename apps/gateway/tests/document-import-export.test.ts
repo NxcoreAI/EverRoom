@@ -595,7 +595,8 @@ exit 1
     const error = await imports.preview('feishu', 'tokEmpty').then(() => null, (caught: unknown) => caught)
     expect(error).toBeInstanceOf(ImportServiceError)
     const serviceError = error as ImportServiceError
-    expect(serviceError.code).toBe('IMPORT_READ_FAILED')
+    expect(serviceError.code).toBe('IMPORT_CONTENT_EMPTY')
+    expect(serviceError.statusCode).toBe(422)
     expect(serviceError.message).toContain('内容为空')
     expect(serviceError.message).toContain('tokEmpty')
   })

@@ -131,9 +131,12 @@ export function ConnectorDocumentImportPanel({
   const pollRef = useRef<number | null>(null)
   const runCancelRef = useRef(false)
   const currentBatchIdRef = useRef<string | null>(null)
+  const unmountedRef = useRef(false)
 
+  // 卸载不清 sleep 定时器（挂起 chunk 循环）：置标志让循环自行终止，
+  // 已完成的分批落库、剩余分批放弃（重挂载后按 imported 徽标可辨）。
   useEffect(() => () => {
-    if (pollRef.current !== null) window.clearTimeout(pollRef.current)
+    unmountedRef.current = true
   }, [])
 
   const loadDocuments = useCallback(async () => {
@@ -230,7 +233,7 @@ export function ConnectorDocumentImportPanel({
     setRun({ status: 'running', total: ids.length, processed: 0, ...agg })
     try {
       for (const chunk of chunks) {
-        if (runCancelRef.current) break
+        if (runCancelRef.current || unmountedRef.current) break
         const created = await external.importBatch({
           provider,
           ...(connectionName ? { connectionName } : {}),
@@ -239,9 +242,15 @@ export function ConnectorDocumentImportPanel({
           ...(roomId ? { roomId } : {}),
           ...(forceNew ? { forceNew } : {}),
         })
+        // 创建往返期间点了取消：立即取消该批，避免下一轮轮询前多导入数篇。
+        if (runCancelRef.current) {
+          await external.cancelImportBatch(created.batchId).catch(() => undefined)
+          break
+        }
         currentBatchIdRef.current = created.batchId
         for (;;) {
           await sleep(BATCH_POLL_MS)
+          if (unmountedRef.current) return
           if (runCancelRef.current && currentBatchIdRef.current === created.batchId) {
             await external.cancelImportBatch(created.batchId).catch(() => undefined)
           }
@@ -258,6 +267,7 @@ export function ConnectorDocumentImportPanel({
         }
         setRun((prev) => prev && prev.status === 'running' ? { ...prev, ...agg } : prev)
       }
+      if (unmountedRef.current) return
       const cancelled = runCancelRef.current
       setRun({ status: cancelled ? 'cancelled' : 'completed', total: ids.length, processed: ids.length, ...agg })
       showToast({
@@ -283,6 +293,9 @@ export function ConnectorDocumentImportPanel({
       }
       setStartError(message)
       setRun((prev) => prev && prev.status === 'running' ? { ...prev, status: 'cancelled' } : prev)
+      // 发起失败恢复勾选：可能是几百篇的全选，失败后不应让用户重选一遍
+      //（已导入的会在重载后带 imported 徽标）。
+      if (!unmountedRef.current) setSelected(new Set(ids))
       showToast({ title: t('surface:connectorSync.batchStartFailed'), message })
     } finally {
       currentBatchIdRef.current = null
@@ -314,14 +327,14 @@ export function ConnectorDocumentImportPanel({
     try {
       const ids = [...selected]
       const existing = new Set<string>()
-      let checkFailed = false
       for (let index = 0; index < ids.length; index += 50) {
         const result = await external.importExistingInRoom(provider, room.id, ids.slice(index, index + 50)).catch(() => null)
-        if (!result) { checkFailed = true; break }
+        if (!result) continue
         for (const id of result.existingRemoteIds) existing.add(id)
       }
-      // 检查失败不拦导入：按默认（更新已有）继续。
-      if (checkFailed || existing.size === 0) {
+      // 部分分批预检失败但已查到冲突时仍弹确认（用已得集合），避免静默覆盖；
+      // 完全查不到冲突信息（size=0）时按默认（更新已有）继续，与旧行为一致。
+      if (existing.size === 0) {
         setRoomPickerOpen(false)
         await startBatch('room', room.id)
       } else {

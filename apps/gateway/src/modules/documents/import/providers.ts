@@ -594,7 +594,7 @@ export function createFeishuImportAdapter(run: ImportActionFn): ExternalDocument
       if (fetchedDoc && rawContent !== null && rawContent.trim() === "") {
         throw new ImportConnectorError(
           "content_empty",
-          `飞书文档内容为空（${remoteDocumentId}）：空文档或仅含无法转换的内容，无可导入内容，请跳过该篇`,
+          `飞书文档内容为空（${remoteDocumentId}）：空文档或仅含无法转换的内容，无可导入内容`,
         );
       }
       throw new ImportConnectorError("connector_error", "feishu.fetch_document 未返回可识别的 Markdown 正文");
