@@ -66,7 +66,6 @@ export function MemoryPane({
     return (
       <div className="context-room-memory-pane">
         <header>
-          <h2>{t('contextRoom:memory.roomMemory')}</h2>
           <button type="button" onClick={() => setShowFullGraph(false)}>
             <ChevronLeft aria-hidden="true" />
             {t('contextRoom:memory.backToEntitiesAndFacts')}
@@ -130,7 +129,6 @@ export function MemoryPane({
   return (
     <div className="context-room-memory-pane">
       <header>
-        <h2>{t('contextRoom:memory.entitiesAndFacts')}</h2>
         {hasGraphContent ? (
           <button type="button" onClick={() => setShowFullGraph(true)}>
             <Maximize2 aria-hidden="true" />

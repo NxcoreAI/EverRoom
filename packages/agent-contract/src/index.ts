@@ -935,6 +935,7 @@ export interface RoomDocument {
   contentSchemaVersion: number;
   version: number;
   status: "draft" | "active";
+  origin: "native" | "import";
   activeTransactionId: string | null;
   deletedAt?: string | null;
   createdAt: string;

@@ -1,11 +1,12 @@
 import type { RoomAppliedEntitySource, RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract';
 import type { ContextRoomRecord, ContextRoomResource, ContextRoomWikiPageResource } from '../../types';
 import type { KnowledgeFileDto } from '../../../../../../../shared/knowledge';
-import type { DetailPane } from '../RoomIconSidebar';
+import type { BoardId, BoardSubtab } from '../RoomIconSidebar';
 import {
   LinkGraphPane,
   MailsPane,
   MemoryPane,
+  OverviewDashboard,
   RelationsPane,
   SchedulePane,
   TasksPane,
@@ -15,7 +16,8 @@ import {
 import { ResourceTree } from '../detail-panels/ResourcePanel';
 
 export function WorkspacePaneBody({
-  pane,
+  board,
+  subtab,
   room,
   selectedResourceId,
   backendDocuments,
@@ -29,6 +31,7 @@ export function WorkspacePaneBody({
   onDeleteDocumentPermanently,
   onEmptyTrash,
   onOpenDocument,
+  onOpenPane,
   linkGraphFocusNodeId,
   onOpenObject,
   onOpenSource,
@@ -39,7 +42,8 @@ export function WorkspacePaneBody({
   selectedObject,
   onCloseObject,
 }: {
-  pane: DetailPane;
+  board: BoardId;
+  subtab: BoardSubtab | null;
   room: ContextRoomRecord;
   selectedResourceId: string | null;
   backendDocuments: RoomDocument[];
@@ -54,6 +58,8 @@ export function WorkspacePaneBody({
   onEmptyTrash: (roomId: string) => Promise<void>;
   /** 建联图谱等面板按文档 id 在右区打开文档。 */
   onOpenDocument: (documentId: string) => void;
+  /** 概览下钻到工作板块其他页签。 */
+  onOpenPane: (subtab: BoardSubtab) => void;
   /** 索引 chip 跳转：建联图谱聚焦节点 id（memory:{id} / doc:{id}）。 */
   linkGraphFocusNodeId?: string | null;
   onOpenObject: (target: WorkspaceObjectPreview) => void;
@@ -62,23 +68,98 @@ export function WorkspacePaneBody({
   onOpenRoom: (roomId: string) => void;
   onToggleTask: (taskId: string) => void;
   onUpdateRoom: (updater: (room: ContextRoomRecord) => ContextRoomRecord) => void;
-  /** 面板内详情子视图的受控态：仅归属面板消费（任务/会议/邮件）。 */
+  /** 面板内详情子视图的受控态：仅归属页签消费（任务/会议/邮件）。 */
   selectedObject: WorkspaceObjectPreview | null;
   onCloseObject: () => void;
 }) {
-  // 详情归属面板与 PortedDetail.openObject 的映射保持一致。
-  const objectOwnerPane = (target: WorkspaceObjectPreview): DetailPane =>
+  // 详情归属页签与 PortedDetail.openObject 的映射保持一致。
+  const objectOwnerSubtab = (target: WorkspaceObjectPreview): BoardSubtab =>
     target.kind === 'meeting' ? 'schedule' : target.kind === 'task' ? 'tasks' : 'mails';
-  const ownedDetail = selectedObject && objectOwnerPane(selectedObject) === pane ? selectedObject : null;
-  if (pane === 'documents') {
+  const ownedDetail = selectedObject && board === 'work' && objectOwnerSubtab(selectedObject) === subtab
+    ? selectedObject
+    : null;
+
+  if (board === 'work') {
+    if (subtab === 'schedule') {
+      return (
+        <SchedulePane
+          room={room}
+          onOpen={onOpenObject}
+          detail={ownedDetail}
+          onCloseDetail={onCloseObject}
+          onUpdateRoom={onUpdateRoom}
+        />
+      );
+    }
+    if (subtab === 'tasks') {
+      return (
+        <TasksPane
+          room={room}
+          onSelect={(id) => onOpenObject({ kind: 'task', id })}
+          onToggle={onToggleTask}
+          detail={ownedDetail}
+          onCloseDetail={onCloseObject}
+          onUpdateRoom={onUpdateRoom}
+        />
+      );
+    }
+    if (subtab === 'mails') {
+      return (
+        <MailsPane
+          room={room}
+          rooms={rooms}
+          onSelect={(id) => onOpenObject({ kind: 'mail', id })}
+          detail={ownedDetail}
+          onCloseDetail={onCloseObject}
+          onUpdateRoom={onUpdateRoom}
+        />
+      );
+    }
+    if (subtab === 'materials') {
+      // 资料：外部导入文档 + 上传/本地文件；EverRoom 产物只在产物板块出现。
+      return (
+        <ResourceTree
+          room={room}
+          rooms={rooms}
+          selectedId={selectedResourceId}
+          backendDocuments={backendDocuments.filter((document) => document.origin !== 'native')}
+          trashedDocuments={trashedDocuments.filter((document) => document.origin !== 'native')}
+          knowledgeFiles={knowledgeFiles}
+          variant="materials"
+          onSelect={onSelectResource}
+          onCreateDocument={onCreateDocument}
+          onDeleteDocument={onDeleteDocument}
+          onRestoreDocument={onRestoreDocument}
+          onDeleteDocumentPermanently={onDeleteDocumentPermanently}
+          onEmptyTrash={onEmptyTrash}
+        />
+      );
+    }
+    // 分屏等工作非概览页签下的概览渲染（整屏场景由 WorkspaceLayout 直接接管）。
+    return (
+      <OverviewDashboard
+        room={room}
+        backendDocuments={backendDocuments}
+        knowledgeFiles={knowledgeFiles}
+        onSelectResource={onSelectResource}
+        onOpenObject={onOpenObject}
+        onOpenPane={onOpenPane}
+        onToggleTask={onToggleTask}
+      />
+    );
+  }
+
+  if (board === 'artifacts') {
+    // 产物库：仅用户在 EverRoom 创建的文档；外部导入归工作/资料。
     return (
       <ResourceTree
         room={room}
         rooms={rooms}
         selectedId={selectedResourceId}
-        backendDocuments={backendDocuments}
-        trashedDocuments={trashedDocuments}
-        knowledgeFiles={knowledgeFiles}
+        backendDocuments={backendDocuments.filter((document) => document.origin === 'native')}
+        trashedDocuments={trashedDocuments.filter((document) => document.origin === 'native')}
+        knowledgeFiles={[]}
+        variant="artifacts"
         onSelect={onSelectResource}
         onCreateDocument={onCreateDocument}
         onDeleteDocument={onDeleteDocument}
@@ -88,7 +169,29 @@ export function WorkspacePaneBody({
       />
     );
   }
-  if (pane === 'relations') {
+
+  if (board === 'relations') {
+    if (subtab === 'entities') {
+      return (
+        <MemoryPane
+          room={room}
+          onUpdateRoom={onUpdateRoom}
+          onOpenRoom={onOpenRoom}
+          onOpenSource={onOpenSource}
+        />
+      );
+    }
+    if (subtab === 'linkGraph') {
+      return (
+        <LinkGraphPane
+          room={room}
+          backendDocuments={backendDocuments}
+          trashedDocuments={trashedDocuments}
+          onOpenDocument={onOpenDocument}
+          focusNodeId={linkGraphFocusNodeId}
+        />
+      );
+    }
     return (
       <RelationsPane
         room={room}
@@ -100,67 +203,12 @@ export function WorkspacePaneBody({
       />
     );
   }
-  if (pane === 'memories') {
-    return (
-      <MemoryPane
-        room={room}
-        onUpdateRoom={onUpdateRoom}
-        onOpenRoom={onOpenRoom}
-        onOpenSource={onOpenSource}
-      />
-    );
-  }
-  if (pane === 'linkGraph') {
-    return (
-      <LinkGraphPane
-        room={room}
-        backendDocuments={backendDocuments}
-        trashedDocuments={trashedDocuments}
-        onOpenDocument={onOpenDocument}
-        focusNodeId={linkGraphFocusNodeId}
-      />
-    );
-  }
-  if (pane === 'wiki') {
-    return (
-      <WikiPane
-        room={room}
-        selectedResourceId={selectedResourceId}
-        onOpenPage={onOpenWikiPage}
-      />
-    );
-  }
-  if (pane === 'schedule') {
-    return (
-      <SchedulePane
-        room={room}
-        onOpen={onOpenObject}
-        detail={ownedDetail}
-        onCloseDetail={onCloseObject}
-        onUpdateRoom={onUpdateRoom}
-      />
-    );
-  }
-  if (pane === 'tasks') {
-    return (
-      <TasksPane
-        room={room}
-        onSelect={(id) => onOpenObject({ kind: 'task', id })}
-        onToggle={onToggleTask}
-        detail={ownedDetail}
-        onCloseDetail={onCloseObject}
-        onUpdateRoom={onUpdateRoom}
-      />
-    );
-  }
+
   return (
-    <MailsPane
+    <WikiPane
       room={room}
-      rooms={rooms}
-      onSelect={(id) => onOpenObject({ kind: 'mail', id })}
-      detail={ownedDetail}
-      onCloseDetail={onCloseObject}
-      onUpdateRoom={onUpdateRoom}
+      selectedResourceId={selectedResourceId}
+      onOpenPage={onOpenWikiPage}
     />
   );
 }

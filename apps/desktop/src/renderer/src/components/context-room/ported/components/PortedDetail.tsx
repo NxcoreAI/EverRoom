@@ -16,7 +16,8 @@ import { useContextRoomLayout } from '../hooks/useContextRoomLayout'
 import { useRoomKnowledgeFiles } from '../hooks/useRoomKnowledgeFiles'
 import { ObjectDetailView } from './ObjectDetailView'
 import type { DetailObject } from './ObjectDetailView'
-import type { DetailPane } from './RoomIconSidebar'
+import type { BoardId, BoardSubtab } from './RoomIconSidebar'
+import { loadRoomWorkspaceState, saveRoomWorkspaceState } from '../roomWorkspaceState'
 import type { WorkspaceObjectPreview } from './detail-panels'
 import { WorkspaceLayout } from './detail-workspace/WorkspaceLayout'
 import { ObsidianImportDialog } from '../../../pages/sources/ObsidianImportDialog'
@@ -29,9 +30,10 @@ export function PortedDetail({
   focusedDocumentId,
   focusedBlockId,
   documentFocusRequestId,
-  initialActivePane,
+  initialActiveBoard,
+  initialSubtab,
   initialObject,
-  onActivePaneChange,
+  onActiveBoardChange,
   onBack,
   onOpenRoom,
   onUpdateRoom,
@@ -49,9 +51,10 @@ export function PortedDetail({
   focusedDocumentId: string | null
   focusedBlockId: string | null
   documentFocusRequestId: number | null
-  initialActivePane: DetailPane
+  initialActiveBoard: BoardId
+  initialSubtab?: BoardSubtab
   initialObject?: { kind: 'file' | 'mail' | 'meeting'; id: string } | null
-  onActivePaneChange: (pane: DetailPane) => void
+  onActiveBoardChange: (board: BoardId) => void
   onBack: () => void
   onOpenRoom: (roomId: string) => void
   onUpdateRoom: (updater: (room: ContextRoomRecord) => ContextRoomRecord) => void
@@ -63,8 +66,10 @@ export function PortedDetail({
   onEmptyTrash: (roomId: string) => Promise<void>
 }) {
   const { locale, t } = useLocale()
-  const [activePane, setActivePaneState] = useState<DetailPane>(initialActivePane)
-  const [selectedResourceId, setSelectedResourceId] = useState<string | null>(null)
+  const [activeBoard, setActiveBoardState] = useState<BoardId>(initialActiveBoard)
+  const [selectedResourceId, setSelectedResourceId] = useState<string | null>(
+    () => loadRoomWorkspaceState(room.id)?.selectedResourceId ?? null,
+  )
   const [selectedObject, setSelectedObject] = useState<WorkspaceObjectPreview | null>(null)
   /** WikiPane 打开过的 wiki 页资源（静态 library 不含它们，编辑栏解析时并入）。 */
   const [wikiPageResources, setWikiPageResources] = useState<ContextRoomWikiPageResource[]>([])
@@ -84,15 +89,29 @@ export function PortedDetail({
     () => createContextRoomResourceLibrary(room, backendDocuments, [], knowledgeFiles, locale),
     [backendDocuments, knowledgeFiles, locale, room],
   )
-  const setActivePane = useCallback((pane: DetailPane) => {
-    setActivePaneState(pane)
-    onActivePaneChange(pane)
-  }, [onActivePaneChange])
+  const setActiveBoard = useCallback((board: BoardId) => {
+    setActiveBoardState(board)
+    onActiveBoardChange(board)
+  }, [onActiveBoardChange])
   const layout = useContextRoomLayout({
-    activePane,
-    onActivePaneChange: setActivePane,
-    onEnterDocuments: () => undefined,
+    activeBoard,
+    initialSubtabs: initialSubtab ? { [initialActiveBoard]: initialSubtab } : undefined,
+    onActiveBoardChange: setActiveBoard,
   })
+
+  // 现场恢复：板块/页签与选中对象变化即落盘（按 Room 记忆，重启后恢复）。
+  useEffect(() => {
+    const activePanelBoard = layout.panels[layout.activePanelIndex] ?? layout.panels[0]
+    if (!activePanelBoard) return
+    saveRoomWorkspaceState(room.id, {
+      board: activePanelBoard,
+      subtab: layout.subtabs[activePanelBoard] ?? undefined,
+    })
+  }, [room.id, layout.panels, layout.activePanelIndex, layout.subtabs])
+
+  useEffect(() => {
+    saveRoomWorkspaceState(room.id, { selectedResourceId: selectedResourceId ?? undefined })
+  }, [room.id, selectedResourceId])
 
   const findWikiPageResource = useCallback(
     (roomId: string, resourceId: string) =>
@@ -135,13 +154,19 @@ export function PortedDetail({
     }
     setSelectedObject(null)
     setSelectedResourceId(resource.id)
-    if (!layout.panels.includes('documents')) layout.switchPane('documents')
+    // 产物（用户创建文档）进产物板块；资料（导入文档/上传文件）进工作/资料。
+    if (resource.kind === 'cloud-doc'
+      && backendDocuments.find((document) => document.id === resource.binding.docId)?.origin === 'native') {
+      if (!layout.panels.includes('artifacts')) layout.switchBoard('artifacts')
+    } else if (!(layout.panels.includes('work') && layout.subtabs.work === 'materials')) {
+      layout.switchBoard('work', 'materials')
+    }
     layout.setMobileContent(true)
     // 非 md 且无内嵌预览的上传文件：选中即用系统默认应用打开原件（面板内只留状态卡片）
     if (resource.kind === 'knowledge-file' && !isMarkdownFileName(resource.originalName)) {
       void window.nxcore?.knowledge?.openFile(resource.fileId).catch(() => undefined)
     }
-  }, [layout, room.id])
+  }, [backendDocuments, layout, room.id])
 
   const openWikiPage = useCallback((resource: ContextRoomWikiPageResource) => {
     if (resource.roomId !== room.id) return
@@ -149,8 +174,8 @@ export function PortedDetail({
       current.some((item) => item.id === resource.id) ? current : [...current, resource])
     setSelectedObject(null)
     setSelectedResourceId(resource.id)
-    // 不切走 documents：编辑栏对 wiki-page 资源单独放宽面板门槛（见 WorkspaceContent），左侧目录树保持在场
-    if (!layout.panels.includes('wiki')) layout.switchPane('wiki')
+    // 不切走 wiki：编辑栏对 wiki-page 资源单独放宽面板门槛（见 WorkspaceContent），左侧目录树保持在场
+    if (!layout.panels.includes('wiki')) layout.switchBoard('wiki')
     layout.setMobileContent(true)
   }, [layout, room.id])
 
@@ -198,7 +223,7 @@ export function PortedDetail({
     if (target.roomId !== room.id) return
     if (!room.memoryItems.some((item) => item.id === target.memoryId)) return
     setLinkGraphFocusNodeId(`memory:${target.memoryId}`)
-    layout.switchPane('linkGraph')
+    layout.switchBoard('relations', 'linkGraph')
   }), [room.id, room.memoryItems, layout])
 
   useEffect(() => {
@@ -210,14 +235,16 @@ export function PortedDetail({
   }, [library, room.id, selectedResourceId, findWikiPageResource])
 
   const openObject = useCallback((target: WorkspaceObjectPreview) => {
-    // 详情展示在归属面板内：不触碰文档选中（右区常驻打开的文档），移动端也不把右区盖上来。
-    const pane: DetailPane = target.kind === 'meeting'
+    // 详情展示在归属页签内：不触碰文档选中（右区常驻打开的文档），移动端也不把右区盖上来。
+    const subtab = target.kind === 'meeting'
       ? 'schedule'
       : target.kind === 'task'
         ? 'tasks'
         : 'mails'
     setSelectedObject(target)
-    if (!layout.panels.includes(pane)) layout.switchPane(pane)
+    if (!(layout.panels.includes('work') && layout.subtabs.work === subtab)) {
+      layout.switchBoard('work', subtab)
+    }
   }, [layout])
 
   // 记忆图谱来源行跳转：文档类只在右区打开（不切走中栏的面板，图谱保持在场），

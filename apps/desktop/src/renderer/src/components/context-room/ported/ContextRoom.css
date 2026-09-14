@@ -2180,6 +2180,24 @@
   grid-template-columns: 56px minmax(0, 1fr);
 }
 
+/* 概览整屏也保留板块页签条，资料/日程等页签从概览直达。 */
+.context-room-overview-board {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.context-room-overview-board .context-room-board-tabs {
+  border-bottom: 1px solid var(--cr-border);
+  padding: 6px 10px 0;
+}
+
+.context-room-overview-board > .context-room-dashboard {
+  flex: 1;
+  min-height: 0;
+}
+
 .context-room-workspace-layout.is-middle-hidden {
   grid-template-columns: 56px 0 0 minmax(0, 1fr);
 }
@@ -2274,25 +2292,6 @@
 .context-room-pane-drag-preview svg {
   width: 19px;
   height: 19px;
-}
-
-.context-room-workspace-tabs button.is-drop-before::before,
-.context-room-workspace-tabs button.is-drop-after::after {
-  position: absolute;
-  right: 4px;
-  left: 4px;
-  height: 2px;
-  border-radius: 1px;
-  background: var(--cr-blue);
-  content: '';
-}
-
-.context-room-workspace-tabs button.is-drop-before::before {
-  top: -2px;
-}
-
-.context-room-workspace-tabs button.is-drop-after::after {
-  bottom: -2px;
 }
 
 .context-room-workspace-tabs svg {
@@ -2396,6 +2395,39 @@
   min-height: 0;
   flex: 1;
   overflow: hidden;
+}
+
+/* 板块内页签条：中栏面板列顶部，切换工作/关系板块的二级视图。 */
+.context-room-board-tabs {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 2px;
+  align-items: center;
+  padding: 6px 10px 0;
+  border-bottom: 1px solid var(--cr-border);
+  background: var(--cr-surface-secondary);
+}
+
+.context-room-board-tabs button {
+  padding: 5px 10px 6px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--cr-muted);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.context-room-board-tabs button:hover {
+  color: var(--cr-text);
+  background: var(--cr-surface-hover);
+}
+
+.context-room-board-tabs button.is-active {
+  border-bottom-color: var(--cr-blue);
+  color: var(--cr-blue);
+  font-weight: 600;
 }
 
 /* 面板内详情子视图（任务/会议/邮件）：紧凑页边距 + 事实栅格单列堆叠。 */

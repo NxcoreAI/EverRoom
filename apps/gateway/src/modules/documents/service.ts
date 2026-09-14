@@ -294,8 +294,8 @@ export class DocumentService {
     this.normalizeStoredDocuments();
   }
 
-  list(roomId: string, trashed = false): RoomDocument[] {
-    return this.queryService.list(roomId, trashed);
+  list(roomId: string, trashed = false, origin?: "native" | "import"): RoomDocument[] {
+    return this.queryService.list(roomId, trashed, origin);
   }
 
   get(documentId: string): RoomDocument | null {
@@ -817,6 +817,7 @@ export class DocumentService {
         title,
         content: freshenDocumentContent(content, input.id),
         version: 1,
+        origin: "import",
       });
       this.publish(input.roomId, input.id, null, "document.changed", { document: imported });
       return imported;

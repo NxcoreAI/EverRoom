@@ -1033,6 +1033,7 @@ export class KnowledgeService {
       contentSchemaVersion: row.contentSchemaVersion,
       version: row.version,
       status: row.status,
+      origin: row.origin,
       activeTransactionId: row.activeTransactionId,
       createdAt: row.createdAt.toISOString(),
       updatedAt: row.updatedAt.toISOString(),

@@ -26,10 +26,15 @@ export function documentRoutes(
           querystring: Type.Object({
             roomId: Type.String({ minLength: 1, maxLength: 128 }),
             trashed: Type.Optional(Type.Union([Type.Literal("true"), Type.Literal("false")])),
+            origin: Type.Optional(Type.Union([Type.Literal("native"), Type.Literal("import")])),
           }),
         },
       },
-      async (request) => service.list(request.query.roomId, request.query.trashed === "true"),
+      async (request) => service.list(
+        request.query.roomId,
+        request.query.trashed === "true",
+        request.query.origin,
+      ),
     );
 
     app.get(
