@@ -461,6 +461,13 @@ export interface SyncedPrivateAudioAsset {
 
 export type CloudOidcProvider = 'apple' | 'google'
 
+/**
+ * 用户取消 OIDC 登录时主进程 reject 的固定文案。
+ * preload 据此跳过全局错误上报，renderer 据此区分「取消」与「失败」——
+ * 跨 IPC 只有 message 字符串可携带语义，故以常量共享三处判定。
+ */
+export const OIDC_LOGIN_CANCELLED_MESSAGE = '登录已取消。'
+
 export interface DesktopRequestError {
   channel: string
   message: string

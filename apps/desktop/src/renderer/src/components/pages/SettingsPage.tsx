@@ -884,6 +884,15 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
                     </span>
                     {t('surface:settings.signInWithGoogle')}
                   </button>
+                  {pending === 'apple' || pending === 'google' ? (
+                    <button
+                      className="social-login-button"
+                      type="button"
+                      onClick={() => { void window.nxcore?.account.cancelOidcLogin() }}
+                    >
+                      {t('surface:configGate.cancelLogin')}
+                    </button>
+                  ) : null}
                 </div>
               </div>
             ) : null}
