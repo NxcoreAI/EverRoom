@@ -671,7 +671,11 @@ export async function streamDocumentCursorCompletion(
 
   let failureMessage: string | null = null
   const processEvent = (event: AgentEvent): 'completed' | 'failed' | 'cancelled' | null => {
-    if (event.type === 'message.delta') {
+    if (event.type === 'message.started') {
+      // run 中途再次 message.started = 运行时丢弃上一波半截输出从头重生成
+      // （pi 自动重试，#199）：清空累计，防止两波正文拼进同一次补全解析
+      if (rawText) rawText = ''
+    } else if (event.type === 'message.delta') {
       const delta = eventText(event, 'delta')
       if (delta) {
         rawText += delta

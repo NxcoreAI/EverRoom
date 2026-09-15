@@ -1333,6 +1333,8 @@
   "configGate.language": "Language",
   "configGate.manualOption": "Configure manually",
   "configGate.loginHeading": "Sign in to your EverRoom account",
+  "configGate.oidcWaitingHint": "Browser sign-in is open and will return here when done. If the browser did not open or you gave up, cancel and retry.",
+  "configGate.cancelLogin": "Cancel sign-in",
   "configGate.manualHeading": "Configure your model service",
   "configGate.manualBody": "Enter an OpenAI-compatible endpoint. After saving, a live connectivity test runs; the app unlocks once it passes.",
   "configGate.fieldProvider": "Provider id",

@@ -451,6 +451,11 @@
   margin-top: 10px;
 }
 
+/* 等待浏览器登录：提示文案居左、取消按钮居右 */
+.runtime-config-gate-oidc-waiting {
+  justify-content: space-between;
+}
+
 .runtime-config-gate-primary,
 .runtime-config-gate-secondary {
   display: inline-flex;

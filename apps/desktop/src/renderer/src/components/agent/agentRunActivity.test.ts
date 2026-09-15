@@ -277,4 +277,20 @@ describe('Agent run activity', () => {
 
     expect(activity.finalAnswer).toBe(summary)
   })
+
+  it('drops the abandoned retry wave when the run restarts its message body (#199)', () => {
+    const activity = reduceAgentRunActivity([
+      event(1, 'tool.started', { toolCallId: 'read-1', name: 'read_file', args: {} }),
+      event(2, 'tool.completed', { toolCallId: 'read-1', name: 'read_file', result: { content: 'ok' } }),
+      event(3, 'message.started', { role: 'assistant' }),
+      event(4, 'message.delta', { delta: '第一波半截正文' }),
+      // pi 自动重试：上一波被运行时丢弃，message.started 重发表示从头生成
+      event(5, 'message.started', { role: 'assistant' }),
+      event(6, 'message.delta', { delta: '第二波完整正文' }),
+      event(7, 'run.completed'),
+    ])
+
+    expect(activity.finalAnswer).toBe('第二波完整正文')
+    expect(activity.pendingAnswer).toBe('')
+  })
 })

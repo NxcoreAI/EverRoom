@@ -419,6 +419,70 @@ describe("secret redaction", () => {
     await service.dispose();
   });
 
+  it("discards the withheld tail of the abandoned wave when the runtime restarts the message body (#199)", async () => {
+    const root = await directory();
+    const secret = "t".repeat(43);
+    registerSecret(secret);
+    const abandoned = `abandoned-wave-${secret.slice(0, 20)}`;
+    const retried = "retry-wave-final-answer-13579";
+    class RetryingRuntime implements AgentRuntime {
+      readonly id = "retrying-runtime";
+      async getCapabilities(): Promise<RuntimeCapabilities> { return { streaming: true, reasoning: false, tools: false, steering: false, resume: false }; }
+      async start(input: StartRuntimeRunInput): Promise<RuntimeRun> {
+        async function* events() {
+          yield { type: "run.started" as const, payload: {} };
+          yield { type: "message.started" as const, payload: {} };
+          // 第一波：结尾扣留触发脱敏持有（波内无完整 secret，仅持尾）
+          yield { type: "message.delta" as const, payload: { delta: abandoned.slice(0, 20) } };
+          yield { type: "message.delta" as const, payload: { delta: abandoned.slice(20) } };
+          // pi 自动重试：重发 message.started 表示丢弃上一波、从头重新生成
+          yield { type: "message.started" as const, payload: {} };
+          yield { type: "message.delta" as const, payload: { delta: retried.slice(0, 12) } };
+          yield { type: "message.delta" as const, payload: { delta: retried.slice(12) } };
+          yield { type: "message.completed" as const, payload: { role: "assistant", content: retried } };
+          yield { type: "run.completed" as const, payload: {} };
+        }
+        return { runId: input.runId, runtimeSessionRef: "retrying-session", events: events() };
+      }
+      async resume(_input: ResumeRuntimeRunInput): Promise<RuntimeRun> { throw new Error("unsupported"); }
+      async sendInput(): Promise<void> {}
+      async cancel(): Promise<void> {}
+      async deleteSession(): Promise<void> {}
+      async dispose(): Promise<void> {}
+    }
+    const database = createDatabase(join(root, "gateway.sqlite"), resolve("drizzle"));
+    databases.push(database.sqlite);
+    const broker = new AgentEventBroker();
+    const service = new AgentService(database.db, new RetryingRuntime(), broker);
+    await service.initialize();
+    const session = service.createSession({ pageLabel: "test" });
+    const frames: string[] = [];
+    broker.subscribe(session.id, { readyState: 1, send: (data) => frames.push(data) });
+    const run = await service.startRun(session.id, { prompt: "streaming prompt", idempotencyKey: "flush-run-53" });
+    const deadline = Date.now() + 2_000;
+    while (service.getRun(run.id)?.status !== "completed") {
+      if (Date.now() > deadline) throw new Error("retrying run timed out");
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 10));
+    }
+
+    const events = database.db.select().from(agentEvents).all()
+      .filter((event) => event.runId === run.id)
+      .sort((left, right) => left.seq - right.seq);
+    // 重放 delta 只能拼出重试波次的正文：被丢弃波次的扣留尾不得再冲刷拼接
+    const deltas = events
+      .filter((event) => event.type === "message.delta")
+      .map((event) => String((event.payload as { delta?: unknown }).delta))
+      .join("");
+    expect(deltas).toBe(retried);
+    expect(events.filter((event) => event.type === "message.started")).toHaveLength(2);
+    const persisted = database.db.select().from(agentMessages).all()
+      .find((message) => message.runId === run.id && message.role === "assistant");
+    expect(persisted?.content).toBe(retried);
+    expect(JSON.stringify(events)).not.toContain(secret);
+    expect(frames.join("\n")).not.toContain(secret);
+    await service.dispose();
+  });
+
   it("redacts prompts, tool args/results, split output, DB messages/events, WebSocket frames, chat, and timeline snapshots", async () => {
     const root = await directory();
     const canary = "canary-agent-output-51";

@@ -18,7 +18,7 @@ import type {
 } from '../shared/memory'
 import type { IngestPipelines } from '../shared/ingest'
 import type { McpServersSnapshot } from '../shared/mcp'
-import type { AiRelayKeeperEventType, CloudAccountStatus, DesktopRequestError, NxcoreDesktopApi, RoomAgentSelectionRewriteInput } from '../shared/sources'
+import { OIDC_LOGIN_CANCELLED_MESSAGE, type AiRelayKeeperEventType, type CloudAccountStatus, type DesktopRequestError, type NxcoreDesktopApi, type RoomAgentSelectionRewriteInput } from '../shared/sources'
 import type { BrowserExtensionMessage, BrowserExtensionStatus } from '../shared/browser-extension'
 import { isCursorCompletionAgentErrorPayload } from '../shared/cursor-completion'
 import {
@@ -144,7 +144,9 @@ async function invokeWithRecovery<T>(channel: string, args: unknown[], attempt: 
       }
     }
     const detail = requestError(channel, error)
-    reportRequestError(detail)
+    // 用户主动取消 OIDC 登录是预期结局而非故障：不进全局错误上报，
+    // 原样抛回调用方由登录页静默收场（renderer 按 message 哨兵识别）。
+    if (detail.message !== OIDC_LOGIN_CANCELLED_MESSAGE) reportRequestError(detail)
     throw new Error(detail.message)
   }
 }

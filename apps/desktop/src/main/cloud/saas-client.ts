@@ -9,6 +9,8 @@ import { basename, extname, isAbsolute, join, relative, resolve } from 'node:pat
 import type { AxiosRequestConfig, AxiosResponse } from 'axios'
 import type { App } from 'electron'
 
+import { OIDC_LOGIN_CANCELLED_MESSAGE } from '../../shared/sources'
+
 import type {
   AiGatewayStatus,
   AsrJob,
@@ -88,6 +90,7 @@ const OIDC_LOOPBACK_PORT = Number.parseInt(env('NXCORE_LOGTO_LOOPBACK_PORT', '53
 const OIDC_LOOPBACK_HOST = '127.0.0.1'
 const OIDC_LOOPBACK_PATH = '/auth/callback'
 const OIDC_LOOPBACK_REDIRECT_URI = `http://${OIDC_LOOPBACK_HOST}:${OIDC_LOOPBACK_PORT}${OIDC_LOOPBACK_PATH}`
+const OIDC_LOOPBACK_PROBE_TIMEOUT_MS = 5_000
 
 interface LoginResult {
   accessToken: string
@@ -509,7 +512,6 @@ export class SaasClient {
   readonly baseUrl: string
   readonly logtoIssuer: string
   readonly logtoAppId: string
-  private readonly connectorIds: Record<CloudOidcProvider, string>
 
   constructor(
     private readonly credentials: CredentialStore,
@@ -522,10 +524,6 @@ export class SaasClient {
     this.baseUrl = normalizeSaasApiUrl(env('NXCORE_SAAS_API_URL', 'http://192.168.1.99:4100/api/v1'))
     this.logtoIssuer = env('NXCORE_LOGTO_ISSUER', 'https://auth.nxcore.ai/oidc').replace(/\/+$/, '')
     this.logtoAppId = env('NXCORE_LOGTO_APP_ID', 'typreqzzbz3anel9aq1z8')
-    this.connectorIds = {
-      google: env('NXCORE_LOGTO_GOOGLE_CONNECTOR_ID', 'ylj6cyoz9kqpgpqgh3st8'),
-      apple: env('NXCORE_LOGTO_APPLE_CONNECTOR_ID', 'aei6v6kjlpauhod1r7f82'),
-    }
   }
 
   initialize(): Promise<void> {
@@ -881,7 +879,10 @@ export class SaasClient {
     authorizationUrl.searchParams.set('state', state)
     authorizationUrl.searchParams.set('nonce', nonce)
     authorizationUrl.searchParams.set('prompt', 'login')
-    authorizationUrl.searchParams.set('direct_sign_in', `social:${this.connectorIds[provider]}`)
+    // direct_sign_in 必须传 provider target（social:apple / social:google）才直达
+    // Provider 登录页；传 connector ID 会被 Logto 落回通用登录页（2026-09-15 对
+    // auth.nxcore.ai 实测）。
+    authorizationUrl.searchParams.set('direct_sign_in', `social:${provider}`)
 
     const result = new Promise<CloudAccountStatus>((resolveLogin, rejectLogin) => {
       const timeout = setTimeout(() => {
@@ -922,8 +923,10 @@ export class SaasClient {
   }
 
   /**
-   * Logto 后台注册了固定端口回环 redirect_uri 才走 HTTP 回调(每次登录探测一次并缓存),
+   * Logto 后台注册了固定端口回环 redirect_uri 才走 HTTP 回调(IdP 明确应答后缓存),
    * 否则回退到 everroom:// 自定义协议,保证未配置时登录流程不被破坏。
+   * 网络故障(代理/VPN 断连)只影响当次:本轮回退 everroom:// 但不缓存,
+   * 下次登录重新探测——避免一次网络抖动把回环回调永久禁用。
    */
   private async resolveOidcRedirectUri(): Promise<string> {
     if (this.loopbackRedirectSupported !== null) {
@@ -941,12 +944,15 @@ export class SaasClient {
           state: 'probe',
           nonce: 'probe',
         },
+        // 探测只决定回调方式，不该让点登录到跳浏览器的体感等待超过 5s
+        // （默认 15s 在代理环境下是「点了没反应」的主要来源）。
+        timeout: OIDC_LOOPBACK_PROBE_TIMEOUT_MS,
         validateStatus: () => true,
         maxRedirects: 0,
       })
       this.loopbackRedirectSupported = probe.status !== 400
     } catch {
-      this.loopbackRedirectSupported = false
+      return OIDC_CALLBACK_URL
     }
     return this.loopbackRedirectSupported ? OIDC_LOOPBACK_REDIRECT_URI : OIDC_CALLBACK_URL
   }
@@ -1027,7 +1033,7 @@ export class SaasClient {
     return 'accepted'
   }
 
-  cancelOidcLogin(message = '登录已取消。'): void {
+  cancelOidcLogin(message = OIDC_LOGIN_CANCELLED_MESSAGE): void {
     const pending = this.pendingOidcLogin
     if (pending) this.rejectOidcLogin(pending, new Error(message))
   }

@@ -9,7 +9,7 @@ import {
 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 
-import type { RuntimeConfigSnapshot, RuntimeConfigTestResult } from '../../../../shared/sources'
+import { OIDC_LOGIN_CANCELLED_MESSAGE, type RuntimeConfigSnapshot, type RuntimeConfigTestResult } from '../../../../shared/sources'
 import appleLogo from '@/assets/apple-logo.svg'
 import googleLogo from '@/assets/google-logo.svg'
 import { ProductBrand } from '@/components/ui/ProductBrand'
@@ -197,6 +197,8 @@ export function RuntimeConfigGate({ children }: { children: ReactNode }) {
       }
       await completeGateLogin()
     } catch (error) {
+      // 用户主动取消：静默回到登录页，不算失败。
+      if (error instanceof Error && error.message === OIDC_LOGIN_CANCELLED_MESSAGE) return
       if(redeemCodeValue&&error instanceof Error&&/invitation code/i.test(error.message))redeemCode.markInvalid()
       setTestError(t('surface:configGate.loginFailed'))
     } finally {
@@ -317,6 +319,15 @@ export function RuntimeConfigGate({ children }: { children: ReactNode }) {
                       {t('surface:settings.signInWithGoogle')}
                     </button>
                   </div>
+
+                  {oidcPending !== null ? (
+                    <div className="runtime-config-gate-button-row runtime-config-gate-oidc-waiting">
+                      <p>{t('surface:configGate.oidcWaitingHint')}</p>
+                      <button type="button" className="runtime-config-gate-secondary" onClick={() => { void window.nxcore?.account.cancelOidcLogin() }}>
+                        {t('surface:configGate.cancelLogin')}
+                      </button>
+                    </div>
+                  ) : null}
 
                   {testError ? <p className="runtime-config-gate-error" role="alert"><PlugZap aria-hidden="true" />{testError}</p> : null}
                 </div>

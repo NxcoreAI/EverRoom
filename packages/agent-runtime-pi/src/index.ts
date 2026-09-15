@@ -953,6 +953,17 @@ export class PiAgentRuntime implements AgentRuntime {
       return;
     }
 
+    if (event.type === "auto_retry_start") {
+      // pi 在流式失败后整段重试：出错的半截 assistant 消息已从 agent state
+      // 移除，重试会从头重新生成。若不重置累计，每波 delta 仍追加进同一条
+      // 消息，重试几次正文就重复几份（#199）。message.started 复用为
+      // "消息体重启"信号（各 runtime 均只在正文首次出现前发一次），
+      // 下游据此清空流式累计再重新拼接。
+      active.content = "";
+      active.queue.push({ type: "message.started", payload: { role: "assistant" } });
+      return;
+    }
+
     if (event.type === "message_update") {
       const update = event.assistantMessageEvent;
       if (update.type === "text_delta") {

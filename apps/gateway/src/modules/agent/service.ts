@@ -45,7 +45,7 @@ import { issueTrustedMcpSession, revokeTrustedMcpSession } from "./mcp-session-a
 import { requestsWorkspaceDocument } from "./document-intent.js";
 import { localAgentGrant, sealDelegationPayload } from "../local-agents/delegation.js";
 import type { FilesService } from "../files/service.js";
-import { flushRedactionDelta, redactDelta, redactSecrets, redactText } from "../../security/secret-redaction.js";
+import { clearRedactionDelta, flushRedactionDelta, redactDelta, redactSecrets, redactText } from "../../security/secret-redaction.js";
 
 export interface AgentServiceLogger {
   info(bindings: Record<string, unknown>, message: string): void;
@@ -1574,6 +1574,12 @@ export class AgentService {
       if (typeof payload.delta === "string" && !options.skipDeltaHold) {
         runtimeEvent = { ...runtimeEvent, payload: { ...payload, delta: redactDelta(deltaScope, payload.delta) } };
       }
+    } else if (runtimeEvent.type === "message.started") {
+      // 重试重启消息体（#199）：run 已发过正文后再次出现 message.started，
+      // 说明上一波半截输出被运行时丢弃、将从头重新生成。扣留的尾部属于
+      // 被丢弃的旧内容，必须作废而不是在终结事件前冲刷拼接，否则新正文
+      // 会多出旧波次的脏尾。run 首个 message.started 时本就无扣留，无副作用。
+      clearRedactionDelta(deltaScope);
     } else if (runtimeEvent.type === "message.completed" || runtimeEvent.type.startsWith("run.")) {
       // 扣留的尾部必须补发，否则事件流里的 delta 累加永久缺尾（#199）：
       // 中断时前端只能展示 delta 累加；正常完成时工具型 run 的"末段答案"
