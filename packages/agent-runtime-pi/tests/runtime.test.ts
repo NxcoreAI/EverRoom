@@ -985,4 +985,90 @@ describe("PiAgentRuntime", () => {
       ]);
     }
   });
+
+  it("resets the streamed message body when pi retries a truncated stream (#199)", async () => {
+    let requestCount = 0;
+    const endpoint = createServer((request, response) => {
+      requestCount += 1;
+      response.writeHead(200, {
+        "content-type": "text/event-stream",
+        "cache-control": "no-cache",
+        connection: "keep-alive",
+      });
+      const chunk = (content: string, finishReason: string | null = null) => JSON.stringify({
+        id: "chatcmpl-nxcore-retry-test",
+        object: "chat.completion.chunk",
+        created: 1,
+        model: "nxcore-test-model",
+        choices: [{ index: 0, delta: content ? { content } : {}, finish_reason: finishReason }],
+      });
+      if (requestCount === 1) {
+        // 第一波：流中途断开（无 finish_reason、无 [DONE]）。
+        // 先等客户端收到并解析这条增量再断流，模拟真实的传输中断。
+        response.write(`data: ${chunk("第一波的半截正文")}\n\n`);
+        setTimeout(() => response.destroy(), 100);
+        return;
+      }
+      // 第二波：完整响应
+      response.write(`data: ${chunk("重试后的完整")}\n\n`);
+      response.write(`data: ${chunk("正文")}\n\n`);
+      response.write(`data: ${chunk("", "stop")}\n\n`);
+      response.end("data: [DONE]\n\n");
+    });
+    await new Promise<void>((resolvePromise) => endpoint.listen(0, "127.0.0.1", resolvePromise));
+    const address = endpoint.address();
+    if (!address || typeof address === "string") throw new Error("Test endpoint did not bind a TCP port");
+
+    const dataDir = await mkdtemp(join(tmpdir(), "nxcore-pi-retry-reset-test-"));
+    temporaryDirectories.push(dataDir);
+    const runtime = new PiAgentRuntime({
+      provider: "nxcore-test-provider",
+      model: "nxcore-test-model",
+      baseUrl: `http://127.0.0.1:${address.port}/v1`,
+      apiKey: "nxcore-test-key",
+      api: "openai-completions",
+      maxTokens: 1024,
+      contextWindow: 8192,
+      temperature: 0.3,
+      reasoning: "off",
+      sessionsDir: join(dataDir, "sessions"),
+      workingDirectory: join(dataDir, "workspace"),
+      agentDirectory: join(dataDir, "config"),
+      retry: { enabled: true, maxRetries: 2, baseDelayMs: 1 },
+    });
+
+    try {
+      const run = await runtime.start({
+        runId: "run-retry-reset",
+        sessionId: "session-retry-reset",
+        runtimeSessionRef: null,
+        prompt: "写一段话",
+        pageLabel: "测试",
+        roomId: null,
+      });
+      const events: RuntimeEvent[] = [];
+      for await (const event of run.events) events.push(event);
+
+      expect(requestCount).toBe(2);
+      const completed = events.find((event) => event.type === "message.completed");
+      // 最终正文只含重试波次的内容，不含第一波半截
+      expect((completed?.payload as { content?: unknown }).content).toBe("重试后的完整正文");
+      // 重试波次前必须重发 message.started 作为"消息体重启"信号
+      const startedSeq = events
+        .map((event, index) => ({ event, index }))
+        .filter(({ event }) => event.type === "message.started");
+      expect(startedSeq).toHaveLength(2);
+      const deltas = events.filter((event) => event.type === "message.delta");
+      const resetEvent = startedSeq[1]!.event;
+      const resetAt = events.indexOf(resetEvent);
+      const firstWave = deltas.filter((event) => events.indexOf(event) < resetAt);
+      const secondWave = deltas.filter((event) => events.indexOf(event) > resetAt);
+      expect(firstWave.map((event) => (event.payload as { delta?: unknown }).delta).join("")).toBe("第一波的半截正文");
+      expect(secondWave.map((event) => (event.payload as { delta?: unknown }).delta).join("")).toBe("重试后的完整正文");
+      expect(events[events.length - 1]?.type).toBe("run.completed");
+    } finally {
+      await runtime.dispose();
+      await new Promise<void>((resolvePromise, reject) => endpoint.close((error) => error ? reject(error) : resolvePromise()));
+    }
+  });
 });

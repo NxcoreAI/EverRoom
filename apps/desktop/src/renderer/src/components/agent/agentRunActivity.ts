@@ -435,6 +435,12 @@ export function reduceAgentRunActivity(
       continue
     }
 
+    if (event.type === 'message.started') {
+      // pi 自动重试重启消息体（#199）：丢弃上一波半截正文，从零重新累计
+      if (pendingText) pendingText = ''
+      continue
+    }
+
     if (event.type === 'message.delta') {
       const delta = (event.payload as { delta?: unknown }).delta
       if (typeof delta !== 'string' || !delta) continue
@@ -520,7 +526,16 @@ export function reduceAgentRunEvents(events: AgentEvent[]): ReducedAgentRunEvent
       const delta = (event.payload as { delta?: unknown }).delta
       if (typeof delta === 'string') reduced.reasoning += delta
     }
-    if (event.type === 'message.started') reduced.messageStarted = true
+    if (event.type === 'message.started') {
+      // run 中途再次 message.started = 运行时丢弃上一波半截输出从头重生成
+      // （pi 自动重试，#199）：清空累计，防止多波 delta 拼出重复正文。
+      // 首个 message.started 不清——a2a/cli 等运行时的 reasoning 可能先于它到达。
+      if (reduced.messageStarted) {
+        reduced.streamingContent = ''
+        reduced.reasoning = ''
+      }
+      reduced.messageStarted = true
+    }
     if (event.type === 'message.delta') {
       const delta = (event.payload as { delta?: unknown }).delta
       if (typeof delta === 'string') reduced.streamingContent += delta

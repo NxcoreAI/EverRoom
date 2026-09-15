@@ -143,6 +143,7 @@ export function useAgentSession(
   const sequenceByRun = useRef(new Map<string, number>())
   const eventsByRun = useRef(new Map<string, AgentEvent[]>())
   const terminalRunIdsRef = useRef(new Set<string>())
+  const messageStartedRunIdsRef = useRef(new Set<string>())
   const sessionIdRef = useRef<string | null>(null)
   const activeScopeRef = useRef(sessionScope(pageLabel, roomId))
   /** AI 标题生成素材：runId → 网关脱敏后的用户 prompt（与兜底标题同源）。 */
@@ -290,8 +291,22 @@ export function useAgentSession(
       return
     }
     if (event.type === 'message.started') {
+      // 正文首现时创建流式消息；run 中途再次出现则说明运行时丢弃了上一波
+      // 半截输出、从头重新生成（pi 自动重试，#199）——清空累计防止重复拼接。
+      // 首个 message.started 不清 reasoning：a2a/cli 的思考可能先于它到达。
+      const restarted = messageStartedRunIdsRef.current.has(event.runId)
+      messageStartedRunIdsRef.current.add(event.runId)
+      if (restarted) {
+        setReasoningByRun((current) => {
+          if (!(event.runId in current)) return current
+          const { [event.runId]: _discarded, ...rest } = current
+          return rest
+        })
+      }
       setMessages((current) => current.some((message) => message.id === `stream-${event.runId}`)
-        ? current
+        ? current.map((message) => message.id === `stream-${event.runId}`
+          ? { ...message, content: '', streaming: true }
+          : message)
         : [...current, {
           id: `stream-${event.runId}`,
           sessionId: event.sessionId,
