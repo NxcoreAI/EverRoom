@@ -392,7 +392,7 @@ export class MemoryService {
 
   async overview(): Promise<MemoryOverviewDto> {
     const client = this.require();
-    const [l1All, l1Episodic, l1Persona, l1Instruction, l0, l2, l3, pipeline] = await Promise.allSettled([
+    const probe = () => Promise.allSettled([
       client.countAtomic(),
       client.countAtomic("episodic"),
       client.countAtomic("persona"),
@@ -401,7 +401,18 @@ export class MemoryService {
       client.countScenario(),
       client.readCoreFile(),
       client.pipelineStatus(),
-    ]);
+    ] as const);
+    type Probes = Awaited<ReturnType<typeof probe>>;
+    const l1Dead = (results: Probes) => results.slice(0, 4).every((item) => item.status === "rejected");
+    let results = await probe();
+    // MemoryCore 随网关启动，就绪有几秒窗口：全新安装/清数据后登录瞬间的
+    // 总览查询会全路 fetch failed（实测 502 报警）。全挂时短暂重试几轮，
+    // 把启动竞态从"报错"变成"慢一次"；持续不可达仍按原语义抛出。
+    for (let attempt = 0; attempt < 3 && l1Dead(results); attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 1_500));
+      results = await probe();
+    }
+    const [l1All, l1Episodic, l1Persona, l1Instruction, l0, l2, l3, pipeline] = results;
     // 总览页允许单路失败：失败的层置 null，前端按"未知"渲染，而不是整页 502。
     const counted = (result: PromiseSettledResult<number>) =>
       result.status === "fulfilled" ? result.value : null;

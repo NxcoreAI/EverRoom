@@ -1225,6 +1225,8 @@
   "connectorSync.batchCompleted": "Batch import finished",
   "connectorSync.batchCancelled": "Batch import cancelled",
   "connectorSync.batchSummary": "Imported {imported} · incubated {incubated} · failed {failed}",
+  "connectorSync.batchSummaryWithSkipped": "Imported {imported} · incubated {incubated} · failed {failed} · empty docs skipped {skipped}",
+  "connectorSync.batchSkippedItems": "Empty documents (skipped; others unaffected)",
   "connectorSync.batchFailedItems": "Failures",
   "connectorSync.batchStartFailed": "Failed to start batch import",
   "connectorSync.autoClassifyUnavailable": "AI auto-classify unavailable",

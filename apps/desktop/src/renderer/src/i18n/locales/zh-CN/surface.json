@@ -1226,6 +1226,8 @@
   "connectorSync.batchCompleted": "批量导入完成",
   "connectorSync.batchCancelled": "批量导入已取消",
   "connectorSync.batchSummary": "导入 {imported} 篇 · 孵化 {incubated} 篇 · 失败 {failed} 篇",
+  "connectorSync.batchSummaryWithSkipped": "导入 {imported} 篇 · 孵化 {incubated} 篇 · 失败 {failed} 篇 · 空文档跳过 {skipped} 篇",
+  "connectorSync.batchSkippedItems": "空文档（已跳过，不影响其余导入）",
   "connectorSync.batchFailedItems": "失败明细",
   "connectorSync.batchStartFailed": "批量导入发起失败",
   "connectorSync.autoClassifyUnavailable": "AI 自动归类暂不可用",

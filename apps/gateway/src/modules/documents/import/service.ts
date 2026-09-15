@@ -1365,6 +1365,10 @@ export class DocumentImportService {
       if (error.code === "action_not_found") {
         return new ImportServiceError("IMPORT_ACTION_MISSING", `OpenConnector 动作不可用：${error.detail}`, 502);
       }
+      if (error.code === "content_empty") {
+        // 空文档是数据形态而非连接器故障：批量导入按"跳过"落项，不进失败明细。
+        return new ImportServiceError("IMPORT_CONTENT_EMPTY", error.detail, 422);
+      }
       if (error.code === "connector_unavailable") {
         return new ImportServiceError("OPEN_CONNECTOR_UNAVAILABLE", `OpenConnector 服务不可用：${error.detail}`, 503);
       }

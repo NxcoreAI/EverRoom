@@ -602,6 +602,43 @@ describe('document-import batch (room mode)', () => {
     })
     expect(created.total).toBe(1)
   })
+
+  it('空文档落 skipped 不算失败，其余文档照常导入', async () => {
+    insertRoom('room-empty')
+    const actions: FakeAction = {
+      ...feishuReadActions(['tokOk']),
+      'feishu.get_document': (input: Record<string, unknown>) => {
+        const id = String(input.documentId)
+        return { documentId: id, revisionId: 7, title: id === 'tokEmpty' ? '' : `文档 ${id}`, raw: {} }
+      },
+      'feishu.fetch_document': (input: Record<string, unknown>) => {
+        const id = String(input.documentId)
+        return {
+          document: {
+            document_id: id,
+            revision_id: 7,
+            title: `文档 ${id}`,
+            url: `https://f.cn/docx/${id}`,
+            content: id === 'tokEmpty' ? '' : `# 文档 ${id}\n\n正文。`,
+          },
+        }
+      },
+    }
+    const { batch } = makeServices(fakeRunner(actions))
+    const created = await batch.createBatch({
+      provider: 'feishu',
+      remoteDocumentIds: ['tokEmpty', 'tokOk'],
+      mode: 'room',
+      roomId: 'room-empty',
+    })
+    const view = await waitBatch(batch, created.batchId)
+    expect(view.status).toBe('completed')
+    expect(view.failed).toBe(0)
+    const byId = new Map(view.items.map((item) => [item.remoteDocumentId, item]))
+    expect(byId.get('tokEmpty')?.status).toBe('skipped')
+    expect(byId.get('tokEmpty')?.error).toContain('空文档已跳过')
+    expect(byId.get('tokOk')?.status).toBe('imported')
+  })
 })
 
 // ── 批量导入（auto 模式，M2 端口注入）──────────────────────────────────────

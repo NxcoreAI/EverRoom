@@ -237,3 +237,5 @@
 .connector-conflict-confirm-hint { margin: 0; color: var(--muted); font-size: 9px; line-height: 1.5; }
 .connector-conflict-confirm footer { display: flex; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--border); background: var(--surface-alt); }
 .connector-conflict-confirm footer .primary-button { flex: 1; justify-content: center; }
+.connector-doc-failures.connector-doc-skipped { border-color: color-mix(in srgb, #8a6d1a 30%, var(--border)); background: color-mix(in srgb, #8a6d1a 4%, var(--surface)); }
+.connector-doc-failures.connector-doc-skipped > strong { color: #8a6d1a; }

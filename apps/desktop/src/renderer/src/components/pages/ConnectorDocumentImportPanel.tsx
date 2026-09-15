@@ -2,6 +2,7 @@ import { ArrowUpRight, BookOpen, Bot, Boxes, FileDown, FileText, Files, FolderOp
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import type {
+  DocumentImportBatchItemView,
   DocumentImportBatchView,
   ExternalDocumentListItem,
   ExternalDocumentProvider,
@@ -104,7 +105,17 @@ export function ConnectorDocumentImportPanel({
   const [filter, setFilter] = useState('')
   const [selected, setSelected] = useState<Set<string>>(new Set())
 
-  const [batch, setBatch] = useState<DocumentImportBatchView | null>(null)
+  /** 聚合批次视图：一次导入动作可能拆多批（单批上限 50），跨批聚合进度与明细。 */
+  const [run, setRun] = useState<{
+    status: 'running' | 'completed' | 'cancelled'
+    total: number
+    processed: number
+    imported: number
+    incubated: number
+    failed: number
+    skipped: number
+    items: DocumentImportBatchItemView[]
+  } | null>(null)
   const [autoDisabled, setAutoDisabled] = useState(false)
   /** 批次发起中的即时反馈（IPC 往返期间按钮防重入，避免"点了没反应"的观感）。 */
   const [batchStarting, setBatchStarting] = useState(false)
@@ -118,9 +129,19 @@ export function ConnectorDocumentImportPanel({
   const [roomsLoading, setRoomsLoading] = useState(false)
   const [roomQuery, setRoomQuery] = useState('')
   const pollRef = useRef<number | null>(null)
+  const runCancelRef = useRef(false)
+  const currentBatchIdRef = useRef<string | null>(null)
+  const unmountedRef = useRef(false)
 
-  useEffect(() => () => {
-    if (pollRef.current !== null) window.clearInterval(pollRef.current)
+  // 卸载不清 sleep 定时器（挂起 chunk 循环）：置标志让循环自行终止，
+  // 已完成的分批落库、剩余分批放弃（重挂载后按 imported 徽标可辨）。
+  // setup 里复位：StrictMode dev 双挂载会先跑一次 cleanup，不复位则恒 true，
+  // 首次导入即被误判为已卸载而卡死在 running。
+  useEffect(() => {
+    unmountedRef.current = false
+    return () => {
+      unmountedRef.current = true
+    }
   }, [])
 
   const loadDocuments = useCallback(async () => {
@@ -164,7 +185,11 @@ export function ConnectorDocumentImportPanel({
     return items.filter((item) => item.title.toLowerCase().includes(keyword)
       || (item.wikiSpaceName ?? '').toLowerCase().includes(keyword))
   }, [items, filter])
-  const batchStatusById = useMemo(() => new Map((batch?.items ?? []).map((item) => [item.remoteDocumentId, item])), [batch])
+  const batchStatusById = useMemo(() => new Map((run?.items ?? []).map((item) => [item.remoteDocumentId, item])), [run])
+  /** 明细行显示名：批量项 title 常为 null（失败/跳过发生在标题回填前），回退到列表项标题。 */
+  const listTitleById = useMemo(() => new Map(items.map((item) => [item.remoteDocumentId, item.title])), [items])
+  const itemDisplayName = (item: DocumentImportBatchItemView) =>
+    item.title || listTitleById.get(item.remoteDocumentId) || item.remoteDocumentId
   const visibleSelectableIds = visibleItems.map((item) => item.remoteDocumentId)
   const allVisibleSelected = visibleSelectableIds.length > 0
     && visibleSelectableIds.every((id) => selected.has(id))
@@ -186,56 +211,118 @@ export function ConnectorDocumentImportPanel({
     })
   }
 
+  /** 单批接口上限（网关 BATCH_MAX_ITEMS + schema maxItems）：超出自动分批串行。 */
+  const BATCH_CHUNK = 50
+
+  const sleep = (ms: number) => new Promise<void>((resolve) => {
+    pollRef.current = window.setTimeout(resolve, ms)
+  })
+
+  const mergeBatchIntoRun = (
+    agg: { imported: number; incubated: number; failed: number; skipped: number; items: DocumentImportBatchItemView[] },
+    view: DocumentImportBatchView,
+  ) => {
+    agg.items.push(...view.items)
+    agg.imported += view.items.filter((item) => item.status === 'imported').length
+    agg.incubated += view.items.filter((item) => item.status === 'incubated').length
+    agg.failed += view.items.filter((item) => item.status === 'failed').length
+    agg.skipped += view.items.filter((item) => item.status === 'skipped' && item.error).length
+  }
+
   const startBatch = async (mode: 'room' | 'auto', roomId?: string, forceNew?: boolean) => {
-    if (!external || selected.size === 0 || batch?.status === 'running' || batchStarting) return
+    if (!external || selected.size === 0 || run?.status === 'running' || batchStarting) return
     setBatchStarting(true)
     setStartError(null)
+    const ids = [...selected]
+    const chunks: string[][] = []
+    for (let index = 0; index < ids.length; index += BATCH_CHUNK) chunks.push(ids.slice(index, index + BATCH_CHUNK))
+    const agg = { imported: 0, incubated: 0, failed: 0, skipped: 0, items: [] as DocumentImportBatchItemView[] }
+    runCancelRef.current = false
+    setSelected(new Set())
+    setRun({ status: 'running', total: ids.length, processed: 0, ...agg })
     try {
-      const created = await external.importBatch({
-        provider,
-        ...(connectionName ? { connectionName } : {}),
-        remoteDocumentIds: [...selected],
-        mode,
-        ...(roomId ? { roomId } : {}),
-        ...(forceNew ? { forceNew } : {}),
-      })
-      setSelected(new Set())
-      const view = await external.importBatchStatus(created.batchId)
-      setBatch(view)
-      if (pollRef.current !== null) window.clearInterval(pollRef.current)
-      pollRef.current = window.setInterval(() => {
-        void external.importBatchStatus(created.batchId)
-          .then((next) => {
-            setBatch(next)
-            if (next.status !== 'running') {
-              if (pollRef.current !== null) window.clearInterval(pollRef.current)
-              pollRef.current = null
-              const imported = next.items.filter((item) => item.status === 'imported').length
-              const incubated = next.items.filter((item) => item.status === 'incubated').length
-              const failed = next.items.filter((item) => item.status === 'failed').length
-              showToast({
-                title: next.status === 'cancelled'
-                  ? t('surface:connectorSync.batchCancelled')
-                  : t('surface:connectorSync.batchCompleted'),
-                message: t('surface:connectorSync.batchSummary', {
-                  imported: String(imported),
-                  incubated: String(incubated),
-                  failed: String(failed),
-                }),
-              })
-              void loadDocuments()
-            }
+      let connectionLost = false
+      for (const chunk of chunks) {
+        if (runCancelRef.current || unmountedRef.current) break
+        const created = await external.importBatch({
+          provider,
+          ...(connectionName ? { connectionName } : {}),
+          remoteDocumentIds: chunk,
+          mode,
+          ...(roomId ? { roomId } : {}),
+          ...(forceNew ? { forceNew } : {}),
+        })
+        // 创建往返期间点了取消：立即取消该批，避免下一轮轮询前多导入数篇。
+        if (runCancelRef.current) {
+          await external.cancelImportBatch(created.batchId).catch(() => undefined)
+          break
+        }
+        currentBatchIdRef.current = created.batchId
+        let pollFailures = 0
+        for (;;) {
+          await sleep(BATCH_POLL_MS)
+          if (unmountedRef.current) return
+          if (runCancelRef.current && currentBatchIdRef.current === created.batchId) {
+            await external.cancelImportBatch(created.batchId).catch(() => undefined)
+          }
+          const view = await external.importBatchStatus(created.batchId).catch(() => null)
+          if (!view) {
+            // 网关不可达/批 404 连续失败要有上限，否则 run 永远停在 running。
+            pollFailures += 1
+            if (pollFailures >= 10) throw new Error(`批量导入状态查询连续失败（${String(pollFailures)} 次），已中断`)
+            continue
+          }
+          pollFailures = 0
+          if (view.status === 'running') {
+            setRun((prev) => prev && prev.status === 'running'
+              ? { ...prev, processed: agg.imported + agg.incubated + agg.failed + agg.skipped + view.processed }
+              : prev)
+            continue
+          }
+          mergeBatchIntoRun(agg, view)
+          // 连接级失败（token 失效/oo 不可达）网关会短路整批：继续建剩余
+          // 分批只会逐批复现同样失败，熔断整个导入。
+          if (view.errorCode === 'IMPORT_CONNECTION_REQUIRED' || view.errorCode === 'OPEN_CONNECTOR_UNAVAILABLE') {
+            connectionLost = true
+          }
+          break
+        }
+        if (connectionLost) break
+        setRun((prev) => prev && prev.status === 'running' ? { ...prev, ...agg } : prev)
+      }
+      if (unmountedRef.current) return
+      const cancelled = runCancelRef.current || connectionLost
+      // 终态进度用实际完成数（items 全部已终态）：中途取消/熔断时不跳满。
+      setRun({ status: cancelled ? 'cancelled' : 'completed', total: ids.length, processed: agg.items.length, ...agg })
+      showToast({
+        title: cancelled ? t('surface:connectorSync.batchCancelled') : t('surface:connectorSync.batchCompleted'),
+        message: agg.skipped > 0
+          ? t('surface:connectorSync.batchSummaryWithSkipped', {
+            imported: String(agg.imported),
+            incubated: String(agg.incubated),
+            failed: String(agg.failed),
+            skipped: String(agg.skipped),
           })
-          .catch(() => undefined)
-      }, BATCH_POLL_MS)
+          : t('surface:connectorSync.batchSummary', {
+            imported: String(agg.imported),
+            incubated: String(agg.incubated),
+            failed: String(agg.failed),
+          }),
+      })
+      void loadDocuments()
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       if (message.includes('BATCH_AUTO_UNAVAILABLE')) {
         setAutoDisabled(true)
       }
       setStartError(message)
+      setRun((prev) => prev && prev.status === 'running' ? { ...prev, status: 'cancelled' } : prev)
+      // 发起失败恢复勾选：可能是几百篇的全选，失败后不应让用户重选一遍
+      //（已导入的会在重载后带 imported 徽标）。
+      if (!unmountedRef.current) setSelected(new Set(ids))
       showToast({ title: t('surface:connectorSync.batchStartFailed'), message })
     } finally {
+      currentBatchIdRef.current = null
       setBatchStarting(false)
     }
   }
@@ -256,30 +343,32 @@ export function ConnectorDocumentImportPanel({
     }
   }
 
-  /** 选定目标 Room：先查勾选中已在该 Room 导入过的文档，无冲突直接开批，
-   * 有冲突弹确认（更新已有=默认候选链路 / 创建新的=跳过去重）。 */
+  /** 选定目标 Room：先查勾选中已在该 Room 导入过的文档（>50 时分批查询），
+   * 无冲突直接开批，有冲突弹确认（更新已有=默认候选链路 / 创建新的=跳过去重）。 */
   const pickRoom = async (room: { id: string; title: string }) => {
     if (!external || conflictChecking) return
     setConflictChecking(true)
     try {
-      const result = await external.importExistingInRoom(provider, room.id, [...selected])
-      const existing = new Set(result.existingRemoteIds)
+      const ids = [...selected]
+      const existing = new Set<string>()
+      for (let index = 0; index < ids.length; index += BATCH_CHUNK) {
+        const result = await external.importExistingInRoom(provider, room.id, ids.slice(index, index + BATCH_CHUNK)).catch(() => null)
+        if (!result) continue
+        for (const id of result.existingRemoteIds) existing.add(id)
+      }
+      // 部分分批预检失败但已查到冲突时仍弹确认（用已得集合），避免静默覆盖；
+      // 完全查不到冲突信息（size=0）时按默认（更新已有）继续，与旧行为一致。
       if (existing.size === 0) {
         setRoomPickerOpen(false)
         await startBatch('room', room.id)
       } else {
         setConflict({ roomId: room.id, roomTitle: room.title, existingRemoteIds: existing })
       }
-    } catch {
-      // 检查失败不拦导入：按默认（更新已有）继续。
-      setRoomPickerOpen(false)
-      await startBatch('room', room.id)
     } finally {
       setConflictChecking(false)
     }
   }
 
-  const batchRunning = batch?.status === 'running'
   const connectionMissing = !listLoading
     && (activeConnections.length === 0 || Boolean(listError?.includes('IMPORT_CONNECTION_REQUIRED')))
   // 授权中轮询：主进程打开授权页后，每 3s 检查一次连接，新连接出现即提示卡消失。
@@ -371,7 +460,8 @@ export function ConnectorDocumentImportPanel({
     )
   }
 
-  const batchPercent = batch && batch.total > 0 ? Math.round((batch.processed / batch.total) * 100) : 0
+  const batchRunning = run?.status === 'running'
+  const batchPercent = run && run.total > 0 ? Math.round((run.processed / run.total) * 100) : 0
 
   return (
     <section className="connector-sync-section" data-embedded={String(embedded)}>
@@ -505,21 +595,23 @@ export function ConnectorDocumentImportPanel({
           </div>
 
           <div className="connector-doc-actions">
-            {batchRunning && batch ? (
+            {batchRunning && run ? (
               <div className="connector-doc-progress">
                 <div className="connector-doc-progress-row">
                   <LoaderCircle className="spin" aria-hidden="true" />
                   <strong>{t('surface:connectorSync.batchProgress', {
-                    processed: String(batch.processed),
-                    total: String(batch.total),
+                    processed: String(run.processed),
+                    total: String(run.total),
                   })}</strong>
                   <span>{t('surface:connectorSync.batchProgressDetail', {
-                    succeeded: String(batch.succeeded),
-                    failed: String(batch.failed),
+                    succeeded: String(run.imported + run.incubated),
+                    failed: String(run.failed),
                   })}</span>
                   <button type="button" className="connector-text-btn" onClick={() => {
-                    if (!external) return
-                    void external.cancelImportBatch(batch.id).then(setBatch).catch(() => undefined)
+                    runCancelRef.current = true
+                    if (currentBatchIdRef.current && external) {
+                      void external.cancelImportBatch(currentBatchIdRef.current).catch(() => undefined)
+                    }
                   }}>
                     {t('surface:connectorSync.batchCancel')}
                   </button>
@@ -562,12 +654,23 @@ export function ConnectorDocumentImportPanel({
               </div>
             </div>
           ) : null}
-          {batch && batch.status !== 'running' && batch.items.some((item) => item.status === 'failed') ? (
+          {run && run.status !== 'running' && run.items.some((item) => item.status === 'failed') ? (
             <div className="connector-doc-failures">
               <strong><TriangleAlert aria-hidden="true" />{t('surface:connectorSync.batchFailedItems')}</strong>
-              {batch.items.filter((item) => item.status === 'failed').map((item) => (
+              {run.items.filter((item) => item.status === 'failed').map((item) => (
                 <div key={item.remoteDocumentId}>
-                  <span>{item.title ?? item.remoteDocumentId}</span>
+                  <span>{itemDisplayName(item)}</span>
+                  <small>{item.error}</small>
+                </div>
+              ))}
+            </div>
+          ) : null}
+          {run && run.status !== 'running' && run.items.some((item) => item.status === 'skipped' && item.error) ? (
+            <div className="connector-doc-failures connector-doc-skipped">
+              <strong><Info aria-hidden="true" />{t('surface:connectorSync.batchSkippedItems')}</strong>
+              {run.items.filter((item) => item.status === 'skipped' && item.error).map((item) => (
+                <div key={item.remoteDocumentId}>
+                  <span>{itemDisplayName(item)}</span>
                   <small>{item.error}</small>
                 </div>
               ))}
