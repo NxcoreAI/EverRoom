@@ -70,6 +70,26 @@ describe('agent event display state', () => {
     expect(reduced.completedAt).toBe(event(6, 'run.failed').occurredAt)
     expect(reduced.lastSequence).toBe(6)
   })
+
+  it('discards the abandoned wave when the run restarts its message body (#199)', () => {
+    const reduced = reduceAgentRunEvents([
+      event(1, 'run.started'),
+      event(2, 'message.started', { role: 'assistant' }),
+      event(3, 'reasoning.delta', { delta: '第一波思考。' }),
+      event(4, 'message.delta', { delta: '第一波半截正文' }),
+      // pi 自动重试：丢弃上一波半截输出，从头重新生成（message.started 重发）
+      event(5, 'message.started', { role: 'assistant' }),
+      event(6, 'reasoning.delta', { delta: '第二波思考。' }),
+      event(7, 'message.delta', { delta: '第二波完整正文' }),
+      event(8, 'message.completed', { role: 'assistant', content: '第二波完整正文' }),
+      event(9, 'run.completed'),
+    ])
+
+    expect(reduced.reasoning).toBe('第二波思考。')
+    expect(reduced.streamingContent).toBe('第二波完整正文')
+    expect(reduced.messageStarted).toBe(true)
+    expect(reduced.messageCompleted).toBe(true)
+  })
 })
 
 describe('auto session title guard', () => {
