@@ -8,7 +8,10 @@ import { listPackage } from '@electron/asar'
 
 const desktopRoot = resolve(import.meta.dirname, '..')
 const releaseRoot = resolve(process.env.EVERROOM_RELEASE_DIR ?? join(desktopRoot, '..', '..', 'release'))
-const version = JSON.parse(readFileSync(join(desktopRoot, 'package.json'), 'utf8')).version
+const packageVersion = JSON.parse(readFileSync(join(desktopRoot, 'package.json'), 'utf8')).version
+// CI 里 artifactName 用 tag 完整版本号（nightly 带 nightly.日期.序号 后缀），
+// 由 workflow 注入；本地打包无此变量时回退 package.json 版本。
+const version = process.env.EVERROOM_FULL_VERSION ?? packageVersion
 const unpackedRoot = join(releaseRoot, 'win-unpacked')
 const appRoot = join(unpackedRoot, 'EverRoom.exe')
 const resourcesRoot = join(unpackedRoot, 'resources')

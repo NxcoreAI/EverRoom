@@ -173,7 +173,10 @@ jobs:
           else
             export CSC_IDENTITY_AUTO_DISCOVERY=false
           fi
-          pnpm --filter @nxcore/desktop exec electron-builder --mac dmg zip --arm64 --publish never "${args[@]}"
+          # 与 windows job 一致：产物文件名用 tag 完整版本号（nightly 可区分）。
+          full_version="${GITHUB_REF_NAME#desktop-v}"
+          pnpm --filter @nxcore/desktop exec electron-builder --mac dmg zip --arm64 --publish never \
+            --config.mac.artifactName="\${productName}-${full_version}-\${arch}.\${ext}" "${args[@]}"
 
       - name: Audit package contents
         shell: bash
@@ -348,8 +351,13 @@ jobs:
         shell: bash
         # npmRebuild=false: better-sqlite3 ships N-API prebuilds for every
         # platform, so no Electron-ABI rebuild is needed.
+        # artifactName 用 tag 完整版本号（nightly 含 nightly.日期.序号），
+        # 避免 nightly 之间文件名相同无法区分；正式版 tag 无后缀，名称不变。
         run: |
-          pnpm --filter @nxcore/desktop exec electron-builder --win nsis --x64 --publish never --config.npmRebuild=false
+          full_version="${GITHUB_REF_NAME#desktop-v}"
+          pnpm --filter @nxcore/desktop exec electron-builder --win nsis --x64 --publish never --config.npmRebuild=false \
+            --config.win.artifactName="\${productName}-${full_version}-windows-\${arch}.\${ext}"
+          echo "EVERROOM_FULL_VERSION=$full_version" >> "$GITHUB_ENV"
 
       - name: Audit package contents
         shell: bash
@@ -397,7 +405,8 @@ jobs:
           SIGNING_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE_BASE64 || secrets.MAC_CERTS }}
           PUSH_PROFILE: ${{ secrets.MACOS_PROVISIONING_PROFILE_BASE64 }}
         run: |
-          version="$(node -p "require('./apps/desktop/package.json').version")"
+          # 资产名与打包侧 artifactName 一致：tag 完整版本号（nightly 含后缀）。
+          version="${GITHUB_REF_NAME#desktop-v}"
           expected=(
             "release-assets/EverRoom-$version-arm64.dmg"
             "release-assets/EverRoom-$version-arm64.zip"
@@ -450,8 +459,8 @@ jobs:
         env:
           PUBLISH_RESULT: ${{ needs.publish.result }}
         run: |
+          # 完整版本号（nightly 含后缀）：产物下载 URL 与打包文件名一致。
           version="${GITHUB_REF_NAME#desktop-v}"
-          version="${version%%-*}"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
           previous_tag="$(git describe --tags --match 'desktop-v*' --abbrev=0 "$GITHUB_SHA^" 2>/dev/null || true)"
