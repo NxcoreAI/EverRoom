@@ -196,6 +196,18 @@ function defaultConfigPath(): string {
   return path;
 }
 
+/** 配置 payload 幂等比较：键序无关的稳定序列化（set 重复保存短路用）。 */
+function stableConfigJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableConfigJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record).sort()
+      .map((key) => `${JSON.stringify(key)}:${stableConfigJson(record[key])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
+}
+
 export class RuntimeConfigManager {
   private current: RuntimeConfigSnapshot;
   private readonly listeners = new Set<(snapshot: RuntimeConfigSnapshot) => void>();
@@ -240,6 +252,13 @@ export class RuntimeConfigManager {
     const config = source === "saas"
       ? validateConfig(candidate)
       : validateConfig(preserveMasked(candidate, previous?.payload));
+    // 同 payload 重复保存直接短路（登录后主进程钩子与启动 gate 各 PUT 一次
+    // 同内容 saas 配置）：不再递增版本、不再 emit——否则 memory-core/knowledge
+    // 等托管子进程被重启两轮，首登引导探测撞上双重重启窗口会把已跳过的
+    // 引导又弹回首页（2026-09-15/16 全新安装实测复现）。
+    if (previous && stableConfigJson(previous.payload) === stableConfigJson(config)) {
+      return this.snapshot();
+    }
     this.secrets.update({ [`search:${source}`]: searchSecret });
     const version = Math.max(this.current.configVersion, previous?.configVersion ?? 0) + 1;
     const now = new Date();

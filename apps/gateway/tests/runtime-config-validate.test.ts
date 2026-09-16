@@ -1,4 +1,8 @@
-import { describe, expect, it, vi } from "vitest";
+import { randomBytes } from "node:crypto";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { describe, expect, it, vi, afterEach } from "vitest";
 import {
   aiFieldsConfigured,
   embeddingAiFields,
@@ -9,6 +13,9 @@ import {
   testEmbeddingConnection,
   vlmAiFields,
 } from "../src/modules/runtime-config/validate.js";
+import { createDatabase } from "../src/infrastructure/database/client.js";
+import { RuntimeConfigManager } from "../src/runtime-config.js";
+import { SecretStore } from "../src/security/secret-store.js";
 
 function config(overrides: Record<string, string> = {}): Record<string, unknown> {
   return {
@@ -189,5 +196,66 @@ describe("runtime config embedding connection test", () => {
     expect(result.valid).toBe(false);
     expect(result.error).toContain("runtime_config_test_unreachable");
     vi.unstubAllGlobals();
+  });
+});
+
+// ── set() 幂等短路（真实 manager + sqlite）─────────────────────────────────
+
+const dedupeDirs: string[] = [];
+const dedupeDbs: Array<{ close(): void }> = [];
+
+afterEach(async () => {
+  for (const database of dedupeDbs.splice(0)) database.close();
+  await Promise.all(dedupeDirs.splice(0).map((path) => rm(path, { recursive: true, force: true })));
+});
+
+async function dedupeManager(): Promise<RuntimeConfigManager> {
+  const root = await mkdtemp(join(tmpdir(), "everroom-rc-dedupe-"));
+  dedupeDirs.push(root);
+  await mkdir(join(root, "security"), { recursive: true });
+  const database = createDatabase(join(root, "gateway.sqlite"), resolve("drizzle"));
+  dedupeDbs.push(database.sqlite);
+  return new RuntimeConfigManager(
+    database.db,
+    new SecretStore(join(root, "security", "credentials.enc"), randomBytes(32).toString("base64url")),
+    resolve("runtime-config.default.json"),
+    null,
+    null,
+  );
+}
+
+describe("runtime config set idempotency", () => {
+  const saasPayload = {
+    schemaVersion: 1,
+    primary: {
+      provider: "openai-compatible",
+      model: "test-model",
+      baseUrl: "https://api.example.com/v1",
+      apiKey: "sk-test",
+    },
+  };
+
+  it("同 payload 重复保存短路：版本不递增、onChange 只发一次；变更正常生效", async () => {
+    const manager = await dedupeManager();
+    let emissions = 0;
+    manager.onChange(() => { emissions += 1; });
+
+    const first = manager.set("saas", saasPayload);
+    expect(emissions).toBe(1);
+
+    // 键序不同的等价 payload（两条保存链路来源不同）同样命中短路。
+    const second = manager.set("saas", {
+      primary: { ...saasPayload.primary },
+      schemaVersion: 1,
+    });
+    expect(second.configVersion).toBe(first.configVersion);
+    expect(emissions).toBe(1);
+
+    const third = manager.set("saas", {
+      ...saasPayload,
+      primary: { ...saasPayload.primary, model: "another-model" },
+    });
+    expect(third.configVersion).toBeGreaterThan(first.configVersion);
+    expect(emissions).toBe(2);
   });
 });
