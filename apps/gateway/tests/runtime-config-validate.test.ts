@@ -209,19 +209,21 @@ afterEach(async () => {
   await Promise.all(dedupeDirs.splice(0).map((path) => rm(path, { recursive: true, force: true })));
 });
 
-async function dedupeManager(): Promise<RuntimeConfigManager> {
+async function dedupeManager(): Promise<{ manager: RuntimeConfigManager; secrets: SecretStore }> {
   const root = await mkdtemp(join(tmpdir(), "everroom-rc-dedupe-"));
   dedupeDirs.push(root);
   await mkdir(join(root, "security"), { recursive: true });
   const database = createDatabase(join(root, "gateway.sqlite"), resolve("drizzle"));
   dedupeDbs.push(database.sqlite);
-  return new RuntimeConfigManager(
+  const secrets = new SecretStore(join(root, "security", "credentials.enc"), randomBytes(32).toString("base64url"));
+  const manager = new RuntimeConfigManager(
     database.db,
-    new SecretStore(join(root, "security", "credentials.enc"), randomBytes(32).toString("base64url")),
+    secrets,
     resolve("runtime-config.default.json"),
     null,
     null,
   );
+  return { manager, secrets };
 }
 
 describe("runtime config set idempotency", () => {
@@ -236,7 +238,7 @@ describe("runtime config set idempotency", () => {
   };
 
   it("同 payload 重复保存短路：版本不递增、onChange 只发一次；变更正常生效", async () => {
-    const manager = await dedupeManager();
+    const { manager } = await dedupeManager();
     let emissions = 0;
     manager.onChange(() => { emissions += 1; });
 
@@ -257,5 +259,68 @@ describe("runtime config set idempotency", () => {
     });
     expect(third.configVersion).toBeGreaterThan(first.configVersion);
     expect(emissions).toBe(2);
+  });
+
+  it("仅轮换搜索密钥不短路：新密钥真实落库（apiKey 比较前已剥除、走 secrets 通道）", async () => {
+    const { manager, secrets } = await dedupeManager();
+    let emissions = 0;
+    manager.onChange(() => { emissions += 1; });
+    const base = {
+      schemaVersion: 1,
+      primary: {
+        provider: "openai-compatible",
+        model: "test-model",
+        baseUrl: "https://api.example.com/v1",
+        apiKey: "sk-test",
+      },
+      webSearch: {
+        provider: "openai-compatible",
+        model: "search-model",
+        baseUrl: "https://api.example.com/v1",
+        apiKey: "key-one",
+      },
+    };
+    manager.set("user", base);
+    expect(secrets.get("search:user")).toBe("key-one");
+    expect(emissions).toBe(1);
+
+    // 只换搜索密钥：剥除 apiKey 后 payload 与库中相同，但密钥不同必须生效。
+    manager.set("user", { ...base, webSearch: { ...base.webSearch, apiKey: "key-two" } });
+    expect(secrets.get("search:user")).toBe("key-two");
+    expect(emissions).toBe(2);
+
+    // 删除搜索密钥同样不能被短路吞掉。
+    manager.set("user", { ...base, webSearch: { ...base.webSearch, apiKey: { operation: "delete" } } });
+    expect(secrets.get("search:user")).toBeUndefined();
+    expect(emissions).toBe(3);
+  });
+
+  it("user 源重存相同配置仍切回 user 选中（保存 BYOK 即切源的唯一机制）", async () => {
+    const { manager } = await dedupeManager();
+    const userPayload = {
+      schemaVersion: 1,
+      primary: {
+        provider: "openai-compatible",
+        model: "byok-model",
+        baseUrl: "https://byok.example.com/v1",
+        apiKey: "sk-byok",
+      },
+    };
+    manager.set("user", userPayload);
+    manager.set("saas", saasPayload);
+    manager.selectSource("saas");
+    expect(manager.snapshot().selectedSource).toBe("saas");
+
+    let emissions = 0;
+    manager.onChange(() => { emissions += 1; });
+    manager.set("user", userPayload);
+    expect(emissions).toBe(1);
+    const snapshot = manager.snapshot();
+    expect(snapshot.selectedSource).toBe("user");
+    expect(snapshot.config.primary?.model).toBe("byok-model");
+
+    // 切回后再重复保存相同 user 配置：此时允许短路。
+    manager.set("user", userPayload);
+    expect(emissions).toBe(1);
   });
 });
