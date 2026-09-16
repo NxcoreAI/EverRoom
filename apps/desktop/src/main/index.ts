@@ -465,6 +465,10 @@ const ACCOUNT_CHANNELS = {
   qrLoginCancel: 'account:qr-login-cancel',
   deviceAdmissionReplace: 'account:device-admission-replace',
   deviceAdmissionDismiss: 'account:device-admission-dismiss',
+  /** 中转额度视图：必须挂在被路由的分组里——handle() 只写注册表，
+   *  通道不在 channelGroups 中就不会安装 ipcMain.handle（引入提交漏了这行，
+   *  已登录开设置页每次都报 No handler registered）。 */
+  aiRelayStatus: 'ai-relay:status',
 } as const
 
 const TRANSCRIPTION_CHANNELS = {
@@ -2889,8 +2893,6 @@ function registerAccountHandlers(
     client.clearAdmissionChallenge()
     return { dismissed: true }
   })
-  // 中转额度视图（订阅周期开窗）；未配置/未登录场景由 SettingsPage 静默降级。
-  handle('ai-relay:status', () => rateLimitAware(() => client.aiGatewayStatus()))
   handle(ACCOUNT_CHANNELS.logout, () => rateLimitAware(async () => {
     await beforeLogout?.()
     const connection = gatewaySupervisor?.isRunning() ? gatewaySupervisor.getConnection() : null
@@ -3398,6 +3400,14 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     resolveNtnCliExecutable() ? new NtnAuthRunner(resolveNtnCliExecutable()!) : null,
   )
   registerAgentAuthHandlers()
+  // 中转额度视图：窗口即将创建而 SaaS 客户端要到启动链后段才构造，设置页
+  // 登录态一挂载即查询——这里提前注册，客户端未就绪时返回 null 静默降级
+  // （此前启动期查询必报 No handler registered，console 错误还上 Sentry）。
+  handle(ACCOUNT_CHANNELS.aiRelayStatus, () => {
+    const client = saasClient
+    if (!client) return Promise.resolve(null)
+    return rateLimitAware(() => client.aiGatewayStatus())
+  })
   createWindow()
   // SaaS 客户端先于连接器栈构造：saas 连接层在 gateway 启动前就需要登录态换 oo 会话。
   const credentials = new CredentialStore(join(app.getPath('userData'), 'credentials.json'))
