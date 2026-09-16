@@ -390,6 +390,19 @@ export class LocalDataService {
       SET status = 'error', last_error = '上次同步未完成，请重新扫描', updated_at = ?
       WHERE status = 'syncing'
     `).run(recoveredAt)
+    // 上个版本可能把「条目已 missing 但导出仍 pending/exporting」的脏行留在表里
+    // （曾引发导出 worker 死循环）；启动时统一落成 failed，自愈存量数据。
+    this.database.prepare(`
+      UPDATE source_exports
+      SET status = 'failed', last_error = '本地文件已不存在，跳过导出', updated_at = ?
+      WHERE status IN ('pending', 'exporting')
+        AND source_version_id IN (
+          SELECT source_versions.id
+          FROM source_versions
+          JOIN source_items ON source_items.id = source_versions.source_item_id
+          WHERE source_items.state = 'missing'
+        )
+    `).run(recoveredAt)
     this.database.prepare(`
       UPDATE source_exports SET status = 'pending', updated_at = ? WHERE status = 'exporting'
     `).run(recoveredAt)
@@ -1158,9 +1171,18 @@ export class LocalDataService {
               last_change_run_id = ?, last_changed_at = ?
           WHERE id = ?
         `)
+        // 条目转 missing 后，其 pending 导出将永远不可达（processExports 只取
+        // present 条目）；不及时落成 failed 会留下与取件条件分歧的脏行。
+        const failMissingExports = this.database.prepare(`
+          UPDATE source_exports
+          SET status = 'failed', last_error = ?, updated_at = ?
+          WHERE status = 'pending'
+            AND source_version_id IN (SELECT id FROM source_versions WHERE source_item_id = ?)
+        `)
         const changedAt = new Date().toISOString()
         for (const item of missingItems) {
           markMissing.run(runId, changedAt, item.id)
+          failMissingExports.run('本地文件已不存在，跳过导出', changedAt, item.id)
           await this.fileExports?.markLocalFileMissing?.({ localSourceId: id, localItemId: item.id }).catch(() => undefined)
         }
         counts.removed = missingItems.length
@@ -1632,8 +1654,17 @@ export class LocalDataService {
   }
 
   private hasPendingExports(): boolean {
+    // 必须与 processExports 的取件条件保持一致（联表限定 state = 'present'）：
+    // 若只看 status，missing 条目的残留 pending 行会让这里恒为真，而 worker
+    // 又取不到任务，kickExportWorker 的 finally 便形成纯微任务死循环，把主
+    // 进程事件循环打满（整个应用无响应）。
     return Boolean(this.database.prepare(`
-      SELECT 1 FROM source_exports WHERE status = 'pending' LIMIT 1
+      SELECT 1
+      FROM source_exports
+      JOIN source_versions ON source_versions.id = source_exports.source_version_id
+      JOIN source_items ON source_items.id = source_versions.source_item_id
+      WHERE source_exports.status = 'pending' AND source_items.state = 'present'
+      LIMIT 1
     `).get())
   }
 
