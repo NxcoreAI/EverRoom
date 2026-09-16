@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { DocumentOperation, DocumentOperationCommandInput, DocumentOperationItem, DocumentMutationTarget, TiptapJsonContent } from "@nxcore/agent-contract";
-import { agentDocumentMarkdown, sanitizeAgentDocumentTables } from "../agent-markdown.js";
+import { agentDocumentMarkdown, parseImportedMarkdown, sanitizeAgentDocumentTables } from "../agent-markdown.js";
 import { BLOCK_INDEX_MARK_NODE } from "../block-index-mark.js";
 import { applyDocumentMutation, findBlockPath, mutationTargetBlockIds, targetsOverlap, tiptapText } from "../content-model.js";
 import { DocumentContentEngine } from "../core/index.js";
@@ -108,7 +108,7 @@ function parseFragment(backend: CapabilityBackend, documentId: string, roomId: s
   const engine = new DocumentContentEngine({ findDocumentRoom: (id) => backend.get(id)?.roomId ?? null });
   try {
     const parsed = sanitizeAgentDocumentTables(
-      agentDocumentMarkdown.parse(source) as TiptapJsonContent,
+      parseImportedMarkdown(source) as TiptapJsonContent,
     ).content;
     return engine.normalizeFragment(parsed, documentId, roomId).content.content ?? [];
   } catch (error) {

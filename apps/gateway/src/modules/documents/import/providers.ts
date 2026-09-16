@@ -8,6 +8,7 @@ import type {
   ExternalDocumentWarning,
 } from "@nxcore/agent-contract";
 import { ImportConnectorError, type ImportConnectorActionCall } from "./oo-runner.js";
+import { normalizeImportedMarkdown } from "../agent-markdown.js";
 
 /**
  * 飞书 / Notion 的 OpenConnector 读适配层。只使用 provider 已注册的 action
@@ -585,7 +586,9 @@ export function createFeishuImportAdapter(run: ImportActionFn): ExternalDocument
       action: "fetch_document",
       input: { documentId: remoteDocumentId, format: "markdown" },
     });
-    const bodyMarkdown = extractMarkdown(fetchResult);
+    // 飞书正文内嵌非标准标签（<callout>/<cite>/<title>），归一化成 markdown
+    // 语义，避免下游解析字面化、导入预览显示源码。
+    const bodyMarkdown = normalizeImportedMarkdown(extractMarkdown(fetchResult) ?? "");
     if (!bodyMarkdown) {
       // fetch 成功但正文为空串（XML 探测同空）= 文档本体无内容块——与
       // 响应形状异常分开报，空文档不是连接器故障，提示要能指导用户跳过。

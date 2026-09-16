@@ -29,7 +29,7 @@ import {
   documents,
 } from "../../../infrastructure/database/schema.js";
 import type { OpenConnectorCliConfig } from "../../../config.js";
-import { agentDocumentMarkdown } from "../agent-markdown.js";
+import { parseImportedMarkdown } from "../agent-markdown.js";
 import type { DocumentService } from "../service.js";
 import { artifactHashOf, readArtifact, storeArtifact } from "./artifact-store.js";
 import { ImportConnectorError, runImportConnectorAction, type ImportActionRunner } from "./oo-runner.js";
@@ -759,7 +759,7 @@ export class DocumentImportService {
       : null;
     if (!snapshot) throw new ImportServiceError("SNAPSHOT_MISSING", "导入快照缺失", 409);
     const artifact = await this.loadArtifact(snapshot.artifactRef);
-    const contentJson = agentDocumentMarkdown.parse(artifact.bodyMarkdown) as RoomDocument["contentJson"];
+    const contentJson = parseImportedMarkdown(artifact.bodyMarkdown) as RoomDocument["contentJson"];
 
     // 来源去重（方案 §3.1）：未显式指定目标文档时，若该 Room 已导入过同一来源
     // （relation=primary 且文档仍存在），自动转为该文档的候选版本，不重复落新文档。
@@ -924,7 +924,7 @@ export class DocumentImportService {
     if (target.activeTransactionId) {
       throw new ImportServiceError("DOCUMENT_BUSY", "Agent 正在写入该文档", 409);
     }
-    const contentJson = agentDocumentMarkdown.parse(artifact.bodyMarkdown) as RoomDocument["contentJson"];
+    const contentJson = parseImportedMarkdown(artifact.bodyMarkdown) as RoomDocument["contentJson"];
     const saved = await this.documents.save(row.documentId, {
       baseVersion: target.version,
       title: artifact.title,
@@ -1037,7 +1037,7 @@ export class DocumentImportService {
     if (!target) throw new ImportServiceError("NOT_FOUND", "目标文档不存在", 404);
     const candidateDocument = this.documents.get(row.candidateDocumentId);
     const candidateContent = candidateDocument?.contentJson
-      ?? agentDocumentMarkdown.parse((await this.loadArtifact(snapshotRow.artifactRef)).bodyMarkdown) as RoomDocument["contentJson"];
+      ?? parseImportedMarkdown((await this.loadArtifact(snapshotRow.artifactRef)).bodyMarkdown) as RoomDocument["contentJson"];
     const cleanTitle = (candidateDocument?.title ?? snapshotRow.contentHash.slice(0, 8)).replace(/（外部更新候选）\s*$/, "");
     return {
       candidate: {
