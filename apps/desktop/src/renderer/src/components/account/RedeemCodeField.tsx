@@ -1,5 +1,5 @@
 import { AlertCircle, CheckCircle2, ChevronDown, LoaderCircle, TicketCheck } from 'lucide-react'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useLocale } from '@/i18n/LocaleContext'
 import './RedeemCodeField.css'
 
@@ -13,9 +13,14 @@ export function useRedeemCode() {
   const [open, setOpen] = useState(false)
   const [code, setCode] = useState('')
   const [state, setState] = useState<RedeemState>('idle')
+  // 核验在途期间码可能被编辑（change() 会重置 idle）：响应落地时用它比对，
+  // 过期结果直接丢弃，避免把未核验的新码误标为 valid（登录时会因此跳过重验）。
+  const codeRef = useRef('')
 
   const change = (value:string) => {
-    setCode(value.toUpperCase())
+    const next=value.toUpperCase()
+    codeRef.current=next
+    setCode(next)
     setState('idle')
   }
 
@@ -28,9 +33,9 @@ export function useRedeemCode() {
       setState('validating')
       try{
         await accountApi.validateInvitationCode(normalized)
-        setState('valid')
+        if(codeRef.current===normalized)setState('valid')
       }catch(error){
-        setState(isInvalidRedeemError(error)?'invalid':'error')
+        if(codeRef.current===normalized)setState(isInvalidRedeemError(error)?'invalid':'error')
         throw error
       }
     }
@@ -55,7 +60,8 @@ export function RedeemCodeField({value,state,open,disabled,onChange,onToggle,onV
       :state==='error'
         ?{tone:'invalid',text:t('surface:settings.redeemCodeValidationFailed')}
         :null
-  const canVerify=!disabled&&Boolean(value.trim())&&state!=='validating'
+  // valid 态禁用：结果已由反馈文案表达；编辑码会重置 idle 并重新启用
+  const canVerify=!disabled&&Boolean(value.trim())&&state!=='validating'&&state!=='valid'
 
   return <div className="redeem-code-field" data-open={open} data-state={state}>
     <button type="button" className="redeem-code-toggle" aria-expanded={open} disabled={disabled} onClick={onToggle}>
