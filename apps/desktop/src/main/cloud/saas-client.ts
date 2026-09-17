@@ -192,6 +192,21 @@ export interface SaasRuntimeConfig {
   config: Record<string, unknown>
 }
 
+/**
+ * SaaS 下发配置里 primary 槽位是否"实质存在"（provider/model/baseUrl 至少
+ * model+baseUrl 非空；apiKey 不要求——relay 会话激活时由 gateway 统一注入
+ * 会话令牌）。用于登录后刷新 runtime config 前判断云端是否还打算下发模型
+ * 配置：primary 整体缺失/为空时不得覆盖本地仍可用的旧配置（issue #225：
+ * 空配置覆盖后用户被困在登录页无法返回应用）。
+ */
+export function saasRuntimePrimaryPresent(config: SaasRuntimeConfig['config'] | null | undefined): boolean {
+  const primary = config?.primary
+  if (!primary || typeof primary !== 'object' || Array.isArray(primary)) return false
+  const fields = primary as Record<string, unknown>
+  const text = (key: string): string => (typeof fields[key] === 'string' ? (fields[key] as string).trim() : '')
+  return text('model') !== '' && text('baseUrl') !== ''
+}
+
 /** SaaS 签发的 new-api 中转短期令牌（`POST /app/ai-gateway/tokens`）。 */
 export interface AiGatewayToken {
   token: string

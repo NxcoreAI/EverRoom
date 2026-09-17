@@ -212,7 +212,14 @@ export function RuntimeConfigGate({ children }: { children: ReactNode }) {
     window.dispatchEvent(new CustomEvent('everroom-account-status-changed', { detail: account }))
     // 登录钩子（main index）会把 SaaS runtime config 写进 gateway；
     // 这里再显式拉取一次确保 saas source 已保存，然后走连通测试。
-    const next = await window.nxcore!.runtimeConfig.refreshSaas()
+    // 拉取失败（网络抖动等）退回网关当前快照——本地仍保留可用配置时照常
+    // 放行（#225：不能把已登录用户困在登录页）。
+    let next: RuntimeConfigSnapshot | null | undefined
+    try {
+      next = await window.nxcore!.runtimeConfig.refreshSaas()
+    } catch {
+      next = await window.nxcore!.runtimeConfig.get().catch(() => null)
+    }
     if (next && isRuntimeConfigReady(next)) {
       const entered = await validateAndEnter(next, 'login')
       if (entered) {
