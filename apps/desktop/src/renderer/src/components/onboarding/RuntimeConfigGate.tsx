@@ -303,9 +303,7 @@ export function RuntimeConfigGate({ children }: { children: ReactNode }) {
 
               {!qrActive ? (
                 <div className="qr-login-methods" key="gate-methods">
-                  <RedeemCodeField value={redeemCode.code} state={redeemCode.state} open={redeemCode.open} disabled={oidcPending!==null} onChange={redeemCode.change} onToggle={()=>redeemCode.setOpen(value=>!value)}/>
-
-                  <div className="runtime-config-gate-button-row runtime-config-gate-login-row">
+                  <div className="runtime-config-gate-login-row">
                     <button type="button" className="runtime-config-gate-social-button runtime-config-gate-apple-login" disabled={oidcPending !== null} onClick={() => void loginWithOidc('apple')}>
                       <span className="runtime-config-gate-brand-login-icon" aria-hidden="true">
                         {oidcPending === 'apple' ? <LoaderCircle className="spin" /> : <img src={appleLogo} alt="" />}
@@ -321,8 +319,8 @@ export function RuntimeConfigGate({ children }: { children: ReactNode }) {
                   </div>
 
                   {oidcPending !== null ? (
-                    <div className="runtime-config-gate-button-row runtime-config-gate-oidc-waiting">
-                      <p>{t('surface:configGate.oidcWaitingHint')}</p>
+                    <div className="runtime-config-gate-waiting" role="status">
+                      <p><LoaderCircle className="spin" aria-hidden="true" />{t('surface:configGate.oidcWaitingHint')}</p>
                       <button type="button" className="runtime-config-gate-secondary" onClick={() => { void window.nxcore?.account.cancelOidcLogin() }}>
                         {t('surface:configGate.cancelLogin')}
                       </button>
@@ -342,10 +340,14 @@ export function RuntimeConfigGate({ children }: { children: ReactNode }) {
               />
 
               {!qrActive ? (
-                <div className="runtime-config-gate-button-row" key="gate-manual">
-                  <button type="button" className="runtime-config-gate-secondary" onClick={() => { setTestError(null); setMode('manual') }}>
-                    <Settings2 aria-hidden="true" />{t('surface:configGate.manualOption')}
-                  </button>
+                <div className="qr-login-methods" key="gate-secondary">
+                  <RedeemCodeField value={redeemCode.code} state={redeemCode.state} open={redeemCode.open} disabled={oidcPending!==null} onChange={redeemCode.change} onToggle={()=>redeemCode.setOpen(value=>!value)} onVerify={()=>{void redeemCode.prepare().catch(()=>{})}}/>
+
+                  <div className="runtime-config-gate-button-row runtime-config-gate-manual-row">
+                    <button type="button" className="runtime-config-gate-secondary" onClick={() => { setTestError(null); setMode('manual') }}>
+                      <Settings2 aria-hidden="true" />{t('surface:configGate.manualOption')}
+                    </button>
+                  </div>
                 </div>
               ) : null}
             </div>

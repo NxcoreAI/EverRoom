@@ -856,7 +856,7 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
           <div className="cloud-login-content">
             {!qrActive ? (
               <div className="qr-login-methods" key="cloud-methods">
-                <RedeemCodeField value={redeemCode.code} state={redeemCode.state} open={redeemCode.open} disabled={isBusy} onChange={redeemCode.change} onToggle={()=>redeemCode.setOpen(value=>!value)}/>
+                <RedeemCodeField value={redeemCode.code} state={redeemCode.state} open={redeemCode.open} disabled={isBusy} onChange={redeemCode.change} onToggle={()=>redeemCode.setOpen(value=>!value)} onVerify={()=>{void redeemCode.prepare().catch(()=>{})}}/>
                 <div className="social-login-grid" aria-label={t('surface:settings.quickSignIn')}>
                   <button
                     className="social-login-button apple-login"
@@ -886,7 +886,7 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
                   </button>
                   {pending === 'apple' || pending === 'google' ? (
                     <button
-                      className="social-login-button"
+                      className="secondary-button cloud-login-cancel"
                       type="button"
                       onClick={() => { void window.nxcore?.account.cancelOidcLogin() }}
                     >

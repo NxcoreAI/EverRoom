@@ -628,6 +628,7 @@
   "settings.redeemCodeValid": "兑换码有效",
   "settings.redeemCodeInvalid": "兑换码无效或已被使用",
   "settings.redeemCodeValidationFailed": "无法验证兑换码，请稍后重试",
+  "settings.redeemCodeVerify": "核验兑换码",
   "settings.redeemCodeApplied": "兑换成功，Pro 已生效",
   "settings.redeemCodeProActive": "当前账号已是 Pro，兑换码未使用",
   "settings.computerAudio": "电脑音频",

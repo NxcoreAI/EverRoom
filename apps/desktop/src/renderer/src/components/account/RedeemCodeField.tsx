@@ -46,7 +46,7 @@ export function useRedeemCode() {
   return { open, setOpen, code, state, change, prepare, reset, markInvalid:()=>setState('invalid') }
 }
 
-export function RedeemCodeField({value,state,open,disabled,onChange,onToggle}:{value:string;state:RedeemState;open:boolean;disabled:boolean;onChange(value:string):void;onToggle():void}){
+export function RedeemCodeField({value,state,open,disabled,onChange,onToggle,onVerify}:{value:string;state:RedeemState;open:boolean;disabled:boolean;onChange(value:string):void;onToggle():void;onVerify():void}){
   const{t}=useLocale()
   const feedback=state==='valid'
     ?{tone:'valid',text:t('surface:settings.redeemCodeValid')}
@@ -55,6 +55,7 @@ export function RedeemCodeField({value,state,open,disabled,onChange,onToggle}:{v
       :state==='error'
         ?{tone:'invalid',text:t('surface:settings.redeemCodeValidationFailed')}
         :null
+  const canVerify=!disabled&&Boolean(value.trim())&&state!=='validating'
 
   return <div className="redeem-code-field" data-open={open} data-state={state}>
     <button type="button" className="redeem-code-toggle" aria-expanded={open} disabled={disabled} onClick={onToggle}>
@@ -68,12 +69,20 @@ export function RedeemCodeField({value,state,open,disabled,onChange,onToggle}:{v
     {open?<div className="redeem-code-body">
       <label className="redeem-code-input">
         <span className="redeem-code-input-label">{t('surface:settings.redeemCodeLabel')}</span>
-        <input autoCapitalize="characters" autoComplete="off" spellCheck={false} maxLength={32} disabled={disabled} placeholder="ER-XXXX-XXXX-XXXX" value={value} onChange={event=>onChange(event.target.value)}/>
+        <input autoCapitalize="characters" autoComplete="off" spellCheck={false} maxLength={32} disabled={disabled} placeholder="ER-XXXX-XXXX-XXXX" value={value}
+          onChange={event=>onChange(event.target.value)}
+          onKeyDown={event=>{if(event.key==='Enter'&&canVerify){event.preventDefault();onVerify()}}}/>
         <span className="redeem-code-input-state" aria-hidden="true">
           {state==='validating'?<LoaderCircle className="spin"/>:state==='valid'?<CheckCircle2 className="valid"/>:state==='invalid'||state==='error'?<AlertCircle className="invalid"/>:null}
         </span>
       </label>
-      {feedback?<p className={`redeem-code-feedback ${feedback.tone}`} role={feedback.tone==='invalid'?'alert':'status'}>{feedback.text}</p>:null}
+      <div className="redeem-code-foot">
+        {feedback?<p className={`redeem-code-feedback ${feedback.tone}`} role={feedback.tone==='invalid'?'alert':'status'}>{feedback.text}</p>:null}
+        <button type="button" className="redeem-code-verify" disabled={!canVerify} onClick={onVerify}>
+          {state==='validating'?<LoaderCircle className="spin" aria-hidden="true"/>:null}
+          {t('surface:settings.redeemCodeVerify')}
+        </button>
+      </div>
     </div>:null}
   </div>
 }
