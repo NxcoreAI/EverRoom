@@ -536,6 +536,7 @@ const KNOWLEDGE_CHANNELS = {
   updateRoomRelation: 'knowledge:room-relations:update',
   removeManualRoomRelation: 'knowledge:room-relations:remove-manual',
   listWikiPages: 'knowledge:wiki:pages',
+  retryWikiBuild: 'knowledge:wiki:rebuild',
   readWikiPage: 'knowledge:wiki:page-read',
   listWikis: 'knowledge:wikis:list',
   getWikiGraph: 'knowledge:wiki:graph',
@@ -2508,6 +2509,7 @@ function registerKnowledgeHandlers(bridge: KnowledgeGatewayBridge): void {
   handle(KNOWLEDGE_CHANNELS.removeManualRoomRelation, (_event, relationId) =>
     bridge.removeManualRoomRelation(relationId))
   handle(KNOWLEDGE_CHANNELS.listWikiPages, (_event, roomId) => bridge.listWikiPages(roomId))
+  handle(KNOWLEDGE_CHANNELS.retryWikiBuild, (_event, roomId) => bridge.retryWikiBuild(roomId))
   handle(KNOWLEDGE_CHANNELS.readWikiPage, (_event, roomId, ref) => bridge.readWikiPage(roomId, ref))
   handle(KNOWLEDGE_CHANNELS.listWikis, () => bridge.listWikis())
   handle(KNOWLEDGE_CHANNELS.getWikiGraph, (_event, roomId: string) => bridge.getWikiGraph(roomId))

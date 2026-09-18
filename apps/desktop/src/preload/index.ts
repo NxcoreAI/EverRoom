@@ -780,6 +780,7 @@ const api: NxcoreDesktopApi = {
     updateRoomRelation: (relationId, input) => invoke('knowledge:room-relations:update', relationId, input),
     removeManualRoomRelation: (relationId) => invoke('knowledge:room-relations:remove-manual', relationId),
     listWikiPages: (roomId) => invoke('knowledge:wiki:pages', roomId),
+    retryWikiBuild: (roomId) => invoke('knowledge:wiki:rebuild', roomId),
     readWikiPage: (roomId, ref) => invoke('knowledge:wiki:page-read', roomId, ref),
     listWikis: () => invoke('knowledge:wikis:list'),
     getWikiGraph: (roomId) => invoke('knowledge:wiki:graph', roomId),

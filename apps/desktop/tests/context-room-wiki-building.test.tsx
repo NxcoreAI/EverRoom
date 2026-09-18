@@ -26,7 +26,7 @@ function pageDto(path: string, title: string): KnowledgeWikiPageDto {
 
 type PagesResponse = { status: string; items: KnowledgeWikiPageDto[]; pageCount: number | null }
 
-function installKnowledgeBridge(responses: PagesResponse[]) {
+function installKnowledgeBridge(responses: PagesResponse[], sourceCount = 2) {
   let call = 0
   const knowledge = {
     listWikiPages: vi.fn(() => {
@@ -34,7 +34,10 @@ function installKnowledgeBridge(responses: PagesResponse[]) {
       call += 1
       return Promise.resolve(response)
     }),
-    listRoomFiles: vi.fn(() => Promise.resolve({ items: [] })),
+    listRoomFiles: vi.fn(() => Promise.resolve({
+      items: Array.from({ length: sourceCount }, (_, index) => ({ id: `file-${index}` })),
+    })),
+    retryWikiBuild: vi.fn(() => Promise.resolve({ ok: true })),
   }
   vi.stubGlobal('window', {
     nxcore: { knowledge },
@@ -66,8 +69,8 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-describe('Wiki 板块：构建进度展示', () => {
-  it('构建中显示进度块：转圈 + 真实已生成页数，且自动轮询刷新', async () => {
+describe('Wiki 板块：构建进度步骤条（原型 cr-wiki-progress 对照）', () => {
+  it('构建中显示步骤条：资料沉淀份数 + 生成页面真实页数，且自动轮询', async () => {
     const knowledge = installKnowledgeBridge([
       { status: 'processing', items: [], pageCount: 3 },
     ])
@@ -76,7 +79,9 @@ describe('Wiki 板块：构建进度展示', () => {
       renderer = renderWikiPane()
     })
     const text = textOf(renderer!)
-    expect(text).toContain('知识库正在构建中')
+    expect(text).toContain('资料沉淀')
+    expect(text).toContain('2 份资料')
+    expect(text).toContain('生成页面')
     expect(text).toContain('已生成 3 页')
     expect(knowledge.listWikiPages).toHaveBeenCalledTimes(1)
 
@@ -86,7 +91,7 @@ describe('Wiki 板块：构建进度展示', () => {
     expect(knowledge.listWikiPages).toHaveBeenCalledTimes(2)
   })
 
-  it('构建完成自动切换为目录树，无需手动刷新', async () => {
+  it('构建完成自动切换为目录树，进度条消失', async () => {
     installKnowledgeBridge([
       { status: 'processing', items: [], pageCount: 0 },
       { status: 'ready', items: [pageDto('视觉/动效.md', '动效规范')], pageCount: 1 },
@@ -95,16 +100,17 @@ describe('Wiki 板块：构建进度展示', () => {
     await act(async () => {
       renderer = renderWikiPane()
     })
-    expect(textOf(renderer!)).toContain('知识库正在构建中')
+    expect(textOf(renderer!)).toContain('生成页面')
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(4000)
     })
-    expect(textOf(renderer!)).toContain('动效规范')
-    expect(textOf(renderer!)).not.toContain('知识库正在构建中')
+    const text = textOf(renderer!)
+    expect(text).toContain('动效规范')
+    expect(text).not.toContain('资料沉淀')
   })
 
-  it('构建失败单独报错并提供重试', async () => {
+  it('构建失败：失败步骤 + 真重试（调网关重建接口并刷新）', async () => {
     const knowledge = installKnowledgeBridge([
       { status: 'failed', items: [], pageCount: null },
     ])
@@ -112,13 +118,15 @@ describe('Wiki 板块：构建进度展示', () => {
     await act(async () => {
       renderer = renderWikiPane()
     })
-    expect(textOf(renderer!)).toContain('知识库构建失败')
+    expect(textOf(renderer!)).toContain('生成页面')
+    expect(renderer!.root.findAllByProps({ className: 'context-room-wp-step is-failed' })).toHaveLength(1)
 
     const retry = renderer!.root.findAllByType('button').find((node) => node.children.includes('重试'))
     expect(retry).toBeTruthy()
     await act(async () => {
       retry!.props.onClick()
     })
+    expect(knowledge.retryWikiBuild).toHaveBeenCalledTimes(1)
     expect(knowledge.listWikiPages).toHaveBeenCalledTimes(2)
   })
 })

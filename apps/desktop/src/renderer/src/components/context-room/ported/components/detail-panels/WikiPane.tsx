@@ -1,5 +1,7 @@
 import {
   AlertTriangle,
+  CheckCircle2,
+  ChevronRight,
   ChevronLeft,
   FileText,
   FolderOpen,
@@ -23,7 +25,6 @@ import {
 } from '../../../knowledgeMarkdownImport';
 import { WikiGraphCanvas } from '../WikiGraphCanvas';
 import { MarkdownBody } from './MarkdownBody';
-import { PanelEmptyState } from './PanelEmptyState';
 import { WikiTree } from './WikiTree';
 
 const SOURCE_KIND_LABELS: Record<string, string> = {
@@ -80,6 +81,23 @@ export function WikiPane({ room, selectedResourceId, onOpenPage, view = 'tree' }
   const [uploading, setUploading] = useState(false);
   const [graph, setGraph] = useState<KnowledgeWikiGraphDto | null>(null);
   const [graphLoading, setGraphLoading] = useState(false);
+  const [retrying, setRetrying] = useState(false);
+  const building = status === 'processing' || status === 'pending';
+  const canRetry = typeof window.nxcore?.knowledge?.retryWikiBuild === 'function';
+
+  const retryBuild = async () => {
+    const knowledge = window.nxcore?.knowledge;
+    if (!knowledge?.retryWikiBuild) return;
+    setRetrying(true);
+    try {
+      await knowledge.retryWikiBuild(room.id);
+      await refresh();
+    } catch (cause) {
+      showToast({ title: t('contextRoom:wiki.failedToRetry'), message: cause instanceof Error ? cause.message : undefined });
+    } finally {
+      setRetrying(false);
+    }
+  };
 
   const selectedPath = selectedResourceId?.startsWith(`${room.id}:wiki:`)
     ? selectedResourceId.slice(`${room.id}:wiki:`.length)
@@ -271,6 +289,36 @@ export function WikiPane({ room, selectedResourceId, onOpenPage, view = 'tree' }
           </button>
         </div>
       </header>
+      {building || status === 'failed' ? (
+        <div className="context-room-wiki-progress">
+          <span className="context-room-wp-step is-done">
+            <CheckCircle2 aria-hidden="true" />
+            <b>{t('contextRoom:wiki.materialsDeposited')}</b>
+            <small>{t('contextRoom:wiki.countSources', { count: files.length })}</small>
+          </span>
+          <span className="context-room-wp-arrow"><ChevronRight aria-hidden="true" /></span>
+          <span className={`context-room-wp-step${building ? ' is-running' : ' is-failed'}`}>
+            {building
+              ? <LoaderCircle aria-hidden="true" className="is-spinning" />
+              : <AlertTriangle aria-hidden="true" />}
+            <b>{t('contextRoom:wiki.generatingPages')}</b>
+            {building && pageCount !== null ? (
+              <small>{t('contextRoom:wiki.countPagesGenerated', { count: pageCount })}</small>
+            ) : null}
+          </span>
+          {status === 'failed' && canRetry ? (
+            <button
+              type="button"
+              className="context-room-wiki-progress-retry"
+              disabled={retrying}
+              onClick={() => void retryBuild()}
+            >
+              {retrying ? <LoaderCircle aria-hidden="true" className="is-spinning" /> : null}
+              {t('contextRoom:wiki.retry')}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
       {status === 'error' ? (
         <div className="context-room-workspace-empty">{t('contextRoom:wiki.knowledgeServiceUnavailableError', { error: error ?? '' })}</div>
       ) : status === 'loading' ? (
@@ -279,22 +327,7 @@ export function WikiPane({ room, selectedResourceId, onOpenPage, view = 'tree' }
         <div className="context-room-workspace-empty">
           {t('contextRoom:wiki.thisRoomHasNoCapturedKnowledgeYetSubmitted')}
         </div>
-      ) : status === 'processing' || status === 'pending' ? (
-        <div className="context-room-wiki-building">
-          <LoaderCircle aria-hidden="true" className="is-spinning" />
-          <strong>{t('contextRoom:wiki.buildingTheKnowledgeBase')}</strong>
-          {pageCount !== null ? (
-            <span>{t('contextRoom:wiki.countPagesGenerated', { count: pageCount })}</span>
-          ) : null}
-        </div>
-      ) : status === 'failed' ? (
-        <PanelEmptyState
-          error
-          icon={AlertTriangle}
-          title={t('contextRoom:wiki.constructionFailed')}
-          action={{ label: t('contextRoom:wiki.retry'), onClick: () => void refresh() }}
-        />
-      ) : pages.length === 0 ? (
+      ) : building || status === 'failed' ? null : pages.length === 0 ? (
         <div className="context-room-workspace-empty">
           {t('contextRoom:wiki.noKnowledgePagesYetUploadFilesOrWrite')}
         </div>

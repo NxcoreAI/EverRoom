@@ -1293,6 +1293,8 @@ export interface NxcoreDesktopApi {
     updateRoomRelation(relationId: string, input: UpdateKnowledgeRoomRelationInput): Promise<KnowledgeRoomRelationDto>
     removeManualRoomRelation(relationId: string): Promise<{ relation: KnowledgeRoomRelationDto | null }>
     listWikiPages(roomId: string): Promise<{ status: string; items: KnowledgeWikiPageDto[]; pageCount: number | null }>
+    /** 手动重试构建失败的 Room wiki（重新触发 ingest，进度照旧轮询）。 */
+    retryWikiBuild(roomId: string): Promise<{ ok: boolean }>
     readWikiPage(roomId: string, ref: string): Promise<{ ref: string; markdown: string }>
     /** 全部 Room 的 wiki 映射（Wiki 应用清单）。 */
     listWikis(): Promise<{ items: KnowledgeWikiDto[] }>

@@ -600,6 +600,20 @@ export function knowledgeRoutes(service: KnowledgeService): FastifyPluginAsyncTy
       async (request) => service.listRoomWikiPages(request.params.id),
     );
 
+    app.post(
+      "/v1/knowledge/rooms/:id/wiki/rebuild",
+      {
+        schema: {
+          tags: ["knowledge"],
+          params: RoomIdParams,
+          response: {
+            200: Type.Object({ ok: Type.Boolean() }),
+          },
+        },
+      },
+      async (request) => service.retryRoomWikiIngest(request.params.id),
+    );
+
     app.get(
       "/v1/knowledge/rooms/:id/wiki/graph",
       {

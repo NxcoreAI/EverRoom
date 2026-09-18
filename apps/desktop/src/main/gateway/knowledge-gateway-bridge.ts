@@ -97,6 +97,10 @@ export class KnowledgeGatewayBridge {
     return this.request(`/v1/knowledge/rooms/${encodeURIComponent(roomId)}/wiki/pages`)
   }
 
+  retryWikiBuild(roomId: string): Promise<{ ok: boolean }> {
+    return this.request(`/v1/knowledge/rooms/${encodeURIComponent(roomId)}/wiki/rebuild`, { method: 'POST' })
+  }
+
   readWikiPage(roomId: string, ref: string): Promise<{ ref: string; markdown: string }> {
     // ref 是带斜杠的页面路径，逐段编码
     const encoded = ref.split('/').map(encodeURIComponent).join('/')

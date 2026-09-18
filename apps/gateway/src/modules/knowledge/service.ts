@@ -767,6 +767,22 @@ export class KnowledgeService {
     return { status: wiki.status, items, pageCount: wiki.page_count };
   }
 
+  /**
+   * 手动重试构建（status=failed 的 Room wiki）：重新触发 KS ingest。
+   * 后台执行不等待落定——返回后客户端回到轮询进度即可。
+   */
+  async retryRoomWikiIngest(roomId: string): Promise<{ ok: true }> {
+    const knowledgeId = this.resolveRoomWikiId(roomId);
+    if (!knowledgeId) throw new Error("room has no wiki");
+    void this.ks.ingest(knowledgeId).catch((error: unknown) => {
+      this.logger.warn(
+        { event: "knowledge.wiki.retry_failed", roomId, knowledgeId, error: String(error) },
+        "manual wiki ingest retry failed",
+      );
+    });
+    return { ok: true };
+  }
+
   /** 读单页 Markdown 全文（ref = page/ls 的 path）；无 wiki 或页面缺失返回 null。 */
   async readRoomWikiPage(roomId: string, ref: string): Promise<string | null> {
     const knowledgeId = this.resolveRoomWikiId(roomId);
