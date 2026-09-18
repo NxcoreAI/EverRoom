@@ -1,7 +1,9 @@
 import {
+  AlertTriangle,
   ChevronLeft,
   FileText,
   FolderOpen,
+  LoaderCircle,
   RefreshCw,
   Upload,
 } from 'lucide-react';
@@ -21,6 +23,7 @@ import {
 } from '../../../knowledgeMarkdownImport';
 import { WikiGraphCanvas } from '../WikiGraphCanvas';
 import { MarkdownBody } from './MarkdownBody';
+import { PanelEmptyState } from './PanelEmptyState';
 import { WikiTree } from './WikiTree';
 
 const SOURCE_KIND_LABELS: Record<string, string> = {
@@ -113,6 +116,13 @@ export function WikiPane({ room, selectedResourceId, onOpenPage, view = 'tree' }
     window.addEventListener('everroom:knowledge-changed', onChanged);
     return () => window.removeEventListener('everroom:knowledge-changed', onChanged);
   }, [refresh]);
+
+  // 构建期间自动轮询：页数进度和完成切页不需要用户手动刷新。
+  useEffect(() => {
+    if (status !== 'processing' && status !== 'pending') return;
+    const timer = window.setInterval(() => { void refresh(); }, 4000);
+    return () => window.clearInterval(timer);
+  }, [status, refresh]);
 
   // 图谱懒加载：首次切到图谱视图才拉取（服务端要读全部页面，别在目录态白跑）
   useEffect(() => {
@@ -270,9 +280,20 @@ export function WikiPane({ room, selectedResourceId, onOpenPage, view = 'tree' }
           {t('contextRoom:wiki.thisRoomHasNoCapturedKnowledgeYetSubmitted')}
         </div>
       ) : status === 'processing' || status === 'pending' ? (
-        <div className="context-room-workspace-empty">
-          {t('contextRoom:wiki.buildingTheKnowledgeBaseProgressPauseEditingBriefly', { progress: pageCount ? t('contextRoom:wiki.countPagesGenerated', { count: pageCount }) : '' })}
+        <div className="context-room-wiki-building">
+          <LoaderCircle aria-hidden="true" className="is-spinning" />
+          <strong>{t('contextRoom:wiki.buildingTheKnowledgeBase')}</strong>
+          {pageCount !== null ? (
+            <span>{t('contextRoom:wiki.countPagesGenerated', { count: pageCount })}</span>
+          ) : null}
         </div>
+      ) : status === 'failed' ? (
+        <PanelEmptyState
+          error
+          icon={AlertTriangle}
+          title={t('contextRoom:wiki.constructionFailed')}
+          action={{ label: t('contextRoom:wiki.retry'), onClick: () => void refresh() }}
+        />
       ) : pages.length === 0 ? (
         <div className="context-room-workspace-empty">
           {t('contextRoom:wiki.noKnowledgePagesYetUploadFilesOrWrite')}

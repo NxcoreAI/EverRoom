@@ -11219,6 +11219,34 @@
   flex-direction: column;
 }
 
+.context-room-wiki-building {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.context-room-wiki-building svg.is-spinning {
+  width: 22px;
+  height: 22px;
+  animation: context-room-spin 900ms linear infinite;
+}
+
+.context-room-wiki-building strong {
+  color: var(--cr-text);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.context-room-wiki-building span {
+  color: var(--cr-tertiary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
 .context-room-wiki-title {
   display: flex;
   min-width: 0;
