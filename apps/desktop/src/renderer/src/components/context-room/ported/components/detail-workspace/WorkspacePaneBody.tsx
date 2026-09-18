@@ -5,6 +5,7 @@ import type { BoardId, BoardSubtab } from '../RoomIconSidebar';
 import {
   ActivityPane,
   ArtifactLibraryPane,
+  IdeasBoardPane,
   LinkGraphPane,
   MaterialsPane,
   MemoryPane,
@@ -216,7 +217,7 @@ export function WorkspacePaneBody({
   }
 
   if (board === 'thoughts') {
-    return <ThoughtsPane room={room} />;
+    return <IdeasBoardPane room={room} />;
   }
 
   return (

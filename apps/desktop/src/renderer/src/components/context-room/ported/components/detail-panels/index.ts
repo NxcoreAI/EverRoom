@@ -15,3 +15,4 @@ export type WorkspaceObjectPreview =
 export { OverviewDashboard } from './OverviewDashboard'
 export { WikiPane } from './WikiPane'
 export { ThoughtsPane } from './ThoughtsPane'
+export { IdeasBoardPane } from './IdeasBoardPane'
