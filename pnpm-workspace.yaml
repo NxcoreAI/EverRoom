@@ -19,7 +19,7 @@ allowBuilds:
   '@google/genai': true
   '@parcel/watcher': false
   '@sentry/cli': true
-  '@oomol-lab/open-connector@git+https://code.vyitec.com/nexcore/everroom-openconnector.git#bd4213af4c96af24f1f6fa4a66765cb425a8291f': false
+  '@oomol-lab/open-connector@git+https://github.com/NxcoreAI/open-connector.git#806663488c6e8df92755d473cd866a1d80f2222f': false
   '@tencentdb-agent-memory/memory-tencentdb-v2@git+https://github.com/NxcoreAI/TencentDB-Agent-Memory.git#f65f83e550cc4a13d51cbef8550f0b1755073ea4&path:MemoryCore': false
   better-sqlite3: true
   electron: true
@@ -29,7 +29,7 @@ allowBuilds:
   '@tencentdb-agent-memory/memory-tencentdb-v2@git+https://github.com/NxcoreAI/TencentDB-Agent-Memory.git#f65f83e550cc4a13d51cbef8550f0b1755073ea4&path:MemoryCore(patch_hash=351b45cf8e7bc7b80b1feff362fb4100900a4301b00d7dd3fa34c572f331e7e6)': false
   '@larksuite/cli': true
   ntn: true
-  '@oomol-lab/open-connector@git+https://code.vyitec.com/nexcore/everroom-openconnector.git#bd4213af4c96af24f1f6fa4a66765cb425a8291f(patch_hash=6e17a3f3a85300edd042cc19665aa487aecc7f0c80184d1835862925fda3123c)': false
+  '@oomol-lab/open-connector@git+https://github.com/NxcoreAI/open-connector.git#806663488c6e8df92755d473cd866a1d80f2222f(patch_hash=6e17a3f3a85300edd042cc19665aa487aecc7f0c80184d1835862925fda3123c)': false
 
 minimumReleaseAgeExclude:
   - '@earendil-works/pi-agent-core@0.84.2'
