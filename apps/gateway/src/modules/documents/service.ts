@@ -46,7 +46,7 @@ import {
   type AtomicDocumentCreateInput,
   type AtomicDocumentCommitInput,
 } from "./core/index.js";
-import { agentDocumentMarkdown, sanitizeAgentDocumentTables } from "./agent-markdown.js";
+import { agentDocumentMarkdown, parseImportedMarkdown, sanitizeAgentDocumentTables } from "./agent-markdown.js";
 import {
   canonicalOverviewText,
   invokeOverviewGeneration,
@@ -1067,7 +1067,7 @@ export class DocumentService {
 
 
   private parseMarkdown(markdown: string): TiptapJsonContent {
-    return agentDocumentMarkdown.parse(markdown) as TiptapJsonContent;
+    return parseImportedMarkdown(markdown) as TiptapJsonContent;
   }
 
   private normalizeStoredDocuments(): void {

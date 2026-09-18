@@ -4,7 +4,7 @@ import type {
   TiptapJsonContent,
 } from "@nxcore/agent-contract";
 import { DOCUMENT_TITLE_NODE_TYPE } from "@nxcore/document-model";
-import { agentDocumentMarkdown, sanitizeAgentDocumentTables } from "../agent-markdown.js";
+import { parseImportedMarkdown, sanitizeAgentDocumentTables } from "../agent-markdown.js";
 import { DocumentServiceError } from "../errors.js";
 
 /**
@@ -174,7 +174,7 @@ function applyCodeBlockReplacement(
 function parseReplacementBlocks(replacement: string): TiptapJsonContent[] {
   try {
     const parsed = sanitizeAgentDocumentTables(
-      agentDocumentMarkdown.parse(replacement) as TiptapJsonContent,
+      parseImportedMarkdown(replacement) as TiptapJsonContent,
     );
     return parsed.content.content ?? [];
   } catch (error) {
