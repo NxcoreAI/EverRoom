@@ -2,6 +2,8 @@ import { dialog, shell } from 'electron'
 import { desktopText } from '../desktop-locale'
 import { readFile } from 'node:fs/promises'
 import type {
+  EmergenceProjectionResultDto,
+  EmergenceRequest,
   KnowledgeAttachInput,
   KnowledgeDecisionDto,
   KnowledgeEntityDetailDto,
@@ -184,6 +186,14 @@ export class KnowledgeGatewayBridge {
   /** on-demand Room 推荐（创建入口「智能推荐」页签）：描述 + 已导入文件 → 推荐卡。 */
   proposeRooms(input: { description: string; fileEntryIds: string[] }): Promise<{ items: KnowledgeRoomProposalDto[] }> {
     return this.request('/v1/knowledge/room-proposals', { method: 'POST', body: JSON.stringify(input) })
+  }
+
+  /** 知识涌现投影（思路板块）：聚焦/漫步共用一个端点，卡片与脉络同源。 */
+  emergence(roomId: string, request: EmergenceRequest): Promise<EmergenceProjectionResultDto> {
+    return this.request(`/v1/knowledge/rooms/${encodeURIComponent(roomId)}/emergence`, {
+      method: 'POST',
+      body: JSON.stringify(request),
+    })
   }
 
   revertDecision(decisionId: string): Promise<{ ok: boolean }> {

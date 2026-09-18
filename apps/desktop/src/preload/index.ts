@@ -18,7 +18,7 @@ import type {
 } from '../shared/memory'
 import type { IngestPipelines } from '../shared/ingest'
 import type { McpServersSnapshot } from '../shared/mcp'
-import { OIDC_LOGIN_CANCELLED_MESSAGE, type AiRelayKeeperEventType, type CloudAccountStatus, type DesktopRequestError, type NxcoreDesktopApi, type RoomAgentSelectionRewriteInput } from '../shared/sources'
+import { OIDC_LOGIN_CANCELLED_MESSAGE, type AiRelayKeeperEventType, type AsrResult, type CloudAccountStatus, type DesktopRequestError, type NxcoreDesktopApi, type RoomAgentSelectionRewriteInput } from '../shared/sources'
 import type { BrowserExtensionMessage, BrowserExtensionStatus } from '../shared/browser-extension'
 import { isCursorCompletionAgentErrorPayload } from '../shared/cursor-completion'
 import {
@@ -501,10 +501,22 @@ const api: NxcoreDesktopApi = {
     openSystemAudioSettings: () => invoke('asr:open-system-audio-settings'),
     beginRecording: (mimeType) => invoke('asr:begin-recording', mimeType),
     appendRecording: (id, chunk) => invoke('asr:append-recording', id, chunk),
+    uploadRecordingSegment: (id, index, chunk, durationMs, meta) => invoke('asr:upload-recording-segment', id, index, chunk, durationMs, meta),
+    onSegmentTranscription: (listener) => {
+      const handle = (_event: Electron.IpcRendererEvent, value: unknown) => {
+        if (!value || typeof value !== 'object') return
+        const candidate = value as { recordingId?: unknown; index?: unknown; result?: unknown }
+        if (typeof candidate.recordingId !== 'string' || typeof candidate.index !== 'number' || !candidate.result) return
+        listener(candidate as { recordingId: string; index: number; result: AsrResult })
+      }
+      ipcRenderer.on('asr:segment-transcribed', handle)
+      return () => ipcRenderer.removeListener('asr:segment-transcribed', handle)
+    },
     finishRecording: (id) => invoke('asr:finish-recording', id),
     cancelRecording: (id) => invoke('asr:cancel-recording', id),
     createJob: (input) => invoke('asr:create-job', input),
     getJob: (id) => invoke('asr:get-job', id),
+    renameSpeaker: (jobId, speakerId, name) => invoke('asr:rename-speaker', jobId, speakerId, name),
   },
   privateAudio: {
     list: (cursor?: number) => invoke('private-audio:list', cursor ?? 0),
@@ -786,6 +798,8 @@ const api: NxcoreDesktopApi = {
     routeStatus: (sourceIds) => invoke('knowledge:route:status', sourceIds),
     proposeRooms: (input: { description: string; fileEntryIds: string[] }) =>
       invoke('knowledge:rooms:propose', input),
+    emergence: (roomId: string, request: import('../shared/knowledge').EmergenceRequest) =>
+      invoke('knowledge:rooms:emergence', roomId, request),
     revertDecision: (decisionId) => invoke('knowledge:route:revert', decisionId),
     getPreferences: (): Promise<import('../shared/knowledge').KnowledgePreferencesDto> =>
       invoke('knowledge:preferences:get'),

@@ -11,12 +11,27 @@ export interface RoomWorkspaceState {
   board: BoardId
   subtab?: BoardSubtab
   selectedResourceId?: string
+  /** 思路伴随区收起（打开云文档时的三栏布局记忆）。 */
+  thoughtsCompanionCollapsed?: boolean
   savedAt: number
 }
 
 type RoomWorkspaceStateMap = Record<string, RoomWorkspaceState>
 
 const BOARD_IDS: readonly BoardId[] = BOARD_TABS.map((tab) => tab.id)
+
+/** R1 旧页签到 PRD 四视图的迁移：日程/任务并入待办，邮件并入资料。 */
+const SUBTAB_MIGRATION: Partial<Record<string, BoardSubtab>> = {
+  schedule: 'todo',
+  tasks: 'todo',
+  mails: 'materials',
+}
+
+function migrateSubtab(board: BoardId, subtab: unknown): BoardSubtab | undefined {
+  if (typeof subtab !== 'string') return undefined
+  const candidate: string = SUBTAB_MIGRATION[subtab] ?? subtab
+  return BOARD_SUBTABS[board].some((tab) => tab.id === candidate) ? candidate as BoardSubtab : undefined
+}
 
 function loadMap(): RoomWorkspaceStateMap {
   try {
@@ -51,13 +66,12 @@ function normalizeState(roomId: string, value: unknown): RoomWorkspaceState | nu
   const candidate = value as Partial<RoomWorkspaceState>
   if (!BOARD_IDS.includes(candidate.board as BoardId)) return null
   const board = candidate.board as BoardId
-  const subtab = BOARD_SUBTABS[board].some((tab) => tab.id === candidate.subtab)
-    ? candidate.subtab
-    : undefined
+  const subtab = migrateSubtab(board, candidate.subtab)
   return {
     board,
     ...(subtab ? { subtab } : {}),
     ...(typeof candidate.selectedResourceId === 'string' ? { selectedResourceId: candidate.selectedResourceId } : {}),
+    ...(candidate.thoughtsCompanionCollapsed === true ? { thoughtsCompanionCollapsed: true } : {}),
     savedAt: typeof candidate.savedAt === 'number' ? candidate.savedAt : 0,
   }
 }
@@ -74,6 +88,9 @@ export function saveRoomWorkspaceState(roomId: string, patch: Partial<Omit<RoomW
     ...(patch.subtab !== undefined ? { subtab: patch.subtab } : current?.subtab !== undefined ? { subtab: current.subtab } : {}),
     ...(patch.selectedResourceId !== undefined || current?.selectedResourceId !== undefined
       ? { selectedResourceId: patch.selectedResourceId ?? current?.selectedResourceId }
+      : {}),
+    ...(patch.thoughtsCompanionCollapsed !== undefined || current?.thoughtsCompanionCollapsed !== undefined
+      ? { thoughtsCompanionCollapsed: patch.thoughtsCompanionCollapsed ?? current?.thoughtsCompanionCollapsed ?? false }
       : {}),
     savedAt: Date.now(),
   }

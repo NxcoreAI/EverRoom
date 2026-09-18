@@ -120,6 +120,8 @@ export type {
   ConnectorProvidersResponse,
 } from '@nxcore/connector-contract'
 import type {
+  EmergenceProjectionResultDto,
+  EmergenceRequest,
   KnowledgeAttachInput,
   KnowledgeDecisionDto,
   KnowledgeEntityDetailDto,
@@ -301,7 +303,8 @@ export interface AsrSegment {
   text: string
   beginTime: number
   endTime: number
-  speakerId: number | null
+  speakerId: number | string | null
+  speakerName?: string | null
 }
 
 export interface AsrResult {
@@ -1093,10 +1096,13 @@ export interface NxcoreDesktopApi {
     openSystemAudioSettings(): Promise<void>
     beginRecording(mimeType: string): Promise<{ id: string }>
     appendRecording(id: string, chunk: Uint8Array): Promise<void>
+    uploadRecordingSegment(id: string, index: number, chunk: Uint8Array, durationMs: number, meta: { mimeType: string; languageHints?: string[] }): Promise<void>
+    onSegmentTranscription(listener: (event: { recordingId: string; index: number; result: AsrResult }) => void): () => void
     finishRecording(id: string): Promise<{ filePath: string }>
     cancelRecording(id: string): Promise<void>
     createJob(input: CreateAsrJobInput): Promise<AsrJob>
     getJob(id: string): Promise<AsrJob>
+    renameSpeaker(jobId: string, speakerId: string, name: string | null): Promise<AsrJob>
   }
   privateAudio: {
     list(cursor?: number): Promise<{ assets: SyncedPrivateAudioAsset[]; nextCursor: number }>
@@ -1319,6 +1325,8 @@ export interface NxcoreDesktopApi {
     routeStatus(sourceIds: string[]): Promise<{ items: KnowledgeRouteStatusDto[] }>
     /** on-demand Room 推荐（创建入口「智能推荐」页签）：描述 + 已导入文件 → 推荐卡。 */
     proposeRooms(input: { description: string; fileEntryIds: string[] }): Promise<{ items: KnowledgeRoomProposalDto[] }>
+    /** 知识涌现投影（思路板块）：聚焦/漫步共用一个端点。 */
+    emergence(roomId: string, request: EmergenceRequest): Promise<EmergenceProjectionResultDto>
     revertDecision(decisionId: string): Promise<{ ok: boolean }>
     /** M3 知识整理偏好：统计/洞察/用户接管/开关。 */
     getPreferences(): Promise<KnowledgePreferencesDto>

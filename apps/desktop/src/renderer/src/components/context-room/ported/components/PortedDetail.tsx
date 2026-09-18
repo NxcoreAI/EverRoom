@@ -236,11 +236,9 @@ export function PortedDetail({
 
   const openObject = useCallback((target: WorkspaceObjectPreview) => {
     // 详情展示在归属页签内：不触碰文档选中（右区常驻打开的文档），移动端也不把右区盖上来。
-    const subtab = target.kind === 'meeting'
-      ? 'schedule'
-      : target.kind === 'task'
-        ? 'tasks'
-        : 'mails'
+    const subtab = target.kind === 'meeting' || target.kind === 'task'
+      ? 'todo'
+      : 'materials'
     setSelectedObject(target)
     if (!(layout.panels.includes('work') && layout.subtabs.work === subtab)) {
       layout.switchBoard('work', subtab)

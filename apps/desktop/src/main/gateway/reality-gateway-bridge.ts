@@ -83,10 +83,10 @@ export class RealityGatewayBridge {
     })
   }
 
-  applyAsrByJob(job: AsrJob): Promise<RealityEvent> {
+  applyAsrByJob(job: AsrJob, resultVersionOverride?: number): Promise<RealityEvent> {
     return this.request(`/v1/reality/asr-jobs/${encodeURIComponent(job.id)}`, {
       method: 'POST',
-      data: this.asrInput(job),
+      data: this.asrInput(job, resultVersionOverride),
     })
   }
 
@@ -204,14 +204,14 @@ export class RealityGatewayBridge {
     }, delayMs)
   }
 
-  private asrInput(job: AsrJob): ApplyRealityAsrInput {
+  private asrInput(job: AsrJob, resultVersionOverride?: number): ApplyRealityAsrInput {
     return {
       jobId: job.id,
       source: job.source,
       status: job.status,
       result: job.result,
       error: job.error,
-      resultVersion: Math.max(1, Date.parse(job.updatedAt)),
+      resultVersion: Math.max(1, Date.parse(job.updatedAt), resultVersionOverride ?? 0),
     }
   }
 

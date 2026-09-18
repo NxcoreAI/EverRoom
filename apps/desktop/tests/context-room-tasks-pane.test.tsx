@@ -13,6 +13,20 @@ vi.mock('../src/renderer/src/i18n/LocaleContext', async (importOriginal) => {
 })
 
 import type { RoomOverviewProjection } from '@nxcore/agent-contract'
+import type { ReactNode } from 'react'
+
+// 无 DOM 环境：新建任务/延期用 Popover 透传（内容常驻树中，直接驱动表单与按钮）。
+vi.mock('@radix-ui/react-popover', () => {
+  const passthrough = ({ children }: { children?: ReactNode }) => children ?? null
+  return {
+    Root: passthrough,
+    Trigger: ({ children }: { children?: ReactNode }) => children ?? null,
+    Portal: passthrough,
+    Content: passthrough,
+    Close: ({ children }: { children?: ReactNode }) => children ?? null,
+    Arrow: () => null,
+  }
+})
 
 import { createContextRoomFixture } from './context-room-fixture'
 import { TasksPane } from '../src/renderer/src/components/context-room/ported/components/detail-panels/ActivityPanes'
@@ -170,11 +184,15 @@ describe('待办面板：确定性待办投影合并', () => {
     expect(incompleteHeader.findByType('span').children[0]).toBe('2')
   })
 
-  it('连接器待办为只读行：无勾选按钮、无跳转按钮', async () => {
+  it('连接器待办为只读行：勾选位明确禁用（title 提示只读）、无跳转按钮', async () => {
     const { renderer } = await renderTasksPane()
     const row = taskRows(renderer, 'todo')[0]
-    expect(row.findAllByType('button')).toHaveLength(0)
-    expect(row.findAll((node) => node.props?.className === 'context-room-task-check')).toHaveLength(1)
+    // 唯一按钮是禁用的勾选位（PRD：连接器只读项明确禁用）
+    const buttons = row.findAllByType('button')
+    expect(buttons).toHaveLength(1)
+    expect(buttons[0].props.className).toBe('context-room-task-check')
+    expect(buttons[0].props.disabled).toBe(true)
+    expect(buttons[0].props.title).toBe('连接器任务只读，完成状态随连接器同步')
   })
 
   it('本地与投影均为空时仍显示空态', async () => {
@@ -248,5 +266,66 @@ describe('待办面板：确定性待办投影合并', () => {
     // 不出现「还没有任务」空态
     expect(renderer.root.findAll((node) =>
       typeof node.props?.title === 'string' && node.props.title === '还没有任务')).toHaveLength(0)
+  })
+})
+
+describe('待办面板：新建与延期（PRD 6.2 待办动作）', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  async function renderWithUpdater() {
+    vi.stubGlobal('window', {
+      ...globalThis,
+      nxcore: { contextRooms: { overview: vi.fn().mockResolvedValue(projectionFixture()) } },
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })
+    const room = createContextRoomFixture('room-connector', '连接器 Room')
+    room.actionItems = [
+      { id: 'task-pending', title: '本地验收任务', status: '进行中', owner: '林薇', deadline: '2026-09-01 09:00', completed: false },
+    ]
+    const onUpdateRoom = vi.fn()
+    let renderer: TestRenderer.ReactTestRenderer | null = null
+    await act(async () => {
+      renderer = TestRenderer.create(
+        <TasksPane room={room} onSelect={() => {}} onToggle={() => {}} onUpdateRoom={onUpdateRoom} />,
+      )
+    })
+    return { renderer: renderer!, room, onUpdateRoom }
+  }
+
+  it('新建任务：表单提交后追加本地任务（owner 记为“我”，空截止回退待排期）', async () => {
+    const { renderer, room, onUpdateRoom } = await renderWithUpdater()
+    await act(async () => {
+      renderer.root.findByProps({ id: 'context-room-new-task-title' })
+        .props.onChange({ target: { value: '写本周周报' } })
+    })
+    await act(async () => {
+      renderer.root.findByType('form').props.onSubmit({ preventDefault: () => {} })
+    })
+    expect(onUpdateRoom).toHaveBeenCalledTimes(1)
+    const next = onUpdateRoom.mock.calls[0][0](room)
+    expect(next.actionItems).toHaveLength(2)
+    expect(next.actionItems[1]).toMatchObject({ title: '写本周周报', status: '未开始', owner: '我', deadline: '待排期' })
+    expect(next.actionItems[0]).toBe(room.actionItems[0])
+  })
+
+  it('延期：本地任务截止顺延 N 天并写回快照', async () => {
+    const { renderer, room, onUpdateRoom } = await renderWithUpdater()
+    const postponeButton = renderer.root.findAllByType('button')
+      .find((button) => {
+        const children = Array.isArray(button.props.children) ? button.props.children : [button.props.children]
+        return children.some((child) => typeof child === 'string' && child.includes('延后 1 天'))
+      })
+    expect(postponeButton).toBeTruthy()
+    await act(async () => {
+      postponeButton!.props.onClick()
+    })
+    expect(onUpdateRoom).toHaveBeenCalledTimes(1)
+    const next = onUpdateRoom.mock.calls[0][0](room)
+    // 2026-09-01 顺延 1 天 → 09-02（MM-DD，与现有截止展示格式一致）
+    expect(next.actionItems[0].deadline).toBe('09-02')
   })
 })

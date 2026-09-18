@@ -12,6 +12,8 @@ import { ActiveDocumentProvider } from './state/ActiveDocumentContext'
 import { PortedDetail } from './components/context-room/ported/components/PortedDetail'
 import { createEmptyContextRoom } from './components/context-room/ported/contextRoomFactory'
 import { loadRoomWorkspaceState } from './components/context-room/ported/roomWorkspaceState'
+import type { ContextRoomRecord } from './components/context-room/ported/types'
+import './components/context-room/ported/ContextRoom.css'
 import '@/styles/tokens.css'
 import './styles.css'
 
@@ -57,6 +59,22 @@ const room = createEmptyContextRoom({
   briefStatus: '进行中',
 })
 
+// 工作/待办与资料的数据面（本地快照部分；连接器邮件/日历走 mock nxcore）。
+const localDate = (offset: number, time: string) => {
+  const date = new Date()
+  date.setDate(date.getDate() + offset)
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')} ${time}`
+}
+room.materials = [
+  { id: 'meeting-1', type: '会议', title: '周会：连接器排期', time: localDate(0, '14:00'), summary: '确认阶段一范围与负责人', attendees: ['王小雨', '李明'], location: '会议室 A', meetingActions: [{ id: 'ma-1', title: '输出阶段一排期表', owner: '李明' }] },
+  { id: 'meeting-2', type: '会议', title: '设计评审', time: localDate(-3, '10:00'), summary: 'V1 视觉定稿评审', attendees: ['林薇', '王小雨'] },
+  { id: 'mail-local-1', type: '邮件', title: '客户反馈汇总', time: localDate(-1, '09:30'), summary: '本周客户反馈共 12 条', sender: '客服组' },
+]
+room.actionItems = [
+  { id: 'task-1', title: '补齐 OAuth 文档', status: '进行中', owner: '林薇', deadline: localDate(1, '18:00').slice(0, 16), completed: false, source: { type: '会议', name: '周会：连接器排期', objectId: 'meeting-1' } },
+  { id: 'task-2', title: '确认测试范围', status: '未开始', owner: '我', deadline: '待排期', completed: false },
+]
+
 const stored = loadRoomWorkspaceState(ROOM_ID)
 let createdCount = 0
 
@@ -64,11 +82,16 @@ let createdCount = 0
 function DocumentOperationRoot() {
   const { upsertDocument } = useRoomDocumentsState()
   const operationBridge = React.useMemo(() => desktopOperationBridge(), [])
+  // 本地快照更新走真实链路语义（新建任务/延期/勾选等写回后重渲染）。
+  const [roomState, applyRoomUpdate] = React.useReducer(
+    (current: ContextRoomRecord, updater: (room: ContextRoomRecord) => ContextRoomRecord) => updater(current),
+    room,
+  )
   return (
     <DocumentOperationProvider operationBridge={operationBridge} onDocumentApplied={upsertDocument}>
       <ActiveDocumentProvider>
         <PortedDetail
-          room={room}
+          room={roomState}
           rooms={[room]}
           backendDocuments={backendDocuments}
           trashedDocuments={trashedDocuments}
@@ -80,7 +103,7 @@ function DocumentOperationRoot() {
           onActiveBoardChange={() => undefined}
           onBack={() => undefined}
           onOpenRoom={() => undefined}
-          onUpdateRoom={() => undefined}
+          onUpdateRoom={applyRoomUpdate}
           onBackendDocumentChange={() => undefined}
           onCreateDocument={async (_roomId, title) => {
             createdCount += 1

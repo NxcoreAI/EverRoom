@@ -80,9 +80,34 @@ describe('private transcription reality import', () => {
       endedAt: '2026-08-16T16:47:37.000Z',
     })
     expect(imported?.transcriptSegments).toEqual([
-      { text: '你好，你能听到吗？', beginTime: 960, endTime: 9_090, speakerId: 0 },
-      { text: '可以听到。', beginTime: 9_090, endTime: 11_300, speakerId: 1 },
+      { text: '你好，你能听到吗？', beginTime: 960, endTime: 9_090, speakerId: null, speakerName: '发言人 0' },
+      { text: '可以听到。', beginTime: 9_090, endTime: 11_300, speakerId: null, speakerName: '发言人 1' },
     ])
+  })
+
+  it('keeps opaque nxcore speaker ids and names when the record carries segments', () => {
+    const nxcore = source()
+    nxcore.metadata = { ...nxcore.metadata, transcriptLines: undefined }
+    nxcore.segments = [
+      { text: '今天我们讨论上线。', beginTime: 0, endTime: 3_200, speakerId: 'spk_9f2a', speakerName: '张三' },
+      { text: '好的。', beginTime: 3_200, endTime: 4_100, speakerId: 'spk_b71c', speakerName: null },
+    ]
+    const imported = toImportedRealityEvent(nxcore)
+    expect(imported?.transcriptSegments).toEqual([
+      { text: '今天我们讨论上线。', beginTime: 0, endTime: 3_200, speakerId: 'spk_9f2a', speakerName: '张三' },
+      { text: '好的。', beginTime: 3_200, endTime: 4_100, speakerId: 'spk_b71c', speakerName: null },
+    ])
+  })
+
+  it('prefers record segments over transcriptLines so a publish round-trip keeps speaker ids', () => {
+    const roundTrip = source()
+    roundTrip.segments = [
+      { text: '你好，你能听到吗？', beginTime: 960, endTime: 9_090, speakerId: 'spk_vsew', speakerName: '说话人1' },
+      { text: '可以听到。', beginTime: 9_090, endTime: 11_300, speakerId: 'spk_ubjd', speakerName: '说话人2' },
+    ]
+    const imported = toImportedRealityEvent(roundTrip)
+    // transcriptLines 也存在（只含文字标签）；必须用带 id 的 segments，否则回流导入会把本地说话人 id 洗掉。
+    expect(imported?.transcriptSegments).toEqual(roundTrip.segments)
   })
 
   it('rejects placeholder titles even when the summary has content', () => {

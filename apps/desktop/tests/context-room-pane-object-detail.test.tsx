@@ -2,7 +2,8 @@ import TestRenderer, { act } from 'react-test-renderer'
 import { describe, expect, it, vi } from 'vitest'
 
 import { createContextRoomFixture } from './context-room-fixture'
-import { MailsPane, TasksPane } from '../src/renderer/src/components/context-room/ported/components/detail-panels/ActivityPanes'
+import { TasksPane } from '../src/renderer/src/components/context-room/ported/components/detail-panels/ActivityPanes'
+import { MaterialsPane } from '../src/renderer/src/components/context-room/ported/components/detail-panels/MaterialsPane'
 
 vi.mock('../src/renderer/src/i18n/LocaleContext', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/renderer/src/i18n/LocaleContext')>()
@@ -85,14 +86,24 @@ describe('pane-embedded object detail', () => {
     expect(closeDetail).toHaveBeenCalledTimes(1)
   })
 
-  it('renders the mail detail inside the mails pane instead of a dialog', async () => {
+  it('renders the mail detail inside the materials pane instead of a dialog', async () => {
     const room = roomWithObjects()
     let renderer: TestRenderer.ReactTestRenderer
     await act(async () => {
       renderer = TestRenderer.create(
-        <MailsPane
+        <MaterialsPane
           room={room}
+          rooms={[]}
+          backendDocuments={[]}
+          trashedDocuments={[]}
+          knowledgeFiles={[]}
+          selectedId={null}
           onSelect={() => undefined}
+          onDeleteDocument={vi.fn()}
+          onRestoreDocument={vi.fn()}
+          onDeleteDocumentPermanently={vi.fn()}
+          onEmptyTrash={vi.fn()}
+          onOpenObject={() => undefined}
           detail={{ kind: 'mail', id: 'mail-1' }}
           onCloseDetail={() => undefined}
           onUpdateRoom={() => undefined}
@@ -100,7 +111,7 @@ describe('pane-embedded object detail', () => {
       )
     })
     expect(textNodes(renderer!, 'Nango 授权异常告警')).not.toHaveLength(0)
-    expect(renderer!.root.findAllByProps({ className: 'context-room-mail-pane' })).toHaveLength(0)
+    expect(renderer!.root.findAllByProps({ className: 'context-room-materials-pane' })).toHaveLength(0)
   })
 
   it('falls back to the pane list when the detail object no longer exists', async () => {

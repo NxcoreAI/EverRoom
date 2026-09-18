@@ -44,7 +44,6 @@ export function ResourceTree({
   onDeleteDocumentPermanently,
   onEmptyTrash,
   onCorrected,
-  variant = 'materials',
 }: {
   room: ContextRoomRecord;
   /** 归入纠正（改归其他 Room）的目标候选。 */
@@ -61,8 +60,6 @@ export function ResourceTree({
   onEmptyTrash: (roomId: string) => Promise<void>;
   /** 纠正完成后的就地刷新钩子（资料清单随 knowledge-changed 自刷新，可缺省）。 */
   onCorrected?: () => void;
-  /** materials=工作资料（外部导入+上传文件，无新建入口）；artifacts=产物库（用户文档+新建入口）。 */
-  variant?: 'materials' | 'artifacts';
 }) {
   const { locale, t } = useLocale();
   const library = useMemo(
@@ -194,16 +191,16 @@ export function ResourceTree({
           const trashFolder = folder.id.endsWith(':folder:trash');
           const documentsFolder = folder.id.endsWith(':folder:documents');
           // 产物库只承载用户文档：外部文件归夹（Office/设计与附件）不在产物展示。
-          if (variant === 'artifacts' && !documentsFolder && !trashFolder) return null;
+          if (!documentsFolder && !trashFolder) return null;
           return (
             <section key={folder.id}>
               <div className="context-room-resource-folder-row">
                 <button type="button" className="context-room-resource-folder" aria-expanded={open} onClick={() => setExpanded((current) => { const next = new Set(current); if (next.has(folder.id)) next.delete(folder.id); else next.add(folder.id); return next; })}>
                   <ChevronRight aria-hidden="true" className={open ? 'is-open' : ''} />
                   {trashFolder ? <Trash2 aria-hidden="true" /> : open ? <FolderOpen aria-hidden="true" /> : <Folder aria-hidden="true" />}
-                  <span>{t(uiText(variant === 'artifacts' && documentsFolder ? '产物' : folder.name))}</span><small>{resources.length}</small>
+                  <span>{t(uiText(documentsFolder ? '产物' : folder.name))}</span><small>{resources.length}</small>
                 </button>
-                {documentsFolder && variant === 'artifacts' ? (
+                {documentsFolder ? (
                   <Popover.Root
                     open={createPopoverOpen}
                     onOpenChange={(nextOpen) => {

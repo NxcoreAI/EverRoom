@@ -3,13 +3,14 @@ import type { ContextRoomRecord, ContextRoomResource, ContextRoomWikiPageResourc
 import type { KnowledgeFileDto } from '../../../../../../../shared/knowledge';
 import type { BoardId, BoardSubtab } from '../RoomIconSidebar';
 import {
+  ActivityPane,
   LinkGraphPane,
-  MailsPane,
+  MaterialsPane,
   MemoryPane,
   OverviewDashboard,
   RelationsPane,
-  SchedulePane,
-  TasksPane,
+  ThoughtsPane,
+  TodoPane,
   WikiPane,
   type WorkspaceObjectPreview,
 } from '../detail-panels';
@@ -72,29 +73,30 @@ export function WorkspacePaneBody({
   selectedObject: WorkspaceObjectPreview | null;
   onCloseObject: () => void;
 }) {
-  // 详情归属页签与 PortedDetail.openObject 的映射保持一致。
+  // 详情归属页签与 PortedDetail.openObject 的映射保持一致：会议/任务归待办，邮件归资料。
   const objectOwnerSubtab = (target: WorkspaceObjectPreview): BoardSubtab =>
-    target.kind === 'meeting' ? 'schedule' : target.kind === 'task' ? 'tasks' : 'mails';
+    target.kind === 'meeting' || target.kind === 'task' ? 'todo' : 'materials';
   const ownedDetail = selectedObject && board === 'work' && objectOwnerSubtab(selectedObject) === subtab
     ? selectedObject
     : null;
 
   if (board === 'work') {
-    if (subtab === 'schedule') {
+    if (subtab === 'activity') {
       return (
-        <SchedulePane
+        <ActivityPane
           room={room}
-          onOpen={onOpenObject}
-          detail={ownedDetail}
-          onCloseDetail={onCloseObject}
-          onUpdateRoom={onUpdateRoom}
+          backendDocuments={backendDocuments.filter((document) => document.origin !== 'native')}
+          knowledgeFiles={knowledgeFiles}
+          onSelectResource={onSelectResource}
+          onOpenObject={onOpenObject}
         />
       );
     }
-    if (subtab === 'tasks') {
+    if (subtab === 'todo') {
       return (
-        <TasksPane
+        <TodoPane
           room={room}
+          onOpen={onOpenObject}
           onSelect={(id) => onOpenObject({ kind: 'task', id })}
           onToggle={onToggleTask}
           detail={ownedDetail}
@@ -103,35 +105,26 @@ export function WorkspacePaneBody({
         />
       );
     }
-    if (subtab === 'mails') {
-      return (
-        <MailsPane
-          room={room}
-          rooms={rooms}
-          onSelect={(id) => onOpenObject({ kind: 'mail', id })}
-          detail={ownedDetail}
-          onCloseDetail={onCloseObject}
-          onUpdateRoom={onUpdateRoom}
-        />
-      );
-    }
     if (subtab === 'materials') {
-      // 资料：外部导入文档 + 上传/本地文件；EverRoom 产物只在产物板块出现。
+      // 资料：按来源对象平铺（外部导入文档、上传/本地文件、邮件、会议）；
+      // EverRoom 产物只在产物板块出现。
       return (
-        <ResourceTree
+        <MaterialsPane
           room={room}
           rooms={rooms}
           selectedId={selectedResourceId}
           backendDocuments={backendDocuments.filter((document) => document.origin !== 'native')}
           trashedDocuments={trashedDocuments.filter((document) => document.origin !== 'native')}
           knowledgeFiles={knowledgeFiles}
-          variant="materials"
           onSelect={onSelectResource}
-          onCreateDocument={onCreateDocument}
           onDeleteDocument={onDeleteDocument}
           onRestoreDocument={onRestoreDocument}
           onDeleteDocumentPermanently={onDeleteDocumentPermanently}
           onEmptyTrash={onEmptyTrash}
+          onOpenObject={onOpenObject}
+          detail={ownedDetail}
+          onCloseDetail={onCloseObject}
+          onUpdateRoom={onUpdateRoom}
         />
       );
     }
@@ -159,7 +152,6 @@ export function WorkspacePaneBody({
         backendDocuments={backendDocuments.filter((document) => document.origin === 'native')}
         trashedDocuments={trashedDocuments.filter((document) => document.origin === 'native')}
         knowledgeFiles={[]}
-        variant="artifacts"
         onSelect={onSelectResource}
         onCreateDocument={onCreateDocument}
         onDeleteDocument={onDeleteDocument}
@@ -202,6 +194,10 @@ export function WorkspacePaneBody({
         onSelectResource={onSelectResource}
       />
     );
+  }
+
+  if (board === 'thoughts') {
+    return <ThoughtsPane room={room} />;
   }
 
   return (

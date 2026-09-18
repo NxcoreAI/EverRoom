@@ -142,7 +142,7 @@ interface CloudJob {
   provider: string
   fileName: string
   transcript?: string | null
-  segments?: Array<{ text: string; beginTime: number; endTime: number; speakerId: number | null }>
+  segments?: Array<{ text: string; beginTime: number; endTime: number; speakerId: number | string | null; speakerName?: string | null }>
   insights?: AsrResult['insights']
   errorCode?: string | null
   errorMessage?: string | null
@@ -1118,6 +1118,68 @@ export class SaasClient {
     return this.normalizeJob(job)
   }
 
+  /** 录制中分段上传：只建单不上传，返回 awaiting_upload 状态的任务。 */
+  async createAsrJobShell(input: {
+    recordingId: string
+    fileName: string
+    mimeType: string
+    fileSize: number
+    contentHash: string
+    estimatedDurationMs: number
+    languageHints?: string[]
+    diarizationEnabled: boolean
+    idempotencyKey: string
+  }): Promise<CloudJob> {
+    this.requireLogin()
+    return this.request<CloudJob>('/app/asr-jobs', {
+      method: 'POST',
+      data: {
+        deviceId: this.account!.device.id,
+        recordingId: input.recordingId,
+        originPlatform: 'desktop',
+        fileName: input.fileName,
+        mimeType: input.mimeType,
+        fileSize: input.fileSize,
+        contentHash: input.contentHash,
+        estimatedDurationMs: input.estimatedDurationMs,
+        idempotencyKey: input.idempotencyKey,
+        languageHints: input.languageHints ?? [],
+        diarizationEnabled: input.diarizationEnabled,
+      },
+    })
+  }
+
+  async authorizeAsrSegmentUpload(
+    jobId: string,
+    index: number,
+    input: { fileSize: number; contentHash: string; durationMs?: number },
+  ): Promise<UploadAuthorization> {
+    return this.request<UploadAuthorization>(
+      `/app/asr-jobs/${jobId}/segments/${index}/upload-authorization`,
+      { method: 'POST', data: input },
+    )
+  }
+
+  /** 按预签名直传段文件（复用单文件上传同一通道，签名过期由调用方重新授权）。 */
+  async putAsrUpload(filePath: string, authorization: UploadAuthorization): Promise<void> {
+    await this.upload(filePath, authorization)
+  }
+
+  async completeAsrJobSegments(
+    jobId: string,
+    segments: Array<{ index: number; objectKey: string; sha256: string; bytes: number; durationMs: number }>,
+  ): Promise<AsrJob> {
+    const job = await this.request<CloudJob>(`/app/asr-jobs/${jobId}/upload-complete`, {
+      method: 'POST',
+      data: { segments },
+    })
+    return this.normalizeJob(job)
+  }
+
+  async cancelAsrJob(jobId: string): Promise<void> {
+    await this.request(`/app/asr-jobs/${jobId}/cancel`, { method: 'POST' })
+  }
+
   async getAsrJob(prefixedId: string): Promise<AsrJob> {
     const id = this.cloudId(prefixedId)
     const job = await this.request<CloudJob>(`/app/asr-jobs/${id}`)
@@ -1134,6 +1196,14 @@ export class SaasClient {
       job.insights = result.insights
     }
     return this.normalizeJob(job)
+  }
+
+  /** 改名在 SaaS 侧同步 asr_results 快照；随后调 getAsrJob 即可拿到新 speakerName。 */
+  async renameAsrSpeaker(prefixedId: string, speakerId: string, name: string | null): Promise<void> {
+    await this.request(`/app/asr-jobs/${this.cloudId(prefixedId)}/speakers/${encodeURIComponent(speakerId)}`, {
+      method: 'PUT',
+      data: { name },
+    })
   }
 
   async registerKeyAgreement(publicKey: string): Promise<void> {

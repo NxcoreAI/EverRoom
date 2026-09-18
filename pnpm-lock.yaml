@@ -319,6 +319,9 @@ importers:
       ajv:
         specifier: ^8.20.0
         version: 8.20.0
+      ajv-formats:
+        specifier: ^3.0.1
+        version: 3.0.1(ajv@8.20.0)
       ali-oss:
         specifier: ^6.23.0
         version: 6.23.0(proxy-agent@8.0.2(supports-color@8.1.1))(supports-color@8.1.1)
@@ -2806,7 +2809,6 @@ packages:
     engines: {node: '>= 10.0.0'}
     cpu: [arm]
     os: [linux]
-    libc: [glibc]
 
   '@parcel/watcher-linux-arm-musl@2.6.0':
     resolution: {integrity: sha512-9c6AUHgHoG+IY88MRIHupztQiQnrbqHYQjkM2btA+Bf/wQnQMuiD0Wfk1EVv3TlNT3x41uU71rn6E4xh/+zvkw==}

@@ -3,8 +3,18 @@ import { extname } from "node:path";
 import { REALITY_PROTOCOL_VERSION } from "@nxcore/reality-contract";
 import type { FastifyPluginAsyncTypebox } from "@fastify/type-provider-typebox";
 import { Type } from "@sinclair/typebox";
+import { Ajv } from "ajv";
+import addFormats from "ajv-formats";
 import { RealityError } from "./errors.js";
 import type { RealityService } from "./service.js";
+
+// speakerId 里 null（无说话人）和 0（第一位说话人）都是合法值且语义不同，
+// Fastify 默认 coerceTypes 会在联合类型上把 null↔0 互转，调换成员顺序只会坏另一边。
+// 带 speakerId 的路由统一改用这个不做类型强转的校验器，值原样通过。
+const noCoerceAjv = new Ajv({ strict: false });
+// @ts-expect-error CJS 包在 NodeNext 下默认导入被推断为模块命名空间，运行时正常
+addFormats(noCoerceAjv);
+const noCoerceValidatorCompiler = ({ schema }: { schema: object }) => noCoerceAjv.compile(schema);
 
 const IdParams = Type.Object({
   id: Type.String({ minLength: 36, maxLength: 100 }),
@@ -57,7 +67,8 @@ const AsrBody = Type.Object({
       text: Type.String(),
       beginTime: Type.Number({ minimum: 0 }),
       endTime: Type.Number({ minimum: 0 }),
-      speakerId: Type.Union([Type.Integer({ minimum: 0 }), Type.Null()]),
+      speakerId: Type.Union([Type.Null(), Type.Integer({ minimum: 0 }), Type.String({ minLength: 1, maxLength: 64 })]),
+      speakerName: Type.Optional(Type.Union([Type.String({ maxLength: 128 }), Type.Null()])),
     })),
   }), Type.Null()])),
   error: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -145,6 +156,7 @@ export function realityRoutes(service: RealityService): FastifyPluginAsyncTypebo
     app.put(
       "/v1/reality/events/:id/import",
       {
+        validatorCompiler: noCoerceValidatorCompiler,
         schema: {
           tags: ["reality"],
           params: IdParams,
@@ -163,7 +175,8 @@ export function realityRoutes(service: RealityService): FastifyPluginAsyncTypebo
               text: Type.String(),
               beginTime: Type.Number({ minimum: 0 }),
               endTime: Type.Number({ minimum: 0 }),
-              speakerId: Type.Union([Type.Integer({ minimum: 0 }), Type.Null()]),
+              speakerId: Type.Union([Type.Null(), Type.Integer({ minimum: 0 }), Type.String({ minLength: 1, maxLength: 64 })]),
+              speakerName: Type.Optional(Type.Union([Type.String({ maxLength: 128 }), Type.Null()])),
             })),
             insights: Type.Optional(InsightsSchema),
             resultVersion: Type.Integer({ minimum: 1 }),
@@ -215,6 +228,7 @@ export function realityRoutes(service: RealityService): FastifyPluginAsyncTypebo
     app.post(
       "/v1/reality/events/:id/asr",
       {
+        validatorCompiler: noCoerceValidatorCompiler,
         schema: {
           tags: ["reality"],
           params: IdParams,
@@ -226,7 +240,7 @@ export function realityRoutes(service: RealityService): FastifyPluginAsyncTypebo
 
     app.post(
       "/v1/reality/asr-jobs/:jobId",
-      { schema: { tags: ["reality"], params: JobParams, body: AsrBody } },
+      { validatorCompiler: noCoerceValidatorCompiler, schema: { tags: ["reality"], params: JobParams, body: AsrBody } },
       async (request) => service.applyAsrByJob(request.params.jobId, request.body),
     );
 

@@ -12,6 +12,8 @@ capabilities:
   - knowledge.entity-identity
   - knowledge.entity-register
   - knowledge.room-proposals
+  - knowledge.emergence-task
+  - knowledge.emergence-explain
 
 tools: []
 
@@ -21,3 +23,5 @@ skills:
   - ./skills/entity-identity
   - ./skills/entity-registration
   - ./skills/room-proposals
+  - ./skills/emergence-task
+  - ./skills/emergence-explain
