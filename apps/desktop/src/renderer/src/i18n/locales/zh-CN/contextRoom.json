@@ -1541,7 +1541,6 @@
   "wiki.thisRoomHasNoCapturedKnowledgeYetSubmitted": "这个 Room 还没有知识沉淀：Room 内文档提交后会自动整理成知识页面。",
   "wiki.uploadFailed": "上传失败",
   "wiki.uploadFiles": "上传文件",
-  "wiki.uploading": "上传中…",
   "wiki.uploadingFiles": "正在上传文件",
   "wiki.userConfirmedImporting": "用户确认·入库中",
   "wikiPageReader.failedToLoadPage": "读取页面失败",

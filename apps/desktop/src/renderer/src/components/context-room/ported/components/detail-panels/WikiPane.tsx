@@ -1,13 +1,13 @@
 import {
   AlertTriangle,
   CheckCircle2,
-  ChevronRight,
   ChevronLeft,
+  ChevronRight,
   FileText,
   FolderOpen,
   LoaderCircle,
+  Plus,
   RefreshCw,
-  Upload,
 } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { useLocale } from '../../../../../i18n/LocaleContext';
@@ -272,11 +272,13 @@ export function WikiPane({ room, selectedResourceId, onOpenPage, view = 'tree' }
             type="button"
             className="context-room-wiki-upload"
             aria-label={t(uploading ? 'contextRoom:wiki.uploadingFiles' : 'contextRoom:wiki.uploadFiles')}
+            title={t('contextRoom:wiki.uploadFiles')}
             disabled={uploading}
             onClick={() => void uploadFiles()}
           >
-            <Upload aria-hidden="true" />
-            <span>{t(uploading ? 'contextRoom:wiki.uploading' : 'contextRoom:wiki.uploadFiles')}</span>
+            {uploading
+              ? <LoaderCircle aria-hidden="true" className="is-spinning" />
+              : <Plus aria-hidden="true" />}
           </button>
           <button
             type="button"

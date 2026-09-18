@@ -11214,11 +11214,6 @@
   color: var(--cr-text);
 }
 
-.context-room-wiki-header {
-  align-items: stretch !important;
-  flex-direction: column;
-}
-
 .context-room-wiki-progress {
   display: flex;
   align-items: center;
@@ -11323,16 +11318,14 @@
 
 .context-room-wiki-upload {
   display: inline-flex;
+  width: 28px;
   height: 28px;
   align-items: center;
-  gap: 6px;
-  padding: 0 10px;
+  justify-content: center;
   border: 1px solid var(--cr-border);
   border-radius: 6px;
   background: var(--cr-surface);
   color: var(--cr-text);
-  font-size: 12px;
-  white-space: nowrap;
 }
 
 .context-room-wiki-upload:hover:not(:disabled) {
@@ -12558,35 +12551,8 @@
     padding-left: 8px;
   }
 
-  .context-room-wiki-upload {
-    width: 28px;
-    padding: 0;
-    justify-content: center;
-    overflow: hidden;
-    color: transparent;
-    gap: 0;
-  }
-
-  .context-room-wiki-upload svg {
-    color: var(--cr-text);
-  }
-
-  .context-room-wiki-upload span {
-    display: none;
-  }
-
   .context-room-wiki-tree-node {
     font-size: 12px;
-  }
-}
-
-@container context-room-wiki-pane (max-width: 180px) {
-  .context-room-wiki-actions {
-    gap: 4px;
-  }
-
-  .context-room-wiki-upload {
-    display: none;
   }
 }
 

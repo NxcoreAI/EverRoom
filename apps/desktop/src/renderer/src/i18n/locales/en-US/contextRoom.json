@@ -1541,7 +1541,6 @@
   "wiki.thisRoomHasNoCapturedKnowledgeYetSubmitted": "This Room has no captured knowledge yet. Submitted Room documents are automatically organized into knowledge pages.",
   "wiki.uploadFailed": "Upload failed",
   "wiki.uploadFiles": "Upload files",
-  "wiki.uploading": "Uploading…",
   "wiki.uploadingFiles": "Uploading files",
   "wiki.userConfirmedImporting": "User confirmed · importing",
   "wikiPageReader.failedToLoadPage": "Failed to load page",
