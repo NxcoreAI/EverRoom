@@ -105,7 +105,10 @@ describe("reality routes", () => {
       audioSource: "microphone",
       durationMs: 11_300,
       transcript: "你好，你能听到吗？",
-      transcriptSegments: [{ text: "你好，你能听到吗？", beginTime: 960, endTime: 11_300, speakerId: 0 }],
+      transcriptSegments: [
+        { text: "你好，你能听到吗？", beginTime: 960, endTime: 11_300, speakerId: 0 },
+        { text: "（停顿）", beginTime: 11_300, endTime: 12_000, speakerId: null },
+      ],
       insights: {
         source: "generated",
         currentTopic: "产品讨论",
@@ -139,6 +142,7 @@ describe("reality routes", () => {
       asrSource: "saas",
     });
     expect(imported.transcriptSegments[0]).toMatchObject({ beginTime: 960, speakerId: 0, isFinal: true });
+    expect(imported.transcriptSegments[1]).toMatchObject({ beginTime: 11_300, speakerId: null, isFinal: true });
 
     const confirmed = (await app.inject({
       method: "POST",

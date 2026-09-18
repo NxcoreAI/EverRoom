@@ -137,6 +137,16 @@ export interface KnowledgeWikiPageDto {
   description?: string
 }
 
+/** Room wiki 页面清单 + 状态（GET /v1/knowledge/rooms/:id/wiki/pages）。 */
+export interface KnowledgeWikiPagesResultDto {
+  status: string
+  items: KnowledgeWikiPageDto[]
+  pageCount: number | null
+  /** KS ingest 成功后生成的内容摘要（概览卡要点）；身份卡/未生成为 null */
+  summary?: string | null
+  updatedAt?: string | null
+}
+
 /** Room ↔ wiki 映射行（GET /v1/knowledge/wikis）。 */
 export interface KnowledgeWikiDto {
   roomId: string
@@ -360,4 +370,103 @@ export interface KnowledgeRoomProposalDto {
   fileCount: number
   evidenceScore: number | null
   sourceCount: number | null
+}
+
+/* ============ 思路 · 知识涌现（POST /v1/knowledge/rooms/:roomId/emergence） ============ */
+
+export type EmergenceMode = 'focus' | 'wander'
+
+export interface EmergenceFocusInput {
+  /** 当前产物/文档 id（伴随区编辑态；独立面板缺省=Room 级焦点）。 */
+  documentId?: string | null
+  /** 选区文本（渲染层负责截断）。 */
+  selectionText?: string | null
+  blockId?: string | null
+}
+
+export interface EmergenceWanderInput {
+  /** 「沿此漫步」换起点：候选的 nodeRef；缺省=当前焦点。 */
+  startNodeRef?: string | null
+  /** 可复现随机种子；「再走一次」传新 seed。 */
+  seed?: number | null
+}
+
+export interface EmergenceRequest {
+  mode: EmergenceMode
+  focus: EmergenceFocusInput
+  wander?: EmergenceWanderInput | null
+  /** 卡片上限（聚焦默认 5，漫步默认 15）。 */
+  limit?: number | null
+  /** 客户端递增版本，响应原样带回；旧响应不得覆盖新焦点。 */
+  requestVersion: number
+}
+
+/** 卡片类型（PRD 7.6）。 */
+export type EmergenceCardKind =
+  | 'evidence' // 直接证据
+  | 'decision' // 历史决策
+  | 'viewpoint' // 相邻观点
+  | 'conflict' // 冲突反例
+  | 'actor' // 人物与项目
+  | 'case' // 相似案例
+  | 'question' // 待回答问题
+
+/** 统一对象层节点（PRD 8.2 CanonicalNode 的 DTO 投影）。 */
+export interface EmergenceNodeDto {
+  /** nodeRef 形如 entity:12 / fact:7 / doc:9 / block:9:3 / memory:x / wiki:3 / room:4。 */
+  id: string
+  nodeType: 'room' | 'entity' | 'fact' | 'document' | 'block' | 'memory' | 'wikiPage' | 'wikiTopic'
+  label: string
+  sourceGraph: 'roomGraph' | 'entityFacts' | 'linkGraph' | 'wiki'
+  /** 来源 Room（跨 Room 结果标注用）。 */
+  roomRef: { id: string; title: string } | null
+  updatedAt: string | null
+}
+
+export interface EmergenceEdgeDto {
+  id: string
+  from: string
+  to: string
+  relationType: string
+  /** PRD 8.3 关系分级：原始=实线 / 组合=虚线 / 语义=点线。 */
+  edgeLevel: 'original' | 'composed' | 'semantic'
+  confidence: number | null
+}
+
+/** 起点到目标的完整可解释路径（漫步硬性要求）。 */
+export interface EmergencePathDto {
+  /** nodeRef 链，含起点与终点。 */
+  nodeRefs: string[]
+  /** 每跳的简短关系说明，长度 = nodeRefs.length - 1。 */
+  hops: string[]
+}
+
+export interface EmergenceCardDto {
+  id: string
+  kind: EmergenceCardKind
+  title: string
+  summary: string
+  sourceType: string
+  occurredAt: string | null
+  roomRef: { id: string; title: string } | null
+  /** 出现理由（聚焦=LLM 生成或降级路径说明；漫步=确定性路径说明）。 */
+  reason: string
+  quote: string | null
+  path: EmergencePathDto | null
+  confidence: number
+  /** 指向 ProjectionResult.nodes 的节点（卡片⇄脉络联动）。 */
+  nodeRef: string | null
+}
+
+export interface EmergenceProjectionResultDto {
+  cards: EmergenceCardDto[]
+  nodes: EmergenceNodeDto[]
+  edges: EmergenceEdgeDto[]
+  paths: EmergencePathDto[]
+  scoreComponents: Record<string, number> | null
+  requestVersion: number
+  /** LLM 任务理解不可用时按 PRD 7.4 降级（关键词+向量+图谱路径）。 */
+  degraded: boolean
+  degradedReason: string | null
+  generatedAt: string
 }

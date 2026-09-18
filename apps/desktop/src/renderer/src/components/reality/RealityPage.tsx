@@ -43,6 +43,7 @@ import type {
   RealityTag,
 } from '../../../../shared/sources'
 import { RecordingPage } from '../recording/RecordingPage'
+import { SpeakerLabel, speakerLabel } from '../recording/SpeakerLabel'
 import { mergeRealityEvent, mergeRealitySnapshot } from './reality-event-state'
 import { perceptionDisplayText, realityTagKindLabel, VisualDetail } from './VisualPerceptionPanel'
 import './RealityPage.css'
@@ -511,6 +512,18 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
     setEvents((current) => mergeRealityEvent(current, updated))
   }
 
+  const renameSpeakerFor = (event: RealityEvent) => async (speakerId: string, name: string | null): Promise<boolean> => {
+    if (!window.nxcore || !event.asrJobId) return false
+    try {
+      await window.nxcore.asr.renameSpeaker(event.asrJobId, speakerId, name)
+      replaceEvent(await window.nxcore.reality.getEvent(event.id))
+      return true
+    } catch (caught) {
+      showToast({ title: t('diaryReality:reality.renameSpeaker'), message: caught instanceof Error ? caught.message : undefined, variant: 'error' })
+      return false
+    }
+  }
+
   const toggleImportant = async (event: RealityEvent) => {
     if (!window.nxcore) return
     if (event.important) {
@@ -599,7 +612,7 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
         `${new Date(event.startedAt).toLocaleString(locale)} · ${formatDuration(event.durationMs)} · ${event.captureDevice.name}`,
         '',
         ...(event.transcriptSegments.length > 0
-          ? event.transcriptSegments.map((segment) => `[${formatDuration(segment.beginTime)}] ${segment.speakerId === null ? t('diaryReality:reality.speaker') : t('diaryReality:reality.speakerNumber', { number: segment.speakerId + 1 })}: ${segment.text}`)
+          ? event.transcriptSegments.map((segment) => `[${formatDuration(segment.beginTime)}] ${speakerLabel(segment, t, 'reality')}: ${segment.text}`)
           : [event.transcript]),
       ]
       const result = await window.nxcore.reality.exportTranscript({
@@ -952,7 +965,7 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
                                 <>
                                   <div ref={transcriptScrollRef} className="reality-segments" aria-label={t('diaryReality:reality.transcriptSegments')}>{event.transcriptSegments.map((segment) => {
                                     const active = segment.id === activeSegmentId
-                                    return <button ref={active ? activeSegmentRef : undefined} type="button" key={segment.id} data-active={String(active)} aria-current={active ? 'true' : undefined} onClick={() => seekTo(segment.beginTime)}><time>{formatDuration(segment.beginTime)}</time><strong>{segment.speakerId === null ? t('diaryReality:reality.speaker') : t('diaryReality:reality.speakerNumber', { number: segment.speakerId + 1 })}</strong><span>{segment.text}</span></button>
+                                    return <button ref={active ? activeSegmentRef : undefined} type="button" key={segment.id} data-active={String(active)} aria-current={active ? 'true' : undefined} onClick={() => seekTo(segment.beginTime)}><time>{formatDuration(segment.beginTime)}</time><SpeakerLabel segment={segment} page="reality" onRename={event.asrJobId?.startsWith('saas:') ? renameSpeakerFor(event) : undefined} /><span>{segment.text}</span></button>
                                   })}</div>
                                 </>
                               )}

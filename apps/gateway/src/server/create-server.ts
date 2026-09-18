@@ -107,6 +107,8 @@ import { knowledgeRoutes } from "../modules/knowledge/routes.js";
 import { KnowledgeService } from "../modules/knowledge/service.js";
 import { KnowledgePreferences } from "../modules/knowledge/preferences.js";
 import { KnowledgeLlm } from "../modules/knowledge/llm.js";
+import { EmergenceService } from "../modules/knowledge/emergence-service.js";
+import { emergenceRoutes } from "../modules/knowledge/emergence-routes.js";
 import { nangoConnectorRoutes } from "@nxcore/connectors-module/routes.js";
 import { purgeConnectorConnectionCascade } from "../modules/connectors/connection-purge.js";
 import { processingRoutes } from "../modules/processing/routes.js";
@@ -658,6 +660,15 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   });
   contextRoomService.setDuplicateService(roomDuplicateService);
   knowledgeService.setRoomDuplicateIndexTrigger(() => roomDuplicateService.requestRebuild());
+  // 知识涌现（思路板块）：四源投影 + LLM 任务理解，只读不写回基础图谱。
+  const emergenceService = new EmergenceService({
+    db,
+    knowledge: knowledgeService,
+    contextRooms: contextRoomService,
+    memory: memoryService,
+    log: app.log,
+    embedding: embeddingFromConfig(config),
+  });
   // M3 知识整理偏好：统计（确定性）+ 洞察（LLM 修订式，失败保旧）+ 建议性注入
   // （extract/judgeEntityIdentity；开关关闭=不注入）。job 延迟 3 分钟首跑。
   const knowledgePreferences = new KnowledgePreferences(
@@ -1656,6 +1667,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     reply.code(404).send({ error: "not_found", path: request.url });
   });
   if (config.knowledge) await app.register(knowledgeRoutes(knowledgeService));
+  if (config.knowledge) await app.register(emergenceRoutes(emergenceService));
 
   return app;
 }

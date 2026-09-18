@@ -8,7 +8,8 @@ import { showToast } from '@/state/toast'
 import { useLocale, type Translate } from '@/i18n/LocaleContext'
 import i18n from '@/i18n/i18next'
 
-import type { AsrJob, AsrResult, NxcoreDesktopApi, RealityEvent } from '../../../../shared/sources'
+import type { AsrJob, AsrResult, AsrSegment, NxcoreDesktopApi, RealityEvent } from '../../../../shared/sources'
+import { SpeakerLabel } from './SpeakerLabel'
 import './RecordingPage.css'
 
 type RecordingState = 'idle' | 'requesting' | 'recording' | 'saving' | 'transcribing' | 'completed' | 'error'
@@ -118,6 +119,10 @@ export function RecordingPage({
   const [elapsed, setElapsed] = useState(0)
   const [languages, setLanguages] = useState<string[]>(initialSettings.languages)
   const [result, setResult] = useState<AsrResult | null>(null)
+  // 边录边转的实时预览：分钟任务转完由主进程推送，段内时间已偏移到整段时间轴。
+  const [previewSegments, setPreviewSegments] = useState<AsrSegment[]>([])
+  const previewRecordingIdRef = useRef<string | null>(null)
+  const [completed, setCompleted] = useState<{ jobId: string; eventId: string } | null>(null)
   const [audioSource, setAudioSource] = useState<AudioSource>(initialSettings.audioSource)
   const { account } = useAccount()
   const [mode,setMode]=useState<'cloud'|'local'>('local')
@@ -128,6 +133,14 @@ export function RecordingPage({
   const recordingStartedAtRef = useRef<number | null>(null)
   const writeQueueRef = useRef<Promise<void>>(Promise.resolve())
   const mountedRef = useRef(true)
+  // 分钟级分段上传（仅 cloud 模式）：与主录音器共用同一路音频流，每 60 秒切一段独立文件直传 SaaS。
+  const segmentActiveRef = useRef(false)
+  const segmentStreamRef = useRef<MediaStream | null>(null)
+  const segmentRecorderRef = useRef<MediaRecorder | null>(null)
+  const segmentIndexRef = useRef(0)
+  const segmentTimerRef = useRef<number | null>(null)
+  const segmentChainRef = useRef<Promise<void>>(Promise.resolve())
+  const segmentMetaRef = useRef<{ mimeType: string; languageHints: string[] } | null>(null)
   const isMacDesktop = window.nxcore?.platform === 'darwin'
 
   useEffect(() => {
@@ -136,6 +149,8 @@ export function RecordingPage({
       mountedRef.current = false
       const recorder = recorderRef.current
       if (recorder?.state === 'recording') recorder.stop()
+      segmentActiveRef.current = false
+      if (segmentRecorderRef.current?.state === 'recording') segmentRecorderRef.current.stop()
       streamRef.current?.getTracks().forEach((track) => track.stop())
       recordingStartedAtRef.current = null
       const id = recordingIdRef.current
@@ -146,6 +161,14 @@ export function RecordingPage({
         }
       }
     }
+  }, [])
+
+  useEffect(() => {
+    const unsubscribe = window.nxcore?.asr?.onSegmentTranscription?.((event) => {
+      if (event.recordingId !== previewRecordingIdRef.current) return
+      setPreviewSegments((current) => [...current, ...event.result.segments])
+    })
+    return () => unsubscribe?.()
   }, [])
 
   useEffect(() => {
@@ -186,9 +209,72 @@ export function RecordingPage({
     }
     setResult(job.result)
     setState('completed')
+    setCompleted({ jobId: job.id, eventId })
     const event = await desktopApi(t).reality.getEvent(eventId)
     onEventChanged?.(event)
     realityEventIdRef.current = null
+  }
+
+  const renameSpeaker = async (speakerId: string, name: string | null): Promise<boolean> => {
+    if (!completed) return false
+    try {
+      const job = await desktopApi(t).asr.renameSpeaker(completed.jobId, speakerId, name)
+      if (job.result) setResult(job.result)
+      const event = await desktopApi(t).reality.getEvent(completed.eventId).catch(() => null)
+      if (event) onEventChanged?.(event)
+      return true
+    } catch (caught) {
+      showToast({ title: t('diaryReality:recording.renameSpeaker'), message: caught instanceof Error ? caught.message : undefined, variant: 'error' })
+      return false
+    }
+  }
+
+  const startSegmentRecorder = () => {
+    const stream = segmentStreamRef.current
+    const meta = segmentMetaRef.current
+    const id = recordingIdRef.current
+    if (!stream || !meta || !id || !segmentActiveRef.current) return
+    const index = segmentIndexRef.current
+    segmentIndexRef.current += 1
+    const mimeType = meta.mimeType
+    const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream)
+    const chunks: Blob[] = []
+    const startedAt = Date.now()
+    segmentRecorderRef.current = recorder
+    recorder.addEventListener('dataavailable', (event) => {
+      if (event.data.size) chunks.push(event.data)
+    })
+    recorder.addEventListener('stop', () => {
+      if (segmentRecorderRef.current === recorder) segmentRecorderRef.current = null
+      // 先启下一段（仍在录时）把切换间隙压到最小，再异步把本段发主进程。
+      if (segmentActiveRef.current) startSegmentRecorder()
+      const durationMs = Date.now() - startedAt
+      if (durationMs < 1000 || !chunks.length) return
+      const blob = new Blob(chunks, { type: mimeType || 'audio/webm' })
+      const languageHints = meta.languageHints.length ? meta.languageHints : undefined
+      // 每段追加后立刻接 catch：单段 IPC 失败不能炸链，否则后续段全部丢失。
+      segmentChainRef.current = segmentChainRef.current
+        .then(async () => {
+          const bytes = new Uint8Array(await blob.arrayBuffer())
+          await desktopApi(t).asr.uploadRecordingSegment(id, index, bytes, durationMs, { mimeType: mimeType || 'audio/webm', languageHints })
+        })
+        .catch(() => undefined)
+    })
+    recorder.start()
+    segmentTimerRef.current = window.setTimeout(() => {
+      void stopSegmentRecorder()
+    }, 60_000)
+  }
+
+  const stopSegmentRecorder = async (): Promise<void> => {
+    const recorder = segmentRecorderRef.current
+    if (!recorder) return
+    segmentRecorderRef.current = null
+    if (segmentTimerRef.current !== null) {
+      window.clearTimeout(segmentTimerRef.current)
+      segmentTimerRef.current = null
+    }
+    await waitForStop(recorder, t).catch(() => undefined)
   }
 
   const startRecording = async () => {
@@ -203,6 +289,7 @@ export function RecordingPage({
     }
     setState('requesting')
     setResult(null)
+    setCompleted(null)
     setElapsed(0)
     try {
       if (audioSource === 'microphone') {
@@ -238,6 +325,16 @@ export function RecordingPage({
       })
       recorder.start(1000)
       recordingStartedAtRef.current = Date.now()
+      if (mode === 'cloud') {
+        segmentActiveRef.current = true
+        segmentIndexRef.current = 0
+        segmentChainRef.current = Promise.resolve()
+        segmentStreamRef.current = audioStream
+        segmentMetaRef.current = { mimeType: mimeType || '', languageHints: languages }
+        previewRecordingIdRef.current = id
+        setPreviewSegments([])
+        startSegmentRecorder()
+      }
       const capturedEvent = await desktopApi(t).reality.createEvent({
         id,
         title: t('diaryReality:recording.desktopPerceptionTitle', {
@@ -257,6 +354,9 @@ export function RecordingPage({
     } catch (caught) {
       const recorder = recorderRef.current
       if (recorder?.state === 'recording') await waitForStop(recorder, t).catch(() => undefined)
+      segmentActiveRef.current = false
+      previewRecordingIdRef.current = null
+      await stopSegmentRecorder()
       streamRef.current?.getTracks().forEach((track) => track.stop())
       streamRef.current = null
       recorderRef.current = null
@@ -282,6 +382,9 @@ export function RecordingPage({
     setState('saving')
     try {
       await waitForStop(recorder, t)
+      segmentActiveRef.current = false
+      await stopSegmentRecorder()
+      await segmentChainRef.current.catch(() => undefined)
       streamRef.current?.getTracks().forEach((track) => track.stop())
       streamRef.current = null
       recorderRef.current = null
@@ -290,6 +393,7 @@ export function RecordingPage({
       recordingStartedAtRef.current = null
       if (durationMs < MIN_TRANSCRIPTION_DURATION_MS) {
         recordingIdRef.current = null
+        previewRecordingIdRef.current = null
         await desktopApi(t).asr.cancelRecording(id)
         realityEventIdRef.current = null
         await desktopApi(t).reality.discard(id).catch(() => undefined)
@@ -319,7 +423,11 @@ export function RecordingPage({
         diarizationEnabled: true,
       })
       await pollJob(job, id)
+      previewRecordingIdRef.current = null
     } catch (caught) {
+      segmentActiveRef.current = false
+      previewRecordingIdRef.current = null
+      await stopSegmentRecorder()
       streamRef.current?.getTracks().forEach((track) => track.stop())
       streamRef.current = null
       recorderRef.current = null
@@ -353,6 +461,11 @@ export function RecordingPage({
           : state === 'recording'
             ? 'diaryReality:recording.recording'
             : 'diaryReality:recording.readyToRecord')
+
+  const previewSegmentsSorted = [...previewSegments].sort((a, b) => a.beginTime - b.beginTime)
+  const displayResult = result ?? (previewSegmentsSorted.length
+    ? { transcript: previewSegmentsSorted.map((segment) => segment.text).join('\n'), segments: previewSegmentsSorted }
+    : null)
 
   if (controlOnly) {
     const listening = state === 'recording'
@@ -450,16 +563,16 @@ export function RecordingPage({
         </div>
       </section>
 
-      {result ? (
+      {displayResult ? (
         <section className="transcript-output" aria-label={t('diaryReality:recording.transcript')}>
-          <header><h2>{t('diaryReality:recording.transcript')}</h2><span>{t('diaryReality:recording.countBlocks', { count: result.segments.length })}</span></header>
-          <div className="transcript-full">{result.transcript}</div>
-          {result.segments.length > 0 ? (
+          <header><h2>{t('diaryReality:recording.transcript')}</h2><span>{t('diaryReality:recording.countBlocks', { count: displayResult.segments.length })}</span></header>
+          <div className="transcript-full">{displayResult.transcript}</div>
+          {displayResult.segments.length > 0 ? (
             <div className="transcript-segments">
-              {result.segments.map((segment, index) => (
+              {displayResult.segments.map((segment, index) => (
                 <div className="transcript-segment" key={`${segment.beginTime}-${index}`}>
                   <time>{formatTimestamp(segment.beginTime)}</time>
-                  <strong>{segment.speakerId === null ? t('diaryReality:recording.speaker') : t('diaryReality:recording.speakerNumber', { number: segment.speakerId + 1 })}</strong>
+                  <SpeakerLabel segment={segment} page="recording" onRename={mode === 'cloud' && completed ? renameSpeaker : undefined} />
                   <p>{segment.text}</p>
                 </div>
               ))}

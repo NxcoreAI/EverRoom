@@ -13,31 +13,29 @@ vi.mock('../src/renderer/src/i18n/LocaleContext', async (importOriginal) => {
   }
 })
 
-import { ResourceTree } from '../src/renderer/src/components/context-room/ported/components/detail-panels/ResourcePanel'
+import { ArtifactLibraryPane } from '../src/renderer/src/components/context-room/ported/components/detail-panels/ArtifactLibraryPane'
 
-function renderResourceTree() {
+function renderArtifactLibrary() {
   return TestRenderer.create(
-    <ResourceTree
+    <ArtifactLibraryPane
       room={createContextRoomFixture()}
       backendDocuments={[]}
       trashedDocuments={[]}
-      knowledgeFiles={[]}
       selectedId={null}
       onSelect={() => {}}
       onCreateDocument={vi.fn().mockResolvedValue(undefined)}
       onDeleteDocument={() => Promise.resolve()}
       onRestoreDocument={() => Promise.resolve()}
       onDeleteDocumentPermanently={() => Promise.resolve()}
-      onEmptyTrash={() => Promise.resolve()}
     />,
   )
 }
 
-describe('文档面板：文件导入入口只在新建文档弹层内', () => {
-  it('资源树不再有独立的“从文件系统导入”按钮（避免与弹层内导入重复）', async () => {
+describe('产物库：文件导入入口只在新建产物弹层内', () => {
+  it('产物库没有独立的“从文件系统导入”按钮（避免与弹层内导入重复）', async () => {
     let renderer: TestRenderer.ReactTestRenderer | null = null
     await act(async () => {
-      renderer = renderResourceTree()
+      renderer = renderArtifactLibrary()
     })
     const buttons = renderer!.root.findAllByType('button')
     expect(buttons.some((node) => node.props.className === 'context-room-resource-add-file')).toBe(false)
@@ -46,13 +44,13 @@ describe('文档面板：文件导入入口只在新建文档弹层内', () => {
     expect(renderer!.root.findAllByProps({ className: 'context-room-document-import-input' })).toHaveLength(0)
   })
 
-  it('文档文件夹保留“新建文档”入口（弹层内含导入本地 Markdown）', async () => {
+  it('工具条保留“新建产物”入口（弹层内含导入本地 Markdown）', async () => {
     let renderer: TestRenderer.ReactTestRenderer | null = null
     await act(async () => {
-      renderer = renderResourceTree()
+      renderer = renderArtifactLibrary()
     })
-    const newDocument = renderer!.root.findAllByType('button')
-      .find((node) => node.props['aria-label'] === '新建文档')
-    expect(newDocument).toBeTruthy()
+    const newArtifact = renderer!.root.findAllByType('button')
+      .find((node) => node.props['aria-label'] === '新建产物')
+    expect(newArtifact).toBeTruthy()
   })
 })

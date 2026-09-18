@@ -2,10 +2,12 @@ import * as ContextMenu from '@radix-ui/react-context-menu';
 import type { RoomAppliedEntitySource, RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract';
 import { FolderInput, X } from 'lucide-react';
 import type { Dispatch, RefObject, SetStateAction } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { useLocale } from '../../../../../i18n/LocaleContext';
 
+import { showToast } from '@/state/toast';
 import type { ContextRoomRecord, ContextRoomResource, ContextRoomWikiPageResource } from '../../types';
-import type { KnowledgeFileDto } from '../../../../../../../shared/knowledge';
+import type { EmergenceCardDto, KnowledgeFileDto } from '../../../../../../../shared/knowledge';
 import {
   BOARD_TABS as TABS,
   type BoardId,
@@ -146,8 +148,25 @@ export function WorkspaceLayout({
   const { t } = useLocale();
   const overview = panels.length === 1 && panels[0] === 'work' && subtabs.work === 'overview';
   const boardLabel = (board: BoardId) => TABS.find((tab) => tab.id === board)?.label ?? board;
+  // 伴随思路页签与右区编辑器之间的桥：选区文本进焦点，「引用」插回光标处。
+  const [selectionText, setSelectionText] = useState<string | null>(null);
+  const insertQuoteRef = useRef<((quote: { text: string; source: string }) => boolean) | null>(null);
+  const registerQuoteInsert = useCallback((insert: (quote: { text: string; source: string }) => boolean) => {
+    insertQuoteRef.current = insert;
+    return () => { insertQuoteRef.current = null };
+  }, []);
+  const onCompanionQuote = (card: EmergenceCardDto) => {
+    const inserted = insertQuoteRef.current?.({
+      text: (card.quote || card.summary).slice(0, 600),
+      source: card.roomRef ? `${card.title} · ${card.roomRef.title}` : card.title,
+    });
+    if (!inserted) showToast({ title: t('contextRoom:emergence.quoteUnavailable') });
+  };
   // 工作概览独占整屏时不可被分屏替换。
   const boardSplittable = (board: BoardId) => !(board === 'work' && subtabs.work === 'overview');
+  // 图谱类板块（思路/关系）单面板时中栏取最大画布（PRD 4.1 知识脉络获得最大画布）。
+  const wideMiddle = !overview && panels.length === 1
+    && (panels[0] === 'thoughts' || panels[0] === 'relations');
 
   return (
     <>
@@ -169,8 +188,8 @@ export function WorkspaceLayout({
       })() : null}
       <div
         ref={layoutRef as React.RefObject<HTMLDivElement>}
-        className={`context-room-workspace-layout${overview ? ' is-overview' : ''}${middleHidden ? ' is-middle-hidden' : ''}${mobileContent ? ' is-mobile-content' : ''}`}
-        style={{ '--context-room-middle-width': `${String(middleWidth)}px` } as React.CSSProperties}
+        className={`context-room-workspace-layout${overview ? ' is-overview' : ''}${middleHidden ? ' is-middle-hidden' : ''}${mobileContent ? ' is-mobile-content' : ''}${wideMiddle ? ' is-wide-middle' : ''}`}
+        style={{ '--context-room-middle-width': wideMiddle ? 'min(720px, 58vw)' : `${String(middleWidth)}px` } as React.CSSProperties}
       >
         <nav className="context-room-workspace-tabs" aria-label={t('contextRoom:roomBoard.contextRoomDetail')}>
           {TABS.map(({ id, label, icon: Icon, tone }) => (
@@ -227,12 +246,8 @@ export function WorkspaceLayout({
         </nav>
 
         {overview ? (
+          // 原型概览态：整中栏独占、无二级页签行（rd-overview）。
           <div className="context-room-overview-board">
-            <BoardTabs
-              board="work"
-              activeSubtab={subtabs.work}
-              onSelectSubtab={(nextSubtab) => setBoardSubtab('work', nextSubtab)}
-            />
             <OverviewDashboard
               room={room}
               backendDocuments={backendDocuments}
@@ -240,6 +255,7 @@ export function WorkspaceLayout({
               onSelectResource={onSelectResource}
               onOpenObject={onOpenObject}
               onOpenPane={(pane) => setBoardSubtab('work', pane)}
+              onOpenWikiBoard={() => switchBoard('wiki')}
               onToggleTask={onToggleTask}
             />
           </div>
@@ -307,6 +323,9 @@ export function WorkspaceLayout({
                         subtab={subtab}
                         room={room}
                         selectedResourceId={selectedResourceId}
+                        selectedResource={selectedResource}
+                        selectionText={selectionText}
+                        onCompanionQuote={onCompanionQuote}
                         backendDocuments={backendDocuments}
                         trashedDocuments={trashedDocuments}
                         knowledgeFiles={knowledgeFiles}
@@ -367,6 +386,8 @@ export function WorkspaceLayout({
               documentFocusRequestId={documentFocusRequestId}
               onBackendDocumentChange={onBackendDocumentChange}
               onDeleteDocument={onDeleteDocument}
+              onSelectionTextChange={setSelectionText}
+              registerQuoteInsert={registerQuoteInsert}
               onMobileBack={() => setMobileContent(false)}
               onUpdateRoom={onUpdateRoom}
             />

@@ -46,6 +46,9 @@ export interface KsWikiDetail {
   status: "draft" | "pending" | "processing" | "ready" | "failed";
   page_count: number | null;
   summary: string | null;
+  /** KS 在 ingest 成功后用 LLM 重写 summary（≤100 字内容摘要）；创建时是网关写的身份卡。 */
+  updated_at?: string | null;
+  last_sync_at?: string | null;
 }
 
 export interface KsRawFile {

@@ -257,6 +257,8 @@ export function TiptapDocumentEditor({
   onDeleteDocument,
   focusedBlockId,
   documentFocusRequestId,
+  onSelectionTextChange,
+  onRegisterQuoteInsert,
 }: {
   room: ContextRoomRecord
   resource?: ContextRoomResource | null
@@ -265,6 +267,10 @@ export function TiptapDocumentEditor({
   onDeleteDocument?: (document: RoomDocument) => Promise<void>
   focusedBlockId?: string | null
   documentFocusRequestId?: number | null
+  /** 思路伴随区：非空选区的纯文本（空选区=null）。 */
+  onSelectionTextChange?: (text: string | null) => void
+  /** 思路伴随区：注册「光标处插入引用」命令，返回清理函数。 */
+  onRegisterQuoteInsert?: (insert: (quote: { text: string; source: string }) => boolean) => () => void
 }) {
   const { locale, t } = useLocale()
   const documentId = resource?.kind === 'cloud-doc' ? resource.binding.docId : room.cloudDoc.docId
@@ -771,6 +777,32 @@ export function TiptapDocumentEditor({
   const visibleContinuationOperation = documentOperations.continuation?.review
   const historyDiffActive = historyView !== null
   const editorLocked = writing || documentOperations.locked || historyDiffActive
+
+  useEffect(() => {
+    if (!editor || !onSelectionTextChange) return
+    const emit = () => {
+      const { from, to, empty } = editor.state.selection
+      const text = empty ? '' : editor.state.doc.textBetween(from, to, ' ').replace(/\s+/g, ' ').trim()
+      onSelectionTextChange(text.length >= 2 ? text.slice(0, 300) : null)
+    }
+    editor.on('selectionUpdate', emit)
+    return () => { editor.off('selectionUpdate', emit) }
+  }, [editor, onSelectionTextChange])
+
+  useEffect(() => {
+    if (!editor || !onRegisterQuoteInsert) return
+    return onRegisterQuoteInsert((quote) => editor.isDestroyed
+      ? false
+      : editor.chain().focus().insertContent({
+        type: 'blockquote',
+        content: [{ type: 'paragraph', content: [{ type: 'text', text: quote.text }] }],
+      }).insertContent({
+        type: 'paragraph',
+        content: [{ type: 'text', text: `—— ${quote.source}` }],
+      }).run(),
+    )
+  }, [editor, onRegisterQuoteInsert])
+
   const selectionRewrite = useTiptapSelectionRewrite({
     editor,
     roomId: room.id,

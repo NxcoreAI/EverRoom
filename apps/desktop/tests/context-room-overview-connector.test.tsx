@@ -148,7 +148,7 @@ describe('概览面板：连接器日程/待办投影叠加', () => {
     expect(String(brandImg.props.src)).toContain('%231a73e8')
     // 点击日程行 → 跳转日程面板
     await act(async () => { schedules[0].props.onClick() })
-    expect(onOpenPane).toHaveBeenCalledWith('schedule')
+    expect(onOpenPane).toHaveBeenCalledWith('todo')
   })
 
   it('待办任务叠加确定性 task claim，与本地任务同名的投影项去重', async () => {
@@ -162,7 +162,7 @@ describe('概览面板：连接器日程/待办投影叠加', () => {
     expect(connectorTasks.map((node) => node.findByType('b').children[0])).toEqual(['补充天线参数'])
     // 点击投影待办行 → 跳转待办面板
     await act(async () => { connectorTasks[0].props.onClick() })
-    expect(onOpenPane).toHaveBeenCalledWith('tasks')
+    expect(onOpenPane).toHaveBeenCalledWith('todo')
     // 本地任务仍以可勾选行渲染，不因投影叠加消失
     const localTasks = renderer.root.findAll((node) =>
       typeof node.props?.className === 'string'

@@ -66,6 +66,8 @@ export function WorkspaceContent({
   documentFocusRequestId,
   onBackendDocumentChange,
   onDeleteDocument,
+  onSelectionTextChange,
+  registerQuoteInsert,
   onMobileBack,
   onUpdateRoom,
 }: {
@@ -78,6 +80,10 @@ export function WorkspaceContent({
   documentFocusRequestId: number | null;
   onBackendDocumentChange: (document: RoomDocument) => void;
   onDeleteDocument: (document: RoomDocument) => Promise<void>;
+  /** 编辑器选区文本上报（伴随思路页签聚焦用）。 */
+  onSelectionTextChange: (text: string | null) => void;
+  /** 伴随思路「引用」插入桥：编辑器挂载时注册。 */
+  registerQuoteInsert: (insert: (quote: { text: string; source: string }) => boolean) => () => void;
   onMobileBack: () => void;
   onUpdateRoom: (updater: (room: ContextRoomRecord) => ContextRoomRecord) => void;
 }) {
@@ -94,41 +100,45 @@ export function WorkspaceContent({
         <ChevronLeft aria-hidden="true" />
         {t('contextRoom:workspaceContent.backToResources')}
       </button>
-      {selectedCloudDoc ? (
-        <DocumentContent
-          room={room}
-          resource={selectedCloudDoc}
-          backendDocuments={backendDocuments}
-          focusedBlockId={focusedDocumentId === selectedCloudDoc.binding.docId ? focusedBlockId : null}
-          documentFocusRequestId={focusedDocumentId === selectedCloudDoc.binding.docId
-            ? documentFocusRequestId
-            : null}
-          onBackendDocumentChange={onBackendDocumentChange}
-          onDeleteDocument={onDeleteDocument}
-        />
-      ) : selectedResource?.kind === 'knowledge-file' ? (
-        isMarkdownFileName(selectedResource.originalName)
-          ? <KnowledgeFileReader resource={selectedResource} />
-          : <KnowledgeFileExternalCard resource={selectedResource} />
-      ) : selectedResource?.kind === 'wiki-page' ? (
-        <WikiPageReader resource={selectedResource} />
-      ) : (
-        <>
-          <div className="context-room-document-actions context-room-empty-doc-actions">
-            <EmptyStateDocumentActions roomId={room.id} />
-          </div>
-          <PanelEmptyState
-            className="context-room-content-empty"
-            icon={hasAvailableResources ? FileText : BookOpen}
-            title={hasAvailableResources
-              ? t('contextRoom:workspaceContent.selectAResource')
-              : t('contextRoom:workspaceContent.noDocumentsYet')}
-            description={hasAvailableResources
-              ? t('contextRoom:workspaceContent.selectADocumentFromTheResourceListOn')
-              : t('contextRoom:workspaceContent.createADocumentOrAddALocalOffice')}
+      <div className="context-room-workspace-editor">
+        {selectedCloudDoc ? (
+          <DocumentContent
+            room={room}
+            resource={selectedCloudDoc}
+            backendDocuments={backendDocuments}
+            focusedBlockId={focusedDocumentId === selectedCloudDoc.binding.docId ? focusedBlockId : null}
+            documentFocusRequestId={focusedDocumentId === selectedCloudDoc.binding.docId
+              ? documentFocusRequestId
+              : null}
+            onBackendDocumentChange={onBackendDocumentChange}
+            onDeleteDocument={onDeleteDocument}
+            onSelectionTextChange={onSelectionTextChange}
+            onRegisterQuoteInsert={registerQuoteInsert}
           />
-        </>
-      )}
+        ) : selectedResource?.kind === 'knowledge-file' ? (
+          isMarkdownFileName(selectedResource.originalName)
+            ? <KnowledgeFileReader resource={selectedResource} />
+            : <KnowledgeFileExternalCard resource={selectedResource} />
+        ) : selectedResource?.kind === 'wiki-page' ? (
+          <WikiPageReader resource={selectedResource} />
+        ) : (
+          <>
+            <div className="context-room-document-actions context-room-empty-doc-actions">
+              <EmptyStateDocumentActions roomId={room.id} />
+            </div>
+            <PanelEmptyState
+              className="context-room-content-empty"
+              icon={hasAvailableResources ? FileText : BookOpen}
+              title={hasAvailableResources
+                ? t('contextRoom:workspaceContent.selectAResource')
+                : t('contextRoom:workspaceContent.noDocumentsYet')}
+              description={hasAvailableResources
+                ? t('contextRoom:workspaceContent.selectADocumentFromTheResourceListOn')
+                : t('contextRoom:workspaceContent.createADocumentOrAddALocalOffice')}
+            />
+          </>
+        )}
+      </div>
     </section>
   );
 }

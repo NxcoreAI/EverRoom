@@ -1,25 +1,30 @@
 import type { RoomAppliedEntitySource, RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract';
 import type { ContextRoomRecord, ContextRoomResource, ContextRoomWikiPageResource } from '../../types';
-import type { KnowledgeFileDto } from '../../../../../../../shared/knowledge';
+import type { EmergenceCardDto, KnowledgeFileDto } from '../../../../../../../shared/knowledge';
 import type { BoardId, BoardSubtab } from '../RoomIconSidebar';
 import {
+  ActivityPane,
+  ArtifactLibraryPane,
+  IdeasBoardPane,
   LinkGraphPane,
-  MailsPane,
+  MaterialsPane,
   MemoryPane,
   OverviewDashboard,
   RelationsPane,
-  SchedulePane,
-  TasksPane,
+  ThoughtsPane,
+  TodoPane,
   WikiPane,
   type WorkspaceObjectPreview,
 } from '../detail-panels';
-import { ResourceTree } from '../detail-panels/ResourcePanel';
 
 export function WorkspacePaneBody({
   board,
   subtab,
   room,
   selectedResourceId,
+  selectedResource,
+  selectionText,
+  onCompanionQuote,
   backendDocuments,
   trashedDocuments,
   knowledgeFiles,
@@ -46,6 +51,11 @@ export function WorkspacePaneBody({
   subtab: BoardSubtab | null;
   room: ContextRoomRecord;
   selectedResourceId: string | null;
+  selectedResource: ContextRoomResource | null;
+  /** 右区编辑器当前选区文本（伴随思路页签聚焦用）。 */
+  selectionText: string | null;
+  /** 伴随思路页签的「引用」：插回右区正在编辑的产物。 */
+  onCompanionQuote: (card: EmergenceCardDto) => void;
   backendDocuments: RoomDocument[];
   trashedDocuments: RoomDocument[];
   knowledgeFiles: KnowledgeFileDto[];
@@ -72,29 +82,30 @@ export function WorkspacePaneBody({
   selectedObject: WorkspaceObjectPreview | null;
   onCloseObject: () => void;
 }) {
-  // 详情归属页签与 PortedDetail.openObject 的映射保持一致。
+  // 详情归属页签与 PortedDetail.openObject 的映射保持一致：会议/任务归待办，邮件归资料。
   const objectOwnerSubtab = (target: WorkspaceObjectPreview): BoardSubtab =>
-    target.kind === 'meeting' ? 'schedule' : target.kind === 'task' ? 'tasks' : 'mails';
+    target.kind === 'meeting' || target.kind === 'task' ? 'todo' : 'materials';
   const ownedDetail = selectedObject && board === 'work' && objectOwnerSubtab(selectedObject) === subtab
     ? selectedObject
     : null;
 
   if (board === 'work') {
-    if (subtab === 'schedule') {
+    if (subtab === 'activity') {
       return (
-        <SchedulePane
+        <ActivityPane
           room={room}
-          onOpen={onOpenObject}
-          detail={ownedDetail}
-          onCloseDetail={onCloseObject}
-          onUpdateRoom={onUpdateRoom}
+          backendDocuments={backendDocuments.filter((document) => document.origin !== 'native')}
+          knowledgeFiles={knowledgeFiles}
+          onSelectResource={onSelectResource}
+          onOpenObject={onOpenObject}
         />
       );
     }
-    if (subtab === 'tasks') {
+    if (subtab === 'todo') {
       return (
-        <TasksPane
+        <TodoPane
           room={room}
+          onOpen={onOpenObject}
           onSelect={(id) => onOpenObject({ kind: 'task', id })}
           onToggle={onToggleTask}
           detail={ownedDetail}
@@ -103,35 +114,26 @@ export function WorkspacePaneBody({
         />
       );
     }
-    if (subtab === 'mails') {
-      return (
-        <MailsPane
-          room={room}
-          rooms={rooms}
-          onSelect={(id) => onOpenObject({ kind: 'mail', id })}
-          detail={ownedDetail}
-          onCloseDetail={onCloseObject}
-          onUpdateRoom={onUpdateRoom}
-        />
-      );
-    }
     if (subtab === 'materials') {
-      // 资料：外部导入文档 + 上传/本地文件；EverRoom 产物只在产物板块出现。
+      // 资料：按来源对象平铺（外部导入文档、上传/本地文件、邮件、会议）；
+      // EverRoom 产物只在产物板块出现。
       return (
-        <ResourceTree
+        <MaterialsPane
           room={room}
           rooms={rooms}
           selectedId={selectedResourceId}
           backendDocuments={backendDocuments.filter((document) => document.origin !== 'native')}
           trashedDocuments={trashedDocuments.filter((document) => document.origin !== 'native')}
           knowledgeFiles={knowledgeFiles}
-          variant="materials"
           onSelect={onSelectResource}
-          onCreateDocument={onCreateDocument}
           onDeleteDocument={onDeleteDocument}
           onRestoreDocument={onRestoreDocument}
           onDeleteDocumentPermanently={onDeleteDocumentPermanently}
           onEmptyTrash={onEmptyTrash}
+          onOpenObject={onOpenObject}
+          detail={ownedDetail}
+          onCloseDetail={onCloseObject}
+          onUpdateRoom={onUpdateRoom}
         />
       );
     }
@@ -150,22 +152,32 @@ export function WorkspacePaneBody({
   }
 
   if (board === 'artifacts') {
+    // 伴随思路页签：中栏卡片流，焦点跟右区打开的产物，引用插回编辑器。
+    if (subtab === 'companion') {
+      const focusDoc = selectedResource?.kind === 'cloud-doc' ? selectedResource : null;
+      return (
+        <ThoughtsPane
+          variant="companion"
+          room={room}
+          focusDocumentId={focusDoc?.binding.docId ?? null}
+          focusDocumentTitle={focusDoc?.name ?? null}
+          focusSelectionText={selectionText}
+          onQuote={onCompanionQuote}
+        />
+      );
+    }
     // 产物库：仅用户在 EverRoom 创建的文档；外部导入归工作/资料。
     return (
-      <ResourceTree
+      <ArtifactLibraryPane
         room={room}
-        rooms={rooms}
         selectedId={selectedResourceId}
         backendDocuments={backendDocuments.filter((document) => document.origin === 'native')}
         trashedDocuments={trashedDocuments.filter((document) => document.origin === 'native')}
-        knowledgeFiles={[]}
-        variant="artifacts"
         onSelect={onSelectResource}
         onCreateDocument={onCreateDocument}
         onDeleteDocument={onDeleteDocument}
         onRestoreDocument={onRestoreDocument}
         onDeleteDocumentPermanently={onDeleteDocumentPermanently}
-        onEmptyTrash={onEmptyTrash}
       />
     );
   }
@@ -204,11 +216,16 @@ export function WorkspacePaneBody({
     );
   }
 
+  if (board === 'thoughts') {
+    return <IdeasBoardPane room={room} />;
+  }
+
   return (
     <WikiPane
       room={room}
       selectedResourceId={selectedResourceId}
       onOpenPage={onOpenWikiPage}
+      view={subtab === 'wikiGraph' ? 'graph' : 'tree'}
     />
   );
 }

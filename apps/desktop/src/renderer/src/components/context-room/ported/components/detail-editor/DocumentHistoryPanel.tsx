@@ -10,6 +10,10 @@ import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import { showToast } from '../../../../../state/toast'
 import { useLocale } from '../../../../../i18n/LocaleContext'
 import { SourceIcon } from '../../../../pages/sources/SourceIcon'
+import {
+  consumePendingDocumentHistory,
+  onDocumentHistoryOpen,
+} from './documentHistoryOpenSignal'
 
 /** 时间轴上的"导入版本"卡片数据（未应用候选）。 */
 interface PendingImportVersion {
@@ -99,6 +103,12 @@ export function DocumentHistoryPanel({
     }
     return [...groups.entries()]
   }, [pendingImports, versions])
+
+  // 外部「查看版本」入口：动态时间轴等组件请求打开本文档历史面板。
+  useEffect(() => {
+    if (consumePendingDocumentHistory(documentId)) setOpen(true)
+    return onDocumentHistoryOpen(documentId, () => setOpen(true))
+  }, [documentId])
 
   useEffect(() => {
     const requestGeneration = historyRequestGenerationRef.current + 1

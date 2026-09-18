@@ -18,6 +18,19 @@ type RoomWorkspaceStateMap = Record<string, RoomWorkspaceState>
 
 const BOARD_IDS: readonly BoardId[] = BOARD_TABS.map((tab) => tab.id)
 
+/** R1 旧页签到 PRD 四视图的迁移：日程/任务并入待办，邮件并入资料。 */
+const SUBTAB_MIGRATION: Partial<Record<string, BoardSubtab>> = {
+  schedule: 'todo',
+  tasks: 'todo',
+  mails: 'materials',
+}
+
+function migrateSubtab(board: BoardId, subtab: unknown): BoardSubtab | undefined {
+  if (typeof subtab !== 'string') return undefined
+  const candidate: string = SUBTAB_MIGRATION[subtab] ?? subtab
+  return BOARD_SUBTABS[board].some((tab) => tab.id === candidate) ? candidate as BoardSubtab : undefined
+}
+
 function loadMap(): RoomWorkspaceStateMap {
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY)
@@ -51,9 +64,7 @@ function normalizeState(roomId: string, value: unknown): RoomWorkspaceState | nu
   const candidate = value as Partial<RoomWorkspaceState>
   if (!BOARD_IDS.includes(candidate.board as BoardId)) return null
   const board = candidate.board as BoardId
-  const subtab = BOARD_SUBTABS[board].some((tab) => tab.id === candidate.subtab)
-    ? candidate.subtab
-    : undefined
+  const subtab = migrateSubtab(board, candidate.subtab)
   return {
     board,
     ...(subtab ? { subtab } : {}),

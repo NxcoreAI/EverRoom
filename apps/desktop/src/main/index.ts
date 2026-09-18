@@ -37,6 +37,7 @@ import { AgentGatewayBridge } from './gateway/agent-gateway-bridge'
 import { AsrGatewayBridge } from './gateway/asr-gateway-bridge'
 import { GatewaySupervisor } from './gateway/gateway-supervisor'
 import { cleanupStaleProcessRecords, installExitCleanupHook } from './process-cleanup'
+import { startDesktopUpdater } from './updater'
 import { RuntimeConfigBridge, type RuntimeMemoryConfig } from './gateway/runtime-config-bridge'
 import { cursorCompletionEnvFromConfig } from './gateway/cursor-completion-env'
 import { MemoryGatewayBridge } from './gateway/memory-gateway-bridge'
@@ -71,6 +72,7 @@ import { ConnectorGatewayBridge } from './gateway/connector-gateway-bridge'
 import { providerOfService, SaasConnectorBridge } from './gateway/saas-connector-bridge'
 import { createConnectorTombstoneStore } from './core/connector-tombstone-store'
 import { RecordingStore } from './recording/recording-store'
+import { RecordingSegmentUploader } from './recording/recording-segment-uploader'
 import { isSaasRateLimitError, OIDC_CALLBACK_URL, SaasClient, SaasRequestError, saasRuntimePrimaryPresent, type ConnectorOoSession, type OidcCallbackOutcome } from './cloud/saas-client'
 import { AgentStatusReporter } from './cloud/agent-status-reporter'
 import { SessionLeaseKeeper } from './cloud/session-lease-keeper'
@@ -418,10 +420,13 @@ const ASR_CHANNELS = {
   openSystemAudioSettings: 'asr:open-system-audio-settings',
   beginRecording: 'asr:begin-recording',
   appendRecording: 'asr:append-recording',
+  uploadRecordingSegment: 'asr:upload-recording-segment',
+  segmentTranscribed: 'asr:segment-transcribed',
   finishRecording: 'asr:finish-recording',
   cancelRecording: 'asr:cancel-recording',
   createJob: 'asr:create-job',
   getJob: 'asr:get-job',
+  renameSpeaker: 'asr:rename-speaker',
 } as const
 const PRIVATE_AUDIO_CHANNELS = {
   list: 'private-audio:list',
@@ -532,6 +537,7 @@ const KNOWLEDGE_CHANNELS = {
   updateRoomRelation: 'knowledge:room-relations:update',
   removeManualRoomRelation: 'knowledge:room-relations:remove-manual',
   listWikiPages: 'knowledge:wiki:pages',
+  retryWikiBuild: 'knowledge:wiki:rebuild',
   readWikiPage: 'knowledge:wiki:page-read',
   listWikis: 'knowledge:wikis:list',
   getWikiGraph: 'knowledge:wiki:graph',
@@ -548,6 +554,7 @@ const KNOWLEDGE_CHANNELS = {
   listRecentDecisions: 'knowledge:decisions:list',
   routeStatus: 'knowledge:route:status',
   proposeRooms: 'knowledge:rooms:propose',
+  emergence: 'knowledge:rooms:emergence',
   revertDecision: 'knowledge:route:revert',
   getPreferences: 'knowledge:preferences:get',
   updatePreferenceContent: 'knowledge:preferences:user-content',
@@ -787,6 +794,7 @@ let agentSchedulerGatewayBridge: AgentSchedulerGatewayBridge | null = null
 let connectorGatewayBridge: ConnectorGatewayBridge | null = null
 let migrationCoordinator: MigrationCoordinator | null = null
 let recordingStore: RecordingStore | null = null
+let recordingSegmentUploader: RecordingSegmentUploader | null = null
 let privateAudioSync: PrivateAudioSyncService | null = null
 let saasClient: SaasClient | null = null
 let agentStatusReporter: AgentStatusReporter | null = null
@@ -2502,6 +2510,7 @@ function registerKnowledgeHandlers(bridge: KnowledgeGatewayBridge): void {
   handle(KNOWLEDGE_CHANNELS.removeManualRoomRelation, (_event, relationId) =>
     bridge.removeManualRoomRelation(relationId))
   handle(KNOWLEDGE_CHANNELS.listWikiPages, (_event, roomId) => bridge.listWikiPages(roomId))
+  handle(KNOWLEDGE_CHANNELS.retryWikiBuild, (_event, roomId) => bridge.retryWikiBuild(roomId))
   handle(KNOWLEDGE_CHANNELS.readWikiPage, (_event, roomId, ref) => bridge.readWikiPage(roomId, ref))
   handle(KNOWLEDGE_CHANNELS.listWikis, () => bridge.listWikis())
   handle(KNOWLEDGE_CHANNELS.getWikiGraph, (_event, roomId: string) => bridge.getWikiGraph(roomId))
@@ -2533,6 +2542,8 @@ function registerKnowledgeHandlers(bridge: KnowledgeGatewayBridge): void {
   handle(KNOWLEDGE_CHANNELS.readFileMarkdown, (_event, fileId: string) => bridge.readFileMarkdown(fileId))
   handle(KNOWLEDGE_CHANNELS.revealFile, (_event, fileId: string) => bridge.revealFile(fileId))
   handle(KNOWLEDGE_CHANNELS.openFile, (_event, fileId: string) => bridge.openFile(fileId))
+  handle(KNOWLEDGE_CHANNELS.emergence, (_event, roomId: string, request: import('../shared/knowledge').EmergenceRequest) =>
+    bridge.emergence(roomId, request))
 }
 
 /** 本体字节的 sha256（流式；与网关 fileBlobs.contentHash 同算法），预览实例的内容指纹。 */
@@ -2671,7 +2682,7 @@ function registerIngestHandlers(bridge: IngestGatewayBridge): void {
   handle(INGEST_CHANNELS.getEventContent, (_event, eventId: string) => bridge.getEventContent(eventId))
 }
 
-function registerAsrHandlers(store: RecordingStore, coordinator: AsrCoordinator): void {
+function registerAsrHandlers(store: RecordingStore, coordinator: AsrCoordinator, segments: RecordingSegmentUploader): void {
   handle(ASR_CHANNELS.requestMicrophoneAccess, async () => {
     if (process.platform !== 'darwin') return true
     const status = systemPreferences.getMediaAccessStatus('microphone')
@@ -2699,10 +2710,23 @@ function registerAsrHandlers(store: RecordingStore, coordinator: AsrCoordinator)
   })
   handle(ASR_CHANNELS.beginRecording, (_event, mimeType) => store.begin(mimeType))
   handle(ASR_CHANNELS.appendRecording, (_event, id, chunk) => store.append(id, chunk))
+  handle(ASR_CHANNELS.uploadRecordingSegment, (_event, id: string, index: number, chunk: unknown, durationMs: number, meta: { mimeType?: string; languageHints?: string[] }) => {
+    // MediaRecorder 会给 'audio/webm;codecs=opus' 这类带编解码器后缀的类型，
+    // SaaS 建单只收白名单裸类型。
+    const normalized = typeof meta?.mimeType === 'string' ? meta.mimeType.split(';')[0]!.trim() : ''
+    const mimeType = ['audio/aac','audio/flac','audio/mp4','audio/mpeg','audio/ogg','audio/wav','audio/webm','video/mp4'].includes(normalized) ? normalized : 'audio/webm'
+    const languageHints = Array.isArray(meta?.languageHints) ? meta.languageHints.filter((hint): hint is string => typeof hint === 'string') : undefined
+    const bytes = chunk instanceof Uint8Array ? chunk : new Uint8Array(0)
+    return segments.onSegment(String(id ?? ''), Number(index), bytes, Number(durationMs), { mimeType, languageHints })
+  })
   handle(ASR_CHANNELS.finishRecording, (_event, id) => store.finish(id))
-  handle(ASR_CHANNELS.cancelRecording, (_event, id) => store.cancel(id))
+  handle(ASR_CHANNELS.cancelRecording, async (_event, id) => {
+    await segments.abort(String(id ?? '')).catch(() => undefined)
+    await store.cancel(id)
+  })
   handle(ASR_CHANNELS.createJob, (_event, input) => rateLimitAware(() => coordinator.createJob(input)))
   handle(ASR_CHANNELS.getJob, (_event, id) => rateLimitAware(() => coordinator.getJob(id)))
+  handle(ASR_CHANNELS.renameSpeaker, (_event, id: string, speakerId: string, name: string | null) => rateLimitAware(() => coordinator.renameSpeaker(id, speakerId, name)))
 }
 
 function registerPrivateAudioHandlers(service: PrivateAudioSyncService): void {
@@ -3449,6 +3473,15 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   recordingStore = new RecordingStore(recordingsDirectory)
   saasClient=new SaasClient(credentials,app,recordingsDirectory,(url)=>shell.openExternal(url))
   void saasClient.initialize()
+  recordingSegmentUploader = new RecordingSegmentUploader(saasClient, recordingsDirectory)
+  recordingSegmentUploader.setPreviewListener((event) => {
+    console.log('[segment-asr] preview push', event.recordingId, 'index', event.index, 'segments', event.result.segments.length, 'windows', BrowserWindow.getAllWindows().length)
+    for (const target of BrowserWindow.getAllWindows()) {
+      if (!target.isDestroyed() && !target.webContents.isDestroyed()) target.webContents.send(ASR_CHANNELS.segmentTranscribed, event)
+    }
+  })
+  void recordingSegmentUploader.cleanupAtStartup()
+  startDesktopUpdater(saasClient)
   // 连接器栈在所有页面可用（sources/connectors 页面模式分叉已删除）
   const connectorModeStore = connectorModeStoreRef ?? createConnectorModeStore(dataDirectory)
   connectorModeStoreRef = connectorModeStore
@@ -3796,7 +3829,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     }, () => macosPushNotifications?.beforeLogout() ?? Promise.resolve())
     registerRuntimeConfigHandlers(saasClient)
     registerPrivateTranscriptionHandlers(privateTranscriptionSync, publishSyncCompleted)
-    registerAsrHandlers(recordingStore,new AsrCoordinator(new AsrGatewayBridge(gatewaySupervisor),saasClient,realityGatewayBridge,privateAudioSync,privateTranscriptionSync))
+    registerAsrHandlers(recordingStore,new AsrCoordinator(new AsrGatewayBridge(gatewaySupervisor),saasClient,realityGatewayBridge,privateAudioSync,privateTranscriptionSync,recordingSegmentUploader ?? undefined),recordingSegmentUploader!)
     registerPrivateAudioHandlers(privateAudioSync)
     registerScreenCaptureHandlers()
 

@@ -17,6 +17,7 @@ function nxcoreMock(): Plugin {
       server.middlewares.use('/@mock/nxcore.js', (_req, res) => {
         res.setHeader('Content-Type', 'text/javascript')
         res.end(`
+const NL = String.fromCharCode(10)
 const file = (over) => ({ id: 'f1', name: 'overview.md', relativePath: 'docs/overview.md', previousRelativePath: null, originalPath: '/data/docs/overview.md', extension: '.md', size: 2048, modifiedAt: '2026-09-05T02:00:00.000Z', exists: true, status: 'unchanged', changedAt: '2026-09-05T02:00:00.000Z', versionCount: 3, ...over })
 const source = (over) => ({ id: 'src-local', kind: 'local-folder', name: '产品笔记', rootPath: '/Users/xjwang/Notes/产品', status: 'connected', fileCount: 128, versionCount: 402, totalBytes: 52000000, lastSyncedAt: '2026-09-05T02:11:00.000Z', lastError: null, createdAt: '2026-08-01T08:00:00.000Z', ...over })
 const sources = [
@@ -142,21 +143,157 @@ const base = {
     { id: 'room-4', title: '周会', kind: 'meeting', aliases: [], description: null },
     { id: 'room-5', title: '营销', kind: 'topic', aliases: [], description: null },
   ] }),
-    // mock-room（板块导航验证）数据面：空数据走各面板空态。
-    listRoomFiles: async () => ({ items: [] }),
-    listWikiPages: async () => ({ status: 'ready', items: [], pageCount: 0 }),
-    getWikiGraph: async () => ({ nodes: [], edges: [] }),
+    // mock-room（工作板块验证）数据面：md 供目录边栏验证，pdf 走外部打开占位卡。
+    listRoomFiles: async () => ({ items: [
+      { id: 'kfile-md', originalName: '调研笔记：连接器统一.md', bytes: 9216, title: null, status: 'confirmed', decidedBy: null, confidence: null, uploadedAt: new Date(Date.now() - 36 * 3600_000).toISOString() },
+      { id: 'kfile-pdf', originalName: '竞品分析.pdf', bytes: 2411724, title: null, status: 'confirmed', decidedBy: null, confidence: null, uploadedAt: new Date(Date.now() - 96 * 3600_000).toISOString() },
+    ] }),
+    readFileMarkdown: async () => ({ markdown: [
+      '# 连接器统一调研',
+      '背景与目标概述。',
+      '## 现状梳理',
+      '三条链路并存：Gmail 双链路、日历、云文档。',
+      '### Gmail 链路',
+      'oo runs 与 managed-gmail 分表。',
+      '### 日历链路',
+      'googlecalendar 无连字符命名。',
+      '## 目标架构',
+      '统一 oo action 执行面。',
+      '### 阶段一',
+      '连接器身份合并。',
+      '### 阶段二',
+      '格式映射自愈。',
+      '## 风险与开放问题',
+      '会话失效静默问题待解。',
+    ].join(NL + NL) }),
+    revealFile: async () => {},
+    listWikiPages: async () => ({ status: 'ready', items: [
+      { id: 'wp-1', title: '连接器统一·现状', type: 'page', path: '连接器统一/现状', description: null },
+      { id: 'wp-2', title: '连接器统一·目标架构', type: 'page', path: '连接器统一/目标架构', description: null },
+      { id: 'wp-3', title: '设计规范·动效篇', type: 'page', path: '设计规范/动效', description: null },
+    ], pageCount: 3,
+      summary: '连接器统一进入映射表收敛阶段，Gmail/日历双链路已并入统一格式层。目标架构以 provider 命名规范为先，映射表三处同值待收口；设计规范动效篇已定稿。',
+      updatedAt: '2026-09-18T08:30:00.000Z' }),
+    getWikiGraph: async () => ({ nodes: [
+      { id: 'wp-1', title: '连接器统一·现状', path: '连接器统一/现状', inLinks: 0 },
+      { id: 'wp-2', title: '连接器统一·目标架构', path: '连接器统一/目标架构', inLinks: 1 },
+      { id: 'wp-3', title: '设计规范·动效篇', path: '设计规范/动效', inLinks: 1 },
+    ], edges: [
+      { source: 'wp-1', target: 'wp-2' },
+      { source: 'wp-1', target: 'wp-3' },
+    ] }),
     getRoomRelations: async () => ({ rooms: [], edges: [], indexing: { status: 'ready', pendingSources: 0 } }),
-    getRoomGraph: async () => ({ rooms: [], edges: [], indexing: { status: 'ready', pendingSources: 0 } }) },
+    getRoomGraph: async () => ({ rooms: [], edges: [], indexing: { status: 'ready', pendingSources: 0 } }),
+    // 思路·知识涌现 mock：聚焦围绕焦点文档给 5 张卡；漫步给 8 张带路径的卡并按 seed 轮换；
+    // 选区文本含「降级」时走 PRD 7.4 降级样例。
+    emergence: async (_roomId, req) => {
+      const center = 'doc:' + (req.focus.documentId ?? 'doc-native-1')
+      const emNodes = [
+        { id: 'room:thoughts-mock', nodeType: 'room', label: '思路涌现验证', sourceGraph: 'roomGraph', roomRef: null, updatedAt: '2026-09-14T08:00:00.000Z' },
+        { id: 'doc:doc-native-1', nodeType: 'document', label: '产物：发布计划', sourceGraph: 'linkGraph', roomRef: null, updatedAt: '2026-09-13T10:00:00.000Z' },
+        { id: 'doc:doc-native-2', nodeType: 'document', label: '产物：复盘草稿', sourceGraph: 'linkGraph', roomRef: null, updatedAt: '2026-09-12T09:00:00.000Z' },
+        { id: 'entity:person-linwei', nodeType: 'entity', label: '林薇', sourceGraph: 'entityFacts', roomRef: null, updatedAt: '2026-09-13T04:00:00.000Z' },
+        { id: 'entity:team-visual', nodeType: 'entity', label: '视觉组', sourceGraph: 'entityFacts', roomRef: null, updatedAt: '2026-09-11T06:00:00.000Z' },
+        { id: 'fact:decision-v1', nodeType: 'fact', label: 'V1 视觉定稿', sourceGraph: 'entityFacts', roomRef: null, updatedAt: '2026-09-13T04:00:00.000Z' },
+        { id: 'fact:conflict-timeline', nodeType: 'fact', label: '排期冲突', sourceGraph: 'entityFacts', roomRef: null, updatedAt: '2026-09-10T02:00:00.000Z' },
+        { id: 'memory:insight-motion', nodeType: 'memory', label: '动效时长约定 240ms', sourceGraph: 'roomGraph', roomRef: null, updatedAt: '2026-09-09T08:00:00.000Z' },
+        { id: 'wiki:3', nodeType: 'wikiPage', label: '设计规范·动效篇', sourceGraph: 'wiki', roomRef: { id: 'room-3', title: '连接器' }, updatedAt: '2026-09-08T08:00:00.000Z' },
+      ]
+      const emEdges = [
+        { id: 'e1', from: 'room:thoughts-mock', to: 'doc:doc-native-1', relationType: '包含', edgeLevel: 'original', confidence: 1 },
+        { id: 'e2', from: 'doc:doc-native-1', to: 'fact:decision-v1', relationType: '记录', edgeLevel: 'original', confidence: 0.9 },
+        { id: 'e3', from: 'doc:doc-native-1', to: 'entity:person-linwei', relationType: '作者', edgeLevel: 'composed', confidence: null },
+        { id: 'e4', from: 'fact:decision-v1', to: 'entity:team-visual', relationType: '涉及', edgeLevel: 'semantic', confidence: null },
+        { id: 'e5', from: 'doc:doc-native-2', to: 'fact:conflict-timeline', relationType: '记录', edgeLevel: 'original', confidence: 0.8 },
+        { id: 'e6', from: 'entity:person-linwei', to: 'entity:team-visual', relationType: '成员', edgeLevel: 'composed', confidence: null },
+        { id: 'e7', from: 'fact:decision-v1', to: 'memory:insight-motion', relationType: '衍生', edgeLevel: 'semantic', confidence: null },
+        { id: 'e8', from: 'memory:insight-motion', to: 'wiki:3', relationType: '沉淀于', edgeLevel: 'composed', confidence: null },
+        { id: 'e9', from: 'room:thoughts-mock', to: 'doc:doc-native-2', relationType: '包含', edgeLevel: 'original', confidence: 1 },
+        { id: 'e10', from: 'fact:conflict-timeline', to: 'entity:person-linwei', relationType: '上报', edgeLevel: 'original', confidence: 0.7 },
+      ]
+      if (req.mode === 'wander') {
+        const start = req.wander?.startNodeRef || center
+        const wanderCards = [
+          { id: 'w1', kind: 'case', title: '相似案例：Notion 的渐进披露', summary: '同类产品把图谱入口收进右上角，正文保持纯净。', sourceType: 'wikiPage', occurredAt: null, roomRef: { id: 'room-3', title: '连接器' }, reason: '与「设计规范·动效篇」相邻，来自另一条知识链。', quote: null, nodeRef: 'wiki:3',
+            path: { nodeRefs: [start, 'memory:insight-motion', 'wiki:3'], hops: ['涉及', '沉淀于'] } },
+          { id: 'w2', kind: 'question', title: '待回答：脉络视图在窄容器里怎么收？', summary: '伴随区收窄后图谱是否降级为列表还未定。', sourceType: 'room', occurredAt: null, roomRef: null, reason: '在「动效时长约定」的邻接位置被翻出。', quote: null, nodeRef: 'memory:insight-motion',
+            path: { nodeRefs: [start, 'fact:decision-v1', 'memory:insight-motion'], hops: ['记录', '衍生'] } },
+          { id: 'w3', kind: 'viewpoint', title: '林薇：动效时长建议 240ms', summary: '全场统一 240ms + ease-out，卡片错峰 40ms 递增。', sourceType: 'entity', occurredAt: '2026-09-13T04:00:00.000Z', roomRef: null, reason: '从「V1 视觉定稿」沿作者关系走到人。', quote: '过渡动画统一 240ms，列表类内容做 40ms 错峰。', nodeRef: 'entity:person-linwei',
+            path: { nodeRefs: [start, 'fact:decision-v1', 'entity:person-linwei'], hops: ['记录', '署名'] } },
+          { id: 'w4', kind: 'evidence', title: '邮件证据：V1 视觉定稿周报', summary: '林薇发出的周报确认 V1 视觉已定稿。', sourceType: 'mail', occurredAt: '2026-09-12T09:00:00.000Z', roomRef: null, reason: '三跳之外翻到的直接证据。', quote: 'V1 视觉已定稿，附件是标注稿。', nodeRef: 'fact:decision-v1',
+            path: { nodeRefs: [start, 'fact:decision-v1'], hops: ['记录'] } },
+          { id: 'w5', kind: 'conflict', title: '排期冲突：视觉与连接器里程碑撞车', summary: '同一周内两个团队的交付节点重叠。', sourceType: 'fact', occurredAt: '2026-09-10T02:00:00.000Z', roomRef: null, reason: '在「复盘草稿」的邻接位置被翻出。', quote: null, nodeRef: 'fact:conflict-timeline',
+            path: { nodeRefs: [start, 'entity:person-linwei', 'fact:conflict-timeline'], hops: ['参与', '上报'] } },
+          { id: 'w6', kind: 'actor', title: '视觉组', summary: '负责 V1 全部视觉产出与设计规范维护。', sourceType: 'entity', occurredAt: null, roomRef: null, reason: '从「排期冲突」沿团队关系走到组织。', quote: null, nodeRef: 'entity:team-visual',
+            path: { nodeRefs: [start, 'fact:decision-v1', 'entity:team-visual'], hops: ['记录', '涉及'] } },
+          { id: 'w7', kind: 'decision', title: '历史决策：图谱入口收进右上角', summary: '早期版本把图谱放正文底部，后来收敛为图标切换。', sourceType: 'document', occurredAt: '2026-09-11T06:00:00.000Z', roomRef: null, reason: '与「设计规范·动效篇」同源。', quote: null, nodeRef: 'wiki:3',
+            path: { nodeRefs: [start, 'memory:insight-motion', 'wiki:3'], hops: ['衍生', '沉淀于'] } },
+          { id: 'w8', kind: 'case', title: '相似案例：Roam 的每日笔记', summary: '按时间组织入口、按图谱组织关系的先例。', sourceType: 'wikiPage', occurredAt: null, roomRef: { id: 'room-3', title: '连接器' }, reason: '跨 Room 翻到的相邻案例。', quote: null, nodeRef: 'wiki:3',
+            path: { nodeRefs: [start, 'doc:doc-native-2', 'fact:conflict-timeline', 'entity:team-visual'], hops: ['关联', '记录', '涉及'] } },
+        ]
+        const seed = req.wander?.seed ?? 0
+        const rotated = wanderCards.slice(seed % wanderCards.length).concat(wanderCards.slice(0, seed % wanderCards.length)).slice(0, Math.min(req.limit ?? 15, wanderCards.length))
+        return { cards: rotated, nodes: emNodes, edges: emEdges, paths: rotated.map((c) => c.path), scoreComponents: null, requestVersion: req.requestVersion, degraded: false, degradedReason: null, generatedAt: new Date().toISOString() }
+      }
+      const degraded = String(req.focus.selectionText ?? '').includes('降级')
+      const focusCards = degraded ? [
+        { id: 'f1', kind: 'evidence', title: '发布计划里的视觉节点', summary: '发布计划第二节提到 V1 视觉定稿的时间点。', sourceType: 'document', occurredAt: '2026-09-13T10:00:00.000Z', roomRef: null, reason: '关键词「发布计划」命中正文第二节。', quote: 'V1 视觉定稿后进入连接器联调窗口。', nodeRef: 'fact:decision-v1', path: null, confidence: 0.72 },
+        { id: 'f2', kind: 'actor', title: '林薇', summary: '发布计划的作者，同时是视觉负责人。', sourceType: 'entity', occurredAt: null, roomRef: null, reason: '关键词+图谱路径共同命中。', quote: null, nodeRef: 'entity:person-linwei', path: null, confidence: 0.58 },
+      ] : [
+        { id: 'f1', kind: 'evidence', title: 'V1 视觉定稿的邮件证据', summary: '林薇的周报确认定稿，附件带标注稿。', sourceType: 'mail', occurredAt: '2026-09-12T09:00:00.000Z', roomRef: null, reason: '这段选区指向视觉交付，而它是最直接的书面证据。', quote: 'V1 视觉已定稿，附件是标注稿。', nodeRef: 'fact:decision-v1', path: null, confidence: 0.91 },
+        { id: 'f2', kind: 'decision', title: 'V1 视觉定稿', summary: '上周设计评审通过，本周进入联调。', sourceType: 'fact', occurredAt: '2026-09-13T04:00:00.000Z', roomRef: null, reason: '决策直接约束当前焦点的排期。', quote: null, nodeRef: 'fact:decision-v1', path: null, confidence: 0.88 },
+        { id: 'f3', kind: 'viewpoint', title: '林薇：动效时长建议 240ms', summary: '全场统一 240ms + ease-out，列表类内容做 40ms 错峰。', sourceType: 'entity', occurredAt: '2026-09-13T04:00:00.000Z', roomRef: null, reason: '她主导了这个决定，观点与选区同源。', quote: '过渡动画统一 240ms，列表类内容做 40ms 错峰。', nodeRef: 'entity:person-linwei', path: null, confidence: 0.74 },
+        { id: 'f4', kind: 'conflict', title: '排期冲突：视觉与连接器里程碑撞车', summary: '同一周内两个团队的交付节点重叠，需要错峰。', sourceType: 'fact', occurredAt: '2026-09-10T02:00:00.000Z', roomRef: null, reason: '与焦点的截止时间正面相撞，值得先看。', quote: null, nodeRef: 'fact:conflict-timeline', path: null, confidence: 0.69 },
+        { id: 'f5', kind: 'case', title: '设计规范·动效篇', summary: '同类动效约定的沉淀页，含 240ms 与错峰条目。', sourceType: 'wikiPage', occurredAt: '2026-09-08T08:00:00.000Z', roomRef: null, reason: '相邻 Room 的相似做法，可对照。', quote: null, nodeRef: 'wiki:3', path: null, confidence: 0.61 },
+      ]
+      return { cards: focusCards, nodes: emNodes, edges: emEdges, paths: [], scoreComponents: degraded ? { relevance: 0.6, graphPath: 0.3 } : { relevance: 0.35, graphPath: 0.2, evidence: 0.15, recency: 0.1, feedback: 0.1 }, requestVersion: req.requestVersion, degraded, degradedReason: degraded ? 'llm_unavailable' : null, generatedAt: new Date().toISOString() } } },
   contextRooms: {
-    overview: async (roomId) => ({ roomId, revision: 1, generatedAt: new Date().toISOString(), stale: false, overview: [], status: [], nextSteps: [], timeline: [], entities: [], appliedCorrectionIds: [] }),
-    listMails: async () => ({ items: [] }),
+    // 登录后的首启探针读 rooms/deletedRooms 计数；不给 list 会打到兜底 Proxy 上崩。
+    list: async () => ({ rooms: [], deletedRooms: [], updatedAt: null }),
+    overview: async (roomId) => {
+      const day = (offset, hour, minute = 0) => { const d = new Date(); d.setDate(d.getDate() + offset); d.setHours(hour, minute, 0, 0); return d.toISOString() }
+      return { roomId, revision: 1, generatedAt: new Date().toISOString(), stale: false,
+        overview: [{ id: 'ov-1', section: 'overview', text: '连接器统一进入阶段一：身份合并与命名对齐。', origin: 'fact', confidence: 0.9, evidence: [], corrected: false, occurredAt: null, data: { kind: 'overview', aspect: 'summary' } }],
+        status: [{ id: 'st-1', section: 'status', text: 'Gmail 双链路排障入口已明确。', origin: 'fact', confidence: 0.8, evidence: [], corrected: false, occurredAt: null, data: { kind: 'status', category: 'progress', state: 'active' } }],
+        nextSteps: [
+          { id: 'ns-sched', section: 'next_steps', text: '与设计师同步连接器视觉', origin: 'fact', confidence: 1, evidence: [{ sourceKind: 'calendar-event', sourceId: 'cal-1', sourceTitle: null }], corrected: false, occurredAt: null, data: { kind: 'next_step', itemType: 'schedule', actionId: 'cal-1', owner: null, dueAt: day(0, 16), status: 'scheduled', priority: null, provider: 'google_calendar' } },
+          { id: 'ns-todo', section: 'next_steps', text: '回复供应商报价邮件', origin: 'fact', confidence: 1, evidence: [{ sourceKind: 'todo', sourceId: 'todo-1', sourceTitle: null }], corrected: false, occurredAt: null, data: { kind: 'next_step', itemType: 'task', actionId: 'todo-1', owner: null, dueAt: day(1, 12), status: 'needsAction', priority: 'high' } },
+        ],
+        timeline: [
+          { id: 'tl-meet', section: 'timeline', text: '周会：连接器排期', origin: 'fact', confidence: 1, evidence: [{ sourceKind: 'calendar-event', sourceId: 'cal-2', sourceTitle: null }], corrected: false, occurredAt: day(0, 14), data: { kind: 'timeline', eventType: 'meeting', title: '周会：连接器排期', description: '确认阶段一范围', certainty: 'fact', provider: 'google_calendar' } },
+          { id: 'tl-task', section: 'timeline', text: '补齐 OAuth 文档', origin: 'fact', confidence: 1, evidence: [{ sourceKind: 'todo', sourceId: 'todo-2', sourceTitle: null }], corrected: false, occurredAt: day(-1, 10), data: { kind: 'timeline', eventType: 'task', title: '补齐 OAuth 文档', description: null, certainty: 'fact' } },
+          { id: 'tl-fact', section: 'timeline', text: '林薇负责 V1 视觉设计', origin: 'fact', confidence: 0.9, evidence: [{ sourceKind: 'mail', sourceId: 'mail-1', sourceTitle: '设计周报' }], corrected: false, occurredAt: day(-2, 9), data: { kind: 'timeline', eventType: 'fact', title: '林薇负责 V1 视觉设计', description: null, certainty: 'fact' } },
+        ],
+        entities: [], appliedCorrectionIds: [] }
+    },
+    listMails: async () => ({ items: [
+      { sourceId: 'gmail-1', subject: '设计周报：V1 视觉定稿', senderName: '林薇', senderAddress: 'linwei@example.com', sentAt: new Date(Date.now() - 2 * 24 * 3600_000).toISOString(), snippet: 'V1 视觉已定稿，附件是标注稿。', hasAttachments: true, provider: 'gmail' },
+      { sourceId: 'gmail-2', subject: '供应商报价（Q4）', senderName: '采购部', senderAddress: 'purchase@example.com', sentAt: new Date(Date.now() - 5 * 3600_000).toISOString(), snippet: '三家供应商报价见正文，请确认。', hasAttachments: false, provider: 'gmail' },
+    ] }),
+    readMail: async (_roomId, sourceId) => ({ sourceId, subject: sourceId === 'gmail-1' ? '设计周报：V1 视觉定稿' : '供应商报价（Q4）', senderName: sourceId === 'gmail-1' ? '林薇' : '采购部', senderAddress: 'purchase@example.com', sentAt: new Date().toISOString(), hasAttachments: false, provider: 'gmail', origin: 'domain', body: '正文摘要（mock）。' + NL + NL + '请确认后回复。' }),
     roomEntities: async () => ({ roomId: 'room-board-mock', entities: [], facts: [], updatedAt: new Date().toISOString() }),
     completeLocalAction: async () => ({}),
   },
   documents: {
     list: async () => [],
     get: async () => null,
+    // 编辑器保存链把返回值直接写进 backendRef 并读 contentJson/version，
+    // 兜底 Proxy 的空壳对象会污染后续保存对比，这里回显完整文档语义。
+    save: async (documentId, payload) => ({
+      id: documentId,
+      title: payload?.title ?? '',
+      contentJson: payload?.contentJson ?? { type: 'doc', content: [] },
+      contentSchemaVersion: 1,
+      version: (payload?.baseVersion ?? 0) + 1,
+      status: 'active',
+      origin: 'native',
+      activeTransactionId: null,
+      deletedAt: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }),
+    versionChangeSummary: async () => ({ summary: '新增「阶段一」章节，调整风险列表（mock 摘要）。' }),
+    listVersions: async () => [],
   },
   ingest: {
     listEvents: async (q) => {

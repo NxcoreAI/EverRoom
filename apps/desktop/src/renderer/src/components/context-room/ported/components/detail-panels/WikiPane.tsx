@@ -1,13 +1,16 @@
 import {
+  AlertTriangle,
+  CheckCircle2,
   ChevronLeft,
+  ChevronRight,
   FileText,
   FolderOpen,
-  ListTree,
-  Network,
+  LoaderCircle,
+  Plus,
   RefreshCw,
-  Upload,
 } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useLocale } from '../../../../../i18n/LocaleContext';
 
 import { showToast } from '@/state/toast';
@@ -56,13 +59,16 @@ type WikiView = 'tree' | 'graph';
 /**
  * Room 知识库面板（room-wiki 方案 M3c）：wiki 页面按 path 组织成目录树，
  * 点击交给编辑栏（onOpenPage）；图谱视图渲染 md 内链派生的链接图。
+ * 目录/图谱视图由 Wiki 板块页签（wikiDir/wikiGraph）受控。
  * 来源文件与上传区保留（上传走自动归类路由）。
  */
-export function WikiPane({ room, selectedResourceId, onOpenPage }: {
+export function WikiPane({ room, selectedResourceId, onOpenPage, view = 'tree' }: {
   room: ContextRoomRecord;
   /** 编辑栏当前选中资源 id（wiki 页高亮联动）。 */
   selectedResourceId?: string | null;
   onOpenPage: (resource: ContextRoomWikiPageResource) => void;
+  /** 板块页签受控视图；缺省目录树。 */
+  view?: WikiView;
 }) {
   const { t } = useLocale();
   const [status, setStatus] = useState<string>('loading');
@@ -74,9 +80,33 @@ export function WikiPane({ room, selectedResourceId, onOpenPage }: {
   >(null);
   const [error, setError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
-  const [view, setView] = useState<WikiView>('tree');
   const [graph, setGraph] = useState<KnowledgeWikiGraphDto | null>(null);
   const [graphLoading, setGraphLoading] = useState(false);
+  const [retrying, setRetrying] = useState(false);
+  const building = status === 'processing' || status === 'pending';
+  const canRetry = typeof window.nxcore?.knowledge?.retryWikiBuild === 'function';
+  const paneRef = useRef<HTMLDivElement | null>(null);
+  const [tabRow, setTabRow] = useState<Element | null>(null);
+
+  // 操作按钮渲染进本面板页签行右侧；找不到页签行的场景（测试/独立渲染）退回面板内。
+  useLayoutEffect(() => {
+    const panel = paneRef.current?.closest('.context-room-workspace-panel');
+    setTabRow(panel?.querySelector('.context-room-board-tabs') ?? null);
+  }, []);
+
+  const retryBuild = async () => {
+    const knowledge = window.nxcore?.knowledge;
+    if (!knowledge?.retryWikiBuild) return;
+    setRetrying(true);
+    try {
+      await knowledge.retryWikiBuild(room.id);
+      await refresh();
+    } catch (cause) {
+      showToast({ title: t('contextRoom:wiki.failedToRetry'), message: cause instanceof Error ? cause.message : undefined });
+    } finally {
+      setRetrying(false);
+    }
+  };
 
   const selectedPath = selectedResourceId?.startsWith(`${room.id}:wiki:`)
     ? selectedResourceId.slice(`${room.id}:wiki:`.length)
@@ -104,7 +134,6 @@ export function WikiPane({ room, selectedResourceId, onOpenPage }: {
 
   useEffect(() => {
     setSelectedFile(null);
-    setView('tree');
     void refresh();
     // 上传/确认后广播的事件：wiki 内容可能变化（图谱缓存一并作废）
     const onChanged = () => {
@@ -114,6 +143,13 @@ export function WikiPane({ room, selectedResourceId, onOpenPage }: {
     window.addEventListener('everroom:knowledge-changed', onChanged);
     return () => window.removeEventListener('everroom:knowledge-changed', onChanged);
   }, [refresh]);
+
+  // 构建期间自动轮询：页数进度和完成切页不需要用户手动刷新。
+  useEffect(() => {
+    if (status !== 'processing' && status !== 'pending') return;
+    const timer = window.setInterval(() => { void refresh(); }, 4000);
+    return () => window.clearInterval(timer);
+  }, [status, refresh]);
 
   // 图谱懒加载：首次切到图谱视图才拉取（服务端要读全部页面，别在目录态白跑）
   useEffect(() => {
@@ -206,6 +242,32 @@ export function WikiPane({ room, selectedResourceId, onOpenPage }: {
     }
   };
 
+  const wikiActions = (
+    <div className="context-room-wiki-actions" role="group">
+      <button
+        type="button"
+        className="context-room-wiki-upload"
+        aria-label={t(uploading ? 'contextRoom:wiki.uploadingFiles' : 'contextRoom:wiki.uploadFiles')}
+        title={t('contextRoom:wiki.uploadFiles')}
+        disabled={uploading}
+        onClick={() => void uploadFiles()}
+      >
+        {uploading
+          ? <LoaderCircle aria-hidden="true" className="is-spinning" />
+          : <Plus aria-hidden="true" />}
+      </button>
+      <button
+        type="button"
+        className="context-room-wiki-refresh"
+        aria-label={t('contextRoom:wiki.refresh')}
+        title={t('contextRoom:wiki.refresh')}
+        onClick={() => void refresh()}
+      >
+        <RefreshCw aria-hidden="true" />
+      </button>
+    </div>
+  );
+
   if (selectedFile) {
     return (
       <div className="context-room-wiki-pane is-reading-file">
@@ -235,59 +297,38 @@ export function WikiPane({ room, selectedResourceId, onOpenPage }: {
   }
 
   return (
-    <div className="context-room-wiki-pane">
-      <header className="context-room-wiki-header">
-        <div className="context-room-wiki-title">
-          {pages.length > 0 ? <span>{t('contextRoom:wiki.countPages', { count: pages.length })}</span> : null}
-        </div>
-        <div className="context-room-wiki-actions">
-          <div className="context-room-wiki-toggle" role="tablist" aria-label={t('contextRoom:wiki.knowledgeBaseView')}>
+    <div className="context-room-wiki-pane" ref={paneRef}>
+      {tabRow ? createPortal(wikiActions, tabRow) : wikiActions}
+      {building || status === 'failed' ? (
+        <div className="context-room-wiki-progress">
+          <span className="context-room-wp-step is-done">
+            <CheckCircle2 aria-hidden="true" />
+            <b>{t('contextRoom:wiki.materialsDeposited')}</b>
+            <small>{t('contextRoom:wiki.countSources', { count: files.length })}</small>
+          </span>
+          <span className="context-room-wp-arrow"><ChevronRight aria-hidden="true" /></span>
+          <span className={`context-room-wp-step${building ? ' is-running' : ' is-failed'}`}>
+            {building
+              ? <LoaderCircle aria-hidden="true" className="is-spinning" />
+              : <AlertTriangle aria-hidden="true" />}
+            <b>{t('contextRoom:wiki.generatingPages')}</b>
+            {building && pageCount !== null ? (
+              <small>{t('contextRoom:wiki.countPagesGenerated', { count: pageCount })}</small>
+            ) : null}
+          </span>
+          {status === 'failed' && canRetry ? (
             <button
               type="button"
-              role="tab"
-              aria-label={t('contextRoom:wiki.pageTree')}
-              aria-selected={view === 'tree'}
-              className={view === 'tree' ? 'is-active' : ''}
-              title={t('contextRoom:wiki.pageTree')}
-              onClick={() => setView('tree')}
+              className="context-room-wiki-progress-retry"
+              disabled={retrying}
+              onClick={() => void retryBuild()}
             >
-              <ListTree aria-hidden="true" />
-              <span>{t('contextRoom:wiki.pages')}</span>
+              {retrying ? <LoaderCircle aria-hidden="true" className="is-spinning" /> : null}
+              {t('contextRoom:wiki.retry')}
             </button>
-            <button
-              type="button"
-              role="tab"
-              aria-label={t('contextRoom:wiki.pageLinkGraph')}
-              aria-selected={view === 'graph'}
-              className={view === 'graph' ? 'is-active' : ''}
-              title={t('contextRoom:wiki.pageLinkGraph')}
-              onClick={() => setView('graph')}
-            >
-              <Network aria-hidden="true" />
-              <span>{t('contextRoom:wiki.graph')}</span>
-            </button>
-          </div>
-          <button
-            type="button"
-            className="context-room-wiki-upload"
-            aria-label={t(uploading ? 'contextRoom:wiki.uploadingFiles' : 'contextRoom:wiki.uploadFiles')}
-            disabled={uploading}
-            onClick={() => void uploadFiles()}
-          >
-            <Upload aria-hidden="true" />
-            <span>{t(uploading ? 'contextRoom:wiki.uploading' : 'contextRoom:wiki.uploadFiles')}</span>
-          </button>
-          <button
-            type="button"
-            className="context-room-wiki-refresh"
-            aria-label={t('contextRoom:wiki.refresh')}
-            title={t('contextRoom:wiki.refresh')}
-            onClick={() => void refresh()}
-          >
-            <RefreshCw aria-hidden="true" />
-          </button>
+          ) : null}
         </div>
-      </header>
+      ) : null}
       {status === 'error' ? (
         <div className="context-room-workspace-empty">{t('contextRoom:wiki.knowledgeServiceUnavailableError', { error: error ?? '' })}</div>
       ) : status === 'loading' ? (
@@ -296,11 +337,7 @@ export function WikiPane({ room, selectedResourceId, onOpenPage }: {
         <div className="context-room-workspace-empty">
           {t('contextRoom:wiki.thisRoomHasNoCapturedKnowledgeYetSubmitted')}
         </div>
-      ) : status === 'processing' || status === 'pending' ? (
-        <div className="context-room-workspace-empty">
-          {t('contextRoom:wiki.buildingTheKnowledgeBaseProgressPauseEditingBriefly', { progress: pageCount ? t('contextRoom:wiki.countPagesGenerated', { count: pageCount }) : '' })}
-        </div>
-      ) : pages.length === 0 ? (
+      ) : building || status === 'failed' ? null : pages.length === 0 ? (
         <div className="context-room-workspace-empty">
           {t('contextRoom:wiki.noKnowledgePagesYetUploadFilesOrWrite')}
         </div>

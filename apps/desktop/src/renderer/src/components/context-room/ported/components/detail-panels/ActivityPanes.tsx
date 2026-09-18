@@ -1,34 +1,28 @@
 import * as Popover from '@radix-ui/react-popover';
 import {
+  CalendarClock,
   CalendarDays,
   Check,
   CheckSquare2,
   ChevronDown,
-  ChevronLeft,
-  ChevronRight,
-  Mail,
   Mic,
   Paperclip,
+  Plus,
   X,
 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { RoomMailDetail, RoomOverviewClaim, RoomOverviewProjection } from '@nxcore/agent-contract';
+import { useMemo, useState } from 'react';
+import type { RoomOverviewClaim } from '@nxcore/agent-contract';
 import { useLocale } from '../../../../../i18n/LocaleContext';
 
 import type { ContextRoomRecord } from '../../types';
 import { localizedUiText, uiText } from '../../adapters';
-import { useRoomMails } from '../../hooks/useRoomMails';
+import { useRoomOverviewProjection } from '../../hooks/useRoomOverviewProjection';
 import { CalendarProviderIcon } from '../CalendarProviderIcon';
-import { MailProviderIcon } from '../MailProviderIcon';
 import { ObjectDetailView, type DetailObject } from '../ObjectDetailView';
-import { ResourceCorrectionMenu } from '../ResourceCorrection';
-import { MarkdownBody } from './MarkdownBody';
 import {
-  preferRoomOverviewProjection,
   ROOM_OVERVIEW_CHANGED_EVENT,
   type RoomOverviewChangedDetail,
 } from '../../../roomOverviewChange';
-import { roomKindTone } from '../utils';
 import { PanelEmptyState } from './PanelEmptyState';
 import type { WorkspaceObjectPreview } from './index';
 
@@ -44,11 +38,9 @@ function resolvePaneDetailObject(room: ContextRoomRecord, detail: WorkspaceObjec
     const value = room.materials.find((item) => item.id === detail.id && item.type === '会议');
     return value ? { kind: 'meeting', value } : null;
   }
-  const value = room.materials.find((item) => item.id === detail.id && item.type === '邮件');
-  return value ? { kind: 'mail', value } : null;
+  return null;
 }
 
-type ScheduleView = 'day' | 'week' | 'month';
 const SCHEDULE_TODAY = new Date();
 
 function parseScheduleDate(value: string) {
@@ -65,66 +57,13 @@ function parseScheduleDate(value: string) {
   return new Date(SCHEDULE_TODAY.getFullYear(), Number(match[1]) - 1, Number(match[2]));
 }
 
-function weekStart(value: Date) {
-  const start = new Date(value.getFullYear(), value.getMonth(), value.getDate());
-  start.setDate(start.getDate() + (start.getDay() === 0 ? -6 : 1 - start.getDay()));
-  return start;
-}
-
 function localDateKey(value: Date): string {
   return `${String(value.getFullYear())}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
 }
 
-function dateInView(date: Date, cursor: Date, view: ScheduleView) {
-  if (view === 'day') return date.toDateString() === cursor.toDateString();
-  if (view === 'week') {
-    const start = weekStart(cursor);
-    const end = new Date(start);
-    end.setDate(end.getDate() + 7);
-    return date >= start && date < end;
-  }
-  return date.getFullYear() === cursor.getFullYear() && date.getMonth() === cursor.getMonth();
-}
-
 /**
- * 概览投影（确定性日历/待办 claim 的数据源）：初次拉取 + 投影变更事件刷新，
- * 与 OverviewDashboard 同构。日程/待办面板共用。
+ * 概览投影 hook 已抽到 hooks/useRoomOverviewProjection.ts（日程/待办/动态共用）。
  */
-function useRoomOverviewProjection(roomId: string) {
-  const [projection, setProjection] = useState<RoomOverviewProjection | null>(null);
-  useEffect(() => {
-    // node 测试环境无 window：投影保持 null，面板回退本地快照视图
-    if (typeof window === "undefined") return;
-    let cancelled = false;
-    const load = async () => {
-      const api = window.nxcore?.contextRooms;
-      if (!api?.overview) return;
-      try {
-        const next = await api.overview(roomId);
-        if (!cancelled) setProjection((current) => preferRoomOverviewProjection(current, next));
-      } catch {
-        // 投影不可用时维持本地快照视图（面板仍有会议/任务兜底）
-      }
-    };
-    void load();
-    const refresh = (event: Event) => {
-      const detail = (event as CustomEvent<RoomOverviewChangedDetail>).detail;
-      if (detail?.roomId && detail.roomId !== roomId) return;
-      const next = detail?.projection;
-      if (next) {
-        setProjection((current) => preferRoomOverviewProjection(current, next));
-        return;
-      }
-      void load();
-    };
-    window.addEventListener(ROOM_OVERVIEW_CHANGED_EVENT, refresh as EventListener);
-    return () => {
-      cancelled = true;
-      window.removeEventListener(ROOM_OVERVIEW_CHANGED_EVENT, refresh as EventListener);
-    };
-  }, [roomId]);
-  return projection;
-}
 
 export function SchedulePane({
   room,
@@ -141,8 +80,6 @@ export function SchedulePane({
   onUpdateRoom: (updater: RoomUpdater) => void;
 }) {
   const { locale, t } = useLocale();
-  const [view, setView] = useState<ScheduleView>('month');
-  const [cursor, setCursor] = useState(new Date(SCHEDULE_TODAY));
   const overviewProjection = useRoomOverviewProjection(room.id);
   // 投影时间轴里的确定性日历 claim → 日历项（occurredAt = 事件开始时间，精确到分）。
   // 连接器（calendar-event）与本地（local-schedule，agent/用户创建）同列渲染，徽标区分。
@@ -184,15 +121,14 @@ export function SchedulePane({
       ...connectorItems,
     ];
   }, [connectorItems, locale, room, t]);
-  const visibleItems = scheduleItems.filter((item) => dateInView(item.date, cursor, view));
-  const groups = visibleItems.reduce<Map<string, typeof visibleItems>>((result, item) => {
-    const key = localDateKey(item.date);
-    result.set(key, [...(result.get(key) ?? []), item]);
-    return result;
-  }, new Map());
-  const month = String(cursor.getMonth() + 1);
-  const cursorLabel = view === 'month' ? t('contextRoom:activityPanes.monthYear', { year: cursor.getFullYear(), month }) : view === 'week' ? t('contextRoom:activityPanes.weekWeekOfMonth', { month, week: Math.ceil(cursor.getDate() / 7) }) : t('contextRoom:activityPanes.monthDay', { month, day: cursor.getDate() });
-  const moveCursor = (delta: number) => setCursor((current) => { const next = new Date(current); if (view === 'month') next.setMonth(next.getMonth() + delta); else next.setDate(next.getDate() + delta * (view === 'week' ? 7 : 1)); return next; });
+  // 原型日程区：全量平铺按日期分组（升序），不做日/周/月范围过滤。
+  const groups = [...scheduleItems]
+    .sort((left, right) => left.date.getTime() - right.date.getTime())
+    .reduce<Map<string, typeof scheduleItems>>((result, item) => {
+      const key = localDateKey(item.date);
+      result.set(key, [...(result.get(key) ?? []), item]);
+      return result;
+    }, new Map());
 
   const detailObject = detail ? resolvePaneDetailObject(room, detail) : null;
   if (detail && detailObject && onCloseDetail) {
@@ -208,21 +144,13 @@ export function SchedulePane({
   }
 
   return <div className="context-room-schedule-pane">
-    <header><h2>{t('contextRoom:activityPanes.roomSchedule')}</h2><div>{(['day', 'week', 'month'] as const).map((item) => <button type="button" key={item} aria-pressed={view === item} onClick={() => setView(item)}>{t(item === 'day' ? 'contextRoom:activityPanes.day' : item === 'week' ? 'contextRoom:activityPanes.week' : 'contextRoom:activityPanes.month')}</button>)}</div></header>
+    <header><CalendarDays aria-hidden="true" /><h2>{t('contextRoom:todoPane.scheduleSection')}</h2></header>
     {scheduleItems.length ? (
       <>
-        <div className="context-room-schedule-date"><button type="button" aria-label={t('contextRoom:activityPanes.previousPeriod')} onClick={() => moveCursor(-1)}><ChevronLeft aria-hidden="true" /></button><span>{cursorLabel}</span><button type="button" aria-label={t('contextRoom:activityPanes.nextPeriod')} onClick={() => moveCursor(1)}><ChevronRight aria-hidden="true" /></button><button type="button" disabled={cursor.toDateString() === SCHEDULE_TODAY.toDateString()} onClick={() => setCursor(new Date(SCHEDULE_TODAY))}>{t('contextRoom:activityPanes.today')}</button></div>
         {[...groups.entries()].map(([date, items]) => <section className="context-room-schedule-group" key={date}>
           <header><span>{date === localDateKey(SCHEDULE_TODAY) ? t('contextRoom:activityPanes.today') : date}</span><b>{items.length}</b></header>
           {items.map((item) => <Popover.Root key={`${item.kind}-${item.id}`}><Popover.Trigger asChild><button type="button" className="context-room-schedule-item" data-icon-tone={item.kind === 'meeting' ? 'calendar' : 'task'} data-connector-source={item.connector ? item.sourceKind : undefined}><span className="context-room-schedule-item-icon">{item.kind === 'meeting' ? (item.connector ? <CalendarProviderIcon provider={item.provider} /> : <Mic aria-hidden="true" />) : <CheckSquare2 aria-hidden="true" />}</span><span><b>{item.title}</b><small>{item.subtitle}{item.location ? ` · ${item.location}` : ''}</small></span><time>{item.time}</time></button></Popover.Trigger><Popover.Portal><Popover.Content className="context-room-schedule-popover" side="right" align="start" sideOffset={8} collisionPadding={12}><header><h3>{item.title}</h3><Popover.Close aria-label={t('contextRoom:activityPanes.closeScheduleDetails')}><X aria-hidden="true" /></Popover.Close></header><p><CalendarProviderIcon provider={item.connector ? item.provider : undefined} />{t(item.kind === 'meeting' ? 'contextRoom:activityPanes.meetingTime' : 'contextRoom:activityPanes.dueDate')}：{date} {item.time}</p><dl><div><dt>{t(item.kind === 'meeting' ? 'contextRoom:activityPanes.participants' : 'contextRoom:activityPanes.owner')}</dt><dd>{item.subtitle}</dd></div><div><dt>{t('contextRoom:activityPanes.description')}</dt><dd>{item.description}</dd></div></dl>{item.attachments.length ? <section className="context-room-schedule-attachments"><span>{t('contextRoom:activityPanes.attachments')}</span>{item.attachments.map((attachment) => <div key={attachment.name}><Paperclip aria-hidden="true" /><b>{attachment.name}</b><small>{attachment.size}</small></div>)}</section> : null}{item.connector ? null : <Popover.Close asChild><button type="button" className="context-room-secondary" onClick={() => onOpen({ kind: item.kind, id: item.id })}>{t('contextRoom:activityPanes.openDetail', { detail: t(item.kind === 'meeting' ? 'contextRoom:activityPanes.meetingDetails' : 'contextRoom:activityPanes.taskDetails') })}</button></Popover.Close>}</Popover.Content></Popover.Portal></Popover.Root>)}
         </section>)}
-        {!visibleItems.length ? (
-          <PanelEmptyState
-            icon={CalendarDays}
-            title={t('contextRoom:activityPanes.noScheduleItemsInThisRange')}
-            description={t('contextRoom:activityPanes.changeTheDateRangeToSeeOtherMeetings')}
-          />
-        ) : null}
       </>
     ) : (
       <PanelEmptyState
@@ -252,6 +180,9 @@ export function TasksPane({
   const { locale, t } = useLocale();
   const [completedOpen, setCompletedOpen] = useState(false);
   const [togglingActionId, setTogglingActionId] = useState<string | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [newTaskTitle, setNewTaskTitle] = useState('');
+  const [newTaskDeadline, setNewTaskDeadline] = useState('');
   const completed = room.actionItems.filter((item) => item.completed || item.status === '已完成');
   const pending = room.actionItems.filter((item) => !item.completed && item.status !== '已完成');
   // 确定性待办叠加：概览投影的 task claim 按来源分流——本地待办（local-task，
@@ -290,6 +221,35 @@ export function TasksPane({
       setTogglingActionId(null);
     }
   };
+  // 本地任务延期：基于现有截止（"待排期"按今天）顺延 N 天，写回快照。
+  const postponeTask = (taskId: string, days: number) =>
+    onUpdateRoom((current) => ({
+      ...current,
+      actionItems: current.actionItems.map((item) => {
+        if (item.id !== taskId) return item;
+        const base = parseScheduleDate(item.deadline);
+        base.setDate(base.getDate() + days);
+        return {
+          ...item,
+          deadline: `${String(base.getMonth() + 1).padStart(2, '0')}-${String(base.getDate()).padStart(2, '0')}`,
+        };
+      }),
+    }));
+  // 新建本地任务：写房间快照（随现有同步持久化），owner 记为"我"。
+  const createTask = (title: string, deadline: string) =>
+    onUpdateRoom((current) => ({
+      ...current,
+      actionItems: [
+        ...current.actionItems,
+        {
+          id: `task-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+          title,
+          status: '未开始',
+          owner: '我',
+          deadline: deadline || '待排期',
+        },
+      ],
+    }));
   const renderTask = (task: ContextRoomRecord['actionItems'][number], done: boolean) => (
     <div className={`context-room-task-row${done ? ' is-done' : ''}`} key={task.id}>
       <button
@@ -314,6 +274,32 @@ export function TasksPane({
           <span><CalendarDays aria-hidden="true" />{t('contextRoom:activityPanes.dueDeadline', { deadline: t(uiText(task.deadline)) })}</span>
         </span>
       </button>
+      {!done ? (
+        <Popover.Root>
+          <Popover.Trigger asChild>
+            <button
+              type="button"
+              className="context-room-task-postpone"
+              aria-label={t('contextRoom:activityPanes.postponeTitle', { title: task.title })}
+              title={t('contextRoom:activityPanes.postpone')}
+            >
+              <CalendarClock aria-hidden="true" />
+            </button>
+          </Popover.Trigger>
+          <Popover.Portal>
+            <Popover.Content className="context-room-task-postpone-popover" side="left" align="center" sideOffset={6} collisionPadding={12} aria-label={t('contextRoom:activityPanes.postponeDeadline')}>
+              <strong>{t('contextRoom:activityPanes.postponeDeadline')}</strong>
+              {([1, 3, 7] as const).map((days) => (
+                <Popover.Close asChild key={days}>
+                  <button type="button" onClick={() => postponeTask(task.id, days)}>
+                    {t('contextRoom:activityPanes.postponeDays', { count: days })}
+                  </button>
+                </Popover.Close>
+              ))}
+            </Popover.Content>
+          </Popover.Portal>
+        </Popover.Root>
+      ) : null}
     </div>
   );
 
@@ -333,10 +319,67 @@ export function TasksPane({
   return (
     <div className="context-room-task-pane">
       <header>
-        <h2>{t('contextRoom:activityPanes.roomTasks')}</h2>
-        <span className="context-room-task-progress" data-icon-tone={roomKindTone(room.kind)}>
-          {completed.length + localDoneTasks.length}/{room.actionItems.length + localTasks.length}
-        </span>
+        <CheckSquare2 aria-hidden="true" />
+        <h2>{t('contextRoom:todoPane.tasksSection')}</h2>
+        <span className="context-room-pane-head-count">{room.actionItems.length + localTasks.length}</span>
+        <Popover.Root
+          open={createOpen}
+          onOpenChange={(nextOpen) => {
+            setCreateOpen(nextOpen);
+            if (!nextOpen) {
+              setNewTaskTitle('');
+              setNewTaskDeadline('');
+            }
+          }}
+        >
+          <Popover.Trigger asChild>
+            <button type="button" className="context-room-task-create" aria-label={t('contextRoom:activityPanes.newTask')}>
+              <Plus aria-hidden="true" />
+              {t('contextRoom:activityPanes.newTask')}
+            </button>
+          </Popover.Trigger>
+          <Popover.Portal>
+            <Popover.Content className="context-room-task-create-popover" side="bottom" align="end" sideOffset={8} collisionPadding={12} aria-label={t('contextRoom:activityPanes.newTask')}>
+              <form
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  const title = newTaskTitle.trim();
+                  if (!title) return;
+                  createTask(title, newTaskDeadline);
+                  setCreateOpen(false);
+                  setNewTaskTitle('');
+                  setNewTaskDeadline('');
+                }}
+              >
+                <label htmlFor="context-room-new-task-title">{t('contextRoom:activityPanes.taskTitleLabel')}</label>
+                <input
+                  id="context-room-new-task-title"
+                  autoFocus
+                  maxLength={200}
+                  value={newTaskTitle}
+                  placeholder={t('contextRoom:activityPanes.newTaskTitlePlaceholder')}
+                  onChange={(event) => setNewTaskTitle(event.target.value)}
+                />
+                <label htmlFor="context-room-new-task-deadline">{t('contextRoom:activityPanes.dueDate')}</label>
+                <input
+                  id="context-room-new-task-deadline"
+                  type="date"
+                  value={newTaskDeadline}
+                  onChange={(event) => setNewTaskDeadline(event.target.value)}
+                />
+                <footer>
+                  <Popover.Close asChild>
+                    <button type="button">{t('contextRoom:resource.cancel')}</button>
+                  </Popover.Close>
+                  <button type="submit" className="is-primary" disabled={!newTaskTitle.trim()}>
+                    {t('contextRoom:activityPanes.create')}
+                  </button>
+                </footer>
+              </form>
+              <Popover.Arrow className="context-room-document-create-arrow" />
+            </Popover.Content>
+          </Popover.Portal>
+        </Popover.Root>
       </header>
       {room.actionItems.length + localTasks.length + connectorTasks.length ? (
         <>
@@ -372,7 +415,14 @@ export function TasksPane({
               const dueAt = item.data?.kind === 'next_step' ? item.data.dueAt : null;
               return (
                 <div className="context-room-task-row" key={item.id} data-connector-source="todo">
-                  <span className="context-room-task-check" aria-hidden="true"><span /></span>
+                  <button
+                    type="button"
+                    className="context-room-task-check"
+                    disabled
+                    title={t('contextRoom:activityPanes.connectorTaskReadOnly')}
+                  >
+                    <span />
+                  </button>
                   <div className="context-room-task-main">
                     <b>{item.text}</b>
                     <span className="context-room-task-source">{t('contextRoom:memory.sourceKind.todo')}</span>
@@ -434,205 +484,6 @@ export function TasksPane({
           title={t('contextRoom:activityPanes.noTasksYet')}
           description={t('contextRoom:activityPanes.actionItemsExtractedByAgentAndRoomTasks')}
         />
-      )}
-    </div>
-  );
-}
-
-/** 连接器邮件详情（邮件面板下半区）：身份头 + 元信息 + 正文滚动区。 */
-function MailDetailPanel({
-  state,
-  locale,
-  onClose,
-}: {
-  state: { loading: boolean; detail: RoomMailDetail | null; error: boolean };
-  locale: string;
-  onClose: () => void;
-}) {
-  const { t } = useLocale();
-  if (state.loading) {
-    return (
-      <aside className="context-room-mail-detail" data-testid="context-room-mail-detail">
-        <p className="context-room-mail-detail-hint">{t('contextRoom:activityPanes.loadingMailBody')}</p>
-      </aside>
-    );
-  }
-  if (state.error || !state.detail) {
-    return (
-      <aside className="context-room-mail-detail" data-testid="context-room-mail-detail">
-        <p className="context-room-mail-detail-hint">{t('contextRoom:activityPanes.mailBodyUnavailable')}</p>
-      </aside>
-    );
-  }
-  const detail = state.detail;
-  const when = detail.sentAt && !Number.isNaN(Date.parse(detail.sentAt))
-    ? new Date(detail.sentAt).toLocaleString(locale)
-    : null;
-  return (
-    <aside className="context-room-mail-detail" data-testid="context-room-mail-detail">
-      <header>
-        <MailProviderIcon provider={detail.provider} />
-        <div className="context-room-mail-detail-title">
-          <strong title={detail.subject}>{detail.subject}</strong>
-          <small>
-            {detail.senderName ?? t('contextRoom:objectDetail.defaultSender')}
-            {detail.senderAddress ? ` <${detail.senderAddress}>` : ''}
-          </small>
-        </div>
-        <button type="button" aria-label={t('contextRoom:activityPanes.closeMailDetail')} onClick={onClose}>
-          <X aria-hidden="true" />
-        </button>
-      </header>
-      <p className="context-room-mail-detail-meta">
-        {when ? <time>{t('contextRoom:activityPanes.sentAt')}：{when}</time> : null}
-        {detail.hasAttachments ? (
-          <span><Paperclip aria-hidden="true" />{t('contextRoom:activityPanes.hasAttachments')}</span>
-        ) : null}
-      </p>
-      <div className="context-room-mail-detail-body">
-        <MarkdownBody markdown={detail.body} />
-      </div>
-    </aside>
-  );
-}
-
-export function MailsPane({
-  room,
-  rooms,
-  onSelect,
-  detail,
-  onCloseDetail,
-  onUpdateRoom,
-}: {
-  room: ContextRoomRecord;
-  /** 归入纠正（改归其他 Room）的目标候选。 */
-  rooms: ContextRoomRecord[];
-  onSelect: (id: string) => void;
-  /** 受控详情态：详情在邮箱面板内展示（替代原全屏弹窗）。 */
-  detail?: WorkspaceObjectPreview | null;
-  onCloseDetail?: () => void;
-  onUpdateRoom: (updater: RoomUpdater) => void;
-}) {
-  const { locale, t } = useLocale();
-  // 连接器邮件叠加：路由引擎归类的 Gmail/Outlook 邮件（专用全量端点，sentAt 倒序）。
-  // 本地 LLM 快照邮件按「主题 + 同日」去重，保留真实发件人/时间的连接器版本。
-  const { mails: connectorMails } = useRoomMails(room.id);
-  // 下半区详情：点击连接器邮件拉取全文（会话内缓存，Room 切换即失效）。
-  const [selectedMailId, setSelectedMailId] = useState<string | null>(null);
-  const [mailDetailState, setMailDetailState] = useState<{ loading: boolean; detail: RoomMailDetail | null; error: boolean }>({
-    loading: false,
-    detail: null,
-    error: false,
-  });
-  const mailDetailCache = useRef(new Map<string, RoomMailDetail>());
-  const mailDetailSeq = useRef(0);
-
-  useEffect(() => {
-    setSelectedMailId(null);
-    setMailDetailState({ loading: false, detail: null, error: false });
-    mailDetailCache.current.clear();
-    mailDetailSeq.current += 1;
-  }, [room.id]);
-
-  const openConnectorMail = useCallback(async (sourceId: string) => {
-    setSelectedMailId(sourceId);
-    const cached = mailDetailCache.current.get(sourceId);
-    if (cached) {
-      setMailDetailState({ loading: false, detail: cached, error: false });
-      return;
-    }
-    const seq = mailDetailSeq.current + 1;
-    mailDetailSeq.current = seq;
-    setMailDetailState({ loading: true, detail: null, error: false });
-    try {
-      const fetched = await window.nxcore?.contextRooms?.readMail(room.id, sourceId);
-      if (!fetched) throw new Error('mail_detail_unavailable');
-      mailDetailCache.current.set(sourceId, fetched);
-      if (mailDetailSeq.current === seq) {
-        setMailDetailState({ loading: false, detail: fetched, error: false });
-      }
-    } catch {
-      if (mailDetailSeq.current === seq) {
-        setMailDetailState({ loading: false, detail: null, error: true });
-      }
-    }
-  }, [room.id]);
-
-  const detailObject = detail ? resolvePaneDetailObject(room, detail) : null;
-  if (detail && detailObject && onCloseDetail) {
-    return (
-      <ObjectDetailView
-        embedded
-        room={room}
-        object={detailObject}
-        onBack={onCloseDetail}
-        onUpdateRoom={onUpdateRoom}
-      />
-    );
-  }
-  const connectorKeys = new Set(connectorMails.flatMap((mail) => {
-    const when = mail.sentAt ? new Date(mail.sentAt) : null;
-    return when && !Number.isNaN(when.getTime())
-      ? [`${mail.subject.trim().toLocaleLowerCase()}\x00${localDateKey(when)}`]
-      : [];
-  }));
-  const mails = room.materials.filter((material) => material.type === '邮件')
-    .filter((mail) => !connectorKeys.has(`${mail.title.trim().toLocaleLowerCase()}\x00${localDateKey(parseScheduleDate(mail.time))}`));
-  const connectorRows = connectorMails.map((mail) => {
-    const when = mail.sentAt ? new Date(mail.sentAt) : null;
-    const time = when && !Number.isNaN(when.getTime()) ? when.toLocaleString(locale) : '';
-    return { mail, time, sender: mail.senderName ?? mail.senderAddress ?? t('contextRoom:objectDetail.defaultSender') };
-  });
-  return (
-    <div className={`context-room-mail-pane${selectedMailId ? ' has-detail' : ''}`}>
-      <header><h2>{t('contextRoom:activityPanes.roomEmail')}</h2><span>{mails.length + connectorRows.length}</span></header>
-      {mails.length + connectorRows.length ? (
-        <>
-          <div className="context-room-mail-list">
-            {mails.map((mail) => (
-              <button type="button" className={mail.unread ? 'is-unread' : ''} key={mail.id} onClick={() => onSelect(mail.id)}>
-                <Mail aria-hidden="true" />
-                <span>
-                  <span className="context-room-mail-meta"><b>{mail.folder === 'sent' ? mail.recipient ?? t('contextRoom:activityPanes.to') : mail.sender ?? t('contextRoom:objectDetail.defaultSender')}</b><time>{mail.time}</time></span>
-                  <strong>{mail.title}</strong>
-                  <small>{localizedUiText(mail.summary, t)}</small>
-                </span>
-              </button>
-            ))}
-            {connectorRows.map(({ mail, time, sender }) => (
-              <div className="context-room-mail-row" key={`mail-${mail.sourceId}`}>
-                <button
-                  type="button"
-                  data-connector-source="mail"
-                  aria-pressed={selectedMailId === mail.sourceId}
-                  className={selectedMailId === mail.sourceId ? 'is-selected' : ''}
-                  onClick={() => void openConnectorMail(mail.sourceId)}
-                >
-                  <MailProviderIcon provider={mail.provider} />
-                  <span>
-                    <span className="context-room-mail-meta"><b>{sender}</b><time>{time}</time></span>
-                    <strong>{mail.subject}</strong>
-                    <small>{mail.snippet ?? ''}</small>
-                  </span>
-                </button>
-                <ResourceCorrectionMenu
-                  room={room}
-                  rooms={rooms}
-                  target={{ sourceKind: 'mail', sourceId: mail.sourceId, title: mail.subject }}
-                />
-              </div>
-            ))}
-          </div>
-          {selectedMailId ? (
-            <MailDetailPanel
-              state={mailDetailState}
-              locale={locale}
-              onClose={() => setSelectedMailId(null)}
-            />
-          ) : null}
-        </>
-      ) : (
-        <PanelEmptyState icon={Mail} title={t('contextRoom:activityPanes.noEmailYet')} description={t('contextRoom:activityPanes.emailRelatedToThisRoomAppearsHere')} />
       )}
     </div>
   );

@@ -1,0 +1,8 @@
+.speaker-label { position: relative; }
+.speaker-label strong[data-renameable='true'] { cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }
+.speaker-rename-popover { position: fixed; z-index: 40; display: grid; width: 236px; gap: 8px; padding: 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); box-shadow: 0 10px 28px rgb(20 26 32 / 14%); }
+.speaker-rename-popover input { width: 100%; padding: 7px 9px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface); color: var(--text); font-size: 12px; }
+.speaker-rename-actions { display: flex; gap: 6px; justify-content: flex-end; }
+.speaker-rename-actions button { min-height: 28px; padding: 0 12px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface-alt); color: var(--text); cursor: pointer; font-size: 11px; }
+.speaker-rename-actions button:disabled { opacity: 0.5; cursor: default; }
+.speaker-rename-actions button:first-child { border-color: #1f7a53; background: #1f7a53; color: #fff; }

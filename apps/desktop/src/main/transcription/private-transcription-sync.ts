@@ -140,12 +140,6 @@ export function hasMeaningfulSummary(
   return !minimum || (overviewLength >= minimum.overview && keyPointCount >= minimum.keyPoints)
 }
 
-function speakerId(value: unknown): number | null {
-  if (typeof value !== 'string') return null
-  const match = value.match(/\d+/)
-  return match ? Number(match[0]) : null
-}
-
 export function toImportedRealityEvent(
   source: PrivateTranscriptionRecord,
   summary?: PrivateTranscriptionRecord,
@@ -168,21 +162,26 @@ export function toImportedRealityEvent(
     return [{
       text: line.text.trim(),
       beginTime: typeof line.startOffsetMillis === 'number' ? Math.max(0, line.startOffsetMillis) : 0,
-      speakerId: speakerId(line.speaker),
+      speakerId: null,
+      // 旧记录 speaker 是“发言人 3”，新记录是人名/自动标签；原样保留展示语义。
+      speakerName: typeof line.speaker === 'string' && line.speaker.trim() ? line.speaker.trim() : null,
     }]
   })
   const transcript = normalizedLines.map((line) => line.text).join('\n')
     || source.transcript.trim().replace(/^#\s*转写结果\s*/u, '')
-  const transcriptSegments = normalizedLines.length
-    ? normalizedLines.map((line, index) => ({
-      ...line,
-      endTime: Math.max(line.beginTime, normalizedLines[index + 1]?.beginTime ?? durationMs),
-    }))
-    : source.segments.map((segment) => ({
+  const transcriptSegments = source.segments.length
+    // 记录带原始 segments（本设备或新版发布）时优先用，保住说话人 id；
+    // 只有文字标签的旧记录退回 transcriptLines 重建。
+    ? source.segments.map((segment) => ({
       text: segment.text,
       beginTime: Math.max(0, segment.beginTime),
       endTime: Math.max(segment.beginTime, segment.endTime),
       speakerId: segment.speakerId,
+      speakerName: segment.speakerName ?? null,
+    }))
+    : normalizedLines.map((line, index) => ({
+      ...line,
+      endTime: Math.max(line.beginTime, normalizedLines[index + 1]?.beginTime ?? durationMs),
     }))
   const insights = importedInsights(summary, transcript)
   const summaryTitle = summary && metadata(summary).summary && typeof metadata(summary).summary === 'object'
@@ -258,7 +257,8 @@ function parsePlaintext(recordId: string, plaintext: Buffer, envelope: PrivateRe
     text: segment.text,
     beginTime: segment.beginTime,
     endTime: segment.endTime,
-    speakerId: typeof segment.speakerId === 'number' ? segment.speakerId : null,
+    speakerId: typeof segment.speakerId === 'number' || typeof segment.speakerId === 'string' ? segment.speakerId : null,
+    speakerName: typeof segment.speakerName === 'string' ? segment.speakerName : null,
   })) : []
   const { transcript: _transcript, rawTranscript: _rawTranscript, segments: _segments, ...metadata } = object
   return {
@@ -343,7 +343,7 @@ export class PrivateTranscriptionSyncService {
     const recordId = event.id
     const transcriptLines = result.segments.length
       ? result.segments.map((segment) => ({
-        speaker: segment.speakerId === null ? '发言人' : `发言人 ${segment.speakerId}`,
+        speaker: segment.speakerName ?? (typeof segment.speakerId === 'number' ? `发言人 ${segment.speakerId}` : '发言人'),
         startOffsetMillis: segment.beginTime,
         text: segment.text,
       }))
@@ -360,6 +360,15 @@ export class PrivateTranscriptionSyncService {
       audioSource: event.audioSource,
       detailMarkdown: `# 转写结果\n\n${result.transcript}`,
       transcriptLines,
+      // 带上原始 segments：同步回导（materialize）时保住说话人 id，
+      // 否则只有文字标签的 transcriptLines 回流会把本地 spk_ id 洗掉。
+      segments: result.segments.map((segment) => ({
+        text: segment.text,
+        beginTime: segment.beginTime,
+        endTime: segment.endTime,
+        speakerId: segment.speakerId,
+        speakerName: segment.speakerName ?? null,
+      })),
       completedAt: new Date().toISOString(),
     }
     const input: PutPrivateRecordInput = {
@@ -417,6 +426,7 @@ export class PrivateTranscriptionSyncService {
           beginTime: segment.beginTime,
           endTime: segment.endTime,
           speakerId: segment.speakerId,
+          speakerName: segment.speakerName ?? null,
         })),
       }, event.asrSource ?? 'unknown')
       queued += 1

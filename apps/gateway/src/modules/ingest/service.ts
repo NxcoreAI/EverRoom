@@ -1310,11 +1310,11 @@ async function normalizeFileBytes(
   );
 }
 
-/** reality_events 行 → 会议纪要 md（§5.2 模板；转录段说话人按 speakerId 标注）。 */
+/** reality_events 行 → 会议纪要 md（§5.2 模板；转录段说话人优先用 speakerName，旧数字 id 兼容 +1）。 */
 function realityEventToMarkdown(row: typeof realityEvents.$inferSelect): string {
   const insights = row.insights ?? {};
   const segments = (row.transcriptSegments ?? []).map((segment) => ({
-    speaker: segment.speakerId === null ? "" : `说话人${segment.speakerId + 1}`,
+    speaker: segment.speakerName ?? (typeof segment.speakerId === "number" ? `说话人${segment.speakerId + 1}` : ""),
     text: segment.text,
     at: formatMillis(segment.beginTime),
   }));

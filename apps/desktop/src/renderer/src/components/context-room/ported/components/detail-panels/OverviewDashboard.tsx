@@ -1,24 +1,18 @@
 import {
   BarChart3,
+  BookOpen,
   Bookmark,
   CalendarDays,
   CheckSquare2,
-  ChevronLeft,
-  ChevronRight,
   CornerDownRight,
   FileText,
-  GitBranch,
   Info,
-  LoaderCircle,
   Network,
-  Sparkles,
   Zap,
 } from 'lucide-react';
-import type { RoomDocument, RoomOverviewClaimData, RoomOverviewEvidence, RoomOverviewProjection } from '@nxcore/agent-contract';
+import type { RoomDocument, RoomOverviewProjection } from '@nxcore/agent-contract';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useLocale, type Translate } from '../../../../../i18n/LocaleContext';
-import { useContextRoomState } from '../../../ContextRoomStateProvider';
-import { showToast } from '@/state/toast';
+import { useLocale } from '../../../../../i18n/LocaleContext';
 import { RoomOverviewCitationControls } from '../../../RoomOverviewCitationControls';
 import {
   preferRoomOverviewProjection,
@@ -30,86 +24,14 @@ import { recordRoomOverviewDiagnostic } from '../../../roomOverviewDiagnostics';
 import { createContextRoomResourceLibrary } from '../../resources';
 import { localizedUiText, uiText } from '../../adapters';
 import type { ContextRoomRecord, ContextRoomResource } from '../../types';
-import type { KnowledgeFileDto } from '../../../../../../../shared/knowledge';
+import type { KnowledgeFileDto, KnowledgeWikiPagesResultDto } from '../../../../../../../shared/knowledge';
+import { formatTimelineTime } from '../../roomTimeline';
 import { useRoomUpdatedTime } from '../../roomUpdatedTime';
-import { formatTimelineTime, parseTimelineDate } from '../../roomTimeline';
 import { roomKindIcon, roomKindTone } from '../utils';
 import { CalendarProviderIcon } from '../CalendarProviderIcon';
 import { PanelEmptyState } from './PanelEmptyState';
-type WorkspaceObjectPreview =
-  | { kind: 'meeting'; id: string }
-  | { kind: 'task'; id: string };
-
-type TimelineView = 'day' | 'week' | 'month';
-
-type TimelineEventType = Extract<RoomOverviewClaimData, { kind: 'timeline' }>['eventType'];
-
-/** 同期折叠窗口：发生时间相差 10 分钟内的相邻条目视为同一批，折叠展示。 */
-const TIMELINE_CLUSTER_WINDOW_MS = 10 * 60 * 1000;
-
-/** 时间轴条目的统一视图形状：投影条目与本地快照条目共用同一渲染路径。 */
-type TimelineEntry = {
-  id: string;
-  /** null = 无日期事件（解析不到发生时间），排序沉底、不参与日期范围过滤。 */
-  time: string | null;
-  title: string;
-  description: string;
-  kind: 'done' | 'warn' | 'info';
-  generated: boolean;
-  evidence: RoomOverviewEvidence[];
-  /** 投影事件的类型（日程/任务/文档/事实），本地快照条目为 null。 */
-  eventType: TimelineEventType | null;
-};
-
-/** 折叠组领头条目的优先级：日程 > 任务 > 文档收录/版本及其余 > 事实记忆。 */
-function timelineEventPriority(entry: TimelineEntry): number {
-  if (entry.eventType === 'meeting') return 0;
-  if (entry.eventType === 'task') return 1;
-  if (entry.eventType === 'fact') return 3;
-  return 2;
-}
-
-/** 相邻条目发生时间相差 ≤ 折叠窗口的收成一组：领头条目按事件优先级挑，其余收进
- * 「同期事件」展开区；无日期条目不参与折叠（保持沉底独立展示）。入参须已按时间倒序。 */
-export function clusterTimelineEntries(entries: TimelineEntry[], today: Date): Array<{ leading: TimelineEntry; peers: TimelineEntry[] }> {
-  const groups: Array<{ entries: TimelineEntry[]; headTime: number | null }> = [];
-  for (const entry of entries) {
-    const when = entry.time ? parseTimelineDate(entry.time, today) : null;
-    const time = when ? when.getTime() : null;
-    const current = groups[groups.length - 1];
-    if (current && time !== null && current.headTime !== null && current.headTime - time <= TIMELINE_CLUSTER_WINDOW_MS) {
-      current.entries.push(entry);
-      continue;
-    }
-    groups.push({ entries: [entry], headTime: time });
-  }
-  return groups.map(({ entries }) => {
-    const leading = entries.reduce((best, entry) => timelineEventPriority(entry) < timelineEventPriority(best) ? entry : best);
-    return { leading, peers: entries.filter((entry) => entry !== leading) };
-  });
-}
-
-/** 证据去重（同来源多版本只展示一次）并按展示预算截断。 */
-function timelineMaterials(evidence: RoomOverviewEvidence[]): RoomOverviewEvidence[] {
-  const unique: RoomOverviewEvidence[] = [];
-  for (const source of evidence) {
-    if (unique.some((candidate) =>
-      candidate.sourceKind === source.sourceKind && candidate.sourceId === source.sourceId)) continue;
-    unique.push(source);
-  }
-  return unique.slice(0, 4);
-}
-
-/** 证据 → 可跳转资源：云文档/上传文件有对应资源；连接器来源仅作标签展示。 */
-function timelineResource(source: RoomOverviewEvidence, resources: ContextRoomResource[]): ContextRoomResource | null {
-  if (source.sourceKind === 'everroom-doc') {
-    return resources.find((item) => item.kind === 'cloud-doc' && item.binding.docId === source.sourceId) ?? null;
-  }
-  if (source.sourceKind === 'file') {
-    return resources.find((item) => item.kind === 'knowledge-file' && item.fileId === source.sourceId) ?? null;
-  }
-  return null;
-}
+import { OverviewTimelineCard } from './OverviewTimelineCard';
+import type { WorkspaceObjectPreview } from './index';
 
 // 逐 Room 的 AI 状态文案覆盖表（原演示 Room 词条已移除）；缺省走下方真实数据派生。
 const DASHBOARD_COPY: Record<
@@ -120,38 +42,6 @@ const DASHBOARD_COPY: Record<
     entities: Array<{ label: string; description: string }>;
   }
 > = {};
-
-function startOfWeek(value: Date) {
-  const result = new Date(value.getFullYear(), value.getMonth(), value.getDate());
-  result.setDate(result.getDate() + (result.getDay() === 0 ? -6 : 1 - result.getDay()));
-  return result;
-}
-
-function inTimelineRange(value: Date | null, view: TimelineView, cursor: Date) {
-  if (!value) return false;
-  if (view === 'day') return value.toDateString() === cursor.toDateString();
-  if (view === 'week') {
-    const start = startOfWeek(cursor);
-    const end = new Date(start);
-    end.setDate(end.getDate() + 7);
-    return value >= start && value < end;
-  }
-  return value.getFullYear() === cursor.getFullYear() && value.getMonth() === cursor.getMonth();
-}
-
-function timelineRangeLabel(view: TimelineView, cursor: Date, locale: string, t: Translate) {
-  if (view === 'day') {
-    return new Intl.DateTimeFormat(locale, { year: 'numeric', month: '2-digit', day: '2-digit' }).format(cursor);
-  }
-  if (view === 'week') {
-    const start = startOfWeek(cursor);
-    const end = new Date(start);
-    end.setDate(end.getDate() + 6);
-    const formatter = new Intl.DateTimeFormat(locale, { month: 'short', day: 'numeric' });
-    return `${formatter.format(start)} ~ ${formatter.format(end)}`;
-  }
-  return t('contextRoom:overviewDashboard.monthYear', { year: cursor.getFullYear(), month: cursor.getMonth() + 1 });
-}
 
 function isTodayLabel(value: string): boolean {
   const now = new Date();
@@ -181,6 +71,7 @@ export function OverviewDashboard({
   onSelectResource,
   onOpenObject,
   onOpenPane,
+  onOpenWikiBoard,
   onToggleTask,
 }: {
   room: ContextRoomRecord;
@@ -189,23 +80,26 @@ export function OverviewDashboard({
   onSelectResource: (resource: ContextRoomResource) => void;
   onOpenObject: (target: WorkspaceObjectPreview) => void;
   /** 概览行点击跳转对应面板：投影日程/待办无详情对象（连接器/本地助手行），只切面板。 */
-  onOpenPane?: (pane: 'schedule' | 'tasks') => void;
+  onOpenPane?: (pane: 'todo') => void;
+  /** Wiki 概览卡「打开 Wiki」跳转 Wiki 板块（整屏概览有；分屏概览缺省不渲染按钮）。 */
+  onOpenWikiBoard?: () => void;
   onToggleTask: (taskId: string) => void;
 }) {
   const { locale, t } = useLocale();
-  const { refreshFromBackend } = useContextRoomState();
   // 合并完成/投影生成的过渡窗口，room 数组字段可能缺失（裸 .length/.map 会崩渲染，
   // 即"合并后首次点开 Room 报错要求刷新"）：入口一次性归一化，宁可空面板不可白屏。
   const materials = room.materials ?? [];
   const actionItems = room.actionItems ?? [];
-  const timeline = room.timeline ?? [];
   const people = room.people ?? [];
   const fileItems = room.fileItems ?? [];
   const dashboardRef = useRef<HTMLElement>(null);
   const [overviewProjection, setOverviewProjection] = useState<RoomOverviewProjection | null>(null);
-  const [regeneratingBrief, setRegeneratingBrief] = useState(false);
-  // “今天”每次渲染实时取值，避免长驻窗口跨天后“今天”按钮与范围判断失真。
-  const today = new Date();
+  const [wiki, setWiki] = useState<KnowledgeWikiPagesResultDto | null>(null);
+  const wikiPages = wiki?.items ?? null;
+  /** KS 生成的 ≤100 字摘要按句读拆成要点；无摘要时卡体回退页面标题。 */
+  const wikiSummaryPoints = useMemo(() => (wiki?.summary ?? '')
+    .split(/[。；;！!？?\n]+/).map((part) => part.trim()).filter(Boolean).slice(0, 4), [wiki?.summary]);
+  const wikiUpdatedAt = wiki?.updatedAt ?? null;
   const latestDocumentAt = backendDocuments.reduce<string | undefined>((latest, document) => (
     !latest || document.updatedAt > latest ? document.updatedAt : latest
   ), undefined);
@@ -215,9 +109,6 @@ export function OverviewDashboard({
       : room.updatedAt,
     lastViewed: room.lastViewed,
   });
-  const [timelineView, setTimelineView] = useState<TimelineView>('month');
-  const [timelineCursor, setTimelineCursor] = useState(() => new Date());
-  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const Icon = roomKindIcon(room.kind);
   const dashboard = DASHBOARD_COPY[room.id] ?? {
     aiStatus: overviewProjection?.status.map((item) => item.text).join('\n')
@@ -260,45 +151,6 @@ export function OverviewDashboard({
     () => createContextRoomResourceLibrary(room, backendDocuments, [], knowledgeFiles, locale),
     [backendDocuments, knowledgeFiles, locale, room],
   );
-  const projectedTimeline: TimelineEntry[] = overviewProjection?.timeline?.length
-    ? overviewProjection.timeline.map((item) => ({
-        id: item.id,
-        time: item.occurredAt ?? null,
-        title: item.data?.kind === 'timeline' ? item.data.title : item.text,
-        description: item.data?.kind === 'timeline'
-          ? item.data.description || (item.data.certainty === 'inference' ? t('contextRoom:overviewDashboard.inferredTimelineEntry') : '')
-          : item.origin === 'inference' ? t('contextRoom:overviewDashboard.inferredTimelineEntry') : '',
-        kind: item.origin === 'inference' ? 'info' as const : 'done' as const,
-        generated: item.origin !== 'user',
-        evidence: item.evidence,
-        eventType: item.data?.kind === 'timeline' ? item.data.eventType : null,
-      }))
-    : timeline.map((item, index) => ({
-        id: `local:${index}:${item.time}:${item.title}`,
-        time: item.time || null,
-        title: item.title,
-        description: item.description,
-        kind: item.kind,
-        generated: item.generated === true,
-        evidence: item.sourceDocumentId
-          ? [{ sourceKind: 'everroom-doc', sourceId: item.sourceDocumentId, sourceTitle: null }]
-          : [],
-        eventType: null,
-      }));
-  // 不信任后端返回顺序：本地按发生时间倒序重排，无日期事件沉底但始终可见。
-  const visibleTimeline = projectedTimeline
-    .filter((item) => {
-      const when = parseTimelineDate(item.time ?? '', today);
-      return when === null || inTimelineRange(when, timelineView, timelineCursor);
-    })
-    .sort((left, right) => {
-      const leftDate = parseTimelineDate(left.time ?? '', today);
-      const rightDate = parseTimelineDate(right.time ?? '', today);
-      if (leftDate && rightDate) return rightDate.getTime() - leftDate.getTime();
-      if (leftDate) return -1;
-      if (rightDate) return 1;
-      return 0;
-    });
   const recentDocuments = [...backendDocuments]
     .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
     .slice(0, 3);
@@ -323,8 +175,6 @@ export function OverviewDashboard({
     item.data?.kind === 'overview' && item.data.aspect === 'goal');
   const projectedGoal = goalClaim?.text || room.brief.goal;
   const projectedNextStepIds = new Set(overviewProjection?.nextSteps.map((item) => item.id) ?? []);
-  const projectedTimelineIds = new Set(overviewProjection?.timeline.map((item) => item.id) ?? []);
-  const projectedTimelineText = new Map(overviewProjection?.timeline.map((item) => [item.id, item.text]) ?? []);
   const hasBrief = Boolean(room.brief.background.trim() || room.brief.goal.trim());
   const hasOverview = Boolean(generatedOverview || hasBrief);
 
@@ -367,6 +217,12 @@ export function OverviewDashboard({
 
   useEffect(() => {
     void loadOverview();
+    // Wiki 概览卡：KS 生成的 ≤100 字摘要分句成要点；无摘要回退页面标题。
+    // 无知识服务（旧网关）时整卡不渲染。
+    let wikiCancelled = false;
+    window.nxcore?.knowledge?.listWikiPages(room.id)
+      .then((data) => { if (!wikiCancelled) setWiki(data); })
+      .catch(() => { if (!wikiCancelled) setWiki(null); });
     const refresh = (event: Event) => {
       const detail = (event as CustomEvent<RoomOverviewChangedDetail>).detail;
       if (detail?.roomId && detail.roomId !== room.id) {
@@ -403,61 +259,11 @@ export function OverviewDashboard({
       });
     };
     window.addEventListener(ROOM_OVERVIEW_CHANGED_EVENT, refresh as EventListener);
-    return () => window.removeEventListener(ROOM_OVERVIEW_CHANGED_EVENT, refresh as EventListener);
+    return () => {
+      wikiCancelled = true;
+      window.removeEventListener(ROOM_OVERVIEW_CHANGED_EVENT, refresh as EventListener);
+    };
   }, [loadOverview, room.id]);
-
-  // 展开态按 id 记（相关资料/同期事件共用）：折叠分组后数组下标会漂移，不能用 index 作键。
-  const toggleExpanded = useCallback((key: string) => {
-    setExpanded((current) => {
-      const next = new Set(current);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  }, []);
-  // 单条时间轴内容（标题行 + 描述 + 相关资料开关）：领头条目与折叠展开后的同组条目共用。
-  const renderTimelineEntryBody = (item: TimelineEntry, toggleKey: string) => {
-    // 相关资料按证据来源解析：云文档/上传文件可跳转，连接器来源等展示来源标签
-    const materials = timelineMaterials(item.evidence);
-    return <>
-      <div><b>{localizedUiText(item.title, t)}</b>{item.time ? <time>{formatTimelineTime(item.time, locale)}</time> : null}</div>
-      {item.description ? <p>{localizedUiText(item.description, t)}</p> : null}
-      {materials.length ? <><button type="button" aria-expanded={expanded.has(toggleKey)} onClick={() => toggleExpanded(toggleKey)}><ChevronRight aria-hidden="true" />{t('contextRoom:overviewDashboard.relatedResources')} <span>{materials.length}</span></button>{expanded.has(toggleKey) ? <div className="context-room-timeline-materials">{materials.map((source) => {
-        const resource = timelineResource(source, library.resources);
-        const label = resource ? resource.name : source.sourceTitle || t(`contextRoom:memory.sourceKind.${source.sourceKind}`);
-        return resource
-          ? <button type="button" key={`${source.sourceKind}:${source.sourceId}`} className="context-room-timeline-material" onClick={() => onSelectResource(resource)}><FileText aria-hidden="true" />{label}</button>
-          : <span key={`${source.sourceKind}:${source.sourceId}`} className="context-room-timeline-material is-plain"><FileText aria-hidden="true" />{label}</span>;
-      })}</div> : null}</> : null}
-    </>;
-  };
-
-  const moveTimeline = (delta: number) =>
-    setTimelineCursor((current) => {
-      const next = new Date(current);
-      if (timelineView === 'month') next.setMonth(next.getMonth() + delta);
-      else next.setDate(next.getDate() + delta * (timelineView === 'week' ? 7 : 1));
-      return next;
-    });
-  // 简报再生成：dispatch context-room 子 Agent（brief-refresh），完成后拉取后端快照刷新本地状态。
-  const regenerateBrief = useCallback(async () => {
-    const api = window.nxcore?.contextRooms;
-    if (!api || regeneratingBrief) return;
-    setRegeneratingBrief(true);
-    try {
-      await api.refreshBrief(room.id);
-      await refreshFromBackend();
-      setOverviewProjection(await api.refreshOverview(room.id));
-      showToast({ title: t('contextRoom:overviewDashboard.briefRegenerated') });
-    } catch (error) {
-      showToast({
-        title: t('contextRoom:overviewDashboard.briefRegenerateFailed'),
-        message: error instanceof Error ? error.message : undefined,
-      });
-    } finally {
-      setRegeneratingBrief(false);
-    }
-  }, [refreshFromBackend, regeneratingBrief, room.id, t]);
 
   return (
     <section ref={dashboardRef} className="context-room-dashboard" data-testid="context-room-pane-overview">
@@ -473,21 +279,7 @@ export function OverviewDashboard({
 
       <div className="context-room-dashboard-grid">
         <article>
-          <header data-icon-tone="document"><FileText aria-hidden="true" />{t('contextRoom:overviewDashboard.roomOverview')}
-            <button
-              type="button"
-              className="context-room-dashboard-regenerate"
-              disabled={regeneratingBrief}
-              onClick={() => void regenerateBrief()}
-            >
-              {regeneratingBrief
-                ? <LoaderCircle aria-hidden="true" data-spin="true" />
-                : <Sparkles aria-hidden="true" />}
-              {t(regeneratingBrief
-                ? 'contextRoom:overviewDashboard.regeneratingBrief'
-                : 'contextRoom:overviewDashboard.regenerateBrief')}
-            </button>
-          </header>
+          <header data-icon-tone="document"><FileText aria-hidden="true" />{t('contextRoom:overviewDashboard.roomOverview')}</header>
           {hasOverview ? (
             <>
               <p data-room-citation-section="overview">
@@ -519,6 +311,27 @@ export function OverviewDashboard({
             </div>
           ) : <PanelEmptyState compact icon={Network} title={t('contextRoom:overviewDashboard.noRelatedEntitiesYet')} description={t('contextRoom:overviewDashboard.detectedPeopleProjectsAndTopicsAppearHere')} />}
         </article>
+        {wikiPages && wikiPages.length > 0 ? (
+          <article className="context-room-dashboard-wiki">
+            <header data-icon-tone="data"><BookOpen aria-hidden="true" />{t('contextRoom:overviewDashboard.wikiOverview')}</header>
+            <ul>
+              {wikiSummaryPoints.length
+                ? wikiSummaryPoints.map((point, index) => <li key={`summary-${index}`}><CornerDownRight aria-hidden="true" />{point}</li>)
+                : wikiPages.slice(0, 4).map((page) => <li key={page.id}><CornerDownRight aria-hidden="true" />{page.title}</li>)}
+            </ul>
+            <footer>
+              <span>
+                {t('contextRoom:overviewDashboard.generatedPages', { count: wikiPages.length })}
+                {wikiUpdatedAt ? ` · ${t('contextRoom:overviewDashboard.updatedAt', { time: formatTimelineTime(wikiUpdatedAt, locale) })}` : ''}
+              </span>
+              {onOpenWikiBoard ? (
+                <button type="button" onClick={onOpenWikiBoard}>
+                  {t('contextRoom:overviewDashboard.openWiki')}
+                </button>
+              ) : null}
+            </footer>
+          </article>
+        ) : null}
       </div>
 
       <div className="context-room-dashboard-bottom">
@@ -539,7 +352,7 @@ export function OverviewDashboard({
           <header data-icon-tone="calendar"><CalendarDays aria-hidden="true" />{t('contextRoom:overviewDashboard.todaySSchedule')}</header>
           {todayMeeting ? <button type="button" onClick={() => onOpenObject({ kind: 'meeting', id: todayMeeting.id })}><time>{timeLabel(todayMeeting.time)}</time><b>{todayMeeting.title}</b></button> : null}
           {projectionSchedules.map((item) => (
-            <button type="button" key={item.id} data-item-type="schedule" data-connector-source="calendar-event" title={item.data?.kind === 'next_step' && item.data.dueAt ? new Date(item.data.dueAt).toLocaleString(locale) : undefined} onClick={() => onOpenPane?.('schedule')}>
+            <button type="button" key={item.id} data-item-type="schedule" data-connector-source="calendar-event" title={item.data?.kind === 'next_step' && item.data.dueAt ? new Date(item.data.dueAt).toLocaleString(locale) : undefined} onClick={() => onOpenPane?.('todo')}>
               <CalendarProviderIcon provider={item.data?.kind === 'next_step' ? item.data.provider : undefined} />
               <time>{item.data?.kind === 'next_step' && item.data.dueAt
                 ? new Date(item.data.dueAt).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' })
@@ -553,7 +366,7 @@ export function OverviewDashboard({
           <header data-icon-tone="task"><CheckSquare2 aria-hidden="true" />{t('contextRoom:overviewDashboard.toDoTasks')}</header>
           {openTasks.map((task) => <div className="context-room-dashboard-task" key={task.id}><button type="button" aria-label={t('contextRoom:overviewDashboard.completeTitle', { title: task.title })} onClick={() => onToggleTask(task.id)}><i /></button><button type="button" onClick={() => onOpenObject({ kind: 'task', id: task.id })}><b>{task.title}</b><time>{t(localizedUiText(task.deadline, t))}</time></button></div>)}
           {projectionTasks.map((item) => (
-            <button type="button" key={item.id} data-item-type="task" data-connector-source="todo" title={item.data?.kind === 'next_step' && item.data.dueAt ? new Date(item.data.dueAt).toLocaleString(locale) : undefined} onClick={() => onOpenPane?.('tasks')}>
+            <button type="button" key={item.id} data-item-type="task" data-connector-source="todo" title={item.data?.kind === 'next_step' && item.data.dueAt ? new Date(item.data.dueAt).toLocaleString(locale) : undefined} onClick={() => onOpenPane?.('todo')}>
               <span>{t('contextRoom:memory.sourceKind.todo')}</span>
               <b>{item.text}</b>
               <time>{item.data?.kind === 'next_step' && item.data.dueAt
@@ -565,37 +378,13 @@ export function OverviewDashboard({
         </article>
       </div>
 
-      <article className="context-room-dashboard-timeline">
-        <header data-icon-tone="data"><GitBranch aria-hidden="true" />{t('contextRoom:overviewDashboard.roomTimeline')} <span>{t('contextRoom:overviewDashboard.countEvents', { count: visibleTimeline.length })}</span></header>
-        <div className="context-room-timeline-toolbar">
-          <div>{(['day', 'week', 'month'] as const).map((view) => <button type="button" key={view} aria-pressed={timelineView === view} onClick={() => setTimelineView(view)}>{t(view === 'day' ? 'contextRoom:overviewDashboard.day' : view === 'week' ? 'contextRoom:overviewDashboard.week' : 'contextRoom:overviewDashboard.month')}</button>)}</div>
-          <nav aria-label={t('contextRoom:overviewDashboard.timelineRange')}>
-            <button type="button" aria-label={t('contextRoom:overviewDashboard.previousPeriod')} onClick={() => moveTimeline(-1)}><ChevronLeft aria-hidden="true" /></button>
-            <span>{timelineRangeLabel(timelineView, timelineCursor, locale, t)}</span>
-            <button type="button" aria-label={t('contextRoom:overviewDashboard.nextPeriod')} onClick={() => moveTimeline(1)}><ChevronRight aria-hidden="true" /></button>
-            <button type="button" disabled={timelineCursor.toDateString() === today.toDateString()} onClick={() => setTimelineCursor(new Date())}>{t('contextRoom:overviewDashboard.today')}</button>
-          </nav>
-        </div>
-        {visibleTimeline.length ? <ol data-room-citation-section="timeline">{clusterTimelineEntries(visibleTimeline, today).map(({ leading, peers }) => {
-          // 同期折叠：10 分钟内的相邻事件收成一组，领头条目代表全组，其余默认收起。
-          const clusterKey = `cluster:${leading.id}`;
-          return <li key={leading.id} data-room-citation-claim-id={projectedTimelineIds.has(leading.id) ? leading.id : undefined} data-room-citation-claim-text={projectedTimelineText.get(leading.id)}>
-            <i data-kind={leading.kind} />
-            <div>
-              {renderTimelineEntryBody(leading, leading.id)}
-              {peers.length ? <>
-                <button type="button" aria-expanded={expanded.has(clusterKey)} onClick={() => toggleExpanded(clusterKey)}><ChevronRight aria-hidden="true" />{t('contextRoom:overviewDashboard.samePeriodEvents', { count: peers.length })}</button>
-                {expanded.has(clusterKey) ? <div className="context-room-timeline-peers">{peers.map((peer) => (
-                  <div key={peer.id} className="context-room-timeline-peer" data-room-citation-claim-id={projectedTimelineIds.has(peer.id) ? peer.id : undefined} data-room-citation-claim-text={projectedTimelineText.get(peer.id)}>
-                    <i data-kind={peer.kind} />
-                    <div>{renderTimelineEntryBody(peer, peer.id)}</div>
-                  </div>
-                ))}</div> : null}
-              </> : null}
-            </div>
-          </li>;
-        })}</ol> : <PanelEmptyState compact icon={GitBranch} title={t('contextRoom:overviewDashboard.noEventsInThisRange')} description={t('contextRoom:overviewDashboard.changeTheDateRangeToSeeOtherRoom')} />}
-      </article>
+      <OverviewTimelineCard
+        room={room}
+        backendDocuments={backendDocuments.filter((document) => document.origin !== 'native')}
+        knowledgeFiles={knowledgeFiles}
+        onSelectResource={onSelectResource}
+        onOpenObject={onOpenObject}
+      />
     </section>
   );
 }

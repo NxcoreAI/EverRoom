@@ -72,6 +72,8 @@ export function DocumentContent({
   onDeleteDocument,
   focusedBlockId,
   documentFocusRequestId,
+  onSelectionTextChange,
+  onRegisterQuoteInsert,
 }: {
   room: ContextRoomRecord
   resource?: ContextRoomResource | null
@@ -80,6 +82,8 @@ export function DocumentContent({
   onDeleteDocument?: (document: RoomDocument) => Promise<void>
   focusedBlockId?: string | null
   documentFocusRequestId?: number | null
+  onSelectionTextChange?: (text: string | null) => void
+  onRegisterQuoteInsert?: (insert: (quote: { text: string; source: string }) => boolean) => () => void
 }) {
   const documentId = resource?.kind === 'cloud-doc' ? resource.binding.docId : room.cloudDoc.docId
   const backendDocument = backendDocuments.find((document) => document.id === documentId) ?? null
@@ -93,6 +97,8 @@ export function DocumentContent({
       onDeleteDocument={onDeleteDocument}
       focusedBlockId={focusedBlockId}
       documentFocusRequestId={documentFocusRequestId}
+      onSelectionTextChange={onSelectionTextChange}
+      onRegisterQuoteInsert={onRegisterQuoteInsert}
     />
   )
 }

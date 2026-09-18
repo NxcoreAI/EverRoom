@@ -3807,6 +3807,225 @@
   font-size: 10px;
 }
 
+/* ── 产物库：平铺清单（工具条筛选 + 富信息行） ── */
+
+.context-room-artifact-library {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+.context-room-artifact-toolbar {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 10px 8px;
+  border-bottom: 1px solid var(--cr-border);
+}
+
+.context-room-artifact-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.context-room-artifact-pill {
+  padding: 3px 9px;
+  border: 1px solid var(--cr-border);
+  border-radius: 999px;
+  color: var(--cr-muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.context-room-artifact-pill:hover {
+  border-color: var(--cr-border-strong);
+  color: var(--cr-text);
+}
+
+.context-room-artifact-pill.is-active {
+  border-color: var(--cr-blue);
+  color: var(--cr-blue);
+  background: color-mix(in srgb, var(--cr-blue) 10%, transparent);
+}
+
+.context-room-artifact-new {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 9px;
+  border: 1px solid var(--cr-border);
+  border-radius: 6px;
+  color: var(--cr-text);
+  font-size: 11px;
+}
+
+.context-room-artifact-new:hover {
+  border-color: var(--cr-blue);
+  color: var(--cr-blue);
+}
+
+.context-room-artifact-new svg {
+  width: 12px;
+  height: 12px;
+}
+
+.context-room-artifact-list {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px 8px 12px;
+}
+
+.context-room-artifact-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.context-room-artifact-item {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 26px 8px 8px;
+  border-radius: 8px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.context-room-artifact-item:hover {
+  background: var(--cr-surface-hover);
+}
+
+.context-room-artifact-item.is-selected {
+  background: var(--cr-blue-soft);
+}
+
+.context-room-artifact-item.is-selected .context-room-artifact-body b {
+  color: var(--cr-blue);
+}
+
+.context-room-artifact-item.is-selected .context-room-artifact-ico {
+  background: color-mix(in srgb, var(--cr-blue) 12%, transparent);
+  color: var(--cr-blue);
+}
+
+.context-room-artifact-item.is-trashed {
+  cursor: default;
+  opacity: 0.72;
+}
+
+.context-room-artifact-ico {
+  display: inline-flex;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: 7px;
+  background: var(--cr-surface-sunken);
+  color: var(--cr-muted);
+}
+
+.context-room-artifact-ico svg {
+  width: 15px;
+  height: 15px;
+}
+
+.context-room-artifact-body {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.context-room-artifact-body b,
+.context-room-artifact-body small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-room-artifact-body b {
+  color: var(--cr-text);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.context-room-artifact-body small {
+  color: var(--cr-tertiary);
+  font-size: 10px;
+}
+
+.context-room-artifact-meta {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+}
+
+.context-room-artifact-tag {
+  padding: 1px 6px;
+  border: 1px solid var(--cr-border);
+  border-radius: 999px;
+  color: var(--cr-muted);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.context-room-artifact-tag.is-draft {
+  border-color: color-mix(in srgb, var(--cr-warning) 45%, transparent);
+  color: var(--cr-warning);
+}
+
+.context-room-artifact-acts {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  display: inline-flex;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.context-room-artifact-row:hover .context-room-artifact-acts,
+.context-room-artifact-row:focus-within .context-room-artifact-acts {
+  opacity: 1;
+}
+
+.context-room-artifact-acts button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 5px;
+  background: var(--cr-surface);
+  color: var(--cr-muted);
+}
+
+.context-room-artifact-acts button:hover {
+  background: var(--cr-surface-hover);
+  color: var(--cr-text);
+}
+
+.context-room-artifact-acts button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.context-room-artifact-acts svg {
+  width: 13px;
+  height: 13px;
+}
+
 .context-room-office-viewer {
   position: relative;
   display: grid;
@@ -4316,29 +4535,6 @@
   animation: context-room-spin 1s linear infinite;
 }
 
-.context-room-schedule-date {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 12px;
-  color: var(--cr-muted);
-  font-size: 11px;
-}
-
-.context-room-schedule-date button {
-  display: inline-flex;
-  width: 24px;
-  height: 24px;
-  align-items: center;
-  justify-content: center;
-  border-radius: 5px;
-}
-
-.context-room-schedule-date svg {
-  width: 13px;
-  height: 13px;
-}
-
 .context-room-schedule-pane > article {
   display: flex;
   gap: 10px;
@@ -4682,40 +4878,6 @@
   font-style: normal;
 }
 
-.context-room-dashboard-grid article > header .context-room-dashboard-regenerate {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  margin-left: auto;
-  padding: 3px 8px;
-  border: 1px solid var(--cr-border);
-  border-radius: 6px;
-  background: var(--cr-surface);
-  color: var(--cr-muted);
-  font-size: 11px;
-  font-weight: 500;
-  cursor: pointer;
-}
-
-.context-room-dashboard-grid article > header .context-room-dashboard-regenerate:hover:not(:disabled) {
-  border-color: var(--cr-blue);
-  color: var(--cr-blue);
-}
-
-.context-room-dashboard-grid article > header .context-room-dashboard-regenerate:disabled {
-  cursor: default;
-  opacity: 0.7;
-}
-
-.context-room-dashboard-grid article > header .context-room-dashboard-regenerate svg {
-  width: 12px;
-  height: 12px;
-}
-
-.context-room-dashboard-grid article > header .context-room-dashboard-regenerate svg[data-spin='true'] {
-  animation: context-room-spin 900ms linear infinite;
-}
-
 .context-room-dashboard-grid article > p,
 .context-room-dashboard-grid article > small,
 .context-room-dashboard-grid article > ul,
@@ -4744,6 +4906,46 @@
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+
+.context-room-dashboard-wiki li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.context-room-dashboard-wiki li svg {
+  width: 12px;
+  height: 12px;
+  flex: none;
+}
+
+.context-room-dashboard-wiki footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 14px 12px;
+}
+
+.context-room-dashboard-wiki footer span {
+  color: var(--cr-muted);
+  font-size: 11px;
+}
+
+.context-room-dashboard-wiki footer button {
+  padding: 3px 10px;
+  border: 1px solid var(--cr-border);
+  border-radius: 6px;
+  background: var(--cr-surface);
+  color: var(--cr-muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.context-room-dashboard-wiki footer button:hover {
+  border-color: var(--cr-blue);
+  color: var(--cr-blue);
 }
 
 .context-room-dashboard-entities span {
@@ -4799,18 +5001,21 @@
   font-size: 11px;
 }
 
-.context-room-dashboard-timeline ol {
+.context-room-dashboard-timeline ol,
+.context-room-activity-list {
   margin: 0;
   padding: 14px;
   list-style: none;
 }
 
-.context-room-dashboard-timeline li {
+.context-room-dashboard-timeline li,
+.context-room-activity-list li {
   display: flex;
   gap: 12px;
 }
 
-.context-room-dashboard-timeline li > i {
+.context-room-dashboard-timeline li > i,
+.context-room-activity-list li > i {
   width: 8px;
   height: 8px;
   flex: 0 0 auto;
@@ -4820,24 +5025,28 @@
   background: var(--cr-surface);
 }
 
-.context-room-dashboard-timeline li > div {
+.context-room-dashboard-timeline li > div,
+.context-room-activity-list li > div {
   min-width: 0;
   flex: 1;
   padding-bottom: 14px;
   border-bottom: 1px solid var(--cr-border);
 }
 
-.context-room-dashboard-timeline li:last-child > div {
+.context-room-dashboard-timeline li:last-child > div,
+.context-room-activity-list li:last-child > div {
   border-bottom: 0;
 }
 
-.context-room-dashboard-timeline li > div > div:first-child {
+.context-room-dashboard-timeline li > div > div:first-child,
+.context-room-activity-list li > div > div:first-child {
   display: flex;
   justify-content: space-between;
   gap: 8px;
 }
 
-.context-room-dashboard-timeline li b {
+.context-room-dashboard-timeline li b,
+.context-room-activity-list li b {
   overflow: hidden;
   font-size: 12px;
   font-weight: 600;
@@ -4845,20 +5054,24 @@
   white-space: nowrap;
 }
 
-.context-room-dashboard-timeline li time {
+.context-room-dashboard-timeline li time,
+.context-room-activity-list li time {
   flex: 0 0 auto;
   color: var(--cr-tertiary);
   font-size: 10px;
 }
 
-.context-room-dashboard-timeline li p {
+.context-room-dashboard-timeline li p,
+.context-room-activity-list li p {
   margin: 2px 0 0;
   color: var(--cr-muted);
   font-size: 11px;
 }
 
 .context-room-dashboard-timeline li button,
-.context-room-dashboard-timeline .context-room-timeline-peer button {
+.context-room-dashboard-timeline .context-room-timeline-peer button,
+.context-room-activity-list li button,
+.context-room-activity-list .context-room-timeline-peer button {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -4870,18 +5083,24 @@
 }
 
 .context-room-dashboard-timeline li button:hover,
-.context-room-dashboard-timeline .context-room-timeline-peer button:hover {
+.context-room-dashboard-timeline .context-room-timeline-peer button:hover,
+.context-room-activity-list li button:hover,
+.context-room-activity-list .context-room-timeline-peer button:hover {
   background: var(--cr-surface-hover);
 }
 
 .context-room-dashboard-timeline li button svg,
-.context-room-dashboard-timeline .context-room-timeline-peer button svg {
+.context-room-dashboard-timeline .context-room-timeline-peer button svg,
+.context-room-activity-list li button svg,
+.context-room-activity-list .context-room-timeline-peer button svg {
   width: 11px;
   height: 11px;
 }
 
 .context-room-dashboard-timeline li button[aria-expanded='true'] svg,
-.context-room-dashboard-timeline .context-room-timeline-peer button[aria-expanded='true'] svg {
+.context-room-dashboard-timeline .context-room-timeline-peer button[aria-expanded='true'] svg,
+.context-room-activity-list li button[aria-expanded='true'] svg,
+.context-room-activity-list .context-room-timeline-peer button[aria-expanded='true'] svg {
   transform: rotate(90deg);
 }
 
@@ -9708,49 +9927,6 @@
   opacity: 0.75;
 }
 
-/* Schedule, task and mail panels keep the prototype's scan-first rhythm. */
-.context-room-schedule-pane > header > div {
-  display: flex;
-  padding: 2px;
-  border-radius: 6px;
-  background: var(--cr-surface-secondary);
-}
-
-.context-room-schedule-pane > header > div button {
-  min-width: 28px;
-  padding: 3px 6px;
-  border-radius: 4px;
-  color: var(--cr-muted);
-  font-size: 10px;
-}
-
-.context-room-schedule-pane > header > div button[aria-pressed='true'] {
-  background: var(--cr-surface);
-  color: var(--cr-blue);
-  box-shadow: 0 1px 2px rgba(31, 31, 31, 0.08);
-}
-
-.context-room-schedule-date {
-  justify-content: flex-start;
-  gap: 4px;
-  border-bottom: 1px solid var(--cr-border);
-}
-
-.context-room-schedule-date span {
-  min-width: 108px;
-  text-align: center;
-}
-
-.context-room-schedule-date button:last-child {
-  width: auto;
-  margin-left: auto;
-  padding: 0 7px;
-}
-
-.context-room-schedule-date button:disabled {
-  opacity: 0.42;
-}
-
 .context-room-schedule-group > header {
   display: flex;
   min-height: 28px;
@@ -10000,21 +10176,6 @@
 .context-room-task-meta svg {
   width: 11px;
   height: 11px;
-}
-
-.context-room-task-progress {
-  display: inline-flex;
-  min-width: 38px;
-  height: 22px;
-  align-items: center;
-  justify-content: center;
-  padding: 0 8px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--cr-icon-tone) 10%, #fff);
-  color: var(--cr-icon-tone);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-  font-weight: 600;
 }
 
 .context-room-task-reference {
@@ -10938,24 +11099,84 @@
   color: var(--cr-text);
 }
 
-.context-room-wiki-header {
-  align-items: stretch !important;
-  flex-direction: column;
-}
-
-.context-room-wiki-title {
+.context-room-wiki-progress {
   display: flex;
-  min-width: 0;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  margin: 12px 12px 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--cr-border);
+  border-radius: 10px;
+  background: var(--cr-surface-secondary);
 }
 
-.context-room-wiki-title span {
-  flex: 0 0 auto;
+.context-room-wp-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--cr-muted);
+  font-size: 12px;
+}
+
+.context-room-wp-step svg {
+  width: 12px;
+  height: 12px;
+}
+
+.context-room-wp-step b {
+  color: var(--cr-text);
+  font-weight: 500;
+}
+
+.context-room-wp-step small {
   color: var(--cr-tertiary);
-  font-size: 11px;
   font-variant-numeric: tabular-nums;
+}
+
+.context-room-wp-step.is-done svg {
+  color: var(--cr-success);
+}
+
+.context-room-wp-step.is-running svg {
+  color: var(--cr-blue);
+  animation: context-room-spin 900ms linear infinite;
+}
+
+.context-room-wp-step.is-failed svg {
+  color: var(--cr-danger);
+}
+
+.context-room-wp-arrow {
+  display: inline-flex;
+  color: var(--cr-tertiary);
+}
+
+.context-room-wp-arrow svg {
+  width: 11px;
+  height: 11px;
+}
+
+.context-room-wiki-progress-retry {
+  display: inline-flex;
+  height: 22px;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  padding: 0 10px;
+  border: 1px solid var(--cr-border);
+  border-radius: 6px;
+  background: var(--cr-surface);
+  color: var(--cr-text);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.context-room-wiki-progress-retry svg {
+  width: 11px;
+  height: 11px;
+  animation: context-room-spin 900ms linear infinite;
 }
 
 .context-room-wiki-actions {
@@ -10963,20 +11184,19 @@
   min-width: 0;
   align-items: center;
   gap: 6px;
+  margin-left: auto;
 }
 
 .context-room-wiki-upload {
   display: inline-flex;
+  width: 28px;
   height: 28px;
   align-items: center;
-  gap: 6px;
-  padding: 0 10px;
+  justify-content: center;
   border: 1px solid var(--cr-border);
   border-radius: 6px;
   background: var(--cr-surface);
   color: var(--cr-text);
-  font-size: 12px;
-  white-space: nowrap;
 }
 
 .context-room-wiki-upload:hover:not(:disabled) {
@@ -11351,50 +11571,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-/* 目录/图谱视图切换 */
-.context-room-wiki-toggle {
-  display: inline-flex;
-  height: 28px;
-  align-items: stretch;
-  padding: 2px;
-  border: 1px solid var(--cr-border);
-  border-radius: 7px;
-  background: var(--cr-surface);
-  gap: 2px;
-  flex: 1 1 auto;
-}
-
-.context-room-wiki-toggle button {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 0 8px;
-  border: 0;
-  border-radius: 5px;
-  background: transparent;
-  color: var(--cr-muted);
-  font-size: 12px;
-  justify-content: center;
-  min-width: 0;
-  flex: 1 1 0;
-  white-space: nowrap;
-}
-
-.context-room-wiki-toggle button:hover {
-  color: var(--cr-text);
-}
-
-.context-room-wiki-toggle button.is-active {
-  background: var(--cr-blue-soft, #eef3ff);
-  color: var(--cr-text);
-  font-weight: 600;
-}
-
-.context-room-wiki-toggle button svg {
-  width: 14px;
-  height: 14px;
 }
 
 /* 图谱视图 */
@@ -12246,40 +12422,8 @@
     padding-left: 8px;
   }
 
-  .context-room-wiki-upload {
-    width: 28px;
-    padding: 0;
-    justify-content: center;
-    overflow: hidden;
-    color: transparent;
-    gap: 0;
-  }
-
-  .context-room-wiki-upload svg {
-    color: var(--cr-text);
-  }
-
-  .context-room-wiki-upload span {
-    display: none;
-  }
-
   .context-room-wiki-tree-node {
     font-size: 12px;
-  }
-}
-
-@container context-room-wiki-pane (max-width: 180px) {
-  .context-room-wiki-actions {
-    gap: 4px;
-  }
-
-  .context-room-wiki-toggle button {
-    padding: 0 4px;
-  }
-
-  .context-room-wiki-toggle button span,
-  .context-room-wiki-upload {
-    display: none;
   }
 }
 
@@ -13313,3 +13457,1918 @@
 .context-room-imported-comments-unanchored-chevron { width: 12px; height: 12px; transition: transform 160ms ease; }
 .context-room-imported-comments-unanchored-chevron[data-collapsed='true'] { transform: rotate(-90deg); }
 .context-room-imported-comments-unanchored[data-collapsed='true'] { padding-bottom: 0; }
+
+/* ===== 工作 / 动态（原型 renderWorkFeed）：极简信息流 ===== */
+
+.context-room-activity-feed {
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 6px;
+}
+
+.context-room-activity-feed-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.context-room-activity-feed-item {
+  display: flex;
+  gap: 10px;
+  padding: 10px 8px;
+  border-radius: 8px;
+}
+
+.context-room-activity-feed-item:hover {
+  background: var(--cr-surface-hover);
+}
+
+.context-room-activity-feed-ico {
+  display: inline-flex;
+  width: 26px;
+  height: 26px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border-radius: 7px;
+  background: var(--cr-surface-secondary);
+  color: var(--cr-muted);
+}
+
+.context-room-activity-feed-ico svg {
+  width: 14px;
+  height: 14px;
+}
+
+.context-room-activity-feed-item[data-category='meeting'] .context-room-activity-feed-ico {
+  background: color-mix(in srgb, var(--cr-icon-calendar) 12%, transparent);
+  color: var(--cr-icon-calendar);
+}
+
+.context-room-activity-feed-item[data-category='mail'] .context-room-activity-feed-ico {
+  background: color-mix(in srgb, var(--cr-icon-communication) 12%, transparent);
+  color: var(--cr-icon-communication);
+}
+
+.context-room-activity-feed-item[data-category='task'] .context-room-activity-feed-ico {
+  background: color-mix(in srgb, var(--cr-icon-task) 12%, transparent);
+  color: var(--cr-icon-task);
+}
+
+.context-room-activity-feed-item[data-category='material'] .context-room-activity-feed-ico {
+  background: color-mix(in srgb, var(--cr-icon-document) 12%, transparent);
+  color: var(--cr-icon-document);
+}
+
+.context-room-activity-feed-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.context-room-activity-feed-main > p {
+  margin: 3px 0 0;
+  color: var(--cr-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* 动态行与时间轴行共用：标题在左、时间/版本在右。 */
+.context-room-activity-entry-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.context-room-activity-entry-row > time {
+  flex: none;
+  color: var(--cr-tertiary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 信息流平铺形态的资料 chips。 */
+.context-room-timeline-materials.is-chips {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 7px;
+}
+
+.context-room-timeline-materials.is-chips .context-room-timeline-material {
+  margin-top: 0;
+  padding: 2px 8px;
+  border-radius: 6px;
+}
+
+.context-room-timeline-materials.is-chips .context-room-timeline-material svg {
+  width: 11px;
+  height: 11px;
+}
+
+/* 时间轴卡里的「相关资料 N」折叠开关。 */
+.context-room-activity-materials-toggle {
+  min-height: 26px;
+  align-items: center;
+  gap: 5px;
+  margin-top: 8px;
+  padding: 3px 7px;
+  border-radius: 7px;
+  color: var(--cr-blue);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.context-room-activity-materials-toggle:hover {
+  background: rgba(0, 122, 255, 0.08);
+}
+
+.context-room-activity-materials-toggle > span {
+  padding: 0 5px;
+  border-radius: 8px;
+  background: var(--cr-surface-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 分区标题行的计数徽标（待办·任务 N）。 */
+.context-room-pane-head-count {
+  flex: none;
+  padding: 0 6px;
+  border-radius: 8px;
+  background: var(--cr-surface-secondary);
+  color: var(--cr-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.context-room-activity-filters {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.context-room-activity-filters > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.context-room-activity-filters > div button {
+  padding: 3px 9px;
+  border: 1px solid var(--cr-border);
+  border-radius: 999px;
+  color: var(--cr-muted);
+  font-size: 11px;
+}
+
+.context-room-activity-filters > div button:hover {
+  border-color: var(--cr-border-strong);
+  color: var(--cr-text);
+}
+
+.context-room-activity-filters > div button[aria-pressed='true'] {
+  border-color: var(--cr-blue);
+  color: var(--cr-blue);
+  background: color-mix(in srgb, var(--cr-blue) 10%, transparent);
+}
+
+.context-room-activity-person {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--cr-tertiary);
+  font-size: 11px;
+}
+
+.context-room-activity-person svg {
+  width: 12px;
+  height: 12px;
+}
+
+.context-room-activity-person select {
+  max-width: 140px;
+  padding: 3px 6px;
+  border: 1px solid var(--cr-border);
+  border-radius: 6px;
+  background: var(--cr-surface);
+  color: var(--cr-text);
+  font-size: 11px;
+}
+
+.context-room-activity-list {
+  padding: 14px;
+}
+
+.context-room-activity-entry-title {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.context-room-activity-entry-title:hover b {
+  color: var(--cr-blue);
+}
+
+.context-room-activity-entry-title svg {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
+  color: var(--cr-muted);
+}
+
+.context-room-activity-version {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border: 1px solid var(--cr-border);
+  border-radius: 5px;
+  color: var(--cr-tertiary);
+  font-size: 10px;
+}
+
+.context-room-activity-doc-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.context-room-activity-summary {
+  margin: 0;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--cr-surface-secondary);
+  color: var(--cr-muted);
+  font-size: 11px;
+}
+
+.context-room-activity-summary.is-error {
+  color: var(--cr-danger, #c2452d);
+}
+
+/* ===== 工作 / 待办：日程与会议 + 任务 上下分区 ===== */
+
+.context-room-todo-pane {
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.context-room-todo-pane > .context-room-todo-section + .context-room-todo-section {
+  border-top: 6px solid var(--cr-border);
+}
+
+.context-room-todo-section > .context-room-schedule-pane,
+.context-room-todo-section > .context-room-task-pane {
+  height: auto;
+  min-height: 0;
+  overflow: visible;
+}
+
+.context-room-task-pane > header {
+  gap: 8px;
+}
+
+.context-room-task-create {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  padding: 4px 9px;
+  border: 1px solid var(--cr-border);
+  border-radius: 6px;
+  color: var(--cr-muted);
+  font-size: 11px;
+}
+
+.context-room-task-create:hover {
+  border-color: var(--cr-blue);
+  color: var(--cr-blue);
+}
+
+.context-room-task-create svg {
+  width: 12px;
+  height: 12px;
+}
+
+/* 待办两分区的标题行：图标 + 名称 + 计数靠左（原型 cr-todo-head）。 */
+.context-room-schedule-pane > header,
+.context-room-task-pane > header {
+  justify-content: flex-start;
+  gap: 6px;
+}
+
+.context-room-schedule-pane > header > svg,
+.context-room-task-pane > header > svg {
+  width: 13px;
+  height: 13px;
+  flex: none;
+  color: var(--cr-muted);
+}
+
+.context-room-task-create-popover {
+  display: grid;
+  gap: 8px;
+  min-width: 220px;
+  padding: 12px;
+  border: 1px solid var(--cr-border);
+  border-radius: 10px;
+  background: var(--cr-surface);
+  box-shadow: var(--cr-shadow, 0 8px 24px rgba(15, 23, 42, 0.12));
+}
+
+.context-room-task-create-popover label {
+  color: var(--cr-tertiary);
+  font-size: 11px;
+}
+
+.context-room-task-create-popover input {
+  padding: 6px 8px;
+  border: 1px solid var(--cr-border);
+  border-radius: 6px;
+  background: var(--cr-surface);
+  color: var(--cr-text);
+  font-size: 12px;
+}
+
+.context-room-task-create-popover footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.context-room-task-create-popover footer button {
+  padding: 5px 12px;
+  border: 1px solid var(--cr-border);
+  border-radius: 6px;
+  background: none;
+  color: var(--cr-muted);
+  font-size: 12px;
+}
+
+.context-room-task-create-popover footer button.is-primary {
+  border-color: var(--cr-blue);
+  background: var(--cr-blue);
+  color: #fff;
+}
+
+.context-room-task-create-popover footer button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.context-room-task-row .context-room-task-postpone {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  flex: 0 0 auto;
+  margin-right: 6px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--cr-muted);
+  cursor: pointer;
+}
+
+.context-room-task-row .context-room-task-postpone:hover {
+  background: var(--cr-surface-hover);
+  color: var(--cr-text);
+}
+
+.context-room-task-row .context-room-task-postpone svg {
+  width: 14px;
+  height: 14px;
+}
+
+.context-room-task-postpone-popover {
+  display: grid;
+  gap: 4px;
+  min-width: 140px;
+  padding: 10px;
+  border: 1px solid var(--cr-border);
+  border-radius: 10px;
+  background: var(--cr-surface);
+  box-shadow: var(--cr-shadow, 0 8px 24px rgba(15, 23, 42, 0.12));
+}
+
+.context-room-task-postpone-popover > strong {
+  color: var(--cr-tertiary);
+  font-size: 11px;
+}
+
+.context-room-task-postpone-popover > button {
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--cr-text);
+  font-size: 12px;
+  text-align: left;
+}
+
+.context-room-task-postpone-popover > button:hover {
+  background: var(--cr-surface-hover);
+}
+
+.context-room-task-check:disabled {
+  cursor: not-allowed;
+}
+
+/* ===== 工作 / 资料：按来源对象平铺 ===== */
+
+.context-room-materials-pane {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.context-room-materials-pane.has-detail {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) minmax(0, 42%);
+}
+
+.context-room-materials-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--cr-border);
+}
+
+.context-room-materials-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.context-room-materials-filters button {
+  padding: 3px 9px;
+  border: 1px solid var(--cr-border);
+  border-radius: 999px;
+  color: var(--cr-muted);
+  font-size: 11px;
+}
+
+.context-room-materials-filters button:hover {
+  border-color: var(--cr-border-strong);
+  color: var(--cr-text);
+}
+
+.context-room-materials-filters button.is-active {
+  border-color: var(--cr-blue);
+  color: var(--cr-blue);
+  background: color-mix(in srgb, var(--cr-blue) 10%, transparent);
+}
+
+.context-room-materials-sort-toggle {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border: 1px solid var(--cr-border);
+  border-radius: 6px;
+  background: var(--cr-surface);
+  color: var(--cr-muted);
+  font-size: 11px;
+}
+
+.context-room-materials-sort-toggle:hover {
+  border-color: var(--cr-border-strong);
+  color: var(--cr-text);
+}
+
+.context-room-materials-sort-toggle svg {
+  width: 11px;
+  height: 11px;
+}
+
+.context-room-materials-list {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px 8px 12px;
+}
+
+.context-room-materials-pane.has-detail .context-room-materials-list {
+  border-bottom: 1px solid var(--cr-border);
+}
+
+.context-room-materials-row {
+  display: flex;
+  align-items: center;
+}
+
+.context-room-materials-item {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 0;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.context-room-materials-item:hover {
+  background: var(--cr-surface-hover);
+}
+
+.context-room-materials-item.is-selected {
+  background: var(--cr-surface-hover);
+  box-shadow: inset 2px 0 0 var(--cr-blue);
+}
+
+.context-room-materials-item.is-trashed {
+  cursor: default;
+}
+
+.context-room-materials-icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  color: var(--cr-muted);
+}
+
+.context-room-materials-icon svg,
+.context-room-materials-icon img.source-icon {
+  width: 15px;
+  height: 15px;
+  object-fit: contain;
+}
+
+.context-room-materials-main {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.context-room-materials-main b {
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-room-materials-item.is-unread .context-room-materials-main b {
+  font-weight: 700;
+}
+
+.context-room-materials-main small {
+  overflow: hidden;
+  color: var(--cr-tertiary);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-room-materials-item > time {
+  flex: 0 0 auto;
+  margin-left: 4px;
+  color: var(--cr-tertiary);
+  font-size: 10px;
+}
+
+.context-room-materials-trash {
+  border-top: 1px solid var(--cr-border);
+  padding: 6px 12px 10px;
+}
+
+.context-room-materials-trash-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--cr-muted);
+  font-size: 11px;
+}
+
+.context-room-materials-trash-toggle:hover {
+  background: var(--cr-surface-hover);
+  color: var(--cr-text);
+}
+
+.context-room-materials-trash-toggle svg {
+  width: 13px;
+  height: 13px;
+}
+
+.context-room-materials-trash-toggle > span {
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--cr-surface-secondary);
+  color: var(--cr-tertiary);
+  font-size: 10px;
+}
+
+.context-room-materials-trash-clear {
+  float: right;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--cr-tertiary);
+  font-size: 10px;
+}
+
+.context-room-materials-trash-clear:hover:not(:disabled) {
+  color: var(--cr-danger, #c2452d);
+}
+
+.context-room-materials-trash-clear:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ===== 长文档预览目录边栏（PRD 6.6） ===== */
+
+.context-room-wiki-reader-pane.has-toc {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-columns: minmax(140px, 200px) minmax(0, 1fr);
+}
+
+.context-room-wiki-reader-pane.has-toc > header {
+  grid-column: 1 / -1;
+}
+
+.context-room-reader-toc {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  gap: 1px;
+  overflow-y: auto;
+  padding: 10px 8px;
+  border-right: 1px solid var(--cr-border);
+}
+
+.context-room-reader-toc > strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 6px;
+  color: var(--cr-tertiary);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.context-room-reader-toc > strong svg {
+  width: 12px;
+  height: 12px;
+}
+
+.context-room-reader-toc button {
+  overflow: hidden;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: var(--cr-muted);
+  font-size: 11px;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-room-reader-toc button:hover {
+  background: var(--cr-surface-hover);
+  color: var(--cr-text);
+}
+
+.context-room-reader-toc button[data-level='4'] {
+  padding-left: 16px;
+}
+
+.context-room-reader-toc button[data-level='5'] {
+  padding-left: 26px;
+}
+
+.context-room-reader-toc button[data-level='6'] {
+  padding-left: 36px;
+}
+
+/* ── 思路板块 · 知识涌现：聚焦/漫步两个世界 ── */
+
+.context-room-thoughts-pane {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--cr-surface);
+  transition: background var(--shell-motion-duration) var(--shell-motion-easing);
+}
+
+.context-room-thoughts-pane[data-mode='wander'] {
+  background: var(--cr-surface-secondary);
+}
+
+.context-room-thoughts-world {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  opacity: 0;
+  transform: translateY(14px) scale(0.985);
+  pointer-events: none;
+  visibility: hidden;
+  transition:
+    opacity var(--shell-motion-duration) var(--shell-motion-easing),
+    transform var(--shell-motion-duration) var(--shell-motion-easing),
+    visibility 0s linear var(--shell-motion-duration);
+}
+
+.context-room-thoughts-pane[data-mode='focus'] > [data-world='focus'],
+.context-room-thoughts-pane[data-mode='wander'] > [data-world='wander'] {
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+  visibility: visible;
+  transition:
+    opacity var(--shell-motion-duration) var(--shell-motion-easing),
+    transform var(--shell-motion-duration) var(--shell-motion-easing),
+    visibility 0s;
+}
+
+.context-room-thoughts-header {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--cr-border);
+  background: var(--cr-surface);
+}
+
+.context-room-thoughts-pane[data-mode='wander'] > [data-world='wander'] > .context-room-thoughts-header {
+  background: transparent;
+}
+
+.context-room-thoughts-focus {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  color: var(--cr-muted);
+  font-size: 12px;
+}
+
+.context-room-thoughts-focus svg {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  color: var(--cr-blue);
+}
+
+.context-room-thoughts-focus strong {
+  overflow: hidden;
+  color: var(--cr-text);
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-room-thoughts-lock {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: none;
+  color: var(--cr-tertiary);
+  cursor: pointer;
+}
+
+.context-room-thoughts-lock:hover {
+  background: var(--cr-surface-hover);
+  color: var(--cr-muted);
+}
+
+.context-room-thoughts-lock.is-locked {
+  border-color: color-mix(in srgb, var(--cr-blue) 35%, transparent);
+  background: var(--cr-blue-soft);
+  color: var(--cr-blue);
+}
+
+.context-room-thoughts-lock svg {
+  width: 14px;
+  height: 14px;
+}
+
+.context-room-thoughts-wander-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.context-room-thoughts-wander-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 9px;
+  border: 1px solid var(--cr-border);
+  border-radius: 7px;
+  background: var(--cr-surface);
+  color: var(--cr-muted);
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.context-room-thoughts-wander-actions button:hover {
+  border-color: var(--cr-blue);
+  color: var(--cr-blue);
+}
+
+.context-room-thoughts-wander-actions svg {
+  width: 12px;
+  height: 12px;
+}
+
+.context-room-emergence-cards {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  padding: 12px;
+}
+
+.context-room-emergence-card {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--cr-border);
+  border-radius: 12px;
+  background: var(--cr-surface);
+  animation: context-room-emergence-card-in 240ms var(--shell-motion-easing) both;
+}
+
+.context-room-emergence-cards > article:nth-child(2) { animation-delay: 40ms; }
+.context-room-emergence-cards > article:nth-child(3) { animation-delay: 80ms; }
+.context-room-emergence-cards > article:nth-child(4) { animation-delay: 120ms; }
+.context-room-emergence-cards > article:nth-child(5) { animation-delay: 160ms; }
+.context-room-emergence-cards > article:nth-child(n + 6) { animation-delay: 200ms; }
+
+@keyframes context-room-emergence-card-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.context-room-emergence-card-body {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  border: none;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.context-room-emergence-card-body header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--cr-border);
+  background: var(--cr-surface-secondary);
+  color: var(--cr-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.context-room-emergence-card-body header svg {
+  width: 13px;
+  height: 13px;
+}
+
+.context-room-emergence-card-room {
+  margin-left: auto;
+  overflow: hidden;
+  max-width: 40%;
+  color: var(--cr-tertiary);
+  font-size: 10px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-room-emergence-card-body h4 {
+  margin: 10px 14px 4px;
+  color: var(--cr-text);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.45;
+}
+
+.context-room-emergence-card-body > p {
+  margin: 0 14px 12px;
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  color: var(--cr-muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.context-room-emergence-card-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 14px 12px;
+  padding: 10px 12px;
+  border-radius: 9px;
+  background: var(--cr-surface-secondary);
+}
+
+.context-room-emergence-card-detail blockquote {
+  margin: 0;
+  border-left: 2px solid color-mix(in srgb, var(--cr-blue) 45%, transparent);
+  padding-left: 10px;
+  color: var(--cr-muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.context-room-emergence-card-path {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  color: var(--cr-tertiary);
+  font-size: 11px;
+}
+
+.context-room-emergence-card-path svg {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 auto;
+}
+
+.context-room-emergence-card-path em {
+  font-style: normal;
+  color: var(--cr-tertiary);
+  opacity: 0.8;
+}
+
+.context-room-emergence-card-path em::before { content: '—'; margin-right: 4px; }
+
+.context-room-emergence-card-reason {
+  margin: 0;
+  color: var(--cr-muted);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.context-room-emergence-card-detail time {
+  color: var(--cr-tertiary);
+  font-size: 10px;
+}
+
+.context-room-emergence-card > footer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-top: 1px solid var(--cr-border);
+  padding: 6px 8px 6px 10px;
+}
+
+.context-room-emergence-card-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border: 1px solid color-mix(in srgb, var(--cr-blue) 30%, transparent);
+  border-radius: 7px;
+  background: var(--cr-blue-soft);
+  color: var(--cr-blue);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.context-room-emergence-card-primary:hover {
+  border-color: var(--cr-blue);
+}
+
+.context-room-emergence-card-primary svg {
+  width: 12px;
+  height: 12px;
+}
+
+.context-room-thoughts-degraded {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 6px 12px;
+  color: var(--cr-tertiary);
+  font-size: 11px;
+}
+
+.context-room-thoughts-pinned {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  gap: 6px;
+  border-top: 1px solid var(--cr-border);
+  padding: 8px 12px;
+  background: var(--cr-surface);
+}
+
+.context-room-thoughts-pinned-item {
+  overflow: hidden;
+  max-width: 200px;
+  padding: 3px 9px;
+  border: 1px solid var(--cr-border);
+  border-radius: 999px;
+  background: var(--cr-surface-secondary);
+  color: var(--cr-muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-room-thoughts-entry {
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: center;
+  padding: 10px 12px 14px;
+  border-top: 1px solid var(--cr-border);
+}
+
+.context-room-thoughts-entry button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 18px;
+  border: 1px dashed color-mix(in srgb, var(--cr-blue) 40%, transparent);
+  border-radius: 999px;
+  background: none;
+  color: var(--cr-blue);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background var(--shell-motion-duration) var(--shell-motion-easing);
+}
+
+.context-room-thoughts-entry button:hover {
+  background: var(--cr-blue-soft);
+}
+
+.context-room-thoughts-entry svg {
+  width: 14px;
+  height: 14px;
+  animation: context-room-thoughts-breathe 2.8s ease-in-out infinite;
+}
+
+@keyframes context-room-thoughts-breathe {
+  50% { opacity: 0.55; transform: translateX(2px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .context-room-thoughts-world,
+  .context-room-thoughts-pane {
+    transition: none;
+  }
+
+  .context-room-emergence-card {
+    animation: none;
+  }
+
+  .context-room-thoughts-entry svg {
+    animation: none;
+  }
+}
+
+.context-room-thoughts-header-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.context-room-thoughts-view-toggle {
+  display: inline-flex;
+  overflow: hidden;
+  border: 1px solid var(--cr-border);
+  border-radius: 8px;
+  background: var(--cr-surface);
+}
+
+.context-room-thoughts-view-toggle button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--cr-tertiary);
+  cursor: pointer;
+}
+
+.context-room-thoughts-view-toggle button + button {
+  border-left: 1px solid var(--cr-border);
+}
+
+.context-room-thoughts-view-toggle button:hover {
+  color: var(--cr-muted);
+}
+
+.context-room-thoughts-view-toggle button.is-active {
+  background: var(--cr-blue-soft);
+  color: var(--cr-blue);
+}
+
+.context-room-thoughts-view-toggle svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* —— 思路板块（上图下卡）：工具条 + 图区常驻 —— */
+.context-room-thoughts-pane[data-variant='board'] {
+  display: flex;
+  flex-direction: column;
+}
+
+.context-room-thoughts-pane[data-variant='board'][data-mode='wander'] {
+  background: var(--cr-surface);
+}
+
+.context-room-thoughts-toolbar {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px 0;
+}
+
+.context-room-thoughts-seg {
+  display: inline-flex;
+  overflow: hidden;
+  border: 1px solid var(--cr-border);
+  border-radius: 8px;
+  background: var(--cr-surface);
+}
+
+.context-room-thoughts-seg button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 12px;
+  border: 0;
+  background: transparent;
+  color: var(--cr-muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.context-room-thoughts-seg button + button {
+  border-left: 1px solid var(--cr-border);
+}
+
+.context-room-thoughts-seg button:hover {
+  background: var(--cr-surface-hover);
+  color: var(--cr-text);
+}
+
+.context-room-thoughts-seg button.is-active {
+  background: var(--cr-blue-soft);
+  color: var(--cr-blue);
+  font-weight: 600;
+}
+
+.context-room-thoughts-seg svg {
+  width: 12px;
+  height: 12px;
+}
+
+.context-room-thoughts-toolbar-tools {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 6px;
+}
+
+.context-room-thoughts-toolbar-tools button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border: 1px solid var(--cr-border);
+  border-radius: 8px;
+  background: var(--cr-surface);
+  color: var(--cr-muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.context-room-thoughts-toolbar-tools button:hover {
+  background: var(--cr-surface-hover);
+  color: var(--cr-text);
+}
+
+.context-room-thoughts-toolbar-tools svg {
+  width: 12px;
+  height: 12px;
+}
+
+.context-room-thoughts-board-body {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 10px 12px 12px;
+}
+
+/* 画布右上角悬浮操作：缩小/放大/自适应/回中心 */
+.eg-canvas-tools {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  z-index: 7;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--cr-border);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--cr-surface) 88%, transparent);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  box-shadow: 0 1px 6px rgb(15 23 42 / 8%);
+}
+
+.eg-canvas-tools button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--cr-muted);
+  cursor: pointer;
+}
+
+.eg-canvas-tools button:hover {
+  background: var(--cr-surface-hover);
+  color: var(--cr-text);
+}
+
+.eg-canvas-tools svg {
+  width: 13px;
+  height: 13px;
+}
+
+/* 投影中骨架：胶囊节点 + 连线 + 提示语 */
+.eg-skeleton {
+  cursor: default;
+}
+
+.eg-skeleton-edges {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.eg-skeleton-edges path {
+  fill: none;
+  stroke: var(--cr-border-strong);
+  stroke-width: 1.5;
+}
+
+.eg-sk {
+  position: absolute;
+  width: 84px;
+  height: 28px;
+  transform: translate(-50%, -50%);
+  border: 1px solid var(--cr-border);
+  border-radius: 999px;
+  background: var(--cr-surface-secondary);
+  animation: eg-sk-shimmer 1.6s ease-in-out infinite;
+}
+
+.eg-sk.is-center {
+  width: 120px;
+  height: 40px;
+  border-color: color-mix(in srgb, var(--cr-blue) 35%, transparent);
+  background: var(--cr-blue-soft);
+}
+
+.eg-skeleton-hint {
+  position: absolute;
+  bottom: 16px;
+  left: 0;
+  right: 0;
+  margin: 0;
+  color: var(--cr-tertiary);
+  font-size: 12px;
+  text-align: center;
+}
+
+@keyframes eg-sk-shimmer {
+  50% { opacity: 0.55; }
+}
+
+
+/* 知识涌现图（聚焦树 + 漫步步进链）：布局坐标来自 treeLayout.ts 的尺寸常量，CSS 只管配色字体 */
+.context-room-thoughts-graph {
+  position: relative;
+  min-height: 0;
+  flex: 1;
+}
+
+.eg-viewport {
+  position: relative;
+  overflow: hidden;
+  width: 100%;
+  height: 100%;
+  border: 1px solid var(--cr-border);
+  border-radius: 12px;
+  background: var(--cr-canvas);
+  cursor: grab;
+  touch-action: none;
+}
+
+.eg-viewport:active {
+  cursor: grabbing;
+}
+
+.eg-viewport.eg-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: none;
+  color: var(--cr-tertiary);
+  font-size: 12px;
+}
+
+.eg-camera {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+
+.eg-edges {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 1px;
+  height: 1px;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.eg-edge {
+  fill: none;
+  stroke: var(--cr-border-strong);
+  stroke-width: 1.5;
+  /* 与节点 gsap 变形（300ms power3.out）同步的路径过渡 */
+  transition: d 300ms cubic-bezier(0.215, 0.61, 0.355, 1);
+}
+
+.eg-edge.is-return {
+  stroke: var(--cr-tertiary);
+  stroke-dasharray: 4 3;
+}
+
+.eg-edge.is-walked {
+  stroke: var(--cr-blue);
+}
+
+.eg-edge.is-next {
+  stroke: var(--cr-success);
+  stroke-dasharray: 5 4;
+}
+
+.eg-edge.is-bridge {
+  stroke: var(--cr-warning);
+}
+
+.eg-edge-label {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  padding: 1px 7px;
+  border: 1px solid var(--cr-border);
+  border-radius: 999px;
+  background: var(--cr-surface);
+  color: var(--cr-tertiary);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: nowrap;
+  pointer-events: none;
+  transition: left 300ms cubic-bezier(0.215, 0.61, 0.355, 1), top 300ms cubic-bezier(0.215, 0.61, 0.355, 1);
+}
+
+.eg-edge-label.is-walked {
+  color: var(--cr-blue);
+}
+
+.eg-edge-label.is-next {
+  color: var(--cr-success);
+}
+
+.eg-edge-label.is-bridge,
+.eg-edge-label.is-bridge em {
+  border-color: var(--cr-warning);
+  color: var(--cr-warning);
+}
+
+.eg-edge-label em {
+  font-style: normal;
+  opacity: 0.85;
+}
+
+.eg-node {
+  position: absolute;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px solid var(--cr-border-strong);
+  border-radius: 999px;
+  background: var(--cr-surface);
+  color: var(--cr-text);
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.eg-node::before {
+  content: '';
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--cr-icon-data);
+}
+
+.eg-node[data-kind='room']::before {
+  background: var(--cr-icon-room);
+}
+
+.eg-node[data-kind='entity']::before {
+  background: var(--cr-icon-people);
+}
+
+.eg-node[data-kind='document']::before {
+  background: var(--cr-icon-document);
+}
+
+.eg-node[data-kind='memory']::before {
+  background: var(--cr-icon-memory);
+}
+
+.eg-node[data-kind='wikiPage']::before {
+  background: var(--cr-icon-ai);
+}
+
+.eg-node:hover,
+.eg-node.is-selected {
+  border-color: var(--cr-blue);
+}
+
+.eg-node.is-selected {
+  box-shadow: 0 0 0 3px var(--cr-blue-soft);
+}
+
+.eg-node[data-role='center'] {
+  border-color: var(--cr-blue);
+  box-shadow: 0 0 0 3px var(--cr-blue-soft);
+  font-weight: 600;
+}
+
+.eg-node[data-role='return'] {
+  background: var(--cr-surface-sunken);
+  color: var(--cr-muted);
+}
+
+.eg-node[data-role='return']:hover {
+  border-color: var(--cr-blue);
+  color: var(--cr-text);
+}
+
+.eg-node .eg-node-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.eg-node .eg-node-plus {
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+  color: var(--cr-blue);
+}
+
+.eg-node .eg-node-return-icon {
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+  color: var(--cr-tertiary);
+}
+
+.eg-walk {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--cr-border-strong);
+  border-radius: 10px;
+  background: var(--cr-surface);
+  color: var(--cr-text);
+  font-size: 12px;
+  text-align: left;
+}
+
+button.eg-walk {
+  cursor: pointer;
+}
+
+.eg-walk header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.eg-walk-kind {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  color: var(--cr-tertiary);
+}
+
+.eg-walk-kind::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--cr-icon-data);
+}
+
+.eg-walk[data-kind='room'] .eg-walk-kind::before {
+  background: var(--cr-icon-room);
+}
+
+.eg-walk[data-kind='entity'] .eg-walk-kind::before {
+  background: var(--cr-icon-people);
+}
+
+.eg-walk[data-kind='document'] .eg-walk-kind::before {
+  background: var(--cr-icon-document);
+}
+
+.eg-walk[data-kind='memory'] .eg-walk-kind::before {
+  background: var(--cr-icon-memory);
+}
+
+.eg-walk[data-kind='wikiPage'] .eg-walk-kind::before {
+  background: var(--cr-icon-ai);
+}
+
+.eg-walk-bridge {
+  padding: 0 5px;
+  border: 1px solid var(--cr-warning);
+  border-radius: 999px;
+  color: var(--cr-warning);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.eg-walk strong {
+  display: -webkit-box;
+  overflow: hidden;
+  font-size: 13px;
+  line-height: 1.3;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.eg-walk p {
+  display: -webkit-box;
+  overflow: hidden;
+  margin: 0;
+  color: var(--cr-tertiary);
+  font-size: 11px;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.eg-walk.is-current {
+  border-color: var(--cr-blue);
+  background: var(--cr-blue-soft);
+  box-shadow: 0 0 0 3px var(--cr-blue-soft);
+}
+
+.eg-walk.is-prev {
+  border-color: var(--cr-border);
+  background: var(--cr-surface-sunken);
+}
+
+button.eg-walk.is-prev:hover,
+button.eg-walk.is-next:hover {
+  border-color: var(--cr-blue);
+}
+
+button.eg-walk.is-next:hover {
+  box-shadow: 0 0 0 3px var(--cr-success-soft);
+  border-color: var(--cr-success);
+}
+
+.eg-walk.is-next {
+  border: 1px dashed var(--cr-success);
+}
+
+.eg-walk.is-stuck {
+  align-items: flex-start;
+  justify-content: center;
+  gap: 8px;
+  border: 1px dashed var(--cr-border-strong);
+  background: none;
+}
+
+.eg-walk.is-stuck p {
+  color: var(--cr-tertiary);
+  font-size: 11px;
+}
+
+.eg-walk.is-stuck button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border: 1px solid var(--cr-border);
+  border-radius: 6px;
+  background: var(--cr-surface);
+  color: var(--cr-text);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.eg-walk.is-stuck button:hover {
+  border-color: var(--cr-blue);
+  color: var(--cr-blue);
+}
+
+.eg-walk.is-stuck svg {
+  width: 12px;
+  height: 12px;
+}
+
+.eg-ghosts {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+}
+
+.eg-node.is-exiting,
+.eg-walk.is-exiting,
+.eg-edge.is-exiting,
+.eg-edge-label.is-exiting {
+  transition: none;
+}
+
+/* 节点详情卡：图区底部悬浮（毛玻璃、可折叠成只剩标题条） */
+.eg-strip {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  left: 12px;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  max-height: 46%;
+  overflow-y: auto;
+  padding: 12px 14px;
+  border: 1px solid var(--cr-border);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--cr-surface) 88%, transparent);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  box-shadow: 0 -2px 18px rgb(15 23 42 / 10%);
+}
+
+.eg-strip.is-collapsed {
+  max-height: none;
+  overflow: hidden;
+  padding: 8px 12px;
+}
+
+.eg-strip-bar {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.eg-strip-bar strong {
+  flex: 1 1 auto;
+  overflow: hidden;
+  color: var(--cr-text);
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.eg-strip-fold {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--cr-tertiary);
+  cursor: pointer;
+}
+
+.eg-strip-fold:hover {
+  background: var(--cr-surface-hover);
+  color: var(--cr-muted);
+}
+
+.eg-strip-fold svg {
+  width: 14px;
+  height: 14px;
+}
+
+.eg-strip blockquote {
+  margin: 8px 0 0;
+  padding: 8px 12px;
+  border-left: 3px solid var(--cr-blue);
+  border-radius: 0 8px 8px 0;
+  background: var(--cr-blue-soft);
+  color: var(--cr-text);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.eg-strip p {
+  margin: 8px 0 0;
+  color: var(--cr-muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.eg-strip-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 10px;
+}
+
+.eg-strip-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border: 1px solid var(--cr-border);
+  border-radius: 7px;
+  background: none;
+  color: var(--cr-muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.eg-strip-actions button:hover {
+  border-color: var(--cr-blue);
+  color: var(--cr-blue);
+}
+
+.eg-strip-actions button.is-primary {
+  border-color: var(--cr-blue);
+  background: var(--cr-blue);
+  color: var(--cr-surface);
+}
+
+.eg-strip-actions button.is-primary:hover {
+  opacity: 0.9;
+}
+
+.eg-strip-actions svg {
+  width: 13px;
+  height: 13px;
+}
+
+.context-room-thoughts-level-nav {
+  display: inline-flex;
+  overflow: hidden;
+  border: 1px solid var(--cr-border);
+  border-radius: 8px;
+  background: var(--cr-surface);
+}
+
+.context-room-thoughts-level-nav button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--cr-tertiary);
+  cursor: pointer;
+}
+
+.context-room-thoughts-level-nav button + button {
+  border-left: 1px solid var(--cr-border);
+}
+
+.context-room-thoughts-level-nav button:hover:not(:disabled) {
+  color: var(--cr-blue);
+}
+
+.context-room-thoughts-level-nav button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.context-room-thoughts-level-nav svg {
+  width: 14px;
+  height: 14px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .eg-edge,
+  .eg-edge-label {
+    transition: none;
+  }
+}
+
+.context-room-thoughts-pane[data-variant='companion'] .context-room-thoughts-entry {
+  padding: 8px 10px 10px;
+}
+
+.context-room-workspace-editor {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.context-room-workspace-editor > * {
+  flex: 1;
+  min-height: 0;
+}
+
+.context-room-thoughts-pinned-item {
+  animation: context-room-emergence-card-in 240ms var(--shell-motion-easing) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .context-room-thoughts-pinned-item {
+    animation: none;
+  }
+}
