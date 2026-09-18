@@ -490,13 +490,17 @@ export class DocumentImportService {
     provider: ExternalDocumentProvider,
     connectionName?: string,
   ): ExternalDocumentListResponse | null {
+    // 不带 connectionName 的调用方（数据源卡片汇总）：docs 连接单槽位，
+    // 按 provider 取最近一行——否则用 "" 查永远 miss 真实连接名写入的
+    // 缓存，卡片"已导入"恒为 0 占位。
     const row = this.db
       .select()
       .from(documentImportListCache)
       .where(and(
         eq(documentImportListCache.provider, provider),
-        eq(documentImportListCache.connectionName, connectionName ?? ""),
+        ...(connectionName ? [eq(documentImportListCache.connectionName, connectionName)] : []),
       ))
+      .orderBy(desc(documentImportListCache.fetchedAt))
       .get();
     if (!row) return null;
     const items = this.markImported(provider, row.itemsJson);
