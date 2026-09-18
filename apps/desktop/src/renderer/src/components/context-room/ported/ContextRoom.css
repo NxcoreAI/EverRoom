@@ -14622,14 +14622,729 @@
   height: 14px;
 }
 
-.context-room-thoughts-vein {
+/* —— 思路板块（上图下卡）：工具条 + 图区常驻 —— */
+.context-room-thoughts-pane[data-variant='board'] {
+  display: flex;
+  flex-direction: column;
+}
+
+.context-room-thoughts-pane[data-variant='board'][data-mode='wander'] {
+  background: var(--cr-surface);
+}
+
+.context-room-thoughts-toolbar {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px 0;
+}
+
+.context-room-thoughts-seg {
+  display: inline-flex;
+  overflow: hidden;
+  border: 1px solid var(--cr-border);
+  border-radius: 8px;
+  background: var(--cr-surface);
+}
+
+.context-room-thoughts-seg button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 12px;
+  border: 0;
+  background: transparent;
+  color: var(--cr-muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.context-room-thoughts-seg button + button {
+  border-left: 1px solid var(--cr-border);
+}
+
+.context-room-thoughts-seg button:hover {
+  background: var(--cr-surface-hover);
+  color: var(--cr-text);
+}
+
+.context-room-thoughts-seg button.is-active {
+  background: var(--cr-blue-soft);
+  color: var(--cr-blue);
+  font-weight: 600;
+}
+
+.context-room-thoughts-seg svg {
+  width: 12px;
+  height: 12px;
+}
+
+.context-room-thoughts-toolbar-tools {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 6px;
+}
+
+.context-room-thoughts-toolbar-tools button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border: 1px solid var(--cr-border);
+  border-radius: 8px;
+  background: var(--cr-surface);
+  color: var(--cr-muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.context-room-thoughts-toolbar-tools button:hover {
+  background: var(--cr-surface-hover);
+  color: var(--cr-text);
+}
+
+.context-room-thoughts-toolbar-tools svg {
+  width: 12px;
+  height: 12px;
+}
+
+.context-room-thoughts-board-body {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 10px 12px 12px;
+}
+
+/* 画布右上角悬浮操作：缩小/放大/自适应/回中心 */
+.eg-canvas-tools {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  z-index: 7;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--cr-border);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--cr-surface) 88%, transparent);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  box-shadow: 0 1px 6px rgb(15 23 42 / 8%);
+}
+
+.eg-canvas-tools button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--cr-muted);
+  cursor: pointer;
+}
+
+.eg-canvas-tools button:hover {
+  background: var(--cr-surface-hover);
+  color: var(--cr-text);
+}
+
+.eg-canvas-tools svg {
+  width: 13px;
+  height: 13px;
+}
+
+/* 投影中骨架：胶囊节点 + 连线 + 提示语 */
+.eg-skeleton {
+  cursor: default;
+}
+
+.eg-skeleton-edges {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.eg-skeleton-edges path {
+  fill: none;
+  stroke: var(--cr-border-strong);
+  stroke-width: 1.5;
+}
+
+.eg-sk {
+  position: absolute;
+  width: 84px;
+  height: 28px;
+  transform: translate(-50%, -50%);
+  border: 1px solid var(--cr-border);
+  border-radius: 999px;
+  background: var(--cr-surface-secondary);
+  animation: eg-sk-shimmer 1.6s ease-in-out infinite;
+}
+
+.eg-sk.is-center {
+  width: 120px;
+  height: 40px;
+  border-color: color-mix(in srgb, var(--cr-blue) 35%, transparent);
+  background: var(--cr-blue-soft);
+}
+
+.eg-skeleton-hint {
+  position: absolute;
+  bottom: 16px;
+  left: 0;
+  right: 0;
+  margin: 0;
+  color: var(--cr-tertiary);
+  font-size: 12px;
+  text-align: center;
+}
+
+@keyframes eg-sk-shimmer {
+  50% { opacity: 0.55; }
+}
+
+
+/* 知识涌现图（聚焦树 + 漫步步进链）：布局坐标来自 treeLayout.ts 的尺寸常量，CSS 只管配色字体 */
+.context-room-thoughts-graph {
+  position: relative;
   min-height: 0;
   flex: 1;
 }
 
-.context-room-thoughts-vein .context-room-graph-shell {
+.eg-viewport {
+  position: relative;
+  overflow: hidden;
   width: 100%;
   height: 100%;
+  border: 1px solid var(--cr-border);
+  border-radius: 12px;
+  background: var(--cr-canvas);
+  cursor: grab;
+  touch-action: none;
+}
+
+.eg-viewport:active {
+  cursor: grabbing;
+}
+
+.eg-viewport.eg-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: none;
+  color: var(--cr-tertiary);
+  font-size: 12px;
+}
+
+.eg-camera {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+
+.eg-edges {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 1px;
+  height: 1px;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.eg-edge {
+  fill: none;
+  stroke: var(--cr-border-strong);
+  stroke-width: 1.5;
+  /* 与节点 gsap 变形（300ms power3.out）同步的路径过渡 */
+  transition: d 300ms cubic-bezier(0.215, 0.61, 0.355, 1);
+}
+
+.eg-edge.is-return {
+  stroke: var(--cr-tertiary);
+  stroke-dasharray: 4 3;
+}
+
+.eg-edge.is-walked {
+  stroke: var(--cr-blue);
+}
+
+.eg-edge.is-next {
+  stroke: var(--cr-success);
+  stroke-dasharray: 5 4;
+}
+
+.eg-edge.is-bridge {
+  stroke: var(--cr-warning);
+}
+
+.eg-edge-label {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  padding: 1px 7px;
+  border: 1px solid var(--cr-border);
+  border-radius: 999px;
+  background: var(--cr-surface);
+  color: var(--cr-tertiary);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: nowrap;
+  pointer-events: none;
+  transition: left 300ms cubic-bezier(0.215, 0.61, 0.355, 1), top 300ms cubic-bezier(0.215, 0.61, 0.355, 1);
+}
+
+.eg-edge-label.is-walked {
+  color: var(--cr-blue);
+}
+
+.eg-edge-label.is-next {
+  color: var(--cr-success);
+}
+
+.eg-edge-label.is-bridge,
+.eg-edge-label.is-bridge em {
+  border-color: var(--cr-warning);
+  color: var(--cr-warning);
+}
+
+.eg-edge-label em {
+  font-style: normal;
+  opacity: 0.85;
+}
+
+.eg-node {
+  position: absolute;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px solid var(--cr-border-strong);
+  border-radius: 999px;
+  background: var(--cr-surface);
+  color: var(--cr-text);
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.eg-node::before {
+  content: '';
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--cr-icon-data);
+}
+
+.eg-node[data-kind='room']::before {
+  background: var(--cr-icon-room);
+}
+
+.eg-node[data-kind='entity']::before {
+  background: var(--cr-icon-people);
+}
+
+.eg-node[data-kind='document']::before {
+  background: var(--cr-icon-document);
+}
+
+.eg-node[data-kind='memory']::before {
+  background: var(--cr-icon-memory);
+}
+
+.eg-node[data-kind='wikiPage']::before {
+  background: var(--cr-icon-ai);
+}
+
+.eg-node:hover,
+.eg-node.is-selected {
+  border-color: var(--cr-blue);
+}
+
+.eg-node.is-selected {
+  box-shadow: 0 0 0 3px var(--cr-blue-soft);
+}
+
+.eg-node[data-role='center'] {
+  border-color: var(--cr-blue);
+  box-shadow: 0 0 0 3px var(--cr-blue-soft);
+  font-weight: 600;
+}
+
+.eg-node[data-role='return'] {
+  background: var(--cr-surface-sunken);
+  color: var(--cr-muted);
+}
+
+.eg-node[data-role='return']:hover {
+  border-color: var(--cr-blue);
+  color: var(--cr-text);
+}
+
+.eg-node .eg-node-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.eg-node .eg-node-plus {
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+  color: var(--cr-blue);
+}
+
+.eg-node .eg-node-return-icon {
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+  color: var(--cr-tertiary);
+}
+
+.eg-walk {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--cr-border-strong);
+  border-radius: 10px;
+  background: var(--cr-surface);
+  color: var(--cr-text);
+  font-size: 12px;
+  text-align: left;
+}
+
+button.eg-walk {
+  cursor: pointer;
+}
+
+.eg-walk header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.eg-walk-kind {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  color: var(--cr-tertiary);
+}
+
+.eg-walk-kind::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--cr-icon-data);
+}
+
+.eg-walk[data-kind='room'] .eg-walk-kind::before {
+  background: var(--cr-icon-room);
+}
+
+.eg-walk[data-kind='entity'] .eg-walk-kind::before {
+  background: var(--cr-icon-people);
+}
+
+.eg-walk[data-kind='document'] .eg-walk-kind::before {
+  background: var(--cr-icon-document);
+}
+
+.eg-walk[data-kind='memory'] .eg-walk-kind::before {
+  background: var(--cr-icon-memory);
+}
+
+.eg-walk[data-kind='wikiPage'] .eg-walk-kind::before {
+  background: var(--cr-icon-ai);
+}
+
+.eg-walk-bridge {
+  padding: 0 5px;
+  border: 1px solid var(--cr-warning);
+  border-radius: 999px;
+  color: var(--cr-warning);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.eg-walk strong {
+  display: -webkit-box;
+  overflow: hidden;
+  font-size: 13px;
+  line-height: 1.3;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.eg-walk p {
+  display: -webkit-box;
+  overflow: hidden;
+  margin: 0;
+  color: var(--cr-tertiary);
+  font-size: 11px;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.eg-walk.is-current {
+  border-color: var(--cr-blue);
+  background: var(--cr-blue-soft);
+  box-shadow: 0 0 0 3px var(--cr-blue-soft);
+}
+
+.eg-walk.is-prev {
+  border-color: var(--cr-border);
+  background: var(--cr-surface-sunken);
+}
+
+button.eg-walk.is-prev:hover,
+button.eg-walk.is-next:hover {
+  border-color: var(--cr-blue);
+}
+
+button.eg-walk.is-next:hover {
+  box-shadow: 0 0 0 3px var(--cr-success-soft);
+  border-color: var(--cr-success);
+}
+
+.eg-walk.is-next {
+  border: 1px dashed var(--cr-success);
+}
+
+.eg-walk.is-stuck {
+  align-items: flex-start;
+  justify-content: center;
+  gap: 8px;
+  border: 1px dashed var(--cr-border-strong);
+  background: none;
+}
+
+.eg-walk.is-stuck p {
+  color: var(--cr-tertiary);
+  font-size: 11px;
+}
+
+.eg-walk.is-stuck button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border: 1px solid var(--cr-border);
+  border-radius: 6px;
+  background: var(--cr-surface);
+  color: var(--cr-text);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.eg-walk.is-stuck button:hover {
+  border-color: var(--cr-blue);
+  color: var(--cr-blue);
+}
+
+.eg-walk.is-stuck svg {
+  width: 12px;
+  height: 12px;
+}
+
+.eg-ghosts {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+}
+
+.eg-node.is-exiting,
+.eg-walk.is-exiting,
+.eg-edge.is-exiting,
+.eg-edge-label.is-exiting {
+  transition: none;
+}
+
+/* 节点详情卡：图区底部悬浮（毛玻璃、可折叠成只剩标题条） */
+.eg-strip {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  left: 12px;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  max-height: 46%;
+  overflow-y: auto;
+  padding: 12px 14px;
+  border: 1px solid var(--cr-border);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--cr-surface) 88%, transparent);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  box-shadow: 0 -2px 18px rgb(15 23 42 / 10%);
+}
+
+.eg-strip.is-collapsed {
+  max-height: none;
+  overflow: hidden;
+  padding: 8px 12px;
+}
+
+.eg-strip-bar {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.eg-strip-bar strong {
+  flex: 1 1 auto;
+  overflow: hidden;
+  color: var(--cr-text);
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.eg-strip-fold {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--cr-tertiary);
+  cursor: pointer;
+}
+
+.eg-strip-fold:hover {
+  background: var(--cr-surface-hover);
+  color: var(--cr-muted);
+}
+
+.eg-strip-fold svg {
+  width: 14px;
+  height: 14px;
+}
+
+.eg-strip blockquote {
+  margin: 8px 0 0;
+  padding: 8px 12px;
+  border-left: 3px solid var(--cr-blue);
+  border-radius: 0 8px 8px 0;
+  background: var(--cr-blue-soft);
+  color: var(--cr-text);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.eg-strip p {
+  margin: 8px 0 0;
+  color: var(--cr-muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.eg-strip-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 10px;
+}
+
+.eg-strip-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border: 1px solid var(--cr-border);
+  border-radius: 7px;
+  background: none;
+  color: var(--cr-muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.eg-strip-actions button:hover {
+  border-color: var(--cr-blue);
+  color: var(--cr-blue);
+}
+
+.eg-strip-actions button.is-primary {
+  border-color: var(--cr-blue);
+  background: var(--cr-blue);
+  color: var(--cr-surface);
+}
+
+.eg-strip-actions button.is-primary:hover {
+  opacity: 0.9;
+}
+
+.eg-strip-actions svg {
+  width: 13px;
+  height: 13px;
+}
+
+.context-room-thoughts-level-nav {
+  display: inline-flex;
+  overflow: hidden;
+  border: 1px solid var(--cr-border);
+  border-radius: 8px;
+  background: var(--cr-surface);
+}
+
+.context-room-thoughts-level-nav button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--cr-tertiary);
+  cursor: pointer;
+}
+
+.context-room-thoughts-level-nav button + button {
+  border-left: 1px solid var(--cr-border);
+}
+
+.context-room-thoughts-level-nav button:hover:not(:disabled) {
+  color: var(--cr-blue);
+}
+
+.context-room-thoughts-level-nav button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.context-room-thoughts-level-nav svg {
+  width: 14px;
+  height: 14px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .eg-edge,
+  .eg-edge-label {
+    transition: none;
+  }
 }
 
 .context-room-thoughts-pane[data-variant='companion'] .context-room-thoughts-entry {

@@ -63,10 +63,17 @@ export function useEmergence({ roomId, focus, debounceMs = 1500, locked = false 
     }
   }, [roomId, focus]);
 
-  // 锁定时冻结投影：焦点行仍跟随显示，卡片不随外部焦点变化重排
+  // 锁定时冻结投影：焦点行仍跟随显示，卡片不随外部焦点变化重排。
+  // 首次投影立即发出（面板打开即取数）；后续焦点变化走防抖，连续编辑不打点。
   const focusKey = `${focus.documentId ?? ''} ${focus.selectionText ?? ''} ${focus.blockId ?? ''}`;
+  const initialRef = useRef<string | null>(null);
   useEffect(() => {
     if (locked) return;
+    if (initialRef.current !== roomId) {
+      initialRef.current = roomId;
+      void request('focus');
+      return;
+    }
     const timer = window.setTimeout(() => { void request('focus'); }, debounceMs);
     return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -1,17 +1,21 @@
-import { Footprints, ListTree, Lock, LockOpen, Network, RotateCcw, Sparkles, Undo2 } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { ChevronLeft, ChevronRight, Footprints, ListTree, Lock, LockOpen, Network, RotateCcw, Sparkles, Undo2 } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
 
 import { useLocale } from '../../../../../i18n/LocaleContext';
-import type { EmergenceCardDto, EmergenceMode } from '../../../../../../../shared/knowledge';
+import type { EmergenceCardDto, EmergenceMode, EmergenceProjectionResultDto } from '../../../../../../../shared/knowledge';
 import type { ContextRoomRecord } from '../../types';
 import { useEmergence } from '../../hooks/useEmergence';
-import { VeinGraphCanvas } from '../VeinGraphCanvas';
+import { FocusTreeCanvas } from '../emergence-graph/FocusTreeCanvas';
+import { WalkJourneyCanvas } from '../emergence-graph/WalkJourneyCanvas';
+import { resolveCenter } from '../emergence-graph/focusTreeModel';
+import { backWalk, initialWalkLog, stepWalk, type WalkStation } from '../emergence-graph/walkModel';
 import { EmergenceCard } from './EmergenceCard';
 
 /**
  * 思路面板 · 知识涌现：聚焦=默认态（随焦点增量更新）；漫步=底部入口进入的
  * 独立态（两个世界，整屏交叉过渡），再走一次=新 seed、沿此漫步=换起点。
  * 模式是临时态：不进 localStorage，重进面板落在聚焦。
+ * 图视图：聚焦=树状导图（钻取历史栈在组件上提）；漫步=步进链（walkLog 随结果身份重置）。
  */
 export function ThoughtsPane({
   room,
@@ -31,17 +35,22 @@ export function ThoughtsPane({
   focusSelectionText?: string | null;
   onQuote?: (card: EmergenceCardDto) => void;
   /** 视图切换回调（伴随区据此扩展/收缩列宽）。 */
-  onViewChange?: (view: 'cards' | 'vein') => void;
+  onViewChange?: (view: 'cards' | 'graph') => void;
 }) {
   const { t } = useLocale();
   const [mode, setMode] = useState<EmergenceMode>('focus');
-  const [view, setView] = useState<'cards' | 'vein'>('cards');
+  const [view, setView] = useState<'cards' | 'graph'>('cards');
   const [locked, setLocked] = useState(false);
   const [pinned, setPinned] = useState<EmergenceCardDto[]>([]);
   const [hiddenFocus, setHiddenFocus] = useState<Set<string>>(() => new Set());
   const [hiddenWander, setHiddenWander] = useState<Set<string>>(() => new Set());
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [wanderStart, setWanderStart] = useState<{ nodeRef: string | null; label: string } | null>(null);
+
+  const focusCenterRef = focusDocumentId ? `doc:${focusDocumentId}` : `room:${room.id}`;
+  const [focusPath, setFocusPath] = useState<{ stack: string[]; index: number }>(() => ({ stack: [focusCenterRef], index: 0 }));
+  const [selectedNodeRef, setSelectedNodeRef] = useState<string | null>(null);
+  const [walkLog, setWalkLog] = useState<WalkStation[]>([]);
 
   const selectionText = focusSelectionText ? focusSelectionText.slice(0, 300) : null;
   const focusInput = useMemo(() => ({
@@ -87,12 +96,31 @@ export function ThoughtsPane({
   };
 
   const wanderLabel = wanderStart?.label ?? focusLabel;
-  const focusCenterRef = focusDocumentId ? `doc:${focusDocumentId}` : `room:${room.id}`;
   const expandedCard = expandedId === null
     ? null
     : (mode === 'focus' ? focusResult?.cards : wanderResult?.cards)?.find((card) => card.id === expandedId) ?? null;
 
-  // 点脉络节点=切回卡片流并展开同一候选卡；卡片展开的 nodeRef 反向高亮脉络节点
+  // 焦点源变化（换文档/选区/房间）=重置钻取历史与图内选中
+  useEffect(() => {
+    setFocusPath((p) => (p.stack[p.index] === focusCenterRef ? p : { stack: [focusCenterRef], index: 0 }));
+    setSelectedNodeRef(null);
+  }, [focusCenterRef]);
+
+  // 新的漫步结果=新的路：渲染期重置（无空帧），视图切换不丢。
+  // 上一次结果必须存 state（存 ref 会在严格模式双渲染下丢重置：首跑改了 ref，次跑看不到变化）。
+  const [prevWanderResult, setPrevWanderResult] = useState<EmergenceProjectionResultDto | null>(null);
+  if (wanderResult !== prevWanderResult) {
+    setPrevWanderResult(wanderResult);
+    const start = wanderResult && wanderResult.nodes.length > 0
+      ? resolveCenter(wanderResult, wanderStart?.nodeRef ?? focusCenterRef)
+      : '';
+    const reset: WalkStation[] = start ? initialWalkLog(start) : [];
+    if (walkLog.length !== reset.length || (reset.length > 0 && walkLog[0].nodeRef !== reset[0].nodeRef)) {
+      setWalkLog(reset);
+    }
+  }
+
+  // 点图节点=切回卡片流并展开同一候选卡；卡片展开的 nodeRef 反向高亮图节点
   const openCardAtNode = (nodeRef: string) => {
     const card = (mode === 'focus' ? focusResult?.cards : wanderResult?.cards)
       ?.find((candidate) => candidate.nodeRef === nodeRef);
@@ -101,10 +129,39 @@ export function ThoughtsPane({
     setExpandedId(card.id);
   };
 
-  const switchView = (next: 'cards' | 'vein') => {
+  const switchView = (next: 'cards' | 'graph') => {
     setView(next);
     onViewChange?.(next);
   };
+
+  const drillTo = (nodeRef: string) => {
+    setFocusPath((p) => {
+      if (p.stack[p.index] === nodeRef) return p;
+      const stack = p.stack.slice(0, p.index + 1);
+      stack.push(nodeRef);
+      return { stack, index: stack.length - 1 };
+    });
+    setSelectedNodeRef(null);
+  };
+
+  const goBackLevel = () => setFocusPath((p) => ({ ...p, index: Math.max(0, p.index - 1) }));
+  const goForwardLevel = () => setFocusPath((p) => ({ ...p, index: Math.min(p.stack.length - 1, p.index + 1) }));
+
+  const selectGraphNode = (nodeRef: string | null) => {
+    setSelectedNodeRef(nodeRef);
+    if (nodeRef !== null) setExpandedId(null);
+  };
+
+  const walkStep = (nodeRef: string) => {
+    if (!wanderResult) return;
+    setWalkLog((log) => stepWalk(wanderResult, room.id, log, nodeRef) ?? log);
+  };
+
+  const walkBackTo = (index: number) => setWalkLog((log) => backWalk(log, index));
+
+  const focusCenter = resolveCenter(focusResult, focusPath.stack[focusPath.index] ?? focusCenterRef);
+  const focusReturnRef = focusPath.index > 0 ? focusPath.stack[focusPath.index - 1] : null;
+  const graphSelectedNode = expandedCard?.nodeRef ?? selectedNodeRef;
 
   const viewToggle = (
     <div className="context-room-thoughts-view-toggle" role="tablist" aria-label={t('contextRoom:emergence.viewToggle')}>
@@ -121,29 +178,14 @@ export function ThoughtsPane({
       <button
         type="button"
         role="tab"
-        aria-selected={view === 'vein'}
-        className={view === 'vein' ? 'is-active' : ''}
+        aria-selected={view === 'graph'}
+        className={view === 'graph' ? 'is-active' : ''}
         title={t('contextRoom:emergence.viewVein')}
-        onClick={() => switchView('vein')}
+        onClick={() => switchView('graph')}
       >
         <Network aria-hidden="true" />
       </button>
     </div>
-  );
-
-  const veinOf = (result: typeof focusResult, centerRef: string) => (
-    result && result.nodes.length > 0 ? (
-      <div className="context-room-thoughts-vein">
-        <VeinGraphCanvas
-          result={result}
-          centerNodeRef={centerRef}
-          selectedNodeRef={view === 'vein' ? (expandedCard?.nodeRef ?? null) : null}
-          onSelectNode={openCardAtNode}
-        />
-      </div>
-    ) : (
-      <div className="context-room-workspace-empty">{t('contextRoom:emergence.veinEmpty')}</div>
-    )
   );
 
   return (
@@ -156,6 +198,28 @@ export function ThoughtsPane({
             <strong>{focusLabel}</strong>
           </div>
           <div className="context-room-thoughts-header-actions">
+            {view === 'graph' ? (
+              <div className="context-room-thoughts-level-nav">
+                <button
+                  type="button"
+                  disabled={focusPath.index === 0}
+                  title={t('contextRoom:emergence.treeBack')}
+                  aria-label={t('contextRoom:emergence.treeBack')}
+                  onClick={goBackLevel}
+                >
+                  <ChevronLeft aria-hidden="true" />
+                </button>
+                <button
+                  type="button"
+                  disabled={focusPath.index >= focusPath.stack.length - 1}
+                  title={t('contextRoom:emergence.treeForward')}
+                  aria-label={t('contextRoom:emergence.treeForward')}
+                  onClick={goForwardLevel}
+                >
+                  <ChevronRight aria-hidden="true" />
+                </button>
+              </div>
+            ) : null}
             {viewToggle}
             <button
               type="button"
@@ -193,7 +257,24 @@ export function ThoughtsPane({
               <div className="context-room-workspace-empty">{t('contextRoom:emergence.projecting')}</div>
             ) : null}
           </div>
-        ) : veinOf(focusResult, focusCenterRef)}
+        ) : focusResult && focusResult.nodes.length > 0 ? (
+          <div className="context-room-thoughts-graph">
+            <FocusTreeCanvas
+              result={focusResult}
+              centerRef={focusCenter}
+              returnRef={focusReturnRef}
+              selectedNodeRef={graphSelectedNode}
+              cards={visibleFocusCards}
+              onDrill={drillTo}
+              onGoBack={goBackLevel}
+              onSelectNode={selectGraphNode}
+              onOpenCard={openCardAtNode}
+              onCardAction={quoteCard}
+            />
+          </div>
+        ) : (
+          <div className="context-room-workspace-empty">{t('contextRoom:emergence.veinEmpty')}</div>
+        )}
         {focusResult?.degraded ? (
           <p className="context-room-thoughts-degraded">{t('contextRoom:emergence.degraded')}</p>
         ) : null}
@@ -259,7 +340,21 @@ export function ThoughtsPane({
               <div className="context-room-workspace-empty">{t('contextRoom:emergence.wandering')}</div>
             ) : null}
           </div>
-        ) : veinOf(wanderResult, wanderStart?.nodeRef ?? focusCenterRef)}
+        ) : wanderResult && wanderResult.nodes.length > 0 ? (
+          <div className="context-room-thoughts-graph">
+            <WalkJourneyCanvas
+              result={wanderResult}
+              roomId={room.id}
+              log={walkLog}
+              cards={visibleWanderCards}
+              onStep={walkStep}
+              onBackTo={walkBackTo}
+              onWalkAgain={() => wanderFrom(wanderStart?.nodeRef ?? null)}
+            />
+          </div>
+        ) : (
+          <div className="context-room-workspace-empty">{t('contextRoom:emergence.veinEmpty')}</div>
+        )}
       </div>
     </div>
   );
