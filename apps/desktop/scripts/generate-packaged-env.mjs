@@ -21,6 +21,11 @@ const names = [
   'NXCORE_NANGO_OUTLOOK_CONFIG_KEY',
   'NXCORE_BROWSER_EXTENSION_STORE_URL',
   'NXCORE_BROWSER_EXTENSION_ID',
+]
+
+// 可选打包变量：缺失时跳过（不阻断构建），运行时各自有缺省行为
+// （channel 缺省 stable；fallback 缺省跳过备源降级）。
+const optionalNames = [
   'NXCORE_UPDATE_CHANNEL',
   'NXCORE_UPDATE_FALLBACK_URL',
 ]
@@ -32,7 +37,12 @@ const value = (name) => process.env[name].replace(/^"(.*)"$/, '$1')
 const missing = names.filter((name) => !process.env[name])
 if (missing.length) throw new Error(`Missing packaged environment variables: ${missing.join(', ')}`)
 
+const entries = [
+  ...names.map((name) => [name, value(name)]),
+  ...optionalNames.filter((name) => process.env[name]).map((name) => [name, value(name)]),
+]
+
 const output = resolve(process.cwd(), 'build', 'packaged-env.json')
 await mkdir(dirname(output), { recursive: true })
-await writeFile(output, `${JSON.stringify(Object.fromEntries(names.map((name) => [name, value(name)])), null, 2)}\n`)
-console.log(`Wrote ${names.length} packaged environment variables to ${output}`)
+await writeFile(output, `${JSON.stringify(Object.fromEntries(entries), null, 2)}\n`)
+console.log(`Wrote ${entries.length} packaged environment variables to ${output}`)
