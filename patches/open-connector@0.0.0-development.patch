@@ -1,8 +1,7 @@
 diff --git a/src/providers/feishu/definition.ts b/src/providers/feishu/definition.ts
-index 1b7486c0..6f746e3f 100644
 --- a/src/providers/feishu/definition.ts
 +++ b/src/providers/feishu/definition.ts
-@@ -4,9 +4,25 @@ import { feishuActions } from "./actions.ts";
+@@ -4,10 +4,26 @@ import { feishuActions } from "./actions.ts";
  import { feishuProviderScopes } from "./scopes.ts";
  
  const service = "feishu";
@@ -19,6 +18,7 @@ index 1b7486c0..6f746e3f 100644
 +// (drive listing, wiki tree, search, comments).
  const feishuOAuthScopes = [
    feishuProviderScopes.offlineAccess,
+   feishuProviderScopes.userIdRead,
 -  ...new Set(feishuActions.flatMap((action) => action.providerPermissions)),
 +  feishuProviderScopes.docxReadonly,
 +  feishuProviderScopes.bitableAppReadonly,
