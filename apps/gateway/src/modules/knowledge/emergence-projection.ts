@@ -254,17 +254,22 @@ function collectGraphFragments(
       const ref = path.nodeRefs[index]!;
       if (index > 0) {
         const previous = path.nodeRefs[index - 1]!;
-        const edge = edgeByEndpoints.get(`${previous}\n${ref}`);
-        if (edge) {
-          const edgeId = `edge:${sha(`${edge.from}\n${edge.to}\n${edge.relationType}`)}`;
+        // 路径声明了关联但图里没有真实边（如评分选中的事实直连房间）→ 按 hops 合成语义边，
+        // 保证返回的图谱片段连通，否则渲染层按边展开会丢节点
+        if (previous !== ref) {
+          const real = edgeByEndpoints.get(`${previous}\n${ref}`);
+          const from = real?.from ?? previous;
+          const to = real?.to ?? ref;
+          const relationType = real?.relationType ?? path.hops[index - 1]?.trim() ?? "关联";
+          const edgeId = `edge:${sha(`${from}\n${to}\n${relationType}`)}`;
           if (!edges.has(edgeId)) {
             edges.set(edgeId, {
               id: edgeId,
-              from: edge.from,
-              to: edge.to,
-              relationType: edge.relationType,
-              edgeLevel: edge.edgeLevel,
-              confidence: edge.confidence,
+              from,
+              to,
+              relationType,
+              edgeLevel: real?.edgeLevel ?? "semantic",
+              confidence: real?.confidence ?? null,
             });
           }
         }
