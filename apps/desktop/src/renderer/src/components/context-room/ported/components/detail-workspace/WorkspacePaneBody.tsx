@@ -1,9 +1,10 @@
 import type { RoomAppliedEntitySource, RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract';
 import type { ContextRoomRecord, ContextRoomResource, ContextRoomWikiPageResource } from '../../types';
-import type { KnowledgeFileDto } from '../../../../../../../shared/knowledge';
+import type { EmergenceCardDto, KnowledgeFileDto } from '../../../../../../../shared/knowledge';
 import type { BoardId, BoardSubtab } from '../RoomIconSidebar';
 import {
   ActivityPane,
+  ArtifactLibraryPane,
   LinkGraphPane,
   MaterialsPane,
   MemoryPane,
@@ -14,13 +15,15 @@ import {
   WikiPane,
   type WorkspaceObjectPreview,
 } from '../detail-panels';
-import { ResourceTree } from '../detail-panels/ResourcePanel';
 
 export function WorkspacePaneBody({
   board,
   subtab,
   room,
   selectedResourceId,
+  selectedResource,
+  selectionText,
+  onCompanionQuote,
   backendDocuments,
   trashedDocuments,
   knowledgeFiles,
@@ -47,6 +50,11 @@ export function WorkspacePaneBody({
   subtab: BoardSubtab | null;
   room: ContextRoomRecord;
   selectedResourceId: string | null;
+  selectedResource: ContextRoomResource | null;
+  /** 右区编辑器当前选区文本（伴随思路页签聚焦用）。 */
+  selectionText: string | null;
+  /** 伴随思路页签的「引用」：插回右区正在编辑的产物。 */
+  onCompanionQuote: (card: EmergenceCardDto) => void;
   backendDocuments: RoomDocument[];
   trashedDocuments: RoomDocument[];
   knowledgeFiles: KnowledgeFileDto[];
@@ -143,21 +151,32 @@ export function WorkspacePaneBody({
   }
 
   if (board === 'artifacts') {
+    // 伴随思路页签：中栏卡片流，焦点跟右区打开的产物，引用插回编辑器。
+    if (subtab === 'companion') {
+      const focusDoc = selectedResource?.kind === 'cloud-doc' ? selectedResource : null;
+      return (
+        <ThoughtsPane
+          variant="companion"
+          room={room}
+          focusDocumentId={focusDoc?.binding.docId ?? null}
+          focusDocumentTitle={focusDoc?.name ?? null}
+          focusSelectionText={selectionText}
+          onQuote={onCompanionQuote}
+        />
+      );
+    }
     // 产物库：仅用户在 EverRoom 创建的文档；外部导入归工作/资料。
     return (
-      <ResourceTree
+      <ArtifactLibraryPane
         room={room}
-        rooms={rooms}
         selectedId={selectedResourceId}
         backendDocuments={backendDocuments.filter((document) => document.origin === 'native')}
         trashedDocuments={trashedDocuments.filter((document) => document.origin === 'native')}
-        knowledgeFiles={[]}
         onSelect={onSelectResource}
         onCreateDocument={onCreateDocument}
         onDeleteDocument={onDeleteDocument}
         onRestoreDocument={onRestoreDocument}
         onDeleteDocumentPermanently={onDeleteDocumentPermanently}
-        onEmptyTrash={onEmptyTrash}
       />
     );
   }
@@ -205,6 +224,7 @@ export function WorkspacePaneBody({
       room={room}
       selectedResourceId={selectedResourceId}
       onOpenPage={onOpenWikiPage}
+      view={subtab === 'wikiGraph' ? 'graph' : 'tree'}
     />
   );
 }

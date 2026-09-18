@@ -1,12 +1,10 @@
 import type { RoomDocument } from '@nxcore/agent-contract';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { BookOpen, ChevronLeft, Ellipsis, FileDown, FileText, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
-import { useCallback, useRef, useState } from 'react';
+import { BookOpen, ChevronLeft, Ellipsis, FileDown, FileText } from 'lucide-react';
+import { useState } from 'react';
 import { useLocale } from '../../../../../i18n/LocaleContext';
 
-import { showToast } from '@/state/toast';
 import type { KnowledgeFileDto } from '../../../../../../../shared/knowledge';
-import { loadRoomWorkspaceState, saveRoomWorkspaceState } from '../../roomWorkspaceState';
 import { createContextRoomResourceLibrary } from '../../resources';
 import type { ContextRoomRecord, ContextRoomResource } from '../../types';
 import { ExternalImportDialog } from '../detail-editor/ExternalImportDialog';
@@ -15,7 +13,6 @@ import { DocumentContent } from '../detail-panels/DocumentPane';
 import { KnowledgeFileExternalCard } from '../detail-panels/KnowledgeFileExternalCard';
 import { KnowledgeFileReader } from '../detail-panels/KnowledgeFileReader';
 import { PanelEmptyState } from '../detail-panels/PanelEmptyState';
-import { ThoughtsPane } from '../detail-panels/ThoughtsPane';
 import { WikiPageReader } from '../detail-panels/WikiPageReader';
 import { isMarkdownFileName } from '../../../knowledgeMarkdownImport';
 
@@ -69,6 +66,8 @@ export function WorkspaceContent({
   documentFocusRequestId,
   onBackendDocumentChange,
   onDeleteDocument,
+  onSelectionTextChange,
+  registerQuoteInsert,
   onMobileBack,
   onUpdateRoom,
 }: {
@@ -81,6 +80,10 @@ export function WorkspaceContent({
   documentFocusRequestId: number | null;
   onBackendDocumentChange: (document: RoomDocument) => void;
   onDeleteDocument: (document: RoomDocument) => Promise<void>;
+  /** 编辑器选区文本上报（伴随思路页签聚焦用）。 */
+  onSelectionTextChange: (text: string | null) => void;
+  /** 伴随思路「引用」插入桥：编辑器挂载时注册。 */
+  registerQuoteInsert: (insert: (quote: { text: string; source: string }) => boolean) => () => void;
   onMobileBack: () => void;
   onUpdateRoom: (updater: (room: ContextRoomRecord) => ContextRoomRecord) => void;
 }) {
@@ -91,71 +94,12 @@ export function WorkspaceContent({
   const hasAvailableResources = createContextRoomResourceLibrary(room, backendDocuments, [], knowledgeFiles, locale).resources
     .some((resource) => !('trashed' in resource) || !resource.trashed);
 
-  // 思路伴随区：打开云文档时左侧第三栏；开合按 Room 记忆。
-  const [companionCollapsed, setCompanionCollapsed] = useState(
-    () => loadRoomWorkspaceState(room.id)?.thoughtsCompanionCollapsed ?? false,
-  );
-  const [companionVein, setCompanionVein] = useState(false);
-  const [selectionText, setSelectionText] = useState<string | null>(null);
-  const insertQuoteRef = useRef<((quote: { text: string; source: string }) => boolean) | null>(null);
-
-  const toggleCompanion = useCallback(() => {
-    setCompanionCollapsed((current) => {
-      const next = !current;
-      saveRoomWorkspaceState(room.id, { thoughtsCompanionCollapsed: next });
-      return next;
-    });
-  }, [room.id]);
-
-  const registerQuoteInsert = useCallback((insert: (quote: { text: string; source: string }) => boolean) => {
-    insertQuoteRef.current = insert;
-    return () => { insertQuoteRef.current = null };
-  }, []);
-
-  const companionOpen = Boolean(selectedCloudDoc) && !companionCollapsed;
-
   return (
-    <section
-      className="context-room-workspace-content"
-      data-companion={selectedCloudDoc ? (companionOpen ? 'open' : 'closed') : undefined}
-      data-companion-view={selectedCloudDoc && companionOpen && companionVein ? 'vein' : 'cards'}
-    >
+    <section className="context-room-workspace-content">
       <button type="button" className="context-room-mobile-back" onClick={onMobileBack}>
         <ChevronLeft aria-hidden="true" />
         {t('contextRoom:workspaceContent.backToResources')}
       </button>
-      {selectedCloudDoc ? (
-        <>
-          <aside className="context-room-thoughts-companion">
-            <ThoughtsPane
-              variant="companion"
-              room={room}
-              focusDocumentId={selectedCloudDoc.binding.docId}
-              focusDocumentTitle={selectedCloudDoc.name}
-              focusSelectionText={selectionText}
-              onQuote={(card) => {
-                const inserted = insertQuoteRef.current?.({
-                  text: (card.quote || card.summary).slice(0, 600),
-                  source: card.roomRef ? `${card.title} · ${card.roomRef.title}` : card.title,
-                });
-                if (inserted) return;
-                showToast({ title: t('contextRoom:emergence.quoteUnavailable') });
-              }}
-              onViewChange={(view) => setCompanionVein(view === 'vein')}
-            />
-          </aside>
-          <button
-            type="button"
-            className="context-room-thoughts-companion-toggle"
-            aria-pressed={companionOpen}
-            aria-label={t(companionOpen ? 'contextRoom:emergence.collapseCompanion' : 'contextRoom:emergence.expandCompanion')}
-            title={t(companionOpen ? 'contextRoom:emergence.collapseCompanion' : 'contextRoom:emergence.expandCompanion')}
-            onClick={toggleCompanion}
-          >
-            {companionOpen ? <PanelLeftClose aria-hidden="true" /> : <PanelLeftOpen aria-hidden="true" />}
-          </button>
-        </>
-      ) : null}
       <div className="context-room-workspace-editor">
         {selectedCloudDoc ? (
           <DocumentContent
@@ -168,7 +112,7 @@ export function WorkspaceContent({
               : null}
             onBackendDocumentChange={onBackendDocumentChange}
             onDeleteDocument={onDeleteDocument}
-            onSelectionTextChange={setSelectionText}
+            onSelectionTextChange={onSelectionTextChange}
             onRegisterQuoteInsert={registerQuoteInsert}
           />
         ) : selectedResource?.kind === 'knowledge-file' ? (

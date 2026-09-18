@@ -1,5 +1,6 @@
 import {
   BarChart3,
+  BookOpen,
   Bookmark,
   CalendarDays,
   CheckSquare2,
@@ -27,7 +28,7 @@ import { recordRoomOverviewDiagnostic } from '../../../roomOverviewDiagnostics';
 import { createContextRoomResourceLibrary } from '../../resources';
 import { localizedUiText, uiText } from '../../adapters';
 import type { ContextRoomRecord, ContextRoomResource } from '../../types';
-import type { KnowledgeFileDto } from '../../../../../../../shared/knowledge';
+import type { KnowledgeFileDto, KnowledgeWikiPageDto } from '../../../../../../../shared/knowledge';
 import { useRoomUpdatedTime } from '../../roomUpdatedTime';
 import { roomKindIcon, roomKindTone } from '../utils';
 import { CalendarProviderIcon } from '../CalendarProviderIcon';
@@ -74,6 +75,7 @@ export function OverviewDashboard({
   onSelectResource,
   onOpenObject,
   onOpenPane,
+  onOpenWikiBoard,
   onToggleTask,
 }: {
   room: ContextRoomRecord;
@@ -83,6 +85,8 @@ export function OverviewDashboard({
   onOpenObject: (target: WorkspaceObjectPreview) => void;
   /** 概览行点击跳转对应面板：投影日程/待办无详情对象（连接器/本地助手行），只切面板。 */
   onOpenPane?: (pane: 'todo') => void;
+  /** Wiki 概览卡「打开 Wiki」跳转 Wiki 板块（整屏概览有；分屏概览缺省不渲染按钮）。 */
+  onOpenWikiBoard?: () => void;
   onToggleTask: (taskId: string) => void;
 }) {
   const { locale, t } = useLocale();
@@ -96,6 +100,7 @@ export function OverviewDashboard({
   const dashboardRef = useRef<HTMLElement>(null);
   const [overviewProjection, setOverviewProjection] = useState<RoomOverviewProjection | null>(null);
   const [regeneratingBrief, setRegeneratingBrief] = useState(false);
+  const [wikiPages, setWikiPages] = useState<KnowledgeWikiPageDto[] | null>(null);
   const latestDocumentAt = backendDocuments.reduce<string | undefined>((latest, document) => (
     !latest || document.updatedAt > latest ? document.updatedAt : latest
   ), undefined);
@@ -213,6 +218,11 @@ export function OverviewDashboard({
 
   useEffect(() => {
     void loadOverview();
+    // Wiki 概览卡只读页面数与标题；无知识服务（旧网关）时整卡不渲染。
+    let wikiCancelled = false;
+    window.nxcore?.knowledge?.listWikiPages(room.id)
+      .then((data) => { if (!wikiCancelled) setWikiPages(data.items); })
+      .catch(() => { if (!wikiCancelled) setWikiPages(null); });
     const refresh = (event: Event) => {
       const detail = (event as CustomEvent<RoomOverviewChangedDetail>).detail;
       if (detail?.roomId && detail.roomId !== room.id) {
@@ -249,7 +259,10 @@ export function OverviewDashboard({
       });
     };
     window.addEventListener(ROOM_OVERVIEW_CHANGED_EVENT, refresh as EventListener);
-    return () => window.removeEventListener(ROOM_OVERVIEW_CHANGED_EVENT, refresh as EventListener);
+    return () => {
+      wikiCancelled = true;
+      window.removeEventListener(ROOM_OVERVIEW_CHANGED_EVENT, refresh as EventListener);
+    };
   }, [loadOverview, room.id]);
 
   // 简报再生成：dispatch context-room 子 Agent（brief-refresh），完成后拉取后端快照刷新本地状态。
@@ -332,6 +345,22 @@ export function OverviewDashboard({
             </div>
           ) : <PanelEmptyState compact icon={Network} title={t('contextRoom:overviewDashboard.noRelatedEntitiesYet')} description={t('contextRoom:overviewDashboard.detectedPeopleProjectsAndTopicsAppearHere')} />}
         </article>
+        {wikiPages && wikiPages.length > 0 ? (
+          <article className="context-room-dashboard-wiki">
+            <header data-icon-tone="data"><BookOpen aria-hidden="true" />{t('contextRoom:overviewDashboard.wikiOverview')}</header>
+            <ul>
+              {wikiPages.slice(0, 4).map((page) => <li key={page.id}><CornerDownRight aria-hidden="true" />{page.title}</li>)}
+            </ul>
+            <footer>
+              <span>{t('contextRoom:wiki.countPages', { count: wikiPages.length })}</span>
+              {onOpenWikiBoard ? (
+                <button type="button" onClick={onOpenWikiBoard}>
+                  {t('contextRoom:overviewDashboard.openWiki')}
+                </button>
+              ) : null}
+            </footer>
+          </article>
+        ) : null}
       </div>
 
       <div className="context-room-dashboard-bottom">

@@ -11,8 +11,6 @@ export interface RoomWorkspaceState {
   board: BoardId
   subtab?: BoardSubtab
   selectedResourceId?: string
-  /** 思路伴随区收起（打开云文档时的三栏布局记忆）。 */
-  thoughtsCompanionCollapsed?: boolean
   savedAt: number
 }
 
@@ -71,7 +69,6 @@ function normalizeState(roomId: string, value: unknown): RoomWorkspaceState | nu
     board,
     ...(subtab ? { subtab } : {}),
     ...(typeof candidate.selectedResourceId === 'string' ? { selectedResourceId: candidate.selectedResourceId } : {}),
-    ...(candidate.thoughtsCompanionCollapsed === true ? { thoughtsCompanionCollapsed: true } : {}),
     savedAt: typeof candidate.savedAt === 'number' ? candidate.savedAt : 0,
   }
 }
@@ -88,9 +85,6 @@ export function saveRoomWorkspaceState(roomId: string, patch: Partial<Omit<RoomW
     ...(patch.subtab !== undefined ? { subtab: patch.subtab } : current?.subtab !== undefined ? { subtab: current.subtab } : {}),
     ...(patch.selectedResourceId !== undefined || current?.selectedResourceId !== undefined
       ? { selectedResourceId: patch.selectedResourceId ?? current?.selectedResourceId }
-      : {}),
-    ...(patch.thoughtsCompanionCollapsed !== undefined || current?.thoughtsCompanionCollapsed !== undefined
-      ? { thoughtsCompanionCollapsed: patch.thoughtsCompanionCollapsed ?? current?.thoughtsCompanionCollapsed ?? false }
       : {}),
     savedAt: Date.now(),
   }

@@ -1,5 +1,6 @@
 export { MemoryPane } from './MemoryPane'
 export { RelationsPane } from './RelationsPane'
+export { ArtifactLibraryPane } from './ArtifactLibraryPane'
 export { SchedulePane, TasksPane } from './ActivityPanes'
 export { ActivityPane } from './ActivityPane'
 export { TodoPane } from './TodoPane'

@@ -2,8 +2,6 @@ import {
   ChevronLeft,
   FileText,
   FolderOpen,
-  ListTree,
-  Network,
   RefreshCw,
   Upload,
 } from 'lucide-react';
@@ -56,13 +54,16 @@ type WikiView = 'tree' | 'graph';
 /**
  * Room 知识库面板（room-wiki 方案 M3c）：wiki 页面按 path 组织成目录树，
  * 点击交给编辑栏（onOpenPage）；图谱视图渲染 md 内链派生的链接图。
+ * 目录/图谱视图由 Wiki 板块页签（wikiDir/wikiGraph）受控。
  * 来源文件与上传区保留（上传走自动归类路由）。
  */
-export function WikiPane({ room, selectedResourceId, onOpenPage }: {
+export function WikiPane({ room, selectedResourceId, onOpenPage, view = 'tree' }: {
   room: ContextRoomRecord;
   /** 编辑栏当前选中资源 id（wiki 页高亮联动）。 */
   selectedResourceId?: string | null;
   onOpenPage: (resource: ContextRoomWikiPageResource) => void;
+  /** 板块页签受控视图；缺省目录树。 */
+  view?: WikiView;
 }) {
   const { t } = useLocale();
   const [status, setStatus] = useState<string>('loading');
@@ -74,7 +75,6 @@ export function WikiPane({ room, selectedResourceId, onOpenPage }: {
   >(null);
   const [error, setError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
-  const [view, setView] = useState<WikiView>('tree');
   const [graph, setGraph] = useState<KnowledgeWikiGraphDto | null>(null);
   const [graphLoading, setGraphLoading] = useState(false);
 
@@ -104,7 +104,6 @@ export function WikiPane({ room, selectedResourceId, onOpenPage }: {
 
   useEffect(() => {
     setSelectedFile(null);
-    setView('tree');
     void refresh();
     // 上传/确认后广播的事件：wiki 内容可能变化（图谱缓存一并作废）
     const onChanged = () => {
@@ -241,32 +240,6 @@ export function WikiPane({ room, selectedResourceId, onOpenPage }: {
           {pages.length > 0 ? <span>{t('contextRoom:wiki.countPages', { count: pages.length })}</span> : null}
         </div>
         <div className="context-room-wiki-actions">
-          <div className="context-room-wiki-toggle" role="tablist" aria-label={t('contextRoom:wiki.knowledgeBaseView')}>
-            <button
-              type="button"
-              role="tab"
-              aria-label={t('contextRoom:wiki.pageTree')}
-              aria-selected={view === 'tree'}
-              className={view === 'tree' ? 'is-active' : ''}
-              title={t('contextRoom:wiki.pageTree')}
-              onClick={() => setView('tree')}
-            >
-              <ListTree aria-hidden="true" />
-              <span>{t('contextRoom:wiki.pages')}</span>
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-label={t('contextRoom:wiki.pageLinkGraph')}
-              aria-selected={view === 'graph'}
-              className={view === 'graph' ? 'is-active' : ''}
-              title={t('contextRoom:wiki.pageLinkGraph')}
-              onClick={() => setView('graph')}
-            >
-              <Network aria-hidden="true" />
-              <span>{t('contextRoom:wiki.graph')}</span>
-            </button>
-          </div>
           <button
             type="button"
             className="context-room-wiki-upload"

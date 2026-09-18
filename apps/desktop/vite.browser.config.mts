@@ -167,8 +167,19 @@ const base = {
       '会话失效静默问题待解。',
     ].join(NL + NL) }),
     revealFile: async () => {},
-    listWikiPages: async () => ({ status: 'ready', items: [], pageCount: 0 }),
-    getWikiGraph: async () => ({ nodes: [], edges: [] }),
+    listWikiPages: async () => ({ status: 'ready', items: [
+      { id: 'wp-1', title: '连接器统一·现状', type: 'page', path: '连接器统一/现状', description: null },
+      { id: 'wp-2', title: '连接器统一·目标架构', type: 'page', path: '连接器统一/目标架构', description: null },
+      { id: 'wp-3', title: '设计规范·动效篇', type: 'page', path: '设计规范/动效', description: null },
+    ], pageCount: 3 }),
+    getWikiGraph: async () => ({ nodes: [
+      { id: 'wp-1', title: '连接器统一·现状', path: '连接器统一/现状', inLinks: 0 },
+      { id: 'wp-2', title: '连接器统一·目标架构', path: '连接器统一/目标架构', inLinks: 1 },
+      { id: 'wp-3', title: '设计规范·动效篇', path: '设计规范/动效', inLinks: 1 },
+    ], edges: [
+      { source: 'wp-1', target: 'wp-2' },
+      { source: 'wp-1', target: 'wp-3' },
+    ] }),
     getRoomRelations: async () => ({ rooms: [], edges: [], indexing: { status: 'ready', pendingSources: 0 } }),
     getRoomGraph: async () => ({ rooms: [], edges: [], indexing: { status: 'ready', pendingSources: 0 } }),
     // 思路·知识涌现 mock：聚焦围绕焦点文档给 5 张卡；漫步给 8 张带路径的卡并按 seed 轮换；

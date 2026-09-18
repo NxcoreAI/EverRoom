@@ -3807,6 +3807,225 @@
   font-size: 10px;
 }
 
+/* ── 产物库：平铺清单（工具条筛选 + 富信息行） ── */
+
+.context-room-artifact-library {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+.context-room-artifact-toolbar {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 10px 8px;
+  border-bottom: 1px solid var(--cr-border);
+}
+
+.context-room-artifact-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.context-room-artifact-pill {
+  padding: 3px 9px;
+  border: 1px solid var(--cr-border);
+  border-radius: 999px;
+  color: var(--cr-muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.context-room-artifact-pill:hover {
+  border-color: var(--cr-border-strong);
+  color: var(--cr-text);
+}
+
+.context-room-artifact-pill.is-active {
+  border-color: var(--cr-blue);
+  color: var(--cr-blue);
+  background: color-mix(in srgb, var(--cr-blue) 10%, transparent);
+}
+
+.context-room-artifact-new {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 9px;
+  border: 1px solid var(--cr-border);
+  border-radius: 6px;
+  color: var(--cr-text);
+  font-size: 11px;
+}
+
+.context-room-artifact-new:hover {
+  border-color: var(--cr-blue);
+  color: var(--cr-blue);
+}
+
+.context-room-artifact-new svg {
+  width: 12px;
+  height: 12px;
+}
+
+.context-room-artifact-list {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px 8px 12px;
+}
+
+.context-room-artifact-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.context-room-artifact-item {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 26px 8px 8px;
+  border-radius: 8px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.context-room-artifact-item:hover {
+  background: var(--cr-surface-hover);
+}
+
+.context-room-artifact-item.is-selected {
+  background: var(--cr-blue-soft);
+}
+
+.context-room-artifact-item.is-selected .context-room-artifact-body b {
+  color: var(--cr-blue);
+}
+
+.context-room-artifact-item.is-selected .context-room-artifact-ico {
+  background: color-mix(in srgb, var(--cr-blue) 12%, transparent);
+  color: var(--cr-blue);
+}
+
+.context-room-artifact-item.is-trashed {
+  cursor: default;
+  opacity: 0.72;
+}
+
+.context-room-artifact-ico {
+  display: inline-flex;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: 7px;
+  background: var(--cr-surface-sunken);
+  color: var(--cr-muted);
+}
+
+.context-room-artifact-ico svg {
+  width: 15px;
+  height: 15px;
+}
+
+.context-room-artifact-body {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.context-room-artifact-body b,
+.context-room-artifact-body small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-room-artifact-body b {
+  color: var(--cr-text);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.context-room-artifact-body small {
+  color: var(--cr-tertiary);
+  font-size: 10px;
+}
+
+.context-room-artifact-meta {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+}
+
+.context-room-artifact-tag {
+  padding: 1px 6px;
+  border: 1px solid var(--cr-border);
+  border-radius: 999px;
+  color: var(--cr-muted);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.context-room-artifact-tag.is-draft {
+  border-color: color-mix(in srgb, var(--cr-warning) 45%, transparent);
+  color: var(--cr-warning);
+}
+
+.context-room-artifact-acts {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  display: inline-flex;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.context-room-artifact-row:hover .context-room-artifact-acts,
+.context-room-artifact-row:focus-within .context-room-artifact-acts {
+  opacity: 1;
+}
+
+.context-room-artifact-acts button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 5px;
+  background: var(--cr-surface);
+  color: var(--cr-muted);
+}
+
+.context-room-artifact-acts button:hover {
+  background: var(--cr-surface-hover);
+  color: var(--cr-text);
+}
+
+.context-room-artifact-acts button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.context-room-artifact-acts svg {
+  width: 13px;
+  height: 13px;
+}
+
 .context-room-office-viewer {
   position: relative;
   display: grid;
@@ -4744,6 +4963,46 @@
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+
+.context-room-dashboard-wiki li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.context-room-dashboard-wiki li svg {
+  width: 12px;
+  height: 12px;
+  flex: none;
+}
+
+.context-room-dashboard-wiki footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 14px 12px;
+}
+
+.context-room-dashboard-wiki footer span {
+  color: var(--cr-muted);
+  font-size: 11px;
+}
+
+.context-room-dashboard-wiki footer button {
+  padding: 3px 10px;
+  border: 1px solid var(--cr-border);
+  border-radius: 6px;
+  background: var(--cr-surface);
+  color: var(--cr-muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.context-room-dashboard-wiki footer button:hover {
+  border-color: var(--cr-blue);
+  color: var(--cr-blue);
 }
 
 .context-room-dashboard-entities span {
@@ -11370,50 +11629,6 @@
   white-space: nowrap;
 }
 
-/* 目录/图谱视图切换 */
-.context-room-wiki-toggle {
-  display: inline-flex;
-  height: 28px;
-  align-items: stretch;
-  padding: 2px;
-  border: 1px solid var(--cr-border);
-  border-radius: 7px;
-  background: var(--cr-surface);
-  gap: 2px;
-  flex: 1 1 auto;
-}
-
-.context-room-wiki-toggle button {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 0 8px;
-  border: 0;
-  border-radius: 5px;
-  background: transparent;
-  color: var(--cr-muted);
-  font-size: 12px;
-  justify-content: center;
-  min-width: 0;
-  flex: 1 1 0;
-  white-space: nowrap;
-}
-
-.context-room-wiki-toggle button:hover {
-  color: var(--cr-text);
-}
-
-.context-room-wiki-toggle button.is-active {
-  background: var(--cr-blue-soft, #eef3ff);
-  color: var(--cr-text);
-  font-weight: 600;
-}
-
-.context-room-wiki-toggle button svg {
-  width: 14px;
-  height: 14px;
-}
-
 /* 图谱视图 */
 .context-room-wiki-graph-wrap {
   display: flex;
@@ -12290,11 +12505,6 @@
     gap: 4px;
   }
 
-  .context-room-wiki-toggle button {
-    padding: 0 4px;
-  }
-
-  .context-room-wiki-toggle button span,
   .context-room-wiki-upload {
     display: none;
   }
@@ -14411,85 +14621,16 @@
   padding: 8px 10px 10px;
 }
 
-/* ── 思路伴随区：编辑器左侧第三栏，切脉络时列宽过渡扩展 ──
-   仅在打开云文档（data-companion 存在）时启用 grid；窄容器走原有移动端布局。 */
-
-@container context-room-shell (min-width: 760px) {
-  .context-room-workspace-content[data-companion] {
-    display: grid;
-    grid-template-columns: 0 18px minmax(0, 1fr);
-    transition: grid-template-columns var(--shell-motion-duration) var(--shell-motion-easing);
-  }
-
-  .context-room-workspace-content[data-companion='open'] {
-    grid-template-columns: 300px 18px minmax(0, 1fr);
-  }
-
-  .context-room-workspace-content[data-companion='open'][data-companion-view='vein'] {
-    grid-template-columns: min(56%, 640px) 18px minmax(0, 1fr);
-  }
-
-  .context-room-thoughts-companion {
-    min-width: 0;
-    min-height: 0;
-    overflow: hidden;
-    border-right: 1px solid var(--cr-border);
-  }
-
-  .context-room-thoughts-companion-toggle {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 18px;
-    min-height: 0;
-    padding: 0;
-    border: none;
-    border-right: 1px solid var(--cr-border);
-    background: var(--cr-surface);
-    color: var(--cr-tertiary);
-    cursor: pointer;
-  }
-
-  .context-room-thoughts-companion-toggle:hover {
-    color: var(--cr-muted);
-    background: var(--cr-surface-hover);
-  }
-
-  .context-room-thoughts-companion-toggle svg {
-    width: 13px;
-    height: 13px;
-  }
-
-  .context-room-workspace-editor {
-    display: flex;
-    min-width: 0;
-    min-height: 0;
-    flex-direction: column;
-  }
-
-  .context-room-workspace-editor > * {
-    flex: 1;
-    min-height: 0;
-  }
-}
-
-.context-room-thoughts-companion {
+.context-room-workspace-editor {
+  display: flex;
   min-width: 0;
   min-height: 0;
+  flex-direction: column;
 }
 
-/* 窄容器（移动端布局）不展示伴随区：三栏是桌面形态 */
-@container context-room-shell (max-width: 759px) {
-  .context-room-thoughts-companion,
-  .context-room-thoughts-companion-toggle {
-    display: none;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .context-room-workspace-content[data-companion] {
-    transition: none;
-  }
+.context-room-workspace-editor > * {
+  flex: 1;
+  min-height: 0;
 }
 
 .context-room-thoughts-pinned-item {
