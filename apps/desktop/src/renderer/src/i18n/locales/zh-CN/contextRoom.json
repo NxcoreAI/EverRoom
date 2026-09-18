@@ -1073,6 +1073,7 @@
   "overviewDashboard.documentsEmailsAndMeetingsCollectedByTheRoom": "Room 收集的文档、邮件和会议会显示在这里。",
   "overviewDashboard.editCitationComment": "修改引用评论",
   "overviewDashboard.generatedPages": "已生成 {count} 页",
+  "overviewDashboard.updatedAt": "更新 {time}",
   "overviewDashboard.goal": "目标：",
   "overviewDashboard.incompleteRoomTasksAppearHere": "未完成的 Room 任务会显示在这里。",
   "overviewDashboard.inferredTimelineEntry": "Agent 推断",

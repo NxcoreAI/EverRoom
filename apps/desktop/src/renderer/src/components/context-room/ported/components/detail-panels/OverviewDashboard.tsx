@@ -24,7 +24,8 @@ import { recordRoomOverviewDiagnostic } from '../../../roomOverviewDiagnostics';
 import { createContextRoomResourceLibrary } from '../../resources';
 import { localizedUiText, uiText } from '../../adapters';
 import type { ContextRoomRecord, ContextRoomResource } from '../../types';
-import type { KnowledgeFileDto, KnowledgeWikiPageDto } from '../../../../../../../shared/knowledge';
+import type { KnowledgeFileDto, KnowledgeWikiPagesResultDto } from '../../../../../../../shared/knowledge';
+import { formatTimelineTime } from '../../roomTimeline';
 import { useRoomUpdatedTime } from '../../roomUpdatedTime';
 import { roomKindIcon, roomKindTone } from '../utils';
 import { CalendarProviderIcon } from '../CalendarProviderIcon';
@@ -93,7 +94,12 @@ export function OverviewDashboard({
   const fileItems = room.fileItems ?? [];
   const dashboardRef = useRef<HTMLElement>(null);
   const [overviewProjection, setOverviewProjection] = useState<RoomOverviewProjection | null>(null);
-  const [wikiPages, setWikiPages] = useState<KnowledgeWikiPageDto[] | null>(null);
+  const [wiki, setWiki] = useState<KnowledgeWikiPagesResultDto | null>(null);
+  const wikiPages = wiki?.items ?? null;
+  /** KS 生成的 ≤100 字摘要按句读拆成要点；无摘要时卡体回退页面标题。 */
+  const wikiSummaryPoints = useMemo(() => (wiki?.summary ?? '')
+    .split(/[。；;！!？?\n]+/).map((part) => part.trim()).filter(Boolean).slice(0, 4), [wiki?.summary]);
+  const wikiUpdatedAt = wiki?.updatedAt ?? null;
   const latestDocumentAt = backendDocuments.reduce<string | undefined>((latest, document) => (
     !latest || document.updatedAt > latest ? document.updatedAt : latest
   ), undefined);
@@ -211,11 +217,12 @@ export function OverviewDashboard({
 
   useEffect(() => {
     void loadOverview();
-    // Wiki 概览卡只读页面数与标题；无知识服务（旧网关）时整卡不渲染。
+    // Wiki 概览卡：KS 生成的 ≤100 字摘要分句成要点；无摘要回退页面标题。
+    // 无知识服务（旧网关）时整卡不渲染。
     let wikiCancelled = false;
     window.nxcore?.knowledge?.listWikiPages(room.id)
-      .then((data) => { if (!wikiCancelled) setWikiPages(data.items); })
-      .catch(() => { if (!wikiCancelled) setWikiPages(null); });
+      .then((data) => { if (!wikiCancelled) setWiki(data); })
+      .catch(() => { if (!wikiCancelled) setWiki(null); });
     const refresh = (event: Event) => {
       const detail = (event as CustomEvent<RoomOverviewChangedDetail>).detail;
       if (detail?.roomId && detail.roomId !== room.id) {
@@ -308,10 +315,15 @@ export function OverviewDashboard({
           <article className="context-room-dashboard-wiki">
             <header data-icon-tone="data"><BookOpen aria-hidden="true" />{t('contextRoom:overviewDashboard.wikiOverview')}</header>
             <ul>
-              {wikiPages.slice(0, 4).map((page) => <li key={page.id}><CornerDownRight aria-hidden="true" />{page.title}</li>)}
+              {wikiSummaryPoints.length
+                ? wikiSummaryPoints.map((point, index) => <li key={`summary-${index}`}><CornerDownRight aria-hidden="true" />{point}</li>)
+                : wikiPages.slice(0, 4).map((page) => <li key={page.id}><CornerDownRight aria-hidden="true" />{page.title}</li>)}
             </ul>
             <footer>
-              <span>{t('contextRoom:overviewDashboard.generatedPages', { count: wikiPages.length })}</span>
+              <span>
+                {t('contextRoom:overviewDashboard.generatedPages', { count: wikiPages.length })}
+                {wikiUpdatedAt ? ` · ${t('contextRoom:overviewDashboard.updatedAt', { time: formatTimelineTime(wikiUpdatedAt, locale) })}` : ''}
+              </span>
               {onOpenWikiBoard ? (
                 <button type="button" onClick={onOpenWikiBoard}>
                   {t('contextRoom:overviewDashboard.openWiki')}

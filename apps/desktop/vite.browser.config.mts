@@ -171,7 +171,9 @@ const base = {
       { id: 'wp-1', title: '连接器统一·现状', type: 'page', path: '连接器统一/现状', description: null },
       { id: 'wp-2', title: '连接器统一·目标架构', type: 'page', path: '连接器统一/目标架构', description: null },
       { id: 'wp-3', title: '设计规范·动效篇', type: 'page', path: '设计规范/动效', description: null },
-    ], pageCount: 3 }),
+    ], pageCount: 3,
+      summary: '连接器统一进入映射表收敛阶段，Gmail/日历双链路已并入统一格式层。目标架构以 provider 命名规范为先，映射表三处同值待收口；设计规范动效篇已定稿。',
+      updatedAt: '2026-09-18T08:30:00.000Z' }),
     getWikiGraph: async () => ({ nodes: [
       { id: 'wp-1', title: '连接器统一·现状', path: '连接器统一/现状', inLinks: 0 },
       { id: 'wp-2', title: '连接器统一·目标架构', path: '连接器统一/目标架构', inLinks: 1 },
@@ -244,6 +246,8 @@ const base = {
       ]
       return { cards: focusCards, nodes: emNodes, edges: emEdges, paths: [], scoreComponents: degraded ? { relevance: 0.6, graphPath: 0.3 } : { relevance: 0.35, graphPath: 0.2, evidence: 0.15, recency: 0.1, feedback: 0.1 }, requestVersion: req.requestVersion, degraded, degradedReason: degraded ? 'llm_unavailable' : null, generatedAt: new Date().toISOString() } } },
   contextRooms: {
+    // 登录后的首启探针读 rooms/deletedRooms 计数；不给 list 会打到兜底 Proxy 上崩。
+    list: async () => ({ rooms: [], deletedRooms: [], updatedAt: null }),
     overview: async (roomId) => {
       const day = (offset, hour, minute = 0) => { const d = new Date(); d.setDate(d.getDate() + offset); d.setHours(hour, minute, 0, 0); return d.toISOString() }
       return { roomId, revision: 1, generatedAt: new Date().toISOString(), stale: false,

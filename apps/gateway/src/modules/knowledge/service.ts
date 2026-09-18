@@ -756,15 +756,30 @@ export class KnowledgeService {
   /**
    * Room wiki 页面清单 + 处理状态（processing 徽标，plan §10 竞态对策）。
    * Room 尚无 wiki（懒创建未触发）返回 status="none"，Tab 显示"尚无沉淀"。
+   * summary：KS ingest 成功后生成的 ≤100 字内容摘要（创建时的身份卡不算概览）。
    */
-  async listRoomWikiPages(roomId: string): Promise<{ status: string; items: KsWikiPageItem[]; pageCount: number | null }> {
+  async listRoomWikiPages(roomId: string): Promise<{
+    status: string;
+    items: KsWikiPageItem[];
+    pageCount: number | null;
+    summary: string | null;
+    updatedAt: string | null;
+  }> {
     const knowledgeId = this.resolveRoomWikiId(roomId);
-    if (!knowledgeId) return { status: "none", items: [], pageCount: null };
+    if (!knowledgeId) return { status: "none", items: [], pageCount: null, summary: null, updatedAt: null };
     const wiki = await this.ks.getWiki(knowledgeId);
-    if (!wiki) return { status: "none", items: [], pageCount: null };
+    if (!wiki) return { status: "none", items: [], pageCount: null, summary: null, updatedAt: null };
     const items = await this.ks.listPages(knowledgeId);
     // page_count：KS 内部已产出页数（processing 期间 ls 为空，用它透出构建进度）
-    return { status: wiki.status, items, pageCount: wiki.page_count };
+    // 身份卡（registry 写的 "Room X 的资料空间"）不是内容概览，不透出
+    const summary = wiki.summary && !wiki.summary.endsWith("的资料空间") ? wiki.summary : null;
+    return {
+      status: wiki.status,
+      items,
+      pageCount: wiki.page_count,
+      summary,
+      updatedAt: wiki.last_sync_at ?? wiki.updated_at ?? null,
+    };
   }
 
   /**

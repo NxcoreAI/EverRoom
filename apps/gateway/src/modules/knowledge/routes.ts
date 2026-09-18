@@ -593,6 +593,10 @@ export function knowledgeRoutes(service: KnowledgeService): FastifyPluginAsyncTy
               items: Type.Array(WikiPageDto),
               /** KS 内部已产出页数（processing 期间 ls 为空，UI 显示构建进度用） */
               pageCount: Type.Union([Type.Integer(), Type.Null()]),
+              /** KS ingest 成功后生成的内容摘要（概览卡要点；身份卡/未生成为 null） */
+              summary: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+              /** 最近一次同步/更新时间 */
+              updatedAt: Type.Optional(Type.Union([Type.String(), Type.Null()])),
             }),
           },
         },

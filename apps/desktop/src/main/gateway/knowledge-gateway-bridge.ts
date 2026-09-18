@@ -22,7 +22,7 @@ import type {
   KnowledgeUnmatchedItemDto,
   KnowledgeWikiDto,
   KnowledgeWikiGraphDto,
-  KnowledgeWikiPageDto,
+  KnowledgeWikiPagesResultDto,
 } from '../../shared/knowledge'
 import type { GatewaySupervisor } from './gateway-supervisor'
 
@@ -93,7 +93,7 @@ export class KnowledgeGatewayBridge {
     return this.request(`/v1/knowledge/rooms/${encodeURIComponent(roomId)}/context`)
   }
 
-  listWikiPages(roomId: string): Promise<{ status: string; items: KnowledgeWikiPageDto[]; pageCount: number | null }> {
+  listWikiPages(roomId: string): Promise<KnowledgeWikiPagesResultDto> {
     return this.request(`/v1/knowledge/rooms/${encodeURIComponent(roomId)}/wiki/pages`)
   }
 

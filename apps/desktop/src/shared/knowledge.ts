@@ -137,6 +137,16 @@ export interface KnowledgeWikiPageDto {
   description?: string
 }
 
+/** Room wiki 页面清单 + 状态（GET /v1/knowledge/rooms/:id/wiki/pages）。 */
+export interface KnowledgeWikiPagesResultDto {
+  status: string
+  items: KnowledgeWikiPageDto[]
+  pageCount: number | null
+  /** KS ingest 成功后生成的内容摘要（概览卡要点）；身份卡/未生成为 null */
+  summary?: string | null
+  updatedAt?: string | null
+}
+
 /** Room ↔ wiki 映射行（GET /v1/knowledge/wikis）。 */
 export interface KnowledgeWikiDto {
   roomId: string

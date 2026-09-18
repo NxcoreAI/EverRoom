@@ -142,7 +142,7 @@ import type {
   KnowledgeUnmatchedItemDto,
   KnowledgeWikiDto,
   KnowledgeWikiGraphDto,
-  KnowledgeWikiPageDto,
+  KnowledgeWikiPagesResultDto,
 } from './knowledge'
 import type {
   OpenConnectorCommandEvent,
@@ -1292,7 +1292,7 @@ export interface NxcoreDesktopApi {
     createRoomRelation(input: CreateKnowledgeRoomRelationInput): Promise<KnowledgeRoomRelationDto>
     updateRoomRelation(relationId: string, input: UpdateKnowledgeRoomRelationInput): Promise<KnowledgeRoomRelationDto>
     removeManualRoomRelation(relationId: string): Promise<{ relation: KnowledgeRoomRelationDto | null }>
-    listWikiPages(roomId: string): Promise<{ status: string; items: KnowledgeWikiPageDto[]; pageCount: number | null }>
+    listWikiPages(roomId: string): Promise<KnowledgeWikiPagesResultDto>
     /** 手动重试构建失败的 Room wiki（重新触发 ingest，进度照旧轮询）。 */
     retryWikiBuild(roomId: string): Promise<{ ok: boolean }>
     readWikiPage(roomId: string, ref: string): Promise<{ ref: string; markdown: string }>

@@ -1073,6 +1073,7 @@
   "overviewDashboard.documentsEmailsAndMeetingsCollectedByTheRoom": "Documents, emails, and meetings collected by the Room appear here.",
   "overviewDashboard.editCitationComment": "Edit citation comment",
   "overviewDashboard.generatedPages": "Generated {count} pages",
+  "overviewDashboard.updatedAt": "Updated {time}",
   "overviewDashboard.goal": "Goal: ",
   "overviewDashboard.incompleteRoomTasksAppearHere": "Incomplete Room tasks appear here.",
   "overviewDashboard.inferredTimelineEntry": "Agent inference",
