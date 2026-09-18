@@ -21,6 +21,8 @@ const names = [
   'NXCORE_NANGO_OUTLOOK_CONFIG_KEY',
   'NXCORE_BROWSER_EXTENSION_STORE_URL',
   'NXCORE_BROWSER_EXTENSION_ID',
+  'NXCORE_UPDATE_CHANNEL',
+  'NXCORE_UPDATE_FALLBACK_URL',
 ]
 
 // GitHub vars 可能连引号一起存（vars.X = "pi"），剥掉包裹引号再下发，

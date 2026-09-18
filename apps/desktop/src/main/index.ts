@@ -36,6 +36,7 @@ import { AgentGatewayBridge } from './gateway/agent-gateway-bridge'
 import { AsrGatewayBridge } from './gateway/asr-gateway-bridge'
 import { GatewaySupervisor } from './gateway/gateway-supervisor'
 import { cleanupStaleProcessRecords, installExitCleanupHook } from './process-cleanup'
+import { startDesktopUpdater } from './updater'
 import { RuntimeConfigBridge, type RuntimeMemoryConfig } from './gateway/runtime-config-bridge'
 import { cursorCompletionEnvFromConfig } from './gateway/cursor-completion-env'
 import { MemoryGatewayBridge } from './gateway/memory-gateway-bridge'
@@ -3359,6 +3360,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   recordingStore = new RecordingStore(recordingsDirectory)
   saasClient=new SaasClient(credentials,app,recordingsDirectory,(url)=>shell.openExternal(url))
   void saasClient.initialize()
+  startDesktopUpdater(saasClient)
   // 连接器栈在所有页面可用（sources/connectors 页面模式分叉已删除）
   const connectorModeStore = connectorModeStoreRef ?? createConnectorModeStore(dataDirectory)
   connectorModeStoreRef = connectorModeStore
