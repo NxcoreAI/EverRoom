@@ -31,21 +31,21 @@ export function TodoPane({
   const { t } = useLocale();
   return (
     <div className="context-room-todo-pane">
-      <section className="context-room-todo-section" aria-label={t('contextRoom:todoPane.scheduleSection')}>
-        <SchedulePane
-          room={room}
-          onOpen={onOpen}
-          detail={detail?.kind === 'meeting' ? detail : null}
-          onCloseDetail={onCloseDetail}
-          onUpdateRoom={onUpdateRoom}
-        />
-      </section>
       <section className="context-room-todo-section" aria-label={t('contextRoom:todoPane.tasksSection')}>
         <TasksPane
           room={room}
           onSelect={onSelect}
           onToggle={onToggle}
           detail={detail?.kind === 'task' ? detail : null}
+          onCloseDetail={onCloseDetail}
+          onUpdateRoom={onUpdateRoom}
+        />
+      </section>
+      <section className="context-room-todo-section" aria-label={t('contextRoom:todoPane.scheduleSection')}>
+        <SchedulePane
+          room={room}
+          onOpen={onOpen}
+          detail={detail?.kind === 'meeting' ? detail : null}
           onCloseDetail={onCloseDetail}
           onUpdateRoom={onUpdateRoom}
         />

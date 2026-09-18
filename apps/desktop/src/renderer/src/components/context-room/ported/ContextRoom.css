@@ -4535,29 +4535,6 @@
   animation: context-room-spin 1s linear infinite;
 }
 
-.context-room-schedule-date {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 12px;
-  color: var(--cr-muted);
-  font-size: 11px;
-}
-
-.context-room-schedule-date button {
-  display: inline-flex;
-  width: 24px;
-  height: 24px;
-  align-items: center;
-  justify-content: center;
-  border-radius: 5px;
-}
-
-.context-room-schedule-date svg {
-  width: 13px;
-  height: 13px;
-}
-
 .context-room-schedule-pane > article {
   display: flex;
   gap: 10px;
@@ -4899,40 +4876,6 @@
   color: var(--cr-blue);
   font-size: 10px;
   font-style: normal;
-}
-
-.context-room-dashboard-grid article > header .context-room-dashboard-regenerate {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  margin-left: auto;
-  padding: 3px 8px;
-  border: 1px solid var(--cr-border);
-  border-radius: 6px;
-  background: var(--cr-surface);
-  color: var(--cr-muted);
-  font-size: 11px;
-  font-weight: 500;
-  cursor: pointer;
-}
-
-.context-room-dashboard-grid article > header .context-room-dashboard-regenerate:hover:not(:disabled) {
-  border-color: var(--cr-blue);
-  color: var(--cr-blue);
-}
-
-.context-room-dashboard-grid article > header .context-room-dashboard-regenerate:disabled {
-  cursor: default;
-  opacity: 0.7;
-}
-
-.context-room-dashboard-grid article > header .context-room-dashboard-regenerate svg {
-  width: 12px;
-  height: 12px;
-}
-
-.context-room-dashboard-grid article > header .context-room-dashboard-regenerate svg[data-spin='true'] {
-  animation: context-room-spin 900ms linear infinite;
 }
 
 .context-room-dashboard-grid article > p,
@@ -9984,49 +9927,6 @@
   opacity: 0.75;
 }
 
-/* Schedule, task and mail panels keep the prototype's scan-first rhythm. */
-.context-room-schedule-pane > header > div {
-  display: flex;
-  padding: 2px;
-  border-radius: 6px;
-  background: var(--cr-surface-secondary);
-}
-
-.context-room-schedule-pane > header > div button {
-  min-width: 28px;
-  padding: 3px 6px;
-  border-radius: 4px;
-  color: var(--cr-muted);
-  font-size: 10px;
-}
-
-.context-room-schedule-pane > header > div button[aria-pressed='true'] {
-  background: var(--cr-surface);
-  color: var(--cr-blue);
-  box-shadow: 0 1px 2px rgba(31, 31, 31, 0.08);
-}
-
-.context-room-schedule-date {
-  justify-content: flex-start;
-  gap: 4px;
-  border-bottom: 1px solid var(--cr-border);
-}
-
-.context-room-schedule-date span {
-  min-width: 108px;
-  text-align: center;
-}
-
-.context-room-schedule-date button:last-child {
-  width: auto;
-  margin-left: auto;
-  padding: 0 7px;
-}
-
-.context-room-schedule-date button:disabled {
-  opacity: 0.42;
-}
-
 .context-room-schedule-group > header {
   display: flex;
   min-height: 28px;
@@ -10276,21 +10176,6 @@
 .context-room-task-meta svg {
   width: 11px;
   height: 11px;
-}
-
-.context-room-task-progress {
-  display: inline-flex;
-  min-width: 38px;
-  height: 22px;
-  align-items: center;
-  justify-content: center;
-  padding: 0 8px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--cr-icon-tone) 10%, #fff);
-  color: var(--cr-icon-tone);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-  font-weight: 600;
 }
 
 .context-room-task-reference {
@@ -13573,50 +13458,149 @@
 .context-room-imported-comments-unanchored-chevron[data-collapsed='true'] { transform: rotate(-90deg); }
 .context-room-imported-comments-unanchored[data-collapsed='true'] { padding-bottom: 0; }
 
-/* ===== 工作 / 动态（PRD L3.2.2）：统一时间轴 ===== */
+/* ===== 工作 / 动态（原型 renderWorkFeed）：极简信息流 ===== */
 
-.context-room-activity-pane {
+.context-room-activity-feed {
   height: 100%;
   min-height: 0;
   overflow-y: auto;
+  padding: 6px;
 }
 
-.context-room-activity-pane > header {
+.context-room-activity-feed-list {
   display: flex;
-  min-height: 42px;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--cr-border);
+  flex-direction: column;
+  gap: 2px;
 }
 
-.context-room-activity-pane > header h2 {
+.context-room-activity-feed-item {
+  display: flex;
+  gap: 10px;
+  padding: 10px 8px;
+  border-radius: 8px;
+}
+
+.context-room-activity-feed-item:hover {
+  background: var(--cr-surface-hover);
+}
+
+.context-room-activity-feed-ico {
   display: inline-flex;
+  width: 26px;
+  height: 26px;
+  flex: none;
   align-items: center;
-  gap: 6px;
-  margin: 0;
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.context-room-activity-pane > header h2 svg {
-  width: 14px;
-  height: 14px;
+  justify-content: center;
+  border-radius: 7px;
+  background: var(--cr-surface-secondary);
   color: var(--cr-muted);
 }
 
-.context-room-activity-pane > header > span {
-  color: var(--cr-tertiary);
-  font-size: 10px;
+.context-room-activity-feed-ico svg {
+  width: 14px;
+  height: 14px;
 }
 
-.context-room-activity-toolbar {
+.context-room-activity-feed-item[data-category='meeting'] .context-room-activity-feed-ico {
+  background: color-mix(in srgb, var(--cr-icon-calendar) 12%, transparent);
+  color: var(--cr-icon-calendar);
+}
+
+.context-room-activity-feed-item[data-category='mail'] .context-room-activity-feed-ico {
+  background: color-mix(in srgb, var(--cr-icon-communication) 12%, transparent);
+  color: var(--cr-icon-communication);
+}
+
+.context-room-activity-feed-item[data-category='task'] .context-room-activity-feed-ico {
+  background: color-mix(in srgb, var(--cr-icon-task) 12%, transparent);
+  color: var(--cr-icon-task);
+}
+
+.context-room-activity-feed-item[data-category='material'] .context-room-activity-feed-ico {
+  background: color-mix(in srgb, var(--cr-icon-document) 12%, transparent);
+  color: var(--cr-icon-document);
+}
+
+.context-room-activity-feed-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.context-room-activity-feed-main > p {
+  margin: 3px 0 0;
+  color: var(--cr-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* 动态行与时间轴行共用：标题在左、时间/版本在右。 */
+.context-room-activity-entry-row {
   display: flex;
-  flex-direction: column;
+  align-items: baseline;
+  justify-content: space-between;
   gap: 8px;
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--cr-border);
+}
+
+.context-room-activity-entry-row > time {
+  flex: none;
+  color: var(--cr-tertiary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 信息流平铺形态的资料 chips。 */
+.context-room-timeline-materials.is-chips {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 7px;
+}
+
+.context-room-timeline-materials.is-chips .context-room-timeline-material {
+  margin-top: 0;
+  padding: 2px 8px;
+  border-radius: 6px;
+}
+
+.context-room-timeline-materials.is-chips .context-room-timeline-material svg {
+  width: 11px;
+  height: 11px;
+}
+
+/* 时间轴卡里的「相关资料 N」折叠开关。 */
+.context-room-activity-materials-toggle {
+  min-height: 26px;
+  align-items: center;
+  gap: 5px;
+  margin-top: 8px;
+  padding: 3px 7px;
+  border-radius: 7px;
+  color: var(--cr-blue);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.context-room-activity-materials-toggle:hover {
+  background: rgba(0, 122, 255, 0.08);
+}
+
+.context-room-activity-materials-toggle > span {
+  padding: 0 5px;
+  border-radius: 8px;
+  background: var(--cr-surface-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 分区标题行的计数徽标（待办·任务 N）。 */
+.context-room-pane-head-count {
+  flex: none;
+  padding: 0 6px;
+  border-radius: 8px;
+  background: var(--cr-surface-secondary);
+  color: var(--cr-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
 }
 
 .context-room-activity-filters {
@@ -13778,6 +13762,21 @@
   height: 12px;
 }
 
+/* 待办两分区的标题行：图标 + 名称 + 计数靠左（原型 cr-todo-head）。 */
+.context-room-schedule-pane > header,
+.context-room-task-pane > header {
+  justify-content: flex-start;
+  gap: 6px;
+}
+
+.context-room-schedule-pane > header > svg,
+.context-room-task-pane > header > svg {
+  width: 13px;
+  height: 13px;
+  flex: none;
+  color: var(--cr-muted);
+}
+
 .context-room-task-create-popover {
   display: grid;
   gap: 8px;
@@ -13903,33 +13902,11 @@
 
 .context-room-materials-toolbar {
   display: flex;
-  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
   gap: 8px;
   padding: 10px 12px;
   border-bottom: 1px solid var(--cr-border);
-}
-
-.context-room-materials-toolbar > label:first-child {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.context-room-materials-toolbar > label:first-child svg {
-  width: 13px;
-  height: 13px;
-  color: var(--cr-muted);
-}
-
-.context-room-materials-toolbar input[type='text'],
-.context-room-materials-toolbar input:not([type]) {
-  flex: 1;
-  padding: 5px 8px;
-  border: 1px solid var(--cr-border);
-  border-radius: 6px;
-  background: var(--cr-surface);
-  color: var(--cr-text);
-  font-size: 12px;
 }
 
 .context-room-materials-filters {
@@ -13957,21 +13934,27 @@
   background: color-mix(in srgb, var(--cr-blue) 10%, transparent);
 }
 
-.context-room-materials-sort {
+.context-room-materials-sort-toggle {
   display: inline-flex;
+  flex: none;
   align-items: center;
-  gap: 6px;
-  color: var(--cr-tertiary);
-  font-size: 11px;
-}
-
-.context-room-materials-sort select {
-  padding: 3px 6px;
+  gap: 4px;
+  padding: 3px 8px;
   border: 1px solid var(--cr-border);
   border-radius: 6px;
   background: var(--cr-surface);
-  color: var(--cr-text);
+  color: var(--cr-muted);
   font-size: 11px;
+}
+
+.context-room-materials-sort-toggle:hover {
+  border-color: var(--cr-border-strong);
+  color: var(--cr-text);
+}
+
+.context-room-materials-sort-toggle svg {
+  width: 11px;
+  height: 11px;
 }
 
 .context-room-materials-list {

@@ -19,7 +19,7 @@ vi.mock('../src/renderer/src/components/context-room/ContextRoomStateProvider', 
 import type { RoomDocument, RoomOverviewProjection } from '@nxcore/agent-contract'
 
 import { createContextRoomFixture } from './context-room-fixture'
-import { ActivityPane } from '../src/renderer/src/components/context-room/ported/components/detail-panels/ActivityPane'
+import { OverviewTimelineCard } from '../src/renderer/src/components/context-room/ported/components/detail-panels/OverviewTimelineCard'
 
 /** 本月内锚定的相对时间：跨月漂移时钳到 1 号，保证条目始终落在当前月视图里；
  * 各条目小时错开，钳制同日后排序仍然确定。 */
@@ -130,11 +130,11 @@ const knowledgeFiles = [{
   bytes: 1024,
   uploadedAt: monthDay(7, 12),
   status: 'ready',
-}] as unknown as Parameters<typeof ActivityPane>[0]['knowledgeFiles']
+}] as unknown as Parameters<typeof OverviewTimelineCard>[0]['knowledgeFiles']
 
 function renderPane() {
   return TestRenderer.create(
-    <ActivityPane
+    <OverviewTimelineCard
       room={createContextRoomFixture('room-timeline', '时间轴 Room')}
       backendDocuments={backendDocuments}
       knowledgeFiles={knowledgeFiles}
@@ -175,7 +175,7 @@ function buttonWithText(node: TestRenderer.ReactTestInstance, text: string) {
   })
 }
 
-describe('动态时间轴：排序与真实对象条目', () => {
+describe('Room 时间轴卡：排序与真实对象条目', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
   })
@@ -222,7 +222,7 @@ describe('动态时间轴：排序与真实对象条目', () => {
     let renderer: TestRenderer.ReactTestRenderer | null = null
     await act(async () => {
       renderer = TestRenderer.create(
-        <ActivityPane
+        <OverviewTimelineCard
           room={createContextRoomFixture('room-timeline', '时间轴 Room')}
           backendDocuments={backendDocuments}
           knowledgeFiles={knowledgeFiles}
@@ -301,7 +301,7 @@ describe('动态时间轴：排序与真实对象条目', () => {
   })
 })
 
-describe('动态时间轴：同期事件折叠', () => {
+describe('Room 时间轴卡：同期事件折叠', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
   })

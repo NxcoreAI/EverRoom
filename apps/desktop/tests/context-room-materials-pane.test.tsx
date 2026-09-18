@@ -363,10 +363,9 @@ describe('资料面板：按来源对象排序与按 Room 记忆', () => {
   it('切换排序按 Room 记忆（localStorage），下次进入恢复', async () => {
     const storage = new Map<string, string>()
     const { renderer } = await renderSortPane(storage)
-    // 切到名称排序
+    // 切到名称排序（原型资料工具栏的两态排序切换按钮）
     await act(async () => {
-      renderer.root.findByProps({ 'aria-label': '排序方式' })
-        .props.onChange({ target: { value: 'name' } })
+      renderer.root.findByProps({ 'aria-label': '切换排序' }).props.onClick()
     })
     expect(rowTitles(renderer)).toEqual(['A 文件.md', 'B 文档', 'C 评审会'])
     expect(storage.get('nxcore-ce:room-materials-view:v1')).toContain('"sort":"name"')

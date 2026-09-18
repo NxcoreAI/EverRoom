@@ -1,12 +1,12 @@
 import * as Popover from '@radix-ui/react-popover';
 import {
+  ArrowDownUp,
   FileSpreadsheet,
   FileText,
   Mail,
   Mic,
   Paperclip,
   RotateCcw,
-  Search,
   SearchX,
   Trash2,
   X,
@@ -29,19 +29,13 @@ import type { WorkspaceObjectPreview } from './index';
 
 type RoomUpdater = (room: ContextRoomRecord) => ContextRoomRecord;
 
-type MaterialsSort = 'source' | 'updated' | 'imported' | 'name';
+/** 原型资料工具栏的两个排序态：来源时间倒序 ↔ 名称 A-Z。 */
+type MaterialsSort = 'source' | 'name';
 type MaterialsFilter = 'all' | 'doc' | 'file' | 'mail' | 'meeting';
 
 /** 资料视图的排序与筛选按 Room 记忆（PRD 6.6：排序选择按 Room 记忆）。 */
 const MATERIALS_VIEW_KEY = 'nxcore-ce:room-materials-view:v1';
 const MAX_ROOMS = 200;
-
-const SORT_OPTIONS: ReadonlyArray<{ id: MaterialsSort; label: string }> = [
-  { id: 'source', label: 'contextRoom:materialsPane.sort.source' },
-  { id: 'updated', label: 'contextRoom:materialsPane.sort.updated' },
-  { id: 'imported', label: 'contextRoom:materialsPane.sort.imported' },
-  { id: 'name', label: 'contextRoom:materialsPane.sort.name' },
-];
 
 const FILTER_OPTIONS: ReadonlyArray<{ id: MaterialsFilter; label: string }> = [
   { id: 'all', label: 'contextRoom:materialsPane.filter.all' },
@@ -56,13 +50,16 @@ interface MaterialsViewMemory {
   filter: MaterialsFilter;
 }
 
+const MATERIALS_SORTS: readonly MaterialsSort[] = ['source', 'name'];
+
 function loadMaterialsView(roomId: string): MaterialsViewMemory {
   try {
     const raw = window.localStorage.getItem(MATERIALS_VIEW_KEY);
     const parsed = raw ? JSON.parse(raw) as Record<string, Partial<MaterialsViewMemory>> : {};
     const entry = parsed[roomId];
     return {
-      sort: SORT_OPTIONS.some((option) => option.id === entry?.sort) ? (entry?.sort as MaterialsSort) : 'source',
+      // 旧记忆里的 updated/imported 排序已随原型收敛，回退 source。
+      sort: MATERIALS_SORTS.includes(entry?.sort as MaterialsSort) ? (entry?.sort as MaterialsSort) : 'source',
       filter: FILTER_OPTIONS.some((option) => option.id === entry?.filter) ? (entry?.filter as MaterialsFilter) : 'all',
     };
   } catch {
@@ -123,8 +120,6 @@ interface MaterialRow {
   timeLabel: string;
   /** 来源发生时间（邮件发送/会议召开/文档创建）排序键，0=未知沉底。 */
   sortSource: number;
-  sortUpdated: number;
-  sortImported: number;
   unread?: boolean;
   resource?: ContextRoomResource;
   openObject?: WorkspaceObjectPreview;
@@ -231,7 +226,6 @@ export function MaterialsPane({
   const { locale, t } = useLocale();
   const { mails: connectorMails } = useRoomMails(room.id);
   const [memory, setMemory] = useState<MaterialsViewMemory>(() => loadMaterialsView(room.id));
-  const [query, setQuery] = useState('');
   const [trashOpen, setTrashOpen] = useState(false);
   const [documentToDelete, setDocumentToDelete] = useState<RoomDocument | null>(null);
   const [documentToDeletePermanently, setDocumentToDeletePermanently] = useState<RoomDocument | null>(null);
@@ -250,7 +244,6 @@ export function MaterialsPane({
 
   useEffect(() => {
     setMemory(loadMaterialsView(room.id));
-    setQuery('');
     setTrashOpen(false);
   }, [room.id]);
 
@@ -282,8 +275,6 @@ export function MaterialsPane({
       subtitle: document.version > 0 ? `V${String(document.version)}` : t('contextRoom:materialsPane.draft'),
       timeLabel: `${t('contextRoom:materialsPane.importedAt')} ${new Date(document.createdAt).toLocaleDateString(locale)}`,
       sortSource: timeSortKey(document.createdAt),
-      sortUpdated: timeSortKey(document.updatedAt),
-      sortImported: timeSortKey(document.createdAt),
       resource: library.resources.find((item) => item.kind === 'cloud-doc' && item.binding.docId === document.id),
       document,
     }));
@@ -295,8 +286,6 @@ export function MaterialsPane({
       subtitle: `${t(uiText(knowledgeFileStatusLabel(file)))} · ${formatBytes(file.bytes)}`,
       timeLabel: `${t('contextRoom:materialsPane.importedAt')} ${new Date(file.uploadedAt).toLocaleDateString(locale)}`,
       sortSource: timeSortKey(file.uploadedAt),
-      sortUpdated: timeSortKey(file.uploadedAt),
-      sortImported: timeSortKey(file.uploadedAt),
       resource: library.resources.find((item) => item.kind === 'knowledge-file' && item.fileId === file.id),
       knowledgeFileId: file.id,
     }));
@@ -307,8 +296,6 @@ export function MaterialsPane({
       subtitle: `${t('contextRoom:materialsPane.localFile')} · ${item.extension}`,
       timeLabel: item.time,
       sortSource: timeSortKey(item.time),
-      sortUpdated: timeSortKey(item.time),
-      sortImported: timeSortKey(item.time),
       resource: library.resources.find((item2) => item2.kind === 'office-file' && item2.id === `${room.id}:file:${item.id}`),
     }));
     const connectorMailRows: MaterialRow[] = connectorMails.map((mail) => ({
@@ -321,8 +308,6 @@ export function MaterialsPane({
         ? new Date(mail.sentAt).toLocaleDateString(locale)
         : '',
       sortSource: timeSortKey(mail.sentAt),
-      sortUpdated: timeSortKey(mail.sentAt),
-      sortImported: timeSortKey(mail.sentAt),
       openObject: { kind: 'connector-mail', sourceId: mail.sourceId },
       connectorMail: { sourceId: mail.sourceId, subject: mail.subject },
     }));
@@ -340,8 +325,6 @@ export function MaterialsPane({
         subtitle: mail.sender ?? localizedUiText(mail.summary, t),
         timeLabel: mail.time,
         sortSource: timeSortKey(mail.time),
-        sortUpdated: timeSortKey(mail.time),
-        sortImported: timeSortKey(mail.time),
         unread: mail.unread,
         openObject: { kind: 'mail', id: mail.id },
       }));
@@ -354,21 +337,16 @@ export function MaterialsPane({
         subtitle: meeting.attendees?.join(locale === 'zh-CN' ? '、' : ', ') ?? '',
         timeLabel: meeting.time,
         sortSource: timeSortKey(meeting.time),
-        sortUpdated: timeSortKey(meeting.time),
-        sortImported: timeSortKey(meeting.time),
         openObject: { kind: 'meeting', id: meeting.id },
       }));
     return [...docRows, ...fileRows, ...officeRows, ...connectorMailRows, ...localMailRows, ...meetingRows];
   }, [backendDocuments, connectorMailKeys, connectorMails, knowledgeFiles, library.resources, locale, room, t]);
 
-  const normalized = query.trim().toLowerCase();
   const visibleRows = rows
-    .filter((row) => (memory.filter === 'all' || row.type === memory.filter)
-      && (!normalized || row.title.toLowerCase().includes(normalized) || row.subtitle.toLowerCase().includes(normalized)))
+    .filter((row) => memory.filter === 'all' || row.type === memory.filter)
     .sort((left, right) => {
       if (memory.sort === 'name') return left.title.localeCompare(right.title, locale);
-      const key = memory.sort === 'updated' ? 'sortUpdated' : memory.sort === 'imported' ? 'sortImported' : 'sortSource';
-      if (left[key] !== right[key]) return right[key] - left[key];
+      if (left.sortSource !== right.sortSource) return right.sortSource - left.sortSource;
       return left.title.localeCompare(right.title, locale);
     });
 
@@ -496,15 +474,6 @@ export function MaterialsPane({
   return (
     <div className={`context-room-materials-pane${connectorMailDetail ? ' has-detail' : ''}`} data-testid="context-room-pane-materials">
       <header className="context-room-materials-toolbar">
-        <label>
-          <Search aria-hidden="true" />
-          <input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder={t('contextRoom:materialsPane.searchPlaceholder')}
-            aria-label={t('contextRoom:materialsPane.searchAriaLabel')}
-          />
-        </label>
         <div className="context-room-materials-filters" role="group" aria-label={t('contextRoom:materialsPane.filterByType')}>
           {FILTER_OPTIONS.map(({ id, label }) => (
             <button
@@ -518,16 +487,17 @@ export function MaterialsPane({
             </button>
           ))}
         </div>
-        <label className="context-room-materials-sort">
-          {t('contextRoom:materialsPane.sortLabel')}
-          <select
-            value={memory.sort}
-            aria-label={t('contextRoom:materialsPane.sortAriaLabel')}
-            onChange={(event) => updateMemory({ sort: event.target.value as MaterialsSort })}
-          >
-            {SORT_OPTIONS.map(({ id, label }) => <option key={id} value={id}>{t(label)}</option>)}
-          </select>
-        </label>
+        <button
+          type="button"
+          className="context-room-materials-sort-toggle"
+          aria-label={t('contextRoom:materialsPane.toggleSort')}
+          onClick={() => updateMemory({ sort: memory.sort === 'source' ? 'name' : 'source' })}
+        >
+          <ArrowDownUp aria-hidden="true" />
+          {t(memory.sort === 'source'
+            ? 'contextRoom:materialsPane.sortBySourceTime'
+            : 'contextRoom:materialsPane.sortByName')}
+        </button>
       </header>
       {actionError ? <div className="context-room-resource-error" role="alert">{actionError}</div> : null}
       <div className="context-room-materials-list" role="list">
@@ -633,7 +603,7 @@ export function MaterialsPane({
             compact
             icon={SearchX}
             title={t('contextRoom:resource.noMatchingResources')}
-            description={t('contextRoom:resource.tryAnotherSearchTerm')}
+            description={t('contextRoom:materialsPane.tryAnotherFilter')}
           />
         ) : null}
       </div>

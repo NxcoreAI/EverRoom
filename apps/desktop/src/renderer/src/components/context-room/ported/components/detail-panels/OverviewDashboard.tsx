@@ -7,16 +7,12 @@ import {
   CornerDownRight,
   FileText,
   Info,
-  LoaderCircle,
   Network,
-  Sparkles,
   Zap,
 } from 'lucide-react';
 import type { RoomDocument, RoomOverviewProjection } from '@nxcore/agent-contract';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useLocale, type Translate } from '../../../../../i18n/LocaleContext';
-import { useContextRoomState } from '../../../ContextRoomStateProvider';
-import { showToast } from '@/state/toast';
+import { useLocale } from '../../../../../i18n/LocaleContext';
 import { RoomOverviewCitationControls } from '../../../RoomOverviewCitationControls';
 import {
   preferRoomOverviewProjection,
@@ -33,9 +29,8 @@ import { useRoomUpdatedTime } from '../../roomUpdatedTime';
 import { roomKindIcon, roomKindTone } from '../utils';
 import { CalendarProviderIcon } from '../CalendarProviderIcon';
 import { PanelEmptyState } from './PanelEmptyState';
-type WorkspaceObjectPreview =
-  | { kind: 'meeting'; id: string }
-  | { kind: 'task'; id: string };
+import { OverviewTimelineCard } from './OverviewTimelineCard';
+import type { WorkspaceObjectPreview } from './index';
 
 // 逐 Room 的 AI 状态文案覆盖表（原演示 Room 词条已移除）；缺省走下方真实数据派生。
 const DASHBOARD_COPY: Record<
@@ -90,7 +85,6 @@ export function OverviewDashboard({
   onToggleTask: (taskId: string) => void;
 }) {
   const { locale, t } = useLocale();
-  const { refreshFromBackend } = useContextRoomState();
   // 合并完成/投影生成的过渡窗口，room 数组字段可能缺失（裸 .length/.map 会崩渲染，
   // 即"合并后首次点开 Room 报错要求刷新"）：入口一次性归一化，宁可空面板不可白屏。
   const materials = room.materials ?? [];
@@ -99,7 +93,6 @@ export function OverviewDashboard({
   const fileItems = room.fileItems ?? [];
   const dashboardRef = useRef<HTMLElement>(null);
   const [overviewProjection, setOverviewProjection] = useState<RoomOverviewProjection | null>(null);
-  const [regeneratingBrief, setRegeneratingBrief] = useState(false);
   const [wikiPages, setWikiPages] = useState<KnowledgeWikiPageDto[] | null>(null);
   const latestDocumentAt = backendDocuments.reduce<string | undefined>((latest, document) => (
     !latest || document.updatedAt > latest ? document.updatedAt : latest
@@ -265,26 +258,6 @@ export function OverviewDashboard({
     };
   }, [loadOverview, room.id]);
 
-  // 简报再生成：dispatch context-room 子 Agent（brief-refresh），完成后拉取后端快照刷新本地状态。
-  const regenerateBrief = useCallback(async () => {
-    const api = window.nxcore?.contextRooms;
-    if (!api || regeneratingBrief) return;
-    setRegeneratingBrief(true);
-    try {
-      await api.refreshBrief(room.id);
-      await refreshFromBackend();
-      setOverviewProjection(await api.refreshOverview(room.id));
-      showToast({ title: t('contextRoom:overviewDashboard.briefRegenerated') });
-    } catch (error) {
-      showToast({
-        title: t('contextRoom:overviewDashboard.briefRegenerateFailed'),
-        message: error instanceof Error ? error.message : undefined,
-      });
-    } finally {
-      setRegeneratingBrief(false);
-    }
-  }, [refreshFromBackend, regeneratingBrief, room.id, t]);
-
   return (
     <section ref={dashboardRef} className="context-room-dashboard" data-testid="context-room-pane-overview">
       <RoomOverviewCitationControls rootRef={dashboardRef} roomId={room.id} roomTitle={room.title} />
@@ -299,21 +272,7 @@ export function OverviewDashboard({
 
       <div className="context-room-dashboard-grid">
         <article>
-          <header data-icon-tone="document"><FileText aria-hidden="true" />{t('contextRoom:overviewDashboard.roomOverview')}
-            <button
-              type="button"
-              className="context-room-dashboard-regenerate"
-              disabled={regeneratingBrief}
-              onClick={() => void regenerateBrief()}
-            >
-              {regeneratingBrief
-                ? <LoaderCircle aria-hidden="true" data-spin="true" />
-                : <Sparkles aria-hidden="true" />}
-              {t(regeneratingBrief
-                ? 'contextRoom:overviewDashboard.regeneratingBrief'
-                : 'contextRoom:overviewDashboard.regenerateBrief')}
-            </button>
-          </header>
+          <header data-icon-tone="document"><FileText aria-hidden="true" />{t('contextRoom:overviewDashboard.roomOverview')}</header>
           {hasOverview ? (
             <>
               <p data-room-citation-section="overview">
@@ -352,7 +311,7 @@ export function OverviewDashboard({
               {wikiPages.slice(0, 4).map((page) => <li key={page.id}><CornerDownRight aria-hidden="true" />{page.title}</li>)}
             </ul>
             <footer>
-              <span>{t('contextRoom:wiki.countPages', { count: wikiPages.length })}</span>
+              <span>{t('contextRoom:overviewDashboard.generatedPages', { count: wikiPages.length })}</span>
               {onOpenWikiBoard ? (
                 <button type="button" onClick={onOpenWikiBoard}>
                   {t('contextRoom:overviewDashboard.openWiki')}
@@ -407,6 +366,13 @@ export function OverviewDashboard({
         </article>
       </div>
 
+      <OverviewTimelineCard
+        room={room}
+        backendDocuments={backendDocuments.filter((document) => document.origin !== 'native')}
+        knowledgeFiles={knowledgeFiles}
+        onSelectResource={onSelectResource}
+        onOpenObject={onOpenObject}
+      />
     </section>
   );
 }

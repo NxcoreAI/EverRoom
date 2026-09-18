@@ -5,8 +5,6 @@ import {
   Check,
   CheckSquare2,
   ChevronDown,
-  ChevronLeft,
-  ChevronRight,
   Mic,
   Paperclip,
   Plus,
@@ -25,7 +23,6 @@ import {
   ROOM_OVERVIEW_CHANGED_EVENT,
   type RoomOverviewChangedDetail,
 } from '../../../roomOverviewChange';
-import { roomKindTone } from '../utils';
 import { PanelEmptyState } from './PanelEmptyState';
 import type { WorkspaceObjectPreview } from './index';
 
@@ -44,7 +41,6 @@ function resolvePaneDetailObject(room: ContextRoomRecord, detail: WorkspaceObjec
   return null;
 }
 
-type ScheduleView = 'day' | 'week' | 'month';
 const SCHEDULE_TODAY = new Date();
 
 function parseScheduleDate(value: string) {
@@ -61,25 +57,8 @@ function parseScheduleDate(value: string) {
   return new Date(SCHEDULE_TODAY.getFullYear(), Number(match[1]) - 1, Number(match[2]));
 }
 
-function weekStart(value: Date) {
-  const start = new Date(value.getFullYear(), value.getMonth(), value.getDate());
-  start.setDate(start.getDate() + (start.getDay() === 0 ? -6 : 1 - start.getDay()));
-  return start;
-}
-
 function localDateKey(value: Date): string {
   return `${String(value.getFullYear())}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
-}
-
-function dateInView(date: Date, cursor: Date, view: ScheduleView) {
-  if (view === 'day') return date.toDateString() === cursor.toDateString();
-  if (view === 'week') {
-    const start = weekStart(cursor);
-    const end = new Date(start);
-    end.setDate(end.getDate() + 7);
-    return date >= start && date < end;
-  }
-  return date.getFullYear() === cursor.getFullYear() && date.getMonth() === cursor.getMonth();
 }
 
 /**
@@ -101,8 +80,6 @@ export function SchedulePane({
   onUpdateRoom: (updater: RoomUpdater) => void;
 }) {
   const { locale, t } = useLocale();
-  const [view, setView] = useState<ScheduleView>('month');
-  const [cursor, setCursor] = useState(new Date(SCHEDULE_TODAY));
   const overviewProjection = useRoomOverviewProjection(room.id);
   // 投影时间轴里的确定性日历 claim → 日历项（occurredAt = 事件开始时间，精确到分）。
   // 连接器（calendar-event）与本地（local-schedule，agent/用户创建）同列渲染，徽标区分。
@@ -144,15 +121,14 @@ export function SchedulePane({
       ...connectorItems,
     ];
   }, [connectorItems, locale, room, t]);
-  const visibleItems = scheduleItems.filter((item) => dateInView(item.date, cursor, view));
-  const groups = visibleItems.reduce<Map<string, typeof visibleItems>>((result, item) => {
-    const key = localDateKey(item.date);
-    result.set(key, [...(result.get(key) ?? []), item]);
-    return result;
-  }, new Map());
-  const month = String(cursor.getMonth() + 1);
-  const cursorLabel = view === 'month' ? t('contextRoom:activityPanes.monthYear', { year: cursor.getFullYear(), month }) : view === 'week' ? t('contextRoom:activityPanes.weekWeekOfMonth', { month, week: Math.ceil(cursor.getDate() / 7) }) : t('contextRoom:activityPanes.monthDay', { month, day: cursor.getDate() });
-  const moveCursor = (delta: number) => setCursor((current) => { const next = new Date(current); if (view === 'month') next.setMonth(next.getMonth() + delta); else next.setDate(next.getDate() + delta * (view === 'week' ? 7 : 1)); return next; });
+  // 原型日程区：全量平铺按日期分组（升序），不做日/周/月范围过滤。
+  const groups = [...scheduleItems]
+    .sort((left, right) => left.date.getTime() - right.date.getTime())
+    .reduce<Map<string, typeof scheduleItems>>((result, item) => {
+      const key = localDateKey(item.date);
+      result.set(key, [...(result.get(key) ?? []), item]);
+      return result;
+    }, new Map());
 
   const detailObject = detail ? resolvePaneDetailObject(room, detail) : null;
   if (detail && detailObject && onCloseDetail) {
@@ -168,21 +144,13 @@ export function SchedulePane({
   }
 
   return <div className="context-room-schedule-pane">
-    <header><h2>{t('contextRoom:activityPanes.roomSchedule')}</h2><div>{(['day', 'week', 'month'] as const).map((item) => <button type="button" key={item} aria-pressed={view === item} onClick={() => setView(item)}>{t(item === 'day' ? 'contextRoom:activityPanes.day' : item === 'week' ? 'contextRoom:activityPanes.week' : 'contextRoom:activityPanes.month')}</button>)}</div></header>
+    <header><CalendarDays aria-hidden="true" /><h2>{t('contextRoom:todoPane.scheduleSection')}</h2></header>
     {scheduleItems.length ? (
       <>
-        <div className="context-room-schedule-date"><button type="button" aria-label={t('contextRoom:activityPanes.previousPeriod')} onClick={() => moveCursor(-1)}><ChevronLeft aria-hidden="true" /></button><span>{cursorLabel}</span><button type="button" aria-label={t('contextRoom:activityPanes.nextPeriod')} onClick={() => moveCursor(1)}><ChevronRight aria-hidden="true" /></button><button type="button" disabled={cursor.toDateString() === SCHEDULE_TODAY.toDateString()} onClick={() => setCursor(new Date(SCHEDULE_TODAY))}>{t('contextRoom:activityPanes.today')}</button></div>
         {[...groups.entries()].map(([date, items]) => <section className="context-room-schedule-group" key={date}>
           <header><span>{date === localDateKey(SCHEDULE_TODAY) ? t('contextRoom:activityPanes.today') : date}</span><b>{items.length}</b></header>
           {items.map((item) => <Popover.Root key={`${item.kind}-${item.id}`}><Popover.Trigger asChild><button type="button" className="context-room-schedule-item" data-icon-tone={item.kind === 'meeting' ? 'calendar' : 'task'} data-connector-source={item.connector ? item.sourceKind : undefined}><span className="context-room-schedule-item-icon">{item.kind === 'meeting' ? (item.connector ? <CalendarProviderIcon provider={item.provider} /> : <Mic aria-hidden="true" />) : <CheckSquare2 aria-hidden="true" />}</span><span><b>{item.title}</b><small>{item.subtitle}{item.location ? ` · ${item.location}` : ''}</small></span><time>{item.time}</time></button></Popover.Trigger><Popover.Portal><Popover.Content className="context-room-schedule-popover" side="right" align="start" sideOffset={8} collisionPadding={12}><header><h3>{item.title}</h3><Popover.Close aria-label={t('contextRoom:activityPanes.closeScheduleDetails')}><X aria-hidden="true" /></Popover.Close></header><p><CalendarProviderIcon provider={item.connector ? item.provider : undefined} />{t(item.kind === 'meeting' ? 'contextRoom:activityPanes.meetingTime' : 'contextRoom:activityPanes.dueDate')}：{date} {item.time}</p><dl><div><dt>{t(item.kind === 'meeting' ? 'contextRoom:activityPanes.participants' : 'contextRoom:activityPanes.owner')}</dt><dd>{item.subtitle}</dd></div><div><dt>{t('contextRoom:activityPanes.description')}</dt><dd>{item.description}</dd></div></dl>{item.attachments.length ? <section className="context-room-schedule-attachments"><span>{t('contextRoom:activityPanes.attachments')}</span>{item.attachments.map((attachment) => <div key={attachment.name}><Paperclip aria-hidden="true" /><b>{attachment.name}</b><small>{attachment.size}</small></div>)}</section> : null}{item.connector ? null : <Popover.Close asChild><button type="button" className="context-room-secondary" onClick={() => onOpen({ kind: item.kind, id: item.id })}>{t('contextRoom:activityPanes.openDetail', { detail: t(item.kind === 'meeting' ? 'contextRoom:activityPanes.meetingDetails' : 'contextRoom:activityPanes.taskDetails') })}</button></Popover.Close>}</Popover.Content></Popover.Portal></Popover.Root>)}
         </section>)}
-        {!visibleItems.length ? (
-          <PanelEmptyState
-            icon={CalendarDays}
-            title={t('contextRoom:activityPanes.noScheduleItemsInThisRange')}
-            description={t('contextRoom:activityPanes.changeTheDateRangeToSeeOtherMeetings')}
-          />
-        ) : null}
       </>
     ) : (
       <PanelEmptyState
@@ -351,10 +319,9 @@ export function TasksPane({
   return (
     <div className="context-room-task-pane">
       <header>
-        <h2>{t('contextRoom:activityPanes.roomTasks')}</h2>
-        <span className="context-room-task-progress" data-icon-tone={roomKindTone(room.kind)}>
-          {completed.length + localDoneTasks.length}/{room.actionItems.length + localTasks.length}
-        </span>
+        <CheckSquare2 aria-hidden="true" />
+        <h2>{t('contextRoom:todoPane.tasksSection')}</h2>
+        <span className="context-room-pane-head-count">{room.actionItems.length + localTasks.length}</span>
         <Popover.Root
           open={createOpen}
           onOpenChange={(nextOpen) => {
