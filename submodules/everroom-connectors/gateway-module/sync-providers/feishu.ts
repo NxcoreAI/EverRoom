@@ -22,6 +22,10 @@ export const feishuSyncProvider: SyncProviderDefinition = {
     },
   },
   defaultScopes: [{ providerScopeId: "docs", displayName: "飞书文档" }],
+  // SaaS OpenConnector 运行时的代理只放行注册 action 路由，proxyGet 直调
+  // open.feishu.cn 必报 open_connector_route_unsupported——自动镜像先关掉
+  // （连接建立/轮询不再触发必然失败的 run）；文档导入面板走 action 通道不受影响。
+  autoSync: false,
   ui: { label: "飞书", category: "docs", iconKey: "feishu" },
   async *pull(ctx) {
     const documents: NormalizedDocument[] = [];

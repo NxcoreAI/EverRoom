@@ -70,7 +70,7 @@ export class ConnectorManager {
       const created = await this.ensureScopesForConnection(c);
       // 首次连接立即触发全量同步：不等轮询周期（默认 5 分钟）——
       // "连接成功但什么都不发生"是最迷惑的首次体验。失败静默，轮询兜底。
-      if (created.length > 0 && this.executor && !input.deferFirstSync) {
+      if (created.length > 0 && this.executor && !input.deferFirstSync && this.autoSyncEnabled(c.provider)) {
         for (const scopeId of created) {
           try {
             this.trigger(scopeId, "full");
@@ -122,6 +122,7 @@ export class ConnectorManager {
       if (connection.status !== "active") continue;
       if (allScopes.some((s) => s.connectionId === connection.id)) continue;
       if (!this.engine.canServe(connection.provider)) continue;
+      if (!this.autoSyncEnabled(connection.provider)) continue;
       try {
         for (const scopeId of await this.ensureScopesForConnection(connection)) {
           this.trigger(scopeId, "full");
@@ -130,6 +131,11 @@ export class ConnectorManager {
         // 轮询周期会重试
       }
     }
+  }
+  /** provider 声明 autoSync=false 时跳过自动触发（连接建立/轮询/自愈）；
+   *  手动 trigger 不拦。 */
+  private autoSyncEnabled(provider: ConnectorProvider): boolean {
+    return syncProviderOf(provider)?.autoSync ?? true;
   }
   trigger(scopeId: string, mode: SyncMode): SyncRun {
     const existing = this.repository
@@ -319,6 +325,7 @@ export class ConnectorManager {
         // direct 源（WebCal 订阅）不受影响照常轮询。
         const connection = this.repository.getConnection(scope.connectionId);
         if (!connection || !this.engine.canServe(connection.provider)) continue;
+        if (!this.autoSyncEnabled(connection.provider)) continue;
         try {
           this.trigger(scope.id, scope.sourceCursor ? "incremental" : "full");
         } catch {}
