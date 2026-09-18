@@ -628,6 +628,7 @@
   "settings.redeemCodeValid": "Code is valid.",
   "settings.redeemCodeInvalid": "This code is invalid or has already been used.",
   "settings.redeemCodeValidationFailed": "Could not verify the code. Try again later.",
+  "settings.redeemCodeVerify": "Verify code",
   "settings.redeemCodeApplied": "Redeemed. Pro is now active.",
   "settings.redeemCodeProActive": "This account already has Pro. Code not used.",
   "settings.computerAudio": "Computer audio",

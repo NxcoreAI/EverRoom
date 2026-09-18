@@ -259,11 +259,10 @@
 }
 
 .runtime-config-gate-login-row {
-  justify-content: flex-start !important;
-}
-
-.runtime-config-gate-login-row button {
-  flex: 0 1 auto;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 4px;
 }
 
 .runtime-config-gate-social-button {
@@ -427,7 +426,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  margin: 0;
+  margin: 10px 0 0;
   padding: 10px 12px;
   border: 1px solid #f0c6c6;
   border-radius: 8px;
@@ -451,19 +450,44 @@
   margin-top: 10px;
 }
 
-/* 等待浏览器登录：提示文案居左、取消按钮居右 */
-.runtime-config-gate-oidc-waiting {
+/* 手动配置是低频逃生入口，居中弱化而非右对齐提交语义 */
+.runtime-config-gate-manual-row {
+  justify-content: center;
+}
+
+/* 等待浏览器登录：通知盒（与错误条同族），spinner+文案居左、取消按钮居右。
+   margin-top：qr-login-methods 列无 gap，与上方登录按钮行保持间距 */
+.runtime-config-gate-waiting {
+  display: flex;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid #c9d9f4;
+  border-radius: 8px;
+  background: #f3f7fe;
 }
 
-/* 提示文案占剩余宽度自行换行；取消按钮不被挤压、文字单行不溢出按钮框 */
-.runtime-config-gate-oidc-waiting p {
+.runtime-config-gate-waiting p {
+  display: flex;
   flex: 1 1 auto;
+  align-items: center;
+  gap: 8px;
   min-width: 0;
+  margin: 0;
+  color: #536070;
+  font-size: 13px;
+  line-height: 1.5;
 }
 
-.runtime-config-gate-oidc-waiting .runtime-config-gate-secondary {
+.runtime-config-gate-waiting p svg {
+  flex: none;
+  width: 15px;
+  height: 15px;
+}
+
+.runtime-config-gate-waiting .runtime-config-gate-secondary {
   flex: none;
   white-space: nowrap;
 }
@@ -515,6 +539,10 @@
 
 @media (max-width: 640px) {
   .runtime-config-gate-options {
+    grid-template-columns: 1fr;
+  }
+
+  .runtime-config-gate-login-row {
     grid-template-columns: 1fr;
   }
 
