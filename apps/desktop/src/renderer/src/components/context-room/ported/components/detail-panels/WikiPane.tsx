@@ -9,7 +9,8 @@ import {
   Plus,
   RefreshCw,
 } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useLocale } from '../../../../../i18n/LocaleContext';
 
 import { showToast } from '@/state/toast';
@@ -84,6 +85,14 @@ export function WikiPane({ room, selectedResourceId, onOpenPage, view = 'tree' }
   const [retrying, setRetrying] = useState(false);
   const building = status === 'processing' || status === 'pending';
   const canRetry = typeof window.nxcore?.knowledge?.retryWikiBuild === 'function';
+  const paneRef = useRef<HTMLDivElement | null>(null);
+  const [tabRow, setTabRow] = useState<Element | null>(null);
+
+  // 操作按钮渲染进本面板页签行右侧；找不到页签行的场景（测试/独立渲染）退回面板内。
+  useLayoutEffect(() => {
+    const panel = paneRef.current?.closest('.context-room-workspace-panel');
+    setTabRow(panel?.querySelector('.context-room-board-tabs') ?? null);
+  }, []);
 
   const retryBuild = async () => {
     const knowledge = window.nxcore?.knowledge;
@@ -233,6 +242,32 @@ export function WikiPane({ room, selectedResourceId, onOpenPage, view = 'tree' }
     }
   };
 
+  const wikiActions = (
+    <div className="context-room-wiki-actions" role="group">
+      <button
+        type="button"
+        className="context-room-wiki-upload"
+        aria-label={t(uploading ? 'contextRoom:wiki.uploadingFiles' : 'contextRoom:wiki.uploadFiles')}
+        title={t('contextRoom:wiki.uploadFiles')}
+        disabled={uploading}
+        onClick={() => void uploadFiles()}
+      >
+        {uploading
+          ? <LoaderCircle aria-hidden="true" className="is-spinning" />
+          : <Plus aria-hidden="true" />}
+      </button>
+      <button
+        type="button"
+        className="context-room-wiki-refresh"
+        aria-label={t('contextRoom:wiki.refresh')}
+        title={t('contextRoom:wiki.refresh')}
+        onClick={() => void refresh()}
+      >
+        <RefreshCw aria-hidden="true" />
+      </button>
+    </div>
+  );
+
   if (selectedFile) {
     return (
       <div className="context-room-wiki-pane is-reading-file">
@@ -262,35 +297,8 @@ export function WikiPane({ room, selectedResourceId, onOpenPage, view = 'tree' }
   }
 
   return (
-    <div className="context-room-wiki-pane">
-      <header className="context-room-wiki-header">
-        <div className="context-room-wiki-title">
-          {pages.length > 0 ? <span>{t('contextRoom:wiki.countPages', { count: pages.length })}</span> : null}
-        </div>
-        <div className="context-room-wiki-actions">
-          <button
-            type="button"
-            className="context-room-wiki-upload"
-            aria-label={t(uploading ? 'contextRoom:wiki.uploadingFiles' : 'contextRoom:wiki.uploadFiles')}
-            title={t('contextRoom:wiki.uploadFiles')}
-            disabled={uploading}
-            onClick={() => void uploadFiles()}
-          >
-            {uploading
-              ? <LoaderCircle aria-hidden="true" className="is-spinning" />
-              : <Plus aria-hidden="true" />}
-          </button>
-          <button
-            type="button"
-            className="context-room-wiki-refresh"
-            aria-label={t('contextRoom:wiki.refresh')}
-            title={t('contextRoom:wiki.refresh')}
-            onClick={() => void refresh()}
-          >
-            <RefreshCw aria-hidden="true" />
-          </button>
-        </div>
-      </header>
+    <div className="context-room-wiki-pane" ref={paneRef}>
+      {tabRow ? createPortal(wikiActions, tabRow) : wikiActions}
       {building || status === 'failed' ? (
         <div className="context-room-wiki-progress">
           <span className="context-room-wp-step is-done">
