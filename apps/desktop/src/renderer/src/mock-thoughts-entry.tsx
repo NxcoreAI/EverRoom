@@ -99,13 +99,15 @@ function DocumentOperationRoot() {
 }
 
 createRoot(document.getElementById('mock-root')!).render(
-  <LocaleProvider>
-    <AccountProvider>
-      <ContextRoomStateProvider>
-        <RoomDocumentsProvider>
-          <DocumentOperationRoot />
-        </RoomDocumentsProvider>
-      </ContextRoomStateProvider>
-    </AccountProvider>
-  </LocaleProvider>,
+  <React.StrictMode>
+    <LocaleProvider>
+      <AccountProvider>
+        <ContextRoomStateProvider>
+          <RoomDocumentsProvider>
+            <DocumentOperationRoot />
+          </RoomDocumentsProvider>
+        </ContextRoomStateProvider>
+      </AccountProvider>
+    </LocaleProvider>
+  </React.StrictMode>,
 )

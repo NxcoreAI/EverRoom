@@ -197,7 +197,7 @@ const base = {
         { id: 'fact:decision-v1', nodeType: 'fact', label: 'V1 视觉定稿', sourceGraph: 'entityFacts', roomRef: null, updatedAt: '2026-09-13T04:00:00.000Z' },
         { id: 'fact:conflict-timeline', nodeType: 'fact', label: '排期冲突', sourceGraph: 'entityFacts', roomRef: null, updatedAt: '2026-09-10T02:00:00.000Z' },
         { id: 'memory:insight-motion', nodeType: 'memory', label: '动效时长约定 240ms', sourceGraph: 'roomGraph', roomRef: null, updatedAt: '2026-09-09T08:00:00.000Z' },
-        { id: 'wiki:3', nodeType: 'wikiPage', label: '设计规范·动效篇', sourceGraph: 'wiki', roomRef: null, updatedAt: '2026-09-08T08:00:00.000Z' },
+        { id: 'wiki:3', nodeType: 'wikiPage', label: '设计规范·动效篇', sourceGraph: 'wiki', roomRef: { id: 'room-3', title: '连接器' }, updatedAt: '2026-09-08T08:00:00.000Z' },
       ]
       const emEdges = [
         { id: 'e1', from: 'room:thoughts-mock', to: 'doc:doc-native-1', relationType: '包含', edgeLevel: 'original', confidence: 1 },
@@ -208,6 +208,8 @@ const base = {
         { id: 'e6', from: 'entity:person-linwei', to: 'entity:team-visual', relationType: '成员', edgeLevel: 'composed', confidence: null },
         { id: 'e7', from: 'fact:decision-v1', to: 'memory:insight-motion', relationType: '衍生', edgeLevel: 'semantic', confidence: null },
         { id: 'e8', from: 'memory:insight-motion', to: 'wiki:3', relationType: '沉淀于', edgeLevel: 'composed', confidence: null },
+        { id: 'e9', from: 'room:thoughts-mock', to: 'doc:doc-native-2', relationType: '包含', edgeLevel: 'original', confidence: 1 },
+        { id: 'e10', from: 'fact:conflict-timeline', to: 'entity:person-linwei', relationType: '上报', edgeLevel: 'original', confidence: 0.7 },
       ]
       if (req.mode === 'wander') {
         const start = req.wander?.startNodeRef || center
