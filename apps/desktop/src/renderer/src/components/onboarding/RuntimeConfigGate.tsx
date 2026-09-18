@@ -208,8 +208,11 @@ export function RuntimeConfigGate({ children }: { children: ReactNode }) {
 
   /** 登录成功后的共同放行：广播账号变化，拉取 SaaS runtime config 并连通测试。 */
   const completeGateLogin = async () => {
-    const account = await window.nxcore!.account.status()
-    window.dispatchEvent(new CustomEvent('everroom-account-status-changed', { detail: account }))
+    // QR 扫码路径经 void 调用本函数：status 抛错不能让 rejection 被静默吞掉。
+    const account = await window.nxcore!.account.status().catch(() => null)
+    if (account) {
+      window.dispatchEvent(new CustomEvent('everroom-account-status-changed', { detail: account }))
+    }
     // 登录钩子（main index）会把 SaaS runtime config 写进 gateway；
     // 这里再显式拉取一次确保 saas source 已保存，然后走连通测试。
     // 拉取失败（网络抖动等）退回网关当前快照——本地仍保留可用配置时照常

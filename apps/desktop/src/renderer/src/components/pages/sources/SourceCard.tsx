@@ -237,7 +237,7 @@ export function CloudSourceCard({
       actions={
         <>
           {onReplaceAccount ? <button type="button" className="src-mini-btn" aria-label={t('surface:sources.replaceAccount')} title={t('surface:sources.replaceAccount')} disabled={busy} onClick={onReplaceAccount}><ArrowLeftRight aria-hidden="true" strokeWidth={1.8} /></button> : null}
-          {active ? <button type="button" className="src-mini-btn" disabled={busy || running || !initialSyncDone} onClick={onSync}><RefreshCw aria-hidden="true" strokeWidth={1.8} />{t('surface:connector.incrementalSync')}</button> : null}
+          {active && !docsProvider ? <button type="button" className="src-mini-btn" disabled={busy || running || !initialSyncDone} onClick={onSync}><RefreshCw aria-hidden="true" strokeWidth={1.8} />{t('surface:connector.incrementalSync')}</button> : null}
           <button type="button" className="src-mini-btn" aria-label={t(active ? 'surface:connector.disableConnection' : 'surface:sourceCard.enableConnection')} title={t(active ? 'surface:connector.disableConnection' : 'surface:sourceCard.enableConnection')} disabled={busy} onClick={onToggleEnabled}>
             {active ? <Pause aria-hidden="true" strokeWidth={1.8} /> : <Play aria-hidden="true" strokeWidth={1.8} />}
           </button>
