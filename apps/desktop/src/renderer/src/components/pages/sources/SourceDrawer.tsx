@@ -303,6 +303,9 @@ export function SourceDrawer({
     // 只有 Google Calendar 按"每个日历"建 scope，作为「日历」列表展示。
     const calendarScopes = connection.provider === 'google-calendar'
     const mailbox = connection.provider === 'gmail' || connection.provider === 'outlook'
+    // docs 类连接（飞书/Notion）不跑镜像同步（SaaS 运行时不支持裸路由），
+    // 历史失败 run 对用户只有误导——同步记录区整个不展示。
+    const docsProvider = connection.provider === 'feishu' || connection.provider === 'notion'
     const lastRun = runs.length ? runs.reduce((latest, run) => (run.startedAt > latest.startedAt ? run : latest)) : null
     const running = runs.some((run) => run.status === 'running' || run.status === 'queued')
     // 增量同步依赖全量落下的游标：初始（全量）同步完成前不允许手动增量
@@ -335,7 +338,7 @@ export function SourceDrawer({
             { value: scopes.length.toLocaleString(), label: t('surface:connector.calendars') },
           ] : [
             ...(mailbox && totals ? [{ value: totals.mail.toLocaleString(), label: t('surface:sourceCard.syncedItems') }] : []),
-            ...(lastRun ? [{ value: lastRun.processed.toLocaleString(), label: t('surface:sourceCard.lastSynced') }] : []),
+            ...(!docsProvider && lastRun ? [{ value: lastRun.processed.toLocaleString(), label: t('surface:sourceCard.lastSynced') }] : []),
           ]),
         ])}
         <div className="src-drawer-list">
@@ -369,23 +372,27 @@ export function SourceDrawer({
               ))}
             </>
           ) : null}
-          <div className="src-list-head"><h4>{t('surface:sourceCard.runs')} · {runs.length.toLocaleString()}</h4></div>
-          {runs.length === 0 ? <div className="src-feed-empty">{t('surface:sourceCard.noRuns')}</div> : null}
-          {groupRuns(runs).map(({ run, attempts }) => {
-            const shown = runPresentation(run, t)
-            const countLabel = run.processed > 0
-              ? t('surface:connector.countRecords', { count: run.processed.toLocaleString() })
-              : run.status === 'completed' ? t('surface:connector.noNewChanges') : null
-            return (
-              <div key={run.id} className="src-run-row" title={run.error || undefined}>
-                <span className="src-file-copy">
-                  <strong>{t(CONNECTOR_STATUS_KEYS[run.mode] ?? run.mode)}{countLabel ? ` · ${countLabel}` : ''}{run.failed > 0 ? ` · ${t('surface:connector.countFailed', { count: run.failed.toLocaleString() })}` : ''}{attempts > 1 ? ` · ${t('surface:connector.attemptCount', { count: attempts.toLocaleString() })}` : ''}</strong>
-                  <small>{formatDate(run.finishedAt ?? run.startedAt, locale, t)}</small>
-                </span>
-                <StatePill tone={shown.tone} label={shown.label} />
-              </div>
-            )
-          })}
+          {docsProvider ? null : (
+            <>
+              <div className="src-list-head"><h4>{t('surface:sourceCard.runs')} · {runs.length.toLocaleString()}</h4></div>
+              {runs.length === 0 ? <div className="src-feed-empty">{t('surface:sourceCard.noRuns')}</div> : null}
+              {groupRuns(runs).map(({ run, attempts }) => {
+                const shown = runPresentation(run, t)
+                const countLabel = run.processed > 0
+                  ? t('surface:connector.countRecords', { count: run.processed.toLocaleString() })
+                  : run.status === 'completed' ? t('surface:connector.noNewChanges') : null
+                return (
+                  <div key={run.id} className="src-run-row" title={run.error || undefined}>
+                    <span className="src-file-copy">
+                      <strong>{t(CONNECTOR_STATUS_KEYS[run.mode] ?? run.mode)}{countLabel ? ` · ${countLabel}` : ''}{run.failed > 0 ? ` · ${t('surface:connector.countFailed', { count: run.failed.toLocaleString() })}` : ''}{attempts > 1 ? ` · ${t('surface:connector.attemptCount', { count: attempts.toLocaleString() })}` : ''}</strong>
+                      <small>{formatDate(run.finishedAt ?? run.startedAt, locale, t)}</small>
+                    </span>
+                    <StatePill tone={shown.tone} label={shown.label} />
+                  </div>
+                )
+              })}
+            </>
+          )}
         </div>
       </>
     )

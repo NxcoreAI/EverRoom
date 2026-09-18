@@ -20,6 +20,7 @@ import type {
 } from "@nxcore/agent-contract";
 import type { GatewayDatabase } from "../../../infrastructure/database/client.js";
 import {
+  documentImportBatches,
   documentImportComments,
   documentImportListCache,
   documentImportRuns,
@@ -489,13 +490,17 @@ export class DocumentImportService {
     provider: ExternalDocumentProvider,
     connectionName?: string,
   ): ExternalDocumentListResponse | null {
+    // 不带 connectionName 的调用方（数据源卡片汇总）：docs 连接单槽位，
+    // 按 provider 取最近一行——否则用 "" 查永远 miss 真实连接名写入的
+    // 缓存，卡片"已导入"恒为 0 占位。
     const row = this.db
       .select()
       .from(documentImportListCache)
       .where(and(
         eq(documentImportListCache.provider, provider),
-        eq(documentImportListCache.connectionName, connectionName ?? ""),
+        ...(connectionName ? [eq(documentImportListCache.connectionName, connectionName)] : []),
       ))
+      .orderBy(desc(documentImportListCache.fetchedAt))
       .get();
     if (!row) return null;
     const items = this.markImported(provider, row.itemsJson);
@@ -508,7 +513,8 @@ export class DocumentImportService {
     };
   }
 
-  /** imported 标记回填：该来源已有落 Room 的导入记录时置 true。 */
+  /** imported 标记回填：已落 Room、或批次成功导入/孵化（auto 模式无目标 Room
+   *  时全部孵化，不产生落 Room 记录）时置 true。 */
   private markImported(
     provider: ExternalDocumentProvider,
     items: ExternalDocumentListItem[],
@@ -536,10 +542,32 @@ export class DocumentImportService {
     const landedRemoteIds = new Set(
       sources.filter((source) => landedSourceIds.has(source.id)).map((source) => source.remoteDocumentId),
     );
+    const batchImported = this.batchImportedRemoteIds(provider);
     for (const item of items) {
-      if (landedRemoteIds.has(item.remoteDocumentId)) item.imported = true;
+      if (landedRemoteIds.has(item.remoteDocumentId) || batchImported.has(item.remoteDocumentId)) item.imported = true;
     }
     return items;
+  }
+
+  /** 批次成功（imported/incubated）的远端文档 id 集合：auto 孵化路径不落 Room、
+   *  只在批次 items 里留痕，"已导入"口径须把它计入。 */
+  private batchImportedRemoteIds(provider: ExternalDocumentProvider): Set<string> {
+    const rows = this.db.select({ items: documentImportBatches.itemsJson })
+      .from(documentImportBatches)
+      .where(and(
+        eq(documentImportBatches.ownerId, "local-user"),
+        eq(documentImportBatches.provider, provider),
+        eq(documentImportBatches.status, "completed"),
+      )).all();
+    const ids = new Set<string>();
+    for (const row of rows) {
+      for (const item of row.items) {
+        if ((item.status === "imported" || item.status === "incubated") && item.remoteDocumentId) {
+          ids.add(item.remoteDocumentId);
+        }
+      }
+    }
+    return ids;
   }
 
   /**

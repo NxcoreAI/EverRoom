@@ -418,6 +418,8 @@ export function AgentChatView({
       ?? runMessages[0]?.id
       ?? null
   }, [messages, notificationRunTarget])
+  const notificationTargetActiveRef = useRef(false)
+  useEffect(() => { notificationTargetActiveRef.current = Boolean(notificationTargetMessageId) }, [notificationTargetMessageId])
 
   const latestStreamingMessage = useMemo(
     () => [...messages].reverse().find((message) => (
@@ -574,6 +576,20 @@ export function AgentChatView({
     element.scrollTop = element.scrollHeight
   }, [activeRunId, linkedRun.messages, linkedRun.reasoning, linkedRun.tools, messages, notificationTargetMessageId, pendingApprovals, toolCallsByRun])
 
+  // 流式正文不在上方 effect 的依赖里（周期性 flush 才触发），流式期间最新
+  // 内容会长时间滞留在输入框后面（实测 gap 可达 155px+）。DOM 级跟随：
+  // 吸底时内容一长就贴底，不依赖 React 状态形状。
+  useEffect(() => {
+    const element = conversationRef.current
+    if (!element || typeof MutationObserver === 'undefined') return undefined
+    const observer = new MutationObserver(() => {
+      if (!pinnedToBottomRef.current || notificationTargetActiveRef.current) return
+      element.scrollTop = element.scrollHeight
+    })
+    observer.observe(element, { childList: true, subtree: true, characterData: true })
+    return () => observer.disconnect()
+  }, [])
+
   useLayoutEffect(() => {
     if (scopeReady) setEmptyLayout(confirmedEmpty)
   }, [confirmedEmpty, scopeReady])
@@ -684,6 +700,11 @@ export function AgentChatView({
         aria-live="polite"
         onScroll={(event) => {
           pinnedToBottomRef.current = isScrolledToBottom(event.currentTarget)
+        }}
+        onWheel={(event) => {
+          // 流式输出期间周期性强制吸底与滚轮竞态：wheel 先于 scroll 事件，
+          // 在这里立即解除吸底，向上滚动不会被下一次强制滚底吃掉。
+          if (event.deltaY < 0) pinnedToBottomRef.current = false
         }}
       >
           {incomingLink ? (

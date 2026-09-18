@@ -89,5 +89,9 @@ export interface SyncProviderDefinition {
   pull?(ctx: SyncPullContext, mode: SyncMode): AsyncGenerator<PullPage>;
   /** direct 引擎拉取（直连源实现此者）。 */
   pullDirect?(ctx: DirectPullContext, mode: SyncMode): AsyncGenerator<PullPage>;
+  /** 自动同步开关（默认 true）：false = 连接建立与轮询不自动触发镜像同步。
+   *  拉取通道在当前运行时必然失败（如 SaaS 代理只放行注册 action 路由）时置
+   *  false，避免必然失败的 run 持续刷屏；手动 trigger 不受影响。 */
+  autoSync?: boolean;
   ui: { label: string; category: "mail" | "calendar" | "docs"; iconKey: string; comingSoon?: boolean };
 }

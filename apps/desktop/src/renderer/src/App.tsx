@@ -239,6 +239,8 @@ export function App() {
   const completeAutomaticOnboarding = useCallback(() => {
     writeFullOnboardingCompleted()
     fullOnboardingCompletedRef.current = true
+    // 让在途的启动探测失效：其晚到的 'advance' 决策会把刚完成的用户拽回引导页。
+    onboardingCheckRequestRef.current += 1
     fullOnboardingStageRef.current = 'idle'
     setFullOnboardingStage('idle')
     setFolderOnboardingOpen(false)
@@ -398,6 +400,9 @@ export function App() {
         // operable main UI — never a hidden shell — and later checks
         // (runtime-config ready, next login) can still run the guide.
         if (action === 'stand-down' || action === 'wait') return
+        // 探测重试（撞 MemoryCore 重启窗口）期间用户可能已手动走完引导：
+        // 晚到的 advance 不得把人拽回引导页。
+        if (fullOnboardingCompletedRef.current) return
 
         setCompletedOnboardingStages(new Set())
         fullOnboardingStageRef.current = 'folder'
@@ -973,6 +978,8 @@ export function App() {
             markOnboardingStageCompleted('folder')
             writeFullOnboardingCompleted()
             fullOnboardingCompletedRef.current = true
+            // 让在途的启动探测失效：其晚到的 'advance' 决策会把刚完成的用户拽回引导页。
+            onboardingCheckRequestRef.current += 1
             fullOnboardingStageRef.current = 'idle'
             setFullOnboardingStage('idle')
             setSuppressAutomaticOnboarding(true)
