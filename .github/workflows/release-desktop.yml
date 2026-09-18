@@ -420,6 +420,90 @@ jobs:
             --generate-notes \
             --notes "$notes"
 
+      # 分发：产物传 OSS + 登记管理端（draft 状态，发布控制完全在管理台）。
+      # 仅 tag 触发时执行；workflow_dispatch 走分支名时跳过。
+      - name: Distribute to OSS and register release
+        shell: bash
+        env:
+          OSS_ENDPOINT: ${{ vars.RELEASE_OSS_ENDPOINT }}
+          OSS_BUCKET: ${{ vars.RELEASE_OSS_BUCKET }}
+          OSS_ACCESS_KEY_ID: ${{ secrets.RELEASE_OSS_KEY_ID }}
+          OSS_ACCESS_KEY_SECRET: ${{ secrets.RELEASE_OSS_KEY_SECRET }}
+          RELEASE_API: ${{ vars.NXCORE_SAAS_API_URL }}
+          RELEASE_CI_TOKEN: ${{ secrets.RELEASE_CI_TOKEN }}
+        run: |
+          if [[ ! "$GITHUB_REF_NAME" =~ ^desktop-v ]]; then
+            echo "::notice::Not a desktop release tag, skipping distribution."
+            exit 0
+          fi
+          for var in OSS_ENDPOINT OSS_BUCKET OSS_ACCESS_KEY_ID OSS_ACCESS_KEY_SECRET RELEASE_API RELEASE_CI_TOKEN; do
+            test -n "${!var}" || { echo "Missing env $var (check repo vars/secrets)" >&2; exit 1; }
+          done
+          version="${GITHUB_REF_NAME#desktop-v}"
+          if [[ "$version" == *-nightly.* ]]; then channel=nightly; else channel=stable; fi
+          echo "Distributing $version (channel=$channel)"
+
+          curl -fsSL -o "$RUNNER_TEMP/ossutil64" https://gosspublic.alicdn.com/ossutil/1.7.19/ossutil64
+          chmod +x "$RUNNER_TEMP/ossutil64"
+          ossutil() { "$RUNNER_TEMP/ossutil64" "$@" -e "$OSS_ENDPOINT" -i "$OSS_ACCESS_KEY_ID" -k "$OSS_ACCESS_KEY_SECRET"; }
+
+          ossutil cp release-assets/ "oss://$OSS_BUCKET/archive/$version/" -r -f
+          base_version="${version%%-*}"
+          sha_exe=$(openssl dgst -sha512 -binary "release-assets/EverRoom-$base_version-windows-x64.exe" | base64 -w0)
+          sha_zip=$(openssl dgst -sha512 -binary "release-assets/EverRoom-$base_version-arm64.zip" | base64 -w0)
+          sha_dmg=$(openssl dgst -sha512 -binary "release-assets/EverRoom-$base_version-arm64.dmg" | base64 -w0)
+          size_exe=$(stat -c%s "release-assets/EverRoom-$base_version-windows-x64.exe")
+          size_zip=$(stat -c%s "release-assets/EverRoom-$base_version-arm64.zip")
+          size_dmg=$(stat -c%s "release-assets/EverRoom-$base_version-arm64.dmg")
+
+          jq -n --arg v "$version" --arg c "$channel" --arg sha "$GITHUB_SHA" \
+            --arg exe "EverRoom-$base_version-windows-x64.exe" --argjson size_exe "$size_exe" --arg sha_exe "$sha_exe" \
+            --arg zip "EverRoom-$base_version-arm64.zip" --argjson size_zip "$size_zip" --arg sha_zip "$sha_zip" \
+            --arg dmg "EverRoom-$base_version-arm64.dmg" --argjson size_dmg "$size_dmg" --arg sha_dmg "$sha_dmg" \
+            '{version:$v,channel:$c,commitSha:$sha,files:[
+              {platform:"windows",fileName:$exe,fileSize:$size_exe,sha512Base64:$sha_exe},
+              {platform:"macos",fileName:$zip,fileSize:$size_zip,sha512Base64:$sha_zip},
+              {platform:"macos",fileName:$dmg,fileSize:$size_dmg,sha512Base64:$sha_dmg,isUpdateTarget:false}
+            ]}' > "$RUNNER_TEMP/ci-register.json"
+
+          status=$(curl -s -o "$RUNNER_TEMP/register-resp.json" -w '%{http_code}' -X POST \
+            -H "X-CI-Token: $RELEASE_CI_TOKEN" -H 'Content-Type: application/json' \
+            --data-binary "@$RUNNER_TEMP/ci-register.json" \
+            "${RELEASE_API%/}/releases/ci-register")
+          test "$status" = "200" || {
+            cat "$RUNNER_TEMP/register-resp.json" >&2
+            echo "ci-register failed with HTTP $status" >&2
+            exit 1
+          }
+          echo "Registered $version ($channel) as draft."
+
+          # stable 渠道额外写一份无灰度直链 yml 到 OSS stable/，作为控制面
+          # 故障时客户端的降级备源（客户端 feed 失败自动切到这里）。
+          if [[ "$channel" = "stable" ]]; then
+            public_base="https://$OSS_BUCKET.$OSS_ENDPOINT"
+            # heredoc 内容与结束符压到脚本基础缩进层：Actions 会剥离公共缩进，
+            # 结束符带前导空格则 bash 不认，heredoc 永不终止。
+            cat > "$RUNNER_TEMP/latest.yml" <<YAML
+          version: $version
+          path: $public_base/archive/$version/EverRoom-$base_version-windows-x64.exe
+          sha512: $sha_exe
+          releaseDate: '$(date -u +%Y-%m-%dT%H:%M:%S.000Z)'
+          releaseName: '$version'
+          YAML
+            cat > "$RUNNER_TEMP/latest-mac.yml" <<YAML
+          version: $version
+          files:
+            - url: $public_base/archive/$version/EverRoom-$base_version-arm64.zip
+              sha512: $sha_zip
+          sha512: $sha_zip
+          releaseDate: '$(date -u +%Y-%m-%dT%H:%M:%S.000Z)'
+          releaseName: '$version'
+          YAML
+            ossutil cp "$RUNNER_TEMP/latest.yml" "oss://$OSS_BUCKET/stable/latest.yml" -f
+            ossutil cp "$RUNNER_TEMP/latest-mac.yml" "oss://$OSS_BUCKET/stable/latest-mac.yml" -f
+            echo "Stable fallback feed updated."
+          fi
+
   notify:
     needs: [macos, windows, publish]
     if: always()
