@@ -1,68 +1,67 @@
-import { Compass, RotateCw, Target } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { Compass, Lock, LockOpen, RotateCw, Sparkles, Target } from 'lucide-react';
+import { useEffect, useState } from 'react';
 
 import { useLocale } from '../../../../../i18n/LocaleContext';
-import type { EmergenceCardDto, EmergenceMode, EmergenceProjectionResultDto } from '../../../../../../../shared/knowledge';
+import type {
+  EmergenceCardDto,
+  EmergenceFocusInput,
+  EmergenceFocusLevel,
+  EmergenceMode,
+  EmergenceProjectionResultDto,
+} from '../../../../../../../shared/knowledge';
 import type { ContextRoomRecord } from '../../types';
 import { useEmergence } from '../../hooks/useEmergence';
 import { FocusTreeCanvas } from '../emergence-graph/FocusTreeCanvas';
+import { SkeletonTreeCanvas } from '../emergence-graph/SkeletonTreeCanvas';
 import { WalkJourneyCanvas } from '../emergence-graph/WalkJourneyCanvas';
 import { resolveCenter } from '../emergence-graph/focusTreeModel';
 import { backWalk, initialWalkLog, stepWalk, type WalkStation } from '../emergence-graph/walkModel';
-
-/** 投影中的图占位：胶囊骨架 + 提示语（数据未到时不空白）。圆点按中心定位（translate -50%），坐标与连线端点一一对应。 */
-function GraphSkeleton({ hint }: { hint: string }) {
-  const pills: Array<[string, string, string]> = [
-    ['14%', '50%', 'is-center'],
-    ['38%', '22%', ''],
-    ['38%', '78%', ''],
-    ['62%', '10%', ''],
-    ['62%', '34%', ''],
-    ['62%', '66%', ''],
-    ['62%', '90%', ''],
-  ];
-  return (
-    <div className="eg-viewport eg-skeleton" aria-busy="true">
-      <svg className="eg-skeleton-edges" aria-hidden="true" viewBox="0 0 100 100" preserveAspectRatio="none">
-        <path vectorEffect="non-scaling-stroke" d="M 14 50 C 24 50, 28 22, 38 22" />
-        <path vectorEffect="non-scaling-stroke" d="M 14 50 C 24 50, 28 78, 38 78" />
-        <path vectorEffect="non-scaling-stroke" d="M 38 22 C 48 22, 52 10, 62 10" />
-        <path vectorEffect="non-scaling-stroke" d="M 38 22 C 48 22, 52 34, 62 34" />
-        <path vectorEffect="non-scaling-stroke" d="M 38 78 C 48 78, 52 66, 62 66" />
-        <path vectorEffect="non-scaling-stroke" d="M 38 78 C 48 78, 52 90, 62 90" />
-      </svg>
-      {pills.map(([left, top, cls]) => (
-        <span key={`${left}-${top}`} className={`eg-sk ${cls}`} style={{ left, top }} />
-      ))}
-      <p className="eg-skeleton-hint">{hint}</p>
-    </div>
-  );
-}
 
 /**
  * 思路板块（上图下卡）：聚焦=思维导图常驻 + 悬浮节点详情卡；漫游=步进链。
  * 工具条=聚焦/漫游分段 + 层级回退箭头 + 刷新；卡片流只存在于伴随区。
  */
-export function IdeasBoardPane({ room }: { room: ContextRoomRecord }) {
+export function IdeasBoardPane({
+  room,
+  focus,
+  focusLabel,
+  focusLevel,
+  focusLocked,
+  onToggleFocusLock,
+}: {
+  room: ContextRoomRecord;
+  /** 焦点协调器输出：跨板块共享的当前焦点（编辑场景=章节/选区/产物，否则 Room）。 */
+  focus: EmergenceFocusInput;
+  focusLabel: string | null;
+  focusLevel: EmergenceFocusLevel;
+  focusLocked: boolean;
+  onToggleFocusLock: () => void;
+}) {
   const { t } = useLocale();
   const [mode, setMode] = useState<EmergenceMode>('focus');
   const [pinned, setPinned] = useState<EmergenceCardDto[]>([]);
-  const focusCenterRef = `room:${room.id}`;
+  const focusCenterRef = focus.documentId ? `doc:${focus.documentId}` : `room:${room.id}`;
   const [focusPath, setFocusPath] = useState<{ stack: string[]; index: number }>(() => ({ stack: [focusCenterRef], index: 0 }));
   const [selectedNodeRef, setSelectedNodeRef] = useState<string | null>(null);
   const [walkLog, setWalkLog] = useState<WalkStation[]>([]);
   const [wanderStart, setWanderStart] = useState<{ nodeRef: string | null; label: string } | null>(null);
 
-  const focusInput = useMemo(() => ({ documentId: null, selectionText: null, blockId: null }), []);
   const {
     focusResult, wanderResult, focusLoading, wanderLoading, error, request, wanderFrom,
-  } = useEmergence({ roomId: room.id, focus: focusInput });
+  } = useEmergence({ roomId: room.id, focus, locked: focusLocked });
 
-  // 焦点源变化（换房间）=重置钻取历史与图内选中
+  // 树根听服务端的：章节级焦点时网关注入临时章节节点，钻取栈必须从章节长起
+  const focusRootRef = focusResult?.focusRootRef ?? focusCenterRef;
+
+  const focusLabelText = focusLevel === 'selection'
+    ? t('contextRoom:emergence.selectionFocus')
+    : (focusLabel || room.title);
+
+  // 焦点源变化（换房间/换章节）=重置钻取历史与图内选中
   useEffect(() => {
-    setFocusPath((p) => (p.stack[p.index] === focusCenterRef ? p : { stack: [focusCenterRef], index: 0 }));
+    setFocusPath((p) => (p.stack[p.index] === focusRootRef ? p : { stack: [focusRootRef], index: 0 }));
     setSelectedNodeRef(null);
-  }, [focusCenterRef]);
+  }, [focusRootRef]);
 
   // 新的漫步结果=新的路：渲染期重置（无空帧），刷新/再走一次都不丢当前视图。
   // 上一次结果必须存 state（存 ref 会在严格模式双渲染下丢重置：首跑改了 ref，次跑看不到变化）。
@@ -135,7 +134,7 @@ export function IdeasBoardPane({ room }: { room: ContextRoomRecord }) {
             onCardAction={pinCard}
           />
         ) : focusLoading ? (
-          <GraphSkeleton hint={t('contextRoom:emergence.projecting')} />
+          <SkeletonTreeCanvas hint={t('contextRoom:emergence.projecting')} />
         ) : (
           <div className="eg-viewport eg-empty">{error ?? t('contextRoom:emergence.veinEmpty')}</div>
         )
@@ -152,7 +151,7 @@ export function IdeasBoardPane({ room }: { room: ContextRoomRecord }) {
             onWalkAgain={() => wanderFrom(wanderStart?.nodeRef ?? null)}
           />
         ) : wanderLoading ? (
-          <GraphSkeleton hint={t('contextRoom:emergence.wandering')} />
+          <SkeletonTreeCanvas hint={t('contextRoom:emergence.wandering')} />
         ) : (
           <div className="eg-viewport eg-empty">{error ?? t('contextRoom:emergence.wanderEmpty')}</div>
         )
@@ -160,6 +159,11 @@ export function IdeasBoardPane({ room }: { room: ContextRoomRecord }) {
 
   return (
     <div className="context-room-thoughts-pane" data-variant="board" data-mode={mode}>
+      <div className="context-room-thoughts-focus" title={focusLabelText}>
+        <Sparkles aria-hidden="true" />
+        <span>{t('contextRoom:emergence.focusPrefix')}</span>
+        <strong>{focusLabelText}</strong>
+      </div>
       <div className="context-room-thoughts-toolbar">
         <div className="context-room-thoughts-seg" role="tablist" aria-label={t('contextRoom:emergence.modeLabel')}>
           <button
@@ -206,6 +210,16 @@ export function IdeasBoardPane({ room }: { room: ContextRoomRecord }) {
           </div>
         ) : null}
         <div className="context-room-thoughts-toolbar-tools">
+          <button
+            type="button"
+            className={focusLocked ? 'context-room-thoughts-lock is-locked' : 'context-room-thoughts-lock'}
+            aria-pressed={focusLocked}
+            aria-label={t('contextRoom:emergence.lockFocus')}
+            title={t(focusLocked ? 'contextRoom:emergence.unlockFocus' : 'contextRoom:emergence.lockFocus')}
+            onClick={onToggleFocusLock}
+          >
+            {focusLocked ? <Lock aria-hidden="true" /> : <LockOpen aria-hidden="true" />}
+          </button>
           <button type="button" onClick={refresh} title={t('contextRoom:emergence.refresh')}>
             <RotateCw aria-hidden="true" />
             {t('contextRoom:emergence.refresh')}

@@ -104,7 +104,9 @@ export interface EmergenceTaskInput {
   roomTitle: string;
   /** 产物标题（伴随区编辑态）；Room 级焦点为 null。 */
   focusTitle: string | null;
-  /** 选区文本或文档导语。 */
+  /** 焦点所在章节标题（章节级焦点）；无章节结构为 null。 */
+  chapterHeading: string | null;
+  /** 选区+章节上下文、整节正文、文档导语或房间简介（组装见 emergence-service.focusText）。 */
   focusText: string;
 }
 
@@ -523,12 +525,14 @@ export function buildTaskUnderstandingPrompt(input: EmergenceTaskInput): string 
   return [
     `Room：${input.roomTitle}`,
     input.focusTitle ? `当前产物：《${input.focusTitle}》` : "（Room 级焦点，无具体产物）",
+    input.chapterHeading ? `当前章节：《${input.chapterHeading}》` : null,
     "",
-    "当前焦点文本（选区或文档导语）：",
-    input.focusText.slice(0, 4_000) || "（空）",
+    "当前焦点文本（选区+所在章节、整节正文、文档导语或房间简介）：",
+    // 章节正文不截断：装不下说明该节确实重要，超限由 chatJson 失败→降级链路兜底。
+    input.focusText || "（空）",
     "",
     "请给出任务理解 JSON。",
-  ].join("\n");
+  ].filter((line) => line !== null).join("\n");
 }
 
 /** 严格解析任务理解输出（导出供单测）：逐字段校验 + 越界修正。 */

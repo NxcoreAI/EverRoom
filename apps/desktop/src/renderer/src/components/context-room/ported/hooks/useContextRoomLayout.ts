@@ -37,6 +37,8 @@ export function useContextRoomLayout({
   const [activePanelIndex, setActivePanelIndex] = useState(0);
   const [middleHidden, setMiddleHidden] = useState(false);
   const [middleWidth, setMiddleWidth] = useState(320);
+  // 宽中栏（思路/关系单面板）用户拖过的宽度；null=未拖过，走 CSS 默认 min(720px, 58vw)。
+  const [wideWidth, setWideWidth] = useState<number | null>(null);
   const [panelWeights, setPanelWeights] = useState([1]);
   const [mobileContent, setMobileContent] = useState(false);
   const [draggedBoard, setDraggedBoard] = useState<BoardId | null>(null);
@@ -253,11 +255,23 @@ export function useContextRoomLayout({
     setMiddleHidden(false);
   };
 
+  // 图谱类板块（思路/关系）单面板时中栏取最大画布（PRD 4.1），且分隔条可拖宽于普通板块。
+  const wideMiddle = !isOverviewWorkspace(panels, subtabs) && panels.length === 1
+    && (panels[0] === 'thoughts' || panels[0] === 'relations');
+
+  const applyMiddleWidth = (raw: number) => {
+    // 所有板块统一可拖到右侧内容列只剩 320px；下限 240 保底可用。
+    const max = Math.max(360, (layoutRef.current?.clientWidth ?? 0) - 56 - 1 - 320);
+    const next = Math.max(240, Math.min(max, raw));
+    if (wideMiddle) setWideWidth(next);
+    else setMiddleWidth(next);
+  };
+
   const startMiddleResize = (event: ReactPointerEvent<HTMLDivElement>) => {
     event.currentTarget.setPointerCapture(event.pointerId);
     const rect = layoutRef.current?.getBoundingClientRect();
     if (!rect) return;
-    const move = (moveEvent: PointerEvent) => setMiddleWidth(Math.max(240, Math.min(560, moveEvent.clientX - rect.left - 56)));
+    const move = (moveEvent: PointerEvent) => applyMiddleWidth(moveEvent.clientX - rect.left - 56);
     const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
@@ -265,7 +279,8 @@ export function useContextRoomLayout({
   const resizeMiddleByKey = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
     event.preventDefault();
-    setMiddleWidth((value) => Math.max(240, Math.min(560, value + (event.key === 'ArrowRight' ? 16 : -16))));
+    const current = wideMiddle ? (wideWidth ?? 720) : middleWidth;
+    applyMiddleWidth(current + (event.key === 'ArrowRight' ? 16 : -16));
   };
   const startPanelResize = (event: ReactPointerEvent<HTMLDivElement>, index: number) => {
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -306,6 +321,8 @@ export function useContextRoomLayout({
     middleHidden,
     setMiddleHidden,
     middleWidth,
+    wideMiddle,
+    wideWidth,
     panelWeights,
     setPanelWeights,
     mobileContent,

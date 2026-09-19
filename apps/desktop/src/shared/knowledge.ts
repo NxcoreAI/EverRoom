@@ -376,12 +376,36 @@ export interface KnowledgeRoomProposalDto {
 
 export type EmergenceMode = 'focus' | 'wander'
 
+/** 焦点级别（PRD 7.3 优先级链：显式选择>选区>章节>产物>对象>Room；一期实现前四档）。 */
+export type EmergenceFocusLevel = 'selection' | 'chapter' | 'document' | 'room'
+
+export type EmergenceFocusTrigger =
+  | 'selection-settle'
+  | 'chapter-stable'
+  | 'document-open'
+  | 'panel-open'
+  | 'board-switch'
+
+export interface EmergenceFocusChapter {
+  heading: string | null
+  /** 章节正文（当前标题到下一个同级/更高级标题之间），按需全量传递不截断。 */
+  bodyText: string
+}
+
 export interface EmergenceFocusInput {
   /** 当前产物/文档 id（伴随区编辑态；独立面板缺省=Room 级焦点）。 */
   documentId?: string | null
   /** 选区文本（渲染层负责截断）。 */
   selectionText?: string | null
   blockId?: string | null
+  /** 当前所在板块（work/thoughts/artifacts/relations/wiki），信息性字段。 */
+  board?: string | null
+  /** 仲裁后的焦点级别。 */
+  level?: EmergenceFocusLevel | null
+  /** 本次焦点定案的触发方式。 */
+  trigger?: EmergenceFocusTrigger | null
+  /** 光标所在章节（含正文），选区存在时作为上下文一并传递。 */
+  chapter?: EmergenceFocusChapter | null
 }
 
 export interface EmergenceWanderInput {
@@ -463,6 +487,8 @@ export interface EmergenceProjectionResultDto {
   nodes: EmergenceNodeDto[]
   edges: EmergenceEdgeDto[]
   paths: EmergencePathDto[]
+  /** 本次投影的树根（章节级焦点=注入的章节节点），钻取起点以它为准。 */
+  focusRootRef: string | null
   scoreComponents: Record<string, number> | null
   requestVersion: number
   /** LLM 任务理解不可用时按 PRD 7.4 降级（关键词+向量+图谱路径）。 */

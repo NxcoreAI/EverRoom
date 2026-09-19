@@ -101,6 +101,7 @@ describe("buildFocusProjection", () => {
       graph: graph([node("entity:1"), node("entity:2")], []),
     });
     expect(result.requestVersion).toBe(3);
+    expect(result.focusRootRef).toBe("room:1");
     expect(result.cards[0]!.nodeRef).toBe("entity:1");
     expect(result.cards[0]!.reason).toBe("LLM 理由");
     expect(result.cards[1]!.reason).not.toBe("LLM 理由");
@@ -178,6 +179,7 @@ describe("buildWanderProjection", () => {
     const b = buildWanderProjection({ ...input, seed: 123 });
     expect(a.cards).toEqual(b.cards);
     expect(a.nodes).toEqual(b.nodes);
+    expect(a.focusRootRef).toBe("room:1");
   });
 
   it("结果都带完整路径：起点打头、深度≥2、hops 与节点数对齐", () => {

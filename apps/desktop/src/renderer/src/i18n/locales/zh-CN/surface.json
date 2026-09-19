@@ -247,6 +247,7 @@
   "agentInfo.recentActivity": "最近活动",
   "agentInfo.waitingForTheNextTask": "等待下一项任务",
   "agentInfo.workspaceReady": "工作区已就绪",
+  "agentPanel.resizeWidth": "调整对话区宽度",
   "agentPanelSkeleton.agentServiceIsStarting": "Agent 服务启动中",
   "agentSessionSwitcher.aRunningConversationCannotBeDeleted": "运行中的会话不能删除",
   "agentSessionSwitcher.cancel": "取消",

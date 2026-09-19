@@ -9,6 +9,7 @@
  * 关联理由退化为确定性路径说明并置 degraded；漫步完全不依赖 LLM。
  */
 
+import { createHash } from "node:crypto";
 import { and, desc, eq, inArray, isNotNull, isNull, ne, or } from "drizzle-orm";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
 import {
@@ -43,6 +44,10 @@ export interface EmergenceRequestInput {
     documentId?: string | null;
     selectionText?: string | null;
     blockId?: string | null;
+    board?: string | null;
+    level?: "selection" | "chapter" | "document" | "room" | null;
+    trigger?: "selection-settle" | "chapter-stable" | "document-open" | "panel-open" | "board-switch" | null;
+    chapter?: { heading: string | null; bodyText: string } | null;
   };
   wander?: { startNodeRef?: string | null; seed?: number | null } | null;
   limit?: number | null;
@@ -113,7 +118,8 @@ export class EmergenceService {
 
     const graph = await this.buildGraph(room.id, room.title);
     const applied = this.loadApplied(room.id);
-    const focusText = this.focusText(room, focusDocument, request.focus.selectionText ?? null);
+    const focusChapter = request.focus.chapter?.bodyText.trim() ? request.focus.chapter : null;
+    const focusText = buildFocusText(room, focusDocument, request.focus.selectionText ?? null, focusChapter);
     const llm = this.deps.knowledge.currentLlm();
     let degraded = false;
     let degradedReason: string | null = null;
@@ -123,6 +129,7 @@ export class EmergenceService {
         understanding = await llm.understandTask({
           roomTitle: room.title,
           focusTitle: focusDocument?.title ?? null,
+          chapterHeading: focusChapter?.heading ?? null,
           focusText,
         });
       } catch (error) {
@@ -150,9 +157,12 @@ export class EmergenceService {
     const focusNode: EmergenceNode = focusDocument
       ? this.nodeOf(graph, this.documentNodeRef(focusDocument.id), focusDocument.title)
       : this.nodeOf(graph, this.roomNodeRef(room.id), room.title);
+    // 焦点视为节点（PRD 7.7 中心节点=当前焦点）：章节级焦点注入临时章节节点，
+    // 经「属于」边挂到产物节点上，任务树从章节长出而不是从整份产物长出。
+    const focusTreeRoot = injectChapterFocusNode(graph, focusNode, focusDocument, focusChapter);
 
     const base = buildFocusProjection({
-      focusNode,
+      focusNode: focusTreeRoot,
       focusText,
       understanding,
       candidates,
@@ -176,7 +186,7 @@ export class EmergenceService {
         })), understanding, focusText);
         if (explanations.size > 0) {
           return buildFocusProjection({
-            focusNode,
+            focusNode: focusTreeRoot,
             focusText,
             understanding,
             candidates,
@@ -419,17 +429,6 @@ export class EmergenceService {
     return { nodes, edges };
   }
 
-  private focusText(
-    room: { title: string; summary: string | null },
-    focusDocument: { title: string; overviewText: string | null } | null,
-    selectionText: string | null,
-  ): string {
-    if (selectionText && selectionText.trim()) return selectionText.trim().slice(0, 2_000);
-    if (focusDocument?.overviewText?.trim()) return focusDocument.overviewText.trim().slice(0, 2_000);
-    if (focusDocument) return focusDocument.title;
-    return [room.title, room.summary ?? ""].filter(Boolean).join("\n");
-  }
-
   // ───────────────────────── 候选组装 ─────────────────────────
 
   private async buildCandidates(input: {
@@ -658,4 +657,53 @@ export class EmergenceService {
     }
     return byRef;
   }
+}
+
+/** 焦点文本（喂给 LLM 任务理解的整段材料）：选区优先带章节全文，章节不设限。 */
+export function buildFocusText(
+  room: { title: string; summary: string | null },
+  focusDocument: { title: string; overviewText: string | null } | null,
+  selectionText: string | null,
+  chapter: { heading: string | null; bodyText: string } | null,
+): string {
+  if (selectionText && selectionText.trim()) {
+    // 选区优先，章节全文作上下文一并给出（PRD 7.4「理解当前选区、章节」）。
+    const selection = selectionText.trim().slice(0, 2_000);
+    return chapter?.bodyText.trim()
+      ? `${selection}\n\n（所在章节${chapter.heading ? `《${chapter.heading}》` : ""}）\n${chapter.bodyText}`
+      : selection;
+  }
+  // 章节正文按用户决策不设限：装不下说明这一节确实重要，超限时由 LLM 层降级兜底。
+  if (chapter?.bodyText.trim()) {
+    return chapter.heading ? `《${chapter.heading}》\n${chapter.bodyText}` : chapter.bodyText;
+  }
+  if (focusDocument?.overviewText?.trim()) return focusDocument.overviewText.trim().slice(0, 2_000);
+  if (focusDocument) return focusDocument.title;
+  return [room.title, room.summary ?? ""].filter(Boolean).join("\n");
+}
+
+/** 章节级焦点注入临时章节节点：经「属于」边挂到产物节点，任务树从章节长出。 */
+export function injectChapterFocusNode(
+  graph: ProjectionGraph,
+  focusNode: EmergenceNode,
+  focusDocument: { id: string } | null,
+  chapter: { heading: string | null; bodyText: string } | null,
+): EmergenceNode {
+  if (!chapter?.bodyText.trim() || !chapter.heading || !focusDocument) return focusNode;
+  const docRef = `doc:${focusDocument.id}`;
+  if (!graph.nodes.has(docRef)) return focusNode;
+  const headingHash = createHash("sha256").update(chapter.heading).digest("hex").slice(0, 10);
+  const chapterRef = `chapter:${docRef}:${headingHash}`;
+  const chapterNode: ProjectionGraphNode = {
+    id: chapterRef,
+    nodeType: "document",
+    label: chapter.heading,
+    sourceGraph: "linkGraph",
+    roomRef: null,
+    updatedAt: null,
+    groupKey: `chapter:${chapterRef}`,
+  };
+  graph.nodes.set(chapterRef, chapterNode);
+  graph.edges.push({ from: chapterRef, to: docRef, relationType: "属于", edgeLevel: "original", confidence: 1, weight: 1 });
+  return chapterNode;
 }

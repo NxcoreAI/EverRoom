@@ -4,7 +4,7 @@ import { BookOpen, ChevronLeft, Ellipsis, FileDown, FileText } from 'lucide-reac
 import { useState } from 'react';
 import { useLocale } from '../../../../../i18n/LocaleContext';
 
-import type { KnowledgeFileDto } from '../../../../../../../shared/knowledge';
+import type { KnowledgeFileDto, EmergenceFocusChapter } from '../../../../../../../shared/knowledge';
 import { createContextRoomResourceLibrary } from '../../resources';
 import type { ContextRoomRecord, ContextRoomResource } from '../../types';
 import { ExternalImportDialog } from '../detail-editor/ExternalImportDialog';
@@ -67,6 +67,7 @@ export function WorkspaceContent({
   onBackendDocumentChange,
   onDeleteDocument,
   onSelectionTextChange,
+  onChapterChange,
   registerQuoteInsert,
   onMobileBack,
   onUpdateRoom,
@@ -82,6 +83,8 @@ export function WorkspaceContent({
   onDeleteDocument: (document: RoomDocument) => Promise<void>;
   /** 编辑器选区文本上报（伴随思路页签聚焦用）。 */
   onSelectionTextChange: (text: string | null) => void;
+  /** 焦点系统：光标所在章节信号上报。 */
+  onChapterChange: (chapter: EmergenceFocusChapter | null) => void;
   /** 伴随思路「引用」插入桥：编辑器挂载时注册。 */
   registerQuoteInsert: (insert: (quote: { text: string; source: string }) => boolean) => () => void;
   onMobileBack: () => void;
@@ -113,6 +116,7 @@ export function WorkspaceContent({
             onBackendDocumentChange={onBackendDocumentChange}
             onDeleteDocument={onDeleteDocument}
             onSelectionTextChange={onSelectionTextChange}
+            onChapterChange={onChapterChange}
             onRegisterQuoteInsert={registerQuoteInsert}
           />
         ) : selectedResource?.kind === 'knowledge-file' ? (

@@ -247,6 +247,7 @@
   "agentInfo.recentActivity": "Recent activity",
   "agentInfo.waitingForTheNextTask": "Waiting for the next task",
   "agentInfo.workspaceReady": "Workspace ready",
+  "agentPanel.resizeWidth": "Resize chat panel width",
   "agentPanelSkeleton.agentServiceIsStarting": "Agent service is starting",
   "agentSessionSwitcher.aRunningConversationCannotBeDeleted": "A running conversation cannot be deleted",
   "agentSessionSwitcher.cancel": "Cancel",

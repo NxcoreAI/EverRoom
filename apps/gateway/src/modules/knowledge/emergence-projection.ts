@@ -91,6 +91,8 @@ export interface EmergenceProjectionResult {
   nodes: EmergenceNode[];
   edges: EmergenceEdge[];
   paths: EmergencePath[];
+  /** 本次投影的树根（章节级焦点=注入的章节节点），客户端以它为钻取起点。 */
+  focusRootRef: string | null;
   scoreComponents: Record<string, number> | null;
   requestVersion: number;
   degraded: boolean;
@@ -347,6 +349,7 @@ export function buildFocusProjection(input: {
     nodes: fragments.nodes,
     edges: fragments.edges,
     paths: fragments.paths,
+    focusRootRef: input.focusNode.id,
     scoreComponents,
     requestVersion: input.requestVersion,
     degraded: input.degraded,
@@ -496,6 +499,7 @@ export function buildWanderProjection(input: {
     nodes: trimmed.nodes,
     edges: trimmed.edges,
     paths: fragments.paths,
+    focusRootRef: input.startNode.id,
     scoreComponents: null,
     requestVersion: input.requestVersion,
     degraded: false,

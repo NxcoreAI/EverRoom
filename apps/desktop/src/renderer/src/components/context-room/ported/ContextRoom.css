@@ -14255,6 +14255,10 @@
   white-space: nowrap;
 }
 
+.context-room-thoughts-pane[data-variant='board'] .context-room-thoughts-focus {
+  padding: 8px 12px 0;
+}
+
 .context-room-thoughts-lock {
   display: inline-flex;
   flex: 0 0 auto;
@@ -14759,40 +14763,9 @@
   height: 13px;
 }
 
-/* 投影中骨架：胶囊节点 + 连线 + 提示语 */
+/* 投影中骨架：G6 骨架树 + 底部提示语（胶囊/连线由 G6 画布自绘） */
 .eg-skeleton {
   cursor: default;
-}
-
-.eg-skeleton-edges {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-}
-
-.eg-skeleton-edges path {
-  fill: none;
-  stroke: var(--cr-border-strong);
-  stroke-width: 1.5;
-}
-
-.eg-sk {
-  position: absolute;
-  width: 84px;
-  height: 28px;
-  transform: translate(-50%, -50%);
-  border: 1px solid var(--cr-border);
-  border-radius: 999px;
-  background: var(--cr-surface-secondary);
-  animation: eg-sk-shimmer 1.6s ease-in-out infinite;
-}
-
-.eg-sk.is-center {
-  width: 120px;
-  height: 40px;
-  border-color: color-mix(in srgb, var(--cr-blue) 35%, transparent);
-  background: var(--cr-blue-soft);
 }
 
 .eg-skeleton-hint {
@@ -14804,10 +14777,6 @@
   color: var(--cr-tertiary);
   font-size: 12px;
   text-align: center;
-}
-
-@keyframes eg-sk-shimmer {
-  50% { opacity: 0.55; }
 }
 
 
@@ -14832,6 +14801,12 @@
 
 .eg-viewport:active {
   cursor: grabbing;
+}
+
+/* G6 引擎挂载点（聚焦导图）：铺满视口，画布由 G6 自建 */
+.eg-g6-mount {
+  position: absolute;
+  inset: 0;
 }
 
 .eg-viewport.eg-empty {
@@ -14978,12 +14953,23 @@
 .eg-node[data-role='center'] {
   border-color: var(--cr-blue);
   box-shadow: 0 0 0 3px var(--cr-blue-soft);
-  font-weight: 600;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.eg-node[data-role='branch'] {
+  font-weight: 500;
+}
+
+.eg-node[data-role='leaf'] {
+  font-size: 11px;
+  font-weight: 500;
 }
 
 .eg-node[data-role='return'] {
   background: var(--cr-surface-sunken);
   color: var(--cr-muted);
+  font-weight: 500;
 }
 
 .eg-node[data-role='return']:hover {
@@ -15353,6 +15339,7 @@ button.eg-walk.is-next:hover {
 
 .context-room-workspace-editor {
   display: flex;
+  height: 100%;
   min-width: 0;
   min-height: 0;
   flex-direction: column;

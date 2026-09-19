@@ -187,7 +187,17 @@ const base = {
     // 思路·知识涌现 mock：聚焦围绕焦点文档给 5 张卡；漫步给 8 张带路径的卡并按 seed 轮换；
     // 选区文本含「降级」时走 PRD 7.4 降级样例。
     emergence: async (_roomId, req) => {
-      const center = 'doc:' + (req.focus.documentId ?? 'doc-native-1')
+      // 默认 900ms 延迟模拟投影耗时；页面里置 window.__holdEmergence=true 可挂起响应（验证加载态），调 window.__releaseEmergence() 放行
+      await new Promise((resolve) => {
+        const w = window
+        const done = () => { if (w.__releaseEmergence === done) w.__releaseEmergence = null; resolve() }
+        if (w.__holdEmergence) { w.__releaseEmergence = done; setTimeout(done, 8000) }
+        else setTimeout(done, 900)
+      })
+      const docCenter = 'doc:' + (req.focus.documentId ?? 'doc-native-1')
+      const chapterBody = req.focus.chapter && req.focus.chapter.bodyText ? String(req.focus.chapter.bodyText).trim() : ''
+      const chapterHeading = chapterBody && req.focus.chapter && req.focus.chapter.heading ? String(req.focus.chapter.heading) : null
+      const center = chapterHeading ? 'chapter:' + docCenter.slice(4) + ':mock' : docCenter
       const emNodes = [
         { id: 'room:thoughts-mock', nodeType: 'room', label: '思路涌现验证', sourceGraph: 'roomGraph', roomRef: null, updatedAt: '2026-09-14T08:00:00.000Z' },
         { id: 'doc:doc-native-1', nodeType: 'document', label: '产物：发布计划', sourceGraph: 'linkGraph', roomRef: null, updatedAt: '2026-09-13T10:00:00.000Z' },
@@ -199,6 +209,7 @@ const base = {
         { id: 'memory:insight-motion', nodeType: 'memory', label: '动效时长约定 240ms', sourceGraph: 'roomGraph', roomRef: null, updatedAt: '2026-09-09T08:00:00.000Z' },
         { id: 'wiki:3', nodeType: 'wikiPage', label: '设计规范·动效篇', sourceGraph: 'wiki', roomRef: { id: 'room-3', title: '连接器' }, updatedAt: '2026-09-08T08:00:00.000Z' },
       ]
+      if (chapterHeading) emNodes.push({ id: center, nodeType: 'document', label: chapterHeading, sourceGraph: 'linkGraph', roomRef: null, updatedAt: new Date().toISOString() })
       const emEdges = [
         { id: 'e1', from: 'room:thoughts-mock', to: 'doc:doc-native-1', relationType: '包含', edgeLevel: 'original', confidence: 1 },
         { id: 'e2', from: 'doc:doc-native-1', to: 'fact:decision-v1', relationType: '记录', edgeLevel: 'original', confidence: 0.9 },
@@ -211,6 +222,7 @@ const base = {
         { id: 'e9', from: 'room:thoughts-mock', to: 'doc:doc-native-2', relationType: '包含', edgeLevel: 'original', confidence: 1 },
         { id: 'e10', from: 'fact:conflict-timeline', to: 'entity:person-linwei', relationType: '上报', edgeLevel: 'original', confidence: 0.7 },
       ]
+      if (chapterHeading) emEdges.push({ id: 'e-chapter', from: center, to: docCenter, relationType: '属于', edgeLevel: 'original', confidence: 1 })
       if (req.mode === 'wander') {
         const start = req.wander?.startNodeRef || center
         const wanderCards = [
@@ -233,7 +245,7 @@ const base = {
         ]
         const seed = req.wander?.seed ?? 0
         const rotated = wanderCards.slice(seed % wanderCards.length).concat(wanderCards.slice(0, seed % wanderCards.length)).slice(0, Math.min(req.limit ?? 15, wanderCards.length))
-        return { cards: rotated, nodes: emNodes, edges: emEdges, paths: rotated.map((c) => c.path), scoreComponents: null, requestVersion: req.requestVersion, degraded: false, degradedReason: null, generatedAt: new Date().toISOString() }
+        return { cards: rotated, nodes: emNodes, edges: emEdges, paths: rotated.map((c) => c.path), focusRootRef: start, scoreComponents: null, requestVersion: req.requestVersion, degraded: false, degradedReason: null, generatedAt: new Date().toISOString() }
       }
       const degraded = String(req.focus.selectionText ?? '').includes('降级')
       const focusCards = degraded ? [
@@ -246,7 +258,7 @@ const base = {
         { id: 'f4', kind: 'conflict', title: '排期冲突：视觉与连接器里程碑撞车', summary: '同一周内两个团队的交付节点重叠，需要错峰。', sourceType: 'fact', occurredAt: '2026-09-10T02:00:00.000Z', roomRef: null, reason: '与焦点的截止时间正面相撞，值得先看。', quote: null, nodeRef: 'fact:conflict-timeline', path: null, confidence: 0.69 },
         { id: 'f5', kind: 'case', title: '设计规范·动效篇', summary: '同类动效约定的沉淀页，含 240ms 与错峰条目。', sourceType: 'wikiPage', occurredAt: '2026-09-08T08:00:00.000Z', roomRef: null, reason: '相邻 Room 的相似做法，可对照。', quote: null, nodeRef: 'wiki:3', path: null, confidence: 0.61 },
       ]
-      return { cards: focusCards, nodes: emNodes, edges: emEdges, paths: [], scoreComponents: degraded ? { relevance: 0.6, graphPath: 0.3 } : { relevance: 0.35, graphPath: 0.2, evidence: 0.15, recency: 0.1, feedback: 0.1 }, requestVersion: req.requestVersion, degraded, degradedReason: degraded ? 'llm_unavailable' : null, generatedAt: new Date().toISOString() } } },
+      return { cards: focusCards, nodes: emNodes, edges: emEdges, paths: [], focusRootRef: center, scoreComponents: degraded ? { relevance: 0.6, graphPath: 0.3 } : { relevance: 0.35, graphPath: 0.2, evidence: 0.15, recency: 0.1, feedback: 0.1 }, requestVersion: req.requestVersion, degraded, degradedReason: degraded ? 'llm_unavailable' : null, generatedAt: new Date().toISOString() } } },
   contextRooms: {
     // 登录后的首启探针读 rooms/deletedRooms 计数；不给 list 会打到兜底 Proxy 上崩。
     list: async () => ({ rooms: [], deletedRooms: [], updatedAt: null }),
@@ -320,6 +332,11 @@ const base = {
   migrations: { sources: async () => [], runs: async () => [], onProgress: () => () => {}, conversations: async () => ({ items: [
     { id: 'thread-1', provider: 'claude', sourceId: 's1', title: '历史会话示例', agentId: 'claude', externalSessionId: 'x', messageCount: 2, lastMessageAt: '2026-09-08T00:00:00.000Z', lastMessageExcerpt: '上次的结论…', available: true },
   ], nextCursor: null }) },
+  // 完整 App 入口（/）验证用：已配置 + 已登录，越过 RuntimeConfigGate。
+  runtimeConfig: { get: async () => ({ primaryConfigured: true, configSource: 'manual' }) },
+  account: { status: async () => ({ authenticated: true, apiBaseUrl: 'https://mock.example', plan: 'pro_plan_active' }) },
+  agent: { discoverLocalAgents: async () => [] },
+  reality: { listEvents: async () => [], onEvent: () => () => {} },
   obsidian: { list: async () => [], discover: async () => [], onChanged: () => () => {}, onDiscoveryChanged: () => () => {} },
 }
 // 预览窗格 document.hidden 恒为 true 会挡住页面轮询;强制视为可见。
@@ -335,6 +352,11 @@ window.nxcore = new Proxy(Object.fromEntries(Object.entries(base).map(([k, v]) =
 
 export default defineConfig({
   root: resolve(here, 'src/renderer'),
+  // 独立依赖缓存：与 electron-vite 渲染层隔离，避免多服务共用缓存互相改写导致页面整刷。
+  cacheDir: resolve(here, 'node_modules/.vite-browser-mock'),
+  optimizeDeps: {
+    include: ['d3-force'],
+  },
   server: {
     port: 5181,
     strictPort: true,

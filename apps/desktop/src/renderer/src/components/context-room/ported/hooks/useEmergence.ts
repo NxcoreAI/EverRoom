@@ -65,7 +65,8 @@ export function useEmergence({ roomId, focus, debounceMs = 1500, locked = false 
 
   // 锁定时冻结投影：焦点行仍跟随显示，卡片不随外部焦点变化重排。
   // 首次投影立即发出（面板打开即取数）；后续焦点变化走防抖，连续编辑不打点。
-  const focusKey = `${focus.documentId ?? ''} ${focus.selectionText ?? ''} ${focus.blockId ?? ''}`;
+  // 章节正文进 key：正文随输入增长，防抖后一次成型，符合「输入停顿才更新焦点」。
+  const focusKey = `${focus.documentId ?? ''} ${focus.selectionText ?? ''} ${focus.blockId ?? ''} ${focus.chapter?.heading ?? ''} ${focus.chapter?.bodyText ?? ''}`;
   const initialRef = useRef<string | null>(null);
   useEffect(() => {
     if (locked) return;

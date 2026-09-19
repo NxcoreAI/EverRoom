@@ -2,7 +2,7 @@ import { ChevronLeft, ChevronRight, Footprints, ListTree, Lock, LockOpen, Networ
 import { useEffect, useMemo, useState } from 'react';
 
 import { useLocale } from '../../../../../i18n/LocaleContext';
-import type { EmergenceCardDto, EmergenceMode, EmergenceProjectionResultDto } from '../../../../../../../shared/knowledge';
+import type { EmergenceCardDto, EmergenceFocusInput, EmergenceMode, EmergenceProjectionResultDto } from '../../../../../../../shared/knowledge';
 import type { ContextRoomRecord } from '../../types';
 import { useEmergence } from '../../hooks/useEmergence';
 import { FocusTreeCanvas } from '../emergence-graph/FocusTreeCanvas';
@@ -20,19 +20,22 @@ import { EmergenceCard } from './EmergenceCard';
 export function ThoughtsPane({
   room,
   variant = 'board',
-  focusDocumentId,
-  focusDocumentTitle,
-  focusSelectionText,
+  focus,
+  focusLabel,
+  focusLocked,
+  onToggleFocusLock,
   onQuote,
   onViewChange,
 }: {
   room: ContextRoomRecord;
   /** board=独立板块；companion=伴随区（引用=光标处插块引用）。 */
   variant?: 'board' | 'companion';
-  focusDocumentId?: string | null;
-  focusDocumentTitle?: string | null;
-  /** 选区文本（伴随区编辑态）；渲染层截断到 300 字。 */
-  focusSelectionText?: string | null;
+  /** 焦点协调器输出的权威焦点档案。 */
+  focus: EmergenceFocusInput;
+  /** 非选区级别的焦点显示文案；选区级别显示 i18n 的「选区焦点」。 */
+  focusLabel: string | null;
+  focusLocked: boolean;
+  onToggleFocusLock: () => void;
   onQuote?: (card: EmergenceCardDto) => void;
   /** 视图切换回调（伴随区据此扩展/收缩列宽）。 */
   onViewChange?: (view: 'cards' | 'graph') => void;
@@ -40,32 +43,25 @@ export function ThoughtsPane({
   const { t } = useLocale();
   const [mode, setMode] = useState<EmergenceMode>('focus');
   const [view, setView] = useState<'cards' | 'graph'>('cards');
-  const [locked, setLocked] = useState(false);
+  const locked = focusLocked;
   const [pinned, setPinned] = useState<EmergenceCardDto[]>([]);
   const [hiddenFocus, setHiddenFocus] = useState<Set<string>>(() => new Set());
   const [hiddenWander, setHiddenWander] = useState<Set<string>>(() => new Set());
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [wanderStart, setWanderStart] = useState<{ nodeRef: string | null; label: string } | null>(null);
 
-  const focusCenterRef = focusDocumentId ? `doc:${focusDocumentId}` : `room:${room.id}`;
+  const focusCenterRef = focus.documentId ? `doc:${focus.documentId}` : `room:${room.id}`;
   const [focusPath, setFocusPath] = useState<{ stack: string[]; index: number }>(() => ({ stack: [focusCenterRef], index: 0 }));
   const [selectedNodeRef, setSelectedNodeRef] = useState<string | null>(null);
   const [walkLog, setWalkLog] = useState<WalkStation[]>([]);
 
-  const selectionText = focusSelectionText ? focusSelectionText.slice(0, 300) : null;
-  const focusInput = useMemo(() => ({
-    documentId: focusDocumentId ?? null,
-    selectionText,
-    blockId: null,
-  }), [focusDocumentId, selectionText]);
-
   const {
     focusResult, wanderResult, focusLoading, wanderLoading, error, wanderFrom,
-  } = useEmergence({ roomId: room.id, focus: focusInput, locked });
+  } = useEmergence({ roomId: room.id, focus, locked });
 
-  const focusLabel = selectionText
+  const focusLabelText = focus.level === 'selection'
     ? t('contextRoom:emergence.selectionFocus')
-    : (focusDocumentTitle || room.title);
+    : (focusLabel || room.title);
   const nodeLabels = useMemo(() => new Map(
     (mode === 'focus' ? focusResult?.nodes : wanderResult?.nodes)?.map((node) => [node.id, node.label]) ?? [],
   ), [mode, focusResult, wanderResult]);
@@ -95,7 +91,7 @@ export function ThoughtsPane({
     else pinCard(card);
   };
 
-  const wanderLabel = wanderStart?.label ?? focusLabel;
+  const wanderLabel = wanderStart?.label ?? focusLabelText;
   const expandedCard = expandedId === null
     ? null
     : (mode === 'focus' ? focusResult?.cards : wanderResult?.cards)?.find((card) => card.id === expandedId) ?? null;
@@ -192,10 +188,10 @@ export function ThoughtsPane({
     <div className="context-room-thoughts-pane" data-variant={variant} data-mode={mode}>
       <div className="context-room-thoughts-world" data-world="focus" aria-hidden={mode !== 'focus'}>
         <header className="context-room-thoughts-header">
-          <div className="context-room-thoughts-focus" title={focusLabel}>
+          <div className="context-room-thoughts-focus" title={focusLabelText}>
             <Sparkles aria-hidden="true" />
             <span>{t('contextRoom:emergence.focusPrefix')}</span>
-            <strong>{focusLabel}</strong>
+            <strong>{focusLabelText}</strong>
           </div>
           <div className="context-room-thoughts-header-actions">
             {view === 'graph' ? (
@@ -227,7 +223,7 @@ export function ThoughtsPane({
               aria-pressed={locked}
               aria-label={t('contextRoom:emergence.lockFocus')}
               title={t(locked ? 'contextRoom:emergence.unlockFocus' : 'contextRoom:emergence.lockFocus')}
-              onClick={() => setLocked((value) => !value)}
+              onClick={onToggleFocusLock}
             >
               {locked ? <Lock aria-hidden="true" /> : <LockOpen aria-hidden="true" />}
             </button>
@@ -288,7 +284,7 @@ export function ThoughtsPane({
           </section>
         ) : null}
         <footer className="context-room-thoughts-entry">
-          <button type="button" onClick={() => enterWander(null, focusLabel)}>
+          <button type="button" onClick={() => enterWander(null, focusLabelText)}>
             <Footprints aria-hidden="true" />
             {t('contextRoom:emergence.wanderEntry')}
           </button>

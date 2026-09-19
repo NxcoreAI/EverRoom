@@ -73,6 +73,39 @@ summary:focus-visible {
   grid-template-columns: 0 minmax(0, 1fr) 0;
 }
 
+.app-shell[data-agent-resizing='true'] {
+  transition: none;
+}
+
+.agent-panel-divider {
+  position: fixed;
+  z-index: 75;
+  top: var(--topbar-height);
+  right: var(--agent-width);
+  bottom: 0;
+  width: 7px;
+  cursor: col-resize;
+}
+
+.agent-panel-divider::before {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 1px;
+  background: var(--border);
+  content: '';
+}
+
+.agent-panel-divider:hover::before,
+.agent-panel-divider:focus::before {
+  background: var(--accent);
+}
+
+.agent-panel-divider:focus {
+  outline: 0;
+}
+
 .drag-region {
   -webkit-app-region: drag;
 }
@@ -2588,6 +2621,10 @@ summary:focus-visible {
 
   .agent-panel {
     width: min(var(--agent-width), 92vw);
+  }
+
+  .agent-panel-divider {
+    display: none;
   }
 }
 
