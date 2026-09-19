@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
-import { dirname } from 'node:path'
+import { readFile, unlink } from 'node:fs/promises'
+import { VersionedJsonStore } from '@nxcore/migration-kit'
 import type { GatewaySupervisor } from '../gateway/gateway-supervisor'
 import type { WindowScreenshotResult } from './window-screenshot-service'
 
@@ -20,21 +20,25 @@ export class ScreenshotOutbox {
   private initialized = false
   private operation: Promise<void> = Promise.resolve()
   private timer: ReturnType<typeof setInterval> | null = null
+  private readonly store: VersionedJsonStore<ScreenshotOutboxItem[]>
 
   constructor(
-    private readonly statePath: string,
+    statePath: string,
     private readonly getSupervisor: () => GatewaySupervisor | null,
-  ) {}
+    backupDir?: string,
+  ) {
+    this.store = new VersionedJsonStore<ScreenshotOutboxItem[]>({
+      filePath: statePath,
+      migrations: [],
+      adoptBaseline: (raw) => (Array.isArray(raw) ? raw.filter(isOutboxItem) : []),
+      fallback: [],
+      ...(backupDir !== undefined ? { backupDir } : {}),
+    })
+  }
 
   async initialize(): Promise<void> {
     if (this.initialized) return
-    await mkdir(dirname(this.statePath), { recursive: true })
-    try {
-      const parsed = JSON.parse(await readFile(this.statePath, 'utf8')) as unknown
-      this.items = Array.isArray(parsed) ? parsed.filter(isOutboxItem) : []
-    } catch {
-      this.items = []
-    }
+    this.items = this.store.read()
     this.initialized = true
     this.timer = setInterval(() => void this.flush(), 15_000)
     this.timer.unref?.()
@@ -119,13 +123,7 @@ export class ScreenshotOutbox {
   }
 
   private async persist(): Promise<void> {
-    const temporary = `${this.statePath}.${randomUUID()}.tmp`
-    try {
-      await writeFile(temporary, JSON.stringify(this.items), { flag: 'wx', mode: 0o600 })
-      await rename(temporary, this.statePath)
-    } finally {
-      await unlink(temporary).catch(() => undefined)
-    }
+    this.store.write(this.items)
   }
 }
 
