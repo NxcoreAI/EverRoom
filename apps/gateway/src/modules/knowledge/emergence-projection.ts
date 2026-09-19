@@ -55,9 +55,9 @@ export interface EmergencePath {
 
 export interface EmergenceNode {
   id: string;
-  nodeType: "room" | "entity" | "fact" | "document" | "memory" | "wikiPage";
+  nodeType: "room" | "entity" | "fact" | "document" | "memory" | "wikiPage" | "mindmapTopic";
   label: string;
-  sourceGraph: "roomGraph" | "entityFacts" | "linkGraph" | "wiki";
+  sourceGraph: "roomGraph" | "entityFacts" | "linkGraph" | "wiki" | "mindmap";
   roomRef: { id: string; title: string } | null;
   updatedAt: string | null;
 }
@@ -525,6 +525,7 @@ function groupSummary(node: ProjectionGraphNode): string {
     entityFacts: "实体与事实",
     linkGraph: "内容建联",
     wiki: "Wiki 知识页",
+    mindmap: "思维导图",
   };
   const roomSuffix = node.roomRef ? `（来自 ${node.roomRef.title}）` : "";
   return `${graphLabel[node.sourceGraph]}${roomSuffix}`;

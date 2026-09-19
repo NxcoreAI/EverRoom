@@ -439,9 +439,9 @@ export type EmergenceCardKind =
 export interface EmergenceNodeDto {
   /** nodeRef 形如 entity:12 / fact:7 / doc:9 / block:9:3 / memory:x / wiki:3 / room:4。 */
   id: string
-  nodeType: 'room' | 'entity' | 'fact' | 'document' | 'block' | 'memory' | 'wikiPage' | 'wikiTopic'
+  nodeType: 'room' | 'entity' | 'fact' | 'document' | 'block' | 'memory' | 'wikiPage' | 'wikiTopic' | 'mindmapTopic'
   label: string
-  sourceGraph: 'roomGraph' | 'entityFacts' | 'linkGraph' | 'wiki'
+  sourceGraph: 'roomGraph' | 'entityFacts' | 'linkGraph' | 'wiki' | 'mindmap'
   /** 来源 Room（跨 Room 结果标注用）。 */
   roomRef: { id: string; title: string } | null
   updatedAt: string | null

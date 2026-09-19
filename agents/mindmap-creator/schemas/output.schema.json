@@ -1,0 +1,58 @@
+{
+  "type": "object",
+  "properties": {
+    "topic": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80,
+      "description": "Root topic phrase: a condensed noun phrase of the whole material, not a sentence."
+    },
+    "branches": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "label": { "type": "string", "minLength": 1, "maxLength": 40 },
+          "children": {
+            "type": "array",
+            "maxItems": 12,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "label": { "type": "string", "minLength": 1, "maxLength": 40 },
+                "children": {
+                  "type": "array",
+                  "maxItems": 8,
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "label": { "type": "string", "minLength": 1, "maxLength": 40 }
+                    },
+                    "required": ["label"]
+                  }
+                }
+              },
+              "required": ["label"]
+            }
+          }
+        },
+        "required": ["label"]
+      }
+    },
+    "digest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "summary": { "type": "string", "maxLength": 200 }
+      },
+      "required": ["summary"]
+    }
+  },
+  "required": ["topic", "branches", "digest"],
+  "additionalProperties": false
+}

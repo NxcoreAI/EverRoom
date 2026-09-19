@@ -1859,6 +1859,43 @@ export const roomWikis = sqliteTable("room_wikis", {
 });
 
 /**
+ * 聚焦思维导图（mindmap-plan）：subAgent 按 NotebookLM 行为特征生成的三层导图，
+ * 按焦点两级缓存——document 级（单文档全文）与 room 级（Room 内全部文档）。
+ * 复合主键而非唯一索引：SQLite 唯一索引把 NULL 视为互异，scope 两级共用一表更稳。
+ */
+export const focusMindmaps = sqliteTable(
+  "focus_mindmaps",
+  {
+    scope: text("scope", { enum: ["room", "document"] }).notNull(),
+    scopeId: text("scope_id").notNull(),
+    /** 归属 Room；document 级为 kick 时所在 Room。 */
+    roomId: text("room_id").notNull(),
+    /** document 级冗余标题（根节点/卡片 reason 用）。 */
+    documentTitle: text("document_title"),
+    status: text("status", { enum: ["pending", "processing", "ready", "failed"] }).notNull().default("pending"),
+    /** subagent 校验后的原始树（{topic, branches, digest}）。 */
+    tree: text("tree", { mode: "json" }).$type<unknown>(),
+    error: text("error"),
+    promptVersion: integer("prompt_version"),
+    /** 本轮 dispatch 的 idempotencyKey；网关重启后按它反查 invocation 收敛死行。 */
+    invocationKey: text("invocation_key"),
+    /** 拼装素材 sha256，供内容变更后失效重生成。 */
+    contentHash: text("content_hash"),
+    generatedAt: integer("generated_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    primaryKey({ columns: [table.scope, table.scopeId] }),
+    index("focus_mindmaps_room_idx").on(table.roomId),
+  ],
+);
+
+/**
  * 抽取审计流水（entity-room-plan §3.2）：归属语义已迁 entity_doc_links，
  * 本表降级为每次路由运行的审计记录（抽取原始输出 + 解析结果 + ingest 状态）。
  * primaryRoomId 回填 primary 实体晋升后的 Room（供撤销/清单 join 用）。
