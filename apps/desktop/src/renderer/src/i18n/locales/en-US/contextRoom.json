@@ -486,8 +486,6 @@
   "emergence.refresh": "Refresh",
   "emergence.returnToParent": "Back to previous level",
   "emergence.selectionFocus": "Current selection",
-  "emergence.treeBack": "Previous level",
-  "emergence.treeForward": "Next level",
   "emergence.unlockFocus": "Unlock focus",
   "emergence.veinCanvas": "Knowledge vein graph",
   "emergence.veinEmpty": "Nothing to map yet",

@@ -15287,45 +15287,6 @@ button.eg-walk.is-next:hover {
   height: 13px;
 }
 
-.context-room-thoughts-level-nav {
-  display: inline-flex;
-  overflow: hidden;
-  border: 1px solid var(--cr-border);
-  border-radius: 8px;
-  background: var(--cr-surface);
-}
-
-.context-room-thoughts-level-nav button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 24px;
-  padding: 0;
-  border: none;
-  background: none;
-  color: var(--cr-tertiary);
-  cursor: pointer;
-}
-
-.context-room-thoughts-level-nav button + button {
-  border-left: 1px solid var(--cr-border);
-}
-
-.context-room-thoughts-level-nav button:hover:not(:disabled) {
-  color: var(--cr-blue);
-}
-
-.context-room-thoughts-level-nav button:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-
-.context-room-thoughts-level-nav svg {
-  width: 14px;
-  height: 14px;
-}
-
 @media (prefers-reduced-motion: reduce) {
   .eg-edge,
   .eg-edge-label {

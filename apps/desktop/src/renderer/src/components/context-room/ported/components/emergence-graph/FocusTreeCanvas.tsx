@@ -5,37 +5,32 @@ import type { TreeGraph } from '@antv/g6';
 import { useLocale } from '../../../../../i18n/LocaleContext';
 import type { EmergenceCardDto, EmergenceProjectionResultDto } from '../../../../../../../shared/knowledge';
 import { GraphCanvasTools } from './GraphCanvasTools';
-import { buildFocusSubtree, type FocusSubtree } from './focusTreeModel';
+import { buildFocusTree, defaultCollapsed, type FocusTree } from './focusTreeModel';
 import {
-  createFocusGraph, focusTreeData, placeParentLeft, setCameraOnNode, recenterCamera,
-  registerLiveGraph, unregisterLiveGraph, updateFocusGraph, visCenterY,
+  animateFitView, createFocusGraph, focusTreeData, setCameraOnNode,
+  registerLiveGraph, tweenCameraTo, tweenCameraToNode, unregisterLiveGraph,
+  updateFocusGraph, visCenterY,
 } from './g6FocusGraph';
 
 /**
- * 聚焦态思维导图：G6 TreeGraph 引擎（原型 lib/contextroom.js 原样移植）。
- * 点非中心节点=钻取换根（压栈），回程框=历史栈回退；底部详情条随选中联动。
+ * 聚焦态思维导图（NotebookLM 式）：默认只见根和一级分支，一级全收起；
+ * 点有子节点的节点=原地展开/收起（＋/− 随状态），点叶子=选中看底部详情条。
+ * 新导图（结果身份变化）重置回收起默认态。
  */
 export function FocusTreeCanvas({
   result,
-  centerRef,
-  returnRef,
+  rootRef,
   selectedNodeRef,
   cards,
-  onDrill,
-  onGoBack,
   onSelectNode,
   onOpenCard,
   onCardAction,
 }: {
   result: EmergenceProjectionResultDto;
-  /** 已过 resolveCenter 兜底的当前中心。 */
-  centerRef: string;
-  /** 钻取前的中心（历史栈上一层），渲染为根左侧回程框。 */
-  returnRef: string | null;
+  /** 已过 resolveCenter 兜底的树根。 */
+  rootRef: string;
   selectedNodeRef: string | null;
   cards: EmergenceCardDto[];
-  onDrill: (nodeRef: string) => void;
-  onGoBack: () => void;
   onSelectNode: (nodeRef: string | null) => void;
   onOpenCard?: (nodeRef: string) => void;
   onCardAction: (card: EmergenceCardDto) => void;
@@ -44,12 +39,21 @@ export function FocusTreeCanvas({
   const viewportRef = useRef<HTMLDivElement>(null);
   const mountRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<TreeGraph | null>(null);
-  const lastAppliedRef = useRef<FocusSubtree | null>(null);
-  const prevCenterRef = useRef(centerRef);
+  const lastDatumRef = useRef<ReturnType<typeof focusTreeData> | null>(null);
   const [stripCollapsed, setStripCollapsed] = useState(false);
 
-  const subtree = useMemo(() => buildFocusSubtree(result, centerRef, returnRef), [result, centerRef, returnRef]);
-  const nodeById = useMemo(() => new Map(subtree.nodes.map((node) => [node.id, node])), [subtree]);
+  const tree = useMemo(() => buildFocusTree(result, rootRef), [result, rootRef]);
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => defaultCollapsed(tree));
+
+  // 新导图=回到默认收起态：渲染期重置（无空帧）；上一份必须存 state
+  // （存 ref 会在严格模式双渲染下丢重置）。
+  const [prevTree, setPrevTree] = useState<FocusTree>(tree);
+  if (tree !== prevTree) {
+    setPrevTree(tree);
+    setCollapsed(defaultCollapsed(tree));
+  }
+
+  const datum = useMemo(() => tree.nodes.length > 0 ? focusTreeData(tree, collapsed) : null, [tree, collapsed]);
   const cardByNode = useMemo(() => {
     const map = new Map<string, EmergenceCardDto>();
     for (const card of cards) {
@@ -58,38 +62,44 @@ export function FocusTreeCanvas({
     return map;
   }, [cards]);
 
-  const stripSubject = selectedNodeRef && nodeById.has(selectedNodeRef)
+  const stripSubject = selectedNodeRef && tree.byId.has(selectedNodeRef)
     ? selectedNodeRef
-    : (nodeById.has(centerRef) ? centerRef : null);
-  const stripNode = stripSubject !== null ? nodeById.get(stripSubject) ?? null : null;
+    : (tree.byId.has(rootRef) ? rootRef : null);
+  const stripNode = stripSubject !== null ? tree.byId.get(stripSubject) ?? null : null;
   const stripCard = stripSubject !== null ? cardByNode.get(stripSubject) ?? null : null;
 
-  // 点击语义走最新闭包（图实例只建一次）
+  // 点击语义走最新闭包（图实例只建一次）：有子=切换展开并选中，叶子=选中；
+  // 选中/展开都以被点节点为相机中心（换树的由 datum effect 接管，叶子的直接补间）
+  const cameraTargetRef = useRef<string | null>(null);
   const clickRef = useRef<(id: string) => void>(() => {});
   clickRef.current = useCallback((id: string) => {
-    const node = nodeById.get(id);
+    const node = tree.byId.get(id);
     if (!node) return;
-    if (node.isReturn) {
-      onGoBack();
-      return;
+    const willSelect = selectedNodeRef !== id;
+    if (node.hasChildren) {
+      cameraTargetRef.current = id;
+      setCollapsed((current) => {
+        const next = new Set(current);
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        return next;
+      });
+    } else if (willSelect) {
+      const graph = graphRef.current;
+      if (graph && graph.findById(id)) tweenCameraToNode(graph, id, graph.getZoom() || 1, 380);
     }
-    if (node.id === centerRef) {
-      onSelectNode(selectedNodeRef === node.id ? null : node.id);
-      return;
-    }
-    if (node.depth === 1 || node.expandable) onDrill(node.id);
-    else onSelectNode(node.id);
-  }, [nodeById, centerRef, selectedNodeRef, onGoBack, onDrill, onSelectNode]);
+    onSelectNode(selectedNodeRef === id ? null : id);
+  }, [tree, selectedNodeRef, onSelectNode]);
 
-  const hasTree = subtree.nodes.length > 0;
+  const hasTree = tree.nodes.length > 0;
 
-  // 建图一次（空树时挂载点不存在，出树后再建）；尺寸变化 → 防抖 changeSize + 重布局 + 相机归位（原型 watchMountSize）
+  // 建图一次（空树时挂载点不存在，出树后再建）；尺寸变化 → 防抖 changeSize + 重布局 + 相机归位
   useEffect(() => {
     const el = mountRef.current;
-    if (!el || graphRef.current) return;
-    const graph = createFocusGraph(el, focusTreeData(subtree), (id) => clickRef.current(id));
+    if (!el || graphRef.current || !datum) return;
+    const graph = createFocusGraph(el, datum, (id) => clickRef.current(id));
     graphRef.current = graph;
-    lastAppliedRef.current = subtree;
+    lastDatumRef.current = datum;
     registerLiveGraph(graph);
     let timer: ReturnType<typeof setTimeout> | null = null;
     const apply = () => {
@@ -97,8 +107,7 @@ export function FocusTreeCanvas({
       try {
         graph.changeSize(el.clientWidth, el.clientHeight);
         graph.refreshLayout();
-        placeParentLeft(graph);
-        setCameraOnNode(graph, subtree.center, graph.getZoom() || 1, { x: el.clientWidth / 2, y: visCenterY(graph) });
+        setCameraOnNode(graph, tree.rootId, graph.getZoom() || 1, { x: el.clientWidth / 2, y: visCenterY(graph) });
       } catch { /* 已销毁 */ }
     };
     let observer: ResizeObserver | null = null;
@@ -115,28 +124,22 @@ export function FocusTreeCanvas({
       unregisterLiveGraph(graph);
       try { graph.destroy(); } catch { /* 已销毁 */ }
       graphRef.current = null;
-      lastAppliedRef.current = null;
+      lastDatumRef.current = null;
     };
-    // 建图吃掉当帧数据；后续数据变化由下方换树 effect 接管
+    // 建图吃掉当帧数据；后续展开/收起由下方换树 effect 接管
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasTree]);
 
-  // 数据/中心变化：钻取/层级切换=动画换树+推近相机；同中心刷新=换树不推近（原型语义）
+  // 展开/收起/换导图：动画换树 + 相机适配（内容超画布拉远、变少轻微推近）；
+  // 相机中心=刚点过的节点，否则根
   useEffect(() => {
     const graph = graphRef.current;
-    if (!graph || lastAppliedRef.current === subtree) return;
-    lastAppliedRef.current = subtree;
-    const datum = focusTreeData(subtree);
-    const centerChanged = prevCenterRef.current !== subtree.center;
-    prevCenterRef.current = subtree.center;
-    if (centerChanged) updateFocusGraph(graph, datum, subtree.center);
-    else {
-      // 同中心刷新：钉屏换树 + 回程框归位 + 变形居中，不推近
-      graph.changeData(datum);
-      placeParentLeft(graph);
-      setTimeout(() => { try { recenterCamera(graph, subtree.center); } catch { /* 已销毁 */ } }, 60);
-    }
-  }, [subtree]);
+    if (!graph || !datum || lastDatumRef.current === datum) return;
+    lastDatumRef.current = datum;
+    const target = cameraTargetRef.current;
+    cameraTargetRef.current = null;
+    updateFocusGraph(graph, datum, target && tree.byId.has(target) ? target : tree.rootId);
+  }, [datum, tree]);
 
   const canvasTools = useMemo(() => ({
     zoomBy: (factor: number) => {
@@ -144,19 +147,19 @@ export function FocusTreeCanvas({
       if (!graph) return;
       const z = graph.getZoom();
       const next = Math.max(0.2, Math.min(3, (Number.isFinite(z) && z > 0 ? z : 1) * factor));
-      setCameraOnNode(graph, subtree.center, next, { x: (graph.get('width') || 0) / 2, y: visCenterY(graph) });
+      tweenCameraTo(graph, next, null, 240);
     },
     fitAll: () => {
       const graph = graphRef.current;
       if (!graph) return;
-      try { graph.fitView(24); } catch { /* 已销毁 */ }
+      animateFitView(graph, 24);
     },
     recenter: () => {
       const graph = graphRef.current;
       if (!graph) return;
-      setCameraOnNode(graph, subtree.center, graph.getZoom() || 1, { x: (graph.get('width') || 0) / 2, y: visCenterY(graph) });
+      tweenCameraToNode(graph, tree.rootId, graph.getZoom() || 1, 380);
     },
-  }), [subtree]);
+  }), [tree.rootId]);
 
   if (!hasTree) {
     return <div className="eg-viewport eg-empty">{t('contextRoom:emergence.veinEmpty')}</div>;

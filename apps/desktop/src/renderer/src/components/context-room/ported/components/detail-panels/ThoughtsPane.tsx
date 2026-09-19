@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight, Footprints, ListTree, Lock, LockOpen, Network, RotateCcw, Sparkles, Undo2 } from 'lucide-react';
+import { Footprints, ListTree, Lock, LockOpen, Network, RotateCcw, Sparkles, Undo2 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 
 import { useLocale } from '../../../../../i18n/LocaleContext';
@@ -14,10 +14,11 @@ import { backWalk, initialWalkLog, stepWalk, type WalkStation } from '../emergen
 import { EmergenceCard } from './EmergenceCard';
 
 /**
- * 思路面板 · 知识涌现：聚焦=默认态（随焦点增量更新）；漫步=底部入口进入的
- * 独立态（两个世界，整屏交叉过渡），再走一次=新 seed、沿此漫步=换起点。
+ * 思路面板 · 知识涌现：聚焦=默认态（agent 生成的思维导图，NotebookLM 式
+ * 点击展开/收起）；漫步=底部入口进入的独立态（两个世界，整屏交叉过渡），
+ * 再走一次=新 seed、沿此漫步=换起点。
  * 模式是临时态：不进 localStorage，重进面板落在聚焦。
- * 图视图：聚焦=树状导图（钻取历史栈在组件上提）；漫步=步进链（walkLog 随结果身份重置）。
+ * 图视图：聚焦=树状导图（展开状态在画布内部）；漫步=步进链（walkLog 随结果身份重置）。
  */
 export function ThoughtsPane({
   room,
@@ -51,9 +52,6 @@ export function ThoughtsPane({
   const [hiddenWander, setHiddenWander] = useState<Set<string>>(() => new Set());
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [wanderStart, setWanderStart] = useState<{ nodeRef: string | null; label: string } | null>(null);
-
-  const focusCenterRef = focus.documentId ? `doc:${focus.documentId}` : `room:${room.id}`;
-  const [focusPath, setFocusPath] = useState<{ stack: string[]; index: number }>(() => ({ stack: [focusCenterRef], index: 0 }));
   const [selectedNodeRef, setSelectedNodeRef] = useState<string | null>(null);
   const [walkLog, setWalkLog] = useState<WalkStation[]>([]);
 
@@ -104,15 +102,14 @@ export function ThoughtsPane({
     ? null
     : (mode === 'focus' ? focusResult?.cards : wanderResult?.cards)?.find((card) => card.id === expandedId) ?? null;
 
-  // 树根听服务端的：导图根=mindmap:root，钻取栈从它长起
-  const focusRootRef = focusResult?.focusRootRef ?? focusCenterRef;
+  // 树根听服务端的：导图根=mindmap:root，resolveCenter 兜底到 room/首节点
+  const focusRootRef = resolveCenter(focusResult, focusResult?.focusRootRef ?? `room:${room.id}`);
 
-  // 新导图=重置钻取历史与图内选中：渲染期重置（无空帧）。上一份结果必须存 state
+  // 新导图=清图内选中：渲染期重置（无空帧）。上一份必须存 state
   // （存 ref 会在严格模式双渲染下丢重置）；focusRootRef 两级 scope 同名，须按结果身份判。
   const [prevFocusResult, setPrevFocusResult] = useState<EmergenceProjectionResultDto | null>(null);
   if (focusResult !== prevFocusResult) {
     setPrevFocusResult(focusResult);
-    setFocusPath((p) => (p.stack[p.index] === focusRootRef ? p : { stack: [focusRootRef], index: 0 }));
     setSelectedNodeRef(null);
   }
 
@@ -122,7 +119,7 @@ export function ThoughtsPane({
   if (wanderResult !== prevWanderResult) {
     setPrevWanderResult(wanderResult);
     const start = wanderResult && wanderResult.nodes.length > 0
-      ? resolveCenter(wanderResult, wanderStart?.nodeRef ?? focusCenterRef)
+      ? resolveCenter(wanderResult, wanderStart?.nodeRef ?? '')
       : '';
     const reset: WalkStation[] = start ? initialWalkLog(start) : [];
     if (walkLog.length !== reset.length || (reset.length > 0 && walkLog[0].nodeRef !== reset[0].nodeRef)) {
@@ -144,19 +141,6 @@ export function ThoughtsPane({
     onViewChange?.(next);
   };
 
-  const drillTo = (nodeRef: string) => {
-    setFocusPath((p) => {
-      if (p.stack[p.index] === nodeRef) return p;
-      const stack = p.stack.slice(0, p.index + 1);
-      stack.push(nodeRef);
-      return { stack, index: stack.length - 1 };
-    });
-    setSelectedNodeRef(null);
-  };
-
-  const goBackLevel = () => setFocusPath((p) => ({ ...p, index: Math.max(0, p.index - 1) }));
-  const goForwardLevel = () => setFocusPath((p) => ({ ...p, index: Math.min(p.stack.length - 1, p.index + 1) }));
-
   const selectGraphNode = (nodeRef: string | null) => {
     setSelectedNodeRef(nodeRef);
     if (nodeRef !== null) setExpandedId(null);
@@ -169,8 +153,6 @@ export function ThoughtsPane({
 
   const walkBackTo = (index: number) => setWalkLog((log) => backWalk(log, index));
 
-  const focusCenter = resolveCenter(focusResult, focusPath.stack[focusPath.index] ?? focusCenterRef);
-  const focusReturnRef = focusPath.index > 0 ? focusPath.stack[focusPath.index - 1] : null;
   const graphSelectedNode = expandedCard?.nodeRef ?? selectedNodeRef;
 
   const viewToggle = (
@@ -208,28 +190,6 @@ export function ThoughtsPane({
             <strong>{focusLabelText}</strong>
           </div>
           <div className="context-room-thoughts-header-actions">
-            {view === 'graph' ? (
-              <div className="context-room-thoughts-level-nav">
-                <button
-                  type="button"
-                  disabled={focusPath.index === 0}
-                  title={t('contextRoom:emergence.treeBack')}
-                  aria-label={t('contextRoom:emergence.treeBack')}
-                  onClick={goBackLevel}
-                >
-                  <ChevronLeft aria-hidden="true" />
-                </button>
-                <button
-                  type="button"
-                  disabled={focusPath.index >= focusPath.stack.length - 1}
-                  title={t('contextRoom:emergence.treeForward')}
-                  aria-label={t('contextRoom:emergence.treeForward')}
-                  onClick={goForwardLevel}
-                >
-                  <ChevronRight aria-hidden="true" />
-                </button>
-              </div>
-            ) : null}
             {viewToggle}
             <button
               type="button"
@@ -286,12 +246,9 @@ export function ThoughtsPane({
           <div className="context-room-thoughts-graph">
             <FocusTreeCanvas
               result={focusResult}
-              centerRef={focusCenter}
-              returnRef={focusReturnRef}
+              rootRef={focusRootRef}
               selectedNodeRef={graphSelectedNode}
               cards={visibleFocusCards}
-              onDrill={drillTo}
-              onGoBack={goBackLevel}
               onSelectNode={selectGraphNode}
               onOpenCard={openCardAtNode}
               onCardAction={quoteCard}

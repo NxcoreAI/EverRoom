@@ -19,8 +19,8 @@ import { resolveCenter } from '../emergence-graph/focusTreeModel';
 import { backWalk, initialWalkLog, stepWalk, type WalkStation } from '../emergence-graph/walkModel';
 
 /**
- * 思路板块（上图下卡）：聚焦=思维导图常驻 + 悬浮节点详情卡；漫游=步进链。
- * 工具条=聚焦/漫游分段 + 层级回退箭头 + 刷新；卡片流只存在于伴随区。
+ * 思路板块（上图下卡）：聚焦=思维导图常驻（NotebookLM 式点击展开/收起）；
+ * 漫游=步进链。工具条=聚焦/漫游分段 + 刷新；卡片流只存在于伴随区。
  */
 export function IdeasBoardPane({
   room,
@@ -41,8 +41,6 @@ export function IdeasBoardPane({
   const { t } = useLocale();
   const [mode, setMode] = useState<EmergenceMode>('focus');
   const [pinned, setPinned] = useState<EmergenceCardDto[]>([]);
-  const focusCenterRef = focus.documentId ? `doc:${focus.documentId}` : `room:${room.id}`;
-  const [focusPath, setFocusPath] = useState<{ stack: string[]; index: number }>(() => ({ stack: [focusCenterRef], index: 0 }));
   const [selectedNodeRef, setSelectedNodeRef] = useState<string | null>(null);
   const [walkLog, setWalkLog] = useState<WalkStation[]>([]);
   const [wanderStart, setWanderStart] = useState<{ nodeRef: string | null; label: string } | null>(null);
@@ -54,8 +52,8 @@ export function IdeasBoardPane({
   const mindmap = useFocusMindmap({ roomId: room.id, documentId: focus.documentId ?? null });
   const focusResult = mindmap.projection;
 
-  // 树根听服务端的：导图根=mindmap:root，钻取栈从它长起
-  const focusRootRef = focusResult?.focusRootRef ?? focusCenterRef;
+  // 树根听服务端的：导图根=mindmap:root，resolveCenter 兜底到 room/首节点
+  const focusRootRef = resolveCenter(focusResult, focusResult?.focusRootRef ?? `room:${room.id}`);
 
   const focusLabelText = focusLevel === 'selection'
     ? t('contextRoom:emergence.selectionFocus')
@@ -64,12 +62,11 @@ export function IdeasBoardPane({
     ? t('contextRoom:emergence.mindmapNoContent')
     : t('contextRoom:emergence.mindmapFailed');
 
-  // 新导图=新的钻取历史：渲染期重置（无空帧）。上一份结果必须存 state
-  // （存 ref 会在严格模式双渲染下丢重置）；focusRootRef 两级 scope 同名，须按结果身份判。
+  // 新导图=清图内选中：渲染期重置（无空帧）。上一份必须存 state
+  // （存 ref 会在严格模式双渲染下丢重置）。
   const [prevFocusResult, setPrevFocusResult] = useState<EmergenceProjectionResultDto | null>(null);
   if (focusResult !== prevFocusResult) {
     setPrevFocusResult(focusResult);
-    setFocusPath((p) => (p.stack[p.index] === focusRootRef ? p : { stack: [focusRootRef], index: 0 }));
     setSelectedNodeRef(null);
   }
 
@@ -79,7 +76,7 @@ export function IdeasBoardPane({
   if (wanderResult !== prevWanderResult) {
     setPrevWanderResult(wanderResult);
     const start = wanderResult && wanderResult.nodes.length > 0
-      ? resolveCenter(wanderResult, wanderStart?.nodeRef ?? focusCenterRef)
+      ? resolveCenter(wanderResult, wanderStart?.nodeRef ?? '')
       : '';
     const reset: WalkStation[] = start ? initialWalkLog(start) : [];
     if (walkLog.length !== reset.length || (reset.length > 0 && walkLog[0].nodeRef !== reset[0].nodeRef)) {
@@ -102,19 +99,6 @@ export function IdeasBoardPane({
     else wanderFrom(wanderStart?.nodeRef ?? null);
   };
 
-  const drillTo = (nodeRef: string) => {
-    setFocusPath((p) => {
-      if (p.stack[p.index] === nodeRef) return p;
-      const stack = p.stack.slice(0, p.index + 1);
-      stack.push(nodeRef);
-      return { stack, index: stack.length - 1 };
-    });
-    setSelectedNodeRef(null);
-  };
-
-  const goBackLevel = () => setFocusPath((p) => ({ ...p, index: Math.max(0, p.index - 1) }));
-  const goForwardLevel = () => setFocusPath((p) => ({ ...p, index: Math.min(p.stack.length - 1, p.index + 1) }));
-
   const walkStep = (nodeRef: string) => {
     if (!wanderResult) return;
     setWalkLog((log) => stepWalk(wanderResult, room.id, log, nodeRef) ?? log);
@@ -125,9 +109,6 @@ export function IdeasBoardPane({
   const pinCard = (card: EmergenceCardDto) => {
     setPinned((current) => current.some((item) => item.id === card.id) ? current : [...current, card]);
   };
-
-  const focusCenter = resolveCenter(focusResult, focusPath.stack[focusPath.index] ?? focusCenterRef);
-  const focusReturnRef = focusPath.index > 0 ? focusPath.stack[focusPath.index - 1] : null;
 
   const graphContent = mode === 'focus'
     ? (
@@ -141,12 +122,9 @@ export function IdeasBoardPane({
         ) : focusResult && focusResult.nodes.length > 0 ? (
           <FocusTreeCanvas
             result={focusResult}
-            centerRef={focusCenter}
-            returnRef={focusReturnRef}
+            rootRef={focusRootRef}
             selectedNodeRef={selectedNodeRef}
             cards={focusResult.cards ?? []}
-            onDrill={drillTo}
-            onGoBack={goBackLevel}
             onSelectNode={setSelectedNodeRef}
             onCardAction={pinCard}
           />
@@ -204,28 +182,6 @@ export function IdeasBoardPane({
             {t('contextRoom:emergence.modeWander')}
           </button>
         </div>
-        {mode === 'focus' ? (
-          <div className="context-room-thoughts-level-nav">
-            <button
-              type="button"
-              disabled={focusPath.index === 0}
-              title={t('contextRoom:emergence.treeBack')}
-              aria-label={t('contextRoom:emergence.treeBack')}
-              onClick={goBackLevel}
-            >
-              ‹
-            </button>
-            <button
-              type="button"
-              disabled={focusPath.index >= focusPath.stack.length - 1}
-              title={t('contextRoom:emergence.treeForward')}
-              aria-label={t('contextRoom:emergence.treeForward')}
-              onClick={goForwardLevel}
-            >
-              ›
-            </button>
-          </div>
-        ) : null}
         <div className="context-room-thoughts-toolbar-tools">
           <button
             type="button"
