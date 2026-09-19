@@ -2206,6 +2206,7 @@ function registerAgentHandlers(bridge: AgentGatewayBridge, migrationCoordinator:
   const workspaceBindings = new Map<string, LocalAgentWorkspaceBinding>()
   const workspaceBindingStore = new LocalAgentWorkspaceBindingStore(
     join(app.getPath('userData'), 'local-agent-workspaces.json'),
+    join(app.getPath('userData'), 'backups'),
   )
   const unboundSessionRoot = (sessionId: string) => join(
     app.getPath('userData'),
@@ -3395,6 +3396,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   screenshotOutbox = new ScreenshotOutbox(
     join(dataDirectory, 'perception', 'screenshot-outbox.json'),
     () => gatewaySupervisor,
+    join(dataDirectory, 'backups'),
   )
   await screenshotOutbox.initialize()
   protocol.handle(DOCUMENT_ASSET_SCHEME, (request) => documentAssets.response(request.url))
@@ -3467,7 +3469,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   })
   createWindow()
   // SaaS 客户端先于连接器栈构造：saas 连接层在 gateway 启动前就需要登录态换 oo 会话。
-  const credentials = new CredentialStore(join(app.getPath('userData'), 'credentials.json'))
+  const credentials = new CredentialStore(join(app.getPath('userData'), 'credentials.json'), join(app.getPath('userData'), 'backups'))
   await credentials.initialize()
   const recordingsDirectory=join(dataDirectory,'recordings')
   recordingStore = new RecordingStore(recordingsDirectory)
@@ -3675,10 +3677,10 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     registerKnowledgeHandlers(new KnowledgeGatewayBridge(gatewaySupervisor))
     registerMcpHandlers(new McpGatewayBridge(gatewaySupervisor))
     registerExternalCallHandlers(new ExternalCallsGatewayBridge(gatewaySupervisor))
-    const highRiskImports = new HighRiskImportCoordinator(join(dataDirectory, 'high-risk-imports.json'))
+    const highRiskImports = new HighRiskImportCoordinator(join(dataDirectory, 'high-risk-imports.json'), join(dataDirectory, 'backups'))
     await highRiskImports.initialize()
     const filesGatewayBridge = new FilesGatewayBridge(gatewaySupervisor, highRiskImports)
-    migrationCoordinator = new MigrationCoordinator(new MigrationsGatewayBridge(gatewaySupervisor), filesGatewayBridge, () => BrowserWindow.getAllWindows()[0] ?? null, join(dataDirectory, 'migrations', 'sources.json'))
+    migrationCoordinator = new MigrationCoordinator(new MigrationsGatewayBridge(gatewaySupervisor), filesGatewayBridge, () => BrowserWindow.getAllWindows()[0] ?? null, join(dataDirectory, 'migrations', 'sources.json'), join(dataDirectory, 'backups'))
     await migrationCoordinator.initialize()
     registerMigrationHandlers(migrationCoordinator)
     clipperAssetBridge = filesGatewayBridge
@@ -3738,14 +3740,15 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         }
       }
     })
-    const keyring = new AccountKeyringService(join(dataDirectory, 'account-keyring.json'))
-    privateAudioSync = new PrivateAudioSyncService(saasClient, keyring, recordingsDirectory, join(dataDirectory, 'private-audio-sync.json'))
+    const keyring = new AccountKeyringService(join(dataDirectory, 'account-keyring.json'), join(dataDirectory, 'backups'))
+    privateAudioSync = new PrivateAudioSyncService(saasClient, keyring, recordingsDirectory, join(dataDirectory, 'private-audio-sync.json'), join(dataDirectory, 'backups'))
     void privateAudioSync.drainPending().catch(() => undefined)
     privateTranscriptionSync = new PrivateTranscriptionSyncService(
       join(dataDirectory, 'private-transcription-sync.json'),
       saasClient,
       keyring,
       realityGatewayBridge,
+      join(dataDirectory, 'backups'),
     )
     await privateTranscriptionSync.initialize()
     // 云端历史转写的物化统一延迟到记忆引导结束（scheduler 登录即跑的首轮
@@ -3781,6 +3784,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       keyring,
       agentGatewayBridge,
       privateTranscriptionSync,
+      join(dataDirectory, 'backups'),
     )
     await transcriptionProcessingCoordinator.initialize()
     transcriptionProcessingCoordinator.start()
