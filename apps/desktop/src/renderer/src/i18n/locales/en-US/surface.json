@@ -1650,5 +1650,9 @@
   "files.unableToRevealOriginal.windows": "Unable to show the original file in File Explorer.",
   "obsidian.trashConfirm.windows": "Move “{name}” to the Recycle Bin?",
   "obsidian.moveToTrash.windows": "Move to Recycle Bin",
-  "settings.computerAudioUnavailableOnWindows": "Computer audio recording is not yet supported on Windows."
+  "settings.computerAudioUnavailableOnWindows": "Computer audio recording is not yet supported on Windows.",
+  "settings": {
+    "navigationUpdate": "Software Update",
+    "navigationUpdateDescription": "Check for and install updates"
+  }
 }
