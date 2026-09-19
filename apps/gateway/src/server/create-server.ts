@@ -109,6 +109,8 @@ import { KnowledgePreferences } from "../modules/knowledge/preferences.js";
 import { KnowledgeLlm } from "../modules/knowledge/llm.js";
 import { EmergenceService } from "../modules/knowledge/emergence-service.js";
 import { emergenceRoutes } from "../modules/knowledge/emergence-routes.js";
+import { FocusMindmapService } from "../modules/knowledge/mindmap-service.js";
+import { mindmapRoutes } from "../modules/knowledge/mindmap-routes.js";
 import { nangoConnectorRoutes } from "@nxcore/connectors-module/routes.js";
 import { purgeConnectorConnectionCascade } from "../modules/connectors/connection-purge.js";
 import { processingRoutes } from "../modules/processing/routes.js";
@@ -784,6 +786,13 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     app.log,
   );
   const contextRoomAgentDispatcher = new ContextRoomAgentDispatcher(subagentOrchestrator);
+  // 聚焦思维导图（思路板块聚焦模式）：mindmap-creator subAgent 生成，
+  // 依赖 orchestrator，须在上方构造。
+  const focusMindmapService = new FocusMindmapService({
+    db,
+    orchestrator: subagentOrchestrator,
+    log: app.log,
+  });
   // doc-writer 调度封装（doc-writer-subagent-plan §8/M2）：编辑器划词改写迁入
   // rewrite task；写作风格注入段对 doc-writer 全部 task 附加。
   const docWriterDispatcher = new DocWriterAgentDispatcher(
@@ -1668,6 +1677,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   });
   if (config.knowledge) await app.register(knowledgeRoutes(knowledgeService));
   if (config.knowledge) await app.register(emergenceRoutes(emergenceService));
+  if (config.knowledge) await app.register(mindmapRoutes(focusMindmapService));
 
   return app;
 }
