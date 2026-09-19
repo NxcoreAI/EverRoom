@@ -1,4 +1,4 @@
-import { app, dialog } from 'electron'
+import { app, dialog, ipcMain } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -50,6 +50,7 @@ export class DesktopUpdater {
   private installId = ''
   private reportedVersion = ''
   private usingFallback = false
+  private manualChecking = false
 
   constructor(private readonly saasClient: SaasClient | null) {
     this.channel = currentChannel()
@@ -60,6 +61,9 @@ export class DesktopUpdater {
 
   async start(): Promise<void> {
     this.installId = await resolveInstallId(this.saasClient)
+    // IPC 两种模式都注册：dev 下按钮可点（supported=false，返回错误态），打包版才有真实更新链路
+    this.registerIpc()
+    if (!app.isPackaged) return
     autoUpdater.autoDownload = true
     autoUpdater.autoInstallOnAppQuit = true
     autoUpdater.allowPrerelease = this.channel === 'nightly'
@@ -73,6 +77,29 @@ export class DesktopUpdater {
     autoUpdater.on('error', () => void this.tryFallbackOnce())
     setTimeout(() => void this.check(), 5000)
     setInterval(() => void this.check(), UPDATE_CHECK_INTERVAL_MS)
+  }
+
+  /** 设置页「检查更新」按钮：与后台轮询共用下载与弹窗链路。 */
+  async checkNow(): Promise<'update-found' | 'no-update' | 'busy' | 'error'> {
+    if (this.manualChecking) return 'busy'
+    this.manualChecking = true
+    try {
+      const result = await autoUpdater.checkForUpdates()
+      return result?.versionInfo ? 'update-found' : 'no-update'
+    } catch {
+      return 'error'
+    } finally {
+      this.manualChecking = false
+    }
+  }
+
+  getStatus() {
+    return { version: app.getVersion(), channel: this.channel, installId: this.installId, supported: app.isPackaged }
+  }
+
+  private registerIpc(): void {
+    ipcMain.handle('update:get-status', () => this.getStatus())
+    ipcMain.handle('update:check-now', () => this.checkNow())
   }
 
   private applyFeed(url?: string): void {
@@ -138,6 +165,5 @@ export class DesktopUpdater {
 
 /** 装配入口：在 saasClient 创建之后调用，异步自启，不阻塞窗口。 */
 export function startDesktopUpdater(saasClient: SaasClient | null): void {
-  if (!app.isPackaged) return
   void new DesktopUpdater(saasClient).start().catch(error => console.warn('[updater] 启动失败', error))
 }

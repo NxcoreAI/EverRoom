@@ -796,6 +796,12 @@ export interface NxcoreDesktopApi {
   app: {
     clearUserData(): Promise<void>
   }
+  updater: {
+    /** 当前版本、渠道与安装标识（诊断/白名单登记用） */
+    getStatus(): Promise<{ version: string; channel: 'stable' | 'nightly'; installId: string; supported: boolean }>
+    /** 手动检查更新：update-found=有新版正在后台下载（完成后弹窗）；no-update=已是最新 */
+    checkNow(): Promise<'update-found' | 'no-update' | 'busy' | 'error'>
+  }
   window: {
     minimize(): Promise<void>
     toggleMaximize(): Promise<void>

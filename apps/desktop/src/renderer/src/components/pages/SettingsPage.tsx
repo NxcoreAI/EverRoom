@@ -29,6 +29,7 @@ import QRCode from 'qrcode'
 
 import { useAccount } from '@/state/AccountContext'
 import { ConnectorModeSection } from '@/components/settings/ConnectorModeSection'
+import { UpdateSection } from '@/components/settings/UpdateSection'
 import { loadRealitySettings, saveRealitySettings, type RealitySettings } from '@/state/realitySettings'
 import {
   loadDocumentCursorCompletionSettings,
@@ -650,6 +651,8 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
           </button>
         </div>
       </section>
+
+      <UpdateSection />
 
       <section id="settings-extensions" className="reality-settings-section settings-anchor-section browser-extension-settings" aria-labelledby="browser-extension-settings-title">
         <header>
