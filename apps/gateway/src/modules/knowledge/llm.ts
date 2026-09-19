@@ -11,7 +11,6 @@
 
 import { invokeAgent } from "../agent/invoke.js";
 import { BUILTIN_AGENT_IDS, type AgentResolver } from "../agent/resolver.js";
-import type { EmergenceTaskUnderstanding } from "./emergence-projection.js";
 
 const CHAT_TIMEOUT_MS = 120_000;
 const MAX_RESPONSE_CHARS = 4_000;
@@ -97,28 +96,6 @@ export interface RoomProposalInput {
   description: string;
   documents: Array<{ title: string; markdown: string }>;
   anchors: Array<{ name: string; kind: string; evidenceScore: number; sourceCount: number }>;
-}
-
-/** 知识涌现任务理解输入：当前工作现场（Room + 焦点文本）。 */
-export interface EmergenceTaskInput {
-  roomTitle: string;
-  /** 产物标题（伴随区编辑态）；Room 级焦点为 null。 */
-  focusTitle: string | null;
-  /** 焦点所在章节标题（章节级焦点）；无章节结构为 null。 */
-  chapterHeading: string | null;
-  /** 选区+章节上下文、整节正文、文档导语或房间简介（组装见 emergence-service.focusText）。 */
-  focusText: string;
-}
-
-/** 知识涌现关联理由输入：任务理解结果 + 已选候选摘要。 */
-export interface EmergenceExplainInput {
-  intent: string;
-  candidates: Array<{ nodeRef: string; kind: string; title: string; summary: string }>;
-}
-
-export interface EmergenceExplanation {
-  nodeRef: string;
-  reason: string;
 }
 
 /** 推荐卡：anchorName 命中实体才能走晋升链路（资料自动成为 Room 数据）。 */
@@ -223,22 +200,6 @@ export class KnowledgeLlm {
     ].join("\n").slice(0, 36_000);
     const proposals = await this.chatJson("room-proposals", prompt, parseProposalsResponse);
     return proposals.slice(0, 3);
-  }
-
-  /**
-   * 知识涌现任务理解（PRD 7.4）：当前焦点文本 → 任务意图/主题/对象/证据需求。
-   * 失败抛 KnowledgeLlmError，调用方按降级路径继续（关键词+向量+图谱路径）。
-   */
-  async understandTask(input: EmergenceTaskInput): Promise<EmergenceTaskUnderstanding> {
-    return this.chatJson("emergence-task", buildTaskUnderstandingPrompt(input), parseTaskUnderstandingResponse);
-  }
-
-  /**
-   * 知识涌现关联理由（PRD 7.6）：已选卡片逐条生成「为何适合当前任务」的短理由。
-   * 失败抛 KnowledgeLlmError，调用方回退确定性路径说明。
-   */
-  async explainCards(input: EmergenceExplainInput): Promise<EmergenceExplanation[]> {
-    return this.chatJson("emergence-explain", buildExplainPrompt(input), parseExplainResponse);
   }
 
   /** 两次尝试（第二次带解析错误反馈），失败抛 KnowledgeLlmError。 */
@@ -518,64 +479,4 @@ export function parseProposalsResponse(content: string): RoomProposal[] {
   }
   if (byName.size === 0) throw new KnowledgeLlmError("proposals result requires at least one proposal");
   return [...byName.values()];
-}
-
-/** 知识涌现任务理解 prompt 构造（纯函数便于测试）。 */
-export function buildTaskUnderstandingPrompt(input: EmergenceTaskInput): string {
-  return [
-    `Room：${input.roomTitle}`,
-    input.focusTitle ? `当前产物：《${input.focusTitle}》` : "（Room 级焦点，无具体产物）",
-    input.chapterHeading ? `当前章节：《${input.chapterHeading}》` : null,
-    "",
-    "当前焦点文本（选区+所在章节、整节正文、文档导语或房间简介）：",
-    // 章节正文不截断：装不下说明该节确实重要，超限由 chatJson 失败→降级链路兜底。
-    input.focusText || "（空）",
-    "",
-    "请给出任务理解 JSON。",
-  ].filter((line) => line !== null).join("\n");
-}
-
-/** 严格解析任务理解输出（导出供单测）：逐字段校验 + 越界修正。 */
-export function parseTaskUnderstandingResponse(content: string): EmergenceTaskUnderstanding {
-  const raw = parseJsonObject(content);
-  const list = (value: unknown, maxItems: number, maxChars: number): string[] =>
-    (Array.isArray(value) ? value : [])
-      .flatMap((item) => (typeof item === "string" ? [item.trim().slice(0, maxChars)] : []))
-      .filter((item) => item.length > 0)
-      .slice(0, maxItems);
-  return {
-    intent: typeof raw.intent === "string" ? raw.intent.trim().slice(0, 200) : "",
-    themes: list(raw.themes, 6, 40),
-    objects: list(raw.objects, 6, 40),
-    evidenceNeeds: list(raw.evidenceNeeds, 4, 60),
-  };
-}
-
-/** 知识涌现关联理由 prompt 构造（纯函数便于测试）。 */
-export function buildExplainPrompt(input: EmergenceExplainInput): string {
-  return [
-    `当前任务：${input.intent || "（未提供，按标题与摘要判断）"}`,
-    "",
-    "召回的候选材料：",
-    ...input.candidates.slice(0, 12).map((candidate, index) =>
-      `${index + 1}. nodeRef=${candidate.nodeRef}（${candidate.kind}）《${candidate.title}》：${candidate.summary.slice(0, 200)}`),
-    "",
-    "请逐条给出关联理由 JSON。",
-  ].join("\n");
-}
-
-/** 严格解析关联理由输出（导出供单测）：nodeRef 必须逐字来自输入。 */
-export function parseExplainResponse(content: string): EmergenceExplanation[] {
-  const raw = parseJsonObject(content);
-  const items = Array.isArray(raw.reasons) ? raw.reasons : [];
-  const byRef = new Map<string, EmergenceExplanation>();
-  for (const item of items) {
-    if (typeof item !== "object" || item === null) continue;
-    const value = item as Record<string, unknown>;
-    const nodeRef = typeof value.nodeRef === "string" ? value.nodeRef.trim() : "";
-    if (!nodeRef) continue;
-    const reason = typeof value.reason === "string" ? value.reason.trim().slice(0, 200) : "";
-    byRef.set(nodeRef, { nodeRef, reason });
-  }
-  return [...byRef.values()];
 }

@@ -662,14 +662,13 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   });
   contextRoomService.setDuplicateService(roomDuplicateService);
   knowledgeService.setRoomDuplicateIndexTrigger(() => roomDuplicateService.requestRebuild());
-  // 知识涌现（思路板块）：四源投影 + LLM 任务理解，只读不写回基础图谱。
+  // 知识涌现（思路板块）：漫步的四源投影，只读不写回基础图谱。
+  // 聚焦模式由 FocusMindmapService（subAgent 思维导图）承接。
   const emergenceService = new EmergenceService({
     db,
     knowledge: knowledgeService,
     contextRooms: contextRoomService,
-    memory: memoryService,
     log: app.log,
-    embedding: embeddingFromConfig(config),
   });
   // M3 知识整理偏好：统计（确定性）+ 洞察（LLM 修订式，失败保旧）+ 建议性注入
   // （extract/judgeEntityIdentity；开关关闭=不注入）。job 延迟 3 分钟首跑。
