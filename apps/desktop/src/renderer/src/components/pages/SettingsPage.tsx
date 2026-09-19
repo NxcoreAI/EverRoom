@@ -66,6 +66,7 @@ const SETTINGS_NAV = [
   { id: 'settings-capture', label: 'surface:settings.windowScreenshots', description: 'surface:settings.navigationCaptureDescription', icon: Camera },
   { id: 'settings-editor', label: 'surface:settings.documentEditing', description: 'surface:settings.navigationEditorDescription', icon: Sparkles },
   { id: 'settings-interface', label: 'surface:settings.interfaceLanguage', description: 'surface:settings.chooseTheDisplayLanguageForEverroom', icon: Languages },
+  { id: 'settings-update', label: 'surface:settings.navigationUpdate', description: 'surface:settings.navigationUpdateDescription', icon: RefreshCw },
   { id: 'settings-data', label: 'surface:settings.dataManagement', description: 'surface:settings.clearAllUserDataDescription', icon: Trash2 },
 ]
 
