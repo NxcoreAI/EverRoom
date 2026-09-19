@@ -1,38 +1,58 @@
 import { createHash } from 'node:crypto'
-import { readFile, writeFile, mkdir, rm } from 'node:fs/promises'
-import { basename, dirname, isAbsolute, join } from 'node:path'
+import { readFile, writeFile, rm } from 'node:fs/promises'
+import { basename, isAbsolute, join } from 'node:path'
+
+import { VersionedJsonStore } from '@nxcore/migration-kit'
 
 import type { PrivateAudioAsset, SaasClient } from '../cloud/saas-client'
 import { AccountKeyringService } from '../security/account-keyring-service'
 import { createLoggedHttpClient } from '../network/http-client'
 
-const AUDIO_SCHEMA_VERSION = 1
 const AUDIO_CHUNK_SIZE = 4 * 1024 * 1024
 // OSS 直传/下载走共享工厂，外网请求由 Chromium 网络栈处理（系统代理）。
 const http = createLoggedHttpClient('saas-audio', { timeout: 5 * 60_000 })
 
 function hash(value: Buffer): string { return `sha256:${createHash('sha256').update(value).digest('hex')}` }
 
+interface PendingAudioItem { filePath: string; recordingId: string; durationMs: number; mimeType: string }
+
+function isPendingAudioItem(value: unknown): value is PendingAudioItem {
+  if (!value || typeof value !== 'object') return false
+  const item = value as Record<string, unknown>
+  return typeof item['filePath'] === 'string' && typeof item['recordingId'] === 'string'
+    && typeof item['durationMs'] === 'number' && typeof item['mimeType'] === 'string'
+}
+
 export class PrivateAudioSyncService {
   private eventResolver: ((recordingId: string) => Promise<string | null>) | null = null
+  private readonly queue: VersionedJsonStore<PendingAudioItem[]>
+
   constructor(
     private readonly client: SaasClient,
     private readonly keyring: AccountKeyringService,
     private readonly recordingsDirectory: string,
-    private readonly queueFile: string,
-  ) {}
+    queueFile: string,
+    backupDir?: string,
+  ) {
+    this.queue = new VersionedJsonStore<PendingAudioItem[]>({
+      filePath: queueFile,
+      migrations: [],
+      adoptBaseline: (raw) => (Array.isArray(raw) ? raw.filter(isPendingAudioItem) : []),
+      fallback: [],
+      ...(backupDir !== undefined ? { backupDir } : {}),
+    })
+  }
 
   setEventResolver(resolver: (recordingId: string) => Promise<string | null>): void { this.eventResolver = resolver }
 
   async drainPending(): Promise<void> {
-    let pending: Array<{ filePath: string; recordingId: string; durationMs: number; mimeType: string }> = []
-    try { pending = JSON.parse(await readFile(this.queueFile, 'utf8')) as typeof pending } catch { return }
-    const remaining: typeof pending = []
+    const pending = this.queue.read()
+    if (!pending.length) return
+    const remaining: PendingAudioItem[] = []
     for (const item of pending) {
       try { await this.upload(item.filePath, item.recordingId, item.durationMs, item.mimeType, false) } catch { remaining.push(item) }
     }
-    await mkdir(dirname(this.queueFile), { recursive: true })
-    await writeFile(this.queueFile, JSON.stringify(remaining), { mode: 0o600 })
+    this.queue.write(remaining)
   }
 
   async list(cursor = 0): Promise<{ assets: PrivateAudioAsset[]; nextCursor: number }> {
@@ -98,12 +118,10 @@ export class PrivateAudioSyncService {
     }
   }
 
-  private async enqueue(item: { filePath: string; recordingId: string; durationMs: number; mimeType: string }) {
-    let pending: typeof item[] = []
-    try { pending = JSON.parse(await readFile(this.queueFile, 'utf8')) as typeof pending } catch { }
+  private async enqueue(item: PendingAudioItem) {
+    const pending = this.queue.read()
     if (!pending.some((entry) => entry.recordingId === item.recordingId)) pending.push(item)
-    await mkdir(dirname(this.queueFile), { recursive: true })
-    await writeFile(this.queueFile, JSON.stringify(pending), { mode: 0o600 })
+    this.queue.write(pending)
   }
 
   async download(asset: PrivateAudioAsset, outputPath: string): Promise<string> {
