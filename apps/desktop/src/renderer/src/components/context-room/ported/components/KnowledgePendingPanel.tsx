@@ -14,6 +14,7 @@ import {
   EyeOff,
   RotateCcw,
 } from 'lucide-react';
+import { createVersionedLocalStorageStore } from '@nxcore/migration-kit/local';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { showToast } from '@/state/toast';
@@ -87,8 +88,6 @@ const RUN_TOUCHED_SLACK_MS = 5_000;
 /** 导入断点续传：内容寻址去重让重跑幂等；网络波动自动重试。 */
 const IMPORT_RETRY_ATTEMPTS = 3;
 const IMPORT_RETRY_DELAY_MS = 2_000;
-/** 会话清单的本地持久化键：应用重启后据此恢复进度（真实状态在网关）。 */
-const RUN_STORAGE_KEY = 'everroom:room-recommendation-run';
 /** 完成态停留时长：进度条打满 100% 让用户看到收尾，再撤蒙层。 */
 const RUN_DONE_LINGER_MS = 900;
 /** 明细回报上限：计数始终精确，明细最多展示/存储 N 条（防大目录撑爆蒙层与清单）。 */
@@ -172,31 +171,50 @@ function runPercentOf(run: RecommendationRun): number {
   return 85;
 }
 
-/** 从 localStorage 恢复未完会话；已完结（timeout/failed）或损坏的清单丢弃。 */
+/** 从 localStorage 恢复未完会话；已完结（timeout/failed）或损坏的清单丢弃。
+ *  旧裸 key（无版本后缀）在首次读取时认领为规范 v1 key，裸 key 保留供旧二进制回滚。
+ *  落盘形态 readySnapshot 为数组（Set 不可序列化），读取时转回 Set。 */
+type PersistedRun = Omit<RecommendationRun, 'readySnapshot'> & { readySnapshot: string[] }
+
+function adoptPersistedRun(raw: unknown): PersistedRun | null {
+  const parsed = raw as Omit<RecommendationRun, 'readySnapshot'> & { readySnapshot?: unknown };
+  if (!parsed || typeof parsed?.id !== 'number' || !Array.isArray(parsed.paths) || typeof parsed.startedAt !== 'number') {
+    return null;
+  }
+  if (parsed.phase !== 'importing' && parsed.phase !== 'routing' && parsed.phase !== 'accumulating') {
+    return null;
+  }
+  return {
+    ...parsed,
+    failedImports: typeof parsed.failedImports === 'number' ? parsed.failedImports : 0,
+    skippedImports: typeof parsed.skippedImports === 'number' ? parsed.skippedImports : 0,
+    okImports: typeof parsed.okImports === 'number' ? parsed.okImports : 0,
+    failureDetails: Array.isArray(parsed.failureDetails)
+      ? parsed.failureDetails.filter((item) => item && typeof item.filename === 'string' && typeof item.error === 'string')
+      : [],
+    skipDetails: Array.isArray(parsed.skipDetails)
+      ? parsed.skipDetails.filter((item) => item && typeof item.filename === 'string')
+      : [],
+    readySnapshot: Array.isArray(parsed.readySnapshot)
+      ? parsed.readySnapshot.filter((item): item is string => typeof item === 'string')
+      : [],
+  };
+}
+
+function createRunStore() {
+  return createVersionedLocalStorageStore<PersistedRun | null>({
+    keyBase: 'everroom:room-recommendation-run',
+    version: 1,
+    adoptBaseline: adoptPersistedRun,
+    fallback: null,
+    migrations: [],
+  });
+}
+
 function readPersistedRun(): RecommendationRun | null {
   try {
-    const raw = window.localStorage?.getItem(RUN_STORAGE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as Omit<RecommendationRun, 'readySnapshot'> & { readySnapshot?: unknown };
-    if (typeof parsed?.id !== 'number' || !Array.isArray(parsed.paths) || typeof parsed.startedAt !== 'number') {
-      return null;
-    }
-    if (parsed.phase !== 'importing' && parsed.phase !== 'routing' && parsed.phase !== 'accumulating') {
-      return null;
-    }
-    return {
-      ...parsed,
-      failedImports: typeof parsed.failedImports === 'number' ? parsed.failedImports : 0,
-      skippedImports: typeof parsed.skippedImports === 'number' ? parsed.skippedImports : 0,
-      okImports: typeof parsed.okImports === 'number' ? parsed.okImports : 0,
-      failureDetails: Array.isArray(parsed.failureDetails)
-        ? parsed.failureDetails.filter((item) => item && typeof item.filename === 'string' && typeof item.error === 'string')
-        : [],
-      skipDetails: Array.isArray(parsed.skipDetails)
-        ? parsed.skipDetails.filter((item) => item && typeof item.filename === 'string')
-        : [],
-      readySnapshot: new Set(Array.isArray(parsed.readySnapshot) ? parsed.readySnapshot : []),
-    };
+    const persisted = createRunStore().get();
+    return persisted ? { ...persisted, readySnapshot: new Set(persisted.readySnapshot) } : null;
   } catch {
     return null;
   }
@@ -204,13 +222,12 @@ function readPersistedRun(): RecommendationRun | null {
 
 function persistRun(run: RecommendationRun | null): void {
   try {
-    const storage = window.localStorage;
-    if (!storage) return;
+    const store = createRunStore();
     if (run && (run.phase === 'importing' || run.phase === 'routing' || run.phase === 'accumulating')) {
       const { readySnapshot, ...rest } = run;
-      storage.setItem(RUN_STORAGE_KEY, JSON.stringify({ ...rest, readySnapshot: [...readySnapshot] }));
+      store.set({ ...rest, readySnapshot: [...readySnapshot] });
     } else {
-      storage.removeItem(RUN_STORAGE_KEY);
+      store.clear();
     }
   } catch {
     // 存储不可用（隐私模式等）：仅失去重启恢复，会话本体不受影响。
