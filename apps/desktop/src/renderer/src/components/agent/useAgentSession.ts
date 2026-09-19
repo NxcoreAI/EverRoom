@@ -9,6 +9,7 @@ import type {
   AgentSessionSnapshot,
   CreateAgentSessionLinkInput,
 } from '@nxcore/agent-contract'
+import { createVersionedLocalStorageStore } from '@nxcore/migration-kit/local'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useLocale } from '@/i18n/LocaleContext'
 
@@ -62,7 +63,10 @@ export function removeAgentRunMessages(
   return messages.filter((message) => message.runId !== runId)
 }
 
-const SESSION_STORAGE_KEY = 'nxcore-ce:agent-session:v2'
+const SESSION_KEY_BASE = 'nxcore-ce:agent-session'
+const SESSION_KEY_VERSION = 2
+// pre-v2 世代用复数 key 存 per-page map（keyBase 不同，框架走不到），
+// 认领时框架外兜底一次：取任一会话 id 作为当前选择。
 const LEGACY_SESSION_STORAGE_KEY = 'nxcore-ce:agent-sessions:v1'
 const defaultSessionCreations = new Map<string, Promise<AgentSession>>()
 
@@ -75,19 +79,34 @@ function sessionScope(_pageLabel?: string, _roomId?: string | null): string {
   return 'global'
 }
 
-function readStoredSession(): string | null {
+function createSessionStore() {
+  return createVersionedLocalStorageStore<string>({
+    keyBase: SESSION_KEY_BASE,
+    version: SESSION_KEY_VERSION,
+    adoptBaseline: () => '',
+    fallback: '',
+    migrations: [],
+  })
+}
+
+function readLegacySession(): string | null {
   try {
-    const stored = localStorage.getItem(SESSION_STORAGE_KEY)
-      ?? localStorage.getItem(LEGACY_SESSION_STORAGE_KEY)
-      ?? '{}'
-    const value: unknown = JSON.parse(stored)
-    if (typeof value === 'string') return value
+    const legacy = localStorage.getItem(LEGACY_SESSION_STORAGE_KEY)
+    if (!legacy) return null
+    const value: unknown = JSON.parse(legacy)
     if (!value || typeof value !== 'object') return null
     const record = value as Record<string, unknown>
     if (typeof record.global === 'string') return record.global
-    // Migrate the old per-page/per-Room map by keeping one last selection.
-    const legacy = Object.values(record).find((sessionId): sessionId is string => typeof sessionId === 'string')
-    return legacy ?? null
+    return Object.values(record).find((sessionId): sessionId is string => typeof sessionId === 'string') ?? null
+  } catch {
+    return null
+  }
+}
+
+function readStoredSession(): string | null {
+  try {
+    const stored = createSessionStore().get()
+    return stored || readLegacySession()
   } catch {
     return null
   }
@@ -95,8 +114,9 @@ function readStoredSession(): string | null {
 
 function storeSession(sessionId: string | null): void {
   try {
-    if (sessionId) localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(sessionId))
-    else localStorage.removeItem(SESSION_STORAGE_KEY)
+    const store = createSessionStore()
+    if (sessionId) store.set(sessionId)
+    else store.clear()
   } catch {
     // Session persistence is optional when browser storage is unavailable.
   }
