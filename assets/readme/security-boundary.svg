@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="300" viewBox="0 0 1200 300" role="img" aria-labelledby="sb-t sb-d">
+  <title id="sb-t">EverRoom local-first boundary</title>
+  <desc id="sb-d">Documents, evidence, indexes, rooms, the loopback gateway, and redacted logs stay on the device by default. Cloud model providers, connectors, and external agents are opt-in and only receive the approved scope.</desc>
+
+  <defs>
+    <marker id="sb-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#6DD0C5"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="300" fill="#12242D"/>
+
+  <text x="60" y="40" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="16" letter-spacing="2" fill="#6DD0C5">LOCAL-FIRST BY DEFAULT</text>
+
+  <!-- device -->
+  <g>
+    <rect x="48" y="62" width="732" height="196" rx="18" fill="#0E1C24" stroke="#3F5B66" stroke-width="1.4"/>
+    <text x="76" y="96" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="17" letter-spacing="1" fill="#F7F7F2">YOUR DEVICE</text>
+    <text x="214" y="96" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="16" fill="#7E99A3">default home of all data</text>
+
+    <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="17" fill="#DCE8EC" text-anchor="middle">
+      <rect x="76" y="116" width="212" height="52" rx="10" fill="#1A323D" stroke="#2A4750" stroke-width="1"/>
+      <text x="182" y="148">Documents</text>
+      <rect x="312" y="116" width="212" height="52" rx="10" fill="#1A323D" stroke="#2A4750" stroke-width="1"/>
+      <text x="418" y="148">Evidence · versions</text>
+      <rect x="548" y="116" width="212" height="52" rx="10" fill="#1A323D" stroke="#2A4750" stroke-width="1"/>
+      <text x="654" y="148">Indexes · FTS5</text>
+      <rect x="76" y="184" width="212" height="52" rx="10" fill="#1A323D" stroke="#2A4750" stroke-width="1"/>
+      <text x="182" y="216">Rooms · SQLite</text>
+      <rect x="312" y="184" width="212" height="52" rx="10" fill="#1A323D" stroke="#2A4750" stroke-width="1"/>
+      <text x="418" y="216">Gateway · loopback</text>
+      <rect x="548" y="184" width="212" height="52" rx="10" fill="#1A323D" stroke="#2A4750" stroke-width="1"/>
+      <text x="654" y="216">Logs · redacted</text>
+    </g>
+  </g>
+
+  <!-- approval gate -->
+  <path d="M780 160 L896 160" stroke="#6DD0C5" stroke-width="1.6" stroke-dasharray="5 6" fill="none" marker-end="url(#sb-arrow)"/>
+  <text x="838" y="144" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="16" fill="#6DD0C5">opt-in</text>
+  <text x="838" y="184" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="16" fill="#BFD2D8">approved scope</text>
+
+  <!-- cloud -->
+  <g>
+    <rect x="900" y="62" width="252" height="196" rx="18" fill="#101B22" stroke="#7E99A3" stroke-width="1.2" stroke-dasharray="6 6"/>
+    <text x="924" y="96" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="17" letter-spacing="1" fill="#7E99A3">OPT-IN CLOUD</text>
+    <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="17" fill="#DCE8EC" text-anchor="middle">
+      <rect x="924" y="114" width="204" height="40" rx="9" fill="#1A323D"/>
+      <text x="1026" y="140">Model providers</text>
+      <rect x="924" y="164" width="204" height="40" rx="9" fill="#1A323D"/>
+      <text x="1026" y="190">Connectors</text>
+      <rect x="924" y="214" width="204" height="40" rx="9" fill="#1A323D"/>
+      <text x="1026" y="240">External agents</text>
+    </g>
+  </g>
+</svg>
