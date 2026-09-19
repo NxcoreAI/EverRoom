@@ -75,6 +75,22 @@ export function defaultCollapsed(tree: FocusTree): Set<string> {
   return collapsed;
 }
 
+/**
+ * 选中即保证邻居可见：叶子上溯把父链展开（父节点跟着亮相），根节点保持
+ * 展开（子节点不消失）；被选节点自身的收起态不动（中间节点的展开/收起
+ * 交互不变）。无可展开时返回 null。
+ */
+export function revealAncestors(tree: FocusTree, collapsed: Set<string>, nodeId: string): Set<string> | null {
+  const node = tree.byId.get(nodeId);
+  if (!node) return null;
+  const next = new Set(collapsed);
+  let changed = false;
+  for (let cur = node.id === tree.rootId ? node.id : node.parentId; cur !== null; cur = tree.byId.get(cur)?.parentId ?? null) {
+    if (next.delete(cur)) changed = true;
+  }
+  return changed ? next : null;
+}
+
 /** 根兜底链：首选 → room 节点 → 第一个节点 → 空。 */
 export function resolveCenter(result: GraphSlice | null, preferred: string): string {
   if (!result || result.nodes.length === 0) return '';

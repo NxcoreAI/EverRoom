@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { EmergenceEdgeDto, EmergenceNodeDto } from '../../../../../../../shared/knowledge';
-import { buildFocusTree, defaultCollapsed, resolveCenter } from './focusTreeModel';
+import { buildFocusTree, defaultCollapsed, revealAncestors, resolveCenter } from './focusTreeModel';
 
 function node(id: string, nodeType: EmergenceNodeDto['nodeType'] = 'fact'): EmergenceNodeDto {
   return { id, nodeType, label: id, sourceGraph: 'roomGraph', roomRef: null, updatedAt: null };
@@ -90,6 +90,35 @@ describe('defaultCollapsed', () => {
   it('empty for a flat tree (no second level)', () => {
     const flat = { nodes: [node('r', 'room'), node('a'), node('b')], edges: [edge('f1', 'r', 'a'), edge('f2', 'r', 'b')] };
     expect([...defaultCollapsed(buildFocusTree(flat, 'r'))]).toEqual([]);
+  });
+});
+
+describe('revealAncestors', () => {
+  const tree = buildFocusTree(graph, 'mindmap:root');
+
+  it('expands the ancestor chain when a leaf is selected (parent becomes visible)', () => {
+    const revealed = revealAncestors(tree, defaultCollapsed(tree), 'mindmap:b1-1');
+    expect(revealed).not.toBeNull();
+    expect(revealed!.has('mindmap:b1')).toBe(false);
+    expect(revealed!.has('mindmap:b2')).toBe(true);
+  });
+
+  it('leaves the selected node itself collapsed (mid-node interaction unchanged)', () => {
+    expect(revealAncestors(tree, defaultCollapsed(tree), 'mindmap:b2')).toBeNull();
+  });
+
+  it('keeps the root expanded when selected (children stay visible)', () => {
+    const collapsed = new Set(defaultCollapsed(tree));
+    collapsed.add('mindmap:root');
+    const revealed = revealAncestors(tree, collapsed, 'mindmap:root');
+    expect(revealed).not.toBeNull();
+    expect(revealed!.has('mindmap:root')).toBe(false);
+    expect(revealed!.has('mindmap:b1')).toBe(true);
+  });
+
+  it('returns null when nothing to reveal or the node is unknown', () => {
+    expect(revealAncestors(tree, new Set(), 'mindmap:b1-1')).toBeNull();
+    expect(revealAncestors(tree, defaultCollapsed(tree), 'fact:orphan')).toBeNull();
   });
 });
 

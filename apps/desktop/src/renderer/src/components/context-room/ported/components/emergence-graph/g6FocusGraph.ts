@@ -241,20 +241,29 @@ export function createFocusGraph(el: HTMLElement, datum: FocusDatum, onNodeClick
   return graph;
 }
 
-// 视觉中心 y：底部悬浮详情条展开时，中心取「条上方可用区域」的中点
-export function visCenterY(graph: G6TreeGraph): number {
+// 可视区几何：底部悬浮详情条占位时（展开/收起都占），可用区域下缘收到条顶。
+// 从画布自身所属视口里找条（同屏多画布时 document 全局查询会查到别人的条）。
+function visibleViewport(graph: G6TreeGraph): { top: number; bottom: number } {
   const H = (graph && graph.get('height')) || 0;
+  let bottom = H;
   try {
-    const card = document.querySelector('[data-eg-strip]') as HTMLElement | null;
-    if (card && !card.classList.contains('is-collapsed') && card.offsetHeight > 40) {
+    const el = graph.get('canvas')?.get('el') as HTMLElement | null | undefined;
+    const card = (el ? el.closest('.eg-viewport') : null)?.querySelector('[data-eg-strip]') as HTMLElement | null;
+    if (card && card.offsetHeight > 20) {
       const body = card.closest('.eg-viewport');
       if (body) {
         const cardTop = card.getBoundingClientRect().top - body.getBoundingClientRect().top;
-        if (Number.isFinite(cardTop) && cardTop > 120) return cardTop / 2;
+        if (Number.isFinite(cardTop) && cardTop > 60) bottom = cardTop;
       }
     }
   } catch { /* 无 DOM */ }
-  return H / 2;
+  return { top: 0, bottom };
+}
+
+// 视觉中心 y：底部悬浮详情条展开时，中心取「条上方可用区域」的中点
+export function visCenterY(graph: G6TreeGraph): number {
+  const { top, bottom } = visibleViewport(graph);
+  return (top + bottom) / 2;
 }
 
 // 相机基础件：直接合成矩阵 [ratio,0,tx,0,ratio,ty]（模型点钉在指定屏幕位）
@@ -336,21 +345,57 @@ export function tweenCameraToNode(graph: G6TreeGraph, nodeId: string, toZoom: nu
   tweenCameraTo(graph, toZoom, { x: m.x as number, y: m.y as number }, duration, cx, nodeId);
 }
 
-// 动画版自适应（工具条「全局」）：按内容盒算适配缩放，中心滑向内容盒中心
+// 内容包围盒：G6 group.getBBox() 有缓存过期问题（changeData/refreshPositions 后可能只报部分节点），
+// 用节点模型坐标手动求并集，缺尺寸的退回 getBBox
+function contentBBox(graph: G6TreeGraph): { x: number; y: number; width: number; height: number } | null {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  graph.getNodes().forEach((n) => {
+    const m = n.getModel() as unknown as { x?: number; y?: number; width?: number; height?: number };
+    const cx = Number(m.x), cy = Number(m.y);
+    if (!Number.isFinite(cx) || !Number.isFinite(cy)) return;
+    const w = Number(m.width), h = Number(m.height);
+    const hw = (Number.isFinite(w) ? w : 90) / 2;
+    const hh = (Number.isFinite(h) ? h : 30) / 2;
+    minX = Math.min(minX, cx - hw); maxX = Math.max(maxX, cx + hw);
+    minY = Math.min(minY, cy - hh); maxY = Math.max(maxY, cy + hh);
+  });
+  if (minX === Infinity) {
+    try {
+      const b = graph.get('group').getBBox();
+      if (b && Number.isFinite(b.width) && b.width > 0) return b;
+    } catch { /* 已销毁 */ }
+    return null;
+  }
+  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+}
+
+// 动画版自适应（工具条「全局」）：按内容盒和真实可视区（底部详情条展开时不含条）算适配缩放，中心滑向内容盒中心
 export function animateFitView(graph: G6TreeGraph, padding = 24) {
   try {
-    const bbox = graph.get('group').getBBox();
+    const bbox = contentBBox(graph);
     const W = graph.get('width') || 1;
-    const H = graph.get('height') || 1;
+    const { top, bottom } = visibleViewport(graph);
+    const visH = Math.max(80, bottom - top);
     if (bbox && Number.isFinite(bbox.width) && bbox.width > 0 && Number.isFinite(bbox.height) && bbox.height > 0) {
-      const fitZoom = Math.min((W - padding * 2) / bbox.width, (H - padding * 2) / bbox.height);
+      const fitZoom = Math.min((W - padding * 2) / bbox.width, (visH - padding * 2) / bbox.height);
       if (Number.isFinite(fitZoom) && fitZoom > 0) {
-        tweenCameraTo(graph, Math.max(0.2, Math.min(1.5, fitZoom)), { x: bbox.x + bbox.width / 2, y: bbox.y + bbox.height / 2 }, 380);
+        tweenCameraTo(graph, Math.max(0.05, Math.min(1.5, fitZoom)), { x: bbox.x + bbox.width / 2, y: bbox.y + bbox.height / 2 }, 380);
         return;
       }
     }
   } catch { /* 已销毁 */ }
   try { graph.fitView(padding); } catch { /* 已销毁 */ }
+}
+
+// 动画版回中（工具条「回到中心」）：保持当前缩放，把整棵树（内容盒中心）平移回可视区中心。
+// 不钉根节点——LR 树根在内容盒左缘，钉根会让右半棵出画。
+export function animateRecenter(graph: G6TreeGraph, duration = 380) {
+  try {
+    const bbox = contentBBox(graph);
+    if (!bbox || !Number.isFinite(bbox.width) || bbox.width <= 0) return;
+    const z = graph.getZoom();
+    tweenCameraTo(graph, Number.isFinite(z) && z > 0.01 ? z : 1, { x: bbox.x + bbox.width / 2, y: bbox.y + bbox.height / 2 }, duration);
+  } catch { /* 已销毁 */ }
 }
 
 // 精确对中：中心节点距视口中心 > 4px 时原地合成居中矩阵（瞬时、不缩放）
@@ -402,12 +447,13 @@ export function updateFocusGraph(graph: G6TreeGraph, datum: FocusDatum, centerId
     animatedChangeData(graph, datum, centerId, {
       autoCenter: false,
       afterSettle: () => {
-        const bbox = graph.get('group').getBBox();
+        const bbox = contentBBox(graph);
         const W = graph.get('width');
-        const H = graph.get('height');
+        const { top, bottom } = visibleViewport(graph);
+        const visH = Math.max(80, bottom - top);
         let toZoom = Math.max(0.85, Math.min(1.1, graph.getZoom() * 1.12));
         if (bbox && Number.isFinite(bbox.width) && bbox.width > 0 && Number.isFinite(bbox.height) && bbox.height > 0) {
-          const fitZoom = Math.min((W - 48) / bbox.width, (H - 40) / bbox.height);
+          const fitZoom = Math.min((W - 48) / bbox.width, (visH - 40) / bbox.height);
           toZoom = Math.min(toZoom, Math.max(0.45, Math.min(1.15, fitZoom)));
         }
         try {

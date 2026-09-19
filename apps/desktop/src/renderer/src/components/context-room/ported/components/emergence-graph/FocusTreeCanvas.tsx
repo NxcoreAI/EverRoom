@@ -5,9 +5,9 @@ import type { TreeGraph } from '@antv/g6';
 import { useLocale } from '../../../../../i18n/LocaleContext';
 import type { EmergenceCardDto, EmergenceProjectionResultDto } from '../../../../../../../shared/knowledge';
 import { GraphCanvasTools } from './GraphCanvasTools';
-import { buildFocusTree, defaultCollapsed, type FocusTree } from './focusTreeModel';
+import { buildFocusTree, defaultCollapsed, revealAncestors, type FocusTree } from './focusTreeModel';
 import {
-  animateFitView, createFocusGraph, focusTreeData, setCameraOnNode,
+  animateFitView, animateRecenter, createFocusGraph, focusTreeData, setCameraOnNode,
   registerLiveGraph, tweenCameraTo, tweenCameraToNode, unregisterLiveGraph,
   updateFocusGraph, visCenterY,
 } from './g6FocusGraph';
@@ -15,7 +15,8 @@ import {
 /**
  * 聚焦态思维导图（NotebookLM 式）：默认只见根和一级分支，一级全收起；
  * 点有子节点的节点=原地展开/收起（＋/− 随状态），点叶子=选中看底部详情条。
- * 新导图（结果身份变化）重置回收起默认态。
+ * 选中节点保证邻居可见：根保持展开（点根只选中不收图）、叶子把父链展开；
+ * 中间节点自身的收起态不随选中变化。新导图（结果身份变化）重置回收起默认态。
  */
 export function FocusTreeCanvas({
   result,
@@ -53,6 +54,21 @@ export function FocusTreeCanvas({
     setCollapsed(defaultCollapsed(tree));
   }
 
+  // 相机中心目标：换树 datum effect 消费后清空
+  const cameraTargetRef = useRef<string | null>(null);
+
+  // 选中即带邻居可见（含挂载时已带选中，如卡片视图展开深层卡片后切回脉络图）：
+  // 叶子上溯展开父链、根保持展开；被选节点自身的收起态不动。上一份同样必须存 state。
+  const [prevSelected, setPrevSelected] = useState<string | null>(null);
+  if (selectedNodeRef !== prevSelected) {
+    setPrevSelected(selectedNodeRef);
+    const revealed = selectedNodeRef !== null ? revealAncestors(tree, collapsed, selectedNodeRef) : null;
+    if (revealed) {
+      setCollapsed(revealed);
+      cameraTargetRef.current = selectedNodeRef;
+    }
+  }
+
   const datum = useMemo(() => tree.nodes.length > 0 ? focusTreeData(tree, collapsed) : null, [tree, collapsed]);
   const cardByNode = useMemo(() => {
     const map = new Map<string, EmergenceCardDto>();
@@ -68,15 +84,14 @@ export function FocusTreeCanvas({
   const stripNode = stripSubject !== null ? tree.byId.get(stripSubject) ?? null : null;
   const stripCard = stripSubject !== null ? cardByNode.get(stripSubject) ?? null : null;
 
-  // 点击语义走最新闭包（图实例只建一次）：有子=切换展开并选中，叶子=选中；
-  // 选中/展开都以被点节点为相机中心（换树的由 datum effect 接管，叶子的直接补间）
-  const cameraTargetRef = useRef<string | null>(null);
+  // 点击语义走最新闭包（图实例只建一次）：中间节点=切换展开并选中，根/叶子=只选中；
+  // 展开与被点节点为相机中心（换树的由 datum effect 接管，根/叶子的直接补间）
   const clickRef = useRef<(id: string) => void>(() => {});
   clickRef.current = useCallback((id: string) => {
     const node = tree.byId.get(id);
     if (!node) return;
     const willSelect = selectedNodeRef !== id;
-    if (node.hasChildren) {
+    if (node.hasChildren && id !== tree.rootId) {
       cameraTargetRef.current = id;
       setCollapsed((current) => {
         const next = new Set(current);
@@ -107,7 +122,9 @@ export function FocusTreeCanvas({
       try {
         graph.changeSize(el.clientWidth, el.clientHeight);
         graph.refreshLayout();
-        setCameraOnNode(graph, tree.rootId, graph.getZoom() || 1, { x: el.clientWidth / 2, y: visCenterY(graph) });
+        // 挂载即带选中时取景对准被选节点（目标被 datum effect 消费后回落根）
+        const anchor = cameraTargetRef.current;
+        setCameraOnNode(graph, anchor && graph.findById(anchor) ? anchor : tree.rootId, graph.getZoom() || 1, { x: el.clientWidth / 2, y: visCenterY(graph) });
       } catch { /* 已销毁 */ }
     };
     let observer: ResizeObserver | null = null;
@@ -157,7 +174,7 @@ export function FocusTreeCanvas({
     recenter: () => {
       const graph = graphRef.current;
       if (!graph) return;
-      tweenCameraToNode(graph, tree.rootId, graph.getZoom() || 1, 380);
+      animateRecenter(graph);
     },
   }), [tree.rootId]);
 
