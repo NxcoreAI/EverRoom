@@ -4,6 +4,9 @@ import { readFile } from 'node:fs/promises'
 import type {
   EmergenceProjectionResultDto,
   EmergenceRequest,
+  FocusMindmapEnsureInput,
+  FocusMindmapScope,
+  FocusMindmapStatusDto,
   KnowledgeAttachInput,
   KnowledgeDecisionDto,
   KnowledgeEntityDetailDto,
@@ -197,6 +200,27 @@ export class KnowledgeGatewayBridge {
     return this.request(`/v1/knowledge/rooms/${encodeURIComponent(roomId)}/emergence`, {
       method: 'POST',
       body: JSON.stringify(request),
+    })
+  }
+
+  /** 聚焦思维导图（思路板块聚焦模式）：GET 读状态（无行懒 kick），渲染端轮询到终态。 */
+  focusMindmap(
+    roomId: string,
+    query: { scope: FocusMindmapScope; documentId?: string | null; requestVersion: number },
+  ): Promise<FocusMindmapStatusDto> {
+    const params = new URLSearchParams({
+      scope: query.scope,
+      requestVersion: String(query.requestVersion),
+    })
+    if (query.documentId) params.set('documentId', query.documentId)
+    return this.request(`/v1/knowledge/rooms/${encodeURIComponent(roomId)}/mindmap?${params.toString()}`)
+  }
+
+  /** 幂等 kick（打开文档/进面板时调用；force=true 对 ready 重生成）。 */
+  ensureFocusMindmap(roomId: string, input: FocusMindmapEnsureInput): Promise<FocusMindmapStatusDto> {
+    return this.request(`/v1/knowledge/rooms/${encodeURIComponent(roomId)}/mindmap/ensure`, {
+      method: 'POST',
+      body: JSON.stringify(input),
     })
   }
 

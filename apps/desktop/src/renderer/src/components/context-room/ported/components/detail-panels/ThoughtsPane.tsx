@@ -1,11 +1,13 @@
 import { ChevronLeft, ChevronRight, Footprints, ListTree, Lock, LockOpen, Network, RotateCcw, Sparkles, Undo2 } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 
 import { useLocale } from '../../../../../i18n/LocaleContext';
 import type { EmergenceCardDto, EmergenceFocusInput, EmergenceMode, EmergenceProjectionResultDto } from '../../../../../../../shared/knowledge';
 import type { ContextRoomRecord } from '../../types';
 import { useEmergence } from '../../hooks/useEmergence';
+import { useFocusMindmap } from '../../hooks/useFocusMindmap';
 import { FocusTreeCanvas } from '../emergence-graph/FocusTreeCanvas';
+import { SkeletonTreeCanvas } from '../emergence-graph/SkeletonTreeCanvas';
 import { WalkJourneyCanvas } from '../emergence-graph/WalkJourneyCanvas';
 import { resolveCenter } from '../emergence-graph/focusTreeModel';
 import { backWalk, initialWalkLog, stepWalk, type WalkStation } from '../emergence-graph/walkModel';
@@ -56,12 +58,18 @@ export function ThoughtsPane({
   const [walkLog, setWalkLog] = useState<WalkStation[]>([]);
 
   const {
-    focusResult, wanderResult, focusLoading, wanderLoading, error, wanderFrom,
-  } = useEmergence({ roomId: room.id, focus, locked });
+    wanderResult, wanderLoading, error, wanderFrom,
+  } = useEmergence({ roomId: room.id, focus });
+  // 聚焦世界=agent 生成的思维导图（NotebookLM 式）；scope 只跟打开的文档走。
+  const mindmap = useFocusMindmap({ roomId: room.id, documentId: focus.documentId ?? null });
+  const focusResult = mindmap.projection;
 
   const focusLabelText = focus.level === 'selection'
     ? t('contextRoom:emergence.selectionFocus')
     : (focusLabel || room.title);
+  const mindmapErrorText = mindmap.error === 'mindmap_no_content'
+    ? t('contextRoom:emergence.mindmapNoContent')
+    : t('contextRoom:emergence.mindmapFailed');
   const nodeLabels = useMemo(() => new Map(
     (mode === 'focus' ? focusResult?.nodes : wanderResult?.nodes)?.map((node) => [node.id, node.label]) ?? [],
   ), [mode, focusResult, wanderResult]);
@@ -96,11 +104,17 @@ export function ThoughtsPane({
     ? null
     : (mode === 'focus' ? focusResult?.cards : wanderResult?.cards)?.find((card) => card.id === expandedId) ?? null;
 
-  // 焦点源变化（换文档/选区/房间）=重置钻取历史与图内选中
-  useEffect(() => {
-    setFocusPath((p) => (p.stack[p.index] === focusCenterRef ? p : { stack: [focusCenterRef], index: 0 }));
+  // 树根听服务端的：导图根=mindmap:root，钻取栈从它长起
+  const focusRootRef = focusResult?.focusRootRef ?? focusCenterRef;
+
+  // 新导图=重置钻取历史与图内选中：渲染期重置（无空帧）。上一份结果必须存 state
+  // （存 ref 会在严格模式双渲染下丢重置）；focusRootRef 两级 scope 同名，须按结果身份判。
+  const [prevFocusResult, setPrevFocusResult] = useState<EmergenceProjectionResultDto | null>(null);
+  if (focusResult !== prevFocusResult) {
+    setPrevFocusResult(focusResult);
+    setFocusPath((p) => (p.stack[p.index] === focusRootRef ? p : { stack: [focusRootRef], index: 0 }));
     setSelectedNodeRef(null);
-  }, [focusCenterRef]);
+  }
 
   // 新的漫步结果=新的路：渲染期重置（无空帧），视图切换不丢。
   // 上一次结果必须存 state（存 ref 会在严格模式双渲染下丢重置：首跑改了 ref，次跑看不到变化）。
@@ -231,27 +245,42 @@ export function ThoughtsPane({
         </header>
         {view === 'cards' ? (
           <div className="context-room-emergence-cards">
-            {visibleFocusCards.map((card) => (
-              <EmergenceCard
-                key={card.id}
-                card={card}
-                mode="focus"
-                nodeLabels={nodeLabels}
-                expanded={expandedId === card.id}
-                onToggle={() => setExpandedId((current) => current === card.id ? null : card.id)}
-                onPrimaryAction={() => quoteCard(card)}
-                onPin={() => pinCard(card)}
-                onHide={() => setHiddenFocus((current) => new Set(current).add(card.id))}
-              />
-            ))}
-            {!focusLoading && visibleFocusCards.length === 0 ? (
+            {mindmap.failed ? (
               <div className="context-room-workspace-empty">
-                {error ?? t('contextRoom:emergence.noCardsYet')}
+                <span>{mindmapErrorText}</span>
+                <button type="button" className="context-room-panel-empty-action" onClick={mindmap.retry}>
+                  {t('contextRoom:emergence.mindmapRetry')}
+                </button>
               </div>
-            ) : null}
-            {focusLoading && visibleFocusCards.length === 0 ? (
-              <div className="context-room-workspace-empty">{t('contextRoom:emergence.projecting')}</div>
-            ) : null}
+            ) : (
+              <>
+                {visibleFocusCards.map((card) => (
+                  <EmergenceCard
+                    key={card.id}
+                    card={card}
+                    mode="focus"
+                    nodeLabels={nodeLabels}
+                    expanded={expandedId === card.id}
+                    onToggle={() => setExpandedId((current) => current === card.id ? null : card.id)}
+                    onPrimaryAction={() => quoteCard(card)}
+                    onPin={() => pinCard(card)}
+                    onHide={() => setHiddenFocus((current) => new Set(current).add(card.id))}
+                  />
+                ))}
+                {mindmap.generating && visibleFocusCards.length === 0 ? (
+                  <div className="context-room-workspace-empty">{t('contextRoom:emergence.mindmapGenerating')}</div>
+                ) : !mindmap.generating && visibleFocusCards.length === 0 ? (
+                  <div className="context-room-workspace-empty">{t('contextRoom:emergence.noCardsYet')}</div>
+                ) : null}
+              </>
+            )}
+          </div>
+        ) : mindmap.failed ? (
+          <div className="context-room-workspace-empty">
+            <span>{mindmapErrorText}</span>
+            <button type="button" className="context-room-panel-empty-action" onClick={mindmap.retry}>
+              {t('contextRoom:emergence.mindmapRetry')}
+            </button>
           </div>
         ) : focusResult && focusResult.nodes.length > 0 ? (
           <div className="context-room-thoughts-graph">
@@ -268,12 +297,13 @@ export function ThoughtsPane({
               onCardAction={quoteCard}
             />
           </div>
+        ) : mindmap.generating ? (
+          <div className="context-room-thoughts-graph">
+            <SkeletonTreeCanvas hint={t('contextRoom:emergence.mindmapGenerating')} />
+          </div>
         ) : (
           <div className="context-room-workspace-empty">{t('contextRoom:emergence.veinEmpty')}</div>
         )}
-        {focusResult?.degraded ? (
-          <p className="context-room-thoughts-degraded">{t('contextRoom:emergence.degraded')}</p>
-        ) : null}
         {pinned.length > 0 ? (
           <section className="context-room-thoughts-pinned">
             {pinned.map((card) => (

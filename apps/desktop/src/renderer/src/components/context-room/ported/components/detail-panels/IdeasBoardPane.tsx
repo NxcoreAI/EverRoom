@@ -1,5 +1,5 @@
 import { Compass, Lock, LockOpen, RotateCw, Sparkles, Target } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 
 import { useLocale } from '../../../../../i18n/LocaleContext';
 import type {
@@ -11,6 +11,7 @@ import type {
 } from '../../../../../../../shared/knowledge';
 import type { ContextRoomRecord } from '../../types';
 import { useEmergence } from '../../hooks/useEmergence';
+import { useFocusMindmap } from '../../hooks/useFocusMindmap';
 import { FocusTreeCanvas } from '../emergence-graph/FocusTreeCanvas';
 import { SkeletonTreeCanvas } from '../emergence-graph/SkeletonTreeCanvas';
 import { WalkJourneyCanvas } from '../emergence-graph/WalkJourneyCanvas';
@@ -47,21 +48,30 @@ export function IdeasBoardPane({
   const [wanderStart, setWanderStart] = useState<{ nodeRef: string | null; label: string } | null>(null);
 
   const {
-    focusResult, wanderResult, focusLoading, wanderLoading, error, request, wanderFrom,
-  } = useEmergence({ roomId: room.id, focus, locked: focusLocked });
+    wanderResult, wanderLoading, error, wanderFrom,
+  } = useEmergence({ roomId: room.id, focus });
+  // 聚焦世界=agent 生成的思维导图（NotebookLM 式）；scope 只跟打开的文档走。
+  const mindmap = useFocusMindmap({ roomId: room.id, documentId: focus.documentId ?? null });
+  const focusResult = mindmap.projection;
 
-  // 树根听服务端的：章节级焦点时网关注入临时章节节点，钻取栈必须从章节长起
+  // 树根听服务端的：导图根=mindmap:root，钻取栈从它长起
   const focusRootRef = focusResult?.focusRootRef ?? focusCenterRef;
 
   const focusLabelText = focusLevel === 'selection'
     ? t('contextRoom:emergence.selectionFocus')
     : (focusLabel || room.title);
+  const mindmapErrorText = mindmap.error === 'mindmap_no_content'
+    ? t('contextRoom:emergence.mindmapNoContent')
+    : t('contextRoom:emergence.mindmapFailed');
 
-  // 焦点源变化（换房间/换章节）=重置钻取历史与图内选中
-  useEffect(() => {
+  // 新导图=新的钻取历史：渲染期重置（无空帧）。上一份结果必须存 state
+  // （存 ref 会在严格模式双渲染下丢重置）；focusRootRef 两级 scope 同名，须按结果身份判。
+  const [prevFocusResult, setPrevFocusResult] = useState<EmergenceProjectionResultDto | null>(null);
+  if (focusResult !== prevFocusResult) {
+    setPrevFocusResult(focusResult);
     setFocusPath((p) => (p.stack[p.index] === focusRootRef ? p : { stack: [focusRootRef], index: 0 }));
     setSelectedNodeRef(null);
-  }, [focusRootRef]);
+  }
 
   // 新的漫步结果=新的路：渲染期重置（无空帧），刷新/再走一次都不丢当前视图。
   // 上一次结果必须存 state（存 ref 会在严格模式双渲染下丢重置：首跑改了 ref，次跑看不到变化）。
@@ -88,7 +98,7 @@ export function IdeasBoardPane({
   };
 
   const refresh = () => {
-    if (mode === 'focus') void request('focus');
+    if (mode === 'focus') mindmap.regenerate();
     else wanderFrom(wanderStart?.nodeRef ?? null);
   };
 
@@ -121,7 +131,14 @@ export function IdeasBoardPane({
 
   const graphContent = mode === 'focus'
     ? (
-        focusResult && focusResult.nodes.length > 0 ? (
+        mindmap.failed ? (
+          <div className="eg-viewport eg-empty">
+            <span>{mindmapErrorText}</span>
+            <button type="button" className="context-room-panel-empty-action" onClick={mindmap.retry}>
+              {t('contextRoom:emergence.mindmapRetry')}
+            </button>
+          </div>
+        ) : focusResult && focusResult.nodes.length > 0 ? (
           <FocusTreeCanvas
             result={focusResult}
             centerRef={focusCenter}
@@ -133,10 +150,10 @@ export function IdeasBoardPane({
             onSelectNode={setSelectedNodeRef}
             onCardAction={pinCard}
           />
-        ) : focusLoading ? (
-          <SkeletonTreeCanvas hint={t('contextRoom:emergence.projecting')} />
+        ) : mindmap.generating ? (
+          <SkeletonTreeCanvas hint={t('contextRoom:emergence.mindmapGenerating')} />
         ) : (
-          <div className="eg-viewport eg-empty">{error ?? t('contextRoom:emergence.veinEmpty')}</div>
+          <div className="eg-viewport eg-empty">{t('contextRoom:emergence.veinEmpty')}</div>
         )
       )
     : (
@@ -229,9 +246,6 @@ export function IdeasBoardPane({
       <div className="context-room-thoughts-board-body">
         {graphContent}
       </div>
-      {mode === 'focus' && focusResult?.degraded ? (
-        <p className="context-room-thoughts-degraded">{t('contextRoom:emergence.degraded')}</p>
-      ) : null}
       {pinned.length > 0 ? (
         <section className="context-room-thoughts-pinned">
           {pinned.map((card) => (

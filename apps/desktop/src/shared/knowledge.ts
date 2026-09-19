@@ -496,3 +496,28 @@ export interface EmergenceProjectionResultDto {
   degradedReason: string | null
   generatedAt: string
 }
+
+/* ============ 聚焦思维导图（GET/POST /v1/knowledge/rooms/:roomId/mindmap） ============ */
+
+export type FocusMindmapScope = 'room' | 'document'
+export type FocusMindmapStatus = 'pending' | 'processing' | 'ready' | 'failed'
+
+/** mindmap-creator subAgent 生成态 + ready 时的投影（契约镜像 gateway mindmap-service）。 */
+export interface FocusMindmapStatusDto {
+  roomId: string
+  scope: FocusMindmapScope
+  scopeId: string
+  status: FocusMindmapStatus
+  error: string | null
+  generatedAt: string | null
+  promptVersion: number | null
+  projection: EmergenceProjectionResultDto | null
+  requestVersion: number
+}
+
+export interface FocusMindmapEnsureInput {
+  scope: FocusMindmapScope
+  documentId?: string | null
+  force?: boolean
+  requestVersion: number
+}

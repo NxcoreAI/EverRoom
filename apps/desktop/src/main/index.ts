@@ -555,6 +555,8 @@ const KNOWLEDGE_CHANNELS = {
   routeStatus: 'knowledge:route:status',
   proposeRooms: 'knowledge:rooms:propose',
   emergence: 'knowledge:rooms:emergence',
+  focusMindmap: 'knowledge:rooms:focus-mindmap',
+  ensureFocusMindmap: 'knowledge:rooms:focus-mindmap-ensure',
   revertDecision: 'knowledge:route:revert',
   getPreferences: 'knowledge:preferences:get',
   updatePreferenceContent: 'knowledge:preferences:user-content',
@@ -2545,6 +2547,14 @@ function registerKnowledgeHandlers(bridge: KnowledgeGatewayBridge): void {
   handle(KNOWLEDGE_CHANNELS.openFile, (_event, fileId: string) => bridge.openFile(fileId))
   handle(KNOWLEDGE_CHANNELS.emergence, (_event, roomId: string, request: import('../shared/knowledge').EmergenceRequest) =>
     bridge.emergence(roomId, request))
+  handle(KNOWLEDGE_CHANNELS.focusMindmap, (_event, roomId: string, query: import('../shared/knowledge').FocusMindmapEnsureInput) =>
+    bridge.focusMindmap(roomId, {
+      scope: query.scope,
+      documentId: query.documentId ?? null,
+      requestVersion: query.requestVersion,
+    }))
+  handle(KNOWLEDGE_CHANNELS.ensureFocusMindmap, (_event, roomId: string, input: import('../shared/knowledge').FocusMindmapEnsureInput) =>
+    bridge.ensureFocusMindmap(roomId, input))
 }
 
 /** 本体字节的 sha256（流式；与网关 fileBlobs.contentHash 同算法），预览实例的内容指纹。 */

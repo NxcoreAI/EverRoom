@@ -2,7 +2,7 @@ import * as ContextMenu from '@radix-ui/react-context-menu';
 import type { RoomAppliedEntitySource, RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract';
 import { FolderInput, X } from 'lucide-react';
 import type { Dispatch, RefObject, SetStateAction } from 'react';
-import { useCallback, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { useLocale } from '../../../../../i18n/LocaleContext';
 
 import { showToast } from '@/state/toast';
@@ -162,6 +162,16 @@ export function WorkspaceLayout({
     documentId: focusDocument?.binding.docId ?? null,
     documentTitle: focusDocument?.name ?? null,
   });
+  // 打开文档即后台预生成聚焦导图（进思路板块直接命中缓存；失败静默，面板 GET 兜底）。
+  const focusDocId = focusDocument?.binding.docId ?? null;
+  useEffect(() => {
+    if (!focusDocId) return;
+    void window.nxcore?.knowledge?.ensureFocusMindmap(room.id, {
+      scope: 'document',
+      documentId: focusDocId,
+      requestVersion: 0,
+    }).catch(() => {});
+  }, [room.id, focusDocId]);
   const insertQuoteRef = useRef<((quote: { text: string; source: string }) => boolean) | null>(null);
   const registerQuoteInsert = useCallback((insert: (quote: { text: string; source: string }) => boolean) => {
     insertQuoteRef.current = insert;
