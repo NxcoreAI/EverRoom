@@ -82,16 +82,17 @@ describe('DocumentOverviewCard', () => {
   it('keeps a collapsed entry bar with a topic preview when not expanded', () => {
     const renderer = render({ state: 'ready', view: view() })
     const json = textOf(renderer)
-    expect(json).toContain('documentQuickView.entryLabel')
+    expect(json).not.toContain('documentQuickView.entryLabel')
     expect(json).toContain('项目架构演进方案')
     expect(renderer.root.findAllByProps({ className: 'context-room-document-overview-body' })).toHaveLength(0)
   })
 
-  it('shows the generating hint and spinner while generating', () => {
+  it('shows the generating hint without icons while generating', () => {
     const renderer = render({ state: 'generating', view: null })
     const json = textOf(renderer)
     expect(json).toContain('documentQuickView.generating')
-    expect(json).toContain('context-room-overview-spinning')
+    expect(json).not.toContain('context-room-overview-spinning')
+    expect(json).not.toContain('documentQuickView.entryLabel')
   })
 
   it('shows the unavailable state without a retry button, and the error state with one', () => {

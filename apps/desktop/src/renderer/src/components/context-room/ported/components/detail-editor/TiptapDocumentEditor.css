@@ -746,16 +746,6 @@ textarea.context-room-tiptap-rewrite-text:disabled {
   border-color: var(--cr-blue);
 }
 
-.context-room-document-overview-bar > svg {
-  color: var(--cr-blue);
-}
-
-.context-room-document-overview-label {
-  flex-shrink: 0;
-  font-weight: 600;
-  color: var(--cr-text);
-}
-
 .context-room-document-overview-hint {
   flex: 1;
   min-width: 0;
@@ -768,7 +758,12 @@ textarea.context-room-tiptap-rewrite-text:disabled {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--cr-muted);
+  color: var(--cr-text);
+  font-weight: 600;
+}
+
+.context-room-document-overview[data-expanded='true'] .context-room-document-overview-topic-preview {
+  white-space: normal;
 }
 
 .context-room-document-overview-stale-badge {
@@ -781,17 +776,6 @@ textarea.context-room-tiptap-rewrite-text:disabled {
   font-weight: 600;
 }
 
-.context-room-document-overview-chevron {
-  flex-shrink: 0;
-  margin-left: auto;
-  color: var(--cr-muted);
-  transition: transform 180ms ease-out;
-}
-
-.context-room-document-overview[data-expanded='true'] .context-room-document-overview-chevron {
-  transform: rotate(180deg);
-}
-
 .context-room-document-overview-skeleton {
   flex: 1;
   height: 10px;
@@ -802,10 +786,6 @@ textarea.context-room-tiptap-rewrite-text:disabled {
 
 @keyframes context-room-overview-pulse {
   50% { opacity: 0.45; }
-}
-
-.context-room-overview-spinning {
-  animation: context-room-agent-write-spin 1s linear infinite;
 }
 
 .context-room-document-overview-body {
@@ -821,14 +801,10 @@ textarea.context-room-tiptap-rewrite-text:disabled {
   line-height: 1.6;
 }
 
-.context-room-document-overview-topic {
-  font-weight: 650;
-  color: var(--cr-text);
-}
-
 .context-room-document-overview-points {
   margin: 0;
-  padding-left: 18px;
+  padding-left: 0;
+  list-style: none;
   color: var(--cr-text);
 }
 
