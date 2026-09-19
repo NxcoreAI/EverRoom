@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto'
-import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises'
-import { dirname } from 'node:path'
+
+import { VersionedJsonStore } from '@nxcore/migration-kit'
 
 import type { ImportRealityEventInput, RealityEvent, RealityInsights, RealityTag } from '@nxcore/reality-contract'
 import type { AccountKeyringStatus, AsrResult, AsrSegment, PrivateTranscriptionRecord, PrivateTranscriptionSyncResult } from '../../shared/sources'
@@ -289,21 +289,30 @@ export class PrivateTranscriptionSyncService {
   }
 
   constructor(
-    private readonly filePath: string,
+    filePath: string,
     private readonly client: SaasClient,
     private readonly keyring: AccountKeyringService,
     private readonly reality: RealityGatewayBridge,
-  ) {}
+    backupDir?: string,
+  ) {
+    this.store = new VersionedJsonStore<StoredSyncState>({
+      filePath,
+      migrations: [],
+      adoptBaseline: (raw) => {
+        const parsed = raw as Partial<StoredSyncState>
+        if (!parsed || typeof parsed !== 'object' || !parsed.accounts || typeof parsed.accounts !== 'object') return { accounts: {} }
+        return { accounts: parsed.accounts as StoredSyncState['accounts'] }
+      },
+      fallback: { accounts: {} },
+      ...(backupDir !== undefined ? { backupDir } : {}),
+    })
+  }
+  private readonly store: VersionedJsonStore<StoredSyncState>
 
   async initialize(): Promise<void> {
     if (this.loaded) return
     this.loaded = true
-    try {
-      const parsed = JSON.parse(await readFile(this.filePath, 'utf8')) as Partial<StoredSyncState>
-      if (parsed.accounts && typeof parsed.accounts === 'object') this.state = { accounts: parsed.accounts as StoredSyncState['accounts'] }
-    } catch {
-      // First launch or a missing local sync file.
-    }
+    this.state = this.store.read()
   }
 
   async keyringStatus(): Promise<AccountKeyringStatus> {
@@ -579,9 +588,7 @@ export class PrivateTranscriptionSyncService {
   }
 
   private async persist(): Promise<void> {
-    await mkdir(dirname(this.filePath), { recursive: true })
-    await writeFile(this.filePath, JSON.stringify(this.state), { mode: 0o600 })
-    await chmod(this.filePath, 0o600)
+    this.store.write(this.state)
   }
 }
 
