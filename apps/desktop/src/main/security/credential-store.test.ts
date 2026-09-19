@@ -25,9 +25,11 @@ describe('CredentialStore secure text', () => {
     await store.setSecureText('everroom:saas:refresh-token', 'rt-secret-51')
     expect(await store.getSecureText('everroom:saas:refresh-token')).toBe('rt-secret-51')
 
-    // 落盘为密文（enc:v1: 前缀），文件里看不到明文。
-    const raw = JSON.parse(await readFile(path, 'utf8')) as Record<string, { value: string }>
-    expect(raw['everroom:saas:refresh-token']?.value).toMatch(/^enc:v1:/)
+    // 落盘为密文（enc:v1: 前缀），文件里看不到明文；信封 {v, data} 包着凭据表。
+    const raw = JSON.parse(await readFile(path, 'utf8')) as {
+      v: number; data: Record<string, { value: string }>
+    }
+    expect(raw.data['everroom:saas:refresh-token']?.value).toMatch(/^enc:v1:/)
     expect(await readFile(path, 'utf8')).not.toContain('rt-secret-51')
   })
 
@@ -36,8 +38,10 @@ describe('CredentialStore secure text', () => {
     await store.setPlainText('everroom:saas:refresh-token', 'rt-legacy-51')
     expect(await store.getSecureText('everroom:saas:refresh-token')).toBe('rt-legacy-51')
 
-    const raw = JSON.parse(await readFile(path, 'utf8')) as Record<string, { value: string }>
-    expect(raw['everroom:saas:refresh-token']?.value).toMatch(/^enc:v1:/)
+    const raw = JSON.parse(await readFile(path, 'utf8')) as {
+      v: number; data: Record<string, { value: string }>
+    }
+    expect(raw.data['everroom:saas:refresh-token']?.value).toMatch(/^enc:v1:/)
 
     // 迁移后再读仍是原值（且不再重复迁移）。
     expect(await store.getSecureText('everroom:saas:refresh-token')).toBe('rt-legacy-51')
