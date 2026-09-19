@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { MigrationFailureError } from "@nxcore/migration-kit";
 import { loadConfig } from "../config.js";
 import { loadEnvironment } from "../load-environment.js";
 import { createServer } from "../server/create-server.js";
@@ -11,7 +12,18 @@ import {
 
 loadEnvironment();
 const config = loadConfig();
-const app = await createServer(config);
+
+let app: Awaited<ReturnType<typeof createServer>>;
+try {
+  app = await createServer(config);
+} catch (error) {
+  if (error instanceof MigrationFailureError) {
+    // 桌面端按退出码 78 + stderr 标记识别「数据迁移失败」，弹窗提示后停在安全状态。
+    process.stderr.write(`${error.message}\n`);
+    process.exit(78);
+  }
+  throw error;
+}
 
 const address = await app.listen({ host: config.host, port: config.port });
 await writeRuntimeManifest(config.runtimeManifestPath, {

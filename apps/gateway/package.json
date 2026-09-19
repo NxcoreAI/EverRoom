@@ -33,6 +33,7 @@
     "@nxcore/connector-contract": "workspace:*",
     "@nxcore/connectors-module": "workspace:*",
     "@nxcore/document-model": "workspace:*",
+    "@nxcore/migration-kit": "workspace:*",
     "@nxcore/reality-contract": "workspace:*",
     "@sinclair/typebox": "^0.34.52",
     "@tiptap/core": "^3.30.1",
