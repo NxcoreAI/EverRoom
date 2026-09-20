@@ -462,7 +462,9 @@ jobs:
           if [[ "$version" == *-nightly.* ]]; then channel=nightly; else channel=stable; fi
           echo "Distributing $version (channel=$channel)"
 
-          curl -fsSL -o "$RUNNER_TEMP/ossutil64" https://gosspublic.alicdn.com/ossutil/1.7.19/ossutil64
+          # 阿里云 2026-09-20 下架了 CDN 上的 1.7.19（404，GitHub 上该 tag 也无资产），
+          # 1.7.18 为最后可用版本；若再失效改用 GitHub aliyun/ossutil v1.7.18 release 资产。
+          curl -fsSL -o "$RUNNER_TEMP/ossutil64" https://gosspublic.alicdn.com/ossutil/1.7.18/ossutil64
           chmod +x "$RUNNER_TEMP/ossutil64"
           ossutil() { "$RUNNER_TEMP/ossutil64" "$@" -e "$OSS_ENDPOINT" -i "$OSS_ACCESS_KEY_ID" -k "$OSS_ACCESS_KEY_SECRET"; }
 
