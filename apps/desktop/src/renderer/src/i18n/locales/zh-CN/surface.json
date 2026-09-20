@@ -823,7 +823,6 @@
   "settings.llmQuotaExhausted": "本周期 LLM 额度已用尽",
   "settings.transcriptionService": "转写服务",
   "settings.usedUsedTotalTotal": "已用 {used} / 共 {total}",
-  "settings.verifiedByLogto": "已通过 Logto 验证",
   "settings.windowScreenshots": "窗口截图",
   "sidebar.accountStatus": "账号状态",
   "sidebar.checking": "正在检查",

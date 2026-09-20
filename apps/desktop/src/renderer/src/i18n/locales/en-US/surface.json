@@ -823,7 +823,6 @@
   "settings.llmQuotaExhausted": "LLM balance exhausted for this period",
   "settings.transcriptionService": "Transcription service",
   "settings.usedUsedTotalTotal": "{used} used / {total} total",
-  "settings.verifiedByLogto": "Verified by Logto",
   "settings.windowScreenshots": "Window screenshots",
   "sidebar.accountStatus": "Account status",
   "sidebar.checking": "Checking",

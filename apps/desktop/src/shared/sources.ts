@@ -387,7 +387,7 @@ export interface AiGatewayStatus {
   configured: boolean
   subscriptionStatus: string | null
   llmCredits: number | null
-  usedCredits: string
+  usedCredits: number
   remainingCredits: number
   periodEnd: string | null
 }
