@@ -1651,8 +1651,6 @@
   "obsidian.trashConfirm.windows": "将“{name}”移到回收站？",
   "obsidian.moveToTrash.windows": "移到回收站",
   "settings.computerAudioUnavailableOnWindows": "电脑音频录制目前暂不支持 Windows。",
-  "settings": {
-    "navigationUpdate": "软件更新",
-    "navigationUpdateDescription": "检查并安装新版本"
-  }
+  "settings.navigationUpdate": "软件更新",
+  "settings.navigationUpdateDescription": "检查并安装新版本"
 }

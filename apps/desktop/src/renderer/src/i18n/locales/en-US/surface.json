@@ -1651,8 +1651,6 @@
   "obsidian.trashConfirm.windows": "Move “{name}” to the Recycle Bin?",
   "obsidian.moveToTrash.windows": "Move to Recycle Bin",
   "settings.computerAudioUnavailableOnWindows": "Computer audio recording is not yet supported on Windows.",
-  "settings": {
-    "navigationUpdate": "Software Update",
-    "navigationUpdateDescription": "Check for and install updates"
-  }
+  "settings.navigationUpdate": "Software Update",
+  "settings.navigationUpdateDescription": "Check for and install updates"
 }
