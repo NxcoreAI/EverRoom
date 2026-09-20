@@ -27,7 +27,10 @@ describe("gateway.sqlite 迁移框架接入", () => {
     const claim = sqlite
       .prepare("SELECT version, name, via FROM data_migrations")
       .all() as Array<{ version: number; name: string; via: string }>;
-    expect(claim).toEqual([{ version: 1, name: "baseline", via: "fresh-claim" }]);
+    expect(claim).toEqual([
+      { version: 1, name: "baseline", via: "fresh-claim" },
+      { version: 2, name: "purge-saas-runtime-config", via: "fresh-claim" },
+    ]);
     sqlite.close();
   });
 
@@ -69,6 +72,48 @@ describe("gateway.sqlite 迁移框架接入", () => {
       reopened.prepare("SELECT value FROM gateway_metadata WHERE key = 'probe'").get(),
     ).toEqual({ value: "migrated:legacy-value" });
     reopened.close();
+  });
+
+  it("v2 清除 saas 运行时配置行与 saas 选中记录，user 行与其它 metadata 保留", () => {
+    const databasePath = join(workspace, "purge", "database", "gateway.sqlite");
+    const { sqlite } = createDatabase(databasePath, migrationsDir);
+    sqlite.close();
+
+    // 模拟旧版桌面留下的库：saas 下发行、saas 选中记录 + 无关数据。
+    const legacy = new Database(databasePath);
+    legacy.prepare("DELETE FROM data_migrations").run();
+    legacy
+      .prepare("INSERT INTO runtime_config_store (source, payload, schema_version, config_version, updated_at) VALUES ('saas', '{}', 1, 3, 0)")
+      .run();
+    legacy
+      .prepare("INSERT INTO runtime_config_store (source, payload, schema_version, config_version, updated_at) VALUES ('user', '{}', 1, 2, 0)")
+      .run();
+    legacy
+      .prepare("INSERT INTO gateway_metadata (key, value, updated_at) VALUES ('runtime_config_source', 'saas', 0)")
+      .run();
+    legacy
+      .prepare("INSERT INTO gateway_metadata (key, value, updated_at) VALUES ('unrelated', 'keep', 0)")
+      .run();
+    legacy.close();
+
+    const reopened = createDatabase(databasePath, migrationsDir);
+    expect(
+      reopened.sqlite.prepare("SELECT source FROM runtime_config_store").all(),
+    ).toEqual([{ source: "user" }]);
+    expect(
+      reopened.sqlite.prepare("SELECT value FROM gateway_metadata WHERE key = 'runtime_config_source'").get(),
+    ).toBeUndefined();
+    expect(
+      reopened.sqlite.prepare("SELECT value FROM gateway_metadata WHERE key = 'unrelated'").get(),
+    ).toEqual({ value: "keep" });
+    const claim = reopened.sqlite
+      .prepare("SELECT version, name, via FROM data_migrations")
+      .all() as Array<{ version: number; name: string; via: string }>;
+    expect(claim).toEqual([
+      { version: 1, name: "baseline", via: "baseline-claim" },
+      { version: 2, name: "purge-saas-runtime-config", via: "migration" },
+    ]);
+    reopened.sqlite.close();
   });
 
   it("存量库迁移失败：整库恢复到备份内容（WAL 文件一并清理）", () => {

@@ -42,7 +42,7 @@ export interface RuntimeConfig {
   [key: string]: unknown;
 }
 
-export type RuntimeConfigSource = "user" | "saas" | "default";
+export type RuntimeConfigSource = "user" | "default";
 
 /** relay 激活时的槽位重写目标：proxyOrigin + gateway 自身 token + 中转站 API 前缀。 */
 export interface RuntimeConfigRelayOverride {
@@ -61,7 +61,7 @@ export interface RuntimeConfigSnapshot {
   updatedAt: string;
   webSearchCredential: {
     configured: boolean;
-    source: "user" | "saas" | "env" | "none";
+    source: "user" | "env" | "none";
   };
 }
 
@@ -246,20 +246,13 @@ export class RuntimeConfigManager {
     const previous = this.db.select().from(runtimeConfigStore).where(eq(runtimeConfigStore.source, source)).get();
     const candidate = clone(input) as Record<string, unknown>;
     const searchSecret = this.extractSearchSecret(source, candidate);
-    // saas 来源是 SaaS forUser() 下发的权威完整配置（未脱敏全量），原样入库：
-    // 平台清除槽位密钥必须真实生效，不能被旧值掩码回填。user 来源仍是
-    // 脱敏回传语义（******** 保留旧值）。
-    const config = source === "saas"
-      ? validateConfig(candidate)
-      : validateConfig(preserveMasked(candidate, previous?.payload));
-    // 同 payload 重复保存直接短路（登录后主进程钩子与启动 gate 各 PUT 一次
-    // 同内容 saas 配置）：不再递增版本、不再 emit——否则 memory-core/knowledge
-    // 等托管子进程被重启两轮，首登引导探测撞上双重重启窗口会把已跳过的
-    // 引导又弹回首页（2026-09-15/16 全新安装实测复现）。短路条件排除两种
+    const config = validateConfig(preserveMasked(candidate, previous?.payload));
+    // 同 payload 重复保存直接短路：不再递增版本、不再 emit——否则
+    // memory-core/knowledge 等托管子进程被无谓重启。短路条件排除两种
     // 真实变更：搜索密钥单独轮换（apiKey 在比较前已被剥除、走 secrets 通道，
     // 密钥不同不能丢）；user 源重存（保存 BYOK 即切回 user 选中源的唯一机制）。
     const secretUnchanged = searchSecret === this.secrets.get(`search:${source}`);
-    const userSourceSwitch = source === "user" && this.selectedSource() !== "user";
+    const userSourceSwitch = this.selectedSource() !== "user";
     if (
       previous
       && secretUnchanged
@@ -310,7 +303,7 @@ export class RuntimeConfigManager {
   }
 
   clearManagedSecrets(): RuntimeConfigSnapshot {
-    if (this.secrets.isAvailable()) this.secrets.update({ "search:user": undefined, "search:saas": undefined });
+    if (this.secrets.isAvailable()) this.secrets.update({ "search:user": undefined });
     this.current = this.resolve(this.defaultConfig(), this.current.configVersion + 1);
     this.emit();
     return this.snapshot();
@@ -326,17 +319,13 @@ export class RuntimeConfigManager {
 
   private resolve(defaults: RuntimeConfig, minimumVersion = 1): RuntimeConfigSnapshot {
     const user = this.db.select().from(runtimeConfigStore).where(eq(runtimeConfigStore.source, "user")).get();
-    const saas = this.db.select().from(runtimeConfigStore).where(eq(runtimeConfigStore.source, "saas")).get();
-    const availableSources: RuntimeConfigSource[] = ["default", ...(saas ? ["saas" as const] : []), ...(user ? ["user" as const] : [])];
+    const availableSources: RuntimeConfigSource[] = ["default", ...(user ? ["user" as const] : [])];
     const storedSelection = this.selectedSource();
-    const selectedSource = storedSelection === "user" && user ? "user" : storedSelection === "saas" && saas ? "saas" : storedSelection === "default" ? "default" : user ? "user" : saas ? "saas" : "default";
-    const selected = selectedSource === "user" ? user : selectedSource === "saas" ? saas : undefined;
+    const selectedSource = storedSelection === "user" && user ? "user" : storedSelection === "default" ? "default" : user ? "user" : "default";
+    const selected = selectedSource === "user" ? user : undefined;
     let config = defaults;
-    if (selectedSource === "user") {
-      if (saas) config = merge(config, saas.payload as RuntimeConfig);
-      if (user) config = merge(config, user.payload as RuntimeConfig);
-    } else if (selectedSource === "saas" && saas) {
-      config = merge(config, saas.payload as RuntimeConfig);
+    if (selectedSource === "user" && user) {
+      config = merge(config, user.payload as RuntimeConfig);
     }
     const credential = this.searchCredential(selectedSource);
     const selectedSearch = config.webSearch ?? {} as RuntimeAiConfig;
@@ -366,10 +355,8 @@ export class RuntimeConfigManager {
     source: RuntimeConfigSnapshot["webSearchCredential"]["source"];
   } {
     const candidates = selectedSource === "user"
-      ? [["user", this.secrets.get("search:user")], ["saas", this.secrets.get("search:saas")]] as const
-      : selectedSource === "saas"
-        ? [["saas", this.secrets.get("search:saas")]] as const
-        : [];
+      ? [["user", this.secrets.get("search:user")]] as const
+      : [];
     for (const [source, value] of candidates) if (value) return { value, source };
     return this.environmentSearch?.apiKey
       ? { value: this.environmentSearch.apiKey, source: "env" }
@@ -404,7 +391,7 @@ export class RuntimeConfigManager {
 
   private migrateSearchSecrets(): void {
     if (!this.secrets.isAvailable()) return;
-    for (const source of ["user", "saas"] as const) {
+    for (const source of ["user"] as const) {
       const row = this.db.select().from(runtimeConfigStore).where(eq(runtimeConfigStore.source, source)).get();
       if (!row) continue;
       const payload = clone(row.payload) as RuntimeConfig;
@@ -430,12 +417,11 @@ export class RuntimeConfigManager {
 
   /**
    * relay 激活且非 user 源时，把 LLM 槽位重写到本地代理出口（幂等不必要——
-   * resolve 每次从存储载荷重建）。仅重写已配置（baseUrl 非空）的槽位；
-   * asr 与 memory/knowledge 服务地址不重写。host 与路径整体换成中转站出口
-   * （路径 = 会话 baseUrl 推导的规范前缀，缺省 /v1），不继承旧槽位的
-   * pathname——过渡期下发的是旧方案直连地址（如 dashscope 的
-   * /compatible-mode/v1），两套方案互不依赖：旧客户端直连旧地址，新客户端
-   * relay 激活时走代理出口，relay 失效即原样回退旧地址。
+   * resolve 每次从内置默认 + user 存储重建）。内置 JSON 只声明 model/api，
+   * baseUrl/apiKey 留空：重写判定看 model 非空——有模型即补齐代理出口与会话
+   * 令牌；asr 与 memory/knowledge 服务地址不重写。host 与路径整体换成中转站
+   * 出口（路径 = 会话 baseUrl 推导的规范前缀，缺省 /v1），不继承槽位旧
+   * pathname。relay 失效时槽位回到未配置态（或 user 源自填直连值）。
    */
   private rewriteSlotsForRelay(config: RuntimeConfig, selectedSource: RuntimeConfigSource): void {
     const override = this.relayOverride?.() ?? null;
@@ -444,7 +430,7 @@ export class RuntimeConfigManager {
     const rewrite = (slot: unknown): void => {
       if (!slot || typeof slot !== "object") return;
       const item = slot as Record<string, unknown>;
-      if (typeof item.baseUrl !== "string" || !item.baseUrl.trim()) return;
+      if (typeof item.model !== "string" || !item.model.trim()) return;
       item.baseUrl = proxyBase;
       item.apiKey = override.token;
     };
@@ -457,7 +443,7 @@ export class RuntimeConfigManager {
 
   private selectedSource(): RuntimeConfigSource | null {
     const value = this.db.select().from(gatewayMetadata).where(eq(gatewayMetadata.key, "runtime_config_source")).get()?.value;
-    return value === "user" || value === "saas" || value === "default" ? value : null;
+    return value === "user" || value === "default" ? value : null;
   }
 
   private emit(): void {

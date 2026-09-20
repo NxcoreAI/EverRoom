@@ -176,10 +176,6 @@ describe("secret storage", () => {
     expect(manager.snapshot(true).config.webSearch).not.toHaveProperty("apiKey");
     expect(manager.snapshot(true).webSearchCredential).toEqual({ configured: true, source: "user" });
 
-    manager.set("saas", {
-      schemaVersion: 1,
-      webSearch: { provider: "openai-compatible", api: "openai-completions", model: "saas", baseUrl: "https://saas.test/v1", apiKey: "canary-search-saas-51" },
-    });
     manager.set("user", {
       schemaVersion: 1,
       webSearch: { provider: "openai-compatible", api: "openai-completions", model: "user", baseUrl: "https://user.test/v1", apiKey: { operation: "set", value: "canary-search-new-51" } },
@@ -195,8 +191,6 @@ describe("secret storage", () => {
       schemaVersion: 1,
       webSearch: { provider: "openai-compatible", api: "openai-completions", model: "user", baseUrl: "https://user.test/v1", apiKey: { operation: "delete" } },
     });
-    expect(manager.snapshot().webSearchCredential.source).toBe("saas");
-    manager.clear("saas");
     expect(manager.snapshot().webSearchCredential.source).toBe("env");
   });
 });

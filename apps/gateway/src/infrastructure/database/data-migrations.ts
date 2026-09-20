@@ -12,4 +12,17 @@ import type { SqliteDataMigration } from "@nxcore/migration-kit";
  *   （详见 client.ts 的历史 repair 与 migration-kit 的认领语义）。
  * - 不允许依赖 dataDir 内容（cursor-completion 实例以独立 dataDir 跑同一份链）。
  */
-export const gatewayDataMigrations: readonly SqliteDataMigration[] = [];
+export const gatewayDataMigrations: readonly SqliteDataMigration[] = [
+  {
+    version: 2,
+    name: "purge-saas-runtime-config",
+    up: (ctx) => {
+      // saas 运行时配置链路整体下线：清掉旧下发存储行与 saas 选中记录，
+      // 让老库自然回落到内置默认源（user 源与其它 metadata 不动）。
+      ctx.sqlite.prepare("DELETE FROM runtime_config_store WHERE source = 'saas'").run();
+      ctx.sqlite
+        .prepare("DELETE FROM gateway_metadata WHERE key = 'runtime_config_source' AND value = 'saas'")
+        .run();
+    },
+  },
+];

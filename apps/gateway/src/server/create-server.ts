@@ -375,13 +375,9 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   const initialRuntimeSnapshot = runtimeConfigManager.snapshot();
   applyRuntimeConfig(config, initialRuntimeSnapshot.config);
   const redactedRuntimeSnapshot = runtimeConfigManager.snapshot(true);
-  const configSource = initialRuntimeSnapshot.selectedSource === "user"
-    ? "local"
-    : initialRuntimeSnapshot.selectedSource === "saas" ? "saas" : "env";
   app.log.info({
     event: "runtime_config.selected",
-    source: configSource,
-    runtimeSource: initialRuntimeSnapshot.selectedSource,
+    source: initialRuntimeSnapshot.selectedSource,
     availableSources: initialRuntimeSnapshot.availableSources,
     configVersion: initialRuntimeSnapshot.configVersion,
     primaryConfigured: isRuntimePrimaryConfigured(initialRuntimeSnapshot.config),
