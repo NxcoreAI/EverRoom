@@ -255,6 +255,12 @@
           ]
         }
       ]
-    }
+    },
+    "publish": [
+      {
+        "provider": "generic",
+        "url": "https://everroom-hu.oss-cn-beijing.aliyuncs.com/stable/"
+      }
+    ]
   }
 }
