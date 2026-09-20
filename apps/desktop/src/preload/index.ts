@@ -489,9 +489,8 @@ const api: NxcoreDesktopApi = {
     get: () => invoke('runtime-config:get'),
     saveUser: (input: unknown) => invoke('runtime-config:save-user', input),
     clearUser: () => invoke('runtime-config:clear-user'),
-    refreshSaas: () => invoke('runtime-config:refresh-saas'),
-    clearSaas: () => invoke('runtime-config:clear-saas'),
-    selectSource: (source: 'user' | 'saas' | 'default') => invoke('runtime-config:select-source', source),
+    relayReady: () => invoke('runtime-config:relay-ready'),
+    selectSource: (source: 'user' | 'default') => invoke('runtime-config:select-source', source),
     test: () => invoke('runtime-config:test'),
   },
   asr: {

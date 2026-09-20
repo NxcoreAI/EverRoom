@@ -516,14 +516,14 @@ export interface PerceptionSettings {
 
 export interface RuntimeConfigSnapshot {
   config: Record<string, unknown>
-  source: 'user' | 'saas' | 'default'
-  selectedSource: 'user' | 'saas' | 'default'
-  availableSources: Array<'user' | 'saas' | 'default'>
+  source: 'user' | 'default'
+  selectedSource: 'user' | 'default'
+  availableSources: Array<'user' | 'default'>
   configVersion: number
   updatedAt: string
   webSearchCredential?: {
     configured: boolean
-    source: 'user' | 'saas' | 'env' | 'none'
+    source: 'user' | 'env' | 'none'
   }
   /** primary AI 四要素（provider/model/baseUrl/apiKey）是否已填写（占位空串视为未配置）。 */
   primaryConfigured?: boolean
@@ -857,9 +857,8 @@ export interface NxcoreDesktopApi {
     get(): Promise<RuntimeConfigSnapshot>
     saveUser(input: unknown): Promise<RuntimeConfigSnapshot>
     clearUser(): Promise<RuntimeConfigSnapshot>
-    refreshSaas(): Promise<RuntimeConfigSnapshot | undefined>
-    clearSaas(): Promise<RuntimeConfigSnapshot | undefined>
-    selectSource(source: 'user' | 'saas' | 'default'): Promise<RuntimeConfigSnapshot | undefined>
+    relayReady(): Promise<RuntimeConfigSnapshot | null>
+    selectSource(source: 'user' | 'default'): Promise<RuntimeConfigSnapshot | undefined>
     test(): Promise<RuntimeConfigTestResult>
   }
   nangoConnector: {

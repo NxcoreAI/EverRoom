@@ -73,7 +73,7 @@ import { providerOfService, SaasConnectorBridge } from './gateway/saas-connector
 import { createConnectorTombstoneStore } from './core/connector-tombstone-store'
 import { RecordingStore } from './recording/recording-store'
 import { RecordingSegmentUploader } from './recording/recording-segment-uploader'
-import { isSaasRateLimitError, OIDC_CALLBACK_URL, SaasClient, SaasRequestError, saasRuntimePrimaryPresent, type ConnectorOoSession, type OidcCallbackOutcome } from './cloud/saas-client'
+import { isSaasRateLimitError, OIDC_CALLBACK_URL, SaasClient, SaasRequestError, type ConnectorOoSession, type OidcCallbackOutcome } from './cloud/saas-client'
 import { AgentStatusReporter } from './cloud/agent-status-reporter'
 import { SessionLeaseKeeper } from './cloud/session-lease-keeper'
 import { AiRelayKeeper, type AiRelayKeeperEvent } from './cloud/ai-relay-keeper'
@@ -267,8 +267,7 @@ const RUNTIME_CONFIG_CHANNELS = {
   get: 'runtime-config:get',
   saveUser: 'runtime-config:save-user',
   clearUser: 'runtime-config:clear-user',
-  refreshSaas: 'runtime-config:refresh-saas',
-  clearSaas: 'runtime-config:clear-saas',
+  relayReady: 'runtime-config:relay-ready',
   selectSource: 'runtime-config:select-source',
   test: 'runtime-config:test',
 } as const
@@ -1378,36 +1377,7 @@ function registerGatewayHandlers(): void {
     ({ state: 'disabled', message: 'nango runtime removed (P3); link-A runs on OpenConnector' }))
 }
 
-/**
- * 登录/启动会话恢复后拉取并落盘 SaaS runtime config（登录钩子路径，与
- * refreshSaas IPC 同一守卫语义）：
- * - #225：云端未下发实质 primary（模型+baseUrl 全空）时不得覆盖仍可用的
- *   本地配置——覆盖即清空，登录 gate 会把已登录用户困在登录页无法返回应用；
- * - SaaS 401/403（会话被吊销）是权威判定：清掉 saas 段并同步子进程 env。
- */
-async function persistSaasRuntimeConfig(client: SaasClient): Promise<void> {
-  try {
-    const config = await client.getRuntimeConfig()
-    const current = await runtimeConfigBridge?.get().catch(() => null)
-    if (current?.primaryConfigured && !saasRuntimePrimaryPresent(config.config)) {
-      console.warn('SaaS runtime config without primary; keeping the working local config')
-      return
-    }
-    const snapshot = await runtimeConfigBridge?.saveSaas(config.config)
-    // SaaS 直调路径此前绕过 sync（只走 IPC handler 才同步子进程 env）。
-    if (snapshot) await syncManagedChildProcesses(snapshot)
-  } catch (error) {
-    if (error instanceof SaasRequestError && (error.status === 401 || error.status === 403)) {
-      void runtimeConfigBridge?.clearSaas()
-        .then((snapshot) => (snapshot ? syncManagedChildProcesses(snapshot) : undefined))
-        .catch(() => undefined)
-    } else {
-      console.warn('Unable to refresh SaaS runtime config', error)
-    }
-  }
-}
-
-function registerRuntimeConfigHandlers(client: SaasClient): void {
+function registerRuntimeConfigHandlers(): void {
   handle(RUNTIME_CONFIG_CHANNELS.get, () => runtimeConfigBridge?.get())
   handle(RUNTIME_CONFIG_CHANNELS.saveUser, async (_event, input: unknown) => {
     const snapshot = await runtimeConfigBridge?.saveUser(input)
@@ -1419,24 +1389,21 @@ function registerRuntimeConfigHandlers(client: SaasClient): void {
     if (snapshot) void syncManagedChildProcesses(snapshot)
     return runtimeConfigBridge?.get()
   })
-  handle(RUNTIME_CONFIG_CHANNELS.refreshSaas, async () => {
-    const config = await client.getRuntimeConfig()
-    // #225：云端未下发实质 primary 时不得覆盖仍可用的本地配置——覆盖即清空，
-    // 登录 gate 会把用户困在登录页无法返回应用。保留旧配置并返回当前快照。
-    const current = await runtimeConfigBridge?.get().catch(() => null)
-    if (current?.primaryConfigured && !saasRuntimePrimaryPresent(config.config)) return current
-    const snapshot = await runtimeConfigBridge?.saveSaas(config.config)
-    if (snapshot) void syncManagedChildProcesses(snapshot)
-    return runtimeConfigBridge?.get()
-  })
-  handle(RUNTIME_CONFIG_CHANNELS.clearSaas, async () => {
-    const snapshot = await runtimeConfigBridge?.clearSaas()
-    if (snapshot) void syncManagedChildProcesses(snapshot)
-    return runtimeConfigBridge?.get()
+  // 登录 gate 放行前的中转就绪闸：触发一次令牌签发（幂等，keeper 20min
+  // 周期外的主力路径），随后轮询快照直至 primary 四要素齐（gateway 在
+  // 会话 PUT 内同步完成槽位重写），~15s 超时后返回末次快照由 gate 兜底。
+  handle(RUNTIME_CONFIG_CHANNELS.relayReady, async () => {
+    await aiRelayKeeper?.renewNow().catch(() => undefined)
+    const deadline = Date.now() + 15_000
+    for (;;) {
+      const snapshot = await runtimeConfigBridge?.get().catch(() => null)
+      if (snapshot?.primaryConfigured || Date.now() >= deadline) return snapshot ?? null
+      await new Promise((resolve) => setTimeout(resolve, 300))
+    }
   })
   handle(RUNTIME_CONFIG_CHANNELS.test, () => runtimeConfigBridge?.test())
   handle(RUNTIME_CONFIG_CHANNELS.selectSource, async (_event, source: unknown) => {
-    if (source !== 'user' && source !== 'saas' && source !== 'default') throw new Error('无效的运行时配置来源。')
+    if (source !== 'user' && source !== 'default') throw new Error('无效的运行时配置来源。')
     const snapshot = await runtimeConfigBridge?.selectSource(source)
     if (snapshot) void syncManagedChildProcesses(snapshot)
     return runtimeConfigBridge?.get()
@@ -3775,9 +3742,6 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     }
     privateSyncScheduler = new PrivateSyncScheduler(privateTranscriptionSync, 15_000, publishSyncCompleted)
     const initialAccount = await saasClient.status().catch(() => null)
-    if (initialAccount?.authenticated) {
-      void persistSaasRuntimeConfig(saasClient)
-    }
     privateSyncScheduler.setAuthenticated(Boolean(initialAccount?.authenticated))
     if (initialAccount?.authenticated) remoteAgentCommandClient.start()
     if (initialAccount?.authenticated) aiRelayKeeper?.start()
@@ -3813,13 +3777,12 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       void (account.authenticated && account.user?.id
         ? fetchConnectorOoSession(account.user.id).then((session) => applyConnectorOoSession(session))
         : applyConnectorOoSession(null))
-      if (account.authenticated) {
-        if (saasClient) void persistSaasRuntimeConfig(saasClient)
-      } else if (context?.explicitLogout) {
-        // #225：仅显式登出清掉本地 saas runtime config。状态检查返回未登录
-        // （token 过期/设备被替/网络误判）不再销毁仍可用的配置——真被平台
-        // 吊销时 persistSaasRuntimeConfig 的 401/403 路径仍会清理。
-        void runtimeConfigBridge?.clearSaas()
+      if (!account.authenticated && context?.explicitLogout) {
+        // 显式登出：拆除中转会话后把子进程 env 同步回清空态（内置默认源与
+        // BYOK user 源都是本地自足状态，无需切源；keeper.stop 幂等，下方
+        // !authenticated 分支的 stop 会再跑一次空清理）。
+        void aiRelayKeeper?.stop()
+          .then(() => runtimeConfigBridge?.get())
           .then((snapshot) => (snapshot ? syncManagedChildProcesses(snapshot) : undefined))
           .catch(() => undefined)
       }
@@ -3841,7 +3804,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         void macosPushNotifications?.registerAuthenticatedDevice()
       }
     }, () => macosPushNotifications?.beforeLogout() ?? Promise.resolve())
-    registerRuntimeConfigHandlers(saasClient)
+    registerRuntimeConfigHandlers()
     registerPrivateTranscriptionHandlers(privateTranscriptionSync, publishSyncCompleted)
     registerAsrHandlers(recordingStore,new AsrCoordinator(new AsrGatewayBridge(gatewaySupervisor),saasClient,realityGatewayBridge,privateAudioSync,privateTranscriptionSync,recordingSegmentUploader ?? undefined),recordingSegmentUploader!)
     registerPrivateAudioHandlers(privateAudioSync)
