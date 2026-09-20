@@ -157,6 +157,8 @@ import { subagentRoutes } from "../modules/subagents/routes.js";
 import { AgentStatusService } from "../modules/agent/status-service.js";
 import { createReferencedAgentConversationTools } from "../modules/agent/reference-tools.js";
 import { createLocalAgentDispatchTools } from "../modules/local-agents/dispatch-tools.js";
+import { LocalAgentDispatchStore } from "../modules/local-agents/dispatch-store.js";
+import type { LocalAgentDispatchSource } from "../modules/local-agents/dispatch-tools.js";
 import { RuntimeConfigManager } from "../runtime-config.js";
 import { runtimeConfigRoutes } from "../modules/runtime-config/routes.js";
 import { AiRelaySessionStore } from "../modules/ai-relay/session.js";
@@ -825,6 +827,11 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   }
   // 提前实例化：主 Agent 的 local_agent_dispatch 工具（@ 点名本机 Agent）需要闭包它。
   const localAgentRuntimeRegistry = new LocalAgentRuntimeRegistry();
+  const localAgentDispatchStore = new LocalAgentDispatchStore(db);
+  // dispatch 工具先于 AgentService 构建，run 级分发来源用晚绑定引用接线。
+  const localAgentDispatchSourceRef: { current: ((runId: string) => LocalAgentDispatchSource | undefined) | null } = {
+    current: null,
+  };
   registerPrimaryAgent(agentResolver, config, documentMcpHost, {
     externalCalls,
     tools: [
@@ -895,7 +902,11 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
          })
         : []),
       ...createNotificationPiTools(notificationMcpHost),
-      ...createLocalAgentDispatchTools(localAgentRuntimeRegistry),
+      ...createLocalAgentDispatchTools({
+        registry: localAgentRuntimeRegistry,
+        store: localAgentDispatchStore,
+        resolveDispatchSource: (runId) => localAgentDispatchSourceRef.current?.(runId),
+      }),
       ...createReferencedAgentConversationTools(async (threadId, query) => (
         resolveAgentConversation?.(threadId, query) ?? null
       )),
@@ -951,6 +962,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     false,
     (target) => localAgentRuntimeRegistry.resolve(target),
   );
+  localAgentDispatchSourceRef.current = (runId) => agentService.getLocalAgentDispatchSource(runId);
   await agentService.initialize();
   registerTranscriptionSummaryAgent(agentResolver, config);
   const backgroundAgentRuntime = agentResolver.resolve(BUILTIN_AGENT_IDS.transcriptionSummary);
@@ -1228,7 +1240,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     sqlite.close();
     await gatewayLogger.close();
   });
-  await app.register(agentRoutes(agentService, new AgentStatusService(agentResolver, subagentOrchestrator)));
+  await app.register(agentRoutes(agentService, new AgentStatusService(agentResolver, subagentOrchestrator), localAgentDispatchStore));
   await app.register(subagentRoutes(subagentOrchestrator));
   const reloadMcpRuntimes = async (): Promise<void> => {
     const primary = agentResolver.reload(BUILTIN_AGENT_IDS.primary);

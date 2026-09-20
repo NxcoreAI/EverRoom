@@ -2672,6 +2672,54 @@ export const subagentInvocations = sqliteTable(
   ],
 );
 
+export interface LocalAgentDispatchMaterialRecord {
+  id: string;
+  kind: string;
+  title: string;
+  chars: number;
+  truncated: boolean;
+  agentOutput: boolean;
+  sourceDispatchId: string | null;
+}
+
+export const localAgentDispatches = sqliteTable(
+  "local_agent_dispatches",
+  {
+    id: text("id").primaryKey(),
+    sessionId: text("session_id")
+      .notNull()
+      .references(() => agentSessions.id, { onDelete: "cascade" }),
+    parentRunId: text("parent_run_id")
+      .notNull()
+      .references(() => agentRuns.id, { onDelete: "cascade" }),
+    agentId: text("agent_id").notNull(),
+    displayName: text("display_name").notNull(),
+    provider: text("provider").notNull(),
+    assignment: text("assignment").notNull(),
+    sharedGoal: text("shared_goal"),
+    constraints: text("constraints", { mode: "json" }).$type<string[]>().notNull().default([]),
+    materials: text("materials", { mode: "json" }).$type<LocalAgentDispatchMaterialRecord[]>().notNull().default([]),
+    packageJson: text("package_json").notNull(),
+    packageDigest: text("package_digest").notNull(),
+    packageVersion: integer("package_version").notNull(),
+    status: text("status", {
+      enum: ["pending", "running", "completed", "failed", "cancelled", "timed_out"],
+    }).notNull().default("pending"),
+    resultText: text("result_text"),
+    errorCode: text("error_code"),
+    errorMessage: text("error_message"),
+    subRunId: text("sub_run_id"),
+    startedAt: integer("started_at", { mode: "timestamp_ms" }),
+    completedAt: integer("completed_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("local_agent_dispatches_parent_run_idx").on(table.parentRunId),
+    index("local_agent_dispatches_session_created_idx").on(table.sessionId, table.createdAt),
+  ],
+);
+
 export const subagentInvocationEvents = sqliteTable(
   "subagent_invocation_events",
   {

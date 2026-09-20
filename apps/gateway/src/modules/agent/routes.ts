@@ -3,6 +3,7 @@ import type { FastifyPluginAsyncTypebox } from "@fastify/type-provider-typebox";
 import { Type } from "@sinclair/typebox";
 import type { AgentService } from "./service.js";
 import type { AgentStatusService } from "./status-service.js";
+import type { LocalAgentDispatchStore } from "../local-agents/dispatch-store.js";
 import { DocumentServiceError } from "../documents/errors.js";
 
 const IdParams = Type.Object({ id: Type.String({ minLength: 1, maxLength: 100 }) });
@@ -114,6 +115,7 @@ const LocalAgentTarget = Type.Object({
 export function agentRoutes(
   service: AgentService,
   statusService?: AgentStatusService,
+  localAgentDispatchStore?: Pick<LocalAgentDispatchStore, "get">,
 ): FastifyPluginAsyncTypebox {
   return async (app) => {
     if (statusService) {
@@ -547,6 +549,68 @@ export function agentRoutes(
         return run ?? reply.code(404).send({ error: "not_found", message: "Agent run not found" });
       },
     );
+
+    if (localAgentDispatchStore) {
+      app.get(
+        "/v1/agent/sessions/:sessionId/local-agent-dispatches/:taskId",
+        {
+          schema: {
+            tags: ["agent"],
+            params: Type.Object({
+              sessionId: Type.String({ minLength: 1, maxLength: 100 }),
+              taskId: Type.String({ minLength: 1, maxLength: 100 }),
+            }),
+            response: {
+              200: Type.Object({
+                id: Type.String(),
+                sessionId: Type.String(),
+                parentRunId: Type.String(),
+                agentId: Type.String(),
+                displayName: Type.String(),
+                provider: Type.String(),
+                assignment: Type.String(),
+                sharedGoal: Type.Union([Type.String(), Type.Null()]),
+                constraints: Type.Array(Type.String()),
+                materials: Type.Array(Type.Object({
+                  id: Type.String(),
+                  kind: Type.String(),
+                  title: Type.String(),
+                  chars: Type.Integer(),
+                  truncated: Type.Boolean(),
+                  agentOutput: Type.Boolean(),
+                  sourceDispatchId: Type.Union([Type.String(), Type.Null()]),
+                })),
+                packageVersion: Type.Integer(),
+                packageDigest: Type.String(),
+                status: Type.String(),
+                resultText: Type.Union([Type.String(), Type.Null()]),
+                errorCode: Type.Union([Type.String(), Type.Null()]),
+                errorMessage: Type.Union([Type.String(), Type.Null()]),
+                subRunId: Type.Union([Type.String(), Type.Null()]),
+                startedAt: Type.Union([Type.String(), Type.Null()]),
+                completedAt: Type.Union([Type.String(), Type.Null()]),
+                createdAt: Type.String(),
+                updatedAt: Type.String(),
+              }),
+              404: Type.Object({ error: Type.String(), message: Type.String() }),
+            },
+          },
+        },
+        async (request, reply) => {
+          const record = localAgentDispatchStore.get(request.params.taskId);
+          if (!record || record.sessionId !== request.params.sessionId) {
+            return reply.code(404).send({ error: "not_found", message: "Local agent dispatch not found" });
+          }
+          return {
+            ...record,
+            startedAt: record.startedAt?.toISOString() ?? null,
+            completedAt: record.completedAt?.toISOString() ?? null,
+            createdAt: record.createdAt.toISOString(),
+            updatedAt: record.updatedAt.toISOString(),
+          };
+        },
+      );
+    }
 
     app.get(
       "/v1/agent/sessions/:sessionId/stream",

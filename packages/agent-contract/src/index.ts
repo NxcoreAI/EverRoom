@@ -829,10 +829,39 @@ export interface LocalAgentInvocationTarget {
   card: LocalAgentCard;
 }
 
+export type LocalAgentDelegationMaterialKind =
+  | "selection"
+  | "attachment"
+  | "active_document"
+  | "transcript"
+  | "note"
+  | "agent_output";
+
+export interface LocalAgentDelegationMaterial {
+  id: string;
+  kind: LocalAgentDelegationMaterialKind;
+  title: string;
+  text: string;
+  truncated?: boolean;
+  /** True when the material was produced by a prior Agent dispatch instead of user-supplied data. */
+  agentOutput: boolean;
+  /** Dispatch id of the upstream task that produced this material（kind 为 agent_output 时必填）. */
+  sourceDispatchId?: string;
+}
+
 export interface LocalAgentDelegationContext {
-  schemaVersion: 1;
+  schemaVersion: 2;
   targetAgentId: string;
+  /** Main 以协作者身份写给子 Agent 的结构化分工。 */
+  assignment: {
+    text: string;
+    sharedGoal?: string;
+    constraints: string[];
+  };
+  /** 展平的分工文本，供审计与旧读者使用。 */
   task: { text: string };
+  /** 本次分发快照携带的材料清单。 */
+  materials: LocalAgentDelegationMaterial[];
   conversation: {
     messages: Array<Pick<AgentMessage, "role" | "authorAgentId" | "content" | "createdAt">>;
     truncated: boolean;

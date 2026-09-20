@@ -87,7 +87,7 @@ import type {
   AgentAuthStartInput,
   DesktopAgentAuthChallenge,
 } from './agent-auth'
-import type { LocalAgentHistoryImportResult, LocalAgentInstallation, LocalAgentWorkspaceBinding } from './local-agents'
+import type { LocalAgentDispatchDetail, LocalAgentHistoryImportResult, LocalAgentInstallation, LocalAgentWorkspaceBinding } from './local-agents'
 import type { MigrationApi } from './migrations'
 import type { BrowserExtensionClipperCapture, BrowserExtensionClipperListInput, BrowserExtensionClipperListResult } from './browser-extension'
 import type {
@@ -1195,6 +1195,7 @@ export interface NxcoreDesktopApi {
     deleteSession(sessionId: string): Promise<void>
     getSession(sessionId: string): Promise<AgentSessionSnapshot>
     getEvents(sessionId: string, runId: string, afterSeq: number): Promise<AgentEvent[]>
+    getLocalAgentDispatch(sessionId: string, taskId: string): Promise<LocalAgentDispatchDetail>
     startRun(sessionId: string, input: StartAgentRunInput): Promise<AgentRun>
     submitPendingIntent(
       intentId: string,

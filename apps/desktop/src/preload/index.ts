@@ -619,6 +619,8 @@ const api: NxcoreDesktopApi = {
     getSession: (sessionId) => invoke('agent:get-session', sessionId),
     getEvents: (sessionId, runId, afterSeq) =>
       invoke('agent:get-events', sessionId, runId, afterSeq),
+    getLocalAgentDispatch: (sessionId, taskId) =>
+      invoke('agent:get-local-agent-dispatch', sessionId, taskId),
     startRun: (sessionId, input) => invoke('agent:start-run', sessionId, input),
     submitPendingIntent: (intentId, input) =>
       invokeQuietly('agent:submit-pending-intent', intentId, input),

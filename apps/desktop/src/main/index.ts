@@ -360,6 +360,7 @@ const AGENT_CHANNELS = {
   deleteSession: 'agent:delete-session',
   getSession: 'agent:get-session',
   getEvents: 'agent:get-events',
+  getLocalAgentDispatch: 'agent:get-local-agent-dispatch',
   startRun: 'agent:start-run',
   submitPendingIntent: 'agent:submit-pending-intent',
   cancelRun: 'agent:cancel-run',
@@ -2262,6 +2263,8 @@ function registerAgentHandlers(bridge: AgentGatewayBridge, migrationCoordinator:
   handle(AGENT_CHANNELS.getSession, (_event, sessionId) => bridge.getSession(sessionId))
   handle(AGENT_CHANNELS.getEvents, (_event, sessionId, runId, afterSeq) =>
     bridge.getEvents(sessionId, runId, afterSeq))
+  handle(AGENT_CHANNELS.getLocalAgentDispatch, (_event, sessionId, taskId) =>
+    bridge.getLocalAgentDispatch(sessionId, taskId))
   handle(AGENT_CHANNELS.startRun, async (_event, sessionId, input) => {
     const request = input as StartAgentRunInput
     // 本机 Agent 的 invocation target 一律由 main 进程从本机发现结果重建
