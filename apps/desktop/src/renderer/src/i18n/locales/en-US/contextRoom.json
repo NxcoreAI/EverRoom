@@ -1545,5 +1545,9 @@
   "workspaceLayout.splitBelow": "Split below",
   "emergence.pathLabel": "Path",
   "emergence.switchToFocus": "Switch to focus",
-  "emergence.switchToWander": "Switch to wander"
+  "emergence.switchToWander": "Switch to wander",
+  "creation.emptySubmitted": "Submitted: an empty Room will be created from the description",
+  "creation.emptyRoomHint": "Files are optional: describe the purpose and submit to create an empty Room, add content later",
+  "creation.emptyRoomTitle": "Untitled Room",
+  "creation.emptyRoomCreated": "Created empty Room \"{title}\" (files that failed to parse were skipped)"
 }
