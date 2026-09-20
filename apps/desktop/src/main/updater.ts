@@ -1,4 +1,4 @@
-import { app, dialog, ipcMain } from 'electron'
+import { app, dialog, ipcMain, webContents } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -43,6 +43,13 @@ async function resolveInstallId(saasClient: SaasClient | null): Promise<string> 
   return generated
 }
 
+/** 渠道暂无版本时 feed 返回 404——业务正常态，非故障。 */
+function isFeedNotFound(error: unknown): boolean {
+  const status = (error as { statusCode?: number }).statusCode
+  const message = error instanceof Error ? error.message : ''
+  return status === 404 || /\b404\b|not found/i.test(message)
+}
+
 export class DesktopUpdater {
   private readonly channel: UpdateChannel
   private readonly feedUrl: string
@@ -70,11 +77,22 @@ export class DesktopUpdater {
     autoUpdater.logger = console
     this.applyFeed()
     autoUpdater.on('checking-for-update', () => void this.report('check'))
+    autoUpdater.on('download-progress', progress => {
+      // 广播给所有窗口：设置页显示百分比与实时速度
+      for (const wc of webContents.getAllWebContents()) {
+        wc.send('update:progress', { percent: progress.percent, bytesPerSecond: progress.bytesPerSecond })
+      }
+    })
     autoUpdater.on('update-downloaded', info => {
+      for (const wc of webContents.getAllWebContents()) wc.send('update:downloaded', { version: info.version })
       void this.report('downloaded', info.version)
       void this.promptInstall(info)
     })
-    autoUpdater.on('error', () => void this.tryFallbackOnce())
+    autoUpdater.on('error', error => {
+      // 404 = 渠道暂无版本，属正常业务态：不切备源、不产生降级副作用
+      if (isFeedNotFound(error)) return
+      void this.tryFallbackOnce()
+    })
     setTimeout(() => void this.check(), 5000)
     setInterval(() => void this.check(), UPDATE_CHECK_INTERVAL_MS)
   }
@@ -86,8 +104,8 @@ export class DesktopUpdater {
     try {
       const result = await autoUpdater.checkForUpdates()
       return result?.versionInfo ? 'update-found' : 'no-update'
-    } catch {
-      return 'error'
+    } catch (error) {
+      return isFeedNotFound(error) ? 'no-update' : 'error'
     } finally {
       this.manualChecking = false
     }
@@ -104,7 +122,8 @@ export class DesktopUpdater {
 
   private applyFeed(url?: string): void {
     const target = url ?? `${this.feedUrl}/${this.channel}/${this.installId}`
-    autoUpdater.setFeedURL({ provider: 'generic', url: target, useMultipleRangeRequest: false })
+    // OSS 支持 Range 并发（多段下载提速）；不关 useMultipleRangeRequest
+    autoUpdater.setFeedURL({ provider: 'generic', url: target })
   }
 
   private async check(): Promise<void> {
