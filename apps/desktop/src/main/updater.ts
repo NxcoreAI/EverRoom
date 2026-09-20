@@ -103,7 +103,9 @@ export class DesktopUpdater {
     this.manualChecking = true
     try {
       const result = await autoUpdater.checkForUpdates()
-      return result?.versionInfo ? 'update-found' : 'no-update'
+      // versionInfo 无更新时也存在（=当前版本），必须用 isUpdateAvailable 判断，
+      // 否则渠道内最高版=当前版时误报「发现新版本」
+      return result?.isUpdateAvailable ? 'update-found' : 'no-update'
     } catch (error) {
       return isFeedNotFound(error) ? 'no-update' : 'error'
     } finally {
