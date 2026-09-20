@@ -773,24 +773,17 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
                       <span>{t('surface:settings.llmRemaining')}</span>
                       <strong>{formatLlmUsd(aiRelayStatus.remainingCredits, locale)}</strong>
                     </div>
-                    {/* 管理端在网关手动加额后余量会超过套餐额度，总量取两者较大值。 */}
                     <progress
                       aria-label={t('surface:settings.llmRemaining')}
-                      max={Math.max(1, aiRelayStatus.llmCredits, aiRelayStatus.remainingCredits)}
-                      value={Math.min(
-                        Math.max(0, aiRelayStatus.remainingCredits),
-                        Math.max(aiRelayStatus.llmCredits, aiRelayStatus.remainingCredits),
-                      )}
+                      max={Math.max(1, aiRelayStatus.llmCredits)}
+                      value={Math.min(Math.max(0, aiRelayStatus.remainingCredits), aiRelayStatus.llmCredits)}
                     />
                     <small>
                       {aiRelayStatus.remainingCredits <= 0
                         ? t('surface:settings.llmQuotaExhausted')
                         : t('surface:settings.usedUsedTotalTotal', {
                             used: formatLlmUsd(aiRelayStatus.usedCredits ?? 0, locale),
-                            total: formatLlmUsd(
-                              Math.max(aiRelayStatus.llmCredits, aiRelayStatus.remainingCredits),
-                              locale,
-                            ),
+                            total: formatLlmUsd(aiRelayStatus.llmCredits, locale),
                           })}
                     </small>
                   </div>
