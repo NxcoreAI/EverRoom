@@ -1,4 +1,4 @@
-import { app, dialog, ipcMain } from 'electron'
+import { app, dialog, ipcMain, webContents } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -77,7 +77,14 @@ export class DesktopUpdater {
     autoUpdater.logger = console
     this.applyFeed()
     autoUpdater.on('checking-for-update', () => void this.report('check'))
+    autoUpdater.on('download-progress', progress => {
+      // 广播给所有窗口：设置页显示百分比与实时速度
+      for (const wc of webContents.getAllWebContents()) {
+        wc.send('update:progress', { percent: progress.percent, bytesPerSecond: progress.bytesPerSecond })
+      }
+    })
     autoUpdater.on('update-downloaded', info => {
+      for (const wc of webContents.getAllWebContents()) wc.send('update:downloaded', { version: info.version })
       void this.report('downloaded', info.version)
       void this.promptInstall(info)
     })
@@ -115,7 +122,8 @@ export class DesktopUpdater {
 
   private applyFeed(url?: string): void {
     const target = url ?? `${this.feedUrl}/${this.channel}/${this.installId}`
-    autoUpdater.setFeedURL({ provider: 'generic', url: target, useMultipleRangeRequest: false })
+    // OSS 支持 Range 并发（多段下载提速）；不关 useMultipleRangeRequest
+    autoUpdater.setFeedURL({ provider: 'generic', url: target })
   }
 
   private async check(): Promise<void> {
