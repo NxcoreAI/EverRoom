@@ -467,23 +467,24 @@ jobs:
           if [[ "$version" == *-nightly.* ]]; then channel=nightly; else channel=stable; fi
           echo "Distributing $version (channel=$channel)"
 
+          # 阿里云 2026-09-20 下架了 CDN 上的 1.7.19（404，GitHub 上该 tag 也无资产），
+          # 1.7.18 为最后可用版本；若再失效改用 GitHub aliyun/ossutil v1.7.18 release 资产。
           curl -fsSL -o "$RUNNER_TEMP/ossutil64" https://gosspublic.alicdn.com/ossutil/1.7.18/ossutil64
           chmod +x "$RUNNER_TEMP/ossutil64"
           ossutil() { "$RUNNER_TEMP/ossutil64" "$@" -e "$OSS_ENDPOINT" -i "$OSS_ACCESS_KEY_ID" -k "$OSS_ACCESS_KEY_SECRET"; }
 
           ossutil cp release-assets/ "oss://$OSS_BUCKET/archive/$version/" -r -f
-          base_version="${version%%-*}"
-          sha_exe=$(openssl dgst -sha512 -binary "release-assets/EverRoom-$base_version-windows-x64.exe" | base64 -w0)
-          sha_zip=$(openssl dgst -sha512 -binary "release-assets/EverRoom-$base_version-arm64.zip" | base64 -w0)
-          sha_dmg=$(openssl dgst -sha512 -binary "release-assets/EverRoom-$base_version-arm64.dmg" | base64 -w0)
-          size_exe=$(stat -c%s "release-assets/EverRoom-$base_version-windows-x64.exe")
-          size_zip=$(stat -c%s "release-assets/EverRoom-$base_version-arm64.zip")
-          size_dmg=$(stat -c%s "release-assets/EverRoom-$base_version-arm64.dmg")
+          sha_exe=$(openssl dgst -sha512 -binary "release-assets/EverRoom-$version-windows-x64.exe" | base64 -w0)
+          sha_zip=$(openssl dgst -sha512 -binary "release-assets/EverRoom-$version-arm64.zip" | base64 -w0)
+          sha_dmg=$(openssl dgst -sha512 -binary "release-assets/EverRoom-$version-arm64.dmg" | base64 -w0)
+          size_exe=$(stat -c%s "release-assets/EverRoom-$version-windows-x64.exe")
+          size_zip=$(stat -c%s "release-assets/EverRoom-$version-arm64.zip")
+          size_dmg=$(stat -c%s "release-assets/EverRoom-$version-arm64.dmg")
 
           jq -n --arg v "$version" --arg c "$channel" --arg sha "$GITHUB_SHA" \
-            --arg exe "EverRoom-$base_version-windows-x64.exe" --argjson size_exe "$size_exe" --arg sha_exe "$sha_exe" \
-            --arg zip "EverRoom-$base_version-arm64.zip" --argjson size_zip "$size_zip" --arg sha_zip "$sha_zip" \
-            --arg dmg "EverRoom-$base_version-arm64.dmg" --argjson size_dmg "$size_dmg" --arg sha_dmg "$sha_dmg" \
+            --arg exe "EverRoom-$version-windows-x64.exe" --argjson size_exe "$size_exe" --arg sha_exe "$sha_exe" \
+            --arg zip "EverRoom-$version-arm64.zip" --argjson size_zip "$size_zip" --arg sha_zip "$sha_zip" \
+            --arg dmg "EverRoom-$version-arm64.dmg" --argjson size_dmg "$size_dmg" --arg sha_dmg "$sha_dmg" \
             '{version:$v,channel:$c,commitSha:$sha,files:[
               {platform:"windows",fileName:$exe,fileSize:$size_exe,sha512Base64:$sha_exe},
               {platform:"macos",fileName:$zip,fileSize:$size_zip,sha512Base64:$sha_zip},
@@ -512,7 +513,7 @@ jobs:
             # 结束符带前导空格则 bash 不认，heredoc 永不终止。
             cat > "$RUNNER_TEMP/latest.yml" <<YAML
           version: $version
-          path: $public_base/archive/$version/EverRoom-$base_version-windows-x64.exe
+          path: $public_base/archive/$version/EverRoom-$version-windows-x64.exe
           sha512: $sha_exe
           releaseDate: '$(date -u +%Y-%m-%dT%H:%M:%S.000Z)'
           releaseName: '$version'
@@ -520,7 +521,7 @@ jobs:
             cat > "$RUNNER_TEMP/latest-mac.yml" <<YAML
           version: $version
           files:
-            - url: $public_base/archive/$version/EverRoom-$base_version-arm64.zip
+            - url: $public_base/archive/$version/EverRoom-$version-arm64.zip
               sha512: $sha_zip
           sha512: $sha_zip
           releaseDate: '$(date -u +%Y-%m-%dT%H:%M:%S.000Z)'
