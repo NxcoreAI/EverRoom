@@ -217,9 +217,17 @@ export function RuntimeConfigGate({ children }: { children: ReactNode }) {
     // 这里再显式拉取一次确保 saas source 已保存，然后走连通测试。
     // 拉取失败（网络抖动等）退回网关当前快照——本地仍保留可用配置时照常
     // 放行（#225：不能把已登录用户困在登录页）。
+    // 首拉空 primary 自动重试：后端在登录会话刚建立时模型配置查询存在
+    // 就绪竞态（实测苹果登录首拉为空、约 90s 内重试即有），重试窗口把
+    // 竞态对用户隐藏；重试用尽仍空才提示"云端未下发"。
     let next: RuntimeConfigSnapshot | null | undefined
     try {
       next = await window.nxcore!.runtimeConfig.refreshSaas()
+      for (const delayMs of [1_500, 4_000]) {
+        if (next && isRuntimeConfigReady(next)) break
+        await new Promise((resolve) => window.setTimeout(resolve, delayMs))
+        next = await window.nxcore!.runtimeConfig.refreshSaas()
+      }
     } catch {
       next = await window.nxcore!.runtimeConfig.get().catch(() => null)
     }
