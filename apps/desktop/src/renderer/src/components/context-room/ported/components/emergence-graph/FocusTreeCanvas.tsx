@@ -14,7 +14,8 @@ import {
 
 /**
  * 聚焦态思维导图（NotebookLM 式）：默认只见根和一级分支，一级全收起；
- * 点有子节点的节点=原地展开/收起（＋/− 随状态），点叶子=选中看底部详情条。
+ * 收起的中级节点点=原地展开并选中，已展开没选中的点回=只选中不收起，
+ * 已选中且展开的再点=收起并取消选中，点叶子/根=只选中看底部详情条。
  * 选中节点保证邻居可见：根保持展开（点根只选中不收图）、叶子把父链展开；
  * 中间节点自身的收起态不随选中变化。新导图（结果身份变化）重置回收起默认态。
  */
@@ -23,6 +24,7 @@ export function FocusTreeCanvas({
   rootRef,
   selectedNodeRef,
   cards,
+  showDetail = true,
   onSelectNode,
   onOpenCard,
   onCardAction,
@@ -32,9 +34,11 @@ export function FocusTreeCanvas({
   rootRef: string;
   selectedNodeRef: string | null;
   cards: EmergenceCardDto[];
+  /** 大弹窗等纯浏览场景不带底部详情条（含小字摘要与操作）。 */
+  showDetail?: boolean;
   onSelectNode: (nodeRef: string | null) => void;
   onOpenCard?: (nodeRef: string) => void;
-  onCardAction: (card: EmergenceCardDto) => void;
+  onCardAction?: (card: EmergenceCardDto) => void;
 }) {
   const { t } = useLocale();
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -56,6 +60,8 @@ export function FocusTreeCanvas({
 
   // 相机中心目标：换树 datum effect 消费后清空
   const cameraTargetRef = useRef<string | null>(null);
+  // 焦点按钮补展开标记：换树落定后按「父级+子树」局部取景，而非保持原缩放
+  const focusFitRef = useRef(false);
 
   // 选中即带邻居可见（含挂载时已带选中，如卡片视图展开深层卡片后切回脉络图）：
   // 叶子上溯展开父链、根保持展开；被选节点自身的收起态不动。上一份同样必须存 state。
@@ -66,6 +72,10 @@ export function FocusTreeCanvas({
     if (revealed) {
       setCollapsed(revealed);
       cameraTargetRef.current = selectedNodeRef;
+    } else if (selectedNodeRef !== null && tree.byId.has(selectedNodeRef)) {
+      // 无需揭示（本来就可见，如路径链点同级/父级）：相机轻推过去即可
+      const graph = graphRef.current;
+      if (graph && graph.findById(selectedNodeRef)) tweenCameraToNode(graph, selectedNodeRef, graph.getZoom() || 1, 380);
     }
   }
 
@@ -84,14 +94,17 @@ export function FocusTreeCanvas({
   const stripNode = stripSubject !== null ? tree.byId.get(stripSubject) ?? null : null;
   const stripCard = stripSubject !== null ? cardByNode.get(stripSubject) ?? null : null;
 
-  // 点击语义走最新闭包（图实例只建一次）：中间节点=切换展开并选中，根/叶子=只选中；
-  // 展开与被点节点为相机中心（换树的由 datum effect 接管，根/叶子的直接补间）
+  // 点击语义走最新闭包（图实例只建一次）：收起的中级节点=点开并选中（展开为相机中心）；
+  // 已展开但没选中的=只选中不收起（从别的节点点回来不会把开着的子级合上）；
+  // 已选中且展开的再点一次=收起并取消选中；根/叶子=只选中。
   const clickRef = useRef<(id: string) => void>(() => {});
   clickRef.current = useCallback((id: string) => {
     const node = tree.byId.get(id);
     if (!node) return;
     const willSelect = selectedNodeRef !== id;
-    if (node.hasChildren && id !== tree.rootId) {
+    const middle = node.hasChildren && id !== tree.rootId;
+    const open = middle && !collapsed.has(id);
+    if (middle && (!open || !willSelect)) {
       cameraTargetRef.current = id;
       setCollapsed((current) => {
         const next = new Set(current);
@@ -103,8 +116,8 @@ export function FocusTreeCanvas({
       const graph = graphRef.current;
       if (graph && graph.findById(id)) tweenCameraToNode(graph, id, graph.getZoom() || 1, 380);
     }
-    onSelectNode(selectedNodeRef === id ? null : id);
-  }, [tree, selectedNodeRef, onSelectNode]);
+    onSelectNode(willSelect ? id : null);
+  }, [tree, selectedNodeRef, onSelectNode, collapsed]);
 
   const hasTree = tree.nodes.length > 0;
 
@@ -155,7 +168,9 @@ export function FocusTreeCanvas({
     lastDatumRef.current = datum;
     const target = cameraTargetRef.current;
     cameraTargetRef.current = null;
-    updateFocusGraph(graph, datum, target && tree.byId.has(target) ? target : tree.rootId);
+    const fitLocal = focusFitRef.current;
+    focusFitRef.current = false;
+    updateFocusGraph(graph, datum, target && tree.byId.has(target) ? target : tree.rootId, { fitLocal });
   }, [datum, tree]);
 
   const canvasTools = useMemo(() => ({
@@ -174,9 +189,19 @@ export function FocusTreeCanvas({
     recenter: () => {
       const graph = graphRef.current;
       if (!graph) return;
-      animateRecenter(graph);
+      // 回到中心=聚焦当前焦点（没选中回根）：居中它，取景刚好装下父级+它的全部子级
+      const target = selectedNodeRef && tree.byId.has(selectedNodeRef) ? selectedNodeRef : tree.rootId;
+      const node = tree.byId.get(target);
+      if (datum && node && node.hasChildren && target !== tree.rootId && collapsed.has(target)) {
+        // 子级还收着：先展开，落定后由换树流程做局部取景
+        cameraTargetRef.current = target;
+        focusFitRef.current = true;
+        setCollapsed((current) => { const next = new Set(current); next.delete(target); return next; });
+      } else {
+        animateRecenter(graph, target, 380, datum);
+      }
     },
-  }), [tree.rootId]);
+  }), [tree, selectedNodeRef, datum, collapsed]);
 
   if (!hasTree) {
     return <div className="eg-viewport eg-empty">{t('contextRoom:emergence.veinEmpty')}</div>;
@@ -185,7 +210,7 @@ export function FocusTreeCanvas({
   return (
     <div ref={viewportRef} className="eg-viewport" aria-label={t('contextRoom:emergence.veinCanvas')}>
       <div ref={mountRef} className="eg-g6-mount" />
-      {stripNode ? (
+      {showDetail && stripNode ? (
         <div
           className={`eg-strip${stripCollapsed ? ' is-collapsed' : ''}`}
           data-eg-strip=""
@@ -214,7 +239,7 @@ export function FocusTreeCanvas({
                       {t('contextRoom:emergence.viewInCards')}
                     </button>
                   ) : null}
-                  <button type="button" className="is-primary" onClick={() => onCardAction(stripCard)}>
+                  <button type="button" className="is-primary" onClick={() => onCardAction?.(stripCard)}>
                     <Quote aria-hidden="true" />
                     {t('contextRoom:emergence.quote')}
                   </button>

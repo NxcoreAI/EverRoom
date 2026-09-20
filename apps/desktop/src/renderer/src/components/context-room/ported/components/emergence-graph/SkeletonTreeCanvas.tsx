@@ -6,7 +6,7 @@ import { createSkeletonGraph, frameSkeleton, unregisterLiveGraph } from './g6Foc
  * 投影/漫步加载占位：G6 骨架树（与真图同引擎同布局），出图后节点原位显形零跳变。
  * 不可交互；底部提示语走 DOM（随 locale）。
  */
-export function SkeletonTreeCanvas({ hint }: { hint: string }) {
+export function SkeletonTreeCanvas({ hint }: { hint?: string }) {
   const mountRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -41,7 +41,7 @@ export function SkeletonTreeCanvas({ hint }: { hint: string }) {
   return (
     <div className="eg-viewport eg-skeleton" aria-busy="true">
       <div ref={mountRef} className="eg-g6-mount" />
-      <p className="eg-skeleton-hint">{hint}</p>
+      {hint ? <p className="eg-skeleton-hint">{hint}</p> : null}
     </div>
   );
 }

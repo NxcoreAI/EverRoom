@@ -9,11 +9,6 @@ import type { FocusTree, FocusTreeNode } from './focusTreeModel';
 // 原型把运行时字段（__crAnim/__crTween）挂在图实例上，G6 类型面没有，这里放宽
 type G6TreeGraph = TreeGraph & { __crAnim?: number; __crTween?: number | null };
 
-export const truncateText = (s: unknown, n: number): string => {
-  const str = String(s ?? '');
-  return str.length > n ? str.slice(0, n) + '…' : str;
-};
-
 function themeVars() {
   const cs = getComputedStyle(document.documentElement);
   const v = (name: string, fb: string) => (cs.getPropertyValue(name) || '').trim() || fb;
@@ -65,8 +60,8 @@ export function focusTreeData(tree: FocusTree, collapsed: Set<string>): FocusDat
     const isCenter = n.depth === 0;
     const fs = isCenter ? 13 : n.depth === 1 ? 12 : 11;
     const weight = isCenter ? 700 : 500;
-    const mark = n.hasChildren ? (collapsed.has(n.id) ? ' ＋' : ' −') : '';
-    const label = truncateText(n.node.label, isCenter ? 10 : n.depth === 1 ? 9 : 8) + mark;
+    const mark = isCenter || !n.hasChildren ? '' : (collapsed.has(n.id) ? ' ＋' : ' −');
+    const label = n.node.label + mark;
     const w = Math.ceil(measureText(label, `${weight} ${fs}px PingFang SC, Microsoft YaHei, sans-serif`)) + 22;
     const h = isCenter ? 36 : 30;
     const kind = NODE_TYPE_KIND[n.node.nodeType] ?? '';
@@ -387,14 +382,91 @@ export function animateFitView(graph: G6TreeGraph, padding = 24) {
   try { graph.fitView(padding); } catch { /* 已销毁 */ }
 }
 
-// 动画版回中（工具条「回到中心」）：保持当前缩放，把整棵树（内容盒中心）平移回可视区中心。
-// 不钉根节点——LR 树根在内容盒左缘，钉根会让右半棵出画。
-export function animateRecenter(graph: G6TreeGraph, duration = 380) {
+// 动画版回中（工具条「回到中心」）：焦点胶囊（根）钉回可视区中心，保持当前缩放；
+// 注意大小——胶囊居中后树只往右展开，右半边可用空间只有半屏，
+// 按胶囊中心到内容盒四缘的距离压低缩放，保证胶囊居中的同时整棵树不出画
+// 焦点取景：非根=被选胶囊居中，画面刚好装下「它的直接父级 + 它的整棵已渲染子树」，
+// 只按这片局部内容算（不带整条祖先链，层级深了会把画面越缩越小）；
+// 根=局部内容就是整棵已渲染树，改为内容盒居中取景——根天然落在画面左侧，
+// 若仍钉根在正中，LR 树只往右展开，左半屏全空。
+function localFocusView(graph: G6TreeGraph, datum: FocusDatum, nodeId: string): { z: number; anchor: { x: number; y: number } } | null {
+  const node = graph.findById(nodeId);
+  const m = node && (node.getModel() as unknown as { x?: number; y?: number } | undefined);
+  const mx = Number(m?.x), my = Number(m?.y);
+  if (!Number.isFinite(mx) || !Number.isFinite(my)) return null;
+  // 渲染树里建父索引并定位目标（children 已按收起态置空，走到的都是可见节点）
+  const parentOf = new Map<string, string>();
+  let target: FocusDatum | null = null;
+  const visit = (n: FocusDatum, parent: string | null): void => {
+    if (parent !== null) parentOf.set(n.id, parent);
+    if (n.id === nodeId) target = n;
+    (n.children || []).forEach((c) => visit(c, n.id));
+  };
+  visit(datum, null);
+  if (!target) return null;
+  const ids: string[] = [];
+  const collect = (n: FocusDatum): void => { ids.push(n.id); (n.children || []).forEach(collect); };
+  collect(target);
+  const parent = parentOf.get(nodeId);
+  if (parent) ids.push(parent);
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  ids.forEach((id) => {
+    const it = graph.findById(id);
+    if (!it) return;
+    const mm = it.getModel() as unknown as { x?: number; y?: number; width?: number; height?: number };
+    const cx = Number(mm.x), cy = Number(mm.y);
+    if (!Number.isFinite(cx) || !Number.isFinite(cy)) return;
+    const hw = (Number.isFinite(Number(mm.width)) ? Number(mm.width) : 90) / 2;
+    const hh = (Number.isFinite(Number(mm.height)) ? Number(mm.height) : 30) / 2;
+    minX = Math.min(minX, cx - hw); maxX = Math.max(maxX, cx + hw);
+    minY = Math.min(minY, cy - hh); maxY = Math.max(maxY, cy + hh);
+  });
+  if (minX === Infinity) return null;
+  const W = graph.get('width') || 1;
+  const { top, bottom } = visibleViewport(graph);
+  const visH = Math.max(80, bottom - top);
+  if (parent) {
+    const extL = Math.max(mx - minX, 1), extR = Math.max(maxX - mx, 1);
+    const extT = Math.max(my - minY, 1), extB = Math.max(maxY - my, 1);
+    const zx = (W / 2 - 24) / Math.max(extL, extR);
+    const zy = (visH / 2 - 24) / Math.max(extT, extB);
+    return { z: Math.max(0.05, Math.min(1.5, zx, zy)), anchor: { x: mx, y: my } };
+  }
+  const zx = (W - 48) / Math.max(maxX - minX, 1);
+  const zy = (visH - 48) / Math.max(maxY - minY, 1);
+  return { z: Math.max(0.05, Math.min(1.5, zx, zy)), anchor: { x: (minX + maxX) / 2, y: (minY + maxY) / 2 } };
+}
+
+export function animateRecenter(graph: G6TreeGraph, nodeId: string, duration = 380, datum?: FocusDatum | null) {
   try {
+    const node = graph.findById(nodeId);
+    const m = node && (node.getModel() as unknown as { x?: number; y?: number } | undefined);
+    const mx = Number(m?.x), my = Number(m?.y);
+    if (!Number.isFinite(mx) || !Number.isFinite(my)) return;
+    let z = graph.getZoom();
+    if (!Number.isFinite(z) || z <= 0.01) z = 1;
+    const local = datum ? localFocusView(graph, datum, nodeId) : null;
+    if (local) {
+      tweenCameraTo(graph, local.z, local.anchor, duration);
+      return;
+    }
+    // 没拿到渲染树时按整图内容兜底取景
+    const W = graph.get('width') || 1;
+    const { top, bottom } = visibleViewport(graph);
+    const visH = Math.max(80, bottom - top);
     const bbox = contentBBox(graph);
-    if (!bbox || !Number.isFinite(bbox.width) || bbox.width <= 0) return;
-    const z = graph.getZoom();
-    tweenCameraTo(graph, Number.isFinite(z) && z > 0.01 ? z : 1, { x: bbox.x + bbox.width / 2, y: bbox.y + bbox.height / 2 }, duration);
+    if (bbox) {
+      const extents = [
+        bbox.x + bbox.width - mx,  // 胶囊中心→内容右缘
+        mx - bbox.x,               // →左缘
+        my - bbox.y,               // →上缘
+        bbox.y + bbox.height - my, // →下缘
+      ].map((e) => Math.max(e, 1));
+      const zx = (W / 2 - 24) / Math.max(extents[0], extents[1]);
+      const zy = (visH / 2 - 24) / Math.max(extents[2], extents[3]);
+      z = Math.max(0.05, Math.min(1.5, z, zx, zy));
+    }
+    tweenCameraToNode(graph, nodeId, z, duration);
   } catch { /* 已销毁 */ }
 }
 
@@ -439,25 +511,26 @@ function pinnedChangeData(graph: G6TreeGraph, datum: FocusDatum, centerId: strin
 
 // 钻取/层级切换的相机编排（原型 updateFocusGraphs 的单图版）：
 // 动画换树 → 目标缩放（默认推近；内容超画布拉远）→ 单相机 tween → 看门狗自愈
-export function updateFocusGraph(graph: G6TreeGraph, datum: FocusDatum, centerId: string) {
+export function updateFocusGraph(graph: G6TreeGraph, datum: FocusDatum, centerId: string, opts?: { fitLocal?: boolean }) {
   try {
     if (graph.__crTween) { cancelAnimationFrame(graph.__crTween); graph.__crTween = null; }
-    // 相机适配必须量换树后的真实尺寸：收起时内容变少要推近，撑满时要拉远。
-    // 新树在退场渐隐后才换上，故缩放与补间挪到 afterSettle（布局已定、变形未起）
+    // 相机适配必须量换树后的真实尺寸：新树在退场渐隐后才换上，
+    // 故缩放与补间挪到 afterSettle（布局已定、变形未起）
     animatedChangeData(graph, datum, centerId, {
       autoCenter: false,
       afterSettle: () => {
-        const bbox = contentBBox(graph);
-        const W = graph.get('width');
-        const { top, bottom } = visibleViewport(graph);
-        const visH = Math.max(80, bottom - top);
-        let toZoom = Math.max(0.85, Math.min(1.1, graph.getZoom() * 1.12));
-        if (bbox && Number.isFinite(bbox.width) && bbox.width > 0 && Number.isFinite(bbox.height) && bbox.height > 0) {
-          const fitZoom = Math.min((W - 48) / bbox.width, (visH - 40) / bbox.height);
-          toZoom = Math.min(toZoom, Math.max(0.45, Math.min(1.15, fitZoom)));
+        // 原地展开/收起不动缩放：点胶囊整图缩小很突兀；取景变化交给自适应/回中心。
+        // fitLocal=焦点按钮补展开：落定后按「父级+子树」刚好取景
+        const z = graph.getZoom();
+        let toZoom = Number.isFinite(z) && z > 0.01 ? z : 1;
+        let anchor: { x: number; y: number } | null = null;
+        if (opts?.fitLocal) {
+          const local = localFocusView(graph, datum, centerId);
+          if (local) { toZoom = local.z; anchor = local.anchor; }
         }
         try {
-          tweenCameraToNode(graph, centerId, toZoom, 380);
+          if (anchor) tweenCameraTo(graph, toZoom, anchor, 380);
+          else tweenCameraToNode(graph, centerId, toZoom, 380);
         } catch (err) {
           console.warn('[CR-G6] tween start:', err instanceof Error ? err.message : err);
           try { graph.fitView(24); } catch { /* 已销毁 */ }
