@@ -1,11 +1,10 @@
-import { Compass, Lock, LockOpen, RotateCw, Sparkles, Target } from 'lucide-react';
-import { useState } from 'react';
+import { Compass, Lock, LockOpen, Target } from 'lucide-react';
+import { useMemo, useState } from 'react';
 
 import { useLocale } from '../../../../../i18n/LocaleContext';
 import type {
   EmergenceCardDto,
   EmergenceFocusInput,
-  EmergenceFocusLevel,
   EmergenceMode,
   EmergenceProjectionResultDto,
 } from '../../../../../../../shared/knowledge';
@@ -20,21 +19,18 @@ import { backWalk, initialWalkLog, stepWalk, type WalkStation } from '../emergen
 
 /**
  * 思路板块（上图下卡）：聚焦=思维导图常驻（NotebookLM 式点击展开/收起）；
- * 漫游=步进链。工具条=聚焦/漫游分段 + 刷新；卡片流只存在于伴随区。
+ * 漫游=步进链。头部一行=路径链（父级 › 当前 › 可能的子级，其余 …）+
+ * 右上角锁定与聚焦/漫游正反面切换；卡片流只存在于伴随区。
  */
 export function IdeasBoardPane({
   room,
   focus,
-  focusLabel,
-  focusLevel,
   focusLocked,
   onToggleFocusLock,
 }: {
   room: ContextRoomRecord;
   /** 焦点协调器输出：跨板块共享的当前焦点（编辑场景=章节/选区/产物，否则 Room）。 */
   focus: EmergenceFocusInput;
-  focusLabel: string | null;
-  focusLevel: EmergenceFocusLevel;
   focusLocked: boolean;
   onToggleFocusLock: () => void;
 }) {
@@ -55,12 +51,37 @@ export function IdeasBoardPane({
   // 树根听服务端的：导图根=mindmap:root，resolveCenter 兜底到 room/首节点
   const focusRootRef = resolveCenter(focusResult, focusResult?.focusRootRef ?? `room:${room.id}`);
 
-  const focusLabelText = focusLevel === 'selection'
-    ? t('contextRoom:emergence.selectionFocus')
-    : (focusLabel || room.title);
   const mindmapErrorText = mindmap.error === 'mindmap_no_content'
     ? t('contextRoom:emergence.mindmapNoContent')
     : t('contextRoom:emergence.mindmapFailed');
+
+  // 头部路径链：当前选中（无选中=根）只带直接父级与第一个子级，更远的层级收成 …
+  const chain = useMemo(() => {
+    if (!focusResult || focusResult.nodes.length === 0) return null;
+    const byId = new Map(focusResult.nodes.map((node) => [node.id, node]));
+    const parentOf = new Map<string, string>();
+    const firstChildOf = new Map<string, string>();
+    const childCount = new Map<string, number>();
+    for (const edge of focusResult.edges) {
+      if (!parentOf.has(edge.to)) parentOf.set(edge.to, edge.from);
+      if (!firstChildOf.has(edge.from)) firstChildOf.set(edge.from, edge.to);
+      childCount.set(edge.from, (childCount.get(edge.from) ?? 0) + 1);
+    }
+    const currentId = selectedNodeRef && byId.has(selectedNodeRef) ? selectedNodeRef : focusRootRef;
+    const current = byId.get(currentId);
+    if (!current) return null;
+    const parentId = parentOf.get(currentId);
+    const parent = parentId ? byId.get(parentId) ?? null : null;
+    const childId = firstChildOf.get(currentId);
+    const child = childId ? byId.get(childId) ?? null : null;
+    return {
+      leftGap: parent !== null && parentOf.has(parent.id),
+      parent,
+      current,
+      child,
+      rightGap: child !== null && (childCount.get(child.id) ?? 0) > 0,
+    };
+  }, [focusResult, selectedNodeRef, focusRootRef]);
 
   // 新导图=清图内选中：渲染期重置（无空帧）。上一份必须存 state
   // （存 ref 会在严格模式双渲染下丢重置）。
@@ -92,11 +113,6 @@ export function IdeasBoardPane({
       setWanderStart({ nodeRef: null, label: room.title });
       wanderFrom(null);
     }
-  };
-
-  const refresh = () => {
-    if (mode === 'focus') mindmap.regenerate();
-    else wanderFrom(wanderStart?.nodeRef ?? null);
   };
 
   const walkStep = (nodeRef: string) => {
@@ -154,35 +170,31 @@ export function IdeasBoardPane({
 
   return (
     <div className="context-room-thoughts-pane" data-variant="board" data-mode={mode}>
-      <div className="context-room-thoughts-focus" title={focusLabelText}>
-        <Sparkles aria-hidden="true" />
-        <span>{t('contextRoom:emergence.focusPrefix')}</span>
-        <strong>{focusLabelText}</strong>
-      </div>
-      <div className="context-room-thoughts-toolbar">
-        <div className="context-room-thoughts-seg" role="tablist" aria-label={t('contextRoom:emergence.modeLabel')}>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={mode === 'focus'}
-            className={mode === 'focus' ? 'is-active' : ''}
-            onClick={() => switchMode('focus')}
-          >
-            <Target aria-hidden="true" />
-            {t('contextRoom:emergence.modeFocus')}
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={mode === 'wander'}
-            className={mode === 'wander' ? 'is-active' : ''}
-            onClick={() => switchMode('wander')}
-          >
-            <Compass aria-hidden="true" />
-            {t('contextRoom:emergence.modeWander')}
-          </button>
-        </div>
-        <div className="context-room-thoughts-toolbar-tools">
+      <div className="context-room-thoughts-head">
+        {chain ? (
+          <nav className="context-room-thoughts-path" aria-label={t('contextRoom:emergence.pathLabel')}>
+            {chain.leftGap ? <span className="is-gap">…</span> : null}
+            {chain.parent ? (
+              <>
+                <button type="button" title={chain.parent.label} onClick={() => setSelectedNodeRef(chain.parent!.id)}>
+                  {chain.parent.label}
+                </button>
+                <span className="is-sep" aria-hidden="true">›</span>
+              </>
+            ) : null}
+            <strong className="is-current" title={chain.current.label}>{chain.current.label}</strong>
+            {chain.child ? (
+              <>
+                <span className="is-sep" aria-hidden="true">›</span>
+                <button type="button" title={chain.child.label} onClick={() => setSelectedNodeRef(chain.child!.id)}>
+                  {chain.child.label}
+                </button>
+                {chain.rightGap ? <span className="is-gap">…</span> : null}
+              </>
+            ) : null}
+          </nav>
+        ) : <div className="context-room-thoughts-path" />}
+        <div className="context-room-thoughts-head-actions">
           <button
             type="button"
             className={focusLocked ? 'context-room-thoughts-lock is-locked' : 'context-room-thoughts-lock'}
@@ -193,9 +205,23 @@ export function IdeasBoardPane({
           >
             {focusLocked ? <Lock aria-hidden="true" /> : <LockOpen aria-hidden="true" />}
           </button>
-          <button type="button" onClick={refresh} title={t('contextRoom:emergence.refresh')}>
-            <RotateCw aria-hidden="true" />
-            {t('contextRoom:emergence.refresh')}
+          <button
+            type="button"
+            className="context-room-thoughts-flip"
+            aria-label={t(mode === 'focus' ? 'contextRoom:emergence.switchToWander' : 'contextRoom:emergence.switchToFocus')}
+            title={t(mode === 'focus' ? 'contextRoom:emergence.switchToWander' : 'contextRoom:emergence.switchToFocus')}
+            onClick={() => switchMode(mode === 'focus' ? 'wander' : 'focus')}
+          >
+            <span className="context-room-thoughts-flip-inner" aria-hidden="true">
+              <span className="context-room-thoughts-flip-face is-front">
+                <Target aria-hidden="true" />
+                {t('contextRoom:emergence.modeFocus')}
+              </span>
+              <span className="context-room-thoughts-flip-face is-back">
+                <Compass aria-hidden="true" />
+                {t('contextRoom:emergence.modeWander')}
+              </span>
+            </span>
           </button>
         </div>
       </div>

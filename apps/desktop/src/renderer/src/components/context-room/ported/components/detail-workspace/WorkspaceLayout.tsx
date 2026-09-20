@@ -348,8 +348,6 @@ export function WorkspaceLayout({
                         selectedResourceId={selectedResourceId}
                         selectedResource={selectedResource}
                         focus={roomFocus.focus}
-                        focusLabel={roomFocus.label}
-                        focusLevel={roomFocus.level}
                         focusLocked={roomFocus.locked}
                         onToggleFocusLock={roomFocus.toggleLocked}
                         onCompanionQuote={onCompanionQuote}

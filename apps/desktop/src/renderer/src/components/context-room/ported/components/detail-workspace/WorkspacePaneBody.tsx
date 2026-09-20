@@ -3,7 +3,6 @@ import type { ContextRoomRecord, ContextRoomResource, ContextRoomWikiPageResourc
 import type {
   EmergenceCardDto,
   EmergenceFocusInput,
-  EmergenceFocusLevel,
   KnowledgeFileDto,
 } from '../../../../../../../shared/knowledge';
 import type { BoardId, BoardSubtab } from '../RoomIconSidebar';
@@ -29,8 +28,6 @@ export function WorkspacePaneBody({
   selectedResourceId,
   selectedResource,
   focus,
-  focusLabel,
-  focusLevel,
   focusLocked,
   onToggleFocusLock,
   onCompanionQuote,
@@ -61,10 +58,8 @@ export function WorkspacePaneBody({
   room: ContextRoomRecord;
   selectedResourceId: string | null;
   selectedResource: ContextRoomResource | null;
-  /** 焦点协调器输出：权威焦点档案与显示信息。 */
+  /** 焦点协调器输出：权威焦点档案。 */
   focus: EmergenceFocusInput;
-  focusLabel: string | null;
-  focusLevel: EmergenceFocusLevel;
   focusLocked: boolean;
   onToggleFocusLock: () => void;
   /** 伴随思路页签的「引用」：插回右区正在编辑的产物。 */
@@ -169,10 +164,8 @@ export function WorkspacePaneBody({
     if (subtab === 'companion') {
       return (
         <ThoughtsPane
-          variant="companion"
           room={room}
           focus={focus}
-          focusLabel={focusLabel}
           focusLocked={focusLocked}
           onToggleFocusLock={onToggleFocusLock}
           onQuote={onCompanionQuote}
@@ -234,8 +227,6 @@ export function WorkspacePaneBody({
       <IdeasBoardPane
         room={room}
         focus={focus}
-        focusLabel={focusLabel}
-        focusLevel={focusLevel}
         focusLocked={focusLocked}
         onToggleFocusLock={onToggleFocusLock}
       />

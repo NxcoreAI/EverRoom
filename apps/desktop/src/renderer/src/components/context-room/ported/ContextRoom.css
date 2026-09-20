@@ -2397,34 +2397,48 @@
   overflow: hidden;
 }
 
-/* 板块内页签条：中栏面板列顶部，切换工作/关系板块的二级视图。 */
+/* 板块内页签条：中栏面板列顶部，切换工作/关系板块的二级视图；
+   外层行不带页签按钮样式（伴随思路的动作行会 portal 进来）。 */
 .context-room-board-tabs {
   display: flex;
   flex: 0 0 auto;
   gap: 2px;
   align-items: center;
-  padding: 6px 10px 0;
+  padding: 6px 8px 0;
   border-bottom: 1px solid var(--cr-border);
   background: var(--cr-surface-secondary);
 }
 
-.context-room-board-tabs button {
-  padding: 5px 10px 6px;
+/* 列表可收缩：极窄中栏时页签名省略号截断，右侧动作按钮永不挤出边界 */
+.context-room-board-tabs-list {
+  display: flex;
+  flex: 0 1 auto;
+  min-width: 0;
+  align-items: center;
+  gap: 2px;
+}
+
+.context-room-board-tabs-list button {
+  padding: 5px 8px 6px;
   border: 0;
   border-bottom: 2px solid transparent;
   background: transparent;
   color: var(--cr-muted);
   font-size: 12px;
   font-weight: 500;
+  white-space: nowrap;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   cursor: pointer;
 }
 
-.context-room-board-tabs button:hover {
+.context-room-board-tabs-list button:hover {
   color: var(--cr-text);
   background: var(--cr-surface-hover);
 }
 
-.context-room-board-tabs button.is-active {
+.context-room-board-tabs-list button.is-active {
   border-bottom-color: var(--cr-blue);
   color: var(--cr-blue);
   font-weight: 600;
@@ -14188,78 +14202,8 @@
   background: var(--cr-surface-secondary);
 }
 
-.context-room-thoughts-world {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  flex-direction: column;
-  opacity: 0;
-  transform: translateY(14px) scale(0.985);
-  pointer-events: none;
-  visibility: hidden;
-  transition:
-    opacity var(--shell-motion-duration) var(--shell-motion-easing),
-    transform var(--shell-motion-duration) var(--shell-motion-easing),
-    visibility 0s linear var(--shell-motion-duration);
-}
-
-.context-room-thoughts-pane[data-mode='focus'] > [data-world='focus'],
-.context-room-thoughts-pane[data-mode='wander'] > [data-world='wander'] {
-  opacity: 1;
-  transform: none;
-  pointer-events: auto;
-  visibility: visible;
-  transition:
-    opacity var(--shell-motion-duration) var(--shell-motion-easing),
-    transform var(--shell-motion-duration) var(--shell-motion-easing),
-    visibility 0s;
-}
-
-.context-room-thoughts-header {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--cr-border);
-  background: var(--cr-surface);
-}
-
-.context-room-thoughts-pane[data-mode='wander'] > [data-world='wander'] > .context-room-thoughts-header {
-  background: transparent;
-}
-
-.context-room-thoughts-focus {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 6px;
-  color: var(--cr-muted);
-  font-size: 12px;
-}
-
-.context-room-thoughts-focus svg {
-  flex: 0 0 auto;
-  width: 14px;
-  height: 14px;
-  color: var(--cr-blue);
-}
-
-.context-room-thoughts-focus strong {
-  overflow: hidden;
-  color: var(--cr-text);
-  font-size: 13px;
-  font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.context-room-thoughts-pane[data-variant='board'] .context-room-thoughts-focus {
-  padding: 8px 12px 0;
-}
-
-.context-room-thoughts-lock {
+.context-room-thoughts-lock,
+.context-room-thoughts-expand {
   display: inline-flex;
   flex: 0 0 auto;
   align-items: center;
@@ -14274,7 +14218,8 @@
   cursor: pointer;
 }
 
-.context-room-thoughts-lock:hover {
+.context-room-thoughts-lock:hover,
+.context-room-thoughts-expand:hover {
   background: var(--cr-surface-hover);
   color: var(--cr-muted);
 }
@@ -14285,41 +14230,10 @@
   color: var(--cr-blue);
 }
 
-.context-room-thoughts-lock svg {
+.context-room-thoughts-lock svg,
+.context-room-thoughts-expand svg {
   width: 14px;
   height: 14px;
-}
-
-.context-room-thoughts-wander-actions {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 6px;
-}
-
-.context-room-thoughts-wander-actions button {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 5px 9px;
-  border: 1px solid var(--cr-border);
-  border-radius: 7px;
-  background: var(--cr-surface);
-  color: var(--cr-muted);
-  font-size: 11px;
-  font-weight: 500;
-  white-space: nowrap;
-  cursor: pointer;
-}
-
-.context-room-thoughts-wander-actions button:hover {
-  border-color: var(--cr-blue);
-  color: var(--cr-blue);
-}
-
-.context-room-thoughts-wander-actions svg {
-  width: 12px;
-  height: 12px;
 }
 
 .context-room-emergence-cards {
@@ -14529,104 +14443,22 @@
   white-space: nowrap;
 }
 
-.context-room-thoughts-entry {
-  flex: 0 0 auto;
-  display: flex;
-  justify-content: center;
-  padding: 10px 12px 14px;
-  border-top: 1px solid var(--cr-border);
-}
-
-.context-room-thoughts-entry button {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding: 8px 18px;
-  border: 1px dashed color-mix(in srgb, var(--cr-blue) 40%, transparent);
-  border-radius: 999px;
-  background: none;
-  color: var(--cr-blue);
-  font-size: 12px;
-  cursor: pointer;
-  transition: background var(--shell-motion-duration) var(--shell-motion-easing);
-}
-
-.context-room-thoughts-entry button:hover {
-  background: var(--cr-blue-soft);
-}
-
-.context-room-thoughts-entry svg {
-  width: 14px;
-  height: 14px;
-  animation: context-room-thoughts-breathe 2.8s ease-in-out infinite;
-}
-
-@keyframes context-room-thoughts-breathe {
-  50% { opacity: 0.55; transform: translateX(2px); }
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .context-room-thoughts-world,
   .context-room-thoughts-pane {
+    transition: none;
+  }
+
+  .context-room-thoughts-flip-inner {
     transition: none;
   }
 
   .context-room-emergence-card {
     animation: none;
   }
-
-  .context-room-thoughts-entry svg {
-    animation: none;
-  }
 }
 
-.context-room-thoughts-header-actions {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 8px;
-}
 
-.context-room-thoughts-view-toggle {
-  display: inline-flex;
-  overflow: hidden;
-  border: 1px solid var(--cr-border);
-  border-radius: 8px;
-  background: var(--cr-surface);
-}
-
-.context-room-thoughts-view-toggle button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 24px;
-  padding: 0;
-  border: none;
-  background: none;
-  color: var(--cr-tertiary);
-  cursor: pointer;
-}
-
-.context-room-thoughts-view-toggle button + button {
-  border-left: 1px solid var(--cr-border);
-}
-
-.context-room-thoughts-view-toggle button:hover {
-  color: var(--cr-muted);
-}
-
-.context-room-thoughts-view-toggle button.is-active {
-  background: var(--cr-blue-soft);
-  color: var(--cr-blue);
-}
-
-.context-room-thoughts-view-toggle svg {
-  width: 14px;
-  height: 14px;
-}
-
-/* —— 思路板块（上图下卡）：工具条 + 图区常驻 —— */
+/* —— 思路板块（上图下卡）：头部一行（路径链 + 锁定 + 聚焦/漫游正反面）+ 图区常驻 —— */
 .context-room-thoughts-pane[data-variant='board'] {
   display: flex;
   flex-direction: column;
@@ -14636,80 +14468,116 @@
   background: var(--cr-surface);
 }
 
-.context-room-thoughts-toolbar {
+.context-room-thoughts-head {
   display: flex;
   flex: 0 0 auto;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: 10px;
+  min-height: 34px;
   padding: 8px 12px 0;
 }
 
-.context-room-thoughts-seg {
-  display: inline-flex;
+/* 路径链：当前节点高亮，父级/子级灰，更远的层级收成 …；标签一律显示全文 */
+.context-room-thoughts-path {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  align-items: center;
+  gap: 2px;
   overflow: hidden;
-  border: 1px solid var(--cr-border);
-  border-radius: 8px;
-  background: var(--cr-surface);
+  white-space: nowrap;
 }
 
-.context-room-thoughts-seg button {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 4px 12px;
-  border: 0;
-  background: transparent;
+.context-room-thoughts-path > button {
+  padding: 3px 6px;
+  border: none;
+  border-radius: 6px;
+  background: none;
   color: var(--cr-muted);
   font-size: 12px;
+  line-height: 1.2;
+  white-space: nowrap;
   cursor: pointer;
 }
 
-.context-room-thoughts-seg button + button {
-  border-left: 1px solid var(--cr-border);
-}
-
-.context-room-thoughts-seg button:hover {
+.context-room-thoughts-path > button:hover {
   background: var(--cr-surface-hover);
   color: var(--cr-text);
 }
 
-.context-room-thoughts-seg button.is-active {
-  background: var(--cr-blue-soft);
-  color: var(--cr-blue);
+.context-room-thoughts-path > strong {
+  color: var(--cr-text);
+  font-size: 13px;
   font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
 }
 
-.context-room-thoughts-seg svg {
-  width: 12px;
-  height: 12px;
+.context-room-thoughts-path .is-sep,
+.context-room-thoughts-path .is-gap {
+  flex: 0 0 auto;
+  padding: 0 1px;
+  color: var(--cr-tertiary);
+  font-size: 12px;
 }
 
-.context-room-thoughts-toolbar-tools {
+.context-room-thoughts-head-actions {
   display: flex;
   flex: 0 0 auto;
+  align-items: center;
   gap: 6px;
 }
 
-.context-room-thoughts-toolbar-tools button {
+/* 聚焦/漫游正反面单按钮：点一下 3D 翻面切换 */
+.context-room-thoughts-flip {
+  position: relative;
+  flex: 0 0 auto;
+  width: 68px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--cr-blue) 35%, transparent);
+  border-radius: 8px;
+  background: var(--cr-blue-soft);
+  color: var(--cr-blue);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  perspective: 220px;
+}
+
+.context-room-thoughts-flip:hover {
+  border-color: var(--cr-blue);
+}
+
+.context-room-thoughts-flip-inner {
+  display: block;
+  width: 100%;
+  height: 100%;
+  transform-style: preserve-3d;
+  transition: transform 0.42s cubic-bezier(0.22, 0.68, 0.32, 1);
+}
+
+.context-room-thoughts-pane[data-mode='wander'] .context-room-thoughts-flip-inner {
+  transform: rotateY(180deg);
+}
+
+.context-room-thoughts-flip-face {
+  position: absolute;
+  inset: 0;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 5px;
-  padding: 4px 10px;
-  border: 1px solid var(--cr-border);
-  border-radius: 8px;
-  background: var(--cr-surface);
-  color: var(--cr-muted);
-  font-size: 12px;
-  cursor: pointer;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
 }
 
-.context-room-thoughts-toolbar-tools button:hover {
-  background: var(--cr-surface-hover);
-  color: var(--cr-text);
+.context-room-thoughts-flip-face.is-back {
+  transform: rotateY(180deg);
 }
 
-.context-room-thoughts-toolbar-tools svg {
+.context-room-thoughts-flip-face svg {
   width: 12px;
   height: 12px;
 }
@@ -14719,6 +14587,119 @@
   flex: 1 1 auto;
   min-height: 0;
   margin: 10px 12px 12px;
+}
+
+/* —— 伴随思路：面板无标题行，动作行（锁定/展开/翻面）portal 到页签行右端 —— */
+.context-room-thoughts-pane[data-variant='companion'] {
+  display: flex;
+  flex-direction: column;
+}
+
+.context-room-thoughts-companion-actions {
+  margin-left: auto;
+  gap: 4px;
+  padding-bottom: 5px;
+}
+
+/* 动作行被 portal 出面板根：翻面旋转改由行自身的 data-mode 驱动 */
+.context-room-thoughts-head-actions[data-mode='wander'] .context-room-thoughts-flip-inner {
+  transform: rotateY(180deg);
+}
+
+/* —— 思维导图大弹窗：尺寸与窗口同比例（86vw × 86vh），淡入+弹起，关闭反向 —— */
+.context-room-mindmap-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  display: grid;
+  place-items: center;
+  background: rgba(15, 15, 15, 0.32);
+  animation: context-room-mindmap-fade var(--shell-motion-duration) var(--shell-motion-easing) backwards;
+  transition: opacity var(--shell-motion-duration) var(--shell-motion-easing);
+}
+
+.context-room-mindmap-overlay.is-closing {
+  pointer-events: none;
+  opacity: 0;
+}
+
+.context-room-mindmap-modal {
+  display: flex;
+  width: 86vw;
+  height: 86vh;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--cr-border);
+  border-radius: 14px;
+  background: var(--cr-surface);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.22);
+  animation: context-room-mindmap-pop var(--shell-motion-duration) var(--shell-motion-easing) backwards;
+  transition: transform var(--shell-motion-duration) var(--shell-motion-easing);
+}
+
+.context-room-mindmap-overlay.is-closing .context-room-mindmap-modal {
+  transform: scale(0.96);
+}
+
+@keyframes context-room-mindmap-fade {
+  from { opacity: 0; }
+}
+
+@keyframes context-room-mindmap-pop {
+  from { opacity: 0; transform: scale(0.94) translateY(10px); }
+}
+
+.context-room-mindmap-head {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--cr-border);
+}
+
+.context-room-mindmap-head .context-room-thoughts-path > strong {
+  font-size: 14px;
+}
+
+.context-room-mindmap-close {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: none;
+  color: var(--cr-tertiary);
+  cursor: pointer;
+}
+
+.context-room-mindmap-close:hover {
+  background: var(--cr-surface-hover);
+  color: var(--cr-muted);
+}
+
+.context-room-mindmap-close svg {
+  width: 15px;
+  height: 15px;
+}
+
+.context-room-mindmap-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 12px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .context-room-mindmap-overlay,
+  .context-room-mindmap-modal {
+    animation: none;
+    transition: none;
+  }
 }
 
 /* 画布右上角悬浮操作：缩小/放大/自适应/回中心 */
@@ -14781,12 +14762,6 @@
 
 
 /* 知识涌现图（聚焦树 + 漫步步进链）：布局坐标来自 treeLayout.ts 的尺寸常量，CSS 只管配色字体 */
-.context-room-thoughts-graph {
-  position: relative;
-  min-height: 0;
-  flex: 1;
-}
-
 .eg-viewport {
   position: relative;
   overflow: hidden;
@@ -15292,10 +15267,6 @@ button.eg-walk.is-next:hover {
   .eg-edge-label {
     transition: none;
   }
-}
-
-.context-room-thoughts-pane[data-variant='companion'] .context-room-thoughts-entry {
-  padding: 8px 10px 10px;
 }
 
 .context-room-workspace-editor {
