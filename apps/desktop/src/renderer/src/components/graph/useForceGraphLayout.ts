@@ -13,6 +13,9 @@ export interface ForceGraphViewportHandle {
   fitView(minScale?: number): void
 }
 
+/** 面板拖动停稳后多久应用布局世界尺寸；拖动期间每帧都重热模拟会让图谱持续洗牌。 */
+const WORLD_RESIZE_SETTLE_MS = 150
+
 /** 从已终结控制器的快照收集最后发布的坐标（id → 坐标），供下一代布局继承。 */
 function collectSeedPositions(controller: ForceGraphLayoutController): Map<string, { x: number; y: number }> {
   const { nodeIds, positions } = controller.snapshot
@@ -94,6 +97,7 @@ export function useForceGraphLayout({
   const [controller, setController] = useState<ForceGraphLayoutController | null>(null)
   const controllerRef = useRef<ForceGraphLayoutController | null>(null)
   const settleTimersRef = useRef<Array<ReturnType<typeof setTimeout>>>([])
+  const worldSettleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const followRafRef = useRef<number | null>(null)
   const worldRef = useRef({ height: 0, width: 0 })
 
@@ -160,6 +164,10 @@ export function useForceGraphLayout({
       return
     }
     worldRef.current = { height: naturalWorldHeight, width: naturalWorldWidth }
+    if (worldSettleTimerRef.current !== null) {
+      clearTimeout(worldSettleTimerRef.current)
+      worldSettleTimerRef.current = null
+    }
     controllerRef.current = next
     setController(next)
     // onFatal 已负责日志；这里只消化 ready 的拒绝，避免未处理 Promise。
@@ -206,16 +214,27 @@ export function useForceGraphLayout({
     }
   }, [positions, scheduleSettleFit, settleFit, canvasRef, controller])
 
-  useEffect(() => clearSettleTimers, [clearSettleTimers])
+  useEffect(() => () => {
+    clearSettleTimers()
+    if (worldSettleTimerRef.current !== null) clearTimeout(worldSettleTimerRef.current)
+  }, [clearSettleTimers])
   const resize = useCallback((width: number, height: number) => {
     if (!controller) return
     const worldWidth = Math.max(width, naturalWorldWidth)
     const worldHeight = Math.max(height, naturalWorldHeight)
-    controller.resize(worldWidth, worldHeight)
     if (worldRef.current.width === worldWidth && worldRef.current.height === worldHeight) return
-    // 世界尺寸变化：中心力换到新世界中心，节点群随后迁移，安排稳定后对准。
-    worldRef.current = { height: worldHeight, width: worldWidth }
-    scheduleSettleFit()
+    // 拖动分栏时面板每帧变宽：布局世界、中心力与自动对准若逐帧跟随，力导向
+    // 会被重热 60 次/秒追着移动的世界中心洗牌（图谱表现为频繁闪烁）。画布
+    // 视口（PixiForceGraphCanvas 内部）仍逐帧贴合面板；世界尺寸等拖动停稳
+    // 后一次性应用并安排稳定后对准。
+    if (worldSettleTimerRef.current !== null) clearTimeout(worldSettleTimerRef.current)
+    worldSettleTimerRef.current = setTimeout(() => {
+      worldSettleTimerRef.current = null
+      if (worldRef.current.width === worldWidth && worldRef.current.height === worldHeight) return
+      worldRef.current = { height: worldHeight, width: worldWidth }
+      controllerRef.current?.resize(worldWidth, worldHeight)
+      scheduleSettleFit()
+    }, WORLD_RESIZE_SETTLE_MS)
   }, [controller, naturalWorldHeight, naturalWorldWidth, scheduleSettleFit])
   // 用户以任意手势接管画布（拖节点/平移/缩放）后停掉相机自动化：
   // 取消跟随循环、清掉待触发的延时对准，视野完全交给用户。

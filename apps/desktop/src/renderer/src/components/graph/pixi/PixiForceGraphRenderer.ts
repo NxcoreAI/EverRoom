@@ -678,6 +678,11 @@ export function createPixiForceGraphRenderer(
         centerOnLayoutPending = false
         centerOnContent()
       }
+      // renderer.resize 会重新分配画布后备存储（内容被清空），常规重绘挂在
+      // 下一轮 ticker（rAF）。主线程被长任务压住时（如拖分栏引发整树重渲染），
+      // 「清空」与「重绘」会落在两次合成提交里，呈现出空白帧（高频闪烁）。
+      // 这里同步补一帧渲染，让清空与重绘始终同帧提交。
+      app.render?.()
     },
     setSelectedIndex(nextIndex) {
       if (destroyed || nextIndex === selectedIndex) return

@@ -67,6 +67,7 @@ export interface PixiApplication {
   stage: PixiDisplayList
   canvas?: unknown
   view?: unknown
+  render?(): void
   destroy(removeView?: boolean, options?: unknown): void
 }
 
