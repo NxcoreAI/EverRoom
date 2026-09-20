@@ -1,6 +1,10 @@
 import type { RoomAppliedEntitySource, RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract';
 import type { ContextRoomRecord, ContextRoomResource, ContextRoomWikiPageResource } from '../../types';
-import type { EmergenceCardDto, KnowledgeFileDto } from '../../../../../../../shared/knowledge';
+import type {
+  EmergenceCardDto,
+  EmergenceFocusInput,
+  KnowledgeFileDto,
+} from '../../../../../../../shared/knowledge';
 import type { BoardId, BoardSubtab } from '../RoomIconSidebar';
 import {
   ActivityPane,
@@ -23,7 +27,9 @@ export function WorkspacePaneBody({
   room,
   selectedResourceId,
   selectedResource,
-  selectionText,
+  focus,
+  focusLocked,
+  onToggleFocusLock,
   onCompanionQuote,
   backendDocuments,
   trashedDocuments,
@@ -52,8 +58,10 @@ export function WorkspacePaneBody({
   room: ContextRoomRecord;
   selectedResourceId: string | null;
   selectedResource: ContextRoomResource | null;
-  /** 右区编辑器当前选区文本（伴随思路页签聚焦用）。 */
-  selectionText: string | null;
+  /** 焦点协调器输出：权威焦点档案。 */
+  focus: EmergenceFocusInput;
+  focusLocked: boolean;
+  onToggleFocusLock: () => void;
   /** 伴随思路页签的「引用」：插回右区正在编辑的产物。 */
   onCompanionQuote: (card: EmergenceCardDto) => void;
   backendDocuments: RoomDocument[];
@@ -154,14 +162,12 @@ export function WorkspacePaneBody({
   if (board === 'artifacts') {
     // 伴随思路页签：中栏卡片流，焦点跟右区打开的产物，引用插回编辑器。
     if (subtab === 'companion') {
-      const focusDoc = selectedResource?.kind === 'cloud-doc' ? selectedResource : null;
       return (
         <ThoughtsPane
-          variant="companion"
           room={room}
-          focusDocumentId={focusDoc?.binding.docId ?? null}
-          focusDocumentTitle={focusDoc?.name ?? null}
-          focusSelectionText={selectionText}
+          focus={focus}
+          focusLocked={focusLocked}
+          onToggleFocusLock={onToggleFocusLock}
           onQuote={onCompanionQuote}
         />
       );
@@ -217,7 +223,14 @@ export function WorkspacePaneBody({
   }
 
   if (board === 'thoughts') {
-    return <IdeasBoardPane room={room} />;
+    return (
+      <IdeasBoardPane
+        room={room}
+        focus={focus}
+        focusLocked={focusLocked}
+        onToggleFocusLock={onToggleFocusLock}
+      />
+    );
   }
 
   return (

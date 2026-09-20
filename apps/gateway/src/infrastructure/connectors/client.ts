@@ -1,6 +1,8 @@
-import { chmodSync, mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { chmodSync, existsSync, mkdirSync, statSync } from "node:fs";
+import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
+import { runSqliteMigrations } from "@nxcore/migration-kit";
+import { connectorDataMigrations } from "./data-migrations.js";
 
 export interface ConnectorDatabase { sqlite: Database.Database; close(): void; }
 const schema = `
@@ -51,4 +53,34 @@ function migrate(sqlite: Database.Database): void {
   }
 }
 
-export function createConnectorDatabase(databasePath:string): ConnectorDatabase { if(databasePath!==":memory:")mkdirSync(dirname(databasePath),{recursive:true}); const sqlite=new Database(databasePath); if(databasePath!==":memory:")try{chmodSync(databasePath,0o600);}catch{} sqlite.pragma("journal_mode = WAL"); sqlite.pragma("foreign_keys = ON"); sqlite.pragma("busy_timeout = 5000"); sqlite.pragma("synchronous = NORMAL"); sqlite.exec(schema); migrate(sqlite); return {sqlite,close:()=>sqlite.close()}; }
+export function createConnectorDatabase(databasePath: string): ConnectorDatabase {
+  if (databasePath !== ":memory:") mkdirSync(dirname(databasePath), { recursive: true });
+  let isFreshStore = true;
+  if (databasePath !== ":memory:") {
+    try {
+      isFreshStore = !existsSync(databasePath) || statSync(databasePath).size === 0;
+    } catch {
+      isFreshStore = true;
+    }
+  }
+  const sqlite = new Database(databasePath);
+  if (databasePath !== ":memory:") {
+    try { chmodSync(databasePath, 0o600); } catch { /* 文件系统不支持时忽略 */ }
+  }
+  sqlite.pragma("journal_mode = WAL");
+  sqlite.pragma("foreign_keys = ON");
+  sqlite.pragma("busy_timeout = 5000");
+  sqlite.pragma("synchronous = NORMAL");
+  sqlite.exec(schema);
+  migrate(sqlite);
+  runSqliteMigrations({
+    storeId: "connectors.sqlite",
+    sqlite,
+    databasePath,
+    backupDir: databasePath === ":memory:" ? null : join(dirname(databasePath), "..", "backups"),
+    isFreshStore,
+    migrations: connectorDataMigrations,
+    close: () => sqlite.close(),
+  });
+  return { sqlite, close: () => sqlite.close() };
+}

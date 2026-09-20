@@ -1,11 +1,10 @@
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import type { TypeBoxTypeProvider } from "@fastify/type-provider-typebox";
 import { randomBytes } from "node:crypto";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { eq } from "drizzle-orm";
 import { createDatabase } from "../src/infrastructure/database/client.js";
 import { runtimeConfigStore } from "../src/infrastructure/database/schema.js";
 import { aiRelayRoutes } from "../src/modules/ai-relay/routes.js";
@@ -39,21 +38,23 @@ function sessionApp(options: { sessions: AiRelaySessionStore; refresh?: () => vo
   return app;
 }
 
-async function managerWithPayload(payload: Record<string, unknown>, options?: {
+async function managerWithPayload(payload: Record<string, unknown> | null, options?: {
   sessions?: AiRelaySessionStore;
-  source?: "saas" | "user";
+  defaultPath?: string;
 }) {
   const root = await directory();
   await mkdir(join(root, "security"), { recursive: true });
   const database = createDatabase(join(root, "gateway.sqlite"), resolve("drizzle"));
   databases.push(database.sqlite);
-  database.db.insert(runtimeConfigStore).values({
-    source: options?.source ?? "saas",
-    payload: payload as never,
-    schemaVersion: 1,
-    configVersion: 1,
-    updatedAt: new Date(),
-  }).run();
+  if (payload) {
+    database.db.insert(runtimeConfigStore).values({
+      source: "user",
+      payload: payload as never,
+      schemaVersion: 1,
+      configVersion: 1,
+      updatedAt: new Date(),
+    }).run();
+  }
   const sessions = options?.sessions ?? new AiRelaySessionStore();
   sessions.set({
     baseUrl: "https://relay.example.com",
@@ -64,14 +65,14 @@ async function managerWithPayload(payload: Record<string, unknown>, options?: {
   const manager = new RuntimeConfigManager(
     database.db,
     new SecretStore(join(root, "security", "credentials.enc"), key()),
-    resolve("runtime-config.default.json"),
+    options?.defaultPath ?? resolve("runtime-config.default.json"),
     null,
     () => {
       const session = sessions.current();
       return session ? { proxyOrigin: session.proxyOrigin, token: "gw-self-token-51" } : null;
     },
   );
-  return { manager, sessions, database };
+  return { manager, sessions };
 }
 
 describe("ai relay session store", () => {
@@ -242,60 +243,54 @@ describe("ai relay proxy", () => {
 });
 
 describe("runtime config relay slot rewrite", () => {
-  it("rewrites configured LLM slots to the local proxy while asr and service URLs stay untouched", async () => {
-    const { manager } = await managerWithPayload({
-      schemaVersion: 1,
-      primary: { provider: "openai-compatible", api: "openai-completions", model: "qwen-plus", baseUrl: "https://relay.example.com/v1", apiKey: "saas-key" },
-      background: { provider: "openai-compatible", api: "openai-completions", model: "qwen-flash", baseUrl: "https://relay.example.com/v1", apiKey: "saas-key" },
-      cursorCompletion: { provider: "openai-compatible", api: "openai-completions", model: "qwen-turbo", baseUrl: "https://relay.example.com/v1", apiKey: "saas-key" },
-      vlm: { provider: "openai-compatible", api: "openai-completions", model: "qwen-vl-max", baseUrl: "https://relay.example.com/v1", apiKey: "saas-key" },
-      webSearch: { provider: "openai-compatible", api: "openai-completions", model: "qwen-plus", baseUrl: "https://relay.example.com/v1", apiKey: "search-key" },
-      asr: { provider: "aliyun", model: "qwen-audio-3.0-asr-flash-filetrans", baseUrl: "https://dashscope.aliyuncs.com/api/v1", apiKey: "asr-key" },
-      knowledge: {
-        llm: { provider: "openai-compatible", api: "openai-completions", model: "qwen-plus", baseUrl: "https://relay.example.com/v1", apiKey: "saas-key" },
-        embedding: { provider: "openai-compatible", api: "openai-completions", model: "text-embedding-v4", baseUrl: "https://relay.example.com/v1", apiKey: "saas-key" },
-      },
-    });
+  it("rewrites built-in default LLM slots (model declared, no baseUrl) once the relay activates", async () => {
+    const { manager } = await managerWithPayload(null);
 
     const snapshot = manager.snapshot(false);
+    expect(snapshot.selectedSource).toBe("default");
     const slotOf = (name: string): Record<string, unknown> =>
       (snapshot.config as unknown as Record<string, Record<string, unknown> | undefined>)[name]!;
-    expect(snapshot.selectedSource).toBe("saas");
+    // 内置 JSON 只声明 model：relay 激活即补齐代理出口与会话令牌，四要素
+    // 直接完整（applyRuntimeConfig/inheritPrimaryDefaults 下游继承退化为兜底）。
+    expect(slotOf("primary")).toMatchObject({
+      model: "deepseek-v4-flash",
+      baseUrl: "http://127.0.0.1:49152/ai-relay/v1",
+      apiKey: "gw-self-token-51",
+    });
     for (const slot of ["primary", "background", "cursorCompletion", "vlm", "webSearch"]) {
       expect(slotOf(slot).baseUrl).toBe("http://127.0.0.1:49152/ai-relay/v1");
       expect(slotOf(slot).apiKey).toBe("gw-self-token-51");
       expect(slotOf(slot).model).toBeTruthy();
+      expect(slotOf(slot).provider).toBeTruthy();
     }
-    const knowledge = slotOf("knowledge");
-    const knowledgeLlm = knowledge.llm as Record<string, unknown>;
-    const knowledgeEmbedding = knowledge.embedding as Record<string, unknown>;
-    expect(knowledgeLlm.baseUrl).toBe("http://127.0.0.1:49152/ai-relay/v1");
-    expect(knowledgeLlm.apiKey).toBe("gw-self-token-51");
-    expect(knowledgeEmbedding.baseUrl).toBe("http://127.0.0.1:49152/ai-relay/v1");
-    expect(knowledgeEmbedding.apiKey).toBe("gw-self-token-51");
-    const asr = slotOf("asr");
-    expect(asr.baseUrl).toBe("https://dashscope.aliyuncs.com/api/v1");
-    expect(asr.apiKey).toBe("asr-key");
+    const embedding = (slotOf("knowledge").embedding as Record<string, unknown>);
+    expect(embedding).toMatchObject({
+      model: "text-embedding-v4",
+      baseUrl: "http://127.0.0.1:49152/ai-relay/v1",
+      apiKey: "gw-self-token-51",
+    });
+    // asr 与 memory/knowledge 服务地址不重写：内置占位原样保留。
+    expect(slotOf("asr")).toMatchObject({ baseUrl: "", apiKey: "" });
+    expect(slotOf("memory")).toMatchObject({ baseUrl: "", apiKey: "" });
+    expect(slotOf("knowledge").baseUrl).toBe("");
   });
 
-  it("rewrites legacy upstream paths to the canonical relay prefix instead of inheriting them", async () => {
-    const { manager } = await managerWithPayload({
+  it("only rewrites slots that declare a model, even when a baseUrl is present", async () => {
+    const root = await directory();
+    const defaultPath = join(root, "runtime-config.custom.json");
+    await writeFile(defaultPath, JSON.stringify({
       schemaVersion: 1,
-      primary: { provider: "openai-compatible", api: "openai-completions", model: "qwen-plus", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", apiKey: "legacy-key" },
-      background: { provider: "openai-compatible", api: "openai-completions", model: "qwen-flash", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", apiKey: "legacy-key" },
-      asr: { provider: "aliyun", model: "qwen-audio-3.0-asr-flash-filetrans", baseUrl: "https://dashscope.aliyuncs.com/api/v1", apiKey: "asr-key" },
-    });
+      primary: { provider: "openai-compatible", model: "with-model", baseUrl: "https://legacy.example/v1", api: "openai-completions", apiKey: "legacy-key" },
+      vlm: { provider: "openai-compatible", model: "", baseUrl: "https://legacy.example/v1", api: "openai-completions", apiKey: "legacy-key" },
+    }));
+    const { manager } = await managerWithPayload(null, { defaultPath });
 
     const snapshot = manager.snapshot(false);
-    // 过渡期下发的是旧方案直连地址：relay 激活时 host/path 整体换成中转站
-    // 出口（默认 /v1），不继承 /compatible-mode/v1——否则 new-api 会 404。
+    // 重写判定看 model 非空：无 model 的槽位即使带着旧 baseUrl 也不动。
     expect(snapshot.config.primary?.baseUrl).toBe("http://127.0.0.1:49152/ai-relay/v1");
     expect(snapshot.config.primary?.apiKey).toBe("gw-self-token-51");
-    expect(snapshot.config.background?.baseUrl).toBe("http://127.0.0.1:49152/ai-relay/v1");
-    // asr 不重写：旧方案直连地址原样保留（relay 失效回退时同样直接可用）。
-    const slotOf = (name: string): Record<string, unknown> =>
-      (snapshot.config as unknown as Record<string, Record<string, unknown> | undefined>)[name]!;
-    expect(slotOf("asr").baseUrl).toBe("https://dashscope.aliyuncs.com/api/v1");
+    expect(snapshot.config.vlm?.baseUrl).toBe("https://legacy.example/v1");
+    expect(snapshot.config.vlm?.apiKey).toBe("legacy-key");
   });
 
   it("does not rewrite when the user source is explicitly selected", async () => {
@@ -303,7 +298,7 @@ describe("runtime config relay slot rewrite", () => {
     const { manager } = await managerWithPayload({
       schemaVersion: 1,
       primary: { provider: "openai-compatible", api: "openai-completions", model: "my-model", baseUrl: "https://api.my-provider.com/v1", apiKey: "my-key" },
-    }, { sessions, source: "user" });
+    }, { sessions });
 
     const snapshot = manager.snapshot(false);
     expect(snapshot.selectedSource).toBe("user");
@@ -313,10 +308,7 @@ describe("runtime config relay slot rewrite", () => {
 
   it("stops rewriting once the session is cleared and refresh() re-resolves", async () => {
     const sessions = new AiRelaySessionStore();
-    const { manager } = await managerWithPayload({
-      schemaVersion: 1,
-      primary: { provider: "openai-compatible", api: "openai-completions", model: "qwen-plus", baseUrl: "https://relay.example.com/v1", apiKey: "saas-key" },
-    }, { sessions });
+    const { manager } = await managerWithPayload(null, { sessions });
     expect(manager.snapshot(false).config.primary?.baseUrl).toBe("http://127.0.0.1:49152/ai-relay/v1");
 
     // 生产路径：DELETE /v1/ai-relay/session 后由路由触发 refresh()。
@@ -324,53 +316,29 @@ describe("runtime config relay slot rewrite", () => {
     manager.refresh();
 
     const snapshot = manager.snapshot(false);
-    expect(snapshot.config.primary?.baseUrl).toBe("https://relay.example.com/v1");
-    expect(snapshot.config.primary?.apiKey).toBe("saas-key");
+    expect(snapshot.selectedSource).toBe("default");
+    expect(snapshot.config.primary?.baseUrl).toBe("");
+    expect(snapshot.config.primary?.apiKey).toBe("");
   });
 
   it("refresh() re-resolves and emits onChange", async () => {
-    const { manager, sessions } = await managerWithPayload({
-      schemaVersion: 1,
-      primary: { provider: "openai-compatible", api: "openai-completions", model: "qwen-plus", baseUrl: "https://relay.example.com/v1", apiKey: "saas-key" },
-    });
+    const { manager, sessions } = await managerWithPayload(null);
     const listener = vi.fn();
     const unsubscribe = manager.onChange(listener);
     sessions.clear();
     manager.refresh();
     expect(listener).toHaveBeenCalledTimes(1);
-    expect(manager.snapshot(false).config.primary?.apiKey).toBe("saas-key");
+    expect(manager.snapshot(false).config.primary?.apiKey).toBe("");
     unsubscribe();
   });
 });
 
-describe("runtime config saas source authority", () => {
-  it("stores the saas payload verbatim so a cleared key stays cleared", async () => {
-    const { manager, database, sessions } = await managerWithPayload({
-      schemaVersion: 1,
-      primary: { provider: "openai-compatible", api: "openai-completions", model: "qwen-plus", baseUrl: "https://relay.example.com/v1", apiKey: "old-saas-key" },
-    });
-
-    // 平台撤销槽位密钥（下发不含 apiKey 的槽位）→ 旧值必须真正消失，
-    // 否则 relay 断开回退时仍会带着平台密钥直连上游。
-    manager.set("saas", {
-      schemaVersion: 1,
-      primary: { provider: "openai-compatible", api: "openai-completions", model: "qwen-plus", baseUrl: "https://relay.example.com/v1" },
-    });
-    const stored = database.db.select().from(runtimeConfigStore).where(eq(runtimeConfigStore.source, "saas")).get();
-    const primary = (stored?.payload as { primary?: Record<string, unknown> } | undefined)?.primary;
-    expect(primary).toBeTruthy();
-    expect("apiKey" in primary!).toBe(false);
-    // relay 断开后回退到原值：清除过的密钥必须真正消失，而不是旧值复活。
-    sessions.clear();
-    manager.refresh();
-    expect(manager.snapshot(false).config.primary?.apiKey).toBe("");
-  });
-
+describe("runtime config user source masked preserve", () => {
   it("keeps the masked-preserve round-trip for the user source", async () => {
     const { manager } = await managerWithPayload({
       schemaVersion: 1,
       primary: { provider: "openai-compatible", api: "openai-completions", model: "my-model", baseUrl: "https://api.my-provider.com/v1", apiKey: "my-key" },
-    }, { source: "user" });
+    });
 
     manager.set("user", {
       schemaVersion: 1,

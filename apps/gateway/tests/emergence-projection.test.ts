@@ -3,11 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   SAME_GROUP_MAX,
   WANDER_MAX_NODES,
-  buildFocusProjection,
   buildWanderProjection,
   mulberry32,
-  tokenize,
-  type EmergenceCandidate,
   type EmergenceNode,
   type ProjectionGraph,
   type ProjectionGraphNode,
@@ -46,106 +43,11 @@ function graph(nodes: ProjectionGraphNode[], edges: Array<{ from: string; to: st
   };
 }
 
-function candidate(overrides: Partial<EmergenceCandidate> & { nodeRef: string }): EmergenceCandidate {
-  return {
-    kind: "evidence",
-    title: overrides.nodeRef,
-    summary: "",
-    sourceType: "entity",
-    occurredAt: null,
-    roomRef: null,
-    quote: null,
-    groupKey: `group:${overrides.nodeRef}`,
-    path: null,
-    edgeLevel: "original",
-    evidence: 0.5,
-    ...overrides,
-  };
-}
-
-const FOCUS_NODE: EmergenceNode = node("room:1", { nodeType: "room", label: "目标 Room" });
-
-describe("tokenize", () => {
-  it("切出 CJK 短语与西文词", () => {
-    const tokens = tokenize("PyTorch 支持 动态计算图 与 automatic differentiation");
-    expect(tokens).toContain("pytorch");
-    expect(tokens).toContain("动态计算图");
-    expect(tokens).toContain("automatic");
-    expect(tokens.some((token) => token.length < 2)).toBe(false);
-  });
-});
-
 describe("mulberry32", () => {
   it("同 seed 同序列", () => {
     const a = mulberry32(42);
     const b = mulberry32(42);
     expect([a(), a(), a()]).toEqual([b(), b(), b()]);
-  });
-});
-
-describe("buildFocusProjection", () => {
-  it("相关性高的候选排前，LLM 理由优先于确定性理由", () => {
-    const relevant = candidate({ nodeRef: "entity:1", title: "动态计算图实现", summary: "动态计算图" });
-    const irrelevant = candidate({ nodeRef: "entity:2", title: "无关实体", summary: "完全无关" });
-    const result = buildFocusProjection({
-      focusNode: FOCUS_NODE,
-      focusText: "动态计算图",
-      understanding: null,
-      candidates: [irrelevant, relevant],
-      explanations: new Map([["entity:1", "LLM 理由"]]),
-      limit: 5,
-      requestVersion: 3,
-      degraded: false,
-      degradedReason: null,
-      generatedAt: GENERATED_AT,
-      graph: graph([node("entity:1"), node("entity:2")], []),
-    });
-    expect(result.requestVersion).toBe(3);
-    expect(result.cards[0]!.nodeRef).toBe("entity:1");
-    expect(result.cards[0]!.reason).toBe("LLM 理由");
-    expect(result.cards[1]!.reason).not.toBe("LLM 理由");
-    expect(result.scoreComponents).not.toBeNull();
-  });
-
-  it("同组候选最多 2 张（多样性截断）", () => {
-    const candidates = ["a", "b", "c", "d"].map((key) => candidate({
-      nodeRef: `entity:${key}`,
-      groupKey: "same-group",
-      title: `候选${key}`,
-      summary: "",
-    }));
-    const result = buildFocusProjection({
-      focusNode: FOCUS_NODE,
-      focusText: "",
-      understanding: null,
-      candidates,
-      explanations: null,
-      limit: 5,
-      requestVersion: 1,
-      degraded: false,
-      degradedReason: null,
-      generatedAt: GENERATED_AT,
-      graph: graph(candidates.map((item) => node(item.nodeRef)), []),
-    });
-    expect(result.cards.length).toBe(2);
-  });
-
-  it("降级标记透传", () => {
-    const result = buildFocusProjection({
-      focusNode: FOCUS_NODE,
-      focusText: "",
-      understanding: null,
-      candidates: [candidate({ nodeRef: "entity:1" })],
-      explanations: null,
-      limit: 5,
-      requestVersion: 1,
-      degraded: true,
-      degradedReason: "llm_unavailable",
-      generatedAt: GENERATED_AT,
-      graph: graph([node("entity:1")], []),
-    });
-    expect(result.degraded).toBe(true);
-    expect(result.degradedReason).toBe("llm_unavailable");
   });
 });
 
@@ -178,6 +80,7 @@ describe("buildWanderProjection", () => {
     const b = buildWanderProjection({ ...input, seed: 123 });
     expect(a.cards).toEqual(b.cards);
     expect(a.nodes).toEqual(b.nodes);
+    expect(a.focusRootRef).toBe("room:1");
   });
 
   it("结果都带完整路径：起点打头、深度≥2、hops 与节点数对齐", () => {

@@ -145,7 +145,7 @@ function installBridge(importOutcomes: OutcomeFixture[], failImports = 0) {
     knowledge,
     files,
     storage,
-    runKey: 'everroom:room-recommendation-run',
+    runKey: 'everroom:room-recommendation-run:v1',
     tickers,
     flush,
     startRun: (intent: string | null = '汇编语言课程设计') => target.dispatchEvent(new CustomEvent(ROOM_RECOMMENDATION_RUN_EVENT, {

@@ -19,12 +19,13 @@ import './styles.css'
 
 const ROOM_ID = 'room-board-mock'
 
-const doc = (id: string, title: string, origin: 'native' | 'import', trashed = false): RoomDocument => {
+const doc = (id: string, title: string, origin: 'native' | 'import', trashed = false, extraBlocks: TiptapJsonContent['content'] = []): RoomDocument => {
   const contentJson: TiptapJsonContent = {
     type: 'doc',
     content: [
       { type: 'heading', attrs: { level: 2 }, content: [{ type: 'text', text: title }] },
       { type: 'paragraph', content: [{ type: 'text', text: `${title} 的正文段落（mock）。` }] },
+      ...extraBlocks,
     ],
   }
   return {
@@ -43,8 +44,16 @@ const doc = (id: string, title: string, origin: 'native' | 'import', trashed = f
   }
 }
 
+// 发布计划带多章节正文：验证章节级焦点（光标落在哪一节，思路板块就跟到哪一节）。
+const releasePlanSections: TiptapJsonContent['content'] = [
+  { type: 'heading', attrs: { level: 2 }, content: [{ type: 'text', text: '一、视觉定稿' }] },
+  { type: 'paragraph', content: [{ type: 'text', text: 'V1 视觉定稿通过评审，动效统一 240ms，列表类内容做 40ms 错峰。' }] },
+  { type: 'heading', attrs: { level: 2 }, content: [{ type: 'text', text: '二、联调窗口' }] },
+  { type: 'paragraph', content: [{ type: 'text', text: '视觉定稿后进入连接器联调窗口，与连接器里程碑错峰排期。' }] },
+]
+
 const backendDocuments = [
-  doc('doc-native-1', '产物：发布计划', 'native'),
+  doc('doc-native-1', '产物：发布计划', 'native', false, releasePlanSections),
   doc('doc-native-2', '产物：复盘草稿', 'native'),
   doc('doc-import-1', '资料：飞书周会纪要', 'import'),
 ]

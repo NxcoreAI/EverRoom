@@ -285,6 +285,7 @@ function LinkedRunProgress({ agentNamesById, state }: { agentNamesById: Record<s
             runCompletedAt={state.completedAt}
             continuing={state.documentPending}
             continuationLabel={t('surface:agentChat.editingDocumentLabel')}
+            sessionId={state.sessionId}
           />
         ) : null}
         {state.status === 'completed' && !finalContent ? (
@@ -791,6 +792,7 @@ export function AgentChatView({
                     activity={activity}
                     runStartedAt={runStartedAtByRun[message.runId]}
                     runCompletedAt={runCompletedAtByRun[message.runId]}
+                    sessionId={currentSessionId}
                   />
                 ) : null}
                 {partialContent ? (
@@ -839,6 +841,7 @@ export function AgentChatView({
                   activity={latestActivity}
                   runStartedAt={runStartedAtByRun[activeRunId]}
                   runCompletedAt={runCompletedAtByRun[activeRunId]}
+                  sessionId={currentSessionId}
                 />
               ) : null}
             </div>

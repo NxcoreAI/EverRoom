@@ -116,7 +116,7 @@ describe('TranscriptionProcessingCoordinator', () => {
       }),
       leaseToken: 'x'.repeat(43),
     }))
-    expect(JSON.parse(await readFile(statePath, 'utf8'))).toEqual({ version: 1, jobs: {} })
+    expect(JSON.parse(await readFile(statePath, 'utf8'))).toEqual({ v: 1, data: { jobs: {} } })
   })
 
   it('still processes a summary when record sync is temporarily unavailable', async () => {

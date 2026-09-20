@@ -227,7 +227,7 @@ async function dedupeManager(): Promise<{ manager: RuntimeConfigManager; secrets
 }
 
 describe("runtime config set idempotency", () => {
-  const saasPayload = {
+  const payload = {
     schemaVersion: 1,
     primary: {
       provider: "openai-compatible",
@@ -242,20 +242,20 @@ describe("runtime config set idempotency", () => {
     let emissions = 0;
     manager.onChange(() => { emissions += 1; });
 
-    const first = manager.set("saas", saasPayload);
+    const first = manager.set("user", payload);
     expect(emissions).toBe(1);
 
     // 键序不同的等价 payload（两条保存链路来源不同）同样命中短路。
-    const second = manager.set("saas", {
-      primary: { ...saasPayload.primary },
+    const second = manager.set("user", {
+      primary: { ...payload.primary },
       schemaVersion: 1,
     });
     expect(second.configVersion).toBe(first.configVersion);
     expect(emissions).toBe(1);
 
-    const third = manager.set("saas", {
-      ...saasPayload,
-      primary: { ...saasPayload.primary, model: "another-model" },
+    const third = manager.set("user", {
+      ...payload,
+      primary: { ...payload.primary, model: "another-model" },
     });
     expect(third.configVersion).toBeGreaterThan(first.configVersion);
     expect(emissions).toBe(2);
@@ -307,9 +307,10 @@ describe("runtime config set idempotency", () => {
       },
     };
     manager.set("user", userPayload);
-    manager.set("saas", saasPayload);
-    manager.selectSource("saas");
-    expect(manager.snapshot().selectedSource).toBe("saas");
+    // 登出走 selectSource('default') 回内置源，user 存储保留。
+    manager.selectSource("default");
+    expect(manager.snapshot().selectedSource).toBe("default");
+    expect(manager.snapshot().availableSources).toEqual(["default", "user"]);
 
     let emissions = 0;
     manager.onChange(() => { emissions += 1; });

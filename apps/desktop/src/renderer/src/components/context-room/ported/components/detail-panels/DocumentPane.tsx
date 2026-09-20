@@ -2,6 +2,7 @@ import type { RoomDocument } from '@nxcore/agent-contract'
 import { ChevronLeft, ChevronRight, FileSpreadsheet, FileText, Folder, FolderOpen, Search } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { useLocale } from '../../../../../i18n/LocaleContext'
+import type { EmergenceFocusChapter } from '../../../../../../../shared/knowledge'
 
 import { createContextRoomResourceLibrary } from '../../resources'
 import type { ContextRoomRecord, ContextRoomResource } from '../../types'
@@ -73,6 +74,7 @@ export function DocumentContent({
   focusedBlockId,
   documentFocusRequestId,
   onSelectionTextChange,
+  onChapterChange,
   onRegisterQuoteInsert,
 }: {
   room: ContextRoomRecord
@@ -83,6 +85,7 @@ export function DocumentContent({
   focusedBlockId?: string | null
   documentFocusRequestId?: number | null
   onSelectionTextChange?: (text: string | null) => void
+  onChapterChange?: (chapter: EmergenceFocusChapter | null) => void
   onRegisterQuoteInsert?: (insert: (quote: { text: string; source: string }) => boolean) => () => void
 }) {
   const documentId = resource?.kind === 'cloud-doc' ? resource.binding.docId : room.cloudDoc.docId
@@ -98,6 +101,7 @@ export function DocumentContent({
       focusedBlockId={focusedBlockId}
       documentFocusRequestId={documentFocusRequestId}
       onSelectionTextChange={onSelectionTextChange}
+      onChapterChange={onChapterChange}
       onRegisterQuoteInsert={onRegisterQuoteInsert}
     />
   )

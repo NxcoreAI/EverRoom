@@ -1,7 +1,7 @@
 import * as Sentry from '@sentry/electron/renderer'
 import React from 'react'
 
-import { CONTEXT_ROOM_LOCAL_STATE_KEY } from '@/components/context-room/ported/contextRoomLocalState'
+import { clearContextRoomLocalState } from '@/components/context-room/ported/contextRoomLocalState'
 
 /**
  * 全局渲染错误兜底（针对"合并后 Room 白屏"这类整页崩溃）：
@@ -44,7 +44,7 @@ export class GlobalErrorBoundary extends React.Component<
 
   private resetWorkspaceAndReload = (): void => {
     try {
-      window.localStorage.removeItem(CONTEXT_ROOM_LOCAL_STATE_KEY)
+      clearContextRoomLocalState()
     } catch {
       // localStorage 不可用时直接重载。
     }

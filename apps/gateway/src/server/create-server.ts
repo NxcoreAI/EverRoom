@@ -109,6 +109,8 @@ import { KnowledgePreferences } from "../modules/knowledge/preferences.js";
 import { KnowledgeLlm } from "../modules/knowledge/llm.js";
 import { EmergenceService } from "../modules/knowledge/emergence-service.js";
 import { emergenceRoutes } from "../modules/knowledge/emergence-routes.js";
+import { FocusMindmapService } from "../modules/knowledge/mindmap-service.js";
+import { mindmapRoutes } from "../modules/knowledge/mindmap-routes.js";
 import { nangoConnectorRoutes } from "@nxcore/connectors-module/routes.js";
 import { purgeConnectorConnectionCascade } from "../modules/connectors/connection-purge.js";
 import { processingRoutes } from "../modules/processing/routes.js";
@@ -155,6 +157,8 @@ import { subagentRoutes } from "../modules/subagents/routes.js";
 import { AgentStatusService } from "../modules/agent/status-service.js";
 import { createReferencedAgentConversationTools } from "../modules/agent/reference-tools.js";
 import { createLocalAgentDispatchTools } from "../modules/local-agents/dispatch-tools.js";
+import { LocalAgentDispatchStore } from "../modules/local-agents/dispatch-store.js";
+import type { LocalAgentDispatchSource } from "../modules/local-agents/dispatch-tools.js";
 import { RuntimeConfigManager } from "../runtime-config.js";
 import { runtimeConfigRoutes } from "../modules/runtime-config/routes.js";
 import { AiRelaySessionStore } from "../modules/ai-relay/session.js";
@@ -373,13 +377,9 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   const initialRuntimeSnapshot = runtimeConfigManager.snapshot();
   applyRuntimeConfig(config, initialRuntimeSnapshot.config);
   const redactedRuntimeSnapshot = runtimeConfigManager.snapshot(true);
-  const configSource = initialRuntimeSnapshot.selectedSource === "user"
-    ? "local"
-    : initialRuntimeSnapshot.selectedSource === "saas" ? "saas" : "env";
   app.log.info({
     event: "runtime_config.selected",
-    source: configSource,
-    runtimeSource: initialRuntimeSnapshot.selectedSource,
+    source: initialRuntimeSnapshot.selectedSource,
     availableSources: initialRuntimeSnapshot.availableSources,
     configVersion: initialRuntimeSnapshot.configVersion,
     primaryConfigured: isRuntimePrimaryConfigured(initialRuntimeSnapshot.config),
@@ -660,14 +660,13 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   });
   contextRoomService.setDuplicateService(roomDuplicateService);
   knowledgeService.setRoomDuplicateIndexTrigger(() => roomDuplicateService.requestRebuild());
-  // 知识涌现（思路板块）：四源投影 + LLM 任务理解，只读不写回基础图谱。
+  // 知识涌现（思路板块）：漫步的四源投影，只读不写回基础图谱。
+  // 聚焦模式由 FocusMindmapService（subAgent 思维导图）承接。
   const emergenceService = new EmergenceService({
     db,
     knowledge: knowledgeService,
     contextRooms: contextRoomService,
-    memory: memoryService,
     log: app.log,
-    embedding: embeddingFromConfig(config),
   });
   // M3 知识整理偏好：统计（确定性）+ 洞察（LLM 修订式，失败保旧）+ 建议性注入
   // （extract/judgeEntityIdentity；开关关闭=不注入）。job 延迟 3 分钟首跑。
@@ -784,6 +783,13 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     app.log,
   );
   const contextRoomAgentDispatcher = new ContextRoomAgentDispatcher(subagentOrchestrator);
+  // 聚焦思维导图（思路板块聚焦模式）：mindmap-creator subAgent 生成，
+  // 依赖 orchestrator，须在上方构造。
+  const focusMindmapService = new FocusMindmapService({
+    db,
+    orchestrator: subagentOrchestrator,
+    log: app.log,
+  });
   // doc-writer 调度封装（doc-writer-subagent-plan §8/M2）：编辑器划词改写迁入
   // rewrite task；写作风格注入段对 doc-writer 全部 task 附加。
   const docWriterDispatcher = new DocWriterAgentDispatcher(
@@ -821,6 +827,11 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   }
   // 提前实例化：主 Agent 的 local_agent_dispatch 工具（@ 点名本机 Agent）需要闭包它。
   const localAgentRuntimeRegistry = new LocalAgentRuntimeRegistry();
+  const localAgentDispatchStore = new LocalAgentDispatchStore(db);
+  // dispatch 工具先于 AgentService 构建，run 级分发来源用晚绑定引用接线。
+  const localAgentDispatchSourceRef: { current: ((runId: string) => LocalAgentDispatchSource | undefined) | null } = {
+    current: null,
+  };
   registerPrimaryAgent(agentResolver, config, documentMcpHost, {
     externalCalls,
     tools: [
@@ -891,7 +902,11 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
          })
         : []),
       ...createNotificationPiTools(notificationMcpHost),
-      ...createLocalAgentDispatchTools(localAgentRuntimeRegistry),
+      ...createLocalAgentDispatchTools({
+        registry: localAgentRuntimeRegistry,
+        store: localAgentDispatchStore,
+        resolveDispatchSource: (runId) => localAgentDispatchSourceRef.current?.(runId),
+      }),
       ...createReferencedAgentConversationTools(async (threadId, query) => (
         resolveAgentConversation?.(threadId, query) ?? null
       )),
@@ -947,6 +962,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     false,
     (target) => localAgentRuntimeRegistry.resolve(target),
   );
+  localAgentDispatchSourceRef.current = (runId) => agentService.getLocalAgentDispatchSource(runId);
   await agentService.initialize();
   registerTranscriptionSummaryAgent(agentResolver, config);
   const backgroundAgentRuntime = agentResolver.resolve(BUILTIN_AGENT_IDS.transcriptionSummary);
@@ -1224,7 +1240,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     sqlite.close();
     await gatewayLogger.close();
   });
-  await app.register(agentRoutes(agentService, new AgentStatusService(agentResolver, subagentOrchestrator)));
+  await app.register(agentRoutes(agentService, new AgentStatusService(agentResolver, subagentOrchestrator), localAgentDispatchStore));
   await app.register(subagentRoutes(subagentOrchestrator));
   const reloadMcpRuntimes = async (): Promise<void> => {
     const primary = agentResolver.reload(BUILTIN_AGENT_IDS.primary);
@@ -1668,6 +1684,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   });
   if (config.knowledge) await app.register(knowledgeRoutes(knowledgeService));
   if (config.knowledge) await app.register(emergenceRoutes(emergenceService));
+  if (config.knowledge) await app.register(mindmapRoutes(focusMindmapService));
 
   return app;
 }

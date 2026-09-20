@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
-import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises'
-import { dirname } from 'node:path'
+
+import { VersionedJsonStore } from '@nxcore/migration-kit'
 
 import type {
   CompleteProcessingJobInput,
@@ -29,7 +29,6 @@ interface StoredProcessingJob {
 }
 
 interface StoredProcessingState {
-  version: 1
   jobs: Record<string, StoredProcessingJob>
 }
 
@@ -65,33 +64,40 @@ interface SummaryTagValue {
 }
 
 export class TranscriptionProcessingCoordinator {
-  private state: StoredProcessingState = { version: 1, jobs: {} }
+  private state: StoredProcessingState = { jobs: {} }
   private loaded = false
   private running = false
   private stopped = true
   private timer: NodeJS.Timeout | null = null
   private failureStreak = 0
   private registeredKey: string | null = null
+  private readonly store: VersionedJsonStore<StoredProcessingState>
 
   constructor(
-    private readonly filePath: string,
+    filePath: string,
     private readonly client: SaasClient,
     private readonly keyring: AccountKeyringService,
     private readonly agent: AgentGatewayBridge,
     private readonly sync?: PrivateTranscriptionSyncService,
-  ) {}
+    backupDir?: string,
+  ) {
+    this.store = new VersionedJsonStore<StoredProcessingState>({
+      filePath,
+      migrations: [],
+      adoptBaseline: (raw) => {
+        const value = raw as Partial<{ version: unknown; jobs: unknown }>
+        if (!value || typeof value !== 'object' || value.version !== 1 || !value.jobs || typeof value.jobs !== 'object') return { jobs: {} }
+        return { jobs: value.jobs as StoredProcessingState['jobs'] }
+      },
+      fallback: { jobs: {} },
+      ...(backupDir !== undefined ? { backupDir } : {}),
+    })
+  }
 
   async initialize(): Promise<void> {
     if (this.loaded) return
     this.loaded = true
-    try {
-      const value = JSON.parse(await readFile(this.filePath, 'utf8')) as Partial<StoredProcessingState>
-      if (value.version === 1 && value.jobs && typeof value.jobs === 'object') {
-        this.state = { version: 1, jobs: value.jobs as StoredProcessingState['jobs'] }
-      }
-    } catch {
-      // The SaaS queue remains authoritative when no local outbox exists.
-    }
+    this.state = this.store.read()
   }
 
   start(): void {
@@ -274,9 +280,7 @@ export class TranscriptionProcessingCoordinator {
   }
 
   private async persist(): Promise<void> {
-    await mkdir(dirname(this.filePath), { recursive: true })
-    await writeFile(this.filePath, JSON.stringify(this.state), { mode: 0o600 })
-    await chmod(this.filePath, 0o600)
+    this.store.write(this.state)
   }
 }
 

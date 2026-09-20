@@ -1,9 +1,8 @@
 import { createHash } from 'node:crypto'
 import { homedir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { statSync } from 'node:fs'
-import { dirname } from 'node:path'
+import { VersionedJsonStore } from '@nxcore/migration-kit'
 import type { BrowserWindow } from 'electron'
 import { dialog } from 'electron'
 import type {
@@ -62,11 +61,31 @@ export class MigrationCoordinator {
   private readonly runPaths = new Map<string, string>()
   private listener: ((event: MigrationProgressEvent) => void) | null = null
 
-  constructor(private readonly gateway: MigrationsGatewayBridge, private readonly files: FilesGatewayBridge, private readonly window: () => BrowserWindow | null, private readonly locatorPath: string) {}
-  async initialize(): Promise<void> {
-    try { const values = JSON.parse(await readFile(this.locatorPath, 'utf8')) as Record<string, string>; Object.entries(values).forEach(([id, path]) => { if (typeof path === 'string') this.sourcePaths.set(id, path) }) } catch { /* first run */ }
+  constructor(
+    private readonly gateway: MigrationsGatewayBridge,
+    private readonly files: FilesGatewayBridge,
+    private readonly window: () => BrowserWindow | null,
+    locatorPath: string,
+    backupDir?: string,
+  ) {
+    this.store = new VersionedJsonStore<Record<string, string>>({
+      filePath: locatorPath,
+      migrations: [],
+      adoptBaseline: (raw) => {
+        if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {}
+        return Object.fromEntries(
+          Object.entries(raw as Record<string, unknown>).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
+        )
+      },
+      fallback: {},
+      ...(backupDir !== undefined ? { backupDir } : {}),
+    })
   }
-  private async persistLocators(): Promise<void> { await mkdir(dirname(this.locatorPath), { recursive: true }); await writeFile(this.locatorPath, JSON.stringify(Object.fromEntries(this.sourcePaths), null, 2), { mode: 0o600 }) }
+  private readonly store: VersionedJsonStore<Record<string, string>>
+  async initialize(): Promise<void> {
+    Object.entries(this.store.read()).forEach(([id, path]) => this.sourcePaths.set(id, path))
+  }
+  private persistLocators(): void { this.store.write(Object.fromEntries(this.sourcePaths)) }
   onProgress(listener: ((event: MigrationProgressEvent) => void) | null): void { this.listener = listener }
   private emit(run: MigrationRun): MigrationRun { this.listener?.({ run }); return run }
   async discover(): Promise<DiscoveredMigrationSource[]> { const items = await discoverOpenClawSources(); this.discovered = new Map(items.map((item) => [item.id, item])); return items.map(({ path: _path, ...item }) => item) }
@@ -78,7 +97,7 @@ export class MigrationCoordinator {
   sources(): Promise<MigrationSource[]> { return this.gateway.sources() }
   runs(sourceId?: string): Promise<MigrationRun[]> { return this.gateway.runs(sourceId) }
   cancel(runId: string): Promise<MigrationRun> { return this.gateway.cancel(runId).then((run) => this.emit(run)) }
-  async clear(sourceId: string): Promise<void> { this.sourcePaths.delete(sourceId); await this.persistLocators(); return this.gateway.clear(sourceId) }
+  async clear(sourceId: string): Promise<void> { this.sourcePaths.delete(sourceId); this.persistLocators(); return this.gateway.clear(sourceId) }
 
   async chooseOpenClaw(): Promise<MigrationRun | null> {
     const options = { title: '选择 OpenClaw 数据目录或官方归档', properties: ['openFile', 'openDirectory'] as Array<'openFile' | 'openDirectory'>, filters: [{ name: 'OpenClaw archive', extensions: ['gz'] }] }
@@ -156,7 +175,7 @@ export class MigrationCoordinator {
 
   private async importOpenClawPath(path: string, transport: MigrationRun['transport'] = path.endsWith('.tar.gz') ? 'archive' : 'directory', displayName = 'OpenClaw'): Promise<MigrationRun> {
     const stableSourceKey = hash(resolve(path)); const started = await this.gateway.begin({ provider: 'openclaw', transport, stableSourceKey, displayName });
-    this.sourcePaths.set(started.source.id, path); this.runPaths.set(started.run.id, path); await this.persistLocators(); this.emit(started.run)
+    this.sourcePaths.set(started.source.id, path); this.runPaths.set(started.run.id, path); this.persistLocators(); this.emit(started.run)
     try {
       const threads = await readOpenClawSource(path); const messages = threads.reduce((sum, thread) => sum + thread.messages.length, 0)
       let run = await this.gateway.progress(started.run.id, { phase: 'normalizing', threadsTotal: threads.length, messagesTotal: messages }); this.emit(run)
@@ -179,7 +198,7 @@ export class MigrationCoordinator {
     })
     this.sourcePaths.set(started.source.id, path)
     this.runPaths.set(started.run.id, path)
-    await this.persistLocators()
+    this.persistLocators()
     this.emit(started.run)
     type StreamingThread = { stableKey: string; agentId?: string; externalSessionId: string; title: string; messages: Array<{ stableKey: string; role: 'user' | 'assistant'; content: string; occurredAt: string }> }
     let run = started.run
@@ -230,7 +249,7 @@ export class MigrationCoordinator {
 
   private async importNotionZipPath(path: string): Promise<MigrationRun> {
     const started = await this.gateway.begin({ provider: 'notion', transport: 'zip', stableSourceKey: hash(resolve(path)), displayName: basename(path) })
-    this.sourcePaths.set(started.source.id, path); this.runPaths.set(started.run.id, path); await this.persistLocators(); this.emit(started.run)
+    this.sourcePaths.set(started.source.id, path); this.runPaths.set(started.run.id, path); this.persistLocators(); this.emit(started.run)
     let extracted: Awaited<ReturnType<typeof extractNotionZip>> | null = null
     try {
       extracted = await extractNotionZip(path); let run = await this.gateway.progress(started.run.id, { phase: 'saving', pagesTotal: extracted.files.length }); this.emit(run)

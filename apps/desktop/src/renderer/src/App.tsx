@@ -1,5 +1,5 @@
 import { ArrowRight, BrainCircuit, X } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import type { AgentSessionLink } from '@nxcore/agent-contract'
 import type { MemoryAtomicItemDto } from '../../shared/memory'
 import { OFFICE_TEST_INSTANCE_ID, type OfficePreviewTab } from '../../shared/sources'
@@ -91,6 +91,19 @@ function readStoredTheme(): ThemeId {
   }
 }
 
+const AGENT_WIDTH_STORAGE_KEY = 'nxcore-ce:agent-width:v1'
+const AGENT_WIDTH_DEFAULT = 360
+const AGENT_WIDTH_MIN = 280
+
+function readStoredAgentWidth(): number {
+  try {
+    const stored = Number(localStorage.getItem(AGENT_WIDTH_STORAGE_KEY))
+    return Number.isFinite(stored) && stored >= AGENT_WIDTH_MIN ? stored : AGENT_WIDTH_DEFAULT
+  } catch {
+    return AGENT_WIDTH_DEFAULT
+  }
+}
+
 function readInitialPage(): PageId {
   return 'home'
 }
@@ -105,6 +118,8 @@ export function App() {
   const [officeTabs, setOfficeTabs] = useState<OfficePreviewTab[]>([])
   const [activeOfficeInstanceId, setActiveOfficeInstanceId] = useState<string | null>(null)
   const [agentOpen, setAgentOpen] = useState(true)
+  const [agentWidth, setAgentWidth] = useState(readStoredAgentWidth)
+  const [agentResizing, setAgentResizing] = useState(false)
   const [agentFocusRequest, setAgentFocusRequest] = useState(0)
   const [agentRoomCitations, setAgentRoomCitations] = useState<RoomOverviewCitation[]>([])
   const [agentNavigationRequest, setAgentNavigationRequest] = useState<AgentNavigationRequest | null>(null)
@@ -256,6 +271,38 @@ export function App() {
       // Theme persistence is optional when storage is unavailable.
     }
   }, [theme])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(AGENT_WIDTH_STORAGE_KEY, String(agentWidth))
+    } catch {
+      // Width persistence is optional when storage is unavailable.
+    }
+  }, [agentWidth])
+
+  // 对话区宽度：主区至少留 760px；窄屏（≤900px）面板为覆盖层，不提供拖拽。
+  const applyAgentWidth = useCallback((raw: number) => {
+    const max = Math.max(400, window.innerWidth - 760)
+    setAgentWidth(Math.round(Math.max(AGENT_WIDTH_MIN, Math.min(max, raw))))
+  }, [])
+  const startAgentResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (window.matchMedia('(max-width: 900px)').matches) return
+    event.currentTarget.setPointerCapture(event.pointerId)
+    setAgentResizing(true)
+    const move = (moveEvent: PointerEvent) => applyAgentWidth(window.innerWidth - moveEvent.clientX)
+    const up = () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      setAgentResizing(false)
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+  }
+  const resizeAgentByKey = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+    event.preventDefault()
+    applyAgentWidth(agentWidth + (event.key === 'ArrowLeft' ? 16 : -16))
+  }
 
   useEffect(() => () => {
     if (agentNavigationTimerRef.current !== null) window.clearTimeout(agentNavigationTimerRef.current)
@@ -816,9 +863,11 @@ export function App() {
       <div
       className="app-shell"
       data-agent-open={String(agentOpen)}
+      data-agent-resizing={String(agentResizing)}
       data-context-room-focused={String(isContextRoomFocused)}
       data-mac-desktop={String(isMacDesktop)}
       data-nav-collapsed={String(effectiveNavCollapsed)}
+      style={{ '--agent-width': `${String(agentWidth)}px` } as CSSProperties}
     >
       <TopBar
         contextRoomTabs={contextRoomTabs}
@@ -895,6 +944,19 @@ export function App() {
           }}
         />
       </main>
+      {agentOpen ? (
+        <div
+          role="separator"
+          tabIndex={0}
+          aria-orientation="vertical"
+          aria-label={t('surface:agentPanel.resizeWidth')}
+          className="agent-panel-divider"
+          onPointerDown={startAgentResize}
+          onKeyDown={resizeAgentByKey}
+          onFocus={() => setAgentResizing(true)}
+          onBlur={() => setAgentResizing(false)}
+        />
+      ) : null}
       {agentOpen ? (
         <AgentPanel
           pageId={activePage}

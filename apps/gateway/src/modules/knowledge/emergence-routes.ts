@@ -16,6 +16,29 @@ const EmergenceRequestBody = Type.Object({
     documentId: Type.Optional(Type.Union([Type.String({ minLength: 1, maxLength: 200 }), Type.Null()])),
     selectionText: Type.Optional(Type.Union([Type.String({ maxLength: 4_000 }), Type.Null()])),
     blockId: Type.Optional(Type.Union([Type.String({ maxLength: 200 }), Type.Null()])),
+    board: Type.Optional(Type.Union([Type.String({ maxLength: 40 }), Type.Null()])),
+    level: Type.Optional(Type.Union([
+      Type.Literal("selection"),
+      Type.Literal("chapter"),
+      Type.Literal("document"),
+      Type.Literal("room"),
+      Type.Null(),
+    ])),
+    trigger: Type.Optional(Type.Union([
+      Type.Literal("selection-settle"),
+      Type.Literal("chapter-stable"),
+      Type.Literal("document-open"),
+      Type.Literal("panel-open"),
+      Type.Literal("board-switch"),
+      Type.Null(),
+    ])),
+    chapter: Type.Optional(Type.Union([
+      Type.Object({
+        heading: Type.Union([Type.String({ maxLength: 500 }), Type.Null()]),
+        bodyText: Type.String({ maxLength: 2_000_000 }),
+      }),
+      Type.Null(),
+    ])),
   }),
   wander: Type.Optional(Type.Union([
     Type.Object({

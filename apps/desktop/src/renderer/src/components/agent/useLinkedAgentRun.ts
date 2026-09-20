@@ -17,6 +17,7 @@ import { useRoomDocumentsState } from '../context-room/RoomDocumentsProvider'
 import { useDocumentOperations } from '../context-room/operations'
 
 export interface LinkedAgentRunState {
+  sessionId: string | null
   status: AgentRunStatus | null
   messages: DisplayAgentMessage[]
   activity: AgentRunActivity
@@ -30,6 +31,7 @@ export interface LinkedAgentRunState {
 }
 
 const EMPTY_STATE: LinkedAgentRunState = {
+  sessionId: null,
   status: null,
   messages: [],
   activity: { steps: [], pendingAnswer: '', finalAnswer: '', hasTools: false, completed: false },
@@ -97,6 +99,7 @@ export function buildLinkedAgentRunState(
   }
 
   return {
+    sessionId: snapshot.session.id,
     status,
     messages,
     activity,

@@ -20,6 +20,7 @@ import type { AxiosRequestConfig } from 'axios'
 import { isAxiosError } from 'axios'
 import type { WebContents } from 'electron'
 import WebSocket from 'ws'
+import type { LocalAgentDispatchDetail } from '../../shared/local-agents'
 import { createLoggedHttpClient } from '../network/http-client'
 import type { GatewaySupervisor } from './gateway-supervisor'
 import { WebContentsLifecycle } from './web-contents-lifecycle'
@@ -168,6 +169,12 @@ export class AgentGatewayBridge {
   getEvents(sessionId: string, runId: string, afterSeq: number): Promise<AgentEvent[]> {
     const query = new URLSearchParams({ runId, afterSeq: String(afterSeq) })
     return this.request(`/v1/agent/sessions/${encodeURIComponent(sessionId)}/events?${query}`)
+  }
+
+  getLocalAgentDispatch(sessionId: string, taskId: string): Promise<LocalAgentDispatchDetail> {
+    return this.request(
+      `/v1/agent/sessions/${encodeURIComponent(sessionId)}/local-agent-dispatches/${encodeURIComponent(taskId)}`,
+    )
   }
 
   resolveApproval(approvalId: string, decision: 'approved' | 'approved_session' | 'denied'): Promise<{ approvalId: string; decision: string }> {

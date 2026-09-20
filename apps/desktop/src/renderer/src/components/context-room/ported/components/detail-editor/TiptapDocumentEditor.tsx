@@ -1,4 +1,6 @@
 import type { DocumentDiffResult, DocumentVersionSnapshot, ImportCandidateDiffView, RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract'
+import type { EmergenceFocusChapter } from '../../../../../../../shared/knowledge'
+import { extractCurrentSection } from './currentSection'
 import type { ResolveDocumentBlockReferencesInput } from '@nxcore/agent-contract'
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
 import Image from '@tiptap/extension-image'
@@ -258,6 +260,7 @@ export function TiptapDocumentEditor({
   focusedBlockId,
   documentFocusRequestId,
   onSelectionTextChange,
+  onChapterChange,
   onRegisterQuoteInsert,
 }: {
   room: ContextRoomRecord
@@ -269,6 +272,8 @@ export function TiptapDocumentEditor({
   documentFocusRequestId?: number | null
   /** 思路伴随区：非空选区的纯文本（空选区=null）。 */
   onSelectionTextChange?: (text: string | null) => void
+  /** 焦点系统：光标所在章节（标题+整节正文），无标题结构时=null。 */
+  onChapterChange?: (chapter: EmergenceFocusChapter | null) => void
   /** 思路伴随区：注册「光标处插入引用」命令，返回清理函数。 */
   onRegisterQuoteInsert?: (insert: (quote: { text: string; source: string }) => boolean) => () => void
 }) {
@@ -788,6 +793,25 @@ export function TiptapDocumentEditor({
     editor.on('selectionUpdate', emit)
     return () => { editor.off('selectionUpdate', emit) }
   }, [editor, onSelectionTextChange])
+
+  useEffect(() => {
+    if (!editor || !onChapterChange) return
+    let lastKey: string | null = null
+    const emit = () => {
+      const section = extractCurrentSection(editor.state.doc, editor.state.selection.from)
+      const key = section ? `${section.heading} ${section.bodyText}` : ''
+      if (key === lastKey) return
+      lastKey = key
+      onChapterChange(section)
+    }
+    emit()
+    editor.on('selectionUpdate', emit)
+    editor.on('update', emit)
+    return () => {
+      editor.off('selectionUpdate', emit)
+      editor.off('update', emit)
+    }
+  }, [editor, onChapterChange])
 
   useEffect(() => {
     if (!editor || !onRegisterQuoteInsert) return
@@ -1579,11 +1603,8 @@ export function TiptapDocumentEditor({
       {editor ? (
         <TiptapContentScale
           items={tableOfContents}
-          documentId={documentId}
           documentTitle={documentName}
           editor={editor}
-          prepareDocument={flushDocumentVersion}
-          locked={editorLocked}
           onOutlineOpenChange={handleOutlineOpenChange}
         />
       ) : null}

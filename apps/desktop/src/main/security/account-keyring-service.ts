@@ -1,6 +1,6 @@
 import { createCipheriv, createDecipheriv, createHash, createPrivateKey, createPublicKey, diffieHellman, generateKeyPairSync, hkdfSync, randomBytes, type KeyObject } from 'node:crypto'
-import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises'
-import { dirname } from 'node:path'
+
+import { VersionedJsonStore } from '@nxcore/migration-kit'
 
 import { decryptLocalSecret, encryptLocalSecret } from './local-secret-cipher'
 
@@ -68,20 +68,30 @@ function verificationCode(publicKey: string): string {
 export class AccountKeyringService {
   private loaded = false
   private file: StoredKeyringFile | null = null
+  private readonly store: VersionedJsonStore<StoredKeyringFile | null>
 
-  constructor(private readonly filePath: string) {}
+  constructor(filePath: string, backupDir?: string) {
+    // failHard：文件解析失败宁可停机报错，也不静默重置设备密钥。
+    // 注意 adoptBaseline 返回 null 不是失败——那是 v1 钥匙串遗留文件，
+    // 本就无法解密，按未初始化处理等待重新批准。
+    this.store = new VersionedJsonStore<StoredKeyringFile | null>({
+      filePath,
+      migrations: [],
+      adoptBaseline: (raw) => {
+        const parsed = raw as Partial<StoredKeyringFile>
+        if (parsed?.version !== 2 || typeof parsed.publicKey !== 'string' || typeof parsed.privateKey !== 'string') return null
+        return { version: 2, publicKey: parsed.publicKey, privateKey: parsed.privateKey, umks: parsed.umks ?? {} }
+      },
+      fallback: null,
+      failHard: true,
+      ...(backupDir !== undefined ? { backupDir } : {}),
+    })
+  }
 
   async initialize(): Promise<void> {
     if (this.loaded) return
     this.loaded = true
-    try {
-      const parsed = JSON.parse(await readFile(this.filePath, 'utf8')) as Partial<StoredKeyringFile>
-      if (parsed.version === 2 && typeof parsed.publicKey === 'string' && typeof parsed.privateKey === 'string') {
-        this.file = { version: 2, publicKey: parsed.publicKey, privateKey: parsed.privateKey, umks: parsed.umks ?? {} }
-      }
-    } catch {
-      // First launch, or a legacy safeStorage/钥匙串 keyring file we can no longer decrypt.
-    }
+    this.file = this.store.read()
   }
 
   async status(client: SaasClient, userId: string): Promise<AccountKeyringStatus> {
@@ -201,9 +211,7 @@ export class AccountKeyringService {
 
   private async persist(): Promise<void> {
     if (!this.file) return
-    await mkdir(dirname(this.filePath), { recursive: true })
-    await writeFile(this.filePath, JSON.stringify(this.file), { mode: 0o600 })
-    await chmod(this.filePath, 0o600)
+    this.store.write(this.file)
   }
 }
 

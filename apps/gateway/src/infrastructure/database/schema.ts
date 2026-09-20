@@ -48,7 +48,7 @@ export const gatewayMetadata = sqliteTable("gateway_metadata", {
 });
 
 export const runtimeConfigStore = sqliteTable("runtime_config_store", {
-  source: text("source", { enum: ["user", "saas"] }).primaryKey(),
+  source: text("source", { enum: ["user"] }).primaryKey(),
   payload: text("payload", { mode: "json" }).notNull(),
   schemaVersion: integer("schema_version").notNull().default(1),
   configVersion: integer("config_version").notNull().default(1),
@@ -1859,6 +1859,43 @@ export const roomWikis = sqliteTable("room_wikis", {
 });
 
 /**
+ * 聚焦思维导图（mindmap-plan）：subAgent 按 NotebookLM 行为特征生成的三层导图，
+ * 按焦点两级缓存——document 级（单文档全文）与 room 级（Room 内全部文档）。
+ * 复合主键而非唯一索引：SQLite 唯一索引把 NULL 视为互异，scope 两级共用一表更稳。
+ */
+export const focusMindmaps = sqliteTable(
+  "focus_mindmaps",
+  {
+    scope: text("scope", { enum: ["room", "document"] }).notNull(),
+    scopeId: text("scope_id").notNull(),
+    /** 归属 Room；document 级为 kick 时所在 Room。 */
+    roomId: text("room_id").notNull(),
+    /** document 级冗余标题（根节点/卡片 reason 用）。 */
+    documentTitle: text("document_title"),
+    status: text("status", { enum: ["pending", "processing", "ready", "failed"] }).notNull().default("pending"),
+    /** subagent 校验后的原始树（{topic, branches, digest}）。 */
+    tree: text("tree", { mode: "json" }).$type<unknown>(),
+    error: text("error"),
+    promptVersion: integer("prompt_version"),
+    /** 本轮 dispatch 的 idempotencyKey；网关重启后按它反查 invocation 收敛死行。 */
+    invocationKey: text("invocation_key"),
+    /** 拼装素材 sha256，供内容变更后失效重生成。 */
+    contentHash: text("content_hash"),
+    generatedAt: integer("generated_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    primaryKey({ columns: [table.scope, table.scopeId] }),
+    index("focus_mindmaps_room_idx").on(table.roomId),
+  ],
+);
+
+/**
  * 抽取审计流水（entity-room-plan §3.2）：归属语义已迁 entity_doc_links，
  * 本表降级为每次路由运行的审计记录（抽取原始输出 + 解析结果 + ingest 状态）。
  * primaryRoomId 回填 primary 实体晋升后的 Room（供撤销/清单 join 用）。
@@ -2632,6 +2669,54 @@ export const subagentInvocations = sqliteTable(
   (table) => [
     uniqueIndex("subagent_invocations_source_idempotency_idx").on(table.source, table.parentRunId, table.idempotencyKey),
     index("subagent_invocations_status_created_idx").on(table.status, table.createdAt),
+  ],
+);
+
+export interface LocalAgentDispatchMaterialRecord {
+  id: string;
+  kind: string;
+  title: string;
+  chars: number;
+  truncated: boolean;
+  agentOutput: boolean;
+  sourceDispatchId: string | null;
+}
+
+export const localAgentDispatches = sqliteTable(
+  "local_agent_dispatches",
+  {
+    id: text("id").primaryKey(),
+    sessionId: text("session_id")
+      .notNull()
+      .references(() => agentSessions.id, { onDelete: "cascade" }),
+    parentRunId: text("parent_run_id")
+      .notNull()
+      .references(() => agentRuns.id, { onDelete: "cascade" }),
+    agentId: text("agent_id").notNull(),
+    displayName: text("display_name").notNull(),
+    provider: text("provider").notNull(),
+    assignment: text("assignment").notNull(),
+    sharedGoal: text("shared_goal"),
+    constraints: text("constraints", { mode: "json" }).$type<string[]>().notNull().default([]),
+    materials: text("materials", { mode: "json" }).$type<LocalAgentDispatchMaterialRecord[]>().notNull().default([]),
+    packageJson: text("package_json").notNull(),
+    packageDigest: text("package_digest").notNull(),
+    packageVersion: integer("package_version").notNull(),
+    status: text("status", {
+      enum: ["pending", "running", "completed", "failed", "cancelled", "timed_out"],
+    }).notNull().default("pending"),
+    resultText: text("result_text"),
+    errorCode: text("error_code"),
+    errorMessage: text("error_message"),
+    subRunId: text("sub_run_id"),
+    startedAt: integer("started_at", { mode: "timestamp_ms" }),
+    completedAt: integer("completed_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("local_agent_dispatches_parent_run_idx").on(table.parentRunId),
+    index("local_agent_dispatches_session_created_idx").on(table.sessionId, table.createdAt),
   ],
 );
 

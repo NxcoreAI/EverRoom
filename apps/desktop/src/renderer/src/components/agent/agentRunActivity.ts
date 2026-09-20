@@ -193,7 +193,7 @@ export function agentToolSubject(tool: DisplayAgentToolCall): string | undefined
     if (service) return service
   }
   for (const key of [
-    'command', 'cmd', 'script', 'code', 'input', 'task',
+    'command', 'cmd', 'script', 'code', 'input', 'task', 'assignment',
     'query', 'search_query', 'keyword', 'prompt', 'path', 'filePath', 'title', 'documentTitle', 'url',
   ]) {
     const value = userText(tool.args[key], 80)

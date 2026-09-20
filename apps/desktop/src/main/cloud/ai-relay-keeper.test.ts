@@ -32,7 +32,7 @@ function createKeeper(options?: {
     getConnection: () => GATEWAY,
   }
   // 源选择是网关侧状态：selectSource 后 get() 返回新值。
-  let selectedSource = options?.selectedSource ?? 'saas'
+  let selectedSource = options?.selectedSource ?? 'default'
   const runtimeConfig = {
     get: async () => ({ selectedSource }),
     selectSource: vi.fn(async (source: string) => { selectedSource = source }),
@@ -121,7 +121,7 @@ describe('AiRelayKeeper', () => {
     }
   })
 
-  it('restores the saas source after a successful renewal while the fallback is active', async () => {
+  it('restores the default source after a successful renewal while the fallback is active', async () => {
     const onEvent = vi.fn()
     let fail = true
     const { keeper, runtimeConfig } = createKeeper({
@@ -144,14 +144,14 @@ describe('AiRelayKeeper', () => {
 
       fail = false
       await keeper.renewNow()
-      expect(runtimeConfig.selectSource).toHaveBeenLastCalledWith('saas')
+      expect(runtimeConfig.selectSource).toHaveBeenLastCalledWith('default')
       expect(onEvent).toHaveBeenCalledWith({ type: 'fallback-restored' })
     } finally {
       keeper.stop()
     }
   })
 
-  it('skips the fallback when the active source is not saas', async () => {
+  it('skips the fallback when the active source is not default', async () => {
     const { keeper, runtimeConfig } = createKeeper({ selectedSource: 'user' })
     try {
       await keeper.renewNow()

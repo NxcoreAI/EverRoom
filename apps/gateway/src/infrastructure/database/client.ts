@@ -1,11 +1,13 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import { migrate } from "drizzle-orm/better-sqlite3/migrator";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
+import { runSqliteMigrations } from "@nxcore/migration-kit";
 import * as schema from "./schema.js";
+import { gatewayDataMigrations } from "./data-migrations.js";
 import { repairContextRoomSchema } from "./context-room-compatibility.js";
 
 export interface DatabaseClient {
@@ -548,6 +550,13 @@ function repairIncompleteUnderstandingMigration(sqlite: Database.Database, migra
 export function createDatabase(databasePath: string, migrationsDir: string): DatabaseClient {
   mkdirSync(dirname(databasePath), { recursive: true });
 
+  let isFreshDatabase = true;
+  try {
+    isFreshDatabase = !existsSync(databasePath) || statSync(databasePath).size === 0;
+  } catch {
+    isFreshDatabase = true;
+  }
+
   const sqlite = new Database(databasePath);
   sqlite.pragma("journal_mode = WAL");
   sqlite.pragma("secure_delete = ON");
@@ -600,6 +609,19 @@ export function createDatabase(databasePath: string, migrationsDir: string): Dat
   // compatibility pass after migrate so fresh databases receive whichever
   // branch migration Drizzle skipped.
   repairIncompleteUnderstandingMigration(sqlite, migrationsDir);
+
+  // 数据级迁移（JSON blob/行级格式变换）必须在全部 schema 修复与 drizzle
+  // 迁移之后执行：迁移看到的是最终表结构。失败时框架会用备份恢复整库并抛
+  // MigrationFailureError，由启动流程（bin/serve.ts）以退出码 78 结束进程。
+  runSqliteMigrations({
+    storeId: "gateway.sqlite",
+    sqlite,
+    databasePath,
+    backupDir: join(dirname(databasePath), "..", "backups"),
+    isFreshStore: isFreshDatabase,
+    migrations: gatewayDataMigrations,
+    close: () => sqlite.close(),
+  });
 
   return { db, sqlite };
 }

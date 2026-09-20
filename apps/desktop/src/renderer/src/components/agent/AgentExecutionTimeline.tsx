@@ -29,6 +29,7 @@ import {
   type AgentRunActivity,
   type DisplayAgentToolCall,
 } from './agentRunActivity'
+import { LocalAgentDispatchCard } from './LocalAgentDispatchCard'
 
 type ToolKind = 'search' | 'memory' | 'file' | 'email' | 'calendar' | 'image' | 'command' | 'schema' | 'connector' | 'action' | 'other'
 
@@ -221,12 +222,14 @@ export function AgentExecutionTimeline({
   runCompletedAt,
   continuing = false,
   continuationLabel = 'surface:agentExecutionTimeline.continuing',
+  sessionId,
 }: {
   activity: AgentRunActivity
   runStartedAt?: string
   runCompletedAt?: string
   continuing?: boolean
   continuationLabel?: string
+  sessionId?: string | null
 }) {
   const { t } = useLocale()
   const tools = activity.steps.map((step) => step.tool)
@@ -349,10 +352,16 @@ export function AgentExecutionTimeline({
                           <span>{statusLabel(tool.status, t)} · {formatDuration(duration, t)}</span>
                         </div>
                         {tool.error ? <p className="agent-tool-error">{localizeAgentActivityText(tool.error, t)}</p> : null}
-                        {command ? <><small>{t('surface:agentExecutionTimeline.command')}</small><pre>{command}</pre></> : null}
-                        {!command && args ? <><small>{t('surface:agentExecutionTimeline.arguments')}</small><pre>{args}</pre></> : null}
-                        {result ? <><small>{t('surface:agentExecutionTimeline.result')}</small><pre>{result}</pre></> : null}
-                        {!command && !args && !result && !tool.error ? <p>{t('surface:agentExecutionTimeline.noAdditionalDetails')}</p> : null}
+                        {tool.name.toLowerCase() === 'local_agent_dispatch' ? (
+                          <LocalAgentDispatchCard tool={tool} sessionId={sessionId} />
+                        ) : (
+                          <>
+                            {command ? <><small>{t('surface:agentExecutionTimeline.command')}</small><pre>{command}</pre></> : null}
+                            {!command && args ? <><small>{t('surface:agentExecutionTimeline.arguments')}</small><pre>{args}</pre></> : null}
+                            {result ? <><small>{t('surface:agentExecutionTimeline.result')}</small><pre>{result}</pre></> : null}
+                            {!command && !args && !result && !tool.error ? <p>{t('surface:agentExecutionTimeline.noAdditionalDetails')}</p> : null}
+                          </>
+                        )}
                       </div>
                     </div>
                   </details>

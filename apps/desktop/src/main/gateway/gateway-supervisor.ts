@@ -362,6 +362,13 @@ export class GatewaySupervisor {
     const deadline = Date.now() + STARTUP_TIMEOUT_MS
     while (Date.now() < deadline) {
       if (child.exitCode !== null || child.signalCode !== null) {
+        if (child.exitCode === 78) {
+          // 退出码 78 = 数据迁移失败（已用备份恢复整库）。给用户可读的说明，
+          // 详细原因在 gateway stderr（含备份路径）里。
+          throw new Error(
+            `${this.serviceLabel()} 数据迁移失败：老数据升级到当前版本时出错，已恢复到迁移前的备份。请查看日志；如持续失败请保留数据目录后联系支持。`,
+          )
+        }
         throw new Error(`${this.serviceLabel()} exited during startup with code ${String(child.exitCode)}`)
       }
 
