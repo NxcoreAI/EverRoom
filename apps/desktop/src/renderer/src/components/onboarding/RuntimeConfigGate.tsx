@@ -213,9 +213,9 @@ export function RuntimeConfigGate({ children }: { children: ReactNode }) {
       window.dispatchEvent(new CustomEvent('everroom-account-status-changed', { detail: account }))
     }
     // 登录钩子（main index）已启动中转保活；relayReady 触发一次续签并轮询
-    // 快照直至主配置可用（中转激活重写槽位）。失败（网络抖动等）退回网关
-    // 当前快照——本地仍保留可用配置时照常放行（#225：不能把已登录用户困
-    // 在登录页）。
+    // 快照直至主配置可用（中转激活重写槽位），轮询窗口内已覆盖首拉空
+    // primary 的就绪竞态。失败（网络抖动等）退回网关当前快照——本地仍保留
+    // 可用配置时照常放行（#225：不能把已登录用户困在登录页）。
     let next: RuntimeConfigSnapshot | null | undefined
     try {
       next = await window.nxcore!.runtimeConfig.relayReady()

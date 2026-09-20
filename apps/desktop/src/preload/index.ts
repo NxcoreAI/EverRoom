@@ -172,6 +172,18 @@ const api: NxcoreDesktopApi = {
   app: {
     clearUserData: () => ipcRenderer.invoke('app:clear-user-data'),
   },
+  updater: {
+    getStatus: () => ipcRenderer.invoke('update:get-status'),
+    checkNow: () => ipcRenderer.invoke('update:check-now'),
+    onProgress: (listener) => {
+      ipcRenderer.on('update:progress', (_event, progress) => listener(progress))
+      return () => ipcRenderer.removeAllListeners('update:progress')
+    },
+    onDownloaded: (listener) => {
+      ipcRenderer.on('update:downloaded', (_event, info) => listener(info))
+      return () => ipcRenderer.removeAllListeners('update:downloaded')
+    },
+  },
   window: {
     minimize: () => ipcRenderer.invoke('window:minimize'),
     toggleMaximize: () => ipcRenderer.invoke('window:toggle-maximize'),

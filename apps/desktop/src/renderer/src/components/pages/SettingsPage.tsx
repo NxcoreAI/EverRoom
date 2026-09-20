@@ -26,6 +26,7 @@ import QRCode from 'qrcode'
 
 import { useAccount } from '@/state/AccountContext'
 import { ConnectorModeSection } from '@/components/settings/ConnectorModeSection'
+import { UpdateSection } from '@/components/settings/UpdateSection'
 import { loadRealitySettings, saveRealitySettings, type RealitySettings } from '@/state/realitySettings'
 import {
   loadDocumentCursorCompletionSettings,
@@ -61,6 +62,7 @@ const SETTINGS_NAV: SettingsNavItem[] = [
   { id: 'settings-capture', label: 'surface:settings.windowScreenshots', icon: Camera },
   { id: 'settings-editor', label: 'surface:settings.documentEditing', icon: Sparkles },
   { id: 'settings-interface', label: 'surface:settings.interfaceLanguage', icon: Languages },
+  { id: 'settings-update', label: 'surface:settings.navigationUpdate', icon: RefreshCw },
 ]
 
 type PendingAction = CloudOidcProvider | 'refresh' | 'logout' | 'keyring' | 'sync' | 'admission' | null
@@ -593,6 +595,8 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
           </button>
         </div>
       </section>
+
+      <UpdateSection />
 
       <section id="settings-extensions" className="reality-settings-section settings-anchor-section browser-extension-settings" aria-labelledby="browser-extension-settings-title">
         <header>

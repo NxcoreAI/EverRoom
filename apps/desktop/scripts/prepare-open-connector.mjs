@@ -4,8 +4,8 @@ import { existsSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 
-const OPEN_CONNECTOR_REVISION = 'bd4213af4c96af24f1f6fa4a66765cb425a8291f'
-// runtimeFormat 4：白名单扩展至 7 项（patches/open-connector@1.3.5.patch，
+const OPEN_CONNECTOR_REVISION = '806663488c6e8df92755d473cd866a1d80f2222f'
+// runtimeFormat 4：白名单扩展至 7 项（现 patches/open-connector@0.0.0-development.patch，
 // 覆盖文档导入链 drive/wiki/search/comment）。patch 不改变 revision/version，
 // 已构建的运行时会因 marker 命中而跳过重建，需靠 bump 强制刷新。
 const RUNTIME_FORMAT = 4
@@ -64,6 +64,8 @@ try {
   // npm ci + lockfile: 浮动 install 会解析到 registry 最新版本，
   // 曾因新发布的 @vitest/browser-playwright@5.0.0（peerDep 要求 vitest@5.0.0）
   // 触发 npm arborist "Cannot read properties of null (reading 'edgesOut')" 崩溃。
+  // 注意：open-connector 依赖源/SHA 变更时必须同步重新生成 open-connector-package-lock.json，
+  // 否则 package.json 与锁文件不同步，npm 10 的 ci 同样以 edgesOut 崩溃而非 EUSAGE 报错。
   await run('npm', ['ci', '--include=dev', '--ignore-scripts', '--no-audit', '--no-fund'], stagingDirectory)
   await run(process.execPath, ['scripts/ensure-generated.ts'], stagingDirectory)
   await applyEverRoomBranding(stagingDirectory)

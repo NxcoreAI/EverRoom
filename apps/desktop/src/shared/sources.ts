@@ -809,6 +809,16 @@ export interface NxcoreDesktopApi {
   app: {
     clearUserData(): Promise<void>
   }
+  updater: {
+    /** 当前版本、渠道与安装标识（诊断/白名单登记用） */
+    getStatus(): Promise<{ version: string; channel: 'stable' | 'nightly'; installId: string; supported: boolean }>
+    /** 手动检查更新：update-found=有新版正在后台下载（完成后弹窗）；no-update=已是最新 */
+    checkNow(): Promise<'update-found' | 'no-update' | 'busy' | 'error'>
+    /** 订阅下载进度（percent 0-100、bytesPerSecond），返回取消函数 */
+    onProgress(listener: (progress: { percent: number; bytesPerSecond: number }) => void): () => void
+    /** 订阅下载完成（version），返回取消函数 */
+    onDownloaded(listener: (info: { version: string }) => void): () => void
+  }
   window: {
     minimize(): Promise<void>
     toggleMaximize(): Promise<void>

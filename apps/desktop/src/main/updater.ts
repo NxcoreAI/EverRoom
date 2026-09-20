@@ -1,4 +1,4 @@
-import { app, dialog } from 'electron'
+import { app, dialog, ipcMain, webContents } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -43,6 +43,13 @@ async function resolveInstallId(saasClient: SaasClient | null): Promise<string> 
   return generated
 }
 
+/** 渠道暂无版本时 feed 返回 404——业务正常态，非故障。 */
+function isFeedNotFound(error: unknown): boolean {
+  const status = (error as { statusCode?: number }).statusCode
+  const message = error instanceof Error ? error.message : ''
+  return status === 404 || /\b404\b|not found/i.test(message)
+}
+
 export class DesktopUpdater {
   private readonly channel: UpdateChannel
   private readonly feedUrl: string
@@ -50,6 +57,7 @@ export class DesktopUpdater {
   private installId = ''
   private reportedVersion = ''
   private usingFallback = false
+  private manualChecking = false
 
   constructor(private readonly saasClient: SaasClient | null) {
     this.channel = currentChannel()
@@ -60,24 +68,62 @@ export class DesktopUpdater {
 
   async start(): Promise<void> {
     this.installId = await resolveInstallId(this.saasClient)
+    // IPC 两种模式都注册：dev 下按钮可点（supported=false，返回错误态），打包版才有真实更新链路
+    this.registerIpc()
+    if (!app.isPackaged) return
     autoUpdater.autoDownload = true
     autoUpdater.autoInstallOnAppQuit = true
     autoUpdater.allowPrerelease = this.channel === 'nightly'
     autoUpdater.logger = console
     this.applyFeed()
     autoUpdater.on('checking-for-update', () => void this.report('check'))
+    autoUpdater.on('download-progress', progress => {
+      // 广播给所有窗口：设置页显示百分比与实时速度
+      for (const wc of webContents.getAllWebContents()) {
+        wc.send('update:progress', { percent: progress.percent, bytesPerSecond: progress.bytesPerSecond })
+      }
+    })
     autoUpdater.on('update-downloaded', info => {
+      for (const wc of webContents.getAllWebContents()) wc.send('update:downloaded', { version: info.version })
       void this.report('downloaded', info.version)
       void this.promptInstall(info)
     })
-    autoUpdater.on('error', () => void this.tryFallbackOnce())
+    autoUpdater.on('error', error => {
+      // 404 = 渠道暂无版本，属正常业务态：不切备源、不产生降级副作用
+      if (isFeedNotFound(error)) return
+      void this.tryFallbackOnce()
+    })
     setTimeout(() => void this.check(), 5000)
     setInterval(() => void this.check(), UPDATE_CHECK_INTERVAL_MS)
   }
 
+  /** 设置页「检查更新」按钮：与后台轮询共用下载与弹窗链路。 */
+  async checkNow(): Promise<'update-found' | 'no-update' | 'busy' | 'error'> {
+    if (this.manualChecking) return 'busy'
+    this.manualChecking = true
+    try {
+      const result = await autoUpdater.checkForUpdates()
+      return result?.versionInfo ? 'update-found' : 'no-update'
+    } catch (error) {
+      return isFeedNotFound(error) ? 'no-update' : 'error'
+    } finally {
+      this.manualChecking = false
+    }
+  }
+
+  getStatus() {
+    return { version: app.getVersion(), channel: this.channel, installId: this.installId, supported: app.isPackaged }
+  }
+
+  private registerIpc(): void {
+    ipcMain.handle('update:get-status', () => this.getStatus())
+    ipcMain.handle('update:check-now', () => this.checkNow())
+  }
+
   private applyFeed(url?: string): void {
     const target = url ?? `${this.feedUrl}/${this.channel}/${this.installId}`
-    autoUpdater.setFeedURL({ provider: 'generic', url: target, useMultipleRangeRequest: false })
+    // OSS 支持 Range 并发（多段下载提速）；不关 useMultipleRangeRequest
+    autoUpdater.setFeedURL({ provider: 'generic', url: target })
   }
 
   private async check(): Promise<void> {
@@ -138,6 +184,5 @@ export class DesktopUpdater {
 
 /** 装配入口：在 saasClient 创建之后调用，异步自启，不阻塞窗口。 */
 export function startDesktopUpdater(saasClient: SaasClient | null): void {
-  if (!app.isPackaged) return
   void new DesktopUpdater(saasClient).start().catch(error => console.warn('[updater] 启动失败', error))
 }
