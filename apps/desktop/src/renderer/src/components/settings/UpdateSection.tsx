@@ -22,13 +22,22 @@ export function UpdateSection() {
   const [checking, setChecking] = useState(false)
   const [result, setResult] = useState<CheckResult | null>(null)
   const [copied, setCopied] = useState(false)
+  const [progress, setProgress] = useState<{ percent: number; bytesPerSecond: number } | null>(null)
+  const [downloaded, setDownloaded] = useState<string | null>(null)
 
   useEffect(() => { void window.nxcore?.updater?.getStatus().then(setStatus).catch(() => setStatus(null)) }, [])
+  useEffect(() => {
+    const offProgress = window.nxcore?.updater?.onProgress(setProgress)
+    const offDownloaded = window.nxcore?.updater?.onDownloaded(info => { setDownloaded(info.version); setProgress(null) })
+    return () => { offProgress?.(); offDownloaded?.() }
+  }, [])
 
   const check = async () => {
     if (checking) return
     setChecking(true)
     setResult('busy')
+    setProgress(null)
+    setDownloaded(null)
     try {
       // eslint-disable-next-line no-await-in-loop
       setResult(await (await window.nxcore?.updater?.checkNow()) ?? 'error')
@@ -45,6 +54,10 @@ export function UpdateSection() {
     setCopied(true)
     setTimeout(() => setCopied(false), 1500)
   }
+
+  const progressText = progress
+    ? `正在下载 ${progress.percent.toFixed(0)}%（${(progress.bytesPerSecond / 1024 / 1024).toFixed(1)} MB/s）`
+    : null
 
   return (
     <section id="settings-update" className="reality-settings-section settings-anchor-section" aria-labelledby="update-settings-title">
@@ -76,9 +89,15 @@ export function UpdateSection() {
           {checking ? '正在检查' : '检查更新'}
         </button>
       </div>
-      {result && (
+      {(progressText || downloaded || result) && (
         <div className="reality-setting-row">
-          <small>{status?.supported === false ? '开发模式不支持更新检查' : resultText[result]}</small>
+          <small>
+            {status?.supported === false
+              ? '开发模式不支持更新检查'
+              : downloaded
+                ? `新版本 ${downloaded} 已下载完成，按弹窗提示重启生效`
+                : progressText ?? resultText[result ?? 'error']}
+          </small>
         </div>
       )}
     </section>
