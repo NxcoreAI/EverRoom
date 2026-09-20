@@ -147,7 +147,7 @@ window.nxcore = new Proxy(base, {
             },
             source: 'user',
             selectedSource: 'user',
-            availableSources: ['user', 'saas'],
+            availableSources: ['default', 'user'],
             configVersion: 5,
             updatedAt: iso(3600_000 * 5),
             primaryConfigured: true,
@@ -155,7 +155,7 @@ window.nxcore = new Proxy(base, {
           }),
           saveUser: async () => null,
           clearUser: async () => null,
-          refreshSaas: async () => null,
+          relayReady: async () => null,
           selectSource: async () => null,
           test: async () => ({ valid: true }),
         }

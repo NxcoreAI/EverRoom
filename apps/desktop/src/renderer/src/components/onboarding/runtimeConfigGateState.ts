@@ -17,19 +17,18 @@ export type StartupGateOutcome = 'wait' | 'app' | 'login'
 /**
  * 配置就绪后的放行判定：本地配置（瞬时）与登录态（需 SaaS 网络往返，可达
  * 数秒）不同步——配置就绪先等登录态落定再决定去向，避免"先进控制台再弹回
- * 登录页"。登录态缺席时按配置来源分流：saas 配置已不可信 → 登录页；
- * 手动/本地配置不依赖登录 → 照常进入应用。
+ * 登录页"。未登录时 default 源必须靠中转（relay 未激活则 primaryConfigured
+ * 为 false，走不到这里），user 源是 BYOK 自足配置 → 照常进入应用。
  */
 export function startupGateOutcome(input: {
   configReady: boolean
   accountResolved: boolean
   authenticated: boolean | null
-  configSource: RuntimeConfigSnapshot['selectedSource'] | null
 }): StartupGateOutcome {
   if (!input.configReady) return 'wait'
   if (!input.accountResolved) return 'wait'
   if (input.authenticated === true) return 'app'
-  return input.configSource === 'saas' ? 'login' : 'app'
+  return 'app'
 }
 
 /**

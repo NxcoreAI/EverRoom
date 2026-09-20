@@ -32,16 +32,18 @@ window.nxcore = new Proxy(original, {
     if (prop === 'runtimeConfig') {
       return {
         ...((target.runtimeConfig as object) ?? {}),
+        // primaryConfigured 随登录态联动：默认源要靠中转重写槽位才算配置就绪。
         get: async () => ({
           config: {},
-          source: 'saas',
-          selectedSource: 'saas',
-          availableSources: ['saas'],
+          source: 'default',
+          selectedSource: 'default',
+          availableSources: ['default'],
           configVersion: 1,
           updatedAt: new Date().toISOString(),
-          primaryConfigured: true,
+          primaryConfigured: authed,
           webSearchCredential: { configured: false, source: 'none' },
         }),
+        relayReady: async () => null,
       }
     }
     return target[prop as string]
