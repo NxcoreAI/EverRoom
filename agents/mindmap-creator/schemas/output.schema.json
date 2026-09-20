@@ -1,4 +1,19 @@
 {
+  "$defs": {
+    "node": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "label": { "type": "string", "minLength": 1, "maxLength": 40 },
+        "children": {
+          "type": "array",
+          "maxItems": 8,
+          "items": { "$ref": "#/$defs/node" }
+        }
+      },
+      "required": ["label"]
+    }
+  },
   "type": "object",
   "properties": {
     "topic": {
@@ -19,26 +34,7 @@
           "children": {
             "type": "array",
             "maxItems": 12,
-            "items": {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "label": { "type": "string", "minLength": 1, "maxLength": 40 },
-                "children": {
-                  "type": "array",
-                  "maxItems": 8,
-                  "items": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "properties": {
-                      "label": { "type": "string", "minLength": 1, "maxLength": 40 }
-                    },
-                    "required": ["label"]
-                  }
-                }
-              },
-              "required": ["label"]
-            }
+            "items": { "$ref": "#/$defs/node" }
           }
         },
         "required": ["label"]

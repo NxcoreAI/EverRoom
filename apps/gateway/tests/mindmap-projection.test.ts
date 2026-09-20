@@ -29,25 +29,35 @@ describe("parseAgentMindmap", () => {
     const tree = parseAgentMindmap(sampleTree);
     expect(tree.topic).toBe("连接器统一调研");
     expect(tree.branches).toHaveLength(4);
-    expect(tree.branches[0]!.children[0]!.children).toEqual([{ label: "oo 与 managed" }]);
+    expect(tree.branches[0]!.children![0]!.children).toEqual([{ label: "oo 与 managed" }]);
     expect(tree.digest?.summary).toBe("统一连接器执行的调研结论");
   });
 
-  it("截断超限层级与分支数", () => {
+  it("截断超限同层数量但层级深度不限", () => {
     const branches = Array.from({ length: 10 }, (_, i) => ({
       label: `分支${i}`,
       children: [
         {
           label: "子",
           children: [
-            { label: "孙", children: [{ label: "曾孙不该出现" }] },
+            { label: "孙", children: [{ label: "曾孙", children: [{ label: "玄孙" }] }] },
           ],
         },
       ],
     }));
     const tree = parseAgentMindmap({ topic: "t", branches });
     expect(tree.branches).toHaveLength(8);
-    expect(tree.branches[0]!.children[0]!.children![0]!.label).toBe("孙");
+    const leaf = tree.branches[0]!.children![0]!.children![0]!.children![0]!.children![0]!;
+    expect(leaf.label).toBe("玄孙");
+  });
+
+  it("同层子节点超出预算截断", () => {
+    const many = Array.from({ length: 20 }, (_, i) => ({ label: `子${i}` }));
+    const tree = parseAgentMindmap({ topic: "t", branches: [{ label: "分支", children: many }] });
+    expect(tree.branches[0]!.children).toHaveLength(12);
+    const deeper = Array.from({ length: 20 }, (_, i) => ({ label: `孙${i}` }));
+    const tree2 = parseAgentMindmap({ topic: "t", branches: [{ label: "分支", children: [{ label: "子", children: deeper }] }] });
+    expect(tree2.branches[0]!.children![0]!.children).toHaveLength(8);
   });
 
   it("清洗非法条目（空 label / 非对象跳过）", () => {
@@ -86,6 +96,38 @@ describe("mindmapToProjection", () => {
     expect(projection.nodes.find((node) => node.id === "mindmap:b0")?.label).toBe("现状梳理");
     expect(projection.nodes.find((node) => node.id === "mindmap:b0-0")?.label).toBe("双链路并存");
     expect(projection.nodes.find((node) => node.id === "mindmap:b0-0-0")?.label).toBe("oo 与 managed");
+  });
+
+  it("深层树投影：层级不限、nodeRef 沿索引路径延伸、边连通", () => {
+    const deepTree = parseAgentMindmap({
+      topic: "深树",
+      branches: [
+        {
+          label: "一级",
+          children: [
+            { label: "二级", children: [{ label: "三级", children: [{ label: "四级", children: [{ label: "五级叶" }] }] }] },
+          ],
+        },
+        { label: "平分支" },
+        { label: "再平分支" },
+      ],
+    });
+    const deep = mindmapToProjection({
+      tree: deepTree,
+      scope: "room",
+      roomId: "r",
+      roomTitle: "房",
+      documentId: null,
+      documentTitle: null,
+      generatedAt: "2026-09-20T00:00:00.000Z",
+      requestVersion: 1,
+    });
+    expect(deep.nodes.find((node) => node.id === "mindmap:b0-0-0-0-0")?.label).toBe("五级叶");
+    const nodeIds = new Set(deep.nodes.map((node) => node.id));
+    expect(deep.edges.every((edge) => nodeIds.has(edge.from) && nodeIds.has(edge.to))).toBe(true);
+    expect(new Set(deep.edges.map((edge) => edge.to))).toEqual(
+      new Set(deep.nodes.map((node) => node.id).filter((id) => id !== MINDMAP_ROOT_REF)),
+    );
   });
 
   it("room 级根节点为 room 类型", () => {

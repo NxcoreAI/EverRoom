@@ -10,7 +10,7 @@
  *   中的 DTO 逐字段同形（跨进程契约双份维护，改动需两侧同步）。
  *
  * 提示词行为对齐 NotebookLM 思维导图（内部提示词从未公开，按官方行为
- * 描述对齐）：根=主题短语、一级分支=主要概念 4-8 个、总层级 ≤3、
+ * 描述对齐）：根=主题短语、一级分支=主要概念 4-8 个、层级不设上限、
  * 节点用短语、覆盖全部主要主题、不编造材料外内容。
  */
 
@@ -24,17 +24,14 @@ import type {
 } from "./emergence-projection.js";
 
 /** 提示词/输出契约版本；行为变更时 +1，旧行按旧版本判定是否重生成。 */
-export const MINDMAP_PROMPT_VERSION = 1;
+export const MINDMAP_PROMPT_VERSION = 2;
 
 export class MindmapParseError extends Error {}
 
-export interface MindmapLeaf {
-  label: string;
-}
-
+/** 树节点：label + 可选子层，层级深度不限。 */
 export interface MindmapBranch {
   label: string;
-  children: Array<{ label: string; children?: MindmapLeaf[] }>;
+  children?: MindmapBranch[];
 }
 
 export interface MindmapTree {
@@ -55,8 +52,24 @@ function cleanLabel(value: unknown, max: number): string {
 
 /**
  * 防御解析 subAgent 提交的树（outputSchema 之外的第二道闸，兼容手工调用）：
- * 类型/长度规整、层级 >3 截断、分支 >8 截断；topic 或 branches 无效时抛错。
+ * 类型/长度规整、同层子节点数截断（层级深度不限）；topic 或 branches 无效时抛错。
  */
+function parseNode(raw: unknown, childBudget: number): MindmapBranch | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const source = raw as Record<string, unknown>;
+  const label = cleanLabel(source.label, LABEL_MAX);
+  if (!label) return null;
+  const rawChildren = source.children;
+  const children: MindmapBranch[] = [];
+  if (Array.isArray(rawChildren)) {
+    for (const rawChild of rawChildren.slice(0, childBudget)) {
+      const child = parseNode(rawChild, GRANDCHILD_MAX);
+      if (child) children.push(child);
+    }
+  }
+  return children.length > 0 ? { label, children } : { label };
+}
+
 export function parseAgentMindmap(raw: unknown): MindmapTree {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     throw new MindmapParseError("mindmap result is not an object");
@@ -68,27 +81,8 @@ export function parseAgentMindmap(raw: unknown): MindmapTree {
   const rawBranches = Array.isArray(source.branches) ? source.branches : [];
   const branches: MindmapBranch[] = [];
   for (const rawBranch of rawBranches.slice(0, BRANCH_MAX)) {
-    if (!rawBranch || typeof rawBranch !== "object" || Array.isArray(rawBranch)) continue;
-    const branch = rawBranch as Record<string, unknown>;
-    const label = cleanLabel(branch.label, LABEL_MAX);
-    if (!label) continue;
-    const children: MindmapBranch["children"] = [];
-    const rawChildren = Array.isArray(branch.children) ? branch.children : [];
-    for (const rawChild of rawChildren.slice(0, CHILD_MAX)) {
-      if (!rawChild || typeof rawChild !== "object" || Array.isArray(rawChild)) continue;
-      const child = rawChild as Record<string, unknown>;
-      const childLabel = cleanLabel(child.label, LABEL_MAX);
-      if (!childLabel) continue;
-      const grandchildren: MindmapLeaf[] = [];
-      const rawGrandchildren = Array.isArray(child.children) ? child.children : [];
-      for (const rawLeaf of rawGrandchildren.slice(0, GRANDCHILD_MAX)) {
-        if (!rawLeaf || typeof rawLeaf !== "object" || Array.isArray(rawLeaf)) continue;
-        const leafLabel = cleanLabel((rawLeaf as Record<string, unknown>).label, LABEL_MAX);
-        if (leafLabel) grandchildren.push({ label: leafLabel });
-      }
-      children.push(grandchildren.length > 0 ? { label: childLabel, children: grandchildren } : { label: childLabel });
-    }
-    branches.push(children.length > 0 ? { label, children } : { label, children: [] });
+    const branch = parseNode(rawBranch, CHILD_MAX);
+    if (branch) branches.push(branch);
   }
   if (branches.length === 0) throw new MindmapParseError("mindmap has no valid branches");
 
@@ -105,14 +99,10 @@ export function parseAgentMindmap(raw: unknown): MindmapTree {
 
 export const MINDMAP_ROOT_REF = "mindmap:root";
 
-function branchRef(index: number): string {
-  return `mindmap:b${index}`;
-}
-
-function leafRef(index: number, childIndex: number, grandIndex?: number): string {
-  return grandIndex === undefined
-    ? `mindmap:b${index}-${childIndex}`
-    : `mindmap:b${index}-${childIndex}-${grandIndex}`;
+/** 索引路径 → 稳定 nodeRef：mindmap:b{i}、b{i}-{j}、b{i}-{j}-{k}…（首段带 b 前缀，层级不限）。 */
+function nodeRefOf(path: readonly number[]): string {
+  const [head, ...rest] = path;
+  return `mindmap:b${head}${rest.map((index) => `-${index}`).join("")}`;
 }
 
 function sha(value: string): string {
@@ -157,7 +147,7 @@ export function mindmapToProjection(input: {
   };
 
   input.tree.branches.forEach((branch, branchIndex) => {
-    const branchNodeRef = branchRef(branchIndex);
+    const branchNodeRef = nodeRefOf([branchIndex]);
     nodes.push({
       id: branchNodeRef,
       nodeType: "mindmapTopic",
@@ -167,39 +157,32 @@ export function mindmapToProjection(input: {
       updatedAt: input.generatedAt,
     });
     pushEdge(MINDMAP_ROOT_REF, branchNodeRef);
-    branch.children.forEach((child, childIndex) => {
-      const childRef = leafRef(branchIndex, childIndex);
-      nodes.push({
-        id: childRef,
-        nodeType: "mindmapTopic",
-        label: child.label,
-        sourceGraph: "mindmap",
-        roomRef,
-        updatedAt: input.generatedAt,
-      });
-      pushEdge(branchNodeRef, childRef);
-      (child.children ?? []).forEach((leaf, grandIndex) => {
-        const leafNodeRef = leafRef(branchIndex, childIndex, grandIndex);
+    const walkChildren = (node: MindmapBranch, parentRef: string, basePath: readonly number[]) => {
+      (node.children ?? []).forEach((child, childIndex) => {
+        const path = [...basePath, childIndex];
+        const childRef = nodeRefOf(path);
         nodes.push({
-          id: leafNodeRef,
+          id: childRef,
           nodeType: "mindmapTopic",
-          label: leaf.label,
+          label: child.label,
           sourceGraph: "mindmap",
           roomRef,
           updatedAt: input.generatedAt,
         });
-        pushEdge(childRef, leafNodeRef);
+        pushEdge(parentRef, childRef);
+        walkChildren(child, childRef, path);
       });
-    });
+    };
+    walkChildren(branch, branchNodeRef, [branchIndex]);
   });
 
   const scopeLabel = input.scope === "document"
     ? `文档《${input.documentTitle ?? ""}》的主要概念分支`
     : `Room「${input.roomTitle}」的主要概念分支`;
   const cards: EmergenceCard[] = input.tree.branches.map((branch, branchIndex) => {
-    const nodeRef = branchRef(branchIndex);
+    const nodeRef = nodeRefOf([branchIndex]);
     const path: EmergencePath = { nodeRefs: [MINDMAP_ROOT_REF, nodeRef], hops: ["分支"] };
-    const childLabels = branch.children.map((child) => child.label).slice(0, 6);
+    const childLabels = (branch.children ?? []).map((child) => child.label).slice(0, 6);
     return {
       id: `card:${sha(`mindmap:${branchIndex}:${branch.label}`)}`,
       kind: "viewpoint",
