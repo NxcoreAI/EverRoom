@@ -27,7 +27,7 @@ import {
   X,
   UserRound,
 } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type Ref } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { useAccount } from '@/state/AccountContext'
@@ -35,6 +35,7 @@ import { loadRealitySettings } from '@/state/realitySettings'
 import { showToast } from '@/state/toast'
 import { useLocale, type AppLocale, type Translate } from '@/i18n/LocaleContext'
 import type {
+  AsrSegment,
   PerceptionNode,
   PerceptionNodeDetail,
   RealityEvent,
@@ -254,6 +255,23 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const activeSegmentRef = useRef<HTMLButtonElement | null>(null)
   const transcriptScrollRef = useRef<HTMLDivElement | null>(null)
+  // 边录边转：事件 id 就是录音 id，按 recordingId 把实时段挂到进行中的事件卡上。
+  const [liveTranscript, setLiveTranscript] = useState<{ recordingId: string; segments: AsrSegment[] } | null>(null)
+  const liveScrollRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    const unsubscribe = window.nxcore?.asr?.onSegmentTranscription?.((event) => {
+      setLiveTranscript((current) => current?.recordingId === event.recordingId
+        ? { recordingId: event.recordingId, segments: [...current.segments, ...event.result.segments] }
+        : { recordingId: event.recordingId, segments: [...event.result.segments] })
+    })
+    return () => unsubscribe?.()
+  }, [])
+
+  useEffect(() => {
+    const el = liveScrollRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [liveTranscript])
 
   const loadEvents = useCallback(async () => {
     if (!window.nxcore) {
@@ -844,6 +862,7 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
                 const event = item.event
                 const expanded = event.id === expandedId
                 const type = eventType(event)
+                const liveSegments = event.status === 'ongoing' && liveTranscript?.recordingId === event.id && liveTranscript.segments.length > 0 ? liveTranscript.segments : null
                 return (
                   <article className="schedule-event" key={event.id} data-expanded={String(expanded)} data-type={type.toLowerCase()}>
                     <div className="schedule-time"><time>{timeLabel(event.startedAt, locale)}</time><span /><small>{event.endedAt ? timeLabel(event.endedAt, locale) : t('diaryReality:reality.now')}</small></div>
@@ -854,7 +873,7 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
                           <span className="event-status" data-status={event.status}>{t(STATUS_LABELS[event.status])}</span>
                           <DeviceIcon event={event} />
                           <strong>{event.currentTopic || event.insights.currentTopic || event.title}</strong>
-                          <p>{event.insights.summary || (event.transcript ? event.transcript.slice(0, 120) : t(PROCESSING_LABELS[event.processingState]))}</p>
+                          <p>{event.insights.summary || (event.transcript ? event.transcript.slice(0, 120) : liveSegments ? liveSegments.map((segment) => segment.text).join(' ').slice(0, 120) : t(PROCESSING_LABELS[event.processingState]))}</p>
                           {(event.insights.representativeTags?.length ?? 0) > 0 ? <span className="schedule-tags">{event.insights.representativeTags!.slice(0, 5).map((tag) => <span key={tag.id ?? `${tag.kind}:${tag.label}`} data-kind={tag.kind}>{tag.label}{(tag.occurrenceCount ?? 0) > 1 ? <small>{tag.occurrenceCount}</small> : null}</span>)}</span> : null}
                           <small>{event.captureDevice.name} · <LiveDuration durationMs={event.durationMs} startedAt={event.startedAt} ongoing={event.status === 'ongoing'} /> · {t(PROCESSING_LABELS[event.processingState])}</small>
                           <ChevronDown aria-hidden="true" />
@@ -880,7 +899,7 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
                               {event.processingState !== 'ready' && !event.insights.summary ? (
                                 <>
                                   <ProcessingStatus event={event} />
-                                  <DetailSkeleton lines={5} />
+                                  {liveSegments ? <LiveTranscriptList segments={liveSegments} scrollRef={liveScrollRef} /> : <DetailSkeleton lines={5} />}
                                 </>
                               ) : (
                                 <>
@@ -955,10 +974,14 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
                               ) : event.transcriptEditedAt ? (
                                 <div className="reality-transcript-text">{event.transcript}</div>
                               ) : event.transcriptSegments.length === 0 && event.processingState !== 'ready' ? (
-                                <>
-                                  <ProcessingStatus event={event} />
-                                  <DetailSkeleton lines={6} />
-                                </>
+                                liveSegments ? (
+                                  <LiveTranscriptList segments={liveSegments} scrollRef={liveScrollRef} />
+                                ) : (
+                                  <>
+                                    <ProcessingStatus event={event} />
+                                    <DetailSkeleton lines={6} />
+                                  </>
+                                )
                               ) : event.transcriptSegments.length === 0 ? (
                                 <p className="reality-tags-empty" style={{ padding: '14px 0' }}>{event.transcript ? event.transcript : t('diaryReality:reality.noTranscriptYet')}</p>
                               ) : (
@@ -995,6 +1018,21 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
 function InsightList({ title, items, empty, icon }: { title: string; items: string[]; empty: string; icon?: ReactNode }) {
   const { t } = useLocale()
   return <section className="reality-insight-list"><h3>{icon}{t(title)}</h3>{items.length > 0 ? <ul>{items.map((item) => <li key={item}>{item}</li>)}</ul> : <p>{t(empty)}</p>}</section>
+}
+
+/** 录音进行中的实时转写：段结果尚未落库，只读展示、不可点选跳播。 */
+function LiveTranscriptList({ segments, scrollRef }: { segments: AsrSegment[]; scrollRef: Ref<HTMLDivElement> }) {
+  const { t } = useLocale()
+  return (
+    <div ref={scrollRef} className="reality-segments reality-segments-live" aria-label={t('diaryReality:reality.transcriptSegments')}>
+      {segments.map((segment, index) => (
+        <div className="reality-segment-live" key={`${segment.beginTime}-${index}`}>
+          <time>{formatDuration(segment.beginTime)}</time>
+          <span>{segment.text}</span>
+        </div>
+      ))}
+    </div>
+  )
 }
 
 /** 处理中/失败的状态条:给用户明确的当前阶段与预期。 */
