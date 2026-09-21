@@ -52,6 +52,15 @@ jobs:
           persist-credentials: false
           submodules: recursive
 
+      - name: Derive update channel from tag
+        shell: bash
+        run: |
+          # nightly tag 构建把渠道烙进 packaged-env（客户端据此查 nightly feed）；
+          # stable 不设该变量，运行时默认 stable。
+          if [[ "$GITHUB_REF_NAME" =~ -nightly\. ]]; then
+            echo "NXCORE_UPDATE_CHANNEL=nightly" >> "$GITHUB_ENV"
+          fi
+
       - name: Set up pnpm
         uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
 
@@ -276,6 +285,15 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
           submodules: recursive
+
+      - name: Derive update channel from tag
+        shell: bash
+        run: |
+          # nightly tag 构建把渠道烙进 packaged-env（客户端据此查 nightly feed）；
+          # stable 不设该变量，运行时默认 stable。
+          if [[ "$GITHUB_REF_NAME" =~ -nightly\. ]]; then
+            echo "NXCORE_UPDATE_CHANNEL=nightly" >> "$GITHUB_ENV"
+          fi
 
       - name: Set up pnpm
         uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10

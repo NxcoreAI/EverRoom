@@ -74,6 +74,9 @@ export class DesktopUpdater {
     autoUpdater.autoDownload = true
     autoUpdater.autoInstallOnAppQuit = true
     autoUpdater.allowPrerelease = this.channel === 'nightly'
+    // nightly 包内嵌版本是裸 X.Y.Z，而 nightly 目标是 X.Y.Z-nightly.N——semver 视角
+    // 是"降级"，必须放行；stable 渠道保持禁止（真降级必须挡）。
+    autoUpdater.allowDowngrade = this.channel === 'nightly'
     autoUpdater.logger = console
     this.applyFeed()
     autoUpdater.on('checking-for-update', () => void this.report('check'))
