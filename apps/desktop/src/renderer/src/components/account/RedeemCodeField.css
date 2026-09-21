@@ -206,6 +206,14 @@
   margin-top: 7px;
 }
 
+.redeem-code-apply-hint {
+  margin: 8px 2px 0 !important;
+  font-size: 11px !important;
+  line-height: 1.5 !important;
+  color: var(--muted, #536070) !important;
+  text-align: left;
+}
+
 .redeem-code-foot .redeem-code-feedback {
   flex: 1 1 auto;
   min-width: 0;

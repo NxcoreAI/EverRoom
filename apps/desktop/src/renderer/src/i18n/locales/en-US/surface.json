@@ -643,6 +643,8 @@
   "settings.redeemCodeVerify": "Verify code",
   "settings.redeemCodeApplied": "Redeemed. Pro is now active.",
   "settings.redeemCodeProActive": "This account already has Pro. Code not used.",
+  "settings.redeemCodeAutoApplyHint": "This code is applied automatically when you sign in — no extra steps needed.",
+  "settings.redeemCodeSignOutHint": "Codes can only be used when signing in. Sign out, then enter this code on the sign-in screen and sign in again to redeem it.",
   "settings.computerAudio": "Computer audio",
   "settings.connected": "Connected",
   "settings.connectedDevices": "Connected devices",

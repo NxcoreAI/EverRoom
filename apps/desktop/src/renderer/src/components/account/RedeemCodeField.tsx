@@ -51,7 +51,7 @@ export function useRedeemCode() {
   return { open, setOpen, code, state, change, prepare, reset, markInvalid:()=>setState('invalid') }
 }
 
-export function RedeemCodeField({value,state,open,disabled,onChange,onToggle,onVerify}:{value:string;state:RedeemState;open:boolean;disabled:boolean;onChange(value:string):void;onToggle():void;onVerify():void}){
+export function RedeemCodeField({value,state,open,disabled,signedIn=false,onChange,onToggle,onVerify}:{value:string;state:RedeemState;open:boolean;disabled:boolean;signedIn?:boolean;onChange(value:string):void;onToggle():void;onVerify():void}){
   const{t}=useLocale()
   const feedback=state==='valid'
     ?{tone:'valid',text:t('surface:settings.redeemCodeValid')}
@@ -60,6 +60,11 @@ export function RedeemCodeField({value,state,open,disabled,onChange,onToggle,onV
       :state==='error'
         ?{tone:'invalid',text:t('surface:settings.redeemCodeValidationFailed')}
         :null
+  // #258：兑换码只在登录时被消费（SaaS 无登录后兑换端点）。核验通过后必须讲清
+  // 「怎么用」：登录页说明会随本次登录自动使用；已登录场景给出退登重登的指引。
+  const applyHint=state==='valid'
+    ?t(signedIn?'surface:settings.redeemCodeSignOutHint':'surface:settings.redeemCodeAutoApplyHint')
+    :null
   // valid 态禁用：结果已由反馈文案表达；编辑码会重置 idle 并重新启用
   const canVerify=!disabled&&Boolean(value.trim())&&state!=='validating'&&state!=='valid'
 
@@ -89,6 +94,7 @@ export function RedeemCodeField({value,state,open,disabled,onChange,onToggle,onV
           {t('surface:settings.redeemCodeVerify')}
         </button>
       </div>
+      {applyHint?<p className="redeem-code-apply-hint" role="status">{applyHint}</p>:null}
     </div>:null}
   </div>
 }

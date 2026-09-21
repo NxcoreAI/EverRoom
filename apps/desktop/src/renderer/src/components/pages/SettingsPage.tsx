@@ -641,6 +641,19 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
               </div>
             ) : null}
 
+            {/* #258：登录后也要有兑换码入口。SaaS 仅在登录时消费兑换码，这里核验
+                通过后提示退登重登；退出登录后码与核验态由同一 hook 保留到登录面板。 */}
+            <RedeemCodeField
+              signedIn
+              value={redeemCode.code}
+              state={redeemCode.state}
+              open={redeemCode.open}
+              disabled={isBusy}
+              onChange={redeemCode.change}
+              onToggle={() => redeemCode.setOpen((value) => !value)}
+              onVerify={() => { void redeemCode.prepare().catch(() => {}) }}
+            />
+
             <div className="cloud-devices" aria-label={t('surface:settings.connectedDevices')}>
               <div className="cloud-devices-heading">
                 <div>
