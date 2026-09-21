@@ -96,6 +96,8 @@ export function WorkspacePaneBody({
   const ownedDetail = selectedObject && board === 'work' && objectOwnerSubtab(selectedObject) === subtab
     ? selectedObject
     : null;
+  // Agent 生成的 Office 文件是产物（产物库单列一节），不进工作/资料清单。
+  const externalKnowledgeFiles = knowledgeFiles.filter((file) => file.sourceKind !== 'agent-generated');
 
   if (board === 'work') {
     if (subtab === 'activity') {
@@ -103,7 +105,7 @@ export function WorkspacePaneBody({
         <ActivityPane
           room={room}
           backendDocuments={backendDocuments.filter((document) => document.origin !== 'native')}
-          knowledgeFiles={knowledgeFiles}
+          knowledgeFiles={externalKnowledgeFiles}
           onSelectResource={onSelectResource}
           onOpenObject={onOpenObject}
         />
@@ -132,7 +134,7 @@ export function WorkspacePaneBody({
           selectedId={selectedResourceId}
           backendDocuments={backendDocuments.filter((document) => document.origin !== 'native')}
           trashedDocuments={trashedDocuments.filter((document) => document.origin !== 'native')}
-          knowledgeFiles={knowledgeFiles}
+          knowledgeFiles={externalKnowledgeFiles}
           onSelect={onSelectResource}
           onDeleteDocument={onDeleteDocument}
           onRestoreDocument={onRestoreDocument}
@@ -150,7 +152,7 @@ export function WorkspacePaneBody({
       <OverviewDashboard
         room={room}
         backendDocuments={backendDocuments}
-        knowledgeFiles={knowledgeFiles}
+        knowledgeFiles={externalKnowledgeFiles}
         onSelectResource={onSelectResource}
         onOpenObject={onOpenObject}
         onOpenPane={onOpenPane}
@@ -172,13 +174,16 @@ export function WorkspacePaneBody({
         />
       );
     }
-    // 产物库：仅用户在 EverRoom 创建的文档；外部导入归工作/资料。
+    // 产物库：用户在 EverRoom 创建的文档 + Agent 生成的 Office 文件；
+    // 外部导入归工作/资料。
+    const agentFiles = knowledgeFiles.filter((file) => file.sourceKind === 'agent-generated');
     return (
       <ArtifactLibraryPane
         room={room}
         selectedId={selectedResourceId}
         backendDocuments={backendDocuments.filter((document) => document.origin === 'native')}
         trashedDocuments={trashedDocuments.filter((document) => document.origin === 'native')}
+        agentFiles={agentFiles}
         onSelect={onSelectResource}
         onCreateDocument={onCreateDocument}
         onDeleteDocument={onDeleteDocument}
@@ -215,7 +220,7 @@ export function WorkspacePaneBody({
         room={room}
         rooms={rooms}
         backendDocuments={backendDocuments}
-        knowledgeFiles={knowledgeFiles}
+        knowledgeFiles={externalKnowledgeFiles}
         onOpenRoom={onOpenRoom}
         onSelectResource={onSelectResource}
       />

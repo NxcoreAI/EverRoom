@@ -24,11 +24,11 @@ export function officePlugin(bridge: OfficeBridgeClient): DocumentCapabilityPlug
   const officeCreate: DocumentCapabilityTool = {
     name: "context_room_office_create",
     title: "生成 Word 文档入 Room",
-    description: "用本地 Word 引擎生成一份新的 .docx 文档并加入当前 Room 的资料页（Office 文件夹），"
+    description: "用本地 Word 引擎生成一份新的 .docx 文档并加入当前 Room（产物库 Office 产物 + 文件库），"
       + "生成的是真实 Word 排版（表格、列表、代码块、引用），适合正式报告、交付文档、需要 Word 排版的内容。"
       + "普通速记、笔记、随手总结仍用文档创建工具（markdown），不要用本工具。"
       + `title 用作文档标题与默认文件名（<title>.docx，可用 fileName 覆盖）。${HTML_GUIDE}`
-      + "生成完成后在回复中告知文件名，并说明可在 Room 资料页打开查看。",
+      + "生成完成后桌面端会自动打开预览；在回复中告知文件名即可。",
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -90,7 +90,7 @@ export function officePlugin(bridge: OfficeBridgeClient): DocumentCapabilityPlug
       + "普通笔记、速记、随手总结用文档创建工具（markdown），不要用 Word 工具。",
       "html 入参必须是受限 HTML 子集（仅标题/段落/列表/表格/链接/强调/pre/code/blockquote 标签）；"
       + "长文用 h2/h3 分节；表格首行用 th、单元格纯文本；不要输出 markdown 或解释性文字。",
-      "生成成功后在回复中告知文件名，并说明文档已加入 Room 资料页（Office 文件文件夹）、可点击打开。",
+      "生成成功后在回复中告知文件名；桌面端会自动打开预览，文档在 Room 产物库（Office 产物）和文件库可见。",
     ],
     tools: [officeCreate],
   };

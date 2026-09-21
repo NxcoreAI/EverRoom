@@ -3,9 +3,11 @@ import { FileText, FileUp, LoaderCircle, Package, Plus, RotateCcw, Trash2 } from
 import { useMemo, useRef, useState } from 'react';
 import { useLocale } from '../../../../../i18n/LocaleContext';
 import type { RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract';
+import type { KnowledgeFileDto } from '../../../../../../../shared/knowledge';
 import { createContextRoomResourceLibrary } from '../../resources';
 import type {
   ContextRoomCloudDocResource,
+  ContextRoomKnowledgeFileResource,
   ContextRoomRecord,
   ContextRoomResource,
 } from '../../types';
@@ -18,11 +20,13 @@ type ArtifactFilter = 'all' | 'draft' | 'trash';
 /**
  * 产物库：Room 内用户创建文档的平铺清单（原型 room-launch 产物板块）。
  * 行信息与筛选只用真实字段——版本/更新时间来自文档，引用数来自建联边投影。
+ * Agent 生成的 Office 文件（sourceKind=agent-generated）同属产物，单列一节。
  */
 export function ArtifactLibraryPane({
   room,
   backendDocuments,
   trashedDocuments,
+  agentFiles = [],
   selectedId,
   onSelect,
   onCreateDocument,
@@ -33,6 +37,8 @@ export function ArtifactLibraryPane({
   room: ContextRoomRecord;
   backendDocuments: RoomDocument[];
   trashedDocuments: RoomDocument[];
+  /** Agent 生成的 Office 产物（Room 文件清单按 sourceKind 过滤）。 */
+  agentFiles: KnowledgeFileDto[];
   selectedId: string | null;
   onSelect: (resource: ContextRoomResource) => void;
   onCreateDocument: (title: string, contentJson?: TiptapJsonContent) => Promise<void>;
@@ -44,6 +50,12 @@ export function ArtifactLibraryPane({
   const library = useMemo(
     () => createContextRoomResourceLibrary(room, backendDocuments, trashedDocuments, [], locale),
     [backendDocuments, locale, room, trashedDocuments],
+  );
+  // Agent Office 产物：复用 knowledge-file 资源映射（点击 → 内嵌 Office 预览）。
+  const officeArtifacts = useMemo(
+    () => createContextRoomResourceLibrary(room, [], [], agentFiles, locale)
+      .resources.filter((resource): resource is ContextRoomKnowledgeFileResource => resource.kind === 'knowledge-file'),
+    [agentFiles, locale, room],
   );
   const isCloudDoc = (resource: ContextRoomResource): resource is ContextRoomCloudDocResource =>
     resource.kind === 'cloud-doc';
@@ -259,6 +271,32 @@ export function ArtifactLibraryPane({
         </Popover.Root>
       </div>
       {actionError ? <div className="context-room-resource-error" role="alert">{actionError}</div> : null}
+      {filter === 'all' && officeArtifacts.length > 0 ? (
+        <section className="context-room-artifact-office" aria-label={t('contextRoom:artifactLibrary.officeArtifacts')}>
+          <h3>{t('contextRoom:artifactLibrary.officeArtifacts')}</h3>
+          <div className="context-room-artifact-list">
+            {officeArtifacts.map((resource) => (
+              <div className="context-room-artifact-row" key={resource.id}>
+                <button
+                  type="button"
+                  className="context-room-artifact-item"
+                  aria-selected={selectedId === resource.id}
+                  onClick={() => onSelect(resource)}
+                >
+                  <span className="context-room-artifact-ico"><FileText aria-hidden="true" /></span>
+                  <span className="context-room-artifact-body">
+                    <b>{resource.name}</b>
+                    <small>{`${resource.sizeLabel} · ${resource.statusLabel}`}</small>
+                  </span>
+                  <span className="context-room-artifact-meta">
+                    <span className="context-room-artifact-tag is-draft">{t('contextRoom:artifactLibrary.agentGenerated')}</span>
+                  </span>
+                </button>
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null}
       <div className="context-room-artifact-list">
         {visibleArtifacts.map((resource) => {
           const backendDocument = backendById.get(resource.binding.docId);
@@ -414,11 +452,13 @@ export function ArtifactLibraryPane({
         })}
         {visibleArtifacts.length === 0 ? (
           artifacts.length === 0 && trashedArtifacts.length === 0 ? (
-            <PanelEmptyState
-              compact
-              icon={Package}
-              title={t('contextRoom:artifactLibrary.noArtifactsYet')}
-            />
+            officeArtifacts.length > 0 && filter === 'all' ? null : (
+              <PanelEmptyState
+                compact
+                icon={Package}
+                title={t('contextRoom:artifactLibrary.noArtifactsYet')}
+              />
+            )
           ) : (
             <PanelEmptyState
               compact

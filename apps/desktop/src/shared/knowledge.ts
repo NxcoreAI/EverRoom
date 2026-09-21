@@ -332,6 +332,8 @@ export interface KnowledgeFileDto {
   status: string
   decidedBy: string | null
   confidence: number | null
+  /** 目录来源（manual-upload/local-folder/connector/…）；agent-generated = Agent 生成产物。 */
+  sourceKind: string
   uploadedAt: string
 }
 

@@ -18,6 +18,7 @@ import type {
 } from '../shared/memory'
 import type { IngestPipelines } from '../shared/ingest'
 import type { McpServersSnapshot } from '../shared/mcp'
+import type { OfficeAgentFileEvent } from '../shared/office'
 import { OIDC_LOGIN_CANCELLED_MESSAGE, type AiRelayKeeperEventType, type AsrResult, type CloudAccountStatus, type DesktopRequestError, type NxcoreDesktopApi, type RoomAgentSelectionRewriteInput } from '../shared/sources'
 import type { BrowserExtensionMessage, BrowserExtensionStatus } from '../shared/browser-extension'
 import { isCursorCompletionAgentErrorPayload } from '../shared/cursor-completion'
@@ -200,6 +201,12 @@ const api: NxcoreDesktopApi = {
     setActiveInstance: (id) => ipcRenderer.invoke('office:instance:set-active', id),
     closeInstance: (id) => ipcRenderer.invoke('office:instance:close', id),
     setWorkspaceBounds: (bounds) => ipcRenderer.send('office:workspace-bounds', bounds),
+    /** Agent 生成 Office 文件的进度/完成事件（完成带 fileId 用于自动打开预览）。 */
+    onAgentFile: (listener: (event: OfficeAgentFileEvent) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: OfficeAgentFileEvent) => listener(payload)
+      ipcRenderer.on('office:agent-file', handler)
+      return () => ipcRenderer.removeListener('office:agent-file', handler)
+    },
   },
   locale: {
     system: ipcRenderer.sendSync('app:get-system-locale-sync') as string,

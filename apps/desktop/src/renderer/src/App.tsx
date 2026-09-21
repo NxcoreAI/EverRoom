@@ -44,6 +44,7 @@ import {
 import { logDocumentFocusDiagnostic, onDocumentBlockNavigation } from '@/components/context-room/ported/components/detail-editor/documentBlockNavigation'
 import { onDocumentOperationNavigation } from '@/components/context-room/operations/documentOperationNavigation'
 import { useLocale } from '@/i18n/LocaleContext'
+import { showToast } from '@/state/toast'
 import { workspaceTabSwipeTarget } from '@/workspaceTabSwipe'
 import './App.css'
 import type { AgentNotificationTarget } from '../../shared/notifications'
@@ -624,6 +625,36 @@ export function App() {
     window.addEventListener('nxcore:office:open', open as EventListener)
     return () => window.removeEventListener('nxcore:office:open', open as EventListener)
   }, [openOfficeTab])
+
+  // Agent 生成 Word（office 桥）：阶段进度提示；完成后刷新 Room 清单并自动
+  // 打开内嵌预览（复用 nxcore:office:open 通道）。
+  useEffect(() => {
+    const office = window.nxcore?.office
+    if (!office?.onAgentFile) return
+    return office.onAgentFile((payload) => {
+      if (payload.type === 'phase') {
+        const phaseKey = payload.phase === 'rendering'
+          ? 'surface:agentOffice.generating.rendering'
+          : payload.phase === 'saved'
+            ? 'surface:agentOffice.generating.saved'
+            : 'surface:agentOffice.generating.importing'
+        showToast({ title: t('surface:agentOffice.generating.title'), message: t(phaseKey, { title: payload.title }) })
+        return
+      }
+      if (payload.type === 'error') {
+        showToast({ title: t('surface:agentOffice.error.title'), message: payload.message, variant: 'error' })
+        return
+      }
+      showToast({ title: t('surface:agentOffice.done.title'), message: t('surface:agentOffice.done.message', { title: payload.title }) })
+      // Room 资料页/产物库清单监听此 DOM 事件刷新（见 useRoomKnowledgeFiles）。
+      window.dispatchEvent(new CustomEvent('everroom:knowledge-changed'))
+      if (payload.fileId && payload.originalName) {
+        window.dispatchEvent(new CustomEvent('nxcore:office:open', {
+          detail: { fileId: payload.fileId, originalName: payload.originalName },
+        }))
+      }
+    })
+  }, [t])
 
   const syncContextRoomTabs = useCallback((rooms: ContextRoomWorkspaceTab[]) => {
     // 全空投影是网关启动/快照刷新窗口的瞬时态，不是真实清空——本地删除 Room

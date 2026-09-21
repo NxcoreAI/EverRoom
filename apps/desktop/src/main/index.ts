@@ -3543,7 +3543,15 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     })
     // Agent 生成 Word：gateway capability 工具 → 桥 → 隐藏 GenOffice docs view
     // → file-imports 入库。失败只禁用工具，不阻塞启动。
-    officeBridgeServer = new OfficeBridgeServer(() => officeFilesBridge)
+    // 生成进度/完成事件推给所有渲染窗口（进度提示 + 完成自动打开预览）。
+    officeBridgeServer = new OfficeBridgeServer(
+      () => officeFilesBridge,
+      (event) => {
+        for (const window of BrowserWindow.getAllWindows()) {
+          if (!window.isDestroyed()) window.webContents.send('office:agent-file', event)
+        }
+      },
+    )
     const officeBridge = await officeBridgeServer.start().catch((error) => {
       console.warn('Office bridge unavailable; office generation tool stays disabled.', error)
       officeBridgeServer = null

@@ -13,6 +13,9 @@ let hookWired = false
 // setDocsFileSavedHook 是全局单槽位：按 webContents id 扇出给并发生成请求。
 const pendingSaves = new Map<number, (filePath: string) => void>()
 
+/** 生成阶段（渲染层做进度提示用）：视图就绪 → 落盘。 */
+export type DocxGenerationPhase = 'rendering' | 'saved'
+
 function ensureRuntime(): PreparedGenOfficeRuntime {
   runtime ??= loadPreparedGenOfficeRuntime()
   if (!hookWired) {
@@ -42,7 +45,10 @@ export interface GeneratedDocx {
  * GenOffice defaultSaveDir → fileSavedHook 回传路径。调用方负责导入后清理
  * 临时文件（失败时保留以便恢复）。
  */
-export async function generateDocxFromHtml(input: { title: string; html: string }): Promise<GeneratedDocx> {
+export async function generateDocxFromHtml(
+  input: { title: string; html: string },
+  onPhase?: (phase: DocxGenerationPhase) => void,
+): Promise<GeneratedDocx> {
   const title = input.title.trim().slice(0, 120)
   if (!title) throw new Error('文档标题不能为空')
   const { docs } = ensureRuntime()
@@ -72,7 +78,9 @@ export async function generateDocxFromHtml(input: { title: string; html: string 
     // 同一同步块内先挂 hook 再排队内容：渲染端 boot 消费必然晚于本块。
     docs.markDocsNewBlank(wcId)
     docs.queueDocsAiContent(wcId, { title, html: input.html })
+    onPhase?.('rendering')
     const filePath = await saved
+    onPhase?.('saved')
     return { filePath, bytes: await readFile(filePath), title }
   } finally {
     cleanup()

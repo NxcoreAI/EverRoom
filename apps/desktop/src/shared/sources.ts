@@ -81,6 +81,7 @@ import type {
 } from '@nxcore/agent-contract'
 import type { BrowserExtensionMessage, BrowserExtensionStatus } from './browser-extension'
 import type { ObsidianVaultApi } from './obsidian'
+import type { OfficeAgentFileEvent } from './office'
 import type {
   AgentAuthEnvironmentStatus,
   AgentAuthEventFrame,
@@ -833,6 +834,8 @@ export interface NxcoreDesktopApi {
     /** 关闭并销毁一个预览实例（标签关闭时调用）。 */
     closeInstance(id: string): Promise<void>
     setWorkspaceBounds(bounds: OfficeWorkspaceBounds): void
+    /** Agent 生成 Office 文件的进度/完成事件（完成带 fileId 用于自动打开预览）。 */
+    onAgentFile(listener: (event: OfficeAgentFileEvent) => void): () => void
   }
   locale: {
     system: string

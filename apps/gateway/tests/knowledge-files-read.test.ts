@@ -158,6 +158,7 @@ describe("文件读取面与归属清单（资料模型修订）", () => {
       id: imported.fileEntryId,
       originalName: "编程学习文档.docx",
       bytes: Buffer.byteLength("docx 字节"),
+      sourceKind: "manual-upload",
     });
 
     // 模拟解析完成：parsed 产物挂上版本后 markdown 与本体路径走 catalog 分支
@@ -173,6 +174,27 @@ describe("文件读取面与归属清单（资料模型修订）", () => {
     // 软删除的目录文件不再进清单
     test.sqlite.prepare("UPDATE file_entries SET deleted_at = 1 WHERE id = ?").run(imported.fileEntryId);
     expect(test.service.listRoomFiles("room-cat")).toHaveLength(0);
+    test.sqlite.close();
+  });
+
+  it("Agent 生成的文件（sourceKind=agent-generated）进清单并携带来源标记", async () => {
+    const test = await serviceForTest();
+    const imported = await test.files.importFile({
+      sourceKind: "agent-generated",
+      sourceKey: "agent:word:test-key-0001",
+      originalName: "本周工作总结.docx",
+      buffer: Buffer.from("docx 字节", "utf8"),
+    });
+    test.sqlite.prepare(
+      "INSERT INTO route_decisions (id, source_kind, source_id, source_version, source_title, primary_room_id, confidence, decided_by, status, created_at, updated_at) VALUES (?, 'file', ?, 1, ?, 'room-agent', 1, 'resolution', 'confirmed', 1, 1)",
+    ).run("d-agent", imported.fileEntryId, "本周工作总结");
+    const files = test.service.listRoomFiles("room-agent");
+    expect(files).toHaveLength(1);
+    expect(files[0]).toMatchObject({
+      id: imported.fileEntryId,
+      originalName: "本周工作总结.docx",
+      sourceKind: "agent-generated",
+    });
     test.sqlite.close();
   });
 

@@ -857,6 +857,7 @@ export class KnowledgeService {
     status: string;
     decidedBy: string | null;
     confidence: number | null;
+    sourceKind: string;
     uploadedAt: Date;
   }> {
     roomId = this.canonicalRoomId(roomId);
@@ -896,11 +897,11 @@ export class KnowledgeService {
     if (wanted.length === 0) return [];
     // 元信息双轨：统一导入管线（/v1/file-imports）只写 file_entries 目录，
     // uploaded_files 仅为遗留字节通道；先旧表后目录表补齐，两边都缺才算不存在
-    const fileMetaById = new Map<string, { originalName: string; bytes: number; uploadedAt: Date }>();
+    const fileMetaById = new Map<string, { originalName: string; bytes: number; uploadedAt: Date; sourceKind: string }>();
     const sourceIds = wanted.map((decision) => decision.sourceId);
     for (const row of this.db.select().from(uploadedFiles)
       .where(inArray(uploadedFiles.id, sourceIds)).all()) {
-      fileMetaById.set(row.id, { originalName: row.originalName, bytes: row.bytes, uploadedAt: row.createdAt });
+      fileMetaById.set(row.id, { originalName: row.originalName, bytes: row.bytes, uploadedAt: row.createdAt, sourceKind: "legacy-upload" });
     }
     const missingIds = sourceIds.filter((id) => !fileMetaById.has(id));
     if (missingIds.length > 0) {
@@ -909,6 +910,7 @@ export class KnowledgeService {
         originalName: fileEntries.originalName,
         bytes: fileBlobs.byteSize,
         createdAt: fileEntries.createdAt,
+        sourceKind: fileEntries.sourceKind,
       }).from(fileEntries)
         .leftJoin(fileVersions, eq(fileEntries.currentVersionId, fileVersions.id))
         .leftJoin(fileBlobs, eq(fileVersions.contentHash, fileBlobs.contentHash))
@@ -919,6 +921,7 @@ export class KnowledgeService {
           originalName: row.originalName,
           bytes: row.bytes ?? 0,
           uploadedAt: row.createdAt,
+          sourceKind: row.sourceKind,
         });
       }
     }
@@ -934,6 +937,7 @@ export class KnowledgeService {
           status: decision.status,
           decidedBy: decision.decidedBy,
           confidence: decision.confidence ?? null,
+          sourceKind: file.sourceKind,
           uploadedAt: file.uploadedAt,
         };
       })

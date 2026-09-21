@@ -2009,7 +2009,7 @@ export const fileEntries = sqliteTable(
   {
     id: text("id").primaryKey(),
     sourceKind: text("source_kind", {
-      enum: ["manual-upload", "local-folder", "connector", "migration", "web-clipper", "legacy-upload"],
+      enum: ["manual-upload", "local-folder", "connector", "migration", "web-clipper", "legacy-upload", "agent-generated"],
     }).notNull(),
     sourceKey: text("source_key").notNull(),
     originalName: text("original_name").notNull(),

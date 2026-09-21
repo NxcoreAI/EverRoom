@@ -3,6 +3,7 @@ import { rm } from 'node:fs/promises'
 import { createServer, type IncomingMessage, type Server } from 'node:http'
 
 import type { FileImportAcceptedDto } from '../../shared/ingest'
+import type { OfficeAgentFileEvent } from '../../shared/office'
 import type { FilesGatewayBridge } from './files-gateway-bridge'
 import { generateDocxFromHtml } from '../office/office-generation'
 
@@ -43,7 +44,10 @@ export class OfficeBridgeServer {
   private server: Server | null = null
   private readonly token = randomBytes(32).toString('base64url')
   /** filesGatewayBridge 在 bridge 启动之后才创建：惰性取最新引用。 */
-  constructor(private readonly filesBridge: () => FilesGatewayBridge | null) {}
+  constructor(
+    private readonly filesBridge: () => FilesGatewayBridge | null,
+    private readonly broadcast: (event: OfficeAgentFileEvent) => void = () => undefined,
+  ) {}
 
   async start(): Promise<{ baseUrl: string; token: string }> {
     if (this.server) throw new Error('Office bridge is already running')
@@ -90,40 +94,59 @@ export class OfficeBridgeServer {
     const files = this.filesBridge()
     if (!files) return { status: 503, body: { message: 'EverRoom 文件服务尚未就绪' } }
 
-    const generated = await generateDocxFromHtml({ title: parsed.title, html: parsed.html })
-    const originalName = parsed.fileName?.trim() || `${generated.title}.docx`
-    let accepted: FileImportAcceptedDto
     try {
-      accepted = await files.importAgentGeneratedFile({
-        filePath: generated.filePath,
-        originalName,
-        // 同 idempotencyKey 重试 → 同 sourceKey：同内容去重 / 新内容进版本链。
-        sourceKey: `agent:word:${parsed.idempotencyKey}`,
-        ...(parsed.roomId ? { roomId: parsed.roomId } : {}),
+      const generated = await generateDocxFromHtml({ title: parsed.title, html: parsed.html }, (phase) => {
+        this.broadcast({ type: 'phase', title: parsed.title, phase })
       })
-    } catch (error) {
-      // 入库失败保留临时文件（defaultSaveDir 下的 <title>.docx）供人工恢复。
-      throw new Error(
-        `Word 已生成（${generated.filePath}）但入库失败：${error instanceof Error ? error.message : String(error)}`,
-      )
-    }
-    await rm(generated.filePath, { force: true }).catch(() => undefined)
-    return {
-      status: 200,
-      body: {
-        data: {
-          fileEntryId: accepted.fileEntryId,
-          fileVersionId: accepted.fileVersionId,
-          jobId: accepted.jobId,
-          contentHash: accepted.contentHash,
-          blobDeduped: accepted.blobDeduped,
-          versionDeduped: accepted.versionDeduped,
-          // Room 投影由路由决策异步完成（router 关闭时会降级不进 Room），
-          // 此字段只表达「本次是否请求了 Room 路由」。
-          roomRequested: Boolean(parsed.roomId),
+      const originalName = parsed.fileName?.trim() || `${generated.title}.docx`
+      this.broadcast({ type: 'phase', title: parsed.title, phase: 'importing' })
+      let accepted: FileImportAcceptedDto
+      try {
+        accepted = await files.importAgentGeneratedFile({
+          filePath: generated.filePath,
           originalName,
+          // 同 idempotencyKey 重试 → 同 sourceKey：同内容去重 / 新内容进版本链。
+          sourceKey: `agent:word:${parsed.idempotencyKey}`,
+          ...(parsed.roomId ? { roomId: parsed.roomId } : {}),
+        })
+      } catch (error) {
+        // 入库失败保留临时文件（defaultSaveDir 下的 <title>.docx）供人工恢复。
+        throw new Error(
+          `Word 已生成（${generated.filePath}）但入库失败：${error instanceof Error ? error.message : String(error)}`,
+        )
+      }
+      await rm(generated.filePath, { force: true }).catch(() => undefined)
+      this.broadcast({
+        type: 'done',
+        title: parsed.title,
+        fileId: accepted.fileEntryId,
+        originalName,
+        roomId: parsed.roomId,
+      })
+      return {
+        status: 200,
+        body: {
+          data: {
+            fileEntryId: accepted.fileEntryId,
+            fileVersionId: accepted.fileVersionId,
+            jobId: accepted.jobId,
+            contentHash: accepted.contentHash,
+            blobDeduped: accepted.blobDeduped,
+            versionDeduped: accepted.versionDeduped,
+            // Room 投影由路由决策异步完成（router 关闭时会降级不进 Room），
+            // 此字段只表达「本次是否请求了 Room 路由」。
+            roomRequested: Boolean(parsed.roomId),
+            originalName,
+          },
         },
-      },
+      }
+    } catch (error) {
+      this.broadcast({
+        type: 'error',
+        title: parsed.title,
+        message: error instanceof Error ? error.message : String(error),
+      })
+      throw error
     }
   }
 }

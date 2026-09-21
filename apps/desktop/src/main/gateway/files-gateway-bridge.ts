@@ -694,7 +694,7 @@ export class FilesGatewayBridge {
 
   private async importPath(input: {
     filePath: string
-    sourceKind: 'manual-upload' | 'local-folder' | 'connector' | 'migration'
+    sourceKind: 'manual-upload' | 'local-folder' | 'connector' | 'migration' | 'agent-generated'
     sourceKey: string
     originalName: string
     localSourceId?: string
@@ -754,7 +754,7 @@ export class FilesGatewayBridge {
   }): Promise<FileImportAcceptedDto> {
     return this.importPath({
       filePath: input.filePath,
-      sourceKind: 'manual-upload',
+      sourceKind: 'agent-generated',
       sourceKey: input.sourceKey,
       originalName: input.originalName,
       ...(input.roomId
