@@ -1424,7 +1424,7 @@ describe('document transactions', () => {
     const reconnected = await host.exchange('mcp-session', {
       jsonrpc: '2.0', id: 4, method: 'tools/list', params: {},
     }, { agentSessionId: 'session-1', runId: 'run-1', roomId: 'room-1' })
-    expect((reconnected[0]?.result as { tools?: unknown[] }).tools).toHaveLength(14)
+    expect((reconnected[0]?.result as { tools?: unknown[] }).tools).toHaveLength(15)
   })
 })
 
