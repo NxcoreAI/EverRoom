@@ -190,8 +190,9 @@ export function RuntimeConfigGate({ children }: { children: ReactNode }) {
     setTestError(null)
     try {
       const account = await window.nxcore.account.loginWithOidc(provider,redeemCodeValue)
-      if(redeemCodeValue){
-        // 同 SettingsPage：registration 可能省略，带码登录成功即清空输入防残留。
+      // 同 SettingsPage：registration 可能省略，登录成功（authenticated）即清空
+      // 输入防残留；设备准入路径（码未消费）不清空，保留已核验的码。
+      if(redeemCodeValue&&(account.registration||account.authenticated)){
         if(account.registration){
           window.alert(t(account.registration.invitationRejected==='pro_plan_active'?'surface:settings.redeemCodeProActive':'surface:settings.redeemCodeApplied'))
         }

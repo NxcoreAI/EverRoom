@@ -291,9 +291,10 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
     try {
       const nextAccount=await window.nxcore.account.loginWithOidc(provider,redeemCodeValue)
       setAccount(nextAccount)
-      if(redeemCodeValue){
-        // 服务端可能省略 registration（如设备准入路径）：只要带码登录成功就清空
-        // 输入，避免 valid 态残留让已登录设置页反复提示退登重登（AI review #266）。
+      // 服务端可能省略 registration：带码且登录成功（authenticated）就清空输入，
+      // 避免 valid 态残留让已登录设置页反复提示退登重登。设备准入路径（额度已满，
+      // authenticated:false 且码未消费）不清空，保留已核验的码（AI review #266）。
+      if(redeemCodeValue&&(nextAccount.registration||nextAccount.authenticated)){
         if(nextAccount.registration){
           window.alert(t(nextAccount.registration.invitationRejected==='pro_plan_active'?'surface:settings.redeemCodeProActive':'surface:settings.redeemCodeApplied'))
         }
