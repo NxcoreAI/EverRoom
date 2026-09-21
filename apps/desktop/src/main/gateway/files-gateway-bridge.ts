@@ -742,6 +742,27 @@ export class FilesGatewayBridge {
     return response.json() as Promise<FileImportAcceptedDto>
   }
 
+  /**
+   * Agent 生成的 Office 文档入库（office-bridge 调用）。sourceKey 由调用方
+   * 携带 idempotencyKey：同键同内容去重、同键新内容走版本链。
+   */
+  importAgentGeneratedFile(input: {
+    filePath: string
+    originalName: string
+    sourceKey: string
+    roomId?: string
+  }): Promise<FileImportAcceptedDto> {
+    return this.importPath({
+      filePath: input.filePath,
+      sourceKind: 'manual-upload',
+      sourceKey: input.sourceKey,
+      originalName: input.originalName,
+      ...(input.roomId
+        ? { roomId: input.roomId, pipelines: { room: true, wiki: false, memory: true } }
+        : {}),
+    })
+  }
+
   private async waitForMarkdown(fileId: string): Promise<void> {
     const deadline = Date.now() + 60_000
     while (Date.now() < deadline) {

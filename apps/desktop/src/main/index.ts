@@ -79,6 +79,7 @@ import { SessionLeaseKeeper } from './cloud/session-lease-keeper'
 import { AiRelayKeeper, type AiRelayKeeperEvent } from './cloud/ai-relay-keeper'
 import { RemoteAgentCommandClient } from './cloud/remote-agent-command-client'
 import { AgentNotificationBridgeServer } from './cloud/agent-notification-bridge'
+import { OfficeBridgeServer } from './gateway/office-bridge'
 import { MacosPushNotificationService } from './cloud/macos-push-notifications'
 import { parseAgentNotificationTarget, type AgentNotificationTarget, type NotificationPreferences } from '../shared/notifications'
 import { AsrCoordinator } from './asr/asr-coordinator'
@@ -804,6 +805,9 @@ let sessionLeaseKeeper: SessionLeaseKeeper | null = null
 let aiRelayKeeper: AiRelayKeeper | null = null
 let remoteAgentCommandClient: RemoteAgentCommandClient | null = null
 let agentNotificationBridgeServer: AgentNotificationBridgeServer | null = null
+let officeBridgeServer: OfficeBridgeServer | null = null
+/** Agent 生成文档入库用的长驻 FilesGatewayBridge（启动流程 L3662 实例就位后赋值）。 */
+let officeFilesBridge: FilesGatewayBridge | null = null
 let macosPushNotifications: MacosPushNotificationService | null = null
 let pendingAgentNotificationTarget: AgentNotificationTarget | null = null
 let privateTranscriptionSync: PrivateTranscriptionSyncService | null = null
@@ -3537,6 +3541,14 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       agentNotificationBridgeServer = null
       return null
     })
+    // Agent 生成 Word：gateway capability 工具 → 桥 → 隐藏 GenOffice docs view
+    // → file-imports 入库。失败只禁用工具，不阻塞启动。
+    officeBridgeServer = new OfficeBridgeServer(() => officeFilesBridge)
+    const officeBridge = await officeBridgeServer.start().catch((error) => {
+      console.warn('Office bridge unavailable; office generation tool stays disabled.', error)
+      officeBridgeServer = null
+      return null
+    })
     gatewaySupervisor = new GatewaySupervisor(
       dataDirectory,
       () => ({
@@ -3547,6 +3559,12 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
           ? {
             NXCORE_NOTIFICATION_BRIDGE_URL: notificationBridge.baseUrl,
             NXCORE_NOTIFICATION_BRIDGE_TOKEN: notificationBridge.token,
+          }
+          : {}),
+        ...(officeBridge
+          ? {
+            NXCORE_OFFICE_BRIDGE_URL: officeBridge.baseUrl,
+            NXCORE_OFFICE_BRIDGE_TOKEN: officeBridge.token,
           }
           : {}),
         ...(ooCliBridge ? ooCliBridge.environment() : {}),
@@ -3664,6 +3682,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     await migrationCoordinator.initialize()
     registerMigrationHandlers(migrationCoordinator)
     clipperAssetBridge = filesGatewayBridge
+    officeFilesBridge = filesGatewayBridge
     browserExtensionService?.setCaptureHandlers({
       create: (capture) => filesGatewayBridge.createClipCapture(capture),
       uploadAsset: (captureId, assetId, data) => filesGatewayBridge.uploadClipAsset(captureId, assetId, data),
@@ -3849,6 +3868,8 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     browserExtensionService = null
     await agentNotificationBridgeServer?.stop()
     agentNotificationBridgeServer = null
+    await officeBridgeServer?.stop()
+    officeBridgeServer = null
     macosPushNotifications?.stop()
     macosPushNotifications = null
     const service = localDataService
@@ -3951,6 +3972,7 @@ app.on('before-quit', (event) => {
   agentSchedulerGatewayBridge = null
   connectorGatewayBridge = null
   clipperAssetBridge = null
+  officeFilesBridge = null
   recordingStore = null
   saasClient = null
   screenshotOutbox = null

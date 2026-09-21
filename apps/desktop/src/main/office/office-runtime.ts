@@ -15,8 +15,11 @@ export interface GenOfficeDocsRuntime {
     openPath?: string,
     options?: { hostMode?: 'tab' | 'everroom'; readonly?: boolean },
   ): WebContentsView
+  markDocsNewBlank(wcId: number): void
+  queueDocsAiContent(wcId: number, content: { title: string; html: string }): void
   registerDocsIpc(): void
   setActiveDocsResolver(resolve: (() => WebContents | null) | null): void
+  setDocsFileSavedHook(hook: (contents: WebContents, filePath: string) => void): void
   setDocsShellWindow(window: BrowserWindow | null): void
   teardownDocsRenderer(contents: WebContents): void
 }

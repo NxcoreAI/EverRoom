@@ -146,6 +146,8 @@ const RawConfigSchema = Type.Object(
     ingestFilterInsightIntervalMs: Type.Integer({ minimum: 60_000 }),
     notificationBridgeUrl: Type.String(),
     notificationBridgeToken: Type.String(),
+    officeBridgeUrl: Type.String(),
+    officeBridgeToken: Type.String(),
   },
   { additionalProperties: false },
 );
@@ -338,6 +340,8 @@ export interface GatewayConfig {
   /** 桌面文档资产本地桥（loopback）；飞书导出时本地图改写为该 URL 前缀由 lark-cli 下载。 */
   documentAssetBridgeUrl?: string | null;
   notificationBridge?: { baseUrl: string; token: string } | null;
+  /** 桌面 Office 生成桥（loopback）：Agent 工具经它驱动隐藏 GenOffice view 生成 docx。 */
+  officeBridge?: { baseUrl: string; token: string } | null;
 }
 
 export interface VlmConfig {
@@ -798,6 +802,8 @@ export function loadConfig(
     ),
     notificationBridgeUrl: env.NXCORE_NOTIFICATION_BRIDGE_URL?.trim() ?? "",
     notificationBridgeToken: env.NXCORE_NOTIFICATION_BRIDGE_TOKEN?.trim() ?? "",
+    officeBridgeUrl: env.NXCORE_OFFICE_BRIDGE_URL?.trim() ?? "",
+    officeBridgeToken: env.NXCORE_OFFICE_BRIDGE_TOKEN?.trim() ?? "",
   };
 
   if (!Value.Check(RawConfigSchema, rawConfig)) {
@@ -845,6 +851,8 @@ export function loadConfig(
   }
   if (Boolean(rawConfig.notificationBridgeUrl)!==Boolean(rawConfig.notificationBridgeToken)) throw new Error("Notification bridge configuration requires URL and token together");
   if(rawConfig.notificationBridgeUrl){const u=new URL(rawConfig.notificationBridgeUrl);if(u.protocol!=="http:"||!["localhost","127.0.0.1","::1"].includes(u.hostname))throw new Error("NXCORE_NOTIFICATION_BRIDGE_URL must be a loopback HTTP endpoint");}
+  if (Boolean(rawConfig.officeBridgeUrl)!==Boolean(rawConfig.officeBridgeToken)) throw new Error("Office bridge configuration requires URL and token together");
+  if(rawConfig.officeBridgeUrl){const u=new URL(rawConfig.officeBridgeUrl);if(u.protocol!=="http:"||!["localhost","127.0.0.1","::1"].includes(u.hostname))throw new Error("NXCORE_OFFICE_BRIDGE_URL must be a loopback HTTP endpoint");}
 
   const memory: MemoryRuntimeConfig | null = rawConfig.memoryEnabled
     ? {
@@ -1062,6 +1070,9 @@ export function loadConfig(
       : null,
     notificationBridge: rawConfig.notificationBridgeUrl
       ? { baseUrl: rawConfig.notificationBridgeUrl.replace(/\/$/, ""), token: rawConfig.notificationBridgeToken }
+      : null,
+    officeBridge: rawConfig.officeBridgeUrl
+      ? { baseUrl: rawConfig.officeBridgeUrl.replace(/\/$/, ""), token: rawConfig.officeBridgeToken }
       : null,
     larkCli: {
       executable: firstEnvValue(env, "NXCORE_LARK_CLI_PATH")?.trim() || "lark-cli",

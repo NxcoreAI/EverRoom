@@ -31,6 +31,7 @@ import { documentOverviewRoutes } from "../modules/documents/overview-routes.js"
 import { documentSectionPreviewRoutes } from "../modules/documents/section-preview-routes.js";
 import { createSelectionRewriteContentResolver } from "../modules/documents/capabilities/selection-rewrite-content.js";
 import { createBuiltinDocumentCapabilityRegistry } from "../modules/documents/capabilities/builtins.js";
+import { OfficeBridgeClient } from "../modules/documents/capabilities/office-bridge-client.js";
 import { DocumentReadAuthority } from "../modules/documents/capabilities/read-authority.js";
 import { ExternalDocumentProjectionService } from "../modules/documents/external-projections/service.js";
 import { externalDocumentProjectionRoutes } from "../modules/documents/external-projections/routes.js";
@@ -609,6 +610,8 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       (roomId) => memoryService.listRoomAttributedMemories(roomId),
       documentCommentService,
       (event) => documentService.broker.publish(event),
+      // agent 写 Word：桌面注入 NXCORE_OFFICE_BRIDGE_URL/TOKEN 后启用。
+      config.officeBridge ? new OfficeBridgeClient(config.officeBridge) : null,
     ),
     documentOperationService,
     (diagnostic) => {
