@@ -3,8 +3,8 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import { RedeemCodeField } from '../src/renderer/src/components/account/RedeemCodeField'
 
-const AUTO_APPLY_HINT = '登录时会自动使用此兑换码，无需其他操作'
-const SIGN_OUT_HINT = '兑换码需在登录时使用：退出登录后，在登录页输入此码并重新登录即可生效'
+const AUTO_APPLY_HINT = '通过 Apple 或 Google 登录时会自动使用此兑换码，无需其他操作'
+const SIGN_OUT_HINT = '兑换码需在登录时使用：退出登录后，在登录页输入此码并通过 Apple / Google 重新登录即可生效'
 
 function renderField(state: 'idle' | 'valid' | 'invalid', signedIn: boolean) {
   return TestRenderer.create(
