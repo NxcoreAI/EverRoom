@@ -166,9 +166,14 @@ async function rateLimitAware<T>(operation: () => Promise<T>): Promise<T | IpcRa
 }
 
 const appDataDirectory = app.getPath('appData')
-const defaultDataDirectory = join(appDataDirectory, APP_NAME)
+// Dev builds get their own directory so they never share credentials.json
+// (and thus SaaS sessions / device bindings) with the packaged app running
+// alongside them.
+const defaultDataDirectory = join(appDataDirectory, app.isPackaged ? APP_NAME : `${APP_NAME}-Dev`)
+const packagedEnvFile = join(appDataDirectory, APP_NAME, '.env')
 const envFilePath = process.env.NXCORE_ENV_FILE?.trim() || join(defaultDataDirectory, '.env')
 if (existsSync(envFilePath)) loadEnvFile(envFilePath)
+else if (!app.isPackaged && existsSync(packagedEnvFile)) loadEnvFile(packagedEnvFile)
 const dataDirectory = process.env.NXCORE_DATA_DIR?.trim() || defaultDataDirectory
 const resolvedDataDirectory = resolve(dataDirectory)
 
