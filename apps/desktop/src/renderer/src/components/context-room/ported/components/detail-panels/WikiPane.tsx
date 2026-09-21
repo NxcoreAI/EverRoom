@@ -1,8 +1,6 @@
 import {
   AlertTriangle,
-  CheckCircle2,
   ChevronLeft,
-  ChevronRight,
   FileText,
   FolderOpen,
   LoaderCircle,
@@ -82,6 +80,7 @@ export function WikiPane({ room, selectedResourceId, onOpenPage, view = 'tree' }
   const [uploading, setUploading] = useState(false);
   const [graph, setGraph] = useState<KnowledgeWikiGraphDto | null>(null);
   const [graphLoading, setGraphLoading] = useState(false);
+  const [graphFailed, setGraphFailed] = useState(false);
   const [retrying, setRetrying] = useState(false);
   const building = status === 'processing' || status === 'pending';
   const canRetry = typeof window.nxcore?.knowledge?.retryWikiBuild === 'function';
@@ -100,7 +99,9 @@ export function WikiPane({ room, selectedResourceId, onOpenPage, view = 'tree' }
     setRetrying(true);
     try {
       await knowledge.retryWikiBuild(room.id);
-      await refresh();
+      // 乐观置构建中让轮询接管；KS 状态翻转有延迟，立刻 refresh 只会
+      // 读回 failed 把 UI 打回失败态（这就是「点重试没反应」的根源）。
+      setStatus('pending');
     } catch (cause) {
       showToast({ title: t('contextRoom:wiki.failedToRetry'), message: cause instanceof Error ? cause.message : undefined });
     } finally {
@@ -138,6 +139,7 @@ export function WikiPane({ room, selectedResourceId, onOpenPage, view = 'tree' }
     // 上传/确认后广播的事件：wiki 内容可能变化（图谱缓存一并作废）
     const onChanged = () => {
       setGraph(null);
+      setGraphFailed(false);
       void refresh();
     };
     window.addEventListener('everroom:knowledge-changed', onChanged);
@@ -151,20 +153,28 @@ export function WikiPane({ room, selectedResourceId, onOpenPage, view = 'tree' }
     return () => window.clearInterval(timer);
   }, [status, refresh]);
 
-  // 图谱懒加载：首次切到图谱视图才拉取（服务端要读全部页面，别在目录态白跑）
-  useEffect(() => {
-    if (view !== 'graph' || graph || graphLoading || pages.length === 0) return;
+  // 图谱懒加载：首次切到图谱视图才拉取（服务端要读全部页面，别在目录态白跑）。
+  // 失败不缓存成空图（否则一次瞬时故障 = 图谱永远空白，只能 reload 解），
+  // 落在 graphFailed 态给重试入口；切走再切回也不会自动重拉，避免失败环。
+  const loadGraph = useCallback(async () => {
     const knowledge = window.nxcore?.knowledge;
     if (!knowledge) return;
     setGraphLoading(true);
-    knowledge.getWikiGraph(room.id)
-      .then((data) => setGraph(data))
-      .catch((cause) => {
-        showToast({ title: t('contextRoom:wiki.failedToLoadGraph'), message: cause instanceof Error ? cause.message : undefined });
-        setGraph({ nodes: [], edges: [] });
-      })
-      .finally(() => setGraphLoading(false));
-  }, [view, graph, graphLoading, pages.length, room.id, t]);
+    setGraphFailed(false);
+    try {
+      setGraph(await knowledge.getWikiGraph(room.id));
+    } catch {
+      setGraph(null);
+      setGraphFailed(true);
+    } finally {
+      setGraphLoading(false);
+    }
+  }, [room.id]);
+
+  useEffect(() => {
+    if (view !== 'graph' || graph || graphLoading || graphFailed || pages.length === 0) return;
+    void loadGraph();
+  }, [view, graph, graphLoading, graphFailed, pages.length, loadGraph]);
 
   const openPage = (page: KnowledgeWikiPageDto) => {
     onOpenPage({
@@ -300,22 +310,23 @@ export function WikiPane({ room, selectedResourceId, onOpenPage, view = 'tree' }
     <div className="context-room-wiki-pane" ref={paneRef}>
       {tabRow ? createPortal(wikiActions, tabRow) : wikiActions}
       {building || status === 'failed' ? (
-        <div className="context-room-wiki-progress">
-          <span className="context-room-wp-step is-done">
-            <CheckCircle2 aria-hidden="true" />
-            <b>{t('contextRoom:wiki.materialsDeposited')}</b>
-            <small>{t('contextRoom:wiki.countSources', { count: files.length })}</small>
-          </span>
-          <span className="context-room-wp-arrow"><ChevronRight aria-hidden="true" /></span>
-          <span className={`context-room-wp-step${building ? ' is-running' : ' is-failed'}`}>
+        <div className={`context-room-wiki-progress${status === 'failed' ? ' is-failed' : ''}`}>
+          <span className={`context-room-wp-icon${building ? ' is-running' : ' is-failed'}`}>
             {building
               ? <LoaderCircle aria-hidden="true" className="is-spinning" />
               : <AlertTriangle aria-hidden="true" />}
-            <b>{t('contextRoom:wiki.generatingPages')}</b>
-            {building && pageCount !== null ? (
-              <small>{t('contextRoom:wiki.countPagesGenerated', { count: pageCount })}</small>
-            ) : null}
           </span>
+          <div className="context-room-wp-body">
+            <b>{building ? t('contextRoom:wiki.generatingPages') : t('contextRoom:wiki.buildFailed')}</b>
+            {building ? (
+              <small>
+                {t('contextRoom:wiki.countPagesGenerated', { count: pageCount ?? 0 })}
+                {' · '}
+                {t('contextRoom:wiki.countSources', { count: files.length })}
+              </small>
+            ) : null}
+            {building ? <span aria-hidden="true" className="context-room-wp-bar" /> : null}
+          </div>
           {status === 'failed' && canRetry ? (
             <button
               type="button"
@@ -344,6 +355,13 @@ export function WikiPane({ room, selectedResourceId, onOpenPage, view = 'tree' }
       ) : view === 'graph' ? (
         graphLoading ? (
           <div className="context-room-workspace-empty">{t('contextRoom:wiki.buildingGraph')}</div>
+        ) : graphFailed ? (
+          <div className="context-room-workspace-empty context-room-wiki-graph-error">
+            <span>{t('contextRoom:wiki.failedToLoadGraph')}</span>
+            <button type="button" className="context-room-wiki-progress-retry" onClick={() => void loadGraph()}>
+              {t('contextRoom:wiki.retry')}
+            </button>
+          </div>
         ) : graph && graph.nodes.length > 0 ? (
           <div className="context-room-wiki-graph-wrap">
             <WikiGraphCanvas

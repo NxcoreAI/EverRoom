@@ -215,31 +215,48 @@ const base = {
       '会话失效静默问题待解。',
     ].join(NL + NL) }),
     revealFile: async () => {},
-    listWikiPages: async () => ({ status: 'ready', items: [
-      { id: 'wp-1', title: '连接器统一·现状', type: 'page', path: '连接器统一/现状', description: null },
-      { id: 'wp-2', title: '连接器统一·目标架构', type: 'page', path: '连接器统一/目标架构', description: null },
-      { id: 'wp-3', title: '设计规范·动效篇', type: 'page', path: '设计规范/动效', description: null },
-    ], pageCount: 3,
-      summary: '连接器统一进入映射表收敛阶段，Gmail/日历双链路已并入统一格式层。目标架构以 provider 命名规范为先，映射表三处同值待收口；设计规范动效篇已定稿。',
-      updatedAt: '2026-09-18T08:30:00.000Z' }),
-    getWikiGraph: async () => ({ nodes: [
-      { id: 'wp-1', title: '连接器统一·现状', path: '连接器统一/现状', inLinks: 0 },
-      { id: 'wp-2', title: '连接器统一·目标架构', path: '连接器统一/目标架构', inLinks: 1 },
-      { id: 'wp-3', title: '设计规范·动效篇', path: '设计规范/动效', inLinks: 1 },
-    ], edges: [
-      { source: 'wp-1', target: 'wp-2' },
-      { source: 'wp-1', target: 'wp-3' },
-    ] }),
+    listWikiPages: async () => {
+      const w = window.__mockWiki = window.__mockWiki || {}
+      const status = w.status || 'ready'
+      if (status === 'ready') return { status, items: [
+        { id: 'wp-1', title: '连接器统一·现状', type: 'page', path: '连接器统一/现状', description: null },
+        { id: 'wp-2', title: '连接器统一·目标架构', type: 'page', path: '连接器统一/目标架构', description: null },
+        { id: 'wp-3', title: '设计规范·动效篇', type: 'page', path: '设计规范/动效', description: null },
+      ], pageCount: 3,
+        summary: '连接器统一进入映射表收敛阶段，Gmail/日历双链路已并入统一格式层。目标架构以 provider 命名规范为先，映射表三处同值待收口；设计规范动效篇已定稿。',
+        updatedAt: '2026-09-18T08:30:00.000Z' }
+      return { status, items: [], pageCount: w.pageCount || 0, summary: '', updatedAt: '' }
+    },
+    getWikiGraph: async () => {
+      if (window.__mockWiki && window.__mockWiki.graphError) throw new Error('KS 临时不可用（503）')
+      return { nodes: [
+        { id: 'wp-1', title: '连接器统一·现状', path: '连接器统一/现状', inLinks: 0 },
+        { id: 'wp-2', title: '连接器统一·目标架构', path: '连接器统一/目标架构', inLinks: 1 },
+        { id: 'wp-3', title: '设计规范·动效篇', path: '设计规范/动效', inLinks: 1 },
+      ], edges: [
+        { source: 'wp-1', target: 'wp-2' },
+        { source: 'wp-1', target: 'wp-3' },
+      ] }
+    },
+    // 手动重试构建：processing 起步，页数逐拍推进，3s 后 ready（验证轮询接管）
+    retryWikiBuild: async () => {
+      const w = window.__mockWiki = window.__mockWiki || {}
+      w.status = 'processing'
+      w.pageCount = 1
+      setTimeout(() => { w.pageCount = 2 }, 1500)
+      setTimeout(() => { w.status = 'ready'; w.pageCount = 3 }, 3000)
+      return { ok: true }
+    },
     getRoomRelations: async () => ({ rooms: [], edges: [], indexing: { status: 'ready', pendingSources: 0 } }),
     getRoomGraph: async () => ({ rooms: [], edges: [], indexing: { status: 'ready', pendingSources: 0 } }),
-    // 思路·聚焦思维导图 mock：GET 懒 kick（无行即 processing）、ensure 可 force 重生成。
-    focusMindmap: async (roomId, q) => mindmapDto(mindmapRow(roomId, q), roomId, q),
-    ensureFocusMindmap: async (roomId, q) => {
-      const row = mindmapRow(roomId, q)
-      if (q.force || row.status === 'failed') { row.status = 'processing'; row.startedAt = Date.now(); row.error = null }
-      return mindmapDto(row, roomId, q)
+    // 思路·聚焦=写作路线导图 mock：GET 无行=missing（不轮询），动作走 routeAction。
+    getRouteMindmap: async (roomId, q) => {
+      const row = routeStore.get(q.documentId) ?? null
+      if (row) routeTick(row)
+      return routeDto(roomId, q.documentId, row, q.requestVersion)
     },
-    // 思路·知识涌现 mock（仅漫步；聚焦已迁 focusMindmap）：8 张带路径的卡按 seed 轮换。
+    routeMindmapAction: async (roomId, q) => routeAction(roomId, q),
+    // 思路·知识涌现 mock（仅漫步；聚焦已迁写作路线导图）：8 张带路径的卡按 seed 轮换。
     emergence: async (_roomId, req) => {
       // 默认 900ms 延迟模拟投影耗时；页面里置 window.__holdEmergence=true 可挂起响应（验证加载态），调 window.__releaseEmergence() 放行
       await new Promise((resolve) => {

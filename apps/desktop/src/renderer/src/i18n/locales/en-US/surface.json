@@ -940,6 +940,8 @@
   "useAgentSession.newConversation": "New conversation",
   "useAgentSession.approvalFailed": "Failed to submit the command decision.",
   "wiki.buildingGraph": "Building graph…",
+  "wiki.failedToLoadGraph": "Failed to load graph",
+  "wiki.retry": "Retry",
   "wiki.close": "Close",
   "wiki.closeNodeDetails": "Close node details",
   "wiki.countInternalLinks": "{count} internal links",

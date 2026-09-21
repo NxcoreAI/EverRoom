@@ -1484,6 +1484,7 @@
   "useDocumentEditorOperations.yourFeedbackHasBeenIncluded": "Your feedback has been included.",
   "wiki.backToList": "Back to list",
   "wiki.buildingGraph": "Building graph…",
+  "wiki.buildFailed": "Generation failed",
   "wiki.captured": "Captured",
   "wiki.classifying": "Classifying",
   "wiki.classifyingAutomaticallyHighConfidenceFilesGoDirectlyTo": "Classifying automatically. High-confidence files go directly to the Room; others enter the review queue.",

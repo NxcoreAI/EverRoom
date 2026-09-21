@@ -83,6 +83,21 @@
   font-size: 13px;
 }
 
+.wiki-graph-error {
+  flex-direction: row;
+}
+
+.wiki-graph-retry {
+  height: 24px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
 .wiki-main {
   display: flex;
   min-width: 0;

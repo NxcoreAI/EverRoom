@@ -940,6 +940,8 @@
   "useAgentSession.newConversation": "新对话",
   "useAgentSession.approvalFailed": "提交命令确认结果失败。",
   "wiki.buildingGraph": "图谱构建中…",
+  "wiki.failedToLoadGraph": "图谱加载失败",
+  "wiki.retry": "重试",
   "wiki.close": "关闭",
   "wiki.closeNodeDetails": "关闭节点详情",
   "wiki.countInternalLinks": "{count} 条内链",

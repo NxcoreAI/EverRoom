@@ -1484,6 +1484,7 @@
   "useDocumentEditorOperations.yourFeedbackHasBeenIncluded": "已带上你的修改意见。",
   "wiki.backToList": "返回列表",
   "wiki.buildingGraph": "图谱构建中…",
+  "wiki.buildFailed": "生成失败",
   "wiki.captured": "已沉淀",
   "wiki.classifying": "归类中",
   "wiki.classifyingAutomaticallyHighConfidenceFilesGoDirectlyTo": "自动归类中：高置信直接入 Room，其余进入待归类队列",

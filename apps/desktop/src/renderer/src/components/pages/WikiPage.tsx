@@ -50,6 +50,7 @@ export function WikiPage() {
   const [view, setView] = useState<WikiView>('tree')
   const [graph, setGraph] = useState<KnowledgeWikiGraphDto | null>(null)
   const [graphLoading, setGraphLoading] = useState(false)
+  const [graphFailed, setGraphFailed] = useState(false)
 
   const refreshList = useCallback(async () => {
     if (!knowledge) return
@@ -118,16 +119,21 @@ export function WikiPage() {
     return () => { cancelled = true }
   }, [knowledge, selectedRoomId, selectedPage])
 
-  // 图谱懒加载：首次切到图谱视图才拉
+  // 图谱懒加载：首次切到图谱视图才拉；失败不缓存成空图（会被守卫挡住
+  // 永不重拉，一次瞬时故障 = 图谱空白直到刷新页面），落 graphFailed 给重试。
   useEffect(() => {
-    if (view !== 'graph' || graph || graphLoading || pages.length === 0) return
+    if (view !== 'graph' || graph || graphLoading || graphFailed || pages.length === 0) return
     if (!knowledge || !selectedRoomId) return
     setGraphLoading(true)
+    setGraphFailed(false)
     knowledge.getWikiGraph(selectedRoomId)
       .then((data) => setGraph(data))
-      .catch(() => setGraph({ nodes: [], edges: [] }))
+      .catch(() => {
+        setGraph(null)
+        setGraphFailed(true)
+      })
       .finally(() => setGraphLoading(false))
-  }, [view, graph, graphLoading, pages.length, knowledge, selectedRoomId])
+  }, [view, graph, graphLoading, graphFailed, pages.length, knowledge, selectedRoomId])
 
   const openPage = (page: KnowledgeWikiPageDto) => {
     setSelectedPage(page)
@@ -266,6 +272,13 @@ export function WikiPage() {
                 <div className="wiki-graph-pane">
                   {graphLoading ? (
                     <div className="wiki-empty">{t('surface:wiki.buildingGraph')}</div>
+                  ) : graphFailed ? (
+                    <div className="wiki-empty wiki-graph-error">
+                      <span>{t('surface:wiki.failedToLoadGraph')}</span>
+                      <button type="button" className="wiki-graph-retry" onClick={() => setGraphFailed(false)}>
+                        {t('surface:wiki.retry')}
+                      </button>
+                    </div>
                   ) : graph && graph.nodes.length > 0 ? (
                     <>
                       <WikiGraphCanvas
