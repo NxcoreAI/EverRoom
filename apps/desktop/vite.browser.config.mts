@@ -82,54 +82,103 @@ const tickBatch = () => {
   batchState.updatedAt = new Date().toISOString()
   return batchState
 }
-// 聚焦思维导图 mock 状态机：GET 懒 kick、约 6s 成材（轮询可见 processing）；
-// window.__holdMindmap=true 恒挂 processing；window.__failMindmap='错误码' 在成材时刻转 failed；
-// window.__resetMindmap() 清空重走。显式全字段，绝不落进兜底 Proxy。
-const mindmapStore = new Map()
-window.__resetMindmap = () => { mindmapStore.clear() }
-const mindmapBranches = (scope) => scope === 'document' ? [
-  ['现状梳理', ['Gmail 双链路', '日历链路', '云文档链路']],
-  ['目标架构', ['阶段一：身份合并', '阶段二：格式映射自愈']],
-  ['风险与开放问题', ['会话失效静默']],
-  ['排期与里程碑', ['V1 视觉定稿', '联调窗口']],
-] : [
-  ['现状梳理', ['三条链路并存']],
-  ['目标架构', ['统一执行面']],
-  ['规范沉淀', ['命名三处同值']],
-  ['开放问题', ['会话失效静默']],
-]
-const mindmapFixture = (scope, roomId, documentId) => {
-  const generatedAt = new Date().toISOString()
-  const topic = scope === 'document' ? '连接器统一调研' : '连接器（Room 级导图）'
-  const roomRef = { id: roomId, title: '连接器' }
-  const nodes = [{ id: 'mindmap:root', nodeType: scope === 'document' ? 'document' : 'room', label: topic, sourceGraph: 'mindmap', roomRef, updatedAt: generatedAt }]
-  const edges = []
-  const cards = mindmapBranches(scope).map((branch, i) => {
-    const ref = 'mindmap:b' + i
-    nodes.push({ id: ref, nodeType: 'mindmapTopic', label: branch[0], sourceGraph: 'mindmap', roomRef, updatedAt: generatedAt })
-    edges.push({ id: 'edge-mm-' + i, from: 'mindmap:root', to: ref, relationType: '分支', edgeLevel: 'composed', confidence: null })
-    branch[1].forEach((leaf, j) => {
-      const leafRef = ref + '-' + j
-      nodes.push({ id: leafRef, nodeType: 'mindmapTopic', label: leaf, sourceGraph: 'mindmap', roomRef, updatedAt: generatedAt })
-      edges.push({ id: 'edge-mm-' + i + '-' + j, from: ref, to: leafRef, relationType: '分支', edgeLevel: 'composed', confidence: null })
-    })
-    const path = { nodeRefs: ['mindmap:root', ref], hops: ['分支'] }
-    return { id: 'card:mm-' + i, kind: 'viewpoint', title: branch[0], summary: branch[1].join('、'), sourceType: 'mindmap', occurredAt: null, roomRef, reason: '统一执行面进入映射自愈阶段，双链路已并入格式层。', quote: null, path, confidence: 0.9, nodeRef: ref }
-  })
-  return { cards, nodes, edges, paths: cards.map((c) => c.path), focusRootRef: 'mindmap:root', scoreComponents: null, requestVersion: 0, degraded: false, degradedReason: null, generatedAt }
+// 写作路线导图 mock 状态机（聚焦改版）：动作建行（start/skip 懒建），GET 到点成材——
+// 初始层/续层约 6s、拍板写正文约 5s；window.__holdRouteMindmap=true 恒挂 expanding；
+// window.__failRouteMindmap='route_planner_failed' 在成材时刻转 failed；
+// window.__failRouteWriting=1 让写正文落败；window.__resetRouteMindmap() 清空重走。
+// 显式全字段，绝不落进兜底 Proxy。
+const routeStore = new Map()
+window.__resetRouteMindmap = () => { routeStore.clear() }
+const routeRootRef = 'route:root'
+const routeFixtureTitles = { 'doc-native-1': '产物：发布计划', 'doc-native-2': '产物：复盘草稿', 'doc-import-1': '资料：飞书周会纪要' }
+const routeFind = (node, ref) => node.ref === ref ? node : (node.children ?? []).map((c) => routeFind(c, ref)).find(Boolean) ?? null
+const routePathTo = (node, ref) => {
+  if (node.ref === ref) return [node.ref]
+  for (const child of node.children ?? []) { const sub = routePathTo(child, ref); if (sub) return [node.ref, ...sub] }
+  return null
 }
-const mindmapRow = (roomId, q) => {
-  const scope = q.scope
-  const key = scope + ':' + (scope === 'document' ? q.documentId : roomId)
-  let row = mindmapStore.get(key)
-  if (!row) { row = { status: 'processing', startedAt: Date.now(), error: null, generatedAt: null, projection: null }; mindmapStore.set(key, row) }
-  if (row.status === 'processing' && !window.__holdMindmap && Date.now() - row.startedAt >= 6000) {
-    if (window.__failMindmap) { row.status = 'failed'; row.error = String(window.__failMindmap); window.__failMindmap = null }
-    else { row.status = 'ready'; row.generatedAt = new Date().toISOString(); row.projection = mindmapFixture(scope, roomId, q.documentId ?? null) }
+const routeOptionPool = [
+  ['从现状痛点切入', '先摆 Gmail 双链路分表的排障成本，再引出统一动机'],
+  ['按目标架构分层', '身份合并、格式映射自愈两阶段，先架构后落地'],
+  ['以风险与开放问题为纲', '会话失效静默等问题先行，倒推方案边界'],
+  ['排期与里程碑叙事', 'V1 视觉定稿与联调窗口串成时间线'],
+  ['深挖关键证据', '用房间资料里的邮件与周报支撑判断'],
+  ['方案对比与取舍', '至少两案对比，说清选型判据'],
+]
+const routeAttach = (node, depth, count = 4) => {
+  node.children = []
+  for (let i = 0; i < count; i += 1) {
+    const [label, note] = routeOptionPool[(depth + i) % routeOptionPool.length]
+    const ref = node.ref === routeRootRef ? 'route:c' + i : node.ref + '-' + i
+    node.children.push({ ref, label: label + '（' + (depth + 1) + '层）', note })
+  }
+}
+const routeTick = (row) => {
+  if (row.status === 'expanding' && !window.__holdRouteMindmap && Date.now() - row.startedAt >= 6000) {
+    if (window.__failRouteMindmap) { row.status = 'failed'; row.error = String(window.__failRouteMindmap); window.__failRouteMindmap = null }
+    else if (row.expandingNodeRef) {
+      const target = row.graph ? routeFind(row.graph.root, row.expandingNodeRef) : null
+      if (!target) { row.status = 'failed'; row.error = 'route_expand_target_lost' }
+      else { routeAttach(target, (row.selectionPath ?? [routeRootRef]).length - 1); row.status = 'active'; row.expandingNodeRef = null; row.generatedAt = new Date().toISOString() }
+    } else {
+      row.graph = { root: { ref: routeRootRef, label: row.title, note: null } }
+      routeAttach(row.graph.root, 0)
+      row.status = 'active'; row.selectionPath = [routeRootRef]; row.generatedAt = new Date().toISOString()
+    }
+  }
+  if (row.writing && Date.now() - row.writingAt >= 5000) {
+    row.writing = false
+    row.error = window.__failRouteWriting ? 'route_writing_failed:mock' : null
+    if (window.__failRouteWriting) window.__failRouteWriting = null
   }
   return row
 }
-const mindmapDto = (row, roomId, q) => ({ roomId, scope: q.scope, scopeId: q.scope === 'document' ? q.documentId : roomId, status: row.status, error: row.error, generatedAt: row.generatedAt, promptVersion: row.status === 'ready' ? 1 : null, projection: row.projection ? { ...row.projection, requestVersion: q.requestVersion } : null, requestVersion: q.requestVersion })
+const routeDto = (roomId, documentId, row, requestVersion) => !row
+  ? { roomId, documentId, title: routeFixtureTitles[documentId] ?? '', description: null, status: 'missing', skipped: false, writing: false, error: null, expandingNodeRef: null, graph: null, selectionPath: null, finalizedAt: null, generatedAt: null, promptVersion: null, requestVersion }
+  : { roomId, documentId: row.documentId, title: row.title, description: row.description, status: row.status, skipped: row.skipped === true, writing: row.writing === true, error: row.error, expandingNodeRef: row.expandingNodeRef, graph: row.graph, selectionPath: row.selectionPath, finalizedAt: row.finalizedAt, generatedAt: row.generatedAt, promptVersion: row.graph ? 1 : null, requestVersion }
+const routeAction = (roomId, q) => {
+  let row = routeStore.get(q.documentId) ?? null
+  if (q.action === 'start') {
+    if (!row) {
+      row = { roomId, documentId: q.documentId, title: q.title ?? routeFixtureTitles[q.documentId] ?? '未命名文档', description: q.description ?? null, status: 'expanding', skipped: false, writing: false, error: null, expandingNodeRef: null, graph: null, selectionPath: null, finalizedAt: null, generatedAt: null, startedAt: Date.now(), writingAt: 0 }
+      routeStore.set(q.documentId, row)
+    } else if (row.status === 'failed') {
+      row.error = null; row.status = 'expanding'; row.startedAt = Date.now()
+      if (!row.graph || !row.expandingNodeRef) { row.graph = null; row.selectionPath = null }
+    } else if (row.skipped && !row.graph) {
+      row.skipped = false; row.status = 'expanding'; row.startedAt = Date.now()
+    } else if (row.skipped) {
+      row.skipped = false
+    }
+  } else if (q.action === 'expand') {
+    if (!row || !row.graph) throw new Error('route_not_generated')
+    if (row.status === 'expanding') throw new Error('route_busy')
+    if (row.status === 'finalized') throw new Error('route_not_finalizable')
+    const node = routeFind(row.graph.root, q.nodeRef)
+    if (!node) throw new Error('route_node_not_found')
+    row.selectionPath = routePathTo(row.graph.root, q.nodeRef)
+    row.skipped = false
+    if (!node.children || node.children.length === 0) { row.status = 'expanding'; row.expandingNodeRef = node.ref; row.error = null; row.startedAt = Date.now() }
+  } else if (q.action === 'back') {
+    if (!row || !row.selectionPath) throw new Error('route_path_missing')
+    if (row.status === 'finalized') throw new Error('route_not_finalizable')
+    const depth = Math.max(0, Math.min(q.toDepth ?? 0, row.selectionPath.length - 1))
+    row.selectionPath = row.selectionPath.slice(0, depth + 1)
+  } else if (q.action === 'skip') {
+    if (!row) {
+      row = { roomId, documentId: q.documentId, title: routeFixtureTitles[q.documentId] ?? '未命名文档', description: null, status: 'active', skipped: true, writing: false, error: null, expandingNodeRef: null, graph: null, selectionPath: null, finalizedAt: null, generatedAt: null, startedAt: 0, writingAt: 0 }
+      routeStore.set(q.documentId, row)
+    } else row.skipped = true
+  } else if (q.action === 'finalize') {
+    if (!row || !row.graph) throw new Error('route_not_generated')
+    const retryable = row.status === 'finalized' && row.error !== null && row.writing !== true
+    if (row.status !== 'active' && !retryable) throw new Error('route_not_finalizable')
+    if (!row.selectionPath || row.selectionPath.length < 2) throw new Error('route_path_empty')
+    row.status = 'finalized'; row.writing = true; row.error = null; row.finalizedAt = row.finalizedAt ?? new Date().toISOString(); row.writingAt = Date.now()
+  }
+  if (row) routeTick(row)
+  return routeDto(roomId, q.documentId, row, q.requestVersion)
+}
 const base = {
   platform: ${JSON.stringify(process.env.MOCK_PLATFORM || 'win32')},
   window: {
@@ -215,31 +264,48 @@ const base = {
       '会话失效静默问题待解。',
     ].join(NL + NL) }),
     revealFile: async () => {},
-    listWikiPages: async () => ({ status: 'ready', items: [
-      { id: 'wp-1', title: '连接器统一·现状', type: 'page', path: '连接器统一/现状', description: null },
-      { id: 'wp-2', title: '连接器统一·目标架构', type: 'page', path: '连接器统一/目标架构', description: null },
-      { id: 'wp-3', title: '设计规范·动效篇', type: 'page', path: '设计规范/动效', description: null },
-    ], pageCount: 3,
-      summary: '连接器统一进入映射表收敛阶段，Gmail/日历双链路已并入统一格式层。目标架构以 provider 命名规范为先，映射表三处同值待收口；设计规范动效篇已定稿。',
-      updatedAt: '2026-09-18T08:30:00.000Z' }),
-    getWikiGraph: async () => ({ nodes: [
-      { id: 'wp-1', title: '连接器统一·现状', path: '连接器统一/现状', inLinks: 0 },
-      { id: 'wp-2', title: '连接器统一·目标架构', path: '连接器统一/目标架构', inLinks: 1 },
-      { id: 'wp-3', title: '设计规范·动效篇', path: '设计规范/动效', inLinks: 1 },
-    ], edges: [
-      { source: 'wp-1', target: 'wp-2' },
-      { source: 'wp-1', target: 'wp-3' },
-    ] }),
+    listWikiPages: async () => {
+      const w = window.__mockWiki = window.__mockWiki || {}
+      const status = w.status || 'ready'
+      if (status === 'ready') return { status, items: [
+        { id: 'wp-1', title: '连接器统一·现状', type: 'page', path: '连接器统一/现状', description: null },
+        { id: 'wp-2', title: '连接器统一·目标架构', type: 'page', path: '连接器统一/目标架构', description: null },
+        { id: 'wp-3', title: '设计规范·动效篇', type: 'page', path: '设计规范/动效', description: null },
+      ], pageCount: 3,
+        summary: '连接器统一进入映射表收敛阶段，Gmail/日历双链路已并入统一格式层。目标架构以 provider 命名规范为先，映射表三处同值待收口；设计规范动效篇已定稿。',
+        updatedAt: '2026-09-18T08:30:00.000Z' }
+      return { status, items: [], pageCount: w.pageCount || 0, summary: '', updatedAt: '' }
+    },
+    getWikiGraph: async () => {
+      if (window.__mockWiki && window.__mockWiki.graphError) throw new Error('KS 临时不可用（503）')
+      return { nodes: [
+        { id: 'wp-1', title: '连接器统一·现状', path: '连接器统一/现状', inLinks: 0 },
+        { id: 'wp-2', title: '连接器统一·目标架构', path: '连接器统一/目标架构', inLinks: 1 },
+        { id: 'wp-3', title: '设计规范·动效篇', path: '设计规范/动效', inLinks: 1 },
+      ], edges: [
+        { source: 'wp-1', target: 'wp-2' },
+        { source: 'wp-1', target: 'wp-3' },
+      ] }
+    },
+    // 手动重试构建：processing 起步，页数逐拍推进，3s 后 ready（验证轮询接管）
+    retryWikiBuild: async () => {
+      const w = window.__mockWiki = window.__mockWiki || {}
+      w.status = 'processing'
+      w.pageCount = 1
+      setTimeout(() => { w.pageCount = 2 }, 1500)
+      setTimeout(() => { w.status = 'ready'; w.pageCount = 3 }, 3000)
+      return { ok: true }
+    },
     getRoomRelations: async () => ({ rooms: [], edges: [], indexing: { status: 'ready', pendingSources: 0 } }),
     getRoomGraph: async () => ({ rooms: [], edges: [], indexing: { status: 'ready', pendingSources: 0 } }),
-    // 思路·聚焦思维导图 mock：GET 懒 kick（无行即 processing）、ensure 可 force 重生成。
-    focusMindmap: async (roomId, q) => mindmapDto(mindmapRow(roomId, q), roomId, q),
-    ensureFocusMindmap: async (roomId, q) => {
-      const row = mindmapRow(roomId, q)
-      if (q.force || row.status === 'failed') { row.status = 'processing'; row.startedAt = Date.now(); row.error = null }
-      return mindmapDto(row, roomId, q)
+    // 思路·聚焦=写作路线导图 mock：GET 无行=missing（不轮询），动作走 routeAction。
+    getRouteMindmap: async (roomId, q) => {
+      const row = routeStore.get(q.documentId) ?? null
+      if (row) routeTick(row)
+      return routeDto(roomId, q.documentId, row, q.requestVersion)
     },
-    // 思路·知识涌现 mock（仅漫步；聚焦已迁 focusMindmap）：8 张带路径的卡按 seed 轮换。
+    routeMindmapAction: async (roomId, q) => routeAction(roomId, q),
+    // 思路·知识涌现 mock（仅漫步；聚焦已迁写作路线导图）：8 张带路径的卡按 seed 轮换。
     emergence: async (_roomId, req) => {
       // 默认 900ms 延迟模拟投影耗时；页面里置 window.__holdEmergence=true 可挂起响应（验证加载态），调 window.__releaseEmergence() 放行
       await new Promise((resolve) => {

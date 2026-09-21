@@ -28,8 +28,8 @@ export class AsrCoordinator {
       }
     }
     if(useSegments){
-      // 录制中已按分钟边录边转：停止时等全部转完、合并成整篇结果；
-      // 任一分钟失败则回退整段上传老路。
+      // 录制中已分段边录边转：停止时等全部转完、合并成整篇结果；
+      // 任一分段失败则回退整段上传老路。
       const segmented=await this.segmentUploader!.finalize(input.recordingId!)
       if(segmented){const event=await this.reality.applyAsr(input.recordingId!,segmented);await this.publish(event,segmented);return segmented}
       input={...input,retryToken:input.retryToken??'seg-fallback'}

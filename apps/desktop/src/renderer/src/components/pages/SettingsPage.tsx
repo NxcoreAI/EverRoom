@@ -5,7 +5,6 @@ import {
   Camera,
   CalendarClock,
   Cloud,
-  ExternalLink,
   LoaderCircle,
   Languages,
   LogOut,
@@ -13,7 +12,6 @@ import {
   Mic,
   MonitorSpeaker,
   Plug,
-  Puzzle,
   RefreshCw,
   ShieldCheck,
   ShieldAlert,
@@ -37,7 +35,6 @@ import appleLogo from '@/assets/apple-logo.svg'
 import googleLogo from '@/assets/google-logo.svg'
 import { formatLlmUsd, type AiGatewayStatus, type CloudOidcProvider } from '../../../../shared/sources'
 import type { AccountKeyringStatus, CloudDevice, PerceptionSettings, WindowScreenshotStatus } from '../../../../shared/sources'
-import type { BrowserExtensionStatus } from '../../../../shared/browser-extension'
 import { PageHeader } from './PageHeader'
 import { McpSettingsSection } from '@/components/settings/McpSettingsSection'
 import { useLocale, type AppLocale, type Translate } from '@/i18n/LocaleContext'
@@ -56,7 +53,6 @@ const SETTINGS_NAV: SettingsNavItem[] = [
   { id: 'settings-models', label: 'surface:settings.navigationModels', icon: Brain },
   { id: 'settings-runtime-config', label: 'surface:settings.navigationRuntimeConfig', icon: ShieldCheck },
   { id: 'settings-token-usage', label: 'surface:settings.usageAndBudgets', icon: Activity },
-  { id: 'settings-extensions', label: 'surface:settings.extensions', icon: Puzzle },
   { id: 'settings-onboarding', label: 'surface:settings.onboardingSetupTitle', icon: Sparkles },
   { id: 'settings-reality', label: 'surface:settings.realityPerception', icon: AudioLines },
   { id: 'settings-capture', label: 'surface:settings.windowScreenshots', icon: Camera },
@@ -138,34 +134,9 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
   const [perceptionBusy, setPerceptionBusy] = useState(false)
   const [lastScreenshotPath, setLastScreenshotPath] = useState<string | null>(null)
   const [activeSetting, setActiveSetting] = useState<string>(SETTINGS_NAV[0].id)
-  const [extensionStatus, setExtensionStatus] = useState<BrowserExtensionStatus | null>(null)
-  const [extensionBusy, setExtensionBusy] = useState(false)
-  const [extensionError, setExtensionError] = useState<string | null>(null)
   const [aiRelayStatus, setAiRelayStatus] = useState<AiGatewayStatus | null>(null)
   const redeemCode = useRedeemCode()
   const [qrActive, setQrActive] = useState(false)
-
-  useEffect(() => {
-    const api = window.nxcore?.browserExtension
-    if (!api) return
-    let cancelled = false
-    const refresh = async () => {
-      try {
-        const status = await api.status()
-        if (!cancelled) setExtensionStatus(status)
-      } catch (error) {
-        if (!cancelled) setExtensionError(error instanceof Error ? error.message : t('surface:settings.extensionUnavailable'))
-      }
-    }
-    void refresh()
-    const removeStatus = api.onStatus((status) => setExtensionStatus(status))
-    const timer = window.setInterval(() => void refresh(), 2_000)
-    return () => {
-      cancelled = true
-      window.clearInterval(timer)
-      removeStatus()
-    }
-  }, [t])
 
   useEffect(() => {
     if (!account?.authenticated || !window.nxcore) {
@@ -456,64 +427,6 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
     .filter((value): value is string => Boolean(value))
     .find(value => value !== accountName) ?? null
 
-  const installExtension = async () => {
-    const api = window.nxcore?.browserExtension
-    if (!api) return
-    setExtensionBusy(true)
-    setExtensionError(null)
-    try {
-      setExtensionStatus(await api.install())
-    } catch (error) {
-      setExtensionError(error instanceof Error ? error.message : t('surface:settings.extensionInstallFailed'))
-    } finally {
-      setExtensionBusy(false)
-    }
-  }
-
-  const createExtensionPairing = async () => {
-    const api = window.nxcore?.browserExtension
-    if (!api) return
-    setExtensionBusy(true)
-    setExtensionError(null)
-    try {
-      setExtensionStatus(await api.createPairing())
-    } catch (error) {
-      setExtensionError(error instanceof Error ? error.message : t('surface:settings.extensionPairingFailed'))
-    } finally {
-      setExtensionBusy(false)
-    }
-  }
-
-  const revokeExtension = async () => {
-    const api = window.nxcore?.browserExtension
-    if (!api) return
-    setExtensionBusy(true)
-    setExtensionError(null)
-    try {
-      setExtensionStatus(await api.revoke())
-    } catch (error) {
-      setExtensionError(error instanceof Error ? error.message : t('surface:settings.extensionRevokeFailed'))
-    } finally {
-      setExtensionBusy(false)
-    }
-  }
-
-  const openExtensionDirectory = async () => {
-    try {
-      await window.nxcore?.browserExtension.openDirectory()
-    } catch (error) {
-      setExtensionError(error instanceof Error ? error.message : t('surface:settings.extensionDirectoryFailed'))
-    }
-  }
-
-  const openBrowserExtensionsPage = async () => {
-    try {
-      await window.nxcore?.browserExtension.openBrowserPage()
-    } catch (error) {
-      setExtensionError(error instanceof Error ? error.message : t('surface:settings.extensionBrowserPageFailed'))
-    }
-  }
-
   return (
     <div className="page settings-page">
       <PageHeader title={t('surface:settings.settings')} />
@@ -597,77 +510,6 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
       </section>
 
       <UpdateSection />
-
-      <section id="settings-extensions" className="reality-settings-section settings-anchor-section browser-extension-settings" aria-labelledby="browser-extension-settings-title">
-        <header>
-          <span><Puzzle aria-hidden="true" /></span>
-          <div>
-            <h2 id="browser-extension-settings-title">{t('surface:settings.extensions')}</h2>
-          </div>
-        </header>
-        <div className="browser-extension-status-row">
-          <div className="browser-extension-status-indicator" data-state={extensionStatus?.state ?? 'unavailable'} aria-hidden="true" />
-          <div>
-            <strong>{t(extensionStatus?.state === 'paired'
-              ? 'surface:settings.extensionPaired'
-              : extensionStatus?.state === 'waiting-for-extension'
-                ? 'surface:settings.extensionWaiting'
-                  : 'surface:settings.extensionNotConnected')}</strong>
-            {extensionStatus?.pairedExtensionId
-              ? <small>{t('surface:settings.extensionId', { id: extensionStatus.pairedExtensionId })}</small>
-              : null}
-          </div>
-        </div>
-        {extensionStatus?.pairing ? (
-          <div className="browser-extension-pairing-panel" aria-live="polite">
-            <div>
-              <strong>{t(extensionStatus.state === 'paired'
-                ? 'surface:settings.extensionPaired'
-                : 'surface:settings.extensionPairingInProgress')}</strong>
-              <small>{t('surface:settings.extensionPairingExpires', { time: new Date(extensionStatus.pairing.expiresAt).toLocaleTimeString(locale) })}</small>
-            </div>
-            {extensionStatus.pairing.extensionId ? <code>{extensionStatus.pairing.extensionId}</code> : null}
-          </div>
-        ) : null}
-        <div className="browser-extension-actions">
-          {extensionStatus?.state === 'paired' ? (
-            <button type="button" className="danger-button" disabled={extensionBusy} onClick={() => void revokeExtension()}>
-              {extensionBusy ? <LoaderCircle className="spin" aria-hidden="true" /> : <Puzzle aria-hidden="true" />}
-              {t('surface:settings.revokeExtension')}
-            </button>
-          ) : (
-            <>
-              <button type="button" className="primary-button" disabled={extensionBusy} onClick={() => void installExtension()}>
-                {extensionBusy ? <LoaderCircle className="spin" aria-hidden="true" /> : <Puzzle aria-hidden="true" />}
-                {t(extensionStatus?.mode === 'development'
-                  ? 'surface:settings.loadDevelopmentExtension'
-                  : 'surface:settings.installExtension')}
-              </button>
-              <button type="button" className="secondary-button" disabled={extensionBusy} onClick={() => void createExtensionPairing()}>
-                {extensionBusy ? <LoaderCircle className="spin" aria-hidden="true" /> : <RefreshCw aria-hidden="true" />}
-                {t('surface:settings.connectExtension')}
-              </button>
-            </>
-          )}
-          {extensionStatus?.mode === 'development' ? (
-            <>
-              <button type="button" className="secondary-button" disabled={extensionBusy} onClick={() => void openExtensionDirectory()}>
-                <Puzzle aria-hidden="true" />{t('surface:settings.openExtensionDirectory')}
-              </button>
-              <button type="button" className="secondary-button" disabled={extensionBusy} onClick={() => void openBrowserExtensionsPage()}>
-                <ExternalLink aria-hidden="true" />{t('surface:settings.openBrowserExtensionsPage')}
-              </button>
-            </>
-          ) : null}
-        </div>
-        {extensionError ? <p className="browser-extension-error" role="alert">{extensionError}</p> : null}
-        {extensionStatus?.lastMessage ? (
-          <div className="browser-extension-last-message">
-            <span>{t('surface:settings.extensionLastMessage')}</span>
-            <code>{extensionStatus.lastMessage.type}</code>
-          </div>
-        ) : null}
-      </section>
 
       <ConnectorModeSection />
       <section id="settings-account" className="cloud-account-section settings-anchor-section" aria-labelledby="cloud-account-title">

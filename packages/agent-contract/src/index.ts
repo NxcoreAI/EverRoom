@@ -1341,6 +1341,8 @@ export interface ImportRoomDocumentInput {
   roomId: string;
   title: string;
   contentJson: TiptapJsonContent;
+  /** 省略时按外部导入（import）落库；EverRoom 内新建（含本地 Markdown 导入）传 native，产物库只列 native。 */
+  origin?: 'native' | 'import';
 }
 
 export interface SaveRoomDocumentInput {

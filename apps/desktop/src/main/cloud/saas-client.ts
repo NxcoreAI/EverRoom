@@ -8,6 +8,7 @@ import { basename, extname, isAbsolute, join, relative, resolve } from 'node:pat
 
 import type { AxiosRequestConfig, AxiosResponse } from 'axios'
 import type { App } from 'electron'
+import WebSocket from 'ws'
 
 import { OIDC_LOGIN_CANCELLED_MESSAGE } from '../../shared/sources'
 
@@ -136,7 +137,7 @@ export function isAdmissionRequired(outcome: LoginOutcome | null | undefined): o
     && (outcome as AdmissionRequired).admissionRequired === true
 }
 
-interface CloudJob {
+export interface CloudJob {
   id: string
   status: string
   provider: string
@@ -429,7 +430,7 @@ function startLoopbackCallbackServer(waiter: LoopbackCallbackWaiter): Promise<Se
 }
 
 export class SaasRequestError extends Error {
-  constructor(message: string, readonly status: number) {
+  constructor(message: string, readonly status: number, readonly errorCode?: string) {
     super(message)
     this.name = 'SaasRequestError'
   }
@@ -439,10 +440,23 @@ export function isSaasRateLimitError(error: unknown): error is SaasRequestError 
   return error instanceof SaasRequestError && error.status === 429
 }
 
-function saasErrorMessage(response: AxiosResponse): string {
-  if (response.status === 429) return '请求过于频繁，请稍后重试。'
-  const body = response.data as { detail?: string; message?: string } | null
-  return body?.detail ?? body?.message ?? `SaaS 请求失败（${response.status}）`
+/** 服务端已判定重试无意义的错误：402 周期额度不足、409 设备与会话不一致（换端登录/多版本共用凭证会触发）。 */
+export function isSaasPermanentError(error: unknown): error is SaasRequestError {
+  if (!(error instanceof SaasRequestError)) return false
+  if (error.status === 402) return true
+  return error.status === 409 && error.errorCode === 'ASR_DEVICE_MISMATCH'
+}
+
+/** 已知永久错误给出用户能看懂的说法；其余沿用服务端 detail。错误码在 problem+json 的 title 字段。 */
+function saasErrorDetail(response: AxiosResponse): { message: string; errorCode?: string } {
+  const body = response.data as { detail?: string; message?: string; title?: string } | null
+  const errorCode = typeof body?.title === 'string' ? body.title : undefined
+  if (response.status === 429) return { message: '请求过于频繁，请稍后重试。', errorCode }
+  const friendly = errorCode === 'ASR_QUOTA_INSUFFICIENT' ? '本期转写额度已用完，可升级套餐或等待额度重置。'
+    : errorCode === 'ASR_DEVICE_MISMATCH' ? '当前登录的设备与会话不一致，请退出登录后重新登录。'
+      : errorCode === 'ASR_PENDING_UPLOAD_LIMIT' ? '待上传的转写任务过多，请先处理或取消。'
+        : undefined
+  return { message: friendly ?? body?.detail ?? body?.message ?? `SaaS 请求失败（${response.status}）`, errorCode }
 }
 
 function env(name: string, fallback: string): string {
@@ -1168,6 +1182,57 @@ export class SaasClient {
     return this.normalizeJob(job)
   }
 
+  /**
+   * 任务推送通道：服务端在任务完成/失败时立刻推过来；订阅即回当前状态快照，
+   * 断线自动重连并重放订阅，错过的终态由快照补齐，是分段转写结果的唯一获取通道。
+   */
+  createAsrJobChannel(onJob: (job: CloudJob) => void): { subscribe(jobIds: string[]): void; close(): void } {
+    this.requireLogin()
+    const url = `${this.baseUrl.replace(/^http/, 'ws').replace(/\/+$/, '')}/app/asr-jobs/ws`
+    let ids: string[] = []
+    let closed = false
+    let socket: WebSocket | null = null
+    let retryTimer: NodeJS.Timeout | null = null
+    const scheduleReconnect = () => {
+      if (closed || retryTimer) return
+      retryTimer = setTimeout(() => { retryTimer = null; connect() }, 4_000)
+      retryTimer.unref()
+    }
+    const connect = () => {
+      if (closed) return
+      const token = this.accessToken
+      if (!token) { scheduleReconnect(); return }
+      const ws = new WebSocket(url, { headers: { Authorization: `Bearer ${token}` } })
+      socket = ws
+      ws.on('open', () => { if (ids.length) ws.send(JSON.stringify({ type: 'subscribe', ids })) })
+      ws.on('message', (data) => {
+        try {
+          const frame = JSON.parse(String(data)) as { type?: string; jobs?: CloudJob[]; job?: CloudJob }
+          if (frame.type === 'snapshot' && Array.isArray(frame.jobs)) for (const job of frame.jobs) onJob(job)
+          else if (frame.type === 'job' && frame.job) onJob(frame.job)
+        } catch { /* 坏帧忽略，等轮询兜底 */ }
+      })
+      ws.on('error', () => undefined)
+      ws.on('close', () => { if (socket === ws) socket = null; scheduleReconnect() })
+    }
+    connect()
+    return {
+      subscribe(jobIds: string[]) {
+        ids = [...new Set(jobIds)]
+        if (ids.length && socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'subscribe', ids }))
+      },
+      close() {
+        closed = true
+        if (retryTimer) clearTimeout(retryTimer)
+        if (socket) {
+          socket.removeAllListeners('close')
+          socket.close()
+          socket = null
+        }
+      },
+    }
+  }
+
   /** 改名在 SaaS 侧同步 asr_results 快照；随后调 getAsrJob 即可拿到新 speakerName。 */
   async renameAsrSpeaker(prefixedId: string, speakerId: string, name: string | null): Promise<void> {
     await this.request(`/app/asr-jobs/${this.cloudId(prefixedId)}/speakers/${encodeURIComponent(speakerId)}`, {
@@ -1614,7 +1679,8 @@ export class SaasClient {
     }
     const body = response.data as { data?: T; meta?: { nextCursor?: number } } | null
     if (response.status >= 400) {
-      throw new SaasRequestError(saasErrorMessage(response), response.status)
+      const detail = saasErrorDetail(response)
+      throw new SaasRequestError(detail.message, response.status, detail.errorCode)
     }
     if (!body || typeof body !== 'object' || !('data' in body)) throw new Error('SaaS 返回了无效响应。')
     return { data: body.data as T, meta: body.meta }
@@ -1640,7 +1706,8 @@ export class SaasClient {
   private unwrap<T>(response: AxiosResponse): T {
     const body = response.data as { data?: T } | null
     if (response.status >= 400) {
-      throw new SaasRequestError(saasErrorMessage(response), response.status)
+      const detail = saasErrorDetail(response)
+      throw new SaasRequestError(detail.message, response.status, detail.errorCode)
     }
     if (!body || typeof body !== 'object' || !('data' in body)) {
       throw new Error('SaaS 返回了无效响应。')

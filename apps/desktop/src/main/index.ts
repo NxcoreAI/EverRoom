@@ -166,9 +166,14 @@ async function rateLimitAware<T>(operation: () => Promise<T>): Promise<T | IpcRa
 }
 
 const appDataDirectory = app.getPath('appData')
-const defaultDataDirectory = join(appDataDirectory, APP_NAME)
+// Dev builds get their own directory so they never share credentials.json
+// (and thus SaaS sessions / device bindings) with the packaged app running
+// alongside them.
+const defaultDataDirectory = join(appDataDirectory, app.isPackaged ? APP_NAME : `${APP_NAME}-Dev`)
+const packagedEnvFile = join(appDataDirectory, APP_NAME, '.env')
 const envFilePath = process.env.NXCORE_ENV_FILE?.trim() || join(defaultDataDirectory, '.env')
 if (existsSync(envFilePath)) loadEnvFile(envFilePath)
+else if (!app.isPackaged && existsSync(packagedEnvFile)) loadEnvFile(packagedEnvFile)
 const dataDirectory = process.env.NXCORE_DATA_DIR?.trim() || defaultDataDirectory
 const resolvedDataDirectory = resolve(dataDirectory)
 
@@ -555,8 +560,8 @@ const KNOWLEDGE_CHANNELS = {
   routeStatus: 'knowledge:route:status',
   proposeRooms: 'knowledge:rooms:propose',
   emergence: 'knowledge:rooms:emergence',
-  focusMindmap: 'knowledge:rooms:focus-mindmap',
-  ensureFocusMindmap: 'knowledge:rooms:focus-mindmap-ensure',
+  getRouteMindmap: 'knowledge:rooms:route-mindmap',
+  routeMindmapAction: 'knowledge:rooms:route-mindmap-action',
   revertDecision: 'knowledge:route:revert',
   getPreferences: 'knowledge:preferences:get',
   updatePreferenceContent: 'knowledge:preferences:user-content',
@@ -2517,14 +2522,10 @@ function registerKnowledgeHandlers(bridge: KnowledgeGatewayBridge): void {
   handle(KNOWLEDGE_CHANNELS.openFile, (_event, fileId: string) => bridge.openFile(fileId))
   handle(KNOWLEDGE_CHANNELS.emergence, (_event, roomId: string, request: import('../shared/knowledge').EmergenceRequest) =>
     bridge.emergence(roomId, request))
-  handle(KNOWLEDGE_CHANNELS.focusMindmap, (_event, roomId: string, query: import('../shared/knowledge').FocusMindmapEnsureInput) =>
-    bridge.focusMindmap(roomId, {
-      scope: query.scope,
-      documentId: query.documentId ?? null,
-      requestVersion: query.requestVersion,
-    }))
-  handle(KNOWLEDGE_CHANNELS.ensureFocusMindmap, (_event, roomId: string, input: import('../shared/knowledge').FocusMindmapEnsureInput) =>
-    bridge.ensureFocusMindmap(roomId, input))
+  handle(KNOWLEDGE_CHANNELS.getRouteMindmap, (_event, roomId: string, query: { documentId: string; requestVersion: number }) =>
+    bridge.getRouteMindmap(roomId, query))
+  handle(KNOWLEDGE_CHANNELS.routeMindmapAction, (_event, roomId: string, input: import('../shared/knowledge').RouteMindmapActionInput) =>
+    bridge.routeMindmapAction(roomId, input))
 }
 
 /** 本体字节的 sha256（流式；与网关 fileBlobs.contentHash 同算法），预览实例的内容指纹。 */

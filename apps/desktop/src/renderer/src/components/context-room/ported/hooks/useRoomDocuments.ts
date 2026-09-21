@@ -213,6 +213,7 @@ export function useRoomDocuments(roomIds: string[]) {
       roomId,
       title,
       contentJson: localizedContent,
+      origin: 'native',
     })
     upsertDocument(document)
     return document

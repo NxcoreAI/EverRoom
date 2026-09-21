@@ -48,6 +48,20 @@ afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map((path) => rm(path, { recursive: true, force: true })))
 })
 
+describe('document import origin', () => {
+  const contentJson: TiptapJsonContent = { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'V1' }] }] }
+
+  it('未传 origin 默认按外部导入落库；传 native 归 EverRoom 创建（产物库只列 native）', async () => {
+    const { service } = await createHarness()
+    const external = await service.import({ id: 'doc-origin-default', roomId: 'room-1', title: '外部导入', contentJson })
+    const created = await service.import({ id: 'doc-origin-native', roomId: 'room-1', title: '新建产物', contentJson, origin: 'native' })
+
+    expect(external.origin).toBe('import')
+    expect(created.origin).toBe('native')
+    expect(service.list('room-1', false, 'native').map((document) => document.id)).toEqual(['doc-origin-native'])
+  })
+})
+
 describe('document transactions', () => {
   it('rejects diffs that reference a missing history version', async () => {
     const { service } = await createHarness()
@@ -1364,10 +1378,13 @@ describe('document transactions', () => {
       'context_room_write_commit',
       'context_room_write_abort',
       'context_room_document_comment_add',
+      'route_mindmap_finalize',
       'context_room_document_delete',
     ])
     expect(result.tools?.find((tool) => tool.name === 'context_room_write_begin')?.description)
       .toContain('正文内容与标题必须来自 document_draft 的返回值')
+    expect(result.tools?.find((tool) => tool.name === 'context_room_write_begin')?.description)
+      .toContain('只要求创建文档而没有要求立即产出内容')
     expect(result.tools?.find((tool) => tool.name === 'context_room_write_begin')?.description)
       .toContain('用户已经明确要求在工作区创建、保存或写入文档')
     expect(result.tools?.find((tool) => tool.name === 'context_room_write_begin')?.description)
@@ -1407,7 +1424,7 @@ describe('document transactions', () => {
     const reconnected = await host.exchange('mcp-session', {
       jsonrpc: '2.0', id: 4, method: 'tools/list', params: {},
     }, { agentSessionId: 'session-1', runId: 'run-1', roomId: 'room-1' })
-    expect((reconnected[0]?.result as { tools?: unknown[] }).tools).toHaveLength(14)
+    expect((reconnected[0]?.result as { tools?: unknown[] }).tools).toHaveLength(15)
   })
 })
 

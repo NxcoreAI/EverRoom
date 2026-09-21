@@ -8,6 +8,7 @@ import { queryPlugins } from "./query-plugin.js";
 import { DocumentCapabilityRegistry } from "./registry.js";
 import { DocumentReadAuthority } from "./read-authority.js";
 import { reviewPlugins } from "./review-plugins.js";
+import { routeMindmapPlugin } from "./route-mindmap-plugin.js";
 import { selectionRewritePlugin } from "./selection-rewrite-plugin.js";
 import type { CapabilityBackend } from "./shared.js";
 import type { DocumentRoomRegistry } from "./types.js";
@@ -26,6 +27,14 @@ export function createBuiltinDocumentCapabilityRegistry(
   comments?: DocumentCommentService,
   /** 文档事件广播：评论落库后发 document.comments.changed，桌面评论面板实时刷新。 */
   publishDocumentEvent?: (event: DocumentEvent) => void,
+  /** 写作路线导图拍板（聚焦改版）：服务晚于注册表构造，经 getter 惰性取用。 */
+  routeMindmapFinalize?: () => {
+    finalize(roomId: string, input: { documentId: string; requestVersion: number }): Promise<{
+      status: string;
+      writing: boolean;
+      error: string | null;
+    }>;
+  } | null,
 ): DocumentCapabilityRegistry {
   const registry = new DocumentCapabilityRegistry(operations);
   const reads = sharedReads ?? new DocumentReadAuthority((documentId) => backend.get(documentId));
@@ -34,6 +43,7 @@ export function createBuiltinDocumentCapabilityRegistry(
   registry.register(createPlugin(backend, operations));
   registry.register(selectionRewritePlugin(backend));
   registry.register(commentPlugin(backend, comments, publishDocumentEvent));
+  registry.register(routeMindmapPlugin(backend, routeMindmapFinalize ?? (() => null)));
   // #242：agent 文档删除（trash，带 confirm 防误删闸门）。
   registry.register(deletePlugin(backend));
   return registry;

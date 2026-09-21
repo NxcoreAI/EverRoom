@@ -784,17 +784,13 @@ export class KnowledgeService {
 
   /**
    * 手动重试构建（status=failed 的 Room wiki）：重新触发 KS ingest。
-   * 后台执行不等待落定——返回后客户端回到轮询进度即可。
+   * await 触发结果（202 即受理）：busy/失败直接抛给客户端，别让
+   * fire-and-forget 把失败吞掉——客户端拿不到错误就无法提示。
    */
   async retryRoomWikiIngest(roomId: string): Promise<{ ok: true }> {
     const knowledgeId = this.resolveRoomWikiId(roomId);
     if (!knowledgeId) throw new Error("room has no wiki");
-    void this.ks.ingest(knowledgeId).catch((error: unknown) => {
-      this.logger.warn(
-        { event: "knowledge.wiki.retry_failed", roomId, knowledgeId, error: String(error) },
-        "manual wiki ingest retry failed",
-      );
-    });
+    await this.ks.ingest(knowledgeId);
     return { ok: true };
   }
 
@@ -817,27 +813,21 @@ export class KnowledgeService {
   }> {
     const knowledgeId = this.resolveRoomWikiId(roomId);
     if (!knowledgeId) return { nodes: [], edges: [] };
-    try {
-      const wiki = await this.ks.getWiki(knowledgeId);
-      if (!wiki) return { nodes: [], edges: [] };
-      const items = (await this.ks.listPages(knowledgeId)).slice(0, WIKI_GRAPH_MAX_PAGES);
-      const contents = new Map<string, string | null>();
-      for (const item of items) {
-        try {
-          const page = await this.ks.readPage(knowledgeId, item.path);
-          contents.set(item.id, page && !page.not_found ? page.content ?? "" : null);
-        } catch {
-          contents.set(item.id, null); // 单页失败不拖垮整图
-        }
+    // getWiki/listPages 失败直接抛（KS 瞬时故障 → 500）：返回空图会被
+    // 客户端当「无内链」缓存住，一次抖动 = 图谱永远空白。
+    const wiki = await this.ks.getWiki(knowledgeId);
+    if (!wiki) return { nodes: [], edges: [] };
+    const items = (await this.ks.listPages(knowledgeId)).slice(0, WIKI_GRAPH_MAX_PAGES);
+    const contents = new Map<string, string | null>();
+    for (const item of items) {
+      try {
+        const page = await this.ks.readPage(knowledgeId, item.path);
+        contents.set(item.id, page && !page.not_found ? page.content ?? "" : null);
+      } catch {
+        contents.set(item.id, null); // 单页失败不拖垮整图
       }
-      return buildWikiGraph(items, contents);
-    } catch (error) {
-      this.logger.warn(
-        { event: "knowledge.wiki.graph_failed", roomId, error: error instanceof Error ? error.message : String(error) },
-        "wiki graph derivation failed, returning empty graph",
-      );
-      return { nodes: [], edges: [] };
     }
+    return buildWikiGraph(items, contents);
   }
 
   /**

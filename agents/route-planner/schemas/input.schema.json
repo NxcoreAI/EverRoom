@@ -1,0 +1,60 @@
+{
+  "type": "object",
+  "properties": {
+    "task": {
+      "type": "string",
+      "enum": ["initial", "expand"],
+      "description": "initial = 为新文档出第一层候选写作路线；expand = 为指定节点出下一层子路线。"
+    },
+    "roomId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "Target room id injected by the gateway; binds provenance to the room."
+    },
+    "documentId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "The new document this route plan belongs to."
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 300,
+      "description": "Document title as written by the user; also the route map root. Never rewritten."
+    },
+    "description": {
+      "type": "string",
+      "maxLength": 2000,
+      "description": "Optional user requirement text from the conversation, context framing."
+    },
+    "pathContext": {
+      "type": "string",
+      "maxLength": 2000,
+      "description": "expand task only: already selected route chain labels, root to target, ' > ' joined."
+    },
+    "targetLabel": {
+      "type": "string",
+      "maxLength": 40,
+      "description": "expand task only: the node label to deepen one more layer under."
+    },
+    "material": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100000,
+      "description": "Relation-board three-graph material assembled by the gateway: related rooms, entities, facts, documents and their links."
+    },
+    "materialTruncated": {
+      "type": "boolean",
+      "description": "True when the gateway truncated the assembled material to fit the budget."
+    },
+    "responseLanguage": {
+      "type": "string",
+      "maxLength": 35,
+      "description": "Preferred label language hint (e.g. a BCP-47 tag); fall back to the title's own language."
+    }
+  },
+  "required": ["task", "roomId", "documentId", "title", "material"],
+  "additionalProperties": false
+}
