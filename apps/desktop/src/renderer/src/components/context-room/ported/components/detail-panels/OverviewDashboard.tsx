@@ -94,6 +94,9 @@ export function OverviewDashboard({
   const fileItems = room.fileItems ?? [];
   const dashboardRef = useRef<HTMLElement>(null);
   const [overviewProjection, setOverviewProjection] = useState<RoomOverviewProjection | null>(null);
+  // #259：概览拉取偶发失败（网关瞬断/重建窗口）此前只静默降级，用户只看到
+  // 笼统报错弹窗、无重试入口。这里记录失败原因，面板内展示并提供重试。
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [wiki, setWiki] = useState<KnowledgeWikiPagesResultDto | null>(null);
   const wikiPages = wiki?.items ?? null;
   /** KS 生成的 ≤100 字摘要按句读拆成要点；无摘要时卡体回退页面标题。 */
@@ -110,8 +113,16 @@ export function OverviewDashboard({
     lastViewed: room.lastViewed,
   });
   const Icon = roomKindIcon(room.kind);
+  // 投影五段在边界上偶发缺段（旧版本落库行/合并完成到投影生成的过渡窗口）：
+  // 入口一次性归一化，宁可空面板不可白屏（#259，与 #154 渲染崩溃同族）。
+  const projectionSections = overviewProjection ? {
+    overview: overviewProjection.overview ?? [],
+    status: overviewProjection.status ?? [],
+    nextSteps: overviewProjection.nextSteps ?? [],
+    entities: overviewProjection.entities ?? [],
+  } : null;
   const dashboard = DASHBOARD_COPY[room.id] ?? {
-    aiStatus: overviewProjection?.status.map((item) => item.text).join('\n')
+    aiStatus: projectionSections?.status.map((item) => item.text).join('\n')
       || room.generatedContext?.status || room.brief.status,
     nextSteps: overviewProjection?.nextSteps?.length
       ? overviewProjection.nextSteps
@@ -158,7 +169,7 @@ export function OverviewDashboard({
   const todayMeeting = materials.find((item) => item.type === '会议' && isTodayLabel(item.time));
   const openTasks = actionItems.filter((item) => !item.completed && item.status !== '已完成').slice(0, 3);
   // 确定性投影叠加：连接器日历/待办 claim（只读展示，不参与本地任务勾选）。
-  const projectionNextSteps = overviewProjection?.nextSteps ?? [];
+  const projectionNextSteps = projectionSections?.nextSteps ?? [];
   const projectionSchedules = projectionNextSteps.filter((item) =>
     item.data?.kind === 'next_step' && item.data.itemType === 'schedule' && isDueToday(item.data.dueAt)).slice(0, 2);
   const openTaskTitles = new Set(openTasks.map((task) => task.title.trim().toLocaleLowerCase()));
@@ -166,15 +177,15 @@ export function OverviewDashboard({
     item.data?.kind === 'next_step' && item.data.itemType === 'task'
     && item.data.status !== 'completed'
     && !openTaskTitles.has(item.text.trim().toLocaleLowerCase())).slice(0, 3);
-  const overviewClaims = overviewProjection?.overview
+  const overviewClaims = projectionSections?.overview
     .filter((item) => item.data?.kind !== 'overview' || item.data.aspect !== 'goal') ?? [];
   const generatedOverview = overviewClaims
     .map((item) => item.text).join('\n').trim()
     || room.generatedContext?.overview?.trim() || '';
-  const goalClaim = overviewProjection?.overview.find((item) =>
+  const goalClaim = projectionSections?.overview.find((item) =>
     item.data?.kind === 'overview' && item.data.aspect === 'goal');
   const projectedGoal = goalClaim?.text || room.brief.goal;
-  const projectedNextStepIds = new Set(overviewProjection?.nextSteps.map((item) => item.id) ?? []);
+  const projectedNextStepIds = new Set(projectionSections?.nextSteps.map((item) => item.id) ?? []);
   const hasBrief = Boolean(room.brief.background.trim() || room.brief.goal.trim());
   const hasOverview = Boolean(generatedOverview || hasBrief);
 
@@ -187,6 +198,7 @@ export function OverviewDashboard({
     recordRoomOverviewDiagnostic('load.started', { roomId: room.id });
     try {
       const projection = await api.overview(room.id);
+      setLoadError(null);
       setOverviewProjection((current) => {
         const preferred = preferRoomOverviewProjection(current, projection);
         recordRoomOverviewDiagnostic(preferred === projection ? 'projection.applied' : 'projection.discarded', {
@@ -211,6 +223,7 @@ export function OverviewDashboard({
         roomId: room.id,
         errorType: error instanceof Error ? error.name : typeof error,
       }, 'error');
+      setLoadError(error instanceof Error ? error.message : String(error));
       // Keep the last-good Room snapshot visible when the projection service is unavailable.
     }
   }, [room.id]);
@@ -277,6 +290,20 @@ export function OverviewDashboard({
         <b>{t(uiText(room.status))}</b>
       </header>
 
+      {loadError ? (
+        <div className="context-room-dashboard-load-error" data-testid="context-room-overview-load-error" role="alert">
+          <span className="context-room-dashboard-load-error-text">
+            <b>{t('contextRoom:overviewDashboard.loadFailed')}</b>
+            <small>{loadError}</small>
+          </span>
+          <button
+            type="button"
+            data-testid="context-room-overview-retry"
+            onClick={() => { setLoadError(null); void loadOverview(); }}
+          >{t('contextRoom:overviewDashboard.retry')}</button>
+        </div>
+      ) : null}
+
       <div className="context-room-dashboard-grid">
         <article>
           <header data-icon-tone="document"><FileText aria-hidden="true" />{t('contextRoom:overviewDashboard.roomOverview')}</header>
@@ -295,8 +322,8 @@ export function OverviewDashboard({
         </article>
         <article>
           <header data-icon-tone="room"><BarChart3 aria-hidden="true" />{t('contextRoom:overviewDashboard.currentStatus')} <em>AI</em></header>
-          {dashboard.aiStatus.trim() ? <p data-room-citation-section="status">{overviewProjection?.status.length
-            ? overviewProjection.status.map((claim, index) => <span key={claim.id} data-room-citation-claim-id={claim.id} data-room-citation-claim-text={claim.text}>{index ? ' ' : ''}{localizedUiText(claim.text, t)}</span>)
+          {dashboard.aiStatus.trim() ? <p data-room-citation-section="status">{projectionSections?.status.length
+            ? projectionSections.status.map((claim, index) => <span key={claim.id} data-room-citation-claim-id={claim.id} data-room-citation-claim-text={claim.text}>{index ? ' ' : ''}{localizedUiText(claim.text, t)}</span>)
             : localizedUiText(dashboard.aiStatus, t)}</p> : <PanelEmptyState compact icon={Info} title={t('contextRoom:overviewDashboard.noStatusSummaryYet')} description={t('contextRoom:overviewDashboard.thisStatusWillUpdateAsNewResourcesAnd')} />}
         </article>
         <article>

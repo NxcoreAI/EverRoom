@@ -351,7 +351,14 @@ export function contextRoomRoutes(
           if (error instanceof Error && error.message === "context_room_not_found") {
             return reply.code(404).send({ error: error.message });
           }
-          throw error;
+          // 概览读取/重建是打开 Room 的主链路，且 get() 在缺行/数据更新时会同步落库，
+          // 偶发失败直接冒 500 会变成笼统的 internal_error（#259），原因不可见也无法区分
+          // 瞬断与真故障。这里转成结构化可重试错误；真实堆栈留在服务端日志。
+          request.log.error({ err: error }, "room overview read failed");
+          return reply.code(503).send({
+            error: "context_room_overview_failed",
+            message: "Context Room overview failed to build; please retry",
+          });
         }
       },
     );
@@ -369,10 +376,19 @@ export function contextRoomRoutes(
         try {
           return await overviews.regenerate(request.params.roomId);
         } catch (error) {
-          if (error instanceof Error && error.message === "context_room_not_found") {
-            return reply.code(404).send({ error: error.message });
+          const code = error instanceof Error ? error.message : "";
+          if (code === "context_room_not_found") {
+            return reply.code(404).send({ error: code });
           }
-          throw error;
+          if (code === "context_room_agent_not_configured") {
+            return reply.code(503).send({ error: code, message: "Context Room agent is not available" });
+          }
+          // 与 overview 读取同链路：结构化可重试错误替代笼统 500（#259）。
+          request.log.error({ err: error }, "room overview refresh failed");
+          return reply.code(503).send({
+            error: "context_room_overview_failed",
+            message: "Context Room overview failed to refresh; please retry",
+          });
         }
       },
     );

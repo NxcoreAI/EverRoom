@@ -4779,6 +4779,55 @@
   background: var(--cr-surface);
 }
 
+/* #259：概览拉取失败的内联提示条（错误原因 + 重试入口），不打断浏览。 */
+.context-room-dashboard-load-error {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+  padding: 10px 14px;
+  border: 1px solid var(--cr-danger-border, #f0c4c0);
+  border-radius: 12px;
+  background: var(--cr-danger-soft, #fdf3f2);
+}
+
+.context-room-dashboard-load-error-text {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.context-room-dashboard-load-error-text b {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--cr-danger, #c0392b);
+}
+
+.context-room-dashboard-load-error-text small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11.5px;
+  color: var(--cr-text-secondary, #68717e);
+}
+
+.context-room-dashboard-load-error > button {
+  flex: 0 0 auto;
+  padding: 5px 14px;
+  border: 1px solid var(--cr-border);
+  border-radius: 8px;
+  background: var(--cr-surface);
+  font-size: 12px;
+  font-weight: 550;
+  cursor: pointer;
+}
+
+.context-room-dashboard-load-error > button:hover {
+  background: var(--cr-blue-soft);
+}
+
 .context-room-dashboard-hero > span {
   display: inline-flex;
   width: 48px;
