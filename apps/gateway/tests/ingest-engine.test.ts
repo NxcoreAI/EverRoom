@@ -602,6 +602,21 @@ describe("扇出语义：策略快照 / router 门 / 记忆失败不阻塞", () 
     test.sqlite.close();
   });
 
+  it("router 关闭 + 显式 roomId（入口确定性）→ 放行并带 entryRoomId 进 Room 扇出", async () => {
+    const test = await engineForTest({ routerEnabled: false });
+    const path = await tempFile("指定房间.md", "# 内容");
+    const result = await test.service.ingest({
+      source: { path },
+      roomId: "room-entry",
+      pipelines: { room: true, wiki: false, memory: true },
+    });
+    expect(result.routeJobId).toBe("route-job-1");
+    expect(test.knowledge.submitEnvelope).toHaveBeenCalledWith(expect.objectContaining({
+      entryRoomId: "room-entry",
+    }));
+    test.sqlite.close();
+  });
+
   it("记忆链路失败：memoryResult={error}，事件照常、Room 链路照走", async () => {
     const test = await engineForTest({ memoryError: true });
     const path = await tempFile("记忆挂.md", "# 内容");

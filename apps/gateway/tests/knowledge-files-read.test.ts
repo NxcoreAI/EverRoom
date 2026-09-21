@@ -198,6 +198,44 @@ describe("文件读取面与归属清单（资料模型修订）", () => {
     test.sqlite.close();
   });
 
+  it("显式 roomId 导入同步落入口决策：Room 清单无需等异步路由即可见", async () => {
+    const test = await serviceForTest();
+    test.files.setRoomEntrySink((input) => test.service.recordImportRoomDecision(input));
+    test.service.upsertRoom({ id: "room-agent", title: "Agent 房" });
+    const imported = await test.files.importFile({
+      sourceKind: "agent-generated",
+      sourceKey: "agent:word:test-key-0002",
+      originalName: "本周工作总结.docx",
+      buffer: Buffer.from("docx 字节", "utf8"),
+      roomId: "room-agent",
+    });
+
+    // 未插入任何 route_decisions：归属完全来自导入时的同步入口决策
+    const files = test.service.listRoomFiles("room-agent");
+    expect(files).toHaveLength(1);
+    expect(files[0]).toMatchObject({
+      id: imported.fileEntryId,
+      originalName: "本周工作总结.docx",
+      status: "auto",
+      decidedBy: "entry",
+      sourceKind: "agent-generated",
+    });
+    // 不外溢：其他 Room 看不到
+    test.service.upsertRoom({ id: "room-other", title: "别的房" });
+    expect(test.service.listRoomFiles("room-other")).toHaveLength(0);
+
+    // roomId 指向不存在的房：静默跳过，不阻断导入
+    const orphan = await test.files.importFile({
+      sourceKind: "agent-generated",
+      sourceKey: "agent:word:test-key-0003",
+      originalName: "孤儿文档.docx",
+      buffer: Buffer.from("docx 字节", "utf8"),
+      roomId: "room-nope",
+    });
+    expect(orphan.fileEntryId).toBeTruthy();
+    test.sqlite.close();
+  });
+
   it("存量回填：旧随机 sourceId 决策迁移到确定性身份并落对象库", async () => {
     const test = await serviceForTest();
     test.sqlite.prepare(

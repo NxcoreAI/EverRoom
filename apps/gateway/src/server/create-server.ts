@@ -1474,6 +1474,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       : createIndexBackfillRuntime(config);
     documentIndexBackfillWorker?.replaceLlm(backfillRuntime ? new IndexBackfillLlm(backfillRuntime) : null);
   });
+  filesService.setRoomEntrySink((input) => knowledgeService.recordImportRoomDecision(input));
   filesService.setVersionIngestor(async (input) => {
     await documentUnderstandingService.parseVersion(input.fileEntryId, input.fileVersionId);
     const versionContext = filesService.getVersionContext(input.fileEntryId, input.fileVersionId);

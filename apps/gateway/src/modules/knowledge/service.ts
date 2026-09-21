@@ -1120,7 +1120,36 @@ export class KnowledgeService {
     return jobId;
   }
 
-  /** 外部信封入口（route/manual 全量信封）：router 必须开启。 */
+  /**
+   * 显式 roomId 导入的入口决策（同步落库）：Room 文件清单读侧只认
+   * route_decisions，而常规链路（file.ingest job → route job）是异步的，
+   * router 关闭时甚至整单拒绝——导入方拿到 202 时归属尚不存在，Room 里
+   * 看不到刚进的文件。这里在导入请求内先落一条 entry 决策保底；router
+   * 稍后的同名决策 latest-wins，语义不变（entry 本就确定性直连）。
+   */
+  recordImportRoomDecision(input: { fileEntryId: string; roomId: string; sourceTitle: string }): void {
+    const room = this.db.select({ id: rooms.id }).from(rooms)
+      .where(and(eq(rooms.id, input.roomId), isNull(rooms.deletedAt))).get();
+    if (!room) return;
+    this.db.insert(routeDecisions).values({
+      id: randomUUID(),
+      sourceKind: "file",
+      sourceId: input.fileEntryId,
+      sourceVersion: 1,
+      sourceTitle: input.sourceTitle,
+      primaryRoomId: room.id,
+      decidedBy: "entry",
+      confidence: 1,
+      reason: "导入时显式指定 Room（入口确定性）",
+      status: "auto",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    }).run();
+  }
+
+  /**
+   * 外部信封入口（route/manual 全量信封）：router 必须开启。
+   */
   submitEnvelope(input: {
     sourceKind: SourceKind;
     title: string;

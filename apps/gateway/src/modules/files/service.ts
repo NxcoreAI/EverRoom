@@ -119,6 +119,8 @@ type VersionIngestor = (input: {
   roomId?: string;
 }) => Promise<VersionIngestResult>;
 type VersionClassifier = (fileEntryId: string, fileVersionId: string) => void;
+/** 显式 roomId 导入的同步归属钩子（create-server 注入 knowledge 落入口决策）。 */
+type RoomEntrySink = (input: { fileEntryId: string; roomId: string; sourceTitle: string }) => void;
 
 /** 统一上传结果：deduped = 判重闸 1 命中（同名同内容，零写入）。 */
 export interface FileUploadResult {
@@ -162,6 +164,7 @@ export interface FileDeletionResult {
 export class FilesService {
   private versionIngestor: VersionIngestor | null = null;
   private versionClassifier: VersionClassifier | null = null;
+  private roomEntrySink: RoomEntrySink | null = null;
   private fileJobWorker: Promise<void> | null = null;
   private disposed = false;
 
@@ -220,6 +223,10 @@ export class FilesService {
 
   setVersionClassifier(classifier: VersionClassifier): void {
     this.versionClassifier = classifier;
+  }
+
+  setRoomEntrySink(sink: RoomEntrySink): void {
+    this.roomEntrySink = sink;
   }
 
   async importFile(input: FileImportInput): Promise<FileImportResult> {
@@ -363,6 +370,7 @@ export class FilesService {
         versionDeduped: true,
       };
       if (shouldEnqueue) this.kickFileJobs();
+      this.emitRoomEntry(input, fileEntryId);
       return result;
     }
 
@@ -444,7 +452,18 @@ export class FilesService {
     });
     entry = this.db.select().from(fileEntries).where(eq(fileEntries.id, fileEntryId)).get();
     if (!input.deferIngest) this.kickFileJobs();
+    this.emitRoomEntry(input, fileEntryId);
     return { fileEntryId, fileVersionId, jobId, contentHash, blobDeduped: Boolean(existingBlob), versionDeduped: false };
+  }
+
+  /** 归属保底失败不阻断导入：异步路由链路（file.ingest → route job）仍会补齐。 */
+  private emitRoomEntry(input: { roomId?: string | undefined; originalName: string }, fileEntryId: string): void {
+    if (!input.roomId || !this.roomEntrySink) return;
+    try {
+      this.roomEntrySink({ fileEntryId, roomId: input.roomId, sourceTitle: input.originalName });
+    } catch {
+      // 见上：sink 抛错仅丢失同步保底，导入本身继续
+    }
   }
 
   getVersionContext(fileEntryId: string, fileVersionId: string): {
