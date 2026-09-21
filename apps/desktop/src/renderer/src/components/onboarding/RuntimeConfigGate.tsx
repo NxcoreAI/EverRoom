@@ -128,7 +128,6 @@ export function RuntimeConfigGate({ children }: { children: ReactNode }) {
       configReady,
       accountResolved,
       authenticated: account?.authenticated ?? null,
-      configSource: snapshot?.selectedSource ?? null,
     })
     if (outcome === 'wait') return
     if (outcome === 'app') {
@@ -213,13 +212,13 @@ export function RuntimeConfigGate({ children }: { children: ReactNode }) {
     if (account) {
       window.dispatchEvent(new CustomEvent('everroom-account-status-changed', { detail: account }))
     }
-    // 登录钩子（main index）会把 SaaS runtime config 写进 gateway；
-    // 这里再显式拉取一次确保 saas source 已保存，然后走连通测试。
-    // 拉取失败（网络抖动等）退回网关当前快照——本地仍保留可用配置时照常
-    // 放行（#225：不能把已登录用户困在登录页）。
+    // 登录钩子（main index）已启动中转保活；relayReady 触发一次续签并轮询
+    // 快照直至主配置可用（中转激活重写槽位），轮询窗口内已覆盖首拉空
+    // primary 的就绪竞态。失败（网络抖动等）退回网关当前快照——本地仍保留
+    // 可用配置时照常放行（#225：不能把已登录用户困在登录页）。
     let next: RuntimeConfigSnapshot | null | undefined
     try {
-      next = await window.nxcore!.runtimeConfig.refreshSaas()
+      next = await window.nxcore!.runtimeConfig.relayReady()
     } catch {
       next = await window.nxcore!.runtimeConfig.get().catch(() => null)
     }
@@ -235,9 +234,9 @@ export function RuntimeConfigGate({ children }: { children: ReactNode }) {
         window.setTimeout(() => window.dispatchEvent(new CustomEvent('everroom-post-login-onboarding-check')), 0)
       }
     } else {
-      // 登录成功但云端没下发有效配置：留在登录页展示原因，
+      // 登录成功但中转会话未就绪：留在登录页展示原因，
       // 用户可重试或点「返回」去手动配置。
-      setTestError(t('surface:configGate.saasConfigMissing'))
+      setTestError(t('surface:configGate.relayNotReady'))
     }
   }
 

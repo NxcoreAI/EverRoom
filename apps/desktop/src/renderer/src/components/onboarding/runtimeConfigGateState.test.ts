@@ -186,7 +186,6 @@ describe('startupGateOutcome', () => {
     configReady: true,
     accountResolved: true,
     authenticated: true,
-    configSource: 'saas' as const,
     ...overrides,
   })
 
@@ -195,14 +194,12 @@ describe('startupGateOutcome', () => {
     expect(startupGateOutcome(input({ accountResolved: false }))).toBe('wait')
   })
 
-  it('enters the app once authenticated regardless of config source', () => {
+  it('enters the app once authenticated', () => {
     expect(startupGateOutcome(input())).toBe('app')
-    expect(startupGateOutcome(input({ configSource: 'user' }))).toBe('app')
   })
 
-  it('sends an expired saas session back to login but keeps manual config usable', () => {
-    expect(startupGateOutcome(input({ authenticated: false }))).toBe('login')
-    expect(startupGateOutcome(input({ authenticated: false, configSource: 'user' }))).toBe('app')
-    expect(startupGateOutcome(input({ authenticated: null, configSource: 'user' }))).toBe('app')
+  it('keeps unauthenticated manual (BYOK) config usable', () => {
+    expect(startupGateOutcome(input({ authenticated: false }))).toBe('app')
+    expect(startupGateOutcome(input({ authenticated: null }))).toBe('app')
   })
 })

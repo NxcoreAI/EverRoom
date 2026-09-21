@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
-import { dirname } from 'node:path'
+
+import { VersionedJsonStore } from '@nxcore/migration-kit'
 
 import { decryptLocalSecret, encryptLocalSecret } from './local-secret-cipher'
 
@@ -15,19 +15,33 @@ const SECURE_PREFIX = 'enc:v1:'
 export class CredentialStore {
   private readonly credentials = new Map<string, StoredCredential>()
   private loaded = false
+  private readonly store: VersionedJsonStore<Record<string, StoredCredential>>
 
-  constructor(private readonly filePath: string) {}
+  constructor(filePath: string, backupDir?: string) {
+    // failHard：凭据文件损坏时宁可停机报错，也不静默清空导致全员重新登录。
+    this.store = new VersionedJsonStore<Record<string, StoredCredential>>({
+      filePath,
+      migrations: [],
+      adoptBaseline: (raw) => {
+        if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('credentials file is not an object')
+        const output: Record<string, StoredCredential> = {}
+        for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+          const item = value as Partial<StoredCredential> | null
+          if (item && typeof item.value === 'string') output[key] = { value: item.value }
+        }
+        return output
+      },
+      fallback: {},
+      failHard: true,
+      ...(backupDir !== undefined ? { backupDir } : {}),
+    })
+  }
 
   async initialize(): Promise<void> {
     if (this.loaded) return
     this.loaded = true
-    try {
-      const raw = JSON.parse(await readFile(this.filePath, 'utf8')) as Record<string, StoredCredential>
-      for (const [key, value] of Object.entries(raw)) {
-        if (typeof value?.value === 'string') this.credentials.set(key, value)
-      }
-    } catch {
-      // The file is optional on first launch.
+    for (const [key, value] of Object.entries(this.store.read())) {
+      this.credentials.set(key, value)
     }
   }
 
@@ -95,7 +109,6 @@ export class CredentialStore {
   private async persist(): Promise<void> {
     const output: Record<string, StoredCredential> = {}
     for (const [key, value] of this.credentials) output[key] = value
-    await mkdir(dirname(this.filePath), { recursive: true })
-    await writeFile(this.filePath, JSON.stringify(output), { mode: 0o600 })
+    this.store.write(output)
   }
 }

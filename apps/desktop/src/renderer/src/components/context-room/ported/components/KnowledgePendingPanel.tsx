@@ -14,9 +14,11 @@ import {
   EyeOff,
   RotateCcw,
 } from 'lucide-react';
+import { createVersionedLocalStorageStore } from '@nxcore/migration-kit/local';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { showToast } from '@/state/toast';
+import { useContextRoomState } from '../../ContextRoomStateProvider';
 import { useLocale } from '../../../../i18n/LocaleContext';
 import type { Translate } from '../../../../i18n/LocaleContext';
 import {
@@ -87,8 +89,6 @@ const RUN_TOUCHED_SLACK_MS = 5_000;
 /** 导入断点续传：内容寻址去重让重跑幂等；网络波动自动重试。 */
 const IMPORT_RETRY_ATTEMPTS = 3;
 const IMPORT_RETRY_DELAY_MS = 2_000;
-/** 会话清单的本地持久化键：应用重启后据此恢复进度（真实状态在网关）。 */
-const RUN_STORAGE_KEY = 'everroom:room-recommendation-run';
 /** 完成态停留时长：进度条打满 100% 让用户看到收尾，再撤蒙层。 */
 const RUN_DONE_LINGER_MS = 900;
 /** 明细回报上限：计数始终精确，明细最多展示/存储 N 条（防大目录撑爆蒙层与清单）。 */
@@ -172,31 +172,50 @@ function runPercentOf(run: RecommendationRun): number {
   return 85;
 }
 
-/** 从 localStorage 恢复未完会话；已完结（timeout/failed）或损坏的清单丢弃。 */
+/** 从 localStorage 恢复未完会话；已完结（timeout/failed）或损坏的清单丢弃。
+ *  旧裸 key（无版本后缀）在首次读取时认领为规范 v1 key，裸 key 保留供旧二进制回滚。
+ *  落盘形态 readySnapshot 为数组（Set 不可序列化），读取时转回 Set。 */
+type PersistedRun = Omit<RecommendationRun, 'readySnapshot'> & { readySnapshot: string[] }
+
+function adoptPersistedRun(raw: unknown): PersistedRun | null {
+  const parsed = raw as Omit<RecommendationRun, 'readySnapshot'> & { readySnapshot?: unknown };
+  if (!parsed || typeof parsed?.id !== 'number' || !Array.isArray(parsed.paths) || typeof parsed.startedAt !== 'number') {
+    return null;
+  }
+  if (parsed.phase !== 'importing' && parsed.phase !== 'routing' && parsed.phase !== 'accumulating') {
+    return null;
+  }
+  return {
+    ...parsed,
+    failedImports: typeof parsed.failedImports === 'number' ? parsed.failedImports : 0,
+    skippedImports: typeof parsed.skippedImports === 'number' ? parsed.skippedImports : 0,
+    okImports: typeof parsed.okImports === 'number' ? parsed.okImports : 0,
+    failureDetails: Array.isArray(parsed.failureDetails)
+      ? parsed.failureDetails.filter((item) => item && typeof item.filename === 'string' && typeof item.error === 'string')
+      : [],
+    skipDetails: Array.isArray(parsed.skipDetails)
+      ? parsed.skipDetails.filter((item) => item && typeof item.filename === 'string')
+      : [],
+    readySnapshot: Array.isArray(parsed.readySnapshot)
+      ? parsed.readySnapshot.filter((item): item is string => typeof item === 'string')
+      : [],
+  };
+}
+
+function createRunStore() {
+  return createVersionedLocalStorageStore<PersistedRun | null>({
+    keyBase: 'everroom:room-recommendation-run',
+    version: 1,
+    adoptBaseline: adoptPersistedRun,
+    fallback: null,
+    migrations: [],
+  });
+}
+
 function readPersistedRun(): RecommendationRun | null {
   try {
-    const raw = window.localStorage?.getItem(RUN_STORAGE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as Omit<RecommendationRun, 'readySnapshot'> & { readySnapshot?: unknown };
-    if (typeof parsed?.id !== 'number' || !Array.isArray(parsed.paths) || typeof parsed.startedAt !== 'number') {
-      return null;
-    }
-    if (parsed.phase !== 'importing' && parsed.phase !== 'routing' && parsed.phase !== 'accumulating') {
-      return null;
-    }
-    return {
-      ...parsed,
-      failedImports: typeof parsed.failedImports === 'number' ? parsed.failedImports : 0,
-      skippedImports: typeof parsed.skippedImports === 'number' ? parsed.skippedImports : 0,
-      okImports: typeof parsed.okImports === 'number' ? parsed.okImports : 0,
-      failureDetails: Array.isArray(parsed.failureDetails)
-        ? parsed.failureDetails.filter((item) => item && typeof item.filename === 'string' && typeof item.error === 'string')
-        : [],
-      skipDetails: Array.isArray(parsed.skipDetails)
-        ? parsed.skipDetails.filter((item) => item && typeof item.filename === 'string')
-        : [],
-      readySnapshot: new Set(Array.isArray(parsed.readySnapshot) ? parsed.readySnapshot : []),
-    };
+    const persisted = createRunStore().get();
+    return persisted ? { ...persisted, readySnapshot: new Set(persisted.readySnapshot) } : null;
   } catch {
     return null;
   }
@@ -204,13 +223,12 @@ function readPersistedRun(): RecommendationRun | null {
 
 function persistRun(run: RecommendationRun | null): void {
   try {
-    const storage = window.localStorage;
-    if (!storage) return;
+    const store = createRunStore();
     if (run && (run.phase === 'importing' || run.phase === 'routing' || run.phase === 'accumulating')) {
       const { readySnapshot, ...rest } = run;
-      storage.setItem(RUN_STORAGE_KEY, JSON.stringify({ ...rest, readySnapshot: [...readySnapshot] }));
+      store.set({ ...rest, readySnapshot: [...readySnapshot] });
     } else {
-      storage.removeItem(RUN_STORAGE_KEY);
+      store.clear();
     }
   } catch {
     // 存储不可用（隐私模式等）：仅失去重启恢复，会话本体不受影响。
@@ -231,6 +249,7 @@ export function KnowledgePendingPanel({
   onOpenCreateRoom: () => void;
 }) {
   const { t } = useLocale();
+  const { refreshFromBackend } = useContextRoomState();
   const [recommended, setRecommended] = useState<KnowledgeEntityDto[]>([]);
   const [recent, setRecent] = useState<KnowledgeDecisionDto[]>([]);
   const [suppressed, setSuppressed] = useState<KnowledgeEntityDto[]>([]);
@@ -360,6 +379,30 @@ export function KnowledgePendingPanel({
   const runPolling = run !== null && (run.phase === 'routing' || run.phase === 'accumulating');
 
   /**
+   * #241：按用途描述直接创建空 Room（无文件也允许，后续可再添加内容）。
+   * 标题取描述首行截断；创建失败（含重复审查 409）返回 null 交由调用方兜底。
+   * 创建成功后重拉网关快照，让 My Rooms 立即出现新 Room（本地列表由
+   * ContextRoomStateProvider 持有，网关直建不会自动进入本地态）。
+   */
+  const createEmptyRoomFromIntent = useCallback(async (rawIntent: string | null) => {
+    const description = (rawIntent ?? '').trim();
+    if (!description) return null;
+    const title = description.split(/\r?\n/)[0]!.trim().slice(0, 60)
+      || translateRef.current('contextRoom:creation.emptyRoomTitle');
+    try {
+      const result = await window.nxcore?.contextRooms?.create({ title, description });
+      const room = result?.room ?? null;
+      if (room) {
+        await refreshFromBackend().catch(() => undefined);
+        return { id: room.id, title: room.title || title };
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }, [refreshFromBackend]);
+
+  /**
    * 执行/重试会话导入：内容寻址去重使重跑幂等（已传文件直接复用），
    * 网络波动自动重试；成功文件进入路由轮询。断点续传与失败重试共用。
    */
@@ -411,6 +454,41 @@ export function KnowledgePendingPanel({
     const files = outcomes
       .filter((item) => item.fileId && !item.error)
       .map((item) => ({ fileId: item.fileId as string, filename: item.filename }));
+    if (files.length === 0) {
+      // #241：全部文件解析失败也不阻断创建——按意图兜底创建空 Room，
+      // 失败/跳过明细保留在蒙层（failureDetails）供用户查看。
+      const created = await createEmptyRoomFromIntent(session.intent);
+      patchRun({
+        files,
+        failedImports: failures.length,
+        skippedImports: skippedCount,
+        okImports: okCount,
+        failureDetails: failures.slice(0, RUN_DETAIL_LIMIT).map((item) => ({
+          filename: item.filename,
+          error: String(item.error),
+        })),
+        skipDetails: [
+          ...skipped.map((item) => ({
+            filename: item.filename,
+            reason: item.skippedReason === 'pending_review' ? 'pending_review' as const : 'unsupported_format' as const,
+          })),
+          ...duplicates.map((item) => ({ filename: item.filename, reason: 'duplicate' as const })),
+        ].slice(0, RUN_DETAIL_LIMIT),
+        phase: created ? 'done' : 'failed',
+        routed: 0,
+        candidates: 0,
+        error: created ? null : 'no files imported',
+      });
+      if (created) {
+        showToast({
+          title: translateRef.current('contextRoom:creation.emptyRoomCreated', { title: created.title }),
+          message: failures.length > 0
+            ? translateRef.current('contextRoom:creation.runImportFailedHint')
+            : undefined,
+        });
+      }
+      return;
+    }
     patchRun({
       files,
       failedImports: failures.length,
@@ -427,18 +505,29 @@ export function KnowledgePendingPanel({
         })),
         ...duplicates.map((item) => ({ filename: item.filename, reason: 'duplicate' as const })),
       ].slice(0, RUN_DETAIL_LIMIT),
-      phase: files.length > 0 ? 'routing' : 'failed',
-      error: files.length > 0 ? null : 'no files imported',
+      phase: 'routing',
+      error: null,
     });
     window.dispatchEvent(new CustomEvent('everroom:knowledge-changed'));
-  }, []);
+  }, [createEmptyRoomFromIntent]);
 
   /**
    * 弹窗提交后接手：先统一导入暂存路径（蒙层显示 x/y），成功文件进入
    * 路由轮询，再由实体证据累积推进到推荐。全程只用原有机制。
    */
   const startRecommendationRun = useCallback(async (payload: RoomRecommendationRunPayload) => {
-    if (payload.paths.length === 0) return;
+    if (payload.paths.length === 0) {
+      // #241：空提交（无文件）= 直接创建空 Room，不走导入/推荐会话。
+      const created = await createEmptyRoomFromIntent(payload.intent);
+      if (created) {
+        showToast({
+          title: translateRef.current('contextRoom:knowledgePending.roomCreated'),
+          message: translateRef.current(
+            'contextRoom:knowledgePending.nameWasAddedToContextRoom', { name: created.title }),
+        });
+      }
+      return;
+    }
     const startedAt = Date.now();
     const knowledge = window.nxcore?.knowledge;
     let readySnapshot: ReadonlySet<string> = new Set();
@@ -471,7 +560,7 @@ export function KnowledgePendingPanel({
     setRun(session);
     void refresh();
     void continueImport(session);
-  }, [continueImport, refresh]);
+  }, [continueImport, createEmptyRoomFromIntent, refresh]);
 
   // 应用重启恢复：真实进度都在网关（决策 + 实体池），清单只负责重挂蒙层；
   // 导入中被打断则重跑导入（内容去重幂等，不重复存储）。

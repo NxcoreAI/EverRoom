@@ -172,6 +172,18 @@ const api: NxcoreDesktopApi = {
   app: {
     clearUserData: () => ipcRenderer.invoke('app:clear-user-data'),
   },
+  updater: {
+    getStatus: () => ipcRenderer.invoke('update:get-status'),
+    checkNow: () => ipcRenderer.invoke('update:check-now'),
+    onProgress: (listener) => {
+      ipcRenderer.on('update:progress', (_event, progress) => listener(progress))
+      return () => ipcRenderer.removeAllListeners('update:progress')
+    },
+    onDownloaded: (listener) => {
+      ipcRenderer.on('update:downloaded', (_event, info) => listener(info))
+      return () => ipcRenderer.removeAllListeners('update:downloaded')
+    },
+  },
   window: {
     minimize: () => ipcRenderer.invoke('window:minimize'),
     toggleMaximize: () => ipcRenderer.invoke('window:toggle-maximize'),
@@ -489,9 +501,8 @@ const api: NxcoreDesktopApi = {
     get: () => invoke('runtime-config:get'),
     saveUser: (input: unknown) => invoke('runtime-config:save-user', input),
     clearUser: () => invoke('runtime-config:clear-user'),
-    refreshSaas: () => invoke('runtime-config:refresh-saas'),
-    clearSaas: () => invoke('runtime-config:clear-saas'),
-    selectSource: (source: 'user' | 'saas' | 'default') => invoke('runtime-config:select-source', source),
+    relayReady: () => invoke('runtime-config:relay-ready'),
+    selectSource: (source: 'user' | 'default') => invoke('runtime-config:select-source', source),
     test: () => invoke('runtime-config:test'),
   },
   asr: {
@@ -620,6 +631,8 @@ const api: NxcoreDesktopApi = {
     getSession: (sessionId) => invoke('agent:get-session', sessionId),
     getEvents: (sessionId, runId, afterSeq) =>
       invoke('agent:get-events', sessionId, runId, afterSeq),
+    getLocalAgentDispatch: (sessionId, taskId) =>
+      invoke('agent:get-local-agent-dispatch', sessionId, taskId),
     startRun: (sessionId, input) => invoke('agent:start-run', sessionId, input),
     submitPendingIntent: (intentId, input) =>
       invokeQuietly('agent:submit-pending-intent', intentId, input),
@@ -801,6 +814,10 @@ const api: NxcoreDesktopApi = {
       invoke('knowledge:rooms:propose', input),
     emergence: (roomId: string, request: import('../shared/knowledge').EmergenceRequest) =>
       invoke('knowledge:rooms:emergence', roomId, request),
+    focusMindmap: (roomId: string, query: { scope: import('../shared/knowledge').FocusMindmapScope; documentId?: string | null; requestVersion: number }) =>
+      invoke('knowledge:rooms:focus-mindmap', roomId, query),
+    ensureFocusMindmap: (roomId: string, input: import('../shared/knowledge').FocusMindmapEnsureInput) =>
+      invoke('knowledge:rooms:focus-mindmap-ensure', roomId, input),
     revertDecision: (decisionId) => invoke('knowledge:route:revert', decisionId),
     getPreferences: (): Promise<import('../shared/knowledge').KnowledgePreferencesDto> =>
       invoke('knowledge:preferences:get'),

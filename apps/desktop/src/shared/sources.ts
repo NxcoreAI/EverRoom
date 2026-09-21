@@ -87,7 +87,7 @@ import type {
   AgentAuthStartInput,
   DesktopAgentAuthChallenge,
 } from './agent-auth'
-import type { LocalAgentHistoryImportResult, LocalAgentInstallation, LocalAgentWorkspaceBinding } from './local-agents'
+import type { LocalAgentDispatchDetail, LocalAgentHistoryImportResult, LocalAgentInstallation, LocalAgentWorkspaceBinding } from './local-agents'
 import type { MigrationApi } from './migrations'
 import type { BrowserExtensionClipperCapture, BrowserExtensionClipperListInput, BrowserExtensionClipperListResult } from './browser-extension'
 import type {
@@ -122,6 +122,9 @@ export type {
 import type {
   EmergenceProjectionResultDto,
   EmergenceRequest,
+  FocusMindmapEnsureInput,
+  FocusMindmapScope,
+  FocusMindmapStatusDto,
   KnowledgeAttachInput,
   KnowledgeDecisionDto,
   KnowledgeEntityDetailDto,
@@ -384,7 +387,7 @@ export interface AiGatewayStatus {
   configured: boolean
   subscriptionStatus: string | null
   llmCredits: number | null
-  usedCredits: string
+  usedCredits: number
   remainingCredits: number
   periodEnd: string | null
 }
@@ -513,14 +516,14 @@ export interface PerceptionSettings {
 
 export interface RuntimeConfigSnapshot {
   config: Record<string, unknown>
-  source: 'user' | 'saas' | 'default'
-  selectedSource: 'user' | 'saas' | 'default'
-  availableSources: Array<'user' | 'saas' | 'default'>
+  source: 'user' | 'default'
+  selectedSource: 'user' | 'default'
+  availableSources: Array<'user' | 'default'>
   configVersion: number
   updatedAt: string
   webSearchCredential?: {
     configured: boolean
-    source: 'user' | 'saas' | 'env' | 'none'
+    source: 'user' | 'env' | 'none'
   }
   /** primary AI 四要素（provider/model/baseUrl/apiKey）是否已填写（占位空串视为未配置）。 */
   primaryConfigured?: boolean
@@ -806,6 +809,16 @@ export interface NxcoreDesktopApi {
   app: {
     clearUserData(): Promise<void>
   }
+  updater: {
+    /** 当前版本、渠道与安装标识（诊断/白名单登记用） */
+    getStatus(): Promise<{ version: string; channel: 'stable' | 'nightly'; installId: string; supported: boolean }>
+    /** 手动检查更新：update-found=有新版正在后台下载（完成后弹窗）；no-update=已是最新 */
+    checkNow(): Promise<'update-found' | 'no-update' | 'busy' | 'error'>
+    /** 订阅下载进度（percent 0-100、bytesPerSecond），返回取消函数 */
+    onProgress(listener: (progress: { percent: number; bytesPerSecond: number }) => void): () => void
+    /** 订阅下载完成（version），返回取消函数 */
+    onDownloaded(listener: (info: { version: string }) => void): () => void
+  }
   window: {
     minimize(): Promise<void>
     toggleMaximize(): Promise<void>
@@ -854,9 +867,8 @@ export interface NxcoreDesktopApi {
     get(): Promise<RuntimeConfigSnapshot>
     saveUser(input: unknown): Promise<RuntimeConfigSnapshot>
     clearUser(): Promise<RuntimeConfigSnapshot>
-    refreshSaas(): Promise<RuntimeConfigSnapshot | undefined>
-    clearSaas(): Promise<RuntimeConfigSnapshot | undefined>
-    selectSource(source: 'user' | 'saas' | 'default'): Promise<RuntimeConfigSnapshot | undefined>
+    relayReady(): Promise<RuntimeConfigSnapshot | null>
+    selectSource(source: 'user' | 'default'): Promise<RuntimeConfigSnapshot | undefined>
     test(): Promise<RuntimeConfigTestResult>
   }
   nangoConnector: {
@@ -1193,6 +1205,7 @@ export interface NxcoreDesktopApi {
     deleteSession(sessionId: string): Promise<void>
     getSession(sessionId: string): Promise<AgentSessionSnapshot>
     getEvents(sessionId: string, runId: string, afterSeq: number): Promise<AgentEvent[]>
+    getLocalAgentDispatch(sessionId: string, taskId: string): Promise<LocalAgentDispatchDetail>
     startRun(sessionId: string, input: StartAgentRunInput): Promise<AgentRun>
     submitPendingIntent(
       intentId: string,
@@ -1329,6 +1342,9 @@ export interface NxcoreDesktopApi {
     proposeRooms(input: { description: string; fileEntryIds: string[] }): Promise<{ items: KnowledgeRoomProposalDto[] }>
     /** 知识涌现投影（思路板块）：聚焦/漫步共用一个端点。 */
     emergence(roomId: string, request: EmergenceRequest): Promise<EmergenceProjectionResultDto>
+    /** 聚焦思维导图状态（ready 附投影）：pending/processing 由渲染端轮询。 */
+    focusMindmap(roomId: string, query: { scope: FocusMindmapScope; documentId?: string | null; requestVersion: number }): Promise<FocusMindmapStatusDto>
+    ensureFocusMindmap(roomId: string, input: FocusMindmapEnsureInput): Promise<FocusMindmapStatusDto>
     revertDecision(decisionId: string): Promise<{ ok: boolean }>
     /** M3 知识整理偏好：统计/洞察/用户接管/开关。 */
     getPreferences(): Promise<KnowledgePreferencesDto>

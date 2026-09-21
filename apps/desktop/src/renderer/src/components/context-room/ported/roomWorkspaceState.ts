@@ -1,10 +1,14 @@
+import { createVersionedLocalStorageStore } from '@nxcore/migration-kit/local'
+
 import { BOARD_SUBTABS, BOARD_TABS, type BoardId, type BoardSubtab } from './components/RoomIconSidebar'
 
 /**
  * Room 工作现场持久化：记住每个 Room 上次所在的板块、页签和选中对象，
  * 应用重启后重进 Room 恢复现场（滚动位置等轻量状态不在此范围）。
+ * v1 裸 map（R1 旧页签）在 v2 认领时逐项校验并迁移页签。
  */
-const STORAGE_KEY = 'nxcore-ce:room-pane:v1'
+const KEY_BASE = 'nxcore-ce:room-pane'
+const KEY_VERSION = 2
 const MAX_ROOMS = 200
 
 export interface RoomWorkspaceState {
@@ -31,13 +35,27 @@ function migrateSubtab(board: BoardId, subtab: unknown): BoardSubtab | undefined
   return BOARD_SUBTABS[board].some((tab) => tab.id === candidate) ? candidate as BoardSubtab : undefined
 }
 
+function createStore() {
+  return createVersionedLocalStorageStore<RoomWorkspaceStateMap>({
+    keyBase: KEY_BASE,
+    version: KEY_VERSION,
+    adoptBaseline: (raw) => {
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {}
+      const output: RoomWorkspaceStateMap = {}
+      for (const [roomId, value] of Object.entries(raw as Record<string, unknown>)) {
+        const normalized = normalizeState(roomId, value)
+        if (normalized) output[roomId] = normalized
+      }
+      return output
+    },
+    fallback: {},
+    migrations: [],
+  })
+}
+
 function loadMap(): RoomWorkspaceStateMap {
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY)
-    if (!raw) return {}
-    const parsed: unknown = JSON.parse(raw)
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
-    return parsed as RoomWorkspaceStateMap
+    return createStore().get()
   } catch {
     return {}
   }
@@ -50,10 +68,10 @@ function saveMap(map: RoomWorkspaceStateMap): void {
       const recent = roomIds
         .sort((a, b) => (map[b]?.savedAt ?? 0) - (map[a]?.savedAt ?? 0))
         .slice(0, MAX_ROOMS)
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(Object.fromEntries(recent.map((id) => [id, map[id]]))))
+      createStore().set(Object.fromEntries(recent.map((id) => [id, map[id]])))
       return
     }
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(map))
+    createStore().set(map)
   } catch {
     // 存储不可用（隐私模式/配额）时静默放弃，现场恢复是增强而非关键路径。
   }

@@ -4,10 +4,13 @@ import type {
   SaveContextRoomSnapshotInput,
 } from '@nxcore/agent-contract';
 
+import { createVersionedLocalStorageStore } from '@nxcore/migration-kit/local';
+
 import type { ContextRoomRecord } from './types';
 import { removeDemoContextRooms } from './demoContextRooms';
 
-export const CONTEXT_ROOM_LOCAL_STATE_KEY = 'nexcore:context-room:state:v1';
+const CONTEXT_ROOM_STATE_KEY_BASE = 'nexcore:context-room:state';
+const CONTEXT_ROOM_STATE_VERSION = 2;
 
 export interface ContextRoomLocalState {
   rooms: ContextRoomRecord[];
@@ -115,36 +118,46 @@ function migrateContextRoomRecord(
   return migrateLegacyUpdatedAt(migrateLegacyGeneratedContext(room), fallbackUpdatedAt);
 }
 
+function adoptLegacyState(
+  raw: unknown,
+  fallback: ContextRoomRecord[],
+): ContextRoomLocalState {
+  const parsed = migrateLegacyBrandText(raw) as Partial<ContextRoomLocalState>;
+  if (!Array.isArray(parsed.rooms) || !parsed.rooms.every(isContextRoomRecord)) {
+    return removeDemoContextRoomState({ rooms: fallback, deletedRooms: [] });
+  }
+  const deletedRooms = Array.isArray(parsed.deletedRooms)
+    ? parsed.deletedRooms.filter(isContextRoomRecord)
+    : [];
+  const fallbackById = new Map(fallback.map((room) => [room.id, room]));
+  const fallbackUpdatedAt = new Date().toISOString();
+  return removeDemoContextRoomState({
+    rooms: parsed.rooms.map((room) => migrateContextRoomRecord(
+      mergeStoredRoom(room, fallbackById.get(room.id)),
+      fallbackUpdatedAt,
+    )),
+    deletedRooms: deletedRooms.map((room) => migrateContextRoomRecord(
+      mergeStoredRoom(room, fallbackById.get(room.id)),
+      fallbackUpdatedAt,
+    )),
+  });
+}
+
+function createLocalStateStore(fallback: ContextRoomRecord[]) {
+  return createVersionedLocalStorageStore<ContextRoomLocalState>({
+    keyBase: CONTEXT_ROOM_STATE_KEY_BASE,
+    version: CONTEXT_ROOM_STATE_VERSION,
+    adoptBaseline: (raw) => adoptLegacyState(raw, fallback),
+    fallback: removeDemoContextRoomState({ rooms: fallback, deletedRooms: [] }),
+    migrations: [],
+  });
+}
+
 export function loadContextRoomLocalState(fallback: ContextRoomRecord[]): ContextRoomLocalState {
   if (typeof window === 'undefined') {
     return removeDemoContextRoomState({ rooms: fallback, deletedRooms: [] });
   }
-
-  try {
-    const raw = window.localStorage.getItem(CONTEXT_ROOM_LOCAL_STATE_KEY);
-    if (!raw) return removeDemoContextRoomState({ rooms: fallback, deletedRooms: [] });
-    const parsed = migrateLegacyBrandText(JSON.parse(raw)) as Partial<ContextRoomLocalState>;
-    if (!Array.isArray(parsed.rooms) || !parsed.rooms.every(isContextRoomRecord)) {
-      return removeDemoContextRoomState({ rooms: fallback, deletedRooms: [] });
-    }
-    const deletedRooms = Array.isArray(parsed.deletedRooms)
-      ? parsed.deletedRooms.filter(isContextRoomRecord)
-      : [];
-    const fallbackById = new Map(fallback.map((room) => [room.id, room]));
-    const fallbackUpdatedAt = new Date().toISOString();
-    return removeDemoContextRoomState({
-      rooms: parsed.rooms.map((room) => migrateContextRoomRecord(
-        mergeStoredRoom(room, fallbackById.get(room.id)),
-        fallbackUpdatedAt,
-      )),
-      deletedRooms: deletedRooms.map((room) => migrateContextRoomRecord(
-        mergeStoredRoom(room, fallbackById.get(room.id)),
-        fallbackUpdatedAt,
-      )),
-    });
-  } catch {
-    return removeDemoContextRoomState({ rooms: fallback, deletedRooms: [] });
-  }
+  return createLocalStateStore(fallback).get();
 }
 
 function snapshotItem(room: ContextRoomRecord): ContextRoomSnapshotItem {
@@ -210,8 +223,18 @@ export function restoreContextRoomSnapshot(
 export function saveContextRoomLocalState(state: ContextRoomLocalState): void {
   if (typeof window === 'undefined') return;
   try {
-    window.localStorage.setItem(CONTEXT_ROOM_LOCAL_STATE_KEY, JSON.stringify(state));
+    createLocalStateStore([]).set(state);
   } catch {
     // Keep the in-memory workspace usable when storage is unavailable or full.
+  }
+}
+
+/** 清掉所有世代的本地工作区 key（错误兜底「重置工作区」用）。 */
+export function clearContextRoomLocalState(): void {
+  if (typeof window === 'undefined') return;
+  try {
+    createLocalStateStore([]).clear();
+  } catch {
+    // localStorage 不可用时由调用方直接重载。
   }
 }

@@ -29,7 +29,7 @@ export function useGraphCamera(
   const camRef = useRef<CamTransform>({ x: 0, y: 0, scale: 1 });
   const tweenAnchor = useRef<Point | null>(null);
   const tween = useRef<gsap.core.Tween | null>(null);
-  // 盲铺开自愈：fit 时视口还没尺寸（隐藏容器/后台标签），缩放会被钳到下限；视口有真实尺寸后重铺
+  // 盲铺开自愈：fit 时视口还没尺寸（隐藏容器/后台标签），落位是错的；视口有真实尺寸后重铺
   const lastFit = useRef<{ bbox: BBox; padding: number; maxScale: number; vw: number; vh: number } | null>(null);
 
   const apply = useCallback(() => {
@@ -76,17 +76,17 @@ export function useGraphCamera(
     const viewport = viewportRef.current;
     if (!viewport || typeof ResizeObserver === 'undefined') return;
     const observer = new ResizeObserver(() => {
-      const rec = lastFit.current;
-      if (!rec || rec.vw >= 80 || rec.vh >= 80) return;
       const vp = viewportSize();
       if (vp.width < 80 || vp.height < 80) return;
-      lastFit.current = { ...rec, vw: vp.width, vh: vp.height };
+      const fitRec = lastFit.current;
+      if (!fitRec || fitRec.vw >= 80 || fitRec.vh >= 80) return;
+      lastFit.current = { ...fitRec, vw: vp.width, vh: vp.height };
       cancelTween();
-      setCam(fitTransform(rec.bbox, vp, rec.padding, rec.maxScale));
+      setCam(fitTransform(fitRec.bbox, vp, fitRec.padding, fitRec.maxScale));
     });
     observer.observe(viewport);
     return () => observer.disconnect();
-  }, [viewportRef, viewportSize, cancelTween, setCam]);
+  }, [viewportRef, viewportSize, cancelTween, setCam, visualCenter]);
 
   /** 锚点（内容坐标）滑向视口中心，缩放同步插值到 toScale。 */
   const tweenTo = useCallback((anchor: Point, toScale: number, options: TweenOptions = {}) => {

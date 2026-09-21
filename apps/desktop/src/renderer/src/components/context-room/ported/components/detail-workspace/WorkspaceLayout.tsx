@@ -2,7 +2,7 @@ import * as ContextMenu from '@radix-ui/react-context-menu';
 import type { RoomAppliedEntitySource, RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract';
 import { FolderInput, X } from 'lucide-react';
 import type { Dispatch, RefObject, SetStateAction } from 'react';
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { useLocale } from '../../../../../i18n/LocaleContext';
 
 import { showToast } from '@/state/toast';
@@ -14,6 +14,7 @@ import {
   type BoardSubtab,
 } from '../RoomIconSidebar';
 import type { BoardSubtabs } from '../../hooks/useContextRoomLayout';
+import { useRoomFocus } from '../../hooks/useRoomFocus';
 import { OverviewDashboard, type WorkspaceObjectPreview } from '../detail-panels';
 import { BoardTabs } from './BoardTabs';
 import { WorkspaceContent } from './WorkspaceContent';
@@ -33,6 +34,8 @@ export function WorkspaceLayout({
   middleHidden,
   setMiddleHidden,
   middleWidth,
+  wideMiddle,
+  wideWidth,
   panelWeights,
   setPanelWeights,
   mobileContent,
@@ -93,6 +96,8 @@ export function WorkspaceLayout({
   middleHidden: boolean;
   setMiddleHidden: Dispatch<SetStateAction<boolean>>;
   middleWidth: number;
+  wideMiddle: boolean;
+  wideWidth: number | null;
   panelWeights: number[];
   setPanelWeights: Dispatch<SetStateAction<number[]>>;
   mobileContent: boolean;
@@ -148,8 +153,25 @@ export function WorkspaceLayout({
   const { t } = useLocale();
   const overview = panels.length === 1 && panels[0] === 'work' && subtabs.work === 'overview';
   const boardLabel = (board: BoardId) => TABS.find((tab) => tab.id === board)?.label ?? board;
-  // 伴随思路页签与右区编辑器之间的桥：选区文本进焦点，「引用」插回光标处。
-  const [selectionText, setSelectionText] = useState<string | null>(null);
+  // 焦点协调器：Room 内唯一权威焦点源（选区>章节>产物>Room），伴随思路页签与
+  // 独立思路看板都从这里取焦点；「引用」插回光标处的桥保持原位。
+  const focusDocument = selectedResource?.kind === 'cloud-doc' ? selectedResource : null;
+  const roomFocus = useRoomFocus({
+    roomId: room.id,
+    board: panels[0] ?? 'work',
+    documentId: focusDocument?.binding.docId ?? null,
+    documentTitle: focusDocument?.name ?? null,
+  });
+  // 打开文档即后台预生成聚焦导图（进思路板块直接命中缓存；失败静默，面板 GET 兜底）。
+  const focusDocId = focusDocument?.binding.docId ?? null;
+  useEffect(() => {
+    if (!focusDocId) return;
+    void window.nxcore?.knowledge?.ensureFocusMindmap(room.id, {
+      scope: 'document',
+      documentId: focusDocId,
+      requestVersion: 0,
+    }).catch(() => {});
+  }, [room.id, focusDocId]);
   const insertQuoteRef = useRef<((quote: { text: string; source: string }) => boolean) | null>(null);
   const registerQuoteInsert = useCallback((insert: (quote: { text: string; source: string }) => boolean) => {
     insertQuoteRef.current = insert;
@@ -164,9 +186,10 @@ export function WorkspaceLayout({
   };
   // 工作概览独占整屏时不可被分屏替换。
   const boardSplittable = (board: BoardId) => !(board === 'work' && subtabs.work === 'overview');
-  // 图谱类板块（思路/关系）单面板时中栏取最大画布（PRD 4.1 知识脉络获得最大画布）。
-  const wideMiddle = !overview && panels.length === 1
-    && (panels[0] === 'thoughts' || panels[0] === 'relations');
+  // 宽中栏默认 min(720px, 58vw)，用户拖过分隔条后以拖到的宽度为准（来自布局 hook）。
+  const middleWidthCss = wideMiddle
+    ? (wideWidth !== null ? `${String(wideWidth)}px` : 'min(720px, 58vw)')
+    : `${String(middleWidth)}px`;
 
   return (
     <>
@@ -189,7 +212,7 @@ export function WorkspaceLayout({
       <div
         ref={layoutRef as React.RefObject<HTMLDivElement>}
         className={`context-room-workspace-layout${overview ? ' is-overview' : ''}${middleHidden ? ' is-middle-hidden' : ''}${mobileContent ? ' is-mobile-content' : ''}${wideMiddle ? ' is-wide-middle' : ''}`}
-        style={{ '--context-room-middle-width': wideMiddle ? 'min(720px, 58vw)' : `${String(middleWidth)}px` } as React.CSSProperties}
+        style={{ '--context-room-middle-width': middleWidthCss } as React.CSSProperties}
       >
         <nav className="context-room-workspace-tabs" aria-label={t('contextRoom:roomBoard.contextRoomDetail')}>
           {TABS.map(({ id, label, icon: Icon, tone }) => (
@@ -324,7 +347,9 @@ export function WorkspaceLayout({
                         room={room}
                         selectedResourceId={selectedResourceId}
                         selectedResource={selectedResource}
-                        selectionText={selectionText}
+                        focus={roomFocus.focus}
+                        focusLocked={roomFocus.locked}
+                        onToggleFocusLock={roomFocus.toggleLocked}
                         onCompanionQuote={onCompanionQuote}
                         backendDocuments={backendDocuments}
                         trashedDocuments={trashedDocuments}
@@ -386,7 +411,8 @@ export function WorkspaceLayout({
               documentFocusRequestId={documentFocusRequestId}
               onBackendDocumentChange={onBackendDocumentChange}
               onDeleteDocument={onDeleteDocument}
-              onSelectionTextChange={setSelectionText}
+              onSelectionTextChange={roomFocus.setSelection}
+              onChapterChange={roomFocus.setChapter}
               registerQuoteInsert={registerQuoteInsert}
               onMobileBack={() => setMobileContent(false)}
               onUpdateRoom={onUpdateRoom}

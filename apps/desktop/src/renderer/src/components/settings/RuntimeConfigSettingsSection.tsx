@@ -1,4 +1,4 @@
-import { Check, RefreshCw, RotateCcw, Save, ShieldCheck, Trash2 } from 'lucide-react'
+import { Check, RefreshCw, Save, ShieldCheck, Trash2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import type { RuntimeConfigSnapshot, RuntimeConfigTestResult } from '../../../../shared/sources'
 import { useLocale } from '@/i18n/LocaleContext'
@@ -63,17 +63,6 @@ export function RuntimeConfigSettingsSection() {
 
   const seedFromSnapshot = (next: RuntimeConfigSnapshot) => {
     setSnapshot(next)
-    // SaaS configuration is managed by the service. Do not seed its payload
-    // into editable form or JSON state in the renderer.
-    if (next.selectedSource === 'saas') {
-      setLlm(emptyAiFields())
-      setEmbedding(emptyAiFields())
-      setVlm(emptyAiFields())
-      setAsr(emptyAsrFields())
-      setSearch(emptyAiFields())
-      setJsonText('')
-      return
-    }
     setLlm(primaryFieldsFromSnapshot(next))
     setEmbedding(embeddingFieldsFromSnapshot(next))
     setVlm(vlmFieldsFromSnapshot(next))
@@ -145,17 +134,7 @@ export function RuntimeConfigSettingsSection() {
       setMessage(error instanceof Error ? error.message : String(error))
     } finally { setBusy(null) }
   }
-  const refreshSaas = async () => {
-    setBusy('save'); setMessage(null)
-    try {
-      const next = await window.nxcore?.runtimeConfig.refreshSaas()
-      if (next) seedFromSnapshot(next)
-      setMessage(t('surface:settings.rcRefreshed'))
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : String(error))
-    } finally { setBusy(null) }
-  }
-  const selectSource = async (source: 'user' | 'saas' | 'default') => {
+  const selectSource = async (source: 'user' | 'default') => {
     setBusy('save'); setMessage(null)
     try {
       const next = await window.nxcore?.runtimeConfig.selectSource(source)
@@ -220,18 +199,8 @@ export function RuntimeConfigSettingsSection() {
     </div>
     <div className="runtime-config-source-selector" role="group" aria-label={t('surface:settings.rcSourceLabel')}>
       <span>{t('surface:settings.rcSourceLabel')}</span>
-      {([['user', 'rcSourceUser'], ['saas', 'rcSourceSaas'], ['default', 'rcSourceDefault']] as const).map(([source, key]) => <button key={source} type="button" className={snapshot?.selectedSource === source ? 'active' : ''} disabled={busy !== null || (source !== 'default' && !snapshot?.availableSources.includes(source))} onClick={() => void selectSource(source)}>{t(`surface:settings.${key}`)}{source !== 'default' && !snapshot?.availableSources.includes(source) ? t('surface:settings.rcSourceNotConfigured') : ''}</button>)}
+      {([['user', 'rcSourceUser'], ['default', 'rcSourceDefault']] as const).map(([source, key]) => <button key={source} type="button" className={snapshot?.selectedSource === source ? 'active' : ''} disabled={busy !== null || (source !== 'default' && !snapshot?.availableSources.includes(source))} onClick={() => void selectSource(source)}>{t(`surface:settings.${key}`)}{source !== 'default' && !snapshot?.availableSources.includes(source) ? t('surface:settings.rcSourceNotConfigured') : ''}</button>)}
     </div>
-    {snapshot?.selectedSource === 'saas' ? <div className="runtime-config-saas-safe-state">
-      <ShieldCheck aria-hidden="true" />
-      <div>
-        <strong>{t('surface:settings.rcSaasManagedTitle')}</strong>
-        {message ? <p className="runtime-config-message"><Check aria-hidden="true" />{message}</p> : null}
-      </div>
-      <button type="button" className="secondary-button" onClick={() => void refreshSaas()} disabled={busy !== null}>
-        <RotateCcw aria-hidden="true" />{t('surface:settings.rcSaasRefresh')}
-      </button>
-    </div> : <>
     <div className="rc-tabs" role="tablist">
       {tabs.map((item) => <button key={item.id} type="button" role="tab" aria-selected={tab === item.id} data-active={tab === item.id} onClick={() => setTab(item.id)}>
         {item.label}
@@ -300,7 +269,6 @@ export function RuntimeConfigSettingsSection() {
 
       <div className="runtime-config-actions">
         <button type="button" className="secondary-button" onClick={() => void load()} disabled={busy !== null}><RefreshCw aria-hidden="true" />{t('surface:settings.rcReload')}</button>
-        <button type="button" className="secondary-button" onClick={() => void refreshSaas()} disabled={busy !== null}><RotateCcw aria-hidden="true" />{t('surface:settings.rcRefreshSaas')}</button>
         <button type="button" className="secondary-button" onClick={() => void clearUser()} disabled={busy !== null}><Trash2 aria-hidden="true" />{t('surface:settings.rcClearUser')}</button>
         <button type="button" className="secondary-button" onClick={() => void runTest()} disabled={busy !== null}>{busy === 'test' ? t('surface:settings.rcTesting') : t('surface:settings.rcRunTest')}</button>
         <button type="button" className="primary-button" onClick={() => void saveForm()} disabled={busy !== null}><Save aria-hidden="true" />{t('surface:settings.rcSaveForm')}</button>
@@ -315,6 +283,5 @@ export function RuntimeConfigSettingsSection() {
         <button type="button" className="primary-button" onClick={() => void saveJson()} disabled={busy !== null}><Save aria-hidden="true" />JSON</button>
       </div>
     </details>
-    </>}
   </section>
 }

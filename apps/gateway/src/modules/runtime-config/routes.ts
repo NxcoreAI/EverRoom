@@ -13,7 +13,7 @@ import {
 } from "./validate.js";
 
 const ConfigBody = Type.Object({}, { additionalProperties: true });
-const SourceBody = Type.Object({ source: Type.Union([Type.Literal("user"), Type.Literal("saas"), Type.Literal("default")]) });
+const SourceBody = Type.Object({ source: Type.Union([Type.Literal("user"), Type.Literal("default")]) });
 
 function configuredEmbeddingDimensions(): number | undefined {
   const raw = process.env.TDAI_EMBEDDING_DIMENSIONS?.trim();
@@ -38,18 +38,8 @@ export function runtimeConfigRoutes(manager: RuntimeConfigManager): FastifyPlugi
       manager.set("user", request.body);
       return withFlag(manager.snapshot(true));
     });
-    // Never return the decrypted SaaS payload to the renderer. The main process
-    // receives the secret from SaaS, but all gateway snapshots crossing IPC are redacted.
-    app.put("/v1/runtime-config/saas", { schema: { tags: ["runtime-config"], body: ConfigBody } }, async (request) => {
-      manager.set("saas", request.body);
-      return withFlag(manager.snapshot(true));
-    });
     app.delete("/v1/runtime-config/user", { schema: { tags: ["runtime-config"] } }, async () => {
       manager.clear("user");
-      return withFlag(manager.snapshot(true));
-    });
-    app.delete("/v1/runtime-config/saas", { schema: { tags: ["runtime-config"] } }, async () => {
-      manager.clear("saas");
       return withFlag(manager.snapshot(true));
     });
     app.put("/v1/runtime-config/source", { schema: { tags: ["runtime-config"], body: SourceBody } }, async (request) => {

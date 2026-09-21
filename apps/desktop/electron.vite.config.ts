@@ -54,6 +54,9 @@ export default defineConfig({
     plugins: sentryPlugins(),
   },
   renderer: {
+    // 独立依赖缓存：避免与 vite.browser.config.mts 起的浏览器复现服务共用缓存互相改写，
+    // 否则运行中的应用依赖引用会过期，进 room 时触发重新打包+整页刷新（闪烁）。
+    cacheDir: 'node_modules/.vite-electron-renderer',
     build: {
       sourcemap: sourceMap,
     },
@@ -70,6 +73,10 @@ export default defineConfig({
       alias: {
         '@': resolve('src/renderer/src'),
       },
+    },
+    // 进 room 时才加载的图组件依赖，不预打包会触发 vite 运行时重打包并整页刷新
+    optimizeDeps: {
+      include: ['d3-force'],
     },
     plugins: [react(), ...sentryPlugins()],
   },

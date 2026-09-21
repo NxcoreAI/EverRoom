@@ -84,9 +84,9 @@ describe("gateway server", () => {
     expect(mcp.statusCode).toBe(200);
     const runtime = await app.inject({
       method: "PUT",
-      url: "/v1/runtime-config/saas",
+      url: "/v1/runtime-config/user",
       headers,
-      payload: { schemaVersion: 1, webSearch: { provider: "openai-compatible", api: "openai-completions", model: "search", baseUrl: "https://search.test/v1", apiKey: "saas-search-51" } },
+      payload: { schemaVersion: 1, webSearch: { provider: "openai-compatible", api: "openai-completions", model: "search", baseUrl: "https://search.test/v1", apiKey: "user-search-51" } },
     });
     expect(runtime.statusCode).toBe(200);
     const logout = await app.inject({ method: "POST", url: "/v1/security/secrets/logout", headers });
@@ -168,11 +168,11 @@ describe("gateway server", () => {
     });
     expect(response.statusCode).toBe(200);
 
-    // SaaS 下发的 memory 段（云端凭据指向本地自管 MemoryCore）不得覆盖 env：
-    // 本地实例的 apiKey 由主进程每次启动随机轮换，云端值必然 401。
+    // 运行时配置里的 memory 段（BYOK 误填云端凭据）不得覆盖 env：
+    // 本地实例的 apiKey 由主进程每次启动随机轮换，外部值必然 401。
     await app.inject({
       method: "PUT",
-      url: "/v1/runtime-config/saas",
+      url: "/v1/runtime-config/user",
       headers,
       payload: {
         schemaVersion: 1,
@@ -220,9 +220,9 @@ describe("gateway server", () => {
     // transport, and a later config event must leave the injected client live.
     await app.inject({
       method: "PUT",
-      url: "/v1/runtime-config/saas",
+      url: "/v1/runtime-config/user",
       headers,
-      payload: { schemaVersion: 1, memory: { serviceId: "service-from-saas" } },
+      payload: { schemaVersion: 1, memory: { serviceId: "service-from-config" } },
     });
     const stillEnabled = await app.inject({ method: "PUT", url: "/v1/memory/config", headers, payload: memory });
     expect(stillEnabled.json()).toEqual({ enabled: true });
@@ -724,6 +724,7 @@ describe("gateway server", () => {
       "context_room_write_commit",
       "context_room_write_abort",
       "context_room_document_comment_add",
+      "context_room_document_delete",
     ]);
   });
 
@@ -786,6 +787,7 @@ describe("gateway server", () => {
         "context_room_write_commit",
         "context_room_write_abort",
         "context_room_document_comment_add",
+        "context_room_document_delete",
       ]);
     } finally {
       await client.close();

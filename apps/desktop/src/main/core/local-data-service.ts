@@ -1,9 +1,10 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { createReadStream, createWriteStream, mkdirSync } from 'node:fs'
+import { createReadStream, createWriteStream, existsSync, mkdirSync, statSync } from 'node:fs'
 import { mkdir, readFile, rename, stat, unlink } from 'node:fs/promises'
 import { basename, extname, join } from 'node:path'
 import { pipeline } from 'node:stream/promises'
 import { DatabaseSync } from 'node:sqlite'
+import { runSqliteMigrations } from '@nxcore/migration-kit'
 
 import { ConnectorRegistry } from '../connectors/connector-registry'
 import type {
@@ -13,6 +14,7 @@ import type {
   ConnectorSubscription,
 } from '../connectors/types'
 import { EvidenceService } from '../evidence/evidence-service'
+import { nxcoreDataMigrations } from './data-migrations'
 import {
   HIGH_RISK_FILE_BATCH_THRESHOLD,
   isIgnoredLocalDirectory,
@@ -127,6 +129,7 @@ interface FileSummaryRow {
 export class LocalDataService {
   private readonly database: DatabaseSync
   private readonly objectsDirectory: string
+  private readonly isFreshDatabase: boolean
   private readonly evidence: EvidenceService
   private readonly activeScans = new Map<string, Promise<SyncResult>>()
   private readonly disconnectingSources = new Set<string>()
@@ -151,7 +154,13 @@ export class LocalDataService {
   ) {
     this.objectsDirectory = join(dataDirectory, 'objects', 'sha256')
     mkdirSync(join(dataDirectory, 'database'), { recursive: true })
-    this.database = new DatabaseSync(join(dataDirectory, 'database', 'nxcore.db'))
+    const databasePath = join(dataDirectory, 'database', 'nxcore.db')
+    try {
+      this.isFreshDatabase = !existsSync(databasePath) || statSync(databasePath).size === 0
+    } catch {
+      this.isFreshDatabase = true
+    }
+    this.database = new DatabaseSync(databasePath)
     this.evidence = new EvidenceService(
       this.database,
       (hash) => this.objectPath(hash),
@@ -378,6 +387,18 @@ export class LocalDataService {
     }
     this.backfillLatestChangeRuns()
     this.evidence.initialize()
+
+    // 数据级迁移：在全部建表与探测式补列之后执行。失败时框架用备份恢复
+    // 整库并抛 MigrationFailureError，由 index.ts 的启动 catch 停机提示。
+    runSqliteMigrations({
+      storeId: 'nxcore.db',
+      sqlite: this.database,
+      databasePath: join(this.dataDirectory, 'database', 'nxcore.db'),
+      backupDir: join(this.dataDirectory, 'backups'),
+      isFreshStore: this.isFreshDatabase,
+      migrations: nxcoreDataMigrations,
+      close: () => this.database.close(),
+    })
 
     const recoveredAt = new Date().toISOString()
     this.database.prepare(`

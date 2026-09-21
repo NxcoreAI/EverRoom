@@ -911,6 +911,142 @@
   word-break: break-word;
 }
 
+.agent-dispatch-card {
+  margin-top: 6px;
+  padding: 8px 10px;
+  border: 1px solid #e8eaee;
+  border-radius: 8px;
+  background: #fafbfc;
+}
+
+.agent-dispatch-executor {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: #3f4650;
+  font-size: 11px;
+}
+
+.agent-dispatch-executor svg {
+  width: 12px;
+  height: 12px;
+  color: #7c8493;
+}
+
+.agent-dispatch-executor strong {
+  font-weight: 600;
+}
+
+.agent-dispatch-executor span {
+  color: #8d95a1;
+}
+
+.agent-dispatch-card > small {
+  display: block;
+  margin-top: 8px;
+  color: #8e96a2;
+}
+
+.agent-dispatch-card > p {
+  margin: 2px 0 0;
+  color: #3f4650;
+  font-size: 11px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.agent-dispatch-constraints,
+.agent-dispatch-materials {
+  display: grid;
+  gap: 3px;
+  margin: 3px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.agent-dispatch-constraints li {
+  color: #555c66;
+  font-size: 11px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.agent-dispatch-constraints li::before {
+  content: '· ';
+  color: #9aa1aa;
+}
+
+.agent-dispatch-materials li {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.agent-dispatch-material-title {
+  min-width: 0;
+  overflow: hidden;
+  color: #555c66;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-dispatch-material-badge {
+  flex: 0 0 auto;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: #eef1fb;
+  color: #5876d8;
+  font-size: 10px;
+  font-style: normal;
+}
+
+.agent-dispatch-material-chars {
+  flex: 0 0 auto;
+  margin-left: auto;
+  color: #9aa1aa;
+}
+
+.agent-dispatch-card pre {
+  max-height: 220px;
+}
+
+.agent-dispatch-full-text {
+  border: 1px solid #e8eaee;
+  background: #fff;
+}
+
+.agent-dispatch-full-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 6px;
+  padding: 3px 9px;
+  border: 1px solid #e0e3e9;
+  border-radius: 6px;
+  background: #fff;
+  color: #565d67;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.agent-dispatch-full-toggle:hover:not(:disabled) {
+  background: #f6f7f8;
+}
+
+.agent-dispatch-full-toggle:disabled {
+  color: #b3b9c2;
+  cursor: default;
+}
+
+.agent-dispatch-full-toggle svg {
+  width: 11px;
+  height: 11px;
+}
+
 .agent-message-actions {
   display: flex;
   align-items: center;

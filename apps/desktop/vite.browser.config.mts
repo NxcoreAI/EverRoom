@@ -82,6 +82,54 @@ const tickBatch = () => {
   batchState.updatedAt = new Date().toISOString()
   return batchState
 }
+// 聚焦思维导图 mock 状态机：GET 懒 kick、约 6s 成材（轮询可见 processing）；
+// window.__holdMindmap=true 恒挂 processing；window.__failMindmap='错误码' 在成材时刻转 failed；
+// window.__resetMindmap() 清空重走。显式全字段，绝不落进兜底 Proxy。
+const mindmapStore = new Map()
+window.__resetMindmap = () => { mindmapStore.clear() }
+const mindmapBranches = (scope) => scope === 'document' ? [
+  ['现状梳理', ['Gmail 双链路', '日历链路', '云文档链路']],
+  ['目标架构', ['阶段一：身份合并', '阶段二：格式映射自愈']],
+  ['风险与开放问题', ['会话失效静默']],
+  ['排期与里程碑', ['V1 视觉定稿', '联调窗口']],
+] : [
+  ['现状梳理', ['三条链路并存']],
+  ['目标架构', ['统一执行面']],
+  ['规范沉淀', ['命名三处同值']],
+  ['开放问题', ['会话失效静默']],
+]
+const mindmapFixture = (scope, roomId, documentId) => {
+  const generatedAt = new Date().toISOString()
+  const topic = scope === 'document' ? '连接器统一调研' : '连接器（Room 级导图）'
+  const roomRef = { id: roomId, title: '连接器' }
+  const nodes = [{ id: 'mindmap:root', nodeType: scope === 'document' ? 'document' : 'room', label: topic, sourceGraph: 'mindmap', roomRef, updatedAt: generatedAt }]
+  const edges = []
+  const cards = mindmapBranches(scope).map((branch, i) => {
+    const ref = 'mindmap:b' + i
+    nodes.push({ id: ref, nodeType: 'mindmapTopic', label: branch[0], sourceGraph: 'mindmap', roomRef, updatedAt: generatedAt })
+    edges.push({ id: 'edge-mm-' + i, from: 'mindmap:root', to: ref, relationType: '分支', edgeLevel: 'composed', confidence: null })
+    branch[1].forEach((leaf, j) => {
+      const leafRef = ref + '-' + j
+      nodes.push({ id: leafRef, nodeType: 'mindmapTopic', label: leaf, sourceGraph: 'mindmap', roomRef, updatedAt: generatedAt })
+      edges.push({ id: 'edge-mm-' + i + '-' + j, from: ref, to: leafRef, relationType: '分支', edgeLevel: 'composed', confidence: null })
+    })
+    const path = { nodeRefs: ['mindmap:root', ref], hops: ['分支'] }
+    return { id: 'card:mm-' + i, kind: 'viewpoint', title: branch[0], summary: branch[1].join('、'), sourceType: 'mindmap', occurredAt: null, roomRef, reason: '统一执行面进入映射自愈阶段，双链路已并入格式层。', quote: null, path, confidence: 0.9, nodeRef: ref }
+  })
+  return { cards, nodes, edges, paths: cards.map((c) => c.path), focusRootRef: 'mindmap:root', scoreComponents: null, requestVersion: 0, degraded: false, degradedReason: null, generatedAt }
+}
+const mindmapRow = (roomId, q) => {
+  const scope = q.scope
+  const key = scope + ':' + (scope === 'document' ? q.documentId : roomId)
+  let row = mindmapStore.get(key)
+  if (!row) { row = { status: 'processing', startedAt: Date.now(), error: null, generatedAt: null, projection: null }; mindmapStore.set(key, row) }
+  if (row.status === 'processing' && !window.__holdMindmap && Date.now() - row.startedAt >= 6000) {
+    if (window.__failMindmap) { row.status = 'failed'; row.error = String(window.__failMindmap); window.__failMindmap = null }
+    else { row.status = 'ready'; row.generatedAt = new Date().toISOString(); row.projection = mindmapFixture(scope, roomId, q.documentId ?? null) }
+  }
+  return row
+}
+const mindmapDto = (row, roomId, q) => ({ roomId, scope: q.scope, scopeId: q.scope === 'document' ? q.documentId : roomId, status: row.status, error: row.error, generatedAt: row.generatedAt, promptVersion: row.status === 'ready' ? 1 : null, projection: row.projection ? { ...row.projection, requestVersion: q.requestVersion } : null, requestVersion: q.requestVersion })
 const base = {
   platform: ${JSON.stringify(process.env.MOCK_PLATFORM || 'win32')},
   window: {
@@ -184,10 +232,23 @@ const base = {
     ] }),
     getRoomRelations: async () => ({ rooms: [], edges: [], indexing: { status: 'ready', pendingSources: 0 } }),
     getRoomGraph: async () => ({ rooms: [], edges: [], indexing: { status: 'ready', pendingSources: 0 } }),
-    // 思路·知识涌现 mock：聚焦围绕焦点文档给 5 张卡；漫步给 8 张带路径的卡并按 seed 轮换；
-    // 选区文本含「降级」时走 PRD 7.4 降级样例。
+    // 思路·聚焦思维导图 mock：GET 懒 kick（无行即 processing）、ensure 可 force 重生成。
+    focusMindmap: async (roomId, q) => mindmapDto(mindmapRow(roomId, q), roomId, q),
+    ensureFocusMindmap: async (roomId, q) => {
+      const row = mindmapRow(roomId, q)
+      if (q.force || row.status === 'failed') { row.status = 'processing'; row.startedAt = Date.now(); row.error = null }
+      return mindmapDto(row, roomId, q)
+    },
+    // 思路·知识涌现 mock（仅漫步；聚焦已迁 focusMindmap）：8 张带路径的卡按 seed 轮换。
     emergence: async (_roomId, req) => {
-      const center = 'doc:' + (req.focus.documentId ?? 'doc-native-1')
+      // 默认 900ms 延迟模拟投影耗时；页面里置 window.__holdEmergence=true 可挂起响应（验证加载态），调 window.__releaseEmergence() 放行
+      await new Promise((resolve) => {
+        const w = window
+        const done = () => { if (w.__releaseEmergence === done) w.__releaseEmergence = null; resolve() }
+        if (w.__holdEmergence) { w.__releaseEmergence = done; setTimeout(done, 8000) }
+        else setTimeout(done, 900)
+      })
+      const docCenter = 'doc:' + (req.focus.documentId ?? 'doc-native-1')
       const emNodes = [
         { id: 'room:thoughts-mock', nodeType: 'room', label: '思路涌现验证', sourceGraph: 'roomGraph', roomRef: null, updatedAt: '2026-09-14T08:00:00.000Z' },
         { id: 'doc:doc-native-1', nodeType: 'document', label: '产物：发布计划', sourceGraph: 'linkGraph', roomRef: null, updatedAt: '2026-09-13T10:00:00.000Z' },
@@ -211,8 +272,7 @@ const base = {
         { id: 'e9', from: 'room:thoughts-mock', to: 'doc:doc-native-2', relationType: '包含', edgeLevel: 'original', confidence: 1 },
         { id: 'e10', from: 'fact:conflict-timeline', to: 'entity:person-linwei', relationType: '上报', edgeLevel: 'original', confidence: 0.7 },
       ]
-      if (req.mode === 'wander') {
-        const start = req.wander?.startNodeRef || center
+      const start = req.wander?.startNodeRef || docCenter
         const wanderCards = [
           { id: 'w1', kind: 'case', title: '相似案例：Notion 的渐进披露', summary: '同类产品把图谱入口收进右上角，正文保持纯净。', sourceType: 'wikiPage', occurredAt: null, roomRef: { id: 'room-3', title: '连接器' }, reason: '与「设计规范·动效篇」相邻，来自另一条知识链。', quote: null, nodeRef: 'wiki:3',
             path: { nodeRefs: [start, 'memory:insight-motion', 'wiki:3'], hops: ['涉及', '沉淀于'] } },
@@ -233,20 +293,7 @@ const base = {
         ]
         const seed = req.wander?.seed ?? 0
         const rotated = wanderCards.slice(seed % wanderCards.length).concat(wanderCards.slice(0, seed % wanderCards.length)).slice(0, Math.min(req.limit ?? 15, wanderCards.length))
-        return { cards: rotated, nodes: emNodes, edges: emEdges, paths: rotated.map((c) => c.path), scoreComponents: null, requestVersion: req.requestVersion, degraded: false, degradedReason: null, generatedAt: new Date().toISOString() }
-      }
-      const degraded = String(req.focus.selectionText ?? '').includes('降级')
-      const focusCards = degraded ? [
-        { id: 'f1', kind: 'evidence', title: '发布计划里的视觉节点', summary: '发布计划第二节提到 V1 视觉定稿的时间点。', sourceType: 'document', occurredAt: '2026-09-13T10:00:00.000Z', roomRef: null, reason: '关键词「发布计划」命中正文第二节。', quote: 'V1 视觉定稿后进入连接器联调窗口。', nodeRef: 'fact:decision-v1', path: null, confidence: 0.72 },
-        { id: 'f2', kind: 'actor', title: '林薇', summary: '发布计划的作者，同时是视觉负责人。', sourceType: 'entity', occurredAt: null, roomRef: null, reason: '关键词+图谱路径共同命中。', quote: null, nodeRef: 'entity:person-linwei', path: null, confidence: 0.58 },
-      ] : [
-        { id: 'f1', kind: 'evidence', title: 'V1 视觉定稿的邮件证据', summary: '林薇的周报确认定稿，附件带标注稿。', sourceType: 'mail', occurredAt: '2026-09-12T09:00:00.000Z', roomRef: null, reason: '这段选区指向视觉交付，而它是最直接的书面证据。', quote: 'V1 视觉已定稿，附件是标注稿。', nodeRef: 'fact:decision-v1', path: null, confidence: 0.91 },
-        { id: 'f2', kind: 'decision', title: 'V1 视觉定稿', summary: '上周设计评审通过，本周进入联调。', sourceType: 'fact', occurredAt: '2026-09-13T04:00:00.000Z', roomRef: null, reason: '决策直接约束当前焦点的排期。', quote: null, nodeRef: 'fact:decision-v1', path: null, confidence: 0.88 },
-        { id: 'f3', kind: 'viewpoint', title: '林薇：动效时长建议 240ms', summary: '全场统一 240ms + ease-out，列表类内容做 40ms 错峰。', sourceType: 'entity', occurredAt: '2026-09-13T04:00:00.000Z', roomRef: null, reason: '她主导了这个决定，观点与选区同源。', quote: '过渡动画统一 240ms，列表类内容做 40ms 错峰。', nodeRef: 'entity:person-linwei', path: null, confidence: 0.74 },
-        { id: 'f4', kind: 'conflict', title: '排期冲突：视觉与连接器里程碑撞车', summary: '同一周内两个团队的交付节点重叠，需要错峰。', sourceType: 'fact', occurredAt: '2026-09-10T02:00:00.000Z', roomRef: null, reason: '与焦点的截止时间正面相撞，值得先看。', quote: null, nodeRef: 'fact:conflict-timeline', path: null, confidence: 0.69 },
-        { id: 'f5', kind: 'case', title: '设计规范·动效篇', summary: '同类动效约定的沉淀页，含 240ms 与错峰条目。', sourceType: 'wikiPage', occurredAt: '2026-09-08T08:00:00.000Z', roomRef: null, reason: '相邻 Room 的相似做法，可对照。', quote: null, nodeRef: 'wiki:3', path: null, confidence: 0.61 },
-      ]
-      return { cards: focusCards, nodes: emNodes, edges: emEdges, paths: [], scoreComponents: degraded ? { relevance: 0.6, graphPath: 0.3 } : { relevance: 0.35, graphPath: 0.2, evidence: 0.15, recency: 0.1, feedback: 0.1 }, requestVersion: req.requestVersion, degraded, degradedReason: degraded ? 'llm_unavailable' : null, generatedAt: new Date().toISOString() } } },
+      return { cards: rotated, nodes: emNodes, edges: emEdges, paths: rotated.map((c) => c.path), focusRootRef: start, scoreComponents: null, requestVersion: req.requestVersion, degraded: false, degradedReason: null, generatedAt: new Date().toISOString() } } },
   contextRooms: {
     // 登录后的首启探针读 rooms/deletedRooms 计数；不给 list 会打到兜底 Proxy 上崩。
     list: async () => ({ rooms: [], deletedRooms: [], updatedAt: null }),
@@ -320,6 +367,11 @@ const base = {
   migrations: { sources: async () => [], runs: async () => [], onProgress: () => () => {}, conversations: async () => ({ items: [
     { id: 'thread-1', provider: 'claude', sourceId: 's1', title: '历史会话示例', agentId: 'claude', externalSessionId: 'x', messageCount: 2, lastMessageAt: '2026-09-08T00:00:00.000Z', lastMessageExcerpt: '上次的结论…', available: true },
   ], nextCursor: null }) },
+  // 完整 App 入口（/）验证用：已配置 + 已登录，越过 RuntimeConfigGate。
+  runtimeConfig: { get: async () => ({ primaryConfigured: true, configSource: 'manual' }) },
+  account: { status: async () => ({ authenticated: true, apiBaseUrl: 'https://mock.example', plan: 'pro_plan_active' }) },
+  agent: { discoverLocalAgents: async () => [] },
+  reality: { listEvents: async () => [], onEvent: () => () => {} },
   obsidian: { list: async () => [], discover: async () => [], onChanged: () => () => {}, onDiscoveryChanged: () => () => {} },
 }
 // 预览窗格 document.hidden 恒为 true 会挡住页面轮询;强制视为可见。
@@ -335,6 +387,11 @@ window.nxcore = new Proxy(Object.fromEntries(Object.entries(base).map(([k, v]) =
 
 export default defineConfig({
   root: resolve(here, 'src/renderer'),
+  // 独立依赖缓存：与 electron-vite 渲染层隔离，避免多服务共用缓存互相改写导致页面整刷。
+  cacheDir: resolve(here, 'node_modules/.vite-browser-mock'),
+  optimizeDeps: {
+    include: ['d3-force'],
+  },
   server: {
     port: 5181,
     strictPort: true,

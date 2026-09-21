@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
-import { dirname, resolve } from 'node:path'
+import { resolve } from 'node:path'
+
+import { VersionedJsonStore } from '@nxcore/migration-kit'
 
 import type { HighRiskImportResolution, HighRiskImportReview, IngestPipelines } from '../shared/ingest'
 
@@ -29,11 +30,6 @@ type StoredBatch = {
   | { origin: 'auto-scan'; payload: PendingAutoScanBatch }
 )
 
-interface StoredState {
-  version: 1
-  batches: StoredBatch[]
-}
-
 type ManualResolver = (batch: PendingManualImportBatch, accepted: boolean) => Promise<HighRiskImportResolution>
 type AutoResolver = (batch: PendingAutoScanBatch, accepted: boolean) => Promise<HighRiskImportResolution>
 
@@ -53,21 +49,26 @@ export class HighRiskImportCoordinator implements HighRiskImportQueue {
   private readonly skippedManualPaths = new Set<string>()
   private readonly listeners = new Set<() => void>()
   private readonly resolving = new Set<string>()
-  private persistChain: Promise<void> = Promise.resolve()
   private manualResolver: ManualResolver | null = null
   private autoResolver: AutoResolver | null = null
+  private readonly store: VersionedJsonStore<StoredBatch[]>
 
-  constructor(private readonly statePath: string) {}
+  constructor(statePath: string, backupDir?: string) {
+    this.store = new VersionedJsonStore<StoredBatch[]>({
+      filePath: statePath,
+      migrations: [],
+      adoptBaseline: (raw) => {
+        const parsed = raw as Partial<{ version: unknown; batches: unknown }>
+        if (parsed.version !== 1 || !Array.isArray(parsed.batches)) return []
+        return parsed.batches.filter(isStoredBatch)
+      },
+      fallback: [],
+      ...(backupDir !== undefined ? { backupDir } : {}),
+    })
+  }
 
   async initialize(): Promise<void> {
-    try {
-      const parsed = JSON.parse(await readFile(this.statePath, 'utf8')) as Partial<StoredState>
-      if (parsed.version === 1 && Array.isArray(parsed.batches)) {
-        this.batches = parsed.batches.filter(isStoredBatch)
-      }
-    } catch {
-      this.batches = []
-    }
+    this.batches = this.store.read()
   }
 
   list(): HighRiskImportReview[] {
@@ -126,7 +127,7 @@ export class HighRiskImportCoordinator implements HighRiskImportQueue {
         result = await this.autoResolver(batch.payload, accepted)
       }
       this.batches = this.batches.filter((item) => item.id !== id)
-      await this.persistWithoutBlockingUserWork()
+      this.persist()
       this.notifyChanged()
       return result
     } finally {
@@ -143,34 +144,20 @@ export class HighRiskImportCoordinator implements HighRiskImportQueue {
       batch.origin !== 'auto-scan' || batch.payload.sourceId !== sourceId)
     if (next.length === this.batches.length) return
     this.batches = next
-    await this.persistWithoutBlockingUserWork()
+    this.persist()
     this.notifyChanged()
   }
 
   private async enqueue(batch: StoredBatch): Promise<HighRiskImportReview> {
     this.batches.push(batch)
-    await this.persistWithoutBlockingUserWork()
+    this.persist()
     this.notifyChanged()
     return toReview(batch)
   }
 
-  private persist(): Promise<void> {
-    this.persistChain = this.persistChain.catch(() => undefined).then(async () => {
-      await mkdir(dirname(this.statePath), { recursive: true })
-      const temporaryPath = `${this.statePath}.tmp`
-      await writeFile(
-        temporaryPath,
-        JSON.stringify({ version: 1, batches: this.batches } satisfies StoredState),
-        { encoding: 'utf8', mode: 0o600 },
-      )
-      await rename(temporaryPath, this.statePath)
-    })
-    return this.persistChain
-  }
-
-  private async persistWithoutBlockingUserWork(): Promise<void> {
+  private persist(): void {
     try {
-      await this.persist()
+      this.store.write(this.batches)
     } catch (error) {
       console.error('[high-risk-imports] unable to persist review state', error)
     }

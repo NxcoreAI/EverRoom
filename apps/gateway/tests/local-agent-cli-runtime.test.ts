@@ -178,9 +178,11 @@ printf '%s\\n' '{"type":"turn.completed","usage":{"input_tokens":12,"output_toke
       pageLabel: "Test",
       roomId: null,
       delegationContext: {
-        schemaVersion: 1,
+        schemaVersion: 2,
         targetAgentId: "codex:test",
+        assignment: { text: "Continue", constraints: [] },
         task: { text: "Continue" },
+        materials: [],
         conversation: { messages: [], truncated: false },
         attachments: [],
         resources: { workspaceRoot: root, roomIds: [] },
@@ -263,9 +265,11 @@ printf '%s\\n' '{"type":"turn.completed","usage":{}}'
       pageLabel: "Test",
       roomId: null,
       delegationContext: {
-        schemaVersion: 1,
+        schemaVersion: 2,
         targetAgentId: "codex:test",
+        assignment: { text: "Review this change", constraints: [] },
         task: { text: "Review this change" },
+        materials: [],
         conversation: {
           messages: [{ role: "user", authorAgentId: null, content: "Earlier request", createdAt: "2026-08-26T00:00:00.000Z" }],
           truncated: false,
@@ -334,9 +338,11 @@ printf '%s\\n' '{"type":"result","subtype":"success","is_error":false,"result":"
       pageLabel: "Test",
       roomId: null,
       delegationContext: {
-        schemaVersion: 1,
+        schemaVersion: 2,
         targetAgentId: "claude:test",
+        assignment: { text: "Continue", constraints: [] },
         task: { text: "Continue" },
+        materials: [],
         conversation: { messages: [], truncated: false },
         attachments: [],
         resources: { workspaceRoot: root, roomIds: [] },

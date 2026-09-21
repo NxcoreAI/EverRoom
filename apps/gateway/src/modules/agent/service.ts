@@ -43,7 +43,12 @@ import {
 import { AgentEventBroker } from "./event-broker.js";
 import { issueTrustedMcpSession, revokeTrustedMcpSession } from "./mcp-session-authority.js";
 import { requestsWorkspaceDocument } from "./document-intent.js";
-import { localAgentGrant, sealDelegationPayload } from "../local-agents/delegation.js";
+import {
+  LOCAL_AGENT_HISTORY_CONTENT_LIMIT,
+  LOCAL_AGENT_HISTORY_MESSAGE_LIMIT,
+  buildLocalAgentDelegationPayload,
+  sealDelegationPayload,
+} from "../local-agents/delegation.js";
 import type { FilesService } from "../files/service.js";
 import { clearRedactionDelta, flushRedactionDelta, redactDelta, redactSecrets, redactText } from "../../security/secret-redaction.js";
 
@@ -230,9 +235,6 @@ const ROOM_OVERVIEW_REGENERATION_REQUEST = /(?:(?:更新|刷新|重新生成|重
 const ROOM_OVERVIEW_EXPLICIT_REPLACEMENT = /(?:改成|改为|替换为|纠正|更正|澄清|\breplace\b.{0,24}\bwith\b|\bchange\b.{0,24}\bto\b)/iu;
 const ROOM_OVERVIEW_CITATION_CONTEXT = /(?:^|\n)引用\s+\d+\n区块：(overview|status|next_steps|entities|timeline)\n引用文本：/u;
 const AGENT_LOCALE_PATTERN = /^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$/u;
-const LOCAL_AGENT_HISTORY_MESSAGE_LIMIT = 12;
-const LOCAL_AGENT_HISTORY_CONTENT_LIMIT = 8_000;
-const LOCAL_AGENT_ATTACHMENT_TEXT_LIMIT = 100_000;
 
 function normalizeAgentLocale(value: string | undefined): string | undefined {
   const normalized = value?.trim();
@@ -251,54 +253,19 @@ function localAgentDelegationContext(input: {
 }): LocalAgentDelegationContext {
   const { request, pageLabel, priorMessages, attachments, rooms, activeDocument } = input;
   if (!request.localAgent) throw new Error("local_agent_target_missing");
-  const recentMessages = priorMessages.slice(-LOCAL_AGENT_HISTORY_MESSAGE_LIMIT);
-  const messages = recentMessages.map((message) => ({
-    role: message.role,
-    content: message.content.slice(0, LOCAL_AGENT_HISTORY_CONTENT_LIMIT),
-    authorAgentId: message.authorAgentId ?? null,
-    createdAt: message.createdAt,
-  }));
-  const payload = {
-    schemaVersion: 1 as const,
+  return sealDelegationPayload(buildLocalAgentDelegationPayload({
     targetAgentId: request.localAgent.id,
-    task: { text: request.prompt },
-    conversation: {
-      messages,
-      truncated: priorMessages.length > LOCAL_AGENT_HISTORY_MESSAGE_LIMIT
-        || recentMessages.some((message) => message.content.length > LOCAL_AGENT_HISTORY_CONTENT_LIMIT),
-    },
-    ...(request.context?.selectedText?.trim() ? {
-      selection: { pageLabel, text: request.context.selectedText.trim() },
-    } : {}),
-    attachments: [
-      ...attachments.map((attachment) => ({
-        filename: attachment.filename,
-        mimeType: attachment.mimeType,
-        kind: attachment.kind,
-        ...(attachment.text ? { text: attachment.text.slice(0, LOCAL_AGENT_ATTACHMENT_TEXT_LIMIT) } : {}),
-      })),
-      ...(request.context?.attachments ?? []).map((attachment) => ({
-        filename: attachment.fileName,
-        mimeType: 'text/plain',
-        kind: 'document' as const,
-        ...(attachment.content ? { text: attachment.content.slice(0, LOCAL_AGENT_ATTACHMENT_TEXT_LIMIT) } : {}),
-      })),
-    ],
-    resources: {
-      workspaceRoot: request.localAgent.workingDirectory,
-      roomIds: rooms.map((room) => room.id),
-      ...(activeDocument ? {
-        activeDocument: {
-          roomId: activeDocument.roomId,
-          documentId: activeDocument.documentId,
-          title: activeDocument.title,
-          version: activeDocument.version,
-        },
-      } : {}),
-    },
-    grant: localAgentGrant(request.localAgent.permissionProfile),
-  };
-  return sealDelegationPayload(payload);
+    assignmentText: request.prompt,
+    pageLabel,
+    priorMessages,
+    attachments,
+    promptAttachments: request.context?.attachments ?? [],
+    ...(request.context?.selectedText?.trim() ? { selectedText: request.context.selectedText } : {}),
+    rooms,
+    ...(activeDocument ? { activeDocument } : {}),
+    workingDirectory: request.localAgent.workingDirectory,
+    permissionProfile: request.localAgent.permissionProfile,
+  }));
 }
 
 function participantHandoffPrompt(messages: AgentMessage[]): string | null {
@@ -441,6 +408,12 @@ function selectedRunRoomId(
   return resolved;
 }
 
+export interface LocalAgentDispatchRunSource {
+  priorMessages: Array<Pick<AgentMessage, "role" | "authorAgentId" | "content" | "createdAt">>;
+  promptAttachments: Array<{ fileName: string; content?: string }>;
+  selectedText?: string;
+}
+
 export class AgentService {
   private filesService: FilesService | null = null;
   private externalConversationResolver: AgentExternalConversationResolver | null = null;
@@ -450,6 +423,7 @@ export class AgentService {
     roomId: string | null;
     availableRooms: AgentRoomReference[];
     activeDocument?: AgentActiveDocumentContext;
+    dispatchSource?: LocalAgentDispatchRunSource;
   }>();
   private readonly trustedMcpSessions = new Map<string, Set<string>>();
   private readonly runtimeEventConsumers = new Map<string, Promise<void>>();
@@ -862,6 +836,10 @@ export class AgentService {
       messages: messageRows.map(toMessage),
       lastEventSeq: lastRun?.lastEventSeq ?? 0,
     };
+  }
+
+  getLocalAgentDispatchSource(runId: string): LocalAgentDispatchRunSource | undefined {
+    return this.executionContexts.get(runId)?.dispatchSource;
   }
 
   getRun(runId: string): AgentRun | null {
@@ -1313,6 +1291,16 @@ export class AgentService {
       roomId: runRoomId,
       availableRooms: rooms,
       ...(activeDocument ? { activeDocument } : {}),
+      dispatchSource: {
+        priorMessages: priorMessages.slice(-LOCAL_AGENT_HISTORY_MESSAGE_LIMIT).map((message) => ({
+          role: message.role,
+          content: message.content.slice(0, LOCAL_AGENT_HISTORY_CONTENT_LIMIT),
+          authorAgentId: message.authorAgentId ?? null,
+          createdAt: message.createdAt,
+        })),
+        promptAttachments: input.context?.attachments ?? [],
+        ...(input.context?.selectedText?.trim() ? { selectedText: input.context.selectedText } : {}),
+      },
     });
 
     const runPageLabel = input.context?.pageLabel?.trim() || session.pageLabel;
@@ -1334,13 +1322,14 @@ export class AgentService {
         : null;
       const referencedLocalAgentContext = referencedTargets.length
         ? [
-            `The user mentioned ${referencedTargets.length === 1 ? "a local Agent" : `${referencedTargets.length} local Agents`} with inline @ mentions in the prompt:`,
+            `用户在本轮输入里用 @ 点名了 ${referencedTargets.length === 1 ? "一个本机 Agent" : `${referencedTargets.length} 个本机 Agent`}：`,
             ...referencedTargets.map((target) => {
               const description = target.card?.description?.trim();
               return `- ${target.displayName} (agentId: ${target.id})${description ? ` — ${description}` : ""}`;
             }),
-            "You decide autonomously which of these mentioned local Agents (if any) should handle part of the request. To delegate, call local_agent_dispatch with that agentId and a task you organize yourself, wait for the result, and relay it to the user.",
-            "You remain the only speaker to the user. Do not answer in a local Agent's place and do not switch agents.",
+            "把用户目标拆成子任务并分派给上述 Agent：每次调用 local_agent_dispatch 给一个 Agent 布置一项分工，assignment 由你以 Main Agent 身份向协作者下达工作指派（目标、范围、产出要求），禁止出现“用户问你”“用户希望你”这类转述口吻。",
+            "相互独立的子任务在同一条回复里并行发出多个 local_agent_dispatch；有依赖的子任务等前置结果返回后再发，并用 priorTaskOutputs 引用结果末尾的 taskId，前置产出会作为“Agent 产出”材料进入子包。",
+            "materials 按最小必要声明子 Agent 需要的材料。子 Agent 不与用户直接对话，结果返回后由你汇总转述；你仍是对用户说话的唯一角色，不要替本机 Agent 回答或切换 Agent。",
           ].join("\n")
         : null;
       const externalContext = nativeContinuationRef ? null : importedContext ?? referencedLocalAgentContext ?? referencedConversationContext;

@@ -61,13 +61,19 @@ export function RoomCreationStudio({
 
   /** 提交：把暂存路径与描述交接给推荐卡片的进度会话，随即关闭弹窗。 */
   const submit = () => {
-    if (paths.length === 0) return
+    const trimmedIntent = intent.trim()
+    // #241：允许不带文件直接创建空 Room（须给出用途描述），不再强制选择内容
+    if (paths.length === 0 && !trimmedIntent) return
     const payload: RoomRecommendationRunPayload = {
       paths,
-      intent: intent.trim() || null,
+      intent: trimmedIntent || null,
     }
     window.dispatchEvent(new CustomEvent(ROOM_RECOMMENDATION_RUN_EVENT, { detail: payload }))
-    showToast({ title: t('contextRoom:creation.submitted', { count: paths.length }) })
+    showToast({
+      title: paths.length > 0
+        ? t('contextRoom:creation.submitted', { count: paths.length })
+        : t('contextRoom:creation.emptySubmitted'),
+    })
     onOpenChange(false)
   }
 
@@ -127,7 +133,12 @@ export function RoomCreationStudio({
                   ))}
                 </ul>
               </>
-            ) : null}
+            ) : (
+              // #241：不选内容时明确告知行为——按描述直接创建空 Room，后续可再添加
+              <p className="context-room-creation-empty-hint" data-testid="context-room-creation-empty-hint">
+                {t('contextRoom:creation.emptyRoomHint')}
+              </p>
+            )}
           </div>
 
           <div className="context-room-creation-footer">
@@ -135,7 +146,7 @@ export function RoomCreationStudio({
               type="button"
               className="context-room-primary context-room-creation-submit"
               data-testid="context-room-creation-start"
-              disabled={picking || paths.length === 0}
+              disabled={picking || (paths.length === 0 && !intent.trim())}
               onClick={submit}
             >
               <Send aria-hidden="true" />

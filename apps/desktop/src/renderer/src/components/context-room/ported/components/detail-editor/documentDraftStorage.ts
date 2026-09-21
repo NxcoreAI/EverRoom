@@ -1,9 +1,12 @@
 import type { JSONContent } from '@tiptap/react'
+import { createVersionedLocalStorageStore } from '@nxcore/migration-kit/local'
 
 import type { Translate } from '../../../../../i18n/LocaleContext'
 import type { ContextRoomRecord } from '../../types'
 
-const DOCUMENT_DRAFT_PREFIX = 'everroom:context-room:document:v1:'
+// 旧布局把版本号嵌在 key 中段（everroom:context-room:document:v1:<id>），
+// 作为 legacyKeys 兜底认领；新规范 key 为 document-draft:<id>:v<N>。
+const DRAFT_KEY_VERSION = 1
 
 export interface DocumentDraft {
   content: JSONContent
@@ -53,20 +56,33 @@ export function createRoomDocumentContent(
   }
 }
 
+function adoptDraft(raw: unknown): DocumentDraft | null {
+  const parsed = raw as Partial<DocumentDraft>
+  if (!parsed || parsed.content?.type !== 'doc') return null
+  return {
+    content: parsed.content,
+    ...(typeof parsed.title === 'string' ? { title: parsed.title } : {}),
+    baseVersion: Number.isSafeInteger(parsed.baseVersion) && Number(parsed.baseVersion) >= 0
+      ? Number(parsed.baseVersion)
+      : null,
+    updatedAt: typeof parsed.updatedAt === 'string' ? parsed.updatedAt : new Date(0).toISOString(),
+  }
+}
+
+function createDraftStore(documentId: string) {
+  return createVersionedLocalStorageStore<DocumentDraft | null>({
+    keyBase: `everroom:context-room:document-draft:${documentId}`,
+    version: DRAFT_KEY_VERSION,
+    adoptBaseline: adoptDraft,
+    fallback: null,
+    migrations: [],
+    legacyKeys: [`everroom:context-room:document:v1:${documentId}`],
+  })
+}
+
 export function readDocumentDraftRecord(documentId: string): DocumentDraft | null {
   try {
-    const raw = localStorage.getItem(`${DOCUMENT_DRAFT_PREFIX}${documentId}`)
-    if (!raw) return null
-    const parsed = JSON.parse(raw) as Partial<DocumentDraft>
-    if (parsed.content?.type !== 'doc') return null
-    return {
-      content: parsed.content,
-      ...(typeof parsed.title === 'string' ? { title: parsed.title } : {}),
-      baseVersion: Number.isSafeInteger(parsed.baseVersion) && Number(parsed.baseVersion) >= 0
-        ? Number(parsed.baseVersion)
-        : null,
-      updatedAt: typeof parsed.updatedAt === 'string' ? parsed.updatedAt : new Date(0).toISOString(),
-    }
+    return createDraftStore(documentId).get()
   } catch {
     return null
   }
@@ -83,10 +99,12 @@ export function writeDocumentDraft(
   title?: string,
 ): boolean {
   try {
-    localStorage.setItem(
-      `${DOCUMENT_DRAFT_PREFIX}${documentId}`,
-      JSON.stringify({ content, baseVersion, ...(title ? { title } : {}), updatedAt: new Date().toISOString() }),
-    )
+    createDraftStore(documentId).set({
+      content,
+      baseVersion,
+      ...(title ? { title } : {}),
+      updatedAt: new Date().toISOString(),
+    })
     return true
   } catch {
     return false
@@ -95,7 +113,7 @@ export function writeDocumentDraft(
 
 export function removeDocumentDraft(documentId: string): void {
   try {
-    localStorage.removeItem(`${DOCUMENT_DRAFT_PREFIX}${documentId}`)
+    createDraftStore(documentId).clear()
   } catch {
     // The Gateway remains authoritative when browser storage is unavailable.
   }

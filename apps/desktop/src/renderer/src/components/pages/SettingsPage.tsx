@@ -26,6 +26,7 @@ import QRCode from 'qrcode'
 
 import { useAccount } from '@/state/AccountContext'
 import { ConnectorModeSection } from '@/components/settings/ConnectorModeSection'
+import { UpdateSection } from '@/components/settings/UpdateSection'
 import { loadRealitySettings, saveRealitySettings, type RealitySettings } from '@/state/realitySettings'
 import {
   loadDocumentCursorCompletionSettings,
@@ -61,6 +62,7 @@ const SETTINGS_NAV: SettingsNavItem[] = [
   { id: 'settings-capture', label: 'surface:settings.windowScreenshots', icon: Camera },
   { id: 'settings-editor', label: 'surface:settings.documentEditing', icon: Sparkles },
   { id: 'settings-interface', label: 'surface:settings.interfaceLanguage', icon: Languages },
+  { id: 'settings-update', label: 'surface:settings.navigationUpdate', icon: RefreshCw },
 ]
 
 type PendingAction = CloudOidcProvider | 'refresh' | 'logout' | 'keyring' | 'sync' | 'admission' | null
@@ -449,6 +451,10 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
     || account?.user?.name
     || account?.user?.phone
     || t('surface:settings.everroomUser')
+  // 第二行只放与主行不同的真实身份（姓名/手机号/邮箱），没有就不显示。
+  const accountDetail = [account?.user?.name, account?.user?.phone, account?.user?.email]
+    .filter((value): value is string => Boolean(value))
+    .find(value => value !== accountName) ?? null
 
   const installExtension = async () => {
     const api = window.nxcore?.browserExtension
@@ -590,6 +596,8 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
         </div>
       </section>
 
+      <UpdateSection />
+
       <section id="settings-extensions" className="reality-settings-section settings-anchor-section browser-extension-settings" aria-labelledby="browser-extension-settings-title">
         <header>
           <span><Puzzle aria-hidden="true" /></span>
@@ -696,10 +704,7 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
               </span>
               <div className="cloud-account-identity">
                 <strong>{accountName}</strong>
-                <span>{account.user?.name && account.user.name !== accountName
-                  ? account.user.name
-                  : account.user?.phone || t('surface:settings.verifiedByLogto')}</span>
-                <small>{account.apiBaseUrl}</small>
+                {accountDetail ? <span>{accountDetail}</span> : null}
               </div>
               <button className="secondary-button" type="button" disabled={isBusy} onClick={logout}>
                 {pending === 'logout'
@@ -766,7 +771,7 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
                     })}
                   </small>
                 </div>
-                {aiRelayStatus?.configured && aiRelayStatus.llmCredits !== null ? (
+                {aiRelayStatus?.configured && aiRelayStatus.llmCredits ? (
                   <div className="cloud-subscription-quota">
                     <div>
                       <span>{t('surface:settings.llmRemaining')}</span>
@@ -781,7 +786,7 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
                       {aiRelayStatus.remainingCredits <= 0
                         ? t('surface:settings.llmQuotaExhausted')
                         : t('surface:settings.usedUsedTotalTotal', {
-                            used: formatLlmUsd(Number(aiRelayStatus.usedCredits || '0'), locale),
+                            used: formatLlmUsd(aiRelayStatus.usedCredits ?? 0, locale),
                             total: formatLlmUsd(aiRelayStatus.llmCredits, locale),
                           })}
                     </small>

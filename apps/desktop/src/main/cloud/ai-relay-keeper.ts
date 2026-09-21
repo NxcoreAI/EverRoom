@@ -21,8 +21,8 @@ const http = createLoggedHttpClient('ai-relay-keeper')
  * gateway 随即重写 LLM 槽位指向本地 /ai-relay 代理出口。约定：
  * - SaaS 403（无订阅/额度尽）是权威判定：清掉 gateway 会话并通知 renderer，
  *   不计网络失败、绝不回落 user 源（中转 402 同理，只在出口透传给消费方）。
- * - 连续网络失败 ≥3 次且当前为 saas 源时临时切 user 源保可用，恢复后自动
- *   切回 saas；user 源不存在则保持现状下轮重试。
+ * - 连续网络失败 ≥3 次且当前为 default 源（中转驱动）时临时切 user 源保
+ *   可用，恢复后自动切回 default；user 源不存在则保持现状下轮重试。
  */
 export class AiRelayKeeper {
   private timer: NodeJS.Timeout | null = null
@@ -46,12 +46,12 @@ export class AiRelayKeeper {
   }
 
   /** 退出登录、应用停机或账号切换前停止，并拆除 gateway 会话。 */
-  stop(): void {
+  async stop(): Promise<void> {
     if (this.timer) clearInterval(this.timer)
     this.timer = null
     this.consecutiveFailures = 0
     this.fellBackToUser = false
-    void this.clearGatewaySession().catch(() => undefined)
+    await this.clearGatewaySession().catch(() => undefined)
   }
 
   renewNow(): Promise<void> {
@@ -68,7 +68,7 @@ export class AiRelayKeeper {
         const issued = await this.client.issueAiGatewayToken()
         await this.pushGatewaySession(issued.token, issued.expiresAt, issued.baseUrl)
         this.consecutiveFailures = 0
-        if (this.fellBackToUser) await this.restoreSaasSource()
+        if (this.fellBackToUser) await this.restoreDefaultSource()
       } catch (error) {
         if (error instanceof SaasRequestError && error.status === 403) {
           await this.clearGatewaySession().catch(() => undefined)
@@ -109,8 +109,8 @@ export class AiRelayKeeper {
   private async fallbackToUserSource(): Promise<void> {
     try {
       const snapshot = await this.runtimeConfig.get()
-      // 仅在 saas 源激活时需要保护；user/default 本就不经中转。
-      if (snapshot.selectedSource !== 'saas') return
+      // 仅在 default 源激活时需要保护；user 源本就不经中转。
+      if (snapshot.selectedSource !== 'default') return
       await this.runtimeConfig.selectSource('user')
       this.fellBackToUser = true
       this.onEvent({ type: 'fallback-user' })
@@ -119,15 +119,15 @@ export class AiRelayKeeper {
     }
   }
 
-  private async restoreSaasSource(): Promise<void> {
+  private async restoreDefaultSource(): Promise<void> {
     this.fellBackToUser = false
     try {
       const snapshot = await this.runtimeConfig.get()
       if (snapshot.selectedSource !== 'user') return
-      await this.runtimeConfig.selectSource('saas')
+      await this.runtimeConfig.selectSource('default')
       this.onEvent({ type: 'fallback-restored' })
     } catch (error) {
-      console.warn(`[desktop/ai-relay] saas-source restore failed | ${error instanceof Error ? error.message : String(error)}`)
+      console.warn(`[desktop/ai-relay] default-source restore failed | ${error instanceof Error ? error.message : String(error)}`)
     }
   }
 

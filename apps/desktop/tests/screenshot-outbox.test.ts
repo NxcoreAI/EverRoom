@@ -27,7 +27,7 @@ describe('ScreenshotOutbox', () => {
       bytes: 16, capturedAt: '2026-08-20T10:00:00.000Z', perceptualHash: '0000000000000000',
     })
     await offline.dispose()
-    expect(JSON.parse(await readFile(statePath, 'utf8'))).toHaveLength(1)
+    expect(JSON.parse(await readFile(statePath, 'utf8')).data).toHaveLength(1)
 
     const request = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ id: 'file-capture' }), { status: 201 }))
@@ -43,7 +43,7 @@ describe('ScreenshotOutbox', () => {
     expect(request).toHaveBeenCalledTimes(2)
     expect(String(request.mock.calls[0]?.[0])).toContain('/v1/files')
     expect(String(request.mock.calls[1]?.[0])).toContain('/v1/perception/visual-observations')
-    expect(JSON.parse(await readFile(statePath, 'utf8'))).toEqual([])
+    expect(JSON.parse(await readFile(statePath, 'utf8')).data).toEqual([])
     await replay.dispose()
   })
 
@@ -73,7 +73,7 @@ describe('ScreenshotOutbox', () => {
     expect(String(request.mock.calls[0]?.[0])).toContain('/v1/files')
     expect(String(request.mock.calls[1]?.[0])).toContain('/v1/perception/visual-observations')
     expect(String(request.mock.calls[2]?.[0])).toContain('/v1/perception/visual-observations')
-    expect(JSON.parse(await readFile(statePath, 'utf8'))).toEqual([])
+    expect(JSON.parse(await readFile(statePath, 'utf8')).data).toEqual([])
     await outbox.dispose()
   })
 })

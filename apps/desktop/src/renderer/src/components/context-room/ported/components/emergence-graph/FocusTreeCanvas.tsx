@@ -1,80 +1,85 @@
-import gsap from 'gsap';
-import { ArrowLeft, ChevronDown, ChevronUp, ListTree, Plus, Quote } from 'lucide-react';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { ChevronDown, ChevronUp, ListTree, Quote } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { TreeGraph } from '@antv/g6';
 
 import { useLocale } from '../../../../../i18n/LocaleContext';
 import type { EmergenceCardDto, EmergenceProjectionResultDto } from '../../../../../../../shared/knowledge';
-import { clampScale, cubicEdgeGeometry, pinTransform, screenOf } from './cameraMath';
 import { GraphCanvasTools } from './GraphCanvasTools';
-import { buildFocusSubtree, type FocusTreeNode } from './focusTreeModel';
-import { layoutFocusTree, NODE_SIZES, treeRoleOf, treeRoleSize, type Point } from './treeLayout';
-import { prefersReducedMotion, useGraphCamera } from './useGraphCamera';
-import { TIMING, useGraphTransition } from './useGraphTransition';
-
-interface EdgeView {
-  key: string;
-  d: string;
-  mid: Point;
-  relation: string | null;
-  isReturn: boolean;
-}
-
-interface ExitNodeEntry { kind: 'node'; key: string; node: FocusTreeNode; pos: Point; }
-interface ExitEdgeEntry { kind: 'edge'; key: string; d: string; mid: Point; relation: string | null; isReturn: boolean; }
-type ExitEntry = ExitNodeEntry | ExitEdgeEntry;
-
-interface PrevFrame {
-  ids: Set<string>;
-  positions: Map<string, Point>;
-  nodes: Map<string, FocusTreeNode>;
-  edgeKeys: Set<string>;
-  center: string;
-}
-
-const STRIP_RESERVE = 96;
+import { buildFocusTree, defaultCollapsed, revealAncestors, type FocusTree } from './focusTreeModel';
+import {
+  animateFitView, animateRecenter, createFocusGraph, focusTreeData, setCameraOnNode,
+  registerLiveGraph, tweenCameraTo, tweenCameraToNode, unregisterLiveGraph,
+  updateFocusGraph, visCenterY,
+} from './g6FocusGraph';
 
 /**
- * 聚焦态树状导图：两层邻域胶囊卡 + SVG 连线；点非中心节点=钻取换根（压栈），
- * 回程框/头部箭头=在历史栈上回退前进；底部详情条随选中/中心联动，可跳卡片流。
+ * 聚焦态思维导图（NotebookLM 式）：默认只见根和一级分支，一级全收起；
+ * 收起的中级节点点=原地展开并选中，已展开没选中的点回=只选中不收起，
+ * 已选中且展开的再点=收起并取消选中，点叶子/根=只选中看底部详情条。
+ * 选中节点保证邻居可见：根保持展开（点根只选中不收图）、叶子把父链展开；
+ * 中间节点自身的收起态不随选中变化。新导图（结果身份变化）重置回收起默认态。
  */
 export function FocusTreeCanvas({
   result,
-  centerRef,
-  returnRef,
+  rootRef,
   selectedNodeRef,
   cards,
-  onDrill,
-  onGoBack,
+  showDetail = true,
   onSelectNode,
   onOpenCard,
   onCardAction,
 }: {
   result: EmergenceProjectionResultDto;
-  /** 已过 resolveCenter 兜底的当前中心。 */
-  centerRef: string;
-  /** 钻取前的中心（历史栈上一层），渲染为根左侧回程框。 */
-  returnRef: string | null;
+  /** 已过 resolveCenter 兜底的树根。 */
+  rootRef: string;
   selectedNodeRef: string | null;
   cards: EmergenceCardDto[];
-  onDrill: (nodeRef: string) => void;
-  onGoBack: () => void;
+  /** 大弹窗等纯浏览场景不带底部详情条（含小字摘要与操作）。 */
+  showDetail?: boolean;
   onSelectNode: (nodeRef: string | null) => void;
   onOpenCard?: (nodeRef: string) => void;
-  onCardAction: (card: EmergenceCardDto) => void;
+  onCardAction?: (card: EmergenceCardDto) => void;
 }) {
   const { t } = useLocale();
   const viewportRef = useRef<HTMLDivElement>(null);
-  const cameraElRef = useRef<HTMLDivElement>(null);
-  const camera = useGraphCamera(viewportRef, cameraElRef);
-  const transition = useGraphTransition();
-  const {
-    camRef, setCam, fit, tweenTo, cancelTween, ensureVisible, viewportSize, visualCenter,
-  } = camera;
-  const { next, later, alive, track, morphFrom, bornFrom, fadeOutEl } = transition;
+  const mountRef = useRef<HTMLDivElement>(null);
+  const graphRef = useRef<TreeGraph | null>(null);
+  const lastDatumRef = useRef<ReturnType<typeof focusTreeData> | null>(null);
+  const [stripCollapsed, setStripCollapsed] = useState(false);
 
-  const subtree = useMemo(() => buildFocusSubtree(result, centerRef, returnRef), [result, centerRef, returnRef]);
-  const nodeById = useMemo(() => new Map(subtree.nodes.map((node) => [node.id, node])), [subtree]);
-  const layout = useMemo(() => layoutFocusTree(subtree.nodes), [subtree]);
+  const tree = useMemo(() => buildFocusTree(result, rootRef), [result, rootRef]);
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => defaultCollapsed(tree));
+
+  // 新导图=回到默认收起态：渲染期重置（无空帧）；上一份必须存 state
+  // （存 ref 会在严格模式双渲染下丢重置）。
+  const [prevTree, setPrevTree] = useState<FocusTree>(tree);
+  if (tree !== prevTree) {
+    setPrevTree(tree);
+    setCollapsed(defaultCollapsed(tree));
+  }
+
+  // 相机中心目标：换树 datum effect 消费后清空
+  const cameraTargetRef = useRef<string | null>(null);
+  // 焦点按钮补展开标记：换树落定后按「父级+子树」局部取景，而非保持原缩放
+  const focusFitRef = useRef(false);
+
+  // 选中即带邻居可见（含挂载时已带选中，如卡片视图展开深层卡片后切回脉络图）：
+  // 叶子上溯展开父链、根保持展开；被选节点自身的收起态不动。上一份同样必须存 state。
+  const [prevSelected, setPrevSelected] = useState<string | null>(null);
+  if (selectedNodeRef !== prevSelected) {
+    setPrevSelected(selectedNodeRef);
+    const revealed = selectedNodeRef !== null ? revealAncestors(tree, collapsed, selectedNodeRef) : null;
+    if (revealed) {
+      setCollapsed(revealed);
+      cameraTargetRef.current = selectedNodeRef;
+    } else if (selectedNodeRef !== null && tree.byId.has(selectedNodeRef)) {
+      // 无需揭示（本来就可见，如路径链点同级/父级）：相机轻推过去即可
+      const graph = graphRef.current;
+      if (graph && graph.findById(selectedNodeRef)) tweenCameraToNode(graph, selectedNodeRef, graph.getZoom() || 1, 380);
+    }
+  }
+
+  const datum = useMemo(() => tree.nodes.length > 0 ? focusTreeData(tree, collapsed) : null, [tree, collapsed]);
   const cardByNode = useMemo(() => {
     const map = new Map<string, EmergenceCardDto>();
     for (const card of cards) {
@@ -83,365 +88,130 @@ export function FocusTreeCanvas({
     return map;
   }, [cards]);
 
-  const edgeViews = useMemo<EdgeView[]>(() => {
-    const list: EdgeView[] = [];
-    for (const node of subtree.nodes) {
-      if (!node.parentId) continue;
-      const parent = nodeById.get(node.parentId);
-      const parentPos = layout.positions.get(node.parentId);
-      const pos = layout.positions.get(node.id);
-      if (!parent || !parentPos || !pos) continue;
-      const ps = treeRoleSize(parent);
-      const cs = treeRoleSize(node);
-      const from = node.isReturn
-        ? { x: parentPos.x, y: parentPos.y + ps.height / 2 }
-        : { x: parentPos.x + ps.width, y: parentPos.y + ps.height / 2 };
-      const to = node.isReturn
-        ? { x: pos.x + cs.width, y: pos.y + cs.height / 2 }
-        : { x: pos.x, y: pos.y + cs.height / 2 };
-      const geo = cubicEdgeGeometry(from, to);
-      list.push({
-        key: `e:${node.id}`,
-        d: geo.d,
-        mid: geo.mid,
-        relation: node.via?.relationType ?? null,
-        isReturn: node.isReturn,
-      });
-    }
-    return list;
-  }, [subtree, nodeById, layout]);
-
-  const [exiting, setExiting] = useState<ExitEntry[]>([]);
-  const [stripCollapsed, setStripCollapsed] = useState(false);
-  const [stripHeight, setStripHeight] = useState(STRIP_RESERVE);
-  const stripElRef = useRef<HTMLDivElement | null>(null);
-  const nodeEls = useRef(new Map<string, HTMLButtonElement>());
-  const edgeEls = useRef(new Map<string, SVGPathElement>());
-  const labelEls = useRef(new Map<string, HTMLSpanElement>());
-  const ghostEls = useRef(new Map<string, HTMLElement>());
-  const prevRef = useRef<PrevFrame | null>(null);
-  const prevEdgeViewsRef = useRef<EdgeView[]>([]);
-
-  const setNodeEl = useCallback((id: string) => (el: HTMLButtonElement | null) => {
-    if (el) nodeEls.current.set(id, el);
-    else nodeEls.current.delete(id);
-  }, []);
-  const setEdgeEl = useCallback((key: string) => (el: SVGPathElement | null) => {
-    if (el) edgeEls.current.set(key, el);
-    else edgeEls.current.delete(key);
-  }, []);
-  const setLabelEl = useCallback((key: string) => (el: HTMLSpanElement | null) => {
-    if (el) labelEls.current.set(key, el);
-    else labelEls.current.delete(key);
-  }, []);
-  const setGhostEl = useCallback((key: string) => (el: HTMLElement | null) => {
-    if (el) ghostEls.current.set(key, el);
-    else ghostEls.current.delete(key);
-  }, []);
-
-  const anchorOf = useCallback((id: string, pos: Point | undefined): Point | null => {
-    if (!pos) return null;
-    const node = nodeById.get(id);
-    const size = node ? treeRoleSize(node) : NODE_SIZES.center;
-    return { x: pos.x + size.width / 2, y: pos.y + size.height / 2 };
-  }, [nodeById]);
-
-  const stripSubject = selectedNodeRef && nodeById.has(selectedNodeRef)
+  const stripSubject = selectedNodeRef && tree.byId.has(selectedNodeRef)
     ? selectedNodeRef
-    : (nodeById.has(centerRef) ? centerRef : null);
-  const stripNode = stripSubject !== null ? nodeById.get(stripSubject) ?? null : null;
+    : (tree.byId.has(rootRef) ? rootRef : null);
+  const stripNode = stripSubject !== null ? tree.byId.get(stripSubject) ?? null : null;
   const stripCard = stripSubject !== null ? cardByNode.get(stripSubject) ?? null : null;
-  const stripReserve = stripNode ? Math.min(Math.max(stripHeight + 24, 72), 300) : 0;
-  const bottomReserve = stripReserve;
 
-  // 详情卡实际高度 → 相机视觉中心上移量（折叠/换卡后相机随之校准）
-  useEffect(() => {
-    const el = stripElRef.current;
-    if (!el || typeof ResizeObserver === 'undefined') return;
-    const observer = new ResizeObserver(() => {
-      setStripHeight(el.offsetHeight);
-    });
-    observer.observe(el);
-    setStripHeight(el.offsetHeight);
-    return () => observer.disconnect();
-  }, [stripSubject, stripCollapsed]);
-
-  const fadeIn = useCallback((el: Element, delayMs = 0) => {
-    if (prefersReducedMotion()) return;
-    track(gsap.from(el, { opacity: 0, duration: TIMING.born / 1000, ease: 'power1.out', delay: delayMs / 1000, overwrite: 'auto' }));
-  }, [track]);
-
-  const drillZoom = useCallback((): number => {
-    const vp = viewportSize();
-    let toScale = clampScale(camRef.current.scale * 1.12, 0.85, 1.1);
-    const bw = layout.bbox.maxX - layout.bbox.minX;
-    const bh = layout.bbox.maxY - layout.bbox.minY;
-    if (bw > 0 && bh > 0 && vp.width > 0 && vp.height > 0) {
-      const fitZoom = Math.min((vp.width - 56) / bw, (vp.height - 40 - bottomReserve) / bh);
-      toScale = Math.min(toScale, clampScale(fitZoom, 0.45, 1.15));
+  // 点击语义走最新闭包（图实例只建一次）：收起的中级节点=点开并选中（展开为相机中心）；
+  // 已展开但没选中的=只选中不收起（从别的节点点回来不会把开着的子级合上）；
+  // 已选中且展开的再点一次=收起并取消选中；根/叶子=只选中。
+  const clickRef = useRef<(id: string) => void>(() => {});
+  clickRef.current = useCallback((id: string) => {
+    const node = tree.byId.get(id);
+    if (!node) return;
+    const willSelect = selectedNodeRef !== id;
+    const middle = node.hasChildren && id !== tree.rootId;
+    const open = middle && !collapsed.has(id);
+    if (middle && (!open || !willSelect)) {
+      cameraTargetRef.current = id;
+      setCollapsed((current) => {
+        const next = new Set(current);
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        return next;
+      });
+    } else if (willSelect) {
+      const graph = graphRef.current;
+      if (graph && graph.findById(id)) tweenCameraToNode(graph, id, graph.getZoom() || 1, 380);
     }
-    return toScale;
-  }, [viewportSize, camRef, layout, bottomReserve]);
+    onSelectNode(willSelect ? id : null);
+  }, [tree, selectedNodeRef, onSelectNode, collapsed]);
+
+  const hasTree = tree.nodes.length > 0;
+
+  // 建图一次（空树时挂载点不存在，出树后再建）；尺寸变化 → 防抖 changeSize + 重布局 + 相机归位
+  useEffect(() => {
+    const el = mountRef.current;
+    if (!el || graphRef.current || !datum) return;
+    const graph = createFocusGraph(el, datum, (id) => clickRef.current(id));
+    graphRef.current = graph;
+    lastDatumRef.current = datum;
+    registerLiveGraph(graph);
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const apply = () => {
+      if (!el.isConnected || !el.clientWidth || !el.clientHeight) return;
+      try {
+        graph.changeSize(el.clientWidth, el.clientHeight);
+        graph.refreshLayout();
+        // 挂载即带选中时取景对准被选节点（目标被 datum effect 消费后回落根）
+        const anchor = cameraTargetRef.current;
+        setCameraOnNode(graph, anchor && graph.findById(anchor) ? anchor : tree.rootId, graph.getZoom() || 1, { x: el.clientWidth / 2, y: visCenterY(graph) });
+      } catch { /* 已销毁 */ }
+    };
+    let observer: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      observer = new ResizeObserver(() => {
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(apply, 160);   // 防抖：拖动分隔条/窗口调整不逐帧重排
+      });
+      observer.observe(el);
+    }
+    return () => {
+      if (timer) clearTimeout(timer);
+      observer?.disconnect();
+      unregisterLiveGraph(graph);
+      try { graph.destroy(); } catch { /* 已销毁 */ }
+      graphRef.current = null;
+      lastDatumRef.current = null;
+    };
+    // 建图吃掉当帧数据；后续展开/收起由下方换树 effect 接管
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasTree]);
+
+  // 展开/收起/换导图：动画换树 + 相机适配（内容超画布拉远、变少轻微推近）；
+  // 相机中心=刚点过的节点，否则根
+  useEffect(() => {
+    const graph = graphRef.current;
+    if (!graph || !datum || lastDatumRef.current === datum) return;
+    lastDatumRef.current = datum;
+    const target = cameraTargetRef.current;
+    cameraTargetRef.current = null;
+    const fitLocal = focusFitRef.current;
+    focusFitRef.current = false;
+    updateFocusGraph(graph, datum, target && tree.byId.has(target) ? target : tree.rootId, { fitLocal });
+  }, [datum, tree]);
 
   const canvasTools = useMemo(() => ({
     zoomBy: (factor: number) => {
-      const vp = viewportSize();
-      if (vp.width <= 0 || vp.height <= 0) return;
-      const cam = camRef.current;
-      const scale = Number.isFinite(cam.scale) && cam.scale > 0 ? cam.scale : 1;
-      const center = { x: vp.width / 2, y: Math.max(40, (vp.height - bottomReserve) / 2) };
-      const content = { x: (center.x - cam.x) / scale, y: (center.y - cam.y) / scale };
-      cancelTween();
-      setCam(pinTransform(content.x, content.y, center.x, center.y, clampScale(scale * factor)));
+      const graph = graphRef.current;
+      if (!graph) return;
+      const z = graph.getZoom();
+      const next = Math.max(0.2, Math.min(3, (Number.isFinite(z) && z > 0 ? z : 1) * factor));
+      tweenCameraTo(graph, next, null, 240);
     },
     fitAll: () => {
-      cancelTween();
-      fit(layout.bbox, 28, 1.15);
+      const graph = graphRef.current;
+      if (!graph) return;
+      animateFitView(graph, 24);
     },
     recenter: () => {
-      const anchor = anchorOf(centerRef, layout.positions.get(centerRef));
-      if (!anchor) return;
-      const vp = viewportSize();
-      cancelTween();
-      setCam(pinTransform(anchor.x, anchor.y, vp.width / 2, Math.max(40, (vp.height - bottomReserve) / 2), camRef.current.scale));
-    },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [viewportSize, camRef, cancelTween, setCam, fit, layout, anchorOf, centerRef, bottomReserve]);
-
-  // 钻取五步编排（提交后、绘制前）：钉屏换树 → 退场鬼影 → 存活变形 → 新生错峰 → 相机补间+看门狗。
-  // 快速连点靠代数计数器整体作废上一代补间；正确性不依赖动画（终态即布局+ensureVisible）。
-  useLayoutEffect(() => {
-    if (subtree.nodes.length === 0) {
-      setExiting([]);
-      prevRef.current = null;
-      prevEdgeViewsRef.current = [];
-      return;
-    }
-    const gen = next();
-    const vp = viewportSize();
-    const reserve = bottomReserve;
-    const newIds = new Set(layout.positions.keys());
-    const newEdgeKeys = new Set(edgeViews.map((edge) => edge.key));
-    const reduced = prefersReducedMotion();
-    const prev = prevRef.current;
-
-    if (!prev || prev.ids.size === 0) {
-      setExiting([]);
-      fit(layout.bbox, 28, 1.15);
-      if (!reduced) {
-        const cp = anchorOf(centerRef, layout.positions.get(centerRef));
-        let index = 0;
-        for (const node of subtree.nodes) {
-          const el = nodeEls.current.get(node.id);
-          const pos = layout.positions.get(node.id);
-          if (!el || !pos || !cp || node.isReturn) continue;
-          const size = treeRoleSize(node);
-          const from = node.id === centerRef
-            ? { x: 0, y: 0 }
-            : { x: cp.x - (pos.x + size.width / 2), y: cp.y - (pos.y + size.height / 2) };
-          bornFrom(el, from, Math.min(index * TIMING.stagger, TIMING.staggerCap));
-          index += 1;
-        }
-      }
-      prevEdgeViewsRef.current = edgeViews;
-      prevRef.current = { ids: newIds, positions: new Map(layout.positions), nodes: nodeById, edgeKeys: newEdgeKeys, center: centerRef };
-      return;
-    }
-
-    const anchor = anchorOf(centerRef, layout.positions.get(centerRef));
-    const centerChanged = prev.center !== centerRef;
-
-    // 钉屏：新中心钉回旧屏幕位（旧位出画/未知钉视觉中心），点击的卡在换树瞬间不跳。
-    // 仅中心真变化时执行——同中心的数据刷新重跑 effect 时若再钉屏，会杀掉进行中的相机补间。
-    if (anchor && centerChanged) {
-      const oldPos = prev.positions.get(centerRef);
-      const oldNode = prev.nodes.get(centerRef);
-      const oldSize = oldNode ? treeRoleSize(oldNode) : NODE_SIZES.center;
-      let sp = oldPos ? screenOf(oldPos.x + oldSize.width / 2, oldPos.y + oldSize.height / 2, camRef.current) : null;
-      if (!sp || sp.x < 0 || sp.x > vp.width || sp.y < 0 || sp.y > vp.height) sp = visualCenter(reserve);
-      cancelTween();
-      setCam(pinTransform(anchor.x, anchor.y, sp.x, sp.y, camRef.current.scale));
-    }
-
-    // 退场集合：旧有新无的节点/边以旧坐标多留一阵，独立 effect 渐隐
-    if (!reduced) {
-      const ghosts: ExitEntry[] = [];
-      for (const node of prev.nodes.values()) {
-        if (newIds.has(node.id)) continue;
-        const pos = prev.positions.get(node.id);
-        if (pos) ghosts.push({ kind: 'node', key: `n:${node.id}`, node, pos });
-      }
-      for (const edge of prevEdgeViewsRef.current) {
-        if (!newEdgeKeys.has(edge.key)) ghosts.push({ kind: 'edge', ...edge });
-      }
-      setExiting(ghosts);
-    } else {
-      setExiting([]);
-    }
-
-    // 存活节点从旧位变形而来；新生节点从中心长出（45ms 错峰，封顶 180ms）
-    let bornIndex = 0;
-    for (const node of subtree.nodes) {
-      const el = nodeEls.current.get(node.id);
-      const pos = layout.positions.get(node.id);
-      if (!el || !pos) continue;
-      const size = treeRoleSize(node);
-      const from = prev.positions.get(node.id);
-      if (from) {
-        if (from.x !== pos.x || from.y !== pos.y) {
-          morphFrom(el, { x: from.x - pos.x, y: from.y - pos.y }, TIMING.morph, 'power3.out');
-        }
-      } else if (anchor && !node.isReturn) {
-        bornFrom(el, { x: anchor.x - (pos.x + size.width / 2), y: anchor.y - (pos.y + size.height / 2) }, Math.min(bornIndex * TIMING.stagger, TIMING.staggerCap));
-        bornIndex += 1;
-      }
-    }
-    for (const edge of edgeViews) {
-      if (prev.edgeKeys.has(edge.key)) continue;
-      const el = edgeEls.current.get(edge.key);
-      if (el) fadeIn(el, TIMING.stagger);
-      const label = labelEls.current.get(`l:${edge.key}`);
-      if (label) fadeIn(label, TIMING.stagger);
-    }
-
-    // 相机：钻取推近到新中心；同中心的数据刷新只对中不推近
-    if (anchor) {
-      if (centerChanged) {
-        tweenTo(anchor, drillZoom(), { durationMs: TIMING.camera, bottomReserve: reserve });
-        later(gen, () => ensureVisible(anchor, layout.bbox, reserve), TIMING.recenter);
-        later(gen, () => ensureVisible(anchor, layout.bbox, reserve), TIMING.watchdog);
+      const graph = graphRef.current;
+      if (!graph) return;
+      // 回到中心=聚焦当前焦点（没选中回根）：居中它，取景刚好装下父级+它的全部子级
+      const target = selectedNodeRef && tree.byId.has(selectedNodeRef) ? selectedNodeRef : tree.rootId;
+      const node = tree.byId.get(target);
+      if (datum && node && node.hasChildren && target !== tree.rootId && collapsed.has(target)) {
+        // 子级还收着：先展开，落定后由换树流程做局部取景
+        cameraTargetRef.current = target;
+        focusFitRef.current = true;
+        setCollapsed((current) => { const next = new Set(current); next.delete(target); return next; });
       } else {
-        later(gen, () => ensureVisible(anchor, layout.bbox, reserve), TIMING.recenter);
+        animateRecenter(graph, target, 380, datum);
       }
-    }
+    },
+  }), [tree, selectedNodeRef, datum, collapsed]);
 
-    prevEdgeViewsRef.current = edgeViews;
-    prevRef.current = { ids: newIds, positions: new Map(layout.positions), nodes: nodeById, edgeKeys: newEdgeKeys, center: centerRef };
-  }, [
-    subtree, nodeById, layout, edgeViews, centerRef, bottomReserve,
-    next, later, fit, tweenTo, cancelTween, ensureVisible, setCam, viewportSize, visualCenter, camRef,
-    anchorOf, drillZoom, morphFrom, bornFrom, fadeIn,
-  ]);
-
-  // 退场鬼影渐隐 + 兜底清理（代数守卫：新一轮编排会重设集合，旧清理不误伤）
-  useEffect(() => {
-    if (exiting.length === 0) return;
-    const gen = transition.genRef.current;
-    for (const entry of exiting) {
-      const el = ghostEls.current.get(entry.key);
-      if (el) fadeOutEl(el);
-    }
-    const timer = window.setTimeout(() => {
-      if (alive(gen)) setExiting([]);
-    }, TIMING.fadeOutBackstop);
-    return () => clearTimeout(timer);
-  }, [exiting, fadeOutEl, alive, transition.genRef]);
-
-  // 视口尺寸变化（含 companion 收窄）：保中心可见
-  useEffect(() => {
-    const viewport = viewportRef.current;
-    if (!viewport) return;
-    const observer = new ResizeObserver(() => {
-      const anchor = anchorOf(centerRef, layout.positions.get(centerRef));
-      if (anchor) ensureVisible(anchor, layout.bbox, bottomReserve);
-    });
-    observer.observe(viewport);
-    return () => observer.disconnect();
-  }, [layout, centerRef, bottomReserve, anchorOf, ensureVisible]);
-
-  const handleNodeClick = (node: FocusTreeNode) => {
-    if (node.isReturn) {
-      onGoBack();
-      return;
-    }
-    if (node.id === centerRef) {
-      onSelectNode(selectedNodeRef === node.id ? null : node.id);
-      return;
-    }
-    if (node.depth === 1 || node.expandable) onDrill(node.id);
-    else onSelectNode(node.id);
-  };
-
-  if (subtree.nodes.length === 0) {
+  if (!hasTree) {
     return <div className="eg-viewport eg-empty">{t('contextRoom:emergence.veinEmpty')}</div>;
   }
 
-  const renderNode = (node: FocusTreeNode, pos: Point, ghost: boolean) => {
-    const size = treeRoleSize(node);
-    const role = treeRoleOf(node);
-    const selected = !ghost && node.id === selectedNodeRef && node.id !== centerRef;
-    return (
-      <button
-        key={ghost ? `g:${node.id}` : node.id}
-        ref={ghost ? setGhostEl(`n:${node.id}`) : setNodeEl(node.id)}
-        type="button"
-        data-eg-node=""
-        data-kind={node.node.nodeType}
-        data-role={role}
-        className={`eg-node${selected ? ' is-selected' : ''}${ghost ? ' is-exiting' : ''}`}
-        style={{ left: pos.x, top: pos.y, width: size.width, height: size.height }}
-        title={node.isReturn ? t('contextRoom:emergence.returnToParent') : node.node.label}
-        tabIndex={ghost ? -1 : undefined}
-        onClick={ghost ? undefined : () => handleNodeClick(node)}
-      >
-        {node.isReturn ? <ArrowLeft className="eg-node-return-icon" aria-hidden="true" /> : null}
-        <span className="eg-node-label">{node.node.label}</span>
-        {node.expandable && !node.isReturn && node.id !== centerRef ? <Plus className="eg-node-plus" aria-hidden="true" /> : null}
-      </button>
-    );
-  };
-
-  const exitNodes = exiting.filter((entry): entry is ExitNodeEntry => entry.kind === 'node');
-  const exitEdges = exiting.filter((entry): entry is ExitEdgeEntry => entry.kind === 'edge');
-
   return (
     <div ref={viewportRef} className="eg-viewport" aria-label={t('contextRoom:emergence.veinCanvas')}>
-      <div ref={cameraElRef} className="eg-camera">
-        <svg className="eg-edges" aria-hidden="true">
-          {edgeViews.map((edge) => (
-            <path
-              key={edge.key}
-              ref={setEdgeEl(edge.key)}
-              d={edge.d}
-              className={`eg-edge${edge.isReturn ? ' is-return' : ''}`}
-              style={{ d: `path('${edge.d}')` }}
-              vectorEffect="non-scaling-stroke"
-            />
-          ))}
-        </svg>
-        {edgeViews.filter((edge) => edge.relation).map((edge) => (
-          <span
-            key={`l:${edge.key}`}
-            ref={setLabelEl(edge.key)}
-            className={`eg-edge-label${edge.isReturn ? ' is-return' : ''}`}
-            style={{ left: edge.mid.x, top: edge.mid.y }}
-          >
-            {edge.relation}
-          </span>
-        ))}
-        {subtree.nodes.map((node) => {
-          const pos = layout.positions.get(node.id);
-          return pos ? renderNode(node, pos, false) : null;
-        })}
-        {exiting.length > 0 ? (
-          <div className="eg-ghosts" aria-hidden="true">
-            <svg className="eg-edges">
-              {exitEdges.map((edge) => (
-                <path key={edge.key} d={edge.d} className="eg-edge is-exiting" vectorEffect="non-scaling-stroke" />
-              ))}
-            </svg>
-            {exitEdges.filter((edge) => edge.relation).map((edge) => (
-              <span key={`l:${edge.key}`} className="eg-edge-label is-exiting" style={{ left: edge.mid.x, top: edge.mid.y }}>
-                {edge.relation}
-              </span>
-            ))}
-            {exitNodes.map((entry) => renderNode(entry.node, entry.pos, true))}
-          </div>
-        ) : null}
-      </div>
-      {stripNode ? (
+      <div ref={mountRef} className="eg-g6-mount" />
+      {showDetail && stripNode ? (
         <div
-          ref={stripElRef}
           className={`eg-strip${stripCollapsed ? ' is-collapsed' : ''}`}
           data-eg-strip=""
         >
@@ -469,7 +239,7 @@ export function FocusTreeCanvas({
                       {t('contextRoom:emergence.viewInCards')}
                     </button>
                   ) : null}
-                  <button type="button" className="is-primary" onClick={() => onCardAction(stripCard)}>
+                  <button type="button" className="is-primary" onClick={() => onCardAction?.(stripCard)}>
                     <Quote aria-hidden="true" />
                     {t('contextRoom:emergence.quote')}
                   </button>

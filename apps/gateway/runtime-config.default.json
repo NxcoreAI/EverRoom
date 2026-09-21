@@ -1,42 +1,54 @@
 {
   "schemaVersion": 1,
   "primary": {
-    "provider": "",
-    "model": "",
+    "provider": "openai",
+    "model": "deepseek-v4-flash",
     "baseUrl": "",
     "api": "openai-completions",
-    "apiKey": ""
+    "apiKey": "",
+    "maxTokens": 128000,
+    "contextWindow": 128000,
+    "temperature": 0.3,
+    "reasoning": "off"
   },
   "background": {
-    "provider": "",
-    "model": "",
+    "provider": "openai",
+    "model": "deepseek-v4-flash",
     "baseUrl": "",
     "api": "openai-completions",
-    "apiKey": ""
+    "apiKey": "",
+    "maxTokens": 128000,
+    "contextWindow": 128000,
+    "temperature": 0.3,
+    "reasoning": "off"
   },
   "cursorCompletion": {
-    "provider": "",
-    "model": "",
+    "provider": "qwen",
+    "model": "qwen-flash",
     "baseUrl": "",
-    "api": "openai-completions",
-    "apiKey": ""
+    "api": "openai-responses",
+    "apiKey": "",
+    "maxTokens": 512,
+    "contextWindow": 128000,
+    "temperature": 0.1,
+    "reasoning": "off"
   },
   "asr": {
     "provider": "aliyun",
     "baseUrl": "",
-    "model": "",
+    "model": "qwen-audio-3.0-asr-flash-filetrans",
     "apiKey": ""
   },
   "vlm": {
-    "provider": "",
-    "model": "",
+    "provider": "qwen",
+    "model": "qwen3-vl-flash",
     "baseUrl": "",
     "api": "openai-completions",
     "apiKey": ""
   },
   "webSearch": {
-    "provider": "",
-    "model": "",
+    "provider": "qwen",
+    "model": "qwen-plus",
     "baseUrl": "",
     "api": "openai-completions",
     "apiKey": ""
@@ -55,6 +67,13 @@
     "baseUrl": "",
     "serviceId": "everroom",
     "teamId": "everroom",
-    "wikiId": ""
+    "wikiId": "",
+    "embedding": {
+      "provider": "qwen",
+      "model": "text-embedding-v4",
+      "baseUrl": "",
+      "api": "openai-completions",
+      "apiKey": ""
+    }
   }
 }

@@ -4,7 +4,9 @@ import React from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { GlobalErrorBoundary } from '../src/renderer/src/components/GlobalErrorBoundary'
-import { CONTEXT_ROOM_LOCAL_STATE_KEY } from '../src/renderer/src/components/context-room/ported/contextRoomLocalState'
+
+// 工作区状态的任意世代 key（v1/v2）都应被「重置并重载」清掉。
+const STATE_KEYS = ['nexcore:context-room:state:v1', 'nexcore:context-room:state:v2']
 
 vi.mock('@sentry/electron/renderer', () => ({ captureException: vi.fn(), init: vi.fn() }))
 
@@ -52,7 +54,7 @@ describe('GlobalErrorBoundary（合并后白屏的最终兜底）', () => {
   })
 
   it('「重置并重载」清掉本地工作区状态（阻断持久化崩溃轮回）', () => {
-    window.localStorage.setItem(CONTEXT_ROOM_LOCAL_STATE_KEY, JSON.stringify({ rooms: [] }))
+    for (const key of STATE_KEYS) window.localStorage.setItem(key, JSON.stringify({ rooms: [] }))
     const reload = vi.fn()
     Object.defineProperty(window, 'location', { value: { ...window.location, reload }, writable: true })
     let renderer: TestRenderer.ReactTestRenderer | undefined
@@ -66,11 +68,11 @@ describe('GlobalErrorBoundary（合并后白屏的最终兜底）', () => {
     const boundary = renderer!.root.findByType(GlobalErrorBoundary).instance as GlobalErrorBoundary & {
       resetWorkspaceAndReload: () => void
     }
-    expect(window.localStorage.getItem(CONTEXT_ROOM_LOCAL_STATE_KEY)).not.toBeNull()
+    for (const key of STATE_KEYS) expect(window.localStorage.getItem(key)).not.toBeNull()
     act(() => {
       boundary.resetWorkspaceAndReload()
     })
-    expect(window.localStorage.getItem(CONTEXT_ROOM_LOCAL_STATE_KEY)).toBeNull()
+    for (const key of STATE_KEYS) expect(window.localStorage.getItem(key)).toBeNull()
     expect(reload).toHaveBeenCalled()
   })
 })
