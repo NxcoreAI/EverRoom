@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { lookup } from 'node:dns/promises'
 
 import type { ConnectorAuthorizationAttempt, ConnectorRemoteAccount } from '@nxcore/connector-contract'
 
@@ -17,6 +18,55 @@ export interface SaasConnectorBridgeDeps {
 
 const AUTHORIZATION_TTL_MS = 15 * 60_000
 const PROBE_TIMEOUT_MS = 5_000
+/** 授权地址 DNS 预检超时：超时不拦截（DNS 慢 ≠ 地址坏），交给浏览器。 */
+const DNS_PROBE_TIMEOUT_MS = 5_000
+
+async function probeHostnameResolvable(hostname: string): Promise<void> {
+  await Promise.race([
+    lookup(hostname, { all: true }),
+    new Promise<never>((_, reject) => {
+      const timer = setTimeout(() => reject(new Error('dns_probe_timeout')), DNS_PROBE_TIMEOUT_MS)
+      timer.unref()
+    }),
+  ])
+}
+
+/**
+ * 授权地址可打开性校验（#240）：SaaS/连接层把内部地址（*.localhost、容器裸
+ * 主机名）或未注册域名（DNS 不存在）当授权页返回时，系统浏览器只会得到
+ * "拒绝连接"死页且桌面端一直轮询到超时。打开前拦截并给出可读错误。
+ */
+export async function assertBrowserOpenableAuthorizationUrl(
+  rawUrl: string,
+  probeLookup: (hostname: string) => Promise<unknown> = probeHostnameResolvable,
+): Promise<URL> {
+  let url: URL
+  try {
+    url = new URL(rawUrl)
+  } catch {
+    throw new Error('授权地址无效。')
+  }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+    throw new Error(`授权地址协议不受支持（${url.protocol}）。`)
+  }
+  const hostname = url.hostname.replace(/^\[|\]$/g, '').toLowerCase()
+  const rejectInternal = () => new Error(
+    `授权地址（${url.origin}）指向内部地址，浏览器无法访问；云端连接配置可能有误，请稍后重试或切换本地连接器模式。`,
+  )
+  if (hostname.endsWith('.localhost')) throw rejectInternal()
+  const ipLiteral = /^\d{1,3}(?:\.\d{1,3}){3}$/.test(hostname) || hostname.includes(':')
+  if (ipLiteral || hostname === 'localhost') return url
+  if (!hostname.includes('.')) throw rejectInternal()
+  try {
+    await probeLookup(hostname)
+  } catch (error) {
+    if (error instanceof Error && error.message === 'dns_probe_timeout') return url
+    throw new Error(
+      `授权地址域名（${hostname}）无法解析，打开也无法完成授权；云端返回的授权地址可能有误（${url.origin}），请稍后重试或切换本地连接器模式。`,
+    )
+  }
+  return url
+}
 
 /**
  * oo service（oo 目录/配置列表的命名，Google 系无连字符）↔ EverRoom provider
@@ -78,10 +128,7 @@ export class SaasConnectorBridge extends ConnectorGatewayBridge {
     if (!/^[a-z][a-z0-9-]*$/.test(provider)) throw new Error('不支持的连接提供方。')
     // SaaS/oo 按 oo service 名索引（Google 系无连字符），桌面各链路只认 provider 名。
     const { authorizationUrl } = await this.deps.startAuthorization(serviceOfProvider(provider))
-    const url = new URL(authorizationUrl)
-    if (url.protocol !== 'https:' && url.protocol !== 'http:') {
-      throw new Error('SaaS 返回了不安全的授权地址。')
-    }
+    const url = await assertBrowserOpenableAuthorizationUrl(authorizationUrl)
     const id = randomUUID()
     const expiresAt = new Date(Date.now() + AUTHORIZATION_TTL_MS).toISOString()
     this.pending.set(id, { provider, expiresAt })

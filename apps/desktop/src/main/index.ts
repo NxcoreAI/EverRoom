@@ -69,7 +69,7 @@ import { DiaryGatewayBridge } from './gateway/diary-gateway-bridge'
 import { WritingStyleGatewayBridge } from './gateway/writing-style-gateway-bridge'
 import { AgentSchedulerGatewayBridge } from './gateway/agent-scheduler-gateway-bridge'
 import { ConnectorGatewayBridge } from './gateway/connector-gateway-bridge'
-import { providerOfService, SaasConnectorBridge } from './gateway/saas-connector-bridge'
+import { assertBrowserOpenableAuthorizationUrl, providerOfService, SaasConnectorBridge } from './gateway/saas-connector-bridge'
 import { createConnectorTombstoneStore } from './core/connector-tombstone-store'
 import { RecordingStore } from './recording/recording-store'
 import { RecordingSegmentUploader } from './recording/recording-segment-uploader'
@@ -1986,8 +1986,9 @@ function registerOpenConnectorHandlers(): void {
         )
       }
     }
-    const url = new URL(authorizationUrl)
-    if (url.protocol !== 'https:' && url.protocol !== 'http:') throw new Error('授权地址协议不受支持。')
+    // #240：打开前校验授权地址可达性——SaaS/连接层返回内部地址或未注册域名时，
+    // 直接给出可读错误，而不是把浏览器引到"拒绝连接"死页。
+    const url = await assertBrowserOpenableAuthorizationUrl(authorizationUrl)
     await shell.openExternal(url.toString())
     return { authorizationUrl: url.toString() }
   })
