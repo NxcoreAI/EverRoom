@@ -9,6 +9,8 @@ export type CapabilityBackend = Pick<DocumentService,
   | "list"
   | "readDocumentForAgent"
   | "get"
+  // #242：文档删除工具走与桌面手动删除相同的 trash 通道（可恢复）。
+  | "delete"
   | "prepareOperationCommit"
   | "notifyDocumentRewriteApplied"
   | "normalizeAgentDocumentChunk"

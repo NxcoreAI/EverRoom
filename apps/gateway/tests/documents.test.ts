@@ -1364,6 +1364,7 @@ describe('document transactions', () => {
       'context_room_write_commit',
       'context_room_write_abort',
       'context_room_document_comment_add',
+      'context_room_document_delete',
     ])
     expect(result.tools?.find((tool) => tool.name === 'context_room_write_begin')?.description)
       .toContain('正文内容与标题必须来自 document_draft 的返回值')
@@ -1406,7 +1407,7 @@ describe('document transactions', () => {
     const reconnected = await host.exchange('mcp-session', {
       jsonrpc: '2.0', id: 4, method: 'tools/list', params: {},
     }, { agentSessionId: 'session-1', runId: 'run-1', roomId: 'room-1' })
-    expect((reconnected[0]?.result as { tools?: unknown[] }).tools).toHaveLength(13)
+    expect((reconnected[0]?.result as { tools?: unknown[] }).tools).toHaveLength(14)
   })
 })
 
