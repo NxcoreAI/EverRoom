@@ -273,6 +273,7 @@ export function documentRoutes(
             roomId: Type.String({ minLength: 1, maxLength: 128 }),
             title: Type.String({ minLength: 1, maxLength: 120 }),
             contentJson: JsonDocument,
+            origin: Type.Optional(Type.Union([Type.Literal("native"), Type.Literal("import")])),
           }),
         },
       },

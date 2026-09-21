@@ -817,7 +817,7 @@ export class DocumentService {
         title,
         content: freshenDocumentContent(content, input.id),
         version: 1,
-        origin: "import",
+        origin: input.origin ?? "import",
       });
       this.publish(input.roomId, input.id, null, "document.changed", { document: imported });
       return imported;

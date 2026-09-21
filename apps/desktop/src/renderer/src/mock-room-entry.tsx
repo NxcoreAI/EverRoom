@@ -91,6 +91,12 @@ let createdCount = 0
 function DocumentOperationRoot() {
   const { upsertDocument } = useRoomDocumentsState()
   const operationBridge = React.useMemo(() => desktopOperationBridge(), [])
+  // 新建文档写回列表：否则新文档资源查不到，焦点会回退到旧文档。
+  const [documents, upsert] = React.useReducer(
+    (current: RoomDocument[], next: RoomDocument) =>
+      current.some((item) => item.id === next.id) ? current.map((item) => (item.id === next.id ? next : item)) : [...current, next],
+    backendDocuments,
+  )
   // 本地快照更新走真实链路语义（新建任务/延期/勾选等写回后重渲染）。
   const [roomState, applyRoomUpdate] = React.useReducer(
     (current: ContextRoomRecord, updater: (room: ContextRoomRecord) => ContextRoomRecord) => updater(current),
@@ -102,7 +108,7 @@ function DocumentOperationRoot() {
         <PortedDetail
           room={roomState}
           rooms={[room]}
-          backendDocuments={backendDocuments}
+          backendDocuments={documents}
           trashedDocuments={trashedDocuments}
           focusedDocumentId={null}
           focusedBlockId={null}
@@ -113,10 +119,12 @@ function DocumentOperationRoot() {
           onBack={() => undefined}
           onOpenRoom={() => undefined}
           onUpdateRoom={applyRoomUpdate}
-          onBackendDocumentChange={() => undefined}
+          onBackendDocumentChange={upsert}
           onCreateDocument={async (_roomId, title) => {
             createdCount += 1
-            return doc(`doc-native-new-${String(createdCount)}`, title, 'native')
+            const created = doc(`doc-native-new-${String(createdCount)}`, title, 'native')
+            upsert(created)
+            return created
           }}
           onDeleteDocument={async () => undefined}
           onRestoreDocument={async () => undefined}

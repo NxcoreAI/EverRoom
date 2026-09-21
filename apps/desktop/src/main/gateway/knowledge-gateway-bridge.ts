@@ -4,9 +4,8 @@ import { readFile } from 'node:fs/promises'
 import type {
   EmergenceProjectionResultDto,
   EmergenceRequest,
-  FocusMindmapEnsureInput,
-  FocusMindmapScope,
-  FocusMindmapStatusDto,
+  RouteMindmapActionInput,
+  RouteMindmapStatusDto,
   KnowledgeAttachInput,
   KnowledgeDecisionDto,
   KnowledgeEntityDetailDto,
@@ -203,24 +202,24 @@ export class KnowledgeGatewayBridge {
     })
   }
 
-  /** 聚焦思维导图（思路板块聚焦模式）：GET 读状态（无行懒 kick），渲染端轮询到终态。 */
-  focusMindmap(
+  /** 写作路线导图（聚焦改版 2026-09）：GET 读状态，渲染端轮询到终态。 */
+  getRouteMindmap(
     roomId: string,
-    query: { scope: FocusMindmapScope; documentId?: string | null; requestVersion: number },
-  ): Promise<FocusMindmapStatusDto> {
+    query: { documentId: string; requestVersion: number },
+  ): Promise<RouteMindmapStatusDto> {
     const params = new URLSearchParams({
-      scope: query.scope,
+      documentId: query.documentId,
       requestVersion: String(query.requestVersion),
     })
-    if (query.documentId) params.set('documentId', query.documentId)
-    return this.request(`/v1/knowledge/rooms/${encodeURIComponent(roomId)}/mindmap?${params.toString()}`)
+    return this.request(`/v1/knowledge/rooms/${encodeURIComponent(roomId)}/route-mindmap?${params.toString()}`)
   }
 
-  /** 幂等 kick（打开文档/进面板时调用；force=true 对 ready 重生成）。 */
-  ensureFocusMindmap(roomId: string, input: FocusMindmapEnsureInput): Promise<FocusMindmapStatusDto> {
-    return this.request(`/v1/knowledge/rooms/${encodeURIComponent(roomId)}/mindmap/ensure`, {
+  /** 五动作合一通道：start/expand/back/skip/finalize（对应网关同路径 POST）。 */
+  routeMindmapAction(roomId: string, input: RouteMindmapActionInput): Promise<RouteMindmapStatusDto> {
+    const { action, ...body } = input
+    return this.request(`/v1/knowledge/rooms/${encodeURIComponent(roomId)}/route-mindmap/${action}`, {
       method: 'POST',
-      body: JSON.stringify(input),
+      body: JSON.stringify(body),
     })
   }
 

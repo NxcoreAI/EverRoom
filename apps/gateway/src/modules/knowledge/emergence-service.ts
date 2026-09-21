@@ -1,6 +1,6 @@
 /**
  * 知识涌现服务（PRD v3.0 §7/§8）：漫步模式的取数与编排。
- * 聚焦模式已改由 subAgent 生成的思维导图承接（mindmap-service.ts），
+ * 聚焦模式已改由 route-mindmap-service.ts（写作路线导图）承接，
  * mode:"focus" 请求直接 400 focus_mode_removed。
  *
  * 编排顺序（照 overview-service 的 buildBase 模式）：取数在本文件完成，
@@ -28,7 +28,7 @@ import {
 
 export interface EmergenceRequestInput {
   mode: "focus" | "wander";
-  /** 焦点对象已废弃（聚焦走 mindmap 路由）；仅 documentId 仍被漫步作起点兜底。 */
+  /** 焦点对象已废弃（聚焦走 route-mindmap 路由）；仅 documentId 仍被漫步作起点兜底。 */
   focus: {
     documentId?: string | null;
     selectionText?: string | null;
@@ -152,8 +152,9 @@ export class EmergenceService {
   /**
    * 统一对象层（PRD 8.2）：把四类数据源投影为一张可游走的图。
    * 只读查询 + 身份前缀（room:/doc:/entity:/fact:/wiki:），不写回任何基础图谱。
+   * 公开供 route-mindmap-service 取三图谱素材（按 sourceGraph 过滤 wiki）。
    */
-  private async buildGraph(roomId: string, roomTitle: string): Promise<ProjectionGraph> {
+  async buildGraph(roomId: string, roomTitle: string): Promise<ProjectionGraph> {
     const nodes = new Map<string, ProjectionGraphNode>();
     const edges: ProjectionGraphEdge[] = [];
     const roomRef = this.roomNodeRef(roomId);

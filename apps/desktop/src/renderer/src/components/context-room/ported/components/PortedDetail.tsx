@@ -191,7 +191,18 @@ export function PortedDetail({
     const resource = createContextRoomResourceLibrary(room, [document], [], locale).resources.find((candidate) =>
       candidate.kind === 'cloud-doc' && candidate.binding.docId === document.id)
     if (resource) openResource(resource)
-  }, [locale, onCreateDocument, openResource, room])
+    // 空文档（不带内容新建）→ 进入写作路线选择：等网关建好路线状态再切思路板块，
+    // 避免面板先取到 missing 空态又不轮询、卡在手动按钮上。
+    if (!contentJson) {
+      await window.nxcore?.knowledge?.routeMindmapAction(room.id, {
+        action: 'start',
+        documentId: document.id,
+        title: document.title,
+        requestVersion: 0,
+      }).catch(() => undefined)
+      layout.switchBoard('thoughts')
+    }
+  }, [locale, onCreateDocument, openResource, layout, room])
 
   useEffect(() => {
     const resource = library.resources.find((candidate) =>

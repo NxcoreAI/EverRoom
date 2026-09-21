@@ -15,7 +15,6 @@ export type BoardSubtab =
   | 'todo'
   | 'materials'
   | 'library'
-  | 'companion'
   | 'trash'
   | 'roomRelations'
   | 'entities'
@@ -47,10 +46,7 @@ export const BOARD_SUBTABS: Record<BoardId, readonly { id: BoardSubtab; label: s
     { id: 'materials', label: 'contextRoom:boardTab.materials' },
   ],
   thoughts: [],
-  artifacts: [
-    { id: 'library', label: 'contextRoom:boardTab.library' },
-    { id: 'companion', label: 'contextRoom:boardTab.companion' },
-  ],
+  artifacts: [],
   relations: [
     { id: 'roomRelations', label: 'contextRoom:boardTab.roomRelations' },
     { id: 'entities', label: 'contextRoom:boardTab.entities' },

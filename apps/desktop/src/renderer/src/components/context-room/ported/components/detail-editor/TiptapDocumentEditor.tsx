@@ -261,7 +261,6 @@ export function TiptapDocumentEditor({
   documentFocusRequestId,
   onSelectionTextChange,
   onChapterChange,
-  onRegisterQuoteInsert,
 }: {
   room: ContextRoomRecord
   resource?: ContextRoomResource | null
@@ -274,8 +273,6 @@ export function TiptapDocumentEditor({
   onSelectionTextChange?: (text: string | null) => void
   /** 焦点系统：光标所在章节（标题+整节正文），无标题结构时=null。 */
   onChapterChange?: (chapter: EmergenceFocusChapter | null) => void
-  /** 思路伴随区：注册「光标处插入引用」命令，返回清理函数。 */
-  onRegisterQuoteInsert?: (insert: (quote: { text: string; source: string }) => boolean) => () => void
 }) {
   const { locale, t } = useLocale()
   const documentId = resource?.kind === 'cloud-doc' ? resource.binding.docId : room.cloudDoc.docId
@@ -812,20 +809,6 @@ export function TiptapDocumentEditor({
       editor.off('update', emit)
     }
   }, [editor, onChapterChange])
-
-  useEffect(() => {
-    if (!editor || !onRegisterQuoteInsert) return
-    return onRegisterQuoteInsert((quote) => editor.isDestroyed
-      ? false
-      : editor.chain().focus().insertContent({
-        type: 'blockquote',
-        content: [{ type: 'paragraph', content: [{ type: 'text', text: quote.text }] }],
-      }).insertContent({
-        type: 'paragraph',
-        content: [{ type: 'text', text: `—— ${quote.source}` }],
-      }).run(),
-    )
-  }, [editor, onRegisterQuoteInsert])
 
   const selectionRewrite = useTiptapSelectionRewrite({
     editor,

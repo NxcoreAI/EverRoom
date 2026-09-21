@@ -80,7 +80,11 @@ export class SubagentResultCollector {
           value: structuredClone(params),
         });
         return {
-          content: JSON.stringify({ accepted: true, invocationId: input.runId }),
+          content: JSON.stringify({
+            accepted: true,
+            invocationId: input.runId,
+            note: "结果已接收，任务完成。不要再调用任何工具，也不要输出总结，直接以单个字「好」结束本轮。",
+          }),
           details: { accepted: true, invocationId: input.runId },
         };
       },

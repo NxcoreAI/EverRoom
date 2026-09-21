@@ -1859,28 +1859,40 @@ export const roomWikis = sqliteTable("room_wikis", {
 });
 
 /**
- * 聚焦思维导图（mindmap-plan）：subAgent 按 NotebookLM 行为特征生成的三层导图，
- * 按焦点两级缓存——document 级（单文档全文）与 room 级（Room 内全部文档）。
- * 复合主键而非唯一索引：SQLite 唯一索引把 NULL 视为互异，scope 两级共用一表更稳。
+ * 写作路线导图（聚焦改版 2026-09）：新文档创建时由 route-planner subAgent 逐层
+ * 生成的路线选择图，一行一文档。全图（含未选分支与回退历史）记录在 graph，
+ * 展示层按 selectionPath 过滤；拍板（finalize）后锁只读并派 doc-writer 写正文。
  */
-export const focusMindmaps = sqliteTable(
-  "focus_mindmaps",
+export const routeMindmaps = sqliteTable(
+  "route_mindmaps",
   {
-    scope: text("scope", { enum: ["room", "document"] }).notNull(),
-    scopeId: text("scope_id").notNull(),
-    /** 归属 Room；document 级为 kick 时所在 Room。 */
+    documentId: text("document_id").primaryKey(),
+    /** 归属 Room。 */
     roomId: text("room_id").notNull(),
-    /** document 级冗余标题（根节点/卡片 reason 用）。 */
-    documentTitle: text("document_title"),
-    status: text("status", { enum: ["pending", "processing", "ready", "failed"] }).notNull().default("pending"),
-    /** subagent 校验后的原始树（{topic, branches, digest}）。 */
-    tree: text("tree", { mode: "json" }).$type<unknown>(),
+    /** 根节点标题 = 创建时的文档标题原文。 */
+    title: text("title").notNull(),
+    /** 用户需求描述（对话入口可空）。 */
+    description: text("description"),
+    /** expanding=正在生成（expandingNodeRef 指明层）；active=可选路；failed；finalized=已拍板。 */
+    status: text("status", { enum: ["expanding", "active", "failed", "finalized"] }).notNull().default("expanding"),
+    /** 全图 JSON：{ root: { ref, label, note?, children? } }，服务端赋 ref（route:root / route:b{i}-…）。 */
+    graph: text("graph", { mode: "json" }).$type<unknown>(),
+    /** 当前已选路径（nodeRef 数组，含根到当前节点）。 */
+    selectionPath: text("selection_path", { mode: "json" }).$type<string[]>(),
+    /** expanding 时正在续生的节点；null=初始层生成。 */
+    expandingNodeRef: text("expanding_node_ref"),
+    /** 用户跳过自动生成（不阻止手动补生成）。 */
+    skipped: integer("skipped", { mode: "boolean" }),
+    /** 拍板后 doc-writer 写正文进行中。 */
+    writing: integer("writing", { mode: "boolean" }),
     error: text("error"),
     promptVersion: integer("prompt_version"),
-    /** 本轮 dispatch 的 idempotencyKey；网关重启后按它反查 invocation 收敛死行。 */
-    invocationKey: text("invocation_key"),
-    /** 拼装素材 sha256，供内容变更后失效重生成。 */
+    /** 本轮生成 dispatch 的 idempotencyKey；重启对账用。 */
+    generationKey: text("generation_key"),
+    /** 拍板写正文 dispatch 的 idempotencyKey；重启对账用。 */
+    writingKey: text("writing_key"),
     contentHash: text("content_hash"),
+    finalizedAt: integer("finalized_at", { mode: "timestamp_ms" }),
     generatedAt: integer("generated_at", { mode: "timestamp_ms" }),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .notNull()
@@ -1890,8 +1902,7 @@ export const focusMindmaps = sqliteTable(
       .$defaultFn(() => new Date()),
   },
   (table) => [
-    primaryKey({ columns: [table.scope, table.scopeId] }),
-    index("focus_mindmaps_room_idx").on(table.roomId),
+    index("route_mindmaps_room_idx").on(table.roomId),
   ],
 );
 

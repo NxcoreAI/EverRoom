@@ -5,7 +5,7 @@ export interface FocusTreeNode {
   depth: number;
   parentId: string | null;
   node: EmergenceNodeDto;
-  /** 有子节点（点击=展开/收起；叶子点击=选中看详情）。 */
+  /** 有子节点（尾节点带当前分岔选项）。 */
   hasChildren: boolean;
 }
 
@@ -16,14 +16,14 @@ export interface FocusTree {
   childrenOf: Map<string, string[]>;
 }
 
-/** 防御上限：agent 树承诺 ≤3 层，投影异常时截断防失控。 */
-export const FOCUS_TREE_MAX_DEPTH = 4;
+/** 防御上限：写作路线不限层数（用户可一直点下去），只截断异常深图防失控。 */
+export const FOCUS_TREE_MAX_DEPTH = 32;
 
 type GraphSlice = Pick<EmergenceProjectionResultDto, 'nodes' | 'edges'>;
 
 /**
- * 以 rootId 为根建全量树（NotebookLM 式展开/收起的数据底座）。
- * 边按父→子取正向（投影的 relationType=分支）；防环、限深。
+ * 以 rootId 为根建全量树（写作路线全展视图的数据底座）。
+ * 边按父→子取正向；防环、限深。
  */
 export function buildFocusTree(result: GraphSlice, rootId: string): FocusTree {
   const nodeOf = new Map(result.nodes.map((node) => [node.id, node]));
@@ -61,34 +61,6 @@ export function buildFocusTree(result: GraphSlice, rootId: string): FocusTree {
   };
   walk(rootId, 0, null);
   return { rootId, nodes, byId, childrenOf };
-}
-
-/**
- * 默认收起集（NotebookLM 首屏）：根展开，其余有子节点的全部收起 ——
- * 首屏只见根和一级分支。
- */
-export function defaultCollapsed(tree: FocusTree): Set<string> {
-  const collapsed = new Set<string>();
-  for (const node of tree.nodes) {
-    if (node.hasChildren && node.id !== tree.rootId) collapsed.add(node.id);
-  }
-  return collapsed;
-}
-
-/**
- * 选中即保证邻居可见：叶子上溯把父链展开（父节点跟着亮相），根节点保持
- * 展开（子节点不消失）；被选节点自身的收起态不动（中间节点的展开/收起
- * 交互不变）。无可展开时返回 null。
- */
-export function revealAncestors(tree: FocusTree, collapsed: Set<string>, nodeId: string): Set<string> | null {
-  const node = tree.byId.get(nodeId);
-  if (!node) return null;
-  const next = new Set(collapsed);
-  let changed = false;
-  for (let cur = node.id === tree.rootId ? node.id : node.parentId; cur !== null; cur = tree.byId.get(cur)?.parentId ?? null) {
-    if (next.delete(cur)) changed = true;
-  }
-  return changed ? next : null;
 }
 
 /** 根兜底链：首选 → room 节点 → 第一个节点 → 空。 */
