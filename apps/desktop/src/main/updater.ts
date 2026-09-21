@@ -73,6 +73,9 @@ export class DesktopUpdater {
     if (!app.isPackaged) return
     autoUpdater.autoDownload = true
     autoUpdater.autoInstallOnAppQuit = true
+    // nightly 包内烙完整版本（CI extraMetadata.version），currentVersion 与 feed 版本
+    // 可直接相等/比较；此处显式允许 prerelease 比较仅作兜底，不启用 allowDowngrade——
+    // 裸版本设备遇 feed 里的 -nightly.N 会被判"更旧"，开启即陷入永久重提示循环。
     autoUpdater.allowPrerelease = this.channel === 'nightly'
     autoUpdater.logger = console
     this.applyFeed()
