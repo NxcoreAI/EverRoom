@@ -185,7 +185,8 @@ jobs:
           # 与 windows job 一致：产物文件名用 tag 完整版本号（nightly 可区分）。
           full_version="${GITHUB_REF_NAME#desktop-v}"
           pnpm --filter @nxcore/desktop exec electron-builder --mac dmg zip --arm64 --publish never \
-            --config.mac.artifactName="\${productName}-${full_version}-\${arch}.\${ext}" "${args[@]}"
+            --config.mac.artifactName="\${productName}-${full_version}-\${arch}.\${ext}" \
+            --config.extraMetadata.version="$full_version" "${args[@]}"
 
       - name: Audit package contents
         shell: bash
@@ -370,12 +371,14 @@ jobs:
         shell: bash
         # npmRebuild=false: better-sqlite3 ships N-API prebuilds for every
         # platform, so no Electron-ABI rebuild is needed.
-        # artifactName 用 tag 完整版本号（nightly 含 nightly.日期.序号），
-        # 避免 nightly 之间文件名相同无法区分；正式版 tag 无后缀，名称不变。
+        # artifactName 与包内版本均用 tag 完整版本号（nightly 含 nightly.日期.序号）：
+        # extraMetadata.version 让 app.getVersion() 返回完整版本，装上 nightly.N 后
+        # 与 feed 版本相等即判无更新；次日 N+1 正常判更新。正式版 tag 无后缀，行为不变。
         run: |
           full_version="${GITHUB_REF_NAME#desktop-v}"
           pnpm --filter @nxcore/desktop exec electron-builder --win nsis --x64 --publish never --config.npmRebuild=false \
-            --config.win.artifactName="\${productName}-${full_version}-windows-\${arch}.\${ext}"
+            --config.win.artifactName="\${productName}-${full_version}-windows-\${arch}.\${ext}" \
+            --config.extraMetadata.version="$full_version"
           echo "EVERROOM_FULL_VERSION=$full_version" >> "$GITHUB_ENV"
 
       - name: Audit package contents
