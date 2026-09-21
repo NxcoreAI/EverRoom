@@ -3,6 +3,7 @@ import type { DocumentCommentService } from "../comments.js";
 import type { DocumentOperationService } from "../operations/service.js";
 import { commentPlugin } from "./comment-plugin.js";
 import { createPlugin } from "./create-plugin.js";
+import { deletePlugin } from "./delete-plugin.js";
 import { queryPlugins } from "./query-plugin.js";
 import { DocumentCapabilityRegistry } from "./registry.js";
 import { DocumentReadAuthority } from "./read-authority.js";
@@ -43,5 +44,7 @@ export function createBuiltinDocumentCapabilityRegistry(
   registry.register(selectionRewritePlugin(backend));
   registry.register(commentPlugin(backend, comments, publishDocumentEvent));
   registry.register(routeMindmapPlugin(backend, routeMindmapFinalize ?? (() => null)));
+  // #242：agent 文档删除（trash，带 confirm 防误删闸门）。
+  registry.register(deletePlugin(backend));
   return registry;
 }

@@ -1379,6 +1379,7 @@ describe('document transactions', () => {
       'context_room_write_abort',
       'context_room_document_comment_add',
       'route_mindmap_finalize',
+      'context_room_document_delete',
     ])
     expect(result.tools?.find((tool) => tool.name === 'context_room_write_begin')?.description)
       .toContain('正文内容与标题必须来自 document_draft 的返回值')

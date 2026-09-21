@@ -1531,5 +1531,9 @@
   "workspaceLayout.resizePanelHeight": "调整面板高度",
   "workspaceLayout.resizeResourcePanel": "调整资源面板宽度",
   "workspaceLayout.splitAbove": "在上方分栏",
-  "workspaceLayout.splitBelow": "在下方分栏"
+  "workspaceLayout.splitBelow": "在下方分栏",
+  "creation.emptySubmitted": "已提交：将按描述直接创建空 Room",
+  "creation.emptyRoomHint": "不选文件也可创建空 Room：填写用途描述后直接提交，内容后续再添加",
+  "creation.emptyRoomTitle": "未命名 Room",
+  "creation.emptyRoomCreated": "已创建空 Room「{title}」（解析失败的文件已跳过）"
 }

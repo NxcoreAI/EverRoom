@@ -1531,5 +1531,9 @@
   "workspaceLayout.resizePanelHeight": "Resize panel height",
   "workspaceLayout.resizeResourcePanel": "Resize resource panel",
   "workspaceLayout.splitAbove": "Split above",
-  "workspaceLayout.splitBelow": "Split below"
+  "workspaceLayout.splitBelow": "Split below",
+  "creation.emptySubmitted": "Submitted: an empty Room will be created from the description",
+  "creation.emptyRoomHint": "Files are optional: describe the purpose and submit to create an empty Room, add content later",
+  "creation.emptyRoomTitle": "Untitled Room",
+  "creation.emptyRoomCreated": "Created empty Room \"{title}\" (files that failed to parse were skipped)"
 }
