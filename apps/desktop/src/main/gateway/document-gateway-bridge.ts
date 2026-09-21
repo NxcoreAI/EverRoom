@@ -45,6 +45,11 @@ interface Subscription {
 
 const SAVE_RETRY_DELAYS_MS = [250, 500, 1_000, 1_500] as const
 
+/** 幂等读（房间文档基线 list/listTrash）遇网关 5xx 的静默重试间隔（issue #259：
+ * 偶发 internal_error 500 打开房间失败）。瞬断自愈后不再弹全局报错；重试耗尽
+ * 才透传原错误。真实原因（堆栈）始终留在网关日志。 */
+const SERVER_ERROR_RETRY_DELAYS_MS = [1_000, 3_000] as const
+
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds))
 }
@@ -88,11 +93,13 @@ export class DocumentGatewayBridge {
   constructor(private readonly supervisor: GatewaySupervisor) {}
 
   list(roomId: string): Promise<RoomDocument[]> {
-    return this.request(`/v1/documents?${new URLSearchParams({ roomId })}`)
+    // 打开房间的文档基线是纯读幂等：网关偶发 500（issue #259）在桥内静默重试，
+    // 瞬断自愈，不再一击即成全局报错弹窗 + 空房间。
+    return this.request(`/v1/documents?${new URLSearchParams({ roomId })}`, undefined, false, 2)
   }
 
   listTrash(roomId: string): Promise<RoomDocument[]> {
-    return this.request(`/v1/documents?${new URLSearchParams({ roomId, trashed: 'true' })}`)
+    return this.request(`/v1/documents?${new URLSearchParams({ roomId, trashed: 'true' })}`, undefined, false, 2)
   }
 
   get(documentId: string): Promise<RoomDocument> {
@@ -391,7 +398,12 @@ export class DocumentGatewayBridge {
     }, delayMs)
   }
 
-  private async request<T>(path: string, init?: RequestInit, retryWhenUnavailable = false): Promise<T> {
+  private async request<T>(
+    path: string,
+    init?: RequestInit,
+    retryWhenUnavailable = false,
+    serverErrorRetries = 0,
+  ): Promise<T> {
     const connection = this.supervisor.getConnection()
     const headers = new Headers(init?.headers)
     headers.set('Authorization', `Bearer ${connection.token}`)
@@ -412,6 +424,12 @@ export class DocumentGatewayBridge {
       }
     }
     if (!response.ok) {
+      // 幂等读的 5xx 瞬断自愈（issue #259）：桥内静默重试再判定，避免把网关
+      // 偶发内部错误直接变成桌面全局报错弹窗；4xx 与重试耗尽照常透传。
+      if (serverErrorRetries > 0 && response.status >= 500) {
+        await delay(SERVER_ERROR_RETRY_DELAYS_MS.at(-serverErrorRetries)!)
+        return this.request<T>(path, init, retryWhenUnavailable, serverErrorRetries - 1)
+      }
       const body = await response.json().catch(() => null) as { error?: unknown; message?: unknown } | null
       const message = typeof body?.message === 'string' ? body.message : `文档请求失败（${response.status}）`
       throw new Error(typeof body?.error === 'string' ? `${body.error}: ${message}` : message)
