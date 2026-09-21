@@ -11,7 +11,6 @@ import {
   AudioLines,
   NotebookPen,
   ListTodo,
-  Lightbulb,
   Settings,
   FilePenLine,
 } from 'lucide-react'
@@ -48,7 +47,6 @@ export const navigationSections: NavigationSection[] = [
     items: [
       { id: 'sources', label: 'surface:navigation.sources', icon: FolderSync, tone: 'cyan' },
       { id: 'files', label: 'surface:navigation.files', icon: FolderOpen, tone: 'green' },
-      { id: 'inspiration', label: 'surface:navigation.inspiration', icon: Lightbulb, tone: 'orange' },
       { id: 'memory', label: 'surface:navigation.memory', icon: Brain, tone: 'orange' },
       { id: 'wiki', label: 'surface:navigation.wiki', icon: BookOpenText, tone: 'indigo' },
     ],
