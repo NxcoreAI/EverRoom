@@ -1,13 +1,14 @@
 import type { DocumentOverviewView } from '@nxcore/agent-contract'
+import { ChevronDown } from 'lucide-react'
 import { useLocale } from '../../../../../i18n/LocaleContext'
 import type { DocumentOverviewStatus } from './useDocumentOverview'
 import './TiptapDocumentEditor.css'
 
 /**
- * 文档速览卡：标题下方、正文上方的可折叠窄卡。无标签无图标，收起态
- * 只显示主题预览一行；展开态主题仍在栏内（可换行），正文区显示要点/
- * 结论 + 生成时间与重新生成。纯展示组件，状态机在 useDocumentOverview。
- * 空文档不渲染（避免空编辑器上方挂噪音条）；过短文档只渲染提示条。
+ * 文档速览卡：标题下方、正文上方的可折叠元信息行，与编辑器同语言——
+ * 无填充无描边，悬停只给一层浅底；展开态以正文排版罗列要点/结论与
+ * 生成时间。纯展示组件，状态机在 useDocumentOverview。空文档不渲染
+ * （避免空编辑器上方挂噪音条）；过短文档只渲染提示条。
  */
 export function DocumentOverviewCard({
   status,
@@ -99,6 +100,11 @@ export function DocumentOverviewCard({
         ) : null}
         {status.state === 'loading' ? (
           <span className="context-room-document-overview-skeleton" aria-hidden="true" />
+        ) : null}
+        {canExpand ? (
+          <span className="context-room-document-overview-chevron" aria-hidden="true">
+            <ChevronDown aria-hidden="true" />
+          </span>
         ) : null}
       </button>
       {expanded && view?.topic ? (
