@@ -2580,7 +2580,7 @@ summary:focus-visible {
   }
 }
 
-@media (max-width: 1080px) {
+@media (max-width: 1200px) {
   /* 窄窗：右侧 AI 面板默认折叠（App 内 matchMedia 同步 agentOpen）；
      手动展开时面板为固定悬浮层，左侧导航列恒保留。 */
   .app-shell,

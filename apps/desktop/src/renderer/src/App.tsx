@@ -139,7 +139,7 @@ export function App() {
   const workspaceMainRef = useRef<HTMLElement>(null)
   const tabSwipeRef = useRef({ distance: 0, lastAt: 0, lockedUntil: 0 })
   const [navCollapsed, setNavCollapsed] = useState(false)
-  const [agentOpen, setAgentOpen] = useState(() => !window.matchMedia('(max-width: 1080px)').matches)
+  const [agentOpen, setAgentOpen] = useState(() => !window.matchMedia('(max-width: 1200px)').matches)
   const [contextRoomDetailFocused, setContextRoomDetailFocused] = useState(false)
   const [contextRoomNavRevealed, setContextRoomNavRevealed] = useState(false)
   const [contextRoomHomeRequest, setContextRoomHomeRequest] = useState(0)
@@ -301,7 +301,7 @@ export function App() {
     setAgentWidth(Math.round(Math.max(AGENT_WIDTH_MIN, Math.min(max, raw))))
   }, [])
   const startAgentResize = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (window.matchMedia('(max-width: 1080px)').matches) return
+    if (window.matchMedia('(max-width: 1200px)').matches) return
     event.currentTarget.setPointerCapture(event.pointerId)
     setAgentResizing(true)
     const move = (moveEvent: PointerEvent) => applyAgentWidth(window.innerWidth - moveEvent.clientX)
