@@ -5,8 +5,10 @@ import { useState } from 'react';
 import { useLocale } from '../../../../../i18n/LocaleContext';
 
 import type { KnowledgeFileDto, EmergenceFocusChapter } from '../../../../../../../shared/knowledge';
+import { officePreviewKindForFileName } from '../../../../../../../shared/sources';
 import { createContextRoomResourceLibrary } from '../../resources';
 import type { ContextRoomRecord, ContextRoomResource } from '../../types';
+import { EmbeddedOfficePreview } from './EmbeddedOfficePreview';
 import { ExternalImportDialog } from '../detail-editor/ExternalImportDialog';
 import { externalDocumentFeatures } from '../detail-editor/externalDocumentFeatures';
 import { DocumentContent } from '../detail-panels/DocumentPane';
@@ -119,6 +121,9 @@ export function WorkspaceContent({
             onChapterChange={onChapterChange}
             onRegisterQuoteInsert={registerQuoteInsert}
           />
+        ) : selectedResource?.kind === 'knowledge-file' && officePreviewKindForFileName(selectedResource.originalName) ? (
+          // Office 可预览的知识文件（Agent 产物）：右区原位内嵌只读预览（替换云文档位置）
+          <EmbeddedOfficePreview room={room} resource={selectedResource} />
         ) : selectedResource?.kind === 'knowledge-file' ? (
           isMarkdownFileName(selectedResource.originalName)
             ? <KnowledgeFileReader resource={selectedResource} />

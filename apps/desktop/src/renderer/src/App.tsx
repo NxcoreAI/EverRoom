@@ -42,6 +42,7 @@ import {
   type RoomOverviewCitation,
 } from '@/components/context-room/roomOverviewCitation'
 import { logDocumentFocusDiagnostic, onDocumentBlockNavigation } from '@/components/context-room/ported/components/detail-editor/documentBlockNavigation'
+import { requestRoomOfficeFocus, useEmbeddedOffice } from '@/components/context-room/ported/embeddedOffice'
 import { onDocumentOperationNavigation } from '@/components/context-room/operations/documentOperationNavigation'
 import { useLocale } from '@/i18n/LocaleContext'
 import { showToast } from '@/state/toast'
@@ -133,6 +134,8 @@ export function App() {
     requestId: number
   } | null>(null)
   const documentFocusRequestIdRef = useRef(0)
+  const roomOfficeFocusRequestIdRef = useRef(0)
+  const embeddedOffice = useEmbeddedOffice()
   const agentNavigationTimerRef = useRef<number | null>(null)
   const workspaceMainRef = useRef<HTMLElement>(null)
   const tabSwipeRef = useRef({ distance: 0, lastAt: 0, lockedUntil: 0 })
@@ -164,10 +167,13 @@ export function App() {
     contextRoomState.rooms.map(({ id, title, kind }) => ({ id, title, kind }))
   ), [contextRoomState.rooms])
 
-  // 顶栏 Office 预览标签：同一时刻只激活一个实例，离开预览页时全部隐藏（标签保留）。
+  // Office 预览实例激活仲裁：顶栏标签页 / office-test 页 / Room 内嵌宿主
+  // 同一时刻只激活一个实例，离开对应页面时全部隐藏（标签与实例本体保留）。
   const focusedOfficeInstanceId = activePage === 'office-test'
     ? OFFICE_TEST_INSTANCE_ID
-    : activePage === 'office-document' ? activeOfficeInstanceId : null
+    : activePage === 'office-document' ? activeOfficeInstanceId
+    : activePage === 'rooms' ? embeddedOffice?.instanceId ?? null
+    : null
 
   useEffect(() => {
     const workspace = workspaceMainRef.current
@@ -177,6 +183,14 @@ export function App() {
     if (!focusedOfficeInstanceId) {
       void office.setActiveInstance(null).catch((error) => {
         console.error('Failed to hide the Office view.', error)
+      })
+      return
+    }
+
+    // Room 内嵌预览：占位矩形由 EmbeddedOfficePreview 自行上报，这里只激活。
+    if (activePage === 'rooms') {
+      void office.setActiveInstance(focusedOfficeInstanceId).catch((error) => {
+        console.error('Failed to open the Office view.', error)
       })
       return
     }
@@ -204,7 +218,7 @@ export function App() {
       observer.disconnect()
       window.removeEventListener('resize', reportBounds)
     }
-  }, [focusedOfficeInstanceId, agentOpen, effectiveNavCollapsed])
+  }, [activePage, focusedOfficeInstanceId, agentOpen, effectiveNavCollapsed])
 
   useEffect(() => {
     logOnboarding('state', {
@@ -626,8 +640,8 @@ export function App() {
     return () => window.removeEventListener('nxcore:office:open', open as EventListener)
   }, [openOfficeTab])
 
-  // Agent 生成 Word（office 桥）：阶段进度提示；完成后刷新 Room 清单并自动
-  // 打开内嵌预览（复用 nxcore:office:open 通道）。
+  // Agent 生成 Word（office 桥）：阶段进度提示；完成后刷新 Room 清单并导航
+  // 进所属 Room、右区原位打开产物（PortedDetail 消费 focus 请求）。
   useEffect(() => {
     const office = window.nxcore?.office
     if (!office?.onAgentFile) return
@@ -648,13 +662,19 @@ export function App() {
       showToast({ title: t('surface:agentOffice.done.title'), message: t('surface:agentOffice.done.message', { title: payload.title }) })
       // Room 资料页/产物库清单监听此 DOM 事件刷新（见 useRoomKnowledgeFiles）。
       window.dispatchEvent(new CustomEvent('everroom:knowledge-changed'))
-      if (payload.fileId && payload.originalName) {
-        window.dispatchEvent(new CustomEvent('nxcore:office:open', {
-          detail: { fileId: payload.fileId, originalName: payload.originalName },
-        }))
+      if (payload.fileId && payload.originalName && payload.roomId) {
+        const room = availableContextRooms.find((item) => item.id === payload.roomId)
+        if (room) openContextRoomTab(room)
+        else activateContextRoomTab(payload.roomId)
+        requestRoomOfficeFocus({
+          roomId: payload.roomId,
+          fileId: payload.fileId,
+          originalName: payload.originalName,
+          requestId: ++roomOfficeFocusRequestIdRef.current,
+        })
       }
     })
-  }, [t])
+  }, [activateContextRoomTab, availableContextRooms, openContextRoomTab, t])
 
   const syncContextRoomTabs = useCallback((rooms: ContextRoomWorkspaceTab[]) => {
     // 全空投影是网关启动/快照刷新窗口的瞬时态，不是真实清空——本地删除 Room

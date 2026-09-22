@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocale } from '../../../../i18n/LocaleContext'
 
 import { consumeDocumentFocusRequest } from '../documentFocus'
+import { consumeRoomOfficeFocus, useRoomOfficeFocus } from '../embeddedOffice'
 import { logDocumentFocusDiagnostic } from './detail-editor/documentBlockNavigation'
 import { onRoomMemoryNavigation } from './detail-editor/blockIndexNavigation'
 import { isMarkdownFileName } from '../../knowledgeMarkdownImport'
@@ -145,8 +146,12 @@ export function PortedDetail({
 
   const openResource = useCallback((resource: ContextRoomResource) => {
     if (resource.roomId !== room.id) return
-    // Office 可预览文件：顶栏新标签打开内嵌只读预览，不在编辑栏内展示
-    if (resource.kind === 'knowledge-file' && officePreviewKindForFileName(resource.originalName)) {
+    // Agent 生成的 Office 产物：右区原位内嵌预览（替换云文档位置），不走顶栏新标签。
+    const isAgentOfficeFile = resource.kind === 'knowledge-file'
+      && knowledgeFiles.find((file) => file.id === resource.fileId)?.sourceKind === 'agent-generated'
+    // 其余 Office 可预览文件（资料）：顶栏新标签打开内嵌只读预览，不在编辑栏内展示
+    if (resource.kind === 'knowledge-file' && !isAgentOfficeFile
+      && officePreviewKindForFileName(resource.originalName)) {
       window.dispatchEvent(new CustomEvent('nxcore:office:open', {
         detail: { fileId: resource.fileId, originalName: resource.originalName },
       }))
@@ -154,19 +159,21 @@ export function PortedDetail({
     }
     setSelectedObject(null)
     setSelectedResourceId(resource.id)
-    // 产物（用户创建文档）进产物板块；资料（导入文档/上传文件）进工作/资料。
-    if (resource.kind === 'cloud-doc'
-      && backendDocuments.find((document) => document.id === resource.binding.docId)?.origin === 'native') {
+    // 产物（用户创建文档 + Agent 生成 Office 文件）进产物板块；资料（导入文档/上传文件）进工作/资料。
+    if ((resource.kind === 'cloud-doc'
+        && backendDocuments.find((document) => document.id === resource.binding.docId)?.origin === 'native')
+      || isAgentOfficeFile) {
       if (!layout.panels.includes('artifacts')) layout.switchBoard('artifacts')
     } else if (!(layout.panels.includes('work') && layout.subtabs.work === 'materials')) {
       layout.switchBoard('work', 'materials')
     }
     layout.setMobileContent(true)
     // 非 md 且无内嵌预览的上传文件：选中即用系统默认应用打开原件（面板内只留状态卡片）
-    if (resource.kind === 'knowledge-file' && !isMarkdownFileName(resource.originalName)) {
+    if (resource.kind === 'knowledge-file' && !isMarkdownFileName(resource.originalName)
+      && !officePreviewKindForFileName(resource.originalName)) {
       void window.nxcore?.knowledge?.openFile(resource.fileId).catch(() => undefined)
     }
-  }, [backendDocuments, layout, room.id])
+  }, [backendDocuments, knowledgeFiles, layout, room.id])
 
   const openWikiPage = useCallback((resource: ContextRoomWikiPageResource) => {
     if (resource.roomId !== room.id) return
@@ -215,6 +222,18 @@ export function PortedDetail({
     })
     if (decision.shouldOpen && resource && resource.id !== selectedResourceId) openResource(resource)
   }, [documentFocusRequestId, focusedDocumentId, library.resources, openResource, room.id, selectedResourceId])
+
+  // Agent 生成完成的自动打开请求：本 Room 挂载（或清单刷新补齐资源）后，
+  // 右区原位打开该 Office 产物。资源未到时挂起重试（effect 依赖 library）。
+  const pendingOfficeFocus = useRoomOfficeFocus()
+  useEffect(() => {
+    if (!pendingOfficeFocus || pendingOfficeFocus.roomId !== room.id) return
+    const resource = library.resources.find((candidate) =>
+      candidate.kind === 'knowledge-file' && candidate.fileId === pendingOfficeFocus.fileId)
+    if (!resource) return
+    consumeRoomOfficeFocus(pendingOfficeFocus.requestId)
+    openResource(resource)
+  }, [library.resources, openResource, pendingOfficeFocus, room.id])
 
   // 块索引标记 → Room 记忆项：同 Room 目标直接切到建联图谱并聚焦该记忆节点
   // （不再整树切 ObjectDetailView 临时详情页；图谱里能看到这条记忆的全部引用关系）。
@@ -268,8 +287,10 @@ export function PortedDetail({
         ?? library.resources.find((candidate) =>
           candidate.kind === 'office-file' && candidate.id === `${room.id}:file:${source.sourceId}`)
       if (resource) {
-        // Office 可预览文件与资源树一致：顶栏新标签打开
-        if (resource.kind === 'knowledge-file' && officePreviewKindForFileName(resource.originalName)) {
+        // Agent 生成的 Office 产物在右区原位打开；其余 Office 可预览文件与资源树一致：顶栏新标签
+        if (resource.kind === 'knowledge-file'
+          && officePreviewKindForFileName(resource.originalName)
+          && knowledgeFiles.find((file) => file.id === resource.fileId)?.sourceKind !== 'agent-generated') {
           window.dispatchEvent(new CustomEvent('nxcore:office:open', {
             detail: { fileId: resource.fileId, originalName: resource.originalName },
           }))
@@ -283,7 +304,7 @@ export function PortedDetail({
       const mail = room.materials.find((item) => item.type === '邮件' && item.id === source.sourceId)
       if (mail) openObject({ kind: 'mail', id: mail.id })
     }
-  }, [layout, library.resources, openObject, room.id, room.materials])
+  }, [knowledgeFiles, layout, library.resources, openObject, room.id, room.materials])
 
   const toggleTask = (taskId: string) => onUpdateRoom((current) => ({
     ...current,

@@ -15305,6 +15305,13 @@ button.eg-walk.is-next:hover {
   min-height: 0;
 }
 
+/* 内嵌 Office 预览宿主：占位 div 撑满编辑栏，原生 WebContentsView 按其矩形叠放。 */
+.context-room-embedded-office-host {
+  position: relative;
+  width: 100%;
+  background: var(--cr-surface);
+}
+
 .context-room-thoughts-pinned-item {
   animation: context-room-emergence-card-in 240ms var(--shell-motion-easing) both;
 }
