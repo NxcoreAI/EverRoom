@@ -164,6 +164,7 @@ export class LocalDataService {
     this.evidence = new EvidenceService(
       this.database,
       (hash) => this.objectPath(hash),
+      (sourceId, relativePath) => this.resolveLocalItemPath(sourceId, relativePath),
       (sourceId) => this.notifyChanged(sourceId, true),
     )
     this.highRiskImports?.setAutoResolver((batch, accepted) => this.resolveAutoScanBatch(batch, accepted))
@@ -748,7 +749,7 @@ export class LocalDataService {
   }
 
   async previewFile(dataSourceId: string, fileId: string): Promise<MarkdownPreview> {
-    this.requireSource(dataSourceId)
+    const source = this.requireSource(dataSourceId)
     const row = this.database.prepare(`
       SELECT relative_path, extension, modified_at, content_hash, state
       FROM source_items WHERE id = ? AND data_source_id = ?
@@ -762,7 +763,13 @@ export class LocalDataService {
     if (!row) throw new Error('文件记录不存在。')
     if (row.state !== 'present' || !row.content_hash) throw new Error('文件当前不可预览。')
     if (!['.md', '.mdx', '.markdown'].includes(row.extension.toLowerCase())) throw new Error('仅支持 Markdown 文件预览。')
-    const content = await readFile(this.objectPath(row.content_hash), 'utf8')
+    // 本地文件夹来源不落对象库，直接读原文件。
+    const contentPath = source.kind === 'local-folder'
+      ? this.resolveLocalItemPath(dataSourceId, row.relative_path)
+      : this.objectPath(row.content_hash)
+    const content = await readFile(contentPath, 'utf8').catch((error: NodeJS.ErrnoException) => {
+      throw error.code === 'ENOENT' ? new Error('源文件已不存在，请恢复文件后重新扫描数据源。') : error
+    })
     if (Buffer.byteLength(content, 'utf8') > 2 * 1024 * 1024) throw new Error('Markdown 文件过大，无法预览。')
     return { fileName: basename(row.relative_path), relativePath: row.relative_path, modifiedAt: row.modified_at, content }
   }
@@ -1585,7 +1592,7 @@ export class LocalDataService {
       deferExport ? 'pending' : 'normal',
       new Date().toISOString(),
     )
-    if (!shouldExport && !deferExport && isLocalParseableExtension(item.extension)) {
+    if (!deferExport && isLocalParseableExtension(item.extension)) {
       this.evidence.enqueueVersion(versionId, item.extension)
     }
     if (shouldExport && this.fileExports) {
@@ -1603,7 +1610,7 @@ export class LocalDataService {
   ): Promise<HighRiskImportResolution> {
     const findVersion = this.database.prepare(`
       SELECT source_versions.id, source_versions.object_hash, source_versions.source_item_id,
-        source_items.remote_id, source_items.relative_path,
+        source_items.remote_id, source_items.relative_path, source_items.extension,
         (
           SELECT COUNT(*)
           FROM source_versions AS accepted_version
@@ -1642,12 +1649,16 @@ export class LocalDataService {
         source_item_id: string
         remote_id: string
         relative_path: string
+        extension: string
         accepted_version_count: number
       } | undefined
       if (!version) continue
       if (accepted) {
         updatePolicy.run('approved', versionId)
         enqueue.run(versionId, new Date().toISOString())
+        if (isLocalParseableExtension(version.extension)) {
+          this.evidence.enqueueVersion(versionId, version.extension)
+        }
       } else {
         addIgnored.run(batch.sourceId, version.remote_id, version.relative_path, new Date().toISOString())
         if (Number(version.accepted_version_count) === 0) {
@@ -1834,6 +1845,13 @@ export class LocalDataService {
       finishedAt,
       runId,
     )
+  }
+
+  private resolveLocalItemPath(sourceId: string, relativePath: string): string {
+    const source = this.requireSource(sourceId)
+    const connector = this.connectors.get(source.kind)
+    if (!connector.resolveLocalPath) throw new Error('该数据源没有本机文件可读。')
+    return connector.resolveLocalPath(this.toConnection(source), relativePath)
   }
 
   private requireSource(id: string): SourceRow {

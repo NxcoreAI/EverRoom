@@ -202,7 +202,7 @@ export function toImportedRealityEvent(
   const normalizedCaptureDevice = captureDevice && typeof captureDevice === 'object' && !Array.isArray(captureDevice)
     && typeof (captureDevice as Record<string, unknown>).id === 'string'
     && typeof (captureDevice as Record<string, unknown>).name === 'string'
-    && ['desktop', 'iphone', 'watch'].includes(String((captureDevice as Record<string, unknown>).kind))
+    && ['desktop', 'iphone', 'apple_watch'].includes(String((captureDevice as Record<string, unknown>).kind))
     ? captureDevice as ImportRealityEventInput['captureDevice']
     : { id: 'synced-iphone', name: 'iPhone', kind: 'iphone' as const }
   const audioSource = sourceMetadata.audioSource === 'system' ? 'system' : 'microphone'
@@ -572,7 +572,8 @@ export class PrivateTranscriptionSyncService {
       const input = toImportedRealityEvent(source, summary)
       if (!input) continue
       activeEventIds.add(input.id)
-      const fingerprint = `${source.revision}:${source.updatedAt}:${summary?.revision ?? 0}:${summary?.updatedAt ?? ''}:${summary ? 'valid' : 'missing'}`
+      // fingerprint 含 captureDevice：云端下发补上来源后（哪怕 revision 没变）也要重新物化，纠正旧的 iPhone 兜底数据。
+      const fingerprint = `${source.revision}:${source.updatedAt}:${summary?.revision ?? 0}:${summary?.updatedAt ?? ''}:${summary ? 'valid' : 'missing'}:${input.captureDevice.id}:${input.captureDevice.kind}`
       if (materialized[input.id] === fingerprint) continue
       await this.reality.importEvent(input)
       materialized[input.id] = fingerprint

@@ -30,7 +30,6 @@ import { useRoomUpdatedTime } from '../../roomUpdatedTime';
 import { roomKindIcon, roomKindTone } from '../utils';
 import { CalendarProviderIcon } from '../CalendarProviderIcon';
 import { PanelEmptyState } from './PanelEmptyState';
-import { OverviewTimelineCard } from './OverviewTimelineCard';
 import type { WorkspaceObjectPreview } from './index';
 
 // 逐 Room 的 AI 状态文案覆盖表（原演示 Room 词条已移除）；缺省走下方真实数据派生。
@@ -377,14 +376,6 @@ export function OverviewDashboard({
           {!openTasks.length && !projectionTasks.length ? <PanelEmptyState compact icon={CheckSquare2} title={t('contextRoom:overviewDashboard.noToDoTasks')} description={t('contextRoom:overviewDashboard.incompleteRoomTasksAppearHere')} /> : null}
         </article>
       </div>
-
-      <OverviewTimelineCard
-        room={room}
-        backendDocuments={backendDocuments.filter((document) => document.origin !== 'native')}
-        knowledgeFiles={knowledgeFiles}
-        onSelectResource={onSelectResource}
-        onOpenObject={onOpenObject}
-      />
     </section>
   );
 }

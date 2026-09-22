@@ -41,8 +41,8 @@ export const BOARD_TABS = [
 export const BOARD_SUBTABS: Record<BoardId, readonly { id: BoardSubtab; label: string }[]> = {
   work: [
     { id: 'overview', label: 'contextRoom:boardTab.overview' },
-    { id: 'activity', label: 'contextRoom:boardTab.activity' },
     { id: 'todo', label: 'contextRoom:boardTab.todo' },
+    { id: 'activity', label: 'contextRoom:boardTab.activity' },
     { id: 'materials', label: 'contextRoom:boardTab.materials' },
   ],
   thoughts: [],

@@ -245,8 +245,13 @@ export function WorkspaceLayout({
         </nav>
 
         {overview ? (
-          // 原型概览态：整中栏独占、无二级页签行（rd-overview）。
+          // 原型概览态：整中栏独占，顶部仍保留工作页签条（rd-overview）。
           <div className="context-room-overview-board">
+            <BoardTabs
+              board="work"
+              activeSubtab={subtabs.work}
+              onSelectSubtab={(nextSubtab) => setBoardSubtab('work', nextSubtab)}
+            />
             <OverviewDashboard
               room={room}
               backendDocuments={backendDocuments}

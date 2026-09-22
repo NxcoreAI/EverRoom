@@ -276,10 +276,16 @@ export function SourcesPage() {
   // connected 时若是该 provider 类型第一次连接——弹过滤偏好引导。
   // "第一次"以 localStorage 记录为准（不依赖"当前有没有该类连接"：用户可能
   // 在别的设备/早前连过，也可能授权期间切走页面错过了轮询瞬间）。
-  const maybeGuide = useCallback((provider: string) => {
+  // 已保存过过滤偏好的不再弹：偏好全局只有一份，换个来源类型再弹同一表单
+  // 只是重复打扰（issue #232）。
+  const maybeGuide = useCallback(async (provider: string) => {
     if (!provider || guided.current.has(provider)) return
     guided.current.add(provider)
     markProviderGuided(provider)
+    try {
+      const rules = await window.nxcore?.ingest.getFilterRules()
+      if (rules?.preference.trim()) return
+    } catch { /* 偏好读不到时按未设置处理，照常弹 */ }
     setGuideProvider(provider)
   }, [])
   useEffect(() => {
@@ -308,14 +314,20 @@ export function SourcesPage() {
 
   // 存量连接补引导：页面挂载时扫一遍已有连接，某 provider 类型已连接但从未
   // 引导过（旧版本连接的、或授权期间切走页面错过的）——补弹一次。
+  // 至多弹一个，其余未引导类型当场全部记账：偏好全局只有一份，"每进一次
+  // 页面补弹一个"是重复打扰（issue #232）；被静默记账的连接首同步由网关
+  // 轮询周期兜底（默认 5 分钟）。
   useEffect(() => {
     void window.nxcore?.nangoConnector.status().then((status) => {
       if (!status.enabled) return
-      for (const connection of status.connections) {
-        if (guided.current.has(connection.provider)) continue
-        maybeGuide(connection.provider)
-        break // 一次只弹一个，下一个来源页挂载时再补
+      const [first, ...rest] = [...new Set(status.connections.map((connection) => connection.provider))]
+        .filter((provider) => !guided.current.has(provider))
+      if (!first) return
+      for (const provider of rest) {
+        guided.current.add(provider)
+        markProviderGuided(provider)
       }
+      void maybeGuide(first)
     }).catch(() => undefined)
   }, [maybeGuide])
 
