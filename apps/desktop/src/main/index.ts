@@ -3612,6 +3612,9 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     officeBridgeServer = new OfficeBridgeServer(
       () => officeFilesBridge,
       broadcastOfficeAgentFileEvent,
+      // Agent 编辑已打开的 slides 产物：registry 持有可编辑实例 → fork 活会话事务
+      // （编辑实时重绘 + 静默保存回填版本链）。
+      () => (fileId, req) => officePreviewRegistry.editSlidesArtifact(fileId, req),
     )
     const officeBridge = await officeBridgeServer.start().catch((error) => {
       console.warn('Office bridge unavailable; office generation tool stays disabled.', error)

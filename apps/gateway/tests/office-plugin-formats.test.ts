@@ -16,20 +16,33 @@ function createHarness() {
     roomRequested: true,
     originalName: "out.pptx",
   });
+  const readDeck = vi.spyOn(bridge, "readDeck").mockResolvedValue({
+    outline: "Page 1\n  t1 | text | 季度回顾",
+    opVocabulary: "setText: 修改文本…",
+  });
+  const editDeck = vi.spyOn(bridge, "editDeck").mockResolvedValue({
+    ok: true,
+    applied: true,
+    records: [{ op: "setText", created: ["t1"] }],
+    saved: true,
+    outline: "Page 1\n  t1 | text | 年度回顾",
+  });
   const plugin = officePlugin(bridge);
   const tools = new Map(plugin.tools.map((tool) => [tool.name, tool]));
-  return { generate, plugin, tools };
+  return { generate, readDeck, editDeck, plugin, tools };
 }
 
 const context: DocumentExecutionContext = { agentSessionId: "session-1", runId: "run-1", roomId: "room-1" };
 
 describe("office 工具：PPT / Excel 扩展", () => {
-  it("插件暴露三个工具：word / slides / sheets", () => {
+  it("插件暴露五个工具：word / slides / sheets 生成 + slides 读 / 编辑", () => {
     const { tools } = createHarness();
     expect([...tools.keys()].sort()).toEqual([
       "context_room_office_create",
       "context_room_sheets_create",
       "context_room_slides_create",
+      "context_room_slides_edit",
+      "context_room_slides_read",
     ]);
   });
 
@@ -97,18 +110,116 @@ describe("office 工具：PPT / Excel 扩展", () => {
     expect(input.idempotencyKey!.startsWith("agent-word:")).toBe(true);
   });
 
-  it("三个工具都要求先选 Room", async () => {
+  it("五个工具都要求先选 Room", async () => {
     const { tools } = createHarness();
     const noRoom = { ...context, roomId: null };
-    for (const name of ["context_room_office_create", "context_room_slides_create", "context_room_sheets_create"]) {
-      await expect(
-        tools.get(name)!.execute(
-          name === "context_room_slides_create" ? { title: "t", pages: [{ elements: [] }] }
-            : name === "context_room_sheets_create" ? { title: "t", sheets: [{ rows: [["a"]] }] }
-              : { title: "t", html: "<p>x</p>" },
-          noRoom,
-        ),
-      ).rejects.toThrow("ROOM_SELECTION_REQUIRED");
+    const args: Record<string, Record<string, unknown>> = {
+      context_room_office_create: { title: "t", html: "<p>x</p>" },
+      context_room_slides_create: { title: "t", pages: [{ elements: [] }] },
+      context_room_sheets_create: { title: "t", sheets: [{ rows: [["a"]] }] },
+      context_room_slides_read: { fileId: "file-1" },
+      context_room_slides_edit: { fileId: "file-1", ops: [{ op: "setNotes" }] },
+    };
+    for (const [name, input] of Object.entries(args)) {
+      await expect(tools.get(name)!.execute(input, noRoom)).rejects.toThrow("ROOM_SELECTION_REQUIRED");
     }
+  });
+});
+
+describe("office 工具：PPT 编辑（slides read / edit）", () => {
+  it("slides_read：转发 fileId，返回 outline + opVocabulary + nextAction=edit", async () => {
+    const { tools, readDeck } = createHarness();
+    const result = await tools.get("context_room_slides_read")!.execute({ fileId: "file-9" }, context);
+    expect(readDeck).toHaveBeenCalledWith("file-9");
+    expect(result.structuredContent).toEqual({
+      fileId: "file-9",
+      outline: "Page 1\n  t1 | text | 季度回顾",
+      opVocabulary: "setText: 修改文本…",
+      nextAction: "edit",
+    });
+  });
+
+  it("slides_read：桌面端未返回大纲 → OFFICE_EDIT_FAILED", async () => {
+    const { tools, readDeck } = createHarness();
+    readDeck.mockResolvedValueOnce({ outline: "", opVocabulary: "" });
+    await expect(
+      tools.get("context_room_slides_read")!.execute({ fileId: "file-9" }, context),
+    ).rejects.toThrow("OFFICE_EDIT_FAILED");
+  });
+
+  it("slides_edit：透传 ops/isolation/dryRun，返回事务结果与新 outline", async () => {
+    const { tools, editDeck } = createHarness();
+    const ops = [{ op: "setText", target: { id: "t1" }, text: "年度回顾" }];
+    const result = await tools.get("context_room_slides_edit")!.execute(
+      { fileId: "file-9", ops, isolation: "per_op", dryRun: false },
+      context,
+    );
+    expect(editDeck).toHaveBeenCalledWith({ fileId: "file-9", ops, isolation: "per_op", dryRun: false });
+    expect(result.structuredContent).toMatchObject({
+      fileId: "file-9",
+      applied: true,
+      saved: true,
+      records: [{ op: "setText", created: ["t1"] }],
+      outline: "Page 1\n  t1 | text | 年度回顾",
+      nextAction: "report_result",
+    });
+  });
+
+  it("slides_edit：不带 isolation/dryRun 时不下发这两个字段", async () => {
+    const { tools, editDeck } = createHarness();
+    const ops = [{ op: "deleteSlide", target: { slide: 1 } }];
+    await tools.get("context_room_slides_edit")!.execute({ fileId: "file-9", ops }, context);
+    expect(editDeck).toHaveBeenCalledWith({ fileId: "file-9", ops });
+  });
+
+  it("slides_edit：未生效 → failures 透传 + nextAction=fix_ops_and_retry", async () => {
+    const { tools, editDeck } = createHarness();
+    editDeck.mockResolvedValueOnce({
+      ok: true,
+      applied: false,
+      failures: [{ index: 0, error: "未知元素 id: tX（用法：…）" }],
+      saved: true,
+    });
+    const result = await tools.get("context_room_slides_edit")!.execute(
+      { fileId: "file-9", ops: [{ op: "setText" }] },
+      context,
+    );
+    expect(result.structuredContent).toMatchObject({
+      applied: false,
+      failures: [{ index: 0, error: "未知元素 id: tX（用法：…）" }],
+      nextAction: "fix_ops_and_retry",
+    });
+  });
+
+  it("slides_edit：宿主级失败（ok:false）→ OFFICE_EDIT_FAILED", async () => {
+    const { tools, editDeck } = createHarness();
+    editDeck.mockResolvedValueOnce({ ok: false, error: "PPT 未在 Room 中打开" });
+    await expect(
+      tools.get("context_room_slides_edit")!.execute({ fileId: "file-9", ops: [{ op: "setNotes" }] }, context),
+    ).rejects.toThrow("OFFICE_EDIT_FAILED: PPT 未在 Room 中打开");
+  });
+
+  it("slides_edit：ops 非数组 / 空数组 → INVALID_REQUEST", async () => {
+    const { tools, editDeck } = createHarness();
+    const edit = tools.get("context_room_slides_edit")!;
+    await expect(edit.execute({ fileId: "file-9" }, context)).rejects.toThrow("INVALID_REQUEST");
+    await expect(edit.execute({ fileId: "file-9", ops: [] }, context)).rejects.toThrow("INVALID_REQUEST");
+    await expect(edit.execute({ fileId: "file-9", ops: "nope" }, context)).rejects.toThrow("INVALID_REQUEST");
+    expect(editDeck).not.toHaveBeenCalled();
+  });
+
+  it("slides_edit：未识别的 isolation 不下发，atomic/per_op 原样透传", async () => {
+    const { tools, editDeck } = createHarness();
+    const ops = [{ op: "setNotes", target: { slide: 0 }, text: "x" }];
+    await tools.get("context_room_slides_edit")!.execute(
+      { fileId: "file-9", ops, isolation: "loose" },
+      context,
+    );
+    expect(editDeck).toHaveBeenCalledWith({ fileId: "file-9", ops });
+    await tools.get("context_room_slides_edit")!.execute(
+      { fileId: "file-9", ops, isolation: "atomic" },
+      context,
+    );
+    expect(editDeck).toHaveBeenLastCalledWith({ fileId: "file-9", ops, isolation: "atomic" });
   });
 });

@@ -13,7 +13,9 @@ import type { OfficeBridgeClient, OfficeSheetBridgeInput } from "./office-bridge
  * - PPT：主进程本地拼装（fork 导出 buildAgentDeckPptx，页 spec 与 vendored
  *   apps/slides/src/main/page-spec.ts 的解析器一致）。
  * - Excel：主进程直接拼标准 OOXML（jszip，inline string）。
- * 编辑已有文档留待后续迭代。
+ * 编辑：PPT 走 context_room_slides_read/edit（文件需在 Room 产物库打开为可编辑
+ * 实例；编辑事务实时重绘在打开的视图上，保存自动回填版本链）。
+ * Word/Excel 的编辑与离屏编辑留待后续迭代。
  */
 
 const MAX_HTML_LENGTH = 400_000;
@@ -281,6 +283,93 @@ export function officePlugin(bridge: OfficeBridgeClient): DocumentCapabilityPlug
     },
   };
 
+  const slidesRead: DocumentCapabilityTool = {
+    name: "context_room_slides_read",
+    title: "读取 PPT 大纲与操作词汇",
+    description: "读取一份已在 Room 产物库打开的 .pptx 产物的大纲与可编辑操作词汇表。"
+      + "大纲列出每页的元素（id | 类型 | 文本摘要），是编辑时定位元素的唯一依据；"
+      + "opVocabulary 列出 context_room_slides_edit 可用的全部操作及其签名。"
+      + "文件必须已打开（可编辑视图）；未打开会报错并提示先打开。"
+      + "编辑前先读本工具，之后按大纲里的元素 id 发编辑事务。",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        fileId: { type: "string", minLength: 1, description: "PPT 文件 id（fileEntryId，来自生成结果或产物库列表）" },
+      },
+      required: ["fileId"],
+    },
+    annotations: annotations(true, false),
+    execute: async (args, context) => {
+      if (!context.roomId) throw new Error("ROOM_SELECTION_REQUIRED: Select a Context Room first");
+      const fileId = stringArg(args, "fileId").trim();
+      const info = await bridge.readDeck(fileId);
+      if (!info.outline) throw new Error("OFFICE_EDIT_FAILED: 桌面端未返回大纲");
+      return success({
+        fileId,
+        outline: info.outline,
+        opVocabulary: info.opVocabulary,
+        nextAction: "edit",
+      });
+    },
+  };
+
+  const slidesEdit: DocumentCapabilityTool = {
+    name: "context_room_slides_edit",
+    title: "编辑已打开的 PPT",
+    description: "向一份已在 Room 产物库打开的 .pptx 产物应用一个操作事务（ops 数组，原子生效）。"
+      + "常用操作：setText/setFont/setFill 改已有元素，addElement/addSlideWithLayout 新增，"
+      + "deleteElement/deleteSlide 删除，moveSlide 调序，findReplace 全稿替换，setNotes 备注页；"
+      + "完整词汇与签名见 context_room_slides_read 返回的 opVocabulary（每项自带用法，失败信息也会带用法提示）。"
+      + "元素用 read 大纲里的 id 定位（target.slide 从 0 计）；一次事务 1~50 个 op。"
+      + "编辑会实时显示在用户打开的视图上并自动保存（版本链 +1）。返回新 outline，可直接链式编辑。",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        fileId: { type: "string", minLength: 1, description: "PPT 文件 id（fileEntryId）" },
+        ops: {
+          type: "array",
+          minItems: 1,
+          maxItems: 50,
+          description: "操作数组，每项 {op, target?, …字段}；默认整体原子（任一失败全部不生效），isolation=per_op 可放开",
+          items: { type: "object", additionalProperties: true },
+        },
+        isolation: { type: "string", enum: ["atomic", "per_op"], description: "atomic（默认）：任一失败全部回滚；per_op：成功的保留" },
+        dryRun: { type: "boolean", description: "true 只校验并返回计划，不落盘" },
+      },
+      required: ["fileId", "ops"],
+    },
+    annotations: annotations(false, false),
+    execute: async (args, context) => {
+      if (!context.roomId) throw new Error("ROOM_SELECTION_REQUIRED: Select a Context Room first");
+      const fileId = stringArg(args, "fileId").trim();
+      if (!Array.isArray(args.ops) || args.ops.length === 0) {
+        throw new Error("INVALID_REQUEST: ops 必须是非空数组（每项一个操作对象）");
+      }
+      const isolation =
+        args.isolation === "per_op" ? "per_op" : args.isolation === "atomic" ? "atomic" : undefined;
+      const result = await bridge.editDeck({
+        fileId,
+        ops: args.ops,
+        ...(isolation ? { isolation } : {}),
+        ...(args.dryRun !== undefined ? { dryRun: args.dryRun === true } : {}),
+      });
+      if (!result.ok) throw new Error(`OFFICE_EDIT_FAILED: ${result.error ?? "桌面端编辑失败"}`);
+      return success({
+        fileId,
+        applied: result.applied === true,
+        ...(result.dryRun ? { dryRun: true, plan: result.plan ?? [] } : {}),
+        ...(result.records ? { records: result.records } : {}),
+        ...(result.failures?.length ? { failures: result.failures } : {}),
+        ...(result.saved !== undefined ? { saved: result.saved } : {}),
+        ...(result.saveError ? { saveError: result.saveError } : {}),
+        ...(result.outline ? { outline: result.outline } : {}),
+        nextAction: result.applied === true ? "report_result" : "fix_ops_and_retry",
+      });
+    },
+  };
+
   return {
     manifest: manifest("office.create", "mutation", null, null, true, false),
     promptGuidelines: [
@@ -293,7 +382,10 @@ export function officePlugin(bridge: OfficeBridgeClient): DocumentCapabilityPlug
       + "每页少字多留白；文本块用 runs 控制字号/加粗/颜色。",
       "Excel 的 sheets→rows 用 JSON 二维数组；数字必须是 JSON number；每个表首行放表头。",
       "生成成功后在回复中告知文件名；桌面端会自动打开预览，文档在 Room 产物库（Office 产物）和文件库可见。",
+      "修改已有 PPT：先确认文件在产物库打开（未打开时引导用户打开），context_room_slides_read 拿大纲与 op 词汇，"
+      + "再用大纲里的元素 id 发 context_room_slides_edit 事务；用户能实时看到每笔修改，改完版本链自动 +1。"
+      + "Word/Excel 产物暂不支持 Agent 编辑。",
     ],
-    tools: [officeCreate, slidesCreate, sheetsCreate],
+    tools: [officeCreate, slidesCreate, sheetsCreate, slidesRead, slidesEdit],
   };
 }

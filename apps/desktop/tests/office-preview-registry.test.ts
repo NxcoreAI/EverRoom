@@ -100,6 +100,8 @@ const runtime = {
   slides: {
     setSlidesShellWindow: vi.fn(),
     setActiveSlidesWebContents: vi.fn(),
+    describeAgentDeck: vi.fn(),
+    applyAgentDeckOps: vi.fn(),
   },
 }
 
@@ -300,7 +302,66 @@ describe('OfficePreviewRegistry', () => {
       expect(viewCalls[0]!.disposed).toBe(false)
     })
 
-    describe('save sync', () => {
+  describe('editSlidesArtifact (Agent 编辑活会话)', () => {
+    it('unknown fileId → not_open', async () => {
+      const outcome = await registry.editSlidesArtifact('file-missing', { mode: 'read' })
+      expect(outcome).toEqual({ ok: false, reason: 'not_open' })
+      expect(runtime.slides.describeAgentDeck).not.toHaveBeenCalled()
+    })
+
+    it('readonly slides instance → not_editable', async () => {
+      const window = makeWindow()
+      await registry.open(window, file('file-r1', 'deck-readonly.pptx'))
+      const outcome = await registry.editSlidesArtifact('file-r1', { mode: 'read' })
+      expect(outcome).toEqual({ ok: false, reason: 'not_editable' })
+    })
+
+    it('read routes to the editable slides instance and returns the deck info', async () => {
+      const window = makeWindow()
+      await registry.open(window, { ...file('file-e1', 'deck-edit.pptx'), editable: true, roomId: 'room-e1' })
+      runtime.slides.describeAgentDeck.mockReturnValueOnce({ outline: 'Page 1…', opVocabulary: 'text: …' })
+
+      const outcome = await registry.editSlidesArtifact('file-e1', { mode: 'read' })
+
+      expect(runtime.slides.describeAgentDeck).toHaveBeenCalledWith(viewCalls[0]!.webContentsId)
+      expect(outcome).toEqual({ ok: true, info: { outline: 'Page 1…', opVocabulary: 'text: …' } })
+    })
+
+    it('session not ready yet → not_open', async () => {
+      const window = makeWindow()
+      await registry.open(window, { ...file('file-e2', 'deck-late.pptx'), editable: true })
+      runtime.slides.describeAgentDeck.mockReturnValueOnce(null)
+
+      const outcome = await registry.editSlidesArtifact('file-e2', { mode: 'read' })
+
+      expect(outcome).toEqual({ ok: false, reason: 'not_open' })
+    })
+
+    it('apply forwards ops/dryRun/isolation and returns the fork result', async () => {
+      const window = makeWindow()
+      await registry.open(window, { ...file('file-e3', 'deck-ops.pptx'), editable: true })
+      const ops = [{ op: 'setNotes', target: { slide: 0 }, text: 'x' }]
+      runtime.slides.applyAgentDeckOps.mockResolvedValueOnce({ ok: true, applied: true, saved: true })
+
+      const outcome = await registry.editSlidesArtifact('file-e3', { mode: 'apply', ops, dryRun: true, isolation: 'per_op' })
+
+      expect(runtime.slides.applyAgentDeckOps).toHaveBeenCalledWith(
+        viewCalls[0]!.webContentsId,
+        ops,
+        { dryRun: true, isolation: 'per_op' },
+      )
+      expect(outcome).toEqual({ ok: true, result: { ok: true, applied: true, saved: true } })
+    })
+
+    it('editable docx instance → not_editable（只有 slides 支持 Agent 编辑）', async () => {
+      const window = makeWindow()
+      await registry.open(window, { ...file('file-e4', 'notes.docx'), editable: true })
+      const outcome = await registry.editSlidesArtifact('file-e4', { mode: 'read' })
+      expect(outcome).toEqual({ ok: false, reason: 'not_editable' })
+    })
+  })
+
+  describe('save sync', () => {
       beforeEach(() => {
         vi.useFakeTimers()
       })

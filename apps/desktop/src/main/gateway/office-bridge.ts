@@ -5,6 +5,10 @@ import { createServer, type IncomingMessage, type Server } from 'node:http'
 import type { FileImportAcceptedDto } from '../../shared/ingest'
 import type { OfficeAgentFileEvent, OfficeAgentFileFormat } from '../../shared/office'
 import type { FilesGatewayBridge } from './files-gateway-bridge'
+import type {
+  SlidesEditArtifactOutcome,
+  SlidesEditArtifactRequest,
+} from '../office/office-preview-registry'
 import { generateDocxFromHtml, generatePptxFromPageSpecs, generateXlsxFromSheets, type DocxGenerationPhase } from '../office/office-generation'
 import type { AgentSheetInput } from '../office/xlsx-generation'
 
@@ -26,6 +30,15 @@ export interface OfficeGenerateRequest {
   roomId: string | null
   fileName: string | null
   idempotencyKey: string
+}
+
+/** Agent 编辑已打开 slides 产物的请求（gateway 工具 → /v1/office-edit）。 */
+export interface OfficeEditRequest {
+  mode: 'read' | 'apply'
+  fileId: string
+  ops?: unknown[]
+  dryRun?: boolean
+  isolation?: 'atomic' | 'per_op'
 }
 
 const FORMAT_EXT: Record<OfficeGenerateFormat, string> = { docx: '.docx', pptx: '.pptx', xlsx: '.xlsx' }
@@ -58,19 +71,34 @@ function validBody(value: unknown): value is OfficeGenerateRequest {
     && typeof input.idempotencyKey === 'string' && input.idempotencyKey.length >= 8
 }
 
+function validEditBody(value: unknown): value is OfficeEditRequest {
+  if (!value || typeof value !== 'object') return false
+  const input = value as Partial<OfficeEditRequest>
+  if (typeof input.fileId !== 'string' || !input.fileId) return false
+  if (input.mode !== 'read' && input.mode !== 'apply') return false
+  if (input.mode === 'apply' && !Array.isArray(input.ops)) return false
+  if (input.dryRun !== undefined && typeof input.dryRun !== 'boolean') return false
+  if (input.isolation !== undefined && input.isolation !== 'atomic' && input.isolation !== 'per_op') return false
+  return true
+}
+
 /**
  * Gateway → 桌面主进程的 Office 生成桥（loopback HTTP + Bearer token，仿
  * AgentNotificationBridgeServer）。gateway 的 capability 工具经此生成
  * Word（隐藏 docs view）/ PPT（主进程本地拼装）/ Excel（jszip 拼 OOXML）
- * 并走 file-imports 入库。
+ * 并走 file-imports 入库；/v1/office-edit 把 Agent 的编辑事务送进已打开
+ * 的 slides 活会话（编辑过程实时重绘在打开的视图上）。
  */
 export class OfficeBridgeServer {
   private server: Server | null = null
   private readonly token = randomBytes(32).toString('base64url')
-  /** filesGatewayBridge 在 bridge 启动之后才创建：惰性取最新引用。 */
+  /** filesGatewayBridge / slidesEdit 在 bridge 启动之后才创建：惰性取最新引用。 */
   constructor(
     private readonly filesBridge: () => FilesGatewayBridge | null,
     private readonly broadcast: (event: OfficeAgentFileEvent) => void = () => undefined,
+    private readonly slidesEdit: () =>
+      | ((fileId: string, req: SlidesEditArtifactRequest) => Promise<SlidesEditArtifactOutcome>)
+      | null = () => null,
   ) {}
 
   async start(): Promise<{ baseUrl: string; token: string }> {
@@ -102,19 +130,63 @@ export class OfficeBridgeServer {
   }
 
   private async handle(request: IncomingMessage): Promise<{ status: number; body: Record<string, unknown> }> {
-    if (request.method !== 'POST' || request.url !== '/v1/office-generate') return { status: 404, body: { message: 'Not found' } }
+    if (request.method !== 'POST') return { status: 404, body: { message: 'Not found' } }
+    if (request.url !== '/v1/office-generate' && request.url !== '/v1/office-edit') {
+      return { status: 404, body: { message: 'Not found' } }
+    }
     if (!authorized(request, this.token)) return { status: 401, body: { message: 'Unauthorized' } }
+    const read = await this.readJsonBody(request)
+    if ('error' in read) return read.error
+    if (request.url === '/v1/office-edit') {
+      if (!validEditBody(read.parsed)) return { status: 422, body: { message: 'Invalid office edit request' } }
+      return this.edit(read.parsed)
+    }
+    if (!validBody(read.parsed)) return { status: 422, body: { message: 'Invalid office generate request' } }
+    return this.generate(read.parsed)
+  }
+
+  private async readJsonBody(
+    request: IncomingMessage,
+  ): Promise<{ parsed: unknown } | { error: { status: number; body: Record<string, unknown> } }> {
     const chunks: Buffer[] = []
     let bytes = 0
     for await (const chunk of request) {
       const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
       bytes += buffer.length
-      if (bytes > MAX_BODY_BYTES) return { status: 413, body: { message: 'Request body is too large' } }
+      if (bytes > MAX_BODY_BYTES) return { error: { status: 413, body: { message: 'Request body is too large' } } }
       chunks.push(buffer)
     }
-    let parsed: unknown
-    try { parsed = JSON.parse(Buffer.concat(chunks).toString('utf8')) } catch { return { status: 400, body: { message: 'Invalid JSON' } } }
-    if (!validBody(parsed)) return { status: 422, body: { message: 'Invalid office generate request' } }
+    try {
+      return { parsed: JSON.parse(Buffer.concat(chunks).toString('utf8')) }
+    } catch {
+      return { error: { status: 400, body: { message: 'Invalid JSON' } } }
+    }
+  }
+
+  private async edit(req: OfficeEditRequest): Promise<{ status: number; body: Record<string, unknown> }> {
+    const slidesEdit = this.slidesEdit()
+    if (!slidesEdit) return { status: 503, body: { message: 'EverRoom Office 编辑会话尚未就绪' } }
+    const artifactReq: SlidesEditArtifactRequest =
+      req.mode === 'read'
+        ? { mode: 'read' }
+        : { mode: 'apply', ops: req.ops ?? [], dryRun: req.dryRun, isolation: req.isolation }
+    let outcome: SlidesEditArtifactOutcome
+    try {
+      outcome = await slidesEdit(req.fileId, artifactReq)
+    } catch (error) {
+      return { status: 502, body: { message: error instanceof Error ? error.message : 'Office edit failed' } }
+    }
+    if (!outcome.ok) {
+      const message =
+        outcome.reason === 'not_editable'
+          ? '该 PPT 当前不是以可编辑的 PPT 产物打开的。请在 Room 产物库中重新打开后再编辑。'
+          : 'PPT 未在 Room 中打开。请先在产物库中打开该文件（Agent 的编辑会实时显示在打开的视图上），然后再试。'
+      return { status: 422, body: { code: outcome.reason, message } }
+    }
+    return { status: 200, body: { data: outcome.info ?? outcome.result ?? {} } }
+  }
+
+  private async generate(parsed: OfficeGenerateRequest): Promise<{ status: number; body: Record<string, unknown> }> {
     const files = this.filesBridge()
     if (!files) return { status: 503, body: { message: 'EverRoom 文件服务尚未就绪' } }
 
