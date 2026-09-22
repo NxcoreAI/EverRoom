@@ -1,7 +1,7 @@
 .agent-chat-conversation-frame {
   --agent-composer-height: 132px;
   --agent-empty-composer-top: clamp(156px, 32%, 272px);
-  --agent-composer-bottom: 16px;
+  --agent-composer-bottom: 0px;
   position: relative;
   min-height: 0;
   flex: 1;

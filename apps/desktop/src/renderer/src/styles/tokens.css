@@ -1,7 +1,7 @@
 :root {
   color-scheme: light;
-  --bg: #f6f7f9;
-  --chrome: #eef1f4;
+  --bg: #fdfcfc;
+  --chrome: #f7f8fa;
   --surface: #ffffff;
   --surface-alt: #f9fafb;
   --text: #151a22;
@@ -34,7 +34,7 @@
   --shadow: 0 1px 1px rgba(21, 26, 34, 0.04), 0 8px 22px rgba(21, 26, 34, 0.07);
   --raised-shadow: 0 1px 2px rgba(21, 26, 34, 0.06);
   --inset-shadow: inset 0 1px 1px rgba(21, 26, 34, 0.04);
-  --nav-width: 270px;
+  --nav-width: 220px;
   --agent-width: 360px;
   --topbar-height: 48px;
   --shell-motion-duration: 240ms;
@@ -98,8 +98,8 @@
 }
 
 :root[data-theme='nxcore'] {
-  --bg: #f6f7f9;
-  --chrome: #eef1f4;
+  --bg: #fdfcfc;
+  --chrome: #f7f8fa;
   --surface: #ffffff;
   --surface-alt: #f9fafb;
   --text: #151a22;
