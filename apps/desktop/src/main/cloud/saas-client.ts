@@ -1446,7 +1446,10 @@ export class SaasClient {
 
   private async restoreSession(): Promise<void> {
     const refreshToken = await this.credentials.getSecureText(REFRESH_TOKEN_KEY)
-    if (!refreshToken) return
+    if (!refreshToken) {
+      console.info('[saas-auth] no stored session (fresh install or signed out)')
+      return
+    }
     this.authBlockedReason = null
     // 启动恢复带重试：Ctrl+C 重启时 VPN/TUN 常常还没热身，一次超时就把已存
     // token 的用户判成未登录（要重新登录）——实测 token 一直在，缺的是重试。
@@ -1456,10 +1459,22 @@ export class SaasClient {
       try {
         await this.refreshExclusive(refreshToken)
         await this.loadSubscription()
+        console.info(`[saas-auth] session restored (user=${this.account?.user?.id ?? '?'}, attempts=${String(attempt)})`)
         return
       } catch (error) {
         if (error instanceof SaasRequestError) {
           if (error.status === 401 || error.status === 403) {
+            // 多实例/热重启竞态：另一进程可能刚轮换过 token 并落盘。删token前
+            // 重读一次磁盘，若已变化用新值再试一轮，而不是直接判死。
+            const latestToken = await this.credentials.getSecureText(REFRESH_TOKEN_KEY)
+            if (latestToken && latestToken !== refreshToken) {
+              return this.restoreSession()
+            }
+            console.error(
+              'SaaS refresh rejected (401/403); signing out locally. '
+              + 'If this repeats across restarts, the token family was likely revoked by a rotation race (killed mid-refresh / concurrent instance).',
+              { status: error.status },
+            )
             await this.credentials.delete(REFRESH_TOKEN_KEY)
             return
           }
