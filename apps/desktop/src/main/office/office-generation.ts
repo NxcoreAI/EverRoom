@@ -1,8 +1,12 @@
-import { readFile } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 
+import { app } from 'electron'
 import type { WebContentsView } from 'electron'
 
 import { loadPreparedGenOfficeRuntime, type PreparedGenOfficeRuntime } from './office-runtime'
+import { buildAgentXlsxBytes, type AgentSheetInput } from './xlsx-generation'
 
 /** 生成卡死兜底：渲染端 boot → 填充 → 静默保存正常在秒级完成。 */
 const GENERATION_TIMEOUT_MS = 3 * 60_000
@@ -37,6 +41,15 @@ export interface GeneratedDocx {
   filePath: string
   bytes: Buffer
   title: string
+}
+
+/** Agent 生成产物的临时落盘（导入成功后由 bridge 清理；失败保留供恢复）。 */
+async function writeGeneratedTempFile(bytes: Buffer, ext: string): Promise<string> {
+  const dir = join(app.getPath('temp'), 'everroom-agent-office')
+  await mkdir(dir, { recursive: true })
+  const filePath = join(dir, `${randomUUID()}${ext}`)
+  await writeFile(filePath, bytes)
+  return filePath
 }
 
 /**
@@ -85,4 +98,56 @@ export async function generateDocxFromHtml(
   } finally {
     cleanup()
   }
+}
+
+export interface GeneratedPptx {
+  filePath: string
+  bytes: Buffer
+  title: string
+  /** 页级容错警告（无效元素被丢弃等），供工具回传给模型自纠。 */
+  warnings: string[]
+}
+
+/**
+ * 离屏生成一份 PPT：页 spec JSON（1280×720 PageSpec，LLM 直接输出）经
+ * fork 导出的 buildAgentDeckPptx 在主进程本地拼装——无渲染端、无会话。
+ */
+export async function generatePptxFromPageSpecs(
+  input: { title: string; pages: string[] },
+  onPhase?: (phase: DocxGenerationPhase) => void,
+): Promise<GeneratedPptx> {
+  const title = input.title.trim().slice(0, 120)
+  if (!title) throw new Error('演示标题不能为空')
+  const pages = Array.isArray(input.pages) ? input.pages : []
+  if (pages.length === 0) throw new Error('至少需要一页幻灯片')
+  const { slides } = ensureRuntime()
+  onPhase?.('rendering')
+  const built = await slides.buildAgentDeckPptx(pages)
+  if (!built.ok) throw new Error(`PPT 生成失败：${built.error}`)
+  onPhase?.('saved')
+  const bytes = Buffer.from(built.deck.bytes)
+  const warnings = built.deck.warnings.map(({ page, messages }) => `第 ${page} 页：${messages.join('；')}`)
+  for (const failure of built.deck.imageFailures) {
+    warnings.push(`第 ${failure.page} 页图片 ${failure.url} 下载失败，已跳过`)
+  }
+  return { filePath: await writeGeneratedTempFile(bytes, '.pptx'), bytes, title, warnings }
+}
+
+export interface GeneratedXlsx {
+  filePath: string
+  bytes: Buffer
+  title: string
+}
+
+/** 生成一份 Excel：LLM 输出的 sheets→rows JSON 直接拼标准 OOXML（jszip）。 */
+export async function generateXlsxFromSheets(
+  input: { title: string; sheets: AgentSheetInput[] },
+  onPhase?: (phase: DocxGenerationPhase) => void,
+): Promise<GeneratedXlsx> {
+  const title = input.title.trim().slice(0, 120)
+  if (!title) throw new Error('表格标题不能为空')
+  onPhase?.('rendering')
+  const bytes = await buildAgentXlsxBytes(input.sheets)
+  onPhase?.('saved')
+  return { filePath: await writeGeneratedTempFile(bytes, '.xlsx'), bytes, title }
 }

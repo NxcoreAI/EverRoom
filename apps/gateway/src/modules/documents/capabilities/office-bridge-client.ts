@@ -1,8 +1,22 @@
 import type { GatewayConfig } from "../../../config.js";
 
+export type OfficeGenerateFormat = "docx" | "pptx" | "xlsx";
+
+export interface OfficeSheetBridgeInput {
+  name: string | null;
+  rows: (string | number | boolean | null)[][];
+}
+
 export interface OfficeGenerateInput {
   title: string;
-  html: string;
+  /** 缺省 docx。 */
+  format?: OfficeGenerateFormat;
+  /** docx：受限 HTML 正文。 */
+  html?: string | null;
+  /** pptx：每页一个 PageSpec JSON 字符串。 */
+  pages?: string[] | null;
+  /** xlsx：sheets→rows。 */
+  sheets?: OfficeSheetBridgeInput[] | null;
   roomId: string | null;
   fileName: string | null;
   idempotencyKey: string;

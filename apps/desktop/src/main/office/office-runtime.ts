@@ -33,6 +33,12 @@ export interface GenOfficeSheetsRuntime {
   stopSheetsSidecar(): void
 }
 
+export interface GenOfficeAgentDeckResult {
+  bytes: Uint8Array
+  warnings: { page: number; messages: string[] }[]
+  imageFailures: { page: number; url: string }[]
+}
+
 export interface GenOfficeSlidesRuntime {
   configureSlidesRuntime(config: { preloadPath: string; rendererFilePath?: string }): void
   createSlidesView(openPath?: string | null, options?: { readonly?: boolean }): WebContentsView
@@ -41,6 +47,8 @@ export interface GenOfficeSlidesRuntime {
   setActiveSlidesWebContents(contents: WebContents | null): void
   setSlidesShellWindow(window: BrowserWindow | null): void
   slidesIsDirty(webContentsId: number): boolean
+  /** Agent 幻灯片生成：页 spec JSON 数组 → 单文件 .pptx 字节（无渲染端参与）。 */
+  buildAgentDeckPptx(pageSpecJsons: string[]): Promise<{ ok: true; deck: GenOfficeAgentDeckResult } | { ok: false; error: string }>
 }
 
 export interface GenOfficePdfRuntime {

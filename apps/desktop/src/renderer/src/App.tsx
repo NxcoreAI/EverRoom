@@ -646,20 +646,21 @@ export function App() {
     const office = window.nxcore?.office
     if (!office?.onAgentFile) return
     return office.onAgentFile((payload) => {
+      const kind = t(`surface:agentOffice.kind.${payload.format ?? 'docx'}`)
       if (payload.type === 'phase') {
         const phaseKey = payload.phase === 'rendering'
           ? 'surface:agentOffice.generating.rendering'
           : payload.phase === 'saved'
             ? 'surface:agentOffice.generating.saved'
             : 'surface:agentOffice.generating.importing'
-        showToast({ title: t('surface:agentOffice.generating.title'), message: t(phaseKey, { title: payload.title }) })
+        showToast({ title: t('surface:agentOffice.generating.title', { kind }), message: t(phaseKey, { title: payload.title }) })
         return
       }
       if (payload.type === 'error') {
-        showToast({ title: t('surface:agentOffice.error.title'), message: payload.message, variant: 'error' })
+        showToast({ title: t('surface:agentOffice.error.title', { kind }), message: payload.message, variant: 'error' })
         return
       }
-      showToast({ title: t('surface:agentOffice.done.title'), message: t('surface:agentOffice.done.message', { title: payload.title }) })
+      showToast({ title: t('surface:agentOffice.done.title', { kind }), message: t('surface:agentOffice.done.message', { title: payload.title }) })
       // Room 资料页/产物库清单监听此 DOM 事件刷新（见 useRoomKnowledgeFiles）。
       window.dispatchEvent(new CustomEvent('everroom:knowledge-changed'))
       if (payload.fileId && payload.originalName && payload.roomId) {
