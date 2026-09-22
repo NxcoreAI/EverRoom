@@ -602,21 +602,26 @@ export function App() {
   }, [])
 
   const closeOfficeTab = useCallback((instanceId: string) => {
-    void window.nxcore?.office.closeInstance(instanceId).catch((error) => {
-      console.error('Failed to close the Office preview.', error)
-    })
-    const closingIndex = officeTabs.findIndex((tab) => tab.id === instanceId)
-    if (closingIndex < 0) return
-    const nextTabs = officeTabs.filter((tab) => tab.id !== instanceId)
-    setOfficeTabs(nextTabs)
-    if (activeOfficeInstanceId !== instanceId) return
-    const neighbor = nextTabs[closingIndex] ?? nextTabs[closingIndex - 1] ?? null
-    if (neighbor) {
-      setActiveOfficeInstanceId(neighbor.id)
-      return
-    }
-    setActiveOfficeInstanceId(null)
-    setActivePage('files')
+    void window.nxcore?.office.closeInstance(instanceId)
+      .then((closed) => {
+        // false = 可编辑实例在脏关闭守卫里被取消：标签与实例都保留。
+        if (closed === false) return
+        const closingIndex = officeTabs.findIndex((tab) => tab.id === instanceId)
+        if (closingIndex < 0) return
+        const nextTabs = officeTabs.filter((tab) => tab.id !== instanceId)
+        setOfficeTabs(nextTabs)
+        if (activeOfficeInstanceId !== instanceId) return
+        const neighbor = nextTabs[closingIndex] ?? nextTabs[closingIndex - 1] ?? null
+        if (neighbor) {
+          setActiveOfficeInstanceId(neighbor.id)
+          return
+        }
+        setActiveOfficeInstanceId(null)
+        setActivePage('files')
+      })
+      .catch((error) => {
+        console.error('Failed to close the Office preview.', error)
+      })
   }, [activeOfficeInstanceId, officeTabs])
 
   // Context Room 等非文件页入口的 Office 文件打开请求：走 files:open-original，
@@ -646,6 +651,11 @@ export function App() {
     const office = window.nxcore?.office
     if (!office?.onAgentFile) return
     return office.onAgentFile((payload) => {
+      if (payload.type === 'edited') {
+        // 人手编辑回填落库（版本链 +1）：静默刷新清单，不弹提示、不抢焦点。
+        window.dispatchEvent(new CustomEvent('everroom:knowledge-changed'))
+        return
+      }
       const kind = t(`surface:agentOffice.kind.${payload.format ?? 'docx'}`)
       if (payload.type === 'phase') {
         const phaseKey = payload.phase === 'rendering'

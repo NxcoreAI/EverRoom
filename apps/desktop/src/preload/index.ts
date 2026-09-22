@@ -854,8 +854,13 @@ const api: NxcoreDesktopApi = {
       invoke('files:pin-cluster-title', clusterId, sharedTitle),
     delete: (fileId: string) => invoke('files:delete', fileId),
     reveal: (fileId: string) => invoke('files:reveal', fileId),
-    openOriginal: (fileId: string, originalName?: string, contentHash?: string) =>
-      invoke('files:open-original', fileId, originalName, contentHash),
+    openOriginal: (
+      fileId: string,
+      originalName?: string,
+      contentHash?: string,
+      options?: { editable?: boolean; roomId?: string },
+    ) =>
+      invoke('files:open-original', fileId, originalName, contentHash, options),
     pickAndImport: (options?: { pipelines?: IngestPipelines; roomId?: string }) =>
       invoke('files:pick-and-import', options),
     /** 仅选择：返回文件/文件夹路径，不导入（创建 Room 弹窗暂存用）。 */

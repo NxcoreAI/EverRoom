@@ -579,6 +579,7 @@
   "files.openClipperPreview": "预览网页剪藏",
   "files.openSourcePage": "打开原网页",
   "files.unableToOpenOriginal": "无法打开原件。",
+  "files.agentGeneratedOpenInRoom": "EverRoom 产物请在所属房间的产物库打开与编辑。",
   "files.registeredDeduplicated": "已登记（去重）",
   "files.searchFiles": "搜索文件",
   "files.revealName": "在访达中显示 {name}",

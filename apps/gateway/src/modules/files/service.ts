@@ -62,6 +62,8 @@ export interface FileImportInput {
   sourceModifiedAt?: Date | undefined;
   pipelines?: { room: boolean; wiki: boolean; memory: boolean } | undefined;
   roomId?: string | undefined;
+  /** 钉住既有条目（新版本入链）：提供时按 fileEntries.id 定位，忽略 (sourceKind, sourceKey) 分组。 */
+  fileEntryId?: string | undefined;
   /** Store a source version without starting normalization/fan-out yet. */
   deferIngest?: boolean | undefined;
 }
@@ -312,10 +314,13 @@ export class FilesService {
       .where(eq(fileBlobs.contentHash, contentHash)).get();
 
     const now = new Date();
-    let entry = this.db.select().from(fileEntries).where(and(
-      eq(fileEntries.sourceKind, input.sourceKind),
-      eq(fileEntries.sourceKey, input.sourceKey),
-    )).get();
+    let entry = input.fileEntryId
+      ? this.db.select().from(fileEntries).where(eq(fileEntries.id, input.fileEntryId)).get()
+      : this.db.select().from(fileEntries).where(and(
+          eq(fileEntries.sourceKind, input.sourceKind),
+          eq(fileEntries.sourceKey, input.sourceKey),
+        )).get();
+    if (input.fileEntryId && !entry) throw new Error("file_entry_not_found");
     const fileEntryId = entry?.id ?? `file-${randomUUID()}`;
     const existingVersion = entry
       ? this.db.select().from(fileVersions).where(and(

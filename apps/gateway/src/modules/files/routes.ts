@@ -269,6 +269,7 @@ export function filesRoutes(
             }),
             400: Type.Object({ error: Type.String() }),
             413: Type.Object({ error: Type.String() }),
+            422: Type.Object({ error: Type.String() }),
           },
         },
       },
@@ -283,7 +284,7 @@ export function filesRoutes(
           sourceKind?: unknown; sourceKey?: unknown; originalName?: unknown;
           provider?: unknown; connectionId?: unknown; localSourceId?: unknown; localItemId?: unknown;
           relativePath?: unknown; sourceUri?: unknown; sourceModifiedAt?: unknown;
-          pipelines?: unknown; roomId?: unknown; clipCaptureId?: unknown;
+          pipelines?: unknown; roomId?: unknown; clipCaptureId?: unknown; fileEntryId?: unknown;
         };
         try {
           metadata = JSON.parse(metadataText) as typeof metadata;
@@ -318,11 +319,13 @@ export function filesRoutes(
             ...(parsedModifiedAt && !Number.isNaN(parsedModifiedAt.getTime()) ? { sourceModifiedAt: parsedModifiedAt } : {}),
             ...(pipelines ? { pipelines } : {}),
             ...(text(metadata.roomId) ? { roomId: text(metadata.roomId) } : {}),
+            ...(text(metadata.fileEntryId) ? { fileEntryId: text(metadata.fileEntryId) } : {}),
           });
           return reply.code(202).send(result);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
-          return reply.code(message.includes("MB 上限") ? 413 : 400).send({ error: message });
+          const code = message === "file_entry_not_found" ? 422 : message.includes("MB 上限") ? 413 : 400;
+          return reply.code(code).send({ error: message });
         }
       },
     );

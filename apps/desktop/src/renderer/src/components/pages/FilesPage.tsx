@@ -413,6 +413,11 @@ export function FilesPage({
 
   const openOriginal = (file: FileCatalogDto) => {
     if (!filesApi) return
+    // Agent 产物在所属 Room 的产物库编辑预览；文件页不再重复开只读标签。
+    if (file.sourceKind === 'agent-generated') {
+      setMessage(t('surface:files.agentGeneratedOpenInRoom'))
+      return
+    }
     void runFileAction(file.id, async () => {
       try {
         const result = await filesApi.openOriginal(file.id, file.originalName, file.contentHash)

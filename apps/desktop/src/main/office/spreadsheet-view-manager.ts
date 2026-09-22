@@ -64,10 +64,11 @@ export class SpreadsheetViewManager {
     this.bounds = bounds; this.view.setBounds(bounds); this.view.setVisible(this.active && bounds.width > 0 && bounds.height > 0)
   }
 
-  readonly dispose = (): void => {
-    if (this.disposed) return
+  readonly dispose = async (): Promise<boolean> => {
+    if (this.disposed) return true
     this.disposed = true
     ipcMain.removeListener(OFFICE_WORKSPACE_BOUNDS_CHANNEL, this.handleBounds)
     if (!this.view.webContents.isDestroyed()) this.view.webContents.close({ waitForBeforeUnload: false })
+    return true
   }
 }

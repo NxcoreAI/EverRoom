@@ -18,6 +18,9 @@ export interface GenOfficeDocsRuntime {
   markDocsNewBlank(wcId: number): void
   queueDocsAiContent(wcId: number, content: { title: string; html: string }): void
   registerDocsIpc(): void
+  /** 脏关闭守卫：true = 可以关闭（Save 已执行/无改动）；Cancel = false。 */
+  requestDocsClose(contents: WebContents, parent?: BrowserWindow | null): Promise<boolean>
+  docsQueryDirty(contents: WebContents): Promise<boolean>
   setActiveDocsResolver(resolve: (() => WebContents | null) | null): void
   setDocsFileSavedHook(hook: (contents: WebContents, filePath: string) => void): void
   setDocsShellWindow(window: BrowserWindow | null): void

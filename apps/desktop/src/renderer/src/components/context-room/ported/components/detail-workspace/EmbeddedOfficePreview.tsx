@@ -41,7 +41,15 @@ export function EmbeddedOfficePreview({
         height: bounds.height,
       })
     }
-    void files.openOriginal(resource.fileId, resource.originalName)
+    // 产物编辑：docx 传 editable（主进程注册表据此建可编辑视图并把保存回填版本链）；
+    // 其余 Office 格式仍只读预览。
+    const editable = resource.originalName.toLowerCase().endsWith('.docx')
+    void files.openOriginal(
+      resource.fileId,
+      resource.originalName,
+      undefined,
+      editable ? { editable: true, roomId: room.id } : undefined,
+    )
       .then((result) => {
         if (disposed) return
         if (result?.openedWith !== 'office') {

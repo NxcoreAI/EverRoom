@@ -16,25 +16,45 @@ let hookWired = false
 
 // setDocsFileSavedHook 是全局单槽位：按 webContents id 扇出给并发生成请求。
 const pendingSaves = new Map<number, (filePath: string) => void>()
+// 同一槽位的第二路扇出：预览编辑回填订阅（生成流程不受影响）。
+const savedListeners = new Map<number, Set<(filePath: string) => void>>()
+
+/** 订阅某 docs webContents 的保存事件（任意保存形态：save/save-as/save-new）。 */
+export function onDocsSaved(wcId: number, listener: (filePath: string) => void): () => void {
+  const set = savedListeners.get(wcId) ?? new Set()
+  set.add(listener)
+  savedListeners.set(wcId, set)
+  return () => {
+    set.delete(listener)
+    if (set.size === 0) savedListeners.delete(wcId)
+  }
+}
 
 /** 生成阶段（渲染层做进度提示用）：视图就绪 → 落盘。 */
 export type DocxGenerationPhase = 'rendering' | 'saved'
 
+/** docs 保存 hook 全局只装一次（幂等）：生成 pendingSaves 与编辑回填监听共享扇出。 */
 function ensureRuntime(): PreparedGenOfficeRuntime {
   runtime ??= loadPreparedGenOfficeRuntime()
   if (!hookWired) {
-    // registerDocsIpc 自带进程级幂等守卫，与 Office 预览共存安全。
-    runtime.docs.registerDocsIpc()
-    runtime.docs.setDocsFileSavedHook((contents, filePath) => {
-      const resolve = pendingSaves.get(contents.id)
-      if (resolve) {
-        pendingSaves.delete(contents.id)
-        resolve(filePath)
-      }
-    })
-    hookWired = true
+    wireDocsSavedHook(runtime)
   }
   return runtime
+}
+
+export function wireDocsSavedHook(target: PreparedGenOfficeRuntime): void {
+  if (hookWired) return
+  // registerDocsIpc 自带进程级幂等守卫，与 Office 预览共存安全。
+  target.docs.registerDocsIpc()
+  target.docs.setDocsFileSavedHook((contents, filePath) => {
+    const resolve = pendingSaves.get(contents.id)
+    if (resolve) {
+      pendingSaves.delete(contents.id)
+      resolve(filePath)
+    }
+    for (const listener of savedListeners.get(contents.id) ?? []) listener(filePath)
+  })
+  hookWired = true
 }
 
 export interface GeneratedDocx {

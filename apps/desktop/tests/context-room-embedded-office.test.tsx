@@ -132,7 +132,13 @@ describe('Room 右区内嵌 Office 预览（Agent 产物替换云文档位置）
     }))
 
     const host = await renderWorkspaceContent(agentDocxResource())
-    expect(bridge.openOriginal).toHaveBeenCalledWith('file-agent-docx', '本周总结.docx')
+    // docx 产物：编辑预览（editable + roomId 归属，主进程据此回填版本链）。
+    expect(bridge.openOriginal).toHaveBeenCalledWith(
+      'file-agent-docx',
+      '本周总结.docx',
+      undefined,
+      { editable: true, roomId: 'room-test' },
+    )
     expect(host.querySelectorAll('[data-office-file-id="file-agent-docx"]')).toHaveLength(1)
     expect(getEmbeddedOffice()).toMatchObject({
       roomId: 'room-test',

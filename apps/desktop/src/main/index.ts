@@ -80,6 +80,7 @@ import { AiRelayKeeper, type AiRelayKeeperEvent } from './cloud/ai-relay-keeper'
 import { RemoteAgentCommandClient } from './cloud/remote-agent-command-client'
 import { AgentNotificationBridgeServer } from './cloud/agent-notification-bridge'
 import { OfficeBridgeServer } from './gateway/office-bridge'
+import type { OfficeAgentFileEvent } from '../shared/office'
 import { MacosPushNotificationService } from './cloud/macos-push-notifications'
 import { parseAgentNotificationTarget, type AgentNotificationTarget, type NotificationPreferences } from '../shared/notifications'
 import { AsrCoordinator } from './asr/asr-coordinator'
@@ -821,6 +822,14 @@ let transcriptionProcessingCoordinator: TranscriptionProcessingCoordinator | nul
 let shutdownStarted = false
 let clearUserDataOnQuit = false
 const officePreviewRegistry = new OfficePreviewRegistry()
+
+/** office:agent-file 事件扇出到所有渲染窗口（生成进度/完成 + 编辑回填结果共用通道）。 */
+function broadcastOfficeAgentFileEvent(event: OfficeAgentFileEvent): void {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) window.webContents.send('office:agent-file', event)
+  }
+}
+
 const queuedProtocolUrls: string[] = []
 let screenshotOutbox: ScreenshotOutbox | null = null
 const captureAndQueueCurrentWindow = async () => {
@@ -933,12 +942,12 @@ ipcMain.handle('office:instance:set-active', (event, id: unknown) => {
   return officePreviewRegistry.setActive(id === null ? null : id)
 })
 
-ipcMain.handle('office:instance:close', (event, id: unknown) => {
+ipcMain.handle('office:instance:close', async (event, id: unknown) => {
   const window = BrowserWindow.fromWebContents(event.sender)
   if (!window || window.isDestroyed()) throw new Error('EverRoom 主窗口不可用。')
   if (typeof id !== 'string') return false
-  officePreviewRegistry.close(id)
-  return true
+  // false = 可编辑实例在脏关闭守卫里被取消：渲染层保留标签不卸载。
+  return officePreviewRegistry.close(id)
 })
 
 function focusMainWindow(): void {
@@ -2571,6 +2580,7 @@ function registerFilesHandlers(
     fileId: string,
     originalName?: string,
     contentHash?: string,
+    options?: { editable?: unknown; roomId?: unknown },
   ) => {
     // 文件页入口自带列表里的 originalName/contentHash；Context Room 等 knowledge
     // 文件入口只带文件名——其 id 可能是统一导入目录条目，遗留通道的 /v1/files/:id
@@ -2594,6 +2604,10 @@ function registerFilesHandlers(
     const effectiveHash = contentHash ?? await hashFileBytes(storagePath)
     // 顶栏预览标签支持多开：同 fileId 复用实例，hash 变化原地重建；激活由渲染端驱动。
     // 旧格式依赖本机 LibreOffice：未安装或转换失败时回退外部应用打开。
+    // editable 仅 Room 产物的 docx 编辑预览传 true：注册表把它算进实例身份，
+    // 与顶栏只读标签互不复用；其余调用方缺省只读。
+    const editable = options?.editable === true
+    const roomId = typeof options?.roomId === 'string' && options.roomId ? options.roomId : undefined
     let descriptor
     try {
       descriptor = await officePreviewRegistry.open(window, {
@@ -2601,6 +2615,8 @@ function registerFilesHandlers(
         contentHash: effectiveHash,
         originalName,
         storagePath,
+        ...(editable ? { editable: true } : {}),
+        ...(roomId ? { roomId } : {}),
       })
     } catch (error) {
       if (!legacy) throw error
@@ -3547,11 +3563,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     // 生成进度/完成事件推给所有渲染窗口（进度提示 + 完成自动打开预览）。
     officeBridgeServer = new OfficeBridgeServer(
       () => officeFilesBridge,
-      (event) => {
-        for (const window of BrowserWindow.getAllWindows()) {
-          if (!window.isDestroyed()) window.webContents.send('office:agent-file', event)
-        }
-      },
+      broadcastOfficeAgentFileEvent,
     )
     const officeBridge = await officeBridgeServer.start().catch((error) => {
       console.warn('Office bridge unavailable; office generation tool stays disabled.', error)
@@ -3692,6 +3704,14 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     registerMigrationHandlers(migrationCoordinator)
     clipperAssetBridge = filesGatewayBridge
     officeFilesBridge = filesGatewayBridge
+    // Room 产物 docx 人手编辑：保存 → 去抖重导入（fileEntryId 钉条目走版本链）→ 广播刷新。
+    officePreviewRegistry.setEditSync({
+      importAgentFile: (input) => {
+        if (!officeFilesBridge) return Promise.reject(new Error('文件网关不可用。'))
+        return officeFilesBridge.importAgentGeneratedFile(input)
+      },
+      broadcast: broadcastOfficeAgentFileEvent,
+    })
     browserExtensionService?.setCaptureHandlers({
       create: (capture) => filesGatewayBridge.createClipCapture(capture),
       uploadAsset: (captureId, assetId, data) => filesGatewayBridge.uploadClipAsset(captureId, assetId, data),
@@ -3996,7 +4016,7 @@ app.on('before-quit', (event) => {
   privateSync?.stop()
   void notificationBridge?.stop()
   pushNotificationsService?.stop()
-  officePreviewRegistry.disposeAll()
+  void officePreviewRegistry.disposeAll()
   if (connectorConsole && !connectorConsole.isDestroyed()) connectorConsole.destroy()
   connectorCli?.shutdown()
   agentBridge?.dispose()
