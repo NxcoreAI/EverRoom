@@ -7,7 +7,7 @@ import { useLocale } from '../../../../../i18n/LocaleContext';
 import type { KnowledgeFileDto, EmergenceFocusChapter } from '../../../../../../../shared/knowledge';
 import { officePreviewKindForFileName } from '../../../../../../../shared/sources';
 import { createContextRoomResourceLibrary } from '../../resources';
-import type { ContextRoomRecord, ContextRoomResource } from '../../types';
+import type { ContextRoomRecord, ContextRoomResource, ContextRoomWikiPageResource } from '../../types';
 import { EmbeddedOfficePreview } from './EmbeddedOfficePreview';
 import { ExternalImportDialog } from '../detail-editor/ExternalImportDialog';
 import { externalDocumentFeatures } from '../detail-editor/externalDocumentFeatures';
@@ -72,6 +72,7 @@ export function WorkspaceContent({
   onChapterChange,
   onMobileBack,
   onUpdateRoom,
+  onOpenWikiPage,
 }: {
   room: ContextRoomRecord;
   selectedResource: ContextRoomResource | null;
@@ -88,6 +89,8 @@ export function WorkspaceContent({
   onChapterChange: (chapter: EmergenceFocusChapter | null) => void;
   onMobileBack: () => void;
   onUpdateRoom: (updater: (room: ContextRoomRecord) => ContextRoomRecord) => void;
+  /** wiki 页面双链点击跳转（编辑栏内换页）。 */
+  onOpenWikiPage?: (resource: ContextRoomWikiPageResource) => void;
 }) {
   const { locale, t } = useLocale();
   // 右区常驻文档阅读器：任务/会议/邮件等数据预览在各自面板内展示，
@@ -125,7 +128,7 @@ export function WorkspaceContent({
             ? <KnowledgeFileReader resource={selectedResource} />
             : <KnowledgeFileExternalCard resource={selectedResource} />
         ) : selectedResource?.kind === 'wiki-page' ? (
-          <WikiPageReader resource={selectedResource} />
+          <WikiPageReader resource={selectedResource} onOpenWikiPage={onOpenWikiPage} />
         ) : (
           <>
             <div className="context-room-document-actions context-room-empty-doc-actions">

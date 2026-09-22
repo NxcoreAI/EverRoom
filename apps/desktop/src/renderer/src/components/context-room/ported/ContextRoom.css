@@ -11517,6 +11517,24 @@
   text-underline-offset: 3px;
 }
 
+/* [[双链]]：站内跳转，弱下划线 + 指针，悬停加强提示可点 */
+.context-room-wiki-markdown .context-room-wikilink {
+  font-weight: 500;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.context-room-wiki-markdown .context-room-wikilink:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* 无跳转处理器时双链退化为正文文本 */
+.context-room-wiki-markdown .context-room-wikilink.is-unlinked {
+  font-weight: 400;
+  cursor: inherit;
+}
+
 .context-room-wiki-markdown blockquote {
   padding-left: 14px;
   margin: 0 0 14px;

@@ -125,6 +125,7 @@ export function App() {
   const [agentRoomCitations, setAgentRoomCitations] = useState<RoomOverviewCitation[]>([])
   const [agentNavigationRequest, setAgentNavigationRequest] = useState<AgentNavigationRequest | null>(null)
   const [agentSessionRouteRequest, setAgentSessionRouteRequest] = useState<AgentSessionRouteRequest | null>(null)
+  const [agentAskRequest, setAgentAskRequest] = useState<{ key: string; roomId: string; message: string } | null>(null)
   const [remoteNotificationTarget, setRemoteNotificationTarget] = useState<AgentNotificationTarget | null>(null)
   const [agentDocumentFocus, setAgentDocumentFocus] = useState<{
     roomId: string
@@ -324,8 +325,9 @@ export function App() {
   }, [])
 
   // 窄窗不再隐藏左侧栏；改为自动折叠右侧 AI 面板（用户可随时手动展开）。
+  // 断点与 CSS/初始态一致取 1200px（此前 900px 低于主窗 minWidth，监听永不触发）。
   useEffect(() => {
-    const compactWindow = window.matchMedia('(max-width: 900px)')
+    const compactWindow = window.matchMedia('(max-width: 1200px)')
     const collapseAgent = (event: MediaQueryListEvent | MediaQueryList) => {
       if (event.matches) setAgentOpen(false)
     }
@@ -688,6 +690,19 @@ export function App() {
     })
   }, [activateContextRoomTab, availableContextRooms, openContextRoomTab, t])
 
+  // slides「AI 修改」弹层转发（office 桥）：切到元素所属 Room，把组装好的
+  // 修改指令自动发给 Agent（AgentPanel 按 roomId 匹配后消费，自动发送）。
+  useEffect(() => {
+    const office = window.nxcore?.office
+    if (!office?.onAgentAsk) return
+    return office.onAgentAsk((payload) => {
+      const room = availableContextRooms.find((item) => item.id === payload.roomId)
+      if (room) openContextRoomTab(room)
+      else activateContextRoomTab(payload.roomId)
+      setAgentAskRequest({ key: `agent-ask-${Date.now()}`, roomId: payload.roomId, message: payload.message })
+    })
+  }, [activateContextRoomTab, availableContextRooms, openContextRoomTab])
+
   const syncContextRoomTabs = useCallback((rooms: ContextRoomWorkspaceTab[]) => {
     // 全空投影是网关启动/快照刷新窗口的瞬时态，不是真实清空——本地删除 Room
     // 会把它挪进 deletedRooms（届时投影为空但删除记录在场）。保留现有标签与
@@ -1013,6 +1028,8 @@ export function App() {
           roomBackendReady={contextRoomBackendReady}
           navigationRequest={agentNavigationRequest}
           sessionRouteRequest={agentSessionRouteRequest}
+          askRequest={agentAskRequest}
+          onAskConsumed={(key) => setAgentAskRequest((current) => current?.key === key ? null : current)}
           onNavigate={navigateFromAgent}
           onRestoreRoomTab={restoreContextRoomTab}
           onNavigationConsumed={(key) => setAgentNavigationRequest((current) => current?.key === key ? null : current)}

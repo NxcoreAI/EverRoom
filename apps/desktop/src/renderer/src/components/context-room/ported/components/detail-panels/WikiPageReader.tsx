@@ -3,16 +3,23 @@ import { useLocale } from '../../../../../i18n/LocaleContext';
 
 import { showToast } from '@/state/toast';
 
+import type { KnowledgeWikiPageDto } from '../../../../../../../shared/knowledge';
 import type { ContextRoomWikiPageResource } from '../../types';
-import { MarkdownBody } from './MarkdownBody';
+import { MarkdownBody, resolveWikiLinkTarget } from './MarkdownBody';
 
 /**
  * 编辑栏的 wiki 页面阅读器（room-wiki 方案 M3c）：readWikiPage 只读渲染，
  * 不复用 TiptapDocumentEditor（那会触发 documents.import 副作用）。
  */
-export function WikiPageReader({ resource }: { resource: ContextRoomWikiPageResource }) {
+export function WikiPageReader({ resource, onOpenWikiPage }: {
+  resource: ContextRoomWikiPageResource;
+  /** 双链点击跳转：换选中资源（与目录树点击同链路）。 */
+  onOpenWikiPage?: (resource: ContextRoomWikiPageResource) => void;
+}) {
   const { t } = useLocale();
   const [markdown, setMarkdown] = useState<string | null>(null);
+  // 双链解析需要页面清单（[[标题]] → 页面 path）；拉取失败时双链降级为不可点
+  const [pages, setPages] = useState<KnowledgeWikiPageDto[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -30,6 +37,35 @@ export function WikiPageReader({ resource }: { resource: ContextRoomWikiPageReso
     return () => { cancelled = true; };
   }, [resource.roomId, resource.wikiPath, t]);
 
+  useEffect(() => {
+    let cancelled = false;
+    const knowledge = window.nxcore?.knowledge;
+    if (!knowledge) return;
+    knowledge.listWikiPages(resource.roomId)
+      .then((data) => { if (!cancelled) setPages(data.items); })
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [resource.roomId]);
+
+  const openWikiLink = onOpenWikiPage
+    ? (target: string) => {
+        const page = resolveWikiLinkTarget(target, pages);
+        if (!page) {
+          showToast({ title: t('contextRoom:wiki.unresolvedLink') });
+          return;
+        }
+        onOpenWikiPage({
+          id: `${resource.roomId}:wiki:${page.path}`,
+          roomId: resource.roomId,
+          folderId: null,
+          name: page.title,
+          updatedAt: '',
+          kind: 'wiki-page',
+          wikiPath: page.path,
+        });
+      }
+    : undefined;
+
   return (
     <div className="context-room-wiki-reader-pane">
       <header>
@@ -40,7 +76,7 @@ export function WikiPageReader({ resource }: { resource: ContextRoomWikiPageReso
         {markdown === null ? (
           <div className="context-room-workspace-empty">{t('contextRoom:wikiPageReader.loading')}</div>
         ) : (
-          <MarkdownBody markdown={markdown} />
+          <MarkdownBody markdown={markdown} onWikiLink={openWikiLink} />
         )}
       </div>
     </div>

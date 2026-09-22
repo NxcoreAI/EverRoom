@@ -390,6 +390,7 @@ export function WorkspaceLayout({
               onChapterChange={roomFocus.setChapter}
               onMobileBack={() => setMobileContent(false)}
               onUpdateRoom={onUpdateRoom}
+              onOpenWikiPage={onOpenWikiPage}
             />
           </>
         )}

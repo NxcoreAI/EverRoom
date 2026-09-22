@@ -1533,6 +1533,7 @@
   "wiki.sourceFiles": "来源文件",
   "wiki.thereAreNoLinksBetweenPagesYet": "页面之间还没有内链，图谱为空。",
   "wiki.thisRoomHasNoCapturedKnowledgeYetSubmitted": "这个 Room 还没有知识沉淀：Room 内文档提交后会自动整理成知识页面。",
+  "wiki.unresolvedLink": "链接指向的页面不存在",
   "wiki.uploadFailed": "上传失败",
   "wiki.uploadFiles": "上传文件",
   "wiki.uploadingFiles": "正在上传文件",

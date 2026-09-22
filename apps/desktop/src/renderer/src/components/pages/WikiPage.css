@@ -280,6 +280,28 @@
   margin: 0 auto;
 }
 
+/* [[双链]]：站内跳转（本页不加载 ContextRoom.css，样式自带） */
+.wiki-preview .context-room-wikilink,
+.wiki-node-drawer-body .context-room-wikilink {
+  color: var(--accent);
+  font-weight: 500;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.wiki-preview .context-room-wikilink:hover,
+.wiki-node-drawer-body .context-room-wikilink:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.wiki-preview .context-room-wikilink.is-unlinked,
+.wiki-node-drawer-body .context-room-wikilink.is-unlinked {
+  color: inherit;
+  font-weight: 400;
+  cursor: inherit;
+}
+
 .wiki-preview-header {
   display: flex;
   flex-direction: column;

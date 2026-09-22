@@ -74,6 +74,22 @@ export interface GenOfficeSlidesRuntime {
   requestSlidesClose(contents: WebContents, parent?: BrowserWindow | null): Promise<boolean>
   setActiveSlidesWebContents(contents: WebContents | null): void
   setSlidesFileSavedHook(hook: (contents: WebContents, filePath: string) => void): void
+  /** 「AI 修改」弹层转发（embed 宿主接管；id 空间 = 大纲/编辑 op 的 durable id）。 */
+  setSlidesAgentAskHook(
+    hook:
+      | ((
+          wcId: number,
+          op: {
+            instruction: string
+            slideIndex: number
+            targets: Array<{
+              id: string
+              desc: { type: string; text?: string; rows?: number; cols?: number }
+            }>
+          },
+        ) => Promise<{ ok: true } | { ok: false; error: string }>)
+      | null,
+  ): void
   setSlidesShellWindow(window: BrowserWindow | null): void
   slidesIsDirty(webContentsId: number): boolean
   /** Agent 幻灯片生成：页 spec JSON 数组 → 单文件 .pptx 字节（无渲染端参与）。 */
