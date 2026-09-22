@@ -96,6 +96,17 @@ export function vlmFieldsFromSnapshot(snapshot: RuntimeConfigSnapshot | null): M
   }
 }
 
+/** 从快照 config.lite 播种（缺段给空表单；连接字段留空＝沿用 primary）。 */
+export function liteFieldsFromSnapshot(snapshot: RuntimeConfigSnapshot | null): ManualAiConfigFields {
+  const value = sectionOf(snapshot?.config as Record<string, unknown> | undefined, 'lite')
+  return {
+    provider: textOf(value, 'provider', 'openai-compatible'),
+    model: textOf(value, 'model'),
+    baseUrl: textOf(value, 'baseUrl'),
+    apiKey: textOf(value, 'apiKey'),
+  }
+}
+
 /** 从快照 config.asr + asr.oss 播种（缺段给空表单；oss secrets 掩码留空）。 */
 export function asrFieldsFromSnapshot(snapshot: RuntimeConfigSnapshot | null): ManualAsrFields {
   const value = sectionOf(snapshot?.config as Record<string, unknown> | undefined, 'asr')
@@ -146,6 +157,7 @@ export function buildUserConfig(
     embedding?: ManualAiConfigFields
     vlm?: ManualAiConfigFields
     asr?: ManualAsrFields
+    lite?: ManualAiConfigFields
   },
 ): Record<string, unknown> {
   const base = (snapshot?.config ?? {}) as Record<string, unknown>
@@ -156,6 +168,9 @@ export function buildUserConfig(
     result.knowledge = { ...knowledge, embedding: trimmedAiFields(sections.embedding) }
   }
   if (sections.vlm) result.vlm = trimmedAiFields(sections.vlm)
+  // lite 连接字段写空串：gateway 侧 model 空＝未配置（档位隐藏），
+  // model 有值而连接空＝继承 primary 的供应商/接口/密钥。
+  if (sections.lite) result.lite = trimmedAiFields(sections.lite)
   if (sections.asr) {
     const { oss, ...scalar } = sections.asr
     result.asr = {
@@ -188,6 +203,18 @@ export function aiFieldsError(fields: ManualAiConfigFields, t: (key: string) => 
   if (isAiFieldsEmpty(fields)) return null
   const filled = [fields.model, fields.baseUrl, fields.apiKey].filter((value) => value.trim()).length
   return filled === 3 ? null : t('surface:configGate.embeddingIncomplete')
+}
+
+/**
+ * 轻量模型段校验：model 是唯一必填项（连接字段留空时 gateway 会继承
+ * primary 的供应商/接口/密钥）。全空＝未配置；只填连接字段没填 model 视为
+ * 填写不完整。
+ */
+export function liteFieldsError(fields: ManualAiConfigFields, t: (key: string) => string): string | null {
+  if (fields.model.trim()) return null
+  const hasOverride = [fields.baseUrl, fields.apiKey].some((value) => value.trim())
+    || (fields.provider.trim() && fields.provider.trim() !== 'openai-compatible')
+  return hasOverride ? t('surface:configGate.embeddingIncomplete') : null
 }
 
 /**

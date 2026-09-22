@@ -1,0 +1,16 @@
+schemaVersion: 1
+kind: builtin
+id: main-lite
+name: Main Agent (Lite)
+description: 轻量模型直答档——处理简单对话与轻量文本工作，更快更省
+runtime: pi
+systemPrompt: ./SYSTEM.md
+skills: []
+
+capabilities:
+  - conversation.respond
+  - memory.read
+  - knowledge.read
+  - context-room.read
+
+tools: []

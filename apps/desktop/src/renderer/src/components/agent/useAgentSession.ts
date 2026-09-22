@@ -3,6 +3,7 @@ import type {
   AgentActiveDocumentContext,
   AgentFileAttachment,
   AgentMessage,
+  AgentModelPreference,
   AgentRoomReference,
   AgentSession,
   AgentSessionLink,
@@ -65,6 +66,24 @@ export function removeAgentRunMessages(
 
 const SESSION_KEY_BASE = 'nxcore-ce:agent-session'
 const SESSION_KEY_VERSION = 2
+const MODEL_PREFERENCE_STORAGE_KEY = 'nxcore-ce:agent-model-preference:v1'
+
+function readStoredModelPreference(): AgentModelPreference {
+  try {
+    const raw = localStorage.getItem(MODEL_PREFERENCE_STORAGE_KEY)
+    return raw === 'primary' || raw === 'lite' ? raw : 'smart'
+  } catch {
+    return 'smart'
+  }
+}
+
+function persistModelPreference(tier: AgentModelPreference): void {
+  try {
+    localStorage.setItem(MODEL_PREFERENCE_STORAGE_KEY, tier)
+  } catch {
+    // localStorage 不可用时仅本次会话生效。
+  }
+}
 // pre-v2 世代用复数 key 存 per-page map（keyBase 不同，框架走不到），
 // 认领时框架外兜底一次：取任一会话 id 作为当前选择。
 const LEGACY_SESSION_STORAGE_KEY = 'nxcore-ce:agent-sessions:v1'
@@ -648,13 +667,23 @@ export function useAgentSession(
     }
   }, [api, applyEvent, hydrateSnapshot, selectSession])
 
+  // 全局默认档位：新会话创建时锁定到 session.activeAgentId（后端权威）。
+  // 切换只影响下一个新会话，进行中的会话档位以 currentSession.modelPreference 为准。
+  const [modelPreferenceDefault, setModelPreferenceDefaultState] = useState<AgentModelPreference>(readStoredModelPreference)
+  const modelPreferenceRef = useRef(modelPreferenceDefault)
+  const setModelPreferenceDefault = useCallback((tier: AgentModelPreference) => {
+    modelPreferenceRef.current = tier
+    setModelPreferenceDefaultState(tier)
+    persistModelPreference(tier)
+  }, [])
+
   const createSession = async (
     pendingMessages: DisplayAgentMessage[] = [],
   ): Promise<AgentSession> => {
     if (!api) throw new Error(t('surface:useAgentSession.desktopOnly'))
     if (activeRunId) throw new Error(t('surface:useAgentSession.stopBeforeCreating'))
     try {
-      const session = await api.createSession({ pageLabel: 'Agent', roomId: null })
+      const session = await api.createSession({ pageLabel: 'Agent', roomId: null, modelPreference: modelPreferenceRef.current })
       setSessions((current) => [session, ...current])
       await selectSession(session, pendingMessages)
       return session
@@ -882,19 +911,21 @@ export function useAgentSession(
       const run = await api!.startRun(currentSessionId, {
         prompt: message,
         idempotencyKey: crypto.randomUUID(),
-        targetAgentId: selectedAgentId,
+        // 'main' 时省略 targetAgentId：档位锁定在会话上，由网关按 session.activeAgentId 选运行时。
+        ...(selectedAgentId !== 'main' ? { targetAgentId: selectedAgentId } : {}),
         invocationMode: 'explicit_switch',
         ...(replaceRunId ? { replaceRunId } : {}),
         responseLanguage: locale,
         ...(effectiveMemoryScope ? { memoryScope: effectiveMemoryScope } : {}),
         context: buildAgentRunContext(rooms, selectedText, selectedRoomId, activeDocument, pageLabel, attachments, referencedConversationId, mentionedAgents?.map((agent) => agent.id)),
       })
+      const runAgentId = run.agentId ?? selectedAgentId
       setMemoryScopeByRun((current) => current[run.id] === (effectiveMemoryScope ?? 'global')
         ? current
         : { ...current, [run.id]: effectiveMemoryScope ?? 'global' })
-      setAgentIdByRun((current) => current[run.id] === selectedAgentId
+      setAgentIdByRun((current) => current[run.id] === runAgentId
         ? current
-        : { ...current, [run.id]: selectedAgentId })
+        : { ...current, [run.id]: runAgentId })
       const updatedAt = new Date().toISOString()
       const runCompleted = terminalRunIdsRef.current.has(run.id)
       setSessions((current) => current.map((session) => session.id === currentSessionId
@@ -908,7 +939,7 @@ export function useAgentSession(
       setCurrentSession((current) => current?.id === currentSessionId
         ? {
             ...current,
-            activeAgentId: selectedAgentId,
+            activeAgentId: runAgentId,
             title: current.title ?? message.slice(0, 48),
             ...(!runCompleted ? { status: 'running' as const } : {}),
             updatedAt,
@@ -1022,6 +1053,8 @@ export function useAgentSession(
     error,
     loading: loading || sending,
     messages,
+    modelPreferenceDefault,
+    setModelPreferenceDefault,
     pendingApprovals,
     reasoningByRun,
     runCompletedAtByRun,

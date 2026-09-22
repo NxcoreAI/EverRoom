@@ -1,0 +1,20 @@
+schemaVersion: 1
+kind: builtin
+id: main-direct
+name: Main Agent (Direct)
+description: 强模型直连档——与主 Agent 同人格，不委派轻量模型，全程强模型作答
+runtime: pi
+systemPrompt: ./SYSTEM.md
+skills: []
+
+capabilities:
+  - conversation.respond
+  - memory.read
+  - knowledge.read
+  - context-room.read
+  - context-room.propose-write
+  - connector.read
+  - connector.write-with-approval
+  - web.search
+
+tools: []

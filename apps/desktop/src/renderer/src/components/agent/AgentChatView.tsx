@@ -21,7 +21,7 @@ import {
 } from './agentDocumentSelection'
 import { useLinkedAgentRun, type LinkedAgentRunState } from './useLinkedAgentRun'
 import type { DisplayAgentMessage, DisplayAgentToolCall } from './useAgentSession'
-import type { AgentNavigationTarget, AgentRoomReference, AgentSessionLink, PendingAgentIntent, RoomDocument } from '@nxcore/agent-contract'
+import { modelPreferenceFromAgentId, type AgentNavigationTarget, type AgentRoomReference, type AgentSessionLink, type PendingAgentIntent, type RoomDocument } from '@nxcore/agent-contract'
 import type { ActiveDocumentDescriptor } from './activeDocumentContext'
 import { writeTextToClipboard } from '../../lib/systemClipboard'
 import { useLocale, type Translate } from '../../i18n/LocaleContext'
@@ -190,10 +190,24 @@ function displayAgentName(agentId: string | null | undefined, names: Record<stri
   return names[agentId] ?? fallbackAgentNames[provider] ?? (provider || agentId)
 }
 
+const modelTierBadgeKeys = {
+  primary: 'surface:agentComposer.modelTierPrimary',
+  lite: 'surface:agentComposer.modelTierLite',
+} as const
+
 function AgentResponseByline({ agentId, names }: { agentId?: string | null; names: Record<string, string> }) {
+  const { t } = useLocale()
   const name = displayAgentName(agentId, names)
-  if (!name) return null
-  return <div className="agent-response-byline"><span>{name}</span></div>
+  // smart 是默认档位，沉默处理；仅非默认档位标注来源。
+  const tier = modelPreferenceFromAgentId(agentId)
+  const tierKey = tier && tier !== 'smart' ? modelTierBadgeKeys[tier] : null
+  if (!name && !tierKey) return null
+  return (
+    <div className="agent-response-byline">
+      {name ? <span>{name}</span> : null}
+      {tierKey ? <span className="agent-model-tier-badge">{t(tierKey)}</span> : null}
+    </div>
+  )
 }
 
 const navigationPageLabels: Record<string, string> = {

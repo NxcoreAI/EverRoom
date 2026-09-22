@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { AgentNavigationTarget, AgentRoomReference, AgentSessionLink, PendingAgentIntent, ExternalConversationSummary } from '@nxcore/agent-contract'
+import type { AgentModelPreference, AgentNavigationTarget, AgentRoomReference, AgentSessionLink, PendingAgentIntent, ExternalConversationSummary } from '@nxcore/agent-contract'
 
 import { AgentChatView } from '@/components/agent/AgentChatView'
 import { AgentComposer } from '@/components/agent/AgentComposer'
@@ -498,6 +498,21 @@ export function AgentPanel({
     }
   }
 
+  // 轻量档可用性：lite 配置了 model 才算可用（网关约定：model 空＝未配置＝档位隐藏）。
+  // 每次打开选择器时由 composer 拉取，设置页保存后无需重启。
+  const loadLiteModelAvailability = useCallback(async (): Promise<boolean> => {
+    try {
+      const snapshot = await window.nxcore?.runtimeConfig?.get()
+      const lite = (snapshot?.config as { lite?: { model?: unknown } } | undefined)?.lite
+      return typeof lite?.model === 'string' && lite.model.trim() !== ''
+    } catch {
+      return false
+    }
+  }, [])
+
+  const modelTierLocked = Boolean(session.sessionId)
+  const effectiveModelPreference: AgentModelPreference = session.currentSession?.modelPreference ?? session.modelPreferenceDefault
+
   const composer = (
     <AgentComposer
       ref={composerRef}
@@ -512,6 +527,10 @@ export function AgentPanel({
       roomFocusEnabled={roomFocusEnabled}
       roomFocusRoomTitle={roomFocusRoomTitle}
       onToggleRoomFocus={toggleRoomFocus}
+      modelPreference={effectiveModelPreference}
+      modelPreferenceLocked={modelTierLocked}
+      loadModelAvailability={loadLiteModelAvailability}
+      onSelectModelPreference={session.setModelPreferenceDefault}
       value={draft}
       active={Boolean(session.activeRunId)}
       loading={session.loading || submitting}
