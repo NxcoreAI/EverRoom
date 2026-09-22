@@ -317,6 +317,8 @@ export interface GatewayConfig {
   /** agent 过滤器（ingest 第一级闸门）配置；enabled=false 直通。 */
   ingestFilter: IngestFilterConfig;
   backgroundPi: PiRuntimeConfig | null;
+  /** 轻量模型档（main-lite）；model 为空＝未配置（lite 档隐藏）。 */
+  litePi: PiRuntimeConfig | null;
   diaryMaxTokens?: number;
   subagents?: SubagentFrameworkConfig;
   /** agent MCP 配置文件绝对路径（设置页管理用）。 */
@@ -596,6 +598,11 @@ export function loadConfig(
     aiBackgroundMaxTokens: parsePositiveInteger(
       "NXCORE_AI_BACKGROUND_MAX_TOKENS",
       env.NXCORE_AI_BACKGROUND_MAX_TOKENS ?? "8192",
+    ),
+    aiLiteModel: env.NXCORE_AI_LITE_MODEL?.trim() ?? "",
+    aiLiteMaxTokens: parsePositiveInteger(
+      "NXCORE_AI_LITE_MAX_TOKENS",
+      env.NXCORE_AI_LITE_MAX_TOKENS ?? env.NXCORE_AI_MAX_TOKENS ?? "8192",
     ),
     diaryMaxTokens: parsePositiveInteger(
       "NXCORE_DIARY_MAX_TOKENS",
@@ -1088,6 +1095,17 @@ export function loadConfig(
           ...pi,
           model: rawConfig.aiBackgroundModel,
           maxTokens: rawConfig.aiBackgroundMaxTokens,
+        }
+      : null,
+    // lite 档恒从 pi 派生（连接要素继承主模型），model 空＝未配置：
+    // 与 background 不同，model 不回落主模型——档位只在显式配置后出现。
+    // 恒建对象（而非 model 空时 null）：runtime config 的 apply 只能打补丁，
+    // null 无法被用户配置补齐（webSearch 同理在 create-server 直接构造）。
+    litePi: pi
+      ? {
+          ...pi,
+          model: rawConfig.aiLiteModel,
+          maxTokens: rawConfig.aiLiteMaxTokens,
         }
       : null,
     subagents: {

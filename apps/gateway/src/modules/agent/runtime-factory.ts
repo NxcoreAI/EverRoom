@@ -15,6 +15,7 @@ import type { FormatMappingService } from "../connectors/format-mapping-service.
 import type { ConnectorManager } from "@nxcore/connectors-module/manager.js";
 import type { DiaryAgentGenerator } from "../diary/agent-generator.js";
 import { createWebSearchPiTools } from "./web-search-tools.js";
+import { createLiteDelegatePiTools } from "./lite-delegate-tools.js";
 import { OpenAiCompletionAgentRuntime } from "./openai-completion-runtime.js";
 import { AgentResolver, BUILTIN_AGENT_IDS, type AgentDefinition } from "./resolver.js";
 import { loadBuiltinAgentBundle } from "./builtin-bundles.js";
@@ -99,16 +100,33 @@ export function createAgentRuntime(
   mcpHost: DocumentMcpHost,
   knowledge?: AgentRuntimeIntegrationOptions,
 ): AgentRuntime {
-  const bundle = builtin(BUILTIN_AGENT_IDS.primary);
+  return createUserFacingRuntime(config, mcpHost, knowledge, BUILTIN_AGENT_IDS.primary, config.pi, true)
+    ?? new UnconfiguredAgentRuntime(BUILTIN_AGENT_IDS.primary);
+}
+
+/**
+ * 用户档 runtime 统一装配（main / main-direct / main-lite 共用）：
+ * 同一 primary 人设 bundle、同套工具（文档/连接器/联网搜索/knowledge），
+ * 差异仅在 pi 配置与 lite 委派工具。返回 null＝该 pi 未配置（调用方
+ * 决定占位或跳过注册）。
+ */
+function createUserFacingRuntime(
+  config: GatewayConfig,
+  mcpHost: DocumentMcpHost,
+  knowledge: AgentRuntimeIntegrationOptions | undefined,
+  agentId: string,
+  pi: GatewayConfig["pi"],
+  liteDelegate: boolean,
+): AgentRuntime | null {
   if (config.agentRuntime === "fake") return new FakeAgentRuntime();
-  // 降级启动：AI 未配置时返回占位 runtime（run 立即 runtime_config_not_ready），
-  // 等 runtime config 保存后 AgentResolver.reload 换成真实 Pi runtime。
-  if (!config.pi || !isPiRuntimeConfigured(config.pi)) return new UnconfiguredAgentRuntime(BUILTIN_AGENT_IDS.primary);
+  if (!pi || !isPiRuntimeConfigured(pi)) return null;
+  const bundle = builtin(BUILTIN_AGENT_IDS.primary);
+  const directories = agentDirectories(config, agentId);
   const routedRoomByRun = new Map<string, string>();
   return new PiAgentRuntime({
-    ...withAgentDirectories(config, BUILTIN_AGENT_IDS.primary, config.pi),
+    ...withAgentDirectories(config, agentId, pi),
     bashSandbox: {
-      allowedRoots: [agentDirectories(config, BUILTIN_AGENT_IDS.primary).workingDirectory],
+      allowedRoots: [directories.workingDirectory],
       timeoutMs: 30_000,
     },
     runtimeRole: "user-facing",
@@ -126,6 +144,10 @@ export function createAgentRuntime(
         : []),
       ...(config.webSearch && knowledge?.agentResolver
         ? createWebSearchPiTools(knowledge.agentResolver, knowledge.externalCalls)
+        : []),
+      // Smart 档专属：轻量模型可用时才暴露委派工具（primary/lite 档不挂）。
+      ...(liteDelegate && knowledge?.agentResolver && isPiRuntimeConfigured(config.litePi)
+        ? createLiteDelegatePiTools(knowledge.agentResolver)
         : []),
     ],
     promptGuidelines: mcpHost.capabilities.promptGuidelines(),
@@ -439,6 +461,58 @@ export function registerPrimaryAgent(
     mcpHost,
     { ...integrations, agentResolver: resolver },
   ));
+}
+
+/**
+ * 会话档位的两个衍生 runtime：
+ * - main-direct（primary 档）：与 main 同装配，仅无 lite 委派工具；
+ * - main-lite（lite 档）：litePi 配置齐全才注册（未配置＝lite 档隐藏）。
+ * 人设复用 primary bundle（同人格，不同引擎）。
+ */
+export function registerModelTierAgents(
+  resolver: AgentResolver,
+  config: GatewayConfig,
+  mcpHost: DocumentMcpHost,
+  integrations: AgentRuntimeIntegrationOptions,
+): void {
+  const bundle = builtin(BUILTIN_AGENT_IDS.primary);
+  resolver.register(definition(config, {
+    id: BUILTIN_AGENT_IDS.primaryDirect,
+    name: `${bundle.name}（直连）`,
+    description: `${bundle.description} 强模型直连档：不委派轻量模型。`,
+  }), () => createUserFacingRuntime(
+    config,
+    mcpHost,
+    { ...integrations, agentResolver: resolver },
+    BUILTIN_AGENT_IDS.primaryDirect,
+    config.pi,
+    false,
+  ) ?? new UnconfiguredAgentRuntime(BUILTIN_AGENT_IDS.primaryDirect));
+  registerLiteAgentIfMissing(resolver, config, mcpHost, integrations);
+}
+
+/** 动态注册 main-lite（boot 时未配置 litePi、runtime config 保存后生效）。 */
+export function registerLiteAgentIfMissing(
+  resolver: AgentResolver,
+  config: GatewayConfig,
+  mcpHost: DocumentMcpHost,
+  integrations: AgentRuntimeIntegrationOptions,
+): boolean {
+  if (!isPiRuntimeConfigured(config.litePi) || resolver.has(BUILTIN_AGENT_IDS.lite)) return false;
+  const bundle = builtin(BUILTIN_AGENT_IDS.primary);
+  resolver.register(definition(config, {
+    id: BUILTIN_AGENT_IDS.lite,
+    name: `${bundle.name}（轻量）`,
+    description: `${bundle.description} 轻量模型档：简单对话直答。`,
+  }), () => createUserFacingRuntime(
+    config,
+    mcpHost,
+    { ...integrations, agentResolver: resolver },
+    BUILTIN_AGENT_IDS.lite,
+    config.litePi,
+    false,
+  ) ?? new UnconfiguredAgentRuntime(BUILTIN_AGENT_IDS.lite));
+  return true;
 }
 
 export function createConnectorMapperAgentRuntime(

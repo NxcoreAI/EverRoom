@@ -52,9 +52,13 @@ import {
   createImportClassifierRuntime,
   createSessionTitleRuntime,
   createWritingStyleRuntime,
+  isPiRuntimeConfigured,
   registerDiaryAgent,
+  registerLiteAgentIfMissing,
+  registerModelTierAgents,
   registerPrimaryAgent,
   registerTranscriptionSummaryAgent,
+  type AgentRuntimeIntegrationOptions,
 } from "../modules/agent/runtime-factory.js";
 import { BUILTIN_AGENT_IDS } from "../modules/agent/resolver.js";
 import { registerWebSearchAgentIfMissing, registerConnectorMapperAgent } from "../modules/agent/runtime-factory.js";
@@ -190,6 +194,7 @@ function applyRuntimeConfig(config: GatewayConfig, runtime: RuntimeConfig): void
   };
   apply(config.pi as unknown as Record<string, unknown> | null, runtime.primary);
   apply(config.backgroundPi as unknown as Record<string, unknown> | null, runtime.background);
+  apply(config.litePi as unknown as Record<string, unknown> | null, runtime.lite);
   apply(config.cursorCompletionPi as unknown as Record<string, unknown> | null, runtime.cursorCompletion);
   // background/cursorCompletion 对齐 env 构建语义（config.ts 的 {...pi} 拷贝）：
   // runtime 段只携带部分覆盖（默认配置里这两段仅预置 api）时，四要素缺失项
@@ -197,6 +202,15 @@ function applyRuntimeConfig(config: GatewayConfig, runtime: RuntimeConfig): void
   // runtime 一直停留在未配置占位，任务永远 runtime_config_not_ready。
   inheritPrimaryDefaults(config.pi, config.backgroundPi);
   inheritPrimaryDefaults(config.pi, config.cursorCompletionPi);
+  // lite 档连接三要素（provider/baseUrl/apiKey）缺省继承 primary，但 model
+  // 不继承——model 空＝未配置 lite＝档位隐藏，回落主模型会冒充轻量档。
+  if (config.pi && config.litePi) {
+    for (const key of ["provider", "baseUrl", "apiKey"] as const) {
+      if (!config.litePi[key] && config.pi[key]) {
+        (config.litePi as unknown as Record<string, unknown>)[key] = config.pi[key];
+      }
+    }
+  }
   // webSearch：boot 时 config.webSearch 仅由 env 构造（config.ts 的
   // NXCORE_WEB_SEARCH_API_KEY 门），env 未配时为 null 且 apply 无法从 null
   // 构造——runtime 四要素齐全时直接构造，让云端下发的搜索配置真正生效。
@@ -883,7 +897,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   const localAgentDispatchSourceRef: { current: ((runId: string) => LocalAgentDispatchSource | undefined) | null } = {
     current: null,
   };
-  registerPrimaryAgent(agentResolver, config, documentMcpHost, {
+  const primaryIntegrations: AgentRuntimeIntegrationOptions = {
     externalCalls,
     tools: [
       ...createRoomOverviewAgentTools(roomOverviewService),
@@ -986,7 +1000,10 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
         updated_at: item.updatedAt,
       }));
     },
-  });
+  };
+  registerPrimaryAgent(agentResolver, config, documentMcpHost, primaryIntegrations);
+  // 会话档位衍生 runtime（main-direct / main-lite）：与 main 共用 integrations。
+  registerModelTierAgents(agentResolver, config, documentMcpHost, primaryIntegrations);
   const agentRuntime = agentResolver.resolve(BUILTIN_AGENT_IDS.primary);
   app.log.info(
     {
@@ -998,6 +1015,9 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
             baseUrl: config.pi.baseUrl,
             api: config.pi.api,
           }
+        : {}),
+      ...(isPiRuntimeConfigured(config.litePi)
+        ? { liteModel: config.litePi!.model }
         : {}),
     },
     "agent runtime configured",
@@ -1013,6 +1033,15 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     false,
     (target) => localAgentRuntimeRegistry.resolve(target),
   );
+  // 档位 runtime 解析：现取 resolver 缓存（热重载后自然换新）；配置缺席时
+  // 返回 null，service 回落 primary——main-direct 未配置（AI 全空）时与
+  // main 同为占位，回落行为一致。
+  agentService.setTierRuntimeResolver((agentId) => {
+    if (!agentResolver.has(agentId)) return null;
+    if (agentId === BUILTIN_AGENT_IDS.lite && !isPiRuntimeConfigured(config.litePi)) return null;
+    if (agentId === BUILTIN_AGENT_IDS.primaryDirect && !isPiRuntimeConfigured(config.pi)) return null;
+    return agentResolver.resolve(agentId);
+  });
   localAgentDispatchSourceRef.current = (runId) => agentService.getLocalAgentDispatchSource(runId);
   await agentService.initialize();
   registerTranscriptionSummaryAgent(agentResolver, config);
@@ -1059,6 +1088,10 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     // webSearch：boot 时 env 未配、runtime config 保存后才注册的场景。
     if (registerWebSearchAgentIfMissing(agentResolver, config)) {
       app.log.info("web search agent registered from runtime config");
+    }
+    // main-lite：boot 时 litePi 未配置、runtime config 保存 lite 段后注册。
+    if (registerLiteAgentIfMissing(agentResolver, config, documentMcpHost, primaryIntegrations)) {
+      app.log.info("lite tier agent registered from runtime config");
     }
     // knowledge agent：boot 时 env 未配 knowledge.llm、runtime config
     // （或 primary 回退）补齐后注册。
@@ -1107,6 +1140,15 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     try {
       const primary = agentResolver.reload(BUILTIN_AGENT_IDS.primary);
       void agentService.replaceRuntime(primary.current);
+      // 档位 runtime 热替换：main-direct 恒重载（占位/真身都由工厂决定）；
+      // main-lite 仅在仍配置时重载（工厂返回 null 会炸 trackedRuntime），
+      // 配置被移除时注册残留但 tier resolver 拦截，会话回落 primary。
+      const direct = agentResolver.reload(BUILTIN_AGENT_IDS.primaryDirect);
+      await direct.previous?.dispose();
+      if (isPiRuntimeConfigured(config.litePi) && agentResolver.has(BUILTIN_AGENT_IDS.lite)) {
+        const lite = agentResolver.reload(BUILTIN_AGENT_IDS.lite);
+        await lite.previous?.dispose();
+      }
       const background = agentResolver.reload(BUILTIN_AGENT_IDS.transcriptionSummary);
       void transcriptionSummaryService.replaceRuntime(background.current);
       for (const agentId of [BUILTIN_AGENT_IDS.cursorCompletion, BUILTIN_AGENT_IDS.webSearch, BUILTIN_AGENT_IDS.knowledge]) {

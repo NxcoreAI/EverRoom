@@ -63,6 +63,8 @@ export interface AgentSession {
   runtimeId: string;
   /** Agent that receives unmentioned user turns in this visible conversation. */
   activeAgentId?: string;
+  /** 会话锁定的模型档位（由 activeAgentId 反推）；后端权威，渲染层只读。 */
+  modelPreference?: AgentModelPreference;
   title: string | null;
   status: AgentSessionStatus;
   createdAt: string;
@@ -242,6 +244,31 @@ export interface CreateAgentSessionInput {
   pageLabel: string;
   /** Legacy input accepted for compatibility; ignored for user sessions. */
   roomId?: string | null;
+  /**
+   * 会话档位（在创建时锁定，映射为 activeAgentId）。缺省 smart。
+   * 中途换档只影响之后新建的会话，不改已有会话。
+   */
+  modelPreference?: AgentModelPreference;
+}
+
+/** 会话模型档位：smart=强模型主会话+轻量模型委派；primary=纯强模型；lite=轻量模型直答。 */
+export type AgentModelPreference = "smart" | "primary" | "lite";
+
+/** 档位 → 内置 agentId（写入 agent_sessions.activeAgentId）。 */
+export const MODEL_PREFERENCE_AGENT_IDS: Record<AgentModelPreference, string> = {
+  smart: MAIN_AGENT_ID,
+  primary: "main-direct",
+  lite: "main-lite",
+};
+
+/** 内置档位 agentId 集合（网关守卫与渲染层 badge 反推共用）。 */
+export const MODEL_TIER_AGENT_IDS: readonly string[] = Object.values(MODEL_PREFERENCE_AGENT_IDS);
+
+export function modelPreferenceFromAgentId(agentId: string | null | undefined): AgentModelPreference | undefined {
+  if (agentId === MODEL_PREFERENCE_AGENT_IDS.primary) return "primary";
+  if (agentId === MODEL_PREFERENCE_AGENT_IDS.lite) return "lite";
+  if (agentId === MAIN_AGENT_ID) return "smart";
+  return undefined;
 }
 
 export interface UpdateAgentSessionInput {

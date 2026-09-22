@@ -173,6 +173,11 @@ export function agentRoutes(
           body: Type.Object({
             pageLabel: Type.String({ minLength: 1, maxLength: 120 }),
             roomId: Type.Optional(Type.Union([Type.String({ maxLength: 100 }), Type.Null()])),
+            modelPreference: Type.Optional(Type.Union([
+              Type.Literal("smart"),
+              Type.Literal("primary"),
+              Type.Literal("lite"),
+            ])),
           }),
         },
       },
