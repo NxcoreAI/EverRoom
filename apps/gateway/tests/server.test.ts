@@ -724,6 +724,7 @@ describe("gateway server", () => {
       "context_room_write_commit",
       "context_room_write_abort",
       "context_room_document_comment_add",
+      "route_mindmap_finalize",
       "context_room_document_delete",
     ]);
   });
@@ -787,6 +788,7 @@ describe("gateway server", () => {
         "context_room_write_commit",
         "context_room_write_abort",
         "context_room_document_comment_add",
+        "route_mindmap_finalize",
         "context_room_document_delete",
       ]);
     } finally {

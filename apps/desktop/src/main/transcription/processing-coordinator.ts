@@ -12,7 +12,7 @@ import type { AgentGatewayBridge } from '../gateway/agent-gateway-bridge'
 import { AccountKeyringService } from '../security/account-keyring-service'
 import { getDesktopLocale } from '../desktop-locale'
 import type { PrivateTranscriptionSyncService } from './private-transcription-sync'
-import { summaryDetailMinimum } from './summary-quality'
+import { looksLikeTranscriptEcho, summaryDetailMinimum } from './summary-quality'
 
 const POLL_INTERVAL_MS = 5_000
 const MAX_POLL_INTERVAL_MS = 60_000
@@ -311,13 +311,13 @@ function transcriptText(source: SourceRecord): string {
 }
 
 /** 校验类失败：携带可直接拼进下一轮提示的修复说明，供一次性 repair 重试。 */
-class SummaryValidationError extends Error {
+export class SummaryValidationError extends Error {
   constructor(code: string, readonly hint?: string) {
     super(code)
   }
 }
 
-function parseSummary(raw: string, transcript: string): SummaryValue {
+export function parseSummary(raw: string, transcript: string): SummaryValue {
   const trimmed = raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')
   let value: unknown
   try {
@@ -381,6 +381,14 @@ function parseSummary(raw: string, transcript: string): SummaryValue {
     throw new SummaryValidationError(
       'incomplete_agent_summary',
       `转写 ${transcriptLength} 字，要求 overview≥${minimum.overview} 字、keyPoints≥${minimum.keyPoints} 条；上一轮 overview ${summary.overview.length} 字、keyPoints ${summary.keyPoints.length} 条，请补足细节`,
+    )
+  }
+  // #260：overview 与原文高度雷同 = 模型把逐字稿整段照抄当总结。拒绝并带
+  // 修复提示重试，仍回显则按 retryable fail 交 SaaS 重排队，禁止原文兜底。
+  if (looksLikeTranscriptEcho(summary.overview, transcript)) {
+    throw new SummaryValidationError(
+      'echoed_transcript_summary',
+      'overview 与转写原文高度雷同，近乎整段照抄；必须输出重新组织的结构化摘要，不得把逐字稿复制为总结',
     )
   }
   return summary
