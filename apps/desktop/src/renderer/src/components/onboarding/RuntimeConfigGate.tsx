@@ -42,6 +42,9 @@ type ManualTab = 'llm' | 'embedding'
 /** 闪屏最短展示时长：决策再快也不闪现即逝。 */
 const STARTUP_SPLASH_MIN_MS = 900
 
+/** 已认证 + 配置未就绪的续签宽限重查次数（2s 间隔，~30s 上限）。 */
+const RELAY_GRACE_RETRIES = 15
+
 /** 测试结果 → 用户可读错误；embedding 失败带专属前缀区分两 tab。 */
 function gateTestError(result: RuntimeConfigTestResult | undefined, t: (key: string) => string): string | null {
   if (result?.valid !== true) return configTestErrorMessage(result?.error, t)
@@ -74,6 +77,11 @@ export function RuntimeConfigGate({ children }: { children: ReactNode }) {
   const [configReady, setConfigReady] = useState(false)
   const modeRef = useRef<GateMode>('checking')
   useEffect(() => { modeRef.current = mode }, [mode])
+  // check() 里读「此刻」的登录态（避免 useCallback 依赖 account 导致的重建链）。
+  const accountRef = useRef(account)
+  accountRef.current = account
+  // 续签宽限重查计数：config 就绪即清零。
+  const relayGraceRef = useRef(0)
   // 启动闪屏只在首次进入时出现一次：show（覆盖中）→ exiting（退场过渡）→
   // gone（永不再现）。最短展示时长防止"闪一下就消失"的廉价感。
   const [splash, setSplash] = useState<'show' | 'exiting' | 'gone'>('show')
@@ -108,6 +116,13 @@ export function RuntimeConfigGate({ children }: { children: ReactNode }) {
       if (isRuntimeConfigReady(next)) {
         // 不直接进 app：由下方 effect 等登录态落定后决定 app/login。
         setConfigReady(true)
+        relayGraceRef.current = 0
+      } else if (accountRef.current?.authenticated && relayGraceRef.current < RELAY_GRACE_RETRIES) {
+        // 已认证但配置未就绪：中转续签（restore 后 rewrite 槽位）通常几秒内
+        // 落地——本会话恢复日志已证成功，把已登录用户送去登录页是续签竞态。
+        // 停留在 checking（闪屏/安静），2s 后重查，最多 ~30s。
+        relayGraceRef.current += 1
+        window.setTimeout(() => { void check() }, 2_000)
       } else {
         setConfigReady(false)
         setMode('login')
