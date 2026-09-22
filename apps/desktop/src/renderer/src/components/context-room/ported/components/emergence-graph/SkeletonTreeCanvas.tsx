@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 
-import { createSkeletonGraph, frameSkeleton, unregisterLiveGraph } from './g6FocusGraph';
+import { createSkeletonGraph, frameSkeleton, resizeFocusGraph, unregisterLiveGraph } from './g6FocusGraph';
 
 /**
  * 投影/漫步加载占位：G6 骨架树（与真图同引擎同布局），出图后节点原位显形零跳变。
@@ -15,12 +15,8 @@ export function SkeletonTreeCanvas({ hint }: { hint?: string }) {
     const graph = createSkeletonGraph(el);
     let timer: ReturnType<typeof setTimeout> | null = null;
     const apply = () => {
-      if (!el.isConnected || !el.clientWidth || !el.clientHeight) return;
-      try {
-        graph.changeSize(el.clientWidth, el.clientHeight);
-        graph.refreshLayout();
-        frameSkeleton(graph, el);
-      } catch { /* 已销毁 */ }
+      if (!resizeFocusGraph(graph, el)) return;
+      try { frameSkeleton(graph, el); } catch { /* 已销毁 */ }
     };
     let observer: ResizeObserver | null = null;
     if (typeof ResizeObserver !== 'undefined') {

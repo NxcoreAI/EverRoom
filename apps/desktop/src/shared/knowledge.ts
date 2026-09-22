@@ -441,9 +441,9 @@ export type EmergenceCardKind =
 export interface EmergenceNodeDto {
   /** nodeRef 形如 entity:12 / fact:7 / doc:9 / block:9:3 / memory:x / wiki:3 / room:4。 */
   id: string
-  nodeType: 'room' | 'entity' | 'fact' | 'document' | 'block' | 'memory' | 'wikiPage' | 'wikiTopic' | 'mindmapTopic'
+  nodeType: 'room' | 'entity' | 'fact' | 'document' | 'block' | 'memory' | 'wikiPage' | 'wikiTopic'
   label: string
-  sourceGraph: 'roomGraph' | 'entityFacts' | 'linkGraph' | 'wiki' | 'mindmap'
+  sourceGraph: 'roomGraph' | 'entityFacts' | 'linkGraph' | 'wiki'
   /** 来源 Room（跨 Room 结果标注用）。 */
   roomRef: { id: string; title: string } | null
   updatedAt: string | null
@@ -499,27 +499,55 @@ export interface EmergenceProjectionResultDto {
   generatedAt: string
 }
 
-/* ============ 聚焦思维导图（GET/POST /v1/knowledge/rooms/:roomId/mindmap） ============ */
+/* ============ 写作路线导图（GET/POST /v1/knowledge/rooms/:roomId/route-mindmap） ============ */
 
-export type FocusMindmapScope = 'room' | 'document'
-export type FocusMindmapStatus = 'pending' | 'processing' | 'ready' | 'failed'
+export type RouteMindmapStatus = 'missing' | 'expanding' | 'active' | 'failed' | 'finalized'
 
-/** mindmap-creator subAgent 生成态 + ready 时的投影（契约镜像 gateway mindmap-service）。 */
-export interface FocusMindmapStatusDto {
+/** 路线节点（与 gateway route-mindmap-graph RouteNode 逐字段同形，双份维护）。 */
+export interface RouteNodeDto {
+  ref: string
+  label: string
+  note: string | null
+  children?: RouteNodeDto[]
+}
+
+export interface RouteGraphDto {
+  root: RouteNodeDto
+}
+
+export type RouteMindmapAction = 'start' | 'expand' | 'back' | 'skip' | 'finalize'
+
+/** 全图 + 已选路径 + 生成/拍板状态（契约镜像 gateway route-mindmap-service）。 */
+export interface RouteMindmapStatusDto {
   roomId: string
-  scope: FocusMindmapScope
-  scopeId: string
-  status: FocusMindmapStatus
+  documentId: string
+  title: string
+  description: string | null
+  status: RouteMindmapStatus
+  skipped: boolean
+  writing: boolean
   error: string | null
+  /** expanding 时正在续生的节点；null=初始层生成中或非生成态。 */
+  expandingNodeRef: string | null
+  /** 全图（含未选分支），展示层按 selectionPath 过滤。 */
+  graph: RouteGraphDto | null
+  /** 当前已选路径（nodeRef 链，含根）。 */
+  selectionPath: string[] | null
+  finalizedAt: string | null
   generatedAt: string | null
   promptVersion: number | null
-  projection: EmergenceProjectionResultDto | null
   requestVersion: number
 }
 
-export interface FocusMindmapEnsureInput {
-  scope: FocusMindmapScope
-  documentId?: string | null
-  force?: boolean
+export interface RouteMindmapActionInput {
+  action: RouteMindmapAction
+  documentId: string
+  /** start 可选。 */
+  title?: string
+  description?: string | null
+  /** expand 必填。 */
+  nodeRef?: string
+  /** back 必填。 */
+  toDepth?: number
   requestVersion: number
 }

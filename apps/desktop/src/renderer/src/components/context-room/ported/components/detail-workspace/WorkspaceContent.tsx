@@ -70,7 +70,6 @@ export function WorkspaceContent({
   onDeleteDocument,
   onSelectionTextChange,
   onChapterChange,
-  registerQuoteInsert,
   onMobileBack,
   onUpdateRoom,
 }: {
@@ -87,8 +86,6 @@ export function WorkspaceContent({
   onSelectionTextChange: (text: string | null) => void;
   /** 焦点系统：光标所在章节信号上报。 */
   onChapterChange: (chapter: EmergenceFocusChapter | null) => void;
-  /** 伴随思路「引用」插入桥：编辑器挂载时注册。 */
-  registerQuoteInsert: (insert: (quote: { text: string; source: string }) => boolean) => () => void;
   onMobileBack: () => void;
   onUpdateRoom: (updater: (room: ContextRoomRecord) => ContextRoomRecord) => void;
 }) {
@@ -119,7 +116,6 @@ export function WorkspaceContent({
             onDeleteDocument={onDeleteDocument}
             onSelectionTextChange={onSelectionTextChange}
             onChapterChange={onChapterChange}
-            onRegisterQuoteInsert={registerQuoteInsert}
           />
         ) : selectedResource?.kind === 'knowledge-file' && officePreviewKindForFileName(selectedResource.originalName) ? (
           // Office 可预览的知识文件（Agent 产物）：右区原位内嵌只读预览（替换云文档位置）

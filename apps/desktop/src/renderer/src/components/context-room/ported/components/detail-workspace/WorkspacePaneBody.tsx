@@ -1,7 +1,6 @@
 import type { RoomAppliedEntitySource, RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract';
 import type { ContextRoomRecord, ContextRoomResource, ContextRoomWikiPageResource } from '../../types';
 import type {
-  EmergenceCardDto,
   EmergenceFocusInput,
   KnowledgeFileDto,
 } from '../../../../../../../shared/knowledge';
@@ -15,7 +14,6 @@ import {
   MemoryPane,
   OverviewDashboard,
   RelationsPane,
-  ThoughtsPane,
   TodoPane,
   WikiPane,
   type WorkspaceObjectPreview,
@@ -30,7 +28,6 @@ export function WorkspacePaneBody({
   focus,
   focusLocked,
   onToggleFocusLock,
-  onCompanionQuote,
   backendDocuments,
   trashedDocuments,
   knowledgeFiles,
@@ -62,8 +59,6 @@ export function WorkspacePaneBody({
   focus: EmergenceFocusInput;
   focusLocked: boolean;
   onToggleFocusLock: () => void;
-  /** 伴随思路页签的「引用」：插回右区正在编辑的产物。 */
-  onCompanionQuote: (card: EmergenceCardDto) => void;
   backendDocuments: RoomDocument[];
   trashedDocuments: RoomDocument[];
   knowledgeFiles: KnowledgeFileDto[];

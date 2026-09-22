@@ -75,7 +75,6 @@ export function DocumentContent({
   documentFocusRequestId,
   onSelectionTextChange,
   onChapterChange,
-  onRegisterQuoteInsert,
 }: {
   room: ContextRoomRecord
   resource?: ContextRoomResource | null
@@ -86,7 +85,6 @@ export function DocumentContent({
   documentFocusRequestId?: number | null
   onSelectionTextChange?: (text: string | null) => void
   onChapterChange?: (chapter: EmergenceFocusChapter | null) => void
-  onRegisterQuoteInsert?: (insert: (quote: { text: string; source: string }) => boolean) => () => void
 }) {
   const documentId = resource?.kind === 'cloud-doc' ? resource.binding.docId : room.cloudDoc.docId
   const backendDocument = backendDocuments.find((document) => document.id === documentId) ?? null
@@ -102,7 +100,6 @@ export function DocumentContent({
       documentFocusRequestId={documentFocusRequestId}
       onSelectionTextChange={onSelectionTextChange}
       onChapterChange={onChapterChange}
-      onRegisterQuoteInsert={onRegisterQuoteInsert}
     />
   )
 }

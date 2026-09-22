@@ -2,12 +2,10 @@ import * as ContextMenu from '@radix-ui/react-context-menu';
 import type { RoomAppliedEntitySource, RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract';
 import { FolderInput, X } from 'lucide-react';
 import type { Dispatch, RefObject, SetStateAction } from 'react';
-import { useCallback, useEffect, useRef } from 'react';
 import { useLocale } from '../../../../../i18n/LocaleContext';
 
-import { showToast } from '@/state/toast';
 import type { ContextRoomRecord, ContextRoomResource, ContextRoomWikiPageResource } from '../../types';
-import type { EmergenceCardDto, KnowledgeFileDto } from '../../../../../../../shared/knowledge';
+import type { KnowledgeFileDto } from '../../../../../../../shared/knowledge';
 import {
   BOARD_TABS as TABS,
   type BoardId,
@@ -162,28 +160,6 @@ export function WorkspaceLayout({
     documentId: focusDocument?.binding.docId ?? null,
     documentTitle: focusDocument?.name ?? null,
   });
-  // 打开文档即后台预生成聚焦导图（进思路板块直接命中缓存；失败静默，面板 GET 兜底）。
-  const focusDocId = focusDocument?.binding.docId ?? null;
-  useEffect(() => {
-    if (!focusDocId) return;
-    void window.nxcore?.knowledge?.ensureFocusMindmap(room.id, {
-      scope: 'document',
-      documentId: focusDocId,
-      requestVersion: 0,
-    }).catch(() => {});
-  }, [room.id, focusDocId]);
-  const insertQuoteRef = useRef<((quote: { text: string; source: string }) => boolean) | null>(null);
-  const registerQuoteInsert = useCallback((insert: (quote: { text: string; source: string }) => boolean) => {
-    insertQuoteRef.current = insert;
-    return () => { insertQuoteRef.current = null };
-  }, []);
-  const onCompanionQuote = (card: EmergenceCardDto) => {
-    const inserted = insertQuoteRef.current?.({
-      text: (card.quote || card.summary).slice(0, 600),
-      source: card.roomRef ? `${card.title} · ${card.roomRef.title}` : card.title,
-    });
-    if (!inserted) showToast({ title: t('contextRoom:emergence.quoteUnavailable') });
-  };
   // 工作概览独占整屏时不可被分屏替换。
   const boardSplittable = (board: BoardId) => !(board === 'work' && subtabs.work === 'overview');
   // 宽中栏默认 min(720px, 58vw)，用户拖过分隔条后以拖到的宽度为准（来自布局 hook）。
@@ -350,7 +326,6 @@ export function WorkspaceLayout({
                         focus={roomFocus.focus}
                         focusLocked={roomFocus.locked}
                         onToggleFocusLock={roomFocus.toggleLocked}
-                        onCompanionQuote={onCompanionQuote}
                         backendDocuments={backendDocuments}
                         trashedDocuments={trashedDocuments}
                         knowledgeFiles={knowledgeFiles}
@@ -413,7 +388,6 @@ export function WorkspaceLayout({
               onDeleteDocument={onDeleteDocument}
               onSelectionTextChange={roomFocus.setSelection}
               onChapterChange={roomFocus.setChapter}
-              registerQuoteInsert={registerQuoteInsert}
               onMobileBack={() => setMobileContent(false)}
               onUpdateRoom={onUpdateRoom}
             />

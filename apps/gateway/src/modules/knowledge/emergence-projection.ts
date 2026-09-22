@@ -1,6 +1,6 @@
 /**
  * 知识涌现投影（PRD v3.0 §7/§8）：漫步模式的纯函数投影层。
- * （聚焦模式已改由 mindmap-projection.ts 映射 agent 生成的思维导图。）
+ * （聚焦模式已改由 route-mindmap 承接写作路线导图，不在本投影内。）
  *
  * 职责边界（照 overview-projection 模式）：
  * - 本文件只做采样、去重、卡片/图谱塑形，不碰数据库、不调 LLM；
@@ -54,9 +54,9 @@ export interface EmergencePath {
 
 export interface EmergenceNode {
   id: string;
-  nodeType: "room" | "entity" | "fact" | "document" | "memory" | "wikiPage" | "mindmapTopic";
+  nodeType: "room" | "entity" | "fact" | "document" | "memory" | "wikiPage";
   label: string;
-  sourceGraph: "roomGraph" | "entityFacts" | "linkGraph" | "wiki" | "mindmap";
+  sourceGraph: "roomGraph" | "entityFacts" | "linkGraph" | "wiki";
   roomRef: { id: string; title: string } | null;
   updatedAt: string | null;
 }
@@ -393,7 +393,6 @@ function groupSummary(node: ProjectionGraphNode): string {
     entityFacts: "实体与事实",
     linkGraph: "内容建联",
     wiki: "Wiki 知识页",
-    mindmap: "思维导图",
   };
   const roomSuffix = node.roomRef ? `（来自 ${node.roomRef.title}）` : "";
   return `${graphLabel[node.sourceGraph]}${roomSuffix}`;

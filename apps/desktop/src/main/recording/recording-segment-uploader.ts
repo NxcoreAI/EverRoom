@@ -3,7 +3,7 @@ import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import type { AsrJob, AsrResult, AsrSegment } from '../../shared/sources'
-import type { SaasClient } from '../cloud/saas-client'
+import { isSaasPermanentError, type CloudJob, type SaasClient } from '../cloud/saas-client'
 
 export interface SegmentUploadMeta {
   mimeType: string
@@ -26,10 +26,9 @@ export interface MiniJobState {
   derivedRecordingId: string
   jobId?: string
   objectKey?: string
-  status: 'pending' | 'submitted' | 'transcribed' | 'uploadFailed' | 'jobFailed'
+  status: 'pending' | 'submitted' | 'transcribed' | 'uploadFailed' | 'jobFailed' | 'blocked'
   result?: AsrResult
   provider?: string
-  pollErrors: number
 }
 
 interface RecordingState {
@@ -41,19 +40,20 @@ interface RecordingState {
   chain: Promise<void>
   finalized: boolean
   aborted: boolean
-  pollTimer: NodeJS.Timeout | null
+  /** 服务端判定永久失败（设备不匹配/额度不足）后记录原因；后续分段直接标记 blocked，不再逐段重试。 */
+  blockedReason?: string
+  pushChannel: ReturnType<SaasClient['createAsrJobChannel']> | null
 }
 
 /** 合并任务在事件上占位的 job id 前缀（不与 'saas:' 前缀冲突，Coordinator 拦截路由）。 */
 export const SEGMENT_JOB_PREFIX = 'saas-seg:'
 
-const MAX_SEGMENT_INDEX = 63
-const POLL_INTERVAL_MS = 5_000
+/** finalize 等待循环的检查间隔：终态由 WS 推送落地，循环只负责重试与超时。 */
+const FINALIZE_WAIT_INTERVAL_MS = 1_000
 const FINALIZE_WAIT_MS = 180_000
-const MAX_POLL_ERRORS = 30
 const V5_NAMESPACE = '8f2d1c4a-6b3e-4f9a-a5d7-2c8e0b6f4d21'
 
-/** SaaS 按 recording_id 全局去重，分钟任务必须各持独立 UUID；确定性派生保证重试幂等。 */
+/** SaaS 按 recording_id 全局去重，分段任务必须各持独立 UUID；确定性派生保证重试幂等。 */
 function uuidV5(name: string): string {
   const hash = createHash('sha1')
   hash.update(Buffer.from(V5_NAMESPACE.replace(/-/g, ''), 'hex'))
@@ -90,7 +90,7 @@ function offsetForIndex(state: RecordingState, index: number): number {
   return offset
 }
 
-/** 按段序合并各分钟任务结果：偏移 = max(段声明时长, 段内最大语音结束点)，与 SaaS 侧同一套数学。 */
+/** 按段序合并各分段任务结果：偏移 = max(段声明时长, 段内最大语音结束点)，与 SaaS 侧同一套数学。 */
 export function mergeMiniJobs(
   recordingId: string,
   mimeType: string,
@@ -124,21 +124,22 @@ export function mergeMiniJobs(
 }
 
 /**
- * 录制中的分钟级分段：每段立即建成独立的 SaaS 转写任务（边录边转），
+ * 录制中的分段上传：每段立即建成独立的 SaaS 转写任务（边录边转），
+ * 终态一律经 WS 推送通道落地（订阅即回快照，断线重连自动补齐），
  * 转完经 preview 回调推送实时文字；停止时等全部转完、按段序合并成整篇结果。
- * 任一分钟两轮仍失败 → 取消全部，调用方回退整段上传老路。
+ * 任一分段两轮仍失败 → 取消全部，调用方回退整段上传老路。
  */
 export class RecordingSegmentUploader {
   private readonly recordings = new Map<string, RecordingState>()
   private preview?: (event: SegmentTranscriptionPreview) => void
-  private readonly pollIntervalMs: number
+  private readonly waitIntervalMs: number
 
   constructor(
     private readonly saas: SaasClient,
     private readonly directory: string,
-    options: { pollIntervalMs?: number } = {},
+    options: { waitIntervalMs?: number } = {},
   ) {
-    this.pollIntervalMs = options.pollIntervalMs ?? POLL_INTERVAL_MS
+    this.waitIntervalMs = options.waitIntervalMs ?? FINALIZE_WAIT_INTERVAL_MS
   }
 
   setPreviewListener(fn: (event: SegmentTranscriptionPreview) => void): void {
@@ -152,7 +153,7 @@ export class RecordingSegmentUploader {
     durationMs: number,
     meta: SegmentUploadMeta,
   ): Promise<void> {
-    if (!Number.isInteger(index) || index < 0 || index > MAX_SEGMENT_INDEX) return
+    if (!Number.isInteger(index) || index < 0) return
     if (!(chunk instanceof Uint8Array) || chunk.byteLength === 0) return
     if (!Number.isFinite(durationMs) || durationMs < 1000) return
     let state = this.recordings.get(recordingId)
@@ -166,7 +167,7 @@ export class RecordingSegmentUploader {
         chain: Promise.resolve(),
         finalized: false,
         aborted: false,
-        pollTimer: null,
+        pushChannel: null,
       }
       this.recordings.set(recordingId, state)
     }
@@ -177,7 +178,7 @@ export class RecordingSegmentUploader {
     const directory = this.segmentDirectory(recordingId)
     await mkdir(directory, { recursive: true })
     await writeFile(join(directory, fileName), buffer)
-    state.minis.set(index, {
+    const mini: MiniJobState = {
       index,
       fileName,
       bytes: buffer.byteLength,
@@ -186,29 +187,38 @@ export class RecordingSegmentUploader {
       attempt: 0,
       derivedRecordingId: uuidV5(`${recordingId}:${index}`),
       status: 'pending',
-      pollErrors: 0,
-    })
+    }
+    state.minis.set(index, mini)
+    if (state.blockedReason) {
+      mini.status = 'blocked'
+      return
+    }
     state.chain = state.chain.then(() => this.submitMini(recordingId, index))
   }
 
-  /** 录音结束收尾：全部分钟任务转完返回合并结果；任何失败返回 null（调用方回退整段上传）。 */
+  /** 录音结束收尾：全部分段任务转完返回合并结果；任何失败返回 null（调用方回退整段上传）。 */
   async finalize(recordingId: string): Promise<AsrJob | null> {
     const state = this.recordings.get(recordingId)
     if (!state) return null
     state.finalized = true
-    this.stopPolling(state)
     await state.chain.catch(() => undefined)
     for (const mini of sortedMinis(state)) {
       if (mini.status === 'pending' || mini.status === 'uploadFailed') await this.submitMini(recordingId, mini.index)
     }
+    // 永久性失败（设备不匹配/额度不足）：不再等推送窗口，直接放弃分段路径，让调用方回退并报出真实原因。
+    if (sortedMinis(state).some((mini) => mini.status === 'blocked')) {
+      await this.cancelAll(state)
+      await this.discard(recordingId)
+      return null
+    }
     const deadline = Date.now() + FINALIZE_WAIT_MS
     for (;;) {
       if (sortedMinis(state).some((mini) => mini.status === 'uploadFailed')) break
-      await this.pollOnce(recordingId)
       const minis = sortedMinis(state)
       if (minis.length > 0 && minis.every((mini) => mini.status === 'transcribed')) {
         await rm(this.segmentDirectory(recordingId), { recursive: true, force: true }).catch(() => undefined)
         await this.persistManifest(recordingId, state).catch(() => undefined)
+        this.closePushChannel(state)
         return mergeMiniJobs(recordingId, state.mimeType, minis, state)
       }
       let giveUp = false
@@ -218,13 +228,12 @@ export class RecordingSegmentUploader {
         mini.attempt += 1
         mini.jobId = undefined
         mini.objectKey = undefined
-        mini.pollErrors = 0
         mini.derivedRecordingId = uuidV5(`${recordingId}:${mini.index}:r${mini.attempt}`)
         await this.submitMini(recordingId, mini.index)
       }
       if (giveUp) break
       if (Date.now() > deadline) break
-      await new Promise((resolve) => setTimeout(resolve, this.pollIntervalMs))
+      await new Promise((resolve) => setTimeout(resolve, this.waitIntervalMs))
     }
     await this.cancelAll(state)
     await this.discard(recordingId)
@@ -235,45 +244,36 @@ export class RecordingSegmentUploader {
     const state = this.recordings.get(recordingId)
     if (!state) return
     state.aborted = true
-    this.stopPolling(state)
     await state.chain.catch(() => undefined)
     await this.cancelAll(state)
     await this.discard(recordingId)
   }
 
-  /** 合并任务查询：全转完返回 completed 合并结果，仍有在转返回 running 占位。 */
+  /** 合并任务查询：REST 逐段拉当前状态，全转完返回 completed 合并结果，仍有在转返回 running 占位。 */
   async getMergedJob(recordingId: string): Promise<AsrJob | null> {
     const state = await this.ensureState(recordingId)
     if (!state || state.minis.size === 0) return null
-    await this.pollOnce(recordingId).catch(() => undefined)
+    await this.refreshResults(state)
+    await this.persistManifest(recordingId, state).catch(() => undefined)
     const minis = sortedMinis(state)
     const done = minis.length > 0 && minis.every((mini) => mini.status === 'transcribed')
     if (!done) {
       return { ...mergeMiniJobs(recordingId, state.mimeType, minis, state), status: 'running', result: null }
     }
-    await this.persistManifest(recordingId, state).catch(() => undefined)
     return mergeMiniJobs(recordingId, state.mimeType, minis, state)
   }
 
-  /** 改名支持：重新拉取全部分钟结果合并，并给出可用于 SaaS 改名的锚点任务 id。 */
+  /** 改名支持：重新拉取全部分段结果合并，并给出可用于 SaaS 改名的锚点任务 id。 */
   async refetchMerged(recordingId: string): Promise<{ merged: AsrJob; anchorJobId: string | null } | null> {
     const state = await this.ensureState(recordingId)
     if (!state || state.minis.size === 0) return null
-    await Promise.all(sortedMinis(state).map(async (mini) => {
-      if (!mini.jobId) return
-      const job = await this.saas.getAsrJob(`saas:${mini.jobId}`).catch(() => undefined)
-      if (job?.status === 'completed' && job.result) {
-        mini.result = job.result
-        mini.provider = job.provider
-        mini.status = 'transcribed'
-      }
-    }))
+    await this.refreshResults(state)
     await this.persistManifest(recordingId, state).catch(() => undefined)
     const anchor = sortedMinis(state).find((mini) => mini.status === 'transcribed' && mini.jobId)
     return { merged: mergeMiniJobs(recordingId, state.mimeType, sortedMinis(state), state), anchorJobId: anchor?.jobId ?? null }
   }
 
-  /** 崩溃遗留的段音频启动时清空；分钟任务的 manifest 留存（重启后改名要用）。 */
+  /** 崩溃遗留的段音频启动时清空；分段任务的 manifest 留存（重启后改名要用）。 */
   async cleanupAtStartup(): Promise<void> {
     await rm(this.segmentsRoot, { recursive: true, force: true }).catch(() => undefined)
   }
@@ -310,12 +310,11 @@ export class RecordingSegmentUploader {
         derivedRecordingId: mini.derivedRecordingId,
         jobId: mini.jobId,
         status: 'submitted',
-        pollErrors: 0,
       }])),
       chain: Promise.resolve(),
       finalized: true,
       aborted: false,
-      pollTimer: null,
+      pushChannel: null,
     }
     this.recordings.set(recordingId, state)
     return state
@@ -368,7 +367,9 @@ export class RecordingSegmentUploader {
   }
 
   private async discard(recordingId: string): Promise<void> {
+    const state = this.recordings.get(recordingId)
     this.recordings.delete(recordingId)
+    if (state) this.closePushChannel(state)
     await rm(this.segmentDirectory(recordingId), { recursive: true, force: true }).catch(() => undefined)
     await rm(this.manifestPath(recordingId), { force: true }).catch(() => undefined)
   }
@@ -381,7 +382,7 @@ export class RecordingSegmentUploader {
 
   private async submitMini(recordingId: string, index: number): Promise<void> {
     const state = this.recordings.get(recordingId)
-    if (!state || state.aborted) return
+    if (!state || state.aborted || state.blockedReason) return
     const mini = state.minis.get(index)
     if (!mini || mini.status === 'submitted' || mini.status === 'transcribed') return
     try {
@@ -397,8 +398,14 @@ export class RecordingSegmentUploader {
       }])
       mini.status = 'submitted'
       await this.persistManifest(recordingId, state).catch(() => undefined)
-      this.ensurePolling(recordingId)
-    } catch {
+      this.syncPushSubscription(recordingId)
+    } catch (error) {
+      if (isSaasPermanentError(error)) {
+        mini.status = 'blocked'
+        state.blockedReason ??= error.message
+        console.warn('[segment-asr] permanent failure; skipping remaining segments', recordingId, error.message)
+        return
+      }
       mini.status = 'uploadFailed'
     }
   }
@@ -421,54 +428,61 @@ export class RecordingSegmentUploader {
     return job.id
   }
 
-  private ensurePolling(recordingId: string): void {
-    const state = this.recordings.get(recordingId)
-    if (!state || state.pollTimer || state.finalized || state.aborted) return
-    state.pollTimer = setInterval(() => {
-      void this.pollOnce(recordingId).catch(() => undefined)
-    }, this.pollIntervalMs)
+  private closePushChannel(state: RecordingState): void {
+    state.pushChannel?.close()
+    state.pushChannel = null
   }
 
-  private stopPolling(state: RecordingState): void {
-    if (state.pollTimer) clearInterval(state.pollTimer)
-    state.pollTimer = null
-  }
-
-  private async pollOnce(recordingId: string): Promise<void> {
+  /** 每次新任务提交后，把全部在转任务的 id 整体重放给推送通道（订阅是替换语义，服务端订阅即回快照）。 */
+  private syncPushSubscription(recordingId: string): void {
     const state = this.recordings.get(recordingId)
     if (!state || state.aborted) return
-    const pending = sortedMinis(state).filter((mini) => mini.status === 'submitted' && mini.jobId)
-    if (!pending.length) {
-      if (state.pollTimer) this.stopPolling(state)
-      return
+    state.pushChannel ??= this.saas.createAsrJobChannel((job) => { void this.applyPushedJob(recordingId, job) })
+    const ids = sortedMinis(state).filter((mini) => mini.status === 'submitted' && mini.jobId).map((mini) => mini.jobId!)
+    if (ids.length) state.pushChannel.subscribe(ids)
+  }
+
+  /** WS 推送（终态单推 + 订阅快照同路）：完成段立刻转正并推实时预览，失败段进 jobFailed 待收尾重试。 */
+  private async applyPushedJob(recordingId: string, job: CloudJob): Promise<void> {
+    const state = this.recordings.get(recordingId)
+    if (!state || state.aborted || !job?.id) return
+    if (job.status !== 'completed' && job.status !== 'failed' && job.status !== 'cancelled' && job.status !== 'expired') return
+    const mini = sortedMinis(state).find((entry) => entry.jobId === job.id && entry.status === 'submitted')
+    if (!mini) return
+    console.log('[segment-asr] push', recordingId, 'index', mini.index, 'status', job.status)
+    await this.applyJobToMini(recordingId, state, mini, job)
+  }
+
+  /** 任务终态落地。 */
+  private async applyJobToMini(recordingId: string, state: RecordingState, mini: MiniJobState, job: CloudJob): Promise<void> {
+    if (job.status === 'completed' && job.transcript) {
+      mini.result = { transcript: job.transcript, segments: job.segments ?? [] }
+      mini.provider = job.provider
+      mini.status = 'transcribed'
+      await this.persistManifest(recordingId, state).catch(() => undefined)
+      this.preview?.({
+        recordingId,
+        index: mini.index,
+        result: this.offsetResult(state, mini),
+      })
+    } else if (job.status === 'failed' || job.status === 'cancelled' || job.status === 'expired') {
+      mini.status = 'jobFailed'
     }
-    await Promise.all(pending.map(async (mini) => {
-      try {
-        const job = await this.saas.getAsrJob(`saas:${mini.jobId}`)
-        mini.pollErrors = 0
-        console.log('[segment-asr] poll', recordingId, 'index', mini.index, 'status', job.status)
-        if (job.status === 'completed' && job.result) {
-          mini.result = job.result
-          mini.provider = job.provider
-          mini.status = 'transcribed'
-          await this.persistManifest(recordingId, state).catch(() => undefined)
-          this.preview?.({
-            recordingId,
-            index: mini.index,
-            result: this.offsetResult(state, mini),
-          })
-        } else if (job.status === 'failed' || job.status === 'cancelled') {
-          mini.status = 'jobFailed'
-        }
-      } catch (error) {
-        mini.pollErrors += 1
-        console.warn('[segment-asr] poll error', recordingId, 'index', mini.index, 'errors', mini.pollErrors, error)
-        if (mini.pollErrors >= MAX_POLL_ERRORS) mini.status = 'jobFailed'
+  }
+
+  /** 查询路径的按需刷新：逐段 REST 拉当前状态（不建轮询循环）。 */
+  private async refreshResults(state: RecordingState): Promise<void> {
+    await Promise.all(sortedMinis(state).map(async (mini) => {
+      if (!mini.jobId) return
+      const job = await this.saas.getAsrJob(`saas:${mini.jobId}`).catch(() => undefined)
+      if (job?.status === 'completed' && job.result) {
+        mini.result = job.result
+        mini.provider = job.provider
+        mini.status = 'transcribed'
+      } else if (job && (job.status === 'failed' || job.status === 'cancelled')) {
+        mini.status = 'jobFailed'
       }
     }))
-    if (!state.aborted && !state.finalized && !sortedMinis(state).some((mini) => mini.status === 'submitted')) {
-      this.stopPolling(state)
-    }
   }
 
   private offsetResult(state: RecordingState, mini: MiniJobState): AsrResult {

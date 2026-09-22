@@ -123,9 +123,8 @@ export type {
 import type {
   EmergenceProjectionResultDto,
   EmergenceRequest,
-  FocusMindmapEnsureInput,
-  FocusMindmapScope,
-  FocusMindmapStatusDto,
+  RouteMindmapActionInput,
+  RouteMindmapStatusDto,
   KnowledgeAttachInput,
   KnowledgeDecisionDto,
   KnowledgeEntityDetailDto,
@@ -1345,9 +1344,10 @@ export interface NxcoreDesktopApi {
     proposeRooms(input: { description: string; fileEntryIds: string[] }): Promise<{ items: KnowledgeRoomProposalDto[] }>
     /** 知识涌现投影（思路板块）：聚焦/漫步共用一个端点。 */
     emergence(roomId: string, request: EmergenceRequest): Promise<EmergenceProjectionResultDto>
-    /** 聚焦思维导图状态（ready 附投影）：pending/processing 由渲染端轮询。 */
-    focusMindmap(roomId: string, query: { scope: FocusMindmapScope; documentId?: string | null; requestVersion: number }): Promise<FocusMindmapStatusDto>
-    ensureFocusMindmap(roomId: string, input: FocusMindmapEnsureInput): Promise<FocusMindmapStatusDto>
+    /** 写作路线导图状态：expanding/writing 由渲染端轮询。 */
+    getRouteMindmap(roomId: string, query: { documentId: string; requestVersion: number }): Promise<RouteMindmapStatusDto>
+    /** 五动作合一：start/expand/back/skip/finalize。 */
+    routeMindmapAction(roomId: string, input: RouteMindmapActionInput): Promise<RouteMindmapStatusDto>
     revertDecision(decisionId: string): Promise<{ ok: boolean }>
     /** M3 知识整理偏好：统计/洞察/用户接管/开关。 */
     getPreferences(): Promise<KnowledgePreferencesDto>

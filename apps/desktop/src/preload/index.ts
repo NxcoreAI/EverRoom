@@ -821,10 +821,10 @@ const api: NxcoreDesktopApi = {
       invoke('knowledge:rooms:propose', input),
     emergence: (roomId: string, request: import('../shared/knowledge').EmergenceRequest) =>
       invoke('knowledge:rooms:emergence', roomId, request),
-    focusMindmap: (roomId: string, query: { scope: import('../shared/knowledge').FocusMindmapScope; documentId?: string | null; requestVersion: number }) =>
-      invoke('knowledge:rooms:focus-mindmap', roomId, query),
-    ensureFocusMindmap: (roomId: string, input: import('../shared/knowledge').FocusMindmapEnsureInput) =>
-      invoke('knowledge:rooms:focus-mindmap-ensure', roomId, input),
+    getRouteMindmap: (roomId: string, query: { documentId: string; requestVersion: number }) =>
+      invoke('knowledge:rooms:route-mindmap', roomId, query),
+    routeMindmapAction: (roomId: string, input: import('../shared/knowledge').RouteMindmapActionInput) =>
+      invoke('knowledge:rooms:route-mindmap-action', roomId, input),
     revertDecision: (decisionId) => invoke('knowledge:route:revert', decisionId),
     getPreferences: (): Promise<import('../shared/knowledge').KnowledgePreferencesDto> =>
       invoke('knowledge:preferences:get'),

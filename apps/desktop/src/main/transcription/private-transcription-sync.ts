@@ -7,7 +7,7 @@ import type { AccountKeyringStatus, AsrResult, AsrSegment, PrivateTranscriptionR
 import type { PairingSessionResponse, PrivateRecordEnvelope, PutPrivateRecordInput, SaasClient } from '../cloud/saas-client'
 import type { RealityGatewayBridge } from '../gateway/reality-gateway-bridge'
 import { AccountKeyringService } from '../security/account-keyring-service'
-import { summaryDetailMinimum } from './summary-quality'
+import { looksLikeTranscriptEcho, summaryDetailMinimum } from './summary-quality'
 
 interface PendingSourcePublication {
   recordId: string
@@ -134,10 +134,13 @@ export function hasMeaningfulSummary(
   )
   if (!structurallyValid || !source) return structurallyValid
   const transcriptLength = source.transcript.trim().length
-  const overviewLength = (summary.overview as string).trim().length
+  const overview = (summary.overview as string).trim()
   const keyPointCount = stringArray(summary.keyPoints).length
   const minimum = summaryDetailMinimum(transcriptLength)
-  return !minimum || (overviewLength >= minimum.overview && keyPointCount >= minimum.keyPoints)
+  if (minimum && (overview.length < minimum.overview || keyPointCount < minimum.keyPoints)) return false
+  // #260：overview 与原文高度雷同（模型回显）不算有效总结——materialize 会把
+  // 这类记录按 invalid_summary 报给 SaaS 重处理，事件先以无总结状态物化。
+  return !looksLikeTranscriptEcho(overview, source.transcript)
 }
 
 export function toImportedRealityEvent(

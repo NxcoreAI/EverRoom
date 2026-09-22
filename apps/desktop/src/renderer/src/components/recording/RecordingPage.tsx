@@ -119,7 +119,7 @@ export function RecordingPage({
   const [elapsed, setElapsed] = useState(0)
   const [languages, setLanguages] = useState<string[]>(initialSettings.languages)
   const [result, setResult] = useState<AsrResult | null>(null)
-  // 边录边转的实时预览：分钟任务转完由主进程推送，段内时间已偏移到整段时间轴。
+  // 边录边转的实时预览：分段任务转完由主进程推送，段内时间已偏移到整段时间轴。
   const [previewSegments, setPreviewSegments] = useState<AsrSegment[]>([])
   const previewRecordingIdRef = useRef<string | null>(null)
   const [completed, setCompleted] = useState<{ jobId: string; eventId: string } | null>(null)
@@ -133,7 +133,7 @@ export function RecordingPage({
   const recordingStartedAtRef = useRef<number | null>(null)
   const writeQueueRef = useRef<Promise<void>>(Promise.resolve())
   const mountedRef = useRef(true)
-  // 分钟级分段上传（仅 cloud 模式）：与主录音器共用同一路音频流，每 60 秒切一段独立文件直传 SaaS。
+  // 分段级上传（仅 cloud 模式）：与主录音器共用同一路音频流，每 15 秒切一段独立文件直传 SaaS。
   const segmentActiveRef = useRef(false)
   const segmentStreamRef = useRef<MediaStream | null>(null)
   const segmentRecorderRef = useRef<MediaRecorder | null>(null)
@@ -263,7 +263,7 @@ export function RecordingPage({
     recorder.start()
     segmentTimerRef.current = window.setTimeout(() => {
       void stopSegmentRecorder()
-    }, 60_000)
+    }, 15_000)
   }
 
   const stopSegmentRecorder = async (): Promise<void> => {

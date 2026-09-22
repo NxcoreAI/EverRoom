@@ -5,16 +5,6 @@ on:
     # 00:00 Asia/Shanghai (UTC+8). GitHub schedules use UTC.
     - cron: "0 16 * * *"
   workflow_dispatch:
-    inputs:
-      channel:
-        description: Release channel
-        required: true
-        default: auto
-        type: choice
-        options:
-          - auto
-          - nightly
-          - alpha
 
 permissions:
   actions: write
@@ -49,12 +39,12 @@ jobs:
       NXCORE_BROWSER_EXTENSION_ID: ${{ vars.NXCORE_BROWSER_EXTENSION_ID }}
 
     steps:
-      # auto（每日默认）：扫上个正式 tag 以来的提交，含 feat: 则发正式版（latest），
-      # 否则发 nightly；nightly：强制夜间通道；alpha：从 alpha 分支发正式版。
+      # 每晚从 dev 出 nightly；stable 由人工验证后手动打 tag 发布
+      # （release-desktop.yml 直接 tag 触发），不再自动扫描 feat 升 stable。
       - name: Check out release branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.channel == 'alpha' && 'alpha' || 'dev' }}
+          ref: dev
           fetch-depth: 0
           persist-credentials: false
           submodules: recursive
@@ -64,7 +54,6 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_CHANNEL: ${{ inputs.channel || 'auto' }}
         run: |
           version="$(node -p "require('./apps/desktop/package.json').version")"
           [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
@@ -73,50 +62,13 @@ jobs:
           }
           git fetch origin 'refs/tags/desktop-v*:refs/tags/desktop-v*'
 
-          # --- Determine channel (auto scans commits since last stable tag) ---
-          channel="$RELEASE_CHANNEL"
-          feat_commits=""
-          if [[ "$channel" == "auto" ]]; then
-            last_stable="$(git tag --list 'desktop-v[0-9]*.[0-9]*.[0-9]*' --sort=-version:refname | grep -Ev 'nightly|alpha|beta|rc' | head -n 1)"
-            if [[ -z "$last_stable" ]]; then
-              range="HEAD"
-            else
-              range="$last_stable..HEAD"
-            fi
-            # 仅匹配提交标题（%s）的 conventional feat 前缀，避免正文行误命中。
-            feat_commits="$(git log --no-merges --format='%h %s' "$range" | grep -Ei '^[0-9a-f]{7,40} feat(\([^)]*\))?!?:' || true)"
-
-            stable_tag="desktop-v$version"
-            if [[ -n "$feat_commits" ]] && ! git show-ref --verify --quiet "refs/tags/$stable_tag"; then
-              channel="stable"
-              echo "::notice::feat commits detected since ${last_stable:-beginning}: publishing stable $stable_tag"
-              echo "$feat_commits" | head -n 5 | sed 's/^/  /'
-            elif [[ -n "$feat_commits" ]] && git show-ref --verify --quiet "refs/tags/$stable_tag"; then
-              echo "::warning::feat commits detected but $stable_tag already exists; falling back to nightly. Bump the desktop version to publish a stable release."
-              echo "feat-pending=true" >> "$GITHUB_OUTPUT"
-            fi
-          fi
-
-          # --- Resolve tag per channel ---
-          if [[ "$channel" == "stable" || "$channel" == "alpha" ]]; then
-            tag="desktop-v$version"
-            if git show-ref --verify --quiet "refs/tags/$tag"; then
-              test "$(git rev-list -n 1 "$tag")" = "$(git rev-parse HEAD)" || {
-                echo "Tag $tag already points to another commit; update the desktop package version." >&2
-                exit 1
-              }
-              echo "tag-exists=true" >> "$GITHUB_OUTPUT"
-            else
-              echo "tag-exists=false" >> "$GITHUB_OUTPUT"
-            fi
+          # nightly tag：同 commit 已有今日 tag 则跳过（幂等），否则按日期+run 序号新建
+          tag="$(git tag --points-at HEAD --list "desktop-v$version-nightly.*" --sort=-version:refname | head -n 1)"
+          if [[ -n "$tag" ]]; then
+            echo "tag-exists=true" >> "$GITHUB_OUTPUT"
           else
-            tag="$(git tag --points-at HEAD --list "desktop-v$version-nightly.*" --sort=-version:refname | head -n 1)"
-            if [[ -n "$tag" ]]; then
-              echo "tag-exists=true" >> "$GITHUB_OUTPUT"
-            else
-              tag="desktop-v$version-nightly.$(TZ=Asia/Shanghai date +%Y%m%d).$GITHUB_RUN_NUMBER"
-              echo "tag-exists=false" >> "$GITHUB_OUTPUT"
-            fi
+            tag="desktop-v$version-nightly.$(TZ=Asia/Shanghai date +%Y%m%d).$GITHUB_RUN_NUMBER"
+            echo "tag-exists=false" >> "$GITHUB_OUTPUT"
           fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
@@ -217,7 +169,7 @@ jobs:
             exit 0
           fi
           message="EverRoom 每日发布检查失败
-          分支：${{ inputs.channel == 'alpha' && 'alpha' || 'dev' }}
+          分支：dev
           提交：$(git log -1 --pretty='%h %s (%an)')
           日志：https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           payload="$(jq -n --arg text "$message" '{msg_type:"text",content:{text:$text}}')"
@@ -226,21 +178,3 @@ jobs:
             --data "$payload" \
             "$FEISHU_WEBHOOK_URL" >/dev/null
 
-      - name: Notify Feishu when stable falls back to nightly
-        if: steps.candidate.outputs.pending == 'true' && steps.candidate.outputs.feat-pending == 'true'
-        shell: bash
-        env:
-          FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_RELEASE_WEBHOOK }}
-        run: |
-          if [[ -z "$FEISHU_WEBHOOK_URL" ]]; then
-            echo "::warning::FEISHU_RELEASE_WEBHOOK is not configured; skipping notification."
-            exit 0
-          fi
-          version="$(node -p "require('./apps/desktop/package.json').version")"
-          message="EverRoom 检出 feat 提交但版本 $version 已发布正式版，本次降级为 nightly。
-          请在合入 feat 后顺手升级 apps/desktop/package.json 版本号，次日将自动补发正式版。"
-          payload="$(jq -n --arg text "$message" '{msg_type:"text",content:{text:$text}}')"
-          curl --fail --silent --show-error \
-            -H 'Content-Type: application/json' \
-            --data "$payload" \
-            "$FEISHU_WEBHOOK_URL" >/dev/null

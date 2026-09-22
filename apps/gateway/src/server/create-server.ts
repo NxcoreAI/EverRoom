@@ -110,8 +110,8 @@ import { KnowledgePreferences } from "../modules/knowledge/preferences.js";
 import { KnowledgeLlm } from "../modules/knowledge/llm.js";
 import { EmergenceService } from "../modules/knowledge/emergence-service.js";
 import { emergenceRoutes } from "../modules/knowledge/emergence-routes.js";
-import { FocusMindmapService } from "../modules/knowledge/mindmap-service.js";
-import { mindmapRoutes } from "../modules/knowledge/mindmap-routes.js";
+import { RouteMindmapService } from "../modules/knowledge/route-mindmap-service.js";
+import { routeMindmapRoutes } from "../modules/knowledge/route-mindmap-routes.js";
 import { nangoConnectorRoutes } from "@nxcore/connectors-module/routes.js";
 import { purgeConnectorConnectionCascade } from "../modules/connectors/connection-purge.js";
 import { processingRoutes } from "../modules/processing/routes.js";
@@ -531,10 +531,21 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   const roomOverviewService = new RoomOverviewService(db, contextRoomService);
   const documentEventBroker = new DocumentEventBroker();
   const documentOperationService = new DocumentOperationService(db, documentEventBroker);
+  // 写作路线导图服务依赖 orchestrator，在下方构造；对话链路空正文 commit 的
+  // 自动开流钩子在此先挂引用、构造后绑定（聚焦改版 2026-09）。
+  const routeMindmapServiceRef: { current: RouteMindmapService | null } = { current: null };
   const documentService = new DocumentService(db, documentEventBroker, (document) => {
     void memoryService.captureDocumentCreation(document).catch((error: unknown) => {
       app.log.warn({ err: error, documentId: document.documentId }, "document memory capture failed");
     });
+    if (!document.markdown.trim()) {
+      void routeMindmapServiceRef.current?.start(document.roomId, {
+        documentId: document.documentId,
+        requestVersion: 0,
+      }).catch((error: unknown) => {
+        app.log.warn({ err: error, documentId: document.documentId }, "route mindmap auto start failed");
+      });
+    }
   }, (patch) => {
     void memoryService.captureSelectionRewrite({
       roomId: patch.roomId,
@@ -612,6 +623,8 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       (event) => documentService.broker.publish(event),
       // agent 写 Word：桌面注入 NXCORE_OFFICE_BRIDGE_URL/TOKEN 后启用。
       config.officeBridge ? new OfficeBridgeClient(config.officeBridge) : null,
+      // 写作路线拍板工具：服务在 orchestrator 之后构造，getter 惰性取用。
+      () => routeMindmapServiceRef.current,
     ),
     documentOperationService,
     (diagnostic) => {
@@ -664,7 +677,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   contextRoomService.setDuplicateService(roomDuplicateService);
   knowledgeService.setRoomDuplicateIndexTrigger(() => roomDuplicateService.requestRebuild());
   // 知识涌现（思路板块）：漫步的四源投影，只读不写回基础图谱。
-  // 聚焦模式由 FocusMindmapService（subAgent 思维导图）承接。
+  // 聚焦模式由 RouteMindmapService（写作路线导图）承接。
   const emergenceService = new EmergenceService({
     db,
     knowledge: knowledgeService,
@@ -786,13 +799,16 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     app.log,
   );
   const contextRoomAgentDispatcher = new ContextRoomAgentDispatcher(subagentOrchestrator);
-  // 聚焦思维导图（思路板块聚焦模式）：mindmap-creator subAgent 生成，
-  // 依赖 orchestrator，须在上方构造。
-  const focusMindmapService = new FocusMindmapService({
+  // 写作路线导图（聚焦改版 2026-09）：新文档创建时 route-planner 逐层出
+  // 路线选项，拍板后 doc-writer 照路线写正文；依赖 orchestrator，须在上方构造。
+  const routeMindmapService = new RouteMindmapService({
     db,
     orchestrator: subagentOrchestrator,
+    emergence: emergenceService,
+    documents: documentService,
     log: app.log,
   });
+  routeMindmapServiceRef.current = routeMindmapService;
   // doc-writer 调度封装（doc-writer-subagent-plan §8/M2）：编辑器划词改写迁入
   // rewrite task；写作风格注入段对 doc-writer 全部 task 附加。
   const docWriterDispatcher = new DocWriterAgentDispatcher(
@@ -1688,7 +1704,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   });
   if (config.knowledge) await app.register(knowledgeRoutes(knowledgeService));
   if (config.knowledge) await app.register(emergenceRoutes(emergenceService));
-  if (config.knowledge) await app.register(mindmapRoutes(focusMindmapService));
+  if (config.knowledge) await app.register(routeMindmapRoutes(routeMindmapService));
 
   return app;
 }

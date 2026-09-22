@@ -1,0 +1,36 @@
+{
+  "type": "object",
+  "properties": {
+    "kind": {
+      "type": "string",
+      "enum": ["route-options"],
+      "description": "Result kind; must always be route-options."
+    },
+    "options": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 5,
+      "description": "Route options for this layer: second level 3-5 clearly differentiated route choices; deeper levels 2-3 deepening sub-choices. Map depth capped at four levels (root + three).",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40,
+            "description": "Route option label: a short phrase naming an angle/structure for writing the document."
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 60,
+            "description": "One short sentence on where this route leads."
+          }
+        },
+        "required": ["label", "note"]
+      }
+    }
+  },
+  "required": ["kind", "options"],
+  "additionalProperties": false
+}
