@@ -1569,10 +1569,10 @@ export class AgentService {
       // 被丢弃的旧内容，必须作废而不是在终结事件前冲刷拼接，否则新正文
       // 会多出旧波次的脏尾。run 首个 message.started 时本就无扣留，无副作用。
       clearRedactionDelta(deltaScope);
-    } else if (runtimeEvent.type === "message.completed" || runtimeEvent.type.startsWith("run.")) {
-      // 扣留的尾部必须补发，否则事件流里的 delta 累加永久缺尾（#199）：
-      // 中断时前端只能展示 delta 累加；正常完成时工具型 run 的"末段答案"
-      // 也取自 delta 累加。余留已过 redactText，补发时 skipDeltaHold 防止再次扣留。
+    } else {
+      // 其余非 delta 事件（tool.* 等）落库前必须先吐扣留尾部：事件按 seq
+      // 排序渲染，若尾巴延迟到下一条 delta 才补，工具事件会插进正文中间，
+      // 句子在视图里被工具块拦腰截断。余留已过 redactText，安全性同下。
       const tail = flushRedactionDelta(deltaScope);
       if (tail) {
         await this.appendEvent(sessionId, runId, {
