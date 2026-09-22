@@ -38,6 +38,8 @@ export interface OfficeGenerateResult {
 export interface OfficeSlidesDeckInfo {
   outline: string;
   opVocabulary: string;
+  /** 宿主补充：实例是否可编辑（只读打开也能读大纲，编辑需重新以可编辑方式打开）。 */
+  editable?: boolean;
 }
 
 /** /v1/office-edit apply：事务结果（ok:false = 宿主级错误；per-op 失败在 failures）。 */
@@ -94,12 +96,13 @@ export class OfficeBridgeClient {
     };
   }
 
-  /** 读取已打开 PPT 产物的活会话大纲 + op 词汇表（文件需已在桌面端以可编辑方式打开）。 */
+  /** 读取已打开 PPT 产物的活会话大纲 + op 词汇表（fileId 'active' = 当前打开的那个）。 */
   async readDeck(fileId: string): Promise<OfficeSlidesDeckInfo> {
     const data = await this.postEdit({ mode: "read", fileId });
     return {
       outline: typeof data.outline === "string" ? data.outline : "",
       opVocabulary: typeof data.opVocabulary === "string" ? data.opVocabulary : "",
+      ...(data.editable !== undefined ? { editable: data.editable === true } : {}),
     };
   }
 

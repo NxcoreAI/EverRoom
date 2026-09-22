@@ -62,9 +62,18 @@ export type SlidesEditArtifactRequest =
   | { mode: 'read' }
   | { mode: 'apply'; ops: unknown[]; dryRun?: boolean; isolation?: 'atomic' | 'per_op' }
 
+/** 当前打开的 Office 实例（引导报错随行，让 Agent 能告知用户现场）。 */
+export interface OpenOfficeInstanceInfo {
+  fileId: string
+  title: string
+  kind: OfficePreviewKind
+  editable: boolean
+  active: boolean
+}
+
 export type SlidesEditArtifactOutcome =
   | { ok: true; info?: AgentSlidesDeckInfo; result?: AgentSlidesEditResult }
-  | { ok: false; reason: 'not_open' | 'not_editable' }
+  | { ok: false; reason: 'not_open' | 'not_editable'; open?: OpenOfficeInstanceInfo[] }
 
 /** 保存回填的 per-file 状态：独立于视图存活（导入只需要磁盘工作副本）。 */
 interface EditSyncState {
@@ -192,21 +201,31 @@ export class OfficePreviewRegistry {
 
   /**
    * Agent 编辑一个已打开的 slides 产物（活会话事务；编辑过程直接重绘在打开的视图上）。
-   * 前置条件：该 fileId 已以可编辑实例打开——未打开/只读/会话未就绪都返回结构化原因。
+   * fileId 'active' 解析为「当前打开的那个 PPT」：焦点 slides 实例优先，退化为唯一
+   * 打开的 slides 实例；未打开/会话未就绪返回结构化原因并附当前打开的 Office 清单。
+   * read 对只读实例也放行（“这个 PPT 有啥”）；apply 必须是可编辑实例。
    */
   async editSlidesArtifact(
     fileId: string,
     req: SlidesEditArtifactRequest,
   ): Promise<SlidesEditArtifactOutcome> {
-    const instance = this.instances.get(fileId)
+    const resolvedId = fileId === 'active' ? this.resolveActiveSlides() : fileId
+    const instance = resolvedId === null ? undefined : this.instances.get(resolvedId)
     const wcId = instance?.view.webContentsId
-    if (!instance || !this.runtime || typeof wcId !== 'number') return { ok: false, reason: 'not_open' }
-    if (instance.descriptor.kind !== 'slides' || !instance.editable) {
-      return { ok: false, reason: 'not_editable' }
+    if (!instance || !this.runtime || typeof wcId !== 'number') {
+      return { ok: false, reason: 'not_open', open: this.listOpenOffice() }
+    }
+    if (instance.descriptor.kind !== 'slides') {
+      return { ok: false, reason: 'not_editable', open: this.listOpenOffice() }
     }
     if (req.mode === 'read') {
       const info = this.runtime.slides.describeAgentDeck(wcId)
-      return info ? { ok: true, info } : { ok: false, reason: 'not_open' }
+      return info
+        ? { ok: true, info: { ...info, editable: instance.editable } }
+        : { ok: false, reason: 'not_open', open: this.listOpenOffice() }
+    }
+    if (!instance.editable) {
+      return { ok: false, reason: 'not_editable', open: this.listOpenOffice() }
     }
     return {
       ok: true,
@@ -215,6 +234,31 @@ export class OfficePreviewRegistry {
         isolation: req.isolation,
       }),
     }
+  }
+
+  /** 当前打开的 Office 实例清单（焦点在前），供 Agent 引导用户。 */
+  listOpenOffice(): OpenOfficeInstanceInfo[] {
+    return [...this.instances.entries()]
+      .map(([fileId, instance]) => ({
+        fileId,
+        title: instance.descriptor.title,
+        kind: instance.descriptor.kind,
+        editable: instance.editable,
+        active: fileId === this.activeId,
+      }))
+      .sort((a, b) => Number(b.active) - Number(a.active))
+  }
+
+  /** 'active' 的解析：焦点 slides 实例优先；无焦点时唯一打开的 slides 实例兜底。 */
+  private resolveActiveSlides(): string | null {
+    if (this.activeId) {
+      const instance = this.instances.get(this.activeId)
+      if (instance?.descriptor.kind === 'slides') return this.activeId
+    }
+    const slidesIds = [...this.instances.entries()]
+      .filter(([, instance]) => instance.descriptor.kind === 'slides')
+      .map(([id]) => id)
+    return slidesIds.length === 1 ? slidesIds[0]! : null
   }
 
   /** 激活一个实例并隐藏其余；未知 id 返回 false。 */

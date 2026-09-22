@@ -303,17 +303,25 @@ describe('OfficePreviewRegistry', () => {
     })
 
   describe('editSlidesArtifact (Agent 编辑活会话)', () => {
-    it('unknown fileId → not_open', async () => {
+    it('unknown fileId → not_open（附空打开清单）', async () => {
       const outcome = await registry.editSlidesArtifact('file-missing', { mode: 'read' })
-      expect(outcome).toEqual({ ok: false, reason: 'not_open' })
+      expect(outcome).toEqual({ ok: false, reason: 'not_open', open: [] })
       expect(runtime.slides.describeAgentDeck).not.toHaveBeenCalled()
     })
 
-    it('readonly slides instance → not_editable', async () => {
+    it('readonly slides 实例：read 放行（editable:false），apply → not_editable', async () => {
       const window = makeWindow()
       await registry.open(window, file('file-r1', 'deck-readonly.pptx'))
-      const outcome = await registry.editSlidesArtifact('file-r1', { mode: 'read' })
-      expect(outcome).toEqual({ ok: false, reason: 'not_editable' })
+      runtime.slides.describeAgentDeck.mockReturnValueOnce({ outline: 'Page 1…', opVocabulary: 'text: …' })
+
+      const read = await registry.editSlidesArtifact('file-r1', { mode: 'read' })
+      expect(read).toEqual({
+        ok: true,
+        info: { outline: 'Page 1…', opVocabulary: 'text: …', editable: false },
+      })
+
+      const apply = await registry.editSlidesArtifact('file-r1', { mode: 'apply', ops: [{ op: 'setNotes' }] })
+      expect(apply).toEqual({ ok: false, reason: 'not_editable', open: [expect.objectContaining({ fileId: 'file-r1', editable: false })] })
     })
 
     it('read routes to the editable slides instance and returns the deck info', async () => {
@@ -324,17 +332,60 @@ describe('OfficePreviewRegistry', () => {
       const outcome = await registry.editSlidesArtifact('file-e1', { mode: 'read' })
 
       expect(runtime.slides.describeAgentDeck).toHaveBeenCalledWith(viewCalls[0]!.webContentsId)
-      expect(outcome).toEqual({ ok: true, info: { outline: 'Page 1…', opVocabulary: 'text: …' } })
+      expect(outcome).toEqual({
+        ok: true,
+        info: { outline: 'Page 1…', opVocabulary: 'text: …', editable: true },
+      })
     })
 
-    it('session not ready yet → not_open', async () => {
+    it("fileId 'active'：焦点 slides 实例优先，无焦点退化为唯一 slides 实例", async () => {
+      const window = makeWindow()
+      await registry.open(window, { ...file('file-a1', 'deck-a.pptx'), editable: true })
+      await registry.open(window, file('file-d1', 'notes.docx'))
+      // 焦点在 docx 上：退化到唯一打开的 slides 实例。
+      registry.setActive('file-d1')
+      runtime.slides.describeAgentDeck.mockReturnValueOnce({ outline: 'A…', opVocabulary: 'ops' })
+      const byFallback = await registry.editSlidesArtifact('active', { mode: 'read' })
+      expect(byFallback).toEqual({ ok: true, info: { outline: 'A…', opVocabulary: 'ops', editable: true } })
+
+      // 焦点回到 slides：直接命中。
+      registry.setActive('file-a1')
+      runtime.slides.describeAgentDeck.mockReturnValueOnce({ outline: 'A…', opVocabulary: 'ops' })
+      const byFocus = await registry.editSlidesArtifact('active', { mode: 'read' })
+      expect(byFocus).toEqual({ ok: true, info: { outline: 'A…', opVocabulary: 'ops', editable: true } })
+    })
+
+    it("fileId 'active'：两个 slides 实例且无焦点 → not_open + 清单（焦点在前）", async () => {
+      const window = makeWindow()
+      await registry.open(window, { ...file('file-a1', 'deck-a.pptx'), editable: true })
+      await registry.open(window, file('file-a2', 'deck-b.pptx'))
+      registry.setActive(null)
+
+      const outcome = await registry.editSlidesArtifact('active', { mode: 'read' })
+
+      expect(outcome).toEqual({
+        ok: false,
+        reason: 'not_open',
+        open: [
+          expect.objectContaining({ fileId: 'file-a1', kind: 'slides' }),
+          expect.objectContaining({ fileId: 'file-a2', kind: 'slides' }),
+        ],
+      })
+      expect(runtime.slides.describeAgentDeck).not.toHaveBeenCalled()
+    })
+
+    it('session not ready yet → not_open（附清单）', async () => {
       const window = makeWindow()
       await registry.open(window, { ...file('file-e2', 'deck-late.pptx'), editable: true })
       runtime.slides.describeAgentDeck.mockReturnValueOnce(null)
 
       const outcome = await registry.editSlidesArtifact('file-e2', { mode: 'read' })
 
-      expect(outcome).toEqual({ ok: false, reason: 'not_open' })
+      expect(outcome).toEqual({
+        ok: false,
+        reason: 'not_open',
+        open: [expect.objectContaining({ fileId: 'file-e2', kind: 'slides', editable: true })],
+      })
     })
 
     it('apply forwards ops/dryRun/isolation and returns the fork result', async () => {
@@ -357,7 +408,23 @@ describe('OfficePreviewRegistry', () => {
       const window = makeWindow()
       await registry.open(window, { ...file('file-e4', 'notes.docx'), editable: true })
       const outcome = await registry.editSlidesArtifact('file-e4', { mode: 'read' })
-      expect(outcome).toEqual({ ok: false, reason: 'not_editable' })
+      expect(outcome).toEqual({
+        ok: false,
+        reason: 'not_editable',
+        open: [expect.objectContaining({ fileId: 'file-e4', kind: 'docx', editable: true })],
+      })
+    })
+
+    it('listOpenOffice：焦点实例排最前', async () => {
+      const window = makeWindow()
+      await registry.open(window, file('file-l1', 'a.docx'))
+      await registry.open(window, { ...file('file-l2', 'b.pptx'), editable: true })
+      registry.setActive('file-l2')
+
+      expect(registry.listOpenOffice()).toEqual([
+        { fileId: 'file-l2', title: 'b.pptx', kind: 'slides', editable: true, active: true },
+        { fileId: 'file-l1', title: 'a.docx', kind: 'docx', editable: false, active: false },
+      ])
     })
   })
 

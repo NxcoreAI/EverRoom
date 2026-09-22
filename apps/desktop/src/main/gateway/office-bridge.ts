@@ -44,6 +44,23 @@ export interface OfficeEditRequest {
 const FORMAT_EXT: Record<OfficeGenerateFormat, string> = { docx: '.docx', pptx: '.pptx', xlsx: '.xlsx' }
 const FORMAT_SOURCE: Record<OfficeGenerateFormat, string> = { docx: 'word', pptx: 'pptx', xlsx: 'xlsx' }
 
+const KIND_LABEL: Record<string, string> = { docx: 'Word', slides: 'PPT', spreadsheet: 'Excel', pdf: 'PDF' }
+
+/** 报错随行的打开清单摘要：让 Agent（和用户）知道现场有哪些 Office 文件打开着。 */
+function describeOpenInstances(open: unknown): string {
+  if (!Array.isArray(open) || open.length === 0) return '当前没有打开任何 Office 文件。'
+  const items = open.map((entry) => {
+    const info = entry as { title?: unknown; kind?: unknown; editable?: unknown; active?: unknown }
+    const label = KIND_LABEL[String(info.kind)] ?? String(info.kind)
+    const suffix = [
+      info.editable ? '可编辑' : '只读',
+      info.active ? '当前焦点' : null,
+    ].filter(Boolean).join('，')
+    return `${String(info.title)}（${label}，${suffix}）`
+  })
+  return `当前打开的 Office 文件：${items.join('；')}。`
+}
+
 function authorized(request: IncomingMessage, token: string): boolean {
   const supplied = String(request.headers.authorization ?? '').replace(/^Bearer\s+/i, '')
   const left = Buffer.from(supplied)
@@ -177,11 +194,12 @@ export class OfficeBridgeServer {
       return { status: 502, body: { message: error instanceof Error ? error.message : 'Office edit failed' } }
     }
     if (!outcome.ok) {
+      const openSummary = describeOpenInstances(outcome.open)
       const message =
         outcome.reason === 'not_editable'
-          ? '该 PPT 当前不是以可编辑的 PPT 产物打开的。请在 Room 产物库中重新打开后再编辑。'
-          : 'PPT 未在 Room 中打开。请先在产物库中打开该文件（Agent 的编辑会实时显示在打开的视图上），然后再试。'
-      return { status: 422, body: { code: outcome.reason, message } }
+          ? `该 PPT 当前不是以可编辑的 PPT 产物打开的，无法应用编辑。请在 Room 产物库中重新以可编辑方式打开后再试。${openSummary}`
+          : `PPT 未在 Room 中打开。请先在产物库中打开该文件（Agent 的编辑会实时显示在打开的视图上），然后再试；或把 fileId 设为 "active" 直接指当前打开的那个 PPT。${openSummary}`
+      return { status: 422, body: { code: outcome.reason, message, open: outcome.open ?? [] } }
     }
     return { status: 200, body: { data: outcome.info ?? outcome.result ?? {} } }
   }
