@@ -394,5 +394,16 @@
   "orgPrefs.statsTopNames": "多次判非重复的名称：{names}",
   "orgPrefs.statsPending": "（学习未开启或尚无信号）",
   "orgPrefs.saving": "正在保存…",
-  "memory.organizationPreferences": "整理偏好"
+  "memory.organizationPreferences": "整理偏好",
+  "timeline.today": "今天",
+  "timeline.yesterday": "昨天",
+  "timeline.thisWeek": "本周",
+  "timeline.thisMonth": "本月",
+  "timeline.earlier": "更早",
+  "timeline.loadMore": "加载更多",
+  "timeline.all": "不限",
+  "timeline.last7days": "近 7 天",
+  "timeline.last30days": "近 30 天",
+  "timeline.featured": "精选",
+  "timeline.dismissFeatured": "暂不显示精选"
 }

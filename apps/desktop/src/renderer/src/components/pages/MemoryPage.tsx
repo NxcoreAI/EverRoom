@@ -20,21 +20,21 @@ import { useMemoryOverview } from './memory/useMemoryData'
 import './memory/MemoryPage.css'
 import { useLocale } from '@/i18n/LocaleContext'
 
-const TABS: Array<{ id: MemoryTabId; label: string; level: string }> = [
-  { id: 'overview', label: 'memory:memory.overview', level: '' },
-  { id: 'conversation', label: 'memory:memory.conversations', level: 'L0' },
-  { id: 'documents', label: 'memory:memory.documents', level: '' },
-  { id: 'atomic', label: 'memory:memory.atomicMemory', level: 'L1' },
-  { id: 'scenario', label: 'memory:memory.scenarios', level: 'L2' },
-  { id: 'core', label: 'memory:memory.profile', level: 'L3' },
+const TABS: Array<{ id: MemoryTabId; label: string }> = [
+  { id: 'overview', label: 'memory:memory.overview' },
+  { id: 'conversation', label: 'memory:memory.conversations' },
+  { id: 'documents', label: 'memory:memory.documents' },
+  { id: 'atomic', label: 'memory:memory.atomicMemory' },
+  { id: 'scenario', label: 'memory:memory.scenarios' },
+  { id: 'core', label: 'memory:memory.profile' },
   // 写作风格 = 从用户文档自动沉淀的表达偏好（系统段只读）+ 用户指令段可编辑
-  { id: 'writing-style', label: 'memory:memory.writingStyle', level: '' },
+  { id: 'writing-style', label: 'memory:memory.writingStyle' },
   // 导入记录 = 统一引擎台账（全源进入记录 + 过滤闸状态，误杀恢复入口）
-  { id: 'ledger', label: 'memory:memory.ledger', level: '' },
+  { id: 'ledger', label: 'memory:memory.ledger' },
   // 过滤规则 = 过滤器判定偏好（用户偏好可编辑 + 系统洞察只读）
-  { id: 'filter-rules', label: 'memory:memory.filterRules', level: '' },
+  { id: 'filter-rules', label: 'memory:memory.filterRules' },
   // 整理偏好 = 知识整理习惯学习（M3）：合并/路由/晋升信号的统计与洞察 + 用户接管
-  { id: 'org-preferences', label: 'memory:memory.organizationPreferences', level: '' },
+  { id: 'org-preferences', label: 'memory:memory.organizationPreferences' },
 ]
 
 export function MemoryPage({ focusAtomicId }: { focusAtomicId?: string | null } = {}) {
@@ -149,10 +149,7 @@ export function MemoryPage({ focusAtomicId }: { focusAtomicId?: string | null } 
               data-active={tab === entry.id && !search}
               onClick={() => { setTab(entry.id); setSearch(null) }}
             >
-              <span className="mem-tab-name">
-                {t(entry.label)}
-                {entry.level ? <span className="mem-level-badge">{entry.level}</span> : null}
-              </span>
+              <span className="mem-tab-name">{t(entry.label)}</span>
               {/* 数量固定占一行（无数量的 tab 留空行），保证各 tab 等高、下划线对齐 */}
               <span className="mem-tab-count">{count !== null ? count : ''}</span>
             </button>

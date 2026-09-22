@@ -394,5 +394,16 @@
   "orgPrefs.statsTopNames": "Names repeatedly judged distinct: {names}",
   "orgPrefs.statsPending": "(Learning is off, or no signals yet)",
   "orgPrefs.saving": "Saving…",
-  "memory.organizationPreferences": "Organization preferences"
+  "memory.organizationPreferences": "Organization preferences",
+  "timeline.today": "Today",
+  "timeline.yesterday": "Yesterday",
+  "timeline.thisWeek": "This week",
+  "timeline.thisMonth": "This month",
+  "timeline.earlier": "Earlier",
+  "timeline.loadMore": "Load more",
+  "timeline.all": "All",
+  "timeline.last7days": "Last 7 days",
+  "timeline.last30days": "Last 30 days",
+  "timeline.featured": "Featured",
+  "timeline.dismissFeatured": "Dismiss featured"
 }
