@@ -157,18 +157,6 @@ export function WorkspacePaneBody({
   }
 
   if (board === 'artifacts') {
-    // 伴随思路页签：中栏卡片流，焦点跟右区打开的产物，引用插回编辑器。
-    if (subtab === 'companion') {
-      return (
-        <ThoughtsPane
-          room={room}
-          focus={focus}
-          focusLocked={focusLocked}
-          onToggleFocusLock={onToggleFocusLock}
-          onQuote={onCompanionQuote}
-        />
-      );
-    }
     // 产物库：用户在 EverRoom 创建的文档 + Agent 生成的 Office 文件；
     // 外部导入归工作/资料。
     const agentFiles = knowledgeFiles.filter((file) => file.sourceKind === 'agent-generated');

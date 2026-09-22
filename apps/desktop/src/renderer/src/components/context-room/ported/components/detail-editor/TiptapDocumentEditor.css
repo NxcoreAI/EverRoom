@@ -1956,3 +1956,78 @@ textarea.context-room-tiptap-rewrite-text:disabled {
   cursor: pointer;
 }
 .context-room-tiptap-bubble-comment button:disabled { opacity: 0.5; cursor: default; }
+
+/* 顶部状态行：文档标题（单击改名）+ 快捷操作（撤销/重做/查找）。 */
+.context-room-doc-status-title {
+  min-width: 0;
+  max-width: 320px;
+  overflow: hidden;
+  padding: 2px 7px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--cr-text);
+  cursor: text;
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-room-doc-status-title:hover:not(:disabled) {
+  background: var(--cr-surface-secondary);
+}
+
+.context-room-doc-status-title:disabled {
+  cursor: default;
+}
+
+.context-room-doc-status-title-input {
+  width: 240px;
+  height: 24px;
+  padding: 0 7px;
+  border: 1px solid var(--cr-blue);
+  border-radius: 5px;
+  background: var(--cr-surface);
+  color: var(--cr-text);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.context-room-doc-status-title-input:focus {
+  outline: 0;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--cr-blue) 12%, transparent);
+}
+
+.context-room-doc-quick-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.context-room-doc-quick-actions button {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--cr-muted);
+  cursor: pointer;
+}
+
+.context-room-doc-quick-actions button:hover:not(:disabled) {
+  background: var(--cr-surface-hover);
+  color: var(--cr-text);
+}
+
+.context-room-doc-quick-actions button:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.context-room-doc-quick-actions button svg {
+  width: 15px;
+  height: 15px;
+}

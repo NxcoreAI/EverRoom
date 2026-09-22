@@ -15045,13 +15045,3 @@ button.eg-walk.is-next:hover {
   width: 100%;
   background: var(--cr-surface);
 }
-
-.context-room-thoughts-pinned-item {
-  animation: context-room-emergence-card-in 240ms var(--shell-motion-easing) both;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .context-room-thoughts-pinned-item {
-    animation: none;
-  }
-}
