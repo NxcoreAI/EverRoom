@@ -8,6 +8,10 @@ import { SaasRequestError, type SaasClient } from './saas-client'
 // TTL 25min − 5min 余量。
 const RENEW_INTERVAL_MS = 20 * 60_000
 const NETWORK_FAILURE_FALLBACK_THRESHOLD = 3
+/** 会话未激活（启动后首推前/会话过期）时的快速重试：10s 起步指数退避、
+ *  60s 封顶。会话激活后再失败沿用 20min 周期（网关侧仍有 ~25min TTL）。 */
+const INACTIVE_RETRY_BASE_MS = 10_000
+const INACTIVE_RETRY_MAX_MS = 60_000
 
 export type AiRelayKeeperEvent =
   | { type: 'quota-exhausted' }
@@ -26,6 +30,10 @@ const http = createLoggedHttpClient('ai-relay-keeper')
  */
 export class AiRelayKeeper {
   private timer: NodeJS.Timeout | null = null
+  private retryTimer: NodeJS.Timeout | null = null
+  private retryAttempts = 0
+  /** 最近一次成功推送的会话到期时刻；0 = 尚未激活（启动后首推前）。 */
+  private sessionActiveUntil = 0
   private cycleInFlight: Promise<void> | null = null
   private cyclePending = false
   private consecutiveFailures = 0
@@ -49,7 +57,11 @@ export class AiRelayKeeper {
   async stop(): Promise<void> {
     if (this.timer) clearInterval(this.timer)
     this.timer = null
+    if (this.retryTimer) clearTimeout(this.retryTimer)
+    this.retryTimer = null
     this.consecutiveFailures = 0
+    this.retryAttempts = 0
+    this.sessionActiveUntil = 0
     this.fellBackToUser = false
     await this.clearGatewaySession().catch(() => undefined)
   }
@@ -67,7 +79,9 @@ export class AiRelayKeeper {
       try {
         const issued = await this.client.issueAiGatewayToken()
         await this.pushGatewaySession(issued.token, issued.expiresAt, issued.baseUrl)
+        this.sessionActiveUntil = Date.parse(issued.expiresAt) || 0
         this.consecutiveFailures = 0
+        this.retryAttempts = 0
         if (this.fellBackToUser) await this.restoreDefaultSource()
       } catch (error) {
         if (error instanceof SaasRequestError && error.status === 403) {
@@ -80,6 +94,7 @@ export class AiRelayKeeper {
         if (this.consecutiveFailures >= NETWORK_FAILURE_FALLBACK_THRESHOLD && !this.fellBackToUser) {
           await this.fallbackToUserSource()
         }
+        if (Date.now() >= this.sessionActiveUntil) this.scheduleInactiveRetry()
       }
     }
     this.cycleInFlight = attempt().finally(() => {
@@ -90,6 +105,18 @@ export class AiRelayKeeper {
       }
     })
     return this.cycleInFlight
+  }
+
+  /** 会话尚未激活时的退避重试：固定 20min 周期会让启动期一次网络抖动把
+   *  登录门卡在未就绪状态最长 20 分钟。仅在 keeper 运行中排程（stop 后不再）。 */
+  private scheduleInactiveRetry(): void {
+    if (this.retryTimer || this.timer === null) return
+    const delay = Math.min(INACTIVE_RETRY_BASE_MS * 2 ** this.retryAttempts, INACTIVE_RETRY_MAX_MS)
+    this.retryAttempts += 1
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = null
+      void this.cycle()
+    }, delay)
   }
 
   private async pushGatewaySession(token: string, expiresAt: string, baseUrl: string): Promise<void> {
