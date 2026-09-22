@@ -1,12 +1,16 @@
 /**
  * runtime config 的 knowledge.embedding → MemoryCore TDAI_EMBEDDING_* 环境变量。
  *
+ * 两条来源：
+ * - relay 槽位（baseUrl 指向 gateway /ai-relay）：API_KEY 换成 gateway 生命周期
+ *   稳定的 bearer token，dimensions 用静态表——SaaS 中转 token 25min 轮换完全
+ *   留在 gateway 进程内，MemoryCore env 恒定不因轮换重启；
+ * - BYOK（用户自配直连）：原样透传，维度经 /v1/runtime-config/test 真实探测。
+ *
  * MemoryCore 约束(见 memory-core src/gateway/config.ts):env 下发完整远程配置
  * (PROVIDER/BASE_URL/API_KEY/MODEL/DIMENSIONS)时自动启用 embedding,缺任一项
- * 自动禁用不崩溃。provider 为任意非 local/none 字符串(OpenAI 兼容 HTTP)。
- * dimensions 由 gateway /v1/runtime-config/test 的真实 /embeddings 响应确认；
- * 已配置 TDAI_EMBEDDING_DIMENSIONS 时，探测请求会带上该期望维度，避免供应商默认值覆盖本地配置。
- * 不设 TDAI_EMBEDDING_ENABLED/SEND_DIMENSIONS，走 MemoryCore 默认。
+ * 自动禁用不崩溃(降级为 FTS/metadata-only,配合 store 补丁不再变砖)。provider
+ * 为任意非 local/none 字符串(OpenAI 兼容 HTTP)。
  * 脱敏占位（********）等同缺失：不注入掩码（MemoryCore 会当真 key 用，
  * 每个上游请求静默 401），宁可不注入让它按未配置降级。
  */
@@ -17,6 +21,43 @@ export interface MemoryCoreEmbeddingFields {
   model: string
   baseUrl: string
   apiKey: string
+}
+
+/** gateway /ai-relay 槽位的稳定凭据：gateway 生命周期内不变（区别于 25min 轮换的 SaaS 中转 token）。 */
+export interface GatewayRelayConnection {
+  baseUrl: string
+  token: string
+}
+
+/** relay 走 newapi 的 embedding 模型 → 向量维度静态表（新模型接入时补一行）。 */
+const RELAY_EMBEDDING_DIMENSIONS: Record<string, number> = {
+  'text-embedding-v4': 1536,
+}
+
+export function relayEmbeddingDimensions(model: string): number {
+  return RELAY_EMBEDDING_DIMENSIONS[model.trim()] ?? 1536
+}
+
+/** 槽位 baseUrl 是否指向本 app gateway 的 /ai-relay（= 经 SaaS newapi 中转）。 */
+export function isRelaySlotUrl(url: string, relay: GatewayRelayConnection | null): boolean {
+  if (!relay) return false
+  return url.trim().startsWith(`${relay.baseUrl.replace(/\/+$/, '')}/ai-relay`)
+}
+
+/** TDAI_* env 中指向 /ai-relay 的 BASE_URL，其 API_KEY 统一替换为稳定的 gateway token。 */
+export function withStableRelayKey(
+  env: Record<string, string> | null,
+  relay: GatewayRelayConnection | null,
+): Record<string, string> | null {
+  if (!relay || !env) return env
+  let stabilized = env
+  if (isRelaySlotUrl(env.TDAI_EMBEDDING_BASE_URL ?? '', relay)) {
+    stabilized = { ...stabilized, TDAI_EMBEDDING_API_KEY: relay.token }
+  }
+  if (isRelaySlotUrl(env.TDAI_LLM_BASE_URL ?? '', relay)) {
+    stabilized = { ...stabilized, TDAI_LLM_API_KEY: relay.token }
+  }
+  return stabilized
 }
 
 export function memoryCoreEmbeddingEnv(

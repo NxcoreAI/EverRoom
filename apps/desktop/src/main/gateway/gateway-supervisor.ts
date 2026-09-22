@@ -131,6 +131,8 @@ export class GatewaySupervisor {
       packagedEntry?: string
       logLabel?: string
       devPortEnvironment?: string
+      /** 连接变化（首次建立、dev 热重载换端口/token、恢复）时回调——依赖 gateway 稳定地址的子进程 env 需要联动刷新。 */
+      onConnectionChanged?: (connection: GatewayConnection) => void
     } = {},
   ) {}
 
@@ -151,6 +153,31 @@ export class GatewaySupervisor {
 
   private async launchGateway(): Promise<GatewayConnection> {
     this.lastError = null
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      try {
+        return await this.launchGatewayOnce()
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        // 数据迁移失败是确定性故障（exit 78，已回滚），重试无意义；其余的
+        // 启动即退/超时在 Windows 上多为杀软扫描、残留进程锁库等偶发因素，
+        // 自动重试一次可自愈，避免用户面对"启动即挂"。
+        if (message.includes('数据迁移失败') || attempt >= 2) throw error
+        console.warn(`[${this.options.logLabel ?? 'gateway'}-supervisor] 启动失败，1s 后重试一次：${message}`)
+        await delay(1_000)
+      }
+    }
+    throw new Error('unreachable')
+  }
+
+  private stderrTail = ''
+
+  private collectStderrTail(chunk: string): void {
+    this.stderrTail = `${this.stderrTail}${chunk}`.slice(-4_000)
+  }
+
+  private async launchGatewayOnce(): Promise<GatewayConnection> {
+    this.lastError = null
+    this.stderrTail = ''
 
     const gatewayDirectory = app.isPackaged
       ? join(process.resourcesPath, 'gateway')
@@ -218,6 +245,7 @@ export class GatewaySupervisor {
     child.stderr.setEncoding('utf8')
     forwardGatewayOutput(child.stdout, process.stdout, this.options.logLabel ?? 'gateway', 'stdout')
     forwardGatewayOutput(child.stderr, process.stderr, this.options.logLabel ?? 'gateway', 'stderr')
+    child.stderr.on('data', (chunk: string) => this.collectStderrTail(chunk))
     child.on('exit', (code, signal) => {
       this.child = null
       this.connection = null
@@ -230,12 +258,14 @@ export class GatewaySupervisor {
 
     try {
       const manifest = await this.waitUntilReady(child, manifestPath, token)
+      const previous = this.connection
       this.connection = {
         pid: manifest.pid,
         baseUrl: manifest.baseUrl,
         token,
         version: manifest.version,
       }
+      this.notifyConnectionChanged(previous, this.connection)
       return this.connection
     } catch (error) {
       this.killChild(child, 'SIGTERM', detached)
@@ -269,12 +299,14 @@ export class GatewaySupervisor {
         throw new Error(`${this.serviceLabel()} 健康检查失败（${response.status}）`)
       }
 
+      const previous = this.connection
       this.connection = {
         pid: parsed.pid,
         baseUrl: parsed.baseUrl,
         token: connection.token,
         version: parsed.version,
       }
+      this.notifyConnectionChanged(previous, this.connection)
       return {
         state: 'ready',
         pid: parsed.pid,
@@ -369,7 +401,10 @@ export class GatewaySupervisor {
             `${this.serviceLabel()} 数据迁移失败：老数据升级到当前版本时出错，已恢复到迁移前的备份。请查看日志；如持续失败请保留数据目录后联系支持。`,
           )
         }
-        throw new Error(`${this.serviceLabel()} exited during startup with code ${String(child.exitCode)}`)
+        const tail = this.stderrTail.trim().split('\n').slice(-8).join('\n')
+        throw new Error(
+          `${this.serviceLabel()} exited during startup with code ${String(child.exitCode)}${tail ? `\n--- stderr 尾部 ---\n${tail}` : ''}`,
+        )
       }
 
       try {
@@ -414,12 +449,14 @@ export class GatewaySupervisor {
         }
         if (this.stopping) throw new Error(`${this.serviceLabel()} 正在停止。`)
 
+        const previous = this.connection
         this.connection = {
           pid: parsed.pid,
           baseUrl: parsed.baseUrl,
           token: staleConnection.token,
           version: parsed.version,
         }
+        this.notifyConnectionChanged(previous, this.connection)
         this.lastError = null
         return this.connection
       } catch (error) {
@@ -436,6 +473,15 @@ export class GatewaySupervisor {
     throw lastError instanceof Error
       ? lastError
       : new Error(`${this.serviceLabel()} 连接恢复失败`)
+  }
+
+  private notifyConnectionChanged(previous: GatewayConnection | null, next: GatewayConnection): void {
+    if (previous && this.isSameConnection(previous, next)) return
+    try {
+      this.options.onConnectionChanged?.(next)
+    } catch (error) {
+      console.warn(`[${this.options.logLabel ?? 'gateway'}-supervisor] onConnectionChanged 回调失败：`, error)
+    }
   }
 
   private isSameConnection(left: GatewayConnection, right: GatewayConnection): boolean {

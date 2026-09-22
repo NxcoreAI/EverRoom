@@ -11,7 +11,7 @@ overrides:
 patchedDependencies:
   '@electron/osx-sign@1.3.3': 9fee0ed4985c19a73ce7269ce20a1f1d0d200189109d3f6384faeaa5f4453d79
   '@oomol-lab/open-connector@0.0.0-development': 9bcac830536dc50bbfc27c3960faaad12c3b6ae839bb8357b1a3c21027c40c14
-  '@tencentdb-agent-memory/memory-tencentdb-v2@2.0.0-beta.1-everroom.8': 351b45cf8e7bc7b80b1feff362fb4100900a4301b00d7dd3fa34c572f331e7e6
+  '@tencentdb-agent-memory/memory-tencentdb-v2@2.0.0-beta.1-everroom.8': 657cc56317b99ecad2247d27859b242080418d97d494444ad9943fa49d878c1c
   pi-mcp-adapter@2.26.1: 804b624646c5ea098dc6653717b1bb35999d334dcc89b6d019fe44e8842966e6
   sqlite-vec@0.1.7-alpha.2: dc66b136208f29f8a7f31c0053a98bbdcb16cfbc4f88028da689fd9b66f776ac
 
@@ -80,7 +80,7 @@ importers:
         version: git+https://github.com/NxcoreAI/TencentDB-Agent-Memory.git#91c967a8aee65346bbc89d64681a14cf2b085f8e&path:MemoryKnowledge(@cfworker/json-schema@4.1.1)(@opentelemetry/core@2.10.0(@opentelemetry/api@1.9.1))(@opentelemetry/exporter-trace-otlp-http@0.219.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(@types/better-sqlite3@9.6.0)(graphology-types@0.24.8)(pg@8.23.0)(supports-color@8.1.1)
       '@tencentdb-agent-memory/memory-tencentdb-v2':
         specifier: https://github.com/NxcoreAI/TencentDB-Agent-Memory.git#f65f83e&path:MemoryCore
-        version: git+https://github.com/NxcoreAI/TencentDB-Agent-Memory.git#f65f83e550cc4a13d51cbef8550f0b1755073ea4&path:MemoryCore(patch_hash=351b45cf8e7bc7b80b1feff362fb4100900a4301b00d7dd3fa34c572f331e7e6)(socks@2.8.9)(supports-color@8.1.1)
+        version: git+https://github.com/NxcoreAI/TencentDB-Agent-Memory.git#f65f83e550cc4a13d51cbef8550f0b1755073ea4&path:MemoryCore(patch_hash=657cc56317b99ecad2247d27859b242080418d97d494444ad9943fa49d878c1c)(socks@2.8.9)(supports-color@8.1.1)
       '@tiptap/extension-document':
         specifier: ^3.30.1
         version: 3.30.1(@tiptap/core@3.30.1(@tiptap/pm@3.30.1))
@@ -13024,7 +13024,7 @@ snapshots:
     dependencies:
       undici: 6.28.0
 
-  '@tencentdb-agent-memory/memory-tencentdb-v2@git+https://github.com/NxcoreAI/TencentDB-Agent-Memory.git#f65f83e550cc4a13d51cbef8550f0b1755073ea4&path:MemoryCore(patch_hash=351b45cf8e7bc7b80b1feff362fb4100900a4301b00d7dd3fa34c572f331e7e6)(socks@2.8.9)(supports-color@8.1.1)':
+  '@tencentdb-agent-memory/memory-tencentdb-v2@git+https://github.com/NxcoreAI/TencentDB-Agent-Memory.git#f65f83e550cc4a13d51cbef8550f0b1755073ea4&path:MemoryCore(patch_hash=657cc56317b99ecad2247d27859b242080418d97d494444ad9943fa49d878c1c)(socks@2.8.9)(supports-color@8.1.1)':
     dependencies:
       '@ai-sdk/openai': 3.0.96(zod@4.4.3)
       '@node-rs/jieba': 2.0.2

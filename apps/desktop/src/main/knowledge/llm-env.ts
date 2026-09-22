@@ -9,13 +9,19 @@
  * 未配置返回 null（保持 .env 透传，不注入半套——LLM_MODE=custom 无 key
  * 会让 wiki ingest 直接报"LLM apiKey 未配置"）。脱敏占位（********）等同
  * 未配置：不注入掩码，让 KS 明确报「LLM apiKey 未配置」而非静默 401。
+ *
+ * relay 槽位（baseUrl 指向 gateway /ai-relay）：apiKey 换成 gateway 生命周期
+ * 稳定的 bearer token——SaaS 中转 token 25min 轮换留在 gateway 进程内，KS env
+ * 恒定不因轮换反复重启（同 memory-core 的 withStableRelayKey 策略）。
  */
 
 import { isMaskedRuntimeConfigSecret } from '../../shared/sources'
+import { isRelaySlotUrl, type GatewayRelayConnection } from '../memory/embedding-env'
 
 /** runtime config primary 段 → KS LLM_*（custom 直连模式）；未配置返回 null。 */
 export function knowledgeServiceLlmEnv(
   config: Record<string, unknown> | undefined | null,
+  relay: GatewayRelayConnection | null = null,
 ): Record<string, string> | null {
   const primary = config?.primary
   const value = primary && typeof primary === 'object' && !Array.isArray(primary)
@@ -26,8 +32,9 @@ export function knowledgeServiceLlmEnv(
     return typeof raw === 'string' && !isMaskedRuntimeConfigSecret(raw) ? raw.trim() : ''
   }
   const baseUrl = text('baseUrl')
-  const apiKey = text('apiKey')
+  let apiKey = text('apiKey')
   const model = text('model')
+  if (isRelaySlotUrl(baseUrl, relay) && relay) apiKey = relay.token
   if (!baseUrl || !apiKey || !model) return null
   return {
     LLM_MODE: 'custom',

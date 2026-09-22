@@ -44,7 +44,7 @@ import { MemoryGatewayBridge } from './gateway/memory-gateway-bridge'
 import { KnowledgeServiceSupervisor } from './knowledge/knowledge-supervisor'
 import { knowledgeServiceLlmEnv } from './knowledge/llm-env'
 import { MemoryCoreSupervisor } from './memory/memory-core-supervisor'
-import { embeddingFieldsFromConfig, memoryCoreEmbeddingEnv, memoryCoreEnvironment } from './memory/embedding-env'
+import { embeddingFieldsFromConfig, isRelaySlotUrl, memoryCoreEmbeddingEnv, memoryCoreEnvironment, relayEmbeddingDimensions, withStableRelayKey } from './memory/embedding-env'
 import type { KnowledgeAttachInput } from '../shared/knowledge'
 import type { McpServersMutation } from '../shared/mcp'
 import type { ExternalCallPolicyInput, ExternalCallQuery } from '../shared/external-calls'
@@ -130,7 +130,7 @@ import { BrowserExtensionService } from './browser-extension/browser-extension-s
 import { CLIPPER_ASSET_SCHEME, type BrowserExtensionStatus } from '../shared/browser-extension'
 import { OBSIDIAN_VAULT_ASSET_SCHEME } from '../shared/obsidian'
 import { ObsidianVaultService } from './obsidian/obsidian-vault-service'
-import { createLocalAgentDiscovery, isSafeLocalAgentPath, probeLocalAgentAcpAdapter } from './local-agents/discovery'
+import { createLocalAgentDiscovery, installLocalAgentAcpAdapter, isSafeLocalAgentPath, probeLocalAgentAcpAdapter } from './local-agents/discovery'
 import { LocalAgentWorkspaceBindingStore } from './local-agents/workspace-binding-store'
 import type { LocalAgentInstallation, LocalAgentWorkspaceBinding } from '../shared/local-agents'
 import { MigrationsGatewayBridge } from './gateway/migrations-gateway-bridge'
@@ -349,6 +349,7 @@ const CONTEXT_ROOM_CHANNELS = {
 const AGENT_CHANNELS = {
   discoverLocalAgents: 'agent:discover-local-agents',
   checkLocalAgentAdapters: 'agent:check-local-agent-adapters',
+  installLocalAgentAdapter: 'agent:install-local-agent-adapter',
   importLocalAgentHistory: 'agent:import-local-agent-history',
   bindLocalAgentWorkspace: 'agent:bind-local-agent-workspace',
   getStatus: 'agent:get-status',
@@ -1459,8 +1460,18 @@ async function syncMemoryCoreEnvironment(snapshot: RuntimeConfigSnapshot): Promi
     const fields = embeddingFieldsFromConfig(snapshot.config)
     let embeddingEnv: Record<string, string> | null = null
     let applyAiEnvironment = true
-    if (fields) {
-      // /test 只在 embedding 四要素齐全时测 /embeddings 并带维度；这里复用一次。
+    const relay = gatewaySupervisor?.getConnection() ?? null
+    if (fields && isRelaySlotUrl(fields.baseUrl, relay) && relay) {
+      // relay 槽位：API_KEY 换成 gateway 稳定 token，dimensions 走静态表——
+      // SaaS 中转 token 的 25min 轮换留在 gateway /ai-relay 内，MemoryCore env
+      // 恒定；不做 /test 探测（relay 会话未激活时探测必失败，会把本可用的
+      // 配置卡在未注入状态）。
+      embeddingEnv = memoryCoreEmbeddingEnv(
+        { ...fields, apiKey: relay.token },
+        relayEmbeddingDimensions(fields.model),
+      )
+    } else if (fields) {
+      // BYOK 直连：/test 真实探测 /embeddings 维度；失败保持现 env 不动。
       const result = await bridge?.test()
       if (!result?.embedding?.valid || !result.embedding.dimensions) {
         console.warn('[memory-core] embedding config saved but /embeddings test failed; keeping current env')
@@ -1469,7 +1480,7 @@ async function syncMemoryCoreEnvironment(snapshot: RuntimeConfigSnapshot): Promi
         embeddingEnv = memoryCoreEmbeddingEnv(fields, result.embedding.dimensions)
       }
     }
-    const nextEnv = memoryCoreEnvironment(snapshot.config, embeddingEnv)
+    const nextEnv = withStableRelayKey(memoryCoreEnvironment(snapshot.config, embeddingEnv), relay)
     const nextJson = nextEnv ? JSON.stringify(nextEnv) : null
     if (applyAiEnvironment && initialConnection.managed && nextJson !== memoryCoreAiEnvApplied) {
       const restarted = await supervisor.restart(nextEnv)
@@ -1598,7 +1609,8 @@ async function syncKnowledgeServiceEnvironment(snapshot: RuntimeConfigSnapshot):
     const supervisor = knowledgeServiceSupervisor
     const initialConnection = supervisor?.getConnection() ?? null
     if (!supervisor || !initialConnection) return
-    const nextEnv = knowledgeServiceLlmEnv(snapshot.config)
+    // relay 槽位注入 gateway 稳定 token，25min 轮换不再反复重启 KS。
+    const nextEnv = knowledgeServiceLlmEnv(snapshot.config, gatewaySupervisor?.getConnection() ?? null)
     const nextJson = JSON.stringify(nextEnv)
     if (nextJson === knowledgeServiceAiEnvApplied) return
     if (initialConnection.managed) {
@@ -2223,6 +2235,18 @@ function registerAgentHandlers(bridge: AgentGatewayBridge, migrationCoordinator:
       displayName: agent.displayName,
       adapter: await probeLocalAgentAcpAdapter(agent),
     })))
+  })
+  handle(AGENT_CHANNELS.installLocalAgentAdapter, async (_event, agentId: string) => {
+    const id = typeof agentId === 'string' ? agentId : ''
+    let installation = localAgents.find((agent) => agent.id === id)
+    if (!installation) {
+      await scanLocalAgents()
+      installation = localAgents.find((agent) => agent.id === id)
+    }
+    if (!installation?.invocationSupported) {
+      throw new Error('选择的本机 Agent 当前不可调用。')
+    }
+    return installLocalAgentAcpAdapter(installation)
   })
   handle(AGENT_CHANNELS.bindLocalAgentWorkspace, async (event, agentId: string, sessionId: string) => {
     if (!localAgents.some((agent) => agent.id === agentId && agent.invocationSupported)) {
@@ -3666,6 +3690,15 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
           }
           : {}),
       }),
+      {
+        // gateway 连接变化（dev 热重载换端口/token）时，MemoryCore/KS 等子进程
+        // 指向 /ai-relay 的稳定 token 随之失效——联动补一次 env 同步。
+        onConnectionChanged: () => {
+          void runtimeConfigBridge?.get()
+            .then(snapshot => (snapshot ? syncManagedChildProcesses(snapshot) : undefined))
+            .catch(() => undefined)
+        },
+      },
     )
     const gateway = await gatewaySupervisor.start()
     console.info(`NxCore Gateway ready at ${gateway.baseUrl} (pid=${gateway.pid})`)
@@ -3815,6 +3848,14 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     }, 5 * 60_000)
     sentryAccountResyncTimer.unref()
     aiRelayKeeper = new AiRelayKeeper(saasClient, gatewaySupervisor, runtimeConfigBridge, (event: AiRelayKeeperEvent) => {
+      if (event.type === 'session-activated') {
+        // relay 会话就绪后 gateway 才把槽位重写为 /ai-relay——补一次子进程
+        // env 同步，闭合「boot 时会话未就绪 → MemoryCore/KS 缺 embedding/LLM」
+        // 的冷启动窗口（token 轮换不再触发，见 withStableRelayKey）。
+        void runtimeConfigBridge?.get()
+          .then(snapshot => (snapshot ? syncManagedChildProcesses(snapshot) : undefined))
+          .catch(() => undefined)
+      }
       for (const target of BrowserWindow.getAllWindows()) {
         if (!target.isDestroyed() && !target.webContents.isDestroyed()) {
           target.webContents.send(`ai-relay:${event.type}`, event)

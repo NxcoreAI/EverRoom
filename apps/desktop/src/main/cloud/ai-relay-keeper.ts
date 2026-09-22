@@ -17,6 +17,7 @@ export type AiRelayKeeperEvent =
   | { type: 'quota-exhausted' }
   | { type: 'fallback-user' }
   | { type: 'fallback-restored' }
+  | { type: 'session-activated' }
 
 const http = createLoggedHttpClient('ai-relay-keeper')
 
@@ -77,11 +78,13 @@ export class AiRelayKeeper {
     }
     const attempt = async () => {
       try {
+        const wasActive = Date.now() < this.sessionActiveUntil
         const issued = await this.client.issueAiGatewayToken()
         await this.pushGatewaySession(issued.token, issued.expiresAt, issued.baseUrl)
         this.sessionActiveUntil = Date.parse(issued.expiresAt) || 0
         this.consecutiveFailures = 0
         this.retryAttempts = 0
+        if (!wasActive) this.onEvent({ type: 'session-activated' })
         if (this.fellBackToUser) await this.restoreDefaultSource()
       } catch (error) {
         if (error instanceof SaasRequestError && error.status === 403) {
