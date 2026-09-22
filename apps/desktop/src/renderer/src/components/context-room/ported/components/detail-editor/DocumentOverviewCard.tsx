@@ -1,14 +1,15 @@
 import type { DocumentOverviewView } from '@nxcore/agent-contract'
-import { ChevronDown } from 'lucide-react'
+import { ChevronDown, Sparkles } from 'lucide-react'
 import { useLocale } from '../../../../../i18n/LocaleContext'
 import type { DocumentOverviewStatus } from './useDocumentOverview'
 import './TiptapDocumentEditor.css'
 
 /**
- * 文档速览卡：标题下方、正文上方的可折叠元信息行，与编辑器同语言——
- * 无填充无描边，悬停只给一层浅底；展开态以正文排版罗列要点/结论与
- * 生成时间。纯展示组件，状态机在 useDocumentOverview。空文档不渲染
- * （避免空编辑器上方挂噪音条）；过短文档只渲染提示条。
+ * 文档速览卡：标题下方、正文上方的可折叠 AI 摘要块。浅灰底 + Sparkles
+ * 图标标示这是 AI 生成内容、非用户正文；图标用编辑器既有 AI 署名色
+ * #7c5cff。展开态以正文排版罗列要点/结论与生成时间。纯展示组件，
+ * 状态机在 useDocumentOverview。空文档不渲染（避免空编辑器上方挂
+ * 噪音条）；过短文档只渲染提示条。
  */
 export function DocumentOverviewCard({
   status,
@@ -32,6 +33,9 @@ export function DocumentOverviewCard({
     return (
       <div className="context-room-document-overview" data-state="ineligible">
         <div className="context-room-document-overview-bar">
+          <span className="context-room-document-overview-icon" aria-hidden="true">
+            <Sparkles />
+          </span>
           <span className="context-room-document-overview-hint">
             {t('contextRoom:documentQuickView.tooShort')}
           </span>
@@ -44,6 +48,9 @@ export function DocumentOverviewCard({
     return (
       <div className="context-room-document-overview" data-state="failed">
         <div className="context-room-document-overview-bar">
+          <span className="context-room-document-overview-icon" aria-hidden="true">
+            <Sparkles />
+          </span>
           <span className="context-room-document-overview-hint">
             {status.kind === 'unavailable'
               ? t('contextRoom:documentQuickView.unavailable')
@@ -85,6 +92,9 @@ export function DocumentOverviewCard({
         disabled={!canExpand}
         onClick={canExpand ? onToggleExpanded : undefined}
       >
+        <span className="context-room-document-overview-icon" aria-hidden="true">
+          <Sparkles />
+        </span>
         {status.state === 'generating' ? (
           <span className="context-room-document-overview-hint">
             {t('contextRoom:documentQuickView.generating')}

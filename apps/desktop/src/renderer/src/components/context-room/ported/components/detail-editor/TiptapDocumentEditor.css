@@ -707,9 +707,10 @@ textarea.context-room-tiptap-rewrite-text:disabled {
   color: var(--cr-muted);
 }
 
-/* 文档速览卡：标题下方的可折叠元信息行，与标题同列对齐；语言与编辑器
-   一致——无填充、无描边，悬停仅一层浅底。选择器带 .context-room-document-overview
-   前缀是为了在特异性上压过 ContextRoom.css 里 :where(button) 的白底兜底。 */
+/* 文档速览卡：标题下方的可折叠 AI 摘要块，与标题同列对齐。浅灰底 +
+   Sparkles 标示 AI 生成内容，区别于用户正文；无描边，悬停仅加深底色。
+   选择器带 .context-room-document-overview 前缀是为了在特异性上压过
+   ContextRoom.css 里 :where(button) 的白底兜底。 */
 .context-room-document-overview {
   width: min(100%, 720px);
   margin: 0 auto;
@@ -720,12 +721,11 @@ textarea.context-room-tiptap-rewrite-text:disabled {
   display: flex;
   align-items: center;
   gap: 8px;
-  width: calc(100% + 20px);
-  margin: 0 -10px;
-  padding: 6px 10px;
+  width: 100%;
+  padding: 8px 12px;
   border: 0;
-  border-radius: 6px;
-  background: transparent;
+  border-radius: 8px;
+  background: var(--cr-surface-secondary);
   color: var(--cr-text);
   font-size: 13px;
   line-height: 1.5;
@@ -734,12 +734,27 @@ textarea.context-room-tiptap-rewrite-text:disabled {
   transition: background-color 140ms ease-out;
 }
 
+.context-room-document-overview[data-expanded='true'] .context-room-document-overview-bar {
+  border-radius: 8px 8px 0 0;
+}
+
 .context-room-document-overview-bar:disabled {
   cursor: default;
 }
 
 .context-room-document-overview-bar:not(:disabled):hover {
-  background: var(--cr-surface-secondary);
+  background: var(--cr-surface-hover);
+}
+
+.context-room-document-overview-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: #7c5cff;
+}
+
+.context-room-document-overview-icon svg {
+  width: 13px;
+  height: 13px;
 }
 
 .context-room-document-overview-hint {
@@ -813,7 +828,9 @@ textarea.context-room-tiptap-rewrite-text:disabled {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding: 8px 0 0;
+  padding: 4px 12px 10px;
+  border-radius: 0 0 8px 8px;
+  background: var(--cr-surface-secondary);
   font-size: 13px;
   line-height: 1.65;
 }
