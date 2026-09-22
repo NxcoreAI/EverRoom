@@ -2527,36 +2527,7 @@ summary:focus-visible {
 }
 
 @media (max-width: 1200px) {
-  .app-shell {
-    grid-template-columns: 0 minmax(0, 1fr) var(--agent-width);
-  }
-
-  .app-shell[data-agent-open='false'] {
-    grid-template-columns: 0 minmax(0, 1fr) 0;
-  }
-
-  .sidebar {
-    transform: translate3d(-100%, 0, 0);
-    pointer-events: none;
-  }
-
-  .app-shell[data-nav-collapsed='false'] .sidebar {
-    position: fixed;
-    z-index: 60;
-    inset: var(--topbar-height) auto 0 0;
-    transform: translate3d(0, 0, 0);
-    pointer-events: auto;
-    box-shadow: 12px 0 32px rgba(25, 25, 20, 0.12);
-  }
-
-  .app-shell[data-nav-collapsed='false']::after {
-    position: fixed;
-    z-index: 50;
-    inset: var(--topbar-height) 0 0;
-    background: rgba(25, 25, 20, 0.12);
-    content: "";
-  }
-
+  /* 左侧栏不再随窗口宽度隐藏：导航列恒保留（窄窗改为折叠右侧 AI 面板）。 */
   .page {
     padding-right: 24px;
     padding-left: 24px;
@@ -2609,11 +2580,12 @@ summary:focus-visible {
   }
 }
 
-@media (max-width: 900px) {
+@media (max-width: 1080px) {
+  /* 窄窗：右侧 AI 面板默认折叠（App 内 matchMedia 同步 agentOpen）；
+     手动展开时面板为固定悬浮层，左侧导航列恒保留。 */
   .app-shell,
   .app-shell[data-agent-open='false'] {
-    grid-template-columns: 0 minmax(0, 1fr) 0;
-    transition: none;
+    grid-template-columns: var(--nav-width) minmax(0, 1fr) 0;
   }
 
   .agent-panel {

@@ -119,7 +119,6 @@ export function App() {
   const [activeContextRoomId, setActiveContextRoomId] = useState<string | null>(null)
   const [officeTabs, setOfficeTabs] = useState<OfficePreviewTab[]>([])
   const [activeOfficeInstanceId, setActiveOfficeInstanceId] = useState<string | null>(null)
-  const [agentOpen, setAgentOpen] = useState(true)
   const [agentWidth, setAgentWidth] = useState(readStoredAgentWidth)
   const [agentResizing, setAgentResizing] = useState(false)
   const [agentFocusRequest, setAgentFocusRequest] = useState(0)
@@ -139,7 +138,8 @@ export function App() {
   const agentNavigationTimerRef = useRef<number | null>(null)
   const workspaceMainRef = useRef<HTMLElement>(null)
   const tabSwipeRef = useRef({ distance: 0, lastAt: 0, lockedUntil: 0 })
-  const [navCollapsed, setNavCollapsed] = useState(() => window.matchMedia('(max-width: 1200px)').matches)
+  const [navCollapsed, setNavCollapsed] = useState(false)
+  const [agentOpen, setAgentOpen] = useState(() => !window.matchMedia('(max-width: 1080px)').matches)
   const [contextRoomDetailFocused, setContextRoomDetailFocused] = useState(false)
   const [contextRoomNavRevealed, setContextRoomNavRevealed] = useState(false)
   const [contextRoomHomeRequest, setContextRoomHomeRequest] = useState(0)
@@ -301,7 +301,7 @@ export function App() {
     setAgentWidth(Math.round(Math.max(AGENT_WIDTH_MIN, Math.min(max, raw))))
   }, [])
   const startAgentResize = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (window.matchMedia('(max-width: 900px)').matches) return
+    if (window.matchMedia('(max-width: 1080px)').matches) return
     event.currentTarget.setPointerCapture(event.pointerId)
     setAgentResizing(true)
     const move = (moveEvent: PointerEvent) => applyAgentWidth(window.innerWidth - moveEvent.clientX)
@@ -323,14 +323,15 @@ export function App() {
     if (agentNavigationTimerRef.current !== null) window.clearTimeout(agentNavigationTimerRef.current)
   }, [])
 
+  // 窄窗不再隐藏左侧栏；改为自动折叠右侧 AI 面板（用户可随时手动展开）。
   useEffect(() => {
-    const compactWindow = window.matchMedia('(max-width: 1200px)')
-    const collapseNavigation = (event: MediaQueryListEvent | MediaQueryList) => {
-      if (event.matches) setNavCollapsed(true)
+    const compactWindow = window.matchMedia('(max-width: 900px)')
+    const collapseAgent = (event: MediaQueryListEvent | MediaQueryList) => {
+      if (event.matches) setAgentOpen(false)
     }
-    collapseNavigation(compactWindow)
-    compactWindow.addEventListener('change', collapseNavigation)
-    return () => compactWindow.removeEventListener('change', collapseNavigation)
+    collapseAgent(compactWindow)
+    compactWindow.addEventListener('change', collapseAgent)
+    return () => compactWindow.removeEventListener('change', collapseAgent)
   }, [])
 
   // 跨页导航事件（非页面树组件用，如连接器引导跳记忆页；照 MEMORY_TAB_EVENT 约定）
@@ -946,11 +947,7 @@ export function App() {
         onCloseContextRoom={closeContextRoomTab}
         onActivateOfficeTab={activateOfficeTab}
         onCloseOfficeTab={closeOfficeTab}
-        onToggleAgent={() => setAgentOpen((open) => {
-          const next = !open
-          if (next && window.matchMedia('(max-width: 900px)').matches) setNavCollapsed(true)
-          return next
-        })}
+        onToggleAgent={() => setAgentOpen((open) => !open)}
       />
       <Sidebar activePage={activePage} onNavigate={navigate} />
       <main ref={workspaceMainRef} className="workspace-main">
