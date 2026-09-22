@@ -45,6 +45,26 @@ export interface GenOfficeAgentDeckResult {
   imageFailures: { page: number; url: string }[]
 }
 
+export interface AgentSlidesDeckInfo {
+  outline: string
+  opVocabulary: string
+}
+
+export interface AgentSlidesEditResult {
+  ok: boolean
+  /** 宿主级错误（无会话/无路径/非法请求）；per-op 失败走 failures。 */
+  error?: string
+  applied?: boolean
+  dryRun?: boolean
+  plan?: string[]
+  records?: Array<{ op: string; target?: string; created?: string[] }>
+  failures?: Array<{ index: number; error: string }>
+  /** 静默保存结果；saveError = 已改内存但未落盘（版本链未回填）。 */
+  saved?: boolean
+  saveError?: string
+  outline?: string
+}
+
 export interface GenOfficeSlidesRuntime {
   configureSlidesRuntime(config: { preloadPath: string; rendererFilePath?: string }): void
   createSlidesView(openPath?: string | null, options?: { readonly?: boolean }): WebContentsView
@@ -56,6 +76,14 @@ export interface GenOfficeSlidesRuntime {
   slidesIsDirty(webContentsId: number): boolean
   /** Agent 幻灯片生成：页 spec JSON 数组 → 单文件 .pptx 字节（无渲染端参与）。 */
   buildAgentDeckPptx(pageSpecJsons: string[]): Promise<{ ok: true; deck: GenOfficeAgentDeckResult } | { ok: false; error: string }>
+  /** Agent 读取活会话：大纲 + op 词汇表（该视图无会话返回 null）。 */
+  describeAgentDeck(webContentsId: number): AgentSlidesDeckInfo | null
+  /** Agent 编辑活会话：事务应用 + 逐视图重绘广播 + 静默保存（fileSaved hook 回填版本链）。 */
+  applyAgentDeckOps(
+    webContentsId: number,
+    ops: unknown[],
+    opts?: { dryRun?: boolean; isolation?: 'atomic' | 'per_op' },
+  ): Promise<AgentSlidesEditResult>
 }
 
 export interface GenOfficePdfRuntime {

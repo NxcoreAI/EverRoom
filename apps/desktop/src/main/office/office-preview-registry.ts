@@ -10,6 +10,8 @@ import { onOfficeFileSaved, wireOfficeSavedHooks } from './office-generation'
 import {
   loadPreparedGenOfficeRuntime,
   preparedGenOfficeFixture,
+  type AgentSlidesDeckInfo,
+  type AgentSlidesEditResult,
   type PreparedGenOfficeRuntime,
 } from './office-runtime'
 import { OfficeViewManager, prepareOfficeDocument } from './office-view-manager'
@@ -54,6 +56,15 @@ interface OfficePreviewInstance {
 
 /** 产物编辑回填的去抖合并窗口：连发保存（含关窗时的 Save）只落一次导入。 */
 const EDIT_SYNC_DEBOUNCE_MS = 2_000
+
+/** Agent 编辑已打开 slides 产物的请求（bridge /v1/office-edit 的载荷）。 */
+export type SlidesEditArtifactRequest =
+  | { mode: 'read' }
+  | { mode: 'apply'; ops: unknown[]; dryRun?: boolean; isolation?: 'atomic' | 'per_op' }
+
+export type SlidesEditArtifactOutcome =
+  | { ok: true; info?: AgentSlidesDeckInfo; result?: AgentSlidesEditResult }
+  | { ok: false; reason: 'not_open' | 'not_editable' }
 
 /** 保存回填的 per-file 状态：独立于视图存活（导入只需要磁盘工作副本）。 */
 interface EditSyncState {
@@ -177,6 +188,33 @@ export class OfficePreviewRegistry {
 
   has(id: string): boolean {
     return this.instances.has(id)
+  }
+
+  /**
+   * Agent 编辑一个已打开的 slides 产物（活会话事务；编辑过程直接重绘在打开的视图上）。
+   * 前置条件：该 fileId 已以可编辑实例打开——未打开/只读/会话未就绪都返回结构化原因。
+   */
+  async editSlidesArtifact(
+    fileId: string,
+    req: SlidesEditArtifactRequest,
+  ): Promise<SlidesEditArtifactOutcome> {
+    const instance = this.instances.get(fileId)
+    const wcId = instance?.view.webContentsId
+    if (!instance || !this.runtime || typeof wcId !== 'number') return { ok: false, reason: 'not_open' }
+    if (instance.descriptor.kind !== 'slides' || !instance.editable) {
+      return { ok: false, reason: 'not_editable' }
+    }
+    if (req.mode === 'read') {
+      const info = this.runtime.slides.describeAgentDeck(wcId)
+      return info ? { ok: true, info } : { ok: false, reason: 'not_open' }
+    }
+    return {
+      ok: true,
+      result: await this.runtime.slides.applyAgentDeckOps(wcId, req.ops, {
+        dryRun: req.dryRun,
+        isolation: req.isolation,
+      }),
+    }
   }
 
   /** 激活一个实例并隐藏其余；未知 id 返回 false。 */

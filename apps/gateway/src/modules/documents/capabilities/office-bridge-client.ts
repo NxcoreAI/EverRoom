@@ -34,6 +34,33 @@ export interface OfficeGenerateResult {
   originalName: string;
 }
 
+/** /v1/office-edit read：活会话大纲 + op 词汇表。 */
+export interface OfficeSlidesDeckInfo {
+  outline: string;
+  opVocabulary: string;
+}
+
+/** /v1/office-edit apply：事务结果（ok:false = 宿主级错误；per-op 失败在 failures）。 */
+export interface OfficeSlidesEditResult {
+  ok: boolean;
+  error?: string;
+  applied?: boolean;
+  dryRun?: boolean;
+  plan?: string[];
+  records?: Array<{ op: string; target?: string; created?: string[] }>;
+  failures?: Array<{ index: number; error: string }>;
+  saved?: boolean;
+  saveError?: string;
+  outline?: string;
+}
+
+export interface OfficeSlidesEditInput {
+  fileId: string;
+  ops: unknown[];
+  dryRun?: boolean;
+  isolation?: "atomic" | "per_op";
+}
+
 export class OfficeBridgeClient {
   constructor(private readonly config: NonNullable<GatewayConfig["officeBridge"]>) {}
 
@@ -65,5 +92,50 @@ export class OfficeBridgeClient {
       roomRequested: data.roomRequested === true,
       originalName: str("originalName"),
     };
+  }
+
+  /** 读取已打开 PPT 产物的活会话大纲 + op 词汇表（文件需已在桌面端以可编辑方式打开）。 */
+  async readDeck(fileId: string): Promise<OfficeSlidesDeckInfo> {
+    const data = await this.postEdit({ mode: "read", fileId });
+    return {
+      outline: typeof data.outline === "string" ? data.outline : "",
+      opVocabulary: typeof data.opVocabulary === "string" ? data.opVocabulary : "",
+    };
+  }
+
+  /** 向已打开 PPT 产物的活会话应用一个 op 事务（编辑实时重绘在打开的视图上，随后静默保存）。 */
+  async editDeck(input: OfficeSlidesEditInput): Promise<OfficeSlidesEditResult> {
+    const data = await this.postEdit({
+      mode: "apply",
+      fileId: input.fileId,
+      ops: input.ops,
+      ...(input.dryRun !== undefined ? { dryRun: input.dryRun } : {}),
+      ...(input.isolation !== undefined ? { isolation: input.isolation } : {}),
+    });
+    return { ...(data as unknown as OfficeSlidesEditResult), ok: data.ok !== false };
+  }
+
+  private async postEdit(body: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const response = await fetch(`${this.config.baseUrl}/v1/office-edit`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.config.token}`,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify(body),
+      // 活会话事务（内存应用 + 一次静默保存），不是分钟级的生成链路。
+      signal: AbortSignal.timeout(30_000),
+    });
+    const parsed = await response.json().catch(() => ({})) as {
+      message?: unknown;
+      data?: Record<string, unknown>;
+    };
+    if (!response.ok) {
+      throw new Error(
+        typeof parsed.message === "string" ? parsed.message : `Office edit failed (${response.status})`,
+      );
+    }
+    return parsed.data ?? {};
   }
 }
