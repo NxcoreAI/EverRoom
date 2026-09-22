@@ -254,6 +254,8 @@ export class ContextRoomService {
   private memoryPromoter: ((input: { roomId: string; itemId: string; content: string; type?: string }) => Promise<boolean>) | null = null;
   private roomEntityClaimer:
     ((roomId: string, entities: Array<{ name: string; kind: string }>) => number | void) | null = null;
+  /** Room 创建后的 overview 初始再生成通知（create-server 接 RoomOverviewScheduler）。 */
+  private roomOverviewKickoff: ((roomId: string) => void) | null = null;
 
   constructor(
     private readonly db: GatewayDatabase,
@@ -283,6 +285,10 @@ export class ContextRoomService {
   ): void {
     this.roomAgent = dispatcher;
     this.roomAgentLogger = logger ?? null;
+  }
+
+  setRoomOverviewKickoff(kickoff: ((roomId: string) => void) | null): void {
+    this.roomOverviewKickoff = kickoff;
   }
 
   /**
@@ -587,6 +593,7 @@ export class ContextRoomService {
       updatedAt: now,
     }).returning().get();
     this.dispatchRoomEnrichment(id, title, description);
+    this.roomOverviewKickoff?.(id);
     this.duplicateService?.requestRebuild();
     return { room: snapshotItem(inserted), created: true };
   }

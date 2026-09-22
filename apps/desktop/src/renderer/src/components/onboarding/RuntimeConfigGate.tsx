@@ -5,7 +5,6 @@ import {
   LoaderCircle,
   PlugZap,
   RefreshCw,
-  Settings2,
 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 
@@ -15,7 +14,6 @@ import googleLogo from '@/assets/google-logo.svg'
 import { ProductBrand } from '@/components/ui/ProductBrand'
 import { StartupSplash } from '@/components/ui/StartupSplash'
 import { WindowControls } from '@/components/WindowControls'
-import { RedeemCodeField, useRedeemCode } from '@/components/account/RedeemCodeField'
 import { QrLoginPanel } from '@/components/account/QrLoginPanel'
 import { useLocale } from '@/i18n/LocaleContext'
 import { useAccount } from '@/state/AccountContext'
@@ -38,7 +36,7 @@ import './RuntimeConfigGate.css'
  * gateway 连通测试（POST /v1/runtime-config/test）才放行进入应用。
  * 手动配置含 LLM（必填）与 embedding（可选，填了才测 /embeddings）两个 tab。
  */
-type GateMode = 'checking' | 'app' | 'login' | 'manual' | 'validating' | 'unavailable'
+type GateMode = 'checking' | 'app' | 'login' | 'manual' | 'validating' | 'unavailable' | 'authNetwork'
 type ManualTab = 'llm' | 'embedding'
 
 /** 闪屏最短展示时长：决策再快也不闪现即逝。 */
@@ -55,7 +53,7 @@ function gateTestError(result: RuntimeConfigTestResult | undefined, t: (key: str
 
 export function RuntimeConfigGate({ children }: { children: ReactNode }) {
   const { locale, preference, setLocale, t } = useLocale()
-  const { account, resolved: accountResolved } = useAccount()
+  const { account, resolved: accountResolved, refreshAccount } = useAccount()
   const isMacDesktop = window.nxcore?.platform === 'darwin' || navigator.platform.startsWith('Mac') || navigator.userAgent.includes('Macintosh')
   const [mode, setMode] = useState<GateMode>('checking')
   const [snapshot, setSnapshot] = useState<RuntimeConfigSnapshot | null>(null)
@@ -63,10 +61,14 @@ export function RuntimeConfigGate({ children }: { children: ReactNode }) {
   const [embedding, setEmbedding] = useState<ManualAiConfigFields>(emptyAiFields())
   const [manualTab, setManualTab] = useState<ManualTab>('llm')
   const [fieldError, setFieldError] = useState<string | null>(null)
-  const redeemCode = useRedeemCode()
   const [testError, setTestError] = useState<string | null>(null)
   const [oidcPending, setOidcPending] = useState<'apple' | 'google' | null>(null)
   const [qrActive, setQrActive] = useState(false)
+  // 扫码面板注册的「取消会话」句柄：返回按钮画在页标题左侧，由这里触发。
+  const qrCancelRef = useRef<(() => void) | null>(null)
+  const registerQrCancel = useCallback((cancel: (() => void) | null) => {
+    qrCancelRef.current = cancel
+  }, [])
   const [checkRequest, setCheckRequest] = useState(0)
   // 配置就绪不等于可放行：登录态（SaaS 网络往返）落定前停在启动闪屏。
   const [configReady, setConfigReady] = useState(false)
@@ -141,10 +143,11 @@ export function RuntimeConfigGate({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const onAccountChanged = (event: Event) => {
-      const next = (event as CustomEvent<{ authenticated?: unknown }>).detail
+      const next = (event as CustomEvent<{ authenticated?: unknown; authBlocked?: string | null }>).detail
       // 只处理运行中会话失效（登出/被踢）：启动期的未登录由上方 outcome
       // effect 判定，这里抢跑会把中间页直接翻成登录页。
-      if (next?.authenticated === false && modeRef.current === 'app') {
+      // authBlocked='network'（凭据在、网络验证失败）不算会话失效，不踢人。
+      if (next?.authenticated === false && !next.authBlocked && modeRef.current === 'app') {
         setTestError(null)
         setMode('login')
       }
@@ -152,6 +155,23 @@ export function RuntimeConfigGate({ children }: { children: ReactNode }) {
     window.addEventListener('everroom-account-status-changed', onAccountChanged)
     return () => window.removeEventListener('everroom-account-status-changed', onAccountChanged)
   }, [])
+
+  // 网络受阻判定：凭据在但验证失败 → 明确提示网络问题 + 重试，
+  // 而不是呈现登录页（用户会误以为被登出/要重新登录）。恢复后交回正常判定。
+  useEffect(() => {
+    if (!accountResolved) return
+    if (account?.authenticated === false && account.authBlocked === 'network') {
+      setMode((current) => (current === 'app' || current === 'authNetwork' ? current : 'authNetwork'))
+    } else {
+      setMode((current) => (current === 'authNetwork' ? 'login' : current))
+    }
+  }, [account, accountResolved])
+
+  /** authNetwork 面板重试：重拉账号状态 + 重跑配置检查，任一恢复即离开本态。 */
+  const retryAuthNetwork = useCallback(async () => {
+    try { await refreshAccount() } catch { /* 状态未变，留在本页 */ }
+    setCheckRequest((value) => value + 1)
+  }, [refreshAccount])
 
   const enterApp = () => setMode('app')
 
@@ -184,21 +204,14 @@ export function RuntimeConfigGate({ children }: { children: ReactNode }) {
 
   const loginWithOidc = async (provider: 'apple' | 'google') => {
     if (!window.nxcore) return
-    let redeemCodeValue:string|undefined
-    try { redeemCodeValue=await redeemCode.prepare() } catch { setTestError(t('surface:settings.redeemCodeInvalid')); return }
     setOidcPending(provider)
     setTestError(null)
     try {
-      const account = await window.nxcore.account.loginWithOidc(provider,redeemCodeValue)
-      if(redeemCodeValue&&account.registration){
-        window.alert(t(account.registration.invitationRejected==='pro_plan_active'?'surface:settings.redeemCodeProActive':'surface:settings.redeemCodeApplied'))
-        redeemCode.reset()
-      }
+      await window.nxcore.account.loginWithOidc(provider)
       await completeGateLogin()
     } catch (error) {
       // 用户主动取消：静默回到登录页，不算失败。
       if (error instanceof Error && error.message === OIDC_LOGIN_CANCELLED_MESSAGE) return
-      if(redeemCodeValue&&error instanceof Error&&/invitation code/i.test(error.message))redeemCode.markInvalid()
       setTestError(t('surface:configGate.loginFailed'))
     } finally {
       setOidcPending(null)
@@ -223,16 +236,30 @@ export function RuntimeConfigGate({ children }: { children: ReactNode }) {
       next = await window.nxcore!.runtimeConfig.get().catch(() => null)
     }
     if (next && isRuntimeConfigReady(next)) {
-      const entered = await validateAndEnter(next, 'login')
-      if (entered) {
-        try {
-          window.sessionStorage.setItem('everroom:post-login-memory-check', '1')
-          window.sessionStorage.setItem('everroom:post-login-room-check', '1')
-        } catch {
-          // Session storage is optional; mounted gates still receive the event.
-        }
-        window.setTimeout(() => window.dispatchEvent(new CustomEvent('everroom-post-login-onboarding-check')), 0)
+      // 登录只回答「你是谁」；LLM 连通性不阻塞进入应用（外网端点可能依赖
+      // 系统代理，测试失败应是应用内降级提示而非登录失败——认证已成功却
+      // 被踹回登录页即由此而来）。首次手动配置仍走 validateAndEnter 把关。
+      setSnapshot(next)
+      enterApp()
+      window.dispatchEvent(new CustomEvent('everroom-runtime-config-status', { detail: 'ready' }))
+      try {
+        window.sessionStorage.setItem('everroom:post-login-memory-check', '1')
+        window.sessionStorage.setItem('everroom:post-login-room-check', '1')
+      } catch {
+        // Session storage is optional; mounted gates still receive the event.
       }
+      window.setTimeout(() => window.dispatchEvent(new CustomEvent('everroom-post-login-onboarding-check')), 0)
+      // 连通测试异步补跑：失败亮降级提示（Sidebar / 设置页），不拦人。
+      void window.nxcore?.runtimeConfig?.test()
+        .then((result) => {
+          const failed = result?.valid !== true || gateTestError(result, t) !== null
+          if (failed) {
+            window.dispatchEvent(new CustomEvent('everroom-runtime-config-status', { detail: 'degraded' }))
+          }
+        })
+        .catch(() => {
+          window.dispatchEvent(new CustomEvent('everroom-runtime-config-status', { detail: 'degraded' }))
+        })
     } else {
       // 登录成功但中转会话未就绪：留在登录页展示原因，
       // 用户可重试或点「返回」去手动配置。
@@ -294,6 +321,18 @@ export function RuntimeConfigGate({ children }: { children: ReactNode }) {
 
       <main className="runtime-config-gate-main">
         <section className="runtime-config-gate-stage" aria-live="polite">
+          {mode === 'authNetwork' ? (
+            <div className="runtime-config-gate-panel">
+              <h1>{t('surface:configGate.authNetworkTitle')}</h1>
+              <p>{t('surface:configGate.authNetworkBody')}</p>
+              <div className="runtime-config-gate-button-row">
+                <button type="button" className="runtime-config-gate-primary" onClick={() => void retryAuthNetwork()}>
+                  <RefreshCw aria-hidden="true" />{t('surface:configGate.retry')}
+                </button>
+              </div>
+            </div>
+          ) : null}
+
           {mode === 'unavailable' ? (
             <div className="runtime-config-gate-panel">
               <h1>{t('surface:configGate.unavailableTitle')}</h1>
@@ -308,7 +347,20 @@ export function RuntimeConfigGate({ children }: { children: ReactNode }) {
 
           {mode === 'login' ? (
             <div className="runtime-config-gate-panel">
-              <h1>{t('surface:configGate.loginHeading')}</h1>
+              <h1 className="runtime-config-gate-login-heading">
+                {qrActive ? (
+                  <button
+                    type="button"
+                    className="runtime-config-gate-heading-back"
+                    aria-label={t('surface:qrLogin.backToMethods')}
+                    title={t('surface:qrLogin.backToMethods')}
+                    onClick={() => qrCancelRef.current?.()}
+                  >
+                    <ArrowLeft aria-hidden="true" />
+                  </button>
+                ) : null}
+                {qrActive ? t('surface:configGate.scanLoginHeading') : t('surface:configGate.loginHeading')}
+              </h1>
 
               {!qrActive ? (
                 <div className="qr-login-methods" key="gate-methods">
@@ -345,18 +397,15 @@ export function RuntimeConfigGate({ children }: { children: ReactNode }) {
                 onAccountChanged={() => undefined}
                 onLoginSucceeded={() => { void completeGateLogin() }}
                 onActiveChange={setQrActive}
+                registerCancel={registerQrCancel}
                 entryDisabled={oidcPending !== null}
               />
 
               {!qrActive ? (
                 <div className="qr-login-methods" key="gate-secondary">
-                  <RedeemCodeField value={redeemCode.code} state={redeemCode.state} open={redeemCode.open} disabled={oidcPending!==null} onChange={redeemCode.change} onToggle={()=>redeemCode.setOpen(value=>!value)} onVerify={()=>{void redeemCode.prepare().catch(()=>{})}}/>
-
-                  <div className="runtime-config-gate-button-row runtime-config-gate-manual-row">
-                    <button type="button" className="runtime-config-gate-secondary" onClick={() => { setTestError(null); setMode('manual') }}>
-                      <Settings2 aria-hidden="true" />{t('surface:configGate.manualOption')}
-                    </button>
-                  </div>
+                  <button type="button" className="runtime-config-gate-manual-link" onClick={() => { setTestError(null); setMode('manual') }}>
+                    {t('surface:configGate.manualOption')}
+                  </button>
                 </div>
               ) : null}
             </div>

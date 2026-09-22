@@ -88,7 +88,14 @@ import type {
   AgentAuthStartInput,
   DesktopAgentAuthChallenge,
 } from './agent-auth'
-import type { LocalAgentDispatchDetail, LocalAgentHistoryImportResult, LocalAgentInstallation, LocalAgentWorkspaceBinding } from './local-agents'
+import type { LocalAgentAcpAdapterInfo, LocalAgentDispatchDetail, LocalAgentHistoryImportResult, LocalAgentInstallation, LocalAgentWorkspaceBinding } from './local-agents'
+
+export interface LocalAgentAdapterCheck {
+  agentId: string
+  provider: string
+  displayName: string
+  adapter: LocalAgentAcpAdapterInfo
+}
 import type { MigrationApi } from './migrations'
 import type { BrowserExtensionClipperCapture, BrowserExtensionClipperListInput, BrowserExtensionClipperListResult } from './browser-extension'
 import type {
@@ -345,6 +352,9 @@ export interface CreateAsrJobInput {
 export interface CloudAccountStatus {
   authenticated: boolean
   apiBaseUrl: string
+  /** 已保存登录凭据但网络原因无法验证（≠ 未登录）：UI 应提示网络问题并提供
+   *  重试，而不是把用户踹回登录页。null/缺省 = 无此情况。 */
+  authBlocked?: 'network' | null
   user?: { id:string;tenantId:string;email?:string|null;phone?:string|null;name?:string }
   device?: { id:string;name?:string;platform?:string }
   subscription?: {
@@ -1189,6 +1199,7 @@ export interface NxcoreDesktopApi {
   }
   agent: {
     discoverLocalAgents(): Promise<LocalAgentInstallation[]>
+    checkLocalAgentAdapters(agentIds: string[]): Promise<LocalAgentAdapterCheck[]>
     importLocalAgentHistory(agentId: string): Promise<LocalAgentHistoryImportResult>
     bindLocalAgentWorkspace(agentId: string, sessionId: string): Promise<LocalAgentWorkspaceBinding | null>
     getStatus(): Promise<AgentStatusSnapshot>

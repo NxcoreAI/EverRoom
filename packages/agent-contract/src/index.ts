@@ -771,6 +771,49 @@ export type LocalAgentProvider = "codex" | "claude" | "openclaw" | "opencode" | 
 export type LocalAgentStatus = "discovered" | "verified" | "history_available" | "unavailable";
 export type AgentInvocationMode = "explicit_switch" | "delegated_subagent";
 export type AgentWorkspacePermissionProfile = "inspect" | "workspace_write" | "full_access";
+export type LocalAcpProvider = Extract<LocalAgentProvider, "codex" | "claude" | "openclaw">;
+
+export interface LocalAcpAdapterCommandInfo {
+  command: string;
+  args: string[];
+  installCommand: string | null;
+}
+
+export interface LocalAgentAcpAdapterInfo {
+  command: string;
+  installed: boolean;
+  installCommand: string | null;
+}
+
+const LOCAL_AGENT_ACP_INSTALL_COMMANDS: Partial<Record<LocalAgentProvider, string>> = {
+  claude: "npm install -g @zed-industries/claude-code-acp",
+  codex: "npm install -g @agentclientprotocol/codex-acp",
+};
+
+/**
+ * provider → ACP 适配器命令（gateway spawn 与桌面端安装检测共用）。
+ * openclaw 原生 `openclaw acp` 无需适配器（installCommand 为 null 表示无需安装）；
+ * `EVERROOM_ACP_COMMAND_<PROVIDER>` 整行覆盖（env 显式传入，不读全局）。
+ */
+export function localAcpAdapterCommand(
+  provider: LocalAcpProvider,
+  executablePath: string,
+  env: Record<string, string | undefined> = {},
+): LocalAcpAdapterCommandInfo {
+  const override = env[`EVERROOM_ACP_COMMAND_${provider.toUpperCase()}`];
+  if (override?.trim()) {
+    const [command, ...args] = override.trim().split(/\s+/);
+    if (command) return { command, args, installCommand: null };
+  }
+  if (provider === "openclaw") {
+    return { command: executablePath || "openclaw", args: ["acp"], installCommand: null };
+  }
+  return {
+    command: provider === "claude" ? "claude-code-acp" : "codex-acp",
+    args: [],
+    installCommand: LOCAL_AGENT_ACP_INSTALL_COMMANDS[provider] ?? null,
+  };
+}
 
 export interface LocalAgentCard {
   name: string;
@@ -796,6 +839,7 @@ export interface LocalAgentInstallation {
   historyPaths: string[];
   card: LocalAgentCard;
   lastSeenAt: string;
+  acpAdapter?: LocalAgentAcpAdapterInfo;
   error?: string;
 }
 

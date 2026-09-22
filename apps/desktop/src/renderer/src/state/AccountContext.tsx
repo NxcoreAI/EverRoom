@@ -47,9 +47,19 @@ export function AccountProvider({ children }: { children: ReactNode }) {
     window.addEventListener('everroom-account-status-changed', onAccountChanged)
     const requestId = ++statusRequestRef.current
     void window.nxcore.account.status({ quiet: true }).then((next) => {
-      if (statusRequestRef.current === requestId) {
-        setAccountState(next)
-        setResolved(true)
+      if (statusRequestRef.current !== requestId) return
+      setAccountState(next)
+      setResolved(true)
+      // 启动恢复可能撞上 VPN/TUN 未热身（主进程侧带重试，这里再兜一层）：
+      // 首查未登录时延迟补查一次，避免把「网络没就绪」当「未登录」。
+      if (next.authenticated === false) {
+        window.setTimeout(() => {
+          const retryId = ++statusRequestRef.current
+          void window.nxcore!.account.status({ quiet: true }).then((retry) => {
+            if (statusRequestRef.current !== retryId) return
+            if (retry.authenticated) setAccount(retry)
+          }).catch(() => undefined)
+        }, 8_000)
       }
     }).catch(() => {
       if (statusRequestRef.current === requestId) setResolved(true)

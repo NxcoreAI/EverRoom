@@ -623,6 +623,7 @@ const api: NxcoreDesktopApi = {
   },
   agent: {
     discoverLocalAgents: () => invokeQuietly('agent:discover-local-agents'),
+    checkLocalAgentAdapters: (agentIds: string[]) => invokeQuietly('agent:check-local-agent-adapters', agentIds),
     importLocalAgentHistory: (agentId: string) => invoke('agent:import-local-agent-history', agentId),
     bindLocalAgentWorkspace: (agentId: string, sessionId: string) => invoke('agent:bind-local-agent-workspace', agentId, sessionId),
     getStatus: () => invokeQuietly('agent:get-status'),

@@ -155,7 +155,10 @@ describe('runtime config gate state', () => {
     expect(configTestErrorMessage('runtime_config_test_incomplete', t)).toBe('surface:configGate.testIncomplete')
     expect(configTestErrorMessage('runtime_config_test_http_401: bad key', t)).toBe('surface:configGate.testAuthFailed')
     expect(configTestErrorMessage('runtime_config_test_http_404: no route', t)).toBe('surface:configGate.testNotFound')
-    expect(configTestErrorMessage('runtime_config_test_unreachable: refused', t)).toBe('surface:configGate.testUnreachable')
+    // 未分类状态与网络失败都附带服务端原始错误尾巴，排障不再靠猜。
+    expect(configTestErrorMessage('runtime_config_test_unreachable: refused', t)).toBe('surface:configGate.testUnreachable（refused）')
+    expect(configTestErrorMessage('runtime_config_test_http_502: upstream down', t)).toBe('surface:configGate.testFailedGeneric（upstream down）')
+    expect(configTestErrorMessage('runtime_config_test_unreachable', t)).toBe('surface:configGate.testUnreachable')
     expect(configTestErrorMessage(undefined, t)).toBe('surface:configGate.testFailedGeneric')
   })
 

@@ -2,7 +2,7 @@ import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { createLocalAgentDiscovery, isSafeLocalAgentPath } from './discovery'
+import { createLocalAgentDiscovery, isSafeLocalAgentPath, probeLocalAgentAcpAdapter } from './discovery'
 
 const roots: string[] = []
 
@@ -77,6 +77,60 @@ describe('local agent discovery', () => {
 
     const agents = await createLocalAgentDiscovery({ env: { PATH: bin }, home: join(root, 'home'), resolveLoginShellPath: false }).scan()
     expect(agents).toEqual([])
+  })
+})
+
+describe('probeLocalAgentAcpAdapter', () => {
+  // platform 用 win32 隔离：不追加 darwin/linux 的系统默认目录，也不跑登录 shell 探测。
+  it('reports the adapter as installed when the adapter binary is on PATH', async () => {
+    const root = await temporaryRoot()
+    const bin = join(root, 'bin')
+    await mkdir(bin, { recursive: true })
+    const adapter = join(bin, 'codex-acp')
+    await writeFile(adapter, '#!/bin/sh\n', 'utf8')
+    await chmod(adapter, 0o755)
+
+    const result = await probeLocalAgentAcpAdapter(
+      { provider: 'codex', executablePath: join(bin, 'codex'), callable: true },
+      { env: { PATH: bin }, home: join(root, 'home'), platform: 'win32' },
+    )
+    expect(result).toEqual({
+      command: 'codex-acp',
+      installed: true,
+      installCommand: 'npm install -g @agentclientprotocol/codex-acp',
+    })
+  })
+
+  it('reports a missing adapter with the claude install command', async () => {
+    const root = await temporaryRoot()
+    const result = await probeLocalAgentAcpAdapter(
+      { provider: 'claude', executablePath: '/usr/local/bin/claude', callable: true },
+      { env: { PATH: '/usr/bin:/bin' }, home: join(root, 'home'), platform: 'win32' },
+    )
+    expect(result.command).toBe('claude-code-acp')
+    expect(result.installed).toBe(false)
+    expect(result.installCommand).toBe('npm install -g @zed-industries/claude-code-acp')
+  })
+
+  it('treats openclaw as always installed and honors adapter command overrides', async () => {
+    const root = await temporaryRoot()
+    const openclaw = await probeLocalAgentAcpAdapter(
+      { provider: 'openclaw', executablePath: '/opt/openclaw/bin/openclaw', callable: true },
+      { env: { PATH: '/usr/bin:/bin' }, home: join(root, 'home'), platform: 'win32' },
+    )
+    expect(openclaw).toEqual({ command: '/opt/openclaw/bin/openclaw', installed: true, installCommand: null })
+
+    const overridden = await probeLocalAgentAcpAdapter(
+      { provider: 'claude', executablePath: '/usr/bin/claude', callable: true },
+      {
+        env: { PATH: '/usr/bin:/bin', EVERROOM_ACP_COMMAND_CLAUDE: '/opt/adapters/claude-acp --verbose' },
+        home: join(root, 'home'),
+        platform: 'win32',
+      },
+    )
+    expect(overridden.command).toBe('/opt/adapters/claude-acp')
+    expect(overridden.installed).toBe(false)
+    expect(overridden.installCommand).toBeNull()
   })
 })
 

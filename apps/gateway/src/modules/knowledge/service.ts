@@ -436,6 +436,8 @@ export class KnowledgeService {
   private drainInFlight: Promise<void> | null = null;
   private promotionDrainInFlight: Promise<void> | null = null;
   private roomDuplicateIndexTrigger: (() => void) | null = null;
+  /** 路由投影/文档沉淀完成 → 通知 room-overview 自动再生调度（装配后生效）。 */
+  private roomOverviewRefreshTrigger: ((roomIds: string[], reason: string) => void) | null = null;
   /** M3 知识整理偏好（注入摘要与统计/洞察宿主），装配后生效。 */
   private knowledgePreferences: import("./preferences.js").KnowledgePreferences | null = null;
 
@@ -506,6 +508,10 @@ export class KnowledgeService {
 
   setRoomDuplicateIndexTrigger(trigger: () => void): void {
     this.roomDuplicateIndexTrigger = trigger;
+  }
+
+  setRoomOverviewRefreshTrigger(trigger: (roomIds: string[], reason: string) => void): void {
+    this.roomOverviewRefreshTrigger = trigger;
   }
 
   /**
@@ -1753,6 +1759,7 @@ export class KnowledgeService {
       mentions,
       facts,
     });
+    this.roomOverviewRefreshTrigger?.(activeRoomIds, "relation-index");
   }
 
   private async runIngestJob(payload: IngestJobPayload): Promise<void> {
@@ -1803,6 +1810,7 @@ export class KnowledgeService {
       { event: "knowledge.ingest.confirmed", sourceId: payload.sourceId, roomId: payload.roomId, knowledgeId },
       "document ingested into room wiki",
     );
+    this.roomOverviewRefreshTrigger?.([payload.roomId], "ingest");
   }
 
   // ───────────────────────── 晋升 job（entity-room-plan §4.4） ─────────────────────────

@@ -8,7 +8,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { pipeline } from 'node:stream/promises'
 import { loadEnvFile } from 'node:process'
 
-import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, nativeTheme, Notification, protocol, shell, systemPreferences } from 'electron'
+import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, nativeTheme, Notification, protocol, session, shell, systemPreferences } from 'electron'
 import type {
   ImportRoomDocumentInput,
   DocumentOperationCommandInput,
@@ -130,7 +130,7 @@ import { BrowserExtensionService } from './browser-extension/browser-extension-s
 import { CLIPPER_ASSET_SCHEME, type BrowserExtensionStatus } from '../shared/browser-extension'
 import { OBSIDIAN_VAULT_ASSET_SCHEME } from '../shared/obsidian'
 import { ObsidianVaultService } from './obsidian/obsidian-vault-service'
-import { createLocalAgentDiscovery, isSafeLocalAgentPath } from './local-agents/discovery'
+import { createLocalAgentDiscovery, isSafeLocalAgentPath, probeLocalAgentAcpAdapter } from './local-agents/discovery'
 import { LocalAgentWorkspaceBindingStore } from './local-agents/workspace-binding-store'
 import type { LocalAgentInstallation, LocalAgentWorkspaceBinding } from '../shared/local-agents'
 import { MigrationsGatewayBridge } from './gateway/migrations-gateway-bridge'
@@ -168,14 +168,9 @@ async function rateLimitAware<T>(operation: () => Promise<T>): Promise<T | IpcRa
 }
 
 const appDataDirectory = app.getPath('appData')
-// Dev builds get their own directory so they never share credentials.json
-// (and thus SaaS sessions / device bindings) with the packaged app running
-// alongside them.
-const defaultDataDirectory = join(appDataDirectory, app.isPackaged ? APP_NAME : `${APP_NAME}-Dev`)
-const packagedEnvFile = join(appDataDirectory, APP_NAME, '.env')
+const defaultDataDirectory = join(appDataDirectory, APP_NAME)
 const envFilePath = process.env.NXCORE_ENV_FILE?.trim() || join(defaultDataDirectory, '.env')
 if (existsSync(envFilePath)) loadEnvFile(envFilePath)
-else if (!app.isPackaged && existsSync(packagedEnvFile)) loadEnvFile(packagedEnvFile)
 const dataDirectory = process.env.NXCORE_DATA_DIR?.trim() || defaultDataDirectory
 const resolvedDataDirectory = resolve(dataDirectory)
 
@@ -353,6 +348,7 @@ const CONTEXT_ROOM_CHANNELS = {
 
 const AGENT_CHANNELS = {
   discoverLocalAgents: 'agent:discover-local-agents',
+  checkLocalAgentAdapters: 'agent:check-local-agent-adapters',
   importLocalAgentHistory: 'agent:import-local-agent-history',
   bindLocalAgentWorkspace: 'agent:bind-local-agent-workspace',
   getStatus: 'agent:get-status',
@@ -766,6 +762,8 @@ function registerBrowserExtensionHandlers(service: BrowserExtensionService): voi
 let localDataService: LocalDataService | null = null
 let obsidianVaultService: ObsidianVaultService | null = null
 let gatewaySupervisor: GatewaySupervisor | null = null
+/** 系统代理探测结果（app 启动时求值一次，supervisor getter 每次 respawn 读取）。 */
+let gatewayProxyEnv: Record<string, string> = {}
 /** gateway:recover 的 in-flight 去重（网络失败风暴时并发请求只触发一次恢复）。 */
 let gatewayRecoverInFlight: Promise<{ ok: boolean; reason?: 'not-started' | 'recover-failed' }> | null = null
 let browserExtensionService: BrowserExtensionService | null = null
@@ -2210,6 +2208,22 @@ function registerAgentHandlers(bridge: AgentGatewayBridge, migrationCoordinator:
     return localAgents
   }
   handle(AGENT_CHANNELS.discoverLocalAgents, scanLocalAgents)
+  handle(AGENT_CHANNELS.checkLocalAgentAdapters, async (_event, agentIds: string[]) => {
+    const wanted = [...new Set((agentIds ?? []).filter((id) => typeof id === 'string' && id))]
+    if (!wanted.length) return []
+    if (wanted.some((id) => !localAgents.some((agent) => agent.id === id))) {
+      await scanLocalAgents()
+    }
+    const targets = wanted
+      .map((id) => localAgents.find((agent) => agent.id === id))
+      .filter((agent): agent is LocalAgentInstallation => Boolean(agent?.invocationSupported))
+    return Promise.all(targets.map(async (agent) => ({
+      agentId: agent.id,
+      provider: agent.provider,
+      displayName: agent.displayName,
+      adapter: await probeLocalAgentAcpAdapter(agent),
+    })))
+  })
   handle(AGENT_CHANNELS.bindLocalAgentWorkspace, async (event, agentId: string, sessionId: string) => {
     if (!localAgents.some((agent) => agent.id === agentId && agent.invocationSupported)) {
       await scanLocalAgents()
@@ -2875,6 +2889,34 @@ async function syncAccountMonitoring(status: Promise<CloudAccountStatus>): Promi
   return account
 }
 
+/**
+ * 探测系统 HTTP 代理并转成 gateway 子进程环境变量。Chromium 网络栈（渲染层
+ * 与桌面主进程 net.fetch）自动遵循系统/PAC 代理；gateway 是纯 Node 进程，
+ * 必须显式注入。只认 PROXY/HTTPS 条目（SOCKS 对 undici EnvHttpProxyAgent
+ * 不可用，直接跳过避免半残配置）；DIRECT / 探测失败返回空对象，行为不变。
+ */
+async function detectSystemProxyEnvironment(): Promise<Record<string, string>> {
+  try {
+    const rules = await session.defaultSession.resolveProxy('https://r.nxcore.ai')
+    const match = /(?:^|;\s*)(?:PROXY|HTTPS)\s+([^\s;]+)/i.exec(rules)
+    if (!match?.[1]) return {}
+    const endpoint = match[1].trim()
+    const proxyUrl = /^https?:\/\//i.test(endpoint) ? endpoint : `http://${endpoint}`
+    const noProxy = 'localhost,127.0.0.1,::1'
+    return {
+      HTTPS_PROXY: proxyUrl,
+      HTTP_PROXY: proxyUrl,
+      NO_PROXY: noProxy,
+      https_proxy: proxyUrl,
+      http_proxy: proxyUrl,
+      no_proxy: noProxy,
+    }
+  } catch (error) {
+    console.warn('System proxy detection failed; gateway will connect directly.', error)
+    return {}
+  }
+}
+
 function registerAccountHandlers(
   client: SaasClient,
   onAccountChanged?: (account: CloudAccountStatus, context?: { explicitLogout?: boolean }) => void,
@@ -3251,7 +3293,7 @@ function createWindow(): BrowserWindow {
     // macOS 走 hiddenInset + 系统红绿灯；Windows 隐藏整条系统标题栏，
     // 由渲染端 TopBar/引导页头部绘制 EverRoom 风格的自绘窗口按钮。
     ...(process.platform === 'darwin'
-      ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 14, y: 17 } }
+      ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 14, y: 16 } }
       : { titleBarStyle: 'hidden' as const }),
     webPreferences: {
       preload: join(__dirname, '../preload/index.cjs'),
@@ -3558,6 +3600,12 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       agentNotificationBridgeServer = null
       return null
     })
+    // 系统代理探测（PAC/手动代理均覆盖）：gateway 的 Node fetch 不读系统代理，
+    // 外网端点（LLM 连通测试、ai-relay 上游、embedding/VLM）在代理环境下会
+    // 整体 unreachable。注入 HTTPS_PROXY + NO_PROXY（loopback 桥接不走代理），
+    // gateway 侧由 proxyFetch 的 EnvHttpProxyAgent 消费。DIRECT 环境零改动。
+    const gatewayProxyEnvironment = await detectSystemProxyEnvironment()
+    gatewayProxyEnv = gatewayProxyEnvironment
     // Agent 生成 Word：gateway capability 工具 → 桥 → 隐藏 GenOffice docs view
     // → file-imports 入库。失败只禁用工具，不阻塞启动。
     // 生成进度/完成事件推给所有渲染窗口（进度提示 + 完成自动打开预览）。
@@ -3576,6 +3624,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         // packaged app 无 .env，gateway 默认 agentRuntime=fake（假流式响应）；
         // 显式注入 pi——AI 四要素由 runtime config 兜底（降级启动到配置完成）。
         NXCORE_AGENT_RUNTIME: 'pi',
+        ...gatewayProxyEnv,
         ...(notificationBridge
           ? {
             NXCORE_NOTIFICATION_BRIDGE_URL: notificationBridge.baseUrl,
@@ -3646,6 +3695,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       () => ({
         NXCORE_MEMORY_ENABLED: 'false',
         NXCORE_AGENT_RUNTIME: 'pi',
+        ...gatewayProxyEnv,
         ...cursorCompletionAiEnv,
       }),
       {

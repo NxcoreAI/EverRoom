@@ -274,6 +274,31 @@ export class RoomOverviewService {
     ]));
   }
 
+  /**
+   * 从未成功产出 LLM 合成的活跃 Room（boot 初始扫描用）：无 overview 行，或
+   * 行上 synthesis_at 为空（regenerate 从未成功过）。零资料的房间跳过——
+   * 没有可合成的内容，重试只会永远空转。
+   */
+  roomIdsNeedingInitialSynthesis(): string[] {
+    const synthesized = new Set(this.db.select({ roomId: roomOverviews.roomId })
+      .from(roomOverviews)
+      .where(isNotNull(roomOverviews.synthesisAt))
+      .all().map((row) => row.roomId));
+    return this.db.select({ id: contextRooms.id }).from(contextRooms)
+      .where(isNull(contextRooms.deletedAt)).all()
+      .map((row) => row.id)
+      .filter((roomId) => !synthesized.has(roomId) && this.roomHasSynthesizableSources(roomId));
+  }
+
+  private roomHasSynthesizableSources(roomId: string): boolean {
+    if (this.db.select({ id: roomSourceMemberships.id }).from(roomSourceMemberships)
+      .where(eq(roomSourceMemberships.roomId, roomId)).limit(1).get()) return true;
+    if (this.db.select({ documentId: roomDocumentLinks.documentId }).from(roomDocumentLinks)
+      .where(eq(roomDocumentLinks.roomId, roomId)).limit(1).get()) return true;
+    return Boolean(this.db.select({ id: roomLocalActions.id }).from(roomLocalActions)
+      .where(and(eq(roomLocalActions.roomId, roomId), isNull(roomLocalActions.deletedAt))).limit(1).get());
+  }
+
   get(roomId: string): RoomOverviewProjection {
     const resolved = this.requireRoom(roomId);
     const stored = this.db.select().from(roomOverviews).where(eq(roomOverviews.roomId, resolved)).get();
@@ -318,7 +343,7 @@ export class RoomOverviewService {
     });
     const content = invocation.status === "completed" ? invocationText(invocation) : null;
     if (!content) throw new Error("context_room_overview_generation_failed");
-    return this.persistBase(this.buildBase(resolved, parseRoomOverviewSynthesis(content)));
+    return this.persistBase(this.buildBase(resolved, parseRoomOverviewSynthesis(content)), new Date());
   }
 
   //
@@ -954,7 +979,7 @@ export class RoomOverviewService {
     });
   }
 
-  private persistBase(base: RoomOverviewProjection): RoomOverviewProjection {
+  private persistBase(base: RoomOverviewProjection, synthesizedAt: Date | null = null): RoomOverviewProjection {
     const existing = this.db.select().from(roomOverviews).where(eq(roomOverviews.roomId, base.roomId)).get();
     const revision = (existing?.revision ?? 0) + 1;
     const applied = this.list(base.roomId).filter((item) => item.status === "applied");
@@ -976,6 +1001,8 @@ export class RoomOverviewService {
     };
     const generatedAt = new Date(base.generatedAt);
     const updatedAt = new Date();
+    // 确定性重投影不推进合成水位：只有 regenerate 显式传入时间才覆盖，其余保留旧值。
+    const synthesisAt = synthesizedAt ?? existing?.synthesisAt ?? null;
     this.db.insert(roomOverviews).values({
       roomId: base.roomId,
       revision,
@@ -983,6 +1010,7 @@ export class RoomOverviewService {
       projection: projection as unknown as Record<string, unknown>,
       generatedAt,
       updatedAt,
+      ...(synthesisAt ? { synthesisAt } : {}),
     }).onConflictDoUpdate({
       target: roomOverviews.roomId,
       set: {
@@ -991,6 +1019,7 @@ export class RoomOverviewService {
         projection: projection as unknown as Record<string, unknown>,
         generatedAt,
         updatedAt,
+        ...(synthesisAt ? { synthesisAt } : {}),
       },
     }).run();
     return projection;

@@ -16,7 +16,9 @@ import {
   type AgentSessionRouteRequest,
 } from '@/components/agent/agentNavigation'
 import { useAgentSession } from '@/components/agent/useAgentSession'
+import { LocalAgentAdapterWizard } from '@/components/agent/LocalAgentAdapterWizard'
 import type { MentionedAgent } from '@/components/agent/agentMentions'
+import type { LocalAgentAdapterCheck } from '../../../shared/sources'
 import { loadRoomFocus, saveRoomFocus } from '@/components/agent/roomFocusStore'
 import type { ContextRoomWorkspaceTab } from '@/components/context-room/contextRoomTabs'
 import type { LocalAgentInstallation } from '../../../shared/local-agents'
@@ -357,8 +359,30 @@ export function AgentPanel({
       })
   }, [onSessionRouteConsumed, pageId, roomId, session, sessionRouteRequest])
 
+  const [adapterWizard, setAdapterWizard] = useState<{
+    checks: LocalAgentAdapterCheck[]
+    resolve: (proceed: boolean) => void
+  } | null>(null)
+  // 发送含 @ 本机 Agent 的消息前检查 ACP 适配器是否已安装；缺失时弹安装向导。
+  // 检测本身失败不拦发送（gateway 侧 spawn 失败仍有兜底错误）。
+  const ensureLocalAgentAdapters = async (agents: MentionedAgent[]): Promise<boolean> => {
+    const check = window.nxcore?.agent?.checkLocalAgentAdapters
+    if (!check) return true
+    let results: LocalAgentAdapterCheck[]
+    try {
+      results = (await check(agents.map((agent) => agent.id))) ?? []
+    } catch {
+      return true
+    }
+    if (!results.some((item) => !item.adapter.installed)) return true
+    return new Promise<boolean>((resolve) => {
+      setAdapterWizard({ checks: results, resolve })
+    })
+  }
+
   const sendPrompt = async (prompt: string, replaceRunId?: string, files: File[] = [], mentionedAgents?: MentionedAgent[]) => {
     if ((!prompt.trim() && !citationPrompt && files.length === 0) || !agentAvailable) return
+    if (mentionedAgents?.length && !await ensureLocalAgentAdapters(mentionedAgents)) return
     const submittedPrompt = prompt.trim() || citationPrompt
     const submittedContext = roomCitations.length
       ? buildRoomOverviewCitationContext(roomCitations)
@@ -565,6 +589,19 @@ export function AgentPanel({
         submitting={submitting || !roomBackendReady}
         toolCallsByRun={session.toolCallsByRun}
         onResolveApproval={(approvalId, decision) => void session.resolveApproval(approvalId, decision)}
+        composerNotice={adapterWizard ? (
+          <LocalAgentAdapterWizard
+            initialChecks={adapterWizard.checks}
+            onProceed={() => {
+              adapterWizard.resolve(true)
+              setAdapterWizard(null)
+            }}
+            onCancel={() => {
+              adapterWizard.resolve(false)
+              setAdapterWizard(null)
+            }}
+          />
+        ) : undefined}
       />
     </aside>
   )

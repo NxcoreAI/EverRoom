@@ -937,7 +937,6 @@ export function App() {
         officeTabs={officeTabs}
         activeOfficeId={activeWorkspaceOfficeId}
         agentOpen={agentOpen}
-        navCollapsed={effectiveNavCollapsed}
         onActivateWorkbench={() => {
           if (activePage === 'rooms' && activeContextRoomId) showContextRoomHome()
           // 预览无「主页」可回：点工作区标签时退回文件页（预览入口），标签保留。
@@ -952,17 +951,6 @@ export function App() {
           if (next && window.matchMedia('(max-width: 900px)').matches) setNavCollapsed(true)
           return next
         })}
-        onToggleNav={() => {
-          if (isContextRoomFocused) {
-            setContextRoomNavRevealed((revealed) => !revealed)
-            return
-          }
-          setNavCollapsed((collapsed) => {
-            const next = !collapsed
-            if (!next && window.matchMedia('(max-width: 900px)').matches) setAgentOpen(false)
-            return next
-          })
-        }}
       />
       <Sidebar activePage={activePage} onNavigate={navigate} />
       <main ref={workspaceMainRef} className="workspace-main">

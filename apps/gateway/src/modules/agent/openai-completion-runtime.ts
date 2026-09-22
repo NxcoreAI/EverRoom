@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, rm } from "node:fs/promises";
 import { resolve, sep } from "node:path";
 import type { RuntimeCapabilities } from "@nxcore/agent-contract";
+import { proxyFetch } from "../../infrastructure/network/proxy-fetch.js";
 import {
   AsyncEventQueue,
   type AgentRuntime,
@@ -142,7 +143,7 @@ export class OpenAiCompletionAgentRuntime implements AgentRuntime {
     maxTokens: number | undefined,
     signal: AbortSignal,
   ): Promise<{ content: string; finishReason: string } | { content: null; finishReason: string }> {
-    const response = await fetch(`${this.config.baseUrl.replace(/\/+$/, "")}/chat/completions`, {
+    const response = await proxyFetch(`${this.config.baseUrl.replace(/\/+$/, "")}/chat/completions`, {
       method: "POST",
       headers: {
         "content-type": "application/json",

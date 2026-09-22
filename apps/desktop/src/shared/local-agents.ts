@@ -4,6 +4,7 @@ export type {
   LocalAgentHistoryConversation,
   LocalAgentHistoryImportResult,
   LocalAgentHistoryMessage,
+  LocalAgentAcpAdapterInfo,
   LocalAgentProvider,
   LocalAgentStatus,
 } from '@nxcore/agent-contract'

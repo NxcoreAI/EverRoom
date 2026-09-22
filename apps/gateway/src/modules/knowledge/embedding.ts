@@ -9,6 +9,7 @@
  */
 
 import type { KnowledgeLlmConfig } from "../../config.js";
+import { proxyFetch } from "../../infrastructure/network/proxy-fetch.js";
 
 /** EMA 新样本权重：偏保守，前 ~4 份资料后质心才近似收敛到新主题。 */
 export const CENTROID_EMA_ALPHA = 0.25;
@@ -34,7 +35,7 @@ export class EmbeddingClient {
     const input = text.slice(0, EMBED_INPUT_MAX_CHARS);
     let response: Response;
     try {
-      response = await fetch(`${this.config.baseUrl.replace(/\/+$/, "")}/embeddings`, {
+      response = await proxyFetch(`${this.config.baseUrl.replace(/\/+$/, "")}/embeddings`, {
         method: "POST",
         headers: {
           "content-type": "application/json",

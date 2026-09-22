@@ -48,6 +48,46 @@
     startup-splash-shadow-pulse 2.8s 920ms ease-in-out infinite;
 }
 
+/* 品牌口号：品牌色（青绿→蜜桃橙）流动渐变文字，随图标落定后淡入上移。 */
+.startup-splash-tagline {
+  margin-top: 26px;
+  font-size: clamp(21px, 2.8vw, 28px);
+  font-weight: 360;
+  letter-spacing: 0.05em;
+  background: linear-gradient(
+    100deg,
+    #35b8ab 0%,
+    #6dd0c5 18%,
+    #f5ad71 50%,
+    #6dd0c5 82%,
+    #35b8ab 100%
+  );
+  background-size: 220% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation:
+    startup-splash-tagline-in 620ms 560ms cubic-bezier(0.22, 1, 0.36, 1) both,
+    startup-splash-tagline-flow 3.4s linear infinite;
+}
+
+@keyframes startup-splash-tagline-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* 渐变首尾同色 + background 平铺，位移一个完整周期即无缝循环。 */
+@keyframes startup-splash-tagline-flow {
+  from { background-position: 0% 50%; }
+  to { background-position: 200% 50%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .startup-splash-tagline {
+    animation: startup-splash-tagline-in 620ms 560ms ease-out both;
+  }
+}
+
 .startup-splash-dots {
   display: flex;
   gap: 9px;
@@ -58,7 +98,7 @@
   width: 7px;
   height: 7px;
   border-radius: 999px;
-  background: var(--accent);
+  background: #151a22;
   animation: startup-splash-dot 1.05s cubic-bezier(0.36, 0.16, 0.64, 0.84) infinite;
 }
 

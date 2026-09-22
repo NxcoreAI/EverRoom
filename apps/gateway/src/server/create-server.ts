@@ -75,6 +75,7 @@ import { createWebSearchPiTools } from "../modules/agent/web-search-tools.js";
 import { createDocWriterAgentTools } from "../modules/subagents/doc-writer-tools.js";
 import { buildRoomContextDigest } from "../modules/context-rooms/room-context-digest.js";
 import { RoomOverviewService } from "../modules/context-rooms/overview-service.js";
+import { RoomOverviewScheduler } from "../modules/context-rooms/overview-scheduler.js";
 import { createRoomOverviewAgentTools } from "../modules/context-rooms/overview-agent-tools.js";
 import { AsrError } from "../modules/asr/errors.js";
 import { createAsrProvider } from "../modules/asr/provider-factory.js";
@@ -819,6 +820,37 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     app.log.warn(bindings, message);
   });
   roomOverviewService.setRoomAgentDispatcher(contextRoomAgentDispatcher);
+  // room-overview 后台自动再生（connector 路由/文档落库 → 去抖 + 每 Room 1h 冷却；
+  // 新建 Room 初始一次）。子 Agent 未启用时不接线，保持纯手动 regenerate 语义。
+  let roomOverviewScheduler: RoomOverviewScheduler | null = null;
+  if (subagentConfig.enabled) {
+    roomOverviewScheduler = new RoomOverviewScheduler(app.log);
+    roomOverviewScheduler.setRegenerate((roomId) => roomOverviewService.regenerate(roomId));
+    knowledgeService.setRoomOverviewRefreshTrigger((roomIds, reason) =>
+      roomOverviewScheduler!.notifySourcesChanged(roomIds, reason));
+    contextRoomService.setRoomOverviewKickoff((roomId) => roomOverviewScheduler!.notifyRoomCreated(roomId));
+    // 初始扫描：从未成功合成过（仍显示 fallback 简报）的存量 Room 补一次再生成。
+    // boot 后 30s 起逐房错峰 10s；runtime config 变更（如 SaaS 登录 AI 才就绪）时
+    // 重跑——已合成的房间被查询本身排除，不会重复烧。
+    const scheduleInitialOverviewSweep = () => {
+      const scheduler = roomOverviewScheduler;
+      if (!scheduler) return;
+      const roomIds = roomOverviewService.roomIdsNeedingInitialSynthesis();
+      if (roomIds.length === 0) return;
+      app.log.info(
+        { event: "room_overview.initial_sweep_scheduled", count: roomIds.length },
+        "scheduling initial room-overview synthesis for rooms without one",
+      );
+      roomIds.forEach((roomId, index) => {
+        scheduler.notifySourcesChanged([roomId], "initial-sweep", {
+          delayMs: 30_000 + index * 10_000,
+          ignoreFailureCooldown: true,
+        });
+      });
+    };
+    scheduleInitialOverviewSweep();
+    runtimeConfigManager.onChange(() => scheduleInitialOverviewSweep());
+  }
   // 改写信任收口（agent-architecture-optimization-plan §3）：documents 插件经
   // CapabilityBackend 注入 resolver——从 subagent_invocations 完成态取替换文本并复核授权。
   // 与 writingStyleProvider 同款 provider 注入模式；documents 模块不直接依赖
@@ -1251,6 +1283,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     await agentSchedulerService.dispose();
     await diaryService.dispose();
     roomDuplicateService.dispose();
+    roomOverviewScheduler?.dispose();
     await knowledgeService.dispose();
     knowledgePreferences.dispose();
     await asrService.dispose();

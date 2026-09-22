@@ -209,12 +209,22 @@ export function asrFieldsError(fields: ManualAsrFields, t: (key: string) => stri
   return required.every((value) => value.trim()) ? null : t('surface:settings.rcAsrOssRequired')
 }
 
-/** 连通测试失败原因 → 用户可读文案（primary/embedding/vlm 共用 taxonomy）。 */
+/** 连通测试失败原因 → 用户可读文案（primary/embedding/vlm 共用 taxonomy）。
+ * 兜底分支（5xx/429 等未分类状态）必须带上服务端原始错误——端点应答了但
+ * 报错时，用户和排障都需要知道它说了什么，不能只剩一句「未通过」。 */
 export function configTestErrorMessage(error: string | undefined, t: (key: string) => string): string {
   if (!error) return t('surface:configGate.testFailedGeneric')
   if (error.includes('incomplete')) return t('surface:configGate.testIncomplete')
   if (error.includes('_http_401') || error.includes('_http_403')) return t('surface:configGate.testAuthFailed')
   if (error.includes('_http_404')) return t('surface:configGate.testNotFound')
-  if (error.includes('unreachable') || error.includes('timeout') || error.includes('TimeoutError')) return t('surface:configGate.testUnreachable')
-  return t('surface:configGate.testFailedGeneric')
+  if (error.includes('unreachable') || error.includes('timeout') || error.includes('TimeoutError')) {
+    return `${t('surface:configGate.testUnreachable')}${testErrorDetail(error)}`
+  }
+  return `${t('surface:configGate.testFailedGeneric')}${testErrorDetail(error)}`
+}
+
+/** 服务端原始错误尾巴（去 taxonomy 前缀、截断）；空/纯前缀返回空串。 */
+function testErrorDetail(error: string): string {
+  const detail = error.replace(/^runtime_config_test[a-z0-9_]*(?::\s*)?/, '').trim()
+  return detail ? `（${detail.slice(0, 160)}）` : ''
 }

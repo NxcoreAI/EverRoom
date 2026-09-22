@@ -503,6 +503,8 @@ export const roomOverviews = sqliteTable(
     projection: text("projection", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
     generatedAt: integer("generated_at", { mode: "timestamp_ms" }).notNull(),
     updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+    /** 最近一次 LLM 合成成功时间（regenerate 落；确定性重投影保留旧值）。初始扫描据此识别从未合成过的 Room。 */
+    synthesisAt: integer("synthesis_at", { mode: "timestamp_ms" }),
   },
   (table) => [index("room_overviews_updated_idx").on(table.updatedAt)],
 );

@@ -1,0 +1,55 @@
+/* 安装向导复用 agent-shell-approval 的卡片/命令块/按钮样式（AgentChat.css），
+   这里只补列表布局、就绪徽标与复制按钮。 */
+
+.agent-adapter-wizard-list {
+  display: grid;
+  gap: 8px;
+}
+
+.agent-adapter-wizard-command-head {
+  justify-content: space-between;
+}
+
+.agent-adapter-wizard-ready {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  color: #7fbf5f;
+  font-style: normal;
+  font-weight: 650;
+}
+
+.agent-adapter-wizard-ready svg {
+  width: 11px;
+  height: 11px;
+}
+
+.agent-adapter-wizard-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  padding: 2px 7px;
+  border: 1px solid #3a414c;
+  border-radius: 5px;
+  background: transparent;
+  color: #c8d1dc;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.agent-adapter-wizard-copy:hover:not(:disabled) {
+  background: #2a3039;
+}
+
+.agent-adapter-wizard-copy:disabled {
+  cursor: wait;
+  opacity: 0.58;
+}
+
+.agent-adapter-wizard-copy svg {
+  width: 11px;
+  height: 11px;
+}

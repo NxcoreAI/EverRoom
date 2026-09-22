@@ -3,6 +3,7 @@ import type { ReadableStream as NodeWebReadableStream } from "node:stream/web";
 import type { FastifyPluginAsyncTypebox } from "@fastify/type-provider-typebox";
 import { Type } from "@sinclair/typebox";
 import type { RuntimeConfigManager } from "../../runtime-config.js";
+import { proxyFetch } from "../../infrastructure/network/proxy-fetch.js";
 import { AiRelaySessionStore } from "./session.js";
 
 const SessionBody = Type.Object({
@@ -104,7 +105,7 @@ export function aiRelayRoutes(options: {
         if (!reply.raw.writableEnded) controller.abort(new Error("client aborted"));
       });
       try {
-        const upstream = await fetch(target, {
+        const upstream = await proxyFetch(target, {
           method,
           headers,
           ...(hasBody ? { body: JSON.stringify(request.body ?? null) } : {}),

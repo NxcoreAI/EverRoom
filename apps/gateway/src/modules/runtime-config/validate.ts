@@ -7,6 +7,8 @@
  *   是有效的才放行"）。
  */
 
+import { proxyFetch } from "../../infrastructure/network/proxy-fetch.js";
+
 export interface AiConfigFields {
   provider: string;
   model: string;
@@ -106,7 +108,7 @@ export async function testAiConnection(fields: AiConfigFields): Promise<TestConn
   }
   let response: Response;
   try {
-    response = await fetch(`${fields.baseUrl.replace(/\/+$/, "")}/chat/completions`, {
+    response = await proxyFetch(`${fields.baseUrl.replace(/\/+$/, "")}/chat/completions`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -154,7 +156,7 @@ export async function testEmbeddingConnection(
   }
   let response: Response;
   try {
-    response = await fetch(`${fields.baseUrl.replace(/\/+$/, "")}/embeddings`, {
+    response = await proxyFetch(`${fields.baseUrl.replace(/\/+$/, "")}/embeddings`, {
       method: "POST",
       headers: {
         "content-type": "application/json",

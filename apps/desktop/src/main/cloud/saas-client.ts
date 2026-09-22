@@ -504,6 +504,12 @@ export class SaasClient {
   private subscriptionRetryAfter = 0
   private subscriptionPromise: Promise<void> | null = null
   private initializePromise: Promise<void> | null = null
+  /** 启动恢复因网络失败（token 保留）时置 'network'，成功/真失效即清除。 */
+  private authBlockedReason: 'network' | null = null
+  /** 单飞 refresh：并发 401（agent/status 心跳、session/lease、订阅同时命中
+   *  过期）必须共享同一次换token请求——否则同一 refresh token 被并发重放，
+   *  服务端轮换复用检测会把整个会话族吊销（表现为重启后必须重新登录）。 */
+  private refreshInFlight: Promise<void> | null = null
   private pendingOidcLogin: PendingOidcLogin | null = null
   private loopbackRedirectSupported: boolean | null = null
   private loopbackServer: Server | null = null
@@ -531,7 +537,11 @@ export class SaasClient {
   }
 
   initialize(): Promise<void> {
-    this.initializePromise ??= this.restoreSession()
+    // 恢复未成功（网络失败、token 仍在）时不冻结本次进程：清掉 memo，
+    // 后续 status() 会再试——否则一次启动超时 = 整个会话被判未登录。
+    this.initializePromise ??= this.restoreSession().then(() => {
+      if (!this.account) this.initializePromise = null
+    })
     return this.initializePromise
   }
 
@@ -1437,13 +1447,30 @@ export class SaasClient {
   private async restoreSession(): Promise<void> {
     const refreshToken = await this.credentials.getSecureText(REFRESH_TOKEN_KEY)
     if (!refreshToken) return
-    try {
-      await this.refresh(refreshToken)
-      await this.loadSubscription()
-    } catch (error) {
-      if (error instanceof SaasRequestError && (error.status === 401 || error.status === 403)) {
-        await this.credentials.delete(REFRESH_TOKEN_KEY)
-      } else {
+    this.authBlockedReason = null
+    // 启动恢复带重试：Ctrl+C 重启时 VPN/TUN 常常还没热身，一次超时就把已存
+    // token 的用户判成未登录（要重新登录）——实测 token 一直在，缺的是重试。
+    // 401/403（token 真失效）与 409（设备额度挑战）不重试，立即定性。
+    const maxAttempts = 3
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        await this.refreshExclusive(refreshToken)
+        await this.loadSubscription()
+        return
+      } catch (error) {
+        if (error instanceof SaasRequestError) {
+          if (error.status === 401 || error.status === 403) {
+            await this.credentials.delete(REFRESH_TOKEN_KEY)
+            return
+          }
+          if (error.status === 409) return
+        }
+        if (attempt < maxAttempts) {
+          await new Promise((resolve) => setTimeout(resolve, 2_000))
+          continue
+        }
+        // 网络（或服务端 5xx）耗尽重试：凭据仍在，标记「网络受阻」而非未登录。
+        this.authBlockedReason = 'network'
         console.warn('Unable to restore EverRoom SaaS session; keeping the refresh token for retry.')
       }
     }
@@ -1531,6 +1558,8 @@ export class SaasClient {
     return {
       authenticated: Boolean(this.accessToken && this.account),
       apiBaseUrl: this.baseUrl,
+      // 凭据在但网络验证失败：明确告知「网络问题」而非「未登录」。
+      ...(!this.accessToken && this.authBlockedReason ? { authBlocked: this.authBlockedReason } : {}),
       ...(this.account ? { user: this.account.user, device: this.account.device } : {}),
       ...(this.subscription ? { subscription: this.subscription } : {}),
       ...(this.account?.registration ? { registration: this.account.registration } : {}),
@@ -1562,7 +1591,16 @@ export class SaasClient {
       throw new SaasRequestError('设备额度已被其他在线设备占满。', 409)
     }
     this.pendingAdmission = null
+    this.authBlockedReason = null
     await this.acceptSession(data)
+  }
+
+  /** 并发安全的 refresh 入口：在途时后来者共享同一个 Promise。 */
+  private refreshExclusive(refreshToken: string): Promise<void> {
+    this.refreshInFlight ??= this.refresh(refreshToken).finally(() => {
+      this.refreshInFlight = null
+    })
+    return this.refreshInFlight
   }
 
   private async acceptSession(data: LoginResult): Promise<void> {
@@ -1662,7 +1700,7 @@ export class SaasClient {
     if (response.status === 401) {
       const refreshToken = await this.credentials.getSecureText(REFRESH_TOKEN_KEY)
       if (!refreshToken) throw new Error('登录已过期，请重新登录。')
-      await this.refresh(refreshToken)
+      await this.refreshExclusive(refreshToken)
       response = await this.send(path, config, this.accessToken!)
     }
     return this.unwrap<T>(response)
@@ -1674,7 +1712,7 @@ export class SaasClient {
     if (response.status === 401) {
       const refreshToken = await this.credentials.getSecureText(REFRESH_TOKEN_KEY)
       if (!refreshToken) throw new Error('登录已过期，请重新登录。')
-      await this.refresh(refreshToken)
+      await this.refreshExclusive(refreshToken)
       response = await this.send(path, config, this.accessToken!)
     }
     const body = response.data as { data?: T; meta?: { nextCursor?: number } } | null

@@ -321,6 +321,7 @@ export function AgentChatView({
   notificationRunTarget,
   onNotificationRunLocated,
   pendingApprovals = [],
+  composerNotice,
   onRetryPrompt,
   onResolveApproval = () => undefined,
   onOpenSessionLink,
@@ -352,6 +353,7 @@ export function AgentChatView({
   notificationRunTarget?: { key: string; runId: string } | null
   onNotificationRunLocated?: (key: string) => void
   pendingApprovals?: PendingShellApproval[]
+  composerNotice?: ReactNode
   onRetryPrompt: (prompt: string, runId: string) => void
   onResolveApproval?: (approvalId: string, decision: 'approved' | 'approved_session' | 'denied') => void
   onOpenSessionLink: (link: AgentSessionLink) => void
@@ -849,6 +851,7 @@ export function AgentChatView({
           {activeRunId && activeHasAssistant && !latestStreamingMessage && !latestActivity?.hasTools
             ? <ThinkingStatus label={getThinkingLabel(undefined, latestTools, t)} />
             : null}
+          {composerNotice}
           <AgentShellApproval
             approvals={pendingApprovals}
             resolvingApprovalIds={resolvingApprovalIds}

@@ -200,6 +200,37 @@
   font-weight: 740;
 }
 
+/* 登录页标题行：扫码激活时标题左侧出现返回按钮，与标题基线对齐。 */
+.runtime-config-gate-login-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.runtime-config-gate-heading-back {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  margin-left: -8px;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  color: #7c8798;
+  cursor: pointer;
+}
+
+.runtime-config-gate-heading-back:hover {
+  color: #151a22;
+  background: rgb(21 26 34 / 6%);
+}
+
+.runtime-config-gate-heading-back svg {
+  width: 18px;
+  height: 18px;
+}
+
 .runtime-config-gate-panel p {
   margin: 0;
   color: #536070;
@@ -450,9 +481,23 @@
   margin-top: 10px;
 }
 
-/* 手动配置是低频逃生入口，居中弱化而非右对齐提交语义 */
-.runtime-config-gate-manual-row {
-  justify-content: center;
+/* 手动配置是低频逃生入口：右对齐的一行弱化文字，不做按钮。 */
+.runtime-config-gate-manual-link {
+  display: block;
+  margin: 14px 2px 0 auto;
+  padding: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #7c8798;
+  font-size: 13px;
+  font-weight: 400;
+  text-decoration: none;
+}
+
+.runtime-config-gate-manual-link:hover {
+  color: #536070;
+  text-decoration: underline;
 }
 
 /* 等待浏览器登录：通知盒（与错误条同族），spinner+文案居左、取消按钮居右。
