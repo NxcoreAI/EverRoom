@@ -20,27 +20,43 @@ import { useMemoryOverview } from './memory/useMemoryData'
 import './memory/MemoryPage.css'
 import { useLocale } from '@/i18n/LocaleContext'
 
-const TABS: Array<{ id: MemoryTabId; label: string }> = [
-  { id: 'overview', label: 'memory:memory.overview' },
-  { id: 'conversation', label: 'memory:memory.conversations' },
-  { id: 'documents', label: 'memory:memory.documents' },
-  { id: 'atomic', label: 'memory:memory.atomicMemory' },
-  { id: 'scenario', label: 'memory:memory.scenarios' },
-  { id: 'core', label: 'memory:memory.profile' },
-  // 写作风格 = 从用户文档自动沉淀的表达偏好（系统段只读）+ 用户指令段可编辑
-  { id: 'writing-style', label: 'memory:memory.writingStyle' },
-  // 导入记录 = 统一引擎台账（全源进入记录 + 过滤闸状态，误杀恢复入口）
-  { id: 'ledger', label: 'memory:memory.ledger' },
-  // 过滤规则 = 过滤器判定偏好（用户偏好可编辑 + 系统洞察只读）
-  { id: 'filter-rules', label: 'memory:memory.filterRules' },
-  // 整理偏好 = 知识整理习惯学习（M3）：合并/路由/晋升信号的统计与洞察 + 用户接管
-  { id: 'org-preferences', label: 'memory:memory.organizationPreferences' },
+/** 记忆页导航（对齐原型信息架构）：时间轴为主视图；来源/派生/治理分区。 */
+const NAV_SECTIONS: Array<{ section: string | null; tabs: Array<{ id: MemoryTabId; label: string }> }> = [
+  { section: null, tabs: [{ id: 'atomic', label: 'memory:memory.atomicTimeline' }] },
+  {
+    section: 'memory:nav.sources',
+    tabs: [
+      { id: 'conversation', label: 'memory:memory.conversations' },
+      { id: 'documents', label: 'memory:memory.documents' },
+    ],
+  },
+  {
+    section: 'memory:nav.derived',
+    tabs: [
+      { id: 'scenario', label: 'memory:memory.scenarios' },
+      { id: 'core', label: 'memory:memory.profile' },
+      { id: 'writing-style', label: 'memory:memory.writingStyle' },
+    ],
+  },
+  {
+    section: 'memory:nav.governance',
+    tabs: [
+      { id: 'ledger', label: 'memory:memory.ledger' },
+      { id: 'filter-rules', label: 'memory:memory.filterRules' },
+      { id: 'org-preferences', label: 'memory:memory.organizationPreferences' },
+    ],
+  },
+  { section: null, tabs: [{ id: 'overview', label: 'memory:memory.overview' }] },
 ]
+
+const TAB_LABELS: Record<MemoryTabId, string> = Object.fromEntries(
+  NAV_SECTIONS.flatMap((section) => section.tabs).map((tab) => [tab.id, tab.label]),
+) as Record<MemoryTabId, string>
 
 export function MemoryPage({ focusAtomicId }: { focusAtomicId?: string | null } = {}) {
   const { t } = useLocale()
   const overview = useMemoryOverview()
-  const [tab, setTab] = useState<MemoryTabId>('overview')
+  const [tab, setTab] = useState<MemoryTabId>('atomic')
   const [searchText, setSearchText] = useState('')
   const [search, setSearch] = useState<{ query: string; result: MemorySearchResult } | null>(null)
   const [searching, setSearching] = useState(false)
@@ -53,7 +69,7 @@ export function MemoryPage({ focusAtomicId }: { focusAtomicId?: string | null } 
   useEffect(() => {
     const openTab = (event: Event) => {
       const tab = (event as CustomEvent<{ tab: string }>).detail?.tab
-      if (tab && TABS.some((entry) => entry.id === tab)) {
+      if (tab && tab in TAB_LABELS) {
         setSearch(null)
         setTab(tab as MemoryTabId)
       }
@@ -133,28 +149,35 @@ export function MemoryPage({ focusAtomicId }: { focusAtomicId?: string | null } 
         </div>
       </header>
       <nav className="mem-tabs" role="tablist" aria-label={t('memory:memory.memoryLevels')}>
-        {TABS.map((entry) => {
-          const data = overview.data
-          const count = !data ? null
-            : entry.id === 'atomic' ? data.l1?.total ?? null
-              : entry.id === 'scenario' ? data.l2?.total ?? null
-                : entry.id === 'conversation' ? data.l0?.total ?? null
-                  : null
-          return (
-            <button
-              key={entry.id}
-              type="button"
-              role="tab"
-              aria-selected={tab === entry.id && !search}
-              data-active={tab === entry.id && !search}
-              onClick={() => { setTab(entry.id); setSearch(null) }}
-            >
-              <span className="mem-tab-name">{t(entry.label)}</span>
-              {/* 数量固定占一行（无数量的 tab 留空行），保证各 tab 等高、下划线对齐 */}
-              <span className="mem-tab-count">{count !== null ? count : ''}</span>
-            </button>
-          )
-        })}
+        {NAV_SECTIONS.map((section, sectionIndex) => (
+          <div className="mem-tab-section" key={section.section ?? `main-${sectionIndex}`}>
+            {section.section ? (
+              <span className="mem-tab-section-label">{t(section.section)}</span>
+            ) : null}
+            {section.tabs.map((entry) => {
+              const data = overview.data
+              const count = !data ? null
+                : entry.id === 'atomic' ? data.l1?.total ?? null
+                  : entry.id === 'scenario' ? data.l2?.total ?? null
+                    : entry.id === 'conversation' ? data.l0?.total ?? null
+                      : null
+              return (
+                <button
+                  key={entry.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={tab === entry.id && !search}
+                  data-active={tab === entry.id && !search}
+                  onClick={() => { setTab(entry.id); setSearch(null) }}
+                >
+                  <span className="mem-tab-name">{t(entry.label)}</span>
+                  {/* 数量固定占一行（无数量的 tab 留空行），保证各 tab 等高、下划线对齐 */}
+                  <span className="mem-tab-count">{count !== null ? count : ''}</span>
+                </button>
+              )
+            })}
+          </div>
+        ))}
       </nav>
       {searchError ? <p className="mem-inline-error">{searchError}</p> : null}
       {search ? (
