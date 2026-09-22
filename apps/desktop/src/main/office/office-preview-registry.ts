@@ -6,7 +6,7 @@ import {
   officePreviewKindForFileName,
   type OfficePreviewKind,
 } from '../../shared/sources'
-import { onOfficeFileSaved, wireOfficeSavedHooks } from './office-generation'
+import { onOfficeFileSaved, wireOfficeSavedHooks, wireSlidesAgentAsk, type AgentAskForwardEvent } from './office-generation'
 import {
   loadPreparedGenOfficeRuntime,
   preparedGenOfficeFixture,
@@ -51,6 +51,7 @@ interface OfficePreviewInstance {
   view: OfficePreviewView
   editable: boolean
   documentPath: string | null
+  roomId: string | null
   unsubscribeSaved: (() => void) | null
 }
 
@@ -101,6 +102,7 @@ export class OfficePreviewRegistry {
   private readonly instances = new Map<string, OfficePreviewInstance>()
   private activeId: string | null = null
   private readonly editStates = new Map<string, EditSyncState>()
+  private agentAskForward: ((event: AgentAskForwardEvent) => void) | null = null
   private editSyncBindings: {
     importAgentFile: (input: {
       filePath: string
@@ -115,6 +117,11 @@ export class OfficePreviewRegistry {
   /** 编辑回填依赖注入（index.ts 启动时接线；缺省则编辑视图保存不回填）。 */
   setEditSync(bindings: OfficePreviewRegistry['editSyncBindings']): void {
     this.editSyncBindings = bindings
+  }
+
+  /** 「AI 修改」转发出口：slides 弹层提交 → wcId 反查 Room → 注入 Room 对话框。 */
+  setAgentAskForward(forward: ((event: AgentAskForwardEvent) => void) | null): void {
+    this.agentAskForward = forward
   }
 
   /** 打开（或复用）一个预览实例；instanceId = fileId，contentHash 或 editable 变化时原地重建。 */
@@ -148,6 +155,7 @@ export class OfficePreviewRegistry {
       view,
       editable,
       documentPath,
+      roomId,
       unsubscribeSaved: null,
     }
     if (editable && typeof view.webContentsId === 'number') {
@@ -190,6 +198,7 @@ export class OfficePreviewRegistry {
       view,
       editable: false,
       documentPath: null,
+      roomId: null,
       unsubscribeSaved: null,
     })
     return descriptor
@@ -247,6 +256,25 @@ export class OfficePreviewRegistry {
         active: fileId === this.activeId,
       }))
       .sort((a, b) => Number(b.active) - Number(a.active))
+  }
+
+  /** 「AI 修改」转发用的 wcId 反查：定位视图所属文件与 Room（编辑回填态里的 roomId 兜底）。 */
+  findByWebContentsId(wcId: number): {
+    fileId: string
+    title: string
+    kind: string
+    roomId: string | null
+  } | null {
+    for (const [fileId, instance] of this.instances.entries()) {
+      if (instance.view.webContentsId !== wcId) continue
+      return {
+        fileId,
+        title: instance.descriptor.title,
+        kind: instance.descriptor.kind,
+        roomId: instance.roomId ?? this.editStates.get(fileId)?.roomId ?? null,
+      }
+    }
+    return null
   }
 
   /** 'active' 的解析：焦点 slides 实例优先；无焦点时唯一打开的 slides 实例兜底。 */
@@ -437,6 +465,13 @@ export class OfficePreviewRegistry {
     }
     // Office 保存 hook（生成 + 编辑回填共享扇出，docs/slides/sheets）在首个使用者装一次。
     wireOfficeSavedHooks(this.runtime)
+    // 「AI 修改」弹层转发：slides 视图提交 → wcId 反查 Room → 广播渲染层注入（幂等）。
+    if (this.agentAskForward) {
+      wireSlidesAgentAsk(this.runtime, {
+        resolveInstance: (wcId) => this.findByWebContentsId(wcId),
+        forward: this.agentAskForward,
+      })
+    }
     // shell window 是三个运行时共享的对话框父窗口，换绑后需要重新指向。
     this.runtime.docs.setDocsShellWindow(window)
     this.runtime.sheets.setSheetsShellWindow(window)

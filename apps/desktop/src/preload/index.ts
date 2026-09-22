@@ -18,7 +18,7 @@ import type {
 } from '../shared/memory'
 import type { IngestPipelines } from '../shared/ingest'
 import type { McpServersSnapshot } from '../shared/mcp'
-import type { OfficeAgentFileEvent } from '../shared/office'
+import type { OfficeAgentAskEvent, OfficeAgentFileEvent } from '../shared/office'
 import { OIDC_LOGIN_CANCELLED_MESSAGE, type AiRelayKeeperEventType, type AsrResult, type CloudAccountStatus, type DesktopRequestError, type NxcoreDesktopApi, type RoomAgentSelectionRewriteInput } from '../shared/sources'
 import type { BrowserExtensionMessage, BrowserExtensionStatus } from '../shared/browser-extension'
 import { isCursorCompletionAgentErrorPayload } from '../shared/cursor-completion'
@@ -206,6 +206,12 @@ const api: NxcoreDesktopApi = {
       const handler = (_event: Electron.IpcRendererEvent, payload: OfficeAgentFileEvent) => listener(payload)
       ipcRenderer.on('office:agent-file', handler)
       return () => ipcRenderer.removeListener('office:agent-file', handler)
+    },
+    /** slides「AI 修改」弹层转发事件（切到对应 Room 并自动发送注入消息）。 */
+    onAgentAsk: (listener: (event: OfficeAgentAskEvent) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: OfficeAgentAskEvent) => listener(payload)
+      ipcRenderer.on('office:agent-ask', handler)
+      return () => ipcRenderer.removeListener('office:agent-ask', handler)
     },
   },
   locale: {

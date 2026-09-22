@@ -7,6 +7,7 @@ import type { WebContents, WebContentsView } from 'electron'
 
 import { loadPreparedGenOfficeRuntime, type PreparedGenOfficeRuntime } from './office-runtime'
 import { buildAgentXlsxBytes, type AgentSheetInput } from './xlsx-generation'
+import type { OfficeAgentAskEvent } from '../../shared/office'
 
 /** 生成卡死兜底：渲染端 boot → 填充 → 静默保存正常在秒级完成。 */
 const GENERATION_TIMEOUT_MS = 3 * 60_000
@@ -58,6 +59,74 @@ export function wireOfficeSavedHooks(target: PreparedGenOfficeRuntime): void {
   target.slides.setSlidesFileSavedHook(fanOut)
   target.sheets.setSheetsFileSavedHook(fanOut)
   hookWired = true
+}
+
+// ── 「AI 修改」转发：slides 视图里的弹层提交 → Room 对话框 ──
+
+/** fork slides:agent-ask 校验后透传的载荷（元素 id = 大纲/编辑 op 的 durable id）。 */
+export interface SlidesAgentAskPayload {
+  instruction: string
+  slideIndex: number
+  targets: Array<{
+    id: string
+    desc: { type: string; text?: string; rows?: number; cols?: number }
+  }>
+}
+
+/** fork NodeDescriptor.type（RenderNodeType）→ 中文类型名。 */
+const ASK_TYPE_LABEL: Record<string, string> = {
+  text: '文本框',
+  shape: '形状',
+  picture: '图片',
+  table: '表格',
+  chart: '图表',
+  group: '组合',
+  'placeholder-chip': '形状',
+}
+
+function describeAskTarget(target: SlidesAgentAskPayload['targets'][number]): string {
+  const label = ASK_TYPE_LABEL[target.desc.type] ?? target.desc.type
+  const text = target.desc.text?.trim().split('\n')[0]
+  if (!text) return `${target.id}（${label}）`
+  const brief = text.length > 24 ? `${text.slice(0, 24)}…` : text
+  return `${target.id}（${label}「${brief}」）`
+}
+
+/** 注入 Room 对话的用户消息：用户口吻的修改指令 + 给 Agent 的工具定位提示。 */
+export function buildAgentAskMessage(title: string, op: SlidesAgentAskPayload): string {
+  const targets = op.targets.map(describeAskTarget).join('、')
+  return (
+    `请修改 PPT《${title}》第 ${op.slideIndex + 1} 页选中的元素（${targets}）：${op.instruction}。`
+    + '用 slides 编辑工具按元素 id 直接定位修改（fileId 可用 "active"，先用 context_room_slides_read 读当前大纲确认页码），'
+    + '只改列出的元素，其他内容保持不动。'
+  )
+}
+
+/** 渲染层注入事件：room 确定后由主进程广播（channel office:agent-ask）。 */
+export type AgentAskForwardEvent = OfficeAgentAskEvent
+
+let agentAskWired = false
+
+/** 全局只装一次（幂等）：slides 弹层转发 → 反查 Room → 广播给渲染层注入对话框。 */
+export function wireSlidesAgentAsk(
+  target: PreparedGenOfficeRuntime,
+  deps: {
+    resolveInstance(wcId: number): { fileId: string; title: string; kind: string; roomId: string | null } | null
+    forward(event: AgentAskForwardEvent): void
+  },
+): void {
+  if (agentAskWired) return
+  target.slides.registerSlidesIpc()
+  target.slides.setSlidesAgentAskHook(async (wcId, op) => {
+    const instance = deps.resolveInstance(wcId)
+    if (!instance) return { ok: false, error: '未找到该 PPT 对应的打开实例' }
+    if (!instance.roomId) {
+      return { ok: false, error: '该文件未在 Room 中打开，无法转发给 Agent（请在 Room 产物库打开后再试）' }
+    }
+    deps.forward({ roomId: instance.roomId, message: buildAgentAskMessage(instance.title, op) })
+    return { ok: true }
+  })
+  agentAskWired = true
 }
 
 export interface GeneratedDocx {

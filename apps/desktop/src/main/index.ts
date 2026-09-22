@@ -81,6 +81,7 @@ import { RemoteAgentCommandClient } from './cloud/remote-agent-command-client'
 import { AgentNotificationBridgeServer } from './cloud/agent-notification-bridge'
 import { OfficeBridgeServer } from './gateway/office-bridge'
 import type { OfficeAgentFileEvent } from '../shared/office'
+import type { AgentAskForwardEvent } from './office/office-generation'
 import { MacosPushNotificationService } from './cloud/macos-push-notifications'
 import { parseAgentNotificationTarget, type AgentNotificationTarget, type NotificationPreferences } from '../shared/notifications'
 import { AsrCoordinator } from './asr/asr-coordinator'
@@ -827,6 +828,13 @@ const officePreviewRegistry = new OfficePreviewRegistry()
 function broadcastOfficeAgentFileEvent(event: OfficeAgentFileEvent): void {
   for (const window of BrowserWindow.getAllWindows()) {
     if (!window.isDestroyed()) window.webContents.send('office:agent-file', event)
+  }
+}
+
+/** office:agent-ask 扇出：slides「AI 修改」弹层转发 → 渲染层注入对应 Room 对话框。 */
+function broadcastAgentAskEvent(event: AgentAskForwardEvent): void {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) window.webContents.send('office:agent-ask', event)
   }
 }
 
@@ -3715,6 +3723,8 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       },
       broadcast: broadcastOfficeAgentFileEvent,
     })
+    // slides「AI 修改」弹层 → 反查 Room → 渲染层注入对话框（hook 在运行时首用时懒装）。
+    officePreviewRegistry.setAgentAskForward(broadcastAgentAskEvent)
     browserExtensionService?.setCaptureHandlers({
       create: (capture) => filesGatewayBridge.createClipCapture(capture),
       uploadAsset: (captureId, assetId, data) => filesGatewayBridge.uploadClipAsset(captureId, assetId, data),

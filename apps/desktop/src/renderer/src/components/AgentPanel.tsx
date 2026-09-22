@@ -52,12 +52,14 @@ export function AgentPanel({
   roomBackendReady,
   navigationRequest,
   sessionRouteRequest,
+  askRequest,
   onNavigate,
   onRestoreRoomTab,
   onNavigationConsumed,
   onOpenSessionLink,
   onOpenDocument,
   onSessionRouteConsumed,
+  onAskConsumed,
   focusRequest = 0,
   roomCitations,
   onRemoveRoomCitation,
@@ -70,12 +72,14 @@ export function AgentPanel({
   roomBackendReady: boolean
   navigationRequest: AgentNavigationRequest | null
   sessionRouteRequest: AgentSessionRouteRequest | null
+  askRequest: { key: string; roomId: string; message: string } | null
   onNavigate: (request: AgentNavigationRequest) => void
   onRestoreRoomTab: (target: AgentNavigationRequest['target']) => void
   onNavigationConsumed: (key: string) => void
   onOpenSessionLink: (link: AgentSessionLink, destination: 'source' | 'target') => void
   onOpenDocument: (target: { roomId: string; documentId: string; blockId?: string | null }) => void
   onSessionRouteConsumed: (key: string) => void
+  onAskConsumed: (key: string) => void
   focusRequest?: number
   roomCitations: RoomOverviewCitation[]
   onRemoveRoomCitation: (citationId: string) => void
@@ -96,6 +100,7 @@ export function AgentPanel({
   const handledNavigationKeysRef = useRef(new Set<string>())
   const handledRequestKeysRef = useRef(new Set<string>())
   const handledSessionRouteKeysRef = useRef(new Set<string>())
+  const handledAskKeysRef = useRef(new Set<string>())
   const handledOverviewToolIdsRef = useRef(new Set<string>())
   const citationSectionLabel = (citation: RoomOverviewCitation) => t(citation.section === 'overview'
       ? 'contextRoom:overviewDashboard.roomOverview'
@@ -420,6 +425,17 @@ export function AgentPanel({
       setSubmitting(false)
     }
   }
+
+  // slides「AI 修改」弹层转发注入：roomId 对上、会话就绪后自动发送（key 去重防重放）。
+  useEffect(() => {
+    if (!askRequest || askRequest.roomId !== roomId || session.loading) return
+    if (handledAskKeysRef.current.has(askRequest.key)) return
+    handledAskKeysRef.current.add(askRequest.key)
+    void sendPrompt(askRequest.message)
+      .then(() => onAskConsumed(askRequest.key))
+      .catch(() => handledAskKeysRef.current.delete(askRequest.key))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [askRequest, roomId, session.loading])
 
   const selectDocument = async ({ document, originalPrompt }: AgentDocumentSelectionSubmission) => {
     if (!roomBackendReady) return
