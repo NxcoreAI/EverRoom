@@ -1068,13 +1068,19 @@ export function TiptapDocumentEditor({
     }
   }, [editor, editorLocked])
 
+  // 注册只消费 version/deletedAt：依赖原语而非 backendDocument 对象，
+  // 避免同 version 的对象替换（远程 touch/事件重放）导致 deactivate→activate
+  // 让 activeDocument 反复 null 震荡。
+  const backendDocumentVersion = backendDocument?.version
+  const backendDocumentDeletedAt = backendDocument?.deletedAt
+
   useEffect(() => {
-    if (!editor || !backendDocument || backendDocument.deletedAt) return
+    if (!editor || backendDocumentVersion === undefined || backendDocumentDeletedAt) return
     const handle = activateDocument({
       roomId: room.id,
       documentId,
       title: documentName,
-      version: backendDocument.version,
+      version: backendDocumentVersion,
       getCursorAnchorCandidate: () => cursorAnchorCandidateFromEditorState(editor.state),
       flush: async () => {
         const version = await flushDocumentVersion()
@@ -1082,7 +1088,7 @@ export function TiptapDocumentEditor({
       },
     })
     return handle.deactivate
-  }, [activateDocument, backendDocument, documentId, documentName, editor, flushDocumentVersion, room.id])
+  }, [activateDocument, backendDocumentDeletedAt, backendDocumentVersion, documentId, documentName, editor, flushDocumentVersion, room.id])
 
   // 图片缩放（幽灵模式）：拖动期间原图占位、幽灵框预览，松手才应用。
   useEffect(() => {
