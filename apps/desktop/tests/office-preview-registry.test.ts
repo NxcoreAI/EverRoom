@@ -338,6 +338,25 @@ describe('OfficePreviewRegistry', () => {
       })
     })
 
+    it('findByWebContentsId：按视图 wcId 反查文件与 Room（「AI 修改」转发用）', async () => {
+      const window = makeWindow()
+      await registry.open(window, { ...file('file-e1', 'deck-edit.pptx'), editable: true, roomId: 'room-e1' })
+      await registry.open(window, file('file-d1', 'notes.docx'))
+
+      expect(registry.findByWebContentsId(viewCalls[0]!.webContentsId)).toEqual({
+        fileId: 'file-e1',
+        title: 'deck-edit.pptx',
+        kind: 'slides',
+        roomId: 'room-e1',
+      })
+      // 非 Room 打开的实例 roomId 为空（转发层据此报错引导）。
+      expect(registry.findByWebContentsId(viewCalls[1]!.webContentsId)).toMatchObject({
+        fileId: 'file-d1',
+        roomId: null,
+      })
+      expect(registry.findByWebContentsId(999_999)).toBeNull()
+    })
+
     it("fileId 'active'：焦点 slides 实例优先，无焦点退化为唯一 slides 实例", async () => {
       const window = makeWindow()
       await registry.open(window, { ...file('file-a1', 'deck-a.pptx'), editable: true })
