@@ -47,16 +47,18 @@ async function postEdit(
 }
 
 describe('OfficeBridgeServer /v1/office-edit', () => {
-  it('read：转发 fileId，返回 info', async () => {
+  it('read：转发 fileId（含 "active"），返回 info', async () => {
     const impl = vi.fn(async () => ({ ok: true, info: { outline: 'Page 1…', opVocabulary: 'text: …' } }))
     slidesEditImpl = impl
     const { baseUrl, token } = await startServer()
 
     const { status, json } = await postEdit(baseUrl, token, { mode: 'read', fileId: 'file-1' })
-
     expect(status).toBe(200)
     expect(json.data).toEqual({ outline: 'Page 1…', opVocabulary: 'text: …' })
     expect(impl).toHaveBeenCalledWith('file-1', { mode: 'read' })
+
+    await postEdit(baseUrl, token, { mode: 'read', fileId: 'active' })
+    expect(impl).toHaveBeenLastCalledWith('active', { mode: 'read' })
   })
 
   it('apply：透传 ops/dryRun/isolation，返回事务结果', async () => {
@@ -78,8 +80,15 @@ describe('OfficeBridgeServer /v1/office-edit', () => {
     expect(impl).toHaveBeenCalledWith('file-2', { mode: 'apply', ops, dryRun: true, isolation: 'per_op' })
   })
 
-  it('not_open → 422 + 引导先在产物库打开', async () => {
-    slidesEditImpl = vi.fn(async () => ({ ok: false, reason: 'not_open' }))
+  it('not_open → 422 + 引导先在产物库打开（附打开清单摘要）', async () => {
+    slidesEditImpl = vi.fn(async () => ({
+      ok: false,
+      reason: 'not_open',
+      open: [
+        { fileId: 'f1', title: '本周工作总结.pptx', kind: 'slides', editable: true, active: true },
+        { fileId: 'f2', title: '笔记.docx', kind: 'docx', editable: false, active: false },
+      ],
+    }))
     const { baseUrl, token } = await startServer()
 
     const { status, json } = await postEdit(baseUrl, token, { mode: 'read', fileId: 'file-3' })
@@ -87,6 +96,19 @@ describe('OfficeBridgeServer /v1/office-edit', () => {
     expect(status).toBe(422)
     expect(json.code).toBe('not_open')
     expect(String(json.message)).toContain('未在 Room 中打开')
+    expect(String(json.message)).toContain('本周工作总结.pptx')
+    expect(String(json.message)).toContain('当前焦点')
+    expect(String(json.message)).toContain('笔记.docx')
+    expect(json.open).toHaveLength(2)
+  })
+
+  it('not_open 无打开文件 → 摘要提示当前没有打开任何 Office 文件', async () => {
+    slidesEditImpl = vi.fn(async () => ({ ok: false, reason: 'not_open' }))
+    const { baseUrl, token } = await startServer()
+    const { status, json } = await postEdit(baseUrl, token, { mode: 'read', fileId: 'f' })
+    expect(status).toBe(422)
+    expect(String(json.message)).toContain('当前没有打开任何 Office 文件')
+    expect(json.open).toEqual([])
   })
 
   it('not_editable → 422 + 重新打开提示', async () => {

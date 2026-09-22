@@ -139,6 +139,23 @@ describe("office 工具：PPT 编辑（slides read / edit）", () => {
     });
   });
 
+  it("slides_read：省略 fileId → 'active'（当前打开的那个 PPT）", async () => {
+    const { tools, readDeck } = createHarness();
+    const result = await tools.get("context_room_slides_read")!.execute({}, context);
+    expect(readDeck).toHaveBeenCalledWith("active");
+    expect(result.structuredContent).toMatchObject({ fileId: "active", nextAction: "edit" });
+  });
+
+  it("slides_read：只读打开（editable:false）→ 透传标记 + nextAction=guide_reopen_editable", async () => {
+    const { tools, readDeck } = createHarness();
+    readDeck.mockResolvedValueOnce({ outline: "Page 1…", opVocabulary: "…", editable: false });
+    const result = await tools.get("context_room_slides_read")!.execute({ fileId: "file-9" }, context);
+    expect(result.structuredContent).toMatchObject({
+      editable: false,
+      nextAction: "guide_reopen_editable",
+    });
+  });
+
   it("slides_read：桌面端未返回大纲 → OFFICE_EDIT_FAILED", async () => {
     const { tools, readDeck } = createHarness();
     readDeck.mockResolvedValueOnce({ outline: "", opVocabulary: "" });

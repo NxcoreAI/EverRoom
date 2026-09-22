@@ -48,6 +48,8 @@ export interface GenOfficeAgentDeckResult {
 export interface AgentSlidesDeckInfo {
   outline: string
   opVocabulary: string
+  /** 宿主补充：实例是否可编辑（只读打开也能读大纲，编辑需重新以可编辑方式打开）。 */
+  editable?: boolean
 }
 
 export interface AgentSlidesEditResult {

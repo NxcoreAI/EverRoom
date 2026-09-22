@@ -287,29 +287,33 @@ export function officePlugin(bridge: OfficeBridgeClient): DocumentCapabilityPlug
     name: "context_room_slides_read",
     title: "读取 PPT 大纲与操作词汇",
     description: "读取一份已在 Room 产物库打开的 .pptx 产物的大纲与可编辑操作词汇表。"
+      + "fileId 缺省（或 \"active\"）= 用户当前打开的那个 PPT，无需知道文件 id。"
       + "大纲列出每页的元素（id | 类型 | 文本摘要），是编辑时定位元素的唯一依据；"
       + "opVocabulary 列出 context_room_slides_edit 可用的全部操作及其签名。"
-      + "文件必须已打开（可编辑视图）；未打开会报错并提示先打开。"
+      + "文件未打开会报错并列出当前打开的 Office 文件；editable=false 表示只读打开（能读大纲，"
+      + "要编辑需用户在产物库重新以可编辑方式打开）。"
       + "编辑前先读本工具，之后按大纲里的元素 id 发编辑事务。",
     inputSchema: {
       type: "object",
       additionalProperties: false,
       properties: {
-        fileId: { type: "string", minLength: 1, description: "PPT 文件 id（fileEntryId，来自生成结果或产物库列表）" },
+        fileId: { type: "string", minLength: 1, description: "PPT 文件 id（fileEntryId）；缺省或 \"active\" = 当前打开的那个 PPT" },
       },
-      required: ["fileId"],
+      required: [],
     },
     annotations: annotations(true, false),
     execute: async (args, context) => {
       if (!context.roomId) throw new Error("ROOM_SELECTION_REQUIRED: Select a Context Room first");
-      const fileId = stringArg(args, "fileId").trim();
+      const rawFileId = args.fileId;
+      const fileId = typeof rawFileId === "string" && rawFileId.trim() ? rawFileId.trim() : "active";
       const info = await bridge.readDeck(fileId);
       if (!info.outline) throw new Error("OFFICE_EDIT_FAILED: 桌面端未返回大纲");
       return success({
         fileId,
         outline: info.outline,
         opVocabulary: info.opVocabulary,
-        nextAction: "edit",
+        ...(info.editable !== undefined ? { editable: info.editable } : {}),
+        nextAction: info.editable === false ? "guide_reopen_editable" : "edit",
       });
     },
   };
@@ -327,7 +331,7 @@ export function officePlugin(bridge: OfficeBridgeClient): DocumentCapabilityPlug
       type: "object",
       additionalProperties: false,
       properties: {
-        fileId: { type: "string", minLength: 1, description: "PPT 文件 id（fileEntryId）" },
+        fileId: { type: "string", minLength: 1, description: "PPT 文件 id（fileEntryId）；\"active\" = 当前打开的那个 PPT" },
         ops: {
           type: "array",
           minItems: 1,
@@ -382,8 +386,9 @@ export function officePlugin(bridge: OfficeBridgeClient): DocumentCapabilityPlug
       + "每页少字多留白；文本块用 runs 控制字号/加粗/颜色。",
       "Excel 的 sheets→rows 用 JSON 二维数组；数字必须是 JSON number；每个表首行放表头。",
       "生成成功后在回复中告知文件名；桌面端会自动打开预览，文档在 Room 产物库（Office 产物）和文件库可见。",
-      "修改已有 PPT：先确认文件在产物库打开（未打开时引导用户打开），context_room_slides_read 拿大纲与 op 词汇，"
-      + "再用大纲里的元素 id 发 context_room_slides_edit 事务；用户能实时看到每笔修改，改完版本链自动 +1。"
+      "修改已有 PPT：context_room_slides_read 可省略 fileId（默认当前打开的那个，未打开会报错并列出现场）；"
+      + "拿到大纲与 op 词汇后，用大纲里的元素 id 发 context_room_slides_edit 事务（fileId 同样可用 \"active\"）；"
+      + "用户能实时看到每笔修改，改完版本链自动 +1；只读打开时（editable=false）先引导用户在产物库以可编辑方式重新打开。"
       + "Word/Excel 产物暂不支持 Agent 编辑。",
     ],
     tools: [officeCreate, slidesCreate, sheetsCreate, slidesRead, slidesEdit],
