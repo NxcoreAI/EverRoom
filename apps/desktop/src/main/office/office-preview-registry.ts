@@ -6,7 +6,7 @@ import {
   officePreviewKindForFileName,
   type OfficePreviewKind,
 } from '../../shared/sources'
-import { onDocsSaved, wireDocsSavedHook } from './office-generation'
+import { onOfficeFileSaved, wireOfficeSavedHooks } from './office-generation'
 import {
   loadPreparedGenOfficeRuntime,
   preparedGenOfficeFixture,
@@ -29,7 +29,7 @@ export interface OfficePreviewFile {
   contentHash: string
   originalName: string
   storagePath: string
-  /** docx 产物：true → 可编辑视图，保存后回填版本链（其余格式忽略）。 */
+  /** 产物（docx/pptx/xlsx）：true → 可编辑视图，保存后回填版本链（其余格式忽略）。 */
   editable?: boolean
   /** 版本链回填的 Room 投影归属（不传则按导入落点默认决策）。 */
   roomId?: string | null
@@ -40,7 +40,7 @@ interface OfficePreviewView {
   setActive(active: boolean): void
   /** false = 用户在脏关闭守卫里取消：实例原样保留。 */
   dispose(): Promise<boolean>
-  /** docs 视图的 webContents id（保存事件订阅用）；其余形态缺省。 */
+  /** Office 视图的 webContents id（保存事件订阅用）；pdf 缺省。 */
   readonly webContentsId?: number
 }
 
@@ -59,6 +59,8 @@ const EDIT_SYNC_DEBOUNCE_MS = 2_000
 interface EditSyncState {
   filePath: string
   originalName: string
+  /** sourceKey 前缀与广播 format 按形态派生（word/slides/sheets → docx/pptx/xlsx）。 */
+  kind: 'docx' | 'slides' | 'spreadsheet'
   roomId: string | null
   pending: boolean
   timer: NodeJS.Timeout | null
@@ -71,7 +73,7 @@ export const officePreviewKindFor = officePreviewKindForFileName
 /**
  * 顶栏 Office 预览标签的主进程侧：按 fileId 多开/复用 genoffice 视图实例，
  * 同一时刻只显示渲染端激活的那个（渲染端是焦点唯一事实源，open 不自动激活）。
- * docx 产物可编辑：保存事件去抖后按 fileEntryId 钉住条目重导入（版本链 +1）。
+ * docx/pptx/xlsx 产物可编辑：保存事件去抖后按 fileEntryId 钉住条目重导入（版本链 +1）。
  */
 export class OfficePreviewRegistry {
   private runtime: PreparedGenOfficeRuntime | null = null
@@ -101,7 +103,7 @@ export class OfficePreviewRegistry {
     if (!kind) throw new Error(`Unsupported internal Office preview: ${file.originalName}`)
     this.bindWindow(window)
     const runtime = this.ensureRuntime(window)
-    const editable = file.editable === true && kind === 'docx'
+    const editable = file.editable === true && kind !== 'pdf'
     const roomId = typeof file.roomId === 'string' && file.roomId ? file.roomId : null
 
     const existing = this.instances.get(file.id)
@@ -133,12 +135,13 @@ export class OfficePreviewRegistry {
       this.editStates.set(fileId, {
         filePath: documentPath!,
         originalName: file.originalName,
+        kind,
         roomId,
         pending: false,
         timer: null,
         runner: null,
       })
-      instance.unsubscribeSaved = onDocsSaved(view.webContentsId, () => this.scheduleEditSync(fileId))
+      instance.unsubscribeSaved = onOfficeFileSaved(view.webContentsId, () => this.scheduleEditSync(fileId))
     }
     this.instances.set(file.id, instance)
     return descriptor
@@ -257,10 +260,12 @@ export class OfficePreviewRegistry {
   private async performEditImport(fileId: string, state: EditSyncState): Promise<void> {
     const bindings = this.editSyncBindings
     if (!bindings) return
+    const kindPrefix = state.kind === 'docx' ? 'word' : state.kind === 'slides' ? 'slides' : 'sheets'
+    const format = state.kind === 'docx' ? 'docx' : state.kind === 'slides' ? 'pptx' : 'xlsx'
     const input = {
       filePath: state.filePath,
       originalName: state.originalName,
-      sourceKey: `agent:word:edit:${fileId}`,
+      sourceKey: `agent:${kindPrefix}:edit:${fileId}`,
       fileEntryId: fileId,
       ...(state.roomId ? { roomId: state.roomId } : {}),
     }
@@ -269,7 +274,7 @@ export class OfficePreviewRegistry {
       console.error('[office] edit sync failed', fileId, message)
       bindings.broadcast({
         type: 'error',
-        format: 'docx',
+        format,
         title: state.originalName,
         fileId,
         roomId: state.roomId,
@@ -290,7 +295,7 @@ export class OfficePreviewRegistry {
     }
     bindings.broadcast({
       type: 'edited',
-      format: 'docx',
+      format,
       title: state.originalName,
       fileId,
       roomId: state.roomId,
@@ -324,12 +329,14 @@ export class OfficePreviewRegistry {
       return { view, documentPath }
     }
     if (kind === 'slides') {
-      return { view: await SlidesViewManager.create(window, runtime.slides, file), documentPath: null }
+      const view = await SlidesViewManager.create(window, runtime.slides, file, { editable })
+      return { view, documentPath: view.documentPath }
     }
     if (kind === 'pdf') {
       return { view: await PdfViewManager.create(window, runtime.pdf, file), documentPath: null }
     }
-    return { view: await SpreadsheetViewManager.create(window, runtime.sheets, file), documentPath: null }
+    const view = await SpreadsheetViewManager.create(window, runtime.sheets, file, { editable })
+    return { view, documentPath: view.documentPath }
   }
 
   private bindWindow(window: BrowserWindow): void {
@@ -346,8 +353,8 @@ export class OfficePreviewRegistry {
     if (!this.runtime) {
       this.runtime = loadPreparedGenOfficeRuntime()
     }
-    // docs 保存 hook（生成 + 编辑回填共享扇出）在首个使用者装一次。
-    wireDocsSavedHook(this.runtime)
+    // Office 保存 hook（生成 + 编辑回填共享扇出，docs/slides/sheets）在首个使用者装一次。
+    wireOfficeSavedHooks(this.runtime)
     // shell window 是三个运行时共享的对话框父窗口，换绑后需要重新指向。
     this.runtime.docs.setDocsShellWindow(window)
     this.runtime.sheets.setSheetsShellWindow(window)

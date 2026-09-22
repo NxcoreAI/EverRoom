@@ -41,9 +41,9 @@ export function EmbeddedOfficePreview({
         height: bounds.height,
       })
     }
-    // 产物编辑：docx 传 editable（主进程注册表据此建可编辑视图并把保存回填版本链）；
-    // 其余 Office 格式仍只读预览。
-    const editable = resource.originalName.toLowerCase().endsWith('.docx')
+    // 产物编辑：docx/pptx/xlsx 传 editable（主进程注册表据此建可编辑视图并把保存回填版本链）；
+    // 其余格式（pdf、legacy .doc/.ppt/.xls）仍只读预览。
+    const editable = /\.(docx|pptx|xlsx)$/.test(resource.originalName.toLowerCase())
     void files.openOriginal(
       resource.fileId,
       resource.originalName,

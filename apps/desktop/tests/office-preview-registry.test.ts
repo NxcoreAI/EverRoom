@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { BrowserWindow } from 'electron'
 
-const { savedListenersByWc, createCalls } = vi.hoisted(() => ({
+const { savedListenersByWc, createCalls, slidesCalls, sheetCalls } = vi.hoisted(() => ({
   savedListenersByWc: new Map<number, Set<(filePath: string) => void>>(),
   createCalls: { options: [] as Array<{ editable?: boolean }> },
+  slidesCalls: { options: [] as Array<{ editable?: boolean }> },
+  sheetCalls: { options: [] as Array<{ editable?: boolean }> },
 }))
 
 vi.mock('../src/main/office/office-runtime', () => ({
@@ -11,7 +13,7 @@ vi.mock('../src/main/office/office-runtime', () => ({
   preparedGenOfficeFixture: vi.fn(() => '/fixtures/simple.docx'),
 }))
 vi.mock('../src/main/office/office-generation', () => ({
-  onDocsSaved: vi.fn((wcId: number, listener: (filePath: string) => void) => {
+  onOfficeFileSaved: vi.fn((wcId: number, listener: (filePath: string) => void) => {
     const set = savedListenersByWc.get(wcId) ?? new Set()
     set.add(listener)
     savedListenersByWc.set(wcId, set)
@@ -20,7 +22,7 @@ vi.mock('../src/main/office/office-generation', () => ({
       if (set.size === 0) savedListenersByWc.delete(wcId)
     }
   }),
-  wireDocsSavedHook: vi.fn(),
+  wireOfficeSavedHooks: vi.fn(),
 }))
 vi.mock('../src/main/office/office-view-manager', () => ({
   OfficeViewManager: {
@@ -32,13 +34,23 @@ vi.mock('../src/main/office/office-view-manager', () => ({
   prepareOfficeDocument: vi.fn(async () => '/tmp/workdir/document.docx'),
 }))
 vi.mock('../src/main/office/slides-view-manager', () => ({
-  SlidesViewManager: { create: vi.fn(async () => makeView('slides')) },
+  SlidesViewManager: {
+    create: vi.fn(async (_window: unknown, _slides: unknown, _file: unknown, options?: { editable?: boolean }) => {
+      slidesCalls.options.push(options ?? {})
+      return { ...makeView('slides'), documentPath: '/tmp/workdir/deck.pptx' }
+    }),
+  },
 }))
 vi.mock('../src/main/office/pdf-view-manager', () => ({
   PdfViewManager: { create: vi.fn(async () => makeView('pdf')) },
 }))
 vi.mock('../src/main/office/spreadsheet-view-manager', () => ({
-  SpreadsheetViewManager: { create: vi.fn(async () => makeView('spreadsheet')) },
+  SpreadsheetViewManager: {
+    create: vi.fn(async (_window: unknown, _sheets: unknown, _file: unknown, options?: { editable?: boolean }) => {
+      sheetCalls.options.push(options ?? {})
+      return { ...makeView('spreadsheet'), documentPath: '/tmp/workdir/book.xlsx' }
+    }),
+  },
 }))
 
 import { OfficePreviewRegistry, officePreviewKindFor } from '../src/main/office/office-preview-registry'
@@ -127,6 +139,8 @@ describe('OfficePreviewRegistry', () => {
     vi.clearAllMocks()
     viewCalls.length = 0
     createCalls.options.length = 0
+    slidesCalls.options.length = 0
+    sheetCalls.options.length = 0
     savedListenersByWc.clear()
     registry = new OfficePreviewRegistry()
   })
@@ -264,6 +278,18 @@ describe('OfficePreviewRegistry', () => {
       expect(createCalls.options[1]).toEqual({ editable: false })
     })
 
+    it('rebuilds a slides instance in place when editable flips', async () => {
+      const window = makeWindow()
+      const base = file('file-p1', 'deck.pptx')
+      await registry.open(window, base)
+      expect(slidesCalls.options).toEqual([{ editable: false }])
+
+      await registry.open(window, { ...base, editable: true, roomId: 'room-p1' })
+      expect(viewCalls).toHaveLength(2)
+      expect(viewCalls[0]!.disposed).toBe(true)
+      expect(slidesCalls.options[1]).toEqual({ editable: true })
+    })
+
     it('keeps the instance when the dirty-close guard is cancelled', async () => {
       const window = makeWindow()
       await registry.open(window, file('file-1', 'file-1.docx'))
@@ -337,6 +363,47 @@ describe('OfficePreviewRegistry', () => {
         expect(importAgentFile).toHaveBeenCalledTimes(1)
         expect(importAgentFile).toHaveBeenCalledWith(expect.objectContaining({ fileEntryId: 'file-7' }))
         expect(broadcast).toHaveBeenCalledWith(expect.objectContaining({ type: 'edited' }))
+      })
+
+      it('syncs editable slides saves with the slides source key and pptx format', async () => {
+        const importAgentFile = vi.fn(async () => ({}))
+        const broadcast = vi.fn()
+        registry.setEditSync({ importAgentFile, broadcast })
+        const window = makeWindow()
+        await registry.open(window, { ...file('file-s1', '季度汇报.pptx'), editable: true, roomId: 'room-s1' })
+        // editable 透传到 slides 视图工厂（readonly 反转点在真实现里）。
+        expect(slidesCalls.options).toEqual([{ editable: true }])
+
+        emitSave(viewCalls[0]!)
+        await vi.advanceTimersByTimeAsync(2_500)
+        expect(importAgentFile).toHaveBeenCalledTimes(1)
+        expect(importAgentFile).toHaveBeenCalledWith(expect.objectContaining({
+          fileEntryId: 'file-s1',
+          sourceKey: 'agent:slides:edit:file-s1',
+          filePath: '/tmp/workdir/deck.pptx',
+          roomId: 'room-s1',
+        }))
+        expect(broadcast).toHaveBeenCalledWith(expect.objectContaining({ type: 'edited', format: 'pptx', fileId: 'file-s1' }))
+      })
+
+      it('syncs editable spreadsheet saves with the sheets source key and xlsx format', async () => {
+        const importAgentFile = vi.fn(async () => ({}))
+        const broadcast = vi.fn()
+        registry.setEditSync({ importAgentFile, broadcast })
+        const window = makeWindow()
+        await registry.open(window, { ...file('file-x1', '预算表.xlsx'), editable: true, roomId: 'room-x1' })
+        expect(sheetCalls.options).toEqual([{ editable: true }])
+
+        emitSave(viewCalls[0]!)
+        await vi.advanceTimersByTimeAsync(2_500)
+        expect(importAgentFile).toHaveBeenCalledTimes(1)
+        expect(importAgentFile).toHaveBeenCalledWith(expect.objectContaining({
+          fileEntryId: 'file-x1',
+          sourceKey: 'agent:sheets:edit:file-x1',
+          filePath: '/tmp/workdir/book.xlsx',
+          roomId: 'room-x1',
+        }))
+        expect(broadcast).toHaveBeenCalledWith(expect.objectContaining({ type: 'edited', format: 'xlsx', fileId: 'file-x1' }))
       })
 
       it('surfaces a persistent import failure via the error broadcast', async () => {

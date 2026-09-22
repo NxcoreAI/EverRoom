@@ -31,7 +31,10 @@ export interface GenOfficeSheetsRuntime {
   createSheetsView(options?: { includeAiHandlers?: boolean; readonly?: boolean }): WebContentsView
   queueWorkbookForView(contents: WebContents, path: string): void
   registerSheetsIpc(): void
+  /** 脏关闭守卫：true = 可以关闭（Save 已执行/无改动）；Cancel = false。 */
+  requestSheetsClose(contents: WebContents, parent?: BrowserWindow | null): Promise<boolean>
   setActiveSheetsWebContents(contents: WebContents | null): void
+  setSheetsFileSavedHook(hook: (contents: WebContents, filePath: string) => void): void
   setSheetsShellWindow(window: BrowserWindow | null): void
   stopSheetsSidecar(): void
 }
@@ -48,6 +51,7 @@ export interface GenOfficeSlidesRuntime {
   registerSlidesIpc(): void
   requestSlidesClose(contents: WebContents, parent?: BrowserWindow | null): Promise<boolean>
   setActiveSlidesWebContents(contents: WebContents | null): void
+  setSlidesFileSavedHook(hook: (contents: WebContents, filePath: string) => void): void
   setSlidesShellWindow(window: BrowserWindow | null): void
   slidesIsDirty(webContentsId: number): boolean
   /** Agent 幻灯片生成：页 spec JSON 数组 → 单文件 .pptx 字节（无渲染端参与）。 */

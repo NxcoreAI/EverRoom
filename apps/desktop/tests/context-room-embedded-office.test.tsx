@@ -18,16 +18,16 @@ import { createContextRoomFixture } from './context-room-fixture'
 import type { ContextRoomKnowledgeFileResource } from '../src/renderer/src/components/context-room/ported/types'
 import type { KnowledgeFileDto } from '../src/shared/knowledge'
 
-function agentDocxResource(fileId = 'file-agent-docx'): ContextRoomKnowledgeFileResource {
+function agentDocxResource(fileId = 'file-agent-docx', name = '本周总结.docx'): ContextRoomKnowledgeFileResource {
   return {
     id: `room-test:kfile:${fileId}`,
     roomId: 'room-test',
     folderId: 'room-test:folder:documents',
-    name: '本周总结.docx',
+    name,
     updatedAt: '2026/9/22 08:00:00',
     kind: 'knowledge-file',
     fileId,
-    originalName: '本周总结.docx',
+    originalName: name,
     bytes: 4096,
     uploadedAt: '2026-09-22T00:00:00.000Z',
     statusLabel: '已沉淀',
@@ -35,10 +35,10 @@ function agentDocxResource(fileId = 'file-agent-docx'): ContextRoomKnowledgeFile
   }
 }
 
-function knowledgeFileDto(fileId: string): KnowledgeFileDto {
+function knowledgeFileDto(fileId: string, name = '本周总结.docx'): KnowledgeFileDto {
   return {
     id: fileId,
-    originalName: '本周总结.docx',
+    originalName: name,
     bytes: 4096,
     title: null,
     status: 'confirmed',
@@ -105,7 +105,7 @@ describe('Room 右区内嵌 Office 预览（Agent 产物替换云文档位置）
           room={createContextRoomFixture()}
           selectedResource={resource}
           backendDocuments={[]}
-          knowledgeFiles={[knowledgeFileDto(resource.fileId)]}
+          knowledgeFiles={[knowledgeFileDto(resource.fileId, resource.originalName)]}
           focusedDocumentId={null}
           focusedBlockId={null}
           documentFocusRequestId={null}
@@ -149,6 +149,43 @@ describe('Room 右区内嵌 Office 预览（Agent 产物替换云文档位置）
     act(() => root!.unmount())
     root = null
     expect(getEmbeddedOffice()).toBeNull()
+  })
+
+  it('pptx/xlsx 产物同样传 editable；legacy 与 pdf 不传', async () => {
+    const bridge = installOfficeBridge(async () => ({
+      openedWith: 'office',
+      instanceId: 'inst-office-1',
+      title: 'x',
+      kind: 'docx',
+    }))
+
+    const deck = await renderWorkspaceContent(agentDocxResource('file-agent-pptx', '季度汇报.pptx'))
+    expect(bridge.openOriginal).toHaveBeenLastCalledWith(
+      'file-agent-pptx',
+      '季度汇报.pptx',
+      undefined,
+      { editable: true, roomId: 'room-test' },
+    )
+    expect(deck.querySelectorAll('[data-office-file-id="file-agent-pptx"]')).toHaveLength(1)
+
+    act(() => root!.unmount())
+    root = null
+    resetEmbeddedStore()
+
+    const sheet = await renderWorkspaceContent(agentDocxResource('file-agent-xlsx', '预算表.xlsx'))
+    expect(bridge.openOriginal).toHaveBeenLastCalledWith(
+      'file-agent-xlsx',
+      '预算表.xlsx',
+      undefined,
+      { editable: true, roomId: 'room-test' },
+    )
+
+    act(() => root!.unmount())
+    root = null
+    resetEmbeddedStore()
+
+    await renderWorkspaceContent(agentDocxResource('file-agent-pdf', '报告.pdf'))
+    expect(bridge.openOriginal).toHaveBeenLastCalledWith('file-agent-pdf', '报告.pdf', undefined, undefined)
   })
 
   it('openOriginal 返回非 Office 结果 → 回退外部打开卡片，不登记实例', async () => {
