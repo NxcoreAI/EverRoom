@@ -31,15 +31,31 @@ const HTML_GUIDE = "内容用受限 HTML 片段表达，只允许这些标签：
   + "代码示例用 pre，引用用 blockquote；长内容用 h2/h3 分节组织。"
   + "不要包含 html/body 标签、markdown 代码围栏或任何解释性文字。";
 
-const PAGESPEC_GUIDE = "每一页是一个 JSON 对象（PageSpec），画布固定 1280×720 像素、坐标原点左上："
-  + '{"background":"#RRGGBB"(可选),"elements":[…按 z 顺序排列…]}。'
-  + "元素三种：文本 {\"type\":\"text\",\"x\",\"y\",\"w\",\"h\",\"paragraphs\":[{\"runs\":[{\"text\",\"sizePt\",\"bold\",\"color\":\"#RRGGBB\",\"font\"}],\"align\":\"left|center|right\",\"bullet\":true}],\"valign\":\"top|middle|bottom\"}；"
-  + "形状 {\"type\":\"shape\",\"shape\":\"rect|roundRect|ellipse|triangle|rightArrow|leftArrow|upArrow|downArrow|chevron|diamond|parallelogram|trapezoid|hexagon|pentagon|pie|donut|star5|heart|cloud|line|lineArrow\",\"fill\":\"#RRGGBB\",\"stroke\":{\"color\",\"widthPt\"},\"paragraphs\":…(可选),\"valign\":…}；"
-  + "图片 {\"type\":\"image\",\"x\",\"y\",\"w\",\"h\",\"url\":\"https://…\"}(仅 http(s)，每页最多 8 张)。"
-  + "限制：每页最多 48 个元素；sizePt 6~160；颜色只写 #RRGGBB。"
-  + "版式建议：页边距≥60px；标题条 44~60pt，正文 18~24pt；同一份演示用统一的背景/主色/标题位置；"
-  + "少字多留白，每页一个要点；封面页用大标题+副标题，内容页用标题条+内容区，结尾页致谢。"
-  + '示例页：{"background":"#FFFFFF","elements":[{"type":"text","x":80,"y":240,"w":1120,"h":120,"paragraphs":[{"runs":[{"text":"季度回顾","sizePt":54,"bold":true,"color":"#1A1A1A"}],"align":"center"}]},{"type":"shape","shape":"rect","x":540,"y":400,"w":200,"h":6,"fill":"#2B6CB0"}]}';
+const PAGESPEC_GUIDE = "每一页是一个 JSON 对象（PageSpec），画布固定 1280×720 像素、坐标原点左上，x/y/w/h 用整数像素："
+  + '{"background":"#RRGGBB"(可选),"elements":[…按绘制顺序排列…]}。'
+  + "元素按数组顺序绘制：背景/装饰形状在前、图片其次、文本最后（文本绝不能被形状盖住）。"
+  + "元素三种："
+  + "文本 {\"type\":\"text\",\"x\",\"y\",\"w\",\"h\",\"valign\":\"top|middle|bottom\",\"paragraphs\":[{\"align\":\"left|center|right\",\"lineSpacingPct\":110,\"spaceAfterPt\":6,\"bullet\":true,\"runs\":[{\"text\",\"sizePt\",\"bold\",\"italic\",\"color\",\"font\"}]}]}；"
+  + "形状 {\"type\":\"shape\",\"shape\":\"rect|roundRect|ellipse|triangle|rightArrow|leftArrow|upArrow|downArrow|chevron|diamond|parallelogram|trapezoid|hexagon|pentagon|pie|donut|star5|heart|cloud|line|lineArrow\",\"fill\":\"#RRGGBB 或 #RRGGBBAA（AA=透明度，00 全透明）\",\"stroke\":{\"color\",\"widthPt\"},\"paragraphs\":…(可选，形状内文字垂直居中)}；"
+  + "图片 {\"type\":\"image\",\"x\",\"y\",\"w\",\"h\",\"url\":\"https://…\"}(仅 http(s)，每页最多 8 张，居中裁剪填满框)。"
+  + "line/lineArrow 画的是所在盒子的对角线（水平分隔线 = 高 1px 的盒子加 stroke）。"
+  + "限制：每页最多 48 个元素；sizePt 6~160；颜色只写 #RGB/#RRGGBB/#RRGGBBAA。"
+  + "同一份演示先定一套设计系统——内容页统一背景、一个主强调色 + 一个辅强调色、统一字号带——所有页严格遵守。"
+  + "硬版式规则：文本框零内边距，框左上角就是首字位置；一行高约 sizePt*1.8px（lineSpacingPct 110），"
+  + "CJK 字宽约 sizePt*1.35px、拉丁字符约 sizePt*0.7px——按框宽估算折行数，框高按行数计算再加一行余量；"
+  + "文本不得溢出或互相重叠：文本与卡片边缘 ≥8px、大标题与副标题 ≥20px、同列相邻文本块 ≥5px，输出前逐对自检；"
+  + "内容铺满整页，不要挤在上半部留大片空白，文本和图片放大到版式允许的尺寸。"
+  + "字号带：大标题 32~48pt、副标题 18~24pt、正文 12~15pt、KPI 大数字可到 80pt。"
+  + "视觉素材：只用真实图片 URL，没有图片素材就用排版/色块/形状补，绝不放假图占位；禁止 emoji；"
+  + "图标化装饰只用允许的形状且每页 ≤4~5 个、与内容强相关；"
+  + "数据图表用 rect/donut/line 形状按真实数值比例拼装（柱高/占比与数值成比例）。"
+  + "反 AI 味设计规则（违反即不可接受）：禁用卡片左侧细色条、卡片顶部色条、标题前小竖条——层级用背景色、字重、字号对比表达；"
+  + "对比多个对象也不许各配一色（禁彩虹卡片，用名称与字重区分）；"
+  + "禁用角落装饰块和零散短线，装饰元素全篇位置与风格保持一致；"
+  + "不要每页都长成「色块 + 加粗小标题 + 描述」的列表；"
+  + "封面必须有视觉锚点（大色块/几何构成/超大数字/主视觉大图），内容页版式轮换不重复"
+  + "（左右图文、三栏卡片、大数字、两栏对比、横向时间线、全图压字交替使用）。"
+  + "示例页：{\"background\":\"#FFFFFF\",\"elements\":[{\"type\":\"text\",\"x\":80,\"y\":240,\"w\":1120,\"h\":120,\"paragraphs\":[{\"runs\":[{\"text\":\"季度回顾\",\"sizePt\":44,\"bold\":true,\"color\":\"#1A1A1A\"}],\"align\":\"center\"}]},{\"type\":\"shape\",\"shape\":\"rect\",\"x\":540,\"y\":400,\"w\":200,\"h\":6,\"fill\":\"#2B6CB0\"}]}";
 
 const SHEETS_GUIDE = "数据用 sheets→rows 的二维数组表达：每个工作表 {\"name\":\"表名(可选,≤31字符)\",\"rows\":[[单元格…],…]}，"
   + `单元格是 string | number | boolean | null（数字用 JSON number，不要写成带引号的字符串；null/缺省留空）。`
@@ -382,8 +398,11 @@ export function officePlugin(bridge: OfficeBridgeClient): DocumentCapabilityPlug
       + "普通笔记、速记、随手总结用文档创建工具（markdown），不要用 Office 工具。",
       "Word 的 html 入参必须是受限 HTML 子集（仅标题/段落/列表/表格/链接/强调/pre/code/blockquote 标签）；"
       + "长文用 h2/h3 分节；表格首行用 th、单元格纯文本；不要输出 markdown 或解释性文字。",
-      "PPT 的 pages 每页一个 PageSpec 对象（1280×720 画布绝对定位）；同一份演示保持统一版式与配色，"
-      + "每页少字多留白；文本块用 runs 控制字号/加粗/颜色。",
+      "PPT 的 pages 每页一个 PageSpec 对象（1280×720 画布绝对定位）。设计要求："
+      + "同一份演示先定一套设计系统（统一背景、一主一辅强调色、统一字号带）全篇遵守；"
+      + "文本框零内边距、按字宽估算折行与框高（CJK 约 sizePt*1.35px 宽、行高约 sizePt*1.8px）；"
+      + "内容页版式轮换不重复，封面要有视觉锚点；禁 emoji、禁卡片彩条与彩虹配色，"
+      + "数据图表用形状按真实数值比例拼装；输出前逐对自检文本不溢出不重叠。",
       "Excel 的 sheets→rows 用 JSON 二维数组；数字必须是 JSON number；每个表首行放表头。",
       "生成成功后在回复中告知文件名；桌面端会自动打开预览，文档在 Room 产物库（Office 产物）和文件库可见。",
       "修改已有 PPT：context_room_slides_read 可省略 fileId（默认当前打开的那个，未打开会报错并列出现场）；"
