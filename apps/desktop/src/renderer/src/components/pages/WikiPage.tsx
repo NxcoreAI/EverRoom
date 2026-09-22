@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from 'react'
 import {
   WikiGraphCanvas,
 } from '../context-room/ported/components/WikiGraphCanvas'
-import { MarkdownBody } from '../context-room/ported/components/detail-panels/MarkdownBody'
+import { MarkdownBody, resolveWikiLinkTarget } from '../context-room/ported/components/detail-panels/MarkdownBody'
 import { WikiTree } from '../context-room/ported/components/detail-panels/WikiTree'
 import type {
   KnowledgeRoomDto,
@@ -139,6 +139,12 @@ export function WikiPage() {
     setSelectedPage(page)
   }
 
+  // 正文 [[双链]]/相对 md 链接 → 同 Room 内换页（与服务端图谱同一解析规则）
+  const openWikiLink = useCallback((target: string) => {
+    const page = resolveWikiLinkTarget(target, pages)
+    if (page) setSelectedPage(page)
+  }, [pages])
+
   const closePage = useCallback(() => {
     setSelectedPage(null)
     setMarkdown(null)
@@ -261,7 +267,7 @@ export function WikiPage() {
                           <strong title={selectedPage.title}>{selectedPage.title}</strong>
                           <span title={selectedPage.path}>{selectedPage.path}</span>
                         </header>
-                        {markdown === null ? t('surface:wiki.loading') : <MarkdownBody markdown={markdown} />}
+                        {markdown === null ? t('surface:wiki.loading') : <MarkdownBody markdown={markdown} onWikiLink={openWikiLink} />}
                       </>
                     ) : (
                       <div className="wiki-empty">{t('surface:wiki.selectAPageFromTheTreeToRead')}</div>
@@ -322,7 +328,7 @@ export function WikiPage() {
                             {markdown === null ? (
                               <div className="wiki-node-drawer-loading">{t('surface:wiki.loading')}</div>
                             ) : (
-                              <MarkdownBody markdown={markdown} />
+                              <MarkdownBody markdown={markdown} onWikiLink={openWikiLink} />
                             )}
                           </div>
                         </aside>

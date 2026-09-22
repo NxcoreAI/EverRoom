@@ -1533,6 +1533,7 @@
   "wiki.sourceFiles": "Source files",
   "wiki.thereAreNoLinksBetweenPagesYet": "There are no links between pages yet.",
   "wiki.thisRoomHasNoCapturedKnowledgeYetSubmitted": "This Room has no captured knowledge yet. Submitted Room documents are automatically organized into knowledge pages.",
+  "wiki.unresolvedLink": "Linked page not found",
   "wiki.uploadFailed": "Upload failed",
   "wiki.uploadFiles": "Upload files",
   "wiki.uploadingFiles": "Uploading files",
