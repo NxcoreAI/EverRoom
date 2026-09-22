@@ -324,8 +324,9 @@ export function App() {
   }, [])
 
   // 窄窗不再隐藏左侧栏；改为自动折叠右侧 AI 面板（用户可随时手动展开）。
+  // 断点与 CSS/初始态一致取 1200px（此前 900px 低于主窗 minWidth，监听永不触发）。
   useEffect(() => {
-    const compactWindow = window.matchMedia('(max-width: 900px)')
+    const compactWindow = window.matchMedia('(max-width: 1200px)')
     const collapseAgent = (event: MediaQueryListEvent | MediaQueryList) => {
       if (event.matches) setAgentOpen(false)
     }
