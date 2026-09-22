@@ -2031,3 +2031,130 @@ textarea.context-room-tiptap-rewrite-text:disabled {
   width: 15px;
   height: 15px;
 }
+
+/* 文档内查找替换（PRD 6.7）：右上悬浮条；命中高亮走 ProseMirror 装饰。 */
+.context-room-find-bar {
+  position: absolute;
+  top: 50px;
+  right: 16px;
+  z-index: 45;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--cr-border);
+  border-radius: 8px;
+  background: var(--cr-surface);
+  box-shadow: 0 8px 24px rgba(22, 27, 38, 0.14);
+}
+
+.context-room-find-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.context-room-find-bar-input {
+  width: 190px;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--cr-border);
+  border-radius: 6px;
+  background: var(--cr-surface);
+  color: var(--cr-text);
+  font-size: 12px;
+}
+
+.context-room-find-bar-input:focus {
+  outline: 0;
+  border-color: var(--cr-blue);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--cr-blue) 12%, transparent);
+}
+
+.context-room-find-bar-count {
+  min-width: 52px;
+  color: var(--cr-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.context-room-find-bar-count[data-empty='true'] {
+  color: var(--cr-danger);
+}
+
+.context-room-find-bar-row > button {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  height: 28px;
+  min-width: 28px;
+  padding: 0 6px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--cr-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+}
+
+.context-room-find-bar-row > button:hover:not(:disabled) {
+  background: var(--cr-surface-hover);
+  color: var(--cr-text);
+}
+
+.context-room-find-bar-row > button[data-active='true'] {
+  background: color-mix(in srgb, var(--cr-blue) 12%, var(--cr-surface));
+  color: var(--cr-blue);
+}
+
+.context-room-find-bar-row > button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.context-room-find-bar-row > button svg {
+  width: 15px;
+  height: 15px;
+}
+
+.context-room-find-bar-scope {
+  gap: 4px;
+  border-color: var(--cr-border);
+  background: color-mix(in srgb, var(--cr-blue) 8%, var(--cr-surface));
+  color: var(--cr-blue);
+  white-space: nowrap;
+}
+
+.context-room-find-bar-scope svg {
+  width: 11px;
+  height: 11px;
+}
+
+.context-room-find-bar-action {
+  padding: 0 9px;
+  border-color: var(--cr-border);
+  background: var(--cr-surface);
+  color: var(--cr-text);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.context-room-find-bar-action:hover:not(:disabled) {
+  border-color: var(--cr-blue);
+  color: var(--cr-blue);
+}
+
+/* 命中高亮：普通命中淡琥珀，当前命中加深并描边。 */
+.context-room-find-match {
+  border-radius: 2px;
+  background: rgb(255 212 0 / 38%);
+}
+
+.context-room-find-match.is-current {
+  background: rgb(255 176 7 / 55%);
+  box-shadow: 0 0 0 1px rgb(202 138 4 / 55%);
+}

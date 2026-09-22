@@ -1748,13 +1748,15 @@ export function TiptapDocumentEditor({
                 }}
               />
             </div>
-            <DocumentOverviewCard
-              status={overview.status}
-              expanded={overviewExpanded}
-              onToggleExpanded={() => setOverviewExpanded((current) => !current)}
-              onRegenerate={overview.regenerate}
-              regenerateDisabled={!backendDocument || editorLocked || saveState === '正在保存...'}
-            />
+            {overview.status.state !== 'ineligible' ? (
+              <DocumentOverviewCard
+                status={overview.status}
+                expanded={overviewExpanded}
+                onToggleExpanded={() => setOverviewExpanded((current) => !current)}
+                onRegenerate={overview.regenerate}
+                regenerateDisabled={!backendDocument || editorLocked || saveState === '正在保存...'}
+              />
+            ) : null}
           </>
         )}
         <div className={historyView ? 'context-room-history-editor-source' : undefined}>
