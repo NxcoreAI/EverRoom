@@ -58,6 +58,7 @@
     "jszip": "^3.10.1",
     "lucide-react": "^0.468.0",
     "mermaid": "^11.12.0",
+    "npm": "^11.19.1",
     "ntn": "0.23.1",
     "pixi-viewport": "5.0.2",
     "pixi.js": "7.4.3",
@@ -122,6 +123,7 @@
       "!**/{test,spec}.*",
       "!**/*.{test,spec}.*",
       "!**/*.{map,ts,tsx,mts,cts}",
+      "!node_modules/npm/**",
       "node_modules/@tencentdb-agent-memory/memory-tencentdb-v2/src/**/*",
       "node_modules/@tencentdb-agent-memory/knowledge-service/src/**/*"
     ],
@@ -129,6 +131,17 @@
       {
         "from": "build/packaged-env.json",
         "to": "packaged-env.json"
+      },
+      {
+        "from": "node_modules/npm",
+        "to": "npm",
+        "filter": [
+          "**/*",
+          "!**/*.md",
+          "!docs/**",
+          "!man/**",
+          "!node_modules/.bin/**"
+        ]
       },
       {
         "from": "../gateway/dist",

@@ -776,7 +776,22 @@ export type LocalAcpProvider = Extract<LocalAgentProvider, "codex" | "claude" | 
 export interface LocalAcpAdapterCommandInfo {
   command: string;
   args: string[];
+  /** 备选命令名（旧版 bin 名等），检测与 spawn 按序回退。 */
+  fallbacks?: string[];
+  /** 派发 target 携带的绝对路径 spawn 需要的附加 env（如 ELECTRON_RUN_AS_NODE）。 */
+  env?: Record<string, string>;
   installCommand: string | null;
+}
+
+/**
+ * 桌面端解析出的适配器 spawn 覆盖：command 为绝对路径（用户 PATH 命中的可执行文件，
+ * 或私有安装场景下的运行时承载命令 + 入口 args）。gateway 直接按此 spawn，
+ * 不再依赖自身 PATH 解析 bare bin 名。
+ */
+export interface LocalAcpAdapterSpawn {
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
 }
 
 export interface LocalAgentAcpAdapterInfo {
@@ -785,33 +800,58 @@ export interface LocalAgentAcpAdapterInfo {
   installCommand: string | null;
 }
 
-const LOCAL_AGENT_ACP_INSTALL_COMMANDS: Partial<Record<LocalAgentProvider, string>> = {
-  claude: "npm install -g @zed-industries/claude-code-acp",
-  codex: "npm install -g @agentclientprotocol/codex-acp",
+const LOCAL_AGENT_ACP_INSTALL_PACKAGES: Partial<Record<LocalAgentProvider, string>> = {
+  claude: "@zed-industries/claude-agent-acp",
+  codex: "@agentclientprotocol/codex-acp",
 };
+
+/** 适配器的 npm 包名；null 表示该 provider 无需安装适配器（openclaw 原生支持）。 */
+export function localAcpAdapterInstallPackage(provider: LocalAcpProvider): string | null {
+  return LOCAL_AGENT_ACP_INSTALL_PACKAGES[provider] ?? null;
+}
 
 /**
  * provider → ACP 适配器命令（gateway spawn 与桌面端安装检测共用）。
  * openclaw 原生 `openclaw acp` 无需适配器（installCommand 为 null 表示无需安装）；
- * `EVERROOM_ACP_COMMAND_<PROVIDER>` 整行覆盖（env 显式传入，不读全局）。
+ * claude 的包已从 claude-code-acp 改名 claude-agent-acp（bin 同步改名），旧 bin 名
+ * 作为 fallback 兼容已安装旧版的用户。优先级：`EVERROOM_ACP_COMMAND_<PROVIDER>`
+ * 整行覆盖 > target 携带的绝对路径 spawn > 默认 bare 名 + fallbacks。
  */
 export function localAcpAdapterCommand(
   provider: LocalAcpProvider,
   executablePath: string,
   env: Record<string, string | undefined> = {},
+  spawnOverride?: LocalAcpAdapterSpawn | null,
 ): LocalAcpAdapterCommandInfo {
   const override = env[`EVERROOM_ACP_COMMAND_${provider.toUpperCase()}`];
   if (override?.trim()) {
     const [command, ...args] = override.trim().split(/\s+/);
     if (command) return { command, args, installCommand: null };
   }
+  if (spawnOverride?.command?.trim()) {
+    return {
+      command: spawnOverride.command,
+      args: spawnOverride.args ?? [],
+      ...(spawnOverride.env ? { env: spawnOverride.env } : {}),
+      installCommand: null,
+    };
+  }
   if (provider === "openclaw") {
     return { command: executablePath || "openclaw", args: ["acp"], installCommand: null };
   }
+  const pkg = LOCAL_AGENT_ACP_INSTALL_PACKAGES[provider];
+  if (provider === "claude") {
+    return {
+      command: "claude-agent-acp",
+      args: [],
+      fallbacks: ["claude-code-acp"],
+      installCommand: pkg ? `npm install -g ${pkg}` : null,
+    };
+  }
   return {
-    command: provider === "claude" ? "claude-code-acp" : "codex-acp",
+    command: "codex-acp",
     args: [],
-    installCommand: LOCAL_AGENT_ACP_INSTALL_COMMANDS[provider] ?? null,
+    installCommand: pkg ? `npm install -g ${pkg}` : null,
   };
 }
 
@@ -871,6 +911,8 @@ export interface LocalAgentInvocationTarget {
   workingDirectory: string;
   permissionProfile: AgentWorkspacePermissionProfile;
   card: LocalAgentCard;
+  /** 桌面端解析的适配器绝对路径 spawn 覆盖（gateway 免 PATH 解析）；null/缺省走默认解析。 */
+  acpAdapter?: LocalAcpAdapterSpawn | null;
 }
 
 export type LocalAgentDelegationMaterialKind =

@@ -17,7 +17,7 @@ export class LocalAgentRuntimeRegistry {
     }
     this.assertCard(target.card);
     const runtime = new AcpAgentRuntime(
-      acpAdapterCommand(target.provider as LocalAcpProvider, target.executablePath),
+      acpAdapterCommand(target.provider as LocalAcpProvider, target.executablePath, target.acpAdapter),
       target.workingDirectory,
       target.id,
     );

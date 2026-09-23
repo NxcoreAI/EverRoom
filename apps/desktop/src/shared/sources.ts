@@ -88,7 +88,7 @@ import type {
   AgentAuthStartInput,
   DesktopAgentAuthChallenge,
 } from './agent-auth'
-import type { LocalAgentAcpAdapterInfo, LocalAgentDispatchDetail, LocalAgentHistoryImportResult, LocalAgentInstallation, LocalAgentWorkspaceBinding } from './local-agents'
+import type { LocalAgentAcpAdapterInfo, LocalAgentAdapterInstallResult, LocalAgentDispatchDetail, LocalAgentHistoryImportResult, LocalAgentInstallation, LocalAgentWorkspaceBinding } from './local-agents'
 
 export interface LocalAgentAdapterCheck {
   agentId: string
@@ -1202,6 +1202,7 @@ export interface NxcoreDesktopApi {
   agent: {
     discoverLocalAgents(): Promise<LocalAgentInstallation[]>
     checkLocalAgentAdapters(agentIds: string[]): Promise<LocalAgentAdapterCheck[]>
+    installLocalAgentAdapter(agentId: string): Promise<LocalAgentAdapterInstallResult>
     importLocalAgentHistory(agentId: string): Promise<LocalAgentHistoryImportResult>
     bindLocalAgentWorkspace(agentId: string, sessionId: string): Promise<LocalAgentWorkspaceBinding | null>
     getStatus(): Promise<AgentStatusSnapshot>

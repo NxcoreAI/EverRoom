@@ -53,3 +53,36 @@
   width: 11px;
   height: 11px;
 }
+
+.agent-adapter-wizard-install {
+  justify-self: start;
+  margin-top: 8px;
+}
+
+.agent-adapter-wizard-error {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  margin-top: 6px;
+  color: #e08c6d;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.agent-adapter-wizard-error svg {
+  position: relative;
+  top: 1px;
+  width: 11px;
+  height: 11px;
+  flex: none;
+}
+
+.agent-adapter-wizard-error code {
+  display: block;
+  max-height: 72px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  opacity: 0.85;
+}
+

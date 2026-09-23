@@ -1,6 +1,6 @@
 import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { delimiter, join } from 'node:path'
+import { delimiter, dirname, join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createLocalAgentDiscovery, isSafeLocalAgentPath, probeLocalAgentAcpAdapter } from './discovery'
 
@@ -107,9 +107,56 @@ describe('probeLocalAgentAcpAdapter', () => {
       { provider: 'claude', executablePath: '/usr/local/bin/claude', callable: true },
       { env: { PATH: '/usr/bin:/bin' }, home: join(root, 'home'), platform: 'win32' },
     )
-    expect(result.command).toBe('claude-code-acp')
+    expect(result.command).toBe('claude-agent-acp')
     expect(result.installed).toBe(false)
-    expect(result.installCommand).toBe('npm install -g @zed-industries/claude-code-acp')
+    expect(result.installCommand).toBe('npm install -g @zed-industries/claude-agent-acp')
+  })
+
+  it('falls back to the legacy claude bin name', async () => {
+    const root = await temporaryRoot()
+    const bin = join(root, 'bin')
+    await mkdir(bin, { recursive: true })
+    const legacy = join(bin, 'claude-code-acp')
+    await writeFile(legacy, '#!/bin/sh\n', 'utf8')
+    await chmod(legacy, 0o755)
+
+    const result = await probeLocalAgentAcpAdapter(
+      { provider: 'claude', executablePath: join(bin, 'claude'), callable: true },
+      { env: { PATH: bin }, home: join(root, 'home'), platform: 'win32' },
+    )
+    expect(result).toEqual({
+      command: 'claude-code-acp',
+      installed: true,
+      installCommand: 'npm install -g @zed-industries/claude-agent-acp',
+    })
+  })
+
+  it('reports privately installed adapters after PATH misses', async () => {
+    const root = await temporaryRoot()
+    const adaptersRoot = join(root, 'adapters')
+    const pkgDir = join(adaptersRoot, 'claude', 'node_modules', '@zed-industries', 'claude-agent-acp')
+    await mkdir(pkgDir, { recursive: true })
+    const entry = join(pkgDir, 'bin', 'claude-agent-acp.js')
+    await mkdir(dirname(entry), { recursive: true })
+    await writeFile(entry, '#!/usr/bin/env node\n', 'utf8')
+    await writeFile(join(pkgDir, 'package.json'), JSON.stringify({
+      name: '@zed-industries/claude-agent-acp',
+      version: '0.23.1',
+      bin: { 'claude-agent-acp': 'bin/claude-agent-acp.js' },
+    }), 'utf8')
+
+    const result = await probeLocalAgentAcpAdapter(
+      { provider: 'claude', executablePath: '/usr/local/bin/claude', callable: true },
+      { env: { PATH: '/usr/bin:/bin' }, home: join(root, 'home'), platform: 'win32', adaptersRoot },
+    )
+    expect(result.installed).toBe(true)
+    expect(result.command).toBe(entry)
+
+    const withoutRoot = await probeLocalAgentAcpAdapter(
+      { provider: 'claude', executablePath: '/usr/local/bin/claude', callable: true },
+      { env: { PATH: '/usr/bin:/bin' }, home: join(root, 'home'), platform: 'win32' },
+    )
+    expect(withoutRoot.installed).toBe(false)
   })
 
   it('treats openclaw as always installed and honors adapter command overrides', async () => {

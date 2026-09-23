@@ -1,6 +1,7 @@
-import { Check, Copy, Download, LoaderCircle, RefreshCw, X } from 'lucide-react'
+import { AlertCircle, Check, Copy, Download, LoaderCircle, RefreshCw, X } from 'lucide-react'
 import { useRef, useState } from 'react'
 import type { LocalAgentAdapterCheck } from '../../../../shared/sources'
+import type { LocalAgentAdapterInstallResult } from '../../../../shared/local-agents'
 import { useLocale } from '@/i18n/LocaleContext'
 import './LocalAgentAdapterWizard.css'
 
@@ -10,27 +11,69 @@ interface LocalAgentAdapterWizardProps {
   onCancel: () => void
 }
 
+const INSTALL_ERROR_KEYS: Record<string, string> = {
+  npm_cli_missing: 'builtinNpmMissing',
+  npm_install_failed: 'installFailed',
+  npm_install_timeout: 'installTimeout',
+  installed_but_not_found: 'installedButNotFound',
+}
+
 export function LocalAgentAdapterWizard({ initialChecks, onProceed, onCancel }: LocalAgentAdapterWizardProps) {
   const { t } = useLocale()
   const [checks, setChecks] = useState(initialChecks)
   const [rechecking, setRechecking] = useState(false)
+  const [installingAgentId, setInstallingAgentId] = useState<string | null>(null)
+  const [installErrors, setInstallErrors] = useState<Record<string, { message: string; log?: string }>>({})
   const [copiedAgentId, setCopiedAgentId] = useState<string | null>(null)
   const requestRef = useRef(0)
 
   const allInstalled = checks.every((check) => check.adapter.installed)
-  const busy = rechecking
+  const busy = rechecking || installingAgentId !== null
 
   const recheck = async () => {
-    if (rechecking) return
+    if (busy) return
     const requestId = ++requestRef.current
     setRechecking(true)
     try {
       const next = await window.nxcore?.agent?.checkLocalAgentAdapters(initialChecks.map((check) => check.agentId))
-      if (requestId === requestRef.current && next) setChecks(next)
+      if (requestId === requestRef.current && next) {
+        setChecks(next)
+        setInstallErrors({})
+      }
     } catch {
       // 检测失败保留当前结果，用户可重试或选择继续发送。
     } finally {
       if (requestId === requestRef.current) setRechecking(false)
+    }
+  }
+
+  const install = async (agentId: string) => {
+    if (busy) return
+    const requestId = ++requestRef.current
+    setInstallingAgentId(agentId)
+    setInstallErrors((current) => {
+      const { [agentId]: _discarded, ...rest } = current
+      return rest
+    })
+    try {
+      const outcome = await window.nxcore?.agent?.installLocalAgentAdapter(agentId)
+      if (requestId !== requestRef.current || !outcome) return
+      setChecks((current) => current.map((check) => (
+        check.agentId === outcome.agentId
+          ? { ...check, adapter: outcome.adapter }
+          : check
+      )))
+      if (!outcome.ok) {
+        const key = outcome.error ? INSTALL_ERROR_KEYS[outcome.error] : undefined
+        const message = t(`surface:localAgentAdapterWizard.${key ?? 'installFailed'}`)
+        setInstallErrors((current) => ({ ...current, [outcome.agentId]: { message, log: outcome.log } }))
+      }
+    } catch (error) {
+      if (requestId !== requestRef.current) return
+      const message = error instanceof Error ? error.message : String(error)
+      setInstallErrors((current) => ({ ...current, [agentId]: { message } }))
+    } finally {
+      if (requestId === requestRef.current) setInstallingAgentId(null)
     }
   }
 
@@ -78,6 +121,26 @@ export function LocalAgentAdapterWizard({ initialChecks, onProceed, onCancel }: 
                 </button>
               ) : null}
             </span>
+            {!check.adapter.installed ? (
+              <button
+                type="button"
+                className="agent-shell-approve agent-adapter-wizard-install"
+                disabled={busy}
+                onClick={() => void install(check.agentId)}
+              >
+                {installingAgentId === check.agentId ? <LoaderCircle className="spin" aria-hidden="true" /> : <Download aria-hidden="true" />}
+                {installingAgentId === check.agentId
+                  ? t('surface:localAgentAdapterWizard.installing')
+                  : t('surface:localAgentAdapterWizard.install')}
+              </button>
+            ) : null}
+            {installErrors[check.agentId] ? (
+              <span className="agent-adapter-wizard-error">
+                <AlertCircle aria-hidden="true" />
+                {installErrors[check.agentId].message}
+                {installErrors[check.agentId].log ? <code>{installErrors[check.agentId].log}</code> : null}
+              </span>
+            ) : null}
             <code>{check.adapter.installCommand ?? check.adapter.command}</code>
           </div>
         ))}
@@ -90,7 +153,7 @@ export function LocalAgentAdapterWizard({ initialChecks, onProceed, onCancel }: 
         </button>
         {!allInstalled ? (
           <button type="button" className="agent-shell-approve" disabled={busy} onClick={() => void recheck()}>
-            {busy ? <LoaderCircle className="spin" aria-hidden="true" /> : <RefreshCw aria-hidden="true" />}
+            {rechecking ? <LoaderCircle className="spin" aria-hidden="true" /> : <RefreshCw aria-hidden="true" />}
             {t('surface:localAgentAdapterWizard.recheck')}
           </button>
         ) : null}

@@ -355,14 +355,35 @@ describe("LocalAgentRuntimeRegistry", () => {
       .toThrow("local_agent_card_invalid");
   });
 
-  it("maps providers to adapter commands with env override", () => {
-    expect(acpAdapterCommand("claude", "/usr/bin/claude")).toEqual({ command: "claude-code-acp", args: [] });
+  it("maps providers to adapter commands with env override and target spawn override", () => {
+    expect(acpAdapterCommand("claude", "/usr/bin/claude")).toEqual({
+      command: "claude-agent-acp",
+      args: [],
+      fallbacks: ["claude-code-acp"],
+    });
     expect(acpAdapterCommand("codex", "/usr/bin/codex")).toEqual({ command: "codex-acp", args: [] });
     expect(acpAdapterCommand("openclaw", "/usr/bin/openclaw")).toEqual({ command: "/usr/bin/openclaw", args: ["acp"] });
+    // 桌面端随 target 下发的绝对路径 spawn：免 gateway 瘦 PATH 解析。
+    expect(acpAdapterCommand("codex", "/usr/bin/codex", { command: "/opt/adapters/codex-acp" })).toEqual({
+      command: "/opt/adapters/codex-acp",
+      args: [],
+      env: undefined,
+    });
+    expect(acpAdapterCommand("claude", "/usr/bin/claude", {
+      command: "/Applications/EverRoom.app/Contents/MacOS/EverRoom",
+      args: ["/entry.js"],
+      env: { ELECTRON_RUN_AS_NODE: "1" },
+    })).toEqual({
+      command: "/Applications/EverRoom.app/Contents/MacOS/EverRoom",
+      args: ["/entry.js"],
+      env: { ELECTRON_RUN_AS_NODE: "1" },
+    });
     const previous = process.env.EVERROOM_ACP_COMMAND_CLAUDE;
     process.env.EVERROOM_ACP_COMMAND_CLAUDE = "/opt/custom/adapter --flag";
     try {
-      expect(acpAdapterCommand("claude", "/usr/bin/claude")).toEqual({ command: "/opt/custom/adapter", args: ["--flag"] });
+      // env 整行覆盖优先级最高，压过 target spawn 覆盖。
+      expect(acpAdapterCommand("claude", "/usr/bin/claude", { command: "/opt/adapters/claude-agent-acp" }))
+        .toEqual({ command: "/opt/custom/adapter", args: ["--flag"] });
     } finally {
       if (previous === undefined) delete process.env.EVERROOM_ACP_COMMAND_CLAUDE;
       else process.env.EVERROOM_ACP_COMMAND_CLAUDE = previous;
