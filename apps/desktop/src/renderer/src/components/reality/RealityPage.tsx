@@ -49,7 +49,6 @@ import { perceptionDisplayText, realityTagKindLabel, VisualDetail } from './Visu
 import './RealityPage.css'
 
 type DetailTab = 'insights' | 'transcript'
-type StatusFilter = 'all' | RealityEventStatus
 /** 采集能力当前只有音频与窗口截图；照片/文档/文件节点不进时间线。 */
 type PerceptionTypeFilter = 'all' | 'audio' | 'screenshot'
 type ActivityRange = '1w' | '1m' | '3m' | '6m' | '1y'
@@ -212,7 +211,6 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
   const [visualNodes, setVisualNodes] = useState<PerceptionNode[]>([])
   const [visualDetail, setVisualDetail] = useState<PerceptionNodeDetail | null>(null)
   const [expandedId, setExpandedId] = useState<string | null>(null)
-  const [filter, setFilter] = useState<StatusFilter>('all')
   const [typeFilter, setTypeFilter] = useState<PerceptionTypeFilter>('all')
   const [search, setSearch] = useState('')
   // 活跃度周数：由容器实测宽度决定（列距 13px），恰好铺满不溢出。
@@ -317,7 +315,6 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
       const eventId = (incoming as CustomEvent<{ eventId?: string }>).detail?.eventId
       if (!eventId) return
       setSelectedDay(null)
-      setFilter('all')
       setTypeFilter('all')
       setSearch('')
       setExpandedId(eventId)
@@ -360,18 +357,6 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
   const visibleEvents = useMemo(() => timelineItems.filter((item) => {
     const itemType = item.kind === 'audio' ? 'audio' : item.node.kind
     if (typeFilter !== 'all' && itemType !== typeFilter) return false
-    if (filter !== 'all') {
-      const matches = item.kind === 'audio'
-        ? filter === 'completed'
-          ? item.event.status === 'completed'
-          : item.event.status === filter
-        : filter === 'ongoing'
-          ? item.node.status === 'pending' || item.node.status === 'processing'
-          : filter === 'completed'
-            ? item.node.status === 'ready'
-            : filter === 'failed' && item.node.status === 'failed'
-      if (!matches) return false
-    }
     if (selectedDay && dayKey(item.startedAt) !== selectedDay) return false
     const query = search.trim().toLocaleLowerCase()
     if (!query) return true
@@ -386,7 +371,7 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
           ...item.node.tags,
         ]
     return values.some((value) => value.toLocaleLowerCase().includes(query))
-  }), [filter, perceptionT, search, selectedDay, t, timelineItems, typeFilter])
+  }), [perceptionT, search, selectedDay, t, timelineItems, typeFilter])
   const grouped = useMemo(() => {
     const groups = new Map<string, TimelineItem[]>()
     for (const item of visibleEvents) {
@@ -741,13 +726,6 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
             <button type="button" key={value} aria-pressed={typeFilter === value} title={t(label)} aria-label={t(label)} onClick={() => setTypeFilter(value)}>{value === 'all' ? <span aria-hidden="true">{t('diaryReality:reality.all')}</span> : <Icon aria-hidden="true" />}</button>
           ))}
         </div>
-        <select value={filter} aria-label={t('diaryReality:reality.filterByEventStatus')} onChange={(event) => setFilter(event.target.value as StatusFilter)}>
-          <option value="all">{t('diaryReality:reality.allStatuses')}</option>
-          <option value="ongoing">{t('diaryReality:reality.inProgress')}</option>
-          <option value="completed">{t('diaryReality:reality.completed')}</option>
-          <option value="failed">{t('diaryReality:reality.failed')}</option>
-          <option value="pending_sync">{t('diaryReality:reality.pendingSync')}</option>
-        </select>
         <RecordingPage
           embedded
           controlOnly
