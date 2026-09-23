@@ -33,17 +33,27 @@ const quickPrompts = [
   ['surface:agentChat.quickPromptTasksLabel', 'surface:agentChat.quickPromptTasks'],
 ] as const
 
-function ThinkingStatus({ label }: { label: string }) {
+function ThinkingStatus({ label, tail }: { label: string; tail?: string }) {
   return (
     <div className="agent-thinking" role="status">
       <span className="agent-thinking-text" data-text={label}>{label}</span>
+      {tail ? <span className="agent-thinking-tail">{tail}</span> : null}
     </div>
   )
 }
 
+function hasLiveTool(tools: DisplayAgentToolCall[]): boolean {
+  return tools.some((tool) => tool.status === 'running' || tool.status === 'pending')
+}
+
+function reasoningTail(text: string | undefined): string | undefined {
+  if (!text) return undefined
+  const collapsed = text.replace(/\s+/g, ' ').trim()
+  return collapsed ? collapsed.slice(-140) : undefined
+}
+
 function getThinkingLabel(message: DisplayAgentMessage | undefined, tools: DisplayAgentToolCall[], t: Translate): string {
-  const runningTool = tools.find((tool) => tool.status === 'running' || tool.status === 'pending')
-  if (runningTool) return t('surface:agentChat.callingATool')
+  if (hasLiveTool(tools)) return t('surface:agentChat.callingATool')
   if (message?.content.trim()) return t('surface:agentChat.writingAResponse')
   if (tools.length > 0) return t('surface:agentChat.organizingResults')
   return t('surface:agentChat.analyzing')
@@ -344,6 +354,7 @@ export function AgentChatView({
   onSelectDocument,
   onSelectPrompt,
   pendingNavigationByRun,
+  reasoningByRun = {},
   runCompletedAtByRun,
   runStartedAtByRun,
   resolvingApprovalIds = new Set<string>(),
@@ -380,6 +391,7 @@ export function AgentChatView({
   onSelectDocument: (selection: AgentDocumentSelectionSubmission) => void
   onSelectPrompt: (prompt: string) => void
   pendingNavigationByRun: Record<string, AgentNavigationTarget>
+  reasoningByRun?: Record<string, string>
   runCompletedAtByRun: Record<string, string>
   runStartedAtByRun: Record<string, string>
   resolvingApprovalIds?: ReadonlySet<string>
@@ -801,7 +813,14 @@ export function AgentChatView({
                   <RunNavigation link={link} pending={link ? undefined : pending} onOpen={onOpenSessionLink} />
                 ) : null}
                 {message.streaming && message.runId === activeRunId
-                  ? <ThinkingStatus label={getThinkingLabel(message, tools, t)} />
+                  ? (
+                    <ThinkingStatus
+                      label={getThinkingLabel(message, tools, t)}
+                      tail={!hasLiveTool(tools) && !rawFinalContent.trim()
+                        ? reasoningTail(reasoningByRun[message.runId])
+                        : undefined}
+                    />
+                  )
                   : null}
                 {hasToolActivity && activity ? (
                   <AgentExecutionTimeline
@@ -851,7 +870,10 @@ export function AgentChatView({
                 />
               ) : null}
               <AgentResponseByline agentId={agentIdByRun[activeRunId]} names={agentNamesById} />
-              <ThinkingStatus label={getThinkingLabel(undefined, latestTools, t)} />
+              <ThinkingStatus
+                label={getThinkingLabel(undefined, latestTools, t)}
+                tail={reasoningTail(reasoningByRun[activeRunId])}
+              />
               {latestActivity?.hasTools ? (
                 <AgentExecutionTimeline
                   activity={latestActivity}
@@ -863,7 +885,12 @@ export function AgentChatView({
             </div>
           ) : null}
           {activeRunId && activeHasAssistant && !latestStreamingMessage && !latestActivity?.hasTools
-            ? <ThinkingStatus label={getThinkingLabel(undefined, latestTools, t)} />
+            ? (
+              <ThinkingStatus
+                label={getThinkingLabel(undefined, latestTools, t)}
+                tail={reasoningTail(reasoningByRun[activeRunId])}
+              />
+            )
             : null}
           {composerNotice}
           <AgentShellApproval

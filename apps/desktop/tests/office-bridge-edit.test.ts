@@ -80,6 +80,36 @@ describe('OfficeBridgeServer /v1/office-edit', () => {
     expect(impl).toHaveBeenCalledWith('file-2', { mode: 'apply', ops, dryRun: true, isolation: 'per_op' })
   })
 
+  it('apply page：透传逐页填充载荷，返回填充结果', async () => {
+    const impl = vi.fn(async () => ({ ok: true, result: { ok: true, applied: true, saved: true, outline: '…' } }))
+    slidesEditImpl = impl
+    const { baseUrl, token } = await startServer()
+    const page = { slideIndex: 2, specJson: '{"elements":[{"type":"text","paragraphs":[{"runs":[{"text":"x"}]}]}]}' }
+
+    const { status, json } = await postEdit(baseUrl, token, {
+      mode: 'apply',
+      fileId: 'file-2',
+      page,
+    })
+
+    expect(status).toBe(200)
+    expect(json.data).toMatchObject({ applied: true, saved: true })
+    expect(impl).toHaveBeenCalledWith('file-2', { mode: 'apply', page })
+  })
+
+  it('page 与 ops 互斥（同时给/都缺/坏 page）→ 422', async () => {
+    const impl = vi.fn(async () => ({ ok: true, result: { ok: true, applied: true } }))
+    slidesEditImpl = impl
+    const { baseUrl, token } = await startServer()
+    const spec = { slideIndex: 0, specJson: '{"elements":[]}' }
+
+    expect((await postEdit(baseUrl, token, { mode: 'apply', fileId: 'f', ops: [{ op: 'setFill' }], page: spec })).status).toBe(422)
+    expect((await postEdit(baseUrl, token, { mode: 'apply', fileId: 'f' })).status).toBe(422)
+    expect((await postEdit(baseUrl, token, { mode: 'apply', fileId: 'f', page: { slideIndex: -1, specJson: '{}' } })).status).toBe(422)
+    expect((await postEdit(baseUrl, token, { mode: 'apply', fileId: 'f', page: { slideIndex: 0 } })).status).toBe(422)
+    expect(impl).not.toHaveBeenCalled()
+  })
+
   it('not_open → 422 + 引导先在产物库打开（附打开清单摘要）', async () => {
     slidesEditImpl = vi.fn(async () => ({
       ok: false,
