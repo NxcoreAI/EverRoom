@@ -375,7 +375,7 @@ export function agentRoutes(
               }, { additionalProperties: false }), { maxItems: 5 })),
               externalConversationId: Type.Optional(Type.String({ minLength: 1, maxLength: 100 })),
               referencedConversationId: Type.Optional(Type.String({ minLength: 1, maxLength: 100 })),
-              referencedLocalAgentIds: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 100 }), { minItems: 1, maxItems: 8 })),
+              referencedLocalAgentIds: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 500 }), { minItems: 1, maxItems: 8 })),
             })),
           }),
         },
