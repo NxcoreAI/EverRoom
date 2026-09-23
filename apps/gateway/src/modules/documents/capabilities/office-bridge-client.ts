@@ -54,6 +54,8 @@ export interface OfficeSlidesEditResult {
   saved?: boolean;
   saveError?: string;
   outline?: string;
+  /** PageSpec 解析告警（逐页填充路径）：页面已渲染，但建议关注。 */
+  warnings?: Array<{ page: number; messages: string[] }>;
 }
 
 export interface OfficeSlidesEditInput {
@@ -114,6 +116,16 @@ export class OfficeBridgeClient {
       ops: input.ops,
       ...(input.dryRun !== undefined ? { dryRun: input.dryRun } : {}),
       ...(input.isolation !== undefined ? { isolation: input.isolation } : {}),
+    });
+    return { ...(data as unknown as OfficeSlidesEditResult), ok: data.ok !== false };
+  }
+
+  /** 逐页填充：PageSpec 经与整册生成同一条 builder/merge 管线原地替换一页（实时重绘 + 静默保存）。 */
+  async fillPage(input: { fileId: string; slideIndex: number; specJson: string }): Promise<OfficeSlidesEditResult> {
+    const data = await this.postEdit({
+      mode: "apply",
+      fileId: input.fileId,
+      page: { slideIndex: input.slideIndex, specJson: input.specJson },
     });
     return { ...(data as unknown as OfficeSlidesEditResult), ok: data.ok !== false };
   }
