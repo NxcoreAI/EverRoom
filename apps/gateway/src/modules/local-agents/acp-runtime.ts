@@ -22,6 +22,7 @@ import {
 import { childEnvironment, delegationPrompt } from "./runtime-common.js";
 import {
   localAcpAdapterCommand,
+  type LocalAcpAdapterSpawn,
   type LocalAcpProvider,
 } from "@nxcore/agent-contract";
 
@@ -33,19 +34,25 @@ const MAX_READ_TEXT_FILE_BYTES = 2 * 1024 * 1024;
 export interface AcpAdapterCommand {
   command: string;
   args: string[];
+  fallbacks?: string[];
+  env?: Record<string, string>;
 }
 
 /**
  * provider → ACP 适配器命令（映射与安装指引在 @nxcore/agent-contract 共享，
- * 桌面端安装向导用同一份）。环境变量 EVERROOM_ACP_COMMAND_<PROVIDER>
- * 可整行覆盖（测试与自定义安装位置用）。
+ * 桌面端安装向导用同一份）。优先级：EVERROOM_ACP_COMMAND_<PROVIDER> 整行覆盖 >
+ * 桌面端随 target 下发的绝对路径 spawn（免 gateway 瘦 PATH 解析）> 默认 bare 名。
  */
 export function acpAdapterCommand(
   provider: LocalAcpProvider,
   executablePath: string,
+  spawnOverride?: LocalAcpAdapterSpawn | null,
 ): AcpAdapterCommand {
-  const { command, args } = localAcpAdapterCommand(provider, executablePath, process.env);
-  return { command, args };
+  const { command, args, fallbacks, env } = localAcpAdapterCommand(provider, executablePath, process.env, spawnOverride);
+  const resolved: AcpAdapterCommand = { command, args };
+  if (fallbacks?.length) resolved.fallbacks = fallbacks;
+  if (env) resolved.env = env;
+  return resolved;
 }
 
 interface ActiveAcpSession {
@@ -197,12 +204,28 @@ export class AcpAgentRuntime implements AgentRuntime {
   }
 
   private async connect(): Promise<void> {
+    // 优先主命令；ENOENT（bin 改名后旧/新版共存场景）按 fallbacks 回退重试。
+    const candidates = [this.adapter.command, ...(this.adapter.fallbacks ?? [])];
+    let lastError: Error | null = null;
+    for (const command of candidates) {
+      try {
+        await this.connectWith(command);
+        return;
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+      }
+    }
+    throw lastError ?? new Error("local_agent_acp_adapter_unavailable");
+  }
+
+  private async connectWith(command: string): Promise<void> {
     this.killChild();
-    const child = spawn(this.adapter.command, this.adapter.args, {
+    const child = spawn(command, this.adapter.args, {
       cwd: this.workingDirectory,
       shell: false,
       stdio: ["pipe", "pipe", "pipe"],
-      env: childEnvironment(),
+      // target 下发的覆盖 env（私有安装的 ELECTRON_RUN_AS_NODE、合并 PATH）最后合并。
+      env: { ...childEnvironment(), ...(this.adapter.env ?? {}) },
     });
     this.stderrTail = "";
     child.stdin.on("error", () => undefined);
@@ -239,7 +262,7 @@ export class AcpAgentRuntime implements AgentRuntime {
       this.killChild();
       this.connection = null;
       const detail = error instanceof Error ? error.message : String(error);
-      throw new Error(`local_agent_acp_adapter_unavailable: ${this.adapter.command} (${detail})`);
+      throw new Error(`local_agent_acp_adapter_unavailable: ${command} (${detail})`);
     }
   }
 

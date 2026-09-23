@@ -3841,14 +3841,6 @@
   margin-bottom: 4px;
 }
 
-.context-room-artifact-office h3 {
-  margin: 0;
-  color: var(--cr-muted);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-}
-
 .context-room-artifact-office .context-room-artifact-list {
   flex: 0 0 auto;
 }
@@ -4922,8 +4914,31 @@
   margin: 0;
   padding: 12px 14px;
   color: var(--cr-muted);
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+/* 概览/状态长文折叠（行数由组件经 --clamp-lines 注入）。 */
+.context-room-dashboard-grid article > p[data-clamp] {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: var(--clamp-lines, 4);
+  overflow: hidden;
+}
+
+.context-room-dashboard-clamp-toggle {
+  display: inline-block;
+  margin: -4px 14px 8px;
+  padding: 2px 8px;
+  border: 0;
+  background: none;
+  color: var(--cr-blue);
   font-size: 12px;
-  line-height: 1.6;
+  cursor: pointer;
+}
+
+.context-room-dashboard-clamp-toggle:hover {
+  text-decoration: underline;
 }
 
 .context-room-dashboard-grid article > small {
@@ -4985,12 +5000,37 @@
   color: var(--cr-blue);
 }
 
-.context-room-dashboard-entities span {
+.context-room-dashboard-entities span,
+.context-room-dashboard-entities button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   padding: 3px 7px;
+  border: 1px solid transparent;
   border-radius: 5px;
   background: var(--cr-surface-secondary);
   color: var(--cr-muted);
-  font-size: 11px;
+  font-size: 12px;
+}
+
+.context-room-dashboard-entities button {
+  cursor: pointer;
+}
+
+.context-room-dashboard-entities button:hover {
+  border-color: var(--cr-blue);
+  color: var(--cr-blue);
+}
+
+.context-room-dashboard-entities button i {
+  font-size: 10px;
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+  color: var(--cr-tertiary);
+}
+
+.context-room-dashboard-entities button:hover i {
+  color: var(--cr-blue);
 }
 
 .context-room-dashboard-timeline {
@@ -15062,4 +15102,63 @@ button.eg-walk.is-next:hover {
   position: relative;
   width: 100%;
   background: var(--cr-surface);
+}
+
+/* 新建产物：类型选择网格（轻文档 / Word / PPT / Excel）。 */
+.context-room-document-create-types {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.context-room-document-create-type {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 10px;
+  border: 1px solid var(--cr-border);
+  border-radius: 7px;
+  background: var(--cr-surface);
+  color: var(--cr-text);
+  cursor: pointer;
+  text-align: left;
+}
+
+.context-room-document-create-type:hover {
+  border-color: var(--cr-blue);
+  background: color-mix(in srgb, var(--cr-blue) 6%, var(--cr-surface));
+}
+
+.context-room-document-create-type > svg {
+  width: 17px;
+  height: 17px;
+  flex: none;
+  color: var(--cr-blue);
+}
+
+.context-room-document-create-type-body {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.context-room-document-create-type-body b {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.context-room-document-create-type-body small {
+  overflow: hidden;
+  color: var(--cr-muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-room-document-create-hint {
+  display: block;
+  color: var(--cr-muted);
+  font-size: 10px;
+  line-height: 1.5;
 }

@@ -703,6 +703,21 @@ export function App() {
     })
   }, [activateContextRoomTab, availableContextRooms, openContextRoomTab])
 
+  // 产物库「新建 Office」：经 Room 会话派发生成请求（自动展开对应 Room 会话）。
+  useEffect(() => {
+    const open = (event: Event) => {
+      const detail = (event as CustomEvent<{ roomId?: string; message?: string }>).detail
+      if (!detail?.roomId || !detail.message) return
+      const room = availableContextRooms.find((item) => item.id === detail.roomId)
+      if (room) openContextRoomTab(room)
+      else activateContextRoomTab(detail.roomId)
+      setAgentOpen(true)
+      setAgentAskRequest({ key: `artifact-create-${Date.now()}`, roomId: detail.roomId, message: detail.message })
+    }
+    window.addEventListener('everroom:room-agent-ask', open)
+    return () => window.removeEventListener('everroom:room-agent-ask', open)
+  }, [activateContextRoomTab, availableContextRooms, openContextRoomTab])
+
   const syncContextRoomTabs = useCallback((rooms: ContextRoomWorkspaceTab[]) => {
     // 全空投影是网关启动/快照刷新窗口的瞬时态，不是真实清空——本地删除 Room
     // 会把它挪进 deletedRooms（届时投影为空但删除记录在场）。保留现有标签与

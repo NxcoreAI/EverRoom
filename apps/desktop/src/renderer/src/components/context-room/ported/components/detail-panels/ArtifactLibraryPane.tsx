@@ -1,5 +1,5 @@
 import * as Popover from '@radix-ui/react-popover';
-import { FileText, FileUp, LoaderCircle, Package, Plus, RotateCcw, Trash2 } from 'lucide-react';
+import { FileText, FileSpreadsheet, FileUp, Presentation, FileText as WordIcon, LoaderCircle, Package, Plus } from 'lucide-react';
 import { useMemo, useRef, useState } from 'react';
 import { useLocale } from '../../../../../i18n/LocaleContext';
 import type { RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract';
@@ -15,12 +15,14 @@ import { markdownDocumentTitle, parseMarkdownDocument } from '../detail-editor/m
 import { buildLinkGraphData } from '../linkGraphModel';
 import { PanelEmptyState } from './PanelEmptyState';
 
-type ArtifactFilter = 'all' | 'draft' | 'trash';
+type ArtifactFilter = 'all' | 'clouddoc' | 'office';
+type CreateType = 'doc' | 'word' | 'ppt' | 'xlsx';
 
 /**
- * 产物库：Room 内用户创建文档的平铺清单（原型 room-launch 产物板块）。
- * 行信息与筛选只用真实字段——版本/更新时间来自文档，引用数来自建联边投影。
- * Agent 生成的 Office 文件（sourceKind=agent-generated）同属产物，单列一节。
+ * 产物库：Room 内创作成果的平铺清单（原型 room-launch 产物板块）。
+ * 筛选只区分「云文档（轻文档）」与「Office 产物（Agent 生成）」；
+ * 不设草稿/回收站状态视图。新建支持轻文档（md）与 Word/PPT/Excel——
+ * Office 走 Room 内 Agent 生成通道（context_room_*_create）。
  */
 export function ArtifactLibraryPane({
   room,
@@ -30,9 +32,6 @@ export function ArtifactLibraryPane({
   selectedId,
   onSelect,
   onCreateDocument,
-  onDeleteDocument,
-  onRestoreDocument,
-  onDeleteDocumentPermanently,
 }: {
   room: ContextRoomRecord;
   backendDocuments: RoomDocument[];
@@ -42,9 +41,10 @@ export function ArtifactLibraryPane({
   selectedId: string | null;
   onSelect: (resource: ContextRoomResource) => void;
   onCreateDocument: (title: string, contentJson?: TiptapJsonContent) => Promise<void>;
-  onDeleteDocument: (document: RoomDocument) => Promise<void>;
-  onRestoreDocument: (document: RoomDocument) => Promise<void>;
-  onDeleteDocumentPermanently: (document: RoomDocument) => Promise<void>;
+  /** 回收站相关操作已从 UI 下线；父级仍会传入，保留类型兼容。 */
+  onDeleteDocument?: (document: RoomDocument) => Promise<void>;
+  onRestoreDocument?: (document: RoomDocument) => Promise<void>;
+  onDeleteDocumentPermanently?: (document: RoomDocument) => Promise<void>;
 }) {
   const { locale, t } = useLocale();
   const library = useMemo(
@@ -59,13 +59,15 @@ export function ArtifactLibraryPane({
   );
   const isCloudDoc = (resource: ContextRoomResource): resource is ContextRoomCloudDocResource =>
     resource.kind === 'cloud-doc';
-  const cloudDocs = library.resources.filter(isCloudDoc);
-  const artifacts = cloudDocs.filter((resource) => !resource.trashed);
-  const trashedArtifacts = cloudDocs.filter((resource) => resource.trashed);
-  const backendById = useMemo(
-    () => new Map([...backendDocuments, ...trashedDocuments].map((document) => [document.id, document])),
-    [backendDocuments, trashedDocuments],
-  );
+  const cloudDocs = library.resources.filter(isCloudDoc).filter((resource) => !resource.trashed);
+
+  const [filter, setFilter] = useState<ArtifactFilter>('all');
+  const [createPopoverOpen, setCreatePopoverOpen] = useState(false);
+  const [createType, setCreateType] = useState<CreateType | null>(null);
+  const [newDocumentTitle, setNewDocumentTitle] = useState('');
+  const [creatingDocument, setCreatingDocument] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
+  const markdownInputRef = useRef<HTMLInputElement>(null);
   // 引用来源计数：与建联图谱同源的纯读侧投影，按文档聚合边数。
   const citationCounts = useMemo(() => {
     const counts = new Map<string, number>();
@@ -78,23 +80,15 @@ export function ArtifactLibraryPane({
     return counts;
   }, [room, backendDocuments, trashedDocuments]);
 
-  const [filter, setFilter] = useState<ArtifactFilter>('all');
-  const [createPopoverOpen, setCreatePopoverOpen] = useState(false);
-  const [newDocumentTitle, setNewDocumentTitle] = useState('');
-  const [creatingDocument, setCreatingDocument] = useState(false);
-  const [createError, setCreateError] = useState<string | null>(null);
-  const markdownInputRef = useRef<HTMLInputElement>(null);
-  const [documentToDelete, setDocumentToDelete] = useState<RoomDocument | null>(null);
-  const [documentToDeletePermanently, setDocumentToDeletePermanently] = useState<RoomDocument | null>(null);
-  const [busyDocumentId, setBusyDocumentId] = useState<string | null>(null);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
-
-  const visibleArtifacts = filter === 'draft'
-    ? artifacts.filter((resource) => backendById.get(resource.binding.docId)?.status === 'draft')
-    : filter === 'trash'
-      ? trashedArtifacts
-      : artifacts;
+  const visibleArtifacts: Array<{ key: string; resource: ContextRoomResource; isOffice: boolean }> =
+    filter === 'clouddoc'
+      ? cloudDocs.map((resource) => ({ key: resource.id, resource, isOffice: false }))
+      : filter === 'office'
+        ? officeArtifacts.map((resource) => ({ key: resource.id, resource, isOffice: true }))
+        : [
+            ...officeArtifacts.map((resource) => ({ key: resource.id, resource, isOffice: true })),
+            ...cloudDocs.map((resource) => ({ key: resource.id, resource, isOffice: false })),
+          ];
 
   const createDocument = async () => {
     const title = newDocumentTitle.trim() || t('contextRoom:resource.untitledDocument');
@@ -104,6 +98,7 @@ export function ArtifactLibraryPane({
       await onCreateDocument(title);
       setCreatePopoverOpen(false);
       setNewDocumentTitle('');
+      setCreateType(null);
     } catch (error: unknown) {
       setCreateError(error instanceof Error ? error.message : t('contextRoom:resource.failedToCreateDocument'));
     } finally {
@@ -124,6 +119,7 @@ export function ArtifactLibraryPane({
       await onCreateDocument(title, parseMarkdownDocument(markdown));
       setCreatePopoverOpen(false);
       setNewDocumentTitle('');
+      setCreateType(null);
     } catch (error: unknown) {
       setCreateError(error instanceof Error ? error.message : t('contextRoom:resource.failedToImportMarkdownDocument'));
     } finally {
@@ -131,48 +127,34 @@ export function ArtifactLibraryPane({
     }
   };
 
-  const confirmDelete = async (document: RoomDocument) => {
-    setDeleteError(null);
-    setBusyDocumentId(document.id);
-    try {
-      await onDeleteDocument(document);
-      setDocumentToDelete(null);
-    } catch (error: unknown) {
-      setDeleteError(error instanceof Error ? error.message : t('contextRoom:resource.failedToDeleteDocument'));
-    } finally {
-      setBusyDocumentId(null);
-    }
-  };
-
-  const restoreDocument = async (document: RoomDocument) => {
-    setActionError(null);
-    setBusyDocumentId(document.id);
-    try {
-      await onRestoreDocument(document);
-    } catch (error: unknown) {
-      setActionError(error instanceof Error ? error.message : t('contextRoom:resource.failedToRestoreDocument'));
-    } finally {
-      setBusyDocumentId(null);
-    }
-  };
-
-  const confirmPermanentDelete = async (document: RoomDocument) => {
-    setDeleteError(null);
-    setBusyDocumentId(document.id);
-    try {
-      await onDeleteDocumentPermanently(document);
-      setDocumentToDeletePermanently(null);
-    } catch (error: unknown) {
-      setDeleteError(error instanceof Error ? error.message : t('contextRoom:resource.failedToPermanentlyDeleteDocument'));
-    } finally {
-      setBusyDocumentId(null);
-    }
+  /** Word/PPT/Excel：经 Room 会话派发生成请求（Agent 走 context_room_*_create
+   *  全链路），产物生成后自动进入本栏并打开预览。 */
+  const dispatchOfficeCreate = (type: Exclude<CreateType, 'doc'>) => {
+    const title = newDocumentTitle.trim() || t(`contextRoom:artifactLibrary.newOfficeDefault.${type}`);
+    const tool = type === 'word' ? 'context_room_office_create' : type === 'ppt' ? 'context_room_slides_create' : 'context_room_sheets_create';
+    const kindLabel = t(`contextRoom:artifactLibrary.newOfficeDefault.${type}`);
+    window.dispatchEvent(new CustomEvent('everroom:room-agent-ask', {
+      detail: {
+        roomId: room.id,
+        message: `请用 ${tool} 新建一份${kindLabel}《${title}》：内容从简，只生成标题与基本骨架，后续我再补充；完成后告知文件名。`,
+      },
+    }));
+    setCreatePopoverOpen(false);
+    setNewDocumentTitle('');
+    setCreateType(null);
   };
 
   const filters: { id: ArtifactFilter; label: string }[] = [
     { id: 'all', label: t('contextRoom:artifactLibrary.filterAll') },
-    { id: 'draft', label: t('contextRoom:artifactLibrary.draft') },
-    { id: 'trash', label: t('contextRoom:artifactLibrary.filterTrash') },
+    { id: 'clouddoc', label: t('contextRoom:artifactLibrary.filterCloudDoc') },
+    { id: 'office', label: t('contextRoom:artifactLibrary.filterOffice') },
+  ];
+
+  const CREATE_TYPES: Array<{ id: CreateType; label: string; hint: string; icon: typeof WordIcon }> = [
+    { id: 'doc', label: t('contextRoom:artifactLibrary.newLightDoc'), hint: t('contextRoom:artifactLibrary.newLightDocHint'), icon: FileText },
+    { id: 'word', label: t('contextRoom:artifactLibrary.newWord'), hint: t('contextRoom:artifactLibrary.newOfficeHint'), icon: WordIcon },
+    { id: 'ppt', label: t('contextRoom:artifactLibrary.newPpt'), hint: t('contextRoom:artifactLibrary.newOfficeHint'), icon: Presentation },
+    { id: 'xlsx', label: t('contextRoom:artifactLibrary.newXlsx'), hint: t('contextRoom:artifactLibrary.newOfficeHint'), icon: FileSpreadsheet },
   ];
 
   return (
@@ -197,7 +179,7 @@ export function ArtifactLibraryPane({
             if (!nextOpen && creatingDocument) return;
             setCreateError(null);
             setCreatePopoverOpen(nextOpen);
-            if (!nextOpen) setNewDocumentTitle('');
+            if (!nextOpen) { setNewDocumentTitle(''); setCreateType(null); }
           }}
         >
           <Popover.Trigger asChild>
@@ -222,252 +204,128 @@ export function ArtifactLibraryPane({
               collisionPadding={12}
               aria-label={t('contextRoom:artifactLibrary.newArtifact')}
             >
-              <form onSubmit={(event) => { event.preventDefault(); void createDocument(); }}>
-                <label htmlFor="context-room-new-artifact-title">{t('contextRoom:resource.documentName')}</label>
-                <input
-                  id="context-room-new-artifact-title"
-                  autoFocus
-                  maxLength={120}
-                  value={newDocumentTitle}
-                  placeholder={t('contextRoom:resource.untitledDocument')}
-                  onChange={(event) => setNewDocumentTitle(event.target.value)}
-                  disabled={creatingDocument}
-                />
-                <input
-                  ref={markdownInputRef}
-                  className="context-room-document-import-input"
-                  type="file"
-                  accept=".md,.markdown,text/markdown"
-                  tabIndex={-1}
-                  aria-hidden="true"
-                  onChange={(event) => {
-                    const file = event.currentTarget.files?.[0];
-                    event.currentTarget.value = '';
-                    if (file) void importMarkdownDocument(file);
-                  }}
-                />
-                <button
-                  type="button"
-                  className="context-room-document-import"
-                  disabled={creatingDocument}
-                  onClick={() => markdownInputRef.current?.click()}
-                >
-                  <FileUp aria-hidden="true" />
-                  {t(creatingDocument ? 'contextRoom:resource.processing' : 'contextRoom:resource.importLocalMarkdown')}
-                </button>
-                {createError ? <small role="alert">{createError}</small> : null}
-                <footer>
-                  <Popover.Close asChild>
-                    <button type="button" disabled={creatingDocument}>{t('contextRoom:resource.cancel')}</button>
-                  </Popover.Close>
-                  <button type="submit" className="is-primary" disabled={creatingDocument}>
-                    {t(creatingDocument ? 'contextRoom:resource.creating' : 'contextRoom:resource.create')}
+              {createType === null ? (
+                <div className="context-room-document-create-types">
+                  {CREATE_TYPES.map(({ id, label, hint, icon: Icon }) => (
+                    <button key={id} type="button" className="context-room-document-create-type" onClick={() => setCreateType(id)}>
+                      <Icon aria-hidden="true" />
+                      <span className="context-room-document-create-type-body">
+                        <b>{label}</b>
+                        <small>{hint}</small>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              ) : createType === 'doc' ? (
+                <form onSubmit={(event) => { event.preventDefault(); void createDocument(); }}>
+                  <label htmlFor="context-room-new-artifact-title">{t('contextRoom:resource.documentName')}</label>
+                  <input
+                    id="context-room-new-artifact-title"
+                    autoFocus
+                    maxLength={120}
+                    value={newDocumentTitle}
+                    placeholder={t('contextRoom:resource.untitledDocument')}
+                    onChange={(event) => setNewDocumentTitle(event.target.value)}
+                    disabled={creatingDocument}
+                  />
+                  <input
+                    ref={markdownInputRef}
+                    className="context-room-document-import-input"
+                    type="file"
+                    accept=".md,.markdown,text/markdown"
+                    tabIndex={-1}
+                    aria-hidden="true"
+                    onChange={(event) => {
+                      const file = event.currentTarget.files?.[0];
+                      event.currentTarget.value = '';
+                      if (file) void importMarkdownDocument(file);
+                    }}
+                  />
+                  <button
+                    type="button"
+                    className="context-room-document-import"
+                    disabled={creatingDocument}
+                    onClick={() => markdownInputRef.current?.click()}
+                  >
+                    <FileUp aria-hidden="true" />
+                    {t(creatingDocument ? 'contextRoom:resource.processing' : 'contextRoom:resource.importLocalMarkdown')}
                   </button>
-                </footer>
-              </form>
+                  {createError ? <small role="alert">{createError}</small> : null}
+                  <footer>
+                    <button type="button" disabled={creatingDocument} onClick={() => setCreateType(null)}>
+                      {t('contextRoom:resource.cancel')}
+                    </button>
+                    <button type="submit" className="is-primary" disabled={creatingDocument}>
+                      {t(creatingDocument ? 'contextRoom:resource.creating' : 'contextRoom:resource.create')}
+                    </button>
+                  </footer>
+                </form>
+              ) : (
+                <form onSubmit={(event) => { event.preventDefault(); dispatchOfficeCreate(createType); }}>
+                  <label htmlFor="context-room-new-artifact-title">{t('contextRoom:resource.documentName')}</label>
+                  <input
+                    id="context-room-new-artifact-title"
+                    autoFocus
+                    maxLength={120}
+                    value={newDocumentTitle}
+                    placeholder={t('contextRoom:resource.untitledDocument')}
+                    onChange={(event) => setNewDocumentTitle(event.target.value)}
+                  />
+                  {createError ? <small role="alert">{createError}</small> : null}
+                  <small className="context-room-document-create-hint">{t('contextRoom:artifactLibrary.officeCreateHint')}</small>
+                  <footer>
+                    <button type="button" onClick={() => setCreateType(null)}>{t('contextRoom:resource.cancel')}</button>
+                    <button type="submit" className="is-primary">{t('contextRoom:artifactLibrary.createOffice')}</button>
+                  </footer>
+                </form>
+              )}
               <Popover.Arrow className="context-room-document-create-arrow" />
             </Popover.Content>
           </Popover.Portal>
         </Popover.Root>
       </div>
-      {actionError ? <div className="context-room-resource-error" role="alert">{actionError}</div> : null}
-      {filter === 'all' && officeArtifacts.length > 0 ? (
-        <section className="context-room-artifact-office" aria-label={t('contextRoom:artifactLibrary.officeArtifacts')}>
-          <h3>{t('contextRoom:artifactLibrary.officeArtifacts')}</h3>
-          <div className="context-room-artifact-list">
-            {officeArtifacts.map((resource) => (
-              <div className="context-room-artifact-row" key={resource.id}>
-                <button
-                  type="button"
-                  className="context-room-artifact-item"
-                  aria-selected={selectedId === resource.id}
-                  onClick={() => onSelect(resource)}
-                >
-                  <span className="context-room-artifact-ico"><FileText aria-hidden="true" /></span>
-                  <span className="context-room-artifact-body">
-                    <b>{resource.name}</b>
-                    <small>{`${resource.sizeLabel} · ${resource.statusLabel}`}</small>
-                  </span>
-                  <span className="context-room-artifact-meta">
-                    <span className="context-room-artifact-tag is-draft">{t('contextRoom:artifactLibrary.agentGenerated')}</span>
-                  </span>
-                </button>
-              </div>
-            ))}
-          </div>
-        </section>
-      ) : null}
       <div className="context-room-artifact-list">
-        {visibleArtifacts.map((resource) => {
-          const backendDocument = backendById.get(resource.binding.docId);
-          if (!backendDocument) return null;
-          const deleting = backendDocument.id === busyDocumentId;
-          const busy = Boolean(backendDocument.activeTransactionId);
-          const trashed = Boolean(resource.trashed);
-          const citations = citationCounts.get(backendDocument.id) ?? 0;
+        {visibleArtifacts.map(({ key, resource }) => {
+          const office = resource.kind === 'knowledge-file' ? resource : null;
+          const cloud = resource.kind === 'cloud-doc' ? resource : null;
+          const backendDocument = cloud ? backendDocuments.find((document) => document.id === cloud.binding.docId) ?? null : null;
+          const citations = backendDocument ? citationCounts.get(backendDocument.id) ?? 0 : 0;
           return (
-            <div className={`context-room-artifact-row${trashed ? ' is-trash' : ''}`} key={resource.id}>
-              {trashed ? (
-                <div className="context-room-artifact-item is-trashed" aria-disabled="true">
-                  <span className="context-room-artifact-ico"><FileText aria-hidden="true" /></span>
-                  <span className="context-room-artifact-body">
-                    <b>{resource.name}</b>
-                    <small>{resource.updatedAt}</small>
-                  </span>
-                </div>
-              ) : (
-                <button
-                  type="button"
-                  className="context-room-artifact-item"
-                  aria-selected={selectedId === resource.id}
-                  onClick={() => onSelect(resource)}
-                >
-                  <span className="context-room-artifact-ico"><FileText aria-hidden="true" /></span>
-                  <span className="context-room-artifact-body">
-                    <b>{resource.name}</b>
-                    <small>{`${resource.version} · ${resource.updatedAt}`}</small>
-                  </span>
-                  <span className="context-room-artifact-meta">
-                    {backendDocument.status === 'draft' ? (
-                      <span className="context-room-artifact-tag is-draft">{t('contextRoom:artifactLibrary.draft')}</span>
-                    ) : null}
-                    {citations > 0 ? (
-                      <span className="context-room-artifact-tag">{t('contextRoom:artifactLibrary.citationCount', { count: citations })}</span>
-                    ) : null}
-                  </span>
-                </button>
-              )}
-              {trashed ? (
-                <span className="context-room-artifact-acts">
-                  <button
-                    type="button"
-                    aria-label={t('contextRoom:resource.restoreDocumentName', { name: resource.name })}
-                    title={t('contextRoom:resource.restoreDocument')}
-                    disabled={deleting}
-                    onClick={() => void restoreDocument(backendDocument)}
-                  >
-                    <RotateCcw aria-hidden="true" />
-                  </button>
-                  <Popover.Root
-                    open={documentToDeletePermanently?.id === backendDocument.id}
-                    onOpenChange={(open) => {
-                      if (!open && deleting) return;
-                      setDeleteError(null);
-                      setDocumentToDeletePermanently(open ? backendDocument : null);
-                    }}
-                  >
-                    <Popover.Trigger asChild>
-                      <button
-                        type="button"
-                        aria-label={t('contextRoom:resource.permanentlyDeleteDocumentName', { name: resource.name })}
-                        title={t('contextRoom:resource.deletePermanently')}
-                        disabled={deleting}
-                      >
-                        <Trash2 aria-hidden="true" />
-                      </button>
-                    </Popover.Trigger>
-                    <Popover.Portal>
-                      <Popover.Content
-                        className="context-room-document-delete-popover"
-                        side="right"
-                        align="center"
-                        sideOffset={8}
-                        collisionPadding={12}
-                        aria-label={t('contextRoom:resource.confirmPermanentlyDeletingDocumentName', { name: resource.name })}
-                      >
-                        <p>{t('contextRoom:resource.permanentlyDeleteName', { name: resource.name })}</p>
-                        <span>{t('contextRoom:resource.theContentAndVersionHistoryCannotBeRestored')}</span>
-                        {deleteError ? <small role="alert">{deleteError}</small> : null}
-                        <footer>
-                          <Popover.Close asChild>
-                            <button type="button" disabled={deleting}>{t('contextRoom:resource.cancel')}</button>
-                          </Popover.Close>
-                          <button
-                            type="button"
-                            className="is-danger"
-                            disabled={deleting}
-                            onClick={() => void confirmPermanentDelete(backendDocument)}
-                          >
-                            {t(deleting ? 'contextRoom:resource.deleting' : 'contextRoom:resource.deletePermanently')}
-                          </button>
-                        </footer>
-                        <Popover.Arrow className="context-room-document-delete-arrow" />
-                      </Popover.Content>
-                    </Popover.Portal>
-                  </Popover.Root>
+            <div className="context-room-artifact-row" key={key}>
+              <button
+                type="button"
+                className="context-room-artifact-item"
+                aria-selected={selectedId === resource.id}
+                onClick={() => onSelect(resource)}
+              >
+                <span className="context-room-artifact-ico"><FileText aria-hidden="true" /></span>
+                <span className="context-room-artifact-body">
+                  <b>{resource.name}</b>
+                  <small>{office
+                    ? `${office.sizeLabel} · ${office.statusLabel}`
+                    : cloud && `${cloud.version} · ${cloud.updatedAt}`}</small>
                 </span>
-              ) : (
-                <span className="context-room-artifact-acts">
-                  <Popover.Root
-                    open={documentToDelete?.id === backendDocument.id}
-                    onOpenChange={(open) => {
-                      if (!open && deleting) return;
-                      setDeleteError(null);
-                      setDocumentToDelete(open ? backendDocument : null);
-                    }}
-                  >
-                    <Popover.Trigger asChild>
-                      <button
-                        type="button"
-                        aria-label={t('contextRoom:resource.moveDocumentNameToTrash', { name: resource.name })}
-                        title={t(busy ? 'contextRoom:resource.agentIsWritingThisDocumentCannotBeMoved' : 'contextRoom:resource.moveToTrash')}
-                        disabled={busy || deleting}
-                      >
-                        <Trash2 aria-hidden="true" />
-                      </button>
-                    </Popover.Trigger>
-                    <Popover.Portal>
-                      <Popover.Content
-                        className="context-room-document-delete-popover"
-                        side="right"
-                        align="center"
-                        sideOffset={8}
-                        collisionPadding={12}
-                        aria-label={t('contextRoom:resource.confirmMovingDocumentNameToTrash', { name: resource.name })}
-                      >
-                        <p>{t('contextRoom:resource.confirmMoveToTrash')}</p>
-                        <span>{t('contextRoom:resource.nameCanBeRestoredFromTrash', { name: resource.name })}</span>
-                        {deleteError ? <small role="alert">{deleteError}</small> : null}
-                        <footer>
-                          <Popover.Close asChild>
-                            <button type="button" disabled={deleting}>{t('contextRoom:resource.cancel')}</button>
-                          </Popover.Close>
-                          <button
-                            type="button"
-                            className="is-danger"
-                            disabled={deleting}
-                            onClick={() => void confirmDelete(backendDocument)}
-                          >
-                            {t(deleting ? 'contextRoom:resource.moving' : 'contextRoom:resource.move')}
-                          </button>
-                        </footer>
-                        <Popover.Arrow className="context-room-document-delete-arrow" />
-                      </Popover.Content>
-                    </Popover.Portal>
-                  </Popover.Root>
+                <span className="context-room-artifact-meta">
+                  {office ? (
+                    <span className="context-room-artifact-tag is-draft">{t('contextRoom:artifactLibrary.agentGenerated')}</span>
+                  ) : citations > 0 ? (
+                    <span className="context-room-artifact-tag">{t('contextRoom:artifactLibrary.citationCount', { count: citations })}</span>
+                  ) : null}
                 </span>
-              )}
+              </button>
             </div>
           );
         })}
         {visibleArtifacts.length === 0 ? (
-          artifacts.length === 0 && trashedArtifacts.length === 0 ? (
-            officeArtifacts.length > 0 && filter === 'all' ? null : (
-              <PanelEmptyState
-                compact
-                icon={Package}
-                title={t('contextRoom:artifactLibrary.noArtifactsYet')}
-              />
-            )
-          ) : (
-            <PanelEmptyState
-              compact
-              icon={Package}
-              title={t(filter === 'trash' && trashedArtifacts.length === 0
-                ? 'contextRoom:resource.trashIsEmpty'
-                : 'contextRoom:artifactLibrary.emptyFilter')}
-            />
-          )
+          <PanelEmptyState
+            compact
+            icon={Package}
+            title={t(filter === 'all'
+              ? 'contextRoom:artifactLibrary.noArtifactsYet'
+              : filter === 'office'
+                ? 'contextRoom:artifactLibrary.noOfficeYet'
+                : 'contextRoom:artifactLibrary.noCloudDocYet')}
+          />
         ) : null}
       </div>
     </div>

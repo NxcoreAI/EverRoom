@@ -153,6 +153,9 @@ importers:
       mermaid:
         specifier: ^11.12.0
         version: 11.17.0
+      npm:
+        specifier: ^11.19.1
+        version: 11.19.1
       ntn:
         specifier: 0.23.1
         version: 0.23.1
@@ -7532,6 +7535,77 @@ packages:
   normalize-url@6.0.1:
     resolution: {integrity: sha512-VU4pzAuh7Kip71XEmO9aNREYAdMHFGTVj/i+CaTImS8x0i1d3jUZkXhqluy/PRgjPLMgsLQulYY3PJ/aSbSjpQ==}
     engines: {node: '>=10'}
+
+  npm@11.19.1:
+    resolution: {integrity: sha512-ztsxKxt/kkIaAs+2i0GU6I+DRmUdrNasxTZKJe9TCdSjKxlhah/4r/hl5ygMD6XAg1qZ9c2TNomR4qgOydp10g==}
+    engines: {node: ^20.17.0 || >=22.9.0}
+    hasBin: true
+    bundledDependencies:
+      - '@isaacs/string-locale-compare'
+      - '@npmcli/arborist'
+      - '@npmcli/config'
+      - '@npmcli/fs'
+      - '@npmcli/map-workspaces'
+      - '@npmcli/metavuln-calculator'
+      - '@npmcli/package-json'
+      - '@npmcli/promise-spawn'
+      - '@npmcli/redact'
+      - '@npmcli/run-script'
+      - '@sigstore/tuf'
+      - abbrev
+      - archy
+      - cacache
+      - chalk
+      - ci-info
+      - fastest-levenshtein
+      - fs-minipass
+      - glob
+      - graceful-fs
+      - hosted-git-info
+      - ini
+      - init-package-json
+      - is-cidr
+      - json-parse-even-better-errors
+      - libnpmaccess
+      - libnpmdiff
+      - libnpmexec
+      - libnpmfund
+      - libnpmorg
+      - libnpmpack
+      - libnpmpublish
+      - libnpmsearch
+      - libnpmteam
+      - libnpmversion
+      - make-fetch-happen
+      - minimatch
+      - minipass
+      - minipass-pipeline
+      - ms
+      - node-gyp
+      - nopt
+      - npm-audit-report
+      - npm-install-checks
+      - npm-package-arg
+      - npm-pick-manifest
+      - npm-profile
+      - npm-registry-fetch
+      - npm-user-validate
+      - p-map
+      - pacote
+      - parse-conflict-json
+      - proc-log
+      - qrcode-terminal
+      - read
+      - semver
+      - spdx-expression-parse
+      - ssri
+      - supports-color
+      - tar
+      - text-table
+      - tiny-relative-date
+      - treeverse
+      - validate-npm-package-name
+      - which
 
   ntn@0.23.1:
     resolution: {integrity: sha512-creSDPME9S8ghGghjgDBYbR4rEVWz/L726AiWAH1wvO3mI/dg85AjsHw5+rmwVdKGb0IvLg542LKBbNfzKFEhQ==}
@@ -17135,6 +17209,8 @@ snapshots:
   normalize-path@3.0.0: {}
 
   normalize-url@6.0.1: {}
+
+  npm@11.19.1: {}
 
   ntn@0.23.1: {}
 

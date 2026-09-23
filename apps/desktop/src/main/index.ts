@@ -13,6 +13,7 @@ import type {
   ImportRoomDocumentInput,
   DocumentOperationCommandInput,
   LocalAgentInvocationTarget,
+  LocalAcpAdapterSpawn,
   SaveRoomDocumentInput,
   StartAgentRunInput,
   StartDocumentOperationInput,
@@ -131,7 +132,9 @@ import { BrowserExtensionService } from './browser-extension/browser-extension-s
 import { CLIPPER_ASSET_SCHEME, type BrowserExtensionStatus } from '../shared/browser-extension'
 import { OBSIDIAN_VAULT_ASSET_SCHEME } from '../shared/obsidian'
 import { ObsidianVaultService } from './obsidian/obsidian-vault-service'
-import { createLocalAgentDiscovery, installLocalAgentAcpAdapter, isSafeLocalAgentPath, probeLocalAgentAcpAdapter } from './local-agents/discovery'
+import { createLocalAgentDiscovery, isSafeLocalAgentPath, probeLocalAgentAcpAdapter } from './local-agents/discovery'
+import { installLocalAgentAcpAdapter, resolveLocalAcpAdapterSpawn } from './local-agents/adapter-install'
+import { bundledNpmCliPath, localAgentAdaptersRoot } from './local-agents/local-agent-paths'
 import { LocalAgentWorkspaceBindingStore } from './local-agents/workspace-binding-store'
 import type { LocalAgentInstallation, LocalAgentWorkspaceBinding } from '../shared/local-agents'
 import { MigrationsGatewayBridge } from './gateway/migrations-gateway-bridge'
@@ -2207,8 +2210,12 @@ function registerMigrationHandlers(coordinator: MigrationCoordinator): void {
 }
 
 function registerAgentHandlers(bridge: AgentGatewayBridge, migrationCoordinator: MigrationCoordinator): void {
-  const localAgentDiscovery = createLocalAgentDiscovery()
+  const localAgentDiscovery = createLocalAgentDiscovery({ adaptersRoot: localAgentAdaptersRoot() })
   let localAgents: LocalAgentInstallation[] = []
+  // 派发 target 的适配器 spawn 覆盖缓存（登录 shell PATH 探测较慢，命中后复用；
+  // 安装/复检/重扫后失效）。
+  const adapterSpawnCache = new Map<string, LocalAcpAdapterSpawn | null>()
+  const invalidateAdapterSpawnCache = () => adapterSpawnCache.clear()
   const workspaceBindings = new Map<string, LocalAgentWorkspaceBinding>()
   const workspaceBindingStore = new LocalAgentWorkspaceBindingStore(
     join(app.getPath('userData'), 'local-agent-workspaces.json'),
@@ -2225,6 +2232,7 @@ function registerAgentHandlers(bridge: AgentGatewayBridge, migrationCoordinator:
   }
   const scanLocalAgents = async () => {
     localAgents = await localAgentDiscovery.scan()
+    invalidateAdapterSpawnCache()
     return localAgents
   }
   handle(AGENT_CHANNELS.discoverLocalAgents, scanLocalAgents)
@@ -2234,6 +2242,7 @@ function registerAgentHandlers(bridge: AgentGatewayBridge, migrationCoordinator:
     if (wanted.some((id) => !localAgents.some((agent) => agent.id === id))) {
       await scanLocalAgents()
     }
+    invalidateAdapterSpawnCache()
     const targets = wanted
       .map((id) => localAgents.find((agent) => agent.id === id))
       .filter((agent): agent is LocalAgentInstallation => Boolean(agent?.invocationSupported))
@@ -2241,7 +2250,7 @@ function registerAgentHandlers(bridge: AgentGatewayBridge, migrationCoordinator:
       agentId: agent.id,
       provider: agent.provider,
       displayName: agent.displayName,
-      adapter: await probeLocalAgentAcpAdapter(agent),
+      adapter: await probeLocalAgentAcpAdapter(agent, { adaptersRoot: localAgentAdaptersRoot() }),
     })))
   })
   handle(AGENT_CHANNELS.installLocalAgentAdapter, async (_event, agentId: string) => {
@@ -2254,7 +2263,13 @@ function registerAgentHandlers(bridge: AgentGatewayBridge, migrationCoordinator:
     if (!installation?.invocationSupported) {
       throw new Error('选择的本机 Agent 当前不可调用。')
     }
-    return installLocalAgentAcpAdapter(installation)
+    const result = await installLocalAgentAcpAdapter(installation, {
+      adaptersRoot: localAgentAdaptersRoot(),
+      npmCliPath: bundledNpmCliPath(),
+      proxyEnv: await detectSystemProxyEnvironment(),
+    })
+    invalidateAdapterSpawnCache()
+    return result
   })
   handle(AGENT_CHANNELS.bindLocalAgentWorkspace, async (event, agentId: string, sessionId: string) => {
     if (!localAgents.some((agent) => agent.id === agentId && agent.invocationSupported)) {
@@ -2363,6 +2378,15 @@ function registerAgentHandlers(bridge: AgentGatewayBridge, migrationCoordinator:
       const workingDirectory = validatedBinding?.rootPath
         ?? unboundWorkspaceRoot(installation.id, targetSessionId)
       await mkdir(workingDirectory, { recursive: true })
+      // gateway 继承 GUI 瘦 PATH，bare bin 名常常解析不到——把桌面端（登录 shell
+      // 合并 PATH + 私有安装目录）解析出的绝对路径 spawn 覆盖随 target 下发。
+      if (!adapterSpawnCache.has(installation.provider)) {
+        adapterSpawnCache.set(
+          installation.provider,
+          await resolveLocalAcpAdapterSpawn(installation, { adaptersRoot: localAgentAdaptersRoot() })
+            .catch(() => null),
+        )
+      }
       return {
         id: installation.id,
         provider: installation.provider,
@@ -2371,6 +2395,7 @@ function registerAgentHandlers(bridge: AgentGatewayBridge, migrationCoordinator:
         workingDirectory,
         permissionProfile: validatedBinding?.permissionProfile ?? 'inspect',
         card: installation.card,
+        acpAdapter: adapterSpawnCache.get(installation.provider) ?? null,
       }
     }
     const referencedLocalAgentIds = request.context?.referencedLocalAgentIds ?? []
