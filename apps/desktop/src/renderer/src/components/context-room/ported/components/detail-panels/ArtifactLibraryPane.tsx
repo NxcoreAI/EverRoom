@@ -197,7 +197,7 @@ export function ArtifactLibraryPane({
           </Popover.Trigger>
           <Popover.Portal>
             <Popover.Content
-              className="context-room-document-create-popover"
+              className={`context-room-document-create-popover${createType === null ? ' is-chooser' : ''}`}
               side="right"
               align="start"
               sideOffset={8}

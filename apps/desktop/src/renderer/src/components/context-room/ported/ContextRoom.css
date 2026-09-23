@@ -4057,6 +4057,7 @@
 
 .context-room-office-viewer {
   position: relative;
+  isolation: isolate;
   display: grid;
   height: 100%;
   min-width: 0;
@@ -15101,13 +15102,20 @@ button.eg-walk.is-next:hover {
 .context-room-embedded-office-host {
   position: relative;
   width: 100%;
+  /* GenOffice 内部样式带 z-index 999999999 级图层；isolation 把它们锁在
+     容器自己的层叠上下文里，避免盖住 app 级弹层（如产物新建弹框）。 */
+  isolation: isolate;
   background: var(--cr-surface);
 }
 
 /* 新建产物：类型选择网格（轻文档 / Word / PPT / Excel）。 */
+.context-room-document-create-popover.is-chooser {
+  width: min(360px, calc(100vw - 24px));
+}
+
 .context-room-document-create-types {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 6px;
 }
 
@@ -15115,6 +15123,7 @@ button.eg-walk.is-next:hover {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
   padding: 9px 10px;
   border: 1px solid var(--cr-border);
   border-radius: 7px;
