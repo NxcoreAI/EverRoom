@@ -42,7 +42,8 @@
   border-color: var(--accent);
 }
 
-.mem-searchbox input {
+.mem-searchbox input,
+.mem-searchbox input:focus-visible {
   border: none;
   outline: none;
   background: transparent;
