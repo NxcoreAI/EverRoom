@@ -124,7 +124,7 @@ export function LocalAgentAdapterWizard({ initialChecks, onProceed, onCancel }: 
             {!check.adapter.installed ? (
               <button
                 type="button"
-                className="agent-shell-approve agent-adapter-wizard-install"
+                className="agent-adapter-wizard-install"
                 disabled={busy}
                 onClick={() => void install(check.agentId)}
               >

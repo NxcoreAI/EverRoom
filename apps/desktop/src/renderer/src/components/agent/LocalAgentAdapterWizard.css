@@ -54,9 +54,24 @@
   height: 11px;
 }
 
-.agent-adapter-wizard-install {
+/* 安装按钮不复用 agent-shell-approve 的深底样式——它落在深色命令块里会
+   同色隐身；改为纸感卡片同色系的高对比主行动样式。 */
+.agent-shell-approval .agent-adapter-wizard-install {
   justify-self: start;
-  margin-top: 8px;
+  margin: 8px 9px 9px;
+  min-height: 32px;
+  border: 1px solid #d9c391;
+  background: #f7ead0;
+  color: #4c3d1f;
+}
+
+.agent-shell-approval .agent-adapter-wizard-install:hover:not(:disabled) {
+  background: #f1dfb9;
+}
+
+.agent-shell-approval .agent-adapter-wizard-install:disabled {
+  cursor: wait;
+  opacity: 0.6;
 }
 
 .agent-adapter-wizard-error {
