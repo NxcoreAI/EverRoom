@@ -42,16 +42,12 @@ export function ConversationPane({ focusSessionId }: { focusSessionId?: string |
   const { locale, t } = useLocale()
   const [reloadTick, setReloadTick] = useState(0)
   const [sessionFilter, setSessionFilter] = useState('')
-  const [conversationsOnly, setConversationsOnly] = useState(false)
   const [confirmingId, setConfirmingId] = useState<string | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const { data, failure, loading } = useAsyncData(
-    () => window.nxcore!.memory.listConversations({
-      limit: RECENT_LIMIT,
-      ...(conversationsOnly ? { sourceKind: 'conversation' as const } : {}),
-    }),
-    [reloadTick, conversationsOnly],
+    () => window.nxcore!.memory.listConversations({ limit: RECENT_LIMIT }),
+    [reloadTick],
   )
 
   // 溯源跳转：原子记忆 → 按会话过滤
@@ -60,9 +56,21 @@ export function ConversationPane({ focusSessionId }: { focusSessionId?: string |
   }, [focusSessionId])
 
   const groups = useMemo(() => groupBySession(data?.messages ?? []), [data])
+  // 会话记录只展示真实对话；文档导入块（memdoc:*）归「文档记录」页管理，
+  // 仅在溯源定位到该会话时单独可见。
+  const conversationGroups = groups.filter((group) => !group.isDocument)
+  const focusedDocumentGroup = sessionFilter.startsWith('memdoc:')
+    ? groups.find((group) => group.sessionId === sessionFilter)
+    : undefined
   const visibleGroups = sessionFilter
-    ? groups.filter((group) => group.sessionId === sessionFilter)
-    : groups
+    ? conversationGroups.filter((group) => group.sessionId === sessionFilter).concat(focusedDocumentGroup ?? [])
+    : conversationGroups
+  const sessionTitle = (group: ConversationGroup): string => {
+    if (group.isDocument || group.sessionId === UNKNOWN_SESSION_ID) return sessionLabel(group.sessionId)
+    const firstUser = group.messages.find((message) => message.role === 'user') ?? group.messages[0]
+    const excerpt = firstUser?.content.replace(/\s+/g, ' ').trim().slice(0, 28)
+    return excerpt || sessionLabel(group.sessionId)
+  }
   const sessionLabel = (sessionId: string) => sessionId === UNKNOWN_SESSION_ID
     ? t('memory:conversation.unknownSession')
     : sessionId
@@ -87,23 +95,15 @@ export function ConversationPane({ focusSessionId }: { focusSessionId?: string |
   return (
     <div className="mem-conversation">
       <div className="mem-toolbar">
-        <span className="mem-count">{t('memory:conversation.latestCountMessagesLimitLimit', { count: data?.messages.length ?? 0, limit: RECENT_LIMIT })}</span>
-        <label className="mem-source-toggle" title={t('memory:conversation.excludeSessionBlocksCreatedFromImportedMarkdownDocuments')}>
-          <input
-            type="checkbox"
-            checked={conversationsOnly}
-            onChange={(event) => { setConversationsOnly(event.target.checked); setSessionFilter('') }}
-          />
-          {t('memory:conversation.conversationsOnly')}
-        </label>
-        {groups.length > 1 ? (
+        <span className="mem-count">{t('memory:conversation.latestCountMessagesLimitLimit', { count: visibleGroups.reduce((sum, group) => sum + group.messages.length, 0), limit: RECENT_LIMIT })}</span>
+        {conversationGroups.length > 1 ? (
           <label className="mem-session-filter">
             {t('memory:conversation.conversations')}
             <select value={sessionFilter} onChange={(event) => setSessionFilter(event.target.value)}>
-              <option value="">{t('memory:conversation.allCount', { count: groups.length })}</option>
-              {groups.map((group) => (
+              <option value="">{t('memory:conversation.allCount', { count: conversationGroups.length })}</option>
+              {conversationGroups.map((group) => (
                 <option key={group.sessionId} value={group.sessionId}>
-                  {t('memory:conversation.idCountItems', { id: sessionLabel(group.sessionId), count: group.messages.length })}
+                  {t('memory:conversation.idCountItems', { id: sessionTitle(group), count: group.messages.length })}
                 </option>
               ))}
             </select>
@@ -132,7 +132,7 @@ export function ConversationPane({ focusSessionId }: { focusSessionId?: string |
                 onClick={() => setSessionFilter(sessionFilter === group.sessionId ? '' : group.sessionId)}
                 title={t('memory:conversation.filterByThisSession')}
               >
-                {sessionLabel(group.sessionId)}
+                {sessionTitle(group)}
                 {group.isDocument ? <span className="mem-doc-badge">{t('memory:conversation.documents')}</span> : null}
               </button>
               <small>{group.latestAt ? formatDate(group.latestAt, locale) : ''} · {t('memory:conversation.countItems', { count: group.messages.length })}</small>
