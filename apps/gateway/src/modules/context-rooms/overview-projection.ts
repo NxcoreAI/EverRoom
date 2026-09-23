@@ -415,16 +415,20 @@ export function buildRoomOverviewProjection(input: {
       ...calendarEvents, ...todoTimeline, ...documentEvents, ...factTimeline, ...legacyTimeline,
     ]).sort((left, right) =>
       (right.occurredAt ?? "").localeCompare(left.occurredAt ?? "") || left.id.localeCompare(right.id)),
-    entities: applied.entities.map((entity) => createRoomOverviewClaim(
-      "entities", entity.summary ? `${entity.name}：${entity.summary}` : entity.name,
-      "fact", entity.sources.map(sourceOf), entity.salience, undefined,
-      {
-        kind: "entity", entityId: entity.entityId, entityKind: entity.kind,
-        entityStatus: entity.status, linkedRoomId: entity.linkedRoomId,
-        salience: entity.salience, mentionCount: entity.mentionCount,
-      },
-      `entity:${entity.entityId}`,
-    )),
+    // 概览只展示关联度（salience）最高的前 10 个实体，同分按提及次数排序。
+    entities: [...applied.entities]
+      .sort((left, right) => right.salience - left.salience || right.mentionCount - left.mentionCount)
+      .slice(0, 10)
+      .map((entity) => createRoomOverviewClaim(
+        "entities", entity.summary ? `${entity.name}：${entity.summary}` : entity.name,
+        "fact", entity.sources.map(sourceOf), entity.salience, undefined,
+        {
+          kind: "entity", entityId: entity.entityId, entityKind: entity.kind,
+          entityStatus: entity.status, linkedRoomId: entity.linkedRoomId,
+          salience: entity.salience, mentionCount: entity.mentionCount,
+        },
+        `entity:${entity.entityId}`,
+      )),
     appliedCorrectionIds: [],
   };
 }

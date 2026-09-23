@@ -28,6 +28,7 @@ export function MemoryPane({
   onUpdateRoom,
   onOpenRoom,
   onOpenSource,
+  focusEntityId,
 }: {
   room: ContextRoomRecord;
   onUpdateRoom: (updater: (room: ContextRoomRecord) => ContextRoomRecord) => void;
@@ -35,6 +36,8 @@ export function MemoryPane({
   onOpenRoom: (roomId: string) => void;
   /** 来源资料行点击跳转：文档类在右区打开、邮件进邮箱面板详情（独立渲染时不传则只读）。 */
   onOpenSource?: (source: RoomAppliedEntitySource) => void;
+  /** 概览实体 chip 点击带来的聚焦实体（applied 实体 id，实体数据异步到位后选中）。 */
+  focusEntityId?: string | null;
 }) {
   const { t, locale } = useLocale();
   const appliedMemory = useRoomAppliedEntities(room.id, room.updatedAt);
@@ -61,6 +64,15 @@ export function MemoryPane({
     setSelectedId(graphData.rootId);
     setDisableConfirmOpen(false);
   }, [graphData.rootId, room.id]);
+
+  // 概览实体 chip 聚焦：applied 实体数据异步加载，节点就绪后再选中。
+  useEffect(() => {
+    if (!focusEntityId) return;
+    const node = graphData.nodes.find(
+      (candidate) => candidate.kind === 'entity' && candidate.entityId === focusEntityId,
+    );
+    if (node) setSelectedId(node.id);
+  }, [focusEntityId, graphData.nodes]);
 
   if (showFullGraph && hasGraphContent) {
     return (

@@ -256,6 +256,13 @@ export function PortedDetail({
     layout.switchBoard('relations', 'linkGraph')
   }), [room.id, room.memoryItems, layout])
 
+  // 概览关联实体 chip → 关联记忆板块的实体-事实图谱，聚焦该实体节点看详情。
+  const [memoryFocusEntityId, setMemoryFocusEntityId] = useState<string | null>(null)
+  const openEntity = useCallback((entityId: string) => {
+    setMemoryFocusEntityId(entityId)
+    layout.switchBoard('relations', 'entities')
+  }, [layout])
+
   useEffect(() => {
     if (selectedResourceId
       && (getRoomResource(library, room.id, selectedResourceId)
@@ -366,6 +373,8 @@ export function PortedDetail({
           onOpenWikiPage={openWikiPage}
           onOpenDocument={openDocumentById}
           linkGraphFocusNodeId={linkGraphFocusNodeId}
+          onOpenEntity={openEntity}
+          memoryFocusEntityId={memoryFocusEntityId}
           onOpenObject={openObject}
           onOpenSource={openSource}
           onCloseObject={() => {

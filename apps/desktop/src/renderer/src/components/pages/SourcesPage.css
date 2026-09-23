@@ -2,7 +2,71 @@
    颜色取自 tokens.css；--src-* 为本页私有扩展（tokens.css 无 ok 绿）。 */
 .src-page {
   --src-ok: #239f91;
+  /* glyph 图标的语义色调（取自 tokens 的 --icon-* 家族）：文件夹/文档/表格/幻灯片… */
+  --tone-folder: var(--icon-room);
+  --tone-doc: var(--icon-document);
+  --tone-sheet: var(--icon-data);
+  --tone-slides: var(--icon-memory);
+  --tone-web: var(--icon-people);
+  --tone-mail: var(--icon-communication);
+  --tone-cal: var(--icon-calendar);
+  --tone-todo: var(--icon-task);
+  --tone-data: var(--icon-data);
+  --tone-sense: var(--icon-ai);
   position: relative;
+}
+
+/* glyph 容器按 tone 上柔和底色 + 同色图标（连接位/来源卡/台账行共用）。
+   data-tone 落在容器上，glyph 经 currentColor 继承。 */
+.src-connect-tile-icon[data-tone="folder"], .src-card-logo[data-tone="folder"], .src-feed-logo[data-tone="folder"] {
+  background: color-mix(in srgb, var(--tone-folder) 9%, var(--surface));
+  border-color: color-mix(in srgb, var(--tone-folder) 20%, var(--border));
+  color: var(--tone-folder);
+}
+.src-connect-tile-icon[data-tone="doc"], .src-card-logo[data-tone="doc"], .src-feed-logo[data-tone="doc"] {
+  background: color-mix(in srgb, var(--tone-doc) 9%, var(--surface));
+  border-color: color-mix(in srgb, var(--tone-doc) 20%, var(--border));
+  color: var(--tone-doc);
+}
+.src-connect-tile-icon[data-tone="sheet"], .src-card-logo[data-tone="sheet"], .src-feed-logo[data-tone="sheet"] {
+  background: color-mix(in srgb, var(--tone-sheet) 9%, var(--surface));
+  border-color: color-mix(in srgb, var(--tone-sheet) 20%, var(--border));
+  color: var(--tone-sheet);
+}
+.src-connect-tile-icon[data-tone="slides"], .src-card-logo[data-tone="slides"], .src-feed-logo[data-tone="slides"] {
+  background: color-mix(in srgb, var(--tone-slides) 9%, var(--surface));
+  border-color: color-mix(in srgb, var(--tone-slides) 20%, var(--border));
+  color: var(--tone-slides);
+}
+.src-connect-tile-icon[data-tone="web"], .src-card-logo[data-tone="web"], .src-feed-logo[data-tone="web"] {
+  background: color-mix(in srgb, var(--tone-web) 9%, var(--surface));
+  border-color: color-mix(in srgb, var(--tone-web) 20%, var(--border));
+  color: var(--tone-web);
+}
+.src-connect-tile-icon[data-tone="mail"], .src-card-logo[data-tone="mail"], .src-feed-logo[data-tone="mail"] {
+  background: color-mix(in srgb, var(--tone-mail) 9%, var(--surface));
+  border-color: color-mix(in srgb, var(--tone-mail) 20%, var(--border));
+  color: var(--tone-mail);
+}
+.src-connect-tile-icon[data-tone="cal"], .src-card-logo[data-tone="cal"], .src-feed-logo[data-tone="cal"] {
+  background: color-mix(in srgb, var(--tone-cal) 9%, var(--surface));
+  border-color: color-mix(in srgb, var(--tone-cal) 20%, var(--border));
+  color: var(--tone-cal);
+}
+.src-connect-tile-icon[data-tone="todo"], .src-card-logo[data-tone="todo"], .src-feed-logo[data-tone="todo"] {
+  background: color-mix(in srgb, var(--tone-todo) 9%, var(--surface));
+  border-color: color-mix(in srgb, var(--tone-todo) 20%, var(--border));
+  color: var(--tone-todo);
+}
+.src-connect-tile-icon[data-tone="data"], .src-card-logo[data-tone="data"], .src-feed-logo[data-tone="data"] {
+  background: color-mix(in srgb, var(--tone-data) 9%, var(--surface));
+  border-color: color-mix(in srgb, var(--tone-data) 20%, var(--border));
+  color: var(--tone-data);
+}
+.src-connect-tile-icon[data-tone="sense"], .src-card-logo[data-tone="sense"], .src-feed-logo[data-tone="sense"] {
+  background: color-mix(in srgb, var(--tone-sense) 9%, var(--surface));
+  border-color: color-mix(in srgb, var(--tone-sense) 20%, var(--border));
+  color: var(--tone-sense);
 }
 
 /* ── 页头 ─────────────────────────────────────────────── */
@@ -78,12 +142,14 @@
   box-shadow: 0 14px 34px rgba(0, 0, 0, 0.14);
 }
 
-/* ── 连接入口「应用架」：一张安静面板 + 裸品牌位 ──────── */
+/* ── 连接入口「应用架」：一张安静面板 + 统一圆角图标盒 ── */
 .src-connect-grid {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 2px 6px;
-  padding: 8px;
+  display: grid;
+  /* auto-fit：条目不足一行时轨道折叠、条目拉伸铺满面板（主页 limit=6 不再留白）；
+     磁贴自身限宽居中，二级页分组条目少时不会撑成巨块 */
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+  gap: 4px;
+  padding: 10px;
   border: 1px solid var(--border);
   border-radius: 14px;
   background: var(--surface);
@@ -92,9 +158,11 @@
 .src-connect-tile {
   display: grid;
   justify-items: center;
-  gap: 7px;
-  width: 96px;
-  padding: 12px 4px 10px;
+  justify-self: center;
+  gap: 8px;
+  width: 100%;
+  max-width: 148px;
+  padding: 12px 6px 10px;
   border: 0;
   border-radius: 11px;
   background: transparent;
@@ -107,21 +175,23 @@
 .src-connect-tile:hover:not(:disabled) { background: var(--hover); }
 .src-connect-tile:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .src-connect-tile:disabled { opacity: 0.5; cursor: default; }
+/* 图标盒：所有入口（品牌标/glyph）一律同一圆角容器,视觉节奏与卡片、台账一致 */
 .src-connect-tile-icon {
   display: grid;
   place-items: center;
   width: 44px;
   height: 44px;
   border-radius: 12px;
+  background: var(--chrome);
+  border: 1px solid var(--border);
   overflow: hidden;
   transition: transform 0.14s ease, border-color 0.14s ease;
 }
 .src-connect-tile:hover:not(:disabled) .src-connect-tile-icon { transform: translateY(-1px); }
-.src-connect-tile-icon img { width: 100%; height: 100%; }
-.src-connect-tile-icon img[data-fill="mark"] { width: 72%; height: 72%; }
-.src-connect-tile-icon:has(> .glyph) { background: var(--surface-alt); border: 1px solid var(--border); }
-.src-connect-tile:hover:not(:disabled) .src-connect-tile-icon:has(> .glyph) { border-color: var(--border-strong); }
-.src-connect-tile-icon > .glyph { width: 24px; height: 24px; color: var(--muted); }
+.src-connect-tile:hover:not(:disabled) .src-connect-tile-icon:not([data-tone]) { border-color: var(--border-strong); }
+.src-connect-tile-icon img { width: 66%; height: 66%; }
+.src-connect-tile-icon img[data-fill="tile"] { width: 100%; height: 100%; }
+.src-connect-tile-icon > .glyph { width: 22px; height: 22px; }
 .src-connect-tile-label {
   display: flex;
   align-items: center;
@@ -241,6 +311,7 @@
 @keyframes src-ring-flow-2 { from { stroke-dashoffset: 12; } to { stroke-dashoffset: -88; } }
 @keyframes src-ring-flow-3 { from { stroke-dashoffset: 20; } to { stroke-dashoffset: -80; } }
 .src-card-head { display: flex; align-items: center; gap: 11px; }
+/* logo 容器：统一圆角盒（品牌标/glyph 一致）；glyph 按 data-tone 着色 */
 .src-card-logo {
   width: 38px;
   height: 38px;
@@ -248,13 +319,14 @@
   display: grid;
   place-items: center;
   border-radius: 10px;
+  background: var(--chrome);
+  border: 1px solid var(--border);
   overflow: hidden;
 }
 /* 品牌 logo 填满容器（圆角裁切）：自带底板的素材 100%；裸标缩放留边防顶角 */
 .src-card-logo img { width: 100%; height: 100%; display: block; }
-.src-card-logo img[data-fill="mark"] { width: 72%; height: 72%; }
-.src-card-logo:has(> .glyph) { background: var(--surface-alt); border: 1px solid var(--border); }
-.src-card-logo > .glyph { width: 23px; height: 23px; color: var(--muted); }
+.src-card-logo img[data-fill="mark"] { width: 66%; height: 66%; }
+.src-card-logo > .glyph { width: 21px; height: 21px; }
 .src-card-title { flex: 1; min-width: 0; }
 .src-card-title h3 {
   margin: 0;
@@ -346,11 +418,15 @@
 .src-card-time { margin-left: auto; color: var(--subtle); font-size: 11px; white-space: nowrap; }
 .src-card-foot { display: flex; align-items: flex-end; margin-top: auto; }
 .src-card-foot .src-card-time { margin-left: auto; }
+/* 卡面操作：全部纯图标方钮（文案统一收进 tooltip/无障碍名），视觉一致 */
+.src-card-actions { display: flex; align-items: center; gap: 6px; margin-top: 10px; }
+.src-card-actions .src-mini-btn { width: 27px; padding: 0; justify-content: center; }
+.src-card-actions .src-mini-btn svg { width: 13px; height: 13px; }
 
 /* ── 最近进入 feed ────────────────────────────────────── */
 .src-feed {
   border: 1px solid var(--border);
-  border-radius: 9px;
+  border-radius: 12px;
   background: var(--surface);
   box-shadow: var(--raised-shadow);
   overflow: hidden;
@@ -368,7 +444,8 @@
 }
 .src-feed-row:first-child { border-top: 0; }
 .src-feed-row:hover { background: var(--surface-alt); }
-/* 行首 logo：统一头像块（淡底 + 边框），品牌图/自带底板/glyph 一律 72% 居中,视觉等大 */
+/* 行首 logo：统一头像块（淡底 + 边框），品牌图/自带底板/glyph 一律居中,视觉等大；
+   data-tone（dataType 语义色）由顶部共用规则着色 */
 .src-feed-logo {
   width: 30px;
   height: 30px;
@@ -376,11 +453,18 @@
   overflow: hidden;
   display: grid;
   place-items: center;
-  background: var(--surface-alt);
+  background: var(--chrome);
   border: 1px solid var(--border);
 }
 .src-feed-logo img { width: 72%; height: 72%; }
-.src-feed-logo .glyph { width: 15px; height: 15px; color: var(--muted); }
+.src-feed-logo .glyph {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+}
+.src-feed-logo .glyph svg { width: 16px; height: 16px; }
+.src-feed-logo[data-tone] .glyph { color: inherit; }
 .src-feed-name { min-width: 0; display: grid; gap: 1px; }
 .src-feed-name strong {
   font-size: 12.5px;
@@ -473,7 +557,7 @@
   box-shadow: var(--raised-shadow);
 }
 .src-mini-btn:hover { background: var(--surface-alt); color: var(--text); }
-.src-mini-btn svg { width: 12px; height: 12px; }
+.src-mini-btn svg { width: 13px; height: 13px; }
 .src-mini-btn:disabled { opacity: 0.45; cursor: default; }
 .src-mini-btn.danger:hover { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 35%, transparent); }
 /* 抽屉操作两层：主操作（全宽柔和强调）+ 次要操作（一行等分、永不换行） */

@@ -6,7 +6,7 @@ import type { DataSourceSummary, SourceFileSummary } from '../../../../../shared
 import type { ConnectorConnection, SyncRun, SyncScope } from '@nxcore/connector-contract'
 import type { ObsidianVaultBinding, ObsidianVaultCandidate } from '../../../../../shared/obsidian'
 import { EVIDENCE_STATUS_LABELS, FILE_STATUS_LABELS, formatBytes, formatDate } from './sourceFormatters'
-import { SourceIcon, type SourceIconKind } from './SourceIcon'
+import { GLYPH_KINDS, SourceIcon, glyphTone, type SourceIconKind } from './SourceIcon'
 import { ConnectorDocumentImportPanel } from '../ConnectorDocumentImportPanel'
 import { providerIconKind, providerLabel, SOURCE_STATUS_TONES, type StateTone } from './sourceKinds'
 import { useLocale, type Translate } from '@/i18n/LocaleContext'
@@ -157,7 +157,7 @@ export function SourceDrawer({
 }) {
   const { locale, t } = useLocale()
   const logo = (kind: SourceIconKind, glyph = false) => (
-    <span className="src-card-logo"><SourceIcon kind={kind} className={glyph ? 'glyph' : ''} /></span>
+    <span className="src-card-logo" data-tone={glyph ? glyphTone(kind) : undefined}><SourceIcon kind={kind} className={glyph ? 'glyph' : ''} /></span>
   )
   const head = (logoNode: ReactNode, name: string, sub: string, meta: ReactNode, primary: ReactNode, secondary?: ReactNode) => (
     <div className="src-drawer-head">
@@ -314,7 +314,7 @@ export function SourceDrawer({
     content = (
       <>
         {head(
-          logo(providerIconKind(connection.provider)),
+          logo(providerIconKind(connection.provider), GLYPH_KINDS.has(providerIconKind(connection.provider))),
           providerLabel(connection.provider),
           connection.connectionName,
           <>

@@ -40,7 +40,9 @@ export function WorkspacePaneBody({
   onEmptyTrash,
   onOpenDocument,
   onOpenPane,
+  onOpenEntity,
   linkGraphFocusNodeId,
+  memoryFocusEntityId,
   onOpenObject,
   onOpenSource,
   rooms,
@@ -73,8 +75,12 @@ export function WorkspacePaneBody({
   onOpenDocument: (documentId: string) => void;
   /** 概览下钻到工作板块其他页签。 */
   onOpenPane: (subtab: BoardSubtab) => void;
+  /** 概览关联实体 chip 点击：切到关联记忆板块并聚焦该实体。 */
+  onOpenEntity?: (entityId: string) => void;
   /** 索引 chip 跳转：建联图谱聚焦节点 id（memory:{id} / doc:{id}）。 */
   linkGraphFocusNodeId?: string | null;
+  /** 概览实体点击带来的记忆面板聚焦实体（applied 实体 id）。 */
+  memoryFocusEntityId?: string | null;
   onOpenObject: (target: WorkspaceObjectPreview) => void;
   onOpenSource: (source: RoomAppliedEntitySource) => void;
   rooms: ContextRoomRecord[];
@@ -155,6 +161,7 @@ export function WorkspacePaneBody({
         onSelectResource={onSelectResource}
         onOpenObject={onOpenObject}
         onOpenPane={onOpenPane}
+        onOpenEntity={onOpenEntity}
         onToggleTask={onToggleTask}
       />
     );
@@ -188,6 +195,7 @@ export function WorkspacePaneBody({
           onUpdateRoom={onUpdateRoom}
           onOpenRoom={onOpenRoom}
           onOpenSource={onOpenSource}
+          focusEntityId={memoryFocusEntityId}
         />
       );
     }
