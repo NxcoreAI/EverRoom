@@ -65,6 +65,8 @@ export interface AgentSlidesEditResult {
   saved?: boolean
   saveError?: string
   outline?: string
+  /** PageSpec 解析告警（逐页填充路径）：页面已渲染，但建议关注。 */
+  warnings?: Array<{ page: number; messages: string[] }>
 }
 
 export interface GenOfficeSlidesRuntime {
@@ -101,6 +103,11 @@ export interface GenOfficeSlidesRuntime {
     webContentsId: number,
     ops: unknown[],
     opts?: { dryRun?: boolean; isolation?: 'atomic' | 'per_op' },
+  ): Promise<AgentSlidesEditResult>
+  /** Agent 逐页填充活会话：PageSpec 经与整册生成同一条 builder/merge 管线原地替换一页。 */
+  applyAgentDeckPage(
+    webContentsId: number,
+    req: { slideIndex: number; specJson: string },
   ): Promise<AgentSlidesEditResult>
 }
 

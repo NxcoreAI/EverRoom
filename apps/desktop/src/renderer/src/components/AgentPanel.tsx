@@ -574,6 +574,7 @@ export function AgentPanel({
           focusComposer()
         }}
         pendingNavigationByRun={pendingNavigationByRun}
+        reasoningByRun={session.reasoningByRun}
         runCompletedAtByRun={session.runCompletedAtByRun}
         runStartedAtByRun={session.runStartedAtByRun}
         resolvingApprovalIds={session.resolvingApprovalIds}

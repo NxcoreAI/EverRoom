@@ -533,10 +533,14 @@
   to { background-position: -100% 50%; }
 }
 
-.agent-reasoning {
-  width: 100%;
+.agent-thinking-tail {
+  margin-left: 10px;
+  max-width: 320px;
+  overflow: hidden;
   color: #6f7784;
-  font-size: 12px;
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .agent-reasoning summary {

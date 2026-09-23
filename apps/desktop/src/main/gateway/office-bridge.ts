@@ -37,6 +37,8 @@ export interface OfficeEditRequest {
   mode: 'read' | 'apply'
   fileId: string
   ops?: unknown[]
+  /** 逐页填充：PageSpec 原地替换一页（与 ops 二选一）。 */
+  page?: { slideIndex: number; specJson: string }
   dryRun?: boolean
   isolation?: 'atomic' | 'per_op'
 }
@@ -93,7 +95,14 @@ function validEditBody(value: unknown): value is OfficeEditRequest {
   const input = value as Partial<OfficeEditRequest>
   if (typeof input.fileId !== 'string' || !input.fileId) return false
   if (input.mode !== 'read' && input.mode !== 'apply') return false
-  if (input.mode === 'apply' && !Array.isArray(input.ops)) return false
+  const page = input.page
+  if (page !== undefined && (
+    !page || typeof page !== 'object'
+    || !Number.isInteger(page.slideIndex) || page.slideIndex < 0
+    || typeof page.specJson !== 'string' || page.specJson.length === 0
+  )) return false
+  if (input.mode === 'apply' && !page && !Array.isArray(input.ops)) return false
+  if (input.mode === 'apply' && page && Array.isArray(input.ops)) return false
   if (input.dryRun !== undefined && typeof input.dryRun !== 'boolean') return false
   if (input.isolation !== undefined && input.isolation !== 'atomic' && input.isolation !== 'per_op') return false
   return true
@@ -186,7 +195,9 @@ export class OfficeBridgeServer {
     const artifactReq: SlidesEditArtifactRequest =
       req.mode === 'read'
         ? { mode: 'read' }
-        : { mode: 'apply', ops: req.ops ?? [], dryRun: req.dryRun, isolation: req.isolation }
+        : req.page
+          ? { mode: 'apply', page: req.page }
+          : { mode: 'apply', ops: req.ops ?? [], dryRun: req.dryRun, isolation: req.isolation }
     let outcome: SlidesEditArtifactOutcome
     try {
       outcome = await slidesEdit(req.fileId, artifactReq)
