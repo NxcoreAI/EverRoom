@@ -1,85 +1,64 @@
-/* 安装向导复用 agent-shell-approval 的卡片/命令块/按钮样式（AgentChat.css），
-   这里只补列表布局、就绪徽标与复制按钮。 */
+/* 安装向导复用 agent-shell-approval 的卡片与按钮样式（AgentChat.css），
+   这里只补条目列表、状态徽标与错误行的样式。 */
 
 .agent-adapter-wizard-list {
   display: grid;
-  gap: 8px;
+  gap: 6px;
 }
 
-.agent-adapter-wizard-command-head {
-  justify-content: space-between;
+.agent-adapter-wizard-item {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 4px 10px;
+  padding: 8px 10px;
+  border: 1px solid #e7dfcd;
+  border-radius: 6px;
+  background: #fffefb;
 }
 
-.agent-adapter-wizard-ready {
+.agent-adapter-wizard-item-name {
+  font-size: 12px;
+  font-weight: 650;
+  color: #43392c;
+}
+
+.agent-adapter-wizard-ready,
+.agent-adapter-wizard-busy,
+.agent-adapter-wizard-missing {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  margin-left: auto;
-  color: #7fbf5f;
+  font-size: 11px;
   font-style: normal;
   font-weight: 650;
 }
 
-.agent-adapter-wizard-ready svg {
-  width: 11px;
-  height: 11px;
+.agent-adapter-wizard-ready {
+  color: #5c9440;
 }
 
-.agent-adapter-wizard-copy {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  margin-left: auto;
-  padding: 2px 7px;
-  border: 1px solid #3a414c;
-  border-radius: 5px;
-  background: transparent;
-  color: #c8d1dc;
-  cursor: pointer;
-  font-size: 10px;
-  font-weight: 600;
+.agent-adapter-wizard-busy {
+  color: #8a7c62;
 }
 
-.agent-adapter-wizard-copy:hover:not(:disabled) {
-  background: #2a3039;
+.agent-adapter-wizard-missing {
+  color: #a5946f;
+  font-weight: 550;
 }
 
-.agent-adapter-wizard-copy:disabled {
-  cursor: wait;
-  opacity: 0.58;
-}
-
-.agent-adapter-wizard-copy svg {
-  width: 11px;
-  height: 11px;
-}
-
-/* 安装按钮不复用 agent-shell-approve 的深底样式——它落在深色命令块里会
-   同色隐身；改为纸感卡片同色系的高对比主行动样式。 */
-.agent-shell-approval .agent-adapter-wizard-install {
-  justify-self: start;
-  margin: 8px 9px 9px;
-  min-height: 32px;
-  border: 1px solid #d9c391;
-  background: #f7ead0;
-  color: #4c3d1f;
-}
-
-.agent-shell-approval .agent-adapter-wizard-install:hover:not(:disabled) {
-  background: #f1dfb9;
-}
-
-.agent-shell-approval .agent-adapter-wizard-install:disabled {
-  cursor: wait;
-  opacity: 0.6;
+.agent-adapter-wizard-ready svg,
+.agent-adapter-wizard-busy svg {
+  width: 12px;
+  height: 12px;
 }
 
 .agent-adapter-wizard-error {
+  grid-column: 1 / -1;
   display: flex;
   align-items: baseline;
   gap: 5px;
-  margin-top: 6px;
-  color: #e08c6d;
+  color: #b0562f;
   font-size: 11px;
   line-height: 1.5;
 }
@@ -100,4 +79,3 @@
   word-break: break-all;
   opacity: 0.85;
 }
-
