@@ -1,4 +1,4 @@
-import { access, constants, readFile, stat } from 'node:fs/promises'
+import { access, constants, readFile, realpath, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { delimiter, dirname, isAbsolute, join, resolve, sep } from 'node:path'
 import { spawn } from 'node:child_process'
@@ -146,13 +146,26 @@ async function executablePath(env: NodeJS.ProcessEnv, names: string[], platform:
       try {
         await access(candidate, constants.X_OK)
         const info = await stat(candidate)
-        if (info.isFile()) return resolve(candidate)
+        if (info.isFile()) return canonicalExecutable(candidate)
       } catch {
         // Keep probing the next PATH entry.
       }
     }
   }
   return null
+}
+
+/**
+ * realpath 规范化可执行路径：fnm/nvm 这类版本管理器会往登录 shell PATH 前置
+ * per-shell 临时 symlink 目录（fnm_multishells/<pid>_<ts>），不规范化则每次
+ * 扫描得到不同路径 → agent id 漂移，渲染端 @ 引用与主进程缓存永远对不上。
+ */
+async function canonicalExecutable(candidate: string): Promise<string> {
+  try {
+    return await realpath(candidate)
+  } catch {
+    return resolve(candidate)
+  }
 }
 
 async function commandAvailable(
@@ -184,7 +197,7 @@ export async function resolveCommandPath(
     try {
       await access(command, constants.X_OK)
       const info = await stat(command)
-      return info.isFile() ? resolve(command) : null
+      return info.isFile() ? canonicalExecutable(command) : null
     } catch {
       return null
     }

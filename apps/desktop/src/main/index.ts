@@ -2235,16 +2235,21 @@ function registerAgentHandlers(bridge: AgentGatewayBridge, migrationCoordinator:
     invalidateAdapterSpawnCache()
     return localAgents
   }
+  // id 形如 `provider:/path`。CLI 路径会漂移（版本管理器换版本、旧会话缓存的
+  // multishell 路径等），精确 id 未命中时按 provider 兜底，避免 @ 引用失效。
+  const findLocalAgent = (id: string) =>
+    localAgents.find((agent) => agent.id === id)
+    ?? localAgents.find((agent) => id.startsWith(`${agent.provider}:`))
   handle(AGENT_CHANNELS.discoverLocalAgents, scanLocalAgents)
   handle(AGENT_CHANNELS.checkLocalAgentAdapters, async (_event, agentIds: string[]) => {
     const wanted = [...new Set((agentIds ?? []).filter((id) => typeof id === 'string' && id))]
     if (!wanted.length) return []
-    if (wanted.some((id) => !localAgents.some((agent) => agent.id === id))) {
+    if (wanted.some((id) => !findLocalAgent(id))) {
       await scanLocalAgents()
     }
     invalidateAdapterSpawnCache()
     const targets = wanted
-      .map((id) => localAgents.find((agent) => agent.id === id))
+      .map((id) => findLocalAgent(id))
       .filter((agent): agent is LocalAgentInstallation => Boolean(agent?.invocationSupported))
     return Promise.all(targets.map(async (agent) => ({
       agentId: agent.id,
@@ -2255,10 +2260,10 @@ function registerAgentHandlers(bridge: AgentGatewayBridge, migrationCoordinator:
   })
   handle(AGENT_CHANNELS.installLocalAgentAdapter, async (_event, agentId: string) => {
     const id = typeof agentId === 'string' ? agentId : ''
-    let installation = localAgents.find((agent) => agent.id === id)
+    let installation = findLocalAgent(id)
     if (!installation) {
       await scanLocalAgents()
-      installation = localAgents.find((agent) => agent.id === id)
+      installation = findLocalAgent(id)
     }
     if (!installation?.invocationSupported) {
       throw new Error('选择的本机 Agent 当前不可调用。')
@@ -2272,10 +2277,10 @@ function registerAgentHandlers(bridge: AgentGatewayBridge, migrationCoordinator:
     return result
   })
   handle(AGENT_CHANNELS.bindLocalAgentWorkspace, async (event, agentId: string, sessionId: string) => {
-    if (!localAgents.some((agent) => agent.id === agentId && agent.invocationSupported)) {
+    if (!findLocalAgent(agentId)?.invocationSupported) {
       await scanLocalAgents()
     }
-    if (!localAgents.some((agent) => agent.id === agentId && agent.invocationSupported)) {
+    if (!findLocalAgent(agentId)?.invocationSupported) {
       throw new Error('选择的本机 Agent 当前不可调用。')
     }
     let existing = [...workspaceBindings.values()].find((binding) => (
@@ -2353,10 +2358,10 @@ function registerAgentHandlers(bridge: AgentGatewayBridge, migrationCoordinator:
       agentId: string,
       workspaceBindingToken?: string,
     ): Promise<LocalAgentInvocationTarget> => {
-      let installation = localAgents.find((agent) => agent.id === agentId)
+      let installation = findLocalAgent(agentId)
       if (!installation) {
         await scanLocalAgents()
-        installation = localAgents.find((agent) => agent.id === agentId)
+        installation = findLocalAgent(agentId)
       }
       if (!installation?.callable || !installation.invocationSupported || !installation.executablePath) {
         throw new Error('选择的本机 Agent 当前不可调用。请重新扫描或检查安装。')

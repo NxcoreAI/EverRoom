@@ -1,4 +1,4 @@
-import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { delimiter, dirname, join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -39,10 +39,14 @@ describe('local agent discovery', () => {
     })
     const agents = await discovery.scan()
 
+    // macOS 临时目录在 /var（/private/var 的 symlink）下，discovery 会 realpath
+    // 规范化可执行路径，期望值同样规范化后再比对。
+    const canonicalCodex = await realpath(codex)
+    const canonicalOpenclaw = await realpath(openclaw)
     expect(agents).toEqual(expect.arrayContaining([
       expect.objectContaining({
         provider: 'codex',
-        executablePath: codex,
+        executablePath: canonicalCodex,
         version: 'codex-cli 9.9.9',
         callable: true,
         invocationSupported: true,
@@ -57,7 +61,7 @@ describe('local agent discovery', () => {
       }),
       expect.objectContaining({
         provider: 'openclaw',
-        executablePath: openclaw,
+        executablePath: canonicalOpenclaw,
         version: 'OpenClaw 2026.7.1',
         callable: true,
         invocationSupported: true,
