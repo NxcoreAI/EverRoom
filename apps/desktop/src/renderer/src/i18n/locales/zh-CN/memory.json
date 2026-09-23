@@ -409,5 +409,9 @@
   "timeline.last7days": "近 7 天",
   "timeline.last30days": "近 30 天",
   "timeline.featured": "精选",
-  "timeline.dismissFeatured": "暂不显示精选"
+  "timeline.dismissFeatured": "暂不显示精选",
+  "timeline.matches": "匹配度 {score}",
+  "timeline.detail": "详情",
+  "timeline.timeRange": "时间",
+  "nav.organize": "整理"
 }

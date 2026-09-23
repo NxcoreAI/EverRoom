@@ -2266,3 +2266,215 @@ button.mem-search-item:hover {
   white-space: nowrap;
   opacity: 0.85;
 }
+
+/* 原型对齐：卡片内类型图标方块 + 标签行 + 内容 + meta 行。 */
+.mem-tl-item .mem-atomic-summary {
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.mem-item-icon {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  flex: none;
+  place-items: center;
+  border-radius: 7px;
+  background: var(--cr-surface-secondary, var(--surface-alt));
+  color: var(--cr-text, var(--text));
+}
+
+.mem-item-icon svg {
+  width: 15px;
+  height: 15px;
+}
+
+.mem-tl-card-body {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.mem-tl-card-tags {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.mem-tl-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--cr-muted, var(--muted));
+  font-size: 10px;
+}
+
+.mem-tl-card-meta > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.mem-tl-card-meta svg {
+  width: 11px;
+  height: 11px;
+}
+
+.mem-tl-card-meta .mem-card-actions {
+  margin-left: auto;
+  color: var(--cr-blue, var(--accent));
+  font-weight: 600;
+}
+
+/* 精选卡：右侧大圆环图标 + 左侧粗蓝边（原型 mem-featured 形态）。 */
+.mem-featured-card {
+  border-left: 3px solid var(--cr-blue, var(--accent));
+  padding-right: 44px;
+}
+
+.mem-featured-content {
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.mem-featured-visual {
+  position: relative;
+  display: grid;
+  width: 72px;
+  height: 72px;
+  flex: none;
+  place-items: center;
+  margin-left: auto;
+  align-self: center;
+}
+
+.mem-featured-visual .mem-item-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--cr-surface, var(--surface));
+  color: var(--cr-blue, var(--accent));
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--cr-blue, var(--accent)) 25%, transparent);
+}
+
+.mem-featured-visual .mem-item-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.mem-featured-ring {
+  position: absolute;
+  inset: 0;
+  border: 1.5px solid color-mix(in srgb, var(--cr-blue, var(--accent)) 35%, transparent);
+  border-radius: 50%;
+}
+
+.mem-featured-ring::after {
+  position: absolute;
+  inset: -7px;
+  border: 1px dashed color-mix(in srgb, var(--cr-blue, var(--accent)) 25%, transparent);
+  border-radius: 50%;
+  content: "";
+}
+
+.mem-featured-card .mem-featured-dismiss {
+  z-index: 1;
+}
+
+.mem-featured-scope {
+  color: var(--cr-muted, var(--muted));
+  font-size: 10px;
+}
+
+/* 长内容截断：摘要两行，展开（AtomicDetail）看全文。 */
+.mem-tl-item .mem-atomic-text {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  line-height: 1.6;
+  white-space: normal;
+}
+
+/* 精选卡内容三行截断。 */
+.mem-featured-content {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+}
+
+/* 二级页：来源（子 tab 条）与整理（左侧子导航 + 右侧内容）。 */
+.mem-subtabs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.mem-subtabs button {
+  min-height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 15px;
+  background: var(--surface);
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.mem-subtabs button:hover {
+  color: var(--text);
+}
+
+.mem-subtabs button[data-active='true'] {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.mem-subpage-organize {
+  display: grid;
+  grid-template-columns: 176px minmax(0, 1fr);
+  align-items: start;
+  gap: 16px;
+}
+
+.mem-subnav {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.mem-subnav button {
+  min-height: 32px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12.5px;
+  text-align: left;
+}
+
+.mem-subnav button:hover {
+  background: var(--surface-alt);
+  color: var(--text);
+}
+
+.mem-subnav button[data-active='true'] {
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  color: var(--accent);
+  font-weight: 600;
+}

@@ -13,66 +13,74 @@ import { IngestLedgerPane } from './memory/IngestLedgerPane'
 import { MemoryDisabledView, MemoryUnreachableView } from './memory/MemoryStatusViews'
 import type { MemorySearchResult } from './memory/MemorySearchResults'
 import { MemorySearchResults } from './memory/MemorySearchResults'
-import { MemoryOverviewPane } from './memory/MemoryOverviewPane'
 import { ScenarioPane } from './memory/ScenarioPane'
 import type { MemoryTabId } from './memory/useMemoryData'
 import { useMemoryOverview } from './memory/useMemoryData'
 import './memory/MemoryPage.css'
 import { useLocale } from '@/i18n/LocaleContext'
 
-/** 记忆页导航（对齐原型信息架构）：时间轴为主视图；来源/派生/治理分区。 */
-const NAV_SECTIONS: Array<{ section: string | null; tabs: Array<{ id: MemoryTabId; label: string }> }> = [
-  { section: null, tabs: [{ id: 'atomic', label: 'memory:memory.atomicTimeline' }] },
-  {
-    section: 'memory:nav.sources',
-    tabs: [
-      { id: 'conversation', label: 'memory:memory.conversations' },
-      { id: 'documents', label: 'memory:memory.documents' },
-    ],
-  },
-  {
-    section: 'memory:nav.derived',
-    tabs: [
-      { id: 'scenario', label: 'memory:memory.scenarios' },
-      { id: 'core', label: 'memory:memory.profile' },
-      { id: 'writing-style', label: 'memory:memory.writingStyle' },
-    ],
-  },
-  {
-    section: 'memory:nav.governance',
-    tabs: [
-      { id: 'ledger', label: 'memory:memory.ledger' },
-      { id: 'filter-rules', label: 'memory:memory.filterRules' },
-      { id: 'org-preferences', label: 'memory:memory.organizationPreferences' },
-    ],
-  },
-  { section: null, tabs: [{ id: 'overview', label: 'memory:memory.overview' }] },
+/** 一级入口：时间轴（记忆库主体）/ 来源（原始记录）/ 整理（派生与治理）。 */
+type MemorySection = 'timeline' | 'sources' | 'organize'
+type SourceSubId = 'conversation' | 'documents'
+type OrganizeSubId = 'scenario' | 'core' | 'writing-style' | 'ledger' | 'filter-rules' | 'org-preferences'
+
+const SECTIONS: Array<{ id: MemorySection; label: string }> = [
+  { id: 'timeline', label: 'memory:memory.atomicTimeline' },
+  { id: 'sources', label: 'memory:nav.sources' },
+  { id: 'organize', label: 'memory:nav.organize' },
 ]
 
-const TAB_LABELS: Record<MemoryTabId, string> = Object.fromEntries(
-  NAV_SECTIONS.flatMap((section) => section.tabs).map((tab) => [tab.id, tab.label]),
-) as Record<MemoryTabId, string>
+const SOURCE_TABS: Array<{ id: SourceSubId; label: string }> = [
+  { id: 'conversation', label: 'memory:memory.conversations' },
+  { id: 'documents', label: 'memory:memory.documents' },
+]
+
+const ORGANIZE_TABS: Array<{ id: OrganizeSubId; label: string }> = [
+  { id: 'scenario', label: 'memory:memory.scenarios' },
+  { id: 'core', label: 'memory:memory.profile' },
+  { id: 'writing-style', label: 'memory:memory.writingStyle' },
+  { id: 'ledger', label: 'memory:memory.ledger' },
+  { id: 'filter-rules', label: 'memory:memory.filterRules' },
+  { id: 'org-preferences', label: 'memory:memory.organizationPreferences' },
+]
+
+/** 管道事件 tab id → 一级分区 + 二级页（侧边栏记忆管道点击跳转用）。 */
+const SECTION_OF_TAB: Record<string, { section: MemorySection; sub: SourceSubId | OrganizeSubId }> = {
+  atomic: { section: 'timeline', sub: 'conversation' },
+  conversation: { section: 'sources', sub: 'conversation' },
+  documents: { section: 'sources', sub: 'documents' },
+  scenario: { section: 'organize', sub: 'scenario' },
+  core: { section: 'organize', sub: 'core' },
+  'writing-style': { section: 'organize', sub: 'writing-style' },
+  ledger: { section: 'organize', sub: 'ledger' },
+  'filter-rules': { section: 'organize', sub: 'filter-rules' },
+  'org-preferences': { section: 'organize', sub: 'org-preferences' },
+}
 
 export function MemoryPage({ focusAtomicId }: { focusAtomicId?: string | null } = {}) {
   const { t } = useLocale()
   const overview = useMemoryOverview()
-  const [tab, setTab] = useState<MemoryTabId>('atomic')
+  const [section, setSection] = useState<MemorySection>('timeline')
+  const [sourceTab, setSourceTab] = useState<SourceSubId>('conversation')
+  const [organizeTab, setOrganizeTab] = useState<OrganizeSubId>('scenario')
   const [searchText, setSearchText] = useState('')
   const [search, setSearch] = useState<{ query: string; result: MemorySearchResult } | null>(null)
   const [searching, setSearching] = useState(false)
   const [searchError, setSearchError] = useState<string | null>(null)
-  // 溯源跳转目标（原子记忆 → 文档详情 / 会话过滤），置位同时切 Tab。
+  // 溯源跳转目标（原子记忆 → 文档详情 / 会话过滤），置位同时切到来源页对应子页。
   const [documentFocus, setDocumentFocus] = useState<string | null>(null)
   const [conversationFocus, setConversationFocus] = useState<string | null>(null)
 
-  // 侧边栏记忆管道点击跳转：按新增层级直接打开对应 tab。
+  // 侧边栏记忆管道点击跳转：映射到一级分区 + 二级子页。
   useEffect(() => {
     const openTab = (event: Event) => {
       const tab = (event as CustomEvent<{ tab: string }>).detail?.tab
-      if (tab && tab in TAB_LABELS) {
-        setSearch(null)
-        setTab(tab as MemoryTabId)
-      }
+      const target = tab ? SECTION_OF_TAB[tab] : undefined
+      if (!target) return
+      setSearch(null)
+      setSection(target.section)
+      if (target.section === 'sources') setSourceTab(target.sub as SourceSubId)
+      if (target.section === 'organize') setOrganizeTab(target.sub as OrganizeSubId)
     }
     window.addEventListener(MEMORY_TAB_EVENT, openTab)
     return () => window.removeEventListener(MEMORY_TAB_EVENT, openTab)
@@ -81,12 +89,14 @@ export function MemoryPage({ focusAtomicId }: { focusAtomicId?: string | null } 
   const openDocument = (documentId: string) => {
     setDocumentFocus(documentId)
     setSearch(null)
-    setTab('documents')
+    setSection('sources')
+    setSourceTab('documents')
   }
   const openConversation = (sessionId: string) => {
     setConversationFocus(sessionId)
     setSearch(null)
-    setTab('conversation')
+    setSection('sources')
+    setSourceTab('conversation')
   }
 
   const runSearch = async () => {
@@ -149,34 +159,17 @@ export function MemoryPage({ focusAtomicId }: { focusAtomicId?: string | null } 
         </div>
       </header>
       <nav className="mem-tabs" role="tablist" aria-label={t('memory:memory.memoryLevels')}>
-        {NAV_SECTIONS.map((section, sectionIndex) => (
-          <div className="mem-tab-section" key={section.section ?? `main-${sectionIndex}`}>
-            {section.section ? (
-              <span className="mem-tab-section-label">{t(section.section)}</span>
-            ) : null}
-            {section.tabs.map((entry) => {
-              const data = overview.data
-              const count = !data ? null
-                : entry.id === 'atomic' ? data.l1?.total ?? null
-                  : entry.id === 'scenario' ? data.l2?.total ?? null
-                    : entry.id === 'conversation' ? data.l0?.total ?? null
-                      : null
-              return (
-                <button
-                  key={entry.id}
-                  type="button"
-                  role="tab"
-                  aria-selected={tab === entry.id && !search}
-                  data-active={tab === entry.id && !search}
-                  onClick={() => { setTab(entry.id); setSearch(null) }}
-                >
-                  <span className="mem-tab-name">{t(entry.label)}</span>
-                  {/* 数量固定占一行（无数量的 tab 留空行），保证各 tab 等高、下划线对齐 */}
-                  <span className="mem-tab-count">{count !== null ? count : ''}</span>
-                </button>
-              )
-            })}
-          </div>
+        {SECTIONS.map((entry) => (
+          <button
+            key={entry.id}
+            type="button"
+            role="tab"
+            aria-selected={section === entry.id && !search}
+            data-active={section === entry.id && !search}
+            onClick={() => { setSection(entry.id); setSearch(null) }}
+          >
+            <span className="mem-tab-name">{t(entry.label)}</span>
+          </button>
         ))}
       </nav>
       {searchError ? <p className="mem-inline-error">{searchError}</p> : null}
@@ -185,30 +178,60 @@ export function MemoryPage({ focusAtomicId }: { focusAtomicId?: string | null } 
           query={search.query}
           result={search.result}
           onClear={() => { setSearch(null); setSearchText('') }}
-          onOpenAtomic={() => { setSearch(null); setTab('atomic') }}
+          onOpenAtomic={() => { setSearch(null); setSection('timeline') }}
         />
       ) : searching ? (
         <p className="mem-loading">{t('memory:memory.searching')}</p>
-      ) : (
+      ) : section === 'timeline' ? (
         <div className="mem-content">
-          {tab === 'overview' ? (
-            overview.data
-              ? <MemoryOverviewPane overview={overview.data} onNavigate={setTab} />
-              : <p className="mem-loading">{t('memory:memory.loading')}</p>
-          ) : null}
-          {tab === 'atomic' ? (
-            <AtomicMemoryPane focusItemId={focusAtomicId} onOpenDocument={openDocument} onOpenConversation={openConversation} />
-          ) : null}
-          {tab === 'scenario' ? <ScenarioPane /> : null}
-          {tab === 'core' ? <CoreProfilePane /> : null}
-          {tab === 'writing-style' ? <WritingStylePane /> : null}
-          {tab === 'ledger' ? <IngestLedgerPane /> : null}
-          {tab === 'filter-rules' ? <FilterRulesPane /> : null}
-          {tab === 'org-preferences' ? <OrganizationPreferencePane /> : null}
-          {tab === 'conversation' ? (
+          <AtomicMemoryPane focusItemId={focusAtomicId} onOpenDocument={openDocument} onOpenConversation={openConversation} />
+        </div>
+      ) : section === 'sources' ? (
+        <div className="mem-content mem-subpage">
+          <div className="mem-subtabs" role="tablist" aria-label={t('memory:nav.sources')}>
+            {SOURCE_TABS.map((entry) => (
+              <button
+                key={entry.id}
+                type="button"
+                role="tab"
+                aria-selected={sourceTab === entry.id}
+                data-active={sourceTab === entry.id}
+                onClick={() => setSourceTab(entry.id)}
+              >
+                {t(entry.label)}
+              </button>
+            ))}
+          </div>
+          {sourceTab === 'conversation' ? (
             <ConversationPane focusSessionId={conversationFocus} />
-          ) : null}
-          {tab === 'documents' ? <DocumentPane focusDocumentId={documentFocus} /> : null}
+          ) : (
+            <DocumentPane focusDocumentId={documentFocus} />
+          )}
+        </div>
+      ) : (
+        <div className="mem-content mem-subpage mem-subpage-organize">
+          <aside className="mem-subnav" role="tablist" aria-label={t('memory:nav.organize')}>
+            {ORGANIZE_TABS.map((entry) => (
+              <button
+                key={entry.id}
+                type="button"
+                role="tab"
+                aria-selected={organizeTab === entry.id}
+                data-active={organizeTab === entry.id}
+                onClick={() => setOrganizeTab(entry.id)}
+              >
+                {t(entry.label)}
+              </button>
+            ))}
+          </aside>
+          <div className="mem-subpage-body">
+            {organizeTab === 'scenario' ? <ScenarioPane /> : null}
+            {organizeTab === 'core' ? <CoreProfilePane /> : null}
+            {organizeTab === 'writing-style' ? <WritingStylePane /> : null}
+            {organizeTab === 'ledger' ? <IngestLedgerPane /> : null}
+            {organizeTab === 'filter-rules' ? <FilterRulesPane /> : null}
+            {organizeTab === 'org-preferences' ? <OrganizationPreferencePane /> : null}
+          </div>
         </div>
       )}
     </div>

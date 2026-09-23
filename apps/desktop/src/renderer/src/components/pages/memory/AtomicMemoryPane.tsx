@@ -1,4 +1,4 @@
-import { Link2, Pencil, Sparkles, Trash2, X } from 'lucide-react'
+import { FileText, Link2, MessagesSquare, Package, Pencil, Sparkles, Trash2, UserRound, X, Zap } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocale } from '@/i18n/LocaleContext'
 
@@ -44,7 +44,7 @@ function RoomChipNav({ roomId, roomTitle, stopPropagation }: {
   )
 }
 
-const TYPE_FILTERS: Array<{ value: MemoryAtomicType | 'all'; label: string }> = [
+const TYPE_FILTERS: Array<{ value: string; label: string }> = [
   { value: 'all', label: 'memory:atomicMemory.all' },
   { value: 'episodic', label: 'memory:atomicMemory.episodic' },
   { value: 'persona', label: 'memory:atomicMemory.persona' },
@@ -55,10 +55,27 @@ const TYPE_LABELS: Record<string, string> = {
   episodic: 'memory:atomicMemory.episodic',
   persona: 'memory:atomicMemory.persona',
   instruction: 'memory:atomicMemory.instruction',
+  // Agent 产物/工作事实：office 产物入库与工作流带出的新类型。
+  work_artifact: 'Agent 产物',
+  work_fact: '工作事实',
 }
 
 function typeLabel(type: string): string {
   return TYPE_LABELS[type] ?? type
+}
+
+/** 条目类型图标：情景=对话、画像=人、指令=笔、产物=包、工作事实=文档（与 ContextRoom 记忆图标语义一致）。 */
+function TypeIcon({ type }: { type: string }) {
+  const Icon = type === 'persona' ? UserRound
+    : type === 'instruction' ? Pencil
+      : type === 'work_artifact' ? Package
+        : type === 'work_fact' ? FileText
+          : MessagesSquare
+  return (
+    <span className="mem-item-icon" data-type={type} aria-hidden="true">
+      <Icon strokeWidth={1.7} />
+    </span>
+  )
 }
 
 /** 溯源区：kind=conversation → 会话原话；document → 文档名 + 标题路径 + 行区间。 */
@@ -283,7 +300,7 @@ export function AtomicMemoryPane({ focusItemId, onOpenDocument, onOpenConversati
   onOpenConversation?: (sessionId: string) => void
 } = {}) {
   const { locale, t } = useLocale()
-  const [type, setType] = useState<MemoryAtomicType | 'all'>('all')
+  const [type, setType] = useState<string>('all')
   const [timeRange, setTimeRange] = useState<TimeRangeId>('all')
   // 时间轴形态：累计加载（加载更多），不做分页——分桶展示与分页天然冲突。
   const [items, setItems] = useState<MemoryAtomicItemDto[]>([])
@@ -368,6 +385,15 @@ export function AtomicMemoryPane({ focusItemId, onOpenDocument, onOpenConversati
     return groups
   }, [filtered, t])
 
+  // 类型 chips 数据驱动：基础三型之外，数据里出现的新类型（如 work_*）自动补进筛选。
+  const extraTypeChips = useMemo(() => {
+    const seen = new Set<string>()
+    for (const item of items) {
+      if (!TYPE_FILTERS.some((filter) => filter.value === item.type)) seen.add(item.type)
+    }
+    return [...seen].sort().map((value) => ({ value, label: typeLabel(value) }))
+  }, [items])
+
   if (failure && items.length === 0) {
     return <div className="mem-pane-error">{memoryFailureText(failure, t)}</div>
   }
@@ -376,15 +402,21 @@ export function AtomicMemoryPane({ focusItemId, onOpenDocument, onOpenConversati
     <div className="mem-atomic">
       {featured && !featuredDismissed ? (
         <div className="mem-featured-card">
-          <span className="mem-featured-icon" aria-hidden="true"><Sparkles strokeWidth={1.7} /></span>
           <div className="mem-featured-body">
             <div className="mem-featured-tags">
               <span className="mem-type-badge" data-type={featured.type}>{t(typeLabel(featured.type))}</span>
+              {featured.roomTitle ? <span className="mem-featured-scope">仅 Room: {featured.roomTitle}</span> : <span className="mem-featured-scope">全局</span>}
               <span className="mem-featured-flag"><Sparkles aria-hidden="true" />{t('memory:timeline.featured')}</span>
-              <time>{formatDate(featured.updatedAt, locale)}</time>
             </div>
             <p className="mem-featured-content">{featured.content}</p>
+            <div className="mem-featured-meta">
+              <span>{formatDate(featured.updatedAt, locale)}</span>
+            </div>
           </div>
+          <span className="mem-featured-visual" aria-hidden="true">
+            <span className="mem-featured-ring" />
+            <TypeIcon type={featured.type} />
+          </span>
           <button
             type="button"
             className="mem-featured-dismiss"
@@ -406,6 +438,16 @@ export function AtomicMemoryPane({ focusItemId, onOpenDocument, onOpenConversati
               onClick={() => { setType(filter.value); setExpandedId(null) }}
             >
               {t(filter.label)}
+            </button>
+          ))}
+          {extraTypeChips.map((chip) => (
+            <button
+              key={chip.value}
+              type="button"
+              data-active={type === chip.value}
+              onClick={() => { setType(chip.value); setExpandedId(null) }}
+            >
+              {chip.label}
             </button>
           ))}
         </div>
@@ -449,9 +491,18 @@ export function AtomicMemoryPane({ focusItemId, onOpenDocument, onOpenConversati
                       data-expanded={expandedId === item.id}
                       onClick={() => setExpandedId(expandedId === item.id ? null : item.id)}
                     >
-                      <span className="mem-type-badge" data-type={item.type}>{t(typeLabel(item.type))}</span>
-                      {item.roomId ? <RoomChipNav roomId={item.roomId} roomTitle={item.roomTitle} stopPropagation /> : null}
-                      <span className="mem-atomic-text">{item.content}</span>
+                      <TypeIcon type={item.type} />
+                      <span className="mem-tl-card-body">
+                        <span className="mem-tl-card-tags">
+                          <span className="mem-type-badge" data-type={item.type}>{t(typeLabel(item.type))}</span>
+                          {item.roomId ? <RoomChipNav roomId={item.roomId} roomTitle={item.roomTitle} stopPropagation /> : null}
+                        </span>
+                        <span className="mem-atomic-text">{item.content}</span>
+                        <span className="mem-tl-card-meta">
+                          {(item.score ?? 0) > 0 ? <span><Zap aria-hidden="true" />{t('memory:timeline.matches', { score: item.score ?? 0 })}</span> : null}
+                          <span className="mem-card-actions">{t('memory:timeline.detail')}</span>
+                        </span>
+                      </span>
                     </button>
                     {expandedId === item.id ? (
                       <AtomicDetail
