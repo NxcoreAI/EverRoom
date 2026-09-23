@@ -1325,39 +1325,107 @@
   overflow: hidden;
 }
 
-.mem-session-header {
+.mem-session-head {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 8px 14px;
+  padding: 9px 12px;
+}
+
+.mem-session[data-open='true'] .mem-session-head {
   background: var(--surface-alt);
   border-bottom: 1px solid var(--border);
 }
 
-.mem-session-title {
+.mem-session-toggle {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
   border: none;
   background: transparent;
-  padding: 2px 6px;
-  border-radius: 5px;
-  font-size: 12px;
+  padding: 2px 4px;
+  border-radius: 6px;
   font-family: inherit;
-  color: var(--muted);
+  text-align: left;
   cursor: pointer;
+}
+
+.mem-session-toggle:hover {
+  background: var(--hover);
+}
+
+.mem-session-chevron {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin-top: 3px;
+  color: var(--subtle);
+  transition: transform 0.15s ease;
+}
+
+.mem-session[data-open='true'] .mem-session-chevron {
+  transform: rotate(90deg);
+}
+
+.mem-session-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
+}
+
+.mem-session-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 40%;
 }
 
-.mem-session-title:hover,
-.mem-session-title[data-active='true'] {
-  background: var(--selected);
-  color: var(--text);
+.mem-session-preview {
+  font-size: 11.5px;
+  color: var(--subtle);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.mem-session-header small {
+.mem-session-meta {
+  flex: none;
   font-size: 11px;
   color: var(--subtle);
+  white-space: nowrap;
+}
+
+.mem-session-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--subtle);
+  cursor: pointer;
+}
+
+.mem-session-icon-btn:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--danger);
+}
+
+.mem-session-icon-btn svg {
+  width: 14px;
+  height: 14px;
 }
 
 .mem-session-actions {
