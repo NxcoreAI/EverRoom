@@ -428,7 +428,7 @@ const base = {
       })
       return { items: all.slice(offset, offset + limit), total: all.length }
     },
-    getFilterRules: async () => ({ preference: '', insight: '', updatedAt: null }),
+    getFilterRules: async () => ({ preference: sessionStorage.getItem('mockFilterPref') || '', insight: '', updatedAt: null }),
     updateFilterPreference: async (content) => ({ preference: content, insight: '', updatedAt: null }) },
   migrations: { sources: async () => [], runs: async () => [], onProgress: () => () => {}, conversations: async () => ({ items: [
     { id: 'thread-1', provider: 'claude', sourceId: 's1', title: '历史会话示例', agentId: 'claude', externalSessionId: 'x', messageCount: 2, lastMessageAt: '2026-09-08T00:00:00.000Z', lastMessageExcerpt: '上次的结论…', available: true },

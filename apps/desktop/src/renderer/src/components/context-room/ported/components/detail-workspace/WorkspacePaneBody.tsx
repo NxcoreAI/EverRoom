@@ -85,10 +85,14 @@ export function WorkspacePaneBody({
   selectedObject: WorkspaceObjectPreview | null;
   onCloseObject: () => void;
 }) {
-  // 详情归属页签与 PortedDetail.openObject 的映射保持一致：会议/任务归待办，邮件归资料。
-  const objectOwnerSubtab = (target: WorkspaceObjectPreview): BoardSubtab =>
-    target.kind === 'meeting' || target.kind === 'task' ? 'todo' : 'materials';
-  const ownedDetail = selectedObject && board === 'work' && objectOwnerSubtab(selectedObject) === subtab
+  // 详情归属页签与 PortedDetail.openObject 的映射保持一致：会议/任务归待办，
+  // 邮件归待办邮件区与资料（两处都列邮件，在哪个页签打开就在哪个页签承接），其余归资料。
+  const detailOwnerSubtabs = (target: WorkspaceObjectPreview): BoardSubtab[] => {
+    if (target.kind === 'meeting' || target.kind === 'task') return ['todo'];
+    if (target.kind === 'mail' || target.kind === 'connector-mail') return ['todo', 'materials'];
+    return ['materials'];
+  };
+  const ownedDetail = selectedObject && board === 'work' && subtab !== null && detailOwnerSubtabs(selectedObject).includes(subtab)
     ? selectedObject
     : null;
   // Agent 生成的 Office 文件是产物（产物库单列一节），不进工作/资料清单。

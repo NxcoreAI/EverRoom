@@ -9,10 +9,9 @@ import {
   RotateCcw,
   SearchX,
   Trash2,
-  X,
 } from 'lucide-react';
-import type { RoomDocument, RoomMailDetail } from '@nxcore/agent-contract';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { RoomDocument } from '@nxcore/agent-contract';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocale } from '../../../../../i18n/LocaleContext';
 
 import type { KnowledgeFileDto } from '../../../../../../../shared/knowledge';
@@ -23,7 +22,7 @@ import { useRoomMails } from '../../hooks/useRoomMails';
 import { MailProviderIcon } from '../MailProviderIcon';
 import { ObjectDetailView } from '../ObjectDetailView';
 import { ResourceCorrectionMenu } from '../ResourceCorrection';
-import { MarkdownBody } from './MarkdownBody';
+import { ConnectorMailDetailPanel, useConnectorMailDetail } from './ConnectorMailDetail';
 import { PanelEmptyState } from './PanelEmptyState';
 import type { WorkspaceObjectPreview } from './index';
 
@@ -83,7 +82,7 @@ function saveMaterialsView(roomId: string, next: MaterialsViewMemory): void {
 }
 
 /** 本地快照时间的宽松解析（"昨天 16:40"/"07-21 10:20"），解析不到返回 null。 */
-function parseDisplayDate(value: string): Date | null {
+export function parseDisplayDate(value: string): Date | null {
   if (!value) return null;
   if (/^(今天|today)(?:\s|$)/iu.test(value)) return new Date();
   if (/^(昨天|yesterday)(?:\s|$)/iu.test(value)) {
@@ -100,7 +99,7 @@ function parseDisplayDate(value: string): Date | null {
 }
 
 /** 本地日期键（补零）：与连接器邮件的同日判断共用。 */
-function paddedDateKey(when: Date): string {
+export function paddedDateKey(when: Date): string {
   return `${String(when.getFullYear())}-${String(when.getMonth() + 1).padStart(2, '0')}-${String(when.getDate()).padStart(2, '0')}`;
 }
 
@@ -129,59 +128,7 @@ interface MaterialRow {
   connectorSource?: string;
 }
 
-/** 连接器邮件详情（资料面板下半区）：身份头 + 元信息 + 正文滚动区。 */
-function ConnectorMailDetailPanel({
-  state,
-  locale,
-  onClose,
-}: {
-  state: { loading: boolean; detail: RoomMailDetail | null; error: boolean };
-  locale: string;
-  onClose: () => void;
-}) {
-  const { t } = useLocale();
-  if (state.loading) {
-    return (
-      <aside className="context-room-mail-detail" data-testid="context-room-mail-detail">
-        <p className="context-room-mail-detail-hint">{t('contextRoom:activityPanes.loadingMailBody')}</p>
-      </aside>
-    );
-  }
-  if (state.error || !state.detail) {
-    return (
-      <aside className="context-room-mail-detail" data-testid="context-room-mail-detail">
-        <p className="context-room-mail-detail-hint">{t('contextRoom:activityPanes.mailBodyUnavailable')}</p>
-      </aside>
-    );
-  }
-  const detail = state.detail;
-  const when = detail.sentAt && !Number.isNaN(Date.parse(detail.sentAt))
-    ? new Date(detail.sentAt).toLocaleString(locale)
-    : null;
-  return (
-    <aside className="context-room-mail-detail" data-testid="context-room-mail-detail">
-      <header>
-        <MailProviderIcon provider={detail.provider} />
-        <div className="context-room-mail-detail-title">
-          <strong title={detail.subject}>{detail.subject}</strong>
-          <small>
-            {detail.senderName ?? t('contextRoom:objectDetail.defaultSender')}
-            {detail.senderAddress ? ` <${detail.senderAddress}>` : ''}
-          </small>
-        </div>
-        <button type="button" aria-label={t('contextRoom:activityPanes.closeMailDetail')} onClick={onClose}>
-          <X aria-hidden="true" />
-        </button>
-      </header>
-      <p className="context-room-mail-detail-meta">
-        {when ? <time>{t('contextRoom:activityPanes.sentAt')}：{when}</time> : null}
-      </p>
-      <div className="context-room-mail-detail-body">
-        <MarkdownBody markdown={detail.body} />
-      </div>
-    </aside>
-  );
-}
+/** 连接器邮件详情（受控 detail 驱动）：点击行 → onOpenObject(connector-mail)。 */
 
 /**
  * 工作 / 资料（PRD L3.2.6 + L3.2.5）：按来源对象平铺管理（不按文件格式分夹），
@@ -233,14 +180,6 @@ export function MaterialsPane({
   const [deletingDocumentId, setDeletingDocumentId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
-  // 连接器邮件详情（受控 detail 驱动）：点击行 → onOpenObject(connector-mail)。
-  const [mailDetailState, setMailDetailState] = useState<{ loading: boolean; detail: RoomMailDetail | null; error: boolean }>({
-    loading: false,
-    detail: null,
-    error: false,
-  });
-  const mailDetailCache = useRef(new Map<string, RoomMailDetail>());
-  const mailDetailSeq = useRef(0);
 
   useEffect(() => {
     setMemory(loadMaterialsView(room.id));
@@ -352,39 +291,7 @@ export function MaterialsPane({
 
   // 连接器邮件详情：受控 detail 变化时拉取全文（会话内缓存，Room 切换即失效）。
   const connectorMailDetail = detail?.kind === 'connector-mail' ? detail : null;
-  useEffect(() => {
-    mailDetailCache.current.clear();
-    mailDetailSeq.current += 1;
-  }, [room.id]);
-  useEffect(() => {
-    if (!connectorMailDetail) {
-      setMailDetailState({ loading: false, detail: null, error: false });
-      return;
-    }
-    const sourceId = connectorMailDetail.sourceId;
-    const cached = mailDetailCache.current.get(sourceId);
-    if (cached) {
-      setMailDetailState({ loading: false, detail: cached, error: false });
-      return;
-    }
-    const seq = mailDetailSeq.current + 1;
-    mailDetailSeq.current = seq;
-    setMailDetailState({ loading: true, detail: null, error: false });
-    void (async () => {
-      try {
-        const fetched = await window.nxcore?.contextRooms?.readMail(room.id, sourceId);
-        if (!fetched) throw new Error('mail_detail_unavailable');
-        mailDetailCache.current.set(sourceId, fetched);
-        if (mailDetailSeq.current === seq) {
-          setMailDetailState({ loading: false, detail: fetched, error: false });
-        }
-      } catch {
-        if (mailDetailSeq.current === seq) {
-          setMailDetailState({ loading: false, detail: null, error: true });
-        }
-      }
-    })();
-  }, [connectorMailDetail, room.id]);
+  const mailDetailState = useConnectorMailDetail(room.id, connectorMailDetail?.sourceId ?? null);
 
 
   // 本地邮件详情：资料面板内嵌 ObjectDetailView。

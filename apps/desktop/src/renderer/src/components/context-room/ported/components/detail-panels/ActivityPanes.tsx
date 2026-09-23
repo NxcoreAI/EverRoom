@@ -5,6 +5,7 @@ import {
   Check,
   CheckSquare2,
   ChevronDown,
+  Mail,
   Mic,
   Paperclip,
   Plus,
@@ -17,12 +18,16 @@ import { useLocale } from '../../../../../i18n/LocaleContext';
 import type { ContextRoomRecord } from '../../types';
 import { localizedUiText, uiText } from '../../adapters';
 import { useRoomOverviewProjection } from '../../hooks/useRoomOverviewProjection';
+import { useRoomMails } from '../../hooks/useRoomMails';
 import { CalendarProviderIcon } from '../CalendarProviderIcon';
+import { MailProviderIcon } from '../MailProviderIcon';
 import { ObjectDetailView, type DetailObject } from '../ObjectDetailView';
 import {
   ROOM_OVERVIEW_CHANGED_EVENT,
   type RoomOverviewChangedDetail,
 } from '../../../roomOverviewChange';
+import { ConnectorMailDetailPanel, useConnectorMailDetail } from './ConnectorMailDetail';
+import { parseDisplayDate, paddedDateKey } from './MaterialsPane';
 import { PanelEmptyState } from './PanelEmptyState';
 import type { WorkspaceObjectPreview } from './index';
 
@@ -485,6 +490,140 @@ export function TasksPane({
           description={t('contextRoom:activityPanes.actionItemsExtractedByAgentAndRoomTasks')}
         />
       )}
+    </div>
+  );
+}
+
+/** 待办邮件区的行：连接器邮件与本地快照邮件统一结构。 */
+interface MailRow {
+  key: string;
+  title: string;
+  subtitle: string;
+  timeLabel: string;
+  sortTime: number;
+  unread?: boolean;
+  provider?: string;
+  open: WorkspaceObjectPreview;
+}
+
+/**
+ * 待办 / 邮件：连接器邮件与本地快照邮件合并平铺（同主题同日去重，保留连接器
+ * 版本），按时间倒序；邮件详情在分区内整区替换展示（返回即回列表）。
+ */
+export function MailPane({
+  room,
+  onOpen,
+  detail,
+  onCloseDetail,
+  onUpdateRoom,
+}: {
+  room: ContextRoomRecord;
+  onOpen: (target: WorkspaceObjectPreview) => void;
+  detail?: WorkspaceObjectPreview | null;
+  onCloseDetail?: () => void;
+  onUpdateRoom: (updater: RoomUpdater) => void;
+}) {
+  const { locale, t } = useLocale();
+  const { mails: connectorMails } = useRoomMails(room.id);
+
+  const connectorMailKeys = useMemo(() => new Set(connectorMails.flatMap((mail) => {
+    const when = mail.sentAt ? new Date(mail.sentAt) : null;
+    if (!when || Number.isNaN(when.getTime())) return [];
+    return [`${mail.subject.trim().toLocaleLowerCase()}\x00${paddedDateKey(when)}`];
+  })), [connectorMails]);
+
+  const rows = useMemo<MailRow[]>(() => {
+    const connectorRows: MailRow[] = connectorMails.map((mail) => ({
+      key: `mail:${mail.sourceId}`,
+      title: mail.subject,
+      subtitle: mail.senderName ?? mail.senderAddress ?? t('contextRoom:objectDetail.defaultSender'),
+      timeLabel: mail.sentAt && !Number.isNaN(Date.parse(mail.sentAt))
+        ? new Date(mail.sentAt).toLocaleDateString(locale)
+        : '',
+      sortTime: Date.parse(mail.sentAt ?? '') || 0,
+      provider: mail.provider ?? undefined,
+      open: { kind: 'connector-mail', sourceId: mail.sourceId },
+    }));
+    const localRows: MailRow[] = room.materials
+      .filter((material) => material.type === '邮件')
+      .filter((mail) => {
+        const when = parseDisplayDate(mail.time);
+        if (!when) return true;
+        return !connectorMailKeys.has(`${mail.title.trim().toLocaleLowerCase()}\x00${paddedDateKey(when)}`);
+      })
+      .map((mail) => ({
+        key: `lmail:${mail.id}`,
+        title: mail.title,
+        subtitle: mail.sender ?? localizedUiText(mail.summary, t),
+        timeLabel: mail.time,
+        sortTime: parseDisplayDate(mail.time)?.getTime() ?? 0,
+        unread: mail.unread,
+        open: { kind: 'mail', id: mail.id } as const,
+      }));
+    return [...connectorRows, ...localRows]
+      .sort((left, right) => (left.sortTime !== right.sortTime
+        ? right.sortTime - left.sortTime
+        : left.title.localeCompare(right.title, locale)));
+  }, [connectorMailKeys, connectorMails, locale, room.materials, t]);
+
+  const localMailObject = detail?.kind === 'mail'
+    ? room.materials.find((material) => material.id === detail.id && material.type === '邮件') ?? null
+    : null;
+  if (detail?.kind === 'mail' && localMailObject && onCloseDetail) {
+    return (
+      <div className="context-room-page context-room-object-page">
+        <ObjectDetailView
+          embedded
+          room={room}
+          object={{ kind: 'mail', value: localMailObject }}
+          onBack={onCloseDetail}
+          onUpdateRoom={onUpdateRoom}
+        />
+      </div>
+    );
+  }
+
+  const connectorMailDetail = detail?.kind === 'connector-mail' ? detail : null;
+  const mailDetailState = useConnectorMailDetail(room.id, connectorMailDetail?.sourceId ?? null);
+  if (connectorMailDetail && onCloseDetail) {
+    return <ConnectorMailDetailPanel state={mailDetailState} locale={locale} onClose={onCloseDetail} />;
+  }
+
+  return (
+    <div className="context-room-mail-pane">
+      <header>
+        <Mail aria-hidden="true" />
+        <h2>{t('contextRoom:todoPane.mailSection')}</h2>
+        <span className="context-room-pane-head-count">{rows.length}</span>
+      </header>
+      <div className="context-room-mail-list" role="list">
+        {rows.map((row) => (
+          <button
+            type="button"
+            role="listitem"
+            key={row.key}
+            className={`context-room-mail-item${row.unread ? ' is-unread' : ''}`}
+            onClick={() => onOpen(row.open)}
+          >
+            <span className="context-room-mail-item-icon">
+              {row.provider ? <MailProviderIcon provider={row.provider} /> : <Mail aria-hidden="true" />}
+            </span>
+            <span className="context-room-mail-item-main">
+              <b>{row.title}</b>
+              <small>{row.subtitle}</small>
+            </span>
+            <time>{row.timeLabel}</time>
+          </button>
+        ))}
+        {!rows.length ? (
+          <PanelEmptyState
+            compact
+            icon={Mail}
+            title={t('contextRoom:todoPane.noMailsYet')}
+            description={t('contextRoom:todoPane.mailsInThisRoomWillAppearHere')}
+          />
+        ) : null}
+      </div>
     </div>
   );
 }

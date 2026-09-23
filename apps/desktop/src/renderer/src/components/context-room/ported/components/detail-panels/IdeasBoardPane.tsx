@@ -105,8 +105,8 @@ export function IdeasBoardPane({
   // 续生一层（已有子级时服务端只挪 selectionPath）。回退是纯本地操作，生成中
   // （expanding）也放行——否则生成中点上级只剩镜头挪过去、分岔露不出来；
   // 续生只在 active 态且未到末梢层（全图最多四层，末梢点选只选中）；
-  // 已拍板=只读浏览（同普通导图）：点父级露出全部分岔、点有子级的选项下钻，
-  // 只改本地视图路径，不触发续生、不改服务端已选路线。
+  // 已拍板=只读浏览（同普通导图）：点父级露出全部分岔、点选项沿链下钻，
+  // 点末端叶子则收缩成路径链；只改本地视图路径，不触发续生、不改服务端已选路线。
   const onRouteSelect = (nodeRef: string | null) => {
     if (nodeRef) setSelectedNodeRef(nodeRef);
     if (!nodeRef || !routeView || !projection) return;
@@ -117,9 +117,9 @@ export function IdeasBoardPane({
         return;
       }
       const chain = routeView.graph ? routePathTo(routeView.graph.root, nodeRef) : null;
-      if (chain && (chain[chain.length - 1]?.children?.length ?? 0) > 0) {
-        setFinalPath(chain.map((node) => node.ref));
-      }
+      // 点选项（含末端叶子）都换层：点有子级的露出其全部分岔，点叶子则视图收缩成
+      // 路径链——前面父级的分岔全部收起，画面聚焦到这条链。
+      if (chain) setFinalPath(chain.map((node) => node.ref));
       return;
     }
     if (depth >= 0) {
