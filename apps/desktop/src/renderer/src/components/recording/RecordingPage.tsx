@@ -1,4 +1,4 @@
-import { Check, Cloud, HardDrive, LoaderCircle, LogIn, Mic, MonitorSpeaker, Settings2, Square } from 'lucide-react'
+import { Check, Cloud, HardDrive, LoaderCircle, LogIn, Mic, MonitorSpeaker, Square } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 
 import { PRODUCT_NAME } from '@/components/ui/brand'
@@ -469,30 +469,19 @@ export function RecordingPage({
 
   if (controlOnly) {
     const listening = state === 'recording'
-    const SourceIcon = audioSource === 'system' ? MonitorSpeaker : Mic
     return (
-      <div className="capture-console" data-state={state}>
-        <div className="capture-console-copy" aria-live="polite">
-          <span>{t('diaryReality:recording.listeningControl')}</span>
-          <strong>{statusLabel}</strong>
-          <small><SourceIcon aria-hidden="true" />{t(audioSource === 'system' ? 'diaryReality:recording.computerAudio' : 'diaryReality:recording.microphone')} · {t(mode === 'cloud' ? 'diaryReality:recording.cloudHosted' : 'diaryReality:recording.localProcessing')}</small>
-        </div>
-        <div className="capture-console-actions">
-          <button
-            type="button"
-            className="capture-primary-button"
-            data-recording={String(listening)}
-            disabled={busy}
-            onClick={listening ? stopRecording : startRecording}
-          >
-            {listening ? <Square aria-hidden="true" /> : <Mic aria-hidden="true" />}
-            {t(listening ? 'diaryReality:recording.stopListening' : busy ? 'diaryReality:recording.processing' : 'diaryReality:recording.startListening')}
-            {listening ? <time>{formatDuration(elapsed)}</time> : null}
-          </button>
-          <button type="button" className="capture-settings-button" title={t('diaryReality:recording.captureSettings')} aria-label={t('diaryReality:recording.captureSettings')} onClick={onOpenSettings}>
-            <Settings2 aria-hidden="true" />
-          </button>
-        </div>
+      <div className="capture-console-actions">
+        <button
+          type="button"
+          className="capture-primary-button"
+          data-recording={String(listening)}
+          disabled={busy}
+          onClick={listening ? stopRecording : startRecording}
+        >
+          {listening ? <Square aria-hidden="true" /> : <Mic aria-hidden="true" />}
+          {t(listening ? 'diaryReality:recording.stopListening' : busy ? 'diaryReality:recording.processing' : 'diaryReality:recording.startListening')}
+          {listening ? <time>{formatDuration(elapsed)}</time> : null}
+        </button>
       </div>
     )
   }
