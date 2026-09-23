@@ -1,7 +1,6 @@
 import {
   AlertCircle,
   AudioLines,
-  BarChart3,
   Bookmark,
   CalendarDays,
   Camera,
@@ -125,23 +124,13 @@ const PERCEPTION_TYPE_OPTIONS = [
   { value: 'screenshot', label: 'diaryReality:reality.screenshotPerception', icon: Camera },
 ] as const
 
-const RANGE_WEEKS: Record<ActivityRange, number> = { '1w': 1, '1m': 5, '3m': 13, '6m': 26, '1y': 53 }
-const ACTIVITY_RANGES: readonly [ActivityRange, string][] = [
-  ['1w', 'diaryReality:reality.rangeOneWeek'], ['1m', 'diaryReality:reality.rangeOneMonth'], ['3m', 'diaryReality:reality.rangeThreeMonths'], ['6m', 'diaryReality:reality.rangeHalfYear'], ['1y', 'diaryReality:reality.rangeOneYear'],
-]
+/** 活跃度热力图常量：格子 10px + 间距 3px；每列 3 天；列数由容器宽度决定，
+ *  恰好铺满不溢出；月份标签至少间隔 4 列防重叠。上限 53 周（1 年）。 */
+const ACTIVITY_CELL_PITCH = 13
+const ACTIVITY_MAX_WEEKS = 53
+const ACTIVITY_DAYS_PER_COLUMN = 3
+const ACTIVITY_LABEL_GAP_COLUMNS = 4
 
-/** 自动选择能覆盖全部使用历史的最大时间范围:尽可能把所有活跃都展示出来。 */
-function preferredActivityRange(events: Array<{ startedAt: string }>): ActivityRange {
-  if (events.length === 0) return '1m'
-  const now = Date.now()
-  const earliest = Math.min(...events.map((event) => Date.parse(event.startedAt)))
-  const weeks = Math.max(1, Math.ceil((now - earliest) / (7 * 24 * 60 * 60 * 1000)))
-  if (weeks <= RANGE_WEEKS['1w']) return '1w'
-  if (weeks <= RANGE_WEEKS['1m']) return '1m'
-  if (weeks <= RANGE_WEEKS['3m']) return '3m'
-  if (weeks <= RANGE_WEEKS['6m']) return '6m'
-  return '1y'
-}
 const REPROCESS_POLL_INTERVAL_MS = 6_000
 const REPROCESS_TIMEOUT_MS = 30 * 60 * 1000
 
@@ -183,38 +172,36 @@ function eventType(event: RealityEvent): RealityEventType {
   return event.insights.eventType ?? 'OTHER'
 }
 
-function buildActivity(events: Array<{ startedAt: string }>, range: ActivityRange, locale: AppLocale) {
-  const weekCount = RANGE_WEEKS[range]
+/** 活跃度热力图：时间连续铺列（每列 3 天），正好终止于今天——无未来占位格。
+ *  月份标签在换月列放置且至少间隔 4 列。 */
+function buildActivity(events: Array<{ startedAt: string }>, weekCount: number, locale: AppLocale) {
   const counts = new Map<string, number>()
   for (const event of events) counts.set(dayKey(event.startedAt), (counts.get(dayKey(event.startedAt)) ?? 0) + 1)
   const today = new Date()
   today.setHours(0, 0, 0, 0)
-  const start = new Date(today)
-  start.setDate(today.getDate() - today.getDay() - (weekCount - 1) * 7)
-  const weeks = Array.from({ length: weekCount }, (_, weekIndex) => {
-    const weekStart = new Date(start)
-    weekStart.setDate(start.getDate() + weekIndex * 7)
-    return Array.from({ length: 7 }, (_, dayIndex) => {
-      const date = new Date(weekStart)
-      date.setDate(weekStart.getDate() + dayIndex)
-      return { date, count: date <= today ? counts.get(dayKey(date)) ?? 0 : -1 }
-    })
+  const totalDays = Math.max(1, weekCount) * 7
+  const days = Array.from({ length: totalDays }, (_, index) => {
+    const date = new Date(today)
+    date.setDate(today.getDate() - (totalDays - 1 - index))
+    return { date, count: counts.get(dayKey(date)) ?? 0 }
   })
-  const max = Math.max(1, ...weeks.flat().map((cell) => cell.count))
-  const monthLabels = weeks.map((week, index) => {
-    const date = week[0]!.date
-    const previous = index > 0 ? weeks[index - 1]![0]!.date : null
-    return !previous || previous.getMonth() !== date.getMonth()
-      ? { column: index + 1, label: new Intl.DateTimeFormat(locale, { month: 'short' }).format(date) }
-      : null
-  }).filter(Boolean) as { column: number; label: string }[]
-  const past = weeks.flat().filter((cell) => cell.date <= today)
-  const total = past.reduce((sum, cell) => sum + Math.max(0, cell.count), 0)
+  const max = Math.max(1, ...days.map((day) => day.count))
+  const columns = Math.ceil(totalDays / ACTIVITY_DAYS_PER_COLUMN)
+  const monthLabels: Array<{ column: number; label: string }> = []
+  let lastKeptColumn = -ACTIVITY_LABEL_GAP_COLUMNS
+  let lastMonth = -1
+  for (let column = 0; column < columns; column += 1) {
+    const date = days[column * ACTIVITY_DAYS_PER_COLUMN]!.date
+    if (date.getMonth() !== lastMonth && column - lastKeptColumn >= ACTIVITY_LABEL_GAP_COLUMNS) {
+      monthLabels.push({ column: column + 1, label: new Intl.DateTimeFormat(locale, { month: 'short' }).format(date) })
+      lastKeptColumn = column
+      lastMonth = date.getMonth()
+    }
+  }
+  const total = days.reduce((sum, day) => sum + day.count, 0)
   let streak = 0
-  let cursor = past.length - 1
-  if (past[cursor]?.count === 0) cursor -= 1
-  while (cursor >= 0 && past[cursor]!.count > 0) { streak += 1; cursor -= 1 }
-  return { weeks, max, monthLabels, total, streak }
+  for (let index = days.length - 1; index >= 0 && days[index]!.count > 0; index -= 1) streak += 1
+  return { days, columns, max, monthLabels, total, streak }
 }
 
 export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) {
@@ -228,10 +215,11 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
   const [filter, setFilter] = useState<StatusFilter>('all')
   const [typeFilter, setTypeFilter] = useState<PerceptionTypeFilter>('all')
   const [search, setSearch] = useState('')
-  const [activityRange, setActivityRange] = useState<ActivityRange>('3m')
-  const [rangeTouched, setRangeTouched] = useState(false)
-  // 趋势（感知活动）默认展开。
-  const [showActivity, setShowActivity] = useState(true)
+  // 活跃度周数：由容器实测宽度决定（列距 13px），恰好铺满不溢出。
+  const activityChartRef = useRef<HTMLDivElement | null>(null)
+  const [chartWidth, setChartWidth] = useState(0)
+  // 悬浮日期提示（视口坐标 fixed 定位，不参与布局）。
+  const [activityHint, setActivityHint] = useState<{ key: string; left: number; top: number } | null>(null)
   const [loading, setLoading] = useState(true)
   const [visualLoading, setVisualLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -407,7 +395,24 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
     }
     return [...groups.entries()]
   }, [locale, t, visibleEvents])
-  const activity = useMemo(() => buildActivity(timelineItems, activityRange, locale), [activityRange, locale, timelineItems])
+  // 活跃度周数 = 容器实测宽度能容纳的列数（列距 13px，向下取整整周）。
+  const activity = useMemo(() => buildActivity(
+    timelineItems,
+    Math.min(ACTIVITY_MAX_WEEKS, Math.max(1, Math.floor(Math.floor((chartWidth + 3) / ACTIVITY_CELL_PITCH) * 3 / 7))),
+    locale,
+  ), [chartWidth, locale, timelineItems])
+
+  // 实测热力图容器宽度。
+  useEffect(() => {
+    const element = activityChartRef.current
+    if (!element || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width ?? 0
+      setChartWidth(width)
+    })
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [])
 
   const expandedVisualNode = visualNodes.find((node) => node.id === expandedId) ?? null
 
@@ -424,13 +429,6 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
       })
     return () => { cancelled = true }
   }, [expandedVisualNode?.id, expandedVisualNode?.status, t])
-
-  // 首次加载后按活跃量自动选择范围;用户手动切换后不再覆盖。
-  useEffect(() => {
-    if (rangeTouched || loading || visualLoading) return
-    setActivityRange(preferredActivityRange(timelineItems))
-    setRangeTouched(true)
-  }, [loading, rangeTouched, timelineItems, visualLoading])
 
   useEffect(() => {
     setDetailTab('insights')
@@ -691,6 +689,65 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
         <div className="reality-header-copy">
           <h1>{t('diaryReality:reality.realityPerception')}</h1>
         </div>
+      </header>
+
+      {/* 活跃度热力图：宽度决定列数，铺满整行。 */}
+      <section className="reality-overview" aria-label={t('diaryReality:reality.perceptionActivity')}>
+        <div ref={activityChartRef} className="activity-chart" style={{ '--activity-columns': activity.columns } as CSSProperties}>
+          <div
+            className="activity-cells"
+            onMouseLeave={() => setActivityHint(null)}
+          >
+            {activity.days.map((day, index) => {
+              const key = dayKey(day.date)
+              const level = day.count === 0 ? 0 : Math.max(1, Math.ceil(day.count / activity.max * 4))
+              const isToday = key === dayKey(new Date())
+              return (
+                <button
+                  type="button"
+                  key={key}
+                  className="activity-cell"
+                  data-level={level}
+                  data-today={String(isToday)}
+                  data-selected={String(selectedDay === key)}
+                  aria-pressed={selectedDay === key}
+                  aria-label={t('diaryReality:reality.dateCountEvents', { date: key, count: day.count })}
+                  style={{ animationDelay: `${Math.min(index * 2, 600)}ms` }}
+                  onClick={() => setSelectedDay(selectedDay === key ? null : key)}
+                  onMouseEnter={(mouseEvent) => {
+                    const cellRect = mouseEvent.currentTarget.getBoundingClientRect()
+                    setActivityHint({ key, left: cellRect.left + cellRect.width / 2, top: cellRect.bottom })
+                  }}
+                />
+              )
+            })}
+            {activityHint ? (
+              <div className="activity-hint" role="tooltip" style={{ left: activityHint.left, top: activityHint.top }}>
+                {dayChipLabel(activityHint.key, locale)}
+              </div>
+            ) : null}
+          </div>
+          <div className="activity-months" aria-hidden="true">{activity.monthLabels.map((item) => (
+            <span key={item.column} style={{ gridColumn: item.column }}>{item.label}</span>
+          ))}</div>
+        </div>
+      </section>
+
+      {/* 控制行：下滑时吸附在页面顶部（sticky），热力图随页滚走。 */}
+      <div className="reality-dock">
+        <label className="reality-search" title={t('diaryReality:reality.searchTopicsTranscriptsOrVisualSummaries')}><Search aria-hidden="true" /><input value={search} placeholder={t('diaryReality:reality.searchPlaceholder')} title={t('diaryReality:reality.searchTopicsTranscriptsOrVisualSummaries')} onChange={(event) => setSearch(event.target.value)} /></label>
+        <div className="reality-type-filter" role="group" aria-label={t('diaryReality:reality.filterByPerceptionType')}>
+          {PERCEPTION_TYPE_OPTIONS.map(({ value, label, icon: Icon }) => (
+            <button type="button" key={value} aria-pressed={typeFilter === value} title={t(label)} aria-label={t(label)} onClick={() => setTypeFilter(value)}>{value === 'all' ? <span aria-hidden="true">{t('diaryReality:reality.all')}</span> : <Icon aria-hidden="true" />}</button>
+          ))}
+        </div>
+        <select value={filter} aria-label={t('diaryReality:reality.filterByEventStatus')} onChange={(event) => setFilter(event.target.value as StatusFilter)}>
+          <option value="all">{t('diaryReality:reality.allStatuses')}</option>
+          <option value="ongoing">{t('diaryReality:reality.inProgress')}</option>
+          <option value="completed">{t('diaryReality:reality.completed')}</option>
+          <option value="failed">{t('diaryReality:reality.failed')}</option>
+          <option value="pending_sync">{t('diaryReality:reality.pendingSync')}</option>
+        </select>
         <RecordingPage
           embedded
           controlOnly
@@ -704,100 +761,22 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
             setExpandedId((current) => current === eventId ? null : current)
           }}
         />
-      </header>
+      </div>
 
       <section className="reality-discovery" aria-labelledby="reality-timeline-title">
         <header className="reality-toolbar-heading">
           <div>
-          <CalendarDays aria-hidden="true" />
-          <strong id="reality-timeline-title">{t('diaryReality:reality.timeline')}</strong>
-          {selectedDay ? (
-            <button type="button" className="reality-day-chip" onClick={() => setSelectedDay(null)}>
-              {dayChipLabel(selectedDay, locale)}
-              <X aria-hidden="true" />
-            </button>
-          ) : (
-            <span>{t('diaryReality:reality.visibleTotalEvents', { visible: visibleEvents.length, total: timelineItems.length })}</span>
-          )}
+            <CalendarDays aria-hidden="true" />
+            <strong id="reality-timeline-title">{t('diaryReality:reality.timeline')}</strong>
+            {selectedDay ? (
+              <button type="button" className="reality-day-chip" onClick={() => setSelectedDay(null)}>
+                {dayChipLabel(selectedDay, locale)}
+                <X aria-hidden="true" />
+              </button>
+            ) : null}
           </div>
         </header>
-        <div className="reality-toolbar">
-          <label className="reality-search" title={t('diaryReality:reality.searchTopicsTranscriptsOrVisualSummaries')}><Search aria-hidden="true" /><input value={search} placeholder={t('diaryReality:reality.searchPlaceholder')} title={t('diaryReality:reality.searchTopicsTranscriptsOrVisualSummaries')} onChange={(event) => setSearch(event.target.value)} /></label>
-          <div className="reality-type-filter" role="group" aria-label={t('diaryReality:reality.filterByPerceptionType')}>
-            {PERCEPTION_TYPE_OPTIONS.map(({ value, label, icon: Icon }) => (
-              <button type="button" key={value} aria-pressed={typeFilter === value} title={t(label)} aria-label={t(label)} onClick={() => setTypeFilter(value)}>{value === 'all' ? <span aria-hidden="true">{t('diaryReality:reality.all')}</span> : <Icon aria-hidden="true" />}</button>
-            ))}
-          </div>
-          <select value={filter} aria-label={t('diaryReality:reality.filterByEventStatus')} onChange={(event) => setFilter(event.target.value as StatusFilter)}>
-            <option value="all">{t('diaryReality:reality.allStatuses')}</option>
-            <option value="ongoing">{t('diaryReality:reality.inProgress')}</option>
-            <option value="completed">{t('diaryReality:reality.completed')}</option>
-            <option value="failed">{t('diaryReality:reality.failed')}</option>
-            <option value="pending_sync">{t('diaryReality:reality.pendingSync')}</option>
-          </select>
-        </div>
       </section>
-
-      <section id="reality-activity-body" className="reality-activity" data-collapsed={String(!showActivity)} aria-labelledby="activity-title">
-          <header className="reality-activity-heading">
-            <h2 id="activity-title">
-              <button type="button" className="reality-activity-toggle" aria-expanded={showActivity} aria-controls="reality-activity-body" onClick={() => setShowActivity((value) => !value)}>
-                <BarChart3 aria-hidden="true" />
-                <span>{t('diaryReality:reality.perceptionActivity')}</span>
-                <ChevronDown aria-hidden="true" />
-              </button>
-            </h2>
-            <span className="reality-activity-meta">{t('diaryReality:reality.countEventsDaysDayStreak', { count: activity.total, days: activity.streak })}</span>
-            {showActivity ? (
-              <div className="reality-range" aria-label={t('diaryReality:reality.activityTimeRange')}>
-                {ACTIVITY_RANGES.map(([value, label]) => (
-                  <button type="button" key={value} aria-pressed={activityRange === value} onClick={() => { setRangeTouched(true); setActivityRange(value) }}>{t(label)}</button>
-                ))}
-              </div>
-            ) : null}
-          </header>
-          {showActivity ? (
-            <>
-          <div className="activity-chart" style={{ '--activity-weeks': activity.weeks.length } as CSSProperties}>
-            <div className="activity-months">{activity.monthLabels.map((item) => (
-              <span key={item.column} style={{ gridColumn: item.column }}>{item.label}</span>
-            ))}</div>
-            <div className="activity-weekdays"><span>{t('diaryReality:reality.mon')}</span><span>{t('diaryReality:reality.wed')}</span><span>{t('diaryReality:reality.fri')}</span></div>
-            <div className="activity-cells">
-              {activity.weeks.flatMap((week, weekIndex) => week.map((cell, dayIndex) => {
-                const key = dayKey(cell.date)
-                const isFuture = cell.count < 0
-                const level = isFuture ? -1 : cell.count === 0 ? 0 : Math.max(1, Math.ceil(cell.count / activity.max * 4))
-                const isToday = key === dayKey(new Date())
-                return (
-                  <button
-                    type="button"
-                    key={`${weekIndex}-${dayIndex}`}
-                    className="activity-cell"
-                    data-level={level}
-                    data-today={String(isToday)}
-                    data-selected={String(selectedDay === key)}
-                    disabled={isFuture}
-                    aria-pressed={selectedDay === key}
-                    aria-label={isFuture ? undefined : t('diaryReality:reality.dateCountEvents', { date: key, count: cell.count })}
-                    title={isFuture ? undefined : t('diaryReality:reality.dateCountEvents', { date: key, count: cell.count })}
-                    style={{ animationDelay: `${Math.min((weekIndex * 7 + dayIndex) * 2, 600)}ms` }}
-                    onClick={() => setSelectedDay(selectedDay === key ? null : key)}
-                  />
-                )
-              }))}
-            </div>
-          </div>
-          <div className="activity-footer">
-            <div className="activity-legend" aria-hidden="true">
-              <span>{t('diaryReality:reality.less')}</span>
-              {[0, 1, 2, 3, 4].map((level) => <i key={level} data-level={level} />)}
-              <span>{t('diaryReality:reality.more')}</span>
-            </div>
-          </div>
-            </>
-          ) : null}
-        </section>
 
       {error ? (
         <div className="reality-error" role="alert">
