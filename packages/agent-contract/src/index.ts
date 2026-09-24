@@ -65,6 +65,8 @@ export interface AgentSession {
   activeAgentId?: string;
   /** 会话锁定的模型档位（由 activeAgentId 反推）；后端权威，渲染层只读。 */
   modelPreference?: AgentModelPreference;
+  /** 会话锁定的本机 CLI Agent 渠道（activeAgentId 为本机 Agent 时由其反推）；后端权威。 */
+  channelAgentId?: string;
   title: string | null;
   status: AgentSessionStatus;
   createdAt: string;
@@ -249,6 +251,11 @@ export interface CreateAgentSessionInput {
    * 中途换档只影响之后新建的会话，不改已有会话。
    */
   modelPreference?: AgentModelPreference;
+  /**
+   * 会话渠道：锁定为某个本机 CLI Agent（如 codex:/usr/local/bin/codex），
+   * 整个会话由该 Agent 连续对话（ACP 持久会话）。设置后 modelPreference 被忽略。
+   */
+  channelAgentId?: string;
 }
 
 /** 会话模型档位：smart=强模型主会话+轻量模型委派；primary=纯强模型；lite=轻量模型直答。 */
@@ -269,6 +276,12 @@ export function modelPreferenceFromAgentId(agentId: string | null | undefined): 
   if (agentId === MODEL_PREFERENCE_AGENT_IDS.lite) return "lite";
   if (agentId === MAIN_AGENT_ID) return "smart";
   return undefined;
+}
+
+/** 会话 activeAgentId 不是档位内置 Agent 时视为本机 CLI 渠道，返回渠道 agentId。 */
+export function channelAgentIdFromAgentId(agentId: string | null | undefined): string | undefined {
+  if (!agentId || MODEL_TIER_AGENT_IDS.includes(agentId)) return undefined;
+  return agentId;
 }
 
 export interface UpdateAgentSessionInput {

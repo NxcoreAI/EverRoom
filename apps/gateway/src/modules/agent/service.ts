@@ -29,6 +29,7 @@ import {
   MAIN_AGENT_ID,
   MODEL_PREFERENCE_AGENT_IDS,
   MODEL_TIER_AGENT_IDS,
+  channelAgentIdFromAgentId,
   modelPreferenceFromAgentId,
 } from "@nxcore/agent-contract";
 import type { AgentRuntime, RuntimeAttachment, RuntimeEvent } from "@nxcore/agent-runtime";
@@ -129,6 +130,7 @@ function iso(value: Date | null): string | null {
 
 function toSession(row: typeof agentSessions.$inferSelect): AgentSession {
   const modelPreference = modelPreferenceFromAgentId(row.activeAgentId);
+  const channelAgentId = channelAgentIdFromAgentId(row.activeAgentId);
   return {
     id: row.id,
     roomId: normalizeRoomId(row.roomId),
@@ -136,6 +138,7 @@ function toSession(row: typeof agentSessions.$inferSelect): AgentSession {
     runtimeId: row.runtimeId,
     activeAgentId: row.activeAgentId,
     ...(modelPreference ? { modelPreference } : {}),
+    ...(channelAgentId ? { channelAgentId } : {}),
     title: row.title,
     status: row.status,
     createdAt: row.createdAt.toISOString(),
@@ -655,7 +658,11 @@ export class AgentService {
     // 档位在创建时锁定为 activeAgentId；lite 未配置（tier resolver 缺席）
     // 静默回落 smart，之后 startRun 一路走 session.activeAgentId。
     let activeAgentId: string = MAIN_AGENT_ID;
-    if (input.modelPreference) {
+    if (input.channelAgentId) {
+      // 渠道会话：activeAgentId 直接锁定为本机 CLI Agent（如 codex:/…），
+      // modelPreference 被忽略；可用性由 startRun 的 localAgent 链路兜底。
+      activeAgentId = input.channelAgentId;
+    } else if (input.modelPreference) {
       const requested = MODEL_PREFERENCE_AGENT_IDS[input.modelPreference];
       const tierRuntime = requested === MAIN_AGENT_ID
         ? this.runtime

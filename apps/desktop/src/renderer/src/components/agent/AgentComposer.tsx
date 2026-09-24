@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowUp, Bot, Brain, Check, Feather, FileText, FolderOpen, History, LoaderCircle, MessagesSquare, Plus, Quote, Search, Square, X, Zap } from 'lucide-react'
+import { ArrowLeft, ArrowUp, Bot, Brain, Check, Feather, FileText, FolderOpen, History, LoaderCircle, MessagesSquare, Plus, Quote, Search, Square, Terminal, X, Zap } from 'lucide-react'
 import {
   forwardRef,
   useEffect,
@@ -110,6 +110,10 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   /** 打开选择器时拉取最新 lite 可用性（设置页保存后无需重启）。 */
   loadModelAvailability: () => Promise<boolean>
   onSelectModelPreference: (tier: AgentModelPreference) => void
+  /** 当前生效渠道：会话已存在＝会话锁定渠道，否则＝全局默认（null=档位模式）。 */
+  channelAgentId?: string | null
+  /** 选择本机 CLI Agent 渠道（整个新会话由其连续执行）；null=回到档位模式。 */
+  onSelectChannelAgent?: (agentId: string | null) => void
   onChange: (value: string) => void
   onSelectExternalConversation: (conversation: ExternalConversationSummary | null) => void
   onClearContext: () => void
@@ -136,6 +140,8 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   modelPreferenceLocked = false,
   loadModelAvailability,
   onSelectModelPreference,
+  channelAgentId = null,
+  onSelectChannelAgent,
   value,
   onChange,
   onClearContext,
@@ -443,7 +449,14 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
     loadModelAvailability().then(setLiteAvailable, () => setLiteAvailable(false))
   }
   const chooseModelTier = (tier: AgentModelPreference) => {
+    // 渠道生效时点档位＝退出渠道，回到档位模式。
+    if (channelAgentId) onSelectChannelAgent?.(null)
     onSelectModelPreference(tier)
+    setModelPickerOpen(false)
+    window.requestAnimationFrame(() => textareaRef.current?.focus())
+  }
+  const chooseChannelAgent = (agentId: string) => {
+    onSelectChannelAgent?.(agentId)
     setModelPickerOpen(false)
     window.requestAnimationFrame(() => textareaRef.current?.focus())
   }
@@ -595,6 +608,8 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   }
 
   const menuOpen = slashPickerOpen || externalPickerOpen || agentPickerOpen || modelPickerOpen
+  const channelAgent = channelAgentId ? localAgents.find((agent) => agent.id === channelAgentId) ?? null : null
+  const channelActive = Boolean(channelAgentId)
   const activeTierMeta = MODEL_TIER_META[modelPreference]
   const ActiveTierIcon = activeTierMeta.icon
   // 会话快照加载时保留本地附件。
@@ -841,23 +856,45 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
             .map((tier) => {
               const meta = MODEL_TIER_META[tier]
               const TierIcon = meta.icon
+              const tierSelected = !channelActive && modelPreference === tier
               return (
                 <button
                   key={tier}
                   type="button"
                   className="agent-model-option"
                   role="option"
-                  aria-selected={modelPreference === tier}
-                  data-active={String(modelPreference === tier)}
+                  aria-selected={tierSelected}
+                  data-active={String(tierSelected)}
                   onMouseDown={(event) => event.preventDefault()}
                   onClick={() => chooseModelTier(tier)}
                 >
                   <span className="agent-picker-header-icon"><TierIcon aria-hidden="true" /></span>
                   <span><strong>{t(meta.labelKey)}</strong><small>{t(meta.hintKey)}</small></span>
-                  {modelPreference === tier ? <Check aria-hidden="true" /> : null}
+                  {tierSelected ? <Check aria-hidden="true" /> : null}
                 </button>
               )
             })}
+          {onSelectChannelAgent && callableLocalAgents.length > 0 ? (
+            <div className="agent-model-channel-group" role="group" aria-label={t('surface:agentComposer.channelGroupLabel')}>
+              <span className="agent-model-group-label">{t('surface:agentComposer.channelGroupLabel')}</span>
+              {callableLocalAgents.map((agent) => (
+                <button
+                  key={agent.id}
+                  type="button"
+                  className="agent-model-option"
+                  role="option"
+                  aria-selected={channelAgentId === agent.id}
+                  data-active={String(channelAgentId === agent.id)}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => chooseChannelAgent(agent.id)}
+                >
+                  <span className="agent-picker-header-icon"><Terminal aria-hidden="true" /></span>
+                  <span><strong>{agent.displayName}</strong><small>{t('surface:agentComposer.channelOptionHint')}</small></span>
+                  {channelAgentId === agent.id ? <Check aria-hidden="true" /> : null}
+                </button>
+              ))}
+            </div>
+          ) : null}
           {modelPreferenceLocked ? (
             <footer className="agent-model-picker-hint">{t('surface:agentComposer.modelPickerApplyToNext')}</footer>
           ) : null}
@@ -970,15 +1007,16 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
           <button
             type="button"
             className="agent-model-tier-toggle"
-            data-tier={modelPreference}
+            data-tier={channelActive ? undefined : modelPreference}
+            data-channel={channelAgentId ?? undefined}
             aria-haspopup="listbox"
             aria-expanded={modelPickerOpen}
-            title={t('surface:agentComposer.modelPickerTitle')}
+            title={channelActive ? channelAgent?.displayName ?? channelAgentId ?? undefined : t('surface:agentComposer.modelPickerTitle')}
             disabled={controlsDisabled}
             onClick={() => (modelPickerOpen ? setModelPickerOpen(false) : openModelPicker())}
           >
-            <ActiveTierIcon aria-hidden="true" />
-            <span>{t(activeTierMeta.labelKey)}</span>
+            {channelActive ? <Terminal aria-hidden="true" /> : <ActiveTierIcon aria-hidden="true" />}
+            <span>{channelActive ? channelAgent?.displayName ?? channelAgentId : t(activeTierMeta.labelKey)}</span>
           </button>
           {/* 占位 flex 撑开发送钮；无引用时不渲染文案。 */}
           <span className="agent-composer-context" title={hasSelectedText ? contextSummary : undefined}>

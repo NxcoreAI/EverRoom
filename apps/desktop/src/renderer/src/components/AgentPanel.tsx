@@ -555,6 +555,11 @@ export function AgentPanel({
 
   const modelTierLocked = Boolean(session.sessionId)
   const effectiveModelPreference: AgentModelPreference = session.currentSession?.modelPreference ?? session.modelPreferenceDefault
+  // 渠道与档位同一把锁：会话已创建＝读会话锁定渠道（无渠道则 null），
+  // 未创建＝读全局默认渠道。
+  const effectiveChannelAgentId = session.sessionId
+    ? session.currentSession?.channelAgentId ?? null
+    : session.channelAgentIdDefault
 
   const composer = (
     <AgentComposer
@@ -575,6 +580,8 @@ export function AgentPanel({
       modelPreferenceLocked={modelTierLocked}
       loadModelAvailability={loadLiteModelAvailability}
       onSelectModelPreference={session.setModelPreferenceDefault}
+      channelAgentId={effectiveChannelAgentId}
+      onSelectChannelAgent={session.setChannelAgentIdDefault}
       value={draft}
       active={Boolean(session.activeRunId)}
       loading={session.loading || submitting}

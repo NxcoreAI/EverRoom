@@ -476,3 +476,69 @@ describe('AgentComposer model tier picker', () => {
     expect(trigger.findAllByType('span').map((span) => String(span.props.children ?? ''))).toEqual(['强模型'])
   })
 })
+
+describe('AgentComposer CLI channel picker', () => {
+  beforeEach(() => {
+    vi.stubGlobal('window', {
+      requestAnimationFrame: (callback: FrameRequestCallback) => { callback(0); return 1 },
+    })
+    vi.stubGlobal('document', { activeElement: null, addEventListener: vi.fn(), removeEventListener: vi.fn() })
+  })
+
+  afterEach(() => {
+    vi.clearAllMocks()
+    vi.unstubAllGlobals()
+  })
+
+  async function openChannelPicker(overrides: Partial<React.ComponentProps<typeof AgentComposer>> = {}) {
+    const onSelectChannelAgent = vi.fn()
+    const onSelectModelPreference = vi.fn()
+    const { renderer } = renderComposer({ onSelectChannelAgent, onSelectModelPreference, ...overrides })
+    const trigger = renderer.root.findByProps({ className: 'agent-model-tier-toggle' })
+    await act(async () => { trigger.props.onClick(); await Promise.resolve() })
+    const channelOptions = renderer.root.findByProps({ className: 'agent-model-channel-group' })
+      .findAllByProps({ role: 'option' })
+    return { renderer, trigger, channelOptions, onSelectChannelAgent, onSelectModelPreference }
+  }
+
+  it('lists callable CLI agents in a channel group and reports the choice', async () => {
+    const { renderer, channelOptions, onSelectChannelAgent } = await openChannelPicker()
+
+    expect(channelOptions.map((option) => String(option.findByType('strong').children)))
+      .toEqual(['Codex', 'Claude Code'])
+    act(() => channelOptions[0]!.props.onClick())
+
+    expect(onSelectChannelAgent).toHaveBeenCalledWith('codex:/usr/local/bin/codex')
+    expect(renderer.root.findAllByProps({ className: 'agent-composer-popover agent-model-picker' })).toHaveLength(0)
+  })
+
+  it('shows the locked channel on the trigger and unselects tiers', async () => {
+    const { renderer, trigger, channelOptions } = await openChannelPicker({
+      channelAgentId: 'codex:/usr/local/bin/codex',
+    })
+
+    expect(trigger.props['data-channel']).toBe('codex:/usr/local/bin/codex')
+    expect(trigger.props['data-tier']).toBeUndefined()
+    expect(trigger.findAllByType('span').map((span) => String(span.props.children ?? ''))).toEqual(['Codex'])
+    expect(channelOptions[0]!.props['aria-selected']).toBe(true)
+    expect(channelOptions[1]!.props['aria-selected']).toBe(false)
+    const tierOptions = renderer.root.findByProps({ className: 'agent-composer-popover agent-model-picker' })
+      .findAllByProps({ role: 'option' })
+      .filter((option) => !channelOptions.includes(option as never))
+    expect(tierOptions.map((option) => option.props['aria-selected'])).toEqual([false, false])
+  })
+
+  it('picking a tier while a channel is active exits the channel', async () => {
+    const { renderer, onSelectChannelAgent, onSelectModelPreference } = await openChannelPicker({
+      channelAgentId: 'claude:/usr/local/bin/claude',
+    })
+    const tierOption = renderer.root.findByProps({ className: 'agent-composer-popover agent-model-picker' })
+      .findAllByProps({ role: 'option' })
+      .find((option) => String(option.findByType('strong').children) === '强模型')!
+
+    act(() => tierOption.props.onClick())
+
+    expect(onSelectChannelAgent).toHaveBeenCalledWith(null)
+    expect(onSelectModelPreference).toHaveBeenCalledWith('primary')
+  })
+})

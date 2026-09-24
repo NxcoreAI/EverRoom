@@ -60,6 +60,8 @@
   "agentComposer.modelTierLite": "轻量",
   "agentComposer.modelTierLiteHint": "轻量模型直答，更快更省",
   "agentComposer.modelPickerApplyToNext": "档位在会话开始时锁定，切换将在新对话中生效",
+  "agentComposer.channelGroupLabel": "CLI 渠道",
+  "agentComposer.channelOptionHint": "整个对话由该 Agent 连续执行，自带其原生环境",
   "agentComposer.agentIsWorking": "Agent 正在处理...",
   "agentComposer.askAboutThisPageOrDescribeAnAction": "基于当前页面提问，或描述需要执行的操作",
   "agentComposer.attachmentsAddedToTheComposer": "附件已添加到输入区",

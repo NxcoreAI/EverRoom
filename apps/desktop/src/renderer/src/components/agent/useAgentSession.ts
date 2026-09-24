@@ -84,6 +84,25 @@ function persistModelPreference(tier: AgentModelPreference): void {
     // localStorage 不可用时仅本次会话生效。
   }
 }
+
+const CHANNEL_PREFERENCE_STORAGE_KEY = 'nxcore-ce:agent-channel-preference:v1'
+
+function readStoredChannelAgentId(): string | null {
+  try {
+    return localStorage.getItem(CHANNEL_PREFERENCE_STORAGE_KEY) || null
+  } catch {
+    return null
+  }
+}
+
+function persistChannelAgentId(agentId: string | null): void {
+  try {
+    if (agentId) localStorage.setItem(CHANNEL_PREFERENCE_STORAGE_KEY, agentId)
+    else localStorage.removeItem(CHANNEL_PREFERENCE_STORAGE_KEY)
+  } catch {
+    // localStorage 不可用时仅本次会话生效。
+  }
+}
 // pre-v2 世代用复数 key 存 per-page map（keyBase 不同，框架走不到），
 // 认领时框架外兜底一次：取任一会话 id 作为当前选择。
 const LEGACY_SESSION_STORAGE_KEY = 'nxcore-ce:agent-sessions:v1'
@@ -540,6 +559,7 @@ export function useAgentSession(
       ? current.map((session) => session.id === snapshot.session.id ? snapshot.session : session)
       : [snapshot.session, ...current])
     sessionIdRef.current = snapshot.session.id
+    channelAgentRef.current = snapshot.session.channelAgentId ?? null
     storeSession(snapshot.session.id)
     return true
   }, [api])
@@ -557,6 +577,7 @@ export function useAgentSession(
     setCurrentSession(session)
     setDisplayTitle(session.title?.trim() || t('surface:useAgentSession.newConversation'))
     sessionIdRef.current = session.id
+    channelAgentRef.current = session.channelAgentId ?? null
     try {
       await api.unsubscribe()
       const snapshot = await api.getSession(session.id)
@@ -593,6 +614,7 @@ export function useAgentSession(
     setSessions([])
     setSessionLinks([])
     sessionIdRef.current = null
+    channelAgentRef.current = null
     sequenceByRun.current.clear()
     eventsByRun.current.clear()
     userPromptByRun.current.clear()
@@ -677,13 +699,32 @@ export function useAgentSession(
     persistModelPreference(tier)
   }, [])
 
+  // 全局默认渠道：新会话整体锁定到某个本机 CLI Agent（ACP 持久会话连续对话）。
+  const [channelAgentIdDefault, setChannelAgentIdDefaultState] = useState<string | null>(readStoredChannelAgentId)
+  const channelAgentDefaultRef = useRef(channelAgentIdDefault)
+  const setChannelAgentIdDefault = useCallback((agentId: string | null) => {
+    channelAgentDefaultRef.current = agentId
+    setChannelAgentIdDefaultState(agentId)
+    persistChannelAgentId(agentId)
+  }, [])
+  // 当前会话锁定的渠道（selectSession/hydrate 时镜像）；渠道会话每轮
+  // startRun 都要显式带 targetAgentId，桌面端 main 才会重建 localAgent。
+  const channelAgentRef = useRef<string | null>(null)
+
   const createSession = async (
     pendingMessages: DisplayAgentMessage[] = [],
   ): Promise<AgentSession> => {
     if (!api) throw new Error(t('surface:useAgentSession.desktopOnly'))
     if (activeRunId) throw new Error(t('surface:useAgentSession.stopBeforeCreating'))
     try {
-      const session = await api.createSession({ pageLabel: 'Agent', roomId: null, modelPreference: modelPreferenceRef.current })
+      const session = await api.createSession({
+        pageLabel: 'Agent',
+        roomId: null,
+        // 渠道优先：锁定后整个会话由该 CLI Agent 连续执行，档位被忽略。
+        ...(channelAgentDefaultRef.current
+          ? { channelAgentId: channelAgentDefaultRef.current }
+          : { modelPreference: modelPreferenceRef.current }),
+      })
       setSessions((current) => [session, ...current])
       await selectSession(session, pendingMessages)
       return session
@@ -763,6 +804,7 @@ export function useAgentSession(
         if (next) await selectSession(next)
         else {
           sessionIdRef.current = null
+          channelAgentRef.current = null
           setSessionId(null)
           setCurrentSession(null)
           setDisplayTitle(t('surface:useAgentSession.newConversation'))
@@ -903,7 +945,9 @@ export function useAgentSession(
     setError(null)
     try {
       const currentSessionId = await ensureSession([optimisticMessage])
-      const selectedAgentId = targetAgentId ?? 'main'
+      // 渠道会话整段锁定在本机 CLI Agent：每轮显式带 targetAgentId，
+      // 桌面端 main 才会走 localAgent 重建（沙箱与工作区授权链路）。
+      const selectedAgentId = targetAgentId ?? channelAgentRef.current ?? 'main'
       setMessages((current) => current.map((item) => item.id === optimisticId
         ? { ...item, sessionId: currentSessionId }
         : item))
@@ -1055,6 +1099,8 @@ export function useAgentSession(
     messages,
     modelPreferenceDefault,
     setModelPreferenceDefault,
+    channelAgentIdDefault,
+    setChannelAgentIdDefault,
     pendingApprovals,
     reasoningByRun,
     runCompletedAtByRun,

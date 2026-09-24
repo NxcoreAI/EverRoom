@@ -60,6 +60,8 @@
   "agentComposer.modelTierLite": "Lite",
   "agentComposer.modelTierLiteHint": "Lite model answers directly — faster and cheaper",
   "agentComposer.modelPickerApplyToNext": "Tier is locked when a conversation starts; the change applies to your next conversation",
+  "agentComposer.channelGroupLabel": "CLI channels",
+  "agentComposer.channelOptionHint": "The whole conversation runs on this agent continuously, with its native environment",
   "agentComposer.agentIsWorking": "Agent is working...",
   "agentComposer.askAboutThisPageOrDescribeAnAction": "Ask about this page or describe an action",
   "agentComposer.attachmentsAddedToTheComposer": "Attachments added to the composer",

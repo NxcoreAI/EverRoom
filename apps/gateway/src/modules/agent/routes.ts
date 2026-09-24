@@ -178,6 +178,7 @@ export function agentRoutes(
               Type.Literal("primary"),
               Type.Literal("lite"),
             ])),
+            channelAgentId: Type.Optional(Type.String({ maxLength: 500 })),
           }),
         },
       },
