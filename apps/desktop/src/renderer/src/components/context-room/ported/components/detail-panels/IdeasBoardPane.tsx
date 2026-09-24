@@ -2,7 +2,7 @@ import { Compass, Lock, LockOpen, Target } from 'lucide-react';
 import { Fragment, useEffect, useMemo, useState } from 'react';
 
 import { useLocale } from '../../../../../i18n/LocaleContext';
-import type { EmergenceFocusInput, EmergenceMode, EmergenceProjectionResultDto } from '../../../../../../../shared/knowledge';
+import type { EmergenceFocusInput, EmergenceMode } from '../../../../../../../shared/knowledge';
 import type { ContextRoomRecord } from '../../types';
 import { useEmergence } from '../../hooks/useEmergence';
 import { useRouteMindmap } from '../../hooks/useRouteMindmap';
@@ -10,7 +10,7 @@ import { FocusTreeCanvas } from '../emergence-graph/FocusTreeCanvas';
 import { SkeletonTreeCanvas } from '../emergence-graph/SkeletonTreeCanvas';
 import { WalkJourneyCanvas } from '../emergence-graph/WalkJourneyCanvas';
 import { resolveCenter } from '../emergence-graph/focusTreeModel';
-import { backWalk, initialWalkLog, stepWalk, type WalkStation } from '../emergence-graph/walkModel';
+import { backWalk, initialWalkLog, nextHops, stepWalk, type WalkStation } from '../emergence-graph/walkModel';
 import { ROUTE_MAX_DEPTH, routeNodeDepth, routePathProjection, routePathTo, routeProjectionCards, routeProjectionToGraph, routeTailNode } from './routeProjection';
 
 /**
@@ -37,7 +37,7 @@ export function IdeasBoardPane({
   const [wanderStart, setWanderStart] = useState<{ nodeRef: string | null; label: string } | null>(null);
 
   const {
-    wanderResult, wanderLoading, error, wanderFrom,
+    wanderResult, wanderLoading, extending, journeyKey, error, wanderFrom, extendWalk,
   } = useEmergence({ roomId: room.id, focus });
   // 聚焦=写作路线导图，跟着打开的文档走。
   const route = useRouteMindmap({ roomId: room.id, documentId: focus.documentId ?? null });
@@ -135,12 +135,13 @@ export function IdeasBoardPane({
     ? t('contextRoom:routeMindmap.noMaterial')
     : t('contextRoom:routeMindmap.failed');
 
-  // 新的漫步结果=新的路：渲染期重置（无空帧），刷新/再走一次都不丢当前视图。
-  // 上一次结果必须存 state（存 ref 会在严格模式双渲染下丢重置：首跑改了 ref，次跑看不到变化）。
-  const [prevWanderResult, setPrevWanderResult] = useState<EmergenceProjectionResultDto | null>(null);
-  if (wanderResult !== prevWanderResult) {
-    setPrevWanderResult(wanderResult);
-    const start = wanderResult && wanderResult.nodes.length > 0
+  // 新的旅程（入口/再走一次）=新的路：渲染期重置（无空帧）。以 journeyKey 而非
+  // 结果对象身份判断——续走（extendWalk）合并出的新对象不再重置路径，脚下扩充而已。
+  // 上一次 key 必须存 state（存 ref 会在严格模式双渲染下丢重置：首跑改了 ref，次跑看不到变化）。
+  const [prevJourneyKey, setPrevJourneyKey] = useState<number>(-1);
+  if (journeyKey !== prevJourneyKey && wanderResult) {
+    setPrevJourneyKey(journeyKey);
+    const start = wanderResult.nodes.length > 0
       ? resolveCenter(wanderResult, wanderStart?.nodeRef ?? '')
       : '';
     const reset: WalkStation[] = start ? initialWalkLog(start) : [];
@@ -148,6 +149,45 @@ export function IdeasBoardPane({
       setWalkLog(reset);
     }
   }
+
+  // 自动续走（步进永不停）：下一跳候选不足两条且未在续走时，以当前驻足为起点
+  // 再投影一次并合并——尽头变成「还在展开」，桥接点过去仍有下文。
+  const candidateHops = useMemo(
+    () => (wanderResult && walkLog.length > 0 ? nextHops(wanderResult, room.id, walkLog) : []),
+    [wanderResult, walkLog, room.id],
+  );
+  useEffect(() => {
+    if (mode !== 'wander' || !wanderResult || walkLog.length === 0 || extending) return;
+    if (candidateHops.length >= 2) return;
+    console.info(`[漫游] 候选不足（${candidateHops.length} 条），从当前驻足续走展开…`);
+    void extendWalk(walkLog[walkLog.length - 1].nodeRef);
+  }, [mode, wanderResult, walkLog, candidateHops, extending, extendWalk]);
+
+  // 漫游诊断日志：每到一站（含续走合并后的重算）打印完整链路与全部候选——
+  // ✓=进界面前 3，其余是排序后被截掉的；尽头/桥接均带标记。控制台输出
+  // 直接复制出来即可分析「走是能走、但没启发」时到底在给用户看什么。
+  useEffect(() => {
+    if (mode !== 'wander' || !wanderResult || walkLog.length === 0) return;
+    const nodeOf = new Map(wanderResult.nodes.map((node) => [node.id, node]));
+    const labelOf = (ref: string) => nodeOf.get(ref)?.label ?? ref;
+    const stations = walkLog.map((station, index) => {
+      const node = nodeOf.get(station.nodeRef);
+      const via = station.viaRelation
+        ? `（沿「${station.viaRelation}」${station.bridgeRoom ? `，桥接:${station.bridgeRoom}` : ''}）`
+        : '';
+      return `${index === 0 ? '★' : '→'} [${node?.nodeType ?? '?'}] ${labelOf(station.nodeRef)}${via}`;
+    });
+    const options = nextHops(wanderResult, room.id, walkLog, 12)
+      .map((hop, index) => {
+        const picked = candidateHops.some((item) => item.edgeId === hop.edgeId) ? '✓' : '·';
+        const bridge = hop.bridgeRoom ? `，桥接:${hop.bridgeRoom}` : '';
+        return `  ${index + 1} ${picked} [${hop.nodeType}] ${labelOf(hop.nodeRef)}（沿「${hop.viaRelation}」${bridge}）${hop.deadEnd ? '【尽头】' : ''}`;
+      })
+      .join('\n');
+    console.info(
+      `[漫游] 第 ${walkLog.length} 站 / 切片 ${wanderResult.nodes.length} 节点\n${stations.join('\n')}\n[漫游] 候选（✓=进界面前3）：\n${options || '  （无候选——等待续走展开）'}`,
+    );
+  }, [mode, wanderResult, walkLog, room.id, candidateHops]);
 
   const switchMode = (next: EmergenceMode) => {
     if (next === mode) return;
@@ -222,6 +262,7 @@ export function IdeasBoardPane({
             roomId={room.id}
             log={walkLog}
             cards={wanderResult.cards ?? []}
+            pending={extending}
             onStep={walkStep}
             onBackTo={walkBackTo}
             onWalkAgain={() => wanderFrom(wanderStart?.nodeRef ?? null)}

@@ -29,6 +29,10 @@ const WikiDto = Type.Object({
   knowledgeId: Type.String(),
   status: Type.String(),
   createdAt: Type.String(),
+  // 清单行价值信号（KS getWiki 元数据；单行 KS 失败时为 null，不拖垮清单）
+  pageCount: Type.Union([Type.Integer(), Type.Null()]),
+  summary: Type.Union([Type.String(), Type.Null()]),
+  updatedAt: Type.Union([Type.String(), Type.Null()]),
 });
 
 const RoomIdParams = Type.Object({ id: Type.String({ minLength: 1, maxLength: 200 }) });
@@ -799,12 +803,13 @@ export function knowledgeRoutes(service: KnowledgeService): FastifyPluginAsyncTy
         },
       },
       async () => ({
-        items: service.listRoomWikis().map((wiki) => ({
+        items: await Promise.all(service.listRoomWikis().map(async (wiki) => ({
           roomId: wiki.roomId,
           knowledgeId: wiki.knowledgeId,
           status: wiki.status,
           createdAt: iso(wiki.createdAt),
-        })),
+          ...await service.wikiMeta(wiki.knowledgeId),
+        }))),
       }),
     );
 

@@ -428,6 +428,12 @@ export interface LocalAgentDispatchRunSource {
 export class AgentService {
   private filesService: FilesService | null = null;
   private externalConversationResolver: AgentExternalConversationResolver | null = null;
+  /** 记忆引擎暂停闸（由 create-server 注入 ingest.getPause().paused）；null = 无闸。 */
+  private memoryCaptureGate: (() => boolean) | null = null;
+
+  setMemoryCaptureGate(gate: (() => boolean) | null): void {
+    this.memoryCaptureGate = gate;
+  }
   private readonly sequences = new Map<string, number>();
   private readonly executionContexts = new Map<string, {
     sessionId: string;
@@ -1153,6 +1159,12 @@ export class AgentService {
     input: StartAgentRunInput,
     options: { persistUserMessage?: boolean } = {},
   ): Promise<AgentRun> {
+    // 记忆引擎暂停闸：暂停期间对话不写 L0（内部工具链路本就 captureMemory=false）。
+    // 暂停语义是「新产生的内容不再进入记忆库」——ingest 闸只拦了文档链路，
+    // 对话捕获在这里补齐，否则暂停后每轮聊天仍进记忆、侧栏指示器仍跳动。
+    if (this.memoryCaptureGate?.() && input.captureMemory !== false) {
+      input = { ...input, captureMemory: false };
+    }
     const existing = this.db
       .select()
       .from(agentRuns)

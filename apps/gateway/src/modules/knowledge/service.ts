@@ -45,7 +45,7 @@ import { OpenAiCompletionAgentRuntime } from "../agent/openai-completion-runtime
 import { AgentResolver, BUILTIN_AGENT_IDS } from "../agent/resolver.js";
 import { loadBuiltinAgentBundle } from "../agent/builtin-bundles.js";
 import { bundledAgentDefinitionsDir } from "../../config.js";
-import { KsAdminClient, KsBusyError, type KsWikiPageItem } from "./ks-client.js";
+import { KsAdminClient, KsBusyError, type KsWikiDetail, type KsWikiPageItem } from "./ks-client.js";
 import { RoomWikiRegistry } from "./registry.js";
 import { KnowledgeRouter, fallbackSummary } from "./router.js";
 import {
@@ -783,15 +783,40 @@ export class KnowledgeService {
     if (!wiki) return { status: "none", items: [], pageCount: null, summary: null, updatedAt: null };
     const items = await this.ks.listPages(knowledgeId);
     // page_count：KS 内部已产出页数（processing 期间 ls 为空，用它透出构建进度）
-    // 身份卡（registry 写的 "Room X 的资料空间"）不是内容概览，不透出
-    const summary = wiki.summary && !wiki.summary.endsWith("的资料空间") ? wiki.summary : null;
     return {
       status: wiki.status,
       items,
       pageCount: wiki.page_count,
-      summary,
+      summary: this.wikiContentSummary(wiki),
       updatedAt: wiki.last_sync_at ?? wiki.updated_at ?? null,
     };
+  }
+
+  /** KS 内容摘要（ingest 成功后 LLM 生成）；创建时 registry 写的身份卡不算概览，不透出。 */
+  private wikiContentSummary(wiki: KsWikiDetail): string | null {
+    return wiki.summary && !wiki.summary.endsWith("的资料空间") ? wiki.summary : null;
+  }
+
+  /**
+   * wiki 清单行的价值信号（页面数/内容摘要/最近同步），Wiki 应用左栏排序展示用。
+   * KS 不可达或单行失败时字段全 null——清单不因个别 wiki 拖垮。
+   */
+  async wikiMeta(knowledgeId: string): Promise<{
+    pageCount: number | null;
+    summary: string | null;
+    updatedAt: string | null;
+  }> {
+    try {
+      const wiki = await this.ks.getWiki(knowledgeId);
+      if (!wiki) return { pageCount: null, summary: null, updatedAt: null };
+      return {
+        pageCount: wiki.page_count,
+        summary: this.wikiContentSummary(wiki),
+        updatedAt: wiki.last_sync_at ?? wiki.updated_at ?? null,
+      };
+    } catch {
+      return { pageCount: null, summary: null, updatedAt: null };
+    }
   }
 
   /**

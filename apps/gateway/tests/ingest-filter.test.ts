@@ -138,6 +138,8 @@ describe("agent 过滤闸（ingest 第一级）", () => {
       dataType: "document",
       title: "需求文档",
       markdown: "# 需求\nEverRoom v2 的目标……",
+      // 题材是过滤闸恢复扇出：显式开记忆以覆盖参考型文档的默认关闭
+      pipelines: { room: true, wiki: true, memory: true },
     });
     expect(result.filterStatus).toBe("pending");
     await vi.waitFor(() => {

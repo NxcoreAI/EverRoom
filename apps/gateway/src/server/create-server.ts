@@ -543,6 +543,28 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   await app.register(aiRelayRoutes({ sessions: aiRelaySessions, runtimeConfigManager }));
   const contextRoomService = new ContextRoomService(db);
   const memoryService = new MemoryService(config.memory, app.log, { db, dataDir: config.dataDir }, contextRoomService);
+  // 参考型文档存量记忆清退（幂等；MemoryCore 由桌面端启动后注入连接，故周期
+  // 重试直至完成打标——见 MemoryService.purgeReferenceMemoryDocuments）。
+  const runReferenceDocPurge = (): void => {
+    void memoryService.purgeReferenceMemoryDocuments()
+      .then((summary) => {
+        if (!summary) return;
+        clearInterval(referenceDocPurgeTimer);
+        app.log.info(
+          { module: "memory-reference-purge", purged: summary.purged },
+          "reference-type memory documents purged (state/reference split)",
+        );
+      })
+      .catch((error: unknown) => {
+        app.log.warn(
+          { module: "memory-reference-purge", error: error instanceof Error ? error.message : String(error) },
+          "reference memory purge attempt failed; will retry",
+        );
+      });
+  };
+  const referenceDocPurgeTimer = setInterval(runReferenceDocPurge, 60_000);
+  referenceDocPurgeTimer.unref?.();
+  setTimeout(runReferenceDocPurge, 10_000).unref?.();
   const roomOverviewService = new RoomOverviewService(db, contextRoomService);
   const documentEventBroker = new DocumentEventBroker();
   const documentOperationService = new DocumentOperationService(db, documentEventBroker);
@@ -1522,6 +1544,9 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   );
   // 启动恢复：进程被杀时 pending 滞留的过滤事件重新入队（幂等）
   ingestService.recoverPendingFilters();
+  // 暂停闸也拦对话捕获：暂停期间 Agent 聊天不写 L0（ingest 闸只管文档链路，
+  // 对话路径在 AgentService.startRun 单点接闸，否则侧栏记忆指示器仍会跳动）。
+  agentService.setMemoryCaptureGate(() => ingestService.getPause().paused);
   // 连接器页批量导入（fire-and-forget + DB 状态行，蓝本 runFrom）；启动时把
   // 进程死亡遗留的 running 批置 failed。auto 模式 = 归房+孵化混合：分类器用
   // 隔离内部 runtime（缺席则 UI 侧按 BATCH_AUTO_UNAVAILABLE 禁用），孵化走

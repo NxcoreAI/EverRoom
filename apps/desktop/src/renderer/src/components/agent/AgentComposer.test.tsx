@@ -221,7 +221,7 @@ describe('AgentComposer external conversation command', () => {
 
     typeInto(renderer, '帮我审一下 @cod')
     // 分组弹层打开时会懒加载一次对话记录候选。
-    expect(conversations).toHaveBeenCalledWith({ limit: 20 })
+    expect(conversations).toHaveBeenCalledWith({ limit: 200 })
     expect(renderer.root.findByProps({ 'aria-label': '点名 Agent' })).toBeTruthy()
 
     chooseHighlightedOption(renderer)

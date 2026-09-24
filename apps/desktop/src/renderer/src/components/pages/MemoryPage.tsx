@@ -1,7 +1,7 @@
 import { Pause, Play, RefreshCw, Search } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
-import { MEMORY_TAB_EVENT } from '../MemoryPipelineStatus'
+import { MEMORY_PAUSE_EVENT, MEMORY_TAB_EVENT } from '../MemoryPipelineStatus'
 import { AtomicMemoryPane } from './memory/AtomicMemoryPane'
 import { ConversationPane } from './memory/ConversationPane'
 import { CoreProfilePane } from './memory/CoreProfilePane'
@@ -88,6 +88,8 @@ export function MemoryPage({ focusAtomicId }: { focusAtomicId?: string | null } 
     try {
       const next = await window.nxcore!.ingest.setPause(!ingestPaused)
       setIngestPaused(next.paused)
+      // 侧栏记忆指示器监听该事件立即切「已暂停」，不等它的轮询。
+      window.dispatchEvent(new CustomEvent(MEMORY_PAUSE_EVENT, { detail: { paused: next.paused } }))
       setSearchError(null)
     } catch (cause) {
       setSearchError(cause instanceof Error ? cause.message : t('memory:memory.ingestToggleFailed'))

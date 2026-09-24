@@ -149,8 +149,8 @@ describe("策略解析（请求覆盖 > 部署覆盖 > 工程默认 > 代码兜�
       project: new Map([["document", { room: true, wiki: true, memory: false }]]),
       deploy: new Map([["document", { room: false, wiki: false, memory: true }]]),
     };
-    // 代码兜底：office-doc 三链路全开
-    expect(resolvePipelines("office-doc", undefined, layers)).toEqual({ room: true, wiki: true, memory: true });
+    // 代码兜底：office-doc 与 document 同为参考型资料，memory 关（状态/参考分流）
+    expect(resolvePipelines("office-doc", undefined, layers)).toEqual({ room: true, wiki: true, memory: false });
     // 工程默认：document 记忆关
     expect(resolvePipelines("document", undefined, { ...layers, deploy: new Map() }))
       .toEqual({ room: true, wiki: true, memory: false });
@@ -221,20 +221,22 @@ describe("策略解析（请求覆盖 > 部署覆盖 > 工程默认 > 代码兜�
 // ───────────────────────── path 输入 ─────────────────────────
 
 describe("引擎主流程：path 输入（U8 只读不拷贝）", () => {
-  it("md 文件：归一化→解析落库→台账→双扇出；不写 uploaded_files", async () => {
+  it("md 文件：归一化→解析落库→台账→扇出；不写 uploaded_files", async () => {
     const test = await engineForTest();
     const path = await tempFile("接入方案.md", "# 接入方案\n\n正文段落");
 
+    // 参考型文档默认不进记忆（状态/参考分流，2026-09-24）：只扇出 Room 链路
     const result = await test.service.ingest({ source: { path } });
     expect(result).toMatchObject({
       deduped: false,
       dataType: "document",
       detectedBy: "extension",
       title: "接入方案",
-      pipelines: { room: true, wiki: true, memory: true },
+      pipelines: { room: true, wiki: true, memory: false },
       routeJobId: "route-job-1",
     });
-    expect(result.memoryResult).toMatchObject({ documentId: "mdoc-1", chunkCount: 3 });
+    expect(result.memoryResult).toBeNull();
+    expect(test.memory.importToMemoryCore).not.toHaveBeenCalled();
 
     // U8：path 只读不拷贝——无对象库登记行，但有解析产物与台账
     expect(test.sqlite.prepare("SELECT COUNT(*) c FROM uploaded_files").get()).toMatchObject({ c: 0 });
@@ -251,8 +253,21 @@ describe("引擎主流程：path 输入（U8 只读不拷贝）", () => {
       entrySignals: { filenamePrefix: "接入方案.md" },
       sourceVersion: 1,
     }));
+    test.sqlite.close();
+  });
+
+  it("md 文件显式请求记忆：请求级覆盖压过默认，双扇出照走", async () => {
+    const test = await engineForTest();
+    const path = await tempFile("要进记忆.md", "# 内容");
+
+    const result = await test.service.ingest({
+      source: { path },
+      pipelines: { room: true, wiki: true, memory: true },
+    });
+    expect(result.pipelines).toEqual({ room: true, wiki: true, memory: true });
+    expect(result.memoryResult).toMatchObject({ documentId: "mdoc-1", chunkCount: 3 });
     expect(test.memory.importToMemoryCore).toHaveBeenCalledWith(expect.objectContaining({
-      title: "接入方案",
+      title: "要进记忆",
       callerRef: result.source.sourceId,
     }));
     test.sqlite.close();
@@ -262,8 +277,15 @@ describe("引擎主流程：path 输入（U8 只读不拷贝）", () => {
     const test = await engineForTest();
     const path = await tempFile("纪要.md", "# 纪要");
 
-    const first = await test.service.ingest({ source: { path } });
-    const again = await test.service.ingest({ source: { path } });
+    const first = await test.service.ingest({
+      source: { path },
+      // 题材是去重闸：显式开记忆以覆盖参考型文档的默认关闭
+      pipelines: { room: true, wiki: true, memory: true },
+    });
+    const again = await test.service.ingest({
+      source: { path },
+      pipelines: { room: true, wiki: true, memory: true },
+    });
     expect(again.deduped).toBe(true);
     expect(again.eventId).toBe(first.eventId);
     expect(test.knowledge.submitEnvelope).toHaveBeenCalledTimes(1);
@@ -471,7 +493,12 @@ describe("ref 输入：file / everroom-doc / reality-event", () => {
   });
 
   it("committed document：Memory 首次失败后从既有台账恢复", async () => {
-    const test = await engineForTest({ knowledgeEnabled: false, memoryErrorOnce: true });
+    const test = await engineForTest({
+      knowledgeEnabled: false,
+      memoryErrorOnce: true,
+      // 记忆恢复语义用显式开启的工程层还原（默认策略下参考型文档不进记忆）
+      policyLayers: { project: new Map([["document", { room: true, wiki: true, memory: true }]]), deploy: new Map() },
+    });
     test.db.insert(documents).values({
       id: "doc-memory-retry",
       title: "Memory retry",
@@ -491,7 +518,10 @@ describe("ref 输入：file / everroom-doc / reality-event", () => {
   });
 
   it("committed document：Knowledge 首次入队失败后恢复缺失扇出且不重复导入 Memory", async () => {
-    const test = await engineForTest({ knowledgeErrorOnce: true });
+    const test = await engineForTest({
+      knowledgeErrorOnce: true,
+      policyLayers: { project: new Map([["document", { room: true, wiki: true, memory: true }]]), deploy: new Map() },
+    });
     test.db.insert(documents).values({
       id: "doc-knowledge-retry",
       title: "Knowledge retry",
@@ -620,7 +650,10 @@ describe("扇出语义：策略快照 / router 门 / 记忆失败不阻塞", () 
   it("记忆链路失败：memoryResult={error}，事件照常、Room 链路照走", async () => {
     const test = await engineForTest({ memoryError: true });
     const path = await tempFile("记忆挂.md", "# 内容");
-    const result = await test.service.ingest({ source: { path } });
+    const result = await test.service.ingest({
+      source: { path },
+      pipelines: { room: true, wiki: true, memory: true },
+    });
     expect(result.memoryResult).toEqual({ error: "memorycore down" });
     expect(result.routeJobId).toBe("route-job-1");
     const event = test.db.select().from(ingestEvents).all()[0]!;
@@ -631,7 +664,10 @@ describe("扇出语义：策略快照 / router 门 / 记忆失败不阻塞", () 
   it("MemoryCore 未启用：memoryResult={error: memory_core_disabled} 不抛错", async () => {
     const test = await engineForTest({ memoryEnabled: false });
     const path = await tempFile("无记忆.md", "# 内容");
-    const result = await test.service.ingest({ source: { path } });
+    const result = await test.service.ingest({
+      source: { path },
+      pipelines: { room: true, wiki: true, memory: true },
+    });
     expect(result.memoryResult).toEqual({ error: "memory_core_disabled" });
     test.sqlite.close();
   });

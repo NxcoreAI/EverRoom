@@ -1,11 +1,11 @@
 {
-  "$comment": "链路策略·工程默认层（unified-ingest-plan §6）。工程师改默认策略在这里，改完重启 gateway 生效；运行环境不动仓库可用 <dataDir>/ingest-policies.json 覆盖。组合约束：room=false 时 wiki 必须 false；三条链路不能全关。只写要改的类型即可，未列出的类型走 types.ts 注册表兜底 defaults。",
+  "$comment": "链路策略·工程默认层（unified-ingest-plan §6）。工程师改默认策略在这里，改完重启 gateway 生效；运行环境不动仓库可用 <dataDir>/ingest-policies.json 覆盖。组合约束：room=false 时 wiki 必须 false；三条链路不能全关。只写要改的类型即可，未列出的类型走 types.ts 注册表兜底 defaults。记忆链路取舍按「状态 vs 参考」（2026-09-24 定案）：会被更新/覆盖、需要唯一权威版本的状态型数据进记忆（reduce）；价值在原文、任何摘要都有损的参考型资料只进知识/Room（select）。",
   "document": {
-    "$comment": "文档（md / markdown / txt）。纯正文阅读型资料：实体与沉淀有价值，L1 记忆提炼也可靠——三链路全开。",
-    "room": true, "wiki": true, "memory": true
+    "$comment": "文档（md / markdown / txt / pdf）。参考型资料：价值在原文，检索走知识/Room 选段即可；L1 全文蒸馏既耗 token 又产出同源碎片。实体计分与 Room 沉淀保留——memory 关。",
+    "room": true, "wiki": true, "memory": false
   },
   "meeting-minutes": {
-    "$comment": "会议纪要（jsonType=meeting-minutes，现实感知 ASR 评审产出）。决议与待办是高价值事实，必须进记忆。",
+    "$comment": "会议纪要（jsonType=meeting-minutes，现实感知 ASR 评审产出）。状态型文档：决议/待办会被后续会议更新覆盖，需要唯一权威版本——必须进记忆。",
     "room": true, "wiki": true, "memory": true
   },
   "perception-event": {
@@ -13,8 +13,8 @@
     "room": true, "wiki": true, "memory": true
   },
   "office-doc": {
-    "$comment": "Office 文档（docx，Word 转归一化 md）。正文类，与 document 同等待遇。",
-    "room": true, "wiki": true, "memory": true
+    "$comment": "Office 文档（docx，Word 转归一化 md）。参考型资料，与 document 同等待遇——memory 关。",
+    "room": true, "wiki": true, "memory": false
   },
   "spreadsheet": {
     "$comment": "表格（xlsx / csv，转 md 表格）。结构化数据整表提炼 L1 噪音大、易断章取义——只做实体计分与晋升后沉淀，memory 关。",
@@ -29,11 +29,11 @@
     "room": true, "wiki": true, "memory": false
   },
   "mail": {
-    "$comment": "邮件（连接器归一化 md）。发件人/主题/正文是高价值事实与实体来源——三链路全开。",
+    "$comment": "邮件（连接器归一化 md）。状态型：往来是会被后续邮件更新覆盖的事实流——进记忆。",
     "room": true, "wiki": true, "memory": true
   },
   "calendar": {
-    "$comment": "日程（连接器归一化 md）。时间/地点/与会人是确定性事实——三链路全开。",
+    "$comment": "日程（连接器归一化 md）。状态型：时间/地点/与会人是会被改期的确定性事实——进记忆。",
     "room": true, "wiki": true, "memory": true
   }
 }
