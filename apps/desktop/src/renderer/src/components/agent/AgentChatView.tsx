@@ -9,7 +9,8 @@ import type { PendingShellApproval } from './agentShellApprovals'
 import type { AgentRunActivity } from './agentRunActivity'
 import { parseAgentDocumentIntentResult, type AgentDocumentIntentResult } from './agentDocumentIntent'
 import { parseAgentNavigationTarget } from './agentNavigation'
-import { formatAgentOutput } from './agentOutputFormat'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { parseAgentRoomSelectionResult } from './agentRoomSelection'
 import { AgentDocumentPicker } from './AgentDocumentPicker'
 import { useRoomDocumentsState } from '../context-room/RoomDocumentsProvider'
@@ -141,16 +142,28 @@ function DocumentIntentClarification({
 
 const generatedDocumentPattern = /文档已成功生成[，,]\s*您可以查看：?\s*\[([^\]]+)\]\s*\(?([0-9a-f]{8}-[0-9a-f-]{27,})\)?/iu
 
+const agentMarkdownComponents = {
+  // 会话气泡内标题一律降级到 h4-h6，避免模型偶尔输出标题撑破布局。
+  h1: ({ children }: { children?: ReactNode }) => <h4>{children}</h4>,
+  h2: ({ children }: { children?: ReactNode }) => <h4>{children}</h4>,
+  h3: ({ children }: { children?: ReactNode }) => <h5>{children}</h5>,
+  h4: ({ children }: { children?: ReactNode }) => <h6>{children}</h6>,
+  h5: ({ children }: { children?: ReactNode }) => <h6>{children}</h6>,
+  h6: ({ children }: { children?: ReactNode }) => <h6>{children}</h6>,
+  a: ({ children, href }: { children?: ReactNode; href?: string }) => (
+    <a href={href} target="_blank" rel="noreferrer noopener">{children}</a>
+  ),
+  img: () => null,
+} as const
+
 function FormattedAgentText({ content }: { content: string }) {
-  return formatAgentOutput(content).map((block, index) => {
-    if (block.type === 'paragraph') return <p key={`${index}:${block.text}`}>{block.text}</p>
-    const List = block.ordered ? 'ol' : 'ul'
-    return (
-      <List key={`${index}:${block.items.join('\u0000')}`} className="agent-output-list">
-        {block.items.map((item, itemIndex) => <li key={`${itemIndex}:${item}`}>{item}</li>)}
-      </List>
-    )
-  })
+  return (
+    <div className="agent-markdown">
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={agentMarkdownComponents}>
+        {content}
+      </ReactMarkdown>
+    </div>
+  )
 }
 
 function AssistantMessageContent({ content }: { content: string }) {
