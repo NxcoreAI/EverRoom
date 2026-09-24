@@ -140,7 +140,8 @@
           "!**/*.md",
           "!docs/**",
           "!man/**",
-          "!node_modules/.bin/**"
+          "!node_modules/.bin/**",
+          "!lib/commands/test.js"
         ]
       },
       {
