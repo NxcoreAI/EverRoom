@@ -461,7 +461,7 @@ export class AgentService {
     private readonly documentRegistry?: AgentDocumentRegistry,
     private readonly completedMessageResolver?: AgentCompletedMessageResolver,
     private readonly disposeRuntime = true,
-    private readonly resolveTargetRuntime?: (target: NonNullable<StartAgentRunInput["localAgent"]>) => AgentRuntime,
+    private readonly resolveTargetRuntime?: (target: NonNullable<StartAgentRunInput["localAgent"]>) => AgentRuntime | null,
   ) {
     this.attachBashApprovalBridge(this.runtime);
   }
@@ -475,7 +475,16 @@ export class AgentService {
     this.resolveTierRuntime = resolve;
   }
 
+  /**
+   * 渠道会话 MCP token 回收（create-server 注入）：deleteSession 时撤销
+   * 该会话挂在 CLI 子进程上的 EverRoom 工具端点。
+   */
+  setChannelSessionRevoker(revoke: (sessionId: string) => Promise<void>): void {
+    this.revokeChannelSession = revoke;
+  }
+
   private resolveTierRuntime: ((agentId: string) => AgentRuntime | null) | undefined;
+  private revokeChannelSession: ((sessionId: string) => Promise<void>) | undefined;
 
   /** replaceRuntime 热替换后也必须重挂，否则审批立即回落 false（无 UI 询问）。 */
   private attachBashApprovalBridge(runtime: AgentRuntime): void {
@@ -838,6 +847,7 @@ export class AgentService {
     }
     this.db.delete(agentSessions).where(eq(agentSessions.id, sessionId)).run();
     this.bashAuthorizedSessions.delete(sessionId);
+    await this.revokeChannelSession?.(sessionId);
     return true;
   }
 

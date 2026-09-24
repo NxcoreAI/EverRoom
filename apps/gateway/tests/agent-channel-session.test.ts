@@ -46,6 +46,17 @@ class RecordingRuntime implements AgentRuntime {
 
 const CHANNEL_AGENT_ID = "codex:/usr/local/bin/codex";
 
+const STUB_CARD = {
+  name: "Codex",
+  description: "CLI coding agent",
+  version: "1.0.0",
+  supportedInterfaces: [{ url: "stub", protocolBinding: "acp", protocolVersion: "1" }],
+  capabilities: {},
+  defaultInputModes: ["text/plain"],
+  defaultOutputModes: ["text/plain"],
+  skills: [],
+};
+
 afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map((path) => rm(path, { recursive: true, force: true })));
 });
@@ -111,7 +122,7 @@ describe("Agent session CLI channel", () => {
           executablePath: "/usr/local/bin/codex",
           workingDirectory: "/tmp/sandbox",
           permissionProfile: "inspect",
-          card: null,
+          card: STUB_CARD,
           acpAdapter: null,
         },
         context: {},
@@ -143,7 +154,7 @@ describe("Agent session CLI channel", () => {
         executablePath: "/usr/local/bin/claude",
         workingDirectory: "/tmp/sandbox",
         permissionProfile: "inspect",
-        card: null,
+        card: { ...STUB_CARD, name: "Claude Code" },
         acpAdapter: null,
       },
       context: {},

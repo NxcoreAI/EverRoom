@@ -9,10 +9,20 @@ import websocket from "@fastify/websocket";
 import type { TypeBoxTypeProvider } from "@fastify/type-provider-typebox";
 import { bundledAgentDefinitionsDir, type GatewayConfig } from "../config.js";
 import { createDatabase } from "../infrastructure/database/client.js";
+import { agentSessions } from "../infrastructure/database/schema.js";
+import { eq } from "drizzle-orm";
+import { channelAgentIdFromAgentId } from "@nxcore/agent-contract";
+import { KnowledgeServiceClient, createKnowledgeTools } from "@nxcore/agent-runtime-pi";
 import { systemRoutes } from "../modules/system/routes.js";
 import { AgentEventBroker } from "../modules/agent/event-broker.js";
 import { agentRoutes } from "../modules/agent/routes.js";
 import { McpConfigManager, mcpRoutes } from "../modules/agent/mcp-routes.js";
+import {
+  ChannelMcpHost,
+  channelToolsFromPiTools,
+  channelToolsFromRuntimeTools,
+} from "../modules/agent/channel-mcp-host.js";
+import { channelMcpRoutes } from "../modules/agent/channel-mcp-routes.js";
 import { AgentService } from "../modules/agent/service.js";
 import { DocumentEventBroker } from "../modules/documents/event-broker.js";
 import { DocumentMcpHost } from "../modules/documents/mcp-host.js";
@@ -912,8 +922,55 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   if (recoveredSubagentInvocations > 0) {
     app.log.info({ recoveredSubagentInvocations }, "subagent invocations interrupted after restart");
   }
+  // 渠道会话（Claude Code / Codex 整段锁定）的 EverRoom 工具 MCP host：
+  // token-in-path 鉴权，文档能力复用 documentMcpHost 的全量 context_room_* 读写，
+  // 检索类工具 = Room 记忆/对话/上下文工具 + wiki 知识库工具。
+  const gatewayLoopbackHost = ["0.0.0.0", "::"].includes(config.host) ? "127.0.0.1" : config.host;
+  // config.knowledge 是网关侧 KnowledgeGatewayConfig（无 searchLimit/wikiId），
+  // 这里显式映射成 pi 侧 KnowledgeRuntimeConfig；与 config.ts 组装 pi runtime 的口径一致。
+  const channelKnowledgeClient = config.knowledge
+    ? new KnowledgeServiceClient({
+        baseUrl: config.knowledge.baseUrl,
+        serviceId: config.knowledge.serviceId,
+        teamId: config.knowledge.teamId,
+        searchLimit: 5,
+      })
+    : null;
+  const channelRoomTools = createContextRoomAgentTools({
+    db,
+    memory: memoryService,
+    overview: roomOverviewService,
+  });
+  const channelMcpHost = new ChannelMcpHost(
+    documentMcpHost.capabilities,
+    `http://${gatewayLoopbackHost}:${config.port}`,
+    (scope) => {
+      if (!channelKnowledgeClient) return channelToolsFromRuntimeTools(channelRoomTools, scope);
+      // Room 级 wiki：会话锁定 Room 时解析该 Room 的 wiki；未命中回退配置默认集。
+      const roomWikiId = scope.roomId && config.knowledge?.roomWikisEnabled
+        ? knowledgeService.resolveRoomWikiId(scope.roomId)
+        : null;
+      const wikiIds = roomWikiId ? [roomWikiId] : channelKnowledgeClient.defaultWikiIds;
+      return [
+        ...channelToolsFromRuntimeTools(channelRoomTools, scope),
+        ...channelToolsFromPiTools(
+          createKnowledgeTools(channelKnowledgeClient, () => ({ wikiIds })),
+        ),
+      ];
+    },
+    (level, event, fields) => app.log[level](fields ?? {}, event),
+  );
   // 提前实例化：主 Agent 的 local_agent_dispatch 工具（@ 点名本机 Agent）需要闭包它。
-  const localAgentRuntimeRegistry = new LocalAgentRuntimeRegistry();
+  // MCP 注入仅限渠道锁定会话（activeAgentId 非内置档位）；@ 点名派发的子任务
+  // 走最小材料模型，不开放 EverRoom 工具。
+  const localAgentRuntimeRegistry = new LocalAgentRuntimeRegistry(async (input) => {
+    const session = db.select({ activeAgentId: agentSessions.activeAgentId })
+      .from(agentSessions)
+      .where(eq(agentSessions.id, input.sessionId))
+      .get();
+    if (!session || !channelAgentIdFromAgentId(session.activeAgentId)) return [];
+    return channelMcpHost.mcpServersForRun(input);
+  });
   const localAgentDispatchStore = new LocalAgentDispatchStore(db);
   // dispatch 工具先于 AgentService 构建，run 级分发来源用晚绑定引用接线。
   const localAgentDispatchSourceRef: { current: ((runId: string) => LocalAgentDispatchSource | undefined) | null } = {
@@ -1064,6 +1121,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     if (agentId === BUILTIN_AGENT_IDS.primaryDirect && !isPiRuntimeConfigured(config.pi)) return null;
     return agentResolver.resolve(agentId);
   });
+  agentService.setChannelSessionRevoker((sessionId) => channelMcpHost.revokeAgentSession(sessionId));
   localAgentDispatchSourceRef.current = (runId) => agentService.getLocalAgentDispatchSource(runId);
   await agentService.initialize();
   registerTranscriptionSummaryAgent(agentResolver, config);
@@ -1340,6 +1398,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     clearInterval(documentOperationExpiryTimer);
     await agentService.dispose();
     await localAgentRuntimeRegistry.dispose();
+    await channelMcpHost.close();
     await subagentOrchestrator.dispose();
     await transcriptionSummaryService.dispose();
     await documentMcpHost.close();
@@ -1390,6 +1449,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     roomOverviewService,
   ));
   await app.register(documentMcpRoutes(documentMcpHost));
+  await app.register(channelMcpRoutes(channelMcpHost));
   await app.register(notificationMcpRoutes(notificationMcpHost));
   // 版本概览 worker：保存（document.changed）后异步判定重要性。重要变更
   // （标题变更/小节增删/变更块 ≥3/首版）直接生成 AI 概览；不重要变更先把

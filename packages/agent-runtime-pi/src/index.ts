@@ -42,6 +42,8 @@ export type {
   KnowledgeSearchResult,
 } from "./knowledge/types.js";
 export type { KnowledgeToolScope } from "./knowledge/tools.js";
+export { createKnowledgeTools } from "./knowledge/tools.js";
+export type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 export { MemoryCoreClient, MemoryCoreError } from "./memory/client.js";
 export type { MemoryCoreErrorKind } from "./memory/client.js";
 export type { RoomMemorySearch } from "./memory/tools.js";

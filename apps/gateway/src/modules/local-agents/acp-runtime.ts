@@ -9,6 +9,7 @@ import {
   type Agent,
   type Client,
   type InitializeResponse,
+  type McpServer,
 } from "@zed-industries/agent-client-protocol";
 import type { RuntimeCapabilities } from "@nxcore/agent-contract";
 import {
@@ -83,6 +84,12 @@ export class AcpAgentRuntime implements AgentRuntime {
     private readonly adapter: AcpAdapterCommand,
     private readonly workingDirectory: string,
     installationId: string,
+    /**
+     * 渠道会话的 EverRoom MCP 注入源（create-server 按 session 渠道锁定
+     * 判定后转发到这里）；派发子任务不注入。loadSession 时适配器可能忽略
+     * 该参数（claude 内存 session 持有首轮配置），故 token 需跨 run 稳定。
+     */
+    private readonly mcpServersForRun?: (input: StartRuntimeRunInput) => McpServer[] | Promise<McpServer[]>,
   ) {
     this.id = `local:acp:${installationId}`;
   }
@@ -134,17 +141,18 @@ export class AcpAgentRuntime implements AgentRuntime {
     let sessionId: string | null = null;
     try {
       await this.ensureConnection();
+      const mcpServers = await this.mcpServersForRun?.(input) ?? [];
       // ACP spec：loadSession 成功后 sessionId 保持请求里传入的那个。
       const resumeRef = input.runtimeSessionRef;
       if (resumeRef && this.initResponse?.agentCapabilities?.loadSession !== false) {
         await this.connection!.loadSession({
           sessionId: resumeRef,
           cwd: this.workingDirectory,
-          mcpServers: [],
+          mcpServers,
         });
         sessionId = resumeRef;
       } else {
-        const session = await this.connection!.newSession({ cwd: this.workingDirectory, mcpServers: [] });
+        const session = await this.connection!.newSession({ cwd: this.workingDirectory, mcpServers });
         sessionId = session.sessionId;
       }
       this.runs.set(input.runId, sessionId);
