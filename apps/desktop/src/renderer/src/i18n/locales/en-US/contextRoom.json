@@ -562,7 +562,7 @@
   "externalImportDialog.commentsLoaded": "{count} comments imported (read-only)",
   "externalImportDialog.commentsUnavailable": "Comments not available for this source",
   "externalImportDialog.commitFailed": "Failed to add to Room",
-  "externalImportDialog.connectionHint": "No import connection for this provider yet — connect it on the Connectors page, then refresh.",
+  "externalImportDialog.connectionHint": "No import connection for this provider yet — connect it first, then refresh.",
   "externalImportDialog.feishu": "Feishu",
   "externalImportDialog.filterNoMatch": "No documents match \"{query}\"",
   "externalImportDialog.filterPlaceholder": "Filter the list…",

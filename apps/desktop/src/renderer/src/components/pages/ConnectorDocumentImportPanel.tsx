@@ -42,6 +42,7 @@ export function ConnectorDocumentImportPanel({
   provider: lockedProvider,
   connectionName: lockedConnectionName,
   embedded = false,
+  standalone = false,
 }: {
   /** 连接器页传入已加载的连接清单；数据源页等上下文不传时面板自拉（cliConnector apps）。 */
   connections?: OpenConnectorConnectionSummary[]
@@ -51,6 +52,9 @@ export function ConnectorDocumentImportPanel({
   connectionName?: string
   /** 嵌入模式（抽屉内）：隐藏区块标题，只保留工具栏/列表/操作条。 */
   embedded?: boolean
+  /** 独立授权模式（数据源页飞书，lark-cli 直连）：不拉 OpenConnector 连接、
+   *  不显示连接缺失授权引导（授权态由数据源页维护）。 */
+  standalone?: boolean
 }) {
   const { locale, t } = useLocale()
   const external = window.nxcore?.externalDocuments
@@ -71,9 +75,9 @@ export function ConnectorDocumentImportPanel({
       .catch(() => undefined)
   }, [])
   useEffect(() => {
-    if (providedConnections !== undefined) return
+    if (providedConnections !== undefined || standalone) return
     loadConnections()
-  }, [providedConnections, loadConnections])
+  }, [providedConnections, standalone, loadConnections])
 
   const [provider, setProvider] = useState<ExternalDocumentProvider>(lockedProvider ?? 'feishu')
   const providerOptions = useMemo(() => {
@@ -449,7 +453,7 @@ export function ConnectorDocumentImportPanel({
     }
   }
 
-  const connectionMissing = !listLoading
+  const connectionMissing = !standalone && !listLoading
     && (activeConnections.length === 0 || Boolean(listError?.includes('IMPORT_CONNECTION_REQUIRED')))
   // 授权中轮询：主进程打开授权页后，每 3s 检查一次连接，新连接出现即提示卡消失。
   useEffect(() => {

@@ -562,7 +562,7 @@
   "externalImportDialog.commentsLoaded": "已导入 {count} 条评论（只读）",
   "externalImportDialog.commentsUnavailable": "该来源未获取评论",
   "externalImportDialog.commitFailed": "加入 Room 失败",
-  "externalImportDialog.connectionHint": "该平台还没有可用的导入连接：请在「连接器」页完成连接后再重新获取。",
+  "externalImportDialog.connectionHint": "该平台还没有可用的导入连接：请先完成对应平台的连接后再重新获取。",
   "externalImportDialog.feishu": "飞书",
   "externalImportDialog.filterNoMatch": "没有匹配“{query}”的文档",
   "externalImportDialog.filterPlaceholder": "筛选列表…",

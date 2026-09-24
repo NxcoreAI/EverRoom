@@ -95,7 +95,7 @@ export function SourcesPage() {
   const obsidianDiscoveryRequestRef = useRef(0)
   const obsidianCandidateIdsRef = useRef(new Set<string>())
   const connectorsEnabled = connectorStatus?.enabled ?? false
-  // 飞书授权已换轨 lark-cli：存量 oo 飞书连接在数据源页彻底隐藏（导入链路换轨前飞书导入暂不可用）。
+  // 飞书授权与导入均已换轨 lark-cli：存量 oo 飞书连接在数据源页隐藏。
   const connections = (connectorStatus?.connections ?? []).filter((item) => item.provider !== 'feishu')
   const scopes = connectorStatus?.scopes ?? []
   const runs = connectorStatus?.runs ?? []
@@ -138,11 +138,13 @@ export function SourcesPage() {
     } catch { /* 网关暂不可达时保留上一次状态 */ }
   }, [])
   useEffect(() => {
-    const docsProviders = (connections ?? [])
+    const fromConnections = (connections ?? [])
       .map((connection) => connection.provider)
       .filter((provider): provider is 'feishu' | 'notion' => provider === 'feishu' || provider === 'notion')
-    refreshImportSummaries([...new Set(docsProviders)])
-  }, [connections, refreshImportSummaries])
+    // 飞书不走 oo 连接，授权态由 lark-cli 维护：已授权即拉导入统计。
+    const providers = [...new Set([...fromConnections, ...(feishuAuthorized ? (['feishu'] as const) : [])])]
+    refreshImportSummaries(providers)
+  }, [connections, feishuAuthorized, refreshImportSummaries])
   useEffect(() => {
     const tick = () => { if (!document.hidden) void refreshConnectorStatus() }
     tick()
@@ -759,6 +761,7 @@ export function SourcesPage() {
                 {feishuAuthorized ? (
                   <FeishuAuthCard
                     userName={agentAuthStatus?.feishu.userName ?? null}
+                    docs={importSummaries.feishu}
                     busy={busyId === 'feishu'}
                     onOpen={() => setDrawer({ type: 'feishu' })}
                     onReplaceAccount={() => void connectFeishuLark()}

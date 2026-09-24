@@ -319,6 +319,12 @@ export function SourceDrawer({
             ? <button type="button" className="src-mini-btn danger" disabled={busy} onClick={onFeishuDisconnect}><LogOut aria-hidden="true" strokeWidth={1.8} />{t('surface:sources.feishuDisconnect')}</button>
             : null,
         )}
+        <div className="src-drawer-list">
+          <div className="src-drawer-doc-import">
+            <div className="src-list-head"><h4>{t('surface:connectorSync.documentImport')}</h4></div>
+            <ConnectorDocumentImportPanel provider="feishu" standalone embedded />
+          </div>
+        </div>
       </>
     )
   }

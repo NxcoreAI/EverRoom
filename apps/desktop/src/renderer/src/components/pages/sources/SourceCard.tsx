@@ -281,15 +281,18 @@ export function CloudSourceCard({
   )
 }
 
-/** 飞书 lark-cli 授权卡（已连接态）：账号名 + 更换账号/断开；点开抽屉看详情。 */
+/** 飞书 lark-cli 授权卡（已连接态）：账号名 + 文档统计 + 更换账号/断开；点开抽屉导入。 */
 export function FeishuAuthCard({
   userName,
+  docs,
   busy,
   onOpen,
   onReplaceAccount,
   onDisconnect,
 }: {
   userName: string | null
+  /** 导入侧汇总（列举缓存）：documents=可见文档数，imported=已落 Room；缺省不渲染统计。 */
+  docs?: { documents: number; imported: number; listed: boolean }
   busy: boolean
   onOpen: () => void
   onReplaceAccount: () => void
@@ -317,6 +320,17 @@ export function FeishuAuthCard({
         </div>
         <StatePill tone="ok" label={t('surface:connector.active')} />
       </header>
+      {docs ? (
+        <Stats items={docs.listed
+          ? [
+            { value: docs.documents.toLocaleString(), label: t('surface:sourceCard.documentsStat') },
+            { value: docs.imported.toLocaleString(), label: t('surface:sourceCard.importedStat') },
+          ]
+          : [
+            { value: '—', label: t('surface:sourceCard.documentsStat') },
+            { value: '0', label: t('surface:sourceCard.importedStat') },
+          ]} />
+      ) : null}
       <span className="src-card-actions" onClick={(event) => event.stopPropagation()}>
         <button type="button" className="src-mini-btn" aria-label={t('surface:sources.replaceAccount')} title={t('surface:sources.replaceAccount')} disabled={busy} onClick={onReplaceAccount}><ArrowLeftRight aria-hidden="true" strokeWidth={1.8} /></button>
         <button type="button" className="src-mini-btn danger" aria-label={t('surface:sources.feishuDisconnect')} title={t('surface:sources.feishuDisconnect')} disabled={busy} onClick={onDisconnect}><LogOut aria-hidden="true" strokeWidth={1.8} /></button>
