@@ -250,12 +250,14 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* 内容摘要卡（KS ingest 后生成的概览；最多 4 行防占满侧栏） */
+/* 内容摘要卡（KS ingest 后生成的概览；最多 4 行防占满侧栏）。
+   flex: 0 0 auto——overflow:hidden 会让 flex 最小高度归零，页面多时整卡被压成一条线 */
 .wiki-summary-card {
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 4;
   overflow: hidden;
+  flex: 0 0 auto;
   margin: 2px 4px 0;
   padding: 8px 10px;
   border: 1px solid var(--border);
