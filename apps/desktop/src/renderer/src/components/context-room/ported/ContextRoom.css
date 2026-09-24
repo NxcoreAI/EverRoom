@@ -878,10 +878,7 @@
   min-width: 0;
   overflow: hidden;
   border-radius: 8px;
-  background:
-    linear-gradient(#eef0f3 1px, transparent 1px),
-    linear-gradient(90deg, #eef0f3 1px, transparent 1px), #fbfcfd;
-  background-size: 24px 24px;
+  background: var(--cr-surface-secondary);
 }
 
 /* 过渡别名：盒模型契约已上收到 graph/graphShell.css 的 .nx-graph-*；
@@ -9747,6 +9744,12 @@
   color: var(--cr-icon-tone);
 }
 
+/* 首页推荐卡图标走中性灰（原型 rooms-rec-card 的 icon 底），不按 Room 类型着色。 */
+.context-room-home .context-room-home-card-icon[data-icon-tone] {
+  background: var(--cr-surface-secondary);
+  color: var(--cr-muted);
+}
+
 .context-room-room-graph-node[data-icon-tone] > span {
   color: var(--cr-icon-tone);
 }
@@ -11882,6 +11885,351 @@
   margin-bottom: 0;
 }
 
+/* ===== 首页精简推荐区（原型 rooms-rec）：一行推荐卡，工作流收进弹框 ===== */
+.context-room-knowledge-strip {
+  position: relative;
+  min-width: 0;
+}
+
+.context-room-strip-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.context-room-strip-head .context-room-home-section-title {
+  margin-bottom: 0;
+}
+
+.context-room-strip-manage {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--cr-tertiary);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+.context-room-strip-manage svg {
+  width: 14px;
+  height: 14px;
+}
+
+.context-room-strip-manage:hover {
+  background: var(--cr-surface-secondary);
+  color: var(--cr-text);
+}
+
+.context-room-knowledge-strip-body {
+  min-width: 0;
+}
+
+.context-room-rec-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.context-room-rec-card {
+  display: flex;
+  height: 84px;
+  min-width: 0;
+  align-items: center;
+  gap: 12px;
+  padding: 0 12px;
+  border: 1px solid var(--cr-border);
+  border-radius: 8px;
+  background: var(--cr-surface);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.context-room-rec-card:hover {
+  border-color: var(--cr-border-strong);
+  background: var(--cr-surface-secondary);
+}
+
+.context-room-rec-card-icon {
+  display: inline-flex;
+  flex: none;
+  width: 40px;
+  height: 40px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  background: var(--cr-surface-secondary);
+  color: var(--cr-muted);
+}
+
+.context-room-rec-card-icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+.context-room-rec-card-body {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.context-room-rec-card-body strong {
+  overflow: hidden;
+  color: var(--cr-text);
+  font-size: 14px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-room-rec-card-body small {
+  overflow: hidden;
+  color: var(--cr-tertiary);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-room-rec-score {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: var(--cr-surface-secondary);
+  color: var(--cr-tertiary);
+  font-size: 11px;
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+.context-room-rec-score svg {
+  width: 13px;
+  height: 13px;
+}
+
+.context-room-rec-score b {
+  color: var(--cr-muted);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.context-room-rec-score[data-state='creating'] {
+  color: var(--cr-blue);
+  background: color-mix(in srgb, var(--cr-blue) 8%, white);
+}
+
+.context-room-rec-empty {
+  display: grid;
+  min-height: 96px;
+  place-content: center;
+  justify-items: center;
+  gap: 6px;
+  padding: 16px;
+  border: 1px dashed var(--cr-border);
+  border-radius: 10px;
+  color: var(--cr-muted);
+  text-align: center;
+}
+
+.context-room-rec-empty svg {
+  width: 18px;
+  height: 18px;
+  color: var(--cr-tertiary);
+}
+
+.context-room-rec-empty h3 {
+  margin: 0;
+  color: var(--cr-text);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.context-room-rec-empty p {
+  margin: 0;
+  max-width: 420px;
+  font-size: 12px;
+  color: var(--cr-tertiary);
+}
+
+.context-room-rec-empty[data-error='true'] > svg {
+  color: var(--cr-red, #d92d20);
+}
+
+.context-room-rec-retry {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  padding: 6px 12px;
+  border: 1px solid var(--cr-border);
+  border-radius: 7px;
+  background: var(--cr-surface);
+  color: var(--cr-text);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.context-room-rec-retry svg {
+  width: 13px;
+  height: 13px;
+}
+
+.context-room-rec-retry:hover {
+  border-color: var(--cr-border-strong);
+  background: var(--cr-surface-secondary);
+}
+
+/* 「全部推荐」管理弹框：承载完整 KnowledgePendingPanel（variant=manage） */
+.context-room-manage-dialog {
+  width: min(720px, calc(100vw - 32px));
+}
+
+.context-room-manage-dialog .context-room-knowledge-panel {
+  padding: 0 20px 20px;
+  border: 0;
+  background: transparent;
+}
+
+/* 推荐卡详情弹框（原型 rd-rrec）：kicker + 名称 + 描述 + 双列 stats */
+.context-room-rec-detail-dialog {
+  width: min(480px, calc(100vw - 32px));
+}
+
+.context-room-rec-detail {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 24px;
+}
+
+.context-room-rec-detail > header {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.context-room-rec-detail-meta {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.context-room-rec-detail-kicker {
+  color: var(--cr-tertiary);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.context-room-rec-detail-meta h3 {
+  margin: 0;
+  color: var(--cr-text);
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.context-room-rec-detail-close {
+  display: inline-flex;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  margin: -4px -6px 0 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--cr-muted);
+  cursor: pointer;
+}
+
+.context-room-rec-detail-close svg {
+  width: 16px;
+  height: 16px;
+}
+
+.context-room-rec-detail-close:hover {
+  background: var(--cr-surface-secondary);
+  color: var(--cr-text);
+}
+
+.context-room-rec-detail-desc {
+  margin: 0;
+  color: var(--cr-text);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.context-room-rec-detail-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px;
+  border: 1px solid var(--cr-border);
+  border-radius: 10px;
+  background: var(--cr-border);
+  overflow: hidden;
+}
+
+.context-room-rec-detail-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 14px 16px;
+  background: var(--cr-surface);
+}
+
+.context-room-rec-detail-stat-num {
+  color: var(--cr-text);
+  font-size: 22px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.context-room-rec-detail-stat-label {
+  color: var(--cr-tertiary);
+  font-size: 11.5px;
+  font-weight: 500;
+}
+
+.context-room-rec-detail-reason {
+  margin: 0;
+  color: var(--cr-muted);
+  font-size: 12px;
+}
+
+.context-room-rec-detail .context-room-creation-progress {
+  padding: 10px 12px;
+  border-radius: 8px;
+}
+
+.context-room-rec-detail-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.context-room-rec-detail-actions .context-room-knowledge-confirm,
+.context-room-rec-detail-actions .context-room-knowledge-defer {
+  min-height: 34px;
+  padding: 0 16px;
+}
+
 .context-room-knowledge-empty {
   display: grid;
   min-height: 120px;
@@ -12378,9 +12726,7 @@
 }
 
 .context-room-knowledge-history {
-  border: 1px solid var(--cr-border);
   border-radius: 10px;
-  background: var(--cr-surface-secondary);
 }
 
 .context-room-knowledge-history > summary {
@@ -12404,7 +12750,7 @@
   min-width: 18px;
   padding: 1px 5px;
   border-radius: 999px;
-  background: var(--cr-surface);
+  background: var(--cr-surface-secondary);
   color: var(--cr-muted);
   font-size: 10px;
   font-weight: 500;
@@ -12989,7 +13335,8 @@
 }
 
 .context-room-creation-studio .spin,
-.context-room-knowledge-overlay .spin {
+.context-room-knowledge-overlay .spin,
+.context-room-rec-score .spin {
   animation: context-room-creation-spin 900ms linear infinite;
 }
 
@@ -13001,7 +13348,8 @@
 
 @media (prefers-reduced-motion: reduce) {
   .context-room-creation-studio .spin,
-.context-room-knowledge-overlay .spin {
+.context-room-knowledge-overlay .spin,
+.context-room-rec-score .spin {
     animation: none;
   }
 }

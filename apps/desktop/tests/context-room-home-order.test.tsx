@@ -14,6 +14,16 @@ vi.mock('../src/renderer/src/i18n/LocaleContext', async (importOriginal) => {
   }
 })
 
+vi.mock('../src/renderer/src/components/context-room/ContextRoomStateProvider', () => ({
+  // 面板只消费 refreshFromBackend（创建后重拉推荐池）；测试无需真实 Provider。
+  useContextRoomState: () => ({
+    state: null,
+    setState: () => {},
+    backendReady: true,
+    refreshFromBackend: async () => null,
+  }),
+}))
+
 import { createContextRoomFixture } from './context-room-fixture'
 import { HomeView } from '../src/renderer/src/components/context-room/ported/components/HomeView'
 import { RoomCard } from '../src/renderer/src/components/context-room/ported/components/RoomCard'

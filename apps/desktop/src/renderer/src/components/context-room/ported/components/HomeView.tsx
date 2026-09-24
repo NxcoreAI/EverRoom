@@ -191,7 +191,7 @@ export function HomeView({
     };
     return [...matched].sort((left, right) => updatedAtOf(right) - updatedAtOf(left));
   }, [query, rooms]);
-  const homeRooms = query.trim() ? visibleRooms : visibleRooms.slice(0, 6);
+  const homeRooms = query.trim() ? visibleRooms : visibleRooms.slice(0, 9);
 
   useEffect(() => {
     const api = window.nxcore?.contextRooms;
@@ -216,6 +216,12 @@ export function HomeView({
     <div className="context-room-app">
       <main className="context-room-home" data-testid="context-room-page">
         <div className="context-room-home-layout">
+          <KnowledgePendingPanel
+            onFocusAgent={onFocusAgent}
+            onOpenCreateRoom={() => setNewRoomOpen(true)}
+            variant="strip"
+          />
+
           <section className="context-room-home-section">
             <div className="context-room-my-toolbar" data-testid="context-room-list-toolbar">
               <div className="context-room-my-title">
@@ -288,8 +294,6 @@ export function HomeView({
               </button>
             ) : null}
           </section>
-
-          <KnowledgePendingPanel onFocusAgent={onFocusAgent} onOpenCreateRoom={() => setNewRoomOpen(true)} />
 
           <RoomGraph rooms={rooms} onOpen={onOpenDetail} />
         </div>
