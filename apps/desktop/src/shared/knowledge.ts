@@ -153,6 +153,10 @@ export interface KnowledgeWikiDto {
   knowledgeId: string
   status: string
   createdAt: string
+  /** 清单价值信号（KS getWiki 元数据；KS 不可达时 null） */
+  pageCount: number | null
+  summary: string | null
+  updatedAt: string | null
 }
 
 /** wiki 内链图谱（页面=节点、md 内链=边；无 wiki/失败为空图）。 */

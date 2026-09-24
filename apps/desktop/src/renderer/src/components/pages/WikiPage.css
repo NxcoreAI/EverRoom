@@ -69,6 +69,105 @@
   color: var(--muted);
 }
 
+/* 左栏分组（按 Room 类型；归档组殿后默认折叠） */
+.wiki-room-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.wiki-room-group-header {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 4px 1px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.wiki-room-group-header:hover {
+  color: var(--text);
+}
+
+.wiki-room-group-header svg {
+  width: 12px;
+  height: 12px;
+}
+
+.wiki-room-group-count {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 内容摘要卡（KS ingest 后生成的概览；最多 4 行防占满侧栏） */
+.wiki-summary-card {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  overflow: hidden;
+  margin: 2px 4px 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--accent-soft, rgba(64, 140, 240, 0.08));
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.wiki-tree-search {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  margin: 0 4px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--muted);
+}
+
+.wiki-tree-search:focus-within {
+  border-color: var(--accent);
+}
+
+.wiki-tree-search svg {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
+}
+
+.wiki-tree-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 12.5px;
+  outline: none;
+}
+
+.wiki-tree-search input::placeholder {
+  color: var(--muted);
+}
+
+.wiki-tree-no-match {
+  padding: 14px 8px;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+}
+
 .wiki-empty {
   display: flex;
   flex: 1;
@@ -369,6 +468,152 @@
   width: 100%;
   height: 100%;
   touch-action: none;
+}
+
+/* 图谱叠加层：节点搜索 + 聚类图例 + 核心/全部切换（浮在画布上，画布交互不受遮挡） */
+.wiki-graph-overlay {
+  position: absolute;
+  z-index: 3;
+  top: 12px;
+  left: 12px;
+  right: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.wiki-graph-overlay > * {
+  pointer-events: auto;
+}
+
+.wiki-graph-search {
+  display: flex;
+  width: 210px;
+  height: 30px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  box-shadow: 0 2px 8px rgba(17, 24, 39, 0.06);
+  color: var(--muted);
+  backdrop-filter: blur(4px);
+}
+
+.wiki-graph-search:focus-within {
+  border-color: var(--accent);
+}
+
+.wiki-graph-search svg {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
+}
+
+.wiki-graph-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 12.5px;
+  outline: none;
+}
+
+.wiki-graph-search input::placeholder {
+  color: var(--muted);
+}
+
+.wiki-graph-search-clear {
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.wiki-graph-search-clear:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.wiki-graph-search-clear svg {
+  width: 11px;
+  height: 11px;
+}
+
+.wiki-graph-legend {
+  display: inline-flex;
+  height: 30px;
+  align-items: center;
+  gap: 10px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  box-shadow: 0 2px 8px rgba(17, 24, 39, 0.06);
+  backdrop-filter: blur(4px);
+}
+
+.wiki-graph-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.wiki-graph-legend-item::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--legend-dot, var(--muted));
+}
+
+/* 与 WikiGraphCanvas 的 WIKI_CLUSTER_COLORS 同源 */
+.wiki-graph-legend-item[data-cluster='concept'] { --legend-dot: #6f8ff8; }
+.wiki-graph-legend-item[data-cluster='entity'] { --legend-dot: #53b489; }
+.wiki-graph-legend-item[data-cluster='source'] { --legend-dot: #e2a54b; }
+.wiki-graph-legend-item[data-cluster='other'] { --legend-dot: #aeb7c4; }
+
+.wiki-graph-mode {
+  display: inline-flex;
+  height: 30px;
+  align-items: center;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  color: var(--muted);
+  font-size: 11.5px;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(17, 24, 39, 0.06);
+  cursor: pointer;
+  backdrop-filter: blur(4px);
+}
+
+.wiki-graph-mode:hover {
+  color: var(--text);
+}
+
+/* 搜索无命中：替换画布的占位 */
+.wiki-graph-no-match {
+  display: grid;
+  flex: 1;
+  place-items: center;
+  color: var(--muted);
+  font-size: 13px;
 }
 
 .wiki-graph-stats {

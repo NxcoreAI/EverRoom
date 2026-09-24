@@ -11700,6 +11700,54 @@
   white-space: nowrap;
 }
 
+/* 目录导读分层（置顶概览 / 分桶目录 / 折叠的系统文件）+ 目录/页数徽标 */
+.wiki-tree-sections {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.wiki-tree-section {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.wiki-tree-section-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px;
+  color: var(--cr-tertiary);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-align: left;
+}
+
+.wiki-tree-system-toggle {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.wiki-tree-system-toggle:hover {
+  color: var(--cr-text);
+}
+
+.context-room-wiki-tree-count {
+  margin-left: auto;
+  flex: 0 0 auto;
+  color: var(--cr-tertiary);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+
 /* 图谱视图 */
 .context-room-wiki-graph-wrap {
   display: flex;
