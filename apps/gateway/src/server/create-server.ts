@@ -1544,6 +1544,9 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   );
   // 启动恢复：进程被杀时 pending 滞留的过滤事件重新入队（幂等）
   ingestService.recoverPendingFilters();
+  // 暂停闸也拦对话捕获：暂停期间 Agent 聊天不写 L0（ingest 闸只管文档链路，
+  // 对话路径在 AgentService.startRun 单点接闸，否则侧栏记忆指示器仍会跳动）。
+  agentService.setMemoryCaptureGate(() => ingestService.getPause().paused);
   // 连接器页批量导入（fire-and-forget + DB 状态行，蓝本 runFrom）；启动时把
   // 进程死亡遗留的 running 批置 failed。auto 模式 = 归房+孵化混合：分类器用
   // 隔离内部 runtime（缺席则 UI 侧按 BATCH_AUTO_UNAVAILABLE 禁用），孵化走
