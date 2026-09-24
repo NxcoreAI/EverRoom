@@ -1179,7 +1179,14 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   const dataMigrationService = new DataMigrationService(db, sqlite, memoryService);
   dataMigrationService.setFilesService(filesService);
   dataMigrationService.recover();
-  resolveAgentConversation = (threadId, query) => dataMigrationService.buildReferenceContext(threadId, query);
+  // @ 引用解析：先查导入的外部线程；未命中（本应用自有会话 id）回退读 agent_sessions 历史。
+  resolveAgentConversation = async (threadId, query) => {
+    try {
+      return await dataMigrationService.buildReferenceContext(threadId, query);
+    } catch {
+      return agentService.buildSessionReferenceContext(threadId);
+    }
+  };
   agentService.setExternalConversationResolver(dataMigrationService);
   agentService.setFilesService(filesService);
   const clipperService = new ClipperService(db, filesService, config.dataDir, createVlmProvider(config));

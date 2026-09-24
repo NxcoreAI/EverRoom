@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowUp, Bot, Brain, Check, Feather, FileText, FolderOpen, History, LoaderCircle, Plus, Quote, Search, Square, X, Zap } from 'lucide-react'
+import { ArrowLeft, ArrowUp, Bot, Brain, Check, Feather, FileText, FolderOpen, History, LoaderCircle, MessagesSquare, Plus, Quote, Search, Square, X, Zap } from 'lucide-react'
 import {
   forwardRef,
   useEffect,
@@ -11,7 +11,7 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from 'react'
-import type { AgentModelPreference, AgentRoomReference, ExternalConversationSummary, LocalAgentInstallation } from '@nxcore/agent-contract'
+import type { AgentModelPreference, AgentRoomReference, AgentSession, ExternalConversationSummary, LocalAgentInstallation, MigrationProvider } from '@nxcore/agent-contract'
 import type { FileCatalogDto } from '../../../../shared/ingest'
 
 import { showToast } from '@/state/toast'
@@ -42,6 +42,15 @@ const MODEL_TIER_ORDER: AgentModelPreference[] = ['smart', 'primary', 'lite']
 
 type ExternalPickerStatus = 'idle' | 'loading' | 'ready' | 'loading-more' | 'error'
 type MentionCategory = 'all' | 'agent' | 'room' | 'file' | 'conversation'
+
+/** @ 弹层「对话记录」条目：导入的外部会话 + 本应用自有会话（provider 'everroom'）。 */
+interface MentionConversationItem {
+  id: string
+  title: string | null
+  provider: MigrationProvider | 'everroom'
+  messageCount: number | null
+  occurredAt: string | null
+}
 
 interface LocalAttachment {
   id: string
@@ -155,7 +164,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   const [agentPickerOpen, setAgentPickerOpen] = useState(false)
   const [agentIndex, setAgentIndex] = useState(0)
   const [mentionFiles, setMentionFiles] = useState<Array<{ id: string; title: string; detail: string }>>([])
-  const [mentionConversations, setMentionConversations] = useState<ExternalConversationSummary[]>([])
+  const [mentionConversations, setMentionConversations] = useState<MentionConversationItem[]>([])
   const [mentionSourcesLoading, setMentionSourcesLoading] = useState(false)
   const [mentionCategory, setMentionCategory] = useState<MentionCategory>('all')
   const [modelPickerOpen, setModelPickerOpen] = useState(false)
@@ -419,9 +428,10 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
     const token = allocateMentionToken(file.title, file.id, mentionHints.current)
     applyMentionToken(token, { kind: 'file', id: file.id, displayName: file.title })
   }
-  const chooseConversation = (conversation: ExternalConversationSummary) => {
-    const token = allocateMentionToken(conversation.title, conversation.id, mentionHints.current)
-    applyMentionToken(token, { kind: 'conversation', id: conversation.id, displayName: conversation.title })
+  const chooseConversation = (conversation: MentionConversationItem) => {
+    const displayName = conversation.title ?? t('surface:agentComposer.untitledConversation')
+    const token = allocateMentionToken(displayName, conversation.id, mentionHints.current)
+    applyMentionToken(token, { kind: 'conversation', id: conversation.id, displayName })
   }
   const openModelPicker = () => {
     setSlashPickerDismissed(true)
@@ -447,7 +457,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
     : callableLocalAgents
   const filteredRoomItems = rooms.filter((room) => matchesQuery(room.title) || matchesQuery(room.id))
   const filteredFileItems = mentionFiles.filter((file) => matchesQuery(file.title) || matchesQuery(file.id) || matchesQuery(file.detail))
-  const filteredConversationItems = mentionConversations.filter((conversation) => matchesQuery(conversation.title)
+  const filteredConversationItems = mentionConversations.filter((conversation) => matchesQuery(conversation.title ?? '')
     || matchesQuery(conversation.provider))
   const mentionCategoryTabs: Array<{ id: MentionCategory; labelKey: string; count: number }> = [
     { id: 'all', labelKey: 'surface:agentComposer.mentionTabAll', count: filteredAgentItems.length + filteredRoomItems.length + filteredFileItems.length + filteredConversationItems.length },
@@ -468,7 +478,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
     | { kind: 'agent'; item: LocalAgentInstallation }
     | { kind: 'room'; item: AgentRoomReference }
     | { kind: 'file'; item: { id: string; title: string; detail: string } }
-    | { kind: 'conversation'; item: ExternalConversationSummary }
+    | { kind: 'conversation'; item: MentionConversationItem }
   const mentionOptions: MentionOption[] = [
     ...(showMentionGroup('agent') ? filteredAgentItems.map((item) => ({ kind: 'agent' as const, item })) : []),
     ...(showMentionGroup('room') ? filteredRoomItems.map((item) => ({ kind: 'room' as const, item })) : []),
@@ -483,6 +493,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
     else chooseConversation(option.item)
   }
   // 弹层打开时懒加载文件与对话记录（Agent/Room 由 props 同步提供）。
+  // 对话记录合并导入的外部会话与本应用自有会话（provider 'everroom'），按最近活跃排序。
   useEffect(() => {
     if (!agentPickerOpen || mentionSourcesLoading) return
     setMentionSourcesLoading(true)
@@ -497,13 +508,40 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
         window.nxcore?.migrations?.conversations({ limit: 20 }).then((page) => page?.items ?? []),
         [] as ExternalConversationSummary[],
       ),
-    ]).then(([fileItems, conversationItems]) => {
+      loadMentionSource(
+        window.nxcore?.agent?.listSessions?.().then((sessions) => sessions ?? []),
+        [] as AgentSession[],
+      ),
+    ]).then(([fileItems, conversationItems, nativeSessions]) => {
       setMentionFiles(fileItems.map((file) => ({
         id: file.id,
         title: file.displayName ?? file.sharedTitle ?? file.originalName,
         detail: file.processingState === 'ready' ? '' : file.processingState,
       })))
-      setMentionConversations(conversationItems)
+      const importedItems: MentionConversationItem[] = conversationItems.map((conversation) => ({
+        id: conversation.id,
+        title: conversation.title,
+        provider: conversation.provider,
+        messageCount: conversation.messageCount,
+        occurredAt: conversation.lastMessageAt,
+      }))
+      const nativeItems: MentionConversationItem[] = nativeSessions
+        // 空会话（从未对话、无标题且未更新过）不值得被 @。
+        .filter((session) => session.title !== null || session.updatedAt !== session.createdAt)
+        .map((session) => ({
+          id: session.id,
+          title: session.title,
+          provider: 'everroom' as const,
+          messageCount: null,
+          occurredAt: session.updatedAt,
+        }))
+      const asTimestamp = (value: string | null): number => {
+        const parsed = Date.parse(value ?? '')
+        return Number.isNaN(parsed) ? 0 : parsed
+      }
+      setMentionConversations([...nativeItems, ...importedItems]
+        .sort((a, b) => asTimestamp(b.occurredAt) - asTimestamp(a.occurredAt))
+        .slice(0, 30))
     }).finally(() => setMentionSourcesLoading(false))
   }, [agentPickerOpen])
   useEffect(() => {
@@ -665,7 +703,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
         </section>
       ) : null}
       {agentPickerOpen ? (
-        <div ref={agentResultsRef} className="agent-composer-popover agent-mention-list" id="agent-composer-menu" role="listbox" aria-label={t('surface:agentComposer.mentionAgent')}>
+        <div ref={agentResultsRef} className="agent-composer-popover agent-mention-popover" id="agent-composer-menu" role="listbox" aria-label={t('surface:agentComposer.mentionAgent')}>
           <div className="agent-mention-tabs" role="tablist" aria-label={t('surface:agentComposer.mentionCategoryLabel')}>
             {mentionCategoryTabs.map((tab) => (
               <button
@@ -689,8 +727,8 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
           {mentionOptionCount === 0 ? (
             <div className="agent-mention-empty">{t('surface:agentComposer.noMentionMatches')}</div>
           ) : (
-            <>
-              {showMentionGroup('agent') && filteredAgentItems.length ? (
+            <div className="agent-mention-list">
+              {mentionCategory === 'all' && filteredAgentItems.length ? (
                 <div className="agent-mention-group-label"><Bot aria-hidden="true" />{t('surface:agentComposer.mentionGroupAgents')}</div>
               ) : null}
               {showMentionGroup('agent') ? filteredAgentItems.map((item, index) => (
@@ -710,7 +748,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
                   <strong>{item.displayName}</strong>
                 </button>
               )) : null}
-              {showMentionGroup('room') && filteredRoomItems.length ? (
+                            {mentionCategory === 'all' && filteredRoomItems.length ? (
                 <div className="agent-mention-group-label"><FolderOpen aria-hidden="true" />{t('surface:agentComposer.mentionGroupRooms')}</div>
               ) : null}
               {showMentionGroup('room') ? filteredRoomItems.map((room) => {
@@ -734,7 +772,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
                   </button>
                 )
               }) : null}
-              {showMentionGroup('file') && filteredFileItems.length ? (
+                            {mentionCategory === 'all' && filteredFileItems.length ? (
                 <div className="agent-mention-group-label"><FileText aria-hidden="true" />{t('surface:agentComposer.mentionGroupFiles')}</div>
               ) : null}
               {showMentionGroup('file') ? filteredFileItems.map((file) => {
@@ -758,7 +796,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
                   </button>
                 )
               }) : null}
-              {showMentionGroup('conversation') && filteredConversationItems.length ? (
+                            {mentionCategory === 'all' && filteredConversationItems.length ? (
                 <div className="agent-mention-group-label"><History aria-hidden="true" />{t('surface:agentComposer.mentionGroupConversations')}</div>
               ) : null}
               {showMentionGroup('conversation') ? filteredConversationItems.map((conversation) => {
@@ -777,14 +815,22 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
                     onClick={() => chooseConversation(conversation)}
                   >
                     <span className="agent-mention-option-icon">
-                      <SourceIcon kind={conversation.provider === 'claude' || conversation.provider === 'codex' || conversation.provider === 'openclaw' ? conversation.provider : 'openclaw'} />
+                      {conversation.provider === 'everroom' ? (
+                        <MessagesSquare aria-hidden="true" />
+                      ) : (
+                        <SourceIcon kind={conversation.provider} />
+                      )}
                     </span>
                     <strong>{displayText(conversation.title, t('surface:agentComposer.untitledConversation'))}</strong>
-                    <small>{conversation.provider} · {t('surface:agentComposer.messageCount', { count: Number.isFinite(conversation.messageCount) ? conversation.messageCount : 0 })}</small>
+                    <small>
+                      {conversation.provider === 'everroom'
+                        ? `${t('surface:agentComposer.everroomConversationTag')} · ${displayDate(conversation.occurredAt, formatDate, t('surface:agentComposer.dateUnavailable'))}`
+                        : `${conversation.provider} · ${t('surface:agentComposer.messageCount', { count: conversation.messageCount ?? 0 })}`}
+                    </small>
                   </button>
                 )
               }) : null}
-            </>
+            </div>
           )}
         </div>
       ) : null}
@@ -934,8 +980,9 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
             <ActiveTierIcon aria-hidden="true" />
             <span>{t(activeTierMeta.labelKey)}</span>
           </button>
-          <span className="agent-composer-context" title={contextSummary}>
-            <span>{contextSummary}</span>
+          {/* 占位 flex 撑开发送钮；无引用时不渲染文案。 */}
+          <span className="agent-composer-context" title={hasSelectedText ? contextSummary : undefined}>
+            {hasSelectedText ? <span>{contextSummary}</span> : null}
             {hasSelectedText ? (
               <button type="button" aria-label={t('surface:agentComposer.clearAllReferences')} title={t('surface:agentComposer.clearAllReferences')} onClick={onClearContext}>
                 <X aria-hidden="true" />

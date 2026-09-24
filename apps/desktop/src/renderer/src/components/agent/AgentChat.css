@@ -1430,7 +1430,9 @@
   bottom: 16px;
 }
 
-.agent-mention-list { display: grid; gap: 1px; max-height: 232px; overflow-y: auto; padding: 4px; scrollbar-width: thin; scrollbar-color: rgba(100, 116, 139, 0.3) transparent; }
+/* 弹层整体固定高度（tab 间切换不跳动）；仅选项列表内部滚动。 */
+.agent-mention-popover { display: flex; flex-direction: column; height: 240px; }
+.agent-mention-list { flex: 1 1 auto; display: grid; gap: 1px; align-content: start; overflow-y: auto; padding: 4px; scrollbar-width: thin; scrollbar-color: rgba(100, 116, 139, 0.3) transparent; }
 .agent-mention-list::-webkit-scrollbar { width: 6px; }
 .agent-mention-list::-webkit-scrollbar-track, .agent-mention-list::-webkit-scrollbar-corner { background: transparent; }
 .agent-mention-list::-webkit-scrollbar-thumb { border-radius: 999px; background-color: rgba(100, 116, 139, 0.3); }
@@ -1450,8 +1452,8 @@
 .agent-mention-tab:disabled { opacity: 0.45; cursor: default; }
 .agent-mention-option-icon { display: inline-flex; width: 16px; height: 16px; flex: 0 0 16px; align-items: center; justify-content: center; background: transparent; overflow: hidden; }
 .agent-mention-option-icon svg { width: 12px; height: 12px; }
-.agent-mention-option-icon img { width: 14px; height: 14px; object-fit: contain; }
-.agent-mention-empty { padding: 10px 4px; color: #8b93a0; font-size: 11px; text-align: center; }
+.agent-mention-option-icon img { width: 16px; height: 16px; object-fit: contain; }
+.agent-mention-empty { flex: 1; display: grid; place-items: center; padding: 10px 4px; color: #8b93a0; font-size: 11px; text-align: center; }
 .agent-command-picker { display: grid; padding: 5px; }
 .agent-command-picker button { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; align-items: center; gap: 9px; min-height: 48px; padding: 7px 8px; border: 0; border-radius: 5px; background: #f3f5f7; color: #1d232d; text-align: left; cursor: pointer; }
 .agent-command-picker button:hover, .agent-command-picker button:focus-visible { outline: 0; background: #eceff3; }
