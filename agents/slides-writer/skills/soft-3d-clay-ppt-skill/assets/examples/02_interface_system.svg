@@ -1,0 +1,100 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720" width="1280" height="720">
+  <rect x="0" y="0" width="1280" height="720" fill="#FDF5E6" />
+
+  <g id="decor">
+    <ellipse cx="1162" cy="590" rx="88" ry="32" fill="#C8BBA8" fill-opacity="0.24" />
+    <circle cx="1140" cy="538" r="46" fill="#DBADAD" />
+    <circle cx="1124" cy="520" r="12" fill="#FFFFFF" fill-opacity="0.28" />
+    <path fill="#B2AC88" d="M1206,558 H1240 A16,16 0 0 1 1256,574 V574 A16,16 0 0 1 1240,590 H1206 A16,16 0 0 1 1190,574 V574 A16,16 0 0 1 1206,558 Z" />
+  </g>
+
+  <g id="header">
+    <text x="56" y="50" font-family="Consolas, Courier New, monospace" font-size="11" fill="#9A9288">02 / INTERFACE SYSTEM</text>
+    <text font-family="Arial, Microsoft YaHei, sans-serif" font-weight="700" fill="#333333" font-size="38" x="56" y="108">Decoupling turns a fragile container</text><text font-family="Arial, Microsoft YaHei, sans-serif" font-weight="700" fill="#333333" font-size="38" x="56" y="152">into a friendly interface system.</text></g>
+
+  <g id="before-panel">
+    <path fill="#C8BBA8" fill-opacity="0.24" d="M98,218 H456 A26,26 0 0 1 482,244 V510 A26,26 0 0 1 456,536 H98 A26,26 0 0 1 72,510 V244 A26,26 0 0 1 98,218 Z" />
+    <path fill="#FFF9EF" stroke="#E7DAC8" stroke-width="1" d="M82,198 H440 A26,26 0 0 1 466,224 V490 A26,26 0 0 1 440,516 H82 A26,26 0 0 1 56,490 V224 A26,26 0 0 1 82,198 Z" />
+    <text x="88" y="246" font-family="Consolas, Courier New, monospace" font-size="14" fill="#DBADAD">BEFORE</text>
+    <text x="88" y="286" font-family="Arial, Microsoft YaHei, sans-serif" font-size="24" font-weight="700" fill="#333333">One container does everything</text>
+    <text font-family="Microsoft YaHei, PingFang SC, Arial, sans-serif" fill="#6B6B6B" font-size="18" x="88" y="326">Session, harness, and sandbox</text><text font-family="Microsoft YaHei, PingFang SC, Arial, sans-serif" fill="#6B6B6B" font-size="18" x="88" y="354">share state and failure modes.</text><g id="stack">
+      <path fill="#FFFFFF" stroke="#E7DAC8" stroke-width="1" d="M116,388 H406 A16,16 0 0 1 422,404 V416 A16,16 0 0 1 406,432 H116 A16,16 0 0 1 100,416 V404 A16,16 0 0 1 116,388 Z" />
+      <text x="126" y="416" font-family="Consolas, Courier New, monospace" font-size="14" fill="#333333">session + harness + sandbox</text>
+      <path fill="#FFFFFF" stroke="#E7DAC8" stroke-width="1" d="M116,446 H406 A16,16 0 0 1 422,462 V474 A16,16 0 0 1 406,490 H116 A16,16 0 0 1 100,474 V462 A16,16 0 0 1 116,446 Z" />
+      <text x="126" y="474" font-family="Consolas, Courier New, monospace" font-size="14" fill="#333333">hard to debug / hard to recover</text>
+    </g>
+  </g>
+
+  <g id="center-thread">
+    <line x1="514" y1="360" x2="626" y2="360" stroke="#B2AC88" stroke-width="4" stroke-linecap="round" />
+    <circle cx="514" cy="360" r="10" fill="#DBADAD" />
+    <circle cx="626" cy="360" r="10" fill="#B2AC88" />
+    <polygon points="636,360 618,350 618,370" fill="#B2AC88" />
+  </g>
+
+  <g id="after-panel">
+    <path fill="#C8BBA8" fill-opacity="0.22" d="M702,218 H1140 A28,28 0 0 1 1168,246 V550 A28,28 0 0 1 1140,578 H702 A28,28 0 0 1 674,550 V246 A28,28 0 0 1 702,218 Z" />
+    <path fill="#FFF9EF" stroke="#E7DAC8" stroke-width="1" d="M678,198 H1116 A28,28 0 0 1 1144,226 V530 A28,28 0 0 1 1116,558 H678 A28,28 0 0 1 650,530 V226 A28,28 0 0 1 678,198 Z" />
+    <text x="684" y="246" font-family="Consolas, Courier New, monospace" font-size="14" fill="#B2AC88">AFTER</text>
+
+    <g id="node-brain">
+      <circle cx="768" cy="330" r="44" fill="#C8BBA8" fill-opacity="0.28" />
+      <circle cx="760" cy="318" r="44" fill="#B2AC88" />
+      <circle cx="744" cy="302" r="12" fill="#FFFFFF" fill-opacity="0.3" />
+      
+  <g transform="translate(744.0, 302.0) scale(1.3333333333333333)" fill="none" stroke="#333333">
+    <path d="M15.5 13a3.5 3.5 0 0 0 -3.5 3.5v1a3.5 3.5 0 0 0 7 0v-1.8" />
+    <path d="M8.5 13a3.5 3.5 0 0 1 3.5 3.5v1a3.5 3.5 0 0 1 -7 0v-1.8" />
+    <path d="M17.5 16a3.5 3.5 0 0 0 0 -7h-.5" />
+    <path d="M19 9.3v-2.8a3.5 3.5 0 0 0 -7 0" />
+    <path d="M6.5 16a3.5 3.5 0 0 1 0 -7h.5" />
+    <path d="M5 9.3v-2.8a3.5 3.5 0 0 1 7 0v10" />
+  </g>
+      <text x="712" y="396" font-family="Arial, Microsoft YaHei, sans-serif" font-size="18" font-weight="700" fill="#333333">Brain</text>
+      <text x="700" y="420" font-family="Consolas, Courier New, monospace" font-size="12" fill="#6B6B6B">harness</text>
+    </g>
+
+    <g id="node-session">
+      <circle cx="924" cy="330" r="44" fill="#C8BBA8" fill-opacity="0.28" />
+      <circle cx="916" cy="318" r="44" fill="#DBADAD" />
+      <circle cx="900" cy="302" r="12" fill="#FFFFFF" fill-opacity="0.3" />
+      
+  <g transform="translate(900.0, 302.0) scale(1.3333333333333333)" fill="none" stroke="#333333">
+    <path d="M4 6a8 3 0 1 0 16 0a8 3 0 1 0 -16 0" />
+    <path d="M4 6v6a8 3 0 0 0 16 0v-6" />
+    <path d="M4 12v6a8 3 0 0 0 16 0v-6" />
+  </g>
+      <text x="862" y="396" font-family="Arial, Microsoft YaHei, sans-serif" font-size="18" font-weight="700" fill="#333333">Session</text>
+      <text x="850" y="420" font-family="Consolas, Courier New, monospace" font-size="12" fill="#6B6B6B">event log</text>
+    </g>
+
+    <g id="node-hands">
+      <circle cx="1080" cy="330" r="44" fill="#C8BBA8" fill-opacity="0.28" />
+      <circle cx="1072" cy="318" r="44" fill="#B2AC88" />
+      <circle cx="1056" cy="302" r="12" fill="#FFFFFF" fill-opacity="0.3" />
+      
+  <g transform="translate(1056.0, 302.0) scale(1.3333333333333333)" fill="none" stroke="#333333">
+    <path d="M12 3l8 4.5l0 9l-8 4.5l-8 -4.5l0 -9l8 -4.5" />
+    <path d="M12 12l8 -4.5" />
+    <path d="M12 12l0 9" />
+    <path d="M12 12l-8 -4.5" />
+  </g>
+      <text x="1028" y="396" font-family="Arial, Microsoft YaHei, sans-serif" font-size="18" font-weight="700" fill="#333333">Hands</text>
+      <text x="1016" y="420" font-family="Consolas, Courier New, monospace" font-size="12" fill="#6B6B6B">tools</text>
+    </g>
+
+    <line x1="804" y1="318" x2="872" y2="318" stroke="#B2AC88" stroke-width="3" stroke-linecap="round" />
+    <polygon points="872,318 858,310 858,326" fill="#B2AC88" />
+    <line x1="960" y1="318" x2="1028" y2="318" stroke="#B2AC88" stroke-width="3" stroke-linecap="round" />
+    <polygon points="1028,318 1014,310 1014,326" fill="#B2AC88" />
+
+    <path fill="#FFFFFF" stroke="#E7DAC8" stroke-width="1" d="M726,474 H1066 A22,22 0 0 1 1088,496 V496 A22,22 0 0 1 1066,518 H726 A22,22 0 0 1 704,496 V496 A22,22 0 0 1 726,474 Z" />
+    <text x="730" y="502" font-family="Consolas, Courier New, monospace" font-size="14" fill="#333333">execute(name,input) -&gt; string</text>
+  </g>
+
+  <g id="footer">
+    <line x1="56" y1="685" x2="1224" y2="685" stroke="#E7DAC8" stroke-width="1" />
+    <text x="56" y="704" font-family="Consolas, Courier New, monospace" font-size="11" fill="#9A9288">Source: Anthropic Engineering, Scaling Managed Agents</text>
+    <text x="1224" y="704" text-anchor="end" font-family="Consolas, Courier New, monospace" font-size="11" fill="#9A9288">02 / 03</text>
+  </g>
+</svg>

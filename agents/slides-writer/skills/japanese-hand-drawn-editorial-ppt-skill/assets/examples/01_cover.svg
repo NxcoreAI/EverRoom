@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#F8F6F2"/>
+
+  <g opacity="0.48">
+    <circle cx="88" cy="82" r="1.1" fill="#BDBDBD"/>
+    <circle cx="152" cy="134" r="0.9" fill="#BDBDBD"/>
+    <circle cx="294" cy="96" r="1" fill="#BDBDBD"/>
+    <circle cx="488" cy="118" r="0.9" fill="#BDBDBD"/>
+    <circle cx="1048" cy="86" r="1.1" fill="#BDBDBD"/>
+    <circle cx="1176" cy="604" r="1" fill="#BDBDBD"/>
+    <path d="M0 188C214 176 394 194 604 182C854 168 1032 188 1280 174" stroke="#BDBDBD" stroke-width="1" stroke-opacity="0.22"/>
+    <path d="M0 530C238 516 438 540 686 522C898 506 1068 526 1280 512" stroke="#BDBDBD" stroke-width="1" stroke-opacity="0.18"/>
+  </g>
+
+  <g stroke="#D8D3CB" stroke-width="1">
+    <line x1="76" y1="78" x2="76" y2="646"/>
+    <line x1="76" y1="646" x2="1204" y2="646"/>
+    <line x1="712" y1="110" x2="712" y2="586"/>
+  </g>
+
+  <text x="76" y="106" fill="#6C7A89" font-family="Noto Sans JP, Yu Gothic, Arial, sans-serif" font-size="12" font-weight="500">JAPANESE HAND-DRAWN EDITORIAL / PPT STYLE</text>
+  <path d="M76 132C112 130 156 134 214 131" stroke="#6C7A89" stroke-width="1.5" stroke-linecap="round"/>
+
+  <text x="74" y="226" fill="#2B2B2B" font-family="Noto Sans JP, Yu Gothic, Arial, sans-serif" font-size="58" font-weight="300">Quiet Lines</text>
+  <text x="74" y="298" fill="#2B2B2B" font-family="Noto Sans JP, Yu Gothic, Arial, sans-serif" font-size="58" font-weight="300">for Thoughtful</text>
+  <text x="74" y="370" fill="#2B2B2B" font-family="Noto Sans JP, Yu Gothic, Arial, sans-serif" font-size="58" font-weight="300">Stories</text>
+
+  <text x="80" y="462" fill="#2B2B2B" font-family="Noto Sans JP, Yu Gothic, Arial, sans-serif" font-size="21" font-weight="300">Soft paper texture, delicate pencil lines, pale watercolor fills.</text>
+  <text x="80" y="500" fill="#6C6C6C" font-family="Noto Sans JP, Yu Gothic, Arial, sans-serif" font-size="17" font-weight="300">Japanese lifestyle editorial composition with quiet human craft.</text>
+
+  <g transform="translate(780 104)">
+    <path d="M22 356C92 326 232 334 352 356" stroke="#BDBDBD" stroke-width="1.2" stroke-linecap="round"/>
+    <path d="M74 218C116 166 184 150 250 174C322 200 350 276 304 326C250 386 134 366 84 304C60 274 56 246 74 218Z" fill="#EAE7E1"/>
+    <path d="M74 218C116 166 184 150 250 174C322 200 350 276 304 326C250 386 134 366 84 304C60 274 56 246 74 218Z" stroke="#2B2B2B" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M112 232C156 206 220 206 276 236" stroke="#2B2B2B" stroke-width="1.3" stroke-linecap="round"/>
+    <path d="M132 278C178 292 230 292 282 276" stroke="#6C7A89" stroke-width="1.3" stroke-linecap="round"/>
+    <path d="M164 190C158 160 176 130 210 126C248 122 274 152 266 188" stroke="#2B2B2B" stroke-width="1.2" stroke-linecap="round"/>
+    <path d="M356 166C388 152 406 126 414 92" stroke="#BDBDBD" stroke-width="1.1" stroke-linecap="round"/>
+    <text x="292" y="144" fill="#6C7A89" font-family="Noto Sans JP, Yu Gothic, Arial, sans-serif" font-size="12">small annotation</text>
+    <path d="M286 150C268 160 252 166 232 170" stroke="#6C7A89" stroke-width="1" stroke-linecap="round"/>
+    <circle cx="92" cy="360" r="5" fill="#6C7A89" opacity="0.45"/>
+  </g>
+
+  <g transform="translate(780 562)" font-family="Noto Sans JP, Yu Gothic, Arial, sans-serif">
+    <text x="0" y="-28" fill="#6C6C6C" font-size="12" font-weight="500">COLOR PALETTE</text>
+    <rect x="0" y="0" width="62" height="40" fill="#F8F6F2" stroke="#D8D3CB"/>
+    <rect x="76" y="0" width="62" height="40" fill="#2B2B2B"/>
+    <rect x="152" y="0" width="62" height="40" fill="#BDBDBD"/>
+    <rect x="228" y="0" width="62" height="40" fill="#6C7A89"/>
+    <rect x="304" y="0" width="62" height="40" fill="#EAE7E1" stroke="#D8D3CB"/>
+    <text x="0" y="64" fill="#6C6C6C" font-size="10">#F8F6F2</text>
+    <text x="76" y="64" fill="#6C6C6C" font-size="10">#2B2B2B</text>
+    <text x="152" y="64" fill="#6C6C6C" font-size="10">#BDBDBD</text>
+    <text x="228" y="64" fill="#6C6C6C" font-size="10">#6C7A89</text>
+    <text x="304" y="64" fill="#6C6C6C" font-size="10">#EAE7E1</text>
+  </g>
+
+  <text x="76" y="682" fill="#8B8680" font-family="Noto Sans JP, Yu Gothic, Arial, sans-serif" font-size="12">16:9 / warm paper texture / uneven ink lines / pale wash / asymmetric editorial composition</text>
+</svg>

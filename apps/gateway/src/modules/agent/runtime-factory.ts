@@ -10,6 +10,7 @@ import { UnconfiguredAgentRuntime, type AgentRuntime } from "@nxcore/agent-runti
 import { bundledAgentDefinitionsDir, type GatewayConfig } from "../../config.js";
 import type { DocumentMcpHost } from "../documents/mcp-host.js";
 import { createDocumentPiToolsWithRoomBindings } from "../documents/pi-tools.js";
+import { SLIDES_TOOL_NAMES } from "../documents/capabilities/office-plugin.js";
 import { createOpenConnectorPiTools } from "@nxcore/connectors-module/open-connector-tools.js";
 import type { FormatMappingService } from "../connectors/format-mapping-service.js";
 import type { ConnectorManager } from "@nxcore/connectors-module/manager.js";
@@ -136,7 +137,10 @@ function createUserFacingRuntime(
   }, {
     tools: [
       ...(knowledge?.tools ?? []),
-      ...createDocumentPiToolsWithRoomBindings(mcpHost, routedRoomByRun),
+      // PPT 四件套归 slides-writer 子代理独占：用户档（main/main-direct/main-lite）
+      // 剔除，改走 slides_draft 调度；doc-writer 消费点另有 allowlist 不受影响。
+      ...createDocumentPiToolsWithRoomBindings(mcpHost, routedRoomByRun)
+        .filter((tool) => !(SLIDES_TOOL_NAMES as readonly string[]).includes(tool.name)),
       // 会话门控：cliConnector 恒在场（create-server 归一化），baseUrl 空 =
       // 登出态，不暴露 oo 工具；会话热更新后经 hotReloadAgentRuntimes 重建。
       ...(config.cliConnector?.baseUrl

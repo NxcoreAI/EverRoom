@@ -1,0 +1,71 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#FFFFFF"/>
+
+  <g opacity="0.82" stroke="#E6EAF2" stroke-width="1">
+    <path d="M80 0V720"/>
+    <path d="M160 0V720"/>
+    <path d="M240 0V720"/>
+    <path d="M320 0V720"/>
+    <path d="M400 0V720"/>
+    <path d="M480 0V720"/>
+    <path d="M560 0V720"/>
+    <path d="M640 0V720"/>
+    <path d="M720 0V720"/>
+    <path d="M800 0V720"/>
+    <path d="M880 0V720"/>
+    <path d="M960 0V720"/>
+    <path d="M1040 0V720"/>
+    <path d="M1120 0V720"/>
+    <path d="M1200 0V720"/>
+    <path d="M0 80H1280"/>
+    <path d="M0 160H1280"/>
+    <path d="M0 240H1280"/>
+    <path d="M0 320H1280"/>
+    <path d="M0 400H1280"/>
+    <path d="M0 480H1280"/>
+    <path d="M0 560H1280"/>
+    <path d="M0 640H1280"/>
+  </g>
+
+  <g fill="none" stroke="#E6EAF2" stroke-width="1">
+    <path d="M72 72H584"/>
+    <path d="M72 72V648"/>
+    <path d="M704 96H1168V538H704Z"/>
+    <path d="M736 164H1136"/>
+    <path d="M736 246H1136"/>
+    <path d="M736 328H1136"/>
+    <path d="M736 410H1136"/>
+  </g>
+
+  <text x="72" y="110" fill="#2F6BFF" font-family="Inter, Arial, sans-serif" font-size="13" font-weight="700">FUTURE SYSTEMS / EDITORIAL GRID</text>
+  <text x="72" y="221" fill="#2B2B2B" font-family="Inter, Arial, sans-serif" font-size="72" font-weight="800">Signal</text>
+  <text x="72" y="294" fill="#2B2B2B" font-family="Inter, Arial, sans-serif" font-size="72" font-weight="800">Architecture</text>
+  <text x="72" y="367" fill="#2B2B2B" font-family="Inter, Arial, sans-serif" font-size="72" font-weight="800">Interface</text>
+
+  <rect x="76" y="430" width="112" height="4" fill="#2F6BFF"/>
+  <text x="76" y="488" fill="#6B6B6B" font-family="Inter, Arial, sans-serif" font-size="21">High-end editorial PPT system for</text>
+  <text x="76" y="520" fill="#6B6B6B" font-family="Inter, Arial, sans-serif" font-size="21">AI, platform, engineering, and strategy narratives.</text>
+
+  <g font-family="Inter, Arial, sans-serif">
+    <text x="736" y="142" fill="#6B6B6B" font-size="12" font-weight="700">DATA MODULE 01</text>
+    <text x="736" y="220" fill="#2F6BFF" font-size="58" font-weight="800">92%</text>
+    <text x="900" y="214" fill="#2B2B2B" font-size="18" font-weight="700">signal clarity</text>
+    <text x="900" y="241" fill="#6B6B6B" font-size="14">structured hierarchy</text>
+
+    <text x="736" y="307" fill="#6B6B6B" font-size="12" font-weight="700">LAYOUT VECTOR</text>
+    <path d="M736 366H1112" stroke="#E6EAF2" stroke-width="1"/>
+    <path d="M736 366H974" stroke="#2F6BFF" stroke-width="3"/>
+    <circle cx="974" cy="366" r="5" fill="#2F6BFF"/>
+    <text x="736" y="400" fill="#2B2B2B" font-size="18" font-weight="700">asymmetric composition</text>
+    <text x="736" y="430" fill="#6B6B6B" font-size="14">wide negative space, sharp grid control</text>
+
+    <text x="736" y="496" fill="#6B6B6B" font-size="12" font-weight="700">FORMAT</text>
+    <text x="736" y="528" fill="#2B2B2B" font-size="18" font-weight="700">16:9 / 1280 x 720 / flat SVG</text>
+  </g>
+
+  <g fill="none" stroke="#2F6BFF" stroke-width="2">
+    <path d="M1112 612H1188V640"/>
+    <path d="M112 610H72V570"/>
+  </g>
+  <text x="72" y="660" fill="#2B2B2B" font-family="Inter, Arial, sans-serif" font-size="12">#FFFFFF / #2F6BFF / #2B2B2B</text>
+</svg>

@@ -20,14 +20,15 @@ export function createSubagentSkillReadTool(revision: LoadedSubagentRevision): P
   return {
     name: "read",
     label: "Read skill resource",
-    description: "读取当前子 Agent Revision 中的 Skill 文件。只能访问系统提示词列出的 Skill 目录。",
+    description: "读取当前子 Agent Revision 中的 Skill 文件。path 用相对本 Skill 根目录的相对路径（如 skills/<name>/SKILL.md）或绝对路径。",
     parameters: Type.Object({
       path: Type.String({ minLength: 1 }),
       offset: Type.Optional(Type.Integer({ minimum: 1 })),
       limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 2_000 })),
     }, { additionalProperties: false }),
     execute: async (_input, params) => {
-      const requestedPath = resolve(String(params.path ?? ""));
+      // 相对路径以 revision 根解析：SYSTEM.md 无法预知运行期绝对路径。
+      const requestedPath = resolve(root, String(params.path ?? ""));
       if (!requestedPath.startsWith(root)) throw new Error("subagent_skill_path_not_allowed");
       const stats = await lstat(requestedPath);
       if (!stats.isFile() || stats.isSymbolicLink()) throw new Error("subagent_skill_file_not_readable");

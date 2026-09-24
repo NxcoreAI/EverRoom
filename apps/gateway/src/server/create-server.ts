@@ -77,6 +77,7 @@ import { createContextRoomAgentTools } from "../modules/context-rooms/room-agent
 import { createDocumentPiTools } from "../modules/documents/pi-tools.js";
 import { createWebSearchPiTools } from "../modules/agent/web-search-tools.js";
 import { createDocWriterAgentTools } from "../modules/subagents/doc-writer-tools.js";
+import { createSlidesWriterAgentTools } from "../modules/subagents/slides-writer-tools.js";
 import { buildRoomContextDigest } from "../modules/context-rooms/room-context-digest.js";
 import { RoomOverviewService } from "../modules/context-rooms/overview-service.js";
 import { RoomOverviewScheduler } from "../modules/context-rooms/overview-scheduler.js";
@@ -756,6 +757,15 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
           roomExists: (roomId) => documentMcpHost.roomExists(roomId),
         })
       : [],
+    webSearchTools: config.webSearch
+      ? createWebSearchPiTools(agentResolver, externalCalls)
+      : [],
+  }));
+  // slides-writer 工具面（用户决策：PPT 四件套从主 Agent 收归子代理）——
+  // slides 四工具 + 素材自取只读面；写入/调度类由工厂内 allowlist 拒绝。须在首次 dispatch 前注册。
+  subagentRuntimeManager.registerAgentTools("slides-writer", () => createSlidesWriterAgentTools({
+    roomTools: createContextRoomAgentTools({ db, memory: memoryService, overview: roomOverviewService }),
+    documentTools: createDocumentPiTools(documentMcpHost),
     webSearchTools: config.webSearch
       ? createWebSearchPiTools(agentResolver, externalCalls)
       : [],

@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#F5EFE6"/>
+
+  <line x1="92" y1="136" x2="268" y2="136" stroke="#A68A64" stroke-width="1"/>
+  <line x1="832" y1="112" x2="832" y2="586" stroke="#D8CCBD" stroke-width="1"/>
+  <line x1="92" y1="642" x2="1188" y2="642" stroke="#D8CCBD" stroke-width="1"/>
+
+  <text x="92" y="104" fill="#A68A64" font-family="Inter, Arial, sans-serif" font-size="12" font-weight="600">MINIMAL LUXURY / BRAND PRESENTATION</text>
+
+  <text x="90" y="238" fill="#3A3A3A" font-family="Georgia, 'Times New Roman', serif" font-size="74" font-weight="500">Quiet</text>
+  <text x="90" y="320" fill="#3A3A3A" font-family="Georgia, 'Times New Roman', serif" font-size="74" font-weight="500">Precision</text>
+  <text x="90" y="402" fill="#3A3A3A" font-family="Georgia, 'Times New Roman', serif" font-size="74" font-weight="500">for Premium</text>
+  <text x="90" y="484" fill="#3A3A3A" font-family="Georgia, 'Times New Roman', serif" font-size="74" font-weight="500">Stories</text>
+
+  <text x="96" y="555" fill="#746F68" font-family="Inter, Arial, sans-serif" font-size="20">Elegant serif and sans-serif pairing, refined spacing,</text>
+  <text x="96" y="586" fill="#746F68" font-family="Inter, Arial, sans-serif" font-size="20">soft neutral tones, and calm editorial hierarchy.</text>
+
+  <text x="874" y="164" fill="#A68A64" font-family="Inter, Arial, sans-serif" font-size="12" font-weight="600">PALETTE</text>
+  <rect x="874" y="196" width="74" height="74" fill="#F5EFE6" stroke="#D8CCBD"/>
+  <rect x="966" y="196" width="74" height="74" fill="#A68A64"/>
+  <rect x="1058" y="196" width="74" height="74" fill="#3A3A3A"/>
+
+  <text x="874" y="338" fill="#3A3A3A" font-family="Georgia, 'Times New Roman', serif" font-size="34" font-weight="500">Refined</text>
+  <text x="874" y="382" fill="#3A3A3A" font-family="Georgia, 'Times New Roman', serif" font-size="34" font-weight="500">Brand Rhythm</text>
+  <line x1="874" y1="424" x2="1134" y2="424" stroke="#D8CCBD" stroke-width="1"/>
+  <text x="874" y="468" fill="#746F68" font-family="Inter, Arial, sans-serif" font-size="16">Large margins</text>
+  <text x="874" y="500" fill="#746F68" font-family="Inter, Arial, sans-serif" font-size="16">Subtle dividers</text>
+  <text x="874" y="532" fill="#746F68" font-family="Inter, Arial, sans-serif" font-size="16">Premium calm</text>
+
+  <text x="92" y="672" fill="#A68A64" font-family="Inter, Arial, sans-serif" font-size="12" font-weight="600">16:9 / #F5EFE6 / #A68A64 / #3A3A3A</text>
+</svg>

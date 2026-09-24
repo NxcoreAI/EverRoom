@@ -59,8 +59,8 @@ describe('buildAgentAskMessage', () => {
     expect(message).toContain('text-7（文本框「季度营收概览」）')
     expect(message).toContain('shape-1（形状）')
     expect(message).toContain('字号调大并改成主色')
-    expect(message).toContain('context_room_slides_read')
-    expect(message).toContain('"active"')
+    expect(message).toContain('slides_draft(task=edit, fileId="active")')
+    expect(message).toContain('slides-writer')
     expect(message).toContain('只改列出的元素')
   })
 

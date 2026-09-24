@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Futuristic Tech Editorial PPT Template</title>
+  <style>
+    :root {
+      --white: #ffffff;
+      --blue: #2f6bff;
+      --graphite: #2b2b2b;
+      --muted: #6b6b6b;
+      --grid: #e6eaf2;
+      --pale: #f7f9fc;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: #eef1f6;
+      font-family: Inter, Arial, "Microsoft JhengHei", "Microsoft YaHei", sans-serif;
+      color: var(--graphite);
+    }
+
+    .deck {
+      display: grid;
+      gap: 32px;
+      padding: 32px;
+    }
+
+    .slide {
+      position: relative;
+      width: min(1280px, 100%);
+      aspect-ratio: 16 / 9;
+      margin: 0 auto;
+      overflow: hidden;
+      background:
+        linear-gradient(var(--grid) 1px, transparent 1px),
+        linear-gradient(90deg, var(--grid) 1px, transparent 1px),
+        var(--white);
+      background-size: 80px 80px;
+      border: 1px solid var(--grid);
+    }
+
+    .slide::before {
+      content: "";
+      position: absolute;
+      inset: 72px;
+      border-top: 1px solid var(--grid);
+      border-left: 1px solid var(--grid);
+      pointer-events: none;
+    }
+
+    .kicker {
+      position: absolute;
+      top: 72px;
+      left: 72px;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0;
+      color: var(--blue);
+      text-transform: uppercase;
+    }
+
+    h1 {
+      position: absolute;
+      left: 72px;
+      top: 150px;
+      width: 680px;
+      margin: 0;
+      font-size: 72px;
+      line-height: 1.02;
+      font-weight: 800;
+      letter-spacing: 0;
+    }
+
+    .subtitle {
+      position: absolute;
+      left: 76px;
+      bottom: 92px;
+      width: 430px;
+      color: var(--muted);
+      font-size: 20px;
+      line-height: 1.45;
+    }
+
+    .data-panel {
+      position: absolute;
+      right: 86px;
+      top: 124px;
+      width: 320px;
+      height: 392px;
+      border: 1px solid var(--grid);
+      background: var(--white);
+      padding: 28px;
+    }
+
+    .metric {
+      font-size: 56px;
+      line-height: 1;
+      font-weight: 800;
+      color: var(--blue);
+    }
+
+    .metric-label {
+      margin-top: 14px;
+      font-size: 13px;
+      color: var(--muted);
+      text-transform: uppercase;
+      font-weight: 700;
+    }
+
+    .rail {
+      position: absolute;
+      left: 28px;
+      right: 28px;
+      bottom: 34px;
+      height: 1px;
+      background: var(--grid);
+    }
+
+    .rail::after {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 42%;
+      height: 1px;
+      background: var(--blue);
+    }
+  </style>
+</head>
+<body>
+  <main class="deck">
+    <section class="slide">
+      <div class="kicker">System / Signal / Editorial</div>
+      <h1>Future Interface Systems</h1>
+      <p class="subtitle">A clean technology magazine layout for sharp business, AI, product, and engineering narratives.</p>
+      <aside class="data-panel">
+        <div class="metric">16:9</div>
+        <div class="metric-label">Presentation Grid</div>
+        <div class="rail"></div>
+      </aside>
+    </section>
+  </main>
+</body>
+</html>

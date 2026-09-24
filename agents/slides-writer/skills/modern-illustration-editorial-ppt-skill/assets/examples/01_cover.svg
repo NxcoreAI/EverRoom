@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <defs>
+    <linearGradient id="blueGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#EAF4FC"/>
+      <stop offset="1" stop-color="#A7C7E7"/>
+    </linearGradient>
+    <linearGradient id="orangeGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FCE8DA"/>
+      <stop offset="1" stop-color="#E8A87C"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1280" height="720" fill="#F7F3EE"/>
+
+  <g fill="#DED8D1" opacity="0.32">
+    <circle cx="72" cy="70" r="1"/>
+    <circle cx="118" cy="112" r="1"/>
+    <circle cx="174" cy="84" r="1"/>
+    <circle cx="226" cy="132" r="1"/>
+    <circle cx="310" cy="86" r="1"/>
+    <circle cx="1012" cy="92" r="1"/>
+    <circle cx="1084" cy="128" r="1"/>
+    <circle cx="1160" cy="84" r="1"/>
+    <circle cx="1212" cy="152" r="1"/>
+  </g>
+
+  <text x="84" y="102" fill="#E8A87C" font-family="Inter, Arial, sans-serif" font-size="12" font-weight="700">MODERN ILLUSTRATION / EDITORIAL PPT</text>
+  <text x="82" y="214" fill="#2F2F2F" font-family="Inter, Arial, sans-serif" font-size="64" font-weight="800">Calm Visual</text>
+  <text x="82" y="286" fill="#2F2F2F" font-family="Inter, Arial, sans-serif" font-size="64" font-weight="800">Systems for</text>
+  <text x="82" y="358" fill="#2F2F2F" font-family="Inter, Arial, sans-serif" font-size="64" font-weight="800">Complex Ideas</text>
+
+  <text x="86" y="456" fill="#5F5F5F" font-family="Inter, Arial, sans-serif" font-size="20">Soft vector illustration, refined hierarchy,</text>
+  <text x="86" y="488" fill="#5F5F5F" font-family="Inter, Arial, sans-serif" font-size="20">and asymmetric editorial composition.</text>
+
+  <g transform="translate(700 86)">
+    <ellipse cx="244" cy="474" rx="206" ry="22" fill="#2F2F2F" opacity="0.07"/>
+    <path d="M100 184C126 84 270 34 360 92C448 150 456 284 356 338C254 394 74 326 100 184Z" fill="url(#blueGrad)"/>
+    <path d="M292 310C330 250 426 234 468 286C514 344 466 426 384 424C308 422 252 372 292 310Z" fill="url(#orangeGrad)"/>
+    <rect x="92" y="360" width="296" height="132" rx="28" fill="#FFFFFF" opacity="0.76" stroke="#DED8D1"/>
+    <path d="M134 410H274" stroke="#A7C7E7" stroke-width="10" stroke-linecap="round"/>
+    <path d="M134 446H330" stroke="#E8A87C" stroke-width="10" stroke-linecap="round"/>
+    <circle cx="214" cy="236" r="34" fill="#2F2F2F"/>
+    <path d="M176 310C184 266 244 262 258 310L270 356H160Z" fill="#FFFFFF"/>
+    <path d="M162 356H276" stroke="#2F2F2F" stroke-width="4" stroke-linecap="round"/>
+    <path d="M290 188C332 170 374 188 398 226" fill="none" stroke="#2F2F2F" stroke-width="4" stroke-linecap="round"/>
+    <circle cx="410" cy="244" r="12" fill="#E8A87C"/>
+    <circle cx="78" cy="284" r="14" fill="#A7C7E7"/>
+    <path d="M92 284C136 272 154 246 176 224" fill="none" stroke="#A7C7E7" stroke-width="3" stroke-linecap="round"/>
+  </g>
+
+  <line x1="84" y1="640" x2="1188" y2="640" stroke="#DED8D1" stroke-width="1"/>
+  <text x="84" y="672" fill="#2F2F2F" font-family="Inter, Arial, sans-serif" font-size="12">#F7F3EE / #A7C7E7 / #E8A87C / #2F2F2F</text>
+</svg>

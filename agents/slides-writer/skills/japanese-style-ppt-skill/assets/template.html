@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Washi Paper & Soft Glow Deck</title>
+  <style>
+    :root {
+      --paper: #F5F5F5;
+      --paper-2: #EFEDEA;
+      --ink: #333333;
+      --muted: #6B6B6B;
+      --line: #D8D6D0;
+      --indigo: #2C3E50;
+      --lavender: #D5D0DB;
+      --serif: Georgia, "Microsoft YaHei", serif;
+      --sans: "Microsoft YaHei", "PingFang SC", Arial, sans-serif;
+      --mono: Consolas, "Courier New", monospace;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--paper);
+      color: var(--ink);
+      font-family: var(--sans);
+      overflow: hidden;
+    }
+    .deck {
+      display: flex;
+      width: 300vw;
+      height: 100vh;
+      transition: transform 700ms cubic-bezier(.2,.8,.2,1);
+    }
+    .slide {
+      width: 100vw;
+      height: 100vh;
+      flex: 0 0 100vw;
+      position: relative;
+      padding: 7vh 7vw;
+      overflow: hidden;
+      background:
+        radial-gradient(circle at 20% 12%, rgba(213,208,219,.26), transparent 28%),
+        radial-gradient(circle at 80% 76%, rgba(44,62,80,.06), transparent 34%),
+        var(--paper);
+    }
+    .slide::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background-image:
+        radial-gradient(circle, rgba(51,51,51,.13) 0 1px, transparent 1.2px);
+      background-size: 42px 42px;
+      opacity: .18;
+    }
+    .kicker {
+      font-family: var(--mono);
+      color: var(--indigo);
+      font-size: 12px;
+      letter-spacing: .18em;
+      text-transform: uppercase;
+    }
+    h1, h2 {
+      font-family: var(--serif);
+      margin: 0;
+      letter-spacing: 0;
+      line-height: 1.05;
+    }
+    h1 { font-size: clamp(54px, 7vw, 104px); max-width: 860px; }
+    h2 { font-size: clamp(36px, 4.4vw, 68px); max-width: 880px; }
+    p {
+      font-size: clamp(18px, 1.45vw, 24px);
+      line-height: 1.55;
+      color: var(--muted);
+      max-width: 680px;
+    }
+    .rule-v {
+      position: absolute;
+      left: 5.6vw;
+      top: 14vh;
+      width: 3px;
+      height: 58vh;
+      background: var(--indigo);
+    }
+    .frame {
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,.34);
+      border-radius: 10px;
+      padding: 34px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: 0.95fr 1.05fr;
+      gap: 7vw;
+      align-items: center;
+      height: 74vh;
+    }
+    .footer {
+      position: absolute;
+      left: 7vw;
+      right: 7vw;
+      bottom: 4.2vh;
+      border-top: 1px solid var(--line);
+      padding-top: 16px;
+      display: flex;
+      justify-content: space-between;
+      color: #9A9690;
+      font-family: var(--mono);
+      font-size: 11px;
+    }
+  </style>
+</head>
+<body>
+  <main class="deck" id="deck">
+    <section class="slide">
+      <div class="rule-v"></div>
+      <div style="margin-left:4vw; margin-top:11vh">
+        <div class="kicker">Washi Paper & Soft Glow</div>
+        <h1>Title with quiet editorial warmth</h1>
+        <p>Use a soft paper surface, thin indigo geometry, and generous negative space.</p>
+      </div>
+      <div class="footer"><span>Professional minimalist deck</span><span>01 / 03</span></div>
+    </section>
+    <section class="slide">
+      <div class="kicker">Pattern / Asymmetric thesis</div>
+      <div class="grid">
+        <div>
+          <h2>One focused idea per slide.</h2>
+          <p>Let the layout breathe before adding extra containers. Use rules and spacing as structure.</p>
+        </div>
+        <div class="frame">
+          <p style="color:var(--ink); margin:0">Diagram, quote, image crop, or evidence frame.</p>
+        </div>
+      </div>
+      <div class="footer"><span>Washi system</span><span>02 / 03</span></div>
+    </section>
+    <section class="slide">
+      <div class="kicker">Closing / Reflection</div>
+      <h2 style="margin-top:18vh">Professional does not have to feel cold.</h2>
+      <p>Use restraint, texture, and a single accent to create warmth without losing clarity.</p>
+      <div class="footer"><span>End</span><span>03 / 03</span></div>
+    </section>
+  </main>
+</body>
+</html>

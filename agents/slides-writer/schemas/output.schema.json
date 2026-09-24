@@ -1,0 +1,46 @@
+{
+  "type": "object",
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["completed", "partial", "failed"],
+      "description": "completed = every page filled / every edit applied; partial = deck created or edited but some pages failed after retries; failed = nothing landed."
+    },
+    "fileEntryId": {
+      "type": "string",
+      "maxLength": 128,
+      "description": "File entry id of the deck, from slides_create / the edited file."
+    },
+    "fileName": {
+      "type": "string",
+      "maxLength": 200,
+      "description": "Deck file name as created."
+    },
+    "pages": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 24,
+      "description": "Total page count of the deck."
+    },
+    "outline": {
+      "type": "array",
+      "maxItems": 24,
+      "items": { "type": "string", "maxLength": 80 },
+      "description": "Final per-page titles of the deck."
+    },
+    "warnings": {
+      "type": "array",
+      "maxItems": 50,
+      "items": { "type": "string", "maxLength": 400 },
+      "description": "Page-level tolerance warnings and failed pages worth reporting to the user."
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000,
+      "description": "Concise outcome for the caller to relay: what was created/edited, failed pages and reasons, or why nothing landed."
+    }
+  },
+  "required": ["status", "summary"],
+  "additionalProperties": false
+}

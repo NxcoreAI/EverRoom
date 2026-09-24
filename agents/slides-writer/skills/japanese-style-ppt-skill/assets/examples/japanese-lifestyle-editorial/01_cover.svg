@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#FFFFFF"/>
+
+  <g stroke="#E8E4DF" stroke-width="1">
+    <line x1="72" y1="72" x2="72" y2="648"/>
+    <line x1="72" y1="648" x2="1208" y2="648"/>
+    <line x1="760" y1="96" x2="760" y2="594"/>
+    <line x1="848" y1="96" x2="848" y2="594"/>
+    <line x1="936" y1="96" x2="936" y2="594"/>
+    <line x1="1024" y1="96" x2="1024" y2="594"/>
+    <line x1="1112" y1="96" x2="1112" y2="594"/>
+  </g>
+
+  <text x="72" y="104" fill="#CC5500" font-family="Inter, Arial, sans-serif" font-size="12" font-weight="700">JAPANESE LIFESTYLE EDITORIAL / PPT STYLE</text>
+  <rect x="72" y="132" width="160" height="4" fill="#CC5500"/>
+
+  <text x="70" y="230" fill="#333333" font-family="Inter, Arial, sans-serif" font-size="66" font-weight="800">High-End</text>
+  <text x="70" y="303" fill="#333333" font-family="Inter, Arial, sans-serif" font-size="66" font-weight="800">Japanese</text>
+  <text x="70" y="376" fill="#333333" font-family="Inter, Arial, sans-serif" font-size="66" font-weight="800">Lifestyle</text>
+  <text x="70" y="449" fill="#333333" font-family="Inter, Arial, sans-serif" font-size="66" font-weight="800">Magazine</text>
+
+  <text x="76" y="520" fill="#71362B" font-family="Inter, Arial, sans-serif" font-size="22" font-weight="700">Stark white, bold editorial hierarchy, burnt orange signal.</text>
+  <text x="76" y="556" fill="#6B6B6B" font-family="Inter, Arial, sans-serif" font-size="18">Asymmetric edge-pressed imagery, structured grid, sharp professional rhythm.</text>
+
+  <g transform="translate(792 108)">
+    <rect x="0" y="0" width="334" height="392" fill="#F7F5F2"/>
+    <rect x="-32" y="54" width="334" height="392" fill="#FFFFFF" stroke="#E8E4DF"/>
+    <rect x="-32" y="54" width="18" height="392" fill="#CC5500"/>
+    <rect x="22" y="102" width="128" height="196" fill="#F4F2EF"/>
+    <rect x="172" y="102" width="86" height="126" fill="#71362B"/>
+    <rect x="172" y="246" width="118" height="52" fill="#CC5500"/>
+    <line x1="22" y1="336" x2="290" y2="336" stroke="#D9D9D6"/>
+    <text x="22" y="372" fill="#333333" font-family="Inter, Arial, sans-serif" font-size="18" font-weight="800">EDGE-PRESSED</text>
+    <text x="22" y="398" fill="#6B6B6B" font-family="Inter, Arial, sans-serif" font-size="14">image crop / editorial grid</text>
+  </g>
+
+  <g transform="translate(792 564)" font-family="Inter, Arial, sans-serif">
+    <text x="0" y="-28" fill="#6B6B6B" font-size="12" font-weight="700">COLOR PALETTE</text>
+    <rect x="0" y="0" width="62" height="42" fill="#FFFFFF" stroke="#D9D9D6"/>
+    <rect x="76" y="0" width="62" height="42" fill="#CC5500"/>
+    <rect x="152" y="0" width="62" height="42" fill="#333333"/>
+    <rect x="228" y="0" width="62" height="42" fill="#71362B"/>
+    <text x="0" y="66" fill="#6B6B6B" font-size="11">#FFFFFF</text>
+    <text x="76" y="66" fill="#6B6B6B" font-size="11">#CC5500</text>
+    <text x="152" y="66" fill="#6B6B6B" font-size="11">#333333</text>
+    <text x="228" y="66" fill="#6B6B6B" font-size="11">#71362B</text>
+  </g>
+
+  <text x="72" y="682" fill="#8A8580" font-family="Inter, Arial, sans-serif" font-size="12">16:9 / asymmetric editorial composition / large negative space / magazine-style grid</text>
+</svg>

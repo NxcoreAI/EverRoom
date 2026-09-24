@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <defs>
+    <linearGradient id="sageClay" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#D6D2B8"/>
+      <stop offset="1" stop-color="#B2AC88"/>
+    </linearGradient>
+    <linearGradient id="pinkClay" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#E8C9C9"/>
+      <stop offset="1" stop-color="#DBADAD"/>
+    </linearGradient>
+    <linearGradient id="beigeClay" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FFF9EF"/>
+      <stop offset="1" stop-color="#FDF5E6"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1280" height="720" fill="#FDF5E6"/>
+
+  <g opacity="0.44">
+    <circle cx="92" cy="92" r="1.2" fill="#D9CBB6"/>
+    <circle cx="176" cy="128" r="0.9" fill="#D9CBB6"/>
+    <circle cx="324" cy="86" r="1.1" fill="#D9CBB6"/>
+    <circle cx="1070" cy="114" r="1.1" fill="#D9CBB6"/>
+    <circle cx="1190" cy="604" r="1.2" fill="#D9CBB6"/>
+  </g>
+
+  <g stroke="#E7DAC8" stroke-width="1">
+    <line x1="76" y1="78" x2="76" y2="646"/>
+    <line x1="76" y1="646" x2="1204" y2="646"/>
+    <line x1="708" y1="108" x2="708" y2="586"/>
+  </g>
+
+  <text x="76" y="106" fill="#B2AC88" font-family="Inter, Arial, sans-serif" font-size="12" font-weight="700">SOFT 3D / CLAYMORPHISM PPT STYLE</text>
+  <rect x="76" y="132" width="148" height="6" rx="3" fill="#B2AC88"/>
+
+  <text x="74" y="232" fill="#333333" font-family="Inter, Arial, sans-serif" font-size="68" font-weight="800">Soft 3D</text>
+  <text x="74" y="305" fill="#333333" font-family="Inter, Arial, sans-serif" font-size="68" font-weight="800">Clay</text>
+  <text x="74" y="378" fill="#333333" font-family="Inter, Arial, sans-serif" font-size="68" font-weight="800">Presentation</text>
+
+  <text x="80" y="466" fill="#6B6B6B" font-family="Inter, Arial, sans-serif" font-size="22" font-weight="700">Minimal, friendly, tactile, and professional.</text>
+  <text x="80" y="504" fill="#6B6B6B" font-family="Inter, Arial, sans-serif" font-size="18">Soft matte geometric shapes, pastel warmth, airy spacing, and UI-like clarity.</text>
+
+  <g transform="translate(780 96)">
+    <ellipse cx="226" cy="456" rx="236" ry="34" fill="#C8BBA8" opacity="0.26"/>
+    <rect x="22" y="110" width="360" height="330" rx="42" fill="#FFF9EF" stroke="#E7DAC8"/>
+    <circle cx="168" cy="198" r="86" fill="url(#sageClay)"/>
+    <circle cx="136" cy="166" r="24" fill="#FFFFFF" opacity="0.30"/>
+    <rect x="226" y="166" width="152" height="82" rx="41" fill="url(#pinkClay)"/>
+    <circle cx="350" cy="184" r="13" fill="#FFFFFF" opacity="0.28"/>
+    <path d="M108 318H286A42 42 0 0 1 328 360A42 42 0 0 1 286 402H108A42 42 0 0 1 66 360A42 42 0 0 1 108 318Z" fill="url(#beigeClay)" stroke="#E7DAC8"/>
+    <circle cx="88" cy="414" r="34" fill="#DBADAD"/>
+    <circle cx="78" cy="402" r="10" fill="#FFFFFF" opacity="0.30"/>
+    <text x="66" y="62" fill="#9A9288" font-family="Inter, Arial, sans-serif" font-size="12" font-weight="700">MATTE GEOMETRY / SOFT CORNERS</text>
+  </g>
+
+  <g transform="translate(780 562)" font-family="Inter, Arial, sans-serif">
+    <text x="0" y="-28" fill="#6B6B6B" font-size="12" font-weight="700">COLOR PALETTE</text>
+    <rect x="0" y="0" width="70" height="42" fill="#FDF5E6" stroke="#E7DAC8"/>
+    <rect x="86" y="0" width="70" height="42" fill="#B2AC88"/>
+    <rect x="172" y="0" width="70" height="42" fill="#DBADAD"/>
+    <rect x="258" y="0" width="70" height="42" fill="#333333"/>
+    <text x="0" y="66" fill="#6B6B6B" font-size="11">#FDF5E6</text>
+    <text x="86" y="66" fill="#6B6B6B" font-size="11">#B2AC88</text>
+    <text x="172" y="66" fill="#6B6B6B" font-size="11">#DBADAD</text>
+    <text x="258" y="66" fill="#6B6B6B" font-size="11">#333333</text>
+  </g>
+
+  <text x="76" y="682" fill="#9A9288" font-family="Inter, Arial, sans-serif" font-size="12">16:9 / warm beige canvas / sage green / morandi pink / soft matte 3D accents / airy modern layout</text>
+</svg>
