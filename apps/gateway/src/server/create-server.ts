@@ -593,9 +593,9 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     }
   }, 30_000);
   documentOperationExpiryTimer.unref();
-  // 外部文档导入（OpenConnector 只读，HTTP 直连）与 Agent 一次性导出（飞书
-  // lark-cli / Notion 官方 ntn CLI）：与导入连接、导出授权两套凭据域解耦，
-  // Gateway 不保存任何 CLI token。
+  // 外部文档导入（飞书 lark-cli / Notion OpenConnector，只读）与 Agent 一次性
+  // 导出（飞书 lark-cli / Notion 官方 ntn CLI）：与导入连接、导出授权两套凭据域
+  // 解耦，Gateway 不保存任何 CLI token。
   const documentImportService = new DocumentImportService(
     db,
     documentService,
@@ -605,6 +605,8 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       assetBridgeUrl: config.documentAssetBridgeUrl ?? null,
       // Notion 行内评论按块查询走官方 ntn（macOS；缺省自动跳过并告警）。
       notionCli: config.notionCli ?? null,
+      // 飞书导入通道（列举/正文/评论/媒体）换轨 lark-cli。
+      larkCli: config.larkCli ?? null,
     },
   );
   const agentDocumentExportService = new AgentDocumentExportService(

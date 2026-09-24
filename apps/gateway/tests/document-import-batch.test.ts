@@ -87,7 +87,12 @@ afterAll(() => {
 
 function makeServices(actionRunner: ImportActionRunner, ports?: DocumentBatchImportPorts) {
   const documents = new DocumentService(db, new DocumentEventBroker())
-  const imports = new DocumentImportService(db, documents, connectorConfig, dataDirectory, { actionRunner })
+  // larkActionFn 是飞书换轨 lark-cli 后的测试缝：同一 fake 双注入，
+  // 既有断言零改动（feishu 走 larkActionFn，notion 走 actionRunner）。
+  const imports = new DocumentImportService(db, documents, connectorConfig, dataDirectory, {
+    actionRunner,
+    larkActionFn: (call) => actionRunner(connectorConfig, call),
+  })
   const batch = new DocumentBatchImportService(db, imports, null, ports)
   return { documents, imports, batch }
 }
@@ -105,6 +110,25 @@ async function waitBatch(batch: DocumentBatchImportService, batchId: string) {
 }
 
 // ── 全量列举 ────────────────────────────────────────────────────────────────
+
+describe('飞书 lark-cli 注入隔离', () => {
+  it('只注入 larkActionFn（无 oo 连接配置）：feishu 照常列举，notion 仍 OPEN_CONNECTOR_UNAVAILABLE', async () => {
+    const documents = new DocumentService(db, new DocumentEventBroker())
+    const actionRunner = fakeRunner({
+      'feishu.list_drive_files': { items: [{ token: 'tokA', type: 'docx', name: '直连文档', url: 'https://f.cn/docx/tokA' }], hasMore: false },
+      'feishu.list_wiki_spaces': { items: [], hasMore: false },
+    })
+    const imports = new DocumentImportService(db, documents, null, dataDirectory, {
+      larkActionFn: (call) => actionRunner(connectorConfig, call),
+    })
+    const response = await imports.listAllDocuments('feishu')
+    expect(response.items.map((item) => item.remoteDocumentId)).toEqual(['tokA'])
+    await expect(imports.listAllDocuments('notion')).rejects.toMatchObject({
+      code: 'OPEN_CONNECTOR_UNAVAILABLE',
+      statusCode: 503,
+    })
+  })
+})
 
 describe('document-import list', () => {
   it('feishu：云空间目录递归 + docx 过滤 + wiki 空间树（obj_token 为 remoteDocumentId）', async () => {
