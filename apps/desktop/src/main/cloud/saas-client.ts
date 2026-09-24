@@ -332,6 +332,8 @@ interface LogtoTokenResponse {
 }
 
 interface PendingOidcLogin {
+  /** 发起本次登录时的 oidcLoginEpoch：用于判断响应回来时是否已被更新的登录/登出接管。 */
+  epoch: number
   state: string
   nonce: string
   codeVerifier: string
@@ -505,6 +507,8 @@ export class SaasClient {
   private subscriptionPromise: Promise<void> | null = null
   private initializePromise: Promise<void> | null = null
   private pendingOidcLogin: PendingOidcLogin | null = null
+  /** 每次发起新的 OIDC 登录或登出时 +1：在途的旧登录响应据此知道自己已被接管。 */
+  private oidcLoginEpoch = 0
   private loopbackRedirectSupported: boolean | null = null
   private loopbackServer: Server | null = null
 
@@ -862,6 +866,7 @@ export class SaasClient {
   async loginWithOidc(provider: CloudOidcProvider, invitationCode?: string): Promise<CloudAccountStatus> {
     await this.initialize()
     this.cancelOidcLogin('新的登录请求已开始。')
+    this.oidcLoginEpoch += 1
 
     const state = randomBase64Url()
     const nonce = randomBase64Url()
@@ -891,6 +896,7 @@ export class SaasClient {
         rejectLogin(new Error('浏览器登录等待超时，请重试。'))
       }, OIDC_LOGIN_TIMEOUT_MS)
       this.pendingOidcLogin = {
+        epoch: this.oidcLoginEpoch,
         state,
         nonce,
         codeVerifier,
@@ -1041,6 +1047,7 @@ export class SaasClient {
     await this.initialize()
     this.cancelOidcLogin()
     this.stopLoopbackServer()
+    this.oidcLoginEpoch += 1
     await this.cancelPendingQrLogin()
     this.pendingAdmission = null
     const refreshToken = await this.credentials.getSecureText(REFRESH_TOKEN_KEY)
@@ -1473,7 +1480,12 @@ export class SaasClient {
         headers: { Authorization: `Bearer ${token.id_token}` },
         data: { ...(await this.deviceDetails()), ...(pending.invitationCode ? { invitationCode: pending.invitationCode } : {}) },
       })
-      if (this.pendingOidcLogin !== pending) return
+      // 服务端在这次 POST 里已按"一设备一会话"吊销旧会话并签发新会话——
+      // 不论客户端这边发生过什么，旧 token 都已作废。若这里因为等待超时已
+      // 清掉 pendingOidcLogin 就把新会话丢弃，客户端会抱着被吊销的旧 token
+      // 死循环 401（2026-09-23 线上事故）。因此超时后到达的响应照常采纳；
+      // 只有被更新的登录/登出接管（epoch 变化）时才放弃，由新流程收尾。
+      if (pending.epoch !== this.oidcLoginEpoch) return
       let status: CloudAccountStatus
       if (isAdmissionRequired(data)) {
         // 设备额度已满：不建立会话，保留挑战给设备准入 UI 处理。
@@ -1552,10 +1564,22 @@ export class SaasClient {
   }
 
   private async refresh(refreshToken: string): Promise<void> {
-    const data = await this.publicRequest<LoginOutcome>('/app/auth/refresh', {
-      method: 'POST',
-      data: { refreshToken },
-    })
+    let data: LoginOutcome
+    try {
+      data = await this.publicRequest<LoginOutcome>('/app/auth/refresh', {
+        method: 'POST',
+        data: { refreshToken },
+      })
+    } catch (error) {
+      // 刷新令牌已被服务端拒绝（会话被别处登录轮换或吊销）：再留着它只会让
+      // 心跳、租约续期等后台循环每 15~30 秒空转一轮 401（线上曾持续刷屏两分
+      // 多钟）。清空本地会话，后续请求在 requireLogin 直接失败且不发网络，
+      // 直到用户重新登录。
+      if (error instanceof SaasRequestError && (error.status === 401 || error.status === 403)) {
+        await this.clearSession()
+      }
+      throw error
+    }
     if (isAdmissionRequired(data)) {
       // 额度被其他设备占满：保留挑战并判定会话失效，由上层进入设备准入 UI。
       this.pendingAdmission = data
@@ -1563,6 +1587,17 @@ export class SaasClient {
     }
     this.pendingAdmission = null
     await this.acceptSession(data)
+  }
+
+  /** 清空本地会话（不通知服务端——会话在服务端已经无效，登出接口同样会拒绝）。 */
+  private async clearSession(): Promise<void> {
+    this.accessToken = null
+    this.account = null
+    this.subscription = null
+    this.subscriptionLoadedAt = 0
+    this.subscriptionRetryAfter = 0
+    this.subscriptionPromise = null
+    await this.credentials.delete(REFRESH_TOKEN_KEY)
   }
 
   private async acceptSession(data: LoginResult): Promise<void> {
