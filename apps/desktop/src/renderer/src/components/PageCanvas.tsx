@@ -41,6 +41,7 @@ export function PageCanvas({
   onOpenDocument,
   onOpenOfficePreview,
   memoryFocusId,
+  agentFileFocus,
   onStartFullOnboarding,
 }: {
   page: PageId
@@ -61,6 +62,7 @@ export function PageCanvas({
   onOpenDocument: (target: { roomId: string; documentId: string; blockId?: string | null }) => void
   onOpenOfficePreview: (tab: OfficePreviewTab) => void
   memoryFocusId?: string | null
+  agentFileFocus?: { fileId: string; requestId: number } | null
   onStartFullOnboarding?: () => void
 }) {
   const { t } = useLocale()
@@ -101,7 +103,7 @@ export function PageCanvas({
   }
   if (page === 'docs') content = <DocsPage onNavigate={onNavigate} onOpenDocument={onOpenDocument} />
   if (page === 'sources') content = <SourcesPage />
-  if (page === 'files') content = <FilesPage onNavigate={onNavigate} onOpenOfficePreview={onOpenOfficePreview} />
+  if (page === 'files') content = <FilesPage onNavigate={onNavigate} onOpenOfficePreview={onOpenOfficePreview} focusRequest={agentFileFocus} />
   if (page === 'inspiration') content = <InspirationPage />
   if (page === 'memory') content = <MemoryPage focusAtomicId={memoryFocusId} />
   if (page === 'wiki') content = <WikiPage />

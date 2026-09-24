@@ -448,7 +448,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   const chooseConversation = (conversation: MentionConversationItem) => {
     const displayName = conversation.title ?? t('surface:agentComposer.untitledConversation')
     const token = allocateMentionToken(displayName, conversation.id, mentionHints.current)
-    applyMentionToken(token, { kind: 'conversation', id: conversation.id, displayName })
+    applyMentionToken(token, { kind: 'conversation', id: conversation.id, displayName, provider: conversation.provider })
   }
   const openModelPicker = () => {
     setSlashPickerDismissed(true)

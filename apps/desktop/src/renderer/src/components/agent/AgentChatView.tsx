@@ -22,6 +22,7 @@ import {
 } from './agentDocumentSelection'
 import { useLinkedAgentRun, type LinkedAgentRunState } from './useLinkedAgentRun'
 import type { DisplayAgentMessage, DisplayAgentToolCall } from './useAgentSession'
+import type { MentionedItem } from './agentMentions'
 import { modelPreferenceFromAgentId, type AgentNavigationTarget, type AgentRoomReference, type AgentSessionLink, type PendingAgentIntent, type RoomDocument } from '@nxcore/agent-contract'
 import type { ActiveDocumentDescriptor } from './activeDocumentContext'
 import { writeTextToClipboard } from '../../lib/systemClipboard'
@@ -362,6 +363,7 @@ export function AgentChatView({
   onRetryPrompt,
   onResolveApproval = () => undefined,
   onOpenSessionLink,
+  onOpenMention,
   onRejectDocumentIntent,
   onSelectRoom,
   onSelectDocument,
@@ -395,6 +397,7 @@ export function AgentChatView({
   onRetryPrompt: (prompt: string, runId: string) => void
   onResolveApproval?: (approvalId: string, decision: 'approved' | 'approved_session' | 'denied') => void
   onOpenSessionLink: (link: AgentSessionLink) => void
+  onOpenMention?: (item: MentionedItem) => void
   onRejectDocumentIntent: () => void
   onSelectRoom: (
     room: AgentRoomReference,
@@ -785,12 +788,32 @@ export function AgentChatView({
             const authorAgentId = message.authorAgentId ?? agentIdByRun[message.runId]
 
             if (message.role === 'user') {
+              const mentionItems: MentionedItem[] | null = message.mentions?.length ? message.mentions : null
+              const mentionClickable = (item: MentionedItem) => item.kind === 'room' || item.kind === 'file'
+                || (item.kind === 'conversation' && (item.provider === undefined || item.provider === 'everroom'))
               return (
                 <Fragment key={message.id}>
                   {index === authCardInsertIndex ? <AgentAuthChallengeCard /> : null}
-                  {message.referencedAgentNames?.map((name) => (
-                    <span key={name} className="agent-user-mention">@{name}</span>
-                  ))}
+                  {mentionItems
+                    ? mentionItems.map((item) => (
+                      mentionClickable(item) && onOpenMention ? (
+                        <button
+                          key={`${item.kind}:${item.id}`}
+                          type="button"
+                          className="agent-user-mention agent-user-mention-link"
+                          data-kind={item.kind}
+                          title={t('surface:agentChat.mentionJumpTitle', { name: item.displayName })}
+                          onClick={() => onOpenMention(item)}
+                        >
+                          @{item.displayName}
+                        </button>
+                      ) : (
+                        <span key={`${item.kind}:${item.id}`} className="agent-user-mention" data-kind={item.kind}>@{item.displayName}</span>
+                      )
+                    ))
+                    : message.referencedAgentNames?.map((name) => (
+                      <span key={name} className="agent-user-mention">@{name}</span>
+                    ))}
                   <article
                     className="agent-message"
                     data-agent-message-id={message.id}

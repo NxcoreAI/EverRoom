@@ -134,9 +134,12 @@ function groupCatalogFiles(files: FileCatalogDto[]): Map<string, ClassifiedFile[
 export function FilesPage({
   onNavigate,
   onOpenOfficePreview,
+  focusRequest,
 }: {
   onNavigate: (page: PageId) => void
   onOpenOfficePreview: (tab: OfficePreviewTab) => void
+  /** Agent 面板点击 @ 文件跳转：聚焦（选中分类并高亮）该文件。requestId 保证重复点击同文件也生效。 */
+  focusRequest?: { fileId: string; requestId: number } | null
 }) {
   const { locale, t } = useLocale()
   const filesApi = window.nxcore?.files
@@ -154,6 +157,8 @@ export function FilesPage({
   const [searchQuery, setSearchQuery] = useState('')
   const [dragActive, setDragActive] = useState(false)
   const [clipperPreview, setClipperPreview] = useState<{ capture: BrowserExtensionClipperCapture; markdown: string } | null>(null)
+  const [focusedFileId, setFocusedFileId] = useState<string | null>(null)
+  const handledFocusRequestIdRef = useRef(-1)
   const dragDepth = useRef(0)
   const filesSnapshot = useRef<FileCatalogDto[]>(fileCatalogCache.items)
   const filesRefreshInFlight = useRef<Promise<void> | null>(null)
@@ -251,6 +256,24 @@ export function FilesPage({
       setImportProgress(progress.status === 'completed' ? null : progress)
     })
   }, [filesApi])
+
+  // Agent 面板 @ 文件跳转：确保目录已加载后选中该文件所属分类并高亮定位。
+  useEffect(() => {
+    if (!focusRequest || handledFocusRequestIdRef.current === focusRequest.requestId) return
+    handledFocusRequestIdRef.current = focusRequest.requestId
+    void loadFiles(true).then(() => {
+      const file = filesSnapshot.current.find((item) => item.id === focusRequest.fileId)
+      if (!file) return
+      setView('files')
+      setSearchQuery('')
+      setSelectedCategoryKey(categoryForFile(file).key)
+      setFocusedFileId(file.id)
+      window.setTimeout(() => {
+        document.querySelector<HTMLElement>(`[data-file-id="${CSS.escape(file.id)}"]`)?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+      }, 80)
+      window.setTimeout(() => setFocusedFileId((current) => (current === file.id ? null : current)), 3_000)
+    }).catch(() => undefined)
+  }, [focusRequest, loadFiles])
 
   const classifiedFilesByCategory = useMemo(() => groupCatalogFiles(files), [files])
 
@@ -592,7 +615,7 @@ export function FilesPage({
                 items={selectedCategory.files.map(({ file }) => file.id)}
                 renderItem={(fileId) => {
                   const file = selectedCategory.files.find(({ file: item }) => item.id === fileId)!.file
-                  return <article key={file.id} className={`file-document-card file-document-${selectedCategory.tone}`}>
+                  return <article key={file.id} className={`file-document-card file-document-${selectedCategory.tone}`} data-file-id={file.id} data-focused={String(focusedFileId === file.id)}>
                     <button type="button" className="file-document-main" title={file.sourceKind === 'web-clipper' ? t('surface:files.openClipperPreview') : t('surface:files.openOriginal')} disabled={busyId === file.id} onClick={() => openFile(file)}>
                       <span className="file-document-icon"><FileTypeIcon file={file} /></span>
                       <span className="file-document-copy"><strong title={file.originalName}>{file.sharedTitle}</strong></span>

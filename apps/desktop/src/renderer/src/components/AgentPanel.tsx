@@ -62,6 +62,7 @@ export function AgentPanel({
   onOpenDocument,
   onSessionRouteConsumed,
   onAskConsumed,
+  onOpenMentionFile,
   focusRequest = 0,
   roomCitations,
   onRemoveRoomCitation,
@@ -82,6 +83,7 @@ export function AgentPanel({
   onOpenDocument: (target: { roomId: string; documentId: string; blockId?: string | null }) => void
   onSessionRouteConsumed: (key: string) => void
   onAskConsumed: (key: string) => void
+  onOpenMentionFile?: (fileId: string) => void
   focusRequest?: number
   roomCitations: RoomOverviewCitation[]
   onRemoveRoomCitation: (citationId: string) => void
@@ -186,6 +188,38 @@ export function AgentPanel({
   const selectExternalConversation = useCallback((conversation: ExternalConversationSummary | null) => {
     setSelectedExternalConversation(conversation)
   }, [])
+
+  /** 消息区点击 @ 条目跳转：Room 走导航管线开房间标签，文件跳文件页聚焦，本应用会话切回该对话。 */
+  const openMention = useCallback((item: MentionedItem) => {
+    if (item.kind === 'room') {
+      onNavigate({
+        key: `mention:room:${item.id}:${Date.now()}`,
+        source: {
+          sessionId: session.sessionId ?? '',
+          pageId,
+          pageLabel,
+          roomId,
+          runId: '',
+        },
+        target: {
+          pageId: 'rooms',
+          title: item.displayName,
+          action: 'referenced',
+          roomId: item.id,
+          objectType: 'room',
+        },
+      })
+      return
+    }
+    if (item.kind === 'file') {
+      onOpenMentionFile?.(item.id)
+      return
+    }
+    if (item.kind === 'conversation' && item.provider !== undefined && item.provider !== 'everroom') return
+    void session.selectSessionById(item.id).catch(() => {
+      showToast({ title: t('surface:agentChat.mentionTargetUnavailable') })
+    })
+  }, [onNavigate, onOpenMentionFile, pageId, pageLabel, roomId, session, t])
 
 
 
@@ -466,6 +500,7 @@ export function AgentPanel({
         externalConversation?.id ?? mentionedConversationId,
         mentionedAgents,
         memoryScope,
+        mentioned,
       )
       if (externalConversation) setSelectedExternalConversation(null)
       if (roomCitations.length) onClearRoomCitations()
@@ -638,6 +673,7 @@ export function AgentPanel({
         onRejectDocumentIntent={focusComposer}
         onRetryPrompt={(prompt, runId) => void sendPrompt(prompt, runId)}
         onOpenSessionLink={(link) => void openSessionLink(link)}
+        onOpenMention={openMention}
         onSelectRoom={selectDocumentRoom}
         onSelectDocument={(selection) => void selectDocument(selection)}
         onSelectPrompt={(prompt) => {
