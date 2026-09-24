@@ -1,10 +1,11 @@
 import * as Popover from '@radix-ui/react-popover';
 import { FileText, FileSpreadsheet, FileUp, Presentation, FileText as WordIcon, LoaderCircle, Package, Plus } from 'lucide-react';
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocale } from '../../../../../i18n/LocaleContext';
 import type { RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract';
 import type { KnowledgeFileDto } from '../../../../../../../shared/knowledge';
 import { createContextRoomResourceLibrary } from '../../resources';
+import { getEmbeddedOffice } from '../../embeddedOffice';
 import type {
   ContextRoomCloudDocResource,
   ContextRoomKnowledgeFileResource,
@@ -79,6 +80,20 @@ export function ArtifactLibraryPane({
     }
     return counts;
   }, [room, backendDocuments, trashedDocuments]);
+
+  // Office 预览是主进程 WebContentsView（原生层，叠在窗口上），HTML 弹层
+  // 永远画不过它：新建弹框打开期间隐藏全部 office 视图，关闭时恢复当前
+  // 登记的实例；期间被生成流程新激活的实例以恢复时刻的仲裁为准。
+  useEffect(() => {
+    if (!createPopoverOpen) return
+    const office = window.nxcore?.office
+    if (!office) return
+    void office.setActiveInstance(null)
+    return () => {
+      const active = getEmbeddedOffice()
+      if (active) void office.setActiveInstance(active.instanceId)
+    }
+  }, [createPopoverOpen])
 
   const visibleArtifacts: Array<{ key: string; resource: ContextRoomResource; isOffice: boolean }> =
     filter === 'clouddoc'
@@ -197,7 +212,7 @@ export function ArtifactLibraryPane({
           </Popover.Trigger>
           <Popover.Portal>
             <Popover.Content
-              className="context-room-document-create-popover"
+              className={`context-room-document-create-popover${createType === null ? ' is-chooser' : ''}`}
               side="right"
               align="start"
               sideOffset={8}

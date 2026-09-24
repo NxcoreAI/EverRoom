@@ -112,7 +112,8 @@ export interface MemoryOnboardingResultDto {
 }
 
 export interface MemoryAtomicListOptions {
-  type?: MemoryAtomicType
+  /** 类型过滤；Agent 产物等新类型（work_*）动态出现，故不限于基础三型。 */
+  type?: MemoryAtomicType | (string & {})
   limit?: number
   offset?: number
   timeStart?: string

@@ -1,33 +1,61 @@
-import { CalendarDays, ChevronLeft, ChevronRight, Database, FileText, FolderOpen, Mail } from 'lucide-react'
+import { CalendarDays, ChevronLeft, ChevronRight, ClipboardList, Database, FileSpreadsheet, FileText, Folder, Globe, ListTodo, Mail, Presentation, Camera, type LucideIcon } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
 import type { IngestEventDto } from '../../../../../shared/ingest'
-import { formatRelative, ingestKindIcon, providerIconKind, providerLabel } from './sourceKinds'
-import { SourceIcon, type SourceIconKind } from './SourceIcon'
+import { formatRelative, providerIconKind, providerLabel } from './sourceKinds'
+import { SourceIcon, type SourceGlyphTone } from './SourceIcon'
 import { useLocale } from '@/i18n/LocaleContext'
 
-/** sourceKind → 通用图标（品牌无法确定,按类型给 glyph）。 */
-const KIND_GLYPHS: Record<string, typeof FolderOpen> = {
-  file: FolderOpen,
-  mail: Mail,
-  'calendar-event': CalendarDays,
-  'cloud-doc': FileText,
-  'connector-record': Database,
+/**
+ * dataType → 线条 glyph + 语义色调（对齐 gateway DATA_TYPES 注册表）。
+ * 本地文件不再一律画文件夹：幻灯片/表格/文档各归各位,台账不再满屏重复图标。
+ */
+const DATA_TYPE_GLYPHS: Record<string, { icon: LucideIcon; tone: SourceGlyphTone }> = {
+  document: { icon: FileText, tone: 'doc' },
+  'office-doc': { icon: FileText, tone: 'doc' },
+  'connector-document': { icon: FileText, tone: 'doc' },
+  'meeting-minutes': { icon: ClipboardList, tone: 'doc' },
+  spreadsheet: { icon: FileSpreadsheet, tone: 'sheet' },
+  slides: { icon: Presentation, tone: 'slides' },
+  html: { icon: Globe, tone: 'web' },
+  mail: { icon: Mail, tone: 'mail' },
+  email: { icon: Mail, tone: 'mail' },
+  'connector-email': { icon: Mail, tone: 'mail' },
+  calendar: { icon: CalendarDays, tone: 'cal' },
+  'connector-calendar': { icon: CalendarDays, tone: 'cal' },
+  'connector-todo': { icon: ListTodo, tone: 'todo' },
+  'connector-record': { icon: Database, tone: 'data' },
+  'perception-event': { icon: Camera, tone: 'sense' },
+}
+
+/** 台账 sourceKind 兜底（dataType 不在注册表时）。 */
+const KIND_GLYPHS: Record<string, { icon: LucideIcon; tone: SourceGlyphTone }> = {
+  file: { icon: Folder, tone: 'folder' },
+  mail: { icon: Mail, tone: 'mail' },
+  'calendar-event': { icon: CalendarDays, tone: 'cal' },
+  'cloud-doc': { icon: FileText, tone: 'doc' },
+  'connector-record': { icon: Database, tone: 'data' },
 }
 
 /** 台账行：品牌 logo + 标题 + 来源副行 + 过滤状态 + 时间。 */
 export function IngestRow({ event }: { event: IngestEventDto }) {
   const { locale, t } = useLocale()
-  const Glyph = KIND_GLYPHS[event.sourceKind]
-  const logo = event.provider
-    ? <SourceIcon kind={providerIconKind(event.provider)} />
-    : Glyph
-      ? <span className="glyph"><Glyph aria-hidden="true" strokeWidth={1.8} /></span>
-      : <SourceIcon kind={ingestKindIcon(event.sourceKind) as SourceIconKind} />
+  // 图标优先级：provider 品牌 logo → dataType glyph → sourceKind 兜底 → 文档。
+  // providerIconKind 对未知 provider 回落 web-page（Globe）——那不是品牌标,按 glyph 走。
+  const brandKind = event.provider ? providerIconKind(event.provider) : null
+  const branded = brandKind !== null && brandKind !== 'web-page'
+  const glyph = branded ? null
+    : DATA_TYPE_GLYPHS[event.dataType] ?? KIND_GLYPHS[event.sourceKind] ?? { icon: FileText, tone: 'doc' as const }
+  const logoTone = branded ? undefined : glyph?.tone
+  const logo = branded
+    ? <SourceIcon kind={brandKind!} />
+    : glyph
+      ? <span className="glyph"><glyph.icon aria-hidden="true" strokeWidth={1.8} /></span>
+      : null
   const label = event.sourceLabel ?? (event.provider ? providerLabel(event.provider) : null)
   return (
     <div className="src-feed-row">
-      <span className="src-feed-logo">{logo}</span>
+      <span className="src-feed-logo" data-tone={logoTone}>{logo}</span>
       <span className="src-feed-name">
         <strong>{event.title || t('surface:connector.untitled')}</strong>
         {label ? <small>{label}</small> : null}

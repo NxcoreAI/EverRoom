@@ -1,4 +1,4 @@
-import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { delimiter, dirname, join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -159,7 +159,7 @@ describe('resolveLocalAcpAdapterSpawn', () => {
       { provider: 'codex', executablePath: join(bin, 'codex'), callable: true },
       { adaptersRoot: join(root, 'adapters'), env: { PATH: bin }, home: join(root, 'home'), platform: 'win32', probeTimeoutMs: 1 },
     )
-    expect(spawn?.command).toBe(adapter)
+    expect(spawn?.command).toBe(await realpath(adapter))
     expect(spawn?.args).toEqual([])
     expect((spawn?.env?.PATH ?? '').split(delimiter)).toContain(bin)
   })

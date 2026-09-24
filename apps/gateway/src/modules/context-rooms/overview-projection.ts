@@ -98,6 +98,24 @@ export function dedupeRoomOverviewClaims(items: RoomOverviewClaim[]): RoomOvervi
   });
 }
 
+/**
+ * 时间轴专用去重：key 追加「发生日 + 首个证据 sourceId」。全局纯文本 key
+ * 会把周会这类同名重复事件压成一条（用户看不出改动历史），同文不同日的
+ * 事件必须各自保留；sourceId 兜底区分同日同名但不同来源的事件。
+ */
+export function dedupeTimelineClaims(items: RoomOverviewClaim[]): RoomOverviewClaim[] {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    if (!item.text.trim()) return false;
+    const day = item.occurredAt ? item.occurredAt.slice(0, 10) : "";
+    const sourceId = item.evidence[0]?.sourceId ?? "";
+    const key = `${item.section}:${item.text.trim().toLocaleLowerCase()}:${day}:${sourceId}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 export function roomOverviewFreshness(
   generatedAt: string,
   sourceUpdatedAt: string | null,
@@ -127,12 +145,20 @@ export function buildRoomOverviewProjection(input: {
     origin: "connector" | "local";
     /** 连接器事件的服务商 slug（域表 service）；本地日程为 null。 */
     provider?: string | null;
+    /** 组织者显示名（连接器域行；本地/快照回退路径为 null）。 */
+    organizerName?: string | null;
+    /** 参会人显示名（截断后的短名单）。 */
+    attendees?: string[];
   }>;
   /** 已路由进 Room 的连接器待办 + 本地待办（按 dueAt 升序）——task claim 与时间轴任务事件源。 */
   todos: Array<{
     sourceId: string; title: string; status: string | null;
     dueAt: string | null; completedAt: string | null; priority: string | null;
     origin: "connector" | "local";
+    /** 待办备注（连接器域行 notes；截断）。 */
+    notes?: string | null;
+    /** 来源清单名（connectorTodos.listName；本地为 null）。 */
+    listName?: string | null;
   }>;
   synthesis?: ContextRoomOverviewSynthesis;
 }): RoomOverviewProjection {
@@ -322,34 +348,61 @@ export function buildRoomOverviewProjection(input: {
   // 确定性事件源②：连接器日历事件 + 本地日程（occurredAt = 事件开始时间；解析不到则按无时间沉底）。
   // 时间轴取最新 20 条（列表已升序，slice(-20) 保升序输出；最终 timeline 整体倒序）；
   // 无标题/纯数字这类流水日程没有信息量，直接不进时间轴。
+  // description 补密度：组织者 · 参会人（前 4）· 地点——时间轴上一眼看出和谁开的会。
   const calendarEvents = input.calendarEvents.slice(-20).flatMap((event) => {
     if (!event.title || !meaningfulCalendarTitle(event.title)) return [];
     const local = event.origin === "local";
+    const detailParts = [
+      ...(event.organizerName ? [`组织者 ${event.organizerName}`] : []),
+      ...(event.attendees && event.attendees.length > 0
+        ? [`参会 ${event.attendees.slice(0, 4).join("、")}${event.attendees.length > 4 ? ` 等 ${String(event.attendees.length)} 人` : ""}`]
+        : []),
+      ...(event.location ? [event.location] : []),
+    ];
     return [createRoomOverviewClaim(
       "timeline", event.title, "fact",
       [{ sourceKind: local ? "local-schedule" : "calendar-event", sourceId: event.sourceId, sourceTitle: event.title }],
       1, event.startedAt,
-      { kind: "timeline", eventType: "meeting", title: event.title, description: null, certainty: "fact", provider: local ? null : (event.provider ?? null) },
+      {
+        kind: "timeline", eventType: "meeting", title: event.title,
+        description: detailParts.length > 0 ? detailParts.join(" · ") : null,
+        certainty: "fact", provider: local ? null : (event.provider ?? null),
+      },
       `${local ? "local-schedule" : "calendar"}:${event.sourceId}`,
     )];
   });
-  // 确定性事件源③：连接器待办 + 本地待办（occurredAt = dueAt；已完成的取完成时间；dueAt 升序 → 取最新 20）。
+  // 确定性事件源③：连接器待办 + 本地待办。occurredAt 语义：已完成取完成时间，
+  // 未完成且已逾期取截止时间（逾期是要被看见的信号）；未到截止的 future 待办
+  // 属于「将要发生」，由 next_steps 的 task claim 呈现，不进历史时间轴。
+  // description 补密度：状态（已完成/已逾期）· 备注 · 来源清单。
+  const now = generatedAt.toISOString();
   const todoTimeline = input.todos.slice(-20).flatMap((todo) => {
+    const completed = Boolean(todo.completedAt);
     const occurredAt = todo.completedAt ?? todo.dueAt;
-    if (!occurredAt) return [];
+    if (!occurredAt || (!completed && todo.dueAt && todo.dueAt > now)) return [];
     const local = todo.origin === "local";
+    const detailParts = [
+      ...(completed ? ["已完成"] : todo.dueAt ? ["已逾期"] : []),
+      ...(todo.notes ? [todo.notes.slice(0, 120)] : []),
+      ...(todo.listName ? [`清单 ${todo.listName}`] : []),
+    ];
     return [createRoomOverviewClaim(
       "timeline", todo.title, "fact",
       [{ sourceKind: local ? "local-task" : "todo", sourceId: todo.sourceId, sourceTitle: todo.title }],
       1, occurredAt,
-      { kind: "timeline", eventType: "task", title: todo.title, description: null, certainty: "fact" },
+      {
+        kind: "timeline", eventType: "task", title: todo.title,
+        description: detailParts.length > 0 ? detailParts.join(" · ") : null,
+        certainty: "fact",
+      },
       `${local ? "local-task" : "todo-timeline"}:${todo.sourceId}`,
     )];
   });
   // 确定性事件源④：事实记忆——occurredAt 取首次提及时间（最后提及时间会让旧事随新资料"漂移"到最新）。
-  // 事实数量远超日程/文档，全量进时间轴会淹没其它事件：按重要度只取前 5 条——
+  // 事实数量远超日程/文档，全量进时间轴会淹没其它事件：按重要度只取前 12 条——
   // 跨来源交叉确认（sourceCount）+ 涉及实体的最大显著度（0-1）合计为分，平分时新提及优先、factId 兜底保证确定性。
-  const FACT_TIMELINE_LIMIT = 5;
+  // description 补密度：标注该事实来自哪些资料（去重标题，前 3）。
+  const FACT_TIMELINE_LIMIT = 12;
   const entitySalienceById = new Map(applied.entities.map((entity) => [entity.entityId, entity.salience]));
   const factTimeline = applied.facts
     .filter((fact) => fact.lastMentionAt || fact.sources.length > 0)
@@ -367,31 +420,23 @@ export function buildRoomOverviewProjection(input: {
       || (right.firstMentionAt ?? "").localeCompare(left.firstMentionAt ?? "")
       || left.fact.factId.localeCompare(right.fact.factId))
     .slice(0, FACT_TIMELINE_LIMIT)
-    .map(({ fact, firstMentionAt }) => createRoomOverviewClaim(
-      "timeline", fact.content, "fact", fact.sources.map(sourceOf), 1, firstMentionAt,
-      { kind: "timeline", eventType: "fact", title: fact.content, description: null, certainty: "fact" },
-      `fact:${fact.factId}`,
-    ));
-  const legacyTimeline = Array.isArray(data.timeline) ? data.timeline.flatMap((item) => {
-    const value = record(item);
-    const title = text(value.title, 500);
-    const description = text(value.description, 2_000);
-    if (!title && !description) return [];
-    const sourceId = text(value.sourceDocumentId, 256);
-    return [createRoomOverviewClaim(
-      "timeline", title && description ? `${title}：${description}` : title || description,
-      value.generated === true ? "inference" : "fact",
-      sourceId ? [{ sourceKind: "everroom-doc", sourceId, sourceTitle: null }] : [],
-      value.generated === true ? null : 1,
-      text(value.time, 200) || null,
-      {
-        kind: "timeline", eventType: text(value.kind, 40) === "meeting" ? "meeting" : "update",
-        title: title || description, description: description || null,
-        certainty: value.generated === true ? "inference" : "fact",
-      },
-      `legacy:${text(value.id, 200) || `${text(value.time, 200)}:${title || description}`}`,
-    )];
-  }) : [];
+    .map(({ fact, firstMentionAt }) => {
+      const sourceTitles = [...new Set(fact.sources
+        .map((source) => source.sourceTitle)
+        .filter((title): title is string => Boolean(title)))].slice(0, 3);
+      return createRoomOverviewClaim(
+        "timeline", fact.content, "fact", fact.sources.map(sourceOf), 1, firstMentionAt,
+        {
+          kind: "timeline", eventType: "fact", title: fact.content,
+          description: sourceTitles.length > 0 ? `来自《${sourceTitles.join("》《")}》` : null,
+          certainty: "fact",
+        },
+        `fact:${fact.factId}`,
+      );
+    });
+  // 旧版 generatedContext.timeline 事件不再并入：与确定性事件源①-④口径重复
+  // （同为文档/日程/待办的投影），且时间戳语义陈旧，是时间轴"看不出改了啥
+  // 且不准确"的主要来源。确定性源已覆盖其信息量。
   const freshness = roomOverviewFreshness(generatedAt.toISOString(), input.sourceUpdatedAt);
   return {
     roomId,
@@ -411,20 +456,24 @@ export function buildRoomOverviewProjection(input: {
         || (leftData?.dueAt ?? "9999").localeCompare(rightData?.dueAt ?? "9999")
         || left.text.localeCompare(right.text);
     }),
-    timeline: dedupeRoomOverviewClaims([
-      ...calendarEvents, ...todoTimeline, ...documentEvents, ...factTimeline, ...legacyTimeline,
+    timeline: dedupeTimelineClaims([
+      ...calendarEvents, ...todoTimeline, ...documentEvents, ...factTimeline,
     ]).sort((left, right) =>
       (right.occurredAt ?? "").localeCompare(left.occurredAt ?? "") || left.id.localeCompare(right.id)),
-    entities: applied.entities.map((entity) => createRoomOverviewClaim(
-      "entities", entity.summary ? `${entity.name}：${entity.summary}` : entity.name,
-      "fact", entity.sources.map(sourceOf), entity.salience, undefined,
-      {
-        kind: "entity", entityId: entity.entityId, entityKind: entity.kind,
-        entityStatus: entity.status, linkedRoomId: entity.linkedRoomId,
-        salience: entity.salience, mentionCount: entity.mentionCount,
-      },
-      `entity:${entity.entityId}`,
-    )),
+    // 概览只展示关联度（salience）最高的前 10 个实体，同分按提及次数排序。
+    entities: [...applied.entities]
+      .sort((left, right) => right.salience - left.salience || right.mentionCount - left.mentionCount)
+      .slice(0, 10)
+      .map((entity) => createRoomOverviewClaim(
+        "entities", entity.summary ? `${entity.name}：${entity.summary}` : entity.name,
+        "fact", entity.sources.map(sourceOf), entity.salience, undefined,
+        {
+          kind: "entity", entityId: entity.entityId, entityKind: entity.kind,
+          entityStatus: entity.status, linkedRoomId: entity.linkedRoomId,
+          salience: entity.salience, mentionCount: entity.mentionCount,
+        },
+        `entity:${entity.entityId}`,
+      )),
     appliedCorrectionIds: [],
   };
 }

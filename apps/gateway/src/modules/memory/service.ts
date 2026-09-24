@@ -229,7 +229,8 @@ function toStageDto(
 }
 
 export interface MemoryListOptions {
-  type?: MemoryAtomicQuery["type"] | undefined;
+  /** 开放类型：Agent 产物（work_artifact）等工作流类型动态入库，过滤透传 MemoryCore。 */
+  type?: string | undefined;
   limit: number;
   offset: number;
   timeStart?: string | undefined;
@@ -242,8 +243,8 @@ export interface MemoryConversationListOptions {
   offset: number;
   timeStart?: string | undefined;
   timeEnd?: string | undefined;
-  /** 'conversation' = 仅对话（排除文档会话块）。 */
-  sourceKind?: "conversation" | "document" | undefined;
+  /** 来源标记开放枚举：conversation/document 及后续导入来源。 */
+  sourceKind?: string | undefined;
 }
 
 /** 渲染层 DTO：导入的文档登记行（MemoryCore documents 表视图）。 */

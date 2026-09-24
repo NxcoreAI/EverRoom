@@ -37,7 +37,10 @@ export function parseTimelineDate(value: string, now = new Date()): Date | null 
   }
   const match = text.match(/(\d{1,2})-(\d{1,2})/)
   if (!match) return null
-  return new Date(now.getFullYear(), Number(match[1]) - 1, Number(match[2]))
+  const candidate = new Date(now.getFullYear(), Number(match[1]) - 1, Number(match[2]))
+  // 无年份的 MM-DD 只可能指过去一年内：落在未来（如 1 月看到“12-30”）回退一年
+  if (candidate.getTime() > now.getTime()) candidate.setFullYear(candidate.getFullYear() - 1)
+  return candidate
 }
 
 /** ISO 时间戳转为本地展示文案；自由文本（今天 11:20 等）原样返回。 */

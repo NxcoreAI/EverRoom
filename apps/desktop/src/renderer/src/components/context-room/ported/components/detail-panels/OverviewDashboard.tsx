@@ -30,16 +30,25 @@ import { useRoomUpdatedTime } from '../../roomUpdatedTime';
 import { roomKindIcon, roomKindTone } from '../utils';
 import { CalendarProviderIcon } from '../CalendarProviderIcon';
 import { PanelEmptyState } from './PanelEmptyState';
-import { OverviewTimelineCard } from './OverviewTimelineCard';
 import type { WorkspaceObjectPreview } from './index';
 
 // 逐 Room 的 AI 状态文案覆盖表（原演示 Room 词条已移除）；缺省走下方真实数据派生。
+/** 概览关联实体 chip：投影分支带 claim/实体元数据，其余分支只有文案。 */
+type OverviewEntityChip = {
+  label: string;
+  description: string;
+  id?: string;
+  text?: string;
+  entityId?: string;
+  salience?: number;
+  mentionCount?: number;
+};
 const DASHBOARD_COPY: Record<
   string,
   {
     aiStatus: string;
     nextSteps: Array<{ id: string; text: string; owner: string | null; dueAt: string | null; itemType: string }>;
-    entities: Array<{ label: string; description: string }>;
+    entities: OverviewEntityChip[];
   }
 > = {};
 
@@ -64,6 +73,48 @@ function timeLabel(value: string): string {
   return value.match(/\b\d{1,2}:\d{2}\b/)?.[0] ?? value;
 }
 
+/** 概览/状态长文折叠：超过 lines 行时截断显示，展开按钮只在真溢出时出现。 */
+function ClampedText({
+  lines,
+  section,
+  children,
+}: {
+  lines: number;
+  section: string;
+  children: React.ReactNode;
+}) {
+  const { t } = useLocale();
+  const [expanded, setExpanded] = useState(false);
+  const [overflowing, setOverflowing] = useState(false);
+  const ref = useRef<HTMLParagraphElement>(null);
+  useEffect(() => {
+    // 展开态不测量（scrollHeight==clientHeight 会误判为不溢出，收起按钮会闪没）。
+    if (expanded || !ref.current) return;
+    setOverflowing(ref.current.scrollHeight - ref.current.clientHeight > 2);
+  });
+  return (
+    <>
+      <p
+        data-room-citation-section={section}
+        data-clamp={expanded ? undefined : String(lines)}
+        style={{ '--clamp-lines': String(lines) } as React.CSSProperties}
+        ref={ref}
+      >
+        {children}
+      </p>
+      {overflowing || expanded ? (
+        <button
+          type="button"
+          className="context-room-dashboard-clamp-toggle"
+          onClick={() => setExpanded((current) => !current)}
+        >
+          {t(expanded ? 'contextRoom:overviewDashboard.collapse' : 'contextRoom:overviewDashboard.expand')}
+        </button>
+      ) : null}
+    </>
+  );
+}
+
 export function OverviewDashboard({
   room,
   backendDocuments,
@@ -71,6 +122,7 @@ export function OverviewDashboard({
   onSelectResource,
   onOpenObject,
   onOpenPane,
+  onOpenEntity,
   onOpenWikiBoard,
   onToggleTask,
 }: {
@@ -81,6 +133,8 @@ export function OverviewDashboard({
   onOpenObject: (target: WorkspaceObjectPreview) => void;
   /** 概览行点击跳转对应面板：投影日程/待办无详情对象（连接器/本地助手行），只切面板。 */
   onOpenPane?: (pane: 'todo') => void;
+  /** 关联实体 chip 点击：切到关联记忆板块并聚焦该实体节点。 */
+  onOpenEntity?: (entityId: string) => void;
   /** Wiki 概览卡「打开 Wiki」跳转 Wiki 板块（整屏概览有；分屏概览缺省不渲染按钮）。 */
   onOpenWikiBoard?: () => void;
   onToggleTask: (taskId: string) => void;
@@ -132,14 +186,26 @@ export function OverviewDashboard({
           id: item.id, text: item.title, owner: item.owner || null, dueAt: item.deadline || null, itemType: 'task',
         })),
     entities: overviewProjection?.entities?.length
-      ? overviewProjection.entities.map((entity) => ({
-          id: entity.id,
-          text: entity.text,
-          label: entity.text.split('：')[0] || entity.text,
-          description: entity.data?.kind === 'entity'
-            ? `${entity.data.entityKind} · ${entity.text} · ${entity.data.mentionCount}`
-            : entity.text,
-        }))
+      // 关联比例（salience）降序取前 10：新投影网关侧已截断，这里兜底旧缓存投影。
+      ? [...overviewProjection.entities]
+          .sort((left, right) => (right.data?.kind === 'entity' ? right.data.salience : 0)
+            - (left.data?.kind === 'entity' ? left.data.salience : 0))
+          .slice(0, 10)
+          .map((entity) => ({
+            id: entity.id,
+            text: entity.text,
+            label: entity.text.split('：')[0] || entity.text,
+            entityId: entity.data?.kind === 'entity' ? entity.data.entityId : undefined,
+            salience: entity.data?.kind === 'entity' ? entity.data.salience : undefined,
+            mentionCount: entity.data?.kind === 'entity' ? entity.data.mentionCount : undefined,
+            description: entity.data?.kind === 'entity'
+              ? t('contextRoom:overviewDashboard.entityChipMeta', {
+                type: t(localizedUiText(entity.data.entityKind, t)),
+                ratio: Math.round(entity.data.salience * 100),
+                count: entity.data.mentionCount,
+              })
+              : entity.text,
+          }))
       : room.generatedContext?.entities?.length
       ? room.generatedContext.entities.map((entity) => ({
           label: entity.name,
@@ -282,11 +348,11 @@ export function OverviewDashboard({
           <header data-icon-tone="document"><FileText aria-hidden="true" />{t('contextRoom:overviewDashboard.roomOverview')}</header>
           {hasOverview ? (
             <>
-              <p data-room-citation-section="overview">
+              <ClampedText lines={4} section="overview">
                 {overviewClaims.length
                   ? overviewClaims.map((claim, index) => <span key={claim.id} data-room-citation-claim-id={claim.id} data-room-citation-claim-text={claim.text}>{index ? ' ' : ''}{localizedUiText(claim.text, t)}</span>)
                   : localizedUiText(generatedOverview || room.brief.background, t) || t('contextRoom:overviewDashboard.noBackgroundProvided')}
-              </p>
+              </ClampedText>
               <small data-room-citation-section="overview"><b>{t('contextRoom:overviewDashboard.goal')}</b><span data-room-citation-claim-id={goalClaim?.id} data-room-citation-claim-text={goalClaim?.text}>{localizedUiText(projectedGoal, t) || t('contextRoom:overviewDashboard.notSet')}</span></small>
             </>
           ) : (
@@ -295,9 +361,13 @@ export function OverviewDashboard({
         </article>
         <article>
           <header data-icon-tone="room"><BarChart3 aria-hidden="true" />{t('contextRoom:overviewDashboard.currentStatus')} <em>AI</em></header>
-          {dashboard.aiStatus.trim() ? <p data-room-citation-section="status">{overviewProjection?.status.length
-            ? overviewProjection.status.map((claim, index) => <span key={claim.id} data-room-citation-claim-id={claim.id} data-room-citation-claim-text={claim.text}>{index ? ' ' : ''}{localizedUiText(claim.text, t)}</span>)
-            : localizedUiText(dashboard.aiStatus, t)}</p> : <PanelEmptyState compact icon={Info} title={t('contextRoom:overviewDashboard.noStatusSummaryYet')} description={t('contextRoom:overviewDashboard.thisStatusWillUpdateAsNewResourcesAnd')} />}
+          {dashboard.aiStatus.trim() ? (
+            <ClampedText lines={3} section="status">
+              {overviewProjection?.status.length
+                ? overviewProjection.status.map((claim, index) => <span key={claim.id} data-room-citation-claim-id={claim.id} data-room-citation-claim-text={claim.text}>{index ? ' ' : ''}{localizedUiText(claim.text, t)}</span>)
+                : localizedUiText(dashboard.aiStatus, t)}
+            </ClampedText>
+          ) : <PanelEmptyState compact icon={Info} title={t('contextRoom:overviewDashboard.noStatusSummaryYet')} description={t('contextRoom:overviewDashboard.thisStatusWillUpdateAsNewResourcesAnd')} />}
         </article>
         <article>
           <header data-icon-tone="ai"><Zap aria-hidden="true" />{t('contextRoom:overviewDashboard.suggestedNextSteps')} <em>AI</em></header>
@@ -307,7 +377,34 @@ export function OverviewDashboard({
           <header data-icon-tone="memory"><Bookmark aria-hidden="true" />{t('contextRoom:overviewDashboard.relatedMemoryEntities')}</header>
           {dashboard.entities.length ? (
             <div className="context-room-dashboard-entities" data-room-citation-section="entities">
-              {dashboard.entities.map((entity) => <span key={entity.label} title={entity.description} data-room-citation-claim-id={'id' in entity ? entity.id : undefined} data-room-citation-claim-text={'text' in entity ? entity.text : undefined}>{entity.label}</span>)}
+              {dashboard.entities.map((entity: OverviewEntityChip) => {
+                const entityId = entity.entityId;
+                const salience = entity.salience;
+                const claimId = entity.id;
+                const claimText = entity.text;
+                return entityId && onOpenEntity ? (
+                  <button
+                    type="button"
+                    key={entity.label}
+                    title={entity.description}
+                    data-room-citation-claim-id={claimId}
+                    data-room-citation-claim-text={claimText}
+                    onClick={() => onOpenEntity(entityId)}
+                  >
+                    {entity.label}
+                    {salience !== undefined ? <i>{`${Math.round(salience * 100)}%`}</i> : null}
+                  </button>
+                ) : (
+                  <span
+                    key={entity.label}
+                    title={entity.description}
+                    data-room-citation-claim-id={claimId}
+                    data-room-citation-claim-text={claimText}
+                  >
+                    {entity.label}
+                  </span>
+                );
+              })}
             </div>
           ) : <PanelEmptyState compact icon={Network} title={t('contextRoom:overviewDashboard.noRelatedEntitiesYet')} description={t('contextRoom:overviewDashboard.detectedPeopleProjectsAndTopicsAppearHere')} />}
         </article>
@@ -377,14 +474,6 @@ export function OverviewDashboard({
           {!openTasks.length && !projectionTasks.length ? <PanelEmptyState compact icon={CheckSquare2} title={t('contextRoom:overviewDashboard.noToDoTasks')} description={t('contextRoom:overviewDashboard.incompleteRoomTasksAppearHere')} /> : null}
         </article>
       </div>
-
-      <OverviewTimelineCard
-        room={room}
-        backendDocuments={backendDocuments.filter((document) => document.origin !== 'native')}
-        knowledgeFiles={knowledgeFiles}
-        onSelectResource={onSelectResource}
-        onOpenObject={onOpenObject}
-      />
     </section>
   );
 }

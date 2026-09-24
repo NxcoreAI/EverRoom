@@ -45,6 +45,7 @@ const CatalogFileDto = Type.Object({
   ]),
   clusterId: Type.Union([Type.String(), Type.Null()]),
   contentHash: Type.String(),
+  currentVersionId: Type.Union([Type.String(), Type.Null()]),
   parsed: Type.Boolean(),
   updatedAt: Type.String(),
 });
@@ -190,6 +191,22 @@ export function filesRoutes(
         },
       },
       async (request) => service.listCatalog(request.query.limit, request.query.offset),
+    );
+
+    app.get(
+      "/v1/files/catalog/:id",
+      {
+        schema: {
+          tags: ["files"],
+          params: FileIdParams,
+          response: { 200: CatalogFileDto, 404: Type.Object({ error: Type.String() }) },
+        },
+      },
+      async (request, reply) => {
+        const item = service.catalogEntry(request.params.id);
+        if (!item) return reply.code(404).send(errorOf("file_not_found"));
+        return item;
+      },
     );
 
     app.post(

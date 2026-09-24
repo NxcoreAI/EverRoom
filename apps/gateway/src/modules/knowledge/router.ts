@@ -226,12 +226,10 @@ export class KnowledgeRouter {
       extraction = await this.deps.llm.extract(envelope.title, envelope.markdown, this.deps.preferenceDigest?.() || undefined);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      // 速率限制、输出截断与调用超时都是瞬时态：抛错交 worker 退避重试，不落 awaiting_review——
-      // 否则该资料被永久定罪为"抽取失败"，条件恢复后也不会重新抽取。
-      const transient = KnowledgeLlm.isRateLimited(error)
-        || KnowledgeLlm.isTruncated(error)
-        || KnowledgeLlm.isTimedOut(error);
-      if (transient) {
+      // 默认瞬时，仅「输出不可解析」永久：429、截断、超时、5xx、网络断连
+      // 全部抛错交 worker 退避重试，不落 awaiting_review——否则该资料被
+      // 永久定罪为"抽取失败"，条件恢复后也不会重新抽取。
+      if (!KnowledgeLlm.isUnparsable(error)) {
         this.deps.logger.warn(
           {
             event: "knowledge.router.extract.retryable",
@@ -601,7 +599,11 @@ export class KnowledgeRouter {
       primaryRoomId: outcome.roomId,
       decidedBy: outcome.decidedBy,
       confidence: outcome.confidence,
-      evidence: outcome.evidence,
+      // 入口信号进 evidence（挂载即学习/重路由都要用它还原 matcher；缺失时
+      // replayRoutingRule 只能回退到 sourceId/markdown 推导，creatorId 无法重放）
+      evidence: envelope.entrySignals
+        ? { ...((outcome.evidence ?? {}) as Record<string, unknown>), signals: envelope.entrySignals }
+        : outcome.evidence,
       reason: outcome.reason,
       status: outcome.disposition === "execute"
         ? "auto"

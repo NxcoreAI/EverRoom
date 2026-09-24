@@ -2,10 +2,12 @@ import { describe, expect, it } from 'vitest'
 import type { LocalAgentInstallation } from '@nxcore/agent-contract'
 
 import {
+  allocateMentionToken,
   findMentionRanges,
   matchMentionTrigger,
   resolveMentions,
   slugifyAgentToken,
+  type MentionedItem,
 } from './agentMentions'
 
 const codexAgent: LocalAgentInstallation = {
@@ -40,7 +42,11 @@ const chineseAgent: LocalAgentInstallation = {
 }
 
 const localAgents = [codexAgent, chineseAgent]
-const hintTokens = new Map<string, string>([['codex', 'codex:/usr/local/bin/codex']])
+const hintItems = new Map<string, MentionedItem>([['codex', {
+  kind: 'agent',
+  id: 'codex:/usr/local/bin/codex',
+  displayName: 'Codex',
+}]])
 
 describe('slugifyAgentToken', () => {
   it('keeps letters, numbers, CJK and hyphens and drops the rest', () => {
@@ -62,21 +68,33 @@ describe('matchMentionTrigger', () => {
 
 describe('findMentionRanges', () => {
   it('covers resolved tokens only, hint first then unique slug fallback', () => {
-    const ranges = findMentionRanges('让 @codex 和 @抓取助手 一起', hintTokens, localAgents)
-    expect(ranges.map((range) => [range.start, range.end, range.agent.id])).toEqual([
-      [2, 8, 'codex:/usr/local/bin/codex'],
-      [11, 16, 'openclaw:/opt/homebrew/bin/openclaw'],
+    const ranges = findMentionRanges('让 @codex 和 @抓取助手 一起', hintItems, localAgents)
+    expect(ranges.map((range) => [range.start, range.end, range.item.id, range.item.kind])).toEqual([
+      [2, 8, 'codex:/usr/local/bin/codex', 'agent'],
+      [11, 16, 'openclaw:/opt/homebrew/bin/openclaw', 'agent'],
     ])
   })
 
   it('ignores unresolved tokens and mid-word @', () => {
-    expect(findMentionRanges('联系 foo@codex 或 @unknown', hintTokens, localAgents)).toHaveLength(0)
+    expect(findMentionRanges('联系 foo@codex 或 @unknown', hintItems, localAgents)).toHaveLength(0)
+  })
+
+  it('resolves non-agent kinds through hints and dedupes by kind+id', () => {
+    const hints = new Map<string, MentionedItem>([
+      ['room-x', { kind: 'room', id: 'room-1', displayName: 'X' }],
+      ['room-x2', { kind: 'room', id: 'room-1', displayName: 'X' }],
+    ])
+    const mentioned = resolveMentions('看下 @room-x 和 @room-x2', hints, localAgents)
+    expect(mentioned).toEqual([{ kind: 'room', id: 'room-1', displayName: 'X' }])
   })
 })
 
-describe('resolveMentions', () => {
-  it('dedupes repeated mentions and preserves order', () => {
-    const mentioned = resolveMentions('@codex 再 @codex', hintTokens, localAgents)
-    expect(mentioned).toEqual([{ id: 'codex:/usr/local/bin/codex', displayName: 'Codex' }])
+describe('allocateMentionToken', () => {
+  it('reuses a token held by the same item and suffixes on collision', () => {
+    const hints = new Map<string, MentionedItem>([
+      ['codex', { kind: 'conversation', id: 'thread-1', displayName: 'Codex' }],
+    ])
+    expect(allocateMentionToken('Codex', 'thread-1', hints)).toBe('codex')
+    expect(allocateMentionToken('Codex', 'agent-2', hints)).toBe('codex-2')
   })
 })

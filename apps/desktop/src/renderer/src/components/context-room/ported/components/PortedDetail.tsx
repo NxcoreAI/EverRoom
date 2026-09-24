@@ -256,6 +256,13 @@ export function PortedDetail({
     layout.switchBoard('relations', 'linkGraph')
   }), [room.id, room.memoryItems, layout])
 
+  // 概览关联实体 chip → 关联记忆板块的实体-事实图谱，聚焦该实体节点看详情。
+  const [memoryFocusEntityId, setMemoryFocusEntityId] = useState<string | null>(null)
+  const openEntity = useCallback((entityId: string) => {
+    setMemoryFocusEntityId(entityId)
+    layout.switchBoard('relations', 'entities')
+  }, [layout])
+
   useEffect(() => {
     if (selectedResourceId
       && (getRoomResource(library, room.id, selectedResourceId)
@@ -266,11 +273,16 @@ export function PortedDetail({
 
   const openObject = useCallback((target: WorkspaceObjectPreview) => {
     // 详情展示在归属页签内：不触碰文档选中（右区常驻打开的文档），移动端也不把右区盖上来。
-    const subtab = target.kind === 'meeting' || target.kind === 'task'
+    // 邮件详情由待办邮件区与资料两处承接：已在其中一个页签就不切走，缺省去待办。
+    const isMailTarget = target.kind === 'mail' || target.kind === 'connector-mail';
+    const subtab = target.kind === 'meeting' || target.kind === 'task' || isMailTarget
       ? 'todo'
-      : 'materials'
+      : 'materials';
+    const hostedHere = isMailTarget
+      && layout.panels.includes('work')
+      && (layout.subtabs.work === 'todo' || layout.subtabs.work === 'materials');
     setSelectedObject(target)
-    if (!(layout.panels.includes('work') && layout.subtabs.work === subtab)) {
+    if (!hostedHere && !(layout.panels.includes('work') && layout.subtabs.work === subtab)) {
       layout.switchBoard('work', subtab)
     }
   }, [layout])
@@ -361,6 +373,8 @@ export function PortedDetail({
           onOpenWikiPage={openWikiPage}
           onOpenDocument={openDocumentById}
           linkGraphFocusNodeId={linkGraphFocusNodeId}
+          onOpenEntity={openEntity}
+          memoryFocusEntityId={memoryFocusEntityId}
           onOpenObject={openObject}
           onOpenSource={openSource}
           onCloseObject={() => {

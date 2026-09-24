@@ -182,6 +182,33 @@ function FilterStatusCell({ status, verdict, busy, onReinstate, action = true }:
   action?: boolean
 }) {
   const { t } = useLocale()
+  if (status === 'filtered' && verdict?.category === 'paused') {
+    // 暂停闸暂存（记忆页顶部「继续/暂停」拦下的条目）：琥珀徽标 + 可恢复
+    return (
+      <span
+        className="filter-status-cell"
+        onClick={(event) => event.stopPropagation()}
+        onKeyDown={(event) => event.stopPropagation()}
+        role="presentation"
+      >
+        <span className="filter-badge paused" title={t('memory:ledger.filterPausedHint')}>
+          {t('memory:ledger.filterPaused')}
+        </span>
+        {action ? (
+          <button
+            type="button"
+            className="icon-button"
+            aria-label={t('memory:ledger.reinstate')}
+            title={t('memory:ledger.reinstateHint')}
+            disabled={busy}
+            onClick={onReinstate}
+          >
+            <RotateCcw aria-hidden="true" strokeWidth={1.8} className={busy ? 'mem-spin' : undefined} />
+          </button>
+        ) : null}
+      </span>
+    )
+  }
   if (status === 'filtered') {
     const hint = verdict?.reason
       ? `${verdict.reason}（${verdict.category} · ${Math.round(verdict.confidence * 100)}%）`
@@ -279,8 +306,12 @@ function LedgerDetailDialog({ event, onClose, onReinstate, reinstating }: {
                   onReinstate={onReinstate}
                   action={false}
                 />
-                <span className="mem-ledger-verdict-reason">{verdict.reason}</span>
-                <small>{verdict.category} · {Math.round(verdict.confidence * 100)}%</small>
+                <span className="mem-ledger-verdict-reason">
+                  {verdict.category === 'paused' ? t('memory:ledger.filterPausedHint') : verdict.reason}
+                </span>
+                {verdict.category !== 'paused' ? (
+                  <small>{verdict.category} · {Math.round(verdict.confidence * 100)}%</small>
+                ) : null}
               </p>
             </div>
           ) : null}

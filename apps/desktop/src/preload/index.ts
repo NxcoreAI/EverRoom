@@ -821,6 +821,11 @@ const api: NxcoreDesktopApi = {
     restoreSuppressedEntity: (entityId: string) => invoke('knowledge:entities:restore', entityId),
     mergeEntity: (fromId: string, targetId: string) => invoke('knowledge:entities:merge', fromId, targetId),
     listUnmatched: () => invoke('knowledge:unmatched:list'),
+    retryUnmatched: (decisionIds?: string[]) => invoke('knowledge:unmatched:retry', decisionIds),
+    ignoreUnmatched: (decisionIds: string[]) => invoke('knowledge:unmatched:ignore', decisionIds),
+    listRules: (): Promise<{ items: import('../shared/knowledge').KnowledgeRuleDto[] }> =>
+      invoke('knowledge:rules:list'),
+    deleteRule: (ruleId: string) => invoke('knowledge:rules:delete', ruleId),
     attachDoc: (sourceKind: string, sourceId: string, input: KnowledgeAttachInput) =>
       invoke('knowledge:docs:attach', sourceKind, sourceId, input),
     listRecentDecisions: (limit) => invoke('knowledge:decisions:list', limit),
@@ -849,6 +854,7 @@ const api: NxcoreDesktopApi = {
   },
   files: {
     list: (limit?: number, offset?: number) => invoke('files:list', limit, offset),
+    catalogEntry: (fileId: string) => invoke('files:catalog-entry', fileId),
     listClipCaptures: (input) => invoke('files:clipper-captures:list', input),
     setClipCaptureFavorite: (captureId, favorite) => invoke('files:clipper-captures:favorite', captureId, favorite),
     getClipCaptureDetail: (captureId: string) => invoke('files:clipper-captures:detail', captureId),
@@ -910,6 +916,8 @@ const api: NxcoreDesktopApi = {
       invoke('ingest:filter-rules:update-preference', content),
     reinstateEvent: (eventId: string) => invoke('ingest:events:reinstate', eventId),
     getEventContent: (eventId: string) => invoke('ingest:events:content', eventId),
+    getPause: () => invoke('ingest:pause:get'),
+    setPause: (paused: boolean) => invoke('ingest:pause:set', paused),
   },
 }
 

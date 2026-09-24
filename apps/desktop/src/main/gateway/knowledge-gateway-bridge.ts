@@ -7,6 +7,7 @@ import type {
   RouteMindmapActionInput,
   RouteMindmapStatusDto,
   KnowledgeAttachInput,
+  KnowledgeAttachResult,
   KnowledgeDecisionDto,
   KnowledgeEntityDetailDto,
   KnowledgeEntityDto,
@@ -15,6 +16,7 @@ import type {
   KnowledgeRoomContextDto,
   KnowledgeRoomGraphDto,
   KnowledgeRoomDto,
+  KnowledgeRuleDto,
   KnowledgeRoomProposalDto,
   KnowledgeRouteStatusDto,
   KnowledgeRoomRelationDto,
@@ -164,12 +166,12 @@ export class KnowledgeGatewayBridge {
     })
   }
 
-  /** 未识别资料手动挂实体（role=manual，+1.5 证据分）。 */
+  /** 未识别资料手动挂实体（role=manual，+1.5 证据分）。挂到 Room 时可带回学习规则。 */
   attachDoc(
     sourceKind: string,
     sourceId: string,
     input: KnowledgeAttachInput,
-  ): Promise<{ entityId: string }> {
+  ): Promise<KnowledgeAttachResult> {
     return this.request(
       `/v1/knowledge/docs/${encodeURIComponent(sourceKind)}/${encodeURIComponent(sourceId)}/attach`,
       { method: 'POST', body: JSON.stringify(input) },
@@ -178,6 +180,30 @@ export class KnowledgeGatewayBridge {
 
   listUnmatched(): Promise<{ items: KnowledgeUnmatchedItemDto[] }> {
     return this.request('/v1/knowledge/docs/unmatched')
+  }
+
+  /** 批量重路由未识别资料（不传 ids = 全部）：重走完整路由瀑布。 */
+  retryUnmatched(decisionIds?: string[]): Promise<{ requeued: number }> {
+    return this.request('/v1/knowledge/unmatched/retry', {
+      method: 'POST',
+      body: JSON.stringify(decisionIds ? { ids: decisionIds } : {}),
+    })
+  }
+
+  /** 忽略未识别资料：显式移出待挂载列表。 */
+  ignoreUnmatched(decisionIds: string[]): Promise<{ ignored: number }> {
+    return this.request('/v1/knowledge/unmatched/ignore', {
+      method: 'POST',
+      body: JSON.stringify({ ids: decisionIds }),
+    })
+  }
+
+  listRules(): Promise<{ items: KnowledgeRuleDto[] }> {
+    return this.request('/v1/knowledge/rules')
+  }
+
+  deleteRule(ruleId: string): Promise<void> {
+    return this.request(`/v1/knowledge/rules/${encodeURIComponent(ruleId)}`, { method: 'DELETE' })
   }
 
   listRecentDecisions(limit = 20): Promise<{ items: KnowledgeDecisionDto[] }> {

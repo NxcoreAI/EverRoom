@@ -316,17 +316,23 @@ describe('ContextRoomService', () => {
     sqlite.close()
   })
 
-  it('removes Rooms omitted from the next complete snapshot', async () => {
+  it('keeps Rooms omitted from the next complete snapshot; deletion only via deletedRooms', async () => {
     const { service, sqlite } = await createHarness()
     const keep = { id: 'room-keep', title: '保留 Room', data: { id: 'room-keep', title: '保留 Room' } }
     const remove = { id: 'room-remove', title: '移除 Room', data: { id: 'room-remove', title: '移除 Room' } }
     service.saveSnapshot({ rooms: [keep, remove], deletedRooms: [] })
 
-    expect(service.saveSnapshot({ rooms: [keep], deletedRooms: [] }).rooms).toEqual([keep])
+    // 陈旧快照未提及 room-remove：不物理删除（服务端创建/合并幸存的 Room 依赖此保证）。
+    expect(service.saveSnapshot({ rooms: [keep], deletedRooms: [] }).rooms).toEqual([keep, remove])
+    expect(service.isActive(remove.id)).toBe(true)
+
+    // 删除只走显式 deletedRooms 软删通道，可从回收站恢复。
+    expect(service.saveSnapshot({ rooms: [keep], deletedRooms: [remove] }).rooms).toEqual([keep])
     expect(service.isActive(remove.id)).toBe(false)
 
+    // 空快照不清空已有 Room；软删 Room 落在 deletedRooms。
     expect(service.saveSnapshot({ rooms: [], deletedRooms: [] }))
-      .toMatchObject({ rooms: [], deletedRooms: [] })
+      .toMatchObject({ rooms: [keep], deletedRooms: [remove] })
     sqlite.close()
   })
 
@@ -489,6 +495,10 @@ describe('ContextRoomService', () => {
 describe('RoomOverviewService', () => {
   it('builds typed, evidence-backed claims for every overview section', async () => {
     const { service, db } = await createHarness()
+    // 会议/日程 claim 只保留 generatedAt 之后的事件，freshness 以 membership updatedAt
+    // 为准：固定系统时间覆盖 insert 默认值与 refresh，避免 fixture 日期随真实时间过期。
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-08-20T00:00:00.000Z'))
     service.saveSnapshot({
       rooms: [{
         id: 'room-structured',
@@ -533,6 +543,7 @@ describe('RoomOverviewService', () => {
     }).run()
 
     const projection = new RoomOverviewService(db, service).refresh('room-structured')
+    vi.useRealTimers()
     expect(projection.overview.map((item) => item.data)).toEqual([
       { kind: 'overview', aspect: 'summary' },
       { kind: 'overview', aspect: 'goal' },
@@ -552,14 +563,46 @@ describe('RoomOverviewService', () => {
       evidence: [{ sourceKind: 'mail', sourceId: 'mail-1', sourceTitle: '交付周报', excerpt: '林薇负责 V1' }],
       data: { kind: 'entity', entityId: 'entity-owner', entityKind: '人物', entityStatus: 'ready', salience: 0.9, mentionCount: 1 },
     })
-    expect(projection.timeline.map((item) => item.text)).toEqual(['Agent 初步判断：可能进入验收', 'V1 已进入联调'])
-    expect(projection.timeline[0]?.data).toMatchObject({ kind: 'timeline', certainty: 'inference' })
-    expect(projection.timeline[1]).toMatchObject({
+    // legacy timeline（room.data.timeline）已从投影合并中移除：与确定性事件重复且时间戳陈旧。
+    expect(projection.timeline.map((item) => item.text)).toEqual(['V1 已进入联调'])
+    expect(projection.timeline[0]).toMatchObject({
       id: expect.stringMatching(/^timeline:/),
       data: { kind: 'timeline', eventType: 'fact', certainty: 'fact' },
       evidence: [{ sourceKind: 'mail', sourceId: 'mail-1', excerpt: 'V1 已进入联调' }],
     })
     expect(projection.freshness).toMatchObject({ state: 'fresh', staleSince: null })
+  })
+
+  it('caps overview projection entities to the 10 most salient', async () => {
+    const { service, db } = await createHarness()
+    service.saveSnapshot({
+      rooms: [{ id: 'room-entities', title: 'Entities Room', data: { id: 'room-entities', title: 'Entities Room' } }],
+      deletedRooms: [],
+    })
+    db.insert(roomSourceMemberships).values({
+      id: 'source-entities', roomId: 'room-entities', sourceKind: 'mail', sourceId: 'mail-1',
+      sourceVersion: 1, evidenceGroupKey: 'group-1', role: 'primary', sourceTitle: '周报',
+    }).run()
+    const observedAt = new Date('2026-08-14T10:00:00.000Z')
+    db.insert(entitiesTable).values(
+      Array.from({ length: 12 }, (_, index) => ({
+        id: `entity-${index}`, name: `实体${index}`, kind: '人物' as const, status: 'ready' as const,
+      })),
+    ).run()
+    db.insert(roomEntityMentions).values(
+      Array.from({ length: 12 }, (_, index) => ({
+        id: `mention-${index}`, roomId: 'room-entities', entityId: `entity-${index}`, sourceKind: 'mail' as const,
+        sourceId: 'mail-1', sourceVersion: 1, evidenceGroupKey: 'group-1',
+        salience: (index + 1) / 12,
+        evidence: `提及实体${index}`, createdAt: observedAt, updatedAt: observedAt,
+      })),
+    ).run()
+
+    const projection = new RoomOverviewService(db, service).refresh('room-entities')
+    expect(projection.entities).toHaveLength(10)
+    expect(projection.entities.map((claim) =>
+      claim.data?.kind === 'entity' ? claim.data.salience : null))
+      .toEqual([1, 11 / 12, 10 / 12, 9 / 12, 8 / 12, 7 / 12, 6 / 12, 5 / 12, 4 / 12, 3 / 12])
   })
 
   it('derives timeline events from linked documents and routed calendar sources', async () => {
@@ -713,12 +756,13 @@ describe('RoomOverviewService', () => {
     const factTexts = projection.timeline
       .map((item) => item.data?.kind === 'timeline' && item.data.eventType === 'fact' ? item.text : null)
       .filter(Boolean)
-    expect(factTexts).toHaveLength(5)
-    // 交叉确认 + 高显著度实体的事实排最前；最旧的两条单来源事实被挤掉。
+    // FACT_TIMELINE_LIMIT 提升到 12：重要性排序不变（交叉确认 + 高显著度实体的事实排最前），
+    // 但最旧的单来源事实不再被挤出时间轴。
+    expect(factTexts).toHaveLength(7)
     expect(factTexts[0]).toBe('林薇负责 V1 视觉设计')
     expect(factTexts).toContain('新事实二')
-    expect(factTexts).not.toContain('四月旧事实一')
-    expect(factTexts).not.toContain('四月旧事实二')
+    expect(factTexts).toContain('四月旧事实一')
+    expect(factTexts).toContain('四月旧事实二')
   })
 
   it('projects connector calendar rows and todos deterministically into nextSteps and timeline', async () => {

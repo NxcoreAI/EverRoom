@@ -492,6 +492,8 @@ export class RoomOverviewService {
     endAt: string | null; allDay: boolean; location: string | null;
     origin: "connector" | "local";
     provider: string | null;
+    organizerName: string | null;
+    attendees: string[];
   }> {
     // 本地日程（agent/用户创建，直挂 roomId）与连接器行同形并入，origin 供投影
     // 切换 evidence sourceKind 与 identity 前缀（local-schedule）。
@@ -512,6 +514,8 @@ export class RoomOverviewService {
         location: row.location,
         origin: "local" as const,
         provider: null,
+        organizerName: null,
+        attendees: [],
       }))
       .filter((event) => event.title);
     const memberships = this.db.select({
@@ -545,6 +549,11 @@ export class RoomOverviewService {
           location: row.location,
           origin: "connector" as const,
           provider: row.service,
+          organizerName: row.organizer?.name || row.organizer?.address || null,
+          attendees: (row.attendees ?? [])
+            .map((attendee) => attendee.name || attendee.address || "")
+            .filter(Boolean)
+            .slice(0, 12),
         }];
       }
       return [];
@@ -565,6 +574,11 @@ export class RoomOverviewService {
         location: row.location,
         origin: "connector" as const,
         provider: row.service,
+        organizerName: row.organizer?.name || row.organizer?.address || null,
+        attendees: (row.attendees ?? [])
+          .map((attendee) => attendee.name || attendee.address || "")
+          .filter(Boolean)
+          .slice(0, 12),
       });
     }
     const stillMissing = missing.filter((id) => !refRows.has(id));
@@ -602,6 +616,8 @@ export class RoomOverviewService {
         // 快照路径没有域表 service 列，但 membership sourceId 本身是 connector ref
         // （connector:google-calendar:…），从 ref 解析服务商供桌面打品牌图标。
         provider: connectorProviderOf(snapshot.sourceId),
+        organizerName: null,
+        attendees: [],
       }];
     });
     // 按开始时间升序（缺时间排尾）：投影的「未来日程取最近 N 条」与「时间轴取
@@ -614,6 +630,8 @@ export class RoomOverviewService {
     sourceId: string; title: string; status: string | null;
     dueAt: string | null; completedAt: string | null; priority: string | null;
     origin: "connector" | "local";
+    notes: string | null;
+    listName: string | null;
   }> {
     // 本地待办（agent/用户创建）：evidence sourceKind local-task 由投影按 origin 切换。
     const local = this.db.select()
@@ -632,6 +650,8 @@ export class RoomOverviewService {
         completedAt: row.completedAt?.toISOString() ?? null,
         priority: row.priority,
         origin: "local" as const,
+        notes: null,
+        listName: null,
       }))
       .filter((todo) => todo.title);
     const memberships = this.db.select({
@@ -662,6 +682,8 @@ export class RoomOverviewService {
         completedAt: row.completedAt?.toISOString() ?? null,
         priority: row.priority,
         origin: "connector" as const,
+        notes: row.notes || null,
+        listName: row.listName || null,
       })),
       ...local,
     ]

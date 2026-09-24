@@ -102,6 +102,7 @@ const runtime = {
     setActiveSlidesWebContents: vi.fn(),
     describeAgentDeck: vi.fn(),
     applyAgentDeckOps: vi.fn(),
+    applyAgentDeckPage: vi.fn(),
   },
 }
 
@@ -144,7 +145,7 @@ describe('OfficePreviewRegistry', () => {
     slidesCalls.options.length = 0
     sheetCalls.options.length = 0
     savedListenersByWc.clear()
-    registry = new OfficePreviewRegistry()
+    registry = new OfficePreviewRegistry(0)
   })
 
   it('opens a preview per extension family without auto-activating it', async () => {

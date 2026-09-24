@@ -17,7 +17,7 @@ import {
 } from '@/components/agent/agentNavigation'
 import { useAgentSession } from '@/components/agent/useAgentSession'
 import { LocalAgentAdapterWizard } from '@/components/agent/LocalAgentAdapterWizard'
-import type { MentionedAgent } from '@/components/agent/agentMentions'
+import type { MentionedAgent, MentionedItem } from '@/components/agent/agentMentions'
 import type { LocalAgentAdapterCheck } from '../../../shared/sources'
 import { loadRoomFocus, saveRoomFocus } from '@/components/agent/roomFocusStore'
 import type { ContextRoomWorkspaceTab } from '@/components/context-room/contextRoomTabs'
@@ -385,9 +385,17 @@ export function AgentPanel({
     })
   }
 
-  const sendPrompt = async (prompt: string, replaceRunId?: string, files: File[] = [], mentionedAgents?: MentionedAgent[]) => {
+  const sendPrompt = async (prompt: string, replaceRunId?: string, files: File[] = [], mentioned: MentionedItem[] = []) => {
     if ((!prompt.trim() && !citationPrompt && files.length === 0) || !agentAvailable) return
+    const mentionedAgents: MentionedAgent[] = mentioned
+      .filter((item) => item.kind === 'agent')
+      .map((item) => ({ id: item.id, displayName: item.displayName }))
     if (mentionedAgents?.length && !await ensureLocalAgentAdapters(mentionedAgents)) return
+    // @ 引用的 Room：本次运行按该 Room 解析（覆盖页面所在 Room 的默认聚焦）。
+    const mentionedRoomId = [...mentioned].reverse().find((item) => item.kind === 'room')?.id
+    // @ 引用的对话记录：取最后一条作为 referencedConversationId 注入运行上下文。
+    const mentionedConversationId = [...mentioned].reverse().find((item) => item.kind === 'conversation')?.id
+    const mentionedFileIds = mentioned.filter((item) => item.kind === 'file').map((item) => item.id)
     const submittedPrompt = prompt.trim() || citationPrompt
     const submittedContext = roomCitations.length
       ? buildRoomOverviewCitationContext(roomCitations)
@@ -413,14 +421,33 @@ export function AgentPanel({
           status: 'processing' as const,
         }))
       }
+      if (mentionedFileIds.length) {
+        const filesApi = window.nxcore?.files
+        if (!filesApi) throw new Error(t('surface:agentComposer.filesServiceUnavailable'))
+        const referenced = await Promise.all(mentionedFileIds.map(async (fileId) => {
+          const entry = await filesApi.catalogEntry(fileId)
+          if (!entry?.currentVersionId) throw new Error(t('surface:agentComposer.mentionedFileUnavailable'))
+          return {
+            fileId,
+            fileVersionId: entry.currentVersionId,
+            fileName: entry.displayName ?? entry.sharedTitle ?? entry.originalName,
+            status: (entry.processingState === 'ready' ? 'ready' : 'processing') as 'ready' | 'processing',
+          }
+        }))
+        const known = new Set((attachments ?? []).map((item) => item.fileId))
+        attachments = [...(attachments ?? []), ...referenced.filter((item) => !known.has(item.fileId))]
+      }
       // selectedRoomId 只在 Room 仍存在时提交：Room 已合并/删除/同步丢失时
       // 提交死 id 会被网关 409 拒绝（room_not_available），转而以全局会话运行。
       const validRoomId = roomId && rooms.some((room) => room.id === roomId) ? roomId : undefined
+      const effectiveRoomId = mentionedRoomId && rooms.some((room) => room.id === mentionedRoomId)
+        ? mentionedRoomId
+        : validRoomId
       // 重试优先还原原 run 的记忆范围（含"原 run 是全局"的情况），本会话内未知
       // （应用重启后的旧 run）才回退当前开关；聚焦需房间仍有效，失效则全局运行。
       const priorScope = replaceRunId ? session.memoryScopeByRun[replaceRunId] : undefined
       const wantsRoomFocus = priorScope === 'room' || (priorScope === undefined && roomFocusEnabled)
-      const memoryScope = wantsRoomFocus && validRoomId ? ('room' as const) : undefined
+      const memoryScope = wantsRoomFocus && effectiveRoomId ? ('room' as const) : undefined
       if (roomFocusEnabled && roomId && !validRoomId) {
         // 房间已失效（他端合并/删除/同步滞后）而 chip 仍显示已聚焦：提示后按全局
         // 运行，并同步关闭/清除该房间的持久聚焦，不让 chip 继续失真。
@@ -431,12 +458,12 @@ export function AgentPanel({
       await session.sendPrompt(
         submittedPrompt || t('surface:agentComposer.analyzeUploadedFiles'),
         submittedContext,
-        validRoomId,
+        effectiveRoomId,
         activeDocumentContext,
         replaceRunId,
         attachments,
         undefined,
-        externalConversation?.id,
+        externalConversation?.id ?? mentionedConversationId,
         mentionedAgents,
         memoryScope,
       )
@@ -539,6 +566,7 @@ export function AgentPanel({
       resetKey={composerResetKey}
       selectedExternalConversation={selectedExternalConversation}
       localAgents={localAgents}
+      rooms={rooms}
       roomFocusVisible={Boolean(roomId)}
       roomFocusEnabled={roomFocusEnabled}
       roomFocusRoomTitle={roomFocusRoomTitle}
@@ -556,7 +584,7 @@ export function AgentPanel({
       onClearContext={onClearRoomCitations}
       onRemoveContext={onRemoveRoomCitation}
       onStop={() => void session.stop()}
-      onSubmit={(files, mentionedAgents) => void sendPrompt(draft, undefined, files, mentionedAgents)}
+      onSubmit={(files, mentioned) => void sendPrompt(draft, undefined, files, mentioned)}
     />
   )
 
@@ -617,6 +645,7 @@ export function AgentPanel({
           focusComposer()
         }}
         pendingNavigationByRun={pendingNavigationByRun}
+        reasoningByRun={session.reasoningByRun}
         runCompletedAtByRun={session.runCompletedAtByRun}
         runStartedAtByRun={session.runStartedAtByRun}
         resolvingApprovalIds={session.resolvingApprovalIds}

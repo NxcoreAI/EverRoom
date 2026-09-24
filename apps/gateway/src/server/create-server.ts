@@ -1179,7 +1179,14 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   const dataMigrationService = new DataMigrationService(db, sqlite, memoryService);
   dataMigrationService.setFilesService(filesService);
   dataMigrationService.recover();
-  resolveAgentConversation = (threadId, query) => dataMigrationService.buildReferenceContext(threadId, query);
+  // @ 引用解析：先查导入的外部线程；未命中（本应用自有会话 id）回退读 agent_sessions 历史。
+  resolveAgentConversation = async (threadId, query) => {
+    try {
+      return await dataMigrationService.buildReferenceContext(threadId, query);
+    } catch {
+      return agentService.buildSessionReferenceContext(threadId);
+    }
+  };
   agentService.setExternalConversationResolver(dataMigrationService);
   agentService.setFilesService(filesService);
   const clipperService = new ClipperService(db, filesService, config.dataDir, createVlmProvider(config));
@@ -1510,6 +1517,8 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       deploy: await loadPolicyOverrides(config.dataDir, policyWarn),
     },
     ingestFilterService,
+    // 暂停闸状态文件（记忆页「继续/暂停」，重启保持）
+    resolve(config.dataDir, "ingest-gate.json"),
   );
   // 启动恢复：进程被杀时 pending 滞留的过滤事件重新入队（幂等）
   ingestService.recoverPendingFilters();

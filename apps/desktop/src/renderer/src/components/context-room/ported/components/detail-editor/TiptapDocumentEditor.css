@@ -954,8 +954,8 @@ textarea.context-room-tiptap-rewrite-text:disabled {
 }
 
 /* 章节大纲（展开态，停靠左侧，飞书式）：透明浮在页面底色上——无卡片、
-   无边框、无阴影；高度占满停靠区，条目超出时内部滚动；内容区随正文按
-   比例滚动，当前章节高亮。 */
+   无边框、无阴影；高度占满停靠区，条目超出时内部滚动；当前章节高亮并
+   保持可见，列表不随正文滚动。 */
 .context-room-tiptap-outline {
   display: flex;
   flex-direction: column;
@@ -1092,8 +1092,9 @@ textarea.context-room-tiptap-rewrite-text:disabled {
   height: 1px;
 }
 
-/* 文本按钮（大纲条目与文档标题共用基样式）：长标题完整换行；
-   hover/点击/当前章节的高亮都在文本按钮自身，不外溢。 */
+/* 文本按钮（大纲条目与文档标题共用基样式）：长标题单行截断（完整文本
+   走 title 提示），列表保持可扫读；hover/点击/当前章节的高亮都在文本
+   按钮自身，不外溢。 */
 .context-room-tiptap-outline-item {
   min-width: 0;
   padding: 4px 8px 4px 2px;
@@ -1102,8 +1103,9 @@ textarea.context-room-tiptap-rewrite-text:disabled {
   font-size: 13px;
   line-height: 1.6;
   text-align: left;
-  white-space: normal;
-  overflow-wrap: break-word;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   background: transparent;
   transition: background-color 120ms ease-out, color 120ms ease-out;
 }
@@ -1118,6 +1120,7 @@ textarea.context-room-tiptap-rewrite-text:disabled {
   background: var(--cr-surface-hover);
 }
 
+/* 一级章节比深层级字色更深，维持层级可读性。 */
 .context-room-tiptap-outline-entry[data-level='1'] .context-room-tiptap-outline-item {
   color: var(--cr-text);
 }
@@ -1128,16 +1131,17 @@ textarea.context-room-tiptap-rewrite-text:disabled {
   font-weight: 500;
 }
 
+/* 当前章节的祖先链：弱强调（正文色，不加背景），深层级也能看出所处结构。 */
+.context-room-tiptap-outline-entry[data-in-path='true']:not([data-active='true']) .context-room-tiptap-outline-item {
+  color: var(--cr-text);
+}
+
 /* 直接子级的文档标题项：列容器里禁止 flex-grow（否则章节少时把整个
    面板高度撑满），按内容自然高度。 */
 .context-room-tiptap-outline-items > .context-room-tiptap-outline-item {
   width: 100%;
   flex: 0 0 auto;
   padding: 6px 10px;
-}
-
-.context-room-tiptap-outline-entry[data-level='1'] .context-room-tiptap-outline-item {
-  color: var(--cr-text);
 }
 
 /* 文档标题项（大纲第一条）：与一级标题同层但加粗，点击回顶部。 */

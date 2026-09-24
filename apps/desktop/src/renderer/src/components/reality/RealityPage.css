@@ -1,46 +1,57 @@
-.reality-page { width: min(1200px, 100%); height: 100%; margin: 0 auto; overflow-y: auto; overscroll-behavior: contain; padding: 28px 34px 56px; }
+/* 页面自身滚动；滚动条隐藏（保留滚动能力）。 */
+.reality-page { width: min(1200px, 100%); height: 100%; margin: 0 auto; overflow-y: auto; overscroll-behavior: contain; padding: 28px 34px 56px; scrollbar-width: none; }
+.reality-page::-webkit-scrollbar { display: none; }
 .reality-header { display: flex; align-items: center; justify-content: space-between; gap: 28px; }
 .reality-header-copy { min-width: 190px; }
 .reality-eyebrow { display: block; margin-bottom: 7px; color: var(--accent); font-size: 9px; font-weight: 720; letter-spacing: .08em; }
 .reality-header h1 { margin: 0; font-size: 24px; font-weight: 700; letter-spacing: 0; }
 .reality-header p { max-width: 320px; margin: 7px 0 0; color: var(--muted); font-size: 13px; line-height: 1.5; }
 
-.reality-activity { margin-top: 12px; padding: 16px 18px 18px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); box-shadow: 0 1px 2px rgb(0 0 0 / 2%); }
-.reality-activity[data-collapsed='true'] { padding-block: 4px; }
-.reality-activity-heading { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
-.reality-activity[data-collapsed='true'] .reality-activity-heading { margin-bottom: 0; }
-.reality-activity h2 { margin: 0; font-size: 13px; }
-.reality-activity-toggle { display: inline-flex; min-height: 30px; align-items: center; gap: 7px; padding: 0 7px; border-radius: 5px; color: var(--text); cursor: pointer; font-size: 13px; font-weight: 650; }
-.reality-activity-toggle:hover { background: var(--surface-alt); }
-.reality-activity-toggle > svg { width: 14px; height: 14px; color: var(--muted); }
-.reality-activity-toggle > svg:last-child { transition: transform 160ms ease; }
-.reality-activity-toggle[aria-expanded='true'] > svg:last-child { transform: rotate(180deg); }
-.reality-activity-meta { margin-right: auto; color: var(--muted); font-size: 11px; }
-.reality-range { display: inline-flex; padding: 2px; border: 1px solid var(--border); border-radius: 5px; background: var(--chrome); }
-.reality-range button { min-width: 48px; min-height: 30px; padding: 0 9px; border-radius: 3px; color: var(--muted); cursor: pointer; font-size: 11px; }
-.reality-range button[aria-pressed='true'] { background: var(--surface); color: var(--text); box-shadow: var(--raised-shadow); }
-.activity-chart { display: grid; grid-template-columns: 18px minmax(0, 1fr); grid-template-rows: 16px auto; gap: 6px 8px; overflow-x: auto; padding-bottom: 2px; }
-.activity-months { display: grid; min-width: calc(var(--activity-weeks) * 13px); grid-column: 2; grid-template-columns: repeat(var(--activity-weeks), minmax(10px, 1fr)); }
+/* 活跃度热力图（每列 3 天）：列数随容器宽度自适应，铺满整行；悬浮提示 fixed。 */
+.reality-overview { margin-top: 12px; }
+.activity-chart { display: flex; flex-direction: column; gap: 6px; overflow-x: auto; padding-bottom: 2px; }
+.activity-months { display: grid; grid-template-columns: repeat(var(--activity-columns), 10px); gap: 3px; }
 .activity-months span { overflow: visible; color: var(--muted); font-size: 10px; white-space: nowrap; }
-.activity-weekdays { display: grid; height: 88px; grid-row: 2; grid-template-rows: repeat(7, 10px); align-content: space-between; color: var(--muted); font-size: 10px; }
-.activity-weekdays span:nth-child(1) { grid-row: 2; }.activity-weekdays span:nth-child(2) { grid-row: 4; }.activity-weekdays span:nth-child(3) { grid-row: 6; }
-.activity-cells { display: grid; min-width: calc(var(--activity-weeks) * 13px); height: 88px; grid-auto-flow: column; grid-template-rows: repeat(7, 10px); grid-template-columns: repeat(var(--activity-weeks), minmax(10px, 1fr)); gap: 3px; }
+.activity-cells { position: relative; display: grid; grid-auto-flow: column; grid-auto-columns: 10px; grid-template-rows: repeat(3, 10px); gap: 3px; width: fit-content; }
+.activity-hint { position: fixed; z-index: 40; transform: translate(-50%, 6px); padding: 5px 9px; border-radius: 5px; background: rgb(31 31 31 / 92%); color: #fff; font-size: 11px; white-space: nowrap; pointer-events: none; box-shadow: 0 8px 24px rgba(31, 31, 31, 0.2); }
+
+/* 控制行：搜索/筛选/开启聆听单行，下滑时吸附在页面顶部。 */
+.reality-dock {
+  position: sticky;
+  top: -12px;
+  z-index: 30;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 8px 0;
+  background: var(--bg);
+}
+
+.reality-dock .reality-search {
+  flex: 1 1 200px;
+  min-width: 180px;
+}
+
+.reality-dock select {
+  min-height: 36px;
+  padding: 0 26px 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 11px;
+}
+
 .activity-cell { min-width: 10px; min-height: 10px; padding: 0; border: 1px solid #e5e8eb; border-radius: 3px; background: #f2f4f5; cursor: pointer; transition: box-shadow 120ms ease, border-color 120ms ease; animation: activity-cell-in 260ms ease backwards; }
 .activity-cell:hover:not(:disabled) { border-color: var(--border-strong); box-shadow: 0 0 0 2px rgb(20 26 32 / 18%); z-index: 1; }
-.activity-cell:disabled { border-style: dashed; border-color: #e3e7ea; background: transparent; cursor: default; animation: none; }
 .activity-cell[data-level='1'] { border-color: #cce8db; background: #dff3e9; }
 .activity-cell[data-level='2'] { border-color: #96d3b5; background: #aee0c8; }
 .activity-cell[data-level='3'] { border-color: #4eae7d; background: #64bc8d; }
 .activity-cell[data-level='4'] { border-color: #178657; background: #1d9864; }
 .activity-cell[data-today='true'] { box-shadow: 0 0 0 1px var(--accent); }
 .activity-cell[data-selected='true'] { border-color: var(--accent); box-shadow: 0 0 0 2px rgb(29 138 100 / 30%); }
-.activity-footer { display: flex; align-items: center; justify-content: flex-end; gap: 12px; margin-top: 10px; }
-.activity-legend { display: inline-flex; align-items: center; gap: 4px; color: var(--subtle); font-size: 10px; }
-.activity-legend i { width: 9px; height: 9px; border: 1px solid #e5e8eb; border-radius: 2px; background: #f2f4f5; }
-.activity-legend i[data-level='1'] { border-color: #cce8db; background: #dff3e9; }
-.activity-legend i[data-level='2'] { border-color: #96d3b5; background: #aee0c8; }
-.activity-legend i[data-level='3'] { border-color: #4eae7d; background: #64bc8d; }
-.activity-legend i[data-level='4'] { border-color: #178657; background: #1d9864; }
 @keyframes activity-cell-in { from { opacity: 0; } to { opacity: 1; } }
 .reality-day-chip { display: inline-flex; align-items: center; gap: 5px; min-height: 26px; padding: 0 8px; border: 1px solid #cfe2d8; border-radius: 5px; background: #f0f8f4; color: #27674b; cursor: pointer; font-size: 11px; }
 .reality-day-chip:hover { border-color: #a8cdbb; }

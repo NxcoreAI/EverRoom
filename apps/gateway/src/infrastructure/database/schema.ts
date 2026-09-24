@@ -1942,7 +1942,7 @@ export const routeDecisions = sqliteTable(
     evidence: text("evidence", { mode: "json" }),
     reason: text("reason"),
     status: text("status", {
-      enum: ["pending", "auto", "linked", "awaiting_review", "confirmed", "reverted"],
+      enum: ["pending", "auto", "linked", "awaiting_review", "confirmed", "reverted", "ignored"],
     }).notNull().default("pending"),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .notNull()

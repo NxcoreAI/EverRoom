@@ -1,5 +1,5 @@
-import { CheckSquare2, FileText, GitBranch, History, Mail, Mic } from 'lucide-react';
-import { useCallback, useState } from 'react';
+import { CheckSquare2, FileText, GitBranch, History, LoaderCircle, Mail, Mic } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
 import { useLocale } from '../../../../../i18n/LocaleContext';
 import type { RoomOverviewEvidence } from '@nxcore/agent-contract';
 
@@ -135,25 +135,33 @@ export function ActivityEntryBody({
   const materials = timelineMaterials(entry.evidence);
   const summaryKey = entry.document ? `${entry.document.documentId}:${String(entry.document.version)}` : null;
   const summary = summaryKey ? interactions.changeSummaries[summaryKey] : undefined;
+  // 变更摘要自动加载：条目带文档版本即拉取，无需先点「查看变更摘要」。
+  useEffect(() => {
+    if (summaryKey && !summary && entry.document) {
+      interactions.loadChangeSummary(entry.document.documentId, entry.document.version);
+    }
+  }, [summaryKey, summary, interactions, entry.document]);
   return <>
     {entry.description ? <p>{localizedUiText(entry.description, t)}</p> : null}
     {entry.document ? (
       <div className="context-room-activity-doc-actions">
-        <button
-          type="button"
-          aria-expanded={Boolean(summary)}
-          onClick={() => summaryKey && interactions.loadChangeSummary(entry.document!.documentId, entry.document!.version)}
-        >
-          {t(summary?.loading
-            ? 'contextRoom:activityPane.loadingChangeSummary'
-            : summary?.error
-              ? 'contextRoom:activityPane.changeSummaryRetry'
-              : 'contextRoom:activityPane.viewChangeSummary')}
-        </button>
+        {summary?.loading ? (
+          <p className="context-room-activity-summary is-loading">
+            <LoaderCircle aria-hidden="true" className="context-room-spin" />
+            {t('contextRoom:activityPane.loadingChangeSummary')}
+          </p>
+        ) : null}
         {summary && !summary.loading && !summary.error && summary.text
           ? <p className="context-room-activity-summary">{summary.text}</p>
           : null}
-        {summary?.error ? <p className="context-room-activity-summary is-error">{t('contextRoom:activityPane.changeSummaryUnavailable')}</p> : null}
+        {summary?.error ? (
+          <button
+            type="button"
+            onClick={() => interactions.loadChangeSummary(entry.document!.documentId, entry.document!.version)}
+          >
+            {t('contextRoom:activityPane.changeSummaryRetry')}
+          </button>
+        ) : null}
         <button
           type="button"
           onClick={() => {

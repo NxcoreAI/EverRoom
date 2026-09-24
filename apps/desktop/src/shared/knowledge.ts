@@ -293,6 +293,25 @@ export interface KnowledgeAttachInput {
   createEntity?: { name: string; kind: string }
 }
 
+/** 挂载结果：挂载即学习派生的规则（UI 提供撤销），无入口信号时缺省。 */
+export interface KnowledgeAttachResult {
+  entityId: string
+  learnedRule?: { id: string; matcher: Record<string, string>; replayed: number }
+}
+
+/** 归集规则（挂载即学习 origin="learned"；手动创建的为其他值）。 */
+export interface KnowledgeRuleDto {
+  id: string
+  matcher: Record<string, unknown>
+  targetRoomId: string
+  roomTitle: string | null
+  origin: string
+  enabled: boolean
+  hitCount: number
+  lastHitAt: string | null
+  createdAt: string
+}
+
 /** M3 知识整理偏好统计（确定性层，只读回溯三类信号的可复现快照）。 */
 export interface KnowledgePreferenceStatsDto {
   corrections: { reverts: number; manualLinks: number }

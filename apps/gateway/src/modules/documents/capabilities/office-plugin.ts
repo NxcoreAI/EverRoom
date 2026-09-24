@@ -5,13 +5,16 @@ import { stringArg, success, type DocumentCapabilityPlugin, type DocumentCapabil
 import type { OfficeBridgeClient, OfficeSheetBridgeInput } from "./office-bridge-client.js";
 
 /**
- * Agent 写 Office：Word（受限 HTML）、PPT（PageSpec 页描述）、Excel
+ * Agent 写 Office：Word（受限 HTML）、PPT（两阶段：骨架 + 逐页填充）、Excel
  * （sheets→rows）三个工具，经桌面 office-bridge 生成真实文件并走
  * file-imports 入库，Room 产物库由路由决策自动投影展示。
  * - Word：隐藏 GenOffice docs view（HTML 子集与 vendored
  *   apps/docs/src/renderer/ai/protocol.ts 的 HTML_RULES 一致）。
- * - PPT：主进程本地拼装（fork 导出 buildAgentDeckPptx，页 spec 与 vendored
- *   apps/slides/src/main/page-spec.ts 的解析器一致）。
+ * - PPT：两阶段生成。create 只带 outline（每页标题），桌面端合成骨架页并经
+ *   fork buildAgentDeckPptx 生成整册（同一条整册管线）；文件入库后自动以可编辑
+ *   方式打开，Agent 再用 set_page 逐页把 PageSpec 填进活会话（fork
+ *   applyAgentDeckPage：与 regenerate_slide 相同的 insertSlidePptx 事务，
+ *   实时重绘、每页独立失败重试）。单次输出一页，避免长输出结构漂移与黑盒等待。
  * - Excel：主进程直接拼标准 OOXML（jszip，inline string）。
  * 编辑：PPT 走 context_room_slides_read/edit（文件需在 Room 产物库打开为可编辑
  * 实例；编辑事务实时重绘在打开的视图上，保存自动回填版本链）。
@@ -20,6 +23,7 @@ import type { OfficeBridgeClient, OfficeSheetBridgeInput } from "./office-bridge
 
 const MAX_HTML_LENGTH = 400_000;
 const MAX_SLIDES_PAGES = 24;
+const MAX_PAGE_SPEC_LENGTH = 80_000;
 const MAX_SHEETS = 20;
 const MAX_ROWS = 5000;
 const MAX_COLS = 50;
@@ -78,18 +82,41 @@ function optionalFileName(args: Record<string, unknown>, extension: string): str
   return fileName;
 }
 
-/** PageSpec 页可以是对象或整段 JSON 字符串（模型偶发输出）；统一成字符串下发。 */
-function normalizePageSpecs(pages: unknown): string[] {
-  if (!Array.isArray(pages) || pages.length === 0) {
-    throw new Error("INVALID_REQUEST: pages 必须是非空数组（每页一个 PageSpec 对象）");
+/** PPT 大纲（每页一个标题）；骨架页由此合成，模型不再整册输出 PageSpec。 */
+function normalizeOutline(outline: unknown): string[] {
+  if (!Array.isArray(outline) || outline.length === 0) {
+    throw new Error("INVALID_REQUEST: outline 必须是非空字符串数组（每页一个标题，数组顺序即页序）");
   }
-  if (pages.length > MAX_SLIDES_PAGES) {
+  if (outline.length > MAX_SLIDES_PAGES) {
     throw new Error(`INVALID_REQUEST: 页数超过上限（${MAX_SLIDES_PAGES}），请精简内容`);
   }
-  return pages.map((page, index) => {
-    if (page && typeof page === "object") return JSON.stringify(page);
-    if (typeof page === "string" && page.trim()) return page;
-    throw new Error(`INVALID_REQUEST: 第 ${index + 1} 页不是有效的 PageSpec 对象`);
+  return outline.map((item, index) => {
+    if (typeof item !== "string" || !item.trim()) {
+      throw new Error(`INVALID_REQUEST: 第 ${index + 1} 页标题无效（必须是非空字符串）`);
+    }
+    return item.trim().slice(0, 80);
+  });
+}
+
+/** 骨架页：中性占位版式（演示标题 + 页标题 + 待填充提示），set_page 填充时整页替换。 */
+function skeletonPageSpec(deckTitle: string, pageTitle: string, index: number, total: number): string {
+  return JSON.stringify({
+    background: "#F5F6F8",
+    elements: [
+      { type: "shape", shape: "rect", x: 80, y: 64, w: 48, h: 6, fill: "#C6CBD4" },
+      {
+        type: "text", x: 80, y: 96, w: 1120, h: 40,
+        paragraphs: [{ runs: [{ text: deckTitle, sizePt: 16, bold: true, color: "#6B7280" }] }],
+      },
+      {
+        type: "text", x: 80, y: 300, w: 1120, h: 84,
+        paragraphs: [{ runs: [{ text: pageTitle, sizePt: 40, bold: true, color: "#1F2937" }] }],
+      },
+      {
+        type: "text", x: 80, y: 622, w: 1120, h: 24,
+        paragraphs: [{ runs: [{ text: `第 ${index + 1} / ${total} 页 · 待填充`, sizePt: 12, color: "#9CA3AF" }] }],
+      },
+    ],
   });
 }
 
@@ -180,33 +207,37 @@ export function officePlugin(bridge: OfficeBridgeClient): DocumentCapabilityPlug
 
   const slidesCreate: DocumentCapabilityTool = {
     name: "context_room_slides_create",
-    title: "生成 PPT 演示入 Room",
-    description: "生成本地排版的一份新 .pptx 演示文稿并加入当前 Room（产物库 Office 产物 + 文件库），"
-      + "适合汇报、提案、培训等演示场景。title 用作默认文件名（<title>.pptx，可用 fileName 覆盖）。"
-      + `pages 是页描述数组（每页一个 PageSpec 对象，1~${MAX_SLIDES_PAGES} 页，数组顺序即页序）。${PAGESPEC_GUIDE}`
-      + "生成完成后桌面端会自动打开预览；在回复中告知文件名与页数即可。",
+    title: "创建 PPT 骨架入 Room",
+    description: "创建一份新 .pptx 演示文稿并加入当前 Room（产物库 Office 产物 + 文件库），"
+      + "适合汇报、提案、培训等演示场景。这是两阶段生成的第一步：只传 outline（每页一个标题）创建骨架页，"
+      + `共 1~${MAX_SLIDES_PAGES} 页；文件入库后桌面端自动以可编辑方式打开。`
+      + "第二步必须用 context_room_slides_set_page 从第 0 页起逐页填充版式与内容"
+      + "（每次一页，用户能实时看到每一页成形；某页失败只需重试该页）。"
+      + "title 用作默认文件名（<title>.pptx，可用 fileName 覆盖）。"
+      + "不要在本工具里写任何页面内容——内容全部通过逐页填充完成。",
     inputSchema: {
       type: "object",
       additionalProperties: false,
       properties: {
         title: { type: "string", minLength: 1, maxLength: 120, description: "演示标题（同时是默认文件名）" },
-        pages: {
+        outline: {
           type: "array",
           minItems: 1,
           maxItems: MAX_SLIDES_PAGES,
-          description: "每页一个 PageSpec JSON 对象（1280×720 画布；elements 数组即 z 顺序）",
-          items: { type: "object", additionalProperties: true },
+          description: "每页的标题（数组顺序即页序；第 1 项是封面标题）。只要标题，不要写页面内容",
+          items: { type: "string", minLength: 1, maxLength: 80 },
         },
         fileName: { type: "string", minLength: 6, maxLength: 120, description: "可选文件名，必须以 .pptx 结尾" },
       },
-      required: ["title", "pages"],
+      required: ["title", "outline"],
     },
     annotations: annotations(false, false),
     execute: async (args, context) => {
       if (!context.roomId) throw new Error("ROOM_SELECTION_REQUIRED: Select a Context Room first");
       const title = stringArg(args, "title").trim().slice(0, 120);
-      const pages = normalizePageSpecs(args.pages);
+      const outline = normalizeOutline(args.outline);
       const fileName = optionalFileName(args, ".pptx");
+      const pages = outline.map((pageTitle, index) => skeletonPageSpec(title, pageTitle, index, outline.length));
       const result = await bridge.generate({
         title,
         format: "pptx",
@@ -223,11 +254,65 @@ export function officePlugin(bridge: OfficeBridgeClient): DocumentCapabilityPlug
         contentHash: result.contentHash,
         originalName: result.originalName,
         format: "pptx",
-        pages: pages.length,
+        pages: outline.length,
+        outline,
         roomId: context.roomId,
         deduped: result.versionDeduped || result.blobDeduped,
         roomRoutingRequested: result.roomRequested,
-        nextAction: "report_result",
+        nextAction: "fill_pages",
+        hint: `骨架已创建并正在自动打开；接下来用 context_room_slides_set_page（fileId=${result.fileEntryId} 或 \"active\"）从 slideIndex=0 起逐页填充，完成一页再填下一页。`,
+      });
+    },
+  };
+
+  const slidesSetPage: DocumentCapabilityTool = {
+    name: "context_room_slides_set_page",
+    title: "逐页填充 PPT",
+    description: "用一份完整 PageSpec 原地替换已打开 PPT 的某一页（该页旧内容整体丢弃）。"
+      + "这是 PPT 生成的第二步：context_room_slides_create 建好骨架后，用本工具逐页填充——"
+      + "每次只填一页，等本页成功（用户实时看到该页成形）再填下一页；某页失败只重试该页，不影响已完成的页。"
+      + "填充时按该页主题自主设计版式，不必迁就骨架占位。"
+      + `${PAGESPEC_GUIDE}`
+      + "slideIndex 从 0 开始（第 1 页 = 0）；刚创建的文件会自动打开，fileId 用 create 返回的 fileEntryId 或 \"active\"。",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        fileId: { type: "string", minLength: 1, description: "PPT 文件 id（fileEntryId）；\"active\" = 当前打开的那个 PPT" },
+        slideIndex: { type: "integer", minimum: 0, maximum: MAX_SLIDES_PAGES - 1, description: "页序号，从 0 开始（第 1 页 = 0）" },
+        spec: { type: "object", additionalProperties: true, description: "该页完整的 PageSpec 对象（整页替换；elements 按绘制顺序排列）" },
+      },
+      required: ["fileId", "slideIndex", "spec"],
+    },
+    annotations: annotations(false, false),
+    execute: async (args, context) => {
+      if (!context.roomId) throw new Error("ROOM_SELECTION_REQUIRED: Select a Context Room first");
+      const fileId = stringArg(args, "fileId").trim();
+      const slideIndex = args.slideIndex;
+      if (typeof slideIndex !== "number" || !Number.isInteger(slideIndex) || slideIndex < 0) {
+        throw new Error("INVALID_REQUEST: slideIndex 必须是非负整数（0 = 第 1 页）");
+      }
+      const spec = args.spec;
+      if (!spec || typeof spec !== "object" || Array.isArray(spec)) {
+        throw new Error("INVALID_REQUEST: spec 必须是该页完整的 PageSpec 对象");
+      }
+      const specJson = JSON.stringify(spec);
+      if (specJson.length > MAX_PAGE_SPEC_LENGTH) {
+        throw new Error(`INVALID_REQUEST: 单页 PageSpec 超过长度上限（${MAX_PAGE_SPEC_LENGTH} 字符），请精简该页`);
+      }
+      const result = await bridge.fillPage({ fileId, slideIndex, specJson });
+      if (!result.ok) throw new Error(`OFFICE_EDIT_FAILED: ${result.error ?? "桌面端填充失败"}`);
+      return success({
+        fileId,
+        slideIndex,
+        applied: result.applied === true,
+        ...(result.records ? { records: result.records } : {}),
+        ...(result.failures?.length ? { failures: result.failures } : {}),
+        ...(result.warnings?.length ? { warnings: result.warnings } : {}),
+        ...(result.saved !== undefined ? { saved: result.saved } : {}),
+        ...(result.saveError ? { saveError: result.saveError } : {}),
+        ...(result.outline ? { outline: result.outline } : {}),
+        nextAction: result.applied === true ? "fill_next_page" : "fix_spec_and_retry",
       });
     },
   };
@@ -398,11 +483,15 @@ export function officePlugin(bridge: OfficeBridgeClient): DocumentCapabilityPlug
       + "普通笔记、速记、随手总结用文档创建工具（markdown），不要用 Office 工具。",
       "Word 的 html 入参必须是受限 HTML 子集（仅标题/段落/列表/表格/链接/强调/pre/code/blockquote 标签）；"
       + "长文用 h2/h3 分节；表格首行用 th、单元格纯文本；不要输出 markdown 或解释性文字。",
-      "PPT 的 pages 每页一个 PageSpec 对象（1280×720 画布绝对定位）。设计要求："
+      "PPT 一律两阶段生成：① context_room_slides_create 传 title + outline（每页一个标题，先想清楚全篇叙事与版式轮换）创建骨架，"
+      + "文件会自动以可编辑方式打开；② 立即用 context_room_slides_set_page 从 slideIndex=0 起逐页填充——"
+      + "每次一页、拿到成功结果再填下一页（用户能实时看到每一页成形），全部页填完再向用户总结。"
+      + "禁止跳过逐页填充、禁止把整册内容塞进 create。",
+      "填充每一页时遵守 context_room_slides_set_page 工具说明里的 PageSpec 规范与设计要求："
       + "同一份演示先定一套设计系统（统一背景、一主一辅强调色、统一字号带）全篇遵守；"
       + "文本框零内边距、按字宽估算折行与框高（CJK 约 sizePt*1.35px 宽、行高约 sizePt*1.8px）；"
       + "内容页版式轮换不重复，封面要有视觉锚点；禁 emoji、禁卡片彩条与彩虹配色，"
-      + "数据图表用形状按真实数值比例拼装；输出前逐对自检文本不溢出不重叠。",
+      + "数据图表用形状按真实数值比例拼装；每页输出前逐对自检文本不溢出不重叠。",
       "Excel 的 sheets→rows 用 JSON 二维数组；数字必须是 JSON number；每个表首行放表头。",
       "生成成功后在回复中告知文件名；桌面端会自动打开预览，文档在 Room 产物库（Office 产物）和文件库可见。",
       "修改已有 PPT：context_room_slides_read 可省略 fileId（默认当前打开的那个，未打开会报错并列出现场）；"
@@ -410,6 +499,6 @@ export function officePlugin(bridge: OfficeBridgeClient): DocumentCapabilityPlug
       + "用户能实时看到每笔修改，改完版本链自动 +1；只读打开时（editable=false）先引导用户在产物库以可编辑方式重新打开。"
       + "Word/Excel 产物暂不支持 Agent 编辑。",
     ],
-    tools: [officeCreate, slidesCreate, sheetsCreate, slidesRead, slidesEdit],
+    tools: [officeCreate, slidesCreate, slidesSetPage, sheetsCreate, slidesRead, slidesEdit],
   };
 }

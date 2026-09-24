@@ -558,6 +558,10 @@ const KNOWLEDGE_CHANNELS = {
   restoreSuppressedEntity: 'knowledge:entities:restore',
   mergeEntity: 'knowledge:entities:merge',
   listUnmatched: 'knowledge:unmatched:list',
+  retryUnmatched: 'knowledge:unmatched:retry',
+  ignoreUnmatched: 'knowledge:unmatched:ignore',
+  listRules: 'knowledge:rules:list',
+  deleteRule: 'knowledge:rules:delete',
   attachDoc: 'knowledge:docs:attach',
   listRecentDecisions: 'knowledge:decisions:list',
   routeStatus: 'knowledge:route:status',
@@ -578,6 +582,7 @@ const KNOWLEDGE_CHANNELS = {
 
 const FILES_CHANNELS = {
   list: 'files:list',
+  catalogEntry: 'files:catalog-entry',
   listClipCaptures: 'files:clipper-captures:list',
   getClipCaptureDetail: 'files:clipper-captures:detail',
   setClipCaptureFavorite: 'files:clipper-captures:favorite',
@@ -606,6 +611,8 @@ const INGEST_CHANNELS = {
   updateFilterPreference: 'ingest:filter-rules:update-preference',
   reinstateEvent: 'ingest:events:reinstate',
   getEventContent: 'ingest:events:content',
+  getPause: 'ingest:pause:get',
+  setPause: 'ingest:pause:set',
 } as const
 
 const SCREEN_CAPTURE_CHANNELS = {
@@ -2235,16 +2242,21 @@ function registerAgentHandlers(bridge: AgentGatewayBridge, migrationCoordinator:
     invalidateAdapterSpawnCache()
     return localAgents
   }
+  // id 形如 `provider:/path`。CLI 路径会漂移（版本管理器换版本、旧会话缓存的
+  // multishell 路径等），精确 id 未命中时按 provider 兜底，避免 @ 引用失效。
+  const findLocalAgent = (id: string) =>
+    localAgents.find((agent) => agent.id === id)
+    ?? localAgents.find((agent) => id.startsWith(`${agent.provider}:`))
   handle(AGENT_CHANNELS.discoverLocalAgents, scanLocalAgents)
   handle(AGENT_CHANNELS.checkLocalAgentAdapters, async (_event, agentIds: string[]) => {
     const wanted = [...new Set((agentIds ?? []).filter((id) => typeof id === 'string' && id))]
     if (!wanted.length) return []
-    if (wanted.some((id) => !localAgents.some((agent) => agent.id === id))) {
+    if (wanted.some((id) => !findLocalAgent(id))) {
       await scanLocalAgents()
     }
     invalidateAdapterSpawnCache()
     const targets = wanted
-      .map((id) => localAgents.find((agent) => agent.id === id))
+      .map((id) => findLocalAgent(id))
       .filter((agent): agent is LocalAgentInstallation => Boolean(agent?.invocationSupported))
     return Promise.all(targets.map(async (agent) => ({
       agentId: agent.id,
@@ -2255,10 +2267,10 @@ function registerAgentHandlers(bridge: AgentGatewayBridge, migrationCoordinator:
   })
   handle(AGENT_CHANNELS.installLocalAgentAdapter, async (_event, agentId: string) => {
     const id = typeof agentId === 'string' ? agentId : ''
-    let installation = localAgents.find((agent) => agent.id === id)
+    let installation = findLocalAgent(id)
     if (!installation) {
       await scanLocalAgents()
-      installation = localAgents.find((agent) => agent.id === id)
+      installation = findLocalAgent(id)
     }
     if (!installation?.invocationSupported) {
       throw new Error('选择的本机 Agent 当前不可调用。')
@@ -2272,10 +2284,10 @@ function registerAgentHandlers(bridge: AgentGatewayBridge, migrationCoordinator:
     return result
   })
   handle(AGENT_CHANNELS.bindLocalAgentWorkspace, async (event, agentId: string, sessionId: string) => {
-    if (!localAgents.some((agent) => agent.id === agentId && agent.invocationSupported)) {
+    if (!findLocalAgent(agentId)?.invocationSupported) {
       await scanLocalAgents()
     }
-    if (!localAgents.some((agent) => agent.id === agentId && agent.invocationSupported)) {
+    if (!findLocalAgent(agentId)?.invocationSupported) {
       throw new Error('选择的本机 Agent 当前不可调用。')
     }
     let existing = [...workspaceBindings.values()].find((binding) => (
@@ -2353,10 +2365,10 @@ function registerAgentHandlers(bridge: AgentGatewayBridge, migrationCoordinator:
       agentId: string,
       workspaceBindingToken?: string,
     ): Promise<LocalAgentInvocationTarget> => {
-      let installation = localAgents.find((agent) => agent.id === agentId)
+      let installation = findLocalAgent(agentId)
       if (!installation) {
         await scanLocalAgents()
-        installation = localAgents.find((agent) => agent.id === agentId)
+        installation = findLocalAgent(agentId)
       }
       if (!installation?.callable || !installation.invocationSupported || !installation.executablePath) {
         throw new Error('选择的本机 Agent 当前不可调用。请重新扫描或检查安装。')
@@ -2587,6 +2599,10 @@ function registerKnowledgeHandlers(bridge: KnowledgeGatewayBridge): void {
   handle(KNOWLEDGE_CHANNELS.mergeEntity, (_event, fromId: string, targetId: string) =>
     bridge.mergeEntity(fromId, targetId))
   handle(KNOWLEDGE_CHANNELS.listUnmatched, () => bridge.listUnmatched())
+  handle(KNOWLEDGE_CHANNELS.retryUnmatched, (_event, decisionIds?: string[]) => bridge.retryUnmatched(decisionIds))
+  handle(KNOWLEDGE_CHANNELS.ignoreUnmatched, (_event, decisionIds: string[]) => bridge.ignoreUnmatched(decisionIds))
+  handle(KNOWLEDGE_CHANNELS.listRules, () => bridge.listRules())
+  handle(KNOWLEDGE_CHANNELS.deleteRule, (_event, ruleId: string) => bridge.deleteRule(ruleId))
   handle(KNOWLEDGE_CHANNELS.attachDoc, (_event, sourceKind: string, sourceId: string, input: KnowledgeAttachInput) =>
     bridge.attachDoc(sourceKind, sourceId, input))
   handle(KNOWLEDGE_CHANNELS.listRecentDecisions, (_event, limit?: number) =>
@@ -2629,6 +2645,7 @@ function registerFilesHandlers(
     }
   })
   handle(FILES_CHANNELS.list, (_event, limit?: number, offset?: number) => bridge.list(limit, offset))
+  handle(FILES_CHANNELS.catalogEntry, (_event, fileId: string) => bridge.catalogEntry(fileId))
   handle(FILES_CHANNELS.listClipCaptures, (_event, input) => bridge.listClipCaptures(input))
   handle(FILES_CHANNELS.setClipCaptureFavorite, (_event, captureId: string, favorite: boolean) =>
     bridge.setClipCaptureFavorite(captureId, favorite))
@@ -2753,6 +2770,9 @@ function registerIngestHandlers(bridge: IngestGatewayBridge): void {
   handle(INGEST_CHANNELS.reinstateEvent, (_event, eventId: string) => bridge.reinstateEvent(eventId))
   // 事件详情：归一化产物全文
   handle(INGEST_CHANNELS.getEventContent, (_event, eventId: string) => bridge.getEventContent(eventId))
+  // 记忆引擎暂停闸（记忆页顶部「继续/暂停」按钮）
+  handle(INGEST_CHANNELS.getPause, () => bridge.getPause())
+  handle(INGEST_CHANNELS.setPause, (_event, paused: boolean) => bridge.setPause(paused))
 }
 
 function registerAsrHandlers(store: RecordingStore, coordinator: AsrCoordinator, segments: RecordingSegmentUploader): void {

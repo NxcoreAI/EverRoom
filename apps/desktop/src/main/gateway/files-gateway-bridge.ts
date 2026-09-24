@@ -220,6 +220,11 @@ export class FilesGatewayBridge {
     return this.request(`/v1/files/catalog?${query}`)
   }
 
+  /** 单个 catalog 条目（@ 文件引用解析当前版本用）。 */
+  catalogEntry(fileId: string): Promise<FileCatalogDto> {
+    return this.request(`/v1/files/catalog/${encodeURIComponent(fileId)}`)
+  }
+
   capabilities(): Promise<{ items: FileFormatCapabilityDto[] }> {
     return this.request('/v1/files/capabilities')
   }

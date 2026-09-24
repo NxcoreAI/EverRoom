@@ -62,6 +62,7 @@ const EDIT_SYNC_DEBOUNCE_MS = 2_000
 export type SlidesEditArtifactRequest =
   | { mode: 'read' }
   | { mode: 'apply'; ops: unknown[]; dryRun?: boolean; isolation?: 'atomic' | 'per_op' }
+  | { mode: 'apply'; page: { slideIndex: number; specJson: string } }
 
 /** 当前打开的 Office 实例（引导报错随行，让 Agent 能告知用户现场）。 */
 export interface OpenOfficeInstanceInfo {
@@ -103,6 +104,9 @@ export class OfficePreviewRegistry {
   private activeId: string | null = null
   private readonly editStates = new Map<string, EditSyncState>()
   private agentAskForward: ((event: AgentAskForwardEvent) => void) | null = null
+
+  /** 生成完成 → 渲染端自动打开的等待窗口；测试可传 0 关闭。 */
+  constructor(private readonly autoOpenWaitMs = 8_000) {}
   private editSyncBindings: {
     importAgentFile: (input: {
       filePath: string
@@ -219,7 +223,12 @@ export class OfficePreviewRegistry {
     req: SlidesEditArtifactRequest,
   ): Promise<SlidesEditArtifactOutcome> {
     const resolvedId = fileId === 'active' ? this.resolveActiveSlides() : fileId
-    const instance = resolvedId === null ? undefined : this.instances.get(resolvedId)
+    let instance = resolvedId === null ? undefined : this.instances.get(resolvedId)
+    // 生成完成 → 渲染端自动以可编辑方式打开有一条异步链路（刷新/挂载/开视图）；
+    // 显式 fileId 的读/写在等待窗口内轮询，避免把「正在打开」误报成「未打开」。
+    if (!instance && fileId !== 'active') {
+      instance = await this.waitForInstance(fileId)
+    }
     const wcId = instance?.view.webContentsId
     if (!instance || !this.runtime || typeof wcId !== 'number') {
       return { ok: false, reason: 'not_open', open: this.listOpenOffice() }
@@ -238,11 +247,27 @@ export class OfficePreviewRegistry {
     }
     return {
       ok: true,
-      result: await this.runtime.slides.applyAgentDeckOps(wcId, req.ops, {
-        dryRun: req.dryRun,
-        isolation: req.isolation,
-      }),
+      result: 'page' in req
+        ? await this.runtime.slides.applyAgentDeckPage(wcId, req.page)
+        : await this.runtime.slides.applyAgentDeckOps(wcId, req.ops, {
+          dryRun: req.dryRun,
+          isolation: req.isolation,
+        }),
     }
+  }
+
+  private async waitForInstance(
+    fileId: string,
+    timeoutMs = this.autoOpenWaitMs,
+    pollMs = 400,
+  ): Promise<OfficePreviewInstance | undefined> {
+    const deadline = Date.now() + timeoutMs
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, pollMs))
+      const hit = this.instances.get(fileId)
+      if (hit) return hit
+    }
+    return undefined
   }
 
   /** 当前打开的 Office 实例清单（焦点在前），供 Agent 引导用户。 */

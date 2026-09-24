@@ -46,6 +46,10 @@ type KnowledgeApi = {
   listEntities: ReturnType<typeof vi.fn>
   attachDoc: ReturnType<typeof vi.fn>
   listUnmatched: ReturnType<typeof vi.fn>
+  listRules: ReturnType<typeof vi.fn>
+  retryUnmatched: ReturnType<typeof vi.fn>
+  ignoreUnmatched: ReturnType<typeof vi.fn>
+  deleteRule: ReturnType<typeof vi.fn>
 }
 
 function installKnowledgeApi(overrides: Partial<Record<keyof KnowledgeApi, ReturnType<typeof vi.fn>>>): KnowledgeApi {
@@ -55,6 +59,10 @@ function installKnowledgeApi(overrides: Partial<Record<keyof KnowledgeApi, Retur
     listEntities: vi.fn(async () => ({ items: [] })),
     attachDoc: vi.fn(async () => ({ entityId: 'entity-1' })),
     listUnmatched: vi.fn(async () => ({ items: [] })),
+    listRules: vi.fn(async () => ({ items: [] })),
+    retryUnmatched: vi.fn(async () => undefined),
+    ignoreUnmatched: vi.fn(async () => undefined),
+    deleteRule: vi.fn(async () => undefined),
     ...overrides,
   }
   ;(globalThis as { window?: unknown }).window = {
