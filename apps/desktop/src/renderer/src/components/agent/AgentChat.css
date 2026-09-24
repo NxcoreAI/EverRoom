@@ -79,8 +79,7 @@
 
 .agent-message {
   display: flex;
-  width: fit-content;
-  max-width: 88%;
+  width: 100%;
   min-width: 0;
   flex-direction: column;
   align-self: flex-start;
@@ -88,6 +87,8 @@
 
 .agent-message[data-role='user'] {
   align-self: flex-end;
+  width: fit-content;
+  max-width: 88%;
   padding: 9px 13px;
   border-radius: 12px;
   background: #f3f4f6;
