@@ -435,6 +435,9 @@ export class IngestService {
           entrySignals: input.entrySignals ?? {
             sourceTag: `connector:${row.service}`,
             ...(row.threadId ? { threadId: row.threadId } : {}),
+            // 发件人进 creatorId 信号（挂载即学习：手动挂载一封邮件 → 学到
+            // 「该发件人的后续邮件都进这个 Room」的确定性规则）
+            ...(row.senderAddress ? { creatorId: row.senderAddress } : {}),
           },
         }, {
           sourceKind: "mail",
@@ -475,7 +478,12 @@ export class IngestService {
         const markdown = connectorCalendarEventToMarkdown(row);
         return this.processNormalized({
           ...input,
-          entrySignals: input.entrySignals ?? { sourceTag: `connector:${row.service}` },
+          entrySignals: input.entrySignals ?? {
+            sourceTag: `connector:${row.service}`,
+            // 无 calendarId 列（schema 未落），组织者地址同时充当日历身份信号
+            // 与创建者信号（挂载即学习可学到「该组织者的会议都进这个 Room」）
+            ...(row.organizer?.address ? { calendarId: row.organizer.address, creatorId: row.organizer.address } : {}),
+          },
         }, {
           sourceKind: "calendar-event",
           sourceId,

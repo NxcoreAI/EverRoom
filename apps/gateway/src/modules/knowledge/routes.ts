@@ -404,6 +404,8 @@ const RuleDto = Type.Object({
   id: Type.String(),
   matcher: Type.Record(Type.String(), Type.Unknown()),
   targetRoomId: Type.String(),
+  roomTitle: Type.Union([Type.String(), Type.Null()]),
+  origin: Type.String(),
   enabled: Type.Boolean(),
   hitCount: Type.Integer(),
   lastHitAt: Type.Union([Type.String(), Type.Null()]),
@@ -1043,7 +1045,15 @@ export function knowledgeRoutes(service: KnowledgeService): FastifyPluginAsyncTy
           params: DocSourceParams,
           body: AttachBody,
           response: {
-            200: Type.Object({ entityId: Type.String() }),
+            200: Type.Object({
+              entityId: Type.String(),
+              /** 挂载即学习：本次挂载派生的规则（可撤销），无信号时缺省。 */
+              learnedRule: Type.Optional(Type.Object({
+                id: Type.String(),
+                matcher: Type.Record(Type.String(), Type.Unknown()),
+                replayed: Type.Integer(),
+              })),
+            }),
             400: Type.Object({ error: Type.String() }),
             404: Type.Object({ error: Type.String() }),
           },
@@ -1060,7 +1070,10 @@ export function knowledgeRoutes(service: KnowledgeService): FastifyPluginAsyncTy
           const status = result.error === "source_not_routed" || result.error === "entity_not_found" ? 404 : 400;
           return reply.code(status).send(errorOf(result.error));
         }
-        return { entityId: result.entityId };
+        return {
+          entityId: result.entityId,
+          ...(result.learnedRule ? { learnedRule: result.learnedRule } : {}),
+        };
       },
     );
 
@@ -1080,6 +1093,39 @@ export function knowledgeRoutes(service: KnowledgeService): FastifyPluginAsyncTy
           createdAt: iso(item.createdAt),
         })),
       }),
+    );
+
+    app.post(
+      "/v1/knowledge/unmatched/retry",
+      {
+        schema: {
+          tags: ["knowledge"],
+          body: Type.Object({
+            ids: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 100 }), { maxItems: 200 })),
+          }),
+        },
+      },
+      async (request, reply) => {
+        const result = service.retryUnmatched(request.body.ids);
+        if (!result.ok) return reply.code(400).send(errorOf(result.error));
+        return { requeued: result.requeued };
+      },
+    );
+
+    app.post(
+      "/v1/knowledge/unmatched/ignore",
+      {
+        schema: {
+          tags: ["knowledge"],
+          body: Type.Object({
+            ids: Type.Array(Type.String({ minLength: 1, maxLength: 100 }), { minItems: 1, maxItems: 200 }),
+          }),
+        },
+      },
+      async (request) => {
+        const result = service.ignoreUnmatched(request.body.ids);
+        return { ignored: result.ignored };
+      },
     );
 
     app.get(

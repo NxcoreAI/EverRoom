@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import type { DocumentEvent, RoomDocument, TiptapJsonContent } from "@nxcore/agent-contract";
-import { and, asc, desc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import type { KnowledgeLlmConfig } from "../../config.js";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
 import {
@@ -47,7 +47,7 @@ import { loadBuiltinAgentBundle } from "../agent/builtin-bundles.js";
 import { bundledAgentDefinitionsDir } from "../../config.js";
 import { KsAdminClient, KsBusyError, type KsWikiPageItem } from "./ks-client.js";
 import { RoomWikiRegistry } from "./registry.js";
-import { KnowledgeRouter } from "./router.js";
+import { KnowledgeRouter, fallbackSummary } from "./router.js";
 import {
   ROOM_RELATION_INDEX_JOB_TYPE,
   RoomRelationRegistry,
@@ -129,6 +129,10 @@ const INGEST_POLL_TIMEOUT_MS = 10 * 60_000;
 /** 409 busy / 瞬时不可达的退避间隔与最大尝试次数。 */
 const BUSY_RETRY_DELAY_MS = 5_000;
 const MAX_TRANSIENT_ATTEMPTS = 5;
+/** 未识别栏超期自动忽略：30 天未人工处理的 awaiting_review 转 ignored（治理）。 */
+const UNMATCHED_EXPIRY_DAYS = 30;
+/** 超期忽略巡检间隔（打包版常驻数周，不能只在启动时扫一次）。 */
+const UNMATCHED_SWEEP_INTERVAL_MS = 60 * 60_000;
 /** 未识别栏 / 候选实体列表单页上限。 */
 const LIST_PAGE_SIZE = 100;
 /** 晋升 backlog 的收敛轮次上限（防止持续新链接把晋升 job 变成长驻循环）。 */
@@ -435,6 +439,8 @@ export class KnowledgeService {
   private stopped = false;
   private drainInFlight: Promise<void> | null = null;
   private promotionDrainInFlight: Promise<void> | null = null;
+  /** 下次超期忽略巡检时间（wake() 每秒触发，按小时节流）。 */
+  private nextUnmatchedSweepAt: number | undefined;
   private roomDuplicateIndexTrigger: (() => void) | null = null;
   /** 路由投影/文档沉淀完成 → 通知 room-overview 自动再生调度（装配后生效）。 */
   private roomOverviewRefreshTrigger: ((roomIds: string[], reason: string) => void) | null = null;
@@ -1372,6 +1378,10 @@ export class KnowledgeService {
   private wake(): void {
     this.drainRequested = true;
     this.promotionDrainRequested = true;
+    if (this.nextUnmatchedSweepAt === undefined || Date.now() >= this.nextUnmatchedSweepAt) {
+      this.nextUnmatchedSweepAt = Date.now() + UNMATCHED_SWEEP_INTERVAL_MS;
+      this.sweepExpiredUnmatched();
+    }
     void this.drain();
     void this.drainPromotions();
   }
@@ -1581,6 +1591,10 @@ export class KnowledgeService {
             const payload = job.payload as PromoteJobPayload;
             this.setPromotionProgress(job.id, "failed", message);
             this.entityRegistry.releasePromotion(payload.entityId, payload.previousStatus ?? "ready");
+          }
+          if (job.type === ROUTE_JOB_TYPE) {
+            // 死信落未识别栏：只写 jobs 表的话用户完全无感知，资料会凭空消失。
+            this.deadLetterRoute(job.payload as RouteJobPayload, message);
           }
           this.logger.error(
             { event: "knowledge.job.failed", jobId: job.id, error: message },
@@ -2833,7 +2847,11 @@ export class KnowledgeService {
     sourceId: string;
     entityId?: string;
     createEntity?: { name: string; kind: string };
-  }): { ok: true; entityId: string } | { ok: false; error: string } {
+  }): {
+    ok: true;
+    entityId: string;
+    learnedRule?: { id: string; matcher: Record<string, string>; replayed: number };
+  } | { ok: false; error: string } {
     if (!input.entityId && !input.createEntity?.name) {
       return { ok: false, error: "entity_id_or_create_entity_required" };
     }
@@ -2868,6 +2886,7 @@ export class KnowledgeService {
       decidedBy: "user",
     });
 
+    let learnedRule: { id: string; matcher: Record<string, string>; replayed: number } | null = null;
     // 决策流水补记归属（挂到已晋升实体时立即可 ingest）
     if (updated.status === "room" && updated.roomId) {
       this.db.update(routeDecisions).set({
@@ -2885,6 +2904,8 @@ export class KnowledgeService {
         roomId: updated.roomId,
         decisionId: decision.id,
       });
+      // 挂载即学习（B 线）：挂到 Room 的资料带入口信号时派生规则并回填
+      learnedRule = this.learnRuleFromMount(decision, updated.roomId);
     } else {
       this.db.update(routeDecisions).set({
         decidedBy: "user",
@@ -2894,7 +2915,60 @@ export class KnowledgeService {
       // upsertLink 已按 V2 规则回算 weak/ready；创建仍等待用户确认。
     }
     this.wake();
-    return { ok: true, entityId: entity.id };
+    return { ok: true, entityId: entity.id, ...(learnedRule ? { learnedRule } : {}) };
+  }
+
+  /**
+   * 挂载即学习（B 线）：手动挂到已晋升实体（Room）的资料，从决策行入口
+   * 信号自动派生一条确定性路由规则——信号优先级 creatorId > listId >
+   * calendarId > filenamePrefix，取最强的一个字段（窄规则宁可漏配不错配）。
+   * 历史决策无 signals 快照时从 sourceId/markdown 确定性还原。派生后立即
+   * 回填存量无归属决策（挂一封邮件 → 该发件人的 backlog 整体进 Room）。
+   * 幂等：同 matcher + 同目标 Room 的规则已存在则不再创建。可撤销：
+   * 返回规则 id，UI toast 提供「撤销」直接删规则。
+   */
+  private learnRuleFromMount(
+    decision: typeof routeDecisions.$inferSelect,
+    roomId: string,
+  ): { id: string; matcher: Record<string, string>; replayed: number } | null {
+    if (decision.sourceKind === "everroom-doc") return null;
+    const signals = ((decision.evidence ?? {}) as { signals?: DocEnvelope["entrySignals"] }).signals ?? {};
+    const calendarId = signals.calendarId ?? calendarOrganizerOf(decision.sourceMarkdown ?? "");
+    const listId = signals.listId ?? todoListIdOf(decision.sourceMarkdown ?? "");
+    const candidate: Record<string, string> | null = signals.creatorId
+      ? { creatorId: signals.creatorId }
+      : listId
+        ? { listId }
+        : calendarId
+          ? { calendarId }
+          : decision.sourceKind === "file" && signals.filenamePrefix
+            ? { filenamePrefix: signals.filenamePrefix.replace(/\.[^.]+$/, "") }
+            : null;
+    if (!candidate) return null;
+
+    for (const rule of this.db.select({ matcher: routingRules.matcher, targetRoomId: routingRules.targetRoomId })
+      .from(routingRules).all()) {
+      const existing = (rule.matcher ?? {}) as Record<string, string>;
+      if (rule.targetRoomId !== roomId) continue;
+      if (Object.keys(existing).length !== Object.keys(candidate).length) continue;
+      if (Object.entries(candidate).every(([key, value]) => existing[key] === value)) return null;
+    }
+
+    const id = randomUUID();
+    this.db.insert(routingRules).values({
+      id,
+      matcher: candidate,
+      targetRoomId: roomId,
+      origin: "learned",
+      enabled: true,
+      createdAt: new Date(),
+    }).run();
+    const backfill = this.replayRoutingRule(id);
+    this.logger.info(
+      { event: "knowledge.rule.learned", ruleId: id, roomId, matcher: candidate, replayed: backfill.ok ? backfill.replayed : 0 },
+      "routing rule learned from manual mount",
+    );
+    return { id, matcher: candidate, replayed: backfill.ok ? backfill.replayed : 0 };
   }
 
   /** 未识别栏（plan §7）：抽取空/失败的资料，等待人工挂载。 */
@@ -2927,6 +3001,135 @@ export class KnowledgeService {
         createdAt: row.createdAt,
       };
     });
+  }
+
+  /**
+   * route job 最终失败后的死信：落一条 awaiting_review 决策行，让资料在
+   * 未识别栏可见、可批量重路由——只写 jobs 表 failed 行的话用户无感知，
+   * 资料会凭空消失。幂等：同 (kind, id, version) 已有 awaiting_review 行
+   * 则只刷新原因与时间。
+   */
+  private deadLetterRoute(payload: RouteJobPayload, message: string): void {
+    if (payload.sourceKind === "everroom-doc" || !payload.envelope) return;
+    const existing = this.db.select({ id: routeDecisions.id }).from(routeDecisions)
+      .where(and(
+        eq(routeDecisions.sourceKind, payload.sourceKind),
+        eq(routeDecisions.sourceId, payload.sourceId),
+        eq(routeDecisions.sourceVersion, payload.sourceVersion),
+        eq(routeDecisions.status, "awaiting_review"),
+      )).get();
+    const reason = `实体抽取失败（已退避重试 ${String(MAX_TRANSIENT_ATTEMPTS)} 次）：${message.slice(0, 300)}`;
+    if (existing) {
+      this.db.update(routeDecisions).set({ reason, updatedAt: new Date() })
+        .where(eq(routeDecisions.id, existing.id)).run();
+      return;
+    }
+    this.db.insert(routeDecisions).values({
+      id: randomUUID(),
+      sourceKind: payload.sourceKind,
+      sourceId: payload.sourceId,
+      sourceVersion: payload.sourceVersion,
+      sourceTitle: payload.envelope.title,
+      sourceMarkdown: payload.envelope.markdown,
+      primaryRoomId: null,
+      decidedBy: null,
+      confidence: 0,
+      evidence: { summary: fallbackSummary(payload.envelope.markdown) },
+      reason,
+      status: "awaiting_review",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    }).run();
+  }
+
+  /**
+   * 批量重路由未识别资料（治理入口）：awaiting_review / ignored 决策重新
+   * 入队走完整瀑布（外部源用决策行快照重建信封，everroom-doc 回查表）。
+   * 旧决策行标记 reverted 保留审计轨迹，重路由会落新行。批量路径按源
+   * 去重取最高版本，避免同源多版本重复入队。
+   */
+  retryUnmatched(decisionIds?: string[]): { ok: true; requeued: number } | { ok: false; error: string } {
+    const retryable = (row: typeof routeDecisions.$inferSelect) =>
+      row.status === "awaiting_review" || row.status === "ignored";
+    let rows: typeof routeDecisions.$inferSelect[];
+    if (decisionIds && decisionIds.length > 0) {
+      rows = decisionIds.flatMap((id) => {
+        const row = this.db.select().from(routeDecisions).where(eq(routeDecisions.id, id)).get();
+        return row && retryable(row) ? [row] : [];
+      });
+    } else {
+      const latest = new Map<string, typeof routeDecisions.$inferSelect>();
+      for (const row of this.db.select().from(routeDecisions)
+        .where(eq(routeDecisions.status, "awaiting_review"))
+        .orderBy(desc(routeDecisions.sourceVersion), desc(routeDecisions.createdAt))
+        .limit(LIST_PAGE_SIZE * 3).all()) {
+        const key = `${row.sourceKind}\x00${row.sourceId}`;
+        if (!latest.has(key)) latest.set(key, row);
+      }
+      rows = [...latest.values()];
+      // 同源低版本的遗留 awaiting_review 行一并翻 reverted，防止重路由后旧行仍挂在栏里。
+      for (const row of this.db.select().from(routeDecisions)
+        .where(eq(routeDecisions.status, "awaiting_review")).all()) {
+        const key = `${row.sourceKind}\x00${row.sourceId}`;
+        if (latest.has(key) && latest.get(key)!.id !== row.id) {
+          this.db.update(routeDecisions).set({ status: "reverted", updatedAt: new Date() })
+            .where(eq(routeDecisions.id, row.id)).run();
+        }
+      }
+    }
+    let requeued = 0;
+    for (const decision of rows) {
+      this.db.update(routeDecisions).set({ status: "reverted", updatedAt: new Date() })
+        .where(eq(routeDecisions.id, decision.id)).run();
+      const signals = ((decision.evidence ?? {}) as { signals?: DocEnvelope["entrySignals"] }).signals;
+      const payload: RouteJobPayload = {
+        sourceKind: decision.sourceKind,
+        sourceId: decision.sourceId,
+        sourceVersion: decision.sourceVersion,
+        ...(decision.sourceMarkdown ? {
+          envelope: {
+            title: decision.sourceTitle ?? decision.sourceId,
+            markdown: decision.sourceMarkdown,
+            ...(signals ? { entrySignals: signals } : {}),
+          },
+        } : {}),
+      };
+      this.insertJob(ROUTE_JOB_TYPE, payload);
+      requeued += 1;
+    }
+    if (requeued > 0) this.wake();
+    return { ok: true, requeued };
+  }
+
+  /** 忽略未识别资料（治理）：显式移出未识别栏，不再出现在待挂载列表。 */
+  ignoreUnmatched(decisionIds: string[]): { ok: true; ignored: number } {
+    let ignored = 0;
+    for (const id of decisionIds) {
+      const result = this.db.update(routeDecisions)
+        .set({ status: "ignored", updatedAt: new Date() })
+        .where(and(eq(routeDecisions.id, id), eq(routeDecisions.status, "awaiting_review")))
+        .run();
+      if (result.changes > 0) ignored += result.changes;
+    }
+    return { ok: true, ignored };
+  }
+
+  /** 超期自动忽略（治理）：awaiting_review 超 30 天未处理转 ignored。 */
+  private sweepExpiredUnmatched(): void {
+    const cutoff = Date.now() - UNMATCHED_EXPIRY_DAYS * 24 * 60 * 60_000;
+    const expired = this.db.select({ id: routeDecisions.id }).from(routeDecisions)
+      .where(and(
+        eq(routeDecisions.status, "awaiting_review"),
+        lt(routeDecisions.createdAt, new Date(cutoff)),
+      )).all();
+    if (expired.length === 0) return;
+    this.db.update(routeDecisions)
+      .set({ status: "ignored", reason: "超期自动忽略（30 天未处理）", updatedAt: new Date() })
+      .where(inArray(routeDecisions.id, expired.map((row) => row.id))).run();
+    this.logger.info(
+      { event: "knowledge.unmatched.expired", count: expired.length },
+      "expired unmatched decisions auto-ignored",
+    );
   }
 
   /**
@@ -3058,15 +3261,28 @@ export class KnowledgeService {
     id: string;
     matcher: Record<string, unknown>;
     targetRoomId: string;
+    roomTitle: string | null;
+    origin: string;
     enabled: boolean;
     hitCount: number;
     lastHitAt: Date | null;
     createdAt: Date;
   }> {
+    const roomIds = [...new Set(this.db.select({ targetRoomId: routingRules.targetRoomId }).from(routingRules).all()
+      .map((rule) => rule.targetRoomId))];
+    const titles = new Map<string, string>();
+    if (roomIds.length > 0) {
+      for (const room of this.db.select({ id: rooms.id, title: rooms.title }).from(rooms)
+        .where(inArray(rooms.id, roomIds)).all()) {
+        titles.set(room.id, room.title);
+      }
+    }
     return this.db.select().from(routingRules).orderBy(desc(routingRules.createdAt)).all().map((rule) => ({
       id: rule.id,
       matcher: (rule.matcher ?? {}) as Record<string, unknown>,
       targetRoomId: rule.targetRoomId,
+      roomTitle: titles.get(rule.targetRoomId) ?? null,
+      origin: rule.origin,
       enabled: rule.enabled,
       hitCount: rule.hitCount,
       lastHitAt: rule.lastHitAt,
@@ -3113,7 +3329,9 @@ export class KnowledgeService {
   /**
    * 规则回填：对存量「无归属」（primaryRoomId 空，如 linked/awaiting_review）的
    * 连接器来源重放 ②b 规则层。sourceTag 从 sourceId 确定性推导，titleKeyword
-   * 对决策快照标题匹配；命中即落 rule/execute 决策并排 relation-index job 补
+   * 对决策快照标题匹配；creatorId/threadId/filenamePrefix 从决策 evidence 的
+   * signals 快照还原（router persist 已写入；更早的历史行无快照，该行跳过——
+   * 宁可漏配不可错配）。命中即落 rule/execute 决策并排 relation-index job 补
    * Room 投影（不排 wiki ingest——回填零 LLM 成本，新到事件走完整链路）。
    * 幂等：最新决策已 execute（primaryRoomId 非空）的来源天然跳过。
    */
@@ -3122,10 +3340,6 @@ export class KnowledgeService {
     if (!rule) return { ok: false, error: "rule_not_found" };
     if (!rule.enabled) return { ok: false, error: "rule_disabled" };
     const matcher = (rule.matcher ?? {}) as Record<string, string | undefined>;
-    if (matcher.threadId !== undefined || matcher.filenamePrefix !== undefined || matcher.creatorId !== undefined) {
-      // 决策快照不含这些入口信号，无法确定性重放
-      return { ok: false, error: "matcher_not_replayable" };
-    }
 
     const latest = new Map<string, typeof routeDecisions.$inferSelect>();
     for (const decision of this.db.select().from(routeDecisions)
@@ -3140,24 +3354,32 @@ export class KnowledgeService {
     for (const decision of latest.values()) {
       // 最新决策已归房（含上次回填写入的 rule/execute 行）：幂等跳过。
       if (decision.primaryRoomId) continue;
-      const sourceTag = connectorSourceTagOf(decision.sourceId);
+      const signals = ((decision.evidence ?? {}) as { signals?: NonNullable<DocEnvelope["entrySignals"]> }).signals ?? {};
+      const sourceTag = signals.sourceTag ?? connectorSourceTagOf(decision.sourceId);
       if (matcher.sourceTag !== undefined && sourceTag !== matcher.sourceTag) continue;
-      // 日历级 calendarId：历史决策无 entrySignals 快照，从 markdown 组织者行近似推导
+      // 日历级 calendarId：优先 signals 快照，历史行从 markdown 组织者行近似推导
       const calendarId = matcher.calendarId !== undefined
-        ? calendarOrganizerOf(decision.sourceMarkdown ?? "")
+        ? (signals.calendarId ?? calendarOrganizerOf(decision.sourceMarkdown ?? ""))
         : undefined;
       if (matcher.calendarId !== undefined && calendarId !== matcher.calendarId) continue;
-      // 清单级 listId：从 markdown frontmatter 的 list_id 确定性还原
+      // 清单级 listId：优先 signals 快照，历史行从 markdown frontmatter 还原
       const listId = matcher.listId !== undefined
-        ? todoListIdOf(decision.sourceMarkdown ?? "")
+        ? (signals.listId ?? todoListIdOf(decision.sourceMarkdown ?? ""))
         : undefined;
       if (matcher.listId !== undefined && listId !== matcher.listId) continue;
+      // 个人级信号只在 signals 快照存在时可比（历史行缺失 → 跳过该行）
+      if (matcher.creatorId !== undefined && signals.creatorId !== matcher.creatorId) continue;
+      if (matcher.threadId !== undefined && signals.threadId !== matcher.threadId) continue;
+      if (matcher.filenamePrefix !== undefined && !(signals.filenamePrefix ?? "").startsWith(matcher.filenamePrefix)) continue;
       if (matcher.titleKeyword !== undefined && !(decision.sourceTitle ?? "").includes(matcher.titleKeyword)) continue;
       matched += 1;
       const entrySignals = {
         ...(sourceTag ? { sourceTag } : {}),
         ...(calendarId ? { calendarId } : {}),
         ...(listId ? { listId } : {}),
+        ...(signals.creatorId ? { creatorId: signals.creatorId } : {}),
+        ...(signals.threadId ? { threadId: signals.threadId } : {}),
+        ...(signals.filenamePrefix ? { filenamePrefix: signals.filenamePrefix } : {}),
       };
       const result = this.router.routeByRule({
         ref: { kind: decision.sourceKind, id: decision.sourceId, version: decision.sourceVersion },

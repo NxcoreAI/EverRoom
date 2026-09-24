@@ -133,12 +133,14 @@ import type {
   RouteMindmapActionInput,
   RouteMindmapStatusDto,
   KnowledgeAttachInput,
+  KnowledgeAttachResult,
   KnowledgeDecisionDto,
   KnowledgeEntityDetailDto,
   KnowledgeEntityDto,
   KnowledgeEntityStatus,
   KnowledgeFileDto,
   KnowledgeFileUploadResult,
+  KnowledgeRuleDto,
   KnowledgeRoomContextDto,
   KnowledgeRoomGraphDto,
   KnowledgeRoomDto,
@@ -1350,8 +1352,16 @@ export interface NxcoreDesktopApi {
     /** 手动合并：from 并入 target。 */
     mergeEntity(fromId: string, targetId: string): Promise<{ ok: boolean }>
     listUnmatched(): Promise<{ items: KnowledgeUnmatchedItemDto[] }>
-    /** 未识别资料手动挂实体（role=manual）。 */
-    attachDoc(sourceKind: string, sourceId: string, input: KnowledgeAttachInput): Promise<{ entityId: string }>
+    /** 批量重路由未识别资料（不传 ids = 全部）：重走完整路由瀑布。 */
+    retryUnmatched(decisionIds?: string[]): Promise<{ requeued: number }>
+    /** 忽略未识别资料：显式移出待挂载列表。 */
+    ignoreUnmatched(decisionIds: string[]): Promise<{ ignored: number }>
+    /** 归集规则清单（挂载即学习 + 手动创建）。 */
+    listRules(): Promise<{ items: KnowledgeRuleDto[] }>
+    /** 删除归集规则（撤销学习结果）。 */
+    deleteRule(ruleId: string): Promise<void>
+    /** 未识别资料手动挂实体（role=manual）；挂到 Room 时可带回学习规则。 */
+    attachDoc(sourceKind: string, sourceId: string, input: KnowledgeAttachInput): Promise<KnowledgeAttachResult>
     listRecentDecisions(limit?: number): Promise<{ items: KnowledgeDecisionDto[] }>
     /** 按 sourceId 查最新路由决策（任意状态）：推荐会话轮询解析进度（驱动阶段推进）。 */
     routeStatus(sourceIds: string[]): Promise<{ items: KnowledgeRouteStatusDto[] }>

@@ -12416,6 +12416,31 @@
   white-space: nowrap;
 }
 
+.context-room-knowledge-unmatched .context-room-knowledge-recent-row,
+.context-room-knowledge-rules .context-room-knowledge-recent-row {
+  padding: 3px 0;
+}
+
+.context-room-knowledge-unmatched-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 2px 0 8px;
+}
+
+.context-room-knowledge-rule-meta {
+  display: block;
+  overflow: hidden;
+  color: var(--cr-muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-room-knowledge-defer svg.context-room-spin {
+  animation: context-room-spin 900ms linear infinite;
+}
+
 .context-room-knowledge-revert {
   display: inline-flex;
   flex: 0 0 auto;
@@ -13767,6 +13792,18 @@
 
 .context-room-activity-summary.is-error {
   color: var(--cr-danger, #c2452d);
+}
+
+.context-room-activity-summary.is-loading {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.context-room-activity-summary.is-loading svg {
+  width: 12px;
+  height: 12px;
+  animation: context-room-spin 900ms linear infinite;
 }
 
 /* ===== 工作 / 待办：日程与会议 + 任务 上下分区 ===== */
