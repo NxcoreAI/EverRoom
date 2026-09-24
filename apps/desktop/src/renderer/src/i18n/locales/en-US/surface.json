@@ -1732,5 +1732,7 @@
   "agentComposer.mentionGroupRooms": "Rooms",
   "agentComposer.mentionGroupFiles": "Files",
   "agentComposer.mentionGroupConversations": "Conversations",
-  "agentComposer.mentionedFileUnavailable": "A mentioned file is unavailable. Please reselect."
+  "agentComposer.mentionedFileUnavailable": "A mentioned file is unavailable. Please reselect.",
+  "agentComposer.mentionTabAll": "All",
+  "agentComposer.mentionCategoryLabel": "Mention categories"
 }

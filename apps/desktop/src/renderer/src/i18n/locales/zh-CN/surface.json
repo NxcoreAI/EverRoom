@@ -1732,5 +1732,7 @@
   "agentComposer.mentionGroupRooms": "房间",
   "agentComposer.mentionGroupFiles": "文件",
   "agentComposer.mentionGroupConversations": "对话记录",
-  "agentComposer.mentionedFileUnavailable": "引用的文件当前不可用，请重新选择。"
+  "agentComposer.mentionedFileUnavailable": "引用的文件当前不可用，请重新选择。",
+  "agentComposer.mentionTabAll": "全部",
+  "agentComposer.mentionCategoryLabel": "引用分类"
 }

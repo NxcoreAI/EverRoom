@@ -41,6 +41,7 @@ const MODEL_TIER_META: Record<AgentModelPreference, { icon: typeof Zap; labelKey
 const MODEL_TIER_ORDER: AgentModelPreference[] = ['smart', 'primary', 'lite']
 
 type ExternalPickerStatus = 'idle' | 'loading' | 'ready' | 'loading-more' | 'error'
+type MentionCategory = 'all' | 'agent' | 'room' | 'file' | 'conversation'
 
 interface LocalAttachment {
   id: string
@@ -156,6 +157,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   const [mentionFiles, setMentionFiles] = useState<Array<{ id: string; title: string; detail: string }>>([])
   const [mentionConversations, setMentionConversations] = useState<ExternalConversationSummary[]>([])
   const [mentionSourcesLoading, setMentionSourcesLoading] = useState(false)
+  const [mentionCategory, setMentionCategory] = useState<MentionCategory>('all')
   const [modelPickerOpen, setModelPickerOpen] = useState(false)
   const [liteAvailable, setLiteAvailable] = useState(false)
   const [caret, setCaret] = useState(0)
@@ -257,6 +259,12 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
       return
     }
     if (agentPickerOpen) {
+      if (event.key === 'Tab') {
+        // Tab / Shift+Tab 在有内容的分类间循环切换（含「全部」）。
+        event.preventDefault()
+        cycleMentionCategory(event.shiftKey ? -1 : 1)
+        return
+      }
       if (event.key === 'ArrowDown' && mentionOptions.length) {
         event.preventDefault()
         setAgentIndex((current) => Math.min(mentionOptions.length - 1, current + 1))
@@ -441,19 +449,33 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   const filteredFileItems = mentionFiles.filter((file) => matchesQuery(file.title) || matchesQuery(file.id) || matchesQuery(file.detail))
   const filteredConversationItems = mentionConversations.filter((conversation) => matchesQuery(conversation.title)
     || matchesQuery(conversation.provider))
-  const mentionOptionCount = filteredAgentItems.length + filteredRoomItems.length
-    + filteredFileItems.length + filteredConversationItems.length
+  const mentionCategoryTabs: Array<{ id: MentionCategory; labelKey: string; count: number }> = [
+    { id: 'all', labelKey: 'surface:agentComposer.mentionTabAll', count: filteredAgentItems.length + filteredRoomItems.length + filteredFileItems.length + filteredConversationItems.length },
+    { id: 'agent', labelKey: 'surface:agentComposer.mentionGroupAgents', count: filteredAgentItems.length },
+    { id: 'room', labelKey: 'surface:agentComposer.mentionGroupRooms', count: filteredRoomItems.length },
+    { id: 'file', labelKey: 'surface:agentComposer.mentionGroupFiles', count: filteredFileItems.length },
+    { id: 'conversation', labelKey: 'surface:agentComposer.mentionGroupConversations', count: filteredConversationItems.length },
+  ]
+  const showMentionGroup = (kind: Exclude<MentionCategory, 'all'>) => mentionCategory === 'all' || mentionCategory === kind
+  const cycleMentionCategory = (step: 1 | -1) => {
+    const order = mentionCategoryTabs.filter((tab) => tab.count > 0).map((tab) => tab.id)
+    if (order.length < 2) return
+    const current = order.includes(mentionCategory) ? order.indexOf(mentionCategory) : 0
+    setMentionCategory(order[(current + step + order.length) % order.length]!)
+    setAgentIndex(0)
+  }
   type MentionOption =
     | { kind: 'agent'; item: LocalAgentInstallation }
     | { kind: 'room'; item: AgentRoomReference }
     | { kind: 'file'; item: { id: string; title: string; detail: string } }
     | { kind: 'conversation'; item: ExternalConversationSummary }
   const mentionOptions: MentionOption[] = [
-    ...filteredAgentItems.map((item) => ({ kind: 'agent' as const, item })),
-    ...filteredRoomItems.map((item) => ({ kind: 'room' as const, item })),
-    ...filteredFileItems.map((item) => ({ kind: 'file' as const, item })),
-    ...filteredConversationItems.map((item) => ({ kind: 'conversation' as const, item })),
+    ...(showMentionGroup('agent') ? filteredAgentItems.map((item) => ({ kind: 'agent' as const, item })) : []),
+    ...(showMentionGroup('room') ? filteredRoomItems.map((item) => ({ kind: 'room' as const, item })) : []),
+    ...(showMentionGroup('file') ? filteredFileItems.map((item) => ({ kind: 'file' as const, item })) : []),
+    ...(showMentionGroup('conversation') ? filteredConversationItems.map((item) => ({ kind: 'conversation' as const, item })) : []),
   ]
+  const mentionOptionCount = mentionOptions.length
   const chooseMentionOption = (option: MentionOption) => {
     if (option.kind === 'agent') chooseAgent(option.item)
     else if (option.kind === 'room') chooseRoom(option.item)
@@ -487,6 +509,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   useEffect(() => {
     if (!mentionTrigger || agentPickerOpen) return
     setAgentPickerOpen(true)
+    setMentionCategory('all')
     setSlashPickerDismissed(true)
   }, [mentionTrigger?.replaceStart, mentionTrigger?.query, agentPickerOpen])
 
@@ -643,14 +666,34 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
       ) : null}
       {agentPickerOpen ? (
         <div ref={agentResultsRef} className="agent-composer-popover agent-mention-list" id="agent-composer-menu" role="listbox" aria-label={t('surface:agentComposer.mentionAgent')}>
+          <div className="agent-mention-tabs" role="tablist" aria-label={t('surface:agentComposer.mentionCategoryLabel')}>
+            {mentionCategoryTabs.map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                className="agent-mention-tab"
+                role="tab"
+                aria-selected={mentionCategory === tab.id}
+                data-selected={String(mentionCategory === tab.id)}
+                disabled={tab.count === 0 && tab.id !== mentionCategory}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => {
+                  setMentionCategory(tab.id)
+                  setAgentIndex(0)
+                }}
+              >
+                {t(tab.labelKey)}{tab.count > 0 ? <span>{tab.count}</span> : null}
+              </button>
+            ))}
+          </div>
           {mentionOptionCount === 0 ? (
             <div className="agent-mention-empty">{t('surface:agentComposer.noMentionMatches')}</div>
           ) : (
             <>
-              {filteredAgentItems.length ? (
+              {showMentionGroup('agent') && filteredAgentItems.length ? (
                 <div className="agent-mention-group-label"><Bot aria-hidden="true" />{t('surface:agentComposer.mentionGroupAgents')}</div>
               ) : null}
-              {filteredAgentItems.map((item, index) => (
+              {showMentionGroup('agent') ? filteredAgentItems.map((item, index) => (
                 <button
                   key={`agent:${item.id}`}
                   type="button"
@@ -663,13 +706,14 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
                   onMouseDown={(event) => event.preventDefault()}
                   onClick={() => chooseAgent(item)}
                 >
+                  <span className="agent-mention-option-icon"><SourceIcon kind={item.provider === 'claude' || item.provider === 'openclaw' ? item.provider : 'codex'} /></span>
                   <strong>{item.displayName}</strong>
                 </button>
-              ))}
-              {filteredRoomItems.length ? (
+              )) : null}
+              {showMentionGroup('room') && filteredRoomItems.length ? (
                 <div className="agent-mention-group-label"><FolderOpen aria-hidden="true" />{t('surface:agentComposer.mentionGroupRooms')}</div>
               ) : null}
-              {filteredRoomItems.map((room) => {
+              {showMentionGroup('room') ? filteredRoomItems.map((room) => {
                 const index = mentionOptions.findIndex((option) => option.kind === 'room' && option.item.id === room.id)
                 return (
                   <button
@@ -684,15 +728,16 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
                     onMouseDown={(event) => event.preventDefault()}
                     onClick={() => chooseRoom(room)}
                   >
+                    <span className="agent-mention-option-icon"><FolderOpen aria-hidden="true" /></span>
                     <strong>{room.title}</strong>
                     {room.kind ? <small>{room.kind}</small> : null}
                   </button>
                 )
-              })}
-              {filteredFileItems.length ? (
+              }) : null}
+              {showMentionGroup('file') && filteredFileItems.length ? (
                 <div className="agent-mention-group-label"><FileText aria-hidden="true" />{t('surface:agentComposer.mentionGroupFiles')}</div>
               ) : null}
-              {filteredFileItems.map((file) => {
+              {showMentionGroup('file') ? filteredFileItems.map((file) => {
                 const index = mentionOptions.findIndex((option) => option.kind === 'file' && option.item.id === file.id)
                 return (
                   <button
@@ -707,15 +752,16 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
                     onMouseDown={(event) => event.preventDefault()}
                     onClick={() => chooseFile(file)}
                   >
+                    <span className="agent-mention-option-icon"><FileText aria-hidden="true" /></span>
                     <strong>{file.title}</strong>
                     {file.detail ? <small>{file.detail}</small> : null}
                   </button>
                 )
-              })}
-              {filteredConversationItems.length ? (
+              }) : null}
+              {showMentionGroup('conversation') && filteredConversationItems.length ? (
                 <div className="agent-mention-group-label"><History aria-hidden="true" />{t('surface:agentComposer.mentionGroupConversations')}</div>
               ) : null}
-              {filteredConversationItems.map((conversation) => {
+              {showMentionGroup('conversation') ? filteredConversationItems.map((conversation) => {
                 const index = mentionOptions.findIndex((option) => option.kind === 'conversation' && option.item.id === conversation.id)
                 return (
                   <button
@@ -730,11 +776,14 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
                     onMouseDown={(event) => event.preventDefault()}
                     onClick={() => chooseConversation(conversation)}
                   >
+                    <span className="agent-mention-option-icon">
+                      <SourceIcon kind={conversation.provider === 'claude' || conversation.provider === 'codex' || conversation.provider === 'openclaw' ? conversation.provider : 'openclaw'} />
+                    </span>
                     <strong>{displayText(conversation.title, t('surface:agentComposer.untitledConversation'))}</strong>
                     <small>{conversation.provider} · {t('surface:agentComposer.messageCount', { count: Number.isFinite(conversation.messageCount) ? conversation.messageCount : 0 })}</small>
                   </button>
                 )
-              })}
+              }) : null}
             </>
           )}
         </div>
