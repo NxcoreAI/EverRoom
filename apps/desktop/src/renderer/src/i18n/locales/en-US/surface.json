@@ -91,8 +91,6 @@
   "agentComposer.couldNotLoadMore": "Could not load more records. Try again.",
   "agentComposer.removeExternalConversation": "Remove external conversation reference",
   "agentComposer.mentionAgent": "Address an Agent",
-  "agentComposer.noAgents": "No addressable local agents found (Codex/Claude Code/OpenClaw)",
-  "agentComposer.noAgentMatches": "No matching local agents",
   "useAgentSession.workspaceRequired": "Choose and authorize an Agent workspace first.",
   "agentComposer.localAttachments": "Local attachments",
   "agentComposer.onlySupportedDocumentFormatsUpTo10Mb": "Only supported document and image formats up to 10 MB each are allowed.",
@@ -1728,5 +1726,11 @@
   "settings.connectorModeLocalDescription": "Run OpenConnector on this machine; credentials and data stay local (privacy fallback).",
   "settings.computerAudioUnavailableOnWindows": "Computer audio recording is not yet supported on Windows.",
   "settings.navigationUpdate": "Software Update",
-  "settings.navigationUpdateDescription": "Check for and install updates"
+  "settings.navigationUpdateDescription": "Check for and install updates",
+  "agentComposer.noMentionMatches": "No matching mentions",
+  "agentComposer.mentionGroupAgents": "Agents",
+  "agentComposer.mentionGroupRooms": "Rooms",
+  "agentComposer.mentionGroupFiles": "Files",
+  "agentComposer.mentionGroupConversations": "Conversations",
+  "agentComposer.mentionedFileUnavailable": "A mentioned file is unavailable. Please reselect."
 }

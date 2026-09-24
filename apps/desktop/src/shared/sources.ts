@@ -1372,6 +1372,7 @@ export interface NxcoreDesktopApi {
   }
   files: {
     list(limit?: number, offset?: number): Promise<{ items: FileCatalogDto[]; total: number }>
+    catalogEntry(fileId: string): Promise<FileCatalogDto>
     listClipCaptures(input?: BrowserExtensionClipperListInput): Promise<BrowserExtensionClipperListResult>
     setClipCaptureFavorite(captureId: string, favorite: boolean): Promise<BrowserExtensionClipperCapture>
     getClipCaptureDetail(captureId: string): Promise<BrowserExtensionClipperCapture>

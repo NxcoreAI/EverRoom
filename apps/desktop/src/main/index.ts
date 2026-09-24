@@ -558,6 +558,10 @@ const KNOWLEDGE_CHANNELS = {
   restoreSuppressedEntity: 'knowledge:entities:restore',
   mergeEntity: 'knowledge:entities:merge',
   listUnmatched: 'knowledge:unmatched:list',
+  retryUnmatched: 'knowledge:unmatched:retry',
+  ignoreUnmatched: 'knowledge:unmatched:ignore',
+  listRules: 'knowledge:rules:list',
+  deleteRule: 'knowledge:rules:delete',
   attachDoc: 'knowledge:docs:attach',
   listRecentDecisions: 'knowledge:decisions:list',
   routeStatus: 'knowledge:route:status',
@@ -578,6 +582,7 @@ const KNOWLEDGE_CHANNELS = {
 
 const FILES_CHANNELS = {
   list: 'files:list',
+  catalogEntry: 'files:catalog-entry',
   listClipCaptures: 'files:clipper-captures:list',
   getClipCaptureDetail: 'files:clipper-captures:detail',
   setClipCaptureFavorite: 'files:clipper-captures:favorite',
@@ -2592,6 +2597,10 @@ function registerKnowledgeHandlers(bridge: KnowledgeGatewayBridge): void {
   handle(KNOWLEDGE_CHANNELS.mergeEntity, (_event, fromId: string, targetId: string) =>
     bridge.mergeEntity(fromId, targetId))
   handle(KNOWLEDGE_CHANNELS.listUnmatched, () => bridge.listUnmatched())
+  handle(KNOWLEDGE_CHANNELS.retryUnmatched, (_event, decisionIds?: string[]) => bridge.retryUnmatched(decisionIds))
+  handle(KNOWLEDGE_CHANNELS.ignoreUnmatched, (_event, decisionIds: string[]) => bridge.ignoreUnmatched(decisionIds))
+  handle(KNOWLEDGE_CHANNELS.listRules, () => bridge.listRules())
+  handle(KNOWLEDGE_CHANNELS.deleteRule, (_event, ruleId: string) => bridge.deleteRule(ruleId))
   handle(KNOWLEDGE_CHANNELS.attachDoc, (_event, sourceKind: string, sourceId: string, input: KnowledgeAttachInput) =>
     bridge.attachDoc(sourceKind, sourceId, input))
   handle(KNOWLEDGE_CHANNELS.listRecentDecisions, (_event, limit?: number) =>
@@ -2634,6 +2643,7 @@ function registerFilesHandlers(
     }
   })
   handle(FILES_CHANNELS.list, (_event, limit?: number, offset?: number) => bridge.list(limit, offset))
+  handle(FILES_CHANNELS.catalogEntry, (_event, fileId: string) => bridge.catalogEntry(fileId))
   handle(FILES_CHANNELS.listClipCaptures, (_event, input) => bridge.listClipCaptures(input))
   handle(FILES_CHANNELS.setClipCaptureFavorite, (_event, captureId: string, favorite: boolean) =>
     bridge.setClipCaptureFavorite(captureId, favorite))

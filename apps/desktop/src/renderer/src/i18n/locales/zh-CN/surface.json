@@ -91,8 +91,6 @@
   "agentComposer.couldNotLoadMore": "更多记录加载失败，可再次尝试",
   "agentComposer.removeExternalConversation": "移除外部会话引用",
   "agentComposer.mentionAgent": "点名 Agent",
-  "agentComposer.noAgents": "未发现可点名的本机 Agent（Codex/Claude Code/OpenClaw）",
-  "agentComposer.noAgentMatches": "没有匹配的本机 Agent",
   "useAgentSession.workspaceRequired": "需要先选择并授权 Agent 工作区。",
   "agentComposer.localAttachments": "本地附件",
   "agentComposer.onlySupportedDocumentFormatsUpTo10Mb": "仅支持指定文档和图片格式，且单个文件不超过 10 MB。",
@@ -1728,5 +1726,11 @@
   "settings.connectorModeLocalDescription": "在本机启动 OpenConnector 服务，凭据与数据完全留在本地（隐私兜底）。",
   "settings.computerAudioUnavailableOnWindows": "电脑音频录制目前暂不支持 Windows。",
   "settings.navigationUpdate": "软件更新",
-  "settings.navigationUpdateDescription": "检查并安装新版本"
+  "settings.navigationUpdateDescription": "检查并安装新版本",
+  "agentComposer.noMentionMatches": "没有匹配的引用对象",
+  "agentComposer.mentionGroupAgents": "Agent",
+  "agentComposer.mentionGroupRooms": "房间",
+  "agentComposer.mentionGroupFiles": "文件",
+  "agentComposer.mentionGroupConversations": "对话记录",
+  "agentComposer.mentionedFileUnavailable": "引用的文件当前不可用，请重新选择。"
 }

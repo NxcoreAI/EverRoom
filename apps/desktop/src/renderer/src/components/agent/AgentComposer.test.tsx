@@ -220,7 +220,8 @@ describe('AgentComposer external conversation command', () => {
     act(() => { renderer = TestRenderer.create(<TypingComposer />) })
 
     typeInto(renderer, '帮我审一下 @cod')
-    expect(conversations).not.toHaveBeenCalled()
+    // 分组弹层打开时会懒加载一次对话记录候选。
+    expect(conversations).toHaveBeenCalledWith({ limit: 20 })
     expect(renderer.root.findByProps({ 'aria-label': '点名 Agent' })).toBeTruthy()
 
     chooseHighlightedOption(renderer)
@@ -237,6 +238,7 @@ describe('AgentComposer external conversation command', () => {
     let renderer!: TestRenderer.ReactTestRenderer
     act(() => { renderer = TestRenderer.create(<TypingComposer />) })
     typeInto(renderer, '@')
+    // 同步断言窗口内只有 Agent 组（文件/对话记录走懒加载，下一拍才补进来）。
     expect(renderer.root.findAllByProps({ role: 'option' })).toHaveLength(2)
 
     typeInto(renderer, '@claude')
@@ -269,8 +271,8 @@ describe('AgentComposer external conversation command', () => {
       nativeEvent: { isComposing: false, keyCode: 13 },
     }))
     expect(onSubmit).toHaveBeenCalledWith([], [
-      { id: 'codex:/usr/local/bin/codex', displayName: 'Codex' },
-      { id: 'claude:/usr/local/bin/claude', displayName: 'Claude Code' },
+      { kind: 'agent', id: 'codex:/usr/local/bin/codex', displayName: 'Codex' },
+      { kind: 'agent', id: 'claude:/usr/local/bin/claude', displayName: 'Claude Code' },
     ])
     act(() => renderer.unmount())
   })
@@ -292,7 +294,7 @@ describe('AgentComposer external conversation command', () => {
       preventDefault: vi.fn(),
       nativeEvent: { isComposing: false, keyCode: 13 },
     }))
-    expect(onSubmit).toHaveBeenCalledWith([], [{ id: 'codex:/usr/local/bin/codex', displayName: 'Codex' }])
+    expect(onSubmit).toHaveBeenCalledWith([], [{ kind: 'agent', id: 'codex:/usr/local/bin/codex', displayName: 'Codex' }])
     act(() => renderer.unmount())
   })
 
