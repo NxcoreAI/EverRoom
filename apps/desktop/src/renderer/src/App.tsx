@@ -151,6 +151,8 @@ export function App() {
   const [suppressAutomaticOnboarding, setSuppressAutomaticOnboarding] = useState(true)
   const [memoryReady, setMemoryReady] = useState(false)
   const [memoryFocusId, setMemoryFocusId] = useState<string | null>(null)
+  const [agentFileFocus, setAgentFileFocus] = useState<{ fileId: string; requestId: number } | null>(null)
+  const agentFileFocusRequestIdRef = useRef(0)
   const [generatedMemoryNotice, setGeneratedMemoryNotice] = useState<MemoryAtomicItemDto | null>(null)
   const manualMemoryOnboardingRef = useRef(false)
   const fullOnboardingCompletedRef = useRef(readFullOnboardingCompleted())
@@ -814,6 +816,17 @@ export function App() {
     setAgentFocusRequest((request) => request + 1)
   }
 
+  /** 消息区点击 @ 的文件：跳到文件页并聚焦该文件。 */
+  const openAgentMentionFile = (fileId: string) => {
+    if (manualMemoryOnboardingRef.current) return
+    if (agentNavigationTimerRef.current !== null) {
+      window.clearTimeout(agentNavigationTimerRef.current)
+      agentNavigationTimerRef.current = null
+    }
+    setAgentFileFocus({ fileId, requestId: ++agentFileFocusRequestIdRef.current })
+    navigate('files')
+  }
+
   const navigateFromAgent = (request: AgentNavigationRequest) => {
     setAgentNavigationRequest(request)
     setAgentSessionRouteRequest(null)
@@ -986,6 +999,7 @@ export function App() {
           activeContextRoomId={activeContextRoomId}
           agentDocumentFocus={agentDocumentFocus}
           memoryFocusId={memoryFocusId}
+          agentFileFocus={agentFileFocus}
           contextRoomHomeRequest={contextRoomHomeRequest}
           onContextRoomDetailFocusChange={handleContextRoomDetailFocusChange}
           onContextRoomOpenTab={openContextRoomTab}
@@ -1051,6 +1065,7 @@ export function App() {
           onOpenSessionLink={openAgentSessionLink}
           onOpenDocument={openDocumentTarget}
           onSessionRouteConsumed={(key) => setAgentSessionRouteRequest((current) => current?.key === key ? null : current)}
+          onOpenMentionFile={openAgentMentionFile}
           focusRequest={agentFocusRequest}
           roomCitations={agentRoomCitations}
           onRemoveRoomCitation={(citationId) => {

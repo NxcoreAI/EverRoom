@@ -24,7 +24,7 @@ import {
   type ReducedAgentRunEvents,
 } from './agentRunActivity'
 import { buildAgentRunContext } from './agentRunContext'
-import type { MentionedAgent } from './agentMentions'
+import type { MentionedAgent, MentionedItem } from './agentMentions'
 import { plainTextFromMarkdown } from './agentTextUtils'
 import {
   applyShellApprovalEvent,
@@ -44,6 +44,8 @@ export interface DisplayAgentMessage extends AgentMessage {
   streaming?: boolean
   /** 展示用：发送时 @ 点名的本机 Agent 名字，不落库，重载后消失。 */
   referencedAgentNames?: string[]
+  /** 展示用：发送时 @ 的全部条目（含 Room/文件/对话记录），供消息区点击跳转；不落库。 */
+  mentions?: MentionedItem[]
 }
 
 export function mergePendingAgentMessages(
@@ -883,6 +885,7 @@ export function useAgentSession(
     referencedConversationId?: string,
     mentionedAgents?: MentionedAgent[],
     memoryScope?: 'room',
+    mentions?: MentionedItem[],
   ): Promise<string | null> => {
     const message = prompt.trim()
     if ((!message && !attachments?.length) || activeRunId || loading || sending) return null
@@ -938,6 +941,7 @@ export function useAgentSession(
       content: message,
       createdAt: new Date().toISOString(),
       ...(mentionedAgents?.length ? { referencedAgentNames: mentionedAgents.map((agent) => agent.displayName) } : {}),
+      ...(mentions?.length ? { mentions } : {}),
     }
 
     setMessages((current) => mergePendingAgentMessages(current, [optimisticMessage]))

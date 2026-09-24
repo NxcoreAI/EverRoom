@@ -12,6 +12,8 @@ export interface MentionedItem {
   kind: MentionKind
   id: string
   displayName: string
+  /** 对话记录来源：'everroom' 为本应用会话（点击可切回），其余为导入的外部会话。 */
+  provider?: string
 }
 
 export interface MentionTokenRange {

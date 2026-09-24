@@ -131,6 +131,11 @@
 }
 
 .agent-user-mention { align-self: flex-end; margin: 0 4px 3px; color: #9aa2ae; font-size: 10px; }
+button.agent-user-mention { padding: 1px 6px; border: none; border-radius: 5px; background: #e9f0ff; color: #5b6472; cursor: pointer; }
+button.agent-user-mention[data-kind='room'] { background: #eaf5ec; }
+button.agent-user-mention[data-kind='file'] { background: #f6efe2; }
+button.agent-user-mention[data-kind='conversation'] { background: #f3ecfa; }
+button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
 
 .agent-message p {
   margin: 0;

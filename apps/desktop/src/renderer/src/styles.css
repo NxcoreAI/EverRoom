@@ -3066,6 +3066,17 @@ summary:focus-visible {
   transform: translateY(-2px);
 }
 
+.file-document-card[data-focused='true'] {
+  border-color: #f0a848;
+  box-shadow: 0 0 0 3px rgba(240, 168, 72, 0.25);
+  animation: file-focus-pulse 900ms ease;
+}
+
+@keyframes file-focus-pulse {
+  0%, 100% { box-shadow: 0 0 0 3px rgba(240, 168, 72, 0.25); }
+  50% { box-shadow: 0 0 0 7px rgba(240, 168, 72, 0.35); }
+}
+
 .file-document-main {
   display: flex;
   min-width: 0;
