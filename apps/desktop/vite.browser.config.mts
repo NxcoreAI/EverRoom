@@ -179,6 +179,44 @@ const routeAction = (roomId, q) => {
   if (row) routeTick(row)
   return routeDto(roomId, q.documentId, row, q.requestVersion)
 }
+// 飞书 agent-auth mock 状态机：start 出 pending 卡；window.__feishu.completeAuth('名字')
+// 模拟浏览器授权完成；window.__feishu.reset() 回到未连接；disconnect 走真入口。
+const authSubs = new Set()
+const authEmit = (frame) => { for (const cb of authSubs) cb(frame) }
+let authState = { appConfigured: false, userAuthorized: false, userName: null }
+let authChallenge = null
+const mkChallenge = (phase) => ({
+  id: 'challenge-mock-' + Date.now(),
+  provider: 'feishu',
+  phase,
+  status: 'pending',
+  reason: 'not_connected',
+  title: '授权飞书账号',
+  verificationUrl: phase === 'user_auth' ? 'https://feishu.cn/verify?code=mock123' : 'https://feishu.cn/app-setup',
+  steps: [
+    { id: 's1', title: '打开授权页面', description: '在浏览器完成飞书登录授权', action: 'open_url', url: 'https://feishu.cn/verify?code=mock123', completed: false },
+  ],
+  exportRunId: null,
+  message: null,
+  startedAt: new Date().toISOString(),
+  expiresAt: new Date(Date.now() + 30 * 60_000).toISOString(),
+})
+const authStatus = () => ({
+  feishu: { cliState: 'ready', cliPath: '/mock/lark-cli', appConfigured: authState.appConfigured, userAuthorized: authState.userAuthorized, userName: authState.userName, message: null },
+  activeChallenge: authChallenge,
+})
+window.__feishu = {
+  completeAuth: (userName = '王小雨') => {
+    authState = { appConfigured: true, userAuthorized: true, userName }
+    authChallenge = authChallenge ? { ...authChallenge, status: 'authorized', message: '已连接 ' + userName } : null
+    authEmit({ type: 'environment.changed', status: authStatus() })
+  },
+  reset: () => {
+    authState = { appConfigured: false, userAuthorized: false, userName: null }
+    authChallenge = null
+    authEmit({ type: 'environment.changed', status: authStatus() })
+  },
+}
 const base = {
   platform: ${JSON.stringify(process.env.MOCK_PLATFORM || 'win32')},
   window: {
@@ -189,6 +227,32 @@ const base = {
     onMaximizedChange: () => () => {},
   },
   locale: { system: 'zh-CN', getSystem: async () => 'zh-CN' },
+  agentAuth: {
+    status: async () => authStatus(),
+    start: async (input) => {
+      const phase = input?.phase ?? (authState.appConfigured ? 'user_auth' : 'app_setup')
+      authChallenge = mkChallenge(phase)
+      authEmit({ type: 'environment.changed', status: authStatus() })
+      return authChallenge
+    },
+    resume: async () => authStatus(),
+    cancel: async (id) => {
+      if (authChallenge && (!id || authChallenge.id === id)) {
+        authChallenge = null
+        authEmit({ type: 'challenge.removed', challengeId: id })
+        authEmit({ type: 'environment.changed', status: authStatus() })
+      }
+      return authStatus()
+    },
+    disconnect: async (provider) => {
+      if (provider !== 'feishu') throw new Error('仅支持飞书')
+      authState = { appConfigured: false, userAuthorized: false, userName: null }
+      authChallenge = null
+      authEmit({ type: 'environment.changed', status: authStatus() })
+      return authStatus()
+    },
+    onEvent: (cb) => { authSubs.add(cb); return () => authSubs.delete(cb) },
+  },
   sources: {
     list: async () => sources,
     listFiles: async (id) => id === 'src-git' ? [file({ id: 'f2', name: 'a.ts', relativePath: 'src/a.ts', originalPath: 'repo/src/a.ts', extension: '.ts', status: 'updated', versionCount: 5 })] : [file({}), file({ id: 'f3', name: 'b.md', relativePath: 'notes/b.md', originalPath: '/data/notes/b.md', status: 'added', versionCount: 1 })],
@@ -199,6 +263,8 @@ const base = {
   nangoConnector: { status: async () => ({ enabled: true, connections: [
     { id: 'conn-gmail', provider: 'gmail', service: 'gmail', connectionName: 'work@gmail.com', status: 'active', updatedAt: '2026-09-04T10:00:00.000Z' },
     { id: 'conn-notion', provider: 'notion', service: 'notion', connectionName: '我的 Notion 工作区', status: 'active', updatedAt: '2026-09-08T09:30:00.000Z' },
+    // 存量 oo 飞书连接：验证换轨后数据源页彻底隐藏。
+    { id: 'conn-feishu-oo', provider: 'feishu', service: 'feishu', connectionName: '公司飞书', status: 'active', updatedAt: '2026-09-08T09:30:00.000Z' },
   ], scopes: [
     { id: 'sc-1', connectionId: 'conn-gmail', provider: 'gmail', label: 'INBOX', state: 'idle', updatedAt: '2026-09-04T10:00:00.000Z' },
   ], runs: [

@@ -1,4 +1,4 @@
-import { ArrowLeftRight, ExternalLink, Eraser, Eye, File, FolderOpen, Import, Pause, Play, RefreshCw, Trash2, Unplug, Wrench, X } from 'lucide-react'
+import { ArrowLeftRight, ExternalLink, Eraser, Eye, File, FolderOpen, Import, LogOut, Pause, Play, RefreshCw, Trash2, Unplug, Wrench, X } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 
@@ -14,6 +14,7 @@ import { useLocale, type Translate } from '@/i18n/LocaleContext'
 export type DrawerTarget =
   | { type: 'local'; source: DataSourceSummary }
   | { type: 'obsidian' }
+  | { type: 'feishu' }
   | { type: 'cloud'; connection: ConnectorConnection }
 
 /** connector 状态/模式 → 既有 i18n key。 */
@@ -126,6 +127,9 @@ export function SourceDrawer({
   onToggleEnabled,
   onPurge,
   onReplaceAccount,
+  feishuUserName,
+  onFeishuReplace,
+  onFeishuDisconnect,
 }: {
   target: DrawerTarget
   open: boolean
@@ -154,6 +158,10 @@ export function SourceDrawer({
   onPurge: (connection: ConnectorConnection) => void
   /** 云抽屉：重新授权同一 provider（单槽位:新账号顶替现有连接）；缺省不显示。 */
   onReplaceAccount?: () => void
+  /** 飞书 lark-cli 授权抽屉：账号信息与换绑/断开（不走 oo 连接器）。 */
+  feishuUserName?: string | null
+  onFeishuReplace?: () => void
+  onFeishuDisconnect?: () => void
 }) {
   const { locale, t } = useLocale()
   const logo = (kind: SourceIconKind, glyph = false) => (
@@ -291,6 +299,26 @@ export function SourceDrawer({
             </div>
           ))}
         </div>
+      </>
+    )
+  }
+
+  if (target.type === 'feishu') {
+    const busy = busyId === 'feishu'
+    content = (
+      <>
+        {head(
+          logo('feishu'),
+          t('surface:agentAuthCard.feishu'),
+          feishuUserName ?? t('surface:sources.feishuUnnamedAccount'),
+          <StatePill tone="ok" label={t('surface:connector.active')} />,
+          onFeishuReplace
+            ? <button type="button" className="src-mini-btn primary" disabled={busy} onClick={onFeishuReplace}><ArrowLeftRight aria-hidden="true" strokeWidth={1.8} />{t('surface:sources.replaceAccount')}</button>
+            : null,
+          onFeishuDisconnect
+            ? <button type="button" className="src-mini-btn danger" disabled={busy} onClick={onFeishuDisconnect}><LogOut aria-hidden="true" strokeWidth={1.8} />{t('surface:sources.feishuDisconnect')}</button>
+            : null,
+        )}
       </>
     )
   }

@@ -22,10 +22,11 @@ import { MarkdownSourceDialog } from './sources/MarkdownSourceDialog'
 import { MarkdownPreviewDialog } from './sources/MarkdownPreviewDialog'
 import { ObsidianImportDialog } from './sources/ObsidianImportDialog'
 import { describeSync } from './sources/sourceFormatters'
-import { CloudSourceCard, LocalSourceCard, ObsidianSourceCard } from './sources/SourceCard'
+import { CloudSourceCard, FeishuAuthCard, LocalSourceCard, ObsidianSourceCard } from './sources/SourceCard'
 import { SourceDrawer, type DrawerTarget } from './sources/SourceDrawer'
 import { IngestFeed } from './sources/IngestFeed'
 import { SourceIcon } from './sources/SourceIcon'
+import { AgentAuthDialog, useAgentAuthStatus } from '@/components/agent/AgentAuthChallengeCard'
 import { PRODUCT_NAME } from '@/components/ui/brand'
 import { useLocale } from '@/i18n/LocaleContext'
 import './SourcesPage.css'
@@ -94,11 +95,15 @@ export function SourcesPage() {
   const obsidianDiscoveryRequestRef = useRef(0)
   const obsidianCandidateIdsRef = useRef(new Set<string>())
   const connectorsEnabled = connectorStatus?.enabled ?? false
-  const connections = connectorStatus?.connections ?? []
+  // 飞书授权已换轨 lark-cli：存量 oo 飞书连接在数据源页彻底隐藏（导入链路换轨前飞书导入暂不可用）。
+  const connections = (connectorStatus?.connections ?? []).filter((item) => item.provider !== 'feishu')
   const scopes = connectorStatus?.scopes ?? []
   const runs = connectorStatus?.runs ?? []
+  const agentAuthStatus = useAgentAuthStatus()
+  const feishuAuthorized = agentAuthStatus?.feishu.userAuthorized === true
   // 已连接的 provider 集合：待连接区隐藏这些条目（OAuth 单槽位,换账号从已连接卡片的「更换账号」进）
   const connectedProviders = new Set(connections.map((item) => item.provider))
+  if (feishuAuthorized) connectedProviders.add('feishu')
 
   // 云服务卡与抽屉的数据源：页面级轮询。
   // docs 类连接统计走导入列举缓存（cachedOnly 秒回，不拉远端）；连接变化时重算。
@@ -341,6 +346,31 @@ export function SourcesPage() {
       }
     } catch (error) {
       setMessage(error instanceof Error ? error.message : t('surface:sources.failedToOpenTheAuthorizationPage'))
+    }
+  }
+
+  // 飞书（lark-cli 本地授权）：点击即发起,阶段由主进程按授权环境自动选择,
+  // 授权链接一到自动打开浏览器。
+  const connectFeishuLark = async () => {
+    setMessage(null)
+    try {
+      await window.nxcore?.agentAuth?.start({ provider: 'feishu' })
+      setMessage(t('surface:sources.theAuthorizationPageIsOpenCompleteAuthorizationIn'))
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : t('surface:sources.failedToOpenTheAuthorizationPage'))
+    }
+  }
+
+  const disconnectFeishu = async () => {
+    setBusyId('feishu')
+    setMessage(null)
+    try {
+      await window.nxcore?.agentAuth?.disconnect('feishu')
+      setMessage(t('surface:sources.feishuDisconnected'))
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : t('surface:sources.feishuDisconnectFailed'))
+    } finally {
+      setBusyId(null)
     }
   }
 
@@ -605,12 +635,13 @@ export function SourcesPage() {
   useEffect(() => {
     if (drawer?.type === 'local' && !drawerSource) setDrawer(null)
     if (drawer?.type === 'cloud' && !connections.some((item) => item.id === drawer.connection.id)) setDrawer(null)
-  }, [connections, drawer, drawerSource])
+    if (drawer?.type === 'feishu' && !feishuAuthorized) setDrawer(null)
+  }, [connections, drawer, drawerSource, feishuAuthorized])
 
   // ── 脉搏行（全部由现有状态计算）──
   const obsidianPending = obsidianCandidates.filter((candidate) => !candidate.mountedVaultId)
   const hasObsidian = vaults.length + obsidianPending.length > 0
-  const sourceCount = sources.length + (hasObsidian ? 1 : 0) + connections.length
+  const sourceCount = sources.length + (hasObsidian ? 1 : 0) + connections.length + (feishuAuthorized ? 1 : 0)
   const attentionCount
     = sources.filter((source) => source.status === 'error' || source.status === 'disconnected').length
     + connections.filter((connection) => connection.status === 'error').length
@@ -652,6 +683,7 @@ export function SourcesPage() {
       )}
       {!api ? <div className="source-notice"><HardDrive aria-hidden="true" strokeWidth={1.8} /><div><strong>{t('surface:sources.connectLocalFoldersInTheDesktopApp')}</strong><span>{t('surface:sources.theWebVersionNeverRequestsOrReadsLocal')}</span></div></div> : null}
       {deletionProgress ? <div className="source-feedback source-delete-progress" role="status"><div className="source-delete-progress-copy"><strong>{deletionProgress.message}</strong><span className="source-delete-progress-track"><span style={{ width: `${deletionProgress.percent}%` }} /></span></div><b>{deletionProgress.percent}%</b></div> : message ? <div className="source-feedback" role="status">{message}</div> : null}
+      <AgentAuthDialog challenge={agentAuthStatus?.activeChallenge ?? null} />
       {previewError ? <div className="source-feedback" role="alert">{previewError}</div> : null}
       {/* 二级页正文（主页分区在下方 {!subPage && …} 中整体让位） */}
       {subPage === 'ingest' ? (
@@ -676,6 +708,8 @@ export function SourcesPage() {
             providers={connectorProviders}
             configuredProviders={configuredProviders}
             onWebcalSubscription={() => setWebcalOpen(true)}
+            onFeishuLarkAuth={window.nxcore?.agentAuth ? () => void connectFeishuLark() : undefined}
+            feishuConnected={feishuAuthorized}
           />
         </section>
       ) : null}
@@ -700,12 +734,14 @@ export function SourcesPage() {
               providers={connectorProviders}
               configuredProviders={configuredProviders}
               onWebcalSubscription={() => setWebcalOpen(true)}
+              onFeishuLarkAuth={window.nxcore?.agentAuth ? () => void connectFeishuLark() : undefined}
+              feishuConnected={feishuAuthorized}
             />
           </section>
           {loading ? <div className="src-feed-empty" role="status">{t('surface:sourceTable.loadingSources')}</div> : null}
-          {!loading && (sources.length > 0 || hasObsidian || connections.length > 0) ? (
+          {!loading && (sources.length > 0 || hasObsidian || connections.length > 0 || feishuAuthorized) ? (
             <section className="src-zone">
-              <header className="src-zone-head"><h2>{t('surface:sources.connectedSources')}</h2><small>{sources.length + (hasObsidian ? 1 : 0) + connections.length}</small></header>
+              <header className="src-zone-head"><h2>{t('surface:sources.connectedSources')}</h2><small>{sources.length + (hasObsidian ? 1 : 0) + connections.length + (feishuAuthorized ? 1 : 0)}</small></header>
               <div className="src-cards">
                 {sources.map((source) => (
                   <LocalSourceCard key={source.id} source={source} busy={busyId === source.id} onOpen={() => setDrawer({ type: 'local', source })} onSync={() => void runAction(source.id, async () => { const result = await api.sync(source.id); setMessage(describeSync(result, t)) })} onTogglePaused={() => void runAction(source.id, () => api.setPaused(source.id, source.status === 'connected'))} onClear={() => clearSourceData(source)} />
@@ -720,6 +756,15 @@ export function SourcesPage() {
                     <CloudSourceCard key={connection.id} connection={connection} scopes={connectionScopes} runs={runs.filter((run) => connectionScopeIds.has(run.scopeId))} totals={recordTotals[connection.id]} docs={connection.provider === 'feishu' || connection.provider === 'notion' ? importSummaries[connection.provider as 'feishu' | 'notion'] : undefined} busy={cloudBusyId === connection.id} onOpen={() => setDrawer({ type: 'cloud', connection })} onSync={() => syncConnection(connection)} onToggleEnabled={() => toggleConnectionEnabled(connection)} onPurge={() => purgeConnectionData(connection)} onReplaceAccount={isWebcalConnection(connection) ? undefined : () => replaceAccountFor(connection)} />
                   )
                 })}
+                {feishuAuthorized ? (
+                  <FeishuAuthCard
+                    userName={agentAuthStatus?.feishu.userName ?? null}
+                    busy={busyId === 'feishu'}
+                    onOpen={() => setDrawer({ type: 'feishu' })}
+                    onReplaceAccount={() => void connectFeishuLark()}
+                    onDisconnect={() => void disconnectFeishu()}
+                  />
+                ) : null}
               </div>
             </section>
           ) : null}
@@ -740,7 +785,7 @@ export function SourcesPage() {
           scopes={drawerScopes}
           runs={drawerRuns}
           totals={drawer.type === 'cloud' ? recordTotals[drawer.connection.id] : undefined}
-          busyId={drawer.type === 'cloud' ? cloudBusyId : drawerSource ? busyId : null}
+          busyId={drawer.type === 'cloud' ? cloudBusyId : drawer.type === 'feishu' || drawerSource ? busyId : null}
           onClose={() => setDrawer(null)}
           onSync={() => { if (drawerSource && api) void runAction(drawerSource.id, async () => { const result = await api.sync(drawerSource.id); setMessage(describeSync(result, t)) }) }}
           onTogglePaused={() => { if (drawerSource && api) void runAction(drawerSource.id, () => api.setPaused(drawerSource.id, drawerSource.status === 'connected')) }}
@@ -756,6 +801,9 @@ export function SourcesPage() {
           onToggleEnabled={(connection) => toggleConnectionEnabled(connection)}
           onPurge={(connection) => purgeConnectionData(connection)}
           onReplaceAccount={drawer.type === 'cloud' && !isWebcalConnection(drawer.connection) ? () => replaceAccountFor(drawer.connection) : undefined}
+          feishuUserName={agentAuthStatus?.feishu.userName ?? null}
+          onFeishuReplace={() => { setDrawer(null); void connectFeishuLark() }}
+          onFeishuDisconnect={() => { setDrawer(null); void disconnectFeishu() }}
         />
       ) : null}
       {evidenceDocument ? <EvidenceViewer evidence={evidenceDocument} activeBlockId={activeEvidenceId} onClose={() => { setEvidenceDocument(null); setActiveEvidenceId(null) }} onShowFile={() => showFile(evidenceDocument.sourceId, evidenceDocument.fileId)} /> : null}

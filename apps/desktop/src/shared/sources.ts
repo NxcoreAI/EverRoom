@@ -911,6 +911,7 @@ export interface NxcoreDesktopApi {
     start(input: AgentAuthStartInput): Promise<DesktopAgentAuthChallenge>
     resume(challengeId: string): Promise<DesktopAgentAuthChallenge | null>
     cancel(challengeId?: string): Promise<DesktopAgentAuthChallenge | null>
+    disconnect(provider: 'feishu'): Promise<AgentAuthEnvironmentStatus>
     onEvent(listener: (frame: AgentAuthEventFrame) => void): () => void
   }
   externalDocuments: {

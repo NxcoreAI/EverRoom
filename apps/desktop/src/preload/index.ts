@@ -317,6 +317,7 @@ const api: NxcoreDesktopApi = {
     start: (input) => invoke('agent-auth:start', input),
     resume: (challengeId) => invokeQuietly('agent-auth:resume', challengeId),
     cancel: (challengeId) => invokeQuietly('agent-auth:cancel', challengeId),
+    disconnect: (provider: 'feishu') => invoke('agent-auth:disconnect', provider),
     onEvent: (listener) => {
       const handleEvent = (_event: Electron.IpcRendererEvent, frame: Parameters<typeof listener>[0]) => {
         listener(frame)
