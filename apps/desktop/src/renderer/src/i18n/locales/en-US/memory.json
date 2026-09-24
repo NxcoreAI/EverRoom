@@ -299,6 +299,8 @@
   "pipeline.newThisRound": "New this round: {summary}",
   "pipeline.persistedSummary": "{atomic} atomic memories · {scenes} scenes saved",
   "pipeline.upToDate": "Memory is up to date",
+  "pipeline.pausedState": "Paused",
+  "pipeline.pausedHint": "Memory engine paused — new content is not being remembered. Resume from the Memory page",
   "pipeline.statusLabel": "Memory processing",
   "pipeline.memory": "Memory",
   "pipeline.viewMemory": "Open memory",

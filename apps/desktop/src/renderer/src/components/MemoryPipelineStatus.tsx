@@ -1,4 +1,4 @@
-import { Activity, Check, CircleAlert, Loader } from 'lucide-react'
+import { Activity, Check, CircleAlert, Loader, Pause } from 'lucide-react'
 import { createPortal } from 'react-dom'
 import { memo, useCallback, useEffect, useRef, useState, type CSSProperties, type RefObject } from 'react'
 
@@ -7,7 +7,7 @@ import { useLocale, type Translate } from '@/i18n/LocaleContext'
 import type { MemoryOverviewDto } from '../../../shared/memory'
 import './MemoryPipelineStatus.css'
 
-type PipelineState = 'loading' | 'running' | 'queued' | 'idle' | 'unavailable'
+type PipelineState = 'loading' | 'running' | 'queued' | 'idle' | 'paused' | 'unavailable'
 type DeltaLevel = 'l1' | 'l2' | 'l3'
 
 const STATE_ICONS: Record<PipelineState, typeof Activity> = {
@@ -15,8 +15,12 @@ const STATE_ICONS: Record<PipelineState, typeof Activity> = {
   running: Loader,
   queued: Activity,
   idle: Check,
+  paused: Pause,
   unavailable: CircleAlert,
 }
+
+/** 记忆页切换「继续/暂停」后广播（detail: { paused }），指示器立即刷新而非等下轮轮询。 */
+export const MEMORY_PAUSE_EVENT = 'nxcore:memory:pause-changed'
 
 /** 点击后跳转记忆页时要打开的 tab。 */
 const DELTA_TABS: Record<DeltaLevel, string> = {
@@ -185,6 +189,11 @@ function activeLabel(overview: MemoryOverviewDto | null, state: PipelineState): 
 
 function tooltipLines(overview: MemoryOverviewDto | null, state: PipelineState, delta: MemoryDelta | null, t: Translate): string[] {
   if (state === 'unavailable') return [t('memory:pipeline.memoryCoreUnavailable')]
+  if (state === 'paused') {
+    const lines: string[] = [t('memory:pipeline.pausedHint')]
+    if (overview?.l1) lines.push(t('memory:pipeline.persistedSummary', { atomic: overview.l1.total, scenes: overview.l2?.total ?? 0 }))
+    return lines
+  }
   if (state === 'running' || state === 'queued') {
     const running = stageCount(overview, 'l1', 'running') + stageCount(overview, 'l2', 'running') + stageCount(overview, 'l3', 'running')
     const queued = stageCount(overview, 'l1', 'queued') + stageCount(overview, 'l2', 'queued') + stageCount(overview, 'l3', 'queued')
@@ -198,8 +207,10 @@ function tooltipLines(overview: MemoryOverviewDto | null, state: PipelineState, 
   return lines.length > 0 ? lines : [t('memory:pipeline.upToDate')]
 }
 
-export function getPipelineState(overview: MemoryOverviewDto | null, unavailable = false): PipelineState {
-  if (unavailable || !overview) return unavailable ? 'unavailable' : 'loading'
+export function getPipelineState(overview: MemoryOverviewDto | null, unavailable = false, paused = false): PipelineState {
+  if (unavailable) return 'unavailable'
+  if (paused) return 'paused'
+  if (!overview) return 'loading'
   if (!overview.pipeline) return 'unavailable'
   const stages = [overview.pipeline.l1, overview.pipeline.l2, overview.pipeline.l3]
   if (stages.some((stage) => (stage?.running ?? 0) > 0)) return 'running'
@@ -215,6 +226,7 @@ export const MemoryPipelineStatus = memo(function MemoryPipelineStatus({
   const { t } = useLocale()
   const [overview, setOverview] = useState<MemoryOverviewDto | null>(null)
   const [unavailable, setUnavailable] = useState(false)
+  const [paused, setPaused] = useState(false)
   const [delta, setDelta] = useState<MemoryDelta | null>(null)
   const [particleBurst, setParticleBurst] = useState<{ id: number; count: number } | null>(null)
   const particleBurstIdRef = useRef(0)
@@ -260,17 +272,36 @@ export const MemoryPipelineStatus = memo(function MemoryPipelineStatus({
       }
     }
 
+    const refreshPaused = () => {
+      window.nxcore?.ingest?.getPause()
+        .then((state) => { if (!disposed) setPaused(state.paused) })
+        .catch(() => undefined)
+    }
+
     void refresh()
+    refreshPaused()
+    // 记忆页切换暂停后立即刷新（getPause 轮询最長间隔 15s，等轮询会显得迟钝）。
+    const onPauseChanged = (event: Event) => {
+      const value = (event as CustomEvent<{ paused?: boolean }>).detail?.paused
+      if (typeof value === 'boolean') setPaused(value)
+    }
+    window.addEventListener(MEMORY_PAUSE_EVENT, onPauseChanged as EventListener)
+    // 暂停态兜底轮询（跨页面切换、冷启动等场景事件没覆盖到时对齐）。
+    const pausePoll = window.setInterval(refreshPaused, 15_000)
     return () => {
       disposed = true
       window.clearTimeout(timeout)
+      window.clearInterval(pausePoll)
+      window.removeEventListener(MEMORY_PAUSE_EVENT, onPauseChanged as EventListener)
     }
   }, [])
 
-  const state: PipelineState = getPipelineState(overview, unavailable)
+  const state: PipelineState = getPipelineState(overview, unavailable, paused)
   const StatusIcon = STATE_ICONS[state]
   const animated = state === 'running' || state === 'queued'
-  const label = delta ? deltaSummary(delta, t) : activeLabel(overview, state)
+  const label = state === 'paused'
+    ? t('memory:pipeline.pausedState')
+    : delta ? deltaSummary(delta, t) : activeLabel(overview, state)
 
   // 整个状态条：提炼结束后静置 60s（无互动）就整体收起，
   // 等下一轮记忆提炼开始时再出现。
@@ -334,7 +365,7 @@ export const MemoryPipelineStatus = memo(function MemoryPipelineStatus({
           <StatusIcon strokeWidth={1.8} />
         </span>
         <span className="sidebar-memory-pipeline-label">{t('memory:pipeline.memory')}</span>
-        {animated || delta ? (
+        {animated || delta || state === 'paused' ? (
           <span className="sidebar-memory-pipeline-state">{label}</span>
         ) : null}
         {animated ? (

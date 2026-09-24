@@ -31,6 +31,11 @@
   --memory-pipeline-color: #a56b24;
 }
 
+/* 暂停态与记忆页「暂停」按钮同款琥珀，静态展示（不转圈）。 */
+.sidebar-memory-pipeline[data-state='paused'] {
+  --memory-pipeline-color: #b07a1e;
+}
+
 .sidebar-memory-pipeline[data-state='unavailable'] {
   --memory-pipeline-color: #9a6b70;
 }

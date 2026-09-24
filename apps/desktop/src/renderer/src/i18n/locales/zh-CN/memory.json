@@ -299,6 +299,8 @@
   "pipeline.newThisRound": "本轮新增：{summary}",
   "pipeline.persistedSummary": "已沉淀 {atomic} 条原子记忆 · {scenes} 个场景",
   "pipeline.upToDate": "记忆已是最新",
+  "pipeline.pausedState": "已暂停",
+  "pipeline.pausedHint": "记忆引擎已暂停，新内容不再进入记忆库；可在记忆页恢复",
   "pipeline.statusLabel": "记忆提炼",
   "pipeline.memory": "记忆",
   "pipeline.viewMemory": "点击查看记忆",
