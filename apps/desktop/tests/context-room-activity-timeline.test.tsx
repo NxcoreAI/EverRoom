@@ -204,7 +204,6 @@ describe('动态时间轴：排序与真实对象条目', () => {
       typeof node.props?.className === 'string' && node.props.className.includes('context-room-activity-version'))
     expect(versionBadge).toHaveLength(1)
     expect(versionBadge[0].children.join('')).toBe('V2')
-    expect(buttonWithText(docEntry, '变更摘要')).toBeTruthy()
     expect(buttonWithText(docEntry, '查看版本')).toBeTruthy()
   })
 
@@ -243,13 +242,11 @@ describe('动态时间轴：排序与真实对象条目', () => {
     vi.unstubAllGlobals()
   })
 
-  it('文档条目懒加载变更摘要（PRD 6.4：不能只显示"文件已更新"）', async () => {
+  it('文档条目自动加载变更摘要（PRD 6.4：不能只显示"文件已更新"）', async () => {
     const versionChangeSummary = vi.fn().mockResolvedValue({ summary: '新增了天线参数章节' })
     const { renderer } = await renderWithProjection(projectionFixture(), { versionChangeSummary })
-    const docEntry = renderer.root.findAllByType('li')[1]
-    await act(async () => {
-      buttonWithText(docEntry, '变更摘要')!.props.onClick()
-    })
+    // 挂载即拉取，无需先点「变更摘要」按钮
+    await act(async () => {})
     expect(versionChangeSummary).toHaveBeenCalledWith('doc-1', 2)
     const summaryNode = renderer.root.findAll((node) =>
       typeof node.props?.className === 'string' && node.props.className.includes('context-room-activity-summary'))
