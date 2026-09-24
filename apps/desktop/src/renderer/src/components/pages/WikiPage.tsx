@@ -6,7 +6,7 @@ import {
   WIKI_CLUSTERS,
 } from '../context-room/ported/components/WikiGraphCanvas'
 import { MarkdownBody, resolveWikiLinkTarget } from '../context-room/ported/components/detail-panels/MarkdownBody'
-import { FOLDER_LABEL_KEYS, WRAPPER_DIR_NAMES, WikiTree } from '../context-room/ported/components/detail-panels/WikiTree'
+import { FOLDER_LABEL_KEYS, WRAPPER_DIR_NAMES, WIKI_TREE_CARET_SLOT, WikiTree } from '../context-room/ported/components/detail-panels/WikiTree'
 import type {
   KnowledgeRoomDto,
   KnowledgeWikiDto,
@@ -45,11 +45,13 @@ function roomDisplayName(room: KnowledgeRoomDto | undefined, wiki: KnowledgeWiki
   return firstLine.length > 18 ? `${firstLine.slice(0, 18)}…` : firstLine
 }
 
-/** overview 正文首段（剥掉 markdown 痕迹）——KS 摘要缺失时侧栏摘要卡的兜底来源。 */
+/** overview 正文首段（剥掉 frontmatter 与 markdown 痕迹）——KS 摘要缺失时侧栏摘要卡的兜底来源。 */
 function firstPlainTextParagraph(markdown: string): string | null {
-  for (const block of markdown.split(/\n\s*\n/)) {
+  // ingest 会把 overview.md 连 YAML frontmatter 一起搬进来；不剥掉的话 --- 头会被压成一行当摘要
+  const body = markdown.replace(/^---\r?\n[\s\S]*?\r?\n---\s*/, '')
+  for (const block of body.split(/\n\s*\n/)) {
     const trimmed = block.trim()
-    if (!trimmed || /^[#>`|]/.test(trimmed)) continue
+    if (!trimmed || /^[#>`|]/.test(trimmed) || /^(-{3,}|\*{3,}|_{3,})$/.test(trimmed)) continue
     const text = trimmed
       .replace(/\s*\n\s*/g, '')
       .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
@@ -573,6 +575,7 @@ export function WikiPage() {
                                     title={page.description || page.title || page.path}
                                     onClick={() => openPage(page)}
                                   >
+                                    <span aria-hidden="true" style={{ width: WIKI_TREE_CARET_SLOT, flex: '0 0 auto' }} />
                                     <BookOpenText aria-hidden="true" strokeWidth={1.7} />
                                     <span className="context-room-wiki-tree-name">{page.title || page.path}</span>
                                   </button>
