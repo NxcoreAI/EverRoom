@@ -159,8 +159,35 @@ export function IdeasBoardPane({
   useEffect(() => {
     if (mode !== 'wander' || !wanderResult || walkLog.length === 0 || extending) return;
     if (candidateHops.length >= 2) return;
+    console.info(`[漫游] 候选不足（${candidateHops.length} 条），从当前驻足续走展开…`);
     void extendWalk(walkLog[walkLog.length - 1].nodeRef);
   }, [mode, wanderResult, walkLog, candidateHops, extending, extendWalk]);
+
+  // 漫游诊断日志：每到一站（含续走合并后的重算）打印完整链路与全部候选——
+  // ✓=进界面前 3，其余是排序后被截掉的；尽头/桥接均带标记。控制台输出
+  // 直接复制出来即可分析「走是能走、但没启发」时到底在给用户看什么。
+  useEffect(() => {
+    if (mode !== 'wander' || !wanderResult || walkLog.length === 0) return;
+    const nodeOf = new Map(wanderResult.nodes.map((node) => [node.id, node]));
+    const labelOf = (ref: string) => nodeOf.get(ref)?.label ?? ref;
+    const stations = walkLog.map((station, index) => {
+      const node = nodeOf.get(station.nodeRef);
+      const via = station.viaRelation
+        ? `（沿「${station.viaRelation}」${station.bridgeRoom ? `，桥接:${station.bridgeRoom}` : ''}）`
+        : '';
+      return `${index === 0 ? '★' : '→'} [${node?.nodeType ?? '?'}] ${labelOf(station.nodeRef)}${via}`;
+    });
+    const options = nextHops(wanderResult, room.id, walkLog, 12)
+      .map((hop, index) => {
+        const picked = candidateHops.some((item) => item.edgeId === hop.edgeId) ? '✓' : '·';
+        const bridge = hop.bridgeRoom ? `，桥接:${hop.bridgeRoom}` : '';
+        return `  ${index + 1} ${picked} [${hop.nodeType}] ${labelOf(hop.nodeRef)}（沿「${hop.viaRelation}」${bridge}）${hop.deadEnd ? '【尽头】' : ''}`;
+      })
+      .join('\n');
+    console.info(
+      `[漫游] 第 ${walkLog.length} 站 / 切片 ${wanderResult.nodes.length} 节点\n${stations.join('\n')}\n[漫游] 候选（✓=进界面前3）：\n${options || '  （无候选——等待续走展开）'}`,
+    );
+  }, [mode, wanderResult, walkLog, room.id, candidateHops]);
 
   const switchMode = (next: EmergenceMode) => {
     if (next === mode) return;
