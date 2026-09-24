@@ -49,6 +49,7 @@ export function WalkJourneyCanvas({
   roomId,
   log,
   cards,
+  pending = false,
   onStep,
   onBackTo,
   onWalkAgain,
@@ -57,6 +58,8 @@ export function WalkJourneyCanvas({
   roomId: string;
   log: WalkStation[];
   cards: EmergenceCardDto[];
+  /** 续走展开中：不亮尽头卡，右列给「正在展开」占位。 */
+  pending?: boolean;
   onStep: (nodeRef: string) => void;
   onBackTo: (index: number) => void;
   onWalkAgain: () => void;
@@ -334,17 +337,19 @@ export function WalkJourneyCanvas({
     const card = cardByNode.get(id) ?? null;
     const label = node?.label ?? id;
     const bridgeRoom = station?.bridgeRoom ?? null;
+    const deadEnd = state === 'next' && (station as WalkHop | null)?.deadEnd === true;
     const inner = (
       <>
         <header>
           <span className="eg-walk-kind">{node ? kindLabel(node.nodeType) : ''}</span>
           {bridgeRoom ? <span className="eg-walk-bridge">{bridgeRoom}</span> : null}
+          {deadEnd ? <span className="eg-walk-dead">{t('contextRoom:emergence.wanderDeadEnd')}</span> : null}
         </header>
         <strong>{label}</strong>
         {card ? <p>{card.summary}</p> : null}
       </>
     );
-    const className = `eg-walk is-${state}${ghost ? ' is-exiting' : ''}`;
+    const className = `eg-walk is-${state}${deadEnd ? ' is-dead' : ''}${ghost ? ' is-exiting' : ''}`;
     const style = { left: pos.x, top: pos.y, width: size.width, height: size.height };
     if (state === 'current') {
       return (
@@ -372,12 +377,15 @@ export function WalkJourneyCanvas({
   };
 
   const currentPos = layout.positions.get(currentRef)!;
-  const stuckPos = layout.positions.size > 0 && hops.length === 0
+  // 右列空槽：续走展开中给「正在展开」占位（不亮尽头卡）；确定无下一跳才亮尽头卡。
+  const emptySlotPos = layout.positions.size > 0 && hops.length === 0
     ? {
         x: NODE_SIZES.walkCurrent.width + GAPS.walkH,
         y: (NODE_SIZES.walkCurrent.height - NODE_SIZES.walkNext.height) / 2,
       }
     : null;
+  const pendingSlot = pending && emptySlotPos;
+  const stuckPos = !pending && emptySlotPos;
 
   const exitNodes = exiting.filter((entry): entry is ExitNodeEntry => entry.kind === 'node');
   const exitEdges = exiting.filter((entry): entry is ExitEdgeEntry => entry.kind === 'edge');
@@ -427,6 +435,11 @@ export function WalkJourneyCanvas({
               <RotateCcw aria-hidden="true" />
               {t('contextRoom:emergence.wanderAgain')}
             </button>
+          </div>
+        ) : null}
+        {pendingSlot ? (
+          <div className="eg-walk is-pending" data-eg-node="" style={{ left: pendingSlot.x, top: pendingSlot.y, width: NODE_SIZES.walkNext.width, height: NODE_SIZES.walkNext.height }}>
+            <p>{t('contextRoom:emergence.wanderExtending')}</p>
           </div>
         ) : null}
         {exiting.length > 0 ? (

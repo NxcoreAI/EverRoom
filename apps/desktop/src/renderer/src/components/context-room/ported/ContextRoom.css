@@ -14924,6 +14924,48 @@ button.eg-walk {
   line-height: 1.5;
 }
 
+.eg-walk-dead {
+  padding: 0 5px;
+  border: 1px solid var(--cr-border-strong);
+  border-radius: 999px;
+  color: var(--cr-tertiary);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+button.eg-walk.is-dead {
+  opacity: 0.62;
+}
+
+button.eg-walk.is-dead strong {
+  color: var(--cr-tertiary);
+}
+
+.eg-walk.is-pending {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed var(--cr-border-strong);
+  background: none;
+  animation: eg-walk-pending-pulse 1.2s ease-in-out infinite;
+}
+
+.eg-walk.is-pending p {
+  -webkit-line-clamp: 2;
+}
+
+@keyframes eg-walk-pending-pulse {
+
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+
+  50% {
+    opacity: 1;
+  }
+}
+
 .eg-walk strong {
   display: -webkit-box;
   overflow: hidden;

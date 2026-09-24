@@ -18,6 +18,7 @@ import {
 import type { ContextRoomService } from "../context-rooms/service.js";
 import type { KnowledgeService } from "./service.js";
 import {
+  attachRoomContent,
   buildWanderProjection,
   WANDER_DEFAULT_CARDS,
   type EmergenceProjectionResult,
@@ -64,6 +65,12 @@ const MAX_DOCUMENT_NODES = 80;
 const MAX_BLOCK_REFERENCE_EDGES = 60;
 const MAX_WIKI_PAGE_NODES = 60;
 const MAX_WIKI_PAGE_LINKS = 80;
+/** 邻 Room 展开规模：前几个高分关系 Room 各展开一层内容，桥过去有下文。 */
+const MAX_NEIGHBOR_EXPAND_ROOMS = 3;
+const NEIGHBOR_ENTITY_NODES = 6;
+const NEIGHBOR_FACT_NODES = 6;
+const NEIGHBOR_DOCUMENT_NODES = 6;
+const NEIGHBOR_REFERENCE_EDGES = 30;
 
 type AppliedResult = Awaited<ReturnType<ContextRoomService["roomAppliedEntities"]>>;
 
@@ -173,39 +180,9 @@ export class EmergenceService {
       edges.push({ from, to, relationType, edgeLevel, confidence, weight });
     };
 
-    // ① 实体与事实图谱：Room →提及→ 实体 →事实→ 事实
+    // ①+② 实体与事实 / 内容建联：Room 内容星群统一挂载（attachRoomContent——
+    //     事实挂全部涉事实实体、「关系」型事实补实体间直达边，织网避免星形断头）
     const applied = this.loadApplied(roomId);
-    for (const entity of [...applied.entities].sort((a, b) => b.salience - a.salience).slice(0, MAX_ENTITY_NODES)) {
-      const ref = `entity:${entity.entityId}`;
-      nodes.set(ref, {
-        id: ref,
-        nodeType: "entity",
-        label: entity.name,
-        sourceGraph: "entityFacts",
-        roomRef: { id: roomId, title: roomTitle },
-        updatedAt: entity.lastMentionAt,
-        groupKey: `entity:${entity.name}`,
-      });
-      link(roomRef, ref, "提及", "original", entity.salience);
-    }
-    const knownEntities = new Set(applied.entities.map((entity) => entity.entityId));
-    for (const fact of applied.facts.slice(0, MAX_FACT_NODES)) {
-      const ref = `fact:${fact.factId}`;
-      nodes.set(ref, {
-        id: ref,
-        nodeType: "fact",
-        label: fact.content.slice(0, 60),
-        sourceGraph: "entityFacts",
-        roomRef: { id: roomId, title: roomTitle },
-        updatedAt: fact.lastMentionAt,
-        groupKey: `fact:${fact.content.slice(0, 24)}`,
-      });
-      const owner = fact.entityIds.find((id) => knownEntities.has(id));
-      if (owner) link(`entity:${owner}`, ref, "事实", "original", Math.min(1, fact.sourceCount / 3));
-      else link(roomRef, ref, "事实", "original", Math.min(1, fact.sourceCount / 3));
-    }
-
-    // ② 内容建联：Room →收录→ 文档；文档 ↔引用↔ 文档（块引用投影）
     const docRows = this.deps.db
       .select({
         id: documents.id,
@@ -218,42 +195,38 @@ export class EmergenceService {
       .orderBy(desc(documents.updatedAt))
       .limit(MAX_DOCUMENT_NODES)
       .all();
-    for (const doc of docRows) {
-      const ref = this.documentNodeRef(doc.id);
-      nodes.set(ref, {
-        id: ref,
-        nodeType: "document",
-        label: doc.title,
-        sourceGraph: "linkGraph",
-        roomRef: { id: roomId, title: roomTitle },
-        updatedAt: doc.updatedAt instanceof Date ? doc.updatedAt.toISOString() : null,
-        groupKey: "document",
-      });
-      link(roomRef, ref, "收录", "original", null);
-    }
     const docIds = docRows.map((doc) => doc.id);
-    if (docIds.length > 0) {
-      const referenceRows = this.deps.db
-        .select({
-          sourceDocumentId: documentBlockReferences.sourceDocumentId,
-          targetDocumentId: documentBlockReferences.targetDocumentId,
-        })
-        .from(documentBlockReferences)
-        .where(or(
-          inArray(documentBlockReferences.sourceDocumentId, docIds),
-          inArray(documentBlockReferences.targetDocumentId, docIds),
-        ))
-        .limit(MAX_BLOCK_REFERENCE_EDGES)
-        .all();
-      const seenPairs = new Set<string>();
-      for (const row of referenceRows) {
-        const pairKey = [row.sourceDocumentId, row.targetDocumentId].sort().join("\n");
-        if (seenPairs.has(pairKey)) continue;
-        seenPairs.add(pairKey);
-        if (!nodes.has(this.documentNodeRef(row.sourceDocumentId)) || !nodes.has(this.documentNodeRef(row.targetDocumentId))) continue;
-        link(this.documentNodeRef(row.sourceDocumentId), this.documentNodeRef(row.targetDocumentId), "引用", "original", null);
-      }
-    }
+    const referenceRows = docIds.length > 0
+      ? this.deps.db
+          .select({
+            sourceDocumentId: documentBlockReferences.sourceDocumentId,
+            targetDocumentId: documentBlockReferences.targetDocumentId,
+          })
+          .from(documentBlockReferences)
+          .where(or(
+            inArray(documentBlockReferences.sourceDocumentId, docIds),
+            inArray(documentBlockReferences.targetDocumentId, docIds),
+          ))
+          .limit(MAX_BLOCK_REFERENCE_EDGES)
+          .all()
+      : [];
+    attachRoomContent({
+      nodes,
+      edges,
+      ownerRoomRef: roomRef,
+      room: { id: roomId, title: roomTitle },
+      entities: applied.entities,
+      facts: applied.facts,
+      documents: docRows.map((doc) => ({
+        id: doc.id,
+        title: doc.title,
+        updatedAt: doc.updatedAt instanceof Date ? doc.updatedAt.toISOString() : null,
+      })),
+      references: referenceRows,
+      entityLimit: MAX_ENTITY_NODES,
+      factLimit: MAX_FACT_NODES,
+      documentLimit: MAX_DOCUMENT_NODES,
+    });
 
     // ③ LLM Wiki：Room →收录于Wiki→ 知识页 ↔内链↔ 知识页
     try {
@@ -280,13 +253,21 @@ export class EmergenceService {
       // wiki 是增强视图：不可达不阻塞涌现
     }
 
-    // ④ Room 关系图谱：Room ↔关系↔ 关联 Room（跨 Room 桥接边加权）
+    // ④ Room 关系图谱：Room ↔关系↔ 关联 Room（跨 Room 桥接边加权）；
+    //    关系分最高的前几个邻 Room 展开一层内容——桥过去是那个 Room 的
+    //    实体/事实/文档，不再是点进去就断头的空壳节点
     try {
       const roomGraph = this.deps.knowledge.roomGraph("active");
       const nodeTitle = new Map(roomGraph.nodes.map((node) => [node.id, node.title]));
-      for (const edge of roomGraph.edges) {
-        const other = edge.sourceRoomId === roomId ? edge.targetRoomId : edge.targetRoomId === roomId ? edge.sourceRoomId : null;
-        if (!other || !nodeTitle.has(other)) continue;
+      const neighbors = roomGraph.edges
+        .map((edge) => {
+          const other = edge.sourceRoomId === roomId ? edge.targetRoomId : edge.targetRoomId === roomId ? edge.sourceRoomId : null;
+          return other && nodeTitle.has(other) ? { other, edge } : null;
+        })
+        .filter((item): item is { other: string; edge: (typeof roomGraph.edges)[number] } => item !== null)
+        .sort((a, b) => (b.edge.score ?? 0) - (a.edge.score ?? 0));
+      const expanded = new Set<string>();
+      for (const { other, edge } of neighbors) {
         const otherRef = this.roomNodeRef(other);
         if (!nodes.has(otherRef)) {
           nodes.set(otherRef, {
@@ -301,11 +282,82 @@ export class EmergenceService {
         }
         const weight = edge.strength === "strong" ? 1.6 : edge.strength === "medium" ? 1.3 : 1;
         link(roomRef, otherRef, edge.label ?? edge.type, "original", edge.score, weight);
+        if (expanded.size >= MAX_NEIGHBOR_EXPAND_ROOMS || expanded.has(other)) continue;
+        expanded.add(other);
+        this.attachNeighborRoom(nodes, edges, other, nodeTitle.get(other)!, otherRef);
       }
     } catch {
       // 关系索引降级时游走继续（PRD 15：显示已完成部分）
     }
 
-    return { nodes, edges };
+    // 出口去重：主 Room 与邻 Room 展开可能命中同一条文档引用对，同向同关系只留一条
+    const seenEdgeKeys = new Set<string>();
+    const dedupedEdges = edges.filter((edge) => {
+      const key = `${edge.from}\n${edge.to}\n${edge.relationType}`;
+      if (seenEdgeKeys.has(key)) return false;
+      seenEdgeKeys.add(key);
+      return true;
+    });
+    return { nodes, edges: dedupedEdges };
+  }
+
+  /** 邻 Room 一层展开：显著实体/事实/最新文档各取前几个挂到邻 Room 节点下（断点兜底，失败即跳过）。 */
+  private attachNeighborRoom(
+    nodes: Map<string, ProjectionGraphNode>,
+    edges: ProjectionGraphEdge[],
+    roomId: string,
+    roomTitle: string,
+    roomRef: string,
+  ): void {
+    let applied: AppliedResult;
+    try {
+      applied = this.deps.contextRooms.roomAppliedEntities(roomId);
+    } catch {
+      return;
+    }
+    const docRows = this.deps.db
+      .select({
+        id: documents.id,
+        title: documents.title,
+        updatedAt: documents.updatedAt,
+      })
+      .from(documents)
+      .innerJoin(roomDocumentLinks, eq(roomDocumentLinks.documentId, documents.id))
+      .where(and(eq(roomDocumentLinks.roomId, roomId), isNull(documents.deletedAt)))
+      .orderBy(desc(documents.updatedAt))
+      .limit(NEIGHBOR_DOCUMENT_NODES)
+      .all();
+    const docIds = docRows.map((doc) => doc.id);
+    const referenceRows = docIds.length > 0
+      ? this.deps.db
+          .select({
+            sourceDocumentId: documentBlockReferences.sourceDocumentId,
+            targetDocumentId: documentBlockReferences.targetDocumentId,
+          })
+          .from(documentBlockReferences)
+          .where(or(
+            inArray(documentBlockReferences.sourceDocumentId, docIds),
+            inArray(documentBlockReferences.targetDocumentId, docIds),
+          ))
+          .limit(NEIGHBOR_REFERENCE_EDGES)
+          .all()
+      : [];
+    attachRoomContent({
+      nodes,
+      edges,
+      ownerRoomRef: roomRef,
+      room: { id: roomId, title: roomTitle },
+      entities: applied.entities,
+      facts: applied.facts,
+      documents: docRows.map((doc) => ({
+        id: doc.id,
+        title: doc.title,
+        updatedAt: doc.updatedAt instanceof Date ? doc.updatedAt.toISOString() : null,
+      })),
+      references: referenceRows,
+      entityLimit: NEIGHBOR_ENTITY_NODES,
+      factLimit: NEIGHBOR_FACT_NODES,
+      documentLimit: NEIGHBOR_DOCUMENT_NODES,
+    });
   }
 }
