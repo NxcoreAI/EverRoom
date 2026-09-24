@@ -127,6 +127,9 @@ describe('SaasClient 会话恢复（OIDC 响应竞态 / refresh 失效清理）'
         // SaaS 登录 POST 挂起：模拟用户在浏览器耗满 3 分钟后服务端响应才回来。
         return new Promise<{ status: number; data: unknown }>((resolve) => { resolveLogtoPost = resolve })
       }
+      // status() 会重跑会话恢复（initialize 记忆清空后拿存量 token 再 refresh）：
+      // refresh 必须回登录形状，否则恢复失败进入 2 秒重试睡眠，假时钟下无人推进。
+      if (url.includes('/app/auth/refresh')) return { status: 200, data: loginOutcome('refresh-new') }
       return okResponse
     })
     expect(client.handleOidcCallback(`everroom://auth/callback?code=auth-code&state=${state}`)).toBe('accepted')
@@ -222,6 +225,8 @@ describe('SaasClient 会话恢复（OIDC 响应竞态 / refresh 失效清理）'
     http.request.mockImplementation(async (config: unknown) => {
       const url = String((config as { url?: string })?.url ?? '')
       if (url.includes('/app/auth/oidc/logto')) return { status: 201, data: loginOutcome('refresh-1') }
+      // status() 重跑会话恢复时 refresh 回登录形状（与登录同一会话族）。
+      if (url.includes('/app/auth/refresh')) return { status: 200, data: loginOutcome('refresh-1') }
       return okResponse
     })
     expect(client.handleOidcCallback(`everroom://auth/callback?code=auth-code&state=${state}`)).toBe('accepted')
