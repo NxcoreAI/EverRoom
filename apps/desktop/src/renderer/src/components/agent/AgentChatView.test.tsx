@@ -374,6 +374,68 @@ describe('AgentChatView', () => {
     act(() => renderer.unmount())
   })
 
+  it('renders markdown tables and code spans in assistant replies', async () => {
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(<AgentChatView
+        activeDocument={null}
+        activeRunId={null}
+        agentIdByRun={{}}
+        agentNamesById={{}}
+        activityByRun={{}}
+        availableRooms={[]}
+        composer={null}
+        currentSessionId="session-1"
+        draftHasContent={false}
+        error={null}
+        loading={false}
+        messages={[
+          {
+            id: 'assistant-table',
+            sessionId: 'session-1',
+            runId: 'run-1',
+            role: 'assistant',
+            authorAgentId: 'main',
+            content: [
+              '方案对比如下：',
+              '',
+              '| 技术 | 在什么位置发挥作用 |',
+              '| --- | --- |',
+              '| NFC | 线圈取电 |',
+              '| FOC | 电机换相 |',
+              '',
+              '详见 `驱动方案` 章节。',
+            ].join('\n'),
+            createdAt: '2026-08-20T00:00:01.000Z',
+          },
+        ]}
+        onOpenSessionLink={vi.fn()}
+        onRejectDocumentIntent={vi.fn()}
+        onRetryPrompt={vi.fn()}
+        onSelectDocument={vi.fn()}
+        onSelectPrompt={vi.fn()}
+        onSelectRoom={vi.fn().mockResolvedValue(undefined)}
+        pendingNavigationByRun={{}}
+        runCompletedAtByRun={{ 'run-1': '2026-08-20T00:00:01.000Z' }}
+        runStartedAtByRun={{}}
+        scopeReady
+        sessionLinks={[]}
+        submitting={false}
+        toolCallsByRun={{}}
+      />)
+    })
+
+    const tables = renderer.root.findAllByType('table')
+    expect(tables).toHaveLength(1)
+    const headerCells = tables[0]!.findAllByType('th').map((node) => node.children.join(''))
+    expect(headerCells).toEqual(['技术', '在什么位置发挥作用'])
+    const bodyCells = tables[0]!.findAllByType('td').map((node) => node.children.join(''))
+    expect(bodyCells).toEqual(['NFC', '线圈取电', 'FOC', '电机换相'])
+    const codeSpans = renderer.root.findAllByType('code')
+    expect(codeSpans.map((node) => node.children.join(''))).toContain('驱动方案')
+    act(() => renderer.unmount())
+  })
+
   it('copies a user message from its bubble copy button', async () => {
     writeClipboardTextMock.mockResolvedValue(undefined)
     let renderer!: TestRenderer.ReactTestRenderer
