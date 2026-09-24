@@ -24,12 +24,42 @@ const WIKI_STATUS_LABELS: Record<string, string> = {
   none: 'surface:wiki.notCreated',
   pending: 'surface:wiki.pending',
   processing: 'surface:wiki.building',
+  active: 'surface:wiki.ready',
   ready: 'surface:wiki.ready',
   error: 'surface:wiki.error',
 }
 
 function statusLabel(status: string): string {
   return WIKI_STATUS_LABELS[status] ?? status
+}
+
+/** ingest 自动建的 Room 用机名当标题（auto-xxxxxxxx），别让它当门面。 */
+const AUTO_ROOM_TITLE_RE = /^auto-[0-9a-z-]{4,}$/i
+
+/** 左栏/标题的 Room 展示名：机名 Room 用 KS 内容摘要首行代称（截 18 字），无摘要回退原名。 */
+function roomDisplayName(room: KnowledgeRoomDto | undefined, wiki: KnowledgeWikiDto): string {
+  const title = room?.title ?? wiki.roomId
+  if (!AUTO_ROOM_TITLE_RE.test(title)) return title
+  const firstLine = wiki.summary?.split('\n').find((line) => line.trim())?.trim() ?? null
+  if (!firstLine) return title
+  return firstLine.length > 18 ? `${firstLine.slice(0, 18)}…` : firstLine
+}
+
+/** overview 正文首段（剥掉 markdown 痕迹）——KS 摘要缺失时侧栏摘要卡的兜底来源。 */
+function firstPlainTextParagraph(markdown: string): string | null {
+  for (const block of markdown.split(/\n\s*\n/)) {
+    const trimmed = block.trim()
+    if (!trimmed || /^[#>`|]/.test(trimmed)) continue
+    const text = trimmed
+      .replace(/\s*\n\s*/g, '')
+      .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+      .replace(/[*`_]/g, '')
+      .replace(/[[\]]/g, '')
+      .trim()
+    if (!text) continue
+    return text.length > 120 ? `${text.slice(0, 120)}…` : text
+  }
+  return null
 }
 
 /** 核心视图默认只画被引最高的前 N 个节点（治"毛线球"：200 节点全画谁也读不出重点）。 */
@@ -183,7 +213,16 @@ export function WikiPage() {
   }, [closePage, selectedPage, view])
 
   const selectedWiki = wikis.find((wiki) => wiki.roomId === selectedRoomId) ?? null
-  const selectedRoomTitle = selectedRoomId ? roomsById.get(selectedRoomId)?.title : undefined
+  const selectedRoom = selectedRoomId ? roomsById.get(selectedRoomId) : undefined
+  const selectedDisplayName = selectedWiki
+    ? roomDisplayName(selectedRoom, selectedWiki)
+    : (selectedRoom?.title ?? selectedRoomId ?? '')
+  // 侧栏摘要卡：KS 摘要优先；缺失时用当前已加载的 overview 正文首段兜底
+  const overviewPath = pages.find((page) => page.path.endsWith('overview.md'))?.path ?? null
+  const sidebarSummary = selectedWiki?.summary
+    ?? (selectedPage && overviewPath && selectedPage.path === overviewPath && markdown
+      ? firstPlainTextParagraph(markdown)
+      : null)
 
   // 左栏清单分组：归档殿后，其余按 kind 首现顺序分组；组内最近更新优先（无时间殿后）。
   const wikiGroups = useMemo(() => {
@@ -316,7 +355,7 @@ export function WikiPage() {
                         className={`wiki-room-item${wiki.roomId === selectedRoomId ? ' is-selected' : ''}`}
                         onClick={() => setSelectedRoomId(wiki.roomId)}
                       >
-                        <strong>{room?.title ?? wiki.roomId}</strong>
+                        <strong>{roomDisplayName(room, wiki)}</strong>
                         <span>{meta}</span>
                       </button>
                     )
@@ -331,7 +370,7 @@ export function WikiPage() {
               <div className="wiki-main-title">
                 <BookOpenText aria-hidden="true" strokeWidth={1.7} />
                 <span>
-                  {selectedRoomTitle ?? selectedRoomId ?? ''}
+                  {selectedDisplayName}
                   {selectedWiki ? ` (${t(statusLabel(selectedWiki.status))})` : ''}
                 </span>
               </div>
@@ -375,8 +414,8 @@ export function WikiPage() {
                       <div className="wiki-empty">{t('surface:wiki.noPagesYet')}</div>
                     ) : (
                       <>
-                        {selectedWiki?.summary ? (
-                          <p className="wiki-summary-card">{selectedWiki.summary}</p>
+                        {sidebarSummary ? (
+                          <p className="wiki-summary-card">{sidebarSummary}</p>
                         ) : null}
                         <label className="wiki-tree-search">
                           <Search aria-hidden="true" strokeWidth={1.7} />

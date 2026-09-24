@@ -27,6 +27,9 @@ const FOLDER_LABEL_KEYS: Record<string, string> = {
   other: 'surface:wiki.folderOther',
 };
 
+/** 纯包装目录（所有页面共享的前缀壳），树里不占一级。 */
+const WRAPPER_DIR_NAMES = new Set(['wiki', 'pages']);
+
 /** 按 page.path 的 / 段递归建目录树（文档栏式；目录在页面间共享前缀）。 */
 function buildWikiTree(pages: KnowledgeWikiPageDto[]): WikiTreeNode {
   const root: WikiTreeNode = { name: '', path: '', isDirectory: true, page: null, children: new Map() };
@@ -175,7 +178,16 @@ export function WikiTree({ pages, selectedPath, onSelect }: {
     }
     return { pinned, system, rest };
   }, [pages]);
-  const root = useMemo(() => buildWikiTree(rest), [rest]);
+  const root = useMemo(() => {
+    let node = buildWikiTree(rest);
+    // 全部页面共享同一前缀目录（KS 的 wiki/…）时下钻剥掉，别让包装层占一级
+    while (node.children.size === 1) {
+      const only = [...node.children.values()][0];
+      if (!only || !only.isDirectory || !WRAPPER_DIR_NAMES.has(only.name)) break;
+      node = only;
+    }
+    return node;
+  }, [rest]);
   const treeChildren = sortNodes([...root.children.values()], locale);
   return (
     <div className="wiki-tree-sections">
