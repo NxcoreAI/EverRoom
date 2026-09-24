@@ -332,6 +332,7 @@ const api: NxcoreDesktopApi = {
     importExistingInRoom: (provider, roomId, remoteDocumentIds) => invoke('external-documents:import-existing-in-room', provider, roomId, remoteDocumentIds),
     importBatch: (input) => invoke('external-documents:import-batch', input),
     importBatchStatus: (batchId) => invokeQuietly('external-documents:import-batch-status', batchId),
+    activeImportBatch: (provider, connectionName) => invokeQuietly('external-documents:active-import-batch', provider, connectionName),
     cancelImportBatch: (batchId) => invoke('external-documents:cancel-import-batch', batchId),
     importPreview: (provider, remoteDocumentId) => invoke('external-documents:import-preview', provider, remoteDocumentId),
     importCommit: (input) => invoke('external-documents:import-commit', input),

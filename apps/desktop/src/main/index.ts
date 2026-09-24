@@ -305,6 +305,7 @@ const EXTERNAL_DOCUMENT_CHANNELS = {
   importExistingInRoom: 'external-documents:import-existing-in-room',
   importBatch: 'external-documents:import-batch',
   importBatchStatus: 'external-documents:import-batch-status',
+  activeImportBatch: 'external-documents:active-import-batch',
   cancelImportBatch: 'external-documents:cancel-import-batch',
   importPreview: 'external-documents:import-preview',
   importCommit: 'external-documents:import-commit',
@@ -2067,6 +2068,11 @@ function registerExternalDocumentHandlers(bridge: ExternalDocumentsGatewayBridge
   handle(EXTERNAL_DOCUMENT_CHANNELS.importBatchStatus, (_event, batchId: unknown) => {
     if (typeof batchId !== 'string') throw new Error('无效的批量导入标识。')
     return bridge.importBatchStatus(batchId)
+  })
+  handle(EXTERNAL_DOCUMENT_CHANNELS.activeImportBatch, (_event, provider: unknown, connectionName: unknown) => {
+    if (typeof provider !== 'string') throw new Error('无效的文档来源。')
+    if (connectionName !== undefined && typeof connectionName !== 'string') throw new Error('无效的连接名。')
+    return bridge.activeImportBatch(provider as 'feishu' | 'notion', connectionName)
   })
   handle(EXTERNAL_DOCUMENT_CHANNELS.cancelImportBatch, (_event, batchId: unknown) => {
     if (typeof batchId !== 'string') throw new Error('无效的批量导入标识。')

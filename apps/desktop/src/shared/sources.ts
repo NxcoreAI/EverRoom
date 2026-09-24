@@ -930,6 +930,8 @@ export interface NxcoreDesktopApi {
       forceNew?: boolean
     }): Promise<{ batchId: string; total: number }>
     importBatchStatus(batchId: string): Promise<DocumentImportBatchView>
+    /** 面板重挂载找回进行中批次（按 provider+连接名查最近一条 running，无则 null）。 */
+    activeImportBatch(provider: ExternalDocumentProvider, connectionName?: string): Promise<DocumentImportBatchView | null>
     cancelImportBatch(batchId: string): Promise<DocumentImportBatchView>
     importPreview(provider: ExternalDocumentProvider, remoteDocumentId: string): Promise<ExternalDocumentPreview>
     importCommit(input: { runId: string; roomId: string; targetDocumentId?: string }): Promise<{

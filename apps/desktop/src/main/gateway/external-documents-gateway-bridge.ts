@@ -76,6 +76,16 @@ export class ExternalDocumentsGatewayBridge {
     return this.request(`/v1/document-import/batch/${encodeURIComponent(batchId)}`)
   }
 
+  /** 面板重挂载找回进行中批次（按 provider+连接名查最近一条 running，无则 null）。 */
+  async activeImportBatch(
+    provider: ExternalDocumentProvider,
+    connectionName?: string,
+  ): Promise<DocumentImportBatchView | null> {
+    const query = new URLSearchParams({ provider })
+    if (connectionName) query.set('connectionName', connectionName)
+    return this.request(`/v1/document-import/batches/active?${query.toString()}`)
+  }
+
   async importStructuredDiff(roomImportId: string): Promise<ImportCandidateDiffView> {
     return this.request(`/v1/document-import/room-imports/${encodeURIComponent(roomImportId)}/diff-structured`)
   }
