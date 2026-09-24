@@ -1,9 +1,11 @@
 import {
   AlertCircle,
+  ArrowRight,
   Check,
   ChevronDown,
   Clock3,
   Inbox,
+  Layers3,
   Link2,
   LoaderCircle,
   MessageCircle,
@@ -13,6 +15,7 @@ import {
   Undo2,
   EyeOff,
   RotateCcw,
+  X,
 } from 'lucide-react';
 import { createVersionedLocalStorageStore } from '@nxcore/migration-kit/local';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -29,6 +32,7 @@ import {
 import { localizedUiText } from '../adapters';
 import { waitForKnowledgeEntityPromotion } from '../knowledgePromotion';
 import { UnmatchedDocsSection } from './UnmatchedDocsSection';
+import { ReferenceDialog } from './shared';
 import {
   ROOM_RECOMMENDATION_RUN_EVENT,
   type RoomRecommendationRunPayload,
@@ -241,9 +245,12 @@ function persistRun(run: RecommendationRun | null): void {
  * 未识别栏已移除——不做人工挂载实体，资料证据自然累积进推荐池。
  */
 export function KnowledgePendingPanel({
+  variant = 'manage',
   onFocusAgent,
   onOpenCreateRoom,
 }: {
+  /** manage = 完整管理面板（默认，测试与管理弹框共用）；strip = 首页精简推荐区。 */
+  variant?: 'manage' | 'strip';
   onFocusAgent: () => void;
   /** 新建 Room 统一入口（手动创建 / 智能推荐双页签）。 */
   onOpenCreateRoom: () => void;
@@ -256,6 +263,10 @@ export function KnowledgePendingPanel({
   const [busy, setBusy] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loaded, setLoaded] = useState(false);
+  /** strip 视图：详情弹框存实体 id（实体对象每拍刷新，进度可实时跟进）。 */
+  const [detailId, setDetailId] = useState<string | null>(null);
+  /** strip 视图：完整管理面板弹框（批量选择 / 待挂载 / 历史收纳于此）。 */
+  const [manageOpen, setManageOpen] = useState(false);
   /** 知识服务不可用：与「确实没有推荐」区分展示，附重试入口。 */
   const [loadError, setLoadError] = useState(false);
   const activePromotionsRef = useRef(new Map<string, string>());
@@ -817,7 +828,252 @@ export function KnowledgePendingPanel({
     return next;
   });
 
-  return (
+  /** 推荐理由一句话（加入已有 Room 提示 / 强证据 / 标准证据）：strip 卡与详情弹框共用。 */
+  const entityReason = (entity: KnowledgeEntityDto) => entity.existingRoomMatch
+    ? t(entity.existingRoomMatch.confidence === 'high'
+      ? 'contextRoom:knowledgePending.existingRoomHighMatch'
+      : 'contextRoom:knowledgePending.existingRoomMediumMatch', {
+        name: entity.existingRoomMatch.roomTitle,
+      })
+    : entity.readinessPath === 'strong'
+      ? t('contextRoom:knowledgePending.strongEvidenceReason', { count: entity.strongSourceCount ?? 0 })
+      : t('contextRoom:knowledgePending.standardEvidenceReason', {
+        count: entity.eligibleSourceCount ?? entity.sourceCount,
+        trusted: entity.trustedSourceCount ?? 0,
+      });
+
+  /** 操作按钮组（加入已有 / 确认创建 / 仍要创建 / 暂不创建）：管理卡 footer 与详情弹框共用。 */
+  const entityActions = (entity: KnowledgeEntityDto) => {
+    const promotion = entity.promotion;
+    const isPromotionActive = promotionActive(entity);
+    return (
+      <>
+        {entity.existingRoomMatch && !isPromotionActive ? (
+          <button
+            type="button"
+            className="context-room-knowledge-confirm"
+            aria-label={t('contextRoom:knowledgePending.joinExistingRoom')}
+            disabled={busy.has(`entity:${entity.id}:reuse`)}
+            onClick={() => void reuseExistingRoom(entity)}
+          >
+            {busy.has(`entity:${entity.id}:reuse`) ? <LoaderCircle className="spin" aria-hidden="true" /> : <Link2 aria-hidden="true" />}
+            {t('contextRoom:knowledgePending.joinExistingRoom')}
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="context-room-knowledge-confirm"
+            disabled={busy.has(`entity:${entity.id}:promote`) || isPromotionActive}
+            onClick={() => void confirmCreate(entity)}
+          >
+            {isPromotionActive ? <LoaderCircle className="spin" aria-hidden="true" /> : <Sparkles aria-hidden="true" />}
+            {t(isPromotionActive
+              ? promotion?.status === 'queued' ? 'contextRoom:knowledgePending.queued' : 'contextRoom:knowledgePending.creating'
+              : promotion?.status === 'failed' ? 'contextRoom:knowledgePending.retryCreation' : 'contextRoom:knowledgePending.create')}
+          </button>
+        )}
+        {entity.existingRoomMatch?.confidence === 'medium' && !isPromotionActive ? (
+          <button
+            type="button"
+            className="context-room-knowledge-defer"
+            disabled={busy.has(`entity:${entity.id}:promote`)}
+            onClick={() => void confirmCreate(entity)}
+          >
+            <Sparkles aria-hidden="true" />
+            {t('contextRoom:knowledgePending.createAnyway')}
+          </button>
+        ) : null}
+        {!isPromotionActive ? (
+          <button
+            type="button"
+            className="context-room-knowledge-defer"
+            disabled={busy.has(`entity:${entity.id}:suppress`)}
+            onClick={() => void deferCreate(entity)}
+          >
+            <EyeOff aria-hidden="true" />
+            {t('contextRoom:knowledgePending.deferCreation')}
+          </button>
+        ) : null}
+      </>
+    );
+  };
+
+  /** 创建进度块（排队/建 Room/建 Wiki/导资料）：管理卡与详情弹框共用。 */
+  const promotionProgressBlock = (entity: KnowledgeEntityDto) => {
+    const promotion = entity.promotion;
+    if (!promotion) return null;
+    const creationPercent = promotionPercent(promotion);
+    return (
+      <div className="context-room-creation-progress" data-status={promotion.status} role="status">
+        <div className="context-room-creation-progress-heading">
+          {promotion.status === 'failed'
+            ? <AlertCircle aria-hidden="true" />
+            : promotion.status === 'queued'
+              ? <Clock3 aria-hidden="true" />
+              : <LoaderCircle className="spin" aria-hidden="true" />}
+          <strong>{promotionLabel(promotion, t)}</strong>
+          <span>{creationPercent}%</span>
+        </div>
+        <div className="context-room-creation-progress-bar" aria-hidden="true">
+          <div style={{ width: `${creationPercent}%` }} />
+        </div>
+        {promotion.status === 'queued' && promotion.queuePosition ? (
+          <small>{t('contextRoom:knowledgePending.queuePosition', { position: promotion.queuePosition })}</small>
+        ) : promotion.stage === 'importing_documents' && promotion.total !== null ? (
+          <small>{t('contextRoom:knowledgePending.resourceProgress', { current: promotion.current ?? 0, total: promotion.total })}</small>
+        ) : promotion.error ? <small>{promotion.error}</small> : null}
+      </div>
+    );
+  };
+
+  /** 推荐生成蒙层：strip 区与管理面板都挂在各自容器内（dialog 打开时双处可见）。 */
+  const runOverlay = run ? (
+  <div
+    className="context-room-knowledge-overlay"
+    data-testid="context-room-recommendation-run"
+    data-phase={run.phase}
+  >
+    <div className="context-room-knowledge-overlay-card">
+      <header>
+        {run.phase === 'failed'
+          ? <AlertCircle aria-hidden="true" />
+          : run.phase === 'timeout'
+            ? <Clock3 aria-hidden="true" />
+            : run.phase === 'done'
+              ? <Check aria-hidden="true" />
+              : <LoaderCircle className="spin" aria-hidden="true" />}
+        <strong>{run.intent
+          ? t('contextRoom:creation.runIntentTitle', { intent: run.intent })
+          : t('contextRoom:creation.runTitle')}</strong>
+      </header>
+      <div
+        className="context-room-knowledge-overlay-bar"
+        role="progressbar"
+        aria-label={t('contextRoom:creation.runTitle')}
+      >
+        <div style={{ width: `${Math.round(runPercentOf(run))}%` }} />
+      </div>
+      <ol className="context-room-creation-steps" data-testid="context-room-creation-steps">
+        <li data-state={run.phase === 'importing' ? 'active' : 'done'}>
+          <span className="context-room-creation-step-icon">
+            {run.phase === 'importing'
+              ? <LoaderCircle className="spin" aria-hidden="true" />
+              : <Check aria-hidden="true" />}
+          </span>
+          <span className="context-room-creation-step-body">
+            <b>{t('contextRoom:creation.stepImport')}</b>
+            <small>{run.phase === 'importing'
+              ? t('contextRoom:creation.importProgress', {
+                  current: run.imported.completed,
+                  total: run.imported.total,
+                })
+              : run.failedImports > 0 || run.skippedImports > 0
+                ? runImportSummaryText(run.okImports, run.skippedImports, run.failedImports, t)
+                : t('contextRoom:creation.filesSelected', { count: run.files.length })}</small>
+          </span>
+        </li>
+        <li data-state={run.phase === 'routing' ? 'active' : run.phase === 'importing' ? undefined : 'done'}>
+          <span className="context-room-creation-step-icon">
+            {run.phase === 'routing'
+              ? <LoaderCircle className="spin" aria-hidden="true" />
+              : run.phase === 'importing' ? <span aria-hidden="true" /> : <Check aria-hidden="true" />}
+          </span>
+          <span className="context-room-creation-step-body">
+            <b>{t('contextRoom:creation.stepRoute')}</b>
+            {/* 不展示「已解析 x/y」计数：路由决策落库节奏与用户感知不一致，只标等待/进行。 */}
+            {run.phase === 'importing'
+              ? <small>{t('contextRoom:creation.stepWaiting')}</small>
+              : null}
+          </span>
+        </li>
+        <li data-state={run.phase === 'accumulating' || run.phase === 'timeout' ? 'active' : run.phase === 'done' ? 'done' : undefined}>
+          <span className="context-room-creation-step-icon">
+            {run.phase === 'timeout'
+              ? <Clock3 aria-hidden="true" />
+              : run.phase === 'done'
+                ? <Check aria-hidden="true" />
+                : run.phase === 'accumulating'
+                  ? <LoaderCircle className="spin" aria-hidden="true" />
+                  : <span aria-hidden="true" />}
+          </span>
+          <span className="context-room-creation-step-body">
+            <b>{t('contextRoom:creation.stepAccumulate')}</b>
+            <small>{run.phase === 'timeout'
+              ? t('contextRoom:creation.runTimeoutHint')
+              : run.phase === 'done'
+                ? t('contextRoom:creation.runDone')
+                : run.phase === 'accumulating'
+                  ? t('contextRoom:creation.runCandidates', { count: run.candidates })
+                  : t('contextRoom:creation.stepWaiting')}</small>
+          </span>
+        </li>
+      </ol>
+      {run.phase !== 'importing' && (run.failureDetails.length > 0 || run.skipDetails.length > 0) ? (
+        <div
+          className="context-room-knowledge-overlay-details"
+          data-testid="context-room-import-details"
+        >
+          {run.failureDetails.length > 0 ? (
+            <ul>
+              {run.failureDetails.slice(0, RUN_DETAILS_SHOWN).map((item) => (
+                <li key={`failure:${item.filename}`}>
+                  <AlertCircle aria-hidden="true" />
+                  <span title={item.filename}>{item.filename}</span>
+                  <small>{item.error}</small>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {run.skipDetails.length > 0 ? (
+            <ul>
+              {run.skipDetails.slice(0, RUN_DETAILS_SHOWN).map((item) => (
+                <li key={`skip:${item.filename}`}>
+                  <EyeOff aria-hidden="true" />
+                  <span title={item.filename}>{item.filename}</span>
+                  <small>{skipReasonLabel(item.reason, t)}</small>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {Math.max(0, run.failureDetails.length - RUN_DETAILS_SHOWN)
+            + Math.max(0, run.skipDetails.length - RUN_DETAILS_SHOWN) > 0 ? (
+            <p className="context-room-knowledge-overlay-details-more">
+              {t('contextRoom:creation.countMore', {
+                count: Math.max(0, run.failureDetails.length - RUN_DETAILS_SHOWN)
+                  + Math.max(0, run.skipDetails.length - RUN_DETAILS_SHOWN),
+              })}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+      {run.phase === 'failed' ? (
+        <p className="context-room-knowledge-overlay-note">{t('contextRoom:creation.runImportFailed')}</p>
+      ) : null}
+      {run.phase === 'timeout' || run.phase === 'failed' ? (
+        <div className="context-room-knowledge-overlay-actions">
+          {run.phase === 'failed' ? (
+            <button
+              type="button"
+              className="context-room-knowledge-overlay-retry"
+              onClick={() => void continueImport(run)}
+            >
+              {t('contextRoom:creation.runImportRetry')}
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className="context-room-knowledge-overlay-dismiss"
+            onClick={() => setRun(null)}
+          >
+            {t('contextRoom:creation.runDismiss')}
+          </button>
+        </div>
+      ) : null}
+    </div>
+  </div>
+  ) : null;
+
+  const manageView = (
     <section className="context-room-knowledge-panel" data-testid="context-room-knowledge-pending">
       <div className="context-room-my-title">
         <div className="context-room-home-section-title">
@@ -846,151 +1102,7 @@ export function KnowledgePendingPanel({
         </div>
       </div>
 
-      {run ? (
-        <div
-          className="context-room-knowledge-overlay"
-          data-testid="context-room-recommendation-run"
-          data-phase={run.phase}
-        >
-          <div className="context-room-knowledge-overlay-card">
-            <header>
-              {run.phase === 'failed'
-                ? <AlertCircle aria-hidden="true" />
-                : run.phase === 'timeout'
-                  ? <Clock3 aria-hidden="true" />
-                  : run.phase === 'done'
-                    ? <Check aria-hidden="true" />
-                    : <LoaderCircle className="spin" aria-hidden="true" />}
-              <strong>{run.intent
-                ? t('contextRoom:creation.runIntentTitle', { intent: run.intent })
-                : t('contextRoom:creation.runTitle')}</strong>
-            </header>
-            <div
-              className="context-room-knowledge-overlay-bar"
-              role="progressbar"
-              aria-label={t('contextRoom:creation.runTitle')}
-            >
-              <div style={{ width: `${Math.round(runPercentOf(run))}%` }} />
-            </div>
-            <ol className="context-room-creation-steps" data-testid="context-room-creation-steps">
-              <li data-state={run.phase === 'importing' ? 'active' : 'done'}>
-                <span className="context-room-creation-step-icon">
-                  {run.phase === 'importing'
-                    ? <LoaderCircle className="spin" aria-hidden="true" />
-                    : <Check aria-hidden="true" />}
-                </span>
-                <span className="context-room-creation-step-body">
-                  <b>{t('contextRoom:creation.stepImport')}</b>
-                  <small>{run.phase === 'importing'
-                    ? t('contextRoom:creation.importProgress', {
-                        current: run.imported.completed,
-                        total: run.imported.total,
-                      })
-                    : run.failedImports > 0 || run.skippedImports > 0
-                      ? runImportSummaryText(run.okImports, run.skippedImports, run.failedImports, t)
-                      : t('contextRoom:creation.filesSelected', { count: run.files.length })}</small>
-                </span>
-              </li>
-              <li data-state={run.phase === 'routing' ? 'active' : run.phase === 'importing' ? undefined : 'done'}>
-                <span className="context-room-creation-step-icon">
-                  {run.phase === 'routing'
-                    ? <LoaderCircle className="spin" aria-hidden="true" />
-                    : run.phase === 'importing' ? <span aria-hidden="true" /> : <Check aria-hidden="true" />}
-                </span>
-                <span className="context-room-creation-step-body">
-                  <b>{t('contextRoom:creation.stepRoute')}</b>
-                  {/* 不展示「已解析 x/y」计数：路由决策落库节奏与用户感知不一致，只标等待/进行。 */}
-                  {run.phase === 'importing'
-                    ? <small>{t('contextRoom:creation.stepWaiting')}</small>
-                    : null}
-                </span>
-              </li>
-              <li data-state={run.phase === 'accumulating' || run.phase === 'timeout' ? 'active' : run.phase === 'done' ? 'done' : undefined}>
-                <span className="context-room-creation-step-icon">
-                  {run.phase === 'timeout'
-                    ? <Clock3 aria-hidden="true" />
-                    : run.phase === 'done'
-                      ? <Check aria-hidden="true" />
-                      : run.phase === 'accumulating'
-                        ? <LoaderCircle className="spin" aria-hidden="true" />
-                        : <span aria-hidden="true" />}
-                </span>
-                <span className="context-room-creation-step-body">
-                  <b>{t('contextRoom:creation.stepAccumulate')}</b>
-                  <small>{run.phase === 'timeout'
-                    ? t('contextRoom:creation.runTimeoutHint')
-                    : run.phase === 'done'
-                      ? t('contextRoom:creation.runDone')
-                      : run.phase === 'accumulating'
-                        ? t('contextRoom:creation.runCandidates', { count: run.candidates })
-                        : t('contextRoom:creation.stepWaiting')}</small>
-                </span>
-              </li>
-            </ol>
-            {run.phase !== 'importing' && (run.failureDetails.length > 0 || run.skipDetails.length > 0) ? (
-              <div
-                className="context-room-knowledge-overlay-details"
-                data-testid="context-room-import-details"
-              >
-                {run.failureDetails.length > 0 ? (
-                  <ul>
-                    {run.failureDetails.slice(0, RUN_DETAILS_SHOWN).map((item) => (
-                      <li key={`failure:${item.filename}`}>
-                        <AlertCircle aria-hidden="true" />
-                        <span title={item.filename}>{item.filename}</span>
-                        <small>{item.error}</small>
-                      </li>
-                    ))}
-                  </ul>
-                ) : null}
-                {run.skipDetails.length > 0 ? (
-                  <ul>
-                    {run.skipDetails.slice(0, RUN_DETAILS_SHOWN).map((item) => (
-                      <li key={`skip:${item.filename}`}>
-                        <EyeOff aria-hidden="true" />
-                        <span title={item.filename}>{item.filename}</span>
-                        <small>{skipReasonLabel(item.reason, t)}</small>
-                      </li>
-                    ))}
-                  </ul>
-                ) : null}
-                {Math.max(0, run.failureDetails.length - RUN_DETAILS_SHOWN)
-                  + Math.max(0, run.skipDetails.length - RUN_DETAILS_SHOWN) > 0 ? (
-                  <p className="context-room-knowledge-overlay-details-more">
-                    {t('contextRoom:creation.countMore', {
-                      count: Math.max(0, run.failureDetails.length - RUN_DETAILS_SHOWN)
-                        + Math.max(0, run.skipDetails.length - RUN_DETAILS_SHOWN),
-                    })}
-                  </p>
-                ) : null}
-              </div>
-            ) : null}
-            {run.phase === 'failed' ? (
-              <p className="context-room-knowledge-overlay-note">{t('contextRoom:creation.runImportFailed')}</p>
-            ) : null}
-            {run.phase === 'timeout' || run.phase === 'failed' ? (
-              <div className="context-room-knowledge-overlay-actions">
-                {run.phase === 'failed' ? (
-                  <button
-                    type="button"
-                    className="context-room-knowledge-overlay-retry"
-                    onClick={() => void continueImport(run)}
-                  >
-                    {t('contextRoom:creation.runImportRetry')}
-                  </button>
-                ) : null}
-                <button
-                  type="button"
-                  className="context-room-knowledge-overlay-dismiss"
-                  onClick={() => setRun(null)}
-                >
-                  {t('contextRoom:creation.runDismiss')}
-                </button>
-              </div>
-            ) : null}
-          </div>
-        </div>
-      ) : null}
+      {runOverlay}
 
       {loadError && recommended.length === 0 && !runActive ? (
         <div className="context-room-knowledge-empty" data-error="true">
@@ -1039,7 +1151,6 @@ export function KnowledgePendingPanel({
               / EVIDENCE_READY_SCORE[entity.readinessPath === 'strong' ? 'strong' : 'standard']);
             const promotion = entity.promotion;
             const isPromotionActive = promotion?.status === 'queued' || promotion?.status === 'running';
-            const creationPercent = promotion ? promotionPercent(promotion) : 0;
             return (
               <article key={entity.id} className="context-room-knowledge-card" data-state="recommended">
                 <header>
@@ -1059,18 +1170,7 @@ export function KnowledgePendingPanel({
                   <span className="context-room-knowledge-tag">{localizedUiText(entity.kind, t)}</span>
                 </header>
                 <p className="context-room-knowledge-reason">
-                  {entity.existingRoomMatch
-                    ? t(entity.existingRoomMatch.confidence === 'high'
-                      ? 'contextRoom:knowledgePending.existingRoomHighMatch'
-                      : 'contextRoom:knowledgePending.existingRoomMediumMatch', {
-                        name: entity.existingRoomMatch.roomTitle,
-                      })
-                    : entity.readinessPath === 'strong'
-                    ? t('contextRoom:knowledgePending.strongEvidenceReason', { count: entity.strongSourceCount ?? 0 })
-                    : t('contextRoom:knowledgePending.standardEvidenceReason', {
-                        count: entity.eligibleSourceCount ?? entity.sourceCount,
-                        trusted: entity.trustedSourceCount ?? 0,
-                      })}
+                  {entityReason(entity)}
                   {entity.sourceKinds?.length
                     ? ` · ${entity.sourceKinds.map((kind) => t(`contextRoom:knowledgePending.sourceKind.${kind}`)).join(' / ')}`
                     : ''}
@@ -1086,74 +1186,9 @@ export function KnowledgePendingPanel({
                 {entity.firstEvidence ? (
                   <p className="context-room-knowledge-summary">{entity.firstEvidence}</p>
                 ) : null}
-                {promotion ? (
-                  <div className="context-room-creation-progress" data-status={promotion.status} role="status">
-                    <div className="context-room-creation-progress-heading">
-                      {promotion.status === 'failed'
-                        ? <AlertCircle aria-hidden="true" />
-                        : promotion.status === 'queued'
-                          ? <Clock3 aria-hidden="true" />
-                          : <LoaderCircle className="spin" aria-hidden="true" />}
-                      <strong>{promotionLabel(promotion, t)}</strong>
-                      <span>{creationPercent}%</span>
-                    </div>
-                    <div className="context-room-creation-progress-bar" aria-hidden="true">
-                      <div style={{ width: `${creationPercent}%` }} />
-                    </div>
-                    {promotion.status === 'queued' && promotion.queuePosition ? (
-                      <small>{t('contextRoom:knowledgePending.queuePosition', { position: promotion.queuePosition })}</small>
-                    ) : promotion.stage === 'importing_documents' && promotion.total !== null ? (
-                      <small>{t('contextRoom:knowledgePending.resourceProgress', { current: promotion.current ?? 0, total: promotion.total })}</small>
-                    ) : promotion.error ? <small>{promotion.error}</small> : null}
-                  </div>
-                ) : null}
+                {promotionProgressBlock(entity)}
                 <footer>
-                  {entity.existingRoomMatch && !isPromotionActive ? (
-                    <button
-                      type="button"
-                      className="context-room-knowledge-confirm"
-                      aria-label={t('contextRoom:knowledgePending.joinExistingRoom')}
-                      disabled={busy.has(`entity:${entity.id}:reuse`)}
-                      onClick={() => void reuseExistingRoom(entity)}
-                    >
-                      {busy.has(`entity:${entity.id}:reuse`) ? <LoaderCircle className="spin" aria-hidden="true" /> : <Link2 aria-hidden="true" />}
-                      {t('contextRoom:knowledgePending.joinExistingRoom')}
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      className="context-room-knowledge-confirm"
-                      disabled={busy.has(`entity:${entity.id}:promote`) || isPromotionActive}
-                      onClick={() => void confirmCreate(entity)}
-                    >
-                      {isPromotionActive ? <LoaderCircle className="spin" aria-hidden="true" /> : <Sparkles aria-hidden="true" />}
-                      {t(isPromotionActive
-                        ? promotion?.status === 'queued' ? 'contextRoom:knowledgePending.queued' : 'contextRoom:knowledgePending.creating'
-                        : promotion?.status === 'failed' ? 'contextRoom:knowledgePending.retryCreation' : 'contextRoom:knowledgePending.create')}
-                    </button>
-                  )}
-                  {entity.existingRoomMatch?.confidence === 'medium' && !isPromotionActive ? (
-                    <button
-                      type="button"
-                      className="context-room-knowledge-defer"
-                      disabled={busy.has(`entity:${entity.id}:promote`)}
-                      onClick={() => void confirmCreate(entity)}
-                    >
-                      <Sparkles aria-hidden="true" />
-                      {t('contextRoom:knowledgePending.createAnyway')}
-                    </button>
-                  ) : null}
-                  {!isPromotionActive ? (
-                    <button
-                      type="button"
-                      className="context-room-knowledge-defer"
-                      disabled={busy.has(`entity:${entity.id}:suppress`)}
-                      onClick={() => void deferCreate(entity)}
-                    >
-                      <EyeOff aria-hidden="true" />
-                      {t('contextRoom:knowledgePending.deferCreation')}
-                    </button>
-                  ) : null}
+                  {entityActions(entity)}
                 </footer>
               </article>
             );
@@ -1206,6 +1241,136 @@ export function KnowledgePendingPanel({
           </div>
         </details>
       ) : null}
+    </section>
+  );
+
+  if (variant !== 'strip') return manageView;
+
+  const detailEntity = detailId ? recommended.find((entity) => entity.id === detailId) ?? null : null;
+
+  // 原型首页推荐区：一行简单推荐卡，工作流收纳进「全部推荐」与卡片详情弹框。
+  return (
+    <section className="context-room-knowledge-strip">
+      <div className="context-room-strip-head">
+        <div className="context-room-home-section-title">
+          <span>{t('contextRoom:home.recommend')}</span>
+          <h2>{t('contextRoom:knowledgePending.recommendedRooms')}</h2>
+        </div>
+        <button type="button" className="context-room-strip-manage" onClick={() => setManageOpen(true)}>
+          {t('contextRoom:knowledgePending.manageAll')}
+          <ArrowRight aria-hidden="true" />
+        </button>
+      </div>
+      <div className="context-room-knowledge-strip-body">
+        {loadError && recommended.length === 0 && !runActive ? (
+          <div className="context-room-rec-empty" data-error="true">
+            <AlertCircle aria-hidden="true" />
+            <h3>{t('contextRoom:knowledgePending.loadFailedTitle')}</h3>
+            <button type="button" className="context-room-rec-retry" onClick={() => void refresh()}>
+              <RefreshCw aria-hidden="true" />
+              {t('contextRoom:knowledgePending.loadFailedRetry')}
+            </button>
+          </div>
+        ) : visibleRecommended.length === 0 ? (
+          <div className="context-room-rec-empty">
+            <Sparkles aria-hidden="true" />
+            <h3>{t('contextRoom:knowledgePending.understandingResources')}</h3>
+            <p>{t('contextRoom:knowledgePending.tellAgentWhatRoomToCreate')}</p>
+          </div>
+        ) : (
+          <div className="context-room-rec-grid">
+            {visibleRecommended.slice(0, RECOMMEND_LIMIT).map((entity) => {
+              const promotion = entity.promotion;
+              return (
+                <button
+                  key={entity.id}
+                  type="button"
+                  className="context-room-rec-card"
+                  onClick={() => setDetailId(entity.id)}
+                >
+                  <span className="context-room-rec-card-icon"><Sparkles aria-hidden="true" /></span>
+                  <span className="context-room-rec-card-body">
+                    <strong>{entity.name}</strong>
+                    <small>{entityReason(entity)}</small>
+                  </span>
+                  {promotionActive(entity) && promotion ? (
+                    <span className="context-room-rec-score" data-state="creating" title={promotionLabel(promotion, t)}>
+                      <LoaderCircle className="spin" aria-hidden="true" />
+                      {promotionPercent(promotion)}%
+                    </span>
+                  ) : (
+                    <span
+                      className="context-room-rec-score"
+                      title={t('contextRoom:knowledgePending.evidenceScoreSecondary', { score: entity.evidenceScore.toFixed(2), count: entity.sourceCount })}
+                    >
+                      <Layers3 aria-hidden="true" />
+                      <b>{entity.sourceCount}</b>
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {runOverlay}
+
+      <ReferenceDialog
+        open={manageOpen}
+        onOpenChange={setManageOpen}
+        title={t('contextRoom:knowledgePending.recommendedRooms')}
+        contentClassName="context-room-manage-dialog"
+      >
+        {manageView}
+      </ReferenceDialog>
+
+      <ReferenceDialog
+        open={detailEntity !== null}
+        onOpenChange={(open) => { if (!open) setDetailId(null); }}
+        title={detailEntity?.name ?? ''}
+        contentClassName="context-room-rec-detail-dialog"
+      >
+        {detailEntity ? (
+          <div className="context-room-rec-detail">
+            <header>
+              <div className="context-room-rec-detail-meta">
+                <span className="context-room-rec-detail-kicker">
+                  {t('contextRoom:knowledgePending.recommendCreationKicker', { name: detailEntity.name })}
+                </span>
+                <h3>{detailEntity.name}</h3>
+              </div>
+              <span className="context-room-knowledge-tag">{localizedUiText(detailEntity.kind, t)}</span>
+              <button
+                type="button"
+                className="context-room-rec-detail-close"
+                aria-label={t('contextRoom:shared.closeDialog')}
+                onClick={() => setDetailId(null)}
+              >
+                <X aria-hidden="true" />
+              </button>
+            </header>
+            {detailEntity.firstEvidence ? (
+              <p className="context-room-rec-detail-desc">{detailEntity.firstEvidence}</p>
+            ) : null}
+            <div className="context-room-rec-detail-stats">
+              <div className="context-room-rec-detail-stat">
+                <span className="context-room-rec-detail-stat-num">{detailEntity.sourceCount}</span>
+                <span className="context-room-rec-detail-stat-label">{t('contextRoom:knowledgePending.statSources')}</span>
+              </div>
+              <div className="context-room-rec-detail-stat">
+                <span className="context-room-rec-detail-stat-num">{detailEntity.evidenceScore.toFixed(2)}</span>
+                <span className="context-room-rec-detail-stat-label">{t('contextRoom:knowledgePending.statScore')}</span>
+              </div>
+            </div>
+            <p className="context-room-rec-detail-reason">{entityReason(detailEntity)}</p>
+            {promotionProgressBlock(detailEntity)}
+            <footer className="context-room-rec-detail-actions">
+              {entityActions(detailEntity)}
+            </footer>
+          </div>
+        ) : null}
+      </ReferenceDialog>
     </section>
   );
 }

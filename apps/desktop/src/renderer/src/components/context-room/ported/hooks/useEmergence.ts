@@ -86,6 +86,11 @@ export function useEmergence({ roomId, focus }: UseEmergenceOptions) {
     }
   }, [requestWander]);
 
+  const hasExtended = useCallback(
+    (startNodeRef: string): boolean => extendedFromRef.current.has(startNodeRef),
+    [],
+  );
+
   return {
     wanderResult,
     wanderLoading,
@@ -94,5 +99,6 @@ export function useEmergence({ roomId, focus }: UseEmergenceOptions) {
     error,
     wanderFrom,
     extendWalk,
+    hasExtended,
   };
 }

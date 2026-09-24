@@ -9,45 +9,116 @@ function node(id: string, roomRef?: { id: string; title: string } | null, nodeTy
   return { id, nodeType, label: id, sourceGraph: 'roomGraph', roomRef: roomRef ?? null, updatedAt: null };
 }
 
-function edge(id: string, from: string, to: string, relationType = '关联'): EmergenceEdgeDto {
-  return { id, from, to, relationType, edgeLevel: 'original', confidence: null };
+function edge(id: string, from: string, to: string, relationType = '关联', confidence: number | null = null): EmergenceEdgeDto {
+  return { id, from, to, relationType, edgeLevel: 'original', confidence };
 }
 
 const ROOM = 'room-1';
 const foreign = { id: 'room-3', title: '连接器' };
 
-describe('nextHops', () => {
-  it('ranks continuation candidates ahead of dead ends, bridge next', () => {
+describe('nextHops · 内容价值排序', () => {
+  it('多源事实领跑，实体居中，空桥垫底（事实不因叶子身份降权）', () => {
     const graph = {
-      nodes: [node('a'), node('b'), node('c'), node('d'), node('e'), node('f', foreign), node('g')],
+      nodes: [node('a'), node('f1'), node('e1', null, 'entity'), node('b1', foreign, 'room')],
       edges: [
-        edge('e1', 'a', 'b'), edge('e2', 'a', 'c'), edge('e3', 'a', 'd'),
-        edge('e4', 'a', 'e'), edge('e5', 'f', 'a'), edge('e6', 'a', 'g'),
-        edge('x1', 'b', 'g'),
+        edge('x1', 'a', 'f1', '事实', 0.9),
+        edge('x2', 'a', 'e1', '提及'),
+        edge('x3', 'a', 'b1', 'mixed'),
       ],
     };
     const hops = nextHops(graph, ROOM, initialWalkLog('a'));
-    // b、g 背后还有未访问邻居（有下文）排前；桥接 f 是尽头排第三；其余尽头更后
-    expect(hops.map((h) => h.nodeRef)).toEqual(['b', 'g', 'f']);
-    expect(hops[0].deadEnd).toBe(false);
-    expect(hops[0].nodeType).toBe('fact');
+    expect(hops.map((h) => h.nodeRef)).toEqual(['f1', 'e1', 'b1']);
+    expect(hops[0].score).toBeGreaterThan(hops[1].score);
+    expect(hops[1].score).toBeGreaterThan(hops[2].score);
     expect(hops[2].bridgeRoom).toBe('连接器');
     expect(hops[2].deadEnd).toBe(true);
   });
 
-  it('marks leaf candidates as deadEnd but still offers them last', () => {
+  it('洞察跳加成：relationType 本身是事实文本的边领跑', () => {
     const graph = {
-      nodes: [node('a'), node('hub'), node('leaf1'), node('leaf2'), node('beyond')],
+      nodes: [node('a'), node('e1', null, 'entity'), node('e2', null, 'entity')],
       edges: [
-        edge('e1', 'a', 'leaf1'), edge('e2', 'a', 'leaf2'), edge('e3', 'a', 'hub'),
-        edge('e4', 'hub', 'beyond'),
+        edge('x1', 'a', 'e1', '张三与李四合作', 0.67),
+        edge('x2', 'a', 'e2', '提及'),
       ],
     };
     const hops = nextHops(graph, ROOM, initialWalkLog('a'));
-    expect(hops.map((h) => h.nodeRef)).toEqual(['hub', 'leaf1', 'leaf2']);
-    expect(hops.map((h) => h.deadEnd)).toEqual([false, true, true]);
+    expect(hops.map((h) => h.nodeRef)).toEqual(['e1', 'e2']);
+    expect(hops[0].score - hops[1].score).toBeGreaterThan(0.3);
   });
 
+  it('文档尽头受罚，死事实仍压过死文档', () => {
+    const graph = {
+      nodes: [node('a'), node('d1', null, 'document'), node('f1')],
+      edges: [
+        edge('x1', 'a', 'd1', '收录'),
+        edge('x2', 'a', 'f1', '事实', 0.33),
+      ],
+    };
+    const hops = nextHops(graph, ROOM, initialWalkLog('a'));
+    expect(hops.map((h) => h.nodeRef)).toEqual(['f1', 'd1']);
+    expect(hops[1].deadEnd).toBe(true);
+  });
+
+  it('富桥（对岸挂载多）排在空桥之前', () => {
+    const rich = { id: 'room-9', title: '富桥' };
+    const graph = {
+      nodes: [
+        node('a'),
+        node('r1', rich, 'room'), node('r2', rich, 'entity'), node('r3', rich, 'entity'),
+        node('r4', rich, 'entity'), node('r5', rich, 'entity'),
+        node('h1', foreign, 'room'),
+      ],
+      edges: [
+        edge('x1', 'a', 'r1', 'mixed'),
+        edge('x2', 'a', 'h1', 'mixed'),
+      ],
+    };
+    const hops = nextHops(graph, ROOM, initialWalkLog('a'));
+    expect(hops.map((h) => h.nodeRef)).toEqual(['r1', 'h1']);
+    expect(hops[0].bridgeRoom).toBe('富桥');
+  });
+});
+
+describe('nextHops · 事实翻面', () => {
+  it('事实站翻同一实体的兄弟事实，via 标签带锚实体，兄弟在则不是尽头', () => {
+    const graph = {
+      nodes: [node('start'), node('e', null, 'entity'), node('f1'), node('f2'), node('f3')],
+      edges: [
+        edge('x0', 'start', 'e', '提及'),
+        edge('x1', 'e', 'f1', '事实', 0.5),
+        edge('x2', 'e', 'f2', '事实', 0.5),
+        edge('x3', 'e', 'f3', '事实', 0.5),
+      ],
+    };
+    const log = stepWalk(graph, ROOM, stepWalk(graph, ROOM, initialWalkLog('start'), 'e')!, 'f1')!;
+    const hops = nextHops(graph, ROOM, log);
+    expect(hops.map((h) => h.nodeRef)).toEqual(['f2', 'f3']);
+    expect(hops[0].flip).toBe(true);
+    expect(hops[0].viaRelation).toBe('同实体·e');
+    expect(hops[0].viaLevel).toBe('composed');
+    expect(hops[0].deadEnd).toBe(false);
+  });
+
+  it('实体站借共同事实跳到共现实体，via 标签就是那条事实', () => {
+    const graph = {
+      nodes: [node('start'), node('e1', null, 'entity'), node('e2', null, 'entity'), node('e3', null, 'entity'), node('f1')],
+      edges: [
+        edge('x0', 'start', 'e1', '提及'),
+        edge('x1', 'e1', 'f1', '事实', 0.5),
+        edge('x2', 'f1', 'e2', '事实', 0.5),
+        edge('x3', 'e1', 'e3', '提及'),
+      ],
+    };
+    const log = stepWalk(graph, ROOM, initialWalkLog('start'), 'e1')!;
+    const hops = nextHops(graph, ROOM, log);
+    expect(hops.map((h) => h.nodeRef)).toEqual(['f1', 'e3', 'e2']);
+    expect(hops[2].flip).toBe(true);
+    expect(hops[2].viaRelation).toBe('f1');
+  });
+});
+
+describe('nextHops · 通用约束', () => {
   it('caps same nodeType at two seats before filling with other types', () => {
     const graph = {
       nodes: [
@@ -62,8 +133,7 @@ describe('nextHops', () => {
       ],
     };
     const hops = nextHops(graph, ROOM, initialWalkLog('a'));
-    // document 先占两席，第三席给 entity（都有下文，按边序 document 在前）
-    expect(hops.map((h) => h.nodeType)).toEqual(['document', 'document', 'entity']);
+    expect(hops.map((h) => h.nodeType)).toEqual(['entity', 'entity', 'document']);
   });
 
   it('skips already visited stations', () => {
