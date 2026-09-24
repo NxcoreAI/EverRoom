@@ -1,12 +1,12 @@
-import { BookOpenText, ChevronDown, ChevronRight, FileText, ListTree, Network, RefreshCw, Search, X } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { BookOpenText, ChevronDown, ChevronRight, FileText, ListTree, Network, PanelLeftClose, PanelLeftOpen, RefreshCw, Search, X } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import {
   WikiGraphCanvas,
   WIKI_CLUSTERS,
 } from '../context-room/ported/components/WikiGraphCanvas'
 import { MarkdownBody, resolveWikiLinkTarget } from '../context-room/ported/components/detail-panels/MarkdownBody'
-import { WikiTree } from '../context-room/ported/components/detail-panels/WikiTree'
+import { FOLDER_LABEL_KEYS, WRAPPER_DIR_NAMES, WikiTree } from '../context-room/ported/components/detail-panels/WikiTree'
 import type {
   KnowledgeRoomDto,
   KnowledgeWikiDto,
@@ -96,11 +96,45 @@ export function WikiPage() {
   // 图谱搜索防抖：布局 worker 按节点集重建，逐键重算太重
   const [graphFilter, setGraphFilter] = useState('')
   const [coreOnly, setCoreOnly] = useState(true)
+  // 顶部切换器弹层 + 侧栏折叠（CSS 隐藏而非卸载，保住树的展开/滚动状态）
+  const [switcherOpen, setSwitcherOpen] = useState(false)
+  const [switcherQuery, setSwitcherQuery] = useState('')
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  // 面包屑点目录 → 展开定位（受控展开 + 滚动到该目录节点）
+  const [revealPath, setRevealPath] = useState<string | null>(null)
+  const switcherRef = useRef<HTMLDivElement | null>(null)
+  const sidebarRef = useRef<HTMLElement | null>(null)
 
   useEffect(() => {
     const timer = setTimeout(() => setGraphFilter(graphQuery), 200)
     return () => clearTimeout(timer)
   }, [graphQuery])
+
+  // 切换器弹层：点外面 / Esc 关闭
+  useEffect(() => {
+    if (!switcherOpen) return
+    const onPointerDown = (event: MouseEvent) => {
+      if (!switcherRef.current?.contains(event.target as Node)) setSwitcherOpen(false)
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setSwitcherOpen(false)
+    }
+    document.addEventListener('mousedown', onPointerDown)
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown)
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [switcherOpen])
+
+  // 面包屑定位目录：等树展开渲染后再滚动到目标节点
+  useEffect(() => {
+    if (!revealPath) return
+    const timer = setTimeout(() => {
+      sidebarRef.current?.querySelector(`[data-path="${revealPath}"]`)?.scrollIntoView({ block: 'nearest' })
+    }, 60)
+    return () => clearTimeout(timer)
+  }, [revealPath])
 
   const refreshList = useCallback(async () => {
     if (!knowledge) return
@@ -224,6 +258,35 @@ export function WikiPage() {
       ? firstPlainTextParagraph(markdown)
       : null)
 
+  // 面包屑：wiki 名 › 本地化目录 › 页面标题；点 wiki 名回概览页，点目录展开并定位树节点
+  const crumbs: Array<{ label: string; onClick: () => void }> = [{
+    label: selectedDisplayName || t('surface:wiki.selectWiki'),
+    onClick: () => {
+      const overview = pages.find((page) => page.path.endsWith('overview.md'))
+      if (overview) openPage(overview)
+    },
+  }]
+  if (view === 'graph') {
+    crumbs.push({ label: t('surface:wiki.graph'), onClick: () => {} })
+  } else if (selectedPage) {
+    const segments = selectedPage.path.split('/').filter(Boolean)
+    const fileName = segments.pop() ?? ''
+    let folderPath = ''
+    for (const segment of segments) {
+      folderPath += `${segment}/`
+      if (WRAPPER_DIR_NAMES.has(segment)) continue
+      const path = folderPath
+      crumbs.push({
+        label: t(FOLDER_LABEL_KEYS[segment] ?? segment),
+        onClick: () => {
+          setSidebarCollapsed(false)
+          setRevealPath(path)
+        },
+      })
+    }
+    crumbs.push({ label: selectedPage.title || fileName, onClick: () => {} })
+  }
+
   // 左栏清单分组：归档殿后，其余按 kind 首现顺序分组；组内最近更新优先（无时间殿后）。
   const wikiGroups = useMemo(() => {
     const buckets = new Map<string, KnowledgeWikiDto[]>()
@@ -255,6 +318,24 @@ export function WikiPage() {
       }),
     }))
   }, [wikis, roomsById, t])
+
+  // 顶部切换器搜索：按展示名 + 机名过滤分组清单，空查询用原分组
+  const switcherGroups = useMemo(() => {
+    const query = switcherQuery.trim().toLowerCase()
+    if (!query) return wikiGroups
+    return wikiGroups
+      .map((group) => ({
+        ...group,
+        items: group.items.filter((wiki) => {
+          const room = roomsById.get(wiki.roomId)
+          const name = roomDisplayName(room, wiki)
+          return name.toLowerCase().includes(query)
+            || (room?.title ?? '').toLowerCase().includes(query)
+            || wiki.roomId.toLowerCase().includes(query)
+        }),
+      }))
+      .filter((group) => group.items.length > 0)
+  }, [wikiGroups, roomsById, switcherQuery])
 
   // 目录搜索：平铺匹配（标题/路径包含），不进树
   const filteredTreePages = useMemo(() => {
@@ -289,24 +370,6 @@ export function WikiPage() {
 
   return (
     <div className="page wiki-page">
-      <header className="page-header">
-        <div>
-          <h1>Wiki</h1>
-        </div>
-        <span className="page-header-actions">
-          <button
-            type="button"
-            className="icon-button"
-            onClick={() => void refreshList()}
-            disabled={!knowledge}
-            title={t('surface:wiki.refresh')}
-            aria-label={t('surface:wiki.refresh')}
-          >
-            <RefreshCw aria-hidden="true" strokeWidth={1.8} />
-          </button>
-        </span>
-      </header>
-
       {!loaded ? (
         <div className="wiki-empty">{t('surface:wiki.loading')}</div>
       ) : !knowledge ? (
@@ -317,9 +380,38 @@ export function WikiPage() {
           {t('surface:wiki.noWikisYetTheyAreGeneratedAsRooms')}
         </div>
       ) : (
-        <div className="wiki-body">
-          <aside className="wiki-room-list" aria-label={t('surface:wiki.roomWikiList')}>
-            {wikiGroups.map((group) => {
+        <div className={`wiki-body${sidebarCollapsed ? ' is-sidebar-collapsed' : ''}`}>
+          <div className="wiki-topbar">
+            <div className="wiki-switcher" ref={switcherRef}>
+              <button
+                type="button"
+                className="wiki-switcher-button"
+                aria-haspopup="listbox"
+                aria-expanded={switcherOpen}
+                onClick={() => setSwitcherOpen((open) => !open)}
+              >
+                <BookOpenText aria-hidden="true" strokeWidth={1.7} />
+                <strong>{selectedDisplayName || t('surface:wiki.selectWiki')}</strong>
+                {selectedWiki?.pageCount != null ? (
+                  <span className="wiki-switcher-count">{t('surface:wiki.listPageCount', { count: selectedWiki.pageCount })}</span>
+                ) : null}
+                <ChevronDown aria-hidden="true" strokeWidth={1.8} className="wiki-switcher-caret" />
+              </button>
+              {switcherOpen ? (
+                <div className="wiki-switcher-popover">
+                  <label className="wiki-tree-search wiki-switcher-search">
+                    <Search aria-hidden="true" strokeWidth={1.7} />
+                    <input
+                      value={switcherQuery}
+                      onChange={(event) => setSwitcherQuery(event.target.value)}
+                      placeholder={t('surface:wiki.switcherSearchPlaceholder')}
+                      aria-label={t('surface:wiki.switcherSearchPlaceholder')}
+                    />
+                  </label>
+                  {switcherGroups.length === 0 ? (
+                    <div className="wiki-tree-no-match">{t('surface:wiki.switcherNoMatches')}</div>
+                  ) : (
+                  switcherGroups.map((group) => {
               const collapsed = collapsedGroups.has(group.kind)
               return (
                 <section key={group.kind} className="wiki-room-group">
@@ -353,27 +445,48 @@ export function WikiPage() {
                         type="button"
                         key={wiki.roomId}
                         className={`wiki-room-item${wiki.roomId === selectedRoomId ? ' is-selected' : ''}`}
-                        onClick={() => setSelectedRoomId(wiki.roomId)}
+                        onClick={() => {
+                          setSelectedRoomId(wiki.roomId)
+                          setSwitcherOpen(false)
+                          setSwitcherQuery('')
+                          setRevealPath(null)
+                        }}
                       >
                         <strong>{roomDisplayName(room, wiki)}</strong>
                         <span>{meta}</span>
                       </button>
                     )
                   })}
-                </section>
-              )
-            })}
-          </aside>
-
-          <section className="wiki-main">
-            <div className="wiki-main-toolbar">
-              <div className="wiki-main-title">
-                <BookOpenText aria-hidden="true" strokeWidth={1.7} />
-                <span>
-                  {selectedDisplayName}
-                  {selectedWiki ? ` (${t(statusLabel(selectedWiki.status))})` : ''}
-                </span>
-              </div>
+                  </section>
+                  )
+                })
+                  )}
+                </div>
+              ) : null}
+            </div>
+            <nav className="wiki-crumbs" aria-label={t('surface:wiki.breadcrumb')}>
+              {crumbs.map((crumb, index) => {
+                const isLast = index === crumbs.length - 1
+                return (
+                  <span key={`${crumb.label}-${index}`} className="wiki-crumb">
+                    {index > 0 ? <span className="wiki-crumb-sep" aria-hidden="true">›</span> : null}
+                    {isLast
+                      ? <span className="wiki-crumb-current" title={crumb.label}>{crumb.label}</span>
+                      : (
+                        <button
+                          type="button"
+                          className="wiki-crumb-link"
+                          title={crumb.label}
+                          onClick={crumb.onClick}
+                        >
+                          {crumb.label}
+                        </button>
+                      )}
+                  </span>
+                )
+              })}
+            </nav>
+            <span className="wiki-topbar-actions">
               <div className="wiki-toggle" role="tablist" aria-label={t('surface:wiki.wikiView')}>
                 <button
                   type="button"
@@ -396,12 +509,32 @@ export function WikiPage() {
                   {t('surface:wiki.graph')}
                 </button>
               </div>
-            </div>
+              <button
+                type="button"
+                className="icon-button"
+                onClick={() => setSidebarCollapsed((value) => !value)}
+                title={sidebarCollapsed ? t('surface:wiki.expandSidebar') : t('surface:wiki.collapseSidebar')}
+                aria-label={sidebarCollapsed ? t('surface:wiki.expandSidebar') : t('surface:wiki.collapseSidebar')}
+                aria-pressed={sidebarCollapsed}
+              >
+                {sidebarCollapsed
+                  ? <PanelLeftOpen aria-hidden="true" strokeWidth={1.8} />
+                  : <PanelLeftClose aria-hidden="true" strokeWidth={1.8} />}
+              </button>
+              <button
+                type="button"
+                className="icon-button"
+                onClick={() => void refreshList()}
+                disabled={!knowledge}
+                title={t('surface:wiki.refresh')}
+                aria-label={t('surface:wiki.refresh')}
+              >
+                <RefreshCw aria-hidden="true" strokeWidth={1.8} />
+              </button>
+            </span>
+          </div>
 
-            <div className={`wiki-panes${view === 'graph' ? ' is-graph' : ''}`}>
-              {view === 'tree' ? (
-                <>
-                  <div className="wiki-tree-pane">
+          <aside ref={sidebarRef} className="wiki-sidebar" aria-label={t('surface:wiki.pages')}>
                     {pagesLoading ? (
                       <div className="wiki-empty">{t('surface:wiki.loading')}</div>
                     ) : pageStatus === 'error' ? (
@@ -448,11 +581,13 @@ export function WikiPage() {
                             </ul>
                           )
                         ) : (
-                          <WikiTree pages={pages} selectedPath={selectedPage?.path ?? null} onSelect={openPage} />
+                          <WikiTree pages={pages} selectedPath={selectedPage?.path ?? null} onSelect={openPage} revealPath={revealPath} />
                         )}
                       </>
                     )}
-                  </div>
+                  </aside>
+                  <section className="wiki-main">
+                    {view === 'tree' ? (
                   <div className="wiki-preview">
                     {selectedPage ? (
                       <>
@@ -466,7 +601,6 @@ export function WikiPage() {
                       <div className="wiki-empty">{t('surface:wiki.selectAPageFromTheTreeToRead')}</div>
                     )}
                   </div>
-                </>
               ) : (
                 <div className="wiki-graph-pane">
                   {graphLoading ? (
@@ -572,7 +706,6 @@ export function WikiPage() {
                   )}
                 </div>
               )}
-            </div>
           </section>
         </div>
       )}

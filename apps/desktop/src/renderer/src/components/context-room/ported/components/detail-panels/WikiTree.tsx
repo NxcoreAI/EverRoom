@@ -1,5 +1,5 @@
 import { BookOpen, ChevronDown, ChevronRight, Folder, Wrench } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useLocale } from '../../../../../i18n/LocaleContext';
 
 import type { KnowledgeWikiPageDto } from '../../../../../../../shared/knowledge';
@@ -20,7 +20,7 @@ const PINNED_FILE_NAMES = new Set(['overview.md', 'purpose.md']);
 const SYSTEM_FILE_NAMES = new Set(['index.md', 'log.md', 'schema.md']);
 
 /** KS 侧固定分桶目录 → i18n 标签；未知目录回退原名。 */
-const FOLDER_LABEL_KEYS: Record<string, string> = {
+export const FOLDER_LABEL_KEYS: Record<string, string> = {
   concepts: 'surface:wiki.folderConcepts',
   entities: 'surface:wiki.folderEntities',
   sources: 'surface:wiki.folderSources',
@@ -28,7 +28,7 @@ const FOLDER_LABEL_KEYS: Record<string, string> = {
 };
 
 /** 纯包装目录（所有页面共享的前缀壳），树里不占一级。 */
-const WRAPPER_DIR_NAMES = new Set(['wiki', 'pages']);
+export const WRAPPER_DIR_NAMES = new Set(['wiki', 'pages']);
 
 /** 按 page.path 的 / 段递归建目录树（文档栏式；目录在页面间共享前缀）。 */
 function buildWikiTree(pages: KnowledgeWikiPageDto[]): WikiTreeNode {
@@ -70,16 +70,21 @@ function countPages(node: WikiTreeNode): number {
   return total;
 }
 
-function WikiTreeItem({ node, depth, selectedPath, onSelect, locale }: {
+function WikiTreeItem({ node, depth, selectedPath, onSelect, locale, revealPath }: {
   node: WikiTreeNode;
   depth: number;
   selectedPath: string | null;
   onSelect: (page: KnowledgeWikiPageDto) => void;
   locale: string;
+  revealPath?: string | null;
 }) {
   const [open, setOpen] = useState(depth < 1);
   const { t } = useLocale();
   const children = sortNodes([...node.children.values()], locale);
+  // 面包屑点目录：外部要求展开定位到某文件夹（revealPath 是该目录的 path）
+  useEffect(() => {
+    if (node.isDirectory && revealPath && revealPath.startsWith(node.path)) setOpen(true);
+  }, [node, revealPath]);
   return (
     <li>
       <button
@@ -88,6 +93,7 @@ function WikiTreeItem({ node, depth, selectedPath, onSelect, locale }: {
         style={{ paddingLeft: 6 + depth * 14 }}
         data-selected={node.page ? node.page.path === selectedPath : undefined}
         data-directory={node.isDirectory}
+        data-path={node.path}
         title={node.isDirectory ? node.path : node.page?.description || node.page?.title || node.path}
         onClick={() => {
           if (node.isDirectory) setOpen((value) => !value);
@@ -105,7 +111,7 @@ function WikiTreeItem({ node, depth, selectedPath, onSelect, locale }: {
           <BookOpen aria-hidden="true" strokeWidth={1.7} />
         )}
         <span className="context-room-wiki-tree-name">
-          {node.isDirectory ? t(FOLDER_LABEL_KEYS[node.name] ?? node.name) : node.name}
+          {node.isDirectory ? t(FOLDER_LABEL_KEYS[node.name] ?? node.name) : node.page?.title || node.name}
         </span>
         {node.isDirectory ? (
           <span className="context-room-wiki-tree-count">{countPages(node)}</span>
@@ -121,6 +127,7 @@ function WikiTreeItem({ node, depth, selectedPath, onSelect, locale }: {
               selectedPath={selectedPath}
               onSelect={onSelect}
               locale={locale}
+              revealPath={revealPath}
             />
           ))}
         </ul>
@@ -158,11 +165,13 @@ function WikiFlatPageRow({ page, selectedPath, onSelect }: {
 /**
  * wiki 页面目录（room-wiki 方案 M3c）：导读优先——置顶概览页、分桶目录带计数、
  * 机器脚手架（index/log/schema）折叠进「系统文件」。页面按 path 分层，点击交给阅读区。
+ * revealPath：外部要求展开并定位到某个目录（面包屑点文件夹时用）。
  */
-export function WikiTree({ pages, selectedPath, onSelect }: {
+export function WikiTree({ pages, selectedPath, onSelect, revealPath }: {
   pages: KnowledgeWikiPageDto[];
   selectedPath: string | null;
   onSelect: (page: KnowledgeWikiPageDto) => void;
+  revealPath?: string | null;
 }) {
   const { t, locale } = useLocale();
   const [systemOpen, setSystemOpen] = useState(false);
@@ -213,6 +222,7 @@ export function WikiTree({ pages, selectedPath, onSelect }: {
               selectedPath={selectedPath}
               onSelect={onSelect}
               locale={locale}
+              revealPath={revealPath}
             />
           ))}
         </ul>
