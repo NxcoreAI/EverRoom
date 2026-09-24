@@ -1510,6 +1510,8 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       deploy: await loadPolicyOverrides(config.dataDir, policyWarn),
     },
     ingestFilterService,
+    // 暂停闸状态文件（记忆页「继续/暂停」，重启保持）
+    resolve(config.dataDir, "ingest-gate.json"),
   );
   // 启动恢复：进程被杀时 pending 滞留的过滤事件重新入队（幂等）
   ingestService.recoverPendingFilters();

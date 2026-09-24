@@ -916,6 +916,8 @@ const api: NxcoreDesktopApi = {
       invoke('ingest:filter-rules:update-preference', content),
     reinstateEvent: (eventId: string) => invoke('ingest:events:reinstate', eventId),
     getEventContent: (eventId: string) => invoke('ingest:events:content', eventId),
+    getPause: () => invoke('ingest:pause:get'),
+    setPause: (paused: boolean) => invoke('ingest:pause:set', paused),
   },
 }
 

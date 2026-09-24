@@ -3222,6 +3222,12 @@ summary:focus-visible {
   background: rgba(160, 107, 0, 0.1);
 }
 
+.filter-badge.paused {
+  color: #a06b00;
+  background: rgba(160, 107, 0, 0.1);
+  font-weight: 600;
+}
+
 .filter-badge.plain {
   color: var(--subtle);
 }

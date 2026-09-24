@@ -410,5 +410,12 @@
   "timeline.matches": "Match {score}",
   "timeline.detail": "Details",
   "timeline.timeRange": "Time",
-  "nav.organize": "Organize"
+  "nav.organize": "Organize",
+  "memory.ingestPause": "Pause",
+  "memory.ingestResume": "Resume",
+  "memory.ingestPauseTitle": "While paused, new content stops flowing into memory",
+  "memory.ingestResumeTitle": "Resume intake. Content received while paused stays recoverable in Organize → Ingest ledger",
+  "memory.ingestToggleFailed": "Failed to switch memory engine state",
+  "ledger.filterPaused": "Paused hold",
+  "ledger.filterPausedHint": "Received while memory was paused; not ingested — reinstate after resuming"
 }

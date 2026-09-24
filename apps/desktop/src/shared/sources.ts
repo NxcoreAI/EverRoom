@@ -1444,6 +1444,10 @@ export interface NxcoreDesktopApi {
     reinstateEvent(eventId: string): Promise<IngestEventDto>
     /** 事件归一化产物全文（台账详情查看）。 */
     getEventContent(eventId: string): Promise<{ markdown: string; parsedAt: string }>
+    /** 记忆引擎暂停闸读取（记忆页顶部「继续/暂停」）。 */
+    getPause(): Promise<{ paused: boolean; updatedAt: string | null }>
+    /** 切换暂停闸：暂停期间新内容只进台账不扇出（重启保持）。 */
+    setPause(paused: boolean): Promise<{ paused: boolean; updatedAt: string }>
   }
 }
 import type {

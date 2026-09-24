@@ -611,6 +611,8 @@ const INGEST_CHANNELS = {
   updateFilterPreference: 'ingest:filter-rules:update-preference',
   reinstateEvent: 'ingest:events:reinstate',
   getEventContent: 'ingest:events:content',
+  getPause: 'ingest:pause:get',
+  setPause: 'ingest:pause:set',
 } as const
 
 const SCREEN_CAPTURE_CHANNELS = {
@@ -2768,6 +2770,9 @@ function registerIngestHandlers(bridge: IngestGatewayBridge): void {
   handle(INGEST_CHANNELS.reinstateEvent, (_event, eventId: string) => bridge.reinstateEvent(eventId))
   // 事件详情：归一化产物全文
   handle(INGEST_CHANNELS.getEventContent, (_event, eventId: string) => bridge.getEventContent(eventId))
+  // 记忆引擎暂停闸（记忆页顶部「继续/暂停」按钮）
+  handle(INGEST_CHANNELS.getPause, () => bridge.getPause())
+  handle(INGEST_CHANNELS.setPause, (_event, paused: boolean) => bridge.setPause(paused))
 }
 
 function registerAsrHandlers(store: RecordingStore, coordinator: AsrCoordinator, segments: RecordingSegmentUploader): void {

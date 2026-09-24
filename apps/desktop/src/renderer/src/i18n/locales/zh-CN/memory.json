@@ -410,5 +410,12 @@
   "timeline.matches": "匹配度 {score}",
   "timeline.detail": "详情",
   "timeline.timeRange": "时间",
-  "nav.organize": "整理"
+  "nav.organize": "整理",
+  "memory.ingestPause": "暂停",
+  "memory.ingestResume": "继续",
+  "memory.ingestPauseTitle": "暂停后，新产生的内容不再进入记忆库",
+  "memory.ingestResumeTitle": "恢复接收新内容；暂停期间收到的内容保留在「整理 → 导入记录」，可手动恢复",
+  "memory.ingestToggleFailed": "记忆引擎状态切换失败",
+  "ledger.filterPaused": "暂停暂存",
+  "ledger.filterPausedHint": "记忆引擎暂停期间收到，未进入记忆库；恢复后可放行"
 }

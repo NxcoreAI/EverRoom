@@ -1,4 +1,4 @@
-import { RefreshCw, Search } from 'lucide-react'
+import { Pause, Play, RefreshCw, Search } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
 import { MEMORY_TAB_EVENT } from '../MemoryPipelineStatus'
@@ -70,6 +70,31 @@ export function MemoryPage({ focusAtomicId }: { focusAtomicId?: string | null } 
   // 溯源跳转目标（原子记忆 → 文档详情 / 会话过滤），置位同时切到来源页对应子页。
   const [documentFocus, setDocumentFocus] = useState<string | null>(null)
   const [conversationFocus, setConversationFocus] = useState<string | null>(null)
+  // 记忆引擎暂停闸（顶部「继续/暂停」）：null = 状态未知（gateway 不可达，按钮禁用）。
+  const [ingestPaused, setIngestPaused] = useState<boolean | null>(null)
+  const [ingestBusy, setIngestBusy] = useState(false)
+
+  useEffect(() => {
+    let active = true
+    window.nxcore!.ingest.getPause()
+      .then((state) => { if (active) setIngestPaused(state.paused) })
+      .catch(() => { if (active) setIngestPaused(null) })
+    return () => { active = false }
+  }, [])
+
+  const toggleIngest = async () => {
+    if (ingestBusy || ingestPaused === null) return
+    setIngestBusy(true)
+    try {
+      const next = await window.nxcore!.ingest.setPause(!ingestPaused)
+      setIngestPaused(next.paused)
+      setSearchError(null)
+    } catch (cause) {
+      setSearchError(cause instanceof Error ? cause.message : t('memory:memory.ingestToggleFailed'))
+    } finally {
+      setIngestBusy(false)
+    }
+  }
 
   // 侧边栏记忆管道点击跳转：映射到一级分区 + 二级子页。
   useEffect(() => {
@@ -135,6 +160,17 @@ export function MemoryPage({ focusAtomicId }: { focusAtomicId?: string | null } 
           <h1>{t('memory:memory.memory')}</h1>
         </div>
         <div className="mem-header-tools">
+          <button
+            type="button"
+            className="mem-ingest-toggle"
+            data-paused={ingestPaused === true || undefined}
+            title={t(ingestPaused ? 'memory:memory.ingestResumeTitle' : 'memory:memory.ingestPauseTitle')}
+            disabled={ingestBusy || ingestPaused === null}
+            onClick={() => void toggleIngest()}
+          >
+            {ingestPaused ? <Play aria-hidden="true" strokeWidth={1.7} /> : <Pause aria-hidden="true" strokeWidth={1.7} />}
+            <span>{t(ingestPaused ? 'memory:memory.ingestResume' : 'memory:memory.ingestPause')}</span>
+          </button>
           <div className="mem-searchbox">
             <Search aria-hidden="true" strokeWidth={1.7} />
             <input

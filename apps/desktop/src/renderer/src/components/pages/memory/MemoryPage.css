@@ -26,6 +26,48 @@
   gap: 8px;
 }
 
+/* 记忆引擎「继续/暂停」：运行中低干扰胶囊，暂停后转琥珀提醒（新内容正在被拦）。 */
+.mem-ingest-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.mem-ingest-toggle svg {
+  width: 14px;
+  height: 14px;
+}
+
+.mem-ingest-toggle:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.mem-ingest-toggle:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.mem-ingest-toggle[data-paused] {
+  color: #a06b00;
+  border-color: rgba(160, 107, 0, 0.35);
+  background: rgba(160, 107, 0, 0.1);
+  font-weight: 600;
+}
+
+.mem-ingest-toggle[data-paused]:hover:not(:disabled) {
+  background: rgba(160, 107, 0, 0.16);
+  color: #a06b00;
+}
+
 .mem-searchbox {
   display: flex;
   align-items: center;

@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
-import { basename } from "node:path";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { basename, dirname } from "node:path";
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import type { Logger } from "pino";
@@ -146,12 +147,52 @@ export class IngestService {
     private readonly policyLayers: PolicyLayers = emptyPolicyLayers(),
     /** agent 过滤器（第一级闸门）；null = 过滤关闭，全量直通。 */
     private readonly filter: IngestFilterService | null = null,
-  ) {}
+    /** 暂停闸状态文件（<dataDir>/ingest-gate.json）；null = 暂停闸不可用（默认放行）。 */
+    private readonly gateStatePath: string | null = null,
+  ) {
+    // 暂停闸状态从 dataDir 状态文件恢复（进程重启不丢）；文件缺失/损坏按未暂停处理。
+    if (gateStatePath) {
+      try {
+        const raw = readFileSync(gateStatePath, "utf8");
+        const state = JSON.parse(raw) as { paused?: unknown; updatedAt?: unknown };
+        this.gatePaused = state.paused === true;
+        this.gateUpdatedAt = typeof state.updatedAt === "string" ? state.updatedAt : null;
+      } catch {
+        this.gatePaused = false;
+        this.gateUpdatedAt = null;
+      }
+    }
+  }
 
   /** 过滤闸 worker：去抖批（N 条或 M ms）→ agent 判定 → 放行扇出 / 记 filtered。 */
   private pendingFanouts = new Map<string, PendingFanout>();
   private filterTimer: NodeJS.Timeout | null = null;
   private filterRunning = false;
+
+  /** 暂停闸运行态（构造时从状态文件恢复，setPause 写穿持久化）。 */
+  private gatePaused = false;
+  private gateUpdatedAt: string | null = null;
+
+  /** 暂停闸读取（GET /v1/ingest/pause）。 */
+  getPause(): { paused: boolean; updatedAt: string | null } {
+    return { paused: this.gatePaused, updatedAt: this.gateUpdatedAt };
+  }
+
+  /** 暂停闸切换（PUT /v1/ingest/pause）：写穿 dataDir 状态文件，重启后保持。 */
+  setPause(paused: boolean): { paused: boolean; updatedAt: string } {
+    this.gatePaused = paused;
+    this.gateUpdatedAt = new Date().toISOString();
+    if (this.gateStatePath) {
+      mkdirSync(dirname(this.gateStatePath), { recursive: true });
+      writeFileSync(
+        this.gateStatePath,
+        JSON.stringify({ paused: this.gatePaused, updatedAt: this.gateUpdatedAt }),
+        "utf8",
+      );
+    }
+    this.logger.info({ event: "ingest.gate", paused }, paused ? "ingest gate paused" : "ingest gate resumed");
+    return { paused: this.gatePaused, updatedAt: this.gateUpdatedAt };
+  }
 
   /** 只读展示：当前生效的两层策略（REST GET /v1/ingest/policies 数据源）。 */
   get policy(): PolicyLayers {
@@ -623,6 +664,56 @@ export class IngestService {
 
     // 台账：类型识别 + 策略快照落定（晋升/增量 ingest 的 wiki 判定读快照）
     const eventId = `ing-${randomUUID().slice(0, 12)}`;
+
+    // 暂停闸（记忆页「继续/暂停」）：优先于过滤闸。暂停期间新内容照常归一化
+    // 落台账（parsed 产物保留），但不扇出——恢复后可在导入记录里手动放行（reinstate）。
+    if (this.gatePaused) {
+      const verdict: IngestFilterVerdict = {
+        informative: false,
+        reason: "记忆引擎暂停期间收到的内容，未进入记忆库",
+        category: "paused",
+        confidence: 1,
+      };
+      this.db.insert(ingestEvents).values({
+        id: eventId,
+        sourceKind: unit.sourceKind,
+        sourceId: unit.sourceId,
+        sourceVersion: unit.sourceVersion,
+        dataType: unit.dataType,
+        detectedBy: unit.detectedBy,
+        title: unit.title,
+        contentHash: unit.contentHash,
+        parsedId,
+        pipelines,
+        originChannel: unit.origin,
+        filterStatus: "filtered",
+        filterVerdict: verdict,
+      }).run();
+      this.logger.info(
+        { event: "ingest.gate.held", eventId, sourceKind: unit.sourceKind, sourceId: unit.sourceId },
+        "ingest event held by pause gate",
+      );
+      return {
+        eventId,
+        deduped: false,
+        source: {
+          sourceKind: unit.sourceKind,
+          sourceId: unit.sourceId,
+          sourceVersion: unit.sourceVersion,
+        },
+        dataType: unit.dataType,
+        detectedBy: unit.detectedBy,
+        title: unit.title,
+        contentHash: unit.contentHash,
+        parsedId,
+        pipelines,
+        routeJobId: null,
+        memoryResult: null,
+        filterStatus: "filtered",
+        filterVerdict: verdict,
+        originChannel: unit.origin,
+      };
+    }
 
     // 过滤闸（第一级）：开启且不豁免 → 记 pending 不扇出，去抖批送 agent 判定
     // A user-authored web clip is an explicit save intent. It must be normalized
