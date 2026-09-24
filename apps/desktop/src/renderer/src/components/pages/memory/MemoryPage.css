@@ -42,7 +42,8 @@
   border-color: var(--accent);
 }
 
-.mem-searchbox input {
+.mem-searchbox input,
+.mem-searchbox input:focus-visible {
   border: none;
   outline: none;
   background: transparent;
@@ -1325,39 +1326,107 @@
   overflow: hidden;
 }
 
-.mem-session-header {
+.mem-session-head {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 8px 14px;
+  padding: 9px 12px;
+}
+
+.mem-session[data-open='true'] .mem-session-head {
   background: var(--surface-alt);
   border-bottom: 1px solid var(--border);
 }
 
-.mem-session-title {
+.mem-session-toggle {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
   border: none;
   background: transparent;
-  padding: 2px 6px;
-  border-radius: 5px;
-  font-size: 12px;
+  padding: 2px 4px;
+  border-radius: 6px;
   font-family: inherit;
-  color: var(--muted);
+  text-align: left;
   cursor: pointer;
+}
+
+.mem-session-toggle:hover {
+  background: var(--hover);
+}
+
+.mem-session-chevron {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin-top: 3px;
+  color: var(--subtle);
+  transition: transform 0.15s ease;
+}
+
+.mem-session[data-open='true'] .mem-session-chevron {
+  transform: rotate(90deg);
+}
+
+.mem-session-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
+}
+
+.mem-session-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 40%;
 }
 
-.mem-session-title:hover,
-.mem-session-title[data-active='true'] {
-  background: var(--selected);
-  color: var(--text);
+.mem-session-preview {
+  font-size: 11.5px;
+  color: var(--subtle);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.mem-session-header small {
+.mem-session-meta {
+  flex: none;
   font-size: 11px;
   color: var(--subtle);
+  white-space: nowrap;
+}
+
+.mem-session-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--subtle);
+  cursor: pointer;
+}
+
+.mem-session-icon-btn:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--danger);
+}
+
+.mem-session-icon-btn svg {
+  width: 14px;
+  height: 14px;
 }
 
 .mem-session-actions {
@@ -2046,4 +2115,435 @@ button.mem-search-item:hover {
   background: rgba(0, 0, 0, 0.02);
   color: var(--text-secondary, #5f6368);
   font-size: 12px;
+}
+
+/* 记忆时间轴（原型 mem-timeline 移植）：分桶分组 + 左侧节点线。 */
+.mem-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.mem-tl-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.mem-tl-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mem-tl-head h3 {
+  margin: 0;
+  color: var(--cr-text, var(--text));
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.mem-tl-count {
+  min-width: 20px;
+  padding: 1px 6px;
+  border-radius: 9px;
+  background: var(--cr-surface-secondary, var(--surface-alt));
+  color: var(--cr-muted, var(--muted));
+  font-size: 10px;
+  text-align: center;
+}
+
+.mem-tl-list {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 2px 0 2px 18px;
+  border-left: 2px solid var(--cr-border, var(--border));
+  list-style: none;
+}
+
+.mem-tl-item {
+  position: relative;
+}
+
+.mem-tl-item::before {
+  position: absolute;
+  top: 14px;
+  left: -23px;
+  width: 8px;
+  height: 8px;
+  border: 2px solid var(--cr-blue, var(--accent));
+  border-radius: 50%;
+  background: var(--cr-surface, var(--surface));
+  content: "";
+}
+
+.mem-tl-time {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--cr-muted, var(--muted));
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.mem-tl-item .mem-atomic-item {
+  margin: 0;
+}
+
+.mem-load-more {
+  display: block;
+  min-height: 34px;
+  margin: 14px auto 0;
+  padding: 0 18px;
+  border: 1px solid var(--cr-border, var(--border));
+  border-radius: 6px;
+  background: var(--cr-surface, var(--surface));
+  color: var(--cr-muted, var(--muted));
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+}
+
+.mem-load-more:hover:not(:disabled) {
+  border-color: var(--cr-blue, var(--accent));
+  color: var(--cr-blue, var(--accent));
+}
+
+.mem-load-more:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+/* 精选卡：评分最高的记忆置顶高亮。 */
+.mem-featured-card {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--cr-blue, var(--accent)) 30%, var(--cr-border, var(--border)));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--cr-blue, var(--accent)) 5%, var(--cr-surface, var(--surface)));
+}
+
+.mem-featured-icon {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  flex: none;
+  place-items: center;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--cr-blue, var(--accent)) 14%, transparent);
+  color: var(--cr-blue, var(--accent));
+}
+
+.mem-featured-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.mem-featured-body {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.mem-featured-tags {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.mem-featured-tags time {
+  color: var(--cr-muted, var(--muted));
+  font-size: 10px;
+}
+
+.mem-featured-flag {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 7px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--cr-blue, var(--accent)) 14%, transparent);
+  color: var(--cr-blue, var(--accent));
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.mem-featured-flag svg {
+  width: 10px;
+  height: 10px;
+}
+
+.mem-featured-content {
+  margin: 0;
+  color: var(--cr-text, var(--text));
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.mem-featured-dismiss {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--cr-muted, var(--muted));
+  cursor: pointer;
+}
+
+.mem-featured-dismiss:hover {
+  background: var(--cr-surface-hover, var(--surface-alt));
+  color: var(--cr-text, var(--text));
+}
+
+.mem-featured-dismiss svg {
+  width: 12px;
+  height: 12px;
+}
+
+/* 导航分区（时间轴 / 来源 / 派生 / 治理）：分区之间细分隔线，分区名小字置中。 */
+.mem-tab-section {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+}
+
+.mem-tab-section + .mem-tab-section {
+  margin-left: 6px;
+  padding-left: 12px;
+  border-left: 1px solid var(--border);
+}
+
+.mem-tab-section-label {
+  display: flex;
+  align-items: center;
+  padding: 0 4px;
+  color: var(--muted);
+  font-size: 10px;
+  white-space: nowrap;
+  opacity: 0.85;
+}
+
+/* 原型对齐：卡片内类型图标方块 + 标签行 + 内容 + meta 行。 */
+.mem-tl-item .mem-atomic-summary {
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.mem-item-icon {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  flex: none;
+  place-items: center;
+  border-radius: 7px;
+  background: var(--cr-surface-secondary, var(--surface-alt));
+  color: var(--cr-text, var(--text));
+}
+
+.mem-item-icon svg {
+  width: 15px;
+  height: 15px;
+}
+
+.mem-tl-card-body {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.mem-tl-card-tags {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.mem-tl-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--cr-muted, var(--muted));
+  font-size: 10px;
+}
+
+.mem-tl-card-meta > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.mem-tl-card-meta svg {
+  width: 11px;
+  height: 11px;
+}
+
+.mem-tl-card-meta .mem-card-actions {
+  margin-left: auto;
+  color: var(--cr-blue, var(--accent));
+  font-weight: 600;
+}
+
+/* 精选卡：右侧大圆环图标 + 左侧粗蓝边（原型 mem-featured 形态）。 */
+.mem-featured-card {
+  border-left: 3px solid var(--cr-blue, var(--accent));
+  padding-right: 44px;
+}
+
+.mem-featured-content {
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.mem-featured-visual {
+  position: relative;
+  display: grid;
+  width: 72px;
+  height: 72px;
+  flex: none;
+  place-items: center;
+  margin-left: auto;
+  align-self: center;
+}
+
+.mem-featured-visual .mem-item-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--cr-surface, var(--surface));
+  color: var(--cr-blue, var(--accent));
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--cr-blue, var(--accent)) 25%, transparent);
+}
+
+.mem-featured-visual .mem-item-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.mem-featured-ring {
+  position: absolute;
+  inset: 0;
+  border: 1.5px solid color-mix(in srgb, var(--cr-blue, var(--accent)) 35%, transparent);
+  border-radius: 50%;
+}
+
+.mem-featured-ring::after {
+  position: absolute;
+  inset: -7px;
+  border: 1px dashed color-mix(in srgb, var(--cr-blue, var(--accent)) 25%, transparent);
+  border-radius: 50%;
+  content: "";
+}
+
+.mem-featured-card .mem-featured-dismiss {
+  z-index: 1;
+}
+
+.mem-featured-scope {
+  color: var(--cr-muted, var(--muted));
+  font-size: 10px;
+}
+
+/* 长内容截断：摘要两行，展开（AtomicDetail）看全文。 */
+.mem-tl-item .mem-atomic-text {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  line-height: 1.6;
+  white-space: normal;
+}
+
+/* 精选卡内容三行截断。 */
+.mem-featured-content {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+}
+
+/* 二级页：来源（子 tab 条）与整理（左侧子导航 + 右侧内容）。 */
+.mem-subtabs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.mem-subtabs button {
+  min-height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 15px;
+  background: var(--surface);
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.mem-subtabs button:hover {
+  color: var(--text);
+}
+
+.mem-subtabs button[data-active='true'] {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.mem-subpage-organize {
+  display: grid;
+  grid-template-columns: 176px minmax(0, 1fr);
+  align-items: start;
+  gap: 16px;
+}
+
+.mem-subnav {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.mem-subnav button {
+  min-height: 32px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12.5px;
+  text-align: left;
+}
+
+.mem-subnav button:hover {
+  background: var(--surface-alt);
+  color: var(--text);
+}
+
+.mem-subnav button[data-active='true'] {
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  color: var(--accent);
+  font-weight: 600;
 }

@@ -1,12 +1,25 @@
+import type { LocalAgentAcpAdapterInfo } from '@nxcore/agent-contract'
+
 export type {
   LocalAgentCard,
   LocalAgentInstallation,
   LocalAgentHistoryConversation,
   LocalAgentHistoryImportResult,
   LocalAgentHistoryMessage,
+  LocalAgentAcpAdapterInfo,
   LocalAgentProvider,
   LocalAgentStatus,
 } from '@nxcore/agent-contract'
+
+/** 一键安装 ACP 适配器的结果（主进程安装 → 渲染端向导展示）。 */
+export interface LocalAgentAdapterInstallResult {
+  agentId: string
+  ok: boolean
+  status: 'installed' | 'not_needed' | 'failed'
+  adapter: LocalAgentAcpAdapterInfo
+  error?: string
+  log?: string
+}
 
 export interface LocalAgentWorkspaceBinding {
   token: string

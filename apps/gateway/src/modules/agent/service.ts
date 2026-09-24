@@ -3,6 +3,7 @@ import type {
   AgentActiveDocumentContext,
   AgentEvent,
   AgentEventType,
+  AgentModelPreference,
   AgentNavigationTarget,
   AgentMessage,
   LocalAgentDelegationContext,
@@ -24,7 +25,12 @@ import type {
   TrustedMcpSession,
   UpdateAgentSessionInput,
 } from "@nxcore/agent-contract";
-import { MAIN_AGENT_ID } from "@nxcore/agent-contract";
+import {
+  MAIN_AGENT_ID,
+  MODEL_PREFERENCE_AGENT_IDS,
+  MODEL_TIER_AGENT_IDS,
+  modelPreferenceFromAgentId,
+} from "@nxcore/agent-contract";
 import type { AgentRuntime, RuntimeAttachment, RuntimeEvent } from "@nxcore/agent-runtime";
 import type { PiBashApprovalRequest } from "@nxcore/agent-runtime-pi";
 import { and, asc, desc, eq, gt, inArray, isNull, or } from "drizzle-orm";
@@ -122,12 +128,14 @@ function iso(value: Date | null): string | null {
 }
 
 function toSession(row: typeof agentSessions.$inferSelect): AgentSession {
+  const modelPreference = modelPreferenceFromAgentId(row.activeAgentId);
   return {
     id: row.id,
     roomId: normalizeRoomId(row.roomId),
     pageLabel: row.pageLabel,
     runtimeId: row.runtimeId,
     activeAgentId: row.activeAgentId,
+    ...(modelPreference ? { modelPreference } : {}),
     title: row.title,
     status: row.status,
     createdAt: row.createdAt.toISOString(),
@@ -449,6 +457,17 @@ export class AgentService {
     this.attachBashApprovalBridge(this.runtime);
   }
 
+  /**
+   * 内置档位 runtime（main-direct/main-lite）解析器：由 create-server 注入，
+   * 返回 null＝该档不可用（lite 未配置），调用方回落 primary。
+   * 每次解析都现取（resolver 缓存当前实例），热重载后自然生效。
+   */
+  setTierRuntimeResolver(resolve: (agentId: string) => AgentRuntime | null): void {
+    this.resolveTierRuntime = resolve;
+  }
+
+  private resolveTierRuntime: ((agentId: string) => AgentRuntime | null) | undefined;
+
   /** replaceRuntime 热替换后也必须重挂，否则审批立即回落 false（无 UI 询问）。 */
   private attachBashApprovalBridge(runtime: AgentRuntime): void {
     const runtimeWithApprovals = runtime as AgentRuntime & {
@@ -589,13 +608,13 @@ export class AgentService {
         type: "run.interrupted",
         payload: { reason: "gateway-restarted" },
       });
-      if (run.agentId === MAIN_AGENT_ID) {
+      if (MODEL_TIER_AGENT_IDS.includes(run.agentId)) {
         const recoveredAt = new Date();
         this.db.update(agentSessionParticipants)
           .set({ runtimeSessionRef: null, updatedAt: recoveredAt })
           .where(and(
             eq(agentSessionParticipants.sessionId, run.sessionId),
-            eq(agentSessionParticipants.agentId, MAIN_AGENT_ID),
+            eq(agentSessionParticipants.agentId, run.agentId),
           )).run();
         this.db.update(agentSessions)
           .set({ runtimeSessionRef: null, updatedAt: recoveredAt })
@@ -633,6 +652,16 @@ export class AgentService {
 
   createSession(input: CreateAgentSessionInput): AgentSession {
     const now = new Date();
+    // 档位在创建时锁定为 activeAgentId；lite 未配置（tier resolver 缺席）
+    // 静默回落 smart，之后 startRun 一路走 session.activeAgentId。
+    let activeAgentId: string = MAIN_AGENT_ID;
+    if (input.modelPreference) {
+      const requested = MODEL_PREFERENCE_AGENT_IDS[input.modelPreference];
+      const tierRuntime = requested === MAIN_AGENT_ID
+        ? this.runtime
+        : this.resolveTierRuntime?.(requested) ?? null;
+      activeAgentId = tierRuntime ? requested : MAIN_AGENT_ID;
+    }
     const row: typeof agentSessions.$inferInsert = {
       id: randomUUID(),
       // Room is run context, not session identity. Keep the legacy column
@@ -640,7 +669,7 @@ export class AgentService {
       roomId: null,
       pageLabel: input.pageLabel.trim(),
       runtimeId: this.runtime.id,
-      activeAgentId: MAIN_AGENT_ID,
+      activeAgentId,
       status: "idle",
       createdAt: now,
       updatedAt: now,
@@ -649,7 +678,7 @@ export class AgentService {
       const session = tx.insert(agentSessions).values(row).returning().get();
       tx.insert(agentSessionParticipants).values({
         sessionId: session.id,
-        agentId: MAIN_AGENT_ID,
+        agentId: activeAgentId,
         runtimeId: this.runtime.id,
         permissionProfile: "inspect",
         createdAt: now,
@@ -1111,9 +1140,22 @@ export class AgentService {
         ?? input.context.activeDocument
       : undefined;
 
-    const selectedAgentId = input.targetAgentId ?? session.activeAgentId ?? MAIN_AGENT_ID;
+    // 档位（main/main-direct/main-lite）在会话创建时锁定：会话已锁档位时
+    // 请求另一个档位不生效（静默沿用会话档位）；local agent 切换不受影响。
+    const lockedTier = MODEL_TIER_AGENT_IDS.includes(session.activeAgentId ?? MAIN_AGENT_ID)
+      ? session.activeAgentId ?? MAIN_AGENT_ID
+      : null;
+    let selectedAgentId = input.targetAgentId ?? session.activeAgentId ?? MAIN_AGENT_ID;
+    if (lockedTier && MODEL_TIER_AGENT_IDS.includes(selectedAgentId) && selectedAgentId !== lockedTier) {
+      this.logger.info(
+        { event: "agent_tier_locked", sessionId, requested: selectedAgentId, locked: lockedTier },
+        "agent model tier locked at session creation",
+      );
+      selectedAgentId = lockedTier;
+    }
+    const isBuiltinTier = MODEL_TIER_AGENT_IDS.includes(selectedAgentId);
     const invocationMode = input.invocationMode ?? "explicit_switch";
-    if (input.context?.referencedConversationId && selectedAgentId !== MAIN_AGENT_ID) {
+    if (input.context?.referencedConversationId && !isBuiltinTier) {
       throw new Error("referenced_conversation_requires_main_agent");
     }
     if (input.context?.referencedConversationId && input.context.externalConversationId) {
@@ -1122,7 +1164,7 @@ export class AgentService {
     const referencedLocalAgentIds = input.context?.referencedLocalAgentIds ?? [];
     const referencedTargets = input.referencedLocalAgents ?? [];
     if (referencedLocalAgentIds.length || referencedTargets.length) {
-      if (selectedAgentId !== MAIN_AGENT_ID) {
+      if (!isBuiltinTier) {
         throw new Error("referenced_local_agent_requires_main_agent");
       }
       if (input.context?.externalConversationId || input.context?.referencedConversationId) {
@@ -1135,13 +1177,33 @@ export class AgentService {
         throw new Error("referenced_local_agent_target_mismatch");
       }
     }
-    if (selectedAgentId === MAIN_AGENT_ID && input.localAgent) throw new Error("local_agent_target_invalid");
-    if (selectedAgentId !== MAIN_AGENT_ID && input.localAgent?.id !== selectedAgentId) {
+    if (isBuiltinTier && input.localAgent) throw new Error("local_agent_target_invalid");
+    if (!isBuiltinTier && input.localAgent?.id !== selectedAgentId) {
       throw new Error("local_agent_target_invalid");
     }
     const targetRuntime = input.localAgent ? this.resolveTargetRuntime?.(input.localAgent) : null;
-    if (selectedAgentId !== MAIN_AGENT_ID && !targetRuntime) throw new Error("local_agent_runtime_unavailable");
-    const selectedRuntime = targetRuntime ?? this.runtime;
+    if (!isBuiltinTier && !targetRuntime) throw new Error("local_agent_runtime_unavailable");
+    // 档位 runtime：main 走 this.runtime（热重载经 replaceRuntime 替换），
+    // main-direct/main-lite 经注入的 resolver 现取；不可用时静默回落 primary
+    // （lite 配置被移除后的旧 lite 会话不至于报错）。
+    let selectedRuntime: AgentRuntime;
+    if (targetRuntime) {
+      selectedRuntime = targetRuntime;
+    } else if (isBuiltinTier && selectedAgentId !== MAIN_AGENT_ID) {
+      const tierRuntime = this.resolveTierRuntime?.(selectedAgentId) ?? null;
+      if (tierRuntime) {
+        selectedRuntime = tierRuntime;
+        this.attachBashApprovalBridge(tierRuntime);
+      } else {
+        this.logger.info(
+          { event: "agent_tier_fallback", sessionId, agentId: selectedAgentId },
+          "tier runtime unavailable; falling back to primary",
+        );
+        selectedRuntime = this.runtime;
+      }
+    } else {
+      selectedRuntime = this.runtime;
+    }
     let participant = this.db.select().from(agentSessionParticipants).where(and(
       eq(agentSessionParticipants.sessionId, sessionId),
       eq(agentSessionParticipants.agentId, selectedAgentId),
@@ -1240,7 +1302,7 @@ export class AgentService {
     // the Agent: it receives the Room metadata and can pass an exact Room id to
     // the document-create tool when the match is clear.
     // toolsEnabled=false 的运行是内部纯文本调用（选区重写/续写），不触发 UI 预检。
-    const interactiveRun = input.toolsEnabled !== false && selectedAgentId === MAIN_AGENT_ID;
+    const interactiveRun = input.toolsEnabled !== false && isBuiltinTier;
     const documentTopic = interactiveRun && !runRoomId
       ? ambiguousDocumentTopic(input.prompt)
       : null;
@@ -1311,7 +1373,7 @@ export class AgentService {
       const importedContext = externalConversationId
           ? await this.externalConversationResolver?.bindAndBuildContext(sessionId, externalConversationId, input.prompt) ?? null
           : null;
-      const nativeContinuationRef = externalConversationId && selectedAgentId !== MAIN_AGENT_ID
+      const nativeContinuationRef = externalConversationId && !isBuiltinTier
         ? this.externalConversationResolver?.resolveNativeContinuation?.(externalConversationId, selectedAgentId) ?? null
         : null;
       const referencedConversationContext = referencedConversationId
@@ -1351,7 +1413,7 @@ export class AgentService {
         prompt: runtimePrompt(
           input,
           runPageLabel,
-          selectedAgentId === MAIN_AGENT_ID ? participantHandoffPrompt(priorMessages) : null,
+          !isBuiltinTier ? participantHandoffPrompt(priorMessages) : null,
           externalContext,
         ),
         ...(attachments.length ? { attachments } : {}),
@@ -1385,7 +1447,7 @@ export class AgentService {
         eq(agentSessionParticipants.sessionId, sessionId),
         eq(agentSessionParticipants.agentId, selectedAgentId),
       )).run();
-      if (selectedAgentId === MAIN_AGENT_ID) this.db.update(agentSessions)
+      if (isBuiltinTier) this.db.update(agentSessions)
         .set({ runtimeSessionRef: runtimeRun.runtimeSessionRef, updatedAt: new Date() })
         .where(eq(agentSessions.id, sessionId)).run();
     }
@@ -1569,10 +1631,10 @@ export class AgentService {
       // 被丢弃的旧内容，必须作废而不是在终结事件前冲刷拼接，否则新正文
       // 会多出旧波次的脏尾。run 首个 message.started 时本就无扣留，无副作用。
       clearRedactionDelta(deltaScope);
-    } else if (runtimeEvent.type === "message.completed" || runtimeEvent.type.startsWith("run.")) {
-      // 扣留的尾部必须补发，否则事件流里的 delta 累加永久缺尾（#199）：
-      // 中断时前端只能展示 delta 累加；正常完成时工具型 run 的"末段答案"
-      // 也取自 delta 累加。余留已过 redactText，补发时 skipDeltaHold 防止再次扣留。
+    } else {
+      // 其余非 delta 事件（tool.* 等）落库前必须先吐扣留尾部：事件按 seq
+      // 排序渲染，若尾巴延迟到下一条 delta 才补，工具事件会插进正文中间，
+      // 句子在视图里被工具块拦腰截断。余留已过 redactText，安全性同下。
       const tail = flushRedactionDelta(deltaScope);
       if (tail) {
         await this.appendEvent(sessionId, runId, {
@@ -1590,7 +1652,7 @@ export class AgentService {
           eq(agentSessionParticipants.sessionId, sessionId),
           eq(agentSessionParticipants.agentId, runOwner.agentId),
         )).run();
-        if (runOwner.agentId === MAIN_AGENT_ID) this.db.update(agentSessions)
+        if (MODEL_TIER_AGENT_IDS.includes(runOwner.agentId)) this.db.update(agentSessions)
           .set({ runtimeSessionRef, updatedAt: new Date() })
           .where(eq(agentSessions.id, sessionId)).run();
       }

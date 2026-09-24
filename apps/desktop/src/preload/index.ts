@@ -18,6 +18,7 @@ import type {
 } from '../shared/memory'
 import type { IngestPipelines } from '../shared/ingest'
 import type { McpServersSnapshot } from '../shared/mcp'
+import type { OfficeAgentAskEvent, OfficeAgentFileEvent } from '../shared/office'
 import { OIDC_LOGIN_CANCELLED_MESSAGE, type AiRelayKeeperEventType, type AsrResult, type CloudAccountStatus, type DesktopRequestError, type NxcoreDesktopApi, type RoomAgentSelectionRewriteInput } from '../shared/sources'
 import type { BrowserExtensionMessage, BrowserExtensionStatus } from '../shared/browser-extension'
 import { isCursorCompletionAgentErrorPayload } from '../shared/cursor-completion'
@@ -200,6 +201,18 @@ const api: NxcoreDesktopApi = {
     setActiveInstance: (id) => ipcRenderer.invoke('office:instance:set-active', id),
     closeInstance: (id) => ipcRenderer.invoke('office:instance:close', id),
     setWorkspaceBounds: (bounds) => ipcRenderer.send('office:workspace-bounds', bounds),
+    /** Agent 生成 Office 文件的进度/完成事件（完成带 fileId 用于自动打开预览）。 */
+    onAgentFile: (listener: (event: OfficeAgentFileEvent) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: OfficeAgentFileEvent) => listener(payload)
+      ipcRenderer.on('office:agent-file', handler)
+      return () => ipcRenderer.removeListener('office:agent-file', handler)
+    },
+    /** slides「AI 修改」弹层转发事件（切到对应 Room 并自动发送注入消息）。 */
+    onAgentAsk: (listener: (event: OfficeAgentAskEvent) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: OfficeAgentAskEvent) => listener(payload)
+      ipcRenderer.on('office:agent-ask', handler)
+      return () => ipcRenderer.removeListener('office:agent-ask', handler)
+    },
   },
   locale: {
     system: ipcRenderer.sendSync('app:get-system-locale-sync') as string,
@@ -618,6 +631,8 @@ const api: NxcoreDesktopApi = {
   },
   agent: {
     discoverLocalAgents: () => invokeQuietly('agent:discover-local-agents'),
+    checkLocalAgentAdapters: (agentIds: string[]) => invokeQuietly('agent:check-local-agent-adapters', agentIds),
+    installLocalAgentAdapter: (agentId: string) => invoke('agent:install-local-agent-adapter', agentId),
     importLocalAgentHistory: (agentId: string) => invoke('agent:import-local-agent-history', agentId),
     bindLocalAgentWorkspace: (agentId: string, sessionId: string) => invoke('agent:bind-local-agent-workspace', agentId, sessionId),
     getStatus: () => invokeQuietly('agent:get-status'),
@@ -849,8 +864,13 @@ const api: NxcoreDesktopApi = {
       invoke('files:pin-cluster-title', clusterId, sharedTitle),
     delete: (fileId: string) => invoke('files:delete', fileId),
     reveal: (fileId: string) => invoke('files:reveal', fileId),
-    openOriginal: (fileId: string, originalName?: string, contentHash?: string) =>
-      invoke('files:open-original', fileId, originalName, contentHash),
+    openOriginal: (
+      fileId: string,
+      originalName?: string,
+      contentHash?: string,
+      options?: { editable?: boolean; roomId?: string },
+    ) =>
+      invoke('files:open-original', fileId, originalName, contentHash, options),
     pickAndImport: (options?: { pipelines?: IngestPipelines; roomId?: string }) =>
       invoke('files:pick-and-import', options),
     /** 仅选择：返回文件/文件夹路径，不导入（创建 Room 弹窗暂存用）。 */

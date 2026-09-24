@@ -23,7 +23,7 @@ import {
   scheduleRoomMarkdownImport,
 } from '../../../knowledgeMarkdownImport';
 import { WikiGraphCanvas } from '../WikiGraphCanvas';
-import { MarkdownBody } from './MarkdownBody';
+import { MarkdownBody, resolveWikiLinkTarget } from './MarkdownBody';
 import { WikiTree } from './WikiTree';
 
 const SOURCE_KIND_LABELS: Record<string, string> = {
@@ -278,6 +278,16 @@ export function WikiPane({ room, selectedResourceId, onOpenPage, view = 'tree' }
     </div>
   );
 
+  // 来源 md 原件里的 [[双链]] 同样按 Room wiki 页面解析跳转
+  const openWikiLink = (target: string) => {
+    const page = resolveWikiLinkTarget(target, pages);
+    if (!page) {
+      showToast({ title: t('contextRoom:wiki.unresolvedLink') });
+      return;
+    }
+    openPage(page);
+  };
+
   if (selectedFile) {
     return (
       <div className="context-room-wiki-pane is-reading-file">
@@ -300,7 +310,7 @@ export function WikiPane({ room, selectedResourceId, onOpenPage, view = 'tree' }
           </button>
         </header>
         <div className="context-room-wiki-reader">
-          <MarkdownBody markdown={selectedFile.markdown} />
+          <MarkdownBody markdown={selectedFile.markdown} onWikiLink={openWikiLink} />
         </div>
       </div>
     );

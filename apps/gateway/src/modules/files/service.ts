@@ -44,7 +44,7 @@ export function isSupportedUploadFilename(filename: string): boolean {
   return SUPPORTED_UPLOAD_EXTENSIONS.has(normalizedFileExtension(filename));
 }
 
-export type FileSourceKind = "manual-upload" | "local-folder" | "connector" | "migration" | "web-clipper" | "legacy-upload";
+export type FileSourceKind = "manual-upload" | "local-folder" | "connector" | "migration" | "web-clipper" | "legacy-upload" | "agent-generated";
 
 export interface FileImportInput {
   sourceKind: Exclude<FileSourceKind, "legacy-upload">;
@@ -62,6 +62,8 @@ export interface FileImportInput {
   sourceModifiedAt?: Date | undefined;
   pipelines?: { room: boolean; wiki: boolean; memory: boolean } | undefined;
   roomId?: string | undefined;
+  /** 钉住既有条目（新版本入链）：提供时按 fileEntries.id 定位，忽略 (sourceKind, sourceKey) 分组。 */
+  fileEntryId?: string | undefined;
   /** Store a source version without starting normalization/fan-out yet. */
   deferIngest?: boolean | undefined;
 }
@@ -119,6 +121,8 @@ type VersionIngestor = (input: {
   roomId?: string;
 }) => Promise<VersionIngestResult>;
 type VersionClassifier = (fileEntryId: string, fileVersionId: string) => void;
+/** 显式 roomId 导入的同步归属钩子（create-server 注入 knowledge 落入口决策）。 */
+type RoomEntrySink = (input: { fileEntryId: string; roomId: string; sourceTitle: string }) => void;
 
 /** 统一上传结果：deduped = 判重闸 1 命中（同名同内容，零写入）。 */
 export interface FileUploadResult {
@@ -162,6 +166,7 @@ export interface FileDeletionResult {
 export class FilesService {
   private versionIngestor: VersionIngestor | null = null;
   private versionClassifier: VersionClassifier | null = null;
+  private roomEntrySink: RoomEntrySink | null = null;
   private fileJobWorker: Promise<void> | null = null;
   private disposed = false;
 
@@ -220,6 +225,10 @@ export class FilesService {
 
   setVersionClassifier(classifier: VersionClassifier): void {
     this.versionClassifier = classifier;
+  }
+
+  setRoomEntrySink(sink: RoomEntrySink): void {
+    this.roomEntrySink = sink;
   }
 
   async importFile(input: FileImportInput): Promise<FileImportResult> {
@@ -305,10 +314,13 @@ export class FilesService {
       .where(eq(fileBlobs.contentHash, contentHash)).get();
 
     const now = new Date();
-    let entry = this.db.select().from(fileEntries).where(and(
-      eq(fileEntries.sourceKind, input.sourceKind),
-      eq(fileEntries.sourceKey, input.sourceKey),
-    )).get();
+    let entry = input.fileEntryId
+      ? this.db.select().from(fileEntries).where(eq(fileEntries.id, input.fileEntryId)).get()
+      : this.db.select().from(fileEntries).where(and(
+          eq(fileEntries.sourceKind, input.sourceKind),
+          eq(fileEntries.sourceKey, input.sourceKey),
+        )).get();
+    if (input.fileEntryId && !entry) throw new Error("file_entry_not_found");
     const fileEntryId = entry?.id ?? `file-${randomUUID()}`;
     const existingVersion = entry
       ? this.db.select().from(fileVersions).where(and(
@@ -363,6 +375,7 @@ export class FilesService {
         versionDeduped: true,
       };
       if (shouldEnqueue) this.kickFileJobs();
+      this.emitRoomEntry(input, fileEntryId);
       return result;
     }
 
@@ -444,7 +457,18 @@ export class FilesService {
     });
     entry = this.db.select().from(fileEntries).where(eq(fileEntries.id, fileEntryId)).get();
     if (!input.deferIngest) this.kickFileJobs();
+    this.emitRoomEntry(input, fileEntryId);
     return { fileEntryId, fileVersionId, jobId, contentHash, blobDeduped: Boolean(existingBlob), versionDeduped: false };
+  }
+
+  /** 归属保底失败不阻断导入：异步路由链路（file.ingest → route job）仍会补齐。 */
+  private emitRoomEntry(input: { roomId?: string | undefined; originalName: string }, fileEntryId: string): void {
+    if (!input.roomId || !this.roomEntrySink) return;
+    try {
+      this.roomEntrySink({ fileEntryId, roomId: input.roomId, sourceTitle: input.originalName });
+    } catch {
+      // 见上：sink 抛错仅丢失同步保底，导入本身继续
+    }
   }
 
   getVersionContext(fileEntryId: string, fileVersionId: string): {
@@ -506,7 +530,7 @@ export class FilesService {
       displayName: entry.displayName,
       sharedTitle: cluster?.canonicalTitle ?? entry.displayName ?? entry.originalName,
       sourceKind: entry.sourceKind,
-      sourceLabel: entry.provider ?? (entry.sourceKind === "local-folder" ? "本地文件夹" : entry.sourceKind === "manual-upload" ? "手动上传" : entry.sourceKind === "web-clipper" ? "网页剪藏" : "历史上传"),
+      sourceLabel: entry.provider ?? (entry.sourceKind === "local-folder" ? "本地文件夹" : entry.sourceKind === "manual-upload" ? "手动上传" : entry.sourceKind === "web-clipper" ? "网页剪藏" : entry.sourceKind === "agent-generated" ? "Agent 生成" : "历史上传"),
       relativePath: entry.relativePath,
       provider: entry.provider,
       bytes: blob?.byteSize ?? 0,

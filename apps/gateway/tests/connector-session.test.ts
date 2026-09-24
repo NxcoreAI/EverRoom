@@ -68,6 +68,7 @@ describe("connector session routes", () => {
         insightEnabled: false, insightIntervalMs: 3_600_000,
       },
       cursorCompletionPi: null,
+      litePi: null,
       mcpConfigPath: join(dir, "agent", "mcp.json"),
       webSearch: null,
     } as Parameters<typeof createServer>[0]);

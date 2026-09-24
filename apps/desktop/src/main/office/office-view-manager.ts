@@ -79,6 +79,7 @@ export async function prepareOfficeDocument(
 export class OfficeViewManager {
   private readonly docs: GenOfficeDocsRuntime
   private readonly view: WebContentsView
+  private readonly editable: boolean
   private disposed = false
   private active = false
   private bounds: Rectangle | null = null
@@ -87,25 +88,34 @@ export class OfficeViewManager {
     private readonly window: BrowserWindow,
     docs: GenOfficeDocsRuntime,
     view: WebContentsView,
+    editable: boolean,
   ) {
     this.docs = docs
     this.view = view
+    this.editable = editable
+  }
+
+  /** docs webContents id：保存事件订阅（编辑回填）按它键控。 */
+  get webContentsId(): number {
+    return this.view.webContents.id
   }
 
   static createWithRuntime(
     window: BrowserWindow,
     docs: GenOfficeDocsRuntime,
     docxPath: string,
+    options?: { editable?: boolean },
   ): OfficeViewManager {
     const filePath = validateDocxPath(docxPath)
+    const editable = options?.editable === true
     docs.registerDocsIpc()
     docs.setDocsShellWindow(window)
-    const view = docs.createDocsView(filePath, { hostMode: 'everroom', readonly: true })
+    const view = docs.createDocsView(filePath, { hostMode: 'everroom', readonly: !editable })
     docs.setActiveDocsResolver(() => view.webContents.isDestroyed() ? null : view.webContents)
     view.setVisible(false)
     window.contentView.addChildView(view)
 
-    const manager = new OfficeViewManager(window, docs, view)
+    const manager = new OfficeViewManager(window, docs, view, editable)
     ipcMain.on(OFFICE_WORKSPACE_BOUNDS_CHANNEL, manager.handleBounds)
     return manager
   }
@@ -130,13 +140,24 @@ export class OfficeViewManager {
     this.view.setVisible(this.active && bounds.width > 0 && bounds.height > 0)
   }
 
-  readonly dispose = (): void => {
-    if (this.disposed) return
+  /** false = 用户在脏关闭守卫里点了取消：实例与视图原样保留。 */
+  readonly dispose = async (): Promise<boolean> => {
+    if (this.disposed) return true
+    if (
+      this.editable &&
+      !this.view.webContents.isDestroyed() &&
+      !this.window.isDestroyed()
+    ) {
+      // Save 分支会跑渲染端完整保存流——保存事件照常进回填链，随后由调用方 flush。
+      const proceed = await this.docs.requestDocsClose(this.view.webContents, this.window)
+      if (!proceed) return false
+    }
     this.disposed = true
     ipcMain.removeListener(OFFICE_WORKSPACE_BOUNDS_CHANNEL, this.handleBounds)
     if (!this.view.webContents.isDestroyed()) {
       this.docs.teardownDocsRenderer(this.view.webContents)
       this.view.webContents.close({ waitForBeforeUnload: false })
     }
+    return true
   }
 }

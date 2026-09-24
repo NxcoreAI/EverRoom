@@ -15,8 +15,14 @@ export interface GenOfficeDocsRuntime {
     openPath?: string,
     options?: { hostMode?: 'tab' | 'everroom'; readonly?: boolean },
   ): WebContentsView
+  markDocsNewBlank(wcId: number): void
+  queueDocsAiContent(wcId: number, content: { title: string; html: string }): void
   registerDocsIpc(): void
+  /** 脏关闭守卫：true = 可以关闭（Save 已执行/无改动）；Cancel = false。 */
+  requestDocsClose(contents: WebContents, parent?: BrowserWindow | null): Promise<boolean>
+  docsQueryDirty(contents: WebContents): Promise<boolean>
   setActiveDocsResolver(resolve: (() => WebContents | null) | null): void
+  setDocsFileSavedHook(hook: (contents: WebContents, filePath: string) => void): void
   setDocsShellWindow(window: BrowserWindow | null): void
   teardownDocsRenderer(contents: WebContents): void
 }
@@ -25,9 +31,42 @@ export interface GenOfficeSheetsRuntime {
   createSheetsView(options?: { includeAiHandlers?: boolean; readonly?: boolean }): WebContentsView
   queueWorkbookForView(contents: WebContents, path: string): void
   registerSheetsIpc(): void
+  /** 脏关闭守卫：true = 可以关闭（Save 已执行/无改动）；Cancel = false。 */
+  requestSheetsClose(contents: WebContents, parent?: BrowserWindow | null): Promise<boolean>
   setActiveSheetsWebContents(contents: WebContents | null): void
+  setSheetsFileSavedHook(hook: (contents: WebContents, filePath: string) => void): void
   setSheetsShellWindow(window: BrowserWindow | null): void
   stopSheetsSidecar(): void
+}
+
+export interface GenOfficeAgentDeckResult {
+  bytes: Uint8Array
+  warnings: { page: number; messages: string[] }[]
+  imageFailures: { page: number; url: string }[]
+}
+
+export interface AgentSlidesDeckInfo {
+  outline: string
+  opVocabulary: string
+  /** 宿主补充：实例是否可编辑（只读打开也能读大纲，编辑需重新以可编辑方式打开）。 */
+  editable?: boolean
+}
+
+export interface AgentSlidesEditResult {
+  ok: boolean
+  /** 宿主级错误（无会话/无路径/非法请求）；per-op 失败走 failures。 */
+  error?: string
+  applied?: boolean
+  dryRun?: boolean
+  plan?: string[]
+  records?: Array<{ op: string; target?: string; created?: string[] }>
+  failures?: Array<{ index: number; error: string }>
+  /** 静默保存结果；saveError = 已改内存但未落盘（版本链未回填）。 */
+  saved?: boolean
+  saveError?: string
+  outline?: string
+  /** PageSpec 解析告警（逐页填充路径）：页面已渲染，但建议关注。 */
+  warnings?: Array<{ page: number; messages: string[] }>
 }
 
 export interface GenOfficeSlidesRuntime {
@@ -36,8 +75,40 @@ export interface GenOfficeSlidesRuntime {
   registerSlidesIpc(): void
   requestSlidesClose(contents: WebContents, parent?: BrowserWindow | null): Promise<boolean>
   setActiveSlidesWebContents(contents: WebContents | null): void
+  setSlidesFileSavedHook(hook: (contents: WebContents, filePath: string) => void): void
+  /** 「AI 修改」弹层转发（embed 宿主接管；id 空间 = 大纲/编辑 op 的 durable id）。 */
+  setSlidesAgentAskHook(
+    hook:
+      | ((
+          wcId: number,
+          op: {
+            instruction: string
+            slideIndex: number
+            targets: Array<{
+              id: string
+              desc: { type: string; text?: string; rows?: number; cols?: number }
+            }>
+          },
+        ) => Promise<{ ok: true } | { ok: false; error: string }>)
+      | null,
+  ): void
   setSlidesShellWindow(window: BrowserWindow | null): void
   slidesIsDirty(webContentsId: number): boolean
+  /** Agent 幻灯片生成：页 spec JSON 数组 → 单文件 .pptx 字节（无渲染端参与）。 */
+  buildAgentDeckPptx(pageSpecJsons: string[]): Promise<{ ok: true; deck: GenOfficeAgentDeckResult } | { ok: false; error: string }>
+  /** Agent 读取活会话：大纲 + op 词汇表（该视图无会话返回 null）。 */
+  describeAgentDeck(webContentsId: number): AgentSlidesDeckInfo | null
+  /** Agent 编辑活会话：事务应用 + 逐视图重绘广播 + 静默保存（fileSaved hook 回填版本链）。 */
+  applyAgentDeckOps(
+    webContentsId: number,
+    ops: unknown[],
+    opts?: { dryRun?: boolean; isolation?: 'atomic' | 'per_op' },
+  ): Promise<AgentSlidesEditResult>
+  /** Agent 逐页填充活会话：PageSpec 经与整册生成同一条 builder/merge 管线原地替换一页。 */
+  applyAgentDeckPage(
+    webContentsId: number,
+    req: { slideIndex: number; specJson: string },
+  ): Promise<AgentSlidesEditResult>
 }
 
 export interface GenOfficePdfRuntime {

@@ -707,35 +707,35 @@ textarea.context-room-tiptap-rewrite-text:disabled {
   color: var(--cr-muted);
 }
 
-/* 文档速览卡：标题下方、正文上方的可折叠窄卡，与标题同列对齐。 */
+/* 文档速览卡：标题下方的可折叠 AI 摘要块，与标题同列对齐。浅灰底 +
+   Sparkles 标示 AI 生成内容，区别于用户正文；无描边，悬停仅加深底色。
+   选择器带 .context-room-document-overview 前缀是为了在特异性上压过
+   ContextRoom.css 里 :where(button) 的白底兜底。 */
 .context-room-document-overview {
   width: min(100%, 720px);
   margin: 0 auto;
-  padding: 14px clamp(24px, 8cqw, 72px) 0;
+  padding: 8px clamp(24px, 8cqw, 72px) 24px;
 }
 
-.context-room-document-overview-bar {
+.context-room-document-overview .context-room-document-overview-bar {
   display: flex;
   align-items: center;
   gap: 8px;
   width: 100%;
-  padding: 7px 12px;
-  border: 1px solid color-mix(in srgb, var(--cr-blue) 55%, transparent);
-  border-radius: 10px;
-  /* !important 是承重墙：真机上此按钮 background 被一个未定位到的样式源
-     覆盖成白底（同文件同选择器强度的 body div 着色正常，全仓 CSS 扫描与
-     insertCSS 均未找到来源）。移除前先在真机确认 header 仍为浅蓝。 */
-  background: color-mix(in srgb, var(--cr-blue) 9%, var(--cr-surface)) !important;
-  color: var(--cr-muted);
-  font-size: 12px;
-  line-height: 1.45;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--cr-surface-secondary);
+  color: var(--cr-text);
+  font-size: 13px;
+  line-height: 1.5;
   text-align: left;
   cursor: pointer;
-  transition: border-color 160ms ease-out, background-color 160ms ease-out;
+  transition: background-color 140ms ease-out;
 }
 
 .context-room-document-overview[data-expanded='true'] .context-room-document-overview-bar {
-  border-radius: 10px 10px 0 0;
+  border-radius: 8px 8px 0 0;
 }
 
 .context-room-document-overview-bar:disabled {
@@ -743,7 +743,18 @@ textarea.context-room-tiptap-rewrite-text:disabled {
 }
 
 .context-room-document-overview-bar:not(:disabled):hover {
-  border-color: var(--cr-blue);
+  background: var(--cr-surface-hover);
+}
+
+.context-room-document-overview-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: #7c5cff;
+}
+
+.context-room-document-overview-icon svg {
+  width: 13px;
+  height: 13px;
 }
 
 .context-room-document-overview-hint {
@@ -767,20 +778,29 @@ textarea.context-room-tiptap-rewrite-text:disabled {
 }
 
 .context-room-document-overview-stale-badge {
+  display: inline-flex;
   flex-shrink: 0;
-  padding: 1px 8px;
-  border-radius: 999px;
-  background: color-mix(in srgb, #b45309 14%, transparent);
+  align-items: center;
+  gap: 5px;
   color: #b45309;
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 500;
+}
+
+.context-room-document-overview-stale-badge::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.8;
 }
 
 .context-room-document-overview-skeleton {
   flex: 1;
-  height: 10px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--cr-muted) 20%, transparent);
+  height: 8px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--cr-border-strong, var(--cr-border)) 45%, transparent);
   animation: context-room-overview-pulse 1.2s ease-in-out infinite;
 }
 
@@ -788,17 +808,31 @@ textarea.context-room-tiptap-rewrite-text:disabled {
   50% { opacity: 0.45; }
 }
 
+.context-room-document-overview-chevron {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--cr-tertiary, var(--cr-muted));
+  transition: transform 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.context-room-document-overview-chevron svg {
+  width: 14px;
+  height: 14px;
+}
+
+.context-room-document-overview[data-expanded='true'] .context-room-document-overview-chevron {
+  transform: rotate(180deg);
+}
+
 .context-room-document-overview-body {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 12px 14px;
-  border: 1px solid color-mix(in srgb, var(--cr-blue) 55%, transparent);
-  border-top: 0;
-  border-radius: 0 0 10px 10px;
-  background: color-mix(in srgb, var(--cr-blue) 9%, var(--cr-surface));
+  gap: 6px;
+  padding: 4px 12px 10px;
+  border-radius: 0 0 8px 8px;
+  background: var(--cr-surface-secondary);
   font-size: 13px;
-  line-height: 1.6;
+  line-height: 1.65;
 }
 
 .context-room-document-overview-points {
@@ -808,12 +842,24 @@ textarea.context-room-tiptap-rewrite-text:disabled {
   color: var(--cr-text);
 }
 
+.context-room-document-overview-points li {
+  display: flex;
+  gap: 8px;
+}
+
 .context-room-document-overview-points li + li {
   margin-top: 2px;
 }
 
+.context-room-document-overview-points li::before {
+  content: '–';
+  flex-shrink: 0;
+  color: var(--cr-tertiary, var(--cr-muted));
+}
+
 .context-room-document-overview-conclusion {
-  color: color-mix(in srgb, var(--cr-text) 88%, transparent);
+  margin: 0;
+  color: var(--cr-muted);
 }
 
 .context-room-document-overview-footer {
@@ -826,28 +872,24 @@ textarea.context-room-tiptap-rewrite-text:disabled {
   color: var(--cr-tertiary, var(--cr-muted));
 }
 
-.context-room-document-overview-retry {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  flex-shrink: 0;
-  padding: 3px 9px;
-  border: 1px solid var(--cr-border);
-  border-radius: 999px;
+.context-room-document-overview .context-room-document-overview-retry {
+  padding: 2px 4px;
+  margin: 0 -4px;
+  border: 0;
+  border-radius: 4px;
   background: transparent;
-  color: var(--cr-text);
+  color: var(--cr-muted);
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 500;
   cursor: pointer;
-  transition: border-color 160ms ease-out, color 160ms ease-out;
+  transition: color 140ms ease-out;
 }
 
-.context-room-document-overview-retry:not(:disabled):hover {
-  border-color: var(--cr-blue);
+.context-room-document-overview .context-room-document-overview-retry:not(:disabled):hover {
   color: var(--cr-blue);
 }
 
-.context-room-document-overview-retry:disabled {
+.context-room-document-overview .context-room-document-overview-retry:disabled {
   opacity: 0.5;
   cursor: default;
 }
@@ -1956,3 +1998,205 @@ textarea.context-room-tiptap-rewrite-text:disabled {
   cursor: pointer;
 }
 .context-room-tiptap-bubble-comment button:disabled { opacity: 0.5; cursor: default; }
+
+/* 顶部状态行：文档标题（单击改名）+ 快捷操作（撤销/重做/查找）。 */
+.context-room-doc-status-title {
+  min-width: 0;
+  max-width: 320px;
+  overflow: hidden;
+  padding: 2px 7px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--cr-text);
+  cursor: text;
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-room-doc-status-title:hover:not(:disabled) {
+  background: var(--cr-surface-secondary);
+}
+
+.context-room-doc-status-title:disabled {
+  cursor: default;
+}
+
+.context-room-doc-status-title-input {
+  width: 240px;
+  height: 24px;
+  padding: 0 7px;
+  border: 1px solid var(--cr-blue);
+  border-radius: 5px;
+  background: var(--cr-surface);
+  color: var(--cr-text);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.context-room-doc-status-title-input:focus {
+  outline: 0;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--cr-blue) 12%, transparent);
+}
+
+.context-room-doc-quick-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.context-room-doc-quick-actions button {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--cr-muted);
+  cursor: pointer;
+}
+
+.context-room-doc-quick-actions button:hover:not(:disabled) {
+  background: var(--cr-surface-hover);
+  color: var(--cr-text);
+}
+
+.context-room-doc-quick-actions button:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.context-room-doc-quick-actions button svg {
+  width: 15px;
+  height: 15px;
+}
+
+/* 文档内查找替换（PRD 6.7）：右上悬浮条；命中高亮走 ProseMirror 装饰。 */
+.context-room-find-bar {
+  position: absolute;
+  top: 50px;
+  right: 16px;
+  z-index: 45;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--cr-border);
+  border-radius: 8px;
+  background: var(--cr-surface);
+  box-shadow: 0 8px 24px rgba(22, 27, 38, 0.14);
+}
+
+.context-room-find-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.context-room-find-bar-input {
+  width: 190px;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--cr-border);
+  border-radius: 6px;
+  background: var(--cr-surface);
+  color: var(--cr-text);
+  font-size: 12px;
+}
+
+.context-room-find-bar-input:focus {
+  outline: 0;
+  border-color: var(--cr-blue);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--cr-blue) 12%, transparent);
+}
+
+.context-room-find-bar-count {
+  min-width: 52px;
+  color: var(--cr-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.context-room-find-bar-count[data-empty='true'] {
+  color: var(--cr-danger);
+}
+
+.context-room-find-bar-row > button {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  height: 28px;
+  min-width: 28px;
+  padding: 0 6px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--cr-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+}
+
+.context-room-find-bar-row > button:hover:not(:disabled) {
+  background: var(--cr-surface-hover);
+  color: var(--cr-text);
+}
+
+.context-room-find-bar-row > button[data-active='true'] {
+  background: color-mix(in srgb, var(--cr-blue) 12%, var(--cr-surface));
+  color: var(--cr-blue);
+}
+
+.context-room-find-bar-row > button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.context-room-find-bar-row > button svg {
+  width: 15px;
+  height: 15px;
+}
+
+.context-room-find-bar-scope {
+  gap: 4px;
+  border-color: var(--cr-border);
+  background: color-mix(in srgb, var(--cr-blue) 8%, var(--cr-surface));
+  color: var(--cr-blue);
+  white-space: nowrap;
+}
+
+.context-room-find-bar-scope svg {
+  width: 11px;
+  height: 11px;
+}
+
+.context-room-find-bar-action {
+  padding: 0 9px;
+  border-color: var(--cr-border);
+  background: var(--cr-surface);
+  color: var(--cr-text);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.context-room-find-bar-action:hover:not(:disabled) {
+  border-color: var(--cr-blue);
+  color: var(--cr-blue);
+}
+
+/* 命中高亮：普通命中淡琥珀，当前命中加深并描边。 */
+.context-room-find-match {
+  border-radius: 2px;
+  background: rgb(255 212 0 / 38%);
+}
+
+.context-room-find-match.is-current {
+  background: rgb(255 176 7 / 55%);
+  box-shadow: 0 0 0 1px rgb(202 138 4 / 55%);
+}

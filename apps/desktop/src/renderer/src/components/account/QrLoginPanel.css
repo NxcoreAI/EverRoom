@@ -97,29 +97,50 @@
   box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04), 0 10px 30px rgba(16, 24, 40, 0.07);
 }
 
+/* 创建会话：真二维码底图先糊着（灰块只是底图未就绪的兜底），
+ * 真码就位后由 qr-focus-in 聚焦替换。 */
+.qr-login-qr-placeholder-img {
+  display: block;
+  width: 180px;
+  height: 180px;
+  filter: blur(6px);
+  opacity: 0.75;
+}
+
+.qr-login-qr-placeholder {
+  width: 180px;
+  height: 180px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, rgb(21 26 34 / 5%), rgb(21 26 34 / 10%));
+  filter: blur(3px);
+}
+
+/* 真二维码入场：从模糊聚焦到清晰。只挂在真码上——占位码若继承该动画，
+ * 会在挂载瞬间被拉到 blur(0) 再跳回，看起来像「没有模糊」（且闪一下）。 */
+.qr-login-qr-box img {
+  display: block;
+}
+
+.qr-login-qr-real {
+  animation: qr-focus-in 520ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes qr-focus-in {
+  from { filter: blur(6px); opacity: 0.75; transform: scale(1.01); }
+  to { filter: blur(0); opacity: 1; transform: scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .qr-login-qr-real { animation: none; }
+  .qr-login-qr-placeholder { filter: none; }
+}
+
 .qr-login-qr-box img {
   display: block;
   width: 180px;
   height: 180px;
   transition: opacity 0.45s ease, transform 0.45s ease, filter 0.45s ease;
 }
-
-/* 四角取景框 */
-.qr-login-corners { position: absolute; inset: 0; transition: opacity 0.4s ease; }
-
-.qr-login-corners i {
-  position: absolute;
-  width: 20px;
-  height: 20px;
-  border: 0 solid var(--accent);
-}
-
-.qr-login-corners i:nth-child(1) { top: 7px; left: 7px; border-top-width: 2.5px; border-left-width: 2.5px; border-top-left-radius: 10px; }
-.qr-login-corners i:nth-child(2) { top: 7px; right: 7px; border-top-width: 2.5px; border-right-width: 2.5px; border-top-right-radius: 10px; }
-.qr-login-corners i:nth-child(3) { bottom: 7px; left: 7px; border-bottom-width: 2.5px; border-left-width: 2.5px; border-bottom-left-radius: 10px; }
-.qr-login-corners i:nth-child(4) { bottom: 7px; right: 7px; border-bottom-width: 2.5px; border-right-width: 2.5px; border-bottom-right-radius: 10px; }
-
-.qr-login-qr-box.is-scanned .qr-login-corners { opacity: 0; }
 
 /* 扫码成功：整框轻微回弹，二维码淡出模糊 */
 .qr-login-qr-box.is-scanned { animation: qr-nudge 0.5s ease; }
@@ -132,21 +153,17 @@
 }
 
 /* 等待扫码：柔和的呼吸扫描线 */
-.qr-login-scanline {
-  position: absolute;
-  left: 8px;
-  right: 8px;
-  top: 8px;
-  height: 48px;
-  background: linear-gradient(to bottom, transparent, rgba(34, 160, 107, 0.18), transparent);
-  animation: qr-scan-sweep 2.8s ease-in-out infinite;
+/* 加载中提示（创建会话阶段）：spinner + 文案。 */
+.qr-login-loading {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
 }
 
-@keyframes qr-scan-sweep {
-  0% { transform: translateY(0); opacity: 0; }
-  15% { opacity: 1; }
-  85% { opacity: 1; }
-  100% { transform: translateY(132px); opacity: 0; }
+.qr-login-loading .spin {
+  width: 16px;
+  height: 16px;
 }
 
 /* 扫码成功的瞬间：对勾弹性弹出 + 一圈波纹扩散 */
@@ -260,33 +277,6 @@
   justify-content: center;
   margin-top: 6px;
 }
-
-/* 底部辅助操作：弱化为文字链接行，避免与主操作按钮抢层级 */
-.qr-login-footer {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  color: var(--muted);
-  font-size: 10px;
-}
-
-.qr-login-sep { color: var(--border); }
-
-.qr-login-footer .link-button {
-  min-height: 0;
-  padding: 0;
-  border: 0;
-  background: none;
-  color: var(--accent);
-  font-size: 10.5px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.qr-login-footer .link-button:hover { color: var(--accent-strong); text-decoration: underline; }
-
-.qr-login-footer .link-button svg { width: 11px; height: 11px; }
 
 /* 设备准入（与 SettingsPage cloud-device-row 同构） */
 .qr-login-admission { align-items: stretch; }

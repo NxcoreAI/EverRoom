@@ -36,7 +36,8 @@ export interface RoomMemorySnapshot {
 
 /** L1 原子记忆分页查询（/v3/atomic/query）入参。 */
 export interface MemoryAtomicQuery {
-  type?: "episodic" | "persona" | "instruction" | undefined;
+  /** 开放类型：与写入侧一致（Agent 产物 work_artifact 等工作流类型动态入库）。 */
+  type?: string | undefined;
   limit: number;
   offset: number;
   timeStart?: string | undefined;
@@ -87,8 +88,8 @@ export interface MemoryConversationQuery {
   offset: number;
   timeStart?: string | undefined;
   timeEnd?: string | undefined;
-  /** 来源过滤：'conversation' = 仅对话（排除文档会话块）。 */
-  sourceKind?: "conversation" | "document" | undefined;
+  /** 来源过滤（开放枚举）：'conversation' = 仅对话；文档/Agent 产物导入带各自标记。 */
+  sourceKind?: string | undefined;
 }
 
 /** L0 对话分页查询结果。 */

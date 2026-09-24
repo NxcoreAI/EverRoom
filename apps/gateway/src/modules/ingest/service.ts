@@ -603,7 +603,9 @@ export class IngestService {
     const pipelines = resolvePipelines(unit.dataType, input.pipelines, this.policyLayers);
     const invalid = validatePipelines(pipelines);
     if (invalid) throw new IngestError("链路开关组合非法（wiki 依赖 Room；至少开一条链路）", invalid);
-    if (pipelines.room && !this.knowledge.routerEnabled && unit.sourceKind !== "everroom-doc") {
+    // 显式 roomId（入口确定性归属）不需要路由瀑布：Agent 生成/拖入指定 Room
+    // 的文件在 router 关闭的环境（dev 默认）也要能进 Room 清单与 wiki。
+    if (pipelines.room && !this.knowledge.routerEnabled && unit.sourceKind !== "everroom-doc" && !input.roomId) {
       throw new IngestError("Room 链路需要开启 knowledge router（roomWikisEnabled）", "router_disabled", 400);
     }
 

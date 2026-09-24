@@ -173,6 +173,11 @@ export function agentRoutes(
           body: Type.Object({
             pageLabel: Type.String({ minLength: 1, maxLength: 120 }),
             roomId: Type.Optional(Type.Union([Type.String({ maxLength: 100 }), Type.Null()])),
+            modelPreference: Type.Optional(Type.Union([
+              Type.Literal("smart"),
+              Type.Literal("primary"),
+              Type.Literal("lite"),
+            ])),
           }),
         },
       },
@@ -370,7 +375,7 @@ export function agentRoutes(
               }, { additionalProperties: false }), { maxItems: 5 })),
               externalConversationId: Type.Optional(Type.String({ minLength: 1, maxLength: 100 })),
               referencedConversationId: Type.Optional(Type.String({ minLength: 1, maxLength: 100 })),
-              referencedLocalAgentIds: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 100 }), { minItems: 1, maxItems: 8 })),
+              referencedLocalAgentIds: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 500 }), { minItems: 1, maxItems: 8 })),
             })),
           }),
         },

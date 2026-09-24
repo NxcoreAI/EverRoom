@@ -72,7 +72,11 @@ export function ImportedCommentsPanel({
   const [contentHeight, setContentHeight] = useState(0)
   const [dockHeight, setDockHeight] = useState(0)
 
-  /** 编辑器真正的滚动祖先：向上找第一个 overflow 可滚动且内容超出的元素。 */
+  /** 编辑器真正的滚动祖先：向上找第一个 overflow 可滚动的元素。
+   * 不能要求"当前内容超出"（scrollHeight > clientHeight）：短文档放得下时
+   * 会一路走到 document.body 兜底，而 dock 高度取自 scroller.clientHeight，
+   * body(900) 与滚动容器(808) 交替命中形成 dock 高度 808↔900 双稳态振荡，
+   * 右侧评注栏无限闪动（2026-09-22 真机实锤）。滚动容器恒为同一元素才稳定。 */
   const scrollerOf = useCallback((): HTMLElement | null => {
     const dom = editor?.view?.dom
     if (!dom) return null
@@ -80,7 +84,7 @@ export function ImportedCommentsPanel({
     while (element) {
       const style = window.getComputedStyle(element)
       const scrollable = /(auto|scroll|overlay)/.test(`${style.overflowY}${style.overflow}`)
-      if (scrollable && element.scrollHeight > element.clientHeight + 1) return element
+      if (scrollable) return element
       if (element === document.body) break
       element = element.parentElement
     }

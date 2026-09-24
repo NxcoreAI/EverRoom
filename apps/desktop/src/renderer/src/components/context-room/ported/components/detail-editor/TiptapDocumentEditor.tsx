@@ -35,6 +35,9 @@ import { TiptapBubbleToolbar } from './TiptapBubbleToolbar'
 import { TiptapContentScale } from './TiptapContentScale'
 import { TiptapDocumentActions } from './TiptapDocumentActions'
 import { TiptapSlashCommandMenu } from './TiptapSlashCommandMenu'
+import { TiptapFindReplace, openFindReplace, type FindReplaceStats } from './TiptapFindReplaceExtension'
+import { TiptapFindReplaceBar } from './TiptapFindReplaceBar'
+import { TiptapDocumentQuickActions } from './TiptapDocumentQuickActions'
 import { TiptapTableControls } from './TiptapTableControls'
 import {
   DocumentCursorCompletionExtension,
@@ -300,6 +303,20 @@ export function TiptapDocumentEditor({
   const documentNameRef = useRef(documentName)
   documentNameRef.current = documentName
   const titleInputRef = useRef<HTMLTextAreaElement>(null)
+  // 顶部状态行标题：单击改名的内联编辑态（与正文画布大标题共用 documentName）。
+  const [statusTitleEditing, setStatusTitleEditing] = useState(false)
+  const [statusTitleDraft, setStatusTitleDraft] = useState('')
+  const statusTitleInputRef = useRef<HTMLInputElement>(null)
+  const commitStatusTitle = () => {
+    if (!editor || editorLocked) return
+    const title = statusTitleDraft.trim() || t('contextRoom:documentOperationCenter.untitledDocument')
+    setStatusTitleEditing(false)
+    if (title !== documentName) {
+      setDocumentName(title)
+      queueDocumentSave(editor.getJSON() as TiptapJsonContent, 0, title)
+    }
+    editor.commands.focus()
+  }
   const saveTimer = useRef<number | null>(null)
   const saveInFlight = useRef(false)
   const pendingSave = useRef<{ contentJson: TiptapJsonContent; title: string; revision: number } | null>(null)
@@ -408,7 +425,7 @@ export function TiptapDocumentEditor({
   onBackendChangeRef.current = onBackendDocumentChange
 
   useEffect(() => {
-    if (!backendDocument?.title || document.activeElement === titleInputRef.current) return
+    if (!backendDocument?.title || document.activeElement === titleInputRef.current || document.activeElement === statusTitleInputRef.current) return
     setDocumentName(backendDocument.title)
   }, [backendDocument?.title])
 
@@ -678,6 +695,20 @@ export function TiptapDocumentEditor({
     requestDocumentBlockNavigation(target)
   }, [t])
 
+  // 文档内查找替换（PRD 6.7）：扩展经 onStats 回报命中数/游标，Cmd/Ctrl+F 唤起。
+  const [findStats, setFindStats] = useState<FindReplaceStats | null>(null)
+  const handleFindReplaceStats = useCallback((stats: FindReplaceStats) => {
+    setFindStats((current) => current !== null
+      && current.open === stats.open
+      && current.count === stats.count
+      && current.index === stats.index
+      && current.replaceVisible === stats.replaceVisible
+      && current.caseSensitive === stats.caseSensitive
+      && current.scope === stats.scope
+      ? current
+      : stats)
+  }, [])
+
   const editor = useEditor({
     extensions: [
       StarterKit.configure({
@@ -721,6 +752,7 @@ export function TiptapDocumentEditor({
       DocumentContinuationExtension,
       SelectionRewritePreviewExtension,
       DocumentCursorCompletionExtension,
+      TiptapFindReplace.configure({ onStats: handleFindReplaceStats }),
       Markdown,
       TableOfContents.configure({
         scrollParent: () => document.querySelector<HTMLElement>('.context-room-tiptap-scroll') ?? window,
@@ -790,6 +822,19 @@ export function TiptapDocumentEditor({
     editor.on('selectionUpdate', emit)
     return () => { editor.off('selectionUpdate', emit) }
   }, [editor, onSelectionTextChange])
+
+  // Cmd/Ctrl+F 唤起查找（编辑器失焦时也要能开，故挂 window；扩展内另有编辑器内快捷键）。
+  useEffect(() => {
+    if (!editor) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'f') {
+        event.preventDefault()
+        openFindReplace(editor)
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [editor])
 
   useEffect(() => {
     if (!editor || !onChapterChange) return
@@ -1023,13 +1068,19 @@ export function TiptapDocumentEditor({
     }
   }, [editor, editorLocked])
 
+  // 注册只消费 version/deletedAt：依赖原语而非 backendDocument 对象，
+  // 避免同 version 的对象替换（远程 touch/事件重放）导致 deactivate→activate
+  // 让 activeDocument 反复 null 震荡。
+  const backendDocumentVersion = backendDocument?.version
+  const backendDocumentDeletedAt = backendDocument?.deletedAt
+
   useEffect(() => {
-    if (!editor || !backendDocument || backendDocument.deletedAt) return
+    if (!editor || backendDocumentVersion === undefined || backendDocumentDeletedAt) return
     const handle = activateDocument({
       roomId: room.id,
       documentId,
       title: documentName,
-      version: backendDocument.version,
+      version: backendDocumentVersion,
       getCursorAnchorCandidate: () => cursorAnchorCandidateFromEditorState(editor.state),
       flush: async () => {
         const version = await flushDocumentVersion()
@@ -1037,7 +1088,7 @@ export function TiptapDocumentEditor({
       },
     })
     return handle.deactivate
-  }, [activateDocument, backendDocument, documentId, documentName, editor, flushDocumentVersion, room.id])
+  }, [activateDocument, backendDocumentDeletedAt, backendDocumentVersion, documentId, documentName, editor, flushDocumentVersion, room.id])
 
   // 图片缩放（幽灵模式）：拖动期间原图占位、幽灵框预览，松手才应用。
   useEffect(() => {
@@ -1527,7 +1578,50 @@ export function TiptapDocumentEditor({
       data-continuation-active={String(Boolean(visibleContinuationOperation))}
     >
       <div className="context-room-embedded-doc-status">
+        {statusTitleEditing ? (
+          <input
+            ref={statusTitleInputRef}
+            className="context-room-doc-status-title-input"
+            value={statusTitleDraft}
+            maxLength={120}
+            aria-label={t('contextRoom:tiptapDocumentEditor.documentTitle')}
+            autoFocus
+            onChange={(event) => setStatusTitleDraft(event.target.value.replace(/[\r\n]+/g, ' '))}
+            onBlur={() => commitStatusTitle()}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault()
+                commitStatusTitle()
+              }
+              if (event.key === 'Escape') {
+                event.stopPropagation()
+                setStatusTitleEditing(false)
+                editor?.commands.focus()
+              }
+            }}
+          />
+        ) : (
+          <button
+            type="button"
+            className="context-room-doc-status-title"
+            title={t('contextRoom:tiptapDocumentEditor.renameTitle')}
+            disabled={!editor || editorLocked || writing}
+            onClick={() => {
+              setStatusTitleDraft(documentName)
+              setStatusTitleEditing(true)
+            }}
+          >
+            {documentName}
+          </button>
+        )}
         <b>{historyDiffActive ? t('contextRoom:documentHistory.viewing') : t(uiText(saveState))}</b>
+        {editor ? (
+          <TiptapDocumentQuickActions
+            editor={editor}
+            disabled={historyDiffActive}
+            onOpenFind={() => openFindReplace(editor)}
+          />
+        ) : null}
         {cursorCompletionRunning ? (
           <div
             className="context-room-cursor-completion-banner"
@@ -1595,6 +1689,7 @@ export function TiptapDocumentEditor({
         ref={editorInteractions.scrollRef}
         className="context-room-tiptap-scroll"
       >
+        {editor && findStats?.open ? <TiptapFindReplaceBar editor={editor} stats={findStats} /> : null}
         {historyView ? (
           <div className="context-room-history-diff-banner" role="status">
             <div className="context-room-history-diff-context">
@@ -1653,13 +1748,15 @@ export function TiptapDocumentEditor({
                 }}
               />
             </div>
-            <DocumentOverviewCard
-              status={overview.status}
-              expanded={overviewExpanded}
-              onToggleExpanded={() => setOverviewExpanded((current) => !current)}
-              onRegenerate={overview.regenerate}
-              regenerateDisabled={!backendDocument || editorLocked || saveState === '正在保存...'}
-            />
+            {overview.status.state !== 'ineligible' ? (
+              <DocumentOverviewCard
+                status={overview.status}
+                expanded={overviewExpanded}
+                onToggleExpanded={() => setOverviewExpanded((current) => !current)}
+                onRegenerate={overview.regenerate}
+                regenerateDisabled={!backendDocument || editorLocked || saveState === '正在保存...'}
+              />
+            ) : null}
           </>
         )}
         <div className={historyView ? 'context-room-history-editor-source' : undefined}>

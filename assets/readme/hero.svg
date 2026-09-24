@@ -1,0 +1,110 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="380" viewBox="0 0 1200 380" role="img" aria-labelledby="hero-title hero-desc">
+  <title id="hero-title">EverRoom — a local-first personal context workspace</title>
+  <desc id="hero-desc">EverRoom connects files, chats, and services into a Context Room holding evidence, wiki, memory, and docs; a scoped, reviewable Agent works from it and decisions flow back.</desc>
+
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#6DD0C5"/>
+    </marker>
+    <marker id="arrow-dim" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#7E99A3"/>
+    </marker>
+  </defs>
+
+  <!-- background -->
+  <rect width="1200" height="380" fill="#12242D"/>
+
+  <!-- quiet brand motif, top right: the three staggered strokes of the logo "E" -->
+  <g opacity="0.1" transform="translate(1040 -60)">
+    <path d="M0 44 L96 44 L64 82 L0 82 Z" fill="#6DD0C5"/>
+    <path d="M0 92 L64 92 L96 130 L0 130 Z" fill="#F7F7F2"/>
+    <path d="M0 140 L64 140 L32 178 L0 178 Z" fill="#F5AD71"/>
+  </g>
+  <g opacity="0.05" transform="translate(-70 300) scale(1.6)">
+    <path d="M0 44 L96 44 L64 82 L0 82 Z" fill="#6DD0C5"/>
+  </g>
+
+  <!-- ==================== title block ==================== -->
+  <g transform="translate(72 0)">
+    <text x="0" y="108" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="17" letter-spacing="3" fill="#6DD0C5">LOCAL-FIRST CONTEXT WORKSPACE</text>
+
+    <!-- brand mark: the layered "E" -->
+    <g transform="translate(0 132)">
+      <path d="M0 0 L52 0 L34 24 L0 24 Z" fill="#6DD0C5"/>
+      <path d="M0 30 L34 30 L52 54 L0 54 Z" fill="#F7F7F2"/>
+      <path d="M0 60 L34 60 L16 84 L0 84 Z" fill="#F5AD71"/>
+    </g>
+    <text x="76" y="204" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="78" font-weight="800" fill="#F7F7F2">EverRoom</text>
+
+    <text x="0" y="252" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="23" fill="#BFD2D8">Files, conversations, memory, and agents,</text>
+    <text x="0" y="284" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="23" fill="#BFD2D8">kept in one working context on your device.</text>
+
+    <!-- metadata row -->
+    <g font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="16" fill="#7E99A3">
+      <text x="0" y="330">macOS</text>
+      <text x="72" y="330">·</text>
+      <text x="88" y="330">Alpha</text>
+      <text x="150" y="330">·</text>
+      <text x="166" y="330">Apache-2.0</text>
+    </g>
+  </g>
+
+  <!-- ==================== mechanism: sources → Context Room → Agent ==================== -->
+  <g transform="translate(640 64)">
+    <!-- source cards -->
+    <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="19" fill="#DCE8EC">
+      <g>
+        <rect x="0" y="0" width="132" height="56" rx="10" fill="#1A323D" stroke="#2A4750" stroke-width="1"/>
+        <rect x="0" y="0" width="5" height="56" rx="2.5" fill="#6DD0C5"/>
+        <text x="20" y="35">Files</text>
+      </g>
+      <g>
+        <rect x="0" y="72" width="132" height="56" rx="10" fill="#1A323D" stroke="#2A4750" stroke-width="1"/>
+        <rect x="0" y="72" width="5" height="56" rx="2.5" fill="#F7F7F2"/>
+        <text x="20" y="107">Chats</text>
+      </g>
+      <g>
+        <rect x="0" y="144" width="132" height="56" rx="10" fill="#1A323D" stroke="#2A4750" stroke-width="1"/>
+        <rect x="0" y="144" width="5" height="56" rx="2.5" fill="#F5AD71"/>
+        <text x="20" y="179">Services</text>
+      </g>
+    </g>
+
+    <!-- arrows into the room -->
+    <g stroke="#6DD0C5" stroke-width="1.6" fill="none">
+      <path d="M136 28 C 158 28 158 56 172 80" marker-end="url(#arrow)"/>
+      <path d="M136 100 L168 114" marker-end="url(#arrow)"/>
+      <path d="M136 172 C 158 172 158 160 172 148" marker-end="url(#arrow)"/>
+    </g>
+
+    <!-- Context Room container -->
+    <g>
+      <rect x="176" y="28" width="156" height="216" rx="18" fill="#0E1C24" stroke="#6DD0C5" stroke-width="1.4"/>
+      <text x="254" y="62" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="17" letter-spacing="0.5" fill="#6DD0C5">CONTEXT ROOM</text>
+      <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="17" fill="#DCE8EC">
+        <rect x="190" y="80" width="128" height="30" rx="8" fill="#1A323D"/>
+        <text x="204" y="101">Evidence</text>
+        <rect x="190" y="118" width="128" height="30" rx="8" fill="#1A323D"/>
+        <text x="204" y="139">Wiki</text>
+        <rect x="190" y="156" width="128" height="30" rx="8" fill="#1A323D"/>
+        <text x="204" y="177">Memory</text>
+        <rect x="190" y="194" width="128" height="30" rx="8" fill="#1A323D"/>
+        <text x="204" y="215">Docs</text>
+      </g>
+    </g>
+
+    <!-- arrow to agent -->
+    <path d="M336 100 L364 100" stroke="#6DD0C5" stroke-width="1.6" fill="none" marker-end="url(#arrow)"/>
+
+    <!-- agent node -->
+    <g>
+      <rect x="370" y="62" width="140" height="76" rx="16" fill="#1A323D" stroke="#F5AD71" stroke-width="1.4"/>
+      <text x="440" y="98" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="20" font-weight="700" fill="#F7F7F2">Agent</text>
+      <text x="440" y="122" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="14" fill="#7E99A3">reviewable</text>
+    </g>
+
+    <!-- decisions flow back -->
+    <path d="M440 146 C 440 226 400 258 296 256" stroke="#7E99A3" stroke-width="1.4" stroke-dasharray="5 6" fill="none" marker-end="url(#arrow-dim)"/>
+    <text x="460" y="256" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="16" fill="#7E99A3">flows back</text>
+  </g>
+</svg>

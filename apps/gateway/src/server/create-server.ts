@@ -31,6 +31,7 @@ import { documentOverviewRoutes } from "../modules/documents/overview-routes.js"
 import { documentSectionPreviewRoutes } from "../modules/documents/section-preview-routes.js";
 import { createSelectionRewriteContentResolver } from "../modules/documents/capabilities/selection-rewrite-content.js";
 import { createBuiltinDocumentCapabilityRegistry } from "../modules/documents/capabilities/builtins.js";
+import { OfficeBridgeClient } from "../modules/documents/capabilities/office-bridge-client.js";
 import { DocumentReadAuthority } from "../modules/documents/capabilities/read-authority.js";
 import { ExternalDocumentProjectionService } from "../modules/documents/external-projections/service.js";
 import { externalDocumentProjectionRoutes } from "../modules/documents/external-projections/routes.js";
@@ -51,9 +52,13 @@ import {
   createImportClassifierRuntime,
   createSessionTitleRuntime,
   createWritingStyleRuntime,
+  isPiRuntimeConfigured,
   registerDiaryAgent,
+  registerLiteAgentIfMissing,
+  registerModelTierAgents,
   registerPrimaryAgent,
   registerTranscriptionSummaryAgent,
+  type AgentRuntimeIntegrationOptions,
 } from "../modules/agent/runtime-factory.js";
 import { BUILTIN_AGENT_IDS } from "../modules/agent/resolver.js";
 import { registerWebSearchAgentIfMissing, registerConnectorMapperAgent } from "../modules/agent/runtime-factory.js";
@@ -74,6 +79,7 @@ import { createWebSearchPiTools } from "../modules/agent/web-search-tools.js";
 import { createDocWriterAgentTools } from "../modules/subagents/doc-writer-tools.js";
 import { buildRoomContextDigest } from "../modules/context-rooms/room-context-digest.js";
 import { RoomOverviewService } from "../modules/context-rooms/overview-service.js";
+import { RoomOverviewScheduler } from "../modules/context-rooms/overview-scheduler.js";
 import { createRoomOverviewAgentTools } from "../modules/context-rooms/overview-agent-tools.js";
 import { AsrError } from "../modules/asr/errors.js";
 import { createAsrProvider } from "../modules/asr/provider-factory.js";
@@ -188,6 +194,7 @@ function applyRuntimeConfig(config: GatewayConfig, runtime: RuntimeConfig): void
   };
   apply(config.pi as unknown as Record<string, unknown> | null, runtime.primary);
   apply(config.backgroundPi as unknown as Record<string, unknown> | null, runtime.background);
+  apply(config.litePi as unknown as Record<string, unknown> | null, runtime.lite);
   apply(config.cursorCompletionPi as unknown as Record<string, unknown> | null, runtime.cursorCompletion);
   // background/cursorCompletion 对齐 env 构建语义（config.ts 的 {...pi} 拷贝）：
   // runtime 段只携带部分覆盖（默认配置里这两段仅预置 api）时，四要素缺失项
@@ -195,6 +202,15 @@ function applyRuntimeConfig(config: GatewayConfig, runtime: RuntimeConfig): void
   // runtime 一直停留在未配置占位，任务永远 runtime_config_not_ready。
   inheritPrimaryDefaults(config.pi, config.backgroundPi);
   inheritPrimaryDefaults(config.pi, config.cursorCompletionPi);
+  // lite 档连接三要素（provider/baseUrl/apiKey）缺省继承 primary，但 model
+  // 不继承——model 空＝未配置 lite＝档位隐藏，回落主模型会冒充轻量档。
+  if (config.pi && config.litePi) {
+    for (const key of ["provider", "baseUrl", "apiKey"] as const) {
+      if (!config.litePi[key] && config.pi[key]) {
+        (config.litePi as unknown as Record<string, unknown>)[key] = config.pi[key];
+      }
+    }
+  }
   // webSearch：boot 时 config.webSearch 仅由 env 构造（config.ts 的
   // NXCORE_WEB_SEARCH_API_KEY 门），env 未配时为 null 且 apply 无法从 null
   // 构造——runtime 四要素齐全时直接构造，让云端下发的搜索配置真正生效。
@@ -620,6 +636,8 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       (roomId) => memoryService.listRoomAttributedMemories(roomId),
       documentCommentService,
       (event) => documentService.broker.publish(event),
+      // agent 写 Word：桌面注入 NXCORE_OFFICE_BRIDGE_URL/TOKEN 后启用。
+      config.officeBridge ? new OfficeBridgeClient(config.officeBridge) : null,
       // 写作路线拍板工具：服务在 orchestrator 之后构造，getter 惰性取用。
       () => routeMindmapServiceRef.current,
     ),
@@ -816,6 +834,37 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     app.log.warn(bindings, message);
   });
   roomOverviewService.setRoomAgentDispatcher(contextRoomAgentDispatcher);
+  // room-overview 后台自动再生（connector 路由/文档落库 → 去抖 + 每 Room 1h 冷却；
+  // 新建 Room 初始一次）。子 Agent 未启用时不接线，保持纯手动 regenerate 语义。
+  let roomOverviewScheduler: RoomOverviewScheduler | null = null;
+  if (subagentConfig.enabled) {
+    roomOverviewScheduler = new RoomOverviewScheduler(app.log);
+    roomOverviewScheduler.setRegenerate((roomId) => roomOverviewService.regenerate(roomId));
+    knowledgeService.setRoomOverviewRefreshTrigger((roomIds, reason) =>
+      roomOverviewScheduler!.notifySourcesChanged(roomIds, reason));
+    contextRoomService.setRoomOverviewKickoff((roomId) => roomOverviewScheduler!.notifyRoomCreated(roomId));
+    // 初始扫描：从未成功合成过（仍显示 fallback 简报）的存量 Room 补一次再生成。
+    // boot 后 30s 起逐房错峰 10s；runtime config 变更（如 SaaS 登录 AI 才就绪）时
+    // 重跑——已合成的房间被查询本身排除，不会重复烧。
+    const scheduleInitialOverviewSweep = () => {
+      const scheduler = roomOverviewScheduler;
+      if (!scheduler) return;
+      const roomIds = roomOverviewService.roomIdsNeedingInitialSynthesis();
+      if (roomIds.length === 0) return;
+      app.log.info(
+        { event: "room_overview.initial_sweep_scheduled", count: roomIds.length },
+        "scheduling initial room-overview synthesis for rooms without one",
+      );
+      roomIds.forEach((roomId, index) => {
+        scheduler.notifySourcesChanged([roomId], "initial-sweep", {
+          delayMs: 30_000 + index * 10_000,
+          ignoreFailureCooldown: true,
+        });
+      });
+    };
+    scheduleInitialOverviewSweep();
+    runtimeConfigManager.onChange(() => scheduleInitialOverviewSweep());
+  }
   // 改写信任收口（agent-architecture-optimization-plan §3）：documents 插件经
   // CapabilityBackend 注入 resolver——从 subagent_invocations 完成态取替换文本并复核授权。
   // 与 writingStyleProvider 同款 provider 注入模式；documents 模块不直接依赖
@@ -848,7 +897,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   const localAgentDispatchSourceRef: { current: ((runId: string) => LocalAgentDispatchSource | undefined) | null } = {
     current: null,
   };
-  registerPrimaryAgent(agentResolver, config, documentMcpHost, {
+  const primaryIntegrations: AgentRuntimeIntegrationOptions = {
     externalCalls,
     tools: [
       ...createRoomOverviewAgentTools(roomOverviewService),
@@ -951,7 +1000,10 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
         updated_at: item.updatedAt,
       }));
     },
-  });
+  };
+  registerPrimaryAgent(agentResolver, config, documentMcpHost, primaryIntegrations);
+  // 会话档位衍生 runtime（main-direct / main-lite）：与 main 共用 integrations。
+  registerModelTierAgents(agentResolver, config, documentMcpHost, primaryIntegrations);
   const agentRuntime = agentResolver.resolve(BUILTIN_AGENT_IDS.primary);
   app.log.info(
     {
@@ -963,6 +1015,9 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
             baseUrl: config.pi.baseUrl,
             api: config.pi.api,
           }
+        : {}),
+      ...(isPiRuntimeConfigured(config.litePi)
+        ? { liteModel: config.litePi!.model }
         : {}),
     },
     "agent runtime configured",
@@ -978,6 +1033,15 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     false,
     (target) => localAgentRuntimeRegistry.resolve(target),
   );
+  // 档位 runtime 解析：现取 resolver 缓存（热重载后自然换新）；配置缺席时
+  // 返回 null，service 回落 primary——main-direct 未配置（AI 全空）时与
+  // main 同为占位，回落行为一致。
+  agentService.setTierRuntimeResolver((agentId) => {
+    if (!agentResolver.has(agentId)) return null;
+    if (agentId === BUILTIN_AGENT_IDS.lite && !isPiRuntimeConfigured(config.litePi)) return null;
+    if (agentId === BUILTIN_AGENT_IDS.primaryDirect && !isPiRuntimeConfigured(config.pi)) return null;
+    return agentResolver.resolve(agentId);
+  });
   localAgentDispatchSourceRef.current = (runId) => agentService.getLocalAgentDispatchSource(runId);
   await agentService.initialize();
   registerTranscriptionSummaryAgent(agentResolver, config);
@@ -1024,6 +1088,10 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     // webSearch：boot 时 env 未配、runtime config 保存后才注册的场景。
     if (registerWebSearchAgentIfMissing(agentResolver, config)) {
       app.log.info("web search agent registered from runtime config");
+    }
+    // main-lite：boot 时 litePi 未配置、runtime config 保存 lite 段后注册。
+    if (registerLiteAgentIfMissing(agentResolver, config, documentMcpHost, primaryIntegrations)) {
+      app.log.info("lite tier agent registered from runtime config");
     }
     // knowledge agent：boot 时 env 未配 knowledge.llm、runtime config
     // （或 primary 回退）补齐后注册。
@@ -1072,6 +1140,15 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     try {
       const primary = agentResolver.reload(BUILTIN_AGENT_IDS.primary);
       void agentService.replaceRuntime(primary.current);
+      // 档位 runtime 热替换：main-direct 恒重载（占位/真身都由工厂决定）；
+      // main-lite 仅在仍配置时重载（工厂返回 null 会炸 trackedRuntime），
+      // 配置被移除时注册残留但 tier resolver 拦截，会话回落 primary。
+      const direct = agentResolver.reload(BUILTIN_AGENT_IDS.primaryDirect);
+      await direct.previous?.dispose();
+      if (isPiRuntimeConfigured(config.litePi) && agentResolver.has(BUILTIN_AGENT_IDS.lite)) {
+        const lite = agentResolver.reload(BUILTIN_AGENT_IDS.lite);
+        await lite.previous?.dispose();
+      }
       const background = agentResolver.reload(BUILTIN_AGENT_IDS.transcriptionSummary);
       void transcriptionSummaryService.replaceRuntime(background.current);
       for (const agentId of [BUILTIN_AGENT_IDS.cursorCompletion, BUILTIN_AGENT_IDS.webSearch, BUILTIN_AGENT_IDS.knowledge]) {
@@ -1248,6 +1325,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     await agentSchedulerService.dispose();
     await diaryService.dispose();
     roomDuplicateService.dispose();
+    roomOverviewScheduler?.dispose();
     await knowledgeService.dispose();
     knowledgePreferences.dispose();
     await asrService.dispose();
@@ -1487,6 +1565,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       : createIndexBackfillRuntime(config);
     documentIndexBackfillWorker?.replaceLlm(backfillRuntime ? new IndexBackfillLlm(backfillRuntime) : null);
   });
+  filesService.setRoomEntrySink((input) => knowledgeService.recordImportRoomDecision(input));
   filesService.setVersionIngestor(async (input) => {
     await documentUnderstandingService.parseVersion(input.fileEntryId, input.fileVersionId);
     const versionContext = filesService.getVersionContext(input.fileEntryId, input.fileVersionId);

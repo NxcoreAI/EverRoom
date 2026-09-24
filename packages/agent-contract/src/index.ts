@@ -63,6 +63,8 @@ export interface AgentSession {
   runtimeId: string;
   /** Agent that receives unmentioned user turns in this visible conversation. */
   activeAgentId?: string;
+  /** 会话锁定的模型档位（由 activeAgentId 反推）；后端权威，渲染层只读。 */
+  modelPreference?: AgentModelPreference;
   title: string | null;
   status: AgentSessionStatus;
   createdAt: string;
@@ -242,6 +244,31 @@ export interface CreateAgentSessionInput {
   pageLabel: string;
   /** Legacy input accepted for compatibility; ignored for user sessions. */
   roomId?: string | null;
+  /**
+   * 会话档位（在创建时锁定，映射为 activeAgentId）。缺省 smart。
+   * 中途换档只影响之后新建的会话，不改已有会话。
+   */
+  modelPreference?: AgentModelPreference;
+}
+
+/** 会话模型档位：smart=强模型主会话+轻量模型委派；primary=纯强模型；lite=轻量模型直答。 */
+export type AgentModelPreference = "smart" | "primary" | "lite";
+
+/** 档位 → 内置 agentId（写入 agent_sessions.activeAgentId）。 */
+export const MODEL_PREFERENCE_AGENT_IDS: Record<AgentModelPreference, string> = {
+  smart: MAIN_AGENT_ID,
+  primary: "main-direct",
+  lite: "main-lite",
+};
+
+/** 内置档位 agentId 集合（网关守卫与渲染层 badge 反推共用）。 */
+export const MODEL_TIER_AGENT_IDS: readonly string[] = Object.values(MODEL_PREFERENCE_AGENT_IDS);
+
+export function modelPreferenceFromAgentId(agentId: string | null | undefined): AgentModelPreference | undefined {
+  if (agentId === MODEL_PREFERENCE_AGENT_IDS.primary) return "primary";
+  if (agentId === MODEL_PREFERENCE_AGENT_IDS.lite) return "lite";
+  if (agentId === MAIN_AGENT_ID) return "smart";
+  return undefined;
 }
 
 export interface UpdateAgentSessionInput {
@@ -771,6 +798,89 @@ export type LocalAgentProvider = "codex" | "claude" | "openclaw" | "opencode" | 
 export type LocalAgentStatus = "discovered" | "verified" | "history_available" | "unavailable";
 export type AgentInvocationMode = "explicit_switch" | "delegated_subagent";
 export type AgentWorkspacePermissionProfile = "inspect" | "workspace_write" | "full_access";
+export type LocalAcpProvider = Extract<LocalAgentProvider, "codex" | "claude" | "openclaw">;
+
+export interface LocalAcpAdapterCommandInfo {
+  command: string;
+  args: string[];
+  /** 备选命令名（旧版 bin 名等），检测与 spawn 按序回退。 */
+  fallbacks?: string[];
+  /** 派发 target 携带的绝对路径 spawn 需要的附加 env（如 ELECTRON_RUN_AS_NODE）。 */
+  env?: Record<string, string>;
+  installCommand: string | null;
+}
+
+/**
+ * 桌面端解析出的适配器 spawn 覆盖：command 为绝对路径（用户 PATH 命中的可执行文件，
+ * 或私有安装场景下的运行时承载命令 + 入口 args）。gateway 直接按此 spawn，
+ * 不再依赖自身 PATH 解析 bare bin 名。
+ */
+export interface LocalAcpAdapterSpawn {
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
+}
+
+export interface LocalAgentAcpAdapterInfo {
+  command: string;
+  installed: boolean;
+  installCommand: string | null;
+}
+
+const LOCAL_AGENT_ACP_INSTALL_PACKAGES: Partial<Record<LocalAgentProvider, string>> = {
+  claude: "@zed-industries/claude-agent-acp",
+  codex: "@agentclientprotocol/codex-acp",
+};
+
+/** 适配器的 npm 包名；null 表示该 provider 无需安装适配器（openclaw 原生支持）。 */
+export function localAcpAdapterInstallPackage(provider: LocalAcpProvider): string | null {
+  return LOCAL_AGENT_ACP_INSTALL_PACKAGES[provider] ?? null;
+}
+
+/**
+ * provider → ACP 适配器命令（gateway spawn 与桌面端安装检测共用）。
+ * openclaw 原生 `openclaw acp` 无需适配器（installCommand 为 null 表示无需安装）；
+ * claude 的包已从 claude-code-acp 改名 claude-agent-acp（bin 同步改名），旧 bin 名
+ * 作为 fallback 兼容已安装旧版的用户。优先级：`EVERROOM_ACP_COMMAND_<PROVIDER>`
+ * 整行覆盖 > target 携带的绝对路径 spawn > 默认 bare 名 + fallbacks。
+ */
+export function localAcpAdapterCommand(
+  provider: LocalAcpProvider,
+  executablePath: string,
+  env: Record<string, string | undefined> = {},
+  spawnOverride?: LocalAcpAdapterSpawn | null,
+): LocalAcpAdapterCommandInfo {
+  const override = env[`EVERROOM_ACP_COMMAND_${provider.toUpperCase()}`];
+  if (override?.trim()) {
+    const [command, ...args] = override.trim().split(/\s+/);
+    if (command) return { command, args, installCommand: null };
+  }
+  if (spawnOverride?.command?.trim()) {
+    return {
+      command: spawnOverride.command,
+      args: spawnOverride.args ?? [],
+      ...(spawnOverride.env ? { env: spawnOverride.env } : {}),
+      installCommand: null,
+    };
+  }
+  if (provider === "openclaw") {
+    return { command: executablePath || "openclaw", args: ["acp"], installCommand: null };
+  }
+  const pkg = LOCAL_AGENT_ACP_INSTALL_PACKAGES[provider];
+  if (provider === "claude") {
+    return {
+      command: "claude-agent-acp",
+      args: [],
+      fallbacks: ["claude-code-acp"],
+      installCommand: pkg ? `npm install -g ${pkg}` : null,
+    };
+  }
+  return {
+    command: "codex-acp",
+    args: [],
+    installCommand: pkg ? `npm install -g ${pkg}` : null,
+  };
+}
 
 export interface LocalAgentCard {
   name: string;
@@ -796,6 +906,7 @@ export interface LocalAgentInstallation {
   historyPaths: string[];
   card: LocalAgentCard;
   lastSeenAt: string;
+  acpAdapter?: LocalAgentAcpAdapterInfo;
   error?: string;
 }
 
@@ -827,6 +938,8 @@ export interface LocalAgentInvocationTarget {
   workingDirectory: string;
   permissionProfile: AgentWorkspacePermissionProfile;
   card: LocalAgentCard;
+  /** 桌面端解析的适配器绝对路径 spawn 覆盖（gateway 免 PATH 解析）；null/缺省走默认解析。 */
+  acpAdapter?: LocalAcpAdapterSpawn | null;
 }
 
 export type LocalAgentDelegationMaterialKind =

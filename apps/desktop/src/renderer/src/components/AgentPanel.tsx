@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { AgentNavigationTarget, AgentRoomReference, AgentSessionLink, PendingAgentIntent, ExternalConversationSummary } from '@nxcore/agent-contract'
+import type { AgentModelPreference, AgentNavigationTarget, AgentRoomReference, AgentSessionLink, PendingAgentIntent, ExternalConversationSummary } from '@nxcore/agent-contract'
 
 import { AgentChatView } from '@/components/agent/AgentChatView'
 import { AgentComposer } from '@/components/agent/AgentComposer'
@@ -16,7 +16,9 @@ import {
   type AgentSessionRouteRequest,
 } from '@/components/agent/agentNavigation'
 import { useAgentSession } from '@/components/agent/useAgentSession'
+import { LocalAgentAdapterWizard } from '@/components/agent/LocalAgentAdapterWizard'
 import type { MentionedAgent } from '@/components/agent/agentMentions'
+import type { LocalAgentAdapterCheck } from '../../../shared/sources'
 import { loadRoomFocus, saveRoomFocus } from '@/components/agent/roomFocusStore'
 import type { ContextRoomWorkspaceTab } from '@/components/context-room/contextRoomTabs'
 import type { LocalAgentInstallation } from '../../../shared/local-agents'
@@ -52,12 +54,14 @@ export function AgentPanel({
   roomBackendReady,
   navigationRequest,
   sessionRouteRequest,
+  askRequest,
   onNavigate,
   onRestoreRoomTab,
   onNavigationConsumed,
   onOpenSessionLink,
   onOpenDocument,
   onSessionRouteConsumed,
+  onAskConsumed,
   focusRequest = 0,
   roomCitations,
   onRemoveRoomCitation,
@@ -70,12 +74,14 @@ export function AgentPanel({
   roomBackendReady: boolean
   navigationRequest: AgentNavigationRequest | null
   sessionRouteRequest: AgentSessionRouteRequest | null
+  askRequest: { key: string; roomId: string; message: string } | null
   onNavigate: (request: AgentNavigationRequest) => void
   onRestoreRoomTab: (target: AgentNavigationRequest['target']) => void
   onNavigationConsumed: (key: string) => void
   onOpenSessionLink: (link: AgentSessionLink, destination: 'source' | 'target') => void
   onOpenDocument: (target: { roomId: string; documentId: string; blockId?: string | null }) => void
   onSessionRouteConsumed: (key: string) => void
+  onAskConsumed: (key: string) => void
   focusRequest?: number
   roomCitations: RoomOverviewCitation[]
   onRemoveRoomCitation: (citationId: string) => void
@@ -96,6 +102,7 @@ export function AgentPanel({
   const handledNavigationKeysRef = useRef(new Set<string>())
   const handledRequestKeysRef = useRef(new Set<string>())
   const handledSessionRouteKeysRef = useRef(new Set<string>())
+  const handledAskKeysRef = useRef(new Set<string>())
   const handledOverviewToolIdsRef = useRef(new Set<string>())
   const citationSectionLabel = (citation: RoomOverviewCitation) => t(citation.section === 'overview'
       ? 'contextRoom:overviewDashboard.roomOverview'
@@ -357,8 +364,30 @@ export function AgentPanel({
       })
   }, [onSessionRouteConsumed, pageId, roomId, session, sessionRouteRequest])
 
+  const [adapterWizard, setAdapterWizard] = useState<{
+    checks: LocalAgentAdapterCheck[]
+    resolve: (proceed: boolean) => void
+  } | null>(null)
+  // 发送含 @ 本机 Agent 的消息前检查 ACP 适配器是否已安装；缺失时弹安装向导。
+  // 检测本身失败不拦发送（gateway 侧 spawn 失败仍有兜底错误）。
+  const ensureLocalAgentAdapters = async (agents: MentionedAgent[]): Promise<boolean> => {
+    const check = window.nxcore?.agent?.checkLocalAgentAdapters
+    if (!check) return true
+    let results: LocalAgentAdapterCheck[]
+    try {
+      results = (await check(agents.map((agent) => agent.id))) ?? []
+    } catch {
+      return true
+    }
+    if (!results.some((item) => !item.adapter.installed)) return true
+    return new Promise<boolean>((resolve) => {
+      setAdapterWizard({ checks: results, resolve })
+    })
+  }
+
   const sendPrompt = async (prompt: string, replaceRunId?: string, files: File[] = [], mentionedAgents?: MentionedAgent[]) => {
     if ((!prompt.trim() && !citationPrompt && files.length === 0) || !agentAvailable) return
+    if (mentionedAgents?.length && !await ensureLocalAgentAdapters(mentionedAgents)) return
     const submittedPrompt = prompt.trim() || citationPrompt
     const submittedContext = roomCitations.length
       ? buildRoomOverviewCitationContext(roomCitations)
@@ -421,6 +450,17 @@ export function AgentPanel({
     }
   }
 
+  // slides「AI 修改」弹层转发注入：roomId 对上、会话就绪后自动发送（key 去重防重放）。
+  useEffect(() => {
+    if (!askRequest || askRequest.roomId !== roomId || session.loading) return
+    if (handledAskKeysRef.current.has(askRequest.key)) return
+    handledAskKeysRef.current.add(askRequest.key)
+    void sendPrompt(askRequest.message)
+      .then(() => onAskConsumed(askRequest.key))
+      .catch(() => handledAskKeysRef.current.delete(askRequest.key))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [askRequest, roomId, session.loading])
+
   const selectDocument = async ({ document, originalPrompt }: AgentDocumentSelectionSubmission) => {
     if (!roomBackendReady) return
     setSubmitting(true)
@@ -474,6 +514,21 @@ export function AgentPanel({
     }
   }
 
+  // 轻量档可用性：lite 配置了 model 才算可用（网关约定：model 空＝未配置＝档位隐藏）。
+  // 每次打开选择器时由 composer 拉取，设置页保存后无需重启。
+  const loadLiteModelAvailability = useCallback(async (): Promise<boolean> => {
+    try {
+      const snapshot = await window.nxcore?.runtimeConfig?.get()
+      const lite = (snapshot?.config as { lite?: { model?: unknown } } | undefined)?.lite
+      return typeof lite?.model === 'string' && lite.model.trim() !== ''
+    } catch {
+      return false
+    }
+  }, [])
+
+  const modelTierLocked = Boolean(session.sessionId)
+  const effectiveModelPreference: AgentModelPreference = session.currentSession?.modelPreference ?? session.modelPreferenceDefault
+
   const composer = (
     <AgentComposer
       ref={composerRef}
@@ -488,6 +543,10 @@ export function AgentPanel({
       roomFocusEnabled={roomFocusEnabled}
       roomFocusRoomTitle={roomFocusRoomTitle}
       onToggleRoomFocus={toggleRoomFocus}
+      modelPreference={effectiveModelPreference}
+      modelPreferenceLocked={modelTierLocked}
+      loadModelAvailability={loadLiteModelAvailability}
+      onSelectModelPreference={session.setModelPreferenceDefault}
       value={draft}
       active={Boolean(session.activeRunId)}
       loading={session.loading || submitting}
@@ -558,6 +617,7 @@ export function AgentPanel({
           focusComposer()
         }}
         pendingNavigationByRun={pendingNavigationByRun}
+        reasoningByRun={session.reasoningByRun}
         runCompletedAtByRun={session.runCompletedAtByRun}
         runStartedAtByRun={session.runStartedAtByRun}
         resolvingApprovalIds={session.resolvingApprovalIds}
@@ -565,6 +625,19 @@ export function AgentPanel({
         submitting={submitting || !roomBackendReady}
         toolCallsByRun={session.toolCallsByRun}
         onResolveApproval={(approvalId, decision) => void session.resolveApproval(approvalId, decision)}
+        composerNotice={adapterWizard ? (
+          <LocalAgentAdapterWizard
+            initialChecks={adapterWizard.checks}
+            onProceed={() => {
+              adapterWizard.resolve(true)
+              setAdapterWizard(null)
+            }}
+            onCancel={() => {
+              adapterWizard.resolve(false)
+              setAdapterWizard(null)
+            }}
+          />
+        ) : undefined}
       />
     </aside>
   )

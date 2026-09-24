@@ -8,6 +8,9 @@
   min-height: 0;
   flex-direction: column;
   overflow: hidden;
+  border-top: 1px solid var(--border);
+  border-left: 1px solid var(--border);
+  border-top-left-radius: 12px;
   background: var(--bg);
   color: var(--text);
   font-size: 14px;

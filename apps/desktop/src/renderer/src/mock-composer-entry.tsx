@@ -97,6 +97,9 @@ function ComposerHarness() {
         loading={false}
         selectedExternalConversation={null}
         localAgents={localAgents}
+        modelPreference="smart"
+        loadModelAvailability={async () => true}
+        onSelectModelPreference={() => {}}
         onChange={setValue}
         onSelectExternalConversation={() => setLog((current) => [...current, 'select conversation'])}
         onClearContext={() => {}}

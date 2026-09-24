@@ -1,13 +1,21 @@
-import { access, constants, stat } from 'node:fs/promises'
+import { access, constants, readFile, realpath, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { delimiter, dirname, join, resolve } from 'node:path'
+import { delimiter, dirname, isAbsolute, join, resolve, sep } from 'node:path'
 import { spawn } from 'node:child_process'
+import {
+  localAcpAdapterCommand,
+  localAcpAdapterInstallPackage,
+  type LocalAgentAcpAdapterInfo,
+  type LocalAgentProvider,
+  type LocalAcpProvider,
+} from '@nxcore/agent-contract'
 import type {
   LocalAgentCard,
   LocalAgentInstallation,
-  LocalAgentProvider,
   LocalAgentStatus,
 } from '../../shared/local-agents'
+
+const ACP_PROVIDERS = new Set<LocalAgentProvider>(['codex', 'claude', 'openclaw'])
 
 const PROVIDERS: Array<{ provider: LocalAgentProvider; names: string[]; label: string; historyPaths: string[] }> = [
   { provider: 'codex', names: ['codex'], label: 'Codex', historyPaths: ['.codex'] },
@@ -23,6 +31,8 @@ export interface LocalAgentDiscoveryOptions {
   now?: () => Date
   probeTimeoutMs?: number
   resolveLoginShellPath?: boolean
+  /** app 私有适配器安装目录（一键安装落点）；探测时作为 PATH 之后的兜底。 */
+  adaptersRoot?: string
 }
 
 function loginShellPath(env: NodeJS.ProcessEnv, timeoutMs: number): Promise<string | null> {
@@ -70,6 +80,57 @@ async function discoveryEnvironment(
   return { ...env, PATH: [...new Set(combined.split(delimiter).filter(Boolean))].join(delimiter) }
 }
 
+/** 合并登录 shell PATH 后的完整搜索环境（适配器 spawn 覆盖构造用）。 */
+export async function mergedDiscoveryEnvironment(
+  env: NodeJS.ProcessEnv,
+  home: string,
+  platform: NodeJS.Platform,
+  timeoutMs: number,
+): Promise<NodeJS.ProcessEnv> {
+  return discoveryEnvironment(env, home, platform, platform !== 'win32', timeoutMs)
+}
+
+/** 一键安装落到 app 私有目录的适配器（bin 入口 + 版本）。 */
+export interface LocalAgentPrivateAdapterInstall {
+  entry: string
+  version: string | null
+}
+
+/**
+ * 在 app 私有安装目录（`<adaptersRoot>/<provider>/node_modules/<pkg>`）里
+ * 解析适配器的 JS 入口。npm 包的 bin 是 `#!/usr/bin/env node` 脚本——私有
+ * 安装不落 PATH，由调用方用运行时承载（ELECTRON_RUN_AS_NODE）直接跑入口。
+ */
+export async function findPrivateAdapterInstall(
+  adaptersRoot: string,
+  provider: LocalAcpProvider,
+): Promise<LocalAgentPrivateAdapterInstall | null> {
+  const pkg = localAcpAdapterInstallPackage(provider)
+  if (!pkg) return null
+  const pkgDir = join(adaptersRoot, provider, 'node_modules', pkg)
+  let manifest: { bin?: string | Record<string, string>; version?: string }
+  try {
+    manifest = JSON.parse(await readFile(join(pkgDir, 'package.json'), 'utf8'))
+  } catch {
+    return null
+  }
+  const defaultBin = localAcpAdapterCommand(provider, '', {}).command
+  const binField = manifest.bin
+  const binRel = typeof binField === 'string'
+    ? binField
+    : (binField?.[defaultBin] ?? Object.values(binField ?? {})[0])
+  if (!binRel) return null
+  const entry = resolve(pkgDir, binRel)
+  const pkgRoot = resolve(pkgDir)
+  if (entry !== pkgRoot && !entry.startsWith(`${pkgRoot}${sep}`)) return null
+  try {
+    await access(entry, constants.R_OK)
+  } catch {
+    return null
+  }
+  return { entry, version: typeof manifest.version === 'string' ? manifest.version : null }
+}
+
 export interface LocalAgentDiscovery {
   scan(): Promise<LocalAgentInstallation[]>
 }
@@ -85,13 +146,105 @@ async function executablePath(env: NodeJS.ProcessEnv, names: string[], platform:
       try {
         await access(candidate, constants.X_OK)
         const info = await stat(candidate)
-        if (info.isFile()) return resolve(candidate)
+        if (info.isFile()) return canonicalExecutable(candidate)
       } catch {
         // Keep probing the next PATH entry.
       }
     }
   }
   return null
+}
+
+/**
+ * realpath 规范化可执行路径：fnm/nvm 这类版本管理器会往登录 shell PATH 前置
+ * per-shell 临时 symlink 目录（fnm_multishells/<pid>_<ts>），不规范化则每次
+ * 扫描得到不同路径 → agent id 漂移，渲染端 @ 引用与主进程缓存永远对不上。
+ */
+async function canonicalExecutable(candidate: string): Promise<string> {
+  try {
+    return await realpath(candidate)
+  } catch {
+    return resolve(candidate)
+  }
+}
+
+async function commandAvailable(
+  env: NodeJS.ProcessEnv,
+  command: string,
+  platform: NodeJS.Platform,
+): Promise<boolean> {
+  if (!command) return false
+  if (command.includes('/') || isAbsolute(command)) {
+    try {
+      await access(command, constants.X_OK)
+      const info = await stat(command)
+      return info.isFile()
+    } catch {
+      return false
+    }
+  }
+  return (await executablePath(env, [command], platform)) !== null
+}
+
+/** 解析命令名为可执行绝对路径；bare 名按 PATH（win32 含 .exe/.cmd 后缀）查找。 */
+export async function resolveCommandPath(
+  env: NodeJS.ProcessEnv,
+  command: string,
+  platform: NodeJS.Platform,
+): Promise<string | null> {
+  if (!command) return null
+  if (command.includes('/') || isAbsolute(command)) {
+    try {
+      await access(command, constants.X_OK)
+      const info = await stat(command)
+      return info.isFile() ? canonicalExecutable(command) : null
+    } catch {
+      return null
+    }
+  }
+  return executablePath(env, [command], platform)
+}
+
+/**
+ * 检测某个本机 Agent 的 ACP 适配器是否可用（安装向导用）。
+ * 先用当前 PATH 快速探测，未命中再合并登录 shell PATH 复查——
+ * 用户在终端 `npm i -g` 装完后无需重启应用即可被检出；
+ * 最后看 app 私有安装目录（一键安装的落点，用户自装的优先）。
+ */
+export async function probeLocalAgentAcpAdapter(
+  installation: Pick<LocalAgentInstallation, 'provider' | 'executablePath' | 'callable'>,
+  options: Pick<LocalAgentDiscoveryOptions, 'env' | 'home' | 'platform' | 'probeTimeoutMs' | 'adaptersRoot'> = {},
+): Promise<LocalAgentAcpAdapterInfo> {
+  const env = options.env ?? process.env
+  const home = options.home ?? homedir()
+  const platform = options.platform ?? process.platform
+  const probeTimeoutMs = options.probeTimeoutMs ?? 2_000
+  if (!ACP_PROVIDERS.has(installation.provider)) {
+    return { command: '', installed: true, installCommand: null }
+  }
+  const adapter = localAcpAdapterCommand(installation.provider as LocalAcpProvider, installation.executablePath ?? '', env)
+  if (installation.provider === 'openclaw') {
+    return { command: adapter.command, installed: Boolean(installation.executablePath), installCommand: null }
+  }
+  const candidates = [adapter.command, ...(adapter.fallbacks ?? [])]
+  const anyInstalled = async (searchEnv: NodeJS.ProcessEnv): Promise<string | null> => {
+    for (const candidate of candidates) {
+      if (await commandAvailable(searchEnv, candidate, platform)) return candidate
+    }
+    return null
+  }
+  const hit = await anyInstalled(env)
+  if (hit) return { command: hit, installed: true, installCommand: adapter.installCommand }
+  const searchEnv = await discoveryEnvironment(env, home, platform, true, probeTimeoutMs)
+  const recheck = await anyInstalled(searchEnv)
+  if (recheck) return { command: recheck, installed: true, installCommand: adapter.installCommand }
+  if (options.adaptersRoot !== undefined) {
+    const privateInstall = await findPrivateAdapterInstall(options.adaptersRoot, installation.provider as LocalAcpProvider)
+    if (privateInstall) {
+      return { command: privateInstall.entry, installed: true, installCommand: adapter.installCommand }
+    }
+  }
+  return { command: adapter.command, installed: false, installCommand: adapter.installCommand }
 }
 
 function runVersion(command: string, timeoutMs: number, env: NodeJS.ProcessEnv): Promise<{ version: string | null; error?: string }> {
@@ -176,6 +329,13 @@ export function createLocalAgentDiscovery(options: LocalAgentDiscoveryOptions = 
         const probe = executable ? await runVersion(executable, probeTimeoutMs, searchEnv) : { version: null, error: 'executable_not_found' }
         const callable = Boolean(executable && !probe.error)
         const status: LocalAgentStatus = callable ? 'verified' : histories.length ? 'history_available' : 'unavailable'
+        const invocationSupported = callable && ACP_PROVIDERS.has(provider)
+        const acpAdapter = invocationSupported
+          ? await probeLocalAgentAcpAdapter(
+            { provider, executablePath: executable, callable },
+            { env: searchEnv, home, platform, probeTimeoutMs, ...(options.adaptersRoot !== undefined ? { adaptersRoot: options.adaptersRoot } : {}) },
+          )
+          : undefined
         return {
           id: installationId(provider, executable),
           provider,
@@ -184,11 +344,12 @@ export function createLocalAgentDiscovery(options: LocalAgentDiscoveryOptions = 
           version: probe.version,
           status,
           callable,
-          invocationSupported: callable && (provider === 'codex' || provider === 'claude' || provider === 'openclaw'),
+          invocationSupported,
           historyAvailable: histories.length > 0,
           historyPaths: histories,
           card: card(provider, label, probe.version),
           lastSeenAt: now().toISOString(),
+          ...(acpAdapter ? { acpAdapter } : {}),
           ...(probe.error && executable ? { error: probe.error } : {}),
         } satisfies LocalAgentInstallation
       }))

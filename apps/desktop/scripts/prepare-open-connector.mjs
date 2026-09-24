@@ -60,6 +60,21 @@ for (const entry of [
 }
 await cp(lockfilePath, join(stagingDirectory, 'package-lock.json'))
 
+// 源包 vitest 升到 ^4.1.11 后，其新传递依赖 @vitejs/devtools-vitest（peer vitest:*）
+// 触发 npm 10 arborist loadPeerSet 的 "Cannot read properties of null (reading 'edgesOut')"
+// 崩溃（peer 冲突不降级为 ERESOLVE 而是直接抛 null）。vitest 仅用于 connector 源码自测，
+// 本构建只跑 ensure-generated/build:web，故与 lockfile 一起钉回 4.1.9（该版本依赖树
+// 不含 devtools-vitest）。源包依赖再变动时需同步重新生成 lockfile。
+const stagedManifest = JSON.parse(await readFile(join(stagingDirectory, 'package.json'), 'utf8'))
+stagedManifest.devDependencies ??= {}
+stagedManifest.devDependencies.vitest = '4.1.9'
+stagedManifest.overrides = {
+  ...stagedManifest.overrides,
+  vitest: '4.1.9',
+  '@vitest/browser-playwright': '4.1.9',
+}
+await writeFile(join(stagingDirectory, 'package.json'), `${JSON.stringify(stagedManifest, null, 2)}\n`)
+
 try {
   // npm ci + lockfile: 浮动 install 会解析到 registry 最新版本，
   // 曾因新发布的 @vitest/browser-playwright@5.0.0（peerDep 要求 vitest@5.0.0）

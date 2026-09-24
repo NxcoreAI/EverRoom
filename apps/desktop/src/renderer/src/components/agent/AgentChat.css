@@ -1,7 +1,7 @@
 .agent-chat-conversation-frame {
   --agent-composer-height: 132px;
   --agent-empty-composer-top: clamp(156px, 32%, 272px);
-  --agent-composer-bottom: 16px;
+  --agent-composer-bottom: 0px;
   position: relative;
   min-height: 0;
   flex: 1;
@@ -321,6 +321,16 @@
   white-space: nowrap;
 }
 
+.agent-response-byline .agent-model-tier-badge {
+  flex: 0 0 auto;
+  padding: 0 6px;
+  border-radius: 5px;
+  background: #f0f2f5;
+  color: #6b7480;
+  font-size: 10px;
+  font-weight: 560;
+}
+
 .agent-assistant-turn,
 .agent-message[data-role='user'] {
   scroll-margin-block: 72px;
@@ -533,10 +543,14 @@
   to { background-position: -100% 50%; }
 }
 
-.agent-reasoning {
-  width: 100%;
+.agent-thinking-tail {
+  margin-left: 10px;
+  max-width: 320px;
+  overflow: hidden;
   color: #6f7784;
-  font-size: 12px;
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .agent-reasoning summary {
@@ -1862,6 +1876,111 @@
   border-color: transparent;
   background: var(--accent-soft);
   color: var(--accent-strong);
+}
+
+.agent-model-tier-toggle {
+  display: inline-flex;
+  min-width: 0;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 9px;
+  border: 1px solid #e3e6eb;
+  border-radius: 7px;
+  background: #f8f9fa;
+  color: #555d69;
+  font-size: 11px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.agent-model-tier-toggle:hover:not(:disabled) {
+  border-color: #d3d7de;
+}
+
+.agent-model-tier-toggle:disabled {
+  cursor: default;
+  opacity: 0.42;
+}
+
+.agent-model-tier-toggle svg {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 12px;
+}
+
+.agent-model-tier-toggle[data-tier='primary'],
+.agent-model-tier-toggle[data-tier='lite'] {
+  border-color: transparent;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.agent-model-picker {
+  display: grid;
+  gap: 2px;
+  padding: 5px;
+}
+
+.agent-model-option {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) 18px;
+  align-items: center;
+  gap: 9px;
+  min-height: 46px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #22272f;
+  text-align: left;
+  cursor: pointer;
+}
+
+.agent-model-option:hover {
+  background: #f0f2f5;
+}
+
+.agent-model-option:focus-visible {
+  outline: 2px solid rgba(71, 84, 103, .3);
+  outline-offset: -2px;
+}
+
+.agent-model-option > span:nth-child(2) {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.agent-model-option strong {
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 560;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-model-option small {
+  overflow: hidden;
+  color: #747d8a;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-model-option > svg {
+  width: 14px;
+  height: 14px;
+  color: var(--accent-strong, #4d6faf);
+}
+
+.agent-model-picker-hint {
+  padding: 7px 9px 6px;
+  border-top: 1px solid #eceef1;
+  color: #8b93a0;
+  font-size: 10px;
+  text-align: center;
 }
 
 .agent-prompt-submit {

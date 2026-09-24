@@ -694,7 +694,7 @@ export class FilesGatewayBridge {
 
   private async importPath(input: {
     filePath: string
-    sourceKind: 'manual-upload' | 'local-folder' | 'connector' | 'migration'
+    sourceKind: 'manual-upload' | 'local-folder' | 'connector' | 'migration' | 'agent-generated'
     sourceKey: string
     originalName: string
     localSourceId?: string
@@ -706,6 +706,8 @@ export class FilesGatewayBridge {
     provider?: string
     connectionId?: string
     sourceUri?: string
+    /** 钉住既有条目（编辑回填走版本链）而不是按 (sourceKind, sourceKey) 分组。 */
+    fileEntryId?: string
   }): Promise<FileImportAcceptedDto> {
     const before = await stat(input.filePath)
     const buffer = await readFile(input.filePath)
@@ -727,6 +729,7 @@ export class FilesGatewayBridge {
       sourceModifiedAt: input.sourceModifiedAt ?? after.mtime.toISOString(),
       ...(input.pipelines ? { pipelines: input.pipelines } : {}),
       ...(input.roomId ? { roomId: input.roomId } : {}),
+      ...(input.fileEntryId ? { fileEntryId: input.fileEntryId } : {}),
     }))
     form.append('file', new Blob([new Uint8Array(buffer)]), input.originalName)
     const connection = this.supervisor.getConnection()
@@ -740,6 +743,30 @@ export class FilesGatewayBridge {
       throw new Error(typeof body?.error === 'string' ? body.error : `文件上传失败（${response.status}）`)
     }
     return response.json() as Promise<FileImportAcceptedDto>
+  }
+
+  /**
+   * Agent 生成的 Office 文档入库（office-bridge 调用）。sourceKey 由调用方
+   * 携带 idempotencyKey：同键同内容去重、同键新内容走版本链。fileEntryId
+   * 钉住条目（人手编辑回填）：跨会话也能落回原条目。
+   */
+  importAgentGeneratedFile(input: {
+    filePath: string
+    originalName: string
+    sourceKey: string
+    roomId?: string
+    fileEntryId?: string
+  }): Promise<FileImportAcceptedDto> {
+    return this.importPath({
+      filePath: input.filePath,
+      sourceKind: 'agent-generated',
+      sourceKey: input.sourceKey,
+      originalName: input.originalName,
+      ...(input.roomId
+        ? { roomId: input.roomId, pipelines: { room: true, wiki: false, memory: true } }
+        : {}),
+      ...(input.fileEntryId ? { fileEntryId: input.fileEntryId } : {}),
+    })
   }
 
   private async waitForMarkdown(fileId: string): Promise<void> {

@@ -3830,6 +3830,21 @@
   flex-direction: column;
 }
 
+/* 产物库内的 Agent Office 产物一节（Word 等文件产物，区别于云文档产物）。 */
+.context-room-artifact-office {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 4px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--cr-border);
+  margin-bottom: 4px;
+}
+
+.context-room-artifact-office .context-room-artifact-list {
+  flex: 0 0 auto;
+}
+
 .context-room-artifact-toolbar {
   display: flex;
   flex: 0 0 auto;
@@ -4042,6 +4057,7 @@
 
 .context-room-office-viewer {
   position: relative;
+  isolation: isolate;
   display: grid;
   height: 100%;
   min-width: 0;
@@ -4896,8 +4912,31 @@
   margin: 0;
   padding: 12px 14px;
   color: var(--cr-muted);
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+/* 概览/状态长文折叠（行数由组件经 --clamp-lines 注入）。 */
+.context-room-dashboard-grid article > p[data-clamp] {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: var(--clamp-lines, 4);
+  overflow: hidden;
+}
+
+.context-room-dashboard-clamp-toggle {
+  display: inline-block;
+  margin: -4px 14px 8px;
+  padding: 2px 8px;
+  border: 0;
+  background: none;
+  color: var(--cr-blue);
   font-size: 12px;
-  line-height: 1.6;
+  cursor: pointer;
+}
+
+.context-room-dashboard-clamp-toggle:hover {
+  text-decoration: underline;
 }
 
 .context-room-dashboard-grid article > small {
@@ -4959,12 +4998,37 @@
   color: var(--cr-blue);
 }
 
-.context-room-dashboard-entities span {
+.context-room-dashboard-entities span,
+.context-room-dashboard-entities button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   padding: 3px 7px;
+  border: 1px solid transparent;
   border-radius: 5px;
   background: var(--cr-surface-secondary);
   color: var(--cr-muted);
-  font-size: 11px;
+  font-size: 12px;
+}
+
+.context-room-dashboard-entities button {
+  cursor: pointer;
+}
+
+.context-room-dashboard-entities button:hover {
+  border-color: var(--cr-blue);
+  color: var(--cr-blue);
+}
+
+.context-room-dashboard-entities button i {
+  font-size: 10px;
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+  color: var(--cr-tertiary);
+}
+
+.context-room-dashboard-entities button:hover i {
+  color: var(--cr-blue);
 }
 
 .context-room-activity-pane > header span {
@@ -11490,6 +11554,24 @@
   text-underline-offset: 3px;
 }
 
+/* [[双链]]：站内跳转，弱下划线 + 指针，悬停加强提示可点 */
+.context-room-wiki-markdown .context-room-wikilink {
+  font-weight: 500;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.context-room-wiki-markdown .context-room-wikilink:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* 无跳转处理器时双链退化为正文文本 */
+.context-room-wiki-markdown .context-room-wikilink.is-unlinked {
+  font-weight: 400;
+  cursor: inherit;
+}
+
 .context-room-wiki-markdown blockquote {
   padding-left: 14px;
   margin: 0 0 14px;
@@ -14956,4 +15038,78 @@ button.eg-walk.is-next:hover {
 .context-room-workspace-editor > * {
   flex: 1;
   min-height: 0;
+}
+
+/* 内嵌 Office 预览宿主：占位 div 撑满编辑栏，原生 WebContentsView 按其矩形叠放。 */
+.context-room-embedded-office-host {
+  position: relative;
+  width: 100%;
+  /* GenOffice 内部样式带 z-index 999999999 级图层；isolation 把它们锁在
+     容器自己的层叠上下文里，避免盖住 app 级弹层（如产物新建弹框）。 */
+  isolation: isolate;
+  background: var(--cr-surface);
+}
+
+/* 新建产物：类型选择网格（轻文档 / Word / PPT / Excel）。 */
+.context-room-document-create-popover.is-chooser {
+  width: min(360px, calc(100vw - 24px));
+}
+
+.context-room-document-create-types {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.context-room-document-create-type {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid var(--cr-border);
+  border-radius: 7px;
+  background: var(--cr-surface);
+  color: var(--cr-text);
+  cursor: pointer;
+  text-align: left;
+}
+
+.context-room-document-create-type:hover {
+  border-color: var(--cr-blue);
+  background: color-mix(in srgb, var(--cr-blue) 6%, var(--cr-surface));
+}
+
+.context-room-document-create-type > svg {
+  width: 17px;
+  height: 17px;
+  flex: none;
+  color: var(--cr-blue);
+}
+
+.context-room-document-create-type-body {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.context-room-document-create-type-body b {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.context-room-document-create-type-body small {
+  overflow: hidden;
+  color: var(--cr-muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-room-document-create-hint {
+  display: block;
+  color: var(--cr-muted);
+  font-size: 10px;
+  line-height: 1.5;
 }

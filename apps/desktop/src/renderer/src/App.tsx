@@ -42,8 +42,10 @@ import {
   type RoomOverviewCitation,
 } from '@/components/context-room/roomOverviewCitation'
 import { logDocumentFocusDiagnostic, onDocumentBlockNavigation } from '@/components/context-room/ported/components/detail-editor/documentBlockNavigation'
+import { requestRoomOfficeFocus, useEmbeddedOffice } from '@/components/context-room/ported/embeddedOffice'
 import { onDocumentOperationNavigation } from '@/components/context-room/operations/documentOperationNavigation'
 import { useLocale } from '@/i18n/LocaleContext'
+import { showToast } from '@/state/toast'
 import { workspaceTabSwipeTarget } from '@/workspaceTabSwipe'
 import './App.css'
 import type { AgentNotificationTarget } from '../../shared/notifications'
@@ -117,13 +119,13 @@ export function App() {
   const [activeContextRoomId, setActiveContextRoomId] = useState<string | null>(null)
   const [officeTabs, setOfficeTabs] = useState<OfficePreviewTab[]>([])
   const [activeOfficeInstanceId, setActiveOfficeInstanceId] = useState<string | null>(null)
-  const [agentOpen, setAgentOpen] = useState(true)
   const [agentWidth, setAgentWidth] = useState(readStoredAgentWidth)
   const [agentResizing, setAgentResizing] = useState(false)
   const [agentFocusRequest, setAgentFocusRequest] = useState(0)
   const [agentRoomCitations, setAgentRoomCitations] = useState<RoomOverviewCitation[]>([])
   const [agentNavigationRequest, setAgentNavigationRequest] = useState<AgentNavigationRequest | null>(null)
   const [agentSessionRouteRequest, setAgentSessionRouteRequest] = useState<AgentSessionRouteRequest | null>(null)
+  const [agentAskRequest, setAgentAskRequest] = useState<{ key: string; roomId: string; message: string } | null>(null)
   const [remoteNotificationTarget, setRemoteNotificationTarget] = useState<AgentNotificationTarget | null>(null)
   const [agentDocumentFocus, setAgentDocumentFocus] = useState<{
     roomId: string
@@ -132,10 +134,13 @@ export function App() {
     requestId: number
   } | null>(null)
   const documentFocusRequestIdRef = useRef(0)
+  const roomOfficeFocusRequestIdRef = useRef(0)
+  const embeddedOffice = useEmbeddedOffice()
   const agentNavigationTimerRef = useRef<number | null>(null)
   const workspaceMainRef = useRef<HTMLElement>(null)
   const tabSwipeRef = useRef({ distance: 0, lastAt: 0, lockedUntil: 0 })
-  const [navCollapsed, setNavCollapsed] = useState(() => window.matchMedia('(max-width: 1200px)').matches)
+  const [navCollapsed, setNavCollapsed] = useState(false)
+  const [agentOpen, setAgentOpen] = useState(() => !window.matchMedia('(max-width: 1200px)').matches)
   const [contextRoomDetailFocused, setContextRoomDetailFocused] = useState(false)
   const [contextRoomNavRevealed, setContextRoomNavRevealed] = useState(false)
   const [contextRoomHomeRequest, setContextRoomHomeRequest] = useState(0)
@@ -163,10 +168,13 @@ export function App() {
     contextRoomState.rooms.map(({ id, title, kind }) => ({ id, title, kind }))
   ), [contextRoomState.rooms])
 
-  // 顶栏 Office 预览标签：同一时刻只激活一个实例，离开预览页时全部隐藏（标签保留）。
+  // Office 预览实例激活仲裁：顶栏标签页 / office-test 页 / Room 内嵌宿主
+  // 同一时刻只激活一个实例，离开对应页面时全部隐藏（标签与实例本体保留）。
   const focusedOfficeInstanceId = activePage === 'office-test'
     ? OFFICE_TEST_INSTANCE_ID
-    : activePage === 'office-document' ? activeOfficeInstanceId : null
+    : activePage === 'office-document' ? activeOfficeInstanceId
+    : activePage === 'rooms' ? embeddedOffice?.instanceId ?? null
+    : null
 
   useEffect(() => {
     const workspace = workspaceMainRef.current
@@ -176,6 +184,14 @@ export function App() {
     if (!focusedOfficeInstanceId) {
       void office.setActiveInstance(null).catch((error) => {
         console.error('Failed to hide the Office view.', error)
+      })
+      return
+    }
+
+    // Room 内嵌预览：占位矩形由 EmbeddedOfficePreview 自行上报，这里只激活。
+    if (activePage === 'rooms') {
+      void office.setActiveInstance(focusedOfficeInstanceId).catch((error) => {
+        console.error('Failed to open the Office view.', error)
       })
       return
     }
@@ -203,7 +219,7 @@ export function App() {
       observer.disconnect()
       window.removeEventListener('resize', reportBounds)
     }
-  }, [focusedOfficeInstanceId, agentOpen, effectiveNavCollapsed])
+  }, [activePage, focusedOfficeInstanceId, agentOpen, effectiveNavCollapsed])
 
   useEffect(() => {
     logOnboarding('state', {
@@ -286,7 +302,7 @@ export function App() {
     setAgentWidth(Math.round(Math.max(AGENT_WIDTH_MIN, Math.min(max, raw))))
   }, [])
   const startAgentResize = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (window.matchMedia('(max-width: 900px)').matches) return
+    if (window.matchMedia('(max-width: 1200px)').matches) return
     event.currentTarget.setPointerCapture(event.pointerId)
     setAgentResizing(true)
     const move = (moveEvent: PointerEvent) => applyAgentWidth(window.innerWidth - moveEvent.clientX)
@@ -308,14 +324,16 @@ export function App() {
     if (agentNavigationTimerRef.current !== null) window.clearTimeout(agentNavigationTimerRef.current)
   }, [])
 
+  // 窄窗不再隐藏左侧栏；改为自动折叠右侧 AI 面板（用户可随时手动展开）。
+  // 断点与 CSS/初始态一致取 1200px（此前 900px 低于主窗 minWidth，监听永不触发）。
   useEffect(() => {
     const compactWindow = window.matchMedia('(max-width: 1200px)')
-    const collapseNavigation = (event: MediaQueryListEvent | MediaQueryList) => {
-      if (event.matches) setNavCollapsed(true)
+    const collapseAgent = (event: MediaQueryListEvent | MediaQueryList) => {
+      if (event.matches) setAgentOpen(false)
     }
-    collapseNavigation(compactWindow)
-    compactWindow.addEventListener('change', collapseNavigation)
-    return () => compactWindow.removeEventListener('change', collapseNavigation)
+    collapseAgent(compactWindow)
+    compactWindow.addEventListener('change', collapseAgent)
+    return () => compactWindow.removeEventListener('change', collapseAgent)
   }, [])
 
   // 跨页导航事件（非页面树组件用，如连接器引导跳记忆页；照 MEMORY_TAB_EVENT 约定）
@@ -587,21 +605,26 @@ export function App() {
   }, [])
 
   const closeOfficeTab = useCallback((instanceId: string) => {
-    void window.nxcore?.office.closeInstance(instanceId).catch((error) => {
-      console.error('Failed to close the Office preview.', error)
-    })
-    const closingIndex = officeTabs.findIndex((tab) => tab.id === instanceId)
-    if (closingIndex < 0) return
-    const nextTabs = officeTabs.filter((tab) => tab.id !== instanceId)
-    setOfficeTabs(nextTabs)
-    if (activeOfficeInstanceId !== instanceId) return
-    const neighbor = nextTabs[closingIndex] ?? nextTabs[closingIndex - 1] ?? null
-    if (neighbor) {
-      setActiveOfficeInstanceId(neighbor.id)
-      return
-    }
-    setActiveOfficeInstanceId(null)
-    setActivePage('files')
+    void window.nxcore?.office.closeInstance(instanceId)
+      .then((closed) => {
+        // false = 可编辑实例在脏关闭守卫里被取消：标签与实例都保留。
+        if (closed === false) return
+        const closingIndex = officeTabs.findIndex((tab) => tab.id === instanceId)
+        if (closingIndex < 0) return
+        const nextTabs = officeTabs.filter((tab) => tab.id !== instanceId)
+        setOfficeTabs(nextTabs)
+        if (activeOfficeInstanceId !== instanceId) return
+        const neighbor = nextTabs[closingIndex] ?? nextTabs[closingIndex - 1] ?? null
+        if (neighbor) {
+          setActiveOfficeInstanceId(neighbor.id)
+          return
+        }
+        setActiveOfficeInstanceId(null)
+        setActivePage('files')
+      })
+      .catch((error) => {
+        console.error('Failed to close the Office preview.', error)
+      })
   }, [activeOfficeInstanceId, officeTabs])
 
   // Context Room 等非文件页入口的 Office 文件打开请求：走 files:open-original，
@@ -624,6 +647,76 @@ export function App() {
     window.addEventListener('nxcore:office:open', open as EventListener)
     return () => window.removeEventListener('nxcore:office:open', open as EventListener)
   }, [openOfficeTab])
+
+  // Agent 生成 Word（office 桥）：阶段进度提示；完成后刷新 Room 清单并导航
+  // 进所属 Room、右区原位打开产物（PortedDetail 消费 focus 请求）。
+  useEffect(() => {
+    const office = window.nxcore?.office
+    if (!office?.onAgentFile) return
+    return office.onAgentFile((payload) => {
+      if (payload.type === 'edited') {
+        // 人手编辑回填落库（版本链 +1）：静默刷新清单，不弹提示、不抢焦点。
+        window.dispatchEvent(new CustomEvent('everroom:knowledge-changed'))
+        return
+      }
+      const kind = t(`surface:agentOffice.kind.${payload.format ?? 'docx'}`)
+      if (payload.type === 'phase') {
+        const phaseKey = payload.phase === 'rendering'
+          ? 'surface:agentOffice.generating.rendering'
+          : payload.phase === 'saved'
+            ? 'surface:agentOffice.generating.saved'
+            : 'surface:agentOffice.generating.importing'
+        showToast({ title: t('surface:agentOffice.generating.title', { kind }), message: t(phaseKey, { title: payload.title }) })
+        return
+      }
+      if (payload.type === 'error') {
+        showToast({ title: t('surface:agentOffice.error.title', { kind }), message: payload.message, variant: 'error' })
+        return
+      }
+      showToast({ title: t('surface:agentOffice.done.title', { kind }), message: t('surface:agentOffice.done.message', { title: payload.title }) })
+      // Room 资料页/产物库清单监听此 DOM 事件刷新（见 useRoomKnowledgeFiles）。
+      window.dispatchEvent(new CustomEvent('everroom:knowledge-changed'))
+      if (payload.fileId && payload.originalName && payload.roomId) {
+        const room = availableContextRooms.find((item) => item.id === payload.roomId)
+        if (room) openContextRoomTab(room)
+        else activateContextRoomTab(payload.roomId)
+        requestRoomOfficeFocus({
+          roomId: payload.roomId,
+          fileId: payload.fileId,
+          originalName: payload.originalName,
+          requestId: ++roomOfficeFocusRequestIdRef.current,
+        })
+      }
+    })
+  }, [activateContextRoomTab, availableContextRooms, openContextRoomTab, t])
+
+  // slides「AI 修改」弹层转发（office 桥）：切到元素所属 Room，把组装好的
+  // 修改指令自动发给 Agent（AgentPanel 按 roomId 匹配后消费，自动发送）。
+  useEffect(() => {
+    const office = window.nxcore?.office
+    if (!office?.onAgentAsk) return
+    return office.onAgentAsk((payload) => {
+      const room = availableContextRooms.find((item) => item.id === payload.roomId)
+      if (room) openContextRoomTab(room)
+      else activateContextRoomTab(payload.roomId)
+      setAgentAskRequest({ key: `agent-ask-${Date.now()}`, roomId: payload.roomId, message: payload.message })
+    })
+  }, [activateContextRoomTab, availableContextRooms, openContextRoomTab])
+
+  // 产物库「新建 Office」：经 Room 会话派发生成请求（自动展开对应 Room 会话）。
+  useEffect(() => {
+    const open = (event: Event) => {
+      const detail = (event as CustomEvent<{ roomId?: string; message?: string }>).detail
+      if (!detail?.roomId || !detail.message) return
+      const room = availableContextRooms.find((item) => item.id === detail.roomId)
+      if (room) openContextRoomTab(room)
+      else activateContextRoomTab(detail.roomId)
+      setAgentOpen(true)
+      setAgentAskRequest({ key: `artifact-create-${Date.now()}`, roomId: detail.roomId, message: detail.message })
+    }
+    window.addEventListener('everroom:room-agent-ask', open)
+    return () => window.removeEventListener('everroom:room-agent-ask', open)
+  }, [activateContextRoomTab, availableContextRooms, openContextRoomTab])
 
   const syncContextRoomTabs = useCallback((rooms: ContextRoomWorkspaceTab[]) => {
     // 全空投影是网关启动/快照刷新窗口的瞬时态，不是真实清空——本地删除 Room
@@ -875,7 +968,6 @@ export function App() {
         officeTabs={officeTabs}
         activeOfficeId={activeWorkspaceOfficeId}
         agentOpen={agentOpen}
-        navCollapsed={effectiveNavCollapsed}
         onActivateWorkbench={() => {
           if (activePage === 'rooms' && activeContextRoomId) showContextRoomHome()
           // 预览无「主页」可回：点工作区标签时退回文件页（预览入口），标签保留。
@@ -885,22 +977,7 @@ export function App() {
         onCloseContextRoom={closeContextRoomTab}
         onActivateOfficeTab={activateOfficeTab}
         onCloseOfficeTab={closeOfficeTab}
-        onToggleAgent={() => setAgentOpen((open) => {
-          const next = !open
-          if (next && window.matchMedia('(max-width: 900px)').matches) setNavCollapsed(true)
-          return next
-        })}
-        onToggleNav={() => {
-          if (isContextRoomFocused) {
-            setContextRoomNavRevealed((revealed) => !revealed)
-            return
-          }
-          setNavCollapsed((collapsed) => {
-            const next = !collapsed
-            if (!next && window.matchMedia('(max-width: 900px)').matches) setAgentOpen(false)
-            return next
-          })
-        }}
+        onToggleAgent={() => setAgentOpen((open) => !open)}
       />
       <Sidebar activePage={activePage} onNavigate={navigate} />
       <main ref={workspaceMainRef} className="workspace-main">
@@ -966,6 +1043,8 @@ export function App() {
           roomBackendReady={contextRoomBackendReady}
           navigationRequest={agentNavigationRequest}
           sessionRouteRequest={agentSessionRouteRequest}
+          askRequest={agentAskRequest}
+          onAskConsumed={(key) => setAgentAskRequest((current) => current?.key === key ? null : current)}
           onNavigate={navigateFromAgent}
           onRestoreRoomTab={restoreContextRoomTab}
           onNavigationConsumed={(key) => setAgentNavigationRequest((current) => current?.key === key ? null : current)}

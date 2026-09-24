@@ -59,11 +59,13 @@ const RawConfigSchema = Type.Object(
     aiProvider: Type.String(),
     aiModel: Type.String(),
     aiBackgroundModel: Type.String(),
+    aiLiteModel: Type.String(),
     aiBaseUrl: Type.String(),
     aiApiKey: Type.String(),
     aiApi: AiApiSchema,
     aiMaxTokens: Type.Integer({ minimum: 1 }),
     aiBackgroundMaxTokens: Type.Integer({ minimum: 1 }),
+    aiLiteMaxTokens: Type.Integer({ minimum: 1 }),
     diaryMaxTokens: Type.Integer({ minimum: 1 }),
     aiContextWindow: Type.Integer({ minimum: 1 }),
     aiTemperature: Type.Number({ minimum: 0, maximum: 2 }),
@@ -146,6 +148,8 @@ const RawConfigSchema = Type.Object(
     ingestFilterInsightIntervalMs: Type.Integer({ minimum: 60_000 }),
     notificationBridgeUrl: Type.String(),
     notificationBridgeToken: Type.String(),
+    officeBridgeUrl: Type.String(),
+    officeBridgeToken: Type.String(),
   },
   { additionalProperties: false },
 );
@@ -315,6 +319,8 @@ export interface GatewayConfig {
   /** agent 过滤器（ingest 第一级闸门）配置；enabled=false 直通。 */
   ingestFilter: IngestFilterConfig;
   backgroundPi: PiRuntimeConfig | null;
+  /** 轻量模型档（main-lite）；model 为空＝未配置（lite 档隐藏）。 */
+  litePi: PiRuntimeConfig | null;
   diaryMaxTokens?: number;
   subagents?: SubagentFrameworkConfig;
   /** agent MCP 配置文件绝对路径（设置页管理用）。 */
@@ -338,6 +344,8 @@ export interface GatewayConfig {
   /** 桌面文档资产本地桥（loopback）；飞书导出时本地图改写为该 URL 前缀由 lark-cli 下载。 */
   documentAssetBridgeUrl?: string | null;
   notificationBridge?: { baseUrl: string; token: string } | null;
+  /** 桌面 Office 生成桥（loopback）：Agent 工具经它驱动隐藏 GenOffice view 生成 docx。 */
+  officeBridge?: { baseUrl: string; token: string } | null;
 }
 
 export interface VlmConfig {
@@ -593,6 +601,11 @@ export function loadConfig(
       "NXCORE_AI_BACKGROUND_MAX_TOKENS",
       env.NXCORE_AI_BACKGROUND_MAX_TOKENS ?? "8192",
     ),
+    aiLiteModel: env.NXCORE_AI_LITE_MODEL?.trim() ?? "",
+    aiLiteMaxTokens: parsePositiveInteger(
+      "NXCORE_AI_LITE_MAX_TOKENS",
+      env.NXCORE_AI_LITE_MAX_TOKENS ?? env.NXCORE_AI_MAX_TOKENS ?? "8192",
+    ),
     diaryMaxTokens: parsePositiveInteger(
       "NXCORE_DIARY_MAX_TOKENS",
       env.NXCORE_DIARY_MAX_TOKENS ?? "16384",
@@ -798,6 +811,8 @@ export function loadConfig(
     ),
     notificationBridgeUrl: env.NXCORE_NOTIFICATION_BRIDGE_URL?.trim() ?? "",
     notificationBridgeToken: env.NXCORE_NOTIFICATION_BRIDGE_TOKEN?.trim() ?? "",
+    officeBridgeUrl: env.NXCORE_OFFICE_BRIDGE_URL?.trim() ?? "",
+    officeBridgeToken: env.NXCORE_OFFICE_BRIDGE_TOKEN?.trim() ?? "",
   };
 
   if (!Value.Check(RawConfigSchema, rawConfig)) {
@@ -845,6 +860,8 @@ export function loadConfig(
   }
   if (Boolean(rawConfig.notificationBridgeUrl)!==Boolean(rawConfig.notificationBridgeToken)) throw new Error("Notification bridge configuration requires URL and token together");
   if(rawConfig.notificationBridgeUrl){const u=new URL(rawConfig.notificationBridgeUrl);if(u.protocol!=="http:"||!["localhost","127.0.0.1","::1"].includes(u.hostname))throw new Error("NXCORE_NOTIFICATION_BRIDGE_URL must be a loopback HTTP endpoint");}
+  if (Boolean(rawConfig.officeBridgeUrl)!==Boolean(rawConfig.officeBridgeToken)) throw new Error("Office bridge configuration requires URL and token together");
+  if(rawConfig.officeBridgeUrl){const u=new URL(rawConfig.officeBridgeUrl);if(u.protocol!=="http:"||!["localhost","127.0.0.1","::1"].includes(u.hostname))throw new Error("NXCORE_OFFICE_BRIDGE_URL must be a loopback HTTP endpoint");}
 
   const memory: MemoryRuntimeConfig | null = rawConfig.memoryEnabled
     ? {
@@ -1063,6 +1080,9 @@ export function loadConfig(
     notificationBridge: rawConfig.notificationBridgeUrl
       ? { baseUrl: rawConfig.notificationBridgeUrl.replace(/\/$/, ""), token: rawConfig.notificationBridgeToken }
       : null,
+    officeBridge: rawConfig.officeBridgeUrl
+      ? { baseUrl: rawConfig.officeBridgeUrl.replace(/\/$/, ""), token: rawConfig.officeBridgeToken }
+      : null,
     larkCli: {
       executable: firstEnvValue(env, "NXCORE_LARK_CLI_PATH")?.trim() || "lark-cli",
     },
@@ -1077,6 +1097,17 @@ export function loadConfig(
           ...pi,
           model: rawConfig.aiBackgroundModel,
           maxTokens: rawConfig.aiBackgroundMaxTokens,
+        }
+      : null,
+    // lite 档恒从 pi 派生（连接要素继承主模型），model 空＝未配置：
+    // 与 background 不同，model 不回落主模型——档位只在显式配置后出现。
+    // 恒建对象（而非 model 空时 null）：runtime config 的 apply 只能打补丁，
+    // null 无法被用户配置补齐（webSearch 同理在 create-server 直接构造）。
+    litePi: pi
+      ? {
+          ...pi,
+          model: rawConfig.aiLiteModel,
+          maxTokens: rawConfig.aiLiteMaxTokens,
         }
       : null,
     subagents: {

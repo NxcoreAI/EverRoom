@@ -75,6 +75,8 @@ export function WorkspaceLayout({
   onOpenWikiPage,
   onOpenDocument,
   linkGraphFocusNodeId,
+  onOpenEntity,
+  memoryFocusEntityId,
   onOpenObject,
   onOpenSource,
   onCloseObject,
@@ -139,6 +141,10 @@ export function WorkspaceLayout({
   onOpenDocument: (documentId: string) => void;
   /** 索引 chip 跳转：建联图谱聚焦节点 id（memory:{id} / doc:{id}）。 */
   linkGraphFocusNodeId?: string | null;
+  /** 概览关联实体 chip 点击：切到关联记忆板块并聚焦该实体。 */
+  onOpenEntity?: (entityId: string) => void;
+  /** 概览实体点击带来的记忆面板聚焦实体（applied 实体 id）。 */
+  memoryFocusEntityId?: string | null;
   onOpenObject: (target: WorkspaceObjectPreview) => void;
   /** 记忆图谱来源行跳转（文档右区打开 / 邮件进面板详情）。 */
   onOpenSource: (source: RoomAppliedEntitySource) => void;
@@ -259,6 +265,7 @@ export function WorkspaceLayout({
               onSelectResource={onSelectResource}
               onOpenObject={onOpenObject}
               onOpenPane={(pane) => setBoardSubtab('work', pane)}
+              onOpenEntity={onOpenEntity}
               onOpenWikiBoard={() => switchBoard('wiki')}
               onToggleTask={onToggleTask}
             />
@@ -345,7 +352,9 @@ export function WorkspaceLayout({
                         onEmptyTrash={onEmptyTrash}
                         onOpenDocument={onOpenDocument}
                         onOpenPane={(nextSubtab) => setBoardSubtab('work', nextSubtab)}
+                        onOpenEntity={onOpenEntity}
                         linkGraphFocusNodeId={linkGraphFocusNodeId}
+                        memoryFocusEntityId={memoryFocusEntityId}
                         onToggleTask={onToggleTask}
                         onUpdateRoom={onUpdateRoom}
                         onOpenObject={onOpenObject}
@@ -395,6 +404,7 @@ export function WorkspaceLayout({
               onChapterChange={roomFocus.setChapter}
               onMobileBack={() => setMobileContent(false)}
               onUpdateRoom={onUpdateRoom}
+              onOpenWikiPage={onOpenWikiPage}
             />
           </>
         )}

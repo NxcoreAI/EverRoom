@@ -436,6 +436,8 @@ export class KnowledgeService {
   private drainInFlight: Promise<void> | null = null;
   private promotionDrainInFlight: Promise<void> | null = null;
   private roomDuplicateIndexTrigger: (() => void) | null = null;
+  /** 路由投影/文档沉淀完成 → 通知 room-overview 自动再生调度（装配后生效）。 */
+  private roomOverviewRefreshTrigger: ((roomIds: string[], reason: string) => void) | null = null;
   /** M3 知识整理偏好（注入摘要与统计/洞察宿主），装配后生效。 */
   private knowledgePreferences: import("./preferences.js").KnowledgePreferences | null = null;
 
@@ -506,6 +508,10 @@ export class KnowledgeService {
 
   setRoomDuplicateIndexTrigger(trigger: () => void): void {
     this.roomDuplicateIndexTrigger = trigger;
+  }
+
+  setRoomOverviewRefreshTrigger(trigger: (roomIds: string[], reason: string) => void): void {
+    this.roomOverviewRefreshTrigger = trigger;
   }
 
   /**
@@ -847,6 +853,7 @@ export class KnowledgeService {
     status: string;
     decidedBy: string | null;
     confidence: number | null;
+    sourceKind: string;
     uploadedAt: Date;
   }> {
     roomId = this.canonicalRoomId(roomId);
@@ -886,11 +893,11 @@ export class KnowledgeService {
     if (wanted.length === 0) return [];
     // 元信息双轨：统一导入管线（/v1/file-imports）只写 file_entries 目录，
     // uploaded_files 仅为遗留字节通道；先旧表后目录表补齐，两边都缺才算不存在
-    const fileMetaById = new Map<string, { originalName: string; bytes: number; uploadedAt: Date }>();
+    const fileMetaById = new Map<string, { originalName: string; bytes: number; uploadedAt: Date; sourceKind: string }>();
     const sourceIds = wanted.map((decision) => decision.sourceId);
     for (const row of this.db.select().from(uploadedFiles)
       .where(inArray(uploadedFiles.id, sourceIds)).all()) {
-      fileMetaById.set(row.id, { originalName: row.originalName, bytes: row.bytes, uploadedAt: row.createdAt });
+      fileMetaById.set(row.id, { originalName: row.originalName, bytes: row.bytes, uploadedAt: row.createdAt, sourceKind: "legacy-upload" });
     }
     const missingIds = sourceIds.filter((id) => !fileMetaById.has(id));
     if (missingIds.length > 0) {
@@ -899,6 +906,7 @@ export class KnowledgeService {
         originalName: fileEntries.originalName,
         bytes: fileBlobs.byteSize,
         createdAt: fileEntries.createdAt,
+        sourceKind: fileEntries.sourceKind,
       }).from(fileEntries)
         .leftJoin(fileVersions, eq(fileEntries.currentVersionId, fileVersions.id))
         .leftJoin(fileBlobs, eq(fileVersions.contentHash, fileBlobs.contentHash))
@@ -909,6 +917,7 @@ export class KnowledgeService {
           originalName: row.originalName,
           bytes: row.bytes ?? 0,
           uploadedAt: row.createdAt,
+          sourceKind: row.sourceKind,
         });
       }
     }
@@ -924,6 +933,7 @@ export class KnowledgeService {
           status: decision.status,
           decidedBy: decision.decidedBy,
           confidence: decision.confidence ?? null,
+          sourceKind: file.sourceKind,
           uploadedAt: file.uploadedAt,
         };
       })
@@ -1106,7 +1116,36 @@ export class KnowledgeService {
     return jobId;
   }
 
-  /** 外部信封入口（route/manual 全量信封）：router 必须开启。 */
+  /**
+   * 显式 roomId 导入的入口决策（同步落库）：Room 文件清单读侧只认
+   * route_decisions，而常规链路（file.ingest job → route job）是异步的，
+   * router 关闭时甚至整单拒绝——导入方拿到 202 时归属尚不存在，Room 里
+   * 看不到刚进的文件。这里在导入请求内先落一条 entry 决策保底；router
+   * 稍后的同名决策 latest-wins，语义不变（entry 本就确定性直连）。
+   */
+  recordImportRoomDecision(input: { fileEntryId: string; roomId: string; sourceTitle: string }): void {
+    const room = this.db.select({ id: rooms.id }).from(rooms)
+      .where(and(eq(rooms.id, input.roomId), isNull(rooms.deletedAt))).get();
+    if (!room) return;
+    this.db.insert(routeDecisions).values({
+      id: randomUUID(),
+      sourceKind: "file",
+      sourceId: input.fileEntryId,
+      sourceVersion: 1,
+      sourceTitle: input.sourceTitle,
+      primaryRoomId: room.id,
+      decidedBy: "entry",
+      confidence: 1,
+      reason: "导入时显式指定 Room（入口确定性）",
+      status: "auto",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    }).run();
+  }
+
+  /**
+   * 外部信封入口（route/manual 全量信封）：router 必须开启。
+   */
   submitEnvelope(input: {
     sourceKind: SourceKind;
     title: string;
@@ -1720,6 +1759,7 @@ export class KnowledgeService {
       mentions,
       facts,
     });
+    this.roomOverviewRefreshTrigger?.(activeRoomIds, "relation-index");
   }
 
   private async runIngestJob(payload: IngestJobPayload): Promise<void> {
@@ -1770,6 +1810,7 @@ export class KnowledgeService {
       { event: "knowledge.ingest.confirmed", sourceId: payload.sourceId, roomId: payload.roomId, knowledgeId },
       "document ingested into room wiki",
     );
+    this.roomOverviewRefreshTrigger?.([payload.roomId], "ingest");
   }
 
   // ───────────────────────── 晋升 job（entity-room-plan §4.4） ─────────────────────────

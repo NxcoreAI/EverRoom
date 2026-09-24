@@ -1,11 +1,11 @@
-import { AlertTriangle, ArrowLeftRight, Eraser, LogOut, Pause, Play, RefreshCw, Trash2 } from 'lucide-react'
+import { AlertTriangle, ArrowLeftRight, LogOut, Pause, Play, RefreshCw, Trash2 } from 'lucide-react'
 import type { ReactNode } from 'react'
 
 import type { DataSourceSummary } from '../../../../../shared/sources'
 import type { ConnectorConnection, SyncRun, SyncScope } from '@nxcore/connector-contract'
 import type { ObsidianVaultBinding, ObsidianVaultCandidate } from '../../../../../shared/obsidian'
 import { formatBytes, formatDate } from './sourceFormatters'
-import { SourceIcon, type SourceIconKind } from './SourceIcon'
+import { GLYPH_KINDS, SourceIcon, glyphTone, type SourceGlyphTone, type SourceIconKind } from './SourceIcon'
 import {
   CONNECTION_STATUS_TONES,
   localCardTone,
@@ -32,6 +32,7 @@ function StatePill({ tone, label }: { tone: StateTone; label: string }) {
 function CardShell({
   tone,
   logo,
+  logoTone,
   name,
   subtitle,
   state,
@@ -43,6 +44,8 @@ function CardShell({
 }: CardProps & {
   tone: 'ok' | 'syncing' | 'paused' | 'attention'
   logo: ReactNode
+  /** glyph 类 logo 的语义色调（品牌 logo 不传）。 */
+  logoTone?: SourceGlyphTone
   name: string
   subtitle: string
   state: ReactNode
@@ -59,7 +62,7 @@ function CardShell({
       }}
     >
       <header className="src-card-head">
-        <span className="src-card-logo">{logo}</span>
+        <span className="src-card-logo" data-tone={logoTone}>{logo}</span>
         <div className="src-card-title">
           <h3>{name}</h3>
           <small title={subtitle}>{subtitle}</small>
@@ -107,7 +110,8 @@ export function LocalSourceCard({
   return (
     <CardShell
       tone={localCardTone(source.status)}
-      logo={<SourceIcon kind={source.kind as SourceIconKind} className={source.kind === 'local-folder' ? 'glyph' : ''} />}
+      logo={<SourceIcon kind={source.kind as SourceIconKind} className={GLYPH_KINDS.has(source.kind as SourceIconKind) ? 'glyph' : ''} />}
+      logoTone={GLYPH_KINDS.has(source.kind as SourceIconKind) ? glyphTone(source.kind as SourceIconKind) : undefined}
       name={source.name}
       subtitle={source.rootPath}
       state={<StatePill tone={SOURCE_STATUS_TONES[source.status]} label={t(`surface:sourceTable.${source.status === 'connected' ? 'synced' : source.status === 'syncing' ? 'syncing' : source.status === 'paused' ? 'paused' : source.status === 'disconnected' ? 'disconnected' : 'syncFailed'}`)} />}
@@ -116,12 +120,12 @@ export function LocalSourceCard({
       onOpen={onOpen}
       actions={
         <>
-          {syncable ? <button type="button" className="src-mini-btn" disabled={busyAction} onClick={onSync}><RefreshCw aria-hidden="true" strokeWidth={1.8} />{t('surface:sourceCard.syncNow')}</button> : null}
+          {syncable ? <button type="button" className="src-mini-btn" aria-label={t('surface:sourceCard.syncNow')} title={t('surface:sourceCard.syncNow')} disabled={busyAction} onClick={onSync}><RefreshCw aria-hidden="true" strokeWidth={2} /></button> : null}
           <button type="button" className="src-mini-btn" aria-label={t(resumable ? 'surface:sourceTable.resumeSync' : 'surface:sourceTable.pauseSync')} title={t(resumable ? 'surface:sourceTable.resumeSync' : 'surface:sourceTable.pauseSync')} disabled={busy} onClick={onTogglePaused}>
-            {resumable ? <Play aria-hidden="true" strokeWidth={1.8} /> : <Pause aria-hidden="true" strokeWidth={1.8} />}
+            {resumable ? <Play aria-hidden="true" strokeWidth={2} /> : <Pause aria-hidden="true" strokeWidth={2} />}
           </button>
           <button type="button" className="src-mini-btn danger" aria-label={t('surface:sourceTable.clearDataName', { name: source.name })} title={t('surface:sourceTable.clearDataKeepFolder')} disabled={busy} onClick={onClear}>
-            <Eraser aria-hidden="true" strokeWidth={1.8} />
+            <Trash2 aria-hidden="true" strokeWidth={2} />
           </button>
         </>
       }
@@ -168,8 +172,8 @@ export function ObsidianSourceCard({
       busy={busy}
       onOpen={onOpen}
       actions={
-        <button type="button" className="src-mini-btn" disabled={busy} onClick={onRescan}>
-          <RefreshCw aria-hidden="true" strokeWidth={1.8} />{t('surface:sources.rescanObsidian')}
+        <button type="button" className="src-mini-btn" aria-label={t('surface:sources.rescanObsidian')} title={t('surface:sources.rescanObsidian')} disabled={busy} onClick={onRescan}>
+          <RefreshCw aria-hidden="true" strokeWidth={2} />
         </button>
       }
     >
@@ -211,6 +215,8 @@ export function CloudSourceCard({
   onReplaceAccount?: () => void
 }) {
   const { locale, t } = useLocale()
+  const logoKind = providerIconKind(connection.provider)
+  const logoIsGlyph = GLYPH_KINDS.has(logoKind)
   const active = connection.status === 'active'
   const mailbox = connection.provider === 'gmail' || connection.provider === 'outlook'
   const calendarScopes = connection.provider === 'google-calendar'
@@ -227,7 +233,8 @@ export function CloudSourceCard({
   return (
     <CardShell
       tone={tone}
-      logo={<SourceIcon kind={providerIconKind(connection.provider)} />}
+      logo={<SourceIcon kind={logoKind} className={logoIsGlyph ? 'glyph' : ''} />}
+      logoTone={logoIsGlyph ? glyphTone(logoKind) : undefined}
       name={providerLabel(connection.provider)}
       subtitle={connection.connectionName}
       state={<StatePill tone={running ? 'run' : CONNECTION_STATUS_TONES[connection.status]} label={stateLabel} />}
@@ -236,13 +243,13 @@ export function CloudSourceCard({
       onOpen={onOpen}
       actions={
         <>
-          {onReplaceAccount ? <button type="button" className="src-mini-btn" aria-label={t('surface:sources.replaceAccount')} title={t('surface:sources.replaceAccount')} disabled={busy} onClick={onReplaceAccount}><ArrowLeftRight aria-hidden="true" strokeWidth={1.8} /></button> : null}
-          {active && !docsProvider ? <button type="button" className="src-mini-btn" disabled={busy || running || !initialSyncDone} onClick={onSync}><RefreshCw aria-hidden="true" strokeWidth={1.8} />{t('surface:connector.incrementalSync')}</button> : null}
+          {onReplaceAccount ? <button type="button" className="src-mini-btn" aria-label={t('surface:sources.replaceAccount')} title={t('surface:sources.replaceAccount')} disabled={busy} onClick={onReplaceAccount}><ArrowLeftRight aria-hidden="true" strokeWidth={2} /></button> : null}
+          {active && !docsProvider ? <button type="button" className="src-mini-btn" aria-label={t('surface:connector.incrementalSync')} title={t('surface:connector.incrementalSync')} disabled={busy || running || !initialSyncDone} onClick={onSync}><RefreshCw aria-hidden="true" strokeWidth={2} /></button> : null}
           <button type="button" className="src-mini-btn" aria-label={t(active ? 'surface:connector.disableConnection' : 'surface:sourceCard.enableConnection')} title={t(active ? 'surface:connector.disableConnection' : 'surface:sourceCard.enableConnection')} disabled={busy} onClick={onToggleEnabled}>
-            {active ? <Pause aria-hidden="true" strokeWidth={1.8} /> : <Play aria-hidden="true" strokeWidth={1.8} />}
+            {active ? <Pause aria-hidden="true" strokeWidth={2} /> : <Play aria-hidden="true" strokeWidth={2} />}
           </button>
           <button type="button" className="src-mini-btn danger" aria-label={t('surface:connector.clearLocalData')} title={t('surface:connector.clearLocalData')} disabled={busy} onClick={onPurge}>
-            <Trash2 aria-hidden="true" strokeWidth={1.8} />
+            <Trash2 aria-hidden="true" strokeWidth={2} />
           </button>
         </>
       }

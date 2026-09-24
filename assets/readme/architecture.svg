@@ -1,0 +1,99 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="520" viewBox="0 0 1200 520" role="img" aria-labelledby="ar-t ar-d">
+  <title id="ar-t">EverRoom architecture</title>
+  <desc id="ar-d">The Electron desktop talks to the local NxCore Gateway through typed IPC with an ephemeral bearer token. The Gateway runs unified ingest, knowledge, memory, document, and agent services over SQLite, content-addressed objects, and daily logs, with replaceable engines attached.</desc>
+
+  <defs>
+    <marker id="ar-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#6DD0C5"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="520" fill="#12242D"/>
+
+  <!-- zone eyebrows -->
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="16" letter-spacing="2">
+    <text x="56" y="44" fill="#7E99A3">DESKTOP</text>
+    <text x="360" y="44" fill="#6DD0C5">NXCORE GATEWAY</text>
+    <text x="920" y="44" fill="#7E99A3">REPLACEABLE ENGINES</text>
+  </g>
+
+  <!-- ==================== desktop ==================== -->
+  <rect x="56" y="58" width="204" height="272" rx="16" fill="#0E1C24" stroke="#2A4750" stroke-width="1"/>
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="17" fill="#DCE8EC">
+    <rect x="76" y="86" width="164" height="52" rx="10" fill="#1A323D"/>
+    <text x="158" y="118" text-anchor="middle">React Renderer</text>
+    <rect x="76" y="166" width="164" height="52" rx="10" fill="#1A323D"/>
+    <text x="158" y="198" text-anchor="middle">Typed preload IPC</text>
+    <rect x="76" y="246" width="164" height="52" rx="10" fill="#1A323D"/>
+    <text x="158" y="278" text-anchor="middle">Electron main</text>
+  </g>
+  <g stroke="#6DD0C5" stroke-width="1.5" fill="none">
+    <path d="M158 138 L158 160" marker-end="url(#ar-arrow)"/>
+    <path d="M158 218 L158 240" marker-end="url(#ar-arrow)"/>
+  </g>
+
+  <!-- token arrow -->
+  <path d="M260 106 L352 106" stroke="#6DD0C5" stroke-width="1.6" fill="none" marker-end="url(#ar-arrow)"/>
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="16" fill="#BFD2D8" text-anchor="middle">
+    <text x="306" y="76">ephemeral</text>
+    <text x="306" y="94">bearer token</text>
+  </g>
+
+  <!-- ==================== gateway ==================== -->
+  <rect x="360" y="58" width="520" height="292" rx="16" fill="#0E1C24" stroke="#3F5B66" stroke-width="1.2"/>
+  <rect x="384" y="82" width="472" height="48" rx="10" fill="#1A323D" stroke="#6DD0C5" stroke-width="1.2"/>
+  <text x="620" y="112" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="17" fill="#6DD0C5">Fastify REST · WebSocket · OpenAPI</text>
+
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="17" fill="#DCE8EC">
+    <rect x="384" y="158" width="152" height="60" rx="10" fill="#1A323D"/>
+    <text x="460" y="194" text-anchor="middle">Unified ingest</text>
+    <rect x="548" y="158" width="152" height="60" rx="10" fill="#1A323D"/>
+    <text x="624" y="194" text-anchor="middle">Knowledge &amp; Rooms</text>
+    <rect x="712" y="158" width="152" height="60" rx="10" fill="#1A323D"/>
+    <text x="788" y="194" text-anchor="middle">Memory proxy</text>
+    <rect x="448" y="238" width="152" height="60" rx="10" fill="#1A323D"/>
+    <text x="524" y="274" text-anchor="middle">Document core</text>
+    <rect x="612" y="238" width="152" height="60" rx="10" fill="#1A323D"/>
+    <text x="688" y="274" text-anchor="middle">Agent service</text>
+  </g>
+
+  <!-- ==================== engines ==================== -->
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="17" fill="#DCE8EC">
+    <g>
+      <rect x="920" y="82" width="224" height="52" rx="10" fill="#1A323D" stroke="#7E99A3" stroke-width="1.2" stroke-dasharray="5 4"/>
+      <text x="1032" y="114" text-anchor="middle">Pi Agent runtime</text>
+    </g>
+    <g>
+      <rect x="920" y="150" width="224" height="52" rx="10" fill="#1A323D" stroke="#7E99A3" stroke-width="1.2" stroke-dasharray="5 4"/>
+      <text x="1032" y="182" text-anchor="middle">MemoryCore</text>
+    </g>
+    <g>
+      <rect x="920" y="218" width="224" height="52" rx="10" fill="#1A323D" stroke="#7E99A3" stroke-width="1.2" stroke-dasharray="5 4"/>
+      <text x="1032" y="250" text-anchor="middle">Knowledge service</text>
+    </g>
+    <g>
+      <rect x="920" y="286" width="224" height="52" rx="10" fill="#1A323D" stroke="#7E99A3" stroke-width="1.2" stroke-dasharray="5 4"/>
+      <text x="1032" y="318" text-anchor="middle">OpenConnector / oo</text>
+    </g>
+  </g>
+
+  <!-- gateway to engines -->
+  <g stroke="#6DD0C5" stroke-width="1.5" fill="none">
+    <path d="M880 108 L914 108" marker-end="url(#ar-arrow)"/>
+    <path d="M880 176 L914 176" marker-end="url(#ar-arrow)"/>
+    <path d="M880 244 L914 244" marker-end="url(#ar-arrow)"/>
+    <path d="M880 312 L914 312" marker-end="url(#ar-arrow)"/>
+  </g>
+
+  <!-- ==================== local data ==================== -->
+  <text x="340" y="388" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="16" letter-spacing="2" fill="#7E99A3">LOCAL DATA</text>
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="17" fill="#DCE8EC">
+    <rect x="340" y="402" width="250" height="64" rx="12" fill="#14262E" stroke="#2A4750" stroke-width="1"/>
+    <text x="465" y="440" text-anchor="middle">SQLite WAL · Drizzle · FTS5</text>
+    <rect x="617" y="402" width="250" height="64" rx="12" fill="#14262E" stroke="#2A4750" stroke-width="1"/>
+    <text x="742" y="440" text-anchor="middle">Content-addressed objects</text>
+    <rect x="894" y="402" width="250" height="64" rx="12" fill="#14262E" stroke="#2A4750" stroke-width="1"/>
+    <text x="1019" y="440" text-anchor="middle">Structured daily logs</text>
+  </g>
+  <path d="M620 350 L620 396" stroke="#6DD0C5" stroke-width="1.5" fill="none" marker-end="url(#ar-arrow)"/>
+</svg>

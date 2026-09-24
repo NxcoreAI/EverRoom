@@ -40,7 +40,9 @@ export function WorkspacePaneBody({
   onEmptyTrash,
   onOpenDocument,
   onOpenPane,
+  onOpenEntity,
   linkGraphFocusNodeId,
+  memoryFocusEntityId,
   onOpenObject,
   onOpenSource,
   rooms,
@@ -73,8 +75,12 @@ export function WorkspacePaneBody({
   onOpenDocument: (documentId: string) => void;
   /** 概览下钻到工作板块其他页签。 */
   onOpenPane: (subtab: BoardSubtab) => void;
+  /** 概览关联实体 chip 点击：切到关联记忆板块并聚焦该实体。 */
+  onOpenEntity?: (entityId: string) => void;
   /** 索引 chip 跳转：建联图谱聚焦节点 id（memory:{id} / doc:{id}）。 */
   linkGraphFocusNodeId?: string | null;
+  /** 概览实体点击带来的记忆面板聚焦实体（applied 实体 id）。 */
+  memoryFocusEntityId?: string | null;
   onOpenObject: (target: WorkspaceObjectPreview) => void;
   onOpenSource: (source: RoomAppliedEntitySource) => void;
   rooms: ContextRoomRecord[];
@@ -95,6 +101,8 @@ export function WorkspacePaneBody({
   const ownedDetail = selectedObject && board === 'work' && subtab !== null && detailOwnerSubtabs(selectedObject).includes(subtab)
     ? selectedObject
     : null;
+  // Agent 生成的 Office 文件是产物（产物库单列一节），不进工作/资料清单。
+  const externalKnowledgeFiles = knowledgeFiles.filter((file) => file.sourceKind !== 'agent-generated');
 
   if (board === 'work') {
     if (subtab === 'activity') {
@@ -102,7 +110,7 @@ export function WorkspacePaneBody({
         <ActivityPane
           room={room}
           backendDocuments={backendDocuments.filter((document) => document.origin !== 'native')}
-          knowledgeFiles={knowledgeFiles}
+          knowledgeFiles={externalKnowledgeFiles}
           onSelectResource={onSelectResource}
           onOpenObject={onOpenObject}
         />
@@ -131,7 +139,7 @@ export function WorkspacePaneBody({
           selectedId={selectedResourceId}
           backendDocuments={backendDocuments.filter((document) => document.origin !== 'native')}
           trashedDocuments={trashedDocuments.filter((document) => document.origin !== 'native')}
-          knowledgeFiles={knowledgeFiles}
+          knowledgeFiles={externalKnowledgeFiles}
           onSelect={onSelectResource}
           onDeleteDocument={onDeleteDocument}
           onRestoreDocument={onRestoreDocument}
@@ -149,23 +157,27 @@ export function WorkspacePaneBody({
       <OverviewDashboard
         room={room}
         backendDocuments={backendDocuments}
-        knowledgeFiles={knowledgeFiles}
+        knowledgeFiles={externalKnowledgeFiles}
         onSelectResource={onSelectResource}
         onOpenObject={onOpenObject}
         onOpenPane={onOpenPane}
+        onOpenEntity={onOpenEntity}
         onToggleTask={onToggleTask}
       />
     );
   }
 
   if (board === 'artifacts') {
-    // 产物库：仅用户在 EverRoom 创建的文档；外部导入归工作/资料。
+    // 产物库：用户在 EverRoom 创建的文档 + Agent 生成的 Office 文件；
+    // 外部导入归工作/资料。
+    const agentFiles = knowledgeFiles.filter((file) => file.sourceKind === 'agent-generated');
     return (
       <ArtifactLibraryPane
         room={room}
         selectedId={selectedResourceId}
         backendDocuments={backendDocuments.filter((document) => document.origin === 'native')}
         trashedDocuments={trashedDocuments.filter((document) => document.origin === 'native')}
+        agentFiles={agentFiles}
         onSelect={onSelectResource}
         onCreateDocument={onCreateDocument}
         onDeleteDocument={onDeleteDocument}
@@ -183,6 +195,7 @@ export function WorkspacePaneBody({
           onUpdateRoom={onUpdateRoom}
           onOpenRoom={onOpenRoom}
           onOpenSource={onOpenSource}
+          focusEntityId={memoryFocusEntityId}
         />
       );
     }
@@ -202,7 +215,7 @@ export function WorkspacePaneBody({
         room={room}
         rooms={rooms}
         backendDocuments={backendDocuments}
-        knowledgeFiles={knowledgeFiles}
+        knowledgeFiles={externalKnowledgeFiles}
         onOpenRoom={onOpenRoom}
         onSelectResource={onSelectResource}
       />

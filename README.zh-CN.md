@@ -1,16 +1,10 @@
 <div align="center">
 
-<img src="./everroom_logo/everroom_full.png" alt="Everroom logo" width="360">
-
+<img src="./assets/readme/hero.svg" width="100%" alt="EverRoom — 本地优先的个人上下文工作空间：文件、对话、记忆与 Agent 在同一个 Context Room 中协作">
 
 **一个本地优先的个人上下文工作空间，把文件、对话、记忆和 AI Agent 放回同一个工作现场。**
 
-
 连接信息 · 理解上下文 · 推进下一步
-
-
-
-# EverRoom
 
 [English](./README.md) | [简体中文](./README.zh-CN.md) | [官网](https://r.nxcore.ai/)
 
@@ -26,7 +20,6 @@
 > [!IMPORTANT]
 > Everroom 当前处于 Alpha 阶段，macOS 是主要开发目标。产品和 API 正在快速迭代，部分能力需要可选的本地服务或模型配置。
 
-
 ## Everroom 是什么？
 
 Everroom 是面向个人的上下文工作空间：把文件、代码仓库、沟通记录、会议、记忆和 Agent 放在同一个工作现场。你可以把它理解为下一代 Notion / Obsidian，但核心不是存放内容，而是让内容持续理解你的工作，并帮助你推进下一步。
@@ -35,15 +28,11 @@ Everroom 是面向个人的上下文工作空间：把文件、代码仓库、�
 
 > **让 AI 持续理解你，让你的积累随时发挥作用。**
 
-### 你会怎样使用 Everroom？
+### 产品闭环
 
-```mermaid
-flowchart LR
-    A["连接信息"] --> B["建立 Context Room"]
-    B --> C["写作与记忆"]
-    C --> D["让 Agent 推进工作"]
-    D --> A
-```
+<p align="center">
+  <img src="./assets/readme/product-loop.svg" width="100%" alt="EverRoom 产品闭环：连接信息、建立 Context Room、写作与记忆、让 Agent 推进工作，决策与新证据回流到闭环起点。">
+</p>
 
 1. **连接信息：** 导入本地文件、代码仓库、会议和录音，也可以按需连接飞书、Slack、Notion、Gmail 等服务。
 2. **建立 Context Room：** 为项目、主题、人物或长期职责建立一个工作空间，把文档、决策、任务、Wiki 和记忆放在一起。
@@ -61,16 +50,6 @@ Everroom 补上的正是这一层。它围绕文档、代码仓库、对话、�
 产品主张很简单：
 
 > **上下文应当由证据组装，被限定在具体的工作空间中，并且清晰到足以由人来治理。**
-
-```mermaid
-flowchart LR
-    A["已连接的数据"] --> B["可追溯证据"]
-    B --> C["受治理的记忆"]
-    C --> D["Context Room"]
-    D --> E["Context Doc 与 Agent"]
-    E --> F["新产物与新证据"]
-    F --> B
-```
 
 产品遵循四项原则：
 
@@ -92,9 +71,19 @@ flowchart LR
 | **Context Docs** | Agent 可通过可审阅操作创建或编辑的版本化文档 | 确保最终产物仍由人掌控 |
 | **Agent** | 拥有明确工具、会话、运行记录和取消能力的任务执行者 | 让自动化能够被检查、停止和替换 |
 
+每份来源只做一次规范化，沉淀为带版本、内容寻址的证据；Knowledge、Memory 和 Room 引用这份资产，而不是复制它。
+
+<p align="center">
+  <img src="./assets/readme/evidence-pipeline.svg" width="100%" alt="一份资产多处引用：来源一次规范化进入证据台账，记录内容哈希、版本历史与溯源；Knowledge、Memory 与 Room 链接以引用方式使用它。">
+</p>
+
 ### 一个 Room 如何工作？
 
 Room 不只是文件夹，而是围绕一项工作逐步组装出的上下文视图：
+
+<p align="center">
+  <img src="./assets/readme/room-anatomy.svg" width="100%" alt="Context Room 解剖图：关联来源经路由与证据检查后成为 Wiki 页面、实体、记忆文档或仅链接；Room Profile 汇总目标、状态、人物、风险、决策与时间线；Agent 使用 Room 范围的工具工作，经审阅的修改作为新证据回流。">
+</p>
 
 1. 来源被关联到 Room，并保留稳定身份和版本历史。
 2. 路由与证据检查决定材料应成为 Room Wiki、实体候选、记忆文档，还是仅保留链接。
@@ -128,79 +117,6 @@ Everroom 当前不会从连续屏幕录制、自治多 Agent 集群、企业管�
 | 现实感知 | 已可用，持续完善 | 麦克风 / 系统音频采集、转写和可审阅的对话记录 |
 | Agent 工作管理 | 已可用，持续完善 | Agent Office、定时任务、日记任务和手动执行 |
 | Connectors | 基础能力已可用 | 托管本地 OpenConnector、`oo` bridge、可选 Nango 集成，连接器覆盖持续扩展 |
-
-## 技术架构
-
-Electron 负责桌面应用生命周期，并将 NxCore Gateway 作为独立本地服务启动。Renderer 无法直接访问数据库、文件系统或 Gateway 凭据；所有 IPC 请求由主进程处理，再由主进程将授权后的 REST 与 WebSocket 流量转发给 Gateway。
-
-```mermaid
-flowchart TB
-    subgraph Desktop["Everroom Desktop"]
-        UI["React Renderer"]
-        IPC["Typed Preload IPC"]
-        MAIN["Electron Main Process"]
-        UI --> IPC --> MAIN
-    end
-
-    subgraph Gateway["NxCore Gateway"]
-        API["Fastify REST / WebSocket / OpenAPI"]
-        INGEST["统一摄取"]
-        KNOW["Knowledge 与 Room 服务"]
-        MEM["Memory 代理与文档摄取"]
-        DOCS["文档内核与操作"]
-        AGENT["Agent 服务"]
-        API --> INGEST
-        API --> KNOW
-        API --> MEM
-        API --> DOCS
-        API --> AGENT
-    end
-
-    subgraph Engines["可替换的本地引擎"]
-        PI["Pi Agent runtime"]
-        MC["MemoryCore"]
-        KS["Knowledge service"]
-        OC["OpenConnector / oo"]
-    end
-
-    subgraph Local["本地工作区"]
-        DB["SQLite WAL"]
-        OBJECTS["内容寻址对象"]
-        LOGS["按日切分的结构化日志"]
-    end
-
-    MAIN -->|"临时 Bearer Token"| API
-    AGENT --> PI
-    MEM --> MC
-    KNOW --> KS
-    AGENT --> OC
-    API --> DB
-    DB --> OBJECTS
-    API --> LOGS
-```
-
-Electron 负责窗口、进程生命周期和权限边界；NxCore Gateway 是独立的本地后端服务，负责 Agent、数据摄取、知识、记忆、文档、文件和连接器编排。Renderer 不能直接访问数据库、文件系统或 Gateway 凭据。
-
-### 实现策略
-
-- **一次规范化，在合适位置完成理解。** 摄取层识别并规范化来源，再依据已记录的策略快照分发给 Knowledge、Memory 或 Room 链接，不额外制造一条 LLM 管道。
-- **一份资产，多处引用。** 原始文件与解析后的 Markdown 只有一个存储所有者，下游通过稳定引用、哈希和溯源信息使用它们。
-- **Room 范围上下文。** Knowledge 工具先解析当前 Room 或会话，再读取 Wiki、来源和材料；Agent 默认不会获得无边界的全局语料。
-- **先提交，再执行副作用。** 文档修改先通过事务化提交内核与 outbox 落盘，再分发给 Knowledge 和 Memory，外部服务失败不会破坏权威文档版本。
-- **确定性的外部操作。** Connector 调用基于真实 Action Schema 和连接准备，凭据留在可信进程中；破坏性或对外可见的操作需要确认边界。
-- **优雅降级。** Fake Agent、未启用的 MemoryCore、不可用连接器和模型错误都有明确状态，可选服务缺失不会让本地文档不可访问。
-
-### 技术栈
-
-| 层级 | 技术 |
-| --- | --- |
-| 桌面端 | Electron、React、TypeScript、electron-vite |
-| Gateway | Node.js 22+、Fastify 5、TypeBox |
-| API | REST、WebSocket、OpenAPI |
-| 存储 | SQLite WAL、better-sqlite3、Drizzle ORM、FTS5 |
-| Agent 边界 | 共享协议包与可替换 runtime adapter |
-| 日志 | Pino、可读终端输出、按日切分的 JSON 文件日志 |
-| 测试 | Vitest 与 TypeScript 严格检查 |
 
 ## 快速开始
 
@@ -240,7 +156,8 @@ NXCORE_AI_API=openai-responses
 
 NxCore Gateway 同时提供受 Bearer Token 保护的 `/v1/mcp/documents/:sessionId` Streamable HTTP MCP 入口，供经过认证的 MCP 客户端使用。已废弃的远端聊天传输不再属于 runtime 配置。
 
-#### 文件驱动的子 Agent
+<details>
+<summary><b>文件驱动的子 Agent（目录结构、agent.yaml 与约束）</b></summary>
 
 子 Agent 只能被主 Agent 或 Gateway 内部工作流调度，不提供独立聊天入口，也不需要管理页面。Gateway 默认扫描仓库根目录的 `agents`。该目录在 Gateway 构建时复制到 `dist/agents`，并随 Desktop 一起打包；开发或测试时可以通过环境变量临时覆盖：
 
@@ -286,6 +203,8 @@ policy:
 
 每个 `SKILL.md` 必须包含 `name` 和 `description` YAML frontmatter。子 Agent 通过受限 `read` 工具读取自己的 Skill 快照，不能借此读取工作区或设备上的其他文件。MCP 的 `includeTools` 必须显式填写；需要开放服务器全部工具时使用 `["*"]`。
 
+</details>
+
 ### 可选的本地 MemoryCore 与 Knowledge 服务
 
 功能开关启用后，Desktop 会管理兼容的本地服务。默认使用以下 loopback 地址：
@@ -307,11 +226,57 @@ pnpm typecheck    # 检查所有 workspace 包的类型
 pnpm test         # 运行 Agent runtime 与 Gateway 测试
 pnpm build        # 构建 Gateway 与 Electron
 pnpm package:mac  # 生成 macOS DMG 与 ZIP
+pnpm package:win  # 生成 Windows x64 NSIS 安装包
 ```
 
-## Gateway
+<details>
+<summary><b>构建 Windows 安装包</b></summary>
 
-桌面开发模式下，Electron 会从运行时清单发现 Gateway 地址，默认端口是动态分配的：
+`pnpm package:win` 与 macOS 构建走同一条链路 —— Gateway、内置 Windows PostgreSQL 的 Nango runtime、OpenConnector、oo CLI、GenOffice runtimes（含 Rust `xlsx-sidecar.exe`）、打包环境，最后执行 `electron-builder --win nsis --x64`。前置要求：
+
+- Node 22 与 `packageManager` 固定的 pnpm 版本（`corepack enable`）
+- Rust 工具链（`cargo`），用于 GenOffice xlsx sidecar
+- `git submodule update --init --recursive`（Nango connector 与 GenOffice）
+- `apps/desktop/scripts/generate-packaged-env.mjs` 所需的打包环境变量；本地测试构建使用占位值，切勿使用生产密钥
+
+未签名的安装包输出到 `release/EverRoom-<version>-windows-x64.exe`。可通过 `pnpm --filter @nxcore/desktop exec node scripts/verify-windows-package.mjs` 免安装验证。脚本化安装时可使用 `/S`（静默）与 `/D=<dir>` 指定目标目录。由于构建未签名，Microsoft Defender SmartScreen 可能会在首次启动前提示。
+
+</details>
+
+## 技术架构
+
+Everroom 保持产品边界稳定，同时允许底层引擎替换。桌面端负责生命周期与信任边界；NxCore Gateway 负责持久化编排；专门服务各自维护数据契约。Renderer 无法直接访问数据库、文件系统或 Gateway 凭据；所有 IPC 请求由主进程处理，再转发给 Gateway。
+
+<p align="center">
+  <img src="./assets/readme/architecture.svg" width="100%" alt="EverRoom 架构：Electron 桌面端通过类型化 IPC 携临时 Bearer Token 访问本地 NxCore Gateway；Gateway 运行统一摄取、Knowledge 与 Room、Memory 代理、文档内核与 Agent 服务，底层是 SQLite、内容寻址对象与按日切分日志，并可挂接可替换引擎——Pi runtime、MemoryCore、Knowledge service、OpenConnector。">
+</p>
+
+### 实现策略
+
+- **一次规范化，在合适位置完成理解。** 摄取层识别并规范化来源，再依据已记录的策略快照分发给 Knowledge、Memory 或 Room 链接，不额外制造一条 LLM 管道。
+- **一份资产，多处引用。** 原始文件与解析后的 Markdown 只有一个存储所有者，下游通过稳定引用、哈希和溯源信息使用它们。
+- **Room 范围上下文。** Knowledge 工具先解析当前 Room 或会话，再读取 Wiki、来源和材料；Agent 默认不会获得无边界的全局语料。
+- **先提交，再执行副作用。** 文档修改先通过事务化提交内核与 outbox 落盘，再分发给 Knowledge 和 Memory，外部服务失败不会破坏权威文档版本。
+- **确定性的外部操作。** Connector 调用基于真实 Action Schema 和连接准备，凭据留在可信进程中；破坏性或对外可见的操作需要确认边界。
+- **优雅降级。** Fake Agent、未启用的 MemoryCore、不可用连接器和模型错误都有明确状态，可选服务缺失不会让本地文档不可访问。
+
+### 技术栈
+
+| 层级 | 技术 |
+| --- | --- |
+| 桌面端 | Electron 39、React、TypeScript、electron-vite |
+| Gateway | Node.js 22+、Fastify 5、TypeBox、REST、WebSocket、OpenAPI |
+| 存储 | SQLite WAL、better-sqlite3、Drizzle ORM、FTS5、内容寻址对象 |
+| 文档 | Tiptap 文档模型、版本化提交、块引用、操作内核 |
+| Agent 边界 | 共享 Agent 契约、Pi runtime adapter、MCP 文档端点 |
+| 记忆 | MemoryCore HTTP 客户端与 L0-L3 管道 |
+| 连接器 | OpenConnector sidecar、`oo` CLI bridge、可选 Nango supervisor |
+| 可观测性 | Pino 结构化日志、可读终端输出、按日切分的 JSON 日志 |
+| 验证 | Vitest、严格 TypeScript 检查、Gateway 与 runtime 集成测试 |
+
+## Gateway 与本地数据
+
+桌面开发模式下，Electron 会从运行时清单发现 Gateway 地址，默认端口是动态分配的，避免多个本地实例冲突。需要固定开发端口时设置 `NXCORE_GATEWAY_DEV_PORT`：
 
 - API 地址：`http://127.0.0.1:<动态端口>`
 - OpenAPI UI：`http://127.0.0.1:<动态端口>/docs`
@@ -329,21 +294,36 @@ pnpm --dir apps/gateway dev -- \
   --token local-development-token
 ```
 
-服务端细节见 [`apps/gateway/README.md`](./apps/gateway/README.md)。
-
-## 本地数据
-
 macOS 默认运行时目录：
 
 ```text
 ~/Library/Application Support/NxCore/
-├── database/   # Gateway 与桌面端 SQLite 数据库
+├── database/   # Gateway、文档与连接器数据库
 ├── logs/       # Gateway 按日切分的 JSON 日志
-├── objects/    # 内容寻址的来源文件
-└── runtime/    # 临时 Gateway 发现清单
+├── objects/    # 内容寻址的来源与解析对象
+├── runtime/    # 临时 Gateway 发现清单
+└── open-connector/  # 托管连接器运行时与 CLI 数据
 ```
 
+Windows 上相同布局位于 `%APPDATA%\EverRoom\`（即 `C:\Users\<user>\AppData\Roaming\EverRoom\`）。设置 `NXCORE_DATA_DIR` 可迁移该目录。
+
 Gateway 日志命名为 `gateway.YYYY-MM-DD.N.log`，每天零点切分，保留 30 个历史文件，并自动脱敏已知凭据。终端日志使用可读的本地时间。
+
+服务端细节见 [`apps/gateway/README.md`](./apps/gateway/README.md)；OpenConnector 生命周期与安全边界见 [`docs/open-connector-desktop-integration.zh-CN.md`](./docs/open-connector-desktop-integration.zh-CN.md)。
+
+## 安全模型
+
+<p align="center">
+  <img src="./assets/readme/security-boundary.svg" width="100%" alt="本地优先边界：文档、证据、索引、Room、回环 Gateway 与脱敏日志默认留在设备上；云模型、连接器与外部 Agent 均为可选，只获得批准的范围。">
+</p>
+
+- 数据、索引、工作记忆和文档默认保存在用户设备上。
+- Gateway 只监听本地回环地址，每次桌面会话使用新的高熵 Token。
+- Renderer 只能访问类型化 preload API；文件系统、数据库、模型 Token 和 MemoryCore 凭据保留在可信进程中。
+- 原始来源以内容寻址方式保存版本；下游能力支持时，派生知识和记忆会保留来源引用。
+- 云服务、远程模型和外部 Agent 均为可选能力，并且只应获得用户批准的 Room 或任务范围。
+- 日志会自动脱敏敏感请求头与凭据，托管连接器配置文件使用受限权限。
+- 对外产生影响的操作与只读上下文收集相互分离，并应经过明确的准备与确认边界。
 
 ## 仓库结构
 
@@ -376,12 +356,6 @@ Everroom/
 
 连续屏幕录制、自治多 Agent DAG、企业管理和强制云端同步仍不属于当前首版范围。
 
-## 开源协议与贡献
-
-社区版计划包含桌面客户端、基础 Room 与 Doc 体验、Agent runtime 边界、基础 Memory Kernel、本地 Connector 和扩展 SDK。托管同步、团队管理、企业控制与托管连接器基础设施可能单独提供。
-
-Everroom 以 [Apache License 2.0](./LICENSE) 开源。第三方组件仍适用各自的上游许可证；请以对应目录中的许可证和声明文件为准。
-
 ## 致谢
 
 Everroom 建立在众多开源项目和理念之上：
@@ -394,16 +368,10 @@ Everroom 建立在众多开源项目和理念之上：
 - [Liminon](https://liminon.ai/) 为 AI 工作流和上下文产品方向提供启发。
 - [Nango](https://nango.dev/) 提供 Connector 集成和 OAuth 管理能力。
 
-## 安全模型
+## 开源协议与贡献
 
-- 数据、索引、工作记忆和文档默认保存在用户设备上。
-- Gateway 只监听本地回环地址，每次桌面会话使用新的高熵 Token。
-- Renderer 只能访问类型化 preload API；文件系统、数据库、模型 Token 和 MemoryCore 凭据保留在可信进程中。
-- 原始来源以内容寻址方式保存版本；下游能力支持时，派生知识和记忆会保留来源引用。
-- 云服务、远程模型和外部 Agent 均为可选能力，并且只应获得用户批准的 Room 或任务范围。
-- 日志会自动脱敏敏感请求头与凭据，托管连接器配置文件使用受限权限。
-- 对外产生影响的操作与只读上下文收集相互分离，并应经过明确的准备与确认边界。
+Everroom 以 [Apache License 2.0](./LICENSE) 开源。第三方组件仍适用各自的上游许可证；请以对应目录中的许可证和声明文件为准。
 
-## 参与贡献
+社区版计划包含桌面客户端、基础 Room 与 Doc 体验、Agent runtime 边界、基础 Memory Kernel、本地 Connector 和扩展 SDK。托管同步、团队管理、企业控制与托管连接器基础设施可能单独提供。
 
 Everroom 仍处于早期阶段，接口会持续演进。当前有价值的贡献方向包括 Connector、Agent adapter、记忆评估器、Room 模板、测试、文档和隐私审查。开始大规模架构改动前，请先创建 Issue，确保实现与当前契约和路线图保持一致。

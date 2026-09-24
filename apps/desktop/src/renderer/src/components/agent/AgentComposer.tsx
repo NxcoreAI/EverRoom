@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowUp, FileText, History, LoaderCircle, Plus, Quote, Search, Square, X } from 'lucide-react'
+import { ArrowLeft, ArrowUp, Brain, Check, Feather, FileText, History, LoaderCircle, Plus, Quote, Search, Square, X, Zap } from 'lucide-react'
 import {
   forwardRef,
   useEffect,
@@ -11,7 +11,7 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from 'react'
-import type { ExternalConversationSummary, LocalAgentInstallation } from '@nxcore/agent-contract'
+import type { AgentModelPreference, ExternalConversationSummary, LocalAgentInstallation } from '@nxcore/agent-contract'
 
 import { showToast } from '@/state/toast'
 import { useLocale } from '@/i18n/LocaleContext'
@@ -30,6 +30,13 @@ const MAX_ATTACHMENTS = 5
 const MAX_ATTACHMENT_SIZE = 10 * 1024 * 1024
 const TEXTAREA_MIN_HEIGHT = 42
 const TEXTAREA_MAX_HEIGHT = 180
+
+const MODEL_TIER_META: Record<AgentModelPreference, { icon: typeof Zap; labelKey: string; hintKey: string }> = {
+  smart: { icon: Zap, labelKey: 'surface:agentComposer.modelTierSmart', hintKey: 'surface:agentComposer.modelTierSmartHint' },
+  primary: { icon: Brain, labelKey: 'surface:agentComposer.modelTierPrimary', hintKey: 'surface:agentComposer.modelTierPrimaryHint' },
+  lite: { icon: Feather, labelKey: 'surface:agentComposer.modelTierLite', hintKey: 'surface:agentComposer.modelTierLiteHint' },
+}
+const MODEL_TIER_ORDER: AgentModelPreference[] = ['smart', 'primary', 'lite']
 
 type ExternalPickerStatus = 'idle' | 'loading' | 'ready' | 'loading-more' | 'error'
 
@@ -82,6 +89,13 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   roomFocusEnabled?: boolean
   roomFocusRoomTitle?: string
   onToggleRoomFocus?: (next: boolean) => void
+  /** 当前生效档位：会话已存在＝会话锁定档，否则＝全局默认档。 */
+  modelPreference: AgentModelPreference
+  /** 会话已创建 → 档位锁定在会话上，切换只影响下一个新会话。 */
+  modelPreferenceLocked?: boolean
+  /** 打开选择器时拉取最新 lite 可用性（设置页保存后无需重启）。 */
+  loadModelAvailability: () => Promise<boolean>
+  onSelectModelPreference: (tier: AgentModelPreference) => void
   onChange: (value: string) => void
   onSelectExternalConversation: (conversation: ExternalConversationSummary | null) => void
   onClearContext: () => void
@@ -103,6 +117,10 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   roomFocusEnabled = false,
   roomFocusRoomTitle,
   onToggleRoomFocus,
+  modelPreference,
+  modelPreferenceLocked = false,
+  loadModelAvailability,
+  onSelectModelPreference,
   value,
   onChange,
   onClearContext,
@@ -130,6 +148,8 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   const [externalStatus, setExternalStatus] = useState<ExternalPickerStatus>('idle')
   const [agentPickerOpen, setAgentPickerOpen] = useState(false)
   const [agentIndex, setAgentIndex] = useState(0)
+  const [modelPickerOpen, setModelPickerOpen] = useState(false)
+  const [liteAvailable, setLiteAvailable] = useState(false)
   const [caret, setCaret] = useState(0)
   const overlayRef = useRef<HTMLDivElement>(null)
   const mentionHints = useRef(new Map<string, string>())
@@ -195,21 +215,23 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
     setExternalPickerOpen(false)
     externalRequestRef.current += 1
     setAgentPickerOpen(false)
+    setModelPickerOpen(false)
     mentionHints.current.clear()
     if (fileInputRef.current) fileInputRef.current.value = ''
   }, [resetKey])
 
   useEffect(() => {
-    if (!externalPickerOpen && !agentPickerOpen) return undefined
+    if (!externalPickerOpen && !agentPickerOpen && !modelPickerOpen) return undefined
     const closeOnOutsidePress = (event: PointerEvent) => {
       if (shellRef.current?.contains(event.target as Node)) return
       externalRequestRef.current += 1
       setExternalPickerOpen(false)
       setAgentPickerOpen(false)
+      setModelPickerOpen(false)
     }
     document.addEventListener?.('pointerdown', closeOnOutsidePress)
     return () => document.removeEventListener?.('pointerdown', closeOnOutsidePress)
-  }, [externalPickerOpen, agentPickerOpen])
+  }, [externalPickerOpen, agentPickerOpen, modelPickerOpen])
 
   const submitMentions = () => resolveMentions(value, mentionHints.current, localAgents)
 
@@ -219,6 +241,13 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   }
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (modelPickerOpen) {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        setModelPickerOpen(false)
+      }
+      return
+    }
     if (agentPickerOpen) {
       if (event.key === 'ArrowDown' && filteredAgentItems.length) {
         event.preventDefault()
@@ -363,6 +392,20 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
       textarea.setSelectionRange(nextCaret, nextCaret)
     })
   }
+  const openModelPicker = () => {
+    setSlashPickerDismissed(true)
+    externalRequestRef.current += 1
+    setExternalPickerOpen(false)
+    setAgentPickerOpen(false)
+    setModelPickerOpen(true)
+    // 每次打开时刷新：设置页保存轻量模型后无需重启即可出现 lite 档。
+    loadModelAvailability().then(setLiteAvailable, () => setLiteAvailable(false))
+  }
+  const chooseModelTier = (tier: AgentModelPreference) => {
+    onSelectModelPreference(tier)
+    setModelPickerOpen(false)
+    window.requestAnimationFrame(() => textareaRef.current?.focus())
+  }
   const callableLocalAgents = localAgents.filter((agent) => agent.invocationSupported && agent.callable)
   const agentQueryNormalized = mentionQuery.trim().toLocaleLowerCase()
   const filteredAgentItems = agentQueryNormalized
@@ -419,7 +462,9 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
     return nodes
   }
 
-  const menuOpen = slashPickerOpen || externalPickerOpen || agentPickerOpen
+  const menuOpen = slashPickerOpen || externalPickerOpen || agentPickerOpen || modelPickerOpen
+  const activeTierMeta = MODEL_TIER_META[modelPreference]
+  const ActiveTierIcon = activeTierMeta.icon
   // 会话快照加载时保留本地附件。
   const controlsDisabled = active || !available
 
@@ -549,6 +594,35 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
           )}
         </div>
       ) : null}
+      {modelPickerOpen ? (
+        <section className="agent-composer-popover agent-model-picker" id="agent-composer-menu" role="listbox" aria-label={t('surface:agentComposer.modelPickerTitle')}>
+          {MODEL_TIER_ORDER
+            .filter((tier) => tier !== 'lite' || liteAvailable)
+            .map((tier) => {
+              const meta = MODEL_TIER_META[tier]
+              const TierIcon = meta.icon
+              return (
+                <button
+                  key={tier}
+                  type="button"
+                  className="agent-model-option"
+                  role="option"
+                  aria-selected={modelPreference === tier}
+                  data-active={String(modelPreference === tier)}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => chooseModelTier(tier)}
+                >
+                  <span className="agent-picker-header-icon"><TierIcon aria-hidden="true" /></span>
+                  <span><strong>{t(meta.labelKey)}</strong><small>{t(meta.hintKey)}</small></span>
+                  {modelPreference === tier ? <Check aria-hidden="true" /> : null}
+                </button>
+              )
+            })}
+          {modelPreferenceLocked ? (
+            <footer className="agent-model-picker-hint">{t('surface:agentComposer.modelPickerApplyToNext')}</footer>
+          ) : null}
+        </section>
+      ) : null}
       <div className="agent-prompt" data-has-attachments={String(attachments.length > 0)}>
         {selectedExternalConversation ? <div className="agent-external-selection"><span><History />{t('surface:agentComposer.referencedConversation')} · {selectedExternalConversation.title}</span><button type="button" title={t('surface:agentComposer.removeExternalConversation')} aria-label={t('surface:agentComposer.removeExternalConversation')} onClick={() => onSelectExternalConversation(null)}><X /></button></div> : null}
         {contextItems.length > 0 ? (
@@ -653,6 +727,19 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
               <span>{roomFocusEnabled ? t('surface:agentComposer.roomFocusOn') : t('surface:agentComposer.roomFocusOff')}</span>
             </button>
           ) : null}
+          <button
+            type="button"
+            className="agent-model-tier-toggle"
+            data-tier={modelPreference}
+            aria-haspopup="listbox"
+            aria-expanded={modelPickerOpen}
+            title={t('surface:agentComposer.modelPickerTitle')}
+            disabled={controlsDisabled}
+            onClick={() => (modelPickerOpen ? setModelPickerOpen(false) : openModelPicker())}
+          >
+            <ActiveTierIcon aria-hidden="true" />
+            <span>{t(activeTierMeta.labelKey)}</span>
+          </button>
           <span className="agent-composer-context" title={contextSummary}>
             <span>{contextSummary}</span>
             {hasSelectedText ? (

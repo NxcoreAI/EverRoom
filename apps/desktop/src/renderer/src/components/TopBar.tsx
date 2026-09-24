@@ -1,7 +1,5 @@
 import {
   BookOpen,
-  ChevronLeft,
-  ChevronRight,
   FileSpreadsheet,
   FileText,
   FileType,
@@ -15,7 +13,6 @@ import {
 import type { LucideIcon } from 'lucide-react'
 
 import type { ContextRoomWorkspaceTab } from '@/components/context-room/contextRoomTabs'
-import { ProductBrand } from '@/components/ui/ProductBrand'
 import { WindowControls } from '@/components/WindowControls'
 import { useLocale } from '@/i18n/LocaleContext'
 import type { OfficePreviewKind, OfficePreviewTab } from '../../../shared/sources'
@@ -33,46 +30,29 @@ export function TopBar({
   officeTabs,
   activeOfficeId,
   agentOpen,
-  navCollapsed,
   onActivateWorkbench,
   onActivateContextRoom,
   onCloseContextRoom,
   onActivateOfficeTab,
   onCloseOfficeTab,
   onToggleAgent,
-  onToggleNav,
 }: {
   contextRoomTabs: ContextRoomWorkspaceTab[]
   activeContextRoomId: string | null
   officeTabs: OfficePreviewTab[]
   activeOfficeId: string | null
   agentOpen: boolean
-  navCollapsed: boolean
   onActivateWorkbench: () => void
   onActivateContextRoom: (roomId: string) => void
   onCloseContextRoom: (roomId: string) => void
   onActivateOfficeTab: (instanceId: string) => void
   onCloseOfficeTab: (instanceId: string) => void
   onToggleAgent: () => void
-  onToggleNav: () => void
 }) {
   const { t } = useLocale()
   const workbenchActive = activeContextRoomId === null && activeOfficeId === null
   return (
     <header className="topbar">
-      <div className="brand-area">
-        <ProductBrand className="topbar-brand" />
-        <button
-          className="icon-button no-drag nav-collapse"
-          type="button"
-          title={t(navCollapsed ? 'surface:topBar.expandNavigation' : 'surface:topBar.collapseNavigation')}
-          aria-label={t(navCollapsed ? 'surface:topBar.expandNavigation' : 'surface:topBar.collapseNavigation')}
-          onClick={onToggleNav}
-        >
-          {navCollapsed ? <ChevronRight aria-hidden="true" strokeWidth={1.8} /> : <ChevronLeft aria-hidden="true" strokeWidth={1.8} />}
-        </button>
-      </div>
-
       <div className="tabs" role="tablist" aria-label={t('surface:topBar.openPages')}>
         <div
           className="tab"

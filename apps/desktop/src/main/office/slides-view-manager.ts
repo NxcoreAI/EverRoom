@@ -35,22 +35,30 @@ export class SlidesViewManager {
     private readonly window: BrowserWindow,
     private readonly slides: GenOfficeSlidesRuntime,
     private readonly view: WebContentsView,
+    private readonly editable: boolean,
+    readonly documentPath: string,
   ) {}
+
+  get webContentsId(): number {
+    return this.view.webContents.id
+  }
 
   static async create(
     window: BrowserWindow,
     slides: GenOfficeSlidesRuntime,
     file: { id: string; contentHash: string; originalName: string; storagePath: string },
+    options?: { editable?: boolean },
   ): Promise<SlidesViewManager> {
     const path = await preparePresentation(file.id, file.contentHash, file.originalName, file.storagePath)
+    const editable = options?.editable === true
     slides.setSlidesShellWindow(window)
     // createSlidesView queues the path for the renderer's mount-time
     // consumePendingOpen, registers slides IPC, and loads mode=tab.
-    const view = slides.createSlidesView(path, { readonly: true })
+    const view = slides.createSlidesView(path, { readonly: !editable })
     slides.setActiveSlidesWebContents(view.webContents)
     view.setVisible(false)
     window.contentView.addChildView(view)
-    const manager = new SlidesViewManager(window, slides, view)
+    const manager = new SlidesViewManager(window, slides, view, editable, path)
     ipcMain.on(OFFICE_WORKSPACE_BOUNDS_CHANNEL, manager.handleBounds)
     return manager
   }
@@ -84,10 +92,15 @@ export class SlidesViewManager {
     this.view.setVisible(this.active && bounds.width > 0 && bounds.height > 0)
   }
 
-  readonly dispose = (): void => {
-    if (this.disposed) return
+  readonly dispose = async (): Promise<boolean> => {
+    if (this.disposed) return true
+    if (this.editable && !this.view.webContents.isDestroyed() && !this.window.isDestroyed()) {
+      const proceed = await this.slides.requestSlidesClose(this.view.webContents, this.window)
+      if (!proceed) return false
+    }
     this.disposed = true
     ipcMain.removeListener(OFFICE_WORKSPACE_BOUNDS_CHANNEL, this.handleBounds)
     if (!this.view.webContents.isDestroyed()) this.view.webContents.close({ waitForBeforeUnload: false })
+    return true
   }
 }

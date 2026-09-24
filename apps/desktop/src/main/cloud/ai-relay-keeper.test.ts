@@ -180,4 +180,34 @@ describe('AiRelayKeeper', () => {
     // 无 gateway 进程时无需清理（进程已死，会话随内存消失）。
     expect(sessionRequests('DELETE')).toHaveLength(0)
   })
+
+  it('retries quickly with backoff while the relay session is inactive', async () => {
+    vi.useFakeTimers()
+    let calls = 0
+    const { keeper } = createKeeper({
+      issue: async () => {
+        calls += 1
+        throw new Error('network unreachable')
+      },
+    })
+    try {
+      keeper.start()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(calls).toBe(1)
+      // 会话未激活：10s 起步、逐轮翻倍、60s 封顶，不再死等 20min 周期。
+      await vi.advanceTimersByTimeAsync(10_000)
+      expect(calls).toBe(2)
+      await vi.advanceTimersByTimeAsync(20_000)
+      expect(calls).toBe(3)
+      await vi.advanceTimersByTimeAsync(40_000)
+      expect(calls).toBe(4)
+      await vi.advanceTimersByTimeAsync(59_000)
+      expect(calls).toBe(4)
+      await vi.advanceTimersByTimeAsync(1_000)
+      expect(calls).toBe(5)
+    } finally {
+      await keeper.stop()
+      vi.useRealTimers()
+    }
+  })
 })

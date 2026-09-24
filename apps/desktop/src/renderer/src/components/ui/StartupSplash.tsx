@@ -24,6 +24,7 @@ export function StartupSplash({ exiting, onExited }: {
       <div className="startup-splash-scene">
         <div className="startup-splash-icon"><ProductLogo variant="icon" /></div>
         <div className="startup-splash-shadow" aria-hidden="true" />
+        <div className="startup-splash-tagline">先进个人，先用 EverRoom</div>
         <div className="startup-splash-dots" aria-hidden="true"><i /><i /><i /></div>
       </div>
     </div>

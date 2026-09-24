@@ -96,6 +96,17 @@ export function vlmFieldsFromSnapshot(snapshot: RuntimeConfigSnapshot | null): M
   }
 }
 
+/** 从快照 config.lite 播种（缺段给空表单；连接字段留空＝沿用 primary）。 */
+export function liteFieldsFromSnapshot(snapshot: RuntimeConfigSnapshot | null): ManualAiConfigFields {
+  const value = sectionOf(snapshot?.config as Record<string, unknown> | undefined, 'lite')
+  return {
+    provider: textOf(value, 'provider', 'openai-compatible'),
+    model: textOf(value, 'model'),
+    baseUrl: textOf(value, 'baseUrl'),
+    apiKey: textOf(value, 'apiKey'),
+  }
+}
+
 /** 从快照 config.asr + asr.oss 播种（缺段给空表单；oss secrets 掩码留空）。 */
 export function asrFieldsFromSnapshot(snapshot: RuntimeConfigSnapshot | null): ManualAsrFields {
   const value = sectionOf(snapshot?.config as Record<string, unknown> | undefined, 'asr')
@@ -146,6 +157,7 @@ export function buildUserConfig(
     embedding?: ManualAiConfigFields
     vlm?: ManualAiConfigFields
     asr?: ManualAsrFields
+    lite?: ManualAiConfigFields
   },
 ): Record<string, unknown> {
   const base = (snapshot?.config ?? {}) as Record<string, unknown>
@@ -156,6 +168,9 @@ export function buildUserConfig(
     result.knowledge = { ...knowledge, embedding: trimmedAiFields(sections.embedding) }
   }
   if (sections.vlm) result.vlm = trimmedAiFields(sections.vlm)
+  // lite 连接字段写空串：gateway 侧 model 空＝未配置（档位隐藏），
+  // model 有值而连接空＝继承 primary 的供应商/接口/密钥。
+  if (sections.lite) result.lite = trimmedAiFields(sections.lite)
   if (sections.asr) {
     const { oss, ...scalar } = sections.asr
     result.asr = {
@@ -191,6 +206,18 @@ export function aiFieldsError(fields: ManualAiConfigFields, t: (key: string) => 
 }
 
 /**
+ * 轻量模型段校验：model 是唯一必填项（连接字段留空时 gateway 会继承
+ * primary 的供应商/接口/密钥）。全空＝未配置；只填连接字段没填 model 视为
+ * 填写不完整。
+ */
+export function liteFieldsError(fields: ManualAiConfigFields, t: (key: string) => string): string | null {
+  if (fields.model.trim()) return null
+  const hasOverride = [fields.baseUrl, fields.apiKey].some((value) => value.trim())
+    || (fields.provider.trim() && fields.provider.trim() !== 'openai-compatible')
+  return hasOverride ? t('surface:configGate.embeddingIncomplete') : null
+}
+
+/**
  * ASR 段校验：标量全空 OK；填了则标量必填全 + OSS 必填四项（region/
  * bucket/accessKeyId/accessKeySecret；stsToken/prefix 可选）。gateway 构造
  * 分支同样只认"标量+OSS 必填项齐全"，这里提前拦截给出可读文案。
@@ -209,12 +236,22 @@ export function asrFieldsError(fields: ManualAsrFields, t: (key: string) => stri
   return required.every((value) => value.trim()) ? null : t('surface:settings.rcAsrOssRequired')
 }
 
-/** 连通测试失败原因 → 用户可读文案（primary/embedding/vlm 共用 taxonomy）。 */
+/** 连通测试失败原因 → 用户可读文案（primary/embedding/vlm 共用 taxonomy）。
+ * 兜底分支（5xx/429 等未分类状态）必须带上服务端原始错误——端点应答了但
+ * 报错时，用户和排障都需要知道它说了什么，不能只剩一句「未通过」。 */
 export function configTestErrorMessage(error: string | undefined, t: (key: string) => string): string {
   if (!error) return t('surface:configGate.testFailedGeneric')
   if (error.includes('incomplete')) return t('surface:configGate.testIncomplete')
   if (error.includes('_http_401') || error.includes('_http_403')) return t('surface:configGate.testAuthFailed')
   if (error.includes('_http_404')) return t('surface:configGate.testNotFound')
-  if (error.includes('unreachable') || error.includes('timeout') || error.includes('TimeoutError')) return t('surface:configGate.testUnreachable')
-  return t('surface:configGate.testFailedGeneric')
+  if (error.includes('unreachable') || error.includes('timeout') || error.includes('TimeoutError')) {
+    return `${t('surface:configGate.testUnreachable')}${testErrorDetail(error)}`
+  }
+  return `${t('surface:configGate.testFailedGeneric')}${testErrorDetail(error)}`
+}
+
+/** 服务端原始错误尾巴（去 taxonomy 前缀、截断）；空/纯前缀返回空串。 */
+function testErrorDetail(error: string): string {
+  const detail = error.replace(/^runtime_config_test[a-z0-9_]*(?::\s*)?/, '').trim()
+  return detail ? `（${detail.slice(0, 160)}）` : ''
 }

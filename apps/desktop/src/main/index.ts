@@ -8,11 +8,12 @@ import { createHash, randomUUID } from 'node:crypto'
 import { pipeline } from 'node:stream/promises'
 import { loadEnvFile } from 'node:process'
 
-import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, nativeTheme, Notification, protocol, shell, systemPreferences } from 'electron'
+import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, nativeTheme, Notification, protocol, session, shell, systemPreferences } from 'electron'
 import type {
   ImportRoomDocumentInput,
   DocumentOperationCommandInput,
   LocalAgentInvocationTarget,
+  LocalAcpAdapterSpawn,
   SaveRoomDocumentInput,
   StartAgentRunInput,
   StartDocumentOperationInput,
@@ -44,7 +45,7 @@ import { MemoryGatewayBridge } from './gateway/memory-gateway-bridge'
 import { KnowledgeServiceSupervisor } from './knowledge/knowledge-supervisor'
 import { knowledgeServiceLlmEnv } from './knowledge/llm-env'
 import { MemoryCoreSupervisor } from './memory/memory-core-supervisor'
-import { embeddingFieldsFromConfig, memoryCoreEmbeddingEnv, memoryCoreEnvironment } from './memory/embedding-env'
+import { embeddingFieldsFromConfig, isRelaySlotUrl, memoryCoreEmbeddingEnv, memoryCoreEnvironment, relayEmbeddingDimensions, withStableRelayKey } from './memory/embedding-env'
 import type { KnowledgeAttachInput } from '../shared/knowledge'
 import type { McpServersMutation } from '../shared/mcp'
 import type { ExternalCallPolicyInput, ExternalCallQuery } from '../shared/external-calls'
@@ -79,6 +80,9 @@ import { SessionLeaseKeeper } from './cloud/session-lease-keeper'
 import { AiRelayKeeper, type AiRelayKeeperEvent } from './cloud/ai-relay-keeper'
 import { RemoteAgentCommandClient } from './cloud/remote-agent-command-client'
 import { AgentNotificationBridgeServer } from './cloud/agent-notification-bridge'
+import { OfficeBridgeServer } from './gateway/office-bridge'
+import type { OfficeAgentFileEvent } from '../shared/office'
+import type { AgentAskForwardEvent } from './office/office-generation'
 import { MacosPushNotificationService } from './cloud/macos-push-notifications'
 import { parseAgentNotificationTarget, type AgentNotificationTarget, type NotificationPreferences } from '../shared/notifications'
 import { AsrCoordinator } from './asr/asr-coordinator'
@@ -129,7 +133,9 @@ import { BrowserExtensionService } from './browser-extension/browser-extension-s
 import { CLIPPER_ASSET_SCHEME, type BrowserExtensionStatus } from '../shared/browser-extension'
 import { OBSIDIAN_VAULT_ASSET_SCHEME } from '../shared/obsidian'
 import { ObsidianVaultService } from './obsidian/obsidian-vault-service'
-import { createLocalAgentDiscovery, isSafeLocalAgentPath } from './local-agents/discovery'
+import { createLocalAgentDiscovery, isSafeLocalAgentPath, probeLocalAgentAcpAdapter } from './local-agents/discovery'
+import { installLocalAgentAcpAdapter, resolveLocalAcpAdapterSpawn } from './local-agents/adapter-install'
+import { bundledNpmCliPath, localAgentAdaptersRoot } from './local-agents/local-agent-paths'
 import { LocalAgentWorkspaceBindingStore } from './local-agents/workspace-binding-store'
 import type { LocalAgentInstallation, LocalAgentWorkspaceBinding } from '../shared/local-agents'
 import { MigrationsGatewayBridge } from './gateway/migrations-gateway-bridge'
@@ -167,14 +173,9 @@ async function rateLimitAware<T>(operation: () => Promise<T>): Promise<T | IpcRa
 }
 
 const appDataDirectory = app.getPath('appData')
-// Dev builds get their own directory so they never share credentials.json
-// (and thus SaaS sessions / device bindings) with the packaged app running
-// alongside them.
-const defaultDataDirectory = join(appDataDirectory, app.isPackaged ? APP_NAME : `${APP_NAME}-Dev`)
-const packagedEnvFile = join(appDataDirectory, APP_NAME, '.env')
+const defaultDataDirectory = join(appDataDirectory, APP_NAME)
 const envFilePath = process.env.NXCORE_ENV_FILE?.trim() || join(defaultDataDirectory, '.env')
 if (existsSync(envFilePath)) loadEnvFile(envFilePath)
-else if (!app.isPackaged && existsSync(packagedEnvFile)) loadEnvFile(packagedEnvFile)
 const dataDirectory = process.env.NXCORE_DATA_DIR?.trim() || defaultDataDirectory
 const resolvedDataDirectory = resolve(dataDirectory)
 
@@ -354,6 +355,8 @@ const CONTEXT_ROOM_CHANNELS = {
 
 const AGENT_CHANNELS = {
   discoverLocalAgents: 'agent:discover-local-agents',
+  checkLocalAgentAdapters: 'agent:check-local-agent-adapters',
+  installLocalAgentAdapter: 'agent:install-local-agent-adapter',
   importLocalAgentHistory: 'agent:import-local-agent-history',
   bindLocalAgentWorkspace: 'agent:bind-local-agent-workspace',
   getStatus: 'agent:get-status',
@@ -767,6 +770,8 @@ function registerBrowserExtensionHandlers(service: BrowserExtensionService): voi
 let localDataService: LocalDataService | null = null
 let obsidianVaultService: ObsidianVaultService | null = null
 let gatewaySupervisor: GatewaySupervisor | null = null
+/** 系统代理探测结果（app 启动时求值一次，supervisor getter 每次 respawn 读取）。 */
+let gatewayProxyEnv: Record<string, string> = {}
 /** gateway:recover 的 in-flight 去重（网络失败风暴时并发请求只触发一次恢复）。 */
 let gatewayRecoverInFlight: Promise<{ ok: boolean; reason?: 'not-started' | 'recover-failed' }> | null = null
 let browserExtensionService: BrowserExtensionService | null = null
@@ -812,6 +817,9 @@ let sessionLeaseKeeper: SessionLeaseKeeper | null = null
 let aiRelayKeeper: AiRelayKeeper | null = null
 let remoteAgentCommandClient: RemoteAgentCommandClient | null = null
 let agentNotificationBridgeServer: AgentNotificationBridgeServer | null = null
+let officeBridgeServer: OfficeBridgeServer | null = null
+/** Agent 生成文档入库用的长驻 FilesGatewayBridge（启动流程 L3662 实例就位后赋值）。 */
+let officeFilesBridge: FilesGatewayBridge | null = null
 let macosPushNotifications: MacosPushNotificationService | null = null
 let pendingAgentNotificationTarget: AgentNotificationTarget | null = null
 let privateTranscriptionSync: PrivateTranscriptionSyncService | null = null
@@ -820,6 +828,21 @@ let transcriptionProcessingCoordinator: TranscriptionProcessingCoordinator | nul
 let shutdownStarted = false
 let clearUserDataOnQuit = false
 const officePreviewRegistry = new OfficePreviewRegistry()
+
+/** office:agent-file 事件扇出到所有渲染窗口（生成进度/完成 + 编辑回填结果共用通道）。 */
+function broadcastOfficeAgentFileEvent(event: OfficeAgentFileEvent): void {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) window.webContents.send('office:agent-file', event)
+  }
+}
+
+/** office:agent-ask 扇出：slides「AI 修改」弹层转发 → 渲染层注入对应 Room 对话框。 */
+function broadcastAgentAskEvent(event: AgentAskForwardEvent): void {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) window.webContents.send('office:agent-ask', event)
+  }
+}
+
 const queuedProtocolUrls: string[] = []
 let screenshotOutbox: ScreenshotOutbox | null = null
 const captureAndQueueCurrentWindow = async () => {
@@ -932,12 +955,12 @@ ipcMain.handle('office:instance:set-active', (event, id: unknown) => {
   return officePreviewRegistry.setActive(id === null ? null : id)
 })
 
-ipcMain.handle('office:instance:close', (event, id: unknown) => {
+ipcMain.handle('office:instance:close', async (event, id: unknown) => {
   const window = BrowserWindow.fromWebContents(event.sender)
   if (!window || window.isDestroyed()) throw new Error('EverRoom 主窗口不可用。')
   if (typeof id !== 'string') return false
-  officePreviewRegistry.close(id)
-  return true
+  // false = 可编辑实例在脏关闭守卫里被取消：渲染层保留标签不卸载。
+  return officePreviewRegistry.close(id)
 })
 
 function focusMainWindow(): void {
@@ -1451,8 +1474,18 @@ async function syncMemoryCoreEnvironment(snapshot: RuntimeConfigSnapshot): Promi
     const fields = embeddingFieldsFromConfig(snapshot.config)
     let embeddingEnv: Record<string, string> | null = null
     let applyAiEnvironment = true
-    if (fields) {
-      // /test 只在 embedding 四要素齐全时测 /embeddings 并带维度；这里复用一次。
+    const relay = gatewaySupervisor?.getConnection() ?? null
+    if (fields && isRelaySlotUrl(fields.baseUrl, relay) && relay) {
+      // relay 槽位：API_KEY 换成 gateway 稳定 token，dimensions 走静态表——
+      // SaaS 中转 token 的 25min 轮换留在 gateway /ai-relay 内，MemoryCore env
+      // 恒定；不做 /test 探测（relay 会话未激活时探测必失败，会把本可用的
+      // 配置卡在未注入状态）。
+      embeddingEnv = memoryCoreEmbeddingEnv(
+        { ...fields, apiKey: relay.token },
+        relayEmbeddingDimensions(fields.model),
+      )
+    } else if (fields) {
+      // BYOK 直连：/test 真实探测 /embeddings 维度；失败保持现 env 不动。
       const result = await bridge?.test()
       if (!result?.embedding?.valid || !result.embedding.dimensions) {
         console.warn('[memory-core] embedding config saved but /embeddings test failed; keeping current env')
@@ -1461,7 +1494,7 @@ async function syncMemoryCoreEnvironment(snapshot: RuntimeConfigSnapshot): Promi
         embeddingEnv = memoryCoreEmbeddingEnv(fields, result.embedding.dimensions)
       }
     }
-    const nextEnv = memoryCoreEnvironment(snapshot.config, embeddingEnv)
+    const nextEnv = withStableRelayKey(memoryCoreEnvironment(snapshot.config, embeddingEnv), relay)
     const nextJson = nextEnv ? JSON.stringify(nextEnv) : null
     if (applyAiEnvironment && initialConnection.managed && nextJson !== memoryCoreAiEnvApplied) {
       const restarted = await supervisor.restart(nextEnv)
@@ -1590,7 +1623,8 @@ async function syncKnowledgeServiceEnvironment(snapshot: RuntimeConfigSnapshot):
     const supervisor = knowledgeServiceSupervisor
     const initialConnection = supervisor?.getConnection() ?? null
     if (!supervisor || !initialConnection) return
-    const nextEnv = knowledgeServiceLlmEnv(snapshot.config)
+    // relay 槽位注入 gateway 稳定 token，25min 轮换不再反复重启 KS。
+    const nextEnv = knowledgeServiceLlmEnv(snapshot.config, gatewaySupervisor?.getConnection() ?? null)
     const nextJson = JSON.stringify(nextEnv)
     if (nextJson === knowledgeServiceAiEnvApplied) return
     if (initialConnection.managed) {
@@ -2189,8 +2223,12 @@ function registerMigrationHandlers(coordinator: MigrationCoordinator): void {
 }
 
 function registerAgentHandlers(bridge: AgentGatewayBridge, migrationCoordinator: MigrationCoordinator): void {
-  const localAgentDiscovery = createLocalAgentDiscovery()
+  const localAgentDiscovery = createLocalAgentDiscovery({ adaptersRoot: localAgentAdaptersRoot() })
   let localAgents: LocalAgentInstallation[] = []
+  // 派发 target 的适配器 spawn 覆盖缓存（登录 shell PATH 探测较慢，命中后复用；
+  // 安装/复检/重扫后失效）。
+  const adapterSpawnCache = new Map<string, LocalAcpAdapterSpawn | null>()
+  const invalidateAdapterSpawnCache = () => adapterSpawnCache.clear()
   const workspaceBindings = new Map<string, LocalAgentWorkspaceBinding>()
   const workspaceBindingStore = new LocalAgentWorkspaceBindingStore(
     join(app.getPath('userData'), 'local-agent-workspaces.json'),
@@ -2207,14 +2245,55 @@ function registerAgentHandlers(bridge: AgentGatewayBridge, migrationCoordinator:
   }
   const scanLocalAgents = async () => {
     localAgents = await localAgentDiscovery.scan()
+    invalidateAdapterSpawnCache()
     return localAgents
   }
+  // id 形如 `provider:/path`。CLI 路径会漂移（版本管理器换版本、旧会话缓存的
+  // multishell 路径等），精确 id 未命中时按 provider 兜底，避免 @ 引用失效。
+  const findLocalAgent = (id: string) =>
+    localAgents.find((agent) => agent.id === id)
+    ?? localAgents.find((agent) => id.startsWith(`${agent.provider}:`))
   handle(AGENT_CHANNELS.discoverLocalAgents, scanLocalAgents)
-  handle(AGENT_CHANNELS.bindLocalAgentWorkspace, async (event, agentId: string, sessionId: string) => {
-    if (!localAgents.some((agent) => agent.id === agentId && agent.invocationSupported)) {
+  handle(AGENT_CHANNELS.checkLocalAgentAdapters, async (_event, agentIds: string[]) => {
+    const wanted = [...new Set((agentIds ?? []).filter((id) => typeof id === 'string' && id))]
+    if (!wanted.length) return []
+    if (wanted.some((id) => !findLocalAgent(id))) {
       await scanLocalAgents()
     }
-    if (!localAgents.some((agent) => agent.id === agentId && agent.invocationSupported)) {
+    invalidateAdapterSpawnCache()
+    const targets = wanted
+      .map((id) => findLocalAgent(id))
+      .filter((agent): agent is LocalAgentInstallation => Boolean(agent?.invocationSupported))
+    return Promise.all(targets.map(async (agent) => ({
+      agentId: agent.id,
+      provider: agent.provider,
+      displayName: agent.displayName,
+      adapter: await probeLocalAgentAcpAdapter(agent, { adaptersRoot: localAgentAdaptersRoot() }),
+    })))
+  })
+  handle(AGENT_CHANNELS.installLocalAgentAdapter, async (_event, agentId: string) => {
+    const id = typeof agentId === 'string' ? agentId : ''
+    let installation = findLocalAgent(id)
+    if (!installation) {
+      await scanLocalAgents()
+      installation = findLocalAgent(id)
+    }
+    if (!installation?.invocationSupported) {
+      throw new Error('选择的本机 Agent 当前不可调用。')
+    }
+    const result = await installLocalAgentAcpAdapter(installation, {
+      adaptersRoot: localAgentAdaptersRoot(),
+      npmCliPath: bundledNpmCliPath(),
+      proxyEnv: await detectSystemProxyEnvironment(),
+    })
+    invalidateAdapterSpawnCache()
+    return result
+  })
+  handle(AGENT_CHANNELS.bindLocalAgentWorkspace, async (event, agentId: string, sessionId: string) => {
+    if (!findLocalAgent(agentId)?.invocationSupported) {
+      await scanLocalAgents()
+    }
+    if (!findLocalAgent(agentId)?.invocationSupported) {
       throw new Error('选择的本机 Agent 当前不可调用。')
     }
     let existing = [...workspaceBindings.values()].find((binding) => (
@@ -2292,10 +2371,10 @@ function registerAgentHandlers(bridge: AgentGatewayBridge, migrationCoordinator:
       agentId: string,
       workspaceBindingToken?: string,
     ): Promise<LocalAgentInvocationTarget> => {
-      let installation = localAgents.find((agent) => agent.id === agentId)
+      let installation = findLocalAgent(agentId)
       if (!installation) {
         await scanLocalAgents()
-        installation = localAgents.find((agent) => agent.id === agentId)
+        installation = findLocalAgent(agentId)
       }
       if (!installation?.callable || !installation.invocationSupported || !installation.executablePath) {
         throw new Error('选择的本机 Agent 当前不可调用。请重新扫描或检查安装。')
@@ -2317,6 +2396,15 @@ function registerAgentHandlers(bridge: AgentGatewayBridge, migrationCoordinator:
       const workingDirectory = validatedBinding?.rootPath
         ?? unboundWorkspaceRoot(installation.id, targetSessionId)
       await mkdir(workingDirectory, { recursive: true })
+      // gateway 继承 GUI 瘦 PATH，bare bin 名常常解析不到——把桌面端（登录 shell
+      // 合并 PATH + 私有安装目录）解析出的绝对路径 spawn 覆盖随 target 下发。
+      if (!adapterSpawnCache.has(installation.provider)) {
+        adapterSpawnCache.set(
+          installation.provider,
+          await resolveLocalAcpAdapterSpawn(installation, { adaptersRoot: localAgentAdaptersRoot() })
+            .catch(() => null),
+        )
+      }
       return {
         id: installation.id,
         provider: installation.provider,
@@ -2325,6 +2413,7 @@ function registerAgentHandlers(bridge: AgentGatewayBridge, migrationCoordinator:
         workingDirectory,
         permissionProfile: validatedBinding?.permissionProfile ?? 'inspect',
         card: installation.card,
+        acpAdapter: adapterSpawnCache.get(installation.provider) ?? null,
       }
     }
     const referencedLocalAgentIds = request.context?.referencedLocalAgentIds ?? []
@@ -2580,6 +2669,7 @@ function registerFilesHandlers(
     fileId: string,
     originalName?: string,
     contentHash?: string,
+    options?: { editable?: unknown; roomId?: unknown },
   ) => {
     // 文件页入口自带列表里的 originalName/contentHash；Context Room 等 knowledge
     // 文件入口只带文件名——其 id 可能是统一导入目录条目，遗留通道的 /v1/files/:id
@@ -2603,6 +2693,10 @@ function registerFilesHandlers(
     const effectiveHash = contentHash ?? await hashFileBytes(storagePath)
     // 顶栏预览标签支持多开：同 fileId 复用实例，hash 变化原地重建；激活由渲染端驱动。
     // 旧格式依赖本机 LibreOffice：未安装或转换失败时回退外部应用打开。
+    // editable 仅 Room 产物的 docx 编辑预览传 true：注册表把它算进实例身份，
+    // 与顶栏只读标签互不复用；其余调用方缺省只读。
+    const editable = options?.editable === true
+    const roomId = typeof options?.roomId === 'string' && options.roomId ? options.roomId : undefined
     let descriptor
     try {
       descriptor = await officePreviewRegistry.open(window, {
@@ -2610,6 +2704,8 @@ function registerFilesHandlers(
         contentHash: effectiveHash,
         originalName,
         storagePath,
+        ...(editable ? { editable: true } : {}),
+        ...(roomId ? { roomId } : {}),
       })
     } catch (error) {
       if (!legacy) throw error
@@ -2866,6 +2962,34 @@ async function syncAccountMonitoring(status: Promise<CloudAccountStatus>): Promi
   const account = await status
   syncSentryAccount(account)
   return account
+}
+
+/**
+ * 探测系统 HTTP 代理并转成 gateway 子进程环境变量。Chromium 网络栈（渲染层
+ * 与桌面主进程 net.fetch）自动遵循系统/PAC 代理；gateway 是纯 Node 进程，
+ * 必须显式注入。只认 PROXY/HTTPS 条目（SOCKS 对 undici EnvHttpProxyAgent
+ * 不可用，直接跳过避免半残配置）；DIRECT / 探测失败返回空对象，行为不变。
+ */
+async function detectSystemProxyEnvironment(): Promise<Record<string, string>> {
+  try {
+    const rules = await session.defaultSession.resolveProxy('https://r.nxcore.ai')
+    const match = /(?:^|;\s*)(?:PROXY|HTTPS)\s+([^\s;]+)/i.exec(rules)
+    if (!match?.[1]) return {}
+    const endpoint = match[1].trim()
+    const proxyUrl = /^https?:\/\//i.test(endpoint) ? endpoint : `http://${endpoint}`
+    const noProxy = 'localhost,127.0.0.1,::1'
+    return {
+      HTTPS_PROXY: proxyUrl,
+      HTTP_PROXY: proxyUrl,
+      NO_PROXY: noProxy,
+      https_proxy: proxyUrl,
+      http_proxy: proxyUrl,
+      no_proxy: noProxy,
+    }
+  } catch (error) {
+    console.warn('System proxy detection failed; gateway will connect directly.', error)
+    return {}
+  }
 }
 
 function registerAccountHandlers(
@@ -3244,7 +3368,7 @@ function createWindow(): BrowserWindow {
     // macOS 走 hiddenInset + 系统红绿灯；Windows 隐藏整条系统标题栏，
     // 由渲染端 TopBar/引导页头部绘制 EverRoom 风格的自绘窗口按钮。
     ...(process.platform === 'darwin'
-      ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 14, y: 17 } }
+      ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 14, y: 16 } }
       : { titleBarStyle: 'hidden' as const }),
     webPreferences: {
       preload: join(__dirname, '../preload/index.cjs'),
@@ -3553,16 +3677,44 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       agentNotificationBridgeServer = null
       return null
     })
+    // 系统代理探测（PAC/手动代理均覆盖）：gateway 的 Node fetch 不读系统代理，
+    // 外网端点（LLM 连通测试、ai-relay 上游、embedding/VLM）在代理环境下会
+    // 整体 unreachable。注入 HTTPS_PROXY + NO_PROXY（loopback 桥接不走代理），
+    // gateway 侧由 proxyFetch 的 EnvHttpProxyAgent 消费。DIRECT 环境零改动。
+    const gatewayProxyEnvironment = await detectSystemProxyEnvironment()
+    gatewayProxyEnv = gatewayProxyEnvironment
+    // Agent 生成 Word：gateway capability 工具 → 桥 → 隐藏 GenOffice docs view
+    // → file-imports 入库。失败只禁用工具，不阻塞启动。
+    // 生成进度/完成事件推给所有渲染窗口（进度提示 + 完成自动打开预览）。
+    officeBridgeServer = new OfficeBridgeServer(
+      () => officeFilesBridge,
+      broadcastOfficeAgentFileEvent,
+      // Agent 编辑已打开的 slides 产物：registry 持有可编辑实例 → fork 活会话事务
+      // （编辑实时重绘 + 静默保存回填版本链）。
+      () => (fileId, req) => officePreviewRegistry.editSlidesArtifact(fileId, req),
+    )
+    const officeBridge = await officeBridgeServer.start().catch((error) => {
+      console.warn('Office bridge unavailable; office generation tool stays disabled.', error)
+      officeBridgeServer = null
+      return null
+    })
     gatewaySupervisor = new GatewaySupervisor(
       dataDirectory,
       () => ({
         // packaged app 无 .env，gateway 默认 agentRuntime=fake（假流式响应）；
         // 显式注入 pi——AI 四要素由 runtime config 兜底（降级启动到配置完成）。
         NXCORE_AGENT_RUNTIME: 'pi',
+        ...gatewayProxyEnv,
         ...(notificationBridge
           ? {
             NXCORE_NOTIFICATION_BRIDGE_URL: notificationBridge.baseUrl,
             NXCORE_NOTIFICATION_BRIDGE_TOKEN: notificationBridge.token,
+          }
+          : {}),
+        ...(officeBridge
+          ? {
+            NXCORE_OFFICE_BRIDGE_URL: officeBridge.baseUrl,
+            NXCORE_OFFICE_BRIDGE_TOKEN: officeBridge.token,
           }
           : {}),
         ...(ooCliBridge ? ooCliBridge.environment() : {}),
@@ -3591,6 +3743,15 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
           }
           : {}),
       }),
+      {
+        // gateway 连接变化（dev 热重载换端口/token）时，MemoryCore/KS 等子进程
+        // 指向 /ai-relay 的稳定 token 随之失效——联动补一次 env 同步。
+        onConnectionChanged: () => {
+          void runtimeConfigBridge?.get()
+            .then(snapshot => (snapshot ? syncManagedChildProcesses(snapshot) : undefined))
+            .catch(() => undefined)
+        },
+      },
     )
     const gateway = await gatewaySupervisor.start()
     console.info(`NxCore Gateway ready at ${gateway.baseUrl} (pid=${gateway.pid})`)
@@ -3623,6 +3784,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       () => ({
         NXCORE_MEMORY_ENABLED: 'false',
         NXCORE_AGENT_RUNTIME: 'pi',
+        ...gatewayProxyEnv,
         ...cursorCompletionAiEnv,
       }),
       {
@@ -3680,6 +3842,17 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     await migrationCoordinator.initialize()
     registerMigrationHandlers(migrationCoordinator)
     clipperAssetBridge = filesGatewayBridge
+    officeFilesBridge = filesGatewayBridge
+    // Room 产物 docx 人手编辑：保存 → 去抖重导入（fileEntryId 钉条目走版本链）→ 广播刷新。
+    officePreviewRegistry.setEditSync({
+      importAgentFile: (input) => {
+        if (!officeFilesBridge) return Promise.reject(new Error('文件网关不可用。'))
+        return officeFilesBridge.importAgentGeneratedFile(input)
+      },
+      broadcast: broadcastOfficeAgentFileEvent,
+    })
+    // slides「AI 修改」弹层 → 反查 Room → 渲染层注入对话框（hook 在运行时首用时懒装）。
+    officePreviewRegistry.setAgentAskForward(broadcastAgentAskEvent)
     browserExtensionService?.setCaptureHandlers({
       create: (capture) => filesGatewayBridge.createClipCapture(capture),
       uploadAsset: (captureId, assetId, data) => filesGatewayBridge.uploadClipAsset(captureId, assetId, data),
@@ -3730,6 +3903,14 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     }, 5 * 60_000)
     sentryAccountResyncTimer.unref()
     aiRelayKeeper = new AiRelayKeeper(saasClient, gatewaySupervisor, runtimeConfigBridge, (event: AiRelayKeeperEvent) => {
+      if (event.type === 'session-activated') {
+        // relay 会话就绪后 gateway 才把槽位重写为 /ai-relay——补一次子进程
+        // env 同步，闭合「boot 时会话未就绪 → MemoryCore/KS 缺 embedding/LLM」
+        // 的冷启动窗口（token 轮换不再触发，见 withStableRelayKey）。
+        void runtimeConfigBridge?.get()
+          .then(snapshot => (snapshot ? syncManagedChildProcesses(snapshot) : undefined))
+          .catch(() => undefined)
+      }
       for (const target of BrowserWindow.getAllWindows()) {
         if (!target.isDestroyed() && !target.webContents.isDestroyed()) {
           target.webContents.send(`ai-relay:${event.type}`, event)
@@ -3865,6 +4046,8 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     browserExtensionService = null
     await agentNotificationBridgeServer?.stop()
     agentNotificationBridgeServer = null
+    await officeBridgeServer?.stop()
+    officeBridgeServer = null
     macosPushNotifications?.stop()
     macosPushNotifications = null
     const service = localDataService
@@ -3967,6 +4150,7 @@ app.on('before-quit', (event) => {
   agentSchedulerGatewayBridge = null
   connectorGatewayBridge = null
   clipperAssetBridge = null
+  officeFilesBridge = null
   recordingStore = null
   saasClient = null
   screenshotOutbox = null
@@ -3981,7 +4165,7 @@ app.on('before-quit', (event) => {
   privateSync?.stop()
   void notificationBridge?.stop()
   pushNotificationsService?.stop()
-  officePreviewRegistry.disposeAll()
+  void officePreviewRegistry.disposeAll()
   if (connectorConsole && !connectorConsole.isDestroyed()) connectorConsole.destroy()
   connectorCli?.shutdown()
   agentBridge?.dispose()

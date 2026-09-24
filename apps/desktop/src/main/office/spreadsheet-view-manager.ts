@@ -28,17 +28,28 @@ export class SpreadsheetViewManager {
   private disposed = false
   private active = false
   private bounds: Rectangle | null = null
-  private constructor(private readonly window: BrowserWindow, private readonly sheets: GenOfficeSheetsRuntime, private readonly view: WebContentsView) {}
+  private constructor(
+    private readonly window: BrowserWindow,
+    private readonly sheets: GenOfficeSheetsRuntime,
+    private readonly view: WebContentsView,
+    private readonly editable: boolean,
+    readonly documentPath: string,
+  ) {}
 
-  static async create(window: BrowserWindow, sheets: GenOfficeSheetsRuntime, file: { id: string; contentHash: string; originalName: string; storagePath: string }): Promise<SpreadsheetViewManager> {
+  get webContentsId(): number {
+    return this.view.webContents.id
+  }
+
+  static async create(window: BrowserWindow, sheets: GenOfficeSheetsRuntime, file: { id: string; contentHash: string; originalName: string; storagePath: string }, options?: { editable?: boolean }): Promise<SpreadsheetViewManager> {
     const path = await prepareSpreadsheet(file.id, file.contentHash, file.originalName, file.storagePath)
+    const editable = options?.editable === true
     sheets.setSheetsShellWindow(window)
-    const view = sheets.createSheetsView({ includeAiHandlers: false, readonly: true })
+    const view = sheets.createSheetsView({ includeAiHandlers: false, readonly: !editable })
     sheets.queueWorkbookForView(view.webContents, path)
     sheets.setActiveSheetsWebContents(view.webContents)
     view.setVisible(false)
     window.contentView.addChildView(view)
-    const manager = new SpreadsheetViewManager(window, sheets, view)
+    const manager = new SpreadsheetViewManager(window, sheets, view, editable, path)
     ipcMain.on(OFFICE_WORKSPACE_BOUNDS_CHANNEL, manager.handleBounds)
     return manager
   }
@@ -64,10 +75,15 @@ export class SpreadsheetViewManager {
     this.bounds = bounds; this.view.setBounds(bounds); this.view.setVisible(this.active && bounds.width > 0 && bounds.height > 0)
   }
 
-  readonly dispose = (): void => {
-    if (this.disposed) return
+  readonly dispose = async (): Promise<boolean> => {
+    if (this.disposed) return true
+    if (this.editable && !this.view.webContents.isDestroyed() && !this.window.isDestroyed()) {
+      const proceed = await this.sheets.requestSheetsClose(this.view.webContents, this.window)
+      if (!proceed) return false
+    }
     this.disposed = true
     ipcMain.removeListener(OFFICE_WORKSPACE_BOUNDS_CHANNEL, this.handleBounds)
     if (!this.view.webContents.isDestroyed()) this.view.webContents.close({ waitForBeforeUnload: false })
+    return true
   }
 }

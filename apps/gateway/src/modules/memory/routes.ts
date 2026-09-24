@@ -24,7 +24,9 @@ const AtomicType = Type.Union([
 ]);
 
 const ListQuery = Type.Object({
-  type: Type.Optional(AtomicType),
+  // 类型是开放枚举：Agent 产物（work_artifact）等工作流类型动态入库，
+  // 列表按类型过滤只是查询参数，不应锁死基础三型（否则新类型筛不出来）。
+  type: Type.Optional(Type.String({ minLength: 1, maxLength: 64 })),
   limit: Type.Integer({ minimum: 1, maximum: 100, default: 50 }),
   offset: Type.Integer({ minimum: 0, default: 0 }),
   timeStart: Type.Optional(Type.String({ minLength: 4, maxLength: 40 })),
@@ -37,10 +39,8 @@ const ConversationListQuery = Type.Object({
   offset: Type.Integer({ minimum: 0, default: 0 }),
   timeStart: Type.Optional(Type.String({ minLength: 4, maxLength: 40 })),
   timeEnd: Type.Optional(Type.String({ minLength: 4, maxLength: 40 })),
-  sourceKind: Type.Optional(Type.Union([
-    Type.Literal("conversation"),
-    Type.Literal("document"),
-  ])),
+  // sourceKind 同为开放枚举：文档/Agent 产物导入会带新的来源标记。
+  sourceKind: Type.Optional(Type.String({ minLength: 1, maxLength: 40 })),
 });
 
 const AtomicDtoSchema = Type.Object({

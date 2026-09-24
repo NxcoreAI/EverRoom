@@ -8,6 +8,10 @@ import type {
 
 export const BUILTIN_AGENT_IDS = {
   primary: "main",
+  /** 强模型直连档（无 lite 委派工具）＝会话档位 primary。 */
+  primaryDirect: "main-direct",
+  /** 轻量模型档＝会话档位 lite；未配置 litePi 时不注册。 */
+  lite: "main-lite",
   transcriptionSummary: "transcription-summary",
   diary: "diary",
   cursorCompletion: "cursor-completion",

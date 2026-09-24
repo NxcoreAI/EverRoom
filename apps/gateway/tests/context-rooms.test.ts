@@ -562,6 +562,38 @@ describe('RoomOverviewService', () => {
     expect(projection.freshness).toMatchObject({ state: 'fresh', staleSince: null })
   })
 
+  it('caps overview projection entities to the 10 most salient', async () => {
+    const { service, db } = await createHarness()
+    service.saveSnapshot({
+      rooms: [{ id: 'room-entities', title: 'Entities Room', data: { id: 'room-entities', title: 'Entities Room' } }],
+      deletedRooms: [],
+    })
+    db.insert(roomSourceMemberships).values({
+      id: 'source-entities', roomId: 'room-entities', sourceKind: 'mail', sourceId: 'mail-1',
+      sourceVersion: 1, evidenceGroupKey: 'group-1', role: 'primary', sourceTitle: '周报',
+    }).run()
+    const observedAt = new Date('2026-08-14T10:00:00.000Z')
+    db.insert(entitiesTable).values(
+      Array.from({ length: 12 }, (_, index) => ({
+        id: `entity-${index}`, name: `实体${index}`, kind: '人物' as const, status: 'ready' as const,
+      })),
+    ).run()
+    db.insert(roomEntityMentions).values(
+      Array.from({ length: 12 }, (_, index) => ({
+        id: `mention-${index}`, roomId: 'room-entities', entityId: `entity-${index}`, sourceKind: 'mail' as const,
+        sourceId: 'mail-1', sourceVersion: 1, evidenceGroupKey: 'group-1',
+        salience: (index + 1) / 12,
+        evidence: `提及实体${index}`, createdAt: observedAt, updatedAt: observedAt,
+      })),
+    ).run()
+
+    const projection = new RoomOverviewService(db, service).refresh('room-entities')
+    expect(projection.entities).toHaveLength(10)
+    expect(projection.entities.map((claim) =>
+      claim.data?.kind === 'entity' ? claim.data.salience : null))
+      .toEqual([1, 11 / 12, 10 / 12, 9 / 12, 8 / 12, 7 / 12, 6 / 12, 5 / 12, 4 / 12, 3 / 12])
+  })
+
   it('derives timeline events from linked documents and routed calendar sources', async () => {
     const { service, db } = await createHarness()
     service.saveSnapshot({

@@ -1,4 +1,4 @@
-import { CalendarDays, FolderOpen, Globe } from 'lucide-react'
+import { CalendarDays, Folder, FolderSearch, Globe } from 'lucide-react'
 
 import feishuLogo from '@/assets/source-icons/feishu.svg'
 import githubLogo from '@/assets/source-icons/github.svg'
@@ -14,6 +14,7 @@ import obsidianLogo from '@/assets/obsidian.svg'
 
 export type SourceIconKind =
   | 'local-folder'
+  | 'folder-scan'
   | 'obsidian-vault'
   | 'github'
   | 'google-docs'
@@ -28,7 +29,7 @@ export type SourceIconKind =
   | 'web-page'
   | 'ics-calendar'
 
-type BrandedSourceIconKind = Exclude<SourceIconKind, 'local-folder' | 'web-page' | 'ics-calendar'>
+type BrandedSourceIconKind = Exclude<SourceIconKind, 'local-folder' | 'folder-scan' | 'web-page' | 'ics-calendar'>
 
 const SOURCE_LOGOS: Record<BrandedSourceIconKind, string> = {
   'obsidian-vault': obsidianLogo,
@@ -47,9 +48,22 @@ const SOURCE_LOGOS: Record<BrandedSourceIconKind, string> = {
 /** 素材自带底板（深色圆角块/白色圆/PNG 图）——可 100% 填满容器；其余是裸标,需留边防顶角。 */
 const TILE_ICON_KINDS = new Set<SourceIconKind>(['github', 'notion', 'claude', 'codex', 'openclaw', 'feishu'])
 
+/** 线条 glyph 类 kind（非品牌 logo）——容器按 tone 上底色,logo 类按品牌素材呈现。 */
+export const GLYPH_KINDS = new Set<SourceIconKind>(['local-folder', 'folder-scan', 'web-page', 'ics-calendar'])
+
+/** 线条 glyph 类内容 → 语义色调（品牌 logo 不适用）。feed 的 dataType 图标与卡片/连接位的 folder/web/cal 共用这一组。 */
+export type SourceGlyphTone = 'folder' | 'doc' | 'sheet' | 'slides' | 'web' | 'mail' | 'cal' | 'todo' | 'data' | 'sense'
+
+export function glyphTone(kind: SourceIconKind): SourceGlyphTone {
+  if (kind === 'local-folder' || kind === 'folder-scan') return 'folder'
+  if (kind === 'ics-calendar') return 'cal'
+  return 'web'
+}
+
 export function SourceIcon({ kind, className = '' }: { kind: SourceIconKind; className?: string }) {
   const classes = `source-icon ${className}`.trim()
-  if (kind === 'local-folder') return <FolderOpen className={classes} aria-hidden="true" strokeWidth={1.8} />
+  if (kind === 'local-folder') return <Folder className={classes} aria-hidden="true" strokeWidth={1.8} />
+  if (kind === 'folder-scan') return <FolderSearch className={classes} aria-hidden="true" strokeWidth={1.8} />
   if (kind === 'web-page') return <Globe className={classes} aria-hidden="true" strokeWidth={1.8} />
   if (kind === 'ics-calendar') return <CalendarDays className={classes} aria-hidden="true" strokeWidth={1.8} />
 

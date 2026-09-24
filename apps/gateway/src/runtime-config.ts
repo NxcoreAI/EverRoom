@@ -24,6 +24,8 @@ export interface RuntimeConfig {
   schemaVersion: number;
   primary?: RuntimeAiConfig;
   background?: RuntimeAiConfig;
+  /** 轻量模型档（main-lite）；未配置时 lite 会话档不可用。 */
+  lite?: RuntimeAiConfig;
   cursorCompletion?: RuntimeAiConfig;
   asr?: {
     provider: string;
@@ -141,11 +143,11 @@ function validateConfig(value: unknown): RuntimeConfig {
   const config = value as Record<string, unknown>;
   if (config.schemaVersion !== 1) throw new Error("runtime_config_schema_version_unsupported");
   const allowed = new Set([
-    "schemaVersion", "primary", "background", "cursorCompletion", "asr", "vlm",
+    "schemaVersion", "primary", "background", "lite", "cursorCompletion", "asr", "vlm",
     "webSearch", "memory", "knowledge", "updatedAt", "configVersion",
   ]);
   for (const key of Object.keys(config)) if (!allowed.has(key)) throw new Error(`runtime_config_unknown_field:${key}`);
-  for (const key of ["primary", "background", "cursorCompletion", "vlm", "webSearch"]) {
+  for (const key of ["primary", "background", "lite", "cursorCompletion", "vlm", "webSearch"]) {
     const item = config[key];
     if (item === undefined) continue;
     validateAiConfig(item, key);
@@ -434,7 +436,7 @@ export class RuntimeConfigManager {
       item.baseUrl = proxyBase;
       item.apiKey = override.token;
     };
-    for (const slot of [config.primary, config.background, config.cursorCompletion, config.vlm, config.webSearch]) {
+    for (const slot of [config.primary, config.background, config.lite, config.cursorCompletion, config.vlm, config.webSearch]) {
       rewrite(slot);
     }
     rewrite(config.knowledge?.llm);

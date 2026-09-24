@@ -6,6 +6,7 @@ import { useAccount } from '@/state/AccountContext'
 import type { GatewayState, GatewayStatus } from '../../../shared/sources'
 import { useLocale } from '@/i18n/LocaleContext'
 import { MemoryPipelineStatus } from './MemoryPipelineStatus'
+import { ProductBrand } from './ui/ProductBrand'
 
 const INITIAL_GATEWAY_STATUS: GatewayStatus = {
   state: 'starting',
@@ -38,7 +39,7 @@ export function Sidebar({
   const { t, formatNumber } = useLocale()
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(() => new Set())
   const [gatewayStatus, setGatewayStatus] = useState<GatewayStatus>(INITIAL_GATEWAY_STATUS)
-  const [runtimeConfigStatus, setRuntimeConfigStatus] = useState<'checking' | 'testing' | null>(null)
+  const [runtimeConfigStatus, setRuntimeConfigStatus] = useState<'checking' | 'testing' | 'degraded' | null>(null)
   const gatewayStateRef = useRef<GatewayState>(INITIAL_GATEWAY_STATUS.state)
   const { account } = useAccount()
 
@@ -100,7 +101,7 @@ export function Sidebar({
   useEffect(() => {
     const onRuntimeConfigStatus = (event: Event) => {
       const status = (event as CustomEvent<string>).detail
-      setRuntimeConfigStatus(status === 'checking' || status === 'testing' ? status : null)
+      setRuntimeConfigStatus(status === 'checking' || status === 'testing' || status === 'degraded' ? status : null)
     }
     window.addEventListener('everroom-runtime-config-status', onRuntimeConfigStatus)
     return () => window.removeEventListener('everroom-runtime-config-status', onRuntimeConfigStatus)
@@ -126,6 +127,9 @@ export function Sidebar({
 
   return (
     <aside className="sidebar">
+      <div className="brand-area">
+        <ProductBrand className="topbar-brand" />
+      </div>
       <nav className="sidebar-nav" aria-label={t('surface:sidebar.mainNavigation')}>
         {navigationSectionsForMode(window.nxcore?.office.testAvailable === true).map((section) => (
           <section
@@ -184,7 +188,9 @@ export function Sidebar({
             ? t('surface:sidebar.runtimeConfigChecking')
             : runtimeConfigStatus === 'testing'
               ? t('surface:sidebar.runtimeConfigTesting')
-              : gatewayStatusLabel(gatewayStatus, t)}</small>
+              : runtimeConfigStatus === 'degraded'
+                ? t('surface:sidebar.runtimeConfigDegraded')
+                : gatewayStatusLabel(gatewayStatus, t)}</small>
         </span>
         <i className="gateway-status-dot" aria-hidden="true" />
       </div>

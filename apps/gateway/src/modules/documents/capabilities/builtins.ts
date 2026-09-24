@@ -4,6 +4,8 @@ import type { DocumentOperationService } from "../operations/service.js";
 import { commentPlugin } from "./comment-plugin.js";
 import { createPlugin } from "./create-plugin.js";
 import { deletePlugin } from "./delete-plugin.js";
+import type { OfficeBridgeClient } from "./office-bridge-client.js";
+import { officePlugin } from "./office-plugin.js";
 import { queryPlugins } from "./query-plugin.js";
 import { DocumentCapabilityRegistry } from "./registry.js";
 import { DocumentReadAuthority } from "./read-authority.js";
@@ -27,6 +29,8 @@ export function createBuiltinDocumentCapabilityRegistry(
   comments?: DocumentCommentService,
   /** 文档事件广播：评论落库后发 document.comments.changed，桌面评论面板实时刷新。 */
   publishDocumentEvent?: (event: DocumentEvent) => void,
+  /** Office 生成桥（agent 写 Word）：传入则启用 context_room_office_create 等工具。 */
+  officeBridge?: OfficeBridgeClient | null,
   /** 写作路线导图拍板（聚焦改版）：服务晚于注册表构造，经 getter 惰性取用。 */
   routeMindmapFinalize?: () => {
     finalize(roomId: string, input: { documentId: string; requestVersion: number }): Promise<{
@@ -46,5 +50,7 @@ export function createBuiltinDocumentCapabilityRegistry(
   registry.register(routeMindmapPlugin(backend, routeMindmapFinalize ?? (() => null)));
   // #242：agent 文档删除（trash，带 confirm 防误删闸门）。
   registry.register(deletePlugin(backend));
+  // agent 写 Word：桌面 office-bridge 未注入（如测试环境）时工具不暴露。
+  if (officeBridge) registry.register(officePlugin(officeBridge));
   return registry;
 }

@@ -229,12 +229,12 @@ export function parseRoomOverviewSynthesis(content: string): ContextRoomOverview
     const items = Array.isArray(input) ? input : [input];
     return items.flatMap((item) => {
       if (typeof item === "string") {
-        const normalized = text(item, 2_000);
+        const normalized = text(item, 240);
         return normalized ? [{ key: null, text: normalized, aspect: "summary" as const, confidence: null, evidenceRefs: [] }] : [];
       }
       if (!item || typeof item !== "object" || Array.isArray(item)) return [];
       const row = item as Record<string, unknown>;
-      const normalized = text(row.text, 2_000);
+      const normalized = text(row.text, 240);
       if (!normalized) return [];
       const aspect = ["summary", "background", "goal"].includes(String(row.aspect))
         ? row.aspect as "summary" | "background" | "goal"
@@ -246,13 +246,13 @@ export function parseRoomOverviewSynthesis(content: string): ContextRoomOverview
         confidence: confidence(row.confidence),
         evidenceRefs: textArray(row.evidenceRefs, 20, 300),
       }];
-    }).slice(0, 6);
+    }).slice(0, 4);
   };
   const parseStatus = (input: unknown): ContextRoomOverviewSynthesis["status"] => {
     const items = Array.isArray(input) ? input : [input];
     return items.flatMap((item) => {
       if (typeof item === "string") {
-        const normalized = text(item, 1_000);
+        const normalized = text(item, 200);
         return normalized ? [{
           key: null,
           text: normalized,
@@ -264,7 +264,7 @@ export function parseRoomOverviewSynthesis(content: string): ContextRoomOverview
       }
       if (!item || typeof item !== "object" || Array.isArray(item)) return [];
       const row = item as Record<string, unknown>;
-      const normalized = text(row.text, 1_000);
+      const normalized = text(row.text, 200);
       if (!normalized) return [];
       const category = ["conclusion", "progress", "problem", "blocker"].includes(String(row.category))
         ? row.category as "conclusion" | "progress" | "problem" | "blocker"
@@ -280,7 +280,7 @@ export function parseRoomOverviewSynthesis(content: string): ContextRoomOverview
         confidence: confidence(row.confidence),
         evidenceRefs: textArray(row.evidenceRefs, 20, 300),
       }];
-    }).slice(0, 12);
+    }).slice(0, 5);
   };
   const parseNextSteps = (input: unknown): ContextRoomOverviewSynthesis["nextSteps"] => (
     (Array.isArray(input) ? input : []).flatMap((item) => {

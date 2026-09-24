@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="300" viewBox="0 0 1200 300" role="img" aria-labelledby="ep-t ep-d">
+  <title id="ep-t">EverRoom evidence pipeline</title>
+  <desc id="ep-d">Each source is normalized once into an evidence ledger with content hash, version history, and provenance; Knowledge, Memory, and Room links reference it instead of copying it.</desc>
+
+  <defs>
+    <marker id="ep-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#6DD0C5"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="300" fill="#12242D"/>
+
+  <text x="60" y="38" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="16" letter-spacing="2" fill="#7E99A3">EVERROOM · EVIDENCE PIPELINE</text>
+  <text x="698" y="38" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="15" fill="#7E99A3">fan-out · by reference</text>
+
+  <!-- original source -->
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif">
+    <rect x="60" y="96" width="200" height="96" rx="14" fill="#1A323D" stroke="#2A4750" stroke-width="1"/>
+    <text x="140" y="134" text-anchor="middle" font-size="20" font-weight="700" fill="#F7F7F2">Original source</text>
+    <text x="140" y="160" text-anchor="middle" font-size="16" fill="#7E99A3">file · chat · page</text>
+    <text x="140" y="180" text-anchor="middle" font-size="16" fill="#7E99A3">audio · repo</text>
+  </g>
+
+  <!-- normalize once -->
+  <path d="M264 144 L372 144" stroke="#6DD0C5" stroke-width="1.6" fill="none" marker-end="url(#ep-arrow)"/>
+  <text x="318" y="126" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="16" fill="#BFD2D8">normalize once</text>
+
+  <!-- evidence ledger -->
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, monospace">
+    <rect x="380" y="88" width="300" height="112" rx="14" fill="#14262E" stroke="#6DD0C5" stroke-width="1.4"/>
+    <text x="530" y="120" text-anchor="middle" font-size="17" letter-spacing="1" fill="#6DD0C5">EVIDENCE LEDGER</text>
+    <text x="404" y="148" font-size="16" fill="#BFD2D8">content hash</text>
+    <text x="404" y="170" font-size="16" fill="#BFD2D8">version history</text>
+    <text x="404" y="192" font-size="16" fill="#BFD2D8">provenance · position</text>
+  </g>
+
+  <!-- fan out -->
+  <g stroke="#6DD0C5" stroke-width="1.6" fill="none">
+    <path d="M684 122 C 706 122 706 92 734 92" marker-end="url(#ep-arrow)"/>
+    <path d="M684 144 L734 170" marker-end="url(#ep-arrow)"/>
+    <path d="M684 166 C 706 166 706 248 734 248" marker-end="url(#ep-arrow)"/>
+  </g>
+
+  <!-- consumers -->
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="18">
+    <g>
+      <rect x="740" y="60" width="400" height="64" rx="12" fill="#1A323D" stroke="#2A4750" stroke-width="1"/>
+      <rect x="740" y="60" width="5" height="64" rx="2.5" fill="#6DD0C5"/>
+      <text x="764" y="99"><tspan font-weight="700" fill="#F7F7F2">Knowledge</tspan><tspan fill="#7E99A3"> — wiki pages · entities</tspan></text>
+    </g>
+    <g>
+      <rect x="740" y="138" width="400" height="64" rx="12" fill="#1A323D" stroke="#2A4750" stroke-width="1"/>
+      <rect x="740" y="138" width="5" height="64" rx="2.5" fill="#F5AD71"/>
+      <text x="764" y="177"><tspan font-weight="700" fill="#F7F7F2">Memory</tspan><tspan fill="#7E99A3"> — MemoryCore L0–L3</tspan></text>
+    </g>
+    <g>
+      <rect x="740" y="216" width="400" height="64" rx="12" fill="#1A323D" stroke="#2A4750" stroke-width="1"/>
+      <rect x="740" y="216" width="5" height="64" rx="2.5" fill="#F7F7F2"/>
+      <text x="764" y="255"><tspan font-weight="700" fill="#F7F7F2">Room links</tspan><tspan fill="#7E99A3"> — scoped context</tspan></text>
+    </g>
+  </g>
+</svg>

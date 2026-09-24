@@ -1,5 +1,6 @@
 import type { RealityTag } from "@nxcore/reality-contract";
 import { normalizeInsightTags } from "../reality/insight-tags.js";
+import { proxyFetch } from "../../infrastructure/network/proxy-fetch.js";
 
 export interface VisualInferenceResult {
   eventType: string;
@@ -268,7 +269,7 @@ export class OpenAiCompatibleVlmClient implements VisualInferenceClient, Documen
   ): Promise<unknown> {
     const timeout = AbortSignal.timeout(60_000);
     const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
-    const response = await fetch(`${this.config.baseUrl.replace(/\/$/, "")}/chat/completions`, {
+    const response = await proxyFetch(`${this.config.baseUrl.replace(/\/$/, "")}/chat/completions`, {
       method: "POST",
       headers: {
         authorization: `Bearer ${this.config.apiKey}`,

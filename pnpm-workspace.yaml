@@ -30,6 +30,7 @@ allowBuilds:
   '@larksuite/cli': true
   ntn: true
   '@oomol-lab/open-connector@https://codeload.github.com/NxcoreAI/open-connector/tar.gz/806663488c6e8df92755d473cd866a1d80f2222f(patch_hash=9bcac830536dc50bbfc27c3960faaad12c3b6ae839bb8357b1a3c21027c40c14)': false
+  '@tencentdb-agent-memory/memory-tencentdb-v2@git+https://github.com/NxcoreAI/TencentDB-Agent-Memory.git#f65f83e550cc4a13d51cbef8550f0b1755073ea4&path:MemoryCore(patch_hash=657cc56317b99ecad2247d27859b242080418d97d494444ad9943fa49d878c1c)': false
 
 minimumReleaseAgeExclude:
   - '@earendil-works/pi-agent-core@0.84.2'

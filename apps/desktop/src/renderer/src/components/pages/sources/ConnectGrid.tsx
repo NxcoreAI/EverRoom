@@ -1,5 +1,5 @@
 import type { ConnectorProviderSummary } from '../../../../../shared/sources'
-import { SourceIcon, type SourceIconKind } from './SourceIcon'
+import { SourceIcon, glyphTone, type SourceIconKind } from './SourceIcon'
 import { FALLBACK_CONNECTOR_PROVIDERS } from './useConnectorProviders'
 import { useLocale } from '@/i18n/LocaleContext'
 
@@ -26,7 +26,9 @@ function Grid({ items, busy }: { items: ConnectItem[]; busy: boolean }) {
     <div className="src-connect-grid">
       {items.map((item) => (
         <button key={item.key} type="button" className="src-connect-tile" disabled={busy} onClick={item.onSelect}>
-          <span className="src-connect-tile-icon"><SourceIcon kind={item.icon} className={item.glyph ? 'glyph' : ''} /></span>
+          <span className="src-connect-tile-icon" data-tone={item.glyph ? glyphTone(item.icon) : undefined}>
+            <SourceIcon kind={item.icon} className={item.glyph ? 'glyph' : ''} />
+          </span>
           <span className="src-connect-tile-label"><span>{item.label}</span></span>
         </button>
       ))}
@@ -136,7 +138,7 @@ export function ConnectGrid({
     ? cloud.filter((item) => !item.provider || item.alwaysVisible || !connectedProviders.has(item.provider))
     : cloud
   const items: ConnectItem[] = [
-    { key: 'local-folder', icon: 'local-folder', glyph: true, label: t('surface:connectSourceMenu.localFolder'), group: 'local', onSelect: onLocalFolder },
+    { key: 'local-folder', icon: 'folder-scan', glyph: true, label: t('surface:connectSourceMenu.localFolder'), group: 'local', onSelect: onLocalFolder },
     { key: 'obsidian', icon: 'obsidian-vault', label: 'Obsidian', group: 'local', onSelect: onObsidian },
     { key: 'github', icon: 'github', label: 'GitHub', group: 'local', onSelect: onGitHub },
     ...visibleCloud,

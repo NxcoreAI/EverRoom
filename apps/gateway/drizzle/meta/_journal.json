@@ -463,6 +463,13 @@
       "when": 1789976400000,
       "tag": "0067_route_mindmaps",
       "breakpoints": true
+    },
+    {
+      "idx": 69,
+      "version": "6",
+      "when": 1790078829000,
+      "tag": "0068_room_overview_synthesis",
+      "breakpoints": true
     }
   ]
 }

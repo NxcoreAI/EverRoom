@@ -11,13 +11,15 @@ import {
   embeddingFieldsFromSnapshot,
   emptyAiFields,
   emptyAsrFields,
+  liteFieldsError,
+  liteFieldsFromSnapshot,
   primaryFieldsFromSnapshot,
   vlmFieldsFromSnapshot,
   type ManualAiConfigFields,
   type ManualAsrFields,
 } from '../runtimeConfigFormState'
 
-type SectionTab = 'llm' | 'embedding' | 'vlm' | 'asr' | 'search'
+type SectionTab = 'llm' | 'embedding' | 'vlm' | 'asr' | 'search' | 'lite'
 
 function pretty(value: Record<string, unknown>): string { return `${JSON.stringify(value, null, 2)}\n` }
 
@@ -54,6 +56,7 @@ export function RuntimeConfigSettingsSection() {
   const [vlm, setVlm] = useState<ManualAiConfigFields>(emptyAiFields())
   const [asr, setAsr] = useState<ManualAsrFields>(emptyAsrFields())
   const [search, setSearch] = useState<ManualAiConfigFields>(emptyAiFields())
+  const [lite, setLite] = useState<ManualAiConfigFields>(emptyAiFields())
   const [deleteSearchKey, setDeleteSearchKey] = useState(false)
   const [fieldError, setFieldError] = useState<string | null>(null)
   const [jsonText, setJsonText] = useState('')
@@ -67,6 +70,7 @@ export function RuntimeConfigSettingsSection() {
     setEmbedding(embeddingFieldsFromSnapshot(next))
     setVlm(vlmFieldsFromSnapshot(next))
     setAsr(asrFieldsFromSnapshot(next))
+    setLite(liteFieldsFromSnapshot(next))
     const webSearch = (next.config.webSearch ?? {}) as Record<string, unknown>
     setSearch({
       provider: typeof webSearch.provider === 'string' ? webSearch.provider : 'openai-compatible',
@@ -92,10 +96,10 @@ export function RuntimeConfigSettingsSection() {
       : search.model.trim() && search.baseUrl.trim() && (search.apiKey.trim() || snapshot?.webSearchCredential?.configured || deleteSearchKey)
         ? null
         : t('surface:configGate.embeddingIncomplete')
-    const error = aiFieldsError(llm, t) ?? aiFieldsError(embedding, t) ?? aiFieldsError(vlm, t) ?? asrFieldsError(asr, t) ?? searchReady
+    const error = aiFieldsError(llm, t) ?? aiFieldsError(embedding, t) ?? aiFieldsError(vlm, t) ?? asrFieldsError(asr, t) ?? searchReady ?? liteFieldsError(lite, t)
     if (error) { setFieldError(error); setBusy(null); return }
     try {
-      const config = buildUserConfig(snapshot, { primary: llm, embedding, vlm, asr })
+      const config = buildUserConfig(snapshot, { primary: llm, embedding, vlm, asr, lite })
       config.webSearch = {
         provider: search.provider.trim() || 'openai-compatible',
         model: search.model.trim(),
@@ -158,6 +162,7 @@ export function RuntimeConfigSettingsSection() {
   const updateEmbedding = (key: keyof ManualAiConfigFields, value: string) => setEmbedding((c) => ({ ...c, [key]: value }))
   const updateVlm = (key: keyof ManualAiConfigFields, value: string) => setVlm((c) => ({ ...c, [key]: value }))
   const updateAsr = (key: 'model' | 'baseUrl' | 'apiKey', value: string) => setAsr((c) => ({ ...c, [key]: value }))
+  const updateLite = (key: keyof ManualAiConfigFields, value: string) => setLite((c) => ({ ...c, [key]: value }))
   const updateSearch = (key: keyof ManualAiConfigFields, value: string) => {
     setDeleteSearchKey(false)
     setSearch((current) => ({ ...current, [key]: value }))
@@ -184,6 +189,7 @@ export function RuntimeConfigSettingsSection() {
 
   const tabs: Array<{ id: SectionTab; label: string; optional: boolean }> = [
     { id: 'llm', label: t('surface:settings.rcTabLlm'), optional: false },
+    { id: 'lite', label: t('surface:settings.rcTabLite'), optional: true },
     { id: 'embedding', label: t('surface:settings.rcTabEmbedding'), optional: true },
     { id: 'vlm', label: t('surface:settings.rcTabVlm'), optional: true },
     { id: 'asr', label: t('surface:settings.rcTabAsr'), optional: true },
@@ -211,6 +217,17 @@ export function RuntimeConfigSettingsSection() {
     <div className="rc-form">
       {tab === 'llm' ? <>
         <AiFieldsGroup fields={llm} onChange={updateLlm} labels={aiLabels} modelPlaceholder="gpt-4o-mini / glm-4-flash / …" />
+      </> : null}
+      {tab === 'lite' ? <>
+        <label className="rc-form-field"><span>{aiLabels.model}</span>
+          <input value={lite.model} placeholder="gpt-4o-mini / qwen-flash / glm-4-flash / …" onChange={(event) => updateLite('model', event.target.value)} /></label>
+        <label className="rc-form-field"><span>{aiLabels.provider}</span>
+          <input value={lite.provider} onChange={(event) => updateLite('provider', event.target.value)} /></label>
+        <label className="rc-form-field"><span>{aiLabels.baseUrl}</span>
+          <input value={lite.baseUrl} placeholder="https://api.example.com/v1" onChange={(event) => updateLite('baseUrl', event.target.value)} /></label>
+        <label className="rc-form-field"><span>{aiLabels.apiKey}</span>
+          <input type="password" value={lite.apiKey} placeholder="sk-…" onChange={(event) => updateLite('apiKey', event.target.value)} /></label>
+        <p className="rc-form-hint">{t('surface:settings.rcLiteHint')}</p>
       </> : null}
       {tab === 'embedding' ? <>
         <AiFieldsGroup fields={embedding} onChange={updateEmbedding} labels={aiLabels} modelPlaceholder="text-embedding-3-small / text-embedding-v4 / …" />

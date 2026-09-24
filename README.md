@@ -1,14 +1,10 @@
 <div align="center">
 
-<img src="./everroom_logo/everroom_full.png" alt="Everroom logo" width="360">
-
-
+<img src="./assets/readme/hero.svg" width="100%" alt="EverRoom — a local-first personal context workspace: files, conversations, memory, and a scoped Agent working from one Context Room">
 
 **A local-first personal context workspace for your files, conversations, memory, and AI agents.**
 
-Connect information. Understand context. Move work forward.
-
-# EverRoom
+Connect information · Understand context · Move work forward
 
 [English](./README.md) | [简体中文](./README.zh-CN.md) | [Website](https://r.nxcore.ai/)
 
@@ -34,13 +30,9 @@ It is the layer between your data and AI: more alive than a file store, more gro
 
 ### The product loop
 
-```mermaid
-flowchart LR
-    A["Connect information"] --> B["Build a Context Room"]
-    B --> C["Write and remember"]
-    C --> D["Let Agent move work forward"]
-    D --> A
-```
+<p align="center">
+  <img src="./assets/readme/product-loop.svg" width="100%" alt="The EverRoom loop: connect information, build a Context Room, write and remember, and let the Agent move work forward; decisions and new evidence flow back.">
+</p>
 
 1. **Connect information** from local files, repositories, meetings, audio, and optional services such as Feishu, Slack, Notion, or Gmail.
 2. **Build a Context Room** for a project, topic, person, or responsibility. Sources, decisions, Wiki pages, tasks, and memory stay together without becoming one unbounded prompt.
@@ -57,18 +49,12 @@ The product thesis is simple:
 
 > **Context should be assembled from evidence, scoped to a place of work, and made visible enough for a person to govern.**
 
-This leads to a closed loop:
+Four principles follow from it:
 
-```mermaid
-flowchart LR
-    A["Sources\nfiles, repos, conversations, apps"] --> B["Unified ingest\nnormalize, classify, policy"]
-    B --> C["Evidence ledger\nidentity, versions, provenance"]
-    C --> D["Knowledge and memory\nwiki, entities, L0-L3"]
-    D --> E["Context Room\nproject or topic workspace"]
-    E --> F["Agent and Context Docs\nplan, write, review, act"]
-    F --> G["New decisions and artifacts"]
-    G --> C
-```
+- **Local-first.** Data, indexes, working memory, and documents stay on the user's device by default.
+- **Evidence before conclusions.** Key memories and generated content should be traceable back to their sources.
+- **Automated, but governable.** Agents receive explicit, temporary, and revocable context and tool permissions.
+- **Replaceable foundations.** Models, memory engines, connectors, and agent runtimes all plug in through Everroom's own interfaces.
 
 The loop is deliberately reversible. A generated summary is useful only when a person can inspect where it came from, correct it, and let the correction flow back into the next task.
 
@@ -83,9 +69,19 @@ The loop is deliberately reversible. A generated summary is useful only when a p
 | **Context Docs** | Versioned documents that agents can create or edit through reviewable operations | Human ownership of the final artifact |
 | **Agent** | A scoped worker with explicit tools, sessions, runs, and cancellation | Automation that can be inspected, stopped, and replaced |
 
+Every source is normalized once into versioned, content-addressed evidence; Knowledge, Memory, and Rooms reference that one asset instead of copying it.
+
+<p align="center">
+  <img src="./assets/readme/evidence-pipeline.svg" width="100%" alt="One asset, many references: each source is normalized once into an evidence ledger holding its content hash, version history, and provenance; Knowledge, Memory, and Room links reference it instead of copying.">
+</p>
+
 ### How a Room works
 
 A Room is more than a folder. It is a progressively assembled view of one area of work:
+
+<p align="center">
+  <img src="./assets/readme/room-anatomy.svg" width="100%" alt="Anatomy of a Context Room: linked sources route through evidence checks into wiki pages, entities, memory documents, or plain links; the Room profile summarizes goal, status, people, risks, decisions, and timeline; the Agent works with Room-scoped tools, and reviewed changes flow back as new evidence.">
+</p>
 
 1. Sources are linked to the Room and preserved with stable identity and version history.
 2. Routing and evidence checks decide whether material becomes a Room wiki page, an entity candidate, a memory document, or only a link.
@@ -116,81 +112,6 @@ The main branch now contains the first integrated product loop. Some features re
 | Agent work management | Available, evolving | Agent Office presence, scheduled runs, diary tasks, and explicit run-now controls |
 | Files and understanding | Available, evolving | Local file browser, parsing and indexing pipeline, office/web document understanding, and source-linked artifacts |
 | Connectors | Foundation available | Managed local OpenConnector + `oo` bridge, optional Nango integrations, and Feishu issue automation; provider coverage is still expanding |
-
-## Technical path
-
-Everroom keeps the product boundary stable while allowing the underlying engines to change. The desktop owns lifecycle and trust boundaries; the Gateway owns durable orchestration; specialized services own their own data contracts.
-
-```mermaid
-flowchart TB
-    subgraph Desktop["Everroom Desktop"]
-        UI["React Renderer"]
-        IPC["Typed preload IPC"]
-        MAIN["Electron main process"]
-        UI --> IPC --> MAIN
-    end
-
-    subgraph Gateway["NxCore Gateway"]
-        API["Fastify REST / WebSocket / OpenAPI"]
-        INGEST["Unified ingest"]
-        KNOW["Knowledge and Room services"]
-        MEM["Memory proxy and document ingest"]
-        DOCS["Document core and operations"]
-        AGENT["Agent service"]
-        API --> INGEST
-        API --> KNOW
-        API --> MEM
-        API --> DOCS
-        API --> AGENT
-    end
-
-    subgraph Engines["Replaceable local engines"]
-        PI["Pi Agent runtime"]
-        MC["MemoryCore"]
-        KS["Knowledge service"]
-        OC["OpenConnector / oo"]
-    end
-
-    subgraph Storage["Local data"]
-        DB["SQLite WAL + Drizzle + FTS5"]
-        OBJECTS["Content-addressed objects"]
-        LOGS["Structured logs"]
-    end
-
-    MAIN -->|"ephemeral bearer token"| API
-    AGENT --> PI
-    MEM --> MC
-    KNOW --> KS
-    AGENT --> OC
-    INGEST --> DB
-    DOCS --> DB
-    KNOW --> DB
-    DB --> OBJECTS
-    API --> LOGS
-```
-
-### The implementation strategy
-
-- **Normalize once, understand in the right place.** The ingest layer identifies and normalizes a source once, then fans it out to Knowledge, Memory, or Room links according to a recorded policy snapshot. It does not become a fourth LLM pipeline.
-- **One asset, many references.** Original files and parsed Markdown have one storage owner. Downstream systems keep stable references, hashes, and provenance instead of copying the same source into several databases.
-- **Room-scoped context.** Knowledge tools resolve the current Room or session before reading Wiki pages, sources, or materials. Agents do not receive a global unbounded corpus by default.
-- **Commit before side effects.** Document edits go through a transactional commit core and outbox. Knowledge and Memory fan-out happens after the authoritative document version is committed, so an external service failure cannot corrupt the document.
-- **Deterministic external actions.** Connector calls are prepared against real Action Schemas and real connections before execution. Tokens remain in trusted processes, and destructive or externally visible actions are designed to require approval.
-- **Graceful degradation.** The fake Agent runtime, disabled MemoryCore, unavailable connectors, and model failures have explicit fallback states. A missing optional service should not make local documents inaccessible.
-
-### Technology stack
-
-| Layer | Technology |
-| --- | --- |
-| Desktop | Electron 39, React, TypeScript, electron-vite |
-| Gateway | Node.js 22+, Fastify 5, TypeBox, REST, WebSocket, OpenAPI |
-| Storage | SQLite WAL, better-sqlite3, Drizzle ORM, FTS5, content-addressed objects |
-| Documents | Tiptap document model, versioned commits, block references, operation kernel |
-| Agent boundary | Shared Agent contracts, Pi runtime adapter, MCP document endpoint |
-| Memory | MemoryCore HTTP client and L0-L3 pipeline |
-| Connectors | OpenConnector sidecar, `oo` CLI bridge, optional Nango supervisor |
-| Observability | Pino structured logs, readable console output, rotating daily JSON files |
-| Verification | Vitest, strict TypeScript checks, Gateway and runtime integration tests |
 
 ## Quick start
 
@@ -230,7 +151,8 @@ Generative model calls in the Gateway are resolved through `AgentResolver` using
 
 NxCore Gateway also exposes the bearer-protected `/v1/mcp/documents/:sessionId` Streamable HTTP MCP endpoint for authenticated clients.
 
-#### File-driven subagents
+<details>
+<summary><b>File-driven subagents</b></summary>
 
 Subagents can be dispatched only by the primary Agent or internal Gateway workflows. They do not expose independent chat entry points. Gateway scans the repository-root `agents` directory by default; builds copy it into `dist/agents` for Desktop packaging. Development and tests can override the location:
 
@@ -242,6 +164,8 @@ NXCORE_SUBAGENTS_DIR=/absolute/path/to/everroom-agents
 Each first-level directory represents one Agent and contains an `agent.yaml`, its system prompt, and optional skills. MCP servers reference names already configured in Settings, and `includeTools` must explicitly limit the tools visible to that Agent. Gateway creates an immutable revision when definitions change, so running invocations continue on their original revision.
 
 Every `SKILL.md` requires `name` and `description` YAML frontmatter. Subagents can read only their own skill snapshot through the restricted `read` tool, not arbitrary workspace or device files. See [`docs/subagent-framework-design.zh-CN.md`](./docs/subagent-framework-design.zh-CN.md) for the full schema and policy model.
+
+</details>
 
 ### Optional local MemoryCore and Knowledge services
 
@@ -267,7 +191,8 @@ pnpm package:mac  # Create macOS DMG and ZIP artifacts
 pnpm package:win  # Create the Windows x64 NSIS installer
 ```
 
-### Building the Windows installer
+<details>
+<summary><b>Building the Windows installer</b></summary>
 
 `pnpm package:win` runs the same chain as the macOS build — Gateway, Nango runtime with Windows embedded PostgreSQL, OpenConnector, oo CLI, GenOffice runtimes (including the Rust `xlsx-sidecar.exe`), packaged environment, then `electron-builder --win nsis --x64`. Prerequisites:
 
@@ -277,6 +202,39 @@ pnpm package:win  # Create the Windows x64 NSIS installer
 - The packaged-environment variables listed in `apps/desktop/scripts/generate-packaged-env.mjs`; for local test builds use placeholder values, never production secrets
 
 The unsigned installer is written to `release/EverRoom-<version>-windows-x64.exe`. Verify it without installing by running `pnpm --filter @nxcore/desktop exec node scripts/verify-windows-package.mjs`. For scripted installs, run the NSIS installer with `/S` (silent) and `/D=<dir>` to pick the target directory. Because the build is unsigned, Microsoft Defender SmartScreen may show a warning before the first launch.
+
+</details>
+
+## Architecture
+
+Everroom keeps the product boundary stable while allowing the underlying engines to change. The desktop owns lifecycle and trust boundaries; the Gateway owns durable orchestration; specialized services own their own data contracts.
+
+<p align="center">
+  <img src="./assets/readme/architecture.svg" width="100%" alt="EverRoom architecture: the Electron desktop reaches the local NxCore Gateway through typed IPC with an ephemeral bearer token; the Gateway runs unified ingest, knowledge and rooms, memory proxy, document core, and agent services over SQLite, content-addressed objects, and daily logs, with replaceable engines — Pi runtime, MemoryCore, knowledge service, OpenConnector — attached.">
+</p>
+
+### The implementation strategy
+
+- **Normalize once, understand in the right place.** The ingest layer identifies and normalizes a source once, then fans it out to Knowledge, Memory, or Room links according to a recorded policy snapshot. It does not become a fourth LLM pipeline.
+- **One asset, many references.** Original files and parsed Markdown have one storage owner. Downstream systems keep stable references, hashes, and provenance instead of copying the same source into several databases.
+- **Room-scoped context.** Knowledge tools resolve the current Room or session before reading Wiki pages, sources, or materials. Agents do not receive a global unbounded corpus by default.
+- **Commit before side effects.** Document edits go through a transactional commit core and outbox. Knowledge and Memory fan-out happens after the authoritative document version is committed, so an external service failure cannot corrupt the document.
+- **Deterministic external actions.** Connector calls are prepared against real Action Schemas and real connections before execution. Tokens remain in trusted processes, and destructive or externally visible actions are designed to require approval.
+- **Graceful degradation.** The fake Agent runtime, disabled MemoryCore, unavailable connectors, and model failures have explicit fallback states. A missing optional service should not make local documents inaccessible.
+
+### Technology stack
+
+| Layer | Technology |
+| --- | --- |
+| Desktop | Electron 39, React, TypeScript, electron-vite |
+| Gateway | Node.js 22+, Fastify 5, TypeBox, REST, WebSocket, OpenAPI |
+| Storage | SQLite WAL, better-sqlite3, Drizzle ORM, FTS5, content-addressed objects |
+| Documents | Tiptap document model, versioned commits, block references, operation kernel |
+| Agent boundary | Shared Agent contracts, Pi runtime adapter, MCP document endpoint |
+| Memory | MemoryCore HTTP client and L0-L3 pipeline |
+| Connectors | OpenConnector sidecar, `oo` CLI bridge, optional Nango supervisor |
+| Observability | Pino structured logs, readable console output, rotating daily JSON files |
+| Verification | Vitest, strict TypeScript checks, Gateway and runtime integration tests |
 
 ## Gateway and local data
 
@@ -314,6 +272,10 @@ On Windows, the same layout lives under `%APPDATA%\EverRoom\` (that is `C:\Users
 See [`apps/gateway/README.md`](./apps/gateway/README.md) for ASR, mail connector, and standalone Gateway details. The OpenConnector lifecycle and security boundary are documented in [`docs/open-connector-desktop-integration.zh-CN.md`](./docs/open-connector-desktop-integration.zh-CN.md).
 
 ## Security and privacy model
+
+<p align="center">
+  <img src="./assets/readme/security-boundary.svg" width="100%" alt="Local-first by default: documents, evidence, indexes, rooms, the loopback gateway, and redacted logs stay on the device; cloud model providers, connectors, and external agents are opt-in and only receive the approved scope.">
+</p>
 
 - Data, indexes, working memory, and documents stay on the user's device by default.
 - The Gateway listens on loopback and uses a fresh high-entropy token for each desktop session.

@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="330" viewBox="0 0 1200 330" role="img" aria-labelledby="pl-t pl-d">
+  <title id="pl-t">EverRoom product loop</title>
+  <desc id="pl-d">Connect information, build a Context Room, write and remember, and let the Agent move work forward; decisions and new evidence flow back into the loop.</desc>
+
+  <defs>
+    <marker id="pl-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#6DD0C5"/>
+    </marker>
+    <marker id="pl-arrow-dim" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#7E99A3"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="330" fill="#12242D"/>
+
+  <text x="60" y="42" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="16" letter-spacing="2" fill="#7E99A3">EVERROOM · THE PRODUCT LOOP</text>
+
+  <!-- stage cards -->
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif">
+    <!-- 01 connect -->
+    <g>
+      <rect x="60" y="70" width="240" height="160" rx="14" fill="#1A323D" stroke="#2A4750" stroke-width="1"/>
+      <rect x="60" y="70" width="5" height="160" rx="2.5" fill="#6DD0C5"/>
+      <text x="80" y="104" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="15" letter-spacing="1" fill="#7E99A3">STEP 01</text>
+      <text x="80" y="138" font-size="21" font-weight="700" fill="#F7F7F2">Connect</text>
+      <text x="80" y="170" font-size="18" fill="#BFD2D8">files · repos · meetings</text>
+      <text x="80" y="198" font-size="18" fill="#BFD2D8">services you approve</text>
+    </g>
+    <!-- 02 context room -->
+    <g>
+      <rect x="340" y="70" width="240" height="160" rx="14" fill="#14262E" stroke="#6DD0C5" stroke-width="1.4"/>
+      <text x="360" y="104" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="15" letter-spacing="1" fill="#7E99A3">STEP 02</text>
+      <text x="360" y="138" font-size="21" font-weight="700" fill="#F7F7F2">Context Room</text>
+      <text x="360" y="170" font-size="18" fill="#BFD2D8">evidence · wiki · memory</text>
+      <text x="360" y="198" font-size="18" fill="#BFD2D8">one bounded workspace</text>
+    </g>
+    <!-- 03 write and remember -->
+    <g>
+      <rect x="620" y="70" width="240" height="160" rx="14" fill="#1A323D" stroke="#2A4750" stroke-width="1"/>
+      <rect x="620" y="70" width="5" height="160" rx="2.5" fill="#F7F7F2"/>
+      <text x="640" y="104" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="15" letter-spacing="1" fill="#7E99A3">STEP 03</text>
+      <text x="640" y="138" font-size="21" font-weight="700" fill="#F7F7F2">Write &amp; remember</text>
+      <text x="640" y="170" font-size="18" fill="#BFD2D8">context docs · diaries</text>
+      <text x="640" y="198" font-size="18" fill="#BFD2D8">traceable to sources</text>
+    </g>
+    <!-- 04 agent -->
+    <g>
+      <rect x="900" y="70" width="240" height="160" rx="14" fill="#1A323D" stroke="#F5AD71" stroke-width="1.4"/>
+      <rect x="900" y="70" width="5" height="160" rx="2.5" fill="#F5AD71"/>
+      <text x="920" y="104" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="15" letter-spacing="1" fill="#7E99A3">STEP 04</text>
+      <text x="920" y="138" font-size="21" font-weight="700" fill="#F7F7F2">Agent</text>
+      <text x="920" y="170" font-size="18" fill="#BFD2D8">scoped sessions · runs</text>
+      <text x="920" y="198" font-size="18" fill="#BFD2D8">reviewable actions</text>
+    </g>
+  </g>
+
+  <!-- forward arrows -->
+  <g stroke="#6DD0C5" stroke-width="1.6" fill="none">
+    <path d="M302 150 L336 150" marker-end="url(#pl-arrow)"/>
+    <path d="M582 150 L616 150" marker-end="url(#pl-arrow)"/>
+    <path d="M862 150 L896 150" marker-end="url(#pl-arrow)"/>
+  </g>
+
+  <!-- loop back -->
+  <path d="M1020 232 V 282 H 180 V 240" stroke="#7E99A3" stroke-width="1.4" stroke-dasharray="5 6" fill="none" marker-end="url(#pl-arrow-dim)"/>
+  <text x="600" y="272" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="17" fill="#7E99A3">decisions &amp; new evidence flow back</text>
+</svg>

@@ -1,12 +1,12 @@
-import { ChevronLeft, ChevronRight, Link2, Pencil, Trash2, X } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { FileText, Link2, MessagesSquare, Package, Pencil, Sparkles, Trash2, UserRound, X, Zap } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocale } from '@/i18n/LocaleContext'
 
 import type { MemoryAtomicItemDto, MemoryAtomicProvenanceDto, MemoryAtomicType } from '../../../../../shared/memory'
 import { dispatchRoomMemoryChanged } from '@/components/context-room/roomMemoryChange'
 import { RoomAssignControl } from './RoomAssignControl'
 import { MemoryEmptyView } from './MemoryStatusViews'
-import { formatDate, memoryFailureText, useAsyncData } from './useMemoryData'
+import { formatDate, memoryFailureText, toMemoryFailure, type MemoryFailure } from './useMemoryData'
 
 const PAGE_SIZE = 50
 
@@ -44,7 +44,7 @@ function RoomChipNav({ roomId, roomTitle, stopPropagation }: {
   )
 }
 
-const TYPE_FILTERS: Array<{ value: MemoryAtomicType | 'all'; label: string }> = [
+const TYPE_FILTERS: Array<{ value: string; label: string }> = [
   { value: 'all', label: 'memory:atomicMemory.all' },
   { value: 'episodic', label: 'memory:atomicMemory.episodic' },
   { value: 'persona', label: 'memory:atomicMemory.persona' },
@@ -55,10 +55,27 @@ const TYPE_LABELS: Record<string, string> = {
   episodic: 'memory:atomicMemory.episodic',
   persona: 'memory:atomicMemory.persona',
   instruction: 'memory:atomicMemory.instruction',
+  // Agent 产物/工作事实：office 产物入库与工作流带出的新类型。
+  work_artifact: 'Agent 产物',
+  work_fact: '工作事实',
 }
 
 function typeLabel(type: string): string {
   return TYPE_LABELS[type] ?? type
+}
+
+/** 条目类型图标：情景=对话、画像=人、指令=笔、产物=包、工作事实=文档（与 ContextRoom 记忆图标语义一致）。 */
+function TypeIcon({ type }: { type: string }) {
+  const Icon = type === 'persona' ? UserRound
+    : type === 'instruction' ? Pencil
+      : type === 'work_artifact' ? Package
+        : type === 'work_fact' ? FileText
+          : MessagesSquare
+  return (
+    <span className="mem-item-icon" data-type={type} aria-hidden="true">
+      <Icon strokeWidth={1.7} />
+    </span>
+  )
 }
 
 /** 溯源区：kind=conversation → 会话原话；document → 文档名 + 标题路径 + 行区间。 */
@@ -248,44 +265,169 @@ function AtomicDetail({ item, onSaved, onDeleted, onOpenDocument, onOpenConversa
   )
 }
 
+type TimeRangeId = 'all' | '7d' | '30d'
+type TimelineBucketId = 'today' | 'yesterday' | 'week' | 'month' | 'earlier'
+
+const TIME_RANGES: Array<{ value: TimeRangeId; label: string }> = [
+  { value: 'all', label: 'memory:timeline.all' },
+  { value: '7d', label: 'memory:timeline.last7days' },
+  { value: '30d', label: 'memory:timeline.last30days' },
+]
+
+const TIMELINE_BUCKETS: Array<{ id: TimelineBucketId; label: string }> = [
+  { id: 'today', label: 'memory:timeline.today' },
+  { id: 'yesterday', label: 'memory:timeline.yesterday' },
+  { id: 'week', label: 'memory:timeline.thisWeek' },
+  { id: 'month', label: 'memory:timeline.thisMonth' },
+  { id: 'earlier', label: 'memory:timeline.earlier' },
+]
+
+function timeBucket(updatedAt: string): TimelineBucketId {
+  const date = new Date(updatedAt)
+  const now = new Date()
+  const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  const diffDays = Math.floor((dayStart.getTime() - new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime()) / 86400000)
+  if (diffDays <= 0) return 'today'
+  if (diffDays === 1) return 'yesterday'
+  if (diffDays <= 7) return 'week'
+  if (diffDays <= 30) return 'month'
+  return 'earlier'
+}
+
 export function AtomicMemoryPane({ focusItemId, onOpenDocument, onOpenConversation }: {
   focusItemId?: string | null
   onOpenDocument?: (documentId: string) => void
   onOpenConversation?: (sessionId: string) => void
 } = {}) {
   const { locale, t } = useLocale()
-  const [type, setType] = useState<MemoryAtomicType | 'all'>('all')
-  const [offset, setOffset] = useState(0)
+  const [type, setType] = useState<string>('all')
+  const [timeRange, setTimeRange] = useState<TimeRangeId>('all')
+  // 时间轴形态：累计加载（加载更多），不做分页——分桶展示与分页天然冲突。
+  const [items, setItems] = useState<MemoryAtomicItemDto[]>([])
+  const [total, setTotal] = useState(0)
+  const [loading, setLoading] = useState(true)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const [failure, setFailure] = useState<MemoryFailure | null>(null)
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [reloadTick, setReloadTick] = useState(0)
+  const [featuredDismissed, setFeaturedDismissed] = useState(false)
+  const focusAppliedRef = useRef(false)
 
-  const listOptions = {
-    ...(type === 'all' ? {} : { type }),
-    limit: PAGE_SIZE,
-    offset,
-  }
-  const { data, failure, loading } = useAsyncData(
-    () => window.nxcore!.memory.listAtomic(listOptions),
-    [type, offset, reloadTick],
-  )
-
-  const items = data?.items ?? []
-  const total = data?.total ?? 0
-  const pageStart = offset + 1
-  const pageEnd = offset + items.length
+  const load = useCallback(async (offset: number, replace: boolean) => {
+    if (replace) setLoading(true)
+    else setLoadingMore(true)
+    try {
+      const page = await window.nxcore!.memory.listAtomic({
+        ...(type === 'all' ? {} : { type }),
+        limit: PAGE_SIZE,
+        offset,
+      })
+      setFailure(null)
+      setTotal(page.total)
+      setItems((current) => {
+        if (replace) return page.items
+        const seen = new Set(current.map((item) => item.id))
+        return [...current, ...page.items.filter((item) => !seen.has(item.id))]
+      })
+    } catch (error) {
+      setFailure(toMemoryFailure(error))
+      if (replace) setItems([])
+    } finally {
+      setLoading(false)
+      setLoadingMore(false)
+    }
+  }, [type])
 
   useEffect(() => {
-    if (!focusItemId || !items.some((item) => item.id === focusItemId)) return
+    focusAppliedRef.current = false
+    void load(0, true)
+  }, [load])
+
+  useEffect(() => {
+    if (reloadTick > 0) void load(0, true)
+  }, [load, reloadTick])
+
+  useEffect(() => {
+    if (!focusItemId || focusAppliedRef.current || items.length === 0) return
+    if (!items.some((item) => item.id === focusItemId)) return
+    focusAppliedRef.current = true
     setExpandedId(focusItemId)
     window.setTimeout(() => document.querySelector(`[data-memory-id="${CSS.escape(focusItemId)}"]`)?.scrollIntoView({ block: 'center', behavior: 'smooth' }), 0)
   }, [focusItemId, items])
 
-  if (failure && !data) {
+  const reload = () => setReloadTick((tick) => tick + 1)
+
+  const filtered = useMemo(() => {
+    if (timeRange === 'all') return items
+    const days = timeRange === '7d' ? 7 : 30
+    const threshold = Date.now() - days * 86400000
+    return items.filter((item) => Date.parse(item.updatedAt) >= threshold)
+  }, [items, timeRange])
+
+  // 精选：已加载条目里评分最高的一条（并列取更新时间新的）；本会话内可关闭。
+  const featured = useMemo(() => {
+    const pool = filtered.length > 0 ? filtered : items
+    if (pool.length === 0) return null
+    return [...pool].sort((left, right) => {
+      const delta = (right.score ?? 0) - (left.score ?? 0)
+      return delta !== 0 ? delta : right.updatedAt.localeCompare(left.updatedAt)
+    })[0]
+  }, [filtered, items])
+
+  const grouped = useMemo(() => {
+    const groups: Array<{ id: TimelineBucketId; label: string; items: MemoryAtomicItemDto[] }> = []
+    for (const bucket of TIMELINE_BUCKETS) {
+      const bucketItems = filtered.filter((item) => timeBucket(item.updatedAt) === bucket.id)
+      if (bucketItems.length > 0) {
+        groups.push({ id: bucket.id, label: t(bucket.label), items: bucketItems })
+      }
+    }
+    return groups
+  }, [filtered, t])
+
+  // 类型 chips 数据驱动：基础三型之外，数据里出现的新类型（如 work_*）自动补进筛选。
+  const extraTypeChips = useMemo(() => {
+    const seen = new Set<string>()
+    for (const item of items) {
+      if (!TYPE_FILTERS.some((filter) => filter.value === item.type)) seen.add(item.type)
+    }
+    return [...seen].sort().map((value) => ({ value, label: typeLabel(value) }))
+  }, [items])
+
+  if (failure && items.length === 0) {
     return <div className="mem-pane-error">{memoryFailureText(failure, t)}</div>
   }
 
   return (
     <div className="mem-atomic">
+      {featured && !featuredDismissed ? (
+        <div className="mem-featured-card">
+          <div className="mem-featured-body">
+            <div className="mem-featured-tags">
+              <span className="mem-type-badge" data-type={featured.type}>{t(typeLabel(featured.type))}</span>
+              {featured.roomTitle ? <span className="mem-featured-scope">仅 Room: {featured.roomTitle}</span> : <span className="mem-featured-scope">全局</span>}
+              <span className="mem-featured-flag"><Sparkles aria-hidden="true" />{t('memory:timeline.featured')}</span>
+            </div>
+            <p className="mem-featured-content">{featured.content}</p>
+            <div className="mem-featured-meta">
+              <span>{formatDate(featured.updatedAt, locale)}</span>
+            </div>
+          </div>
+          <span className="mem-featured-visual" aria-hidden="true">
+            <span className="mem-featured-ring" />
+            <TypeIcon type={featured.type} />
+          </span>
+          <button
+            type="button"
+            className="mem-featured-dismiss"
+            aria-label={t('memory:timeline.dismissFeatured')}
+            title={t('memory:timeline.dismissFeatured')}
+            onClick={() => setFeaturedDismissed(true)}
+          >
+            <X aria-hidden="true" />
+          </button>
+        </div>
+      ) : null}
       <div className="mem-toolbar">
         <div className="mem-type-filters" role="tablist" aria-label={t('memory:atomicMemory.memoryType')}>
           {TYPE_FILTERS.map((filter) => (
@@ -293,55 +435,100 @@ export function AtomicMemoryPane({ focusItemId, onOpenDocument, onOpenConversati
               key={filter.value}
               type="button"
               data-active={type === filter.value}
-              onClick={() => { setType(filter.value); setOffset(0); setExpandedId(null) }}
+              onClick={() => { setType(filter.value); setExpandedId(null) }}
             >
               {t(filter.label)}
             </button>
           ))}
+          {extraTypeChips.map((chip) => (
+            <button
+              key={chip.value}
+              type="button"
+              data-active={type === chip.value}
+              onClick={() => { setType(chip.value); setExpandedId(null) }}
+            >
+              {chip.label}
+            </button>
+          ))}
+        </div>
+        <div className="mem-type-filters" role="group" aria-label={t('memory:timeline.timeRange')}>
+          {TIME_RANGES.map((range) => (
+            <button
+              key={range.value}
+              type="button"
+              data-active={timeRange === range.value}
+              onClick={() => setTimeRange(range.value)}
+            >
+              {t(range.label)}
+            </button>
+          ))}
         </div>
         <span className="mem-count">{t('memory:atomicMemory.countItems', { count: total })}</span>
-        <div className="mem-pager">
-          <button type="button" disabled={offset === 0 || loading} onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}>
-            <ChevronLeft aria-hidden="true" strokeWidth={1.8} />
-          </button>
-          <span>{loading ? '…' : total === 0 ? '0' : `${pageStart}–${pageEnd} / ${total}`}</span>
-          <button type="button" disabled={pageEnd >= total || loading} onClick={() => setOffset(offset + PAGE_SIZE)}>
-            <ChevronRight aria-hidden="true" strokeWidth={1.8} />
-          </button>
-        </div>
       </div>
-      {!loading && items.length === 0 ? (
+      {loading && items.length === 0 ? (
+        <p className="mem-loading">{t('memory:memory.loading')}</p>
+      ) : filtered.length === 0 ? (
         <MemoryEmptyView
           title={t('memory:atomicMemory.noAtomicMemoriesYet')}
           hint={t(type === 'all' ? 'memory:atomicMemory.afterSeveralConversationsWithTheAiAssistantMemorycore' : 'memory:atomicMemory.noMemoriesOfThisType')}
         />
       ) : (
-        <ul className="mem-atomic-list">
-          {items.map((item) => (
-      <li key={item.id} className="mem-atomic-item" data-memory-id={item.id}>
-              <button
-                type="button"
-                className="mem-atomic-summary"
-                data-expanded={expandedId === item.id}
-                onClick={() => setExpandedId(expandedId === item.id ? null : item.id)}
-              >
-                <span className="mem-type-badge" data-type={item.type}>{t(typeLabel(item.type))}</span>
-                {item.roomId ? <RoomChipNav roomId={item.roomId} roomTitle={item.roomTitle} stopPropagation /> : null}
-                <span className="mem-atomic-text">{item.content}</span>
-                <span className="mem-time">{formatDate(item.updatedAt, locale)}</span>
-              </button>
-              {expandedId === item.id ? (
-                <AtomicDetail
-                  item={item}
-                  onSaved={() => setReloadTick((tick) => tick + 1)}
-                  onDeleted={() => { setExpandedId(null); setReloadTick((tick) => tick + 1) }}
-                  onOpenDocument={onOpenDocument}
-                  onOpenConversation={onOpenConversation}
-                />
-              ) : null}
-            </li>
+        <div className="mem-timeline">
+          {grouped.map((group) => (
+            <section className="mem-tl-group" key={group.id}>
+              <header className="mem-tl-head">
+                <span className="mem-tl-dot" aria-hidden="true" />
+                <h3>{group.label}</h3>
+                <span className="mem-tl-count">{group.items.length}</span>
+              </header>
+              <ul className="mem-tl-list">
+                {group.items.map((item) => (
+                  <li key={item.id} className="mem-atomic-item mem-tl-item" data-memory-id={item.id}>
+                    <time className="mem-tl-time">{formatDate(item.updatedAt, locale)}</time>
+                    <button
+                      type="button"
+                      className="mem-atomic-summary"
+                      data-expanded={expandedId === item.id}
+                      onClick={() => setExpandedId(expandedId === item.id ? null : item.id)}
+                    >
+                      <TypeIcon type={item.type} />
+                      <span className="mem-tl-card-body">
+                        <span className="mem-tl-card-tags">
+                          <span className="mem-type-badge" data-type={item.type}>{t(typeLabel(item.type))}</span>
+                          {item.roomId ? <RoomChipNav roomId={item.roomId} roomTitle={item.roomTitle} stopPropagation /> : null}
+                        </span>
+                        <span className="mem-atomic-text">{item.content}</span>
+                        <span className="mem-tl-card-meta">
+                          {(item.score ?? 0) > 0 ? <span><Zap aria-hidden="true" />{t('memory:timeline.matches', { score: item.score ?? 0 })}</span> : null}
+                          <span className="mem-card-actions">{t('memory:timeline.detail')}</span>
+                        </span>
+                      </span>
+                    </button>
+                    {expandedId === item.id ? (
+                      <AtomicDetail
+                        item={item}
+                        onSaved={reload}
+                        onDeleted={() => { setExpandedId(null); reload() }}
+                        onOpenDocument={onOpenDocument}
+                        onOpenConversation={onOpenConversation}
+                      />
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            </section>
           ))}
-        </ul>
+          {items.length < total ? (
+            <button
+              type="button"
+              className="mem-load-more"
+              disabled={loadingMore}
+              onClick={() => void load(items.length, false)}
+            >
+              {loadingMore ? '…' : t('memory:timeline.loadMore')}
+            </button>
+          ) : null}
+        </div>
       )}
     </div>
   )

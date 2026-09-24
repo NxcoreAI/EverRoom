@@ -1,0 +1,107 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="460" viewBox="0 0 1200 460" role="img" aria-labelledby="ra-t ra-d">
+  <title id="ra-t">Anatomy of a Context Room</title>
+  <desc id="ra-d">Linked sources route through evidence checks into wiki pages, entities, memory documents, or plain links. The Room profile summarizes goal, status, people, risks, decisions, and timeline. The Agent works with Room-scoped tools, and reviewed changes flow back as new evidence.</desc>
+
+  <defs>
+    <marker id="ra-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#6DD0C5"/>
+    </marker>
+    <marker id="ra-arrow-dim" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#7E99A3"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="460" fill="#12242D"/>
+
+  <text x="60" y="42" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="16" letter-spacing="2" fill="#7E99A3">ANATOMY OF A CONTEXT ROOM</text>
+
+  <!-- sources -->
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="17" fill="#DCE8EC">
+    <g>
+      <rect x="56" y="96" width="180" height="42" rx="10" fill="#1A323D" stroke="#2A4750" stroke-width="1"/>
+      <text x="76" y="123">Files</text>
+    </g>
+    <g>
+      <rect x="56" y="148" width="180" height="42" rx="10" fill="#1A323D" stroke="#2A4750" stroke-width="1"/>
+      <text x="76" y="175">Repos</text>
+    </g>
+    <g>
+      <rect x="56" y="200" width="180" height="42" rx="10" fill="#1A323D" stroke="#2A4750" stroke-width="1"/>
+      <text x="76" y="227">Meetings &amp; audio</text>
+    </g>
+    <g>
+      <rect x="56" y="252" width="180" height="42" rx="10" fill="#1A323D" stroke="#2A4750" stroke-width="1"/>
+      <text x="76" y="279">Feishu · Slack</text>
+    </g>
+    <g>
+      <rect x="56" y="304" width="180" height="42" rx="10" fill="#1A323D" stroke="#2A4750" stroke-width="1"/>
+      <text x="76" y="331">Notion · Gmail</text>
+    </g>
+  </g>
+  <text x="146" y="374" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="15" fill="#7E99A3">stable identity · versions</text>
+
+  <!-- arrows into the room -->
+  <g stroke="#6DD0C5" stroke-width="1.5" fill="none">
+    <path d="M236 117 C 270 117 268 150 294 160" marker-end="url(#ra-arrow)"/>
+    <path d="M236 169 C 264 169 268 170 294 170" marker-end="url(#ra-arrow)"/>
+    <path d="M236 221 C 270 221 268 188 294 180" marker-end="url(#ra-arrow)"/>
+    <path d="M236 273 C 272 273 268 196 294 188" marker-end="url(#ra-arrow)"/>
+    <path d="M236 325 C 276 325 270 206 294 200" marker-end="url(#ra-arrow)"/>
+  </g>
+
+  <!-- context room container -->
+  <g>
+    <rect x="300" y="84" width="580" height="312" rx="20" fill="#0E1C24" stroke="#6DD0C5" stroke-width="1.4"/>
+    <text x="590" y="116" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="19" letter-spacing="2" fill="#6DD0C5">CONTEXT ROOM</text>
+    <text x="590" y="138" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="16" fill="#7E99A3">one bounded workspace</text>
+
+    <rect x="340" y="150" width="500" height="40" rx="10" fill="#1A323D" stroke="#2A4750" stroke-width="1"/>
+    <text x="590" y="175" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="16" fill="#BFD2D8">routing &amp; evidence checks</text>
+
+    <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="17" fill="#DCE8EC">
+      <rect x="324" y="206" width="124" height="38" rx="9" fill="#1A323D"/>
+      <text x="386" y="231" text-anchor="middle">Wiki page</text>
+      <rect x="460" y="206" width="124" height="38" rx="9" fill="#1A323D"/>
+      <text x="522" y="231" text-anchor="middle">Entity</text>
+      <rect x="596" y="206" width="124" height="38" rx="9" fill="#1A323D"/>
+      <text x="658" y="231" text-anchor="middle">Memory</text>
+      <rect x="732" y="206" width="124" height="38" rx="9" fill="#1A323D"/>
+      <text x="794" y="231" text-anchor="middle">Link only</text>
+    </g>
+
+    <line x1="324" y1="268" x2="856" y2="268" stroke="#2A4750" stroke-width="1"/>
+    <text x="590" y="292" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="16" letter-spacing="1" fill="#7E99A3">ROOM PROFILE</text>
+
+    <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="17" fill="#DCE8EC">
+      <rect x="339" y="306" width="158" height="34" rx="8" fill="#1A323D"/>
+      <text x="418" y="329" text-anchor="middle">goal</text>
+      <rect x="511" y="306" width="158" height="34" rx="8" fill="#1A323D"/>
+      <text x="590" y="329" text-anchor="middle">status</text>
+      <rect x="683" y="306" width="158" height="34" rx="8" fill="#1A323D"/>
+      <text x="762" y="329" text-anchor="middle">people</text>
+      <rect x="339" y="348" width="158" height="34" rx="8" fill="#1A323D"/>
+      <text x="418" y="371" text-anchor="middle">risks</text>
+      <rect x="511" y="348" width="158" height="34" rx="8" fill="#1A323D"/>
+      <text x="590" y="371" text-anchor="middle">decisions</text>
+      <rect x="683" y="348" width="158" height="34" rx="8" fill="#1A323D"/>
+      <text x="762" y="371" text-anchor="middle">timeline</text>
+    </g>
+  </g>
+
+  <!-- arrow to agent -->
+  <path d="M884 178 L932 178" stroke="#6DD0C5" stroke-width="1.6" fill="none" marker-end="url(#ra-arrow)"/>
+  <text x="908" y="164" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="16" fill="#BFD2D8">scoped</text>
+
+  <!-- agent -->
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif">
+    <rect x="940" y="120" width="204" height="120" rx="16" fill="#1A323D" stroke="#F5AD71" stroke-width="1.4"/>
+    <text x="1042" y="156" text-anchor="middle" font-size="21" font-weight="700" fill="#F7F7F2">Agent</text>
+    <text x="1042" y="184" text-anchor="middle" font-size="17" fill="#DCE8EC">Room-scoped</text>
+    <text x="1042" y="206" text-anchor="middle" font-size="17" fill="#DCE8EC">tools &amp; docs</text>
+    <text x="1042" y="228" text-anchor="middle" font-size="16" fill="#7E99A3">reviewable · cancellable</text>
+  </g>
+
+  <!-- flow back -->
+  <path d="M1042 240 V 424 H 590 V 404" stroke="#7E99A3" stroke-width="1.4" stroke-dasharray="5 6" fill="none" marker-end="url(#ra-arrow-dim)"/>
+  <text x="816" y="414" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="16" fill="#7E99A3">reviewed changes flow back as new evidence</text>
+</svg>

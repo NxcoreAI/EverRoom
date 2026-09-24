@@ -384,6 +384,7 @@ const RoomFileDto = Type.Object({
   status: Type.String(),
   decidedBy: Type.Union([Type.String(), Type.Null()]),
   confidence: Type.Union([Type.Number(), Type.Null()]),
+  sourceKind: Type.String(),
   uploadedAt: Type.String(),
 });
 

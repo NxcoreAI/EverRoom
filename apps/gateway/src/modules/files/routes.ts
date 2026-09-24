@@ -30,6 +30,7 @@ const CatalogFileDto = Type.Object({
   sourceKind: Type.Union([
     Type.Literal("manual-upload"), Type.Literal("local-folder"),
     Type.Literal("connector"), Type.Literal("migration"), Type.Literal("web-clipper"), Type.Literal("legacy-upload"),
+    Type.Literal("agent-generated"),
   ]),
   sourceLabel: Type.String(),
   relativePath: Type.Union([Type.String(), Type.Null()]),
@@ -268,6 +269,7 @@ export function filesRoutes(
             }),
             400: Type.Object({ error: Type.String() }),
             413: Type.Object({ error: Type.String() }),
+            422: Type.Object({ error: Type.String() }),
           },
         },
       },
@@ -282,14 +284,14 @@ export function filesRoutes(
           sourceKind?: unknown; sourceKey?: unknown; originalName?: unknown;
           provider?: unknown; connectionId?: unknown; localSourceId?: unknown; localItemId?: unknown;
           relativePath?: unknown; sourceUri?: unknown; sourceModifiedAt?: unknown;
-          pipelines?: unknown; roomId?: unknown; clipCaptureId?: unknown;
+          pipelines?: unknown; roomId?: unknown; clipCaptureId?: unknown; fileEntryId?: unknown;
         };
         try {
           metadata = JSON.parse(metadataText) as typeof metadata;
         } catch {
           return reply.code(400).send(errorOf("metadata_invalid"));
         }
-        if (metadata.sourceKind !== "manual-upload" && metadata.sourceKind !== "connector" && metadata.sourceKind !== "migration" && metadata.sourceKind !== "web-clipper") {
+        if (metadata.sourceKind !== "manual-upload" && metadata.sourceKind !== "connector" && metadata.sourceKind !== "migration" && metadata.sourceKind !== "web-clipper" && metadata.sourceKind !== "agent-generated") {
           return reply.code(400).send(errorOf("source_kind_invalid"));
         }
         if (typeof metadata.sourceKey !== "string" || !metadata.sourceKey.trim()) {
@@ -317,11 +319,13 @@ export function filesRoutes(
             ...(parsedModifiedAt && !Number.isNaN(parsedModifiedAt.getTime()) ? { sourceModifiedAt: parsedModifiedAt } : {}),
             ...(pipelines ? { pipelines } : {}),
             ...(text(metadata.roomId) ? { roomId: text(metadata.roomId) } : {}),
+            ...(text(metadata.fileEntryId) ? { fileEntryId: text(metadata.fileEntryId) } : {}),
           });
           return reply.code(202).send(result);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
-          return reply.code(message.includes("MB 上限") ? 413 : 400).send({ error: message });
+          const code = message === "file_entry_not_found" ? 422 : message.includes("MB 上限") ? 413 : 400;
+          return reply.code(code).send({ error: message });
         }
       },
     );

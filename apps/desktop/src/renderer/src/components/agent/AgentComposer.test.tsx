@@ -76,6 +76,9 @@ function renderComposer(overrides: Partial<React.ComponentProps<typeof AgentComp
     resetKey: 0,
     selectedExternalConversation: null,
     localAgents: [codexAgent, claudeAgent],
+    modelPreference: 'smart',
+    loadModelAvailability: vi.fn(async () => false),
+    onSelectModelPreference: vi.fn(),
     value: '',
     onChange: vi.fn(),
     onClearContext: vi.fn(),
@@ -103,6 +106,9 @@ function TypingComposer({ overrides = {} }: { overrides?: Partial<React.Componen
     resetKey: 0,
     selectedExternalConversation: null,
     localAgents: [codexAgent, claudeAgent],
+    modelPreference: 'smart',
+    loadModelAvailability: vi.fn(async () => false),
+    onSelectModelPreference: vi.fn(),
     onChange: setValue,
     onClearContext: vi.fn(),
     onRemoveContext: vi.fn(),
@@ -399,5 +405,72 @@ describe('AgentComposer external conversation command', () => {
       await Promise.resolve()
     })
     expect(renderer.root.findByProps({ 'data-active': 'true' })).toBeTruthy()
+  })
+})
+
+describe('AgentComposer model tier picker', () => {
+  beforeEach(() => {
+    vi.stubGlobal('window', {
+      requestAnimationFrame: (callback: FrameRequestCallback) => { callback(0); return 1 },
+    })
+    vi.stubGlobal('document', { activeElement: null, addEventListener: vi.fn(), removeEventListener: vi.fn() })
+  })
+
+  afterEach(() => {
+    vi.clearAllMocks()
+    vi.unstubAllGlobals()
+  })
+
+  async function openModelPicker(overrides: Partial<React.ComponentProps<typeof AgentComposer>> = {}) {
+    const loadModelAvailability = vi.fn(async () => true)
+    const onSelectModelPreference = vi.fn()
+    const { renderer } = renderComposer({ loadModelAvailability, onSelectModelPreference, ...overrides })
+    const trigger = renderer.root.findByProps({ className: 'agent-model-tier-toggle' })
+    await act(async () => { trigger.props.onClick(); await Promise.resolve() })
+    const options = renderer.root.findByProps({ className: 'agent-composer-popover agent-model-picker' })
+      .findAllByProps({ role: 'option' })
+    return { renderer, trigger, options, onSelectModelPreference, loadModelAvailability }
+  }
+
+  it('shows the current tier on the trigger and lists three tiers when lite is available', async () => {
+    const { trigger, options } = await openModelPicker({ modelPreference: 'smart' })
+
+    expect(trigger.props['data-tier']).toBe('smart')
+    expect(trigger.findAllByType('span').map((span) => String(span.props.children ?? ''))).toEqual(['智能'])
+    expect(options.map((option) => String(option.findByType('strong').children))).toEqual(['智能', '强模型', '轻量'])
+    expect(options[0]?.props['aria-selected']).toBe(true)
+  })
+
+  it('hides the lite tier and skips availability ping until opened when lite is unconfigured', async () => {
+    const { options, renderer } = await openModelPicker({ loadModelAvailability: vi.fn(async () => false) })
+
+    expect(options.map((option) => String(option.findByType('strong').children))).toEqual(['智能', '强模型'])
+    expect(renderer.root.findAll((node) => node.children.includes('轻量模型直答'))).toHaveLength(0)
+  })
+
+  it('reports the selected tier and closes the popover', async () => {
+    const { renderer, onSelectModelPreference } = await openModelPicker()
+
+    const liteOption = renderer.root.findAllByProps({ role: 'option' })
+      .find((option) => String(option.findByType('strong').children) === '轻量')!
+    act(() => liteOption.props.onClick())
+
+    expect(onSelectModelPreference).toHaveBeenCalledWith('lite')
+    expect(renderer.root.findAllByProps({ className: 'agent-composer-popover agent-model-picker' })).toHaveLength(0)
+  })
+
+  it('explains that switching only affects the next conversation when the tier is locked', async () => {
+    const { renderer } = await openModelPicker({ modelPreferenceLocked: true })
+
+    expect(renderer.root.findByProps({ className: 'agent-model-picker-hint' }).children)
+      .toContain('档位在会话开始时锁定，切换将在新对话中生效')
+  })
+
+  it('reflects a non-default tier on the trigger', async () => {
+    const { renderer } = renderComposer({ modelPreference: 'primary' })
+    const trigger = renderer.root.findByProps({ className: 'agent-model-tier-toggle' })
+
+    expect(trigger.props['data-tier']).toBe('primary')
+    expect(trigger.findAllByType('span').map((span) => String(span.props.children ?? ''))).toEqual(['强模型'])
   })
 })

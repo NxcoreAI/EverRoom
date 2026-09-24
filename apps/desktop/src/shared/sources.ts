@@ -81,13 +81,21 @@ import type {
 } from '@nxcore/agent-contract'
 import type { BrowserExtensionMessage, BrowserExtensionStatus } from './browser-extension'
 import type { ObsidianVaultApi } from './obsidian'
+import type { OfficeAgentAskEvent, OfficeAgentFileEvent } from './office'
 import type {
   AgentAuthEnvironmentStatus,
   AgentAuthEventFrame,
   AgentAuthStartInput,
   DesktopAgentAuthChallenge,
 } from './agent-auth'
-import type { LocalAgentDispatchDetail, LocalAgentHistoryImportResult, LocalAgentInstallation, LocalAgentWorkspaceBinding } from './local-agents'
+import type { LocalAgentAcpAdapterInfo, LocalAgentAdapterInstallResult, LocalAgentDispatchDetail, LocalAgentHistoryImportResult, LocalAgentInstallation, LocalAgentWorkspaceBinding } from './local-agents'
+
+export interface LocalAgentAdapterCheck {
+  agentId: string
+  provider: string
+  displayName: string
+  adapter: LocalAgentAcpAdapterInfo
+}
 import type { MigrationApi } from './migrations'
 import type { BrowserExtensionClipperCapture, BrowserExtensionClipperListInput, BrowserExtensionClipperListResult } from './browser-extension'
 import type {
@@ -344,6 +352,9 @@ export interface CreateAsrJobInput {
 export interface CloudAccountStatus {
   authenticated: boolean
   apiBaseUrl: string
+  /** 已保存登录凭据但网络原因无法验证（≠ 未登录）：UI 应提示网络问题并提供
+   *  重试，而不是把用户踹回登录页。null/缺省 = 无此情况。 */
+  authBlocked?: 'network' | null
   user?: { id:string;tenantId:string;email?:string|null;phone?:string|null;name?:string }
   device?: { id:string;name?:string;platform?:string }
   subscription?: {
@@ -830,8 +841,13 @@ export interface NxcoreDesktopApi {
     /** 激活指定 Office 预览实例并隐藏其余实例；null = 全部隐藏（标签仍保留）。 */
     setActiveInstance(id: string | null): Promise<void>
     /** 关闭并销毁一个预览实例（标签关闭时调用）。 */
-    closeInstance(id: string): Promise<void>
+    /** 关闭预览实例；false = 可编辑实例在脏关闭守卫里被取消（保留标签）。 */
+    closeInstance(id: string): Promise<boolean>
     setWorkspaceBounds(bounds: OfficeWorkspaceBounds): void
+    /** Agent 生成 Office 文件的进度/完成事件（完成带 fileId 用于自动打开预览）。 */
+    onAgentFile(listener: (event: OfficeAgentFileEvent) => void): () => void
+    /** slides「AI 修改」弹层转发事件（切到对应 Room 并自动发送注入消息）。 */
+    onAgentAsk(listener: (event: OfficeAgentAskEvent) => void): () => void
   }
   locale: {
     system: string
@@ -1188,6 +1204,8 @@ export interface NxcoreDesktopApi {
   }
   agent: {
     discoverLocalAgents(): Promise<LocalAgentInstallation[]>
+    checkLocalAgentAdapters(agentIds: string[]): Promise<LocalAgentAdapterCheck[]>
+    installLocalAgentAdapter(agentId: string): Promise<LocalAgentAdapterInstallResult>
     importLocalAgentHistory(agentId: string): Promise<LocalAgentHistoryImportResult>
     bindLocalAgentWorkspace(agentId: string, sessionId: string): Promise<LocalAgentWorkspaceBinding | null>
     getStatus(): Promise<AgentStatusSnapshot>
@@ -1377,11 +1395,13 @@ export interface NxcoreDesktopApi {
     /** 在系统文件管理器中定位文件本体。 */
     reveal(fileId: string): Promise<void>
     /** DOCX/XLSX/XLSM/PPTX 用内置 Office 预览标签打开（可多开，instanceId=fileId）；其他格式走操作系统默认查看器。
-     * originalName/contentHash 缺省时（Context Room 等只带 fileId 的入口）由主进程向网关补齐。 */
+     * originalName/contentHash 缺省时（Context Room 等只带 fileId 的入口）由主进程向网关补齐。
+     * options.editable：Room 产物 docx 的编辑预览（保存回填版本链）；缺省只读。 */
     openOriginal(
       fileId: string,
       originalName?: string,
       contentHash?: string,
+      options?: { editable?: boolean; roomId?: string },
     ): Promise<
       | { openedWith: 'office'; instanceId: string; kind: OfficePreviewKind; title: string }
       | { openedWith: 'external' }
