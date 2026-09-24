@@ -304,10 +304,11 @@ export const MemoryPipelineStatus = memo(function MemoryPipelineStatus({
     : delta ? deltaSummary(delta, t) : activeLabel(overview, state)
 
   // 整个状态条：提炼结束后静置 60s（无互动）就整体收起，
-  // 等下一轮记忆提炼开始时再出现。
+  // 等下一轮记忆提炼开始时再出现。暂停态常驻——用户需要随时看到
+  // 「记忆没在工作」这个状态，藏起来会被误以为还在记。
   const [visible, setVisible] = useState(true)
   useEffect(() => {
-    if (state === 'running' || state === 'queued') {
+    if (state === 'running' || state === 'queued' || state === 'paused') {
       setVisible(true)
       return
     }
