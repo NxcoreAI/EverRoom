@@ -338,6 +338,7 @@ export function WalkJourneyCanvas({
     const label = node?.label ?? id;
     const bridgeRoom = station?.bridgeRoom ?? null;
     const deadEnd = state === 'next' && (station as WalkHop | null)?.deadEnd === true;
+    const flip = state === 'next' && (station as WalkHop | null)?.flip === true;
     const inner = (
       <>
         <header>
@@ -349,7 +350,7 @@ export function WalkJourneyCanvas({
         {card ? <p>{card.summary}</p> : null}
       </>
     );
-    const className = `eg-walk is-${state}${deadEnd ? ' is-dead' : ''}${ghost ? ' is-exiting' : ''}`;
+    const className = `eg-walk is-${state}${deadEnd ? ' is-dead' : ''}${flip ? ' is-flip' : ''}${ghost ? ' is-exiting' : ''}`;
     const style = { left: pos.x, top: pos.y, width: size.width, height: size.height };
     if (state === 'current') {
       return (

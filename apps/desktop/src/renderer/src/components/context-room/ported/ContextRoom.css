@@ -14941,6 +14941,10 @@ button.eg-walk.is-dead strong {
   color: var(--cr-tertiary);
 }
 
+button.eg-walk.is-flip {
+  border-style: dashed;
+}
+
 .eg-walk.is-pending {
   display: flex;
   align-items: center;

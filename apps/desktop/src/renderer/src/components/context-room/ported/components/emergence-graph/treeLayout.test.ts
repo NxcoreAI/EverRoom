@@ -5,7 +5,7 @@ import type { WalkHop, WalkStation } from './walkModel';
 
 describe('layoutWalkJourney', () => {
   const station = (nodeRef: string): WalkStation => ({ nodeRef, viaRelation: '', viaLevel: null, bridgeRoom: null });
-  const hop = (nodeRef: string): WalkHop => ({ nodeRef, edgeId: nodeRef, viaRelation: '', viaLevel: 'original', bridgeRoom: null, nodeType: 'fact', deadEnd: false });
+  const hop = (nodeRef: string): WalkHop => ({ nodeRef, edgeId: nodeRef, viaRelation: '', viaLevel: 'original', bridgeRoom: null, nodeType: 'fact', deadEnd: false, flip: false, score: 1 });
 
   it('walks previous stations leftward one column each and hops right', () => {
     const log = [station('a'), station('b'), station('c')];

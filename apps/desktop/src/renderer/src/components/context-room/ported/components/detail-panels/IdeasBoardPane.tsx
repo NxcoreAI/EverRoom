@@ -37,7 +37,7 @@ export function IdeasBoardPane({
   const [wanderStart, setWanderStart] = useState<{ nodeRef: string | null; label: string } | null>(null);
 
   const {
-    wanderResult, wanderLoading, extending, journeyKey, error, wanderFrom, extendWalk,
+    wanderResult, wanderLoading, extending, journeyKey, error, wanderFrom, extendWalk, hasExtended,
   } = useEmergence({ roomId: room.id, focus });
   // 聚焦=写作路线导图，跟着打开的文档走。
   const route = useRouteMindmap({ roomId: room.id, documentId: focus.documentId ?? null });
@@ -159,9 +159,31 @@ export function IdeasBoardPane({
   useEffect(() => {
     if (mode !== 'wander' || !wanderResult || walkLog.length === 0 || extending) return;
     if (candidateHops.length >= 2) return;
-    console.info(`[漫游] 候选不足（${candidateHops.length} 条），从当前驻足续走展开…`);
-    void extendWalk(walkLog[walkLog.length - 1].nodeRef);
-  }, [mode, wanderResult, walkLog, candidateHops, extending, extendWalk]);
+    const cur = walkLog[walkLog.length - 1].nodeRef;
+    // 只有收录回边的文档是结构性死路：续走只会把内容挂回别的枢纽（投影只收
+    // ≥2 跳路径上的节点，叶子的直接邻居进不来），直接视为已试过，省一次注定无效的请求。
+    const visited = new Set(walkLog.map((station) => station.nodeRef));
+    const hopelessDoc = wanderResult.nodes.find((node) => node.id === cur)?.nodeType === 'document'
+      && wanderResult.edges.every((edge) => {
+        const other = edge.from === cur ? edge.to : edge.to === cur ? edge.from : null;
+        return other === null || visited.has(other);
+      });
+    if (!hasExtended(cur) && !hopelessDoc) {
+      console.info(`[漫游] 候选不足（${candidateHops.length} 条），从当前驻足续走展开…`);
+      void extendWalk(cur);
+      return;
+    }
+    // 续走（或判定无望）后仍无候选：停留一拍（读完尽头卡）自动回退一站，步进
+    // 永不真正停住。首站不退——整条旅程走完，亮尽头卡收束。期间任何手动操作
+    // （点候选/回退）都会改 walkLog，本 effect 重跑并清理定时器。
+    if (candidateHops.length === 0 && walkLog.length > 1) {
+      const timer = setTimeout(() => {
+        console.info('[漫游] 续走后仍无候选，自动回退一站');
+        setWalkLog(backWalk(walkLog, walkLog.length - 2));
+      }, 1800);
+      return () => clearTimeout(timer);
+    }
+  }, [mode, wanderResult, walkLog, candidateHops, extending, extendWalk, hasExtended]);
 
   // 漫游诊断日志：每到一站（含续走合并后的重算）打印完整链路与全部候选——
   // ✓=进界面前 3，其余是排序后被截掉的；尽头/桥接均带标记。控制台输出
@@ -181,7 +203,7 @@ export function IdeasBoardPane({
       .map((hop, index) => {
         const picked = candidateHops.some((item) => item.edgeId === hop.edgeId) ? '✓' : '·';
         const bridge = hop.bridgeRoom ? `，桥接:${hop.bridgeRoom}` : '';
-        return `  ${index + 1} ${picked} [${hop.nodeType}] ${labelOf(hop.nodeRef)}（沿「${hop.viaRelation}」${bridge}）${hop.deadEnd ? '【尽头】' : ''}`;
+        return `  ${index + 1} ${picked} [${hop.nodeType}] ${labelOf(hop.nodeRef)}（沿「${hop.viaRelation}」${bridge}）分 ${hop.score.toFixed(2)}${hop.flip ? '⟲翻面' : ''}${hop.deadEnd ? '【尽头】' : ''}`;
       })
       .join('\n');
     console.info(
