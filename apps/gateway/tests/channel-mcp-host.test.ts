@@ -9,6 +9,7 @@ import {
   type ChannelMcpTool,
 } from "../src/modules/agent/channel-mcp-host.js";
 import type { StartRuntimeRunInput } from "@nxcore/agent-runtime";
+import type { McpServer } from "@zed-industries/agent-client-protocol";
 
 function fakeRegistry(): DocumentCapabilityRegistry {
   return {
@@ -53,6 +54,13 @@ function tokenFrom(url: string): string {
   return url.split("/").pop() ?? "";
 }
 
+function issuedUrl(host: ChannelMcpHost, input: StartRuntimeRunInput): string {
+  const [entry]: McpServer[] = host.mcpServersForRun(input);
+  // Stdio 变体没有 url 字段（也无 type 判别），用 in 收窄到 http/sse。
+  if (!entry || !("url" in entry)) throw new Error("expected http mcp server entry");
+  return entry.url;
+}
+
 let nextId = 0;
 
 async function rpc(host: ChannelMcpHost, token: string, method: string, params: Record<string, unknown> = {}) {
@@ -64,25 +72,23 @@ describe("ChannelMcpHost", () => {
   it("reuses the token for the same session and room, rotates on room change", () => {
     const host = new ChannelMcpHost(fakeRegistry(), "http://127.0.0.1:7654");
 
-    const first = host.mcpServersForRun(runInput("s1", "room-a"))[0];
-    const again = host.mcpServersForRun(runInput("s1", "room-a"))[0];
-    expect(again.url).toBe(first.url);
-    expect(first.type).toBe("http");
-    expect(first.name).toBe("everroom");
-    expect(first.url).toBe(`http://127.0.0.1:7654/v1/mcp/everroom/${tokenFrom(first.url)}`);
+    const first = issuedUrl(host, runInput("s1", "room-a"));
+    const again = issuedUrl(host, runInput("s1", "room-a"));
+    expect(again).toBe(first);
+    expect(first).toBe(`http://127.0.0.1:7654/v1/mcp/everroom/${tokenFrom(first)}`);
 
-    const rotated = host.mcpServersForRun(runInput("s1", "room-b"))[0];
-    expect(rotated.url).not.toBe(first.url);
-    expect(tokenFrom(rotated.url)).toMatch(/^[0-9a-f]{32}$/);
+    const rotated = issuedUrl(host, runInput("s1", "room-b"));
+    expect(rotated).not.toBe(first);
+    expect(tokenFrom(rotated)).toMatch(/^[0-9a-f]{32}$/);
 
     // 旧 token 在 TTL 内仍可解析（claude 适配器 loadSession 不更新 mcpServers）。
-    expect(() => host.exchangeTrusted(tokenFrom(first.url), { jsonrpc: "2.0", method: "initialize", params: {} }))
+    expect(() => host.exchangeTrusted(tokenFrom(first), { jsonrpc: "2.0", method: "initialize", params: {} }))
       .not.toThrow();
   });
 
   it("serves document capabilities and knowledge tools over the exchange", async () => {
     const host = new ChannelMcpHost(fakeRegistry(), "http://127.0.0.1:7654", fakeKnowledgeTools());
-    const token = tokenFrom(host.mcpServersForRun(runInput("s1", "room-a"))[0].url);
+    const token = tokenFrom(issuedUrl(host, runInput("s1", "room-a")));
 
     const init = await rpc(host, token, "initialize", {
       protocolVersion: "2025-06-18",
@@ -113,7 +119,7 @@ describe("ChannelMcpHost", () => {
 
   it("reports unknown tools as tool errors instead of transport errors", async () => {
     const host = new ChannelMcpHost(fakeRegistry(), "http://127.0.0.1:7654");
-    const token = tokenFrom(host.mcpServersForRun(runInput("s2", null))[0].url);
+    const token = tokenFrom(issuedUrl(host, runInput("s2", null)));
     await rpc(host, token, "initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "c", version: "1" } });
 
     const response = await rpc(host, token, "tools/call", { name: "nope", arguments: {} });
@@ -126,7 +132,7 @@ describe("ChannelMcpHost", () => {
     await expect(host.exchangeTrusted("deadbeef".repeat(4), { jsonrpc: "2.0", method: "initialize", params: {} }))
       .rejects.toThrow("MCP_SESSION_INVALID");
 
-    const token = tokenFrom(host.mcpServersForRun(runInput("s3", null))[0].url);
+    const token = tokenFrom(issuedUrl(host, runInput("s3", null)));
     await expect(rpc(host, token, "tools/list"))
       .rejects.toThrow("MCP_SESSION_INVALID");
     await host.close();
@@ -134,7 +140,7 @@ describe("ChannelMcpHost", () => {
 
   it("revokes tokens on agent session deletion", async () => {
     const host = new ChannelMcpHost(fakeRegistry(), "http://127.0.0.1:7654");
-    const token = tokenFrom(host.mcpServersForRun(runInput("s4", null))[0].url);
+    const token = tokenFrom(issuedUrl(host, runInput("s4", null)));
     await rpc(host, token, "initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "c", version: "1" } });
 
     await host.revokeAgentSession("s4");
@@ -148,6 +154,7 @@ describe("channel tool adapters", () => {
     const calls: Array<{ input: StartRuntimeRunInput; args: Record<string, unknown> }> = [];
     const tools = channelToolsFromRuntimeTools([{
       name: "room_context_get",
+      label: "房间上下文",
       description: "房间上下文",
       parameters: { type: "object", properties: {} },
       execute: async (input, args) => {
@@ -166,6 +173,7 @@ describe("channel tool adapters", () => {
   it("maps pi knowledge tools, joining text blocks", async () => {
     const tools = channelToolsFromPiTools([{
       name: "wiki_search",
+      label: "知识库检索",
       description: "检索知识库",
       parameters: { type: "object", properties: { query: { type: "string" } } },
       execute: (async (_id: string, params: unknown) => ({
