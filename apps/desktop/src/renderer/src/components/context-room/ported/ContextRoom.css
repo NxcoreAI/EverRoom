@@ -11706,16 +11706,18 @@
 /* 目录导读分层（置顶概览 / 分桶目录 / 折叠的系统文件）+ 目录/页数徽标 */
 .wiki-tree-sections {
   display: flex;
-  min-height: 0;
   flex-direction: column;
   gap: 10px;
+  /* 分组不可压：min-height:0 + 默认 shrink 让大树把概览组压扁、
+   * 行内容叠到下一组头上（411 页实证）；滚动交给外层 wrap/侧栏。 */
+  flex-shrink: 0;
 }
 
 .wiki-tree-section {
   display: flex;
-  min-height: 0;
   flex-direction: column;
   gap: 2px;
+  flex-shrink: 0;
 }
 
 .wiki-tree-section-header {
