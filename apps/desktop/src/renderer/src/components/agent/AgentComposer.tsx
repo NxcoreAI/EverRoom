@@ -139,17 +139,17 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   contextUsage?: AgentContextUsage | null
   /** 上下文压缩进行中（渲染动效提示）。 */
   contextCompacting?: boolean
-  /** 会话已创建（档位/渠道中途切换需要回写会话）。 */
+  /** 会话已创建 → 档位/渠道锁定在会话上，切换只影响下一个新会话。 */
   modelPreferenceLocked?: boolean
-  /** 打开选择器时拉取最新 lite 可用性（设置页保存后无需重启）。 */
-  loadModelAvailability: () => Promise<boolean>
+  /** 打开选择器时拉取最新档位可用性（lite 未配置隐藏；primary 未配置点击时提示去设置）。 */
+  loadModelAvailability: () => Promise<{ lite: boolean; primary: boolean }>
   onSelectModelPreference: (tier: AgentModelPreference) => void
   /** 当前生效渠道：会话已存在＝会话锁定渠道，否则＝全局默认（null=档位模式）。 */
   channelAgentId?: string | null
   /** 选择本机 CLI Agent 渠道（整个新会话由其连续执行）；null=回到档位模式。 */
   onSelectChannelAgent?: (agentId: string | null) => void
-  /** 会话已存在时把切换立即回写到当前会话（下一轮 startRun 走新目标）。 */
-  onSwitchSessionTarget?: (input: { channelAgentId?: string | null; modelPreference?: AgentModelPreference }) => void
+  /** 强模型未配置时提示去设置（跳应用设置页）。 */
+  onOpenSettings?: () => void
   onChange: (value: string) => void
   onSelectExternalConversation: (conversation: ExternalConversationSummary | null) => void
   onClearContext: () => void
@@ -180,7 +180,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   onSelectModelPreference,
   channelAgentId = null,
   onSelectChannelAgent,
-  onSwitchSessionTarget,
+  onOpenSettings,
   value,
   onChange,
   onClearContext,
@@ -216,6 +216,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   const [modelPickerOpen, setModelPickerOpen] = useState(false)
   const [contextPanelOpen, setContextPanelOpen] = useState(false)
   const [liteAvailable, setLiteAvailable] = useState(false)
+  const [primaryAvailable, setPrimaryAvailable] = useState(true)
   const [caret, setCaret] = useState(0)
   const overlayRef = useRef<HTMLDivElement>(null)
   const mentionHints = useRef(new Map<string, MentionedItem>())
@@ -493,25 +494,38 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
     setExternalPickerOpen(false)
     setAgentPickerOpen(false)
     setModelPickerOpen(true)
-    // 每次打开时刷新：设置页保存轻量模型后无需重启即可出现 lite 档。
-    loadModelAvailability().then(setLiteAvailable, () => setLiteAvailable(false))
+    // 每次打开时刷新：设置页保存后无需重启即可生效（lite 出现/强模型可点）。
+    loadModelAvailability().then(
+      (availability) => {
+        setLiteAvailable(availability.lite)
+        setPrimaryAvailable(availability.primary)
+      },
+      () => setLiteAvailable(false),
+    )
   }
   const chooseModelTier = (tier: AgentModelPreference) => {
+    // 强模型未配置：不切档，直接提示去设置配置。
+    if (tier === 'primary' && !primaryAvailable) {
+      showToast({
+        title: t('surface:agentComposer.primaryTierUnavailable'),
+        message: t('surface:agentComposer.primaryTierUnavailableHint'),
+        ...(onOpenSettings ? {
+          actionLabel: t('surface:agentComposer.goConfigure'),
+          onAction: onOpenSettings,
+        } : {}),
+      })
+      setModelPickerOpen(false)
+      window.requestAnimationFrame(() => textareaRef.current?.focus())
+      return
+    }
     // 渠道生效时点档位＝退出渠道，回到档位模式。
     if (channelAgentId) onSelectChannelAgent?.(null)
     onSelectModelPreference(tier)
-    // 会话已存在：切换立即回写当前会话（下一轮就走该档位），否则只改全局默认。
-    if (modelPreferenceLocked && (channelAgentId || modelPreference !== tier)) {
-      onSwitchSessionTarget?.({ channelAgentId: null, modelPreference: tier })
-    }
     setModelPickerOpen(false)
     window.requestAnimationFrame(() => textareaRef.current?.focus())
   }
   const chooseChannelAgent = (agentId: string) => {
     onSelectChannelAgent?.(agentId)
-    if (modelPreferenceLocked && channelAgentId !== agentId) {
-      onSwitchSessionTarget?.({ channelAgentId: agentId })
-    }
     setModelPickerOpen(false)
     window.requestAnimationFrame(() => textareaRef.current?.focus())
   }
@@ -985,6 +999,9 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
                 </button>
               ))}
             </div>
+          ) : null}
+          {modelPreferenceLocked ? (
+            <footer className="agent-model-picker-hint">{t('surface:agentComposer.modelPickerApplyToNext')}</footer>
           ) : null}
         </section>
       ) : null}

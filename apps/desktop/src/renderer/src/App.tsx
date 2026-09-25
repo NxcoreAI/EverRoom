@@ -1060,6 +1060,7 @@ export function App() {
           askRequest={agentAskRequest}
           onAskConsumed={(key) => setAgentAskRequest((current) => current?.key === key ? null : current)}
           onNavigate={navigateFromAgent}
+          onNavigatePage={navigate}
           onRestoreRoomTab={restoreContextRoomTab}
           onNavigationConsumed={(key) => setAgentNavigationRequest((current) => current?.key === key ? null : current)}
           onOpenSessionLink={openAgentSessionLink}

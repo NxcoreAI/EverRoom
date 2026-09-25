@@ -110,7 +110,6 @@ function persistChannelAgentId(agentId: string | null): void {
 // pre-v2 世代用复数 key 存 per-page map（keyBase 不同，框架走不到），
 // 认领时框架外兜底一次：取任一会话 id 作为当前选择。
 const LEGACY_SESSION_STORAGE_KEY = 'nxcore-ce:agent-sessions:v1'
-const defaultSessionCreations = new Map<string, Promise<AgentSession>>()
 
 function isUserSession(session: AgentSession): boolean {
   return session.pageLabel !== 'Remote Agent'
@@ -655,23 +654,10 @@ export function useAgentSession(
             ?? userSessions[0]
           if (selected) await selectSession(selected)
           else if (alive) {
-            const scope = sessionScope()
+            // 无历史会话：停在草稿态（不建会话），首条消息发出时才创建——
+            // 避免空会话把档位/渠道在用户尚未选择时就锁死。
             setDisplayTitle(t('surface:useAgentSession.newConversation'))
-            let creation = defaultSessionCreations.get(scope)
-            if (!creation) {
-              creation = api.createSession({ pageLabel: 'Agent', roomId: null })
-              defaultSessionCreations.set(scope, creation)
-              const clear = () => {
-                if (defaultSessionCreations.get(scope) === creation) {
-                  defaultSessionCreations.delete(scope)
-                }
-              }
-              void creation.then(clear, clear)
-            }
-            const created = await creation
-            if (!alive || scope !== activeScopeRef.current) return
-            setSessions([created])
-            await selectSession(created)
+            setScopeReady(true)
           }
         })
         .catch((requestError) => {
@@ -755,6 +741,38 @@ export function useAgentSession(
     }
   }
 
+  /** 新建对话＝回到草稿态：不建会话，首条消息发出时（ensureSession）才用当前档位/渠道默认创建。 */
+  const startNewConversation = useCallback(async (): Promise<void> => {
+    if (activeRunId) throw new Error(t('surface:useAgentSession.stopBeforeCreating'))
+    await api?.unsubscribe()
+    setSessionId(null)
+    sessionIdRef.current = null
+    storeSession(null)
+    setCurrentSession(null)
+    setSessionLinks([])
+    channelAgentRef.current = null
+    setMessages([])
+    setToolCallsByRun({})
+    setActivityByRun({})
+    setRunStartedAtByRun({})
+    setRunCompletedAtByRun({})
+    setReasoningByRun({})
+    setAgentIdByRun({})
+    setMemoryScopeByRun({})
+    setPendingApprovals([])
+    setResolvingApprovalIds(new Set())
+    setContextUsage(null)
+    setContextCompacting(false)
+    setActiveRunId(null)
+    setDisplayTitle(t('surface:useAgentSession.newConversation'))
+    sequenceByRun.current.clear()
+    eventsByRun.current.clear()
+    userPromptByRun.current.clear()
+    assistantContentByRun.current.clear()
+    sessionRunIds.current.clear()
+    setError(null)
+  }, [activeRunId, api, t])
+
   const ensureSession = async (pendingMessages: DisplayAgentMessage[]): Promise<string> => {
     if (sessionIdRef.current) return sessionIdRef.current
     return (await createSession(pendingMessages)).id
@@ -779,24 +797,6 @@ export function useAgentSession(
       throw requestError
     }
   }
-
-  // 会话已存在时中途切换目标：立即回写网关（下一轮 startRun 走新 agent），本地状态同步刷新。
-  const switchSessionTarget = useCallback(async (
-    input: { channelAgentId?: string | null; modelPreference?: AgentModelPreference },
-  ): Promise<void> => {
-    const targetId = sessionIdRef.current
-    if (!api || !targetId) return
-    try {
-      const updated = await api.updateSession(targetId, input)
-      setSessions((current) => current.map((session) => session.id === updated.id ? updated : session))
-      setCurrentSession((current) => current?.id === updated.id ? updated : current)
-      if (updated.id === sessionIdRef.current) {
-        channelAgentRef.current = updated.channelAgentId ?? null
-      }
-    } catch (requestError) {
-      setError(requestErrorMessage(requestError, t('surface:useAgentSession.switchTargetFailed')))
-    }
-  }, [api, t])
 
   // 会话首轮完成后自动起标题：网关兜底标题 = run.accepted 的 prompt 截 48 字
   // （与网关 service 同源），只有权威标题仍等于该兜底值（用户未改名）才替换。
@@ -1150,7 +1150,7 @@ export function useAgentSession(
     runStartedAtByRun,
     scopeReady,
     renameSession,
-    switchSessionTarget,
+    startNewConversation,
     resolveApproval,
     resolvingApprovalIds,
     markSessionLinkReturned,

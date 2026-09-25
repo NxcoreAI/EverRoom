@@ -268,16 +268,7 @@ export function agentRoutes(
         schema: {
           tags: ["agent"],
           params: SessionParams,
-          body: Type.Object({
-            title: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
-            // 中途切换会话目标：渠道 id 或 null（退出渠道）＋档位。
-            channelAgentId: Type.Optional(Type.Union([Type.Null(), Type.String({ minLength: 1, maxLength: 500 })])),
-            modelPreference: Type.Optional(Type.Union([
-              Type.Literal("smart"),
-              Type.Literal("primary"),
-              Type.Literal("lite"),
-            ])),
-          }),
+          body: Type.Object({ title: Type.String({ minLength: 1, maxLength: 120 }) }),
         },
       },
       async (request, reply) => service.updateSession(request.params.sessionId, request.body)

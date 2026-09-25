@@ -56,6 +56,7 @@ export function AgentPanel({
   sessionRouteRequest,
   askRequest,
   onNavigate,
+  onNavigatePage,
   onRestoreRoomTab,
   onNavigationConsumed,
   onOpenSessionLink,
@@ -77,6 +78,8 @@ export function AgentPanel({
   sessionRouteRequest: AgentSessionRouteRequest | null
   askRequest: { key: string; roomId: string; message: string } | null
   onNavigate: (request: AgentNavigationRequest) => void
+  /** 应用级页面跳转（与 Sidebar 同源）；用于「去设置」类提示动作。 */
+  onNavigatePage?: (page: PageId) => void
   onRestoreRoomTab: (target: AgentNavigationRequest['target']) => void
   onNavigationConsumed: (key: string) => void
   onOpenSessionLink: (link: AgentSessionLink, destination: 'source' | 'target') => void
@@ -577,15 +580,23 @@ export function AgentPanel({
     }
   }
 
-  // 轻量档可用性：lite 配置了 model 才算可用（网关约定：model 空＝未配置＝档位隐藏）。
-  // 每次打开选择器时由 composer 拉取，设置页保存后无需重启。
-  const loadLiteModelAvailability = useCallback(async (): Promise<boolean> => {
+  // 档位可用性：lite 配置了 model 才显示档位；primary 缺连接要素时仍显示但点击提示去设置
+  // （网关约定：model 空＝未配置＝档位隐藏；primary 空＝强模型档不可用）。
+  const loadTierAvailability = useCallback(async (): Promise<{ lite: boolean; primary: boolean }> => {
     try {
       const snapshot = await window.nxcore?.runtimeConfig?.get()
-      const lite = (snapshot?.config as { lite?: { model?: unknown } } | undefined)?.lite
-      return typeof lite?.model === 'string' && lite.model.trim() !== ''
+      const config = snapshot?.config as {
+        lite?: { model?: unknown }
+        primary?: { provider?: unknown; model?: unknown; baseUrl?: unknown }
+      } | undefined
+      const lite = typeof config?.lite?.model === 'string' && config.lite.model.trim() !== ''
+      const primary = ['provider', 'model', 'baseUrl'].every((key) => {
+        const value = config?.primary?.[key as keyof NonNullable<typeof config.primary>]
+        return typeof value === 'string' && value.trim() !== ''
+      })
+      return { lite, primary }
     } catch {
-      return false
+      return { lite: false, primary: false }
     }
   }, [])
 
@@ -616,11 +627,11 @@ export function AgentPanel({
       modelPreferenceLocked={modelTierLocked}
       contextUsage={session.contextUsage}
       contextCompacting={session.contextCompacting}
-      loadModelAvailability={loadLiteModelAvailability}
+      loadModelAvailability={loadTierAvailability}
       onSelectModelPreference={session.setModelPreferenceDefault}
       channelAgentId={effectiveChannelAgentId}
       onSelectChannelAgent={session.setChannelAgentIdDefault}
-      onSwitchSessionTarget={session.switchSessionTarget}
+      onOpenSettings={onNavigatePage ? () => onNavigatePage('settings') : undefined}
       value={draft}
       active={Boolean(session.activeRunId)}
       loading={session.loading || submitting}
@@ -648,7 +659,8 @@ export function AgentPanel({
             setDraft('')
             if (roomCitations.length) onClearRoomCitations()
             setComposerResetKey((current) => current + 1)
-            return session.createSession()
+            // 懒创建：只回到草稿态，首条消息发出时才用当前档位/渠道默认建会话。
+            return session.startNewConversation()
           }}
           onDelete={session.deleteSession}
           onRename={session.renameSession}
