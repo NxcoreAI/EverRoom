@@ -2812,7 +2812,7 @@
 }
 
 .context-room-history-diff-content {
-  width: min(100%, 720px);
+  width: min(100%, var(--cr-doc-column, 720px));
   margin: 0 auto;
   padding: 10px 18px 28px;
   min-height: 0;
@@ -2820,7 +2820,7 @@
 }
 
 .context-room-history-diff-title-block {
-  width: min(100%, 720px);
+  width: min(100%, var(--cr-doc-column, 720px));
   margin: 0 auto;
   padding: 36px 18px 0;
 }
@@ -6578,6 +6578,8 @@
   --cr-blue: #3d6ff6;
   --cr-blue-hover: #2f5de0;
   --cr-blue-soft: rgba(61, 111, 246, 0.1);
+  --cr-success: #16a34a;
+  --cr-success-soft: #ecfdf3;
   --cr-danger: #c83232;
   --cr-danger-soft: #fef2f2;
   position: fixed;
@@ -12068,6 +12070,69 @@
 .context-room-rec-detail .context-room-creation-progress {
   padding: 10px 12px;
   border-radius: 8px;
+}
+
+/* 创建过程时间线（详情弹框）：六阶段步骤条，入场渐次浮现。 */
+.context-room-promo-run {
+  animation: context-room-promo-enter 0.28s ease both;
+}
+
+.context-room-promo-steps {
+  padding: 12px 14px;
+}
+
+.context-room-promo-steps li {
+  animation: context-room-promo-step-in 0.24s ease both;
+}
+
+.context-room-promo-steps li:nth-child(2) { animation-delay: 0.03s; }
+.context-room-promo-steps li:nth-child(3) { animation-delay: 0.06s; }
+.context-room-promo-steps li:nth-child(4) { animation-delay: 0.09s; }
+.context-room-promo-steps li:nth-child(5) { animation-delay: 0.12s; }
+.context-room-promo-steps li:nth-child(6) { animation-delay: 0.15s; }
+
+.context-room-promo-steps li[data-state='active'] b {
+  color: var(--cr-blue);
+}
+
+@keyframes context-room-promo-enter {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes context-room-promo-step-in {
+  from { opacity: 0; transform: translateX(-4px); }
+  to { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .context-room-promo-run,
+  .context-room-promo-steps li {
+    animation: none;
+  }
+}
+
+/* 创建完成闪光：全勾转成功绿，标签绿底 + 对勾。 */
+.context-room-rec-detail-flash .context-room-promo-steps li[data-state='done'] .context-room-creation-step-icon {
+  border-color: var(--cr-success);
+  background: var(--cr-success);
+}
+
+.context-room-rec-detail-flash .context-room-promo-steps li[data-state='done']::before {
+  background: var(--cr-success);
+}
+
+.context-room-rec-detail-flash .context-room-knowledge-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--cr-success-soft);
+  color: var(--cr-success);
+}
+
+.context-room-rec-detail-flash .context-room-knowledge-tag svg {
+  width: 12px;
+  height: 12px;
 }
 
 .context-room-rec-detail-actions {
