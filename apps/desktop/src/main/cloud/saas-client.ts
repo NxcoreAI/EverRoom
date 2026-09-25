@@ -504,6 +504,8 @@ export class SaasClient {
   private subscriptionRetryAfter = 0
   private subscriptionPromise: Promise<void> | null = null
   private initializePromise: Promise<void> | null = null
+  /** 未登录态日志去重：轮询每 5s 重跑 restoreSession，无 token 时只打一次。 */
+  private noSessionLogged = false
   /** 启动恢复因网络失败（token 保留）时置 'network'，成功/真失效即清除。 */
   private authBlockedReason: 'network' | null = null
   /** 单飞 refresh：并发 401（agent/status 心跳、session/lease、订阅同时命中
@@ -1447,7 +1449,10 @@ export class SaasClient {
   private async restoreSession(): Promise<void> {
     const refreshToken = await this.credentials.getSecureText(REFRESH_TOKEN_KEY)
     if (!refreshToken) {
-      console.info('[saas-auth] no stored session (fresh install or signed out)')
+      if (!this.noSessionLogged) {
+        this.noSessionLogged = true
+        console.info('[saas-auth] no stored session (fresh install or signed out)')
+      }
       return
     }
     this.authBlockedReason = null
@@ -1460,12 +1465,15 @@ export class SaasClient {
         await this.refreshExclusive(refreshToken)
         await this.loadSubscription()
         console.info(`[saas-auth] session restored (user=${this.account?.user?.id ?? '?'}, attempts=${String(attempt)})`)
+        this.noSessionLogged = false
         return
       } catch (error) {
         if (error instanceof SaasRequestError) {
           if (error.status === 401 || error.status === 403) {
             // 多实例/热重启竞态：另一进程可能刚轮换过 token 并落盘。删token前
-            // 重读一次磁盘，若已变化用新值再试一轮，而不是直接判死。
+            // 强制重读磁盘（getSecureText 平时只读 initialize 的内存快照，看
+            // 不到外部进程的写入），若已变化用新值再试一轮，而不是直接判死。
+            await this.credentials.reload()
             const latestToken = await this.credentials.getSecureText(REFRESH_TOKEN_KEY)
             if (latestToken && latestToken !== refreshToken) {
               return this.restoreSession()
