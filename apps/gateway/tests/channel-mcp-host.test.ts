@@ -69,6 +69,16 @@ async function rpc(host: ChannelMcpHost, token: string, method: string, params: 
 }
 
 describe("ChannelMcpHost", () => {
+  it("resolves a lazy baseUrl at issue time so a --port 0 gateway injects the real bound port", () => {
+    let boundPort = 0;
+    const host = new ChannelMcpHost(fakeRegistry(), () => `http://127.0.0.1:${boundPort || 0}`);
+
+    // listen 前（端口未知）与 listen 后（拿到随机端口）都要在签发时取当下值。
+    expect(issuedUrl(host, runInput("s1", null))).toMatch(/^http:\/\/127\.0\.0\.1:0\/v1\/mcp\/everroom\//);
+    boundPort = 53399;
+    expect(issuedUrl(host, runInput("s1", null))).toMatch(/^http:\/\/127\.0\.0\.1:53399\/v1\/mcp\/everroom\//);
+  });
+
   it("reuses the token for the same session and room, rotates on room change", () => {
     const host = new ChannelMcpHost(fakeRegistry(), "http://127.0.0.1:7654");
 

@@ -926,6 +926,15 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   // token-in-path 鉴权，文档能力复用 documentMcpHost 的全量 context_room_* 读写，
   // 检索类工具 = Room 记忆/对话/上下文工具 + wiki 知识库工具。
   const gatewayLoopbackHost = ["0.0.0.0", "::"].includes(config.host) ? "127.0.0.1" : config.host;
+  // 渠道 MCP 注入 URL 必须用 listen 后的实际绑定地址：桌面 main 以 --port 0 拉起网关，
+  // 构造期的 config.port 是 0，注入 http://127.0.0.1:0 会让 CLI 连接失败并静默丢弃该 MCP 服务器。
+  const channelMcpBaseUrl = (): string => {
+    const bound = app.server?.address();
+    if (bound && typeof bound === "object" && bound.port > 0) {
+      return `http://${["0.0.0.0", "::"].includes(bound.address) ? "127.0.0.1" : bound.address}:${bound.port}`;
+    }
+    return `http://${gatewayLoopbackHost}:${config.port}`;
+  };
   // config.knowledge 是网关侧 KnowledgeGatewayConfig（无 searchLimit/wikiId），
   // 这里显式映射成 pi 侧 KnowledgeRuntimeConfig；与 config.ts 组装 pi runtime 的口径一致。
   const channelKnowledgeClient = config.knowledge
@@ -943,7 +952,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   });
   const channelMcpHost = new ChannelMcpHost(
     documentMcpHost.capabilities,
-    `http://${gatewayLoopbackHost}:${config.port}`,
+    channelMcpBaseUrl,
     (scope) => {
       if (!channelKnowledgeClient) return channelToolsFromRuntimeTools(channelRoomTools, scope);
       // Room 级 wiki：会话锁定 Room 时解析该 Room 的 wiki；未命中回退配置默认集。

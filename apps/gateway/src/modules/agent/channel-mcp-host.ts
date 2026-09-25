@@ -158,7 +158,7 @@ export class ChannelMcpHost {
 
   constructor(
     private readonly capabilities: DocumentCapabilityRegistry,
-    private readonly baseUrl: string,
+    private readonly baseUrl: string | (() => string),
     private readonly knowledgeToolFactory?: ChannelKnowledgeToolsFactory,
     private readonly log?: (
       level: "info" | "warn" | "error",
@@ -180,9 +180,14 @@ export class ChannelMcpHost {
     return [{
       type: "http",
       name: "everroom",
-      url: `${this.baseUrl.replace(/\/+$/, "")}/v1/mcp/everroom/${record.token}`,
+      url: `${this.resolveBaseUrl().replace(/\/+$/, "")}/v1/mcp/everroom/${record.token}`,
       headers: [],
     }];
+  }
+
+  /** baseUrl 惰性解析：--port 0 随机端口只有 listen 后才可知，构造时拿到的 config.port 可能是 0。 */
+  private resolveBaseUrl(): string {
+    return typeof this.baseUrl === "function" ? this.baseUrl() : this.baseUrl;
   }
 
   async exchangeTrusted(
