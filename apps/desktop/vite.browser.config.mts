@@ -233,13 +233,23 @@ const base = {
     importBatchStatus: async () => tickBatch(),
     cancelImportBatch: async () => { if (batchState) { batchState.status = 'cancelled'; batchState.completedAt = new Date().toISOString() } return batchState },
   },
-  knowledge: { listRooms: async () => ({ items: [
+  // knowledge 的 wiki 数据面：历史上与本命名空间拆成两个字面量键（后者会覆盖前者），
+  // 改名挂载，构建 nxcore 前 Object.assign 合并回 knowledge。
+  knowledgeWikiMocks: { listRooms: async () => ({ items: [
     { id: 'room-1', title: '产品调研', kind: 'project', aliases: ['research'], description: null },
     { id: 'room-2', title: '设计系统', kind: 'topic', aliases: [], description: null },
     { id: 'room-3', title: '连接器', kind: 'project', aliases: ['connector', 'feishu'], description: null },
     { id: 'room-4', title: '周会', kind: 'meeting', aliases: [], description: null },
     { id: 'room-5', title: '营销', kind: 'topic', aliases: [], description: null },
   ] }),
+    // 顶层 Wiki 页（room↔wiki 映射）：含机名 Room（auto-*，靠摘要首行代称）与归档组
+    listWikis: async () => ({ items: [
+      { roomId: 'room-1', knowledgeId: 'ks-1', status: 'active', createdAt: '2026-08-01T00:00:00.000Z', pageCount: 9, summary: '连接器统一调研：三条链路并存，目标架构以统一执行面为先，映射表待收口。', updatedAt: '2026-09-18T08:30:00.000Z' },
+      { roomId: 'room-3', knowledgeId: 'ks-3', status: 'active', createdAt: '2026-08-12T00:00:00.000Z', pageCount: 5, summary: '连接器身份合并与格式映射自愈方案。', updatedAt: '2026-09-16T10:00:00.000Z' },
+      { roomId: 'room-2', knowledgeId: 'ks-2', status: 'ready', createdAt: '2026-07-20T00:00:00.000Z', pageCount: 4, summary: null, updatedAt: '2026-09-10T09:00:00.000Z' },
+      { roomId: 'auto-9f3c21', knowledgeId: 'ks-auto', status: 'active', createdAt: '2026-09-14T00:00:00.000Z', pageCount: 2, summary: 'Notion 导入批处理的设计取舍记录。', updatedAt: '2026-09-15T04:00:00.000Z' },
+      { roomId: 'room-4', knowledgeId: 'ks-4', status: 'archived', createdAt: '2026-06-01T00:00:00.000Z', pageCount: 3, summary: null, updatedAt: '2026-08-30T02:00:00.000Z' },
+    ] }),
     // mock-room（工作板块验证）数据面：md 供目录边栏验证，pdf 走外部打开占位卡。
     listRoomFiles: async () => ({ items: [
       { id: 'kfile-md', originalName: '调研笔记：连接器统一.md', bytes: 9216, title: null, status: 'confirmed', decidedBy: null, confidence: null, uploadedAt: new Date(Date.now() - 36 * 3600_000).toISOString() },
@@ -267,24 +277,45 @@ const base = {
     listWikiPages: async () => {
       const w = window.__mockWiki = window.__mockWiki || {}
       const status = w.status || 'ready'
-      if (status === 'ready') return { status, items: [
-        { id: 'wp-1', title: '连接器统一·现状', type: 'page', path: '连接器统一/现状', description: null },
-        { id: 'wp-2', title: '连接器统一·目标架构', type: 'page', path: '连接器统一/目标架构', description: null },
-        { id: 'wp-3', title: '设计规范·动效篇', type: 'page', path: '设计规范/动效', description: null },
-      ], pageCount: 3,
+      if (status === 'ready') return { status, pageCount: 9,
         summary: '连接器统一进入映射表收敛阶段，Gmail/日历双链路已并入统一格式层。目标架构以 provider 命名规范为先，映射表三处同值待收口；设计规范动效篇已定稿。',
-        updatedAt: '2026-09-18T08:30:00.000Z' }
+        updatedAt: '2026-09-18T08:30:00.000Z',
+        items: [
+          { id: 'wp-o', title: '总体概览', type: 'page', path: 'wiki/overview.md', description: '三条链路并入统一格式层的调研结论与推进状态。' },
+          { id: 'wp-p', title: '目标与范围', type: 'page', path: 'wiki/purpose.md', description: null },
+          { id: 'wp-i', title: 'index', type: 'page', path: 'wiki/index.md', description: null },
+          { id: 'wp-c1', title: '双链路收敛', type: 'page', path: 'wiki/concepts/双链路收敛.md', description: 'Gmail 双链路并入统一格式层的关键概念。' },
+          { id: 'wp-c2', title: '映射表同值', type: 'page', path: 'wiki/concepts/映射表同值.md', description: null },
+          { id: 'wp-arch', title: '目标架构', type: 'page', path: 'wiki/concepts/映射表/目标架构.md', description: null },
+          { id: 'wp-e1', title: 'Gmail', type: 'page', path: 'wiki/entities/gmail.md', description: null },
+          { id: 'wp-e2', title: 'Google Calendar', type: 'page', path: 'wiki/entities/gcal.md', description: null },
+          { id: 'wp-s1', title: 'oo runs 设计稿', type: 'page', path: 'wiki/sources/oo-runs.md', description: null },
+        ] }
       return { status, items: [], pageCount: w.pageCount || 0, summary: '', updatedAt: '' }
     },
+    // 顶层 Wiki 阅读面：桶目录 + wiki/ 包装层，验证面包屑与树展开定位
+    readWikiPage: async (_roomId, path) => ({ markdown: [
+      '# ' + (path.split('/').pop() || '').replace(/\.md$/, ''),
+      '本页是浏览器 mock 正文：三条链路并存（Gmail 双链路、日历、云文档），统一到 oo action 执行面。',
+      '## 现状梳理',
+      '- Gmail：oo runs 与 managed-gmail 分表。',
+      '- 日历：googlecalendar 无连字符命名。',
+      '## 下一步',
+      '映射表三处同值收口后进入灰度。',
+    ].join(NL + NL) }),
     getWikiGraph: async () => {
       if (window.__mockWiki && window.__mockWiki.graphError) throw new Error('KS 临时不可用（503）')
       return { nodes: [
-        { id: 'wp-1', title: '连接器统一·现状', path: '连接器统一/现状', inLinks: 0 },
-        { id: 'wp-2', title: '连接器统一·目标架构', path: '连接器统一/目标架构', inLinks: 1 },
-        { id: 'wp-3', title: '设计规范·动效篇', path: '设计规范/动效', inLinks: 1 },
+        { id: 'wp-o', title: '总体概览', path: 'wiki/overview.md', inLinks: 2 },
+        { id: 'wp-c1', title: '双链路收敛', path: 'wiki/concepts/双链路收敛.md', inLinks: 1 },
+        { id: 'wp-c2', title: '映射表同值', path: 'wiki/concepts/映射表同值.md', inLinks: 1 },
+        { id: 'wp-arch', title: '目标架构', path: 'wiki/concepts/映射表/目标架构.md', inLinks: 1 },
+        { id: 'wp-e1', title: 'Gmail', path: 'wiki/entities/gmail.md', inLinks: 1 },
       ], edges: [
-        { source: 'wp-1', target: 'wp-2' },
-        { source: 'wp-1', target: 'wp-3' },
+        { source: 'wp-c1', target: 'wp-o' },
+        { source: 'wp-c2', target: 'wp-arch' },
+        { source: 'wp-e1', target: 'wp-c1' },
+        { source: 'wp-arch', target: 'wp-o' },
       ] }
     },
     // 手动重试构建：processing 起步，页数逐拍推进，3s 后 ready（验证轮询接管）
@@ -296,8 +327,6 @@ const base = {
       setTimeout(() => { w.status = 'ready'; w.pageCount = 3 }, 3000)
       return { ok: true }
     },
-    getRoomRelations: async () => ({ rooms: [], edges: [], indexing: { status: 'ready', pendingSources: 0 } }),
-    getRoomGraph: async () => ({ rooms: [], edges: [], indexing: { status: 'ready', pendingSources: 0 } }),
     // 思路·聚焦=写作路线导图 mock：GET 无行=missing（不轮询），动作走 routeAction。
     getRouteMindmap: async (roomId, q) => {
       const row = routeStore.get(q.documentId) ?? null
@@ -360,9 +389,67 @@ const base = {
         const seed = req.wander?.seed ?? 0
         const rotated = wanderCards.slice(seed % wanderCards.length).concat(wanderCards.slice(0, seed % wanderCards.length)).slice(0, Math.min(req.limit ?? 15, wanderCards.length))
       return { cards: rotated, nodes: emNodes, edges: emEdges, paths: rotated.map((c) => c.path), focusRootRef: start, scoreComponents: null, requestVersion: req.requestVersion, degraded: false, degradedReason: null, generatedAt: new Date().toISOString() } } },
+  knowledge: {
+    // ctxroom 首页推荐区 mock：3 个 ready 候选（强/标准/已有 Room 高匹配各一）。
+    listEntities: async (status) => {
+      const now = new Date().toISOString()
+      const entity = (over) => ({
+        id: 'ke-1', name: '连接器统一排期', kind: '主题', status: 'ready', roomId: null, roomTitle: null,
+        evidenceScore: 2.6, sourceCount: 6, eligibleSourceCount: 6, trustedSourceCount: 3, strongSourceCount: 0,
+        readinessPath: 'standard', sourceKinds: ['mail', 'file'], excludedSourceCount: 0,
+        promoteScore: 0, promoteSources: 0, firstEvidence: '周会确认连接器阶段一范围与联调窗口，排期表由李明输出。',
+        lastLinkedAt: null, updatedAt: now, existingRoomMatch: null, promotion: null, ...over })
+      const all = [
+        entity({ id: 'ke-strong', name: 'V1 视觉定稿', evidenceScore: 3.1, strongSourceCount: 4, readinessPath: 'strong',
+          sourceKinds: ['mail', 'calendar-event'], firstEvidence: '林薇周报确认 V1 视觉已定稿，动效统一 240ms。' }),
+        entity({ id: 'ke-std', name: '连接器统一排期', evidenceScore: 2.6 }),
+        entity({ id: 'ke-match', name: '供应商报价评估', kind: '主题', evidenceScore: 2.2, sourceCount: 4, eligibleSourceCount: 4,
+          sourceKinds: ['mail'], firstEvidence: '三家供应商 Q4 报价已汇总，等待确认。',
+          existingRoomMatch: { roomId: 'room-1', roomTitle: '采购流程', entityId: 'ent-proc', confidence: 'high', score: 0.91, reasons: ['同源邮件链'] } }),
+        entity({ id: 'ke-promoting', name: 'OAuth 文档补齐', kind: '任务', status: 'promoting', evidenceScore: 2.4, sourceCount: 3,
+          readinessPath: 'standard', sourceKinds: ['file'], firstEvidence: 'OAuth 文档缺回调配置章节。',
+          promotion: { status: 'running', stage: 'creating_wiki', queuePosition: null, current: null, total: null, error: null } }),
+      ]
+      return { items: all.filter((item) => item.status === status) }
+    },
+    listRecentDecisions: async () => ({ items: [
+      { decisionId: 'kd-1', title: '客户反馈汇总', roomId: 'room-1', roomTitle: '采购流程', reason: '来自邮件《客户反馈汇总》', createdAt: new Date().toISOString() },
+    ] }),
+    listUnmatched: async () => ({ items: [] }),
+    listRules: async () => ({ items: [] }),
+    routeStatus: async () => ({ items: [] }),
+    // 首页 RoomGraph 走 knowledge 命名空间（useRoomRelationGraph 读 nxcore.knowledge）。
+    getRoomGraph: async () => ({
+      revision: 1,
+      generatedAt: new Date().toISOString(),
+      indexing: { status: 'ready', pendingSources: 0 },
+      nodes: [],
+      edges: [],
+    }),
+    getRoomRelations: async () => ({
+      revision: 1,
+      generatedAt: new Date().toISOString(),
+      indexing: { status: 'ready', pendingSources: 0 },
+      nodes: [],
+      edges: [],
+    }),
+    promoteEntity: async (entityId) => ({ entityId, status: 'queued', jobId: 'job-' + entityId, error: null }),
+    promoteEntities: async (entityIds) => ({ items: entityIds.map((entityId) => ({ entityId, status: 'queued', jobId: 'job-' + entityId, error: null })) }),
+    suppressEntities: async (entityIds) => ({ items: entityIds.map((entityId) => ({ entityId, status: 'suppressed', error: null })) }),
+  },
   contextRooms: {
     // 登录后的首启探针读 rooms/deletedRooms 计数；不给 list 会打到兜底 Proxy 上崩。
-    list: async () => ({ rooms: [], deletedRooms: [], updatedAt: null }),
+    list: async () => ({
+      rooms: [{
+        id: 'room-1', title: '连接器项目室', kind: '项目', icon: '🧩', tone: 'sky', status: 'active', starred: false,
+        updatedAt: '2026-09-20T02:00:00.000Z', lastViewed: '2026-09-20T02:00:00.000Z', roomCode: 'R-001', origin: 'user',
+        brief: { background: '浏览器 mock 房间', goal: '验证 @ 房间跳转', status: '进行中', risks: [], decisions: [] },
+        stats: { docs: 1, mails: 0, meetings: 0, events: 0, memories: 0, tasks: 0 },
+        riskCount: 0, pendingMemoryCount: 0, people: [], timeline: [], materials: [], actionItems: [], graphEdges: [],
+        pendingMemoryItems: [], memoryItems: [], fileItems: [], nextReverseRecall: '', cloudDoc: { workspaceId: 'ws-1', docId: 'doc-1' },
+      }],
+      deletedRooms: [], updatedAt: null,
+    }),
     overview: async (roomId) => {
       const day = (offset, hour, minute = 0) => { const d = new Date(); d.setDate(d.getDate() + offset); d.setHours(hour, minute, 0, 0); return d.toISOString() }
       return { roomId, revision: 1, generatedAt: new Date().toISOString(), stale: false,
@@ -433,15 +520,73 @@ const base = {
   migrations: { sources: async () => [], runs: async () => [], onProgress: () => () => {}, conversations: async () => ({ items: [
     { id: 'thread-1', provider: 'claude', sourceId: 's1', title: '历史会话示例', agentId: 'claude', externalSessionId: 'x', messageCount: 2, lastMessageAt: '2026-09-08T00:00:00.000Z', lastMessageExcerpt: '上次的结论…', available: true },
   ], nextCursor: null }) },
+  files: {
+    list: async (limit = 200, offset = 0) => {
+      const items = [
+        { id: 'f-cat-1', originalName: 'overview.md', displayName: '产品概览', sharedTitle: '产品概览', sourceKind: 'manual-upload', sourceLabel: '手动上传', relativePath: 'docs/overview.md', provider: null, bytes: 2048, dataType: null, agentCategory: null, summary: null, tags: [], processingState: 'ready', clusterId: null, contentHash: 'h1', currentVersionId: 'v1', parsed: true, updatedAt: '2026-09-05T02:00:00.000Z' },
+        { id: 'f-cat-2', originalName: 'spec.pdf', displayName: '接口规格.pdf', sharedTitle: '接口规格.pdf', sourceKind: 'local-folder', sourceLabel: '产品笔记', relativePath: 'docs/spec.pdf', provider: null, bytes: 8192, dataType: null, agentCategory: null, summary: null, tags: [], processingState: 'ready', clusterId: null, contentHash: 'h2', currentVersionId: 'v2', parsed: true, updatedAt: '2026-09-06T02:00:00.000Z' },
+      ]
+      return { items: items.slice(offset, offset + limit), total: items.length }
+    },
+    catalogEntry: async (fileId) => [
+      { id: 'f-cat-1', originalName: 'overview.md', displayName: '产品概览', sharedTitle: '产品概览', sourceKind: 'manual-upload', sourceLabel: '手动上传', relativePath: 'docs/overview.md', provider: null, bytes: 2048, dataType: null, agentCategory: null, summary: null, tags: [], processingState: 'ready', clusterId: null, contentHash: 'h1', currentVersionId: 'v1', parsed: true, updatedAt: '2026-09-05T02:00:00.000Z' },
+      { id: 'f-cat-2', originalName: 'spec.pdf', displayName: '接口规格.pdf', sharedTitle: '接口规格.pdf', sourceKind: 'local-folder', sourceLabel: '产品笔记', relativePath: 'docs/spec.pdf', provider: null, bytes: 8192, dataType: null, agentCategory: null, summary: null, tags: [], processingState: 'ready', clusterId: null, contentHash: 'h2', currentVersionId: 'v2', parsed: true, updatedAt: '2026-09-06T02:00:00.000Z' },
+    ].find((item) => item.id === fileId) ?? null,
+  },
+  documents: { list: async () => [], listTrash: async () => [] },
   // 完整 App 入口（/）验证用：已配置 + 已登录，越过 RuntimeConfigGate。
   runtimeConfig: { get: async () => ({ primaryConfigured: true, configSource: 'manual' }) },
   account: { status: async () => ({ authenticated: true, apiBaseUrl: 'https://mock.example', plan: 'pro_plan_active' }) },
-  agent: { discoverLocalAgents: async () => [] },
+  agent: {
+    discoverLocalAgents: async () => [],
+    listSessions: async () => [
+      { id: 'sess-1', roomId: null, pageLabel: '首页', runtimeId: 'rt-main', title: '本应用会话示例', status: 'idle', createdAt: '2026-09-10T00:00:00.000Z', updatedAt: '2026-09-10T01:00:00.000Z' },
+      { id: 'sess-2', roomId: null, pageLabel: '首页', runtimeId: 'rt-main', title: null, status: 'idle', createdAt: '2026-09-11T00:00:00.000Z', updatedAt: '2026-09-11T00:00:00.000Z' },
+    ],
+    createSession: async () => ({ id: 'sess-3', roomId: null, pageLabel: 'Agent', runtimeId: 'rt-main', title: null, status: 'idle', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }),
+    getSession: async (id) => ({
+      session: { id, roomId: null, pageLabel: 'Agent', runtimeId: 'rt-main', title: null, status: 'idle', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+      participants: [],
+      activeRun: null,
+      messages: [],
+      lastEventSeq: 0,
+    }),
+    updateSession: async (id) => ({ id, roomId: null, pageLabel: 'Agent', runtimeId: 'rt-main', title: null, status: 'idle', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }),
+    deleteSession: async () => {},
+    subscribe: async () => {},
+    unsubscribe: async () => {},
+    getEvents: async () => [],
+    listSessionLinks: async () => [],
+    startRun: async (sessionId) => ({ id: 'run-1', sessionId, agentId: null, invocationMode: 'explicit_switch', roomId: null, status: 'running', prompt: '', lastEventSeq: 0, error: null, startedAt: new Date().toISOString(), completedAt: null, createdAt: new Date().toISOString() }),
+    cancelRun: async () => {},
+    generateSessionTitle: async () => {},
+    resolveApproval: async () => {},
+    submitPendingIntent: async () => ({ run: { id: 'run-1', sessionId: 'sess-1', status: 'running', prompt: '', lastEventSeq: 0, error: null, startedAt: null, completedAt: null, createdAt: new Date().toISOString() } }),
+    createSessionLink: async () => ({ id: 'link-1', sessionId: 'sess-1', createdAt: new Date().toISOString() }),
+    markSessionLinkReturned: async () => {},
+  },
   reality: { listEvents: async () => [], onEvent: () => () => {} },
+  // 首页关系图谱（RoomGraph）走顶层 API，不在 knowledge 命名空间下。
+  getRoomGraph: async () => ({
+    revision: 1,
+    generatedAt: new Date().toISOString(),
+    indexing: { status: 'ready', pendingSources: 0 },
+    nodes: [],
+    edges: [],
+  }),
+  getRoomRelations: async () => ({
+    revision: 1,
+    generatedAt: new Date().toISOString(),
+    indexing: { status: 'ready', pendingSources: 0 },
+    nodes: [],
+    edges: [],
+  }),
   obsidian: { list: async () => [], discover: async () => [], onChanged: () => () => {}, onDiscoveryChanged: () => () => {} },
 }
 // 预览窗格 document.hidden 恒为 true 会挡住页面轮询;强制视为可见。
 Object.defineProperty(document, 'hidden', { get: () => false })
+// 顶层 Wiki 数据面并回 knowledge 命名空间（wikiMocks 在前，现有 knowledge 键优先）
+Object.assign(base.knowledge, base.knowledgeWikiMocks)
 window.nxcore = new Proxy(Object.fromEntries(Object.entries(base).map(([k, v]) => [k, v && typeof v === 'object' ? face(v) : v])), {
   get: (target, prop) => prop in target ? target[prop] : magic(String(prop)),
 })
@@ -459,8 +604,9 @@ export default defineConfig({
     include: ['d3-force'],
   },
   server: {
-    port: 5181,
-    strictPort: true,
+    // PORT 由 preview 启动器注入（autoPort）；多会话并行时各拿一个空闲端口
+    port: Number(process.env.PORT) || 5181,
+    strictPort: false,
     headers: {
       'Cross-Origin-Embedder-Policy': 'require-corp',
       'Cross-Origin-Opener-Policy': 'same-origin',
