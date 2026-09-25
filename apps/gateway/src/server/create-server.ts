@@ -87,6 +87,7 @@ import { createContextRoomAgentTools } from "../modules/context-rooms/room-agent
 import { createDocumentPiTools } from "../modules/documents/pi-tools.js";
 import { createWebSearchPiTools } from "../modules/agent/web-search-tools.js";
 import { createDocWriterAgentTools } from "../modules/subagents/doc-writer-tools.js";
+import { createSlidesWriterAgentTools } from "../modules/subagents/slides-writer-tools.js";
 import { buildRoomContextDigest } from "../modules/context-rooms/room-context-digest.js";
 import { RoomOverviewService } from "../modules/context-rooms/overview-service.js";
 import { RoomOverviewScheduler } from "../modules/context-rooms/overview-scheduler.js";
@@ -625,9 +626,9 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     }
   }, 30_000);
   documentOperationExpiryTimer.unref();
-  // 外部文档导入（OpenConnector 只读，HTTP 直连）与 Agent 一次性导出（飞书
-  // lark-cli / Notion 官方 ntn CLI）：与导入连接、导出授权两套凭据域解耦，
-  // Gateway 不保存任何 CLI token。
+  // 外部文档导入（飞书 lark-cli / Notion OpenConnector，只读）与 Agent 一次性
+  // 导出（飞书 lark-cli / Notion 官方 ntn CLI）：与导入连接、导出授权两套凭据域
+  // 解耦，Gateway 不保存任何 CLI token。
   const documentImportService = new DocumentImportService(
     db,
     documentService,
@@ -637,6 +638,8 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       assetBridgeUrl: config.documentAssetBridgeUrl ?? null,
       // Notion 行内评论按块查询走官方 ntn（macOS；缺省自动跳过并告警）。
       notionCli: config.notionCli ?? null,
+      // 飞书导入通道（列举/正文/评论/媒体）换轨 lark-cli。
+      larkCli: config.larkCli ?? null,
     },
   );
   const agentDocumentExportService = new AgentDocumentExportService(
@@ -786,6 +789,15 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
           roomExists: (roomId) => documentMcpHost.roomExists(roomId),
         })
       : [],
+    webSearchTools: config.webSearch
+      ? createWebSearchPiTools(agentResolver, externalCalls)
+      : [],
+  }));
+  // slides-writer 工具面（用户决策：PPT 四件套从主 Agent 收归子代理）——
+  // slides 四工具 + 素材自取只读面；写入/调度类由工厂内 allowlist 拒绝。须在首次 dispatch 前注册。
+  subagentRuntimeManager.registerAgentTools("slides-writer", () => createSlidesWriterAgentTools({
+    roomTools: createContextRoomAgentTools({ db, memory: memoryService, overview: roomOverviewService }),
+    documentTools: createDocumentPiTools(documentMcpHost),
     webSearchTools: config.webSearch
       ? createWebSearchPiTools(agentResolver, externalCalls)
       : [],

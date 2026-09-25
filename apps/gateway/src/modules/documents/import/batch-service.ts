@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { and, desc, eq, isNull } from "drizzle-orm";
 import type {
   DocumentImportBatchItemView,
   DocumentImportBatchMode,
@@ -156,6 +156,20 @@ export class DocumentBatchImportService {
     const row = this.readRow(batchId);
     if (!row) throw new BatchImportServiceError("BATCH_NOT_FOUND", `批量导入任务不存在：${batchId}`, 404);
     return this.toView(row);
+  }
+
+  /** 面板重挂载找回进行中批次：按 provider+connectionName 取最近一条 running，无则 null。 */
+  getActiveBatch(provider: ExternalDocumentProvider, connectionName?: string): DocumentImportBatchView | null {
+    const rows = this.db.select().from(documentImportBatches)
+      .where(and(
+        eq(documentImportBatches.provider, provider),
+        connectionName ? eq(documentImportBatches.connectionName, connectionName) : isNull(documentImportBatches.connectionName),
+        eq(documentImportBatches.status, "running"),
+      ))
+      .orderBy(desc(documentImportBatches.createdAt))
+      .limit(1)
+      .all();
+    return rows[0] ? this.toView(rows[0]) : null;
   }
 
   /** 幂等：已结束的批次直接返回当前视图。 */

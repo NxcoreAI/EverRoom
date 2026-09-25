@@ -142,16 +142,20 @@ export function ArtifactLibraryPane({
     }
   };
 
-  /** Word/PPT/Excel：经 Room 会话派发生成请求（Agent 走 context_room_*_create
-   *  全链路），产物生成后自动进入本栏并打开预览。 */
+  /** Word/PPT/Excel：经 Room 会话派发生成请求（Word/Excel 走 context_room_*_create，
+   *  PPT 走 slides_draft 调度 slides-writer 子 Agent）产物生成后自动进入本栏并打开预览。 */
   const dispatchOfficeCreate = (type: Exclude<CreateType, 'doc'>) => {
     const title = newDocumentTitle.trim() || t(`contextRoom:artifactLibrary.newOfficeDefault.${type}`);
-    const tool = type === 'word' ? 'context_room_office_create' : type === 'ppt' ? 'context_room_slides_create' : 'context_room_sheets_create';
+    const createInstruction = type === 'word'
+      ? `请用 context_room_office_create 新建`
+      : type === 'ppt'
+        ? `请用 slides_draft(task=create) 新建`
+        : `请用 context_room_sheets_create 新建`;
     const kindLabel = t(`contextRoom:artifactLibrary.newOfficeDefault.${type}`);
     window.dispatchEvent(new CustomEvent('everroom:room-agent-ask', {
       detail: {
         roomId: room.id,
-        message: `请用 ${tool} 新建一份${kindLabel}《${title}》：内容从简，只生成标题与基本骨架，后续我再补充；完成后告知文件名。`,
+        message: `${createInstruction}一份${kindLabel}《${title}》：内容从简，只生成标题与基本骨架，后续我再补充；完成后告知文件名。`,
       },
     }));
     setCreatePopoverOpen(false);

@@ -29,6 +29,14 @@ const MAX_ROWS = 5000;
 const MAX_COLS = 50;
 const MAX_CELL_LENGTH = 3000;
 
+/** slides-writer 子代理独占的 4 个 PPT 工具名：主 Agent 工具面按此剔除（单一事实源）。 */
+export const SLIDES_TOOL_NAMES = [
+  "context_room_slides_create",
+  "context_room_slides_set_page",
+  "context_room_slides_read",
+  "context_room_slides_edit",
+] as const;
+
 const HTML_GUIDE = "内容用受限 HTML 片段表达，只允许这些标签："
   + "h1 h2 h3 h4 h5 h6 p ul ol li strong em u s a br table thead tbody tr th td pre code blockquote。"
   + "表格首行用 th，单元格只放纯文本（可用 br 分行），不支持嵌套表格和合并单元格；"
@@ -479,25 +487,12 @@ export function officePlugin(bridge: OfficeBridgeClient): DocumentCapabilityPlug
     manifest: manifest("office.create", "mutation", null, null, true, false),
     promptGuidelines: [
       "用户需要正式 Office 文档时按格式选工具：Word 报告/交付物用 context_room_office_create，"
-      + "演示/汇报用 context_room_slides_create，数据表格用 context_room_sheets_create；"
+      + "数据表格用 context_room_sheets_create；演示/汇报（PPT）不在本组工具内，一律经 slides_draft 调度 slides-writer 子 Agent 完成；"
       + "普通笔记、速记、随手总结用文档创建工具（markdown），不要用 Office 工具。",
       "Word 的 html 入参必须是受限 HTML 子集（仅标题/段落/列表/表格/链接/强调/pre/code/blockquote 标签）；"
       + "长文用 h2/h3 分节；表格首行用 th、单元格纯文本；不要输出 markdown 或解释性文字。",
-      "PPT 一律两阶段生成：① context_room_slides_create 传 title + outline（每页一个标题，先想清楚全篇叙事与版式轮换）创建骨架，"
-      + "文件会自动以可编辑方式打开；② 立即用 context_room_slides_set_page 从 slideIndex=0 起逐页填充——"
-      + "每次一页、拿到成功结果再填下一页（用户能实时看到每一页成形），全部页填完再向用户总结。"
-      + "禁止跳过逐页填充、禁止把整册内容塞进 create。",
-      "填充每一页时遵守 context_room_slides_set_page 工具说明里的 PageSpec 规范与设计要求："
-      + "同一份演示先定一套设计系统（统一背景、一主一辅强调色、统一字号带）全篇遵守；"
-      + "文本框零内边距、按字宽估算折行与框高（CJK 约 sizePt*1.35px 宽、行高约 sizePt*1.8px）；"
-      + "内容页版式轮换不重复，封面要有视觉锚点；禁 emoji、禁卡片彩条与彩虹配色，"
-      + "数据图表用形状按真实数值比例拼装；每页输出前逐对自检文本不溢出不重叠。",
       "Excel 的 sheets→rows 用 JSON 二维数组；数字必须是 JSON number；每个表首行放表头。",
       "生成成功后在回复中告知文件名；桌面端会自动打开预览，文档在 Room 产物库（Office 产物）和文件库可见。",
-      "修改已有 PPT：context_room_slides_read 可省略 fileId（默认当前打开的那个，未打开会报错并列出现场）；"
-      + "拿到大纲与 op 词汇后，用大纲里的元素 id 发 context_room_slides_edit 事务（fileId 同样可用 \"active\"）；"
-      + "用户能实时看到每笔修改，改完版本链自动 +1；只读打开时（editable=false）先引导用户在产物库以可编辑方式重新打开。"
-      + "Word/Excel 产物暂不支持 Agent 编辑。",
     ],
     tools: [officeCreate, slidesCreate, slidesSetPage, sheetsCreate, slidesRead, slidesEdit],
   };

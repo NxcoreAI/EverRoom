@@ -54,7 +54,8 @@ export interface AgentAuthEnvironmentStatus {
 
 export interface AgentAuthStartInput {
   provider: AgentAuthProvider
-  phase: AgentAuthPhase
+  /** 省略时由控制器按授权环境自动选择（飞书：appConfigured ? user_auth : app_setup）。 */
+  phase?: AgentAuthPhase
   exportRunId?: string
 }
 

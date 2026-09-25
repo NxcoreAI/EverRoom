@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Soft 3D Clay PPT</title>
+  <style>
+    :root {
+      --bg: #FDF5E6;
+      --surface: #FFF9EF;
+      --sage: #B2AC88;
+      --pink: #DBADAD;
+      --ink: #333333;
+      --muted: #6B6B6B;
+      --line: #E7DAC8;
+      --shadow: #C8BBA8;
+      --sans: Arial, "Microsoft YaHei", sans-serif;
+      --body: "Microsoft YaHei", "PingFang SC", Arial, sans-serif;
+      --mono: Consolas, "Courier New", monospace;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: var(--body);
+      overflow: hidden;
+    }
+    .deck {
+      display: flex;
+      width: 300vw;
+      height: 100vh;
+      transition: transform 700ms cubic-bezier(.2,.8,.2,1);
+    }
+    .slide {
+      width: 100vw;
+      height: 100vh;
+      flex: 0 0 100vw;
+      position: relative;
+      padding: 7vh 7vw;
+      overflow: hidden;
+      background: var(--bg);
+    }
+    .kicker {
+      font-family: var(--mono);
+      color: var(--sage);
+      font-size: 12px;
+      letter-spacing: .16em;
+      text-transform: uppercase;
+    }
+    h1, h2 {
+      margin: 0;
+      font-family: var(--sans);
+      font-weight: 800;
+      line-height: 1.02;
+      letter-spacing: 0;
+    }
+    h1 { font-size: clamp(56px, 7vw, 100px); max-width: 760px; }
+    h2 { font-size: clamp(38px, 4.5vw, 70px); max-width: 860px; }
+    p {
+      color: var(--muted);
+      font-size: clamp(18px, 1.45vw, 24px);
+      line-height: 1.5;
+      max-width: 640px;
+    }
+    .clay {
+      position: absolute;
+      border-radius: 999px;
+      background: var(--sage);
+      box-shadow: 28px 34px 54px rgba(200,187,168,.52);
+    }
+    .clay::before {
+      content: "";
+      position: absolute;
+      inset: 12%;
+      border-radius: inherit;
+      background: rgba(255,255,255,.34);
+      transform: translate(-12%, -14%);
+    }
+    .clay.cube {
+      width: 210px;
+      height: 170px;
+      right: 10vw;
+      top: 18vh;
+      border-radius: 42px;
+      transform: rotate(-8deg);
+    }
+    .clay.sphere {
+      width: 138px;
+      height: 138px;
+      right: 23vw;
+      bottom: 17vh;
+      background: var(--pink);
+    }
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      padding: 30px;
+      box-shadow: 18px 22px 45px rgba(200,187,168,.22);
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 28px;
+      margin-top: 9vh;
+    }
+    .footer {
+      position: absolute;
+      left: 7vw;
+      right: 7vw;
+      bottom: 4vh;
+      border-top: 1px solid var(--line);
+      padding-top: 14px;
+      display: flex;
+      justify-content: space-between;
+      color: #9A9288;
+      font-family: var(--mono);
+      font-size: 11px;
+    }
+  </style>
+</head>
+<body>
+  <main class="deck">
+    <section class="slide">
+      <div class="clay cube"></div>
+      <div class="clay sphere"></div>
+      <div style="margin-top:13vh">
+        <div class="kicker">Soft 3D / Claymorphism</div>
+        <h1>Airy slides with soft matte depth.</h1>
+        <p>Use lightweight 3D geometry as a professional accent, not decoration for its own sake.</p>
+      </div>
+      <div class="footer"><span>Minimal professional deck</span><span>01 / 03</span></div>
+    </section>
+    <section class="slide">
+      <div class="kicker">Soft UI Panels</div>
+      <h2>Keep the information flat. Let depth frame the mood.</h2>
+      <div class="grid">
+        <div class="panel"><p>Warm beige base</p></div>
+        <div class="panel"><p>Sage green accent</p></div>
+        <div class="panel"><p>Morandi pink warmth</p></div>
+      </div>
+      <div class="footer"><span>Style system</span><span>02 / 03</span></div>
+    </section>
+    <section class="slide">
+      <div class="clay sphere" style="right:9vw; top:16vh; bottom:auto;"></div>
+      <div style="margin-top:17vh">
+        <div class="kicker">Closing</div>
+        <h2>Modern, soft, and still serious.</h2>
+        <p>Use whitespace, charcoal typography, and restrained 3D accents to keep the deck sophisticated.</p>
+      </div>
+      <div class="footer"><span>End</span><span>03 / 03</span></div>
+    </section>
+  </main>
+</body>
+</html>

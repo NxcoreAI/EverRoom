@@ -846,6 +846,139 @@ export function createSubagentPiTools(
       },
     });
   }
+  const slidesWriter = registry.get("slides-writer");
+  if (slidesWriter) {
+    tools.push({
+      name: "slides_draft",
+      label: "Create or edit a slides deck",
+      description: "调度 slides-writer 子 Agent 创建或修改演示文稿（PPT）。"
+        + "PPT 的骨架创建、逐页填充与元素级编辑全部由该子 Agent 完成，主 Agent 不直接持有 slides 工具。"
+        + "create：传 instruction（主题、受众、篇幅、风格等要求）与可选 title/outline（每页一个标题），"
+        + "可传 style 指定风格：japanese-style（日式编辑，和纸柔光/生活杂志两变体）/ soft-3d-clay（软 3D 黏土）/ futuristic-tech-editorial（未来科技编辑）/"
+        + "minimalist-luxury-branding（极简奢牌）/ modern-illustration-editorial（现代插画编辑）/ japanese-hand-drawn-editorial（日式手绘编辑）"
+        + "——用户点名风格时传对应 id，气质明显时选最贴近的，拿不准就不传（子 Agent 自选）；"
+        + "子 Agent 会建骨架并逐页填充（用户在桌面端实时看到每一页成形），返回 fileEntryId/fileName/pages/outline。"
+        + "edit：传 instruction（要改什么，可含选中的元素描述）与可选 fileId（缺省 \"active\" 即当前桌面打开的那份），"
+        + "子 Agent 读取大纲后发编辑事务，页面实时更新。"
+        + "结果以返回的 status/summary 为准向用户汇报（failed/partial 时如实转告 warnings 与原因，可重试）；"
+        + "禁止主 Agent 自行拼页面内容或代替子 Agent 重试底层工具。",
+      parameters: Type.Object({
+        task: Type.Union([Type.Literal("create"), Type.Literal("edit")]),
+        instruction: Type.String({ minLength: 1, maxLength: 16_000 }),
+        title: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
+        style: Type.Optional(Type.String({ minLength: 1, maxLength: 40 })),
+        outline: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 80 }), { minItems: 1, maxItems: 24 })),
+        fileId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+        roomId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+      }, { additionalProperties: false }),
+      execute: async (run, params, signal) => {
+        const task = params.task === "edit" ? "edit" : "create";
+        const instruction = String(params.instruction ?? "").trim();
+        if (!instruction) throw new Error("slides_draft_instruction_required");
+        const titleArg = typeof params.title === "string" ? params.title.trim().slice(0, 120) : "";
+        const styleArg = typeof params.style === "string" ? params.style.trim().slice(0, 40) : "";
+        const fileIdArg = typeof params.fileId === "string" ? params.fileId.trim() : "";
+        const explicitRoomId = typeof params.roomId === "string" ? params.roomId.trim() : "";
+        if (explicitRoomId && run.roomId && explicitRoomId !== run.roomId) {
+          throw new Error("ROOM_SELECTION_MISMATCH: The slides target differs from the Room already bound to this run");
+        }
+        const roomId = explicitRoomId || run.roomId || run.activeDocument?.roomId?.trim() || "";
+        if (!roomId) {
+          throw new Error("ROOM_SELECTION_REQUIRED: Choose one valid Room from available_rooms or call context_room_list");
+        }
+        // 显式传入的房间必须真实存在（availableRooms 是开跑快照，实时注册表兜底）。
+        if (explicitRoomId && !run.roomId && Array.isArray(run.availableRooms) && run.availableRooms.length > 0
+          && !run.availableRooms.some((room) => room.id === explicitRoomId)
+          && !options.roomExists?.(explicitRoomId)) {
+          throw new Error("ROOM_SELECTION_REQUIRED: Choose one valid Room from available_rooms or call context_room_list");
+        }
+        const input = {
+          task,
+          instruction,
+          // Room 透传：orchestrator 用它绑定子 run 的 slides 工具（pi-tools input.roomId），缺失即 409。
+          roomId,
+          ...(task === "create" && titleArg ? { title: titleArg } : {}),
+          ...(task === "create" && styleArg ? { style: styleArg } : {}),
+          ...(task === "create" && Array.isArray(params.outline)
+            ? { outline: params.outline.map((item) => String(item ?? "").trim().slice(0, 80)).filter(Boolean) }
+            : {}),
+          ...(task === "edit" && fileIdArg ? { fileId: fileIdArg } : {}),
+        };
+        let invocation;
+        try {
+          invocation = await dispatchWithConcurrencyRetry(() => orchestrator.dispatch({
+            agentId: "slides-writer",
+            task: `演示文稿${task === "create" ? "创建" : "修改"}`,
+            input,
+            idempotencyKey: dispatchKey(run.runId, "slides-writer", task, input),
+            source: "primary_agent",
+            parentSessionId: run.sessionId,
+            parentRunId: run.runId,
+            ...(signal ? { signal } : {}),
+          }));
+        } catch (error) {
+          const errorCode = error instanceof Error ? error.message : String(error);
+          const retryable = isConcurrencyLimitError(error);
+          return {
+            content: JSON.stringify({
+              status: "failed",
+              errorCode,
+              retryable,
+              message: retryable
+                ? "slides-writer 调度被并发限额拒绝；如实告知用户可稍后重试，禁止自行拼 PPT 内容。"
+                : "slides-writer 调度失败；如实告知用户，禁止自行拼 PPT 内容。",
+            }),
+            details: { errorCode },
+          };
+        }
+        if (invocation.status !== "completed") {
+          return {
+            content: JSON.stringify({
+              invocationId: invocation.id,
+              status: invocation.status,
+              errorCode: invocation.errorCode ?? invocation.errorMessage ?? invocation.status,
+              retryable: invocation.status === "timed_out" || invocation.status === "cancelled",
+              message: `slides-writer 未完成（${invocation.status}）；如实告知用户，禁止自行拼 PPT 内容。`,
+            }),
+            details: invocation,
+          };
+        }
+        const structured = invocation.result?.structuredOutput !== null
+          && typeof invocation.result?.structuredOutput === "object"
+          && !Array.isArray(invocation.result.structuredOutput)
+          ? invocation.result.structuredOutput as Record<string, unknown>
+          : extractJsonObject(invocation.result?.text ?? "");
+        if (!structured || typeof structured.status !== "string"
+          || !["completed", "partial", "failed"].includes(structured.status)) {
+          return {
+            content: JSON.stringify({
+              invocationId: invocation.id,
+              status: "failed",
+              errorCode: "slides_writer_result_invalid",
+              retryable: true,
+              message: "slides-writer 未提交匹配任务的结构化结果；可调整 instruction 后重新调用 slides_draft。",
+            }),
+            details: invocation,
+          };
+        }
+        const pick = (key: string): unknown => (structured[key] !== undefined && structured[key] !== null ? structured[key] : null);
+        return {
+          content: JSON.stringify({
+            invocationId: invocation.id,
+            task,
+            status: structured.status,
+            fileEntryId: pick("fileEntryId"),
+            fileName: pick("fileName"),
+            pages: pick("pages"),
+            outline: pick("outline"),
+            warnings: Array.isArray(structured.warnings) ? structured.warnings : [],
+            summary: typeof structured.summary === "string" ? structured.summary : "",
+          }),
+          details: invocation,
+        };
+      },
+    });
+  }
   const roomCorrector = registry.get("room-corrector");
   if (roomCorrector) {
     const correctionTaskLabels = {

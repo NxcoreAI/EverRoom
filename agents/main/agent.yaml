@@ -39,6 +39,7 @@ tools:
   - context_room_write_commit
   - context_room_write_abort
   - document_draft
+  - slides_draft
   - room_correction_draft
   - context_room_context_get
   - context_room_overview_regenerate

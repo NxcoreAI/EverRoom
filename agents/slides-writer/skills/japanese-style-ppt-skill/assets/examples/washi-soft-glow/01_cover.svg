@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#F5F5F5"/>
+
+  <g opacity="0.42">
+    <circle cx="86" cy="86" r="1.2" fill="#D8D6D0"/>
+    <circle cx="152" cy="142" r="0.9" fill="#D8D6D0"/>
+    <circle cx="312" cy="94" r="1.1" fill="#D8D6D0"/>
+    <circle cx="518" cy="126" r="0.9" fill="#D8D6D0"/>
+    <circle cx="1112" cy="96" r="1.1" fill="#D8D6D0"/>
+    <circle cx="1186" cy="612" r="1.2" fill="#D8D6D0"/>
+    <line x1="0" y1="190" x2="1280" y2="178" stroke="#D8D6D0" stroke-width="1" stroke-opacity="0.35"/>
+    <line x1="0" y1="520" x2="1280" y2="536" stroke="#D8D6D0" stroke-width="1" stroke-opacity="0.25"/>
+  </g>
+
+  <circle cx="944" cy="300" r="206" fill="#D5D0DB" opacity="0.30"/>
+  <circle cx="1004" cy="350" r="126" fill="#B3AFCB" opacity="0.18"/>
+
+  <g stroke="#D8D6D0" stroke-width="1">
+    <line x1="76" y1="78" x2="76" y2="646"/>
+    <line x1="76" y1="646" x2="1204" y2="646"/>
+    <line x1="714" y1="110" x2="714" y2="586"/>
+  </g>
+
+  <text x="76" y="106" fill="#8995B7" font-family="Inter, Arial, sans-serif" font-size="12" font-weight="700">WASHI PAPER &amp; SOFT GLOW / PPT STYLE</text>
+  <rect x="76" y="132" width="152" height="3" fill="#8995B7"/>
+
+  <text x="74" y="232" fill="#333333" font-family="Georgia, 'Times New Roman', serif" font-size="68" font-weight="500">Washi</text>
+  <text x="74" y="310" fill="#333333" font-family="Georgia, 'Times New Roman', serif" font-size="68" font-weight="500">Paper</text>
+  <text x="74" y="388" fill="#333333" font-family="Georgia, 'Times New Roman', serif" font-size="68" font-weight="500">&amp; Soft Glow</text>
+
+  <text x="80" y="472" fill="#2C3E50" font-family="Inter, Arial, sans-serif" font-size="22" font-weight="700">Japanese minimalist warmth with quiet editorial precision.</text>
+  <text x="80" y="510" fill="#6B6B6B" font-family="Inter, Arial, sans-serif" font-size="18">Soft off-white texture, thin gray lines, muted color blocks, and zen negative space.</text>
+
+  <g transform="translate(784 122)">
+    <rect x="0" y="0" width="342" height="396" fill="#EFEDEA" stroke="#D8D6D0"/>
+    <path d="M54 126C98 62 190 60 246 112C302 164 278 266 206 302C126 342 32 260 54 126Z" fill="#D5D0DB" opacity="0.72"/>
+    <path d="M96 170C130 126 198 126 234 168C270 210 250 276 188 292C126 308 60 220 96 170Z" fill="#B3AFCB" opacity="0.48"/>
+    <line x1="44" y1="338" x2="296" y2="338" stroke="#8995B7"/>
+    <text x="44" y="372" fill="#333333" font-family="Georgia, 'Times New Roman', serif" font-size="26">quiet glow</text>
+    <text x="44" y="398" fill="#6B6B6B" font-family="Inter, Arial, sans-serif" font-size="13">washi texture / muted geometry</text>
+  </g>
+
+  <g transform="translate(784 562)" font-family="Inter, Arial, sans-serif">
+    <text x="0" y="-28" fill="#6B6B6B" font-size="12" font-weight="700">COLOR PALETTE</text>
+    <rect x="0" y="0" width="58" height="40" fill="#B3AFCB"/>
+    <rect x="72" y="0" width="58" height="40" fill="#8995B7"/>
+    <rect x="144" y="0" width="58" height="40" fill="#777F6C"/>
+    <rect x="216" y="0" width="58" height="40" fill="#AA6F5F"/>
+    <rect x="288" y="0" width="58" height="40" fill="#D5D0DB"/>
+    <text x="0" y="64" fill="#6B6B6B" font-size="10">#B3AFCB</text>
+    <text x="72" y="64" fill="#6B6B6B" font-size="10">#8995B7</text>
+    <text x="144" y="64" fill="#6B6B6B" font-size="10">#777F6C</text>
+    <text x="216" y="64" fill="#6B6B6B" font-size="10">#AA6F5F</text>
+    <text x="288" y="64" fill="#6B6B6B" font-size="10">#D5D0DB</text>
+  </g>
+
+  <text x="76" y="682" fill="#9A9690" font-family="Inter, Arial, sans-serif" font-size="12">16:9 / soft off-white paper / thin gray lines / indigo restraint / warm minimalist brand storytelling</text>
+</svg>

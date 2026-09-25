@@ -42,6 +42,7 @@ export function ConnectorDocumentImportPanel({
   provider: lockedProvider,
   connectionName: lockedConnectionName,
   embedded = false,
+  standalone = false,
 }: {
   /** 连接器页传入已加载的连接清单；数据源页等上下文不传时面板自拉（cliConnector apps）。 */
   connections?: OpenConnectorConnectionSummary[]
@@ -51,6 +52,9 @@ export function ConnectorDocumentImportPanel({
   connectionName?: string
   /** 嵌入模式（抽屉内）：隐藏区块标题，只保留工具栏/列表/操作条。 */
   embedded?: boolean
+  /** 独立授权模式（数据源页飞书，lark-cli 直连）：不拉 OpenConnector 连接、
+   *  不显示连接缺失授权引导（授权态由数据源页维护）。 */
+  standalone?: boolean
 }) {
   const { locale, t } = useLocale()
   const external = window.nxcore?.externalDocuments
@@ -71,9 +75,9 @@ export function ConnectorDocumentImportPanel({
       .catch(() => undefined)
   }, [])
   useEffect(() => {
-    if (providedConnections !== undefined) return
+    if (providedConnections !== undefined || standalone) return
     loadConnections()
-  }, [providedConnections, loadConnections])
+  }, [providedConnections, standalone, loadConnections])
 
   const [provider, setProvider] = useState<ExternalDocumentProvider>(lockedProvider ?? 'feishu')
   const providerOptions = useMemo(() => {
@@ -132,6 +136,8 @@ export function ConnectorDocumentImportPanel({
   const runCancelRef = useRef(false)
   const currentBatchIdRef = useRef<string | null>(null)
   const unmountedRef = useRef(false)
+  /** 发起/找回的导入流程占用中：防止本地新批次与找回批次同时写 run 状态。 */
+  const runActiveRef = useRef(false)
 
   // 卸载不清 sleep 定时器（挂起 chunk 循环）：置标志让循环自行终止，
   // 已完成的分批落库、剩余分批放弃（重挂载后按 imported 徽标可辨）。
@@ -229,10 +235,101 @@ export function ConnectorDocumentImportPanel({
     agg.skipped += view.items.filter((item) => item.status === 'skipped' && item.error).length
   }
 
+  const countsFromItems = (items: DocumentImportBatchItemView[]) => ({
+    imported: items.filter((item) => item.status === 'imported').length,
+    incubated: items.filter((item) => item.status === 'incubated').length,
+    failed: items.filter((item) => item.status === 'failed').length,
+    skipped: items.filter((item) => item.status === 'skipped' && item.error).length,
+  })
+
+  const showBatchResultToast = (
+    agg: { imported: number; incubated: number; failed: number; skipped: number },
+    cancelled: boolean,
+  ) => {
+    showToast({
+      title: cancelled ? t('surface:connectorSync.batchCancelled') : t('surface:connectorSync.batchCompleted'),
+      message: agg.skipped > 0
+        ? t('surface:connectorSync.batchSummaryWithSkipped', {
+          imported: String(agg.imported),
+          incubated: String(agg.incubated),
+          failed: String(agg.failed),
+          skipped: String(agg.skipped),
+        })
+        : t('surface:connectorSync.batchSummary', {
+          imported: String(agg.imported),
+          incubated: String(agg.incubated),
+          failed: String(agg.failed),
+        }),
+    })
+  }
+
+  /** 重挂载（抽屉关闭再打开等）找回后台仍在跑的批次：恢复进度条并续接轮询到终态，
+   * 完成/取消的 toast 与列表刷新同样生效；多次挂载/切换连接由 runActiveRef 防重入。 */
+  const resumeRunningBatch = async (initial: DocumentImportBatchView) => {
+    if (!external) return
+    runActiveRef.current = true
+    currentBatchIdRef.current = initial.id
+    runCancelRef.current = false
+    const applyRunning = (view: DocumentImportBatchView) => {
+      setRun({ status: 'running', total: view.total, processed: view.processed, ...countsFromItems(view.items), items: view.items })
+    }
+    applyRunning(initial)
+    let pollFailures = 0
+    try {
+      for (;;) {
+        await sleep(BATCH_POLL_MS)
+        if (unmountedRef.current) return
+        if (runCancelRef.current && currentBatchIdRef.current === initial.id) {
+          await external.cancelImportBatch(initial.id).catch(() => undefined)
+        }
+        const view = await external.importBatchStatus(initial.id).catch(() => null)
+        if (!view) {
+          pollFailures += 1
+          if (pollFailures >= 10) {
+            setRun((prev) => prev && prev.status === 'running' ? { ...prev, status: 'cancelled' } : prev)
+            return
+          }
+          continue
+        }
+        pollFailures = 0
+        if (view.status === 'running') {
+          applyRunning(view)
+          continue
+        }
+        const counts = countsFromItems(view.items)
+        const cancelled = view.status === 'cancelled'
+        setRun({ status: cancelled ? 'cancelled' : 'completed', total: view.total, processed: view.processed, ...counts, items: view.items })
+        showBatchResultToast(counts, cancelled)
+        void loadDocuments()
+        return
+      }
+    } finally {
+      currentBatchIdRef.current = null
+      runActiveRef.current = false
+    }
+  }
+
+  // 打开/切换 provider 或连接时找回该连接仍在跑的导入批次（后台不随抽屉关闭而停）。
+  useEffect(() => {
+    if (!external) return
+    let disposed = false
+    void external.activeImportBatch(provider, connectionName || undefined)
+      .then((view) => {
+        if (disposed || !view || view.status !== 'running') return
+        if (runActiveRef.current) return
+        void resumeRunningBatch(view)
+      })
+      .catch(() => undefined)
+    return () => {
+      disposed = true
+    }
+  }, [external, provider, connectionName])
+
   const startBatch = async (mode: 'room' | 'auto', roomId?: string, forceNew?: boolean) => {
     if (!external || selected.size === 0 || run?.status === 'running' || batchStarting) return
     setBatchStarting(true)
     setStartError(null)
+    runActiveRef.current = true
     const ids = [...selected]
     const chunks: string[][] = []
     for (let index = 0; index < ids.length; index += BATCH_CHUNK) chunks.push(ids.slice(index, index + BATCH_CHUNK))
@@ -294,21 +391,7 @@ export function ConnectorDocumentImportPanel({
       const cancelled = runCancelRef.current || connectionLost
       // 终态进度用实际完成数（items 全部已终态）：中途取消/熔断时不跳满。
       setRun({ status: cancelled ? 'cancelled' : 'completed', total: ids.length, processed: agg.items.length, ...agg })
-      showToast({
-        title: cancelled ? t('surface:connectorSync.batchCancelled') : t('surface:connectorSync.batchCompleted'),
-        message: agg.skipped > 0
-          ? t('surface:connectorSync.batchSummaryWithSkipped', {
-            imported: String(agg.imported),
-            incubated: String(agg.incubated),
-            failed: String(agg.failed),
-            skipped: String(agg.skipped),
-          })
-          : t('surface:connectorSync.batchSummary', {
-            imported: String(agg.imported),
-            incubated: String(agg.incubated),
-            failed: String(agg.failed),
-          }),
-      })
+      showBatchResultToast(agg, cancelled)
       void loadDocuments()
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
@@ -323,6 +406,7 @@ export function ConnectorDocumentImportPanel({
       showToast({ title: t('surface:connectorSync.batchStartFailed'), message })
     } finally {
       currentBatchIdRef.current = null
+      runActiveRef.current = false
       setBatchStarting(false)
     }
   }
@@ -369,7 +453,7 @@ export function ConnectorDocumentImportPanel({
     }
   }
 
-  const connectionMissing = !listLoading
+  const connectionMissing = !standalone && !listLoading
     && (activeConnections.length === 0 || Boolean(listError?.includes('IMPORT_CONNECTION_REQUIRED')))
   // 授权中轮询：主进程打开授权页后，每 3s 检查一次连接，新连接出现即提示卡消失。
   useEffect(() => {

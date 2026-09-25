@@ -57,6 +57,8 @@ export function ConnectGrid({
   onWebcalSubscription,
   connectedProviders,
   configuredProviders,
+  onFeishuLarkAuth,
+  feishuConnected,
 }: {
   busy: boolean
   limit?: number
@@ -77,6 +79,9 @@ export function ConnectGrid({
   connectedProviders?: ReadonlySet<string>
   /** SaaS 已配置 OAuth 的 provider 集合：非 null 时云端组只显示这些；null（未登录/local 模式/拉取失败）回落注册表展示。 */
   configuredProviders?: ReadonlySet<string> | null
+  /** 飞书走桌面本地 lark-cli 授权（不依赖 SaaS 配置,企业外部人员可用）；提供即显示固定入口。 */
+  onFeishuLarkAuth?: () => void
+  feishuConnected?: boolean
 }) {
   const { t } = useLocale()
   const metadata = providers ?? FALLBACK_CONNECTOR_PROVIDERS
@@ -88,7 +93,8 @@ export function ConnectGrid({
     provider: item.provider,
     onSelect: () => onConnectorProvider?.(item.provider),
   })
-  const oauthPool = metadata.filter((item) => item.authChannel === 'nango-oauth' && !item.comingSoon)
+  // 飞书授权已换轨 lark-cli：注册表/静态清单里的 nango 条目不再渲染,由固定入口承接。
+  const oauthPool = metadata.filter((item) => item.authChannel === 'nango-oauth' && !item.comingSoon && item.provider !== 'feishu')
   const webcalFeeds = metadata.filter((item) => item.authChannel === 'webcal-url' && !item.comingSoon)
   const webcalItems: ConnectItem[] = onWebcalSubscription
     ? webcalFeeds.map((item) => ({
@@ -111,9 +117,20 @@ export function ConnectGrid({
           { key: 'notion', icon: 'notion', label: 'Notion', group: 'cloud', provider: 'notion', onSelect: () => onConnectorProvider?.('notion') },
           ...oauthPool.filter((item) => item.category === 'mail' || item.category === 'calendar').map(cloudOAuthItem),
         ]
+  const feishuItem: ConnectItem | null = onFeishuLarkAuth && !feishuConnected
+    ? {
+        key: 'feishu-lark-cli',
+        icon: 'feishu',
+        label: '飞书',
+        group: 'cloud',
+        provider: 'feishu',
+        onSelect: onFeishuLarkAuth,
+      }
+    : null
   const cloud: ConnectItem[] = connectorsEnabled && onConnectorProvider
-    ? [...oauthItems, ...webcalItems]
+    ? [...(feishuItem ? [feishuItem] : []), ...oauthItems, ...webcalItems]
     : [
+        ...(feishuItem ? [feishuItem] : []),
         { key: 'google-docs', icon: 'google-docs', label: 'Google Docs', group: 'cloud', onSelect: onGoogleDocs },
         { key: 'notion', icon: 'notion', label: 'Notion', group: 'cloud', onSelect: onNotion },
       ]

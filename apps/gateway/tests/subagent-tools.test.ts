@@ -293,3 +293,85 @@ describe('createSubagentPiTools room_analysis', () => {
     ).rejects.toThrow('context_room_not_found')
   })
 })
+
+describe('createSubagentPiTools slides_draft', () => {
+  it('create：房间透传 + outline/title 进 input，结构化结果归一返回', async () => {
+    const orchestrator = orchestratorReturning({
+      result: {
+        text: '',
+        structuredOutput: {
+          status: 'completed',
+          fileEntryId: 'file-1',
+          fileName: '季度汇报.pptx',
+          pages: 3,
+          outline: ['封面', '业绩', '计划'],
+          warnings: [],
+          summary: '已生成 3 页',
+        },
+      },
+    })
+    const tools = createSubagentPiTools(registryWith(['slides-writer']), orchestrator)
+    const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
+    const result = await slidesDraft.execute(
+      { ...run, roomId: 'room-1' } as never,
+      {
+        task: 'create',
+        instruction: '做一份 3 页的季度汇报',
+        title: '季度汇报',
+        style: 'futuristic-tech-editorial',
+        outline: ['封面', '业绩', '计划'],
+      } as never,
+      undefined,
+    )
+
+    const dispatched = orchestrator.dispatch.mock.calls[0]![0] as Record<string, unknown>
+    expect(dispatched).toMatchObject({ agentId: 'slides-writer', source: 'primary_agent' })
+    expect(dispatched.task).toContain('创建')
+    const input = dispatched.input as Record<string, unknown>
+    expect(input).toMatchObject({
+      task: 'create',
+      instruction: '做一份 3 页的季度汇报',
+      roomId: 'room-1',
+      title: '季度汇报',
+      style: 'futuristic-tech-editorial',
+    })
+    expect(input.outline).toEqual(['封面', '业绩', '计划'])
+
+    const payload = JSON.parse((result as { content: string }).content)
+    expect(payload).toMatchObject({
+      status: 'completed',
+      fileEntryId: 'file-1',
+      fileName: '季度汇报.pptx',
+      pages: 3,
+      summary: '已生成 3 页',
+    })
+  })
+
+  it('edit：fileId 缺省不进 input；roomId 冲突与缺失直接拒绝；未注册子代理时无此工具', async () => {
+    const orchestrator = orchestratorReturning({})
+    const tools = createSubagentPiTools(registryWith(['slides-writer']), orchestrator)
+    const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
+
+    await expect(
+      slidesDraft.execute({ ...run, roomId: 'room-1' } as never, { task: 'edit', instruction: '字号调大', roomId: 'room-2' } as never, undefined),
+    ).rejects.toThrow('ROOM_SELECTION_MISMATCH')
+
+    await expect(
+      slidesDraft.execute(run as never, { task: 'edit', instruction: '字号调大' } as never, undefined),
+    ).rejects.toThrow('ROOM_SELECTION_REQUIRED')
+
+    await slidesDraft.execute(
+      { ...run, roomId: 'room-1' } as never,
+      { task: 'edit', instruction: '字号调大', style: 'boardroom' } as never,
+      undefined,
+    )
+    const input = orchestrator.dispatch.mock.calls[0]![0].input as Record<string, unknown>
+    expect(input).toMatchObject({ task: 'edit', instruction: '字号调大', roomId: 'room-1' })
+    expect(input.fileId).toBeUndefined()
+    expect(input.style).toBeUndefined()
+
+    expect(
+      createSubagentPiTools(registryWith([]), orchestratorReturning({})).some((tool) => tool.name === 'slides_draft'),
+    ).toBe(false)
+  })
+})

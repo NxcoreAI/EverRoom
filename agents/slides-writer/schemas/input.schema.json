@@ -1,0 +1,50 @@
+{
+  "type": "object",
+  "properties": {
+    "task": {
+      "type": "string",
+      "enum": ["create", "edit"],
+      "description": "The slides task to execute."
+    },
+    "instruction": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 16000,
+      "description": "User instruction for this slides task; always the highest priority."
+    },
+    "title": {
+      "type": "string",
+      "maxLength": 120,
+      "description": "Deck title for create; also the default file name. Optional — derive from instruction when absent."
+    },
+    "style": {
+      "type": "string",
+      "maxLength": 40,
+      "description": "Style skill id for create: japanese-style | soft-3d-clay | futuristic-tech-editorial | minimalist-luxury-branding | modern-illustration-editorial | japanese-hand-drawn-editorial. Optional — pick the closest style yourself when absent; explicit user style requests in instruction override the skill."
+    },
+    "outline": {
+      "type": "array",
+      "maxItems": 24,
+      "items": { "type": "string", "minLength": 1, "maxLength": 80 },
+      "description": "Per-page titles for create (order = page order; first item is the cover). Optional — design it yourself when absent."
+    },
+    "fileId": {
+      "type": "string",
+      "maxLength": 128,
+      "description": "Target deck for edit: a file entry id or \"active\" (the deck currently open on the user's desktop). Defaults to \"active\"."
+    },
+    "roomId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "Target room id injected by the gateway; binds the slides tools to the room. Required."
+    },
+    "roomTitle": {
+      "type": "string",
+      "maxLength": 120,
+      "description": "Optional room title for context framing."
+    }
+  },
+  "required": ["task", "instruction", "roomId"],
+  "additionalProperties": false
+}

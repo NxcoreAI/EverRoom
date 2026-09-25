@@ -125,6 +125,7 @@ import { startDocumentAssetBridge, type DocumentAssetBridge } from './document-a
 import { NtnAuthRunner } from './agent-auth/ntn-auth-runner'
 import { createAgentAuthPersistence } from './agent-auth/persistence'
 import type {
+  AgentAuthEnvironmentStatus,
   AgentAuthStartInput,
   DesktopAgentAuthChallenge,
 } from '../shared/agent-auth'
@@ -296,6 +297,7 @@ const AGENT_AUTH_CHANNELS = {
   start: 'agent-auth:start',
   resume: 'agent-auth:resume',
   cancel: 'agent-auth:cancel',
+  disconnect: 'agent-auth:disconnect',
 } as const
 
 const EXTERNAL_DOCUMENT_CHANNELS = {
@@ -304,6 +306,7 @@ const EXTERNAL_DOCUMENT_CHANNELS = {
   importExistingInRoom: 'external-documents:import-existing-in-room',
   importBatch: 'external-documents:import-batch',
   importBatchStatus: 'external-documents:import-batch-status',
+  activeImportBatch: 'external-documents:active-import-batch',
   cancelImportBatch: 'external-documents:cancel-import-batch',
   importPreview: 'external-documents:import-preview',
   importCommit: 'external-documents:import-commit',
@@ -2061,7 +2064,7 @@ function registerAgentAuthHandlers(): void {
     const value = input as AgentAuthStartInput
     if (!value || typeof value !== 'object') throw new Error('无效的授权请求。')
     if (value.provider !== 'feishu' && value.provider !== 'notion') throw new Error('provider 只支持 feishu 或 notion。')
-    if (value.phase !== 'app_setup' && value.phase !== 'user_auth') throw new Error('phase 只支持 app_setup 或 user_auth。')
+    if (value.phase !== undefined && value.phase !== 'app_setup' && value.phase !== 'user_auth') throw new Error('phase 只支持 app_setup 或 user_auth。')
     return agentAuthController.start({
       provider: value.provider,
       phase: value.phase,
@@ -2069,6 +2072,11 @@ function registerAgentAuthHandlers(): void {
         ? value.exportRunId.trim()
         : undefined,
     }) as Promise<DesktopAgentAuthChallenge>
+  })
+  handle(AGENT_AUTH_CHANNELS.disconnect, (_event, provider: unknown) => {
+    if (!agentAuthController) throw new Error('授权控制器尚未就绪。')
+    if (provider !== 'feishu') throw new Error('断开目前仅支持飞书。')
+    return agentAuthController.disconnect('feishu') as Promise<AgentAuthEnvironmentStatus>
   })
   handle(AGENT_AUTH_CHANNELS.resume, (_event, challengeId: unknown) => {
     if (!agentAuthController) throw new Error('授权控制器尚未就绪。')
@@ -2101,6 +2109,11 @@ function registerExternalDocumentHandlers(bridge: ExternalDocumentsGatewayBridge
   handle(EXTERNAL_DOCUMENT_CHANNELS.importBatchStatus, (_event, batchId: unknown) => {
     if (typeof batchId !== 'string') throw new Error('无效的批量导入标识。')
     return bridge.importBatchStatus(batchId)
+  })
+  handle(EXTERNAL_DOCUMENT_CHANNELS.activeImportBatch, (_event, provider: unknown, connectionName: unknown) => {
+    if (typeof provider !== 'string') throw new Error('无效的文档来源。')
+    if (connectionName !== undefined && typeof connectionName !== 'string') throw new Error('无效的连接名。')
+    return bridge.activeImportBatch(provider as 'feishu' | 'notion', connectionName)
   })
   handle(EXTERNAL_DOCUMENT_CHANNELS.cancelImportBatch, (_event, batchId: unknown) => {
     if (typeof batchId !== 'string') throw new Error('无效的批量导入标识。')
@@ -3573,6 +3586,8 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
           }
         }
       },
+      // 授权链接一到即自动拉起浏览器（数据源卡片点击后直达授权页）。
+      onVerificationUrl: (url) => openExternalUrl(url),
       // 非 token 授权状态加密落盘（本地静态密钥，不依赖 safeStorage/钥匙串）。
       persist: createAgentAuthPersistence(join(dataDirectory, 'agent-auth', 'challenge.bin')),
     },

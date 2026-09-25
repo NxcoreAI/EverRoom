@@ -1,6 +1,7 @@
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import Fastify from 'fastify'
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createDatabase, type GatewayDatabase } from '../src/infrastructure/database/client.js'
 import { documentRoomImports, rooms } from '../src/infrastructure/database/schema.js'
@@ -16,6 +17,7 @@ import {
   type DocumentBatchImportPorts,
   type ImportClassifierVerdict,
 } from '../src/modules/documents/import/batch-service.js'
+import { documentImportBatchRoutes } from '../src/modules/documents/import/batch-routes.js'
 import type { ImportActionRunner } from '../src/modules/documents/import/oo-runner.js'
 import { ImportConnectorError } from '../src/modules/documents/import/oo-runner.js'
 import type { OpenConnectorCliConfig } from '../src/config.js'
@@ -85,7 +87,12 @@ afterAll(() => {
 
 function makeServices(actionRunner: ImportActionRunner, ports?: DocumentBatchImportPorts) {
   const documents = new DocumentService(db, new DocumentEventBroker())
-  const imports = new DocumentImportService(db, documents, connectorConfig, dataDirectory, { actionRunner })
+  // larkActionFn 是飞书换轨 lark-cli 后的测试缝：同一 fake 双注入，
+  // 既有断言零改动（feishu 走 larkActionFn，notion 走 actionRunner）。
+  const imports = new DocumentImportService(db, documents, connectorConfig, dataDirectory, {
+    actionRunner,
+    larkActionFn: (call) => actionRunner(connectorConfig, call),
+  })
   const batch = new DocumentBatchImportService(db, imports, null, ports)
   return { documents, imports, batch }
 }
@@ -103,6 +110,25 @@ async function waitBatch(batch: DocumentBatchImportService, batchId: string) {
 }
 
 // ── 全量列举 ────────────────────────────────────────────────────────────────
+
+describe('飞书 lark-cli 注入隔离', () => {
+  it('只注入 larkActionFn（无 oo 连接配置）：feishu 照常列举，notion 仍 OPEN_CONNECTOR_UNAVAILABLE', async () => {
+    const documents = new DocumentService(db, new DocumentEventBroker())
+    const actionRunner = fakeRunner({
+      'feishu.list_drive_files': { items: [{ token: 'tokA', type: 'docx', name: '直连文档', url: 'https://f.cn/docx/tokA' }], hasMore: false },
+      'feishu.list_wiki_spaces': { items: [], hasMore: false },
+    })
+    const imports = new DocumentImportService(db, documents, null, dataDirectory, {
+      larkActionFn: (call) => actionRunner(connectorConfig, call),
+    })
+    const response = await imports.listAllDocuments('feishu')
+    expect(response.items.map((item) => item.remoteDocumentId)).toEqual(['tokA'])
+    await expect(imports.listAllDocuments('notion')).rejects.toMatchObject({
+      code: 'OPEN_CONNECTOR_UNAVAILABLE',
+      statusCode: 503,
+    })
+  })
+})
 
 describe('document-import list', () => {
   it('feishu：云空间目录递归 + docx 过滤 + wiki 空间树（obj_token 为 remoteDocumentId）', async () => {
@@ -408,6 +434,35 @@ describe('document-import batch (room mode)', () => {
     expect(byId.get('tokA')?.status).toBe('imported')
     expect(byId.get('tokB')?.status).toBe('failed')
     expect(byId.get('tokC')?.status).toBe('skipped')
+  })
+
+  it('getActiveBatch：按 provider+连接名找回进行中批次，跨连接隔离，终态后不再返回', async () => {
+    insertRoom('room-active')
+    let release: (() => void) | null = null
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    const actions: FakeAction = {
+      ...feishuReadActions(['tokA', 'tokB']),
+      'feishu.fetch_document': async (input: Record<string, unknown>) => {
+        await gate
+        const id = String(input.documentId)
+        return { document: { document_id: id, revision_id: 7, title: `文档 ${id}`, url: `https://f.cn/docx/${id}`, content: `# 文档 ${id}\n\n正文。` } }
+      },
+    }
+    const { batch } = makeServices(fakeRunner(actions))
+    const created = await batch.createBatch({
+      provider: 'feishu',
+      connectionName: 'vyi',
+      remoteDocumentIds: ['tokA', 'tokB'],
+      mode: 'room',
+      roomId: 'room-active',
+    })
+    // 首篇卡在 fetch：批进行中，同 provider+连接名可找回；默认连接/其他连接名找不到。
+    expect(batch.getActiveBatch('feishu', 'vyi')?.id).toBe(created.batchId)
+    expect(batch.getActiveBatch('feishu')).toBeNull()
+    expect(batch.getActiveBatch('feishu', 'other')).toBeNull()
+    release!()
+    await waitBatch(batch, created.batchId)
+    expect(batch.getActiveBatch('feishu', 'vyi')).toBeNull()
   })
 
   it('入口校验：空列表/超上限/缺 roomId/Room 不存在/auto 未就绪', async () => {
@@ -737,5 +792,55 @@ describe('createBatch input contract', () => {
   it('accepts provider/connectionName/mode/roomId shape', () => {
     const input: CreateBatchImportInput = { provider: 'notion', remoteDocumentIds: ['p1'], mode: 'room', roomId: 'r1' }
     expect(input.mode).toBe('room')
+  })
+})
+
+// ── 找回进行中批次（面板重挂载恢复导入进度）──────────────────────────────────
+
+describe('document-import batches/active route', () => {
+  it('GET active：返回 running 批完整视图（字段不剥），无进行中/非法 provider 的行为', async () => {
+    insertRoom('room-active-route')
+    let release: (() => void) | null = null
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    const actions: FakeAction = {
+      ...feishuReadActions(['tokA', 'tokB']),
+      'feishu.fetch_document': async (input: Record<string, unknown>) => {
+        await gate
+        const id = String(input.documentId)
+        return { document: { document_id: id, revision_id: 7, title: `文档 ${id}`, url: `https://f.cn/docx/${id}`, content: `# 文档 ${id}\n\n正文。` } }
+      },
+    }
+    const { batch } = makeServices(fakeRunner(actions))
+    const app = Fastify()
+    await app.register(documentImportBatchRoutes(batch))
+    await app.ready()
+
+    // 无进行中批次：null。
+    const idle = await app.inject({ method: 'GET', url: '/v1/document-import/batches/active?provider=feishu' })
+    expect(idle.statusCode).toBe(200)
+    expect(idle.json()).toBeNull()
+
+    const created = await batch.createBatch({
+      provider: 'feishu',
+      connectionName: 'vyi',
+      remoteDocumentIds: ['tokA', 'tokB'],
+      mode: 'room',
+      roomId: 'room-active-route',
+    })
+    const running = await app.inject({ method: 'GET', url: `/v1/document-import/batches/active?provider=feishu&connectionName=vyi` })
+    expect(running.statusCode).toBe(200)
+    expect(running.json()).toMatchObject({ id: created.batchId, provider: 'feishu', connectionName: 'vyi', status: 'running', total: 2, items: [{ remoteDocumentId: 'tokA', status: 'pending' }, { remoteDocumentId: 'tokB', status: 'pending' }] })
+    // 响应体含 createdAt/updatedAt 等完整视图字段（fastify 默认序列化不剥）。
+    expect(running.json()).toHaveProperty('createdAt')
+
+    // 默认连接查询不带 connectionName：匹配 connection_name IS NULL，vyi 批不可见。
+    expect((await app.inject({ method: 'GET', url: '/v1/document-import/batches/active?provider=feishu' })).json()).toBeNull()
+    // 非法 provider 400。
+    expect((await app.inject({ method: 'GET', url: '/v1/document-import/batches/active?provider=gmail' })).statusCode).toBe(400)
+
+    release!()
+    await waitBatch(batch, created.batchId)
+    expect((await app.inject({ method: 'GET', url: '/v1/document-import/batches/active?provider=feishu&connectionName=vyi' })).json()).toBeNull()
+    await app.close()
   })
 })

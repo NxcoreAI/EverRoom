@@ -154,6 +154,11 @@ export class LarkAuthRunner {
     }, requestId)
   }
 
+  /** `lark-cli auth logout`：清除本机凭据（断开连接）。 */
+  authLogout(): Promise<LarkRunOutcome> {
+    return this.run(['auth', 'logout', '--json'], { timeoutMs: AUTH_STATUS_TIMEOUT_MS })
+  }
+
   newRequestId(prefix: string): string {
     return `${prefix}-${randomUUID()}`
   }

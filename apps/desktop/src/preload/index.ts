@@ -330,6 +330,7 @@ const api: NxcoreDesktopApi = {
     start: (input) => invoke('agent-auth:start', input),
     resume: (challengeId) => invokeQuietly('agent-auth:resume', challengeId),
     cancel: (challengeId) => invokeQuietly('agent-auth:cancel', challengeId),
+    disconnect: (provider: 'feishu') => invoke('agent-auth:disconnect', provider),
     onEvent: (listener) => {
       const handleEvent = (_event: Electron.IpcRendererEvent, frame: Parameters<typeof listener>[0]) => {
         listener(frame)
@@ -344,6 +345,7 @@ const api: NxcoreDesktopApi = {
     importExistingInRoom: (provider, roomId, remoteDocumentIds) => invoke('external-documents:import-existing-in-room', provider, roomId, remoteDocumentIds),
     importBatch: (input) => invoke('external-documents:import-batch', input),
     importBatchStatus: (batchId) => invokeQuietly('external-documents:import-batch-status', batchId),
+    activeImportBatch: (provider, connectionName) => invokeQuietly('external-documents:active-import-batch', provider, connectionName),
     cancelImportBatch: (batchId) => invoke('external-documents:cancel-import-batch', batchId),
     importPreview: (provider, remoteDocumentId) => invoke('external-documents:import-preview', provider, remoteDocumentId),
     importCommit: (input) => invoke('external-documents:import-commit', input),
