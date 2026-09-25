@@ -15,7 +15,6 @@ import {
   Undo2,
   EyeOff,
   RotateCcw,
-  X,
 } from 'lucide-react';
 import { createVersionedLocalStorageStore } from '@nxcore/migration-kit/local';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -70,6 +69,71 @@ function promotionLabel(progress: KnowledgePromotionProgressDto, t: Translate): 
     importing_documents: 'contextRoom:knowledgePending.importingDocuments',
   };
   return t(stageKeys[progress.stage] ?? 'contextRoom:knowledgePending.creatingRoom');
+}
+
+/** 创建阶段序（与 promotionPercent 刻度一致）：详情弹框时间线与完成闪光共用。 */
+const PROMOTION_STAGES: Array<{ stage: KnowledgePromotionProgressDto['stage']; labelKey: string }> = [
+  { stage: 'queued', labelKey: 'contextRoom:knowledgePending.promotionQueued' },
+  { stage: 'checking_identity', labelKey: 'contextRoom:knowledgePending.checkingIdentity' },
+  { stage: 'registering_entity', labelKey: 'contextRoom:knowledgePending.registeringEntity' },
+  { stage: 'creating_room', labelKey: 'contextRoom:knowledgePending.creatingRoom' },
+  { stage: 'creating_wiki', labelKey: 'contextRoom:knowledgePending.creatingWiki' },
+  { stage: 'importing_documents', labelKey: 'contextRoom:knowledgePending.importingDocuments' },
+];
+
+/** 完成闪光的合成进度对象：全部阶段打勾。 */
+const PROMOTION_COMPLETED_SNAPSHOT: KnowledgePromotionProgressDto = {
+  jobId: '',
+  status: 'completed',
+  stage: 'completed',
+  message: '',
+  current: null,
+  total: null,
+  queuePosition: null,
+  roomId: null,
+  error: null,
+  updatedAt: '',
+};
+
+/** 六阶段步骤条：完成打勾 / 当前转圈 / 失败显错；导入步带资料计数。 */
+function promotionStepsList(promotion: KnowledgePromotionProgressDto, t: Translate) {
+  const failed = promotion.status === 'failed';
+  const done = promotion.status === 'completed';
+  const activeIndex = done
+    ? PROMOTION_STAGES.length
+    : Math.max(0, PROMOTION_STAGES.findIndex((item) => item.stage === promotion.stage));
+  return (
+    <ol className="context-room-creation-steps context-room-promo-steps">
+      {PROMOTION_STAGES.map((item, index) => {
+        const state = failed && index === activeIndex
+          ? 'failed'
+          : index < activeIndex || done ? 'done' : index === activeIndex ? 'active' : undefined;
+        return (
+          <li key={item.stage} data-state={state}>
+            <span className="context-room-creation-step-icon">
+              {state === 'failed'
+                ? <AlertCircle aria-hidden="true" />
+                : state === 'done'
+                  ? <Check aria-hidden="true" />
+                  : state === 'active'
+                    ? <LoaderCircle className="spin" aria-hidden="true" />
+                    : <span aria-hidden="true" />}
+            </span>
+            <span className="context-room-creation-step-body">
+              <b>{t(item.labelKey)}</b>
+              {state === 'active' && item.stage === 'importing_documents' && promotion.total !== null ? (
+                <small>{t('contextRoom:knowledgePending.resourceProgress', {
+                  current: promotion.current ?? 0,
+                  total: promotion.total,
+                })}</small>
+              ) : null}
+              {state === 'failed' && promotion.error ? <small>{promotion.error}</small> : null}
+            </span>
+          </li>
+        );
+      })}
+    </ol>
+  );
 }
 
 /** 仅展示证据分最高的三个待创建候选。 */
@@ -265,6 +329,34 @@ export function KnowledgePendingPanel({
   const [loaded, setLoaded] = useState(false);
   /** strip 视图：详情弹框存实体 id（实体对象每拍刷新，进度可实时跟进）。 */
   const [detailId, setDetailId] = useState<string | null>(null);
+  /**
+   * 创建完成闪光状态：确认创建后实体转 room 态离开 ready 池，detailEntity
+   * 随之变 null、弹框会瞬间关闭。捕获这次「promoting → 消失」的迁移，
+   * 停留 1.6s 展示全勾完成态再收，长等待有明确的终点画面。
+   */
+  const [completedFlash, setCompletedFlash] = useState<{ id: string; name: string } | null>(null);
+  const detailSnapshotRef = useRef<{ id: string | null; promoting: boolean; name: string }>({ id: null, promoting: false, name: '' });
+  useEffect(() => {
+    const snapshot = detailSnapshotRef.current;
+    const current = detailId ? recommended.find((entity) => entity.id === detailId) ?? null : null;
+    const promoting = current?.promotion?.status === 'queued'
+      || current?.promotion?.status === 'running';
+    // 换了别的实体：立即撤闪光，别让旧计时器收走新弹框。
+    if (completedFlash && detailId !== null && detailId !== completedFlash.id) {
+      setCompletedFlash(null);
+    }
+    if (snapshot.promoting && detailId !== null && detailId === snapshot.id && current === null) {
+      const flashId = detailId;
+      setCompletedFlash({ id: flashId, name: snapshot.name });
+      const timer = window.setTimeout(() => {
+        setCompletedFlash(null);
+        setDetailId((currentId) => (currentId === flashId ? null : currentId));
+      }, 1_600);
+      detailSnapshotRef.current = { id: detailId, promoting: false, name: snapshot.name };
+      return () => window.clearTimeout(timer);
+    }
+    detailSnapshotRef.current = { id: detailId, promoting, name: current?.name ?? snapshot.name };
+  }, [detailId, recommended, completedFlash]);
   /** strip 视图：完整管理面板弹框（批量选择 / 待挂载 / 历史收纳于此）。 */
   const [manageOpen, setManageOpen] = useState(false);
   /** 知识服务不可用：与「确实没有推荐」区分展示，附重试入口。 */
@@ -926,13 +1018,28 @@ export function KnowledgePendingPanel({
     );
   };
 
+  /** 创建过程时间线（详情弹框用）：六阶段步骤条，当前步带资料计数，比紧凑进度条更能安放长等待。 */
+  const promotionDetailBlock = (entity: KnowledgeEntityDto) => {
+    const promotion = entity.promotion;
+    if (!promotion) return null;
+    return (
+      <div
+        className="context-room-promo-run"
+        data-status={promotion.status}
+        role="status"
+      >
+        {promotionStepsList(promotion, t)}
+      </div>
+    );
+  };
+
   /** 推荐生成蒙层：strip 区与管理面板都挂在各自容器内（dialog 打开时双处可见）。 */
   const runOverlay = run ? (
-  <div
-    className="context-room-knowledge-overlay"
-    data-testid="context-room-recommendation-run"
-    data-phase={run.phase}
-  >
+    <div
+      className="context-room-knowledge-overlay"
+      data-testid="context-room-recommendation-run"
+      data-phase={run.phase}
+    >
     <div className="context-room-knowledge-overlay-card">
       <header>
         {run.phase === 'failed'
@@ -1326,29 +1433,21 @@ export function KnowledgePendingPanel({
       </ReferenceDialog>
 
       <ReferenceDialog
-        open={detailEntity !== null}
-        onOpenChange={(open) => { if (!open) setDetailId(null); }}
-        title={detailEntity?.name ?? ''}
+        open={detailEntity !== null || completedFlash !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setCompletedFlash(null);
+            setDetailId(null);
+          }
+        }}
+        title={detailEntity?.name ?? completedFlash?.name ?? ''}
         contentClassName="context-room-rec-detail-dialog"
       >
         {detailEntity ? (
           <div className="context-room-rec-detail">
             <header>
-              <div className="context-room-rec-detail-meta">
-                <span className="context-room-rec-detail-kicker">
-                  {t('contextRoom:knowledgePending.recommendCreationKicker', { name: detailEntity.name })}
-                </span>
-                <h3>{detailEntity.name}</h3>
-              </div>
+              <h3>{detailEntity.name}</h3>
               <span className="context-room-knowledge-tag">{localizedUiText(detailEntity.kind, t)}</span>
-              <button
-                type="button"
-                className="context-room-rec-detail-close"
-                aria-label={t('contextRoom:shared.closeDialog')}
-                onClick={() => setDetailId(null)}
-              >
-                <X aria-hidden="true" />
-              </button>
             </header>
             {detailEntity.firstEvidence ? (
               <p className="context-room-rec-detail-desc">{detailEntity.firstEvidence}</p>
@@ -1363,11 +1462,21 @@ export function KnowledgePendingPanel({
                 <span className="context-room-rec-detail-stat-label">{t('contextRoom:knowledgePending.statScore')}</span>
               </div>
             </div>
-            <p className="context-room-rec-detail-reason">{entityReason(detailEntity)}</p>
-            {promotionProgressBlock(detailEntity)}
+            {promotionDetailBlock(detailEntity)}
             <footer className="context-room-rec-detail-actions">
               {entityActions(detailEntity)}
             </footer>
+          </div>
+        ) : completedFlash ? (
+          <div className="context-room-rec-detail context-room-rec-detail-flash" data-status="completed">
+            <header>
+              <h3>{completedFlash.name}</h3>
+              <span className="context-room-knowledge-tag" data-tone="success">
+                <Check aria-hidden="true" />
+                {t('contextRoom:knowledgePending.roomCreated')}
+              </span>
+            </header>
+            {promotionStepsList(PROMOTION_COMPLETED_SNAPSHOT, t)}
           </div>
         ) : null}
       </ReferenceDialog>
