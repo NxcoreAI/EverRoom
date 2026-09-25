@@ -142,6 +142,14 @@ export class AcpAgentRuntime implements AgentRuntime {
     try {
       await this.ensureConnection();
       const mcpServers = await this.mcpServersForRun?.(input) ?? [];
+      // 注入的 EverRoom MCP 工具与 pi 渠道同语义（token 即能力，不做权限门）：
+      // 经 _meta.claudeCode.options.allowedTools 预授权整个服务器，否则 CLI 对每个
+      // mcp__everroom__* 调用走 canUseTool→requestPermission，在无工作区绑定
+      // （inspect → mutationAllowed=false）下连只读检索也会被拒。
+      // 文件系统 mutation 仍走 mutationAllowed 的 requestPermission 门。
+      const sessionMeta = mcpServers.length > 0
+        ? { claudeCode: { options: { allowedTools: mcpServers.map((server) => `mcp__${server.name}`) } } }
+        : undefined;
       // ACP spec：loadSession 成功后 sessionId 保持请求里传入的那个。
       const resumeRef = input.runtimeSessionRef;
       if (resumeRef && this.initResponse?.agentCapabilities?.loadSession !== false) {
@@ -149,10 +157,15 @@ export class AcpAgentRuntime implements AgentRuntime {
           sessionId: resumeRef,
           cwd: this.workingDirectory,
           mcpServers,
+          ...(sessionMeta ? { _meta: sessionMeta } : {}),
         });
         sessionId = resumeRef;
       } else {
-        const session = await this.connection!.newSession({ cwd: this.workingDirectory, mcpServers });
+        const session = await this.connection!.newSession({
+          cwd: this.workingDirectory,
+          mcpServers,
+          ...(sessionMeta ? { _meta: sessionMeta } : {}),
+        });
         sessionId = session.sessionId;
       }
       this.runs.set(input.runId, sessionId);
