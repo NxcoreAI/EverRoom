@@ -1573,6 +1573,7 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
 .agent-picker-icon-button svg { width: 15px; height: 15px; }
 .agent-picker-header-icon { display: grid; width: 28px; height: 28px; place-items: center; border-radius: 6px; background: #eef4ff; color: #4d6faf; }
 .agent-picker-header-icon svg { width: 14px; height: 14px; }
+.agent-picker-header-icon .source-icon { width: 15px; height: 15px; object-fit: contain; }
 .agent-external-search { display: flex; align-items: center; min-height: 38px; gap: 7px; margin: 7px 8px 6px; padding: 0 9px; border: 1px solid #dfe3e8; border-radius: 6px; background: #fafbfc; }
 .agent-external-search:focus-within { border-color: #bcc3cc; background: #fff; box-shadow: 0 0 0 2px rgba(71, 84, 103, .08); }
 .agent-external-search svg { width: 14px; height: 14px; flex: 0 0 auto; color: #818995; }
@@ -1793,16 +1794,6 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
 .agent-context-citation > button svg {
   width: 12px;
   height: 12px;
-}
-
-.agent-file-input {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip: rect(0 0 0 0);
-  clip-path: inset(50%);
-  white-space: nowrap;
 }
 
 .agent-attachments {
@@ -2150,7 +2141,6 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
   background: #e3e5e9;
 }
 
-.agent-prompt-tool,
 .agent-model-picker-hint {
   padding: 7px 9px 6px;
   border-top: 1px solid #eceef1;
@@ -2174,15 +2164,6 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
   cursor: pointer;
 }
 
-.agent-prompt-tool:hover:not(:disabled) {
-  background: #f1f2f4;
-  color: #2f343b;
-}
-
-.agent-prompt-tool:disabled {
-  cursor: default;
-  opacity: 0.42;
-}
 
 .agent-room-focus-toggle {
   display: inline-flex;
@@ -2228,11 +2209,11 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
   min-width: 0;
   flex: 0 0 auto;
   align-items: center;
-  gap: 5px;
-  height: 24px;
-  padding: 0 9px;
+  gap: 6px;
+  height: 26px;
+  padding: 0 10px;
   border: 1px solid #e3e6eb;
-  border-radius: 7px;
+  border-radius: 8px;
   background: #f8f9fa;
   color: #555d69;
   font-size: 11px;
@@ -2254,6 +2235,11 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
   height: 12px;
   flex: 0 0 12px;
 }
+
+/* 渠道 chip 用品牌 logo（SourceIcon img）+ 下拉箭头；尺寸独立于 svg 图标。 */
+.agent-model-tier-toggle .source-icon { width: 14px; height: 14px; flex: 0 0 14px; object-fit: contain; }
+.agent-model-tier-toggle .agent-model-tier-caret { width: 11px; height: 11px; flex: 0 0 11px; opacity: 0.65; }
+.agent-model-tier-toggle:hover:not(:disabled) .agent-model-tier-caret { opacity: 1; }
 
 .agent-model-tier-toggle[data-tier='primary'],
 .agent-model-tier-toggle[data-tier='lite'],
@@ -2369,7 +2355,6 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
   fill: currentColor;
 }
 
-.agent-prompt-tool svg,
 .agent-prompt-submit svg {
   width: 17px;
   height: 17px;

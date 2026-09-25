@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowUp, Bot, Brain, Check, Feather, FileText, FolderOpen, History, LoaderCircle, MessagesSquare, Plus, Quote, Search, Square, Terminal, X, Zap } from 'lucide-react'
+import { ArrowLeft, ArrowUp, Bot, Brain, Check, ChevronDown, Feather, FileText, FolderOpen, History, LoaderCircle, MessagesSquare, Quote, Search, Square, Terminal, X, Zap } from 'lucide-react'
 import {
   forwardRef,
   useEffect,
@@ -6,7 +6,6 @@ import {
   useLayoutEffect,
   useRef,
   useState,
-  type ChangeEvent,
   type FormEvent,
   type KeyboardEvent,
   type ReactNode,
@@ -26,7 +25,6 @@ import {
   type MentionedItem,
 } from './agentMentions'
 
-const ACCEPTED_ATTACHMENTS = '.txt,.md,.csv,.json,.pdf,.docx,.xlsx,.pptx'
 const ATTACHMENT_PATTERN = /\.(txt|md|csv|json|pdf|docx|xlsx|pptx)$/i
 const MAX_ATTACHMENTS = 5
 const MAX_ATTACHMENT_SIZE = 10 * 1024 * 1024
@@ -193,7 +191,6 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   const [attachments, setAttachments] = useState<LocalAttachment[]>([])
   const shellRef = useRef<HTMLFormElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
-  const fileInputRef = useRef<HTMLInputElement>(null)
   const externalResultsRef = useRef<HTMLDivElement>(null)
   const agentResultsRef = useRef<HTMLDivElement>(null)
   const mountedRef = useRef(true)
@@ -285,7 +282,6 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
     setModelPickerOpen(false)
     setContextPanelOpen(false)
     mentionHints.current.clear()
-    if (fileInputRef.current) fileInputRef.current.value = ''
   }, [resetKey])
 
   useEffect(() => {
@@ -365,25 +361,6 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
       event.preventDefault()
       if (available) onSubmit(attachments.map(({ file }) => file), submitMentions())
     }
-  }
-
-  const selectAttachments = (event: ChangeEvent<HTMLInputElement>) => {
-    const files = [...(event.target.files ?? [])]
-    const known = new Set(attachments.map((file) => file.id))
-    const candidates = files
-      .filter((file) => ATTACHMENT_PATTERN.test(file.name) && file.size <= MAX_ATTACHMENT_SIZE)
-      .map((file) => ({ id: `${file.name}:${file.size}:${file.lastModified}`, file, name: file.name, size: file.size }))
-      .filter((file) => !known.has(file.id))
-    const accepted = candidates.slice(0, Math.max(0, MAX_ATTACHMENTS - attachments.length))
-    const rejected = files.length - accepted.length
-    setAttachments((current) => [...current, ...accepted])
-    showToast({
-      title: t(rejected ? 'surface:agentComposer.someAttachmentsWereNotAdded' : 'surface:agentComposer.attachmentsAddedToTheComposer'),
-      message: rejected
-        ? t('surface:agentComposer.onlySupportedDocumentFormatsUpTo10Mb')
-        : t('surface:agentComposer.attachmentsAddedToTheComposer'),
-    })
-    event.target.value = ''
   }
 
   const addDroppedAttachments = (files: File[]) => {
@@ -993,7 +970,11 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
                   onMouseDown={(event) => event.preventDefault()}
                   onClick={() => chooseChannelAgent(agent.id)}
                 >
-                  <span className="agent-picker-header-icon"><Terminal aria-hidden="true" /></span>
+                  <span className="agent-picker-header-icon">
+                    {agent.provider === 'claude' || agent.provider === 'codex' || agent.provider === 'openclaw'
+                      ? <SourceIcon kind={agent.provider} />
+                      : <Terminal aria-hidden="true" />}
+                  </span>
                   <span><strong>{agent.displayName}</strong><small>{t('surface:agentComposer.channelOptionHint')}</small></span>
                   {channelAgentId === agent.id ? <Check aria-hidden="true" /> : null}
                 </button>
@@ -1126,25 +1107,6 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
           </div>
         ) : null}
         <div className="agent-prompt-actions">
-          <input
-            ref={fileInputRef}
-            className="agent-file-input"
-            type="file"
-            accept={ACCEPTED_ATTACHMENTS}
-            multiple
-            tabIndex={-1}
-            onChange={selectAttachments}
-          />
-          <button
-            type="button"
-            className="agent-prompt-tool"
-            title={t('surface:agentComposer.addAttachment')}
-            aria-label={t('surface:agentComposer.addAttachment')}
-            disabled={controlsDisabled}
-            onClick={() => fileInputRef.current?.click()}
-          >
-            <Plus aria-hidden="true" />
-          </button>
           {roomFocusVisible && onToggleRoomFocus ? (
             <button
               type="button"
@@ -1170,8 +1132,13 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
             disabled={controlsDisabled}
             onClick={() => (modelPickerOpen ? setModelPickerOpen(false) : openModelPicker())}
           >
-            {channelActive ? <Terminal aria-hidden="true" /> : <ActiveTierIcon aria-hidden="true" />}
+            {channelActive ? (
+              channelAgent && (channelAgent.provider === 'claude' || channelAgent.provider === 'codex' || channelAgent.provider === 'openclaw')
+                ? <SourceIcon kind={channelAgent.provider} className="agent-model-tier-logo" />
+                : <Terminal aria-hidden="true" />
+            ) : <ActiveTierIcon aria-hidden="true" />}
             <span>{channelActive ? channelAgent?.displayName ?? channelAgentId : t(activeTierMeta.labelKey)}</span>
+            <ChevronDown aria-hidden="true" className="agent-model-tier-caret" />
           </button>
           {/* 占位 flex 撑开发送钮；无引用时不渲染文案。 */}
           <span className="agent-composer-context" title={hasSelectedText ? contextSummary : undefined}>
