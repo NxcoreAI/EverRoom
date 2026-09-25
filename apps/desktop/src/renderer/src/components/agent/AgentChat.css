@@ -19,7 +19,8 @@
 .agent-chat-empty-heading {
   position: absolute;
   z-index: 1;
-  top: max(14px, calc(100% - var(--agent-composer-bottom) - var(--agent-composer-height) - 70px));
+  /* 快捷提示块(≈118px)移到编辑框上方后，标题相应上移让位。 */
+  top: max(14px, calc(100% - var(--agent-composer-bottom) - var(--agent-composer-height) - 200px));
   left: 12px;
   right: 12px;
   display: flex;
@@ -1399,7 +1400,7 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
 .agent-chat-quick-prompts {
   position: absolute;
   z-index: 3;
-  top: calc(100% - var(--agent-composer-bottom) + 10px);
+  bottom: calc(var(--agent-composer-bottom) + var(--agent-composer-height) + 10px);
   left: 12px;
   right: 12px;
   display: flex;
@@ -1419,6 +1420,15 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
   transform: translateY(0);
   visibility: visible;
   transition-delay: 0s;
+}
+
+/* 快捷提示在编辑框上方；模型/@ 弹层从 composer 顶边向上展开，展开期间隐藏提示避免重叠。 */
+.agent-chat-conversation-frame[data-empty='true'] .agent-composer-shell[data-menu-open='true'] ~ .agent-chat-quick-prompts {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(10px);
+  visibility: hidden;
+  transition: opacity 180ms 180ms ease, transform 220ms 180ms cubic-bezier(.22, 1, .36, 1), visibility 0s 180ms linear;
 }
 
 .agent-chat-quick-prompts button {
