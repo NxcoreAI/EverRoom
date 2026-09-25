@@ -285,7 +285,14 @@ export function channelAgentIdFromAgentId(agentId: string | null | undefined): s
 }
 
 export interface UpdateAgentSessionInput {
-  title: string;
+  title?: string;
+  /**
+   * 中途切换当前会话的目标（立即生效，下一轮 startRun 走新目标）。
+   * channelAgentId 有值＝切到该 CLI 渠道（modelPreference 被忽略）；
+   * channelAgentId: null＋modelPreference＝退出渠道回到档位模式。
+   */
+  channelAgentId?: string | null;
+  modelPreference?: AgentModelPreference;
 }
 
 export type AgentNavigationAction = "created" | "updated" | "opened" | "referenced";

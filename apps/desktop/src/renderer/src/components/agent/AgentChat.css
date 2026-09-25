@@ -2102,14 +2102,6 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
   color: var(--accent-strong, #4d6faf);
 }
 
-.agent-model-picker-hint {
-  padding: 7px 9px 6px;
-  border-top: 1px solid #eceef1;
-  color: #8b93a0;
-  font-size: 10px;
-  text-align: center;
-}
-
 .agent-prompt-submit {
   margin-left: auto;
   border-radius: 50%;

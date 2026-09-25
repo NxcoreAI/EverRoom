@@ -830,8 +830,27 @@ export class AgentService {
   }
 
   updateSession(sessionId: string, input: UpdateAgentSessionInput): AgentSession | null {
+    const existing = this.db.select().from(agentSessions).where(eq(agentSessions.id, sessionId)).get();
+    if (!existing) return null;
+    if (existing.status === "running") throw new Error("agent_session_busy");
+    const patch: Partial<typeof agentSessions.$inferInsert> = { updatedAt: new Date() };
+    if (input.title !== undefined) patch.title = input.title.trim();
+    // 中途切换目标：与 createSession 同口径（渠道优先，档位 lite 未配置回落 smart）。
+    if (input.channelAgentId !== undefined || input.modelPreference !== undefined) {
+      if (input.channelAgentId) {
+        patch.activeAgentId = input.channelAgentId;
+      } else {
+        const requested = input.modelPreference
+          ? MODEL_PREFERENCE_AGENT_IDS[input.modelPreference]
+          : MAIN_AGENT_ID;
+        const tierRuntime = requested === MAIN_AGENT_ID
+          ? this.runtime
+          : this.resolveTierRuntime?.(requested) ?? null;
+        patch.activeAgentId = tierRuntime ? requested : MAIN_AGENT_ID;
+      }
+    }
     const updated = this.db.update(agentSessions)
-      .set({ title: input.title.trim(), updatedAt: new Date() })
+      .set(patch)
       .where(eq(agentSessions.id, sessionId))
       .returning()
       .get();

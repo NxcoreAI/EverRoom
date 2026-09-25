@@ -121,7 +121,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   onToggleRoomFocus?: (next: boolean) => void
   /** 当前生效档位：会话已存在＝会话锁定档，否则＝全局默认档。 */
   modelPreference: AgentModelPreference
-  /** 会话已创建 → 档位锁定在会话上，切换只影响下一个新会话。 */
+  /** 会话已创建（档位/渠道中途切换需要回写会话）。 */
   modelPreferenceLocked?: boolean
   /** 打开选择器时拉取最新 lite 可用性（设置页保存后无需重启）。 */
   loadModelAvailability: () => Promise<boolean>
@@ -130,6 +130,8 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   channelAgentId?: string | null
   /** 选择本机 CLI Agent 渠道（整个新会话由其连续执行）；null=回到档位模式。 */
   onSelectChannelAgent?: (agentId: string | null) => void
+  /** 会话已存在时把切换立即回写到当前会话（下一轮 startRun 走新目标）。 */
+  onSwitchSessionTarget?: (input: { channelAgentId?: string | null; modelPreference?: AgentModelPreference }) => void
   onChange: (value: string) => void
   onSelectExternalConversation: (conversation: ExternalConversationSummary | null) => void
   onClearContext: () => void
@@ -158,6 +160,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   onSelectModelPreference,
   channelAgentId = null,
   onSelectChannelAgent,
+  onSwitchSessionTarget,
   value,
   onChange,
   onClearContext,
@@ -469,11 +472,18 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
     // 渠道生效时点档位＝退出渠道，回到档位模式。
     if (channelAgentId) onSelectChannelAgent?.(null)
     onSelectModelPreference(tier)
+    // 会话已存在：切换立即回写当前会话（下一轮就走该档位），否则只改全局默认。
+    if (modelPreferenceLocked && (channelAgentId || modelPreference !== tier)) {
+      onSwitchSessionTarget?.({ channelAgentId: null, modelPreference: tier })
+    }
     setModelPickerOpen(false)
     window.requestAnimationFrame(() => textareaRef.current?.focus())
   }
   const chooseChannelAgent = (agentId: string) => {
     onSelectChannelAgent?.(agentId)
+    if (modelPreferenceLocked && channelAgentId !== agentId) {
+      onSwitchSessionTarget?.({ channelAgentId: agentId })
+    }
     setModelPickerOpen(false)
     window.requestAnimationFrame(() => textareaRef.current?.focus())
   }
@@ -936,9 +946,6 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
                 </button>
               ))}
             </div>
-          ) : null}
-          {modelPreferenceLocked ? (
-            <footer className="agent-model-picker-hint">{t('surface:agentComposer.modelPickerApplyToNext')}</footer>
           ) : null}
         </section>
       ) : null}

@@ -617,6 +617,7 @@ export function AgentPanel({
       onSelectModelPreference={session.setModelPreferenceDefault}
       channelAgentId={effectiveChannelAgentId}
       onSelectChannelAgent={session.setChannelAgentIdDefault}
+      onSwitchSessionTarget={session.switchSessionTarget}
       value={draft}
       active={Boolean(session.activeRunId)}
       loading={session.loading || submitting}

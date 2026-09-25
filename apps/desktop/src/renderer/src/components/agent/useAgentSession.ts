@@ -761,6 +761,24 @@ export function useAgentSession(
     }
   }
 
+  // 会话已存在时中途切换目标：立即回写网关（下一轮 startRun 走新 agent），本地状态同步刷新。
+  const switchSessionTarget = useCallback(async (
+    input: { channelAgentId?: string | null; modelPreference?: AgentModelPreference },
+  ): Promise<void> => {
+    const targetId = sessionIdRef.current
+    if (!api || !targetId) return
+    try {
+      const updated = await api.updateSession(targetId, input)
+      setSessions((current) => current.map((session) => session.id === updated.id ? updated : session))
+      setCurrentSession((current) => current?.id === updated.id ? updated : current)
+      if (updated.id === sessionIdRef.current) {
+        channelAgentRef.current = updated.channelAgentId ?? null
+      }
+    } catch (requestError) {
+      setError(requestErrorMessage(requestError, t('surface:useAgentSession.switchTargetFailed')))
+    }
+  }, [api, t])
+
   // 会话首轮完成后自动起标题：网关兜底标题 = run.accepted 的 prompt 截 48 字
   // （与网关 service 同源），只有权威标题仍等于该兜底值（用户未改名）才替换。
   const maybeGenerateSessionTitle = (targetSessionId: string, runId: string): void => {
@@ -1111,6 +1129,7 @@ export function useAgentSession(
     runStartedAtByRun,
     scopeReady,
     renameSession,
+    switchSessionTarget,
     resolveApproval,
     resolvingApprovalIds,
     markSessionLinkReturned,

@@ -426,12 +426,13 @@ describe('AgentComposer model tier picker', () => {
   async function openModelPicker(overrides: Partial<React.ComponentProps<typeof AgentComposer>> = {}) {
     const loadModelAvailability = vi.fn(async () => true)
     const onSelectModelPreference = vi.fn()
-    const { renderer } = renderComposer({ loadModelAvailability, onSelectModelPreference, ...overrides })
+    const onSwitchSessionTarget = vi.fn()
+    const { renderer } = renderComposer({ loadModelAvailability, onSelectModelPreference, onSwitchSessionTarget, ...overrides })
     const trigger = renderer.root.findByProps({ className: 'agent-model-tier-toggle' })
     await act(async () => { trigger.props.onClick(); await Promise.resolve() })
     const options = renderer.root.findByProps({ className: 'agent-composer-popover agent-model-picker' })
       .findAllByProps({ role: 'option' })
-    return { renderer, trigger, options, onSelectModelPreference, loadModelAvailability }
+    return { renderer, trigger, options, onSelectModelPreference, loadModelAvailability, onSwitchSessionTarget }
   }
 
   it('shows the current tier on the trigger and lists three tiers when lite is available', async () => {
@@ -461,11 +462,35 @@ describe('AgentComposer model tier picker', () => {
     expect(renderer.root.findAllByProps({ className: 'agent-composer-popover agent-model-picker' })).toHaveLength(0)
   })
 
-  it('explains that switching only affects the next conversation when the tier is locked', async () => {
-    const { renderer } = await openModelPicker({ modelPreferenceLocked: true })
+  it('switches an existing session to the picked tier immediately', async () => {
+    const { renderer, onSwitchSessionTarget } = await openModelPicker({ modelPreferenceLocked: true })
 
-    expect(renderer.root.findByProps({ className: 'agent-model-picker-hint' }).children)
-      .toContain('档位在会话开始时锁定，切换将在新对话中生效')
+    const primaryOption = renderer.root.findAllByProps({ role: 'option' })
+      .find((option) => String(option.findByType('strong').children) === '强模型')!
+    act(() => primaryOption.props.onClick())
+
+    expect(onSwitchSessionTarget).toHaveBeenCalledWith({ channelAgentId: null, modelPreference: 'primary' })
+  })
+
+  it('does not rewrite the session when the active tier is re-picked', async () => {
+    const { options, onSwitchSessionTarget } = await openModelPicker({ modelPreferenceLocked: true })
+
+    act(() => options[0]!.props.onClick())
+
+    expect(onSwitchSessionTarget).not.toHaveBeenCalled()
+  })
+
+  it('picking a tier while a channel is locked rewrites the session back to tier mode', async () => {
+    const { renderer, onSwitchSessionTarget } = await openModelPicker({
+      modelPreferenceLocked: true,
+      channelAgentId: 'claude:/usr/local/bin/claude',
+    })
+
+    const smartOption = renderer.root.findAllByProps({ role: 'option' })
+      .find((option) => String(option.findByType('strong').children) === '智能')!
+    act(() => smartOption.props.onClick())
+
+    expect(onSwitchSessionTarget).toHaveBeenCalledWith({ channelAgentId: null, modelPreference: 'smart' })
   })
 
   it('reflects a non-default tier on the trigger', async () => {
@@ -493,12 +518,13 @@ describe('AgentComposer CLI channel picker', () => {
   async function openChannelPicker(overrides: Partial<React.ComponentProps<typeof AgentComposer>> = {}) {
     const onSelectChannelAgent = vi.fn()
     const onSelectModelPreference = vi.fn()
-    const { renderer } = renderComposer({ onSelectChannelAgent, onSelectModelPreference, ...overrides })
+    const onSwitchSessionTarget = vi.fn()
+    const { renderer } = renderComposer({ onSelectChannelAgent, onSelectModelPreference, onSwitchSessionTarget, ...overrides })
     const trigger = renderer.root.findByProps({ className: 'agent-model-tier-toggle' })
     await act(async () => { trigger.props.onClick(); await Promise.resolve() })
     const channelOptions = renderer.root.findByProps({ className: 'agent-model-channel-group' })
       .findAllByProps({ role: 'option' })
-    return { renderer, trigger, channelOptions, onSelectChannelAgent, onSelectModelPreference }
+    return { renderer, trigger, channelOptions, onSelectChannelAgent, onSelectModelPreference, onSwitchSessionTarget }
   }
 
   it('lists callable CLI agents in a channel group and reports the choice', async () => {
@@ -540,5 +566,24 @@ describe('AgentComposer CLI channel picker', () => {
 
     expect(onSelectChannelAgent).toHaveBeenCalledWith(null)
     expect(onSelectModelPreference).toHaveBeenCalledWith('primary')
+  })
+
+  it('switches an existing session to the picked channel immediately', async () => {
+    const { channelOptions, onSwitchSessionTarget } = await openChannelPicker({ modelPreferenceLocked: true })
+
+    act(() => channelOptions[1]!.props.onClick())
+
+    expect(onSwitchSessionTarget).toHaveBeenCalledWith({ channelAgentId: 'claude:/usr/local/bin/claude' })
+  })
+
+  it('does not rewrite the session when the locked channel is re-picked', async () => {
+    const { channelOptions, onSwitchSessionTarget } = await openChannelPicker({
+      modelPreferenceLocked: true,
+      channelAgentId: 'claude:/usr/local/bin/claude',
+    })
+
+    act(() => channelOptions[1]!.props.onClick())
+
+    expect(onSwitchSessionTarget).not.toHaveBeenCalled()
   })
 })
