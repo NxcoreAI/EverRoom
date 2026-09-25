@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, ne, or } from "drizzle-orm";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
 import { roomWikis, rooms } from "../../infrastructure/database/schema.js";
 import { KsAdminClient } from "./ks-client.js";
@@ -16,15 +16,40 @@ export class RoomWikiRegistry {
   constructor(
     private readonly db: GatewayDatabase,
     private readonly ks: KsAdminClient,
-  ) {}
+  ) {
+    this.archiveWikisOfDeadRooms();
+  }
 
-  /** Room 当前活跃 wiki 的 knowledgeId；未建或已归档返回 null。 */
+  /** Room 是否存活（未软删且 lifecycle=active）。merged/软删房的 wiki 是历史残卷。 */
+  private roomIsLive(roomId: string): boolean {
+    const row = this.db.select({ lifecycle: rooms.lifecycle, deletedAt: rooms.deletedAt })
+      .from(rooms)
+      .where(eq(rooms.id, roomId))
+      .get();
+    return row !== undefined && row.lifecycle === "active" && row.deletedAt === null;
+  }
+
+  /** 启动自愈：把已合并/软删房仍挂 active 的 wiki 残卷翻回 archived
+   *  （旧版"并入现有房"合并路径不归档 wiki，遗下 status=active 的僵尸行）。 */
+  private archiveWikisOfDeadRooms(): void {
+    const dead = this.db.select({ id: rooms.id }).from(rooms)
+      .where(or(ne(rooms.lifecycle, "active"), isNotNull(rooms.deletedAt)))
+      .all()
+      .map((row) => row.id);
+    if (dead.length === 0) return;
+    this.db.update(roomWikis)
+      .set({ status: "archived" })
+      .where(and(eq(roomWikis.status, "active"), inArray(roomWikis.roomId, dead)))
+      .run();
+  }
+
+  /** Room 当前活跃 wiki 的 knowledgeId；未建、已归档或房已合并/软删返回 null。 */
   resolveRoomWikiId(roomId: string): string | null {
     const row = this.db.select({ knowledgeId: roomWikis.knowledgeId })
       .from(roomWikis)
       .where(and(eq(roomWikis.roomId, roomId), eq(roomWikis.status, "active")))
       .get();
-    return row?.knowledgeId ?? null;
+    return row && this.roomIsLive(roomId) ? row.knowledgeId : null;
   }
 
   /**
@@ -44,18 +69,21 @@ export class RoomWikiRegistry {
       const raced = this.resolveRoomWikiId(roomId);
       if (raced) return raced;
 
-      // 归档过的 Room 复活：沿用原行（KS 侧 wiki 数据仍在），只翻状态。
+      // 归档行的复活只限活房（删除房回炉/改名重挂场景）；已合并房的残卷
+      // 保持 archived——历史上无条件复活让合并旧路径漏归档的僵尸 wiki
+      // 重新出现在顶层 wiki 清单里，同一份材料看起来存了三四份。
       const archived = this.db.select()
         .from(roomWikis)
         .where(eq(roomWikis.roomId, roomId))
         .get();
-      if (archived) {
+      if (archived && this.roomIsLive(roomId)) {
         this.db.update(roomWikis)
           .set({ status: "active" })
           .where(eq(roomWikis.roomId, roomId))
           .run();
         return archived.knowledgeId;
       }
+      if (archived) return archived.knowledgeId;
 
       const knowledgeId = await this.ks.createWiki(`room-${roomId}`);
       this.db.insert(roomWikis)
@@ -79,8 +107,18 @@ export class RoomWikiRegistry {
     }
   }
 
+  /** 顶层 wiki 清单只列活房：已合并/软删房不产出 wiki 条目（含 status=archived 行）。 */
   listRoomWikis(): Array<{ roomId: string; knowledgeId: string; status: string; createdAt: Date }> {
-    return this.db.select().from(roomWikis).all();
+    return this.db.select({
+      roomId: roomWikis.roomId,
+      knowledgeId: roomWikis.knowledgeId,
+      status: roomWikis.status,
+      createdAt: roomWikis.createdAt,
+    })
+      .from(roomWikis)
+      .innerJoin(rooms, eq(rooms.id, roomWikis.roomId))
+      .where(and(isNull(rooms.deletedAt), eq(rooms.lifecycle, "active")))
+      .all();
   }
 
   private roomTitle(roomId: string): string {
