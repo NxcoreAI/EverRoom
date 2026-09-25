@@ -481,6 +481,62 @@
   margin-top: 10px;
 }
 
+/* 设备准入（额度满）：登录页内的可替换设备清单，整行可点。 */
+.runtime-config-gate-admission-devices {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  margin-top: 14px;
+}
+
+.runtime-config-gate-admission-device {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid #d7dce4;
+  border-radius: 10px;
+  background: #fff;
+  cursor: pointer;
+  text-align: left;
+}
+
+.runtime-config-gate-admission-device:hover:not(:disabled) {
+  border-color: #151a22;
+}
+
+.runtime-config-gate-admission-device:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.runtime-config-gate-admission-device-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.runtime-config-gate-admission-device-meta strong {
+  font-size: 14px;
+  color: #151a22;
+}
+
+.runtime-config-gate-admission-device-meta small {
+  font-size: 12px;
+  color: #7c8798;
+}
+
+.runtime-config-gate-admission-device em {
+  flex: none;
+  font-style: normal;
+  font-size: 13px;
+  font-weight: 500;
+  color: #151a22;
+}
+
 /* 手动配置是低频逃生入口：右对齐的一行弱化文字，不做按钮。 */
 .runtime-config-gate-manual-link {
   display: block;

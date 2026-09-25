@@ -143,6 +143,17 @@ export function QrLoginPanel(props: {
           setPhase({ kind: 'ended', reason: 'expired' })
           return
         }
+        // 主进程已无此会话（主进程重启/会话被新建顶掉）：desktopExchangeToken
+        // 只在主进程内存，旧码必然无法 exchange。等扫码阶段静默换新码；已扫/
+        // 已确认阶段用户流程作废，进终态提示重试，不再按网络错误无限退避。
+        if (message.includes('扫码登录会话')) {
+          if (phaseRef.current.kind === 'pendingScan') {
+            void createSession()
+            return
+          }
+          setPhase({ kind: 'ended', reason: 'error', message })
+          return
+        }
         // 网络错误：退避后重试，不中断面板。
         return schedule(5_000)
       } finally {
