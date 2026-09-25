@@ -8519,90 +8519,6 @@
   gap: 12px;
 }
 
-.context-room-graph-index-state {
-  display: inline-flex;
-  min-width: 0;
-  align-items: center;
-  color: var(--cr-tertiary);
-  font-size: 10px;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
-.context-room-graph-index-state[data-status='building'] {
-  color: var(--cr-blue);
-}
-
-.context-room-graph-index-state[data-status='degraded'] {
-  color: var(--cr-danger);
-}
-
-.context-room-room-graph-toolbar {
-  display: grid;
-  grid-template-columns: minmax(180px, 1fr) auto auto auto auto 32px;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
-}
-
-.context-room-room-graph-toolbar .context-room-home-search {
-  width: min(100%, 340px);
-}
-
-.context-room-room-graph-toolbar select,
-.context-room-graph-tool-button,
-.context-room-graph-icon-button {
-  height: 32px;
-  border: 1px solid var(--cr-border);
-  border-radius: 6px;
-  background: var(--cr-surface);
-  color: var(--cr-muted);
-  font-size: 11px;
-}
-
-.context-room-room-graph-toolbar select {
-  padding: 0 24px 0 8px;
-}
-
-.context-room-graph-tool-button,
-.context-room-graph-icon-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  padding: 0 9px;
-  white-space: nowrap;
-}
-
-.context-room-graph-icon-button {
-  width: 32px;
-  padding: 0;
-}
-
-.context-room-graph-tool-button svg,
-.context-room-graph-icon-button svg {
-  width: 14px;
-  height: 14px;
-}
-
-.context-room-graph-tool-button:hover,
-.context-room-graph-icon-button:hover,
-.context-room-room-graph-toolbar select:hover {
-  border-color: var(--cr-border-strong);
-  color: var(--cr-text);
-}
-
-.context-room-graph-tool-button[aria-pressed='true'] {
-  border-color: color-mix(in srgb, var(--cr-blue) 35%, var(--cr-border));
-  background: var(--cr-blue-soft);
-  color: var(--cr-blue);
-}
-
-.context-room-graph-tool-button:disabled {
-  opacity: 0.45;
-}
-
-.context-room-graph-toggle,
 .context-room-relation-checkbox {
   display: inline-flex;
   align-items: center;
@@ -8612,7 +8528,6 @@
   white-space: nowrap;
 }
 
-.context-room-graph-toggle input,
 .context-room-relation-checkbox input {
   width: 14px;
   height: 14px;
@@ -8978,33 +8893,10 @@
   height: 14px;
 }
 
-@container context-room-shell (max-width: 900px) {
-  .context-room-room-graph-toolbar {
-    grid-template-columns: minmax(180px, 1fr) repeat(2, auto);
-  }
-
-  .context-room-room-graph-toolbar > :nth-child(n + 4) {
-    grid-row: 2;
-  }
-}
-
 @container context-room-shell (max-width: 620px) {
   .context-room-graph-heading {
     align-items: flex-start;
     flex-direction: column;
-  }
-
-  .context-room-room-graph-toolbar {
-    grid-template-columns: 1fr 1fr;
-  }
-
-  .context-room-room-graph-toolbar .context-room-home-search {
-    grid-column: 1 / -1;
-    width: 100%;
-  }
-
-  .context-room-room-graph-toolbar > :nth-child(n + 4) {
-    grid-row: auto;
   }
 
   .context-room-room-graph-layout.is-selected {
@@ -11706,16 +11598,18 @@
 /* 目录导读分层（置顶概览 / 分桶目录 / 折叠的系统文件）+ 目录/页数徽标 */
 .wiki-tree-sections {
   display: flex;
-  min-height: 0;
   flex-direction: column;
   gap: 10px;
+  /* 分组不可压：min-height:0 + 默认 shrink 让大树把概览组压扁、
+   * 行内容叠到下一组头上（411 页实证）；滚动交给外层 wrap/侧栏。 */
+  flex-shrink: 0;
 }
 
 .wiki-tree-section {
   display: flex;
-  min-height: 0;
   flex-direction: column;
   gap: 2px;
+  flex-shrink: 0;
 }
 
 .wiki-tree-section-header {
@@ -12122,51 +12016,15 @@
   gap: 10px;
 }
 
-.context-room-rec-detail-meta {
-  display: flex;
-  min-width: 0;
+/* 名称行：h3 直接作为 header 弹性子项（kicker 与 meta 包装层已移除）。 */
+.context-room-rec-detail > header h3 {
   flex: 1;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.context-room-rec-detail-kicker {
-  color: var(--cr-tertiary);
-  font-size: 11px;
-  font-weight: 500;
-}
-
-.context-room-rec-detail-meta h3 {
+  min-width: 0;
   margin: 0;
   color: var(--cr-text);
   font-size: 18px;
   font-weight: 600;
   line-height: 1.35;
-}
-
-.context-room-rec-detail-close {
-  display: inline-flex;
-  flex: none;
-  width: 28px;
-  height: 28px;
-  align-items: center;
-  justify-content: center;
-  margin: -4px -6px 0 0;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--cr-muted);
-  cursor: pointer;
-}
-
-.context-room-rec-detail-close svg {
-  width: 16px;
-  height: 16px;
-}
-
-.context-room-rec-detail-close:hover {
-  background: var(--cr-surface-secondary);
-  color: var(--cr-text);
 }
 
 .context-room-rec-detail-desc {
@@ -12205,12 +12063,6 @@
   color: var(--cr-tertiary);
   font-size: 11.5px;
   font-weight: 500;
-}
-
-.context-room-rec-detail-reason {
-  margin: 0;
-  color: var(--cr-muted);
-  font-size: 12px;
 }
 
 .context-room-rec-detail .context-room-creation-progress {

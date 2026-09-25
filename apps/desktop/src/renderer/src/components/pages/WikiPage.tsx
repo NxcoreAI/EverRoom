@@ -6,7 +6,7 @@ import {
   WIKI_CLUSTERS,
 } from '../context-room/ported/components/WikiGraphCanvas'
 import { MarkdownBody, resolveWikiLinkTarget } from '../context-room/ported/components/detail-panels/MarkdownBody'
-import { FOLDER_LABEL_KEYS, WRAPPER_DIR_NAMES, WikiTree } from '../context-room/ported/components/detail-panels/WikiTree'
+import { FOLDER_LABEL_KEYS, WRAPPER_DIR_NAMES, WIKI_TREE_CARET_SLOT, WikiTree } from '../context-room/ported/components/detail-panels/WikiTree'
 import type {
   KnowledgeRoomDto,
   KnowledgeWikiDto,
@@ -43,23 +43,6 @@ function roomDisplayName(room: KnowledgeRoomDto | undefined, wiki: KnowledgeWiki
   const firstLine = wiki.summary?.split('\n').find((line) => line.trim())?.trim() ?? null
   if (!firstLine) return title
   return firstLine.length > 18 ? `${firstLine.slice(0, 18)}…` : firstLine
-}
-
-/** overview 正文首段（剥掉 markdown 痕迹）——KS 摘要缺失时侧栏摘要卡的兜底来源。 */
-function firstPlainTextParagraph(markdown: string): string | null {
-  for (const block of markdown.split(/\n\s*\n/)) {
-    const trimmed = block.trim()
-    if (!trimmed || /^[#>`|]/.test(trimmed)) continue
-    const text = trimmed
-      .replace(/\s*\n\s*/g, '')
-      .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
-      .replace(/[*`_]/g, '')
-      .replace(/[[\]]/g, '')
-      .trim()
-    if (!text) continue
-    return text.length > 120 ? `${text.slice(0, 120)}…` : text
-  }
-  return null
 }
 
 /** 核心视图默认只画被引最高的前 N 个节点（治"毛线球"：200 节点全画谁也读不出重点）。 */
@@ -251,13 +234,6 @@ export function WikiPage() {
   const selectedDisplayName = selectedWiki
     ? roomDisplayName(selectedRoom, selectedWiki)
     : (selectedRoom?.title ?? selectedRoomId ?? '')
-  // 侧栏摘要卡：KS 摘要优先；缺失时用当前已加载的 overview 正文首段兜底
-  const overviewPath = pages.find((page) => page.path.endsWith('overview.md'))?.path ?? null
-  const sidebarSummary = selectedWiki?.summary
-    ?? (selectedPage && overviewPath && selectedPage.path === overviewPath && markdown
-      ? firstPlainTextParagraph(markdown)
-      : null)
-
   // 面包屑：wiki 名 › 本地化目录 › 页面标题；点 wiki 名回概览页，点目录展开并定位树节点
   const crumbs: Array<{ label: string; onClick: () => void }> = [{
     label: selectedDisplayName || t('surface:wiki.selectWiki'),
@@ -547,9 +523,6 @@ export function WikiPage() {
                       <div className="wiki-empty">{t('surface:wiki.noPagesYet')}</div>
                     ) : (
                       <>
-                        {sidebarSummary ? (
-                          <p className="wiki-summary-card">{sidebarSummary}</p>
-                        ) : null}
                         <label className="wiki-tree-search">
                           <Search aria-hidden="true" strokeWidth={1.7} />
                           <input
@@ -573,6 +546,7 @@ export function WikiPage() {
                                     title={page.description || page.title || page.path}
                                     onClick={() => openPage(page)}
                                   >
+                                    <span aria-hidden="true" style={{ width: WIKI_TREE_CARET_SLOT, flex: '0 0 auto' }} />
                                     <BookOpenText aria-hidden="true" strokeWidth={1.7} />
                                     <span className="context-room-wiki-tree-name">{page.title || page.path}</span>
                                   </button>

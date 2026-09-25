@@ -42,7 +42,7 @@ type ManualTab = 'llm' | 'embedding'
 /** 闪屏最短展示时长：决策再快也不闪现即逝。 */
 const STARTUP_SPLASH_MIN_MS = 900
 
-/** 已认证 + 配置未就绪的续签宽限重查次数（2s 间隔，~30s 上限）。 */
+/** 登录态未落定/已认证 + 配置未就绪的宽限重查次数（2s 间隔，~30s 上限）。 */
 const RELAY_GRACE_RETRIES = 15
 
 /** 测试结果 → 用户可读错误；embedding 失败带专属前缀区分两 tab。 */
@@ -67,6 +67,9 @@ export function RuntimeConfigGate({ children }: { children: ReactNode }) {
   const [testError, setTestError] = useState<string | null>(null)
   const [oidcPending, setOidcPending] = useState<'apple' | 'google' | null>(null)
   const [qrActive, setQrActive] = useState(false)
+  // 启动期撞上设备额度挑战（restoreSession 409 保留的 pendingAdmission）：
+  // 登录页渲染设备选择，否则用户会卡在登录页看不出原因。
+  const [admissionBusy, setAdmissionBusy] = useState(false)
   // 扫码面板注册的「取消会话」句柄：返回按钮画在页标题左侧，由这里触发。
   const qrCancelRef = useRef<(() => void) | null>(null)
   const registerQrCancel = useCallback((cancel: (() => void) | null) => {
@@ -113,19 +116,37 @@ export function RuntimeConfigGate({ children }: { children: ReactNode }) {
       setSnapshot(next)
       setFields(primaryFieldsFromSnapshot(next))
       setEmbedding(embeddingFieldsFromSnapshot(next))
+      const accountNow = accountRef.current
       if (isRuntimeConfigReady(next)) {
         // 不直接进 app：由下方 effect 等登录态落定后决定 app/login。
         setConfigReady(true)
         relayGraceRef.current = 0
-      } else if (accountRef.current?.authenticated && relayGraceRef.current < RELAY_GRACE_RETRIES) {
-        // 已认证但配置未就绪：中转续签（restore 后 rewrite 槽位）通常几秒内
-        // 落地——本会话恢复日志已证成功，把已登录用户送去登录页是续签竞态。
-        // 停留在 checking（闪屏/安静），2s 后重查，最多 ~30s。
+      } else if (accountNow?.authenticated === false && !accountNow.authBlocked) {
+        // 明确未登录（无凭据时主进程秒回，不走网络）+ 配置未就绪：这才是
+        // 登录页的服务对象。authBlocked='network'（凭据在、网络验证失败）
+        // 交给 authNetwork 面板；登录态未落定（重挂载/启动竞态）走宽限。
+        setConfigReady(false)
+        setMode('login')
+        scheduleSplashExit()
+        window.dispatchEvent(new CustomEvent('everroom-runtime-config-status', { detail: 'missing' }))
+      } else if (accountNow?.authenticated === false && accountNow.authBlocked === 'network') {
+        // 凭据在但网络验证失败：交 authNetwork 面板（自带重试）。必须停掉
+        // 宽限循环——2s 重查入口的 setMode('checking') 会把面板盖回去。
+        setConfigReady(false)
+        setMode('authNetwork')
+        scheduleSplashExit()
+        window.dispatchEvent(new CustomEvent('everroom-runtime-config-status', { detail: 'missing' }))
+      } else if (relayGraceRef.current < RELAY_GRACE_RETRIES) {
+        // 登录态未落定或已认证：配置未就绪是瞬态（中转续签、gateway 重启换
+        // 端口后槽位重灌）。停留 checking（闪屏/安静），2s 后重查，最多 ~30s；
+        // 重查会重新评估登录态，期间真的被登出也能在 2s 内落到登录页。
         relayGraceRef.current += 1
         window.setTimeout(() => { void check() }, 2_000)
       } else {
+        // 宽限耗尽仍就绪不了：网关侧问题，给重试入口。把已登录/登录态未知
+        // 的用户送去登录页解决不了任何问题，只会制造"莫名被登出"的错觉。
         setConfigReady(false)
-        setMode('login')
+        setMode('unavailable')
         scheduleSplashExit()
         window.dispatchEvent(new CustomEvent('everroom-runtime-config-status', { detail: 'missing' }))
       }
@@ -146,13 +167,9 @@ export function RuntimeConfigGate({ children }: { children: ReactNode }) {
       accountResolved,
       authenticated: account?.authenticated ?? null,
     })
-    if (outcome === 'wait') return
-    if (outcome === 'app') {
-      setMode('app')
-      window.dispatchEvent(new CustomEvent('everroom-runtime-config-status', { detail: 'ready' }))
-    } else {
-      setMode('login')
-    }
+    if (outcome !== 'app') return
+    setMode('app')
+    window.dispatchEvent(new CustomEvent('everroom-runtime-config-status', { detail: 'ready' }))
     scheduleSplashExit()
   }, [configReady, accountResolved, account, snapshot, scheduleSplashExit])
 
@@ -171,14 +188,23 @@ export function RuntimeConfigGate({ children }: { children: ReactNode }) {
     return () => window.removeEventListener('everroom-account-status-changed', onAccountChanged)
   }, [])
 
+  // 回收：已认证用户却停在登录页（中转慢、历史竞态翻入）→ 自动重查。
+  // 已登录用户困在登录页是明确缺陷（#225），宁可多重查一轮。
+  useEffect(() => {
+    if (mode !== 'login' || !accountResolved || configReady) return
+    if (account?.authenticated === true) setCheckRequest((value) => value + 1)
+  }, [mode, account, accountResolved, configReady])
+
   // 网络受阻判定：凭据在但验证失败 → 明确提示网络问题 + 重试，
   // 而不是呈现登录页（用户会误以为被登出/要重新登录）。恢复后交回正常判定。
   useEffect(() => {
     if (!accountResolved) return
     if (account?.authenticated === false && account.authBlocked === 'network') {
       setMode((current) => (current === 'app' || current === 'authNetwork' ? current : 'authNetwork'))
-    } else {
-      setMode((current) => (current === 'authNetwork' ? 'login' : current))
+    } else if (modeRef.current === 'authNetwork') {
+      // 网络恢复：重跑完整判定（就绪→app；未就绪→宽限/不可用）。直接落
+      // 登录页会把恢复后的已登录用户错送去重新登录。
+      setCheckRequest((value) => value + 1)
     }
   }, [account, accountResolved])
 
@@ -282,6 +308,32 @@ export function RuntimeConfigGate({ children }: { children: ReactNode }) {
     }
   }
 
+  const admission = account && account.authenticated === false ? account.admission ?? null : null
+
+  /** 设备准入：选一台在线设备下线腾出额度，成功即按登录成功放行。 */
+  const replaceAdmission = async (replaceDeviceId: string) => {
+    const admissionToken = admission?.admissionToken
+    if (!admissionToken || !window.nxcore) return
+    setAdmissionBusy(true)
+    setTestError(null)
+    try {
+      await window.nxcore.account.replaceDeviceAdmission({ admissionToken, replaceDeviceId })
+      await completeGateLogin()
+    } catch (error) {
+      setTestError(error instanceof Error ? error.message : t('surface:qrLogin.failedToReplace'))
+    } finally {
+      setAdmissionBusy(false)
+    }
+  }
+
+  /** 放弃准入挑战：回到常规登录入口（重新登录可获取新挑战）。 */
+  const dismissAdmissionPanel = async () => {
+    setAdmissionBusy(true)
+    try { await window.nxcore?.account.dismissDeviceAdmission() } catch { /* best-effort */ }
+    await refreshAccount().catch(() => undefined)
+    setAdmissionBusy(false)
+  }
+
   const saveManual = async () => {
     const runtimeConfig = window.nxcore?.runtimeConfig
     if (!runtimeConfig) return
@@ -360,7 +412,37 @@ export function RuntimeConfigGate({ children }: { children: ReactNode }) {
             </div>
           ) : null}
 
-          {mode === 'login' ? (
+          {mode === 'login' && admission ? (
+            <div className="runtime-config-gate-panel" key="gate-admission">
+              <h1>{t('surface:qrLogin.deviceLimitTitle', { maxDevices: admission.maxDevices })}</h1>
+              <p>{t('surface:qrLogin.deviceLimitDescription')}</p>
+              <div className="runtime-config-gate-admission-devices">
+                {admission.devices.map((device) => (
+                  <button
+                    type="button"
+                    key={device.id}
+                    className="runtime-config-gate-admission-device"
+                    disabled={admissionBusy}
+                    onClick={() => { void replaceAdmission(device.id) }}
+                  >
+                    <span className="runtime-config-gate-admission-device-meta">
+                      <strong>{device.name}</strong>
+                      <small>{device.platform}{device.appVersion ? ` · ${device.appVersion}` : ''}</small>
+                    </span>
+                    <em>{t('surface:qrLogin.replaceDevice')}</em>
+                  </button>
+                ))}
+              </div>
+              {testError ? <p className="runtime-config-gate-error" role="alert"><PlugZap aria-hidden="true" />{testError}</p> : null}
+              <div className="runtime-config-gate-button-row">
+                <button type="button" className="runtime-config-gate-secondary" disabled={admissionBusy} onClick={() => { void dismissAdmissionPanel() }}>
+                  {t('surface:qrLogin.cancelLogin')}
+                </button>
+              </div>
+            </div>
+          ) : null}
+
+          {mode === 'login' && !admission ? (
             <div className="runtime-config-gate-panel">
               <h1 className="runtime-config-gate-login-heading">
                 {qrActive ? (

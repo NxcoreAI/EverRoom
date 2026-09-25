@@ -45,6 +45,16 @@ export class CredentialStore {
     }
   }
 
+  /** 丢弃内存缓存重读磁盘：多进程共享同一凭据文件时，取另一进程刚落盘的值
+   * （initialize 的缓存对本进程是启动时刻的快照，看不到外部写入）。 */
+  async reload(): Promise<void> {
+    await this.initialize()
+    this.credentials.clear()
+    for (const [key, value] of Object.entries(this.store.read())) {
+      this.credentials.set(key, value)
+    }
+  }
+
   async set(value: string): Promise<string> {
     await this.initialize()
     const key = randomUUID()

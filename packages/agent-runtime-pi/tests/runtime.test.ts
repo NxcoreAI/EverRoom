@@ -98,9 +98,16 @@ describe("PiAgentRuntime", () => {
         "message.started",
         "message.delta",
         "message.delta",
+        "context.usage",
         "message.completed",
         "run.completed",
       ]);
+      expect(events.find((event) => event.type === "context.usage")?.payload).toEqual({
+        tokens: expect.any(Number),
+        contextWindow: 8192,
+        percent: expect.any(Number),
+        segments: expect.any(Array),
+      });
       expect(events.find((event) => event.type === "message.completed")?.payload).toEqual({
         role: "assistant",
         content: "你好，Pi!",

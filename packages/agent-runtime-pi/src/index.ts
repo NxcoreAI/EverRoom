@@ -1,13 +1,14 @@
 import { mkdir, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { resolve, sep } from "node:path";
-import type { RuntimeCapabilities } from "@nxcore/agent-contract";
+import type { AgentContextUsageSegment, RuntimeCapabilities } from "@nxcore/agent-contract";
 import {
   type AgentSession,
   type AgentSessionEvent,
   createAgentSession,
   DefaultResourceLoader,
   defineTool,
+  estimateTokens,
   ModelRuntime,
   SessionManager,
   SettingsManager,
@@ -952,6 +953,29 @@ export class PiAgentRuntime implements AgentRuntime {
         active.usage.cacheRead += usage.cacheRead ?? 0;
         active.usage.cacheWrite += usage.cacheWrite ?? 0;
       }
+      this.emitContextUsage(active);
+      return;
+    }
+
+    if (event.type === "compaction_start") {
+      active.queue.push({
+        type: "context.compaction",
+        payload: { active: true, reason: event.reason },
+      });
+      return;
+    }
+
+    if (event.type === "compaction_end") {
+      active.queue.push({
+        type: "context.compaction",
+        payload: {
+          active: false,
+          reason: event.reason,
+          ...(event.errorMessage ? { error: event.errorMessage } : {}),
+        },
+      });
+      // 压缩后旧用量不可信（pi 约定 tokens/percent 为 null），透出快照让 UI 及时回落。
+      this.emitContextUsage(active);
       return;
     }
 
@@ -1024,6 +1048,71 @@ export class PiAgentRuntime implements AgentRuntime {
 
   private toolLimitErrorMessage(): string {
     return `Pi runtime exceeded the maximum tool calls per run (${this.config.maxToolCallsPerRun})`;
+  }
+
+  /** 把 pi 的 getContextUsage 快照 + 占用构成粗估作为 context.usage 事件推入 run 队列（token 数未知时也透传，UI 据此回落）。 */
+  private emitContextUsage(active: ActivePiRun): void {
+    const usage = active.handle.session.getContextUsage();
+    if (!usage) return;
+    active.queue.push({
+      type: "context.usage",
+      payload: {
+        tokens: usage.tokens,
+        contextWindow: usage.contextWindow,
+        percent: usage.percent,
+        segments: this.estimateContextSegments(active),
+      },
+    });
+  }
+
+  /**
+   * 粗估上下文构成：系统提示 + 工具 schema 按 chars/4 估，消息按 role 分桶
+   * （estimateTokens 复用 pi 的口径）。与头部 tokens 同为估算，仅供占比参考；
+   * 头部 tokens 来自模型 usage（含模板开销），分段合计不与其强一致。
+   */
+  private estimateContextSegments(active: ActivePiRun): AgentContextUsageSegment[] {
+    const session = active.handle.session;
+    const segments: AgentContextUsageSegment[] = [];
+    const tokensPerChar = (text: string): number => Math.ceil(text.length / 4);
+    const systemPrompt = session.systemPrompt;
+    if (systemPrompt) segments.push({ key: "systemPrompt", tokens: tokensPerChar(systemPrompt) });
+    let toolsTokens = 0;
+    for (const name of session.getActiveToolNames()) {
+      const definition = session.getToolDefinition(name);
+      if (!definition) continue;
+      try {
+        toolsTokens += tokensPerChar(JSON.stringify({
+          name: definition.name,
+          description: definition.description,
+          parameters: definition.parameters,
+        }));
+      } catch {
+        // 个别 schema 序列化失败就跳过：估算展示，不值得让它炸事件链。
+      }
+    }
+    if (toolsTokens > 0) segments.push({ key: "tools", tokens: toolsTokens });
+    const messageBuckets: Record<AgentContextUsageSegment["key"], number> = {
+      systemPrompt: 0,
+      tools: 0,
+      user: 0,
+      assistant: 0,
+      toolResults: 0,
+      other: 0,
+    };
+    for (const message of session.messages) {
+      if ((message as { excludeFromContext?: boolean }).excludeFromContext) continue;
+      const role = message.role;
+      const key: AgentContextUsageSegment["key"] =
+        role === "user" ? "user"
+        : role === "assistant" ? "assistant"
+        : role === "toolResult" ? "toolResults"
+        : "other";
+      messageBuckets[key] += estimateTokens(message);
+    }
+    for (const key of ["user", "assistant", "toolResults", "other"] as const) {
+      if (messageBuckets[key] > 0) segments.push({ key, tokens: messageBuckets[key] });
+    }
+    return segments;
   }
 
   private async abortForToolLimit(runId: string): Promise<void> {

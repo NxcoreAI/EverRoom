@@ -11,9 +11,9 @@ export const SEND_NOTIFICATION_TOOL={
   title:"发送系统通知",
   description:"向用户的 iOS、macOS 或两端发送一条 EverRoom 系统通知。标题和摘要会显示在锁屏或系统通知中心；详细内容在用户点击后从对应 Agent 会话加载。",
   guidelines:[
-    "两类场景必须调用本工具推送通知，不能省略、也不能只在回复里口头说明：(1) 用户明确要求通知、提醒或要求完成后告知；(2) 本 run 内 Context Room 文档发生实际变更：context_room_patch_commit 返回 documentChanged=true，或 context_room_write_commit 成功提交新文档。patch_commit 返回 awaiting_review 时只是修改提案待用户审阅，不算文档变更，不触发必推。",
-    "其余场景自主决定：仅当结果需要用户离开对话后回来处理（长任务完成、后台任务结束、等待审阅或补充输入）时才发送；中间过程、琐碎进展和同一 run 内的重复进展不要发送。",
-    "title 必须简短且脱离上下文也能独立理解；body 只写一句话摘要，不得包含正文、密钥或其他敏感原文。用户未指定平台时默认同时投递 ios 与 macos。",
+    "三类场景必须在给出最终回复前调用本工具推送通知，不能省略，也不能只在回复里口头说明：(1) 用户明确要求通知、提醒或要求完成后告知；(2) 本 run 内 Context Room 文档发生实际变更：context_room_patch_commit 返回 documentChanged=true，或 context_room_write_commit 成功提交新文档；(3) 长任务到达终态（成功、失败或等待用户审阅）：本 run 累计 5 轮以上工具调用，或包含文档生成、Office 产物、批量导入/索引、子任务派发、多轮联网检索等耗时工作。patch_commit 返回 awaiting_review 只是提案待审、不算文档变更，但该 run 若属长任务仍按第 (3) 类必推。",
+    "拿不准是否算长任务时倾向于推送：用户可能已离开对话，漏报结果的代价大于多一条通知。以下不要发送：中间过程与琐碎进展、同一 run 内的重复进展、单轮工具调用即可完成的普通对话；每个 run 至多在终态发一条结果通知。",
+    "title 必须简短且脱离上下文也能独立理解；body 只写一句话摘要（含结果成败），不得包含正文、密钥或其他敏感原文。用户未指定平台时默认同时投递 ios 与 macos。",
   ],
   inputSchema:{type:"object",properties:{
     title:{type:"string",minLength:1,maxLength:80,description:"简短、可独立理解的通知标题。"},

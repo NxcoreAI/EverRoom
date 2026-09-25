@@ -87,7 +87,7 @@ function ComposerHarness() {
   return (
     <div style={{ width: 460, margin: '40px auto', padding: 16, border: '1px solid #ddd', borderRadius: 12 }}>
       <AgentComposer
-        contextSummary="首页 · 未选择文本"
+        contextSummary=""
         contextItems={[]}
         hasSelectedText={false}
         resetKey={0}

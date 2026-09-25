@@ -27,6 +27,10 @@ export const FOLDER_LABEL_KEYS: Record<string, string> = {
   other: 'surface:wiki.folderOther',
 };
 
+/** 页面行补齐目录行的 caret 列（13px 图标 + 6px 间距）：
+ *  否则同级页名比目录名浅 19px，密树里整层读起来像错位。 */
+export const WIKI_TREE_CARET_SLOT = 13;
+
 /** 纯包装目录（所有页面共享的前缀壳），树里不占一级。 */
 export const WRAPPER_DIR_NAMES = new Set(['wiki', 'pages']);
 
@@ -108,7 +112,10 @@ function WikiTreeItem({ node, depth, selectedPath, onSelect, locale, revealPath 
             <Folder aria-hidden="true" strokeWidth={1.7} />
           </>
         ) : (
-          <BookOpen aria-hidden="true" strokeWidth={1.7} />
+          <>
+            <span aria-hidden="true" style={{ width: WIKI_TREE_CARET_SLOT, flex: '0 0 auto' }} />
+            <BookOpen aria-hidden="true" strokeWidth={1.7} />
+          </>
         )}
         <span className="context-room-wiki-tree-name">
           {node.isDirectory ? t(FOLDER_LABEL_KEYS[node.name] ?? node.name) : node.page?.title || node.name}
@@ -155,6 +162,7 @@ function WikiFlatPageRow({ page, selectedPath, onSelect }: {
         title={page.description || page.title || page.path}
         onClick={() => onSelect(page)}
       >
+        <span aria-hidden="true" style={{ width: WIKI_TREE_CARET_SLOT, flex: '0 0 auto' }} />
         <BookOpen aria-hidden="true" strokeWidth={1.7} />
         <span className="context-room-wiki-tree-name">{page.title || fileName(page)}</span>
       </button>
