@@ -542,3 +542,72 @@ describe('AgentComposer CLI channel picker', () => {
     expect(onSelectModelPreference).toHaveBeenCalledWith('primary')
   })
 })
+
+describe('AgentComposer context usage meter', () => {
+  const usage = { tokens: 41_200, contextWindow: 128_000, percent: 32.2 }
+
+  beforeEach(() => {
+    vi.stubGlobal('window', {
+      requestAnimationFrame: (callback: FrameRequestCallback) => { callback(0); return 1 },
+    })
+    vi.stubGlobal('document', { activeElement: null, addEventListener: vi.fn(), removeEventListener: vi.fn() })
+  })
+
+  afterEach(() => {
+    vi.clearAllMocks()
+    vi.unstubAllGlobals()
+  })
+
+  it('defaults to a small ring whose hover title carries the numbers, then opens a breakdown on click', () => {
+    const { renderer } = renderComposer({
+      contextUsage: {
+        ...usage,
+        segments: [
+          { key: 'systemPrompt', tokens: 5_200 },
+          { key: 'tools', tokens: 12_000 },
+          { key: 'user', tokens: 6_000 },
+          { key: 'assistant', tokens: 14_000 },
+          { key: 'toolResults', tokens: 4_000 },
+        ],
+      },
+    })
+
+    // 默认态：只有一个圆环按钮，数字都收在悬停 title 里。
+    const ring = renderer.root.findByProps({ className: 'agent-context-ring' })
+    expect(ring.props['aria-expanded']).toBe(false)
+    expect(ring.props.title).toBe('上下文 41,200 / 128,000 tokens（32%）')
+    expect(renderer.root.findAllByProps({ className: 'agent-composer-popover agent-context-breakdown' })).toHaveLength(0)
+
+    act(() => ring.props.onClick())
+
+    expect(renderer.root.findByProps({ className: 'agent-context-ring' }).props['aria-expanded']).toBe(true)
+    const panel = renderer.root.findByProps({ className: 'agent-composer-popover agent-context-breakdown' })
+    expect(panel.findByProps({ className: 'agent-context-breakdown-head' }).findByType('strong').children)
+      .toContain('41K / 128K')
+
+    const rows = panel.findAllByProps({ className: 'agent-context-breakdown-label' }).map((row) => String(row.children))
+    expect(rows).toEqual(['助手消息', '工具定义', '用户消息', '系统提示', '工具结果', '剩余空间'])
+
+    const shares = panel.findAllByProps({ className: 'agent-context-breakdown-share' }).map((row) => String(row.children))
+    expect(shares).toEqual(['11%', '9.4%', '4.7%', '4.1%', '3.1%', '68%'])
+  })
+
+  it('renders nothing when usage is unknown, and breathes while compacting', () => {
+    const hidden = renderComposer({ contextUsage: null })
+    expect(hidden.renderer.root.findAllByProps({ className: 'agent-context-ring' })).toEqual([])
+
+    // 有窗口但 tokens 未知（压缩刚结束）：圆环只剩轨道，且带呼吸态。
+    const postCompaction = renderComposer({
+      contextUsage: { tokens: null, contextWindow: 128_000, percent: null },
+      contextCompacting: true,
+    })
+    const ring = postCompaction.renderer.root.findByProps({ className: 'agent-context-ring agent-context-ring--compacting' })
+    expect(ring.props['data-level']).toBeUndefined()
+
+    // 快照完全缺失却压缩中：退回文字胶囊兜底。
+    const compacting = renderComposer({ contextUsage: null, contextCompacting: true })
+    const chip = compacting.renderer.root.findByProps({ className: 'agent-context-usage agent-context-usage--compacting' })
+
+    expect(chip.props.title).toBe('上下文压缩中…')
+  })
+})

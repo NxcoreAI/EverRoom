@@ -123,9 +123,10 @@ export function AgentPanel({
       detail: citation.comment ? `${summary}\n${t('surface:agentComposer.referenceComment')}${locale === 'zh-CN' ? '：' : ': '}${citation.comment}` : summary,
     }
   })
+  // 仅在有引用时展示（composer 侧空态不渲染文案）。
   const contextSummary = roomCitations.length
     ? `${roomCitations[0]?.roomTitle ?? pageLabel} · ${t('surface:agentComposer.countReferences', { count: roomCitations.length })}`
-    : `${pageLabel} · ${t('surface:agent.noTextSelected')}`
+    : ''
   const roomFocusRoomTitle = roomId
     ? rooms.find((room) => room.id === roomId)?.title ?? t('surface:agentComposer.roomFocus')
     : undefined
@@ -613,6 +614,8 @@ export function AgentPanel({
       onToggleRoomFocus={toggleRoomFocus}
       modelPreference={effectiveModelPreference}
       modelPreferenceLocked={modelTierLocked}
+      contextUsage={session.contextUsage}
+      contextCompacting={session.contextCompacting}
       loadModelAvailability={loadLiteModelAvailability}
       onSelectModelPreference={session.setModelPreferenceDefault}
       channelAgentId={effectiveChannelAgentId}

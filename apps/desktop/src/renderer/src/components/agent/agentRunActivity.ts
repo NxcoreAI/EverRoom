@@ -1,4 +1,4 @@
-import type { AgentEvent } from '@nxcore/agent-contract'
+import type { AgentContextUsage, AgentEvent } from '@nxcore/agent-contract'
 import type { Translate } from '../../i18n/LocaleContext'
 
 export type DisplayAgentToolStatus = 'pending' | 'running' | 'completed' | 'error' | 'stopped'
@@ -547,4 +547,41 @@ export function reduceAgentRunEvents(events: AgentEvent[]): ReducedAgentRunEvent
     }
   }
   return reduced
+}
+
+/** 会话级上下文状态：最新用量快照 + 是否处于压缩中（hydrate 重放与实时事件共用）。 */
+export interface AgentContextState {
+  usage: AgentContextUsage | null
+  compacting: boolean
+}
+
+/**
+ * 折叠 context.usage / context.compaction 事件。事件按 occurredAt 排序后
+ * 「后到者胜」：用量取最新快照，压缩态取最新信号。跨 run 的事件序列号
+ * 互不相干，故不用 seq 排序。
+ */
+export function reduceAgentContextState(events: AgentEvent[]): AgentContextState {
+  const sorted = [...events].sort((left, right) => left.occurredAt.localeCompare(right.occurredAt))
+  const state: AgentContextState = { usage: null, compacting: false }
+  for (const event of sorted) {
+    if (event.type === 'context.usage') {
+      const payload = event.payload as Partial<AgentContextUsage>
+      if (typeof payload?.contextWindow === 'number' && payload.contextWindow > 0) {
+        const segments = Array.isArray(payload.segments)
+          ? payload.segments.filter((segment): segment is NonNullable<AgentContextUsage['segments']>[number] => (
+            typeof segment?.key === 'string' && typeof segment?.tokens === 'number'
+          ))
+          : undefined
+        state.usage = {
+          tokens: typeof payload.tokens === 'number' ? payload.tokens : null,
+          contextWindow: payload.contextWindow,
+          percent: typeof payload.percent === 'number' ? payload.percent : null,
+          ...(segments?.length ? { segments } : {}),
+        }
+      }
+    } else if (event.type === 'context.compaction') {
+      state.compacting = (event.payload as { active?: unknown }).active === true
+    }
+  }
+  return state
 }

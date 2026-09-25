@@ -2,7 +2,7 @@ import type { AgentEvent } from '@nxcore/agent-contract'
 import { describe, expect, it } from 'vitest'
 
 import { toolKind } from './AgentExecutionTimeline'
-import { agentToolLabel, agentToolResultSummary, agentToolStageText, agentToolSubject, reduceAgentRunActivity } from './agentRunActivity'
+import { agentToolLabel, agentToolResultSummary, agentToolStageText, agentToolSubject, reduceAgentContextState, reduceAgentRunActivity } from './agentRunActivity'
 import { translate } from '../../i18n/LocaleContext'
 
 function event(seq: number, type: AgentEvent['type'], payload: unknown = {}): AgentEvent {
@@ -292,5 +292,56 @@ describe('Agent run activity', () => {
 
     expect(activity.finalAnswer).toBe('第二波完整正文')
     expect(activity.pendingAnswer).toBe('')
+  })
+
+  it('reduces context usage and compaction events to session-level state', () => {
+    // 空历史：未知用量、未压缩。
+    expect(reduceAgentContextState([])).toEqual({ usage: null, compacting: false })
+
+    // 后到者胜：用量取最新快照，压缩态取最新信号（occurredAt 排序，跨 run 亦可）。
+    const state = reduceAgentContextState([
+      event(1, 'run.started'),
+      event(2, 'context.usage', { tokens: 1000, contextWindow: 128000, percent: 0.78 }),
+      event(3, 'context.compaction', { active: true, reason: 'threshold' }),
+      event(4, 'context.compaction', { active: false, reason: 'threshold' }),
+      event(5, 'context.usage', { tokens: 6000, contextWindow: 128000, percent: 4.7 }),
+    ])
+    expect(state.usage).toEqual({ tokens: 6000, contextWindow: 128000, percent: 4.7 })
+    expect(state.compacting).toBe(false)
+
+    // 压缩刚结束、新用量未到：tokens/percent 为 null，仅窗口保留。
+    const postCompaction = reduceAgentContextState([
+      event(1, 'context.usage', { tokens: 1000, contextWindow: 128000, percent: 0.78 }),
+      event(2, 'context.compaction', { active: false, reason: 'overflow' }),
+      event(3, 'context.usage', { tokens: null, contextWindow: 128000, percent: null }),
+    ])
+    expect(postCompaction.usage).toEqual({ tokens: null, contextWindow: 128000, percent: null })
+
+    // 非法窗口（<=0）的快照不采纳，保留上一个合法值。
+    const guarded = reduceAgentContextState([
+      event(1, 'context.usage', { tokens: 1000, contextWindow: 128000, percent: 0.78 }),
+      event(2, 'context.usage', { tokens: 5, contextWindow: 0, percent: 0 }),
+    ])
+    expect(guarded.usage).toEqual({ tokens: 1000, contextWindow: 128000, percent: 0.78 })
+
+    // 占用构成随快照透传；畸形段（缺 key/tokens）被丢弃，空段不挂字段。
+    const segmented = reduceAgentContextState([
+      event(1, 'context.usage', {
+        tokens: 41000,
+        contextWindow: 128000,
+        percent: 32,
+        segments: [
+          { key: 'systemPrompt', tokens: 5200 },
+          { key: 'unknown', tokens: 999 },
+          { key: 'tools', tokens: 12000 },
+        ],
+      }),
+      event(2, 'context.usage', { tokens: 5000, contextWindow: 128000, percent: 3.9, segments: [] }),
+    ])
+    expect(segmented.usage).toEqual({
+      tokens: 5000,
+      contextWindow: 128000,
+      percent: 3.9,
+    })
   })
 })

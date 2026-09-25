@@ -11,7 +11,7 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from 'react'
-import type { AgentModelPreference, AgentRoomReference, AgentSession, ExternalConversationSummary, LocalAgentInstallation, MigrationProvider } from '@nxcore/agent-contract'
+import type { AgentContextUsage, AgentModelPreference, AgentRoomReference, AgentSession, ExternalConversationSummary, LocalAgentInstallation, MigrationProvider } from '@nxcore/agent-contract'
 import type { FileCatalogDto } from '../../../../shared/ingest'
 
 import { showToast } from '@/state/toast'
@@ -98,6 +98,20 @@ function displayDate(
   }
 }
 
+/** token 数紧凑显示：<1000 原样，否则 K 单位（40960→"41K"，150000→"150K"）。 */
+function formatContextTokens(tokens: number): string {
+  if (tokens < 1000) return String(tokens)
+  return `${Math.round(tokens / 1000)}K`
+}
+
+/** 圆环周长（r=5.5）。 */
+const RING_CIRCUMFERENCE = 2 * Math.PI * 5.5
+
+/** 占用构成占比：<10% 保留一位小数，否则取整。 */
+function formatContextPercent(percent: number): string {
+  return percent >= 9.95 ? `${Math.round(percent)}%` : `${percent.toFixed(1)}%`
+}
+
 export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   contextSummary: string
   contextItems: Array<{ id: string; label: string; detail: string }>
@@ -121,6 +135,10 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   onToggleRoomFocus?: (next: boolean) => void
   /** 当前生效档位：会话已存在＝会话锁定档，否则＝全局默认档。 */
   modelPreference: AgentModelPreference
+  /** 实时上下文用量（context.usage 事件快照；缺省=未知，不渲染）。 */
+  contextUsage?: AgentContextUsage | null
+  /** 上下文压缩进行中（渲染动效提示）。 */
+  contextCompacting?: boolean
   /** 会话已创建 → 档位锁定在会话上，切换只影响下一个新会话。 */
   modelPreferenceLocked?: boolean
   /** 打开选择器时拉取最新 lite 可用性（设置页保存后无需重启）。 */
@@ -154,6 +172,8 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   onToggleRoomFocus,
   modelPreference,
   modelPreferenceLocked = false,
+  contextUsage = null,
+  contextCompacting = false,
   loadModelAvailability,
   onSelectModelPreference,
   channelAgentId = null,
@@ -191,6 +211,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   const [mentionSourcesLoading, setMentionSourcesLoading] = useState(false)
   const [mentionCategory, setMentionCategory] = useState<MentionCategory>('all')
   const [modelPickerOpen, setModelPickerOpen] = useState(false)
+  const [contextPanelOpen, setContextPanelOpen] = useState(false)
   const [liteAvailable, setLiteAvailable] = useState(false)
   const [caret, setCaret] = useState(0)
   const overlayRef = useRef<HTMLDivElement>(null)
@@ -258,22 +279,24 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
     externalRequestRef.current += 1
     setAgentPickerOpen(false)
     setModelPickerOpen(false)
+    setContextPanelOpen(false)
     mentionHints.current.clear()
     if (fileInputRef.current) fileInputRef.current.value = ''
   }, [resetKey])
 
   useEffect(() => {
-    if (!externalPickerOpen && !agentPickerOpen && !modelPickerOpen) return undefined
+    if (!externalPickerOpen && !agentPickerOpen && !modelPickerOpen && !contextPanelOpen) return undefined
     const closeOnOutsidePress = (event: PointerEvent) => {
       if (shellRef.current?.contains(event.target as Node)) return
       externalRequestRef.current += 1
       setExternalPickerOpen(false)
       setAgentPickerOpen(false)
       setModelPickerOpen(false)
+      setContextPanelOpen(false)
     }
     document.addEventListener?.('pointerdown', closeOnOutsidePress)
     return () => document.removeEventListener?.('pointerdown', closeOnOutsidePress)
-  }, [externalPickerOpen, agentPickerOpen, modelPickerOpen])
+  }, [externalPickerOpen, agentPickerOpen, modelPickerOpen, contextPanelOpen])
 
   const submitMentions = () => resolveMentions(value, mentionHints.current, localAgents)
 
@@ -283,6 +306,11 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   }
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === 'Escape' && contextPanelOpen) {
+      event.preventDefault()
+      setContextPanelOpen(false)
+      return
+    }
     if (modelPickerOpen) {
       if (event.key === 'Escape') {
         event.preventDefault()
@@ -658,6 +686,17 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   const channelActive = Boolean(channelAgentId)
   const activeTierMeta = MODEL_TIER_META[modelPreference]
   const ActiveTierIcon = activeTierMeta.icon
+  // 上下文占用构成：按占比降序，tokens 已知时补一段剩余空间。
+  const contextBreakdown = contextUsage?.contextWindow
+    ? {
+        window: contextUsage.contextWindow,
+        tokens: contextUsage.tokens,
+        percent: contextUsage.percent,
+        segments: (contextUsage.segments ?? []).filter((segment) => segment.tokens > 0)
+          .sort((left, right) => right.tokens - left.tokens),
+        freeTokens: contextUsage.tokens === null ? null : Math.max(0, contextUsage.contextWindow - contextUsage.tokens),
+      }
+    : null
   // 会话快照加载时保留本地附件。
   const controlsDisabled = active || !available
 
@@ -942,6 +981,56 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
           ) : null}
         </section>
       ) : null}
+      {contextPanelOpen && contextBreakdown ? (
+        <section className="agent-composer-popover agent-context-breakdown" aria-label={t('surface:agentComposer.contextWindow')}>
+          <header className="agent-context-breakdown-head">
+            <span>{t('surface:agentComposer.contextWindow')}</span>
+            <strong>
+              {contextBreakdown.tokens !== null
+                ? `${formatContextTokens(contextBreakdown.tokens)} / ${formatContextTokens(contextBreakdown.window)}`
+                : formatContextTokens(contextBreakdown.window)}
+              {contextBreakdown.percent != null ? `（${formatContextPercent(contextBreakdown.percent)}）` : ''}
+            </strong>
+          </header>
+          {contextBreakdown.segments.length ? (
+            <>
+              <div className="agent-context-breakdown-bar" aria-hidden="true">
+                {contextBreakdown.segments.map((segment) => (
+                  <span
+                    key={segment.key}
+                    data-key={segment.key}
+                    style={{ width: `${Math.min(100, (segment.tokens / contextBreakdown.window) * 100)}%` }}
+                  />
+                ))}
+              </div>
+              <ul className="agent-context-breakdown-rows">
+                {contextBreakdown.segments.map((segment) => (
+                  <li key={segment.key}>
+                    <span className="agent-context-breakdown-dot" data-key={segment.key} aria-hidden="true" />
+                    <span className="agent-context-breakdown-label">{t(`surface:agentComposer.segment.${segment.key}`)}</span>
+                    <span className="agent-context-breakdown-tokens">{formatContextTokens(segment.tokens)}</span>
+                    <span className="agent-context-breakdown-share">
+                      {formatContextPercent((segment.tokens / contextBreakdown.window) * 100)}
+                    </span>
+                  </li>
+                ))}
+                {contextBreakdown.freeTokens !== null && contextBreakdown.freeTokens > 0 ? (
+                  <li>
+                    <span className="agent-context-breakdown-dot" data-key="free" aria-hidden="true" />
+                    <span className="agent-context-breakdown-label">{t('surface:agentComposer.segment.free')}</span>
+                    <span className="agent-context-breakdown-tokens">{formatContextTokens(contextBreakdown.freeTokens)}</span>
+                    <span className="agent-context-breakdown-share">
+                      {formatContextPercent((contextBreakdown.freeTokens / contextBreakdown.window) * 100)}
+                    </span>
+                  </li>
+                ) : null}
+              </ul>
+            </>
+          ) : (
+            <p className="agent-context-breakdown-empty">{t('surface:agentComposer.contextBreakdownUnknown')}</p>
+          )}
+        </section>
+      ) : null}
       <div className="agent-prompt" data-has-attachments={String(attachments.length > 0)}>
         {selectedExternalConversation ? <div className="agent-external-selection"><span><History />{t('surface:agentComposer.referencedConversation')} · {selectedExternalConversation.title}</span><button type="button" title={t('surface:agentComposer.removeExternalConversation')} aria-label={t('surface:agentComposer.removeExternalConversation')} onClick={() => onSelectExternalConversation(null)}><X /></button></div> : null}
         {contextItems.length > 0 ? (
@@ -1067,6 +1156,45 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
               <button type="button" aria-label={t('surface:agentComposer.clearAllReferences')} title={t('surface:agentComposer.clearAllReferences')} onClick={onClearContext}>
                 <X aria-hidden="true" />
               </button>
+            ) : null}
+            {/* 实时上下文用量：默认只有小圆环，悬停看数字，点击展开占用构成；压缩中圆环呼吸。 */}
+            {contextUsage?.contextWindow ? (
+              <button
+                type="button"
+                className={`agent-context-ring${contextCompacting ? ' agent-context-ring--compacting' : ''}`}
+                data-level={contextUsage.percent !== null && contextUsage.percent >= 85 ? 'high' : undefined}
+                aria-expanded={contextPanelOpen}
+                title={contextCompacting
+                  ? t('surface:agentComposer.contextCompacting')
+                  : t('surface:agentComposer.contextUsageTitle', {
+                    used: contextUsage.tokens === null ? '—' : contextUsage.tokens.toLocaleString(),
+                    total: contextUsage.contextWindow.toLocaleString(),
+                    percent: contextUsage.percent === null ? '—' : Math.round(contextUsage.percent),
+                  })}
+                onClick={() => setContextPanelOpen((open) => !open)}
+              >
+                <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+                  <circle className="agent-context-ring-track" cx="8" cy="8" r="5.5" fill="none" strokeWidth="2.5" />
+                  {contextUsage.percent !== null ? (
+                    <circle
+                      className="agent-context-ring-arc"
+                      cx="8"
+                      cy="8"
+                      r="5.5"
+                      fill="none"
+                      strokeWidth="2.5"
+                      strokeLinecap="round"
+                      strokeDasharray={`${(RING_CIRCUMFERENCE * Math.min(100, Math.max(3, contextUsage.percent))) / 100} ${RING_CIRCUMFERENCE}`}
+                      transform="rotate(-90 8 8)"
+                    />
+                  ) : null}
+                </svg>
+              </button>
+            ) : contextCompacting ? (
+              <span className="agent-context-usage agent-context-usage--compacting" title={t('surface:agentComposer.contextCompacting')}>
+                <span className="agent-context-usage-pulse" aria-hidden="true" />
+                {t('surface:agentComposer.contextCompacting')}
+              </span>
             ) : null}
           </span>
           {active ? (

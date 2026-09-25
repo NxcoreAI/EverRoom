@@ -48,11 +48,38 @@ export type AgentEventType =
   | "approval.requested"
   | "approval.resolved"
   | "context.updated"
+  | "context.usage"
+  | "context.compaction"
   | "runtime.session.updated"
   | "run.interrupted"
   | "run.failed"
   | "run.cancelled"
   | "run.completed";
+
+/** 上下文占用分段估算（key 对应 pi 会话的构成；tokens 为 chars/4 级粗估，供占比展示）。 */
+export interface AgentContextUsageSegment {
+  key: "systemPrompt" | "tools" | "user" | "assistant" | "toolResults" | "other";
+  tokens: number;
+}
+
+/** 实时上下文用量快照（runtime 在模型回合结束、压缩结束后透出；对齐 pi getContextUsage）。 */
+export interface AgentContextUsage {
+  /** 估算的上下文 token 数；压缩刚结束、尚无新的模型用量时为 null。 */
+  tokens: number | null;
+  contextWindow: number;
+  /** 占上下文窗口百分比；tokens 未知时为 null。 */
+  percent: number | null;
+  /** 占用构成分段（runtime 能估算时携带；缺省=未知）。 */
+  segments?: AgentContextUsageSegment[];
+}
+
+/** 上下文压缩状态信号（runtime 透传 pi 的 compaction_start/compaction_end）。 */
+export interface AgentContextCompaction {
+  active: boolean;
+  reason: "manual" | "threshold" | "overflow";
+  /** 压缩失败/中止时的原因（仅 compaction_end 且出错时）。 */
+  error?: string;
+}
 
 export interface AgentSession {
   id: string;

@@ -1,4 +1,5 @@
 import type {
+  AgentContextUsage,
   AgentEvent,
   AgentActiveDocumentContext,
   AgentFileAttachment,
@@ -16,6 +17,7 @@ import { useLocale } from '@/i18n/LocaleContext'
 
 import {
   mergeAgentToolEvent,
+  reduceAgentContextState,
   reduceAgentRunActivity,
   reduceAgentRunEvents,
   type AgentRunActivity,
@@ -200,6 +202,9 @@ export function useAgentSession(
   const [error, setError] = useState<string | null>(null)
   const [pendingApprovals, setPendingApprovals] = useState<PendingShellApproval[]>([])
   const [resolvingApprovalIds, setResolvingApprovalIds] = useState<Set<string>>(() => new Set())
+  /** 实时上下文用量 + 压缩中标记（context.usage / context.compaction 事件折叠）。 */
+  const [contextUsage, setContextUsage] = useState<AgentContextUsage | null>(null)
+  const [contextCompacting, setContextCompacting] = useState(false)
   const sequenceByRun = useRef(new Map<string, number>())
   const eventsByRun = useRef(new Map<string, AgentEvent[]>())
   const terminalRunIdsRef = useRef(new Set<string>())
@@ -275,6 +280,13 @@ export function useAgentSession(
 
     if (event.type === 'approval.requested' || event.type === 'approval.resolved') {
       setPendingApprovals((current) => applyShellApprovalEvent(current, event))
+      return
+    }
+
+    if (event.type === 'context.usage' || event.type === 'context.compaction') {
+      const next = reduceAgentContextState([event])
+      if (event.type === 'context.usage') setContextUsage(next.usage)
+      else setContextCompacting(next.compacting)
       return
     }
 
@@ -448,6 +460,7 @@ export function useAgentSession(
         }
       })
       const status = event.type === 'run.interrupted' ? 'interrupted' : 'idle'
+      setContextCompacting(false)
       setSessions((current) => current.map((session) => session.id === event.sessionId
         ? { ...session, status, updatedAt: event.occurredAt }
         : session))
@@ -514,6 +527,8 @@ export function useAgentSession(
       if (reduced.completedAt) nextCompletedAt[group.runId] = reduced.completedAt
       nextApprovals.push(...reducePendingShellApprovals(group.events))
     }
+    // 会话级上下文状态跨 run 折叠（occurredAt 排序见 reducer）。
+    const contextState = reduceAgentContextState(eventGroups.flatMap((group) => group.events))
     for (const message of snapshot.messages) {
       if (message.authorAgentId) nextAgentIdByRun[message.runId] = message.authorAgentId
     }
@@ -551,6 +566,8 @@ export function useAgentSession(
     setRunCompletedAtByRun(nextCompletedAt)
     setPendingApprovals(nextApprovals)
     setResolvingApprovalIds(new Set())
+    setContextUsage(contextState.usage)
+    setContextCompacting(contextState.compacting)
     setActiveRunId(snapshot.activeRun?.id ?? null)
     setSessionId(snapshot.session.id)
     setCurrentSession(snapshot.session)
@@ -611,6 +628,8 @@ export function useAgentSession(
     setAgentIdByRun({})
     setPendingApprovals([])
     setResolvingApprovalIds(new Set())
+    setContextUsage(null)
+    setContextCompacting(false)
     setActiveRunId(null)
     setSessionId(null)
     setSessions([])
@@ -1093,6 +1112,8 @@ export function useAgentSession(
     memoryScopeByRun,
     activityByRun,
     connected,
+    contextUsage,
+    contextCompacting,
     createSession,
     createSessionLink,
     currentSession,
