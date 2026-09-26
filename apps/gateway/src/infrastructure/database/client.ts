@@ -587,6 +587,17 @@ export function createDatabase(databasePath: string, migrationsDir: string): Dat
     runAdditiveMigrationIdempotently(sqlite, migrationsDir, localReferenceEntry.tag!);
     recordMigration(sqlite, migrationsDir, localReferenceEntry);
   }
+  // 0064_document_import_batches_force_new 的手写时间戳早于同批 0064_document_origin
+  // 与 0065+，游标已越过它的升级库会被 Drizzle 当作已应用而静默跳过 ALTER。
+  const importBatchForceNewEntry = readMigrationJournal(migrationsDir)
+    .find((item) => item.tag === "0064_document_import_batches_force_new");
+  const hasImportBatches = Boolean(sqlite.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'document_import_batches' LIMIT 1",
+  ).get());
+  if (importBatchForceNewEntry && hasMigrationTable && hasImportBatches) {
+    runAdditiveMigrationIdempotently(sqlite, migrationsDir, importBatchForceNewEntry.tag!);
+    recordMigration(sqlite, migrationsDir, importBatchForceNewEntry);
+  }
   const db = drizzle(sqlite, { schema });
   migrate(db, { migrationsFolder: migrationsDir });
   // 指令表迁移须在 migrate 之后：老库的 writing_style_user_content 由
