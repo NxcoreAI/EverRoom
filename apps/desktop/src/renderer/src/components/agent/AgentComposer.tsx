@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowUp, Bot, Brain, Check, ChevronDown, Feather, FileText, FolderOpen, History, LoaderCircle, MessagesSquare, Quote, Search, Square, Terminal, X, Zap } from 'lucide-react'
+import { ArrowLeft, Bot, Brain, Check, ChevronDown, CornerDownLeft, Feather, FileText, FolderOpen, History, LoaderCircle, MessagesSquare, Quote, Search, Square, Terminal, X, Zap } from 'lucide-react'
 import {
   forwardRef,
   useEffect,
@@ -193,6 +193,8 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const externalResultsRef = useRef<HTMLDivElement>(null)
   const agentResultsRef = useRef<HTMLDivElement>(null)
+  const modelPickerRef = useRef<HTMLElement | null>(null)
+  const contextPanelRef = useRef<HTMLElement | null>(null)
   const mountedRef = useRef(true)
   const composingRef = useRef(false)
   const externalRequestRef = useRef(0)
@@ -287,7 +289,14 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   useEffect(() => {
     if (!externalPickerOpen && !agentPickerOpen && !modelPickerOpen && !contextPanelOpen) return undefined
     const closeOnOutsidePress = (event: PointerEvent) => {
-      if (shellRef.current?.contains(event.target as Node)) return
+      const target = event.target as Element
+      if (shellRef.current?.contains(target)) {
+        // 壳内点击默认交给组件自身逻辑；但模型/上下文弹层覆盖在输入区上，
+        // 点到弹层和触发钮之外（如输入框）视为失去焦点，直接收起。
+        if (modelPickerOpen && !modelPickerRef.current?.contains(target) && !target.closest('.agent-model-tier-toggle')) setModelPickerOpen(false)
+        if (contextPanelOpen && !contextPanelRef.current?.contains(target) && !target.closest('.agent-context-ring')) setContextPanelOpen(false)
+        return
+      }
       externalRequestRef.current += 1
       setExternalPickerOpen(false)
       setAgentPickerOpen(false)
@@ -932,7 +941,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
         </div>
       ) : null}
       {modelPickerOpen ? (
-        <section className="agent-composer-popover agent-model-picker" id="agent-composer-menu" role="listbox" aria-label={t('surface:agentComposer.modelPickerTitle')}>
+        <section ref={modelPickerRef} className="agent-composer-popover agent-model-picker" id="agent-composer-menu" role="listbox" aria-label={t('surface:agentComposer.modelPickerTitle')}>
           {MODEL_TIER_ORDER
             .filter((tier) => tier !== 'lite' || liteAvailable)
             .map((tier) => {
@@ -958,7 +967,6 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
             })}
           {onSelectChannelAgent && callableLocalAgents.length > 0 ? (
             <div className="agent-model-channel-group" role="group" aria-label={t('surface:agentComposer.channelGroupLabel')}>
-              <span className="agent-model-group-label">{t('surface:agentComposer.channelGroupLabel')}</span>
               {callableLocalAgents.map((agent) => (
                 <button
                   key={agent.id}
@@ -975,7 +983,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
                       ? <SourceIcon kind={agent.provider} />
                       : <Terminal aria-hidden="true" />}
                   </span>
-                  <span><strong>{agent.displayName}</strong><small>{t('surface:agentComposer.channelOptionHint')}</small></span>
+                  <span><strong>{agent.displayName}<span className="agent-model-channel-tag"> (CLI)</span></strong><small>{t('surface:agentComposer.channelOptionHint')}</small></span>
                   {channelAgentId === agent.id ? <Check aria-hidden="true" /> : null}
                 </button>
               ))}
@@ -987,7 +995,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
         </section>
       ) : null}
       {contextPanelOpen && contextBreakdown ? (
-        <section className="agent-composer-popover agent-context-breakdown" aria-label={t('surface:agentComposer.contextWindow')}>
+        <section ref={contextPanelRef} className="agent-composer-popover agent-context-breakdown" aria-label={t('surface:agentComposer.contextWindow')}>
           <header className="agent-context-breakdown-head">
             <span>{t('surface:agentComposer.contextWindow')}</span>
             <strong>
@@ -1194,7 +1202,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
             </button>
           ) : (
             <button type="submit" className="agent-prompt-submit" title={t('surface:agentComposer.send')} aria-label={t('surface:agentComposer.send')} disabled={!available || (!value.trim() && attachments.length === 0 && !hasSubmittableContext) || loading}>
-              <ArrowUp aria-hidden="true" />
+              <CornerDownLeft aria-hidden="true" />
             </button>
           )}
         </div>

@@ -518,7 +518,7 @@ describe('AgentComposer CLI channel picker', () => {
   it('lists callable CLI agents in a channel group and reports the choice', async () => {
     const { renderer, channelOptions, onSelectChannelAgent } = await openChannelPicker()
 
-    expect(channelOptions.map((option) => String(option.findByType('strong').children)))
+    expect(channelOptions.map((option) => option.findByType('strong').children[0]))
       .toEqual(['Codex', 'Claude Code'])
     act(() => channelOptions[0]!.props.onClick())
 

@@ -1571,9 +1571,10 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
 .agent-picker-icon-button { display: grid; width: 28px; height: 28px; place-items: center; padding: 0; border: 0; border-radius: 5px; background: transparent; color: #69717d; cursor: pointer; }
 .agent-picker-icon-button:hover, .agent-picker-icon-button:focus-visible { outline: 0; background: #f0f2f4; color: #242a32; }
 .agent-picker-icon-button svg { width: 15px; height: 15px; }
-.agent-picker-header-icon { display: grid; width: 28px; height: 28px; place-items: center; border-radius: 6px; background: #eef4ff; color: #4d6faf; }
-.agent-picker-header-icon svg { width: 14px; height: 14px; }
-.agent-picker-header-icon .source-icon { width: 15px; height: 15px; object-fit: contain; }
+/* 模型/渠道选项行图标：去底色块，仅留裸图标。 */
+.agent-picker-header-icon { display: grid; width: 22px; height: 22px; place-items: center; color: #667085; }
+.agent-picker-header-icon svg { width: 15px; height: 15px; }
+.agent-picker-header-icon .source-icon { width: 16px; height: 16px; object-fit: contain; }
 .agent-external-search { display: flex; align-items: center; min-height: 38px; gap: 7px; margin: 7px 8px 6px; padding: 0 9px; border: 1px solid #dfe3e8; border-radius: 6px; background: #fafbfc; }
 .agent-external-search:focus-within { border-color: #bcc3cc; background: #fff; box-shadow: 0 0 0 2px rgba(71, 84, 103, .08); }
 .agent-external-search svg { width: 14px; height: 14px; flex: 0 0 auto; color: #818995; }
@@ -2169,22 +2170,23 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
   display: inline-flex;
   min-width: 0;
   max-width: 170px;
-  height: 24px;
+  height: 26px;
   flex: 0 1 auto;
   align-items: center;
   gap: 5px;
-  padding: 0 9px;
-  border: 1px solid #e3e6eb;
-  border-radius: 7px;
-  background: #f8f9fa;
-  color: #555d69;
-  font-size: 11px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #667085;
+  font-size: 11.5px;
   white-space: nowrap;
   cursor: pointer;
 }
 
 .agent-room-focus-toggle:hover:not(:disabled) {
-  border-color: #d3d7de;
+  background: #f1f2f4;
+  color: #344054;
 }
 
 .agent-room-focus-toggle:disabled {
@@ -2199,30 +2201,31 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
 }
 
 .agent-room-focus-toggle[data-active='true'] {
-  border-color: transparent;
-  background: var(--accent-soft);
   color: var(--accent-strong);
+  font-weight: 500;
 }
 
+/* 底栏控件统一 ghost 风格：无框无底，图标+文字+下拉箭头，悬停浅底。 */
 .agent-model-tier-toggle {
   display: inline-flex;
   min-width: 0;
   flex: 0 0 auto;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   height: 26px;
-  padding: 0 10px;
-  border: 1px solid #e3e6eb;
-  border-radius: 8px;
-  background: #f8f9fa;
-  color: #555d69;
-  font-size: 11px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #667085;
+  font-size: 11.5px;
   white-space: nowrap;
   cursor: pointer;
 }
 
 .agent-model-tier-toggle:hover:not(:disabled) {
-  border-color: #d3d7de;
+  background: #f1f2f4;
+  color: #344054;
 }
 
 .agent-model-tier-toggle:disabled {
@@ -2231,9 +2234,9 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
 }
 
 .agent-model-tier-toggle svg {
-  width: 12px;
-  height: 12px;
-  flex: 0 0 12px;
+  width: 13px;
+  height: 13px;
+  flex: 0 0 13px;
 }
 
 /* 渠道 chip 用品牌 logo（SourceIcon img）+ 下拉箭头；尺寸独立于 svg 图标。 */
@@ -2244,39 +2247,40 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
 .agent-model-tier-toggle[data-tier='primary'],
 .agent-model-tier-toggle[data-tier='lite'],
 .agent-model-tier-toggle[data-channel] {
-  border-color: transparent;
-  background: var(--accent-soft);
-  color: var(--accent-strong);
+  color: #1f242c;
+  font-weight: 500;
 }
 
 .agent-model-channel-group {
   display: grid;
-  gap: 2px;
+  gap: 1px;
   margin-top: 3px;
   padding-top: 4px;
   border-top: 1px solid #eceef1;
 }
 
-.agent-model-group-label {
-  padding: 2px 8px 3px;
-  color: #8b93a0;
-  font-size: 10px;
-  font-weight: 560;
-}
-
-.agent-model-picker {
+/* 模型选择弹层：轻量紧凑，锚在底部选择器正上方（盖住输入区下沿），宽度随内容。 */
+.agent-composer-popover.agent-model-picker {
+  right: auto;
+  left: 12px;
+  bottom: 52px;
   display: grid;
-  gap: 2px;
-  padding: 5px;
+  gap: 1px;
+  width: max-content;
+  min-width: 216px;
+  max-width: 320px;
+  padding: 4px;
+  border-color: #e8eaee;
+  box-shadow: 0 10px 28px rgba(25, 31, 41, 0.1), 0 2px 6px rgba(25, 31, 41, 0.05);
 }
 
 .agent-model-option {
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr) 18px;
+  grid-template-columns: 22px minmax(0, 1fr) 16px;
   align-items: center;
-  gap: 9px;
-  min-height: 46px;
-  padding: 6px 8px;
+  gap: 8px;
+  min-height: 38px;
+  padding: 4px 8px;
   border: 0;
   border-radius: 6px;
   background: transparent;
@@ -2297,13 +2301,14 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
 .agent-model-option > span:nth-child(2) {
   display: grid;
   min-width: 0;
-  gap: 2px;
+  gap: 1px;
 }
 
 .agent-model-option strong {
   overflow: hidden;
   font-size: 12px;
   font-weight: 560;
+  line-height: 1.25;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -2312,8 +2317,16 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
   overflow: hidden;
   color: #747d8a;
   font-size: 10px;
+  line-height: 1.2;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 渠道名后缀 (CLI)：弱化显示，与模型档位行区分。 */
+.agent-model-channel-tag {
+  color: #8b93a0;
+  font-size: 10.5px;
+  font-weight: 400;
 }
 
 .agent-model-option > svg {
@@ -2324,14 +2337,15 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
 
 .agent-prompt-submit {
   margin-left: auto;
-  border-radius: 50%;
-  background: #202124;
-  color: #fff;
+  border-radius: 7px;
+  background: #eef0f3;
+  color: #565e6a;
   transition: background 150ms ease, transform 150ms ease;
 }
 
 .agent-prompt-submit:hover:not(:disabled) {
-  background: #111214;
+  background: #e2e5e9;
+  color: #30343a;
 }
 
 .agent-prompt-submit:active:not(:disabled) {
@@ -2339,8 +2353,8 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
 }
 
 .agent-prompt-submit:disabled {
-  background: #eceef1;
-  color: #adb3bc;
+  background: transparent;
+  color: #c3c8d0;
   cursor: default;
 }
 
@@ -2356,8 +2370,8 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
 }
 
 .agent-prompt-submit svg {
-  width: 17px;
-  height: 17px;
+  width: 15px;
+  height: 15px;
   stroke: currentColor;
 }
 
