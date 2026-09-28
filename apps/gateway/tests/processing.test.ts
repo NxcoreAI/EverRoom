@@ -214,7 +214,6 @@ describe("ConversationSuggestionService", () => {
     const runtime = fakeRuntime("1. 「跟进导出失败」\n2. \"整理上周周会\"\n3. 检查部署日志。\n4. 多余的一条");
     const service = new ConversationSuggestionService(runtime);
     const { prompts } = await service.suggestStarterPrompts({
-      pageLabel: undefined,
       roomTitle: "写作房间",
       recentSessions: [
         { title: "导出失败排查", updatedAt: "2026-09-28T10:00:00.000Z" },
