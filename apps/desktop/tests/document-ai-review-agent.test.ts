@@ -93,7 +93,6 @@ describe('document ai review agent', () => {
     expect(captured!.toolsEnabled).toBeUndefined()
     expect(captured!.captureMemory).toBe(false)
     expect(captured!.recallMemory).toBe(true)
-    expect(captured!.memoryScope).toBe('room')
     const context = captured!.context as {
       selectedRoomId: string
       activeDocument: { documentId: string; version: number; defaultAnchor: string }

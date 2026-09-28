@@ -1486,8 +1486,6 @@ export class AgentService {
         roomSelectionRequired: runRoomId === null,
         captureMemory: input.captureMemory !== false,
         recallMemory: input.recallMemory !== false,
-        // 聚焦只在 roomId 解析成功后生效；selectedRoomId 缺失/失效时静默降级 global。
-        ...(runRoomId && input.memoryScope === "room" ? { memoryScope: "room" as const } : {}),
         toolsEnabled: input.toolsEnabled !== false,
         ...(referencedConversationId ? { referencedConversationId } : {}),
         ...(referencedTargets.length ? { referencedLocalAgents: referencedTargets } : {}),

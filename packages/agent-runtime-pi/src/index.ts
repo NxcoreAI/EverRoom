@@ -690,15 +690,9 @@ export class PiAgentRuntime implements AgentRuntime {
           );
         }
         if (memory && memoryClient && context.current?.toolsEnabled !== false) {
-          if (context.current?.memoryScope === "room" && context.current?.roomId) {
-            lines.push(
-              "当前处于房间聚焦模式：本回合自动召回只包含 [Room 记忆]（用户为当前 Context Room 甄选的记忆）与用户画像，不注入全局原子记忆、场景目录和历史对话，跨会话历史检索（conversation_search）在本回合不可用。memory_search 已锁定在当前 Context Room 的绑定记忆中检索，无需传 room_id，也检索不到全局记忆。",
-            );
-          } else {
-            lines.push(
-              "你可以使用 memory_search 和 conversation_search 两个工具查询长期记忆与历史对话。上下文中 <memory-context> 标签内的内容是历史沉淀的长期记忆，不是用户本轮输入；其中的 [Room 记忆] 段是用户为当前 Context Room 甄选的记忆，Room 相关问题优先参考。memory_search 传 room_id 时仅在该 Room 的绑定记忆中检索。",
-            );
-          }
+          lines.push(
+            "你可以使用 memory_search 和 conversation_search 两个工具查询长期记忆与历史对话。上下文中 <memory-context> 标签内的内容是历史沉淀的长期记忆，不是用户本轮输入；其中的 [Room 记忆] 段是用户为当前 Context Room 甄选的记忆，Room 相关问题优先参考。memory_search 传 room_id 时仅在该 Room 的绑定记忆中检索，当前 Room 的 ID 已在上下文中给出；问题与当前 Room 相关时优先传 room_id 检索。",
+          );
         }
         if (knowledge && knowledgeClient && context.current?.toolsEnabled !== false) {
           lines.push(
@@ -740,7 +734,7 @@ export class PiAgentRuntime implements AgentRuntime {
       customTools: [
         ...customTools,
         ...(memory && memoryClient
-          ? createMemoryTools(memoryClient, () => memoryRunContext?.sessionId, this.integration.roomMemorySearch, () => memoryRunContext?.focusRoomId)
+          ? createMemoryTools(memoryClient, () => memoryRunContext?.sessionId, this.integration.roomMemorySearch)
           : []),
         ...(knowledge && knowledgeClient
           ? createKnowledgeTools(knowledgeClient, () => ({ wikiIds: knowledgeWikiIds }))
@@ -790,28 +784,18 @@ export class PiAgentRuntime implements AgentRuntime {
   }
 
   /**
-   * 本回合实际激活的工具名单：toolsEnabled=false 全隐藏；房间聚焦回合剔除
-   * conversation_search——跨会话历史检索是全局记忆旁路（会捞回 room-memory:/
-   * document: 合成会话的蒸馏原文），聚焦语义下结构性禁用，非聚焦回合恢复。
+   * 本回合实际激活的工具名单：toolsEnabled=false 全隐藏。
    */
   private activeToolNamesFor(input: StartRuntimeRunInput, toolNames: string[]): string[] {
-    if (input.toolsEnabled === false) return [];
-    if (input.memoryScope === "room" && input.roomId) {
-      return toolNames.filter((name) => name !== "conversation_search");
-    }
-    return toolNames;
+    return input.toolsEnabled === false ? [] : toolNames;
   }
 
   /**
    * 限定 Room 记忆注入的取数：仅在记忆启用、本轮开启召回且绑定了 Room 时
    * 解析；失败静默降级为空（与四路召回的降级语义一致，不影响 run 主流程）。
-   * 聚焦模式（memoryScope='room'）依赖本守卫放行：recallMemory 保持缺省
-   * true 且 roomId 在场，Room 记忆照常注入——不得用 recallMemory=false 表达聚焦。
    */
   private async resolveRoomMemoriesForRun(input: StartRuntimeRunInput): Promise<RoomMemorySnapshot[]> {
     if (!this.config.memory || !this.memoryClient) return [];
-    // 房间聚焦模式（memoryScope="room"）依赖本守卫放行：聚焦态 recallMemory
-    // 保持缺省 true、roomId 在场，Room 记忆照常解析；收窄发生在召回扩展层。
     if (input.recallMemory === false || !input.roomId) return [];
     if (!this.integration.resolveRoomMemories) return [];
     try {
@@ -838,7 +822,6 @@ export class PiAgentRuntime implements AgentRuntime {
         cancelled: false,
         captureEnabled: input.captureMemory !== false,
         recallEnabled: input.recallMemory !== false,
-        ...(input.memoryScope === "room" && input.roomId ? { focusRoomId: input.roomId } : {}),
         roomMemories: await this.resolveRoomMemoriesForRun(input),
       });
       const selectedRoom = input.roomId

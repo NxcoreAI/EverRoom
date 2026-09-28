@@ -126,11 +126,6 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   localAgents: LocalAgentInstallation[]
   /** Room 引用候选（@ 弹层「房间」组；AgentPanel 已持有完整列表）。 */
   rooms?: AgentRoomReference[]
-  /** 视口在 Context Room 内时展示「聚焦当前房间」开关。 */
-  roomFocusVisible?: boolean
-  roomFocusEnabled?: boolean
-  roomFocusRoomTitle?: string
-  onToggleRoomFocus?: (next: boolean) => void
   /** 当前生效档位：会话已存在＝会话锁定档，否则＝全局默认档。 */
   modelPreference: AgentModelPreference
   /** 实时上下文用量（context.usage 事件快照；缺省=未知，不渲染）。 */
@@ -170,10 +165,6 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   selectedExternalConversation,
   localAgents,
   rooms = [],
-  roomFocusVisible = false,
-  roomFocusEnabled = false,
-  roomFocusRoomTitle,
-  onToggleRoomFocus,
   modelPreference,
   modelPreferenceLocked = false,
   contextUsage = null,
@@ -1143,20 +1134,6 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
           </div>
         ) : null}
         <div className="agent-prompt-actions">
-          {roomFocusVisible && onToggleRoomFocus ? (
-            <button
-              type="button"
-              className="agent-room-focus-toggle"
-              data-active={String(roomFocusEnabled)}
-              aria-pressed={roomFocusEnabled}
-              title={t('surface:agentComposer.roomFocusTitle')}
-              disabled={controlsDisabled}
-              onClick={() => onToggleRoomFocus(!roomFocusEnabled)}
-            >
-              {roomFocusRoomTitle ? <span className="agent-room-focus-name">{roomFocusRoomTitle}</span> : null}
-              <span>{roomFocusEnabled ? t('surface:agentComposer.roomFocusOn') : t('surface:agentComposer.roomFocusOff')}</span>
-            </button>
-          ) : null}
           <button
             type="button"
             className="agent-model-tier-toggle"

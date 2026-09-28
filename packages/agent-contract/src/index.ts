@@ -739,8 +739,6 @@ export interface StartAgentRunInput {
   captureMemory?: boolean;
   /** Defaults to true. Lightweight runs can skip automatic memory recall. */
   recallMemory?: boolean;
-  /** Defaults to "global". Room focus mode: recall keeps only the core profile and the current Room's curated memories, skipping global atomic/scenario/conversation recall; memory_search is locked to the current Room. Requires context.selectedRoomId. */
-  memoryScope?: "room" | "global";
   /** Defaults to true. Lightweight runs can hide all runtime tools from the model. */
   toolsEnabled?: boolean;
   context?: {

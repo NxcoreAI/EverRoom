@@ -19,7 +19,6 @@ import { useAgentSession } from '@/components/agent/useAgentSession'
 import { LocalAgentAdapterWizard } from '@/components/agent/LocalAgentAdapterWizard'
 import type { MentionedAgent, MentionedItem } from '@/components/agent/agentMentions'
 import type { LocalAgentAdapterCheck } from '../../../shared/sources'
-import { loadRoomFocus, saveRoomFocus } from '@/components/agent/roomFocusStore'
 import type { ContextRoomWorkspaceTab } from '@/components/context-room/contextRoomTabs'
 import type { LocalAgentInstallation } from '../../../shared/local-agents'
 import {
@@ -105,7 +104,6 @@ export function AgentPanel({
   const [composerResetKey, setComposerResetKey] = useState(0)
   const [localAgents, setLocalAgents] = useState<LocalAgentInstallation[]>([])
   const [selectedExternalConversation, setSelectedExternalConversation] = useState<ExternalConversationSummary | null>(null)
-  const [roomFocusEnabled, setRoomFocusEnabled] = useState(() => (roomId ? loadRoomFocus(roomId) : false))
   const [notificationRunTarget, setNotificationRunTarget] = useState<{ key: string; runId: string } | null>(null)
   const composerRef = useRef<HTMLTextAreaElement>(null)
   const previousSessionIdRef = useRef<string | null>(null)
@@ -135,8 +133,8 @@ export function AgentPanel({
   const contextSummary = roomCitations.length
     ? `${roomCitations[0]?.roomTitle ?? pageLabel} · ${t('surface:agentComposer.countReferences', { count: roomCitations.length })}`
     : ''
-  const roomFocusRoomTitle = roomId
-    ? rooms.find((room) => room.id === roomId)?.title ?? t('surface:agentComposer.roomFocus')
+  const currentRoomTitle = roomId
+    ? rooms.find((room) => room.id === roomId)?.title ?? t('contextRoom:creation.emptyRoomTitle')
     : undefined
   const citationPrompt = buildRoomOverviewCitationPrompt(roomCitations, locale)
   const session = useAgentSession(pageLabel, roomId, rooms)
@@ -177,7 +175,7 @@ export function AgentPanel({
       api.suggestConversationPrompt({
         sessionId: session.sessionId,
         pageLabel,
-        roomTitle: roomFocusRoomTitle ?? null,
+        roomTitle: currentRoomTitle ?? null,
         messages: recent,
         language: locale,
       })
@@ -187,7 +185,7 @@ export function AgentPanel({
         .catch(() => undefined)
     }, 400)
     return () => { window.clearTimeout(timer) }
-  }, [conversationSuggestionSettings.completionEnabled, session.activeRunId, draft, session.messages, session.sessionId, ghostContextKey, pageLabel, roomFocusRoomTitle, locale])
+  }, [conversationSuggestionSettings.completionEnabled, session.activeRunId, draft, session.messages, session.sessionId, ghostContextKey, pageLabel, currentRoomTitle, locale])
 
   // 新对话空态：按最近会话标题生成开场推荐（5 分钟 TTL 缓存，失败静默回退静态文案）。
   const newConversationEmpty = session.scopeReady && session.messages.length === 0
@@ -198,7 +196,7 @@ export function AgentPanel({
       .sort((a, b) => Date.parse(b.updatedAt ?? '') - Date.parse(a.updatedAt ?? ''))
       .slice(0, 8)
       .map((item) => ({ title: item.title, updatedAt: item.updatedAt }))
-    const key = `${pageLabel}|${roomId ?? ''}|${locale}|${roomFocusRoomTitle ?? ''}|${recentSessions.map((item) => item.title ?? '').join('/')}`
+    const key = `${pageLabel}|${roomId ?? ''}|${locale}|${currentRoomTitle ?? ''}|${recentSessions.map((item) => item.title ?? '').join('/')}`
     const cached = starterPromptsCacheRef.current
     if (cached && cached.key === key && Date.now() - cached.at < 5 * 60_000) {
       setStarterPrompts(cached.prompts)
@@ -207,7 +205,7 @@ export function AgentPanel({
     let cancelled = false
     api.suggestStarterPrompts({
       pageLabel,
-      roomTitle: roomFocusRoomTitle ?? null,
+      roomTitle: currentRoomTitle ?? null,
       recentSessions,
       language: locale,
     })
@@ -218,7 +216,7 @@ export function AgentPanel({
       })
       .catch(() => undefined)
     return () => { cancelled = true }
-  }, [conversationSuggestionSettings.starterPromptsEnabled, newConversationEmpty, session.sessions, session.scopeReady, pageLabel, roomId, locale, roomFocusRoomTitle])
+  }, [conversationSuggestionSettings.starterPromptsEnabled, newConversationEmpty, session.sessions, session.scopeReady, pageLabel, roomId, locale, currentRoomTitle])
 
   const { activeDocument, prepareActiveDocumentRun } = useActiveDocument()
   const agentNamesById = useMemo(() => Object.fromEntries(
@@ -321,18 +319,6 @@ export function AgentPanel({
       showToast({ title: t('surface:agentChat.mentionTargetUnavailable') })
     })
   }, [onNavigate, onOpenMentionFile, pageId, pageLabel, roomId, session, t])
-
-
-
-  // 房间聚焦是 per-Room 持久偏好（非会话态）：切房间/回到房间恢复各自上次的选择。
-  useEffect(() => {
-    setRoomFocusEnabled(roomId ? loadRoomFocus(roomId) : false)
-  }, [roomId])
-
-  const toggleRoomFocus = useCallback((next: boolean) => {
-    setRoomFocusEnabled(next)
-    if (roomId) saveRoomFocus(roomId, next)
-  }, [roomId])
 
 
   useEffect(() => {
@@ -578,18 +564,6 @@ export function AgentPanel({
       const effectiveRoomId = mentionedRoomId && rooms.some((room) => room.id === mentionedRoomId)
         ? mentionedRoomId
         : validRoomId
-      // 重试优先还原原 run 的记忆范围（含"原 run 是全局"的情况），本会话内未知
-      // （应用重启后的旧 run）才回退当前开关；聚焦需房间仍有效，失效则全局运行。
-      const priorScope = replaceRunId ? session.memoryScopeByRun[replaceRunId] : undefined
-      const wantsRoomFocus = priorScope === 'room' || (priorScope === undefined && roomFocusEnabled)
-      const memoryScope = wantsRoomFocus && effectiveRoomId ? ('room' as const) : undefined
-      if (roomFocusEnabled && roomId && !validRoomId) {
-        // 房间已失效（他端合并/删除/同步滞后）而 chip 仍显示已聚焦：提示后按全局
-        // 运行，并同步关闭/清除该房间的持久聚焦，不让 chip 继续失真。
-        showToast({ title: t('surface:agentComposer.roomFocusUnavailable') })
-        setRoomFocusEnabled(false)
-        saveRoomFocus(roomId, false)
-      }
       await session.sendPrompt(
         submittedPrompt || t('surface:agentComposer.analyzeUploadedFiles'),
         submittedContext,
@@ -600,7 +574,6 @@ export function AgentPanel({
         undefined,
         externalConversation?.id ?? mentionedConversationId,
         mentionedAgents,
-        memoryScope,
         mentioned,
       )
       if (externalConversation) setSelectedExternalConversation(null)
@@ -716,10 +689,6 @@ export function AgentPanel({
       selectedExternalConversation={selectedExternalConversation}
       localAgents={localAgents}
       rooms={rooms}
-      roomFocusVisible={Boolean(roomId)}
-      roomFocusEnabled={roomFocusEnabled}
-      roomFocusRoomTitle={roomFocusRoomTitle}
-      onToggleRoomFocus={toggleRoomFocus}
       modelPreference={effectiveModelPreference}
       modelPreferenceLocked={modelTierLocked}
       contextUsage={session.contextUsage}

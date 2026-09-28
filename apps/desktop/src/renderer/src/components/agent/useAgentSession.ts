@@ -190,8 +190,6 @@ export function useAgentSession(
   const [runCompletedAtByRun, setRunCompletedAtByRun] = useState<Record<string, string>>({})
   const [reasoningByRun, setReasoningByRun] = useState<Record<string, string>>({})
   const [agentIdByRun, setAgentIdByRun] = useState<Record<string, string>>({})
-  /** 每个 run 实际使用的记忆范围；重试(replaceRunId)据此还原原 run 的聚焦态，未知(重启后)回退当前开关。 */
-  const [memoryScopeByRun, setMemoryScopeByRun] = useState<Record<string, 'room' | 'global'>>({})
   const [activeRunId, setActiveRunId] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [scopeReady, setScopeReady] = useState(false)
@@ -758,7 +756,6 @@ export function useAgentSession(
     setRunCompletedAtByRun({})
     setReasoningByRun({})
     setAgentIdByRun({})
-    setMemoryScopeByRun({})
     setPendingApprovals([])
     setResolvingApprovalIds(new Set())
     setContextUsage(null)
@@ -921,7 +918,6 @@ export function useAgentSession(
     targetAgentId?: string,
     referencedConversationId?: string,
     mentionedAgents?: MentionedAgent[],
-    memoryScope?: 'room',
     mentions?: MentionedItem[],
   ): Promise<string | null> => {
     const message = prompt.trim()
@@ -995,7 +991,6 @@ export function useAgentSession(
       setMessages((current) => current.map((item) => item.id === optimisticId
         ? { ...item, sessionId: currentSessionId }
         : item))
-      const effectiveMemoryScope = memoryScope && selectedRoomId ? ('room' as const) : undefined
       const run = await api!.startRun(currentSessionId, {
         prompt: message,
         idempotencyKey: crypto.randomUUID(),
@@ -1004,7 +999,6 @@ export function useAgentSession(
         invocationMode: 'explicit_switch',
         ...(replaceRunId ? { replaceRunId } : {}),
         responseLanguage: locale,
-        ...(effectiveMemoryScope ? { memoryScope: effectiveMemoryScope } : {}),
         // 渠道会话下 @ 其他 Agent / 引用对话是主代理专属能力，网关会拒
         // （referenced_*_requires_main_agent）；UI 已隐藏入口，这里兜底剥离，
         // 覆盖重试、外部注入等绕过输入框的路径。
@@ -1020,9 +1014,6 @@ export function useAgentSession(
         ),
       })
       const runAgentId = run.agentId ?? selectedAgentId
-      setMemoryScopeByRun((current) => current[run.id] === (effectiveMemoryScope ?? 'global')
-        ? current
-        : { ...current, [run.id]: effectiveMemoryScope ?? 'global' })
       setAgentIdByRun((current) => current[run.id] === runAgentId
         ? current
         : { ...current, [run.id]: runAgentId })
@@ -1142,7 +1133,6 @@ export function useAgentSession(
   return {
     activeRunId,
     agentIdByRun,
-    memoryScopeByRun,
     activityByRun,
     connected,
     contextUsage,

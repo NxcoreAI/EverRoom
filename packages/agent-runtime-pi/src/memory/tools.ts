@@ -24,7 +24,6 @@ export function createMemoryTools(
   client: MemoryCoreClient,
   getCurrentSessionId: () => string | undefined,
   roomSearch?: RoomMemorySearch,
-  getScopedRoomId?: () => string | undefined,
 ): ToolDefinition[] {
   const memorySearch = defineTool({
     name: "memory_search",
@@ -48,21 +47,16 @@ export function createMemoryTools(
       try {
         const limit = params.limit ?? 5;
         const hasRange = params.time_start !== undefined || params.time_end !== undefined;
-        // 房间聚焦回合静默锁定当前 Room：覆盖模型传参/缺参，抑制全局检索兜底。
-        const scopedRoomId = getScopedRoomId?.();
-        const effectiveRoomId = scopedRoomId ?? params.room_id;
         let items: MemoryAtomicItem[];
-        if (effectiveRoomId !== undefined) {
+        if (params.room_id !== undefined) {
           if (!roomSearch) {
             return {
-              content: [{ type: "text", text: scopedRoomId !== undefined
-                ? "Room 记忆过滤未配置（room_memory provider 缺失）。"
-                : "Room 记忆过滤未配置（room_memory provider 缺失），请改为全局检索。" }],
-              details: { count: 0, roomId: effectiveRoomId },
+              content: [{ type: "text", text: "Room 记忆过滤未配置（room_memory provider 缺失），请改为全局检索。" }],
+              details: { count: 0, roomId: params.room_id },
               isError: true,
             };
           }
-          items = await roomSearch(effectiveRoomId, params.query, limit);
+          items = await roomSearch(params.room_id, params.query, limit);
           // 快照检索无服务端时间过滤，在此按更新时间本地圈定。
           if (hasRange) {
             items = items.filter((item) =>
@@ -77,15 +71,13 @@ export function createMemoryTools(
           );
         }
         const text = items.length === 0
-          ? effectiveRoomId !== undefined
-            ? scopedRoomId !== undefined
-              ? "当前 Room 没有匹配的绑定记忆。"
-              : "该 Room 没有匹配的绑定记忆（可去掉 room_id 改为全局检索）。"
+          ? params.room_id !== undefined
+            ? "该 Room 没有匹配的绑定记忆（可去掉 room_id 改为全局检索）。"
             : "没有匹配的长期记忆。"
           : items.map(formatAtomicLine).join("\n");
         return {
           content: [{ type: "text", text }],
-          details: { count: items.length, roomId: effectiveRoomId ?? null },
+          details: { count: items.length, roomId: params.room_id ?? null },
         };
       } catch (error) {
         return {
