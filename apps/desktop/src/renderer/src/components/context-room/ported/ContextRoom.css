@@ -5113,174 +5113,271 @@
   color: var(--cr-blue);
 }
 
-.context-room-activity-pane > header span {
-  margin-left: auto;
-  color: var(--cr-tertiary);
-  font-size: 10px;
-  font-weight: 400;
+/* ===== 动态（Room 时间轴）：quiet chrome，与紧凑面板共用一套词汇 =====
+   分段控件 + 筛选 chips + 竖向轴线 + 类别着色圆点，颜色全走 --cr-* 变量。
+   此前散落后段的 iOS 实验块与后置补丁块已并入此处，避免多层覆盖。 */
+.context-room-activity-pane {
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  border-radius: 8px;
+}
+
+.context-room-activity-pane > header {
+  display: flex;
+  min-height: 42px;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--cr-border);
+}
+
+.context-room-activity-pane > header > svg {
+  width: 13px;
+  height: 13px;
+  flex: none;
+  color: var(--cr-muted);
+}
+
+.context-room-activity-pane > header h2 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .context-room-timeline-toolbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 14px;
+  gap: 8px;
+  padding: 8px 12px;
   border-bottom: 1px solid var(--cr-border);
 }
 
 .context-room-timeline-toolbar > div {
   display: flex;
+  gap: 2px;
   padding: 2px;
-  border-radius: 6px;
+  border-radius: 7px;
   background: var(--cr-surface-secondary);
 }
 
-.context-room-timeline-toolbar button {
-  min-width: 30px;
-  padding: 3px 7px;
+.context-room-timeline-toolbar > div button {
+  min-width: 32px;
+  padding: 3px 9px;
   border-radius: 5px;
   color: var(--cr-muted);
   font-size: 11px;
 }
 
-.context-room-timeline-toolbar button[aria-pressed='true'] {
+.context-room-timeline-toolbar > div button:hover {
+  color: var(--cr-text);
+}
+
+.context-room-timeline-toolbar > div button[aria-pressed='true'] {
   background: var(--cr-surface);
-  color: var(--cr-blue);
+  color: var(--cr-text);
+  font-weight: 550;
   box-shadow: 0 1px 2px rgba(31, 31, 31, 0.08);
 }
 
-.context-room-timeline-toolbar > span {
+.context-room-timeline-toolbar nav {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.context-room-timeline-toolbar nav span {
+  min-width: 108px;
+  color: var(--cr-muted);
+  font-size: 11px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.context-room-timeline-toolbar nav button {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  min-width: 0;
+  place-items: center;
+  padding: 0;
+  border-radius: 6px;
   color: var(--cr-muted);
   font-size: 11px;
 }
 
-.context-room-activity-pane ol,
+.context-room-timeline-toolbar nav button:hover:not(:disabled) {
+  background: var(--cr-surface-hover);
+  color: var(--cr-text);
+}
+
+.context-room-timeline-toolbar nav button:disabled {
+  opacity: 0.4;
+}
+
+.context-room-timeline-toolbar nav button:last-child {
+  width: auto;
+  padding: 0 7px;
+}
+
+.context-room-timeline-toolbar nav svg {
+  width: 13px;
+  height: 13px;
+}
+
 .context-room-activity-list {
   margin: 0;
-  padding: 14px;
+  padding: 4px 12px 10px;
   list-style: none;
 }
 
-.context-room-activity-pane li,
-.context-room-activity-list li {
-  display: flex;
-  gap: 12px;
+.context-room-activity-list > li {
+  position: relative;
+  display: grid;
+  grid-template-columns: 13px minmax(0, 1fr);
+  gap: 10px;
+  padding: 10px 0;
 }
 
-.context-room-activity-pane li > i,
-.context-room-activity-list li > i {
-  width: 8px;
-  height: 8px;
-  flex: 0 0 auto;
-  margin-top: 6px;
+.context-room-activity-list > li + li {
+  border-top: 1px solid var(--cr-border);
+}
+
+.context-room-activity-list > li > i {
+  position: relative;
+  z-index: 1;
+  width: 9px;
+  height: 9px;
+  margin-top: 5px;
   border: 2px solid var(--cr-blue);
   border-radius: 50%;
   background: var(--cr-surface);
 }
 
-.context-room-activity-pane li > div,
-.context-room-activity-list li > div {
-  min-width: 0;
-  flex: 1;
-  padding-bottom: 14px;
-  border-bottom: 1px solid var(--cr-border);
+/* 竖向轴线：从本条目圆点圆心连到下一条目圆点圆心；圆点不透明且 z-index 更高会盖住线段。 */
+.context-room-activity-list > li::before {
+  position: absolute;
+  top: 19px;
+  bottom: -20px;
+  left: 4px;
+  width: 1px;
+  background: var(--cr-border);
+  content: '';
 }
 
-.context-room-activity-pane li:last-child > div,
-.context-room-activity-list li:last-child > div {
-  border-bottom: 0;
+.context-room-activity-list > li:last-child::before {
+  display: none;
 }
 
-.context-room-activity-pane li > div > div:first-child,
-.context-room-activity-list li > div > div:first-child {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
+/* 类别着色：与概览时间轴（timeline-item）同一套语义色，done 实心 + 内圈白环。 */
+.context-room-activity-list > li > i[data-kind='done'] {
+  border-color: var(--cr-success);
+  background: var(--cr-success);
+  box-shadow: inset 0 0 0 2px var(--cr-surface);
 }
 
-.context-room-activity-pane li b,
+.context-room-activity-list > li > i[data-kind='warn'] {
+  border-color: var(--cr-warning);
+  background: var(--cr-warning-soft);
+}
+
+.context-room-activity-list > li > i[data-kind='info'] {
+  border-color: var(--cr-blue);
+  background: var(--cr-blue-soft);
+}
+
 .context-room-activity-list li b {
   overflow: hidden;
   font-size: 12px;
   font-weight: 600;
+  line-height: 1.4;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.context-room-activity-pane li time,
 .context-room-activity-list li time {
-  flex: 0 0 auto;
+  flex: none;
   color: var(--cr-tertiary);
   font-size: 10px;
+  font-variant-numeric: tabular-nums;
 }
 
-.context-room-activity-pane li p,
 .context-room-activity-list li p {
-  margin: 2px 0 0;
+  margin: 3px 0 0;
   color: var(--cr-muted);
   font-size: 11px;
+  line-height: 1.5;
 }
 
-.context-room-activity-pane li button,
-.context-room-activity-pane .context-room-timeline-peer button,
-.context-room-activity-list li button,
-.context-room-activity-list .context-room-timeline-peer button {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  margin-top: 5px;
-  padding: 3px 6px;
-  border-radius: 5px;
-  color: var(--cr-muted);
+/* 动态行（标题在左、时间/版本在右）：信息流行与时间轴行共用。 */
+.context-room-activity-entry-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.context-room-activity-entry-row > time {
+  flex: none;
+  color: var(--cr-tertiary);
   font-size: 10px;
+  font-variant-numeric: tabular-nums;
 }
 
-.context-room-activity-pane li button:hover,
-.context-room-activity-pane .context-room-timeline-peer button:hover,
-.context-room-activity-list li button:hover,
-.context-room-activity-list .context-room-timeline-peer button:hover {
-  background: var(--cr-surface-hover);
+.context-room-activity-entry-title {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
 }
 
-.context-room-activity-pane li button svg,
-.context-room-activity-pane .context-room-timeline-peer button svg,
-.context-room-activity-list li button svg,
-.context-room-activity-list .context-room-timeline-peer button svg {
-  width: 11px;
-  height: 11px;
-}
-
-.context-room-activity-pane li button[aria-expanded='true'] svg,
-.context-room-activity-pane .context-room-timeline-peer button[aria-expanded='true'] svg,
-.context-room-activity-list li button[aria-expanded='true'] svg,
-.context-room-activity-list .context-room-timeline-peer button[aria-expanded='true'] svg {
-  transform: rotate(90deg);
-}
-
-/* 同期事件折叠组：展开后的同组条目行（div 而非 li，保持时间轴条目计数语义） */
+/* 同期事件折叠组：展开后的同组条目收进浅底块（div 而非 li，保持条目计数语义）。 */
 .context-room-timeline-peers {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  margin-top: 4px;
+  gap: 8px;
+  margin-top: 6px;
   padding: 8px 10px;
-  border-radius: 8px;
+  border-radius: 7px;
   background: var(--cr-surface-secondary);
 }
 
 .context-room-timeline-peer {
   display: flex;
-  gap: 10px;
+  gap: 8px;
 }
 
+/* 同期组内圆点：同类着色的柔和高亮形态（浅底 + 实色描边）。 */
 .context-room-timeline-peer > i {
-  width: 6px;
-  height: 6px;
-  flex: 0 0 auto;
-  margin-top: 5px;
-  border: 1px solid var(--cr-blue);
+  width: 7px;
+  height: 7px;
+  flex: none;
+  margin-top: 4px;
+  border: 2px solid var(--cr-blue);
   border-radius: 50%;
   background: var(--cr-surface);
+}
+
+.context-room-timeline-peer > i[data-kind='done'] {
+  border-color: var(--cr-success);
+  background: var(--cr-success-soft);
+}
+
+.context-room-timeline-peer > i[data-kind='warn'] {
+  border-color: var(--cr-warning);
+  background: var(--cr-warning-soft);
+}
+
+.context-room-timeline-peer > i[data-kind='info'] {
+  border-color: var(--cr-blue);
+  background: var(--cr-blue-soft);
 }
 
 .context-room-timeline-peer > div {
@@ -5288,47 +5385,144 @@
   flex: 1;
 }
 
-.context-room-timeline-peer > div > div:first-child {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-}
-
 .context-room-timeline-peer b {
-  overflow: hidden;
-  font-size: 12px;
   font-weight: 500;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .context-room-timeline-peer time {
-  flex: 0 0 auto;
+  flex: none;
   color: var(--cr-tertiary);
   font-size: 10px;
+  font-variant-numeric: tabular-nums;
 }
 
 .context-room-timeline-peer p {
-  margin: 2px 0 0;
+  margin: 3px 0 0;
   color: var(--cr-muted);
   font-size: 11px;
 }
 
+/* 相关资料 chip：可跳转资源为按钮（悬停浅底），连接器来源仅作标签。 */
 .context-room-timeline-material {
-  display: flex;
+  display: inline-flex;
+  max-width: 100%;
   align-items: center;
   gap: 5px;
-  margin-top: 5px;
-  padding: 5px 8px;
-  border-radius: 5px;
+  margin-top: 0;
+  padding: 3px 8px;
+  border-radius: 6px;
   background: var(--cr-surface-secondary);
   color: var(--cr-muted);
-  font-size: 10px;
+  font-size: 11px;
+}
+
+.context-room-timeline-material:hover {
+  background: var(--cr-surface-hover);
+  color: var(--cr-text);
+}
+
+.context-room-timeline-material.is-plain:hover {
+  background: var(--cr-surface-secondary);
+  color: var(--cr-muted);
+  cursor: default;
 }
 
 .context-room-timeline-material svg {
   width: 12px;
   height: 12px;
+  flex: none;
+  color: var(--cr-tertiary);
+}
+
+.context-room-timeline-materials {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.context-room-activity-version {
+  flex: none;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--cr-surface-secondary);
+  color: var(--cr-tertiary);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 静态小按钮（查看版本 / 相关资料 / 同期事件）：灰字、悬停浅底。 */
+.context-room-activity-doc-actions > button,
+.context-room-activity-materials-toggle,
+.context-room-activity-list > li > div > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  padding: 3px 6px;
+  border-radius: 6px;
+  color: var(--cr-muted);
+  font-size: 11px;
+}
+
+.context-room-activity-doc-actions > button:hover,
+.context-room-activity-materials-toggle:hover,
+.context-room-activity-list > li > div > button:hover {
+  background: var(--cr-surface-hover);
+  color: var(--cr-text);
+}
+
+.context-room-activity-doc-actions > button svg,
+.context-room-activity-materials-toggle svg,
+.context-room-activity-list > li > div > button svg {
+  width: 12px;
+  height: 12px;
+}
+
+.context-room-activity-list > li > div > button[aria-expanded='true'] svg {
+  transform: rotate(90deg);
+}
+
+.context-room-activity-materials-toggle > span {
+  padding: 0 5px;
+  border-radius: 8px;
+  background: var(--cr-surface-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.context-room-activity-doc-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.context-room-activity-summary {
+  margin: 0;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--cr-surface-secondary);
+  color: var(--cr-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.context-room-activity-summary.is-error {
+  color: var(--cr-danger);
+}
+
+.context-room-activity-summary.is-loading {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.context-room-activity-summary.is-loading svg {
+  width: 12px;
+  height: 12px;
+  animation: context-room-spin 900ms linear infinite;
 }
 
 .context-room-dashboard-bottom {
@@ -5617,271 +5811,6 @@
   }
 }
 
-/* iOS-inspired timeline surface: grouped content, quiet chrome, and a clear
-   vertical reading path for events. Kept scoped so the rest of the Room UI
-   can retain its existing desktop card treatment. */
-.context-room-activity-pane {
-  height: 100%;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 8px 10px 14px;
-  border: 0;
-  border-radius: 16px;
-  background: transparent;
-}
-
-.context-room-activity-pane > header {
-  min-height: 0;
-  padding: 2px 4px 10px;
-  border: 0;
-  background: transparent;
-  color: var(--cr-text);
-  font-size: 17px;
-  font-weight: 650;
-  letter-spacing: -0.01em;
-}
-
-.context-room-activity-pane > header svg {
-  width: 18px;
-  height: 18px;
-  stroke-width: 2.25;
-}
-
-.context-room-activity-pane > header span {
-  align-self: center;
-  padding: 3px 8px;
-  border-radius: 999px;
-  background: rgba(118, 118, 128, 0.12);
-  color: var(--cr-muted);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-}
-
-.context-room-timeline-toolbar {
-  display: flex;
-  min-height: 44px;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  margin-bottom: 12px;
-  padding: 4px 6px;
-  border: 1px solid rgba(60, 60, 67, 0.08);
-  border-radius: 11px;
-  background: rgba(118, 118, 128, 0.12);
-}
-
-.context-room-timeline-toolbar > div {
-  display: flex;
-  flex: 0 0 auto;
-  gap: 2px;
-  padding: 0;
-  border-radius: 8px;
-  background: transparent;
-}
-
-.context-room-timeline-toolbar > div button {
-  min-width: 34px;
-  min-height: 32px;
-  padding: 0 10px;
-  border-radius: 8px;
-  color: var(--cr-muted);
-  font-size: 12px;
-  font-weight: 550;
-  transition: background 140ms ease, color 140ms ease, box-shadow 140ms ease;
-}
-
-.context-room-timeline-toolbar > div button:hover {
-  color: var(--cr-text);
-}
-
-.context-room-timeline-toolbar > div button[aria-pressed='true'] {
-  background: var(--cr-surface);
-  color: var(--cr-blue);
-  box-shadow: 0 1px 4px rgba(31, 31, 31, 0.12);
-}
-
-.context-room-timeline-toolbar nav {
-  min-width: 0;
-  gap: 2px;
-}
-
-.context-room-timeline-toolbar nav span {
-  min-width: 118px;
-  color: var(--cr-text);
-  font-size: 11px;
-  font-weight: 550;
-}
-
-.context-room-timeline-toolbar nav button {
-  width: 30px;
-  height: 30px;
-  border-radius: 8px;
-  color: var(--cr-muted);
-  transition: background 140ms ease, color 140ms ease;
-}
-
-.context-room-timeline-toolbar nav button:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.75);
-  color: var(--cr-blue);
-}
-
-.context-room-timeline-toolbar nav button:last-child {
-  width: auto;
-  min-width: 42px;
-  padding: 0 9px;
-  color: var(--cr-blue);
-  font-weight: 550;
-}
-
-.context-room-activity-pane > ol {
-  margin: 0;
-  padding: 2px 18px;
-  border: 1px solid rgba(60, 60, 67, 0.1);
-  border-radius: 16px;
-  background: var(--cr-surface);
-  box-shadow: 0 6px 20px rgba(31, 31, 31, 0.045);
-}
-
-.context-room-activity-pane > ol > li {
-  position: relative;
-  display: grid;
-  grid-template-columns: 12px minmax(0, 1fr);
-  gap: 14px;
-  padding: 15px 0;
-}
-
-.context-room-activity-pane > ol > li + li {
-  border-top: 1px solid var(--cr-border);
-}
-
-.context-room-activity-pane > ol > li > i {
-  position: relative;
-  z-index: 1;
-  width: 10px;
-  height: 10px;
-  margin-top: 4px;
-  border: 3px solid var(--cr-blue);
-  border-radius: 50%;
-  background: var(--cr-surface);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--cr-blue) 12%, transparent);
-}
-
-/* 竖向时间轴线（参考 diary-timeline-list）：从本条目圆点圆心一直连到
-   下一条目圆点圆心。left 对准圆点圆心 x（10px 圆即 5px）；top 为圆点
-   圆心（padding-top 15 + margin-top 4 + 半径 5 = 24）；bottom 跨过
-   下一条目 border-top(1) + padding-top(15) + 到圆心的 24。圆点不透明
-   且 z-index 更高，会盖住穿过它的线段。 */
-.context-room-activity-pane > ol > li::before {
-  position: absolute;
-  top: 24px;
-  bottom: -25px;
-  left: 4.5px;
-  width: 1px;
-  background: var(--cr-border);
-  content: '';
-}
-
-.context-room-activity-pane > ol > li:last-child::before {
-  display: none;
-}
-
-.context-room-activity-pane > ol > li > i[data-kind='done'] {
-  border-color: #34c759;
-  box-shadow: 0 0 0 3px rgba(52, 199, 89, 0.12);
-}
-
-.context-room-activity-pane > ol > li > i[data-kind='warn'] {
-  border-color: #ff9500;
-  box-shadow: 0 0 0 3px rgba(255, 149, 0, 0.14);
-}
-
-.context-room-activity-pane > ol > li > div {
-  min-width: 0;
-  padding: 0;
-  border: 0;
-}
-
-.context-room-activity-pane li > div > div:first-child {
-  align-items: flex-start;
-  gap: 10px;
-}
-
-.context-room-activity-pane li b {
-  overflow: visible;
-  color: var(--cr-text);
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 1.38;
-  text-overflow: clip;
-  white-space: normal;
-}
-
-.context-room-activity-pane li time {
-  flex: 0 0 auto;
-  padding: 3px 7px;
-  border-radius: 6px;
-  background: #f2f2f7;
-  color: var(--cr-muted);
-  font-size: 10px;
-  font-variant-numeric: tabular-nums;
-  line-height: 1.2;
-}
-
-.context-room-activity-pane li p {
-  margin: 5px 0 0;
-  color: var(--cr-muted);
-  font-size: 12px;
-  line-height: 1.55;
-}
-
-.context-room-activity-pane li button {
-  min-height: 26px;
-  align-items: center;
-  gap: 5px;
-  margin-top: 8px;
-  padding: 3px 7px;
-  border-radius: 7px;
-  color: var(--cr-blue);
-  font-size: 11px;
-  font-weight: 500;
-}
-
-.context-room-activity-pane li button:hover {
-  background: rgba(0, 122, 255, 0.08);
-}
-
-.context-room-timeline-material {
-  display: flex;
-  width: fit-content;
-  max-width: 100%;
-  align-items: center;
-  gap: 6px;
-  margin-top: 6px;
-  padding: 7px 9px;
-  border: 1px solid var(--cr-border);
-  border-radius: 8px;
-  background: #f2f2f7;
-  color: var(--cr-text) !important;
-  font-size: 11px !important;
-}
-
-.context-room-timeline-material svg {
-  flex: 0 0 auto;
-  color: var(--cr-blue);
-}
-
-.context-room-timeline-materials {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 6px;
-}
-
-/* 不可跳转的来源（连接器邮件/日历等）只作标签展示，去掉按钮交互形态。 */
-.context-room-timeline-material.is-plain {
-  cursor: default;
-}
-
 .context-room-dashboard-empty {
   min-height: 112px;
   border: 1px solid rgba(60, 60, 67, 0.1);
@@ -5890,15 +5819,10 @@
 }
 
 @container context-room-shell (max-width: 759px) {
-  .context-room-activity-pane > header {
-    padding-inline: 0;
-  }
-
   .context-room-timeline-toolbar {
     align-items: stretch;
     flex-direction: column;
     gap: 6px;
-    padding: 5px;
   }
 
   .context-room-timeline-toolbar > div {
@@ -5916,21 +5840,6 @@
   .context-room-timeline-toolbar nav span {
     min-width: 0;
     flex: 1 1 auto;
-  }
-
-  .context-room-activity-pane > ol {
-    padding-inline: 14px;
-  }
-
-  .context-room-activity-pane > ol > li {
-    gap: 12px;
-    padding-block: 14px;
-  }
-
-  /* 窄容器下 padding-block 由 15 收窄到 14，轴线端点随之微调。 */
-  .context-room-activity-pane > ol > li::before {
-    top: 23px;
-    bottom: -24px;
   }
 
   .context-room-activity-pane li > div > div:first-child {
@@ -9903,43 +9812,6 @@
   white-space: normal;
 }
 
-.context-room-timeline-toolbar nav {
-  display: flex;
-  align-items: center;
-  gap: 3px;
-}
-
-.context-room-timeline-toolbar nav span {
-  min-width: 112px;
-  color: var(--cr-muted);
-  font-size: 10px;
-  text-align: center;
-  font-variant-numeric: tabular-nums;
-}
-
-.context-room-timeline-toolbar nav button {
-  display: grid;
-  width: 26px;
-  height: 26px;
-  min-width: 0;
-  place-items: center;
-  padding: 0;
-}
-
-.context-room-timeline-toolbar nav button:last-child {
-  width: auto;
-  padding: 0 7px;
-}
-
-.context-room-timeline-toolbar nav button:disabled {
-  opacity: 0.42;
-}
-
-.context-room-timeline-toolbar nav svg {
-  width: 13px;
-  height: 13px;
-}
-
 .context-room-dashboard-empty {
   display: grid;
   min-height: 96px;
@@ -11071,16 +10943,6 @@
 }
 
 @container context-room-shell (max-width: 759px) {
-  .context-room-timeline-toolbar {
-    align-items: stretch;
-    flex-direction: column;
-    gap: 8px;
-  }
-
-  .context-room-timeline-toolbar nav {
-    justify-content: space-between;
-  }
-
   .context-room-dashboard-bottom {
     grid-template-columns: 1fr;
   }
@@ -11096,29 +10958,6 @@
     margin: 0 8px 8px;
   }
 }
-/* Keep the iOS treatment authoritative after the legacy parity rules above. */
-.context-room-activity-pane {
-  border-radius: 16px;
-}
-
-.context-room-timeline-toolbar nav span {
-  min-width: 118px;
-  color: var(--cr-text);
-  font-size: 11px;
-  font-weight: 550;
-}
-
-.context-room-timeline-toolbar nav button {
-  width: 30px;
-  height: 30px;
-  border-radius: 8px;
-}
-
-.context-room-timeline-toolbar nav button:last-child {
-  min-width: 42px;
-  padding-inline: 9px;
-}
-
 .context-room-dashboard-empty {
   min-height: 112px;
 }
@@ -13998,22 +13837,6 @@
 .context-room-imported-comments-unanchored-chevron[data-collapsed='true'] { transform: rotate(-90deg); }
 .context-room-imported-comments-unanchored[data-collapsed='true'] { padding-bottom: 0; }
 
-/* 动态行与时间轴行共用：标题在左、时间/版本在右。 */
-.context-room-activity-entry-row {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.context-room-activity-entry-row > time {
-  flex: none;
-  color: var(--cr-tertiary);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-}
-
-/* 信息流平铺形态的资料 chips。 */
 .context-room-timeline-materials.is-chips {
   flex-direction: row;
   flex-wrap: wrap;
@@ -14033,30 +13856,6 @@
   height: 11px;
 }
 
-/* 时间轴卡里的「相关资料 N」折叠开关。 */
-.context-room-activity-materials-toggle {
-  min-height: 26px;
-  align-items: center;
-  gap: 5px;
-  margin-top: 8px;
-  padding: 3px 7px;
-  border-radius: 7px;
-  color: var(--cr-blue);
-  font-size: 11px;
-  font-weight: 500;
-}
-
-.context-room-activity-materials-toggle:hover {
-  background: rgba(0, 122, 255, 0.08);
-}
-
-.context-room-activity-materials-toggle > span {
-  padding: 0 5px;
-  border-radius: 8px;
-  background: var(--cr-surface-secondary);
-  font-variant-numeric: tabular-nums;
-}
-
 /* 分区标题行的计数徽标（待办·任务 N）。 */
 .context-room-pane-head-count {
   flex: none;
@@ -14074,76 +13873,8 @@
   justify-content: space-between;
   gap: 8px;
   flex-wrap: wrap;
-}
-
-.context-room-activity-list {
-  padding: 14px;
-}
-
-.context-room-activity-entry-title {
-  display: inline-flex;
-  min-width: 0;
-  align-items: center;
-  gap: 6px;
-  padding: 0;
-  border: 0;
-  background: none;
-  color: inherit;
-  cursor: pointer;
-  text-align: left;
-}
-
-.context-room-activity-entry-title:hover b {
-  color: var(--cr-blue);
-}
-
-.context-room-activity-entry-title svg {
-  width: 13px;
-  height: 13px;
-  flex: 0 0 auto;
-  color: var(--cr-muted);
-}
-
-.context-room-activity-version {
-  flex: 0 0 auto;
-  padding: 1px 6px;
-  border: 1px solid var(--cr-border);
-  border-radius: 5px;
-  color: var(--cr-tertiary);
-  font-size: 10px;
-}
-
-.context-room-activity-doc-actions {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 4px;
-  margin-top: 4px;
-}
-
-.context-room-activity-summary {
-  margin: 0;
-  padding: 6px 8px;
-  border-radius: 6px;
-  background: var(--cr-surface-secondary);
-  color: var(--cr-muted);
-  font-size: 11px;
-}
-
-.context-room-activity-summary.is-error {
-  color: var(--cr-danger, #c2452d);
-}
-
-.context-room-activity-summary.is-loading {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.context-room-activity-summary.is-loading svg {
-  width: 12px;
-  height: 12px;
-  animation: context-room-spin 900ms linear infinite;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--cr-border);
 }
 
 /* ===== 工作 / 待办：日程与会议 + 任务 上下分区 ===== */

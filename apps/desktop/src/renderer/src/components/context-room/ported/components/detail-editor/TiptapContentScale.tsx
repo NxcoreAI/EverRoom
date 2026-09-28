@@ -3,6 +3,8 @@ import type { TableOfContentData, TableOfContentDataItem } from '@tiptap/extensi
 import { ChevronLeft, ChevronRight, ListTree } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocale } from '../../../../../i18n/LocaleContext'
+import { findDocumentBlockElement } from './documentBlockNavigation'
+import { computeOutlineActiveId } from './outlineScrollSpy'
 import { jumpToSectionHeading } from './scaleMarkerNavigation'
 
 /**
@@ -93,22 +95,68 @@ function OutlinePanel({ items, documentTitle, editor, collapsed, onToggleCollaps
     return result
   }, [collapsed, items])
 
+  // 当前章节：以视口几何重算（阅读区顶缘 + 8px 为准线，最后一个越过准线的
+  // 标题）。扩展 isActive 的 scrollTop/offsetTop 跨坐标系比较在本布局下会漂，
+  // 不作高亮依据；初始值先取扩展结果兜底，挂载后立即按几何纠正。
+  const [scrollActiveId, setScrollActiveId] = useState<string | null>(
+    () => items.find((item) => item.isActive)?.id ?? null,
+  )
+  const activeId = scrollActiveId
+  const tocItemsRef = useRef(items)
+  tocItemsRef.current = items
+
+  useEffect(() => {
+    const root = editor?.view.dom
+    const container = root?.closest<HTMLElement>('.context-room-tiptap-scroll')
+    if (!editor || !root || !container) return
+    // 标题元素 id → DOM：一次遍历收集（data-block-id 优先，data-toc-id 兜底）。
+    const collectHeadings = () => {
+      const map = new Map<string, HTMLElement>()
+      for (const selector of ['[data-block-id]', '[data-toc-id]']) {
+        for (const element of root.querySelectorAll<HTMLElement>(selector)) {
+          const id = element.getAttribute('data-block-id') ?? element.getAttribute('data-toc-id')
+          if (id && !map.has(id)) map.set(id, element)
+        }
+      }
+      return map
+    }
+    let frame = 0
+    const compute = () => {
+      frame = 0
+      const headings = collectHeadings()
+      const next = computeOutlineActiveId(
+        tocItemsRef.current,
+        (id) => headings.get(id)?.getBoundingClientRect().top ?? null,
+        container.getBoundingClientRect().top,
+      )
+      setScrollActiveId(next)
+    }
+    const schedule = () => {
+      if (frame) return
+      frame = requestAnimationFrame(compute)
+    }
+    compute()
+    container.addEventListener('scroll', schedule, { passive: true })
+    return () => {
+      container.removeEventListener('scroll', schedule)
+      if (frame) cancelAnimationFrame(frame)
+    }
+  }, [editor, items])
+
   // 当前章节的祖先链：列表里整条路径做弱强调，深层级也能看出所处结构。
   const activePath = useMemo(() => {
     const path = new Set<string>()
     const stack: Array<{ id: string; level: number }> = []
     for (const item of items) {
       while (stack.length && stack[stack.length - 1]!.level >= item.level) stack.pop()
-      if (item.isActive) {
+      if (item.id === activeId) {
         for (const ancestor of stack) path.add(ancestor.id)
         break
       }
       stack.push({ id: item.id, level: item.level })
     }
     return path
-  }, [items])
-
-  const activeId = items.find((item) => item.isActive)?.id ?? null
+  }, [items, activeId])
 
   // 当前章节变化时把高亮条目滚入列表可视区（贴边最小滚动，不动外层容器）；
   // 列表本身不再随正文按比例滚动——位置由「当前章节」驱动，用户手动滚动不被打断。
@@ -160,7 +208,7 @@ function OutlinePanel({ items, documentTitle, editor, collapsed, onToggleCollaps
             className="context-room-tiptap-outline-entry"
             data-toc-id={item.id}
             data-level={item.level}
-            data-active={String(item.isActive)}
+            data-active={String(item.id === activeId)}
             data-in-path={String(activePath.has(item.id))}
           >
             {hasChildren[item.id] ? (
