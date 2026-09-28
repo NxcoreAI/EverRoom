@@ -1003,8 +1003,14 @@ export class IngestService {
     status: "passed" | "bypassed",
     verdict: IngestFilterVerdict,
   ): Promise<void> {
+    const pipelines = rescueMemoryPipeline(pending.pipelines, verdict);
     this.db.update(ingestEvents)
-      .set({ filterStatus: status, filterVerdict: verdict, updatedAt: new Date() })
+      .set({
+        filterStatus: status,
+        filterVerdict: verdict,
+        ...(pipelines === pending.pipelines ? {} : { pipelines }),
+        updatedAt: new Date(),
+      })
       .where(eq(ingestEvents.id, pending.eventId)).run();
     const row = this.db.select().from(ingestEvents)
       .where(eq(ingestEvents.id, pending.eventId)).get();
@@ -1021,7 +1027,7 @@ export class IngestService {
       contentHash: row.contentHash,
       parsedId: row.parsedId,
       origin: row.originChannel as OriginChannel,
-      pipelines: pending.pipelines,
+      pipelines,
       filename: pending.filename,
       roomId: pending.roomId,
       entrySignals: pending.entrySignals,
@@ -1037,8 +1043,14 @@ export class IngestService {
     const parsed = this.db.select().from(parsedContents)
       .where(eq(parsedContents.id, row.parsedId)).get();
     if (!parsed) throw new IngestError("归一化产物缺失，无法恢复", "parsed_missing", 410);
+    const pipelines = rescueMemoryPipeline(row.pipelines, row.filterVerdict);
     this.db.update(ingestEvents)
-      .set({ filterStatus: "passed", reinstatedAt: new Date(), updatedAt: new Date() })
+      .set({
+        filterStatus: "passed",
+        reinstatedAt: new Date(),
+        ...(pipelines === row.pipelines ? {} : { pipelines }),
+        updatedAt: new Date(),
+      })
       .where(eq(ingestEvents.id, eventId)).run();
     await this.fanOut({
       eventId: row.id,
@@ -1053,7 +1065,7 @@ export class IngestService {
       contentHash: row.contentHash,
       parsedId: row.parsedId,
       origin: row.originChannel as OriginChannel,
-      pipelines: row.pipelines,
+      pipelines,
     });
     return this.getEvent(eventId);
   }
@@ -1495,4 +1507,17 @@ function failOpenVerdict(reason: string): IngestFilterVerdict {
     category: "other",
     confidence: 0,
   };
+}
+
+/** 状态/参考分流（2026-09-24 定案）的 per-document 恢复：闸1 判定 stateLike
+ * 的资料即便类型默认 memory:false（参考型兜底），也单独打开记忆链路。
+ * 只开不关——判定缺省/失败不恢复（fail-closed 保 token），判定为参考型也
+ * 不能杀掉状态型类型的记忆（policy 是下限）。 */
+function rescueMemoryPipeline(
+  pipelines: Pipelines,
+  verdict: IngestFilterVerdict | null | undefined,
+): Pipelines {
+  return verdict?.stateLike === true && !pipelines.memory
+    ? { ...pipelines, memory: true }
+    : pipelines;
 }

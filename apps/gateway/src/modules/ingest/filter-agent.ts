@@ -6,6 +6,8 @@
  * runtime + "JSON prompt → 抓 message.completed"。偏好化改造（ingest-filter-agent-plan）：
  * - 判定规则不再写死在 prompt，注入过滤规则文档（用户偏好段 + 系统洞察段）；
  * - toolsEnabled 时过滤器 runtime 挂只读 memory/wiki 工具，拿不准可查证；
+ * - 同一次判定顺带输出 stateLike（状态/参考分流）——per-document 恢复被类型
+ *   默认关掉的 memory 链路，判定失败/缺省不恢复（fail-closed 保 token）；
  * - 记忆严格隔离：captureMemory/recallMemory 双 false——过滤器对话不进任何
  *   记忆层，也不把批 prompt 当召回查询（与用户对话 agent 的记忆通道完全切断）。
  * 降级链：agent → KnowledgeLlm 单发 → fail-open 放行——闸门不是依赖，
@@ -239,8 +241,9 @@ function filterPrompt(items: FilterItem[], context: FilterPromptContext): string
     );
   }
   sections.push(
+    "【状态/参考判定】对每份资料判断 stateLike：这条数据会被更新、覆盖、需要唯一权威版本吗（状态型：会议纪要、计划、待办、决策记录、个人笔记、邮件往来、日程），还是价值就在原文本身、任何摘要都有损（参考型：论文、说明书、手册、网页文章、报表）。拿不准判 false。",
     "只输出一个 JSON 数组，不要使用 Markdown 代码块，不要添加解释。",
-    "每个元素必须符合：{\"informative\":boolean,\"reason\":string,\"category\":\"bot-noise\"|\"trivial\"|\"template\"|\"empty\"|\"other\",\"confidence\":number}。",
+    "每个元素必须符合：{\"informative\":boolean,\"stateLike\":boolean,\"reason\":string,\"category\":\"bot-noise\"|\"trivial\"|\"template\"|\"empty\"|\"other\",\"confidence\":number}。",
     "confidence 取 0 到 1；数组长度必须等于资料条数，顺序与输入一致。",
     ...entries,
   );
@@ -311,6 +314,9 @@ function normalizeVerdict(value: unknown): IngestFilterVerdict {
     : 0.5;
   return {
     informative,
+    // stateLike 只在模型明确给出 boolean 时保留（旧输出/非法值按未判定处理，
+    // 不触发记忆恢复——fail-closed）
+    ...(typeof record.stateLike === "boolean" ? { stateLike: record.stateLike } : {}),
     reason: typeof record.reason === "string" && record.reason.trim() ? record.reason.slice(0, 300)
       : informative ? "默认有价值（未给出理由）" : "无信息量",
     category: typeof record.category === "string" && record.category.trim() ? record.category.slice(0, 40) : "other",
