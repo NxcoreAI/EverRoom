@@ -1,10 +1,41 @@
 import * as Dialog from '@radix-ui/react-dialog';
-import { AlertTriangle, type LucideIcon, X } from 'lucide-react';
+import { AlertTriangle, ChevronDown, type LucideIcon, X } from 'lucide-react';
 import type { ReactNode } from 'react';
 
 import type { ToolbarAction } from '../types';
 import { cn, uiText } from '../adapters';
 import { useLocale } from '../../../../i18n/LocaleContext';
+
+/** 统一下拉筛选：胶囊外观 + 右侧箭头，非默认值时转蓝色强调（两处资料筛选共用）。 */
+export function FilterSelect<T extends string>({
+  value,
+  options,
+  onChange,
+  ariaLabel,
+  className,
+}: {
+  value: T;
+  options: ReadonlyArray<{ id: T; label: string }>;
+  onChange: (id: T) => void;
+  ariaLabel: string;
+  className?: string;
+}) {
+  const active = value !== options[0]?.id;
+  return (
+    <label className={cn('context-room-filter-select', className)} data-active={active || undefined}>
+      <select
+        value={value}
+        aria-label={ariaLabel}
+        onChange={(event) => onChange(event.target.value as T)}
+      >
+        {options.map((option) => (
+          <option key={option.id} value={option.id}>{option.label}</option>
+        ))}
+      </select>
+      <ChevronDown aria-hidden="true" />
+    </label>
+  );
+}
 export function ToolbarButton({ action }: { action: ToolbarAction }) {
   const { t } = useLocale();
   const Icon = action.icon;
