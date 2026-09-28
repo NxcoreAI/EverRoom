@@ -2266,10 +2266,11 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
   font-weight: 560;
 }
 
-/* 模型选择弹层：轻量紧凑，锚在选择器附近（composer 左上），宽度随内容。 */
+/* 模型选择弹层：轻量紧凑，锚在底部选择器正上方（盖住输入区下沿），宽度随内容。 */
 .agent-composer-popover.agent-model-picker {
   right: auto;
   left: 12px;
+  bottom: 52px;
   display: grid;
   gap: 1px;
   width: max-content;
