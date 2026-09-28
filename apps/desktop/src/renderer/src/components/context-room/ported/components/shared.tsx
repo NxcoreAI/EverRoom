@@ -1,12 +1,13 @@
 import * as Dialog from '@radix-ui/react-dialog';
-import { AlertTriangle, ChevronDown, type LucideIcon, X } from 'lucide-react';
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
+import { AlertTriangle, Check, ChevronDown, type LucideIcon, X } from 'lucide-react';
 import type { ReactNode } from 'react';
 
 import type { ToolbarAction } from '../types';
 import { cn, uiText } from '../adapters';
 import { useLocale } from '../../../../i18n/LocaleContext';
 
-/** 统一下拉筛选：胶囊外观 + 右侧箭头，非默认值时转蓝色强调（两处资料筛选共用）。 */
+/** 统一下拉筛选：胶囊触发器 + 自绘菜单（Radix RadioGroup），弹层与卡片菜单同风格。 */
 export function FilterSelect<T extends string>({
   value,
   options,
@@ -20,20 +21,44 @@ export function FilterSelect<T extends string>({
   ariaLabel: string;
   className?: string;
 }) {
-  const active = value !== options[0]?.id;
+  const current = options.find((option) => option.id === value) ?? options[0];
   return (
-    <label className={cn('context-room-filter-select', className)} data-active={active || undefined}>
-      <select
-        value={value}
-        aria-label={ariaLabel}
-        onChange={(event) => onChange(event.target.value as T)}
-      >
-        {options.map((option) => (
-          <option key={option.id} value={option.id}>{option.label}</option>
-        ))}
-      </select>
-      <ChevronDown aria-hidden="true" />
-    </label>
+    <DropdownMenu.Root>
+      <DropdownMenu.Trigger asChild>
+        <button
+          type="button"
+          className={cn('context-room-filter-select', className)}
+          data-active={value !== options[0]?.id || undefined}
+          aria-label={ariaLabel}
+        >
+          {current?.label}
+          <ChevronDown aria-hidden="true" />
+        </button>
+      </DropdownMenu.Trigger>
+      <DropdownMenu.Portal>
+        <DropdownMenu.Content
+          className="context-room-card-menu context-room-filter-menu"
+          align="start"
+          sideOffset={6}
+        >
+          <DropdownMenu.RadioGroup value={value}>
+            {options.map((option) => (
+              <DropdownMenu.RadioItem
+                key={option.id}
+                value={option.id}
+                className="context-room-filter-menu-item"
+                onSelect={() => onChange(option.id)}
+              >
+                <span className="context-room-filter-menu-check" aria-hidden="true">
+                  {value === option.id ? <Check aria-hidden="true" /> : null}
+                </span>
+                {option.label}
+              </DropdownMenu.RadioItem>
+            ))}
+          </DropdownMenu.RadioGroup>
+        </DropdownMenu.Content>
+      </DropdownMenu.Portal>
+    </DropdownMenu.Root>
   );
 }
 export function ToolbarButton({ action }: { action: ToolbarAction }) {
