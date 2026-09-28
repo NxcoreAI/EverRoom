@@ -41,6 +41,7 @@ function sessionApp(options: { sessions: AiRelaySessionStore; refresh?: () => vo
 async function managerWithPayload(payload: Record<string, unknown> | null, options?: {
   sessions?: AiRelaySessionStore;
   defaultPath?: string;
+  models?: Record<string, string | number>;
 }) {
   const root = await directory();
   await mkdir(join(root, "security"), { recursive: true });
@@ -61,6 +62,7 @@ async function managerWithPayload(payload: Record<string, unknown> | null, optio
     token: "sk-relay-51",
     expiresAt: new Date(Date.now() + 60_000).toISOString(),
     proxyOrigin: "http://127.0.0.1:49152",
+    models: options?.models ?? null,
   });
   const manager = new RuntimeConfigManager(
     database.db,
@@ -69,7 +71,7 @@ async function managerWithPayload(payload: Record<string, unknown> | null, optio
     null,
     () => {
       const session = sessions.current();
-      return session ? { proxyOrigin: session.proxyOrigin, token: "gw-self-token-51" } : null;
+      return session ? { proxyOrigin: session.proxyOrigin, token: "gw-self-token-51", models: session.models ?? undefined } : null;
     },
   );
   return { manager, sessions };
@@ -125,11 +127,27 @@ describe("ai relay session routes", () => {
           token: "sk-relay-51",
           expiresAt: new Date(Date.now() + 60_000).toISOString(),
           proxyOrigin: "http://127.0.0.1:49152",
+          models: {
+            primary: "saas-main-x",
+            lite: "saas-lite-z",
+            embedding: "saas-embed-t",
+            embeddingDimensions: 1024,
+          },
         },
       });
       expect(ok.statusCode).toBe(200);
       expect(ok.json()).toMatchObject({ ok: true, active: true });
       expect(refresh).toHaveBeenCalledTimes(1);
+      // Fastify 响应/请求 schema 会剥未声明字段：models 必须完整落进会话。
+      expect(sessions.current()).toMatchObject({
+        baseUrl: "https://relay.example.com",
+        models: {
+          primary: "saas-main-x",
+          lite: "saas-lite-z",
+          embedding: "saas-embed-t",
+          embeddingDimensions: 1024,
+        },
+      });
 
       const cleared = await app.inject({
         method: "DELETE",
@@ -330,6 +348,82 @@ describe("runtime config relay slot rewrite", () => {
     expect(listener).toHaveBeenCalledTimes(1);
     expect(manager.snapshot(false).config.primary?.apiKey).toBe("");
     unsubscribe();
+  });
+});
+
+describe("runtime config relay plan models", () => {
+  const planModels = {
+    primary: "saas-main-x",
+    background: "saas-bg-y",
+    lite: "saas-lite-z",
+    cursorCompletion: "saas-complete-w",
+    vlm: "saas-vlm-v",
+    webSearch: "saas-search-u",
+    embedding: "saas-embed-t",
+    embeddingDimensions: 1024,
+  };
+
+  it("overrides slot models with SaaS-issued plan models, building lite from primary", async () => {
+    const { manager } = await managerWithPayload(null, { models: planModels });
+
+    const snapshot = manager.snapshot(false);
+    const slotOf = (name: string): Record<string, unknown> =>
+      (snapshot.config as unknown as Record<string, Record<string, unknown> | undefined>)[name]!;
+    expect(slotOf("primary")).toMatchObject({ model: "saas-main-x", baseUrl: "http://127.0.0.1:49152/ai-relay/v1", apiKey: "gw-self-token-51" });
+    expect(slotOf("background").model).toBe("saas-bg-y");
+    expect(slotOf("cursorCompletion").model).toBe("saas-complete-w");
+    expect(slotOf("vlm").model).toBe("saas-vlm-v");
+    expect(slotOf("webSearch").model).toBe("saas-search-u");
+    // 内置 JSON 无 lite 槽位：SaaS 下发即从 primary 克隆结构换 model，
+    // 四要素齐备（provider/api 继承 primary），lite 档随之可用。
+    expect(slotOf("lite")).toMatchObject({
+      provider: "openai",
+      model: "saas-lite-z",
+      api: "openai-completions",
+      baseUrl: "http://127.0.0.1:49152/ai-relay/v1",
+      apiKey: "gw-self-token-51",
+    });
+    const embedding = (slotOf("knowledge").embedding as Record<string, unknown>);
+    expect(embedding).toMatchObject({ model: "saas-embed-t", dimensions: 1024 });
+  });
+
+  it("keeps built-in defaults for scenarios SaaS did not issue", async () => {
+    const { manager } = await managerWithPayload(null, { models: { primary: "saas-main-x" } });
+
+    const snapshot = manager.snapshot(false);
+    expect(snapshot.config.primary?.model).toBe("saas-main-x");
+    expect(snapshot.config.background?.model).toBe("deepseek-v4-flash");
+    expect(snapshot.config.vlm?.model).toBe("qwen3-vl-flash");
+    // 未下发 lite：保持内置未配置态，lite 档不可用。
+    expect(snapshot.config.lite).toBeUndefined();
+    const embedding = snapshot.config.knowledge?.embedding as Record<string, unknown> | undefined;
+    expect(embedding?.model).toBe("text-embedding-v4");
+    expect(embedding?.dimensions).toBeUndefined();
+  });
+
+  it("user source ignores SaaS plan models", async () => {
+    const { manager } = await managerWithPayload({
+      schemaVersion: 1,
+      primary: { provider: "openai-compatible", api: "openai-completions", model: "my-model", baseUrl: "https://api.my-provider.com/v1", apiKey: "my-key" },
+    }, { models: planModels });
+
+    const snapshot = manager.snapshot(false);
+    expect(snapshot.selectedSource).toBe("user");
+    expect(snapshot.config.primary?.model).toBe("my-model");
+    expect(snapshot.config.lite).toBeUndefined();
+  });
+
+  it("falls back to built-in models once the session is cleared", async () => {
+    const { manager, sessions } = await managerWithPayload(null, { models: planModels });
+    expect(manager.snapshot(false).config.primary?.model).toBe("saas-main-x");
+    expect(manager.snapshot(false).config.lite?.model).toBe("saas-lite-z");
+
+    sessions.clear();
+    manager.refresh();
+
+    const snapshot = manager.snapshot(false);
+    expect(snapshot.config.primary?.model).toBe("deepseek-v4-flash");
+    expect(snapshot.config.lite).toBeUndefined();
   });
 });
 

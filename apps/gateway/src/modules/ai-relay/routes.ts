@@ -11,6 +11,16 @@ const SessionBody = Type.Object({
   token: Type.String({ minLength: 1 }),
   expiresAt: Type.String({ minLength: 1 }),
   proxyOrigin: Type.String({ minLength: 1 }),
+  models: Type.Optional(Type.Object({
+    primary: Type.Optional(Type.String({ minLength: 1 })),
+    background: Type.Optional(Type.String({ minLength: 1 })),
+    lite: Type.Optional(Type.String({ minLength: 1 })),
+    cursorCompletion: Type.Optional(Type.String({ minLength: 1 })),
+    vlm: Type.Optional(Type.String({ minLength: 1 })),
+    webSearch: Type.Optional(Type.String({ minLength: 1 })),
+    embedding: Type.Optional(Type.String({ minLength: 1 })),
+    embeddingDimensions: Type.Optional(Type.Integer({ minimum: 1 })),
+  })),
 });
 
 function assertHttpUrl(value: string): void {

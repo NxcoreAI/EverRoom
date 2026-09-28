@@ -1482,7 +1482,7 @@ async function syncMemoryCoreEnvironment(snapshot: RuntimeConfigSnapshot): Promi
       // 配置卡在未注入状态）。
       embeddingEnv = memoryCoreEmbeddingEnv(
         { ...fields, apiKey: relay.token },
-        relayEmbeddingDimensions(fields.model),
+        fields.dimensions ?? relayEmbeddingDimensions(fields.model),
       )
     } else if (fields) {
       // BYOK 直连：/test 真实探测 /embeddings 维度；失败保持现 env 不动。
@@ -3903,10 +3903,12 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     }, 5 * 60_000)
     sentryAccountResyncTimer.unref()
     aiRelayKeeper = new AiRelayKeeper(saasClient, gatewaySupervisor, runtimeConfigBridge, (event: AiRelayKeeperEvent) => {
-      if (event.type === 'session-activated') {
+      if (event.type === 'session-activated' || event.type === 'models-changed') {
         // relay 会话就绪后 gateway 才把槽位重写为 /ai-relay——补一次子进程
         // env 同步，闭合「boot 时会话未就绪 → MemoryCore/KS 缺 embedding/LLM」
         // 的冷启动窗口（token 轮换不再触发，见 withStableRelayKey）。
+        // models-changed：续签时 SaaS 侧套餐场景模型变更，gateway 槽位已热
+        // 更新，托管子进程的 env 需要重派生（含 embedding 维度）。
         void runtimeConfigBridge?.get()
           .then(snapshot => (snapshot ? syncManagedChildProcesses(snapshot) : undefined))
           .catch(() => undefined)

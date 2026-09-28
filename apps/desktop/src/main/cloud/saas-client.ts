@@ -183,12 +183,26 @@ export interface AgentStreamCredentials {
   deviceId: string
 }
 
+/** SaaS 套餐场景模型配置（管理端套餐面板逐场景配置，随中转令牌下发）。 */
+export interface AiPlanModels {
+  primary: string
+  background: string
+  lite: string
+  cursorCompletion: string
+  vlm: string
+  webSearch: string
+  embedding: string
+  embeddingDimensions: number
+}
+
 /** SaaS 签发的 new-api 中转短期令牌（`POST /app/ai-gateway/tokens`）。 */
 export interface AiGatewayToken {
   token: string
   expiresAt: string
   /** 中转站推理根地址（无 /v1）。 */
   baseUrl: string
+  /** 套餐场景模型；套餐未配置时为 null（客户端沿用内置默认模型）。 */
+  models?: AiPlanModels | null
 }
 
 
@@ -791,7 +805,12 @@ export class SaasClient {
     ) {
       throw new Error('SaaS 返回了无效的中转令牌。')
     }
-    return { token: issued.token, expiresAt: issued.expiresAt, baseUrl: issued.baseUrl.trim().replace(/\/+$/, '') }
+    return {
+      token: issued.token,
+      expiresAt: issued.expiresAt,
+      baseUrl: issued.baseUrl.trim().replace(/\/+$/, ''),
+      models: issued.models && typeof issued.models === 'object' ? issued.models : null,
+    }
   }
 
   /** 中转额度状态（未配置/无订阅记录时 data 可能为 null）。 */

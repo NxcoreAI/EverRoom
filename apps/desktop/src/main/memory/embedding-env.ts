@@ -3,8 +3,8 @@
  *
  * 两条来源：
  * - relay 槽位（baseUrl 指向 gateway /ai-relay）：API_KEY 换成 gateway 生命周期
- *   稳定的 bearer token，dimensions 用静态表——SaaS 中转 token 25min 轮换完全
- *   留在 gateway 进程内，MemoryCore env 恒定不因轮换重启；
+ *   稳定的 bearer token，dimensions 优先用 SaaS 套餐下发值、无则静态表——SaaS
+ *   中转 token 25min 轮换完全留在 gateway 进程内，MemoryCore env 恒定不因轮换重启；
  * - BYOK（用户自配直连）：原样透传，维度经 /v1/runtime-config/test 真实探测。
  *
  * MemoryCore 约束(见 memory-core src/gateway/config.ts):env 下发完整远程配置
@@ -21,6 +21,8 @@ export interface MemoryCoreEmbeddingFields {
   model: string
   baseUrl: string
   apiKey: string
+  /** SaaS 套餐下发的向量维度（槽位额外字段）；BYOK 直连探测维度时不经过这里。 */
+  dimensions?: number
 }
 
 /** gateway /ai-relay 槽位的稳定凭据：gateway 生命周期内不变（区别于 25min 轮换的 SaaS 中转 token）。 */
@@ -89,11 +91,13 @@ export function embeddingFieldsFromConfig(
     const raw = value[key]
     return typeof raw === 'string' && !isMaskedRuntimeConfigSecret(raw) ? raw.trim() : ''
   }
-  const fields = {
+  const dimensions = value.dimensions
+  const fields: MemoryCoreEmbeddingFields = {
     provider: text('provider'),
     model: text('model'),
     baseUrl: text('baseUrl'),
     apiKey: text('apiKey'),
+    ...(typeof dimensions === 'number' && Number.isInteger(dimensions) && dimensions > 0 ? { dimensions } : {}),
   }
   if (!fields.model || !fields.baseUrl || !fields.apiKey) return null
   return fields

@@ -13,6 +13,17 @@ vi.mock('../network/http-client', () => ({
 
 const GATEWAY = { baseUrl: 'http://gateway.test', token: 'gw-token-51' }
 
+const PLAN_MODELS_A = {
+  primary: 'saas-main-x',
+  background: 'saas-bg-y',
+  lite: 'saas-lite-z',
+  cursorCompletion: 'saas-complete-w',
+  vlm: 'saas-vlm-v',
+  webSearch: 'saas-search-u',
+  embedding: 'saas-embed-t',
+  embeddingDimensions: 1024,
+}
+
 function createKeeper(options?: {
   issue?: () => Promise<unknown>
   selectedSource?: string
@@ -77,6 +88,57 @@ describe('AiRelayKeeper', () => {
       })
       const data = puts[0]!.data as { expiresAt: string }
       expect(Number.isFinite(Date.parse(data.expiresAt))).toBe(true)
+    } finally {
+      keeper.stop()
+    }
+  })
+
+  it('pushes SaaS-issued plan models with the session', async () => {
+    const { keeper } = createKeeper({
+      issue: async () => ({
+        token: 'sk-relay-51',
+        expiresAt: new Date(Date.now() + 25 * 60_000).toISOString(),
+        baseUrl: 'https://relay.example.com',
+        models: PLAN_MODELS_A,
+      }),
+    })
+    try {
+      await keeper.renewNow()
+      const puts = sessionRequests('PUT')
+      expect(puts).toHaveLength(1)
+      expect((puts[0]!.data as { models?: unknown }).models).toEqual(PLAN_MODELS_A)
+    } finally {
+      keeper.stop()
+    }
+  })
+
+  it('emits models-changed only on renewal when the plan models differ', async () => {
+    const onEvent = vi.fn()
+    let models: unknown = PLAN_MODELS_A
+    const { keeper } = createKeeper({
+      issue: async () => ({
+        token: 'sk-relay-51',
+        expiresAt: new Date(Date.now() + 25 * 60_000).toISOString(),
+        baseUrl: 'https://relay.example.com',
+        models,
+      }),
+      onEvent,
+    })
+    try {
+      // 首推：会话激活（session-activated），不比对 models。
+      await keeper.renewNow()
+      expect(onEvent).toHaveBeenCalledWith({ type: 'session-activated' })
+      expect(onEvent).not.toHaveBeenCalledWith({ type: 'models-changed' })
+
+      // 续签且模型不变：不触发。
+      await keeper.renewNow()
+      expect(onEvent).not.toHaveBeenCalledWith({ type: 'models-changed' })
+
+      // 续签且 SaaS 侧改了套餐模型：触发一次。
+      models = { ...PLAN_MODELS_A, primary: 'saas-main-2' }
+      await keeper.renewNow()
+      expect(onEvent).toHaveBeenCalledTimes(2)
+      expect(onEvent).toHaveBeenLastCalledWith({ type: 'models-changed' })
     } finally {
       keeper.stop()
     }

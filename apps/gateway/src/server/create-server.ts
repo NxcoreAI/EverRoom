@@ -389,7 +389,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
         // 非法 baseUrl 按根处理
       }
       const pathPrefix = base.endsWith("/v1") ? base : `${base}/v1`;
-      return { proxyOrigin: session.proxyOrigin, token: config.authToken, pathPrefix };
+      return { proxyOrigin: session.proxyOrigin, token: config.authToken, pathPrefix, models: session.models ?? undefined };
     });
   const initialRuntimeSnapshot = runtimeConfigManager.snapshot();
   applyRuntimeConfig(config, initialRuntimeSnapshot.config);

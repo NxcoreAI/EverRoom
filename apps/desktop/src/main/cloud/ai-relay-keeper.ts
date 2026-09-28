@@ -3,7 +3,7 @@ import type { GatewaySupervisor } from '../gateway/gateway-supervisor'
 import type { RuntimeConfigBridge } from '../gateway/runtime-config-bridge'
 import { createLoggedHttpClient } from '../network/http-client'
 import { redactDesktopText } from '../security/secret-redaction'
-import { SaasRequestError, type SaasClient } from './saas-client'
+import { SaasRequestError, type AiPlanModels, type SaasClient } from './saas-client'
 
 // TTL 25min − 5min 余量。
 const RENEW_INTERVAL_MS = 20 * 60_000
@@ -18,6 +18,7 @@ export type AiRelayKeeperEvent =
   | { type: 'fallback-user' }
   | { type: 'fallback-restored' }
   | { type: 'session-activated' }
+  | { type: 'models-changed' }
 
 const http = createLoggedHttpClient('ai-relay-keeper')
 
@@ -39,6 +40,8 @@ export class AiRelayKeeper {
   private cyclePending = false
   private consecutiveFailures = 0
   private fellBackToUser = false
+  /** 最近一次成功推送的场景模型 JSON；续签时检测 SaaS 侧套餐模型变更。 */
+  private lastModelsJson: string | null = null
 
   constructor(
     private readonly client: SaasClient,
@@ -64,6 +67,7 @@ export class AiRelayKeeper {
     this.retryAttempts = 0
     this.sessionActiveUntil = 0
     this.fellBackToUser = false
+    this.lastModelsJson = null
     await this.clearGatewaySession().catch(() => undefined)
   }
 
@@ -80,11 +84,16 @@ export class AiRelayKeeper {
       try {
         const wasActive = Date.now() < this.sessionActiveUntil
         const issued = await this.client.issueAiGatewayToken()
-        await this.pushGatewaySession(issued.token, issued.expiresAt, issued.baseUrl)
+        await this.pushGatewaySession(issued.token, issued.expiresAt, issued.baseUrl, issued.models ?? null)
         this.sessionActiveUntil = Date.parse(issued.expiresAt) || 0
         this.consecutiveFailures = 0
         this.retryAttempts = 0
         if (!wasActive) this.onEvent({ type: 'session-activated' })
+        const modelsJson = JSON.stringify(issued.models ?? null)
+        if (wasActive && this.lastModelsJson !== null && modelsJson !== this.lastModelsJson) {
+          this.onEvent({ type: 'models-changed' })
+        }
+        this.lastModelsJson = modelsJson
         if (this.fellBackToUser) await this.restoreDefaultSource()
       } catch (error) {
         if (error instanceof SaasRequestError && error.status === 403) {
@@ -122,11 +131,16 @@ export class AiRelayKeeper {
     }, delay)
   }
 
-  private async pushGatewaySession(token: string, expiresAt: string, baseUrl: string): Promise<void> {
+  private async pushGatewaySession(
+    token: string,
+    expiresAt: string,
+    baseUrl: string,
+    models: AiPlanModels | null,
+  ): Promise<void> {
     const connection = await this.supervisor.ensureConnection()
     await this.gatewayRequest(connection, '/v1/ai-relay/session', {
       method: 'PUT',
-      data: { baseUrl, token, expiresAt, proxyOrigin: connection.baseUrl },
+      data: { baseUrl, token, expiresAt, proxyOrigin: connection.baseUrl, models: models ?? undefined },
     })
   }
 

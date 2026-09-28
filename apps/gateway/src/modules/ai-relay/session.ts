@@ -5,6 +5,7 @@
  */
 
 import { registerSecret } from "../../security/secret-redaction.js";
+import type { RelayModels } from "../../runtime-config.js";
 
 export interface AiRelaySession {
   /** 中转站推理根地址（如 https://ai.example.com，无 /v1 ——路径由请求方拼接）。 */
@@ -15,6 +16,8 @@ export interface AiRelaySession {
   expiresAt: string;
   /** gateway 自身 origin（如 http://127.0.0.1:49152），槽位重写目标。 */
   proxyOrigin: string;
+  /** SaaS 套餐场景模型；未下发为 null（各槽位模型沿用本地内置值）。 */
+  models?: RelayModels | null;
 }
 
 export class AiRelaySessionStore {
