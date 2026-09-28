@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { mkdir } from 'node:fs/promises'
+import { access, mkdir } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -210,11 +210,40 @@ export async function resolveLocalAcpAdapterSpawn(
   }
   const privateInstall = await findPrivateAdapterInstall(adaptersRoot, provider)
   if (privateInstall && isSafeLocalAgentPath(privateInstall.entry)) {
+    const nativeClaudeCli = provider === 'claude'
+      ? await resolvableNativeCli(installation.executablePath)
+      : null
     return {
       command: options.execPath ?? process.execPath,
       args: [privateInstall.entry],
-      env: { ELECTRON_RUN_AS_NODE: '1', PATH: searchEnv.PATH ?? '' },
+      env: {
+        ELECTRON_RUN_AS_NODE: '1',
+        PATH: searchEnv.PATH ?? '',
+        // claude 适配器默认以 process.execPath 拉起 SDK 内置 cli.js——Electron 承载下
+        // 就是 EverRoom.app 二进制，CLI 子进程（及其整棵子树）会以 EverRoom 包身份在
+        // macOS LaunchServices 注册为 Foreground 应用：每次 Agent 调用弹一个空白应用
+        // 实例且 prompt 结束后不退出。指向原生 claude 二进制后 SDK 直接 spawn 它。
+        ...(nativeClaudeCli ? { CLAUDE_CODE_EXECUTABLE: nativeClaudeCli } : {}),
+      },
     }
   }
   return null
+}
+
+const JS_CLI_EXTENSIONS = ['.js', '.mjs', '.ts', '.tsx', '.jsx']
+
+/**
+ * 返回可直接作为子进程 command 的原生 CLI 绝对路径；JS 入口或不可达时为 null
+ * （JS 入口经 CLAUDE_CODE_EXECUTABLE 反而会回到 [Electron, xx.js] 形态）。
+ */
+async function resolvableNativeCli(executablePath: string | null | undefined): Promise<string | null> {
+  if (!executablePath) return null
+  if (!executablePath.includes('/') && !executablePath.includes('\\')) return null
+  if (JS_CLI_EXTENSIONS.some((ext) => executablePath.endsWith(ext))) return null
+  try {
+    await access(executablePath)
+    return executablePath
+  } catch {
+    return null
+  }
 }
