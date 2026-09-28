@@ -16,6 +16,9 @@ const delayMs = Number(params.get('delay') ?? '4000')
 const authed = params.get('authed') === '1'
 const ready = params.has('ready') ? params.get('ready') === '1' : authed
 const blocked = params.get('blocked') === '1'
+// ?getfail=N：前 N 次 runtimeConfig.get() 直接 reject，模拟 gateway 重启换
+// 端口的真空期（ECONNREFUSED）。
+let getFailRemaining = Number(params.get('getfail') ?? '0')
 
 const state = {
   authed,
@@ -73,16 +76,22 @@ window.nxcore = new Proxy(original, {
       return {
         ...((target.runtimeConfig as object) ?? {}),
         // primaryConfigured 随登录态联动：默认源要靠中转重写槽位才算配置就绪。
-        get: async () => ({
-          config: {},
-          source: 'default',
-          selectedSource: 'default',
-          availableSources: ['default'],
-          configVersion: 1,
-          updatedAt: new Date().toISOString(),
-          primaryConfigured: ready || state.authed,
-          webSearchCredential: { configured: false, source: 'none' },
-        }),
+        get: async () => {
+          if (getFailRemaining > 0) {
+            getFailRemaining -= 1
+            throw new Error('connect ECONNREFUSED 127.0.0.1:64233')
+          }
+          return {
+            config: {},
+            source: 'default',
+            selectedSource: 'default',
+            availableSources: ['default'],
+            configVersion: 1,
+            updatedAt: new Date().toISOString(),
+            primaryConfigured: ready || state.authed,
+            webSearchCredential: { configured: false, source: 'none' },
+          }
+        },
         relayReady: async () => null,
       }
     }

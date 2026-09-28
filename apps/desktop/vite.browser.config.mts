@@ -399,6 +399,24 @@ const base = {
         readinessPath: 'standard', sourceKinds: ['mail', 'file'], excludedSourceCount: 0,
         promoteScore: 0, promoteSources: 0, firstEvidence: '周会确认连接器阶段一范围与联调窗口，排期表由李明输出。',
         lastLinkedAt: null, updatedAt: now, existingRoomMatch: null, promotion: null, ...over })
+      // ke-promoting 全流程演示：窗口加载起每 2.5s 推进一阶段，导入步 1..5 计数，
+      // 走完后实体转 room 离池（验证完成闪光）；window.__resetPromoDemo() 重置。
+      if (!window.__promoDemoStart) window.__promoDemoStart = Date.now()
+      window.__resetPromoDemo = () => { window.__promoDemoStart = Date.now() }
+      const promoElapsed = Date.now() - window.__promoDemoStart
+      const promoStageOrder = ['queued', 'checking_identity', 'registering_entity', 'creating_room', 'creating_wiki', 'importing_documents']
+      const promoIdx = Math.min(Math.floor(promoElapsed / 2500), promoStageOrder.length + 5)
+      let promo = null
+      if (promoIdx < promoStageOrder.length) {
+        const stage = promoStageOrder[promoIdx]
+        const importing = stage === 'importing_documents'
+        promo = {
+          status: stage === 'queued' ? 'queued' : 'running', stage,
+          queuePosition: stage === 'queued' ? 2 : null,
+          current: importing ? Math.min(4, Math.floor((promoElapsed - 12500) / 500)) : null,
+          total: importing ? 5 : null, error: null,
+        }
+      }
       const all = [
         entity({ id: 'ke-strong', name: 'V1 视觉定稿', evidenceScore: 3.1, strongSourceCount: 4, readinessPath: 'strong',
           sourceKinds: ['mail', 'calendar-event'], firstEvidence: '林薇周报确认 V1 视觉已定稿，动效统一 240ms。' }),
@@ -406,9 +424,10 @@ const base = {
         entity({ id: 'ke-match', name: '供应商报价评估', kind: '主题', evidenceScore: 2.2, sourceCount: 4, eligibleSourceCount: 4,
           sourceKinds: ['mail'], firstEvidence: '三家供应商 Q4 报价已汇总，等待确认。',
           existingRoomMatch: { roomId: 'room-1', roomTitle: '采购流程', entityId: 'ent-proc', confidence: 'high', score: 0.91, reasons: ['同源邮件链'] } }),
-        entity({ id: 'ke-promoting', name: 'OAuth 文档补齐', kind: '任务', status: 'promoting', evidenceScore: 2.4, sourceCount: 3,
-          readinessPath: 'standard', sourceKinds: ['file'], firstEvidence: 'OAuth 文档缺回调配置章节。',
-          promotion: { status: 'running', stage: 'creating_wiki', queuePosition: null, current: null, total: null, error: null } }),
+        ...(promo
+          ? [entity({ id: 'ke-promoting', name: 'OAuth 文档补齐', kind: '任务', status: 'promoting', evidenceScore: 2.4, sourceCount: 3,
+              readinessPath: 'standard', sourceKinds: ['file'], firstEvidence: 'OAuth 文档缺回调配置章节。', promotion: promo })]
+          : []),
       ]
       return { items: all.filter((item) => item.status === status) }
     },

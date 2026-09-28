@@ -151,11 +151,18 @@ export function RuntimeConfigGate({ children }: { children: ReactNode }) {
         window.dispatchEvent(new CustomEvent('everroom-runtime-config-status', { detail: 'missing' }))
       }
     } catch {
-      // gateway 未就绪：给重试入口，不静默放行。
-      setConfigReady(false)
-      setMode('unavailable')
-      scheduleSplashExit()
-      window.dispatchEvent(new CustomEvent('everroom-runtime-config-status', { detail: 'error' }))
+      // gateway 重启换端口/慢启动：get() 连接失败是瞬态，与"拿到了快照但
+      // 未就绪"共用宽限预算——停留 checking 重查，不秒弹错误页（gateway
+      // 重启是常态，开机撞上真空期不该吓用户）。
+      if (relayGraceRef.current < RELAY_GRACE_RETRIES) {
+        relayGraceRef.current += 1
+        window.setTimeout(() => { void check() }, 2_000)
+      } else {
+        setConfigReady(false)
+        setMode('unavailable')
+        scheduleSplashExit()
+        window.dispatchEvent(new CustomEvent('everroom-runtime-config-status', { detail: 'error' }))
+      }
     }
   }, [scheduleSplashExit])
 
