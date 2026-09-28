@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowUp, Bot, Brain, Check, ChevronDown, Feather, FileText, FolderOpen, History, LoaderCircle, MessagesSquare, Quote, Search, Square, Terminal, X, Zap } from 'lucide-react'
+import { ArrowLeft, Bot, Brain, Check, ChevronDown, CornerDownLeft, Feather, FileText, FolderOpen, History, LoaderCircle, MessagesSquare, Quote, Search, Square, Terminal, X, Zap } from 'lucide-react'
 import {
   forwardRef,
   useEffect,
@@ -1194,7 +1194,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
             </button>
           ) : (
             <button type="submit" className="agent-prompt-submit" title={t('surface:agentComposer.send')} aria-label={t('surface:agentComposer.send')} disabled={!available || (!value.trim() && attachments.length === 0 && !hasSubmittableContext) || loading}>
-              <ArrowUp aria-hidden="true" />
+              <CornerDownLeft aria-hidden="true" />
             </button>
           )}
         </div>

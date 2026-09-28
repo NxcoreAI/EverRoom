@@ -2325,14 +2325,15 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
 
 .agent-prompt-submit {
   margin-left: auto;
-  border-radius: 50%;
-  background: #202124;
-  color: #fff;
+  border-radius: 7px;
+  background: #eef0f3;
+  color: #565e6a;
   transition: background 150ms ease, transform 150ms ease;
 }
 
 .agent-prompt-submit:hover:not(:disabled) {
-  background: #111214;
+  background: #e2e5e9;
+  color: #30343a;
 }
 
 .agent-prompt-submit:active:not(:disabled) {
@@ -2340,8 +2341,8 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
 }
 
 .agent-prompt-submit:disabled {
-  background: #eceef1;
-  color: #adb3bc;
+  background: transparent;
+  color: #c3c8d0;
   cursor: default;
 }
 
@@ -2357,8 +2358,8 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
 }
 
 .agent-prompt-submit svg {
-  width: 17px;
-  height: 17px;
+  width: 15px;
+  height: 15px;
   stroke: currentColor;
 }
 
