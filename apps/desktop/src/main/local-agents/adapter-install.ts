@@ -210,7 +210,9 @@ export async function resolveLocalAcpAdapterSpawn(
   }
   const privateInstall = await findPrivateAdapterInstall(adaptersRoot, provider)
   if (privateInstall && isSafeLocalAgentPath(privateInstall.entry)) {
-    const nativeClaudeCli = provider === 'claude'
+    // 仅 darwin：LaunchServices 幽灵应用问题；win32 下 executablePath 可能是
+    // npm 的 .cmd/.bat 垫片，Node spawn 直接拉会 EINVAL，不注入。
+    const nativeClaudeCli = provider === 'claude' && platform === 'darwin'
       ? await resolvableNativeCli(installation.executablePath)
       : null
     return {

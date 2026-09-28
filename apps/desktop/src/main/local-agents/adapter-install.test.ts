@@ -218,9 +218,32 @@ describe('resolveLocalAcpAdapterSpawn', () => {
 
     const spawn = await resolveLocalAcpAdapterSpawn(
       { ...CLAUDE_INSTALLATION, executablePath: nativeCli },
-      { adaptersRoot, env: { PATH: '/usr/bin:/bin' }, home: join(root, 'home'), platform: 'win32', probeTimeoutMs: 1 },
+      { adaptersRoot, env: { PATH: '/usr/bin:/bin' }, home: join(root, 'home'), platform: 'darwin', probeTimeoutMs: 1 },
     )
     expect(spawn?.env?.CLAUDE_CODE_EXECUTABLE).toBe(nativeCli)
+  })
+
+  it('private install omits CLAUDE_CODE_EXECUTABLE on non-darwin platforms', async () => {
+    const root = await temporaryRoot()
+    const adaptersRoot = join(root, 'adapters')
+    const pkgDir = join(adaptersRoot, 'claude', 'node_modules', '@zed-industries', 'claude-agent-acp')
+    await mkdir(dirname(join(pkgDir, 'bin', 'x')), { recursive: true })
+    await writeFile(join(pkgDir, 'bin', 'claude-agent-acp.js'), '#!/usr/bin/env node\n', 'utf8')
+    await writeFile(join(pkgDir, 'package.json'), JSON.stringify({
+      name: '@zed-industries/claude-agent-acp',
+      version: '0.23.1',
+      bin: { 'claude-agent-acp': 'bin/claude-agent-acp.js' },
+    }), 'utf8')
+    const shimCli = join(root, 'claude.cmd')
+    await writeFile(shimCli, '@echo off\n', 'utf8')
+
+    for (const platform of ['win32', 'linux'] as const) {
+      const spawn = await resolveLocalAcpAdapterSpawn(
+        { ...CLAUDE_INSTALLATION, executablePath: shimCli },
+        { adaptersRoot, env: { PATH: '/usr/bin:/bin' }, home: join(root, 'home'), platform, probeTimeoutMs: 1 },
+      )
+      expect(spawn?.env?.CLAUDE_CODE_EXECUTABLE).toBeUndefined()
+    }
   })
 
   it('private install omits CLAUDE_CODE_EXECUTABLE for JS or missing CLI paths', async () => {
@@ -238,7 +261,7 @@ describe('resolveLocalAcpAdapterSpawn', () => {
     for (const executablePath of [join(root, 'claude.js'), join(root, 'missing-claude')]) {
       const spawn = await resolveLocalAcpAdapterSpawn(
         { ...CLAUDE_INSTALLATION, executablePath },
-        { adaptersRoot, env: { PATH: '/usr/bin:/bin' }, home: join(root, 'home'), platform: 'win32', probeTimeoutMs: 1 },
+        { adaptersRoot, env: { PATH: '/usr/bin:/bin' }, home: join(root, 'home'), platform: 'darwin', probeTimeoutMs: 1 },
       )
       expect(spawn?.env?.CLAUDE_CODE_EXECUTABLE).toBeUndefined()
     }
