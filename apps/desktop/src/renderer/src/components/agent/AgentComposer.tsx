@@ -967,7 +967,6 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
             })}
           {onSelectChannelAgent && callableLocalAgents.length > 0 ? (
             <div className="agent-model-channel-group" role="group" aria-label={t('surface:agentComposer.channelGroupLabel')}>
-              <span className="agent-model-group-label">{t('surface:agentComposer.channelGroupLabel')}</span>
               {callableLocalAgents.map((agent) => (
                 <button
                   key={agent.id}
@@ -984,7 +983,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
                       ? <SourceIcon kind={agent.provider} />
                       : <Terminal aria-hidden="true" />}
                   </span>
-                  <span><strong>{agent.displayName}</strong><small>{t('surface:agentComposer.channelOptionHint')}</small></span>
+                  <span><strong>{agent.displayName}<span className="agent-model-channel-tag"> (CLI)</span></strong><small>{t('surface:agentComposer.channelOptionHint')}</small></span>
                   {channelAgentId === agent.id ? <Check aria-hidden="true" /> : null}
                 </button>
               ))}

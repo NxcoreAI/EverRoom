@@ -2253,17 +2253,10 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
 
 .agent-model-channel-group {
   display: grid;
-  gap: 2px;
+  gap: 1px;
   margin-top: 3px;
   padding-top: 4px;
   border-top: 1px solid #eceef1;
-}
-
-.agent-model-group-label {
-  padding: 2px 8px 3px;
-  color: #8b93a0;
-  font-size: 10px;
-  font-weight: 560;
 }
 
 /* 模型选择弹层：轻量紧凑，锚在底部选择器正上方（盖住输入区下沿），宽度随内容。 */
@@ -2308,13 +2301,14 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
 .agent-model-option > span:nth-child(2) {
   display: grid;
   min-width: 0;
-  gap: 2px;
+  gap: 1px;
 }
 
 .agent-model-option strong {
   overflow: hidden;
   font-size: 12px;
   font-weight: 560;
+  line-height: 1.25;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -2323,8 +2317,16 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
   overflow: hidden;
   color: #747d8a;
   font-size: 10px;
+  line-height: 1.2;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 渠道名后缀 (CLI)：弱化显示，与模型档位行区分。 */
+.agent-model-channel-tag {
+  color: #8b93a0;
+  font-size: 10.5px;
+  font-weight: 400;
 }
 
 .agent-model-option > svg {
