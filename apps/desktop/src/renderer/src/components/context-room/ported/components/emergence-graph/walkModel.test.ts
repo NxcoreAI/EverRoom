@@ -246,6 +246,25 @@ describe('stepWalk / backWalk', () => {
     expect(stepWalk(graph, ROOM, initialWalkLog('a'), 'c')).toBeNull();
   });
 
+  it('翻面候选可点击入链：带组合层与翻面标签（非邻居也非翻面仍拒绝）', () => {
+    const flipGraph = {
+      nodes: [node('r', { id: ROOM, title: '本Room' }, 'room'), node('e', null, 'entity'), node('f1'), node('f2')],
+      edges: [
+        edge('x1', 'r', 'e', '提及'),
+        edge('x2', 'e', 'f1', '事实', 0.9),
+        edge('x3', 'e', 'f2', '事实', 0.9),
+      ],
+    };
+    const log = initialWalkLog('r');
+    expect(nextHops(flipGraph, ROOM, log)[0]).toMatchObject({ nodeRef: 'f1', flip: true });
+    const stepped = stepWalk(flipGraph, ROOM, log, 'f1')!;
+    expect(stepped).toHaveLength(2);
+    expect(stepped[1]).toMatchObject({ nodeRef: 'f1', viaRelation: 'e', viaLevel: 'composed' });
+    // 直接邻居优先走真实边
+    const viaEdge = stepWalk(flipGraph, ROOM, log, 'e')!;
+    expect(viaEdge[1]).toMatchObject({ nodeRef: 'e', viaLevel: 'original' });
+  });
+
   it('truncates back to a station without ever emptying the log', () => {
     const log = stepWalk(graph, ROOM, stepWalk(graph, ROOM, initialWalkLog('a'), 'b')!, 'c')!;
     expect(backWalk(log, 0)).toHaveLength(1);

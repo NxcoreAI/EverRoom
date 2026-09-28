@@ -258,17 +258,29 @@ export function nextHops(result: GraphSlice, roomId: string, log: WalkStation[],
   return chosen;
 }
 
-/** 沿一步走：目标必须是当前驻足的邻居，否则返回 null（调用方忽略）。 */
+/** 沿一步走：直接邻居走真实边；否则按候选时同规则识别翻面目标（两跳组合，
+ *  虚线入链）。两者都不是则返回 null（调用方忽略）。 */
 export function stepWalk(result: GraphSlice, roomId: string, log: WalkStation[], nodeRef: string): WalkStation[] | null {
   const cur = currentStation(log).nodeRef;
-  const edge = edgeBetween(result, cur, nodeRef);
-  if (!edge) return null;
   const nodeOf = new Map(result.nodes.map((node) => [node.id, node]));
+  const edge = edgeBetween(result, cur, nodeRef);
+  if (edge) {
+    return [...log, {
+      nodeRef,
+      viaRelation: edge.relationType,
+      viaLevel: edge.edgeLevel,
+      bridgeRoom: bridgeTitleOf(edge, nodeOf, roomId),
+    }];
+  }
+  const visited = new Set(log.map((station) => station.nodeRef));
+  const flip = flipTargetsOf(result, nodeOf, visited, cur).find((target) => target.nodeRef === nodeRef);
+  if (!flip) return null;
+  const roomRef = nodeOf.get(nodeRef)?.roomRef;
   return [...log, {
     nodeRef,
-    viaRelation: edge.relationType,
-    viaLevel: edge.edgeLevel,
-    bridgeRoom: bridgeTitleOf(edge, nodeOf, roomId),
+    viaRelation: flip.viaLabel,
+    viaLevel: 'composed',
+    bridgeRoom: roomRef && roomRef.id !== roomId ? roomRef.title : null,
   }];
 }
 
