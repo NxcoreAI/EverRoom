@@ -212,8 +212,14 @@ export async function resolveLocalAcpAdapterSpawn(
   if (privateInstall && isSafeLocalAgentPath(privateInstall.entry)) {
     // 仅 darwin：LaunchServices 幽灵应用问题；win32 下 executablePath 可能是
     // npm 的 .cmd/.bat 垫片，Node spawn 直接拉会 EINVAL，不注入。
-    const nativeClaudeCli = provider === 'claude' && platform === 'darwin'
-      ? await resolvableNativeCli(installation.executablePath)
+    const darwin = platform === 'darwin'
+    const claudeCli = provider === 'claude' && darwin
+      ? await resolvableCliPath(installation.executablePath)
+      : null
+    // codex 适配器把 CODEX_PATH 直接当 command spawn，JS 入口有 node shebang
+    // 会落在纯 node 上（无 bundle 身份），故允许 JS——npm 装的 codex bin 正是 .js。
+    const codexCli = provider === 'codex' && darwin
+      ? await resolvableCliPath(installation.executablePath, { allowJsEntry: true })
       : null
     return {
       command: options.execPath ?? process.execPath,
@@ -221,11 +227,14 @@ export async function resolveLocalAcpAdapterSpawn(
       env: {
         ELECTRON_RUN_AS_NODE: '1',
         PATH: searchEnv.PATH ?? '',
-        // claude 适配器默认以 process.execPath 拉起 SDK 内置 cli.js——Electron 承载下
-        // 就是 EverRoom.app 二进制，CLI 子进程（及其整棵子树）会以 EverRoom 包身份在
-        // macOS LaunchServices 注册为 Foreground 应用：每次 Agent 调用弹一个空白应用
-        // 实例且 prompt 结束后不退出。指向原生 claude 二进制后 SDK 直接 spawn 它。
-        ...(nativeClaudeCli ? { CLAUDE_CODE_EXECUTABLE: nativeClaudeCli } : {}),
+        // 两个适配器缺省都会以 process.execPath 拉起各自 CLI（Electron 承载下
+        // 就是 EverRoom.app 二进制），CLI 子进程及其整棵子树会以 EverRoom 包身份
+        // 在 macOS LaunchServices 注册为 Foreground 应用：每次 Agent 调用弹一个
+        // 空白应用实例且 prompt 结束后不退出。指向用户已装的 CLI 后：
+        // - claude SDK 经 CLAUDE_CODE_EXECUTABLE 直接 spawn 原生二进制；
+        // - codex 适配器经 CODEX_PATH 直接 spawn 用户 CLI（否则退回捆绑 codex.js）。
+        ...(claudeCli ? { CLAUDE_CODE_EXECUTABLE: claudeCli } : {}),
+        ...(codexCli ? { CODEX_PATH: codexCli } : {}),
       },
     }
   }
@@ -235,13 +244,18 @@ export async function resolveLocalAcpAdapterSpawn(
 const JS_CLI_EXTENSIONS = ['.js', '.mjs', '.ts', '.tsx', '.jsx']
 
 /**
- * 返回可直接作为子进程 command 的原生 CLI 绝对路径；JS 入口或不可达时为 null
- * （JS 入口经 CLAUDE_CODE_EXECUTABLE 反而会回到 [Electron, xx.js] 形态）。
+ * 返回可直接作为子进程 command 的 CLI 绝对路径；相对名、不可达时为 null。
+ * JS 入口默认拒绝（claude SDK 经 CLAUDE_CODE_EXECUTABLE 会回到
+ * [Electron, xx.js] 形态）；codex 把路径当 command 直接 spawn，shebang 落在
+ * 纯 node 上无此问题，传 allowJsEntry 放行。
  */
-async function resolvableNativeCli(executablePath: string | null | undefined): Promise<string | null> {
+async function resolvableCliPath(
+  executablePath: string | null | undefined,
+  { allowJsEntry = false }: { allowJsEntry?: boolean } = {},
+): Promise<string | null> {
   if (!executablePath) return null
   if (!executablePath.includes('/') && !executablePath.includes('\\')) return null
-  if (JS_CLI_EXTENSIONS.some((ext) => executablePath.endsWith(ext))) return null
+  if (!allowJsEntry && JS_CLI_EXTENSIONS.some((ext) => executablePath.endsWith(ext))) return null
   try {
     await access(executablePath)
     return executablePath
