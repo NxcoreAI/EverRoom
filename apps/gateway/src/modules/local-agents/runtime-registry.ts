@@ -7,11 +7,15 @@ import { AcpAgentRuntime, acpAdapterCommand, type LocalAcpProvider } from "./acp
 const ACP_PROVIDERS = new Set<LocalAcpProvider>(["codex", "claude", "openclaw"]);
 
 export type LocalAgentMcpServersForRun = (input: StartRuntimeRunInput) => McpServer[] | Promise<McpServer[]>;
+export type LocalAgentHumanApprovalForRun = (input: StartRuntimeRunInput) => boolean | Promise<boolean>;
 
 export class LocalAgentRuntimeRegistry {
   private readonly runtimes = new Map<string, AgentRuntime>();
 
-  constructor(private readonly mcpServersForRun?: LocalAgentMcpServersForRun) {}
+  constructor(
+    private readonly mcpServersForRun?: LocalAgentMcpServersForRun,
+    private readonly humanApprovalForRun?: LocalAgentHumanApprovalForRun,
+  ) {}
 
   resolve(target: LocalAgentInvocationTarget): AgentRuntime {
     const runtimeKey = `${target.id}\0${resolve(target.workingDirectory)}`;
@@ -26,6 +30,7 @@ export class LocalAgentRuntimeRegistry {
       target.workingDirectory,
       target.id,
       this.mcpServersForRun,
+      this.humanApprovalForRun,
     );
     this.runtimes.set(runtimeKey, runtime);
     return runtime;

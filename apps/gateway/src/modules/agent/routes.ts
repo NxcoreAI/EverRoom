@@ -147,7 +147,7 @@ export function agentRoutes(
         },
       },
       async (request, reply) => {
-        const result = service.resolveBashApproval(request.params.approvalId, request.body.decision);
+        const result = service.resolveApproval(request.params.approvalId, request.body.decision);
         return result ?? reply.code(404).send({ error: "not_found", message: "Approval request not found" });
       },
     );

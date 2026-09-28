@@ -19,14 +19,17 @@ export function AgentShellApproval({
 
   const busy = resolvingApprovalIds.has(approval.approvalId)
   const queuedCount = approvals.length - 1
+  const isTool = approval.kind === 'tool'
+  const title = t(isTool ? 'surface:agentChat.toolApprovalTitle' : 'surface:agentChat.shellApprovalTitle')
+  const description = t(isTool ? 'surface:agentChat.toolApprovalDescription' : 'surface:agentChat.shellApprovalDescription')
 
   return (
-    <section className="agent-shell-approval" aria-label={t('surface:agentChat.shellApprovalTitle')}>
+    <section className="agent-shell-approval" aria-label={title}>
       <header className="agent-shell-approval-header">
         <span className="agent-shell-approval-icon"><ShieldAlert aria-hidden="true" /></span>
         <span>
-          <strong>{t('surface:agentChat.shellApprovalTitle')}</strong>
-          <small>{t('surface:agentChat.shellApprovalDescription')}</small>
+          <strong>{title}</strong>
+          <small>{description}</small>
         </span>
         {queuedCount > 0 ? (
           <span className="agent-shell-approval-count">+{queuedCount}</span>

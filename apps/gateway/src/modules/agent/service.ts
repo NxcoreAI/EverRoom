@@ -34,6 +34,7 @@ import {
 } from "@nxcore/agent-contract";
 import type { AgentRuntime, RuntimeAttachment, RuntimeEvent } from "@nxcore/agent-runtime";
 import type { PiBashApprovalRequest } from "@nxcore/agent-runtime-pi";
+import type { AcpPermissionApprovalRequest, AcpPermissionDecision } from "../local-agents/acp-runtime.js";
 import { and, asc, desc, eq, gt, inArray, isNull, or } from "drizzle-orm";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
 import {
@@ -451,6 +452,12 @@ export class AgentService {
     timeout: NodeJS.Timeout;
   }>();
   private readonly bashAuthorizedSessions = new Set<string>();
+  /** ACP 渠道会话的工具审批（approvalId → 待回填决定），与 bash 审批同一 resolve 路由。 */
+  private readonly pendingAcpApprovals = new Map<string, {
+    runId: string;
+    resolve: (decision: AcpPermissionDecision) => void;
+    timeout: NodeJS.Timeout;
+  }>();
 
   constructor(
     private readonly db: GatewayDatabase,
@@ -517,6 +524,39 @@ export class AgentService {
     if (decision === "approved_session") this.bashAuthorizedSessions.add(pending.request.input.sessionId);
     pending.resolve(approved);
     return { approvalId, decision };
+  }
+
+  /** 审批回填统一入口：先查 pi bash 审批，再查 ACP 工具审批。 */
+  resolveApproval(approvalId: string, decision: "approved" | "approved_session" | "denied"): { approvalId: string; decision: string } | null {
+    return this.resolveBashApproval(approvalId, decision) ?? this.resolveAcpApproval(approvalId, decision);
+  }
+
+  private resolveAcpApproval(approvalId: string, decision: "approved" | "approved_session" | "denied"): { approvalId: string; decision: string } | null {
+    const pending = this.pendingAcpApprovals.get(approvalId);
+    if (!pending) return null;
+    clearTimeout(pending.timeout);
+    this.pendingAcpApprovals.delete(approvalId);
+    pending.resolve(decision);
+    return { approvalId, decision };
+  }
+
+  /** ACP 渠道会话工具审批：挂 pending 等渲染层回填，5 分钟超时自动拒绝（与 bash 审批同语义）。 */
+  requestAcpApproval(request: AcpPermissionApprovalRequest): Promise<AcpPermissionDecision> {
+    return new Promise((resolve) => {
+      const timeout = setTimeout(() => {
+        this.pendingAcpApprovals.delete(request.approvalId);
+        resolve("denied");
+      }, 5 * 60_000);
+      timeout.unref?.();
+      this.pendingAcpApprovals.set(request.approvalId, { runId: request.runId, resolve, timeout });
+    });
+  }
+
+  private attachAcpPermissionBridge(runtime: AgentRuntime): void {
+    const runtimeWithApprovals = runtime as AgentRuntime & {
+      setPermissionRequestHandler?: (handler: ((request: AcpPermissionApprovalRequest) => Promise<AcpPermissionDecision>) | null) => void;
+    };
+    runtimeWithApprovals.setPermissionRequestHandler?.((request) => this.requestAcpApproval(request));
   }
 
   setFilesService(files: FilesService): void {
@@ -652,6 +692,11 @@ export class AgentService {
       clearTimeout(pending.timeout);
       pending.resolve(false);
       this.pendingBashApprovals.delete(approvalId);
+    }
+    for (const [approvalId, pending] of this.pendingAcpApprovals) {
+      clearTimeout(pending.timeout);
+      pending.resolve("cancelled");
+      this.pendingAcpApprovals.delete(approvalId);
     }
     this.bashAuthorizedSessions.clear();
     for (const sessionIds of this.trustedMcpSessions.values()) {
@@ -1251,6 +1296,7 @@ export class AgentService {
     let selectedRuntime: AgentRuntime;
     if (targetRuntime) {
       selectedRuntime = targetRuntime;
+      this.attachAcpPermissionBridge(targetRuntime);
     } else if (isBuiltinTier && selectedAgentId !== MAIN_AGENT_ID) {
       const tierRuntime = this.resolveTierRuntime?.(selectedAgentId) ?? null;
       if (tierRuntime) {
@@ -1559,6 +1605,14 @@ export class AgentService {
     const run = this.getRun(runId);
     if (!run) return null;
     if (run.status === "accepted" || run.status === "running") {
+      // 协议要求客户端 cancel 后以 cancelled 应答挂起的 request_permission，
+      // 先结审批再 cancel（runtime 的 interactivePermission 把 cancelled 映射回适配器）。
+      for (const [approvalId, pending] of [...this.pendingAcpApprovals]) {
+        if (pending.runId !== runId) continue;
+        clearTimeout(pending.timeout);
+        this.pendingAcpApprovals.delete(approvalId);
+        pending.resolve("cancelled");
+      }
       await (this.runRuntimes.get(runId) ?? this.runtime).cancel(runId);
     }
     return this.getRun(runId);

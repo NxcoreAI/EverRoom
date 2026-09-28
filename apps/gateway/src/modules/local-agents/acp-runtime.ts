@@ -1,4 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { resolve as resolvePath, relative } from "node:path";
 import { Readable, Writable } from "node:stream";
@@ -28,6 +29,33 @@ import {
 } from "@nxcore/agent-contract";
 
 export type { LocalAcpProvider };
+
+export type AcpPermissionDecision = "approved" | "approved_session" | "denied" | "cancelled";
+
+export interface AcpPermissionApprovalRequest {
+  approvalId: string;
+  agentSessionId: string;
+  runId: string;
+  toolCallId: string;
+  toolName: string;
+  command: string;
+  cwd?: string;
+}
+
+/** 渲染层审批卡片的工具输入摘要：优先常见语义键，回退截断 JSON。 */
+function acpToolInputSummary(rawInput: unknown): string {
+  const input = rawInput && typeof rawInput === "object" ? rawInput as Record<string, unknown> : {};
+  for (const key of ["command", "file_path", "filePath", "path", "url", "pattern", "query"]) {
+    const value = input[key];
+    if (typeof value === "string" && value) return value.slice(0, 300);
+  }
+  try {
+    const serialized = JSON.stringify(input);
+    return (serialized === "{}" ? "" : serialized).slice(0, 300);
+  } catch {
+    return "";
+  }
+}
 
 const MAX_STDERR_BYTES = 64 * 1024;
 const MAX_READ_TEXT_FILE_BYTES = 2 * 1024 * 1024;
@@ -59,9 +87,12 @@ export function acpAdapterCommand(
 interface ActiveAcpSession {
   queue: AsyncEventQueue<RuntimeEvent>;
   runId: string;
+  agentSessionId: string;
   mutationAllowed: boolean;
+  humanApproval: boolean;
   messageStarted: boolean;
   text: string;
+  pendingApprovals: Set<string>;
 }
 
 /**
@@ -90,8 +121,20 @@ export class AcpAgentRuntime implements AgentRuntime {
      * 该参数（claude 内存 session 持有首轮配置），故 token 需跨 run 稳定。
      */
     private readonly mcpServersForRun?: (input: StartRuntimeRunInput) => McpServer[] | Promise<McpServer[]>,
+    /**
+     * 渠道会话判定（与 MCP 注入同一判据）：true 时 CLI 工具权限走人工审批
+     * （approval.requested 事件 + service 桥），false 维持 mutationAllowed 自动应答。
+     */
+    private readonly humanApprovalForRun?: (input: StartRuntimeRunInput) => boolean | Promise<boolean>,
   ) {
     this.id = `local:acp:${installationId}`;
+  }
+
+  private permissionRequestHandler: ((request: AcpPermissionApprovalRequest) => Promise<AcpPermissionDecision>) | null = null;
+
+  /** AgentService 桥接点（结构化可选方法，与 pi 档 setBashApprovalHandler 同构）。 */
+  setPermissionRequestHandler(handler: ((request: AcpPermissionApprovalRequest) => Promise<AcpPermissionDecision>) | null): void {
+    this.permissionRequestHandler = handler;
   }
 
   async getCapabilities(): Promise<RuntimeCapabilities> {
@@ -172,9 +215,12 @@ export class AcpAgentRuntime implements AgentRuntime {
       this.sessions.set(sessionId, {
         queue,
         runId: input.runId,
+        agentSessionId: input.sessionId,
         mutationAllowed: input.delegationContext?.grant.mutationAllowed ?? false,
+        humanApproval: await this.humanApprovalForRun?.(input) ?? false,
         messageStarted: false,
         text: "",
+        pendingApprovals: new Set(),
       });
       queue.push({ type: "runtime.session.updated", payload: { runtimeSessionRef: sessionId } });
 
@@ -211,6 +257,13 @@ export class AcpAgentRuntime implements AgentRuntime {
       queue.push({ type: "run.failed", payload: { message: `${detail}${tail}`.slice(0, 2_000) } });
     } finally {
       if (sessionId) {
+        const active = this.sessions.get(sessionId);
+        if (active) {
+          for (const approvalId of active.pendingApprovals) {
+            active.queue.push({ type: "approval.resolved", payload: { approvalId, approved: false } });
+          }
+          active.pendingApprovals.clear();
+        }
         this.sessions.delete(sessionId);
         this.runs.delete(input.runId);
       }
@@ -287,11 +340,69 @@ export class AcpAgentRuntime implements AgentRuntime {
     }
   }
 
+  /**
+   * 人工审批桥：approval.requested 事件进 run 队列（渲染层卡片），决定经
+   * service 的 pending 表回填；decision 按 kind 映射回适配器给的 optionId——
+   * approved→allow_once、approved_session→allow_always、denied→reject_once，
+   * 对 ExitPlanMode/codex plan 等特例选项面同样成立。
+   */
+  private async interactivePermission(
+    params: { options: Array<{ kind: string; optionId: string }>; toolCall: { toolCallId: string; title?: string | null; rawInput?: Record<string, unknown> } },
+    active: ActiveAcpSession,
+  ): Promise<{ outcome: { outcome: "selected"; optionId: string } | { outcome: "cancelled" } }> {
+    const handler = this.permissionRequestHandler!;
+    const approvalId = randomUUID();
+    const toolName = typeof params.toolCall.title === "string" && params.toolCall.title ? params.toolCall.title : "tool";
+    const command = acpToolInputSummary(params.toolCall.rawInput) || toolName;
+    active.pendingApprovals.add(approvalId);
+    active.queue.push({
+      type: "approval.requested",
+      payload: { approvalId, kind: "tool", toolName, command, cwd: this.workingDirectory },
+    });
+    let decision: AcpPermissionDecision;
+    try {
+      decision = await handler({
+        approvalId,
+        agentSessionId: active.agentSessionId,
+        runId: active.runId,
+        toolCallId: params.toolCall.toolCallId,
+        toolName,
+        command,
+        cwd: this.workingDirectory,
+      });
+    } catch {
+      decision = "denied";
+    } finally {
+      active.pendingApprovals.delete(approvalId);
+    }
+    active.queue.push({
+      type: "approval.resolved",
+      payload: { approvalId, approved: decision === "approved" || decision === "approved_session" },
+    });
+    const wantedKind = decision === "approved" ? "allow_once"
+      : decision === "approved_session" ? "allow_always"
+        : decision === "denied" ? "reject_once"
+          : null;
+    if (!wantedKind) return { outcome: { outcome: "cancelled" } };
+    const options = params.options ?? [];
+    const option = options.find((item) => item.kind === wantedKind)
+      ?? (wantedKind === "allow_always" ? options.find((item) => item.kind === "allow_once") : undefined)
+      ?? (wantedKind === "reject_once" ? options.find((item) => item.kind === "reject_always") : undefined);
+    return option
+      ? { outcome: { outcome: "selected", optionId: option.optionId } }
+      : { outcome: { outcome: "cancelled" } };
+  }
+
   private onAdapterExit(): void {
     this.child = null;
     this.connection = null;
     this.initResponse = null;
     for (const [sessionId, active] of [...this.sessions]) {
+      // 挂起的审批随 run 终止收口，避免卡片滞留 UI（service 侧 pending 由超时兜底）。
+      for (const approvalId of active.pendingApprovals) {
+        active.queue.push({ type: "approval.resolved", payload: { approvalId, approved: false } });
+      }
+      active.pendingApprovals.clear();
       active.queue.push({
         type: "run.failed",
         payload: { message: `local_agent_acp_adapter_exited: ${this.adapter.command}${this.stderrTail ? `: ${this.stderrTail.slice(-400)}` : ""}` },
@@ -331,6 +442,9 @@ export class AcpAgentRuntime implements AgentRuntime {
       },
       requestPermission: async (params) => {
         const active = this.sessions.get(params.sessionId);
+        if (active?.humanApproval && this.permissionRequestHandler) {
+          return this.interactivePermission(params, active);
+        }
         const wanted = active?.mutationAllowed ? "allow" : "reject";
         const options = params.options ?? [];
         const option = options.find((item) => item.kind === `${wanted}_once`)

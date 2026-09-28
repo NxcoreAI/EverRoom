@@ -68,8 +68,9 @@ async function handlePrompt(message) {
   if (mode === "permission") {
     const answer = await clientRequest("session/request_permission", {
       sessionId,
-      toolCall: { toolCallId: "tc-1", title: "run tool", kind: "execute", status: "pending" },
+      toolCall: { toolCallId: "tc-1", title: "run tool", kind: "execute", status: "pending", rawInput: { command: "rm -rf build" } },
       options: [
+        { optionId: "allow-always", kind: "allow_always", name: "Always Allow" },
         { optionId: "allow-once", kind: "allow_once", name: "Allow" },
         { optionId: "reject-once", kind: "reject_once", name: "Reject" },
       ],
@@ -172,8 +173,12 @@ async function writeFakeAgent(mode: string): Promise<{ command: string; args: st
   return { command: execPath, args: [script, mode] };
 }
 
-function runtimeFor(adapter: { command: string; args: string[] }, workingDirectory: string): AcpAgentRuntime {
-  return new AcpAgentRuntime(adapter, workingDirectory, `test:${workingDirectory}`);
+function runtimeFor(
+  adapter: { command: string; args: string[] },
+  workingDirectory: string,
+  humanApprovalForRun?: (input: { runId: string; sessionId: string }) => boolean,
+): AcpAgentRuntime {
+  return new AcpAgentRuntime(adapter, workingDirectory, `test:${workingDirectory}`, undefined, humanApprovalForRun);
 }
 
 function delegation(mutationAllowed: boolean): LocalAgentDelegationContext {
@@ -258,6 +263,36 @@ describe("AcpAgentRuntime", () => {
     expect(String((allowed.find((event) => event.type === "message.completed")!.payload as { content?: string }).content)).toBe("allow-once");
     const rejected = await collect(await reader.start({ ...baseInput(root), delegationContext: delegation(false) }));
     expect(String((rejected.find((event) => event.type === "message.completed")!.payload as { content?: string }).content)).toBe("reject-once");
+  });
+
+  it("routes channel-session permissions through the UI approval bridge", async () => {
+    const root = await workspace();
+    const runtime = runtimeFor(await writeFakeAgent("permission"), root, () => true);
+    onTestFinished(() => void runtime.dispose());
+    const seen: Array<Record<string, unknown>> = [];
+    runtime.setPermissionRequestHandler(async (request) => {
+      seen.push(request as unknown as Record<string, unknown>);
+      return "approved_session";
+    });
+    const events = await collect(await runtime.start({ ...baseInput(root), delegationContext: delegation(false) }));
+    const requested = events.find((event) => event.type === "approval.requested");
+    expect(requested?.payload).toMatchObject({ kind: "tool", toolName: "run tool", command: "rm -rf build" });
+    const resolved = events.find((event) => event.type === "approval.resolved");
+    expect(resolved?.payload).toMatchObject({ approved: true });
+    expect(seen[0]).toMatchObject({ agentSessionId: "session-1", runId: "run-1", toolName: "run tool", command: "rm -rf build" });
+    // approved_session → allow_always（即便 grant 是 read-only，人工审批优先于自动拒绝）
+    expect(String((events.find((event) => event.type === "message.completed")!.payload as { content?: string }).content)).toBe("allow-always");
+  });
+
+  it("maps a denied UI decision to the reject option", async () => {
+    const root = await workspace();
+    const runtime = runtimeFor(await writeFakeAgent("permission"), root, () => true);
+    onTestFinished(() => void runtime.dispose());
+    runtime.setPermissionRequestHandler(async () => "denied");
+    const events = await collect(await runtime.start({ ...baseInput(root), delegationContext: delegation(true) }));
+    expect(String((events.find((event) => event.type === "message.completed")!.payload as { content?: string }).content)).toBe("reject-once");
+    expect(events.find((event) => event.type === "approval.requested")).toBeDefined();
+    expect(events.find((event) => event.type === "approval.resolved")?.payload).toMatchObject({ approved: false });
   });
 
   it("serves fs/read_text_file inside the workspace and rejects traversal", async () => {
