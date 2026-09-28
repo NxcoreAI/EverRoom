@@ -3852,30 +3852,56 @@
   border-bottom: 1px solid var(--cr-border);
 }
 
-.context-room-artifact-filters {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
+/* 统一下拉筛选（FilterSelect）：胶囊外观 + 右侧箭头；选中非默认值转蓝。 */
+.context-room-filter-select {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
 }
 
-.context-room-artifact-pill {
-  padding: 3px 9px;
+.context-room-filter-select select {
+  appearance: none;
+  max-width: 160px;
+  height: 26px;
+  padding: 0 26px 0 12px;
   border: 1px solid var(--cr-border);
   border-radius: 999px;
+  background: var(--cr-surface);
   color: var(--cr-muted);
   font-size: 11px;
+  font-family: inherit;
   cursor: pointer;
+  text-overflow: ellipsis;
+  transition: border-color 0.15s ease, color 0.15s ease;
 }
 
-.context-room-artifact-pill:hover {
+.context-room-filter-select select:hover {
   border-color: var(--cr-border-strong);
   color: var(--cr-text);
 }
 
-.context-room-artifact-pill.is-active {
+.context-room-filter-select select:focus-visible {
+  border-color: var(--cr-blue);
+  outline: none;
+}
+
+.context-room-filter-select[data-active] select {
   border-color: var(--cr-blue);
   color: var(--cr-blue);
   background: color-mix(in srgb, var(--cr-blue) 10%, transparent);
+}
+
+.context-room-filter-select svg {
+  position: absolute;
+  right: 9px;
+  width: 12px;
+  height: 12px;
+  color: var(--cr-tertiary);
+  pointer-events: none;
+}
+
+.context-room-filter-select[data-active] svg {
+  color: var(--cr-blue);
 }
 
 .context-room-artifact-new {
@@ -14330,31 +14356,6 @@
   gap: 8px;
   padding: 10px 12px;
   border-bottom: 1px solid var(--cr-border);
-}
-
-.context-room-materials-filters {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-
-.context-room-materials-filters button {
-  padding: 3px 9px;
-  border: 1px solid var(--cr-border);
-  border-radius: 999px;
-  color: var(--cr-muted);
-  font-size: 11px;
-}
-
-.context-room-materials-filters button:hover {
-  border-color: var(--cr-border-strong);
-  color: var(--cr-text);
-}
-
-.context-room-materials-filters button.is-active {
-  border-color: var(--cr-blue);
-  color: var(--cr-blue);
-  background: color-mix(in srgb, var(--cr-blue) 10%, transparent);
 }
 
 .context-room-materials-sort-toggle {

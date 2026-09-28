@@ -197,7 +197,6 @@ const api: NxcoreDesktopApi = {
     },
   },
   office: {
-    testAvailable: Boolean(process.env.ELECTRON_RENDERER_URL),
     setActiveInstance: (id) => ipcRenderer.invoke('office:instance:set-active', id),
     closeInstance: (id) => ipcRenderer.invoke('office:instance:close', id),
     setWorkspaceBounds: (bounds) => ipcRenderer.send('office:workspace-bounds', bounds),

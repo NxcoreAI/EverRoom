@@ -45,6 +45,7 @@ minimumReleaseAgeExclude:
 patchedDependencies:
   '@electron/osx-sign@1.3.3': patches/@electron__osx-sign@1.3.3.patch
   '@oomol-lab/open-connector@0.0.0-development': patches/open-connector@0.0.0-development.patch
+  '@tencentdb-agent-memory/knowledge-service@0.1.0-everroom.1': patches/knowledge-service@0.1.0-everroom.1.patch
   '@tencentdb-agent-memory/memory-tencentdb-v2@2.0.0-beta.1-everroom.8': patches/memory-tencentdb-v2@2.0.0-beta.1-everroom.8.patch
   pi-mcp-adapter@2.26.1: patches/pi-mcp-adapter@2.26.1.patch
   sqlite-vec@0.1.7-alpha.2: patches/sqlite-vec@0.1.7-alpha.2.patch

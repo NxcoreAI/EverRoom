@@ -126,12 +126,6 @@ export interface PreparedGenOfficeRuntime {
   root: string
 }
 
-export function preparedGenOfficeFixture(root: string): string {
-  const fixture = join(root, 'fixtures', 'simple.docx')
-  if (!existsSync(fixture)) throw new Error(`GenOffice test fixture is unavailable: ${fixture}`)
-  return fixture
-}
-
 function runtimeRoot(): string {
   return app.isPackaged
     ? join(process.resourcesPath, 'genoffice')

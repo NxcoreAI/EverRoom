@@ -1,0 +1,48 @@
+diff --git a/src/engines/wiki/ingest-v2/llm.ts b/src/engines/wiki/ingest-v2/llm.ts
+index 879a552..afe32d0 100644
+--- a/src/engines/wiki/ingest-v2/llm.ts
++++ b/src/engines/wiki/ingest-v2/llm.ts
+@@ -9,7 +9,7 @@
+  * 这里做归一化以兼容 INTERFACE 文档里写的 { baseUrl, maxTokens, timeoutMs } 别名。
+  */
+ 
+-import { generateText } from "ai";
++import { streamText } from "ai";
+ import { createOpenAI } from "@ai-sdk/openai";
+ import { createAnthropic } from "@ai-sdk/anthropic";
+ import { createLogger } from "../../../logger.js";
+@@ -127,7 +127,9 @@ export function createLlmClient(raw: RawLlmConfig | undefined): LlmClient {
+       log.debug(`LLM user prompt [${label}] (model=${config.model})`, { text: params.prompt.slice(0, 500) });
+ 
+       try {
+-        const result = await generateText({
++        // 流式收整：中转链路（nginx → newapi）proxy_read_timeout=60s，非流式
++        // 长调用 60s 无响应字节必被 504；SSE 每个 chunk 重置读计时器。
++        const result = streamText({
+           model: provider.chat(config.model),
+           system: params.system,
+           prompt: params.prompt,
+@@ -139,18 +141,19 @@ export function createLlmClient(raw: RawLlmConfig | undefined): LlmClient {
+             functionId: params.label ?? "chat",
+           },
+         });
+-        const text = (result.text ?? "").trim();
+-        const u = result.usage ?? ({} as Record<string, number>);
++        const text = ((await result.text) ?? "").trim();
++        const u = (await result.usage) ?? ({} as Record<string, number>);
++        const finishReason = await result.finishReason;
+         log.info(`LLM 调用完成 [${label}]`, {
+           ms: Date.now() - startMs,
+           promptTokens: u.inputTokens ?? null,
+           completionTokens: u.outputTokens ?? null,
+           totalTokens: u.totalTokens ?? null,
+-          finishReason: result.finishReason ?? null,
++          finishReason: finishReason ?? null,
+           outputChars: text.length,
+         });
+         if (!text) {
+-          log.warn(`LLM 返回空文本 [${label}]`, { finishReason: result.finishReason ?? null });
++          log.warn(`LLM 返回空文本 [${label}]`, { finishReason: finishReason ?? null });
+         }
+         return text;
+       } catch (err) {

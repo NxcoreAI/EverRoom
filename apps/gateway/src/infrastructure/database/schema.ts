@@ -2560,6 +2560,10 @@ export interface IngestFilterVerdict {
   category: string;
   /** 置信 0~1，低于阈值放行（宁漏勿错杀）。 */
   confidence: number;
+  /** 状态/参考分流（2026-09-24 定案）：这条数据会被更新/覆盖、需要唯一
+   * 权威版本吗。true 时即便类型默认 memory:false（参考型兜底）也单独打开
+   * 记忆链路；缺省 = 未判定，不触发恢复（fail-closed，保 token）。 */
+  stateLike?: boolean;
 }
 
 /**

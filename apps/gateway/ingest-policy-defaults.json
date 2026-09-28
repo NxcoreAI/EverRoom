@@ -1,7 +1,7 @@
 {
   "$comment": "链路策略·工程默认层（unified-ingest-plan §6）。工程师改默认策略在这里，改完重启 gateway 生效；运行环境不动仓库可用 <dataDir>/ingest-policies.json 覆盖。组合约束：room=false 时 wiki 必须 false；三条链路不能全关。只写要改的类型即可，未列出的类型走 types.ts 注册表兜底 defaults。记忆链路取舍按「状态 vs 参考」（2026-09-24 定案）：会被更新/覆盖、需要唯一权威版本的状态型数据进记忆（reduce）；价值在原文、任何摘要都有损的参考型资料只进知识/Room（select）。",
   "document": {
-    "$comment": "文档（md / markdown / txt / pdf）。参考型资料：价值在原文，检索走知识/Room 选段即可；L1 全文蒸馏既耗 token 又产出同源碎片。实体计分与 Room 沉淀保留——memory 关。",
+    "$comment": "文档（md / markdown / txt / pdf）。参考型资料：价值在原文，检索走知识/Room 选段即可；L1 全文蒸馏既耗 token 又产出同源碎片。实体计分与 Room 沉淀保留——memory 关。例外：闸1 判定 stateLike（实为计划/纪要等状态文档）的个别资料会在恢复扇出时单独打开 memory（只开不关）。",
     "room": true, "wiki": true, "memory": false
   },
   "meeting-minutes": {
@@ -13,7 +13,7 @@
     "room": true, "wiki": true, "memory": true
   },
   "office-doc": {
-    "$comment": "Office 文档（docx，Word 转归一化 md）。参考型资料，与 document 同等待遇——memory 关。",
+    "$comment": "Office 文档（docx，Word 转归一化 md）。参考型资料，与 document 同等待遇——memory 关；stateLike 判定同样可 per-document 恢复。",
     "room": true, "wiki": true, "memory": false
   },
   "spreadsheet": {

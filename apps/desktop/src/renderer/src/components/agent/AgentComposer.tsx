@@ -715,6 +715,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
       ref={shellRef}
       className="agent-composer-shell"
       data-menu-open={String(menuOpen)}
+      data-lift={String(externalPickerOpen || (agentPickerOpen && mentionOptionCount > 0))}
       onSubmit={submit}
       onDragOver={(event) => {
         if (!controlsDisabled && event.dataTransfer.types.includes('Files')) event.preventDefault()

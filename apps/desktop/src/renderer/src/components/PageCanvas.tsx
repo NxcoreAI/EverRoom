@@ -69,10 +69,10 @@ export function PageCanvas({
   let content = null
   if (page === 'home') content = <HomePage onNavigate={onNavigate} onFocusAgent={onFocusAgent} onOpenDocument={onOpenDocument} />
   if (page === 'office') content = <AgentStatusPage />
-  if (page === 'office-document' || page === 'office-test') {
+  if (page === 'office-document') {
     content = (
       <div className="page">
-        <div className="evidence-viewer-state">{page === 'office-test' ? '正在加载 DOCX 测试文档…' : '正在加载 Office 文档…'}</div>
+        <div className="evidence-viewer-state">{'正在加载 Office 文档…'}</div>
       </div>
     )
   }

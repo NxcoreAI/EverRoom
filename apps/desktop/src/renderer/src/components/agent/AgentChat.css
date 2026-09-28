@@ -1525,7 +1525,8 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
   box-shadow: 0 12px 30px rgba(25, 31, 41, 0.14), 0 2px 7px rgba(25, 31, 41, 0.06);
 }
 
-.agent-chat-conversation-frame[data-empty='true'] .agent-composer-shell[data-menu-open='true'] {
+/* 空态抬升只给高弹层（@ 弹层、外部会话选择器）；小菜单（模型/斜杠）不挪 composer。 */
+.agent-chat-conversation-frame[data-empty='true'] .agent-composer-shell[data-lift='true'] {
   bottom: 16px;
 }
 

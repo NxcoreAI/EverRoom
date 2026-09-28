@@ -21,7 +21,7 @@ import type {
 
 import type { CloudAccountStatus, DefaultLocalFolder, DefaultLocalFolderConnectionResult } from '../shared/sources'
 import type { PrivateTranscriptionSyncCompletedEvent, RuntimeConfigSnapshot } from '../shared/sources'
-import { OFFICE_TEST_INSTANCE_ID, officePreviewKindForFileName } from '../shared/sources'
+import { officePreviewKindForFileName } from '../shared/sources'
 import { CURSOR_COMPLETION_AGENT_ERROR_KEY } from '../shared/cursor-completion'
 import type { OpenConnectorExecutionInput } from '../shared/open-connector'
 import { ConnectorRegistry } from './connectors/connector-registry'
@@ -950,11 +950,6 @@ ipcMain.on('app:diagnostic-log', (_event, input: unknown) => logRendererDiagnost
 ipcMain.handle('office:instance:set-active', (event, id: unknown) => {
   const window = BrowserWindow.fromWebContents(event.sender)
   if (!window || window.isDestroyed()) throw new Error('EverRoom 主窗口不可用。')
-  // 渲染端是预览焦点唯一事实源：office-test 实例在开发模式下按需懒创建。
-  if (id === OFFICE_TEST_INSTANCE_ID && !officePreviewRegistry.has(OFFICE_TEST_INSTANCE_ID)) {
-    if (!process.env.ELECTRON_RENDERER_URL) throw new Error('Office 测试入口仅在开发模式可用。')
-    officePreviewRegistry.openTest(window)
-  }
   if (id !== null && typeof id !== 'string') return false
   return officePreviewRegistry.setActive(id === null ? null : id)
 })
