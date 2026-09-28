@@ -248,7 +248,9 @@ export function MemoryPane({
                         </span>
                         <span>
                           <b>{localizedUiText(fact.description, t)}</b>
-                          <small>{t(uiText(fact.label))}</small>
+                          <small>{fact.memory
+                            ? t(uiText(fact.memory.type))
+                            : t(`contextRoom:memory.factType.${fact.fact?.type === '关系' ? 'relation' : 'attribute'}`)}</small>
                         </span>
                       </button>
                     ))}

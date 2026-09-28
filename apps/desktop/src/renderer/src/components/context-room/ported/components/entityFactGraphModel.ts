@@ -59,6 +59,20 @@ export interface EntityFactGraphData {
 /** 安全上限（防极端规模冻结画布），非内容策划：正常 Room 应全量展示。 */
 const ENTITY_LIMIT = 500;
 const FACT_LIMIT = 500;
+/** 事实节点图上标签的截断长度：与实体名量级一致，中文一字一义够表达主题。 */
+const FACT_LABEL_MAX_LENGTH = 18;
+
+/**
+ * 事实节点图上标签取内容主题（首行截断），而非类型串——图上一排
+ * "work_fact"/"work_task" 没有信息密度；类型收进详情卡与元信息行。
+ */
+function factNodeLabel(content: string): string {
+  const subject = (content.split('\n').find((line) => line.trim().length > 0) ?? content).trim();
+  const stripped = subject.replace(/[。．，、；：,.;:！!？?…\s]+$/u, '');
+  const label = stripped || subject;
+  return label.length <= FACT_LABEL_MAX_LENGTH ? label : `${label.slice(0, FACT_LABEL_MAX_LENGTH)}…`;
+}
+
 /** Room 根节点（Room 本体），导出供详情区区分根节点与普通实体。 */
 export const ROOT_ID = 'entity:root';
 
@@ -149,7 +163,7 @@ export function createEntityFactGraphData(
     factNodes.push({
       id: `applied-fact:${fact.factId}`,
       kind: 'fact',
-      label: fact.type,
+      label: factNodeLabel(content),
       description: content,
       fact,
     });
@@ -162,7 +176,7 @@ export function createEntityFactGraphData(
     factNodes.push({
       id: `fact:${memory.id}`,
       kind: 'fact',
-      label: memory.type,
+      label: factNodeLabel(content),
       description: content,
       memory,
     });
