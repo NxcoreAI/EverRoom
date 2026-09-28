@@ -1575,6 +1575,7 @@
   "wiki.materialsDeposited": "Materials deposited",
   "wiki.meetingTranscript": "Meeting transcript",
   "wiki.noKnowledgePagesYetUploadFilesOrWrite": "No knowledge pages yet. Upload files or write documents in the Room to generate them.",
+  "wiki.noSourceFilesYet": "No source files yet. Upload with the + button and they'll be auto-classified into this Room.",
   "wiki.pageCountLabel": "{count} pages",
   "wiki.pageLinkGraph": "Page link graph",
   "wiki.pageTree": "Page tree",

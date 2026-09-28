@@ -12862,28 +12862,18 @@
   height: 13px;
 }
 
-/* ── 来源文件（WikiPane 底部分区：uploaded_files ⨝ 归属决策） ── */
+/* ── 来源文件（WikiPane「来源文件」页签主内容：uploaded_files ⨝ 归属决策） ── */
 
 .context-room-wiki-files {
   display: flex;
-  flex: 0 0 auto;
+  min-height: 0;
+  flex: 1;
   flex-direction: column;
   gap: 6px;
-  max-height: min(38%, 240px);
-  margin-top: 0;
-  padding: 10px 8px 8px;
+  padding: 8px 8px 12px;
   overflow-y: auto;
-  border-top: 1px solid var(--cr-border);
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
-}
-
-.context-room-wiki-files h3 {
-  margin: 0;
-  padding: 0 4px 2px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--cr-muted);
 }
 
 .context-room-wiki-files ul {

@@ -1575,6 +1575,7 @@
   "wiki.materialsDeposited": "资料沉淀",
   "wiki.meetingTranscript": "会议实录",
   "wiki.noKnowledgePagesYetUploadFilesOrWrite": "还没有生成知识页面：上传文件或在 Room 里写文档后自动生成。",
+  "wiki.noSourceFilesYet": "还没有来源文件：点右上角 + 上传，会自动归类沉淀到本 Room。",
   "wiki.pageCountLabel": "{count} 个页面",
   "wiki.pageLinkGraph": "页面内链图谱",
   "wiki.pageTree": "目录树",
