@@ -1571,9 +1571,10 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
 .agent-picker-icon-button { display: grid; width: 28px; height: 28px; place-items: center; padding: 0; border: 0; border-radius: 5px; background: transparent; color: #69717d; cursor: pointer; }
 .agent-picker-icon-button:hover, .agent-picker-icon-button:focus-visible { outline: 0; background: #f0f2f4; color: #242a32; }
 .agent-picker-icon-button svg { width: 15px; height: 15px; }
-.agent-picker-header-icon { display: grid; width: 28px; height: 28px; place-items: center; border-radius: 6px; background: #eef4ff; color: #4d6faf; }
-.agent-picker-header-icon svg { width: 14px; height: 14px; }
-.agent-picker-header-icon .source-icon { width: 15px; height: 15px; object-fit: contain; }
+/* 模型/渠道选项行图标：去底色块，仅留裸图标。 */
+.agent-picker-header-icon { display: grid; width: 22px; height: 22px; place-items: center; color: #667085; }
+.agent-picker-header-icon svg { width: 15px; height: 15px; }
+.agent-picker-header-icon .source-icon { width: 16px; height: 16px; object-fit: contain; }
 .agent-external-search { display: flex; align-items: center; min-height: 38px; gap: 7px; margin: 7px 8px 6px; padding: 0 9px; border: 1px solid #dfe3e8; border-radius: 6px; background: #fafbfc; }
 .agent-external-search:focus-within { border-color: #bcc3cc; background: #fff; box-shadow: 0 0 0 2px rgba(71, 84, 103, .08); }
 .agent-external-search svg { width: 14px; height: 14px; flex: 0 0 auto; color: #818995; }
@@ -2265,19 +2266,27 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
   font-weight: 560;
 }
 
-.agent-model-picker {
+/* 模型选择弹层：轻量紧凑，锚在选择器附近（composer 左上），宽度随内容。 */
+.agent-composer-popover.agent-model-picker {
+  right: auto;
+  left: 12px;
   display: grid;
-  gap: 2px;
-  padding: 5px;
+  gap: 1px;
+  width: max-content;
+  min-width: 216px;
+  max-width: 320px;
+  padding: 4px;
+  border-color: #e8eaee;
+  box-shadow: 0 10px 28px rgba(25, 31, 41, 0.1), 0 2px 6px rgba(25, 31, 41, 0.05);
 }
 
 .agent-model-option {
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr) 18px;
+  grid-template-columns: 22px minmax(0, 1fr) 16px;
   align-items: center;
-  gap: 9px;
-  min-height: 46px;
-  padding: 6px 8px;
+  gap: 8px;
+  min-height: 38px;
+  padding: 4px 8px;
   border: 0;
   border-radius: 6px;
   background: transparent;
