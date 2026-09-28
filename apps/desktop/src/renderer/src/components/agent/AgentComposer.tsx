@@ -148,6 +148,10 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   onSelectChannelAgent?: (agentId: string | null) => void
   /** 强模型未配置时提示去设置（跳应用设置页）。 */
   onOpenSettings?: () => void
+  /** 空态建议（推断的下一个提问）；仅输入框为空时作为 placeholder 展示，Tab/Enter 采纳。 */
+  ghostSuggestion?: string | null
+  onAcceptGhost?: () => void
+  onDismissGhost?: () => void
   onChange: (value: string) => void
   onSelectExternalConversation: (conversation: ExternalConversationSummary | null) => void
   onClearContext: () => void
@@ -179,6 +183,9 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   channelAgentId = null,
   onSelectChannelAgent,
   onOpenSettings,
+  ghostSuggestion = null,
+  onAcceptGhost,
+  onDismissGhost,
   value,
   onChange,
   onClearContext,
@@ -309,6 +316,8 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
 
   const submitMentions = () => resolveMentions(value, mentionHints.current, localAgents)
 
+  const ghostActive = !active && available && value === '' && Boolean(ghostSuggestion?.trim())
+
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     if (available) onSubmit(attachments.map(({ file }) => file), submitMentions())
@@ -366,6 +375,19 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
       event.preventDefault(); openExternalPicker(); return
     }
     if (event.key === 'Escape' && slashPickerOpen) { event.preventDefault(); setSlashPickerDismissed(true); return }
+    if (ghostActive && !slashPickerOpen) {
+      // 空态建议：Tab/Enter 采纳（填入不发送，第二次 Enter 才提交），Esc 本次丢弃。
+      if (event.key === 'Tab' || (event.key === 'Enter' && !event.shiftKey)) {
+        event.preventDefault()
+        onAcceptGhost?.()
+        return
+      }
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        onDismissGhost?.()
+        return
+      }
+    }
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault()
       if (available) onSubmit(attachments.map(({ file }) => file), submitMentions())
@@ -1074,9 +1096,11 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
             aria-label={t('surface:agentComposer.desktopAiWorkspaceInput')}
             placeholder={active
               ? t('surface:agentComposer.agentIsWorking')
-              : available
-                ? t('surface:agentComposer.askAboutThisPageOrDescribeAnAction')
-                : t('surface:agentComposer.syncingRoomData')}
+              : ghostActive
+                ? ghostSuggestion ?? undefined
+                : available
+                  ? t('surface:agentComposer.askAboutThisPageOrDescribeAnAction')
+                  : t('surface:agentComposer.syncingRoomData')}
             rows={2}
             value={value}
             aria-controls={menuOpen ? 'agent-composer-menu' : undefined}

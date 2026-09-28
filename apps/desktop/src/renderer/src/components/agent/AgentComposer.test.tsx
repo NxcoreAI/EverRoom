@@ -626,3 +626,102 @@ describe('AgentComposer context usage meter', () => {
     expect(chip.props.title).toBe('上下文压缩中…')
   })
 })
+
+describe('AgentComposer ghost suggestion', () => {
+  beforeEach(() => {
+    vi.stubGlobal('window', {
+      requestAnimationFrame: (callback: FrameRequestCallback) => { callback(0); return 1 },
+    })
+    vi.stubGlobal('document', { activeElement: null, addEventListener: vi.fn(), removeEventListener: vi.fn() })
+  })
+
+  afterEach(() => {
+    vi.clearAllMocks()
+    vi.unstubAllGlobals()
+  })
+
+  function keyDown(renderer: TestRenderer.ReactTestRenderer, key: string) {
+    const textarea = renderer.root.findByProps({ 'aria-label': '桌面 AI 工作台输入框' })
+    const preventDefault = vi.fn()
+    act(() => textarea.props.onKeyDown({
+      key,
+      shiftKey: false,
+      preventDefault,
+      nativeEvent: { isComposing: false, keyCode: key === 'Enter' ? 13 : 0 },
+    }))
+    return preventDefault
+  }
+
+  it('shows the suggestion as the placeholder on empty draft', () => {
+    const { renderer } = renderComposer({ ghostSuggestion: '继续排查导出失败' })
+    const textarea = renderer.root.findByProps({ 'aria-label': '桌面 AI 工作台输入框' })
+    expect(textarea.props.placeholder).toBe('继续排查导出失败')
+  })
+
+  it('accepts with Tab by filling without submitting', () => {
+    const onAcceptGhost = vi.fn()
+    const onSubmit = vi.fn()
+    const { renderer } = renderComposer({ ghostSuggestion: '继续排查导出失败', onAcceptGhost, onSubmit })
+
+    const preventDefault = keyDown(renderer, 'Tab')
+    expect(preventDefault).toHaveBeenCalled()
+    expect(onAcceptGhost).toHaveBeenCalledTimes(1)
+    expect(onSubmit).not.toHaveBeenCalled()
+  })
+
+  it('accepts with Enter by filling without submitting', () => {
+    const onAcceptGhost = vi.fn()
+    const onSubmit = vi.fn()
+    const { renderer } = renderComposer({ ghostSuggestion: '继续排查导出失败', onAcceptGhost, onSubmit })
+
+    const preventDefault = keyDown(renderer, 'Enter')
+    expect(preventDefault).toHaveBeenCalled()
+    expect(onAcceptGhost).toHaveBeenCalledTimes(1)
+    expect(onSubmit).not.toHaveBeenCalled()
+  })
+
+  it('dismisses on Escape', () => {
+    const onDismissGhost = vi.fn()
+    const { renderer } = renderComposer({ ghostSuggestion: '继续排查导出失败', onDismissGhost })
+
+    const preventDefault = keyDown(renderer, 'Escape')
+    expect(preventDefault).toHaveBeenCalled()
+    expect(onDismissGhost).toHaveBeenCalledTimes(1)
+  })
+
+  it('stays out of the way once the draft has content: Enter submits normally', () => {
+    const onAcceptGhost = vi.fn()
+    const onSubmit = vi.fn()
+    const { renderer } = renderComposer({
+      ghostSuggestion: '继续排查导出失败',
+      value: '我自己已经打了字',
+      onAcceptGhost,
+      onSubmit,
+    })
+
+    const textarea = renderer.root.findByProps({ 'aria-label': '桌面 AI 工作台输入框' })
+    expect(textarea.props.placeholder).not.toBe('继续排查导出失败')
+
+    keyDown(renderer, 'Enter')
+    expect(onAcceptGhost).not.toHaveBeenCalled()
+    expect(onSubmit).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not accept an IME confirmation Enter as a ghost acceptance', () => {
+    const onAcceptGhost = vi.fn()
+    const { renderer } = renderComposer({ ghostSuggestion: '继续排查导出失败', onAcceptGhost })
+    const textarea = renderer.root.findByProps({ 'aria-label': '桌面 AI 工作台输入框' })
+    const preventDefault = vi.fn()
+
+    act(() => textarea.props.onCompositionStart())
+    act(() => textarea.props.onKeyDown({
+      key: 'Enter',
+      shiftKey: false,
+      preventDefault,
+      nativeEvent: { isComposing: true, keyCode: 229 },
+    }))
+
+    expect(preventDefault).not.toHaveBeenCalled()
+    expect(onAcceptGhost).not.toHaveBeenCalled()
+  })
+})

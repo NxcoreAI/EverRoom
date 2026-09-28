@@ -251,6 +251,33 @@ export class AgentGatewayBridge {
     })
   }
 
+  suggestConversationPrompt(input: {
+    sessionId: string | null
+    pageLabel?: string
+    roomTitle: string | null
+    messages: Array<{ role: 'user' | 'assistant'; text: string }>
+    language?: string
+  }): Promise<{ suggestion: string }> {
+    return this.request('/v1/processing/conversation-suggestion', {
+      method: 'POST',
+      data: input,
+      timeout: 15_000,
+    })
+  }
+
+  suggestStarterPrompts(input: {
+    pageLabel?: string
+    roomTitle: string | null
+    recentSessions: Array<{ title: string | null; updatedAt: string }>
+    language?: string
+  }): Promise<{ prompts: string[] }> {
+    return this.request('/v1/processing/starter-prompts', {
+      method: 'POST',
+      data: input,
+      timeout: 20_000,
+    })
+  }
+
   subscribe(contents: WebContents, sessionId: string): void {
     this.unsubscribe(contents.id)
     const subscription: Subscription = {

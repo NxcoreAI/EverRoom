@@ -1217,6 +1217,19 @@ export interface NxcoreDesktopApi {
       assistantText: string
       language?: string
     }): Promise<{ title: string }>
+    suggestConversationPrompt(input: {
+      sessionId: string | null
+      pageLabel?: string
+      roomTitle: string | null
+      messages: Array<{ role: 'user' | 'assistant'; text: string }>
+      language?: string
+    }): Promise<{ suggestion: string }>
+    suggestStarterPrompts(input: {
+      pageLabel?: string
+      roomTitle: string | null
+      recentSessions: Array<{ title: string | null; updatedAt: string }>
+      language?: string
+    }): Promise<{ prompts: string[] }>
     deleteSession(sessionId: string): Promise<void>
     getSession(sessionId: string): Promise<AgentSessionSnapshot>
     getEvents(sessionId: string, runId: string, afterSeq: number): Promise<AgentEvent[]>
