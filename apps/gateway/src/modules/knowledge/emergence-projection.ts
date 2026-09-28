@@ -23,6 +23,16 @@ export const WANDER_MIN_DEPTH = 2;
 export const WANDER_MAX_DEPTH = 4;
 /** 同主题组在结果中的最大连续占比（PRD 7.5：同一主题连续不超过三个）。 */
 export const SAME_GROUP_MAX = 3;
+/** 终点内容价值（与渲染层 walkModel 的 TYPE_BASE 同口径）：事实是硬通货，
+ *  实体是通往事实簇的门，文档/Room 桥是死重末梢。 */
+export const WANDER_TYPE_VALUE: Record<ProjectionGraphNode["nodeType"], number> = {
+  fact: 1.0,
+  entity: 0.75,
+  wikiPage: 0.65,
+  memory: 0.6,
+  document: 0.55,
+  room: 0.45,
+};
 
 export type EmergenceCardKind =
   | "evidence"
@@ -439,7 +449,9 @@ export function buildWanderProjection(input: {
     frontier = nextShuffled.slice(0, PER_LAYER_MAX * 2);
   }
 
-  // 终点候选：深度 ≥2（一跳太直白），按桥接/新颖/跨范围/距离打分
+  // 终点候选：深度 ≥2（一跳太直白），内容价值为主排序。旧打分让跨 Room
+  // 身份碾压内容（外来实体 0.97 vs 自家事实 0.63），切片里根本没有事实可走，
+  // 漫游自然没干货——跨 Room 保留为小幅新颖加成，不再一票定身价。
   const startRoom = input.graph.nodes.get(input.startNode.id)?.roomRef?.id ?? null;
   const typeSeen = new Map<string, number>();
   const candidates = [...reached.values()]
@@ -447,13 +459,12 @@ export function buildWanderProjection(input: {
     .map((state) => {
       const node = input.graph.nodes.get(state.nodeRef);
       if (!node) return null;
-      const bridge = (node.roomRef && node.roomRef.id !== startRoom ? 0.5 : 0)
-        + (node.nodeType !== input.startNode.nodeType ? 0.5 : 0);
+      const content = WANDER_TYPE_VALUE[node.nodeType] ?? 0.5;
+      const crossRoom = node.roomRef && node.roomRef.id !== startRoom ? 1 : 0;
       const novelty = 1 / (1 + (typeSeen.get(node.nodeType) ?? 0));
       typeSeen.set(node.nodeType, (typeSeen.get(node.nodeType) ?? 0) + 1);
-      const crossScope = node.roomRef && node.roomRef.id !== startRoom ? 1 : 0;
       const distance = state.depth >= WANDER_MIN_DEPTH && state.depth <= WANDER_MAX_DEPTH ? 1 : 0.5;
-      const score = 0.3 * bridge + 0.25 * novelty + 0.2 * crossScope + 0.15 * distance + 0.1 * (0.5 + random() * 0.5);
+      const score = 0.6 * content + 0.1 * crossRoom + 0.15 * novelty + 0.1 * distance + 0.05 * (0.5 + random() * 0.5);
       return { state, node, score };
     })
     .filter((item): item is NonNullable<typeof item> => item !== null)

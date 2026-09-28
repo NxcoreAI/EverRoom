@@ -44,6 +44,9 @@ const TYPE_BASE: Record<EmergenceNodeDto['nodeType'], number> = {
 
 type GraphSlice = Pick<EmergenceProjectionResultDto, 'nodes' | 'edges'>;
 
+/** confidence 契约是 [0,1]，历史数据/桥接边可能超界——评分前统一夹紧。 */
+const clamp01 = (value: number | null | undefined): number => Math.min(1, Math.max(0, value ?? 0.5));
+
 export function initialWalkLog(startRef: string): WalkStation[] {
   return [{ nodeRef: startRef, viaRelation: '', viaLevel: null, bridgeRoom: null }];
 }
@@ -82,7 +85,8 @@ interface FlipTarget {
 }
 
 /** 二级跳目标：事实站翻同一实体的其他事实（来路实体正是共同锚点，允许已访问）；
- *  实体站借共同事实跳到共现实体——跳的标签就是那条事实，相关性自带解释。 */
+ *  实体站借共同事实跳到共现实体——跳的标签就是那条事实，相关性自带解释；
+ *  Room 站直达自挂实体的最优事实（room→实体→事实两跳），干货第一站就露面。 */
 function flipTargetsOf(
   result: GraphSlice,
   nodeOf: Map<string, EmergenceNodeDto>,
@@ -124,6 +128,18 @@ function flipTargetsOf(
         add(coEntity, factLabel);
       }
     }
+  } else if (node.nodeType === 'room') {
+    for (const edge of result.edges) {
+      const entityRef = otherEnd(edge, fromRef);
+      if (!entityRef || nodeOf.get(entityRef)?.nodeType !== 'entity') continue;
+      const entityLabel = nodeOf.get(entityRef)!.label;
+      for (const second of result.edges) {
+        const fact = otherEnd(second, entityRef);
+        if (!fact || fact === fromRef) continue;
+        if (nodeOf.get(fact)?.nodeType !== 'fact') continue;
+        add(fact, entityLabel);
+      }
+    }
   }
   return out;
 }
@@ -152,7 +168,7 @@ export function nextHops(result: GraphSlice, roomId: string, log: WalkStation[],
   const factConfidenceOf = (ref: string): number => {
     for (const edge of result.edges) {
       if (edge.relationType !== '事实') continue;
-      if (edge.from === ref || edge.to === ref) return edge.confidence ?? 0.5;
+      if (edge.from === ref || edge.to === ref) return clamp01(edge.confidence);
     }
     return 0.5;
   };
@@ -181,7 +197,7 @@ export function nextHops(result: GraphSlice, roomId: string, log: WalkStation[],
     const cont = continuationOf(target);
     const bridgeRoomRef = node.roomRef && node.roomRef.id !== roomId ? node.roomRef : null;
     const score = (TYPE_BASE[node.nodeType] ?? 0.5)
-      + 0.5 * (edge.confidence ?? 0.5)
+      + 0.5 * clamp01(edge.confidence)
       + (0.25 * Math.min(cont, 3)) / 3
       + (STRUCTURAL_RELATIONS.has(edge.relationType) ? 0 : 0.35)
       + (bridgeRoomRef ? 0.3 * Math.min(densityOf(bridgeRoomRef.id) / 8, 1) : 0)

@@ -116,6 +116,41 @@ describe('nextHops · 事实翻面', () => {
     expect(hops[2].flip).toBe(true);
     expect(hops[2].viaRelation).toBe('f1');
   });
+
+  it('Room 站直达自挂实体的事实（两跳翻面），第一站就见到干货', () => {
+    const graph = {
+      nodes: [
+        node('r', { id: ROOM, title: '本Room' }, 'room'),
+        node('e', null, 'entity'), node('f1'), node('f2'),
+      ],
+      edges: [
+        edge('x1', 'r', 'e', '提及'),
+        edge('x2', 'e', 'f1', '事实', 0.9),
+        edge('x3', 'e', 'f2', '事实', 0.9),
+      ],
+    };
+    const hops = nextHops(graph, ROOM, initialWalkLog('r'));
+    expect(hops.map((h) => h.nodeRef)).toEqual(['f1', 'f2', 'e']);
+    expect(hops[0].flip).toBe(true);
+    expect(hops[0].viaRelation).toBe('e');
+    expect(hops[0].deadEnd).toBe(false);
+    expect(hops[2].flip).toBe(false);
+  });
+});
+
+describe('nextHops · 评分夹紧', () => {
+  it('confidence 超界（历史桥接分）被夹回 [0,1]，不再引爆排序', () => {
+    const graph = {
+      nodes: [node('a'), node('e1', null, 'entity'), node('f1')],
+      edges: [
+        edge('x1', 'a', 'e1', '提及', 22),
+        edge('x2', 'a', 'f1', '事实', 0.9),
+      ],
+    };
+    const hops = nextHops(graph, ROOM, initialWalkLog('a'));
+    expect(hops.map((h) => h.nodeRef)).toEqual(['f1', 'e1']);
+    expect(hops[1].score).toBeLessThan(2);
+  });
 });
 
 describe('nextHops · 通用约束', () => {

@@ -281,7 +281,9 @@ export class EmergenceService {
           });
         }
         const weight = edge.strength === "strong" ? 1.6 : edge.strength === "medium" ? 1.3 : 1;
-        link(roomRef, otherRef, edge.label ?? edge.type, "original", edge.score, weight);
+        // confidence 契约是 [0,1]：Room 关系分是无上限累加（提及 1.25/条），
+        // 按 strong≥4 饱和归一——否则下游按 confidence 加权时桥接压倒一切。
+        link(roomRef, otherRef, edge.label ?? edge.type, "original", Math.min(1, (edge.score ?? 0) / 4), weight);
         if (expanded.size >= MAX_NEIGHBOR_EXPAND_ROOMS || expanded.has(other)) continue;
         expanded.add(other);
         this.attachNeighborRoom(nodes, edges, other, nodeTitle.get(other)!, otherRef);
