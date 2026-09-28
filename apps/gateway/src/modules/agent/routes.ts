@@ -412,6 +412,36 @@ export function agentRoutes(
               ...(roomId ? { roomId } : {}),
             });
           }
+          // 引用/目标校验类：客户端组合出网关不支持的运行形态（如渠道会话里
+          // @ 其他 Agent 或引用其他对话）——语义错误用 422，而不是裸 500。
+          const referenceValidationErrors = new Map<string, [string, string]>([
+            ["referenced_conversation_requires_main_agent", [
+              "referenced_conversation_requires_main_agent",
+              "Referencing a conversation is only supported in main Agent sessions",
+            ]],
+            ["referenced_local_agent_requires_main_agent", [
+              "referenced_local_agent_requires_main_agent",
+              "Referencing local Agents is only supported in main Agent sessions",
+            ]],
+            ["agent_conversation_context_conflict", [
+              "conversation_context_conflict",
+              "Conversation references and external conversations cannot be combined",
+            ]],
+            ["referenced_local_agent_target_mismatch", [
+              "referenced_local_agent_target_mismatch",
+              "Referenced local Agents and invocation targets do not match",
+            ]],
+            ["local_agent_target_invalid", [
+              "local_agent_target_invalid",
+              "The requested local Agent target is invalid for this run",
+            ]],
+          ]);
+          const mappedReferenceError = error instanceof Error
+            ? referenceValidationErrors.get(error.message)
+            : undefined;
+          if (mappedReferenceError) {
+            return reply.code(422).send({ error: mappedReferenceError[0], message: mappedReferenceError[1] });
+          }
           throw error;
         }
       },

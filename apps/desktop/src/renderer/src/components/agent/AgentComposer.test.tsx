@@ -249,6 +249,21 @@ describe('AgentComposer external conversation command', () => {
     act(() => renderer.unmount())
   })
 
+  it('offers no agent or conversation mentions while a CLI channel is active', () => {
+    let renderer!: TestRenderer.ReactTestRenderer
+    act(() => {
+      renderer = TestRenderer.create(
+        <TypingComposer overrides={{ channelAgentId: 'claude:/usr/local/bin/claude' }} />,
+      )
+    })
+
+    // 渠道会话：@ Agent 与对话引用是主代理专属（网关会拒），@ 弹层不提供这些组。
+    typeInto(renderer, '@')
+    expect(renderer.root.findAllByProps({ role: 'option' })).toHaveLength(0)
+    expect(renderer.root.findAllByProps({ 'aria-label': '点名 Agent' })).toHaveLength(0)
+    act(() => renderer.unmount())
+  })
+
   it('supports mentioning several agents in one draft and resolves them on submit', () => {
     const onSubmit = vi.fn()
     let renderer!: TestRenderer.ReactTestRenderer

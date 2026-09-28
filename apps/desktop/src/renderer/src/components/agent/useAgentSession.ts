@@ -977,7 +977,9 @@ export function useAgentSession(
       authorAgentId: null,
       content: message,
       createdAt: new Date().toISOString(),
-      ...(mentionedAgents?.length ? { referencedAgentNames: mentionedAgents.map((agent) => agent.displayName) } : {}),
+      ...(mentionedAgents?.length && !channelAgentRef.current
+        ? { referencedAgentNames: mentionedAgents.map((agent) => agent.displayName) }
+        : {}),
       ...(mentions?.length ? { mentions } : {}),
     }
 
@@ -988,6 +990,7 @@ export function useAgentSession(
       const currentSessionId = await ensureSession([optimisticMessage])
       // 渠道会话整段锁定在本机 CLI Agent：每轮显式带 targetAgentId，
       // 桌面端 main 才会走 localAgent 重建（沙箱与工作区授权链路）。
+      const channelLocked = Boolean(channelAgentRef.current)
       const selectedAgentId = targetAgentId ?? channelAgentRef.current ?? 'main'
       setMessages((current) => current.map((item) => item.id === optimisticId
         ? { ...item, sessionId: currentSessionId }
@@ -1002,7 +1005,19 @@ export function useAgentSession(
         ...(replaceRunId ? { replaceRunId } : {}),
         responseLanguage: locale,
         ...(effectiveMemoryScope ? { memoryScope: effectiveMemoryScope } : {}),
-        context: buildAgentRunContext(rooms, selectedText, selectedRoomId, activeDocument, pageLabel, attachments, referencedConversationId, mentionedAgents?.map((agent) => agent.id)),
+        // 渠道会话下 @ 其他 Agent / 引用对话是主代理专属能力，网关会拒
+        // （referenced_*_requires_main_agent）；UI 已隐藏入口，这里兜底剥离，
+        // 覆盖重试、外部注入等绕过输入框的路径。
+        context: buildAgentRunContext(
+          rooms,
+          selectedText,
+          selectedRoomId,
+          activeDocument,
+          pageLabel,
+          attachments,
+          channelLocked ? undefined : referencedConversationId,
+          channelLocked ? undefined : mentionedAgents?.map((agent) => agent.id),
+        ),
       })
       const runAgentId = run.agentId ?? selectedAgentId
       setMemoryScopeByRun((current) => current[run.id] === (effectiveMemoryScope ?? 'global')

@@ -540,7 +540,10 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   const callableLocalAgents = localAgents.filter((agent) => agent.invocationSupported && agent.callable)
   const agentQueryNormalized = mentionQuery.trim().toLocaleLowerCase()
   const matchesQuery = (haystack: string) => !agentQueryNormalized || haystack.toLocaleLowerCase().includes(agentQueryNormalized)
-  const filteredAgentItems = agentQueryNormalized
+  // 渠道会话锁定在本机 CLI Agent：@ 其他 Agent / 引用其他对话是主代理专属能力
+  // （网关 referenced_*_requires_main_agent），渠道模式下整组不提供。
+  const channelLocked = Boolean(channelAgentId)
+  const filteredAgentItems = channelLocked ? [] : agentQueryNormalized
     ? callableLocalAgents.filter((item) => item.displayName.toLocaleLowerCase().includes(agentQueryNormalized)
       || item.id.toLocaleLowerCase().includes(agentQueryNormalized)
       || item.provider.toLocaleLowerCase().includes(agentQueryNormalized))
@@ -550,7 +553,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   // 查询词与当前服务端检索一致时，导入条目已按 FTS 命中（含消息正文），
   // 不再做客户端标题过滤以免误杀；应用自有会话仍走客户端过滤。
   const conversationQueryServerFiltered = conversationServerQuery !== '' && conversationServerQuery === mentionQuery.trim()
-  const filteredConversationItems = mentionConversations.filter((conversation) => {
+  const filteredConversationItems = channelLocked ? [] : mentionConversations.filter((conversation) => {
     if (conversationQueryServerFiltered && conversation.provider !== 'everroom') return true
     return matchesQuery(conversation.title ?? '')
       || matchesQuery(conversation.provider)
