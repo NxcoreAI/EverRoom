@@ -228,16 +228,17 @@ describe('MemoryPane applied entities', () => {
       )
     })
 
-    // 实体详情：关联事实区块列出按 entityId 命中的事实（应用事实节点 label = type）。
+    // 实体详情：关联事实区块列出按 entityId 命中的事实（应用事实节点 label = 内容主题，
+    // 与详情行同串：mock 画布按钮 + 关联事实行各计一次）。
     await clickNode(renderer!, '林薇')
     expect(textNodes(renderer!, '关联事实')).toHaveLength(1)
-    expect(textNodes(renderer!, '林薇负责 V1 视觉设计')).toHaveLength(1)
+    expect(textNodes(renderer!, '林薇负责 V1 视觉设计')).toHaveLength(2)
 
     // 选中应用事实节点：内容 + 来源；应用事实只读，不出现「禁用」入口。
     // （meta「2 个来源陈述」与区块头「来源」都含“来源”，不按该词计数。）
-    await clickNode(renderer!, '关系')
+    await clickNode(renderer!, '林薇负责 V1 视觉设计')
     expect(textNodes(renderer!, 'V1 项目结论')).toHaveLength(1)
-    expect(textNodes(renderer!, '林薇负责 V1 视觉设计')).toHaveLength(1)
+    expect(textNodes(renderer!, '林薇负责 V1 视觉设计')).toHaveLength(2)
     expect(renderer!.root.findAllByProps({ className: 'context-room-ghost' })).toHaveLength(0)
   })
 
