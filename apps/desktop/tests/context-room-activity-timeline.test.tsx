@@ -1,4 +1,5 @@
 import TestRenderer, { act } from 'react-test-renderer'
+import React from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('../src/renderer/src/i18n/LocaleContext', async (importOriginal) => {
@@ -15,6 +16,22 @@ vi.mock('../src/renderer/src/i18n/LocaleContext', async (importOriginal) => {
 vi.mock('../src/renderer/src/components/context-room/ContextRoomStateProvider', () => ({
   useContextRoomState: () => ({ refreshFromBackend: vi.fn().mockResolvedValue(undefined) }),
 }))
+
+// FilterSelect 走 Radix DropdownMenu：react-test-renderer 环境无 DOM，透传成纯结构；
+// RadioItem 渲染为可点击 button（触发 onSelect），供筛选交互断言。
+vi.mock('@radix-ui/react-dropdown-menu', () => {
+  const passthrough = ({ children }: { children?: React.ReactNode }) => children ?? null
+  return {
+    Root: passthrough,
+    Trigger: ({ children }: { children?: React.ReactNode }) => children ?? null,
+    Portal: passthrough,
+    Content: passthrough,
+    RadioGroup: passthrough,
+    RadioItem: ({ children, onSelect }: { children?: React.ReactNode; onSelect?: () => void }) => (
+      <button type="button" onClick={() => onSelect?.()}>{children}</button>
+    ),
+  }
+})
 
 import type { RoomDocument, RoomOverviewProjection } from '@nxcore/agent-contract'
 
@@ -281,17 +298,17 @@ describe('动态时间轴：排序与真实对象条目', () => {
 
   it('对象类型筛选：只保留所选类别的条目', async () => {
     const { renderer } = await renderWithProjection()
-    const chipWithText = (text: string) => renderer.root.findAllByType('button')
-      .filter((button) => button.props['aria-pressed'] !== undefined)
+    // FilterSelect：筛选选项以 RadioItem（mock 成 button）呈现，点击触发 onSelect。
+    const optionWithText = (text: string) => renderer.root.findAllByType('button')
       .find((button) => {
         const children = Array.isArray(button.props.children) ? button.props.children : [button.props.children]
         return children.some((child) => typeof child === 'string' && child.includes(text))
       })
-    expect(chipWithText('全部')).toBeTruthy()
-    const meetingChip = chipWithText('会议')
-    expect(meetingChip).toBeTruthy()
+    expect(optionWithText('全部')).toBeTruthy()
+    const meetingOption = optionWithText('会议')
+    expect(meetingOption).toBeTruthy()
     await act(async () => {
-      meetingChip!.props.onClick()
+      meetingOption!.props.onClick()
     })
     const items = renderer.root.findAllByType('li')
     expect(items.map((node) => node.findByType('b').children[0])).toEqual(['发布评审', '明天对齐会'])

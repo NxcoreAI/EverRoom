@@ -57,6 +57,7 @@ import { createDocumentImportPiTools } from "../modules/documents/import/tools.j
 import {
   createAgentResolver,
   createDocumentOverviewRuntime,
+  createConversationSuggestionRuntime,
   createIngestFilterAgentRuntime,
   createIndexBackfillRuntime,
   createImportClassifierRuntime,
@@ -129,6 +130,7 @@ import { RouteMindmapService } from "../modules/knowledge/route-mindmap-service.
 import { routeMindmapRoutes } from "../modules/knowledge/route-mindmap-routes.js";
 import { nangoConnectorRoutes } from "@nxcore/connectors-module/routes.js";
 import { purgeConnectorConnectionCascade } from "../modules/connectors/connection-purge.js";
+import { ConversationSuggestionService } from "../modules/processing/conversation-suggestion.js";
 import { processingRoutes } from "../modules/processing/routes.js";
 import { SessionTitleService } from "../modules/processing/session-title.js";
 import { TranscriptionSummaryService } from "../modules/processing/service.js";
@@ -204,6 +206,7 @@ function applyRuntimeConfig(config: GatewayConfig, runtime: RuntimeConfig): void
   };
   apply(config.pi as unknown as Record<string, unknown> | null, runtime.primary);
   apply(config.backgroundPi as unknown as Record<string, unknown> | null, runtime.background);
+  apply(config.transcriptionSummaryPi as unknown as Record<string, unknown> | null, runtime.transcriptionSummary);
   apply(config.litePi as unknown as Record<string, unknown> | null, runtime.lite);
   apply(config.cursorCompletionPi as unknown as Record<string, unknown> | null, runtime.cursorCompletion);
   // background/cursorCompletion 对齐 env 构建语义（config.ts 的 {...pi} 拷贝）：
@@ -211,6 +214,7 @@ function applyRuntimeConfig(config: GatewayConfig, runtime: RuntimeConfig): void
   // 继承 primary——否则 patch 永远凑不齐 isPiRuntimeConfigured，后台转写总结
   // runtime 一直停留在未配置占位，任务永远 runtime_config_not_ready。
   inheritPrimaryDefaults(config.pi, config.backgroundPi);
+  inheritPrimaryDefaults(config.pi, config.transcriptionSummaryPi);
   inheritPrimaryDefaults(config.pi, config.cursorCompletionPi);
   // lite 档连接三要素（provider/baseUrl/apiKey）缺省继承 primary，但 model
   // 不继承——model 空＝未配置 lite＝档位隐藏，回落主模型会冒充轻量档。
@@ -971,15 +975,22 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   );
   // 提前实例化：主 Agent 的 local_agent_dispatch 工具（@ 点名本机 Agent）需要闭包它。
   // MCP 注入仅限渠道锁定会话（activeAgentId 非内置档位）；@ 点名派发的子任务
-  // 走最小材料模型，不开放 EverRoom 工具。
-  const localAgentRuntimeRegistry = new LocalAgentRuntimeRegistry(async (input) => {
+  // 走最小材料模型，不开放 EverRoom 工具。人工审批与 MCP 注入同一判据：
+  // 渠道会话的 CLI 工具权限走 UI 审批，派发子任务维持 mutationAllowed 自动应答。
+  const isChannelAgentSession = (sessionId: string): boolean => {
     const session = db.select({ activeAgentId: agentSessions.activeAgentId })
       .from(agentSessions)
-      .where(eq(agentSessions.id, input.sessionId))
+      .where(eq(agentSessions.id, sessionId))
       .get();
-    if (!session || !channelAgentIdFromAgentId(session.activeAgentId)) return [];
-    return channelMcpHost.mcpServersForRun(input);
-  });
+    return Boolean(session && channelAgentIdFromAgentId(session.activeAgentId));
+  };
+  const localAgentRuntimeRegistry = new LocalAgentRuntimeRegistry(
+    async (input) => {
+      if (!isChannelAgentSession(input.sessionId)) return [];
+      return channelMcpHost.mcpServersForRun(input);
+    },
+    (input) => isChannelAgentSession(input.sessionId),
+  );
   const localAgentDispatchStore = new LocalAgentDispatchStore(db);
   // dispatch 工具先于 AgentService 构建，run 级分发来源用晚绑定引用接线。
   const localAgentDispatchSourceRef: { current: ((runId: string) => LocalAgentDispatchSource | undefined) | null } = {
@@ -1150,6 +1161,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   );
   const transcriptionSummaryService = new TranscriptionSummaryService(backgroundAgentRuntime, false);
   const sessionTitleService = new SessionTitleService(createSessionTitleRuntime(config));
+  const conversationSuggestionService = new ConversationSuggestionService(createConversationSuggestionRuntime(config));
   let asrProvider = Object.hasOwn(overrides, "asrProvider")
     ? overrides.asrProvider ?? null
     : createAsrProvider(config, app.log);
@@ -1660,6 +1672,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     documentOverviewRuntime = createDocumentOverviewRuntime(config);
     importRoomClassifier.replaceRuntime(createImportClassifierRuntime(config));
     sessionTitleService.replaceRuntime(createSessionTitleRuntime(config));
+    conversationSuggestionService.replaceRuntime(createConversationSuggestionRuntime(config));
     versionSummaryRuntime = createWritingStyleRuntime(config);
     writingStyleRuntime = createWritingStyleRuntime(config);
     writingStyleService.replaceLlm(writingStyleRuntime ? new WritingStyleLlm(writingStyleRuntime) : null);
@@ -1813,7 +1826,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     filterRulesStore,
     filterInsightJob ? () => filterInsightJob!.refreshNow() : null,
   ));
-  await app.register(processingRoutes(transcriptionSummaryService, sessionTitleService));
+  await app.register(processingRoutes(transcriptionSummaryService, sessionTitleService, conversationSuggestionService));
   await app.register(realityRoutes(realityService));
   await app.register(perceptionRoutes(perceptionService));
   await app.register(diaryRoutes(diaryService));

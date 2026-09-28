@@ -151,6 +151,38 @@ describe("buildWanderProjection", () => {
     });
     expect(result.cards.length).toBeLessThanOrEqual(SAME_GROUP_MAX);
   });
+
+  it("内容价值优先：自家事实排在外来实体之前，且事实带着挂载边进切片", () => {
+    const home = { id: "room-1", title: "Room 根" };
+    const foreign = { id: "room-2", title: "外Room" };
+    const nodes = [
+      node("room:1", { nodeType: "room", label: "Room 根", roomRef: home }),
+      node("entity:e1", { roomRef: home }),
+      node("fact:f1", { nodeType: "fact", roomRef: home }),
+      node("room:2", { nodeType: "room", label: "外Room", roomRef: foreign }),
+      node("entity:fe1", { roomRef: foreign }),
+    ];
+    const edges = [
+      { from: "room:1", to: "entity:e1" },
+      { from: "entity:e1", to: "fact:f1" },
+      { from: "room:1", to: "room:2" },
+      { from: "room:2", to: "entity:fe1" },
+    ];
+    const result = buildWanderProjection({
+      startNode: node("room:1", { nodeType: "room", label: "Room 根", roomRef: home }) as EmergenceNode,
+      graph: graph(nodes, edges),
+      seed: 11,
+      cardsLimit: 5,
+      requestVersion: 1,
+      generatedAt: GENERATED_AT,
+    });
+    expect(result.cards.map((card) => card.nodeRef)).toEqual(["fact:f1", "entity:fe1"]);
+    // 事实作为卡进切片，实体作为路径中间节点连带进来——渲染层才有得走
+    expect(result.nodes.map((item) => item.id)).toContain("entity:e1");
+    expect(result.edges.some((edge) =>
+      (edge.from === "entity:e1" && edge.to === "fact:f1")
+      || (edge.from === "fact:f1" && edge.to === "entity:e1"))).toBe(true);
+  });
 });
 
 describe("attachRoomContent", () => {

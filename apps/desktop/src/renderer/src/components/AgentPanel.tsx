@@ -33,6 +33,11 @@ import {
 } from '@/components/context-room/roomOverviewChange'
 import { recordRoomOverviewDiagnostic } from '@/components/context-room/roomOverviewDiagnostics'
 import { useContextRoomState } from '@/components/context-room/ContextRoomStateProvider'
+import {
+  loadConversationSuggestionSettings,
+  onConversationSuggestionSettingsChanged,
+  type ConversationSuggestionSettings,
+} from '@/state/conversationSuggestionSettings'
 import type { PageId } from '@/data/navigation'
 import { useLocale } from '@/i18n/LocaleContext'
 import { showToast } from '@/state/toast'
@@ -136,6 +141,85 @@ export function AgentPanel({
   const citationPrompt = buildRoomOverviewCitationPrompt(roomCitations, locale)
   const session = useAgentSession(pageLabel, roomId, rooms)
   const agentAvailable = Boolean(window.nxcore?.agent)
+
+  const [conversationSuggestionSettings, setConversationSuggestionSettings] =
+    useState<ConversationSuggestionSettings>(loadConversationSuggestionSettings)
+  const [composerSuggestion, setComposerSuggestion] = useState<string | null>(null)
+  const [starterPrompts, setStarterPrompts] = useState<string[] | null>(null)
+  // 同一对话快照只取一次；Esc 丢弃后该快照不再出现建议。
+  const ghostContextKeyRef = useRef<string | null>(null)
+  const ghostDismissedKeyRef = useRef<string | null>(null)
+  const starterPromptsCacheRef = useRef<{ key: string; prompts: string[]; at: number } | null>(null)
+  useEffect(() => onConversationSuggestionSettingsChanged(setConversationSuggestionSettings), [])
+
+  const lastMessage = session.messages.length ? session.messages[session.messages.length - 1] : null
+  const ghostContextKey = `${session.sessionId ?? 'draft'}:${session.messages.length}:${lastMessage?.id ?? ''}`
+
+  useEffect(() => {
+    const api = window.nxcore?.agent
+    if (!api?.suggestConversationPrompt || !conversationSuggestionSettings.completionEnabled) {
+      setComposerSuggestion(null)
+      return
+    }
+    if (session.activeRunId || draft.trim() || session.messages.length === 0) {
+      setComposerSuggestion(null)
+      return
+    }
+    if (ghostDismissedKeyRef.current === ghostContextKey) return
+    if (ghostContextKeyRef.current === ghostContextKey) return
+    ghostContextKeyRef.current = ghostContextKey
+    const timer = window.setTimeout(() => {
+      const recent = session.messages
+        .filter((message) => message.role === 'user' || message.role === 'assistant')
+        .slice(-8)
+        .map((message) => ({ role: message.role as 'user' | 'assistant', text: message.content.slice(0, 4000) }))
+      if (recent.length === 0) return
+      api.suggestConversationPrompt({
+        sessionId: session.sessionId,
+        pageLabel,
+        roomTitle: roomFocusRoomTitle ?? null,
+        messages: recent,
+        language: locale,
+      })
+        .then(({ suggestion }) => {
+          if (suggestion?.trim()) setComposerSuggestion(suggestion)
+        })
+        .catch(() => undefined)
+    }, 400)
+    return () => { window.clearTimeout(timer) }
+  }, [conversationSuggestionSettings.completionEnabled, session.activeRunId, draft, session.messages, session.sessionId, ghostContextKey, pageLabel, roomFocusRoomTitle, locale])
+
+  // 新对话空态：按最近会话标题生成开场推荐（5 分钟 TTL 缓存，失败静默回退静态文案）。
+  const newConversationEmpty = session.scopeReady && session.messages.length === 0
+  useEffect(() => {
+    const api = window.nxcore?.agent
+    if (!api?.suggestStarterPrompts || !conversationSuggestionSettings.starterPromptsEnabled || !newConversationEmpty) return
+    const recentSessions = [...session.sessions]
+      .sort((a, b) => Date.parse(b.updatedAt ?? '') - Date.parse(a.updatedAt ?? ''))
+      .slice(0, 8)
+      .map((item) => ({ title: item.title, updatedAt: item.updatedAt }))
+    const key = `${pageLabel}|${roomId ?? ''}|${locale}|${roomFocusRoomTitle ?? ''}|${recentSessions.map((item) => item.title ?? '').join('/')}`
+    const cached = starterPromptsCacheRef.current
+    if (cached && cached.key === key && Date.now() - cached.at < 5 * 60_000) {
+      setStarterPrompts(cached.prompts)
+      return
+    }
+    let cancelled = false
+    api.suggestStarterPrompts({
+      pageLabel,
+      roomTitle: roomFocusRoomTitle ?? null,
+      recentSessions,
+      language: locale,
+    })
+      .then(({ prompts }) => {
+        if (cancelled || !prompts?.length) return
+        starterPromptsCacheRef.current = { key, prompts, at: Date.now() }
+        setStarterPrompts(prompts)
+      })
+      .catch(() => undefined)
+    return () => { cancelled = true }
+  }, [conversationSuggestionSettings.starterPromptsEnabled, newConversationEmpty, session.sessions, session.scopeReady, pageLabel, roomId, locale, roomFocusRoomTitle])
+
   const { activeDocument, prepareActiveDocumentRun } = useActiveDocument()
   const agentNamesById = useMemo(() => Object.fromEntries(
     localAgents.map((agent) => [agent.id, agent.displayName]),
@@ -166,6 +250,19 @@ export function AgentPanel({
     if (!focusRequest) return
     focusComposer(true)
   }, [focusRequest])
+
+  const acceptGhost = useCallback(() => {
+    setComposerSuggestion((current) => {
+      if (current?.trim()) setDraft(current)
+      return null
+    })
+    focusComposer()
+  }, [focusComposer])
+
+  const dismissGhost = useCallback(() => {
+    ghostDismissedKeyRef.current = ghostContextKey
+    setComposerSuggestion(null)
+  }, [ghostContextKey])
 
   useEffect(() => {
     void window.nxcore?.agent.discoverLocalAgents?.()
@@ -632,6 +729,9 @@ export function AgentPanel({
       channelAgentId={effectiveChannelAgentId}
       onSelectChannelAgent={session.setChannelAgentIdDefault}
       onOpenSettings={onNavigatePage ? () => onNavigatePage('settings') : undefined}
+      ghostSuggestion={composerSuggestion}
+      onAcceptGhost={acceptGhost}
+      onDismissGhost={dismissGhost}
       value={draft}
       active={Boolean(session.activeRunId)}
       loading={session.loading || submitting}
@@ -686,6 +786,7 @@ export function AgentPanel({
         composer={composer}
         currentSessionId={session.sessionId}
         scopeReady={session.scopeReady}
+        starterPrompts={newConversationEmpty ? starterPrompts : null}
         draftHasContent={Boolean(draft.trim())}
         error={session.error}
         loading={session.loading}

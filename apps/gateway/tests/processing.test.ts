@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { AgentRuntime, RuntimeEvent } from "@nxcore/agent-runtime";
+import { ConversationSuggestionService } from "../src/modules/processing/conversation-suggestion.js";
 import { SessionTitleService } from "../src/modules/processing/session-title.js";
 import { TranscriptionSummaryService } from "../src/modules/processing/service.js";
 
@@ -175,5 +176,70 @@ describe("SessionTitleService", () => {
       userText: "问个问题",
       assistantText: "回答",
     })).rejects.toThrow("title_runtime_unavailable");
+  });
+});
+
+describe("ConversationSuggestionService", () => {
+  it("suggests a composer prompt from recent messages and cleans up the runtime session", async () => {
+    const runtime = fakeRuntime("「继续讲讲导出失败的原因吧」");
+    const service = new ConversationSuggestionService(runtime);
+    const { suggestion } = await service.suggestComposerPrompt({
+      sessionId: "session-1",
+      pageLabel: "首页",
+      roomTitle: null,
+      messages: [
+        { role: "user", text: "帮我看看导出为什么失败" },
+        { role: "assistant", text: "看日志是磁盘空间不足。" },
+      ],
+      language: "zh-CN",
+    });
+    expect(suggestion).toBe("继续讲讲导出失败的原因吧");
+    expect(runtime.start).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: "conversation-suggestion:composer:session-1",
+      pageLabel: "对话建议",
+      roomId: null,
+      captureMemory: false,
+      recallMemory: false,
+      toolsEnabled: false,
+    }));
+    const prompt = (runtime.start as ReturnType<typeof vi.fn>).mock.calls[0]![0].prompt as string;
+    expect(prompt).toContain("<user>");
+    expect(prompt).toContain("帮我看看导出为什么失败");
+    expect(prompt).toContain("<assistant>");
+    expect(prompt).toContain("输出语言：zh-CN");
+    expect(runtime.deleteSession).toHaveBeenCalledWith("/tmp/title-session");
+  });
+
+  it("returns up to three normalized starter prompts from recent session titles", async () => {
+    const runtime = fakeRuntime("1. 「跟进导出失败」\n2. \"整理上周周会\"\n3. 检查部署日志。\n4. 多余的一条");
+    const service = new ConversationSuggestionService(runtime);
+    const { prompts } = await service.suggestStarterPrompts({
+      pageLabel: undefined,
+      roomTitle: "写作房间",
+      recentSessions: [
+        { title: "导出失败排查", updatedAt: "2026-09-28T10:00:00.000Z" },
+        { title: null, updatedAt: "2026-09-27T10:00:00.000Z" },
+        { title: "周会纪要", updatedAt: "2026-09-26T10:00:00.000Z" },
+      ],
+      language: "zh-CN",
+    });
+    expect(prompts).toEqual(["跟进导出失败", "整理上周周会", "检查部署日志"]);
+    const prompt = (runtime.start as ReturnType<typeof vi.fn>).mock.calls[0]![0].prompt as string;
+    expect(prompt).toContain("当前房间：写作房间");
+    expect(prompt).toContain("导出失败排查");
+    expect(prompt).toContain("周会纪要");
+  });
+
+  it("throws when runtime is unavailable", async () => {
+    const service = new ConversationSuggestionService(null);
+    await expect(service.suggestComposerPrompt({
+      sessionId: null,
+      roomTitle: null,
+      messages: [{ role: "user", text: "问个问题" }],
+    })).rejects.toThrow("suggestion_runtime_unavailable");
+    await expect(service.suggestStarterPrompts({
+      roomTitle: null,
+      recentSessions: [],
+    })).rejects.toThrow("suggestion_runtime_unavailable");
   });
 });

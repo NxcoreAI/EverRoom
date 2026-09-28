@@ -27,6 +27,10 @@ vi.mock('@radix-ui/react-dropdown-menu', () => {
     Item: ({ children, onSelect }: { children?: ReactNode; onSelect?: () => void }) => (
       <button type="button" onClick={onSelect}>{children}</button>
     ),
+    RadioGroup: passthrough,
+    RadioItem: ({ children, onSelect }: { children?: ReactNode; onSelect?: () => void }) => (
+      <button type="button" onClick={() => onSelect?.()}>{children}</button>
+    ),
   }
 })
 

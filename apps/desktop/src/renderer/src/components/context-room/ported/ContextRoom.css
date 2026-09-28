@@ -3852,56 +3852,115 @@
   border-bottom: 1px solid var(--cr-border);
 }
 
-/* 统一下拉筛选（FilterSelect）：胶囊外观 + 右侧箭头；选中非默认值转蓝。 */
+/* 统一下拉筛选（FilterSelect）：胶囊触发器 + 自绘菜单；选中非默认值转蓝。 */
 .context-room-filter-select {
-  position: relative;
   display: inline-flex;
-  align-items: center;
-}
-
-.context-room-filter-select select {
-  appearance: none;
-  max-width: 160px;
+  max-width: 180px;
   height: 26px;
-  padding: 0 26px 0 12px;
+  align-items: center;
+  gap: 5px;
+  padding: 0 9px 0 12px;
   border: 1px solid var(--cr-border);
   border-radius: 999px;
   background: var(--cr-surface);
   color: var(--cr-muted);
   font-size: 11px;
   font-family: inherit;
+  white-space: nowrap;
   cursor: pointer;
-  text-overflow: ellipsis;
   transition: border-color 0.15s ease, color 0.15s ease;
 }
 
-.context-room-filter-select select:hover {
+.context-room-filter-select:hover {
   border-color: var(--cr-border-strong);
   color: var(--cr-text);
 }
 
-.context-room-filter-select select:focus-visible {
+.context-room-filter-select:focus-visible {
   border-color: var(--cr-blue);
   outline: none;
 }
 
-.context-room-filter-select[data-active] select {
+.context-room-filter-select[data-active] {
   border-color: var(--cr-blue);
   color: var(--cr-blue);
   background: color-mix(in srgb, var(--cr-blue) 10%, transparent);
 }
 
 .context-room-filter-select svg {
-  position: absolute;
-  right: 9px;
+  flex: none;
   width: 12px;
   height: 12px;
   color: var(--cr-tertiary);
-  pointer-events: none;
+}
+
+.context-room-filter-select .context-room-filter-select-value {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
 }
 
 .context-room-filter-select[data-active] svg {
   color: var(--cr-blue);
+}
+
+/* 下拉菜单弹层：与卡片菜单同底（card-menu 提供白底/阴影/变量域），补齐布局与选中态。 */
+.context-room-filter-menu {
+  --cr-blue: #3d6ff6;
+  min-width: 136px;
+  padding: 5px;
+  border: 1px solid var(--cr-border, #e5e7eb);
+  border-radius: 10px;
+  animation: context-room-filter-menu-in 0.16s ease;
+}
+
+.context-room-filter-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: transparent;
+  color: #1f1f1f;
+  font-size: 12px;
+  cursor: pointer;
+  outline: none;
+  user-select: none;
+}
+
+.context-room-filter-menu-item[data-highlighted] {
+  background: #f1f2f3;
+}
+
+.context-room-filter-menu-item[data-state='checked'] {
+  color: #111827;
+  font-weight: 500;
+}
+
+.context-room-filter-menu-check {
+  display: inline-flex;
+  flex: none;
+  width: 14px;
+  height: 14px;
+  align-items: center;
+  justify-content: center;
+  color: var(--cr-blue);
+}
+
+.context-room-filter-menu-check svg {
+  width: 13px;
+  height: 13px;
+}
+
+@keyframes context-room-filter-menu-in {
+  from { opacity: 0; transform: translateY(-3px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .context-room-filter-menu {
+    animation: none;
+  }
 }
 
 .context-room-artifact-new {
@@ -14025,54 +14084,6 @@
   justify-content: space-between;
   gap: 8px;
   flex-wrap: wrap;
-}
-
-.context-room-activity-filters > div {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-
-.context-room-activity-filters > div button {
-  padding: 3px 9px;
-  border: 1px solid var(--cr-border);
-  border-radius: 999px;
-  color: var(--cr-muted);
-  font-size: 11px;
-}
-
-.context-room-activity-filters > div button:hover {
-  border-color: var(--cr-border-strong);
-  color: var(--cr-text);
-}
-
-.context-room-activity-filters > div button[aria-pressed='true'] {
-  border-color: var(--cr-blue);
-  color: var(--cr-blue);
-  background: color-mix(in srgb, var(--cr-blue) 10%, transparent);
-}
-
-.context-room-activity-person {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  color: var(--cr-tertiary);
-  font-size: 11px;
-}
-
-.context-room-activity-person svg {
-  width: 12px;
-  height: 12px;
-}
-
-.context-room-activity-person select {
-  max-width: 140px;
-  padding: 3px 6px;
-  border: 1px solid var(--cr-border);
-  border-radius: 6px;
-  background: var(--cr-surface);
-  color: var(--cr-text);
-  font-size: 11px;
 }
 
 .context-room-activity-list {

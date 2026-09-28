@@ -375,6 +375,7 @@ export function AgentChatView({
   resolvingApprovalIds = new Set<string>(),
   scopeReady,
   sessionLinks,
+  starterPrompts = null,
   submitting,
   toolCallsByRun,
 }: {
@@ -413,6 +414,8 @@ export function AgentChatView({
   resolvingApprovalIds?: ReadonlySet<string>
   scopeReady: boolean
   sessionLinks: AgentSessionLink[]
+  /** 按最近活动生成的动态开场推荐；null/空时回退静态 quickPrompts。 */
+  starterPrompts?: string[] | null
   submitting: boolean
   toolCallsByRun: Record<string, DisplayAgentToolCall[]>
 }) {
@@ -1021,9 +1024,13 @@ export function AgentChatView({
       </div>
       {composer}
       <div className="agent-chat-quick-prompts" aria-label={t('surface:agentChat.suggestedPrompts')} aria-hidden={!quickPromptsReady}>
-        {quickPrompts.map(([label, prompt]) => (
-          <button key={label} type="button" onClick={() => onSelectPrompt(t(prompt))}>{t(label)}</button>
-        ))}
+        {starterPrompts?.length
+          ? starterPrompts.map((prompt) => (
+            <button key={prompt} type="button" onClick={() => onSelectPrompt(prompt)}>{prompt}</button>
+          ))
+          : quickPrompts.map(([label, prompt]) => (
+            <button key={label} type="button" onClick={() => onSelectPrompt(t(prompt))}>{t(label)}</button>
+          ))}
       </div>
     </section>
   )

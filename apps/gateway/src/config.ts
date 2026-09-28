@@ -59,12 +59,14 @@ const RawConfigSchema = Type.Object(
     aiProvider: Type.String(),
     aiModel: Type.String(),
     aiBackgroundModel: Type.String(),
+    aiTranscriptionModel: Type.String(),
     aiLiteModel: Type.String(),
     aiBaseUrl: Type.String(),
     aiApiKey: Type.String(),
     aiApi: AiApiSchema,
     aiMaxTokens: Type.Integer({ minimum: 1 }),
     aiBackgroundMaxTokens: Type.Integer({ minimum: 1 }),
+    aiTranscriptionMaxTokens: Type.Integer({ minimum: 1 }),
     aiLiteMaxTokens: Type.Integer({ minimum: 1 }),
     diaryMaxTokens: Type.Integer({ minimum: 1 }),
     aiContextWindow: Type.Integer({ minimum: 1 }),
@@ -319,6 +321,8 @@ export interface GatewayConfig {
   /** agent 过滤器（ingest 第一级闸门）配置；enabled=false 直通。 */
   ingestFilter: IngestFilterConfig;
   backgroundPi: PiRuntimeConfig | null;
+  /** 转写总结专用档：独立于 background 换模型；model 为空＝未配置（回退 backgroundPi）。 */
+  transcriptionSummaryPi: PiRuntimeConfig | null;
   /** 轻量模型档（main-lite）；model 为空＝未配置（lite 档隐藏）。 */
   litePi: PiRuntimeConfig | null;
   diaryMaxTokens?: number;
@@ -593,6 +597,7 @@ export function loadConfig(
     aiProvider: env.NXCORE_AI_PROVIDER?.trim() ?? "",
     aiModel: env.NXCORE_AI_MODEL?.trim() ?? "",
     aiBackgroundModel: env.NXCORE_AI_BACKGROUND_MODEL?.trim() || env.NXCORE_AI_MODEL?.trim() || "",
+    aiTranscriptionModel: env.NXCORE_AI_TRANSCRIPTION_MODEL?.trim() || "",
     aiBaseUrl: env.NXCORE_AI_BASE_URL?.trim() ?? "",
     aiApiKey: env.NXCORE_AI_API_KEY?.trim() ?? "",
     aiApi: env.NXCORE_AI_API ?? "openai-completions",
@@ -600,6 +605,10 @@ export function loadConfig(
     aiBackgroundMaxTokens: parsePositiveInteger(
       "NXCORE_AI_BACKGROUND_MAX_TOKENS",
       env.NXCORE_AI_BACKGROUND_MAX_TOKENS ?? "8192",
+    ),
+    aiTranscriptionMaxTokens: parsePositiveInteger(
+      "NXCORE_AI_TRANSCRIPTION_MAX_TOKENS",
+      env.NXCORE_AI_TRANSCRIPTION_MAX_TOKENS ?? env.NXCORE_AI_BACKGROUND_MAX_TOKENS ?? "8192",
     ),
     aiLiteModel: env.NXCORE_AI_LITE_MODEL?.trim() ?? "",
     aiLiteMaxTokens: parsePositiveInteger(
@@ -1097,6 +1106,17 @@ export function loadConfig(
           ...pi,
           model: rawConfig.aiBackgroundModel,
           maxTokens: rawConfig.aiBackgroundMaxTokens,
+        }
+      : null,
+    // 转写总结档与 background 同为派生段（连接要素继承主模型），但 model 独立
+    // 配置（NXCORE_AI_TRANSCRIPTION_MODEL / runtime config transcriptionSummary
+    // 段）——后台任务换模型不再连带转写总结。恒建对象：runtime config 的 apply
+    // 只能打补丁，model 空时靠 inheritPrimaryDefaults 凑四要素后由段内 model 覆盖。
+    transcriptionSummaryPi: pi
+      ? {
+          ...pi,
+          model: rawConfig.aiTranscriptionModel,
+          maxTokens: rawConfig.aiTranscriptionMaxTokens,
         }
       : null,
     // lite 档恒从 pi 派生（连接要素继承主模型），model 空＝未配置：

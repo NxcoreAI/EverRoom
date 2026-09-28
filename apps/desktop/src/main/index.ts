@@ -365,6 +365,8 @@ const AGENT_CHANNELS = {
   markSessionLinkReturned: 'agent:mark-session-link-returned',
   updateSession: 'agent:update-session',
   generateSessionTitle: 'agent:generate-session-title',
+  suggestConversationPrompt: 'agent:suggest-conversation-prompt',
+  suggestStarterPrompts: 'agent:suggest-starter-prompts',
   deleteSession: 'agent:delete-session',
   getSession: 'agent:get-session',
   getEvents: 'agent:get-events',
@@ -2338,6 +2340,8 @@ function registerAgentHandlers(bridge: AgentGatewayBridge, migrationCoordinator:
   handle(AGENT_CHANNELS.markSessionLinkReturned, (_event, linkId) => bridge.markSessionLinkReturned(linkId))
   handle(AGENT_CHANNELS.updateSession, (_event, sessionId, input) => bridge.updateSession(sessionId, input))
   handle(AGENT_CHANNELS.generateSessionTitle, (_event, input) => bridge.generateSessionTitle(input))
+  handle(AGENT_CHANNELS.suggestConversationPrompt, (_event, input) => bridge.suggestConversationPrompt(input))
+  handle(AGENT_CHANNELS.suggestStarterPrompts, (_event, input) => bridge.suggestStarterPrompts(input))
   handle(AGENT_CHANNELS.deleteSession, async (_event, sessionId) => {
     await bridge.deleteSession(sessionId)
     await workspaceBindingStore.removeSession(sessionId)
