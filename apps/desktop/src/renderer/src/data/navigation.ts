@@ -15,7 +15,7 @@ import {
   FilePenLine,
 } from 'lucide-react'
 
-export type PageId = 'home' | 'office' | 'office-document' | 'office-test' | 'rooms' | 'docs' | 'recording' | 'sources' | 'files' | 'inspiration' | 'memory' | 'wiki' | 'diary' | 'schedules' | 'settings'
+export type PageId = 'home' | 'office' | 'office-document' | 'rooms' | 'docs' | 'recording' | 'sources' | 'files' | 'inspiration' | 'memory' | 'wiki' | 'diary' | 'schedules' | 'settings'
 
 export interface NavigationItem {
   id: PageId
@@ -69,13 +69,6 @@ export const navigationSections: NavigationSection[] = [
   },
 ]
 
-const officeTestItem: NavigationItem = {
-  id: 'office-test',
-  label: 'surface:navigation.officeTest',
-  icon: FilePenLine,
-  tone: 'indigo',
-}
-
 const officeDocumentItem: NavigationItem = {
   id: 'office-document',
   label: 'surface:navigation.officeDocument',
@@ -83,27 +76,13 @@ const officeDocumentItem: NavigationItem = {
   tone: 'indigo',
 }
 
-export function navigationSectionsForMode(
-  includeOfficeTest = false,
-): NavigationSection[] {
-  return navigationSections
-    .map((section) => ({
-      ...section,
-      items: [
-        ...section.items,
-        ...(includeOfficeTest && section.id === 'execution' ? [officeTestItem] : []),
-      ],
-    }))
-    .filter((section) => section.items.length > 0)
-}
-
 export const pageLabels: Record<PageId, string> = Object.fromEntries(
-  [...navigationSections.flatMap((section) => section.items), officeTestItem, officeDocumentItem]
+  [...navigationSections.flatMap((section) => section.items), officeDocumentItem]
     .map((item) => [item.id, item.label])
 ) as Record<PageId, string>
 
 export const pageIcons: Record<PageId, LucideIcon> = Object.fromEntries(
-  [...navigationSections.flatMap((section) => section.items), officeTestItem, officeDocumentItem]
+  [...navigationSections.flatMap((section) => section.items), officeDocumentItem]
     .map((item) => [item.id, item.icon])
 ) as Record<PageId, LucideIcon>
 

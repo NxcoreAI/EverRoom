@@ -757,9 +757,6 @@ export interface OfficeWorkspaceBounds {
 /** 内嵌 Office 预览的实例类型（genoffice docs / sheets / slides / pdf 运行时）。 */
 export type OfficePreviewKind = 'docx' | 'spreadsheet' | 'slides' | 'pdf'
 
-/** dev 测试页使用的固定预览实例 id（office-test 页 ↔ 主进程懒创建的 fixture 实例）。 */
-export const OFFICE_TEST_INSTANCE_ID = 'office-test'
-
 /** 顶栏 Office 预览标签（对齐 ContextRoomWorkspaceTab 的标签形状）。 */
 export interface OfficePreviewTab {
   id: string
@@ -839,7 +836,6 @@ export interface NxcoreDesktopApi {
     onMaximizedChange(listener: (maximized: boolean) => void): () => void
   }
   office: {
-    testAvailable: boolean
     /** 激活指定 Office 预览实例并隐藏其余实例；null = 全部隐藏（标签仍保留）。 */
     setActiveInstance(id: string | null): Promise<void>
     /** 关闭并销毁一个预览实例（标签关闭时调用）。 */

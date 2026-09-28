@@ -1,7 +1,7 @@
 import { ChevronDown, Server } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 
-import { navigationSectionsForMode, type PageId } from '@/data/navigation'
+import { navigationSections, type PageId } from '@/data/navigation'
 import { useAccount } from '@/state/AccountContext'
 import type { GatewayState, GatewayStatus } from '../../../shared/sources'
 import { useLocale } from '@/i18n/LocaleContext'
@@ -131,7 +131,7 @@ export function Sidebar({
         <ProductBrand className="topbar-brand" />
       </div>
       <nav className="sidebar-nav" aria-label={t('surface:sidebar.mainNavigation')}>
-        {navigationSectionsForMode(window.nxcore?.office.testAvailable === true).map((section) => (
+        {navigationSections.map((section) => (
           <section
             key={section.id}
             className="nav-section"

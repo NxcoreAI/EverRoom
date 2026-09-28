@@ -2,14 +2,12 @@ import type { BrowserWindow } from 'electron'
 
 import type { OfficeAgentFileEvent } from '../../shared/office'
 import {
-  OFFICE_TEST_INSTANCE_ID,
   officePreviewKindForFileName,
   type OfficePreviewKind,
 } from '../../shared/sources'
 import { onOfficeFileSaved, wireOfficeSavedHooks, wireSlidesAgentAsk, type AgentAskForwardEvent } from './office-generation'
 import {
   loadPreparedGenOfficeRuntime,
-  preparedGenOfficeFixture,
   type AgentSlidesDeckInfo,
   type AgentSlidesEditResult,
   type PreparedGenOfficeRuntime,
@@ -176,35 +174,6 @@ export class OfficePreviewRegistry {
       instance.unsubscribeSaved = onOfficeFileSaved(view.webContentsId, () => this.scheduleEditSync(fileId))
     }
     this.instances.set(file.id, instance)
-    return descriptor
-  }
-
-  /** dev 测试页的 fixture 实例（固定 id，懒创建）。 */
-  openTest(window: BrowserWindow): OfficePreviewDescriptor {
-    if (this.instances.has(OFFICE_TEST_INSTANCE_ID)) {
-      return this.instances.get(OFFICE_TEST_INSTANCE_ID)!.descriptor
-    }
-    this.bindWindow(window)
-    const runtime = this.ensureRuntime(window)
-    const view = OfficeViewManager.createWithRuntime(
-      window,
-      runtime.docs,
-      preparedGenOfficeFixture(runtime.root),
-    )
-    const descriptor: OfficePreviewDescriptor = {
-      id: OFFICE_TEST_INSTANCE_ID,
-      kind: 'docx',
-      title: 'DOCX test document',
-      contentHash: 'test',
-    }
-    this.instances.set(OFFICE_TEST_INSTANCE_ID, {
-      descriptor,
-      view,
-      editable: false,
-      documentPath: null,
-      roomId: null,
-      unsubscribeSaved: null,
-    })
     return descriptor
   }
 
