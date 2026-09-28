@@ -31,7 +31,7 @@ export function FilterSelect<T extends string>({
           data-active={value !== options[0]?.id || undefined}
           aria-label={ariaLabel}
         >
-          {current?.label}
+          <span className="context-room-filter-select-value">{current?.label}</span>
           <ChevronDown aria-hidden="true" />
         </button>
       </DropdownMenu.Trigger>

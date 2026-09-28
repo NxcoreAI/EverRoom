@@ -3894,6 +3894,12 @@
   color: var(--cr-tertiary);
 }
 
+.context-room-filter-select .context-room-filter-select-value {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+}
+
 .context-room-filter-select[data-active] svg {
   color: var(--cr-blue);
 }
@@ -14078,54 +14084,6 @@
   justify-content: space-between;
   gap: 8px;
   flex-wrap: wrap;
-}
-
-.context-room-activity-filters > div {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-
-.context-room-activity-filters > div button {
-  padding: 3px 9px;
-  border: 1px solid var(--cr-border);
-  border-radius: 999px;
-  color: var(--cr-muted);
-  font-size: 11px;
-}
-
-.context-room-activity-filters > div button:hover {
-  border-color: var(--cr-border-strong);
-  color: var(--cr-text);
-}
-
-.context-room-activity-filters > div button[aria-pressed='true'] {
-  border-color: var(--cr-blue);
-  color: var(--cr-blue);
-  background: color-mix(in srgb, var(--cr-blue) 10%, transparent);
-}
-
-.context-room-activity-person {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  color: var(--cr-tertiary);
-  font-size: 11px;
-}
-
-.context-room-activity-person svg {
-  width: 12px;
-  height: 12px;
-}
-
-.context-room-activity-person select {
-  max-width: 140px;
-  padding: 3px 6px;
-  border: 1px solid var(--cr-border);
-  border-radius: 6px;
-  background: var(--cr-surface);
-  color: var(--cr-text);
-  font-size: 11px;
 }
 
 .context-room-activity-list {
