@@ -4,10 +4,13 @@ import { join } from 'node:path'
 
 import type { AsrJob, AsrResult, AsrSegment } from '../../shared/sources'
 import { isSaasPermanentError, type CloudJob, type SaasClient } from '../cloud/saas-client'
+import { LocalRecordingSegmentTranscriber, type LocalSegmentEngine } from './local-recording-segment-transcriber'
 
 export interface SegmentUploadMeta {
   mimeType: string
   languageHints?: string[]
+  /** 录音的转写路：缺省走云端（现状行为）；'local' 走本地网关分段引擎。 */
+  mode?: 'cloud' | 'local'
 }
 
 export interface SegmentTranscriptionPreview {
@@ -65,23 +68,23 @@ function uuidV5(name: string): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`
 }
 
-function extensionForMimeType(mimeType: string): string {
+export function extensionForMimeType(mimeType: string): string {
   const normalized = mimeType.toLowerCase()
   if (normalized.includes('mp4')) return '.m4a'
   if (normalized.includes('ogg')) return '.ogg'
   return '.webm'
 }
 
-function sortedMinis(state: RecordingState): MiniJobState[] {
+export function sortedMinis(state: { minis: Map<number, MiniJobState> }): MiniJobState[] {
   return [...state.minis.values()].sort((a, b) => a.index - b.index)
 }
 
-function miniDurationMs(mini: MiniJobState): number {
+export function miniDurationMs(mini: MiniJobState): number {
   const localEnd = mini.result?.segments.length ? Math.max(...mini.result.segments.map((segment) => segment.endTime)) : 0
   return Math.max(mini.durationMs, localEnd)
 }
 
-function offsetForIndex(state: RecordingState, index: number): number {
+export function offsetForIndex(state: { minis: Map<number, MiniJobState> }, index: number): number {
   let offset = 0
   for (const mini of sortedMinis(state)) {
     if (mini.index >= index) break
@@ -90,26 +93,33 @@ function offsetForIndex(state: RecordingState, index: number): number {
   return offset
 }
 
+/** 自建引擎常只回纯文本（segments 空）：合成一条覆盖整段时间轴的段，保证预览与合并可见。 */
+export function miniResultSegments(mini: MiniJobState): AsrSegment[] {
+  const segments = mini.result?.segments ?? []
+  if (segments.length > 0 || !mini.result?.transcript) return segments
+  return [{ text: mini.result.transcript, beginTime: 0, endTime: miniDurationMs(mini), speakerId: null }]
+}
+
 /** 按段序合并各分段任务结果：偏移 = max(段声明时长, 段内最大语音结束点)，与 SaaS 侧同一套数学。 */
 export function mergeMiniJobs(
   recordingId: string,
   mimeType: string,
   minis: MiniJobState[],
-  meta: { createdAt: string; languageHints?: string[]; diarizationEnabled: boolean },
+  meta: { createdAt: string; languageHints?: string[]; diarizationEnabled: boolean; source?: 'local' | 'saas'; defaultProvider?: string },
 ): AsrJob {
   const ordered = [...minis].sort((a, b) => a.index - b.index)
   const segments: AsrSegment[] = []
   let offset = 0
   for (const mini of ordered) {
-    for (const segment of mini.result?.segments ?? []) {
+    for (const segment of miniResultSegments(mini)) {
       segments.push({ ...segment, beginTime: segment.beginTime + offset, endTime: segment.endTime + offset })
     }
     offset += miniDurationMs(mini)
   }
   return {
     id: `${SEGMENT_JOB_PREFIX}${recordingId}`,
-    source: 'saas',
-    provider: ordered.find((mini) => mini.provider)?.provider ?? 'nxcore',
+    source: meta.source ?? 'saas',
+    provider: ordered.find((mini) => mini.provider)?.provider ?? meta.defaultProvider ?? 'nxcore',
     status: 'completed',
     fileName: `${recordingId}${extensionForMimeType(mimeType)}`,
     languageHints: meta.languageHints ?? [],
@@ -124,29 +134,91 @@ export function mergeMiniJobs(
 }
 
 /**
- * 录制中的分段上传：每段立即建成独立的 SaaS 转写任务（边录边转），
- * 终态一律经 WS 推送通道落地（订阅即回快照，断线重连自动补齐），
- * 转完经 preview 回调推送实时文字；停止时等全部转完、按段序合并成整篇结果。
+ * 录制中的分段上传/转写入口（云/本地路由）：
+ * - 云端路（meta.mode 缺省或 'cloud'）：每段立即建成独立的 SaaS 转写任务（边录边转），
+ *   终态一律经 WS 推送通道落地（订阅即回快照，断线重连自动补齐），
+ *   转完经 preview 回调推送实时文字；停止时等全部转完、按段序合并成整篇结果。
+ * - 本地路（meta.mode==='local' 且注入 localEngine）：分段落盘 → 网关建任务 → 轮询取结果
+ *   → 推实时文字 → 停止时合并；引擎不可用/未配置时静默降级（停止后整段转）。
  * 任一分段两轮仍失败 → 取消全部，调用方回退整段上传老路。
  */
 export class RecordingSegmentUploader {
   private readonly recordings = new Map<string, RecordingState>()
   private preview?: (event: SegmentTranscriptionPreview) => void
   private readonly waitIntervalMs: number
+  private readonly local: LocalRecordingSegmentTranscriber | null
+  /** 本会话内已路由到本地引擎的录音（manifest 的 engine 字段兜底重启后的路由）。 */
+  private readonly localRouted = new Set<string>()
 
   constructor(
     private readonly saas: SaasClient,
     private readonly directory: string,
-    options: { waitIntervalMs?: number } = {},
+    options: { waitIntervalMs?: number; localEngine?: () => LocalSegmentEngine | null; localPollIntervalMs?: number } = {},
   ) {
     this.waitIntervalMs = options.waitIntervalMs ?? FINALIZE_WAIT_INTERVAL_MS
+    this.local = options.localEngine
+      ? new LocalRecordingSegmentTranscriber(directory, options.localEngine, { waitIntervalMs: this.waitIntervalMs, pollIntervalMs: options.localPollIntervalMs })
+      : null
   }
 
   setPreviewListener(fn: (event: SegmentTranscriptionPreview) => void): void {
     this.preview = fn
+    this.local?.setPreviewListener(fn)
   }
 
   async onSegment(
+    recordingId: string,
+    index: number,
+    chunk: Uint8Array,
+    durationMs: number,
+    meta: SegmentUploadMeta,
+  ): Promise<void> {
+    if (meta.mode === 'local' && this.local) {
+      this.localRouted.add(recordingId)
+      return this.local.onSegment(recordingId, index, chunk, durationMs, meta)
+    }
+    // mode==='local' 但未注入本地引擎：静默丢弃分段，停止后走整段转（现状）。
+    return this.onCloudSegment(recordingId, index, chunk, durationMs, meta)
+  }
+
+  /** 录音结束收尾：全部分段任务转完返回合并结果；任何失败返回 null（调用方回退整段上传）。 */
+  async finalize(recordingId: string): Promise<AsrJob | null> {
+    if (await this.isLocalRouted(recordingId)) return this.local!.finalize(recordingId)
+    return this.finalizeCloud(recordingId)
+  }
+
+  async abort(recordingId: string): Promise<void> {
+    // 路由未知时两侧都收（无状态侧幂等空转）。
+    await this.abortCloud(recordingId)
+    await this.local?.abort(recordingId)
+  }
+
+  /** 合并任务查询：REST 逐段拉当前状态，全转完返回 completed 合并结果，仍有在转返回 running 占位。 */
+  async getMergedJob(recordingId: string): Promise<AsrJob | null> {
+    if (await this.isLocalRouted(recordingId)) return this.local!.getMergedJob(recordingId)
+    return this.getMergedCloudJob(recordingId)
+  }
+
+  /** 改名支持：重新拉取全部分段结果合并，并给出可用于 SaaS 改名的锚点任务 id（本地路恒 null）。 */
+  async refetchMerged(recordingId: string): Promise<{ merged: AsrJob; anchorJobId: string | null } | null> {
+    if (await this.isLocalRouted(recordingId)) return this.local!.refetchMerged(recordingId)
+    return this.refetchMergedCloud(recordingId)
+  }
+
+  /** 崩溃遗留的段音频启动时清空；分段任务的 manifest 留存（重启后改名/合并查询要用）。 */
+  async cleanupAtStartup(): Promise<void> {
+    await this.cleanupCloudAtStartup()
+    await this.local?.cleanupAtStartup()
+  }
+
+  private async isLocalRouted(recordingId: string): Promise<boolean> {
+    if (!this.local) return false
+    if (this.localRouted.has(recordingId)) return true
+    if (this.recordings.has(recordingId)) return false
+    return this.local.ownsRecording(recordingId)
+  }
+
+  private async onCloudSegment(
     recordingId: string,
     index: number,
     chunk: Uint8Array,
@@ -196,8 +268,7 @@ export class RecordingSegmentUploader {
     state.chain = state.chain.then(() => this.submitMini(recordingId, index))
   }
 
-  /** 录音结束收尾：全部分段任务转完返回合并结果；任何失败返回 null（调用方回退整段上传）。 */
-  async finalize(recordingId: string): Promise<AsrJob | null> {
+  private async finalizeCloud(recordingId: string): Promise<AsrJob | null> {
     const state = this.recordings.get(recordingId)
     if (!state) return null
     state.finalized = true
@@ -240,7 +311,7 @@ export class RecordingSegmentUploader {
     return null
   }
 
-  async abort(recordingId: string): Promise<void> {
+  private async abortCloud(recordingId: string): Promise<void> {
     const state = this.recordings.get(recordingId)
     if (!state) return
     state.aborted = true
@@ -250,7 +321,7 @@ export class RecordingSegmentUploader {
   }
 
   /** 合并任务查询：REST 逐段拉当前状态，全转完返回 completed 合并结果，仍有在转返回 running 占位。 */
-  async getMergedJob(recordingId: string): Promise<AsrJob | null> {
+  private async getMergedCloudJob(recordingId: string): Promise<AsrJob | null> {
     const state = await this.ensureState(recordingId)
     if (!state || state.minis.size === 0) return null
     await this.refreshResults(state)
@@ -264,7 +335,7 @@ export class RecordingSegmentUploader {
   }
 
   /** 改名支持：重新拉取全部分段结果合并，并给出可用于 SaaS 改名的锚点任务 id。 */
-  async refetchMerged(recordingId: string): Promise<{ merged: AsrJob; anchorJobId: string | null } | null> {
+  private async refetchMergedCloud(recordingId: string): Promise<{ merged: AsrJob; anchorJobId: string | null } | null> {
     const state = await this.ensureState(recordingId)
     if (!state || state.minis.size === 0) return null
     await this.refreshResults(state)
@@ -274,7 +345,7 @@ export class RecordingSegmentUploader {
   }
 
   /** 崩溃遗留的段音频启动时清空；分段任务的 manifest 留存（重启后改名要用）。 */
-  async cleanupAtStartup(): Promise<void> {
+  private async cleanupCloudAtStartup(): Promise<void> {
     await rm(this.segmentsRoot, { recursive: true, force: true }).catch(() => undefined)
   }
 
