@@ -149,7 +149,7 @@ export function ArtifactLibraryPane({
     const createInstruction = type === 'word'
       ? `请用 context_room_office_create 新建`
       : type === 'ppt'
-        ? `请用 slides_draft(task=create) 新建`
+        ? `请用 slides_draft(task=draft) 新建`
         : `请用 context_room_sheets_create 新建`;
     const kindLabel = t(`contextRoom:artifactLibrary.newOfficeDefault.${type}`);
     window.dispatchEvent(new CustomEvent('everroom:room-agent-ask', {

@@ -1,6 +1,11 @@
 {
   "type": "object",
   "properties": {
+    "phase": {
+      "type": "string",
+      "enum": ["draft", "arrange"],
+      "description": "Which phase this submission is for: draft = content draft for the user to confirm; arrange = final page plan for the builder."
+    },
     "title": {
       "type": "string",
       "minLength": 1,
@@ -10,7 +15,7 @@
     "narrative": {
       "type": "string",
       "maxLength": 500,
-      "description": "One-sentence narrative spine of the deck (storyline and audience take-away)."
+      "description": "One-sentence narrative spine of the deck (storyline, audience take-away; in arrange, also why the page order fits the audience)."
     },
     "pages": {
       "type": "array",
@@ -28,7 +33,12 @@
           "role": {
             "type": "string",
             "maxLength": 20,
-            "description": "Content role hint: cover | toc | section | content | data | table | flow | quote | closing."
+            "description": "arrange only. Content role hint: cover | toc | section | content | data | table | flow | quote | closing."
+          },
+          "density": {
+            "type": "string",
+            "enum": ["sparse", "standard", "dense"],
+            "description": "arrange only. Information density tier: sparse = one big-line idea page (10 words is already too much); standard = normal 3-5 point page; dense = full-page data (chart/table/KPI, 200 words is not too much). The deck must alternate tiers for narrative rhythm."
           },
           "points": {
             "type": "array",
@@ -39,7 +49,12 @@
           "data": {
             "type": "string",
             "maxLength": 2000,
-            "description": "Real data this page must present: numbers, table rows, chart categories/series with values."
+            "description": "Real data this page must present: draft phase = plain sentences with real numbers; arrange phase = chart/table/KPI line format the builder translates directly."
+          },
+          "materialHints": {
+            "type": "string",
+            "maxLength": 300,
+            "description": "draft only. One sentence on what imagery this page needs (e.g. factory floor photo, growth curve); arrange uses it to search the material library."
           },
           "materials": {
             "type": "array",
@@ -63,7 +78,7 @@
               "required": ["url"],
               "additionalProperties": false
             },
-            "description": "Material image direct links for this page; omit entirely when none were found."
+            "description": "arrange only. Material image links for this page; omit entirely when none were found."
           },
           "notes": {
             "type": "string",
@@ -74,7 +89,7 @@
         "required": ["title"],
         "additionalProperties": false
       },
-      "description": "Per-page content plan in page order; first item is the cover."
+      "description": "Per-page plan in page order; first item is the cover."
     },
     "warnings": {
       "type": "array",
@@ -86,9 +101,9 @@
       "type": "string",
       "minLength": 1,
       "maxLength": 1500,
-      "description": "Concise description of the plan: storyline, page count, material situation."
+      "description": "Concise description of this phase's result: storyline, page count, material situation."
     }
   },
-  "required": ["title", "pages", "summary"],
+  "required": ["phase", "title", "pages", "summary"],
   "additionalProperties": false
 }

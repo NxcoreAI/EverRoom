@@ -351,6 +351,8 @@ export function AgentChatView({
   onRetryPrompt,
   onResolveApproval = () => undefined,
   onOpenSessionLink,
+  onOpenDraftDocument,
+  onSlidesGenerate,
   onRejectDocumentIntent,
   onSelectRoom,
   onSelectDocument,
@@ -384,6 +386,8 @@ export function AgentChatView({
   onRetryPrompt: (prompt: string, runId: string) => void
   onResolveApproval?: (approvalId: string, decision: AgentApprovalDecision, feedback?: string) => void
   onOpenSessionLink: (link: AgentSessionLink) => void
+  onOpenDraftDocument?: (documentId: string) => void
+  onSlidesGenerate?: (message: string) => void
   onRejectDocumentIntent: () => void
   onSelectRoom: (
     room: AgentRoomReference,
@@ -922,8 +926,9 @@ export function AgentChatView({
             <SlidesProgressCard
               state={slidesProgress.progress}
               toolRunning={slidesProgress.tool.status === 'running' || slidesProgress.tool.status === 'pending'}
-              resolvingApprovalIds={resolvingApprovalIds}
-              onResolve={onResolveApproval ?? (() => undefined)}
+              busy={Boolean(activeRunId) || submitting}
+              onOpenDraft={onOpenDraftDocument}
+              onGenerate={onSlidesGenerate}
             />
           ) : null}
           <AgentShellApproval

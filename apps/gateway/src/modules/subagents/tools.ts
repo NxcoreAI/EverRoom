@@ -13,7 +13,12 @@ import { formatRoomContextDigest, type RoomContextDigest } from "../context-room
 import { docWriterDraftFromStructuredOutput } from "./doc-writer-content.js";
 import { SubagentOrchestrator } from "./orchestrator.js";
 import { SubagentRegistry } from "./registry.js";
-import { slidesGatePlanFrom, type SlidesGateEvent, type SlidesReviewGate } from "./slides-review-gate.js";
+import {
+  parseDraftMarkdown,
+  renderDraftMarkdown,
+  slidesProgressPlanFrom,
+} from "./slides-draft-doc.js";
+import type { SlidesProgressEvent, SlidesProgressTracker } from "./slides-progress-tracker.js";
 
 function dispatchKey(runId: string, agentId: string, task: string, input: unknown): string {
   return createHash("sha256")
@@ -115,39 +120,19 @@ function parseJsonObject(value: string): Record<string, unknown> | null {
   }
 }
 
-/** 闸门事件 → 渲染层进度卡载荷（slides_draft onUpdate 的 details/content）。 */
-function slidesGateUpdatePayload(event: SlidesGateEvent): Record<string, unknown> {
+/** 进度事件 → 渲染层进度卡载荷（slides_draft onUpdate 的 details/content）。 */
+function slidesProgressUpdatePayload(event: SlidesProgressEvent): Record<string, unknown> {
   const snapshot = event.snapshot;
-  const shared = {
+  return {
+    stage: "page_applied",
+    slideIndex: event.slideIndex,
     title: snapshot.title,
     totalPages: snapshot.totalPages,
     pages: snapshot.pages,
     doneCount: snapshot.doneCount,
-    revisingIndex: snapshot.revisingIndex,
-    awaitingIndex: snapshot.awaitingIndex,
-    finishedEarly: snapshot.finishedEarly,
     ...(snapshot.narrative ? { narrative: snapshot.narrative } : {}),
     ...(snapshot.warnings?.length ? { warnings: snapshot.warnings } : {}),
   };
-  switch (event.kind) {
-    case "page_applied":
-      return { stage: "page_applied", slideIndex: event.slideIndex, ...shared };
-    case "gate_open":
-      return {
-        stage: "page_gate",
-        approvalId: event.approvalId,
-        slideIndex: event.slideIndex,
-        ...shared,
-      };
-    case "page_resolved":
-      return {
-        stage: "page_resolved",
-        slideIndex: event.slideIndex,
-        action: event.action,
-        ...(event.timedOut ? { timedOut: true } : {}),
-        ...shared,
-      };
-  }
 }
 
 function extractJsonObject(value: string): Record<string, unknown> | null {
@@ -304,8 +289,17 @@ export function createSubagentPiTools(
         evidence: Array<{ sourceKind: string; sourceId: string; sourceTitle: string | null }>;
       }>;
     } | null;
-    /** PPT 逐页审阅闸门：传入则 slides_draft create 方案产出后布闸，逐页等用户表态。 */
-    slidesGate?: SlidesReviewGate | null;
+    /** PPT 逐页进度上报器：slides_draft generate 布进度，set_page 落页后广播快照（无决策无挂起）。 */
+    slidesProgress?: SlidesProgressTracker | null;
+    /**
+     * 草稿文档落地（draft 阶段）：方案渲染成 markdown 后由网关建 Room 文档，
+     * 返回 documentId 供用户编辑与 generate 阶段读回。
+     */
+    createSlidesDraftDocument?: (input: {
+      roomId: string;
+      title: string;
+      markdown: string;
+    }) => Promise<{ documentId: string; title: string }>;
   } = {},
 ): PiAgentRuntimeTool[] {
   const tools: PiAgentRuntimeTool[] = [
@@ -944,29 +938,31 @@ export function createSubagentPiTools(
     tools.push({
       name: "slides_draft",
       label: "Create or edit a slides deck",
-      description: "调度 slides 子代理两段式生成或修改演示文稿（PPT）。"
-        + "create：两跳串接——先由 slides-planner 子 Agent 收集背景信息与素材图片直链、产出逐页内容方案，"
-        + "再由 slides-builder 子 Agent 定调、设计每页布局并逐页填充（用户在桌面端实时看到每一页成形，"
-        + "方案页清单与每一页的进度都会以进度更新实时展示；每页落定后暂停等用户确认/调整再继续）；"
-        + "传 instruction（主题、受众、篇幅等要求）与可选 title/outline（每页一个标题）。"
-        + "可传 style 指定落页风格：japanese-style（和纸柔光·日式静）/ japanese-lifestyle（白底焦橙·杂志锐）/ futuristic-tech-editorial（白底电蓝·数据锐）/"
+      description: "调度 slides 子代理按「草稿 → 用户确认 → 生成」三步产出或修改演示文稿（PPT）。"
+        + "draft：先由 slides-planner 收集背景信息，产出内容草稿文档（一个章节 = 一页，含要点/数据/配图建议）——到此即停，"
+        + "用户在文档里确认修改内容后才会发起生成；传 instruction（主题、受众、篇幅等要求）与可选 title/outline（用户点名的页序）。"
+        + "generate：用户确认草稿后调用，传 draftDocumentId（草稿文档 id）与可选 style——"
+        + "slides-planner 先按受众重排页序、按起承转合分配每页信息密度并检索配图，再由 slides-builder 定调设计并一口气落完所有页"
+        + "（逐页进度实时展示，中途不再逐页询问）；确认卡的受众/时长/详略答案原样写进 instruction 转述。"
+        + "style 可选：japanese-style（和纸柔光·日式静）/ japanese-lifestyle（白底焦橙·杂志锐）/ futuristic-tech-editorial（白底电蓝·数据锐）/"
         + "minimalist-luxury-branding（米棕衬线·奢牌）/ modern-illustration-editorial（现代插画·暖）/ soft-3d-clay（黏土软调·圆润）/ japanese-hand-drawn-editorial（手绘线稿·手作）"
-        + "——用户点名风格时传对应 id，气质明显时选最贴近的，拿不准就不传（落页代理自选）；"
+        + "——用户点名风格时传对应 id，拿不准就不传（落页代理自选）。"
         + "edit：传 instruction（要改什么，可含选中的元素描述）与可选 fileId（缺省 \"active\" 即当前桌面打开的那份），"
-        + "不经方案阶段，由 slides-builder 读取大纲后直接发编辑事务，页面实时更新。"
+        + "由 slides-builder 读取大纲后直接发编辑事务，页面实时更新。"
         + "结果以返回的 status/summary 为准向用户汇报（failed/partial 时如实转告 warnings 与原因，可重试）；"
         + "禁止主 Agent 自行拼页面内容或代替子代理重试底层工具。",
       parameters: Type.Object({
-        task: Type.Union([Type.Literal("create"), Type.Literal("edit")]),
+        task: Type.Union([Type.Literal("draft"), Type.Literal("generate"), Type.Literal("edit")]),
         instruction: Type.String({ minLength: 1, maxLength: 16_000 }),
         title: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
         style: Type.Optional(Type.String({ minLength: 1, maxLength: 40 })),
         outline: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 80 }), { minItems: 1, maxItems: 24 })),
+        draftDocumentId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         fileId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         roomId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
       }, { additionalProperties: false }),
       execute: async (run, params, signal, onUpdate) => {
-        const task = params.task === "edit" ? "edit" : "create";
+        const task = params.task;
         const instruction = String(params.instruction ?? "").trim();
         if (!instruction) throw new Error("slides_draft_instruction_required");
         const titleArg = typeof params.title === "string" ? params.title.trim().slice(0, 120) : "";
@@ -987,8 +983,8 @@ export function createSubagentPiTools(
           throw new Error("ROOM_SELECTION_REQUIRED: Choose one valid Room from available_rooms or call context_room_list");
         }
 
-        // ── create：两跳——先 slides-planner 出内容方案，再 slides-builder 落页。 ──
-        if (task === "create") {
+        // ── draft：先出内容草稿文档，到此暂停——等用户在文档里确认内容后再生成（2026-09 重设计）。 ──
+        if (task === "draft") {
           const planner = registry.get("slides-planner");
           if (!planner) {
             return {
@@ -1001,7 +997,19 @@ export function createSubagentPiTools(
               details: { errorCode: "slides_planner_not_registered" },
             };
           }
-          const plannerInput = {
+          if (!options.createSlidesDraftDocument) {
+            return {
+              content: JSON.stringify({
+                status: "failed",
+                errorCode: "slides_draft_document_unavailable",
+                retryable: false,
+                message: "草稿文档服务未配置；如实告知用户创建失败，禁止自行拼 PPT 内容。",
+              }),
+              details: { errorCode: "slides_draft_document_unavailable" },
+            };
+          }
+          const plannerInput: Record<string, unknown> = {
+            phase: "draft",
             instruction,
             roomId,
             ...(titleArg ? { title: titleArg } : {}),
@@ -1013,9 +1021,9 @@ export function createSubagentPiTools(
           try {
             plannerInvocation = await dispatchWithConcurrencyRetry(() => orchestrator.dispatch({
               agentId: "slides-planner",
-              task: "演示文稿内容方案",
+              task: "演示文稿内容草稿",
               input: plannerInput,
-              idempotencyKey: dispatchKey(run.runId, "slides-planner", "create", plannerInput),
+              idempotencyKey: dispatchKey(run.runId, "slides-planner", "draft", plannerInput),
               source: "primary_agent",
               parentSessionId: run.sessionId,
               parentRunId: run.runId,
@@ -1043,7 +1051,7 @@ export function createSubagentPiTools(
                 status: "failed",
                 errorCode: plannerInvocation.errorCode ?? plannerInvocation.errorMessage ?? plannerInvocation.status,
                 retryable: plannerInvocation.status === "timed_out" || plannerInvocation.status === "cancelled",
-                message: `方案阶段未完成（${plannerInvocation.status}）；如实告知用户，禁止自行拼 PPT 内容。`,
+                message: `草稿阶段未完成（${plannerInvocation.status}）；如实告知用户，禁止自行拼 PPT 内容。`,
               }),
               details: plannerInvocation,
             };
@@ -1053,24 +1061,7 @@ export function createSubagentPiTools(
             && !Array.isArray(plannerInvocation.result.structuredOutput)
             ? plannerInvocation.result.structuredOutput as Record<string, unknown>
             : extractJsonObject(plannerInvocation.result?.text ?? "");
-          const planPages = Array.isArray(plan?.pages) ? plan.pages : [];
-          const planTitle = typeof plan?.title === "string" ? plan.title.trim() : "";
-          if (!plan || planPages.length === 0 || !planTitle) {
-            return {
-              content: JSON.stringify({
-                invocationId: plannerInvocation.id,
-                status: "failed",
-                errorCode: "slides_planner_result_invalid",
-                retryable: true,
-                message: "方案代理未提交含 pages/title 的结构化方案；可调整 instruction 后重新调用 slides_draft。",
-              }),
-              details: plannerInvocation,
-            };
-          }
-
-          // 方案实时可见（用户决策：只展示不停）：方案一出即透传给渲染层进度卡，
-          // 含每页文案要点/数据/配图与叙事主线——生成前用户就能读到内容与走向。
-          const gatePlan = slidesGatePlanFrom(plan);
+          const gatePlan = slidesProgressPlanFrom(plan);
           if (!gatePlan) {
             return {
               content: JSON.stringify({
@@ -1078,33 +1069,191 @@ export function createSubagentPiTools(
                 status: "failed",
                 errorCode: "slides_planner_result_invalid",
                 retryable: true,
-                message: "方案代理未提交含 pages/title 的结构化方案；可调整 instruction 后重新调用 slides_draft。",
+                message: "方案代理未提交含 pages/title 的结构化草稿；可调整 instruction 后重新调用 slides_draft(task=draft)。",
               }),
               details: plannerInvocation,
             };
           }
+          let draftDocument: { documentId: string; title: string };
+          try {
+            draftDocument = await options.createSlidesDraftDocument({
+              roomId,
+              title: gatePlan.title,
+              markdown: renderDraftMarkdown(gatePlan),
+            });
+          } catch (error) {
+            const errorCode = error instanceof Error ? error.message : String(error);
+            return {
+              content: JSON.stringify({
+                invocationId: plannerInvocation.id,
+                status: "failed",
+                errorCode,
+                retryable: true,
+                message: "草稿文档创建失败；可调整 instruction 后重新调用 slides_draft(task=draft)。",
+              }),
+              details: { errorCode },
+            };
+          }
+          // 草稿实时可见：进度卡切「草稿待确认」，带全量页清单与文档定位。
+          const draftUpdate: Record<string, unknown> = {
+            stage: "draft_ready",
+            title: gatePlan.title,
+            totalPages: gatePlan.pages.length,
+            pages: gatePlan.pages,
+            doneCount: 0,
+            documentId: draftDocument.documentId,
+            ...(gatePlan.narrative ? { narrative: gatePlan.narrative } : {}),
+            ...(gatePlan.warnings?.length ? { warnings: gatePlan.warnings } : {}),
+          };
+          onUpdate?.({ content: JSON.stringify(draftUpdate), details: draftUpdate });
+          return {
+            content: JSON.stringify({
+              status: "draft_ready",
+              documentId: draftDocument.documentId,
+              documentTitle: draftDocument.title,
+              pages: gatePlan.pages.length,
+              warnings: gatePlan.warnings ?? [],
+              message: "内容草稿文档已创建并打开。告诉用户：请在文档里检查修改（一个章节=一页，改章节/要点/数据就是改页），"
+                + "确认后在对话的确认卡上选受众、时长、风格并发起生成；用户确认前不要生成 PPT。",
+            }),
+            details: { stage: "draft_ready", documentId: draftDocument.documentId },
+          };
+        }
+
+        // ── generate：读回用户确认的草稿 → planner arrange（受众重排+密度+素材）→ builder 一口气落页。 ──
+        if (task === "generate") {
+          const draftDocumentId = typeof params.draftDocumentId === "string" ? params.draftDocumentId.trim() : "";
+          if (!draftDocumentId) {
+            return {
+              content: JSON.stringify({
+                status: "failed",
+                errorCode: "slides_draft_document_required",
+                retryable: false,
+                message: "缺少 draftDocumentId：先经 task=draft 产出草稿文档，用户确认后再发起 generate。",
+              }),
+              details: { errorCode: "slides_draft_document_required" },
+            };
+          }
+          const draftSnapshot = options.resolveDocumentForDraft?.(draftDocumentId, roomId) ?? null;
+          if (!draftSnapshot) {
+            return {
+              content: JSON.stringify({
+                status: "failed",
+                errorCode: "slides_draft_document_not_found",
+                retryable: false,
+                message: "草稿文档不存在或不属于当前 Room；与用户确认文档后重新提供 draftDocumentId。",
+              }),
+              details: { errorCode: "slides_draft_document_not_found" },
+            };
+          }
+          const draftPages = parseDraftMarkdown(draftSnapshot.markdown);
+          if (!draftPages) {
+            return {
+              content: JSON.stringify({
+                status: "failed",
+                errorCode: "slides_draft_document_empty",
+                retryable: false,
+                message: "草稿里解析不到「## 章节=页」结构（可能被清空）；请用户恢复章节结构后重试。",
+              }),
+              details: { errorCode: "slides_draft_document_empty" },
+            };
+          }
+          const planner = registry.get("slides-planner");
+          if (!planner) {
+            return {
+              content: JSON.stringify({
+                status: "failed",
+                errorCode: "slides_planner_not_registered",
+                retryable: false,
+                message: "方案代理未注册；如实告知用户创建失败，禁止自行拼 PPT 内容。",
+              }),
+              details: { errorCode: "slides_planner_not_registered" },
+            };
+          }
+          const plannerInput: Record<string, unknown> = {
+            phase: "arrange",
+            instruction,
+            roomId,
+            title: draftSnapshot.document.title.slice(0, 120),
+            draftPages,
+            ...(styleArg ? { style: styleArg } : {}),
+          };
+          let plannerInvocation;
+          try {
+            plannerInvocation = await dispatchWithConcurrencyRetry(() => orchestrator.dispatch({
+              agentId: "slides-planner",
+              task: "演示文稿编排",
+              input: plannerInput,
+              idempotencyKey: dispatchKey(run.runId, "slides-planner", "arrange", plannerInput),
+              source: "primary_agent",
+              parentSessionId: run.sessionId,
+              parentRunId: run.runId,
+              ...(signal ? { signal } : {}),
+            }));
+          } catch (error) {
+            const errorCode = error instanceof Error ? error.message : String(error);
+            const retryable = isConcurrencyLimitError(error);
+            return {
+              content: JSON.stringify({
+                status: "failed",
+                errorCode,
+                retryable,
+                message: retryable
+                  ? "编排代理调度被并发限额拒绝；如实告知用户可稍后重试（草稿已就绪），禁止自行拼 PPT 内容。"
+                  : "编排代理调度失败；如实告知用户，禁止自行拼 PPT 内容。",
+              }),
+              details: { errorCode },
+            };
+          }
+          if (plannerInvocation.status !== "completed") {
+            return {
+              content: JSON.stringify({
+                invocationId: plannerInvocation.id,
+                status: "failed",
+                errorCode: plannerInvocation.errorCode ?? plannerInvocation.errorMessage ?? plannerInvocation.status,
+                retryable: plannerInvocation.status === "timed_out" || plannerInvocation.status === "cancelled",
+                message: `编排阶段未完成（${plannerInvocation.status}）；如实告知用户，禁止自行拼 PPT 内容。`,
+              }),
+              details: plannerInvocation,
+            };
+          }
+          const plan = plannerInvocation.result?.structuredOutput !== null
+            && typeof plannerInvocation.result?.structuredOutput === "object"
+            && !Array.isArray(plannerInvocation.result.structuredOutput)
+            ? plannerInvocation.result.structuredOutput as Record<string, unknown>
+            : extractJsonObject(plannerInvocation.result?.text ?? "");
+          const gatePlan = slidesProgressPlanFrom(plan);
+          if (!gatePlan) {
+            return {
+              content: JSON.stringify({
+                invocationId: plannerInvocation.id,
+                status: "failed",
+                errorCode: "slides_planner_result_invalid",
+                retryable: true,
+                message: "编排代理未提交含 pages/title 的结构化方案；可调整 instruction 后重新调用 slides_draft(task=generate)。",
+              }),
+              details: plannerInvocation,
+            };
+          }
+          // 编排方案实时可见：页序/密度/配图一出即透传给进度卡。
           const planUpdate: Record<string, unknown> = {
             stage: "plan_ready",
             title: gatePlan.title,
             totalPages: gatePlan.pages.length,
             pages: gatePlan.pages,
             doneCount: 0,
-            revisingIndex: null,
-            awaitingIndex: null,
-            finishedEarly: false,
             ...(gatePlan.narrative ? { narrative: gatePlan.narrative } : {}),
             ...(gatePlan.warnings?.length ? { warnings: gatePlan.warnings } : {}),
           };
           onUpdate?.({ content: JSON.stringify(planUpdate), details: planUpdate });
 
-          const slidesGate = options.slidesGate;
+          const slidesProgress = options.slidesProgress;
           let builderRunId: string | null = null;
-
           const builderInput = {
             task: "create",
             instruction,
             roomId,
-            title: planTitle.slice(0, 120),
+            title: gatePlan.title,
             ...(styleArg ? { style: styleArg } : {}),
             plan,
           };
@@ -1114,31 +1263,25 @@ export function createSubagentPiTools(
               agentId: "slides-builder",
               task: "演示文稿创建",
               input: builderInput,
-              idempotencyKey: dispatchKey(run.runId, "slides-builder", "create", builderInput),
+              idempotencyKey: dispatchKey(run.runId, "slides-builder", "generate", builderInput),
               source: "primary_agent",
               parentSessionId: run.sessionId,
-              // 两跳串接（调用链语义）：落页挂靠方案调用之下，对话时间线才能以
-              // "Slides Planner → Slides Builder" 呈现先后依赖；重试时方案命中
-              // 幂等记录，父 id 稳定不变。
+              // 两跳串接（调用链语义）：落页挂靠编排调用之下，时间线呈现先后依赖。
               parentRunId: plannerInvocation.id,
-              // 逐页审阅闸门（用户决策：每页都停下等确认）：invocationId 一生成即
-              // 布闸并挂进度转发，子 run 的 set_page 才能在落页后挂起等表态。
-              ...(slidesGate
-                ? {
-                    onInvocationId: (invocationId) => {
-                      builderRunId = invocationId;
-                      if (!slidesGate.isActive(invocationId)) {
-                        slidesGate.arm(invocationId, gatePlan);
-                      }
-                      if (onUpdate) {
-                        slidesGate.setRelay(invocationId, (event) => {
-                          const payload = slidesGateUpdatePayload(event);
-                          onUpdate({ content: JSON.stringify(payload), details: payload });
-                        });
-                      }
-                    },
+              // 逐页进度（只报不定）：invocationId 一生成即登记并挂进度转发，
+              // 子 run 的 set_page 落页后广播快照，进度卡逐页打勾。
+              onInvocationId: (invocationId) => {
+                builderRunId = invocationId;
+                if (slidesProgress) {
+                  slidesProgress.arm(invocationId, gatePlan);
+                  if (onUpdate) {
+                    slidesProgress.setRelay(invocationId, (event) => {
+                      const payload = slidesProgressUpdatePayload(event);
+                      onUpdate({ content: JSON.stringify(payload), details: payload });
+                    });
                   }
-                : {}),
+                }
+              },
               ...(signal ? { signal } : {}),
             }));
           } catch (error) {
@@ -1157,9 +1300,9 @@ export function createSubagentPiTools(
               details: { errorCode },
             };
           } finally {
-            if (builderRunId) slidesGate?.disarm(builderRunId);
+            if (builderRunId) slidesProgress?.disarm(builderRunId);
           }
-          return normalizeSlidesResult(builderInvocation, task);
+          return normalizeSlidesResult(builderInvocation, "create");
         }
 
         // ── edit：不经方案阶段，slides-builder 直改。 ──
@@ -1196,7 +1339,7 @@ export function createSubagentPiTools(
             details: { errorCode },
           };
         }
-        return normalizeSlidesResult(editInvocation, task);
+        return normalizeSlidesResult(editInvocation, "edit");
       },
     });
   }

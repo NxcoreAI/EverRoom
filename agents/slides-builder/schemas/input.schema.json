@@ -40,7 +40,7 @@
     },
     "plan": {
       "type": "object",
-      "description": "Content plan produced by slides-planner (title, narrative, pages with per-page titles/points/data/material links/notes). Present on create; execute it faithfully."
+      "description": "Page plan produced by slides-planner (title, narrative, pages with per-page titles/roles/density tiers/points/data/material links/notes). Present on create; execute it faithfully — density drives the layout and content budget per page."
     }
   },
   "required": ["task", "instruction", "roomId"],

@@ -1,8 +1,7 @@
-import { Check, ChevronDown, LoaderCircle, Presentation, RotateCw } from 'lucide-react'
+import { Check, ChevronDown, FileText, LoaderCircle, Presentation } from 'lucide-react'
 import { useState } from 'react'
 
 import { useLocale } from '@/i18n/LocaleContext'
-import type { AgentApprovalDecision } from '../../../../shared/sources'
 
 import type { DisplayAgentToolCall } from './agentRunActivity'
 
@@ -11,26 +10,24 @@ export interface SlidesPagePlan {
   title?: string
   points?: string[]
   data?: string
+  materialHints?: string
   notes?: string
   materials?: Array<{ url: string; desc?: string }>
 }
 
 /** slides_draft 进度载荷（网关 onUpdate details，全量快照，取最新一条即可）。 */
 export interface SlidesProgressState {
-  stage: 'plan_ready' | 'page_applied' | 'page_gate' | 'page_resolved'
+  stage: 'draft_ready' | 'plan_ready' | 'page_applied'
   title?: string
   totalPages?: number
   pages?: SlidesPagePlan[]
   doneCount?: number
-  revisingIndex?: number | null
-  awaitingIndex?: number | null
-  finishedEarly?: boolean
-  approvalId?: string
+  documentId?: string
   narrative?: string
   warnings?: string[]
 }
 
-const PROGRESS_STAGES = new Set(['plan_ready', 'page_applied', 'page_gate', 'page_resolved'])
+const PROGRESS_STAGES = new Set(['draft_ready', 'plan_ready', 'page_applied'])
 
 /** 从 slides_draft 工具调用的 partialResult 还原进度载荷；不是进行中的 PPT 任务返回 null。 */
 export function slidesProgressFromToolCall(tool: DisplayAgentToolCall | undefined): SlidesProgressState | null {
@@ -45,21 +42,29 @@ export function slidesProgressFromToolCall(tool: DisplayAgentToolCall | undefine
   return record as unknown as SlidesProgressState
 }
 
-type SlidesPageStatus = 'done' | 'revising' | 'awaiting' | 'pending'
+/** 草稿确认表单选项（值进确认消息，标签走 i18n）。 */
+interface GenerateFormState {
+  audience: number
+  duration: number
+  style: string | null
+  focus: number
+}
 
 export function SlidesProgressCard({
   state,
   toolRunning,
-  resolvingApprovalIds,
-  onResolve,
+  busy,
+  onOpenDraft,
+  onGenerate,
 }: {
   state: SlidesProgressState
   toolRunning: boolean
-  resolvingApprovalIds: ReadonlySet<string>
-  onResolve: (approvalId: string, decision: AgentApprovalDecision, feedback?: string) => void
+  busy?: boolean
+  onOpenDraft?: (documentId: string) => void
+  onGenerate?: (message: string) => void
 }) {
   const { t } = useLocale()
-  const [feedback, setFeedback] = useState('')
+  const [form, setForm] = useState<GenerateFormState>({ audience: 0, duration: 1, style: null, focus: 2 })
   // 换了新任务时清掉上一份 deck 的展开状态（渲染期重置，存上一份在 useState）
   const [prevDeckTitle, setPrevDeckTitle] = useState(state.title)
   const [expanded, setExpanded] = useState<ReadonlySet<number>>(new Set())
@@ -69,27 +74,55 @@ export function SlidesProgressCard({
   }
   const pages = state.pages ?? []
   const total = state.totalPages ?? pages.length
-  const gateOpen = toolRunning
-    && state.stage === 'page_gate'
-    && typeof state.approvalId === 'string'
-    && state.awaitingIndex !== null
-  const approvalId = gateOpen ? state.approvalId as string : null
-  const busy = approvalId !== null && resolvingApprovalIds.has(approvalId)
-  const reviseReady = Boolean(feedback.trim())
+  const doneCount = state.doneCount ?? 0
+  const isDraft = state.stage === 'draft_ready' && typeof state.documentId === 'string'
+  const runningIndex = toolRunning ? doneCount : -1
 
-  const statusOf = (index: number): SlidesPageStatus => {
-    if (state.revisingIndex === index) return 'revising'
-    if (gateOpen && state.awaitingIndex === index) return 'awaiting'
-    if (index < (state.doneCount ?? 0)) return 'done'
+  const audiences = [
+    t('surface:agentChat.slidesAudienceLeader'),
+    t('surface:agentChat.slidesAudienceClient'),
+    t('surface:agentChat.slidesAudienceTeam'),
+  ]
+  const durations = [
+    t('surface:agentChat.slidesDurationShort'),
+    t('surface:agentChat.slidesDurationMedium'),
+    t('surface:agentChat.slidesDurationLong'),
+  ]
+  const focusOptions = [
+    t('surface:agentChat.slidesFocusPoints'),
+    t('surface:agentChat.slidesFocusData'),
+    t('surface:agentChat.slidesFocusBalanced'),
+  ]
+  const styleOptions: Array<{ key: string | null; label: string }> = [
+    { key: null, label: t('surface:agentChat.slidesStyleAuto') },
+    { key: 'japanese-style', label: t('surface:agentChat.slidesStyleJapanese') },
+    { key: 'japanese-lifestyle', label: t('surface:agentChat.slidesStyleLifestyle') },
+    { key: 'futuristic-tech-editorial', label: t('surface:agentChat.slidesStyleTech') },
+    { key: 'minimalist-luxury-branding', label: t('surface:agentChat.slidesStyleLuxury') },
+    { key: 'modern-illustration-editorial', label: t('surface:agentChat.slidesStyleIllustration') },
+    { key: 'soft-3d-clay', label: t('surface:agentChat.slidesStyleClay') },
+    { key: 'japanese-hand-drawn-editorial', label: t('surface:agentChat.slidesStyleHandDrawn') },
+  ]
+
+  const composeGenerateMessage = (): string => {
+    const params = {
+      documentId: state.documentId ?? '',
+      title: state.title ?? '',
+      audience: audiences[form.audience],
+      duration: durations[form.duration],
+      style: form.style ?? '',
+      focus: focusOptions[form.focus],
+    }
+    return form.style
+      ? t('surface:agentChat.slidesGenerateMessageStyled', params)
+      : t('surface:agentChat.slidesGenerateMessage', params)
+  }
+
+  const statusOf = (index: number): 'done' | 'running' | 'pending' => {
+    if (index < doneCount) return 'done'
+    if (index === runningIndex) return 'running'
     return 'pending'
   }
-  const statusText = (status: SlidesPageStatus): string => status === 'done'
-    ? t('surface:agentChat.slidesPageDone')
-    : status === 'revising'
-      ? t('surface:agentChat.slidesPageRevising')
-      : status === 'awaiting'
-        ? t('surface:agentChat.slidesPageAwaiting')
-        : ''
   const toggleExpanded = (index: number) => {
     setExpanded((prev) => {
       const next = new Set(prev)
@@ -105,7 +138,11 @@ export function SlidesProgressCard({
         <span className="agent-slides-progress-icon"><Presentation aria-hidden="true" /></span>
         <span className="agent-slides-progress-title">
           <strong>{state.title}</strong>
-          <small>{t('surface:agentChat.slidesDeckProgress', { done: state.doneCount ?? 0, total })}</small>
+          <small>
+            {isDraft
+              ? t('surface:agentChat.slidesDraftPageCount', { total })
+              : t('surface:agentChat.slidesDeckProgress', { done: doneCount, total })}
+          </small>
         </span>
       </header>
 
@@ -115,16 +152,10 @@ export function SlidesProgressCard({
         <ol className="agent-slides-progress-pages">
           {pages.map((page, index) => {
             const status = statusOf(index)
-            const hasDetail = Boolean(page.points?.length || page.data || page.notes || page.materials?.length)
-            const open = hasDetail
-              && (expanded.has(index)
-                || (gateOpen && state.awaitingIndex === index)
-                || state.revisingIndex === index)
+            const hasDetail = Boolean(page.points?.length || page.data || page.materialHints || page.notes || page.materials?.length)
+            const open = hasDetail && expanded.has(index)
             return (
-              <li
-                key={index}
-                className={`agent-slides-page${status === 'awaiting' ? ' is-awaiting' : ''}${open ? ' is-open' : ''}`}
-              >
+              <li key={index} className={`agent-slides-page${status === 'running' ? ' is-running' : ''}${open ? ' is-open' : ''}`}>
                 <button
                   type="button"
                   className="agent-slides-page-head"
@@ -136,8 +167,7 @@ export function SlidesProgressCard({
                   <span className="agent-slides-page-title" title={page.title ?? undefined}>{page.title}</span>
                   {status !== 'pending' ? (
                     <span className={`agent-slides-page-status is-${status}`}>
-                      {status === 'done' ? <Check aria-hidden="true" /> : status === 'revising' ? <RotateCw aria-hidden="true" /> : null}
-                      {statusText(status)}
+                      {status === 'done' ? <Check aria-hidden="true" /> : <LoaderCircle className="spin" aria-hidden="true" />}
                     </span>
                   ) : null}
                   {hasDetail ? <ChevronDown className="agent-slides-page-chevron" aria-hidden="true" /> : null}
@@ -150,6 +180,7 @@ export function SlidesProgressCard({
                       </ul>
                     ) : null}
                     {page.data ? <div className="agent-slides-page-data">{page.data}</div> : null}
+                    {page.materialHints ? <div className="agent-slides-page-notes">{page.materialHints}</div> : null}
                     {page.notes ? <div className="agent-slides-page-notes">{page.notes}</div> : null}
                     {page.materials?.length ? (
                       <div className="agent-slides-page-media">
@@ -172,52 +203,74 @@ export function SlidesProgressCard({
         </ol>
       ) : null}
 
-      {state.finishedEarly ? (
-        <div className="agent-slides-stopped">{t('surface:agentChat.slidesFinishedEarly')}</div>
+      {state.warnings?.length ? (
+        <div className="agent-slides-stopped">{state.warnings.join('；')}</div>
       ) : null}
 
-      {approvalId !== null ? (
-        <div className="agent-slides-review">
-          <input
-            type="text"
-            value={feedback}
+      {isDraft ? (
+        <div className="agent-slides-confirm">
+          <button
+            type="button"
+            className="agent-slides-open-draft"
             disabled={busy}
-            placeholder={t('surface:agentChat.slidesRevisePlaceholder')}
-            onChange={(event) => setFeedback(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter' && reviseReady && !busy && approvalId) {
-                onResolve(approvalId, 'revise', feedback.trim())
-              }
-            }}
-          />
-          <footer>
-            <button
-              type="button"
-              className="agent-slides-stop"
-              disabled={busy}
-              onClick={() => approvalId && onResolve(approvalId, 'finish')}
-            >
-              {t('surface:agentChat.slidesFinish')}
-            </button>
-            <button
-              type="button"
-              className="agent-slides-revise"
-              disabled={busy || !reviseReady}
-              onClick={() => approvalId && onResolve(approvalId, 'revise', feedback.trim())}
-            >
-              {busy ? <LoaderCircle className="spin" aria-hidden="true" /> : <RotateCw aria-hidden="true" />}
-              {t('surface:agentChat.slidesRevise')}
-            </button>
-            <button
-              type="button"
-              className="agent-slides-continue"
-              disabled={busy}
-              onClick={() => approvalId && onResolve(approvalId, 'continue')}
-            >
-              {busy ? <LoaderCircle className="spin" aria-hidden="true" /> : <Check aria-hidden="true" />}
-              {t('surface:agentChat.slidesContinue')}
-            </button>
-          </footer>
+            onClick={() => onOpenDraft?.(state.documentId as string)}
+          >
+            <FileText aria-hidden="true" />
+            {t('surface:agentChat.slidesOpenDraft')}
+          </button>
+          <div className="agent-slides-form">
+            <label>
+              <span>{t('surface:agentChat.slidesFormAudience')}</span>
+              <select
+                value={form.audience}
+                disabled={busy}
+                onChange={(event) => setForm((prev) => ({ ...prev, audience: Number(event.target.value) }))}
+              >
+                {audiences.map((label, index) => <option key={label} value={index}>{label}</option>)}
+              </select>
+            </label>
+            <label>
+              <span>{t('surface:agentChat.slidesFormDuration')}</span>
+              <select
+                value={form.duration}
+                disabled={busy}
+                onChange={(event) => setForm((prev) => ({ ...prev, duration: Number(event.target.value) }))}
+              >
+                {durations.map((label, index) => <option key={label} value={index}>{label}</option>)}
+              </select>
+            </label>
+            <label>
+              <span>{t('surface:agentChat.slidesFormStyle')}</span>
+              <select
+                value={form.style ?? ''}
+                disabled={busy}
+                onChange={(event) => setForm((prev) => ({ ...prev, style: event.target.value || null }))}
+              >
+                {styleOptions.map((option) => (
+                  <option key={option.key ?? ''} value={option.key ?? ''}>{option.label}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>{t('surface:agentChat.slidesFormFocus')}</span>
+              <select
+                value={form.focus}
+                disabled={busy}
+                onChange={(event) => setForm((prev) => ({ ...prev, focus: Number(event.target.value) }))}
+              >
+                {focusOptions.map((label, index) => <option key={label} value={index}>{label}</option>)}
+              </select>
+            </label>
+          </div>
+          <button
+            type="button"
+            className="agent-slides-generate"
+            disabled={busy}
+            onClick={() => onGenerate?.(composeGenerateMessage())}
+          >
+            {busy ? <LoaderCircle className="spin" aria-hidden="true" /> : <Presentation aria-hidden="true" />}
+            {t('surface:agentChat.slidesGenerate')}
+          </button>
         </div>
       ) : null}
     </section>

@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import Fastify, { LogController } from "fastify";
@@ -159,7 +160,7 @@ import { ConnectorDocumentStore } from "@nxcore/connectors-module/document-store
 import { SubagentRegistry } from "../modules/subagents/registry.js";
 import { SubagentRuntimeManager } from "../modules/subagents/runtime-manager.js";
 import { SubagentOrchestrator } from "../modules/subagents/orchestrator.js";
-import { SlidesReviewGate } from "../modules/subagents/slides-review-gate.js";
+import { SlidesProgressTracker } from "../modules/subagents/slides-progress-tracker.js";
 import { createSubagentPiTools, inferMaterialSourcesFromReads } from "../modules/subagents/tools.js";
 import { createDocWriterResultValidator } from "../modules/subagents/document-draft.js";
 import { createDocWriterDraftResolver } from "../modules/subagents/doc-writer-content.js";
@@ -631,9 +632,9 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   const documentReadAuthority = new DocumentReadAuthority((documentId) => documentService.get(documentId));
   // 评论服务在 host 之前构建并共享单实例：registry 的 AI 审阅工具与 REST 路由共用。
   const documentCommentService = new DocumentCommentService(db, (documentId) => Boolean(documentService.get(documentId)));
-  // PPT 逐页审阅闸门（用户决策：每页都停等确认）：早于 documentMcpHost 构建共享
-  // 单实例——registry 的 set_page 挂起等表态，slides_draft 布闸，resolve 路由回填。
-  const slidesReviewGate = new SlidesReviewGate();
+  // PPT 逐页进度上报器（只报不定）：早于 documentMcpHost 构建共享单实例——
+  // registry 的 set_page 落页即广播快照，slides_draft 布闸挂转发。
+  const slidesProgress = new SlidesProgressTracker();
   const documentMcpHost = new DocumentMcpHost(
     documentService,
     contextRoomService,
@@ -650,8 +651,8 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       config.officeBridge ? new OfficeBridgeClient(config.officeBridge) : null,
       // 写作路线拍板工具：服务在 orchestrator 之后构造，getter 惰性取用。
       () => routeMindmapServiceRef.current,
-      // PPT 逐页审阅闸门：set_page 成功落页后停下等用户表态。
-      slidesReviewGate,
+      // PPT 逐页进度上报：set_page 成功落页即广播快照。
+      slidesProgress,
     ),
     documentOperationService,
     (diagnostic) => {
@@ -990,8 +991,21 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
                 return null;
               }
             },
-            // PPT 逐页审阅闸门：create 方案产出后布闸，逐页落定等用户表态。
-            slidesGate: slidesReviewGate,
+            // PPT 逐页进度：create 编排方案产出后登记，落页即广播快照。
+            slidesProgress,
+            // PPT 草稿文档：planner 内容方案 → 落成 Room 可编辑文档（用户确认后再生成）。
+            createSlidesDraftDocument: async ({ roomId, title, markdown }) => {
+              const documentId = randomUUID();
+              const prepared = documentService.prepareAgentDocumentDraft({ documentId, roomId, title, markdown });
+              await documentService.import({
+                id: prepared.documentId,
+                roomId: prepared.roomId,
+                title: prepared.title,
+                contentJson: prepared.content,
+                origin: "native",
+              });
+              return { documentId: prepared.documentId, title: prepared.title };
+            },
          })
         : []),
       ...createNotificationPiTools(notificationMcpHost),
@@ -1343,7 +1357,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     await agentService.dispose();
     await localAgentRuntimeRegistry.dispose();
     await subagentOrchestrator.dispose();
-    slidesReviewGate.dispose();
+    slidesProgress.dispose();
     await transcriptionSummaryService.dispose();
     await documentMcpHost.close();
     await documentOutboxWorker?.dispose();
@@ -1366,7 +1380,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     sqlite.close();
     await gatewayLogger.close();
   });
-  await app.register(agentRoutes(agentService, new AgentStatusService(agentResolver, subagentOrchestrator), localAgentDispatchStore, slidesReviewGate));
+  await app.register(agentRoutes(agentService, new AgentStatusService(agentResolver, subagentOrchestrator), localAgentDispatchStore));
   await app.register(subagentRoutes(subagentOrchestrator));
   const reloadMcpRuntimes = async (): Promise<void> => {
     const primary = agentResolver.reload(BUILTIN_AGENT_IDS.primary);

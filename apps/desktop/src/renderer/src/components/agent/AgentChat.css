@@ -1375,7 +1375,7 @@
   border-radius: 6px;
 }
 
-.agent-slides-page.is-awaiting {
+.agent-slides-page.is-running {
   background: #eef4fd;
 }
 
@@ -1508,13 +1508,8 @@
   color: #3d7a44;
 }
 
-.agent-slides-page-status.is-revising {
-  color: #a06a10;
-}
-
-.agent-slides-page-status.is-awaiting {
+.agent-slides-page-status.is-running {
   color: #2f5a96;
-  font-weight: 650;
 }
 
 .agent-slides-stopped {
@@ -1523,34 +1518,14 @@
   line-height: 16px;
 }
 
-.agent-slides-review {
+.agent-slides-confirm {
   display: grid;
   gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #e8edf4;
 }
 
-.agent-slides-review input {
-  width: 100%;
-  min-height: 30px;
-  padding: 5px 9px;
-  border: 1px solid #d8e0ea;
-  border-radius: 6px;
-  background: #fff;
-  color: #27313f;
-  font-size: 12px;
-}
-
-.agent-slides-review input:focus {
-  border-color: #9db8dc;
-  outline: none;
-}
-
-.agent-slides-review footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 7px;
-}
-
-.agent-slides-review button {
+.agent-slides-confirm button {
   display: inline-flex;
   min-height: 30px;
   align-items: center;
@@ -1564,42 +1539,66 @@
   font-weight: 650;
 }
 
-.agent-slides-review button:disabled {
+.agent-slides-confirm button:disabled {
   cursor: wait;
   opacity: 0.58;
 }
 
-.agent-slides-review button svg {
+.agent-slides-confirm button svg {
   width: 13px;
   height: 13px;
 }
 
-.agent-slides-stop {
-  border-color: #ded7ca !important;
-  background: #fff;
-  color: #62594b;
-}
-
-.agent-slides-stop:hover:not(:disabled) {
-  background: #f7f3ec;
-}
-
-.agent-slides-revise {
+.agent-slides-open-draft {
   border-color: #c8d6ea !important;
   background: #fff;
   color: #2f5a96;
 }
 
-.agent-slides-revise:hover:not(:disabled) {
+.agent-slides-open-draft:hover:not(:disabled) {
   background: #f0f5fb;
 }
 
-.agent-slides-continue {
+.agent-slides-form {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 8px;
+}
+
+.agent-slides-form label {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.agent-slides-form label span {
+  color: #7c8695;
+  font-size: 10px;
+  line-height: 14px;
+}
+
+.agent-slides-form select {
+  width: 100%;
+  min-height: 28px;
+  padding: 3px 7px;
+  border: 1px solid #d8e0ea;
+  border-radius: 6px;
+  background: #fff;
+  color: #27313f;
+  font-size: 12px;
+}
+
+.agent-slides-form select:focus {
+  border-color: #9db8dc;
+  outline: none;
+}
+
+.agent-slides-generate {
   background: #20252c;
   color: #fff;
 }
 
-.agent-slides-continue:hover:not(:disabled) {
+.agent-slides-generate:hover:not(:disabled) {
   background: #303741;
 }
 

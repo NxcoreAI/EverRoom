@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: slides-planner
 name: Slides Planner
-description: 承接演示文稿（PPT）create 的方案阶段——收集背景与素材、产出逐页内容大纲，交由 slides-builder 落页
+description: 承接演示文稿（PPT）的两段方案工作——draft 产出内容草稿供用户确认，arrange 把确认稿编排成带密度节奏与配图的落页方案，交由 slides-builder 落页
 mode: dispatch_only
 enabled: true
 
@@ -17,6 +17,6 @@ outputSchema: ./schemas/output.schema.json
 policy:
   allowedCallers: [primary-agent]
   maxConcurrency: 2
-  # 方案阶段预算：素材检索 + 文档读取 + 大纲撰写，不落页。
+  # 方案阶段预算：draft/arrange 素材检索 + 文档读取 + 大纲撰写，不落页。
   maxToolCalls: 32
   timeoutSeconds: 420

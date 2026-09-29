@@ -1,11 +1,16 @@
 {
   "type": "object",
   "properties": {
+    "phase": {
+      "type": "string",
+      "enum": ["draft", "arrange"],
+      "description": "Which phase to run: draft = produce the content draft for user confirmation; arrange = turn the user-confirmed draft into the final page plan."
+    },
     "instruction": {
       "type": "string",
       "minLength": 1,
       "maxLength": 16000,
-      "description": "User instruction for this slides create task; always the highest priority."
+      "description": "User instruction for this slides task; always the highest priority."
     },
     "roomId": {
       "type": "string",
@@ -28,7 +33,30 @@
       "minItems": 1,
       "maxItems": 24,
       "items": { "type": "string", "minLength": 1, "maxLength": 80 },
-      "description": "Per-page titles requested by the user (order = page order; first item is the cover). Treat as the skeleton when present."
+      "description": "draft only: per-page titles requested by the user (order = page order; first item is the cover). Treat as the skeleton when present."
+    },
+    "draftPages": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 24,
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": { "type": "string", "maxLength": 80 },
+          "points": { "type": "array", "maxItems": 8, "items": { "type": "string", "maxLength": 200 } },
+          "data": { "type": "string", "maxLength": 2000 },
+          "materialHints": { "type": "string", "maxLength": 300 },
+          "notes": { "type": "string", "maxLength": 300 }
+        },
+        "required": ["title"],
+        "additionalProperties": false
+      },
+      "description": "arrange only: pages parsed back from the user-confirmed draft document (their edits are authoritative)."
+    },
+    "style": {
+      "type": "string",
+      "maxLength": 40,
+      "description": "arrange only: requested style id, passed through to the builder."
     }
   },
   "required": ["instruction", "roomId"],

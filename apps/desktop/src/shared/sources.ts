@@ -814,17 +814,11 @@ export interface RoomLocalActionResult {
   overview: RoomOverviewProjection
 }
 
-/**
- * Agent 审批表态：前三态是 bash 命令审批；后三态是 PPT 逐页审阅
- * （continue 翻页 / revise 按反馈重落该页 / finish 到此为止）。
- */
+/** Agent 审批表态：bash 命令审批三态。 */
 export type AgentApprovalDecision =
   | 'approved'
   | 'approved_session'
   | 'denied'
-  | 'continue'
-  | 'revise'
-  | 'finish'
 
 export interface NxcoreDesktopApi {
   platform: string

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 
 import { annotations, manifest } from "./shared.js";
-import { stringArg, success, type DocumentCapabilityPlugin, type DocumentCapabilityTool, type SlidesPageReviewGate } from "./types.js";
+import { stringArg, success, type DocumentCapabilityPlugin, type DocumentCapabilityTool, type SlidesPageProgressReporter } from "./types.js";
 import type { OfficeBridgeClient, OfficeSheetBridgeInput } from "./office-bridge-client.js";
 
 /**
@@ -162,8 +162,8 @@ function normalizeSheets(sheets: unknown): OfficeSheetBridgeInput[] {
 
 export function officePlugin(
   bridge: OfficeBridgeClient,
-  /** PPT 逐页审阅闸门（用户决策：每页停下等确认）；未注入时逐页直通。 */
-  slidesGate?: SlidesPageReviewGate | null,
+  /** PPT 逐页进度上报器（只报不定）：未注入时落页无进度广播。 */
+  slidesProgress?: SlidesPageProgressReporter | null,
 ): DocumentCapabilityPlugin {
   const officeCreate: DocumentCapabilityTool = {
     name: "context_room_office_create",
@@ -288,9 +288,6 @@ export function officePlugin(
       + "这是 PPT 生成的第二步：context_room_slides_create 建好文件（1 页骨架）后，用本工具一页一页生成——"
       + "从 slideIndex=0 起按 0、1、2… 顺序推进，每页等成功结果（用户实时看到该页成形）再继续下一页；"
       + "某页失败只需重试该页，不影响已完成的页；生成到第几页，文件就有几页。"
-      + "开启逐页审阅时，成功落页的返回会带 review 字段并以它为准：action=continue 照常填下一页；"
-      + "action=revise（附 feedback）说明用户对刚落的这页有修改意见——带着 feedback 对同一 slideIndex 重落一版；"
-      + "action=finish 说明用户要求到此为止——停止填页，跑完收尾自检后提交（summary 里如实说明提前收尾）。"
       + `${PAGESPEC_GUIDE}`
       + "刚创建的文件会自动打开，fileId 用 create 返回的 fileEntryId 或 \"active\"。",
     inputSchema: {
@@ -321,29 +318,11 @@ export function officePlugin(
       }
       const result = await bridge.fillPage({ fileId, slideIndex, specJson });
       if (!result.ok) throw new Error(`OFFICE_EDIT_FAILED: ${result.error ?? "桌面端填充失败"}`);
-      // 逐页审阅闸门（用户决策：每页都停下等确认）：成功落页且闸门对该 run 生效时
-      // 挂起等表态；QA 自检替换（回填旧页）在闸门内部直通。revise 时本页内容已在
-      // 文件里（用户已实时看到），nextAction 指示 builder 按反馈对同一页重落一版。
-      let review: {
-        action: "continue" | "revise" | "finish";
-        feedback?: string;
-        timedOut?: boolean;
-      } | null = null;
-      if (result.applied === true && slidesGate?.isActive(context.runId)) {
-        const decision = await slidesGate.awaitDecision(context.runId, slideIndex);
-        review = {
-          action: decision.action,
-          ...(decision.feedback ? { feedback: decision.feedback } : {}),
-          ...(decision.timedOut ? { timedOut: true } : {}),
-        };
+      // 逐页进度（只报不定）：成功落页即广播快照，进度卡逐页打勾；
+      // 不停等、不决策——内容确认在草稿文档阶段，修改在成品批注阶段。
+      if (result.applied === true) {
+        slidesProgress?.notify(context.runId, slideIndex);
       }
-      const reviewNextAction = review
-        ? review.action === "revise"
-          ? "regenerate_same_page_with_feedback"
-          : review.action === "finish"
-            ? "stop_and_submit"
-            : "fill_next_page"
-        : null;
       return success({
         fileId,
         slideIndex,
@@ -354,8 +333,7 @@ export function officePlugin(
         ...(result.saved !== undefined ? { saved: result.saved } : {}),
         ...(result.saveError ? { saveError: result.saveError } : {}),
         ...(result.outline ? { outline: result.outline } : {}),
-        ...(review ? { review } : {}),
-        nextAction: reviewNextAction ?? (result.applied === true ? "fill_next_page" : "fix_spec_and_retry"),
+        nextAction: result.applied === true ? "fill_next_page" : "fix_spec_and_retry",
       });
     },
   };

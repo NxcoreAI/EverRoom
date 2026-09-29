@@ -610,6 +610,10 @@ export function AgentPanel({
         onRejectDocumentIntent={focusComposer}
         onRetryPrompt={(prompt, runId) => void sendPrompt(prompt, runId)}
         onOpenSessionLink={(link) => void openSessionLink(link)}
+        onOpenDraftDocument={(documentId) => {
+          if (roomId) onOpenDocument({ roomId, documentId })
+        }}
+        onSlidesGenerate={(message) => void sendPrompt(message)}
         onSelectRoom={selectDocumentRoom}
         onSelectDocument={(selection) => void selectDocument(selection)}
         onSelectPrompt={(prompt) => {
