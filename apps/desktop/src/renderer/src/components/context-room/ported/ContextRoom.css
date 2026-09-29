@@ -4029,6 +4029,20 @@
   opacity: 1;
 }
 
+/* 行内删除：资源删除钮在 acts 容器内常显，沿用悬停红。 */
+.context-room-artifact-acts .context-room-resource-delete {
+  width: 22px;
+  height: 22px;
+  opacity: 1;
+  color: var(--cr-muted);
+}
+
+.context-room-artifact-acts .context-room-resource-delete:hover:not(:disabled),
+.context-room-artifact-acts .context-room-resource-delete:focus-visible {
+  background: rgba(181, 71, 50, 0.09);
+  color: #b54732;
+}
+
 .context-room-artifact-acts button {
   display: inline-flex;
   align-items: center;

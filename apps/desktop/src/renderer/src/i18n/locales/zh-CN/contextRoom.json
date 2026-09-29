@@ -1575,5 +1575,12 @@
   "creation.emptySubmitted": "已提交：将按描述直接创建空 Room",
   "creation.emptyRoomHint": "不选文件也可创建空 Room：填写用途描述后直接提交，内容后续再添加",
   "creation.emptyRoomTitle": "未命名 Room",
-  "creation.emptyRoomCreated": "已创建空 Room「{title}」（解析失败的文件已跳过）"
+  "creation.emptyRoomCreated": "已创建空 Room「{title}」（解析失败的文件已跳过）",
+  "artifactLibrary.deleteFile": "删除",
+  "artifactLibrary.confirmDeleteFileName": "确认删除 {name}",
+  "artifactLibrary.confirmDeleteFile": "删除该文件？",
+  "artifactLibrary.deleteFileIrreversible": "删除后无法恢复。",
+  "artifactLibrary.delete": "删除",
+  "artifactLibrary.deleting": "删除中…",
+  "artifactLibrary.failedToDeleteFile": "删除文件失败"
 }

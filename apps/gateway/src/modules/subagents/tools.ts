@@ -61,7 +61,7 @@ async function dispatchWithConcurrencyRetry<T>(
 function normalizeSlidesResult(
   invocation: Awaited<ReturnType<SubagentOrchestrator["dispatch"]>>,
   task: "create" | "edit",
-): { content: string; details: unknown } {
+): { content: string; details: unknown; status: string } {
   if (invocation.status !== "completed") {
     return {
       content: JSON.stringify({
@@ -72,6 +72,7 @@ function normalizeSlidesResult(
         message: `落页阶段未完成（${invocation.status}）；如实告知用户，禁止自行拼 PPT 内容。`,
       }),
       details: invocation,
+      status: invocation.status,
     };
   }
   const structured = invocation.result?.structuredOutput !== null
@@ -90,6 +91,7 @@ function normalizeSlidesResult(
         message: "落页代理未提交匹配任务的结构化结果；可调整 instruction 后重新调用 slides_draft。",
       }),
       details: invocation,
+      status: "failed",
     };
   }
   const pick = (key: string): unknown => (structured[key] !== undefined && structured[key] !== null ? structured[key] : null);
@@ -106,6 +108,7 @@ function normalizeSlidesResult(
       summary: typeof structured.summary === "string" ? structured.summary : "",
     }),
     details: invocation,
+    status: structured.status,
   };
 }
 
@@ -300,6 +303,11 @@ export function createSubagentPiTools(
       title: string;
       markdown: string;
     }) => Promise<{ documentId: string; title: string }>;
+    /**
+     * 内容草稿回收（generate 成功后）：产物已落库，草稿使命结束，进回收站可恢复；
+     * 失败/部分完成时草稿保留以便重试，不调用本项。
+     */
+    trashSlidesDraftDocument?: (documentId: string) => Promise<void>;
   } = {},
 ): PiAgentRuntimeTool[] {
   const tools: PiAgentRuntimeTool[] = [
@@ -1302,7 +1310,13 @@ export function createSubagentPiTools(
           } finally {
             if (builderRunId) slidesProgress?.disarm(builderRunId);
           }
-          return normalizeSlidesResult(builderInvocation, "create");
+          const generateResult = normalizeSlidesResult(builderInvocation, "create");
+          // 落页完成即回收内容草稿：产物已落库，草稿使命结束（进回收站可恢复）；
+          // partial/failed 保留草稿便于重试。fire-and-forget，不影响结果返回。
+          if (generateResult.status === "completed" && draftDocumentId) {
+            void options.trashSlidesDraftDocument?.(draftDocumentId).catch(() => {});
+          }
+          return { content: generateResult.content, details: generateResult.details };
         }
 
         // ── edit：不经方案阶段，slides-builder 直改。 ──

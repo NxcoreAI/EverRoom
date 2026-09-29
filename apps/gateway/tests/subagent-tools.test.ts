@@ -350,7 +350,7 @@ describe('createSubagentPiTools slides_draft', () => {
 
   /** generate 阶段读回草稿的文档快照夹具（与 readDocumentForAgent 同构）。 */
   const draftSnapshot = {
-    document: { id: 'doc-draft-1', title: '季度汇报' },
+    document: { id: 'doc-draft-1', roomId: 'room-1', title: '季度汇报', version: 1 },
     blocks: [],
     markdown: '## 封面\n- 季度汇报\n\n## 业绩\n数据：Q1: 1.2 亿；Q2: 1.5 亿\n\n## 计划\n- 三线扩张\n',
   }
@@ -359,7 +359,10 @@ describe('createSubagentPiTools slides_draft', () => {
     const orchestrator = orchestratorByAgent({
       'slides-planner': { result: { text: '', structuredOutput: planFixture } },
     })
-    const createSlidesDraftDocument = vi.fn(async () => ({ documentId: 'doc-draft-1', title: '季度汇报' }))
+    const createSlidesDraftDocument = vi.fn(async (_input: { roomId: string; title: string; markdown: string }) => ({
+      documentId: 'doc-draft-1',
+      title: '季度汇报',
+    }))
     const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestrator, {
       createSlidesDraftDocument,
     })
@@ -426,8 +429,10 @@ describe('createSubagentPiTools slides_draft', () => {
       'slides-planner': { result: { text: '', structuredOutput: arrangePlan } },
       'slides-builder': { result: { text: '', structuredOutput: builderResultFixture } },
     })
+    const trashDraft = vi.fn(async () => {})
     const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestrator, {
       resolveDocumentForDraft: () => draftSnapshot,
+      trashSlidesDraftDocument: trashDraft,
     })
     const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
     const onUpdate = vi.fn()
@@ -479,6 +484,41 @@ describe('createSubagentPiTools slides_draft', () => {
       pages: 3,
       summary: '已生成 3 页',
     })
+
+    // 级联清理：落页完成即回收内容草稿（进回收站）。
+    expect(trashDraft).toHaveBeenCalledTimes(1)
+    expect(trashDraft).toHaveBeenCalledWith('doc-draft-1')
+  })
+
+  it('generate：落页部分完成时草稿保留（便于重试），不回收', async () => {
+    const arrangePlan = {
+      phase: 'arrange',
+      title: '季度汇报',
+      pages: [{ title: '封面', role: 'opening', density: 'sparse', points: ['季度汇报'] }],
+    }
+    const orchestrator = orchestratorByAgent({
+      'slides-planner': { result: { text: '', structuredOutput: arrangePlan } },
+      'slides-builder': {
+        result: {
+          text: '',
+          structuredOutput: { ...builderResultFixture, status: 'partial', summary: '已生成 2 页，第 3 页失败' },
+        },
+      },
+    })
+    const trashDraft = vi.fn(async () => {})
+    const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestrator, {
+      resolveDocumentForDraft: () => draftSnapshot,
+      trashSlidesDraftDocument: trashDraft,
+    })
+    const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
+    const result = await slidesDraft.execute(
+      { ...run, roomId: 'room-1' } as never,
+      { task: 'generate', instruction: '生成', draftDocumentId: 'doc-draft-1' } as never,
+      undefined,
+    )
+
+    expect(JSON.parse((result as { content: string }).content)).toMatchObject({ status: 'partial' })
+    expect(trashDraft).not.toHaveBeenCalled()
   })
 
   it('generate：缺少 draftDocumentId 或草稿解析不到页结构即返回 failed，不发生调度', async () => {

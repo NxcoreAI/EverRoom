@@ -1006,6 +1006,10 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
               });
               return { documentId: prepared.documentId, title: prepared.title };
             },
+            // 草稿回收：落页成功后网关侧进回收站（可恢复），桌面清单随之移除。
+            trashSlidesDraftDocument: async (documentId) => {
+              await documentService.delete(documentId);
+            },
          })
         : []),
       ...createNotificationPiTools(notificationMcpHost),

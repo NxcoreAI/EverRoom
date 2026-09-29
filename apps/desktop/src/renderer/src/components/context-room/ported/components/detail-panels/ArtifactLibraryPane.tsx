@@ -1,5 +1,5 @@
 import * as Popover from '@radix-ui/react-popover';
-import { FileText, FileSpreadsheet, FileUp, Presentation, FileText as WordIcon, LoaderCircle, Package, Plus } from 'lucide-react';
+import { FileText, FileSpreadsheet, FileUp, Presentation, FileText as WordIcon, LoaderCircle, Package, Plus, Trash2 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocale } from '../../../../../i18n/LocaleContext';
 import type { RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract';
@@ -33,6 +33,7 @@ export function ArtifactLibraryPane({
   selectedId,
   onSelect,
   onCreateDocument,
+  onDeleteDocument,
 }: {
   room: ContextRoomRecord;
   backendDocuments: RoomDocument[];
@@ -42,8 +43,9 @@ export function ArtifactLibraryPane({
   selectedId: string | null;
   onSelect: (resource: ContextRoomResource) => void;
   onCreateDocument: (title: string, contentJson?: TiptapJsonContent) => Promise<void>;
-  /** 回收站相关操作已从 UI 下线；父级仍会传入，保留类型兼容。 */
+  /** 产物库行内删除（云文档进回收站），由父级 useRoomDocuments.deleteDocument 提供。 */
   onDeleteDocument?: (document: RoomDocument) => Promise<void>;
+  /** 回收站管理操作已从 UI 下线；父级仍会传入，保留类型兼容。 */
   onRestoreDocument?: (document: RoomDocument) => Promise<void>;
   onDeleteDocumentPermanently?: (document: RoomDocument) => Promise<void>;
 }) {
@@ -69,6 +71,39 @@ export function ArtifactLibraryPane({
   const [creatingDocument, setCreatingDocument] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const markdownInputRef = useRef<HTMLInputElement>(null);
+  // 行内删除：office 产物为硬删除（级联清理），云文档进回收站（可恢复）。
+  const [pendingDelete, setPendingDelete] = useState<
+    | { key: string; kind: 'file'; fileId: string; name: string }
+    | { key: string; kind: 'document'; document: RoomDocument; name: string }
+    | null
+  >(null);
+  const [deletingArtifact, setDeletingArtifact] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  const confirmArtifactDelete = async () => {
+    if (!pendingDelete) return;
+    setDeleteError(null);
+    setDeletingArtifact(true);
+    try {
+      if (pendingDelete.kind === 'file') {
+        const files = window.nxcore?.files;
+        if (!files) throw new Error(t('contextRoom:artifactLibrary.failedToDeleteFile'));
+        await files.delete(pendingDelete.fileId);
+        // 文件清单各面板监听该事件刷新；尾随刷新由钩子自兜。
+        window.dispatchEvent(new CustomEvent('everroom:knowledge-changed'));
+      } else {
+        await onDeleteDocument?.(pendingDelete.document);
+      }
+      setPendingDelete(null);
+    } catch (error: unknown) {
+      setDeleteError(error instanceof Error && error.message
+        ? error.message
+        : t('contextRoom:artifactLibrary.failedToDeleteFile'));
+    } finally {
+      setDeletingArtifact(false);
+    }
+  };
+
   // 引用来源计数：与建联图谱同源的纯读侧投影，按文档聚合边数。
   const citationCounts = useMemo(() => {
     const counts = new Map<string, number>();
@@ -332,6 +367,70 @@ export function ArtifactLibraryPane({
                   ) : null}
                 </span>
               </button>
+              {office || backendDocument ? (
+                <span className="context-room-artifact-acts">
+                  <Popover.Root
+                    open={pendingDelete?.key === key}
+                    onOpenChange={(open) => {
+                      if (!open && deletingArtifact && pendingDelete?.key === key) return;
+                      setDeleteError(null);
+                      setPendingDelete(open
+                        ? office
+                          ? { key, kind: 'file', fileId: office.fileId, name: resource.name }
+                          : backendDocument
+                            ? { key, kind: 'document', document: backendDocument, name: resource.name }
+                            : null
+                        : null);
+                    }}
+                  >
+                    <Popover.Trigger asChild>
+                      <button
+                        type="button"
+                        className="context-room-resource-delete"
+                        aria-label={office
+                          ? t('contextRoom:artifactLibrary.confirmDeleteFileName', { name: resource.name })
+                          : t('contextRoom:resource.confirmMovingDocumentNameToTrash', { name: resource.name })}
+                        title={office ? t('contextRoom:artifactLibrary.deleteFile') : t('contextRoom:resource.moveToTrash')}
+                        disabled={deletingArtifact && pendingDelete?.key === key}
+                      >
+                        <Trash2 aria-hidden="true" />
+                      </button>
+                    </Popover.Trigger>
+                    <Popover.Portal>
+                      <Popover.Content
+                        className="context-room-document-delete-popover"
+                        side="left"
+                        align="center"
+                        sideOffset={8}
+                        collisionPadding={12}
+                        aria-label={office
+                          ? t('contextRoom:artifactLibrary.confirmDeleteFileName', { name: resource.name })
+                          : t('contextRoom:resource.confirmMovingDocumentNameToTrash', { name: resource.name })}
+                      >
+                        <p>{office ? t('contextRoom:artifactLibrary.confirmDeleteFile') : t('contextRoom:resource.confirmMoveToTrash')}</p>
+                        <span>{office
+                          ? t('contextRoom:artifactLibrary.deleteFileIrreversible')
+                          : t('contextRoom:resource.nameCanBeRestoredFromTrash', { name: resource.name })}</span>
+                        {deleteError ? <small role="alert">{deleteError}</small> : null}
+                        <footer>
+                          <Popover.Close asChild>
+                            <button type="button">{t('contextRoom:resource.cancel')}</button>
+                          </Popover.Close>
+                          <button
+                            type="button"
+                            className="is-danger"
+                            disabled={deletingArtifact}
+                            onClick={() => void confirmArtifactDelete()}
+                          >
+                            {t(deletingArtifact ? 'contextRoom:artifactLibrary.deleting' : 'contextRoom:artifactLibrary.delete')}
+                          </button>
+                        </footer>
+                        <Popover.Arrow className="context-room-document-delete-arrow" />
+                      </Popover.Content>
+                    </Popover.Portal>
+                  </Popover.Root>
+                </span>
+              ) : null}
             </div>
           );
         })}

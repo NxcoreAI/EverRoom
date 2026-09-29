@@ -1575,5 +1575,12 @@
   "creation.emptySubmitted": "Submitted: an empty Room will be created from the description",
   "creation.emptyRoomHint": "Files are optional: describe the purpose and submit to create an empty Room, add content later",
   "creation.emptyRoomTitle": "Untitled Room",
-  "creation.emptyRoomCreated": "Created empty Room \"{title}\" (files that failed to parse were skipped)"
+  "creation.emptyRoomCreated": "Created empty Room \"{title}\" (files that failed to parse were skipped)",
+  "artifactLibrary.deleteFile": "Delete",
+  "artifactLibrary.confirmDeleteFileName": "Confirm deleting {name}",
+  "artifactLibrary.confirmDeleteFile": "Delete this file?",
+  "artifactLibrary.deleteFileIrreversible": "This cannot be undone.",
+  "artifactLibrary.delete": "Delete",
+  "artifactLibrary.deleting": "Deleting…",
+  "artifactLibrary.failedToDeleteFile": "Failed to delete file"
 }
