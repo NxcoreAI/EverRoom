@@ -1,10 +1,12 @@
 import {
   Activity,
+  ArrowLeft,
   AudioLines,
   Brain,
   Camera,
   CalendarClock,
   Cloud,
+  CloudCog,
   LoaderCircle,
   Languages,
   LogOut,
@@ -15,11 +17,12 @@ import {
   RefreshCw,
   ShieldCheck,
   ShieldAlert,
+  ServerCog,
   Sparkles,
   Smartphone,
   WalletCards,
 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import QRCode from 'qrcode'
 
 import { useAccount } from '@/state/AccountContext'
@@ -46,6 +49,8 @@ import { useLocale, type AppLocale, type Translate } from '@/i18n/LocaleContext'
 import { LocalAgentSettingsSection } from '@/components/settings/LocalAgentSettingsSection'
 import { UsageAndBudgetSettingsSection } from '@/components/settings/UsageAndBudgetSettingsSection'
 import { RuntimeConfigSettingsSection } from '@/components/settings/RuntimeConfigSettingsSection'
+import { CloudControlSection } from '@/components/settings/CloudControlSection'
+import { AppPrefsSection } from '@/components/settings/AppPrefsSection'
 import { RedeemCodeField, useRedeemCode } from '@/components/account/RedeemCodeField'
 import { QrLoginPanel } from '@/components/account/QrLoginPanel'
 import './SettingsPage.css'
@@ -55,6 +60,8 @@ type SettingsNavItem = { id: string; label: string; icon: typeof Cloud }
 const SETTINGS_NAV: SettingsNavItem[] = [
   { id: 'settings-account', label: 'surface:settings.navigationAccount', icon: Cloud },
   { id: 'settings-connector-mode', label: 'surface:settings.connectorModeTitle', icon: Plug },
+  { id: 'settings-cloud-control', label: 'surface:settings.cloudControlTitle', icon: CloudCog },
+  { id: 'settings-app-prefs', label: 'surface:settings.appPrefsTitle', icon: ServerCog },
   { id: 'settings-models', label: 'surface:settings.navigationModels', icon: Brain },
   { id: 'settings-runtime-config', label: 'surface:settings.navigationRuntimeConfig', icon: ShieldCheck },
   { id: 'settings-token-usage', label: 'surface:settings.usageAndBudgets', icon: Activity },
@@ -144,6 +151,12 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
   const [aiRelayStatus, setAiRelayStatus] = useState<AiGatewayStatus | null>(null)
   const redeemCode = useRedeemCode()
   const [qrActive, setQrActive] = useState(false)
+  // 扫码面板注册的「取消会话」句柄：二维码展开后由设置页提供返回入口
+  // （与首启 gate 同款模式），否则用户会困在二维码视图里回不到登录方式。
+  const qrCancelRef = useRef<(() => void) | null>(null)
+  const registerQrCancel = useCallback((cancel: (() => void) | null) => {
+    qrCancelRef.current = cancel
+  }, [])
 
   useEffect(() => {
     if (!account?.authenticated || !window.nxcore) {
@@ -527,6 +540,8 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
       <UpdateSection />
 
       <ConnectorModeSection />
+      <CloudControlSection />
+      <AppPrefsSection />
       <section id="settings-account" className="cloud-account-section settings-anchor-section" aria-labelledby="cloud-account-title">
         <header className="cloud-account-header">
           <span className="cloud-account-icon"><Cloud aria-hidden="true" /></span>
@@ -759,10 +774,22 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
               </div>
             ) : null}
 
+            {qrActive ? (
+              <button
+                className="secondary-button cloud-login-cancel"
+                type="button"
+                onClick={() => qrCancelRef.current?.()}
+              >
+                <ArrowLeft aria-hidden="true" />
+                {t('surface:qrLogin.backToMethods', { defaultValue: '返回登录方式' })}
+              </button>
+            ) : null}
+
             <QrLoginPanel
               account={account}
               onAccountChanged={setAccount}
               onActiveChange={setQrActive}
+              registerCancel={registerQrCancel}
               entryDisabled={isBusy}
             />
           </div>
@@ -886,10 +913,9 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
         <div className="reality-setting-row">
           <div><strong>{t('surface:settings.transcriptionLanguages')}</strong></div>
           <div className="segmented-control" aria-label={t('surface:settings.realityPerceptionTranscriptionLanguages')}>
-            {([['zh', 'surface:settings.chinese'], ['en', 'surface:settings.english']] as const).map(([value, label]) => {
-              const active = realitySettings.languages.includes(value)
-              return <button key={value} type="button" data-active={String(active)} onClick={() => updateRealitySettings({ languages: active && realitySettings.languages.length > 1 ? realitySettings.languages.filter((item) => item !== value) : active ? realitySettings.languages : [...realitySettings.languages, value] })}>{t(label)}</button>
-            })}
+            {([['zh', 'surface:settings.chinese'], ['en', 'surface:settings.english']] as const).map(([value, label]) => (
+              <button key={value} type="button" data-active={String(realitySettings.languages[0] === value)} onClick={() => updateRealitySettings({ languages: [value] })}>{t(label)}</button>
+            ))}
           </div>
         </div>
       </section>

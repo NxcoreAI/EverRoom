@@ -5,6 +5,7 @@ import {
   LoaderCircle,
   PlugZap,
   RefreshCw,
+  SlidersHorizontal,
 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 
@@ -238,6 +239,10 @@ export function RuntimeConfigGate({ children }: { children: ReactNode }) {
         }
         setSnapshot(next)
         enterApp()
+        // 自配模型 = 用户表达了"不依赖官方云"的意图：连接层跟随默认本地
+        //（云端模式未登录时是死配置，见排查报告）。重启后生效；之后可随时
+        // 在设置切回云端（有重新授权确认）。登录路保持默认云端不动。
+        if (from === 'manual') void window.nxcore?.cliConnector?.setMode('local').catch(() => undefined)
         window.dispatchEvent(new CustomEvent('everroom-runtime-config-status', { detail: 'ready' }))
         return true
       }
@@ -507,8 +512,17 @@ export function RuntimeConfigGate({ children }: { children: ReactNode }) {
 
               {!qrActive ? (
                 <div className="qr-login-methods" key="gate-secondary">
-                  <button type="button" className="runtime-config-gate-manual-link" onClick={() => { setTestError(null); setMode('manual') }}>
-                    {t('surface:configGate.manualOption')}
+                  <button
+                    type="button"
+                    className="runtime-config-gate-manual-cta"
+                    disabled={oidcPending !== null}
+                    onClick={() => { setTestError(null); setMode('manual') }}
+                  >
+                    <SlidersHorizontal aria-hidden="true" />
+                    <span>
+                      <strong>{t('surface:configGate.manualCtaTitle', { defaultValue: '自己配置 AI 模型' })}</strong>
+                      <small>{t('surface:configGate.manualCtaBody', { defaultValue: '不登录、数据不出本机，填自己的模型服务即可使用' })}</small>
+                    </span>
                   </button>
                 </div>
               ) : null}

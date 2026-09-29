@@ -31,18 +31,16 @@ export function startupGateOutcome(input: {
 }
 
 /**
- * gate 手动表单本地校验：primary 三要素必填；embedding 可选（填了必须填全）。
- * 校验逻辑复用共享模块（settings 页同语义）。参数带 provider 字段（表单形状）。
+ * gate 手动表单本地校验：primary 三要素必填；embedding 可选——未填全由
+ * buildUserConfig 按未配置清空（历史半填数据自愈），不再阻塞进入应用。
  */
 export function manualConfigFieldError(
   primary: { model: string; baseUrl: string; apiKey: string; provider?: string },
-  embedding: { model: string; baseUrl: string; apiKey: string; provider?: string },
+  _embedding: { model: string; baseUrl: string; apiKey: string; provider?: string },
   t: (key: string) => string,
 ): string | null {
   if (!primary.model.trim() || !primary.baseUrl.trim() || !primary.apiKey.trim()) {
     return t('surface:configGate.fieldRequired')
   }
-  const filled = [embedding.model, embedding.baseUrl, embedding.apiKey].filter((value) => value.trim()).length
-  if (filled > 0 && filled < 3) return t('surface:configGate.embeddingIncomplete')
   return null
 }

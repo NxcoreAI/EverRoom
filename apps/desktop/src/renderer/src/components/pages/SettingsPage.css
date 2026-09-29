@@ -94,6 +94,8 @@
 .settings-content[data-active-setting='settings-runtime-config'] > #settings-runtime-config { display: block; }
 .settings-content[data-active-setting='settings-extensions'] > #settings-extensions { display: block; }
 .settings-content[data-active-setting='settings-update'] > #settings-update { display: block; }
+.settings-content[data-active-setting='settings-cloud-control'] > #settings-cloud-control { display: block; }
+.settings-content[data-active-setting='settings-app-prefs'] > #settings-app-prefs { display: block; }
 .browser-extension-settings { min-height: 320px; }
 .browser-extension-status-row { display: flex; align-items: center; gap: 12px; padding: 16px; border-bottom: 1px solid var(--border); }
 .browser-extension-status-row > div:last-child { display: grid; gap: 4px; min-width: 0; }
@@ -1488,6 +1490,12 @@
   flex-direction: column;
   gap: 2px;
   flex: 1;
+}
+
+.connector-mode-option-desc {
+  font-size: 12px;
+  color: var(--muted);
+  text-align: left;
 }
 
 .connector-mode-option-body strong {

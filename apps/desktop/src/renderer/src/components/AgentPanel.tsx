@@ -171,6 +171,7 @@ export function AgentPanel({
         .filter((message) => message.role === 'user' || message.role === 'assistant')
         .slice(-8)
         .map((message) => ({ role: message.role as 'user' | 'assistant', text: message.content.slice(0, 4000) }))
+        .filter((message) => message.text.trim())
       if (recent.length === 0) return
       api.suggestConversationPrompt({
         sessionId: session.sessionId,

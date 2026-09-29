@@ -537,23 +537,49 @@
   color: #151a22;
 }
 
-/* 手动配置是低频逃生入口：右对齐的一行弱化文字，不做按钮。 */
-.runtime-config-gate-manual-link {
-  display: block;
-  margin: 14px 2px 0 auto;
-  padding: 0;
-  background: none;
-  border: none;
+/* 真·开源版（改造清单#4）：自配模型与登录同等权重，不再是角落里的弱化逃生链接。 */
+.runtime-config-gate-manual-cta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid #c9d9f4;
+  border-radius: 8px;
+  background: #f6f9ff;
   cursor: pointer;
-  color: #7c8798;
-  font-size: 13px;
-  font-weight: 400;
-  text-decoration: none;
+  text-align: left;
+  font: inherit;
 }
 
-.runtime-config-gate-manual-link:hover {
-  color: #536070;
-  text-decoration: underline;
+.runtime-config-gate-manual-cta:hover {
+  border-color: #93b4f0;
+  background: #eef4ff;
+}
+
+.runtime-config-gate-manual-cta:disabled {
+  cursor: default;
+  opacity: .5;
+}
+
+.runtime-config-gate-manual-cta svg {
+  flex: none;
+  color: #3b6fd4;
+}
+
+.runtime-config-gate-manual-cta strong {
+  display: block;
+  font-size: 14px;
+  font-weight: 600;
+  color: #151a22;
+}
+
+.runtime-config-gate-manual-cta small {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  color: #7c8798;
 }
 
 /* 等待浏览器登录：通知盒（与错误条同族），spinner+文案居左、取消按钮居右。
