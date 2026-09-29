@@ -79,6 +79,9 @@ import { AgentStatusReporter } from './cloud/agent-status-reporter'
 import { SessionLeaseKeeper } from './cloud/session-lease-keeper'
 import { AiRelayKeeper, type AiRelayKeeperEvent } from './cloud/ai-relay-keeper'
 import { RemoteAgentCommandClient } from './cloud/remote-agent-command-client'
+import { registerCloudControlIpc } from './cloud/cloud-control-ipc'
+import { getCloudControlSettings, onCloudControlSettingsChanged } from './cloud/cloud-control-store'
+import { registerAppPrefsIpc } from './settings/app-prefs-ipc'
 import { AgentNotificationBridgeServer } from './cloud/agent-notification-bridge'
 import { OfficeBridgeServer } from './gateway/office-bridge'
 import type { OfficeAgentFileEvent } from '../shared/office'
@@ -195,6 +198,8 @@ if (app.isPackaged) {
   )
 }
 configureDesktopLogger(dataDirectory)
+// 偏好存储先于 Sentry 初始化：crashReporting=false 时 configureSentry 直接不启用。
+registerAppPrefsIpc()
 configureSentry(app.getVersion(), app.isPackaged)
 if (process.platform === 'darwin') process.title = APP_NAME
 
@@ -832,6 +837,8 @@ let agentStatusReporter: AgentStatusReporter | null = null
 let sessionLeaseKeeper: SessionLeaseKeeper | null = null
 let aiRelayKeeper: AiRelayKeeper | null = null
 let remoteAgentCommandClient: RemoteAgentCommandClient | null = null
+/** 远程指令通道的登录态门：云端控制开关开启也需登录才会连接。 */
+let remoteCommandWantedByAuth = false
 let agentNotificationBridgeServer: AgentNotificationBridgeServer | null = null
 let officeBridgeServer: OfficeBridgeServer | null = null
 /** Agent 生成文档入库用的长驻 FilesGatewayBridge（启动流程 L3662 实例就位后赋值）。 */
@@ -2890,14 +2897,14 @@ function registerAsrHandlers(store: RecordingStore, coordinator: AsrCoordinator,
   })
   handle(ASR_CHANNELS.beginRecording, (_event, mimeType) => store.begin(mimeType))
   handle(ASR_CHANNELS.appendRecording, (_event, id, chunk) => store.append(id, chunk))
-  handle(ASR_CHANNELS.uploadRecordingSegment, (_event, id: string, index: number, chunk: unknown, durationMs: number, meta: { mimeType?: string; languageHints?: string[] }) => {
+  handle(ASR_CHANNELS.uploadRecordingSegment, (_event, id: string, index: number, chunk: unknown, durationMs: number, meta: { mimeType?: string; languageHints?: string[]; mode?: 'cloud' | 'local' }) => {
     // MediaRecorder 会给 'audio/webm;codecs=opus' 这类带编解码器后缀的类型，
     // SaaS 建单只收白名单裸类型。
     const normalized = typeof meta?.mimeType === 'string' ? meta.mimeType.split(';')[0]!.trim() : ''
     const mimeType = ['audio/aac','audio/flac','audio/mp4','audio/mpeg','audio/ogg','audio/wav','audio/webm','video/mp4'].includes(normalized) ? normalized : 'audio/webm'
     const languageHints = Array.isArray(meta?.languageHints) ? meta.languageHints.filter((hint): hint is string => typeof hint === 'string') : undefined
     const bytes = chunk instanceof Uint8Array ? chunk : new Uint8Array(0)
-    return segments.onSegment(String(id ?? ''), Number(index), bytes, Number(durationMs), { mimeType, languageHints })
+    return segments.onSegment(String(id ?? ''), Number(index), bytes, Number(durationMs), { mimeType, languageHints, ...(meta?.mode === 'local' ? { mode: 'local' as const } : {}) })
   })
   handle(ASR_CHANNELS.finishRecording, (_event, id) => store.finish(id))
   handle(ASR_CHANNELS.cancelRecording, async (_event, id) => {
@@ -3590,6 +3597,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   // 退出兜底（win32）：崩溃/强杀路径 before-quit 不会执行，exit 钩子同步击杀
   // 仍存活的受管子进程；POSIX 正常退出已有进程组语义，不注册。
   installExitCleanupHook()
+  registerCloudControlIpc()
   // 窗口先显示,Gateway 等服务在后台初始化,状态由左下角 Gateway 指示器呈现。
   const documentAssets = new DocumentAssetStore(join(dataDirectory, 'document-assets'))
   await documentAssets.initialize().catch((error: unknown) => {
@@ -3688,7 +3696,10 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   recordingStore = new RecordingStore(recordingsDirectory)
   saasClient=new SaasClient(credentials,app,recordingsDirectory,(url)=>shell.openExternal(url))
   void saasClient.initialize()
-  recordingSegmentUploader = new RecordingSegmentUploader(saasClient, recordingsDirectory)
+  recordingSegmentUploader = new RecordingSegmentUploader(saasClient, recordingsDirectory, {
+    // 惰性提供本地分段引擎：gateway 此刻可能尚未拉起（顺序不敏感），缺引擎时本地路静默降级。
+    localEngine: () => (gatewaySupervisor ? new AsrGatewayBridge(gatewaySupervisor) : null),
+  })
   recordingSegmentUploader.setPreviewListener((event) => {
     console.log('[segment-asr] preview push', event.recordingId, 'index', event.index, 'segments', event.result.segments.length, 'windows', BrowserWindow.getAllWindows().length)
     for (const target of BrowserWindow.getAllWindows()) {
@@ -3966,6 +3977,14 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       messages: snapshot.messages.slice(-120),
     })))
     remoteAgentCommandClient = new RemoteAgentCommandClient(saasClient, agentGatewayBridge)
+    // 远程指令通道双门控（真·开源默认关）：登录态 + 用户显式开启，运行中随时可关断。
+    onCloudControlSettingsChanged((settings) => {
+      if (settings.remoteAgentChannel) {
+        if (remoteCommandWantedByAuth) remoteAgentCommandClient?.start()
+      } else {
+        remoteAgentCommandClient?.stop()
+      }
+    })
     registerAgentHandlers(agentGatewayBridge, migrationCoordinator)
     // 独立 event channel：与主 Agent UI 的 'agent:event' 隔离，避免两个桥的
     // websocket 帧在渲染进程串台。
@@ -4012,6 +4031,10 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         }
       }
     })
+    // 中转开关接「云端同步与远程控制」：初始对齐 + 变更实时生效（禁用即拆
+    // 会话并在有自配源时切回，重新启用恢复官方中转）。
+    void aiRelayKeeper.setRelayEnabled(getCloudControlSettings().aiRelay)
+    onCloudControlSettingsChanged((settings) => { void aiRelayKeeper?.setRelayEnabled(settings.aiRelay) })
     const keyring = new AccountKeyringService(join(dataDirectory, 'account-keyring.json'), join(dataDirectory, 'backups'))
     privateAudioSync = new PrivateAudioSyncService(saasClient, keyring, recordingsDirectory, join(dataDirectory, 'private-audio-sync.json'), join(dataDirectory, 'backups'))
     void privateAudioSync.drainPending().catch(() => undefined)
@@ -4038,7 +4061,8 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     privateSyncScheduler = new PrivateSyncScheduler(privateTranscriptionSync, 15_000, publishSyncCompleted)
     const initialAccount = await saasClient.status().catch(() => null)
     privateSyncScheduler.setAuthenticated(Boolean(initialAccount?.authenticated))
-    if (initialAccount?.authenticated) remoteAgentCommandClient.start()
+    remoteCommandWantedByAuth = Boolean(initialAccount?.authenticated)
+    if (remoteCommandWantedByAuth && getCloudControlSettings().remoteAgentChannel) remoteAgentCommandClient.start()
     if (initialAccount?.authenticated) aiRelayKeeper?.start()
     if (initialAccount?.authenticated) void macosPushNotifications.registerAuthenticatedDevice()
     privateAudioSync.setEventResolver((recordingId) => privateTranscriptionSync!.eventIdForSegment(recordingId))
@@ -4082,6 +4106,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
           .catch(() => undefined)
       }
       privateSyncScheduler?.setAuthenticated(account.authenticated)
+      remoteCommandWantedByAuth = account.authenticated
       if (!account.authenticated) {
         remoteAgentCommandClient?.stop()
         agentStatusReporter?.reset()
@@ -4091,7 +4116,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       } else {
         if (lastAccountId !== account.user?.id) agentStatusReporter?.reset()
         lastAccountId = account.user?.id ?? null
-        remoteAgentCommandClient?.start()
+        if (getCloudControlSettings().remoteAgentChannel) remoteAgentCommandClient?.start()
         agentStatusReporter?.reportNow()
         sessionLeaseKeeper?.reset()
         aiRelayKeeper?.start()
@@ -4101,7 +4126,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     }, () => macosPushNotifications?.beforeLogout() ?? Promise.resolve())
     registerRuntimeConfigHandlers()
     registerPrivateTranscriptionHandlers(privateTranscriptionSync, publishSyncCompleted)
-    registerAsrHandlers(recordingStore,new AsrCoordinator(new AsrGatewayBridge(gatewaySupervisor),saasClient,realityGatewayBridge,privateAudioSync,privateTranscriptionSync,recordingSegmentUploader ?? undefined),recordingSegmentUploader!)
+    registerAsrHandlers(recordingStore,new AsrCoordinator(new AsrGatewayBridge(gatewaySupervisor),saasClient,realityGatewayBridge,privateAudioSync,privateTranscriptionSync,recordingSegmentUploader ?? undefined,{audioUploadEnabled:()=>getCloudControlSettings().audioUpload,transcriptSyncEnabled:()=>getCloudControlSettings().transcriptSync}),recordingSegmentUploader!)
     registerPrivateAudioHandlers(privateAudioSync)
     registerScreenCaptureHandlers()
 

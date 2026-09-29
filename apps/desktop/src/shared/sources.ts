@@ -413,7 +413,7 @@ export function formatLlmUsd(quota: number, locale: string): string {
   return new Intl.NumberFormat(locale, { style: 'currency', currency: 'USD' }).format(quota / QUOTA_PER_USD)
 }
 
-export type AiRelayKeeperEventType = 'quota-exhausted' | 'fallback-user' | 'fallback-restored'
+export type AiRelayKeeperEventType = 'quota-exhausted' | 'fallback-user' | 'fallback-restored' | 'session-activated'
 
 /** 扫码登录 renderer 可见的展示信息（二维码载荷要素，无桌面交换凭证）。 */
 export interface QrLoginPresentation {
@@ -530,6 +530,9 @@ export interface PerceptionSettings {
 
 export interface RuntimeConfigSnapshot {
   config: Record<string, unknown>
+  /** 用户源原始 payload（未配置 user 源时 null/缺失）：表单播种只认它，
+   *  默认/中转源的值不进表单（可选段不被官方默认值污染）。 */
+  userConfig?: Record<string, unknown> | null
   source: 'user' | 'default'
   selectedSource: 'user' | 'default'
   availableSources: Array<'user' | 'default'>
@@ -820,6 +823,35 @@ export type AgentApprovalDecision =
   | 'approved'
   | 'approved_session'
   | 'denied'
+
+
+/** 云端同步与远程控制开关：真·开源默认全关（不登录/不连官方云是完整可用态），
+ * 逐项显式开启；主进程为权威存储（asr 上传、远程指令通道都在主进程裁决）。
+ * 例外 aiRelay（官方中转）默认开：它是登录用户的既有权益，本次只补显式退出。 */
+export interface CloudControlSettings {
+  audioUpload: boolean
+  transcriptSync: boolean
+  remoteAgentChannel: boolean
+  aiRelay: boolean
+}
+
+export const DEFAULT_CLOUD_CONTROL_SETTINGS: CloudControlSettings = {
+  audioUpload: false,
+  transcriptSync: false,
+  remoteAgentChannel: false,
+  aiRelay: true,
+}
+
+/** 应用级偏好：官方端点覆盖 + 遥测开关（真·开源版自部署场景）。 */
+export interface AppPrefs {
+  /** SaaS API 基地址覆盖（null=用环境默认官方地址）。 */
+  saasBaseUrl: string | null
+  /** 自定义更新 feed 完整地址（null=官方源）。 */
+  updateFeedUrl: string | null
+  /** 崩溃与错误上报开关。 */
+  crashReporting: boolean
+}
+
 
 export interface NxcoreDesktopApi {
   platform: string
@@ -1119,7 +1151,17 @@ export interface NxcoreDesktopApi {
   aiRelay: {
     /** 中转额度视图（订阅周期开窗）；未登录/未配置时为 null。 */
     status(): Promise<AiGatewayStatus | null>
-    onEvent(listener: (event: { type: AiRelayKeeperEventType }) => void): () => void
+    onEvent(listener: (event: { type: AiRelayKeeperEventType; first?: boolean }) => void): () => void
+  }
+  cloudControl: {
+    settings(): Promise<CloudControlSettings>
+    update(input: Partial<CloudControlSettings>): Promise<CloudControlSettings>
+    onChanged(listener: (settings: CloudControlSettings) => void): () => void
+  }
+  appPrefs: {
+    settings(): Promise<AppPrefs>
+    update(input: Partial<AppPrefs>): Promise<AppPrefs>
+    onChanged(listener: (prefs: AppPrefs) => void): () => void
   }
   notifications: {
     preferences(): Promise<NotificationPreferences>
@@ -1135,7 +1177,7 @@ export interface NxcoreDesktopApi {
     openSystemAudioSettings(): Promise<void>
     beginRecording(mimeType: string): Promise<{ id: string }>
     appendRecording(id: string, chunk: Uint8Array): Promise<void>
-    uploadRecordingSegment(id: string, index: number, chunk: Uint8Array, durationMs: number, meta: { mimeType: string; languageHints?: string[] }): Promise<void>
+    uploadRecordingSegment(id: string, index: number, chunk: Uint8Array, durationMs: number, meta: { mimeType: string; languageHints?: string[]; mode?: 'cloud' | 'local' }): Promise<void>
     onSegmentTranscription(listener: (event: { recordingId: string; index: number; result: AsrResult }) => void): () => void
     finishRecording(id: string): Promise<{ filePath: string }>
     cancelRecording(id: string): Promise<void>

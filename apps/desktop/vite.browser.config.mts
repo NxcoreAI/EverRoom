@@ -619,8 +619,46 @@ const base = {
     ].find((item) => item.id === fileId) ?? null,
   },
   documents: { list: async () => [], listTrash: async () => [] },
+  mcp: { listServers: async () => [], saveServers: async () => {} },
   // 完整 App 入口（/）验证用：已配置 + 已登录，越过 RuntimeConfigGate。
-  runtimeConfig: { get: async () => ({ primaryConfigured: true, configSource: 'manual' }) },
+  // runtimeConfig 用完整 snapshot 形状（含 userConfig）——魔法代理的残缺返回
+  // 会把 RuntimeConfigSettingsSection 渲染炸进全局错误边界。
+  runtimeConfig: {
+    get: async () => ({
+      primaryConfigured: true,
+      config: {},
+      // 复现历史污染：embedding/webSearch/asr 半填（旧表单默认值预填时代保存的遗留）。
+      userConfig: {
+        primary: { provider: 'openai-compatible', model: 'glm-5.3', baseUrl: 'http://localhost:8227/v1', apiKey: 'sk-mock' },
+        knowledge: { embedding: { provider: 'qwen', model: 'text-embedding-v4', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', apiKey: '' } },
+        webSearch: { provider: 'qwen', model: 'qwen-plus', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', apiKey: '' },
+        asr: { provider: 'aliyun', model: 'qwen-audio-3.0-asr-flash-filetrans', baseUrl: '', apiKey: '', oss: { region: '', bucket: '', accessKeyId: '', accessKeySecret: '', stsToken: '', prefix: '' } },
+      },
+      source: 'user', selectedSource: 'user', availableSources: ['default', 'user'],
+      configVersion: 2, updatedAt: new Date().toISOString(),
+      webSearchCredential: { configured: false, source: 'none' },
+    }),
+    saveUser: async (input) => ({
+      config: input, userConfig: input, source: 'user', selectedSource: 'user',
+      availableSources: ['default', 'user'], configVersion: 3,
+      updatedAt: new Date().toISOString(), webSearchCredential: { configured: false, source: 'none' },
+    }),
+    clearUser: async () => {},
+    relayReady: async () => ({ ready: true }),
+    selectSource: async () => {},
+    test: async () => ({ valid: true }),
+  },
+  aiRelay: { status: async () => null, onEvent: () => () => {} },
+  cloudControl: {
+    settings: async () => ({ audioUpload: false, transcriptSync: false, remoteAgentChannel: false, aiRelay: true }),
+    update: async (patch) => ({ audioUpload: false, transcriptSync: false, remoteAgentChannel: false, aiRelay: true, ...patch }),
+    onChanged: () => () => {},
+  },
+  appPrefs: {
+    settings: async () => ({ saasBaseUrl: null, updateFeedUrl: null, crashReporting: true }),
+    update: async (patch) => ({ saasBaseUrl: null, updateFeedUrl: null, crashReporting: true, ...patch }),
+    onChanged: () => () => {},
+  },
   account: { status: async () => ({ authenticated: true, apiBaseUrl: 'https://mock.example', plan: 'pro_plan_active' }) },
   agent: {
     discoverLocalAgents: async () => [],
