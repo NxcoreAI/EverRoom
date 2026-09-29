@@ -1222,6 +1222,7 @@ export interface NxcoreDesktopApi {
       pageLabel?: string
       roomTitle: string | null
       messages: Array<{ role: 'user' | 'assistant'; text: string }>
+      recentSessions?: Array<{ title: string | null; updatedAt: string }>
       language?: string
     }): Promise<{ suggestion: string }>
     suggestStarterPrompts(input: {

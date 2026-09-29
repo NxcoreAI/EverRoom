@@ -142,9 +142,9 @@ export function AgentPanel({
 
   const [conversationSuggestionSettings, setConversationSuggestionSettings] =
     useState<ConversationSuggestionSettings>(loadConversationSuggestionSettings)
-  const [composerSuggestion, setComposerSuggestion] = useState<string | null>(null)
+  const [composerSuggestion, setComposerSuggestion] = useState<{ key: string; text: string } | null>(null)
   const [starterPrompts, setStarterPrompts] = useState<string[] | null>(null)
-  // 同一对话快照只取一次；Esc 丢弃后该快照不再出现建议。
+  // 同一对话快照只在定时器真正触发时标记（清理掉的调度下次 effect 重排，StrictMode/依赖抖动不再永久丢失）；Esc 丢弃后该快照不再出现建议。
   const ghostContextKeyRef = useRef<string | null>(null)
   const ghostDismissedKeyRef = useRef<string | null>(null)
   const starterPromptsCacheRef = useRef<{ key: string; prompts: string[]; at: number } | null>(null)
@@ -152,6 +152,7 @@ export function AgentPanel({
 
   const lastMessage = session.messages.length ? session.messages[session.messages.length - 1] : null
   const ghostContextKey = `${session.sessionId ?? 'draft'}:${session.messages.length}:${lastMessage?.id ?? ''}`
+  const ghostSuggestion = composerSuggestion?.key === ghostContextKey ? composerSuggestion.text : null
 
   useEffect(() => {
     const api = window.nxcore?.agent
@@ -159,33 +160,39 @@ export function AgentPanel({
       setComposerSuggestion(null)
       return
     }
-    if (session.activeRunId || draft.trim() || session.messages.length === 0) {
+    if (session.activeRunId) {
       setComposerSuggestion(null)
       return
     }
+    const recentMessages = session.messages
+      .filter((message) => message.role === 'user' || message.role === 'assistant')
+      .slice(-8)
+      .map((message) => ({ role: message.role as 'user' | 'assistant', text: message.content.slice(0, 4000) }))
+    // 空会话（新对话）走开场问题变体：等会话清单就绪后再取。
+    if (recentMessages.length === 0 && !session.scopeReady) return
     if (ghostDismissedKeyRef.current === ghostContextKey) return
     if (ghostContextKeyRef.current === ghostContextKey) return
-    ghostContextKeyRef.current = ghostContextKey
     const timer = window.setTimeout(() => {
-      const recent = session.messages
-        .filter((message) => message.role === 'user' || message.role === 'assistant')
-        .slice(-8)
-        .map((message) => ({ role: message.role as 'user' | 'assistant', text: message.content.slice(0, 4000) }))
-      if (recent.length === 0) return
+      ghostContextKeyRef.current = ghostContextKey
+      const recentSessions = [...session.sessions]
+        .sort((a, b) => Date.parse(b.updatedAt ?? '') - Date.parse(a.updatedAt ?? ''))
+        .slice(0, 8)
+        .map((item) => ({ title: item.title, updatedAt: item.updatedAt }))
       api.suggestConversationPrompt({
         sessionId: session.sessionId,
         pageLabel,
         roomTitle: currentRoomTitle ?? null,
-        messages: recent,
+        messages: recentMessages,
+        ...(recentMessages.length === 0 ? { recentSessions } : {}),
         language: locale,
       })
         .then(({ suggestion }) => {
-          if (suggestion?.trim()) setComposerSuggestion(suggestion)
+          if (suggestion?.trim()) setComposerSuggestion({ key: ghostContextKey, text: suggestion })
         })
         .catch(() => undefined)
     }, 400)
     return () => { window.clearTimeout(timer) }
-  }, [conversationSuggestionSettings.completionEnabled, session.activeRunId, draft, session.messages, session.sessionId, ghostContextKey, pageLabel, currentRoomTitle, locale])
+  }, [conversationSuggestionSettings.completionEnabled, session.activeRunId, session.messages, session.sessionId, session.sessions, session.scopeReady, ghostContextKey, pageLabel, currentRoomTitle, locale])
 
   // 新对话空态：按最近会话标题生成开场推荐（5 分钟 TTL 缓存，失败静默回退静态文案）。
   const newConversationEmpty = session.scopeReady && session.messages.length === 0
@@ -251,7 +258,7 @@ export function AgentPanel({
 
   const acceptGhost = useCallback(() => {
     setComposerSuggestion((current) => {
-      if (current?.trim()) setDraft(current)
+      if (current) setDraft(current.text)
       return null
     })
     focusComposer()
@@ -698,7 +705,7 @@ export function AgentPanel({
       channelAgentId={effectiveChannelAgentId}
       onSelectChannelAgent={session.setChannelAgentIdDefault}
       onOpenSettings={onNavigatePage ? () => onNavigatePage('settings') : undefined}
-      ghostSuggestion={composerSuggestion}
+      ghostSuggestion={ghostSuggestion}
       onAcceptGhost={acceptGhost}
       onDismissGhost={dismissGhost}
       value={draft}

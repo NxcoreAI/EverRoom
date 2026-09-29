@@ -256,6 +256,7 @@ export class AgentGatewayBridge {
     pageLabel?: string
     roomTitle: string | null
     messages: Array<{ role: 'user' | 'assistant'; text: string }>
+    recentSessions?: Array<{ title: string | null; updatedAt: string }>
     language?: string
   }): Promise<{ suggestion: string }> {
     return this.request('/v1/processing/conversation-suggestion', {

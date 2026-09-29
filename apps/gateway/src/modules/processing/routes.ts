@@ -83,7 +83,17 @@ export function processingRoutes(
                 role: Type.Union([Type.Literal("user"), Type.Literal("assistant")]),
                 text: Type.String({ minLength: 1, maxLength: 20_000 }),
               }),
-              { minItems: 1, maxItems: 40 },
+              { maxItems: 40 },
+            ),
+            // 空会话（messages 为空）时的开场问题信号，与 starter-prompts 同源。
+            recentSessions: Type.Optional(
+              Type.Array(
+                Type.Object({
+                  title: Type.Union([Type.String({ minLength: 1, maxLength: 300 }), Type.Null()]),
+                  updatedAt: Type.String({ minLength: 1, maxLength: 40 }),
+                }),
+                { maxItems: 20 },
+              ),
             ),
             language: Type.Optional(Type.String({ minLength: 2, maxLength: 20 })),
           }),

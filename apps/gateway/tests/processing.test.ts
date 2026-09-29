@@ -210,11 +210,35 @@ describe("ConversationSuggestionService", () => {
     expect(runtime.deleteSession).toHaveBeenCalledWith("/tmp/title-session");
   });
 
+  it("suggests an opening prompt from recent session titles when the conversation is empty", async () => {
+    const runtime = fakeRuntime("「继续排查导出失败」");
+    const service = new ConversationSuggestionService(runtime);
+    const { suggestion } = await service.suggestComposerPrompt({
+      sessionId: null,
+      pageLabel: "首页",
+      roomTitle: null,
+      messages: [],
+      recentSessions: [
+        { title: "导出失败排查", updatedAt: "2026-09-28T10:00:00.000Z" },
+        { title: null, updatedAt: "2026-09-27T10:00:00.000Z" },
+      ],
+      language: "zh-CN",
+    });
+    expect(suggestion).toBe("继续排查导出失败");
+    expect(runtime.start).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: "conversation-suggestion:composer:draft",
+      pageLabel: "对话建议",
+    }));
+    const prompt = (runtime.start as ReturnType<typeof vi.fn>).mock.calls[0]![0].prompt as string;
+    expect(prompt).toContain("输入框还空着");
+    expect(prompt).toContain("导出失败排查");
+    expect(prompt).not.toContain("<recent_messages>");
+  });
+
   it("returns up to three normalized starter prompts from recent session titles", async () => {
     const runtime = fakeRuntime("1. 「跟进导出失败」\n2. \"整理上周周会\"\n3. 检查部署日志。\n4. 多余的一条");
     const service = new ConversationSuggestionService(runtime);
     const { prompts } = await service.suggestStarterPrompts({
-      pageLabel: undefined,
       roomTitle: "写作房间",
       recentSessions: [
         { title: "导出失败排查", updatedAt: "2026-09-28T10:00:00.000Z" },
