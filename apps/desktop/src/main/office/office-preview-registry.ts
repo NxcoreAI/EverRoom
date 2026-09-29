@@ -7,6 +7,7 @@ import {
   type OfficePreviewKind,
 } from '../../shared/sources'
 import { onOfficeFileSaved, wireOfficeSavedHooks, wireSlidesAgentAsk, type AgentAskForwardEvent } from './office-generation'
+import type { GenOfficeMaterialResolver } from './office-runtime'
 import {
   loadPreparedGenOfficeRuntime,
   preparedGenOfficeFixture,
@@ -106,7 +107,11 @@ export class OfficePreviewRegistry {
   private agentAskForward: ((event: AgentAskForwardEvent) => void) | null = null
 
   /** 生成完成 → 渲染端自动打开的等待窗口；测试可传 0 关闭。 */
-  constructor(private readonly autoOpenWaitMs = 8_000) {}
+  constructor(
+    private readonly autoOpenWaitMs = 8_000,
+    /** everroom-material:// 素材回源器（惰性取——文件桥在网关启动后才就绪）。 */
+    private readonly materialResolver: () => GenOfficeMaterialResolver | null = () => null,
+  ) {}
   private editSyncBindings: {
     importAgentFile: (input: {
       filePath: string
@@ -248,7 +253,7 @@ export class OfficePreviewRegistry {
     return {
       ok: true,
       result: 'page' in req
-        ? await this.runtime.slides.applyAgentDeckPage(wcId, req.page)
+        ? await this.runtime.slides.applyAgentDeckPage(wcId, req.page, this.materialResolver() ?? undefined)
         : await this.runtime.slides.applyAgentDeckOps(wcId, req.ops, {
           dryRun: req.dryRun,
           isolation: req.isolation,

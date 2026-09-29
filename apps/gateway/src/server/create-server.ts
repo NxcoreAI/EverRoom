@@ -97,6 +97,9 @@ import { IndexBackfillLlm } from "../modules/documents/index-backfill/llm.js";
 import { DataMigrationService } from "../modules/data-migrations/service.js";
 import { dataMigrationRoutes } from "../modules/data-migrations/routes.js";
 import { filesRoutes } from "../modules/files/routes.js";
+import { materialsRoutes } from "../modules/materials/routes.js";
+import { createMaterialSearchPiTools } from "../modules/materials/agent-tool.js";
+import { MaterialsService } from "../modules/materials/service.js";
 import { FilesService } from "../modules/files/service.js";
 import { FileClusteringService } from "../modules/files/clustering-service.js";
 import { ClipperService } from "../modules/clipper/service.js";
@@ -776,6 +779,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     webSearchTools: config.webSearch
       ? createWebSearchPiTools(agentResolver, externalCalls)
       : [],
+    materialSearchTools: createMaterialSearchPiTools(materialsService),
   }));
   subagentRuntimeManager.registerAgentTools("slides-builder", () => createSlidesBuilderAgentTools({
     documentTools: createDocumentPiTools(documentMcpHost),
@@ -1199,6 +1203,9 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   // 文件管理中心（U9 唯一字节入口）：对象库 + uploaded/parsed 登记；
   // 删除级联经钩子回调 knowledge（wiki 清理）与 memory（文档删除）。
   const filesService = new FilesService(db, config.dataDir);
+  // 本地素材库（PPT 配图）：检索走结构化表（perception/剪藏/文档内嵌图），
+  // 取图按内容哈希回源本地字节。slides-planner 专属工具 + /v1/materials/:hash。
+  const materialsService = new MaterialsService(db, config.dataDir);
   filesService.initializeCatalog();
   const dataMigrationService = new DataMigrationService(db, sqlite, memoryService);
   dataMigrationService.setFilesService(filesService);
@@ -1445,6 +1452,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   await app.register(agentDocumentExportRoutes(agentDocumentExportService));
   await app.register(asrRoutes(asrService));
   await app.register(memoryRoutes(memoryService));
+  await app.register(materialsRoutes(materialsService));
   await app.register(dataMigrationRoutes(dataMigrationService));
   await app.register(filesRoutes(filesService, {
     // 删除级联（§8.2）：Room/wiki 走 knowledge cleanup job，记忆按 caller_ref 删文档

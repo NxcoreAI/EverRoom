@@ -45,6 +45,11 @@ export interface GenOfficeAgentDeckResult {
   imageFailures: { page: number; url: string }[]
 }
 
+/** everroom-material:// 素材引用回源器（桌面端注入，从本地素材库取字节）。 */
+export interface GenOfficeMaterialResolver {
+  resolveMaterial(url: string): Promise<{ bytes: Uint8Array; ext: string } | null>
+}
+
 export interface AgentSlidesDeckInfo {
   outline: string
   opVocabulary: string
@@ -95,7 +100,10 @@ export interface GenOfficeSlidesRuntime {
   setSlidesShellWindow(window: BrowserWindow | null): void
   slidesIsDirty(webContentsId: number): boolean
   /** Agent 幻灯片生成：页 spec JSON 数组 → 单文件 .pptx 字节（无渲染端参与）。 */
-  buildAgentDeckPptx(pageSpecJsons: string[]): Promise<{ ok: true; deck: GenOfficeAgentDeckResult } | { ok: false; error: string }>
+  buildAgentDeckPptx(
+    pageSpecJsons: string[],
+    imageResolver?: GenOfficeMaterialResolver,
+  ): Promise<{ ok: true; deck: GenOfficeAgentDeckResult } | { ok: false; error: string }>
   /** Agent 读取活会话：大纲 + op 词汇表（该视图无会话返回 null）。 */
   describeAgentDeck(webContentsId: number): AgentSlidesDeckInfo | null
   /** Agent 编辑活会话：事务应用 + 逐视图重绘广播 + 静默保存（fileSaved hook 回填版本链）。 */
@@ -108,6 +116,7 @@ export interface GenOfficeSlidesRuntime {
   applyAgentDeckPage(
     webContentsId: number,
     req: { slideIndex: number; specJson: string },
+    imageResolver?: GenOfficeMaterialResolver,
   ): Promise<AgentSlidesEditResult>
 }
 

@@ -83,6 +83,7 @@ import { AgentNotificationBridgeServer } from './cloud/agent-notification-bridge
 import { OfficeBridgeServer } from './gateway/office-bridge'
 import type { OfficeAgentFileEvent } from '../shared/office'
 import type { AgentAskForwardEvent } from './office/office-generation'
+import { createEverroomMaterialResolver } from './office/office-material-resolver'
 import { MacosPushNotificationService } from './cloud/macos-push-notifications'
 import { parseAgentNotificationTarget, type AgentNotificationTarget, type NotificationPreferences } from '../shared/notifications'
 import { AsrCoordinator } from './asr/asr-coordinator'
@@ -828,7 +829,11 @@ let privateSyncScheduler: PrivateSyncScheduler | null = null
 let transcriptionProcessingCoordinator: TranscriptionProcessingCoordinator | null = null
 let shutdownStarted = false
 let clearUserDataOnQuit = false
-const officePreviewRegistry = new OfficePreviewRegistry()
+const officePreviewRegistry = new OfficePreviewRegistry(
+  8_000,
+  // everroom-material:// 素材回源：文件桥惰性取（网关启动后才赋值），每次调用现建（闭包零成本）。
+  () => createEverroomMaterialResolver(() => officeFilesBridge),
+)
 
 /** office:agent-file 事件扇出到所有渲染窗口（生成进度/完成 + 编辑回填结果共用通道）。 */
 function broadcastOfficeAgentFileEvent(event: OfficeAgentFileEvent): void {

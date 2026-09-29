@@ -23,6 +23,8 @@ const SLIDES_PLANNER_DOCUMENT_TOOL_ALLOWLIST = new Set([
 
 const SLIDES_PLANNER_WEB_SEARCH_TOOL_ALLOWLIST = new Set(["web_search"]);
 
+const SLIDES_PLANNER_MATERIAL_TOOL_ALLOWLIST = new Set(["material_search"]);
+
 const SLIDES_BUILDER_TOOL_ALLOWLIST = new Set<string>(SLIDES_TOOL_NAMES);
 
 function filterTools(
@@ -39,11 +41,14 @@ export function createSlidesPlannerAgentTools(deps: {
   documentTools: PiAgentRuntimeTool[];
   /** createWebSearchPiTools 的产物（未配置时传空数组）。 */
   webSearchTools: PiAgentRuntimeTool[];
+  /** createMaterialSearchPiTools 的产物（本地素材检索，PPT 配图主通道）。 */
+  materialSearchTools: PiAgentRuntimeTool[];
 }): PiAgentRuntimeTool[] {
   return [
     ...filterTools(deps.roomTools, SLIDES_PLANNER_ROOM_TOOL_ALLOWLIST),
     ...filterTools(deps.documentTools, SLIDES_PLANNER_DOCUMENT_TOOL_ALLOWLIST),
     ...filterTools(deps.webSearchTools, SLIDES_PLANNER_WEB_SEARCH_TOOL_ALLOWLIST),
+    ...filterTools(deps.materialSearchTools, SLIDES_PLANNER_MATERIAL_TOOL_ALLOWLIST),
   ];
 }
 

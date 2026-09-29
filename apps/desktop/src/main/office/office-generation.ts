@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { app } from 'electron'
 import type { WebContents, WebContentsView } from 'electron'
 
-import { loadPreparedGenOfficeRuntime, type PreparedGenOfficeRuntime } from './office-runtime'
+import { loadPreparedGenOfficeRuntime, type GenOfficeMaterialResolver, type PreparedGenOfficeRuntime } from './office-runtime'
 import { buildAgentXlsxBytes, type AgentSheetInput } from './xlsx-generation'
 import type { OfficeAgentAskEvent } from '../../shared/office'
 
@@ -207,6 +207,7 @@ export interface GeneratedPptx {
 export async function generatePptxFromPageSpecs(
   input: { title: string; pages: string[] },
   onPhase?: (phase: DocxGenerationPhase) => void,
+  imageResolver?: GenOfficeMaterialResolver,
 ): Promise<GeneratedPptx> {
   const title = input.title.trim().slice(0, 120)
   if (!title) throw new Error('演示标题不能为空')
@@ -214,7 +215,7 @@ export async function generatePptxFromPageSpecs(
   if (pages.length === 0) throw new Error('至少需要一页幻灯片')
   const { slides } = ensureRuntime()
   onPhase?.('rendering')
-  const built = await slides.buildAgentDeckPptx(pages)
+  const built = await slides.buildAgentDeckPptx(pages, imageResolver)
   if (!built.ok) throw new Error(`PPT 生成失败：${built.error}`)
   onPhase?.('saved')
   const bytes = Buffer.from(built.deck.bytes)

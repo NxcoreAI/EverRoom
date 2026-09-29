@@ -24,17 +24,19 @@ const PLANNER_DOCUMENT_TOOLS = [
 ];
 
 describe("createSlidesPlannerAgentTools（slides-planner 工具面）", () => {
-  it("只放行检索/读取/联网类；slides 四件套、写入、调度、通知类一律拒绝", () => {
+  it("只放行检索/读取/联网/素材类；slides 四件套、写入、调度、通知类一律拒绝", () => {
     const tools = createSlidesPlannerAgentTools({
       roomTools: PLANNER_ROOM_TOOLS,
       documentTools: PLANNER_DOCUMENT_TOOLS,
       webSearchTools: [tool("web_search"), tool("agent_dispatch"), tool("agent_catalog"), tool("send_notification")],
+      materialSearchTools: [tool("material_search"), tool("send_notification")],
     });
     expect(tools.map((item) => item.name).sort()).toEqual([
       "context_room_document_list",
       "context_room_document_read",
       "context_room_list",
       "conversation_search",
+      "material_search",
       "memory_search",
       "room_context_get",
       "web_search",
@@ -42,7 +44,7 @@ describe("createSlidesPlannerAgentTools（slides-planner 工具面）", () => {
   });
 
   it("空依赖时返回空数组", () => {
-    expect(createSlidesPlannerAgentTools({ roomTools: [], documentTools: [], webSearchTools: [] })).toEqual([]);
+    expect(createSlidesPlannerAgentTools({ roomTools: [], documentTools: [], webSearchTools: [], materialSearchTools: [] })).toEqual([]);
   });
 });
 

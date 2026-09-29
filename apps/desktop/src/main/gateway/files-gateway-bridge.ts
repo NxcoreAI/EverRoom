@@ -254,6 +254,18 @@ export class FilesGatewayBridge {
     return { dataUrl: `data:${mime};base64,${bytes.toString('base64')}` }
   }
 
+  /** 本地素材库按内容哈希取图（PPT 打包 everroom-material:// 回源用）；404/失败返回 null。 */
+  async readMaterial(hash: string): Promise<{ buffer: Buffer; mime: string } | null> {
+    const connection = this.supervisor.getConnection()
+    const response = await fetch(`${connection.baseUrl}/v1/materials/${encodeURIComponent(hash)}`, {
+      headers: { Authorization: `Bearer ${connection.token}` },
+    })
+    if (!response.ok) return null
+    const mime = response.headers.get('content-type')?.split(';')[0]?.trim() || 'application/octet-stream'
+    const buffer = Buffer.from(await response.arrayBuffer())
+    return { buffer, mime }
+  }
+
   async importAgentAttachments(selectedPaths: string[]): Promise<AgentAttachmentReference[]> {
     const candidates = await collectImportCandidates(
       selectedPaths,

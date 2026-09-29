@@ -51,8 +51,8 @@
                   "type": "string",
                   "minLength": 1,
                   "maxLength": 500,
-                  "pattern": "^https?://",
-                  "description": "Direct http(s) image link; the engine rejects anything else."
+                  "pattern": "^(https?://|everroom-material://)",
+                  "description": "Direct http(s) image link, or an everroom-material:// reference returned by material_search; the engine rejects anything else."
                 },
                 "desc": {
                   "type": "string",
