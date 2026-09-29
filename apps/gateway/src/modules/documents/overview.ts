@@ -6,7 +6,8 @@ import type { AgentRuntime } from "@nxcore/agent-runtime";
  * 宽容解析三件套；生成失败由 service 层转为 DOCUMENT_OVERVIEW_GENERATION_FAILED。
  */
 
-export const OVERVIEW_TIMEOUT_MS = 30_000;
+/** 自配模型（BYOK）单发整篇速览常超 30s——官方快档时代的值，放宽到 90s。 */
+export const OVERVIEW_TIMEOUT_MS = 90_000;
 export const MAX_CONTENT_CHARS = 12_000;
 export const MAX_PROMPT_CHARS = 16_000;
 export const MAX_RESPONSE_CHARS = 1_200;

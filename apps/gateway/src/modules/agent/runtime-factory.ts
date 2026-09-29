@@ -372,14 +372,18 @@ export function createCursorCompletionRuntime(config: GatewayConfig): AgentRunti
 
 /**
  * 对话侧建议（输入框空态补全 + 新对话推荐提问）的隔离内部 runtime：
- * 无工具/记忆，单次调用。档位优先 cursorCompletionPi（qwen-flash 低延迟档），
- * 未配置时回退 background——两者都是机器对机器短输出，reasoning 一律关闭。
+ * 无工具/记忆，单次调用。档位优先 cursorCompletionPi（低延迟档），其次
+ * litePi（用户在「轻量模型」里配的低延迟模型），最后 background——辅助建议
+ * 对延迟敏感，主模型慢时（如 BYOK 大模型单发 >10s）应优先落到轻量档；
+ * 三者都是机器对机器短输出，reasoning 一律关闭。
  */
 export function createConversationSuggestionRuntime(config: GatewayConfig): AgentRuntime | null {
   if (config.agentRuntime === "fake") return null;
   const tier = isPiRuntimeConfigured(config.cursorCompletionPi)
     ? config.cursorCompletionPi!
-    : config.backgroundPi;
+    : isPiRuntimeConfigured(config.litePi)
+      ? config.litePi!
+      : config.backgroundPi;
   if (!isPiRuntimeConfigured(tier)) return null;
   const { mcp: _mcp, ...pi } = tier!;
   return new PiAgentRuntime({
