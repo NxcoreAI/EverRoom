@@ -1,0 +1,36 @@
+{
+  "type": "object",
+  "properties": {
+    "instruction": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 16000,
+      "description": "User instruction for this slides create task; always the highest priority."
+    },
+    "roomId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "Target room id injected by the gateway; binds the read tools to the room. Required."
+    },
+    "roomTitle": {
+      "type": "string",
+      "maxLength": 120,
+      "description": "Optional room title for context framing."
+    },
+    "title": {
+      "type": "string",
+      "maxLength": 120,
+      "description": "Deck title requested by the user; derive one when absent."
+    },
+    "outline": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 24,
+      "items": { "type": "string", "minLength": 1, "maxLength": 80 },
+      "description": "Per-page titles requested by the user (order = page order; first item is the cover). Treat as the skeleton when present."
+    }
+  },
+  "required": ["instruction", "roomId"],
+  "additionalProperties": false
+}
