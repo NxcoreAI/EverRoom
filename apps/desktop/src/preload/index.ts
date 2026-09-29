@@ -481,20 +481,43 @@ const api: NxcoreDesktopApi = {
   },
   aiRelay: {
     status: () => invokeQuietly('ai-relay:status'),
-    onEvent: (listener: (event: { type: AiRelayKeeperEventType }) => void) => {
+    onEvent: (listener: (event: { type: AiRelayKeeperEventType; first?: boolean }) => void) => {
+      const channels = ['ai-relay:quota-exhausted', 'ai-relay:fallback-user', 'ai-relay:fallback-restored', 'ai-relay:session-activated']
       const handle = (_event: Electron.IpcRendererEvent, value: unknown) => {
-        const eventType = value && typeof value === 'object' ? (value as { type?: unknown }).type : null
-        if (eventType !== 'quota-exhausted' && eventType !== 'fallback-user' && eventType !== 'fallback-restored') return
-        listener({ type: eventType })
+        const parsed = value && typeof value === 'object' ? value as { type?: unknown; first?: unknown } : null
+        const eventType = parsed?.type
+        if (typeof eventType !== 'string' || !channels.includes(`ai-relay:${eventType}`)) return
+        listener({
+          type: eventType as AiRelayKeeperEventType,
+          ...(eventType === 'session-activated' && parsed?.first === true ? { first: true } : {}),
+        })
       }
-      for (const channel of ['ai-relay:quota-exhausted', 'ai-relay:fallback-user', 'ai-relay:fallback-restored']) {
+      for (const channel of channels) {
         ipcRenderer.on(channel, handle)
       }
       return () => {
-        for (const channel of ['ai-relay:quota-exhausted', 'ai-relay:fallback-user', 'ai-relay:fallback-restored']) {
+        for (const channel of channels) {
           ipcRenderer.removeListener(channel, handle)
         }
       }
+    },
+  },
+  cloudControl: {
+    settings: () => invokeQuietly('cloud-control:settings'),
+    update: (input) => invoke('cloud-control:update-settings', input),
+    onChanged: (listener) => {
+      const handle = (_event: Electron.IpcRendererEvent, value: Parameters<typeof listener>[0]) => listener(value)
+      ipcRenderer.on('cloud-control:changed', handle)
+      return () => ipcRenderer.removeListener('cloud-control:changed', handle)
+    },
+  },
+  appPrefs: {
+    settings: () => invokeQuietly('app-prefs:settings'),
+    update: (input) => invoke('app-prefs:update-settings', input),
+    onChanged: (listener) => {
+      const handle = (_event: Electron.IpcRendererEvent, value: Parameters<typeof listener>[0]) => listener(value)
+      ipcRenderer.on('app-prefs:changed', handle)
+      return () => ipcRenderer.removeListener('app-prefs:changed', handle)
     },
   },
   notifications: {
@@ -641,8 +664,8 @@ const api: NxcoreDesktopApi = {
     markSessionLinkReturned: (linkId) => invoke('agent:mark-session-link-returned', linkId),
     updateSession: (sessionId, input) => invoke('agent:update-session', sessionId, input),
     generateSessionTitle: (input) => invoke('agent:generate-session-title', input),
-    suggestConversationPrompt: (input) => invoke('agent:suggest-conversation-prompt', input),
-    suggestStarterPrompts: (input) => invoke('agent:suggest-starter-prompts', input),
+    suggestConversationPrompt: (input) => invokeQuietly('agent:suggest-conversation-prompt', input),
+    suggestStarterPrompts: (input) => invokeQuietly('agent:suggest-starter-prompts', input),
     deleteSession: (sessionId) => invoke('agent:delete-session', sessionId),
     getSession: (sessionId) => invoke('agent:get-session', sessionId),
     getEvents: (sessionId, runId, afterSeq) =>
