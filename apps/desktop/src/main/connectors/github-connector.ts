@@ -141,10 +141,15 @@ export class GitHubConnector implements Connector<GitHubConfig> {
   private async request<T>(path: string, headers: RawAxiosRequestHeaders): Promise<GitHubResponse<T>> {
     const response = await http.get<T>(path, { headers, validateStatus: () => true })
     if (response.status >= 400) {
-      if (response.status === 401) throw new Error('GitHub 凭证无效或已过期。')
-      if (response.status === 403) throw new Error('GitHub 请求被拒绝，可能触发了速率限制。')
-      if (response.status === 404) throw new Error('GitHub 仓库、分支或对象不存在。')
-      throw new Error(`GitHub API 请求失败（${response.status}）。`)
+      // GitHub 的错误响应体带确切原因（速率限制/令牌无权访问该仓库/SSO 等），
+      // 透出原文让用户能自查，而不是一句猜测性的"可能触发了速率限制"。
+      const detail = (response.data as { message?: unknown } | undefined)?.message
+      const suffix = typeof detail === 'string' && detail.trim() ? `：${detail.trim()}` : ''
+      if (response.status === 401) throw new Error(`GitHub 凭证无效或已过期${suffix || '。'}`)
+      if (response.status === 403) throw new Error(`GitHub 请求被拒绝${suffix || '，可能触发了速率限制。'}`)
+      if (response.status === 404) throw new Error(`GitHub 仓库、分支或对象不存在${suffix || '。'}`)
+      if (response.status === 429) throw new Error('GitHub 速率限制：匿名调用每小时仅 60 次，同步一个仓库（文件+issues）会立刻用尽。请在数据源里填写 Personal Access Token（每小时 5000 次）后重试。')
+      throw new Error(`GitHub API 请求失败（${response.status}）${suffix}`)
     }
     return { data: response.data }
   }
