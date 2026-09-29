@@ -282,7 +282,6 @@ export class OpenAiCompatibleVlmClient implements VisualInferenceClient, Documen
       },
       body: JSON.stringify({
         model: this.config.model,
-        store: false,
         temperature: 0.1,
         response_format: { type: "json_object" },
         messages: [{

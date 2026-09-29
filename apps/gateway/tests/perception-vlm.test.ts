@@ -92,7 +92,10 @@ describe("visual inference parser", () => {
 
     const init = request.mock.calls[0]?.[1] as RequestInit;
     const body = JSON.parse(String(init.body)) as Record<string, unknown>;
-    expect(body).toMatchObject({ model: "vision-model", store: false });
+    // store 参数已移除：第三方 OpenAI 兼容代理（LiteLLM→anthropic 等）不认它，
+    // 省略时 OpenAI 官方语义不变（不存储）。
+    expect(body).toMatchObject({ model: "vision-model" });
+    expect("store" in body).toBe(false);
     expect(String(init.body)).toContain("data:image/jpeg;base64,");
     expect(String(init.body)).not.toContain("/Users/");
     expect(JSON.stringify(init.headers)).not.toContain("image");

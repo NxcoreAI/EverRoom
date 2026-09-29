@@ -612,10 +612,13 @@ export class PiAgentRuntime implements AgentRuntime {
           maxTokens: this.config.maxTokens,
           samplingParams: { temperature: this.config.temperature },
           // 本 runtime 只对接网关/自建 baseUrl：pi-ai 按 URL 自动探测会把
-          // 未知源当 OpenAI 官方，reasoning 模型的系统提示词发成 developer
+          // 未知源当 OpenAI 官方——reasoning 模型的系统提示词发成 developer
           // role，而中转上游只认 system（400: developer is not one of
-          // ['system', ...]）。system 全兼容，一律禁用 developer。
-          compat: { supportsDeveloperRole: false },
+          // ['system', ...]）；chat/completions 还会带 store=false（OpenAI
+          // 专属存储开关），anthropic 协议中转（如 LiteLLM 路由 glm）直接
+          // 400 UnsupportedParamsError。两参数省略对 OpenAI 官方语义无变化，
+          // 一律禁用。
+          compat: { supportsDeveloperRole: false, supportsStore: false },
         }],
       });
       await runtime.setRuntimeApiKey(this.config.provider, this.config.apiKey);

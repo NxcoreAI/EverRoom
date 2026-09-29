@@ -200,7 +200,7 @@ import { redactSecrets, redactText } from "../security/secret-redaction.js";
 import { ExternalCallBudgetService } from "../modules/external-calls/service.js";
 import { externalCallRoutes } from "../modules/external-calls/routes.js";
 
-function applyRuntimeConfig(config: GatewayConfig, runtime: RuntimeConfig): void {
+function applyRuntimeConfig(config: GatewayConfig, runtime: RuntimeConfig, userConfig: RuntimeConfig | null): void {
   // runtime config（尤其默认文件）里的 "" 是「未配置」占位，不是「清空」指令；
   // 空串直接覆盖会把 env 兜底（如 NXCORE_MEMORY_BASE_URL）打掉，导致
   // MemoryCoreClient baseUrl 为空、fetch 相对路径报 Failed to parse URL。
@@ -216,6 +216,33 @@ function applyRuntimeConfig(config: GatewayConfig, runtime: RuntimeConfig): void
   apply(config.transcriptionSummaryPi as unknown as Record<string, unknown> | null, runtime.transcriptionSummary);
   apply(config.litePi as unknown as Record<string, unknown> | null, runtime.lite);
   apply(config.cursorCompletionPi as unknown as Record<string, unknown> | null, runtime.cursorCompletion);
+  // 真·开源 BYOK：用户源激活时，未被用户显式配置的派生档（background/
+  // transcriptionSummary/cursorCompletion）不得保留默认档的模型名与 api 形态
+  // ——默认段（qwen-flash + openai-responses 等）配上继承来的用户连接发出去
+  // 必然 400 invalid model。判定必须读「用户源 payload」：合并后的 runtime 段
+  // 永远带着默认值，读它会恒判"已配置"。未配置＝五要素全量重置为用户主模型。
+  if (userConfig) {
+    const tierUserConfigured = (source: unknown): boolean => {
+      if (!source || typeof source !== "object") return false;
+      const value = source as Record<string, unknown>;
+      return ["provider", "model", "baseUrl", "apiKey"].some(
+        (key) => typeof value[key] === "string" && (value[key] as string).trim() !== "",
+      );
+    };
+    const resetTierToPrimary = (tier: Record<string, unknown> | null): void => {
+      const primary = config.pi as unknown as Record<string, unknown> | null;
+      if (!tier || !primary) return;
+      // 全量重置（含 maxTokens/temperature）：只拷五要素会留下默认档的
+      // maxTokens=512——用户主模型（如 glm）正常输出即烧穿上限，辅助任务
+      // 全部「达到模型输出上限」失败回退静态文案。
+      for (const key of ["provider", "model", "baseUrl", "api", "apiKey", "maxTokens", "contextWindow", "temperature", "reasoning"] as const) {
+        tier[key] = primary[key] ?? "";
+      }
+    };
+    if (!tierUserConfigured(userConfig.background)) resetTierToPrimary(config.backgroundPi as unknown as Record<string, unknown> | null);
+    if (!tierUserConfigured(userConfig.transcriptionSummary)) resetTierToPrimary(config.transcriptionSummaryPi as unknown as Record<string, unknown> | null);
+    if (!tierUserConfigured(userConfig.cursorCompletion)) resetTierToPrimary(config.cursorCompletionPi as unknown as Record<string, unknown> | null);
+  }
   // background/cursorCompletion 对齐 env 构建语义（config.ts 的 {...pi} 拷贝）：
   // runtime 段只携带部分覆盖（默认配置里这两段仅预置 api）时，四要素缺失项
   // 继承 primary——否则 patch 永远凑不齐 isPiRuntimeConfigured，后台转写总结
@@ -255,7 +282,8 @@ function applyRuntimeConfig(config: GatewayConfig, runtime: RuntimeConfig): void
   } else {
     apply(config.vlm as unknown as Record<string, unknown> | null, runtime.vlm);
   }
-  // ASR（仅 aliyun provider）：runtime 标量 + OSS 必填项齐全可直接构造
+  // ASR：openai-compatible 自建引擎只要 baseUrl 即可整体构造；aliyun 需
+  // runtime 标量 + OSS 必填项齐全才可直接构造
   // （含 OSS——env 从未应用 runtime.asr.oss，而阿里云提交转写无 OSS 直接抛错）；
   // 仅标量齐全时保持补丁行为，env 配置的 OSS 保留。
   const runtimeAsr = runtime.asr as Record<string, unknown> | undefined;
@@ -264,7 +292,16 @@ function applyRuntimeConfig(config: GatewayConfig, runtime: RuntimeConfig): void
   const runtimeOss = runtimeAsr?.oss as Record<string, unknown> | undefined;
   const ossText = (key: string): string =>
     runtimeOss && typeof runtimeOss[key] === "string" ? (runtimeOss[key] as string).trim() : "";
-  if (asrText("apiKey") && asrText("baseUrl") && asrText("model")
+  if (asrText("provider") === "openai-compatible" && asrText("baseUrl")) {
+    // 自建引擎不需要 OSS，baseUrl 即可构造（apiKey/model/language 可选）。
+    config.asr = {
+      engine: "openai-compatible",
+      baseUrl: asrText("baseUrl"),
+      ...(asrText("apiKey") ? { apiKey: asrText("apiKey") } : {}),
+      ...(asrText("model") ? { model: asrText("model") } : {}),
+      ...(asrText("language") ? { language: asrText("language") } : {}),
+    };
+  } else if (asrText("apiKey") && asrText("baseUrl") && asrText("model")
     && ossText("region") && ossText("bucket") && ossText("accessKeyId") && ossText("accessKeySecret")) {
     config.asr = {
       apiKey: asrText("apiKey"),
@@ -412,7 +449,11 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       return { proxyOrigin: session.proxyOrigin, token: config.authToken, pathPrefix: relayPathPrefix(session.baseUrl), models: session.models ?? undefined };
     });
   const initialRuntimeSnapshot = runtimeConfigManager.snapshot();
-  applyRuntimeConfig(config, initialRuntimeSnapshot.config);
+  applyRuntimeConfig(
+    config,
+    initialRuntimeSnapshot.config,
+    initialRuntimeSnapshot.selectedSource === "user" ? initialRuntimeSnapshot.userConfig : null,
+  );
   const redactedRuntimeSnapshot = runtimeConfigManager.snapshot(true);
   app.log.info({
     event: "runtime_config.selected",
@@ -1244,7 +1285,11 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       runtimeSections: Object.keys(snapshot.config).filter((key) =>
         ["primary", "background", "cursorCompletion", "asr", "vlm", "webSearch", "memory", "knowledge"].includes(key)),
     }, "runtime config selected");
-    applyRuntimeConfig(config, snapshot.config);
+    applyRuntimeConfig(
+      config,
+      snapshot.config,
+      snapshot.selectedSource === "user" ? snapshot.userConfig : null,
+    );
     // embedding 端点热替换（runtime knowledge.embedding 覆盖 env）。
     const embedding = embeddingFromConfig(config);
     knowledgeService.replaceEmbedding(embedding ? { client: embedding.client, model: embedding.model } : null);
