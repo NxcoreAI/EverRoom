@@ -144,9 +144,10 @@ export function AgentPanel({
     useState<ConversationSuggestionSettings>(loadConversationSuggestionSettings)
   const [composerSuggestion, setComposerSuggestion] = useState<{ key: string; text: string } | null>(null)
   const [starterPrompts, setStarterPrompts] = useState<string[] | null>(null)
-  // 同一对话快照只在定时器真正触发时标记（清理掉的调度下次 effect 重排，StrictMode/依赖抖动不再永久丢失）；Esc 丢弃后该快照不再出现建议。
+  // 同一对话快照只在定时器真正触发时标记（清理掉的调度下次 effect 重排，StrictMode/依赖抖动不再永久丢失）；Esc 丢弃按快照 key 记忆；命中缓存立即回显（5 分钟 TTL），切对话往返不重复生成。
   const ghostContextKeyRef = useRef<string | null>(null)
-  const ghostDismissedKeyRef = useRef<string | null>(null)
+  const ghostDismissedKeysRef = useRef<Set<string>>(new Set())
+  const ghostCacheRef = useRef<Map<string, { text: string; at: number }>>(new Map())
   const starterPromptsCacheRef = useRef<{ key: string; prompts: string[]; at: number } | null>(null)
   useEffect(() => onConversationSuggestionSettingsChanged(setConversationSuggestionSettings), [])
 
@@ -170,7 +171,12 @@ export function AgentPanel({
       .map((message) => ({ role: message.role as 'user' | 'assistant', text: message.content.slice(0, 4000) }))
     // 空会话（新对话）走开场问题变体：等会话清单就绪后再取。
     if (recentMessages.length === 0 && !session.scopeReady) return
-    if (ghostDismissedKeyRef.current === ghostContextKey) return
+    if (ghostDismissedKeysRef.current.has(ghostContextKey)) return
+    const cached = ghostCacheRef.current.get(ghostContextKey)
+    if (cached && Date.now() - cached.at < 5 * 60_000) {
+      setComposerSuggestion({ key: ghostContextKey, text: cached.text })
+      return
+    }
     if (ghostContextKeyRef.current === ghostContextKey) return
     const timer = window.setTimeout(() => {
       ghostContextKeyRef.current = ghostContextKey
@@ -187,7 +193,13 @@ export function AgentPanel({
         language: locale,
       })
         .then(({ suggestion }) => {
-          if (suggestion?.trim()) setComposerSuggestion({ key: ghostContextKey, text: suggestion })
+          if (!suggestion?.trim()) return
+          ghostCacheRef.current.set(ghostContextKey, { text: suggestion, at: Date.now() })
+          if (ghostCacheRef.current.size > 100) {
+            const oldest = ghostCacheRef.current.keys().next().value
+            if (oldest !== undefined) ghostCacheRef.current.delete(oldest)
+          }
+          setComposerSuggestion({ key: ghostContextKey, text: suggestion })
         })
         .catch(() => undefined)
     }, 400)
@@ -265,7 +277,8 @@ export function AgentPanel({
   }, [focusComposer])
 
   const dismissGhost = useCallback(() => {
-    ghostDismissedKeyRef.current = ghostContextKey
+    ghostDismissedKeysRef.current.add(ghostContextKey)
+    if (ghostDismissedKeysRef.current.size > 50) ghostDismissedKeysRef.current.clear()
     setComposerSuggestion(null)
   }, [ghostContextKey])
 
