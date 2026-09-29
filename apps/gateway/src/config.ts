@@ -25,7 +25,11 @@ const AgentRuntimeSchema = Type.Union([
   Type.Literal("fake"),
   Type.Literal("pi"),
 ]);
-const AsrProviderSchema = Type.Union([Type.Literal("disabled"), Type.Literal("aliyun")]);
+const AsrProviderSchema = Type.Union([
+  Type.Literal("disabled"),
+  Type.Literal("aliyun"),
+  Type.Literal("openai-compatible"),
+]);
 const AiApiSchema = Type.Union([
   Type.Literal("openai-completions"),
   Type.Literal("openai-responses"),
@@ -99,6 +103,10 @@ const RawConfigSchema = Type.Object(
     asrAliyunOssAccessKeySecret: Type.String(),
     asrAliyunOssStsToken: Type.String(),
     asrAliyunOssPrefix: Type.String({ minLength: 1 }),
+    asrOpenaiBaseUrl: Type.String(),
+    asrOpenaiApiKey: Type.String(),
+    asrOpenaiModel: Type.String(),
+    asrOpenaiLanguage: Type.String(),
     nangoConnectorPollMs: Type.Integer({ minimum: 1000 }),
     memoryEnabled: Type.Boolean(),
     memoryBaseUrl: Type.String(),
@@ -162,11 +170,26 @@ export type AiApi = typeof AiApiSchema.static;
 export type AiReasoning = typeof AiReasoningSchema.static;
 
 export interface AliyunAsrConfig {
+  /** 引擎判别；缺省视为 aliyun（既有构造点不写 engine）。 */
+  engine?: "aliyun";
   apiKey: string;
   baseUrl: string;
   model: string;
   oss: AliyunOssConfig | null;
 }
+
+/** 自建 OpenAI 兼容转写服务（faster-whisper / whisper.cpp server 等），不需要 OSS。 */
+export interface OpenAiCompatibleAsrConfig {
+  engine: "openai-compatible";
+  baseUrl: string;
+  /** 部分自建服务无鉴权，可省。 */
+  apiKey?: string;
+  /** 缺省 whisper-1。 */
+  model?: string;
+  language?: string;
+}
+
+export type AsrConfig = AliyunAsrConfig | OpenAiCompatibleAsrConfig;
 
 export interface AliyunOssConfig {
   region: string;
@@ -333,7 +356,7 @@ export interface GatewayConfig {
   webSearch: WebSearchConfig | null;
   vlm?: VlmConfig | null;
   asrInputDir: string;
-  asr: AliyunAsrConfig | null;
+  asr: AsrConfig | null;
   /** 链路A连接编排（P3 Nango 删除后仅剩编排自身配置；命名遗留 P4 清理）。 */
   nangoConnector?: {
     enabled: boolean;
@@ -684,6 +707,10 @@ export function loadConfig(
     asrAliyunOssAccessKeySecret: env.NXCORE_ASR_ALIYUN_OSS_ACCESS_KEY_SECRET?.trim() ?? "",
     asrAliyunOssStsToken: env.NXCORE_ASR_ALIYUN_OSS_STS_TOKEN?.trim() ?? "",
     asrAliyunOssPrefix: env.NXCORE_ASR_ALIYUN_OSS_PREFIX?.trim() ?? "nxcore-asr",
+    asrOpenaiBaseUrl: env.NXCORE_ASR_OPENAI_BASE_URL?.trim() ?? "",
+    asrOpenaiApiKey: env.NXCORE_ASR_OPENAI_API_KEY?.trim() ?? "",
+    asrOpenaiModel: env.NXCORE_ASR_OPENAI_MODEL?.trim() ?? "",
+    asrOpenaiLanguage: env.NXCORE_ASR_OPENAI_LANGUAGE?.trim() ?? "",
     nangoConnectorPollMs: parsePositiveInteger(
       "NXCORE_CONNECTOR_POLL_MS",
       env.NXCORE_CONNECTOR_POLL_MS?.trim() || "300000",
@@ -867,6 +894,13 @@ export function loadConfig(
       throw new Error(`Aliyun OSS configuration requires: ${missing.join(", ")}`);
     }
   }
+  if (rawConfig.asrProvider === "openai-compatible") {
+    if (!rawConfig.asrOpenaiBaseUrl) {
+      throw new Error("OpenAI-compatible ASR requires: NXCORE_ASR_OPENAI_BASE_URL");
+    }
+    // 自建转写服务常见本机/局域网 HTTP 部署，允许 http(s) 绝对地址。
+    validateAiEndpoint(rawConfig.asrOpenaiBaseUrl, "NXCORE_ASR_OPENAI_BASE_URL");
+  }
   if (Boolean(rawConfig.notificationBridgeUrl)!==Boolean(rawConfig.notificationBridgeToken)) throw new Error("Notification bridge configuration requires URL and token together");
   if(rawConfig.notificationBridgeUrl){const u=new URL(rawConfig.notificationBridgeUrl);if(u.protocol!=="http:"||!["localhost","127.0.0.1","::1"].includes(u.hostname))throw new Error("NXCORE_NOTIFICATION_BRIDGE_URL must be a loopback HTTP endpoint");}
   if (Boolean(rawConfig.officeBridgeUrl)!==Boolean(rawConfig.officeBridgeToken)) throw new Error("Office bridge configuration requires URL and token together");
@@ -1047,7 +1081,15 @@ export function loadConfig(
     ),
     runtimeManifestPath: join(dataDir, "runtime", "gateway.json"),
     asrInputDir: join(dataDir, "recordings"),
-    asr: rawConfig.asrProvider === "aliyun"
+    asr: rawConfig.asrProvider === "openai-compatible"
+      ? {
+          engine: "openai-compatible" as const,
+          baseUrl: rawConfig.asrOpenaiBaseUrl,
+          ...(rawConfig.asrOpenaiApiKey ? { apiKey: rawConfig.asrOpenaiApiKey } : {}),
+          ...(rawConfig.asrOpenaiModel ? { model: rawConfig.asrOpenaiModel } : {}),
+          ...(rawConfig.asrOpenaiLanguage ? { language: rawConfig.asrOpenaiLanguage } : {}),
+        }
+      : rawConfig.asrProvider === "aliyun"
       ? {
           apiKey: rawConfig.asrAliyunApiKey,
           baseUrl: rawConfig.asrAliyunBaseUrl,

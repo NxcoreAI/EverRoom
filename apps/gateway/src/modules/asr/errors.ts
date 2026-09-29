@@ -16,3 +16,10 @@ export class AliyunAsrError extends AsrError {
     this.name = "AliyunAsrError";
   }
 }
+
+export class OpenAiAsrError extends AsrError {
+  constructor(operation: string, message: string, options?: ErrorOptions) {
+    super("openai_asr_error", `OpenAI-compatible ASR ${operation} failed: ${message}`, 502, options);
+    this.name = "OpenAiAsrError";
+  }
+}

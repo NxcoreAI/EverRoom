@@ -34,6 +34,8 @@ export interface RuntimeConfig {
     baseUrl: string;
     model: string;
     apiKey: string;
+    /** openai-compatible 引擎的转写语言提示（如 zh）；仅自建引擎消费。 */
+    language?: string;
     oss?: Record<string, unknown>;
     [key: string]: unknown;
   };
@@ -58,6 +60,9 @@ export interface RuntimeConfigRelayOverride {
 
 export interface RuntimeConfigSnapshot {
   config: RuntimeConfig;
+  /** 用户源原始 payload（未配置 user 源时 null）：表单播种用，避免默认/中转
+   *  源的值污染表单、把"可选段未配置"误判成"填写不完整"。 */
+  userConfig: RuntimeConfig | null;
   source: RuntimeConfigSource;
   selectedSource: RuntimeConfigSource;
   availableSources: RuntimeConfigSource[];
@@ -157,8 +162,8 @@ function validateConfig(value: unknown): RuntimeConfig {
   if (config.asr !== undefined) {
     if (!config.asr || typeof config.asr !== "object" || Array.isArray(config.asr)) throw new Error("runtime_config_invalid:asr");
     const asr = config.asr as Record<string, unknown>;
-    for (const key of Object.keys(asr)) if (!["provider", "baseUrl", "model", "apiKey", "oss"].includes(key)) throw new Error(`runtime_config_unknown_field:asr.${key}`);
-    for (const key of ["provider", "baseUrl", "model", "apiKey"]) if (asr[key] !== undefined && typeof asr[key] !== "string") throw new Error(`runtime_config_invalid:asr.${key}`);
+    for (const key of Object.keys(asr)) if (!["provider", "baseUrl", "model", "apiKey", "language", "oss"].includes(key)) throw new Error(`runtime_config_unknown_field:asr.${key}`);
+    for (const key of ["provider", "baseUrl", "model", "apiKey", "language"]) if (asr[key] !== undefined && typeof asr[key] !== "string") throw new Error(`runtime_config_invalid:asr.${key}`);
     if (asr.baseUrl) { try { const url = new URL(asr.baseUrl as string); if (!["http:", "https:"].includes(url.protocol)) throw new Error(); } catch { throw new Error("runtime_config_invalid_url:asr.baseUrl"); } }
     if (asr.oss !== undefined) {
       if (!asr.oss || typeof asr.oss !== "object" || Array.isArray(asr.oss)) throw new Error("runtime_config_invalid:asr.oss");
@@ -237,7 +242,12 @@ export class RuntimeConfigManager {
 
   snapshot(redacted = false): RuntimeConfigSnapshot {
     const result = clone(this.current);
-    if (redacted) result.config = stripWebSearchApiKey(redact(result.config) as RuntimeConfig);
+    if (redacted) {
+      result.config = stripWebSearchApiKey(redact(result.config) as RuntimeConfig);
+      result.userConfig = result.userConfig
+        ? stripWebSearchApiKey(redact(result.userConfig) as RuntimeConfig)
+        : null;
+    }
     return result;
   }
 
@@ -345,6 +355,7 @@ export class RuntimeConfigManager {
     this.rewriteSlotsForRelay(config, selectedSource);
     return {
       config: { ...config, configVersion: version, updatedAt },
+      userConfig: user ? (user.payload as RuntimeConfig) : null,
       source: selectedSource,
       selectedSource,
       availableSources,
