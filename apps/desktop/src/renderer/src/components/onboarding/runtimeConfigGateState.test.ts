@@ -16,6 +16,8 @@ import {
 function snapshot(config: Record<string, unknown> = {}, extra: Partial<RuntimeConfigSnapshot> = {}): RuntimeConfigSnapshot {
   return {
     config,
+    // 播种只认用户源：与 runtimeConfigFormState.test 同口径，default-only 场景传 userConfig: null。
+    userConfig: config,
     source: 'default',
     selectedSource: 'default',
     availableSources: ['default'],
@@ -169,13 +171,13 @@ describe('runtime config gate state', () => {
     expect(manualConfigFieldError(primary('m', 'https://api.example.com/v1', 'sk'), emptyEmbedding(), t)).toBeNull()
   })
 
-  it('rejects a partially filled embedding', () => {
+  it('no longer blocks on a partially filled embedding (buildUserConfig sanitizes it)', () => {
     const t = (key: string) => key
     expect(manualConfigFieldError(
       primary('m', 'https://api.example.com/v1', 'sk'),
       { ...emptyEmbedding(), model: 'text-embedding-v4' },
       t,
-    )).toBe('surface:configGate.embeddingIncomplete')
+    )).toBeNull()
     expect(manualConfigFieldError(
       primary('m', 'https://api.example.com/v1', 'sk'),
       { provider: 'qwen', model: 'text-embedding-v4', baseUrl: 'https://api.example.com/v1', apiKey: 'sk-embed' },

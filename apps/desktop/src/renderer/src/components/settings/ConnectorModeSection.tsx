@@ -31,6 +31,10 @@ export function ConnectorModeSection() {
       }))
       return
     }
+    // 真·开源版（改造清单#6）：重新授权的代价在动手前讲清楚，不是切完才告知。
+    if (!window.confirm(t('surface:settings.connectorModeConfirmSwitch', {
+      defaultValue: '切换连接层模式后，已连接的服务需要全部重新授权才能继续使用。确定要切换吗？',
+    }))) return
     setPending(true)
     try {
       const next = await window.nxcore?.cliConnector.setMode(mode)
@@ -45,16 +49,21 @@ export function ConnectorModeSection() {
     }
   }
 
-  const options: Array<{ id: ConnectorLayerMode; icon: typeof Cloud; title: string; disabled?: boolean }> = [
+  const options: Array<{ id: ConnectorLayerMode; icon: typeof Cloud; title: string; desc: string; disabled?: boolean }> = [
     {
       id: 'saas',
       icon: Cloud,
       title: t('surface:settings.connectorModeSaasTitle', { defaultValue: '云端连接层（默认）' }),
+      desc: t('surface:settings.connectorModeSaasDesc', { defaultValue: '官方云端执行授权与数据拉取，需登录 EverRoom 账号；凭据不落本机。' }),
+      // 已切到本地且未登录时，云端档点不动是"需登录"的拦截——禁用+提示，
+      // 而不是无反馈（否则用户以为切换坏了）。
+      disabled: !account?.authenticated && state?.mode === 'local',
     },
     {
       id: 'local',
       icon: HardDrive,
       title: t('surface:settings.connectorModeLocalTitle', { defaultValue: '本地连接层' }),
+      desc: t('surface:settings.connectorModeLocalDesc', { defaultValue: '在本机运行 OpenConnector，数据不出本机；首次使用需在本地管理台配置各服务的授权凭据。' }),
     },
   ]
 
@@ -69,18 +78,20 @@ export function ConnectorModeSection() {
         </div>
       </header>
       <div className="connector-mode-options">
-        {options.map(({ id, icon: Icon, title }) => (
+        {options.map(({ id, icon: Icon, title, desc, disabled }) => (
           <button
             key={id}
             type="button"
             className="connector-mode-option"
             data-active={String(state?.mode === id)}
-            disabled={pending}
+            disabled={pending || disabled}
+            title={disabled ? t('surface:settings.connectorModeSaasLoginRequired', { defaultValue: '使用云端连接层需要先登录 EverRoom 账号（设置 → EverRoom 账号）。' }) : undefined}
             onClick={() => void choose(id)}
           >
             <span className="connector-mode-option-icon"><Icon aria-hidden="true" /></span>
             <span className="connector-mode-option-body">
               <strong>{title}</strong>
+              <small className="connector-mode-option-desc">{desc}</small>
             </span>
             <span className="connector-mode-option-state" aria-hidden="true">
               {state?.mode === id ? '●' : ''}

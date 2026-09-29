@@ -6,6 +6,9 @@ import {
   aiFieldsError,
   asrFieldsError,
   asrFieldsFromSnapshot,
+  aiFieldsIncomplete,
+  asrFieldsIncomplete,
+  liteFieldsIncomplete,
   buildUserConfig,
   configTestErrorMessage,
   embeddingFieldsFromSnapshot,
@@ -71,7 +74,7 @@ export function RuntimeConfigSettingsSection() {
     setVlm(vlmFieldsFromSnapshot(next))
     setAsr(asrFieldsFromSnapshot(next))
     setLite(liteFieldsFromSnapshot(next))
-    const webSearch = (next.config.webSearch ?? {}) as Record<string, unknown>
+    const webSearch = ((next.userConfig as Record<string, unknown> | undefined)?.webSearch ?? {}) as Record<string, unknown>
     setSearch({
       provider: typeof webSearch.provider === 'string' ? webSearch.provider : 'openai-compatible',
       model: typeof webSearch.model === 'string' ? webSearch.model : '',
@@ -88,7 +91,8 @@ export function RuntimeConfigSettingsSection() {
   }
   useEffect(() => { void load().catch((error) => setMessage(error instanceof Error ? error.message : String(error))) }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  /** 表单保存：四段校验（可选段 all-or-nothing）通过后一次写入 user source。 */
+  /** 表单保存：只有 primary 必须完整；其余可选段（embedding/vlm/asr/lite/搜索）
+   *  未填全一律按未配置清空落库（含历史污染数据自愈），不阻塞保存。 */
   const saveForm = async () => {
     setBusy('save'); setMessage(null); setFieldError(null); setTestResult(null)
     const searchReady = !search.model.trim() && !search.baseUrl.trim()
@@ -96,14 +100,20 @@ export function RuntimeConfigSettingsSection() {
       : search.model.trim() && search.baseUrl.trim() && (search.apiKey.trim() || snapshot?.webSearchCredential?.configured || deleteSearchKey)
         ? null
         : t('surface:configGate.embeddingIncomplete')
-    const error = aiFieldsError(llm, t) ?? aiFieldsError(embedding, t) ?? aiFieldsError(vlm, t) ?? asrFieldsError(asr, t) ?? searchReady ?? liteFieldsError(lite, t)
+    const error = aiFieldsError(llm, t)
     if (error) { setFieldError(error); setBusy(null); return }
+    const cleared: string[] = []
+    if (aiFieldsIncomplete(embedding)) cleared.push(t('surface:settings.rcTabEmbedding'))
+    if (aiFieldsIncomplete(vlm)) cleared.push(t('surface:settings.rcTabVlm'))
+    if (asrFieldsIncomplete(asr)) cleared.push(t('surface:settings.rcTabAsr'))
+    if (liteFieldsIncomplete(lite)) cleared.push(t('surface:settings.rcTabLite'))
+    if (searchReady !== null) cleared.push(t('surface:settings.rcTabSearch'))
     try {
       const config = buildUserConfig(snapshot, { primary: llm, embedding, vlm, asr, lite })
       config.webSearch = {
         provider: search.provider.trim() || 'openai-compatible',
-        model: search.model.trim(),
-        baseUrl: search.baseUrl.trim(),
+        model: searchReady === null ? search.model.trim() : '',
+        baseUrl: searchReady === null ? search.baseUrl.trim() : '',
         api: 'openai-completions',
         apiKey: deleteSearchKey
           ? { operation: 'delete' }
@@ -112,7 +122,12 @@ export function RuntimeConfigSettingsSection() {
             : { operation: 'keep' },
       }
       const next = await window.nxcore?.runtimeConfig.saveUser(config)
-      if (next) { seedFromSnapshot(next); setMessage(t('surface:settings.rcSaved')) }
+      if (next) {
+        seedFromSnapshot(next)
+        setMessage(cleared.length > 0
+          ? t('surface:settings.rcSavedWithCleared', { sections: cleared.join('、') })
+          : t('surface:settings.rcSaved'))
+      }
     } catch (saveError) {
       setMessage(saveError instanceof Error ? saveError.message : String(saveError))
     } finally { setBusy(null) }
@@ -161,7 +176,7 @@ export function RuntimeConfigSettingsSection() {
   const updateLlm = (key: keyof ManualAiConfigFields, value: string) => setLlm((c) => ({ ...c, [key]: value }))
   const updateEmbedding = (key: keyof ManualAiConfigFields, value: string) => setEmbedding((c) => ({ ...c, [key]: value }))
   const updateVlm = (key: keyof ManualAiConfigFields, value: string) => setVlm((c) => ({ ...c, [key]: value }))
-  const updateAsr = (key: 'model' | 'baseUrl' | 'apiKey', value: string) => setAsr((c) => ({ ...c, [key]: value }))
+  const updateAsr = (key: 'model' | 'baseUrl' | 'apiKey' | 'language', value: string) => setAsr((c) => ({ ...c, [key]: value }))
   const updateLite = (key: keyof ManualAiConfigFields, value: string) => setLite((c) => ({ ...c, [key]: value }))
   const updateSearch = (key: keyof ManualAiConfigFields, value: string) => {
     setDeleteSearchKey(false)
@@ -241,26 +256,44 @@ export function RuntimeConfigSettingsSection() {
           <input type="password" value={vlm.apiKey} placeholder="sk-…" onChange={(event) => updateVlm('apiKey', event.target.value)} /></label>
       </> : null}
       {tab === 'asr' ? <>
-        <label className="rc-form-field"><span>{aiLabels.model}</span>
-          <input value={asr.model} placeholder="qwen-audio-3.0-asr-flash-filetrans" onChange={(event) => updateAsr('model', event.target.value)} /></label>
-        <label className="rc-form-field"><span>{aiLabels.baseUrl}</span>
-          <input value={asr.baseUrl} placeholder="https://dashscope.aliyuncs.com/api/v1" onChange={(event) => updateAsr('baseUrl', event.target.value)} /></label>
-        <label className="rc-form-field"><span>{aiLabels.apiKey}</span>
-          <input type="password" value={asr.apiKey} placeholder="sk-…" onChange={(event) => updateAsr('apiKey', event.target.value)} /></label>
-        <div className="rc-oss-group">
-          <label className="rc-form-field"><span>{t('surface:settings.rcFieldOssRegion')}</span>
-            <input value={asr.oss.region} placeholder="oss-cn-beijing" onChange={(event) => updateOss('region', event.target.value)} /></label>
-          <label className="rc-form-field"><span>{t('surface:settings.rcFieldOssBucket')}</span>
-            <input value={asr.oss.bucket} onChange={(event) => updateOss('bucket', event.target.value)} /></label>
-          <label className="rc-form-field"><span>{t('surface:settings.rcFieldOssAccessKeyId')}</span>
-            <input value={asr.oss.accessKeyId} onChange={(event) => updateOss('accessKeyId', event.target.value)} /></label>
-          <label className="rc-form-field"><span>{t('surface:settings.rcFieldOssAccessKeySecret')}</span>
-            <input type="password" value={asr.oss.accessKeySecret} onChange={(event) => updateOss('accessKeySecret', event.target.value)} /></label>
-          <label className="rc-form-field"><span>{t('surface:settings.rcFieldOssStsToken')}</span>
-            <input type="password" value={asr.oss.stsToken} onChange={(event) => updateOss('stsToken', event.target.value)} /></label>
-          <label className="rc-form-field"><span>{t('surface:settings.rcFieldOssPrefix')}</span>
-            <input value={asr.oss.prefix} placeholder="nxcore-asr" onChange={(event) => updateOss('prefix', event.target.value)} /></label>
-        </div>
+        <label className="rc-form-field"><span>{t('surface:settings.rcAsrEngine')}</span>
+          <div className="segmented-control">
+            <button type="button" data-active={String(asr.provider !== 'openai-compatible')} onClick={() => setAsr((c) => ({ ...c, provider: 'aliyun' }))}>{t('surface:settings.rcAsrEngineAliyun')}</button>
+            <button type="button" data-active={String(asr.provider === 'openai-compatible')} onClick={() => setAsr((c) => ({ ...c, provider: 'openai-compatible' }))}>{t('surface:settings.rcAsrEngineSelfHosted')}</button>
+          </div>
+        </label>
+        {asr.provider === 'openai-compatible' ? <>
+          <p className="rc-form-hint">{t('surface:settings.rcAsrSelfHostedHint')}</p>
+          <label className="rc-form-field"><span>{aiLabels.baseUrl}</span>
+            <input value={asr.baseUrl} placeholder="http://127.0.0.1:9000" onChange={(event) => updateAsr('baseUrl', event.target.value)} /></label>
+          <label className="rc-form-field"><span>{aiLabels.model}</span>
+            <input value={asr.model} placeholder="完整模型 ID，如 FunAudioLLM/SenseVoiceSmall、whisper-large-v3" onChange={(event) => updateAsr('model', event.target.value)} /></label>
+          <label className="rc-form-field"><span>{aiLabels.apiKey}</span>
+            <input type="password" value={asr.apiKey} placeholder={t('surface:settings.rcAsrOptionalKey')} onChange={(event) => updateAsr('apiKey', event.target.value)} /></label>
+          <label className="rc-form-field"><span>{t('surface:settings.rcAsrLanguage')}</span>
+            <input value={asr.language} placeholder="zh" onChange={(event) => updateAsr('language', event.target.value)} /></label>
+        </> : <>
+          <label className="rc-form-field"><span>{aiLabels.model}</span>
+            <input value={asr.model} placeholder="qwen-audio-3.0-asr-flash-filetrans" onChange={(event) => updateAsr('model', event.target.value)} /></label>
+          <label className="rc-form-field"><span>{aiLabels.baseUrl}</span>
+            <input value={asr.baseUrl} placeholder="https://dashscope.aliyuncs.com/api/v1" onChange={(event) => updateAsr('baseUrl', event.target.value)} /></label>
+          <label className="rc-form-field"><span>{aiLabels.apiKey}</span>
+            <input type="password" value={asr.apiKey} placeholder="sk-…" onChange={(event) => updateAsr('apiKey', event.target.value)} /></label>
+          <div className="rc-oss-group">
+            <label className="rc-form-field"><span>{t('surface:settings.rcFieldOssRegion')}</span>
+              <input value={asr.oss.region} placeholder="oss-cn-beijing" onChange={(event) => updateOss('region', event.target.value)} /></label>
+            <label className="rc-form-field"><span>{t('surface:settings.rcFieldOssBucket')}</span>
+              <input value={asr.oss.bucket} onChange={(event) => updateOss('bucket', event.target.value)} /></label>
+            <label className="rc-form-field"><span>{t('surface:settings.rcFieldOssAccessKeyId')}</span>
+              <input value={asr.oss.accessKeyId} onChange={(event) => updateOss('accessKeyId', event.target.value)} /></label>
+            <label className="rc-form-field"><span>{t('surface:settings.rcFieldOssAccessKeySecret')}</span>
+              <input type="password" value={asr.oss.accessKeySecret} onChange={(event) => updateOss('accessKeySecret', event.target.value)} /></label>
+            <label className="rc-form-field"><span>{t('surface:settings.rcFieldOssStsToken')}</span>
+              <input type="password" value={asr.oss.stsToken} onChange={(event) => updateOss('stsToken', event.target.value)} /></label>
+            <label className="rc-form-field"><span>{t('surface:settings.rcFieldOssPrefix')}</span>
+              <input value={asr.oss.prefix} placeholder="nxcore-asr" onChange={(event) => updateOss('prefix', event.target.value)} /></label>
+          </div>
+        </>}
       </> : null}
       {tab === 'search' ? <>
         <label className="rc-form-field"><span>{aiLabels.model}</span>
