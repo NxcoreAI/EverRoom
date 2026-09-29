@@ -210,6 +210,48 @@ describe("filesystem subagent framework", () => {
     fixture.database.sqlite.close();
   }, 15_000);
 
+  it("listInvocationTree：按 run 收拢两层调用树，附带展示名并按创建时间排序", async () => {
+    const fixture = await createFixture();
+    await fixture.registry.initialize();
+    const runtimeManager = new SubagentRuntimeManager({ agentRuntime: "fake" } as GatewayConfig, fixture.config);
+    const orchestrator = new SubagentOrchestrator(
+      fixture.database.db,
+      fixture.config,
+      fixture.registry,
+      runtimeManager,
+      logger,
+    );
+
+    const parent = await orchestrator.dispatch({
+      agentId: "researcher",
+      task: "Parent task",
+      input: { topic: "EverRoom" },
+      idempotencyKey: "tree-parent",
+      source: "primary_agent",
+      parentSessionId: "session-tree",
+      parentRunId: "run-tree",
+    });
+    const child = await orchestrator.dispatch({
+      agentId: "researcher",
+      task: "Child task",
+      input: { topic: "EverRoom" },
+      idempotencyKey: "tree-child",
+      source: "primary_agent",
+      parentSessionId: "session-tree",
+      parentRunId: parent.id,
+    });
+
+    const tree = orchestrator.listInvocationTree("run-tree");
+    expect(tree.map((node) => [node.id, node.agentName, node.parentRunId])).toEqual([
+      [parent.id, "Researcher", "run-tree"],
+      [child.id, "Researcher", parent.id],
+    ]);
+    expect(orchestrator.listInvocationTree("run-missing")).toEqual([]);
+
+    await orchestrator.dispose();
+    fixture.database.sqlite.close();
+  }, 15_000);
+
   it("透传 dispatch input 的 roomId 到 runtime.start（子 run 文档工具绑定）", async () => {
     const fixture = await createFixture();
     await fixture.registry.initialize();

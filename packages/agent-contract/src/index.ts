@@ -231,6 +231,11 @@ export interface SubagentInvocation {
   completedAt: string | null;
 }
 
+/** 对话时间线用的调用树节点：附带 Agent 展示名（registry 缺失时回退 id）。 */
+export interface SubagentInvocationNode extends SubagentInvocation {
+  agentName: string;
+}
+
 export interface SubagentInvocationEvent {
   id: string;
   invocationId: string;

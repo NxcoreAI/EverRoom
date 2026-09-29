@@ -1,13 +1,14 @@
 import { randomUUID } from "node:crypto";
 import type {
   SubagentInvocation,
+  SubagentInvocationNode,
   SubagentInvocationResult,
   SubagentInvocationSource,
   SubagentInvocationStatus,
 } from "@nxcore/agent-contract";
 import type { AgentRuntime, RuntimeEvent } from "@nxcore/agent-runtime";
 import { Ajv, type ValidateFunction } from "ajv";
-import { and, desc, eq, inArray, isNull } from "drizzle-orm";
+import { asc, and, desc, eq, inArray, isNull } from "drizzle-orm";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
 import {
   subagentInvocationEvents,
@@ -109,6 +110,40 @@ export class SubagentOrchestrator {
     const row = this.db.select().from(subagentInvocations)
       .where(eq(subagentInvocations.id, invocationId)).get();
     return row ? toInvocation(row) : null;
+  }
+
+  /**
+   * 一次 run 的子代理调用树（扁平返回，renderer 据此拼父子链）：
+   * 第一层 = parentRunId 命中该 run 的调用，其后逐层取「父为已收录调用」的后代，
+   * createdAt 升序。上限 200 条 / 5 层——仅作展示，防脏数据把查询拖成全表回放。
+   */
+  listInvocationTree(rootRunId: string): SubagentInvocationNode[] {
+    const collected = new Map<string, SubagentInvocationNode>();
+    let frontier = this.db.select().from(subagentInvocations)
+      .where(eq(subagentInvocations.parentRunId, rootRunId))
+      .orderBy(asc(subagentInvocations.createdAt))
+      .all()
+      .map((row) => this.toInvocationNode(row));
+    for (const node of frontier) collected.set(node.id, node);
+    for (let depth = 1; frontier.length > 0 && collected.size < 200 && depth < 5; depth += 1) {
+      frontier = this.db.select().from(subagentInvocations)
+        .where(inArray(subagentInvocations.parentRunId, frontier.map((node) => node.id)))
+        .orderBy(asc(subagentInvocations.createdAt))
+        .all()
+        .map((row) => this.toInvocationNode(row))
+        .filter((node) => !collected.has(node.id));
+      for (const node of frontier) collected.set(node.id, node);
+    }
+    return [...collected.values()].sort((left, right) =>
+      left.createdAt.localeCompare(right.createdAt));
+  }
+
+  private toInvocationNode(row: typeof subagentInvocations.$inferSelect): SubagentInvocationNode {
+    const invocation = toInvocation(row);
+    return {
+      ...invocation,
+      agentName: this.registry.get(invocation.agentDefinitionId)?.name ?? invocation.agentDefinitionId,
+    };
   }
 
   async dispatch(input: DispatchSubagentInput): Promise<SubagentInvocation> {

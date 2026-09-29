@@ -11,9 +11,15 @@ export function subagentRoutes(orchestrator: SubagentOrchestrator): FastifyPlugi
     app.get("/v1/subagent-invocations", {
       schema: {
         tags: ["subagents"],
-        querystring: Type.Object({ limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 500 })) }),
+        querystring: Type.Object({
+          limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 500 })),
+          // 传 rootRunId 时返回该 run 的子代理调用树（含嵌套后代），忽略 limit。
+          rootRunId: Type.Optional(Type.String({ minLength: 1 })),
+        }),
       },
-    }, async (request) => orchestrator.listInvocations(request.query.limit));
+    }, async (request) => request.query.rootRunId
+      ? orchestrator.listInvocationTree(request.query.rootRunId)
+      : orchestrator.listInvocations(request.query.limit));
 
     app.get("/v1/subagent-invocations/:invocationId", {
       schema: {
