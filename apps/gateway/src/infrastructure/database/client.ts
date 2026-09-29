@@ -58,7 +58,9 @@ function runAdditiveMigrationIdempotently(
   ).has(column);
 
   const sql = readFileSync(migrationPath, "utf8");
-  for (const statement of sql.split(/--> statement-breakpoint/g).map((item) => item.trim()).filter(Boolean)) {
+  for (const raw of sql.split(/--> statement-breakpoint/g)) {
+    const statement = raw.replace(/^--[^\n]*$/gm, "").trim();
+    if (!statement) continue;
     const createTable = statement.match(/^CREATE TABLE(?: IF NOT EXISTS)? [`"]([^`"]+)[`"]/)?.[1];
     if (createTable && hasObject("table", createTable)) continue;
     const createIndex = statement.match(/^CREATE(?: UNIQUE)? INDEX(?: IF NOT EXISTS)? [`"]([^`"]+)[`"]/)?.[1];
