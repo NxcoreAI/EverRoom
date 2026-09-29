@@ -17,7 +17,8 @@ export type AiRelayKeeperEvent =
   | { type: 'quota-exhausted' }
   | { type: 'fallback-user' }
   | { type: 'fallback-restored' }
-  | { type: 'session-activated' }
+  /** first=true：本次登录周期（自上次 stop()/启动以来）首次激活，即首次被改道。 */
+  | { type: 'session-activated'; first: boolean }
   | { type: 'models-changed' }
 
 const http = createLoggedHttpClient('ai-relay-keeper')
@@ -29,6 +30,8 @@ const http = createLoggedHttpClient('ai-relay-keeper')
  *   不计网络失败、绝不回落 user 源（中转 402 同理，只在出口透传给消费方）。
  * - 连续网络失败 ≥3 次且当前为 default 源（中转驱动）时临时切 user 源保
  *   可用，恢复后自动切回 default；user 源不存在则保持现状下轮重试。
+ * - 用户禁用中转（setRelayEnabled(false)）：停保活并拆除 gateway 会话，
+ *   start()/renewNow() 变 no-op，但保留运行意图，重新启用后自动恢复周期。
  */
 export class AiRelayKeeper {
   private timer: NodeJS.Timeout | null = null
@@ -42,6 +45,12 @@ export class AiRelayKeeper {
   private fellBackToUser = false
   /** 最近一次成功推送的场景模型 JSON；续签时检测 SaaS 侧套餐模型变更。 */
   private lastModelsJson: string | null = null
+  /** 用户禁用中转：禁用期间 start()/renewNow() 为 no-op。 */
+  private relayEnabled = true
+  /** start() 表达的运行意图；stop() 清除，禁用暂停不清除（恢复用）。 */
+  private startRequested = false
+  /** 本登录周期内已激活过（用于 session-activated.first）。 */
+  private activatedThisSession = false
 
   constructor(
     private readonly client: SaasClient,
@@ -50,15 +59,47 @@ export class AiRelayKeeper {
     private readonly onEvent: (event: AiRelayKeeperEvent) => void = () => undefined,
   ) {}
 
-  /** 登录成功或会话恢复后启动；重复调用安全。 */
+  /** 登录成功或会话恢复后启动；重复调用安全。禁用期间为 no-op（意图保留）。 */
   start(): void {
-    if (this.timer) return
+    this.startRequested = true
+    if (!this.relayEnabled || this.timer) return
     void this.cycle()
     this.timer = setInterval(() => void this.cycle(), RENEW_INTERVAL_MS)
   }
 
   /** 退出登录、应用停机或账号切换前停止，并拆除 gateway 会话。 */
   async stop(): Promise<void> {
+    this.startRequested = false
+    await this.halt()
+  }
+
+  /** 用户禁用/启用中转。禁用：停保活并拆 gateway 会话（清理等同 stop()）；
+   *  重新启用：若此前处于运行意图则自动恢复周期。幂等。 */
+  async setRelayEnabled(enabled: boolean): Promise<void> {
+    if (this.relayEnabled === enabled) return
+    this.relayEnabled = enabled
+    if (enabled) {
+      if (this.startRequested && this.timer === null) this.start()
+      return
+    }
+    // 注：拆除请求飞行中若快速重新启用，晚到的 DELETE 可能拆掉新周期刚推的
+    // 会话——20min 周期（或未激活退避）会重新推送，自愈。
+    await this.halt()
+    // 中转会话拆除后 default 源的 /ai-relay 出口即失效：有可用 user 源就切回
+    // 自配源（复用断网回退路径；无 user 源保持现状，重新启用即恢复中转）。
+    await this.fallbackToUserSource()
+  }
+
+  isRelayEnabled(): boolean {
+    return this.relayEnabled
+  }
+
+  renewNow(): Promise<void> {
+    return this.cycle()
+  }
+
+  /** 停保活并拆除 gateway 会话、重置周期状态（stop 与禁用共用）。 */
+  private async halt(): Promise<void> {
     if (this.timer) clearInterval(this.timer)
     this.timer = null
     if (this.retryTimer) clearTimeout(this.retryTimer)
@@ -68,14 +109,12 @@ export class AiRelayKeeper {
     this.sessionActiveUntil = 0
     this.fellBackToUser = false
     this.lastModelsJson = null
+    this.activatedThisSession = false
     await this.clearGatewaySession().catch(() => undefined)
   }
 
-  renewNow(): Promise<void> {
-    return this.cycle()
-  }
-
   private cycle(): Promise<void> {
+    if (!this.relayEnabled) return Promise.resolve()
     if (this.cycleInFlight) {
       this.cyclePending = true
       return this.cycleInFlight
@@ -88,7 +127,11 @@ export class AiRelayKeeper {
         this.sessionActiveUntil = Date.parse(issued.expiresAt) || 0
         this.consecutiveFailures = 0
         this.retryAttempts = 0
-        if (!wasActive) this.onEvent({ type: 'session-activated' })
+        if (!wasActive) {
+          const first = !this.activatedThisSession
+          this.activatedThisSession = true
+          this.onEvent({ type: 'session-activated', first })
+        }
         const modelsJson = JSON.stringify(issued.models ?? null)
         if (wasActive && this.lastModelsJson !== null && modelsJson !== this.lastModelsJson) {
           this.onEvent({ type: 'models-changed' })
