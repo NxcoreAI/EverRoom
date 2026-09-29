@@ -16,6 +16,7 @@ const GATEWAY = { baseUrl: 'http://gateway.test', token: 'gw-token-51' }
 function createKeeper(options?: {
   issue?: () => Promise<unknown>
   selectedSource?: string
+  availableSources?: string[]
   isRunning?: boolean
   onEvent?: (event: { type: string }) => void
 }) {
@@ -34,7 +35,7 @@ function createKeeper(options?: {
   // 源选择是网关侧状态：selectSource 后 get() 返回新值。
   let selectedSource = options?.selectedSource ?? 'default'
   const runtimeConfig = {
-    get: async () => ({ selectedSource }),
+    get: async () => ({ selectedSource, availableSources: options?.availableSources ?? ['user', 'default'] }),
     selectSource: vi.fn(async (source: string) => { selectedSource = source }),
   }
   const onEvent = options?.onEvent ?? vi.fn()
@@ -208,6 +209,195 @@ describe('AiRelayKeeper', () => {
     } finally {
       await keeper.stop()
       vi.useRealTimers()
+    }
+  })
+
+  it('makes start() and renewNow() no-ops while the relay is disabled', async () => {
+    vi.useFakeTimers()
+    const { keeper, client } = createKeeper()
+    try {
+      await keeper.setRelayEnabled(false)
+      expect(keeper.isRelayEnabled()).toBe(false)
+      keeper.start()
+      await keeper.renewNow()
+      await vi.advanceTimersByTimeAsync(25 * 60_000)
+      expect(client.issueAiGatewayToken).not.toHaveBeenCalled()
+      expect(sessionRequests('PUT')).toHaveLength(0)
+    } finally {
+      await keeper.stop()
+      vi.useRealTimers()
+    }
+  })
+
+  it('tears down the gateway session and stops keep-alive when disabled while running', async () => {
+    vi.useFakeTimers()
+    let calls = 0
+    const { keeper } = createKeeper({
+      issue: async () => {
+        calls += 1
+        return {
+          token: 'sk-relay-60',
+          expiresAt: new Date(Date.now() + 25 * 60_000).toISOString(),
+          baseUrl: 'https://relay.example.com',
+        }
+      },
+    })
+    try {
+      keeper.start()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(calls).toBe(1)
+      await keeper.setRelayEnabled(false)
+      expect(sessionRequests('DELETE')).toHaveLength(1)
+      // 不再保活：长时间推进无新签发。
+      await vi.advanceTimersByTimeAsync(60 * 60_000)
+      expect(calls).toBe(1)
+    } finally {
+      await keeper.stop()
+      vi.useRealTimers()
+    }
+  })
+
+  it('resumes the renewal cycle after re-enabling', async () => {
+    vi.useFakeTimers()
+    let calls = 0
+    const { keeper } = createKeeper({
+      issue: async () => {
+        calls += 1
+        return {
+          token: 'sk-relay-61',
+          expiresAt: new Date(Date.now() + 25 * 60_000).toISOString(),
+          baseUrl: 'https://relay.example.com',
+        }
+      },
+    })
+    try {
+      keeper.start()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(calls).toBe(1)
+      await keeper.setRelayEnabled(false)
+      await keeper.setRelayEnabled(true)
+      expect(keeper.isRelayEnabled()).toBe(true)
+      // 恢复即补一次签发，且 20min 周期重新排程。
+      await vi.advanceTimersByTimeAsync(0)
+      expect(calls).toBe(2)
+      await vi.advanceTimersByTimeAsync(20 * 60_000)
+      expect(calls).toBe(3)
+    } finally {
+      await keeper.stop()
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not auto-start on re-enable when start() was never called', async () => {
+    vi.useFakeTimers()
+    const { keeper, client } = createKeeper()
+    try {
+      await keeper.setRelayEnabled(false)
+      await keeper.setRelayEnabled(true)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(client.issueAiGatewayToken).not.toHaveBeenCalled()
+    } finally {
+      await keeper.stop()
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps stop() semantics: re-enable after stop() does not restart the cycle', async () => {
+    vi.useFakeTimers()
+    let calls = 0
+    const { keeper } = createKeeper({
+      issue: async () => {
+        calls += 1
+        return {
+          token: 'sk-relay-62',
+          expiresAt: new Date(Date.now() + 25 * 60_000).toISOString(),
+          baseUrl: 'https://relay.example.com',
+        }
+      },
+    })
+    try {
+      keeper.start()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(calls).toBe(1)
+      await keeper.setRelayEnabled(false)
+      await keeper.setRelayEnabled(true)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(calls).toBe(2)
+      // stop() 清除运行意图：此后翻转开关不再自动恢复周期。
+      await keeper.stop()
+      await keeper.setRelayEnabled(false)
+      await keeper.setRelayEnabled(true)
+      await vi.advanceTimersByTimeAsync(60 * 60_000)
+      expect(calls).toBe(2)
+    } finally {
+      await keeper.stop()
+      vi.useRealTimers()
+    }
+  })
+
+  it('marks session-activated with first=true only on the first activation of a login session', async () => {
+    vi.useFakeTimers()
+    const onEvent = vi.fn()
+    const { keeper } = createKeeper({ onEvent })
+    try {
+      await keeper.renewNow()
+      expect(onEvent).toHaveBeenCalledWith({ type: 'session-activated', first: true })
+      // 同周期内续期（会话未过期）不重复触发。
+      await keeper.renewNow()
+      expect(onEvent).toHaveBeenCalledTimes(1)
+      // 会话过期后再激活：仍发事件，但 first=false（周期内非首次）。
+      await vi.advanceTimersByTimeAsync(26 * 60_000)
+      await keeper.renewNow()
+      expect(onEvent).toHaveBeenCalledTimes(2)
+      expect(onEvent).toHaveBeenLastCalledWith({ type: 'session-activated', first: false })
+      // stop() 结束登录周期：重启后首次激活重新计为 first=true。
+      await keeper.stop()
+      await keeper.renewNow()
+      expect(onEvent).toHaveBeenLastCalledWith({ type: 'session-activated', first: true })
+    } finally {
+      await keeper.stop()
+      vi.useRealTimers()
+    }
+  })
+
+  it('resets the first-activation flag when the relay is disabled and later re-enabled', async () => {
+    const onEvent = vi.fn()
+    const { keeper } = createKeeper({ onEvent })
+    try {
+      await keeper.renewNow()
+      expect(onEvent).toHaveBeenLastCalledWith({ type: 'session-activated', first: true })
+      // 禁用拆除了 gateway 会话：恢复运行后的首次成功推送视为重新改道。
+      await keeper.setRelayEnabled(false)
+      await keeper.setRelayEnabled(true)
+      await keeper.renewNow()
+      expect(onEvent).toHaveBeenCalledWith({ type: 'session-activated', first: true })
+      // 禁用期间已 fallback 到 user 源：恢复中转后自动切回 default 源。
+      expect(onEvent).toHaveBeenLastCalledWith({ type: 'fallback-restored' })
+    } finally {
+      await keeper.stop()
+    }
+  })
+
+  it('falls back to the user source when disabled while a user source exists', async () => {
+    const { keeper, runtimeConfig, onEvent } = createKeeper()
+    try {
+      await keeper.renewNow()
+      await keeper.setRelayEnabled(false)
+      expect(runtimeConfig.selectSource).toHaveBeenCalledWith('user')
+      expect(onEvent).toHaveBeenCalledWith({ type: 'fallback-user' })
+    } finally {
+      await keeper.stop()
+    }
+  })
+
+  it('keeps the default source when disabled without a usable user source', async () => {
+    const { keeper, runtimeConfig } = createKeeper({ availableSources: ['default'] })
+    try {
+      await keeper.renewNow()
+      await keeper.setRelayEnabled(false)
+      expect(runtimeConfig.selectSource).not.toHaveBeenCalled()
+    } finally {
+      await keeper.stop()
     }
   })
 })

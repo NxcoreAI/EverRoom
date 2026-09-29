@@ -112,6 +112,15 @@ function readInitialPage(): PageId {
 
 export function App() {
   const { t } = useLocale()
+  // 真·开源版（改造清单#4）：登录后首次被改道官方中转时明确告知——静默改道
+  // 是本次排查的核心痛点之一；切回入口在 设置 → 云端同步与远程控制。
+  useEffect(() => {
+    const off = window.nxcore?.aiRelay?.onEvent((event) => {
+      if (event.type !== 'session-activated' || event.first !== true) return
+      showToast({ title: t('surface:settings.relayRedirectTitle'), message: t('surface:settings.relayRedirectBody') })
+    })
+    return () => off?.()
+  }, [t])
   const { state: contextRoomState, backendReady: contextRoomBackendReady } = useContextRoomState()
   const isMacDesktop = detectMacDesktop()
   const [activePage, setActivePage] = useState<PageId>(readInitialPage)
