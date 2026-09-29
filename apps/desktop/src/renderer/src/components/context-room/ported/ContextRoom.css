@@ -3824,9 +3824,10 @@
 /* ── 产物库：平铺清单（工具条筛选 + 富信息行） ── */
 
 .context-room-artifact-library {
+  /* 面板内容壳是普通块级盒（overflow:hidden），必须显式撑满才有界，列表才滚得动 */
+  height: 100%;
   display: flex;
   min-height: 0;
-  flex: 1;
   flex-direction: column;
 }
 
