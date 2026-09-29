@@ -4,6 +4,7 @@ import type * as SentryApi from '@sentry/electron/main'
 
 import type { CloudAccountStatus } from '../../shared/sources'
 import { redactDesktopSecrets } from '../security/secret-redaction'
+import { getAppPrefs } from '../settings/app-prefs-store'
 
 const require = createRequire(import.meta.url)
 const Sentry = process.versions.electron
@@ -34,6 +35,11 @@ function isRemoteDebugActive(): boolean {
   return Date.now() < enabledUntil
 }
 
+/** 用户偏好：崩溃与错误上报总开关（关=不初始化 + 出口丢弃一切 future events）。 */
+function isCrashReportingEnabled(): boolean {
+  return getAppPrefs().crashReporting
+}
+
 export function isSentryRemoteDebugEnabled(): boolean {
   return isRemoteDebugActive()
 }
@@ -49,6 +55,9 @@ export function isSdkAutoNetLog(log: { attributes?: Record<string, unknown> }): 
 
 export function configureSentry(version: string, packaged: boolean): void {
   if (!Sentry) return
+  // 偏好关闭时不初始化（需 index.ts 在 configureSentry 前先 initAppPrefsStore；
+  // 未注入路径时读到默认 true，退化为下方出口门控，future events 同样不外发）
+  if (!isCrashReportingEnabled()) return
   const dsn = process.env.NXCORE_SENTRY_DSN?.trim() || (packaged ? PRODUCTION_DSN : '')
   if (!dsn) return
 
@@ -68,10 +77,10 @@ export function configureSentry(version: string, packaged: boolean): void {
         ({ name }) => name !== 'MainProcessSession' && name !== 'SentryMinidump'
           && name !== 'ElectronNet' && name !== 'Console',
       ),
-      beforeBreadcrumb: (breadcrumb) => isRemoteDebugActive() ? redactSentryPayload(breadcrumb) : null,
-      beforeSend: (event) => isRemoteDebugActive() ? redactSentryPayload(event) : null,
+      beforeBreadcrumb: (breadcrumb) => isCrashReportingEnabled() && isRemoteDebugActive() ? redactSentryPayload(breadcrumb) : null,
+      beforeSend: (event) => isCrashReportingEnabled() && isRemoteDebugActive() ? redactSentryPayload(event) : null,
       beforeSendLog: (log) => {
-        if (!isRemoteDebugActive() || isSdkAutoNetLog(log)) return null
+        if (!isCrashReportingEnabled() || !isRemoteDebugActive() || isSdkAutoNetLog(log)) return null
         return redactSentryPayload(log)
       },
     })
@@ -117,6 +126,7 @@ export function captureSentryLog(
   event: Record<string, unknown>,
 ): void {
   if (!isSentryLogModuleAllowed(module)) return
+  if (!isCrashReportingEnabled()) return
   if (!configured || !Sentry || !Sentry.isInitialized() || !isRemoteDebugActive()) return
   const message = typeof event.event === 'string' ? event.event : `${module}.${level}`
   // debug 本地已默认丢弃，远端同样不上报，避免轮询类日志刷屏。

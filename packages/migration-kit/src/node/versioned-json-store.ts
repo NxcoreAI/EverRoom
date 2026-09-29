@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { MigrationLogger } from "../core/types.js";
 import { backupJsonFile, ensureFilePermissions, quarantineJsonFile } from "./backup.js";
@@ -131,7 +131,28 @@ export class VersionedJsonStore<T> {
     const tempPath = join(dirname(this.options.filePath), `.${basenameOf(this.options.filePath)}.tmp`);
     writeFileSync(tempPath, payload, { mode });
     ensureFilePermissions(tempPath, mode);
-    renameSync(tempPath, this.options.filePath);
+    this.replaceAtomically(tempPath, this.options.filePath);
+  }
+
+  /**
+   * Windows 下目标文件常被杀软/索引器短暂锁定，rename 报 EXDEV/EPERM——
+   * 凭据写不进去会直接打断扫码登录。短退避重试 rename；仍失败退化为
+   * copy+删（牺牲原子性换可用性，内容一致）。
+   */
+  private replaceAtomically(tempPath: string, targetPath: string): void {
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        renameSync(tempPath, targetPath);
+        return;
+      } catch (error) {
+        if (attempt >= 3) {
+          copyFileSync(tempPath, targetPath);
+          rmSync(tempPath, { force: true });
+          return;
+        }
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50 * 2 ** attempt);
+      }
+    }
   }
 
   private existingMode(): number | null {

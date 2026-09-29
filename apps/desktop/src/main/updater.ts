@@ -4,6 +4,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { autoUpdater, type UpdateInfo } from 'electron-updater'
 import type { SaasClient } from './cloud/saas-client'
+import { getAppPrefs } from './settings/app-prefs-store'
 
 type UpdateChannel = 'stable' | 'nightly'
 
@@ -94,6 +95,8 @@ export class DesktopUpdater {
     autoUpdater.on('error', error => {
       // 404 = 渠道暂无版本，属正常业务态：不切备源、不产生降级副作用
       if (isFeedNotFound(error)) return
+      // 自定义源出错不回退官方 OSS 备源：用户已显式脱离官方更新链路
+      if (getAppPrefs().updateFeedUrl) return
       void this.tryFallbackOnce()
     })
     setTimeout(() => void this.check(), 5000)
@@ -105,6 +108,8 @@ export class DesktopUpdater {
     if (this.manualChecking) return 'busy'
     this.manualChecking = true
     try {
+      // 手动检查同样先重算 feed，改完自定义源立即点「检查更新」即可生效
+      if (app.isPackaged && !this.usingFallback) this.applyFeed()
       const result = await autoUpdater.checkForUpdates()
       // versionInfo 无更新时也存在（=当前版本），必须用 isUpdateAvailable 判断，
       // 否则渠道内最高版=当前版时误报「发现新版本」
@@ -126,13 +131,19 @@ export class DesktopUpdater {
   }
 
   private applyFeed(url?: string): void {
-    const target = url ?? `${this.feedUrl}/${this.channel}/${this.installId}`
+    // 自定义源 = 用户填的完整 feed 地址，原样使用（generic provider 自拼 latest.yml），
+    // 不附渠道/设备号路径；官方源按 base + 渠道 + 设备号。
+    const target = url ?? getAppPrefs().updateFeedUrl ?? `${this.feedUrl}/${this.channel}/${this.installId}`
     // OSS 支持 Range 并发（多段下载提速）；不关 useMultipleRangeRequest
     autoUpdater.setFeedURL({ provider: 'generic', url: target })
   }
 
   private async check(): Promise<void> {
-    try { await autoUpdater.checkForUpdates() } catch { /* 降级逻辑走 error 事件；此处静默 */ }
+    try {
+      // 每轮检查前重算 feed：设置页改自定义源/清除后下一轮即生效（不热更、不重启）
+      if (!this.usingFallback) this.applyFeed()
+      await autoUpdater.checkForUpdates()
+    } catch { /* 降级逻辑走 error 事件；此处静默 */ }
   }
 
   /** 主源失败切 OSS 直链备源再试一次；已在备源则放弃本轮。 */
@@ -175,6 +186,8 @@ export class DesktopUpdater {
   }
 
   private async report(event: 'check' | 'downloaded' | 'installed' | 'error', version?: string): Promise<void> {
+    // 设备号上报仅官方源附带；自定义更新源不上报官方统计
+    if (getAppPrefs().updateFeedUrl) return
     const target = version ?? app.getVersion()
     // check 事件高频（每次轮询），同一版本只上报一次，避免刷统计
     if (event === 'check' && this.reportedVersion === target) return
