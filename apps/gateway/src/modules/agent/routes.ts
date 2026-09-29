@@ -4,6 +4,7 @@ import { Type } from "@sinclair/typebox";
 import type { AgentService } from "./service.js";
 import type { AgentStatusService } from "./status-service.js";
 import type { LocalAgentDispatchStore } from "../local-agents/dispatch-store.js";
+import type { SlidesReviewGate } from "../subagents/slides-review-gate.js";
 import { DocumentServiceError } from "../documents/errors.js";
 
 const IdParams = Type.Object({ id: Type.String({ minLength: 1, maxLength: 100 }) });
@@ -116,6 +117,8 @@ export function agentRoutes(
   service: AgentService,
   statusService?: AgentStatusService,
   localAgentDispatchStore?: Pick<LocalAgentDispatchStore, "get">,
+  /** PPT 逐页审阅闸门：bash 审批未命中的 resolve 转给它（逐页继续/调整/收尾表态）。 */
+  slidesGate?: Pick<SlidesReviewGate, "resolve"> | null,
 ): FastifyPluginAsyncTypebox {
   return async (app) => {
     if (statusService) {
@@ -143,11 +146,36 @@ export function agentRoutes(
         schema: {
           tags: ["agent"],
           params: ApprovalParams,
-          body: Type.Object({ decision: Type.Union([Type.Literal("approved"), Type.Literal("approved_session"), Type.Literal("denied")]) }),
+          body: Type.Object({
+            // bash 审批三态 + PPT 逐页审阅三态共用一个端点：按 approvalId 归属分发。
+            decision: Type.Union([
+              Type.Literal("approved"),
+              Type.Literal("approved_session"),
+              Type.Literal("denied"),
+              Type.Literal("continue"),
+              Type.Literal("revise"),
+              Type.Literal("finish"),
+            ]),
+            // revise 时的修改意见（用户对刚落那页的要求），转述给落页代理。
+            feedback: Type.Optional(Type.String({ minLength: 1, maxLength: 2_000 })),
+          }),
         },
       },
       async (request, reply) => {
-        const result = service.resolveBashApproval(request.params.approvalId, request.body.decision);
+        const { decision, feedback } = request.body;
+        if (decision === "continue" || decision === "revise" || decision === "finish") {
+          if (!slidesGate) {
+            return reply.code(404).send({ error: "not_found", message: "Approval request not found" });
+          }
+          const resolved = slidesGate.resolve(request.params.approvalId, {
+            action: decision,
+            ...(decision === "revise" && feedback ? { feedback } : {}),
+          });
+          return resolved
+            ? { approvalId: request.params.approvalId, decision }
+            : reply.code(404).send({ error: "not_found", message: "Approval request not found" });
+        }
+        const result = service.resolveBashApproval(request.params.approvalId, decision);
         return result ?? reply.code(404).send({ error: "not_found", message: "Approval request not found" });
       },
     );

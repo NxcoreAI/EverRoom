@@ -137,7 +137,8 @@ function createUserFacingRuntime(
   }, {
     tools: [
       ...(knowledge?.tools ?? []),
-      // PPT 四件套归 slides-writer 子代理独占：用户档（main/main-direct/main-lite）
+      // PPT 四件套归 slides 子代理独占（create：slides-planner 方案 → slides-builder 落页；
+      // edit：slides-builder 直改）：用户档（main/main-direct/main-lite）
       // 剔除，改走 slides_draft 调度；doc-writer 消费点另有 allowlist 不受影响。
       ...createDocumentPiToolsWithRoomBindings(mcpHost, routedRoomByRun)
         .filter((tool) => !(SLIDES_TOOL_NAMES as readonly string[]).includes(tool.name)),

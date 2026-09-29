@@ -28,6 +28,11 @@ export interface DispatchSubagentInput {
   parentSessionId?: string | null;
   parentRunId?: string | null;
   signal?: AbortSignal;
+  /**
+   * invocationId 生成即回调（幂等命中时回传既有 id）：供调用方在子 run 开跑前
+   * 以该 id 注册跨模块运行时状态（如 PPT 逐页审阅闸门 arm）。
+   */
+  onInvocationId?: (invocationId: string) => void;
 }
 
 interface ActiveInvocation {
@@ -199,6 +204,7 @@ export class SubagentOrchestrator {
       eq(subagentInvocations.idempotencyKey, input.idempotencyKey),
     )).get();
     if (existing) {
+      input.onInvocationId?.(existing.id);
       const active = this.active.get(existing.id);
       if (active) return { invocationId: existing.id, completion: active.promise, joined: true };
       return { invocationId: existing.id, completion: Promise.resolve(toInvocation(existing)), joined: true };
@@ -219,6 +225,7 @@ export class SubagentOrchestrator {
       throw error;
     }
     const invocationId = randomUUID();
+    input.onInvocationId?.(invocationId);
     const now = new Date();
     this.db.insert(subagentInvocations).values({
       id: invocationId,

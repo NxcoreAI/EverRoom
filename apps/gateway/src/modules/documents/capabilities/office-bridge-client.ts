@@ -120,7 +120,7 @@ export class OfficeBridgeClient {
     return { ...(data as unknown as OfficeSlidesEditResult), ok: data.ok !== false };
   }
 
-  /** 逐页填充：PageSpec 经与整册生成同一条 builder/merge 管线原地替换一页（实时重绘 + 静默保存）。 */
+  /** 逐页生成：PageSpec 经与整册生成同一条 builder/merge 管线落地——替换指定页或在末尾追加新页（实时重绘 + 静默保存）。 */
   async fillPage(input: { fileId: string; slideIndex: number; specJson: string }): Promise<OfficeSlidesEditResult> {
     const data = await this.postEdit({
       mode: "apply",

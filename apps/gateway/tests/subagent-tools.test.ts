@@ -295,22 +295,68 @@ describe('createSubagentPiTools room_analysis', () => {
 })
 
 describe('createSubagentPiTools slides_draft', () => {
-  it('create：房间透传 + outline/title 进 input，结构化结果归一返回', async () => {
-    const orchestrator = orchestratorReturning({
-      result: {
-        text: '',
-        structuredOutput: {
-          status: 'completed',
-          fileEntryId: 'file-1',
-          fileName: '季度汇报.pptx',
-          pages: 3,
-          outline: ['封面', '业绩', '计划'],
-          warnings: [],
-          summary: '已生成 3 页',
+  /** create 两跳串接：按 agentId 返回各自的 invocation 夹具。 */
+  function orchestratorByAgent(handlers: Record<string, Partial<SubagentInvocation>>): SubagentOrchestrator & {
+    dispatch: ReturnType<typeof vi.fn>
+  } {
+    return {
+      dispatch: vi.fn(async (input: { agentId: string }) => ({
+        id: 'invocation-1',
+        agentDefinitionId: input.agentId,
+        agentRevisionId: 'revision-1',
+        source: 'primary_agent',
+        parentSessionId: 'session-1',
+        parentRunId: 'run-1',
+        task: '演示文稿',
+        input: null,
+        status: 'completed',
+        result: { text: '' },
+        errorCode: null,
+        errorMessage: null,
+        createdAt: new Date().toISOString(),
+        startedAt: new Date().toISOString(),
+        completedAt: new Date().toISOString(),
+        ...handlers[input.agentId],
+      })),
+    } as unknown as SubagentOrchestrator & { dispatch: ReturnType<typeof vi.fn> }
+  }
+
+  const planFixture = {
+    title: '季度汇报',
+    narrative: '业绩回顾到下一步计划',
+    pages: [
+      { title: '封面', role: 'cover', points: ['季度汇报'] },
+      { title: '业绩', role: 'data', points: ['营收增长'], data: 'Q1: 1.2 亿；Q2: 1.5 亿' },
+      { title: '计划', role: 'content', points: ['三线扩张'] },
+    ],
+    warnings: [],
+    summary: '3 页方案',
+  }
+
+  it('create：先方案后落页两跳——style 不进方案代理、plan 进落页代理，结果归一返回', async () => {
+    const orchestrator = orchestratorByAgent({
+      'slides-planner': {
+        result: {
+          text: '',
+          structuredOutput: planFixture,
+        },
+      },
+      'slides-builder': {
+        result: {
+          text: '',
+          structuredOutput: {
+            status: 'completed',
+            fileEntryId: 'file-1',
+            fileName: '季度汇报.pptx',
+            pages: 3,
+            outline: ['封面', '业绩', '计划'],
+            warnings: [],
+            summary: '已生成 3 页',
+          },
         },
       },
     })
-    const tools = createSubagentPiTools(registryWith(['slides-writer']), orchestrator)
+    const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestrator)
     const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
     const result = await slidesDraft.execute(
       { ...run, roomId: 'room-1' } as never,
@@ -324,21 +370,36 @@ describe('createSubagentPiTools slides_draft', () => {
       undefined,
     )
 
-    const dispatched = orchestrator.dispatch.mock.calls[0]![0] as Record<string, unknown>
-    expect(dispatched).toMatchObject({ agentId: 'slides-writer', source: 'primary_agent' })
-    expect(dispatched.task).toContain('创建')
-    const input = dispatched.input as Record<string, unknown>
-    expect(input).toMatchObject({
+    expect(orchestrator.dispatch).toHaveBeenCalledTimes(2)
+    const plannerDispatch = orchestrator.dispatch.mock.calls[0]![0] as Record<string, unknown>
+    expect(plannerDispatch).toMatchObject({ agentId: 'slides-planner', source: 'primary_agent' })
+    expect(plannerDispatch.task).toBe('演示文稿内容方案')
+    const plannerInput = plannerDispatch.input as Record<string, unknown>
+    expect(plannerInput).toMatchObject({
+      instruction: '做一份 3 页的季度汇报',
+      roomId: 'room-1',
+      title: '季度汇报',
+    })
+    expect(plannerInput.outline).toEqual(['封面', '业绩', '计划'])
+    expect(plannerInput.style).toBeUndefined()
+
+    const builderDispatch = orchestrator.dispatch.mock.calls[1]![0] as Record<string, unknown>
+    expect(builderDispatch).toMatchObject({ agentId: 'slides-builder', source: 'primary_agent' })
+    // 两跳串接成链：落页调用挂靠方案调用之下，时间线据此呈现 "Slides Planner → Slides Builder"
+    expect(builderDispatch.parentRunId).toBe('invocation-1')
+    const builderInput = builderDispatch.input as Record<string, unknown>
+    expect(builderInput).toMatchObject({
       task: 'create',
       instruction: '做一份 3 页的季度汇报',
       roomId: 'room-1',
       title: '季度汇报',
       style: 'futuristic-tech-editorial',
     })
-    expect(input.outline).toEqual(['封面', '业绩', '计划'])
+    expect(builderInput.plan).toEqual(planFixture)
 
     const payload = JSON.parse((result as { content: string }).content)
     expect(payload).toMatchObject({
+      task: 'create',
       status: 'completed',
       fileEntryId: 'file-1',
       fileName: '季度汇报.pptx',
@@ -347,9 +408,45 @@ describe('createSubagentPiTools slides_draft', () => {
     })
   })
 
-  it('edit：fileId 缺省不进 input；roomId 冲突与缺失直接拒绝；未注册子代理时无此工具', async () => {
+  it('create：方案阶段失败即返回 failed，不发生落页调度', async () => {
+    const orchestrator = orchestratorByAgent({
+      'slides-planner': {
+        status: 'timed_out',
+        errorCode: 'timeout',
+      },
+    })
+    const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestrator)
+    const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
+    const result = await slidesDraft.execute(
+      { ...run, roomId: 'room-1' } as never,
+      { task: 'create', instruction: '做一份季度汇报' } as never,
+      undefined,
+    )
+
+    expect(orchestrator.dispatch).toHaveBeenCalledTimes(1)
+    const payload = JSON.parse((result as { content: string }).content)
+    expect(payload).toMatchObject({ status: 'failed', retryable: true })
+    expect(payload.message).toContain('方案阶段未完成')
+  })
+
+  it('create：方案代理未注册时返回 failed，不发生调度', async () => {
     const orchestrator = orchestratorReturning({})
-    const tools = createSubagentPiTools(registryWith(['slides-writer']), orchestrator)
+    const tools = createSubagentPiTools(registryWith(['slides-builder']), orchestrator)
+    const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
+    const result = await slidesDraft.execute(
+      { ...run, roomId: 'room-1' } as never,
+      { task: 'create', instruction: '做一份季度汇报' } as never,
+      undefined,
+    )
+
+    expect(orchestrator.dispatch).not.toHaveBeenCalled()
+    const payload = JSON.parse((result as { content: string }).content)
+    expect(payload).toMatchObject({ status: 'failed', errorCode: 'slides_planner_not_registered' })
+  })
+
+  it('edit：不经方案阶段直落 slides-builder；fileId 缺省不进 input；roomId 冲突与缺失直接拒绝', async () => {
+    const orchestrator = orchestratorReturning({})
+    const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestrator)
     const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
 
     await expect(
@@ -365,7 +462,10 @@ describe('createSubagentPiTools slides_draft', () => {
       { task: 'edit', instruction: '字号调大', style: 'boardroom' } as never,
       undefined,
     )
-    const input = orchestrator.dispatch.mock.calls[0]![0].input as Record<string, unknown>
+    expect(orchestrator.dispatch).toHaveBeenCalledTimes(1)
+    const dispatched = orchestrator.dispatch.mock.calls[0]![0] as Record<string, unknown>
+    expect(dispatched).toMatchObject({ agentId: 'slides-builder', source: 'primary_agent' })
+    const input = dispatched.input as Record<string, unknown>
     expect(input).toMatchObject({ task: 'edit', instruction: '字号调大', roomId: 'room-1' })
     expect(input.fileId).toBeUndefined()
     expect(input.style).toBeUndefined()

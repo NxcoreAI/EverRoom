@@ -13,7 +13,7 @@ import { reviewPlugins } from "./review-plugins.js";
 import { routeMindmapPlugin } from "./route-mindmap-plugin.js";
 import { selectionRewritePlugin } from "./selection-rewrite-plugin.js";
 import type { CapabilityBackend } from "./shared.js";
-import type { DocumentRoomRegistry } from "./types.js";
+import type { DocumentRoomRegistry, SlidesPageReviewGate } from "./types.js";
 
 export function createBuiltinDocumentCapabilityRegistry(
   backend: CapabilityBackend,
@@ -39,6 +39,8 @@ export function createBuiltinDocumentCapabilityRegistry(
       error: string | null;
     }>;
   } | null,
+  /** PPT 逐页审阅闸门：传入则 slides set_page 成功落页后停下等用户表态。 */
+  slidesGate?: SlidesPageReviewGate | null,
 ): DocumentCapabilityRegistry {
   const registry = new DocumentCapabilityRegistry(operations);
   const reads = sharedReads ?? new DocumentReadAuthority((documentId) => backend.get(documentId));
@@ -51,6 +53,6 @@ export function createBuiltinDocumentCapabilityRegistry(
   // #242：agent 文档删除（trash，带 confirm 防误删闸门）。
   registry.register(deletePlugin(backend));
   // agent 写 Word：桌面 office-bridge 未注入（如测试环境）时工具不暴露。
-  if (officeBridge) registry.register(officePlugin(officeBridge));
+  if (officeBridge) registry.register(officePlugin(officeBridge, slidesGate));
   return registry;
 }

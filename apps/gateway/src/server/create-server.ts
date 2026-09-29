@@ -77,7 +77,7 @@ import { createContextRoomAgentTools } from "../modules/context-rooms/room-agent
 import { createDocumentPiTools } from "../modules/documents/pi-tools.js";
 import { createWebSearchPiTools } from "../modules/agent/web-search-tools.js";
 import { createDocWriterAgentTools } from "../modules/subagents/doc-writer-tools.js";
-import { createSlidesWriterAgentTools } from "../modules/subagents/slides-writer-tools.js";
+import { createSlidesPlannerAgentTools, createSlidesBuilderAgentTools } from "../modules/subagents/slides-agent-tools.js";
 import { buildRoomContextDigest } from "../modules/context-rooms/room-context-digest.js";
 import { RoomOverviewService } from "../modules/context-rooms/overview-service.js";
 import { RoomOverviewScheduler } from "../modules/context-rooms/overview-scheduler.js";
@@ -156,6 +156,7 @@ import { ConnectorDocumentStore } from "@nxcore/connectors-module/document-store
 import { SubagentRegistry } from "../modules/subagents/registry.js";
 import { SubagentRuntimeManager } from "../modules/subagents/runtime-manager.js";
 import { SubagentOrchestrator } from "../modules/subagents/orchestrator.js";
+import { SlidesReviewGate } from "../modules/subagents/slides-review-gate.js";
 import { createSubagentPiTools, inferMaterialSourcesFromReads } from "../modules/subagents/tools.js";
 import { createDocWriterResultValidator } from "../modules/subagents/document-draft.js";
 import { createDocWriterDraftResolver } from "../modules/subagents/doc-writer-content.js";
@@ -627,6 +628,9 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   const documentReadAuthority = new DocumentReadAuthority((documentId) => documentService.get(documentId));
   // 评论服务在 host 之前构建并共享单实例：registry 的 AI 审阅工具与 REST 路由共用。
   const documentCommentService = new DocumentCommentService(db, (documentId) => Boolean(documentService.get(documentId)));
+  // PPT 逐页审阅闸门（用户决策：每页都停等确认）：早于 documentMcpHost 构建共享
+  // 单实例——registry 的 set_page 挂起等表态，slides_draft 布闸，resolve 路由回填。
+  const slidesReviewGate = new SlidesReviewGate();
   const documentMcpHost = new DocumentMcpHost(
     documentService,
     contextRoomService,
@@ -643,6 +647,8 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       config.officeBridge ? new OfficeBridgeClient(config.officeBridge) : null,
       // 写作路线拍板工具：服务在 orchestrator 之后构造，getter 惰性取用。
       () => routeMindmapServiceRef.current,
+      // PPT 逐页审阅闸门：set_page 成功落页后停下等用户表态。
+      slidesReviewGate,
     ),
     documentOperationService,
     (diagnostic) => {
@@ -761,14 +767,18 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       ? createWebSearchPiTools(agentResolver, externalCalls)
       : [],
   }));
-  // slides-writer 工具面（用户决策：PPT 四件套从主 Agent 收归子代理）——
-  // slides 四工具 + 素材自取只读面；写入/调度类由工厂内 allowlist 拒绝。须在首次 dispatch 前注册。
-  subagentRuntimeManager.registerAgentTools("slides-writer", () => createSlidesWriterAgentTools({
+  // slides 两段式子代理工具面（create：slides-planner 出内容方案 → slides-builder
+  // 落页；edit：slides-builder 直改）——方案代理拿只读检索面（无 PPT 工具、不落页），
+  // 落页代理只拿 PPT 四件套（方案已带内容，不再检索）；写入/调度类由工厂内 allowlist 拒绝。须在首次 dispatch 前注册。
+  subagentRuntimeManager.registerAgentTools("slides-planner", () => createSlidesPlannerAgentTools({
     roomTools: createContextRoomAgentTools({ db, memory: memoryService, overview: roomOverviewService }),
     documentTools: createDocumentPiTools(documentMcpHost),
     webSearchTools: config.webSearch
       ? createWebSearchPiTools(agentResolver, externalCalls)
       : [],
+  }));
+  subagentRuntimeManager.registerAgentTools("slides-builder", () => createSlidesBuilderAgentTools({
+    documentTools: createDocumentPiTools(documentMcpHost),
   }));
   // room-corrector 输出校验：edits 的 targetClaimId 必须来自网关组装的 claims 快照
   //（服务端 applyCitations 还有二次强校验，这里提前拒绝省一次转发）。
@@ -976,6 +986,8 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
                 return null;
               }
             },
+            // PPT 逐页审阅闸门：create 方案产出后布闸，逐页落定等用户表态。
+            slidesGate: slidesReviewGate,
          })
         : []),
       ...createNotificationPiTools(notificationMcpHost),
@@ -1324,6 +1336,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     await agentService.dispose();
     await localAgentRuntimeRegistry.dispose();
     await subagentOrchestrator.dispose();
+    slidesReviewGate.dispose();
     await transcriptionSummaryService.dispose();
     await documentMcpHost.close();
     await documentOutboxWorker?.dispose();
@@ -1346,7 +1359,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     sqlite.close();
     await gatewayLogger.close();
   });
-  await app.register(agentRoutes(agentService, new AgentStatusService(agentResolver, subagentOrchestrator), localAgentDispatchStore));
+  await app.register(agentRoutes(agentService, new AgentStatusService(agentResolver, subagentOrchestrator), localAgentDispatchStore, slidesReviewGate));
   await app.register(subagentRoutes(subagentOrchestrator));
   const reloadMcpRuntimes = async (): Promise<void> => {
     const primary = agentResolver.reload(BUILTIN_AGENT_IDS.primary);

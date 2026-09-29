@@ -21,6 +21,24 @@ export interface DocumentExecutionContext {
   activeDocument?: AgentActiveDocumentContext;
 }
 
+/**
+ * PPT 逐页审阅闸门（slides 逐页确认）：set_page 成功落页后挂起等用户表态。
+ * gateway 侧权威实现在 modules/subagents/slides-review-gate.ts，此处只声明
+ * 结构契约（capabilities 模块不反向依赖 subagents 模块）。
+ */
+export interface SlidesPageReviewGate {
+  /** 该 run 是否布了闸（edit 流未布闸时 set_page 不带 review 字段）。 */
+  isActive(runId: string | undefined): boolean;
+  awaitDecision(
+    runId: string | undefined,
+    slideIndex: number,
+  ): Promise<{
+    action: "continue" | "revise" | "finish";
+    feedback?: string;
+    timedOut?: boolean;
+  }>;
+}
+
 export interface DocumentRoomRegistry {
   listReferences(): AgentRoomReference[];
   createRoom(input: CreateContextRoomInput): Promise<CreateContextRoomResult>;

@@ -175,6 +175,8 @@ export interface PiAgentRuntimeTool {
     input: StartRuntimeRunInput,
     params: Record<string, unknown>,
     signal?: AbortSignal,
+    /** 执行中进度（pi tool_execution_update → tool.updated → 渲染层 partialResult）。 */
+    onUpdate?: (partialResult: PiAgentRuntimeToolResult) => void,
   ) => Promise<PiAgentRuntimeToolResult>;
   classifyFailure?: (
     error: unknown,
@@ -571,13 +573,26 @@ export class PiAgentRuntime implements AgentRuntime {
       ...(tool.promptGuidelines ? { promptGuidelines: tool.promptGuidelines } : {}),
       parameters: Type.Unsafe<Record<string, unknown>>(tool.parameters),
       ...(tool.executionMode ? { executionMode: tool.executionMode } : {}),
-      execute: async (_toolCallId, params, signal) => {
+      execute: async (_toolCallId, params, signal, onUpdate) => {
         const input = context.current;
         if (!input) throw new Error("Pi document tool is not bound to an active run");
         const active = this.activeRuns.get(input.runId);
         if (active?.toolLimitExceeded) throw new Error(this.toolLimitErrorMessage());
         try {
-          const result = await withAbortSignal(() => tool.execute(input, params, signal), signal);
+          const result = await withAbortSignal(
+            () => tool.execute(
+              input,
+              params,
+              signal,
+              onUpdate
+                ? (partial) => onUpdate({
+                    content: [{ type: "text" as const, text: partial.content }],
+                    details: partial.details ?? {},
+                  })
+                : undefined,
+            ),
+            signal,
+          );
           return {
             content: [{ type: "text" as const, text: result.content }],
             details: result.details ?? {},
