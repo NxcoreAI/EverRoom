@@ -31,6 +31,7 @@ export class LocalAgentRuntimeRegistry {
       target.id,
       this.mcpServersForRun,
       this.humanApprovalForRun,
+      target.provider as LocalAcpProvider,
     );
     this.runtimes.set(runtimeKey, runtime);
     return runtime;

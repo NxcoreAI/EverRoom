@@ -1,5 +1,7 @@
 import type {
   AgentEvent,
+  AgentPermissionMode,
+  AgentPermissionModeState,
   PendingAgentIntent,
   AgentRun,
   AgentStatusSnapshot,
@@ -181,6 +183,17 @@ export class AgentGatewayBridge {
     return this.request(`/v1/agent/approvals/${encodeURIComponent(approvalId)}/resolve`, {
       method: 'POST',
       data: { decision },
+    })
+  }
+
+  getPermissionMode(sessionId: string): Promise<AgentPermissionModeState> {
+    return this.request(`/v1/agent/sessions/${encodeURIComponent(sessionId)}/permission-mode`)
+  }
+
+  setPermissionMode(sessionId: string, mode: AgentPermissionMode): Promise<{ mode: AgentPermissionMode; applied: boolean }> {
+    return this.request(`/v1/agent/sessions/${encodeURIComponent(sessionId)}/permission-mode`, {
+      method: 'PUT',
+      data: { mode },
     })
   }
 

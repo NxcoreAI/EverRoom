@@ -428,6 +428,10 @@ export const agentSessions = sqliteTable("agent_sessions", {
   runtimeSessionRef: text("runtime_session_ref"),
   activeAgentId: text("active_agent_id").notNull().default("main"),
   title: text("title"),
+  /** 会话权限模式（provider 中立语义档）；null = 未显式设置，按运行时默认（pi: accept_edits，ACP: 适配器 currentModeId）。 */
+  permissionMode: text("permission_mode", {
+    enum: ["ask_before_write", "accept_edits", "auto", "full_access"],
+  }),
   status: text("status", {
     enum: ["idle", "running", "interrupted", "closed"],
   })

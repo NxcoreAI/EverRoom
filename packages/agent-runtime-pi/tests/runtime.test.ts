@@ -973,4 +973,75 @@ describe("PiAgentRuntime", () => {
       await new Promise<void>((resolvePromise, reject) => endpoint.close((error) => error ? reject(error) : resolvePromise()));
     }
   });
+
+  it("enforces the permission-mode matrix for bash and edit approvals", async () => {
+    const runtime = new PiAgentRuntime({
+      provider: "test",
+      model: "test-model",
+      baseUrl: "https://example.com/v1",
+      apiKey: "not-used",
+      api: "openai-completions",
+      maxTokens: 1024,
+      contextWindow: 8192,
+      temperature: 0.3,
+      reasoning: "off",
+      sessionsDir: "/tmp/nxcore-pi-test/sessions",
+      workingDirectory: "/tmp/nxcore-pi-test/workspace",
+      agentDirectory: "/tmp/nxcore-pi-test/config",
+    });
+    try {
+      const seen: string[] = [];
+      runtime.setBashApprovalHandler(async (request) => {
+        seen.push(`${request.kind ?? "shell"}:${request.toolName}`);
+        return false;
+      });
+      const runInput = {
+        runId: "run-1",
+        sessionId: "session-1",
+        runtimeSessionRef: null,
+        prompt: "",
+        pageLabel: "test",
+        roomId: null,
+      };
+      const request = (toolName?: string) => ({
+        approvalId: `approval-${seen.length}`,
+        input: runInput,
+        command: "echo hi",
+        cwd: "/tmp",
+        timeoutMs: 1_000,
+        ...(toolName ? { toolName } : {}),
+      });
+
+      // 默认（accept_edits = 既有行为）：bash 必审、edit 放行
+      expect(await runtime.requestBashApproval(request())).toBe(false);
+      expect(seen).toEqual(["shell:bash"]);
+      expect(await runtime.requestEditApproval(request("edit"))).toBe(true);
+      expect(seen).toEqual(["shell:bash"]);
+
+      // ask_before_write：edit 也必审（kind=edit 的审批卡）
+      runtime.setSessionPermissionMode("session-1", "ask_before_write");
+      expect(await runtime.requestEditApproval(request("edit"))).toBe(false);
+      expect(seen).toEqual(["shell:bash", "edit:edit"]);
+
+      // auto / full_access：bash 与 edit 全放行，不打扰审批链
+      runtime.setSessionPermissionMode("session-1", "auto");
+      expect(await runtime.requestBashApproval(request())).toBe(true);
+      expect(await runtime.requestEditApproval(request("write"))).toBe(true);
+      runtime.setSessionPermissionMode("session-1", "full_access");
+      expect(await runtime.requestBashApproval(request())).toBe(true);
+      expect(seen).toEqual(["shell:bash", "edit:edit"]);
+
+      // 会话级授权（审批卡「本会话允许」）：ask_before_write 下 edit 免审
+      runtime.setSessionPermissionMode("session-1", "ask_before_write");
+      runtime.setEditSessionAuthorizationChecker(() => true);
+      expect(await runtime.requestEditApproval(request("edit"))).toBe(true);
+      expect(seen).toEqual(["shell:bash", "edit:edit"]);
+
+      // forget → 回到默认 accept_edits
+      runtime.forgetSessionPermissionMode("session-1");
+      expect(runtime.getSessionPermissionMode("session-1")).toBe("accept_edits");
+    } finally {
+      await runtime.dispose();
+    }
+  });
 });

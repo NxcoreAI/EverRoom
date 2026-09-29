@@ -262,6 +262,45 @@ export function agentRoutes(
       },
     );
 
+    app.get(
+      "/v1/agent/sessions/:sessionId/permission-mode",
+      { schema: { tags: ["agent"], params: SessionParams } },
+      async (request, reply) => {
+        try {
+          return service.getPermissionModeState(request.params.sessionId);
+        } catch {
+          return reply.code(404).send({ error: "not_found", message: "Agent session not found" });
+        }
+      },
+    );
+
+    app.put(
+      "/v1/agent/sessions/:sessionId/permission-mode",
+      {
+        schema: {
+          tags: ["agent"],
+          params: SessionParams,
+          body: Type.Object({
+            mode: Type.Union([
+              Type.Literal("ask_before_write"),
+              Type.Literal("accept_edits"),
+              Type.Literal("auto"),
+              Type.Literal("full_access"),
+            ]),
+          }),
+        },
+      },
+      async (request, reply) => {
+        try {
+          return await service.setSessionPermissionMode(request.params.sessionId, request.body.mode);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (message.includes("not_found")) return reply.code(404).send({ error: "not_found", message });
+          return reply.code(400).send({ error: "invalid_request", message });
+        }
+      },
+    );
+
     app.patch(
       "/v1/agent/sessions/:sessionId",
       {

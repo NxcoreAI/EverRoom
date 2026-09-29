@@ -2151,6 +2151,36 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
   text-align: center;
 }
 
+/* 权限模式弹层：与模型选择器同族，锚在底栏左上方。 */
+.agent-composer-popover.agent-permission-mode-picker {
+  right: auto;
+  left: 12px;
+  bottom: 52px;
+  display: grid;
+  gap: 1px;
+  width: max-content;
+  min-width: 232px;
+  max-width: 320px;
+  padding: 4px;
+  border-color: #e8eaee;
+  box-shadow: 0 10px 28px rgba(25, 31, 41, 0.1), 0 2px 6px rgba(25, 31, 41, 0.05);
+}
+
+/* full_access 危险档：选项标题与当前态切换钮同用危险色。 */
+.agent-model-option[data-danger='true'] strong { color: #b42318; }
+.agent-permission-mode-toggle[data-danger='true'] { color: #b42318; font-weight: 500; }
+.agent-permission-mode-toggle[data-danger='true']:hover:not(:disabled) { background: #fef3f2; color: #912018; }
+
+/* 两步确认：警告文案 + 取消/开启。 */
+.agent-permission-mode-confirm { display: grid; gap: 7px; padding: 10px 10px 8px; }
+.agent-permission-mode-confirm strong { font-size: 12px; color: #b42318; }
+.agent-permission-mode-confirm p { margin: 0; color: #667085; font-size: 11px; line-height: 1.5; }
+.agent-permission-mode-confirm-actions { display: flex; justify-content: flex-end; gap: 6px; }
+.agent-permission-mode-confirm-actions button { height: 26px; padding: 0 10px; border: 1px solid #e3e6ea; border-radius: 6px; background: #fff; color: #475467; font-size: 11px; cursor: pointer; }
+.agent-permission-mode-confirm-actions button:hover { background: #f5f6f8; }
+.agent-permission-mode-confirm-actions .agent-permission-mode-confirm-enable { border-color: #b42318; background: #b42318; color: #fff; }
+.agent-permission-mode-confirm-actions .agent-permission-mode-confirm-enable:hover { background: #912018; }
+
 .agent-prompt-submit {
   display: inline-flex;
   width: 30px;

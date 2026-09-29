@@ -5,6 +5,8 @@ import type {
   AgentFileAttachment,
   AgentMessage,
   AgentModelPreference,
+  AgentPermissionMode,
+  AgentPermissionModeState,
   AgentRoomReference,
   AgentSession,
   AgentSessionLink,
@@ -202,6 +204,8 @@ export function useAgentSession(
   /** 实时上下文用量 + 压缩中标记（context.usage / context.compaction 事件折叠）。 */
   const [contextUsage, setContextUsage] = useState<AgentContextUsage | null>(null)
   const [contextCompacting, setContextCompacting] = useState(false)
+  /** 会话权限模式（GET 初始化 + PUT 响应 + 适配器 current_mode_update 事件三来源折叠）。 */
+  const [permissionModeState, setPermissionModeState] = useState<AgentPermissionModeState | null>(null)
   const sequenceByRun = useRef(new Map<string, number>())
   const eventsByRun = useRef(new Map<string, AgentEvent[]>())
   const terminalRunIdsRef = useRef(new Set<string>())
@@ -277,6 +281,17 @@ export function useAgentSession(
 
     if (event.type === 'approval.requested' || event.type === 'approval.resolved') {
       setPendingApprovals((current) => applyShellApprovalEvent(current, event))
+      return
+    }
+
+    // 适配器侧模式变更（CLI /permission-mode 等）：并入当前状态；PUT 切换不走事件（直接用响应）。
+    if (event.type === 'session.permission_mode.updated') {
+      const mode = (event.payload as { permissionMode?: unknown }).permissionMode
+      if (typeof mode === 'string') {
+        setPermissionModeState((current) => current && current.mode !== mode
+          ? { ...current, mode: mode as AgentPermissionMode }
+          : current)
+      }
       return
     }
 
@@ -501,6 +516,9 @@ export function useAgentSession(
       })))
       : []
     const nextSessionLinks = api ? await api.listSessionLinks(snapshot.session.id) : []
+    const nextPermissionMode = api
+      ? await api.getPermissionMode(snapshot.session.id).catch(() => null)
+      : null
     const nextTools: Record<string, DisplayAgentToolCall[]> = {}
     const nextActivity: Record<string, AgentRunActivity> = {}
     const nextReasoning: Record<string, string> = {}
@@ -565,6 +583,7 @@ export function useAgentSession(
     setResolvingApprovalIds(new Set())
     setContextUsage(contextState.usage)
     setContextCompacting(contextState.compacting)
+    setPermissionModeState(nextPermissionMode)
     setActiveRunId(snapshot.activeRun?.id ?? null)
     setSessionId(snapshot.session.id)
     setCurrentSession(snapshot.session)
@@ -627,6 +646,7 @@ export function useAgentSession(
     setResolvingApprovalIds(new Set())
     setContextUsage(null)
     setContextCompacting(false)
+    setPermissionModeState(null)
     setActiveRunId(null)
     setSessionId(null)
     setSessions([])
@@ -760,6 +780,7 @@ export function useAgentSession(
     setResolvingApprovalIds(new Set())
     setContextUsage(null)
     setContextCompacting(false)
+    setPermissionModeState(null)
     setActiveRunId(null)
     setDisplayTitle(t('surface:useAgentSession.newConversation'))
     sequenceByRun.current.clear()
@@ -1130,6 +1151,23 @@ export function useAgentSession(
     }
   }
 
+  /** 切换会话权限模式：PUT 后以 GET 回读为权威值（applied=false 表示 run 间隙仅落库）。 */
+  const setSessionPermissionMode = useCallback(async (mode: AgentPermissionMode): Promise<boolean> => {
+    const targetSessionId = sessionIdRef.current
+    if (!api || !targetSessionId) return false
+    setError(null)
+    try {
+      await api.setPermissionMode(targetSessionId, mode)
+    } catch (requestError) {
+      setError(requestErrorMessage(requestError, t('surface:useAgentSession.permissionModeUpdateFailed')))
+      return false
+    }
+    const next = await api.getPermissionMode(targetSessionId).catch(() => null)
+    if (next) setPermissionModeState(next)
+    else setPermissionModeState((current) => current && current.mode !== mode ? { ...current, mode } : current)
+    return true
+  }, [api, t])
+
   return {
     activeRunId,
     agentIdByRun,
@@ -1150,6 +1188,9 @@ export function useAgentSession(
     channelAgentIdDefault,
     setChannelAgentIdDefault,
     pendingApprovals,
+    permissionMode: permissionModeState?.mode ?? null,
+    permissionModeAvailable: permissionModeState?.available ?? [],
+    setSessionPermissionMode,
     reasoningByRun,
     runCompletedAtByRun,
     runStartedAtByRun,

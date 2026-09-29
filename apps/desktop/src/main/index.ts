@@ -375,6 +375,8 @@ const AGENT_CHANNELS = {
   submitPendingIntent: 'agent:submit-pending-intent',
   cancelRun: 'agent:cancel-run',
   resolveApproval: 'agent:resolve-approval',
+  getPermissionMode: 'agent:get-permission-mode',
+  setPermissionMode: 'agent:set-permission-mode',
   subscribe: 'agent:subscribe',
   unsubscribe: 'agent:unsubscribe',
 } as const
@@ -2432,6 +2434,8 @@ function registerAgentHandlers(bridge: AgentGatewayBridge, migrationCoordinator:
     bridge.submitPendingIntent(intentId, input))
   handle(AGENT_CHANNELS.cancelRun, (_event, runId) => bridge.cancelRun(runId))
   handle(AGENT_CHANNELS.resolveApproval, (_event, approvalId, decision) => bridge.resolveApproval(approvalId, decision))
+  handle(AGENT_CHANNELS.getPermissionMode, (_event, sessionId) => bridge.getPermissionMode(sessionId))
+  handle(AGENT_CHANNELS.setPermissionMode, (_event, sessionId, mode) => bridge.setPermissionMode(sessionId, mode))
   handle(AGENT_CHANNELS.subscribe, (event, sessionId) => bridge.subscribe(event.sender, sessionId))
   handle(AGENT_CHANNELS.unsubscribe, (event) => bridge.unsubscribe(event.sender.id))
 }

@@ -470,6 +470,13 @@
       "when": 1790078829000,
       "tag": "0068_room_overview_synthesis",
       "breakpoints": true
+    },
+    {
+      "idx": 70,
+      "version": "6",
+      "when": 1790165229000,
+      "tag": "0069_agent_session_permission_mode",
+      "breakpoints": true
     }
   ]
 }

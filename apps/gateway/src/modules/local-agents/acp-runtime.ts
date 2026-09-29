@@ -12,7 +12,8 @@ import {
   type InitializeResponse,
   type McpServer,
 } from "@zed-industries/agent-client-protocol";
-import type { RuntimeCapabilities } from "@nxcore/agent-contract";
+import type { RuntimeCapabilities, AgentPermissionMode } from "@nxcore/agent-contract";
+import type { SessionModeState } from "@zed-industries/agent-client-protocol";
 import {
   AsyncEventQueue,
   type AgentRuntime,
@@ -22,11 +23,20 @@ import {
   type StartRuntimeRunInput,
 } from "@nxcore/agent-runtime";
 import { childEnvironment, delegationPrompt } from "./runtime-common.js";
+import { permissionModeIdForProvider, semanticForProviderModeId } from "../agent/permission-modes.js";
 import {
   localAcpAdapterCommand,
   type LocalAcpAdapterSpawn,
   type LocalAcpProvider,
 } from "@nxcore/agent-contract";
+
+function acpSessionModeSnapshot(modes: SessionModeState): { currentModeId: string; availableModeIds: string[] } | null {
+  if (!modes?.currentModeId || !Array.isArray(modes.availableModes)) return null;
+  return {
+    currentModeId: modes.currentModeId,
+    availableModeIds: modes.availableModes.map((mode) => mode.id).filter((id) => typeof id === "string"),
+  };
+}
 
 export type { LocalAcpProvider };
 
@@ -93,6 +103,8 @@ interface ActiveAcpSession {
   messageStarted: boolean;
   text: string;
   pendingApprovals: Set<string>;
+  /** 适配器上报的模式状态（session/new·load 响应与 current_mode_update 维护）；null=适配器未声明 modes 能力。 */
+  modes: { currentModeId: string; availableModeIds: string[] } | null;
 }
 
 /**
@@ -126,6 +138,8 @@ export class AcpAgentRuntime implements AgentRuntime {
      * （approval.requested 事件 + service 桥），false 维持 mutationAllowed 自动应答。
      */
     private readonly humanApprovalForRun?: (input: StartRuntimeRunInput) => boolean | Promise<boolean>,
+    /** 语义权限档 → provider modeId 翻译用；缺省时权限模式能力降级（set 返回 null）。 */
+    private readonly provider?: LocalAcpProvider,
   ) {
     this.id = `local:acp:${installationId}`;
   }
@@ -135,6 +149,61 @@ export class AcpAgentRuntime implements AgentRuntime {
   /** AgentService 桥接点（结构化可选方法，与 pi 档 setBashApprovalHandler 同构）。 */
   setPermissionRequestHandler(handler: ((request: AcpPermissionApprovalRequest) => Promise<AcpPermissionDecision>) | null): void {
     this.permissionRequestHandler = handler;
+  }
+
+  /** 各渠道会话的目标权限档（agentSessionId 键；ACP 会话仅 run 中存活，run 间隙由这里缓冲）。 */
+  private readonly desiredPermissionModes = new Map<string, { semantic: AgentPermissionMode; modeId: string }>();
+
+  /**
+   * 设置会话权限模式（语义档）。run 进行中立即下发 session/set_mode；
+   * run 间隙记入缓冲，下次 drive() 在 session/new·load 后、prompt 前补发。
+   * 返回 null=该 runtime 不支持（无 provider 或语义档无映射）。
+   */
+  async setSessionPermissionMode(agentSessionId: string, semantic: AgentPermissionMode): Promise<{ applied: boolean } | null> {
+    if (!this.provider) return null;
+    const modeId = permissionModeIdForProvider(this.provider, semantic);
+    if (!modeId) return null;
+    this.desiredPermissionModes.set(agentSessionId, { semantic, modeId });
+    const active = this.activeByAgentSession(agentSessionId);
+    if (!active || !this.connection) return { applied: false };
+    await this.connection.setSessionMode({ sessionId: this.sessionIdOf(active), modeId });
+    if (active.modes) active.modes.currentModeId = modeId;
+    return { applied: true };
+  }
+
+  /** 当前模式状态快照：desired 来自缓冲，current/available 仅 run 中有效（适配器上报）。 */
+  getSessionPermissionModes(agentSessionId: string): {
+    desired: AgentPermissionMode | null;
+    current: AgentPermissionMode | null;
+    available: AgentPermissionMode[];
+  } {
+    const desired = this.desiredPermissionModes.get(agentSessionId)?.semantic ?? null;
+    const active = this.activeByAgentSession(agentSessionId);
+    if (!active?.modes || !this.provider) return { desired, current: null, available: [] };
+    const current = semanticForProviderModeId(this.provider, active.modes.currentModeId);
+    const available = active.modes.availableModeIds
+      .map((modeId) => semanticForProviderModeId(this.provider!, modeId))
+      .filter((semantic): semantic is AgentPermissionMode => Boolean(semantic));
+    return { desired, current, available };
+  }
+
+  /** 会话删除后清缓冲（registry 缓存的 runtime 长驻，防跨会话泄漏）。 */
+  forgetSessionPermissionMode(agentSessionId: string): void {
+    this.desiredPermissionModes.delete(agentSessionId);
+  }
+
+  private activeByAgentSession(agentSessionId: string): ActiveAcpSession | null {
+    for (const [sessionId, active] of this.sessions) {
+      if (active.agentSessionId === agentSessionId) return active;
+    }
+    return null;
+  }
+
+  private sessionIdOf(active: ActiveAcpSession): string {
+    for (const [sessionId, candidate] of this.sessions) {
+      if (candidate === active) return sessionId;
+    }
+    throw new Error("local_agent_acp_session_missing");
   }
 
   async getCapabilities(): Promise<RuntimeCapabilities> {
@@ -195,14 +264,16 @@ export class AcpAgentRuntime implements AgentRuntime {
         : undefined;
       // ACP spec：loadSession 成功后 sessionId 保持请求里传入的那个。
       const resumeRef = input.runtimeSessionRef;
+      let sessionModes: { currentModeId: string; availableModeIds: string[] } | null = null;
       if (resumeRef && this.initResponse?.agentCapabilities?.loadSession !== false) {
-        await this.connection!.loadSession({
+        const loaded = await this.connection!.loadSession({
           sessionId: resumeRef,
           cwd: this.workingDirectory,
           mcpServers,
           ...(sessionMeta ? { _meta: sessionMeta } : {}),
         });
         sessionId = resumeRef;
+        if (loaded?.modes) sessionModes = acpSessionModeSnapshot(loaded.modes);
       } else {
         const session = await this.connection!.newSession({
           cwd: this.workingDirectory,
@@ -210,6 +281,7 @@ export class AcpAgentRuntime implements AgentRuntime {
           ...(sessionMeta ? { _meta: sessionMeta } : {}),
         });
         sessionId = session.sessionId;
+        if (session.modes) sessionModes = acpSessionModeSnapshot(session.modes);
       }
       this.runs.set(input.runId, sessionId);
       this.sessions.set(sessionId, {
@@ -221,10 +293,17 @@ export class AcpAgentRuntime implements AgentRuntime {
         messageStarted: false,
         text: "",
         pendingApprovals: new Set(),
+        modes: sessionModes,
       });
       queue.push({ type: "runtime.session.updated", payload: { runtimeSessionRef: sessionId } });
 
       const active = this.sessions.get(sessionId)!;
+      // run 间隙缓存的权限档在 prompt 前补发（ACP 会话仅 run 中存活）。
+      const desiredMode = this.desiredPermissionModes.get(input.sessionId);
+      if (desiredMode && active.modes && active.modes.currentModeId !== desiredMode.modeId) {
+        await this.connection!.setSessionMode({ sessionId, modeId: desiredMode.modeId });
+        active.modes.currentModeId = desiredMode.modeId;
+      }
       const response = await this.connection!.prompt({
         sessionId,
         prompt: [{ type: "text", text: delegationPrompt(input) }],
@@ -429,6 +508,20 @@ export class AcpAgentRuntime implements AgentRuntime {
         const active = this.sessions.get(params.sessionId);
         if (!active) return;
         const update = params.update;
+        if (update.sessionUpdate === "current_mode_update") {
+          // 适配器侧模式变化（ExitPlanMode 应答后切换、CLI 内自发切换）——跟随并广播语义档。
+          if (active.modes) active.modes.currentModeId = update.currentModeId;
+          if (this.provider) {
+            const semantic = semanticForProviderModeId(this.provider, update.currentModeId);
+            if (semantic) {
+              const desired = this.desiredPermissionModes.get(active.agentSessionId);
+              // 适配器自己切到的档视为新的目标档，避免下次 run 又切回去。
+              if (desired) this.desiredPermissionModes.set(active.agentSessionId, { semantic, modeId: update.currentModeId });
+              active.queue.push({ type: "session.permission_mode.updated", payload: { permissionMode: semantic } });
+            }
+          }
+          return;
+        }
         if (update.sessionUpdate !== "agent_message_chunk") return;
         if (update.content.type !== "text") return;
         const delta = update.content.text;

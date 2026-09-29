@@ -19,9 +19,18 @@ export function AgentShellApproval({
 
   const busy = resolvingApprovalIds.has(approval.approvalId)
   const queuedCount = approvals.length - 1
-  const isTool = approval.kind === 'tool'
-  const title = t(isTool ? 'surface:agentChat.toolApprovalTitle' : 'surface:agentChat.shellApprovalTitle')
-  const description = t(isTool ? 'surface:agentChat.toolApprovalDescription' : 'surface:agentChat.shellApprovalDescription')
+  const titleKey = approval.kind === 'edit'
+    ? 'surface:agentChat.editApprovalTitle'
+    : approval.kind === 'tool'
+      ? 'surface:agentChat.toolApprovalTitle'
+      : 'surface:agentChat.shellApprovalTitle'
+  const descriptionKey = approval.kind === 'edit'
+    ? 'surface:agentChat.editApprovalDescription'
+    : approval.kind === 'tool'
+      ? 'surface:agentChat.toolApprovalDescription'
+      : 'surface:agentChat.shellApprovalDescription'
+  const title = t(titleKey)
+  const description = t(descriptionKey)
 
   return (
     <section className="agent-shell-approval" aria-label={title}>

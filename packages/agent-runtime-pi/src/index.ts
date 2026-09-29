@@ -1,7 +1,7 @@
 import { mkdir, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { resolve, sep } from "node:path";
-import type { AgentContextUsageSegment, RuntimeCapabilities } from "@nxcore/agent-contract";
+import type { AgentContextUsageSegment, AgentPermissionMode, RuntimeCapabilities } from "@nxcore/agent-contract";
 import {
   type AgentSession,
   type AgentSessionEvent,
@@ -150,6 +150,10 @@ export interface PiBashApprovalRequest {
   command: string;
   cwd: string;
   timeoutMs: number;
+  /** 审批卡类型：shell（bash 命令）| edit（文件写入 edit/write）；缺省 shell。 */
+  kind?: "shell" | "edit";
+  /** 审批卡上的工具名；缺省 "bash"。 */
+  toolName?: string;
 }
 
 export interface PiAgentRuntimeToolResult {
@@ -215,6 +219,8 @@ export interface PiAgentRuntimeIntegration {
   requestBashApproval?: (request: PiBashApprovalRequest) => Promise<boolean>;
   /** Returns whether bash has already been approved for the current Agent session. */
   isBashSessionAuthorized?: (sessionId: string) => boolean;
+  /** Returns whether file edits (edit/write) have been session-approved for the Agent session. */
+  isEditSessionAuthorized?: (sessionId: string) => boolean;
 }
 
 interface PiRunContextRef {
@@ -287,6 +293,34 @@ function createBashSandboxExtension(
         ),
       });
       if (!approved) throw new Error("shell_execution_not_approved");
+    });
+  };
+}
+
+function createPermissionGateExtension(
+  config: PiAgentRuntimeConfig,
+  runtime: PiAgentRuntime,
+  getInput: () => StartRuntimeRunInput | null,
+): ExtensionFactory {
+  return (pi) => {
+    pi.on("tool_call", async (event) => {
+      if (event.toolName !== "edit" && event.toolName !== "write") return;
+      const input = getInput();
+      if (!input) throw new Error("edit_run_context_missing");
+      const path = String(
+        (event.input as Record<string, unknown> | undefined)?.path ?? "",
+      );
+      const approved = await runtime.requestEditApproval({
+        approvalId: randomUUID(),
+        input,
+        command: path || event.toolName,
+        cwd: resolve(config.workingDirectory),
+        timeoutMs: 30_000,
+        toolName: event.toolName,
+      });
+      if (!approved) {
+        return { block: true, reason: "edit_execution_not_approved" };
+      }
     });
   };
 }
@@ -389,14 +423,52 @@ export class PiAgentRuntime implements AgentRuntime {
     else delete this.integration.isBashSessionAuthorized;
   }
 
+  setEditSessionAuthorizationChecker(checker: ((sessionId: string) => boolean) | null): void {
+    if (checker) this.integration.isEditSessionAuthorized = checker;
+    else delete this.integration.isEditSessionAuthorized;
+  }
+
+  /** 会话权限模式（agentSessionId 键）；缺省 accept_edits = 既有行为（edit/write 放行、bash 必审）。 */
+  private readonly sessionPermissionModes = new Map<string, AgentPermissionMode>();
+
+  setSessionPermissionMode(sessionId: string, mode: AgentPermissionMode): void {
+    this.sessionPermissionModes.set(sessionId, mode);
+  }
+
+  getSessionPermissionMode(sessionId: string): AgentPermissionMode {
+    return this.sessionPermissionModes.get(sessionId) ?? "accept_edits";
+  }
+
+  forgetSessionPermissionMode(sessionId: string): void {
+    this.sessionPermissionModes.delete(sessionId);
+  }
+
   /** Internal bridge used by the sandbox shell tool to surface approval state. */
   async requestBashApproval(request: PiBashApprovalRequest): Promise<boolean> {
-    if (this.integration.isBashSessionAuthorized?.(request.input.sessionId)) return true;
+    return this.requestToolApproval({ ...request, kind: "shell", toolName: request.toolName ?? "bash" });
+  }
+
+  /** edit/write 文件变更审批（ask_before_write 档；其余档在入口直接放行）。 */
+  async requestEditApproval(request: PiBashApprovalRequest): Promise<boolean> {
+    return this.requestToolApproval({ ...request, kind: "edit", toolName: request.toolName ?? "edit" });
+  }
+
+  private async requestToolApproval(request: PiBashApprovalRequest & { kind: "shell" | "edit" }): Promise<boolean> {
+    const mode = this.getSessionPermissionMode(request.input.sessionId);
+    const isEdit = request.kind === "edit";
+    // 矩阵：bash 是黑盒（一条命令可写文件），永远比文件工具保守一档——
+    // auto/full_access 之外的档 bash 必审；edit 在 accept_edits 即放行。
+    if (!isEdit && (mode === "auto" || mode === "full_access")) return true;
+    if (isEdit && mode !== "ask_before_write") return true;
+    const sessionAuthorized = isEdit
+      ? this.integration.isEditSessionAuthorized?.(request.input.sessionId)
+      : this.integration.isBashSessionAuthorized?.(request.input.sessionId);
+    if (sessionAuthorized) return true;
     const active = this.activeRuns.get(request.input.runId);
     active?.queue.push({ type: "approval.requested", payload: {
       approvalId: request.approvalId,
-      kind: "shell",
-      toolName: "bash",
+      kind: request.kind,
+      toolName: request.toolName ?? "bash",
       command: request.command,
       cwd: request.cwd,
       timeoutMs: request.timeoutMs,
@@ -622,6 +694,7 @@ export class PiAgentRuntime implements AgentRuntime {
     // 扩展工厂：memory + MCP 适配器（pi-mcp-adapter，注入式隔离配置）。
     const mcpServers = this.config.mcp?.mcpServers;
     const extensionFactories = [
+      createPermissionGateExtension(this.config, this, () => context.current),
       ...(this.config.bashSandbox
         ? [createBashSandboxExtension(this.config, this, () => context.current)]
         : []),

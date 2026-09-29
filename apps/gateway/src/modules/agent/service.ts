@@ -32,9 +32,15 @@ import {
   channelAgentIdFromAgentId,
   modelPreferenceFromAgentId,
 } from "@nxcore/agent-contract";
+import type { AgentPermissionMode } from "@nxcore/agent-contract";
 import type { AgentRuntime, RuntimeAttachment, RuntimeEvent } from "@nxcore/agent-runtime";
 import type { PiBashApprovalRequest } from "@nxcore/agent-runtime-pi";
 import type { AcpPermissionApprovalRequest, AcpPermissionDecision } from "../local-agents/acp-runtime.js";
+import {
+  defaultPermissionModeForProvider,
+  isAgentPermissionMode,
+  permissionModesForProvider,
+} from "./permission-modes.js";
 import { and, asc, desc, eq, gt, inArray, isNull, or } from "drizzle-orm";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
 import {
@@ -452,6 +458,8 @@ export class AgentService {
     timeout: NodeJS.Timeout;
   }>();
   private readonly bashAuthorizedSessions = new Set<string>();
+  /** edit/write 的"本会话允许"（ask_before_write 档下用户对一次编辑点允许后，本会话后续编辑免审）。 */
+  private readonly editAuthorizedSessions = new Set<string>();
   /** ACP 渠道会话的工具审批（approvalId → 待回填决定），与 bash 审批同一 resolve 路由。 */
   private readonly pendingAcpApprovals = new Map<string, {
     runId: string;
@@ -498,9 +506,11 @@ export class AgentService {
     const runtimeWithApprovals = runtime as AgentRuntime & {
       setBashApprovalHandler?: (handler: ((request: PiBashApprovalRequest) => Promise<boolean>) | null) => void;
       setBashSessionAuthorizationChecker?: (checker: ((sessionId: string) => boolean) | null) => void;
+      setEditSessionAuthorizationChecker?: (checker: ((sessionId: string) => boolean) | null) => void;
     };
     runtimeWithApprovals.setBashApprovalHandler?.((request) => this.requestBashApproval(request));
-    runtimeWithApprovals.setBashSessionAuthorizationChecker?.((sessionId) => this.bashAuthorizedSessions.has(sessionId));
+    runtimeWithApprovals.setBashSessionAuthorizationChecker?.((sessionId: string) => this.bashAuthorizedSessions.has(sessionId));
+    runtimeWithApprovals.setEditSessionAuthorizationChecker?.((sessionId: string) => this.editAuthorizedSessions.has(sessionId));
   }
 
   private requestBashApproval(request: PiBashApprovalRequest): Promise<boolean> {
@@ -521,7 +531,10 @@ export class AgentService {
     clearTimeout(pending.timeout);
     this.pendingBashApprovals.delete(approvalId);
     const approved = decision !== "denied";
-    if (decision === "approved_session") this.bashAuthorizedSessions.add(pending.request.input.sessionId);
+    if (decision === "approved_session") {
+      const authorized = pending.request.kind === "edit" ? this.editAuthorizedSessions : this.bashAuthorizedSessions;
+      authorized.add(pending.request.input.sessionId);
+    }
     pending.resolve(approved);
     return { approvalId, decision };
   }
@@ -557,6 +570,59 @@ export class AgentService {
       setPermissionRequestHandler?: (handler: ((request: AcpPermissionApprovalRequest) => Promise<AcpPermissionDecision>) | null) => void;
     };
     runtimeWithApprovals.setPermissionRequestHandler?.((request) => this.requestAcpApproval(request));
+  }
+
+  /**
+   * 会话权限模式读取：DB 显式值优先，缺省按 provider 出厂档
+   * （claude default→ask_before_write、codex auto、pi→accept_edits）。
+   */
+  getPermissionModeState(sessionId: string): {
+    mode: AgentPermissionMode;
+    available: readonly AgentPermissionMode[];
+    channelAgentId: string | null;
+  } {
+    const session = this.db.select({ activeAgentId: agentSessions.activeAgentId, permissionMode: agentSessions.permissionMode })
+      .from(agentSessions).where(eq(agentSessions.id, sessionId)).get();
+    if (!session) throw new Error("agent_session_not_found");
+    const channelAgentId = channelAgentIdFromAgentId(session.activeAgentId) ?? null;
+    const provider = channelAgentId?.split(":")[0] ?? null;
+    return {
+      mode: session.permissionMode ?? defaultPermissionModeForProvider(provider),
+      available: permissionModesForProvider(provider),
+      channelAgentId,
+    };
+  }
+
+  /**
+   * 设置会话权限模式：写 DB（跨 run 事实源）+ 尽力转发活跃 run 的 runtime
+   * （ACP 立即 set_mode；pi 立即生效）。run 间隙不转发——下次 startRun 从
+   * DB 预热（ACP 进 runtime 缓冲、pi 直设）。
+   */
+  async setSessionPermissionMode(sessionId: string, mode: string): Promise<{ mode: AgentPermissionMode; applied: boolean }> {
+    if (!isAgentPermissionMode(mode)) throw new Error("agent_permission_mode_invalid");
+    const updated = this.db.update(agentSessions)
+      .set({ permissionMode: mode, updatedAt: new Date() })
+      .where(eq(agentSessions.id, sessionId))
+      .returning({ id: agentSessions.id }).get();
+    if (!updated) throw new Error("agent_session_not_found");
+    let applied = false;
+    const liveRun = this.db.select({ id: agentRuns.id })
+      .from(agentRuns)
+      .where(and(eq(agentRuns.sessionId, sessionId), eq(agentRuns.status, "running")))
+      .get();
+    const liveRuntime = liveRun ? this.runRuntimes.get(liveRun.id) : undefined;
+    if (liveRuntime) {
+      applied = await this.applyPermissionModeToRuntime(liveRuntime, sessionId, mode);
+    }
+    return { mode, applied };
+  }
+
+  private async applyPermissionModeToRuntime(runtime: AgentRuntime, sessionId: string, mode: AgentPermissionMode): Promise<boolean> {
+    const structural = runtime as AgentRuntime & {
+      setSessionPermissionMode?: (sessionId: string, mode: AgentPermissionMode) => Promise<{ applied: boolean } | null> | void;
+    };
+    const result = await structural.setSessionPermissionMode?.(sessionId, mode);
+    return Boolean(result && typeof result === "object" && result.applied);
   }
 
   setFilesService(files: FilesService): void {
@@ -699,6 +765,7 @@ export class AgentService {
       this.pendingAcpApprovals.delete(approvalId);
     }
     this.bashAuthorizedSessions.clear();
+    this.editAuthorizedSessions.clear();
     for (const sessionIds of this.trustedMcpSessions.values()) {
       for (const sessionId of sessionIds) revokeTrustedMcpSession(sessionId);
     }
@@ -892,8 +959,18 @@ export class AgentService {
     }
     this.db.delete(agentSessions).where(eq(agentSessions.id, sessionId)).run();
     this.bashAuthorizedSessions.delete(sessionId);
+    this.editAuthorizedSessions.delete(sessionId);
+    this.forgetSessionPermissionMode(this.runtime, sessionId);
     await this.revokeChannelSession?.(sessionId);
     return true;
+  }
+
+  /** 会话删除后清理 runtime 侧权限模式缓存（结构化可选，pi/ACP 各自实现）。 */
+  private forgetSessionPermissionMode(runtime: AgentRuntime, sessionId: string): void {
+    const structural = runtime as AgentRuntime & {
+      forgetSessionPermissionMode?: (sessionId: string) => void;
+    };
+    structural.forgetSessionPermissionMode?.(sessionId);
   }
 
   /**
@@ -1311,6 +1388,11 @@ export class AgentService {
       }
     } else {
       selectedRuntime = this.runtime;
+    }
+    // 权限模式预热：pi 档直设（进程重启后 Map 丢失，这里重建）；
+    // ACP 档进 runtime 缓冲，drive() 在 session/new·load 后补发 set_mode。
+    if (session.permissionMode) {
+      await this.applyPermissionModeToRuntime(selectedRuntime, sessionId, session.permissionMode);
     }
     let participant = this.db.select().from(agentSessionParticipants).where(and(
       eq(agentSessionParticipants.sessionId, sessionId),

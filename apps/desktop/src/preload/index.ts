@@ -654,6 +654,8 @@ const api: NxcoreDesktopApi = {
       invokeQuietly('agent:submit-pending-intent', intentId, input),
     cancelRun: (runId) => invoke('agent:cancel-run', runId),
     resolveApproval: (approvalId, decision) => invoke('agent:resolve-approval', approvalId, decision),
+    getPermissionMode: (sessionId) => invoke('agent:get-permission-mode', sessionId),
+    setPermissionMode: (sessionId, mode) => invoke('agent:set-permission-mode', sessionId, mode),
     subscribe: (sessionId) => invoke('agent:subscribe', sessionId),
     unsubscribe: () => invoke('agent:unsubscribe'),
     onEvent: (listener) => {

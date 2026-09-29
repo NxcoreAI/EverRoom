@@ -717,6 +717,9 @@ export function AgentPanel({
       onSelectModelPreference={session.setModelPreferenceDefault}
       channelAgentId={effectiveChannelAgentId}
       onSelectChannelAgent={session.setChannelAgentIdDefault}
+      permissionMode={session.permissionMode}
+      permissionModeAvailable={session.permissionModeAvailable}
+      onSelectPermissionMode={session.setSessionPermissionMode}
       onOpenSettings={onNavigatePage ? () => onNavigatePage('settings') : undefined}
       ghostSuggestion={ghostSuggestion}
       onAcceptGhost={acceptGhost}

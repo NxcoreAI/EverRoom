@@ -1,4 +1,4 @@
-import { ArrowLeft, Bot, Brain, Check, ChevronDown, CornerDownLeft, Feather, FileText, FolderOpen, History, LoaderCircle, MessagesSquare, Quote, Search, Square, Terminal, X, Zap } from 'lucide-react'
+import { ArrowLeft, Bot, Brain, Check, ChevronDown, CornerDownLeft, Feather, FileText, FolderOpen, History, LoaderCircle, Lock, MessagesSquare, Quote, Search, ShieldCheck, Square, Terminal, Unlock, X, Zap } from 'lucide-react'
 import {
   forwardRef,
   useEffect,
@@ -10,7 +10,7 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from 'react'
-import type { AgentContextUsage, AgentModelPreference, AgentRoomReference, AgentSession, ExternalConversationSummary, LocalAgentInstallation, MigrationProvider } from '@nxcore/agent-contract'
+import type { AgentContextUsage, AgentModelPreference, AgentPermissionMode, AgentRoomReference, AgentSession, ExternalConversationSummary, LocalAgentInstallation, MigrationProvider } from '@nxcore/agent-contract'
 import type { FileCatalogDto } from '../../../../shared/ingest'
 
 import { showToast } from '@/state/toast'
@@ -37,6 +37,15 @@ const MODEL_TIER_META: Record<AgentModelPreference, { icon: typeof Zap; labelKey
   lite: { icon: Feather, labelKey: 'surface:agentComposer.modelTierLite', hintKey: 'surface:agentComposer.modelTierLiteHint' },
 }
 const MODEL_TIER_ORDER: AgentModelPreference[] = ['smart', 'primary', 'lite']
+
+/** 权限档语义元数据（顺序=下拉展示顺序；选项再按 provider 可用性过滤）。 */
+const PERMISSION_MODE_META: Record<AgentPermissionMode, { icon: typeof Zap; labelKey: string; hintKey: string; danger: boolean }> = {
+  ask_before_write: { icon: Lock, labelKey: 'surface:agentComposer.permissionModeAskBeforeWrite', hintKey: 'surface:agentComposer.permissionModeAskBeforeWriteHint', danger: false },
+  accept_edits: { icon: ShieldCheck, labelKey: 'surface:agentComposer.permissionModeAcceptEdits', hintKey: 'surface:agentComposer.permissionModeAcceptEditsHint', danger: false },
+  auto: { icon: Zap, labelKey: 'surface:agentComposer.permissionModeAuto', hintKey: 'surface:agentComposer.permissionModeAutoHint', danger: false },
+  full_access: { icon: Unlock, labelKey: 'surface:agentComposer.permissionModeFullAccess', hintKey: 'surface:agentComposer.permissionModeFullAccessHint', danger: true },
+}
+const PERMISSION_MODE_ORDER: AgentPermissionMode[] = ['ask_before_write', 'accept_edits', 'auto', 'full_access']
 
 type ExternalPickerStatus = 'idle' | 'loading' | 'ready' | 'loading-more' | 'error'
 type MentionCategory = 'all' | 'agent' | 'room' | 'file' | 'conversation'
@@ -141,6 +150,11 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   channelAgentId?: string | null
   /** 选择本机 CLI Agent 渠道（整个新会话由其连续执行）；null=回到档位模式。 */
   onSelectChannelAgent?: (agentId: string | null) => void
+  /** 会话权限模式（渠道会话显示切换钮；null=未加载/不适用，隐藏）。 */
+  permissionMode?: AgentPermissionMode | null
+  /** provider 可用语义档（网关按渠道过滤后的权威列表）。 */
+  permissionModeAvailable?: readonly AgentPermissionMode[]
+  onSelectPermissionMode?: (mode: AgentPermissionMode) => void | Promise<unknown>
   /** 强模型未配置时提示去设置（跳应用设置页）。 */
   onOpenSettings?: () => void
   /** 空态建议（推断的下一个提问）；仅输入框为空时作为 placeholder 展示，Tab/Enter 采纳。 */
@@ -173,6 +187,9 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   onSelectModelPreference,
   channelAgentId = null,
   onSelectChannelAgent,
+  permissionMode = null,
+  permissionModeAvailable = [],
+  onSelectPermissionMode,
   onOpenSettings,
   ghostSuggestion = null,
   onAcceptGhost,
@@ -211,6 +228,10 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   const [mentionSourcesLoading, setMentionSourcesLoading] = useState(false)
   const [mentionCategory, setMentionCategory] = useState<MentionCategory>('all')
   const [modelPickerOpen, setModelPickerOpen] = useState(false)
+  const [permissionModeOpen, setPermissionModeOpen] = useState(false)
+  /** full_access 两步确认：true=弹层切到危险确认态。 */
+  const [confirmingFullAccess, setConfirmingFullAccess] = useState(false)
+  const permissionModeRef = useRef<HTMLElement | null>(null)
   const [contextPanelOpen, setContextPanelOpen] = useState(false)
   const [liteAvailable, setLiteAvailable] = useState(false)
   const [primaryAvailable, setPrimaryAvailable] = useState(true)
@@ -281,11 +302,13 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
     setAgentPickerOpen(false)
     setModelPickerOpen(false)
     setContextPanelOpen(false)
+    setPermissionModeOpen(false)
+    setConfirmingFullAccess(false)
     mentionHints.current.clear()
   }, [resetKey])
 
   useEffect(() => {
-    if (!externalPickerOpen && !agentPickerOpen && !modelPickerOpen && !contextPanelOpen) return undefined
+    if (!externalPickerOpen && !agentPickerOpen && !modelPickerOpen && !contextPanelOpen && !permissionModeOpen) return undefined
     const closeOnOutsidePress = (event: PointerEvent) => {
       const target = event.target as Element
       if (shellRef.current?.contains(target)) {
@@ -293,6 +316,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
         // 点到弹层和触发钮之外（如输入框）视为失去焦点，直接收起。
         if (modelPickerOpen && !modelPickerRef.current?.contains(target) && !target.closest('.agent-model-tier-toggle')) setModelPickerOpen(false)
         if (contextPanelOpen && !contextPanelRef.current?.contains(target) && !target.closest('.agent-context-ring')) setContextPanelOpen(false)
+        if (permissionModeOpen && !permissionModeRef.current?.contains(target) && !target.closest('.agent-permission-mode-toggle')) setPermissionModeOpen(false)
         return
       }
       externalRequestRef.current += 1
@@ -300,10 +324,11 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
       setAgentPickerOpen(false)
       setModelPickerOpen(false)
       setContextPanelOpen(false)
+      setPermissionModeOpen(false)
     }
     document.addEventListener?.('pointerdown', closeOnOutsidePress)
     return () => document.removeEventListener?.('pointerdown', closeOnOutsidePress)
-  }, [externalPickerOpen, agentPickerOpen, modelPickerOpen, contextPanelOpen])
+  }, [externalPickerOpen, agentPickerOpen, modelPickerOpen, contextPanelOpen, permissionModeOpen])
 
   const submitMentions = () => resolveMentions(value, mentionHints.current, localAgents)
 
@@ -318,6 +343,14 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
     if (event.key === 'Escape' && contextPanelOpen) {
       event.preventDefault()
       setContextPanelOpen(false)
+      return
+    }
+    if (permissionModeOpen) {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        setPermissionModeOpen(false)
+        setConfirmingFullAccess(false)
+      }
       return
     }
     if (modelPickerOpen) {
@@ -528,6 +561,17 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
     setModelPickerOpen(false)
     window.requestAnimationFrame(() => textareaRef.current?.focus())
   }
+  const choosePermissionMode = (mode: AgentPermissionMode) => {
+    // full_access 两步确认（与 tutti 同规则）：首次点击进入确认态，再点「开启」才生效。
+    if (mode === 'full_access' && permissionMode !== 'full_access' && !confirmingFullAccess) {
+      setConfirmingFullAccess(true)
+      return
+    }
+    setConfirmingFullAccess(false)
+    setPermissionModeOpen(false)
+    if (mode !== permissionMode) void onSelectPermissionMode?.(mode)
+    window.requestAnimationFrame(() => textareaRef.current?.focus())
+  }
   const callableLocalAgents = localAgents.filter((agent) => agent.invocationSupported && agent.callable)
   const agentQueryNormalized = mentionQuery.trim().toLocaleLowerCase()
   const matchesQuery = (haystack: string) => !agentQueryNormalized || haystack.toLocaleLowerCase().includes(agentQueryNormalized)
@@ -707,11 +751,19 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   }
 
   // 弹层引用对象为空时弹层不渲染，composer 也不抬升（menuOpen 与可见弹层保持一致）。
-  const menuOpen = slashPickerOpen || externalPickerOpen || modelPickerOpen || (agentPickerOpen && mentionOptionCount > 0)
+  const menuOpen = slashPickerOpen || externalPickerOpen || modelPickerOpen || permissionModeOpen || (agentPickerOpen && mentionOptionCount > 0)
   const channelAgent = channelAgentId ? localAgents.find((agent) => agent.id === channelAgentId) ?? null : null
   const channelActive = Boolean(channelAgentId)
   const activeTierMeta = MODEL_TIER_META[modelPreference]
   const ActiveTierIcon = activeTierMeta.icon
+  // 权限档切换钮：一期仅渠道会话显示（gateway 侧已通用，pi 档 UI 放开留二期）。
+  const permissionModeOptions = PERMISSION_MODE_ORDER.filter((mode) => permissionModeAvailable.includes(mode))
+  const permissionModeToggleVisible = channelActive
+    && permissionMode !== null
+    && permissionModeOptions.length > 1
+    && Boolean(onSelectPermissionMode)
+  const activePermissionMeta = permissionMode ? PERMISSION_MODE_META[permissionMode] : null
+  const ActivePermissionIcon = activePermissionMeta?.icon ?? ShieldCheck
   // 上下文占用构成：按占比降序，tokens 已知时补一段剩余空间。
   const contextBreakdown = contextUsage?.contextWindow
     ? {
@@ -1011,6 +1063,55 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
           ) : null}
         </section>
       ) : null}
+      {permissionModeOpen && permissionModeToggleVisible ? (
+        <section
+          ref={permissionModeRef}
+          className="agent-composer-popover agent-permission-mode-picker"
+          role="listbox"
+          aria-label={t('surface:agentComposer.permissionModePickerTitle')}
+        >
+          {confirmingFullAccess ? (
+            <div className="agent-permission-mode-confirm" role="alertdialog" aria-label={t('surface:agentComposer.permissionModeFullAccessConfirmTitle')}>
+              <strong>{t('surface:agentComposer.permissionModeFullAccessConfirmTitle')}</strong>
+              <p>{t('surface:agentComposer.permissionModeFullAccessConfirmBody')}</p>
+              <div className="agent-permission-mode-confirm-actions">
+                <button type="button" onClick={() => setConfirmingFullAccess(false)}>
+                  {t('surface:agentComposer.permissionModeConfirmCancel')}
+                </button>
+                <button
+                  type="button"
+                  className="agent-permission-mode-confirm-enable"
+                  data-danger="true"
+                  onClick={() => choosePermissionMode('full_access')}
+                >
+                  {t('surface:agentComposer.permissionModeConfirmEnable')}
+                </button>
+              </div>
+            </div>
+          ) : permissionModeOptions.map((mode) => {
+            const meta = PERMISSION_MODE_META[mode]
+            const ModeIcon = meta.icon
+            const modeSelected = permissionMode === mode
+            return (
+              <button
+                key={mode}
+                type="button"
+                className="agent-model-option"
+                role="option"
+                aria-selected={modeSelected}
+                data-active={String(modeSelected)}
+                data-danger={meta.danger ? 'true' : undefined}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => choosePermissionMode(mode)}
+              >
+                <span className="agent-picker-header-icon"><ModeIcon aria-hidden="true" /></span>
+                <span><strong>{t(meta.labelKey)}</strong><small>{t(meta.hintKey)}</small></span>
+                {modeSelected ? <Check aria-hidden="true" /> : null}
+              </button>
+            )
+          })}
+        </section>
+      ) : null}
       {contextPanelOpen && contextBreakdown ? (
         <section ref={contextPanelRef} className="agent-composer-popover agent-context-breakdown" aria-label={t('surface:agentComposer.contextWindow')}>
           <header className="agent-context-breakdown-head">
@@ -1153,6 +1254,26 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
             <span>{channelActive ? channelAgent?.displayName ?? channelAgentId : t(activeTierMeta.labelKey)}</span>
             <ChevronDown aria-hidden="true" className="agent-model-tier-caret" />
           </button>
+          {permissionModeToggleVisible && activePermissionMeta ? (
+            <button
+              type="button"
+              className="agent-model-tier-toggle agent-permission-mode-toggle"
+              data-mode={permissionMode ?? undefined}
+              data-danger={permissionMode === 'full_access' ? 'true' : undefined}
+              aria-haspopup="listbox"
+              aria-expanded={permissionModeOpen}
+              title={t('surface:agentComposer.permissionModePickerTitle')}
+              disabled={controlsDisabled}
+              onClick={() => {
+                setConfirmingFullAccess(false)
+                setPermissionModeOpen((open) => !open)
+              }}
+            >
+              <ActivePermissionIcon aria-hidden="true" />
+              <span>{t(activePermissionMeta.labelKey)}</span>
+              <ChevronDown aria-hidden="true" className="agent-model-tier-caret" />
+            </button>
+          ) : null}
           {/* 占位 flex 撑开发送钮；无引用时不渲染文案。 */}
           <span className="agent-composer-context" title={hasSelectedText ? contextSummary : undefined}>
             {hasSelectedText ? <span>{contextSummary}</span> : null}

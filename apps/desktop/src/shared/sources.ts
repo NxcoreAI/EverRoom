@@ -78,6 +78,8 @@ import type {
   ExternalDocumentProvider,
   ExternalDocumentSearchResponse,
   ImportCandidateDiffView,
+  AgentPermissionMode,
+  AgentPermissionModeState,
 } from '@nxcore/agent-contract'
 import type { BrowserExtensionMessage, BrowserExtensionStatus } from './browser-extension'
 import type { ObsidianVaultApi } from './obsidian'
@@ -1242,6 +1244,8 @@ export interface NxcoreDesktopApi {
     ): Promise<{ intent: PendingAgentIntent; run: AgentRun }>
     cancelRun(runId: string): Promise<AgentRun>
     resolveApproval(approvalId: string, decision: 'approved' | 'approved_session' | 'denied'): Promise<{ approvalId: string; decision: string }>
+    getPermissionMode(sessionId: string): Promise<AgentPermissionModeState>
+    setPermissionMode(sessionId: string, mode: AgentPermissionMode): Promise<{ mode: AgentPermissionMode; applied: boolean }>
     subscribe(sessionId: string): Promise<void>
     unsubscribe(): Promise<void>
     onEvent(listener: (frame: AgentSocketFrame) => void): () => void

@@ -51,6 +51,7 @@ export type AgentEventType =
   | "context.usage"
   | "context.compaction"
   | "runtime.session.updated"
+  | "session.permission_mode.updated"
   | "run.interrupted"
   | "run.failed"
   | "run.cancelled"
@@ -836,6 +837,14 @@ export type LocalAgentProvider = "codex" | "claude" | "openclaw" | "opencode" | 
 export type LocalAgentStatus = "discovered" | "verified" | "history_available" | "unavailable";
 export type AgentInvocationMode = "explicit_switch" | "delegated_subagent";
 export type AgentWorkspacePermissionProfile = "inspect" | "workspace_write" | "full_access";
+/** 会话权限模式（provider 中立语义档）：ask_before_write=变更前必问，accept_edits=文件变更放行、bash 仍问，auto=沙盒内全自动，full_access=全自动。 */
+export type AgentPermissionMode = "ask_before_write" | "accept_edits" | "auto" | "full_access";
+
+export interface AgentPermissionModeState {
+  mode: AgentPermissionMode;
+  available: AgentPermissionMode[];
+  channelAgentId: string | null;
+}
 export type LocalAcpProvider = Extract<LocalAgentProvider, "codex" | "claude" | "openclaw">;
 
 export interface LocalAcpAdapterCommandInfo {
