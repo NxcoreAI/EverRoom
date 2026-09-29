@@ -5,7 +5,12 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type { AsrJob, AsrResult } from '../src/shared/sources'
 import type { CloudJob, SaasClient } from '../src/main/cloud/saas-client'
+import type { AsrGatewayBridge } from '../src/main/gateway/asr-gateway-bridge'
+import type { LocalSegmentEngine, LocalSegmentEngineJob } from '../src/main/recording/local-recording-segment-transcriber'
 import { RecordingSegmentUploader } from '../src/main/recording/recording-segment-uploader'
+
+// 接线契约（编译期）：AsrGatewayBridge 必须结构满足本地分段引擎面，index.ts 构造点可直接注入。
+const _bridgeSatisfiesEngine: LocalSegmentEngine = null as unknown as AsrGatewayBridge
 
 type SaasMock = SaasClient & Record<string, ReturnType<typeof vi.fn>> & { emit(job: CloudJob): void }
 
@@ -309,5 +314,151 @@ describe('RecordingSegmentUploader', () => {
     expect(refetched!.merged.result!.segments[0]).toMatchObject({ speakerName: '张三' })
     expect(refetched!.merged.result!.segments[1]).toMatchObject({ beginTime: 5_500, speakerName: '说话人1' })
     expect(refetched!.merged.updatedAt > first!.updatedAt).toBe(true)
+  })
+})
+
+function gatewayJob(id: string, status: LocalSegmentEngineJob['status'], result?: AsrResult): LocalSegmentEngineJob {
+  return { id, provider: 'openai-compatible', status, ...(result ? { result } : {}) }
+}
+
+type GatewayMock = LocalSegmentEngine & { complete(jobId: string, result: AsrResult): void; fail(jobId: string): void }
+
+/** 网关分段引擎桩：createJob 建 pending 任务，测试侧用 complete/fail 推终态（模拟轮询到结果）。 */
+function fakeGateway(options: { immediate?: (id: string) => LocalSegmentEngineJob } = {}): GatewayMock {
+  let created = 0
+  const jobs = new Map<string, LocalSegmentEngineJob>()
+  return {
+    createJob: vi.fn().mockImplementation(async () => {
+      created += 1
+      const id = `gw-${created}`
+      const job = options.immediate ? options.immediate(id) : gatewayJob(id, 'pending')
+      jobs.set(id, job)
+      return { ...job }
+    }),
+    getJob: vi.fn().mockImplementation(async (id: string) => {
+      const current = jobs.get(id)
+      if (!current) throw new Error(`no scripted gateway job ${id}`)
+      return { ...current }
+    }),
+    complete: (id: string, result: AsrResult) => {
+      if (jobs.has(id)) jobs.set(id, gatewayJob(id, 'completed', result))
+    },
+    fail: (id: string) => {
+      if (jobs.has(id)) jobs.set(id, gatewayJob(id, 'failed'))
+    },
+  } as unknown as GatewayMock
+}
+
+async function createLocalUploader(gateway: LocalSegmentEngine, saas: SaasClient = fakeSaas()) {
+  const directory = await mkdtemp(join(tmpdir(), 'segment-local-'))
+  const uploader = new RecordingSegmentUploader(saas, directory, {
+    waitIntervalMs: 10,
+    localEngine: () => gateway,
+    localPollIntervalMs: 5,
+  })
+  return { uploader, directory }
+}
+
+describe('RecordingSegmentUploader local segments (gateway engine)', () => {
+  it('local mode submits minis to the gateway, previews with offsets and merges (synthesizing timeline for plain-text results)', async () => {
+    const gateway = fakeGateway()
+    const saas = fakeSaas()
+    const { uploader } = await createLocalUploader(gateway, saas)
+    const previews: Array<{ recordingId: string; index: number; result: AsrResult }> = []
+    uploader.setPreviewListener((event) => previews.push(event))
+    await uploader.onSegment('rec-1', 0, chunk(1), 5_000, { mimeType: 'audio/webm', mode: 'local', languageHints: ['zh'] })
+    await uploader.onSegment('rec-1', 1, chunk(2), 5_000, { mimeType: 'audio/webm', mode: 'local' })
+    await vi.waitFor(() => expect(gateway.createJob).toHaveBeenCalledTimes(2))
+    const createInputs = vi.mocked(gateway.createJob).mock.calls.map(([input]) => input)
+    // 分段落盘到网关录音输入目录内，建单以绝对路径引用；语言提示随首段（与云路同口径）。
+    expect(createInputs[0]!.filePath).toMatch(/[/\\]segments[/\\]rec-1[/\\]0\.webm$/)
+    expect(createInputs[0]).toMatchObject({ languageHints: ['zh'], diarizationEnabled: true })
+    // 自建引擎只回纯文本（segments 空）也要可见；带时间戳的结果原样偏移。
+    gateway.complete('gw-1', { transcript: '第一段。', segments: [] })
+    gateway.complete('gw-2', { transcript: '第二段。', segments: [segment('第二段。', 500, 900)] })
+    await vi.waitFor(() => expect(previews).toHaveLength(2))
+    const job = await uploader.finalize('rec-1')
+    expect(job).toMatchObject({ id: 'saas-seg:rec-1', status: 'completed', source: 'local', provider: 'openai-compatible' })
+    expect(job!.result!.segments).toEqual([
+      { text: '第一段。', beginTime: 0, endTime: 5_000, speakerId: null },
+      { text: '第二段。', beginTime: 5_500, endTime: 5_900, speakerId: 'spk_a', speakerName: '说话人1' },
+    ])
+    expect(job!.result!.transcript).toBe('第一段。\n第二段。')
+    expect(previews.find((event) => event.index === 0)!.result.segments[0]).toMatchObject({ text: '第一段。', beginTime: 0, endTime: 5_000 })
+    expect(previews.find((event) => event.index === 1)!.result.segments[0]).toMatchObject({ text: '第二段。', beginTime: 5_500 })
+    // 云路完全未被触碰。
+    expect(saas.createAsrJobShell).not.toHaveBeenCalled()
+    expect(saas.createAsrJobChannel).not.toHaveBeenCalled()
+  })
+
+  it('handles gateway jobs that complete synchronously at creation without polling', async () => {
+    const gateway = fakeGateway({ immediate: (id) => gatewayJob(id, 'completed', { transcript: '同步完成。', segments: [] }) })
+    const { uploader } = await createLocalUploader(gateway)
+    const previews: Array<{ index: number }> = []
+    uploader.setPreviewListener((event) => previews.push(event))
+    await uploader.onSegment('rec-1', 0, chunk(1), 5_000, { mimeType: 'audio/webm', mode: 'local' })
+    await vi.waitFor(() => expect(previews).toHaveLength(1))
+    const job = await uploader.finalize('rec-1')
+    expect(job).toMatchObject({ status: 'completed', source: 'local' })
+    expect(job!.result!.transcript).toBe('同步完成。')
+    // 建单即终态：不起轮询。
+    expect(gateway.getJob).not.toHaveBeenCalled()
+  })
+
+  it('silently degrades when the gateway asr is not configured', async () => {
+    const gateway: LocalSegmentEngine = {
+      createJob: vi.fn().mockRejectedValue(new Error('转写服务请求失败（503）')),
+      getJob: vi.fn(),
+    }
+    const saas = fakeSaas()
+    const { uploader } = await createLocalUploader(gateway, saas)
+    await uploader.onSegment('rec-1', 0, chunk(1), 5_000, { mimeType: 'audio/webm', mode: 'local' })
+    await uploader.onSegment('rec-1', 1, chunk(2), 5_000, { mimeType: 'audio/webm', mode: 'local' })
+    // 首段建单失败后整条分段路放弃：后续段不再尝试。
+    await vi.waitFor(() => expect(gateway.createJob).toHaveBeenCalledTimes(1))
+    // 静默降级：finalize 返回 null（调用方回退停止后整段转），云路未被触碰。
+    expect(await uploader.finalize('rec-1')).toBeNull()
+    expect(gateway.getJob).not.toHaveBeenCalled()
+    expect(saas.createAsrJobShell).not.toHaveBeenCalled()
+  })
+
+  it('falls back to null when a local mini fails twice', async () => {
+    const gateway = fakeGateway()
+    const { uploader } = await createLocalUploader(gateway)
+    await uploader.onSegment('rec-1', 0, chunk(1), 5_000, { mimeType: 'audio/webm', mode: 'local' })
+    await vi.waitFor(() => expect(gateway.createJob).toHaveBeenCalledTimes(1))
+    gateway.fail('gw-1')
+    const finishing = uploader.finalize('rec-1')
+    // 失败段以新任务重试一次。
+    await vi.waitFor(() => expect(gateway.createJob).toHaveBeenCalledTimes(2))
+    gateway.fail('gw-2')
+    expect(await finishing).toBeNull()
+    expect(gateway.createJob).toHaveBeenCalledTimes(2)
+  })
+
+  it('routes recordings without a mode to the cloud pipeline (现状不变)', async () => {
+    const gateway = fakeGateway()
+    const saas = fakeSaas()
+    const { uploader } = await createLocalUploader(gateway, saas)
+    await uploader.onSegment('rec-1', 0, chunk(1), 5_000, { mimeType: 'audio/webm' })
+    await submitted(saas, 1)
+    expect(gateway.createJob).not.toHaveBeenCalled()
+  })
+
+  it('restores local minis from the manifest after restart for merged queries', async () => {
+    const gateway = fakeGateway()
+    const { uploader, directory } = await createLocalUploader(gateway)
+    await uploader.onSegment('rec-1', 0, chunk(1), 5_000, { mimeType: 'audio/webm', mode: 'local' })
+    await uploader.onSegment('rec-1', 1, chunk(2), 5_000, { mimeType: 'audio/webm', mode: 'local' })
+    await vi.waitFor(() => expect(gateway.createJob).toHaveBeenCalledTimes(2))
+    gateway.complete('gw-1', { transcript: '第一段。', segments: [] })
+    gateway.complete('gw-2', { transcript: '第二段。', segments: [] })
+    expect(await uploader.finalize('rec-1')).not.toBeNull()
+    // 重启：新实例靠 manifest（engine:'local'）找回分段任务并路由到本地引擎。
+    const revived = new RecordingSegmentUploader(fakeSaas(), directory, { waitIntervalMs: 10, localEngine: () => gateway, localPollIntervalMs: 5 })
+    const merged = await revived.getMergedJob('rec-1')
+    expect(merged).toMatchObject({ status: 'completed', source: 'local' })
+    expect(merged!.result!.transcript).toBe('第一段。\n第二段。')
+    expect(merged!.result!.segments.map((entry) => entry.beginTime)).toEqual([0, 5_000])
   })
 })

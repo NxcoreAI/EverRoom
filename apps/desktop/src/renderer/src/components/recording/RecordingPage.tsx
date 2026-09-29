@@ -133,14 +133,14 @@ export function RecordingPage({
   const recordingStartedAtRef = useRef<number | null>(null)
   const writeQueueRef = useRef<Promise<void>>(Promise.resolve())
   const mountedRef = useRef(true)
-  // 分段级上传（仅 cloud 模式）：与主录音器共用同一路音频流，每 15 秒切一段独立文件直传 SaaS。
+  // 分段级上传（云/本地共用）：与主录音器共用同一路音频流，每 15 秒切一段独立文件上传。
   const segmentActiveRef = useRef(false)
   const segmentStreamRef = useRef<MediaStream | null>(null)
   const segmentRecorderRef = useRef<MediaRecorder | null>(null)
   const segmentIndexRef = useRef(0)
   const segmentTimerRef = useRef<number | null>(null)
-  const segmentChainRef = useRef<Promise<void>>(Promise.resolve())
-  const segmentMetaRef = useRef<{ mimeType: string; languageHints: string[] } | null>(null)
+  const segmentUploadsRef = useRef<Promise<void>[]>([])
+  const segmentMetaRef = useRef<{ mimeType: string; languageHints: string[]; mode: 'cloud' | 'local' } | null>(null)
   const isMacDesktop = window.nxcore?.platform === 'darwin'
 
   useEffect(() => {
@@ -252,13 +252,13 @@ export function RecordingPage({
       if (durationMs < 1000 || !chunks.length) return
       const blob = new Blob(chunks, { type: mimeType || 'audio/webm' })
       const languageHints = meta.languageHints.length ? meta.languageHints : undefined
-      // 每段追加后立刻接 catch：单段 IPC 失败不能炸链，否则后续段全部丢失。
-      segmentChainRef.current = segmentChainRef.current
-        .then(async () => {
-          const bytes = new Uint8Array(await blob.arrayBuffer())
-          await desktopApi(t).asr.uploadRecordingSegment(id, index, bytes, durationMs, { mimeType: mimeType || 'audio/webm', languageHints })
-        })
-        .catch(() => undefined)
+      // 串行链曾在真实环境把分段攒到停止时刻才统一上抛（链头一卡全卡）；
+      // 分段自带 index，主进程按 index 归位，无需保序——并发上传，停止时统一收尾。
+      const upload = (async () => {
+        const bytes = new Uint8Array(await blob.arrayBuffer())
+        await desktopApi(t).asr.uploadRecordingSegment(id, index, bytes, durationMs, { mimeType: mimeType || 'audio/webm', languageHints, mode: meta.mode })
+      })().catch(() => undefined)
+      segmentUploadsRef.current.push(upload)
     })
     recorder.start()
     segmentTimerRef.current = window.setTimeout(() => {
@@ -325,12 +325,13 @@ export function RecordingPage({
       })
       recorder.start(1000)
       recordingStartedAtRef.current = Date.now()
-      if (mode === 'cloud') {
+      // 云/本地都启用边录边转的实时分段预览（本地路由网关引擎，未配置时主进程静默降级）。
+      if (mode === 'cloud' || mode === 'local') {
         segmentActiveRef.current = true
         segmentIndexRef.current = 0
-        segmentChainRef.current = Promise.resolve()
+        segmentUploadsRef.current = []
         segmentStreamRef.current = audioStream
-        segmentMetaRef.current = { mimeType: mimeType || '', languageHints: languages }
+        segmentMetaRef.current = { mimeType: mimeType || '', languageHints: languages, mode }
         previewRecordingIdRef.current = id
         setPreviewSegments([])
         startSegmentRecorder()
@@ -384,7 +385,7 @@ export function RecordingPage({
       await waitForStop(recorder, t)
       segmentActiveRef.current = false
       await stopSegmentRecorder()
-      await segmentChainRef.current.catch(() => undefined)
+      await Promise.allSettled(segmentUploadsRef.current)
       streamRef.current?.getTracks().forEach((track) => track.stop())
       streamRef.current = null
       recorderRef.current = null

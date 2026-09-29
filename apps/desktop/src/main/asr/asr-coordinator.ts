@@ -7,6 +7,12 @@ import type { PrivateAudioSyncService } from '../transcription/private-audio-syn
 import type { PrivateTranscriptionSyncService } from '../transcription/private-transcription-sync'
 import type { RecordingSegmentUploader } from '../recording/recording-segment-uploader'
 
+/** 云端同步门面（真·开源默认全关）：主进程注入；缺省视为全开（兼容历史行为与测试）。 */
+export interface AsrCloudControlGate {
+  audioUploadEnabled(): boolean
+  transcriptSyncEnabled(): boolean
+}
+
 export class AsrCoordinator {
   constructor(
     private readonly local:AsrGatewayBridge,
@@ -15,10 +21,12 @@ export class AsrCoordinator {
     private readonly audioSync?:PrivateAudioSyncService,
     private readonly transcriptionSync?:PrivateTranscriptionSyncService,
     private readonly segmentUploader?:RecordingSegmentUploader,
+    private readonly cloudControl?:AsrCloudControlGate,
   ){}
   async createJob(input:CreateAsrJobInput):Promise<AsrJob>{
-    const useSegments = input.mode==='cloud'&&!!input.recordingId&&!!this.segmentUploader
-    if (input.recordingId && this.audioSync) {
+    // 云/本地两条路都支持录制中分段（边录边转）：本地路由网关引擎驱动，引擎缺失时 finalize 返回 null 自然回退。
+    const useSegments=(input.mode==='cloud'||input.mode==='local')&&!!input.recordingId&&!!this.segmentUploader
+    if (input.recordingId && this.audioSync && this.cloudControl?.audioUploadEnabled() !== false) {
       const upload = this.audioSync.upload(input.filePath, input.recordingId, Math.max(0, input.durationMs ?? 0), 'audio/mp4')
       if (useSegments) {
         // 分段路径音频早已在云端，备份转入后台，不阻塞转写；失败自入队下次启动补传。
@@ -50,7 +58,10 @@ export class AsrCoordinator {
     if(id.startsWith(SEGMENT_JOB_PREFIX)&&this.segmentUploader){
       const recordingId=id.slice(SEGMENT_JOB_PREFIX.length)
       const before=await this.segmentUploader.refetchMerged(recordingId)
-      if(!before||!before.anchorJobId)throw new Error('分段转写尚未完成，暂时无法标记说话人。')
+      if(!before)throw new Error('分段转写尚未完成，暂时无法标记说话人。')
+      // 本地分段没有云端锚点任务：与本地整段任务同口径，不支持标记说话人。
+      if(before.merged.source==='local')throw new Error('仅云端转写支持标记说话人。')
+      if(!before.anchorJobId)throw new Error('分段转写尚未完成，暂时无法标记说话人。')
       // 改名在 SaaS 侧落到用户级声纹会话并联动所有任务快照：用任一已完成分钟任务当锚点。
       await this.cloud.renameAsrSpeaker(`saas:${before.anchorJobId}`,speakerId,name)
       const after=await this.segmentUploader.refetchMerged(recordingId)
@@ -69,6 +80,7 @@ export class AsrCoordinator {
   }
   private async publish(event: Awaited<ReturnType<RealityGatewayBridge['applyAsr']>>, job: AsrJob): Promise<void> {
     if (job.status !== 'completed' || !job.result || !this.transcriptionSync) return
+    if (this.cloudControl && !this.cloudControl.transcriptSyncEnabled()) return
     await this.transcriptionSync.publishLocalTranscription(event, job.result, job.provider).catch((error) => {
       console.warn('Private transcription source publication deferred', error)
     })
