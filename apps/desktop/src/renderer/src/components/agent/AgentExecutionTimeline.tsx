@@ -1,5 +1,6 @@
 import {
   AlertCircle,
+  Bot,
   Brain,
   CalendarDays,
   Check,
@@ -26,10 +27,13 @@ import {
   agentToolResultSummary,
   agentToolStageText,
   agentToolSubject,
+  buildTimelineRows,
   type AgentRunActivity,
   type DisplayAgentToolCall,
+  type TimelineRow,
 } from './agentRunActivity'
 import { LocalAgentDispatchCard } from './LocalAgentDispatchCard'
+import { useRunSubagentInvocations } from './useRunSubagentInvocations'
 
 type ToolKind = 'search' | 'memory' | 'file' | 'email' | 'calendar' | 'image' | 'command' | 'schema' | 'connector' | 'action' | 'other'
 
@@ -57,6 +61,18 @@ function detailText(value: unknown): string | undefined {
   } catch {
     return String(value)
   }
+}
+
+const detailTextCache = new WeakMap<object, string | undefined>()
+
+/** 大结果 JSON.stringify(2 空格缩进) 开销不小，时间线每秒随 duration 计时器整表
+ * 重渲染，按对象身份缓存；终态工具的 args/result 不再变化，缓存长期有效。 */
+function detailTextCached(value: unknown): string | undefined {
+  if (!value || typeof value !== 'object') return detailText(value)
+  if (detailTextCache.has(value)) return detailTextCache.get(value)
+  const computed = detailText(value)
+  detailTextCache.set(value, computed)
+  return computed
 }
 
 function durationMs(startedAt: string, completedAt: string | undefined, now: number): number {
@@ -235,6 +251,12 @@ export function AgentExecutionTimeline({
   const tools = activity.steps.map((step) => step.tool)
   const running = tools.some((tool) => tool.status === 'pending' || tool.status === 'running')
   const active = continuing || !runCompletedAt
+  const runId = tools[0]?.runId
+  const subagentInvocations = useRunSubagentInvocations(runId, active)
+  const rows = useMemo<TimelineRow[]>(
+    () => buildTimelineRows(activity.steps, subagentInvocations, runId ?? ''),
+    [activity.steps, runId, subagentInvocations],
+  )
   const summaryStarted = !continuing && Boolean(activity.pendingAnswer || activity.finalAnswer)
   const [expanded, setExpanded] = useState(active && !summaryStarted)
   const [now, setNow] = useState(Date.now())
@@ -318,15 +340,47 @@ export function AgentExecutionTimeline({
       >
         <div>
           <div className="agent-tool-list">
-            {activity.steps.map((step) => {
+            {rows.map((row) => {
+              if (row.kind === 'subagent') {
+                const sub = row.subagent
+                const taskPreview = sub.task.trim().slice(0, 120) || undefined
+                const duration = sub.startedAt ? durationMs(sub.startedAt, sub.completedAt ?? undefined, now) : null
+                return (
+                  <div key={row.key} className="agent-tool-step" data-status={sub.status}>
+                    <details className="agent-tool-row" data-status={sub.status} data-kind="subagent">
+                      <summary className="agent-tool-command" title={taskPreview ? `${sub.label} ${taskPreview}` : sub.label}>
+                        <span className="agent-tool-rail" aria-hidden="true"><Bot aria-hidden="true" /></span>
+                        <span className="agent-tool-command-text">
+                          <strong>{sub.label}</strong>
+                          {taskPreview ? <span>{taskPreview}</span> : null}
+                        </span>
+                        <span className="agent-tool-status" title={statusLabel(sub.status, t)}>
+                          <StatusIcon status={sub.status} />
+                        </span>
+                        <ChevronRight className="agent-tool-chevron" aria-hidden="true" />
+                      </summary>
+                      <div className="agent-tool-details">
+                        <div>
+                          <div className="agent-tool-meta">
+                            <span>{statusLabel(sub.status, t)}{duration !== null ? ` · ${formatDuration(duration, t)}` : ''}</span>
+                          </div>
+                          {sub.errorMessage ? <p className="agent-tool-error">{sub.errorMessage}</p> : null}
+                          {sub.task.trim() ? <><small>{t('surface:agentExecutionTimeline.subagentTask')}</small><pre>{sub.task}</pre></> : null}
+                        </div>
+                      </div>
+                    </details>
+                  </div>
+                )
+              }
+              const step = row.step
               const tool = step.tool
               const summaryText = localizeAgentActivityText(agentToolResultSummary(tool.result ?? tool.partialResult, t), t)
               const subject = agentToolSubject(tool)
               const preview = subject ?? summaryText ?? tool.error
               const duration = durationMs(tool.startedAt, tool.completedAt, now)
               const command = agentToolCommand(tool)
-              const args = Object.keys(tool.args).length ? detailText(tool.args) : undefined
-              const result = detailText(tool.result ?? tool.partialResult)
+              const args = Object.keys(tool.args).length ? detailTextCached(tool.args) : undefined
+              const result = detailTextCached(tool.result ?? tool.partialResult)
               const label = agentToolLabel(tool, tool.status === 'completed', t)
               const beforeText = localizeAgentActivityText(step.beforeText, t)
               const stageText = localizeAgentActivityText(step.afterText || agentToolStageText(tool, t), t)

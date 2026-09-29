@@ -21,6 +21,7 @@ import { isAxiosError } from 'axios'
 import type { WebContents } from 'electron'
 import WebSocket from 'ws'
 import type { LocalAgentDispatchDetail } from '../../shared/local-agents'
+import type { AgentApprovalDecision } from '../../shared/sources'
 import { createLoggedHttpClient } from '../network/http-client'
 import type { GatewaySupervisor } from './gateway-supervisor'
 import { WebContentsLifecycle } from './web-contents-lifecycle'
@@ -177,10 +178,14 @@ export class AgentGatewayBridge {
     )
   }
 
-  resolveApproval(approvalId: string, decision: 'approved' | 'approved_session' | 'denied'): Promise<{ approvalId: string; decision: string }> {
+  resolveApproval(
+    approvalId: string,
+    decision: AgentApprovalDecision,
+    feedback?: string,
+  ): Promise<{ approvalId: string; decision: string }> {
     return this.request(`/v1/agent/approvals/${encodeURIComponent(approvalId)}/resolve`, {
       method: 'POST',
-      data: { decision },
+      data: { decision, ...(feedback ? { feedback } : {}) },
     })
   }
 

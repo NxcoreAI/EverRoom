@@ -343,6 +343,7 @@ const CONTEXT_ROOM_CHANNELS = {
   dispatchSelectionRewrite: 'context-rooms:dispatch-selection-rewrite',
   getSubagentInvocation: 'context-rooms:get-subagent-invocation',
   cancelSubagentInvocation: 'context-rooms:cancel-subagent-invocation',
+  listRunSubagentInvocations: 'context-rooms:list-run-subagent-invocations',
   refreshBrief: 'context-rooms:refresh-brief',
   promoteMemoryItem: 'context-rooms:promote-memory-item',
   overview: 'context-rooms:overview',
@@ -2191,6 +2192,8 @@ function registerContextRoomHandlers(bridge: ContextRoomGatewayBridge): void {
     bridge.getSubagentInvocation(invocationId))
   handle(CONTEXT_ROOM_CHANNELS.cancelSubagentInvocation, (_event, invocationId) =>
     bridge.cancelSubagentInvocation(invocationId))
+  handle(CONTEXT_ROOM_CHANNELS.listRunSubagentInvocations, (_event, rootRunId: string) =>
+    bridge.listRunSubagentInvocations(rootRunId))
   handle(CONTEXT_ROOM_CHANNELS.refreshBrief, (_event, roomId) => bridge.refreshBrief(roomId))
   handle(CONTEXT_ROOM_CHANNELS.promoteMemoryItem, (_event, roomId: string, itemId: string) =>
     bridge.promoteMemoryItem(roomId, itemId))
@@ -2438,7 +2441,8 @@ function registerAgentHandlers(bridge: AgentGatewayBridge, migrationCoordinator:
   handle(AGENT_CHANNELS.submitPendingIntent, (_event, intentId, input) =>
     bridge.submitPendingIntent(intentId, input))
   handle(AGENT_CHANNELS.cancelRun, (_event, runId) => bridge.cancelRun(runId))
-  handle(AGENT_CHANNELS.resolveApproval, (_event, approvalId, decision) => bridge.resolveApproval(approvalId, decision))
+  handle(AGENT_CHANNELS.resolveApproval, (_event, approvalId, decision, feedback) =>
+    bridge.resolveApproval(approvalId, decision, feedback))
   handle(AGENT_CHANNELS.subscribe, (event, sessionId) => bridge.subscribe(event.sender, sessionId))
   handle(AGENT_CHANNELS.unsubscribe, (event) => bridge.unsubscribe(event.sender.id))
 }

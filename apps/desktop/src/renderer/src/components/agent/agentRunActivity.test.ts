@@ -1,8 +1,21 @@
-import type { AgentEvent } from '@nxcore/agent-contract'
+import type { AgentEvent, SubagentInvocationNode } from '@nxcore/agent-contract'
 import { describe, expect, it } from 'vitest'
 
 import { toolKind } from './AgentExecutionTimeline'
-import { agentToolLabel, agentToolResultSummary, agentToolStageText, agentToolSubject, reduceAgentRunActivity } from './agentRunActivity'
+import {
+  agentToolLabel,
+  agentToolResultSummary,
+  agentToolStageText,
+  agentToolSubject,
+  buildTimelineRows,
+  createAgentRunActivityAccumulator,
+  foldAgentRunActivityEvent,
+  reduceAgentRunActivity,
+  snapshotAgentRunActivity,
+  subagentChainLabel,
+  subagentInvocationStatus,
+  type AgentActivityStep,
+} from './agentRunActivity'
 import { translate } from '../../i18n/LocaleContext'
 
 function event(seq: number, type: AgentEvent['type'], payload: unknown = {}): AgentEvent {
@@ -292,5 +305,162 @@ describe('Agent run activity', () => {
 
     expect(activity.finalAnswer).toBe('第二波完整正文')
     expect(activity.pendingAnswer).toBe('')
+  })
+})
+
+describe('subagent timeline rows', () => {
+  function invocation(overrides: Partial<SubagentInvocationNode> & { id: string }): SubagentInvocationNode {
+    return {
+      agentDefinitionId: 'researcher',
+      agentRevisionId: 'revision-1',
+      source: 'primary_agent',
+      parentSessionId: 'session-1',
+      parentRunId: 'run-1',
+      task: '研究任务',
+      input: null,
+      status: 'completed',
+      result: null,
+      errorCode: null,
+      errorMessage: null,
+      createdAt: '2026-09-29T10:00:02.000Z',
+      startedAt: '2026-09-29T10:00:02.000Z',
+      completedAt: '2026-09-29T10:00:30.000Z',
+      agentName: 'Researcher',
+      ...overrides,
+    }
+  }
+
+  it('labels nested invocations with the parent chain and keeps run-level ones plain', () => {
+    const byId = new Map([
+      ['parent-inv', invocation({ id: 'parent-inv', agentName: 'Document Writer' })],
+      ['child-inv', invocation({
+        id: 'child-inv',
+        agentName: 'Content Analyst',
+        parentRunId: 'parent-inv',
+      })],
+    ])
+    expect(subagentChainLabel(byId.get('parent-inv')!, byId, 'run-1')).toBe('Document Writer')
+    expect(subagentChainLabel(byId.get('child-inv')!, byId, 'run-1')).toBe('Document Writer → Content Analyst')
+    // 链路中断（父调用不在树里）时退回单名
+    expect(subagentChainLabel(byId.get('child-inv')!, new Map(), 'run-1')).toBe('Content Analyst')
+  })
+
+  it('merges tool steps and subagent invocations into one chronological list', () => {
+    const steps: AgentActivityStep[] = [{
+      id: 'dispatch-1',
+      sequence: 1,
+      tool: {
+        id: 'dispatch-1', runId: 'run-1', name: 'document_draft', args: {},
+        status: 'completed', startedAt: '2026-09-29T10:00:01.000Z',
+        completedAt: '2026-09-29T10:01:00.000Z',
+      },
+      beforeText: '',
+      afterText: '',
+    }]
+    const invocations = [
+      invocation({
+        id: 'nested-inv',
+        agentName: 'Content Analyst',
+        parentRunId: 'parent-inv',
+        status: 'running',
+        createdAt: '2026-09-29T10:00:20.000Z',
+        startedAt: '2026-09-29T10:00:21.000Z',
+        completedAt: null,
+      }),
+      invocation({
+        id: 'parent-inv',
+        agentName: 'Document Writer',
+        status: 'running',
+        completedAt: null,
+      }),
+    ]
+    const rows = buildTimelineRows(steps, invocations, 'run-1')
+    expect(rows.map((row) => row.key)).toEqual(['dispatch-1', 'subagent-parent-inv', 'subagent-nested-inv'])
+    expect(rows[0]!.kind).toBe('tool')
+    const parentRow = rows[1]!
+    expect(parentRow.kind).toBe('subagent')
+    if (parentRow.kind === 'subagent') {
+      expect(parentRow.subagent.label).toBe('Document Writer')
+      expect(parentRow.subagent.status).toBe('running')
+    }
+    const nestedRow = rows[2]!
+    expect(nestedRow.kind).toBe('subagent')
+    if (nestedRow.kind === 'subagent') {
+      expect(nestedRow.subagent.label).toBe('Document Writer → Content Analyst')
+      expect(nestedRow.subagent.status).toBe('running')
+    }
+  })
+
+  it('maps invocation terminal statuses and surfaces the error message', () => {
+    expect(subagentInvocationStatus('accepted')).toBe('pending')
+    expect(subagentInvocationStatus('running')).toBe('running')
+    expect(subagentInvocationStatus('completed')).toBe('completed')
+    expect(subagentInvocationStatus('failed')).toBe('error')
+    expect(subagentInvocationStatus('timed_out')).toBe('error')
+    expect(subagentInvocationStatus('cancelled')).toBe('stopped')
+    expect(subagentInvocationStatus('interrupted')).toBe('stopped')
+    const rows = buildTimelineRows([], [invocation({
+      id: 'failed-inv',
+      status: 'failed',
+      errorCode: 'timeout',
+      errorMessage: null,
+    })], 'run-1')
+    expect(rows[0]!.kind).toBe('subagent')
+    if (rows[0]!.kind === 'subagent') {
+      expect(rows[0]!.subagent.status).toBe('error')
+      expect(rows[0]!.subagent.errorMessage).toBe('错误码 timeout')
+    }
+  })
+
+  it('incremental fold matches the full replay for a mixed tool/stream/failure run', () => {
+    const events: AgentEvent[] = [
+      event(1, 'run.started'),
+      event(2, 'reasoning.delta', { delta: '想想。' }),
+      event(3, 'message.delta', { delta: '先看一眼' }),
+      event(4, 'tool.started', { toolCallId: 'search-1', name: 'web_search', args: { query: 'EverRoom' } }),
+      event(5, 'message.delta', { delta: '，再搜' }),
+      event(6, 'tool.completed', { toolCallId: 'search-1', result: { results: [1, 2, 3] } }),
+      event(7, 'tool.started', { toolCallId: 'read-1', name: 'read_file', args: { path: 'a.md' } }),
+      event(8, 'tool.failed', { toolCallId: 'read-1', message: '不存在' }),
+      // pi 自动重试：重启消息体丢弃上一波半截正文
+      event(9, 'message.started', { role: 'assistant' }),
+      event(10, 'message.delta', { delta: '重写正文' }),
+      event(11, 'tool.started', { toolCallId: 'read-2', name: 'read_file', args: { path: 'b.md' } }),
+      event(12, 'tool.completed', { toolCallId: 'read-2', result: 'ok' }),
+      event(13, 'run.failed', { message: '中断' }),
+    ]
+    const full = reduceAgentRunActivity(events)
+
+    const acc = createAgentRunActivityAccumulator()
+    for (const item of events) foldAgentRunActivityEvent(acc, item)
+    const incremental = snapshotAgentRunActivity(acc)
+
+    expect(incremental).toEqual(full)
+    expect(incremental.steps.map((step) => step.id)).toEqual(['search-1', 'read-1', 'read-2'])
+    expect(incremental.completed).toBe(false)
+
+    // 无观察变化的事件必须返回 false（跳过无谓重渲染）；正文/思考的清空
+    // 属于消息流（reduceAgentRunEvents/useAgentSession），不在活动折算范围。
+    const settled = createAgentRunActivityAccumulator()
+    foldAgentRunActivityEvent(settled, event(1, 'run.started'))
+    foldAgentRunActivityEvent(settled, event(2, 'message.started', { role: 'assistant' }))
+    expect(foldAgentRunActivityEvent(settled, event(3, 'message.started', { role: 'assistant' }))).toBe(false)
+    expect(foldAgentRunActivityEvent(settled, event(4, 'run.completed'))).toBe(true)
+    expect(foldAgentRunActivityEvent(settled, event(5, 'run.completed'))).toBe(false)
+    expect(foldAgentRunActivityEvent(settled, event(6, 'reasoning.delta', { delta: '忽略' }))).toBe(false)
+    expect(foldAgentRunActivityEvent(settled, event(7, 'message.delta', { delta: '' }))).toBe(false)
+  })
+
+  it('snapshot copies steps so later fold mutations do not leak into previous snapshots', () => {
+    const acc = createAgentRunActivityAccumulator()
+    foldAgentRunActivityEvent(acc, event(1, 'tool.started', { toolCallId: 'a-1', name: 'web_search', args: {} }))
+    const first = snapshotAgentRunActivity(acc)
+    foldAgentRunActivityEvent(acc, event(2, 'message.delta', { delta: '第一段话' }))
+    foldAgentRunActivityEvent(acc, event(3, 'tool.started', { toolCallId: 'b-2', name: 'read_file', args: {} }))
+    const second = snapshotAgentRunActivity(acc)
+    // 新工具到达时会把积压正文写进上一个 step 的 afterText；早先的快照不能被改到。
+    expect(first.steps[0]!.afterText).toBe('')
+    expect(second.steps[0]!.afterText).not.toBe('')
+    expect(acc.steps[0]!.afterText).toBe(second.steps[0]!.afterText)
   })
 })

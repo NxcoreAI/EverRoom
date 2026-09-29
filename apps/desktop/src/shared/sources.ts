@@ -814,6 +814,18 @@ export interface RoomLocalActionResult {
   overview: RoomOverviewProjection
 }
 
+/**
+ * Agent 审批表态：前三态是 bash 命令审批；后三态是 PPT 逐页审阅
+ * （continue 翻页 / revise 按反馈重落该页 / finish 到此为止）。
+ */
+export type AgentApprovalDecision =
+  | 'approved'
+  | 'approved_session'
+  | 'denied'
+  | 'continue'
+  | 'revise'
+  | 'finish'
+
 export interface NxcoreDesktopApi {
   platform: string
   app: {
@@ -1076,6 +1088,7 @@ export interface NxcoreDesktopApi {
     dispatchSelectionRewrite(input: RoomAgentSelectionRewriteInput): Promise<{ invocationId: string }>
     getSubagentInvocation(invocationId: string): Promise<SubagentInvocation>
     cancelSubagentInvocation(invocationId: string): Promise<SubagentInvocation>
+    listRunSubagentInvocations(rootRunId: string): Promise<import('@nxcore/agent-contract').SubagentInvocationNode[]>
     refreshBrief(roomId: string): Promise<ContextRoomSnapshotItem>
     /** 记忆条目晋升（待确认→已确认）：MemoryCore 蒸馏后 worker 回填归属。 */
     promoteMemoryItem(roomId: string, itemId: string): Promise<{ promotionSessionId: string | null }>
@@ -1232,7 +1245,11 @@ export interface NxcoreDesktopApi {
       input: SubmitPendingAgentIntentInput,
     ): Promise<{ intent: PendingAgentIntent; run: AgentRun }>
     cancelRun(runId: string): Promise<AgentRun>
-    resolveApproval(approvalId: string, decision: 'approved' | 'approved_session' | 'denied'): Promise<{ approvalId: string; decision: string }>
+    resolveApproval(
+      approvalId: string,
+      decision: AgentApprovalDecision,
+      feedback?: string,
+    ): Promise<{ approvalId: string; decision: string }>
     subscribe(sessionId: string): Promise<void>
     unsubscribe(): Promise<void>
     onEvent(listener: (frame: AgentSocketFrame) => void): () => void

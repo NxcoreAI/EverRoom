@@ -446,6 +446,8 @@ const api: NxcoreDesktopApi = {
       invokeQuietly('context-rooms:get-subagent-invocation', invocationId),
     cancelSubagentInvocation: (invocationId: string) =>
       invokeQuietly('context-rooms:cancel-subagent-invocation', invocationId),
+    listRunSubagentInvocations: (rootRunId: string) =>
+      invokeQuietly('context-rooms:list-run-subagent-invocations', rootRunId),
     refreshBrief: (roomId: string) => invokeQuietly('context-rooms:refresh-brief', roomId),
     promoteMemoryItem: (roomId: string, itemId: string) =>
       invokeQuietly('context-rooms:promote-memory-item', roomId, itemId),
@@ -654,7 +656,7 @@ const api: NxcoreDesktopApi = {
     submitPendingIntent: (intentId, input) =>
       invokeQuietly('agent:submit-pending-intent', intentId, input),
     cancelRun: (runId) => invoke('agent:cancel-run', runId),
-    resolveApproval: (approvalId, decision) => invoke('agent:resolve-approval', approvalId, decision),
+    resolveApproval: (approvalId, decision, feedback) => invoke('agent:resolve-approval', approvalId, decision, feedback),
     subscribe: (sessionId) => invoke('agent:subscribe', sessionId),
     unsubscribe: () => invoke('agent:unsubscribe'),
     onEvent: (listener) => {

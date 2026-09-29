@@ -3,6 +3,7 @@ import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type R
 
 import { AgentExecutionTimeline } from './AgentExecutionTimeline'
 import { AgentShellApproval } from './AgentShellApproval'
+import { SlidesProgressCard, slidesProgressFromToolCall, type SlidesProgressState } from './SlidesProgressCard'
 import { AgentAuthChallengeCard, useAgentAuthChallenge } from './AgentAuthChallengeCard'
 import { isScrolledToBottom } from './agentChatScroll'
 import type { PendingShellApproval } from './agentShellApprovals'
@@ -23,6 +24,7 @@ import { useLinkedAgentRun, type LinkedAgentRunState } from './useLinkedAgentRun
 import type { DisplayAgentMessage, DisplayAgentToolCall } from './useAgentSession'
 import { modelPreferenceFromAgentId, type AgentNavigationTarget, type AgentRoomReference, type AgentSessionLink, type PendingAgentIntent, type RoomDocument } from '@nxcore/agent-contract'
 import type { ActiveDocumentDescriptor } from './activeDocumentContext'
+import type { AgentApprovalDecision } from '../../../../shared/sources'
 import { writeTextToClipboard } from '../../lib/systemClipboard'
 import { useLocale, type Translate } from '../../i18n/LocaleContext'
 import { pageLabelKey } from '../../data/navigation'
@@ -380,7 +382,7 @@ export function AgentChatView({
   pendingApprovals?: PendingShellApproval[]
   composerNotice?: ReactNode
   onRetryPrompt: (prompt: string, runId: string) => void
-  onResolveApproval?: (approvalId: string, decision: 'approved' | 'approved_session' | 'denied') => void
+  onResolveApproval?: (approvalId: string, decision: AgentApprovalDecision, feedback?: string) => void
   onOpenSessionLink: (link: AgentSessionLink) => void
   onRejectDocumentIntent: () => void
   onSelectRoom: (
@@ -458,13 +460,26 @@ export function AgentChatView({
   )
   const latestTools = activeRunId ? toolCallsByRun[activeRunId] ?? [] : []
   const latestActivity = activeRunId ? activityByRun[activeRunId] : undefined
+  // PPT 逐页进度卡：最近一次带进度载荷的 slides_draft（进行中的优先）。
+  const slidesProgress = useMemo(() => {
+    const candidates = Object.values(toolCallsByRun)
+      .flat()
+      .map((tool) => ({ tool, progress: slidesProgressFromToolCall(tool) }))
+      .filter((entry): entry is { tool: DisplayAgentToolCall; progress: SlidesProgressState } => entry.progress !== null)
+    if (candidates.length === 0) return null
+    const live = candidates.filter((entry) => entry.tool.status === 'running' || entry.tool.status === 'pending')
+    const pool = live.length > 0 ? live : candidates
+    return pool.reduce((latest, entry) =>
+      Date.parse(entry.tool.startedAt) > Date.parse(latest.tool.startedAt) ? entry : latest)
+  }, [toolCallsByRun])
   const activeHasAssistant = activeRunId
     ? messages.some((message) => message.runId === activeRunId && message.role === 'assistant')
     : false
+  const userRunIds = useMemo(() => new Set(
+    messages.filter((message) => message.role === 'user').map((message) => message.runId),
+  ), [messages])
   const activeRunPending = Boolean(activeRunId && !runCompletedAtByRun[activeRunId])
-  const activeRunHasUserMessage = Boolean(activeRunId && messages.some((message) => (
-    message.role === 'user' && message.runId === activeRunId
-  )))
+  const activeRunHasUserMessage = Boolean(activeRunId && userRunIds.has(activeRunId))
   const activeNavigationLink = activeRunId
     ? outgoingLinks.find((link) => link.sourceRunId === activeRunId)
     : undefined
@@ -605,18 +620,26 @@ export function AgentChatView({
     element.scrollTop = element.scrollHeight
   }, [activeRunId, linkedRun.messages, linkedRun.reasoning, linkedRun.tools, messages, notificationTargetMessageId, pendingApprovals, toolCallsByRun])
 
-  // 流式正文不在上方 effect 的依赖里（周期性 flush 才触发），流式期间最新
-  // 内容会长时间滞留在输入框后面（实测 gap 可达 155px+）。DOM 级跟随：
-  // 吸底时内容一长就贴底，不依赖 React 状态形状。
+  // DOM 级滚动跟随：吸底时内容一长就贴底，不依赖 React 状态形状。MutationObserver
+  // 每次正文变化都会回调，逐次读 scrollHeight 强制布局，事件风暴下按帧合并掉。
   useEffect(() => {
     const element = conversationRef.current
     if (!element || typeof MutationObserver === 'undefined') return undefined
+    let frame: number | null = null
     const observer = new MutationObserver(() => {
       if (!pinnedToBottomRef.current || notificationTargetActiveRef.current) return
-      element.scrollTop = element.scrollHeight
+      if (frame !== null) return
+      frame = requestAnimationFrame(() => {
+        frame = null
+        if (!pinnedToBottomRef.current || notificationTargetActiveRef.current) return
+        element.scrollTop = element.scrollHeight
+      })
     })
     observer.observe(element, { childList: true, subtree: true, characterData: true })
-    return () => observer.disconnect()
+    return () => {
+      observer.disconnect()
+      if (frame !== null) cancelAnimationFrame(frame)
+    }
   }, [])
 
   useLayoutEffect(() => {
@@ -707,6 +730,9 @@ export function AgentChatView({
     }
   }
 
+  // 逐条向上找「最近一条用户消息」是 O(M²) 渲染成本，改成随循环顺带维护。
+  let lastUserMessage: DisplayAgentMessage | undefined
+
   return (
     <section
       className="agent-chat-conversation-frame"
@@ -744,6 +770,7 @@ export function AgentChatView({
           ) : null}
           {messages.map((message, index) => {
             if (message.role === 'system') return null
+            const previousUserMessage = lastUserMessage
             const tools = toolCallsByRun[message.runId] ?? []
             const activity = activityByRun[message.runId]
             const hasToolActivity = Boolean(activity?.hasTools)
@@ -756,7 +783,6 @@ export function AgentChatView({
             const partialContent = Boolean(
               hasToolActivity && activity && !activity.completed && runCompletedAtByRun[message.runId] && finalContent,
             )
-            const previousUserMessage = [...messages.slice(0, index)].reverse().find((item) => item.role === 'user')
             const showActions = message.role === 'assistant' && !message.streaming
               && !partialContent && Boolean(finalContent.trim())
             const link = outgoingLinks.find((item) => item.sourceRunId === message.runId)
@@ -766,12 +792,11 @@ export function AgentChatView({
             const pending = !runCompletedAtByRun[message.runId] || navigationResult
               ? pendingNavigationByRun[message.runId]
               : undefined
-            const runHasUserMessage = messages.some((item) => (
-              item.role === 'user' && item.runId === message.runId
-            ))
+            const runHasUserMessage = userRunIds.has(message.runId)
             const authorAgentId = message.authorAgentId ?? agentIdByRun[message.runId]
 
             if (message.role === 'user') {
+              lastUserMessage = message
               return (
                 <Fragment key={message.id}>
                   {index === authCardInsertIndex ? <AgentAuthChallengeCard /> : null}
@@ -893,6 +918,14 @@ export function AgentChatView({
             )
             : null}
           {composerNotice}
+          {slidesProgress ? (
+            <SlidesProgressCard
+              state={slidesProgress.progress}
+              toolRunning={slidesProgress.tool.status === 'running' || slidesProgress.tool.status === 'pending'}
+              resolvingApprovalIds={resolvingApprovalIds}
+              onResolve={onResolveApproval ?? (() => undefined)}
+            />
+          ) : null}
           <AgentShellApproval
             approvals={pendingApprovals}
             resolvingApprovalIds={resolvingApprovalIds}

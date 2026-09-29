@@ -97,7 +97,7 @@ export function buildAgentAskMessage(title: string, op: SlidesAgentAskPayload): 
   const targets = op.targets.map(describeAskTarget).join('、')
   return (
     `请修改 PPT《${title}》第 ${op.slideIndex + 1} 页选中的元素（${targets}）：${op.instruction}。`
-    + '用 slides_draft(task=edit, fileId="active") 调度 slides-writer 子 Agent，把上述元素 id 与修改要求写进 instruction，'
+    + '用 slides_draft(task=edit, fileId="active") 调度 slides-builder 子代理，把上述元素 id 与修改要求写进 instruction，'
     + '只改列出的元素，其他内容保持不动。'
   )
 }

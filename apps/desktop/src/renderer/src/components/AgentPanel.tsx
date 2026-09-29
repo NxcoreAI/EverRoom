@@ -624,7 +624,7 @@ export function AgentPanel({
         sessionLinks={session.sessionLinks}
         submitting={submitting || !roomBackendReady}
         toolCallsByRun={session.toolCallsByRun}
-        onResolveApproval={(approvalId, decision) => void session.resolveApproval(approvalId, decision)}
+        onResolveApproval={(approvalId, decision, feedback) => void session.resolveApproval(approvalId, decision, feedback)}
         composerNotice={adapterWizard ? (
           <LocalAgentAdapterWizard
             initialChecks={adapterWizard.checks}
