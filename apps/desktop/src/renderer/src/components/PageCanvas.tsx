@@ -101,7 +101,7 @@ export function PageCanvas({
       </Suspense>
     )
   }
-  if (page === 'docs') content = <DocsPage onNavigate={onNavigate} onOpenDocument={onOpenDocument} />
+  if (page === 'docs') content = <DocsPage onNavigate={onNavigate} onOpenDocument={onOpenDocument} onOpenOfficePreview={onOpenOfficePreview} />
   if (page === 'sources') content = <SourcesPage />
   if (page === 'files') content = <FilesPage onNavigate={onNavigate} onOpenOfficePreview={onOpenOfficePreview} focusRequest={agentFileFocus} />
   if (page === 'inspiration') content = <InspirationPage />

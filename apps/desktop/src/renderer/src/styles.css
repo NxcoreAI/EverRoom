@@ -1301,13 +1301,32 @@ summary:focus-visible {
   color: var(--subtle);
 }
 
-/* 文档页工具栏:搜索 + Room 筛选。 */
+/* 文稿页工具栏:搜索 + 两个下拉筛选。--cr-* 映射让 FilterSelect 接入 surface 主题。 */
 .doc-toolbar {
+  --cr-surface: var(--surface);
+  --cr-surface-hover: var(--hover);
+  --cr-text: var(--text);
+  --cr-muted: var(--muted);
+  --cr-tertiary: var(--subtle);
+  --cr-border: var(--border);
+  --cr-border-strong: var(--border-strong);
+  --cr-blue: var(--accent);
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 14px;
+}
+
+.doc-toolbar-filters {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.doc-toolbar .context-room-filter-select {
+  height: 30px;
+  font-size: 12px;
 }
 
 .doc-search {
@@ -1340,51 +1359,6 @@ summary:focus-visible {
 
 .doc-search:focus-within {
   border-color: var(--accent);
-}
-
-.doc-filter {
-  display: flex;
-  max-width: 60%;
-  align-items: center;
-  gap: 6px;
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-
-.doc-filter::-webkit-scrollbar {
-  display: none;
-}
-
-.doc-filter button {
-  display: inline-flex;
-  height: 28px;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 5px;
-  padding: 0 11px;
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  background: var(--surface);
-  color: var(--muted);
-  cursor: pointer;
-  font-size: 12px;
-  white-space: nowrap;
-}
-
-.doc-filter button:hover {
-  background: var(--surface-alt);
-}
-
-.doc-filter button[data-active='true'] {
-  border-color: color-mix(in srgb, var(--accent) 46%, transparent);
-  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
-  color: var(--accent-strong);
-  font-weight: 600;
-}
-
-.doc-filter button small {
-  font-size: 10px;
-  opacity: 0.72;
 }
 
 /* 按 Room 分组。 */
