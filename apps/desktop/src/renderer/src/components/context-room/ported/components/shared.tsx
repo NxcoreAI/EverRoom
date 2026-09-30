@@ -14,12 +14,15 @@ export function FilterSelect<T extends string>({
   onChange,
   ariaLabel,
   className,
+  contentClassName,
 }: {
   value: T;
   options: ReadonlyArray<{ id: T; label: string }>;
   onChange: (id: T) => void;
   ariaLabel: string;
   className?: string;
+  /** 菜单弹层挂在 body Portal 下，本页未加载 ContextRoom.css 时用它自带样式。 */
+  contentClassName?: string;
 }) {
   const current = options.find((option) => option.id === value) ?? options[0];
   return (
@@ -37,7 +40,7 @@ export function FilterSelect<T extends string>({
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>
         <DropdownMenu.Content
-          className="context-room-card-menu context-room-filter-menu"
+          className={cn('context-room-card-menu context-room-filter-menu', contentClassName)}
           align="start"
           sideOffset={6}
         >

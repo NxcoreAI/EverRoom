@@ -207,12 +207,16 @@ export function DocsPage({
         </label>
         <div className="doc-toolbar-filters">
           <FilterSelect
+            className="doc-filter-trigger"
+            contentClassName="doc-filter-menu"
             value={roomFilter}
             options={roomSelectOptions}
             onChange={setRoomFilter}
             ariaLabel={t('surface:docs.filterByRoom')}
           />
           <FilterSelect
+            className="doc-filter-trigger"
+            contentClassName="doc-filter-menu"
             value={typeFilter}
             options={typeSelectOptions}
             onChange={setTypeFilter}

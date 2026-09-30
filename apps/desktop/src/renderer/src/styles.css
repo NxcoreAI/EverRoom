@@ -1301,16 +1301,8 @@ summary:focus-visible {
   color: var(--subtle);
 }
 
-/* 文稿页工具栏:搜索 + 两个下拉筛选。--cr-* 映射让 FilterSelect 接入 surface 主题。 */
+/* 文稿页工具栏:搜索 + 两个下拉筛选(本页不加载 ContextRoom.css,FilterSelect 样式自带)。 */
 .doc-toolbar {
-  --cr-surface: var(--surface);
-  --cr-surface-hover: var(--hover);
-  --cr-text: var(--text);
-  --cr-muted: var(--muted);
-  --cr-tertiary: var(--subtle);
-  --cr-border: var(--border);
-  --cr-border-strong: var(--border-strong);
-  --cr-blue: var(--accent);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1324,9 +1316,118 @@ summary:focus-visible {
   gap: 8px;
 }
 
-.doc-toolbar .context-room-filter-select {
-  height: 30px;
+/* 下拉筛选触发器:与搜索框同语言(白底/1px 边/6px 圆角/32px 高),选中非默认值转蓝。 */
+.doc-toolbar .doc-filter-trigger {
+  display: inline-flex;
+  max-width: 200px;
+  height: 32px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
   font-size: 12px;
+  font-family: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.doc-toolbar .doc-filter-trigger:hover {
+  background: var(--hover);
+}
+
+.doc-toolbar .doc-filter-trigger:focus-visible {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.doc-toolbar .doc-filter-trigger[data-active] {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  color: var(--accent);
+}
+
+.doc-toolbar .doc-filter-trigger svg {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  color: var(--subtle);
+}
+
+.doc-toolbar .doc-filter-trigger[data-active] svg {
+  color: var(--accent);
+}
+
+.doc-toolbar .doc-filter-trigger .context-room-filter-select-value {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+}
+
+/* 下拉菜单弹层(Radix Portal 挂 body,自带完整样式,走 surface token 适配明暗主题)。 */
+.doc-filter-menu {
+  z-index: 1000;
+  min-width: 140px;
+  max-width: 260px;
+  padding: 5px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 10px 30px rgba(31, 31, 31, 0.12);
+  animation: doc-filter-menu-in 0.16s ease;
+}
+
+.doc-filter-menu [role='menuitem'] {
+  display: flex;
+  min-height: 28px;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+  outline: none;
+  user-select: none;
+}
+
+.doc-filter-menu [role='menuitem'][data-highlighted] {
+  background: var(--hover);
+}
+
+.doc-filter-menu [role='menuitem'][data-state='checked'] {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.doc-filter-menu svg {
+  width: 13px;
+  height: 13px;
+}
+
+.doc-filter-menu .context-room-filter-menu-check {
+  display: inline-flex;
+  flex: none;
+  width: 14px;
+  height: 14px;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent);
+}
+
+@keyframes doc-filter-menu-in {
+  from { opacity: 0; transform: translateY(-3px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .doc-filter-menu {
+    animation: none;
+  }
 }
 
 .doc-search {
