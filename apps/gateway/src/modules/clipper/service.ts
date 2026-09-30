@@ -870,7 +870,9 @@ export class ClipperService {
       mime: "text/markdown",
       sourceUri: capture.canonicalUrl,
       sourceModifiedAt: capture.capturedAt,
-      pipelines: { room: true, wiki: true, memory: true },
+      // 网页剪藏是参考型资料（价值在原文，摘要有损）：知识/Room 选段即可，
+      // 不再强制进 L1 记忆（状态/参考分流，2026-09-24）。
+      pipelines: { room: true, wiki: true, memory: false },
     });
     this.db.update(clipperCaptures).set({ fileVersionId: imported.fileVersionId, updatedAt: new Date() })
       .where(eq(clipperCaptures.id, captureId)).run();

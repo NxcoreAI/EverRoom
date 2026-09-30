@@ -41,6 +41,7 @@ export function PageCanvas({
   onOpenDocument,
   onOpenOfficePreview,
   memoryFocusId,
+  agentFileFocus,
   onStartFullOnboarding,
 }: {
   page: PageId
@@ -61,16 +62,17 @@ export function PageCanvas({
   onOpenDocument: (target: { roomId: string; documentId: string; blockId?: string | null }) => void
   onOpenOfficePreview: (tab: OfficePreviewTab) => void
   memoryFocusId?: string | null
+  agentFileFocus?: { fileId: string; requestId: number } | null
   onStartFullOnboarding?: () => void
 }) {
   const { t } = useLocale()
   let content = null
   if (page === 'home') content = <HomePage onNavigate={onNavigate} onFocusAgent={onFocusAgent} onOpenDocument={onOpenDocument} />
   if (page === 'office') content = <AgentStatusPage />
-  if (page === 'office-document' || page === 'office-test') {
+  if (page === 'office-document') {
     content = (
       <div className="page">
-        <div className="evidence-viewer-state">{page === 'office-test' ? '正在加载 DOCX 测试文档…' : '正在加载 Office 文档…'}</div>
+        <div className="evidence-viewer-state">{'正在加载 Office 文档…'}</div>
       </div>
     )
   }
@@ -99,9 +101,9 @@ export function PageCanvas({
       </Suspense>
     )
   }
-  if (page === 'docs') content = <DocsPage onNavigate={onNavigate} onOpenDocument={onOpenDocument} />
+  if (page === 'docs') content = <DocsPage onNavigate={onNavigate} onOpenDocument={onOpenDocument} onOpenOfficePreview={onOpenOfficePreview} />
   if (page === 'sources') content = <SourcesPage />
-  if (page === 'files') content = <FilesPage onNavigate={onNavigate} onOpenOfficePreview={onOpenOfficePreview} />
+  if (page === 'files') content = <FilesPage onNavigate={onNavigate} onOpenOfficePreview={onOpenOfficePreview} focusRequest={agentFileFocus} />
   if (page === 'inspiration') content = <InspirationPage />
   if (page === 'memory') content = <MemoryPage focusAtomicId={memoryFocusId} />
   if (page === 'wiki') content = <WikiPage />

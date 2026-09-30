@@ -43,4 +43,28 @@ describe('AgentShellApproval', () => {
     act(() => renderer.root.findByProps({ className: 'agent-shell-approve agent-shell-approve-session' }).props.onClick())
     expect(onResolve).toHaveBeenCalledWith('approval-1', 'approved_session')
   })
+
+  it('uses edit-approval copy for kind=edit requests', () => {
+    const renderer = TestRenderer.create(
+      <AgentShellApproval
+        approvals={[
+          {
+            approvalId: 'approval-edit',
+            runId: 'run-1',
+            toolName: 'edit',
+            kind: 'edit',
+            command: '/workspace/src/index.ts',
+            requestedAt: '2026-08-21T00:00:00.000Z',
+          },
+        ]}
+        resolvingApprovalIds={new Set()}
+        onResolve={vi.fn()}
+      />,
+    )
+    const strong = renderer.root.findByType('strong')
+    expect(strong.children).toEqual(['surface:agentChat.editApprovalTitle'])
+    const small = renderer.root.findByType('small')
+    expect(small.children).toEqual(['surface:agentChat.editApprovalDescription'])
+    expect(renderer.root.findAllByType('code')[0]?.children).toEqual(['/workspace/src/index.ts'])
+  })
 })

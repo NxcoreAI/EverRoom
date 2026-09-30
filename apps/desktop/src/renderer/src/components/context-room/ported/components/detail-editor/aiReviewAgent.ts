@@ -104,9 +104,8 @@ export async function runDocumentAiReview(
     idempotencyKey: crypto.randomUUID(),
     responseLanguage: input.responseLanguage,
     captureMemory: false,
-    // 召回 Room 记忆（聚焦当前房间）：审阅建议结合记忆里的用户背景、目标与事实。
+    // Room 记忆随 context.selectedRoomId 注入：审阅建议结合记忆里的用户背景、目标与事实。
     recallMemory: true,
-    memoryScope: 'room',
     // 不传 toolsEnabled（默认 true）：审阅需要文档读取与评论工具。
     context: {
       selectedRoomId: input.roomId,

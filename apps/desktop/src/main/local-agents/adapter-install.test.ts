@@ -201,4 +201,123 @@ describe('resolveLocalAcpAdapterSpawn', () => {
     })
     expect(spawn).toBeNull()
   })
+
+  it('private install points CLAUDE_CODE_EXECUTABLE at the native claude binary', async () => {
+    const root = await temporaryRoot()
+    const adaptersRoot = join(root, 'adapters')
+    const pkgDir = join(adaptersRoot, 'claude', 'node_modules', '@zed-industries', 'claude-agent-acp')
+    await mkdir(dirname(join(pkgDir, 'bin', 'x')), { recursive: true })
+    await writeFile(join(pkgDir, 'bin', 'claude-agent-acp.js'), '#!/usr/bin/env node\n', 'utf8')
+    await writeFile(join(pkgDir, 'package.json'), JSON.stringify({
+      name: '@zed-industries/claude-agent-acp',
+      version: '0.23.1',
+      bin: { 'claude-agent-acp': 'bin/claude-agent-acp.js' },
+    }), 'utf8')
+    const nativeCli = join(root, 'claude')
+    await writeFile(nativeCli, '#!/bin/sh\n', 'utf8')
+
+    const spawn = await resolveLocalAcpAdapterSpawn(
+      { ...CLAUDE_INSTALLATION, executablePath: nativeCli },
+      { adaptersRoot, env: { PATH: '/usr/bin:/bin' }, home: join(root, 'home'), platform: 'darwin', probeTimeoutMs: 1 },
+    )
+    expect(spawn?.env?.CLAUDE_CODE_EXECUTABLE).toBe(nativeCli)
+  })
+
+  it('private install omits CLAUDE_CODE_EXECUTABLE on non-darwin platforms', async () => {
+    const root = await temporaryRoot()
+    const adaptersRoot = join(root, 'adapters')
+    const pkgDir = join(adaptersRoot, 'claude', 'node_modules', '@zed-industries', 'claude-agent-acp')
+    await mkdir(dirname(join(pkgDir, 'bin', 'x')), { recursive: true })
+    await writeFile(join(pkgDir, 'bin', 'claude-agent-acp.js'), '#!/usr/bin/env node\n', 'utf8')
+    await writeFile(join(pkgDir, 'package.json'), JSON.stringify({
+      name: '@zed-industries/claude-agent-acp',
+      version: '0.23.1',
+      bin: { 'claude-agent-acp': 'bin/claude-agent-acp.js' },
+    }), 'utf8')
+    const shimCli = join(root, 'claude.cmd')
+    await writeFile(shimCli, '@echo off\n', 'utf8')
+
+    for (const platform of ['win32', 'linux'] as const) {
+      const spawn = await resolveLocalAcpAdapterSpawn(
+        { ...CLAUDE_INSTALLATION, executablePath: shimCli },
+        { adaptersRoot, env: { PATH: '/usr/bin:/bin' }, home: join(root, 'home'), platform, probeTimeoutMs: 1 },
+      )
+      expect(spawn?.env?.CLAUDE_CODE_EXECUTABLE).toBeUndefined()
+    }
+  })
+
+  it('private install omits CLAUDE_CODE_EXECUTABLE for JS or missing CLI paths', async () => {
+    const root = await temporaryRoot()
+    const adaptersRoot = join(root, 'adapters')
+    const pkgDir = join(adaptersRoot, 'claude', 'node_modules', '@zed-industries', 'claude-agent-acp')
+    await mkdir(dirname(join(pkgDir, 'bin', 'x')), { recursive: true })
+    await writeFile(join(pkgDir, 'bin', 'claude-agent-acp.js'), '#!/usr/bin/env node\n', 'utf8')
+    await writeFile(join(pkgDir, 'package.json'), JSON.stringify({
+      name: '@zed-industries/claude-agent-acp',
+      version: '0.23.1',
+      bin: { 'claude-agent-acp': 'bin/claude-agent-acp.js' },
+    }), 'utf8')
+
+    for (const executablePath of [join(root, 'claude.js'), join(root, 'missing-claude')]) {
+      const spawn = await resolveLocalAcpAdapterSpawn(
+        { ...CLAUDE_INSTALLATION, executablePath },
+        { adaptersRoot, env: { PATH: '/usr/bin:/bin' }, home: join(root, 'home'), platform: 'darwin', probeTimeoutMs: 1 },
+      )
+      expect(spawn?.env?.CLAUDE_CODE_EXECUTABLE).toBeUndefined()
+    }
+  })
+
+  it('private install points CODEX_PATH at the codex CLI, including npm JS entries', async () => {
+    const root = await temporaryRoot()
+    const adaptersRoot = join(root, 'adapters')
+    const pkgDir = join(adaptersRoot, 'codex', 'node_modules', '@agentclientprotocol', 'codex-acp')
+    await mkdir(dirname(join(pkgDir, 'dist', 'x')), { recursive: true })
+    await writeFile(join(pkgDir, 'dist', 'index.js'), '#!/usr/bin/env node\n', 'utf8')
+    await writeFile(join(pkgDir, 'package.json'), JSON.stringify({
+      name: '@agentclientprotocol/codex-acp',
+      version: '0.15.3',
+      bin: { 'codex-acp': 'dist/index.js' },
+    }), 'utf8')
+
+    // npm 装的 codex bin 是带 shebang 的 codex.js——适配器把 CODEX_PATH 直接当
+    // command spawn，shebang 落在纯 node 上，JS 也要注入。
+    const npmCli = join(root, 'codex.js')
+    await writeFile(npmCli, '#!/usr/bin/env node\n', 'utf8')
+    const nativeCli = join(root, 'codex')
+    await writeFile(nativeCli, '#!/bin/sh\n', 'utf8')
+
+    for (const executablePath of [npmCli, nativeCli]) {
+      const spawn = await resolveLocalAcpAdapterSpawn(
+        { provider: 'codex', executablePath, callable: true },
+        { adaptersRoot, env: { PATH: '/usr/bin:/bin' }, home: join(root, 'home'), platform: 'darwin', probeTimeoutMs: 1 },
+      )
+      expect(spawn?.env?.CODEX_PATH).toBe(executablePath)
+    }
+  })
+
+  it('private install omits CODEX_PATH on non-darwin platforms or missing CLI', async () => {
+    const root = await temporaryRoot()
+    const adaptersRoot = join(root, 'adapters')
+    const pkgDir = join(adaptersRoot, 'codex', 'node_modules', '@agentclientprotocol', 'codex-acp')
+    await mkdir(dirname(join(pkgDir, 'dist', 'x')), { recursive: true })
+    await writeFile(join(pkgDir, 'dist', 'index.js'), '#!/usr/bin/env node\n', 'utf8')
+    await writeFile(join(pkgDir, 'package.json'), JSON.stringify({
+      name: '@agentclientprotocol/codex-acp',
+      version: '0.15.3',
+      bin: { 'codex-acp': 'dist/index.js' },
+    }), 'utf8')
+
+    for (const platform of ['win32', 'linux'] as const) {
+      const spawn = await resolveLocalAcpAdapterSpawn(
+        { provider: 'codex', executablePath: join(root, 'codex'), callable: true },
+        { adaptersRoot, env: { PATH: '/usr/bin:/bin' }, home: join(root, 'home'), platform, probeTimeoutMs: 1 },
+      )
+      expect(spawn?.env?.CODEX_PATH).toBeUndefined()
+    }
+    const spawn = await resolveLocalAcpAdapterSpawn(
+      { provider: 'codex', executablePath: join(root, 'missing-codex'), callable: true },
+      { adaptersRoot, env: { PATH: '/usr/bin:/bin' }, home: join(root, 'home'), platform: 'darwin', probeTimeoutMs: 1 },
+    )
+    expect(spawn?.env?.CODEX_PATH).toBeUndefined()
+  })
 })

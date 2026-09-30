@@ -2,7 +2,7 @@ import { ArrowRight, BrainCircuit, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import type { AgentSessionLink } from '@nxcore/agent-contract'
 import type { MemoryAtomicItemDto } from '../../shared/memory'
-import { OFFICE_TEST_INSTANCE_ID, type OfficePreviewTab } from '../../shared/sources'
+import { type OfficePreviewTab } from '../../shared/sources'
 
 import { AgentPanel } from '@/components/AgentPanel'
 import {
@@ -151,6 +151,8 @@ export function App() {
   const [suppressAutomaticOnboarding, setSuppressAutomaticOnboarding] = useState(true)
   const [memoryReady, setMemoryReady] = useState(false)
   const [memoryFocusId, setMemoryFocusId] = useState<string | null>(null)
+  const [agentFileFocus, setAgentFileFocus] = useState<{ fileId: string; requestId: number } | null>(null)
+  const agentFileFocusRequestIdRef = useRef(0)
   const [generatedMemoryNotice, setGeneratedMemoryNotice] = useState<MemoryAtomicItemDto | null>(null)
   const manualMemoryOnboardingRef = useRef(false)
   const fullOnboardingCompletedRef = useRef(readFullOnboardingCompleted())
@@ -168,11 +170,9 @@ export function App() {
     contextRoomState.rooms.map(({ id, title, kind }) => ({ id, title, kind }))
   ), [contextRoomState.rooms])
 
-  // Office 预览实例激活仲裁：顶栏标签页 / office-test 页 / Room 内嵌宿主
+  // Office 预览实例激活仲裁：顶栏标签页 / Room 内嵌宿主
   // 同一时刻只激活一个实例，离开对应页面时全部隐藏（标签与实例本体保留）。
-  const focusedOfficeInstanceId = activePage === 'office-test'
-    ? OFFICE_TEST_INSTANCE_ID
-    : activePage === 'office-document' ? activeOfficeInstanceId
+  const focusedOfficeInstanceId = activePage === 'office-document' ? activeOfficeInstanceId
     : activePage === 'rooms' ? embeddedOffice?.instanceId ?? null
     : null
 
@@ -814,6 +814,17 @@ export function App() {
     setAgentFocusRequest((request) => request + 1)
   }
 
+  /** 消息区点击 @ 的文件：跳到文件页并聚焦该文件。 */
+  const openAgentMentionFile = (fileId: string) => {
+    if (manualMemoryOnboardingRef.current) return
+    if (agentNavigationTimerRef.current !== null) {
+      window.clearTimeout(agentNavigationTimerRef.current)
+      agentNavigationTimerRef.current = null
+    }
+    setAgentFileFocus({ fileId, requestId: ++agentFileFocusRequestIdRef.current })
+    navigate('files')
+  }
+
   const navigateFromAgent = (request: AgentNavigationRequest) => {
     setAgentNavigationRequest(request)
     setAgentSessionRouteRequest(null)
@@ -971,7 +982,7 @@ export function App() {
         onActivateWorkbench={() => {
           if (activePage === 'rooms' && activeContextRoomId) showContextRoomHome()
           // 预览无「主页」可回：点工作区标签时退回文件页（预览入口），标签保留。
-          if (activePage === 'office-document' || activePage === 'office-test') setActivePage('files')
+          if (activePage === 'office-document') setActivePage('files')
         }}
         onActivateContextRoom={activateContextRoomTab}
         onCloseContextRoom={closeContextRoomTab}
@@ -986,6 +997,7 @@ export function App() {
           activeContextRoomId={activeContextRoomId}
           agentDocumentFocus={agentDocumentFocus}
           memoryFocusId={memoryFocusId}
+          agentFileFocus={agentFileFocus}
           contextRoomHomeRequest={contextRoomHomeRequest}
           onContextRoomDetailFocusChange={handleContextRoomDetailFocusChange}
           onContextRoomOpenTab={openContextRoomTab}
@@ -1046,11 +1058,13 @@ export function App() {
           askRequest={agentAskRequest}
           onAskConsumed={(key) => setAgentAskRequest((current) => current?.key === key ? null : current)}
           onNavigate={navigateFromAgent}
+          onNavigatePage={navigate}
           onRestoreRoomTab={restoreContextRoomTab}
           onNavigationConsumed={(key) => setAgentNavigationRequest((current) => current?.key === key ? null : current)}
           onOpenSessionLink={openAgentSessionLink}
           onOpenDocument={openDocumentTarget}
           onSessionRouteConsumed={(key) => setAgentSessionRouteRequest((current) => current?.key === key ? null : current)}
+          onOpenMentionFile={openAgentMentionFile}
           focusRequest={agentFocusRequest}
           roomCitations={agentRoomCitations}
           onRemoveRoomCitation={(citationId) => {

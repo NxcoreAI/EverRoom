@@ -440,6 +440,8 @@ describe("统一理解引擎三链路 e2e", { timeout: 600_000 }, () => {
       expect(uploaded.deduped).toBe(false);
       const result = await engine.ingest({
         source: { ref: { sourceKind: "file", sourceId: uploaded.fileId } },
+        // 本用例题材是记忆全链路：请求级显式开启（默认策略下参考型文档不进记忆）
+        pipelines: { room: true, wiki: true, memory: true },
       });
 
       // 台账 + 扇出结果

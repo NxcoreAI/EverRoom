@@ -48,11 +48,39 @@ export type AgentEventType =
   | "approval.requested"
   | "approval.resolved"
   | "context.updated"
+  | "context.usage"
+  | "context.compaction"
   | "runtime.session.updated"
+  | "session.permission_mode.updated"
   | "run.interrupted"
   | "run.failed"
   | "run.cancelled"
   | "run.completed";
+
+/** 上下文占用分段估算（key 对应 pi 会话的构成；tokens 为 chars/4 级粗估，供占比展示）。 */
+export interface AgentContextUsageSegment {
+  key: "systemPrompt" | "tools" | "user" | "assistant" | "toolResults" | "other";
+  tokens: number;
+}
+
+/** 实时上下文用量快照（runtime 在模型回合结束、压缩结束后透出；对齐 pi getContextUsage）。 */
+export interface AgentContextUsage {
+  /** 估算的上下文 token 数；压缩刚结束、尚无新的模型用量时为 null。 */
+  tokens: number | null;
+  contextWindow: number;
+  /** 占上下文窗口百分比；tokens 未知时为 null。 */
+  percent: number | null;
+  /** 占用构成分段（runtime 能估算时携带；缺省=未知）。 */
+  segments?: AgentContextUsageSegment[];
+}
+
+/** 上下文压缩状态信号（runtime 透传 pi 的 compaction_start/compaction_end）。 */
+export interface AgentContextCompaction {
+  active: boolean;
+  reason: "manual" | "threshold" | "overflow";
+  /** 压缩失败/中止时的原因（仅 compaction_end 且出错时）。 */
+  error?: string;
+}
 
 export interface AgentSession {
   id: string;
@@ -65,6 +93,8 @@ export interface AgentSession {
   activeAgentId?: string;
   /** 会话锁定的模型档位（由 activeAgentId 反推）；后端权威，渲染层只读。 */
   modelPreference?: AgentModelPreference;
+  /** 会话锁定的本机 CLI Agent 渠道（activeAgentId 为本机 Agent 时由其反推）；后端权威。 */
+  channelAgentId?: string;
   title: string | null;
   status: AgentSessionStatus;
   createdAt: string;
@@ -254,6 +284,11 @@ export interface CreateAgentSessionInput {
    * 中途换档只影响之后新建的会话，不改已有会话。
    */
   modelPreference?: AgentModelPreference;
+  /**
+   * 会话渠道：锁定为某个本机 CLI Agent（如 codex:/usr/local/bin/codex），
+   * 整个会话由该 Agent 连续对话（ACP 持久会话）。设置后 modelPreference 被忽略。
+   */
+  channelAgentId?: string;
 }
 
 /** 会话模型档位：smart=强模型主会话+轻量模型委派；primary=纯强模型；lite=轻量模型直答。 */
@@ -274,6 +309,12 @@ export function modelPreferenceFromAgentId(agentId: string | null | undefined): 
   if (agentId === MODEL_PREFERENCE_AGENT_IDS.lite) return "lite";
   if (agentId === MAIN_AGENT_ID) return "smart";
   return undefined;
+}
+
+/** 会话 activeAgentId 不是档位内置 Agent 时视为本机 CLI 渠道，返回渠道 agentId。 */
+export function channelAgentIdFromAgentId(agentId: string | null | undefined): string | undefined {
+  if (!agentId || MODEL_TIER_AGENT_IDS.includes(agentId)) return undefined;
+  return agentId;
 }
 
 export interface UpdateAgentSessionInput {
@@ -704,8 +745,6 @@ export interface StartAgentRunInput {
   captureMemory?: boolean;
   /** Defaults to true. Lightweight runs can skip automatic memory recall. */
   recallMemory?: boolean;
-  /** Defaults to "global". Room focus mode: recall keeps only the core profile and the current Room's curated memories, skipping global atomic/scenario/conversation recall; memory_search is locked to the current Room. Requires context.selectedRoomId. */
-  memoryScope?: "room" | "global";
   /** Defaults to true. Lightweight runs can hide all runtime tools from the model. */
   toolsEnabled?: boolean;
   context?: {
@@ -803,6 +842,14 @@ export type LocalAgentProvider = "codex" | "claude" | "openclaw" | "opencode" | 
 export type LocalAgentStatus = "discovered" | "verified" | "history_available" | "unavailable";
 export type AgentInvocationMode = "explicit_switch" | "delegated_subagent";
 export type AgentWorkspacePermissionProfile = "inspect" | "workspace_write" | "full_access";
+/** 会话权限模式（provider 中立语义档）：ask_before_write=变更前必问，accept_edits=文件变更放行、bash 仍问，auto=沙盒内全自动，full_access=全自动。 */
+export type AgentPermissionMode = "ask_before_write" | "accept_edits" | "auto" | "full_access";
+
+export interface AgentPermissionModeState {
+  mode: AgentPermissionMode;
+  available: AgentPermissionMode[];
+  channelAgentId: string | null;
+}
 export type LocalAcpProvider = Extract<LocalAgentProvider, "codex" | "claude" | "openclaw">;
 
 export interface LocalAcpAdapterCommandInfo {
@@ -1022,7 +1069,8 @@ export interface AgentFileAttachment {
 export type PendingAgentIntentTargetCapability =
   | "document.create"
   | "document.edit"
-  | "document.continue";
+  | "document.continue"
+  | "task.clarify";
 
 export interface PendingAgentIntent {
   id: string;
@@ -1043,6 +1091,10 @@ export interface SubmitPendingAgentIntentInput {
   idempotencyKey: string;
   /** Current UI locale to carry into the resumed Agent run. */
   responseLanguage?: string;
+  /** task.clarify：结构化澄清表单的作答（questionId → 单值或多选值）。 */
+  answers?: Record<string, string | string[]>;
+  /** task.clarify 可选自由补充说明，与 answers 一并注入续跑 prompt。 */
+  note?: string;
 }
 
 export interface TrustedMcpSession {
@@ -1087,6 +1139,27 @@ export interface RoomDocument {
   deletedAt?: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface RoomTaskFolder {
+  id: string;
+  roomId: string;
+  kind: "task";
+  title: string;
+  /** 任务元数据镜像：{ taskKind, stage, workplanDocId, goal? }。 */
+  data: Record<string, unknown>;
+  position: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Room 任务夹投影：夹列表 + 文档/文件条目的归夹映射。 */
+export interface RoomFolderProjection {
+  folders: RoomTaskFolder[];
+  /** documentId → folderId。 */
+  documentFolders: Record<string, string>;
+  /** fileEntryId → folderId（sourceKind=file 的产物归夹）。 */
+  fileFolders: Record<string, string>;
 }
 
 export interface DocumentBlockSummary {

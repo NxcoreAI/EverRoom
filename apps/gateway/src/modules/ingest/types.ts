@@ -23,14 +23,16 @@ export interface DataTypeDef {
 
 /**
  * 类型注册表（开放集合：加一行 + 一个 normalizer 即新类型）。
- * 默认策略保守取向：表格/幻灯片/网页的 L1 提炼噪音大，memory 默认关。
+ * 默认策略取向：记忆链路按「状态 vs 参考」分流（2026-09-24 定案）——
+ * 状态型（会被更新/覆盖、需要唯一权威版本：对话/纪要/邮件/日程）进记忆；
+ * 参考型（价值在原文、摘要有损：文档/表格/幻灯片/网页）memory 默认关。
  */
 export const DATA_TYPES: DataTypeDef[] = [
   {
     key: "document",
     label: "文档",
     matchExtensions: ["md", "markdown", "txt", "pdf"],
-    defaults: { room: true, wiki: true, memory: true },
+    defaults: { room: true, wiki: true, memory: false },
   },
   {
     key: "meeting-minutes",
@@ -49,7 +51,7 @@ export const DATA_TYPES: DataTypeDef[] = [
     key: "office-doc",
     label: "Office 文档",
     matchExtensions: ["doc", "docx", "docm", "dot", "dotx", "dotm", "rtf"],
-    defaults: { room: true, wiki: true, memory: true },
+    defaults: { room: true, wiki: true, memory: false },
   },
   {
     key: "spreadsheet",

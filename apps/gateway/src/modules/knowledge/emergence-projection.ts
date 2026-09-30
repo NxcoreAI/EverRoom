@@ -23,6 +23,16 @@ export const WANDER_MIN_DEPTH = 2;
 export const WANDER_MAX_DEPTH = 4;
 /** 同主题组在结果中的最大连续占比（PRD 7.5：同一主题连续不超过三个）。 */
 export const SAME_GROUP_MAX = 3;
+/** 终点内容价值（与渲染层 walkModel 的 TYPE_BASE 同口径）：事实是硬通货，
+ *  实体是通往事实簇的门，文档/Room 桥是死重末梢。 */
+export const WANDER_TYPE_VALUE: Record<ProjectionGraphNode["nodeType"], number> = {
+  fact: 1.0,
+  entity: 0.75,
+  wikiPage: 0.65,
+  memory: 0.6,
+  document: 0.55,
+  room: 0.45,
+};
 
 export type EmergenceCardKind =
   | "evidence"
@@ -118,6 +128,140 @@ export interface ProjectionGraphEdge {
 export interface ProjectionGraph {
   nodes: Map<string, ProjectionGraphNode>;
   edges: ProjectionGraphEdge[];
+}
+
+// ───────────────────────── 内容挂载（统一图组装件） ─────────────────────────
+
+/** attachRoomContent 的行形状：服务层取数后传入（结构化子集，便于纯函数测试）。 */
+export interface AttachEntityRow {
+  entityId: string;
+  name: string;
+  salience: number;
+  lastMentionAt: string | null;
+}
+
+export interface AttachFactRow {
+  factId: string;
+  content: string;
+  type: string;
+  entityIds: string[];
+  sourceCount: number;
+  lastMentionAt: string | null;
+}
+
+export interface AttachDocumentRow {
+  id: string;
+  title: string;
+  updatedAt: string | null;
+}
+
+export interface AttachReferenceRow {
+  sourceDocumentId: string;
+  targetDocumentId: string;
+}
+
+/** 「关系」型事实转实体间直达边的标签截断长度。 */
+export const FACT_EDGE_LABEL_MAX = 12;
+
+function factEdgeLabel(content: string): string {
+  const trimmed = content.trim();
+  return trimmed.length <= FACT_EDGE_LABEL_MAX ? trimmed : `${trimmed.slice(0, FACT_EDGE_LABEL_MAX)}…`;
+}
+
+/**
+ * 把一个 Room 的内容星群挂进统一图（主 Room 与邻 Room 展开共用）：
+ * Room→提及→实体、实体→事实→事实、Room→收录→文档、文档↔引用↔文档。
+ * 事实挂到全部涉事实体（无实体可挂才连房间根）；「关系」型事实在前两个
+ * 实体间补一条以事实内容为标签的直达边——把纯星形拓扑织成可续走的网。
+ * 已存在的节点（跨 Room 共享的实体/文档）不覆盖，仍补挂载边。
+ */
+export function attachRoomContent(input: {
+  nodes: Map<string, ProjectionGraphNode>;
+  edges: ProjectionGraphEdge[];
+  ownerRoomRef: string;
+  room: { id: string; title: string };
+  entities: AttachEntityRow[];
+  facts: AttachFactRow[];
+  documents: AttachDocumentRow[];
+  references: AttachReferenceRow[];
+  entityLimit: number;
+  factLimit: number;
+  documentLimit: number;
+}): void {
+  const { nodes, edges, ownerRoomRef } = input;
+  const link = (from: string, to: string, relationType: string, edgeLevel: ProjectionGraphEdge["edgeLevel"], confidence: number | null, weight = 1) => {
+    if (from === to) return;
+    edges.push({ from, to, relationType, edgeLevel, confidence, weight });
+  };
+
+  const topEntities = [...input.entities]
+    .sort((a, b) => b.salience - a.salience)
+    .slice(0, input.entityLimit);
+  const knownEntityIds = new Set(topEntities.map((entity) => entity.entityId));
+  for (const entity of topEntities) {
+    const ref = `entity:${entity.entityId}`;
+    if (!nodes.has(ref)) {
+      nodes.set(ref, {
+        id: ref,
+        nodeType: "entity",
+        label: entity.name,
+        sourceGraph: "entityFacts",
+        roomRef: { ...input.room },
+        updatedAt: entity.lastMentionAt,
+        groupKey: `entity:${entity.name}`,
+      });
+    }
+    link(ownerRoomRef, ref, "提及", "original", entity.salience);
+  }
+
+  for (const fact of input.facts.slice(0, input.factLimit)) {
+    const ref = `fact:${fact.factId}`;
+    if (!nodes.has(ref)) {
+      nodes.set(ref, {
+        id: ref,
+        nodeType: "fact",
+        label: fact.content.slice(0, 60),
+        sourceGraph: "entityFacts",
+        roomRef: { ...input.room },
+        updatedAt: fact.lastMentionAt,
+        groupKey: `fact:${fact.content.slice(0, 24)}`,
+      });
+    }
+    const confidence = Math.min(1, fact.sourceCount / 3);
+    const owners = fact.entityIds.filter((id) => knownEntityIds.has(id));
+    for (const owner of owners) link(`entity:${owner}`, ref, "事实", "original", confidence);
+    if (owners.length === 0) link(ownerRoomRef, ref, "事实", "original", confidence);
+    if (fact.type === "关系" && owners.length >= 2) {
+      link(`entity:${owners[0]}`, `entity:${owners[1]}`, factEdgeLabel(fact.content), "original", confidence, 0.9);
+    }
+  }
+
+  for (const doc of input.documents.slice(0, input.documentLimit)) {
+    const ref = `doc:${doc.id}`;
+    if (!nodes.has(ref)) {
+      nodes.set(ref, {
+        id: ref,
+        nodeType: "document",
+        label: doc.title,
+        sourceGraph: "linkGraph",
+        roomRef: { ...input.room },
+        updatedAt: doc.updatedAt,
+        groupKey: "document",
+      });
+    }
+    link(ownerRoomRef, ref, "收录", "original", null);
+  }
+
+  const seenPairs = new Set<string>();
+  for (const row of input.references) {
+    const pairKey = [row.sourceDocumentId, row.targetDocumentId].sort().join("\n");
+    if (seenPairs.has(pairKey)) continue;
+    seenPairs.add(pairKey);
+    const from = `doc:${row.sourceDocumentId}`;
+    const to = `doc:${row.targetDocumentId}`;
+    if (!nodes.has(from) || !nodes.has(to)) continue;
+    link(from, to, "引用", "original", null);
+  }
 }
 
 /** 卡片源数据（toCard 的输入形状，漫步终点节点转卡片）。 */
@@ -305,7 +449,9 @@ export function buildWanderProjection(input: {
     frontier = nextShuffled.slice(0, PER_LAYER_MAX * 2);
   }
 
-  // 终点候选：深度 ≥2（一跳太直白），按桥接/新颖/跨范围/距离打分
+  // 终点候选：深度 ≥2（一跳太直白），内容价值为主排序。旧打分让跨 Room
+  // 身份碾压内容（外来实体 0.97 vs 自家事实 0.63），切片里根本没有事实可走，
+  // 漫游自然没干货——跨 Room 保留为小幅新颖加成，不再一票定身价。
   const startRoom = input.graph.nodes.get(input.startNode.id)?.roomRef?.id ?? null;
   const typeSeen = new Map<string, number>();
   const candidates = [...reached.values()]
@@ -313,13 +459,12 @@ export function buildWanderProjection(input: {
     .map((state) => {
       const node = input.graph.nodes.get(state.nodeRef);
       if (!node) return null;
-      const bridge = (node.roomRef && node.roomRef.id !== startRoom ? 0.5 : 0)
-        + (node.nodeType !== input.startNode.nodeType ? 0.5 : 0);
+      const content = WANDER_TYPE_VALUE[node.nodeType] ?? 0.5;
+      const crossRoom = node.roomRef && node.roomRef.id !== startRoom ? 1 : 0;
       const novelty = 1 / (1 + (typeSeen.get(node.nodeType) ?? 0));
       typeSeen.set(node.nodeType, (typeSeen.get(node.nodeType) ?? 0) + 1);
-      const crossScope = node.roomRef && node.roomRef.id !== startRoom ? 1 : 0;
       const distance = state.depth >= WANDER_MIN_DEPTH && state.depth <= WANDER_MAX_DEPTH ? 1 : 0.5;
-      const score = 0.3 * bridge + 0.25 * novelty + 0.2 * crossScope + 0.15 * distance + 0.1 * (0.5 + random() * 0.5);
+      const score = 0.6 * content + 0.1 * crossRoom + 0.15 * novelty + 0.1 * distance + 0.05 * (0.5 + random() * 0.5);
       return { state, node, score };
     })
     .filter((item): item is NonNullable<typeof item> => item !== null)

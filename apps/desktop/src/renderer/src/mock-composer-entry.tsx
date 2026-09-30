@@ -87,7 +87,7 @@ function ComposerHarness() {
   return (
     <div style={{ width: 460, margin: '40px auto', padding: 16, border: '1px solid #ddd', borderRadius: 12 }}>
       <AgentComposer
-        contextSummary="首页 · 未选择文本"
+        contextSummary=""
         contextItems={[]}
         hasSelectedText={false}
         resetKey={0}
@@ -98,7 +98,7 @@ function ComposerHarness() {
         selectedExternalConversation={null}
         localAgents={localAgents}
         modelPreference="smart"
-        loadModelAvailability={async () => true}
+        loadModelAvailability={async () => ({ lite: true, primary: true })}
         onSelectModelPreference={() => {}}
         onChange={setValue}
         onSelectExternalConversation={() => setLog((current) => [...current, 'select conversation'])}

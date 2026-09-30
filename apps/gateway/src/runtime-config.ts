@@ -24,6 +24,8 @@ export interface RuntimeConfig {
   schemaVersion: number;
   primary?: RuntimeAiConfig;
   background?: RuntimeAiConfig;
+  /** 转写总结专用档（不随 background 换模型）；未配置时回退 background。 */
+  transcriptionSummary?: RuntimeAiConfig;
   /** 轻量模型档（main-lite）；未配置时 lite 会话档不可用。 */
   lite?: RuntimeAiConfig;
   cursorCompletion?: RuntimeAiConfig;
@@ -157,11 +159,11 @@ function validateConfig(value: unknown): RuntimeConfig {
   const config = value as Record<string, unknown>;
   if (config.schemaVersion !== 1) throw new Error("runtime_config_schema_version_unsupported");
   const allowed = new Set([
-    "schemaVersion", "primary", "background", "lite", "cursorCompletion", "asr", "vlm",
+    "schemaVersion", "primary", "background", "transcriptionSummary", "lite", "cursorCompletion", "asr", "vlm",
     "webSearch", "memory", "knowledge", "updatedAt", "configVersion",
   ]);
   for (const key of Object.keys(config)) if (!allowed.has(key)) throw new Error(`runtime_config_unknown_field:${key}`);
-  for (const key of ["primary", "background", "lite", "cursorCompletion", "vlm", "webSearch"]) {
+  for (const key of ["primary", "background", "transcriptionSummary", "lite", "cursorCompletion", "vlm", "webSearch"]) {
     const item = config[key];
     if (item === undefined) continue;
     validateAiConfig(item, key);

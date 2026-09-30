@@ -14,6 +14,34 @@ import { useLocale } from '../../../../i18n/LocaleContext'
 /** 详情面板小视口：布局稳定后只居中、不缩小；收敛期间相机逐帧跟随内容。 */
 const SETTLE_FIT = { minScale: 1, follow: true }
 
+/** wiki 分桶目录 → 图谱聚类色（与目录树同源分组；未知路径归 other）。 */
+export const WIKI_CLUSTER_COLORS = {
+  concept: 0x6f8ff8,
+  entity: 0x53b489,
+  source: 0xe2a54b,
+  other: 0xaeb7c4,
+} as const
+
+export type WikiCluster = keyof typeof WIKI_CLUSTER_COLORS
+
+/** 图例元数据（WikiPage 图谱叠加层渲染；labelKey 指向目录树同一批 i18n 键）。 */
+export const WIKI_CLUSTERS: Array<{ key: WikiCluster; labelKey: string }> = [
+  { key: 'concept', labelKey: 'surface:wiki.folderConcepts' },
+  { key: 'entity', labelKey: 'surface:wiki.folderEntities' },
+  { key: 'source', labelKey: 'surface:wiki.folderSources' },
+  { key: 'other', labelKey: 'surface:wiki.folderOther' },
+]
+
+/** 页面路径 → 聚类：认第一个命中 KS 分桶目录的路径段。 */
+export function wikiClusterOf(path: string): WikiCluster {
+  for (const segment of path.split('/')) {
+    if (segment === 'concepts') return 'concept'
+    if (segment === 'entities') return 'entity'
+    if (segment === 'sources') return 'source'
+  }
+  return 'other'
+}
+
 function nodeRadius(node: KnowledgeWikiGraphDto['nodes'][number]) {
   return Math.min(28, 18 + node.inLinks * 2)
 }
@@ -49,7 +77,7 @@ export function WikiGraphCanvas({ graph, selectedPath, onSelectPage }: {
     [graph.nodes],
   )
   const nodes = useMemo<PixiForceGraphCanvasNode[]>(() => graph.nodes.map((node) => ({
-    color: node.inLinks >= 2 ? 0x7799f9 : 0xaeb7c4,
+    color: WIKI_CLUSTER_COLORS[wikiClusterOf(node.path)],
     id: node.id,
     label: node.title,
     radius: nodeRadius(node),

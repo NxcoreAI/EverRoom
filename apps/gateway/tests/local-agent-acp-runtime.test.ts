@@ -22,6 +22,19 @@ let nextClientRequestId = 1;
 const pendingClientRequests = new Map();
 const clientResponses = new Map();
 const cancelled = new Set();
+// session modes（session/new·load 响应上报；set_mode 记录并广播 current_mode_update）
+let currentMode = "default";
+const appliedModes = [];
+function sessionModes() {
+  return {
+    currentModeId: currentMode,
+    availableModes: [
+      { id: "default", name: "Default" },
+      { id: "acceptEdits", name: "Accept Edits" },
+      { id: "bypassPermissions", name: "Bypass Permissions" },
+    ],
+  };
+}
 
 function send(message) {
   process.stdout.write(JSON.stringify(message) + "\n");
@@ -65,11 +78,33 @@ async function handlePrompt(message) {
     respond(message.id, { stopReason: cancelled.has(sessionId) ? "cancelled" : "end_turn" });
     return;
   }
+  if (mode === "waitsetmode") {
+    // 等 run 中途收到 session/set_mode 再回包（验证 mid-turn 直发路径）
+    for (let i = 0; i < 500 && appliedModes.length === 0; i += 1) await sleep(10);
+    chunk(sessionId, "mode:" + appliedModes.join(",") + "@" + currentMode);
+    respond(message.id, { stopReason: "end_turn" });
+    return;
+  }
+  if (mode === "permission-read") {
+    const answer = await clientRequest("session/request_permission", {
+      sessionId,
+      toolCall: { toolCallId: "tc-read", title: "Read notes.txt", kind: "read", status: "pending", rawInput: { path: "../notes.txt" } },
+      options: [
+        { optionId: "allow-always", kind: "allow_always", name: "Always Allow" },
+        { optionId: "allow-once", kind: "allow_once", name: "Allow" },
+        { optionId: "reject-once", kind: "reject_once", name: "Reject" },
+      ],
+    });
+    chunk(sessionId, answer.outcome.outcome === "selected" ? answer.outcome.optionId : "none:" + answer.outcome.outcome);
+    respond(message.id, { stopReason: "end_turn" });
+    return;
+  }
   if (mode === "permission") {
     const answer = await clientRequest("session/request_permission", {
       sessionId,
-      toolCall: { toolCallId: "tc-1", title: "run tool", kind: "execute", status: "pending" },
+      toolCall: { toolCallId: "tc-1", title: "run tool", kind: "execute", status: "pending", rawInput: { command: "rm -rf build" } },
       options: [
+        { optionId: "allow-always", kind: "allow_always", name: "Always Allow" },
         { optionId: "allow-once", kind: "allow_once", name: "Allow" },
         { optionId: "reject-once", kind: "reject_once", name: "Reject" },
       ],
@@ -99,10 +134,11 @@ async function handlePrompt(message) {
     respond(message.id, { stopReason: "refusal" });
     return;
   }
-  // ok：流式两段，回显 prompt 尾部（测试断言委派上下文注入）
-  const echo = prompt.includes("<everroom_delegation_context>")
+  // ok：流式两段，回显 prompt 尾部（测试断言委派上下文注入）+ set_mode 轨迹
+  const echo = (prompt.includes("<everroom_delegation_context>")
     ? "ctx:yes:" + prompt.slice(-80)
-    : "ctx:no";
+    : "ctx:no")
+    + "|modes:" + appliedModes.join("+") + "@" + currentMode;
   chunk(sessionId, "first part ");
   await sleep(20);
   chunk(sessionId, echo);
@@ -113,9 +149,18 @@ async function handle(message) {
   if (message.method === "initialize") {
     respond(message.id, { protocolVersion: 1, agentCapabilities: { loadSession: true } });
   } else if (message.method === "session/new") {
-    respond(message.id, { sessionId: "s-" + nextSession++ });
+    respond(message.id, { sessionId: "s-" + nextSession++, modes: sessionModes() });
   } else if (message.method === "session/load") {
-    respond(message.id, { sessionId: message.params.sessionId });
+    respond(message.id, { sessionId: message.params.sessionId, modes: sessionModes() });
+  } else if (message.method === "session/set_mode") {
+    appliedModes.push(message.params.modeId);
+    currentMode = message.params.modeId;
+    respond(message.id, {});
+    send({
+      jsonrpc: "2.0",
+      method: "session/update",
+      params: { sessionId: message.params.sessionId, update: { sessionUpdate: "current_mode_update", currentModeId: currentMode } },
+    });
   } else if (message.method === "session/prompt") {
     await handlePrompt(message);
   } else if (message.method === "session/cancel") {
@@ -172,8 +217,13 @@ async function writeFakeAgent(mode: string): Promise<{ command: string; args: st
   return { command: execPath, args: [script, mode] };
 }
 
-function runtimeFor(adapter: { command: string; args: string[] }, workingDirectory: string): AcpAgentRuntime {
-  return new AcpAgentRuntime(adapter, workingDirectory, `test:${workingDirectory}`);
+function runtimeFor(
+  adapter: { command: string; args: string[] },
+  workingDirectory: string,
+  humanApprovalForRun?: (input: { runId: string; sessionId: string }) => boolean,
+  provider?: "claude" | "codex" | "openclaw",
+): AcpAgentRuntime {
+  return new AcpAgentRuntime(adapter, workingDirectory, `test:${workingDirectory}`, undefined, humanApprovalForRun, provider);
 }
 
 function delegation(mutationAllowed: boolean): LocalAgentDelegationContext {
@@ -260,6 +310,67 @@ describe("AcpAgentRuntime", () => {
     expect(String((rejected.find((event) => event.type === "message.completed")!.payload as { content?: string }).content)).toBe("reject-once");
   });
 
+  it("routes channel-session permissions through the UI approval bridge", async () => {
+    const root = await workspace();
+    const runtime = runtimeFor(await writeFakeAgent("permission"), root, () => true);
+    onTestFinished(() => void runtime.dispose());
+    const seen: Array<Record<string, unknown>> = [];
+    runtime.setPermissionRequestHandler(async (request) => {
+      seen.push(request as unknown as Record<string, unknown>);
+      return "approved_session";
+    });
+    const events = await collect(await runtime.start({ ...baseInput(root), delegationContext: delegation(false) }));
+    const requested = events.find((event) => event.type === "approval.requested");
+    expect(requested?.payload).toMatchObject({ kind: "tool", toolName: "run tool", command: "rm -rf build" });
+    const resolved = events.find((event) => event.type === "approval.resolved");
+    expect(resolved?.payload).toMatchObject({ approved: true });
+    expect(seen[0]).toMatchObject({ agentSessionId: "session-1", runId: "run-1", toolName: "run tool", command: "rm -rf build" });
+    // approved_session → allow_always（即便 grant 是 read-only，人工审批优先于自动拒绝）
+    expect(String((events.find((event) => event.type === "message.completed")!.payload as { content?: string }).content)).toBe("allow-always");
+  });
+
+  it("maps a denied UI decision to the reject option", async () => {
+    const root = await workspace();
+    const runtime = runtimeFor(await writeFakeAgent("permission"), root, () => true);
+    onTestFinished(() => void runtime.dispose());
+    runtime.setPermissionRequestHandler(async () => "denied");
+    const events = await collect(await runtime.start({ ...baseInput(root), delegationContext: delegation(true) }));
+    expect(String((events.find((event) => event.type === "message.completed")!.payload as { content?: string }).content)).toBe("reject-once");
+    expect(events.find((event) => event.type === "approval.requested")).toBeDefined();
+    expect(events.find((event) => event.type === "approval.resolved")?.payload).toMatchObject({ approved: false });
+  });
+
+  it("auto-approves reads covered by the permission mode without surfacing the UI card", async () => {
+    const root = await workspace();
+    const adapter = await writeFakeAgent("permission-read");
+    // 显式档：accept_edits 覆盖 read → 桥前放行 allow_always，无审批事件
+    const explicit = runtimeFor(adapter, root, () => true, "claude");
+    onTestFinished(() => void explicit.dispose());
+    explicit.setPermissionRequestHandler(async () => "denied");
+    await explicit.setSessionPermissionMode("session-1", "accept_edits");
+    const events = await collect(await explicit.start({ ...baseInput(root), delegationContext: delegation(false) }));
+    expect(events.find((event) => event.type === "approval.requested")).toBeUndefined();
+    expect(String((events.find((event) => event.type === "message.completed")!.payload as { content?: string }).content)).toBe("allow-always");
+
+    // 未显式设置：回退适配器上报的 currentModeId（claude default→ask_before_write，
+    // read 仍覆盖——沙箱外用户文件读取是架构伪影，全档免问）
+    const fallback = runtimeFor(adapter, root, () => true, "claude");
+    onTestFinished(() => void fallback.dispose());
+    fallback.setPermissionRequestHandler(async () => "denied");
+    const events2 = await collect(await fallback.start({ ...baseInput(root), delegationContext: delegation(false) }));
+    expect(events2.find((event) => event.type === "approval.requested")).toBeUndefined();
+    expect(String((events2.find((event) => event.type === "message.completed")!.payload as { content?: string }).content)).toBe("allow-always");
+
+    // execute 不被 accept_edits 覆盖 → 仍走人工桥
+    const execute = runtimeFor(await writeFakeAgent("permission"), root, () => true, "claude");
+    onTestFinished(() => void execute.dispose());
+    execute.setPermissionRequestHandler(async () => "denied");
+    await execute.setSessionPermissionMode("session-1", "accept_edits");
+    const events3 = await collect(await execute.start({ ...baseInput(root), delegationContext: delegation(false) }));
+    expect(events3.find((event) => event.type === "approval.requested")).toBeDefined();
+    expect(String((events3.find((event) => event.type === "message.completed")!.payload as { content?: string }).content)).toBe("reject-once");
+  });
+
   it("serves fs/read_text_file inside the workspace and rejects traversal", async () => {
     const root = await workspace();
     await writeFile(join(root, "notes.txt"), "workspace material payload", "utf8");
@@ -308,6 +419,47 @@ describe("AcpAgentRuntime", () => {
     const events = await collect(await runtime.start(baseInput(root)));
     const failure = events.find((event) => event.type === "run.failed");
     expect(String((failure?.payload as { message?: string }).message)).toContain("local_agent_acp_adapter_exited");
+  });
+
+  it("buffers a run-gap permission mode and re-applies it on the next drive", async () => {
+    const root = await workspace();
+    const runtime = runtimeFor(await writeFakeAgent("ok"), root, undefined, "claude");
+    onTestFinished(() => runtime.dispose());
+    // run 间隙：无活跃 ACP 会话，仅入缓冲
+    await expect(runtime.setSessionPermissionMode("session-1", "full_access")).resolves.toEqual({ applied: false });
+    // claude 无 auto 语义档映射；无 provider 的 runtime 整体不支持
+    await expect(runtime.setSessionPermissionMode("session-1", "auto")).resolves.toBeNull();
+    const noProvider = runtimeFor(await writeFakeAgent("ok"), root);
+    onTestFinished(() => noProvider.dispose());
+    await expect(noProvider.setSessionPermissionMode("session-1", "full_access")).resolves.toBeNull();
+
+    const events = await collect(await runtime.start(baseInput(root)));
+    // drive() 在 session/new 后、prompt 前补发 set_mode；适配器回执 current_mode_update → 语义事件
+    const modeEvent = events.find((event) => event.type === "session.permission_mode.updated");
+    expect(modeEvent?.payload).toMatchObject({ permissionMode: "full_access" });
+    const completed = events.find((event) => event.type === "message.completed");
+    expect(String((completed!.payload as { content?: string }).content)).toContain("modes:bypassPermissions@bypassPermissions");
+    expect(events[events.length - 1]!.type).toBe("run.completed");
+  });
+
+  it("applies a permission mode to a live session mid-run", async () => {
+    const root = await workspace();
+    const runtime = runtimeFor(await writeFakeAgent("waitsetmode"), root, undefined, "claude");
+    onTestFinished(() => runtime.dispose());
+    const run = await runtime.start(baseInput(root));
+    const collecting = collect(run);
+    // 等 ACP 会话建立（modes 上报后 available 才非空）
+    for (let i = 0; i < 150; i += 1) {
+      if (runtime.getSessionPermissionModes("session-1").available.length > 0) break;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    expect(runtime.getSessionPermissionModes("session-1").available).toContain("ask_before_write");
+    await expect(runtime.setSessionPermissionMode("session-1", "ask_before_write")).resolves.toEqual({ applied: true });
+    const events = await collecting;
+    const completed = events.find((event) => event.type === "message.completed");
+    // ask_before_write → claude default；fake 收到 set_mode 后放行 prompt
+    expect(String((completed!.payload as { content?: string }).content)).toBe("mode:default@default");
+    expect(events[events.length - 1]!.type).toBe("run.completed");
   });
 });
 

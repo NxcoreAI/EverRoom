@@ -1,4 +1,5 @@
 import type {
+  AgentContextUsage,
   AgentEvent,
   SubagentInvocationEvent,
   SubagentInvocationNode,
@@ -11,6 +12,8 @@ export interface DisplayAgentToolCall {
   id: string
   runId: string
   name: string
+  /** 适配器侧人类可读标题（ACP tool_call.title）；作为 subject 的兜底展示。 */
+  title?: string
   args: Record<string, unknown>
   partialResult?: unknown
   result?: unknown
@@ -71,6 +74,7 @@ export function mergeAgentToolEvent(
   const payload = event.payload as {
     toolCallId?: unknown
     name?: unknown
+    title?: unknown
     args?: unknown
     partialResult?: unknown
     result?: unknown
@@ -98,6 +102,7 @@ export function mergeAgentToolEvent(
     id: payload.toolCallId,
     runId: event.runId,
     name: typeof payload.name === 'string' ? payload.name : existing?.name ?? 'tool',
+    title: typeof payload.title === 'string' ? payload.title : existing?.title,
     args,
     partialResult: payload.partialResult !== undefined ? payload.partialResult : existing?.partialResult,
     result: payload.result !== undefined ? payload.result : existing?.result,
@@ -150,6 +155,13 @@ export function agentToolLabel(tool: DisplayAgentToolCall, completed = tool.stat
     wiki_search: ['搜索知识库', '已搜索知识库'],
     wiki_read: ['读取知识库页面', '已读取知识库页面'],
     conversation_search: ['检索历史对话', '已检索历史对话'],
+    // ACP 渠道工具 kind 的语义名（见网关 acpToolEventName）。
+    web_fetch: ['获取网页', '已获取网页'],
+    search: ['搜索', '已搜索'],
+    think: ['思考', '已思考'],
+    create: ['创建', '已创建'],
+    delete: ['删除', '已删除'],
+    move: ['移动', '已移动'],
   }
   const exact = labels[name]
   if (exact) {
@@ -175,6 +187,12 @@ export function agentToolLabel(tool: DisplayAgentToolCall, completed = tool.stat
         wiki_search: ['surface:agentExecutionTimeline.searchWiki', 'surface:agentExecutionTimeline.wikiSearched'],
         wiki_read: ['surface:agentExecutionTimeline.readWikiPage', 'surface:agentExecutionTimeline.wikiPageRead'],
         conversation_search: ['surface:agentExecutionTimeline.searchConversations', 'surface:agentExecutionTimeline.conversationsSearched'],
+        web_fetch: ['surface:agentExecutionTimeline.fetchWeb', 'surface:agentExecutionTimeline.fetchedWeb'],
+        search: ['surface:agentExecutionTimeline.searchGeneric', 'surface:agentExecutionTimeline.searchedGeneric'],
+        think: ['surface:agentExecutionTimeline.thinking', 'surface:agentExecutionTimeline.thought'],
+        create: ['surface:agentExecutionTimeline.createItem', 'surface:agentExecutionTimeline.createdItem'],
+        delete: ['surface:agentExecutionTimeline.deleteItem', 'surface:agentExecutionTimeline.deletedItem'],
+        move: ['surface:agentExecutionTimeline.moveItem', 'surface:agentExecutionTimeline.movedItem'],
       }
       const key = keys[name]?.[completed ? 1 : 0]
       if (key) return t(key)
@@ -213,12 +231,12 @@ export function agentToolSubject(tool: DisplayAgentToolCall): string | undefined
   }
   for (const key of [
     'command', 'cmd', 'script', 'code', 'input', 'task', 'assignment',
-    'query', 'search_query', 'keyword', 'prompt', 'path', 'filePath', 'title', 'documentTitle', 'url',
+    'query', 'search_query', 'keyword', 'prompt', 'path', 'filePath', 'file_path', 'title', 'documentTitle', 'url',
   ]) {
     const value = userText(tool.args[key], 80)
     if (value) return value
   }
-  return undefined
+  return userText(tool.title, 80)
 }
 
 export function agentToolCommand(tool: DisplayAgentToolCall): string | undefined {
@@ -726,4 +744,41 @@ export function reduceSubagentInvocationTools(
   events: SubagentInvocationEvent[],
 ): DisplayAgentToolCall[] {
   return foldSubagentToolEvents([], invocationId, events)
+}
+
+/** 会话级上下文状态：最新用量快照 + 是否处于压缩中（hydrate 重放与实时事件共用）。 */
+export interface AgentContextState {
+  usage: AgentContextUsage | null
+  compacting: boolean
+}
+
+/**
+ * 折叠 context.usage / context.compaction 事件。事件按 occurredAt 排序后
+ * 「后到者胜」：用量取最新快照，压缩态取最新信号。跨 run 的事件序列号
+ * 互不相干，故不用 seq 排序。
+ */
+export function reduceAgentContextState(events: AgentEvent[]): AgentContextState {
+  const sorted = [...events].sort((left, right) => left.occurredAt.localeCompare(right.occurredAt))
+  const state: AgentContextState = { usage: null, compacting: false }
+  for (const event of sorted) {
+    if (event.type === 'context.usage') {
+      const payload = event.payload as Partial<AgentContextUsage>
+      if (typeof payload?.contextWindow === 'number' && payload.contextWindow > 0) {
+        const segments = Array.isArray(payload.segments)
+          ? payload.segments.filter((segment): segment is NonNullable<AgentContextUsage['segments']>[number] => (
+            typeof segment?.key === 'string' && typeof segment?.tokens === 'number'
+          ))
+          : undefined
+        state.usage = {
+          tokens: typeof payload.tokens === 'number' ? payload.tokens : null,
+          contextWindow: payload.contextWindow,
+          percent: typeof payload.percent === 'number' ? payload.percent : null,
+          ...(segments?.length ? { segments } : {}),
+        }
+      }
+    } else if (event.type === 'context.compaction') {
+      state.compacting = (event.payload as { active?: unknown }).active === true
+    }
+  }
+  return state
 }

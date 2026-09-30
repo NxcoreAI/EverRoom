@@ -78,6 +78,8 @@ import type {
   ExternalDocumentProvider,
   ExternalDocumentSearchResponse,
   ImportCandidateDiffView,
+  AgentPermissionMode,
+  AgentPermissionModeState,
 } from '@nxcore/agent-contract'
 import type { BrowserExtensionMessage, BrowserExtensionStatus } from './browser-extension'
 import type { ObsidianVaultApi } from './obsidian'
@@ -133,12 +135,14 @@ import type {
   RouteMindmapActionInput,
   RouteMindmapStatusDto,
   KnowledgeAttachInput,
+  KnowledgeAttachResult,
   KnowledgeDecisionDto,
   KnowledgeEntityDetailDto,
   KnowledgeEntityDto,
   KnowledgeEntityStatus,
   KnowledgeFileDto,
   KnowledgeFileUploadResult,
+  KnowledgeRuleDto,
   KnowledgeRoomContextDto,
   KnowledgeRoomGraphDto,
   KnowledgeRoomDto,
@@ -755,9 +759,6 @@ export interface OfficeWorkspaceBounds {
 /** 内嵌 Office 预览的实例类型（genoffice docs / sheets / slides / pdf 运行时）。 */
 export type OfficePreviewKind = 'docx' | 'spreadsheet' | 'slides' | 'pdf'
 
-/** dev 测试页使用的固定预览实例 id（office-test 页 ↔ 主进程懒创建的 fixture 实例）。 */
-export const OFFICE_TEST_INSTANCE_ID = 'office-test'
-
 /** 顶栏 Office 预览标签（对齐 ContextRoomWorkspaceTab 的标签形状）。 */
 export interface OfficePreviewTab {
   id: string
@@ -843,7 +844,6 @@ export interface NxcoreDesktopApi {
     onMaximizedChange(listener: (maximized: boolean) => void): () => void
   }
   office: {
-    testAvailable: boolean
     /** 激活指定 Office 预览实例并隐藏其余实例；null = 全部隐藏（标签仍保留）。 */
     setActiveInstance(id: string | null): Promise<void>
     /** 关闭并销毁一个预览实例（标签关闭时调用）。 */
@@ -1230,6 +1230,20 @@ export interface NxcoreDesktopApi {
       assistantText: string
       language?: string
     }): Promise<{ title: string }>
+    suggestConversationPrompt(input: {
+      sessionId: string | null
+      pageLabel?: string
+      roomTitle: string | null
+      messages: Array<{ role: 'user' | 'assistant'; text: string }>
+      recentSessions?: Array<{ title: string | null; updatedAt: string }>
+      language?: string
+    }): Promise<{ suggestion: string }>
+    suggestStarterPrompts(input: {
+      pageLabel?: string
+      roomTitle: string | null
+      recentSessions: Array<{ title: string | null; updatedAt: string }>
+      language?: string
+    }): Promise<{ prompts: string[] }>
     deleteSession(sessionId: string): Promise<void>
     getSession(sessionId: string): Promise<AgentSessionSnapshot>
     getEvents(sessionId: string, runId: string, afterSeq: number): Promise<AgentEvent[]>
@@ -1245,6 +1259,8 @@ export interface NxcoreDesktopApi {
       decision: AgentApprovalDecision,
       feedback?: string,
     ): Promise<{ approvalId: string; decision: string }>
+    getPermissionMode(sessionId: string): Promise<AgentPermissionModeState>
+    setPermissionMode(sessionId: string, mode: AgentPermissionMode): Promise<{ mode: AgentPermissionMode; applied: boolean }>
     subscribe(sessionId: string): Promise<void>
     unsubscribe(): Promise<void>
     onEvent(listener: (frame: AgentSocketFrame) => void): () => void
@@ -1365,8 +1381,16 @@ export interface NxcoreDesktopApi {
     /** 手动合并：from 并入 target。 */
     mergeEntity(fromId: string, targetId: string): Promise<{ ok: boolean }>
     listUnmatched(): Promise<{ items: KnowledgeUnmatchedItemDto[] }>
-    /** 未识别资料手动挂实体（role=manual）。 */
-    attachDoc(sourceKind: string, sourceId: string, input: KnowledgeAttachInput): Promise<{ entityId: string }>
+    /** 批量重路由未识别资料（不传 ids = 全部）：重走完整路由瀑布。 */
+    retryUnmatched(decisionIds?: string[]): Promise<{ requeued: number }>
+    /** 忽略未识别资料：显式移出待挂载列表。 */
+    ignoreUnmatched(decisionIds: string[]): Promise<{ ignored: number }>
+    /** 归集规则清单（挂载即学习 + 手动创建）。 */
+    listRules(): Promise<{ items: KnowledgeRuleDto[] }>
+    /** 删除归集规则（撤销学习结果）。 */
+    deleteRule(ruleId: string): Promise<void>
+    /** 未识别资料手动挂实体（role=manual）；挂到 Room 时可带回学习规则。 */
+    attachDoc(sourceKind: string, sourceId: string, input: KnowledgeAttachInput): Promise<KnowledgeAttachResult>
     listRecentDecisions(limit?: number): Promise<{ items: KnowledgeDecisionDto[] }>
     /** 按 sourceId 查最新路由决策（任意状态）：推荐会话轮询解析进度（驱动阶段推进）。 */
     routeStatus(sourceIds: string[]): Promise<{ items: KnowledgeRouteStatusDto[] }>
@@ -1387,6 +1411,7 @@ export interface NxcoreDesktopApi {
   }
   files: {
     list(limit?: number, offset?: number): Promise<{ items: FileCatalogDto[]; total: number }>
+    catalogEntry(fileId: string): Promise<FileCatalogDto>
     listClipCaptures(input?: BrowserExtensionClipperListInput): Promise<BrowserExtensionClipperListResult>
     setClipCaptureFavorite(captureId: string, favorite: boolean): Promise<BrowserExtensionClipperCapture>
     getClipCaptureDetail(captureId: string): Promise<BrowserExtensionClipperCapture>
@@ -1448,6 +1473,10 @@ export interface NxcoreDesktopApi {
     reinstateEvent(eventId: string): Promise<IngestEventDto>
     /** 事件归一化产物全文（台账详情查看）。 */
     getEventContent(eventId: string): Promise<{ markdown: string; parsedAt: string }>
+    /** 记忆引擎暂停闸读取（记忆页顶部「继续/暂停」）。 */
+    getPause(): Promise<{ paused: boolean; updatedAt: string | null }>
+    /** 切换暂停闸：暂停期间新内容只进台账不扇出（重启保持）。 */
+    setPause(paused: boolean): Promise<{ paused: boolean; updatedAt: string }>
   }
 }
 import type {

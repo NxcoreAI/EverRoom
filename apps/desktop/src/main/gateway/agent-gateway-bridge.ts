@@ -1,5 +1,7 @@
 import type {
   AgentEvent,
+  AgentPermissionMode,
+  AgentPermissionModeState,
   PendingAgentIntent,
   AgentRun,
   AgentStatusSnapshot,
@@ -189,6 +191,17 @@ export class AgentGatewayBridge {
     })
   }
 
+  getPermissionMode(sessionId: string): Promise<AgentPermissionModeState> {
+    return this.request(`/v1/agent/sessions/${encodeURIComponent(sessionId)}/permission-mode`)
+  }
+
+  setPermissionMode(sessionId: string, mode: AgentPermissionMode): Promise<{ mode: AgentPermissionMode; applied: boolean }> {
+    return this.request(`/v1/agent/sessions/${encodeURIComponent(sessionId)}/permission-mode`, {
+      method: 'PUT',
+      data: { mode },
+    })
+  }
+
   async startRun(sessionId: string, input: StartAgentRunInput): Promise<AgentRun> {
     const run = await this.request<AgentRun>(`/v1/agent/sessions/${encodeURIComponent(sessionId)}/runs`, {
       method: 'POST',
@@ -253,6 +266,34 @@ export class AgentGatewayBridge {
       method: 'POST',
       data: input,
       timeout: 30_000,
+    })
+  }
+
+  suggestConversationPrompt(input: {
+    sessionId: string | null
+    pageLabel?: string
+    roomTitle: string | null
+    messages: Array<{ role: 'user' | 'assistant'; text: string }>
+    recentSessions?: Array<{ title: string | null; updatedAt: string }>
+    language?: string
+  }): Promise<{ suggestion: string }> {
+    return this.request('/v1/processing/conversation-suggestion', {
+      method: 'POST',
+      data: input,
+      timeout: 15_000,
+    })
+  }
+
+  suggestStarterPrompts(input: {
+    pageLabel?: string
+    roomTitle: string | null
+    recentSessions: Array<{ title: string | null; updatedAt: string }>
+    language?: string
+  }): Promise<{ prompts: string[] }> {
+    return this.request('/v1/processing/starter-prompts', {
+      method: 'POST',
+      data: input,
+      timeout: 20_000,
     })
   }
 

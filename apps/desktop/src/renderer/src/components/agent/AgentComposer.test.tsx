@@ -4,6 +4,7 @@ import TestRenderer, { act } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/state/toast', () => ({ showToast: vi.fn() }))
+import { showToast } from '@/state/toast'
 vi.mock('@/i18n/LocaleContext', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/i18n/LocaleContext')>()
   return {
@@ -77,7 +78,7 @@ function renderComposer(overrides: Partial<React.ComponentProps<typeof AgentComp
     selectedExternalConversation: null,
     localAgents: [codexAgent, claudeAgent],
     modelPreference: 'smart',
-    loadModelAvailability: vi.fn(async () => false),
+    loadModelAvailability: vi.fn(async () => ({ lite: false, primary: true })),
     onSelectModelPreference: vi.fn(),
     value: '',
     onChange: vi.fn(),
@@ -107,7 +108,7 @@ function TypingComposer({ overrides = {} }: { overrides?: Partial<React.Componen
     selectedExternalConversation: null,
     localAgents: [codexAgent, claudeAgent],
     modelPreference: 'smart',
-    loadModelAvailability: vi.fn(async () => false),
+    loadModelAvailability: vi.fn(async () => ({ lite: false, primary: true })),
     onSelectModelPreference: vi.fn(),
     onChange: setValue,
     onClearContext: vi.fn(),
@@ -220,7 +221,8 @@ describe('AgentComposer external conversation command', () => {
     act(() => { renderer = TestRenderer.create(<TypingComposer />) })
 
     typeInto(renderer, '帮我审一下 @cod')
-    expect(conversations).not.toHaveBeenCalled()
+    // 分组弹层打开时会懒加载一次对话记录候选。
+    expect(conversations).toHaveBeenCalledWith({ limit: 200 })
     expect(renderer.root.findByProps({ 'aria-label': '点名 Agent' })).toBeTruthy()
 
     chooseHighlightedOption(renderer)
@@ -237,12 +239,28 @@ describe('AgentComposer external conversation command', () => {
     let renderer!: TestRenderer.ReactTestRenderer
     act(() => { renderer = TestRenderer.create(<TypingComposer />) })
     typeInto(renderer, '@')
+    // 同步断言窗口内只有 Agent 组（文件/对话记录走懒加载，下一拍才补进来）。
     expect(renderer.root.findAllByProps({ role: 'option' })).toHaveLength(2)
 
     typeInto(renderer, '@claude')
     const results = renderer.root.findAllByProps({ role: 'option' })
     expect(results).toHaveLength(1)
     expect(results[0]!.findByType('strong').children).toEqual(['Claude Code'])
+    act(() => renderer.unmount())
+  })
+
+  it('offers no agent or conversation mentions while a CLI channel is active', () => {
+    let renderer!: TestRenderer.ReactTestRenderer
+    act(() => {
+      renderer = TestRenderer.create(
+        <TypingComposer overrides={{ channelAgentId: 'claude:/usr/local/bin/claude' }} />,
+      )
+    })
+
+    // 渠道会话：@ Agent 与对话引用是主代理专属（网关会拒），@ 弹层不提供这些组。
+    typeInto(renderer, '@')
+    expect(renderer.root.findAllByProps({ role: 'option' })).toHaveLength(0)
+    expect(renderer.root.findAllByProps({ 'aria-label': '点名 Agent' })).toHaveLength(0)
     act(() => renderer.unmount())
   })
 
@@ -269,8 +287,8 @@ describe('AgentComposer external conversation command', () => {
       nativeEvent: { isComposing: false, keyCode: 13 },
     }))
     expect(onSubmit).toHaveBeenCalledWith([], [
-      { id: 'codex:/usr/local/bin/codex', displayName: 'Codex' },
-      { id: 'claude:/usr/local/bin/claude', displayName: 'Claude Code' },
+      { kind: 'agent', id: 'codex:/usr/local/bin/codex', displayName: 'Codex' },
+      { kind: 'agent', id: 'claude:/usr/local/bin/claude', displayName: 'Claude Code' },
     ])
     act(() => renderer.unmount())
   })
@@ -292,7 +310,7 @@ describe('AgentComposer external conversation command', () => {
       preventDefault: vi.fn(),
       nativeEvent: { isComposing: false, keyCode: 13 },
     }))
-    expect(onSubmit).toHaveBeenCalledWith([], [{ id: 'codex:/usr/local/bin/codex', displayName: 'Codex' }])
+    expect(onSubmit).toHaveBeenCalledWith([], [{ kind: 'agent', id: 'codex:/usr/local/bin/codex', displayName: 'Codex' }])
     act(() => renderer.unmount())
   })
 
@@ -319,42 +337,6 @@ describe('AgentComposer external conversation command', () => {
 
     expect(renderer.root.findAllByProps({ 'aria-label': '语音输入' })).toHaveLength(0)
     expect(renderer.root.findAllByProps({ className: 'agent-prompt-voice' })).toHaveLength(0)
-  })
-
-  it('renders the room focus chip only inside a Room and reports its state', () => {
-    const hidden = renderComposer()
-    expect(hidden.renderer.root.findAllByProps({ className: 'agent-room-focus-toggle' })).toHaveLength(0)
-
-    const onToggleRoomFocus = vi.fn()
-    const { renderer } = renderComposer({
-      roomFocusVisible: true,
-      roomFocusEnabled: false,
-      roomFocusRoomTitle: '产品规划',
-      onToggleRoomFocus,
-    })
-    const toggle = renderer.root.findByProps({ className: 'agent-room-focus-toggle' })
-    expect(toggle.props['aria-pressed']).toBe(false)
-    expect(toggle.props['data-active']).toBe('false')
-    expect(toggle.findAllByType('span').map((span) => String(span.props.children ?? '')))
-      .toEqual(['产品规划', '未聚焦'])
-
-    act(() => toggle.props.onClick())
-    expect(onToggleRoomFocus).toHaveBeenCalledWith(true)
-
-    const enabled = renderComposer({
-      roomFocusVisible: true,
-      roomFocusEnabled: true,
-      roomFocusRoomTitle: '产品规划',
-      onToggleRoomFocus,
-    })
-    const activeToggle = enabled.renderer.root.findByProps({ className: 'agent-room-focus-toggle' })
-    expect(activeToggle.props['aria-pressed']).toBe(true)
-    expect(activeToggle.props['data-active']).toBe('true')
-    expect(activeToggle.findAllByType('span').map((span) => String(span.props.children ?? '')))
-      .toEqual(['产品规划', '已聚焦'])
-
-    act(() => activeToggle.props.onClick())
-    expect(onToggleRoomFocus).toHaveBeenCalledWith(false)
   })
 
   it('ignores stale search responses and never loads previews on hover', async () => {
@@ -422,7 +404,7 @@ describe('AgentComposer model tier picker', () => {
   })
 
   async function openModelPicker(overrides: Partial<React.ComponentProps<typeof AgentComposer>> = {}) {
-    const loadModelAvailability = vi.fn(async () => true)
+    const loadModelAvailability = vi.fn(async () => ({ lite: true, primary: true }))
     const onSelectModelPreference = vi.fn()
     const { renderer } = renderComposer({ loadModelAvailability, onSelectModelPreference, ...overrides })
     const trigger = renderer.root.findByProps({ className: 'agent-model-tier-toggle' })
@@ -442,7 +424,7 @@ describe('AgentComposer model tier picker', () => {
   })
 
   it('hides the lite tier and skips availability ping until opened when lite is unconfigured', async () => {
-    const { options, renderer } = await openModelPicker({ loadModelAvailability: vi.fn(async () => false) })
+    const { options, renderer } = await openModelPicker({ loadModelAvailability: vi.fn(async () => ({ lite: false, primary: true })) })
 
     expect(options.map((option) => String(option.findByType('strong').children))).toEqual(['智能', '强模型'])
     expect(renderer.root.findAll((node) => node.children.includes('轻量模型直答'))).toHaveLength(0)
@@ -463,7 +445,20 @@ describe('AgentComposer model tier picker', () => {
     const { renderer } = await openModelPicker({ modelPreferenceLocked: true })
 
     expect(renderer.root.findByProps({ className: 'agent-model-picker-hint' }).children)
-      .toContain('档位在会话开始时锁定，切换将在新对话中生效')
+      .toContain('会话开始后档位锁定，切换将在新对话中生效')
+  })
+
+  it('prompts to configure instead of switching when the primary tier is unavailable', async () => {
+    const { renderer, onSelectModelPreference } = await openModelPicker({
+      loadModelAvailability: vi.fn(async () => ({ lite: true, primary: false })),
+    })
+
+    const primaryOption = renderer.root.findAllByProps({ role: 'option' })
+      .find((option) => String(option.findByType('strong').children) === '强模型')!
+    act(() => primaryOption.props.onClick())
+
+    expect(showToast).toHaveBeenCalledWith(expect.objectContaining({ title: '强模型未配置' }))
+    expect(onSelectModelPreference).not.toHaveBeenCalled()
   })
 
   it('reflects a non-default tier on the trigger', async () => {
@@ -472,5 +467,294 @@ describe('AgentComposer model tier picker', () => {
 
     expect(trigger.props['data-tier']).toBe('primary')
     expect(trigger.findAllByType('span').map((span) => String(span.props.children ?? ''))).toEqual(['强模型'])
+  })
+})
+
+describe('AgentComposer CLI channel picker', () => {
+  beforeEach(() => {
+    vi.stubGlobal('window', {
+      requestAnimationFrame: (callback: FrameRequestCallback) => { callback(0); return 1 },
+    })
+    vi.stubGlobal('document', { activeElement: null, addEventListener: vi.fn(), removeEventListener: vi.fn() })
+  })
+
+  afterEach(() => {
+    vi.clearAllMocks()
+    vi.unstubAllGlobals()
+  })
+
+  async function openChannelPicker(overrides: Partial<React.ComponentProps<typeof AgentComposer>> = {}) {
+    const onSelectChannelAgent = vi.fn()
+    const onSelectModelPreference = vi.fn()
+    const { renderer } = renderComposer({ onSelectChannelAgent, onSelectModelPreference, ...overrides })
+    const trigger = renderer.root.findByProps({ className: 'agent-model-tier-toggle' })
+    await act(async () => { trigger.props.onClick(); await Promise.resolve() })
+    const channelOptions = renderer.root.findByProps({ className: 'agent-model-channel-group' })
+      .findAllByProps({ role: 'option' })
+    return { renderer, trigger, channelOptions, onSelectChannelAgent, onSelectModelPreference }
+  }
+
+  it('lists callable CLI agents in a channel group and reports the choice', async () => {
+    const { renderer, channelOptions, onSelectChannelAgent } = await openChannelPicker()
+
+    expect(channelOptions.map((option) => option.findByType('strong').children[0]))
+      .toEqual(['Codex', 'Claude Code'])
+    act(() => channelOptions[0]!.props.onClick())
+
+    expect(onSelectChannelAgent).toHaveBeenCalledWith('codex:/usr/local/bin/codex')
+    expect(renderer.root.findAllByProps({ className: 'agent-composer-popover agent-model-picker' })).toHaveLength(0)
+  })
+
+  it('shows the locked channel on the trigger and unselects tiers', async () => {
+    const { renderer, trigger, channelOptions } = await openChannelPicker({
+      channelAgentId: 'codex:/usr/local/bin/codex',
+    })
+
+    expect(trigger.props['data-channel']).toBe('codex:/usr/local/bin/codex')
+    expect(trigger.props['data-tier']).toBeUndefined()
+    expect(trigger.findAllByType('span').map((span) => String(span.props.children ?? ''))).toEqual(['Codex'])
+    expect(channelOptions[0]!.props['aria-selected']).toBe(true)
+    expect(channelOptions[1]!.props['aria-selected']).toBe(false)
+    const tierOptions = renderer.root.findByProps({ className: 'agent-composer-popover agent-model-picker' })
+      .findAllByProps({ role: 'option' })
+      .filter((option) => !channelOptions.includes(option as never))
+    expect(tierOptions.map((option) => option.props['aria-selected'])).toEqual([false, false])
+  })
+
+  it('picking a tier while a channel is active exits the channel', async () => {
+    const { renderer, onSelectChannelAgent, onSelectModelPreference } = await openChannelPicker({
+      channelAgentId: 'claude:/usr/local/bin/claude',
+    })
+    const tierOption = renderer.root.findByProps({ className: 'agent-composer-popover agent-model-picker' })
+      .findAllByProps({ role: 'option' })
+      .find((option) => String(option.findByType('strong').children) === '强模型')!
+
+    act(() => tierOption.props.onClick())
+
+    expect(onSelectChannelAgent).toHaveBeenCalledWith(null)
+    expect(onSelectModelPreference).toHaveBeenCalledWith('primary')
+  })
+
+})
+
+describe('AgentComposer context usage meter', () => {
+  const usage = { tokens: 41_200, contextWindow: 128_000, percent: 32.2 }
+
+  beforeEach(() => {
+    vi.stubGlobal('window', {
+      requestAnimationFrame: (callback: FrameRequestCallback) => { callback(0); return 1 },
+    })
+    vi.stubGlobal('document', { activeElement: null, addEventListener: vi.fn(), removeEventListener: vi.fn() })
+  })
+
+  afterEach(() => {
+    vi.clearAllMocks()
+    vi.unstubAllGlobals()
+  })
+
+  it('defaults to a small ring whose hover title carries the numbers, then opens a breakdown on click', () => {
+    const { renderer } = renderComposer({
+      contextUsage: {
+        ...usage,
+        segments: [
+          { key: 'systemPrompt', tokens: 5_200 },
+          { key: 'tools', tokens: 12_000 },
+          { key: 'user', tokens: 6_000 },
+          { key: 'assistant', tokens: 14_000 },
+          { key: 'toolResults', tokens: 4_000 },
+        ],
+      },
+    })
+
+    // 默认态：只有一个圆环按钮，数字都收在悬停 title 里。
+    const ring = renderer.root.findByProps({ className: 'agent-context-ring' })
+    expect(ring.props['aria-expanded']).toBe(false)
+    expect(ring.props.title).toBe('上下文 41,200 / 128,000 tokens（32%）')
+    expect(renderer.root.findAllByProps({ className: 'agent-composer-popover agent-context-breakdown' })).toHaveLength(0)
+
+    act(() => ring.props.onClick())
+
+    expect(renderer.root.findByProps({ className: 'agent-context-ring' }).props['aria-expanded']).toBe(true)
+    const panel = renderer.root.findByProps({ className: 'agent-composer-popover agent-context-breakdown' })
+    expect(panel.findByProps({ className: 'agent-context-breakdown-head' }).findByType('strong').children)
+      .toContain('41K / 128K')
+
+    const rows = panel.findAllByProps({ className: 'agent-context-breakdown-label' }).map((row) => String(row.children))
+    expect(rows).toEqual(['助手消息', '工具定义', '用户消息', '系统提示', '工具结果', '剩余空间'])
+
+    const shares = panel.findAllByProps({ className: 'agent-context-breakdown-share' }).map((row) => String(row.children))
+    expect(shares).toEqual(['11%', '9.4%', '4.7%', '4.1%', '3.1%', '68%'])
+  })
+
+  it('renders nothing when usage is unknown, and breathes while compacting', () => {
+    const hidden = renderComposer({ contextUsage: null })
+    expect(hidden.renderer.root.findAllByProps({ className: 'agent-context-ring' })).toEqual([])
+
+    // 有窗口但 tokens 未知（压缩刚结束）：圆环只剩轨道，且带呼吸态。
+    const postCompaction = renderComposer({
+      contextUsage: { tokens: null, contextWindow: 128_000, percent: null },
+      contextCompacting: true,
+    })
+    const ring = postCompaction.renderer.root.findByProps({ className: 'agent-context-ring agent-context-ring--compacting' })
+    expect(ring.props['data-level']).toBeUndefined()
+
+    // 快照完全缺失却压缩中：退回文字胶囊兜底。
+    const compacting = renderComposer({ contextUsage: null, contextCompacting: true })
+    const chip = compacting.renderer.root.findByProps({ className: 'agent-context-usage agent-context-usage--compacting' })
+
+    expect(chip.props.title).toBe('上下文压缩中…')
+  })
+})
+
+describe('AgentComposer ghost suggestion', () => {
+  beforeEach(() => {
+    vi.stubGlobal('window', {
+      requestAnimationFrame: (callback: FrameRequestCallback) => { callback(0); return 1 },
+    })
+    vi.stubGlobal('document', { activeElement: null, addEventListener: vi.fn(), removeEventListener: vi.fn() })
+  })
+
+  afterEach(() => {
+    vi.clearAllMocks()
+    vi.unstubAllGlobals()
+  })
+
+  function keyDown(renderer: TestRenderer.ReactTestRenderer, key: string) {
+    const textarea = renderer.root.findByProps({ 'aria-label': '桌面 AI 工作台输入框' })
+    const preventDefault = vi.fn()
+    act(() => textarea.props.onKeyDown({
+      key,
+      shiftKey: false,
+      preventDefault,
+      nativeEvent: { isComposing: false, keyCode: key === 'Enter' ? 13 : 0 },
+    }))
+    return preventDefault
+  }
+
+  it('shows the suggestion as the placeholder on empty draft', () => {
+    const { renderer } = renderComposer({ ghostSuggestion: '继续排查导出失败' })
+    const textarea = renderer.root.findByProps({ 'aria-label': '桌面 AI 工作台输入框' })
+    expect(textarea.props.placeholder).toBe('继续排查导出失败')
+  })
+
+  it('accepts with Tab by filling without submitting', () => {
+    const onAcceptGhost = vi.fn()
+    const onSubmit = vi.fn()
+    const { renderer } = renderComposer({ ghostSuggestion: '继续排查导出失败', onAcceptGhost, onSubmit })
+
+    const preventDefault = keyDown(renderer, 'Tab')
+    expect(preventDefault).toHaveBeenCalled()
+    expect(onAcceptGhost).toHaveBeenCalledTimes(1)
+    expect(onSubmit).not.toHaveBeenCalled()
+  })
+
+  it('accepts with Enter by filling without submitting', () => {
+    const onAcceptGhost = vi.fn()
+    const onSubmit = vi.fn()
+    const { renderer } = renderComposer({ ghostSuggestion: '继续排查导出失败', onAcceptGhost, onSubmit })
+
+    const preventDefault = keyDown(renderer, 'Enter')
+    expect(preventDefault).toHaveBeenCalled()
+    expect(onAcceptGhost).toHaveBeenCalledTimes(1)
+    expect(onSubmit).not.toHaveBeenCalled()
+  })
+
+  it('dismisses on Escape', () => {
+    const onDismissGhost = vi.fn()
+    const { renderer } = renderComposer({ ghostSuggestion: '继续排查导出失败', onDismissGhost })
+
+    const preventDefault = keyDown(renderer, 'Escape')
+    expect(preventDefault).toHaveBeenCalled()
+    expect(onDismissGhost).toHaveBeenCalledTimes(1)
+  })
+
+  it('stays out of the way once the draft has content: Enter submits normally', () => {
+    const onAcceptGhost = vi.fn()
+    const onSubmit = vi.fn()
+    const { renderer } = renderComposer({
+      ghostSuggestion: '继续排查导出失败',
+      value: '我自己已经打了字',
+      onAcceptGhost,
+      onSubmit,
+    })
+
+    const textarea = renderer.root.findByProps({ 'aria-label': '桌面 AI 工作台输入框' })
+    expect(textarea.props.placeholder).not.toBe('继续排查导出失败')
+
+    keyDown(renderer, 'Enter')
+    expect(onAcceptGhost).not.toHaveBeenCalled()
+    expect(onSubmit).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not accept an IME confirmation Enter as a ghost acceptance', () => {
+    const onAcceptGhost = vi.fn()
+    const { renderer } = renderComposer({ ghostSuggestion: '继续排查导出失败', onAcceptGhost })
+    const textarea = renderer.root.findByProps({ 'aria-label': '桌面 AI 工作台输入框' })
+    const preventDefault = vi.fn()
+
+    act(() => textarea.props.onCompositionStart())
+    act(() => textarea.props.onKeyDown({
+      key: 'Enter',
+      shiftKey: false,
+      preventDefault,
+      nativeEvent: { isComposing: true, keyCode: 229 },
+    }))
+
+    expect(preventDefault).not.toHaveBeenCalled()
+    expect(onAcceptGhost).not.toHaveBeenCalled()
+  })
+})
+
+describe('AgentComposer queued submissions', () => {
+  beforeEach(() => {
+    vi.stubGlobal('window', {
+      requestAnimationFrame: (callback: FrameRequestCallback) => { callback(0); return 1 },
+    })
+    vi.stubGlobal('document', { activeElement: null, addEventListener: vi.fn(), removeEventListener: vi.fn() })
+  })
+
+  afterEach(() => {
+    vi.clearAllMocks()
+    vi.unstubAllGlobals()
+  })
+
+  it('keeps the textarea enabled while a run is active so Enter still submits (queues upstream)', () => {
+    const onSubmit = vi.fn()
+    const { renderer } = renderComposer({ active: true, value: '排队消息', onSubmit })
+    const textarea = renderer.root.findByProps({ 'aria-label': '桌面 AI 工作台输入框' })
+    expect(textarea.props.disabled).toBe(false)
+    expect(textarea.props.placeholder).toBe('Agent 正在处理，输入将排队，结束后自动发送')
+
+    act(() => textarea.props.onKeyDown({
+      key: 'Enter',
+      shiftKey: false,
+      preventDefault: vi.fn(),
+      nativeEvent: { isComposing: false, keyCode: 13 },
+    }))
+    expect(onSubmit).toHaveBeenCalledTimes(1)
+  })
+
+  it('renders queued chips in order and removes one on click', () => {
+    const onRemoveQueuedSubmission = vi.fn()
+    const { renderer } = renderComposer({
+      active: true,
+      queuedSubmissions: [
+        { id: 'q1', prompt: '第一条排队' },
+        { id: 'q2', prompt: '第二条排队' },
+      ],
+      onRemoveQueuedSubmission,
+    })
+    const chips = renderer.root.findAllByProps({ className: 'agent-queued-item' })
+    expect(chips).toHaveLength(2)
+    expect(chips[0].findByProps({ className: 'agent-queued-item-text' }).children).toEqual(['第一条排队'])
+    expect(chips[1].findByProps({ className: 'agent-queued-item-text' }).children).toEqual(['第二条排队'])
+
+    act(() => chips[1].findByProps({ 'aria-label': '移除排队消息' }).props.onClick())
+    expect(onRemoveQueuedSubmission).toHaveBeenCalledWith('q2')
+  })
+
+  it('renders no queue surface when nothing is queued', () => {
+    const { renderer } = renderComposer({ active: true })
+    expect(renderer.root.findAllByProps({ className: 'agent-queued-submissions' })).toHaveLength(0)
   })
 })

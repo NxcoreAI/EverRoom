@@ -138,6 +138,8 @@ describe("agent 过滤闸（ingest 第一级）", () => {
       dataType: "document",
       title: "需求文档",
       markdown: "# 需求\nEverRoom v2 的目标……",
+      // 题材是过滤闸恢复扇出：显式开记忆以覆盖参考型文档的默认关闭
+      pipelines: { room: true, wiki: true, memory: true },
     });
     expect(result.filterStatus).toBe("pending");
     await vi.waitFor(() => {
@@ -146,6 +148,58 @@ describe("agent 过滤闸（ingest 第一级）", () => {
     });
     expect(submitEnvelope).toHaveBeenCalledTimes(1);
     expect(importToMemoryCore).toHaveBeenCalledTimes(1);
+
+    sqlite.close();
+  });
+
+  it("状态/参考分流：判定 stateLike 恢复参考型文档的记忆链路（类型默认关被 per-document 打开）", async () => {
+    const stub = filterStub({
+      verdicts: { "季度计划": verdict(true, { stateLike: true, reason: "计划类状态文档，会被后续更新覆盖" }) },
+    });
+    const { service, db, sqlite, submitEnvelope, importToMemoryCore } = await harness({
+      filter: stub.service,
+    });
+    // 不传 pipelines：document 类型走默认 memory:false（参考型兜底）
+    const result = await service.ingestConnector({
+      kind: "cloud-doc",
+      sourceId: "connector:notion:c1:doc-state-1",
+      dataType: "document",
+      title: "季度计划",
+      markdown: "# Q4 计划\n目标、里程碑与负责人……",
+    });
+    await vi.waitFor(() => {
+      const row = db.select().from(ingestEvents).where(eq(ingestEvents.id, result.eventId)).get();
+      expect(row?.filterStatus).toBe("passed");
+    });
+    expect(importToMemoryCore).toHaveBeenCalledTimes(1);
+    // 生效策略快照与判定一并落账（晋升/增量 ingest 读的快照不失真）
+    const row = db.select().from(ingestEvents).where(eq(ingestEvents.id, result.eventId)).get();
+    expect(row?.pipelines.memory).toBe(true);
+    expect(row?.filterVerdict?.stateLike).toBe(true);
+    expect(submitEnvelope).toHaveBeenCalledTimes(1);
+
+    sqlite.close();
+  });
+
+  it("判定参考型（stateLike:false）或未判定：document 默认 memory:false 维持（fail-closed）", async () => {
+    const stub = filterStub({
+      verdicts: { "API 手册": verdict(true, { stateLike: false }) },
+    });
+    const { service, db, sqlite, importToMemoryCore } = await harness({ filter: stub.service });
+    for (const title of ["API 手册", "随想笔记"]) {
+      await service.ingestConnector({
+        kind: "cloud-doc",
+        sourceId: `connector:notion:c1:${title}`,
+        dataType: "document",
+        title,
+        markdown: `# ${title}\n正文`,
+      });
+    }
+    await vi.waitFor(() => {
+      const rows = db.select().from(ingestEvents).all();
+      expect(rows.filter((item) => item.filterStatus === "passed")).toHaveLength(2);
+    });
+    expect(importToMemoryCore).not.toHaveBeenCalled();
 
     sqlite.close();
   });
@@ -332,6 +386,16 @@ describe("parseVerdicts 宽容解析", () => {
     expect(verdicts[0]).toMatchObject({ informative: false })
   })
 
+  it("stateLike 只透传明确 boolean（旧输出/非法值按未判定处理）", () => {
+    const verdicts = parseVerdicts(
+      '[{"informative":true,"stateLike":true,"reason":"计划","category":"other","confidence":1},{"informative":true,"stateLike":"yes","reason":"r","category":"other","confidence":1},{"informative":true,"reason":"旧格式","category":"other","confidence":1}]',
+      3,
+    )
+    expect(verdicts[0]?.stateLike).toBe(true)
+    expect(verdicts[1]?.stateLike).toBeUndefined()
+    expect(verdicts[2]?.stateLike).toBeUndefined()
+  })
+
   it("截断的数组（无闭合 ]）仍抛错 → fail-open", () => {
     expect(() => parseVerdicts('[{"informative":false,"reason":"半截', 1)).toThrow()
   })
@@ -375,6 +439,9 @@ describe("过滤 prompt 偏好化注入", () => {
     expect(prompt).toContain("预算 ≤8 次/批");
     // JSON 协议保留
     expect(prompt).toContain("只输出一个 JSON 数组");
+    // 状态/参考判定协议（一次判定顺带输出，恢复扇出时 per-document 打开 memory）
+    expect(prompt).toContain("【状态/参考判定】");
+    expect(prompt).toContain("\"stateLike\":boolean");
     // 兜底语义固定在 engine prompt，不受规则文档影响
     expect(prompt).toContain("宁漏勿错杀");
   });

@@ -49,6 +49,18 @@ export class IngestGatewayBridge {
     return this.request(`/v1/ingest/${encodeURIComponent(eventId)}/content`)
   }
 
+  /** 记忆引擎暂停闸（记忆页顶部「继续/暂停」）。 */
+  getPause(): Promise<{ paused: boolean; updatedAt: string | null }> {
+    return this.request('/v1/ingest/pause')
+  }
+
+  setPause(paused: boolean): Promise<{ paused: boolean; updatedAt: string }> {
+    return this.request('/v1/ingest/pause', {
+      method: 'PUT',
+      body: JSON.stringify({ paused }),
+    })
+  }
+
   private async request<T>(path: string, init?: RequestInit): Promise<T> {
     const connection = this.supervisor.getConnection()
     const response = await fetch(`${connection.baseUrl}${path}`, {

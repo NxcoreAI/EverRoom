@@ -60,7 +60,7 @@ export function dataMigrationRoutes(service: DataMigrationService): FastifyPlugi
     }, async (request, reply) => { await service.clear(request.params.id); return reply.code(204).send(); });
 
     app.get("/v1/data-migrations/conversations", {
-      schema: { querystring: Type.Object({ query: Type.Optional(Type.String({ maxLength: 500 })), cursor: Type.Optional(Type.String({ maxLength: 100 })), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 50 })) }) },
+      schema: { querystring: Type.Object({ query: Type.Optional(Type.String({ maxLength: 500 })), cursor: Type.Optional(Type.String({ maxLength: 100 })), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 200 })) }) },
     }, async (request) => service.searchConversations(request.query.query ?? "", request.query.cursor, request.query.limit ?? 20));
     app.get("/v1/data-migrations/conversations/:id/preview", {
       schema: { params: Type.Object({ id: Type.String() }) },

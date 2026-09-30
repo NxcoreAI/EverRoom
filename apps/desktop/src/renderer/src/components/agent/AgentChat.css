@@ -19,7 +19,8 @@
 .agent-chat-empty-heading {
   position: absolute;
   z-index: 1;
-  top: max(14px, calc(100% - var(--agent-composer-bottom) - var(--agent-composer-height) - 70px));
+  /* 快捷提示块(≈118px)移到编辑框上方后，标题相应上移让位。 */
+  top: max(14px, calc(100% - var(--agent-composer-bottom) - var(--agent-composer-height) - 200px));
   left: 12px;
   right: 12px;
   display: flex;
@@ -79,8 +80,7 @@
 
 .agent-message {
   display: flex;
-  width: fit-content;
-  max-width: 88%;
+  width: 100%;
   min-width: 0;
   flex-direction: column;
   align-self: flex-start;
@@ -88,6 +88,8 @@
 
 .agent-message[data-role='user'] {
   align-self: flex-end;
+  width: fit-content;
+  max-width: 88%;
   padding: 9px 13px;
   border-radius: 12px;
   background: #f3f4f6;
@@ -130,6 +132,11 @@
 }
 
 .agent-user-mention { align-self: flex-end; margin: 0 4px 3px; color: #9aa2ae; font-size: 10px; }
+button.agent-user-mention { padding: 1px 6px; border: none; border-radius: 5px; background: #e9f0ff; color: #5b6472; cursor: pointer; }
+button.agent-user-mention[data-kind='room'] { background: #eaf5ec; }
+button.agent-user-mention[data-kind='file'] { background: #f6efe2; }
+button.agent-user-mention[data-kind='conversation'] { background: #f3ecfa; }
+button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
 
 .agent-message p {
   margin: 0;
@@ -140,27 +147,118 @@
   white-space: pre-wrap;
 }
 
-.agent-message p + p,
-.agent-message p + .agent-output-list,
-.agent-message .agent-output-list + p {
-  margin-top: 8px;
-}
+.agent-message .agent-markdown > :first-child { margin-top: 0; }
 
-.agent-output-list {
-  margin: 6px 0 0;
+.agent-message .agent-markdown > :last-child { margin-bottom: 0; }
+
+.agent-message .agent-markdown > * + * { margin-top: 8px; }
+
+.agent-message .agent-markdown ul,
+.agent-message .agent-markdown ol {
+  margin: 0;
   padding-left: 20px;
   color: #17191d;
   font-size: 14px;
   line-height: 1.65;
 }
 
-.agent-output-list li {
+.agent-message .agent-markdown li {
   padding-left: 2px;
   overflow-wrap: anywhere;
 }
 
-.agent-output-list li + li {
-  margin-top: 3px;
+.agent-message .agent-markdown li + li { margin-top: 3px; }
+
+.agent-message .agent-markdown li > p { margin: 0; }
+
+.agent-message .agent-markdown li > p + p { margin-top: 4px; }
+
+.agent-message .agent-markdown h4,
+.agent-message .agent-markdown h5,
+.agent-message .agent-markdown h6 {
+  margin: 0;
+  color: #17191d;
+  line-height: 1.5;
+}
+
+.agent-message .agent-markdown h4 { font-size: 14px; font-weight: 600; }
+
+.agent-message .agent-markdown h5 { font-size: 13px; font-weight: 600; }
+
+.agent-message .agent-markdown h6 { font-size: 12px; font-weight: 550; color: #565e6a; }
+
+.agent-message .agent-markdown a {
+  color: #335d8f;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  overflow-wrap: anywhere;
+}
+
+.agent-message .agent-markdown blockquote {
+  margin: 0;
+  padding-left: 12px;
+  border-left: 2px solid #d9dde5;
+  color: #565e6a;
+}
+
+.agent-message .agent-markdown blockquote p { color: inherit; }
+
+.agent-message .agent-markdown hr {
+  margin: 10px 0 0;
+  border: 0;
+  border-top: 1px solid #e3e6ec;
+}
+
+.agent-message .agent-markdown table {
+  display: block;
+  width: fit-content;
+  max-width: 100%;
+  margin: 8px 0 0;
+  border-collapse: collapse;
+  overflow-x: auto;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.agent-message .agent-markdown th,
+.agent-message .agent-markdown td {
+  padding: 5px 10px;
+  border: 1px solid #d9dde5;
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.agent-message .agent-markdown th {
+  background: #f4f6f9;
+  color: #30343a;
+  font-weight: 600;
+}
+
+.agent-message .agent-markdown code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: #f1f3f7;
+  color: #30343a;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12.5px;
+}
+
+.agent-message .agent-markdown pre {
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #17191d;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.agent-message .agent-markdown pre code {
+  padding: 0;
+  background: none;
+  color: #f4f6f8;
+  font-size: 12px;
 }
 
 .agent-message[data-role='user'] p {
@@ -588,16 +686,8 @@
   white-space: pre-wrap;
 }
 
-.agent-reasoning-content p + p,
-.agent-reasoning-content p + .agent-output-list,
-.agent-reasoning-content .agent-output-list + p {
+.agent-reasoning-content p + p {
   margin-top: 6px;
-}
-
-.agent-reasoning-content .agent-output-list {
-  margin-top: 4px;
-  color: inherit;
-  font-size: inherit;
 }
 
 .agent-execution {
@@ -1642,7 +1732,7 @@ button.agent-slides-progress-header {
 .agent-chat-quick-prompts {
   position: absolute;
   z-index: 3;
-  top: calc(100% - var(--agent-composer-bottom) + 10px);
+  bottom: calc(var(--agent-composer-bottom) + var(--agent-composer-height) + 10px);
   left: 12px;
   right: 12px;
   display: flex;
@@ -1662,6 +1752,15 @@ button.agent-slides-progress-header {
   transform: translateY(0);
   visibility: visible;
   transition-delay: 0s;
+}
+
+/* 快捷提示在编辑框上方；模型/@ 弹层从 composer 顶边向上展开，展开期间隐藏提示避免重叠。 */
+.agent-chat-conversation-frame[data-empty='true'] .agent-composer-shell[data-menu-open='true'] ~ .agent-chat-quick-prompts {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(10px);
+  visibility: hidden;
+  transition: opacity 180ms 180ms ease, transform 220ms 180ms cubic-bezier(.22, 1, .36, 1), visibility 0s 180ms linear;
 }
 
 .agent-chat-quick-prompts button {
@@ -1758,16 +1857,35 @@ button.agent-slides-progress-header {
   box-shadow: 0 12px 30px rgba(25, 31, 41, 0.14), 0 2px 7px rgba(25, 31, 41, 0.06);
 }
 
-.agent-chat-conversation-frame[data-empty='true'] .agent-composer-shell[data-menu-open='true'] {
+/* 空态抬升只给高弹层（@ 弹层、外部会话选择器）；小菜单（模型/斜杠）不挪 composer。 */
+.agent-chat-conversation-frame[data-empty='true'] .agent-composer-shell[data-lift='true'] {
   bottom: 16px;
 }
 
-.agent-mention-list { display: grid; gap: 2px; max-height: 246px; overflow-y: auto; padding: 5px; }
-.agent-mention-option { display: flex; min-height: 30px; align-items: center; padding: 5px 9px; border: 0; border-radius: 6px; background: transparent; color: #22272f; text-align: left; cursor: pointer; }
+/* 弹层整体固定高度（tab 间切换不跳动）；仅选项列表内部滚动。 */
+.agent-mention-popover { display: flex; flex-direction: column; height: 240px; }
+.agent-mention-list { flex: 1 1 auto; display: grid; gap: 1px; align-content: start; overflow-y: auto; padding: 4px; scrollbar-width: thin; scrollbar-color: rgba(100, 116, 139, 0.3) transparent; }
+.agent-mention-list::-webkit-scrollbar { width: 6px; }
+.agent-mention-list::-webkit-scrollbar-track, .agent-mention-list::-webkit-scrollbar-corner { background: transparent; }
+.agent-mention-list::-webkit-scrollbar-thumb { border-radius: 999px; background-color: rgba(100, 116, 139, 0.3); }
+.agent-mention-list::-webkit-scrollbar-thumb:hover { background-color: rgba(100, 116, 139, 0.45); }
+.agent-mention-option { display: flex; min-height: 26px; align-items: center; gap: 7px; padding: 3px 8px; border: 0; border-radius: 6px; background: transparent; color: #22272f; text-align: left; cursor: pointer; }
 .agent-mention-option:hover, .agent-mention-option[data-active='true'] { background: #f0f2f5; }
 .agent-mention-option:focus-visible { outline: 2px solid rgba(71, 84, 103, .3); outline-offset: -2px; }
 .agent-mention-option strong { min-width: 0; overflow: hidden; font-size: 12px; font-weight: 560; text-overflow: ellipsis; white-space: nowrap; }
-.agent-mention-empty { padding: 12px 4px; color: #8b93a0; font-size: 11px; text-align: center; }
+.agent-mention-option small { min-width: 0; overflow: hidden; color: #747d8a; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.agent-mention-group-label { display: flex; align-items: center; gap: 5px; padding: 6px 8px 2px; color: #8b93a0; font-size: 10px; font-weight: 650; letter-spacing: .02em; }
+.agent-mention-group-label svg { width: 11px; height: 11px; }
+.agent-mention-tabs { display: flex; gap: 2px; padding: 3px 4px 2px; margin-bottom: 2px; }
+.agent-mention-tab { display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; border: 0; border-radius: 5px; background: transparent; color: #747d8a; cursor: pointer; font-size: 10px; font-weight: 620; }
+.agent-mention-tab[data-selected='true'] { background: #eceef2; color: #22272f; }
+.agent-mention-tab[data-selected='true'] span { color: #8b93a0; }
+.agent-mention-tab span { color: #98a1ad; font-weight: 550; }
+.agent-mention-tab:disabled { opacity: 0.45; cursor: default; }
+.agent-mention-option-icon { display: inline-flex; width: 16px; height: 16px; flex: 0 0 16px; align-items: center; justify-content: center; background: transparent; overflow: hidden; }
+.agent-mention-option-icon svg { width: 12px; height: 12px; }
+.agent-mention-option-icon img { width: 16px; height: 16px; object-fit: contain; }
+.agent-mention-empty { flex: 1; display: grid; place-items: center; padding: 10px 4px; color: #8b93a0; font-size: 11px; text-align: center; }
 .agent-command-picker { display: grid; padding: 5px; }
 .agent-command-picker button { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; align-items: center; gap: 9px; min-height: 48px; padding: 7px 8px; border: 0; border-radius: 5px; background: #f3f5f7; color: #1d232d; text-align: left; cursor: pointer; }
 .agent-command-picker button:hover, .agent-command-picker button:focus-visible { outline: 0; background: #eceff3; }
@@ -1786,8 +1904,10 @@ button.agent-slides-progress-header {
 .agent-picker-icon-button { display: grid; width: 28px; height: 28px; place-items: center; padding: 0; border: 0; border-radius: 5px; background: transparent; color: #69717d; cursor: pointer; }
 .agent-picker-icon-button:hover, .agent-picker-icon-button:focus-visible { outline: 0; background: #f0f2f4; color: #242a32; }
 .agent-picker-icon-button svg { width: 15px; height: 15px; }
-.agent-picker-header-icon { display: grid; width: 28px; height: 28px; place-items: center; border-radius: 6px; background: #eef4ff; color: #4d6faf; }
-.agent-picker-header-icon svg { width: 14px; height: 14px; }
+/* 模型/渠道选项行图标：去底色块，仅留裸图标。 */
+.agent-picker-header-icon { display: grid; width: 22px; height: 22px; place-items: center; color: #667085; }
+.agent-picker-header-icon svg { width: 15px; height: 15px; }
+.agent-picker-header-icon .source-icon { width: 16px; height: 16px; object-fit: contain; }
 .agent-external-search { display: flex; align-items: center; min-height: 38px; gap: 7px; margin: 7px 8px 6px; padding: 0 9px; border: 1px solid #dfe3e8; border-radius: 6px; background: #fafbfc; }
 .agent-external-search:focus-within { border-color: #bcc3cc; background: #fff; box-shadow: 0 0 0 2px rgba(71, 84, 103, .08); }
 .agent-external-search svg { width: 14px; height: 14px; flex: 0 0 auto; color: #818995; }
@@ -1933,6 +2053,10 @@ button.agent-slides-progress-header {
   box-decoration-break: clone;
 }
 
+.agent-mention-token[data-kind='room'] { background: #eaf5ec; }
+.agent-mention-token[data-kind='file'] { background: #f6efe2; }
+.agent-mention-token[data-kind='conversation'] { background: #f3ecfa; }
+
 .agent-context-citations {
   display: flex;
   min-width: 0;
@@ -2004,16 +2128,6 @@ button.agent-slides-progress-header {
 .agent-context-citation > button svg {
   width: 12px;
   height: 12px;
-}
-
-.agent-file-input {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip: rect(0 0 0 0);
-  clip-path: inset(50%);
-  white-space: nowrap;
 }
 
 .agent-attachments {
@@ -2092,6 +2206,74 @@ button.agent-slides-progress-header {
   height: 12px;
 }
 
+.agent-queued-submissions {
+  display: flex;
+  min-width: 0;
+  gap: 5px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.agent-queued-submissions::-webkit-scrollbar {
+  display: none;
+}
+
+.agent-queued-item {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 260px;
+  height: 27px;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 5px;
+  padding: 0 4px 0 8px;
+  border: 1px dashed #c3c9d2;
+  border-radius: 7px;
+  background: #f6f8fa;
+  color: #555d69;
+}
+
+.agent-queued-item > svg {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 12px;
+  color: #8b7ce8;
+}
+
+.agent-queued-item-text {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-queued-item button {
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #8b929d;
+  cursor: pointer;
+}
+
+.agent-queued-item button:hover {
+  background: #eceef1;
+  color: #454b54;
+}
+
+.agent-queued-item button svg {
+  width: 12px;
+  height: 12px;
+}
+
 .agent-prompt-actions {
   display: flex;
   min-width: 0;
@@ -2145,7 +2327,260 @@ button.agent-slides-progress-header {
   height: 12px;
 }
 
-.agent-prompt-tool,
+/* 实时上下文用量：压缩中且尚无用量数据时的兜底胶囊（平时只显示小圆环）。 */
+.agent-context-usage {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 170px;
+  margin-left: auto;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: #f0f1f3;
+  color: #757d89;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* 压缩中动效：呼吸圆点 + 文案。 */
+.agent-context-usage--compacting {
+  color: #5876d8;
+}
+
+.agent-context-usage-pulse {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 6px;
+  border-radius: 50%;
+  background: #5876d8;
+  animation: agent-context-pulse 1.1s ease-in-out infinite;
+}
+
+@keyframes agent-context-pulse {
+  0%,
+  100% {
+    opacity: 0.25;
+    transform: scale(0.8);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* 上下文圆环：默认态只有一个圆环，悬停看数字（title），点击展开占用构成。 */
+.agent-context-ring {
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  margin-left: auto;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: #5876d8;
+  cursor: pointer;
+}
+
+.agent-context-ring:hover,
+.agent-context-ring[aria-expanded='true'] {
+  background: #f0f1f3;
+}
+
+.agent-context-ring-track {
+  stroke: #dcdee2;
+}
+
+.agent-context-ring-arc {
+  stroke: currentColor;
+  transition: stroke 0.3s ease;
+}
+
+/* 高占用（≥85%，临近 pi 自动压缩阈值）换警示色。 */
+.agent-context-ring[data-level='high'] {
+  color: #b4552d;
+}
+
+/* 压缩中：圆环呼吸。 */
+.agent-context-ring--compacting {
+  animation: agent-ring-breathe 1.1s ease-in-out infinite;
+}
+
+@keyframes agent-ring-breathe {
+  0%,
+  100% {
+    opacity: 0.4;
+  }
+
+  50% {
+    opacity: 1;
+  }
+}
+
+/* 占用构成面板：悬停圆环后的分析弹层。 */
+.agent-context-breakdown {
+  left: auto;
+  width: min(300px, calc(100% - 24px));
+  padding: 10px 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.agent-context-breakdown-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  color: #757d89;
+}
+
+.agent-context-breakdown-head strong {
+  font-variant-numeric: tabular-nums;
+  color: #343941;
+}
+
+.agent-context-breakdown-bar {
+  display: flex;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e3e5e9;
+}
+
+.agent-context-breakdown-bar > span {
+  display: block;
+  height: 100%;
+  min-width: 2px;
+}
+
+.agent-context-breakdown-rows {
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 3px;
+  list-style: none;
+  font-size: 11px;
+}
+
+.agent-context-breakdown-rows li {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) auto 44px;
+  align-items: center;
+  gap: 6px;
+}
+
+.agent-context-breakdown-dot {
+  width: 7px;
+  height: 7px;
+  justify-self: center;
+  border-radius: 50%;
+  background: #8a929d;
+}
+
+.agent-context-breakdown-label {
+  min-width: 0;
+  overflow: hidden;
+  color: #555d69;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-context-breakdown-tokens,
+.agent-context-breakdown-share {
+  color: #757d89;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.agent-context-breakdown-empty {
+  margin: 0;
+  color: #8a929d;
+  font-size: 11px;
+}
+
+/* 段配色：与 Claude Code 的分类习惯对齐。 */
+.agent-context-breakdown-bar > span[data-key='systemPrompt'],
+.agent-context-breakdown-dot[data-key='systemPrompt'] {
+  background: #d9a441;
+}
+
+.agent-context-breakdown-bar > span[data-key='tools'],
+.agent-context-breakdown-dot[data-key='tools'] {
+  background: #5876d8;
+}
+
+.agent-context-breakdown-bar > span[data-key='user'],
+.agent-context-breakdown-dot[data-key='user'] {
+  background: #6aa84f;
+}
+
+.agent-context-breakdown-bar > span[data-key='assistant'],
+.agent-context-breakdown-dot[data-key='assistant'] {
+  background: #b4552d;
+}
+
+.agent-context-breakdown-bar > span[data-key='toolResults'],
+.agent-context-breakdown-dot[data-key='toolResults'] {
+  background: #8a6fc1;
+}
+
+.agent-context-breakdown-bar > span[data-key='other'],
+.agent-context-breakdown-dot[data-key='other'] {
+  background: #8a929d;
+}
+
+.agent-context-breakdown-dot[data-key='free'] {
+  background: #e3e5e9;
+}
+
+.agent-model-picker-hint {
+  padding: 7px 9px 6px;
+  border-top: 1px solid #eceef1;
+  color: #8b93a0;
+  font-size: 10px;
+  text-align: center;
+}
+
+/* 权限模式弹层：与模型选择器同族，锚在底栏左上方。 */
+.agent-composer-popover.agent-permission-mode-picker {
+  right: auto;
+  left: 12px;
+  bottom: 52px;
+  display: grid;
+  gap: 1px;
+  width: max-content;
+  min-width: 232px;
+  max-width: 320px;
+  padding: 4px;
+  border-color: #e8eaee;
+  box-shadow: 0 10px 28px rgba(25, 31, 41, 0.1), 0 2px 6px rgba(25, 31, 41, 0.05);
+}
+
+/* full_access 危险档：选项标题与当前态切换钮同用危险色。 */
+.agent-model-option[data-danger='true'] strong { color: #b42318; }
+.agent-permission-mode-toggle[data-danger='true'] { color: #b42318; font-weight: 500; }
+.agent-permission-mode-toggle[data-danger='true']:hover:not(:disabled) { background: #fef3f2; color: #912018; }
+
+/* 两步确认：警告文案 + 取消/开启。 */
+.agent-permission-mode-confirm { display: grid; gap: 7px; padding: 10px 10px 8px; }
+.agent-permission-mode-confirm strong { font-size: 12px; color: #b42318; }
+.agent-permission-mode-confirm p { margin: 0; color: #667085; font-size: 11px; line-height: 1.5; }
+.agent-permission-mode-confirm-actions { display: flex; justify-content: flex-end; gap: 6px; }
+.agent-permission-mode-confirm-actions button { height: 26px; padding: 0 10px; border: 1px solid #e3e6ea; border-radius: 6px; background: #fff; color: #475467; font-size: 11px; cursor: pointer; }
+.agent-permission-mode-confirm-actions button:hover { background: #f5f6f8; }
+.agent-permission-mode-confirm-actions .agent-permission-mode-confirm-enable { border-color: #b42318; background: #b42318; color: #fff; }
+.agent-permission-mode-confirm-actions .agent-permission-mode-confirm-enable:hover { background: #912018; }
+
 .agent-prompt-submit {
   display: inline-flex;
   width: 30px;
@@ -2161,74 +2596,28 @@ button.agent-slides-progress-header {
   cursor: pointer;
 }
 
-.agent-prompt-tool:hover:not(:disabled) {
-  background: #f1f2f4;
-  color: #2f343b;
-}
 
-.agent-prompt-tool:disabled {
-  cursor: default;
-  opacity: 0.42;
-}
-
-.agent-room-focus-toggle {
-  display: inline-flex;
-  min-width: 0;
-  max-width: 170px;
-  height: 24px;
-  flex: 0 1 auto;
-  align-items: center;
-  gap: 5px;
-  padding: 0 9px;
-  border: 1px solid #e3e6eb;
-  border-radius: 7px;
-  background: #f8f9fa;
-  color: #555d69;
-  font-size: 11px;
-  white-space: nowrap;
-  cursor: pointer;
-}
-
-.agent-room-focus-toggle:hover:not(:disabled) {
-  border-color: #d3d7de;
-}
-
-.agent-room-focus-toggle:disabled {
-  cursor: default;
-  opacity: 0.42;
-}
-
-.agent-room-focus-toggle .agent-room-focus-name {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.agent-room-focus-toggle[data-active='true'] {
-  border-color: transparent;
-  background: var(--accent-soft);
-  color: var(--accent-strong);
-}
-
+/* 底栏控件统一 ghost 风格：无框无底，图标+文字+下拉箭头，悬停浅底。 */
 .agent-model-tier-toggle {
   display: inline-flex;
   min-width: 0;
   flex: 0 0 auto;
   align-items: center;
   gap: 5px;
-  height: 24px;
-  padding: 0 9px;
-  border: 1px solid #e3e6eb;
-  border-radius: 7px;
-  background: #f8f9fa;
-  color: #555d69;
-  font-size: 11px;
+  height: 26px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #667085;
+  font-size: 11.5px;
   white-space: nowrap;
   cursor: pointer;
 }
 
 .agent-model-tier-toggle:hover:not(:disabled) {
-  border-color: #d3d7de;
+  background: #f1f2f4;
+  color: #344054;
 }
 
 .agent-model-tier-toggle:disabled {
@@ -2237,31 +2626,53 @@ button.agent-slides-progress-header {
 }
 
 .agent-model-tier-toggle svg {
-  width: 12px;
-  height: 12px;
-  flex: 0 0 12px;
+  width: 13px;
+  height: 13px;
+  flex: 0 0 13px;
 }
+
+/* 渠道 chip 用品牌 logo（SourceIcon img）+ 下拉箭头；尺寸独立于 svg 图标。 */
+.agent-model-tier-toggle .source-icon { width: 14px; height: 14px; flex: 0 0 14px; object-fit: contain; }
+.agent-model-tier-toggle .agent-model-tier-caret { width: 11px; height: 11px; flex: 0 0 11px; opacity: 0.65; }
+.agent-model-tier-toggle:hover:not(:disabled) .agent-model-tier-caret { opacity: 1; }
 
 .agent-model-tier-toggle[data-tier='primary'],
-.agent-model-tier-toggle[data-tier='lite'] {
-  border-color: transparent;
-  background: var(--accent-soft);
-  color: var(--accent-strong);
+.agent-model-tier-toggle[data-tier='lite'],
+.agent-model-tier-toggle[data-channel] {
+  color: #1f242c;
+  font-weight: 500;
 }
 
-.agent-model-picker {
+.agent-model-channel-group {
   display: grid;
-  gap: 2px;
-  padding: 5px;
+  gap: 1px;
+  margin-top: 3px;
+  padding-top: 4px;
+  border-top: 1px solid #eceef1;
+}
+
+/* 模型选择弹层：轻量紧凑，锚在底部选择器正上方（盖住输入区下沿），宽度随内容。 */
+.agent-composer-popover.agent-model-picker {
+  right: auto;
+  left: 12px;
+  bottom: 52px;
+  display: grid;
+  gap: 1px;
+  width: max-content;
+  min-width: 216px;
+  max-width: 320px;
+  padding: 4px;
+  border-color: #e8eaee;
+  box-shadow: 0 10px 28px rgba(25, 31, 41, 0.1), 0 2px 6px rgba(25, 31, 41, 0.05);
 }
 
 .agent-model-option {
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr) 18px;
+  grid-template-columns: 22px minmax(0, 1fr) 16px;
   align-items: center;
-  gap: 9px;
-  min-height: 46px;
-  padding: 6px 8px;
+  gap: 8px;
+  min-height: 38px;
+  padding: 4px 8px;
   border: 0;
   border-radius: 6px;
   background: transparent;
@@ -2282,13 +2693,14 @@ button.agent-slides-progress-header {
 .agent-model-option > span:nth-child(2) {
   display: grid;
   min-width: 0;
-  gap: 2px;
+  gap: 1px;
 }
 
 .agent-model-option strong {
   overflow: hidden;
   font-size: 12px;
   font-weight: 560;
+  line-height: 1.25;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -2297,8 +2709,16 @@ button.agent-slides-progress-header {
   overflow: hidden;
   color: #747d8a;
   font-size: 10px;
+  line-height: 1.2;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 渠道名后缀 (CLI)：弱化显示，与模型档位行区分。 */
+.agent-model-channel-tag {
+  color: #8b93a0;
+  font-size: 10.5px;
+  font-weight: 400;
 }
 
 .agent-model-option > svg {
@@ -2307,24 +2727,17 @@ button.agent-slides-progress-header {
   color: var(--accent-strong, #4d6faf);
 }
 
-.agent-model-picker-hint {
-  padding: 7px 9px 6px;
-  border-top: 1px solid #eceef1;
-  color: #8b93a0;
-  font-size: 10px;
-  text-align: center;
-}
-
 .agent-prompt-submit {
   margin-left: auto;
-  border-radius: 50%;
-  background: #202124;
-  color: #fff;
+  border-radius: 7px;
+  background: #eef0f3;
+  color: #565e6a;
   transition: background 150ms ease, transform 150ms ease;
 }
 
 .agent-prompt-submit:hover:not(:disabled) {
-  background: #111214;
+  background: #e2e5e9;
+  color: #30343a;
 }
 
 .agent-prompt-submit:active:not(:disabled) {
@@ -2332,8 +2745,8 @@ button.agent-slides-progress-header {
 }
 
 .agent-prompt-submit:disabled {
-  background: #eceef1;
-  color: #adb3bc;
+  background: transparent;
+  color: #c3c8d0;
   cursor: default;
 }
 
@@ -2348,10 +2761,9 @@ button.agent-slides-progress-header {
   fill: currentColor;
 }
 
-.agent-prompt-tool svg,
 .agent-prompt-submit svg {
-  width: 17px;
-  height: 17px;
+  width: 15px;
+  height: 15px;
   stroke: currentColor;
 }
 
@@ -2389,8 +2801,14 @@ button.agent-slides-progress-header {
 
 @media (prefers-reduced-motion: reduce) {
   .agent-thinking-text::after,
-  .spin {
+  .spin,
+  .agent-context-usage-pulse,
+  .agent-context-ring--compacting {
     animation: none;
+  }
+
+  .agent-context-ring-arc {
+    transition: none;
   }
 
   .agent-assistant-turn,

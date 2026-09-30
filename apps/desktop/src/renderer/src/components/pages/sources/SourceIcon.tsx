@@ -45,8 +45,8 @@ const SOURCE_LOGOS: Record<BrandedSourceIconKind, string> = {
   feishu: feishuLogo,
 }
 
-/** 素材自带底板（深色圆角块/白色圆/PNG 图）——可 100% 填满容器；其余是裸标,需留边防顶角。 */
-const TILE_ICON_KINDS = new Set<SourceIconKind>(['github', 'notion', 'claude', 'codex', 'openclaw', 'feishu'])
+/** 素材自带底板（白色圆/PNG 图）——可 100% 填满容器；其余是裸标,需留边防顶角。 */
+const TILE_ICON_KINDS = new Set<SourceIconKind>(['github', 'notion', 'feishu'])
 
 /** 线条 glyph 类 kind（非品牌 logo）——容器按 tone 上底色,logo 类按品牌素材呈现。 */
 export const GLYPH_KINDS = new Set<SourceIconKind>(['local-folder', 'folder-scan', 'web-page', 'ics-calendar'])

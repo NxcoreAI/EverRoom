@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowUp, Brain, Check, Feather, FileText, History, LoaderCircle, Plus, Quote, Search, Square, X, Zap } from 'lucide-react'
+import { ArrowLeft, Bot, Brain, Check, ChevronDown, Clock, CornerDownLeft, Feather, FileText, FolderOpen, History, LoaderCircle, Lock, MessagesSquare, Quote, Search, ShieldCheck, Square, Terminal, Unlock, X, Zap } from 'lucide-react'
 import {
   forwardRef,
   useEffect,
@@ -6,25 +6,25 @@ import {
   useLayoutEffect,
   useRef,
   useState,
-  type ChangeEvent,
   type FormEvent,
   type KeyboardEvent,
   type ReactNode,
 } from 'react'
-import type { AgentModelPreference, ExternalConversationSummary, LocalAgentInstallation } from '@nxcore/agent-contract'
+import type { AgentContextUsage, AgentModelPreference, AgentPermissionMode, AgentRoomReference, AgentSession, ExternalConversationSummary, LocalAgentInstallation, MigrationProvider } from '@nxcore/agent-contract'
+import type { FileCatalogDto } from '../../../../shared/ingest'
 
 import { showToast } from '@/state/toast'
 import { useLocale } from '@/i18n/LocaleContext'
 import { SourceIcon } from '@/components/pages/sources/SourceIcon'
 import {
+  allocateMentionToken,
   findMentionRanges,
   matchMentionTrigger,
   resolveMentions,
   slugifyAgentToken,
-  type MentionedAgent,
+  type MentionedItem,
 } from './agentMentions'
 
-const ACCEPTED_ATTACHMENTS = '.txt,.md,.csv,.json,.pdf,.docx,.xlsx,.pptx'
 const ATTACHMENT_PATTERN = /\.(txt|md|csv|json|pdf|docx|xlsx|pptx)$/i
 const MAX_ATTACHMENTS = 5
 const MAX_ATTACHMENT_SIZE = 10 * 1024 * 1024
@@ -38,7 +38,42 @@ const MODEL_TIER_META: Record<AgentModelPreference, { icon: typeof Zap; labelKey
 }
 const MODEL_TIER_ORDER: AgentModelPreference[] = ['smart', 'primary', 'lite']
 
+/** 权限档语义元数据（顺序=下拉展示顺序；选项再按 provider 可用性过滤）。 */
+const PERMISSION_MODE_META: Record<AgentPermissionMode, { icon: typeof Zap; labelKey: string; hintKey: string; danger: boolean }> = {
+  ask_before_write: { icon: Lock, labelKey: 'surface:agentComposer.permissionModeAskBeforeWrite', hintKey: 'surface:agentComposer.permissionModeAskBeforeWriteHint', danger: false },
+  accept_edits: { icon: ShieldCheck, labelKey: 'surface:agentComposer.permissionModeAcceptEdits', hintKey: 'surface:agentComposer.permissionModeAcceptEditsHint', danger: false },
+  auto: { icon: Zap, labelKey: 'surface:agentComposer.permissionModeAuto', hintKey: 'surface:agentComposer.permissionModeAutoHint', danger: false },
+  full_access: { icon: Unlock, labelKey: 'surface:agentComposer.permissionModeFullAccess', hintKey: 'surface:agentComposer.permissionModeFullAccessHint', danger: true },
+}
+const PERMISSION_MODE_ORDER: AgentPermissionMode[] = ['ask_before_write', 'accept_edits', 'auto', 'full_access']
+
 type ExternalPickerStatus = 'idle' | 'loading' | 'ready' | 'loading-more' | 'error'
+type MentionCategory = 'all' | 'agent' | 'room' | 'file' | 'conversation'
+
+/** @ 弹层「对话记录」条目：导入的外部会话 + 本应用自有会话（provider 'everroom'）。 */
+interface MentionConversationItem {
+  id: string
+  title: string | null
+  provider: MigrationProvider | 'everroom'
+  messageCount: number | null
+  occurredAt: string | null
+}
+
+const MENTION_CONVERSATION_LIMIT = 200
+
+const mentionConversationTime = (value: string | null): number => {
+  const parsed = Date.parse(value ?? '')
+  return Number.isNaN(parsed) ? 0 : parsed
+}
+
+function mergeMentionConversations(
+  native: MentionConversationItem[],
+  imported: MentionConversationItem[],
+): MentionConversationItem[] {
+  return [...native, ...imported]
+    .sort((a, b) => mentionConversationTime(b.occurredAt) - mentionConversationTime(a.occurredAt))
+    .slice(0, MENTION_CONVERSATION_LIMIT)
+}
 
 interface LocalAttachment {
   id: string
@@ -70,6 +105,20 @@ function displayDate(
   }
 }
 
+/** token 数紧凑显示：<1000 原样，否则 K 单位（40960→"41K"，150000→"150K"）。 */
+function formatContextTokens(tokens: number): string {
+  if (tokens < 1000) return String(tokens)
+  return `${Math.round(tokens / 1000)}K`
+}
+
+/** 圆环周长（r=5.5）。 */
+const RING_CIRCUMFERENCE = 2 * Math.PI * 5.5
+
+/** 占用构成占比：<10% 保留一位小数，否则取整。 */
+function formatContextPercent(percent: number): string {
+  return percent >= 9.95 ? `${Math.round(percent)}%` : `${percent.toFixed(1)}%`
+}
+
 export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   contextSummary: string
   contextItems: Array<{ id: string; label: string; detail: string }>
@@ -84,24 +133,43 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   selectedExternalConversation: ExternalConversationSummary | null
   /** 本机已发现的 CLI Agent 候选（@ 点名弹层数据源）。 */
   localAgents: LocalAgentInstallation[]
-  /** 视口在 Context Room 内时展示「聚焦当前房间」开关。 */
-  roomFocusVisible?: boolean
-  roomFocusEnabled?: boolean
-  roomFocusRoomTitle?: string
-  onToggleRoomFocus?: (next: boolean) => void
+  /** Room 引用候选（@ 弹层「房间」组；AgentPanel 已持有完整列表）。 */
+  rooms?: AgentRoomReference[]
   /** 当前生效档位：会话已存在＝会话锁定档，否则＝全局默认档。 */
   modelPreference: AgentModelPreference
-  /** 会话已创建 → 档位锁定在会话上，切换只影响下一个新会话。 */
+  /** 实时上下文用量（context.usage 事件快照；缺省=未知，不渲染）。 */
+  contextUsage?: AgentContextUsage | null
+  /** 上下文压缩进行中（渲染动效提示）。 */
+  contextCompacting?: boolean
+  /** 会话已创建 → 档位/渠道锁定在会话上，切换只影响下一个新会话。 */
   modelPreferenceLocked?: boolean
-  /** 打开选择器时拉取最新 lite 可用性（设置页保存后无需重启）。 */
-  loadModelAvailability: () => Promise<boolean>
+  /** 打开选择器时拉取最新档位可用性（lite 未配置隐藏；primary 未配置点击时提示去设置）。 */
+  loadModelAvailability: () => Promise<{ lite: boolean; primary: boolean }>
   onSelectModelPreference: (tier: AgentModelPreference) => void
+  /** 当前生效渠道：会话已存在＝会话锁定渠道，否则＝全局默认（null=档位模式）。 */
+  channelAgentId?: string | null
+  /** 选择本机 CLI Agent 渠道（整个新会话由其连续执行）；null=回到档位模式。 */
+  onSelectChannelAgent?: (agentId: string | null) => void
+  /** 会话权限模式（渠道会话显示切换钮；null=未加载/不适用，隐藏）。 */
+  permissionMode?: AgentPermissionMode | null
+  /** provider 可用语义档（网关按渠道过滤后的权威列表）。 */
+  permissionModeAvailable?: readonly AgentPermissionMode[]
+  onSelectPermissionMode?: (mode: AgentPermissionMode) => void | Promise<unknown>
+  /** 强模型未配置时提示去设置（跳应用设置页）。 */
+  onOpenSettings?: () => void
+  /** 空态建议（推断的下一个提问）；仅输入框为空时作为 placeholder 展示，Tab/Enter 采纳。 */
+  ghostSuggestion?: string | null
+  onAcceptGhost?: () => void
+  onDismissGhost?: () => void
+  /** run 进行中排队的消息（run 终态后自动逐条发出）；空数组不渲染。 */
+  queuedSubmissions?: Array<{ id: string; prompt: string }>
+  onRemoveQueuedSubmission?: (id: string) => void
   onChange: (value: string) => void
   onSelectExternalConversation: (conversation: ExternalConversationSummary | null) => void
   onClearContext: () => void
   onRemoveContext: (id: string) => void
   onStop: () => void
-  onSubmit: (files: File[], mentionedAgents: MentionedAgent[]) => void
+  onSubmit: (files: File[], mentioned: MentionedItem[]) => void
 }>(function AgentComposer({
   active,
   available,
@@ -113,14 +181,24 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   resetKey,
   selectedExternalConversation,
   localAgents,
-  roomFocusVisible = false,
-  roomFocusEnabled = false,
-  roomFocusRoomTitle,
-  onToggleRoomFocus,
+  rooms = [],
   modelPreference,
   modelPreferenceLocked = false,
+  contextUsage = null,
+  contextCompacting = false,
   loadModelAvailability,
   onSelectModelPreference,
+  channelAgentId = null,
+  onSelectChannelAgent,
+  permissionMode = null,
+  permissionModeAvailable = [],
+  onSelectPermissionMode,
+  onOpenSettings,
+  ghostSuggestion = null,
+  onAcceptGhost,
+  onDismissGhost,
+  queuedSubmissions = [],
+  onRemoveQueuedSubmission,
   value,
   onChange,
   onClearContext,
@@ -133,9 +211,10 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   const [attachments, setAttachments] = useState<LocalAttachment[]>([])
   const shellRef = useRef<HTMLFormElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
-  const fileInputRef = useRef<HTMLInputElement>(null)
   const externalResultsRef = useRef<HTMLDivElement>(null)
   const agentResultsRef = useRef<HTMLDivElement>(null)
+  const modelPickerRef = useRef<HTMLElement | null>(null)
+  const contextPanelRef = useRef<HTMLElement | null>(null)
   const mountedRef = useRef(true)
   const composingRef = useRef(false)
   const externalRequestRef = useRef(0)
@@ -148,11 +227,22 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   const [externalStatus, setExternalStatus] = useState<ExternalPickerStatus>('idle')
   const [agentPickerOpen, setAgentPickerOpen] = useState(false)
   const [agentIndex, setAgentIndex] = useState(0)
+  const [mentionFiles, setMentionFiles] = useState<Array<{ id: string; title: string; detail: string }>>([])
+  const [mentionConversations, setMentionConversations] = useState<MentionConversationItem[]>([])
+  const [conversationServerQuery, setConversationServerQuery] = useState('')
+  const [mentionSourcesLoading, setMentionSourcesLoading] = useState(false)
+  const [mentionCategory, setMentionCategory] = useState<MentionCategory>('all')
   const [modelPickerOpen, setModelPickerOpen] = useState(false)
+  const [permissionModeOpen, setPermissionModeOpen] = useState(false)
+  /** full_access 两步确认：true=弹层切到危险确认态。 */
+  const [confirmingFullAccess, setConfirmingFullAccess] = useState(false)
+  const permissionModeRef = useRef<HTMLElement | null>(null)
+  const [contextPanelOpen, setContextPanelOpen] = useState(false)
   const [liteAvailable, setLiteAvailable] = useState(false)
+  const [primaryAvailable, setPrimaryAvailable] = useState(true)
   const [caret, setCaret] = useState(0)
   const overlayRef = useRef<HTMLDivElement>(null)
-  const mentionHints = useRef(new Map<string, string>())
+  const mentionHints = useRef(new Map<string, MentionedItem>())
 
   useImperativeHandle(ref, () => textareaRef.current as HTMLTextAreaElement)
 
@@ -216,24 +306,38 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
     externalRequestRef.current += 1
     setAgentPickerOpen(false)
     setModelPickerOpen(false)
+    setContextPanelOpen(false)
+    setPermissionModeOpen(false)
+    setConfirmingFullAccess(false)
     mentionHints.current.clear()
-    if (fileInputRef.current) fileInputRef.current.value = ''
   }, [resetKey])
 
   useEffect(() => {
-    if (!externalPickerOpen && !agentPickerOpen && !modelPickerOpen) return undefined
+    if (!externalPickerOpen && !agentPickerOpen && !modelPickerOpen && !contextPanelOpen && !permissionModeOpen) return undefined
     const closeOnOutsidePress = (event: PointerEvent) => {
-      if (shellRef.current?.contains(event.target as Node)) return
+      const target = event.target as Element
+      if (shellRef.current?.contains(target)) {
+        // 壳内点击默认交给组件自身逻辑；但模型/上下文弹层覆盖在输入区上，
+        // 点到弹层和触发钮之外（如输入框）视为失去焦点，直接收起。
+        if (modelPickerOpen && !modelPickerRef.current?.contains(target) && !target.closest('.agent-model-tier-toggle')) setModelPickerOpen(false)
+        if (contextPanelOpen && !contextPanelRef.current?.contains(target) && !target.closest('.agent-context-ring')) setContextPanelOpen(false)
+        if (permissionModeOpen && !permissionModeRef.current?.contains(target) && !target.closest('.agent-permission-mode-toggle')) setPermissionModeOpen(false)
+        return
+      }
       externalRequestRef.current += 1
       setExternalPickerOpen(false)
       setAgentPickerOpen(false)
       setModelPickerOpen(false)
+      setContextPanelOpen(false)
+      setPermissionModeOpen(false)
     }
     document.addEventListener?.('pointerdown', closeOnOutsidePress)
     return () => document.removeEventListener?.('pointerdown', closeOnOutsidePress)
-  }, [externalPickerOpen, agentPickerOpen, modelPickerOpen])
+  }, [externalPickerOpen, agentPickerOpen, modelPickerOpen, contextPanelOpen, permissionModeOpen])
 
   const submitMentions = () => resolveMentions(value, mentionHints.current, localAgents)
+
+  const ghostActive = !active && available && value === '' && Boolean(ghostSuggestion?.trim())
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -241,6 +345,19 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   }
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === 'Escape' && contextPanelOpen) {
+      event.preventDefault()
+      setContextPanelOpen(false)
+      return
+    }
+    if (permissionModeOpen) {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        setPermissionModeOpen(false)
+        setConfirmingFullAccess(false)
+      }
+      return
+    }
     if (modelPickerOpen) {
       if (event.key === 'Escape') {
         event.preventDefault()
@@ -249,21 +366,27 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
       return
     }
     if (agentPickerOpen) {
-      if (event.key === 'ArrowDown' && filteredAgentItems.length) {
+      if (event.key === 'Tab') {
+        // Tab / Shift+Tab 在有内容的分类间循环切换（含「全部」）。
         event.preventDefault()
-        setAgentIndex((current) => Math.min(filteredAgentItems.length - 1, current + 1))
+        cycleMentionCategory(event.shiftKey ? -1 : 1)
         return
       }
-      if (event.key === 'ArrowUp' && filteredAgentItems.length) {
+      if (event.key === 'ArrowDown' && mentionOptions.length) {
+        event.preventDefault()
+        setAgentIndex((current) => Math.min(mentionOptions.length - 1, current + 1))
+        return
+      }
+      if (event.key === 'ArrowUp' && mentionOptions.length) {
         event.preventDefault()
         setAgentIndex((current) => Math.max(0, current - 1))
         return
       }
       if (event.key === 'Enter' && !composingRef.current && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229) {
-        const item = filteredAgentItems[Math.min(agentIndex, filteredAgentItems.length - 1)]
-        if (item) {
+        const option = mentionOptions[Math.min(agentIndex, mentionOptions.length - 1)]
+        if (option) {
           event.preventDefault()
-          chooseAgent(item)
+          chooseMentionOption(option)
         }
         return
       }
@@ -281,29 +404,23 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
       event.preventDefault(); openExternalPicker(); return
     }
     if (event.key === 'Escape' && slashPickerOpen) { event.preventDefault(); setSlashPickerDismissed(true); return }
+    if (ghostActive && !slashPickerOpen) {
+      // 空态建议：Tab/Enter 采纳（填入不发送，第二次 Enter 才提交），Esc 本次丢弃。
+      if (event.key === 'Tab' || (event.key === 'Enter' && !event.shiftKey)) {
+        event.preventDefault()
+        onAcceptGhost?.()
+        return
+      }
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        onDismissGhost?.()
+        return
+      }
+    }
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault()
       if (available) onSubmit(attachments.map(({ file }) => file), submitMentions())
     }
-  }
-
-  const selectAttachments = (event: ChangeEvent<HTMLInputElement>) => {
-    const files = [...(event.target.files ?? [])]
-    const known = new Set(attachments.map((file) => file.id))
-    const candidates = files
-      .filter((file) => ATTACHMENT_PATTERN.test(file.name) && file.size <= MAX_ATTACHMENT_SIZE)
-      .map((file) => ({ id: `${file.name}:${file.size}:${file.lastModified}`, file, name: file.name, size: file.size }))
-      .filter((file) => !known.has(file.id))
-    const accepted = candidates.slice(0, Math.max(0, MAX_ATTACHMENTS - attachments.length))
-    const rejected = files.length - accepted.length
-    setAttachments((current) => [...current, ...accepted])
-    showToast({
-      title: t(rejected ? 'surface:agentComposer.someAttachmentsWereNotAdded' : 'surface:agentComposer.attachmentsAddedToTheComposer'),
-      message: rejected
-        ? t('surface:agentComposer.onlySupportedDocumentFormatsUpTo10Mb')
-        : t('surface:agentComposer.attachmentsAddedToTheComposer'),
-    })
-    event.target.value = ''
   }
 
   const addDroppedAttachments = (files: File[]) => {
@@ -376,11 +493,14 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
     setExternalPickerOpen(false)
     window.requestAnimationFrame(() => textareaRef.current?.focus())
   }
-  const chooseAgent = (item: LocalAgentInstallation) => {
-    const token = slugifyAgentToken(item.displayName)
+  const chooseAgent = (item: { id: string; displayName: string }) => {
+    const token = allocateMentionToken(item.displayName, item.id, mentionHints.current)
+    applyMentionToken(token, { kind: 'agent', id: item.id, displayName: item.displayName })
+  }
+  const applyMentionToken = (token: string, item: MentionedItem) => {
     const replaceStart = mentionTrigger?.replaceStart ?? caret
     const nextValue = `${value.slice(0, replaceStart)}@${token} ${value.slice(caret)}`
-    mentionHints.current.set(token.toLocaleLowerCase(), item.id)
+    mentionHints.current.set(token.toLocaleLowerCase(), item)
     const nextCaret = replaceStart + token.length + 2
     onChange(nextValue)
     setCaret(nextCaret)
@@ -392,30 +512,203 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
       textarea.setSelectionRange(nextCaret, nextCaret)
     })
   }
+  const chooseRoom = (room: AgentRoomReference) => {
+    const token = allocateMentionToken(room.title, room.id, mentionHints.current)
+    applyMentionToken(token, { kind: 'room', id: room.id, displayName: room.title })
+  }
+  const chooseFile = (file: { id: string; title: string }) => {
+    const token = allocateMentionToken(file.title, file.id, mentionHints.current)
+    applyMentionToken(token, { kind: 'file', id: file.id, displayName: file.title })
+  }
+  const chooseConversation = (conversation: MentionConversationItem) => {
+    const displayName = conversation.title ?? t('surface:agentComposer.untitledConversation')
+    const token = allocateMentionToken(displayName, conversation.id, mentionHints.current)
+    applyMentionToken(token, { kind: 'conversation', id: conversation.id, displayName, provider: conversation.provider })
+  }
   const openModelPicker = () => {
     setSlashPickerDismissed(true)
     externalRequestRef.current += 1
     setExternalPickerOpen(false)
     setAgentPickerOpen(false)
     setModelPickerOpen(true)
-    // 每次打开时刷新：设置页保存轻量模型后无需重启即可出现 lite 档。
-    loadModelAvailability().then(setLiteAvailable, () => setLiteAvailable(false))
+    // 每次打开时刷新：设置页保存后无需重启即可生效（lite 出现/强模型可点）。
+    loadModelAvailability().then(
+      (availability) => {
+        setLiteAvailable(availability.lite)
+        setPrimaryAvailable(availability.primary)
+      },
+      () => setLiteAvailable(false),
+    )
   }
   const chooseModelTier = (tier: AgentModelPreference) => {
+    // 强模型未配置：不切档，直接提示去设置配置。
+    if (tier === 'primary' && !primaryAvailable) {
+      showToast({
+        title: t('surface:agentComposer.primaryTierUnavailable'),
+        message: t('surface:agentComposer.primaryTierUnavailableHint'),
+        ...(onOpenSettings ? {
+          actionLabel: t('surface:agentComposer.goConfigure'),
+          onAction: onOpenSettings,
+        } : {}),
+      })
+      setModelPickerOpen(false)
+      window.requestAnimationFrame(() => textareaRef.current?.focus())
+      return
+    }
+    // 渠道生效时点档位＝退出渠道，回到档位模式。
+    if (channelAgentId) onSelectChannelAgent?.(null)
     onSelectModelPreference(tier)
     setModelPickerOpen(false)
     window.requestAnimationFrame(() => textareaRef.current?.focus())
   }
+  const chooseChannelAgent = (agentId: string) => {
+    onSelectChannelAgent?.(agentId)
+    setModelPickerOpen(false)
+    window.requestAnimationFrame(() => textareaRef.current?.focus())
+  }
+  const choosePermissionMode = (mode: AgentPermissionMode) => {
+    // full_access 两步确认（与 tutti 同规则）：首次点击进入确认态，再点「开启」才生效。
+    if (mode === 'full_access' && permissionMode !== 'full_access' && !confirmingFullAccess) {
+      setConfirmingFullAccess(true)
+      return
+    }
+    setConfirmingFullAccess(false)
+    setPermissionModeOpen(false)
+    if (mode !== permissionMode) void onSelectPermissionMode?.(mode)
+    window.requestAnimationFrame(() => textareaRef.current?.focus())
+  }
   const callableLocalAgents = localAgents.filter((agent) => agent.invocationSupported && agent.callable)
   const agentQueryNormalized = mentionQuery.trim().toLocaleLowerCase()
-  const filteredAgentItems = agentQueryNormalized
+  const matchesQuery = (haystack: string) => !agentQueryNormalized || haystack.toLocaleLowerCase().includes(agentQueryNormalized)
+  // 渠道会话锁定在本机 CLI Agent：@ 其他 Agent / 引用其他对话是主代理专属能力
+  // （网关 referenced_*_requires_main_agent），渠道模式下整组不提供。
+  const channelLocked = Boolean(channelAgentId)
+  const filteredAgentItems = channelLocked ? [] : agentQueryNormalized
     ? callableLocalAgents.filter((item) => item.displayName.toLocaleLowerCase().includes(agentQueryNormalized)
       || item.id.toLocaleLowerCase().includes(agentQueryNormalized)
       || item.provider.toLocaleLowerCase().includes(agentQueryNormalized))
     : callableLocalAgents
+  const filteredRoomItems = rooms.filter((room) => matchesQuery(room.title) || matchesQuery(room.id))
+  const filteredFileItems = mentionFiles.filter((file) => matchesQuery(file.title) || matchesQuery(file.id) || matchesQuery(file.detail))
+  // 查询词与当前服务端检索一致时，导入条目已按 FTS 命中（含消息正文），
+  // 不再做客户端标题过滤以免误杀；应用自有会话仍走客户端过滤。
+  const conversationQueryServerFiltered = conversationServerQuery !== '' && conversationServerQuery === mentionQuery.trim()
+  const filteredConversationItems = channelLocked ? [] : mentionConversations.filter((conversation) => {
+    if (conversationQueryServerFiltered && conversation.provider !== 'everroom') return true
+    return matchesQuery(conversation.title ?? '')
+      || matchesQuery(conversation.provider)
+  })
+  const mentionCategoryTabs: Array<{ id: MentionCategory; labelKey: string; count: number }> = [
+    { id: 'all', labelKey: 'surface:agentComposer.mentionTabAll', count: filteredAgentItems.length + filteredRoomItems.length + filteredFileItems.length + filteredConversationItems.length },
+    { id: 'agent', labelKey: 'surface:agentComposer.mentionGroupAgents', count: filteredAgentItems.length },
+    { id: 'room', labelKey: 'surface:agentComposer.mentionGroupRooms', count: filteredRoomItems.length },
+    { id: 'file', labelKey: 'surface:agentComposer.mentionGroupFiles', count: filteredFileItems.length },
+    { id: 'conversation', labelKey: 'surface:agentComposer.mentionGroupConversations', count: filteredConversationItems.length },
+  ]
+  const showMentionGroup = (kind: Exclude<MentionCategory, 'all'>) => mentionCategory === 'all' || mentionCategory === kind
+  const cycleMentionCategory = (step: 1 | -1) => {
+    const order = mentionCategoryTabs.filter((tab) => tab.count > 0).map((tab) => tab.id)
+    if (order.length < 2) return
+    const current = order.includes(mentionCategory) ? order.indexOf(mentionCategory) : 0
+    setMentionCategory(order[(current + step + order.length) % order.length]!)
+    setAgentIndex(0)
+  }
+  type MentionOption =
+    | { kind: 'agent'; item: LocalAgentInstallation }
+    | { kind: 'room'; item: AgentRoomReference }
+    | { kind: 'file'; item: { id: string; title: string; detail: string } }
+    | { kind: 'conversation'; item: MentionConversationItem }
+  const mentionOptions: MentionOption[] = [
+    ...(showMentionGroup('agent') ? filteredAgentItems.map((item) => ({ kind: 'agent' as const, item })) : []),
+    ...(showMentionGroup('room') ? filteredRoomItems.map((item) => ({ kind: 'room' as const, item })) : []),
+    ...(showMentionGroup('file') ? filteredFileItems.map((item) => ({ kind: 'file' as const, item })) : []),
+    ...(showMentionGroup('conversation') ? filteredConversationItems.map((item) => ({ kind: 'conversation' as const, item })) : []),
+  ]
+  const mentionOptionCount = mentionOptions.length
+  const chooseMentionOption = (option: MentionOption) => {
+    if (option.kind === 'agent') chooseAgent(option.item)
+    else if (option.kind === 'room') chooseRoom(option.item)
+    else if (option.kind === 'file') chooseFile(option.item)
+    else chooseConversation(option.item)
+  }
+  // 弹层打开时懒加载文件与对话记录（Agent/Room 由 props 同步提供）。
+  // 对话记录合并导入的外部会话与本应用自有会话（provider 'everroom'），按最近活跃排序。
+  useEffect(() => {
+    if (!agentPickerOpen || mentionSourcesLoading) return
+    setMentionSourcesLoading(true)
+    setConversationServerQuery('')
+    const loadMentionSource = <T,>(promise: Promise<T> | undefined, fallback: T): Promise<T> =>
+      promise?.catch(() => fallback) ?? Promise.resolve(fallback)
+    void Promise.all([
+      loadMentionSource(
+        window.nxcore?.files?.list(MENTION_CONVERSATION_LIMIT).then((page) => page?.items ?? []),
+        [] as FileCatalogDto[],
+      ),
+      loadMentionSource(
+        window.nxcore?.migrations?.conversations({ limit: MENTION_CONVERSATION_LIMIT }).then((page) => page?.items ?? []),
+        [] as ExternalConversationSummary[],
+      ),
+      loadMentionSource(
+        window.nxcore?.agent?.listSessions?.().then((sessions) => sessions ?? []),
+        [] as AgentSession[],
+      ),
+    ]).then(([fileItems, conversationItems, nativeSessions]) => {
+      setMentionFiles(fileItems.map((file) => ({
+        id: file.id,
+        title: file.displayName ?? file.sharedTitle ?? file.originalName,
+        detail: file.processingState === 'ready' ? '' : file.processingState,
+      })))
+      const importedItems: MentionConversationItem[] = conversationItems.map((conversation) => ({
+        id: conversation.id,
+        title: conversation.title,
+        provider: conversation.provider,
+        messageCount: conversation.messageCount,
+        occurredAt: conversation.lastMessageAt,
+      }))
+      const nativeItems: MentionConversationItem[] = nativeSessions
+        // 空会话（从未对话、无标题且未更新过）不值得被 @。
+        .filter((session) => session.title !== null || session.updatedAt !== session.createdAt)
+        .map((session) => ({
+          id: session.id,
+          title: session.title,
+          provider: 'everroom' as const,
+          messageCount: null,
+          occurredAt: session.updatedAt,
+        }))
+      setMentionConversations(mergeMentionConversations(nativeItems, importedItems))
+    }).finally(() => setMentionSourcesLoading(false))
+  }, [agentPickerOpen])
+  // 有查询词时导入的对话记录转服务端 FTS 检索（可命中消息正文，突破首屏 200 条），
+  // 清空查询词则还原全量；应用自有会话始终保留并走客户端过滤。
+  useEffect(() => {
+    if (!agentPickerOpen) return undefined
+    const query = mentionQuery.trim()
+    if (!query && !conversationServerQuery) return undefined
+    const timer = window.setTimeout(() => {
+      void window.nxcore?.migrations?.conversations(query ? { query, limit: MENTION_CONVERSATION_LIMIT } : { limit: MENTION_CONVERSATION_LIMIT })
+        ?.then((page) => page?.items ?? [])
+        .then((items) => {
+          const importedItems: MentionConversationItem[] = items.map((conversation) => ({
+            id: conversation.id,
+            title: conversation.title,
+            provider: conversation.provider,
+            messageCount: conversation.messageCount,
+            occurredAt: conversation.lastMessageAt,
+          }))
+          setMentionConversations((current) => mergeMentionConversations(
+            current.filter((conversation) => conversation.provider === 'everroom'),
+            importedItems,
+          ))
+          setConversationServerQuery(query)
+        })
+        .catch(() => undefined)
+    }, 200)
+    return () => window.clearTimeout(timer)
+  }, [mentionQuery, agentPickerOpen, conversationServerQuery])
   useEffect(() => {
     if (!mentionTrigger || agentPickerOpen) return
     setAgentPickerOpen(true)
+    setMentionCategory('all')
     setSlashPickerDismissed(true)
   }, [mentionTrigger?.replaceStart, mentionTrigger?.query, agentPickerOpen])
 
@@ -455,16 +748,38 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
     let cursor = 0
     mentionRanges.forEach((range, index) => {
       if (range.start > cursor) nodes.push(value.slice(cursor, range.start))
-      nodes.push(<span key={`agent-mention-${index}`} className="agent-mention-token">@{range.token}</span>)
+      nodes.push(<span key={`agent-mention-${index}`} className="agent-mention-token" data-kind={range.item.kind}>@{range.token}</span>)
       cursor = range.end
     })
     if (cursor < value.length) nodes.push(value.slice(cursor))
     return nodes
   }
 
-  const menuOpen = slashPickerOpen || externalPickerOpen || agentPickerOpen || modelPickerOpen
+  // 弹层引用对象为空时弹层不渲染，composer 也不抬升（menuOpen 与可见弹层保持一致）。
+  const menuOpen = slashPickerOpen || externalPickerOpen || modelPickerOpen || permissionModeOpen || (agentPickerOpen && mentionOptionCount > 0)
+  const channelAgent = channelAgentId ? localAgents.find((agent) => agent.id === channelAgentId) ?? null : null
+  const channelActive = Boolean(channelAgentId)
   const activeTierMeta = MODEL_TIER_META[modelPreference]
   const ActiveTierIcon = activeTierMeta.icon
+  // 权限档切换钮：一期仅渠道会话显示（gateway 侧已通用，pi 档 UI 放开留二期）。
+  const permissionModeOptions = PERMISSION_MODE_ORDER.filter((mode) => permissionModeAvailable.includes(mode))
+  const permissionModeToggleVisible = channelActive
+    && permissionMode !== null
+    && permissionModeOptions.length > 1
+    && Boolean(onSelectPermissionMode)
+  const activePermissionMeta = permissionMode ? PERMISSION_MODE_META[permissionMode] : null
+  const ActivePermissionIcon = activePermissionMeta?.icon ?? ShieldCheck
+  // 上下文占用构成：按占比降序，tokens 已知时补一段剩余空间。
+  const contextBreakdown = contextUsage?.contextWindow
+    ? {
+        window: contextUsage.contextWindow,
+        tokens: contextUsage.tokens,
+        percent: contextUsage.percent,
+        segments: (contextUsage.segments ?? []).filter((segment) => segment.tokens > 0)
+          .sort((left, right) => right.tokens - left.tokens),
+        freeTokens: contextUsage.tokens === null ? null : Math.max(0, contextUsage.contextWindow - contextUsage.tokens),
+      }
+    : null
   // 会话快照加载时保留本地附件。
   const controlsDisabled = active || !available
 
@@ -473,6 +788,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
       ref={shellRef}
       className="agent-composer-shell"
       data-menu-open={String(menuOpen)}
+      data-lift={String(externalPickerOpen || (agentPickerOpen && mentionOptionCount > 0))}
       onSubmit={submit}
       onDragOver={(event) => {
         if (!controlsDisabled && event.dataTransfer.types.includes('Files')) event.preventDefault()
@@ -570,14 +886,35 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
           </div>
         </section>
       ) : null}
-      {agentPickerOpen ? (
-        <div ref={agentResultsRef} className="agent-composer-popover agent-mention-list" id="agent-composer-menu" role="listbox" aria-label={t('surface:agentComposer.mentionAgent')}>
-          {filteredAgentItems.length === 0 ? (
-            <div className="agent-mention-empty">{t(callableLocalAgents.length === 0 ? 'surface:agentComposer.noAgents' : 'surface:agentComposer.noAgentMatches')}</div>
-          ) : (
-            filteredAgentItems.map((item, index) => (
+      {agentPickerOpen && mentionOptionCount > 0 ? (
+        <div ref={agentResultsRef} className="agent-composer-popover agent-mention-popover" id="agent-composer-menu" role="listbox" aria-label={t('surface:agentComposer.mentionAgent')}>
+          <div className="agent-mention-tabs" role="tablist" aria-label={t('surface:agentComposer.mentionCategoryLabel')}>
+            {mentionCategoryTabs.map((tab) => (
               <button
-                key={item.id}
+                key={tab.id}
+                type="button"
+                className="agent-mention-tab"
+                role="tab"
+                aria-selected={mentionCategory === tab.id}
+                data-selected={String(mentionCategory === tab.id)}
+                disabled={tab.count === 0 && tab.id !== mentionCategory}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => {
+                  setMentionCategory(tab.id)
+                  setAgentIndex(0)
+                }}
+              >
+                {t(tab.labelKey)}{tab.count > 0 ? <span>{tab.count}</span> : null}
+              </button>
+            ))}
+          </div>
+          <div className="agent-mention-list">
+            {mentionCategory === 'all' && filteredAgentItems.length ? (
+              <div className="agent-mention-group-label"><Bot aria-hidden="true" />{t('surface:agentComposer.mentionGroupAgents')}</div>
+            ) : null}
+            {showMentionGroup('agent') ? filteredAgentItems.map((item, index) => (
+              <button
+                key={`agent:${item.id}`}
                 type="button"
                 className="agent-mention-option"
                 role="option"
@@ -588,39 +925,246 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={() => chooseAgent(item)}
               >
+                <span className="agent-mention-option-icon"><SourceIcon kind={item.provider === 'claude' || item.provider === 'openclaw' ? item.provider : 'codex'} /></span>
                 <strong>{item.displayName}</strong>
               </button>
-            ))
-          )}
+            )) : null}
+            {mentionCategory === 'all' && filteredRoomItems.length ? (
+              <div className="agent-mention-group-label"><FolderOpen aria-hidden="true" />{t('surface:agentComposer.mentionGroupRooms')}</div>
+            ) : null}
+            {showMentionGroup('room') ? filteredRoomItems.map((room) => {
+              const index = mentionOptions.findIndex((option) => option.kind === 'room' && option.item.id === room.id)
+              return (
+                <button
+                  key={`room:${room.id}`}
+                  type="button"
+                  className="agent-mention-option"
+                  role="option"
+                  aria-selected={index === agentIndex}
+                  data-active={String(index === agentIndex)}
+                  data-result-index={index}
+                  onMouseEnter={() => setAgentIndex(index)}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => chooseRoom(room)}
+                >
+                  <span className="agent-mention-option-icon"><FolderOpen aria-hidden="true" /></span>
+                  <strong>{room.title}</strong>
+                  {room.kind ? <small>{room.kind}</small> : null}
+                </button>
+              )
+            }) : null}
+                          {mentionCategory === 'all' && filteredFileItems.length ? (
+              <div className="agent-mention-group-label"><FileText aria-hidden="true" />{t('surface:agentComposer.mentionGroupFiles')}</div>
+            ) : null}
+            {showMentionGroup('file') ? filteredFileItems.map((file) => {
+              const index = mentionOptions.findIndex((option) => option.kind === 'file' && option.item.id === file.id)
+              return (
+                <button
+                  key={`file:${file.id}`}
+                  type="button"
+                  className="agent-mention-option"
+                  role="option"
+                  aria-selected={index === agentIndex}
+                  data-active={String(index === agentIndex)}
+                  data-result-index={index}
+                  onMouseEnter={() => setAgentIndex(index)}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => chooseFile(file)}
+                >
+                  <span className="agent-mention-option-icon"><FileText aria-hidden="true" /></span>
+                  <strong>{file.title}</strong>
+                  {file.detail ? <small>{file.detail}</small> : null}
+                </button>
+              )
+            }) : null}
+                          {mentionCategory === 'all' && filteredConversationItems.length ? (
+              <div className="agent-mention-group-label"><History aria-hidden="true" />{t('surface:agentComposer.mentionGroupConversations')}</div>
+            ) : null}
+            {showMentionGroup('conversation') ? filteredConversationItems.map((conversation) => {
+              const index = mentionOptions.findIndex((option) => option.kind === 'conversation' && option.item.id === conversation.id)
+              return (
+                <button
+                  key={`conversation:${conversation.id}`}
+                  type="button"
+                  className="agent-mention-option"
+                  role="option"
+                  aria-selected={index === agentIndex}
+                  data-active={String(index === agentIndex)}
+                  data-result-index={index}
+                  onMouseEnter={() => setAgentIndex(index)}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => chooseConversation(conversation)}
+                >
+                  <span className="agent-mention-option-icon">
+                    {conversation.provider === 'everroom' ? (
+                      <MessagesSquare aria-hidden="true" />
+                    ) : (
+                      <SourceIcon kind={conversation.provider} />
+                    )}
+                  </span>
+                  <strong>{displayText(conversation.title, t('surface:agentComposer.untitledConversation'))}</strong>
+                  <small>
+                    {conversation.provider === 'everroom'
+                      ? `${t('surface:agentComposer.everroomConversationTag')} · ${displayDate(conversation.occurredAt, formatDate, t('surface:agentComposer.dateUnavailable'))}`
+                      : `${conversation.provider} · ${t('surface:agentComposer.messageCount', { count: conversation.messageCount ?? 0 })}`}
+                  </small>
+                </button>
+              )
+            }) : null}
+          </div>
         </div>
       ) : null}
       {modelPickerOpen ? (
-        <section className="agent-composer-popover agent-model-picker" id="agent-composer-menu" role="listbox" aria-label={t('surface:agentComposer.modelPickerTitle')}>
+        <section ref={modelPickerRef} className="agent-composer-popover agent-model-picker" id="agent-composer-menu" role="listbox" aria-label={t('surface:agentComposer.modelPickerTitle')}>
           {MODEL_TIER_ORDER
             .filter((tier) => tier !== 'lite' || liteAvailable)
             .map((tier) => {
               const meta = MODEL_TIER_META[tier]
               const TierIcon = meta.icon
+              const tierSelected = !channelActive && modelPreference === tier
               return (
                 <button
                   key={tier}
                   type="button"
                   className="agent-model-option"
                   role="option"
-                  aria-selected={modelPreference === tier}
-                  data-active={String(modelPreference === tier)}
+                  aria-selected={tierSelected}
+                  data-active={String(tierSelected)}
                   onMouseDown={(event) => event.preventDefault()}
                   onClick={() => chooseModelTier(tier)}
                 >
                   <span className="agent-picker-header-icon"><TierIcon aria-hidden="true" /></span>
                   <span><strong>{t(meta.labelKey)}</strong><small>{t(meta.hintKey)}</small></span>
-                  {modelPreference === tier ? <Check aria-hidden="true" /> : null}
+                  {tierSelected ? <Check aria-hidden="true" /> : null}
                 </button>
               )
             })}
+          {onSelectChannelAgent && callableLocalAgents.length > 0 ? (
+            <div className="agent-model-channel-group" role="group" aria-label={t('surface:agentComposer.channelGroupLabel')}>
+              {callableLocalAgents.map((agent) => (
+                <button
+                  key={agent.id}
+                  type="button"
+                  className="agent-model-option"
+                  role="option"
+                  aria-selected={channelAgentId === agent.id}
+                  data-active={String(channelAgentId === agent.id)}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => chooseChannelAgent(agent.id)}
+                >
+                  <span className="agent-picker-header-icon">
+                    {agent.provider === 'claude' || agent.provider === 'codex' || agent.provider === 'openclaw'
+                      ? <SourceIcon kind={agent.provider} />
+                      : <Terminal aria-hidden="true" />}
+                  </span>
+                  <span><strong>{agent.displayName}<span className="agent-model-channel-tag"> (CLI)</span></strong><small>{t('surface:agentComposer.channelOptionHint')}</small></span>
+                  {channelAgentId === agent.id ? <Check aria-hidden="true" /> : null}
+                </button>
+              ))}
+            </div>
+          ) : null}
           {modelPreferenceLocked ? (
             <footer className="agent-model-picker-hint">{t('surface:agentComposer.modelPickerApplyToNext')}</footer>
           ) : null}
+        </section>
+      ) : null}
+      {permissionModeOpen && permissionModeToggleVisible ? (
+        <section
+          ref={permissionModeRef}
+          className="agent-composer-popover agent-permission-mode-picker"
+          role="listbox"
+          aria-label={t('surface:agentComposer.permissionModePickerTitle')}
+        >
+          {confirmingFullAccess ? (
+            <div className="agent-permission-mode-confirm" role="alertdialog" aria-label={t('surface:agentComposer.permissionModeFullAccessConfirmTitle')}>
+              <strong>{t('surface:agentComposer.permissionModeFullAccessConfirmTitle')}</strong>
+              <p>{t('surface:agentComposer.permissionModeFullAccessConfirmBody')}</p>
+              <div className="agent-permission-mode-confirm-actions">
+                <button type="button" onClick={() => setConfirmingFullAccess(false)}>
+                  {t('surface:agentComposer.permissionModeConfirmCancel')}
+                </button>
+                <button
+                  type="button"
+                  className="agent-permission-mode-confirm-enable"
+                  data-danger="true"
+                  onClick={() => choosePermissionMode('full_access')}
+                >
+                  {t('surface:agentComposer.permissionModeConfirmEnable')}
+                </button>
+              </div>
+            </div>
+          ) : permissionModeOptions.map((mode) => {
+            const meta = PERMISSION_MODE_META[mode]
+            const ModeIcon = meta.icon
+            const modeSelected = permissionMode === mode
+            return (
+              <button
+                key={mode}
+                type="button"
+                className="agent-model-option"
+                role="option"
+                aria-selected={modeSelected}
+                data-active={String(modeSelected)}
+                data-danger={meta.danger ? 'true' : undefined}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => choosePermissionMode(mode)}
+              >
+                <span className="agent-picker-header-icon"><ModeIcon aria-hidden="true" /></span>
+                <span><strong>{t(meta.labelKey)}</strong><small>{t(meta.hintKey)}</small></span>
+                {modeSelected ? <Check aria-hidden="true" /> : null}
+              </button>
+            )
+          })}
+        </section>
+      ) : null}
+      {contextPanelOpen && contextBreakdown ? (
+        <section ref={contextPanelRef} className="agent-composer-popover agent-context-breakdown" aria-label={t('surface:agentComposer.contextWindow')}>
+          <header className="agent-context-breakdown-head">
+            <span>{t('surface:agentComposer.contextWindow')}</span>
+            <strong>
+              {contextBreakdown.tokens !== null
+                ? `${formatContextTokens(contextBreakdown.tokens)} / ${formatContextTokens(contextBreakdown.window)}`
+                : formatContextTokens(contextBreakdown.window)}
+              {contextBreakdown.percent != null ? `（${formatContextPercent(contextBreakdown.percent)}）` : ''}
+            </strong>
+          </header>
+          {contextBreakdown.segments.length ? (
+            <>
+              <div className="agent-context-breakdown-bar" aria-hidden="true">
+                {contextBreakdown.segments.map((segment) => (
+                  <span
+                    key={segment.key}
+                    data-key={segment.key}
+                    style={{ width: `${Math.min(100, (segment.tokens / contextBreakdown.window) * 100)}%` }}
+                  />
+                ))}
+              </div>
+              <ul className="agent-context-breakdown-rows">
+                {contextBreakdown.segments.map((segment) => (
+                  <li key={segment.key}>
+                    <span className="agent-context-breakdown-dot" data-key={segment.key} aria-hidden="true" />
+                    <span className="agent-context-breakdown-label">{t(`surface:agentComposer.segment.${segment.key}`)}</span>
+                    <span className="agent-context-breakdown-tokens">{formatContextTokens(segment.tokens)}</span>
+                    <span className="agent-context-breakdown-share">
+                      {formatContextPercent((segment.tokens / contextBreakdown.window) * 100)}
+                    </span>
+                  </li>
+                ))}
+                {contextBreakdown.freeTokens !== null && contextBreakdown.freeTokens > 0 ? (
+                  <li>
+                    <span className="agent-context-breakdown-dot" data-key="free" aria-hidden="true" />
+                    <span className="agent-context-breakdown-label">{t('surface:agentComposer.segment.free')}</span>
+                    <span className="agent-context-breakdown-tokens">{formatContextTokens(contextBreakdown.freeTokens)}</span>
+                    <span className="agent-context-breakdown-share">
+                      {formatContextPercent((contextBreakdown.freeTokens / contextBreakdown.window) * 100)}
+                    </span>
+                  </li>
+                ) : null}
+              </ul>
+            </>
+          ) : (
+            <p className="agent-context-breakdown-empty">{t('surface:agentComposer.contextBreakdownUnknown')}</p>
+          )}
         </section>
       ) : null}
       <div className="agent-prompt" data-has-attachments={String(attachments.length > 0)}>
@@ -643,6 +1187,24 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
             ))}
           </div>
         ) : null}
+        {queuedSubmissions.length > 0 ? (
+          <div className="agent-queued-submissions" aria-label={t('surface:agentComposer.queuedCount', { count: queuedSubmissions.length })}>
+            {queuedSubmissions.map((item) => (
+              <span key={item.id} className="agent-queued-item" title={item.prompt}>
+                <Clock aria-hidden="true" />
+                <span className="agent-queued-item-text">{item.prompt}</span>
+                <button
+                  type="button"
+                  aria-label={t('surface:agentComposer.queuedRemove')}
+                  title={t('surface:agentComposer.queuedRemove')}
+                  onClick={() => onRemoveQueuedSubmission?.(item.id)}
+                >
+                  <X aria-hidden="true" />
+                </button>
+              </span>
+            ))}
+          </div>
+        ) : null}
         <div className="agent-composer-input">
           <div ref={overlayRef} className="agent-composer-overlay" aria-hidden="true">
             {renderOverlaySegments()}
@@ -651,15 +1213,17 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
             ref={textareaRef}
             aria-label={t('surface:agentComposer.desktopAiWorkspaceInput')}
             placeholder={active
-              ? t('surface:agentComposer.agentIsWorking')
-              : available
-                ? t('surface:agentComposer.askAboutThisPageOrDescribeAnAction')
-                : t('surface:agentComposer.syncingRoomData')}
+              ? t('surface:agentComposer.queueHint')
+              : ghostActive
+                ? ghostSuggestion ?? undefined
+                : available
+                  ? t('surface:agentComposer.askAboutThisPageOrDescribeAnAction')
+                  : t('surface:agentComposer.syncingRoomData')}
             rows={2}
             value={value}
             aria-controls={menuOpen ? 'agent-composer-menu' : undefined}
             aria-expanded={menuOpen}
-            disabled={!available || active}
+            disabled={!available}
             onChange={(event) => {
               setSlashPickerDismissed(false)
               setCaret(event.target.selectionStart)
@@ -694,58 +1258,91 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
           </div>
         ) : null}
         <div className="agent-prompt-actions">
-          <input
-            ref={fileInputRef}
-            className="agent-file-input"
-            type="file"
-            accept={ACCEPTED_ATTACHMENTS}
-            multiple
-            tabIndex={-1}
-            onChange={selectAttachments}
-          />
-          <button
-            type="button"
-            className="agent-prompt-tool"
-            title={t('surface:agentComposer.addAttachment')}
-            aria-label={t('surface:agentComposer.addAttachment')}
-            disabled={controlsDisabled}
-            onClick={() => fileInputRef.current?.click()}
-          >
-            <Plus aria-hidden="true" />
-          </button>
-          {roomFocusVisible && onToggleRoomFocus ? (
-            <button
-              type="button"
-              className="agent-room-focus-toggle"
-              data-active={String(roomFocusEnabled)}
-              aria-pressed={roomFocusEnabled}
-              title={t('surface:agentComposer.roomFocusTitle')}
-              disabled={controlsDisabled}
-              onClick={() => onToggleRoomFocus(!roomFocusEnabled)}
-            >
-              {roomFocusRoomTitle ? <span className="agent-room-focus-name">{roomFocusRoomTitle}</span> : null}
-              <span>{roomFocusEnabled ? t('surface:agentComposer.roomFocusOn') : t('surface:agentComposer.roomFocusOff')}</span>
-            </button>
-          ) : null}
           <button
             type="button"
             className="agent-model-tier-toggle"
-            data-tier={modelPreference}
+            data-tier={channelActive ? undefined : modelPreference}
+            data-channel={channelAgentId ?? undefined}
             aria-haspopup="listbox"
             aria-expanded={modelPickerOpen}
-            title={t('surface:agentComposer.modelPickerTitle')}
+            title={channelActive ? channelAgent?.displayName ?? channelAgentId ?? undefined : t('surface:agentComposer.modelPickerTitle')}
             disabled={controlsDisabled}
             onClick={() => (modelPickerOpen ? setModelPickerOpen(false) : openModelPicker())}
           >
-            <ActiveTierIcon aria-hidden="true" />
-            <span>{t(activeTierMeta.labelKey)}</span>
+            {channelActive ? (
+              channelAgent && (channelAgent.provider === 'claude' || channelAgent.provider === 'codex' || channelAgent.provider === 'openclaw')
+                ? <SourceIcon kind={channelAgent.provider} className="agent-model-tier-logo" />
+                : <Terminal aria-hidden="true" />
+            ) : <ActiveTierIcon aria-hidden="true" />}
+            <span>{channelActive ? channelAgent?.displayName ?? channelAgentId : t(activeTierMeta.labelKey)}</span>
+            <ChevronDown aria-hidden="true" className="agent-model-tier-caret" />
           </button>
-          <span className="agent-composer-context" title={contextSummary}>
-            <span>{contextSummary}</span>
+          {permissionModeToggleVisible && activePermissionMeta ? (
+            <button
+              type="button"
+              className="agent-model-tier-toggle agent-permission-mode-toggle"
+              data-mode={permissionMode ?? undefined}
+              data-danger={permissionMode === 'full_access' ? 'true' : undefined}
+              aria-haspopup="listbox"
+              aria-expanded={permissionModeOpen}
+              title={t('surface:agentComposer.permissionModePickerTitle')}
+              disabled={controlsDisabled}
+              onClick={() => {
+                setConfirmingFullAccess(false)
+                setPermissionModeOpen((open) => !open)
+              }}
+            >
+              <ActivePermissionIcon aria-hidden="true" />
+              <span>{t(activePermissionMeta.labelKey)}</span>
+              <ChevronDown aria-hidden="true" className="agent-model-tier-caret" />
+            </button>
+          ) : null}
+          {/* 占位 flex 撑开发送钮；无引用时不渲染文案。 */}
+          <span className="agent-composer-context" title={hasSelectedText ? contextSummary : undefined}>
+            {hasSelectedText ? <span>{contextSummary}</span> : null}
             {hasSelectedText ? (
               <button type="button" aria-label={t('surface:agentComposer.clearAllReferences')} title={t('surface:agentComposer.clearAllReferences')} onClick={onClearContext}>
                 <X aria-hidden="true" />
               </button>
+            ) : null}
+            {/* 实时上下文用量：默认只有小圆环，悬停看数字，点击展开占用构成；压缩中圆环呼吸。 */}
+            {contextUsage?.contextWindow ? (
+              <button
+                type="button"
+                className={`agent-context-ring${contextCompacting ? ' agent-context-ring--compacting' : ''}`}
+                data-level={contextUsage.percent !== null && contextUsage.percent >= 85 ? 'high' : undefined}
+                aria-expanded={contextPanelOpen}
+                title={contextCompacting
+                  ? t('surface:agentComposer.contextCompacting')
+                  : t('surface:agentComposer.contextUsageTitle', {
+                    used: contextUsage.tokens === null ? '—' : contextUsage.tokens.toLocaleString(),
+                    total: contextUsage.contextWindow.toLocaleString(),
+                    percent: contextUsage.percent === null ? '—' : Math.round(contextUsage.percent),
+                  })}
+                onClick={() => setContextPanelOpen((open) => !open)}
+              >
+                <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+                  <circle className="agent-context-ring-track" cx="8" cy="8" r="5.5" fill="none" strokeWidth="2.5" />
+                  {contextUsage.percent !== null ? (
+                    <circle
+                      className="agent-context-ring-arc"
+                      cx="8"
+                      cy="8"
+                      r="5.5"
+                      fill="none"
+                      strokeWidth="2.5"
+                      strokeLinecap="round"
+                      strokeDasharray={`${(RING_CIRCUMFERENCE * Math.min(100, Math.max(3, contextUsage.percent))) / 100} ${RING_CIRCUMFERENCE}`}
+                      transform="rotate(-90 8 8)"
+                    />
+                  ) : null}
+                </svg>
+              </button>
+            ) : contextCompacting ? (
+              <span className="agent-context-usage agent-context-usage--compacting" title={t('surface:agentComposer.contextCompacting')}>
+                <span className="agent-context-usage-pulse" aria-hidden="true" />
+                {t('surface:agentComposer.contextCompacting')}
+              </span>
             ) : null}
           </span>
           {active ? (
@@ -754,7 +1351,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
             </button>
           ) : (
             <button type="submit" className="agent-prompt-submit" title={t('surface:agentComposer.send')} aria-label={t('surface:agentComposer.send')} disabled={!available || (!value.trim() && attachments.length === 0 && !hasSubmittableContext) || loading}>
-              <ArrowUp aria-hidden="true" />
+              <CornerDownLeft aria-hidden="true" />
             </button>
           )}
         </div>

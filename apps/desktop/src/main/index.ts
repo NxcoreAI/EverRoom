@@ -21,7 +21,7 @@ import type {
 
 import type { CloudAccountStatus, DefaultLocalFolder, DefaultLocalFolderConnectionResult } from '../shared/sources'
 import type { PrivateTranscriptionSyncCompletedEvent, RuntimeConfigSnapshot } from '../shared/sources'
-import { OFFICE_TEST_INSTANCE_ID, officePreviewKindForFileName } from '../shared/sources'
+import { officePreviewKindForFileName } from '../shared/sources'
 import { CURSOR_COMPLETION_AGENT_ERROR_KEY } from '../shared/cursor-completion'
 import type { OpenConnectorExecutionInput } from '../shared/open-connector'
 import { ConnectorRegistry } from './connectors/connector-registry'
@@ -371,6 +371,8 @@ const AGENT_CHANNELS = {
   markSessionLinkReturned: 'agent:mark-session-link-returned',
   updateSession: 'agent:update-session',
   generateSessionTitle: 'agent:generate-session-title',
+  suggestConversationPrompt: 'agent:suggest-conversation-prompt',
+  suggestStarterPrompts: 'agent:suggest-starter-prompts',
   deleteSession: 'agent:delete-session',
   getSession: 'agent:get-session',
   getEvents: 'agent:get-events',
@@ -379,6 +381,8 @@ const AGENT_CHANNELS = {
   submitPendingIntent: 'agent:submit-pending-intent',
   cancelRun: 'agent:cancel-run',
   resolveApproval: 'agent:resolve-approval',
+  getPermissionMode: 'agent:get-permission-mode',
+  setPermissionMode: 'agent:set-permission-mode',
   subscribe: 'agent:subscribe',
   unsubscribe: 'agent:unsubscribe',
 } as const
@@ -564,6 +568,10 @@ const KNOWLEDGE_CHANNELS = {
   restoreSuppressedEntity: 'knowledge:entities:restore',
   mergeEntity: 'knowledge:entities:merge',
   listUnmatched: 'knowledge:unmatched:list',
+  retryUnmatched: 'knowledge:unmatched:retry',
+  ignoreUnmatched: 'knowledge:unmatched:ignore',
+  listRules: 'knowledge:rules:list',
+  deleteRule: 'knowledge:rules:delete',
   attachDoc: 'knowledge:docs:attach',
   listRecentDecisions: 'knowledge:decisions:list',
   routeStatus: 'knowledge:route:status',
@@ -584,6 +592,7 @@ const KNOWLEDGE_CHANNELS = {
 
 const FILES_CHANNELS = {
   list: 'files:list',
+  catalogEntry: 'files:catalog-entry',
   listClipCaptures: 'files:clipper-captures:list',
   getClipCaptureDetail: 'files:clipper-captures:detail',
   setClipCaptureFavorite: 'files:clipper-captures:favorite',
@@ -612,6 +621,8 @@ const INGEST_CHANNELS = {
   updateFilterPreference: 'ingest:filter-rules:update-preference',
   reinstateEvent: 'ingest:events:reinstate',
   getEventContent: 'ingest:events:content',
+  getPause: 'ingest:pause:get',
+  setPause: 'ingest:pause:set',
 } as const
 
 const SCREEN_CAPTURE_CHANNELS = {
@@ -953,11 +964,6 @@ ipcMain.on('app:diagnostic-log', (_event, input: unknown) => logRendererDiagnost
 ipcMain.handle('office:instance:set-active', (event, id: unknown) => {
   const window = BrowserWindow.fromWebContents(event.sender)
   if (!window || window.isDestroyed()) throw new Error('EverRoom 主窗口不可用。')
-  // 渲染端是预览焦点唯一事实源：office-test 实例在开发模式下按需懒创建。
-  if (id === OFFICE_TEST_INSTANCE_ID && !officePreviewRegistry.has(OFFICE_TEST_INSTANCE_ID)) {
-    if (!process.env.ELECTRON_RENDERER_URL) throw new Error('Office 测试入口仅在开发模式可用。')
-    officePreviewRegistry.openTest(window)
-  }
   if (id !== null && typeof id !== 'string') return false
   return officePreviewRegistry.setActive(id === null ? null : id)
 })
@@ -2360,6 +2366,8 @@ function registerAgentHandlers(bridge: AgentGatewayBridge, migrationCoordinator:
   handle(AGENT_CHANNELS.markSessionLinkReturned, (_event, linkId) => bridge.markSessionLinkReturned(linkId))
   handle(AGENT_CHANNELS.updateSession, (_event, sessionId, input) => bridge.updateSession(sessionId, input))
   handle(AGENT_CHANNELS.generateSessionTitle, (_event, input) => bridge.generateSessionTitle(input))
+  handle(AGENT_CHANNELS.suggestConversationPrompt, (_event, input) => bridge.suggestConversationPrompt(input))
+  handle(AGENT_CHANNELS.suggestStarterPrompts, (_event, input) => bridge.suggestStarterPrompts(input))
   handle(AGENT_CHANNELS.deleteSession, async (_event, sessionId) => {
     await bridge.deleteSession(sessionId)
     await workspaceBindingStore.removeSession(sessionId)
@@ -2451,6 +2459,8 @@ function registerAgentHandlers(bridge: AgentGatewayBridge, migrationCoordinator:
   handle(AGENT_CHANNELS.cancelRun, (_event, runId) => bridge.cancelRun(runId))
   handle(AGENT_CHANNELS.resolveApproval, (_event, approvalId, decision, feedback) =>
     bridge.resolveApproval(approvalId, decision, feedback))
+  handle(AGENT_CHANNELS.getPermissionMode, (_event, sessionId) => bridge.getPermissionMode(sessionId))
+  handle(AGENT_CHANNELS.setPermissionMode, (_event, sessionId, mode) => bridge.setPermissionMode(sessionId, mode))
   handle(AGENT_CHANNELS.subscribe, (event, sessionId) => bridge.subscribe(event.sender, sessionId))
   handle(AGENT_CHANNELS.unsubscribe, (event) => bridge.unsubscribe(event.sender.id))
 }
@@ -2617,6 +2627,10 @@ function registerKnowledgeHandlers(bridge: KnowledgeGatewayBridge): void {
   handle(KNOWLEDGE_CHANNELS.mergeEntity, (_event, fromId: string, targetId: string) =>
     bridge.mergeEntity(fromId, targetId))
   handle(KNOWLEDGE_CHANNELS.listUnmatched, () => bridge.listUnmatched())
+  handle(KNOWLEDGE_CHANNELS.retryUnmatched, (_event, decisionIds?: string[]) => bridge.retryUnmatched(decisionIds))
+  handle(KNOWLEDGE_CHANNELS.ignoreUnmatched, (_event, decisionIds: string[]) => bridge.ignoreUnmatched(decisionIds))
+  handle(KNOWLEDGE_CHANNELS.listRules, () => bridge.listRules())
+  handle(KNOWLEDGE_CHANNELS.deleteRule, (_event, ruleId: string) => bridge.deleteRule(ruleId))
   handle(KNOWLEDGE_CHANNELS.attachDoc, (_event, sourceKind: string, sourceId: string, input: KnowledgeAttachInput) =>
     bridge.attachDoc(sourceKind, sourceId, input))
   handle(KNOWLEDGE_CHANNELS.listRecentDecisions, (_event, limit?: number) =>
@@ -2659,6 +2673,7 @@ function registerFilesHandlers(
     }
   })
   handle(FILES_CHANNELS.list, (_event, limit?: number, offset?: number) => bridge.list(limit, offset))
+  handle(FILES_CHANNELS.catalogEntry, (_event, fileId: string) => bridge.catalogEntry(fileId))
   handle(FILES_CHANNELS.listClipCaptures, (_event, input) => bridge.listClipCaptures(input))
   handle(FILES_CHANNELS.setClipCaptureFavorite, (_event, captureId: string, favorite: boolean) =>
     bridge.setClipCaptureFavorite(captureId, favorite))
@@ -2783,6 +2798,9 @@ function registerIngestHandlers(bridge: IngestGatewayBridge): void {
   handle(INGEST_CHANNELS.reinstateEvent, (_event, eventId: string) => bridge.reinstateEvent(eventId))
   // 事件详情：归一化产物全文
   handle(INGEST_CHANNELS.getEventContent, (_event, eventId: string) => bridge.getEventContent(eventId))
+  // 记忆引擎暂停闸（记忆页顶部「继续/暂停」按钮）
+  handle(INGEST_CHANNELS.getPause, () => bridge.getPause())
+  handle(INGEST_CHANNELS.setPause, (_event, paused: boolean) => bridge.setPause(paused))
 }
 
 function registerAsrHandlers(store: RecordingStore, coordinator: AsrCoordinator, segments: RecordingSegmentUploader): void {

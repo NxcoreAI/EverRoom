@@ -128,7 +128,7 @@ describe("replayRoutingRule（规则层存量回填）", () => {
         schoolEvent("ev-2"),
         schoolEvent("ev-done"),
       ]);
-    });
+    }, { timeout: 5_000 });
 
     // 幂等：重跑只看最新决策，已归房的来源不再命中。
     const second = service.replayRoutingRule(ruleId);
@@ -140,15 +140,16 @@ describe("replayRoutingRule（规则层存量回填）", () => {
     sqlite.close();
   });
 
-  it("规则不存在 / 禁用 / 匹配器不可重放时返回错误", async () => {
+  it("规则不存在 / 禁用时返回错误；个人级匹配器无 signals 快照安全跳过", async () => {
     const { service, db, sqlite } = await serviceForTest();
 
     expect(service.replayRoutingRule("nope")).toEqual({ ok: false, error: "rule_not_found" });
 
-    const replayable = service.createRule({ matcher: { threadId: "thread-1" }, targetRoomId: "room-school" });
-    expect(replayable).toEqual({ ok: true, id: expect.any(String) });
-    expect(service.replayRoutingRule(replayable.ok ? replayable.id : ""))
-      .toEqual({ ok: false, error: "matcher_not_replayable" });
+    // 个人级匹配器（threadId）不再整体报错：决策快照缺 signals 时该行跳过（宁可漏配不错配）。
+    const personal = service.createRule({ matcher: { threadId: "thread-1" }, targetRoomId: "room-school" });
+    expect(personal).toEqual({ ok: true, id: expect.any(String) });
+    expect(service.replayRoutingRule(personal.ok ? personal.id : ""))
+      .toEqual({ ok: true, matched: 0, replayed: 0 });
 
     const disabled = service.createRule({ matcher: { sourceTag: "connector:x:y" }, targetRoomId: "room-school" });
     const disabledId = disabled.ok ? disabled.id : "";

@@ -428,6 +428,10 @@ export const agentSessions = sqliteTable("agent_sessions", {
   runtimeSessionRef: text("runtime_session_ref"),
   activeAgentId: text("active_agent_id").notNull().default("main"),
   title: text("title"),
+  /** 会话权限模式（provider 中立语义档）；null = 未显式设置，按运行时默认（pi: accept_edits，ACP: 适配器 currentModeId）。 */
+  permissionMode: text("permission_mode", {
+    enum: ["ask_before_write", "accept_edits", "auto", "full_access"],
+  }),
   status: text("status", {
     enum: ["idle", "running", "interrupted", "closed"],
   })
@@ -802,7 +806,7 @@ export const pendingAgentIntents = sqliteTable(
       .references(() => agentRuns.id, { onDelete: "cascade" }),
     originalPrompt: text("original_prompt").notNull(),
     targetCapability: text("target_capability", {
-      enum: ["document.create", "document.edit", "document.continue"],
+      enum: ["document.create", "document.edit", "document.continue", "task.clarify"],
     }).notNull(),
     allowedRoomIds: text("allowed_room_ids", { mode: "json" }).$type<string[]>().notNull(),
     allowedDocumentIds: text("allowed_document_ids", { mode: "json" }).$type<string[]>().notNull(),
@@ -859,6 +863,30 @@ export const documentSectionPreviews = sqliteTable("document_section_previews", 
   primaryKey({ columns: [table.documentId, table.blockId] }),
 ]);
 
+export const roomFolders = sqliteTable(
+  "room_folders",
+  {
+    id: text("id").primaryKey(),
+    roomId: text("room_id").notNull(),
+    /** 任务夹当前唯一形态；预留后续普通文件夹。 */
+    kind: text("kind", { enum: ["task"] }).notNull().default("task"),
+    title: text("title").notNull(),
+    /** 任务元数据（stage/kind/artifacts 等）冗余在此，供列表投影免解析 workplan 文档。 */
+    data: text("data", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
+    position: integer("position").notNull().default(0),
+    deletedAt: integer("deleted_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("room_folders_room_idx").on(table.roomId, table.deletedAt),
+  ],
+);
+
 export const roomDocumentLinks = sqliteTable(
   "room_doc_links",
   {
@@ -866,6 +894,7 @@ export const roomDocumentLinks = sqliteTable(
     documentId: text("document_id")
       .notNull()
       .references(() => documents.id, { onDelete: "cascade" }),
+    folderId: text("folder_id"),
     linkedAt: integer("linked_at", { mode: "timestamp_ms" })
       .notNull()
       .$defaultFn(() => new Date()),
@@ -873,6 +902,7 @@ export const roomDocumentLinks = sqliteTable(
   (table) => [
     uniqueIndex("room_doc_links_room_document_idx").on(table.roomId, table.documentId),
     index("room_doc_links_room_idx").on(table.roomId),
+    index("room_doc_links_folder_idx").on(table.folderId),
   ],
 );
 
@@ -1708,6 +1738,8 @@ export const roomSourceMemberships = sqliteTable(
     sourceId: text("source_id").notNull(),
     sourceVersion: integer("source_version").notNull(),
     sourceTitle: text("source_title"),
+    /** 任务夹归属：Office 产物（file）等挂 Room 的条目归入任务夹展示。 */
+    folderId: text("folder_id"),
     evidenceGroupKey: text("evidence_group_key").notNull(),
     role: text("role", { enum: ["entry", "primary", "mention", "manual", "rule"] }).notNull(),
     effectiveWeight: real("effective_weight").notNull().default(0),
@@ -1942,7 +1974,7 @@ export const routeDecisions = sqliteTable(
     evidence: text("evidence", { mode: "json" }),
     reason: text("reason"),
     status: text("status", {
-      enum: ["pending", "auto", "linked", "awaiting_review", "confirmed", "reverted"],
+      enum: ["pending", "auto", "linked", "awaiting_review", "confirmed", "reverted", "ignored"],
     }).notNull().default("pending"),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .notNull()
@@ -2560,6 +2592,10 @@ export interface IngestFilterVerdict {
   category: string;
   /** 置信 0~1，低于阈值放行（宁漏勿错杀）。 */
   confidence: number;
+  /** 状态/参考分流（2026-09-24 定案）：这条数据会被更新/覆盖、需要唯一
+   * 权威版本吗。true 时即便类型默认 memory:false（参考型兜底）也单独打开
+   * 记忆链路；缺省 = 未判定，不触发恢复（fail-closed，保 token）。 */
+  stateLike?: boolean;
 }
 
 /**

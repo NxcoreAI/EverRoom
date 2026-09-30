@@ -4,6 +4,17 @@
   min-height: 0;
   flex-direction: column;
   background: var(--cr-surface);
+  /* 尺寸容器：编辑器根节点（无推挤 padding,宽度稳定）。cqw 一律以此为准。 */
+  container-type: inline-size;
+  /* 正文版心宽度公式：随编辑区按比例伸缩（64%,720–1040px 夹取）。
+     AI 边栏折叠、窗口变宽时版心跟着放宽,不再是恒定 720px 的窄条；
+     标题块/速览卡/正文/历史对比共用此变量,永远同列对齐。
+     注意必须基于编辑器根容器取 cqw——若挂在滚动容器上,大纲展开的
+     推挤 padding 会把 content-box 挤窄,64cqw 又落回下限,版心永远放宽不了。 */
+  --cr-doc-column: clamp(720px, 64cqw, 1040px);
+  /* 停靠大纲宽度公式：随编辑区按比例伸缩（22%,176–320px 夹取）；
+     面板宽与正文推挤量（+8px 间隙）共用此变量,永远对齐。 */
+  --cr-outline-width: clamp(176px, 22%, 320px);
 }
 
 .context-room-agent-write-overlay {
@@ -653,21 +664,20 @@ textarea.context-room-tiptap-rewrite-text:disabled {
   overflow-anchor: none;
   overscroll-behavior: contain;
   padding: 0 30px;
-  scrollbar-width: thin;
-  container-type: inline-size;
   /* 大纲展开/收起时正文横向让位/收回（由刻度线组件的兄弟选择器驱动）。 */
   transition: padding-left 180ms ease-out;
 }
 
-/* 大纲展开：正文往右推（面板宽 240px + 16px 间隙），让出的空间放停靠大纲。 */
+/* 大纲展开：正文往右推（面板宽 + 8px 间隙，公式与面板同源），让出的
+   空间放停靠大纲；百分比与面板宽度同基准（编辑器容器宽），永远对齐。 */
 .context-room-tiptap-content-scale[data-outline-open='true'] ~ .context-room-tiptap-scroll {
-  padding-left: min(256px, calc(100vw - 80px));
+  padding-left: calc(var(--cr-outline-width) + 8px);
 }
 
 .context-room-document-title-block {
-  width: min(100%, 720px);
+  width: min(100%, var(--cr-doc-column));
   margin: 0 auto;
-  padding: 44px clamp(24px, 8cqw, 72px) 0;
+  padding: 44px clamp(24px, 6cqw, 72px) 0;
 }
 
 .context-room-document-title-input {
@@ -712,9 +722,9 @@ textarea.context-room-tiptap-rewrite-text:disabled {
    选择器带 .context-room-document-overview 前缀是为了在特异性上压过
    ContextRoom.css 里 :where(button) 的白底兜底。 */
 .context-room-document-overview {
-  width: min(100%, 720px);
+  width: min(100%, var(--cr-doc-column));
   margin: 0 auto;
-  padding: 8px clamp(24px, 8cqw, 72px) 24px;
+  padding: 8px clamp(24px, 6cqw, 72px) 24px;
 }
 
 .context-room-document-overview .context-room-document-overview-bar {
@@ -895,8 +905,8 @@ textarea.context-room-tiptap-rewrite-text:disabled {
 }
 
 .context-room-tiptap-scroll::-webkit-scrollbar {
-  width: 9px;
-  height: 9px;
+  width: 6px;
+  height: 6px;
 }
 
 .context-room-tiptap-scroll::-webkit-scrollbar-track,
@@ -905,7 +915,7 @@ textarea.context-room-tiptap-rewrite-text:disabled {
 }
 
 .context-room-tiptap-scroll::-webkit-scrollbar-thumb {
-  border: 2px solid transparent;
+  border: 1px solid transparent;
   border-radius: 999px;
   background-color: transparent;
   background-clip: padding-box;
@@ -913,53 +923,30 @@ textarea.context-room-tiptap-rewrite-text:disabled {
 }
 
 .context-room-tiptap-scroll[data-scrolling='true']::-webkit-scrollbar-thumb {
-  background-color: color-mix(in srgb, var(--cr-muted) 44%, transparent);
+  background-color: color-mix(in srgb, var(--cr-muted) 34%, transparent);
   background-clip: padding-box;
   transition-duration: 70ms;
 }
 
-/* 章节大纲入口（收起态）：编辑器左上角的展开按钮，与展开态大纲停靠位置对齐。 */
+/* 章节大纲（停靠左侧）：收起态整个不渲染——入口按钮在顶部快捷行（搜索旁）。 */
 .context-room-tiptap-content-scale {
   position: absolute;
   z-index: 20;
   top: 44px;
-  left: 16px;
-  display: flex;
-  flex-direction: column;
-}
-
-/* 展开态：停靠式左侧大纲——贴编辑器左缘、从状态栏下到底部、全高。 */
-.context-room-tiptap-content-scale[data-outline-open='true'] {
   bottom: 0;
   left: 0;
-  max-height: none;
-}
-
-.context-room-tiptap-scale-expand {
+  width: var(--cr-outline-width);
   display: flex;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 26px;
-  width: 26px;
-  height: 26px;
-  border-radius: 6px;
-  color: var(--cr-muted);
-  background: transparent;
-}
-
-.context-room-tiptap-scale-expand:hover,
-.context-room-tiptap-scale-expand:focus-visible {
-  color: var(--cr-blue);
-  background: var(--cr-blue-soft);
+  flex-direction: column;
 }
 
 /* 章节大纲（展开态，停靠左侧，飞书式）：透明浮在页面底色上——无卡片、
-   无边框、无阴影；高度占满停靠区，条目超出时内部滚动；内容区随正文按
-   比例滚动，当前章节高亮。 */
+   无边框、无阴影；高度占满停靠区，条目超出时内部滚动；当前章节高亮并
+   保持可见，列表不随正文滚动。 */
 .context-room-tiptap-outline {
   display: flex;
   flex-direction: column;
-  width: min(240px, calc(100vw - 96px));
+  width: 100%;
   height: 100%;
   overflow: hidden;
   background: transparent;
@@ -1005,16 +992,15 @@ textarea.context-room-tiptap-rewrite-text:disabled {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
   padding: 0 10px 12px 6px;
   overflow-y: auto;
-  scrollbar-width: thin;
   overscroll-behavior: contain;
 }
 
-/* 常显滚动条：条目超出上限时明确可滚（可拖拽）。 */
+/* 拇指常显、轨道透明。注意不能设 scrollbar-width/color：设了 Chromium 会
+   无视 ::-webkit-scrollbar 规则自绘原生滚动条，带常驻轨道线（即截图灰线）。 */
 .context-room-tiptap-outline-items::-webkit-scrollbar {
-  width: 8px;
+  width: 6px;
 }
 
 .context-room-tiptap-outline-items::-webkit-scrollbar-track,
@@ -1023,14 +1009,14 @@ textarea.context-room-tiptap-rewrite-text:disabled {
 }
 
 .context-room-tiptap-outline-items::-webkit-scrollbar-thumb {
-  border: 2px solid transparent;
+  border: 1px solid transparent;
   border-radius: 999px;
-  background-color: color-mix(in srgb, var(--cr-muted) 52%, transparent);
+  background-color: color-mix(in srgb, var(--cr-muted) 30%, transparent);
   background-clip: padding-box;
 }
 
 .context-room-tiptap-outline-items::-webkit-scrollbar-thumb:hover {
-  background-color: var(--cr-muted);
+  background-color: color-mix(in srgb, var(--cr-muted) 50%, transparent);
 }
 
 /* 条目行 = 折叠箭头槽 + 文本：两个独立按钮，各自持有 hover/点击反馈，
@@ -1041,11 +1027,12 @@ textarea.context-room-tiptap-rewrite-text:disabled {
   gap: 2px;
 }
 
-.context-room-tiptap-outline-entry[data-level='1'] { padding-left: 10px; }
-.context-room-tiptap-outline-entry[data-level='2'] { padding-left: 22px; }
-.context-room-tiptap-outline-entry[data-level='3'] { padding-left: 34px; }
-.context-room-tiptap-outline-entry[data-level='4'] { padding-left: 46px; }
-.context-room-tiptap-outline-entry[data-level='5'] { padding-left: 58px; }
+/* 逐级缩进 8px：层级可辨又不吃掉面板宽度（深层级长标题能多显几个字）。 */
+.context-room-tiptap-outline-entry[data-level='1'] { padding-left: 4px; }
+.context-room-tiptap-outline-entry[data-level='2'] { padding-left: 12px; }
+.context-room-tiptap-outline-entry[data-level='3'] { padding-left: 20px; }
+.context-room-tiptap-outline-entry[data-level='4'] { padding-left: 28px; }
+.context-room-tiptap-outline-entry[data-level='5'] { padding-left: 36px; }
 
 /* 折叠按钮：正方形、容器在任何状态（默认/悬停/按下）都零渲染——无背景、
    无圆角、无阴影；只有图标本身的颜色作反馈。 */
@@ -1053,12 +1040,12 @@ textarea.context-room-tiptap-rewrite-text:disabled {
   display: flex;
   align-items: center;
   justify-content: center;
-  flex: 0 0 18px;
-  width: 18px;
-  height: 18px;
-  /* 与首行文本垂直对齐：行首中心 ≈ 4px padding + 20.8px 行高/2 = 14.4px，
-     18px 方钮取 margin-top 5px（中心 14px）。多行条目仍锚定首行。 */
-  margin-top: 5px;
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+  /* 与首行文本垂直对齐：行首中心 ≈ 3px padding + 18.9px 行高/2 ≈ 12.4px，
+     16px 方钮取 margin-top 4px（中心 12px）。多行条目仍锚定首行。 */
+  margin-top: 4px;
   padding: 0;
   border: 0;
   border-radius: 0;
@@ -1087,23 +1074,25 @@ textarea.context-room-tiptap-rewrite-text:disabled {
 }
 
 .context-room-tiptap-outline-toggle-spacer {
-  flex: 0 0 18px;
-  width: 18px;
+  flex: 0 0 16px;
+  width: 16px;
   height: 1px;
 }
 
-/* 文本按钮（大纲条目与文档标题共用基样式）：长标题完整换行；
-   hover/点击/当前章节的高亮都在文本按钮自身，不外溢。 */
+/* 文本按钮（大纲条目与文档标题共用基样式）：长标题单行截断（完整文本
+   走 title 提示），列表保持可扫读；hover/点击/当前章节的高亮都在文本
+   按钮自身，不外溢。 */
 .context-room-tiptap-outline-item {
   min-width: 0;
-  padding: 4px 8px 4px 2px;
+  padding: 3px 8px 3px 2px;
   border-radius: 6px;
   color: var(--cr-muted);
   font-size: 13px;
-  line-height: 1.6;
+  line-height: 1.45;
   text-align: left;
-  white-space: normal;
-  overflow-wrap: break-word;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   background: transparent;
   transition: background-color 120ms ease-out, color 120ms ease-out;
 }
@@ -1118,6 +1107,7 @@ textarea.context-room-tiptap-rewrite-text:disabled {
   background: var(--cr-surface-hover);
 }
 
+/* 一级章节比深层级字色更深，维持层级可读性。 */
 .context-room-tiptap-outline-entry[data-level='1'] .context-room-tiptap-outline-item {
   color: var(--cr-text);
 }
@@ -1128,21 +1118,22 @@ textarea.context-room-tiptap-rewrite-text:disabled {
   font-weight: 500;
 }
 
+/* 当前章节的祖先链：弱强调（正文色，不加背景），深层级也能看出所处结构。 */
+.context-room-tiptap-outline-entry[data-in-path='true']:not([data-active='true']) .context-room-tiptap-outline-item {
+  color: var(--cr-text);
+}
+
 /* 直接子级的文档标题项：列容器里禁止 flex-grow（否则章节少时把整个
    面板高度撑满），按内容自然高度。 */
 .context-room-tiptap-outline-items > .context-room-tiptap-outline-item {
   width: 100%;
   flex: 0 0 auto;
-  padding: 6px 10px;
-}
-
-.context-room-tiptap-outline-entry[data-level='1'] .context-room-tiptap-outline-item {
-  color: var(--cr-text);
+  padding: 5px 10px;
 }
 
 /* 文档标题项（大纲第一条）：与一级标题同层但加粗，点击回顶部。 */
 .context-room-tiptap-outline-doc-title {
-  padding-left: 10px;
+  padding-left: 8px;
   color: var(--cr-text);
   font-weight: 600;
 }
@@ -1154,10 +1145,10 @@ textarea.context-room-tiptap-rewrite-text:disabled {
 }
 
 .context-room-tiptap-scroll .tiptap {
-  width: min(100%, 720px);
+  width: min(100%, var(--cr-doc-column));
   min-height: 100%;
   margin: 0 auto;
-  padding: 20px clamp(24px, 8cqw, 72px) 72px;
+  padding: 20px clamp(24px, 6cqw, 72px) 72px;
   outline: 0;
 }
 
@@ -2067,6 +2058,12 @@ textarea.context-room-tiptap-rewrite-text:disabled {
 .context-room-doc-quick-actions button:disabled {
   cursor: default;
   opacity: 0.4;
+}
+
+/* 章节大纲开关：展开态点亮为主题蓝。 */
+.context-room-doc-quick-actions button[data-active='true'] {
+  color: var(--cr-blue);
+  background: var(--cr-blue-soft);
 }
 
 .context-room-doc-quick-actions button svg {

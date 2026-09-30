@@ -19,7 +19,7 @@ import { TextSelection } from '@tiptap/pm/state'
 import { EditorContent, useEditor, type Editor, type JSONContent } from '@tiptap/react'
 import { Placeholder } from '@tiptap/extensions'
 import StarterKit from '@tiptap/starter-kit'
-import { GitCompare, LoaderCircle, RotateCcw, X } from 'lucide-react'
+import { GitCompare, ListTree, LoaderCircle, RotateCcw, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { stripDocumentTitle } from '@nxcore/document-model'
 
@@ -1502,6 +1502,13 @@ export function TiptapDocumentEditor({
     window.setTimeout(() => setOutlineHandleEpoch((value) => value + 1), 220)
   }, [])
 
+  // 章节大纲受控展开态：入口按钮在顶部快捷行（搜索旁），面板开合由这里驱动。
+  const [outlineOpen, setOutlineOpen] = useState(false)
+  const toggleOutline = useCallback(() => {
+    setOutlineOpen((open) => !open)
+    handleOutlineOpenChange()
+  }, [handleOutlineOpenChange])
+
   const handleBlockDraggingChange = (dragging: boolean) => {
     setBlockDragging(dragging)
     if (!dragging && editor && !editor.isDestroyed) editor.view.dom.dispatchEvent(new Event('dragend'))
@@ -1620,6 +1627,19 @@ export function TiptapDocumentEditor({
             editor={editor}
             disabled={historyDiffActive}
             onOpenFind={() => openFindReplace(editor)}
+            trailing={tableOfContents.length > 0 ? (
+              <button
+                type="button"
+                aria-expanded={outlineOpen}
+                data-active={String(outlineOpen)}
+                aria-label={t(outlineOpen ? 'contextRoom:tiptapContentScale.collapseOutline' : 'contextRoom:tiptapContentScale.expandOutline')}
+                title={t(outlineOpen ? 'contextRoom:tiptapContentScale.collapseOutline' : 'contextRoom:tiptapContentScale.expandOutline')}
+                onMouseDown={(mouseEvent) => mouseEvent.preventDefault()}
+                onClick={toggleOutline}
+              >
+                <ListTree aria-hidden="true" />
+              </button>
+            ) : null}
           />
         ) : null}
         {cursorCompletionRunning ? (
@@ -1682,7 +1702,8 @@ export function TiptapDocumentEditor({
           items={tableOfContents}
           documentTitle={documentName}
           editor={editor}
-          onOutlineOpenChange={handleOutlineOpenChange}
+          outlineOpen={outlineOpen}
+          onCollapseOutline={() => { setOutlineOpen(false); handleOutlineOpenChange() }}
         />
       ) : null}
       <div

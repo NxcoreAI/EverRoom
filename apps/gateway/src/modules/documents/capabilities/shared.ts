@@ -20,6 +20,8 @@ export type CapabilityBackend = Pick<DocumentService,
   | "resolveSelectionRewriteContent"
   // doc-writer 引用透传（M3/V2）：write/patch 的 invocationId → 草稿内容解析器。
   | "resolveDocWriterDraft"
+  // 任务管线（task-plugin）：workplan.md 的同步 create-or-update 写入。
+  | "syncExternalMarkdown"
 >;
 
 export const annotations = (readOnlyHint: boolean, destructiveHint = false) => ({

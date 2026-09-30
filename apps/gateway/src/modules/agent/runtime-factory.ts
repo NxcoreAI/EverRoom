@@ -187,10 +187,14 @@ function createUserFacingRuntime(
 export function createBackgroundAgentRuntime(config: GatewayConfig): AgentRuntime {
   const bundle = builtin(BUILTIN_AGENT_IDS.transcriptionSummary);
   if (config.agentRuntime === "fake") return new FakeAgentRuntime();
-  if (!isPiRuntimeConfigured(config.backgroundPi)) {
+  // 转写总结有独立模型档（transcriptionSummaryPi）；段未配置时回退 background。
+  const tier = isPiRuntimeConfigured(config.transcriptionSummaryPi)
+    ? config.transcriptionSummaryPi!
+    : config.backgroundPi;
+  if (!isPiRuntimeConfigured(tier)) {
     return new UnconfiguredAgentRuntime(BUILTIN_AGENT_IDS.transcriptionSummary);
   }
-  const { memory: _memory, ...pi } = config.backgroundPi!;
+  const { memory: _memory, ...pi } = tier!;
   return new PiAgentRuntime({
     ...withAgentDirectories(config, BUILTIN_AGENT_IDS.transcriptionSummary, pi),
     // 后台总结是机器对机器 JSON 提取：不继承 primary 的 reasoning——
@@ -368,6 +372,31 @@ export function createCursorCompletionRuntime(config: GatewayConfig): AgentRunti
     skillsEnabled: true,
     skillPrompts: bundle.skillPrompts,
     systemPrompt: bundle.systemPrompt,
+  });
+}
+
+/**
+ * 对话侧建议（输入框空态补全 + 新对话推荐提问）的隔离内部 runtime：
+ * 无工具/记忆，单次调用。档位优先 cursorCompletionPi（qwen-flash 低延迟档），
+ * 未配置时回退 background——两者都是机器对机器短输出，reasoning 一律关闭。
+ */
+export function createConversationSuggestionRuntime(config: GatewayConfig): AgentRuntime | null {
+  if (config.agentRuntime === "fake") return null;
+  const tier = isPiRuntimeConfigured(config.cursorCompletionPi)
+    ? config.cursorCompletionPi!
+    : config.backgroundPi;
+  if (!isPiRuntimeConfigured(tier)) return null;
+  const { mcp: _mcp, ...pi } = tier!;
+  return new PiAgentRuntime({
+    ...pi,
+    includeBashTool: false,
+    builtinTools: [],
+    maxToolCallsPerRun: 1,
+    runtimeRole: "internal",
+    reasoning: "off",
+    sessionsDir: join(pi.sessionsDir, "conversation-suggestion"),
+    workingDirectory: join(pi.workingDirectory, "conversation-suggestion"),
+    agentDirectory: join(pi.agentDirectory, "conversation-suggestion"),
   });
 }
 

@@ -5,6 +5,8 @@ export interface PendingShellApproval {
   runId: string
   toolName: string
   command: string
+  /** "shell"（pi 档 bash 审批）| "tool"（ACP 渠道会话工具审批）；缺省按 shell 展示。 */
+  kind?: string
   cwd?: string
   reason?: string
   requestedAt: string
@@ -24,6 +26,7 @@ function requestedApproval(event: AgentEvent): PendingShellApproval | null {
     runId: event.runId,
     toolName: payload.toolName,
     command: payload.command,
+    ...(typeof payload.kind === 'string' && payload.kind ? { kind: payload.kind } : {}),
     ...(typeof payload.cwd === 'string' && payload.cwd ? { cwd: payload.cwd } : {}),
     ...(typeof payload.reason === 'string' && payload.reason ? { reason: payload.reason } : {}),
     requestedAt: event.occurredAt,

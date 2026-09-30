@@ -31,6 +31,11 @@ import {
   saveDocumentCursorCompletionSettings,
   type DocumentCursorCompletionSettings,
 } from '@/state/documentCursorCompletionSettings'
+import {
+  loadConversationSuggestionSettings,
+  saveConversationSuggestionSettings,
+  type ConversationSuggestionSettings,
+} from '@/state/conversationSuggestionSettings'
 import appleLogo from '@/assets/apple-logo.svg'
 import googleLogo from '@/assets/google-logo.svg'
 import { formatLlmUsd, type AiGatewayStatus, type CloudOidcProvider } from '../../../../shared/sources'
@@ -113,6 +118,8 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
   const [realitySettings, setRealitySettings] = useState<RealitySettings>(loadRealitySettings)
   const [cursorCompletionSettings, setCursorCompletionSettings] =
     useState<DocumentCursorCompletionSettings>(loadDocumentCursorCompletionSettings)
+  const [conversationSuggestionSettings, setConversationSuggestionSettings] =
+    useState<ConversationSuggestionSettings>(loadConversationSuggestionSettings)
   const [keyring, setKeyring] = useState<AccountKeyringStatus | null>(null)
   const [syncedCount, setSyncedCount] = useState<number | null>(null)
   const [syncedAudioCount, setSyncedAudioCount] = useState<number | null>(null)
@@ -279,6 +286,14 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
     setCursorCompletionSettings((current) => {
       const next = { ...current, ...patch }
       saveDocumentCursorCompletionSettings(next)
+      return next
+    })
+  }
+
+  const updateConversationSuggestionSettings = (patch: Partial<ConversationSuggestionSettings>) => {
+    setConversationSuggestionSettings((current) => {
+      const next = { ...current, ...patch }
+      saveConversationSuggestionSettings(next)
       return next
     })
   }
@@ -796,6 +811,40 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
           >
             <span aria-hidden="true" />
             {t(cursorCompletionSettings.paragraphEnabled ? 'surface:settings.on' : 'surface:settings.off')}
+          </button>
+        </div>
+        <div className="reality-setting-row">
+          <div><strong>{t('surface:settings.conversationCompletion')}</strong></div>
+          <button
+            className="settings-toggle"
+            type="button"
+            role="switch"
+            aria-label={t('surface:settings.conversationCompletion')}
+            aria-checked={conversationSuggestionSettings.completionEnabled}
+            data-active={String(conversationSuggestionSettings.completionEnabled)}
+            onClick={() => updateConversationSuggestionSettings({
+              completionEnabled: !conversationSuggestionSettings.completionEnabled,
+            })}
+          >
+            <span aria-hidden="true" />
+            {t(conversationSuggestionSettings.completionEnabled ? 'surface:settings.on' : 'surface:settings.off')}
+          </button>
+        </div>
+        <div className="reality-setting-row">
+          <div><strong>{t('surface:settings.starterPrompts')}</strong></div>
+          <button
+            className="settings-toggle"
+            type="button"
+            role="switch"
+            aria-label={t('surface:settings.starterPrompts')}
+            aria-checked={conversationSuggestionSettings.starterPromptsEnabled}
+            data-active={String(conversationSuggestionSettings.starterPromptsEnabled)}
+            onClick={() => updateConversationSuggestionSettings({
+              starterPromptsEnabled: !conversationSuggestionSettings.starterPromptsEnabled,
+            })}
+          >
+            <span aria-hidden="true" />
+            {t(conversationSuggestionSettings.starterPromptsEnabled ? 'surface:settings.on' : 'surface:settings.off')}
           </button>
         </div>
       </section>

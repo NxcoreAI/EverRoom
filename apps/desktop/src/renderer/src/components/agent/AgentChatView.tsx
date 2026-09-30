@@ -10,7 +10,8 @@ import type { PendingShellApproval } from './agentShellApprovals'
 import type { AgentRunActivity } from './agentRunActivity'
 import { parseAgentDocumentIntentResult, type AgentDocumentIntentResult } from './agentDocumentIntent'
 import { parseAgentNavigationTarget } from './agentNavigation'
-import { formatAgentOutput } from './agentOutputFormat'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { parseAgentRoomSelectionResult } from './agentRoomSelection'
 import { AgentDocumentPicker } from './AgentDocumentPicker'
 import { useRoomDocumentsState } from '../context-room/RoomDocumentsProvider'
@@ -22,6 +23,7 @@ import {
 } from './agentDocumentSelection'
 import { useLinkedAgentRun, type LinkedAgentRunState } from './useLinkedAgentRun'
 import type { DisplayAgentMessage, DisplayAgentToolCall } from './useAgentSession'
+import type { MentionedItem } from './agentMentions'
 import { modelPreferenceFromAgentId, type AgentNavigationTarget, type AgentRoomReference, type AgentSessionLink, type PendingAgentIntent, type RoomDocument } from '@nxcore/agent-contract'
 import type { ActiveDocumentDescriptor } from './activeDocumentContext'
 import type { AgentApprovalDecision } from '../../../../shared/sources'
@@ -153,16 +155,28 @@ function DocumentIntentClarification({
 
 const generatedDocumentPattern = /文档已成功生成[，,]\s*您可以查看：?\s*\[([^\]]+)\]\s*\(?([0-9a-f]{8}-[0-9a-f-]{27,})\)?/iu
 
+const agentMarkdownComponents = {
+  // 会话气泡内标题一律降级到 h4-h6，避免模型偶尔输出标题撑破布局。
+  h1: ({ children }: { children?: ReactNode }) => <h4>{children}</h4>,
+  h2: ({ children }: { children?: ReactNode }) => <h4>{children}</h4>,
+  h3: ({ children }: { children?: ReactNode }) => <h5>{children}</h5>,
+  h4: ({ children }: { children?: ReactNode }) => <h6>{children}</h6>,
+  h5: ({ children }: { children?: ReactNode }) => <h6>{children}</h6>,
+  h6: ({ children }: { children?: ReactNode }) => <h6>{children}</h6>,
+  a: ({ children, href }: { children?: ReactNode; href?: string }) => (
+    <a href={href} target="_blank" rel="noreferrer noopener">{children}</a>
+  ),
+  img: () => null,
+} as const
+
 function FormattedAgentText({ content }: { content: string }) {
-  return formatAgentOutput(content).map((block, index) => {
-    if (block.type === 'paragraph') return <p key={`${index}:${block.text}`}>{block.text}</p>
-    const List = block.ordered ? 'ol' : 'ul'
-    return (
-      <List key={`${index}:${block.items.join('\u0000')}`} className="agent-output-list">
-        {block.items.map((item, itemIndex) => <li key={`${itemIndex}:${item}`}>{item}</li>)}
-      </List>
-    )
-  })
+  return (
+    <div className="agent-markdown">
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={agentMarkdownComponents}>
+        {content}
+      </ReactMarkdown>
+    </div>
+  )
 }
 
 function AssistantMessageContent({ content }: { content: string }) {
@@ -353,6 +367,7 @@ export function AgentChatView({
   onOpenSessionLink,
   onOpenDraftDocument,
   onSlidesGenerate,
+  onOpenMention,
   onRejectDocumentIntent,
   onSelectRoom,
   onSelectDocument,
@@ -364,6 +379,7 @@ export function AgentChatView({
   resolvingApprovalIds = new Set<string>(),
   scopeReady,
   sessionLinks,
+  starterPrompts = null,
   submitting,
   toolCallsByRun,
 }: {
@@ -388,6 +404,7 @@ export function AgentChatView({
   onOpenSessionLink: (link: AgentSessionLink) => void
   onOpenDraftDocument?: (documentId: string) => void
   onSlidesGenerate?: (message: string) => void
+  onOpenMention?: (item: MentionedItem) => void
   onRejectDocumentIntent: () => void
   onSelectRoom: (
     room: AgentRoomReference,
@@ -403,6 +420,8 @@ export function AgentChatView({
   resolvingApprovalIds?: ReadonlySet<string>
   scopeReady: boolean
   sessionLinks: AgentSessionLink[]
+  /** 按最近活动生成的动态开场推荐；null/空时回退静态 quickPrompts。 */
+  starterPrompts?: string[] | null
   submitting: boolean
   toolCallsByRun: Record<string, DisplayAgentToolCall[]>
 }) {
@@ -801,12 +820,32 @@ export function AgentChatView({
 
             if (message.role === 'user') {
               lastUserMessage = message
+              const mentionItems: MentionedItem[] | null = message.mentions?.length ? message.mentions : null
+              const mentionClickable = (item: MentionedItem) => item.kind === 'room' || item.kind === 'file'
+                || (item.kind === 'conversation' && (item.provider === undefined || item.provider === 'everroom'))
               return (
                 <Fragment key={message.id}>
                   {index === authCardInsertIndex ? <AgentAuthChallengeCard /> : null}
-                  {message.referencedAgentNames?.map((name) => (
-                    <span key={name} className="agent-user-mention">@{name}</span>
-                  ))}
+                  {mentionItems
+                    ? mentionItems.map((item) => (
+                      mentionClickable(item) && onOpenMention ? (
+                        <button
+                          key={`${item.kind}:${item.id}`}
+                          type="button"
+                          className="agent-user-mention agent-user-mention-link"
+                          data-kind={item.kind}
+                          title={t('surface:agentChat.mentionJumpTitle', { name: item.displayName })}
+                          onClick={() => onOpenMention(item)}
+                        >
+                          @{item.displayName}
+                        </button>
+                      ) : (
+                        <span key={`${item.kind}:${item.id}`} className="agent-user-mention" data-kind={item.kind}>@{item.displayName}</span>
+                      )
+                    ))
+                    : message.referencedAgentNames?.map((name) => (
+                      <span key={name} className="agent-user-mention">@{name}</span>
+                    ))}
                   <article
                     className="agent-message"
                     data-agent-message-id={message.id}
@@ -1023,9 +1062,13 @@ export function AgentChatView({
       </div>
       {composer}
       <div className="agent-chat-quick-prompts" aria-label={t('surface:agentChat.suggestedPrompts')} aria-hidden={!quickPromptsReady}>
-        {quickPrompts.map(([label, prompt]) => (
-          <button key={label} type="button" onClick={() => onSelectPrompt(t(prompt))}>{t(label)}</button>
-        ))}
+        {starterPrompts?.length
+          ? starterPrompts.map((prompt) => (
+            <button key={prompt} type="button" onClick={() => onSelectPrompt(prompt)}>{prompt}</button>
+          ))
+          : quickPrompts.map(([label, prompt]) => (
+            <button key={label} type="button" onClick={() => onSelectPrompt(t(prompt))}>{t(label)}</button>
+          ))}
       </div>
     </section>
   )

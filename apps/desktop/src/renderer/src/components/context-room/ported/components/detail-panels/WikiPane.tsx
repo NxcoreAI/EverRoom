@@ -52,13 +52,13 @@ function formatBytes(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-type WikiView = 'tree' | 'graph';
+type WikiView = 'tree' | 'graph' | 'files';
 
 /**
  * Room 知识库面板（room-wiki 方案 M3c）：wiki 页面按 path 组织成目录树，
  * 点击交给编辑栏（onOpenPage）；图谱视图渲染 md 内链派生的链接图。
- * 目录/图谱视图由 Wiki 板块页签（wikiDir/wikiGraph）受控。
- * 来源文件与上传区保留（上传走自动归类路由）。
+ * 目录/图谱/来源文件视图由 Wiki 板块页签（wikiDir/wikiGraph/wikiFiles）受控。
+ * 来源文件列表在独立页签展示（上传走自动归类路由，页签行 + 号入口不变）。
  */
 export function WikiPane({ room, selectedResourceId, onOpenPage, view = 'tree' }: {
   room: ContextRoomRecord;
@@ -354,6 +354,40 @@ export function WikiPane({ room, selectedResourceId, onOpenPage, view = 'tree' }
         <div className="context-room-workspace-empty">{t('contextRoom:wiki.knowledgeServiceUnavailableError', { error: error ?? '' })}</div>
       ) : status === 'loading' ? (
         <div className="context-room-workspace-empty">{t('contextRoom:wiki.loading')}</div>
+      ) : view === 'files' ? (
+        // 来源文件页签：列表独立成主内容（wiki 构建中也可看，逐文件状态徽标在列）。
+        files.length === 0 ? (
+          <div className="context-room-workspace-empty">{t('contextRoom:wiki.noSourceFilesYet')}</div>
+        ) : (
+          <section className="context-room-wiki-files">
+            <ul>
+              {files.map((file) => (
+                <li key={file.id}>
+                  <button type="button" className="context-room-file-item" onClick={() => void openFile(file)}>
+                    <span className="context-room-wiki-item-icon">
+                      <FileText aria-hidden="true" />
+                    </span>
+                    <span className="context-room-wiki-item-body">
+                      <strong>{file.originalName}</strong>
+                      <span>
+                        {t(fileStatusLabel(file))} · {formatBytes(file.bytes)}
+                      </span>
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    className="context-room-file-reveal"
+                    aria-label={t('contextRoom:wiki.showOriginalInFolder')}
+                    title={t('contextRoom:wiki.showOriginalInFolder')}
+                    onClick={() => void revealFile(file.id)}
+                  >
+                    <FolderOpen aria-hidden="true" />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )
       ) : status === 'none' ? (
         <div className="context-room-workspace-empty">
           {t('contextRoom:wiki.thisRoomHasNoCapturedKnowledgeYetSubmitted')}
@@ -395,37 +429,6 @@ export function WikiPane({ room, selectedResourceId, onOpenPage, view = 'tree' }
           <WikiTree pages={pages} selectedPath={selectedPath} onSelect={openPage} />
         </div>
       )}
-      {files.length > 0 && view === 'tree' ? (
-        <section className="context-room-wiki-files">
-          <h3>{t('contextRoom:wiki.sourceFiles')}</h3>
-          <ul>
-            {files.map((file) => (
-              <li key={file.id}>
-                <button type="button" className="context-room-file-item" onClick={() => void openFile(file)}>
-                  <span className="context-room-wiki-item-icon">
-                    <FileText aria-hidden="true" />
-                  </span>
-                  <span className="context-room-wiki-item-body">
-                    <strong>{file.originalName}</strong>
-                    <span>
-                      {t(fileStatusLabel(file))} · {formatBytes(file.bytes)}
-                    </span>
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  className="context-room-file-reveal"
-                  aria-label={t('contextRoom:wiki.showOriginalInFolder')}
-                  title={t('contextRoom:wiki.showOriginalInFolder')}
-                  onClick={() => void revealFile(file.id)}
-                >
-                  <FolderOpen aria-hidden="true" />
-                </button>
-              </li>
-            ))}
-          </ul>
-        </section>
-      ) : null}
     </div>
   );
 }

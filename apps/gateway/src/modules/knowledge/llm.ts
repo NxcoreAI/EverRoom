@@ -240,9 +240,20 @@ export class KnowledgeLlm {
   /**
    * 判定错误是否为调用超时——瞬时态：推理型模型的思考段偶发超过超时预算
    * （实测 GLM-5.3 长邮件抽取可超 60s），退避后重试即可成功；不得落死信。
+   * abort 中止（fetch AbortError）同样由超时预算触发，一并按瞬时处理。
    */
   static isTimedOut(error: unknown): boolean {
-    return error instanceof KnowledgeLlmError && /invocation timed out/i.test(error.message);
+    return error instanceof KnowledgeLlmError && /timeout|timed out|aborted/i.test(error.message);
+  }
+
+  /**
+   * 判定错误是否为「输出不可解析」——唯一永久态：chatJson 已带解析错误
+   * 反馈重试过一次仍失败，说明模型对该资料稳定产出非法 JSON，继续重试
+   * 无意义，落 awaiting_review 等待人工处理。其余失败（429/截断/超时/
+   * 5xx/网络断连）默认瞬时，交 worker 退避重试。
+   */
+  static isUnparsable(error: unknown): boolean {
+    return error instanceof KnowledgeLlmError && /LLM response unparsable/i.test(error.message);
   }
 
   private async chat(skillName: string, prompt: string): Promise<string> {

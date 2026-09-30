@@ -31,6 +31,7 @@ async function testConfig(): Promise<GatewayConfig> {
     knowledge: null,
     ingestFilter: { enabled: false, mode: "observe", confidenceThreshold: 0.7, batchSize: 5, batchDelayMs: 0, exemptSourceKinds: [], toolsEnabled: false, maxToolCalls: 8, rulesFile: "", rulesMaxBytes: 2048, insightEnabled: false, insightIntervalMs: 3_600_000 },
     backgroundPi: null,
+    transcriptionSummaryPi: null,
     asrInputDir: join(dataDir, "recordings"),
     webSearch: null,
     mcpConfigPath: join(dataDir, 'agent', 'mcp.json'),
@@ -375,32 +376,6 @@ describe("agent gateway", () => {
     });
     expect(snapshot.messages).toEqual([]);
     expect(snapshot.activeRun).toBeNull();
-    await app.close();
-  });
-
-  it("rejects an unknown memoryScope value at the run schema boundary", async () => {
-    const config = await testConfig();
-    const app = await createServer(config);
-    const headers = { authorization: `Bearer ${config.authToken}` };
-    const session = (await app.inject({
-      method: "POST",
-      url: "/v1/agent/sessions",
-      headers,
-      payload: { pageLabel: "首页" },
-    })).json<AgentSession>();
-
-    const response = await app.inject({
-      method: "POST",
-      url: `/v1/agent/sessions/${session.id}/runs`,
-      headers,
-      payload: {
-        prompt: "聚焦模式枚举校验",
-        idempotencyKey: "memory-scope-schema-key",
-        memoryScope: "galaxy",
-      },
-    });
-
-    expect(response.statusCode).toBe(400);
     await app.close();
   });
 

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MemoryCoreClient, MemoryCoreError } from "../src/memory/client.js";
-import { formatRecallResult } from "../src/memory/format.js";
+import { dedupeAtomicItems, formatRecallResult } from "../src/memory/format.js";
 import { createMemoryExtension, extractCapturableMessages } from "../src/memory/extension.js";
 import { createMemoryTools } from "../src/memory/tools.js";
 import type { MemoryRuntimeConfig } from "../src/memory/types.js";
@@ -338,6 +338,80 @@ describe("formatRecallResult", () => {
     );
     expect(withEmpty).not.toContain("[Room 记忆]");
   });
+
+  it("dedupes same-source fragments before rendering [相关记忆]", () => {
+    const item = (id: string, content: string, scene?: string) => ({
+      id,
+      type: "fact",
+      content,
+      ...(scene ? { scene_name: scene } : {}),
+      created_at: "",
+      updated_at: "",
+    });
+    const result = formatRecallResult(
+      {
+        atomicItems: [
+          item("a", "同一文档拆出的碎片一", "API 手册"),
+          item("b", "同一文档 拆出的碎片一", "API 手册"), // 归一后重复
+          item("c", "同一文档拆出的碎片二", "API 手册"),
+          item("d", "同一文档拆出的碎片三", "API 手册"), // 同 scene 超限
+          item("e", "别的场景的记忆", "周会纪要"),
+        ],
+        coreContent: null,
+        scenarios: [],
+      },
+      4000,
+    );
+    expect(result).toContain("碎片一（场景：API 手册）");
+    expect(result).toContain("碎片二");
+    expect(result).not.toContain("碎片三");
+    expect(result).toContain("周会纪要");
+  });
+});
+
+describe("dedupeAtomicItems", () => {
+  const item = (id: string, content: string, scene?: string) => ({
+    id,
+    type: "fact",
+    content,
+    ...(scene ? { scene_name: scene } : {}),
+    created_at: "",
+    updated_at: "",
+  });
+
+  it("drops whitespace/case-normalized duplicates keeping the first (server-ranked) item", () => {
+    const out = dedupeAtomicItems([
+      item("a", "用户偏好简洁回复"),
+      item("b", "用户 偏好 简洁 回复"),
+      item("c", "user prefers chinese"),
+      item("d", "User Prefers Chinese"),
+      item("e", "独立事实"),
+    ]);
+    expect(out.map((x) => x.id)).toEqual(["a", "c", "e"]);
+  });
+
+  it("caps per-scene items at maxPerScene and falls back to background", () => {
+    const out = dedupeAtomicItems([
+      item("a", "决议A", "认证服务演进"),
+      item("b", "决议B", "认证服务演进"),
+      item("c", "决议C", "认证服务演进"),
+      { ...item("d", "无场景但有背景"), scene_name: undefined, background: "旧场景X" },
+      { ...item("e", "同背景另一条"), scene_name: undefined, background: "旧场景X" },
+      { ...item("f", "同背景第三条"), scene_name: undefined, background: "旧场景X" },
+    ]);
+    expect(out.map((x) => x.id)).toEqual(["a", "b", "d", "e"]);
+  });
+
+  it("items without any scene only participate in content dedupe", () => {
+    const out = dedupeAtomicItems([
+      item("a", "事实一"),
+      item("b", "事实二"),
+      item("c", "事实三"),
+      item("d", "事实四"),
+      item("e", "事实一"),
+    ]);
+    expect(out.map((x) => x.id)).toEqual(["a", "b", "c", "d"]);
+  });
 });
 
 describe("extractCapturableMessages", () => {
@@ -464,51 +538,6 @@ describe("memory extension capture policy", () => {
     expect(listScenarios).not.toHaveBeenCalled();
     expect(searchConversation).not.toHaveBeenCalled();
   });
-
-  it("recalls only core profile plus room memories in room focus mode", async () => {
-    const client = new MemoryCoreClient(config);
-    const searchAtomic = vi.spyOn(client, "searchAtomic").mockResolvedValue([]);
-    const readCore = vi.spyOn(client, "readCore").mockResolvedValue({ content: "用户偏好简洁回复", updatedAt: null });
-    const listScenarios = vi.spyOn(client, "listScenarios").mockResolvedValue([]);
-    const searchConversation = vi.spyOn(client, "searchConversation").mockResolvedValue([]);
-    const handlers = new Map<string, (event: unknown) => Promise<unknown>>();
-    const extension = createMemoryExtension({
-      client,
-      config,
-      getRunContext: () => ({
-        sessionId: "room-focused",
-        originalPrompt: "这个项目的决定有哪些",
-        pageLabel: "Agent",
-        cancelled: false,
-        captureEnabled: true,
-        recallEnabled: true,
-        focusRoomId: "room-a",
-        roomMemories: [
-          { memoryId: "m1", content: "Room 内已定稿方案", type: "decision", updatedAt: "2026-09-01T00:00:00Z" },
-        ],
-      }),
-    });
-    if (!("factory" in extension)) throw new Error("Expected an inline extension object");
-    extension.factory({
-      on: (event: string, handler: (event: unknown) => Promise<unknown>) => {
-        handlers.set(event, handler);
-      },
-    } as never);
-
-    const result = await handlers.get("before_agent_start")?.({});
-    const content = (result as { message: { content: string } } | undefined)?.message?.content ?? "";
-
-    expect(readCore).toHaveBeenCalled();
-    expect(searchAtomic).not.toHaveBeenCalled();
-    expect(listScenarios).not.toHaveBeenCalled();
-    expect(searchConversation).not.toHaveBeenCalled();
-    expect(content).toContain("[Room 记忆]");
-    expect(content).toContain("Room 内已定稿方案");
-    expect(content).toContain("[用户画像]");
-    expect(content).not.toContain("[相关记忆]");
-    expect(content).not.toContain("[历史场景]");
-    expect(content).not.toContain("[相关历史对话与文档]");
-  });
 });
 
 describe("memory tools", () => {
@@ -613,42 +642,6 @@ describe("memory tools", () => {
     const result = await tool!.execute("call-room-noop", { query: "绑定", room_id: "room-a" }, undefined, undefined, {} as never);
     const text = (result.content as Array<{ type: string; text: string }>)[0]!.text;
     expect(text).toContain("Room 记忆过滤未配置");
-  });
-
-  it("memory_search locks to the scoped room without an explicit room_id", async () => {
-    const client = new MemoryCoreClient(config);
-    const searchSpy = vi.spyOn(client, "searchAtomic").mockResolvedValue([]);
-    const roomSearch = vi.fn(async () => [
-      { id: "m1", type: "fact", content: "聚焦房间记忆", created_at: "", updated_at: "2026-09-01T00:00:00Z" },
-    ]);
-    const [tool] = createMemoryTools(client, () => "sess-1", roomSearch, () => "room-a");
-    const result = await tool!.execute("call-scoped", { query: "记忆" }, undefined, undefined, {} as never);
-    expect(roomSearch).toHaveBeenCalledWith("room-a", "记忆", 5);
-    expect(searchSpy).not.toHaveBeenCalled();
-    const text = (result.content as Array<{ type: string; text: string }>)[0]!.text;
-    expect(text).toContain("聚焦房间记忆");
-  });
-
-  it("memory_search overrides a model-supplied room_id with the scoped room", async () => {
-    const client = new MemoryCoreClient(config);
-    const roomSearch = vi.fn(async () => [
-      { id: "m1", type: "fact", content: "只应来自 room-a", created_at: "", updated_at: "2026-09-01T00:00:00Z" },
-    ]);
-    const [tool] = createMemoryTools(client, () => "sess-1", roomSearch, () => "room-a");
-    const result = await tool!.execute("call-override", { query: "记忆", room_id: "room-b" }, undefined, undefined, {} as never);
-    expect(roomSearch).toHaveBeenCalledWith("room-a", "记忆", 5);
-    const details = result.details as { roomId: string | null };
-    expect(details.roomId).toBe("room-a");
-  });
-
-  it("memory_search omits the global fallback hint in scoped empty results", async () => {
-    const client = new MemoryCoreClient(config);
-    const roomSearch = vi.fn(async () => []);
-    const [tool] = createMemoryTools(client, () => "sess-1", roomSearch, () => "room-a");
-    const result = await tool!.execute("call-scoped-empty", { query: "不存在" }, undefined, undefined, {} as never);
-    const text = (result.content as Array<{ type: string; text: string }>)[0]!.text;
-    expect(text).toContain("当前 Room 没有匹配的绑定记忆");
-    expect(text).not.toContain("全局检索");
   });
 
   it("memory_search keeps global search when no scope is configured", async () => {

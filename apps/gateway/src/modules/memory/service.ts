@@ -8,13 +8,14 @@ import {
   type MemoryPipelineStatus,
   type MemoryRuntimeConfig,
 } from "@nxcore/agent-runtime-pi";
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import { FilesService } from "../files/service.js";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
 import {
   agentSessions,
   contextRooms,
   gatewayMetadata,
+  ingestEvents,
   roomMemoryAttributions,
   roomMemorySuppressions,
 } from "../../infrastructure/database/schema.js";
@@ -1146,6 +1147,65 @@ export class MemoryService {
       if (offset + 100 >= page.total) break;
     }
     return deleted;
+  }
+
+  /** 参考型文档存量清退的 gateway_metadata 打标键（完成即不再重跑）。 */
+  private static readonly REFERENCE_DOC_PURGE_FLAG = "memory:reference-doc-purge:v1";
+
+  /**
+   * 状态/参考分流定案（2026-09-24）的存量清退：document/office-doc 等参考型
+   * 资料退出记忆链路后，把此前按旧策略导入的记忆文档按台账 documentId 一次性
+   * 级联删除（L0 会话/分块/派生 L1 同清）。
+   *
+   * 幂等与重试：完成即打标 gateway_metadata；MemoryCore 未注入、不可达或有失败
+   * 时不打标，调用方下次再试——已删文档的重复删除按 404 视作成功，天然可重放。
+   * 返回 null 表示本轮未完成（无需/暂不能执行）；{purged} 为本轮实删数。
+   */
+  async purgeReferenceMemoryDocuments(): Promise<{ purged: number } | null> {
+    if (!this.client || !this.enabled || !this.db) return null;
+    const flagged = this.db.select({ key: gatewayMetadata.key }).from(gatewayMetadata)
+      .where(eq(gatewayMetadata.key, MemoryService.REFERENCE_DOC_PURGE_FLAG)).get();
+    if (flagged) return null;
+
+    // 台账按内存快照里成功导入过的 documentId 收敛（{error} 行没有可删对象）
+    const rows = this.db.select({ memoryResult: ingestEvents.memoryResult }).from(ingestEvents)
+      .where(and(
+        inArray(ingestEvents.dataType, ["document", "office-doc"]),
+        isNotNull(ingestEvents.memoryResult),
+        isNull(ingestEvents.deletedAt),
+      )).all();
+    const documentIds = new Set<string>();
+    for (const row of rows) {
+      const result: unknown = row.memoryResult;
+      if (result && typeof result === "object" && "documentId" in result
+        && typeof (result as { documentId?: unknown }).documentId === "string") {
+        documentIds.add((result as { documentId: string }).documentId);
+      }
+    }
+
+    let purged = 0;
+    for (const documentId of documentIds) {
+      try {
+        await this.client.deleteDocument(documentId);
+        purged += 1;
+      } catch (error) {
+        // 已被文件删除级联清掉的文档回 404（http/api 两种 kind 的 status 均为 404，
+        // 注意 envelope message 不会透传到 MemoryGatewayError）：视作成功，
+        // 其余失败不打标，下次启动重试。
+        if (!(error instanceof MemoryCoreError && error.status === 404)) {
+          this.logger.warn(
+            { err: error, documentId },
+            "reference memory document purge failed; will retry on next boot",
+          );
+          return null;
+        }
+      }
+    }
+    this.db.insert(gatewayMetadata).values({
+      key: MemoryService.REFERENCE_DOC_PURGE_FLAG,
+      value: JSON.stringify({ purged, at: new Date().toISOString() }),
+    }).onConflictDoNothing().run();
+    return { purged };
   }
 
   /** 解析产物幂等入库（闸2）已移交 modules/files——资产原语不再本地实现。 */

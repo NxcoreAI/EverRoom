@@ -22,6 +22,7 @@ import { useRoomMails } from '../../hooks/useRoomMails';
 import { MailProviderIcon } from '../MailProviderIcon';
 import { ObjectDetailView } from '../ObjectDetailView';
 import { ResourceCorrectionMenu } from '../ResourceCorrection';
+import { FilterSelect } from '../shared';
 import { ConnectorMailDetailPanel, useConnectorMailDetail } from './ConnectorMailDetail';
 import { PanelEmptyState } from './PanelEmptyState';
 import type { WorkspaceObjectPreview } from './index';
@@ -381,19 +382,12 @@ export function MaterialsPane({
   return (
     <div className={`context-room-materials-pane${connectorMailDetail ? ' has-detail' : ''}`} data-testid="context-room-pane-materials">
       <header className="context-room-materials-toolbar">
-        <div className="context-room-materials-filters" role="group" aria-label={t('contextRoom:materialsPane.filterByType')}>
-          {FILTER_OPTIONS.map(({ id, label }) => (
-            <button
-              type="button"
-              key={id}
-              aria-pressed={memory.filter === id}
-              className={memory.filter === id ? 'is-active' : ''}
-              onClick={() => updateMemory({ filter: id })}
-            >
-              {t(label)}
-            </button>
-          ))}
-        </div>
+        <FilterSelect
+          value={memory.filter}
+          options={FILTER_OPTIONS.map(({ id, label }) => ({ id, label: t(label) }))}
+          onChange={(id) => updateMemory({ filter: id })}
+          ariaLabel={t('contextRoom:materialsPane.filterByType')}
+        />
         <button
           type="button"
           className="context-room-materials-sort-toggle"

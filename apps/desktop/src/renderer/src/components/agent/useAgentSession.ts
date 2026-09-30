@@ -1,9 +1,12 @@
 import type {
+  AgentContextUsage,
   AgentEvent,
   AgentActiveDocumentContext,
   AgentFileAttachment,
   AgentMessage,
   AgentModelPreference,
+  AgentPermissionMode,
+  AgentPermissionModeState,
   AgentRoomReference,
   AgentSession,
   AgentSessionLink,
@@ -20,6 +23,7 @@ import {
   foldAgentRunActivityEvent,
   foldAgentRunActivityEvents,
   mergeAgentToolEvent,
+  reduceAgentContextState,
   reduceAgentRunEvents,
   snapshotAgentRunActivity,
   type AgentRunActivity,
@@ -29,7 +33,7 @@ import {
   type ReducedAgentRunEvents,
 } from './agentRunActivity'
 import { buildAgentRunContext } from './agentRunContext'
-import type { MentionedAgent } from './agentMentions'
+import type { MentionedAgent, MentionedItem } from './agentMentions'
 import { plainTextFromMarkdown } from './agentTextUtils'
 import {
   applyShellApprovalEvent,
@@ -49,6 +53,8 @@ export interface DisplayAgentMessage extends AgentMessage {
   streaming?: boolean
   /** 展示用：发送时 @ 点名的本机 Agent 名字，不落库，重载后消失。 */
   referencedAgentNames?: string[]
+  /** 展示用：发送时 @ 的全部条目（含 Room/文件/对话记录），供消息区点击跳转；不落库。 */
+  mentions?: MentionedItem[]
 }
 
 export function mergePendingAgentMessages(
@@ -67,6 +73,19 @@ export function removeAgentRunMessages(
   runId: string,
 ): DisplayAgentMessage[] {
   return messages.filter((message) => message.runId !== runId)
+}
+
+/** run 进行中提交的消息：冻结发送参数排队，run 终态后由 flush effect 逐条发出。 */
+export interface QueuedAgentSubmission {
+  id: string
+  prompt: string
+  selectedText?: string
+  selectedRoomId?: string
+  activeDocument?: AgentActiveDocumentContext | null
+  attachments?: AgentFileAttachment[]
+  referencedConversationId?: string
+  mentionedAgents?: MentionedAgent[]
+  mentions?: MentionedItem[]
 }
 
 const SESSION_KEY_BASE = 'nxcore-ce:agent-session'
@@ -89,10 +108,28 @@ function persistModelPreference(tier: AgentModelPreference): void {
     // localStorage 不可用时仅本次会话生效。
   }
 }
+
+const CHANNEL_PREFERENCE_STORAGE_KEY = 'nxcore-ce:agent-channel-preference:v1'
+
+function readStoredChannelAgentId(): string | null {
+  try {
+    return localStorage.getItem(CHANNEL_PREFERENCE_STORAGE_KEY) || null
+  } catch {
+    return null
+  }
+}
+
+function persistChannelAgentId(agentId: string | null): void {
+  try {
+    if (agentId) localStorage.setItem(CHANNEL_PREFERENCE_STORAGE_KEY, agentId)
+    else localStorage.removeItem(CHANNEL_PREFERENCE_STORAGE_KEY)
+  } catch {
+    // localStorage 不可用时仅本次会话生效。
+  }
+}
 // pre-v2 世代用复数 key 存 per-page map（keyBase 不同，框架走不到），
 // 认领时框架外兜底一次：取任一会话 id 作为当前选择。
 const LEGACY_SESSION_STORAGE_KEY = 'nxcore-ce:agent-sessions:v1'
-const defaultSessionCreations = new Map<string, Promise<AgentSession>>()
 
 function isUserSession(session: AgentSession): boolean {
   return session.pageLabel !== 'Remote Agent'
@@ -173,8 +210,6 @@ export function useAgentSession(
   const [runCompletedAtByRun, setRunCompletedAtByRun] = useState<Record<string, string>>({})
   const [reasoningByRun, setReasoningByRun] = useState<Record<string, string>>({})
   const [agentIdByRun, setAgentIdByRun] = useState<Record<string, string>>({})
-  /** 每个 run 实际使用的记忆范围；重试(replaceRunId)据此还原原 run 的聚焦态，未知(重启后)回退当前开关。 */
-  const [memoryScopeByRun, setMemoryScopeByRun] = useState<Record<string, 'room' | 'global'>>({})
   const [activeRunId, setActiveRunId] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [scopeReady, setScopeReady] = useState(false)
@@ -184,6 +219,13 @@ export function useAgentSession(
   const [error, setError] = useState<string | null>(null)
   const [pendingApprovals, setPendingApprovals] = useState<PendingShellApproval[]>([])
   const [resolvingApprovalIds, setResolvingApprovalIds] = useState<Set<string>>(() => new Set())
+  /** 实时上下文用量 + 压缩中标记（context.usage / context.compaction 事件折叠）。 */
+  const [contextUsage, setContextUsage] = useState<AgentContextUsage | null>(null)
+  const [contextCompacting, setContextCompacting] = useState(false)
+  /** 会话权限模式（GET 初始化 + PUT 响应 + 适配器 current_mode_update 事件三来源折叠）。 */
+  const [permissionModeState, setPermissionModeState] = useState<AgentPermissionModeState | null>(null)
+  /** 待发队列：run 进行中提交的消息先排队，run 终态后自动逐条发出。 */
+  const [queuedSubmissions, setQueuedSubmissions] = useState<QueuedAgentSubmission[]>([])
   const sequenceByRun = useRef(new Map<string, number>())
   /** 每个 run 的活动折叠器：实时事件按 seq 增量折叠，不再全量重放历史事件。 */
   const activityAccByRun = useRef(new Map<string, AgentRunActivityAccumulator>())
@@ -206,6 +248,8 @@ export function useAgentSession(
   /** sessionId → 标题任务状态，防 socket 重放/断线恢复重复触发。 */
   const titleJobs = useRef(new Map<string, 'inflight' | 'done'>())
   const generateTitleRef = useRef<((sessionId: string, runId: string) => void) | null>(null)
+  /** flush effect 互斥：防 StrictMode 双跑/依赖重触发时重复出队同一条。 */
+  const queueFlushInFlightRef = useRef(false)
   const localeRef = useRef(locale)
   localeRef.current = locale
 
@@ -272,6 +316,24 @@ export function useAgentSession(
 
     if (event.type === 'approval.requested' || event.type === 'approval.resolved') {
       setPendingApprovals((current) => applyShellApprovalEvent(current, event))
+      return
+    }
+
+    // 适配器侧模式变更（CLI /permission-mode 等）：并入当前状态；PUT 切换不走事件（直接用响应）。
+    if (event.type === 'session.permission_mode.updated') {
+      const mode = (event.payload as { permissionMode?: unknown }).permissionMode
+      if (typeof mode === 'string') {
+        setPermissionModeState((current) => current && current.mode !== mode
+          ? { ...current, mode: mode as AgentPermissionMode }
+          : current)
+      }
+      return
+    }
+
+    if (event.type === 'context.usage' || event.type === 'context.compaction') {
+      const next = reduceAgentContextState([event])
+      if (event.type === 'context.usage') setContextUsage(next.usage)
+      else setContextCompacting(next.compacting)
       return
     }
 
@@ -445,6 +507,7 @@ export function useAgentSession(
         }
       })
       const status = event.type === 'run.interrupted' ? 'interrupted' : 'idle'
+      setContextCompacting(false)
       setSessions((current) => current.map((session) => session.id === event.sessionId
         ? { ...session, status, updatedAt: event.occurredAt }
         : session))
@@ -515,6 +578,9 @@ export function useAgentSession(
       })))
       : []
     const nextSessionLinks = api ? await api.listSessionLinks(snapshot.session.id) : []
+    const nextPermissionMode = api
+      ? await api.getPermissionMode(snapshot.session.id).catch(() => null)
+      : null
     const nextTools: Record<string, DisplayAgentToolCall[]> = {}
     const nextActivity: Record<string, AgentRunActivity> = {}
     const nextReasoning: Record<string, string> = {}
@@ -540,6 +606,8 @@ export function useAgentSession(
       if (reduced.completedAt) nextCompletedAt[group.runId] = reduced.completedAt
       nextApprovals.push(...reducePendingShellApprovals(group.events))
     }
+    // 会话级上下文状态跨 run 折叠（occurredAt 排序见 reducer）。
+    const contextState = reduceAgentContextState(eventGroups.flatMap((group) => group.events))
     for (const message of snapshot.messages) {
       if (message.authorAgentId) nextAgentIdByRun[message.runId] = message.authorAgentId
     }
@@ -577,6 +645,9 @@ export function useAgentSession(
     setRunCompletedAtByRun(nextCompletedAt)
     setPendingApprovals(nextApprovals)
     setResolvingApprovalIds(new Set())
+    setContextUsage(contextState.usage)
+    setContextCompacting(contextState.compacting)
+    setPermissionModeState(nextPermissionMode)
     setActiveRunId(snapshot.activeRun?.id ?? null)
     setSessionId(snapshot.session.id)
     setCurrentSession(snapshot.session)
@@ -587,6 +658,7 @@ export function useAgentSession(
       ? current.map((session) => session.id === snapshot.session.id ? snapshot.session : session)
       : [snapshot.session, ...current])
     sessionIdRef.current = snapshot.session.id
+    channelAgentRef.current = snapshot.session.channelAgentId ?? null
     storeSession(snapshot.session.id)
     return true
   }, [api])
@@ -604,6 +676,7 @@ export function useAgentSession(
     setCurrentSession(session)
     setDisplayTitle(session.title?.trim() || t('surface:useAgentSession.newConversation'))
     sessionIdRef.current = session.id
+    channelAgentRef.current = session.channelAgentId ?? null
     try {
       await api.unsubscribe()
       const snapshot = await api.getSession(session.id)
@@ -635,11 +708,16 @@ export function useAgentSession(
     setAgentIdByRun({})
     setPendingApprovals([])
     setResolvingApprovalIds(new Set())
+    setContextUsage(null)
+    setContextCompacting(false)
+    setPermissionModeState(null)
+    setQueuedSubmissions([])
     setActiveRunId(null)
     setSessionId(null)
     setSessions([])
     setSessionLinks([])
     sessionIdRef.current = null
+    channelAgentRef.current = null
     sequenceByRun.current.clear()
     activityAccByRun.current.clear()
     userPromptByRun.current.clear()
@@ -659,23 +737,10 @@ export function useAgentSession(
             ?? userSessions[0]
           if (selected) await selectSession(selected)
           else if (alive) {
-            const scope = sessionScope()
+            // 无历史会话：停在草稿态（不建会话），首条消息发出时才创建——
+            // 避免空会话把档位/渠道在用户尚未选择时就锁死。
             setDisplayTitle(t('surface:useAgentSession.newConversation'))
-            let creation = defaultSessionCreations.get(scope)
-            if (!creation) {
-              creation = api.createSession({ pageLabel: 'Agent', roomId: null })
-              defaultSessionCreations.set(scope, creation)
-              const clear = () => {
-                if (defaultSessionCreations.get(scope) === creation) {
-                  defaultSessionCreations.delete(scope)
-                }
-              }
-              void creation.then(clear, clear)
-            }
-            const created = await creation
-            if (!alive || scope !== activeScopeRef.current) return
-            setSessions([created])
-            await selectSession(created)
+            setScopeReady(true)
           }
         })
         .catch((requestError) => {
@@ -732,13 +797,32 @@ export function useAgentSession(
     persistModelPreference(tier)
   }, [])
 
+  // 全局默认渠道：新会话整体锁定到某个本机 CLI Agent（ACP 持久会话连续对话）。
+  const [channelAgentIdDefault, setChannelAgentIdDefaultState] = useState<string | null>(readStoredChannelAgentId)
+  const channelAgentDefaultRef = useRef(channelAgentIdDefault)
+  const setChannelAgentIdDefault = useCallback((agentId: string | null) => {
+    channelAgentDefaultRef.current = agentId
+    setChannelAgentIdDefaultState(agentId)
+    persistChannelAgentId(agentId)
+  }, [])
+  // 当前会话锁定的渠道（selectSession/hydrate 时镜像）；渠道会话每轮
+  // startRun 都要显式带 targetAgentId，桌面端 main 才会重建 localAgent。
+  const channelAgentRef = useRef<string | null>(null)
+
   const createSession = async (
     pendingMessages: DisplayAgentMessage[] = [],
   ): Promise<AgentSession> => {
     if (!api) throw new Error(t('surface:useAgentSession.desktopOnly'))
     if (activeRunId) throw new Error(t('surface:useAgentSession.stopBeforeCreating'))
     try {
-      const session = await api.createSession({ pageLabel: 'Agent', roomId: null, modelPreference: modelPreferenceRef.current })
+      const session = await api.createSession({
+        pageLabel: 'Agent',
+        roomId: null,
+        // 渠道优先：锁定后整个会话由该 CLI Agent 连续执行，档位被忽略。
+        ...(channelAgentDefaultRef.current
+          ? { channelAgentId: channelAgentDefaultRef.current }
+          : { modelPreference: modelPreferenceRef.current }),
+      })
       setSessions((current) => [session, ...current])
       await selectSession(session, pendingMessages)
       return session
@@ -747,6 +831,38 @@ export function useAgentSession(
       throw createError
     }
   }
+
+  /** 新建对话＝回到草稿态：不建会话，首条消息发出时（ensureSession）才用当前档位/渠道默认创建。 */
+  const startNewConversation = useCallback(async (): Promise<void> => {
+    if (activeRunId) throw new Error(t('surface:useAgentSession.stopBeforeCreating'))
+    await api?.unsubscribe()
+    setSessionId(null)
+    sessionIdRef.current = null
+    storeSession(null)
+    setCurrentSession(null)
+    setSessionLinks([])
+    channelAgentRef.current = null
+    setMessages([])
+    setToolCallsByRun({})
+    setActivityByRun({})
+    setRunStartedAtByRun({})
+    setRunCompletedAtByRun({})
+    setReasoningByRun({})
+    setAgentIdByRun({})
+    setPendingApprovals([])
+    setResolvingApprovalIds(new Set())
+    setContextUsage(null)
+    setContextCompacting(false)
+    setPermissionModeState(null)
+    setQueuedSubmissions([])
+    setActiveRunId(null)
+    setDisplayTitle(t('surface:useAgentSession.newConversation'))
+    sequenceByRun.current.clear()
+    userPromptByRun.current.clear()
+    assistantContentByRun.current.clear()
+    sessionRunIds.current.clear()
+    setError(null)
+  }, [activeRunId, api, t])
 
   const ensureSession = async (pendingMessages: DisplayAgentMessage[]): Promise<string> => {
     if (sessionIdRef.current) return sessionIdRef.current
@@ -818,6 +934,7 @@ export function useAgentSession(
         if (next) await selectSession(next)
         else {
           sessionIdRef.current = null
+          channelAgentRef.current = null
           setSessionId(null)
           setCurrentSession(null)
           setDisplayTitle(t('surface:useAgentSession.newConversation'))
@@ -832,6 +949,7 @@ export function useAgentSession(
           setRunStartedAtByRun({})
           setRunCompletedAtByRun({})
           activityAccByRun.current.clear()
+          setQueuedSubmissions([])
           sequenceByRun.current.clear()
           setConnected(false)
           storeSession(null)
@@ -895,10 +1013,26 @@ export function useAgentSession(
     targetAgentId?: string,
     referencedConversationId?: string,
     mentionedAgents?: MentionedAgent[],
-    memoryScope?: 'room',
+    mentions?: MentionedItem[],
   ): Promise<string | null> => {
     const message = prompt.trim()
-    if ((!message && !attachments?.length) || activeRunId || loading || sending) return null
+    if ((!message && !attachments?.length) || loading || sending) return null
+    if (activeRunId) {
+      // 重试（replaceRunId）不排队：replace 只对已终态 run 有意义，排队会丢失其语义。
+      if (replaceRunId) return null
+      setQueuedSubmissions((current) => [...current, {
+        id: crypto.randomUUID(),
+        prompt: message,
+        selectedText,
+        selectedRoomId,
+        activeDocument,
+        attachments,
+        referencedConversationId,
+        mentionedAgents,
+        mentions,
+      }])
+      return null
+    }
     if (replaceRunId) {
       setMessages((current) => removeAgentRunMessages(current, replaceRunId))
       setToolCallsByRun((current) => {
@@ -950,7 +1084,10 @@ export function useAgentSession(
       authorAgentId: null,
       content: message,
       createdAt: new Date().toISOString(),
-      ...(mentionedAgents?.length ? { referencedAgentNames: mentionedAgents.map((agent) => agent.displayName) } : {}),
+      ...(mentionedAgents?.length && !channelAgentRef.current
+        ? { referencedAgentNames: mentionedAgents.map((agent) => agent.displayName) }
+        : {}),
+      ...(mentions?.length ? { mentions } : {}),
     }
 
     setMessages((current) => mergePendingAgentMessages(current, [optimisticMessage]))
@@ -958,11 +1095,13 @@ export function useAgentSession(
     setError(null)
     try {
       const currentSessionId = await ensureSession([optimisticMessage])
-      const selectedAgentId = targetAgentId ?? 'main'
+      // 渠道会话整段锁定在本机 CLI Agent：每轮显式带 targetAgentId，
+      // 桌面端 main 才会走 localAgent 重建（沙箱与工作区授权链路）。
+      const channelLocked = Boolean(channelAgentRef.current)
+      const selectedAgentId = targetAgentId ?? channelAgentRef.current ?? 'main'
       setMessages((current) => current.map((item) => item.id === optimisticId
         ? { ...item, sessionId: currentSessionId }
         : item))
-      const effectiveMemoryScope = memoryScope && selectedRoomId ? ('room' as const) : undefined
       const run = await api!.startRun(currentSessionId, {
         prompt: message,
         idempotencyKey: crypto.randomUUID(),
@@ -971,13 +1110,21 @@ export function useAgentSession(
         invocationMode: 'explicit_switch',
         ...(replaceRunId ? { replaceRunId } : {}),
         responseLanguage: locale,
-        ...(effectiveMemoryScope ? { memoryScope: effectiveMemoryScope } : {}),
-        context: buildAgentRunContext(rooms, selectedText, selectedRoomId, activeDocument, pageLabel, attachments, referencedConversationId, mentionedAgents?.map((agent) => agent.id)),
+        // 渠道会话下 @ 其他 Agent / 引用对话是主代理专属能力，网关会拒
+        // （referenced_*_requires_main_agent）；UI 已隐藏入口，这里兜底剥离，
+        // 覆盖重试、外部注入等绕过输入框的路径。
+        context: buildAgentRunContext(
+          rooms,
+          selectedText,
+          selectedRoomId,
+          activeDocument,
+          pageLabel,
+          attachments,
+          channelLocked ? undefined : referencedConversationId,
+          channelLocked ? undefined : mentionedAgents?.map((agent) => agent.id),
+        ),
       })
       const runAgentId = run.agentId ?? selectedAgentId
-      setMemoryScopeByRun((current) => current[run.id] === (effectiveMemoryScope ?? 'global')
-        ? current
-        : { ...current, [run.id]: effectiveMemoryScope ?? 'global' })
       setAgentIdByRun((current) => current[run.id] === runAgentId
         ? current
         : { ...current, [run.id]: runAgentId })
@@ -1022,6 +1169,40 @@ export function useAgentSession(
       setSending(false)
     }
   }
+
+  const sendPromptRef = useRef(sendPrompt)
+  sendPromptRef.current = sendPrompt
+
+  // 队列排空：run 终态（activeRunId 清空）且无进行中发送时出队一条发出；
+  // 新 run 启动会再次置 activeRunId，天然串行——网关 startRun 对 running
+  // 会话直接抛 agent_session_busy，绝不并发。
+  useEffect(() => {
+    if (queuedSubmissions.length === 0 || activeRunId || loading || sending) return
+    if (queueFlushInFlightRef.current) return
+    const [next, ...rest] = queuedSubmissions
+    setQueuedSubmissions(rest)
+    queueFlushInFlightRef.current = true
+    void (async () => {
+      try {
+        await sendPromptRef.current(
+          next.prompt,
+          next.selectedText,
+          next.selectedRoomId,
+          next.activeDocument,
+          undefined,
+          next.attachments,
+          undefined,
+          next.referencedConversationId,
+          next.mentionedAgents,
+          next.mentions,
+        )
+      } catch {
+        // 失败已在 sendPrompt 内 setError；丢弃该条继续排后面的，避免卡队列。
+      } finally {
+        queueFlushInFlightRef.current = false
+      }
+    })()
+  }, [queuedSubmissions, activeRunId, loading, sending])
 
   const submitPendingIntent = async (
     intentId: string,
@@ -1095,12 +1276,34 @@ export function useAgentSession(
     }
   }
 
+  /** 切换会话权限模式：PUT 后以 GET 回读为权威值（applied=false 表示 run 间隙仅落库）。 */
+  const setSessionPermissionMode = useCallback(async (mode: AgentPermissionMode): Promise<boolean> => {
+    const targetSessionId = sessionIdRef.current
+    if (!api || !targetSessionId) return false
+    setError(null)
+    try {
+      await api.setPermissionMode(targetSessionId, mode)
+    } catch (requestError) {
+      setError(requestErrorMessage(requestError, t('surface:useAgentSession.permissionModeUpdateFailed')))
+      return false
+    }
+    const next = await api.getPermissionMode(targetSessionId).catch(() => null)
+    if (next) setPermissionModeState(next)
+    else setPermissionModeState((current) => current && current.mode !== mode ? { ...current, mode } : current)
+    return true
+  }, [api, t])
+
+  const removeQueuedSubmission = useCallback((id: string): void => {
+    setQueuedSubmissions((current) => current.filter((item) => item.id !== id))
+  }, [])
+
   return {
     activeRunId,
     agentIdByRun,
-    memoryScopeByRun,
     activityByRun,
     connected,
+    contextUsage,
+    contextCompacting,
     createSession,
     createSessionLink,
     currentSession,
@@ -1111,12 +1314,20 @@ export function useAgentSession(
     messages,
     modelPreferenceDefault,
     setModelPreferenceDefault,
+    channelAgentIdDefault,
+    setChannelAgentIdDefault,
     pendingApprovals,
+    permissionMode: permissionModeState?.mode ?? null,
+    permissionModeAvailable: permissionModeState?.available ?? [],
+    setSessionPermissionMode,
+    queuedSubmissions,
+    removeQueuedSubmission,
     reasoningByRun,
     runCompletedAtByRun,
     runStartedAtByRun,
     scopeReady,
     renameSession,
+    startNewConversation,
     resolveApproval,
     resolvingApprovalIds,
     markSessionLinkReturned,

@@ -238,7 +238,7 @@ export function WorkspacePaneBody({
       room={room}
       selectedResourceId={selectedResourceId}
       onOpenPage={onOpenWikiPage}
-      view={subtab === 'wikiGraph' ? 'graph' : 'tree'}
+      view={subtab === 'wikiGraph' ? 'graph' : subtab === 'wikiFiles' ? 'files' : 'tree'}
     />
   );
 }

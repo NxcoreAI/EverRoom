@@ -1,10 +1,69 @@
 import * as Dialog from '@radix-ui/react-dialog';
-import { AlertTriangle, type LucideIcon, X } from 'lucide-react';
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
+import { AlertTriangle, Check, ChevronDown, type LucideIcon, X } from 'lucide-react';
 import type { ReactNode } from 'react';
 
 import type { ToolbarAction } from '../types';
 import { cn, uiText } from '../adapters';
 import { useLocale } from '../../../../i18n/LocaleContext';
+
+/** 统一下拉筛选：胶囊触发器 + 自绘菜单（Radix RadioGroup），弹层与卡片菜单同风格。 */
+export function FilterSelect<T extends string>({
+  value,
+  options,
+  onChange,
+  ariaLabel,
+  className,
+  contentClassName,
+}: {
+  value: T;
+  options: ReadonlyArray<{ id: T; label: string }>;
+  onChange: (id: T) => void;
+  ariaLabel: string;
+  className?: string;
+  /** 菜单弹层挂在 body Portal 下，本页未加载 ContextRoom.css 时用它自带样式。 */
+  contentClassName?: string;
+}) {
+  const current = options.find((option) => option.id === value) ?? options[0];
+  return (
+    <DropdownMenu.Root>
+      <DropdownMenu.Trigger asChild>
+        <button
+          type="button"
+          className={cn('context-room-filter-select', className)}
+          data-active={value !== options[0]?.id || undefined}
+          aria-label={ariaLabel}
+        >
+          <span className="context-room-filter-select-value">{current?.label}</span>
+          <ChevronDown aria-hidden="true" />
+        </button>
+      </DropdownMenu.Trigger>
+      <DropdownMenu.Portal>
+        <DropdownMenu.Content
+          className={cn('context-room-card-menu context-room-filter-menu', contentClassName)}
+          align="start"
+          sideOffset={6}
+        >
+          <DropdownMenu.RadioGroup value={value}>
+            {options.map((option) => (
+              <DropdownMenu.RadioItem
+                key={option.id}
+                value={option.id}
+                className="context-room-filter-menu-item"
+                onSelect={() => onChange(option.id)}
+              >
+                <span className="context-room-filter-menu-check" aria-hidden="true">
+                  {value === option.id ? <Check aria-hidden="true" /> : null}
+                </span>
+                {option.label}
+              </DropdownMenu.RadioItem>
+            ))}
+          </DropdownMenu.RadioGroup>
+        </DropdownMenu.Content>
+      </DropdownMenu.Portal>
+    </DropdownMenu.Root>
+  );
+}
 export function ToolbarButton({ action }: { action: ToolbarAction }) {
   const { t } = useLocale();
   const Icon = action.icon;

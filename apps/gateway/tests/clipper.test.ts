@@ -350,7 +350,7 @@ describe("web clipper", () => {
     expect(input.markdown).not.toContain("图片理解：");
     const ingestJob = test.sqlite.prepare("SELECT payload FROM jobs WHERE type = 'file.ingest' ORDER BY created_at DESC LIMIT 1")
       .get() as { payload: string };
-    expect(JSON.parse(ingestJob.payload)).toMatchObject({ pipelines: { room: true, wiki: true, memory: true } });
+    expect(JSON.parse(ingestJob.payload)).toMatchObject({ pipelines: { room: true, wiki: true, memory: false } });
     await test.files.dispose();
     test.sqlite.close();
   });
@@ -435,7 +435,7 @@ describe("web clipper", () => {
     expect(job.status).toBe("pending");
     expect(JSON.parse(job.payload)).toMatchObject({
       attempts: 0,
-      pipelines: { room: true, wiki: true, memory: true },
+      pipelines: { room: true, wiki: true, memory: false },
     });
     await test.files.dispose();
     test.sqlite.close();

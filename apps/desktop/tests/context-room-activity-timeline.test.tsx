@@ -1,4 +1,5 @@
 import TestRenderer, { act } from 'react-test-renderer'
+import React from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('../src/renderer/src/i18n/LocaleContext', async (importOriginal) => {
@@ -15,6 +16,22 @@ vi.mock('../src/renderer/src/i18n/LocaleContext', async (importOriginal) => {
 vi.mock('../src/renderer/src/components/context-room/ContextRoomStateProvider', () => ({
   useContextRoomState: () => ({ refreshFromBackend: vi.fn().mockResolvedValue(undefined) }),
 }))
+
+// FilterSelect 走 Radix DropdownMenu：react-test-renderer 环境无 DOM，透传成纯结构；
+// RadioItem 渲染为可点击 button（触发 onSelect），供筛选交互断言。
+vi.mock('@radix-ui/react-dropdown-menu', () => {
+  const passthrough = ({ children }: { children?: React.ReactNode }) => children ?? null
+  return {
+    Root: passthrough,
+    Trigger: ({ children }: { children?: React.ReactNode }) => children ?? null,
+    Portal: passthrough,
+    Content: passthrough,
+    RadioGroup: passthrough,
+    RadioItem: ({ children, onSelect }: { children?: React.ReactNode; onSelect?: () => void }) => (
+      <button type="button" onClick={() => onSelect?.()}>{children}</button>
+    ),
+  }
+})
 
 import type { RoomDocument, RoomOverviewProjection } from '@nxcore/agent-contract'
 
@@ -204,7 +221,6 @@ describe('动态时间轴：排序与真实对象条目', () => {
       typeof node.props?.className === 'string' && node.props.className.includes('context-room-activity-version'))
     expect(versionBadge).toHaveLength(1)
     expect(versionBadge[0].children.join('')).toBe('V2')
-    expect(buttonWithText(docEntry, '变更摘要')).toBeTruthy()
     expect(buttonWithText(docEntry, '查看版本')).toBeTruthy()
   })
 
@@ -243,13 +259,11 @@ describe('动态时间轴：排序与真实对象条目', () => {
     vi.unstubAllGlobals()
   })
 
-  it('文档条目懒加载变更摘要（PRD 6.4：不能只显示"文件已更新"）', async () => {
+  it('文档条目自动加载变更摘要（PRD 6.4：不能只显示"文件已更新"）', async () => {
     const versionChangeSummary = vi.fn().mockResolvedValue({ summary: '新增了天线参数章节' })
     const { renderer } = await renderWithProjection(projectionFixture(), { versionChangeSummary })
-    const docEntry = renderer.root.findAllByType('li')[1]
-    await act(async () => {
-      buttonWithText(docEntry, '变更摘要')!.props.onClick()
-    })
+    // 挂载即拉取，无需先点「变更摘要」按钮
+    await act(async () => {})
     expect(versionChangeSummary).toHaveBeenCalledWith('doc-1', 2)
     const summaryNode = renderer.root.findAll((node) =>
       typeof node.props?.className === 'string' && node.props.className.includes('context-room-activity-summary'))
@@ -284,17 +298,17 @@ describe('动态时间轴：排序与真实对象条目', () => {
 
   it('对象类型筛选：只保留所选类别的条目', async () => {
     const { renderer } = await renderWithProjection()
-    const chipWithText = (text: string) => renderer.root.findAllByType('button')
-      .filter((button) => button.props['aria-pressed'] !== undefined)
+    // FilterSelect：筛选选项以 RadioItem（mock 成 button）呈现，点击触发 onSelect。
+    const optionWithText = (text: string) => renderer.root.findAllByType('button')
       .find((button) => {
         const children = Array.isArray(button.props.children) ? button.props.children : [button.props.children]
         return children.some((child) => typeof child === 'string' && child.includes(text))
       })
-    expect(chipWithText('全部')).toBeTruthy()
-    const meetingChip = chipWithText('会议')
-    expect(meetingChip).toBeTruthy()
+    expect(optionWithText('全部')).toBeTruthy()
+    const meetingOption = optionWithText('会议')
+    expect(meetingOption).toBeTruthy()
     await act(async () => {
-      meetingChip!.props.onClick()
+      meetingOption!.props.onClick()
     })
     const items = renderer.root.findAllByType('li')
     expect(items.map((node) => node.findByType('b').children[0])).toEqual(['发布评审', '明天对齐会'])

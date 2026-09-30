@@ -2,6 +2,7 @@ import type { FastifyPluginAsyncTypebox } from "@fastify/type-provider-typebox";
 import { Type } from "@sinclair/typebox";
 import { DocumentServiceError, type DocumentService } from "./service.js";
 import type { DocumentIndexBackfillReadTrigger } from "./index-backfill/read-trigger.js";
+import type { TaskFolderService } from "./task-folders.js";
 const IdParams = Type.Object({ id: Type.String({ minLength: 1, maxLength: 128 }) });
 const JsonDocument = Type.Object({ type: Type.Literal("doc") }, { additionalProperties: true });
 const BlockReference = Type.Object({
@@ -16,8 +17,22 @@ export function documentRoutes(
   service: DocumentService,
   summaryRuntime?: () => import("@nxcore/agent-runtime").AgentRuntime | null,
   indexBackfillReadTrigger?: DocumentIndexBackfillReadTrigger | null,
+  taskFolders?: TaskFolderService | null,
 ): FastifyPluginAsyncTypebox {
   return async (app) => {
+    if (taskFolders) {
+      app.get(
+        "/v1/documents/folders",
+        {
+          schema: {
+            tags: ["documents"],
+            querystring: Type.Object({ roomId: Type.String({ minLength: 1, maxLength: 128 }) }),
+          },
+        },
+        async (request) => taskFolders.list(request.query.roomId),
+      );
+    }
+
     app.get(
       "/v1/documents",
       {

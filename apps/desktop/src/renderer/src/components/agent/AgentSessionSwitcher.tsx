@@ -21,7 +21,7 @@ export function AgentSessionSwitcher({
   displayTitle: string
   sessionId: string | null
   sessions: AgentSession[]
-  onCreate: () => Promise<AgentSession>
+  onCreate: () => Promise<void>
   onDelete: (session: AgentSession) => Promise<void>
   onRename: (sessionId: string, title: string) => Promise<void>
   onSelect: (session: AgentSession) => Promise<void>

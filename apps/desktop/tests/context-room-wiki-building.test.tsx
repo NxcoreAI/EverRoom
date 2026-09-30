@@ -70,7 +70,7 @@ afterEach(() => {
 })
 
 describe('Wiki 板块：构建进度步骤条（原型 cr-wiki-progress 对照）', () => {
-  it('构建中显示步骤条：资料沉淀份数 + 生成页面真实页数，且自动轮询', async () => {
+  it('构建中显示进度条：资料份数 + 已生成页数，且自动轮询', async () => {
     const knowledge = installKnowledgeBridge([
       { status: 'processing', items: [], pageCount: 3 },
     ])
@@ -79,7 +79,6 @@ describe('Wiki 板块：构建进度步骤条（原型 cr-wiki-progress 对照�
       renderer = renderWikiPane()
     })
     const text = textOf(renderer!)
-    expect(text).toContain('资料沉淀')
     expect(text).toContain('2 份资料')
     expect(text).toContain('生成页面')
     expect(text).toContain('已生成 3 页')
@@ -118,8 +117,8 @@ describe('Wiki 板块：构建进度步骤条（原型 cr-wiki-progress 对照�
     await act(async () => {
       renderer = renderWikiPane()
     })
-    expect(textOf(renderer!)).toContain('生成页面')
-    expect(renderer!.root.findAllByProps({ className: 'context-room-wp-step is-failed' })).toHaveLength(1)
+    expect(textOf(renderer!)).toContain('生成失败')
+    expect(renderer!.root.findAllByProps({ className: 'context-room-wp-icon is-failed' })).toHaveLength(1)
 
     const retry = renderer!.root.findAllByType('button').find((node) => node.children.includes('重试'))
     expect(retry).toBeTruthy()
@@ -127,6 +126,11 @@ describe('Wiki 板块：构建进度步骤条（原型 cr-wiki-progress 对照�
       retry!.props.onClick()
     })
     expect(knowledge.retryWikiBuild).toHaveBeenCalledTimes(1)
+    // 乐观置 pending：不立刻 refresh（KS 状态翻转有延迟，读回 failed 会打回失败态），交给轮询接管
+    expect(knowledge.listWikiPages).toHaveBeenCalledTimes(1)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(4000)
+    })
     expect(knowledge.listWikiPages).toHaveBeenCalledTimes(2)
   })
 })

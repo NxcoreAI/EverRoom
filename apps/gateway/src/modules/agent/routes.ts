@@ -154,7 +154,7 @@ export function agentRoutes(
       },
       async (request, reply) => {
         const { decision } = request.body;
-        const result = service.resolveBashApproval(request.params.approvalId, decision);
+        const result = service.resolveApproval(request.params.approvalId, decision);
         return result ?? reply.code(404).send({ error: "not_found", message: "Approval request not found" });
       },
     );
@@ -185,6 +185,7 @@ export function agentRoutes(
               Type.Literal("primary"),
               Type.Literal("lite"),
             ])),
+            channelAgentId: Type.Optional(Type.String({ maxLength: 500 })),
           }),
         },
       },
@@ -268,6 +269,45 @@ export function agentRoutes(
       },
     );
 
+    app.get(
+      "/v1/agent/sessions/:sessionId/permission-mode",
+      { schema: { tags: ["agent"], params: SessionParams } },
+      async (request, reply) => {
+        try {
+          return service.getPermissionModeState(request.params.sessionId);
+        } catch {
+          return reply.code(404).send({ error: "not_found", message: "Agent session not found" });
+        }
+      },
+    );
+
+    app.put(
+      "/v1/agent/sessions/:sessionId/permission-mode",
+      {
+        schema: {
+          tags: ["agent"],
+          params: SessionParams,
+          body: Type.Object({
+            mode: Type.Union([
+              Type.Literal("ask_before_write"),
+              Type.Literal("accept_edits"),
+              Type.Literal("auto"),
+              Type.Literal("full_access"),
+            ]),
+          }),
+        },
+      },
+      async (request, reply) => {
+        try {
+          return await service.setSessionPermissionMode(request.params.sessionId, request.body.mode);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (message.includes("not_found")) return reply.code(404).send({ error: "not_found", message });
+          return reply.code(400).send({ error: "invalid_request", message });
+        }
+      },
+    );
+
     app.patch(
       "/v1/agent/sessions/:sessionId",
       {
@@ -343,7 +383,6 @@ export function agentRoutes(
             responseLanguage: Type.Optional(ResponseLanguage),
             captureMemory: Type.Optional(Type.Boolean()),
             recallMemory: Type.Optional(Type.Boolean()),
-            memoryScope: Type.Optional(Type.Union([Type.Literal("room"), Type.Literal("global")])),
             toolsEnabled: Type.Optional(Type.Boolean()),
             context: Type.Optional(Type.Object({
               pageLabel: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
@@ -418,6 +457,36 @@ export function agentRoutes(
               ...(roomId ? { roomId } : {}),
             });
           }
+          // 引用/目标校验类：客户端组合出网关不支持的运行形态（如渠道会话里
+          // @ 其他 Agent 或引用其他对话）——语义错误用 422，而不是裸 500。
+          const referenceValidationErrors = new Map<string, [string, string]>([
+            ["referenced_conversation_requires_main_agent", [
+              "referenced_conversation_requires_main_agent",
+              "Referencing a conversation is only supported in main Agent sessions",
+            ]],
+            ["referenced_local_agent_requires_main_agent", [
+              "referenced_local_agent_requires_main_agent",
+              "Referencing local Agents is only supported in main Agent sessions",
+            ]],
+            ["agent_conversation_context_conflict", [
+              "conversation_context_conflict",
+              "Conversation references and external conversations cannot be combined",
+            ]],
+            ["referenced_local_agent_target_mismatch", [
+              "referenced_local_agent_target_mismatch",
+              "Referenced local Agents and invocation targets do not match",
+            ]],
+            ["local_agent_target_invalid", [
+              "local_agent_target_invalid",
+              "The requested local Agent target is invalid for this run",
+            ]],
+          ]);
+          const mappedReferenceError = error instanceof Error
+            ? referenceValidationErrors.get(error.message)
+            : undefined;
+          if (mappedReferenceError) {
+            return reply.code(422).send({ error: mappedReferenceError[0], message: mappedReferenceError[1] });
+          }
           throw error;
         }
       },
@@ -441,6 +510,7 @@ export function agentRoutes(
               Type.Literal("document.create"),
               Type.Literal("document.edit"),
               Type.Literal("document.continue"),
+              Type.Literal("task.clarify"),
             ]),
             allowedRoomIds: Type.Array(Type.String({ minLength: 1, maxLength: 100 }), { minItems: 1, maxItems: 200 }),
             allowedDocumentIds: Type.Optional(Type.Array(
@@ -482,6 +552,15 @@ export function agentRoutes(
             documentId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
             idempotencyKey: Type.String({ minLength: 8, maxLength: 100 }),
             responseLanguage: Type.Optional(ResponseLanguage),
+            // task.clarify：结构化澄清表单作答。
+            answers: Type.Optional(Type.Record(
+              Type.String({ minLength: 1, maxLength: 64 }),
+              Type.Union([Type.String({ maxLength: 2000 }), Type.Array(
+                Type.String({ maxLength: 2000 }),
+                { maxItems: 10 },
+              )]),
+            )),
+            note: Type.Optional(Type.String({ maxLength: 2000 })),
           }),
         },
       },

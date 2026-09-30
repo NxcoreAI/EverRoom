@@ -20,7 +20,8 @@ export type BoardSubtab =
   | 'entities'
   | 'linkGraph'
   | 'wikiDir'
-  | 'wikiGraph';
+  | 'wikiGraph'
+  | 'wikiFiles';
 
 export interface BoardTab {
   id: BoardId;
@@ -55,6 +56,7 @@ export const BOARD_SUBTABS: Record<BoardId, readonly { id: BoardSubtab; label: s
   wiki: [
     { id: 'wikiDir', label: 'contextRoom:wiki.pages' },
     { id: 'wikiGraph', label: 'contextRoom:wiki.graph' },
+    { id: 'wikiFiles', label: 'contextRoom:wiki.sourceFiles' },
   ],
 };
 

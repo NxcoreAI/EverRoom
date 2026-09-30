@@ -10,6 +10,7 @@ import {
   buildTimelineRows,
   createAgentRunActivityAccumulator,
   foldAgentRunActivityEvent,
+  reduceAgentContextState,
   reduceAgentRunActivity,
   reduceSubagentInvocationTools,
   snapshotAgentRunActivity,
@@ -306,6 +307,93 @@ describe('Agent run activity', () => {
 
     expect(activity.finalAnswer).toBe('第二波完整正文')
     expect(activity.pendingAnswer).toBe('')
+  })
+
+  it('reduces context usage and compaction events to session-level state', () => {
+    // 空历史：未知用量、未压缩。
+    expect(reduceAgentContextState([])).toEqual({ usage: null, compacting: false })
+
+    // 后到者胜：用量取最新快照，压缩态取最新信号（occurredAt 排序，跨 run 亦可）。
+    const state = reduceAgentContextState([
+      event(1, 'run.started'),
+      event(2, 'context.usage', { tokens: 1000, contextWindow: 128000, percent: 0.78 }),
+      event(3, 'context.compaction', { active: true, reason: 'threshold' }),
+      event(4, 'context.compaction', { active: false, reason: 'threshold' }),
+      event(5, 'context.usage', { tokens: 6000, contextWindow: 128000, percent: 4.7 }),
+    ])
+    expect(state.usage).toEqual({ tokens: 6000, contextWindow: 128000, percent: 4.7 })
+    expect(state.compacting).toBe(false)
+
+    // 压缩刚结束、新用量未到：tokens/percent 为 null，仅窗口保留。
+    const postCompaction = reduceAgentContextState([
+      event(1, 'context.usage', { tokens: 1000, contextWindow: 128000, percent: 0.78 }),
+      event(2, 'context.compaction', { active: false, reason: 'overflow' }),
+      event(3, 'context.usage', { tokens: null, contextWindow: 128000, percent: null }),
+    ])
+    expect(postCompaction.usage).toEqual({ tokens: null, contextWindow: 128000, percent: null })
+
+    // 非法窗口（<=0）的快照不采纳，保留上一个合法值。
+    const guarded = reduceAgentContextState([
+      event(1, 'context.usage', { tokens: 1000, contextWindow: 128000, percent: 0.78 }),
+      event(2, 'context.usage', { tokens: 5, contextWindow: 0, percent: 0 }),
+    ])
+    expect(guarded.usage).toEqual({ tokens: 1000, contextWindow: 128000, percent: 0.78 })
+
+    // 占用构成随快照透传；畸形段（缺 key/tokens）被丢弃，空段不挂字段。
+    const segmented = reduceAgentContextState([
+      event(1, 'context.usage', {
+        tokens: 41000,
+        contextWindow: 128000,
+        percent: 32,
+        segments: [
+          { key: 'systemPrompt', tokens: 5200 },
+          { key: 'unknown', tokens: 999 },
+          { key: 'tools', tokens: 12000 },
+        ],
+      }),
+      event(2, 'context.usage', { tokens: 5000, contextWindow: 128000, percent: 3.9, segments: [] }),
+    ])
+    expect(segmented.usage).toEqual({
+      tokens: 5000,
+      contextWindow: 128000,
+      percent: 3.9,
+    })
+  })
+})
+
+describe('ACP channel tool events', () => {
+  it('keeps the adapter title across merges and surfaces it as subject fallback', () => {
+    const started = event(1, 'tool.started', {
+      toolCallId: 'tc-1', name: 'shell', title: 'Bash(git status)', args: { command: 'git status' },
+    })
+    const completed = event(2, 'tool.completed', {
+      toolCallId: 'tc-1', result: { stdout: 'clean' },
+    })
+    const activity = reduceAgentRunActivity([started, completed])
+    expect(activity.hasTools).toBe(true)
+    const tool = activity.steps[0]!.tool
+    expect(tool.title).toBe('Bash(git status)')
+    expect(tool.status).toBe('completed')
+    // args.command 优先于 title 作 subject；command 全文走 agentToolCommand。
+    expect(agentToolSubject(tool)).toBe('git status')
+  })
+
+  it('derives subjects from file_path and falls back to the adapter title', () => {
+    expect(agentToolSubject({
+      id: 'e', runId: 'r', name: 'edit', args: { file_path: '/w/src/app.ts' },
+      status: 'running', startedAt: 'x',
+    })).toBe('/w/src/app.ts')
+    expect(agentToolSubject({
+      id: 'g', runId: 'r', name: 'think', args: {}, title: 'Considering next steps',
+      status: 'running', startedAt: 'x',
+    })).toBe('Considering next steps')
+  })
+
+  it('labels and summarizes ACP kind-derived names', () => {
+    const t = (message: string, values?: Record<string, string | number>) => translate('zh-CN', message, values)
+    expect(agentToolLabel({ id: 'a', runId: 'r', name: 'web_fetch', args: {}, status: 'completed', startedAt: 'x' }, true, t)).toBe('已获取网页')
+    expect(agentToolLabel({ id: 'b', runId: 'r', name: 'search', args: {}, status: 'running', startedAt: 'x' }, false, t)).toBe('搜索')
+    expect(agentToolLabel({ id: 'c', runId: 'r', name: 'shell', args: {}, status: 'running', startedAt: 'x' }, false, t)).toBe('运行命令')
   })
 })
 

@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { MemoryRuntimeConfig } from "@nxcore/agent-runtime-pi";
 import { createDatabase, type DatabaseClient } from "../src/infrastructure/database/client.js";
+import { gatewayMetadata, ingestEvents } from "../src/infrastructure/database/schema.js";
 import { MemoryService } from "../src/modules/memory/service.js";
 
 const config: MemoryRuntimeConfig = {
@@ -288,5 +289,123 @@ describe("memory onboarding capture", () => {
       currentFocus: "A real goal",
     })).rejects.toMatchObject({ statusCode: 400 });
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("reference memory purge（状态/参考分流存量清退）", () => {
+  function purgeHarness(options: { notFound?: string[]; fail?: string[] } = {}) {
+    const requests: Array<Record<string, unknown>> = [];
+    const fetchMock = vi.fn(async (input: string | URL, init?: RequestInit) => {
+      const url = String(input);
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+      const respond = (status: number, code: number, message: string, data: unknown): Response =>
+        new Response(JSON.stringify({ code, message, data, request_id: "purge-test" }), {
+          status,
+          headers: { "content-type": "application/json" },
+        });
+      if (url.endsWith("/v3/document/delete")) {
+        requests.push(body);
+        const documentId = String(body.document_id);
+        if (options.fail?.includes(documentId)) {
+          return respond(500, 500, "internal error", null);
+        }
+        if (options.notFound?.includes(documentId)) {
+          // 真实形态：envelope code=404 → HTTP 404（envelope message 不会透传到 gateway）
+          return respond(404, 404, `document not found: ${documentId}`, null);
+        }
+        return respond(200, 0, "ok", { document_id: documentId, deleted: true });
+      }
+      return respond(200, 0, "ok", {});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return { requests, fetchMock };
+  }
+
+  async function seedLedger(database: DatabaseClient) {
+    const row = (
+      id: string,
+      dataType: "document" | "office-doc" | "mail",
+      memoryResult: { documentId: string; chunkCount: number; deduplicated: boolean } | { error: string },
+    ) => ({
+      id,
+      sourceKind: "file" as const,
+      sourceId: `src-${id}`,
+      sourceVersion: 1,
+      dataType,
+      detectedBy: "extension",
+      title: id,
+      contentHash: `hash-${id}`,
+      parsedId: `parsed-${id}`,
+      pipelines: { room: true, wiki: true, memory: true },
+      memoryResult,
+    });
+    database.db.insert(ingestEvents).values([
+      row("evt-doc", "document", { documentId: "doc-a", chunkCount: 3, deduplicated: false }),
+      row("evt-office", "office-doc", { documentId: "doc-b", chunkCount: 2, deduplicated: false }),
+      row("evt-err", "document", { error: "memory_core_disabled" }),
+      row("evt-mail", "mail", { documentId: "doc-mail", chunkCount: 1, deduplicated: false }),
+    ]).run();
+  }
+
+  function flagRow(database: DatabaseClient): { purged: number } | null {
+    const row = database.db.select().from(gatewayMetadata).all()
+      .find((item) => item.key === "memory:reference-doc-purge:v1");
+    return row ? JSON.parse(String(row.value)) as { purged: number } : null;
+  }
+
+  it("按台账清退 document/office-doc 记忆文档（mail 不动），打标后重跑短路", async () => {
+    const { database, assets } = await databaseForTest();
+    await seedLedger(database);
+    const { requests } = purgeHarness();
+    const service = new MemoryService(config, { warn: vi.fn() } as unknown as FastifyBaseLogger, assets);
+
+    await expect(service.purgeReferenceMemoryDocuments()).resolves.toEqual({ purged: 2 });
+    expect(requests.map((request) => request.document_id)).toEqual(["doc-a", "doc-b"]);
+    expect(flagRow(database)).toMatchObject({ purged: 2 });
+
+    await expect(service.purgeReferenceMemoryDocuments()).resolves.toBeNull();
+    expect(requests).toHaveLength(2);
+  });
+
+  it("404（已被文件删除级联清掉）视作成功并打标", async () => {
+    const { database, assets } = await databaseForTest();
+    await seedLedger(database);
+    const { requests } = purgeHarness({ notFound: ["doc-a"] });
+    const service = new MemoryService(config, { warn: vi.fn() } as unknown as FastifyBaseLogger, assets);
+
+    await expect(service.purgeReferenceMemoryDocuments()).resolves.toEqual({ purged: 1 });
+    expect(requests).toHaveLength(2);
+    expect(flagRow(database)).toMatchObject({ purged: 1 });
+  });
+
+  it("其他失败不打标，下次重试从头再跑", async () => {
+    const { database, assets } = await databaseForTest();
+    await seedLedger(database);
+    const { requests } = purgeHarness({ fail: ["doc-b"] });
+    const logger = { warn: vi.fn() } as unknown as FastifyBaseLogger;
+    const service = new MemoryService(config, logger, assets);
+
+    await expect(service.purgeReferenceMemoryDocuments()).resolves.toBeNull();
+    expect(requests).toHaveLength(2);
+    expect(flagRow(database)).toBeNull();
+    expect(logger.warn).toHaveBeenCalled();
+
+    // 失败恢复后重试：全量重放（幂等——已删的 404 照样视作成功）
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL, init?: RequestInit) => {
+      const url = String(input);
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+      if (url.endsWith("/v3/document/delete")) {
+        requests.push(body);
+        const documentId = String(body.document_id);
+        return new Response(JSON.stringify({
+          code: 0, message: "ok", data: { document_id: documentId, deleted: true }, request_id: "purge-test",
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return new Response(JSON.stringify({ code: 0, message: "ok", data: {}, request_id: "purge-test" }), {
+        status: 200, headers: { "content-type": "application/json" },
+      });
+    }));
+    await expect(service.purgeReferenceMemoryDocuments()).resolves.toEqual({ purged: 2 });
+    expect(flagRow(database)).toMatchObject({ purged: 2 });
   });
 });

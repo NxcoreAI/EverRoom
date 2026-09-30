@@ -40,6 +40,8 @@ export interface FileCatalogDto {
   processingState: 'processing' | 'ready' | 'failed' | 'missing'
   clusterId: string | null
   contentHash: string
+  /** 当前版本 id（@ 文件引用拼 context.attachments 用）。 */
+  currentVersionId: string | null
   parsed: boolean
   updatedAt: string
 }

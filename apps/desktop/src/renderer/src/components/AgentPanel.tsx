@@ -17,9 +17,8 @@ import {
 } from '@/components/agent/agentNavigation'
 import { useAgentSession } from '@/components/agent/useAgentSession'
 import { LocalAgentAdapterWizard } from '@/components/agent/LocalAgentAdapterWizard'
-import type { MentionedAgent } from '@/components/agent/agentMentions'
+import type { MentionedAgent, MentionedItem } from '@/components/agent/agentMentions'
 import type { LocalAgentAdapterCheck } from '../../../shared/sources'
-import { loadRoomFocus, saveRoomFocus } from '@/components/agent/roomFocusStore'
 import type { ContextRoomWorkspaceTab } from '@/components/context-room/contextRoomTabs'
 import type { LocalAgentInstallation } from '../../../shared/local-agents'
 import {
@@ -33,6 +32,11 @@ import {
 } from '@/components/context-room/roomOverviewChange'
 import { recordRoomOverviewDiagnostic } from '@/components/context-room/roomOverviewDiagnostics'
 import { useContextRoomState } from '@/components/context-room/ContextRoomStateProvider'
+import {
+  loadConversationSuggestionSettings,
+  onConversationSuggestionSettingsChanged,
+  type ConversationSuggestionSettings,
+} from '@/state/conversationSuggestionSettings'
 import type { PageId } from '@/data/navigation'
 import { useLocale } from '@/i18n/LocaleContext'
 import { showToast } from '@/state/toast'
@@ -56,12 +60,14 @@ export function AgentPanel({
   sessionRouteRequest,
   askRequest,
   onNavigate,
+  onNavigatePage,
   onRestoreRoomTab,
   onNavigationConsumed,
   onOpenSessionLink,
   onOpenDocument,
   onSessionRouteConsumed,
   onAskConsumed,
+  onOpenMentionFile,
   focusRequest = 0,
   roomCitations,
   onRemoveRoomCitation,
@@ -76,12 +82,15 @@ export function AgentPanel({
   sessionRouteRequest: AgentSessionRouteRequest | null
   askRequest: { key: string; roomId: string; message: string } | null
   onNavigate: (request: AgentNavigationRequest) => void
+  /** 应用级页面跳转（与 Sidebar 同源）；用于「去设置」类提示动作。 */
+  onNavigatePage?: (page: PageId) => void
   onRestoreRoomTab: (target: AgentNavigationRequest['target']) => void
   onNavigationConsumed: (key: string) => void
   onOpenSessionLink: (link: AgentSessionLink, destination: 'source' | 'target') => void
   onOpenDocument: (target: { roomId: string; documentId: string; blockId?: string | null }) => void
   onSessionRouteConsumed: (key: string) => void
   onAskConsumed: (key: string) => void
+  onOpenMentionFile?: (fileId: string) => void
   focusRequest?: number
   roomCitations: RoomOverviewCitation[]
   onRemoveRoomCitation: (citationId: string) => void
@@ -95,7 +104,6 @@ export function AgentPanel({
   const [composerResetKey, setComposerResetKey] = useState(0)
   const [localAgents, setLocalAgents] = useState<LocalAgentInstallation[]>([])
   const [selectedExternalConversation, setSelectedExternalConversation] = useState<ExternalConversationSummary | null>(null)
-  const [roomFocusEnabled, setRoomFocusEnabled] = useState(() => (roomId ? loadRoomFocus(roomId) : false))
   const [notificationRunTarget, setNotificationRunTarget] = useState<{ key: string; runId: string } | null>(null)
   const composerRef = useRef<HTMLTextAreaElement>(null)
   const previousSessionIdRef = useRef<string | null>(null)
@@ -121,15 +129,114 @@ export function AgentPanel({
       detail: citation.comment ? `${summary}\n${t('surface:agentComposer.referenceComment')}${locale === 'zh-CN' ? '：' : ': '}${citation.comment}` : summary,
     }
   })
+  // 仅在有引用时展示（composer 侧空态不渲染文案）。
   const contextSummary = roomCitations.length
     ? `${roomCitations[0]?.roomTitle ?? pageLabel} · ${t('surface:agentComposer.countReferences', { count: roomCitations.length })}`
-    : `${pageLabel} · ${t('surface:agent.noTextSelected')}`
-  const roomFocusRoomTitle = roomId
-    ? rooms.find((room) => room.id === roomId)?.title ?? t('surface:agentComposer.roomFocus')
+    : ''
+  const currentRoomTitle = roomId
+    ? rooms.find((room) => room.id === roomId)?.title ?? t('contextRoom:creation.emptyRoomTitle')
     : undefined
   const citationPrompt = buildRoomOverviewCitationPrompt(roomCitations, locale)
   const session = useAgentSession(pageLabel, roomId, rooms)
   const agentAvailable = Boolean(window.nxcore?.agent)
+
+  const [conversationSuggestionSettings, setConversationSuggestionSettings] =
+    useState<ConversationSuggestionSettings>(loadConversationSuggestionSettings)
+  const [composerSuggestion, setComposerSuggestion] = useState<{ key: string; text: string } | null>(null)
+  const [starterPrompts, setStarterPrompts] = useState<string[] | null>(null)
+  // 同一对话快照只在定时器真正触发时标记（清理掉的调度下次 effect 重排，StrictMode/依赖抖动不再永久丢失）；Esc 丢弃按快照 key 记忆；命中缓存立即回显（5 分钟 TTL），切对话往返不重复生成。
+  const ghostContextKeyRef = useRef<string | null>(null)
+  const ghostDismissedKeysRef = useRef<Set<string>>(new Set())
+  const ghostCacheRef = useRef<Map<string, { text: string; at: number }>>(new Map())
+  const starterPromptsCacheRef = useRef<{ key: string; prompts: string[]; at: number } | null>(null)
+  useEffect(() => onConversationSuggestionSettingsChanged(setConversationSuggestionSettings), [])
+
+  const lastMessage = session.messages.length ? session.messages[session.messages.length - 1] : null
+  const ghostContextKey = `${session.sessionId ?? 'draft'}:${session.messages.length}:${lastMessage?.id ?? ''}`
+  const ghostSuggestion = composerSuggestion?.key === ghostContextKey ? composerSuggestion.text : null
+
+  useEffect(() => {
+    const api = window.nxcore?.agent
+    if (!api?.suggestConversationPrompt || !conversationSuggestionSettings.completionEnabled) {
+      setComposerSuggestion(null)
+      return
+    }
+    if (session.activeRunId) {
+      setComposerSuggestion(null)
+      return
+    }
+    const recentMessages = session.messages
+      .filter((message) => message.role === 'user' || message.role === 'assistant')
+      .slice(-8)
+      .map((message) => ({ role: message.role as 'user' | 'assistant', text: message.content.slice(0, 4000) }))
+    // 空会话（新对话）走开场问题变体：等会话清单就绪后再取。
+    if (recentMessages.length === 0 && !session.scopeReady) return
+    if (ghostDismissedKeysRef.current.has(ghostContextKey)) return
+    const cached = ghostCacheRef.current.get(ghostContextKey)
+    if (cached && Date.now() - cached.at < 5 * 60_000) {
+      setComposerSuggestion({ key: ghostContextKey, text: cached.text })
+      return
+    }
+    if (ghostContextKeyRef.current === ghostContextKey) return
+    const timer = window.setTimeout(() => {
+      ghostContextKeyRef.current = ghostContextKey
+      const recentSessions = [...session.sessions]
+        .sort((a, b) => Date.parse(b.updatedAt ?? '') - Date.parse(a.updatedAt ?? ''))
+        .slice(0, 8)
+        .map((item) => ({ title: item.title, updatedAt: item.updatedAt }))
+      api.suggestConversationPrompt({
+        sessionId: session.sessionId,
+        pageLabel,
+        roomTitle: currentRoomTitle ?? null,
+        messages: recentMessages,
+        ...(recentMessages.length === 0 ? { recentSessions } : {}),
+        language: locale,
+      })
+        .then(({ suggestion }) => {
+          if (!suggestion?.trim()) return
+          ghostCacheRef.current.set(ghostContextKey, { text: suggestion, at: Date.now() })
+          if (ghostCacheRef.current.size > 100) {
+            const oldest = ghostCacheRef.current.keys().next().value
+            if (oldest !== undefined) ghostCacheRef.current.delete(oldest)
+          }
+          setComposerSuggestion({ key: ghostContextKey, text: suggestion })
+        })
+        .catch(() => undefined)
+    }, 400)
+    return () => { window.clearTimeout(timer) }
+  }, [conversationSuggestionSettings.completionEnabled, session.activeRunId, session.messages, session.sessionId, session.sessions, session.scopeReady, ghostContextKey, pageLabel, currentRoomTitle, locale])
+
+  // 新对话空态：按最近会话标题生成开场推荐（5 分钟 TTL 缓存，失败静默回退静态文案）。
+  const newConversationEmpty = session.scopeReady && session.messages.length === 0
+  useEffect(() => {
+    const api = window.nxcore?.agent
+    if (!api?.suggestStarterPrompts || !conversationSuggestionSettings.starterPromptsEnabled || !newConversationEmpty) return
+    const recentSessions = [...session.sessions]
+      .sort((a, b) => Date.parse(b.updatedAt ?? '') - Date.parse(a.updatedAt ?? ''))
+      .slice(0, 8)
+      .map((item) => ({ title: item.title, updatedAt: item.updatedAt }))
+    const key = `${pageLabel}|${roomId ?? ''}|${locale}|${currentRoomTitle ?? ''}|${recentSessions.map((item) => item.title ?? '').join('/')}`
+    const cached = starterPromptsCacheRef.current
+    if (cached && cached.key === key && Date.now() - cached.at < 5 * 60_000) {
+      setStarterPrompts(cached.prompts)
+      return
+    }
+    let cancelled = false
+    api.suggestStarterPrompts({
+      pageLabel,
+      roomTitle: currentRoomTitle ?? null,
+      recentSessions,
+      language: locale,
+    })
+      .then(({ prompts }) => {
+        if (cancelled || !prompts?.length) return
+        starterPromptsCacheRef.current = { key, prompts, at: Date.now() }
+        setStarterPrompts(prompts)
+      })
+      .catch(() => undefined)
+    return () => { cancelled = true }
+  }, [conversationSuggestionSettings.starterPromptsEnabled, newConversationEmpty, session.sessions, session.scopeReady, pageLabel, roomId, locale, currentRoomTitle])
+
   const { activeDocument, prepareActiveDocumentRun } = useActiveDocument()
   const agentNamesById = useMemo(() => Object.fromEntries(
     localAgents.map((agent) => [agent.id, agent.displayName]),
@@ -161,6 +268,20 @@ export function AgentPanel({
     focusComposer(true)
   }, [focusRequest])
 
+  const acceptGhost = useCallback(() => {
+    setComposerSuggestion((current) => {
+      if (current) setDraft(current.text)
+      return null
+    })
+    focusComposer()
+  }, [focusComposer])
+
+  const dismissGhost = useCallback(() => {
+    ghostDismissedKeysRef.current.add(ghostContextKey)
+    if (ghostDismissedKeysRef.current.size > 50) ghostDismissedKeysRef.current.clear()
+    setComposerSuggestion(null)
+  }, [ghostContextKey])
+
   useEffect(() => {
     void window.nxcore?.agent.discoverLocalAgents?.()
       .then(setLocalAgents)
@@ -187,17 +308,37 @@ export function AgentPanel({
     setSelectedExternalConversation(conversation)
   }, [])
 
-
-
-  // 房间聚焦是 per-Room 持久偏好（非会话态）：切房间/回到房间恢复各自上次的选择。
-  useEffect(() => {
-    setRoomFocusEnabled(roomId ? loadRoomFocus(roomId) : false)
-  }, [roomId])
-
-  const toggleRoomFocus = useCallback((next: boolean) => {
-    setRoomFocusEnabled(next)
-    if (roomId) saveRoomFocus(roomId, next)
-  }, [roomId])
+  /** 消息区点击 @ 条目跳转：Room 走导航管线开房间标签，文件跳文件页聚焦，本应用会话切回该对话。 */
+  const openMention = useCallback((item: MentionedItem) => {
+    if (item.kind === 'room') {
+      onNavigate({
+        key: `mention:room:${item.id}:${Date.now()}`,
+        source: {
+          sessionId: session.sessionId ?? '',
+          pageId,
+          pageLabel,
+          roomId,
+          runId: '',
+        },
+        target: {
+          pageId: 'rooms',
+          title: item.displayName,
+          action: 'referenced',
+          roomId: item.id,
+          objectType: 'room',
+        },
+      })
+      return
+    }
+    if (item.kind === 'file') {
+      onOpenMentionFile?.(item.id)
+      return
+    }
+    if (item.kind === 'conversation' && item.provider !== undefined && item.provider !== 'everroom') return
+    void session.selectSessionById(item.id).catch(() => {
+      showToast({ title: t('surface:agentChat.mentionTargetUnavailable') })
+    })
+  }, [onNavigate, onOpenMentionFile, pageId, pageLabel, roomId, session, t])
 
 
   useEffect(() => {
@@ -385,9 +526,17 @@ export function AgentPanel({
     })
   }
 
-  const sendPrompt = async (prompt: string, replaceRunId?: string, files: File[] = [], mentionedAgents?: MentionedAgent[]) => {
+  const sendPrompt = async (prompt: string, replaceRunId?: string, files: File[] = [], mentioned: MentionedItem[] = []) => {
     if ((!prompt.trim() && !citationPrompt && files.length === 0) || !agentAvailable) return
+    const mentionedAgents: MentionedAgent[] = mentioned
+      .filter((item) => item.kind === 'agent')
+      .map((item) => ({ id: item.id, displayName: item.displayName }))
     if (mentionedAgents?.length && !await ensureLocalAgentAdapters(mentionedAgents)) return
+    // @ 引用的 Room：本次运行按该 Room 解析（覆盖页面所在 Room 的默认聚焦）。
+    const mentionedRoomId = [...mentioned].reverse().find((item) => item.kind === 'room')?.id
+    // @ 引用的对话记录：取最后一条作为 referencedConversationId 注入运行上下文。
+    const mentionedConversationId = [...mentioned].reverse().find((item) => item.kind === 'conversation')?.id
+    const mentionedFileIds = mentioned.filter((item) => item.kind === 'file').map((item) => item.id)
     const submittedPrompt = prompt.trim() || citationPrompt
     const submittedContext = roomCitations.length
       ? buildRoomOverviewCitationContext(roomCitations)
@@ -413,32 +562,39 @@ export function AgentPanel({
           status: 'processing' as const,
         }))
       }
+      if (mentionedFileIds.length) {
+        const filesApi = window.nxcore?.files
+        if (!filesApi) throw new Error(t('surface:agentComposer.filesServiceUnavailable'))
+        const referenced = await Promise.all(mentionedFileIds.map(async (fileId) => {
+          const entry = await filesApi.catalogEntry(fileId)
+          if (!entry?.currentVersionId) throw new Error(t('surface:agentComposer.mentionedFileUnavailable'))
+          return {
+            fileId,
+            fileVersionId: entry.currentVersionId,
+            fileName: entry.displayName ?? entry.sharedTitle ?? entry.originalName,
+            status: (entry.processingState === 'ready' ? 'ready' : 'processing') as 'ready' | 'processing',
+          }
+        }))
+        const known = new Set((attachments ?? []).map((item) => item.fileId))
+        attachments = [...(attachments ?? []), ...referenced.filter((item) => !known.has(item.fileId))]
+      }
       // selectedRoomId 只在 Room 仍存在时提交：Room 已合并/删除/同步丢失时
       // 提交死 id 会被网关 409 拒绝（room_not_available），转而以全局会话运行。
       const validRoomId = roomId && rooms.some((room) => room.id === roomId) ? roomId : undefined
-      // 重试优先还原原 run 的记忆范围（含"原 run 是全局"的情况），本会话内未知
-      // （应用重启后的旧 run）才回退当前开关；聚焦需房间仍有效，失效则全局运行。
-      const priorScope = replaceRunId ? session.memoryScopeByRun[replaceRunId] : undefined
-      const wantsRoomFocus = priorScope === 'room' || (priorScope === undefined && roomFocusEnabled)
-      const memoryScope = wantsRoomFocus && validRoomId ? ('room' as const) : undefined
-      if (roomFocusEnabled && roomId && !validRoomId) {
-        // 房间已失效（他端合并/删除/同步滞后）而 chip 仍显示已聚焦：提示后按全局
-        // 运行，并同步关闭/清除该房间的持久聚焦，不让 chip 继续失真。
-        showToast({ title: t('surface:agentComposer.roomFocusUnavailable') })
-        setRoomFocusEnabled(false)
-        saveRoomFocus(roomId, false)
-      }
+      const effectiveRoomId = mentionedRoomId && rooms.some((room) => room.id === mentionedRoomId)
+        ? mentionedRoomId
+        : validRoomId
       await session.sendPrompt(
         submittedPrompt || t('surface:agentComposer.analyzeUploadedFiles'),
         submittedContext,
-        validRoomId,
+        effectiveRoomId,
         activeDocumentContext,
         replaceRunId,
         attachments,
         undefined,
-        externalConversation?.id,
+        externalConversation?.id ?? mentionedConversationId,
         mentionedAgents,
-        memoryScope,
+        mentioned,
       )
       if (externalConversation) setSelectedExternalConversation(null)
       if (roomCitations.length) onClearRoomCitations()
@@ -514,20 +670,33 @@ export function AgentPanel({
     }
   }
 
-  // 轻量档可用性：lite 配置了 model 才算可用（网关约定：model 空＝未配置＝档位隐藏）。
-  // 每次打开选择器时由 composer 拉取，设置页保存后无需重启。
-  const loadLiteModelAvailability = useCallback(async (): Promise<boolean> => {
+  // 档位可用性：lite 配置了 model 才显示档位；primary 缺连接要素时仍显示但点击提示去设置
+  // （网关约定：model 空＝未配置＝档位隐藏；primary 空＝强模型档不可用）。
+  const loadTierAvailability = useCallback(async (): Promise<{ lite: boolean; primary: boolean }> => {
     try {
       const snapshot = await window.nxcore?.runtimeConfig?.get()
-      const lite = (snapshot?.config as { lite?: { model?: unknown } } | undefined)?.lite
-      return typeof lite?.model === 'string' && lite.model.trim() !== ''
+      const config = snapshot?.config as {
+        lite?: { model?: unknown }
+        primary?: { provider?: unknown; model?: unknown; baseUrl?: unknown }
+      } | undefined
+      const lite = typeof config?.lite?.model === 'string' && config.lite.model.trim() !== ''
+      const primary = ['provider', 'model', 'baseUrl'].every((key) => {
+        const value = config?.primary?.[key as keyof NonNullable<typeof config.primary>]
+        return typeof value === 'string' && value.trim() !== ''
+      })
+      return { lite, primary }
     } catch {
-      return false
+      return { lite: false, primary: false }
     }
   }, [])
 
   const modelTierLocked = Boolean(session.sessionId)
   const effectiveModelPreference: AgentModelPreference = session.currentSession?.modelPreference ?? session.modelPreferenceDefault
+  // 渠道与档位同一把锁：会话已创建＝读会话锁定渠道（无渠道则 null），
+  // 未创建＝读全局默认渠道。
+  const effectiveChannelAgentId = session.sessionId
+    ? session.currentSession?.channelAgentId ?? null
+    : session.channelAgentIdDefault
 
   const composer = (
     <AgentComposer
@@ -539,14 +708,24 @@ export function AgentPanel({
       resetKey={composerResetKey}
       selectedExternalConversation={selectedExternalConversation}
       localAgents={localAgents}
-      roomFocusVisible={Boolean(roomId)}
-      roomFocusEnabled={roomFocusEnabled}
-      roomFocusRoomTitle={roomFocusRoomTitle}
-      onToggleRoomFocus={toggleRoomFocus}
+      rooms={rooms}
       modelPreference={effectiveModelPreference}
       modelPreferenceLocked={modelTierLocked}
-      loadModelAvailability={loadLiteModelAvailability}
+      contextUsage={session.contextUsage}
+      contextCompacting={session.contextCompacting}
+      loadModelAvailability={loadTierAvailability}
       onSelectModelPreference={session.setModelPreferenceDefault}
+      channelAgentId={effectiveChannelAgentId}
+      onSelectChannelAgent={session.setChannelAgentIdDefault}
+      permissionMode={session.permissionMode}
+      permissionModeAvailable={session.permissionModeAvailable}
+      onSelectPermissionMode={session.setSessionPermissionMode}
+      onOpenSettings={onNavigatePage ? () => onNavigatePage('settings') : undefined}
+      ghostSuggestion={ghostSuggestion}
+      onAcceptGhost={acceptGhost}
+      onDismissGhost={dismissGhost}
+      queuedSubmissions={session.queuedSubmissions}
+      onRemoveQueuedSubmission={session.removeQueuedSubmission}
       value={draft}
       active={Boolean(session.activeRunId)}
       loading={session.loading || submitting}
@@ -556,7 +735,7 @@ export function AgentPanel({
       onClearContext={onClearRoomCitations}
       onRemoveContext={onRemoveRoomCitation}
       onStop={() => void session.stop()}
-      onSubmit={(files, mentionedAgents) => void sendPrompt(draft, undefined, files, mentionedAgents)}
+      onSubmit={(files, mentioned) => void sendPrompt(draft, undefined, files, mentioned)}
     />
   )
 
@@ -574,7 +753,8 @@ export function AgentPanel({
             setDraft('')
             if (roomCitations.length) onClearRoomCitations()
             setComposerResetKey((current) => current + 1)
-            return session.createSession()
+            // 懒创建：只回到草稿态，首条消息发出时才用当前档位/渠道默认建会话。
+            return session.startNewConversation()
           }}
           onDelete={session.deleteSession}
           onRename={session.renameSession}
@@ -600,6 +780,7 @@ export function AgentPanel({
         composer={composer}
         currentSessionId={session.sessionId}
         scopeReady={session.scopeReady}
+        starterPrompts={newConversationEmpty ? starterPrompts : null}
         draftHasContent={Boolean(draft.trim())}
         error={session.error}
         loading={session.loading}
@@ -614,6 +795,7 @@ export function AgentPanel({
           if (roomId) onOpenDocument({ roomId, documentId })
         }}
         onSlidesGenerate={(message) => void sendPrompt(message)}
+        onOpenMention={openMention}
         onSelectRoom={selectDocumentRoom}
         onSelectDocument={(selection) => void selectDocument(selection)}
         onSelectPrompt={(prompt) => {

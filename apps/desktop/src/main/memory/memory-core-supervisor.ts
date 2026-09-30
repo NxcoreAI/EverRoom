@@ -7,6 +7,7 @@ import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from 'node:c
 import { app } from 'electron'
 
 import { forgetProcessRecord, registerProcessRecord } from '../process-cleanup'
+import { writeMemoryCoreGatewayConfig } from './memory-core-config'
 
 /**
  * 托管 TencentDB Agent Memory(MemoryCore)HTTP gateway 的子进程管理器。
@@ -107,6 +108,8 @@ export class MemoryCoreSupervisor {
     // MemoryCore 默认落 ~/.memory-tencentdb/,卸载/清数据会留残骸。
     const dataDir = join(this.dataDirectory, 'memory')
     await mkdir(dataDir, { recursive: true })
+    // fork 调度旋钮经 tdai-gateway.yaml 下发（无专用 env；详见 memory-core-config）
+    await writeMemoryCoreGatewayConfig(dataDir)
     const logDirectory = process.env.LOG_PATH?.trim() || join(this.dataDirectory, 'logs', 'memory-core')
     await mkdir(logDirectory, { recursive: true })
 

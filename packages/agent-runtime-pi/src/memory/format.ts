@@ -26,6 +26,30 @@ export function formatAtomicLine(item: MemoryAtomicItem): string {
 }
 
 /**
+ * 注入侧同源去重：同一来源（scene_name——文档派生=文档标题、会话派生=场景
+ * 分组）的 L1 常被局部蒸馏拆成多条近似碎片，一次召回挤占注入预算。按服务端
+ * 相关性排序处理：
+ * - 内容归一（去空白/小写）后重复 → 丢弃后出现者；
+ * - 同 scene_name 超过 maxPerScene 条 → 丢弃（无 scene_name 只参与内容去重）。
+ */
+export function dedupeAtomicItems(items: MemoryAtomicItem[], maxPerScene = 2): MemoryAtomicItem[] {
+  const seen = new Set<string>();
+  const perScene = new Map<string, number>();
+  const out: MemoryAtomicItem[] = [];
+  for (const item of items) {
+    const key = item.content.replace(/\s+/g, "").toLowerCase();
+    if (seen.has(key)) continue;
+    const scene = (item.scene_name ?? item.background ?? "").trim();
+    const count = scene ? (perScene.get(scene) ?? 0) : 0;
+    if (scene && count >= maxPerScene) continue;
+    seen.add(key);
+    if (scene) perScene.set(scene, count + 1);
+    out.push(item);
+  }
+  return out;
+}
+
+/**
  * 将召回结果格式化为注入 agent 的记忆块。
  * [Room 记忆] 段（用户为当前 Room 甄选）独立于 charBudget——取数侧已按预算
  * 裁好，且确定性注入不应被全局段挤出；其余段超出字符预算时优先截断 L1
@@ -49,7 +73,7 @@ export function formatRecallResult(input: MemoryRecallInput, charBudget: number)
   }
 
   if (input.atomicItems.length > 0) {
-    const lines = input.atomicItems.map(formatAtomicLine);
+    const lines = dedupeAtomicItems(input.atomicItems).map(formatAtomicLine);
     sections.push(`[相关记忆]\n${lines.join("\n")}`);
   }
 

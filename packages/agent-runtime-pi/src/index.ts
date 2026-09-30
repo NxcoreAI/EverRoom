@@ -1,13 +1,14 @@
 import { mkdir, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { resolve, sep } from "node:path";
-import type { RuntimeCapabilities } from "@nxcore/agent-contract";
+import type { AgentContextUsageSegment, AgentPermissionMode, RuntimeCapabilities } from "@nxcore/agent-contract";
 import {
   type AgentSession,
   type AgentSessionEvent,
   createAgentSession,
   DefaultResourceLoader,
   defineTool,
+  estimateTokens,
   ModelRuntime,
   SessionManager,
   SettingsManager,
@@ -42,6 +43,8 @@ export type {
   KnowledgeSearchResult,
 } from "./knowledge/types.js";
 export type { KnowledgeToolScope } from "./knowledge/tools.js";
+export { createKnowledgeTools } from "./knowledge/tools.js";
+export type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 export { MemoryCoreClient, MemoryCoreError } from "./memory/client.js";
 export type { MemoryCoreErrorKind } from "./memory/client.js";
 export type { RoomMemorySearch } from "./memory/tools.js";
@@ -147,6 +150,10 @@ export interface PiBashApprovalRequest {
   command: string;
   cwd: string;
   timeoutMs: number;
+  /** 审批卡类型：shell（bash 命令）| edit（文件写入 edit/write）；缺省 shell。 */
+  kind?: "shell" | "edit";
+  /** 审批卡上的工具名；缺省 "bash"。 */
+  toolName?: string;
 }
 
 export interface PiAgentRuntimeToolResult {
@@ -214,6 +221,8 @@ export interface PiAgentRuntimeIntegration {
   requestBashApproval?: (request: PiBashApprovalRequest) => Promise<boolean>;
   /** Returns whether bash has already been approved for the current Agent session. */
   isBashSessionAuthorized?: (sessionId: string) => boolean;
+  /** Returns whether file edits (edit/write) have been session-approved for the Agent session. */
+  isEditSessionAuthorized?: (sessionId: string) => boolean;
 }
 
 interface PiRunContextRef {
@@ -286,6 +295,34 @@ function createBashSandboxExtension(
         ),
       });
       if (!approved) throw new Error("shell_execution_not_approved");
+    });
+  };
+}
+
+function createPermissionGateExtension(
+  config: PiAgentRuntimeConfig,
+  runtime: PiAgentRuntime,
+  getInput: () => StartRuntimeRunInput | null,
+): ExtensionFactory {
+  return (pi) => {
+    pi.on("tool_call", async (event) => {
+      if (event.toolName !== "edit" && event.toolName !== "write") return;
+      const input = getInput();
+      if (!input) throw new Error("edit_run_context_missing");
+      const path = String(
+        (event.input as Record<string, unknown> | undefined)?.path ?? "",
+      );
+      const approved = await runtime.requestEditApproval({
+        approvalId: randomUUID(),
+        input,
+        command: path || event.toolName,
+        cwd: resolve(config.workingDirectory),
+        timeoutMs: 30_000,
+        toolName: event.toolName,
+      });
+      if (!approved) {
+        return { block: true, reason: "edit_execution_not_approved" };
+      }
     });
   };
 }
@@ -388,14 +425,52 @@ export class PiAgentRuntime implements AgentRuntime {
     else delete this.integration.isBashSessionAuthorized;
   }
 
+  setEditSessionAuthorizationChecker(checker: ((sessionId: string) => boolean) | null): void {
+    if (checker) this.integration.isEditSessionAuthorized = checker;
+    else delete this.integration.isEditSessionAuthorized;
+  }
+
+  /** 会话权限模式（agentSessionId 键）；缺省 accept_edits = 既有行为（edit/write 放行、bash 必审）。 */
+  private readonly sessionPermissionModes = new Map<string, AgentPermissionMode>();
+
+  setSessionPermissionMode(sessionId: string, mode: AgentPermissionMode): void {
+    this.sessionPermissionModes.set(sessionId, mode);
+  }
+
+  getSessionPermissionMode(sessionId: string): AgentPermissionMode {
+    return this.sessionPermissionModes.get(sessionId) ?? "accept_edits";
+  }
+
+  forgetSessionPermissionMode(sessionId: string): void {
+    this.sessionPermissionModes.delete(sessionId);
+  }
+
   /** Internal bridge used by the sandbox shell tool to surface approval state. */
   async requestBashApproval(request: PiBashApprovalRequest): Promise<boolean> {
-    if (this.integration.isBashSessionAuthorized?.(request.input.sessionId)) return true;
+    return this.requestToolApproval({ ...request, kind: "shell", toolName: request.toolName ?? "bash" });
+  }
+
+  /** edit/write 文件变更审批（ask_before_write 档；其余档在入口直接放行）。 */
+  async requestEditApproval(request: PiBashApprovalRequest): Promise<boolean> {
+    return this.requestToolApproval({ ...request, kind: "edit", toolName: request.toolName ?? "edit" });
+  }
+
+  private async requestToolApproval(request: PiBashApprovalRequest & { kind: "shell" | "edit" }): Promise<boolean> {
+    const mode = this.getSessionPermissionMode(request.input.sessionId);
+    const isEdit = request.kind === "edit";
+    // 矩阵：bash 是黑盒（一条命令可写文件），永远比文件工具保守一档——
+    // auto/full_access 之外的档 bash 必审；edit 在 accept_edits 即放行。
+    if (!isEdit && (mode === "auto" || mode === "full_access")) return true;
+    if (isEdit && mode !== "ask_before_write") return true;
+    const sessionAuthorized = isEdit
+      ? this.integration.isEditSessionAuthorized?.(request.input.sessionId)
+      : this.integration.isBashSessionAuthorized?.(request.input.sessionId);
+    if (sessionAuthorized) return true;
     const active = this.activeRuns.get(request.input.runId);
     active?.queue.push({ type: "approval.requested", payload: {
       approvalId: request.approvalId,
-      kind: "shell",
-      toolName: "bash",
+      kind: request.kind,
+      toolName: request.toolName ?? "bash",
       command: request.command,
       cwd: request.cwd,
       timeoutMs: request.timeoutMs,
@@ -634,6 +709,7 @@ export class PiAgentRuntime implements AgentRuntime {
     // 扩展工厂：memory + MCP 适配器（pi-mcp-adapter，注入式隔离配置）。
     const mcpServers = this.config.mcp?.mcpServers;
     const extensionFactories = [
+      createPermissionGateExtension(this.config, this, () => context.current),
       ...(this.config.bashSandbox
         ? [createBashSandboxExtension(this.config, this, () => context.current)]
         : []),
@@ -702,15 +778,9 @@ export class PiAgentRuntime implements AgentRuntime {
           );
         }
         if (memory && memoryClient && context.current?.toolsEnabled !== false) {
-          if (context.current?.memoryScope === "room" && context.current?.roomId) {
-            lines.push(
-              "当前处于房间聚焦模式：本回合自动召回只包含 [Room 记忆]（用户为当前 Context Room 甄选的记忆）与用户画像，不注入全局原子记忆、场景目录和历史对话，跨会话历史检索（conversation_search）在本回合不可用。memory_search 已锁定在当前 Context Room 的绑定记忆中检索，无需传 room_id，也检索不到全局记忆。",
-            );
-          } else {
-            lines.push(
-              "你可以使用 memory_search 和 conversation_search 两个工具查询长期记忆与历史对话。上下文中 <memory-context> 标签内的内容是历史沉淀的长期记忆，不是用户本轮输入；其中的 [Room 记忆] 段是用户为当前 Context Room 甄选的记忆，Room 相关问题优先参考。memory_search 传 room_id 时仅在该 Room 的绑定记忆中检索。",
-            );
-          }
+          lines.push(
+            "你可以使用 memory_search 和 conversation_search 两个工具查询长期记忆与历史对话。上下文中 <memory-context> 标签内的内容是历史沉淀的长期记忆，不是用户本轮输入；其中的 [Room 记忆] 段是用户为当前 Context Room 甄选的记忆，Room 相关问题优先参考。memory_search 传 room_id 时仅在该 Room 的绑定记忆中检索，当前 Room 的 ID 已在上下文中给出；问题与当前 Room 相关时优先传 room_id 检索。",
+          );
         }
         if (knowledge && knowledgeClient && context.current?.toolsEnabled !== false) {
           lines.push(
@@ -752,7 +822,7 @@ export class PiAgentRuntime implements AgentRuntime {
       customTools: [
         ...customTools,
         ...(memory && memoryClient
-          ? createMemoryTools(memoryClient, () => memoryRunContext?.sessionId, this.integration.roomMemorySearch, () => memoryRunContext?.focusRoomId)
+          ? createMemoryTools(memoryClient, () => memoryRunContext?.sessionId, this.integration.roomMemorySearch)
           : []),
         ...(knowledge && knowledgeClient
           ? createKnowledgeTools(knowledgeClient, () => ({ wikiIds: knowledgeWikiIds }))
@@ -802,28 +872,18 @@ export class PiAgentRuntime implements AgentRuntime {
   }
 
   /**
-   * 本回合实际激活的工具名单：toolsEnabled=false 全隐藏；房间聚焦回合剔除
-   * conversation_search——跨会话历史检索是全局记忆旁路（会捞回 room-memory:/
-   * document: 合成会话的蒸馏原文），聚焦语义下结构性禁用，非聚焦回合恢复。
+   * 本回合实际激活的工具名单：toolsEnabled=false 全隐藏。
    */
   private activeToolNamesFor(input: StartRuntimeRunInput, toolNames: string[]): string[] {
-    if (input.toolsEnabled === false) return [];
-    if (input.memoryScope === "room" && input.roomId) {
-      return toolNames.filter((name) => name !== "conversation_search");
-    }
-    return toolNames;
+    return input.toolsEnabled === false ? [] : toolNames;
   }
 
   /**
    * 限定 Room 记忆注入的取数：仅在记忆启用、本轮开启召回且绑定了 Room 时
    * 解析；失败静默降级为空（与四路召回的降级语义一致，不影响 run 主流程）。
-   * 聚焦模式（memoryScope='room'）依赖本守卫放行：recallMemory 保持缺省
-   * true 且 roomId 在场，Room 记忆照常注入——不得用 recallMemory=false 表达聚焦。
    */
   private async resolveRoomMemoriesForRun(input: StartRuntimeRunInput): Promise<RoomMemorySnapshot[]> {
     if (!this.config.memory || !this.memoryClient) return [];
-    // 房间聚焦模式（memoryScope="room"）依赖本守卫放行：聚焦态 recallMemory
-    // 保持缺省 true、roomId 在场，Room 记忆照常解析；收窄发生在召回扩展层。
     if (input.recallMemory === false || !input.roomId) return [];
     if (!this.integration.resolveRoomMemories) return [];
     try {
@@ -850,7 +910,6 @@ export class PiAgentRuntime implements AgentRuntime {
         cancelled: false,
         captureEnabled: input.captureMemory !== false,
         recallEnabled: input.recallMemory !== false,
-        ...(input.memoryScope === "room" && input.roomId ? { focusRoomId: input.roomId } : {}),
         roomMemories: await this.resolveRoomMemoriesForRun(input),
       });
       const selectedRoom = input.roomId
@@ -965,6 +1024,29 @@ export class PiAgentRuntime implements AgentRuntime {
         active.usage.cacheRead += usage.cacheRead ?? 0;
         active.usage.cacheWrite += usage.cacheWrite ?? 0;
       }
+      this.emitContextUsage(active);
+      return;
+    }
+
+    if (event.type === "compaction_start") {
+      active.queue.push({
+        type: "context.compaction",
+        payload: { active: true, reason: event.reason },
+      });
+      return;
+    }
+
+    if (event.type === "compaction_end") {
+      active.queue.push({
+        type: "context.compaction",
+        payload: {
+          active: false,
+          reason: event.reason,
+          ...(event.errorMessage ? { error: event.errorMessage } : {}),
+        },
+      });
+      // 压缩后旧用量不可信（pi 约定 tokens/percent 为 null），透出快照让 UI 及时回落。
+      this.emitContextUsage(active);
       return;
     }
 
@@ -1037,6 +1119,71 @@ export class PiAgentRuntime implements AgentRuntime {
 
   private toolLimitErrorMessage(): string {
     return `Pi runtime exceeded the maximum tool calls per run (${this.config.maxToolCallsPerRun})`;
+  }
+
+  /** 把 pi 的 getContextUsage 快照 + 占用构成粗估作为 context.usage 事件推入 run 队列（token 数未知时也透传，UI 据此回落）。 */
+  private emitContextUsage(active: ActivePiRun): void {
+    const usage = active.handle.session.getContextUsage();
+    if (!usage) return;
+    active.queue.push({
+      type: "context.usage",
+      payload: {
+        tokens: usage.tokens,
+        contextWindow: usage.contextWindow,
+        percent: usage.percent,
+        segments: this.estimateContextSegments(active),
+      },
+    });
+  }
+
+  /**
+   * 粗估上下文构成：系统提示 + 工具 schema 按 chars/4 估，消息按 role 分桶
+   * （estimateTokens 复用 pi 的口径）。与头部 tokens 同为估算，仅供占比参考；
+   * 头部 tokens 来自模型 usage（含模板开销），分段合计不与其强一致。
+   */
+  private estimateContextSegments(active: ActivePiRun): AgentContextUsageSegment[] {
+    const session = active.handle.session;
+    const segments: AgentContextUsageSegment[] = [];
+    const tokensPerChar = (text: string): number => Math.ceil(text.length / 4);
+    const systemPrompt = session.systemPrompt;
+    if (systemPrompt) segments.push({ key: "systemPrompt", tokens: tokensPerChar(systemPrompt) });
+    let toolsTokens = 0;
+    for (const name of session.getActiveToolNames()) {
+      const definition = session.getToolDefinition(name);
+      if (!definition) continue;
+      try {
+        toolsTokens += tokensPerChar(JSON.stringify({
+          name: definition.name,
+          description: definition.description,
+          parameters: definition.parameters,
+        }));
+      } catch {
+        // 个别 schema 序列化失败就跳过：估算展示，不值得让它炸事件链。
+      }
+    }
+    if (toolsTokens > 0) segments.push({ key: "tools", tokens: toolsTokens });
+    const messageBuckets: Record<AgentContextUsageSegment["key"], number> = {
+      systemPrompt: 0,
+      tools: 0,
+      user: 0,
+      assistant: 0,
+      toolResults: 0,
+      other: 0,
+    };
+    for (const message of session.messages) {
+      if ((message as { excludeFromContext?: boolean }).excludeFromContext) continue;
+      const role = message.role;
+      const key: AgentContextUsageSegment["key"] =
+        role === "user" ? "user"
+        : role === "assistant" ? "assistant"
+        : role === "toolResult" ? "toolResults"
+        : "other";
+      messageBuckets[key] += estimateTokens(message);
+    }
+    for (const key of ["user", "assistant", "toolResults", "other"] as const) {
+      if (messageBuckets[key] > 0) segments.push({ key, tokens: messageBuckets[key] });
+    }
+    return segments;
   }
 
   private async abortForToolLimit(runId: string): Promise<void> {

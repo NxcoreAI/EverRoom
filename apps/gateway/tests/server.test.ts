@@ -32,6 +32,7 @@ async function testConfig(): Promise<GatewayConfig> {
     knowledge: null,
     ingestFilter: { enabled: false, mode: "observe", confidenceThreshold: 0.7, batchSize: 5, batchDelayMs: 0, exemptSourceKinds: [], toolsEnabled: false, maxToolCalls: 8, rulesFile: "", rulesMaxBytes: 2048, insightEnabled: false, insightIntervalMs: 3_600_000 },
     backgroundPi: null,
+    transcriptionSummaryPi: null,
     asrInputDir: join(dataDir, "recordings"),
     webSearch: null,
     mcpConfigPath: join(dataDir, 'agent', 'mcp.json'),
@@ -727,6 +728,11 @@ describe("gateway server", () => {
       "context_room_document_comment_add",
       "route_mindmap_finalize",
       "context_room_document_delete",
+      "context_room_task_start",
+      "context_room_task_read",
+      "context_room_task_update",
+      "context_room_task_clarify",
+      "context_room_task_attach",
     ]);
   });
 
@@ -791,6 +797,11 @@ describe("gateway server", () => {
         "context_room_document_comment_add",
         "route_mindmap_finalize",
         "context_room_document_delete",
+        "context_room_task_start",
+        "context_room_task_read",
+        "context_room_task_update",
+        "context_room_task_clarify",
+        "context_room_task_attach",
       ]);
     } finally {
       await client.close();

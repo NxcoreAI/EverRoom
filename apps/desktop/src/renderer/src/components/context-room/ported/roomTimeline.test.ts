@@ -23,6 +23,7 @@ describe('parseTimelineDate', () => {
     expect(parseTimelineDate('今天 11:20', NOW)).toEqual(new Date(2026, 7, 26))
     expect(parseTimelineDate('昨天 18:30', NOW)).toEqual(new Date(2026, 7, 25))
     expect(parseTimelineDate('07-09', NOW)).toEqual(new Date(2026, 6, 9))
+    expect(parseTimelineDate('12-30', NOW)).toEqual(new Date(2025, 11, 30))
     expect(parseTimelineDate('待定', NOW)).toBeNull()
     expect(parseTimelineDate('', NOW)).toBeNull()
   })

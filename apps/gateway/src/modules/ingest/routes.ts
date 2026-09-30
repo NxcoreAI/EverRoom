@@ -235,6 +235,34 @@ export function ingestRoutes(
       async () => ({ items: listPolicyViews(service.policy) }),
     );
 
+    // 记忆引擎暂停闸（记忆页「继续/暂停」）：暂停期间新内容只进台账不扇出，
+    // 状态持久在 <dataDir>/ingest-gate.json（重启保持）。注册须先于 /v1/ingest/:id。
+    const PauseStateSchema = Type.Object({
+      paused: Type.Boolean(),
+      updatedAt: Type.Union([Type.String(), Type.Null()]),
+    });
+    app.get(
+      "/v1/ingest/pause",
+      {
+        schema: {
+          tags: ["ingest"],
+          response: { 200: PauseStateSchema },
+        },
+      },
+      async () => service.getPause(),
+    );
+    app.put(
+      "/v1/ingest/pause",
+      {
+        schema: {
+          tags: ["ingest"],
+          body: Type.Object({ paused: Type.Boolean() }),
+          response: { 200: PauseStateSchema },
+        },
+      },
+      async (request) => service.setPause(request.body.paused),
+    );
+
     app.get(
       "/v1/ingest/:id",
       {

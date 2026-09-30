@@ -10,6 +10,7 @@ import { formatTimelineTime, parseTimelineDate } from '../../roomTimeline';
 import type { ContextRoomRecord, ContextRoomResource } from '../../types';
 import { ActivityEntryBody, CATEGORY_ICONS, useActivityEntryInteractions } from './ActivityEntryParts';
 import { PanelEmptyState } from './PanelEmptyState';
+import { FilterSelect } from '../shared';
 import type { WorkspaceObjectPreview } from './index';
 
 type TimelineView = 'day' | 'week' | 'month';
@@ -152,8 +153,8 @@ export function ActivityPane({
     <section className="context-room-activity-pane" data-testid="context-room-pane-activity">
       <header>
         <GitBranch aria-hidden="true" />
-        {t('contextRoom:overviewDashboard.roomTimeline')}
-        <span>{t('contextRoom:overviewDashboard.countEvents', { count: visibleEntries.length })}</span>
+        <h2>{t('contextRoom:overviewDashboard.roomTimeline')}</h2>
+        <span className="context-room-pane-head-count">{t('contextRoom:overviewDashboard.countEvents', { count: visibleEntries.length })}</span>
       </header>
       <div className="context-room-timeline-toolbar">
         <div>
@@ -171,30 +172,28 @@ export function ActivityPane({
         </nav>
       </div>
       <div className="context-room-activity-filters">
-        <div role="group" aria-label={t('contextRoom:activityPane.filterByType')}>
-          <button type="button" aria-pressed={categoryFilter === 'all'} onClick={() => setCategoryFilter('all')}>{t('contextRoom:activityPane.category.all')}</button>
-          {(['meeting', 'mail', 'task', 'material', 'other'] as const).map((category) => (
-            <button
-              type="button"
-              key={category}
-              aria-pressed={categoryFilter === category}
-              onClick={() => setCategoryFilter(categoryFilter === category ? 'all' : category)}
-            >
-              {t(`contextRoom:activityPane.category.${category}`)}
-            </button>
-          ))}
-        </div>
+        <FilterSelect
+          value={categoryFilter}
+          options={[
+            { id: 'all', label: t('contextRoom:activityPane.category.all') },
+            ...(['meeting', 'mail', 'task', 'material', 'other'] as const).map((category) => ({
+              id: category,
+              label: t(`contextRoom:activityPane.category.${category}`),
+            })),
+          ]}
+          onChange={setCategoryFilter}
+          ariaLabel={t('contextRoom:activityPane.filterByType')}
+        />
         {peoplePool.length ? (
-          <label className="context-room-activity-person">
-            <select
-              value={personFilter ?? ''}
-              aria-label={t('contextRoom:activityPane.filterByPerson')}
-              onChange={(event) => setPersonFilter(event.target.value || null)}
-            >
-              <option value="">{t('contextRoom:activityPane.allPeople')}</option>
-              {peoplePool.map((person) => <option key={person} value={person}>{person}</option>)}
-            </select>
-          </label>
+          <FilterSelect
+            value={personFilter ?? ''}
+            options={[
+              { id: '', label: t('contextRoom:activityPane.allPeople') },
+              ...peoplePool.map((person) => ({ id: person, label: person })),
+            ]}
+            onChange={(id) => setPersonFilter(id || null)}
+            ariaLabel={t('contextRoom:activityPane.filterByPerson')}
+          />
         ) : null}
       </div>
       {hasAnyEntries ? (

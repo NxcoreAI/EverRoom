@@ -1,5 +1,8 @@
 // 临时入口：纯浏览器挂载 RuntimeConfigGate + AccountProvider，验证启动中间页
-// （配合 /@mock/nxcore.js；?delay=ms 控制账号态延迟，?authed=1 模拟登录有效）。
+// （配合 /@mock/nxcore.js；?delay=ms 控制账号态延迟，?authed=1 模拟登录有效，
+// ?ready=0 模拟 gateway 重启后槽位未重灌——primaryConfigured=false 的竞态，
+// ?blocked=1 模拟凭据在但网络验证失败（authenticated:false + authBlocked），
+// ?admission=1 模拟启动期设备额度挑战（authenticated:false + admission））。
 import { createRoot } from 'react-dom/client'
 
 import { AccountProvider } from './state/AccountContext'
@@ -11,6 +14,32 @@ import './styles.css'
 const params = new URLSearchParams(window.location.search)
 const delayMs = Number(params.get('delay') ?? '4000')
 const authed = params.get('authed') === '1'
+const ready = params.has('ready') ? params.get('ready') === '1' : authed
+const blocked = params.get('blocked') === '1'
+// ?getfail=N：前 N 次 runtimeConfig.get() 直接 reject，模拟 gateway 重启换
+// 端口的真空期（ECONNREFUSED）。
+let getFailRemaining = Number(params.get('getfail') ?? '0')
+
+const state = {
+  authed,
+  admission: params.get('admission') === '1' ? {
+    reason: 'device_limit',
+    maxDevices: 3,
+    admissionToken: 'mock-admission-token',
+    expiresAt: new Date(Date.now() + 5 * 60_000).toISOString(),
+    devices: [
+      { id: 'd1', name: 'MacBook Pro', platform: 'darwin', appVersion: '0.5.0', status: 'online', lastSeenAt: new Date().toISOString() },
+      { id: 'd2', name: 'iPhone 17', platform: 'ios', appVersion: '1.2.0', status: 'online', lastSeenAt: new Date().toISOString() },
+    ],
+  } : null,
+}
+
+const accountStatus = () => ({
+  authenticated: state.authed,
+  apiBaseUrl: 'https://saas.example.com',
+  ...(state.authed ? {} : blocked ? { authBlocked: 'network' } : {}),
+  ...(state.authed || !state.admission ? {} : { admission: state.admission }),
+})
 
 const original = window.nxcore as unknown as Record<string, unknown>
 window.nxcore = new Proxy(original, {
@@ -21,9 +50,23 @@ window.nxcore = new Proxy(original, {
           if (key === 'status') {
             return async () => {
               await new Promise((resolve) => setTimeout(resolve, delayMs))
-              return { authenticated: authed, apiBaseUrl: 'https://saas.example.com' }
+              return accountStatus()
             }
           }
+          if (key === 'replaceDeviceAdmission') {
+            return async () => {
+              state.authed = true
+              state.admission = null
+              return accountStatus()
+            }
+          }
+          if (key === 'dismissDeviceAdmission') {
+            return async () => {
+              state.admission = null
+              return { dismissed: true }
+            }
+          }
+          if (key === 'onAdmissionRequired') return () => () => {}
           const value = (face as Record<string | symbol, unknown>)[key]
           return typeof value === 'undefined' ? async () => null : value
         },
@@ -33,16 +76,22 @@ window.nxcore = new Proxy(original, {
       return {
         ...((target.runtimeConfig as object) ?? {}),
         // primaryConfigured 随登录态联动：默认源要靠中转重写槽位才算配置就绪。
-        get: async () => ({
-          config: {},
-          source: 'default',
-          selectedSource: 'default',
-          availableSources: ['default'],
-          configVersion: 1,
-          updatedAt: new Date().toISOString(),
-          primaryConfigured: authed,
-          webSearchCredential: { configured: false, source: 'none' },
-        }),
+        get: async () => {
+          if (getFailRemaining > 0) {
+            getFailRemaining -= 1
+            throw new Error('connect ECONNREFUSED 127.0.0.1:64233')
+          }
+          return {
+            config: {},
+            source: 'default',
+            selectedSource: 'default',
+            availableSources: ['default'],
+            configVersion: 1,
+            updatedAt: new Date().toISOString(),
+            primaryConfigured: ready || state.authed,
+            webSearchCredential: { configured: false, source: 'none' },
+          }
+        },
         relayReady: async () => null,
       }
     }

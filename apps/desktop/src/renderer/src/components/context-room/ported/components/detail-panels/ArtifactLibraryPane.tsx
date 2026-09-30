@@ -15,6 +15,7 @@ import type {
 import { markdownDocumentTitle, parseMarkdownDocument } from '../detail-editor/markdownImport';
 import { buildLinkGraphData } from '../linkGraphModel';
 import { PanelEmptyState } from './PanelEmptyState';
+import { FilterSelect } from '../shared';
 
 type ArtifactFilter = 'all' | 'clouddoc' | 'office';
 type CreateType = 'doc' | 'word' | 'ppt' | 'xlsx';
@@ -214,19 +215,12 @@ export function ArtifactLibraryPane({
   return (
     <div className="context-room-artifact-library">
       <div className="context-room-artifact-toolbar">
-        <div className="context-room-artifact-filters" role="group" aria-label={t('contextRoom:boardTab.library')}>
-          {filters.map(({ id, label }) => (
-            <button
-              key={id}
-              type="button"
-              className={`context-room-artifact-pill${filter === id ? ' is-active' : ''}`}
-              aria-pressed={filter === id}
-              onClick={() => setFilter(id)}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
+        <FilterSelect
+          value={filter}
+          options={filters}
+          onChange={setFilter}
+          ariaLabel={t('contextRoom:boardTab.library')}
+        />
         <Popover.Root
           open={createPopoverOpen}
           onOpenChange={(nextOpen) => {

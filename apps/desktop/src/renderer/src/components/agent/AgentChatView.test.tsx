@@ -374,6 +374,68 @@ describe('AgentChatView', () => {
     act(() => renderer.unmount())
   })
 
+  it('renders markdown tables and code spans in assistant replies', async () => {
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(<AgentChatView
+        activeDocument={null}
+        activeRunId={null}
+        agentIdByRun={{}}
+        agentNamesById={{}}
+        activityByRun={{}}
+        availableRooms={[]}
+        composer={null}
+        currentSessionId="session-1"
+        draftHasContent={false}
+        error={null}
+        loading={false}
+        messages={[
+          {
+            id: 'assistant-table',
+            sessionId: 'session-1',
+            runId: 'run-1',
+            role: 'assistant',
+            authorAgentId: 'main',
+            content: [
+              '方案对比如下：',
+              '',
+              '| 技术 | 在什么位置发挥作用 |',
+              '| --- | --- |',
+              '| NFC | 线圈取电 |',
+              '| FOC | 电机换相 |',
+              '',
+              '详见 `驱动方案` 章节。',
+            ].join('\n'),
+            createdAt: '2026-08-20T00:00:01.000Z',
+          },
+        ]}
+        onOpenSessionLink={vi.fn()}
+        onRejectDocumentIntent={vi.fn()}
+        onRetryPrompt={vi.fn()}
+        onSelectDocument={vi.fn()}
+        onSelectPrompt={vi.fn()}
+        onSelectRoom={vi.fn().mockResolvedValue(undefined)}
+        pendingNavigationByRun={{}}
+        runCompletedAtByRun={{ 'run-1': '2026-08-20T00:00:01.000Z' }}
+        runStartedAtByRun={{}}
+        scopeReady
+        sessionLinks={[]}
+        submitting={false}
+        toolCallsByRun={{}}
+      />)
+    })
+
+    const tables = renderer.root.findAllByType('table')
+    expect(tables).toHaveLength(1)
+    const headerCells = tables[0]!.findAllByType('th').map((node) => node.children.join(''))
+    expect(headerCells).toEqual(['技术', '在什么位置发挥作用'])
+    const bodyCells = tables[0]!.findAllByType('td').map((node) => node.children.join(''))
+    expect(bodyCells).toEqual(['NFC', '线圈取电', 'FOC', '电机换相'])
+    const codeSpans = renderer.root.findAllByType('code')
+    expect(codeSpans.map((node) => node.children.join(''))).toContain('驱动方案')
+    act(() => renderer.unmount())
+  })
+
   it('copies a user message from its bubble copy button', async () => {
     writeClipboardTextMock.mockResolvedValue(undefined)
     let renderer!: TestRenderer.ReactTestRenderer
@@ -478,6 +540,65 @@ describe('AgentChatView', () => {
     expect(hints).toHaveLength(2)
     expect(hints[0]!.children).toEqual(['@', 'Codex'])
     expect(hints[1]!.children).toEqual(['@', 'Claude Code'])
+    act(() => renderer.unmount())
+  })
+
+  it('renders mention chips as jump buttons for rooms, files and native conversations only', async () => {
+    const onOpenMention = vi.fn()
+    const roomMention = { kind: 'room' as const, id: 'room-9', displayName: '产品规划' }
+    const fileMention = { kind: 'file' as const, id: 'file-9', displayName: '需求文档' }
+    const nativeConversation = { kind: 'conversation' as const, id: 'session-9', displayName: '周会讨论', provider: 'everroom' }
+    const importedConversation = { kind: 'conversation' as const, id: 'thread-9', displayName: 'Codex 导入', provider: 'codex' }
+    const agentMention = { kind: 'agent' as const, id: 'codex:/usr/local/bin/codex', displayName: 'Codex' }
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(<AgentChatView
+        activeDocument={null}
+        activeRunId={null}
+        agentIdByRun={{}}
+        agentNamesById={{}}
+        activityByRun={{}}
+        availableRooms={[]}
+        composer={null}
+        currentSessionId="session-1"
+        draftHasContent={false}
+        error={null}
+        loading={false}
+        messages={[{
+          id: 'user-1',
+          sessionId: 'session-1',
+          runId: 'run-1',
+          role: 'user',
+          content: '参考一下',
+          createdAt: '2026-08-20T00:00:00.000Z',
+          mentions: [roomMention, fileMention, nativeConversation, importedConversation, agentMention],
+        }]}
+        onOpenMention={onOpenMention}
+        onOpenSessionLink={vi.fn()}
+        onRejectDocumentIntent={vi.fn()}
+        onRetryPrompt={vi.fn()}
+        onSelectDocument={vi.fn()}
+        onSelectPrompt={vi.fn()}
+        onSelectRoom={vi.fn().mockResolvedValue(undefined)}
+        pendingNavigationByRun={{}}
+        runCompletedAtByRun={{}}
+        runStartedAtByRun={{}}
+        scopeReady
+        sessionLinks={[]}
+        submitting={false}
+        toolCallsByRun={{}}
+      />)
+    })
+
+    const chips = renderer.root.findAllByProps({ className: 'agent-user-mention agent-user-mention-link' })
+    expect(chips.map((chip) => chip.props['data-kind'])).toEqual(['room', 'file', 'conversation'])
+    const plainChips = renderer.root.findAllByProps({ className: 'agent-user-mention' })
+    expect(plainChips.map((chip) => chip.props['data-kind'])).toEqual(['conversation', 'agent'])
+
+    act(() => chips[0]!.props.onClick())
+    expect(onOpenMention).toHaveBeenCalledWith(roomMention)
+    act(() => plainChips[0]!.props.onClick?.())
+    expect(onOpenMention).toHaveBeenCalledTimes(1)
     act(() => renderer.unmount())
   })
 })

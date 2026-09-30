@@ -104,6 +104,7 @@ export interface CatalogFileDto {
   processingState: "processing" | "ready" | "failed" | "missing";
   clusterId: string | null;
   contentHash: string;
+  currentVersionId: string | null;
   parsed: boolean;
   updatedAt: string;
 }
@@ -541,6 +542,7 @@ export class FilesService {
       processingState: entry.state === "deleted" ? "missing" : entry.state,
       clusterId: cluster?.id ?? null,
       contentHash: version?.contentHash ?? "",
+      currentVersionId: version?.id ?? null,
       parsed: Boolean(version?.parsedId),
       updatedAt: entry.updatedAt.toISOString(),
     } satisfies CatalogFileDto));
@@ -557,6 +559,11 @@ export class FilesService {
     const entry = this.db.select({ sourceKind: fileEntries.sourceKind }).from(fileEntries)
       .where(eq(fileEntries.id, fileEntryId)).get();
     return Boolean(entry && entry.sourceKind !== "legacy-upload");
+  }
+
+  /** 单个 catalog 条目（@ 文件引用取当前版本 id 用）。 */
+  catalogEntry(fileEntryId: string): CatalogFileDto | null {
+    return this.listCatalog(200, 0).items.find((item) => item.id === fileEntryId) ?? null;
   }
 
   catalogMarkdownOf(fileEntryId: string): string | null {

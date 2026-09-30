@@ -197,7 +197,6 @@ const api: NxcoreDesktopApi = {
     },
   },
   office: {
-    testAvailable: Boolean(process.env.ELECTRON_RENDERER_URL),
     setActiveInstance: (id) => ipcRenderer.invoke('office:instance:set-active', id),
     closeInstance: (id) => ipcRenderer.invoke('office:instance:close', id),
     setWorkspaceBounds: (bounds) => ipcRenderer.send('office:workspace-bounds', bounds),
@@ -648,6 +647,8 @@ const api: NxcoreDesktopApi = {
     markSessionLinkReturned: (linkId) => invoke('agent:mark-session-link-returned', linkId),
     updateSession: (sessionId, input) => invoke('agent:update-session', sessionId, input),
     generateSessionTitle: (input) => invoke('agent:generate-session-title', input),
+    suggestConversationPrompt: (input) => invoke('agent:suggest-conversation-prompt', input),
+    suggestStarterPrompts: (input) => invoke('agent:suggest-starter-prompts', input),
     deleteSession: (sessionId) => invoke('agent:delete-session', sessionId),
     getSession: (sessionId) => invoke('agent:get-session', sessionId),
     getEvents: (sessionId, runId, afterSeq) =>
@@ -659,6 +660,8 @@ const api: NxcoreDesktopApi = {
       invokeQuietly('agent:submit-pending-intent', intentId, input),
     cancelRun: (runId) => invoke('agent:cancel-run', runId),
     resolveApproval: (approvalId, decision, feedback) => invoke('agent:resolve-approval', approvalId, decision, feedback),
+    getPermissionMode: (sessionId) => invoke('agent:get-permission-mode', sessionId),
+    setPermissionMode: (sessionId, mode) => invoke('agent:set-permission-mode', sessionId, mode),
     subscribe: (sessionId) => invoke('agent:subscribe', sessionId),
     unsubscribe: () => invoke('agent:unsubscribe'),
     onEvent: (listener) => {
@@ -827,6 +830,11 @@ const api: NxcoreDesktopApi = {
     restoreSuppressedEntity: (entityId: string) => invoke('knowledge:entities:restore', entityId),
     mergeEntity: (fromId: string, targetId: string) => invoke('knowledge:entities:merge', fromId, targetId),
     listUnmatched: () => invoke('knowledge:unmatched:list'),
+    retryUnmatched: (decisionIds?: string[]) => invoke('knowledge:unmatched:retry', decisionIds),
+    ignoreUnmatched: (decisionIds: string[]) => invoke('knowledge:unmatched:ignore', decisionIds),
+    listRules: (): Promise<{ items: import('../shared/knowledge').KnowledgeRuleDto[] }> =>
+      invoke('knowledge:rules:list'),
+    deleteRule: (ruleId: string) => invoke('knowledge:rules:delete', ruleId),
     attachDoc: (sourceKind: string, sourceId: string, input: KnowledgeAttachInput) =>
       invoke('knowledge:docs:attach', sourceKind, sourceId, input),
     listRecentDecisions: (limit) => invoke('knowledge:decisions:list', limit),
@@ -855,6 +863,7 @@ const api: NxcoreDesktopApi = {
   },
   files: {
     list: (limit?: number, offset?: number) => invoke('files:list', limit, offset),
+    catalogEntry: (fileId: string) => invoke('files:catalog-entry', fileId),
     listClipCaptures: (input) => invoke('files:clipper-captures:list', input),
     setClipCaptureFavorite: (captureId, favorite) => invoke('files:clipper-captures:favorite', captureId, favorite),
     getClipCaptureDetail: (captureId: string) => invoke('files:clipper-captures:detail', captureId),
@@ -916,6 +925,8 @@ const api: NxcoreDesktopApi = {
       invoke('ingest:filter-rules:update-preference', content),
     reinstateEvent: (eventId: string) => invoke('ingest:events:reinstate', eventId),
     getEventContent: (eventId: string) => invoke('ingest:events:content', eventId),
+    getPause: () => invoke('ingest:pause:get'),
+    setPause: (paused: boolean) => invoke('ingest:pause:set', paused),
   },
 }
 
