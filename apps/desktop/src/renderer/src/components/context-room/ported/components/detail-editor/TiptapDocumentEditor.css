@@ -1021,29 +1021,9 @@ textarea.context-room-tiptap-rewrite-text:disabled {
   flex-direction: column;
   padding: 0 10px 12px 6px;
   overflow-y: auto;
-  scrollbar-width: thin;
+  /* 不显示滚动条：常显细线仍显突兀；滚轮/触控板滚动与 scrollspy 高亮照常。 */
+  scrollbar-width: none;
   overscroll-behavior: contain;
-}
-
-/* 常显滚动条：条目超出上限时明确可滚（可拖拽）。 */
-.context-room-tiptap-outline-items::-webkit-scrollbar {
-  width: 6px;
-}
-
-.context-room-tiptap-outline-items::-webkit-scrollbar-track,
-.context-room-tiptap-outline-items::-webkit-scrollbar-corner {
-  background: transparent;
-}
-
-.context-room-tiptap-outline-items::-webkit-scrollbar-thumb {
-  border: 1px solid transparent;
-  border-radius: 999px;
-  background-color: color-mix(in srgb, var(--cr-muted) 30%, transparent);
-  background-clip: padding-box;
-}
-
-.context-room-tiptap-outline-items::-webkit-scrollbar-thumb:hover {
-  background-color: color-mix(in srgb, var(--cr-muted) 50%, transparent);
 }
 
 /* 条目行 = 折叠箭头槽 + 文本：两个独立按钮，各自持有 hover/点击反馈，
