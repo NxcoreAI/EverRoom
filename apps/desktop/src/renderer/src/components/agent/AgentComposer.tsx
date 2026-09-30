@@ -1,4 +1,4 @@
-import { ArrowLeft, Bot, Brain, Check, ChevronDown, CornerDownLeft, Feather, FileText, FolderOpen, History, LoaderCircle, Lock, MessagesSquare, Quote, Search, ShieldCheck, Square, Terminal, Unlock, X, Zap } from 'lucide-react'
+import { ArrowLeft, Bot, Brain, Check, ChevronDown, Clock, CornerDownLeft, Feather, FileText, FolderOpen, History, LoaderCircle, Lock, MessagesSquare, Quote, Search, ShieldCheck, Square, Terminal, Unlock, X, Zap } from 'lucide-react'
 import {
   forwardRef,
   useEffect,
@@ -161,6 +161,9 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   ghostSuggestion?: string | null
   onAcceptGhost?: () => void
   onDismissGhost?: () => void
+  /** run 进行中排队的消息（run 终态后自动逐条发出）；空数组不渲染。 */
+  queuedSubmissions?: Array<{ id: string; prompt: string }>
+  onRemoveQueuedSubmission?: (id: string) => void
   onChange: (value: string) => void
   onSelectExternalConversation: (conversation: ExternalConversationSummary | null) => void
   onClearContext: () => void
@@ -194,6 +197,8 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   ghostSuggestion = null,
   onAcceptGhost,
   onDismissGhost,
+  queuedSubmissions = [],
+  onRemoveQueuedSubmission,
   value,
   onChange,
   onClearContext,
@@ -1182,6 +1187,24 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
             ))}
           </div>
         ) : null}
+        {queuedSubmissions.length > 0 ? (
+          <div className="agent-queued-submissions" aria-label={t('surface:agentComposer.queuedCount', { count: queuedSubmissions.length })}>
+            {queuedSubmissions.map((item) => (
+              <span key={item.id} className="agent-queued-item" title={item.prompt}>
+                <Clock aria-hidden="true" />
+                <span className="agent-queued-item-text">{item.prompt}</span>
+                <button
+                  type="button"
+                  aria-label={t('surface:agentComposer.queuedRemove')}
+                  title={t('surface:agentComposer.queuedRemove')}
+                  onClick={() => onRemoveQueuedSubmission?.(item.id)}
+                >
+                  <X aria-hidden="true" />
+                </button>
+              </span>
+            ))}
+          </div>
+        ) : null}
         <div className="agent-composer-input">
           <div ref={overlayRef} className="agent-composer-overlay" aria-hidden="true">
             {renderOverlaySegments()}
@@ -1190,7 +1213,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
             ref={textareaRef}
             aria-label={t('surface:agentComposer.desktopAiWorkspaceInput')}
             placeholder={active
-              ? t('surface:agentComposer.agentIsWorking')
+              ? t('surface:agentComposer.queueHint')
               : ghostActive
                 ? ghostSuggestion ?? undefined
                 : available
@@ -1200,7 +1223,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
             value={value}
             aria-controls={menuOpen ? 'agent-composer-menu' : undefined}
             aria-expanded={menuOpen}
-            disabled={!available || active}
+            disabled={!available}
             onChange={(event) => {
               setSlashPickerDismissed(false)
               setCaret(event.target.selectionStart)

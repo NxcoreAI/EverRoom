@@ -70,6 +70,19 @@ export function removeAgentRunMessages(
   return messages.filter((message) => message.runId !== runId)
 }
 
+/** run 进行中提交的消息：冻结发送参数排队，run 终态后由 flush effect 逐条发出。 */
+export interface QueuedAgentSubmission {
+  id: string
+  prompt: string
+  selectedText?: string
+  selectedRoomId?: string
+  activeDocument?: AgentActiveDocumentContext | null
+  attachments?: AgentFileAttachment[]
+  referencedConversationId?: string
+  mentionedAgents?: MentionedAgent[]
+  mentions?: MentionedItem[]
+}
+
 const SESSION_KEY_BASE = 'nxcore-ce:agent-session'
 const SESSION_KEY_VERSION = 2
 const MODEL_PREFERENCE_STORAGE_KEY = 'nxcore-ce:agent-model-preference:v1'
@@ -206,6 +219,8 @@ export function useAgentSession(
   const [contextCompacting, setContextCompacting] = useState(false)
   /** 会话权限模式（GET 初始化 + PUT 响应 + 适配器 current_mode_update 事件三来源折叠）。 */
   const [permissionModeState, setPermissionModeState] = useState<AgentPermissionModeState | null>(null)
+  /** 待发队列：run 进行中提交的消息先排队，run 终态后自动逐条发出。 */
+  const [queuedSubmissions, setQueuedSubmissions] = useState<QueuedAgentSubmission[]>([])
   const sequenceByRun = useRef(new Map<string, number>())
   const eventsByRun = useRef(new Map<string, AgentEvent[]>())
   const terminalRunIdsRef = useRef(new Set<string>())
@@ -220,6 +235,8 @@ export function useAgentSession(
   /** sessionId → 标题任务状态，防 socket 重放/断线恢复重复触发。 */
   const titleJobs = useRef(new Map<string, 'inflight' | 'done'>())
   const generateTitleRef = useRef<((sessionId: string, runId: string) => void) | null>(null)
+  /** flush effect 互斥：防 StrictMode 双跑/依赖重触发时重复出队同一条。 */
+  const queueFlushInFlightRef = useRef(false)
   const localeRef = useRef(locale)
   localeRef.current = locale
 
@@ -647,6 +664,7 @@ export function useAgentSession(
     setContextUsage(null)
     setContextCompacting(false)
     setPermissionModeState(null)
+    setQueuedSubmissions([])
     setActiveRunId(null)
     setSessionId(null)
     setSessions([])
@@ -781,6 +799,7 @@ export function useAgentSession(
     setContextUsage(null)
     setContextCompacting(false)
     setPermissionModeState(null)
+    setQueuedSubmissions([])
     setActiveRunId(null)
     setDisplayTitle(t('surface:useAgentSession.newConversation'))
     sequenceByRun.current.clear()
@@ -875,6 +894,7 @@ export function useAgentSession(
           setResolvingApprovalIds(new Set())
           setRunStartedAtByRun({})
           setRunCompletedAtByRun({})
+          setQueuedSubmissions([])
           eventsByRun.current.clear()
           sequenceByRun.current.clear()
           setConnected(false)
@@ -942,7 +962,23 @@ export function useAgentSession(
     mentions?: MentionedItem[],
   ): Promise<string | null> => {
     const message = prompt.trim()
-    if ((!message && !attachments?.length) || activeRunId || loading || sending) return null
+    if ((!message && !attachments?.length) || loading || sending) return null
+    if (activeRunId) {
+      // 重试（replaceRunId）不排队：replace 只对已终态 run 有意义，排队会丢失其语义。
+      if (replaceRunId) return null
+      setQueuedSubmissions((current) => [...current, {
+        id: crypto.randomUUID(),
+        prompt: message,
+        selectedText,
+        selectedRoomId,
+        activeDocument,
+        attachments,
+        referencedConversationId,
+        mentionedAgents,
+        mentions,
+      }])
+      return null
+    }
     if (replaceRunId) {
       setMessages((current) => removeAgentRunMessages(current, replaceRunId))
       setToolCallsByRun((current) => {
@@ -1080,6 +1116,40 @@ export function useAgentSession(
     }
   }
 
+  const sendPromptRef = useRef(sendPrompt)
+  sendPromptRef.current = sendPrompt
+
+  // 队列排空：run 终态（activeRunId 清空）且无进行中发送时出队一条发出；
+  // 新 run 启动会再次置 activeRunId，天然串行——网关 startRun 对 running
+  // 会话直接抛 agent_session_busy，绝不并发。
+  useEffect(() => {
+    if (queuedSubmissions.length === 0 || activeRunId || loading || sending) return
+    if (queueFlushInFlightRef.current) return
+    const [next, ...rest] = queuedSubmissions
+    setQueuedSubmissions(rest)
+    queueFlushInFlightRef.current = true
+    void (async () => {
+      try {
+        await sendPromptRef.current(
+          next.prompt,
+          next.selectedText,
+          next.selectedRoomId,
+          next.activeDocument,
+          undefined,
+          next.attachments,
+          undefined,
+          next.referencedConversationId,
+          next.mentionedAgents,
+          next.mentions,
+        )
+      } catch {
+        // 失败已在 sendPrompt 内 setError；丢弃该条继续排后面的，避免卡队列。
+      } finally {
+        queueFlushInFlightRef.current = false
+      }
+    })()
+  }, [queuedSubmissions, activeRunId, loading, sending])
+
   const submitPendingIntent = async (
     intentId: string,
     selectedRoomId: string,
@@ -1168,6 +1238,10 @@ export function useAgentSession(
     return true
   }, [api, t])
 
+  const removeQueuedSubmission = useCallback((id: string): void => {
+    setQueuedSubmissions((current) => current.filter((item) => item.id !== id))
+  }, [])
+
   return {
     activeRunId,
     agentIdByRun,
@@ -1191,6 +1265,8 @@ export function useAgentSession(
     permissionMode: permissionModeState?.mode ?? null,
     permissionModeAvailable: permissionModeState?.available ?? [],
     setSessionPermissionMode,
+    queuedSubmissions,
+    removeQueuedSubmission,
     reasoningByRun,
     runCompletedAtByRun,
     runStartedAtByRun,
