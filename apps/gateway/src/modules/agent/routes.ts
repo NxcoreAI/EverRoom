@@ -503,6 +503,7 @@ export function agentRoutes(
               Type.Literal("document.create"),
               Type.Literal("document.edit"),
               Type.Literal("document.continue"),
+              Type.Literal("task.clarify"),
             ]),
             allowedRoomIds: Type.Array(Type.String({ minLength: 1, maxLength: 100 }), { minItems: 1, maxItems: 200 }),
             allowedDocumentIds: Type.Optional(Type.Array(
@@ -544,6 +545,15 @@ export function agentRoutes(
             documentId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
             idempotencyKey: Type.String({ minLength: 8, maxLength: 100 }),
             responseLanguage: Type.Optional(ResponseLanguage),
+            // task.clarify：结构化澄清表单作答。
+            answers: Type.Optional(Type.Record(
+              Type.String({ minLength: 1, maxLength: 64 }),
+              Type.Union([Type.String({ maxLength: 2000 }), Type.Array(
+                Type.String({ maxLength: 2000 }),
+                { maxItems: 10 },
+              )]),
+            )),
+            note: Type.Optional(Type.String({ maxLength: 2000 })),
           }),
         },
       },

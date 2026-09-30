@@ -728,6 +728,11 @@ describe("gateway server", () => {
       "context_room_document_comment_add",
       "route_mindmap_finalize",
       "context_room_document_delete",
+      "context_room_task_start",
+      "context_room_task_read",
+      "context_room_task_update",
+      "context_room_task_clarify",
+      "context_room_task_attach",
     ]);
   });
 
@@ -792,6 +797,11 @@ describe("gateway server", () => {
         "context_room_document_comment_add",
         "route_mindmap_finalize",
         "context_room_document_delete",
+        "context_room_task_start",
+        "context_room_task_read",
+        "context_room_task_update",
+        "context_room_task_clarify",
+        "context_room_task_attach",
       ]);
     } finally {
       await client.close();

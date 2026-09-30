@@ -35,6 +35,7 @@ import { createNotificationPiTools } from "../modules/notifications/pi-tools.js"
 import { documentRoutes } from "../modules/documents/routes.js";
 import { documentOperationRoutes } from "../modules/documents/operations/routes.js";
 import { DocumentService } from "../modules/documents/service.js";
+import { TaskFolderService } from "../modules/documents/task-folders.js";
 import { DocumentCommentService } from "../modules/documents/comments.js";
 import { documentCommentRoutes } from "../modules/documents/comment-routes.js";
 import { documentOverviewRoutes } from "../modules/documents/overview-routes.js";
@@ -585,6 +586,10 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   // 写作路线导图服务依赖 orchestrator，在下方构造；对话链路空正文 commit 的
   // 自动开流钩子在此先挂引用、构造后绑定（聚焦改版 2026-09）。
   const routeMindmapServiceRef: { current: RouteMindmapService | null } = { current: null };
+  // 任务管线：澄清意图签发器——AgentService 在下方构造，经 getter 惰性取用。
+  const agentServiceRef: { current: AgentService | null } = { current: null };
+  // 任务夹服务（task pipeline）：room_folders 的 CRUD/归夹，注册表与 REST 路由共用。
+  const taskFolderService = new TaskFolderService(db);
   const documentService = new DocumentService(db, documentEventBroker, (document) => {
     void memoryService.captureDocumentCreation(document).catch((error: unknown) => {
       app.log.warn({ err: error, documentId: document.documentId }, "document memory capture failed");
@@ -676,6 +681,9 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       config.officeBridge ? new OfficeBridgeClient(config.officeBridge) : null,
       // 写作路线拍板工具：服务在 orchestrator 之后构造，getter 惰性取用。
       () => routeMindmapServiceRef.current,
+      // 任务生产管线（PPT/长文档）：夹 + workplan + 澄清表单。
+      taskFolderService,
+      () => agentServiceRef.current,
     ),
     documentOperationService,
     (diagnostic) => {
@@ -1143,6 +1151,8 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   });
   agentService.setChannelSessionRevoker((sessionId) => channelMcpHost.revokeAgentSession(sessionId));
   localAgentDispatchSourceRef.current = (runId) => agentService.getLocalAgentDispatchSource(runId);
+  // 任务管线澄清签发器：注册表经 getter 惰性取用，此处绑定实例。
+  agentServiceRef.current = agentService;
   await agentService.initialize();
   registerTranscriptionSummaryAgent(agentResolver, config);
   const backgroundAgentRuntime = agentResolver.resolve(BUILTIN_AGENT_IDS.transcriptionSummary);
@@ -1501,7 +1511,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       config.documentIndexBackfill?.readTriggerCooldownMs ?? 1_800_000,
     )
     : null;
-  await app.register(documentRoutes(documentService, () => versionSummaryRuntime, indexBackfillReadTrigger));
+  await app.register(documentRoutes(documentService, () => versionSummaryRuntime, indexBackfillReadTrigger, taskFolderService));
   await app.register(documentCommentRoutes(documentCommentService));
   await app.register(documentOverviewRoutes(documentService, () => documentOverviewRuntime));
   await app.register(documentSectionPreviewRoutes(documentService, () => documentOverviewRuntime));

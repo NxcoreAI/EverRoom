@@ -179,15 +179,17 @@ export interface TaskClarifyQuestion {
   placeholder?: string;
 }
 
-/** 澄清意图签发器（由 AgentService 注入；工具执行时惰性取用）。 */
-export type TaskClarifyIssuer = (input: {
+export interface TaskClarifyIssuerInput {
   sessionId: string;
   runId: string;
   roomId: string;
-  workplanDocId: string;
-  folderId: string;
+  workplanDocId?: string;
+  folderId?: string;
   questions: TaskClarifyQuestion[];
-}) => { pendingIntentId: string; status: string } | null;
+}
+
+/** 澄清意图签发器（由 AgentService 注入；工具执行时惰性取用）。 */
+export type TaskClarifyIssuer = (input: TaskClarifyIssuerInput) => { pendingIntentId: string; status: string } | null;
 
 const STAGE_GUIDE = "阶段流转：draft（写草稿）→ reorder（按受众重排）→ profile（定布局风格，弹澄清表单）"
   + "→ density（按页编排信息密度，填页面计划表）→ produce（开干：PPT 逐页 / 文档逐章生成）→ done。";

@@ -135,6 +135,21 @@ function iso(value: Date | null): string | null {
   return value?.toISOString() ?? null;
 }
 
+/** task.clarify 续跑 prompt：原任务诉求 + 表单作答（questionId → 答案）+ 可选自由补充。 */
+function composeTaskClarifyResumePrompt(
+  originalPrompt: string,
+  answers: Record<string, string | string[]>,
+  note?: string,
+): string {
+  const lines = Object.entries(answers).map(([id, value]) => {
+    const answer = Array.isArray(value) ? value.join("、") : value;
+    return `- ${id}: ${answer}`;
+  });
+  const noteLine = note?.trim() ? `\n用户补充说明：${note.trim()}` : "";
+  return `${originalPrompt}\n\n[用户已提交澄清表单作答——以下 questionId 对应上一轮 context_room_task_clarify 弹出的问题，`
+    + `请据作答继续任务（写入 profile、推进阶段）：]\n${lines.length > 0 ? lines.join("\n") : "-（用户未作答）"}${noteLine}`;
+}
+
 function toSession(row: typeof agentSessions.$inferSelect): AgentSession {
   const modelPreference = modelPreferenceFromAgentId(row.activeAgentId);
   const channelAgentId = channelAgentIdFromAgentId(row.activeAgentId);
@@ -1091,7 +1106,9 @@ export class AgentService {
       throw new Error("pending_agent_intent_resource_not_allowed");
     }
     const allowedDocumentIds = [...new Set((input.allowedDocumentIds ?? []).map((id) => id.trim()).filter(Boolean))];
-    if (input.targetCapability !== "document.create" && allowedDocumentIds.length === 0) {
+    if (input.targetCapability !== "document.create"
+      && input.targetCapability !== "task.clarify"
+      && allowedDocumentIds.length === 0) {
       throw new Error("pending_agent_intent_resource_required");
     }
     for (const documentId of allowedDocumentIds) {
@@ -1132,7 +1149,8 @@ export class AgentService {
     if (documentId && this.findDocumentResource(documentId)?.roomId !== roomId) {
       throw new Error("pending_agent_intent_resource_not_allowed");
     }
-    if (!documentId && intent.targetCapability !== "document.create") {
+    if (!documentId && intent.targetCapability !== "document.create"
+      && intent.targetCapability !== "task.clarify") {
       throw new Error("pending_agent_intent_resource_required");
     }
     const session = this.db.select().from(agentSessions)
@@ -1158,8 +1176,11 @@ export class AgentService {
     }
     try {
       const selectedDocument = documentId ? this.findDocumentResource(documentId) : null;
+      const resumePrompt = intent.targetCapability === "task.clarify"
+        ? composeTaskClarifyResumePrompt(intent.originalPrompt, input.answers ?? {}, input.note)
+        : intent.originalPrompt;
       const run = await this.startRun(intent.sessionId, {
-        prompt: intent.originalPrompt,
+        prompt: resumePrompt,
         idempotencyKey: input.idempotencyKey,
         ...(input.responseLanguage ? { responseLanguage: input.responseLanguage } : {}),
         context: {
@@ -1192,6 +1213,41 @@ export class AgentService {
       }
       throw error;
     }
+  }
+
+  /**
+   * 任务管线澄清（task-plugin → task.clarify）：签发一条 pending intent，
+   * 渲染层据 tool.completed 事件里的 questions + pendingIntentId 渲染表单，
+   * 用户提交走 submitPendingIntent（answers 注入续跑 prompt）。
+   */
+  issueTaskClarification(input: {
+    sessionId: string;
+    runId: string;
+    roomId: string;
+    questions: Array<{
+      id: string;
+      label: string;
+      type: "single" | "multi" | "text";
+      options?: string[];
+      required?: boolean;
+      placeholder?: string;
+    }>;
+  }): { pendingIntentId: string; status: string } | null {
+    const run = this.db.select().from(agentRuns).where(and(
+      eq(agentRuns.id, input.runId),
+      eq(agentRuns.sessionId, input.sessionId),
+    )).get();
+    if (!run) return null;
+    const intent = this.createPendingIntent({
+      sessionId: input.sessionId,
+      sourceRunId: input.runId,
+      originalPrompt: run.prompt,
+      targetCapability: "task.clarify",
+      allowedRoomIds: [input.roomId],
+      allowedDocumentIds: [],
+      now: new Date(),
+    });
+    return { pendingIntentId: intent.id, status: intent.consumedAt ? "consumed" : "pending" };
   }
 
   createTrustedMcpSession(
