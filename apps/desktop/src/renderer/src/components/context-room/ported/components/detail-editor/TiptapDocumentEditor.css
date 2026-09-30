@@ -12,9 +12,9 @@
      注意必须基于编辑器根容器取 cqw——若挂在滚动容器上,大纲展开的
      推挤 padding 会把 content-box 挤窄,64cqw 又落回下限,版心永远放宽不了。 */
   --cr-doc-column: clamp(720px, 64cqw, 1040px);
-  /* 停靠大纲宽度公式：随编辑区按比例伸缩（22%,216–320px 夹取）；
-     面板宽与正文推挤量（+16px 间隙）共用此变量,永远对齐。 */
-  --cr-outline-width: clamp(216px, 22%, 320px);
+  /* 停靠大纲宽度公式：随编辑区按比例伸缩（22%,176–320px 夹取）；
+     面板宽与正文推挤量（+8px 间隙）共用此变量,永远对齐。 */
+  --cr-outline-width: clamp(176px, 22%, 320px);
 }
 
 .context-room-agent-write-overlay {
@@ -669,16 +669,16 @@ textarea.context-room-tiptap-rewrite-text:disabled {
   transition: padding-left 180ms ease-out;
 }
 
-/* 大纲展开：正文往右推（面板宽 + 16px 间隙，公式与面板同源），让出的
+/* 大纲展开：正文往右推（面板宽 + 8px 间隙，公式与面板同源），让出的
    空间放停靠大纲；百分比与面板宽度同基准（编辑器容器宽），永远对齐。 */
 .context-room-tiptap-content-scale[data-outline-open='true'] ~ .context-room-tiptap-scroll {
-  padding-left: calc(var(--cr-outline-width) + 16px);
+  padding-left: calc(var(--cr-outline-width) + 8px);
 }
 
 .context-room-document-title-block {
   width: min(100%, var(--cr-doc-column));
   margin: 0 auto;
-  padding: 44px clamp(24px, 8cqw, 72px) 0;
+  padding: 44px clamp(24px, 6cqw, 72px) 0;
 }
 
 .context-room-document-title-input {
@@ -725,7 +725,7 @@ textarea.context-room-tiptap-rewrite-text:disabled {
 .context-room-document-overview {
   width: min(100%, var(--cr-doc-column));
   margin: 0 auto;
-  padding: 8px clamp(24px, 8cqw, 72px) 24px;
+  padding: 8px clamp(24px, 6cqw, 72px) 24px;
 }
 
 .context-room-document-overview .context-room-document-overview-bar {
@@ -1155,7 +1155,7 @@ textarea.context-room-tiptap-rewrite-text:disabled {
   width: min(100%, var(--cr-doc-column));
   min-height: 100%;
   margin: 0 auto;
-  padding: 20px clamp(24px, 8cqw, 72px) 72px;
+  padding: 20px clamp(24px, 6cqw, 72px) 72px;
   outline: 0;
 }
 
