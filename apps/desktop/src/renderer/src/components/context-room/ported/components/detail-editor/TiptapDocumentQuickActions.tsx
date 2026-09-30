@@ -1,19 +1,22 @@
 import { Redo2, Search, Undo2 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 
 import { useLocale } from '../../../../../i18n/LocaleContext'
 import type { Editor } from '@tiptap/react'
 
-/** 文档顶部状态行的快捷操作：撤销 / 重做 / 文档内查找。
+/** 文档顶部状态行的快捷操作：撤销 / 重做 / 文档内查找（+ 可选尾部按钮，如章节大纲开关）。
  * undo/redo 可用态经 editor transaction 事件在本组件内局部刷新。 */
 export function TiptapDocumentQuickActions({
   editor,
   disabled,
   onOpenFind,
+  trailing,
 }: {
   editor: Editor
   disabled?: boolean
   onOpenFind: () => void
+  /** 尾部追加的按钮（与撤销/重做/查找同排同样式）。 */
+  trailing?: ReactNode
 }) {
   const { t } = useLocale()
   const [historyState, setHistoryState] = useState({ canUndo: false, canRedo: false })
@@ -63,6 +66,7 @@ export function TiptapDocumentQuickActions({
       >
         <Search aria-hidden="true" />
       </button>
+      {trailing}
     </div>
   )
 }

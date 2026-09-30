@@ -1,6 +1,6 @@
 import type { Editor } from '@tiptap/react'
 import type { TableOfContentData, TableOfContentDataItem } from '@tiptap/extension-table-of-contents'
-import { ChevronLeft, ChevronRight, ListTree } from 'lucide-react'
+import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocale } from '../../../../../i18n/LocaleContext'
 import { findDocumentBlockElement } from './documentBlockNavigation'
@@ -11,67 +11,45 @@ import { jumpToSectionHeading } from './scaleMarkerNavigation'
  * 文档大纲入口：收起态是编辑器左上角的展开按钮；展开为飞书式大纲面板
  * （按层级缩进的标题列表，点击跳转，当前章节高亮并保持可见）。
  */
-export function TiptapContentScale({ items, documentTitle, editor, onOutlineOpenChange }: {
+export function TiptapContentScale({ items, documentTitle, editor, outlineOpen, onCollapseOutline }: {
   items: TableOfContentData
   /** 文档标题：作为大纲第一项（点击回顶部）。 */
   documentTitle: string
   editor: Editor | null
-  /** 大纲开/关通知宿主：正文推挤会让块手柄坐标滞留，宿主需触发重算。 */
-  onOutlineOpenChange?: (open: boolean) => void
+  /** 受控展开态：入口按钮在宿主顶部快捷行（搜索旁），收起态这里不渲染。 */
+  outlineOpen: boolean
+  onCollapseOutline: () => void
 }) {
   const { t } = useLocale()
-  const [outlineOpen, setOutlineOpen] = useState(false)
-  // 折叠状态放在面板外层：开合面板不重置已折叠的章节。
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
-
-  if (items.length === 0) return null
-
-  const toggleOutline = (open: boolean) => {
-    setOutlineOpen(open)
-    onOutlineOpenChange?.(open)
-  }
+  if (items.length === 0 || !outlineOpen) return null
 
   return (
     <nav
       className="context-room-tiptap-content-scale"
-      data-outline-open={String(outlineOpen)}
+      data-outline-open="true"
       aria-label={t('contextRoom:tiptapContentScale.documentOutlineScale')}
     >
-      {outlineOpen ? (
-        <OutlinePanel
-          items={items}
-          documentTitle={documentTitle}
-          editor={editor}
-          collapsed={collapsed}
-          onToggleCollapse={(id) => setCollapsed((current) => ({ ...current, [id]: !current[id] }))}
-          onCollapse={() => toggleOutline(false)}
-        />
-      ) : (
-        <button
-          type="button"
-          className="context-room-tiptap-scale-expand"
-          onClick={() => toggleOutline(true)}
-          aria-label={t('contextRoom:tiptapContentScale.expandOutline')}
-          title={t('contextRoom:tiptapContentScale.expandOutline')}
-        >
-          <ListTree size={17} aria-hidden="true" />
-        </button>
-      )}
+      <OutlinePanel
+        items={items}
+        documentTitle={documentTitle}
+        editor={editor}
+        onCollapse={onCollapseOutline}
+      />
     </nav>
   )
 }
 
 /** 飞书式章节大纲：文档标题 + 嵌套标题列表（可折叠子树），当前章节高亮并滚入可见。 */
-function OutlinePanel({ items, documentTitle, editor, collapsed, onToggleCollapse, onCollapse }: {
+function OutlinePanel({ items, documentTitle, editor, onCollapse }: {
   items: TableOfContentData
   documentTitle: string
   editor: Editor | null
-  collapsed: Record<string, boolean>
-  onToggleCollapse: (id: string) => void
   onCollapse: () => void
 }) {
   const { t } = useLocale()
   const itemsRef = useRef<HTMLDivElement | null>(null)
+  // 折叠状态随面板：关闭即重置，重开回到全展开。
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
 
   // 是否有子项：后面跟随更深 level 的条目。
   const hasChildren = useMemo(() => {
@@ -219,7 +197,7 @@ function OutlinePanel({ items, documentTitle, editor, collapsed, onToggleCollaps
                 aria-expanded={!collapsed[item.id]}
                 aria-label={t('contextRoom:tiptapContentScale.toggleChildren')}
                 title={t('contextRoom:tiptapContentScale.toggleChildren')}
-                onClick={() => onToggleCollapse(item.id)}
+                onClick={() => setCollapsed((current) => ({ ...current, [item.id]: !current[item.id] }))}
               >
                 <ChevronRight size={12} aria-hidden="true" />
               </button>

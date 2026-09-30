@@ -928,42 +928,16 @@ textarea.context-room-tiptap-rewrite-text:disabled {
   transition-duration: 70ms;
 }
 
-/* 章节大纲入口（收起态）：编辑器左上角的展开按钮，与展开态大纲停靠位置对齐。 */
+/* 章节大纲（停靠左侧）：收起态整个不渲染——入口按钮在顶部快捷行（搜索旁）。 */
 .context-room-tiptap-content-scale {
   position: absolute;
   z-index: 20;
   top: 44px;
-  left: 16px;
-  display: flex;
-  flex-direction: column;
-}
-
-/* 展开态：停靠式左侧大纲——贴编辑器左缘、从状态栏下到底部、全高。
-   宽度用 --cr-outline-width（随编辑区按比例伸缩），窗口变宽面板跟着
-   变宽，不再固定 240px。 */
-.context-room-tiptap-content-scale[data-outline-open='true'] {
   bottom: 0;
   left: 0;
   width: var(--cr-outline-width);
-  max-height: none;
-}
-
-.context-room-tiptap-scale-expand {
   display: flex;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 26px;
-  width: 26px;
-  height: 26px;
-  border-radius: 6px;
-  color: var(--cr-muted);
-  background: transparent;
-}
-
-.context-room-tiptap-scale-expand:hover,
-.context-room-tiptap-scale-expand:focus-visible {
-  color: var(--cr-blue);
-  background: var(--cr-blue-soft);
+  flex-direction: column;
 }
 
 /* 章节大纲（展开态，停靠左侧，飞书式）：透明浮在页面底色上——无卡片、
@@ -2084,6 +2058,12 @@ textarea.context-room-tiptap-rewrite-text:disabled {
 .context-room-doc-quick-actions button:disabled {
   cursor: default;
   opacity: 0.4;
+}
+
+/* 章节大纲开关：展开态点亮为主题蓝。 */
+.context-room-doc-quick-actions button[data-active='true'] {
+  color: var(--cr-blue);
+  background: var(--cr-blue-soft);
 }
 
 .context-room-doc-quick-actions button svg {
