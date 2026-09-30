@@ -67,6 +67,120 @@ function acpToolInputSummary(rawInput: unknown): string {
   }
 }
 
+/** 适配器 tool_call 增量合并态（AcpToolCallState）：渲染层 tool.* 事件的发射依据。 */
+export interface AcpToolCallState {
+  name: string;
+  title?: string;
+  args: Record<string, unknown>;
+  argsKey: string;
+  status: string;
+  terminal: boolean;
+}
+
+export type AcpToolCallUpdate =
+  | {
+      sessionUpdate: "tool_call";
+      toolCallId: string;
+      title: string;
+      kind?: string | null;
+      status?: string | null;
+      rawInput?: Record<string, unknown> | null;
+      rawOutput?: Record<string, unknown> | null;
+    }
+  | {
+      sessionUpdate: "tool_call_update";
+      toolCallId: string;
+      title?: string | null;
+      kind?: string | null;
+      status?: string | null;
+      rawInput?: Record<string, unknown> | null;
+      rawOutput?: Record<string, unknown> | null;
+    };
+
+/** ACP tool kind → 渲染层语义名：shell/edit/read 命中时间线的标签与命令摘要正则。 */
+function acpToolEventName(kind: string | null | undefined): string {
+  switch (kind) {
+    case "execute": return "shell";
+    case "edit": return "edit";
+    case "read": return "read";
+    case "fetch": return "web_fetch";
+    case "search": return "search";
+    case "think": return "think";
+    case "create": return "create";
+    case "delete": return "delete";
+    case "move": return "move";
+    default: return "tool";
+  }
+}
+
+function argsKeyOf(args: Record<string, unknown>): string {
+  try {
+    return JSON.stringify(args) ?? "{}";
+  } catch {
+    return "{}";
+  }
+}
+
+export interface AcpToolCallEmission {
+  type: "tool.requested" | "tool.started" | "tool.updated" | "tool.completed" | "tool.failed";
+  payload: Record<string, unknown>;
+}
+
+/**
+ * tool_call / tool_call_update → 渲染层 tool.* 事件（渠道会话执行时间线的数据源）。
+ * 纯函数：prior 缺省=首见；返回本批事件 + 合并后的状态。
+ */
+export function reduceAcpToolCallUpdate(
+  prior: AcpToolCallState | undefined,
+  update: AcpToolCallUpdate,
+): { events: AcpToolCallEmission[]; next: AcpToolCallState } {
+  const status = update.status
+    ?? (update.sessionUpdate === "tool_call" ? "pending" : prior?.status ?? "in_progress");
+  // tool_call_update 只带增量字段：title/kind/rawInput 沿用已见状态。
+  const title = update.title ?? prior?.title;
+  const name = prior?.name ?? acpToolEventName(update.kind);
+  const args = update.rawInput && typeof update.rawInput === "object"
+    ? update.rawInput
+    : prior?.args ?? {};
+  const argsKey = argsKeyOf(args);
+  const base: Record<string, unknown> = { toolCallId: update.toolCallId, name, args };
+  if (title) base.title = title;
+
+  const events: AcpToolCallEmission[] = [];
+  if (!prior) {
+    events.push({ type: status === "pending" ? "tool.requested" : "tool.started", payload: base });
+  } else if (status === "in_progress" && prior.status === "pending") {
+    events.push({ type: "tool.started", payload: base });
+  } else if (argsKey !== prior.argsKey && !prior.terminal) {
+    events.push({ type: "tool.updated", payload: base });
+  }
+
+  const terminalType = status === "completed" ? "tool.completed" : status === "failed" ? "tool.failed" : null;
+  if (terminalType && !prior?.terminal) {
+    if (terminalType === "tool.completed") {
+      const result = update.rawOutput && typeof update.rawOutput === "object" ? update.rawOutput : null;
+      events.push({
+        type: "tool.completed",
+        payload: {
+          toolCallId: update.toolCallId,
+          name,
+          ...(result ? { result } : title ? { result: title } : {}),
+        },
+      });
+    } else {
+      events.push({
+        type: "tool.failed",
+        payload: { toolCallId: update.toolCallId, name, message: title ?? "工具调用失败" },
+      });
+    }
+  }
+
+  return {
+    events,
+    next: { name, ...(title ? { title } : {}), args, argsKey, status, terminal: Boolean(terminalType) || prior?.terminal === true },
+  };
+}
+
 const MAX_STDERR_BYTES = 64 * 1024;
 const MAX_READ_TEXT_FILE_BYTES = 2 * 1024 * 1024;
 
@@ -103,6 +217,8 @@ interface ActiveAcpSession {
   messageStarted: boolean;
   text: string;
   pendingApprovals: Set<string>;
+  /** toolCallId → 合并态（渲染层 tool.* 事件发射依据）。 */
+  toolCalls: Map<string, AcpToolCallState>;
   /** 适配器上报的模式状态（session/new·load 响应与 current_mode_update 维护）；null=适配器未声明 modes 能力。 */
   modes: { currentModeId: string; availableModeIds: string[] } | null;
 }
@@ -293,6 +409,7 @@ export class AcpAgentRuntime implements AgentRuntime {
         messageStarted: false,
         text: "",
         pendingApprovals: new Set(),
+        toolCalls: new Map(),
         modes: sessionModes,
       });
       queue.push({ type: "runtime.session.updated", payload: { runtimeSessionRef: sessionId } });
@@ -520,6 +637,16 @@ export class AcpAgentRuntime implements AgentRuntime {
               active.queue.push({ type: "session.permission_mode.updated", payload: { permissionMode: semantic } });
             }
           }
+          return;
+        }
+        if (update.sessionUpdate === "tool_call" || update.sessionUpdate === "tool_call_update") {
+          // 渠道会话执行时间线：适配器工具调用（Bash 命令/文件读写等）映射为 tool.* 事件。
+          const { events, next } = reduceAcpToolCallUpdate(
+            active.toolCalls.get(update.toolCallId),
+            update as AcpToolCallUpdate,
+          );
+          active.toolCalls.set(update.toolCallId, next);
+          for (const event of events) active.queue.push(event);
           return;
         }
         if (update.sessionUpdate !== "agent_message_chunk") return;

@@ -345,3 +345,39 @@ describe('Agent run activity', () => {
     })
   })
 })
+
+describe('ACP channel tool events', () => {
+  it('keeps the adapter title across merges and surfaces it as subject fallback', () => {
+    const started = event(1, 'tool.started', {
+      toolCallId: 'tc-1', name: 'shell', title: 'Bash(git status)', args: { command: 'git status' },
+    })
+    const completed = event(2, 'tool.completed', {
+      toolCallId: 'tc-1', result: { stdout: 'clean' },
+    })
+    const activity = reduceAgentRunActivity([started, completed])
+    expect(activity.hasTools).toBe(true)
+    const tool = activity.steps[0]!.tool
+    expect(tool.title).toBe('Bash(git status)')
+    expect(tool.status).toBe('completed')
+    // args.command 优先于 title 作 subject；command 全文走 agentToolCommand。
+    expect(agentToolSubject(tool)).toBe('git status')
+  })
+
+  it('derives subjects from file_path and falls back to the adapter title', () => {
+    expect(agentToolSubject({
+      id: 'e', runId: 'r', name: 'edit', args: { file_path: '/w/src/app.ts' },
+      status: 'running', startedAt: 'x',
+    })).toBe('/w/src/app.ts')
+    expect(agentToolSubject({
+      id: 'g', runId: 'r', name: 'think', args: {}, title: 'Considering next steps',
+      status: 'running', startedAt: 'x',
+    })).toBe('Considering next steps')
+  })
+
+  it('labels and summarizes ACP kind-derived names', () => {
+    const t = (message: string, values?: Record<string, string | number>) => translate('zh-CN', message, values)
+    expect(agentToolLabel({ id: 'a', runId: 'r', name: 'web_fetch', args: {}, status: 'completed', startedAt: 'x' }, true, t)).toBe('已获取网页')
+    expect(agentToolLabel({ id: 'b', runId: 'r', name: 'search', args: {}, status: 'running', startedAt: 'x' }, false, t)).toBe('搜索')
+    expect(agentToolLabel({ id: 'c', runId: 'r', name: 'shell', args: {}, status: 'running', startedAt: 'x' }, false, t)).toBe('运行命令')
+  })
+})
