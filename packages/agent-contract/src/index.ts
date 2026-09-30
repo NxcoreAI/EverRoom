@@ -1064,7 +1064,8 @@ export interface AgentFileAttachment {
 export type PendingAgentIntentTargetCapability =
   | "document.create"
   | "document.edit"
-  | "document.continue";
+  | "document.continue"
+  | "task.clarify";
 
 export interface PendingAgentIntent {
   id: string;
@@ -1085,6 +1086,10 @@ export interface SubmitPendingAgentIntentInput {
   idempotencyKey: string;
   /** Current UI locale to carry into the resumed Agent run. */
   responseLanguage?: string;
+  /** task.clarify：结构化澄清表单的作答（questionId → 单值或多选值）。 */
+  answers?: Record<string, string | string[]>;
+  /** task.clarify 可选自由补充说明，与 answers 一并注入续跑 prompt。 */
+  note?: string;
 }
 
 export interface TrustedMcpSession {
@@ -1129,6 +1134,27 @@ export interface RoomDocument {
   deletedAt?: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface RoomTaskFolder {
+  id: string;
+  roomId: string;
+  kind: "task";
+  title: string;
+  /** 任务元数据镜像：{ taskKind, stage, workplanDocId, goal? }。 */
+  data: Record<string, unknown>;
+  position: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Room 任务夹投影：夹列表 + 文档/文件条目的归夹映射。 */
+export interface RoomFolderProjection {
+  folders: RoomTaskFolder[];
+  /** documentId → folderId。 */
+  documentFolders: Record<string, string>;
+  /** fileEntryId → folderId（sourceKind=file 的产物归夹）。 */
+  fileFolders: Record<string, string>;
 }
 
 export interface DocumentBlockSummary {

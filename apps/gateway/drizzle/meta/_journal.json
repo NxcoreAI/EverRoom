@@ -477,6 +477,13 @@
       "when": 1790165229000,
       "tag": "0069_agent_session_permission_mode",
       "breakpoints": true
+    },
+    {
+      "idx": 71,
+      "version": "6",
+      "when": 1790749771232,
+      "tag": "0070_room_task_folders",
+      "breakpoints": true
     }
   ]
 }

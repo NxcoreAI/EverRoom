@@ -806,7 +806,7 @@ export const pendingAgentIntents = sqliteTable(
       .references(() => agentRuns.id, { onDelete: "cascade" }),
     originalPrompt: text("original_prompt").notNull(),
     targetCapability: text("target_capability", {
-      enum: ["document.create", "document.edit", "document.continue"],
+      enum: ["document.create", "document.edit", "document.continue", "task.clarify"],
     }).notNull(),
     allowedRoomIds: text("allowed_room_ids", { mode: "json" }).$type<string[]>().notNull(),
     allowedDocumentIds: text("allowed_document_ids", { mode: "json" }).$type<string[]>().notNull(),
@@ -863,6 +863,30 @@ export const documentSectionPreviews = sqliteTable("document_section_previews", 
   primaryKey({ columns: [table.documentId, table.blockId] }),
 ]);
 
+export const roomFolders = sqliteTable(
+  "room_folders",
+  {
+    id: text("id").primaryKey(),
+    roomId: text("room_id").notNull(),
+    /** 任务夹当前唯一形态；预留后续普通文件夹。 */
+    kind: text("kind", { enum: ["task"] }).notNull().default("task"),
+    title: text("title").notNull(),
+    /** 任务元数据（stage/kind/artifacts 等）冗余在此，供列表投影免解析 workplan 文档。 */
+    data: text("data", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
+    position: integer("position").notNull().default(0),
+    deletedAt: integer("deleted_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("room_folders_room_idx").on(table.roomId, table.deletedAt),
+  ],
+);
+
 export const roomDocumentLinks = sqliteTable(
   "room_doc_links",
   {
@@ -870,6 +894,7 @@ export const roomDocumentLinks = sqliteTable(
     documentId: text("document_id")
       .notNull()
       .references(() => documents.id, { onDelete: "cascade" }),
+    folderId: text("folder_id"),
     linkedAt: integer("linked_at", { mode: "timestamp_ms" })
       .notNull()
       .$defaultFn(() => new Date()),
@@ -877,6 +902,7 @@ export const roomDocumentLinks = sqliteTable(
   (table) => [
     uniqueIndex("room_doc_links_room_document_idx").on(table.roomId, table.documentId),
     index("room_doc_links_room_idx").on(table.roomId),
+    index("room_doc_links_folder_idx").on(table.folderId),
   ],
 );
 
@@ -1712,6 +1738,8 @@ export const roomSourceMemberships = sqliteTable(
     sourceId: text("source_id").notNull(),
     sourceVersion: integer("source_version").notNull(),
     sourceTitle: text("source_title"),
+    /** 任务夹归属：Office 产物（file）等挂 Room 的条目归入任务夹展示。 */
+    folderId: text("folder_id"),
     evidenceGroupKey: text("evidence_group_key").notNull(),
     role: text("role", { enum: ["entry", "primary", "mention", "manual", "rule"] }).notNull(),
     effectiveWeight: real("effective_weight").notNull().default(0),

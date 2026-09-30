@@ -829,6 +829,8 @@ export class DocumentService {
     roomId: string;
     title: string;
     markdown: string;
+    /** 任务产物（workplan.md 等）标 native：出现在 Room 文档列表且可编辑。 */
+    origin?: "native" | "import";
   }): Promise<RoomDocument> {
     const title = input.title.trim().slice(0, 120);
     if (!title) throw new DocumentServiceError("INVALID_TITLE", "Document title cannot be empty");
@@ -840,6 +842,7 @@ export class DocumentService {
         roomId: input.roomId,
         title,
         contentJson,
+        origin: input.origin ?? "import",
       });
     }
     if (existing.roomId !== input.roomId) {
