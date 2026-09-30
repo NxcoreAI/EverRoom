@@ -3,6 +3,7 @@ import type { AgentPermissionMode } from "@nxcore/agent-contract";
 import {
   defaultPermissionModeForProvider,
   isAgentPermissionMode,
+  permissionModeCoversToolKind,
   permissionModeIdForProvider,
   permissionModesForProvider,
   semanticForProviderModeId,
@@ -50,5 +51,32 @@ describe("agent permission modes", () => {
     expect(isAgentPermissionMode("accept_edits")).toBe(true);
     expect(isAgentPermissionMode("dontAsk")).toBe(false);
     expect(isAgentPermissionMode(null)).toBe(false);
+  });
+
+  it("classifies tool kinds covered by each mode", () => {
+    // 非破坏类全档免问（含 ask_before_write：沙箱外用户文件读取是架构伪影）
+    for (const kind of ["read", "search", "think", "fetch"]) {
+      expect(permissionModeCoversToolKind("ask_before_write", kind)).toBe(true);
+      expect(permissionModeCoversToolKind("accept_edits", kind)).toBe(true);
+      expect(permissionModeCoversToolKind("auto", kind)).toBe(true);
+      expect(permissionModeCoversToolKind("full_access", kind)).toBe(true);
+    }
+    // 文件变更类：ask_before_write 问、accept_edits 放行、auto 问（沙盒外升级须问）
+    for (const kind of ["edit", "delete", "move"]) {
+      expect(permissionModeCoversToolKind("ask_before_write", kind)).toBe(false);
+      expect(permissionModeCoversToolKind("accept_edits", kind)).toBe(true);
+      expect(permissionModeCoversToolKind("auto", kind)).toBe(false);
+    }
+    // execute 黑盒：仅 full_access；switch_mode/other 永须人确认（除 full_access）
+    expect(permissionModeCoversToolKind("accept_edits", "execute")).toBe(false);
+    expect(permissionModeCoversToolKind("auto", "execute")).toBe(false);
+    expect(permissionModeCoversToolKind("full_access", "execute")).toBe(true);
+    expect(permissionModeCoversToolKind("accept_edits", "switch_mode")).toBe(false);
+    expect(permissionModeCoversToolKind("accept_edits", "other")).toBe(false);
+    expect(permissionModeCoversToolKind("full_access", "switch_mode")).toBe(true);
+    // 档位/类别缺失：保守走人工桥
+    expect(permissionModeCoversToolKind(null, "read")).toBe(false);
+    expect(permissionModeCoversToolKind("accept_edits", null)).toBe(false);
+    expect(permissionModeCoversToolKind("accept_edits", undefined)).toBe(false);
   });
 });

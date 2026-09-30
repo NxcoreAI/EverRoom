@@ -23,7 +23,7 @@ import {
   type StartRuntimeRunInput,
 } from "@nxcore/agent-runtime";
 import { childEnvironment, delegationPrompt } from "./runtime-common.js";
-import { permissionModeIdForProvider, semanticForProviderModeId } from "../agent/permission-modes.js";
+import { permissionModeCoversToolKind, permissionModeIdForProvider, semanticForProviderModeId } from "../agent/permission-modes.js";
 import {
   localAcpAdapterCommand,
   type LocalAcpAdapterSpawn,
@@ -536,6 +536,20 @@ export class AcpAgentRuntime implements AgentRuntime {
       requestPermission: async (params) => {
         const active = this.sessions.get(params.sessionId);
         if (active?.humanApproval && this.permissionRequestHandler) {
+          // 语义权限档先行：档位覆盖的工具类（accept_edits 的 Read 等）在人工桥前
+          // 直接放行，不再弹卡；未覆盖的走 UI 审批。
+          const mode = this.desiredPermissionModes.get(active.agentSessionId)?.semantic
+            ?? (this.provider && active.modes
+              ? semanticForProviderModeId(this.provider, active.modes.currentModeId)
+              : null);
+          if (mode && permissionModeCoversToolKind(mode, params.toolCall?.kind)) {
+            const options = params.options ?? [];
+            const option = options.find((item) => item.kind === "allow_always")
+              ?? options.find((item) => item.kind === "allow_once")
+              ?? options.find((item) => item.kind.startsWith("allow"))
+              ?? options[0];
+            return { outcome: option ? { outcome: "selected", optionId: option.optionId } : { outcome: "cancelled" } };
+          }
           return this.interactivePermission(params, active);
         }
         const wanted = active?.mutationAllowed ? "allow" : "reject";

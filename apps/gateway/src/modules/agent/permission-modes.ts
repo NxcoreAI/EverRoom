@@ -63,3 +63,19 @@ export function defaultPermissionModeForProvider(provider: string | null): Agent
   if (provider === "codex") return "auto";
   return "accept_edits";
 }
+
+/**
+ * 档位是否覆盖该 ACP ToolKind 的确认请求（true=人工审批桥前直接放行）。
+ * 沙箱 cwd 使全部用户文件都在「工作区外」，适配器对区外 Read 即使
+ * acceptEdits 也会发确认——非破坏类（read/search/think/fetch）全档免问
+ * 补偿这一架构伪影；变更类按档位语义：edit/delete/move 自 accept_edits
+ * 放行（文件修改自动执行），execute 仅 full_access（bash 黑盒保守一档），
+ * switch_mode/other 不放行（含 ExitPlanMode 类模式切换，须人确认）。
+ */
+export function permissionModeCoversToolKind(mode: AgentPermissionMode | null, toolKind: string | null | undefined): boolean {
+  if (!mode || !toolKind) return false;
+  if (mode === "full_access") return true;
+  if (toolKind === "read" || toolKind === "search" || toolKind === "think" || toolKind === "fetch") return true;
+  if (toolKind === "edit" || toolKind === "delete" || toolKind === "move") return mode === "accept_edits";
+  return false;
+}

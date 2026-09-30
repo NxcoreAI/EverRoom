@@ -85,6 +85,20 @@ async function handlePrompt(message) {
     respond(message.id, { stopReason: "end_turn" });
     return;
   }
+  if (mode === "permission-read") {
+    const answer = await clientRequest("session/request_permission", {
+      sessionId,
+      toolCall: { toolCallId: "tc-read", title: "Read notes.txt", kind: "read", status: "pending", rawInput: { path: "../notes.txt" } },
+      options: [
+        { optionId: "allow-always", kind: "allow_always", name: "Always Allow" },
+        { optionId: "allow-once", kind: "allow_once", name: "Allow" },
+        { optionId: "reject-once", kind: "reject_once", name: "Reject" },
+      ],
+    });
+    chunk(sessionId, answer.outcome.outcome === "selected" ? answer.outcome.optionId : "none:" + answer.outcome.outcome);
+    respond(message.id, { stopReason: "end_turn" });
+    return;
+  }
   if (mode === "permission") {
     const answer = await clientRequest("session/request_permission", {
       sessionId,
@@ -324,6 +338,37 @@ describe("AcpAgentRuntime", () => {
     expect(String((events.find((event) => event.type === "message.completed")!.payload as { content?: string }).content)).toBe("reject-once");
     expect(events.find((event) => event.type === "approval.requested")).toBeDefined();
     expect(events.find((event) => event.type === "approval.resolved")?.payload).toMatchObject({ approved: false });
+  });
+
+  it("auto-approves reads covered by the permission mode without surfacing the UI card", async () => {
+    const root = await workspace();
+    const adapter = await writeFakeAgent("permission-read");
+    // 显式档：accept_edits 覆盖 read → 桥前放行 allow_always，无审批事件
+    const explicit = runtimeFor(adapter, root, () => true, "claude");
+    onTestFinished(() => void explicit.dispose());
+    explicit.setPermissionRequestHandler(async () => "denied");
+    await explicit.setSessionPermissionMode("session-1", "accept_edits");
+    const events = await collect(await explicit.start({ ...baseInput(root), delegationContext: delegation(false) }));
+    expect(events.find((event) => event.type === "approval.requested")).toBeUndefined();
+    expect(String((events.find((event) => event.type === "message.completed")!.payload as { content?: string }).content)).toBe("allow-always");
+
+    // 未显式设置：回退适配器上报的 currentModeId（claude default→ask_before_write，
+    // read 仍覆盖——沙箱外用户文件读取是架构伪影，全档免问）
+    const fallback = runtimeFor(adapter, root, () => true, "claude");
+    onTestFinished(() => void fallback.dispose());
+    fallback.setPermissionRequestHandler(async () => "denied");
+    const events2 = await collect(await fallback.start({ ...baseInput(root), delegationContext: delegation(false) }));
+    expect(events2.find((event) => event.type === "approval.requested")).toBeUndefined();
+    expect(String((events2.find((event) => event.type === "message.completed")!.payload as { content?: string }).content)).toBe("allow-always");
+
+    // execute 不被 accept_edits 覆盖 → 仍走人工桥
+    const execute = runtimeFor(await writeFakeAgent("permission"), root, () => true, "claude");
+    onTestFinished(() => void execute.dispose());
+    execute.setPermissionRequestHandler(async () => "denied");
+    await execute.setSessionPermissionMode("session-1", "accept_edits");
+    const events3 = await collect(await execute.start({ ...baseInput(root), delegationContext: delegation(false) }));
+    expect(events3.find((event) => event.type === "approval.requested")).toBeDefined();
+    expect(String((events3.find((event) => event.type === "message.completed")!.payload as { content?: string }).content)).toBe("reject-once");
   });
 
   it("serves fs/read_text_file inside the workspace and rejects traversal", async () => {
