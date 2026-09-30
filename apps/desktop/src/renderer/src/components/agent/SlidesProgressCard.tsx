@@ -1,4 +1,4 @@
-import { Check, ChevronDown, FileText, LoaderCircle, Presentation } from 'lucide-react'
+import { Check, ChevronDown, ChevronRight, FileText, LoaderCircle, Presentation } from 'lucide-react'
 import { useState } from 'react'
 
 import { useLocale } from '@/i18n/LocaleContext'
@@ -64,18 +64,29 @@ export function SlidesProgressCard({
   onGenerate?: (message: string) => void
 }) {
   const { t } = useLocale()
+  const isDraft = state.stage === 'draft_ready' && typeof state.documentId === 'string'
   const [form, setForm] = useState<GenerateFormState>({ audience: 0, duration: 1, style: null, focus: 2 })
   // 换了新任务时清掉上一份 deck 的展开状态（渲染期重置，存上一份在 useState）
   const [prevDeckTitle, setPrevDeckTitle] = useState(state.title)
   const [expanded, setExpanded] = useState<ReadonlySet<number>>(new Set())
+  // 点「生成」即确认：卡片折成短卡；新一轮 draft_ready 到来才重新出现确认表单（渲染期重置）
+  const [confirmed, setConfirmed] = useState(!isDraft)
+  const [bodyOpen, setBodyOpen] = useState(isDraft)
+  const [prevAwaitingConfirm, setPrevAwaitingConfirm] = useState(isDraft)
   if (prevDeckTitle !== state.title) {
     setPrevDeckTitle(state.title)
     setExpanded(new Set())
   }
+  if (prevAwaitingConfirm !== isDraft) {
+    setPrevAwaitingConfirm(isDraft)
+    if (isDraft) {
+      setConfirmed(false)
+      setBodyOpen(true)
+    }
+  }
   const pages = state.pages ?? []
   const total = state.totalPages ?? pages.length
   const doneCount = state.doneCount ?? 0
-  const isDraft = state.stage === 'draft_ready' && typeof state.documentId === 'string'
   const runningIndex = toolRunning ? doneCount : -1
 
   const audiences = [
@@ -132,23 +143,42 @@ export function SlidesProgressCard({
     })
   }
 
+  const headerBody = (
+    <span className="agent-slides-progress-title">
+      <strong>{state.title}</strong>
+      <small>
+        {isDraft
+          ? t('surface:agentChat.slidesDraftPageCount', { total })
+          : t('surface:agentChat.slidesDeckProgress', { done: doneCount, total })}
+      </small>
+    </span>
+  )
+
   return (
     <section className="agent-slides-progress" aria-label={state.title ?? undefined}>
-      <header className="agent-slides-progress-header">
-        <span className="agent-slides-progress-icon"><Presentation aria-hidden="true" /></span>
-        <span className="agent-slides-progress-title">
-          <strong>{state.title}</strong>
-          <small>
-            {isDraft
-              ? t('surface:agentChat.slidesDraftPageCount', { total })
-              : t('surface:agentChat.slidesDeckProgress', { done: doneCount, total })}
-          </small>
-        </span>
-      </header>
+      {confirmed ? (
+        <button
+          type="button"
+          className="agent-slides-progress-header"
+          aria-expanded={bodyOpen}
+          onClick={() => setBodyOpen((prev) => !prev)}
+        >
+          <span className="agent-slides-progress-icon"><Presentation aria-hidden="true" /></span>
+          {headerBody}
+          {bodyOpen
+            ? <ChevronDown className="agent-slides-progress-chevron" aria-hidden="true" />
+            : <ChevronRight className="agent-slides-progress-chevron" aria-hidden="true" />}
+        </button>
+      ) : (
+        <header className="agent-slides-progress-header">
+          <span className="agent-slides-progress-icon"><Presentation aria-hidden="true" /></span>
+          {headerBody}
+        </header>
+      )}
 
-      {state.narrative ? <p className="agent-slides-narrative">{state.narrative}</p> : null}
+      {bodyOpen && state.narrative ? <p className="agent-slides-narrative">{state.narrative}</p> : null}
 
-      {pages.length > 0 ? (
+      {bodyOpen && pages.length > 0 ? (
         <ol className="agent-slides-progress-pages">
           {pages.map((page, index) => {
             const status = statusOf(index)
@@ -207,7 +237,7 @@ export function SlidesProgressCard({
         <div className="agent-slides-stopped">{state.warnings.join('；')}</div>
       ) : null}
 
-      {isDraft ? (
+      {isDraft && !confirmed ? (
         <div className="agent-slides-confirm">
           <button
             type="button"
@@ -266,7 +296,11 @@ export function SlidesProgressCard({
             type="button"
             className="agent-slides-generate"
             disabled={busy}
-            onClick={() => onGenerate?.(composeGenerateMessage())}
+            onClick={() => {
+              setConfirmed(true)
+              setBodyOpen(false)
+              onGenerate?.(composeGenerateMessage())
+            }}
           >
             {busy ? <LoaderCircle className="spin" aria-hidden="true" /> : <Presentation aria-hidden="true" />}
             {t('surface:agentChat.slidesGenerate')}

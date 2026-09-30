@@ -15,6 +15,7 @@ import type {
   RoomMailDetail,
   SaveContextRoomSnapshotInput,
   SubagentInvocation,
+  SubagentInvocationEvent,
   SubagentInvocationNode,
 } from '@nxcore/agent-contract'
 
@@ -112,6 +113,11 @@ export class ContextRoomGatewayBridge {
   /** 一次 run 的子代理调用树（含嵌套后代），对话时间线渲染用。 */
   listRunSubagentInvocations(rootRunId: string): Promise<SubagentInvocationNode[]> {
     return this.request(`/v1/subagent-invocations?rootRunId=${encodeURIComponent(rootRunId)}`)
+  }
+
+  /** 一次调用的执行事件（含每次工具调用），afterSeq 增量拉取。 */
+  listSubagentInvocationEvents(invocationId: string, afterSeq = 0): Promise<SubagentInvocationEvent[]> {
+    return this.request(`/v1/subagent-invocations/${encodeURIComponent(invocationId)}/events?afterSeq=${afterSeq}`)
   }
 
   cancelSubagentInvocation(invocationId: string): Promise<SubagentInvocation> {

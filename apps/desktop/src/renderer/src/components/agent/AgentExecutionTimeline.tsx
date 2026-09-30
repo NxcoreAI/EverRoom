@@ -28,12 +28,15 @@ import {
   agentToolStageText,
   agentToolSubject,
   buildTimelineRows,
+  dispatchedInvocationId,
   type AgentRunActivity,
+  type AgentSubagentStep,
   type DisplayAgentToolCall,
   type TimelineRow,
 } from './agentRunActivity'
 import { LocalAgentDispatchCard } from './LocalAgentDispatchCard'
 import { useRunSubagentInvocations } from './useRunSubagentInvocations'
+import { useSubagentInvocationTools } from './useSubagentInvocationTools'
 
 type ToolKind = 'search' | 'memory' | 'file' | 'email' | 'calendar' | 'image' | 'command' | 'schema' | 'connector' | 'action' | 'other'
 
@@ -232,6 +235,133 @@ export function localizeAgentActivityText(value: string | undefined, t: Translat
   return value
 }
 
+/** 单个工具行（收起态一行摘要，展开看参数/结果）。顶层与子代理嵌套列表复用。 */
+function ToolRow({ tool, now, sessionId }: { tool: DisplayAgentToolCall; now: number; sessionId?: string | null }) {
+  const { t } = useLocale()
+  const summaryText = localizeAgentActivityText(agentToolResultSummary(tool.result ?? tool.partialResult, t), t)
+  const subject = agentToolSubject(tool)
+  const preview = subject ?? summaryText ?? tool.error
+  const duration = durationMs(tool.startedAt, tool.completedAt, now)
+  const command = agentToolCommand(tool)
+  const args = Object.keys(tool.args).length ? detailTextCached(tool.args) : undefined
+  const result = detailTextCached(tool.result ?? tool.partialResult)
+  const label = agentToolLabel(tool, tool.status === 'completed', t)
+  return (
+    <details className="agent-tool-row" data-status={tool.status}>
+      <summary className="agent-tool-command" title={preview ? `${label} ${preview}` : label}>
+        <span className="agent-tool-rail" aria-hidden="true"><ToolIcon kind={toolKind(tool.name)} /></span>
+        <span className="agent-tool-command-text">
+          <strong>{label}</strong>
+          {preview ? <span>{preview}</span> : null}
+        </span>
+        <span className="agent-tool-status" title={statusLabel(tool.status, t)}>
+          <StatusIcon status={tool.status} />
+        </span>
+        <ChevronRight className="agent-tool-chevron" aria-hidden="true" />
+      </summary>
+      <div className="agent-tool-details">
+        <div>
+          <div className="agent-tool-meta">
+            <code>{tool.name}</code>
+            <span>{statusLabel(tool.status, t)} · {formatDuration(duration, t)}</span>
+          </div>
+          {tool.error ? <p className="agent-tool-error">{localizeAgentActivityText(tool.error, t)}</p> : null}
+          {tool.name.toLowerCase() === 'local_agent_dispatch' ? (
+            <LocalAgentDispatchCard tool={tool} sessionId={sessionId} />
+          ) : (
+            <>
+              {command ? <><small>{t('surface:agentExecutionTimeline.command')}</small><pre>{command}</pre></> : null}
+              {!command && args ? <><small>{t('surface:agentExecutionTimeline.arguments')}</small><pre>{args}</pre></> : null}
+              {result ? <><small>{t('surface:agentExecutionTimeline.result')}</small><pre>{result}</pre></> : null}
+              {!command && !args && !result && !tool.error ? <p>{t('surface:agentExecutionTimeline.noAdditionalDetails')}</p> : null}
+            </>
+          )}
+        </div>
+      </div>
+    </details>
+  )
+}
+
+/**
+ * 子代理行：展开后内嵌它自己的工具流（运行中自动展开、转终态自动收起；
+ * 用户手动开合后不再自动管）。它再派发的子代理不嵌在这里——调用树统一
+ * 在外层时间线平铺成「A → B」链式行，面板内只把自己的调度工具行去重掉。
+ */
+function SubagentRow({ sub, now, sessionId }: {
+  sub: AgentSubagentStep
+  now: number
+  sessionId?: string | null
+}) {
+  const { t } = useLocale()
+  const taskPreview = sub.task.trim().slice(0, 120) || undefined
+  const duration = sub.startedAt ? durationMs(sub.startedAt, sub.completedAt ?? undefined, now) : null
+  const running = sub.status === 'running' || sub.status === 'pending'
+  const [open, setOpen] = useState(running)
+  const userToggledRef = useRef(false)
+  const runningRef = useRef(running)
+
+  useEffect(() => {
+    if (runningRef.current === running) return
+    runningRef.current = running
+    if (!userToggledRef.current) setOpen(running)
+  }, [running])
+
+  const tools = useSubagentInvocationTools(sub.id, running, open)
+  // 拉子调用列表只为去重：调度类工具行对应的调用已在外层平铺展示。
+  const childInvocations = useRunSubagentInvocations(sub.id, running)
+  const childIds = useMemo(() => new Set(childInvocations.map((child) => child.id)), [childInvocations])
+  const ownTools = tools.filter((tool) => {
+    const invocationId = dispatchedInvocationId(tool)
+    return !invocationId || !childIds.has(invocationId)
+  })
+
+  return (
+    <div className="agent-tool-step" data-status={sub.status}>
+      <details
+        className="agent-tool-row"
+        data-status={sub.status}
+        data-kind="subagent"
+        open={open}
+        onToggle={(event) => {
+          const next = (event.currentTarget as HTMLDetailsElement).open
+          setOpen(next)
+          userToggledRef.current = true
+        }}
+      >
+        <summary className="agent-tool-command" title={taskPreview ? `${sub.label} ${taskPreview}` : sub.label}>
+          <span className="agent-tool-rail" aria-hidden="true"><Bot aria-hidden="true" /></span>
+          <span className="agent-tool-command-text">
+            <strong>{sub.label}</strong>
+            {running
+              ? taskPreview ? <span>{taskPreview}</span> : null
+              : duration !== null ? <span>{formatDuration(duration, t)}</span> : null}
+          </span>
+          <span className="agent-tool-status" title={statusLabel(sub.status, t)}>
+            <StatusIcon status={sub.status} />
+          </span>
+          <ChevronRight className="agent-tool-chevron" aria-hidden="true" />
+        </summary>
+        <div className="agent-tool-details">
+          <div>
+            <div className="agent-tool-meta">
+              <span>{statusLabel(sub.status, t)}{duration !== null ? ` · ${formatDuration(duration, t)}` : ''}</span>
+            </div>
+            {sub.errorMessage ? <p className="agent-tool-error">{sub.errorMessage}</p> : null}
+            {sub.task.trim() ? <><small>{t('surface:agentExecutionTimeline.subagentTask')}</small><pre>{sub.task}</pre></> : null}
+            {open && ownTools.length ? (
+              <div className="agent-subagent-tools">
+                {ownTools.map((tool) => (
+                  <ToolRow key={tool.id} tool={tool} now={now} sessionId={sessionId} />
+                ))}
+              </div>
+            ) : null}
+          </div>
+        </div>
+      </details>
+    </div>
+  )
+}
+
 export function AgentExecutionTimeline({
   activity,
   runStartedAt,
@@ -342,84 +472,16 @@ export function AgentExecutionTimeline({
           <div className="agent-tool-list">
             {rows.map((row) => {
               if (row.kind === 'subagent') {
-                const sub = row.subagent
-                const taskPreview = sub.task.trim().slice(0, 120) || undefined
-                const duration = sub.startedAt ? durationMs(sub.startedAt, sub.completedAt ?? undefined, now) : null
-                return (
-                  <div key={row.key} className="agent-tool-step" data-status={sub.status}>
-                    <details className="agent-tool-row" data-status={sub.status} data-kind="subagent">
-                      <summary className="agent-tool-command" title={taskPreview ? `${sub.label} ${taskPreview}` : sub.label}>
-                        <span className="agent-tool-rail" aria-hidden="true"><Bot aria-hidden="true" /></span>
-                        <span className="agent-tool-command-text">
-                          <strong>{sub.label}</strong>
-                          {taskPreview ? <span>{taskPreview}</span> : null}
-                        </span>
-                        <span className="agent-tool-status" title={statusLabel(sub.status, t)}>
-                          <StatusIcon status={sub.status} />
-                        </span>
-                        <ChevronRight className="agent-tool-chevron" aria-hidden="true" />
-                      </summary>
-                      <div className="agent-tool-details">
-                        <div>
-                          <div className="agent-tool-meta">
-                            <span>{statusLabel(sub.status, t)}{duration !== null ? ` · ${formatDuration(duration, t)}` : ''}</span>
-                          </div>
-                          {sub.errorMessage ? <p className="agent-tool-error">{sub.errorMessage}</p> : null}
-                          {sub.task.trim() ? <><small>{t('surface:agentExecutionTimeline.subagentTask')}</small><pre>{sub.task}</pre></> : null}
-                        </div>
-                      </div>
-                    </details>
-                  </div>
-                )
+                return <SubagentRow key={row.key} sub={row.subagent} now={now} sessionId={sessionId} />
               }
               const step = row.step
-              const tool = step.tool
-              const summaryText = localizeAgentActivityText(agentToolResultSummary(tool.result ?? tool.partialResult, t), t)
-              const subject = agentToolSubject(tool)
-              const preview = subject ?? summaryText ?? tool.error
-              const duration = durationMs(tool.startedAt, tool.completedAt, now)
-              const command = agentToolCommand(tool)
-              const args = Object.keys(tool.args).length ? detailTextCached(tool.args) : undefined
-              const result = detailTextCached(tool.result ?? tool.partialResult)
-              const label = agentToolLabel(tool, tool.status === 'completed', t)
               const beforeText = localizeAgentActivityText(step.beforeText, t)
-              const stageText = localizeAgentActivityText(step.afterText || agentToolStageText(tool, t), t)
+              const stageText = localizeAgentActivityText(step.afterText || agentToolStageText(step.tool, t), t)
               return (
-                <div key={step.id} className="agent-tool-step" data-status={tool.status}>
+                <div key={step.id} className="agent-tool-step" data-status={step.tool.status}>
                   {beforeText ? <p className="agent-activity-commentary">{beforeText}</p> : null}
-                  <details className="agent-tool-row" data-status={tool.status}>
-                    <summary className="agent-tool-command" title={preview ? `${label} ${preview}` : label}>
-                      <span className="agent-tool-rail" aria-hidden="true"><ToolIcon kind={toolKind(tool.name)} /></span>
-                      <span className="agent-tool-command-text">
-                        <strong>{label}</strong>
-                        {preview ? <span>{preview}</span> : null}
-                      </span>
-                      <span className="agent-tool-status" title={statusLabel(tool.status, t)}>
-                        <StatusIcon status={tool.status} />
-                      </span>
-                      <ChevronRight className="agent-tool-chevron" aria-hidden="true" />
-                    </summary>
-                    <div className="agent-tool-details">
-                      <div>
-                        <div className="agent-tool-meta">
-                          <code>{tool.name}</code>
-                          <span>{statusLabel(tool.status, t)} · {formatDuration(duration, t)}</span>
-                        </div>
-                        {tool.error ? <p className="agent-tool-error">{localizeAgentActivityText(tool.error, t)}</p> : null}
-                        {tool.name.toLowerCase() === 'local_agent_dispatch' ? (
-                          <LocalAgentDispatchCard tool={tool} sessionId={sessionId} />
-                        ) : (
-                          <>
-                            {command ? <><small>{t('surface:agentExecutionTimeline.command')}</small><pre>{command}</pre></> : null}
-                            {!command && args ? <><small>{t('surface:agentExecutionTimeline.arguments')}</small><pre>{args}</pre></> : null}
-                            {result ? <><small>{t('surface:agentExecutionTimeline.result')}</small><pre>{result}</pre></> : null}
-                            {!command && !args && !result && !tool.error ? <p>{t('surface:agentExecutionTimeline.noAdditionalDetails')}</p> : null}
-                          </>
-                        )}
-                      </div>
-                    </div>
-                  </details>
-                  {stageText ? <p className="agent-tool-stage" data-status={tool.status}>{stageText}</p> : null}
+                  <ToolRow tool={step.tool} now={now} sessionId={sessionId} />
+                  {stageText ? <p className="agent-tool-stage" data-status={step.tool.status}>{stageText}</p> : null}
                 </div>
               )
             })}

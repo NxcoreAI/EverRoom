@@ -31,6 +31,19 @@ export function subagentRoutes(orchestrator: SubagentOrchestrator): FastifyPlugi
       return invocation ?? reply.code(404).send({ message: "subagent_invocation_not_found" });
     });
 
+    app.get("/v1/subagent-invocations/:invocationId/events", {
+      schema: {
+        tags: ["subagents"],
+        params: Type.Object({ invocationId: Type.String({ minLength: 1 }) }),
+        querystring: Type.Object({
+          afterSeq: Type.Optional(Type.Integer({ minimum: 0 })),
+        }),
+      },
+    }, async (request) => orchestrator.listInvocationEvents(
+      request.params.invocationId,
+      request.query.afterSeq ?? 0,
+    ));
+
     app.post("/v1/subagent-invocations/:invocationId/cancel", {
       schema: {
         tags: ["subagents"],

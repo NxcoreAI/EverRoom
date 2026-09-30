@@ -448,6 +448,8 @@ const api: NxcoreDesktopApi = {
       invokeQuietly('context-rooms:cancel-subagent-invocation', invocationId),
     listRunSubagentInvocations: (rootRunId: string) =>
       invokeQuietly('context-rooms:list-run-subagent-invocations', rootRunId),
+    listSubagentInvocationEvents: (invocationId: string, afterSeq = 0) =>
+      invokeQuietly('context-rooms:list-subagent-invocation-events', invocationId, afterSeq),
     refreshBrief: (roomId: string) => invokeQuietly('context-rooms:refresh-brief', roomId),
     promoteMemoryItem: (roomId: string, itemId: string) =>
       invokeQuietly('context-rooms:promote-memory-item', roomId, itemId),

@@ -1,4 +1,4 @@
-import type { AgentEvent, SubagentInvocationNode } from '@nxcore/agent-contract'
+import type { AgentEvent, SubagentInvocationEvent, SubagentInvocationNode } from '@nxcore/agent-contract'
 import { describe, expect, it } from 'vitest'
 
 import { toolKind } from './AgentExecutionTimeline'
@@ -11,6 +11,7 @@ import {
   createAgentRunActivityAccumulator,
   foldAgentRunActivityEvent,
   reduceAgentRunActivity,
+  reduceSubagentInvocationTools,
   snapshotAgentRunActivity,
   subagentChainLabel,
   subagentInvocationStatus,
@@ -390,6 +391,37 @@ describe('subagent timeline rows', () => {
       expect(nestedRow.subagent.status).toBe('running')
     }
   })
+  it('调度类工具行在它的子代理行已展示时去重：只留子代理那一步', () => {
+    const dispatchStep = (id: string, invocationId: string | undefined): AgentActivityStep => ({
+      id,
+      sequence: 1,
+      tool: {
+        id, runId: 'run-1', name: 'agent_dispatch', args: { agentId: 'researcher', task: '研究任务' },
+        status: 'completed', startedAt: '2026-09-29T10:00:01.000Z',
+        completedAt: '2026-09-29T10:00:30.000Z',
+        ...(invocationId
+          ? { result: { content: JSON.stringify({ invocationId }), details: { id: invocationId, agentDefinitionId: 'researcher' } } }
+          : {}),
+      },
+      beforeText: '',
+      afterText: '',
+    })
+    const invocations = [invocation({ id: 'inv-9', agentName: 'Researcher', status: 'running', completedAt: null })]
+
+    // 调用已展示：dispatch 工具行去重，只留子代理行。
+    const deduped = buildTimelineRows([dispatchStep('d-1', 'inv-9')], invocations, 'run-1')
+    expect(deduped.map((row) => row.kind)).toEqual(['subagent'])
+    expect(deduped[0]!.key).toBe('subagent-inv-9')
+
+    // 调用不在展示列表（派发失败没产生调用 / 轮询未到）：工具行保留。
+    const kept = buildTimelineRows([dispatchStep('d-1', 'inv-9')], [], 'run-1')
+    expect(kept.map((row) => row.kind)).toEqual(['tool'])
+
+    // 结果未回的运行中 dispatch 行照常显示，调用行出现后自然去重。
+    const pending = buildTimelineRows([dispatchStep('d-2', undefined)], invocations, 'run-1')
+    expect(pending.map((row) => row.kind)).toEqual(['tool', 'subagent'])
+  })
+
 
   it('maps invocation terminal statuses and surfaces the error message', () => {
     expect(subagentInvocationStatus('accepted')).toBe('pending')
@@ -462,5 +494,49 @@ describe('subagent timeline rows', () => {
     expect(first.steps[0]!.afterText).toBe('')
     expect(second.steps[0]!.afterText).not.toBe('')
     expect(acc.steps[0]!.afterText).toBe(second.steps[0]!.afterText)
+  })
+})
+
+describe('subagent invocation tool flow', () => {
+  function invocationEvent(seq: number, type: SubagentInvocationEvent['type'], payload: unknown = {}): SubagentInvocationEvent {
+    return {
+      id: `inv-event-${seq}`,
+      invocationId: 'inv-1',
+      seq,
+      type,
+      payload,
+      occurredAt: new Date(seq * 1_000).toISOString(),
+    }
+  }
+
+  it('folds tool events into display calls and skips non-tool events', () => {
+    const tools = reduceSubagentInvocationTools('inv-1', [
+      invocationEvent(1, 'run.started'),
+      invocationEvent(2, 'tool.requested', { toolCallId: 'call-1', name: 'wiki_search', args: { query: 'EverRoom' } }),
+      invocationEvent(3, 'tool.started', { toolCallId: 'call-1' }),
+      invocationEvent(4, 'tool.completed', { toolCallId: 'call-1', name: 'wiki_search', result: { results: [1, 2, 3] } }),
+      invocationEvent(5, 'message.completed', { role: 'assistant', content: '完成。' }),
+    ])
+    expect(tools).toHaveLength(1)
+    expect(tools[0]).toMatchObject({
+      id: 'call-1',
+      name: 'wiki_search',
+      runId: 'inv-1',
+      status: 'completed',
+    })
+    expect(agentToolResultSummary(tools[0]!.result)).toContain('3')
+  })
+
+  it('sorts out-of-order input by seq and surfaces failures', () => {
+    const tools = reduceSubagentInvocationTools('inv-1', [
+      invocationEvent(3, 'tool.completed', { toolCallId: 'call-1', name: 'wiki_search', result: {} }),
+      invocationEvent(2, 'tool.started', { toolCallId: 'call-1' }),
+      invocationEvent(1, 'tool.requested', { toolCallId: 'call-1', name: 'wiki_search', args: {} }),
+      invocationEvent(4, 'tool.failed', { toolCallId: 'call-2', name: 'context_room_write_commit', message: '写入冲突' }),
+    ])
+    expect(tools.map((tool) => tool.id)).toEqual(['call-1', 'call-2'])
+    expect(tools[0]!.status).toBe('completed')
+    expect(tools[1]!.status).toBe('error')
+    expect(tools[1]!.error).toBe('写入冲突')
   })
 })

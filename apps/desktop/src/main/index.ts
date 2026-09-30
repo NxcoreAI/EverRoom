@@ -345,6 +345,7 @@ const CONTEXT_ROOM_CHANNELS = {
   getSubagentInvocation: 'context-rooms:get-subagent-invocation',
   cancelSubagentInvocation: 'context-rooms:cancel-subagent-invocation',
   listRunSubagentInvocations: 'context-rooms:list-run-subagent-invocations',
+  listSubagentInvocationEvents: 'context-rooms:list-subagent-invocation-events',
   refreshBrief: 'context-rooms:refresh-brief',
   promoteMemoryItem: 'context-rooms:promote-memory-item',
   overview: 'context-rooms:overview',
@@ -2199,6 +2200,8 @@ function registerContextRoomHandlers(bridge: ContextRoomGatewayBridge): void {
     bridge.cancelSubagentInvocation(invocationId))
   handle(CONTEXT_ROOM_CHANNELS.listRunSubagentInvocations, (_event, rootRunId: string) =>
     bridge.listRunSubagentInvocations(rootRunId))
+  handle(CONTEXT_ROOM_CHANNELS.listSubagentInvocationEvents, (_event, invocationId: string, afterSeq = 0) =>
+    bridge.listSubagentInvocationEvents(invocationId, afterSeq))
   handle(CONTEXT_ROOM_CHANNELS.refreshBrief, (_event, roomId) => bridge.refreshBrief(roomId))
   handle(CONTEXT_ROOM_CHANNELS.promoteMemoryItem, (_event, roomId: string, itemId: string) =>
     bridge.promoteMemoryItem(roomId, itemId))

@@ -1,4 +1,8 @@
-import type { AgentEvent, SubagentInvocationNode } from '@nxcore/agent-contract'
+import type {
+  AgentEvent,
+  SubagentInvocationEvent,
+  SubagentInvocationNode,
+} from '@nxcore/agent-contract'
 import type { Translate } from '../../i18n/LocaleContext'
 
 export type DisplayAgentToolStatus = 'pending' | 'running' | 'completed' | 'error' | 'stopped'
@@ -639,6 +643,19 @@ export function subagentChainLabel(
   return chain.join(' → ')
 }
 
+/**
+ * 调度类工具（agent_dispatch / content_analysis / document_analysis）的结果
+ * details 里带回它创建的子调用 id；该调用已作为子代理行展示时工具行不再重复。
+ */
+export function dispatchedInvocationId(tool: DisplayAgentToolCall): string | undefined {
+  const record = tool.result ?? tool.partialResult
+  if (!record || typeof record !== 'object') return undefined
+  const details = (record as { details?: unknown }).details
+  if (!details || typeof details !== 'object') return undefined
+  const id = (details as { id?: unknown }).id
+  return typeof id === 'string' ? id : undefined
+}
+
 /** 工具步骤与子代理行按发生时间归并成一条竖直时间线（V8 sort 稳定，同刻保持原序）。 */
 export function buildTimelineRows(
   steps: AgentActivityStep[],
@@ -646,7 +663,13 @@ export function buildTimelineRows(
   rootRunId: string,
 ): TimelineRow[] {
   const byId = new Map(invocations.map((invocation) => [invocation.id, invocation]))
-  const rows: TimelineRow[] = steps.map((step) => ({
+  const rows: TimelineRow[] = (byId.size
+    ? steps.filter((step) => {
+      const invocationId = dispatchedInvocationId(step.tool)
+      return !invocationId || !byId.has(invocationId)
+    })
+    : steps
+  ).map((step) => ({
     kind: 'tool' as const,
     key: step.id,
     at: Date.parse(step.tool.startedAt) || 0,
@@ -669,4 +692,38 @@ export function buildTimelineRows(
     })
   }
   return rows.sort((left, right) => left.at - right.at)
+}
+
+/**
+ * 一次子代理调用的工具流折叠：过滤 tool.* 事件按 seq 递增喂入
+ * mergeAgentToolEvent（runId 适配为 invocationId，仅作行标识用）。
+ * 子代理与主 run 同一套运行时事件结构，折叠逻辑与主时间线完全一致。
+ */
+export function foldSubagentToolEvents(
+  tools: DisplayAgentToolCall[],
+  invocationId: string,
+  events: SubagentInvocationEvent[],
+): DisplayAgentToolCall[] {
+  let next = tools
+  for (const event of [...events].sort((left, right) => left.seq - right.seq)) {
+    if (!isToolEvent({ type: event.type } as AgentEvent)) continue
+    next = mergeAgentToolEvent(next, {
+      id: event.id,
+      sessionId: '',
+      runId: invocationId,
+      seq: event.seq,
+      type: event.type,
+      occurredAt: event.occurredAt,
+      payload: event.payload,
+    })
+  }
+  return next
+}
+
+/** 全量归约：历史回放/测试用。 */
+export function reduceSubagentInvocationTools(
+  invocationId: string,
+  events: SubagentInvocationEvent[],
+): DisplayAgentToolCall[] {
+  return foldSubagentToolEvents([], invocationId, events)
 }

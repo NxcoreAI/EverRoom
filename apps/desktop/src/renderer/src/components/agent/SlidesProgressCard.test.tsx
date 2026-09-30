@@ -42,7 +42,7 @@ describe('slidesProgressFromToolCall', () => {
 })
 
 describe('SlidesProgressCard', () => {
-  it('草稿卡：打开草稿回传文档 id，确认表单合成 generate 消息（含草稿 id 与受众等）', () => {
+  it('草稿卡：打开草稿回传文档 id，确认表单合成 generate 消息（含风格）', () => {
     const onOpenDraft = vi.fn()
     const onGenerate = vi.fn()
     const renderer = TestRenderer.create(
@@ -51,6 +51,21 @@ describe('SlidesProgressCard', () => {
 
     act(() => renderer.root.findByProps({ className: 'agent-slides-open-draft' }).props.onClick())
     expect(onOpenDraft).toHaveBeenCalledWith('doc-draft-1')
+
+    // 换风格 → 带风格键的模板。
+    const selects = renderer.root.findAllByType('select')
+    act(() => selects[2]!.props.onChange({ target: { value: 'japanese-style' } }))
+    act(() => renderer.root.findByProps({ className: 'agent-slides-generate' }).props.onClick())
+    const styledMessage = onGenerate.mock.calls[0]![0] as string
+    expect(styledMessage).toContain('slidesGenerateMessageStyled?')
+    expect(styledMessage).toContain('style=japanese-style')
+  })
+
+  it('点「生成」后折成短卡：表单消失，头部按钮可重展页列表但不回显表单', () => {
+    const onGenerate = vi.fn()
+    const renderer = TestRenderer.create(
+      <SlidesProgressCard state={draftState} toolRunning={false} onGenerate={onGenerate} />,
+    )
 
     // 默认档（受众=领导汇报/时长=15 分钟/风格=自动/详略=均衡）→ 不带 style 的模板。
     act(() => renderer.root.findByProps({ className: 'agent-slides-generate' }).props.onClick())
@@ -61,16 +76,51 @@ describe('SlidesProgressCard', () => {
     expect(message).toContain('title=季度汇报')
     expect(message).not.toContain('Styled')
 
-    // 换风格 → 带风格键的模板。
-    const selects = renderer.root.findAllByType('select')
-    act(() => selects[2]!.props.onChange({ target: { value: 'japanese-style' } }))
-    act(() => renderer.root.findByProps({ className: 'agent-slides-generate' }).props.onClick())
-    const styledMessage = onGenerate.mock.calls[1]![0] as string
-    expect(styledMessage).toContain('slidesGenerateMessageStyled?')
-    expect(styledMessage).toContain('style=japanese-style')
+    // 确认后只剩短卡头部（按钮），页列表与表单都收起。
+    expect(renderer.root.findAllByType('select')).toHaveLength(0)
+    expect(renderer.root.findAllByProps({ className: 'agent-slides-page' })).toHaveLength(0)
+    const header = renderer.root.findByProps({ className: 'agent-slides-progress-header' })
+    expect(header.type).toBe('button')
+    expect(header.props['aria-expanded']).toBe(false)
+
+    // 重展：页列表回来，确认表单不回显。
+    act(() => header.props.onClick())
+    expect(header.props['aria-expanded']).toBe(true)
+    expect(renderer.root.findAllByProps({ className: 'agent-slides-page' })).toHaveLength(2)
+    expect(renderer.root.findAllByType('select')).toHaveLength(0)
   })
 
-  it('生成卡：按 doneCount 打勾，进行中的页转圈，不渲染草稿确认区', () => {
+  it('新一轮 draft_ready 到来：折起的卡片重新展开并恢复确认表单', () => {
+    const onGenerate = vi.fn()
+    const renderer = TestRenderer.create(
+      <SlidesProgressCard state={draftState} toolRunning={false} onGenerate={onGenerate} />,
+    )
+    act(() => renderer.root.findByProps({ className: 'agent-slides-generate' }).props.onClick())
+    expect(renderer.root.findAllByType('select')).toHaveLength(0)
+
+    // 生成中（plan_ready）：折叠保持。
+    const planState: SlidesProgressState = {
+      stage: 'plan_ready',
+      title: draftState.title,
+      totalPages: 2,
+      doneCount: 0,
+      pages: draftState.pages,
+    }
+    act(() => renderer.update(
+      <SlidesProgressCard state={planState} toolRunning={true} onGenerate={onGenerate} />,
+    ))
+    expect(renderer.root.findAllByType('select')).toHaveLength(0)
+    expect(renderer.root.findByProps({ className: 'agent-slides-progress-header' }).type).toBe('button')
+
+    // 新一轮草稿确认到来 → 恢复展开 + 确认表单（与标题无关，看阶段翻转）。
+    act(() => renderer.update(
+      <SlidesProgressCard state={draftState} toolRunning={false} onGenerate={onGenerate} />,
+    ))
+    expect(renderer.root.findByProps({ className: 'agent-slides-progress-header' }).type).toBe('header')
+    expect(renderer.root.findAllByType('select')).toHaveLength(4)
+  })
+
+  it('生成卡：默认折成短卡，点头部展开看页进度（按 doneCount 打勾，进行中的页转圈）', () => {
     const renderer = TestRenderer.create(
       <SlidesProgressCard
         state={{
@@ -83,13 +133,19 @@ describe('SlidesProgressCard', () => {
         toolRunning={true}
       />,
     )
+    // 未展开：无表单无页列表，头部是可点的按钮。
+    expect(renderer.root.findAllByType('select')).toHaveLength(0)
+    expect(renderer.root.findAllByProps({ className: 'agent-slides-page' })).toHaveLength(0)
+    const header = renderer.root.findByProps({ className: 'agent-slides-progress-header' })
+    expect(header.type).toBe('button')
+
+    act(() => header.props.onClick())
     expect(renderer.root.findByProps({ className: 'agent-slides-progress-title' }).children).toEqual([
       expect.anything(),
       expect.anything(),
     ])
     expect(renderer.root.findAllByType('select')).toHaveLength(0)
-    const statuses = renderer.root.findAllByProps({ className: 'agent-slides-page-status is-done' })
-    expect(statuses).toHaveLength(1)
+    expect(renderer.root.findAllByProps({ className: 'agent-slides-page-status is-done' })).toHaveLength(1)
     expect(renderer.root.findAllByProps({ className: 'agent-slides-page-status is-running' })).toHaveLength(1)
   })
 })

@@ -874,6 +874,18 @@
   padding: 0 2px 7px 21px;
 }
 
+/* 子代理行展开后的嵌套工具流：左轨缩进，行样式复用 .agent-tool-row */
+.agent-subagent-tools {
+  display: grid;
+  margin: 3px 0 2px;
+  padding: 2px 0 2px 10px;
+  border-left: 2px solid #e5e8ec;
+}
+
+.agent-subagent-tools .agent-tool-details > div {
+  padding-left: 14px;
+}
+
 .agent-tool-meta {
   display: flex;
   min-width: 0;
@@ -1316,6 +1328,23 @@
   min-width: 0;
   align-items: center;
   gap: 9px;
+}
+
+button.agent-slides-progress-header {
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.agent-slides-progress-chevron {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  color: #8b95a5;
 }
 
 .agent-slides-progress-icon {

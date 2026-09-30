@@ -42,9 +42,11 @@ function detectLocale(): AppLocale {
 
 export function interpolate(message: string, values?: Record<string, string | number>): string {
   if (!values) return message
-  return message.replace(/\{(\w+)\}/g, (match, key: string) => (
-    Object.prototype.hasOwnProperty.call(values, key) ? String(values[key]) : match
-  ))
+  // 兼容 i18next 的 {{key}} 与普通单花括号 {key} 两种占位。
+  return message.replace(/\{\{(\w+)\}\}|\{(\w+)\}/g, (match, braced1, braced2) => {
+    const key = braced1 ?? braced2
+    return Object.prototype.hasOwnProperty.call(values, key) ? String(values[key]) : match
+  })
 }
 
 export function translate(locale: AppLocale, message: string, values?: Record<string, string | number>): string {

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type {
   SubagentInvocation,
+  SubagentInvocationEvent,
   SubagentInvocationNode,
   SubagentInvocationResult,
   SubagentInvocationSource,
@@ -8,7 +9,7 @@ import type {
 } from "@nxcore/agent-contract";
 import type { AgentRuntime, RuntimeEvent } from "@nxcore/agent-runtime";
 import { Ajv, type ValidateFunction } from "ajv";
-import { asc, and, desc, eq, inArray, isNull } from "drizzle-orm";
+import { asc, and, desc, eq, gt, inArray, isNull } from "drizzle-orm";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
 import {
   subagentInvocationEvents,
@@ -115,6 +116,28 @@ export class SubagentOrchestrator {
     const row = this.db.select().from(subagentInvocations)
       .where(eq(subagentInvocations.id, invocationId)).get();
     return row ? toInvocation(row) : null;
+  }
+
+  /**
+   * 一次调用的执行事件（含每次工具调用），afterSeq 增量拉取。该事件流是
+   * 渲染子代理工具流的唯一数据源，消费方（对话时间线）按 seq 递进轮询。
+   */
+  listInvocationEvents(invocationId: string, afterSeq = 0): SubagentInvocationEvent[] {
+    return this.db.select().from(subagentInvocationEvents)
+      .where(and(
+        eq(subagentInvocationEvents.invocationId, invocationId),
+        gt(subagentInvocationEvents.seq, afterSeq),
+      ))
+      .orderBy(asc(subagentInvocationEvents.seq))
+      .all()
+      .map((row) => ({
+        id: row.id,
+        invocationId: row.invocationId,
+        type: row.type as SubagentInvocationEvent["type"],
+        seq: row.seq,
+        payload: row.payload,
+        occurredAt: row.createdAt.toISOString(),
+      }));
   }
 
   /**

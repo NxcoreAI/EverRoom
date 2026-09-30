@@ -1083,6 +1083,7 @@ export interface NxcoreDesktopApi {
     getSubagentInvocation(invocationId: string): Promise<SubagentInvocation>
     cancelSubagentInvocation(invocationId: string): Promise<SubagentInvocation>
     listRunSubagentInvocations(rootRunId: string): Promise<import('@nxcore/agent-contract').SubagentInvocationNode[]>
+    listSubagentInvocationEvents(invocationId: string, afterSeq?: number): Promise<import('@nxcore/agent-contract').SubagentInvocationEvent[]>
     refreshBrief(roomId: string): Promise<ContextRoomSnapshotItem>
     /** 记忆条目晋升（待确认→已确认）：MemoryCore 蒸馏后 worker 回填归属。 */
     promoteMemoryItem(roomId: string, itemId: string): Promise<{ promotionSessionId: string | null }>
