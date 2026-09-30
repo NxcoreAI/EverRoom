@@ -1874,6 +1874,74 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
   height: 12px;
 }
 
+.agent-queued-submissions {
+  display: flex;
+  min-width: 0;
+  gap: 5px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.agent-queued-submissions::-webkit-scrollbar {
+  display: none;
+}
+
+.agent-queued-item {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 260px;
+  height: 27px;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 5px;
+  padding: 0 4px 0 8px;
+  border: 1px dashed #c3c9d2;
+  border-radius: 7px;
+  background: #f6f8fa;
+  color: #555d69;
+}
+
+.agent-queued-item > svg {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 12px;
+  color: #8b7ce8;
+}
+
+.agent-queued-item-text {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-queued-item button {
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #8b929d;
+  cursor: pointer;
+}
+
+.agent-queued-item button:hover {
+  background: #eceef1;
+  color: #454b54;
+}
+
+.agent-queued-item button svg {
+  width: 12px;
+  height: 12px;
+}
+
 .agent-prompt-actions {
   display: flex;
   min-width: 0;

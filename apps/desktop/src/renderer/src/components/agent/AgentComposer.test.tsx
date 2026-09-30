@@ -704,3 +704,57 @@ describe('AgentComposer ghost suggestion', () => {
     expect(onAcceptGhost).not.toHaveBeenCalled()
   })
 })
+
+describe('AgentComposer queued submissions', () => {
+  beforeEach(() => {
+    vi.stubGlobal('window', {
+      requestAnimationFrame: (callback: FrameRequestCallback) => { callback(0); return 1 },
+    })
+    vi.stubGlobal('document', { activeElement: null, addEventListener: vi.fn(), removeEventListener: vi.fn() })
+  })
+
+  afterEach(() => {
+    vi.clearAllMocks()
+    vi.unstubAllGlobals()
+  })
+
+  it('keeps the textarea enabled while a run is active so Enter still submits (queues upstream)', () => {
+    const onSubmit = vi.fn()
+    const { renderer } = renderComposer({ active: true, value: '排队消息', onSubmit })
+    const textarea = renderer.root.findByProps({ 'aria-label': '桌面 AI 工作台输入框' })
+    expect(textarea.props.disabled).toBe(false)
+    expect(textarea.props.placeholder).toBe('Agent 正在处理，输入将排队，结束后自动发送')
+
+    act(() => textarea.props.onKeyDown({
+      key: 'Enter',
+      shiftKey: false,
+      preventDefault: vi.fn(),
+      nativeEvent: { isComposing: false, keyCode: 13 },
+    }))
+    expect(onSubmit).toHaveBeenCalledTimes(1)
+  })
+
+  it('renders queued chips in order and removes one on click', () => {
+    const onRemoveQueuedSubmission = vi.fn()
+    const { renderer } = renderComposer({
+      active: true,
+      queuedSubmissions: [
+        { id: 'q1', prompt: '第一条排队' },
+        { id: 'q2', prompt: '第二条排队' },
+      ],
+      onRemoveQueuedSubmission,
+    })
+    const chips = renderer.root.findAllByProps({ className: 'agent-queued-item' })
+    expect(chips).toHaveLength(2)
+    expect(chips[0].findByProps({ className: 'agent-queued-item-text' }).children).toEqual(['第一条排队'])
+    expect(chips[1].findByProps({ className: 'agent-queued-item-text' }).children).toEqual(['第二条排队'])
+
+    act(() => chips[1].findByProps({ 'aria-label': '移除排队消息' }).props.onClick())
+    expect(onRemoveQueuedSubmission).toHaveBeenCalledWith('q2')
+  })
+
+  it('renders no queue surface when nothing is queued', () => {
+    const { renderer } = renderComposer({ active: true })
+    expect(renderer.root.findAllByProps({ className: 'agent-queued-submissions' })).toHaveLength(0)
+  })
+})

@@ -724,6 +724,8 @@ export function AgentPanel({
       ghostSuggestion={ghostSuggestion}
       onAcceptGhost={acceptGhost}
       onDismissGhost={dismissGhost}
+      queuedSubmissions={session.queuedSubmissions}
+      onRemoveQueuedSubmission={session.removeQueuedSubmission}
       value={draft}
       active={Boolean(session.activeRunId)}
       loading={session.loading || submitting}
