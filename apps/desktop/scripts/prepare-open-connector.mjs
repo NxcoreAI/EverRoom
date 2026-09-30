@@ -5,10 +5,10 @@ import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 
 const OPEN_CONNECTOR_REVISION = '806663488c6e8df92755d473cd866a1d80f2222f'
-// runtimeFormat 4：白名单扩展至 7 项（现 patches/open-connector@0.0.0-development.patch，
-// 覆盖文档导入链 drive/wiki/search/comment）。patch 不改变 revision/version，
+// runtimeFormat 5：provider-icons 插件改为拉取失败降级空图标（oomol.com catalog.json
+// 2026-09 改版 404，曾致 CI build:web 全平台失败）。patch 不改变 revision/version，
 // 已构建的运行时会因 marker 命中而跳过重建，需靠 bump 强制刷新。
-const RUNTIME_FORMAT = 4
+const RUNTIME_FORMAT = 5
 const require = createRequire(import.meta.url)
 const sourcePackagePath = require.resolve('@oomol-lab/open-connector/package.json')
 const sourceDirectory = dirname(sourcePackagePath)
