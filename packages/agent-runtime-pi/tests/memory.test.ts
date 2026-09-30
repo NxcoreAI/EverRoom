@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MemoryCoreClient, MemoryCoreError } from "../src/memory/client.js";
-import { formatRecallResult } from "../src/memory/format.js";
+import { dedupeAtomicItems, formatRecallResult } from "../src/memory/format.js";
 import { createMemoryExtension, extractCapturableMessages } from "../src/memory/extension.js";
 import { createMemoryTools } from "../src/memory/tools.js";
 import type { MemoryRuntimeConfig } from "../src/memory/types.js";
@@ -337,6 +337,80 @@ describe("formatRecallResult", () => {
       2000,
     );
     expect(withEmpty).not.toContain("[Room 记忆]");
+  });
+
+  it("dedupes same-source fragments before rendering [相关记忆]", () => {
+    const item = (id: string, content: string, scene?: string) => ({
+      id,
+      type: "fact",
+      content,
+      ...(scene ? { scene_name: scene } : {}),
+      created_at: "",
+      updated_at: "",
+    });
+    const result = formatRecallResult(
+      {
+        atomicItems: [
+          item("a", "同一文档拆出的碎片一", "API 手册"),
+          item("b", "同一文档 拆出的碎片一", "API 手册"), // 归一后重复
+          item("c", "同一文档拆出的碎片二", "API 手册"),
+          item("d", "同一文档拆出的碎片三", "API 手册"), // 同 scene 超限
+          item("e", "别的场景的记忆", "周会纪要"),
+        ],
+        coreContent: null,
+        scenarios: [],
+      },
+      4000,
+    );
+    expect(result).toContain("碎片一（场景：API 手册）");
+    expect(result).toContain("碎片二");
+    expect(result).not.toContain("碎片三");
+    expect(result).toContain("周会纪要");
+  });
+});
+
+describe("dedupeAtomicItems", () => {
+  const item = (id: string, content: string, scene?: string) => ({
+    id,
+    type: "fact",
+    content,
+    ...(scene ? { scene_name: scene } : {}),
+    created_at: "",
+    updated_at: "",
+  });
+
+  it("drops whitespace/case-normalized duplicates keeping the first (server-ranked) item", () => {
+    const out = dedupeAtomicItems([
+      item("a", "用户偏好简洁回复"),
+      item("b", "用户 偏好 简洁 回复"),
+      item("c", "user prefers chinese"),
+      item("d", "User Prefers Chinese"),
+      item("e", "独立事实"),
+    ]);
+    expect(out.map((x) => x.id)).toEqual(["a", "c", "e"]);
+  });
+
+  it("caps per-scene items at maxPerScene and falls back to background", () => {
+    const out = dedupeAtomicItems([
+      item("a", "决议A", "认证服务演进"),
+      item("b", "决议B", "认证服务演进"),
+      item("c", "决议C", "认证服务演进"),
+      { ...item("d", "无场景但有背景"), scene_name: undefined, background: "旧场景X" },
+      { ...item("e", "同背景另一条"), scene_name: undefined, background: "旧场景X" },
+      { ...item("f", "同背景第三条"), scene_name: undefined, background: "旧场景X" },
+    ]);
+    expect(out.map((x) => x.id)).toEqual(["a", "b", "d", "e"]);
+  });
+
+  it("items without any scene only participate in content dedupe", () => {
+    const out = dedupeAtomicItems([
+      item("a", "事实一"),
+      item("b", "事实二"),
+      item("c", "事实三"),
+      item("d", "事实四"),
+      item("e", "事实一"),
+    ]);
+    expect(out.map((x) => x.id)).toEqual(["a", "b", "c", "d"]);
   });
 });
 

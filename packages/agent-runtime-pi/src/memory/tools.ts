@@ -1,7 +1,7 @@
 import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { MemoryCoreClient } from "./client.js";
-import { formatAtomicLine } from "./format.js";
+import { dedupeAtomicItems, formatAtomicLine } from "./format.js";
 import type { MemoryAtomicItem } from "./types.js";
 
 export const MEMORY_TOOL_NAMES = ["memory_search", "conversation_search"] as const;
@@ -74,7 +74,7 @@ export function createMemoryTools(
           ? params.room_id !== undefined
             ? "该 Room 没有匹配的绑定记忆（可去掉 room_id 改为全局检索）。"
             : "没有匹配的长期记忆。"
-          : items.map(formatAtomicLine).join("\n");
+          : dedupeAtomicItems(items).map(formatAtomicLine).join("\n");
         return {
           content: [{ type: "text", text }],
           details: { count: items.length, roomId: params.room_id ?? null },
