@@ -7,6 +7,8 @@ export interface DisplayAgentToolCall {
   id: string
   runId: string
   name: string
+  /** 适配器侧人类可读标题（ACP tool_call.title）；作为 subject 的兜底展示。 */
+  title?: string
   args: Record<string, unknown>
   partialResult?: unknown
   result?: unknown
@@ -52,6 +54,7 @@ export function mergeAgentToolEvent(
   const payload = event.payload as {
     toolCallId?: unknown
     name?: unknown
+    title?: unknown
     args?: unknown
     partialResult?: unknown
     result?: unknown
@@ -79,6 +82,7 @@ export function mergeAgentToolEvent(
     id: payload.toolCallId,
     runId: event.runId,
     name: typeof payload.name === 'string' ? payload.name : existing?.name ?? 'tool',
+    title: typeof payload.title === 'string' ? payload.title : existing?.title,
     args,
     partialResult: payload.partialResult !== undefined ? payload.partialResult : existing?.partialResult,
     result: payload.result !== undefined ? payload.result : existing?.result,
@@ -131,6 +135,13 @@ export function agentToolLabel(tool: DisplayAgentToolCall, completed = tool.stat
     wiki_search: ['搜索知识库', '已搜索知识库'],
     wiki_read: ['读取知识库页面', '已读取知识库页面'],
     conversation_search: ['检索历史对话', '已检索历史对话'],
+    // ACP 渠道工具 kind 的语义名（见网关 acpToolEventName）。
+    web_fetch: ['获取网页', '已获取网页'],
+    search: ['搜索', '已搜索'],
+    think: ['思考', '已思考'],
+    create: ['创建', '已创建'],
+    delete: ['删除', '已删除'],
+    move: ['移动', '已移动'],
   }
   const exact = labels[name]
   if (exact) {
@@ -156,6 +167,12 @@ export function agentToolLabel(tool: DisplayAgentToolCall, completed = tool.stat
         wiki_search: ['surface:agentExecutionTimeline.searchWiki', 'surface:agentExecutionTimeline.wikiSearched'],
         wiki_read: ['surface:agentExecutionTimeline.readWikiPage', 'surface:agentExecutionTimeline.wikiPageRead'],
         conversation_search: ['surface:agentExecutionTimeline.searchConversations', 'surface:agentExecutionTimeline.conversationsSearched'],
+        web_fetch: ['surface:agentExecutionTimeline.fetchWeb', 'surface:agentExecutionTimeline.fetchedWeb'],
+        search: ['surface:agentExecutionTimeline.searchGeneric', 'surface:agentExecutionTimeline.searchedGeneric'],
+        think: ['surface:agentExecutionTimeline.thinking', 'surface:agentExecutionTimeline.thought'],
+        create: ['surface:agentExecutionTimeline.createItem', 'surface:agentExecutionTimeline.createdItem'],
+        delete: ['surface:agentExecutionTimeline.deleteItem', 'surface:agentExecutionTimeline.deletedItem'],
+        move: ['surface:agentExecutionTimeline.moveItem', 'surface:agentExecutionTimeline.movedItem'],
       }
       const key = keys[name]?.[completed ? 1 : 0]
       if (key) return t(key)
@@ -194,12 +211,12 @@ export function agentToolSubject(tool: DisplayAgentToolCall): string | undefined
   }
   for (const key of [
     'command', 'cmd', 'script', 'code', 'input', 'task', 'assignment',
-    'query', 'search_query', 'keyword', 'prompt', 'path', 'filePath', 'title', 'documentTitle', 'url',
+    'query', 'search_query', 'keyword', 'prompt', 'path', 'filePath', 'file_path', 'title', 'documentTitle', 'url',
   ]) {
     const value = userText(tool.args[key], 80)
     if (value) return value
   }
-  return undefined
+  return userText(tool.title, 80)
 }
 
 export function agentToolCommand(tool: DisplayAgentToolCall): string | undefined {
