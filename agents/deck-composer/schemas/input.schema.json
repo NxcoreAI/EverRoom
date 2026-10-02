@@ -67,6 +67,17 @@
       "type": "string",
       "maxLength": 32,
       "description": "输出语言（BCP-47 或语言名）；优先于素材语言。"
+    },
+    "roomTitle": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120,
+      "description": "绑定 Room 的标题（网关注入，供上下文参考）。"
+    },
+    "previousDraft": {
+      "type": "string",
+      "maxLength": 51_000,
+      "description": "增量迭代的上一稿：可能是本 agent 上一稿的渲染，也可能是用户编辑后的草稿文档全文；instruction 作为其上的修改要求。"
     }
   }
 }

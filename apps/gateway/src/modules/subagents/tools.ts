@@ -11,6 +11,12 @@ import { formatRoomContextDigest, type RoomContextDigest } from "../context-room
   type DocumentDraftSnapshot,
 } from "./document-draft.js";
 import { docWriterDraftFromStructuredOutput } from "./doc-writer-content.js";
+import {
+  DECK_COMPOSER_AGENT_ID,
+  DECK_DRAFT_TASK_LABEL,
+  deckDraftFromInvocation,
+  renderDeckDraftMarkdown,
+} from "./deck-draft.js";
 import { SubagentOrchestrator } from "./orchestrator.js";
 import { SubagentRegistry } from "./registry.js";
 
@@ -167,6 +173,64 @@ export function inferMaterialSourcesFromReads(
     }
   }
   return entries;
+}
+
+/**
+ * draft 类工具共用的素材来源解析（doc-writer 方案 §4；DeckGen W2 起 deck_draft 复用）：
+ * 显式 materialSources 优先（id 必须来自 document_read 的权威块），缺失时从本 run 的
+ * 读取台账确定性推断；不做覆盖，合并上限 50。
+ */
+function resolveDraftMaterialSources(
+  params: { materialSources?: unknown; material?: unknown },
+  run: { runId: string },
+  roomId: string,
+  options: {
+    inferMaterialSources?: (
+      runId: string,
+      roomId: string | undefined,
+      material: string,
+    ) => Array<{ roomId: string; documentId: string; blockId: string; label?: string; textPreview?: string }>;
+  },
+): MaterialSourceEntry[] {
+  const materialSources = Array.isArray(params.materialSources)
+    ? params.materialSources.flatMap((item) => {
+      const entry = item as {
+        roomId?: unknown; documentId?: unknown; blockId?: unknown; label?: unknown; textPreview?: unknown;
+      };
+      const entryRoomId = String(entry.roomId ?? "").trim();
+      const documentId = String(entry.documentId ?? "").trim();
+      const blockId = String(entry.blockId ?? "").trim();
+      if (!entryRoomId || !documentId || !blockId) return [];
+      if (roomId && entryRoomId !== roomId) {
+        throw new Error("ROOM_SELECTION_MISMATCH: materialSources must reference blocks in the target Room");
+      }
+      return [{
+        roomId: entryRoomId,
+        documentId,
+        blockId,
+        ...(typeof entry.label === "string" && entry.label.trim()
+          ? { label: entry.label.trim().slice(0, 200) }
+          : {}),
+        ...(typeof entry.textPreview === "string" && entry.textPreview.trim()
+          ? { textPreview: entry.textPreview.trim().slice(0, 400) }
+          : {}),
+      }];
+    }).slice(0, 50)
+    : [];
+  const materialText = typeof params.material === "string" ? params.material : "";
+  const inferredSources = materialSources.length === 0 && materialText.trim() && options.inferMaterialSources
+    ? options.inferMaterialSources(run.runId, roomId, materialText)
+    : [];
+  return [
+    ...materialSources,
+    ...inferredSources.flatMap((item) => [{
+      roomId: item.roomId,
+      documentId: item.documentId,
+      blockId: item.blockId,
+      ...(item.label ? { label: item.label.slice(0, 200) } : {}),
+      ...(item.textPreview ? { textPreview: item.textPreview.slice(0, 400) } : {}),
+    }]),
+  ].slice(0, 50);
 }
 
 export function createSubagentPiTools(
@@ -543,45 +607,9 @@ export function createSubagentPiTools(
         }
 
         // 块索引标记（blockIndexMark）：主 Agent 从 document_read 拿到的来源块透传给
-        // doc-writer，供正文段落末尾附 ^[...](everroom://...) 索引标记；id 必须来自权威数据。
-        const materialSources = Array.isArray(params.materialSources)
-          ? params.materialSources.flatMap((item) => {
-            const entryRoomId = String(item.roomId ?? "").trim();
-            const documentId = String(item.documentId ?? "").trim();
-            const blockId = String(item.blockId ?? "").trim();
-            if (!entryRoomId || !documentId || !blockId) return [];
-            if (roomId && entryRoomId !== roomId) {
-              throw new Error("ROOM_SELECTION_MISMATCH: materialSources must reference blocks in the target Room");
-            }
-            return [{
-              roomId: entryRoomId,
-              documentId,
-              blockId,
-              ...(typeof item.label === "string" && item.label.trim()
-                ? { label: item.label.trim().slice(0, 200) }
-                : {}),
-              ...(typeof item.textPreview === "string" && item.textPreview.trim()
-                ? { textPreview: item.textPreview.trim().slice(0, 400) }
-                : {}),
-            }];
-          }).slice(0, 50)
-          : [];
-        // 兜底（blockIndexMark）：主 agent 读了文档当素材却没传 materialSources 时，
-        // 从本 run 的读取台账确定性推断；显式传入的来源优先，不做覆盖。
-        const materialText = typeof params.material === "string" ? params.material : "";
-        const inferredSources = materialSources.length === 0 && materialText.trim() && options.inferMaterialSources
-          ? options.inferMaterialSources(run.runId, roomId, materialText)
-          : [];
-        const resolvedMaterialSources = [
-          ...materialSources,
-          ...inferredSources.flatMap((item) => [{
-            roomId: item.roomId,
-            documentId: item.documentId,
-            blockId: item.blockId,
-            ...(item.label ? { label: item.label.slice(0, 200) } : {}),
-            ...(item.textPreview ? { textPreview: item.textPreview.slice(0, 400) } : {}),
-          }]),
-        ].slice(0, 50);
+        // doc-writer，供正文段落末尾附 ^[...](everroom://...) 索引标记；id 必须来自权威数据；
+        // 未显式传入时从本 run 的读取台账确定性推断补齐。
+        const resolvedMaterialSources = resolveDraftMaterialSources(params, run, roomId, options);
         // memoryIndex 由 gateway 从 Room 权威数据注入，主 Agent 不经手记忆 id。
         const memoryIndex = roomId && options.resolveRoomMemoryItems
           && options.resolveRoomMemoryItems(roomId).length > 0
@@ -840,6 +868,197 @@ export function createSubagentPiTools(
             ...(readReceiptExpiresAt ? { readReceiptExpiresAt } : {}),
             ...(previousInvocationId ? { previousDraftApplied: Boolean(previousDraft) } : {}),
             digest: structured.digest ?? null,
+          }),
+          details: invocation,
+        };
+      },
+    });
+  }
+  const deckComposer = registry.get(DECK_COMPOSER_AGENT_ID);
+  if (deckComposer) {
+    tools.push({
+      name: "deck_draft",
+      label: "Draft deck content blocks",
+      description: "调度 deck-composer 子 Agent 从 Room 素材产出 PPT 内容草稿（DraftSpec：title + thesis + 可独立重排的内容块，"
+        + "每块带 everroom:// 溯源引用），是受众重排与密度编排的唯一内容源。"
+        + "instruction 写演示主题、场合与篇幅期望；素材优先由子 Agent 在绑定的 Room 内自取，"
+        + "也可传 material 与 materialSources（id 完整照抄 document_read 的 blocks）。"
+        + "落库：context_room_write_begin（title 用返回值）→ context_room_write_append（invocationId + chunkIndex，0 起逐块）"
+        + "→ context_room_write_commit；草稿 markdown 由服务端从结果转交，不得在参数中复写。"
+        + "落库后引导用户编辑草稿；用户改完要求更新时传 previousDocumentId（编辑后的草稿文档）重新调用本工具。"
+        + "不要自行编排页面顺序或改写块内容——受众重排与密度规划是后续独立步骤。",
+      parameters: Type.Object({
+        instruction: Type.String({ minLength: 1, maxLength: 16_000 }),
+        roomId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+        material: Type.Optional(Type.String({ maxLength: 100_000 })),
+        materialSources: Type.Optional(Type.Array(Type.Object({
+          roomId: Type.String({ minLength: 1, maxLength: 128 }),
+          documentId: Type.String({ minLength: 1, maxLength: 128 }),
+          blockId: Type.String({ minLength: 1, maxLength: 128 }),
+          label: Type.Optional(Type.String({ maxLength: 200 })),
+          textPreview: Type.Optional(Type.String({ maxLength: 400 })),
+        }, { additionalProperties: false }), { maxItems: 50 })),
+        blockBudget: Type.Optional(Type.Integer({ minimum: 4, maximum: 40 })),
+        previousInvocationId: Type.Optional(Type.String({ minLength: 1, maxLength: 64 })),
+        previousDocumentId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+        responseLanguage: Type.Optional(Type.String({ minLength: 2, maxLength: 35 })),
+      }, { additionalProperties: false }),
+      execute: async (run, params, signal) => {
+        const instruction = String(params.instruction ?? "").trim();
+        const material = typeof params.material === "string" && params.material.trim() ? params.material : null;
+        const responseLanguage = typeof params.responseLanguage === "string" && params.responseLanguage.trim()
+          ? params.responseLanguage.trim()
+          : (typeof run.responseLanguage === "string" && run.responseLanguage.trim()
+            ? run.responseLanguage.trim()
+            : null);
+        const explicitRoomId = typeof params.roomId === "string" ? params.roomId.trim() : "";
+        if (explicitRoomId && run.roomId && explicitRoomId !== run.roomId) {
+          throw new Error("ROOM_SELECTION_MISMATCH: The deck target differs from the Room already bound to this run");
+        }
+        const roomId = explicitRoomId || run.roomId || run.activeDocument?.roomId?.trim() || "";
+        if (!roomId) throw new Error("ROOM_SELECTION_REQUIRED: Select a Context Room first");
+        if (explicitRoomId && !run.roomId && Array.isArray(run.availableRooms) && run.availableRooms.length > 0
+          && !run.availableRooms.some((room) => room.id === explicitRoomId)
+          && !options.roomExists?.(explicitRoomId)) {
+          throw new Error("ROOM_SELECTION_REQUIRED: Choose one valid Room from available_rooms or call context_room_list");
+        }
+
+        const resolvedMaterialSources = resolveDraftMaterialSources(params, run, roomId, options);
+        // memoryIndex（deck 契约）：Room 记忆项由 gateway 注入，主 Agent 不经手记忆 id。
+        const memoryIndex = options.resolveRoomMemoryItems
+          ? options.resolveRoomMemoryItems(roomId).slice(0, 50).map((item) => ({
+            roomId,
+            memoryId: item.id,
+            label: item.content.slice(0, 120),
+            textPreview: item.content.slice(0, 400),
+          }))
+          : [];
+        const roomTitle = roomId ? run.availableRooms?.find((room) => room.id === roomId) : undefined;
+
+        // 增量迭代：用户编辑后的草稿文档优先（最新人工状态），否则回读上一稿渲染。
+        let previousDraft: string | null = null;
+        const previousDocumentId = typeof params.previousDocumentId === "string"
+          ? params.previousDocumentId.trim()
+          : "";
+        if (previousDocumentId) {
+          if (!options.resolveDocumentForDraft) throw new Error("deck_draft_document_access_unavailable");
+          let snapshot: DocumentDraftSnapshot;
+          try {
+            snapshot = options.resolveDocumentForDraft(previousDocumentId, roomId);
+          } catch (error) {
+            const detail = error instanceof Error ? error.message : String(error);
+            const code = (error as { code?: string } | null)?.code;
+            throw new Error(`deck_draft_document_unavailable: ${code ?? ""} ${detail}`.trim());
+          }
+          if (snapshot.markdown.trim()) {
+            previousDraft = snapshot.markdown.length > 50_000
+              ? `${snapshot.markdown.slice(0, 50_000)}\n…（超长截断）`
+              : snapshot.markdown;
+          }
+        }
+        const previousInvocationId = typeof params.previousInvocationId === "string"
+          ? params.previousInvocationId.trim()
+          : "";
+        if (!previousDraft && previousInvocationId) {
+          const prior = orchestrator.getInvocation(previousInvocationId);
+          const deck = prior
+            && prior.agentDefinitionId === DECK_COMPOSER_AGENT_ID
+            && prior.source === "primary_agent"
+            && prior.parentSessionId === run.sessionId
+            && prior.status === "completed"
+            ? deckDraftFromInvocation(prior)
+            : null;
+          if (deck) previousDraft = renderDeckDraftMarkdown(deck.spec, deck.labels);
+        }
+
+        const input = {
+          task: "deck-draft" as const,
+          instruction,
+          roomId,
+          ...(material ? { material } : {}),
+          ...(resolvedMaterialSources.length ? { materialSources: resolvedMaterialSources } : {}),
+          ...(memoryIndex.length ? { memoryIndex } : {}),
+          ...(roomTitle?.title?.trim() ? { roomTitle: roomTitle.title.trim().slice(0, 120) } : {}),
+          ...(typeof params.blockBudget === "number" ? { blockBudget: params.blockBudget } : {}),
+          ...(previousDraft ? { previousDraft } : {}),
+          ...(responseLanguage ? { responseLanguage } : {}),
+        };
+        let invocation;
+        try {
+          invocation = await orchestrator.dispatch({
+            agentId: DECK_COMPOSER_AGENT_ID,
+            task: DECK_DRAFT_TASK_LABEL,
+            input,
+            idempotencyKey: dispatchKey(run.runId, DECK_COMPOSER_AGENT_ID, DECK_DRAFT_TASK_LABEL, input),
+            source: "primary_agent",
+            parentSessionId: run.sessionId,
+            parentRunId: run.runId,
+            ...(signal ? { signal } : {}),
+          });
+        } catch (error) {
+          const errorCode = error instanceof Error ? error.message : String(error);
+          const retryable = errorCode === "subagent_concurrency_limit"
+            || errorCode === "subagent_global_concurrency_limit";
+          return {
+            content: JSON.stringify({
+              status: "failed",
+              errorCode,
+              retryable,
+              message: retryable
+                ? "deck-composer 调度被并发限额拒绝；如实告知用户可稍后重试。"
+                : "deck-composer 调度失败；如实告知用户。",
+            }),
+            details: { errorCode },
+          };
+        }
+        if (invocation.status !== "completed") {
+          return {
+            content: JSON.stringify({
+              invocationId: invocation.id,
+              status: invocation.status,
+              errorCode: invocation.errorCode ?? invocation.errorMessage ?? invocation.status,
+              retryable: invocation.status === "timed_out" || invocation.status === "cancelled",
+              message: `deck-composer 未完成（${invocation.status}）；如实告知用户。`,
+            }),
+            details: invocation,
+          };
+        }
+        const deck = deckDraftFromInvocation(invocation);
+        if (!deck) {
+          return {
+            content: JSON.stringify({
+              invocationId: invocation.id,
+              status: "completed",
+              errorCode: "deck_draft_result_invalid",
+              retryable: true,
+              message: "deck-composer 未提交合法 DraftSpec（块 id/kind/溯源引用不合规）；可调整 instruction 后重试 deck_draft。",
+            }),
+            details: invocation,
+          };
+        }
+        const byKind: Record<string, number> = {};
+        for (const block of deck.spec.blocks) byKind[block.kind] = (byKind[block.kind] ?? 0) + 1;
+        return {
+          content: JSON.stringify({
+            invocationId: invocation.id,
+            agentId: invocation.agentDefinitionId,
+            status: "completed",
+            kind: "deck-draft",
+            title: deck.spec.title,
+            ...(deck.spec.thesis ? { thesis: deck.spec.thesis } : {}),
+            blockCount: deck.spec.blocks.length,
+            blocksByKind: byKind,
+            outline: deck.spec.blocks.map((block) => ({
+              id: block.id,
+              kind: block.kind,
+              preview: block.content.slice(0, 80),
+              sources: block.sourceRefs.length,
+            })),
+            // 摘要回传：草稿正文不进主 Agent 上下文，由 write_append 凭
+            // invocationId + chunkIndex（0 起）服务端转交。
+            chunkCount: deck.chunks.length,
+            nextAction: "context_room_write_begin(title) → context_room_write_append(operationId, sequence, invocationId, chunkIndex=0.."
+              + `${deck.chunks.length - 1}) → context_room_write_commit`,
           }),
           details: invocation,
         };

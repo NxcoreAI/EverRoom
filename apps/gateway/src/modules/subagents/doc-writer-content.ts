@@ -13,6 +13,7 @@ import type {
   DocWriterDraftResolver,
 } from "../documents/capabilities/doc-writer-content.js";
 import { DOC_WRITER_AGENT_ID, splitIntoAppendChunks } from "./document-draft.js";
+import { DECK_COMPOSER_AGENT_ID, deckDraftFromInvocation } from "./deck-draft.js";
 
 function structuredOutputOf(invocation: SubagentInvocation): Record<string, unknown> | null {
   const structured = invocation.result?.structuredOutput;
@@ -98,10 +99,18 @@ export function createDocWriterDraftResolver(deps: {
   return (invocationId, context) => {
     const invocation = deps.getInvocation(invocationId);
     if (!invocation) return null;
-    if (invocation.agentDefinitionId !== DOC_WRITER_AGENT_ID) return null;
     if (invocation.source !== "primary_agent") return null;
     if (invocation.parentRunId !== context.runId) return null;
     if (invocation.status !== "completed" || !invocation.result) return null;
+    // DeckGen 比赛项目 W2：deck_draft 派发的 deck-composer 草稿以 draft-create
+    // 形态进入同一转交通道——草稿 markdown 由服务端从 DraftSpec 渲染，主 Agent
+    // 上下文不经全文，与 doc-writer 同一授权口径（本 run 经 primary_agent 派发）。
+    if (invocation.agentDefinitionId === DECK_COMPOSER_AGENT_ID) {
+      const deck = deckDraftFromInvocation(invocation);
+      if (!deck) return null;
+      return { kind: "draft-create", title: deck.spec.title, baseVersion: null, chunks: deck.chunks, items: [] };
+    }
+    if (invocation.agentDefinitionId !== DOC_WRITER_AGENT_ID) return null;
     const output = structuredOutputOf(invocation);
     if (!output) return null;
     return docWriterDraftFromStructuredOutput(output);

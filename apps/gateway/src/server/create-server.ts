@@ -758,6 +758,21 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       ? createWebSearchPiTools(agentResolver, externalCalls)
       : [],
   }));
+  // DeckGen 比赛项目 W2：deck-composer 的研究工具面与 doc-writer 同款
+  //（检索/读取/分析/联网 allowlist，写入/调度/通知类由工厂内拒绝）。须在首次 dispatch 前注册。
+  subagentRuntimeManager.registerAgentTools("deck-composer", () => createDocWriterAgentTools({
+    roomTools: createContextRoomAgentTools({ db, memory: memoryService, overview: roomOverviewService }),
+    documentTools: createDocumentPiTools(documentMcpHost),
+    analysisTools: subagentConfig.enabled
+      ? createSubagentPiTools(subagentRegistry, subagentOrchestrator, {
+          resolveRoomContext: async (roomId) => buildRoomContextDigest(db, roomId),
+          roomExists: (roomId) => documentMcpHost.roomExists(roomId),
+        })
+      : [],
+    webSearchTools: config.webSearch
+      ? createWebSearchPiTools(agentResolver, externalCalls)
+      : [],
+  }));
   // room-corrector 输出校验：edits 的 targetClaimId 必须来自网关组装的 claims 快照
   //（服务端 applyCitations 还有二次强校验，这里提前拒绝省一次转发）。
   subagentRuntimeManager.registerAgentResultValidator("room-corrector", (invocationInput, result) => {
