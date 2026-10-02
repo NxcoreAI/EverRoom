@@ -5,8 +5,8 @@
   "properties": {
     "task": {
       "type": "string",
-      "enum": ["deck-draft"],
-      "description": "The deck composition task to execute.（W3/W4 计划扩展：audience-reorder、density-plan）"
+      "enum": ["deck-draft", "audience-reorder"],
+      "description": "The deck composition task to execute.（W4 计划扩展：density-plan）"
     },
     "roomId": {
       "type": "string",
@@ -17,7 +17,7 @@
     "instruction": {
       "type": "string",
       "maxLength": 16000,
-      "description": "User instruction：演示主题、场合、初判受众、篇幅期望等；最高权威。"
+      "description": "User instruction：deck-draft 写演示主题/场合/篇幅期望；audience-reorder 写用户对本次重排的补充要求。最高权威。"
     },
     "material": {
       "type": "string",
@@ -63,10 +63,45 @@
       },
       "description": "Room 记忆项索引；草稿块的 sourceRefs 引用其 everroom://memory/{roomId}/{memoryId}。"
     },
-    "responseLanguage": {
+    "audienceProfileId": {
       "type": "string",
-      "maxLength": 32,
-      "description": "输出语言（BCP-47 或语言名）；优先于素材语言。"
+      "enum": ["judge", "investor", "customer", "tech"],
+      "description": "audience-reorder：受众画像 id（judge=比赛评委 investor=投资人 customer=客户 tech=技术评审）。"
+    },
+    "rhetoric": {
+      "type": "string",
+      "enum": ["pyramid", "scqa", "timeline"],
+      "description": "audience-reorder：修辞结构（pyramid=金字塔原理 scqa=情境-冲突-问题-答案 timeline=时间线）。"
+    },
+    "draftSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title", "blocks"],
+      "properties": {
+        "title": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "thesis": { "type": "string", "maxLength": 300 },
+        "blocks": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 40,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "kind", "content"],
+            "properties": {
+              "id": { "type": "string", "pattern": "^blk_[a-z0-9]+(_[a-z0-9]+)*$" },
+              "kind": { "enum": ["claim", "evidence", "data", "quote", "visual"] },
+              "content": { "type": "string", "minLength": 1, "maxLength": 2000 },
+              "sourceRefs": {
+                "type": "array",
+                "maxItems": 10,
+                "items": { "type": "string" }
+              }
+            }
+          }
+        }
+      },
+      "description": "audience-reorder：网关从草稿文档解析出的结构化块（顺序为草稿原序）。"
     },
     "roomTitle": {
       "type": "string",
@@ -76,8 +111,13 @@
     },
     "previousDraft": {
       "type": "string",
-      "maxLength": 51_000,
+      "maxLength": 51000,
       "description": "增量迭代的上一稿：可能是本 agent 上一稿的渲染，也可能是用户编辑后的草稿文档全文；instruction 作为其上的修改要求。"
+    },
+    "responseLanguage": {
+      "type": "string",
+      "maxLength": 32,
+      "description": "输出语言（BCP-47 或语言名）；优先于素材语言。"
     }
   }
 }

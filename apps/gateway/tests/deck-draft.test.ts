@@ -5,6 +5,7 @@ import {
   DECK_COMPOSER_AGENT_ID,
   deckSourceIndexOf,
   normalizeDeckDraftSpec,
+  parseDeckDraftBody,
   renderDeckDraftMarkdown,
 } from "../src/modules/subagents/deck-draft.js";
 import { createDocWriterDraftResolver } from "../src/modules/subagents/doc-writer-content.js";
@@ -14,6 +15,7 @@ import { createSubagentPiTools } from "../src/modules/subagents/tools.js";
 
 function deckSpecFixture(): Record<string, unknown> {
   return {
+    kind: "deck-draft",
     title: "DeckGen 项目汇报",
     thesis: "把 PPT 生成从一次性黑盒变成六阶段可干预流水线",
     blocks: [
@@ -136,6 +138,48 @@ describe("renderDeckDraftMarkdown + deckSourceIndexOf", () => {
     const normalized = normalizeDeckDraftSpec(deckSpecFixture())!;
     const markdown = renderDeckDraftMarkdown(normalized, new Map());
     expect(markdown).toContain("^[b2](everroom://room/r1/d1/b2)");
+  });
+});
+
+describe("parseDeckDraftBody（草稿文档确定性解析回块结构）", () => {
+  it("与 renderDeckDraftMarkdown 互逆：解析恢复 thesis/块/溯源", () => {
+    const normalized = normalizeDeckDraftSpec(deckSpecFixture())!;
+    const index = deckSourceIndexOf(deckInvocationFixture().input);
+    const parsed = parseDeckDraftBody(renderDeckDraftMarkdown(normalized, index.labels));
+    expect(parsed).not.toBeNull();
+    expect(parsed!.thesis).toBe(normalized.thesis);
+    expect(parsed!.blocks.map((block) => block.id)).toEqual(normalized.blocks.map((block) => block.id));
+    expect(parsed!.blocks[1]!.sourceRefs).toEqual(["everroom://room/r1/d1/b1"]);
+    // 溯源标记从正文剥离
+    expect(parsed!.blocks[1]!.content).not.toContain("everroom://");
+  });
+
+  it("容忍用户编辑：序号增删、标题间空行、内容改写", () => {
+    const markdown = [
+      "> **核心主张**：用户改过的主张。",
+      "",
+      "### [论点] blk_claim_main",
+      "",
+      "用户改写过的内容。",
+      "",
+      "### 99. [数据] blk_data_users",
+      "",
+      "改过的数字表述。",
+      "^[调研笔记](everroom://room/r1/d1/b1)",
+      "",
+    ].join("\n");
+    const parsed = parseDeckDraftBody(markdown);
+    expect(parsed).not.toBeNull();
+    expect(parsed!.thesis).toBe("用户改过的主张。");
+    expect(parsed!.blocks).toHaveLength(2);
+    expect(parsed!.blocks[1]!.kind).toBe("data");
+    expect(parsed!.blocks[1]!.sourceRefs).toEqual(["everroom://room/r1/d1/b1"]);
+  });
+
+  it("无块标题 / 空块 / 重复 id / 非法溯源 URI 拒绝", () => {
+    expect(parseDeckDraftBody("## 内容块\n\n没有块标题的普通正文。")).toBeNull();
+    expect(parseDeckDraftBody("### [论点] blk_a\n\n### [论点] blk_a\n\n内容")).toBeNull();
+    expect(parseDeckDraftBody("### [论点] blk_a\n\n内容^[x](https://evil.example/a)")).toBeNull();
   });
 });
 

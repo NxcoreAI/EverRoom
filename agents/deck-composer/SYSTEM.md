@@ -14,8 +14,9 @@
 你承接的任务由输入中的 `task` 字段决定：
 
 - `deck-draft`：按指令与素材产出 PPT 草稿 DraftSpec（title + thesis + blocks），方法见 skill。
+- `audience-reorder`：按受众画像与修辞结构对草稿块重排，产出 AudiencePlan（顺序 + 详略，不改写内容），方法见 skill。
 
-（W3/W4 计划：`audience-reorder` 受众感知重排、`density-plan` 信息密度编排——接入时在此登记。）
+（W4 计划：`density-plan` 信息密度编排——接入时在此登记。）
 
 工作要求：
 

@@ -1,58 +1,96 @@
 {
-  "$comment": "DraftSpec v1.0-rc1。契约唯一真源在 deckgen 仓 docs/contracts/draft-spec.schema.json（AtomGit Yuaaaaaaan/deckgen）；本文件与其保持一致，D1 双签冻结后禁止单侧改动。",
+  "$comment": "deck-composer 输出：kind 判别的扁平结构（与 doc-writer 同模式——Ajv 只管字段形态，跨字段语义由网关侧 normalizeDeckDraftSpec / normalizeAudiencePlan 校验）。契约唯一真源：deckgen 仓 docs/contracts/（draft-spec / audience-plan .schema.json，v1.0-rc1）；本文件与其保持一致，D1 双签冻结后禁止单侧改动。",
   "type": "object",
   "additionalProperties": false,
-  "required": ["title", "blocks"],
+  "required": ["kind"],
   "properties": {
+    "kind": {
+      "type": "string",
+      "enum": ["deck-draft", "audience-reorder"],
+      "description": "The task kind this result answers; must match the input task."
+    },
     "title": {
       "type": "string",
       "minLength": 1,
       "maxLength": 120,
-      "description": "演示标题（deck 标题，非文档标题）；可作为 slides_create 的 title。"
+      "description": "deck-draft：演示标题（deck 标题，非文档标题）；可作为 slides_create 的 title。"
     },
     "thesis": {
       "type": "string",
       "maxLength": 300,
-      "description": "一句话核心主张（建议 ≤80 字），供封面页与受众重排锚点使用。"
+      "description": "deck-draft：一句话核心主张（建议 ≤80 字），供封面页与受众重排锚点使用。"
     },
     "blocks": {
       "type": "array",
       "minItems": 4,
       "maxItems": 40,
-      "items": { "$ref": "#/$defs/block" }
-    }
-  },
-  "$defs": {
-    "block": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["id", "kind", "content"],
-      "properties": {
-        "id": {
-          "type": "string",
-          "pattern": "^blk_[a-z0-9]+(_[a-z0-9]+)*$",
-          "description": "内容块稳定 id（blk_ 前缀 + 短横线/下划线小写串）；AudiencePlan/DensityPlan 通过它引用。"
-        },
-        "kind": {
-          "enum": ["claim", "evidence", "data", "quote", "visual"],
-          "description": "claim=论点 evidence=论据 data=数据 quote=引述 visual=图示建议"
-        },
-        "content": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 2000,
-          "description": "块正文：一块一个可独立呈现的语义单元（1–4 句），不含顺序依赖的衔接语。"
-        },
-        "sourceRefs": {
-          "type": "array",
-          "maxItems": 10,
-          "items": {
+      "description": "deck-draft：内容块数组。",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "kind", "content"],
+        "properties": {
+          "id": {
             "type": "string",
-            "pattern": "^everroom://(room/[^/]+/[^/]+/[^/]+|memory/[^/]+/[^/]+)$"
+            "pattern": "^blk_[a-z0-9]+(_[a-z0-9]+)*$",
+            "description": "内容块稳定 id（语义短名，如 blk_core_value）；AudiencePlan/DensityPlan 通过它引用。"
           },
-          "description": "溯源引用：everroom://room/{roomId}/{documentId}/{blockId} 或 everroom://memory/{roomId}/{memoryId}；id 只能照抄输入，禁止自造。data/quote/evidence 块必须至少一条。"
+          "kind": {
+            "enum": ["claim", "evidence", "data", "quote", "visual"],
+            "description": "claim=论点 evidence=论据 data=数据 quote=引述 visual=图示建议"
+          },
+          "content": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000,
+            "description": "块正文：一块一个可独立呈现的语义单元（1–4 句），不含顺序依赖的衔接语。"
+          },
+          "sourceRefs": {
+            "type": "array",
+            "maxItems": 10,
+            "items": {
+              "type": "string",
+              "pattern": "^everroom://(room/[^/]+/[^/]+/[^/]+|memory/[^/]+/[^/]+)$"
+            },
+            "description": "溯源引用：everroom://room/{roomId}/{documentId}/{blockId} 或 everroom://memory/{roomId}/{memoryId}；id 只能照抄输入，禁止自造。data/quote/evidence 块必须至少一条。"
+          }
         }
       }
+    },
+    "profileId": {
+      "type": "string",
+      "enum": ["judge", "investor", "customer", "tech"],
+      "description": "audience-reorder：回显输入的受众画像 id。"
+    },
+    "rhetoric": {
+      "type": "string",
+      "enum": ["pyramid", "scqa", "timeline"],
+      "description": "audience-reorder：采用的修辞结构。"
+    },
+    "orderedBlockIds": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "pattern": "^blk_[a-z0-9]+(_[a-z0-9]+)*$" },
+      "description": "audience-reorder：重排后的块顺序，恰好覆盖所有 detail != cut 的块。"
+    },
+    "perBlock": {
+      "type": "object",
+      "propertyNames": { "pattern": "^blk_[a-z0-9]+(_[a-z0-9]+)*$" },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["detail"],
+        "properties": {
+          "detail": { "enum": ["expand", "keep", "shrink", "cut"] },
+          "note": { "type": "string", "maxLength": 200, "description": "该裁剪决策的简要理由，供表单回显与回溯。" }
+        }
+      },
+      "description": "audience-reorder：按块 id 索引的详略决策，覆盖全部块（含 cut）。"
+    },
+    "rationale": {
+      "type": "string",
+      "maxLength": 1000,
+      "description": "audience-reorder：整体重排理由（面向用户，2–4 句）。"
     }
   }
 }

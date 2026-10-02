@@ -22,4 +22,4 @@ description: Distill Room materials into an editable deck draft (DraftSpec: titl
 
 ## 输出
 
-结束前必须调用 `subagent_submit_result`，按 output schema 提交完整 DraftSpec（title + thesis + blocks）。不输出 markdown 全文，不调用文档写入工具，不向用户提问。
+结束前必须调用 `subagent_submit_result`，提交 `kind: "deck-draft"` + 完整 DraftSpec（title + thesis + blocks）。不输出 markdown 全文，不调用文档写入工具，不向用户提问。

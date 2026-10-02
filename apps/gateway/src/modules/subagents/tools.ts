@@ -15,8 +15,20 @@ import {
   DECK_COMPOSER_AGENT_ID,
   DECK_DRAFT_TASK_LABEL,
   deckDraftFromInvocation,
+  parseDeckDraftBody,
   renderDeckDraftMarkdown,
+  type DeckDraftSpec,
 } from "./deck-draft.js";
+import {
+  AUDIENCE_PROFILE_IDS,
+  DECK_REORDER_TASK_LABEL,
+  RHETORIC_IDS,
+  audienceOutlineOf,
+  audienceProfileOf,
+  normalizeAudiencePlan,
+  rhetoricTemplateOf,
+  type AudienceProfileId,
+} from "./deck-reorder.js";
 import { SubagentOrchestrator } from "./orchestrator.js";
 import { SubagentRegistry } from "./registry.js";
 
@@ -1059,6 +1071,218 @@ export function createSubagentPiTools(
             chunkCount: deck.chunks.length,
             nextAction: "context_room_write_begin(title) → context_room_write_append(operationId, sequence, invocationId, chunkIndex=0.."
               + `${deck.chunks.length - 1}) → context_room_write_commit`,
+          }),
+          details: invocation,
+        };
+      },
+    });
+    tools.push({
+      name: "deck_reorder",
+      label: "Reorder deck blocks for audience",
+      description: "调度 deck-composer 对草稿做受众感知重排，产出 AudiencePlan（块顺序 + 详略 + 理由），"
+        + "是六步流水线第③步：同一份草稿按不同受众（judge/investor/customer/tech）一键出不同讲法。"
+        + "草稿来源二选一：documentId（用户编辑后的草稿文档，优先——网关解析回块结构）或 invocationId（deck_draft 返回值）。"
+        + "rhetoric 可选（pyramid/scqa/timeline，缺省用画像默认）；instruction 写用户对本次的补充要求（如“评委版也要突出商业化”）。"
+        + "返回 outline（排序后每块一档详略）与 rationale——把 outline 呈现给用户确认后，"
+        + "作为 context_room_slides_create 的 outline（每页标题用对应块论点的提炼）生成对应受众版骨架；"
+        + "不要在参数里改写块内容——重排不改写内容，展开/收缩由后续密度规划执行。",
+      parameters: Type.Object({
+        profileId: Type.Union([
+          Type.Literal("judge"),
+          Type.Literal("investor"),
+          Type.Literal("customer"),
+          Type.Literal("tech"),
+        ]),
+        documentId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+        invocationId: Type.Optional(Type.String({ minLength: 1, maxLength: 64 })),
+        rhetoric: Type.Optional(Type.Union([
+          Type.Literal("pyramid"),
+          Type.Literal("scqa"),
+          Type.Literal("timeline"),
+        ])),
+        instruction: Type.Optional(Type.String({ minLength: 1, maxLength: 4_000 })),
+        roomId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+        responseLanguage: Type.Optional(Type.String({ minLength: 2, maxLength: 35 })),
+      }, { additionalProperties: false }),
+      execute: async (run, params, signal) => {
+        const profile = audienceProfileOf(String(params.profileId ?? ""));
+        if (!profile) throw new Error("deck_reorder_profile_invalid");
+        const rhetoricId = typeof params.rhetoric === "string" && params.rhetoric
+          ? params.rhetoric
+          : profile.defaultRhetoric;
+        if (!(RHETORIC_IDS as readonly string[]).includes(rhetoricId)) {
+          throw new Error("deck_reorder_rhetoric_invalid");
+        }
+
+        const explicitRoomId = typeof params.roomId === "string" ? params.roomId.trim() : "";
+        if (explicitRoomId && run.roomId && explicitRoomId !== run.roomId) {
+          throw new Error("ROOM_SELECTION_MISMATCH: The deck target differs from the Room already bound to this run");
+        }
+        const roomId = explicitRoomId || run.roomId || run.activeDocument?.roomId?.trim() || "";
+        if (!roomId) throw new Error("ROOM_SELECTION_REQUIRED: Select a Context Room first");
+
+        // 草稿来源：优先用户编辑后的草稿文档（最新人工状态），否则 deck_draft 上一稿。
+        const documentId = typeof params.documentId === "string" ? params.documentId.trim() : "";
+        const invocationId = typeof params.invocationId === "string" ? params.invocationId.trim() : "";
+        if (!documentId && !invocationId) {
+          throw new Error("deck_reorder_draft_required: Pass documentId (draft document) or invocationId (deck_draft result)");
+        }
+        let spec: DeckDraftSpec | null = null;
+        if (documentId) {
+          if (!options.resolveDocumentForDraft) throw new Error("deck_reorder_document_access_unavailable");
+          let snapshot: DocumentDraftSnapshot;
+          try {
+            snapshot = options.resolveDocumentForDraft(documentId, roomId);
+          } catch (error) {
+            const detail = error instanceof Error ? error.message : String(error);
+            throw new Error(`deck_reorder_document_unavailable: ${detail}`.trim());
+          }
+          const parsed = parseDeckDraftBody(snapshot.markdown);
+          if (!parsed) {
+            return {
+              content: JSON.stringify({
+                status: "failed",
+                errorCode: "deck_reorder_draft_unparseable",
+                retryable: false,
+                message: "草稿文档无法解析回块结构（块标题行格式应为 ### N.[类型] blk_id）；请引导用户修正后再试，或改用 invocationId。",
+              }),
+              details: { documentId },
+            };
+          }
+          spec = {
+            title: snapshot.document.title.trim().slice(0, 120) || "未命名草稿",
+            thesis: parsed.thesis,
+            blocks: parsed.blocks,
+          };
+        } else {
+          const prior = orchestrator.getInvocation(invocationId);
+          const deck = prior
+            && prior.agentDefinitionId === DECK_COMPOSER_AGENT_ID
+            && prior.status === "completed"
+            ? deckDraftFromInvocation(prior)
+            : null;
+          if (!deck) {
+            return {
+              content: JSON.stringify({
+                status: "failed",
+                errorCode: "deck_reorder_draft_unavailable",
+                retryable: false,
+                message: "未找到可用的 deck_draft 结果；请先调用 deck_draft 或传草稿 documentId。",
+              }),
+              details: { invocationId },
+            };
+          }
+          spec = deck.spec;
+        }
+
+        const instruction = typeof params.instruction === "string" && params.instruction.trim()
+          ? params.instruction.trim()
+          : null;
+        const responseLanguage = typeof params.responseLanguage === "string" && params.responseLanguage.trim()
+          ? params.responseLanguage.trim()
+          : (typeof run.responseLanguage === "string" && run.responseLanguage.trim()
+            ? run.responseLanguage.trim()
+            : null);
+        const input = {
+          task: "audience-reorder" as const,
+          instruction: instruction ?? `为${profile.label}重排草稿`,
+          roomId,
+          audienceProfileId: profile.id,
+          rhetoric: rhetoricId,
+          draftSpec: {
+            title: spec.title,
+            ...(spec.thesis ? { thesis: spec.thesis } : {}),
+            blocks: spec.blocks.map((block) => ({
+              id: block.id,
+              kind: block.kind,
+              content: block.content,
+              ...(block.sourceRefs.length ? { sourceRefs: block.sourceRefs } : {}),
+            })),
+          },
+          ...(responseLanguage ? { responseLanguage } : {}),
+        };
+        let invocation;
+        try {
+          invocation = await orchestrator.dispatch({
+            agentId: DECK_COMPOSER_AGENT_ID,
+            task: DECK_REORDER_TASK_LABEL,
+            input,
+            idempotencyKey: dispatchKey(run.runId, DECK_COMPOSER_AGENT_ID, DECK_REORDER_TASK_LABEL, input),
+            source: "primary_agent",
+            parentSessionId: run.sessionId,
+            parentRunId: run.runId,
+            ...(signal ? { signal } : {}),
+          });
+        } catch (error) {
+          const errorCode = error instanceof Error ? error.message : String(error);
+          const retryable = errorCode === "subagent_concurrency_limit"
+            || errorCode === "subagent_global_concurrency_limit";
+          return {
+            content: JSON.stringify({
+              status: "failed",
+              errorCode,
+              retryable,
+              message: retryable
+                ? "deck-composer 调度被并发限额拒绝；如实告知用户可稍后重试。"
+                : "deck-composer 调度失败；如实告知用户。",
+            }),
+            details: { errorCode },
+          };
+        }
+        if (invocation.status !== "completed") {
+          return {
+            content: JSON.stringify({
+              invocationId: invocation.id,
+              status: invocation.status,
+              errorCode: invocation.errorCode ?? invocation.errorMessage ?? invocation.status,
+              retryable: invocation.status === "timed_out" || invocation.status === "cancelled",
+              message: `deck-composer 未完成（${invocation.status}）；如实告知用户。`,
+            }),
+            details: invocation,
+          };
+        }
+        const structured = invocation.result?.structuredOutput !== null
+          && typeof invocation.result?.structuredOutput === "object"
+          && !Array.isArray(invocation.result.structuredOutput)
+          ? invocation.result.structuredOutput as Record<string, unknown>
+          : extractJsonObject(invocation.result?.text ?? "");
+        const plan = structured ? normalizeAudiencePlan(structured, spec, profile.id) : null;
+        if (!plan) {
+          return {
+            content: JSON.stringify({
+              invocationId: invocation.id,
+              status: "completed",
+              errorCode: "deck_reorder_result_invalid",
+              retryable: true,
+              message: "deck-composer 未提交合法 AudiencePlan（覆盖不完整或引用了未知块）；可调整 instruction 后重试 deck_reorder。",
+            }),
+            details: invocation,
+          };
+        }
+        const outline = audienceOutlineOf(spec, plan);
+        const cutBlocks = spec.blocks
+          .filter((block) => plan.perBlock[block.id]?.detail === "cut")
+          .map((block) => ({
+            id: block.id,
+            kind: block.kind,
+            note: plan.perBlock[block.id]?.note ?? null,
+          }));
+        return {
+          content: JSON.stringify({
+            invocationId: invocation.id,
+            agentId: invocation.agentDefinitionId,
+            status: "completed",
+            kind: "audience-reorder",
+            profileId: plan.profileId,
+            profileLabel: profile.label,
+            rhetoric: plan.rhetoric,
+            ...(plan.rationale ? { rationale: plan.rationale } : {}),
+            outline,
+            cutBlocks,
+            draftSource: documentId ? { documentId } : { invocationId },
+            nextAction: "把 outline 呈现给用户确认（顺序/详略/砍块），确认后作为 context_room_slides_create 的 outline"
+              + "（每页标题用对应块论点的提炼，title 加受众后缀如「·评委版」）生成该受众版骨架；"
+              + "同一草稿可再调本工具换 profileId 出其他受众版。",
           }),
           details: invocation,
         };

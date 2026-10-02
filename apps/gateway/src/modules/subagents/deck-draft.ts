@@ -40,6 +40,20 @@ const KIND_LABELS: Record<DeckBlockKind, string> = {
   visual: "图示",
 };
 
+const KIND_BY_LABEL: Record<string, DeckBlockKind> = {
+  论点: "claim",
+  论据: "evidence",
+  数据: "data",
+  引述: "quote",
+  图示: "visual",
+};
+
+/** 草稿文档块标题行：`### 1. [论点] blk_claim_main`（序号可省略，容忍用户编辑）。 */
+const BLOCK_HEADING_PATTERN = /^#{3}\s+(?:\d+\.\s*)?\[(论点|论据|数据|引述|图示)\]\s+(blk_[a-z0-9]+(?:_[a-z0-9]+)*)\s*$/;
+const THESIS_PATTERN = /^>\s*\*\*核心主张\*\*[:：]\s*(.+)$/;
+/** 整行由引用标记组成（`^[label](uri)` 空格并联）；正文内普通行内链接不受影响。 */
+const CITE_MARKER_PATTERN = /\^\[[^\]]*\]\(([^)\s]+)\)/g;
+
 function rowOf(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -95,6 +109,7 @@ function sourceMarker(uri: string, labels: Map<string, string>): string {
  * 与 doc-writer 块索引标记同一信任级别。
  */
 export function normalizeDeckDraftSpec(output: Record<string, unknown>): DeckDraftSpec | null {
+  if (output.kind !== "deck-draft") return null;
   const title = typeof output.title === "string" ? output.title.trim() : "";
   if (!title || title.length > 120) return null;
   const thesis = typeof output.thesis === "string" && output.thesis.trim()
@@ -148,6 +163,59 @@ export interface DeckDraftContent {
   spec: DeckDraftSpec;
   chunks: string[];
   labels: Map<string, string>;
+}
+
+/**
+ * 把草稿文档 markdown 确定性解析回块结构（audience-reorder 的输入侧）：
+ * 与 renderDeckDraftMarkdown 互为逆操作，容忍用户编辑（序号增删、标题间加空行、
+ * 内容改写）；溯源标记从正文剥离并收集为 sourceRefs。解析失败返回 null——
+ * 调用方引导用户检查块标题行格式（### N.[类型] blk_id）。
+ */
+export interface ParsedDeckDraftBody {
+  thesis: string | null;
+  blocks: DeckDraftBlock[];
+}
+
+export function parseDeckDraftBody(markdown: string): ParsedDeckDraftBody | null {
+  const blocks: DeckDraftBlock[] = [];
+  const seen = new Set<string>();
+  let thesis: string | null = null;
+  let current: { id: string; kind: DeckBlockKind; contentLines: string[] } | null = null;
+  const flush = (): boolean => {
+    if (!current) return true;
+    const raw = current.contentLines.join("\n").trim();
+    if (!raw) return false;
+    const refs: string[] = [];
+    for (const match of raw.matchAll(CITE_MARKER_PATTERN)) {
+      const uri = match[1] ?? "";
+      if (!SOURCE_REF_PATTERN.test(uri)) return false;
+      if (!refs.includes(uri)) refs.push(uri);
+    }
+    const content = raw.replace(CITE_MARKER_PATTERN, "").replace(/[ \t]+$/gm, "").trim();
+    if (!content || seen.has(current.id)) return false;
+    seen.add(current.id);
+    blocks.push({ id: current.id, kind: current.kind, content, sourceRefs: refs });
+    return true;
+  };
+  for (const line of markdown.split(/\r?\n/)) {
+    const heading = BLOCK_HEADING_PATTERN.exec(line);
+    if (heading) {
+      if (!flush()) return null;
+      current = { id: heading[2]!, kind: KIND_BY_LABEL[heading[1]!]!, contentLines: [] };
+      continue;
+    }
+    if (!current) {
+      if (thesis === null) {
+        const thesisMatch = THESIS_PATTERN.exec(line);
+        if (thesisMatch) thesis = thesisMatch[1]!.trim().slice(0, 300);
+      }
+      continue;
+    }
+    current.contentLines.push(line);
+  }
+  if (!flush()) return null;
+  if (blocks.length === 0) return null;
+  return { thesis, blocks };
 }
 
 /** 从已完成 invocation 归一 deck 草稿（write_append 转交与 deck_draft 增量回读共用）。 */

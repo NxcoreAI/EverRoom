@@ -9,6 +9,7 @@ systemPrompt: ./SYSTEM.md
 
 skills:
   - ./skills/deck-draft
+  - ./skills/audience-reorder
 
 mcp: []
 
