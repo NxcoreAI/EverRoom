@@ -1,0 +1,72 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["task", "instruction"],
+  "properties": {
+    "task": {
+      "type": "string",
+      "enum": ["deck-draft"],
+      "description": "The deck composition task to execute.（W3/W4 计划扩展：audience-reorder、density-plan）"
+    },
+    "roomId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "本轮绑定的 Context Room；素材自取工具在此 Room 范围内检索与读取。"
+    },
+    "instruction": {
+      "type": "string",
+      "maxLength": 16000,
+      "description": "User instruction：演示主题、场合、初判受众、篇幅期望等；最高权威。"
+    },
+    "material": {
+      "type": "string",
+      "maxLength": 100000,
+      "description": "Source material excerpts assembled by the caller（Room 素材摘录），供 deck-draft 提炼。"
+    },
+    "blockBudget": {
+      "type": "integer",
+      "minimum": 4,
+      "maximum": 40,
+      "description": "建议产出的内容块数量；缺省 12–20（约对应 8–15 页演示）。instruction 明确要求时以 instruction 为准。"
+    },
+    "materialSources": {
+      "type": "array",
+      "maxItems": 50,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["roomId", "documentId", "blockId"],
+        "properties": {
+          "roomId": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "documentId": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "blockId": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "label": { "type": "string", "maxLength": 200 },
+          "textPreview": { "type": "string", "maxLength": 400 }
+        }
+      },
+      "description": "来源文档块（调用方的 document_read 结果）；草稿块的 sourceRefs 引用其 everroom://room/{roomId}/{documentId}/{blockId}。"
+    },
+    "memoryIndex": {
+      "type": "array",
+      "maxItems": 50,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["roomId", "memoryId"],
+        "properties": {
+          "roomId": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "memoryId": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "label": { "type": "string", "maxLength": 200 },
+          "textPreview": { "type": "string", "maxLength": 400 }
+        }
+      },
+      "description": "Room 记忆项索引；草稿块的 sourceRefs 引用其 everroom://memory/{roomId}/{memoryId}。"
+    },
+    "responseLanguage": {
+      "type": "string",
+      "maxLength": 32,
+      "description": "输出语言（BCP-47 或语言名）；优先于素材语言。"
+    }
+  }
+}

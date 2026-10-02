@@ -1,0 +1,24 @@
+schemaVersion: 1
+id: deck-composer
+name: Deck Composer
+description: 比赛项目 DeckGen 六步 PPT 流水线的内容智能层。W1 承载 deck-draft（Room 素材 → 可编辑草稿 DraftSpec）；audience-reorder（受众重排）与 density-plan（密度编排）按里程碑 W3/W4 接入。
+mode: dispatch_only
+enabled: false
+# W1：prompt v0 尚未接线 gateway 调度；W2 打通后再置 true。
+
+systemPrompt: ./SYSTEM.md
+
+skills:
+  - ./skills/deck-draft
+
+mcp: []
+
+inputSchema: ./schemas/input.schema.json
+outputSchema: ./schemas/output.schema.json
+
+policy:
+  allowedCallers: [primary-agent, internal-workflow]
+  maxConcurrency: 2
+  timeoutSeconds: 600
+  # 与 doc-writer 对齐的素材自取预算：检索/读 Room + skill read + 提交。
+  maxToolCalls: 24
