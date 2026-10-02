@@ -6,7 +6,7 @@
   "properties": {
     "kind": {
       "type": "string",
-      "enum": ["deck-draft", "audience-reorder"],
+      "enum": ["deck-draft", "audience-reorder", "density-plan"],
       "description": "The task kind this result answers; must match the input task."
     },
     "title": {
@@ -91,6 +91,41 @@
       "type": "string",
       "maxLength": 1000,
       "description": "audience-reorder：整体重排理由（面向用户，2–4 句）。"
+    },
+    "pages": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 24,
+      "description": "density-plan：页数组，页号从 0 连续递增。",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["pageNo", "blockIds", "layoutHint", "densityBudget"],
+        "properties": {
+          "pageNo": { "type": "integer", "minimum": 0, "maximum": 23 },
+          "blockIds": {
+            "type": "array",
+            "items": { "type": "string", "pattern": "^blk_[a-z0-9]+(_[a-z0-9]+)*$" },
+            "description": "分配到该页的内容块；封面/过渡页可为空。"
+          },
+          "layoutHint": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "版式提示，对齐 slides PageSpec 版式词汇（cover/title/body/body_list/image/chart/comparison/timeline 等）。"
+          },
+          "densityBudget": {
+            "enum": ["sparse", "normal", "dense"],
+            "description": "密度预算：sparse=封面/过渡页 normal=常规页 dense=数据密集页。"
+          },
+          "splitFrom": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 23,
+            "description": "预测性拆分来源页（本页由该页拆出）；必须指向更早的页。"
+          }
+        }
+      }
     }
   }
 }

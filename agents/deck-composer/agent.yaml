@@ -10,6 +10,7 @@ systemPrompt: ./SYSTEM.md
 skills:
   - ./skills/deck-draft
   - ./skills/audience-reorder
+  - ./skills/density-plan
 
 mcp: []
 

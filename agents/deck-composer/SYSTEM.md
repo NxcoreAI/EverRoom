@@ -15,8 +15,7 @@
 
 - `deck-draft`：按指令与素材产出 PPT 草稿 DraftSpec（title + thesis + blocks），方法见 skill。
 - `audience-reorder`：按受众画像与修辞结构对草稿块重排，产出 AudiencePlan（顺序 + 详略，不改写内容），方法见 skill。
-
-（W4 计划：`density-plan` 信息密度编排——接入时在此登记。）
+- `density-plan`：把重排后的块分页，产出 DensityPlan（每页块分配 + 版式提示 + 密度预算），方法见 skill。
 
 工作要求：
 

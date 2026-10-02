@@ -15,6 +15,7 @@ import {
   DECK_COMPOSER_AGENT_ID,
   DECK_DRAFT_TASK_LABEL,
   deckDraftFromInvocation,
+  normalizeDeckDraftSpec,
   parseDeckDraftBody,
   renderDeckDraftMarkdown,
   type DeckDraftSpec,
@@ -29,6 +30,11 @@ import {
   rhetoricTemplateOf,
   type AudienceProfileId,
 } from "./deck-reorder.js";
+import {
+  DECK_DENSITY_TASK_LABEL,
+  densityOutlineOf,
+  normalizeDensityPlan,
+} from "./deck-density.js";
 import { SubagentOrchestrator } from "./orchestrator.js";
 import { SubagentRegistry } from "./registry.js";
 
@@ -1283,6 +1289,193 @@ export function createSubagentPiTools(
             nextAction: "把 outline 呈现给用户确认（顺序/详略/砍块），确认后作为 context_room_slides_create 的 outline"
               + "（每页标题用对应块论点的提炼，title 加受众后缀如「·评委版」）生成该受众版骨架；"
               + "同一草稿可再调本工具换 profileId 出其他受众版。",
+          }),
+          details: invocation,
+        };
+      },
+    });
+    tools.push({
+      name: "deck_density",
+      label: "Plan deck pages with density budgets",
+      description: "调度 deck-composer 对受众重排结果做信息密度编排，产出 DensityPlan（块→页分配 + 版式提示 + 密度预算），"
+        + "是六步流水线第⑤步：内容决定版式，而非模板塞内容。"
+        + "reorderInvocationId 传 deck_reorder 返回的 invocationId（网关回读其草稿与重排结果）。"
+        + "pageBudget 可选（4-24 页，缺省自然分页）；instruction 写用户补充要求（如「控制在 10 页内」「数据都做成图表」）。"
+        + "返回 pages（每页 title/densityBudget/layoutHint/blockIds）——确认后作为 context_room_slides_create 的 outline"
+        + "（第 0 页是封面），随后 context_room_slides_set_page 逐页生成时遵守该页 densityBudget 与 layoutHint："
+        + "sparse ≤30 字一焦点、normal 每块要点化 ≤60 字、dense 用 chart/comparison/timeline 承载且绝不溢出；"
+        + "splitFrom 页与来源页同块延续。不要改写块内容——呈现裁剪发生在生成阶段。",
+      parameters: Type.Object({
+        reorderInvocationId: Type.String({ minLength: 1, maxLength: 64 }),
+        pageBudget: Type.Optional(Type.Integer({ minimum: 4, maximum: 24 })),
+        instruction: Type.Optional(Type.String({ minLength: 1, maxLength: 4_000 })),
+        roomId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+        responseLanguage: Type.Optional(Type.String({ minLength: 2, maxLength: 35 })),
+      }, { additionalProperties: false }),
+      execute: async (run, params, signal) => {
+        const reorderInvocationId = String(params.reorderInvocationId ?? "").trim();
+        const explicitRoomId = typeof params.roomId === "string" ? params.roomId.trim() : "";
+        if (explicitRoomId && run.roomId && explicitRoomId !== run.roomId) {
+          throw new Error("ROOM_SELECTION_MISMATCH: The deck target differs from the Room already bound to this run");
+        }
+        const roomId = explicitRoomId || run.roomId || run.activeDocument?.roomId?.trim() || "";
+        if (!roomId) throw new Error("ROOM_SELECTION_REQUIRED: Select a Context Room first");
+
+        // 回读本会话的 deck_reorder 结果：草稿（dispatch 输入）+ AudiencePlan（结构化输出）。
+        const prior = orchestrator.getInvocation(reorderInvocationId);
+        if (!prior
+          || prior.agentDefinitionId !== DECK_COMPOSER_AGENT_ID
+          || prior.source !== "primary_agent"
+          || prior.parentSessionId !== run.sessionId
+          || prior.status !== "completed") {
+          return {
+            content: JSON.stringify({
+              status: "failed",
+              errorCode: "deck_density_reorder_unavailable",
+              retryable: false,
+              message: "未找到本会话可用的 deck_reorder 结果；请先调用 deck_reorder 再编排密度。",
+            }),
+            details: { reorderInvocationId },
+          };
+        }
+        const priorInput = prior.input !== null && typeof prior.input === "object" && !Array.isArray(prior.input)
+          ? prior.input as Record<string, unknown>
+          : {};
+        const draftSpecRaw = priorInput.draftSpec as Record<string, unknown> | undefined;
+        const spec = draftSpecRaw
+          ? normalizeDeckDraftSpec({ kind: "deck-draft", ...draftSpecRaw })
+          : null;
+        const structured = prior.result?.structuredOutput !== null
+          && typeof prior.result?.structuredOutput === "object"
+          && !Array.isArray(prior.result.structuredOutput)
+          ? prior.result.structuredOutput as Record<string, unknown>
+          : null;
+        const profileId = typeof priorInput.audienceProfileId === "string"
+          ? priorInput.audienceProfileId
+          : "";
+        const plan = spec && structured && (AUDIENCE_PROFILE_IDS as readonly string[]).includes(profileId)
+          ? normalizeAudiencePlan(structured, spec, profileId as AudienceProfileId)
+          : null;
+        if (!spec || !plan) {
+          return {
+            content: JSON.stringify({
+              status: "failed",
+              errorCode: "deck_density_source_invalid",
+              retryable: false,
+              message: "deck_reorder 结果无法归一（草稿或 AudiencePlan 不完整）；请重新调用 deck_reorder 后再试。",
+            }),
+            details: { reorderInvocationId },
+          };
+        }
+
+        const instruction = typeof params.instruction === "string" && params.instruction.trim()
+          ? params.instruction.trim()
+          : null;
+        const responseLanguage = typeof params.responseLanguage === "string" && params.responseLanguage.trim()
+          ? params.responseLanguage.trim()
+          : (typeof run.responseLanguage === "string" && run.responseLanguage.trim()
+            ? run.responseLanguage.trim()
+            : null);
+        const input = {
+          task: "density-plan" as const,
+          instruction: instruction ?? `为受众 ${plan.profileId} 的重排结果编排页面与密度`,
+          roomId,
+          draftSpec: {
+            title: spec.title,
+            ...(spec.thesis ? { thesis: spec.thesis } : {}),
+            blocks: spec.blocks.map((block) => ({
+              id: block.id,
+              kind: block.kind,
+              content: block.content,
+              ...(block.sourceRefs.length ? { sourceRefs: block.sourceRefs } : {}),
+            })),
+          },
+          audiencePlan: {
+            profileId: plan.profileId,
+            rhetoric: plan.rhetoric,
+            orderedBlockIds: plan.orderedBlockIds,
+            perBlock: Object.fromEntries(Object.entries(plan.perBlock).map(([id, entry]) => [
+              id,
+              { detail: entry.detail, ...(entry.note ? { note: entry.note } : {}) },
+            ])),
+          },
+          ...(typeof params.pageBudget === "number" ? { pageBudget: params.pageBudget } : {}),
+          ...(responseLanguage ? { responseLanguage } : {}),
+        };
+        let invocation;
+        try {
+          invocation = await orchestrator.dispatch({
+            agentId: DECK_COMPOSER_AGENT_ID,
+            task: DECK_DENSITY_TASK_LABEL,
+            input,
+            idempotencyKey: dispatchKey(run.runId, DECK_COMPOSER_AGENT_ID, DECK_DENSITY_TASK_LABEL, input),
+            source: "primary_agent",
+            parentSessionId: run.sessionId,
+            parentRunId: run.runId,
+            ...(signal ? { signal } : {}),
+          });
+        } catch (error) {
+          const errorCode = error instanceof Error ? error.message : String(error);
+          const retryable = errorCode === "subagent_concurrency_limit"
+            || errorCode === "subagent_global_concurrency_limit";
+          return {
+            content: JSON.stringify({
+              status: "failed",
+              errorCode,
+              retryable,
+              message: retryable
+                ? "deck-composer 调度被并发限额拒绝；如实告知用户可稍后重试。"
+                : "deck-composer 调度失败；如实告知用户。",
+            }),
+            details: { errorCode },
+          };
+        }
+        if (invocation.status !== "completed") {
+          return {
+            content: JSON.stringify({
+              invocationId: invocation.id,
+              status: invocation.status,
+              errorCode: invocation.errorCode ?? invocation.errorMessage ?? invocation.status,
+              retryable: invocation.status === "timed_out" || invocation.status === "cancelled",
+              message: `deck-composer 未完成（${invocation.status}）；如实告知用户。`,
+            }),
+            details: invocation,
+          };
+        }
+        const output = invocation.result?.structuredOutput !== null
+          && typeof invocation.result?.structuredOutput === "object"
+          && !Array.isArray(invocation.result.structuredOutput)
+          ? invocation.result.structuredOutput as Record<string, unknown>
+          : extractJsonObject(invocation.result?.text ?? "");
+        const density = output ? normalizeDensityPlan(output, plan.orderedBlockIds) : null;
+        if (!density) {
+          return {
+            content: JSON.stringify({
+              invocationId: invocation.id,
+              status: "completed",
+              errorCode: "deck_density_result_invalid",
+              retryable: true,
+              message: "deck-composer 未提交合法 DensityPlan（页号不连续、块未覆盖或版式提示缺失）；可调整 instruction 后重试 deck_density。",
+            }),
+            details: invocation,
+          };
+        }
+        const pages = densityOutlineOf(spec, density);
+        return {
+          content: JSON.stringify({
+            invocationId: invocation.id,
+            agentId: invocation.agentDefinitionId,
+            status: "completed",
+            kind: "density-plan",
+            profileId: plan.profileId,
+            reorderInvocationId,
+            pageCount: pages.length,
+            ...(typeof params.pageBudget === "number" ? { pageBudget: params.pageBudget } : {}),
+            pages,
+            nextAction: "把 pages 呈现给用户确认（页数/分页/密度），确认后：context_room_slides_create 的 outline 用 pages[].title"
+              + "（第 0 页为封面，title 加受众后缀如「·评委版」）；随后 context_room_slides_set_page 逐页生成，"
+              + "每页遵守该页 densityBudget 与 layoutHint——sparse ≤30 字一焦点、normal 要点化 ≤60 字/块、"
+              + "dense 用 chart/comparison/timeline 承载且绝不溢出；splitFrom 页与来源页同块延续。",
           }),
           details: invocation,
         };

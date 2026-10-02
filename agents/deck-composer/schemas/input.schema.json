@@ -5,8 +5,8 @@
   "properties": {
     "task": {
       "type": "string",
-      "enum": ["deck-draft", "audience-reorder"],
-      "description": "The deck composition task to execute.（W4 计划扩展：density-plan）"
+      "enum": ["deck-draft", "audience-reorder", "density-plan"],
+      "description": "The deck composition task to execute."
     },
     "roomId": {
       "type": "string",
@@ -102,6 +102,40 @@
         }
       },
       "description": "audience-reorder：网关从草稿文档解析出的结构化块（顺序为草稿原序）。"
+    },
+    "audiencePlan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["profileId", "rhetoric", "orderedBlockIds", "perBlock"],
+      "properties": {
+        "profileId": { "type": "string", "enum": ["judge", "investor", "customer", "tech"] },
+        "rhetoric": { "type": "string", "enum": ["pyramid", "scqa", "timeline"] },
+        "orderedBlockIds": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "pattern": "^blk_[a-z0-9]+(_[a-z0-9]+)*$" }
+        },
+        "perBlock": {
+          "type": "object",
+          "propertyNames": { "pattern": "^blk_[a-z0-9]+(_[a-z0-9]+)*$" },
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["detail"],
+            "properties": {
+              "detail": { "enum": ["expand", "keep", "shrink", "cut"] },
+              "note": { "type": "string", "maxLength": 200 }
+            }
+          }
+        }
+      },
+      "description": "density-plan：网关组装的受众重排结果（deck_reorder 产物）。"
+    },
+    "pageBudget": {
+      "type": "integer",
+      "minimum": 4,
+      "maximum": 24,
+      "description": "density-plan：可选页数上限；缺省按块数自然分页，硬上限 24。"
     },
     "roomTitle": {
       "type": "string",
