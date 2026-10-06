@@ -23,3 +23,10 @@ export class OpenAiAsrError extends AsrError {
     this.name = "OpenAiAsrError";
   }
 }
+
+export class NxCoreAsrError extends AsrError {
+  constructor(operation: string, message: string, options?: ErrorOptions) {
+    super("nxcore_asr_error", `nxcore-asr ${operation} failed: ${message}`, 502, options);
+    this.name = "NxCoreAsrError";
+  }
+}

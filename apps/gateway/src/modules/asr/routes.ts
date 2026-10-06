@@ -39,6 +39,7 @@ export function asrRoutes(service: AsrService): FastifyPluginAsyncTypebox {
             )),
             diarizationEnabled: Type.Optional(Type.Boolean({ default: true })),
             contextPrompt: Type.Optional(Type.String({ maxLength: 400 })),
+            externalId: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
           }),
           response: { 202: JobSchema },
         },
@@ -48,6 +49,7 @@ export function asrRoutes(service: AsrService): FastifyPluginAsyncTypebox {
         ...(request.body.languageHints ? { languageHints: request.body.languageHints } : {}),
         diarizationEnabled: request.body.diarizationEnabled ?? true,
         ...(request.body.contextPrompt ? { contextPrompt: request.body.contextPrompt } : {}),
+        ...(request.body.externalId ? { externalId: request.body.externalId } : {}),
       })),
     );
 

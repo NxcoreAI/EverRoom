@@ -189,7 +189,15 @@ export interface OpenAiCompatibleAsrConfig {
   language?: string;
 }
 
-export type AsrConfig = AliyunAsrConfig | OpenAiCompatibleAsrConfig;
+/** nxcore-asr 自建转写服务（FunASR 离线 + 说话人识别），见 code.vyitec.com/nexcore/nxcoreasr。 */
+export interface NxCoreAsrConfig {
+  engine: "nxcore-asr";
+  baseUrl: string;
+  /** 租户 api_key（服务端 config.yaml 静态配置的租户身份）。 */
+  apiKey: string;
+}
+
+export type AsrConfig = AliyunAsrConfig | OpenAiCompatibleAsrConfig | NxCoreAsrConfig;
 
 export interface AliyunOssConfig {
   region: string;

@@ -5,13 +5,18 @@ export interface SubmitAsrInput {
   languageHints?: string[];
   diarizationEnabled: boolean;
   contextPrompt?: string;
+  /** 会话归组键（如 recordingId）：同键任务在 nxcore-asr 侧落同一会话，
+   * 说话人跨段连续识别；其他引擎忽略。 */
+  externalId?: string;
 }
 
 export interface AsrSegment {
   text: string;
   beginTime: number;
   endTime: number;
-  speakerId: number | null;
+  /** 云端 SaaS 与 nxcore-asr 用稳定字符串 ID，Aliyun 数字 ID。 */
+  speakerId: number | string | null;
+  speakerName?: string | null;
 }
 
 export interface AsrResult {

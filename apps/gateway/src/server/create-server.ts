@@ -301,6 +301,13 @@ function applyRuntimeConfig(config: GatewayConfig, runtime: RuntimeConfig, userC
       ...(asrText("model") ? { model: asrText("model") } : {}),
       ...(asrText("language") ? { language: asrText("language") } : {}),
     };
+  } else if (asrText("provider") === "nxcore-asr" && asrText("baseUrl") && asrText("apiKey")) {
+    // nxcore-asr：地址 + 租户 key 齐备即整体构造（说话人识别引擎，无需 OSS/model）。
+    config.asr = {
+      engine: "nxcore-asr",
+      baseUrl: asrText("baseUrl"),
+      apiKey: asrText("apiKey"),
+    };
   } else if (asrText("apiKey") && asrText("baseUrl") && asrText("model")
     && ossText("region") && ossText("bucket") && ossText("accessKeyId") && ossText("accessKeySecret")) {
     config.asr = {
