@@ -1512,6 +1512,8 @@
   text-align: left;
 }
 
+.managed-asr-progress { width: 100%; max-width: 320px; height: 6px; margin-top: 6px; accent-color: #3b6fd4; }
+
 .connector-mode-option-body strong {
   font-size: 13px;
 }

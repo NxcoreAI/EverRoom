@@ -24,6 +24,57 @@ import {
 
 type SectionTab = 'llm' | 'embedding' | 'vlm' | 'asr' | 'search' | 'lite'
 
+interface ManagedAsrStatusValue {
+  state: string
+  message: string | null
+  baseUrl: string | null
+  step: number
+  detail: string | null
+}
+
+const MANAGED_ASR_STEPS = 5
+
+/** 内置离线转写引擎的托管状态区：轮询 supervisor 状态 + 启动按钮 + 进度明细。 */
+function ManagedAsrStatus() {
+  const { t } = useLocale()
+  const [status, setStatus] = useState<ManagedAsrStatusValue | null>(null)
+  const [busy, setBusy] = useState(false)
+  useEffect(() => {
+    const api = window.nxcore?.nxcoreAsr
+    if (!api) return
+    let disposed = false
+    const refresh = () => {
+      void api.status().then((value) => { if (!disposed) setStatus(value) }).catch(() => undefined)
+    }
+    refresh()
+    // 首装（依赖/模型下载）持续数分钟且明细高频变化，1s 轮询跟进。
+    const timer = window.setInterval(refresh, 1_000)
+    return () => { disposed = true; window.clearInterval(timer) }
+  }, [])
+  const start = async () => {
+    setBusy(true)
+    try { await window.nxcore?.nxcoreAsr?.start() } catch { /* 状态轮询会呈现失败 */ }
+    finally { setBusy(false) }
+  }
+  const state = status?.state ?? 'unknown'
+  const ready = state === 'ready' || state === 'reused'
+  const working = state === 'setup-venv' || state === 'starting'
+  const step = Math.min(status?.step ?? 0, MANAGED_ASR_STEPS)
+  return (
+    <div className="reality-setting-row">
+      <div>
+        <strong>{ready ? t('surface:settings.rcAsrManagedReady') : t('surface:settings.rcAsrManagedState.' + state, { defaultValue: t('surface:settings.rcAsrManagedState.unknown') })}</strong>
+        {status?.message ? <p className="rc-form-hint">{status.message}</p> : null}
+        {status?.detail ? <p className="rc-form-hint">{status.detail}</p> : null}
+        {working ? <progress className="managed-asr-progress" value={step} max={MANAGED_ASR_STEPS} /> : null}
+      </div>
+      <button className="secondary-button" type="button" disabled={busy || ready} onClick={() => void start()}>
+        {ready ? t('surface:settings.rcAsrManagedRunning') : working ? t('surface:settings.rcAsrManagedWorking') : t('surface:settings.rcAsrManagedStart')}
+      </button>
+    </div>
+  )
+}
+
 function pretty(value: Record<string, unknown>): string { return `${JSON.stringify(value, null, 2)}\n` }
 
 /** 单段四要素输入组（label 文案复用 configGate.field*）。 */
@@ -258,11 +309,15 @@ export function RuntimeConfigSettingsSection() {
       {tab === 'asr' ? <>
         <label className="rc-form-field"><span>{t('surface:settings.rcAsrEngine')}</span>
           <div className="segmented-control">
-            <button type="button" data-active={String(asr.provider !== 'openai-compatible')} onClick={() => setAsr((c) => ({ ...c, provider: 'aliyun' }))}>{t('surface:settings.rcAsrEngineAliyun')}</button>
+            <button type="button" data-active={String(asr.provider !== 'openai-compatible' && asr.provider !== 'nxcore-asr-managed')} onClick={() => setAsr((c) => ({ ...c, provider: 'aliyun' }))}>{t('surface:settings.rcAsrEngineAliyun')}</button>
             <button type="button" data-active={String(asr.provider === 'openai-compatible')} onClick={() => setAsr((c) => ({ ...c, provider: 'openai-compatible' }))}>{t('surface:settings.rcAsrEngineSelfHosted')}</button>
+            <button type="button" data-active={String(asr.provider === 'nxcore-asr-managed')} onClick={() => setAsr((c) => ({ ...c, provider: 'nxcore-asr-managed' }))}>{t('surface:settings.rcAsrEngineManaged')}</button>
           </div>
         </label>
-        {asr.provider === 'openai-compatible' ? <>
+        {asr.provider === 'nxcore-asr-managed' ? <>
+          <p className="rc-form-hint">{t('surface:settings.rcAsrManagedHint')}</p>
+          <ManagedAsrStatus />
+        </> : asr.provider === 'openai-compatible' ? <>
           <p className="rc-form-hint">{t('surface:settings.rcAsrSelfHostedHint')}</p>
           <label className="rc-form-field"><span>{aiLabels.baseUrl}</span>
             <input value={asr.baseUrl} placeholder="http://127.0.0.1:9000" onChange={(event) => updateAsr('baseUrl', event.target.value)} /></label>

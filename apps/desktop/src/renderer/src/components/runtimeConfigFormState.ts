@@ -117,12 +117,17 @@ export function liteFieldsFromSnapshot(snapshot: RuntimeConfigSnapshot | null): 
   }
 }
 
-/** 从用户源 asr + asr.oss 播种（缺段给空表单；oss secrets 掩码留空）。 */
+/** 从用户源 asr + asr.oss 播种（缺段给空表单；oss secrets 掩码留空）。
+ * 托管实例（127.0.0.1:8300）回读为 nxcore-asr-managed 显示态。 */
 export function asrFieldsFromSnapshot(snapshot: RuntimeConfigSnapshot | null): ManualAsrFields {
   const value = sectionOf(userSectionsOf(snapshot), 'asr')
   const oss = sectionOf(value, 'oss')
+  const seededProvider = textOf(value, 'provider', 'aliyun')
+  // nxcore-asr 一律显示为内置托管态：手动地址模式已从表单移除（托管复用
+  // 模式覆盖同端口自建实例；异机实例走 NXCORE_ASR_BASE_URL 环境变量）。
+  const isManaged = seededProvider === 'nxcore-asr'
   return {
-    provider: textOf(value, 'provider', 'aliyun'),
+    provider: isManaged ? 'nxcore-asr-managed' : seededProvider,
     model: textOf(value, 'model'),
     baseUrl: textOf(value, 'baseUrl'),
     apiKey: textOf(value, 'apiKey'),
@@ -273,6 +278,10 @@ export function asrFieldsError(fields: ManualAsrFields, t: (key: string) => stri
     if (isAsrScalarEmpty(fields) && !fields.language.trim()) return null
     if (!fields.baseUrl.trim()) return t('surface:configGate.embeddingIncomplete')
     return /^https?:\/\//.test(fields.baseUrl.trim()) ? null : t('surface:settings.rcAsrUrlInvalid')
+  }
+  if (fields.provider === 'nxcore-asr-managed') {
+    // 内置托管引擎：连接由主进程 supervisor 提供，表单无需任何字段。
+    return null
   }
   if (isAsrScalarEmpty(fields)) {
     // 标量空但 OSS 填了一半也提示（顺手填了 OSS 的人显然想配 ASR）。
