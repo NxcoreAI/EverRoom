@@ -22,7 +22,7 @@ export interface LocalSegmentEngineJob {
 }
 
 export interface LocalSegmentEngine {
-  createJob(input: { filePath: string; languageHints?: string[]; diarizationEnabled: boolean }): Promise<LocalSegmentEngineJob>
+  createJob(input: { filePath: string; languageHints?: string[]; diarizationEnabled: boolean; externalId?: string }): Promise<LocalSegmentEngineJob>
   getJob(id: string): Promise<LocalSegmentEngineJob>
 }
 
@@ -322,6 +322,8 @@ export class LocalRecordingSegmentTranscriber {
         filePath: join(this.segmentDirectory(recordingId), mini.fileName),
         ...(state.languageHints?.length ? { languageHints: state.languageHints } : {}),
         diarizationEnabled: state.diarizationEnabled,
+        // 同一录音的分段共用 external_id → nxcore-asr 同一会话，说话人跨段连续。
+        externalId: recordingId,
       })
       mini.jobId = job.id
       mini.provider = job.provider

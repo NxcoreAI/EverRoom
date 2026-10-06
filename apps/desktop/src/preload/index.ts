@@ -548,6 +548,10 @@ const api: NxcoreDesktopApi = {
       return () => ipcRenderer.removeListener('app-prefs:changed', handle)
     },
   },
+  nxcoreAsr: {
+    status: () => invokeQuietly('nxcore-asr:status'),
+    start: () => invokeQuietly('nxcore-asr:start'),
+  },
   notifications: {
     preferences: () => invokeQuietly('notifications:preferences'),
     updatePreferences: (input) => invoke('notifications:update-preferences', input),

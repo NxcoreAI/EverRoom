@@ -82,6 +82,7 @@ import { RemoteAgentCommandClient } from './cloud/remote-agent-command-client'
 import { registerCloudControlIpc } from './cloud/cloud-control-ipc'
 import { getCloudControlSettings, onCloudControlSettingsChanged } from './cloud/cloud-control-store'
 import { registerAppPrefsIpc } from './settings/app-prefs-ipc'
+import { NxCoreAsrSupervisor } from './asr/nxcore-asr-supervisor'
 import { AgentNotificationBridgeServer } from './cloud/agent-notification-bridge'
 import { OfficeBridgeServer } from './gateway/office-bridge'
 import type { OfficeAgentFileEvent } from '../shared/office'
@@ -818,6 +819,7 @@ const connectorTombstones = createConnectorTombstoneStore(dataDirectory)
 let connectorReconcileTimer: NodeJS.Timeout | null = null
 let openConnectorConsoleWindow: BrowserWindow | null = null
 let memoryCoreSupervisor: MemoryCoreSupervisor | null = null
+let nxcoreAsrSupervisor: NxCoreAsrSupervisor | null = null
 let knowledgeServiceSupervisor: KnowledgeServiceSupervisor | null = null
 let agentGatewayBridge: AgentGatewayBridge | null = null
 let cursorCompletionAgentBridge: AgentGatewayBridge | null = null
@@ -1447,7 +1449,25 @@ function registerGatewayHandlers(): void {
 function registerRuntimeConfigHandlers(): void {
   handle(RUNTIME_CONFIG_CHANNELS.get, () => runtimeConfigBridge?.get())
   handle(RUNTIME_CONFIG_CHANNELS.saveUser, async (_event, input: unknown) => {
-    const snapshot = await runtimeConfigBridge?.saveUser(input)
+    // 内置离线转写：表单的 nxcore-asr-managed 是 UI 态，落库前替换为托管
+    // 实例的真实连接（provider=nxcore-asr + baseUrl + 租户 key）。服务未就绪
+    // 时保存报错——用户先点「启动内置引擎」完成首装。
+    const payload = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>
+    const asr = payload.asr
+    if (asr && typeof asr === 'object' && !Array.isArray(asr)) {
+      const asrSection = asr as Record<string, unknown>
+      if (asrSection.provider === 'nxcore-asr-managed') {
+        const connection = nxcoreAsrSupervisor?.getConnection()
+        if (!connection) throw new Error('内置离线转写引擎尚未就绪，请先在设置中启动它。')
+        payload.asr = {
+          provider: 'nxcore-asr',
+          baseUrl: connection.baseUrl,
+          apiKey: connection.apiKey,
+          oss: { region: '', bucket: '', accessKeyId: '', accessKeySecret: '', stsToken: '', prefix: '' },
+        }
+      }
+    }
+    const snapshot = await runtimeConfigBridge?.saveUser(payload)
     if (snapshot) void syncManagedChildProcesses(snapshot)
     return runtimeConfigBridge?.get()
   })
@@ -3598,6 +3618,14 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   // 仍存活的受管子进程；POSIX 正常退出已有进程组语义，不注册。
   installExitCleanupHook()
   registerCloudControlIpc()
+  // 内置离线转写（nxcore-asr）：按需启动（用户在设置页触发），status 轮询呈现
+  // 首装进度（venv 2GB + 模型 2.1GB 都发生在首次启动）。
+  ipcMain.handle('nxcore-asr:status', () => nxcoreAsrSupervisor?.getStatus() ?? null)
+  ipcMain.handle('nxcore-asr:start', () => {
+    if (!nxcoreAsrSupervisor) return null
+    void nxcoreAsrSupervisor.start()
+    return nxcoreAsrSupervisor.getStatus()
+  })
   // 窗口先显示,Gateway 等服务在后台初始化,状态由左下角 Gateway 指示器呈现。
   const documentAssets = new DocumentAssetStore(join(dataDirectory, 'document-assets'))
   await documentAssets.initialize().catch((error: unknown) => {
@@ -3741,6 +3769,8 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     // 先拉起/探测 MemoryCore(独立可复用),再把连接信息注入 gateway 的记忆配置,
     // 让队友拉代码后无需手工部署即可使用记忆功能。
     memoryCoreSupervisor = new MemoryCoreSupervisor(dataDirectory)
+    // 内置离线转写：仅构造不启动（FunASR 常驻 1-2GB 内存，按需拉起）。
+    nxcoreAsrSupervisor = new NxCoreAsrSupervisor(dataDirectory)
     const memoryCore = await memoryCoreSupervisor.start().catch((error) => {
       console.error('Managed MemoryCore failed to start; memory stays disabled.', error)
       return null
@@ -4198,6 +4228,8 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     cursorCompletionSupervisor = null
     await memoryCoreSupervisor?.shutdown()
     memoryCoreSupervisor = null
+    await nxcoreAsrSupervisor?.shutdown()
+    nxcoreAsrSupervisor = null
     await knowledgeServiceSupervisor?.shutdown()
     knowledgeServiceSupervisor = null
     console.error('Failed to initialize Everroom desktop services', error)

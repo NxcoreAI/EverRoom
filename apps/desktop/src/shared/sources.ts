@@ -351,6 +351,9 @@ export interface CreateAsrJobInput {
   languageHints?: string[]
   diarizationEnabled: boolean
   contextPrompt?: string
+  /** 会话归组键（= recordingId）：nxcore-asr 引擎按它把分段归入同一会话，
+   * 说话人跨段连续；其他引擎忽略。 */
+  externalId?: string
 }
 
 export interface CloudAccountStatus {
@@ -1162,6 +1165,10 @@ export interface NxcoreDesktopApi {
     settings(): Promise<AppPrefs>
     update(input: Partial<AppPrefs>): Promise<AppPrefs>
     onChanged(listener: (prefs: AppPrefs) => void): () => void
+  }
+  nxcoreAsr: {
+    status(): Promise<{ state: string; message: string | null; baseUrl: string | null; apiKey: string | null; step: number; detail: string | null } | null>
+    start(): Promise<{ state: string; message: string | null; baseUrl: string | null; apiKey: string | null; step: number; detail: string | null } | null>
   }
   notifications: {
     preferences(): Promise<NotificationPreferences>

@@ -11,9 +11,7 @@ export class AsrGatewayBridge {
 
   createJob(input: Omit<CreateAsrJobInput,'mode'|'recordingId'|'durationMs'>): Promise<AsrJob> {
     return this.request('/v1/asr/jobs', { method: 'POST', data: input })
-  }
-
-  getJob(id: string): Promise<AsrJob> {
+  }  getJob(id: string): Promise<AsrJob> {
     if (!/^[a-f0-9-]{36}$/i.test(id)) throw new Error('无效的转写任务标识。')
     return this.request(`/v1/asr/jobs/${encodeURIComponent(id)}`)
   }

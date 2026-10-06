@@ -42,7 +42,7 @@ export class AsrCoordinator {
       if(segmented){const event=await this.reality.applyAsr(input.recordingId!,segmented);await this.publish(event,segmented);return segmented}
       input={...input,retryToken:input.retryToken??'seg-fallback'}
     }
-    const job=input.mode==='cloud'?await this.cloud.createAsrJob(input):{...await this.local.createJob({filePath:input.filePath,languageHints:input.languageHints,diarizationEnabled:input.diarizationEnabled,...(input.contextPrompt?{contextPrompt:input.contextPrompt}:{})}),source:'local' as const};if(input.recordingId){const event=await this.reality.applyAsr(input.recordingId,job);await this.publish(event,job)}return job
+    const job=input.mode==='cloud'?await this.cloud.createAsrJob(input):{...await this.local.createJob({filePath:input.filePath,languageHints:input.languageHints,diarizationEnabled:input.diarizationEnabled,...(input.recordingId?{externalId:input.recordingId}:{}),...(input.contextPrompt?{contextPrompt:input.contextPrompt}:{})}),source:'local' as const};if(input.recordingId){const event=await this.reality.applyAsr(input.recordingId,job);await this.publish(event,job)}return job
   }
   async getJob(id:string):Promise<AsrJob>{
     if(id.startsWith(SEGMENT_JOB_PREFIX)&&this.segmentUploader){
