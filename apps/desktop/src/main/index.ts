@@ -2937,7 +2937,13 @@ function registerAsrHandlers(store: RecordingStore, coordinator: AsrCoordinator,
 }
 
 function registerPrivateAudioHandlers(service: PrivateAudioSyncService): void {
-  handle(PRIVATE_AUDIO_CHANNELS.list, (_event, cursor?: number) => rateLimitAware(() => service.list(cursor ?? 0)))
+  // 私有云端音频是登录态功能：未登录 = 无云端数据，list 静默返回空——
+  // 曾经直接抛「请先登录」弹全局错误窗，本地模式用户每次进现实感知页都被打扰。
+  handle(PRIVATE_AUDIO_CHANNELS.list, (_event, cursor?: number) => rateLimitAware(async () => {
+    const status = await saasClient?.status().catch(() => null)
+    if (!status?.authenticated) return { assets: [], nextCursor: 0 }
+    return service.list(cursor ?? 0)
+  }))
   handle(PRIVATE_AUDIO_CHANNELS.download, (_event, assetId: string, outputPath: string) => rateLimitAware(() => service.downloadById(assetId, outputPath)))
   handle(PRIVATE_AUDIO_CHANNELS.read, (_event, assetId: string) => rateLimitAware(() => service.read(assetId)))
 }
@@ -3769,7 +3775,8 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     // 先拉起/探测 MemoryCore(独立可复用),再把连接信息注入 gateway 的记忆配置,
     // 让队友拉代码后无需手工部署即可使用记忆功能。
     memoryCoreSupervisor = new MemoryCoreSupervisor(dataDirectory)
-    // 内置离线转写：仅构造不启动（FunASR 常驻 1-2GB 内存，按需拉起）。
+    // 内置离线转写：仅构造不启动（FunASR 常驻 1-2GB 内存，按需拉起）；
+    // 引擎为 nxcore-asr 时的自动拉起在 runtimeConfigBridge 构造之后接线。
     nxcoreAsrSupervisor = new NxCoreAsrSupervisor(dataDirectory)
     const memoryCore = await memoryCoreSupervisor.start().catch((error) => {
       console.error('Managed MemoryCore failed to start; memory stays disabled.', error)
@@ -3898,6 +3905,14 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     void runtimeConfigBridge.get()
       .then((snapshot) => syncManagedChildProcesses(snapshot))
       .catch((error) => console.warn('[managed-children] startup runtime-config sync skipped:', error))
+    // runtime config 已选 nxcore-asr 引擎时，应用启动即后台拉起内置转写服务
+    //（录音路径直接打 8300，等用户手动去设置页点启动会让录音必报 ECONNREFUSED）。
+    void runtimeConfigBridge.get()
+      .then((snapshot) => {
+        const asr = (snapshot?.config as Record<string, unknown> | undefined)?.asr as Record<string, unknown> | undefined
+        if (asr?.provider === 'nxcore-asr') void nxcoreAsrSupervisor?.start()
+      })
+      .catch(() => undefined)
     diaryGatewayBridge = new DiaryGatewayBridge(gatewaySupervisor)
     writingStyleGatewayBridge = new WritingStyleGatewayBridge(gatewaySupervisor)
     registerWritingStyleHandlers()

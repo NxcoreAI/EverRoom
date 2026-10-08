@@ -1,5 +1,5 @@
 import { Check, RefreshCw, Save, ShieldCheck, Trash2 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { RuntimeConfigSnapshot, RuntimeConfigTestResult } from '../../../../shared/sources'
 import { useLocale } from '@/i18n/LocaleContext'
 import {
@@ -34,17 +34,29 @@ interface ManagedAsrStatusValue {
 
 const MANAGED_ASR_STEPS = 5
 
-/** 内置离线转写引擎的托管状态区：轮询 supervisor 状态 + 启动按钮 + 进度明细。 */
-function ManagedAsrStatus() {
+/** 内置离线转写引擎的托管状态区：轮询 supervisor 状态 + 启动按钮 + 进度明细。
+ *  onReady：引擎首次到达就绪态时触发一次——父组件借机自动保存表单，
+ *  免去"启动了但忘了点保存表单"导致录音报 provider not configured。 */
+function ManagedAsrStatus({ onReady }: { onReady?: () => void }) {
   const { t } = useLocale()
   const [status, setStatus] = useState<ManagedAsrStatusValue | null>(null)
   const [busy, setBusy] = useState(false)
+  const readyFiredRef = useRef(false)
+  const onReadyRef = useRef(onReady)
+  onReadyRef.current = onReady
   useEffect(() => {
     const api = window.nxcore?.nxcoreAsr
     if (!api) return
     let disposed = false
     const refresh = () => {
-      void api.status().then((value) => { if (!disposed) setStatus(value) }).catch(() => undefined)
+      void api.status().then((value) => {
+        if (disposed || !value) return
+        setStatus(value)
+        if ((value.state === 'ready' || value.state === 'reused') && !readyFiredRef.current) {
+          readyFiredRef.current = true
+          onReadyRef.current?.()
+        }
+      }).catch(() => undefined)
     }
     refresh()
     // 首装（依赖/模型下载）持续数分钟且明细高频变化，1s 轮询跟进。
@@ -316,7 +328,7 @@ export function RuntimeConfigSettingsSection() {
         </label>
         {asr.provider === 'nxcore-asr-managed' ? <>
           <p className="rc-form-hint">{t('surface:settings.rcAsrManagedHint')}</p>
-          <ManagedAsrStatus />
+          <ManagedAsrStatus onReady={() => void saveForm()} />
         </> : asr.provider === 'openai-compatible' ? <>
           <p className="rc-form-hint">{t('surface:settings.rcAsrSelfHostedHint')}</p>
           <label className="rc-form-field"><span>{aiLabels.baseUrl}</span>
