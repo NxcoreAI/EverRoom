@@ -475,6 +475,7 @@ const ACCOUNT_CHANNELS = {
   login: 'account:login',
   oidcLogin: 'account:oidc-login',
   invitationCodeValidate: 'account:invitation-code-validate',
+  invitationCodeRedeem: 'account:invitation-code-redeem',
   oidcCancel: 'account:oidc-cancel',
   logout: 'account:logout',
   keyringStatus: 'account:keyring-status',
@@ -3050,6 +3051,10 @@ function registerAccountHandlers(
   handle(ACCOUNT_CHANNELS.invitationCodeValidate, (_event, invitationCode: unknown) => {
     if (typeof invitationCode !== 'string') throw new Error('无效的邀请码。')
     return rateLimitAware(() => client.validateInvitationCode(invitationCode))
+  })
+  handle(ACCOUNT_CHANNELS.invitationCodeRedeem, (_event, invitationCode: unknown) => {
+    if (typeof invitationCode !== 'string') throw new Error('无效的邀请码。')
+    return rateLimitAware(() => client.redeemInvitationCode(invitationCode))
   })
   handle(ACCOUNT_CHANNELS.oidcLogin, (_event, input: unknown) => {
     const value=typeof input==='string'?{provider:input}:input&&typeof input==='object'?input as {provider?:unknown;invitationCode?:unknown}:{}

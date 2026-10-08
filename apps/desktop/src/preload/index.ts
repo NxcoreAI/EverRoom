@@ -465,6 +465,7 @@ const api: NxcoreDesktopApi = {
     devices: (options) => options?.quiet ? invokeQuietly('account:devices') : invoke('account:devices'),
     login: (input) => invoke('account:login', input),
     validateInvitationCode: (invitationCode) => invokeQuietly('account:invitation-code-validate', invitationCode),
+    redeemInvitationCode: (invitationCode) => invokeQuietly('account:invitation-code-redeem', invitationCode),
     loginWithOidc: (provider, invitationCode) => invoke('account:oidc-login', { provider, invitationCode }),
     cancelOidcLogin: () => invoke('account:oidc-cancel'),
     logout: () => invoke('account:logout'),

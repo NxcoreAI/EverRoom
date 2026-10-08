@@ -9,6 +9,8 @@ import './styles.css'
 
 const params = new URLSearchParams(window.location.search)
 const authed = params.get('authed') !== '0'
+// 免费账户态看兑换码入口：?plan=free；缺省 Pro（入口应隐藏）
+let plan = params.get('plan') === 'free' ? 'free' : 'pro'
 
 const now = Date.now()
 const iso = (offsetMs: number) => new Date(now - offsetMs).toISOString()
@@ -54,8 +56,8 @@ window.nxcore = new Proxy(base, {
                 device: { id: 'dev-1', name: '小王的 MacBook Pro', platform: 'darwin' },
                 subscription: {
                   status: 'active',
-                  planCode: 'pro',
-                  planName: 'Pro 年付',
+                  planCode: plan,
+                  planName: plan === 'pro' ? 'Pro 年付' : '免费版',
                   periodStart: iso(3600_000 * 24 * 120),
                   periodEnd: iso(-3600_000 * 24 * 245),
                   quotaSeconds: 3600_000,
@@ -63,6 +65,16 @@ window.nxcore = new Proxy(base, {
                   remainingSeconds: 2400_000,
                 },
               } : { authenticated: false, apiBaseUrl: 'https://api.everroom.example.com' }
+            }
+            if (key === 'redeemInvitationCode') {
+              return async (code: string) => {
+                // 服务端 normalizeInvitationCode 同款归一 + 无易混淆字符的字母表
+                const compact = code.trim().toUpperCase().replace(/[\s-]+/g, '')
+                if (!/^ER[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{12}$/.test(compact)) throw new Error('Invitation code is invalid or unavailable')
+                if (plan === 'pro') return { applied: false, rejected: 'pro_plan_active' as const }
+                plan = 'pro'
+                return { applied: true as const }
+              }
             }
             if (key === 'keyringStatus') {
               return async () => ({ enabled: true, initialized: true, umkId: 'umk-1', activeVersion: 2, deviceStatus: 'active', verificationCode: null })

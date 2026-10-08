@@ -3,7 +3,7 @@ import { useRef, useState } from 'react'
 import { useLocale } from '@/i18n/LocaleContext'
 import './RedeemCodeField.css'
 
-type RedeemState = 'idle' | 'validating' | 'valid' | 'invalid' | 'error'
+type RedeemState = 'idle' | 'validating' | 'valid' | 'invalid' | 'error' | 'applied' | 'already-pro'
 
 function isInvalidRedeemError(error:unknown):boolean{
   return error instanceof Error&&/INVITATION_CODE_INVALID|invitation code is invalid|invalid or unavailable/i.test(error.message)
@@ -48,10 +48,15 @@ export function useRedeemCode() {
     setOpen(false)
   }
 
-  return { open, setOpen, code, state, change, prepare, reset, markInvalid:()=>setState('invalid') }
+  return {
+    open, setOpen, code, state, change, prepare, reset,
+    markInvalid: () => setState('invalid'),
+    markError: () => setState('error'),
+    markDone: (outcome: 'applied' | 'already-pro') => setState(outcome),
+  }
 }
 
-export function RedeemCodeField({value,state,open,disabled,onChange,onToggle,onVerify}:{value:string;state:RedeemState;open:boolean;disabled:boolean;onChange(value:string):void;onToggle():void;onVerify():void}){
+export function RedeemCodeField({value,state,open,disabled,actionLabel,onChange,onToggle,onVerify}:{value:string;state:RedeemState;open:boolean;disabled:boolean;actionLabel?:string;onChange(value:string):void;onToggle():void;onVerify():void}){
   const{t}=useLocale()
   const feedback=state==='valid'
     ?{tone:'valid',text:t('surface:settings.redeemCodeValid')}
@@ -59,9 +64,13 @@ export function RedeemCodeField({value,state,open,disabled,onChange,onToggle,onV
       ?{tone:'invalid',text:t('surface:settings.redeemCodeInvalid')}
       :state==='error'
         ?{tone:'invalid',text:t('surface:settings.redeemCodeValidationFailed')}
-        :null
-  // valid 态禁用：结果已由反馈文案表达；编辑码会重置 idle 并重新启用
-  const canVerify=!disabled&&Boolean(value.trim())&&state!=='validating'&&state!=='valid'
+        :state==='applied'
+          ?{tone:'valid',text:t('surface:settings.redeemCodeApplied')}
+          :state==='already-pro'
+            ?{tone:'valid',text:t('surface:settings.redeemCodeProActive')}
+            :null
+  // valid/applied 态禁用：结果已由反馈文案表达；编辑码会重置 idle 并重新启用
+  const canVerify=!disabled&&Boolean(value.trim())&&state!=='validating'&&state!=='valid'&&state!=='applied'&&state!=='already-pro'
 
   return <div className="redeem-code-field" data-open={open} data-state={state}>
     <button type="button" className="redeem-code-toggle" aria-expanded={open} disabled={disabled} onClick={onToggle}>
@@ -86,7 +95,7 @@ export function RedeemCodeField({value,state,open,disabled,onChange,onToggle,onV
         {feedback?<p className={`redeem-code-feedback ${feedback.tone}`} role={feedback.tone==='invalid'?'alert':'status'}>{feedback.text}</p>:null}
         <button type="button" className="redeem-code-verify" disabled={!canVerify} onClick={onVerify}>
           {state==='validating'?<LoaderCircle className="spin" aria-hidden="true"/>:null}
-          {t('surface:settings.redeemCodeVerify')}
+          {actionLabel ?? t('surface:settings.redeemCodeVerify')}
         </button>
       </div>
     </div>:null}

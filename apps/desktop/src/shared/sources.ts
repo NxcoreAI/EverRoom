@@ -1099,6 +1099,7 @@ export interface NxcoreDesktopApi {
     devices(options?: { quiet?: boolean }): Promise<CloudDevice[]>
     login(input:{identifier:string;password:string}): Promise<CloudAccountStatus>
     validateInvitationCode(invitationCode: string): Promise<{ valid: true }>
+    redeemInvitationCode(invitationCode: string): Promise<{ applied: boolean; rejected?: 'pro_plan_active' }>
     loginWithOidc(provider: CloudOidcProvider, invitationCode?: string): Promise<CloudAccountStatus>
     cancelOidcLogin(): Promise<void>
     logout(): Promise<CloudAccountStatus>

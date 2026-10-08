@@ -894,6 +894,11 @@ export class SaasClient {
     return this.publicRequest('/app/auth/invitation-code/validate', { method: 'POST', data: { invitationCode } })
   }
 
+  /** 已登录账户直接兑换：free 升 Pro；已是 Pro 返回 rejected='pro_plan_active'（码未消耗）。 */
+  async redeemInvitationCode(invitationCode: string): Promise<{ applied: boolean; rejected?: 'pro_plan_active' }> {
+    return this.request('/app/subscription/redeem-invitation', { method: 'POST', data: { invitationCode } })
+  }
+
   async loginWithOidc(provider: CloudOidcProvider, invitationCode?: string): Promise<CloudAccountStatus> {
     await this.initialize()
     this.cancelOidcLogin('新的登录请求已开始。')
