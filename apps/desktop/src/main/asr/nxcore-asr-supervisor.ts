@@ -1,7 +1,9 @@
 import { randomBytes } from 'node:crypto'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdir } from 'node:fs/promises'
 import { spawn, spawnSync, execFileSync, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { connect as tcpConnect } from 'node:net'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { app } from 'electron'
@@ -75,6 +77,23 @@ function venvPython(serviceDir: string): string {
   return process.platform === 'win32'
     ? join(serviceDir, '.venv', 'Scripts', 'python.exe')
     : join(serviceDir, '.venv', 'bin', 'python')
+}
+
+/** 便携 PostgreSQL 二进制目录（打包版免 Docker 形态）：bin/ 下有 initdb 与
+ *  pg_ctl 即认定有效。macOS 二进制无后缀，Windows 为 .exe。
+ *  探测顺序：NXCORE_ASR_PG_DIST 覆盖 → 打包 resources → submodule pg-dist。 */
+function portablePgDir(): string | null {
+  const override = process.env.NXCORE_ASR_PG_DIST?.trim()
+  const candidates = [
+    ...(override ? [override] : []),
+    join(app.getAppPath(), '..', '..', 'resources', 'postgres-portable'),
+    join(app.getAppPath(), '..', '..', '..', 'submodules', 'nxcoreasr', 'pg-dist'),
+  ]
+  const exe = process.platform === 'win32' ? '.exe' : ''
+  for (const candidate of candidates) {
+    if (existsSync(join(candidate, 'bin', `initdb${exe}`))) return candidate
+  }
+  return null
 }
 
 function detectPython(): string | null {
@@ -204,6 +223,9 @@ export class NxCoreAsrSupervisor {
     })()
     const pgDone: Promise<boolean> = (async () => {
       if (await probeTcpPort(PG_PORT)) return true
+      // 便携 PG 分支（打包版形态）：自带 postgres 二进制目录，免 Docker。
+      // dev 无 pg-dist 时回落 docker compose。
+      if (portablePgDir()) return this.startPortablePg()
       const started = await this.runDockerCompose(serviceDir)
       if (!started) return false
       return await this.waitPgReady()
@@ -284,6 +306,7 @@ export class NxCoreAsrSupervisor {
   async shutdown(): Promise<void> {
     const child = this.child
     this.connection = null
+    this.stopPortablePg()
     if (!child) return
     this.stopping = true
     await new Promise<void>((resolve) => {
@@ -420,6 +443,98 @@ export class NxCoreAsrSupervisor {
     }
     this.lastError = 'PostgreSQL 端口 30s 内未就绪'
     return false
+  }
+
+  /** 便携 PG 托管（打包版免 Docker）：initdb 一次 → pg_ctl start → 复刻
+   *  docker initdb 的角色/库初始化（asr_app + asr 库 owner）。
+   *  平面注意：macOS 二进制无后缀、initdb 需 --locale=C（默认 locale 报错）、
+   *  pg_ctl 用 -w -t 同步等待启动完成。 */
+  private async startPortablePg(): Promise<boolean> {
+    const pgDir = portablePgDir()
+    if (!pgDir) return false
+    const exe = process.platform === 'win32' ? '.exe' : ''
+    const bin = join(pgDir, 'bin')
+    const pgHome = join(this.dataDirectory, 'nxcore-asr-pg')
+    const dataDir = join(pgHome, 'data')
+    const logFile = join(pgHome, 'logfile.txt')
+    const run = (args: string[], timeoutMs: number, cwdDataDir: string = dataDir): { status: number | null; output: string } => {
+      const result = spawnSync(join(bin, args[0]!), args.slice(1).map((arg) => arg === '{{DATA}}' ? cwdDataDir : arg), {
+        encoding: 'utf8', timeout: timeoutMs, windowsHide: true,
+        env: { ...process.env, LC_ALL: 'C' },
+      })
+      return { status: result.status, output: `${result.stdout ?? ''}${result.stderr ?? ''}` }
+    }
+    this.setDetail('准备 PostgreSQL…')
+    await mkdir(pgHome, { recursive: true }).catch(() => undefined)
+    if (!existsSync(join(dataDir, 'PG_VERSION'))) {
+      this.setDetail('初始化 PostgreSQL 数据目录…')
+      let init = run(['initdb', '-D', '{{DATA}}', '-U', 'asr_admin', '-E', 'UTF8', '-A', 'trust', '--locale=C'], 120_000)
+      // Windows 杀软实时扫描可锁 WAL rename（Improper link/No such file）：
+      // userData 常在扫描重点区，重试换 os.tmpdir() 下的目录（实测可绕开）。
+      if (init.status !== 0 && /rename|No such file|Improper link/i.test(init.output)) {
+        console.warn('[nxcore-asr] initdb 在数据目录被拦截（疑似杀软），改用临时目录重试')
+        const fallbackData = join(tmpdir(), 'everroom-nxcore-asr-pg', 'data')
+        await mkdir(join(tmpdir(), 'everroom-nxcore-asr-pg'), { recursive: true }).catch(() => undefined)
+        init = run(['initdb', '-D', '{{DATA}}', '-U', 'asr_admin', '-E', 'UTF8', '-A', 'trust', '--locale=C'], 120_000, fallbackData)
+      }
+      if (init.status !== 0) {
+        this.lastError = `initdb 失败：${init.output.slice(-300)}`
+        return false
+      }
+    }
+    if (!(await probeTcpPort(PG_PORT))) {
+      this.setDetail('启动 PostgreSQL…')
+      const start = run(['pg_ctl', '-D', dataDir, '-l', logFile,
+        '-o', `-p ${PG_PORT} -h 127.0.0.1`, '-w', '-t', '60', 'start'], 90_000)
+      if (start.status !== 0) {
+        this.lastError = `pg_ctl start 失败：${start.output.slice(-300)}`
+        return false
+      }
+    }
+    if (!(await this.waitPgReady())) return false
+    // 复刻 docker/initdb/01-roles.sql（幂等）：asr_app 角色 + asr 库 owner。
+    // trust 认证下本地回环免密，超级用户 asr_admin 直连执行。
+    const psql = (sql: string): { status: number | null; output: string } =>
+      run(['psql', '-h', '127.0.0.1', '-p', String(PG_PORT), '-U', 'asr_admin', '-d', 'postgres', '-v', 'ON_ERROR_STOP=1', '-c', sql], 30_000)
+    const role = psql("SELECT 1 FROM pg_roles WHERE rolname='asr_app'")
+    if (role.status !== 0) {
+      this.lastError = `psql 角色查询失败：${role.output.slice(-200)}`
+      return false
+    }
+    if (!role.output.includes('1')) {
+      const create = psql("CREATE ROLE asr_app LOGIN PASSWORD 'asr_dev_password'")
+      if (create.status !== 0) {
+        this.lastError = `创建 asr_app 角色失败：${create.output.slice(-200)}`
+        return false
+      }
+    }
+    const db = psql("SELECT 1 FROM pg_database WHERE datname='asr'")
+    if (db.status === 0 && !db.output.includes('1')) {
+      const create = psql('CREATE DATABASE asr OWNER asr_app')
+      if (create.status !== 0) {
+        this.lastError = `创建 asr 库失败：${create.output.slice(-200)}`
+        return false
+      }
+    }
+    this.setDetail(null)
+    console.info(`[nxcore-asr] portable PostgreSQL ready at 127.0.0.1:${PG_PORT}`)
+    return true
+  }
+
+  /** 便携 PG 关停（托管进程树里 pg_ctl 派生的 postgres 由 shutdown 兜底）。 */
+  private stopPortablePg(): void {
+    const pgDir = portablePgDir()
+    if (!pgDir) return
+    const exe = process.platform === 'win32' ? '.exe' : ''
+    const dataDir = join(this.dataDirectory, 'nxcore-asr-pg', 'data')
+    if (!existsSync(dataDir)) return
+    try {
+      spawnSync(join(pgDir, 'bin', `pg_ctl${exe}`), ['-D', dataDir, '-m', 'fast', '-w', '-t', '10', 'stop'], {
+        encoding: 'utf8', timeout: 15_000, windowsHide: true,
+      })
+    } catch {
+      // 已停或异常都不阻塞退出。
+    }
   }
 
   /** 租户 key 持久化在应用数据目录：重启复用，服务端 config.yaml 与网关配置共享同一把。 */
