@@ -259,6 +259,18 @@ export class FilesGatewayBridge {
     return { dataUrl: `data:${mime};base64,${bytes.toString('base64')}` }
   }
 
+  /** 本地素材库按内容哈希取图（PPT 打包 everroom-material:// 回源用）；404/失败返回 null。 */
+  async readMaterial(hash: string): Promise<{ buffer: Buffer; mime: string } | null> {
+    const connection = this.supervisor.getConnection()
+    const response = await fetch(`${connection.baseUrl}/v1/materials/${encodeURIComponent(hash)}`, {
+      headers: { Authorization: `Bearer ${connection.token}` },
+    })
+    if (!response.ok) return null
+    const mime = response.headers.get('content-type')?.split(';')[0]?.trim() || 'application/octet-stream'
+    const buffer = Buffer.from(await response.arrayBuffer())
+    return { buffer, mime }
+  }
+
   async importAgentAttachments(selectedPaths: string[]): Promise<AgentAttachmentReference[]> {
     const candidates = await collectImportCandidates(
       selectedPaths,
@@ -466,6 +478,21 @@ export class FilesGatewayBridge {
         label: `Obsidian · ${input.projectName}`,
         ...(input.resourceIdsByRelativePath ? { resourceIdsByRelativePath: input.resourceIdsByRelativePath } : {}),
       },
+    })
+  }
+
+  /** 图片注册进看图理解（perception VLM 出描述）：导入链路本身不看图，只有
+   *  截图管线会注册 observation——vault 图片附件走记忆同步入库后需补注册，
+   *  PPT 素材检索才能按中文描述搜到。同一 fileId 重复注册幂等（服务端命中
+   *  既有 observation 直接返回）。 */
+  async registerVisualObservation(input: { fileId: string; capturedAt?: Date }): Promise<void> {
+    await this.request('/v1/perception/visual-observations', {
+      method: 'POST',
+      body: JSON.stringify({
+        fileId: input.fileId,
+        kind: 'photo',
+        capturedAt: (input.capturedAt ?? new Date()).toISOString(),
+      }),
     })
   }
 

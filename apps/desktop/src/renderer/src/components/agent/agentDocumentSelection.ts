@@ -113,6 +113,10 @@ function timestamp(value: string | undefined): number {
   return Number.isFinite(parsed) ? parsed : 0
 }
 
+// findPendingAgentDocumentSelection 随对话状态每个渲染帧重扫，工具结果可能是
+// 大 JSON 字符串；解析按工具对象缓存，工具对象转终态后不再重建。
+const selectionParseCache = new WeakMap<object, AgentDocumentSelectionResult | null>()
+
 export function findPendingAgentDocumentSelection(
   tools: DocumentSelectionToolLike[],
   messages: DocumentSelectionMessageLike[],
@@ -121,7 +125,10 @@ export function findPendingAgentDocumentSelection(
   const candidates = tools
     .filter((tool) => tool.name === 'context_room_document_list' && tool.status === 'completed')
     .flatMap((tool) => {
-      const result = parseAgentDocumentSelectionResult(tool.result)
+      if (!selectionParseCache.has(tool)) {
+        selectionParseCache.set(tool, parseAgentDocumentSelectionResult(tool.result))
+      }
+      const result = selectionParseCache.get(tool)
       // 空列表不弹卡片：没有可选对象时弹"选择要编辑的文档"只会造成困惑
       // （也覆盖修复前入库的旧结果——其候选缺 roomId，解析后恒为空）
       return result && result.documents.length > 0 ? [{ tool, result }] : []

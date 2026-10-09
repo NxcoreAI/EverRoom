@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import Fastify, { LogController } from "fastify";
@@ -89,6 +90,7 @@ import { createContextRoomAgentTools } from "../modules/context-rooms/room-agent
 import { createDocumentPiTools } from "../modules/documents/pi-tools.js";
 import { createWebSearchPiTools } from "../modules/agent/web-search-tools.js";
 import { createDocWriterAgentTools } from "../modules/subagents/doc-writer-tools.js";
+import { createSlidesPlannerAgentTools, createSlidesBuilderAgentTools } from "../modules/subagents/slides-agent-tools.js";
 import { buildRoomContextDigest } from "../modules/context-rooms/room-context-digest.js";
 import { RoomOverviewService } from "../modules/context-rooms/overview-service.js";
 import { RoomOverviewScheduler } from "../modules/context-rooms/overview-scheduler.js";
@@ -108,6 +110,9 @@ import { IndexBackfillLlm } from "../modules/documents/index-backfill/llm.js";
 import { DataMigrationService } from "../modules/data-migrations/service.js";
 import { dataMigrationRoutes } from "../modules/data-migrations/routes.js";
 import { filesRoutes } from "../modules/files/routes.js";
+import { materialsRoutes } from "../modules/materials/routes.js";
+import { createMaterialSearchPiTools } from "../modules/materials/agent-tool.js";
+import { MaterialsService } from "../modules/materials/service.js";
 import { FilesService } from "../modules/files/service.js";
 import { FileClusteringService } from "../modules/files/clustering-service.js";
 import { ClipperService } from "../modules/clipper/service.js";
@@ -168,6 +173,7 @@ import { ConnectorDocumentStore } from "@nxcore/connectors-module/document-store
 import { SubagentRegistry } from "../modules/subagents/registry.js";
 import { SubagentRuntimeManager } from "../modules/subagents/runtime-manager.js";
 import { SubagentOrchestrator } from "../modules/subagents/orchestrator.js";
+import { SlidesProgressTracker } from "../modules/subagents/slides-progress-tracker.js";
 import { createSubagentPiTools, inferMaterialSourcesFromReads } from "../modules/subagents/tools.js";
 import { createDocWriterResultValidator } from "../modules/subagents/document-draft.js";
 import { createDocWriterDraftResolver } from "../modules/subagents/doc-writer-content.js";
@@ -180,7 +186,7 @@ import { LocalAgentDispatchStore } from "../modules/local-agents/dispatch-store.
 import type { LocalAgentDispatchSource } from "../modules/local-agents/dispatch-tools.js";
 import { RuntimeConfigManager } from "../runtime-config.js";
 import { runtimeConfigRoutes } from "../modules/runtime-config/routes.js";
-import { AiRelaySessionStore } from "../modules/ai-relay/session.js";
+import { AiRelaySessionStore, relayPathPrefix } from "../modules/ai-relay/session.js";
 import { aiRelayRoutes } from "../modules/ai-relay/routes.js";
 import { WritingStyleService } from "../modules/writing-style/service.js";
 import { WritingStyleLlm } from "../modules/writing-style/llm.js";
@@ -356,6 +362,13 @@ function swaggerAssetsDirectory(): string {
   return candidates.find((candidate) => existsSync(candidate)) ?? candidates[0]!;
 }
 
+// AI 中转余额类失败（new-api insufficient_user_quota / OpenAI insufficient quota
+// / 预扣费额度失败）。这类错误以普通 Error 形态从 agent runtime 冒出，若不识别
+// 会落进 500 兜底，桌面端只会看到笼统的 "An internal gateway error occurred"。
+export function isAiQuotaError(message: string): boolean {
+  return /insufficient_user_quota|insufficient quota|exceeded your current quota|预扣费额度失败|额度不足/i.test(message);
+}
+
 export interface ServerOverrides {
   asrProvider?: AsrProvider | null;
 }
@@ -394,16 +407,9 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     : null, () => {
       const session = aiRelaySessions.current();
       if (!session) return null;
-      // 槽位重写目标的 API 前缀由会话 baseUrl 决定：根部署 → /v1；已带
-      // /v1 结尾不重复；子路径部署 → /<sub>/v1。旧槽位路径不参与。
-      let base = "";
-      try {
-        base = new URL(session.baseUrl).pathname.replace(/\/+$/, "");
-      } catch {
-        // 非法 baseUrl 按根处理
-      }
-      const pathPrefix = base.endsWith("/v1") ? base : `${base}/v1`;
-      return { proxyOrigin: session.proxyOrigin, token: config.authToken, pathPrefix };
+      // 槽位重写目标的 API 前缀由会话 baseUrl 决定（推导见 relayPathPrefix，
+      // 与会话续期短路共用）。旧槽位路径不参与。
+      return { proxyOrigin: session.proxyOrigin, token: config.authToken, pathPrefix: relayPathPrefix(session.baseUrl), models: session.models ?? undefined };
     });
   const initialRuntimeSnapshot = runtimeConfigManager.snapshot();
   applyRuntimeConfig(config, initialRuntimeSnapshot.config);
@@ -528,6 +534,15 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       });
       return;
     }
+    // AI 中转余额耗尽：给出结构化 402，桌面端据此提示"额度不足"而不是笼统 500。
+    if (isAiQuotaError(error.message)) {
+      await reply.code(402).send({
+        error: "ai_quota_exhausted",
+        message: "AI relay account is out of quota",
+        requestId: request.id,
+      });
+      return;
+    }
     const statusCode = error.statusCode && error.statusCode >= 400 ? error.statusCode : 500;
     await reply.code(statusCode).send({
       error: statusCode === 500 ? "internal_error" : "request_error",
@@ -634,9 +649,9 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     }
   }, 30_000);
   documentOperationExpiryTimer.unref();
-  // 外部文档导入（OpenConnector 只读，HTTP 直连）与 Agent 一次性导出（飞书
-  // lark-cli / Notion 官方 ntn CLI）：与导入连接、导出授权两套凭据域解耦，
-  // Gateway 不保存任何 CLI token。
+  // 外部文档导入（飞书 lark-cli / Notion OpenConnector，只读）与 Agent 一次性
+  // 导出（飞书 lark-cli / Notion 官方 ntn CLI）：与导入连接、导出授权两套凭据域
+  // 解耦，Gateway 不保存任何 CLI token。
   const documentImportService = new DocumentImportService(
     db,
     documentService,
@@ -646,6 +661,8 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       assetBridgeUrl: config.documentAssetBridgeUrl ?? null,
       // Notion 行内评论按块查询走官方 ntn（macOS；缺省自动跳过并告警）。
       notionCli: config.notionCli ?? null,
+      // 飞书导入通道（列举/正文/评论/媒体）换轨 lark-cli。
+      larkCli: config.larkCli ?? null,
     },
   );
   const agentDocumentExportService = new AgentDocumentExportService(
@@ -665,6 +682,9 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   const documentReadAuthority = new DocumentReadAuthority((documentId) => documentService.get(documentId));
   // 评论服务在 host 之前构建并共享单实例：registry 的 AI 审阅工具与 REST 路由共用。
   const documentCommentService = new DocumentCommentService(db, (documentId) => Boolean(documentService.get(documentId)));
+  // PPT 逐页进度上报器（只报不定）：早于 documentMcpHost 构建共享单实例——
+  // registry 的 set_page 落页即广播快照，slides_draft 布闸挂转发。
+  const slidesProgress = new SlidesProgressTracker();
   const documentMcpHost = new DocumentMcpHost(
     documentService,
     contextRoomService,
@@ -684,6 +704,8 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       // 任务生产管线（PPT/长文档）：夹 + workplan + 澄清表单。
       taskFolderService,
       () => agentServiceRef.current,
+      // PPT 逐页进度上报：set_page 成功落页即广播快照。
+      slidesProgress,
     ),
     documentOperationService,
     (diagnostic) => {
@@ -801,6 +823,20 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     webSearchTools: config.webSearch
       ? createWebSearchPiTools(agentResolver, externalCalls)
       : [],
+  }));
+  // slides 两段式子代理工具面（create：slides-planner 出内容方案 → slides-builder
+  // 落页；edit：slides-builder 直改）——方案代理拿只读检索面（无 PPT 工具、不落页），
+  // 落页代理只拿 PPT 四件套（方案已带内容，不再检索）；写入/调度类由工厂内 allowlist 拒绝。须在首次 dispatch 前注册。
+  subagentRuntimeManager.registerAgentTools("slides-planner", () => createSlidesPlannerAgentTools({
+    roomTools: createContextRoomAgentTools({ db, memory: memoryService, overview: roomOverviewService }),
+    documentTools: createDocumentPiTools(documentMcpHost),
+    webSearchTools: config.webSearch
+      ? createWebSearchPiTools(agentResolver, externalCalls)
+      : [],
+    materialSearchTools: createMaterialSearchPiTools(materialsService),
+  }));
+  subagentRuntimeManager.registerAgentTools("slides-builder", () => createSlidesBuilderAgentTools({
+    documentTools: createDocumentPiTools(documentMcpHost),
   }));
   // room-corrector 输出校验：edits 的 targetClaimId 必须来自网关组装的 claims 快照
   //（服务端 applyCitations 还有二次强校验，这里提前拒绝省一次转发）。
@@ -1071,6 +1107,25 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
                 return null;
               }
             },
+            // PPT 逐页进度：create 编排方案产出后登记，落页即广播快照。
+            slidesProgress,
+            // PPT 草稿文档：planner 内容方案 → 落成 Room 可编辑文档（用户确认后再生成）。
+            createSlidesDraftDocument: async ({ roomId, title, markdown }) => {
+              const documentId = randomUUID();
+              const prepared = documentService.prepareAgentDocumentDraft({ documentId, roomId, title, markdown });
+              await documentService.import({
+                id: prepared.documentId,
+                roomId: prepared.roomId,
+                title: prepared.title,
+                contentJson: prepared.content,
+                origin: "native",
+              });
+              return { documentId: prepared.documentId, title: prepared.title };
+            },
+            // 草稿回收：落页成功后网关侧进回收站（可恢复），桌面清单随之移除。
+            trashSlidesDraftDocument: async (documentId) => {
+              await documentService.delete(documentId);
+            },
          })
         : []),
       ...createNotificationPiTools(notificationMcpHost),
@@ -1286,6 +1341,9 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   // 文件管理中心（U9 唯一字节入口）：对象库 + uploaded/parsed 登记；
   // 删除级联经钩子回调 knowledge（wiki 清理）与 memory（文档删除）。
   const filesService = new FilesService(db, config.dataDir);
+  // 本地素材库（PPT 配图）：检索走结构化表（perception/剪藏/文档内嵌图），
+  // 取图按内容哈希回源本地字节。slides-planner 专属工具 + /v1/materials/:hash。
+  const materialsService = new MaterialsService(db, config.dataDir);
   filesService.initializeCatalog();
   const dataMigrationService = new DataMigrationService(db, sqlite, memoryService);
   dataMigrationService.setFilesService(filesService);
@@ -1431,6 +1489,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     await localAgentRuntimeRegistry.dispose();
     await channelMcpHost.close();
     await subagentOrchestrator.dispose();
+    slidesProgress.dispose();
     await transcriptionSummaryService.dispose();
     await documentMcpHost.close();
     await documentOutboxWorker?.dispose();
@@ -1540,6 +1599,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   await app.register(agentDocumentExportRoutes(agentDocumentExportService));
   await app.register(asrRoutes(asrService));
   await app.register(memoryRoutes(memoryService));
+  await app.register(materialsRoutes(materialsService));
   await app.register(dataMigrationRoutes(dataMigrationService));
   await app.register(filesRoutes(filesService, {
     // 删除级联（§8.2）：Room/wiki 走 knowledge cleanup job，记忆按 caller_ref 删文档

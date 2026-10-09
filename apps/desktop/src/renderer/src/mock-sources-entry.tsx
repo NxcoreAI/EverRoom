@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 
 import { LocaleProvider } from './i18n/LocaleContext'
 import { SourcesPage } from './components/pages/SourcesPage'
+import './components/agent/AgentPanel.css'
 import '@/styles/tokens.css'
 import './styles.css'
 

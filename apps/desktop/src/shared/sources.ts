@@ -815,6 +815,12 @@ export interface RoomLocalActionResult {
   overview: RoomOverviewProjection
 }
 
+/** Agent 审批表态：bash 命令审批三态。 */
+export type AgentApprovalDecision =
+  | 'approved'
+  | 'approved_session'
+  | 'denied'
+
 export interface NxcoreDesktopApi {
   platform: string
   app: {
@@ -927,6 +933,7 @@ export interface NxcoreDesktopApi {
     start(input: AgentAuthStartInput): Promise<DesktopAgentAuthChallenge>
     resume(challengeId: string): Promise<DesktopAgentAuthChallenge | null>
     cancel(challengeId?: string): Promise<DesktopAgentAuthChallenge | null>
+    disconnect(provider: 'feishu'): Promise<AgentAuthEnvironmentStatus>
     onEvent(listener: (frame: AgentAuthEventFrame) => void): () => void
   }
   externalDocuments: {
@@ -945,6 +952,8 @@ export interface NxcoreDesktopApi {
       forceNew?: boolean
     }): Promise<{ batchId: string; total: number }>
     importBatchStatus(batchId: string): Promise<DocumentImportBatchView>
+    /** 面板重挂载找回进行中批次（按 provider+连接名查最近一条 running，无则 null）。 */
+    activeImportBatch(provider: ExternalDocumentProvider, connectionName?: string): Promise<DocumentImportBatchView | null>
     cancelImportBatch(batchId: string): Promise<DocumentImportBatchView>
     importPreview(provider: ExternalDocumentProvider, remoteDocumentId: string): Promise<ExternalDocumentPreview>
     importCommit(input: { runId: string; roomId: string; targetDocumentId?: string }): Promise<{
@@ -1073,6 +1082,8 @@ export interface NxcoreDesktopApi {
     dispatchSelectionRewrite(input: RoomAgentSelectionRewriteInput): Promise<{ invocationId: string }>
     getSubagentInvocation(invocationId: string): Promise<SubagentInvocation>
     cancelSubagentInvocation(invocationId: string): Promise<SubagentInvocation>
+    listRunSubagentInvocations(rootRunId: string): Promise<import('@nxcore/agent-contract').SubagentInvocationNode[]>
+    listSubagentInvocationEvents(invocationId: string, afterSeq?: number): Promise<import('@nxcore/agent-contract').SubagentInvocationEvent[]>
     refreshBrief(roomId: string): Promise<ContextRoomSnapshotItem>
     /** 记忆条目晋升（待确认→已确认）：MemoryCore 蒸馏后 worker 回填归属。 */
     promoteMemoryItem(roomId: string, itemId: string): Promise<{ promotionSessionId: string | null }>
@@ -1088,6 +1099,7 @@ export interface NxcoreDesktopApi {
     devices(options?: { quiet?: boolean }): Promise<CloudDevice[]>
     login(input:{identifier:string;password:string}): Promise<CloudAccountStatus>
     validateInvitationCode(invitationCode: string): Promise<{ valid: true }>
+    redeemInvitationCode(invitationCode: string): Promise<{ applied: boolean; rejected?: 'pro_plan_active' }>
     loginWithOidc(provider: CloudOidcProvider, invitationCode?: string): Promise<CloudAccountStatus>
     cancelOidcLogin(): Promise<void>
     logout(): Promise<CloudAccountStatus>
@@ -1243,7 +1255,11 @@ export interface NxcoreDesktopApi {
       input: SubmitPendingAgentIntentInput,
     ): Promise<{ intent: PendingAgentIntent; run: AgentRun }>
     cancelRun(runId: string): Promise<AgentRun>
-    resolveApproval(approvalId: string, decision: 'approved' | 'approved_session' | 'denied'): Promise<{ approvalId: string; decision: string }>
+    resolveApproval(
+      approvalId: string,
+      decision: AgentApprovalDecision,
+      feedback?: string,
+    ): Promise<{ approvalId: string; decision: string }>
     getPermissionMode(sessionId: string): Promise<AgentPermissionModeState>
     setPermissionMode(sessionId: string, mode: AgentPermissionMode): Promise<{ mode: AgentPermissionMode; applied: boolean }>
     subscribe(sessionId: string): Promise<void>

@@ -497,7 +497,12 @@ export function TiptapDocumentEditor({
           if (!nextPending || nextPending.revision < pending.revision) {
             pendingSave.current = pending
           }
-          setSaveState(error instanceof Error && error.message.includes('version') ? '版本冲突，草稿已保留' : '保存失败，草稿已保留')
+          const message = error instanceof Error ? error.message : ''
+          setSaveState(
+            message.includes('VAULT_SOURCE_CONFLICT') || message.includes('源文件已经变化')
+              ? 'Obsidian 中的笔记已修改，草稿已保留'
+              : message.includes('version') ? '版本冲突，草稿已保留' : '保存失败，草稿已保留',
+          )
           return
         }
       }

@@ -10,6 +10,7 @@ import type {
   SlidesEditArtifactRequest,
 } from '../office/office-preview-registry'
 import { generateDocxFromHtml, generatePptxFromPageSpecs, generateXlsxFromSheets, type DocxGenerationPhase } from '../office/office-generation'
+import { createEverroomMaterialResolver } from '../office/office-material-resolver'
 import type { AgentSheetInput } from '../office/xlsx-generation'
 
 // HTML 正文 / 页 spec / 表格 JSON 远大于通知，放宽到 2MB；超过视为模型输出异常。
@@ -224,11 +225,13 @@ export class OfficeBridgeServer {
       const broadcastPhase = (phase: DocxGenerationPhase) => {
         this.broadcast({ type: 'phase', title: parsed.title, phase, format })
       }
+      // everroom-material:// 素材回源器：桥接本地网关素材库（无桥时引用按失败跳过）。
+      const imageResolver = createEverroomMaterialResolver(this.filesBridge)
       const generated =
         format === 'docx'
           ? await generateDocxFromHtml({ title: parsed.title, html: parsed.html! }, broadcastPhase)
           : format === 'pptx'
-            ? await generatePptxFromPageSpecs({ title: parsed.title, pages: parsed.pages! }, broadcastPhase)
+            ? await generatePptxFromPageSpecs({ title: parsed.title, pages: parsed.pages! }, broadcastPhase, imageResolver)
             : await generateXlsxFromSheets({ title: parsed.title, sheets: parsed.sheets! }, broadcastPhase)
       const originalName = parsed.fileName?.trim() || `${generated.title}${FORMAT_EXT[format]}`
       this.broadcast({ type: 'phase', title: parsed.title, phase: 'importing', format })

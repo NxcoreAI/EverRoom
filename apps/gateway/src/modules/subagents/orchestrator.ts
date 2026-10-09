@@ -1,13 +1,15 @@
 import { randomUUID } from "node:crypto";
 import type {
   SubagentInvocation,
+  SubagentInvocationEvent,
+  SubagentInvocationNode,
   SubagentInvocationResult,
   SubagentInvocationSource,
   SubagentInvocationStatus,
 } from "@nxcore/agent-contract";
 import type { AgentRuntime, RuntimeEvent } from "@nxcore/agent-runtime";
 import { Ajv, type ValidateFunction } from "ajv";
-import { and, desc, eq, inArray, isNull } from "drizzle-orm";
+import { asc, and, desc, eq, gt, inArray, isNull } from "drizzle-orm";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
 import {
   subagentInvocationEvents,
@@ -27,6 +29,11 @@ export interface DispatchSubagentInput {
   parentSessionId?: string | null;
   parentRunId?: string | null;
   signal?: AbortSignal;
+  /**
+   * invocationId 生成即回调（幂等命中时回传既有 id）：供调用方在子 run 开跑前
+   * 以该 id 注册跨模块运行时状态（如 PPT 逐页审阅闸门 arm）。
+   */
+  onInvocationId?: (invocationId: string) => void;
 }
 
 interface ActiveInvocation {
@@ -111,6 +118,62 @@ export class SubagentOrchestrator {
     return row ? toInvocation(row) : null;
   }
 
+  /**
+   * 一次调用的执行事件（含每次工具调用），afterSeq 增量拉取。该事件流是
+   * 渲染子代理工具流的唯一数据源，消费方（对话时间线）按 seq 递进轮询。
+   */
+  listInvocationEvents(invocationId: string, afterSeq = 0): SubagentInvocationEvent[] {
+    return this.db.select().from(subagentInvocationEvents)
+      .where(and(
+        eq(subagentInvocationEvents.invocationId, invocationId),
+        gt(subagentInvocationEvents.seq, afterSeq),
+      ))
+      .orderBy(asc(subagentInvocationEvents.seq))
+      .all()
+      .map((row) => ({
+        id: row.id,
+        invocationId: row.invocationId,
+        type: row.type as SubagentInvocationEvent["type"],
+        seq: row.seq,
+        payload: row.payload,
+        occurredAt: row.createdAt.toISOString(),
+      }));
+  }
+
+  /**
+   * 一次 run 的子代理调用树（扁平返回，renderer 据此拼父子链）：
+   * 第一层 = parentRunId 命中该 run 的调用，其后逐层取「父为已收录调用」的后代，
+   * createdAt 升序。上限 200 条 / 5 层——仅作展示，防脏数据把查询拖成全表回放。
+   */
+  listInvocationTree(rootRunId: string): SubagentInvocationNode[] {
+    const collected = new Map<string, SubagentInvocationNode>();
+    let frontier = this.db.select().from(subagentInvocations)
+      .where(eq(subagentInvocations.parentRunId, rootRunId))
+      .orderBy(asc(subagentInvocations.createdAt))
+      .all()
+      .map((row) => this.toInvocationNode(row));
+    for (const node of frontier) collected.set(node.id, node);
+    for (let depth = 1; frontier.length > 0 && collected.size < 200 && depth < 5; depth += 1) {
+      frontier = this.db.select().from(subagentInvocations)
+        .where(inArray(subagentInvocations.parentRunId, frontier.map((node) => node.id)))
+        .orderBy(asc(subagentInvocations.createdAt))
+        .all()
+        .map((row) => this.toInvocationNode(row))
+        .filter((node) => !collected.has(node.id));
+      for (const node of frontier) collected.set(node.id, node);
+    }
+    return [...collected.values()].sort((left, right) =>
+      left.createdAt.localeCompare(right.createdAt));
+  }
+
+  private toInvocationNode(row: typeof subagentInvocations.$inferSelect): SubagentInvocationNode {
+    const invocation = toInvocation(row);
+    return {
+      ...invocation,
+      agentName: this.registry.get(invocation.agentDefinitionId)?.name ?? invocation.agentDefinitionId,
+    };
+  }
+
   async dispatch(input: DispatchSubagentInput): Promise<SubagentInvocation> {
     const { invocationId, completion, joined } = await this.begin(input);
     if (joined) return completion;
@@ -164,6 +227,7 @@ export class SubagentOrchestrator {
       eq(subagentInvocations.idempotencyKey, input.idempotencyKey),
     )).get();
     if (existing) {
+      input.onInvocationId?.(existing.id);
       const active = this.active.get(existing.id);
       if (active) return { invocationId: existing.id, completion: active.promise, joined: true };
       return { invocationId: existing.id, completion: Promise.resolve(toInvocation(existing)), joined: true };
@@ -184,6 +248,7 @@ export class SubagentOrchestrator {
       throw error;
     }
     const invocationId = randomUUID();
+    input.onInvocationId?.(invocationId);
     const now = new Date();
     this.db.insert(subagentInvocations).values({
       id: invocationId,

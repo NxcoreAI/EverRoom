@@ -74,6 +74,19 @@ export function documentImportBatchRoutes(
       }
     });
 
+    app.get("/v1/document-import/batches/active", {
+      schema: {
+        tags: ["document-import"],
+        querystring: Type.Object({
+          provider: providerSchema,
+          connectionName: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+        }, { additionalProperties: false }),
+      },
+    }, async (request) => {
+      const query = request.query as { provider: "feishu" | "notion"; connectionName?: string };
+      return service.getActiveBatch(query.provider, query.connectionName);
+    });
+
     app.get("/v1/document-import/batch/:id", {
       schema: { tags: ["document-import"] },
     }, async (request, reply) => {

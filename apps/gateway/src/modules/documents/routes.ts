@@ -1,5 +1,7 @@
 import type { FastifyPluginAsyncTypebox } from "@fastify/type-provider-typebox";
 import { Type } from "@sinclair/typebox";
+import { agentDocumentMarkdown } from "./agent-markdown.js";
+import { documentBodyContent } from "./content-model.js";
 import { DocumentServiceError, type DocumentService } from "./service.js";
 import type { DocumentIndexBackfillReadTrigger } from "./index-backfill/read-trigger.js";
 import type { TaskFolderService } from "./task-folders.js";
@@ -60,6 +62,30 @@ export function documentRoutes(
         if (!document) return reply.code(404).send({ error: "not_found", message: "Document not found" });
         indexBackfillReadTrigger?.trigger(document);
         return document;
+      },
+    );
+
+    // 文档正文的 Markdown 序列化（与 external-projections 写回 Vault 用同一个序列化器，
+    // 保证「编辑器保存 → 写回笔记文件 → 文件同步回文档」内容一致、不产生额外版本抖动）。
+    app.get(
+      "/v1/documents/:id/markdown",
+      {
+        schema: {
+          tags: ["documents"],
+          params: IdParams,
+          response: {
+            200: Type.Object({ documentId: Type.String(), markdown: Type.String() }),
+            404: Type.Object({ error: Type.String(), message: Type.String() }),
+          },
+        },
+      },
+      async (request, reply) => {
+        const document = service.get(request.params.id);
+        if (!document) return reply.code(404).send({ error: "not_found", message: "Document not found" });
+        return {
+          documentId: document.id,
+          markdown: agentDocumentMarkdown.serialize(documentBodyContent(document.contentJson)),
+        };
       },
     );
 

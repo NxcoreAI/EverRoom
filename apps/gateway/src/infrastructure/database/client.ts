@@ -58,7 +58,9 @@ function runAdditiveMigrationIdempotently(
   ).has(column);
 
   const sql = readFileSync(migrationPath, "utf8");
-  for (const statement of sql.split(/--> statement-breakpoint/g).map((item) => item.trim()).filter(Boolean)) {
+  for (const raw of sql.split(/--> statement-breakpoint/g)) {
+    const statement = raw.replace(/^--[^\n]*$/gm, "").trim();
+    if (!statement) continue;
     const createTable = statement.match(/^CREATE TABLE(?: IF NOT EXISTS)? [`"]([^`"]+)[`"]/)?.[1];
     if (createTable && hasObject("table", createTable)) continue;
     const createIndex = statement.match(/^CREATE(?: UNIQUE)? INDEX(?: IF NOT EXISTS)? [`"]([^`"]+)[`"]/)?.[1];
@@ -586,6 +588,17 @@ export function createDatabase(databasePath: string, migrationsDir: string): Dat
   if (localReferenceEntry && hasMigrationTable && hasFileEntries) {
     runAdditiveMigrationIdempotently(sqlite, migrationsDir, localReferenceEntry.tag!);
     recordMigration(sqlite, migrationsDir, localReferenceEntry);
+  }
+  // 0064_document_import_batches_force_new 的手写时间戳早于同批 0064_document_origin
+  // 与 0065+，游标已越过它的升级库会被 Drizzle 当作已应用而静默跳过 ALTER。
+  const importBatchForceNewEntry = readMigrationJournal(migrationsDir)
+    .find((item) => item.tag === "0064_document_import_batches_force_new");
+  const hasImportBatches = Boolean(sqlite.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'document_import_batches' LIMIT 1",
+  ).get());
+  if (importBatchForceNewEntry && hasMigrationTable && hasImportBatches) {
+    runAdditiveMigrationIdempotently(sqlite, migrationsDir, importBatchForceNewEntry.tag!);
+    recordMigration(sqlite, migrationsDir, importBatchForceNewEntry);
   }
   const db = drizzle(sqlite, { schema });
   migrate(db, { migrationsFolder: migrationsDir });

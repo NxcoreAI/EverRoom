@@ -44,6 +44,11 @@ if [ "$1" = "config" ]; then
   echo app-ready > "$STATE_FILE"
   exit 0
 fi
+if [ "$1" = "auth" ] && [ "$2" = "logout" ]; then
+  echo no-app > "$STATE_FILE"
+  echo '{"ok":true,"data":{"loggedOut":true}}'
+  exit 0
+fi
 echo '{"ok":false,"error":{"type":"cli","message":"unsupported"}}' >&2
 exit 3
 `
@@ -161,6 +166,55 @@ describe('agent auth controller', () => {
     const after = controller.cancel(challenge.id)
     expect(after).toBeNull()
     const status = await controller.status()
+    expect(status.activeChallenge).toBeNull()
+  })
+
+  it('omitted phase auto-selects by environment: app_setup when unconfigured', async () => {
+    const { path } = await writeFakeLarkCli()
+    const controller = createController(path)
+    const challenge = await controller.start({ provider: 'feishu' })
+    expect(challenge.phase).toBe('app_setup')
+    controller.cancel(challenge.id)
+  })
+
+  it('omitted phase auto-selects by environment: user_auth when app configured', async () => {
+    const { path } = await writeFakeLarkCli()
+    await import('node:fs/promises').then((fs) => fs.writeFile(join(path, '..', 'state'), 'app-ready', 'utf8'))
+    const controller = createController(path)
+    const challenge = await controller.start({ provider: 'feishu' })
+    expect(challenge.phase).toBe('user_auth')
+    controller.cancel(challenge.id)
+  })
+
+  it('auto-opens browser when verification URL first appears, once per phase', async () => {
+    const { path } = await writeFakeLarkCli()
+    const openedUrls: string[] = []
+    const controller = new AgentAuthController(
+      new LarkAuthRunner(path),
+      { onVerificationUrl: (url) => { openedUrls.push(url) } },
+    )
+    controllers.push(controller)
+    await controller.start({ provider: 'feishu', phase: 'app_setup' })
+    // app_setup 引导链接 + user_auth 授权页各开一次；后续更新不重复。
+    for (let attempt = 0; attempt < 60 && openedUrls.length < 2; attempt += 1) await delay(100)
+    expect(openedUrls).toContain('https://feishu.cn/app-setup')
+    expect(openedUrls.filter((url) => url === 'https://feishu.cn/verify?code=abc').length).toBe(1)
+    const status = await controller.status()
+    expect(status.feishu.userAuthorized).toBe(true)
+  })
+
+  it('disconnect logs out and removes the authorized challenge card', async () => {
+    const { path } = await writeFakeLarkCli()
+    const controller = createController(path)
+    await controller.start({ provider: 'feishu', phase: 'app_setup' })
+    for (let attempt = 0; attempt < 60; attempt += 1) {
+      const status = await controller.status()
+      if (status.feishu.userAuthorized === true) break
+      await delay(100)
+    }
+    expect((await controller.status()).feishu.userAuthorized).toBe(true)
+    const status = await controller.disconnect('feishu')
+    expect(status.feishu.userAuthorized).not.toBe(true)
     expect(status.activeChallenge).toBeNull()
   })
 

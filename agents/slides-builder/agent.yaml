@@ -1,0 +1,32 @@
+schemaVersion: 1
+id: slides-builder
+name: Slides Builder
+description: 承接 EverRoom 演示文稿（PPT）的落页与修改——按 slides-planner 的内容方案定调、设计布局并逐页填充，输出结构化演示产物
+mode: dispatch_only
+enabled: true
+
+systemPrompt: ./SYSTEM.md
+
+skills:
+  - ./skills/design-craft-ppt-skill
+  - ./skills/layout-ppt-skill
+  - ./skills/japanese-style-ppt-skill
+  - ./skills/japanese-lifestyle-ppt-skill
+  - ./skills/soft-3d-clay-ppt-skill
+  - ./skills/futuristic-tech-editorial-ppt-skill
+  - ./skills/minimalist-luxury-branding-ppt-skill
+  - ./skills/modern-illustration-editorial-ppt-skill
+  - ./skills/japanese-hand-drawn-editorial-ppt-skill
+
+mcp: []
+
+inputSchema: ./schemas/input.schema.json
+outputSchema: ./schemas/output.schema.json
+
+policy:
+  allowedCallers: [primary-agent]
+  maxConcurrency: 2
+  # 逐页生成预算：create 1 + set_page ≤24 页（含失败重试）+ 定调/布局/风格 skill 读取 ~10 + 提交。
+  maxToolCalls: 64
+  # 一口气落完：24 页逐页 set_page + 完稿自检，正常十几分钟内完成。
+  timeoutSeconds: 1800

@@ -1,7 +1,7 @@
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { UnconfiguredAgentRuntime, type AgentRuntime, type StartRuntimeRunInput } from "@nxcore/agent-runtime";
+import { UnconfiguredAgentRuntime, type AgentRuntime, type RuntimeEvent, type StartRuntimeRunInput } from "@nxcore/agent-runtime";
 import { FakeAgentRuntime } from "@nxcore/agent-runtime/testing";
 import { afterEach, describe, expect, it } from "vitest";
 import type { GatewayConfig, SubagentFrameworkConfig } from "../src/config.js";
@@ -206,6 +206,121 @@ describe("filesystem subagent framework", () => {
     });
     controller.abort();
     await expect(cancelledPromise).resolves.toMatchObject({ status: "cancelled" });
+    await orchestrator.dispose();
+    fixture.database.sqlite.close();
+  }, 15_000);
+
+  it("listInvocationTree：按 run 收拢两层调用树，附带展示名并按创建时间排序", async () => {
+    const fixture = await createFixture();
+    await fixture.registry.initialize();
+    const runtimeManager = new SubagentRuntimeManager({ agentRuntime: "fake" } as GatewayConfig, fixture.config);
+    const orchestrator = new SubagentOrchestrator(
+      fixture.database.db,
+      fixture.config,
+      fixture.registry,
+      runtimeManager,
+      logger,
+    );
+
+    const parent = await orchestrator.dispatch({
+      agentId: "researcher",
+      task: "Parent task",
+      input: { topic: "EverRoom" },
+      idempotencyKey: "tree-parent",
+      source: "primary_agent",
+      parentSessionId: "session-tree",
+      parentRunId: "run-tree",
+    });
+    const child = await orchestrator.dispatch({
+      agentId: "researcher",
+      task: "Child task",
+      input: { topic: "EverRoom" },
+      idempotencyKey: "tree-child",
+      source: "primary_agent",
+      parentSessionId: "session-tree",
+      parentRunId: parent.id,
+    });
+
+    const tree = orchestrator.listInvocationTree("run-tree");
+    expect(tree.map((node) => [node.id, node.agentName, node.parentRunId])).toEqual([
+      [parent.id, "Researcher", "run-tree"],
+      [child.id, "Researcher", parent.id],
+    ]);
+    expect(orchestrator.listInvocationTree("run-missing")).toEqual([]);
+
+    await orchestrator.dispose();
+    fixture.database.sqlite.close();
+  }, 15_000);
+
+  it("listInvocationEvents：按 seq 升序返回执行事件，afterSeq 增量过滤", async () => {
+    const fixture = await createFixture();
+    await fixture.registry.initialize();
+
+    class ToolEmittingRuntime implements AgentRuntime {
+      readonly id = "fake-tools";
+      async getCapabilities() {
+        return { streaming: true, reasoning: true, tools: true, steering: false, resume: false };
+      }
+      async start(input: StartRuntimeRunInput) {
+        const runId = input.runId;
+        return {
+          runId,
+          runtimeSessionRef: `fake-${runId}`,
+          events: (async function* generate(): AsyncGenerator<RuntimeEvent> {
+            yield { type: "run.started", payload: {} };
+            yield { type: "tool.requested", payload: { toolCallId: "call-1", name: "wiki_search", args: { query: "EverRoom" } } };
+            yield { type: "tool.completed", payload: { toolCallId: "call-1", name: "wiki_search", result: { results: [1, 2, 3] } } };
+            yield { type: "message.completed", payload: { role: "assistant", content: "完成。" } };
+            yield { type: "run.completed", payload: {} };
+          })(),
+        };
+      }
+      async resume(): Promise<never> { throw new Error("no resume"); }
+      async sendInput(): Promise<never> { throw new Error("no steering"); }
+      async cancel(): Promise<void> {}
+      async deleteSession(): Promise<void> {}
+      async dispose(): Promise<void> {}
+    }
+
+    const runtimeManager = new SubagentRuntimeManager({ agentRuntime: "fake" } as GatewayConfig, fixture.config);
+    const orchestrator = new SubagentOrchestrator(
+      fixture.database.db,
+      fixture.config,
+      fixture.registry,
+      runtimeManager,
+      logger,
+    );
+    // 事件结构无关运行时实现：直接替换为带工具事件的桩运行时。
+    (runtimeManager as unknown as { runtimes: Map<string, AgentRuntime> }).runtimes.set(
+      fixture.registry.get("researcher")!.revision.id,
+      new ToolEmittingRuntime(),
+    );
+
+    const invocation = await orchestrator.dispatch({
+      agentId: "researcher",
+      task: "Emit tool events",
+      input: { topic: "EverRoom" },
+      idempotencyKey: "events-dispatch",
+      source: "primary_agent",
+      parentSessionId: "session-events",
+      parentRunId: "run-events",
+    });
+    expect(invocation.status).toBe("completed");
+
+    const all = orchestrator.listInvocationEvents(invocation.id);
+    expect(all.map((event) => event.type)).toEqual([
+      "run.started",
+      "tool.requested",
+      "tool.completed",
+      "message.completed",
+      "run.completed",
+    ]);
+    expect(all[1]!.payload).toMatchObject({ toolCallId: "call-1", name: "wiki_search", args: { query: "EverRoom" } });
+
+    const later = orchestrator.listInvocationEvents(invocation.id, all[1]!.seq);
+    expect(later.map((event) => event.type)).toEqual(["tool.completed", "message.completed", "run.completed"]);
+    expect(orchestrator.listInvocationEvents("unknown-invocation")).toEqual([]);
+
     await orchestrator.dispose();
     fixture.database.sqlite.close();
   }, 15_000);

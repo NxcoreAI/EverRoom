@@ -19,9 +19,7 @@ import {
   shouldSyncRoomToKnowledge,
 } from './knowledgeRoomSync'
 import { scheduleRoomMarkdownSweep } from '../knowledgeMarkdownImport'
-import type { ObsidianVaultBinding } from '../../../../../shared/obsidian'
 import { createEmptyContextRoom } from './contextRoomFactory'
-import { ObsidianVaultRoom } from '../obsidian/ObsidianVaultRoom'
 import { mergeRoomMemoryItems } from './attributedRoomMemories'
 import { ROOM_MEMORY_CHANGED_EVENT } from '../roomMemoryChange'
 import type { MemoryRoomMemoryItemDto } from '../../../../../shared/memory'
@@ -57,7 +55,6 @@ export function PortedContextRoom({
   const { state, setState, refreshFromBackend } = useContextRoomState()
   const handledHomeRequest = useRef(homeRequest)
   const [homeView, setHomeView] = useState<'home' | 'all'>('home')
-  const [vaults, setVaults] = useState<ObsidianVaultBinding[]>([])
   const activeRoom = state.rooms.find((room) => room.id === activeRoomId) ?? null
   // 手动合并（首页/全部列表两个视图共用）：选择对话框 + manualPair 版合并中心。
   const [manualMergeRoom, setManualMergeRoom] = useState<ContextRoomRecord | null>(null)
@@ -135,7 +132,6 @@ export function PortedContextRoom({
     const api = window.nxcore?.obsidian
     if (!api) return
     const bindings = await api.list()
-    setVaults(bindings)
     setState((current) => {
       const dedicatedBindings = bindings.filter((vault) => vault.mountMode === 'dedicated')
       const byRoomId = new Map(dedicatedBindings.map((vault) => [vault.roomId, vault]))
@@ -369,13 +365,6 @@ export function PortedContextRoom({
   })
 
   if (activeRoom) {
-    const vault = vaults.find((item) => item.roomId === activeRoom.id && item.mountMode === 'dedicated')
-    if (vault) return <ObsidianVaultRoom room={activeRoom} vault={vault} onBack={onShowHome} onDisconnect={async (vaultId) => {
-      await window.nxcore?.obsidian.disconnect(vaultId)
-      setState((current) => ({ ...current, rooms: current.rooms.filter((room) => room.id !== activeRoom.id) }))
-      await refreshVaults()
-      onShowHome()
-    }} />
     return (
       <PortedDetail
         key={activeRoom.id}

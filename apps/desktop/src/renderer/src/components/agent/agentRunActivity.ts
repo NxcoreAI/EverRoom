@@ -1,4 +1,9 @@
-import type { AgentContextUsage, AgentEvent } from '@nxcore/agent-contract'
+import type {
+  AgentContextUsage,
+  AgentEvent,
+  SubagentInvocationEvent,
+  SubagentInvocationNode,
+} from '@nxcore/agent-contract'
 import type { Translate } from '../../i18n/LocaleContext'
 
 export type DisplayAgentToolStatus = 'pending' | 'running' | 'completed' | 'error' | 'stopped'
@@ -33,6 +38,21 @@ export interface AgentRunActivity {
   hasTools: boolean
   completed: boolean
 }
+
+/** 时间线上的子代理行：label 即「谁调用了它」的链式名（如 Slides Planner → Slides Builder）。 */
+export interface AgentSubagentStep {
+  id: string
+  label: string
+  task: string
+  status: DisplayAgentToolStatus
+  startedAt: string | null
+  completedAt: string | null
+  errorMessage: string | null
+}
+
+export type TimelineRow =
+  | { kind: 'tool'; key: string; at: number; step: AgentActivityStep }
+  | { kind: 'subagent'; key: string; at: number; subagent: AgentSubagentStep }
 
 export interface ReducedAgentRunEvents {
   tools: DisplayAgentToolCall[]
@@ -413,93 +433,129 @@ export function agentToolStageText(
   return punctuate(result)
 }
 
-export function reduceAgentRunActivity(
-  events: AgentEvent[],
-  savedAnswer = '',
-): AgentRunActivity {
-  const steps: AgentActivityStep[] = []
-  let tools: DisplayAgentToolCall[] = []
-  let pendingText = ''
-  let completedContent = ''
-  let completed = false
+/**
+ * run 活动的增量折叠器：事件按 seq 升序逐个喂入，避免每个事件都全量重放
+ * 整个 run 的历史（全量重放是 O(N²)，工具多、流式 delta 多时把渲染线程卡死）。
+ * 折叠器自身可变，快照（snapshotAgentRunActivity）输出不可变的展示对象。
+ */
+export interface AgentRunActivityAccumulator {
+  steps: AgentActivityStep[]
+  tools: DisplayAgentToolCall[]
+  pendingText: string
+  completedContent: string
+  completed: boolean
+  savedAnswer: string
+}
 
-  for (const event of [...events].sort((left, right) => left.seq - right.seq)) {
-    if (isToolEvent(event)) {
-      const nextTools = mergeAgentToolEvent(tools, event)
-      const payload = event.payload as { toolCallId?: unknown }
-      if (typeof payload.toolCallId !== 'string') continue
-      const tool = nextTools.find((candidate) => candidate.id === payload.toolCallId)
-      if (!tool) continue
-      const index = steps.findIndex((step) => step.id === tool.id)
-      if (index === -1) {
-        const text = pendingText.trim()
-        if (text && steps.length) {
-          const previous = steps[steps.length - 1]!
-          previous.afterText = filterActivityText(text, previous.tool, tool)
-        }
-        steps.push({
-          id: tool.id,
-          sequence: event.seq,
-          tool,
-          beforeText: text && !steps.length ? filterActivityText(text, tool) : '',
-          afterText: '',
-        })
-        pendingText = ''
-      } else {
-        steps[index] = { ...steps[index]!, tool }
+export function createAgentRunActivityAccumulator(savedAnswer = ''): AgentRunActivityAccumulator {
+  return { steps: [], tools: [], pendingText: '', completedContent: '', completed: false, savedAnswer }
+}
+
+/** 折叠单个事件，返回是否有可观察变化（无变化时调用方可跳过重渲染）。 */
+export function foldAgentRunActivityEvent(acc: AgentRunActivityAccumulator, event: AgentEvent): boolean {
+  if (isToolEvent(event)) {
+    const nextTools = mergeAgentToolEvent(acc.tools, event)
+    const payload = event.payload as { toolCallId?: unknown }
+    if (typeof payload.toolCallId !== 'string') return false
+    const tool = nextTools.find((candidate) => candidate.id === payload.toolCallId)
+    if (!tool) return false
+    const index = acc.steps.findIndex((step) => step.id === tool.id)
+    if (index === -1) {
+      const text = acc.pendingText.trim()
+      if (text && acc.steps.length) {
+        const previous = acc.steps[acc.steps.length - 1]!
+        previous.afterText = filterActivityText(text, previous.tool, tool)
       }
-      tools = nextTools
-      continue
+      acc.steps.push({
+        id: tool.id,
+        sequence: event.seq,
+        tool,
+        beforeText: text && !acc.steps.length ? filterActivityText(text, tool) : '',
+        afterText: '',
+      })
+      acc.pendingText = ''
+    } else {
+      acc.steps[index] = { ...acc.steps[index]!, tool }
     }
-
-    if (event.type === 'message.started') {
-      // pi 自动重试重启消息体（#199）：丢弃上一波半截正文，从零重新累计
-      if (pendingText) pendingText = ''
-      continue
-    }
-
-    if (event.type === 'message.delta') {
-      const delta = (event.payload as { delta?: unknown }).delta
-      if (typeof delta !== 'string' || !delta) continue
-      pendingText += delta
-      continue
-    }
-
-    if (event.type === 'message.completed') {
-      const content = (event.payload as { content?: unknown }).content
-      if (typeof content === 'string') completedContent = content
-    }
-    if (
-      event.type === 'run.failed'
-      || event.type === 'run.cancelled'
-      || event.type === 'run.interrupted'
-    ) {
-      const status: DisplayAgentToolStatus = event.type === 'run.failed' ? 'error' : 'stopped'
-      tools = tools.map((tool) => tool.status === 'pending' || tool.status === 'running'
-        ? { ...tool, status, completedAt: event.occurredAt }
-        : tool)
-      for (let index = 0; index < steps.length; index += 1) {
-        const tool = tools.find((candidate) => candidate.id === steps[index]!.id)
-        if (tool) steps[index] = { ...steps[index]!, tool }
-      }
-    }
-    if (event.type === 'run.completed') completed = true
+    acc.tools = nextTools
+    return true
   }
 
+  if (event.type === 'message.started') {
+    // pi 自动重试重启消息体（#199）：丢弃上一波半截正文，从零重新累计
+    if (!acc.pendingText) return false
+    acc.pendingText = ''
+    return true
+  }
+
+  if (event.type === 'message.delta') {
+    const delta = (event.payload as { delta?: unknown }).delta
+    if (typeof delta !== 'string' || !delta) return false
+    acc.pendingText += delta
+    return true
+  }
+
+  if (event.type === 'message.completed') {
+    const content = (event.payload as { content?: unknown }).content
+    if (typeof content !== 'string') return false
+    acc.completedContent = content
+    return true
+  }
+
+  if (
+    event.type === 'run.failed'
+    || event.type === 'run.cancelled'
+    || event.type === 'run.interrupted'
+  ) {
+    const status: DisplayAgentToolStatus = event.type === 'run.failed' ? 'error' : 'stopped'
+    acc.tools = acc.tools.map((tool) => tool.status === 'pending' || tool.status === 'running'
+      ? { ...tool, status, completedAt: event.occurredAt }
+      : tool)
+    for (let index = 0; index < acc.steps.length; index += 1) {
+      const tool = acc.tools.find((candidate) => candidate.id === acc.steps[index]!.id)
+      if (tool) acc.steps[index] = { ...acc.steps[index]!, tool }
+    }
+    return true
+  }
+
+  if (event.type === 'run.completed') {
+    if (acc.completed) return false
+    acc.completed = true
+    return true
+  }
+
+  return false
+}
+
+/** 按 seq 升序折叠一批事件（历史回放用；实时事件已在收到时保证升序）。 */
+export function foldAgentRunActivityEvents(
+  acc: AgentRunActivityAccumulator,
+  events: AgentEvent[],
+): boolean {
+  let changed = false
+  for (const event of [...events].sort((left, right) => left.seq - right.seq)) {
+    if (foldAgentRunActivityEvent(acc, event)) changed = true
+  }
+  return changed
+}
+
+/** 输出不可变快照：steps 复制一份，避免折叠器后续变异污染已进入 React 状态的对象。 */
+export function snapshotAgentRunActivity(acc: AgentRunActivityAccumulator): AgentRunActivity {
+  const steps = acc.steps.map((step) => ({ ...step }))
   const hasTools = steps.length > 0
   if (!hasTools) {
     return {
       steps,
       pendingAnswer: '',
-      finalAnswer: (completedContent || savedAnswer).trim(),
+      finalAnswer: (acc.completedContent || acc.savedAnswer).trim(),
       hasTools,
-      completed,
+      completed: acc.completed,
     }
   }
 
-  const pendingAnswer = completed ? '' : (pendingText || completedContent || savedAnswer).trim()
-  const finalAnswer = completed
-    ? documentSummaryFallback((pendingText || completedContent || savedAnswer).trim(), tools)
+  const pendingAnswer = acc.completed ? '' : (acc.pendingText || acc.completedContent || acc.savedAnswer).trim()
+  const finalAnswer = acc.completed
+    ? documentSummaryFallback((acc.pendingText || acc.completedContent || acc.savedAnswer).trim(), acc.tools)
     : ''
 
   return {
@@ -507,8 +563,17 @@ export function reduceAgentRunActivity(
     pendingAnswer,
     finalAnswer,
     hasTools,
-    completed,
+    completed: acc.completed,
   }
+}
+
+export function reduceAgentRunActivity(
+  events: AgentEvent[],
+  savedAnswer = '',
+): AgentRunActivity {
+  const acc = createAgentRunActivityAccumulator(savedAnswer)
+  foldAgentRunActivityEvents(acc, events)
+  return snapshotAgentRunActivity(acc)
 }
 
 export function reduceAgentRunEvents(events: AgentEvent[]): ReducedAgentRunEvents {
@@ -564,6 +629,121 @@ export function reduceAgentRunEvents(events: AgentEvent[]): ReducedAgentRunEvent
     }
   }
   return reduced
+}
+
+export function subagentInvocationStatus(status: SubagentInvocationNode['status']): DisplayAgentToolStatus {
+  if (status === 'completed') return 'completed'
+  if (status === 'failed' || status === 'timed_out') return 'error'
+  if (status === 'cancelled' || status === 'interrupted') return 'stopped'
+  if (status === 'running') return 'running'
+  return 'pending'
+}
+
+/**
+ * 子代理展示名：父是本 run 直接挂「名字」；父是另一条调用（子代理调子代理）
+ * 沿父链回溯拼成 "Slides Planner → Slides Builder"，箭头指向被调方。
+ */
+export function subagentChainLabel(
+  invocation: SubagentInvocationNode,
+  byId: Map<string, SubagentInvocationNode>,
+  rootRunId: string,
+): string {
+  const chain = [invocation.agentName]
+  const visited = new Set([invocation.id])
+  let cursor = invocation
+  while (cursor.parentRunId && cursor.parentRunId !== rootRunId && !visited.has(cursor.parentRunId)) {
+    const parent = byId.get(cursor.parentRunId)
+    if (!parent) break
+    visited.add(parent.id)
+    chain.unshift(parent.agentName)
+    cursor = parent
+  }
+  return chain.join(' → ')
+}
+
+/**
+ * 调度类工具（agent_dispatch / content_analysis / document_analysis）的结果
+ * details 里带回它创建的子调用 id；该调用已作为子代理行展示时工具行不再重复。
+ */
+export function dispatchedInvocationId(tool: DisplayAgentToolCall): string | undefined {
+  const record = tool.result ?? tool.partialResult
+  if (!record || typeof record !== 'object') return undefined
+  const details = (record as { details?: unknown }).details
+  if (!details || typeof details !== 'object') return undefined
+  const id = (details as { id?: unknown }).id
+  return typeof id === 'string' ? id : undefined
+}
+
+/** 工具步骤与子代理行按发生时间归并成一条竖直时间线（V8 sort 稳定，同刻保持原序）。 */
+export function buildTimelineRows(
+  steps: AgentActivityStep[],
+  invocations: SubagentInvocationNode[],
+  rootRunId: string,
+): TimelineRow[] {
+  const byId = new Map(invocations.map((invocation) => [invocation.id, invocation]))
+  const rows: TimelineRow[] = (byId.size
+    ? steps.filter((step) => {
+      const invocationId = dispatchedInvocationId(step.tool)
+      return !invocationId || !byId.has(invocationId)
+    })
+    : steps
+  ).map((step) => ({
+    kind: 'tool' as const,
+    key: step.id,
+    at: Date.parse(step.tool.startedAt) || 0,
+    step,
+  }))
+  for (const invocation of invocations) {
+    rows.push({
+      kind: 'subagent',
+      key: `subagent-${invocation.id}`,
+      at: Date.parse(invocation.startedAt ?? invocation.createdAt) || 0,
+      subagent: {
+        id: invocation.id,
+        label: subagentChainLabel(invocation, byId, rootRunId),
+        task: invocation.task,
+        status: subagentInvocationStatus(invocation.status),
+        startedAt: invocation.startedAt,
+        completedAt: invocation.completedAt,
+        errorMessage: invocation.errorMessage ?? (invocation.errorCode ? `错误码 ${invocation.errorCode}` : null),
+      },
+    })
+  }
+  return rows.sort((left, right) => left.at - right.at)
+}
+
+/**
+ * 一次子代理调用的工具流折叠：过滤 tool.* 事件按 seq 递增喂入
+ * mergeAgentToolEvent（runId 适配为 invocationId，仅作行标识用）。
+ * 子代理与主 run 同一套运行时事件结构，折叠逻辑与主时间线完全一致。
+ */
+export function foldSubagentToolEvents(
+  tools: DisplayAgentToolCall[],
+  invocationId: string,
+  events: SubagentInvocationEvent[],
+): DisplayAgentToolCall[] {
+  let next = tools
+  for (const event of [...events].sort((left, right) => left.seq - right.seq)) {
+    if (!isToolEvent({ type: event.type } as AgentEvent)) continue
+    next = mergeAgentToolEvent(next, {
+      id: event.id,
+      sessionId: '',
+      runId: invocationId,
+      seq: event.seq,
+      type: event.type,
+      occurredAt: event.occurredAt,
+      payload: event.payload,
+    })
+  }
+  return next
+}
+
+/** 全量归约：历史回放/测试用。 */
+export function reduceSubagentInvocationTools(
+  invocationId: string,
+  events: SubagentInvocationEvent[],
+): DisplayAgentToolCall[] {
+  return foldSubagentToolEvents([], invocationId, events)
 }
 
 /** 会话级上下文状态：最新用量快照 + 是否处于压缩中（hydrate 重放与实时事件共用）。 */

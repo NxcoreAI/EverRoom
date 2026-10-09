@@ -1,0 +1,109 @@
+{
+  "type": "object",
+  "properties": {
+    "phase": {
+      "type": "string",
+      "enum": ["draft", "arrange"],
+      "description": "Which phase this submission is for: draft = content draft for the user to confirm; arrange = final page plan for the builder."
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120,
+      "description": "Deck title; also the default file name for the builder."
+    },
+    "narrative": {
+      "type": "string",
+      "maxLength": 500,
+      "description": "One-sentence narrative spine of the deck (storyline, audience take-away; in arrange, also why the page order fits the audience)."
+    },
+    "pages": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 24,
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "description": "Action title of the page (the conclusion, not a neutral label)."
+          },
+          "role": {
+            "type": "string",
+            "maxLength": 20,
+            "description": "arrange only. Content role hint: cover | toc | section | content | data | table | flow | quote | closing."
+          },
+          "density": {
+            "type": "string",
+            "enum": ["sparse", "standard", "dense"],
+            "description": "arrange only. Information density tier: sparse = one big-line idea page (10 words is already too much); standard = normal 3-5 point page; dense = full-page data (chart/table/KPI, 200 words is not too much). The deck must alternate tiers for narrative rhythm."
+          },
+          "points": {
+            "type": "array",
+            "maxItems": 8,
+            "items": { "type": "string", "maxLength": 200 },
+            "description": "Self-contained content points / evidence for this page; the builder sees no retrieval output, so every point must stand alone."
+          },
+          "data": {
+            "type": "string",
+            "maxLength": 2000,
+            "description": "Real data this page must present: draft phase = plain sentences with real numbers; arrange phase = chart/table/KPI line format the builder translates directly."
+          },
+          "materialHints": {
+            "type": "string",
+            "maxLength": 300,
+            "description": "draft only. One sentence on what imagery this page needs (e.g. factory floor photo, growth curve); arrange uses it to search the material library."
+          },
+          "materials": {
+            "type": "array",
+            "maxItems": 8,
+            "items": {
+              "type": "object",
+              "properties": {
+                "url": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 500,
+                  "pattern": "^(https?://|everroom-material://)",
+                  "description": "Direct http(s) image link, or an everroom-material:// reference returned by material_search; the engine rejects anything else."
+                },
+                "desc": {
+                  "type": "string",
+                  "maxLength": 200,
+                  "description": "What the image shows and where it fits."
+                }
+              },
+              "required": ["url"],
+              "additionalProperties": false
+            },
+            "description": "arrange only. Material image links for this page; omit entirely when none were found."
+          },
+          "notes": {
+            "type": "string",
+            "maxLength": 300,
+            "description": "Directional emphasis/layout suggestions for the builder (no pixel-level commands)."
+          }
+        },
+        "required": ["title"],
+        "additionalProperties": false
+      },
+      "description": "Per-page plan in page order; first item is the cover."
+    },
+    "warnings": {
+      "type": "array",
+      "maxItems": 30,
+      "items": { "type": "string", "maxLength": 300 },
+      "description": "Research gaps and material shortages worth passing through."
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1500,
+      "description": "Concise description of this phase's result: storyline, page count, material situation."
+    }
+  },
+  "required": ["phase", "title", "pages", "summary"],
+  "additionalProperties": false
+}

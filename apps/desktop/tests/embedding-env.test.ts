@@ -36,6 +36,19 @@ describe('embeddingFieldsFromConfig', () => {
     })).toEqual({ provider: 'openai-compatible', model: 'vec', baseUrl: 'https://api.example.com/v1', apiKey: 'k' })
   })
 
+  it('carries SaaS-issued dimensions and rejects invalid values', () => {
+    expect(embeddingFieldsFromConfig({
+      knowledge: { embedding: { provider: 'p', model: 'm', baseUrl: 'u', apiKey: 'k', dimensions: 1024 } },
+    })).toMatchObject({ dimensions: 1024 })
+    // 非正整数维度一律忽略（SaaS 异常数据不进 MemoryCore env）。
+    expect(embeddingFieldsFromConfig({
+      knowledge: { embedding: { provider: 'p', model: 'm', baseUrl: 'u', apiKey: 'k', dimensions: 0 } },
+    })?.dimensions).toBeUndefined()
+    expect(embeddingFieldsFromConfig({
+      knowledge: { embedding: { provider: 'p', model: 'm', baseUrl: 'u', apiKey: 'k', dimensions: 1024.5 } },
+    })?.dimensions).toBeUndefined()
+  })
+
   it('returns null when a required field is missing or empty', () => {
     expect(embeddingFieldsFromConfig({ knowledge: { embedding: { provider: 'p', model: 'm', baseUrl: '', apiKey: 'k' } } })).toBeNull()
     expect(embeddingFieldsFromConfig({ knowledge: { embedding: { provider: 'p', model: '', baseUrl: 'u', apiKey: 'k' } } })).toBeNull()

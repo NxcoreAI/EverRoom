@@ -150,4 +150,28 @@ describe('AgentGatewayBridge requests', () => {
     })
     expect(recoverConnection).toHaveBeenCalledOnce()
   })
+
+  it('maps the gateway quota error to a localized actionable message', async () => {
+    const server = createServer((_request, response) => {
+      json(response, 402, { error: 'ai_quota_exhausted', message: 'AI relay account is out of quota' })
+    })
+    const port = await listen(server)
+    const supervisor = {
+      ensureConnection: async () => ({
+        pid: 1,
+        baseUrl: `http://127.0.0.1:${String(port)}`,
+        token: 'test-token',
+        version: 'test',
+      }),
+    } as unknown as GatewaySupervisor
+    const bridge = new AgentGatewayBridge(supervisor)
+
+    // 额度不足不应触发连接恢复重试，直接抛出本地化文案
+    await expect(bridge.suggestConversationPrompt({
+      sessionId: null,
+      pageLabel: 'AI 对话',
+      roomTitle: null,
+      messages: [{ role: 'user', text: '你是谁' }],
+    })).rejects.toThrow('AI 额度不足')
+  })
 })

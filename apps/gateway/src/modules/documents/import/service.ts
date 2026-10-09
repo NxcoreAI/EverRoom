@@ -1,4 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { diffChars } from "diff";
 import { and, desc, eq, inArray, isNotNull } from "drizzle-orm";
 import type {
@@ -35,6 +38,12 @@ import type { DocumentService } from "../service.js";
 import { artifactHashOf, readArtifact, storeArtifact } from "./artifact-store.js";
 import { ImportConnectorError, runImportConnectorAction, type ImportActionRunner } from "./oo-runner.js";
 import { importAdapterOf, type ExternalDocumentProviderAdapter, type ImportActionFn } from "./providers.js";
+import {
+  createLarkImportActionRunner,
+  downloadLarkMediaToFile,
+  larkErrorToImportConnectorError,
+} from "./lark-action-runner.js";
+import { larkAuthStatus, LarkCliError, type LarkCliConfig } from "../agent-export/lark-cli.js";
 import { runNtnCli, type NtnCliConfig } from "../agent-export/ntn-cli.js";
 
 export class ImportServiceError extends Error {
@@ -68,12 +77,6 @@ export interface CommitImportResult {
   noChange?: boolean;
   documentId: string;
   document: RoomDocument;
-}
-
-function objectValueish(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
 }
 
 /** 图片魔数嗅探：返回真实格式（远端 content-type 声明不可信）。 */
@@ -376,6 +379,13 @@ export class DocumentImportService {
 
   private readonly notionCli: NtnCliConfig | null;
 
+  private readonly larkCli: LarkCliConfig | null;
+
+  /** 测试缝：注入后飞书绕过 lark-cli 子进程与授权门禁（fake 输出 oo 形状）。 */
+  private readonly larkActionFn: ImportActionFn | null;
+
+  private larkAuthCache: { at: number; ok: boolean; reason: string } | null = null;
+
   constructor(
     private readonly db: GatewayDatabase,
     private readonly documents: DocumentService,
@@ -387,11 +397,16 @@ export class DocumentImportService {
       /** Notion 行内（块级）评论兜底：OpenConnector 动作只覆盖页面级评论，
        * 行内评论须按 block_id 查询（官方 CLI；macOS）。缺省时跳过并告警。 */
       notionCli?: NtnCliConfig | null;
+      /** 飞书导入通道（lark-cli，桌面注入）：缺省时飞书导入报连接不可用。 */
+      larkCli?: LarkCliConfig | null;
+      larkActionFn?: ImportActionFn;
     },
   ) {
     this.actionRunner = options?.actionRunner ?? runImportConnectorAction;
     this.assetBridgeUrl = options?.assetBridgeUrl?.replace(/\/$/, "") ?? null;
     this.notionCli = options?.notionCli ?? null;
+    this.larkCli = options?.larkCli ?? null;
+    this.larkActionFn = options?.larkActionFn ?? null;
   }
 
   async search(
@@ -403,7 +418,7 @@ export class DocumentImportService {
     return adapter.searchDocuments(query.trim())
       .then((result) => ({ provider, items: result.items, warnings: result.warnings }))
       .catch((error) => {
-        throw this.mapConnectorError(error);
+        throw this.mapConnectorError(error, provider);
       });
   }
 
@@ -419,7 +434,7 @@ export class DocumentImportService {
   ): Promise<ExternalDocumentListResponse> {
     const adapter = this.adapterOf(provider, connectionName);
     const listed = await adapter.listAllDocuments().catch((error) => {
-      throw this.mapConnectorError(error);
+      throw this.mapConnectorError(error, provider);
     });
     const items = this.markImported(provider, listed.items);
     const fetchedAt = new Date();
@@ -610,7 +625,6 @@ export class DocumentImportService {
     connectionName?: string,
   ): Promise<ExternalDocumentPreview> {
     const adapter = this.adapterOf(provider, connectionName);
-    const config = this.requireConfig();
     const runId = randomUUID();
     const now = new Date();
     this.db.insert(documentImportRuns).values({
@@ -690,7 +704,7 @@ export class DocumentImportService {
         warnings,
       };
     } catch (error) {
-      const mapped = this.mapConnectorError(error);
+      const mapped = this.mapConnectorError(error, provider);
       this.finishRun(runId, "failed", mapped.code, mapped.message);
       throw mapped;
     }
@@ -702,7 +716,7 @@ export class DocumentImportService {
     };
     // 远端图片物化（B-9）：经桌面资产桥 PUT 落 DocumentAssetStore，改写为本机
     // nxcore-document-asset:// URL（编辑器原生可渲染）；失败保留远端链接并告警。
-    artifact = await this.materializeRemoteAssets(artifact, runId, provider, connectionName);
+    artifact = await this.materializeRemoteAssets(artifact, runId, provider);
 
     const artifactRef = await storeArtifact(this.dataDir, artifact);
     const sourceId = await this.upsertSource(artifact);
@@ -1209,36 +1223,22 @@ export class DocumentImportService {
   }
 
   /**
-   * 飞书图片真实地址解析：markdown 导出给的是 `feishu.cn/file/<token>` 文件页
-   * 链接（HTML，非字节），直接 fetch 必失败。先经运行时 download_docs_media
-   * 动作（带连接鉴权）把媒体落到运行时中转存储，返回的 downloadUrl 才是
-   * 可直接下载的字节地址（真机核实：image/png 200）。
+   * 飞书图片字节获取：markdown 里的 `feishu.cn/file/<token>` 是文件页链接
+   * （HTML，非字节），直接 fetch 必失败。lark-cli 通道经 `docs
+   * +media-download` 落本地临时文件后读字节（outputPath 带扩展名防 CLI
+   * 自动补名漂移）；失败或非飞书场景返回 null 走原链接直连。
    */
-  private async resolveFeishuImageBytesUrl(
+  private async fetchAssetBytes(
     url: string,
     provider: ExternalDocumentProvider,
-    connectionName?: string,
-  ): Promise<string | null> {
-    if (provider !== "feishu") return null;
+    mediaDir: string | null,
+  ): Promise<Uint8Array | null> {
+    if (provider !== "feishu" || !mediaDir || !this.larkCli) return null;
     const token = /feishu\.cn\/file\/([A-Za-z0-9]+)/.exec(url)?.[1];
     if (!token) return null;
-    const config = this.requireConfig();
     try {
-      const result = objectValueish(await this.actionRunner(
-        config,
-        {
-          service: "feishu",
-          action: "download_docs_media",
-          input: { token, type: "media", fileName: "image" },
-          ...(connectionName ? { connectionName } : {}),
-        },
-      ));
-      const downloadUrl = typeof result.downloadUrl === "string" && result.downloadUrl
-        ? result.downloadUrl
-        : typeof (objectValueish(result.data)).downloadUrl === "string"
-          ? (objectValueish(result.data)).downloadUrl as string
-          : null;
-      return downloadUrl;
+      const path = await downloadLarkMediaToFile(this.larkCli, token, join(mediaDir, `${token}.bin`));
+      return new Uint8Array(await readFile(path));
     } catch {
       return null;
     }
@@ -1248,7 +1248,6 @@ export class DocumentImportService {
     artifact: CanonicalDocumentArtifact,
     runId: string,
     provider: ExternalDocumentProvider,
-    connectionName?: string,
   ): Promise<CanonicalDocumentArtifact> {
     if (!this.assetBridgeUrl) return artifact;
     const bridge = this.assetBridgeUrl;
@@ -1257,18 +1256,26 @@ export class DocumentImportService {
     let materialized = 0;
     let failed = 0;
     const failedReasons: string[] = [];
-    const bodyMarkdown = await replaceAsync(artifact.bodyMarkdown, /!\[([^\]]*)\]\(\s*(https?:\/\/[^)\s]+)[^)]*\)/g,
+    const mediaDir = provider === "feishu" && this.larkCli
+      ? await mkdtemp(join(tmpdir(), "nxcore-import-media-"))
+      : null;
+    let bodyMarkdown = artifact.bodyMarkdown;
+    try {
+    bodyMarkdown = await replaceAsync(artifact.bodyMarkdown, /!\[([^\]]*)\]\(\s*(https?:\/\/[^)\s]+)[^)]*\)/g,
       async (full: string, alt: string, url: string) => {
         if (materialized + failed >= 10) return full;
         try {
-          const bytesUrl = (await this.resolveFeishuImageBytesUrl(url, provider, connectionName)) ?? url;
-          const response = await fetch(bytesUrl, { signal: AbortSignal.timeout(30_000) });
-          if (!response.ok) throw new Error(`HTTP ${String(response.status)}`);
-          const bytes = new Uint8Array(await response.arrayBuffer());
+          let bytes = await this.fetchAssetBytes(url, provider, mediaDir);
+          let headerMime = "";
+          if (!bytes) {
+            const response = await fetch(url, { signal: AbortSignal.timeout(30_000) });
+            if (!response.ok) throw new Error(`HTTP ${String(response.status)}`);
+            bytes = new Uint8Array(await response.arrayBuffer());
+            headerMime = ((response.headers.get("content-type") ?? "").split(";")[0] ?? "").trim();
+          }
           if (bytes.byteLength > 5 * 1024 * 1024) throw new Error("图片超过 5MB");
           // 以魔数嗅探为准：远端/中转声明的 content-type 可能与真实字节不符
           // （实测飞书中转 PNG 字节配 image/jpeg 头，资产桥签名校验会拒收 400）。
-          const headerMime = ((response.headers.get("content-type") ?? "").split(";")[0] ?? "").trim();
           const mime = sniffImageMime(bytes)
             ?? (["image/png", "image/jpeg", "image/gif", "image/webp"].includes(headerMime) ? headerMime : null);
           if (!mime) throw new Error(`不支持的图片类型 ${headerMime || "unknown"}`);
@@ -1290,6 +1297,9 @@ export class DocumentImportService {
           return full;
         }
       });
+    } finally {
+      if (mediaDir) await rm(mediaDir, { recursive: true, force: true }).catch(() => undefined);
+    }
     if (materialized > 0) {
       warnings.push({
         code: "remote_assets_materialized",
@@ -1365,7 +1375,50 @@ export class DocumentImportService {
     return this.connectorConfig;
   }
 
+  /** 飞书 lark-cli 授权门禁：结果缓存 30s，批量导入（逐篇 preview）不会
+   * 每篇都 spawn 一次 auth status。未授权抛 authentication_required，
+   * 经 mapConnectorError 映射 422 引导用户去数据源页连接飞书。 */
+  private async ensureFeishuLarkAuth(): Promise<void> {
+    if (this.larkAuthCache && Date.now() - this.larkAuthCache.at < 30_000) {
+      if (!this.larkAuthCache.ok) {
+        throw new ImportConnectorError("authentication_required", this.larkAuthCache.reason);
+      }
+      return;
+    }
+    const config = this.larkCli;
+    if (!config) {
+      throw new ImportServiceError("IMPORT_CONNECTION_REQUIRED", "飞书导入不可用：lark-cli 未配置", 422);
+    }
+    try {
+      const status = await larkAuthStatus(config);
+      if (status.appConfigured && status.userAvailable) {
+        this.larkAuthCache = { at: Date.now(), ok: true, reason: "" };
+        return;
+      }
+      const reason = status.appConfigured
+        ? `飞书账号未授权（${status.userName ?? status.tokenStatus ?? "未登录"}）`
+        : "lark-cli 应用未配置";
+      this.larkAuthCache = { at: Date.now(), ok: false, reason };
+      throw new ImportConnectorError("authentication_required", reason);
+    } catch (error) {
+      if (error instanceof ImportConnectorError || error instanceof ImportServiceError) throw error;
+      if (error instanceof LarkCliError) throw larkErrorToImportConnectorError(error);
+      throw new ImportConnectorError("connector_error", error instanceof Error ? error.message : String(error));
+    }
+  }
+
   private adapterOf(provider: ExternalDocumentProvider, connectionName?: string): ExternalDocumentProviderAdapter {
+    // 飞书换轨 lark-cli：不经 OpenConnector 配置/连接解析，connectionName 无意义。
+    if (provider === "feishu") {
+      const run = this.larkActionFn
+        ?? (this.larkCli
+          ? createLarkImportActionRunner(this.larkCli, { ensureAuth: () => this.ensureFeishuLarkAuth() })
+          : null);
+      if (!run) {
+        throw new ImportServiceError("IMPORT_CONNECTION_REQUIRED", "飞书导入不可用：lark-cli 未配置", 422);
+      }
+      return importAdapterOf(provider, run);
+    }
     const config = this.requireConfig();
     // 连接器页按连接列举/批量导入：入口解析出的连接名显式注入每个 action 调用
     // （call 自带 connectionName 时以 call 为准），避免长任务中途连接解析漂移。
@@ -1380,15 +1433,14 @@ export class DocumentImportService {
     return importAdapterOf(provider, run);
   }
 
-  private mapConnectorError(error: unknown): ImportServiceError {
+  private mapConnectorError(error: unknown, provider?: ExternalDocumentProvider): ImportServiceError {
     if (error instanceof ImportServiceError) return error;
     if (error instanceof ImportConnectorError) {
       if (error.code === "authentication_required" || error.code === "no_connection") {
-        return new ImportServiceError(
-          "IMPORT_CONNECTION_REQUIRED",
-          `导入连接不可用：${error.detail}。请在连接器管理中建立该服务的导入连接。`,
-          422,
-        );
+        const message = provider === "feishu"
+          ? `飞书导入连接不可用：${error.detail}。请在数据源页连接飞书账号。`
+          : `导入连接不可用：${error.detail}。请在连接器管理中建立该服务的导入连接。`;
+        return new ImportServiceError("IMPORT_CONNECTION_REQUIRED", message, 422);
       }
       if (error.code === "action_not_found") {
         return new ImportServiceError("IMPORT_ACTION_MISSING", `OpenConnector 动作不可用：${error.detail}`, 502);
@@ -1398,7 +1450,10 @@ export class DocumentImportService {
         return new ImportServiceError("IMPORT_CONTENT_EMPTY", error.detail, 422);
       }
       if (error.code === "connector_unavailable") {
-        return new ImportServiceError("OPEN_CONNECTOR_UNAVAILABLE", `OpenConnector 服务不可用：${error.detail}`, 503);
+        const message = provider === "feishu"
+          ? `lark-cli 不可用：${error.detail}`
+          : `OpenConnector 服务不可用：${error.detail}`;
+        return new ImportServiceError("OPEN_CONNECTOR_UNAVAILABLE", message, 503);
       }
       return new ImportServiceError("IMPORT_READ_FAILED", `外部文档读取失败：${error.detail}`, 502);
     }

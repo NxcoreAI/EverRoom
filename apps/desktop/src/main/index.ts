@@ -83,6 +83,7 @@ import { AgentNotificationBridgeServer } from './cloud/agent-notification-bridge
 import { OfficeBridgeServer } from './gateway/office-bridge'
 import type { OfficeAgentFileEvent } from '../shared/office'
 import type { AgentAskForwardEvent } from './office/office-generation'
+import { createEverroomMaterialResolver } from './office/office-material-resolver'
 import { MacosPushNotificationService } from './cloud/macos-push-notifications'
 import { parseAgentNotificationTarget, type AgentNotificationTarget, type NotificationPreferences } from '../shared/notifications'
 import { AsrCoordinator } from './asr/asr-coordinator'
@@ -125,6 +126,7 @@ import { startDocumentAssetBridge, type DocumentAssetBridge } from './document-a
 import { NtnAuthRunner } from './agent-auth/ntn-auth-runner'
 import { createAgentAuthPersistence } from './agent-auth/persistence'
 import type {
+  AgentAuthEnvironmentStatus,
   AgentAuthStartInput,
   DesktopAgentAuthChallenge,
 } from '../shared/agent-auth'
@@ -132,6 +134,7 @@ import { BrowserExtensionService } from './browser-extension/browser-extension-s
 import { CLIPPER_ASSET_SCHEME, type BrowserExtensionStatus } from '../shared/browser-extension'
 import { OBSIDIAN_VAULT_ASSET_SCHEME } from '../shared/obsidian'
 import { ObsidianVaultService } from './obsidian/obsidian-vault-service'
+import { pushDocumentSaveToVault, trashDocumentInVault } from './obsidian/vault-document-sync'
 import { createLocalAgentDiscovery, isSafeLocalAgentPath, probeLocalAgentAcpAdapter } from './local-agents/discovery'
 import { installLocalAgentAcpAdapter, resolveLocalAcpAdapterSpawn } from './local-agents/adapter-install'
 import { bundledNpmCliPath, localAgentAdaptersRoot } from './local-agents/local-agent-paths'
@@ -296,6 +299,7 @@ const AGENT_AUTH_CHANNELS = {
   start: 'agent-auth:start',
   resume: 'agent-auth:resume',
   cancel: 'agent-auth:cancel',
+  disconnect: 'agent-auth:disconnect',
 } as const
 
 const EXTERNAL_DOCUMENT_CHANNELS = {
@@ -304,6 +308,7 @@ const EXTERNAL_DOCUMENT_CHANNELS = {
   importExistingInRoom: 'external-documents:import-existing-in-room',
   importBatch: 'external-documents:import-batch',
   importBatchStatus: 'external-documents:import-batch-status',
+  activeImportBatch: 'external-documents:active-import-batch',
   cancelImportBatch: 'external-documents:cancel-import-batch',
   importPreview: 'external-documents:import-preview',
   importCommit: 'external-documents:import-commit',
@@ -340,6 +345,8 @@ const CONTEXT_ROOM_CHANNELS = {
   dispatchSelectionRewrite: 'context-rooms:dispatch-selection-rewrite',
   getSubagentInvocation: 'context-rooms:get-subagent-invocation',
   cancelSubagentInvocation: 'context-rooms:cancel-subagent-invocation',
+  listRunSubagentInvocations: 'context-rooms:list-run-subagent-invocations',
+  listSubagentInvocationEvents: 'context-rooms:list-subagent-invocation-events',
   refreshBrief: 'context-rooms:refresh-brief',
   promoteMemoryItem: 'context-rooms:promote-memory-item',
   overview: 'context-rooms:overview',
@@ -469,6 +476,7 @@ const ACCOUNT_CHANNELS = {
   login: 'account:login',
   oidcLogin: 'account:oidc-login',
   invitationCodeValidate: 'account:invitation-code-validate',
+  invitationCodeRedeem: 'account:invitation-code-redeem',
   oidcCancel: 'account:oidc-cancel',
   logout: 'account:logout',
   keyringStatus: 'account:keyring-status',
@@ -835,7 +843,11 @@ let privateSyncScheduler: PrivateSyncScheduler | null = null
 let transcriptionProcessingCoordinator: TranscriptionProcessingCoordinator | null = null
 let shutdownStarted = false
 let clearUserDataOnQuit = false
-const officePreviewRegistry = new OfficePreviewRegistry()
+const officePreviewRegistry = new OfficePreviewRegistry(
+  8_000,
+  // everroom-material:// 素材回源：文件桥惰性取（网关启动后才赋值），每次调用现建（闭包零成本）。
+  () => createEverroomMaterialResolver(() => officeFilesBridge),
+)
 
 /** office:agent-file 事件扇出到所有渲染窗口（生成进度/完成 + 编辑回填结果共用通道）。 */
 function broadcastOfficeAgentFileEvent(event: OfficeAgentFileEvent): void {
@@ -1077,18 +1089,31 @@ function registerObsidianHandlers(service: ObsidianVaultService): void {
     for (const outcome of outcomes) {
       if (outcome.fileId) await service.setMemoryProjectionFileId(vaultId, outcome.filename, outcome.fileId)
     }
+    // 图片附件注册进看图理解：导入链路本身不看图（只有截图管线会），而 PPT
+    // 素材检索按 VLM 中文描述搜图——vault 图不入 perception 就永远搜不到。
+    // 同一 fileId 重复注册幂等（服务端命中既有 observation 直接返回）。
+    const kindByPath = new Map(resources.map((resource) => [resource.relativePath, resource.kind]))
+    for (const outcome of outcomes) {
+      if (!outcome.fileId || kindByPath.get(outcome.filename) !== 'image') continue
+      await bridge.registerVisualObservation({ fileId: outcome.fileId }).catch((error) => {
+        console.warn('Unable to register vault image observation', { vaultId, filename: outcome.filename, error })
+      })
+    }
     for (const fileId of service.takeRemovedMemoryProjectionFileIds(vaultId)) {
       await bridge.delete(fileId).catch(() => undefined)
     }
     return outcomes
   }
-  const projectRoomVault = async (vaultId: string) => {
+  const projectRoomVault = async (vaultId: string, changedResourceIds?: string[]) => {
     if (!gatewaySupervisor) return
     const vault = service.list().find((item) => item.id === vaultId)
     if (!vault || vault.mountMode === 'memory') return
     const bridge = new FilesGatewayBridge(gatewaySupervisor)
     const documents = new DocumentGatewayBridge(gatewaySupervisor)
-    for (const note of service.projectionNotes(vaultId)) {
+    const changedIds = changedResourceIds ? new Set(changedResourceIds) : null
+    const notes = service.projectionNotes(vaultId)
+      .filter((note) => !changedIds || changedIds.has(note.resourceId))
+    for (const note of notes) {
       await bridge.projectVaultNote(note).then(async (result) => {
         await service.setProjectionFileId(vaultId, note.resourceId, result.fileEntryId)
       }).catch((error) => {
@@ -1126,7 +1151,7 @@ function registerObsidianHandlers(service: ObsidianVaultService): void {
     }
     const vault = service.list().find((item) => item.id === event.vaultId)
     if (vault?.memoryEnabled) void syncMemoryVault(event.vaultId)
-    if (vault && vault.mountMode !== 'memory') void projectRoomVault(event.vaultId)
+    if (vault && vault.mountMode !== 'memory') void projectRoomVault(event.vaultId, event.changedResourceIds)
   })
   service.onRemoved(async (event) => {
     for (const window of BrowserWindow.getAllWindows()) {
@@ -1485,7 +1510,7 @@ async function syncMemoryCoreEnvironment(snapshot: RuntimeConfigSnapshot): Promi
       // 配置卡在未注入状态）。
       embeddingEnv = memoryCoreEmbeddingEnv(
         { ...fields, apiKey: relay.token },
-        relayEmbeddingDimensions(fields.model),
+        fields.dimensions ?? relayEmbeddingDimensions(fields.model),
       )
     } else if (fields) {
       // BYOK 直连：/test 真实探测 /embeddings 维度；失败保持现 env 不动。
@@ -2060,7 +2085,7 @@ function registerAgentAuthHandlers(): void {
     const value = input as AgentAuthStartInput
     if (!value || typeof value !== 'object') throw new Error('无效的授权请求。')
     if (value.provider !== 'feishu' && value.provider !== 'notion') throw new Error('provider 只支持 feishu 或 notion。')
-    if (value.phase !== 'app_setup' && value.phase !== 'user_auth') throw new Error('phase 只支持 app_setup 或 user_auth。')
+    if (value.phase !== undefined && value.phase !== 'app_setup' && value.phase !== 'user_auth') throw new Error('phase 只支持 app_setup 或 user_auth。')
     return agentAuthController.start({
       provider: value.provider,
       phase: value.phase,
@@ -2068,6 +2093,11 @@ function registerAgentAuthHandlers(): void {
         ? value.exportRunId.trim()
         : undefined,
     }) as Promise<DesktopAgentAuthChallenge>
+  })
+  handle(AGENT_AUTH_CHANNELS.disconnect, (_event, provider: unknown) => {
+    if (!agentAuthController) throw new Error('授权控制器尚未就绪。')
+    if (provider !== 'feishu') throw new Error('断开目前仅支持飞书。')
+    return agentAuthController.disconnect('feishu') as Promise<AgentAuthEnvironmentStatus>
   })
   handle(AGENT_AUTH_CHANNELS.resume, (_event, challengeId: unknown) => {
     if (!agentAuthController) throw new Error('授权控制器尚未就绪。')
@@ -2100,6 +2130,11 @@ function registerExternalDocumentHandlers(bridge: ExternalDocumentsGatewayBridge
   handle(EXTERNAL_DOCUMENT_CHANNELS.importBatchStatus, (_event, batchId: unknown) => {
     if (typeof batchId !== 'string') throw new Error('无效的批量导入标识。')
     return bridge.importBatchStatus(batchId)
+  })
+  handle(EXTERNAL_DOCUMENT_CHANNELS.activeImportBatch, (_event, provider: unknown, connectionName: unknown) => {
+    if (typeof provider !== 'string') throw new Error('无效的文档来源。')
+    if (connectionName !== undefined && typeof connectionName !== 'string') throw new Error('无效的连接名。')
+    return bridge.activeImportBatch(provider as 'feishu' | 'notion', connectionName)
   })
   handle(EXTERNAL_DOCUMENT_CHANNELS.cancelImportBatch, (_event, batchId: unknown) => {
     if (typeof batchId !== 'string') throw new Error('无效的批量导入标识。')
@@ -2184,6 +2219,10 @@ function registerContextRoomHandlers(bridge: ContextRoomGatewayBridge): void {
     bridge.getSubagentInvocation(invocationId))
   handle(CONTEXT_ROOM_CHANNELS.cancelSubagentInvocation, (_event, invocationId) =>
     bridge.cancelSubagentInvocation(invocationId))
+  handle(CONTEXT_ROOM_CHANNELS.listRunSubagentInvocations, (_event, rootRunId: string) =>
+    bridge.listRunSubagentInvocations(rootRunId))
+  handle(CONTEXT_ROOM_CHANNELS.listSubagentInvocationEvents, (_event, invocationId: string, afterSeq = 0) =>
+    bridge.listSubagentInvocationEvents(invocationId, afterSeq))
   handle(CONTEXT_ROOM_CHANNELS.refreshBrief, (_event, roomId) => bridge.refreshBrief(roomId))
   handle(CONTEXT_ROOM_CHANNELS.promoteMemoryItem, (_event, roomId: string, itemId: string) =>
     bridge.promoteMemoryItem(roomId, itemId))
@@ -2433,7 +2472,8 @@ function registerAgentHandlers(bridge: AgentGatewayBridge, migrationCoordinator:
   handle(AGENT_CHANNELS.submitPendingIntent, (_event, intentId, input) =>
     bridge.submitPendingIntent(intentId, input))
   handle(AGENT_CHANNELS.cancelRun, (_event, runId) => bridge.cancelRun(runId))
-  handle(AGENT_CHANNELS.resolveApproval, (_event, approvalId, decision) => bridge.resolveApproval(approvalId, decision))
+  handle(AGENT_CHANNELS.resolveApproval, (_event, approvalId, decision, feedback) =>
+    bridge.resolveApproval(approvalId, decision, feedback))
   handle(AGENT_CHANNELS.getPermissionMode, (_event, sessionId) => bridge.getPermissionMode(sessionId))
   handle(AGENT_CHANNELS.setPermissionMode, (_event, sessionId, mode) => bridge.setPermissionMode(sessionId, mode))
   handle(AGENT_CHANNELS.subscribe, (event, sessionId) => bridge.subscribe(event.sender, sessionId))
@@ -2471,6 +2511,33 @@ function registerDocumentHandlers(
   assets: DocumentAssetStore,
   vaults?: ObsidianVaultService | null,
 ): void {
+  // 挂载目录笔记的写回依赖（见 vault-document-sync）：序列化走网关、回滚走投影 PUT。
+  const vaultSyncDeps = vaults ? {
+    vaults,
+    documentMarkdown: (documentId: string) => bridge.documentMarkdown(documentId),
+    revertDocumentToDisk: async (input: {
+      documentId: string
+      vaultId: string
+      resourceId: string
+      relativePath: string
+      sourceHash: string
+      title: string
+      markdown: string
+    }) => {
+      const roomId = vaults.list().find((vault) => vault.id === input.vaultId)?.roomId
+      if (!roomId) throw new Error(`Vault room not found for ${input.vaultId}`)
+      await bridge.syncExternalProjection({
+        sourceKind: 'obsidian-vault',
+        sourceId: input.vaultId,
+        resourceId: input.resourceId,
+        roomId,
+        relativePath: input.relativePath,
+        sourceHash: input.sourceHash,
+        title: input.title,
+        markdown: input.markdown,
+      })
+    },
+  } : null
   handleGroup(DOCUMENT_CHANNELS, {
     list: (_event, roomId) => bridge.list(roomId),
     listTrash: (_event, roomId) => bridge.listTrash(roomId),
@@ -2535,13 +2602,30 @@ function registerDocumentHandlers(
       assertNoEmbeddedDocumentImages(input?.contentJson)
       return bridge.import(input)
     },
-    save: (_event, documentId, input: SaveRoomDocumentInput) => {
+    save: async (_event, documentId, input: SaveRoomDocumentInput) => {
       assertNoEmbeddedDocumentImages(input?.contentJson)
+      // 挂载目录的笔记：网关保存成功后写回原文件（文件是事实源）。
+      // vault 未绑定/离线时跳过写回；文件被外部改过则回滚文档并报冲突（编辑器保留草稿）。
+      if (vaultSyncDeps && vaultSyncDeps.vaults.noteForDocument(documentId)) {
+        const previous = await bridge.get(documentId).catch(() => null)
+        const updated = await bridge.save(documentId, input)
+        await pushDocumentSaveToVault(vaultSyncDeps, {
+          documentId,
+          previousTitle: previous?.title,
+          nextTitle: updated.title,
+        })
+        return updated
+      }
       return bridge.save(documentId, input)
     },
-    delete: (_event, documentId) => bridge.delete(documentId),
+    delete: async (_event, documentId) => {
+      const deleted = await bridge.delete(documentId)
+      if (vaultSyncDeps) await trashDocumentInVault(vaultSyncDeps, documentId)
+      return deleted
+    },
     restore: (_event, documentId) => bridge.restore(documentId),
     deletePermanently: async (_event, documentId) => {
+      if (vaultSyncDeps) await trashDocumentInVault(vaultSyncDeps, documentId)
       await bridge.deletePermanently(documentId)
       await assets.deleteDocument(documentId).catch((error) => {
         console.error('Failed to delete local document assets', { documentId, error })
@@ -3025,6 +3109,10 @@ function registerAccountHandlers(
   handle(ACCOUNT_CHANNELS.invitationCodeValidate, (_event, invitationCode: unknown) => {
     if (typeof invitationCode !== 'string') throw new Error('无效的邀请码。')
     return rateLimitAware(() => client.validateInvitationCode(invitationCode))
+  })
+  handle(ACCOUNT_CHANNELS.invitationCodeRedeem, (_event, invitationCode: unknown) => {
+    if (typeof invitationCode !== 'string') throw new Error('无效的邀请码。')
+    return rateLimitAware(() => client.redeemInvitationCode(invitationCode))
   })
   handle(ACCOUNT_CHANNELS.oidcLogin, (_event, input: unknown) => {
     const value=typeof input==='string'?{provider:input}:input&&typeof input==='object'?input as {provider?:unknown;invitationCode?:unknown}:{}
@@ -3576,6 +3664,8 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
           }
         }
       },
+      // 授权链接一到即自动拉起浏览器（数据源卡片点击后直达授权页）。
+      onVerificationUrl: (url) => openExternalUrl(url),
       // 非 token 授权状态加密落盘（本地静态密钥，不依赖 safeStorage/钥匙串）。
       persist: createAgentAuthPersistence(join(dataDirectory, 'agent-auth', 'challenge.bin')),
     },
@@ -3906,10 +3996,12 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     }, 5 * 60_000)
     sentryAccountResyncTimer.unref()
     aiRelayKeeper = new AiRelayKeeper(saasClient, gatewaySupervisor, runtimeConfigBridge, (event: AiRelayKeeperEvent) => {
-      if (event.type === 'session-activated') {
+      if (event.type === 'session-activated' || event.type === 'models-changed') {
         // relay 会话就绪后 gateway 才把槽位重写为 /ai-relay——补一次子进程
         // env 同步，闭合「boot 时会话未就绪 → MemoryCore/KS 缺 embedding/LLM」
         // 的冷启动窗口（token 轮换不再触发，见 withStableRelayKey）。
+        // models-changed：续签时 SaaS 侧套餐场景模型变更，gateway 槽位已热
+        // 更新，托管子进程的 env 需要重派生（含 embedding 维度）。
         void runtimeConfigBridge?.get()
           .then(snapshot => (snapshot ? syncManagedChildProcesses(snapshot) : undefined))
           .catch(() => undefined)

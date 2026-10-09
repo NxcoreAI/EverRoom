@@ -21,6 +21,7 @@ interface StoredSyncState {
     records: Record<string, PrivateTranscriptionRecord>
     materialized?: Record<string, string>
     pendingSources?: Record<string, PendingSourcePublication>
+    blockedSources?: Record<string, string>
     invalidSummaryReports?: Record<string, string>
   }>
 }
@@ -412,6 +413,14 @@ export class PrivateTranscriptionSyncService {
           delete current.pendingSources[pending.recordId]
           continue
         }
+        // 记录 id 被另一账号占用（换账号重登后本地重算出同 id）：永远不可能
+        // 成功，移入 blockedSources 防止对账循环无限重排队。
+        if (error instanceof Error && /owned by another account/i.test(error.message)) {
+          delete current.pendingSources[pending.recordId]
+          current.blockedSources ??= {}
+          current.blockedSources[pending.recordId] = error.message
+          continue
+        }
         throw error
       }
     }
@@ -431,6 +440,7 @@ export class PrivateTranscriptionSyncService {
       const existing = current.records[event.id]
       if (existing && metadataString(existing, 'kind') === 'everroom.transcription-source') continue
       if (current.pendingSources?.[event.id]) continue
+      if (current.blockedSources?.[event.id]) continue
       await this.publishLocalTranscription(event, {
         transcript: event.transcript,
         segments: event.transcriptSegments.map((segment) => ({

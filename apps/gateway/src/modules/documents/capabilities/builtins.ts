@@ -13,7 +13,7 @@ import { reviewPlugins } from "./review-plugins.js";
 import { routeMindmapPlugin } from "./route-mindmap-plugin.js";
 import { selectionRewritePlugin } from "./selection-rewrite-plugin.js";
 import type { CapabilityBackend } from "./shared.js";
-import type { DocumentRoomRegistry } from "./types.js";
+import type { DocumentRoomRegistry, SlidesPageProgressReporter } from "./types.js";
 import { taskPlugin, type TaskClarifyIssuerInput } from "./task-plugin.js";
 import type { TaskFolderService } from "../task-folders.js";
 
@@ -47,6 +47,8 @@ export function createBuiltinDocumentCapabilityRegistry(
   issueTaskClarify?: () => {
     issueTaskClarification(input: TaskClarifyIssuerInput): { pendingIntentId: string; status: string } | null;
   } | null,
+  /** PPT 逐页进度上报器（只报不定）：传入则 slides 落页即广播进度快照。 */
+  slidesProgress?: SlidesPageProgressReporter | null,
 ): DocumentCapabilityRegistry {
   const registry = new DocumentCapabilityRegistry(operations);
   const reads = sharedReads ?? new DocumentReadAuthority((documentId) => backend.get(documentId));
@@ -66,6 +68,6 @@ export function createBuiltinDocumentCapabilityRegistry(
     }));
   }
   // agent 写 Word：桌面 office-bridge 未注入（如测试环境）时工具不暴露。
-  if (officeBridge) registry.register(officePlugin(officeBridge));
+  if (officeBridge) registry.register(officePlugin(officeBridge, slidesProgress));
   return registry;
 }

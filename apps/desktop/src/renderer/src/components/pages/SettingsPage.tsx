@@ -325,6 +325,25 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
     }
   }
 
+  // 已登录直接兑换：一次请求完成核验+升级，无效码/已用码标 invalid，成功后刷新订阅展示
+  const redeemNow = async () => {
+    if (!window.nxcore) return
+    const code = redeemCode.code.trim().toUpperCase()
+    if (!code) return
+    try {
+      const result = await window.nxcore.account.redeemInvitationCode(code)
+      if (result.applied) {
+        redeemCode.markDone('applied')
+        await refreshAccountStatus()
+      } else {
+        redeemCode.markDone('already-pro')
+      }
+    } catch (error) {
+      if (error instanceof Error && /invitation code/i.test(error.message)) redeemCode.markInvalid()
+      else redeemCode.markError()
+    }
+  }
+
   const refreshAccountStatus = async () => {
     if (!window.nxcore) return
     setPending('refresh')
@@ -656,6 +675,15 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
               </div>
             ) : null}
 
+            {!(account.subscription?.planCode === 'pro' && ['active', 'trialing'].includes(account.subscription.status)) ? (
+              <RedeemCodeField
+                value={redeemCode.code} state={redeemCode.state} open={redeemCode.open} disabled={isBusy}
+                actionLabel={t('surface:settings.redeemCodeRedeem')}
+                onChange={redeemCode.change} onToggle={()=>redeemCode.setOpen(value=>!value)}
+                onVerify={()=>{void redeemNow()}}
+              />
+            ) : null}
+
             <div className="cloud-devices" aria-label={t('surface:settings.connectedDevices')}>
               <div className="cloud-devices-heading">
                 <div>
@@ -748,7 +776,7 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
                   </button>
                   {pending === 'apple' || pending === 'google' ? (
                     <button
-                      className="secondary-button cloud-login-cancel"
+                      className="cloud-login-cancel"
                       type="button"
                       onClick={() => { void window.nxcore?.account.cancelOidcLogin() }}
                     >

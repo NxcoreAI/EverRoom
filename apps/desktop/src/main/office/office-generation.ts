@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { app } from 'electron'
 import type { WebContents, WebContentsView } from 'electron'
 
-import { loadPreparedGenOfficeRuntime, type PreparedGenOfficeRuntime } from './office-runtime'
+import { loadPreparedGenOfficeRuntime, type GenOfficeMaterialResolver, type PreparedGenOfficeRuntime } from './office-runtime'
 import { buildAgentXlsxBytes, type AgentSheetInput } from './xlsx-generation'
 import type { OfficeAgentAskEvent } from '../../shared/office'
 
@@ -97,7 +97,7 @@ export function buildAgentAskMessage(title: string, op: SlidesAgentAskPayload): 
   const targets = op.targets.map(describeAskTarget).join('、')
   return (
     `请修改 PPT《${title}》第 ${op.slideIndex + 1} 页选中的元素（${targets}）：${op.instruction}。`
-    + '用 slides 编辑工具按元素 id 直接定位修改（fileId 可用 "active"，先用 context_room_slides_read 读当前大纲确认页码），'
+    + '用 slides_draft(task=edit, fileId="active") 调度 slides-builder 子代理，把上述元素 id 与修改要求写进 instruction，'
     + '只改列出的元素，其他内容保持不动。'
   )
 }
@@ -207,6 +207,7 @@ export interface GeneratedPptx {
 export async function generatePptxFromPageSpecs(
   input: { title: string; pages: string[] },
   onPhase?: (phase: DocxGenerationPhase) => void,
+  imageResolver?: GenOfficeMaterialResolver,
 ): Promise<GeneratedPptx> {
   const title = input.title.trim().slice(0, 120)
   if (!title) throw new Error('演示标题不能为空')
@@ -214,7 +215,7 @@ export async function generatePptxFromPageSpecs(
   if (pages.length === 0) throw new Error('至少需要一页幻灯片')
   const { slides } = ensureRuntime()
   onPhase?.('rendering')
-  const built = await slides.buildAgentDeckPptx(pages)
+  const built = await slides.buildAgentDeckPptx(pages, imageResolver)
   if (!built.ok) throw new Error(`PPT 生成失败：${built.error}`)
   onPhase?.('saved')
   const bytes = Buffer.from(built.deck.bytes)

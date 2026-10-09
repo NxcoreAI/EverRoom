@@ -54,7 +54,7 @@ describe("office 工具：PPT / Excel 扩展", () => {
     ]);
   });
 
-  it("slides create：outline 合成骨架页（含演示标题与页标题）、format=pptx、幂等键前缀 agent-slides、nextAction=fill_pages", async () => {
+  it("slides create：只落 1 页首页骨架（含演示标题与首页标题）、outline 原样回传作页序蓝图、format=pptx、幂等键前缀 agent-slides、nextAction=fill_pages", async () => {
     const { tools, generate } = createHarness();
     const result = await tools.get("context_room_slides_create")!.execute(
       { title: "季度汇报", outline: ["封面", "营收", "展望"] },
@@ -63,17 +63,17 @@ describe("office 工具：PPT / Excel 扩展", () => {
     expect(generate).toHaveBeenCalledTimes(1);
     const input = generate.mock.calls[0]![0];
     expect(input.format).toBe("pptx");
-    expect(input.pages).toHaveLength(3);
+    expect(input.pages).toHaveLength(1);
     expect(input.pages![0]).toContain("季度汇报");
     expect(input.pages![0]).toContain("封面");
-    expect(input.pages![2]).toContain("第 3 / 3 页");
+    expect(input.pages![0]).toContain("第 1 / 3 页");
     input.pages!.forEach((page) => {
       const parsed = JSON.parse(page) as { elements: unknown[] };
       expect(parsed.elements.length).toBeGreaterThan(0);
     });
     expect(input.idempotencyKey!.startsWith("agent-slides:")).toBe(true);
     expect(result.structuredContent).toMatchObject({
-      pages: 3,
+      pages: 1,
       outline: ["封面", "营收", "展望"],
       nextAction: "fill_pages",
     });

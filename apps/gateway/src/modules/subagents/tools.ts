@@ -13,6 +13,12 @@ import { formatRoomContextDigest, type RoomContextDigest } from "../context-room
 import { docWriterDraftFromStructuredOutput } from "./doc-writer-content.js";
 import { SubagentOrchestrator } from "./orchestrator.js";
 import { SubagentRegistry } from "./registry.js";
+import {
+  parseDraftMarkdown,
+  renderDraftMarkdown,
+  slidesProgressPlanFrom,
+} from "./slides-draft-doc.js";
+import type { SlidesProgressEvent, SlidesProgressTracker } from "./slides-progress-tracker.js";
 
 function dispatchKey(runId: string, agentId: string, task: string, input: unknown): string {
   return createHash("sha256")
@@ -48,6 +54,64 @@ async function dispatchWithConcurrencyRetry<T>(
   }
 }
 
+/**
+ * slides-builder 结构化结果归一：create/edit 两路共用。非 completed、结构化
+ * 缺失与字段归一语义与旧 slides-writer 单代理时代保持一致。
+ */
+function normalizeSlidesResult(
+  invocation: Awaited<ReturnType<SubagentOrchestrator["dispatch"]>>,
+  task: "create" | "edit",
+): { content: string; details: unknown; status: string } {
+  if (invocation.status !== "completed") {
+    return {
+      content: JSON.stringify({
+        invocationId: invocation.id,
+        status: invocation.status,
+        errorCode: invocation.errorCode ?? invocation.errorMessage ?? invocation.status,
+        retryable: invocation.status === "timed_out" || invocation.status === "cancelled",
+        message: `落页阶段未完成（${invocation.status}）；如实告知用户，禁止自行拼 PPT 内容。`,
+      }),
+      details: invocation,
+      status: invocation.status,
+    };
+  }
+  const structured = invocation.result?.structuredOutput !== null
+    && typeof invocation.result?.structuredOutput === "object"
+    && !Array.isArray(invocation.result.structuredOutput)
+    ? invocation.result.structuredOutput as Record<string, unknown>
+    : extractJsonObject(invocation.result?.text ?? "");
+  if (!structured || typeof structured.status !== "string"
+    || !["completed", "partial", "failed"].includes(structured.status)) {
+    return {
+      content: JSON.stringify({
+        invocationId: invocation.id,
+        status: "failed",
+        errorCode: "slides_builder_result_invalid",
+        retryable: true,
+        message: "落页代理未提交匹配任务的结构化结果；可调整 instruction 后重新调用 slides_draft。",
+      }),
+      details: invocation,
+      status: "failed",
+    };
+  }
+  const pick = (key: string): unknown => (structured[key] !== undefined && structured[key] !== null ? structured[key] : null);
+  return {
+    content: JSON.stringify({
+      invocationId: invocation.id,
+      task,
+      status: structured.status,
+      fileEntryId: pick("fileEntryId"),
+      fileName: pick("fileName"),
+      pages: pick("pages"),
+      outline: pick("outline"),
+      warnings: Array.isArray(structured.warnings) ? structured.warnings : [],
+      summary: typeof structured.summary === "string" ? structured.summary : "",
+    }),
+    details: invocation,
+    status: structured.status,
+  };
+}
+
 function parseJsonObject(value: string): Record<string, unknown> | null {
   try {
     const parsed: unknown = JSON.parse(value);
@@ -57,6 +121,21 @@ function parseJsonObject(value: string): Record<string, unknown> | null {
   } catch {
     return null;
   }
+}
+
+/** 进度事件 → 渲染层进度卡载荷（slides_draft onUpdate 的 details/content）。 */
+function slidesProgressUpdatePayload(event: SlidesProgressEvent): Record<string, unknown> {
+  const snapshot = event.snapshot;
+  return {
+    stage: "page_applied",
+    slideIndex: event.slideIndex,
+    title: snapshot.title,
+    totalPages: snapshot.totalPages,
+    pages: snapshot.pages,
+    doneCount: snapshot.doneCount,
+    ...(snapshot.narrative ? { narrative: snapshot.narrative } : {}),
+    ...(snapshot.warnings?.length ? { warnings: snapshot.warnings } : {}),
+  };
 }
 
 function extractJsonObject(value: string): Record<string, unknown> | null {
@@ -213,6 +292,22 @@ export function createSubagentPiTools(
         evidence: Array<{ sourceKind: string; sourceId: string; sourceTitle: string | null }>;
       }>;
     } | null;
+    /** PPT 逐页进度上报器：slides_draft generate 布进度，set_page 落页后广播快照（无决策无挂起）。 */
+    slidesProgress?: SlidesProgressTracker | null;
+    /**
+     * 草稿文档落地（draft 阶段）：方案渲染成 markdown 后由网关建 Room 文档，
+     * 返回 documentId 供用户编辑与 generate 阶段读回。
+     */
+    createSlidesDraftDocument?: (input: {
+      roomId: string;
+      title: string;
+      markdown: string;
+    }) => Promise<{ documentId: string; title: string }>;
+    /**
+     * 内容草稿回收（generate 成功后）：产物已落库，草稿使命结束，进回收站可恢复；
+     * 失败/部分完成时草稿保留以便重试，不调用本项。
+     */
+    trashSlidesDraftDocument?: (documentId: string) => Promise<void>;
   } = {},
 ): PiAgentRuntimeTool[] {
   const tools: PiAgentRuntimeTool[] = [
@@ -843,6 +938,422 @@ export function createSubagentPiTools(
           }),
           details: invocation,
         };
+      },
+    });
+  }
+  const slidesBuilder = registry.get("slides-builder");
+  if (slidesBuilder) {
+    tools.push({
+      name: "slides_draft",
+      label: "Create or edit a slides deck",
+      description: "调度 slides 子代理按「草稿 → 用户确认 → 生成」三步产出或修改演示文稿（PPT）。"
+        + "draft：先由 slides-planner 收集背景信息，产出内容草稿文档（一个章节 = 一页，含要点/数据/配图建议）——到此即停，"
+        + "用户在文档里确认修改内容后才会发起生成；传 instruction（主题、受众、篇幅等要求）与可选 title/outline（用户点名的页序）。"
+        + "generate：用户确认草稿后调用，传 draftDocumentId（草稿文档 id）与可选 style——"
+        + "slides-planner 先按受众重排页序、按起承转合分配每页信息密度并检索配图，再由 slides-builder 定调设计并一口气落完所有页"
+        + "（逐页进度实时展示，中途不再逐页询问）；确认卡的受众/时长/详略答案原样写进 instruction 转述。"
+        + "style 可选：japanese-style（和纸柔光·日式静）/ japanese-lifestyle（白底焦橙·杂志锐）/ futuristic-tech-editorial（白底电蓝·数据锐）/"
+        + "minimalist-luxury-branding（米棕衬线·奢牌）/ modern-illustration-editorial（现代插画·暖）/ soft-3d-clay（黏土软调·圆润）/ japanese-hand-drawn-editorial（手绘线稿·手作）"
+        + "——用户点名风格时传对应 id，拿不准就不传（落页代理自选）。"
+        + "edit：传 instruction（要改什么，可含选中的元素描述）与可选 fileId（缺省 \"active\" 即当前桌面打开的那份），"
+        + "由 slides-builder 读取大纲后直接发编辑事务，页面实时更新。"
+        + "结果以返回的 status/summary 为准向用户汇报（failed/partial 时如实转告 warnings 与原因，可重试）；"
+        + "禁止主 Agent 自行拼页面内容或代替子代理重试底层工具。",
+      parameters: Type.Object({
+        task: Type.Union([Type.Literal("draft"), Type.Literal("generate"), Type.Literal("edit")]),
+        instruction: Type.String({ minLength: 1, maxLength: 16_000 }),
+        title: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
+        style: Type.Optional(Type.String({ minLength: 1, maxLength: 40 })),
+        outline: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 80 }), { minItems: 1, maxItems: 24 })),
+        draftDocumentId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+        fileId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+        roomId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+      }, { additionalProperties: false }),
+      execute: async (run, params, signal, onUpdate) => {
+        const task = params.task;
+        const instruction = String(params.instruction ?? "").trim();
+        if (!instruction) throw new Error("slides_draft_instruction_required");
+        const titleArg = typeof params.title === "string" ? params.title.trim().slice(0, 120) : "";
+        const styleArg = typeof params.style === "string" ? params.style.trim().slice(0, 40) : "";
+        const fileIdArg = typeof params.fileId === "string" ? params.fileId.trim() : "";
+        const explicitRoomId = typeof params.roomId === "string" ? params.roomId.trim() : "";
+        if (explicitRoomId && run.roomId && explicitRoomId !== run.roomId) {
+          throw new Error("ROOM_SELECTION_MISMATCH: The slides target differs from the Room already bound to this run");
+        }
+        const roomId = explicitRoomId || run.roomId || run.activeDocument?.roomId?.trim() || "";
+        if (!roomId) {
+          throw new Error("ROOM_SELECTION_REQUIRED: Choose one valid Room from available_rooms or call context_room_list");
+        }
+        // 显式传入的房间必须真实存在（availableRooms 是开跑快照，实时注册表兜底）。
+        if (explicitRoomId && !run.roomId && Array.isArray(run.availableRooms) && run.availableRooms.length > 0
+          && !run.availableRooms.some((room) => room.id === explicitRoomId)
+          && !options.roomExists?.(explicitRoomId)) {
+          throw new Error("ROOM_SELECTION_REQUIRED: Choose one valid Room from available_rooms or call context_room_list");
+        }
+
+        // ── draft：先出内容草稿文档，到此暂停——等用户在文档里确认内容后再生成（2026-09 重设计）。 ──
+        if (task === "draft") {
+          const planner = registry.get("slides-planner");
+          if (!planner) {
+            return {
+              content: JSON.stringify({
+                status: "failed",
+                errorCode: "slides_planner_not_registered",
+                retryable: false,
+                message: "方案代理未注册；如实告知用户创建失败，禁止自行拼 PPT 内容。",
+              }),
+              details: { errorCode: "slides_planner_not_registered" },
+            };
+          }
+          if (!options.createSlidesDraftDocument) {
+            return {
+              content: JSON.stringify({
+                status: "failed",
+                errorCode: "slides_draft_document_unavailable",
+                retryable: false,
+                message: "草稿文档服务未配置；如实告知用户创建失败，禁止自行拼 PPT 内容。",
+              }),
+              details: { errorCode: "slides_draft_document_unavailable" },
+            };
+          }
+          const plannerInput: Record<string, unknown> = {
+            phase: "draft",
+            instruction,
+            roomId,
+            ...(titleArg ? { title: titleArg } : {}),
+            ...(Array.isArray(params.outline)
+              ? { outline: params.outline.map((item) => String(item ?? "").trim().slice(0, 80)).filter(Boolean) }
+              : {}),
+          };
+          let plannerInvocation;
+          try {
+            plannerInvocation = await dispatchWithConcurrencyRetry(() => orchestrator.dispatch({
+              agentId: "slides-planner",
+              task: "演示文稿内容草稿",
+              input: plannerInput,
+              idempotencyKey: dispatchKey(run.runId, "slides-planner", "draft", plannerInput),
+              source: "primary_agent",
+              parentSessionId: run.sessionId,
+              parentRunId: run.runId,
+              ...(signal ? { signal } : {}),
+            }));
+          } catch (error) {
+            const errorCode = error instanceof Error ? error.message : String(error);
+            const retryable = isConcurrencyLimitError(error);
+            return {
+              content: JSON.stringify({
+                status: "failed",
+                errorCode,
+                retryable,
+                message: retryable
+                  ? "方案代理调度被并发限额拒绝；如实告知用户可稍后重试，禁止自行拼 PPT 内容。"
+                  : "方案代理调度失败；如实告知用户，禁止自行拼 PPT 内容。",
+              }),
+              details: { errorCode },
+            };
+          }
+          if (plannerInvocation.status !== "completed") {
+            return {
+              content: JSON.stringify({
+                invocationId: plannerInvocation.id,
+                status: "failed",
+                errorCode: plannerInvocation.errorCode ?? plannerInvocation.errorMessage ?? plannerInvocation.status,
+                retryable: plannerInvocation.status === "timed_out" || plannerInvocation.status === "cancelled",
+                message: `草稿阶段未完成（${plannerInvocation.status}）；如实告知用户，禁止自行拼 PPT 内容。`,
+              }),
+              details: plannerInvocation,
+            };
+          }
+          const plan = plannerInvocation.result?.structuredOutput !== null
+            && typeof plannerInvocation.result?.structuredOutput === "object"
+            && !Array.isArray(plannerInvocation.result.structuredOutput)
+            ? plannerInvocation.result.structuredOutput as Record<string, unknown>
+            : extractJsonObject(plannerInvocation.result?.text ?? "");
+          const gatePlan = slidesProgressPlanFrom(plan);
+          if (!gatePlan) {
+            return {
+              content: JSON.stringify({
+                invocationId: plannerInvocation.id,
+                status: "failed",
+                errorCode: "slides_planner_result_invalid",
+                retryable: true,
+                message: "方案代理未提交含 pages/title 的结构化草稿；可调整 instruction 后重新调用 slides_draft(task=draft)。",
+              }),
+              details: plannerInvocation,
+            };
+          }
+          let draftDocument: { documentId: string; title: string };
+          try {
+            draftDocument = await options.createSlidesDraftDocument({
+              roomId,
+              title: gatePlan.title,
+              markdown: renderDraftMarkdown(gatePlan),
+            });
+          } catch (error) {
+            const errorCode = error instanceof Error ? error.message : String(error);
+            return {
+              content: JSON.stringify({
+                invocationId: plannerInvocation.id,
+                status: "failed",
+                errorCode,
+                retryable: true,
+                message: "草稿文档创建失败；可调整 instruction 后重新调用 slides_draft(task=draft)。",
+              }),
+              details: { errorCode },
+            };
+          }
+          // 草稿实时可见：进度卡切「草稿待确认」，带全量页清单与文档定位。
+          const draftUpdate: Record<string, unknown> = {
+            stage: "draft_ready",
+            title: gatePlan.title,
+            totalPages: gatePlan.pages.length,
+            pages: gatePlan.pages,
+            doneCount: 0,
+            documentId: draftDocument.documentId,
+            ...(gatePlan.narrative ? { narrative: gatePlan.narrative } : {}),
+            ...(gatePlan.warnings?.length ? { warnings: gatePlan.warnings } : {}),
+          };
+          onUpdate?.({ content: JSON.stringify(draftUpdate), details: draftUpdate });
+          return {
+            content: JSON.stringify({
+              status: "draft_ready",
+              documentId: draftDocument.documentId,
+              documentTitle: draftDocument.title,
+              pages: gatePlan.pages.length,
+              warnings: gatePlan.warnings ?? [],
+              message: "内容草稿文档已创建并打开。告诉用户：请在文档里检查修改（一个章节=一页，改章节/要点/数据就是改页），"
+                + "确认后在对话的确认卡上选受众、时长、风格并发起生成；用户确认前不要生成 PPT。",
+            }),
+            details: { stage: "draft_ready", documentId: draftDocument.documentId },
+          };
+        }
+
+        // ── generate：读回用户确认的草稿 → planner arrange（受众重排+密度+素材）→ builder 一口气落页。 ──
+        if (task === "generate") {
+          const draftDocumentId = typeof params.draftDocumentId === "string" ? params.draftDocumentId.trim() : "";
+          if (!draftDocumentId) {
+            return {
+              content: JSON.stringify({
+                status: "failed",
+                errorCode: "slides_draft_document_required",
+                retryable: false,
+                message: "缺少 draftDocumentId：先经 task=draft 产出草稿文档，用户确认后再发起 generate。",
+              }),
+              details: { errorCode: "slides_draft_document_required" },
+            };
+          }
+          const draftSnapshot = options.resolveDocumentForDraft?.(draftDocumentId, roomId) ?? null;
+          if (!draftSnapshot) {
+            return {
+              content: JSON.stringify({
+                status: "failed",
+                errorCode: "slides_draft_document_not_found",
+                retryable: false,
+                message: "草稿文档不存在或不属于当前 Room；与用户确认文档后重新提供 draftDocumentId。",
+              }),
+              details: { errorCode: "slides_draft_document_not_found" },
+            };
+          }
+          const draftPages = parseDraftMarkdown(draftSnapshot.markdown);
+          if (!draftPages) {
+            return {
+              content: JSON.stringify({
+                status: "failed",
+                errorCode: "slides_draft_document_empty",
+                retryable: false,
+                message: "草稿里解析不到「## 章节=页」结构（可能被清空）；请用户恢复章节结构后重试。",
+              }),
+              details: { errorCode: "slides_draft_document_empty" },
+            };
+          }
+          const planner = registry.get("slides-planner");
+          if (!planner) {
+            return {
+              content: JSON.stringify({
+                status: "failed",
+                errorCode: "slides_planner_not_registered",
+                retryable: false,
+                message: "方案代理未注册；如实告知用户创建失败，禁止自行拼 PPT 内容。",
+              }),
+              details: { errorCode: "slides_planner_not_registered" },
+            };
+          }
+          const plannerInput: Record<string, unknown> = {
+            phase: "arrange",
+            instruction,
+            roomId,
+            title: draftSnapshot.document.title.slice(0, 120),
+            draftPages,
+            ...(styleArg ? { style: styleArg } : {}),
+          };
+          let plannerInvocation;
+          try {
+            plannerInvocation = await dispatchWithConcurrencyRetry(() => orchestrator.dispatch({
+              agentId: "slides-planner",
+              task: "演示文稿编排",
+              input: plannerInput,
+              idempotencyKey: dispatchKey(run.runId, "slides-planner", "arrange", plannerInput),
+              source: "primary_agent",
+              parentSessionId: run.sessionId,
+              parentRunId: run.runId,
+              ...(signal ? { signal } : {}),
+            }));
+          } catch (error) {
+            const errorCode = error instanceof Error ? error.message : String(error);
+            const retryable = isConcurrencyLimitError(error);
+            return {
+              content: JSON.stringify({
+                status: "failed",
+                errorCode,
+                retryable,
+                message: retryable
+                  ? "编排代理调度被并发限额拒绝；如实告知用户可稍后重试（草稿已就绪），禁止自行拼 PPT 内容。"
+                  : "编排代理调度失败；如实告知用户，禁止自行拼 PPT 内容。",
+              }),
+              details: { errorCode },
+            };
+          }
+          if (plannerInvocation.status !== "completed") {
+            return {
+              content: JSON.stringify({
+                invocationId: plannerInvocation.id,
+                status: "failed",
+                errorCode: plannerInvocation.errorCode ?? plannerInvocation.errorMessage ?? plannerInvocation.status,
+                retryable: plannerInvocation.status === "timed_out" || plannerInvocation.status === "cancelled",
+                message: `编排阶段未完成（${plannerInvocation.status}）；如实告知用户，禁止自行拼 PPT 内容。`,
+              }),
+              details: plannerInvocation,
+            };
+          }
+          const plan = plannerInvocation.result?.structuredOutput !== null
+            && typeof plannerInvocation.result?.structuredOutput === "object"
+            && !Array.isArray(plannerInvocation.result.structuredOutput)
+            ? plannerInvocation.result.structuredOutput as Record<string, unknown>
+            : extractJsonObject(plannerInvocation.result?.text ?? "");
+          const gatePlan = slidesProgressPlanFrom(plan);
+          if (!gatePlan) {
+            return {
+              content: JSON.stringify({
+                invocationId: plannerInvocation.id,
+                status: "failed",
+                errorCode: "slides_planner_result_invalid",
+                retryable: true,
+                message: "编排代理未提交含 pages/title 的结构化方案；可调整 instruction 后重新调用 slides_draft(task=generate)。",
+              }),
+              details: plannerInvocation,
+            };
+          }
+          // 编排方案实时可见：页序/密度/配图一出即透传给进度卡。
+          const planUpdate: Record<string, unknown> = {
+            stage: "plan_ready",
+            title: gatePlan.title,
+            totalPages: gatePlan.pages.length,
+            pages: gatePlan.pages,
+            doneCount: 0,
+            ...(gatePlan.narrative ? { narrative: gatePlan.narrative } : {}),
+            ...(gatePlan.warnings?.length ? { warnings: gatePlan.warnings } : {}),
+          };
+          onUpdate?.({ content: JSON.stringify(planUpdate), details: planUpdate });
+
+          const slidesProgress = options.slidesProgress;
+          let builderRunId: string | null = null;
+          const builderInput = {
+            task: "create",
+            instruction,
+            roomId,
+            title: gatePlan.title,
+            ...(styleArg ? { style: styleArg } : {}),
+            plan,
+          };
+          let builderInvocation;
+          try {
+            builderInvocation = await dispatchWithConcurrencyRetry(() => orchestrator.dispatch({
+              agentId: "slides-builder",
+              task: "演示文稿创建",
+              input: builderInput,
+              idempotencyKey: dispatchKey(run.runId, "slides-builder", "generate", builderInput),
+              source: "primary_agent",
+              parentSessionId: run.sessionId,
+              // 两跳串接（调用链语义）：落页挂靠编排调用之下，时间线呈现先后依赖。
+              parentRunId: plannerInvocation.id,
+              // 逐页进度（只报不定）：invocationId 一生成即登记并挂进度转发，
+              // 子 run 的 set_page 落页后广播快照，进度卡逐页打勾。
+              onInvocationId: (invocationId) => {
+                builderRunId = invocationId;
+                if (slidesProgress) {
+                  slidesProgress.arm(invocationId, gatePlan);
+                  if (onUpdate) {
+                    slidesProgress.setRelay(invocationId, (event) => {
+                      const payload = slidesProgressUpdatePayload(event);
+                      onUpdate({ content: JSON.stringify(payload), details: payload });
+                    });
+                  }
+                }
+              },
+              ...(signal ? { signal } : {}),
+            }));
+          } catch (error) {
+            const errorCode = error instanceof Error ? error.message : String(error);
+            const retryable = isConcurrencyLimitError(error);
+            return {
+              content: JSON.stringify({
+                invocationId: plannerInvocation.id,
+                status: "failed",
+                errorCode,
+                retryable,
+                message: retryable
+                  ? "落页代理调度被并发限额拒绝；如实告知用户可稍后重试（方案已就绪，重试会复用），禁止自行拼 PPT 内容。"
+                  : "落页代理调度失败；如实告知用户，禁止自行拼 PPT 内容。",
+              }),
+              details: { errorCode },
+            };
+          } finally {
+            if (builderRunId) slidesProgress?.disarm(builderRunId);
+          }
+          const generateResult = normalizeSlidesResult(builderInvocation, "create");
+          // 落页完成即回收内容草稿：产物已落库，草稿使命结束（进回收站可恢复）；
+          // partial/failed 保留草稿便于重试。fire-and-forget，不影响结果返回。
+          if (generateResult.status === "completed" && draftDocumentId) {
+            void options.trashSlidesDraftDocument?.(draftDocumentId).catch(() => {});
+          }
+          return { content: generateResult.content, details: generateResult.details };
+        }
+
+        // ── edit：不经方案阶段，slides-builder 直改。 ──
+        const editInput = {
+          task: "edit",
+          instruction,
+          roomId,
+          ...(fileIdArg ? { fileId: fileIdArg } : {}),
+        };
+        let editInvocation;
+        try {
+          editInvocation = await dispatchWithConcurrencyRetry(() => orchestrator.dispatch({
+            agentId: "slides-builder",
+            task: "演示文稿修改",
+            input: editInput,
+            idempotencyKey: dispatchKey(run.runId, "slides-builder", "edit", editInput),
+            source: "primary_agent",
+            parentSessionId: run.sessionId,
+            parentRunId: run.runId,
+            ...(signal ? { signal } : {}),
+          }));
+        } catch (error) {
+          const errorCode = error instanceof Error ? error.message : String(error);
+          const retryable = isConcurrencyLimitError(error);
+          return {
+            content: JSON.stringify({
+              status: "failed",
+              errorCode,
+              retryable,
+              message: retryable
+                ? "落页代理调度被并发限额拒绝；如实告知用户可稍后重试，禁止自行拼 PPT 内容。"
+                : "落页代理调度失败；如实告知用户，禁止自行拼 PPT 内容。",
+            }),
+            details: { errorCode },
+          };
+        }
+        return normalizeSlidesResult(editInvocation, "edit");
       },
     });
   }

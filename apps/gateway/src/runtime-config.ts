@@ -48,12 +48,26 @@ export interface RuntimeConfig {
 
 export type RuntimeConfigSource = "user" | "default";
 
+/** SaaS 下发的套餐场景模型（键与 SaaS 管理端套餐面板一致；全 optional 容错）。 */
+export interface RelayModels {
+  primary?: string;
+  background?: string;
+  lite?: string;
+  cursorCompletion?: string;
+  vlm?: string;
+  webSearch?: string;
+  embedding?: string;
+  embeddingDimensions?: number;
+}
+
 /** relay 激活时的槽位重写目标：proxyOrigin + gateway 自身 token + 中转站 API 前缀。 */
 export interface RuntimeConfigRelayOverride {
   proxyOrigin: string;
   token: string;
   /** 中转站 OpenAI 兼容前缀（如 /v1）；缺省 /v1。 */
   pathPrefix?: string;
+  /** 套餐场景模型；未下发时各槽位模型沿用本地内置值。 */
+  models?: RelayModels | undefined;
 }
 
 export interface RuntimeConfigSnapshot {
@@ -426,11 +440,14 @@ export class RuntimeConfigManager {
    * 令牌；asr 与 memory/knowledge 服务地址不重写。host 与路径整体换成中转站
    * 出口（路径 = 会话 baseUrl 推导的规范前缀，缺省 /v1），不继承槽位旧
    * pathname。relay 失效时槽位回到未配置态（或 user 源自填直连值）。
+   * SaaS 下发了场景模型时先覆盖 model 再进重写判定——覆盖后的 model 非空
+   * 即接代理出口，内置无槽位的 lite 由 SaaS 模型补建。
    */
   private rewriteSlotsForRelay(config: RuntimeConfig, selectedSource: RuntimeConfigSource): void {
     const override = this.relayOverride?.() ?? null;
     if (!override || selectedSource === "user") return;
     const proxyBase = `${override.proxyOrigin.replace(/\/+$/, "")}/ai-relay${override.pathPrefix ?? "/v1"}`;
+    this.applyRelayModels(config, override.models);
     const rewrite = (slot: unknown): void => {
       if (!slot || typeof slot !== "object") return;
       const item = slot as Record<string, unknown>;
@@ -443,6 +460,35 @@ export class RuntimeConfigManager {
     }
     rewrite(config.knowledge?.llm);
     rewrite(config.knowledge?.embedding);
+  }
+
+  /** SaaS 套餐场景模型覆盖：只写 SaaS 明确下发的场景，其余槽位模型保持本地
+   *  内置值。lite 内置 JSON 无槽位，缺槽时克隆 primary（或 background）结构
+   *  换 model——lite 档随 SaaS 下发自动可用。 */
+  private applyRelayModels(config: RuntimeConfig, models: RelayModels | undefined): void {
+    if (!models) return;
+    const setModel = (slot: RuntimeAiConfig | undefined, model: string | undefined): void => {
+      if (slot && typeof model === "string" && model.trim()) slot.model = model.trim();
+    };
+    setModel(config.primary, models.primary);
+    setModel(config.background, models.background);
+    setModel(config.lite, models.lite);
+    if (!config.lite && typeof models.lite === "string" && models.lite.trim()) {
+      const source = config.primary ?? config.background
+        ?? { provider: "openai", model: "", baseUrl: "", api: "openai-completions", apiKey: "" } as RuntimeAiConfig;
+      config.lite = { ...clone(source), model: models.lite.trim() };
+    }
+    setModel(config.cursorCompletion, models.cursorCompletion);
+    setModel(config.vlm, models.vlm);
+    setModel(config.webSearch, models.webSearch);
+    const knowledge = config.knowledge as { embedding?: RuntimeAiConfig } | undefined;
+    if (knowledge?.embedding) {
+      setModel(knowledge.embedding, models.embedding);
+      const dimensions = models.embeddingDimensions;
+      if (typeof dimensions === "number" && Number.isInteger(dimensions) && dimensions > 0) {
+        knowledge.embedding.dimensions = dimensions;
+      }
+    }
   }
 
   private selectedSource(): RuntimeConfigSource | null {

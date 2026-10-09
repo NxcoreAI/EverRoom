@@ -16,13 +16,18 @@ import type {
 import { createVersionedLocalStorageStore } from '@nxcore/migration-kit/local'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useLocale } from '@/i18n/LocaleContext'
+import type { AgentApprovalDecision } from '../../../../shared/sources'
 
 import {
+  createAgentRunActivityAccumulator,
+  foldAgentRunActivityEvent,
+  foldAgentRunActivityEvents,
   mergeAgentToolEvent,
   reduceAgentContextState,
-  reduceAgentRunActivity,
   reduceAgentRunEvents,
+  snapshotAgentRunActivity,
   type AgentRunActivity,
+  type AgentRunActivityAccumulator,
   type DisplayAgentToolCall,
   type DisplayAgentToolStatus,
   type ReducedAgentRunEvents,
@@ -85,6 +90,8 @@ export interface QueuedAgentSubmission {
 
 const SESSION_KEY_BASE = 'nxcore-ce:agent-session'
 const SESSION_KEY_VERSION = 2
+/** 流式事件合并节拍：10fps 足够顺滑，同时把长对话的渲染负载压下来。 */
+const AGENT_EVENT_FLUSH_MS = 100
 const MODEL_PREFERENCE_STORAGE_KEY = 'nxcore-ce:agent-model-preference:v1'
 
 function readStoredModelPreference(): AgentModelPreference {
@@ -222,7 +229,15 @@ export function useAgentSession(
   /** 待发队列：run 进行中提交的消息先排队，run 终态后自动逐条发出。 */
   const [queuedSubmissions, setQueuedSubmissions] = useState<QueuedAgentSubmission[]>([])
   const sequenceByRun = useRef(new Map<string, number>())
-  const eventsByRun = useRef(new Map<string, AgentEvent[]>())
+  /** 每个 run 的活动折叠器：实时事件按 seq 增量折叠，不再全量重放历史事件。 */
+  const activityAccByRun = useRef(new Map<string, AgentRunActivityAccumulator>())
+  /**
+   * 流式事件按 AGENT_EVENT_FLUSH_MS 节拍批量入 state：每个 delta 一次 IPC + 一次
+   * React 渲染，工具多、对话长时事件风暴会把主线程打满（表现为对话区卡死、
+   * 滚动冻结在半途）。合并后渲染频率上限 = 10 次/秒。
+   */
+  const pendingEventsRef = useRef<AgentEvent[]>([])
+  const agentEventFlushRef = useRef<number | null>(null)
   const terminalRunIdsRef = useRef(new Set<string>())
   const messageStartedRunIdsRef = useRef(new Set<string>())
   const sessionIdRef = useRef<string | null>(null)
@@ -289,12 +304,17 @@ export function useAgentSession(
     const lastSequence = sequenceByRun.current.get(event.runId) ?? 0
     if (event.seq <= lastSequence) return
     sequenceByRun.current.set(event.runId, event.seq)
-    const runEvents = [...(eventsByRun.current.get(event.runId) ?? []), event]
-    eventsByRun.current.set(event.runId, runEvents)
-    setActivityByRun((current) => ({
-      ...current,
-      [event.runId]: reduceAgentRunActivity(runEvents),
-    }))
+    let acc = activityAccByRun.current.get(event.runId)
+    if (!acc) {
+      acc = createAgentRunActivityAccumulator()
+      activityAccByRun.current.set(event.runId, acc)
+    }
+    if (foldAgentRunActivityEvent(acc, event)) {
+      const snapshot = snapshotAgentRunActivity(acc)
+      setActivityByRun((current) => current[event.runId] === snapshot
+        ? current
+        : { ...current, [event.runId]: snapshot })
+    }
 
     if (event.type === 'approval.requested' || event.type === 'approval.resolved') {
       setPendingApprovals((current) => applyShellApprovalEvent(current, event))
@@ -509,6 +529,27 @@ export function useAgentSession(
     }
   }, [updateToolCall])
 
+  /**
+   * 把队列里积压的事件一次性应用掉；流式 delta 每 100ms 合并成一拍——
+   * 文本流 10fps 足够顺滑，工具状态变化最多延迟一拍，渲染负载降一个量级。
+   */
+  const flushQueuedAgentEvents = useCallback(() => {
+    agentEventFlushRef.current = null
+    const queued = pendingEventsRef.current
+    if (!queued.length) return
+    pendingEventsRef.current = []
+    const currentSessionId = sessionIdRef.current
+    for (const event of queued) {
+      if (event.sessionId !== currentSessionId) continue
+      applyEvent(event)
+    }
+  }, [applyEvent])
+
+  const scheduleAgentEventFlush = useCallback(() => {
+    if (agentEventFlushRef.current !== null) return
+    agentEventFlushRef.current = window.setTimeout(flushQueuedAgentEvents, AGENT_EVENT_FLUSH_MS)
+  }, [flushQueuedAgentEvents])
+
   const hydrateSnapshot = useCallback(async (
     snapshot: AgentSessionSnapshot,
     pendingMessages: DisplayAgentMessage[] = [],
@@ -516,7 +557,7 @@ export function useAgentSession(
   ) => {
     if (expectedScope !== activeScopeRef.current || snapshot.session.id !== sessionIdRef.current) return false
     sequenceByRun.current.clear()
-    eventsByRun.current.clear()
+    activityAccByRun.current.clear()
     terminalRunIdsRef.current.clear()
     userPromptByRun.current.clear()
     assistantContentByRun.current.clear()
@@ -551,8 +592,10 @@ export function useAgentSession(
       ))?.content ?? ''
       reducedByRun.set(group.runId, reduced)
       sequenceByRun.current.set(group.runId, reduced.lastSequence)
-      eventsByRun.current.set(group.runId, group.events)
-      nextActivity[group.runId] = reduceAgentRunActivity(group.events, savedAnswer)
+      const acc = createAgentRunActivityAccumulator(savedAnswer)
+      foldAgentRunActivityEvents(acc, group.events)
+      activityAccByRun.current.set(group.runId, acc)
+      nextActivity[group.runId] = snapshotAgentRunActivity(acc)
       if (reduced.tools.length) nextTools[group.runId] = reduced.tools
       if (reduced.reasoning) nextReasoning[group.runId] = reduced.reasoning
       if (reduced.startedAt) nextStartedAt[group.runId] = reduced.startedAt
@@ -672,7 +715,7 @@ export function useAgentSession(
     sessionIdRef.current = null
     channelAgentRef.current = null
     sequenceByRun.current.clear()
-    eventsByRun.current.clear()
+    activityAccByRun.current.clear()
     userPromptByRun.current.clear()
     assistantContentByRun.current.clear()
     sessionRunIds.current.clear()
@@ -721,16 +764,22 @@ export function useAgentSession(
           })
         }
       } else {
-        applyEvent(frame.event)
+        pendingEventsRef.current.push(frame.event)
+        scheduleAgentEventFlush()
       }
     })
 
     return () => {
       alive = false
       removeListener?.()
+      if (agentEventFlushRef.current !== null) {
+        window.clearTimeout(agentEventFlushRef.current)
+      }
+      agentEventFlushRef.current = null
+      pendingEventsRef.current = []
       void api?.unsubscribe()
     }
-  }, [api, applyEvent, hydrateSnapshot, selectSession])
+  }, [api, applyEvent, hydrateSnapshot, selectSession, scheduleAgentEventFlush])
 
   // 全局默认档位：新会话创建时锁定到 session.activeAgentId（后端权威）。
   // 切换只影响下一个新会话，进行中的会话档位以 currentSession.modelPreference 为准。
@@ -803,7 +852,6 @@ export function useAgentSession(
     setActiveRunId(null)
     setDisplayTitle(t('surface:useAgentSession.newConversation'))
     sequenceByRun.current.clear()
-    eventsByRun.current.clear()
     userPromptByRun.current.clear()
     assistantContentByRun.current.clear()
     sessionRunIds.current.clear()
@@ -894,8 +942,8 @@ export function useAgentSession(
           setResolvingApprovalIds(new Set())
           setRunStartedAtByRun({})
           setRunCompletedAtByRun({})
+          activityAccByRun.current.clear()
           setQueuedSubmissions([])
-          eventsByRun.current.clear()
           sequenceByRun.current.clear()
           setConnected(false)
           storeSession(null)
@@ -1017,7 +1065,7 @@ export function useAgentSession(
         delete next[replaceRunId]
         return next
       })
-      eventsByRun.current.delete(replaceRunId)
+      activityAccByRun.current.delete(replaceRunId)
       sequenceByRun.current.delete(replaceRunId)
       terminalRunIdsRef.current.delete(replaceRunId)
     }
@@ -1202,13 +1250,14 @@ export function useAgentSession(
 
   const resolveApproval = async (
     approvalId: string,
-    decision: 'approved' | 'approved_session' | 'denied',
+    decision: AgentApprovalDecision,
+    feedback?: string,
   ): Promise<void> => {
     if (!api || resolvingApprovalIds.has(approvalId)) return
     setResolvingApprovalIds((current) => new Set(current).add(approvalId))
     setError(null)
     try {
-      await api.resolveApproval(approvalId, decision)
+      await api.resolveApproval(approvalId, decision, feedback)
     } catch (requestError) {
       setError(requestErrorMessage(requestError, t('surface:useAgentSession.approvalFailed')))
       throw requestError

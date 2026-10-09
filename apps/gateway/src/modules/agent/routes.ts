@@ -143,11 +143,18 @@ export function agentRoutes(
         schema: {
           tags: ["agent"],
           params: ApprovalParams,
-          body: Type.Object({ decision: Type.Union([Type.Literal("approved"), Type.Literal("approved_session"), Type.Literal("denied")]) }),
+          body: Type.Object({
+            decision: Type.Union([
+              Type.Literal("approved"),
+              Type.Literal("approved_session"),
+              Type.Literal("denied"),
+            ]),
+          }),
         },
       },
       async (request, reply) => {
-        const result = service.resolveApproval(request.params.approvalId, request.body.decision);
+        const { decision } = request.body;
+        const result = service.resolveApproval(request.params.approvalId, decision);
         return result ?? reply.code(404).send({ error: "not_found", message: "Approval request not found" });
       },
     );

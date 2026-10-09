@@ -180,9 +180,8 @@ export class FilesService {
   initializeCatalog(): void {
     const legacyRows = this.db.select().from(uploadedFiles).all();
     for (const row of legacyRows) {
-      const capability = fileFormatCapability(row.originalName);
-      if (!capability) continue;
-      const versionId = `fver-legacy-${row.id}`;
+      // 对象库索引全量回填（先于 capability 过滤）：素材检索按 content_hash
+      // 内连接 file_blobs，图片等无解析器格式漏行即对检索完全不可见。
       this.db.insert(fileBlobs).values({
         contentHash: row.contentHash,
         storagePath: row.storagePath,
@@ -190,6 +189,9 @@ export class FilesService {
         mime: row.mime,
         createdAt: row.createdAt,
       }).onConflictDoNothing().run();
+      const capability = fileFormatCapability(row.originalName);
+      if (!capability) continue;
+      const versionId = `fver-legacy-${row.id}`;
       this.db.insert(fileEntries).values({
         id: row.id,
         sourceKind: "legacy-upload",
@@ -806,6 +808,18 @@ export class FilesService {
    * 旧值直到调用方重新解析后 touchParsed）。
    * 注意：这里只管字节与登记，不解析（归一化是理解引擎的职责）。
    */
+  /** upload 通道的字节同样登记进对象库索引：素材检索按 content_hash 内连接
+   *  file_blobs，图片等无解析器格式漏登记即对检索完全不可见（启动回填也
+   *  曾被 capability 过滤挡住）。幂等，已存在时不覆盖。 */
+  private ensureBlobRow(contentHash: string, storagePath: string, byteSize: number, mime?: string): void {
+    this.db.insert(fileBlobs).values({
+      contentHash,
+      storagePath,
+      byteSize,
+      mime: mime ?? "application/octet-stream",
+    }).onConflictDoNothing().run();
+  }
+
   async upload(input: {
     filename: string;
     buffer: Buffer;
@@ -826,6 +840,7 @@ export class FilesService {
 
     const existing = this.db.select().from(uploadedFiles).where(eq(uploadedFiles.id, fileId)).get();
     if (existing?.contentHash === contentHash) {
+      this.ensureBlobRow(contentHash, existing.storagePath, existing.bytes, input.mime ?? existing.mime);
       if (input.mime || input.assetKind || input.originChannel || input.visibility || input.capturedAt) {
         this.db.update(uploadedFiles).set({
           ...(input.mime ? { mime: input.mime } : {}),
@@ -847,6 +862,7 @@ export class FilesService {
     }
 
     await storeFileBlob(this.dataDir, contentHash, input.buffer);
+    this.ensureBlobRow(contentHash, storageRelPath(contentHash), input.buffer.byteLength, input.mime);
     if (existing) {
       this.db.update(uploadedFiles).set({
         contentHash,

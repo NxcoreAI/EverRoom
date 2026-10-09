@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { ObsidianVaultService, discoverRegisteredObsidianVaultPaths, isPathInsideRoots } from '../src/main/obsidian/obsidian-vault-service'
+import type { ObsidianVaultChangedEvent } from '../src/shared/obsidian'
 
 const temporaryDirectories: string[] = []
 
@@ -574,6 +575,25 @@ describe('ObsidianVaultService', () => {
     expect(result.status).toBe('conflict')
     expect(result.snapshot.markdown).toBe('# Changed in Obsidian')
     expect(await readFile(join(vaultPath, note.relativePath), 'utf8')).toBe('# Changed in Obsidian')
+    await service.shutdown()
+  })
+
+  it('reports only changed resources on scan events so projections can filter', async () => {
+    const { vaultPath, service } = await fixture()
+    const binding = await service.mount(vaultPath)
+    const note = (await service.tree(binding.id)).resources.find((resource) => resource.kind === 'note')!
+    const events: ObsidianVaultChangedEvent[] = []
+    service.onChanged((event) => events.push(event))
+
+    const saved = await service.saveNote(binding.id, note.id, '# Revised', note.sourceHash)
+    expect(saved.status).toBe('saved')
+    const saveEvent = events.at(-1)!
+    expect(saveEvent.changedResourceIds).toEqual([note.id])
+
+    const before = events.length
+    await service.rescan(binding.id)
+    expect(events.length).toBeGreaterThan(before)
+    expect(events.at(-1)!.changedResourceIds).toBeUndefined()
     await service.shutdown()
   })
 

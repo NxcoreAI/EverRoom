@@ -21,6 +21,15 @@ export interface DocumentExecutionContext {
   activeDocument?: AgentActiveDocumentContext;
 }
 
+/**
+ * PPT 逐页进度上报（只报不定）：set_page 成功落页即广播快照，不停等不决策。
+ * gateway 侧权威实现在 modules/subagents/slides-progress-tracker.ts，此处只声明
+ * 结构契约（capabilities 模块不反向依赖 subagents 模块）。
+ */
+export interface SlidesPageProgressReporter {
+  notify(runId: string | undefined, slideIndex: number): void;
+}
+
 export interface DocumentRoomRegistry {
   listReferences(): AgentRoomReference[];
   createRoom(input: CreateContextRoomInput): Promise<CreateContextRoomResult>;

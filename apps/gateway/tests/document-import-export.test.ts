@@ -1,4 +1,4 @@
-import { mkdtemp, writeFile, chmod } from 'node:fs/promises'
+import { mkdtemp, readFile, writeFile, chmod } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -112,13 +112,19 @@ async function createHarness(options: {
   db = created.db
   closeDatabase = () => created.sqlite.close()
   const documents = new DocumentService(db, new DocumentEventBroker())
+  const runner = options.actionRunner
   const imports = new DocumentImportService(
     db,
     documents,
     options.connector === undefined ? connectorConfig : options.connector,
     dataDirectory,
     {
-      ...(options.actionRunner ? { actionRunner: options.actionRunner } : {}),
+      ...(runner ? { actionRunner: runner } : {}),
+      // 飞书已换轨 lark-cli：同一 fake 平移到 larkActionFn 缝（适配器优先走它），
+      // 既有 feishu 断言零改动；notion 仍走 actionRunner。
+      ...(runner ? { larkActionFn: (call) => runner(connectorConfig, call) } : {}),
+      // 缺省显式 null：不注入时 feishu 走「lark-cli 未配置」422，绝不碰真二进制。
+      larkCli: options.lark === undefined ? null : options.lark,
       ...(options.assetBridgeUrl !== undefined ? { assetBridgeUrl: options.assetBridgeUrl } : {}),
       ...(options.ntn !== undefined ? { notionCli: options.ntn } : {}),
     },
@@ -232,6 +238,82 @@ exit 3
   await chmod(path, 0o755)
   disposables.push(() => undefined)
   return path
+}
+
+/**
+ * 假 lark-cli（导入链路版）：auth status 受状态文件控制、每次调用计数
+ * （TTL 断言用）；drive/wiki/fetch/comments/media 按子命令出 lark 信封
+ * （形状对齐真 CLI 实测：search 嵌套、fetch 无 title、评论 snake、media 落盘）。
+ */
+async function writeFakeLarkImportCli(options: { authOk?: boolean } = {}): Promise<{
+  path: string
+  setAuthOk: (ok: boolean) => Promise<void>
+  authCalls: () => Promise<number>
+}> {
+  const dir = await mkdtemp(join(tmpdir(), 'nxcore-lark-import-'))
+  const path = join(dir, 'lark-cli')
+  const authFile = join(dir, 'auth.json')
+  const callsFile = join(dir, 'auth-calls.log')
+  const writeAuth = async (ok: boolean) => writeFile(authFile, ok ? 'yes' : 'no', 'utf8')
+  await writeAuth(options.authOk !== false)
+  const script = `#!/bin/bash
+if [ "$1" = "auth" ]; then
+  echo auth >> "${callsFile}"
+  if [ "$(cat "${authFile}")" = "yes" ]; then
+    echo '{"ok":true,"appId":"cli_test_app","identities":{"user":{"available":true,"tokenStatus":"valid","userName":"导入测试用户"}}}'
+  else
+    echo '{"ok":true,"appId":"cli_test_app","identities":{"user":{"available":false,"tokenStatus":"expired"}}}'
+  fi
+  exit 0
+fi
+if [[ " $* " == *" drive files list "* ]]; then
+  if [[ " $* " == *" --folder-token fldSub "* ]]; then
+    echo '{"ok":true,"data":{"files":[{"token":"tokDoc2","name":"子目录文档","type":"docx","url":"https://feishu.cn/docx/tokDoc2","modified_time":"1760000000"}],"has_more":false}}'
+  else
+    echo '{"ok":true,"data":{"files":[{"token":"fldSub","name":"子目录","type":"folder","url":"https://feishu.cn/drive/folder/fldSub"},{"token":"tokDoc1","name":"根目录文档","type":"docx","url":"https://feishu.cn/docx/tokDoc1","modified_time":"1759000000"}],"has_more":false}}'
+  fi
+  exit 0
+fi
+if [[ " $* " == *" wiki +space-list "* ]]; then
+  echo '{"ok":true,"data":{"items":[{"space_id":"sp1","name":"知识库"}],"has_more":false}}'
+  exit 0
+fi
+if [[ " $* " == *" wiki +node-list "* ]]; then
+  echo '{"ok":true,"data":{"items":[{"node_token":"n1","obj_token":"tokWiki1","obj_type":"docx","title":"顶层节点","has_child":false}],"has_more":false}}'
+  exit 0
+fi
+if [[ " $* " == *" docs +fetch "* ]]; then
+  echo '{"ok":true,"data":{"document":{"document_id":"tokDoc1","revision_id":7,"content":"<title>带图文档</title>\\n\\n# 带图文档\\n\\n![示意图](https://feishu.cn/file/IMGTOKEN123456)\\n\\n正文段落。"}}}'
+  exit 0
+fi
+if [[ " $* " == *" drive +list-comments "* ]]; then
+  echo '{"ok":true,"data":{"items":[{"id":"c1","is_solved":true,"quote":"带图文档","reply_list":{"replies":[{"id":"r1","content":{"elements":[{"type":"text","text_run":{"text":"评论甲"}}]},"user_id":"ou_test","created_time":"1788000000"},{"id":"r2","content":{"elements":[{"type":"text","text_run":{"text":"回复乙"}}]},"user_id":"ou_other"}]}}],"has_more":false}}'
+  exit 0
+fi
+if [[ " $* " == *" docs +media-download "* ]]; then
+  OUT=""
+  prev=""
+  for a in "$@"; do if [ "$prev" = "--output" ]; then OUT="$a"; fi; prev="$a"; done
+  printf '\\x89\\x50\\x4e\\x47\\x0d\\x0a\\x1a\\x0a' > "$OUT"
+  printf '{"ok":true,"data":{"output":"%s"}}\\n' "$OUT"
+  exit 0
+fi
+echo '{"ok":false,"error":{"type":"cli","message":"unsupported"}}' >&2
+exit 3
+`
+  await writeFile(path, script, 'utf8')
+  await chmod(path, 0o755)
+  return {
+    path,
+    setAuthOk: writeAuth,
+    authCalls: async () => {
+      try {
+        return (await readFile(callsFile, 'utf8')).split('\n').filter(Boolean).length
+      } catch {
+        return 0
+      }
+    },
+  }
 }
 
 /** 假 ntn：状态文件控制登录态（可中途翻转，用于 retry 场景）；api 走 stdin body。 */
@@ -376,27 +458,42 @@ describe('document import service', () => {
     expect(preview.warnings.some((warning) => warning.code === 'comments_pages_capped')).toBe(true)
   })
 
-  it('飞书图片物化：feishu.cn/file 链接先经 download_docs_media 换真实字节 URL', async () => {
+  it('飞书 lark-cli 端到端：列举(BFS+wiki) → preview（<title> 标题 + 评论 + 图片经 media-download 物化）', async () => {
     const bridge = await startAssetBridge()
-    const calls: Array<{ service: string; action: string; input: Record<string, unknown> }> = []
-    const actions: FakeAction = {
-      ...FEISHU_READ,
-      'feishu.fetch_document': () => ({
-        document: { document_id: 'tokImg', revision_id: 3, title: '带图文档', content: '# 带图文档\n\n![示意图](https://feishu.cn/file/IMGTOKEN123456)' },
-      }),
-      'feishu.download_docs_media': (input: Record<string, unknown>) => {
-        calls.push({ service: 'feishu', action: 'download_docs_media', input })
-        return { fileId: 'f1.png', downloadUrl: `${bridge.baseUrl}/real-bytes.png`, mimeType: 'image/png', sizeBytes: 8, name: 'image.png' }
-      },
-    }
-    const { imports } = await createHarness({ actionRunner: fakeRunner(actions), assetBridgeUrl: bridge.baseUrl })
-    const preview = await imports.preview('feishu', 'tokImg')
-    // 文件页 token 被送到 media 动作；下载用换回的真实字节地址；正文改写为本机资产 URL。
-    expect(calls).toHaveLength(1)
-    expect(calls[0]).toMatchObject({ input: { token: 'IMGTOKEN123456', type: 'media' } })
+    const cli = await writeFakeLarkImportCli()
+    const { imports } = await createHarness({
+      connector: null,
+      lark: { executable: cli.path },
+      assetBridgeUrl: bridge.baseUrl,
+    })
+    const list = await imports.listAllDocuments('feishu')
+    expect(list.items.map((item) => item.remoteDocumentId).sort()).toEqual(['tokDoc1', 'tokDoc2', 'tokWiki1'])
+    const preview = await imports.preview('feishu', 'tokDoc1')
+    // 标题来自 +fetch 正文首部 <title> 标签（get_document 短路、信封无 title）。
+    expect(preview.title).toBe('带图文档')
+    expect(preview.commentsStatus).toBe('complete')
+    expect(preview.comments).toHaveLength(2)
+    expect(preview.comments[0]!.body).toBe('评论甲')
+    expect(preview.comments[0]!.resolved).toBe(true)
+    // feishu.cn/file 图片走 docs +media-download 落盘读字节，再 PUT 资产桥改写正文。
     expect(preview.bodyExcerpt).not.toContain('feishu.cn/file')
     expect(preview.warnings.some((w) => w.code === 'remote_assets_materialized')).toBe(true)
     expect(bridge.puts.length).toBeGreaterThanOrEqual(1)
+    expect(bridge.puts[0]!.mime).toBe('image/png')
+  })
+
+  it('飞书门禁：auth 不可用 → 422 引导数据源页；30s TTL 内连续两次只 spawn 一次 auth status', async () => {
+    const cli = await writeFakeLarkImportCli({ authOk: false })
+    const { imports } = await createHarness({ connector: null, lark: { executable: cli.path } })
+    const first = await imports.search('feishu', 'x').then(() => null, (caught: unknown) => caught)
+    expect(first).toBeInstanceOf(ImportServiceError)
+    const serviceError = first as ImportServiceError
+    expect(serviceError.code).toBe('IMPORT_CONNECTION_REQUIRED')
+    expect(serviceError.statusCode).toBe(422)
+    expect(serviceError.message).toContain('数据源页')
+    const second = await imports.search('feishu', 'x').then(() => null, (caught: unknown) => caught)
+    expect((second as ImportServiceError).code).toBe('IMPORT_CONNECTION_REQUIRED')
+    expect(await cli.authCalls()).toBe(1)
   })
 
   it('notion comments via list_page_comments action: 线程分组 + 块锚点 + 分页 + 降级', async () => {
@@ -556,13 +653,19 @@ exit 1
     expect((applied as ImportServiceError).code).toBe('CANDIDATE_ALREADY_APPLIED')
   })
 
-  it('throws OPEN_CONNECTOR_UNAVAILABLE when connector is not configured', async () => {
+  it('connector 未配置：feishu 走 lark 缝 422（引导配置 lark-cli），notion 仍 OPEN_CONNECTOR_UNAVAILABLE', async () => {
     const { imports } = await createHarness({ connector: null })
-    const error = await imports.search('feishu', 'x').then(() => null, (caught: unknown) => caught)
-    expect(error).toBeInstanceOf(ImportServiceError)
-    const serviceError = error as ImportServiceError
-    expect(serviceError.code).toBe('OPEN_CONNECTOR_UNAVAILABLE')
-    expect(serviceError.statusCode).toBe(503)
+    const feishuError = await imports.search('feishu', 'x').then(() => null, (caught: unknown) => caught)
+    expect(feishuError).toBeInstanceOf(ImportServiceError)
+    const feishuServiceError = feishuError as ImportServiceError
+    expect(feishuServiceError.code).toBe('IMPORT_CONNECTION_REQUIRED')
+    expect(feishuServiceError.statusCode).toBe(422)
+    expect(feishuServiceError.message).toContain('lark-cli')
+    const notionError = await imports.search('notion', 'x').then(() => null, (caught: unknown) => caught)
+    expect(notionError).toBeInstanceOf(ImportServiceError)
+    const notionServiceError = notionError as ImportServiceError
+    expect(notionServiceError.code).toBe('OPEN_CONNECTOR_UNAVAILABLE')
+    expect(notionServiceError.statusCode).toBe(503)
   })
 
   it('commits preview to a room as primary version 1', async () => {

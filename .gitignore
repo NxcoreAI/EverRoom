@@ -9,6 +9,7 @@ screenshots/
 # Agent bundles are product source assets and must be committed with the app.
 !agents/
 !agents/**
+agents/**/.DS_Store
 
 # 本地下载的 agent 技能包（工具产物，不入库）。
 .agents/

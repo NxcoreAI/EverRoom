@@ -1,7 +1,8 @@
-import type { AgentAuthEventFrame, DesktopAgentAuthChallenge } from '../../../../shared/agent-auth'
+import type { AgentAuthEnvironmentStatus, AgentAuthEventFrame, DesktopAgentAuthChallenge } from '../../../../shared/agent-auth'
 import { BadgeCheck, ExternalLink, Loader2, RefreshCw, ShieldQuestion, X } from 'lucide-react'
 import QRCode from 'qrcode'
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useLocale } from '../../i18n/LocaleContext'
 
 /**
@@ -10,38 +11,42 @@ import { useLocale } from '../../i18n/LocaleContext'
  * 手动关闭或下一次授权开始时替换。数据来自桌面本地 agent-auth 控制器（IPC），
  * device code 等敏感值不经过本组件。
  */
-export function useAgentAuthChallenge(): DesktopAgentAuthChallenge | null {
-  const [challenge, setChallenge] = useState<DesktopAgentAuthChallenge | null>(null)
+export function useAgentAuthStatus(): AgentAuthEnvironmentStatus | null {
+  const [status, setStatus] = useState<AgentAuthEnvironmentStatus | null>(null)
   useEffect(() => {
     const api = window.nxcore?.agentAuth
     if (!api) return
     let cancelled = false
     let pollTimer: number | null = null
+    const refresh = (): void => {
+      void api.status().then((next) => {
+        if (!cancelled) setStatus(next)
+      }).catch(() => undefined)
+    }
     const applyFrame = (frame: AgentAuthEventFrame): void => {
-      if (frame.type === 'challenge.updated') setChallenge(frame.challenge)
-      else if (frame.type === 'challenge.removed') setChallenge(null)
+      if (frame.type === 'environment.changed') setStatus(frame.status)
+      else refresh()
     }
     const unsubscribe = api.onEvent(applyFrame)
-    void api.status().then((status) => {
-      if (!cancelled) setChallenge(status.activeChallenge)
-    }).catch(() => undefined)
-    pollTimer = window.setInterval(() => {
-      void api.status().then((status) => {
-        if (!cancelled) setChallenge(status.activeChallenge)
-      }).catch(() => undefined)
-    }, 8_000)
+    refresh()
+    // 兜底轮询：TTL 过期等惰性状态只在 status() 读取时推进,不伴随事件。
+    pollTimer = window.setInterval(refresh, 8_000)
     return () => {
       cancelled = true
       unsubscribe()
       if (pollTimer !== null) window.clearInterval(pollTimer)
     }
   }, [])
-  return challenge
+  return status
 }
 
-export function AgentAuthChallengeCard() {
+export function useAgentAuthChallenge(): DesktopAgentAuthChallenge | null {
+  const status = useAgentAuthStatus()
+  return status?.activeChallenge ?? null
+}
+
+function AgentAuthChallengeBody({ challenge, autoScroll }: { challenge: DesktopAgentAuthChallenge | null; autoScroll: boolean }) {
   const { t } = useLocale()
-  const challenge = useAgentAuthChallenge()
   const cardRef = useRef<HTMLElement | null>(null)
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null)
   const [resuming, setResuming] = useState(false)
@@ -49,9 +54,9 @@ export function AgentAuthChallengeCard() {
 
   // 新挑战出现（或阶段推进）时，把智能区滚动到卡片所在位置。
   useEffect(() => {
-    if (!challenge || challenge.status === 'cancelled') return
+    if (!autoScroll || !challenge || challenge.status === 'cancelled') return
     cardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
-  }, [challenge?.id, challenge?.phase, challenge?.status])
+  }, [autoScroll, challenge?.id, challenge?.phase, challenge?.status])
 
   useEffect(() => {
     if (!challenge?.verificationUrl) {
@@ -236,5 +241,70 @@ export function AgentAuthChallengeCard() {
         </div>
       )}
     </section>
+  )
+}
+
+/** 会话流内嵌授权卡（Agent 导出场景）：像一条 Agent 消息挂在消息流末端。 */
+export function AgentAuthChallengeCard() {
+  const challenge = useAgentAuthChallenge()
+  return <AgentAuthChallengeBody challenge={challenge} autoScroll />
+}
+
+/**
+ * 授权过程弹窗（数据源页）：居中对话框 + 出入场过渡动画。授权进行中点遮罩/
+ * ESC 不动作（避免误中断），终态（已授权/失败/过期）可点遮罩或 ESC 关闭。
+ */
+export function AgentAuthDialog({ challenge }: { challenge: DesktopAgentAuthChallenge | null }) {
+  const [mounted, setMounted] = useState(false)
+  const lastChallengeRef = useRef<DesktopAgentAuthChallenge | null>(null)
+  if (challenge) lastChallengeRef.current = challenge
+
+  useEffect(() => {
+    if (challenge) {
+      setMounted(true)
+      return
+    }
+    // 退场动画播完再卸载（data-open 翻 false 触发 keyframes 出场）。
+    const exit = window.setTimeout(() => setMounted(false), 240)
+    return () => window.clearTimeout(exit)
+  }, [challenge])
+
+  const open = challenge != null
+  const dismiss = () => {
+    const api = window.nxcore?.agentAuth
+    const shown = challenge ?? lastChallengeRef.current
+    if (!api || !shown) return
+    void api.cancel(shown.id)
+  }
+
+  useEffect(() => {
+    if (!challenge) return
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return
+      const status = challenge.status
+      if (status === 'authorized' || status === 'failed' || status === 'expired') dismiss()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [challenge?.id, challenge?.status])
+
+  if (!mounted || typeof document === 'undefined') return null
+  const shown = challenge ?? lastChallengeRef.current
+  const terminal = challenge != null && (challenge.status === 'authorized' || challenge.status === 'failed' || challenge.status === 'expired')
+  return createPortal(
+    <div
+      className="agent-auth-dialog-backdrop"
+      data-open={String(open)}
+      onMouseDown={(event) => {
+        if (event.currentTarget !== event.target || !terminal) return
+        dismiss()
+      }}
+    >
+      <div className="agent-auth-dialog" data-open={String(open)} role="dialog" aria-modal="true" aria-label={shown?.title ?? ''}>
+        <AgentAuthChallengeBody challenge={shown} autoScroll={false} />
+      </div>
+    </div>,
+    document.body,
   )
 }

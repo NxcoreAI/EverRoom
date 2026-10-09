@@ -3821,9 +3821,10 @@
 /* ── 产物库：平铺清单（工具条筛选 + 富信息行） ── */
 
 .context-room-artifact-library {
+  /* 面板内容壳是普通块级盒（overflow:hidden），必须显式撑满才有界，列表才滚得动 */
+  height: 100%;
   display: flex;
   min-height: 0;
-  flex: 1;
   flex-direction: column;
 }
 
@@ -4108,6 +4109,20 @@
 .context-room-artifact-row:hover .context-room-artifact-acts,
 .context-room-artifact-row:focus-within .context-room-artifact-acts {
   opacity: 1;
+}
+
+/* 行内删除：资源删除钮在 acts 容器内常显，沿用悬停红。 */
+.context-room-artifact-acts .context-room-resource-delete {
+  width: 22px;
+  height: 22px;
+  opacity: 1;
+  color: var(--cr-muted);
+}
+
+.context-room-artifact-acts .context-room-resource-delete:hover:not(:disabled),
+.context-room-artifact-acts .context-room-resource-delete:focus-visible {
+  background: rgba(181, 71, 50, 0.09);
+  color: #b54732;
 }
 
 .context-room-artifact-acts button {
