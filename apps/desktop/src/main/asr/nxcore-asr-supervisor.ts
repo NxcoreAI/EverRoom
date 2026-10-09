@@ -86,8 +86,11 @@ function portablePgDir(): string | null {
   const override = process.env.NXCORE_ASR_PG_DIST?.trim()
   const candidates = [
     ...(override ? [override] : []),
+    // 打包版：安装根 resources 下（getAppPath 上两级）。
     join(app.getAppPath(), '..', '..', 'resources', 'postgres-portable'),
-    join(app.getAppPath(), '..', '..', '..', 'submodules', 'nxcoreasr', 'pg-dist'),
+    // dev：仓库内 submodule（apps/desktop 上两级回仓库根——曾误用三层
+    // 解析到仓库外，致探测失败回落 docker）。
+    join(app.getAppPath(), '..', '..', 'submodules', 'nxcoreasr', 'pg-dist'),
   ]
   const exe = process.platform === 'win32' ? '.exe' : ''
   for (const candidate of candidates) {
@@ -256,6 +259,10 @@ export class NxCoreAsrSupervisor {
         detached: true,
         stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true,
+        // 全量继承 Electron 主进程 env 曾致 uvicorn 加载期静默退出（纯 Node
+        // 同参 spawn 正常；Electron env 中的变量毒化 Python）——改传最小必需
+        // + 服务可识别变量，同时隔离打包版 ELECTRON_* 污染。
+        env: this.serviceEnvironment(),
       },
     )
     this.child = child
@@ -603,6 +610,25 @@ export class NxCoreAsrSupervisor {
     } catch {
       return false
     }
+  }
+
+  /** uvicorn 子进程的最小环境：仅系统必需 + Python 编码 + 服务自身识别的
+   *  env（config.yaml 覆盖与 OSS 变量）。Electron 主进程其余 env 不透传——
+   *  全量继承曾致 uvicorn 加载期静默 exit 1（纯 Node 同参 spawn 正常）。 */
+  private serviceEnvironment(): NodeJS.ProcessEnv {
+    const env: Record<string, string | undefined> = {
+      PATH: process.env.PATH ?? '',
+      SYSTEMDRIVE: process.env.SYSTEMDRIVE,
+      SYSTEMROOT: process.env.SYSTEMROOT,
+      TEMP: process.env.TEMP,
+      TMP: process.env.TMP,
+      PYTHONIOENCODING: 'utf-8',
+    }
+    for (const key of ['ASR_DATABASE_URL', 'ASR_FAKE_ENGINE', 'ASR_OSS_ENDPOINT', 'ASR_OSS_BUCKET', 'ASR_OSS_ACCESS_KEY_ID', 'ASR_OSS_ACCESS_KEY_SECRET', 'ASR_OSS_UPLOAD_TTL_SECONDS']) {
+      const value = process.env[key]
+      if (value !== undefined) env[key] = value
+    }
+    return env as NodeJS.ProcessEnv
   }
 
   private async waitUntilReady(child: ChildProcessWithoutNullStreams, apiKey: string, timeoutMs: number): Promise<void> {
