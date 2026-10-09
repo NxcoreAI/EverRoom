@@ -46,6 +46,11 @@ function isRateLimitMessage(message: string): boolean {
     || message === translateDesktopMessage('en-US', 'error.rateLimited.message')
 }
 
+function isQuotaMessage(message: string): boolean {
+  return message === translateDesktopMessage('zh-CN', 'error.quota.message')
+    || message === translateDesktopMessage('en-US', 'error.quota.message')
+}
+
 function errorMessage(error: unknown): string {
   if (!(error instanceof Error)) return desktopText('error.requestFailed')
   const message = error.message
@@ -68,6 +73,19 @@ function networkOperation(channel: string): string {
 
 function networkErrorDetail(channel: string, error: unknown): Pick<DesktopRequestError, 'title' | 'message'> | null {
   const raw = error instanceof Error ? error.message : String(error)
+  // [memory_unreachable] 前缀 = 本地网关已应答、但记忆服务上游不可达：如实提示，
+  // 不能落进下面的"无法连接 EverRoom Gateway"模板（真机上 MemoryCore fetch failed 误报的根因）。
+  if (/^\[memory_unreachable\]/.test(raw)) {
+    return {
+      title: desktopText('error.memoryUnreachable.title'),
+      message: desktopText('error.memoryUnreachable.message')
+        .replace('{operation}', networkOperation(channel))
+        .replace('{channel}', channel || 'unknown'),
+    }
+  }
+  // 带 [code] 前缀的结构化网关错误说明本地网关已应答，其文本里可能含上游的
+  // "fetch failed"，不能据此判定本地网关断连（memory 桥的错误码前缀约定）。
+  if (/^\[[a-z][a-z0-9_]*\]/.test(raw)) return null
   // timeout of 10000ms exceeded：gateway 忙碌（ingest 高峰同步写卡事件循环）时
   // loopback axios 客户端（reality bridge / supervisor 健康探活）的响应超时原话，
   // 与 ECONNRESET 同属可自愈的瞬断——issue #181。
@@ -86,6 +104,9 @@ function requestError(channel: string, error: unknown): DesktopRequestError {
   const message = errorMessage(error)
   if (isRateLimitMessage(message)) {
     return { channel, severity: 'notice', title: desktopText('error.rateLimited.title'), message }
+  }
+  if (isQuotaMessage(message)) {
+    return { channel, severity: 'error', title: desktopText('error.quota.title'), message }
   }
   return { channel, severity: 'error', message }
 }

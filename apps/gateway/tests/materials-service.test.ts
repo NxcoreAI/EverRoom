@@ -171,8 +171,15 @@ describe("MaterialsService.search", () => {
     expect(docHit.desc).toContain("产品介绍");
   });
 
-  it("AND 语义：任一词未命中即无结果", () => {
-    expect(service.search("城市 海滩")).toHaveLength(0);
+  it("任一命中即返回：多词查询只命中头部词也有结果；全未命中才为空", () => {
+    // 「城市 夜景」的截图素材两词全中，排在只命中「城市」的结果之前。
+    const both = service.search("城市 夜景");
+    expect(both.length).toBeGreaterThanOrEqual(1);
+    expect(both[0]!.ref).toBe(`everroom-material://${hashOf("screenshot")}`);
+    // 次要词（海滩）无素材命中，但头部词命中的结果仍要浮出，不再整查询作废。
+    const partial = service.search("城市 海滩");
+    expect(partial.length).toBeGreaterThanOrEqual(1);
+    expect(partial[0]!.ref).toBe(`everroom-material://${hashOf("screenshot")}`);
     expect(service.search("")).toHaveLength(0);
   });
 

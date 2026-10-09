@@ -186,7 +186,7 @@ import { LocalAgentDispatchStore } from "../modules/local-agents/dispatch-store.
 import type { LocalAgentDispatchSource } from "../modules/local-agents/dispatch-tools.js";
 import { RuntimeConfigManager } from "../runtime-config.js";
 import { runtimeConfigRoutes } from "../modules/runtime-config/routes.js";
-import { AiRelaySessionStore } from "../modules/ai-relay/session.js";
+import { AiRelaySessionStore, relayPathPrefix } from "../modules/ai-relay/session.js";
 import { aiRelayRoutes } from "../modules/ai-relay/routes.js";
 import { WritingStyleService } from "../modules/writing-style/service.js";
 import { WritingStyleLlm } from "../modules/writing-style/llm.js";
@@ -362,6 +362,13 @@ function swaggerAssetsDirectory(): string {
   return candidates.find((candidate) => existsSync(candidate)) ?? candidates[0]!;
 }
 
+// AI 中转余额类失败（new-api insufficient_user_quota / OpenAI insufficient quota
+// / 预扣费额度失败）。这类错误以普通 Error 形态从 agent runtime 冒出，若不识别
+// 会落进 500 兜底，桌面端只会看到笼统的 "An internal gateway error occurred"。
+export function isAiQuotaError(message: string): boolean {
+  return /insufficient_user_quota|insufficient quota|exceeded your current quota|预扣费额度失败|额度不足/i.test(message);
+}
+
 export interface ServerOverrides {
   asrProvider?: AsrProvider | null;
 }
@@ -400,16 +407,9 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     : null, () => {
       const session = aiRelaySessions.current();
       if (!session) return null;
-      // 槽位重写目标的 API 前缀由会话 baseUrl 决定：根部署 → /v1；已带
-      // /v1 结尾不重复；子路径部署 → /<sub>/v1。旧槽位路径不参与。
-      let base = "";
-      try {
-        base = new URL(session.baseUrl).pathname.replace(/\/+$/, "");
-      } catch {
-        // 非法 baseUrl 按根处理
-      }
-      const pathPrefix = base.endsWith("/v1") ? base : `${base}/v1`;
-      return { proxyOrigin: session.proxyOrigin, token: config.authToken, pathPrefix, models: session.models ?? undefined };
+      // 槽位重写目标的 API 前缀由会话 baseUrl 决定（推导见 relayPathPrefix，
+      // 与会话续期短路共用）。旧槽位路径不参与。
+      return { proxyOrigin: session.proxyOrigin, token: config.authToken, pathPrefix: relayPathPrefix(session.baseUrl), models: session.models ?? undefined };
     });
   const initialRuntimeSnapshot = runtimeConfigManager.snapshot();
   applyRuntimeConfig(config, initialRuntimeSnapshot.config);
@@ -530,6 +530,15 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
         error: error.code,
         message: redactText(error.message),
         ...error.details,
+        requestId: request.id,
+      });
+      return;
+    }
+    // AI 中转余额耗尽：给出结构化 402，桌面端据此提示"额度不足"而不是笼统 500。
+    if (isAiQuotaError(error.message)) {
+      await reply.code(402).send({
+        error: "ai_quota_exhausted",
+        message: "AI relay account is out of quota",
         requestId: request.id,
       });
       return;

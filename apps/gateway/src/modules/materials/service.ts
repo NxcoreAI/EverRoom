@@ -33,8 +33,13 @@ export class MaterialsService {
   ) {}
 
   /**
-   * 关键词检索（AND 语义，命中全部词才算）：文本面 = VLM 摘要/标题/关键点、
-   * 剪藏 alt/OCR、所在文档标题与分类摘要。按命中强度与质量分排序。
+   * 关键词检索（任一命中即返回，按命中强度排序）：文本面 = VLM 摘要/标题/
+   * 关键点、剪藏 alt/OCR、所在文档标题与分类摘要。
+   *
+   * 曾是 AND 语义（全部命中才返回）：实盘里规划代理习惯把多概念写进一次
+   * 查询（如「中国 茶 文化」「茶叶 干茶 对比」），AND 让整库 6/6 查询全空、
+   * PPT 全程无图——改为任一命中 + 命中数加权排序，让头部概念锚定检索、
+   * 次要词提权，精度由返回的 desc 交规划代理自判。
    */
   search(query: string, limit = 8): MaterialHit[] {
     const terms = query.split(/[\s,，、;；]+/).map((term) => term.trim().toLowerCase())
@@ -233,7 +238,8 @@ export class MaterialsService {
   }
 }
 
-/** 命中全部词条才算匹配；返回命中词条数。主文本面命中权重高于辅助面。 */
+/** 任一词条命中即算匹配；主文本面每词权重 2、辅助面 1，返回加权命中分。
+ *  排序交调用方（rank 越大越靠前），0 分 = 无任何词命中。 */
 function matchTerms(terms: string[], primary: string, secondary: string): number {
   const haystackPrimary = primary.toLowerCase();
   const haystackSecondary = secondary.toLowerCase();
@@ -241,7 +247,6 @@ function matchTerms(terms: string[], primary: string, secondary: string): number
   for (const term of terms) {
     if (haystackPrimary.includes(term)) matched += 2;
     else if (haystackSecondary.includes(term)) matched += 1;
-    else return 0;
   }
   return matched;
 }

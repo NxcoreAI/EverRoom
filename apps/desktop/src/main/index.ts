@@ -134,6 +134,7 @@ import { BrowserExtensionService } from './browser-extension/browser-extension-s
 import { CLIPPER_ASSET_SCHEME, type BrowserExtensionStatus } from '../shared/browser-extension'
 import { OBSIDIAN_VAULT_ASSET_SCHEME } from '../shared/obsidian'
 import { ObsidianVaultService } from './obsidian/obsidian-vault-service'
+import { pushDocumentSaveToVault, trashDocumentInVault } from './obsidian/vault-document-sync'
 import { createLocalAgentDiscovery, isSafeLocalAgentPath, probeLocalAgentAcpAdapter } from './local-agents/discovery'
 import { installLocalAgentAcpAdapter, resolveLocalAcpAdapterSpawn } from './local-agents/adapter-install'
 import { bundledNpmCliPath, localAgentAdaptersRoot } from './local-agents/local-agent-paths'
@@ -1088,18 +1089,31 @@ function registerObsidianHandlers(service: ObsidianVaultService): void {
     for (const outcome of outcomes) {
       if (outcome.fileId) await service.setMemoryProjectionFileId(vaultId, outcome.filename, outcome.fileId)
     }
+    // 图片附件注册进看图理解：导入链路本身不看图（只有截图管线会），而 PPT
+    // 素材检索按 VLM 中文描述搜图——vault 图不入 perception 就永远搜不到。
+    // 同一 fileId 重复注册幂等（服务端命中既有 observation 直接返回）。
+    const kindByPath = new Map(resources.map((resource) => [resource.relativePath, resource.kind]))
+    for (const outcome of outcomes) {
+      if (!outcome.fileId || kindByPath.get(outcome.filename) !== 'image') continue
+      await bridge.registerVisualObservation({ fileId: outcome.fileId }).catch((error) => {
+        console.warn('Unable to register vault image observation', { vaultId, filename: outcome.filename, error })
+      })
+    }
     for (const fileId of service.takeRemovedMemoryProjectionFileIds(vaultId)) {
       await bridge.delete(fileId).catch(() => undefined)
     }
     return outcomes
   }
-  const projectRoomVault = async (vaultId: string) => {
+  const projectRoomVault = async (vaultId: string, changedResourceIds?: string[]) => {
     if (!gatewaySupervisor) return
     const vault = service.list().find((item) => item.id === vaultId)
     if (!vault || vault.mountMode === 'memory') return
     const bridge = new FilesGatewayBridge(gatewaySupervisor)
     const documents = new DocumentGatewayBridge(gatewaySupervisor)
-    for (const note of service.projectionNotes(vaultId)) {
+    const changedIds = changedResourceIds ? new Set(changedResourceIds) : null
+    const notes = service.projectionNotes(vaultId)
+      .filter((note) => !changedIds || changedIds.has(note.resourceId))
+    for (const note of notes) {
       await bridge.projectVaultNote(note).then(async (result) => {
         await service.setProjectionFileId(vaultId, note.resourceId, result.fileEntryId)
       }).catch((error) => {
@@ -1137,7 +1151,7 @@ function registerObsidianHandlers(service: ObsidianVaultService): void {
     }
     const vault = service.list().find((item) => item.id === event.vaultId)
     if (vault?.memoryEnabled) void syncMemoryVault(event.vaultId)
-    if (vault && vault.mountMode !== 'memory') void projectRoomVault(event.vaultId)
+    if (vault && vault.mountMode !== 'memory') void projectRoomVault(event.vaultId, event.changedResourceIds)
   })
   service.onRemoved(async (event) => {
     for (const window of BrowserWindow.getAllWindows()) {
@@ -2497,6 +2511,33 @@ function registerDocumentHandlers(
   assets: DocumentAssetStore,
   vaults?: ObsidianVaultService | null,
 ): void {
+  // 挂载目录笔记的写回依赖（见 vault-document-sync）：序列化走网关、回滚走投影 PUT。
+  const vaultSyncDeps = vaults ? {
+    vaults,
+    documentMarkdown: (documentId: string) => bridge.documentMarkdown(documentId),
+    revertDocumentToDisk: async (input: {
+      documentId: string
+      vaultId: string
+      resourceId: string
+      relativePath: string
+      sourceHash: string
+      title: string
+      markdown: string
+    }) => {
+      const roomId = vaults.list().find((vault) => vault.id === input.vaultId)?.roomId
+      if (!roomId) throw new Error(`Vault room not found for ${input.vaultId}`)
+      await bridge.syncExternalProjection({
+        sourceKind: 'obsidian-vault',
+        sourceId: input.vaultId,
+        resourceId: input.resourceId,
+        roomId,
+        relativePath: input.relativePath,
+        sourceHash: input.sourceHash,
+        title: input.title,
+        markdown: input.markdown,
+      })
+    },
+  } : null
   handleGroup(DOCUMENT_CHANNELS, {
     list: (_event, roomId) => bridge.list(roomId),
     listTrash: (_event, roomId) => bridge.listTrash(roomId),
@@ -2561,13 +2602,30 @@ function registerDocumentHandlers(
       assertNoEmbeddedDocumentImages(input?.contentJson)
       return bridge.import(input)
     },
-    save: (_event, documentId, input: SaveRoomDocumentInput) => {
+    save: async (_event, documentId, input: SaveRoomDocumentInput) => {
       assertNoEmbeddedDocumentImages(input?.contentJson)
+      // 挂载目录的笔记：网关保存成功后写回原文件（文件是事实源）。
+      // vault 未绑定/离线时跳过写回；文件被外部改过则回滚文档并报冲突（编辑器保留草稿）。
+      if (vaultSyncDeps && vaultSyncDeps.vaults.noteForDocument(documentId)) {
+        const previous = await bridge.get(documentId).catch(() => null)
+        const updated = await bridge.save(documentId, input)
+        await pushDocumentSaveToVault(vaultSyncDeps, {
+          documentId,
+          previousTitle: previous?.title,
+          nextTitle: updated.title,
+        })
+        return updated
+      }
       return bridge.save(documentId, input)
     },
-    delete: (_event, documentId) => bridge.delete(documentId),
+    delete: async (_event, documentId) => {
+      const deleted = await bridge.delete(documentId)
+      if (vaultSyncDeps) await trashDocumentInVault(vaultSyncDeps, documentId)
+      return deleted
+    },
     restore: (_event, documentId) => bridge.restore(documentId),
     deletePermanently: async (_event, documentId) => {
+      if (vaultSyncDeps) await trashDocumentInVault(vaultSyncDeps, documentId)
       await bridge.deletePermanently(documentId)
       await assets.deleteDocument(documentId).catch((error) => {
         console.error('Failed to delete local document assets', { documentId, error })

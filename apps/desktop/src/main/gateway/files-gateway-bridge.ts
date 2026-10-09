@@ -481,6 +481,21 @@ export class FilesGatewayBridge {
     })
   }
 
+  /** 图片注册进看图理解（perception VLM 出描述）：导入链路本身不看图，只有
+   *  截图管线会注册 observation——vault 图片附件走记忆同步入库后需补注册，
+   *  PPT 素材检索才能按中文描述搜到。同一 fileId 重复注册幂等（服务端命中
+   *  既有 observation 直接返回）。 */
+  async registerVisualObservation(input: { fileId: string; capturedAt?: Date }): Promise<void> {
+    await this.request('/v1/perception/visual-observations', {
+      method: 'POST',
+      body: JSON.stringify({
+        fileId: input.fileId,
+        kind: 'photo',
+        capturedAt: (input.capturedAt ?? new Date()).toISOString(),
+      }),
+    })
+  }
+
   async importMigrationFile(input: {
     filePath: string
     sourceKey: string

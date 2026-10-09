@@ -1,11 +1,15 @@
 import { Check, ChevronRight, CircleHelp, Copy, FileText, Folder, FolderKanban, Link2, MessageSquareText, RotateCcw, X } from 'lucide-react'
-import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Fragment, memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 
 import { AgentExecutionTimeline } from './AgentExecutionTimeline'
 import { AgentShellApproval } from './AgentShellApproval'
 import { SlidesProgressCard, slidesProgressFromToolCall, type SlidesProgressState } from './SlidesProgressCard'
 import { AgentAuthChallengeCard, useAgentAuthChallenge } from './AgentAuthChallengeCard'
-import { isScrolledToBottom } from './agentChatScroll'
+import {
+  AGENT_CHAT_REPIN_DISTANCE_PX,
+  AGENT_CHAT_UNPIN_GRACE_MS,
+  AGENT_CHAT_WHEEL_REPIN_DISTANCE_PX,
+} from './agentChatScroll'
 import type { PendingShellApproval } from './agentShellApprovals'
 import type { AgentRunActivity } from './agentRunActivity'
 import { parseAgentDocumentIntentResult, type AgentDocumentIntentResult } from './agentDocumentIntent'
@@ -52,7 +56,8 @@ function hasLiveTool(tools: DisplayAgentToolCall[]): boolean {
 
 function reasoningTail(text: string | undefined): string | undefined {
   if (!text) return undefined
-  const collapsed = text.replace(/\s+/g, ' ').trim()
+  // 思考串会随流式无限变长，全量正则清洗每帧都跑；只清洗末尾一小段。
+  const collapsed = text.slice(-2_000).replace(/\s+/g, ' ').trim()
   return collapsed ? collapsed.slice(-140) : undefined
 }
 
@@ -169,7 +174,38 @@ const agentMarkdownComponents = {
   img: () => null,
 } as const
 
-function FormattedAgentText({ content }: { content: string }) {
+// pending* 意图扫描与导航判定每次渲染帧都会重扫全部工具调用，工具结果可能是
+// 大 JSON 字符串（每次 JSON.parse 很贵）；按工具对象缓存解析结果。工具对象在
+// 转终态后不再重建，缓存长期有效。
+const navigationTargetCache = new WeakMap<DisplayAgentToolCall, boolean>()
+const roomSelectionCache = new WeakMap<DisplayAgentToolCall, ReturnType<typeof parseAgentRoomSelectionResult>>()
+const documentIntentCache = new WeakMap<DisplayAgentToolCall, ReturnType<typeof parseAgentDocumentIntentResult>>()
+
+function toolNavigationResult(tool: DisplayAgentToolCall): boolean {
+  if (navigationTargetCache.has(tool)) return navigationTargetCache.get(tool)!
+  const parsed = tool.status === 'completed' && Boolean(parseAgentNavigationTarget(tool.result))
+  navigationTargetCache.set(tool, parsed)
+  return parsed
+}
+
+function toolRoomSelectionResult(tool: DisplayAgentToolCall) {
+  if (roomSelectionCache.has(tool)) return roomSelectionCache.get(tool)
+  const parsed = parseAgentRoomSelectionResult(tool.result)
+  roomSelectionCache.set(tool, parsed)
+  return parsed
+}
+
+function toolDocumentIntentResult(tool: DisplayAgentToolCall) {
+  if (documentIntentCache.has(tool)) return documentIntentCache.get(tool)
+  const parsed = parseAgentDocumentIntentResult(tool.result)
+  documentIntentCache.set(tool, parsed)
+  return parsed
+}
+
+// react-markdown 每次渲染都全量重解析整条消息：长对话里每个流式渲染帧都会把
+// 全部历史消息重新解析一遍，主线程直接打满（表现为对话区卡死/滚动冻结）。
+// memo 按内容缓存——历史消息内容不变就不再重解析，流式中那条每次只解析一条。
+const FormattedAgentText = memo(function FormattedAgentText({ content }: { content: string }) {
   return (
     <div className="agent-markdown">
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={agentMarkdownComponents}>
@@ -177,9 +213,9 @@ function FormattedAgentText({ content }: { content: string }) {
       </ReactMarkdown>
     </div>
   )
-}
+})
 
-function AssistantMessageContent({ content }: { content: string }) {
+const AssistantMessageContent = memo(function AssistantMessageContent({ content }: { content: string }) {
   const { t } = useLocale()
   const match = generatedDocumentPattern.exec(content)
   if (!match || match.index === undefined) return <FormattedAgentText content={content} />
@@ -201,7 +237,7 @@ function AssistantMessageContent({ content }: { content: string }) {
       {after ? <FormattedAgentText content={after} /> : null}
     </>
   )
-}
+})
 
 const fallbackAgentNames: Record<string, string> = {
   claude: 'Claude Code',
@@ -446,6 +482,11 @@ export function AgentChatView({
   const { documentsByRoom } = useRoomDocumentsState()
   const conversationRef = useRef<HTMLDivElement>(null)
   const pinnedToBottomRef = useRef(true)
+  const lastScrollTopRef = useRef(0)
+  const lastUnpinAtRef = useRef(0)
+  /** 上一帧的内容总高度：滚动事件比帧回调先触发，用它还原「滚动发生时的底部」，
+   * 不被同一帧里流式插入的新高度污染（竞态消除的关键）。 */
+  const lastScrollHeightRef = useRef(0)
   const lastUserMessageIdRef = useRef<string | null>(null)
   const previousSessionIdRef = useRef(currentSessionId)
   const hasConversation = messages.length > 0 || sessionLinks.length > 0 || pendingApprovals.length > 0
@@ -514,7 +555,7 @@ export function AgentChatView({
       .sort((left, right) => Date.parse(right.completedAt ?? right.startedAt) - Date.parse(left.completedAt ?? left.startedAt))
     for (const tool of candidates) {
       if (dismissedRoomSelections.has(tool.id)) continue
-      const result = parseAgentRoomSelectionResult(tool.result)
+      const result = toolRoomSelectionResult(tool)
       if (!result?.pendingIntent) continue
       const completedAt = Date.parse(tool.completedAt ?? tool.startedAt)
       const hasLaterUserMessage = messages.some((message) => (
@@ -547,7 +588,7 @@ export function AgentChatView({
       .sort((left, right) => Date.parse(right.completedAt ?? right.startedAt) - Date.parse(left.completedAt ?? left.startedAt))
     for (const tool of candidates) {
       if (dismissedDocumentIntents.has(tool.id)) continue
-      const result = parseAgentDocumentIntentResult(tool.result)
+      const result = toolDocumentIntentResult(tool)
       if (!result?.pendingIntent) continue
       const completedAt = Date.parse(tool.completedAt ?? tool.startedAt)
       const hasLaterUserMessage = messages.some((message) => (
@@ -621,6 +662,9 @@ export function AgentChatView({
     if (previousSessionIdRef.current === currentSessionId) return
     previousSessionIdRef.current = currentSessionId
     lastUserMessageIdRef.current = null
+    lastScrollTopRef.current = 0
+    lastScrollHeightRef.current = 0
+    lastUnpinAtRef.current = 0
     pinnedToBottomRef.current = true
   }, [currentSessionId])
 
@@ -641,6 +685,8 @@ export function AgentChatView({
     const element = conversationRef.current
     if (!element || notificationTargetMessageId) return
     element.scrollTop = element.scrollHeight
+    // 主动搬动滚动位置时同步参照值（jsdom 等无原生 scroll 事件的环境也保持一致）
+    lastScrollTopRef.current = element.scrollTop
   }, [activeRunId, linkedRun.messages, linkedRun.reasoning, linkedRun.tools, messages, notificationTargetMessageId, pendingApprovals, toolCallsByRun])
 
   // DOM 级滚动跟随：吸底时内容一长就贴底，不依赖 React 状态形状。MutationObserver
@@ -650,12 +696,21 @@ export function AgentChatView({
     if (!element || typeof MutationObserver === 'undefined') return undefined
     let frame: number | null = null
     const observer = new MutationObserver(() => {
-      if (!pinnedToBottomRef.current || notificationTargetActiveRef.current) return
+      if (notificationTargetActiveRef.current) return
       if (frame !== null) return
       frame = requestAnimationFrame(() => {
         frame = null
-        if (!pinnedToBottomRef.current || notificationTargetActiveRef.current) return
+        lastScrollHeightRef.current = element.scrollHeight
+        if (notificationTargetActiveRef.current) return
+        if (!pinnedToBottomRef.current) {
+          // 每个内容批次都补一次恢复判定：滚动事件在触发前一帧可能被流式增长
+          // 顶出阈值（概率性吸不上），这里持续兜底；解除保护期内不回吸。
+          if (Date.now() - lastUnpinAtRef.current < AGENT_CHAT_UNPIN_GRACE_MS) return
+          if (element.scrollHeight - element.scrollTop - element.clientHeight > AGENT_CHAT_REPIN_DISTANCE_PX) return
+          pinnedToBottomRef.current = true
+        }
         element.scrollTop = element.scrollHeight
+        lastScrollTopRef.current = element.scrollTop
       })
     })
     observer.observe(element, { childList: true, subtree: true, characterData: true })
@@ -777,12 +832,41 @@ export function AgentChatView({
         className="agent-conversation"
         aria-live="polite"
         onScroll={(event) => {
-          pinnedToBottomRef.current = isScrolledToBottom(event.currentTarget)
+          // 吸底判定不能只看瞬时距离：流式增长每帧可达数百像素，解除吸底后
+          // 「距离≤32px」永远追不上（视图会冻在某个高度，#对话区卡住）。
+          // 只有真的向上滚才解除；向下滚到接近底部则恢复吸底。
+          const element = event.currentTarget
+          const lastTop = lastScrollTopRef.current
+          lastScrollTopRef.current = element.scrollTop
+          if (element.scrollTop < lastTop - 1) {
+            pinnedToBottomRef.current = false
+            lastUnpinAtRef.current = Date.now()
+            return
+          }
+          // 到过「上一帧的底部」即算跟到底：同一帧里流式插入会推高当前底部，
+          // 用当前几何判定会被顶出阈值（概率性吸不上），上一帧高度没有这个问题。
+          // 还没有任何内容批次时（初始为 0）退回当前高度，避免误判成「到底了」。
+          const referenceHeight = lastScrollHeightRef.current || element.scrollHeight
+          const reachedPreviousBottom = element.scrollTop
+            >= referenceHeight - element.clientHeight - AGENT_CHAT_REPIN_DISTANCE_PX
+          if (reachedPreviousBottom) pinnedToBottomRef.current = true
         }}
         onWheel={(event) => {
-          // 流式输出期间周期性强制吸底与滚轮竞态：wheel 先于 scroll 事件，
-          // 在这里立即解除吸底，向上滚动不会被下一次强制滚底吃掉。
-          if (event.deltaY < 0) pinnedToBottomRef.current = false
+          // wheel 先于 scroll 事件：向上立即解除吸底，向上滚动不会被下一次
+          // 强制滚底吃掉；向下且已接近底部视为「想跟回」，直接重新吸底——
+          // 不留给流式增长在 scroll 事件触发前冲过阈值的竞态窗口。
+          const element = conversationRef.current
+          if (!element) return
+          if (event.deltaY < 0) {
+            pinnedToBottomRef.current = false
+            lastUnpinAtRef.current = Date.now()
+            return
+          }
+          const distance = element.scrollHeight - element.scrollTop - element.clientHeight
+          if (distance < AGENT_CHAT_WHEEL_REPIN_DISTANCE_PX) {
+            pinnedToBottomRef.current = true
+            lastUnpinAtRef.current = 0
+          }
         }}
       >
           {incomingLink ? (
@@ -809,9 +893,7 @@ export function AgentChatView({
             const showActions = message.role === 'assistant' && !message.streaming
               && !partialContent && Boolean(finalContent.trim())
             const link = outgoingLinks.find((item) => item.sourceRunId === message.runId)
-            const navigationResult = (toolCallsByRun[message.runId] ?? []).some((tool) => (
-              tool.status === 'completed' && Boolean(parseAgentNavigationTarget(tool.result))
-            ))
+            const navigationResult = (toolCallsByRun[message.runId] ?? []).some(toolNavigationResult)
             const pending = !runCompletedAtByRun[message.runId] || navigationResult
               ? pendingNavigationByRun[message.runId]
               : undefined

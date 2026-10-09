@@ -486,7 +486,7 @@ export function RuntimeConfigGate({ children }: { children: ReactNode }) {
                   {oidcPending !== null ? (
                     <div className="runtime-config-gate-waiting" role="status">
                       <p><LoaderCircle className="spin" aria-hidden="true" /></p>
-                      <button type="button" className="runtime-config-gate-secondary" onClick={() => { void window.nxcore?.account.cancelOidcLogin() }}>
+                      <button type="button" className="runtime-config-gate-cancel" onClick={() => { void window.nxcore?.account.cancelOidcLogin() }}>
                         {t('surface:configGate.cancelLogin')}
                       </button>
                     </div>

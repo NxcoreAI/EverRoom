@@ -15,7 +15,7 @@
 ## create 作业流程（按序执行，禁止跳步）
 
 1. **定调**：读 `skills/design-craft-ppt-skill/SKILL.md`，按「定调三步」写设计简报（六色色板、视觉母题、明暗节奏、密度基调、字体角色），题材取自 plan 的 narrative 与各页内容。需要定制色板时读其 `references/palettes.md`。
-2. **选风格**：输入带 `style` 时直接用；没带按下表自选。读齐所选风格的 `skills/<style>-ppt-skill/SKILL.md`（每风格只有这一份文件）。不混搭两套；instruction 明确的风格/颜色要求优先于风格文件（以最接近的风格为底、按 palettes.md 配方改整套色板后全篇一致）；edit 任务不换风格。
+2. **选风格**：按下表自选。读齐所选风格的 `skills/<style>-ppt-skill/SKILL.md`（每风格只有这一份文件）。不混搭两套；instruction 明确的风格/颜色要求优先于风格文件（以最接近的风格为底、按 palettes.md 配方改整套色板后全篇一致）；edit 任务不换风格。
    - `japanese-style` 和纸柔光·静 —— 正式汇报、人文读物、品牌故事、需要温度的商务
    - `japanese-lifestyle` 白底焦橙·锐 —— 生活方式品牌、趋势报告、消费叙事、杂志感
    - `futuristic-tech-editorial` 白底电蓝·数据锐 —— 技术方案、产品发布、数据复盘、开发者题材

@@ -18,7 +18,7 @@ import {
   Terminal,
   Wrench,
 } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocale, type Translate } from '@/i18n/LocaleContext'
 
 import {
@@ -235,10 +235,22 @@ export function localizeAgentActivityText(value: string | undefined, t: Translat
   return value
 }
 
+/** 活跃时间线每秒随 duration 计时器、每次父级渲染帧都会整表重渲染；结果字符串
+ * 可能是大 JSON（agentToolResultSummary 每次要 JSON.parse），按工具对象+语言缓存。 */
+const toolSummaryCache = new WeakMap<object, { locale: string; value: string | undefined }>()
+
+function toolSummaryText(tool: DisplayAgentToolCall, locale: string, t: Translate): string | undefined {
+  const cached = toolSummaryCache.get(tool)
+  if (cached && cached.locale === locale) return cached.value
+  const value = localizeAgentActivityText(agentToolResultSummary(tool.result ?? tool.partialResult, t), t)
+  toolSummaryCache.set(tool, { locale, value })
+  return value
+}
+
 /** 单个工具行（收起态一行摘要，展开看参数/结果）。顶层与子代理嵌套列表复用。 */
 function ToolRow({ tool, now, sessionId }: { tool: DisplayAgentToolCall; now: number; sessionId?: string | null }) {
-  const { t } = useLocale()
-  const summaryText = localizeAgentActivityText(agentToolResultSummary(tool.result ?? tool.partialResult, t), t)
+  const { t, locale } = useLocale()
+  const summaryText = toolSummaryText(tool, locale, t)
   const subject = agentToolSubject(tool)
   const preview = subject ?? summaryText ?? tool.error
   const duration = durationMs(tool.startedAt, tool.completedAt, now)
@@ -362,7 +374,11 @@ function SubagentRow({ sub, now, sessionId }: {
   )
 }
 
-export function AgentExecutionTimeline({
+/**
+ * 时间线随对话区每个流式渲染帧都会被父级重渲染；memo 按属性拦截——历史 run 的
+ * activity/timing 引用稳定，只有活跃 run 真正重算。props 全为值/稳定引用。
+ */
+export const AgentExecutionTimeline = memo(function AgentExecutionTimeline({
   activity,
   runStartedAt,
   runCompletedAt,
@@ -490,4 +506,4 @@ export function AgentExecutionTimeline({
       </div>
     </section>
   )
-}
+})

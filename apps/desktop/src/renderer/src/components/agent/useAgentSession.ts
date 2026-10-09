@@ -90,6 +90,8 @@ export interface QueuedAgentSubmission {
 
 const SESSION_KEY_BASE = 'nxcore-ce:agent-session'
 const SESSION_KEY_VERSION = 2
+/** 流式事件合并节拍：10fps 足够顺滑，同时把长对话的渲染负载压下来。 */
+const AGENT_EVENT_FLUSH_MS = 100
 const MODEL_PREFERENCE_STORAGE_KEY = 'nxcore-ce:agent-model-preference:v1'
 
 function readStoredModelPreference(): AgentModelPreference {
@@ -230,12 +232,12 @@ export function useAgentSession(
   /** 每个 run 的活动折叠器：实时事件按 seq 增量折叠，不再全量重放历史事件。 */
   const activityAccByRun = useRef(new Map<string, AgentRunActivityAccumulator>())
   /**
-   * 流式事件按帧合并后批量入 state：每个 delta 一次 IPC + 一次 React 渲染，
-   * 工具多时事件风暴会把主线程打满（表现为对话区卡住）。同帧内的事件
-   * 合并成一次 applyEvent 扫描，渲染频率上限 = 帧率。
+   * 流式事件按 AGENT_EVENT_FLUSH_MS 节拍批量入 state：每个 delta 一次 IPC + 一次
+   * React 渲染，工具多、对话长时事件风暴会把主线程打满（表现为对话区卡死、
+   * 滚动冻结在半途）。合并后渲染频率上限 = 10 次/秒。
    */
   const pendingEventsRef = useRef<AgentEvent[]>([])
-  const agentEventFlushRef = useRef<{ kind: 'raf' | 'timeout'; id: number } | null>(null)
+  const agentEventFlushRef = useRef<number | null>(null)
   const terminalRunIdsRef = useRef(new Set<string>())
   const messageStartedRunIdsRef = useRef(new Set<string>())
   const sessionIdRef = useRef<string | null>(null)
@@ -528,8 +530,8 @@ export function useAgentSession(
   }, [updateToolCall])
 
   /**
-   * 把队列里积压的事件一次性应用掉。可见时按帧调度（渲染频率上限 = 帧率），
-   * 窗口被隐藏时 rAF 会停摆，改用 32ms 定时器兜底，保证后台也能收敛。
+   * 把队列里积压的事件一次性应用掉；流式 delta 每 100ms 合并成一拍——
+   * 文本流 10fps 足够顺滑，工具状态变化最多延迟一拍，渲染负载降一个量级。
    */
   const flushQueuedAgentEvents = useCallback(() => {
     agentEventFlushRef.current = null
@@ -544,14 +546,8 @@ export function useAgentSession(
   }, [applyEvent])
 
   const scheduleAgentEventFlush = useCallback(() => {
-    if (agentEventFlushRef.current) return
-    if (typeof requestAnimationFrame === 'function' && document.visibilityState !== 'hidden') {
-      const id = requestAnimationFrame(() => flushQueuedAgentEvents())
-      agentEventFlushRef.current = { kind: 'raf', id }
-      return
-    }
-    const id = window.setTimeout(flushQueuedAgentEvents, 32)
-    agentEventFlushRef.current = { kind: 'timeout', id }
+    if (agentEventFlushRef.current !== null) return
+    agentEventFlushRef.current = window.setTimeout(flushQueuedAgentEvents, AGENT_EVENT_FLUSH_MS)
   }, [flushQueuedAgentEvents])
 
   const hydrateSnapshot = useCallback(async (
@@ -776,10 +772,8 @@ export function useAgentSession(
     return () => {
       alive = false
       removeListener?.()
-      if (agentEventFlushRef.current?.kind === 'raf') {
-        cancelAnimationFrame(agentEventFlushRef.current.id)
-      } else if (agentEventFlushRef.current?.kind === 'timeout') {
-        window.clearTimeout(agentEventFlushRef.current.id)
+      if (agentEventFlushRef.current !== null) {
+        window.clearTimeout(agentEventFlushRef.current)
       }
       agentEventFlushRef.current = null
       pendingEventsRef.current = []

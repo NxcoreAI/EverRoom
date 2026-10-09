@@ -69,6 +69,8 @@ export interface ObsidianVaultChangedEvent {
   vaultId: string
   roomId: string
   updatedAt: string
+  /** 本次扫描中内容或路径有变化的资源 id；缺省表示未知（全量处理）。 */
+  changedResourceIds?: string[]
 }
 
 export interface ObsidianDiscoveryChangedEvent {

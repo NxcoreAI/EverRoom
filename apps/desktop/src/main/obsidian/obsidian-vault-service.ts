@@ -913,14 +913,19 @@ export class ObsidianVaultService {
     const byIdentity = new Map(vault.resources.map((resource) => [resource.fileIdentity, resource]))
     const hashCounts = new Map<string, number>()
     for (const resource of vault.resources) hashCounts.set(resource.sourceHash, (hashCounts.get(resource.sourceHash) ?? 0) + 1)
+    const changedResourceIds: string[] = []
     vault.resources = discovered.map((item) => {
       const previous = byPath.get(item.relativePath)
         ?? byIdentity.get(item.fileIdentity)
         ?? (hashCounts.get(item.sourceHash) === 1 ? [...unmatched].find((candidate) => candidate.sourceHash === item.sourceHash) : undefined)
       if (previous) unmatched.delete(previous)
+      const id = previous?.id ?? `vault-resource-${randomUUID()}`
+      if (!previous || previous.sourceHash !== item.sourceHash || previous.relativePath !== item.relativePath) {
+        changedResourceIds.push(id)
+      }
       return {
         ...item,
-        id: previous?.id ?? `vault-resource-${randomUUID()}`,
+        id,
         vaultId: vault.id,
         ...(previous?.projectionFileId ? { projectionFileId: previous.projectionFileId } : {}),
         ...(previous?.projectionDocumentId ? { projectionDocumentId: previous.projectionDocumentId } : {}),
@@ -953,7 +958,7 @@ export class ObsidianVaultService {
     vault.attachmentCount = vault.resources.length - vault.noteCount
     vault.updatedAt = new Date().toISOString()
     await this.persist()
-    if (notify) this.emit(vault)
+    if (notify) this.emit(vault, changedResourceIds)
   }
 
   private startWatching(vaultId: string, attempt = 0): void {
@@ -1116,8 +1121,13 @@ export class ObsidianVaultService {
     }
   }
 
-  private emit(vault: StoredVault): void {
-    const event = { vaultId: vault.id, roomId: vault.roomId, updatedAt: vault.updatedAt }
+  private emit(vault: StoredVault, changedResourceIds?: string[]): void {
+    const event: ObsidianVaultChangedEvent = {
+      vaultId: vault.id,
+      roomId: vault.roomId,
+      updatedAt: vault.updatedAt,
+      ...(changedResourceIds?.length ? { changedResourceIds } : {}),
+    }
     for (const listener of this.listeners) listener(event)
   }
 

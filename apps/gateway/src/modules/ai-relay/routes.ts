@@ -4,7 +4,7 @@ import type { FastifyPluginAsyncTypebox } from "@fastify/type-provider-typebox";
 import { Type } from "@sinclair/typebox";
 import type { RuntimeConfigManager } from "../../runtime-config.js";
 import { proxyFetch } from "../../infrastructure/network/proxy-fetch.js";
-import { AiRelaySessionStore } from "./session.js";
+import { AiRelaySessionStore, relaySlotSignature } from "./session.js";
 
 const SessionBody = Type.Object({
   baseUrl: Type.String({ minLength: 1 }),
@@ -70,8 +70,16 @@ export function aiRelayRoutes(options: {
           error: { message: `ai_relay_invalid_${invalid}`, type: "ai_relay_invalid_request", code: "ai_relay_invalid_request" },
         });
       }
-      sessions.set({ ...request.body });
-      runtimeConfigManager.refresh();
+      const next = { ...request.body };
+      const previous = sessions.current();
+      sessions.set(next);
+      // 只有槽位重写相关字段（baseUrl→前缀 / proxyOrigin / models）变化才重发
+      // runtime config：换 token/续期跳过——令牌由 /ai-relay 代理逐请求注入，
+      // 槽位配置不受影响；无条件 refresh 会触发 agent 运行时热重载，abort
+      // 进行中的 agent run（如 PPT 编排/落页）。
+      if (!previous || relaySlotSignature(previous) !== relaySlotSignature(next)) {
+        runtimeConfigManager.refresh();
+      }
       return { ok: true, active: sessions.active() };
     });
 

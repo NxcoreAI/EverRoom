@@ -161,6 +161,80 @@ describe("ai relay session routes", () => {
       await app.close();
     }
   });
+
+  it("skips runtime config refresh on token renewal when slot-relevant fields are unchanged", async () => {
+    const sessions = new AiRelaySessionStore();
+    const refresh = vi.fn();
+    const app = sessionApp({ sessions, refresh });
+    const headers = { authorization: "Bearer gw-token-51" };
+
+    try {
+      const session = {
+        baseUrl: "https://relay.example.com",
+        token: "sk-relay-51",
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        proxyOrigin: "http://127.0.0.1:49152",
+      };
+      const activate = await app.inject({ method: "PUT", url: "/v1/ai-relay/session", headers, payload: session });
+      expect(activate.statusCode).toBe(200);
+      // 激活（含过期后重推）必须 refresh：槽位从未重写态切到代理出口。
+      expect(refresh).toHaveBeenCalledTimes(1);
+
+      // 每 20min 续期：只换 token/expiresAt——代理逐请求注入令牌，槽位配置
+      // 不变，跳过 refresh，避免热重载 abort 进行中的 agent run。
+      const renew = await app.inject({
+        method: "PUT",
+        url: "/v1/ai-relay/session",
+        headers,
+        payload: { ...session, token: "sk-relay-52", expiresAt: new Date(Date.now() + 120_000).toISOString() },
+      });
+      expect(renew.statusCode).toBe(200);
+      expect(refresh).toHaveBeenCalledTimes(1);
+      expect(sessions.current()?.token).toBe("sk-relay-52");
+
+      // 槽位特征变化（SaaS 下发模型）仍触发 refresh。
+      const modelsChange = await app.inject({
+        method: "PUT",
+        url: "/v1/ai-relay/session",
+        headers,
+        payload: { ...session, token: "sk-relay-53", models: { primary: "saas-main-x" } },
+      });
+      expect(modelsChange.statusCode).toBe(200);
+      expect(refresh).toHaveBeenCalledTimes(2);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("refreshes runtime config when an expired session is re-pushed with unchanged fields", async () => {
+    const sessions = new AiRelaySessionStore();
+    const refresh = vi.fn();
+    const app = sessionApp({ sessions, refresh });
+    const headers = { authorization: "Bearer gw-token-51" };
+    const session = {
+      baseUrl: "https://relay.example.com",
+      token: "sk-relay-51",
+      expiresAt: new Date(Date.now() - 1_000).toISOString(),
+      proxyOrigin: "http://127.0.0.1:49152",
+    };
+
+    try {
+      // 预置一条已过期的会话：current() 为空，槽位实际处于未重写态。
+      sessions.set(session);
+      const reactivated = await app.inject({
+        method: "PUT",
+        url: "/v1/ai-relay/session",
+        headers,
+        payload: { ...session, expiresAt: new Date(Date.now() + 60_000).toISOString() },
+      });
+      expect(reactivated.statusCode).toBe(200);
+      expect(sessions.active()).toBe(true);
+      // 过期会话在语义上是「未激活 → 激活」，槽位需要重新重写，必须 refresh。
+      expect(refresh).toHaveBeenCalledTimes(1);
+    } finally {
+      await app.close();
+    }
+  });
 });
 
 describe("ai relay proxy", () => {

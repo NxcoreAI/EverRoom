@@ -1,3 +1,7 @@
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { RealityTag } from "@nxcore/reality-contract";
 import { normalizeInsightTags } from "../reality/insight-tags.js";
 import { proxyFetch } from "../../infrastructure/network/proxy-fetch.js";
@@ -267,6 +271,7 @@ export class OpenAiCompatibleVlmClient implements VisualInferenceClient, Documen
     prompt: string,
     signal?: AbortSignal,
   ): Promise<unknown> {
+    const scaled = await downscaleForVlm(image);
     const timeout = AbortSignal.timeout(60_000);
     const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
     const response = await proxyFetch(`${this.config.baseUrl.replace(/\/$/, "")}/chat/completions`, {
@@ -286,7 +291,7 @@ export class OpenAiCompatibleVlmClient implements VisualInferenceClient, Documen
             { type: "text", text: prompt },
             {
               type: "image_url",
-              image_url: { url: `data:${image.mime};base64,${image.buffer.toString("base64")}` },
+              image_url: { url: `data:${scaled.mime};base64,${scaled.buffer.toString("base64")}` },
             },
           ],
         }],
@@ -301,5 +306,27 @@ export class OpenAiCompatibleVlmClient implements VisualInferenceClient, Documen
       : null;
     if (typeof content !== "string") throw new Error("VLM response did not contain message content");
     return JSON.parse(jsonText(content));
+  }
+}
+
+/** 大图压到 VLM 友好尺寸（描述任务不需要原始分辨率）：中转站对请求体有
+ *  上限，4.2MB 原图 base64 后 ~5.6MB 直接 HTTP 413。仓库无图像库，用 macOS
+ *  系统 sips 压长边到 1280px（本应用桌面端仅 darwin）；sips 不可用或压缩
+ *  失败时原样发送，由上游报错兜底。 */
+async function downscaleForVlm(image: { buffer: Buffer; mime: string }): Promise<{ buffer: Buffer; mime: string }> {
+  if (process.platform !== "darwin" || image.buffer.byteLength <= 512 * 1024) return image;
+  const directory = mkdtempSync(join(tmpdir(), "vlm-downscale-"));
+  try {
+    const extension = image.mime.includes("png") ? "png" : "jpg";
+    const source = join(directory, `in.${extension}`);
+    const target = join(directory, `out.${extension}`);
+    writeFileSync(source, image.buffer);
+    execFileSync("/usr/bin/sips", ["-Z", "1280", source, "--out", target], { stdio: "ignore" });
+    const buffer = readFileSync(target);
+    return buffer.byteLength < image.buffer.byteLength ? { buffer, mime: image.mime } : image;
+  } catch {
+    return image;
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
   }
 }

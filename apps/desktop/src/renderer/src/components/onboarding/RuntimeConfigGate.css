@@ -588,9 +588,21 @@
   height: 15px;
 }
 
-.runtime-config-gate-waiting .runtime-config-gate-secondary {
+.runtime-config-gate-waiting .runtime-config-gate-cancel {
   flex: none;
+  padding: 0;
+  border: none;
+  background: none;
+  color: #536070;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
   white-space: nowrap;
+}
+
+.runtime-config-gate-waiting .runtime-config-gate-cancel:hover {
+  color: #151a22;
+  text-decoration: underline;
 }
 
 .runtime-config-gate-primary,

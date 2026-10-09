@@ -516,9 +516,23 @@
   opacity: 0.5;
 }
 
-/* 取消登录：登录等待时的逃生动作，弱化为全宽次级按钮，不冒充品牌登录按钮 */
+/* 取消登录：登录等待时的逃生动作，弱化为居中文字链接，不冒充登录按钮 */
 .cloud-login-cancel {
   grid-column: 1 / -1;
+  justify-self: center;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 400;
+  cursor: pointer;
+}
+
+.cloud-login-cancel:hover {
+  color: var(--text);
+  text-decoration: underline;
 }
 
 .apple-login {

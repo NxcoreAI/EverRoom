@@ -20,7 +20,7 @@ export function createMaterialSearchPiTools(materials: MaterialsService | null):
       query: Type.String({
         minLength: 1,
         maxLength: 200,
-        description: "画面关键词（2 个以上词用空格分隔，全部命中才返回），如「城市 夜景」「团队 协作」。",
+        description: "画面关键词（空格分隔，命中任一词即返回、命中越多排越前），如「城市 夜景」「茶具 盖碗」。",
       }),
       limit: Type.Optional(Type.Number({ minimum: 1, maximum: 20 })),
     }, { additionalProperties: false }),

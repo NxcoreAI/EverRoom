@@ -106,6 +106,12 @@ export class DocumentGatewayBridge {
     return this.request(`/v1/documents/${encodeURIComponent(documentId)}`)
   }
 
+  documentMarkdown(documentId: string): Promise<string> {
+    return this.request<{ documentId: string; markdown: string }>(
+      `/v1/documents/${encodeURIComponent(documentId)}/markdown`,
+    ).then((payload) => payload.markdown)
+  }
+
   listBlocks(documentId: string): Promise<DocumentBlockList> {
     return this.request(`/v1/documents/${encodeURIComponent(documentId)}/blocks`)
   }

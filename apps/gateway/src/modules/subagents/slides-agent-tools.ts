@@ -56,5 +56,7 @@ export function createSlidesBuilderAgentTools(deps: {
   /** createDocumentPiTools 的产物（PPT 四件套 + 文档只读子集）。 */
   documentTools: PiAgentRuntimeTool[];
 }): PiAgentRuntimeTool[] {
-  return filterTools(deps.documentTools, SLIDES_BUILDER_TOOL_ALLOWLIST);
+  return [
+    ...filterTools(deps.documentTools, SLIDES_BUILDER_TOOL_ALLOWLIST),
+  ];
 }

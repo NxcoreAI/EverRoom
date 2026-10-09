@@ -167,6 +167,9 @@ export function AgentPanel({
     }
     const recentMessages = session.messages
       .filter((message) => message.role === 'user' || message.role === 'assistant')
+      // 运行刚创建时列表里会出现还没内容的助手占位消息，带进建议请求会被
+      // 网关 text minLength 1 校验拒绝（body/messages/N/text must NOT have fewer than 1 characters）。
+      .filter((message) => message.content.trim().length > 0)
       .slice(-8)
       .map((message) => ({ role: message.role as 'user' | 'assistant', text: message.content.slice(0, 4000) }))
     // 空会话（新对话）走开场问题变体：等会话清单就绪后再取。

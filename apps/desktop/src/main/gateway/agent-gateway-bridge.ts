@@ -24,6 +24,7 @@ import type { WebContents } from 'electron'
 import WebSocket from 'ws'
 import type { LocalAgentDispatchDetail } from '../../shared/local-agents'
 import type { AgentApprovalDecision } from '../../shared/sources'
+import { desktopText } from '../desktop-locale'
 import { createLoggedHttpClient } from '../network/http-client'
 import type { GatewaySupervisor } from './gateway-supervisor'
 import { WebContentsLifecycle } from './web-contents-lifecycle'
@@ -469,9 +470,15 @@ export class AgentGatewayBridge {
       validateStatus: () => true,
     })
     if (response.status >= 400) {
+      const body = response.data as (T & { error?: unknown; message?: unknown }) | undefined
+      // 网关对 AI 中转余额耗尽返回结构化 402：抛本地化文案，
+      // 渲染层弹"AI 额度不足"而不是笼统的 "An internal gateway error occurred"。
+      if (body?.error === 'ai_quota_exhausted') {
+        throw new Error(desktopText('error.quota.message'))
+      }
       throw new Error(
-        typeof response.data?.message === 'string'
-          ? response.data.message
+        typeof body?.message === 'string'
+          ? body.message
           : `Agent 请求失败（${response.status}）`,
       )
     }
