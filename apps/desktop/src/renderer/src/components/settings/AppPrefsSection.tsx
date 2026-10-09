@@ -7,7 +7,7 @@ import { useAppPrefs } from '@/state/appPrefs'
 function isValidHttpUrl(raw: string): boolean {
   try {
     const parsed = new URL(raw.trim())
-    return parsed.protocol === 'http:' || parsed.protocol === 'https://'
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:'
   } catch {
     return false
   }

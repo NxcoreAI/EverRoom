@@ -131,7 +131,7 @@ export class VersionedJsonStore<T> {
     const tempPath = join(dirname(this.options.filePath), `.${basenameOf(this.options.filePath)}.tmp`);
     writeFileSync(tempPath, payload, { mode });
     ensureFilePermissions(tempPath, mode);
-    this.replaceAtomically(tempPath, this.options.filePath);
+    this.replaceAtomically(tempPath, this.options.filePath, mode);
   }
 
   /**
@@ -139,7 +139,7 @@ export class VersionedJsonStore<T> {
    * 凭据写不进去会直接打断扫码登录。短退避重试 rename；仍失败退化为
    * copy+删（牺牲原子性换可用性，内容一致）。
    */
-  private replaceAtomically(tempPath: string, targetPath: string): void {
+  private replaceAtomically(tempPath: string, targetPath: string, mode: number): void {
     for (let attempt = 0; ; attempt += 1) {
       try {
         renameSync(tempPath, targetPath);
@@ -147,6 +147,8 @@ export class VersionedJsonStore<T> {
       } catch (error) {
         if (attempt >= 3) {
           copyFileSync(tempPath, targetPath);
+          // copy 兜底创建的新文件按 umask 落权限（常宽于期望的 0600），补回。
+          ensureFilePermissions(targetPath, mode);
           rmSync(tempPath, { force: true });
           return;
         }

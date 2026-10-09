@@ -109,7 +109,7 @@ export class LocalRecordingSegmentTranscriber {
     const buffer = Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength)
     const directory = this.segmentDirectory(recordingId)
     await mkdir(directory, { recursive: true })
-    await writeFile(join(directory, fileName), buffer)
+    await writeFile(join(directory, fileName), buffer, { mode: 0o600 })
     const mini: MiniJobState = {
       index,
       fileName,

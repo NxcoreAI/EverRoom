@@ -9,6 +9,8 @@ import { OpenAiAsrError } from "./errors.js";
 import type { AsrProvider, AsrResult, AsrTaskSnapshot, SubmitAsrInput, SubmittedAsrTask } from "./types.js";
 
 const DEFAULT_MODEL = "whisper-1";
+// 未被轮询消费的完成快照上限（每条含整篇转写文本，防无限驻留）。
+const SNAPSHOT_CACHE_LIMIT = 200;
 // 长录音的本地转写可能接近实时时长，覆盖 logged 客户端默认 15s 超时。
 const REQUEST_TIMEOUT_MS = 600_000;
 
@@ -101,15 +103,21 @@ export class OpenAiCompatibleAsrProvider implements AsrProvider {
     const result: AsrResult = { transcript: body.text.trim(), segments: [] };
     const taskId = randomUUID();
     this.snapshots.set(taskId, { taskId, status: "completed", result });
+    // 容量上限：未被轮询消费的快照（含整篇转写文本）不无限驻留内存。
+    if (this.snapshots.size > SNAPSHOT_CACHE_LIMIT) {
+      const oldest = this.snapshots.keys().next().value;
+      if (oldest !== undefined) this.snapshots.delete(oldest);
+    }
     return { taskId };
   }
 
+  /** 读后保留可重读：桌面侧 pollMini（2s 轮询）与 finalize/getMergedJob 的
+   *  refresh 可并发飞行，一次性删除会让后到方把已完成任务改判失败。 */
   async getTask(taskId: string): Promise<AsrTaskSnapshot> {
     const snapshot = this.snapshots.get(taskId);
     if (!snapshot) {
       throw new OpenAiAsrError("query transcription", "task snapshot is unavailable (gateway may have restarted)");
     }
-    this.snapshots.delete(taskId);
     return snapshot;
   }
 }

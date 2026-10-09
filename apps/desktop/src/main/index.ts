@@ -1458,12 +1458,17 @@ function registerRuntimeConfigHandlers(): void {
       const asrSection = asr as Record<string, unknown>
       if (asrSection.provider === 'nxcore-asr-managed') {
         const connection = nxcoreAsrSupervisor?.getConnection()
-        if (!connection) throw new Error('内置离线转写引擎尚未就绪，请先在设置中启动它。')
-        payload.asr = {
-          provider: 'nxcore-asr',
-          baseUrl: connection.baseUrl,
-          apiKey: connection.apiKey,
-          oss: { region: '', bucket: '', accessKeyId: '', accessKeySecret: '', stsToken: '', prefix: '' },
+        if (connection) {
+          payload.asr = {
+            provider: 'nxcore-asr',
+            baseUrl: connection.baseUrl,
+            apiKey: connection.apiKey,
+            oss: { region: '', bucket: '', accessKeyId: '', accessKeySecret: '', stsToken: '', prefix: '' },
+          }
+        } else {
+          // 引擎未就绪不阻塞整表保存（用户可能只想改 LLM 段）：asr 段剔除，
+          // 落库后由已存配置或下次就绪时的自动保存接管。
+          delete payload.asr
         }
       }
     }
@@ -3626,7 +3631,11 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   registerCloudControlIpc()
   // 内置离线转写（nxcore-asr）：按需启动（用户在设置页触发），status 轮询呈现
   // 首装进度（venv 2GB + 模型 2.1GB 都发生在首次启动）。
-  ipcMain.handle('nxcore-asr:status', () => nxcoreAsrSupervisor?.getStatus() ?? null)
+  // status 裁掉 apiKey：renderer 只消费 state/step/detail，租户密钥无暴露必要。
+  ipcMain.handle('nxcore-asr:status', () => {
+    const status = nxcoreAsrSupervisor?.getStatus() ?? null
+    return status ? { ...status, apiKey: null } : null
+  })
   ipcMain.handle('nxcore-asr:start', () => {
     if (!nxcoreAsrSupervisor) return null
     void nxcoreAsrSupervisor.start()

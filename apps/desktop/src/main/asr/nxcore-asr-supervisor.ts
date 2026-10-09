@@ -278,6 +278,9 @@ export class NxCoreAsrSupervisor {
       this.child = null
       forgetProcessRecord(join(this.dataDirectory, 'runtime'), 'nxcore-asr')
       if (!this.stopping) {
+        // 崩溃/被杀：清空连接让 start() 可重入（否则设置页点启动只会
+        // 返回陈旧连接，录音持续失败直到重启应用）。
+        this.connection = null
         this.lastError = `nxcore-asr 进程已退出（code=${String(code)}, signal=${String(signal)}）`
         this.setState('error', this.lastError)
         console.error(this.lastError)
@@ -455,10 +458,10 @@ export class NxCoreAsrSupervisor {
     const exe = process.platform === 'win32' ? '.exe' : ''
     const bin = join(pgDir, 'bin')
     const pgHome = join(this.dataDirectory, 'nxcore-asr-pg')
-    const dataDir = join(pgHome, 'data')
+    let dataDir = join(pgHome, 'data')
     const logFile = join(pgHome, 'logfile.txt')
-    const run = (args: string[], timeoutMs: number, cwdDataDir: string = dataDir): { status: number | null; output: string } => {
-      const result = spawnSync(join(bin, args[0]!), args.slice(1).map((arg) => arg === '{{DATA}}' ? cwdDataDir : arg), {
+    const run = (args: string[], timeoutMs: number): { status: number | null; output: string } => {
+      const result = spawnSync(join(bin, args[0]!), args.slice(1).map((arg) => arg === '{{DATA}}' ? dataDir : arg), {
         encoding: 'utf8', timeout: timeoutMs, windowsHide: true,
         env: { ...process.env, LC_ALL: 'C' },
       })
@@ -470,12 +473,14 @@ export class NxCoreAsrSupervisor {
       this.setDetail('初始化 PostgreSQL 数据目录…')
       let init = run(['initdb', '-D', '{{DATA}}', '-U', 'asr_admin', '-E', 'UTF8', '-A', 'trust', '--locale=C'], 120_000)
       // Windows 杀软实时扫描可锁 WAL rename（Improper link/No such file）：
-      // userData 常在扫描重点区，重试换 os.tmpdir() 下的目录（实测可绕开）。
+      // userData 常在扫描重点区，重试换 os.tmpdir() 下的目录。dataDir 随之切换，
+      // 后续 pg_ctl/PG_VERSION 探测/stop 统一走实际目录（tmpdir 集群重启后
+      // 丢失，PG_VERSION 不在即重走 initdb，自愈）。
       if (init.status !== 0 && /rename|No such file|Improper link/i.test(init.output)) {
         console.warn('[nxcore-asr] initdb 在数据目录被拦截（疑似杀软），改用临时目录重试')
-        const fallbackData = join(tmpdir(), 'everroom-nxcore-asr-pg', 'data')
+        dataDir = join(tmpdir(), 'everroom-nxcore-asr-pg', 'data')
         await mkdir(join(tmpdir(), 'everroom-nxcore-asr-pg'), { recursive: true }).catch(() => undefined)
-        init = run(['initdb', '-D', '{{DATA}}', '-U', 'asr_admin', '-E', 'UTF8', '-A', 'trust', '--locale=C'], 120_000, fallbackData)
+        init = run(['initdb', '-D', '{{DATA}}', '-U', 'asr_admin', '-E', 'UTF8', '-A', 'trust', '--locale=C'], 120_000)
       }
       if (init.status !== 0) {
         this.lastError = `initdb 失败：${init.output.slice(-300)}`
@@ -521,19 +526,25 @@ export class NxCoreAsrSupervisor {
     return true
   }
 
-  /** 便携 PG 关停（托管进程树里 pg_ctl 派生的 postgres 由 shutdown 兜底）。 */
+  /** 便携 PG 关停（托管进程树里 pg_ctl 派生的 postgres 由 shutdown 兜底）。
+   *  两个候选数据目录都尝试 stop：杀软回退路径的集群在 tmpdir 下。 */
   private stopPortablePg(): void {
     const pgDir = portablePgDir()
     if (!pgDir) return
     const exe = process.platform === 'win32' ? '.exe' : ''
-    const dataDir = join(this.dataDirectory, 'nxcore-asr-pg', 'data')
-    if (!existsSync(dataDir)) return
-    try {
-      spawnSync(join(pgDir, 'bin', `pg_ctl${exe}`), ['-D', dataDir, '-m', 'fast', '-w', '-t', '10', 'stop'], {
-        encoding: 'utf8', timeout: 15_000, windowsHide: true,
-      })
-    } catch {
-      // 已停或异常都不阻塞退出。
+    const candidates = [
+      join(this.dataDirectory, 'nxcore-asr-pg', 'data'),
+      join(tmpdir(), 'everroom-nxcore-asr-pg', 'data'),
+    ]
+    for (const dataDir of candidates) {
+      if (!existsSync(dataDir)) continue
+      try {
+        spawnSync(join(pgDir, 'bin', `pg_ctl${exe}`), ['-D', dataDir, '-m', 'fast', '-w', '-t', '10', 'stop'], {
+          encoding: 'utf8', timeout: 15_000, windowsHide: true,
+        })
+      } catch {
+        // 已停或异常都不阻塞退出。
+      }
     }
   }
 
@@ -576,7 +587,7 @@ export class NxCoreAsrSupervisor {
         const current = readFileSync(configPath, 'utf8')
         if (current.includes(apiKey)) return
       }
-      writeFileSync(configPath, desired, 'utf8')
+      writeFileSync(configPath, desired, { encoding: 'utf8', mode: 0o600 })
     } catch (error) {
       console.warn('[nxcore-asr] config.yaml write failed |', error)
     }

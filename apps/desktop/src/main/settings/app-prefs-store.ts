@@ -9,14 +9,15 @@ export const DEFAULT_APP_PREFS: AppPrefs = {
   crashReporting: true,
 }
 
-/** 仅接受 http(s) 绝对地址并去尾斜杠；空串/非字符串/协议不对一律归 null。 */
+/** 更新源/上报地址仅接受 https 绝对地址并去尾斜杠（明文 http 等于任意
+ *  安装包来源，不值得为内网便利放开）；空串/非字符串/协议不对一律归 null。 */
 function normalizeUrl(raw: unknown): string | null {
   if (typeof raw !== 'string') return null
   const trimmed = raw.trim()
   if (!trimmed) return null
   try {
     const parsed = new URL(trimmed)
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null
+    if (parsed.protocol !== 'https:') return null
   } catch {
     return null
   }

@@ -70,7 +70,11 @@ describe("OpenAiCompatibleAsrProvider", () => {
       status: "completed",
       result: { transcript: "你好，欢迎使用 NxCore。", segments: [] },
     });
-    await expect(provider.getTask(submitted.taskId)).rejects.toThrow(/snapshot is unavailable/);
+    // 快照读后保留（桌面 pollMini 与 refresh 可并发查询，一次性删除会把
+    // 已完成任务改判失败）；未知 id 仍报错。
+    const reread = await provider.getTask(submitted.taskId);
+    expect(reread.status).toBe("completed");
+    await expect(provider.getTask("nonexistent-task")).rejects.toThrow(/snapshot is unavailable/);
   });
 
   it("swallows a trailing /v1 in baseUrl (OpenAI 生态习惯填完整 baseURL)", async () => {
