@@ -445,6 +445,18 @@ describe('RecordingSegmentUploader local segments (gateway engine)', () => {
     expect(gateway.createJob).not.toHaveBeenCalled()
   })
 
+  it('本地模式无本地引擎时静默丢弃分段，绝不回落云路上传', async () => {
+    // 未注入 localEngine（仅测试/异常接线的形态）：mode=local 的分段
+    // 必须丢弃而非传 SaaS——用户明确选了本地，隐私语义优先。
+    const saas = fakeSaas()
+    const { uploader } = await createUploader(saas as never)
+    await uploader.onSegment('rec-1', 0, chunk(1), 5_000, { mimeType: 'audio/webm', mode: 'local', languageHints: ['zh'] })
+    expect(saas.createAsrJobShell).not.toHaveBeenCalled()
+    expect(saas.putAsrUpload).not.toHaveBeenCalled()
+    const job = await uploader.finalize('rec-1')
+    expect(job).toBeNull()
+  })
+
   it('restores local minis from the manifest after restart for merged queries', async () => {
     const gateway = fakeGateway()
     const { uploader, directory } = await createLocalUploader(gateway)

@@ -177,7 +177,10 @@ export class RecordingSegmentUploader {
       this.localRouted.add(recordingId)
       return this.local.onSegment(recordingId, index, chunk, durationMs, meta)
     }
-    // mode==='local' 但未注入本地引擎：静默丢弃分段，停止后走整段转（现状）。
+    // mode==='local' 但未注入本地引擎：静默丢弃分段，停止后走整段转。
+    // 不得回落云路——用户明确选了本地模式，音频上 SaaS 是隐私违约
+    // （生产接线 localEngine 恒注入，此处仅测试/异常接线的防线）。
+    if (meta.mode === 'local') return undefined
     return this.onCloudSegment(recordingId, index, chunk, durationMs, meta)
   }
 
