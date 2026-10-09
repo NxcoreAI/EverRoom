@@ -198,6 +198,8 @@ export class AiRelayKeeper {
       const snapshot = await this.runtimeConfig.get()
       // 仅在 default 源激活时需要保护；user 源本就不经中转。
       if (snapshot.selectedSource !== 'default') return
+      // 无可用 user 源时保持现状（设计注释如此声明；选中空源只会更糟）。
+      if (!snapshot.availableSources.includes('user')) return
       await this.runtimeConfig.selectSource('user')
       this.fellBackToUser = true
       this.onEvent({ type: 'fallback-user' })

@@ -128,7 +128,7 @@ describe('AiRelayKeeper', () => {
     try {
       // 首推：会话激活（session-activated），不比对 models。
       await keeper.renewNow()
-      expect(onEvent).toHaveBeenCalledWith({ type: 'session-activated' })
+      expect(onEvent).toHaveBeenCalledWith({ type: 'session-activated', first: true })
       expect(onEvent).not.toHaveBeenCalledWith({ type: 'models-changed' })
 
       // 续签且模型不变：不触发。
