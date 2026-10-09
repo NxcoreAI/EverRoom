@@ -50,7 +50,19 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-          submodules: recursive
+      - name: Checkout private submodule (nxcoreasr)
+        shell: bash
+        env:
+          GITLAB_SUBMODULE_TOKEN: ${{ secrets.GITLAB_SUBMODULE_TOKEN }}
+        run: |
+          if [ -n "$GITLAB_SUBMODULE_TOKEN" ]; then
+            git config --global url."https://oauth2:${GITLAB_SUBMODULE_TOKEN}@code.vyitec.com/".insteadOf "https://code.vyitec.com/"
+            git submodule update --init --recursive
+          else
+            echo "::error::no GITLAB_SUBMODULE_TOKEN; release packaging requires the private submodule"
+            exit 1
+          fi
+
 
       - name: Derive update channel from tag
         shell: bash
@@ -285,7 +297,19 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-          submodules: recursive
+      - name: Checkout private submodule (nxcoreasr)
+        shell: bash
+        env:
+          GITLAB_SUBMODULE_TOKEN: ${{ secrets.GITLAB_SUBMODULE_TOKEN }}
+        run: |
+          if [ -n "$GITLAB_SUBMODULE_TOKEN" ]; then
+            git config --global url."https://oauth2:${GITLAB_SUBMODULE_TOKEN}@code.vyitec.com/".insteadOf "https://code.vyitec.com/"
+            git submodule update --init --recursive
+          else
+            echo "::error::no GITLAB_SUBMODULE_TOKEN; release packaging requires the private submodule"
+            exit 1
+          fi
+
 
       - name: Derive update channel from tag
         shell: bash
@@ -409,6 +433,19 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - name: Checkout private submodule (nxcoreasr)
+        shell: bash
+        env:
+          GITLAB_SUBMODULE_TOKEN: ${{ secrets.GITLAB_SUBMODULE_TOKEN }}
+        run: |
+          if [ -n "$GITLAB_SUBMODULE_TOKEN" ]; then
+            git config --global url."https://oauth2:${GITLAB_SUBMODULE_TOKEN}@code.vyitec.com/".insteadOf "https://code.vyitec.com/"
+            git submodule update --init --recursive
+          else
+            echo "::error::no GITLAB_SUBMODULE_TOKEN; release packaging requires the private submodule"
+            exit 1
+          fi
+
 
       - name: Download macOS artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -566,6 +603,19 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - name: Checkout private submodule (nxcoreasr)
+        shell: bash
+        env:
+          GITLAB_SUBMODULE_TOKEN: ${{ secrets.GITLAB_SUBMODULE_TOKEN }}
+        run: |
+          if [ -n "$GITLAB_SUBMODULE_TOKEN" ]; then
+            git config --global url."https://oauth2:${GITLAB_SUBMODULE_TOKEN}@code.vyitec.com/".insteadOf "https://code.vyitec.com/"
+            git submodule update --init --recursive
+          else
+            echo "::error::no GITLAB_SUBMODULE_TOKEN; release packaging requires the private submodule"
+            exit 1
+          fi
+
 
       - name: Collect release summary
         id: summary
