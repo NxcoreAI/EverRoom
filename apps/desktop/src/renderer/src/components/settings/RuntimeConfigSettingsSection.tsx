@@ -27,7 +27,7 @@ const SCENARIO_LABEL_KEYS: Record<TextScenarioId, string> = {
   cursorCompletion: 'rcScenarioCursor',
 }
 
-const MANAGED_ASR_STEPS = 5
+const MANAGED_ASR_STEPS = 4
 
 /** 内置离线转写（nxcore-asr）托管状态区：档位选择 + 引擎启停 + 安装进度。
  * 就绪即自动保存表单（把托管连接写进用户配置）。 */
@@ -72,7 +72,7 @@ function ManagedAsrStatus({ onReady, disabled }: { onReady?: () => void; disable
   const state = status?.state ?? 'unknown'
   const ready = state === 'ready' || state === 'reused'
   const working = state === 'setup-venv' || state === 'starting'
-  const failed = state === 'error' || state === 'missing-python' || state === 'missing-docker'
+  const failed = state === 'error' || state === 'missing-python'
   const step = Math.min(status?.step ?? 0, MANAGED_ASR_STEPS)
   const stateText = ready ? t('surface:settings.rcAsrManagedReady') : t(`surface:settings.rcAsrManagedState.${state}`)
   return (

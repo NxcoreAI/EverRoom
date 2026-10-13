@@ -1,9 +1,6 @@
 import { randomBytes } from 'node:crypto'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
-import { mkdir } from 'node:fs/promises'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { spawn, spawnSync, execFileSync, type ChildProcessWithoutNullStreams } from 'node:child_process'
-import { connect as tcpConnect } from 'node:net'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { app } from 'electron'
@@ -17,8 +14,8 @@ import { forgetProcessRecord, registerProcessRecord } from '../process-cleanup'
  * 1. 外部模式：NXCORE_ASR_BASE_URL 指向别处 / NXCORE_ASR_MANAGED=false —— 不托管。
  * 2. 复用模式：127.0.0.1:8300 已有健康实例（用户手动部署）—— 直接复用托管 key。
  * 3. 托管模式：按需拉起本地服务：
- *    python 检测 → venv+依赖安装（首次约 2GB）→ PostgreSQL（docker compose）
- *    → config.yaml（注入持久化租户 key）→ uvicorn 拉起（首装含模型下载约 2.1GB）。
+ *    python 检测 → venv+依赖安装（首次约 2GB）→ config.yaml（SQLite 库文件 +
+ *    持久租户 key）→ uvicorn 拉起（首装含模型下载约 2.1GB）。
  *
  * 按需启动：用户在设置页选「内置离线转写」才 start（FunASR 常驻内存 1-2GB，
  * 不随应用启动预载）。首次 setup 全程通过 status() 轮询呈现进度态。
@@ -29,7 +26,6 @@ export type NxCoreAsrState =
   | 'reused'
   | 'ready'
   | 'missing-python'
-  | 'missing-docker'
   | 'setup-venv'
   | 'starting'
   | 'error'
@@ -41,7 +37,7 @@ export interface NxCoreAsrStatus {
   /** ready/reused 时的连接信息（apiKey 是本机租户密钥，仅在托管/复用时给出）。 */
   baseUrl: string | null
   apiKey: string | null
-  /** 安装步骤进度（1 基）：检测环境 → 安装依赖 → 准备数据库 → 下载模型 → 启动。 */
+  /** 安装步骤进度（1 基）：检测环境 → 安装依赖 → 下载模型 → 启动。 */
   step: number
   /** 实时明细（当前下载的包名 / 模型下载百分比等），高频刷新。 */
   detail: string | null
@@ -62,7 +58,6 @@ export interface NxCoreAsrConnection {
 
 const SERVICE_PORT = 8300
 const DEFAULT_BASE_URL = `http://127.0.0.1:${SERVICE_PORT}`
-const PG_PORT = 25432
 /** 正常启动（模型已就位）两分钟；首装含模型下载，放宽到 45 分钟。 */
 const STARTUP_TIMEOUT_MS = 120_000
 const FIRST_RUN_STARTUP_TIMEOUT_MS = 45 * 60_000
@@ -89,26 +84,6 @@ function venvPython(serviceDir: string): string {
     : join(serviceDir, '.venv', 'bin', 'python')
 }
 
-/** 便携 PostgreSQL 二进制目录（打包版免 Docker 形态）：bin/ 下有 initdb 与
- *  pg_ctl 即认定有效。macOS 二进制无后缀，Windows 为 .exe。
- *  探测顺序：NXCORE_ASR_PG_DIST 覆盖 → 打包 resources → submodule pg-dist。 */
-function portablePgDir(): string | null {
-  const override = process.env.NXCORE_ASR_PG_DIST?.trim()
-  const candidates = [
-    ...(override ? [override] : []),
-    // 打包版：extraResources 把服务目录部署到 resources/nxcoreasr，pg-dist 随行。
-    join(app.getAppPath(), '..', 'nxcoreasr', 'pg-dist'),
-    // dev：仓库内 submodule（apps/desktop 上两级回仓库根——曾误用三层
-    // 解析到仓库外，致探测失败回落 docker）。
-    join(app.getAppPath(), '..', '..', 'submodules', 'nxcoreasr', 'pg-dist'),
-  ]
-  const exe = process.platform === 'win32' ? '.exe' : ''
-  for (const candidate of candidates) {
-    if (existsSync(join(candidate, 'bin', `initdb${exe}`))) return candidate
-  }
-  return null
-}
-
 function detectPython(): string | null {
   for (const command of ['python3.12', 'python', 'py -3.12']) {
     const parts = command.split(' ')
@@ -122,22 +97,6 @@ function detectPython(): string | null {
     }
   }
   return null
-}
-
-/** TCP 连接探测：端口上有可连的服务返回 true（空闲端口返回 false）。
- *  曾误用 createServer().listen 反向判定——端口空闲（PG 未起）返回 true，
- *  导致 docker compose 从未执行、服务连接 PG 超时退出。 */
-export async function probeTcpPort(port: number): Promise<boolean> {
-  return new Promise((resolve) => {
-    const socket = tcpConnect({ port, host: '127.0.0.1' })
-    const finish = (value: boolean): void => {
-      socket.destroy()
-      resolve(value)
-    }
-    socket.once('connect', () => finish(true))
-    socket.once('error', () => finish(false))
-    setTimeout(() => finish(false), 1_500).unref()
-  })
 }
 
 export class NxCoreAsrSupervisor {
@@ -235,7 +194,7 @@ export class NxCoreAsrSupervisor {
       this.connection = { baseUrl: DEFAULT_BASE_URL, apiKey, managed: false }
       this.state = 'reused'
       this.stateMessage = null
-      this.stateStep = 5
+      this.stateStep = 4
       this.stateDetail = null
       console.info(`[nxcore-asr] reusing existing instance at ${DEFAULT_BASE_URL}`)
       return this.connection
@@ -253,7 +212,6 @@ export class NxCoreAsrSupervisor {
       return null
     }
 
-    // 依赖安装（步骤 2）与 PostgreSQL（步骤 3）互不依赖，真正并行执行。
     // 就绪判定看「关键包可导入」而非 venv 存在——pip 中途失败会留下有
     // python.exe 无依赖的半成品 venv，曾导致 spawn 直接报 No module named uvicorn。
     const pythonPath = venvPython(serviceDir)
@@ -272,32 +230,18 @@ export class NxCoreAsrSupervisor {
       }
       return true
     })()
-    const pgDone: Promise<boolean> = (async () => {
-      if (await probeTcpPort(PG_PORT)) return true
-      // 便携 PG 分支（打包版形态）：自带 postgres 二进制目录，免 Docker。
-      // dev 无 pg-dist 时回落 docker compose。
-      if (portablePgDir()) return this.startPortablePg()
-      const started = await this.runDockerCompose(serviceDir)
-      if (!started) return false
-      return await this.waitPgReady()
-    })()
-    const [setupOk, pgOk] = await Promise.all([setupDone, pgDone])
+    const setupOk = await setupDone
     if (!setupOk) {
       this.setState('error', this.lastError ?? '依赖安装失败', 2)
       return null
     }
-    if (!pgOk) {
-      this.setState('missing-docker', this.lastError ?? 'PostgreSQL 未就绪（docker compose 失败）', 3)
-      return null
-    }
-
     // lite 档：SenseVoice 预下载到目录别名 fun-asr-nano（引擎按固定名探测，
     // 见 modelDirForTier）——必须在 uvicorn 拉起前就位，否则服务会把真正的
     // Fun-ASR-Nano（约 2.1GB）下下来。fsmn-vad/cam-plus 体量小，交给服务首启自下。
     if (this.tier === 'lite') {
       const liteReady = await this.ensureLiteModels(pythonPath)
       if (!liteReady) {
-        this.setState('error', this.lastError ?? '轻量模型下载失败', 4)
+        this.setState('error', this.lastError ?? '轻量模型下载失败', 3)
         return null
       }
     }
@@ -309,7 +253,7 @@ export class NxCoreAsrSupervisor {
     // 首装判定：full 看 models 目录；lite 的 SenseVoice 已在上面预下载就位，
     // 仅剩 vad/声纹小模型（服务首启自下，几十 MB）。
     const firstRun = this.tier === 'full' && !existsSync(join(serviceDir, 'models'))
-    this.setState('starting', firstRun ? '首次启动：正在下载模型（约 2.1GB，仅此一次）…' : null, 4)
+    this.setState('starting', firstRun ? '首次启动：正在下载模型（约 2.1GB，仅此一次）…' : null, 3)
 
     const child = spawn(
       pythonPath,
@@ -359,7 +303,7 @@ export class NxCoreAsrSupervisor {
       this.connection = { baseUrl: DEFAULT_BASE_URL, apiKey, managed: true }
       this.state = 'ready'
       this.stateMessage = null
-      this.stateStep = 5
+      this.stateStep = 4
       this.stateDetail = null
       console.info(`[nxcore-asr] managed instance ready at ${DEFAULT_BASE_URL} (pid=${child.pid})`)
       return this.connection
@@ -368,7 +312,7 @@ export class NxCoreAsrSupervisor {
       this.child = null
       const message = error instanceof Error ? error.message : 'nxcore-asr 启动失败'
       this.lastError = message
-      this.setState('error', message, 4)
+      this.setState('error', message, 3)
       return null
     }
   }
@@ -376,7 +320,6 @@ export class NxCoreAsrSupervisor {
   async shutdown(): Promise<void> {
     const child = this.child
     this.connection = null
-    this.stopPortablePg()
     if (!child) return
     this.stopping = true
     await new Promise<void>((resolve) => {
@@ -474,7 +417,7 @@ export class NxCoreAsrSupervisor {
   private ensureLiteModels(pythonPath: string): Promise<boolean> {
     const target = join(this.dataDirectory, 'nxcore-asr-models-lite', 'fun-asr-nano')
     if (existsSync(join(target, 'configuration.json'))) return Promise.resolve(true)
-    this.setState('starting', '正在下载轻量模型（约 1GB，仅此一次）…', 4)
+    this.setState('starting', '正在下载轻量模型（约 1GB，仅此一次）…', 3)
     const script = [
       'import sys',
       'from modelscope.hub.snapshot_download import snapshot_download',
@@ -520,195 +463,6 @@ export class NxCoreAsrSupervisor {
     })
   }
 
-  /** docker compose 起 PostgreSQL（异步，与 pip 安装并行）。 */
-  private runDockerCompose(serviceDir: string): Promise<boolean> {
-    return new Promise((resolve) => {
-      const child = spawn('docker', ['compose', 'up', '-d'], {
-        cwd: serviceDir, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
-      })
-      child.stdin.end()
-      let output = ''
-      child.stdout.setEncoding('utf8')
-      child.stderr.setEncoding('utf8')
-      child.stdout.on('data', (chunk: string) => {
-        output += chunk
-        process.stdout.write(`[nxcore-asr-setup] ${chunk}`)
-      })
-      child.stderr.on('data', (chunk: string) => {
-        output += chunk
-        process.stdout.write(`[nxcore-asr-setup] ${chunk}`)
-        // 首次拉 postgres 镜像的进度行透传为明细。
-        const pull = chunk.match(/Pulling\s+([\w:.-]+)[\s.]*([\d.kmg]+\/[\d.kmg]+)?/)
-        if (pull) this.setDetail(`拉取镜像 ${pull[1]}${pull[2] ? `（${pull[2]}）` : ''}`)
-      })
-      const timeout = setTimeout(() => {
-        this.killChild(child)
-        this.lastError = 'docker compose 超时（5 分钟）'
-        resolve(false)
-      }, 300_000)
-      child.on('exit', (code) => {
-        clearTimeout(timeout)
-        this.setDetail(null)
-        if (code === 0) return resolve(true)
-        this.lastError = '离线转写需要 PostgreSQL（docker compose）未就绪：' + (output.trim().split('\n').pop() || 'docker 不可用')
-        resolve(false)
-      })
-    })
-  }
-
-  /** 等 PG 端口就绪（容器起后到可连有几秒窗口）。 */
-  private async waitPgReady(): Promise<boolean> {
-    const deadline = Date.now() + 30_000
-    while (Date.now() < deadline) {
-      if (await probeTcpPort(PG_PORT)) return true
-      await delay(500)
-    }
-    this.lastError = 'PostgreSQL 端口 30s 内未就绪'
-    return false
-  }
-
-  /** 异步执行 PG 工具（initdb/pg_ctl/psql）。绝不能 spawnSync：同步等待会阻塞
-   *  Electron 主进程事件循环——被杀软拖住的 initdb（超时 120s）足以把窗口
-   *  冻成「未响应」。 */
-  private async runPgTool(bin: string, args: string[], timeoutMs: number): Promise<{ status: number | null; output: string }> {
-    return new Promise((resolve) => {
-      const child = spawn(join(bin, args[0]!), args.slice(1), {
-        windowsHide: true,
-        env: { ...process.env, LC_ALL: 'C' },
-        stdio: ['ignore', 'pipe', 'pipe'],
-      })
-      let output = ''
-      let settled = false
-      const finish = (status: number | null): void => {
-        if (settled) return
-        settled = true
-        clearTimeout(timer)
-        resolve({ status, output })
-      }
-      const timer = setTimeout(() => {
-        child.kill()
-        finish(null)
-      }, timeoutMs)
-      child.stdout?.setEncoding('utf8')
-      child.stdout?.on('data', (chunk) => { output += chunk })
-      child.stderr?.setEncoding('utf8')
-      child.stderr?.on('data', (chunk) => { output += chunk })
-      child.on('error', () => finish(null))
-      child.on('exit', (code) => finish(code))
-    })
-  }
-
-  /** 便携 PG 托管（打包版免 Docker）：initdb 一次 → pg_ctl start → 复刻
-   *  docker initdb 的角色/库初始化（asr_app + asr 库 owner）。
-   *  平面注意：macOS 二进制无后缀、initdb 需 --locale=C（默认 locale 报错）、
-   *  pg_ctl 用 -w -t 同步等待启动完成。 */
-  private async startPortablePg(): Promise<boolean> {
-    const pgDir = portablePgDir()
-    if (!pgDir) return false
-    const bin = join(pgDir, 'bin')
-    const pgHome = join(this.dataDirectory, 'nxcore-asr-pg')
-    const useTmpdirMarker = join(pgHome, 'use-tmpdir')
-    // userData 曾被杀软拦截：直接走临时目录，不再重复那次注定失败、动辄
-    // 两分钟的 initdb。
-    let dataDir = existsSync(useTmpdirMarker)
-      ? join(tmpdir(), 'everroom-nxcore-asr-pg', 'data')
-      : join(pgHome, 'data')
-    const logFile = join(pgHome, 'logfile.txt')
-    const run = async (args: string[], timeoutMs: number): Promise<{ status: number | null; output: string }> =>
-      this.runPgTool(bin, args.map((arg) => arg === '{{DATA}}' ? dataDir : arg), timeoutMs)
-    this.setDetail('准备 PostgreSQL…')
-    await mkdir(pgHome, { recursive: true }).catch(() => undefined)
-    // 目录里已有 PG_VERSION = 完整集群，直接复用（initdb 只认空目录）。
-    const hasCluster = (dir: string): boolean => existsSync(join(dir, 'PG_VERSION'))
-    if (!hasCluster(dataDir)) {
-      this.setDetail('初始化 PostgreSQL 数据目录…')
-      let init = await run(['initdb', '-D', '{{DATA}}', '-U', 'asr_admin', '-E', 'UTF8', '-A', 'trust', '--locale=C'], 120_000)
-      // Windows 杀软实时扫描可锁 WAL rename（Improper link/No such file）：
-      // userData 常在扫描重点区，重试换 os.tmpdir() 下的目录。半途拦截留下的
-      // 残片目录报 not empty，同样走回退。dataDir 随之切换，后续 pg_ctl/
-      // PG_VERSION 探测/stop 统一走实际目录（tmpdir 集群重启后丢失，
-      // PG_VERSION 不在即重走 initdb，自愈）。
-      if (init.status !== 0 && /rename|No such file|Improper link|exists but is not empty/i.test(init.output)) {
-        console.warn('[nxcore-asr] initdb 在数据目录被拦截（疑似杀软），改用临时目录重试')
-        dataDir = join(tmpdir(), 'everroom-nxcore-asr-pg', 'data')
-        await mkdir(join(tmpdir(), 'everroom-nxcore-asr-pg'), { recursive: true }).catch(() => undefined)
-        try {
-          writeFileSync(useTmpdirMarker, 'tmpdir\n', { encoding: 'utf8' })
-        } catch {
-          // 标记写不进就下次再探测一次。
-        }
-        // 回退目录已有完整集群（上次会话初始化成功）：直接复用——重跑 initdb
-        // 只会对非空目录报 "exists but is not empty"。
-        init = hasCluster(dataDir)
-          ? { status: 0, output: '' }
-          : await run(['initdb', '-D', '{{DATA}}', '-U', 'asr_admin', '-E', 'UTF8', '-A', 'trust', '--locale=C'], 120_000)
-      }
-      if (init.status !== 0) {
-        this.lastError = `initdb 失败：${init.output.slice(-300)}`
-        return false
-      }
-    }
-    if (!(await probeTcpPort(PG_PORT))) {
-      this.setDetail('启动 PostgreSQL…')
-      const start = await run(['pg_ctl', '-D', dataDir, '-l', logFile,
-        '-o', `-p ${PG_PORT} -h 127.0.0.1`, '-w', '-t', '60', 'start'], 90_000)
-      if (start.status !== 0) {
-        this.lastError = `pg_ctl start 失败：${start.output.slice(-300)}`
-        return false
-      }
-    }
-    if (!(await this.waitPgReady())) return false
-    // 复刻 docker/initdb/01-roles.sql（幂等）：asr_app 角色 + asr 库 owner。
-    // trust 认证下本地回环免密，超级用户 asr_admin 直连执行。
-    const psql = async (sql: string): Promise<{ status: number | null; output: string }> =>
-      run(['psql', '-h', '127.0.0.1', '-p', String(PG_PORT), '-U', 'asr_admin', '-d', 'postgres', '-v', 'ON_ERROR_STOP=1', '-c', sql], 30_000)
-    const role = await psql("SELECT 1 FROM pg_roles WHERE rolname='asr_app'")
-    if (role.status !== 0) {
-      this.lastError = `psql 角色查询失败：${role.output.slice(-200)}`
-      return false
-    }
-    if (!role.output.includes('1')) {
-      const create = await psql("CREATE ROLE asr_app LOGIN PASSWORD 'asr_dev_password'")
-      if (create.status !== 0) {
-        this.lastError = `创建 asr_app 角色失败：${create.output.slice(-200)}`
-        return false
-      }
-    }
-    const db = await psql("SELECT 1 FROM pg_database WHERE datname='asr'")
-    if (db.status === 0 && !db.output.includes('1')) {
-      const create = await psql('CREATE DATABASE asr OWNER asr_app')
-      if (create.status !== 0) {
-        this.lastError = `创建 asr 库失败：${create.output.slice(-200)}`
-        return false
-      }
-    }
-    this.setDetail(null)
-    console.info(`[nxcore-asr] portable PostgreSQL ready at 127.0.0.1:${PG_PORT}`)
-    return true
-  }
-
-  /** 便携 PG 关停（托管进程树里 pg_ctl 派生的 postgres 由 shutdown 兜底）。
-   *  两个候选数据目录都尝试 stop：杀软回退路径的集群在 tmpdir 下。 */
-  private stopPortablePg(): void {
-    const pgDir = portablePgDir()
-    if (!pgDir) return
-    const exe = process.platform === 'win32' ? '.exe' : ''
-    const candidates = [
-      join(this.dataDirectory, 'nxcore-asr-pg', 'data'),
-      join(tmpdir(), 'everroom-nxcore-asr-pg', 'data'),
-    ]
-    for (const dataDir of candidates) {
-      if (!existsSync(dataDir)) continue
-      try {
-        spawnSync(join(pgDir, 'bin', `pg_ctl${exe}`), ['-D', dataDir, '-m', 'fast', '-w', '-t', '10', 'stop'], {
-          encoding: 'utf8', timeout: 15_000, windowsHide: true,
-        })
-      } catch {
-        // 已停或异常都不阻塞退出。
-      }
-    }
-  }
-
   /** 租户 key 持久化在应用数据目录：重启复用，服务端 config.yaml 与网关配置共享同一把。 */
   private loadOrCreateApiKey(): string {
     const keyFile = join(this.dataDirectory, 'nxcore-asr-key')
@@ -727,17 +481,27 @@ export class NxCoreAsrSupervisor {
     return generated
   }
 
+  /** 托管运行的可写数据目录（SQLite 库 + 音频落盘）：打包版服务目录在
+   *  resources（只读），必须放应用数据目录。路径斜杠统一 /（yaml 友好）。 */
+  private managedDataDir(): string {
+    return join(this.dataDirectory, 'nxcore-asr-data').replaceAll('\\', '/')
+  }
+
   private ensureServiceConfig(serviceDir: string, apiKey: string): void {
     const configPath = join(serviceDir, 'config.yaml')
     const modelDir = this.modelDirForTier()
+    const dataDir = this.managedDataDir()
+    // SQLite 库文件放应用数据目录（服务方言分支：单文件单租户，免 PG）。
+    // URL 百分号编码：SQLAlchemy 解码后交给 sqlite3，路径含空格/中文都安全。
+    const sqliteUrl = `sqlite:///${encodeURIComponent(`${this.managedDataDir()}/asr.db`)}`
     const desired = [
       '# 由 EverRoom 桌面端托管生成：修改会被下次托管启动覆盖（手动部署请自建 config.yaml 并设 NXCORE_ASR_MANAGED=false）。',
       // funasr 纯 torch：零准备（模型首启自动下载）；默认 llamacpp 需预编译
       // 二进制（setup 脚本 10-30 分钟），托管模式不假设用户跑过。
       'engine: funasr',
-      'data_dir: ./data',
+      `data_dir: ${dataDir}`,
       `model_dir: ${modelDir}`,
-      'database_url: postgresql+psycopg://asr_app:asr_dev_password@127.0.0.1:25432/asr',
+      `database_url: ${sqliteUrl}`,
       'max_workers: 2',
       'tenants:',
       `  - name: everroom_desktop`,
@@ -745,10 +509,13 @@ export class NxCoreAsrSupervisor {
       '',
     ].join('\n')
     try {
+      // 库文件父目录先建（sqlite 只建文件不建目录）。
+      mkdirSync(join(this.dataDirectory, 'nxcore-asr-data'), { recursive: true })
       if (existsSync(configPath)) {
         const current = readFileSync(configPath, 'utf8')
-        // key 与模型目录（档位）都一致才跳过重写：切档必须换 model_dir。
-        if (current.includes(apiKey) && current.includes(`model_dir: ${modelDir}`)) return
+        // key、模型目录（档位）与库地址一致才跳过重写：切档换 model_dir，
+        // 旧版 PG 库地址（已废弃）也会触发重写迁移到 SQLite。
+        if (current.includes(apiKey) && current.includes(`model_dir: ${modelDir}`) && current.includes(sqliteUrl)) return
       }
       writeFileSync(configPath, desired, { encoding: 'utf8', mode: 0o600 })
     } catch (error) {

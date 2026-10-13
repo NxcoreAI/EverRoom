@@ -851,7 +851,6 @@
   "settings.rcAsrManagedState.external": "External mode (NXCORE_ASR_BASE_URL set, not managed)",
   "settings.rcAsrManagedState.ready": "Ready",
   "settings.rcAsrManagedState.missing-python": "Python 3.12+ required",
-  "settings.rcAsrManagedState.missing-docker": "PostgreSQL missing",
   "settings.rcAsrManagedState.setup-venv": "Installing dependencies…",
   "settings.rcAsrManagedState.starting": "Starting service…",
   "settings.rcAsrManagedState.error": "Start failed",

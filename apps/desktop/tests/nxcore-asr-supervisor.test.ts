@@ -11,7 +11,7 @@ vi.mock('../src/main/process-cleanup', () => ({
   forgetProcessRecord: vi.fn(),
 }))
 
-import { NxCoreAsrSupervisor, probeTcpPort } from '../src/main/asr/nxcore-asr-supervisor'
+import { NxCoreAsrSupervisor } from '../src/main/asr/nxcore-asr-supervisor'
 
 const directories: string[] = []
 
@@ -24,23 +24,6 @@ async function useTempDataDir(): Promise<{ dataDir: string; supervisor: NxCoreAs
   directories.push(dataDir)
   return { dataDir, supervisor: new NxCoreAsrSupervisor(dataDir) }
 }
-
-describe('probeTcpPort', () => {
-  it('空闲端口返回 false（有真实监听者才返回 true）——曾反向判定致 docker compose 从未执行', async () => {
-    // 找一个几乎必然空闲的端口。
-    expect(await probeTcpPort(1)).toBe(false)
-    // 起一个真实监听者再探测。
-    const { createServer } = await import('node:net')
-    const server = createServer()
-    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
-    const port = (server.address() as { port: number }).port
-    try {
-      expect(await probeTcpPort(port)).toBe(true)
-    } finally {
-      server.close()
-    }
-  })
-})
 
 describe('NxCoreAsrSupervisor', () => {
   it('初始状态为 idle（未启动不显示就绪——曾因默认 ready 误导用户）', async () => {
@@ -92,6 +75,10 @@ describe('NxCoreAsrSupervisor', () => {
     writeConfig()
     const liteConfig = readFileSync(join(serviceDir, 'config.yaml'), 'utf8')
     expect(liteConfig).toContain(`model_dir: ${join(dataDir, 'nxcore-asr-models-lite').replaceAll('\\', '/')}`)
+    // SQLite 库文件指向应用数据目录（打包版服务目录只读）。
+    expect(liteConfig).toContain(`database_url: sqlite:///`)
+    expect(liteConfig).toContain(encodeURIComponent(`${dataDir.replaceAll('\\', '/')}/nxcore-asr-data/asr.db`))
+    expect(liteConfig).toContain(`data_dir: ${dataDir.replaceAll('\\', '/')}/nxcore-asr-data`)
 
     await supervisor.setModelTier('full')
     writeConfig()
@@ -113,7 +100,7 @@ describe('NxCoreAsrSupervisor', () => {
       // 服务目录缺失 → error 态（probe 不通 + 目录不存在）。
       const status = supervisor.getStatus()
       if (connection === null) {
-        expect(['error', 'external', 'missing-python', 'missing-docker', 'setup-venv', 'starting']).toContain(status.state)
+        expect(['error', 'external', 'missing-python', 'setup-venv', 'starting']).toContain(status.state)
       }
     } finally {
       delete process.env.NXCORE_ASR_BASE_URL

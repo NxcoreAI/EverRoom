@@ -851,7 +851,6 @@
   "settings.rcAsrManagedState.external": "外部模式（NXCORE_ASR_BASE_URL 指定，不托管）",
   "settings.rcAsrManagedState.ready": "已就绪",
   "settings.rcAsrManagedState.missing-python": "缺少 Python 3.12+",
-  "settings.rcAsrManagedState.missing-docker": "缺少 PostgreSQL",
   "settings.rcAsrManagedState.setup-venv": "正在安装依赖…",
   "settings.rcAsrManagedState.starting": "正在启动服务…",
   "settings.rcAsrManagedState.error": "启动失败",

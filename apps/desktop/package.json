@@ -139,10 +139,6 @@
         "to": "nxcoreasr",
         "filter": [
           "app/**/*",
-          "docker/**/*",
-          "scripts/**/*",
-          "pg-dist/bin/**/*",
-          "pg-dist/share/**/*",
           "requirements.txt",
           "!**/__pycache__/**"
         ]
