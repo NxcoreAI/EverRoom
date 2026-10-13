@@ -135,6 +135,19 @@
         "to": "packaged-env.json"
       },
       {
+        "from": "../../submodules/nxcoreasr",
+        "to": "nxcoreasr",
+        "filter": [
+          "app/**/*",
+          "docker/**/*",
+          "scripts/**/*",
+          "pg-dist/bin/**/*",
+          "pg-dist/share/**/*",
+          "requirements.txt",
+          "!**/__pycache__/**"
+        ]
+      },
+      {
         "from": "node_modules/npm",
         "to": "npm",
         "filter": [

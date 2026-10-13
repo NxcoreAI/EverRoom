@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import type { AsrJob } from '../src/shared/sources'
-import { AsrCoordinator } from '../src/main/asr/asr-coordinator'
+import { AsrCoordinator, type AsrCloudControlGate } from '../src/main/asr/asr-coordinator'
 
 function makeJob(): AsrJob {
   return {
@@ -145,5 +145,91 @@ describe('AsrCoordinator segmented (saas-seg:) routing', () => {
     uploader.refetchMerged.mockResolvedValue({ merged: makeSegmentedJob(), anchorJobId: null })
     await expect(coordinator.renameSpeaker('saas-seg:rec-1', 'spk_a', '张三')).rejects.toThrow('分段转写尚未完成')
     expect(cloud.renameAsrSpeaker).not.toHaveBeenCalled()
+  })
+})
+
+describe('AsrCoordinator local segmented recordings', () => {
+  function makeLocalSegmentDeps(finalize: AsrJob | null) {
+    const fallback = { ...makeJob(), id: 'local-1', source: 'local' as const }
+    const cloud = {
+      renameAsrSpeaker: vi.fn().mockResolvedValue(undefined),
+      getAsrJob: vi.fn().mockResolvedValue(makeJob()),
+      createAsrJob: vi.fn().mockResolvedValue(makeJob()),
+    }
+    const reality = {
+      applyAsr: vi.fn().mockResolvedValue({ id: 'event-1' }),
+      applyAsrByJob: vi.fn().mockResolvedValue({ id: 'event-1' }),
+    }
+    const transcriptionSync = { publishLocalTranscription: vi.fn().mockResolvedValue(undefined) }
+    const audioSync = { upload: vi.fn().mockResolvedValue(undefined) }
+    const uploader = {
+      finalize: vi.fn().mockResolvedValue(finalize),
+      getMergedJob: vi.fn().mockResolvedValue(finalize),
+      refetchMerged: vi.fn().mockResolvedValue({ merged: finalize ?? makeSegmentedJob(), anchorJobId: 'gw-1' }),
+    }
+    const localBridge = { createJob: vi.fn().mockResolvedValue(fallback), getJob: vi.fn() }
+    const coordinator = new AsrCoordinator(localBridge as never, cloud as never, reality as never, audioSync as never, transcriptionSync as never, uploader as never)
+    return { cloud, reality, transcriptionSync, uploader, localBridge, coordinator }
+  }
+
+  it('本地模式分段合并成功：不回退整段，合并结果落地事件并发布', async () => {
+    const { reality, transcriptionSync, uploader, localBridge, coordinator } = makeLocalSegmentDeps({ ...makeSegmentedJob(), source: 'local' })
+    const job = await coordinator.createJob({ mode: 'local', filePath: '/tmp/a.webm', recordingId: 'rec-1', durationMs: 120_000 } as never)
+    expect(uploader.finalize).toHaveBeenCalledWith('rec-1')
+    expect(job.source).toBe('local')
+    expect(localBridge.createJob).not.toHaveBeenCalled()
+    expect((reality.applyAsr as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith('rec-1', job)
+    expect(transcriptionSync.publishLocalTranscription).toHaveBeenCalledTimes(1)
+  })
+
+  it('本地模式分段失败：回退整段本地转写老路', async () => {
+    const { reality, uploader, localBridge, coordinator } = makeLocalSegmentDeps(null)
+    const job = await coordinator.createJob({ mode: 'local', filePath: '/tmp/a.webm', recordingId: 'rec-1', durationMs: 120_000, languageHints: ['zh'], diarizationEnabled: true } as never)
+    expect(uploader.finalize).toHaveBeenCalledWith('rec-1')
+    expect(localBridge.createJob).toHaveBeenCalledWith(expect.objectContaining({ filePath: '/tmp/a.webm', languageHints: ['zh'], diarizationEnabled: true }))
+    expect(job.id).toBe('local-1')
+    expect(job.source).toBe('local')
+    expect((reality.applyAsr as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith('rec-1', job)
+  })
+
+  it('本地分段合并不支持标记说话人', async () => {
+    const { cloud, uploader, coordinator } = makeLocalSegmentDeps(null)
+    uploader.refetchMerged.mockResolvedValue({ merged: { ...makeSegmentedJob(), source: 'local' }, anchorJobId: 'gw-1' })
+    await expect(coordinator.renameSpeaker('saas-seg:rec-1', 'spk_a', '张三')).rejects.toThrow('仅云端转写支持标记说话人')
+    expect(cloud.renameAsrSpeaker).not.toHaveBeenCalled()
+  })
+})
+
+describe('AsrCoordinator cloud-control gating', () => {
+  const gate = (audioUpload: boolean, transcriptSync: boolean): AsrCloudControlGate => ({
+    audioUploadEnabled: () => audioUpload,
+    transcriptSyncEnabled: () => transcriptSync,
+  })
+
+  function makeGatedDeps(control: AsrCloudControlGate) {
+    const local = { createJob: vi.fn().mockResolvedValue(makeJob()), getJob: vi.fn().mockResolvedValue(makeJob()) }
+    const reality = { applyAsr: vi.fn().mockResolvedValue({ id: 'event-1' }) }
+    const audioSync = { upload: vi.fn().mockResolvedValue(undefined) }
+    const transcriptionSync = { publishLocalTranscription: vi.fn().mockResolvedValue(undefined) }
+    const coordinator = new AsrCoordinator(local as never, {} as never, reality as never, audioSync as never, transcriptionSync as never, undefined, control)
+    return { audioSync, transcriptionSync, coordinator }
+  }
+
+  it('音频上云开关关闭时不上传音频（本地模式同样拦截）', async () => {
+    const { audioSync, coordinator } = makeGatedDeps(gate(false, true))
+    await coordinator.createJob({ mode: 'local', filePath: '/tmp/a.m4a', recordingId: 'rec-1', durationMs: 1_000 } as never)
+    expect(audioSync.upload).not.toHaveBeenCalled()
+  })
+
+  it('音频上云开关开启时上传音频', async () => {
+    const { audioSync, coordinator } = makeGatedDeps(gate(true, true))
+    await coordinator.createJob({ mode: 'local', filePath: '/tmp/a.m4a', recordingId: 'rec-1', durationMs: 1_000 } as never)
+    expect(audioSync.upload).toHaveBeenCalledTimes(1)
+  })
+
+  it('转写文字同步开关关闭时不向云端发布', async () => {
+    const { transcriptionSync, coordinator } = makeGatedDeps(gate(true, false))
+    await coordinator.createJob({ mode: 'local', filePath: '/tmp/a.m4a', recordingId: 'rec-1', durationMs: 1_000 } as never)
+    expect(transcriptionSync.publishLocalTranscription).not.toHaveBeenCalled()
   })
 })

@@ -75,6 +75,7 @@ import { providerOfService, SaasConnectorBridge } from './gateway/saas-connector
 import { createConnectorTombstoneStore } from './core/connector-tombstone-store'
 import { RecordingStore } from './recording/recording-store'
 import { RecordingSegmentUploader } from './recording/recording-segment-uploader'
+import { NxCoreAsrSupervisor } from './asr/nxcore-asr-supervisor'
 import { isSaasRateLimitError, OIDC_CALLBACK_URL, SaasClient, SaasRequestError, type ConnectorOoSession, type OidcCallbackOutcome } from './cloud/saas-client'
 import { AgentStatusReporter } from './cloud/agent-status-reporter'
 import { SessionLeaseKeeper } from './cloud/session-lease-keeper'
@@ -858,6 +859,7 @@ let connectorGatewayBridge: ConnectorGatewayBridge | null = null
 let migrationCoordinator: MigrationCoordinator | null = null
 let recordingStore: RecordingStore | null = null
 let recordingSegmentUploader: RecordingSegmentUploader | null = null
+let nxcoreAsrSupervisor: NxCoreAsrSupervisor | null = null
 let privateAudioSync: PrivateAudioSyncService | null = null
 let saasClient: SaasClient | null = null
 let agentStatusReporter: AgentStatusReporter | null = null
@@ -1481,7 +1483,25 @@ function registerGatewayHandlers(): void {
 function registerRuntimeConfigHandlers(): void {
   handle(RUNTIME_CONFIG_CHANNELS.get, () => runtimeConfigBridge?.get())
   handle(RUNTIME_CONFIG_CHANNELS.saveUser, async (_event, input: unknown) => {
-    const snapshot = await runtimeConfigBridge?.saveUser(input)
+    const payload = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>
+    const asr = payload.asr
+    if (asr && typeof asr === 'object' && !Array.isArray(asr)) {
+      const asrSection = asr as Record<string, unknown>
+      if (asrSection.provider === 'nxcore-asr-managed') {
+        const connection = nxcoreAsrSupervisor?.getConnection()
+        if (connection) {
+          payload.asr = {
+            provider: 'nxcore-asr',
+            baseUrl: connection.baseUrl,
+            apiKey: connection.apiKey,
+            oss: { region: '', bucket: '', accessKeyId: '', accessKeySecret: '', stsToken: '', prefix: '' },
+          }
+        } else {
+          delete payload.asr
+        }
+      }
+    }
+    const snapshot = await runtimeConfigBridge?.saveUser(payload)
     if (snapshot) void syncManagedChildProcesses(snapshot)
     return runtimeConfigBridge?.get()
   })
@@ -2935,14 +2955,14 @@ function registerAsrHandlers(store: RecordingStore, coordinator: AsrCoordinator,
   })
   handle(ASR_CHANNELS.beginRecording, (_event, mimeType) => store.begin(mimeType))
   handle(ASR_CHANNELS.appendRecording, (_event, id, chunk) => store.append(id, chunk))
-  handle(ASR_CHANNELS.uploadRecordingSegment, (_event, id: string, index: number, chunk: unknown, durationMs: number, meta: { mimeType?: string; languageHints?: string[] }) => {
+  handle(ASR_CHANNELS.uploadRecordingSegment, (_event, id: string, index: number, chunk: unknown, durationMs: number, meta: { mimeType?: string; languageHints?: string[]; mode?: 'cloud' | 'local' }) => {
     // MediaRecorder 会给 'audio/webm;codecs=opus' 这类带编解码器后缀的类型，
     // SaaS 建单只收白名单裸类型。
     const normalized = typeof meta?.mimeType === 'string' ? meta.mimeType.split(';')[0]!.trim() : ''
     const mimeType = ['audio/aac','audio/flac','audio/mp4','audio/mpeg','audio/ogg','audio/wav','audio/webm','video/mp4'].includes(normalized) ? normalized : 'audio/webm'
     const languageHints = Array.isArray(meta?.languageHints) ? meta.languageHints.filter((hint): hint is string => typeof hint === 'string') : undefined
     const bytes = chunk instanceof Uint8Array ? chunk : new Uint8Array(0)
-    return segments.onSegment(String(id ?? ''), Number(index), bytes, Number(durationMs), { mimeType, languageHints })
+    return segments.onSegment(String(id ?? ''), Number(index), bytes, Number(durationMs), { mimeType, languageHints, ...(meta?.mode === 'local' ? { mode: 'local' as const } : {}) })
   })
   handle(ASR_CHANNELS.finishRecording, (_event, id) => store.finish(id))
   handle(ASR_CHANNELS.cancelRecording, async (_event, id) => {
@@ -2955,7 +2975,11 @@ function registerAsrHandlers(store: RecordingStore, coordinator: AsrCoordinator,
 }
 
 function registerPrivateAudioHandlers(service: PrivateAudioSyncService): void {
-  handle(PRIVATE_AUDIO_CHANNELS.list, (_event, cursor?: number) => rateLimitAware(() => service.list(cursor ?? 0)))
+  handle(PRIVATE_AUDIO_CHANNELS.list, (_event, cursor?: number) => rateLimitAware(async () => {
+    const status = await saasClient?.status().catch(() => null)
+    if (!status?.authenticated) return { assets: [], nextCursor: 0 }
+    return service.list(cursor ?? 0)
+  }))
   handle(PRIVATE_AUDIO_CHANNELS.download, (_event, assetId: string, outputPath: string) => rateLimitAware(() => service.downloadById(assetId, outputPath)))
   handle(PRIVATE_AUDIO_CHANNELS.read, (_event, assetId: string) => rateLimitAware(() => service.read(assetId)))
 }
@@ -3858,6 +3882,20 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   // 创建必报 No handler registered。依赖均为模块级或调用期懒解析，可提前注册。
   registerScreenCaptureHandlers()
   registerScreenMemoryHandlers()
+  ipcMain.handle('nxcore-asr:status', () => {
+    const status = nxcoreAsrSupervisor?.getStatus() ?? null
+    return status ? { ...status, apiKey: null } : null
+  })
+  ipcMain.handle('nxcore-asr:start', () => {
+    if (!nxcoreAsrSupervisor) return null
+    void nxcoreAsrSupervisor.start()
+    return nxcoreAsrSupervisor.getStatus()
+  })
+  ipcMain.handle('nxcore-asr:set-tier', (_event, tier: unknown) => {
+    if (!nxcoreAsrSupervisor) return null
+    if (tier === 'lite' || tier === 'full') void nxcoreAsrSupervisor.setModelTier(tier)
+    return nxcoreAsrSupervisor.getStatus()
+  })
   createWindow()
   // SaaS 客户端先于连接器栈构造：saas 连接层在 gateway 启动前就需要登录态换 oo 会话。
   const credentials = new CredentialStore(join(app.getPath('userData'), 'credentials.json'), join(app.getPath('userData'), 'backups'))
@@ -3866,7 +3904,9 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   recordingStore = new RecordingStore(recordingsDirectory)
   saasClient=new SaasClient(credentials,app,recordingsDirectory,(url)=>shell.openExternal(url))
   void saasClient.initialize()
-  recordingSegmentUploader = new RecordingSegmentUploader(saasClient, recordingsDirectory)
+  recordingSegmentUploader = new RecordingSegmentUploader(saasClient, recordingsDirectory, {
+    localEngine: () => (gatewaySupervisor ? new AsrGatewayBridge(gatewaySupervisor) : null),
+  })
   recordingSegmentUploader.setPreviewListener((event) => {
     console.log('[segment-asr] preview push', event.recordingId, 'index', event.index, 'segments', event.result.segments.length, 'windows', BrowserWindow.getAllWindows().length)
     for (const target of BrowserWindow.getAllWindows()) {
@@ -4032,11 +4072,16 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     screenMemoryPersistence = screenMemoryBridge
     screenMemoryControllerSummaryDispatch = (allowed) => screenMemoryBridge.setSummaryDispatch(allowed)
     runtimeConfigBridge = new RuntimeConfigBridge(gatewaySupervisor)
+    nxcoreAsrSupervisor = new NxCoreAsrSupervisor(dataDirectory)
     // 冷启动 MemoryCore/补全服务只带 .env 透传；gateway 就绪后按已存 runtime
     // config 补一次（把“每次冷启动回退 .env”的窗口收窄到 gateway ready 之前）。
     // 现在这两个 sync 都是 no-op 风格：配置没变不会重启任何实例。
     void runtimeConfigBridge.get()
-      .then((snapshot) => syncManagedChildProcesses(snapshot))
+      .then((snapshot) => {
+        void syncManagedChildProcesses(snapshot)
+        const asr = (snapshot?.config as Record<string, unknown> | undefined)?.asr as Record<string, unknown> | undefined
+        if (asr?.provider === 'nxcore-asr') void nxcoreAsrSupervisor?.start()
+      })
       .catch((error) => console.warn('[managed-children] startup runtime-config sync skipped:', error))
     diaryGatewayBridge = new DiaryGatewayBridge(gatewaySupervisor)
     writingStyleGatewayBridge = new WritingStyleGatewayBridge(gatewaySupervisor)
@@ -4399,6 +4444,7 @@ app.on('before-quit', (event) => {
   const statusReporter = agentStatusReporter
   const leaseKeeper = sessionLeaseKeeper
   const relayKeeper = aiRelayKeeper
+  const asrSupervisor = nxcoreAsrSupervisor
   const remoteCommands = remoteAgentCommandClient
   const cursorCompletionBridge = cursorCompletionAgentBridge
   const documentBridge = documentGatewayBridge
@@ -4419,6 +4465,7 @@ app.on('before-quit', (event) => {
   openConnectorConsoleWindow = null
   cursorCompletionSupervisor = null
   memoryCoreSupervisor = null
+  nxcoreAsrSupervisor = null
   knowledgeServiceSupervisor = null
   agentGatewayBridge = null
   agentStatusReporter = null
@@ -4471,6 +4518,7 @@ app.on('before-quit', (event) => {
     cursorCompletion?.shutdown(),
     memoryCore?.shutdown(),
     knowledgeService?.shutdown(),
+    asrSupervisor?.shutdown(),
   ]).then(async () => {
     await flushDesktopLogs()
     if (clearUserDataOnQuit) {

@@ -255,4 +255,38 @@ describe('runtime config form state — shared ai fields', () => {
     expect(asrFieldsError({ ...scalarsOnly, oss: { ...scalarsOnly.oss, region: 'r', bucket: 'b', accessKeyId: 'ak', accessKeySecret: 'sk' } }, t)).toBeNull()
     expect(asrFieldsError({ ...emptyAsrFields(), model: 'm' }, t)).toBe('surface:configGate.embeddingIncomplete')
   })
+
+  it('asr 引擎分支校验：托管态免校验；openai-compatible 只需 baseUrl', () => {
+    const t = (key: string) => key
+    // 托管态：连接由主进程写入，表单零校验。
+    expect(asrFieldsError({ ...emptyAsrFields(), provider: 'nxcore-asr-managed' }, t)).toBeNull()
+    // openai-compatible：全空 = 未配置；只填 baseUrl 即有效（model/key/language 可选）。
+    expect(asrFieldsError({ ...emptyAsrFields(), provider: 'openai-compatible' }, t)).toBeNull()
+    expect(asrFieldsError({ ...emptyAsrFields(), provider: 'openai-compatible', baseUrl: 'http://127.0.0.1:8000' }, t)).toBeNull()
+    expect(asrFieldsError({ ...emptyAsrFields(), provider: 'openai-compatible', model: 'whisper-1' }, t)).toBe('surface:configGate.embeddingIncomplete')
+  })
+
+  it('asr 托管态保存为占位 provider；openai-compatible 携带 language 不带 oss 要求', () => {
+    const managed = stateWith({ asrCustom: true, asr: { ...emptyAsrFields(), provider: 'nxcore-asr-managed' } })
+    const managedPayload = buildUserPayload(snapshot(null), managed) as Record<string, unknown>
+    expect(managedPayload.asr).toEqual({ provider: 'nxcore-asr-managed' })
+
+    const selfHosted = stateWith({ asrCustom: true, asr: { ...emptyAsrFields(), provider: 'openai-compatible', baseUrl: 'http://127.0.0.1:8000', apiKey: 'sk-1', language: 'zh' } })
+    const selfPayload = buildUserPayload(snapshot(null), selfHosted).asr as Record<string, unknown>
+    expect(selfPayload).toMatchObject({ provider: 'openai-compatible', baseUrl: 'http://127.0.0.1:8000', apiKey: 'sk-1', language: 'zh' })
+  })
+
+  it('播种：已存 nxcore-asr 显示为托管态，language 一并回读', () => {
+    const state = formStateFromSnapshot(snapshot({
+      asr: { provider: 'nxcore-asr', baseUrl: 'http://127.0.0.1:8300', apiKey: '********', language: '' },
+    }))
+    expect(state.asr.provider).toBe('nxcore-asr-managed')
+    expect(state.asrCustom).toBe(true)
+
+    const selfHosted = formStateFromSnapshot(snapshot({
+      asr: { provider: 'openai-compatible', baseUrl: 'http://127.0.0.1:8000', apiKey: '********', language: 'zh' },
+    }))
+    expect(selfHosted.asr.provider).toBe('openai-compatible')
+    expect(selfHosted.asr.language).toBe('zh')
+  })
 })

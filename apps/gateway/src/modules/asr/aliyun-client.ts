@@ -40,7 +40,7 @@ const TERMINAL_STATUS = new Map<string, AsrTaskSnapshot["status"]>([
   ["CANCELLED", "cancelled"],
 ]);
 
-function contentType(fileName: string): string {
+export function contentType(fileName: string): string {
   const extension = fileName.split(".").pop()?.toLowerCase();
   const types: Record<string, string> = {
     aac: "audio/aac",

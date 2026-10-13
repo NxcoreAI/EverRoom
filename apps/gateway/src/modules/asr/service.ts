@@ -16,6 +16,7 @@ interface AsrJobPayload {
   diarizationEnabled: boolean;
   contextPrompt: string;
   remoteTaskId?: string;
+  externalId?: string;
 }
 
 function payloadOf(value: unknown): AsrJobPayload {
@@ -72,6 +73,7 @@ export class AsrService {
       languageHints: input.languageHints ?? [],
       diarizationEnabled: input.diarizationEnabled,
       contextPrompt: input.contextPrompt?.trim() ?? "",
+      ...(input.externalId ? { externalId: input.externalId } : {}),
     };
     this.db.insert(jobs).values({
       id,
@@ -112,6 +114,7 @@ export class AsrService {
         languageHints: payload.languageHints,
         diarizationEnabled: payload.diarizationEnabled,
         contextPrompt: payload.contextPrompt,
+        ...(payload.externalId ? { externalId: payload.externalId } : {}),
       });
       this.db.update(jobs).set({
         status: "running",

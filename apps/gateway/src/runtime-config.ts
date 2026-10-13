@@ -34,6 +34,8 @@ export interface RuntimeConfig {
     baseUrl: string;
     model: string;
     apiKey: string;
+    /** openai-compatible 引擎的转写语言提示（如 zh）；仅自建引擎消费。 */
+    language?: string;
     oss?: Record<string, unknown>;
     [key: string]: unknown;
   };
@@ -160,8 +162,8 @@ function validateConfig(value: unknown): RuntimeConfig {
   if (config.asr !== undefined) {
     if (!config.asr || typeof config.asr !== "object" || Array.isArray(config.asr)) throw new Error("runtime_config_invalid:asr");
     const asr = config.asr as Record<string, unknown>;
-    for (const key of Object.keys(asr)) if (!["provider", "baseUrl", "model", "apiKey", "oss"].includes(key)) throw new Error(`runtime_config_unknown_field:asr.${key}`);
-    for (const key of ["provider", "baseUrl", "model", "apiKey"]) if (asr[key] !== undefined && typeof asr[key] !== "string") throw new Error(`runtime_config_invalid:asr.${key}`);
+    for (const key of Object.keys(asr)) if (!["provider", "baseUrl", "model", "apiKey", "language", "oss"].includes(key)) throw new Error(`runtime_config_unknown_field:asr.${key}`);
+    for (const key of ["provider", "baseUrl", "model", "apiKey", "language"]) if (asr[key] !== undefined && typeof asr[key] !== "string") throw new Error(`runtime_config_invalid:asr.${key}`);
     if (asr.baseUrl) { try { const url = new URL(asr.baseUrl as string); if (!["http:", "https:"].includes(url.protocol)) throw new Error(); } catch { throw new Error("runtime_config_invalid_url:asr.baseUrl"); } }
     if (asr.oss !== undefined) {
       if (!asr.oss || typeof asr.oss !== "object" || Array.isArray(asr.oss)) throw new Error("runtime_config_invalid:asr.oss");

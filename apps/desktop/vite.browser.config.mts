@@ -27,6 +27,8 @@ const sources = [
 // 任意缺失的 nxcore 方法返回「可调用 + thenable + 可取属性」的万能对象:
 // 调用结果仍是 magic（既能 await 当空结果,也能继续调用当取消订阅函数）。
 const magicCache = new Map()
+// 内置离线转写托管状态（nxcoreAsr.status/start/setTier 消费；tier 切换可联动 UI）。
+let mockAsrStatus = { state: 'idle', message: null, baseUrl: null, apiKey: null, step: 0, detail: null, tier: 'full' }
 const magic = (name) => {
   const cached = magicCache.get(name)
   if (cached) return cached
@@ -619,8 +621,57 @@ const base = {
     ].find((item) => item.id === fileId) ?? null,
   },
   documents: { list: async () => [], listTrash: async () => [] },
+  mcp: { listServers: async () => ({ configPath: '/mock/mcp.json', servers: {} }), saveServers: async (servers) => ({ configPath: '/mock/mcp.json', servers }) },
+  screenMemory: {
+    status: async () => ({ running: false, permission: 'not-determined', helperAvailable: false, paused: false, enabled: false, currentBundleId: null, currentAppName: null, openIntervalSince: null, currentKeyframes: 0, heartbeatMs: 0, lastBeatAt: null, lastError: null, directory: '/mock/screen-memory', deviceReady: { archOk: true, memoryOk: true } }),
+    settings: async () => ({ enabled: false, paused: false, allowedApps: [], excludedApps: [] }),
+    updateSettings: async (patch) => ({ enabled: false, paused: false, allowedApps: [], excludedApps: [], ...patch }),
+    storage: async () => ({ imagesBytes: 0 }),
+  },
   // 完整 App 入口（/）验证用：已配置 + 已登录，越过 RuntimeConfigGate。
-  runtimeConfig: { get: async () => ({ primaryConfigured: true, configSource: 'manual' }) },
+  // runtimeConfig 用完整 snapshot 形状（含 userConfig）——魔法代理的残缺返回
+  // 会把 RuntimeConfigSettingsSection 渲染炸进全局错误边界。
+  runtimeConfig: {
+    get: async () => ({
+      primaryConfigured: true,
+      config: {},
+      // 复现历史污染：embedding/webSearch/asr 半填（旧表单默认值预填时代保存的遗留）。
+      userConfig: {
+        primary: { provider: 'openai-compatible', model: 'glm-5.3', baseUrl: 'http://localhost:8227/v1', apiKey: 'sk-mock' },
+        knowledge: { embedding: { provider: 'qwen', model: 'text-embedding-v4', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', apiKey: '' } },
+        webSearch: { provider: 'qwen', model: 'qwen-plus', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', apiKey: '' },
+        asr: { provider: 'aliyun', model: 'qwen-audio-3.0-asr-flash-filetrans', baseUrl: '', apiKey: '', oss: { region: '', bucket: '', accessKeyId: '', accessKeySecret: '', stsToken: '', prefix: '' } },
+      },
+      source: 'user', selectedSource: 'user', availableSources: ['default', 'user'],
+      configVersion: 2, updatedAt: new Date().toISOString(),
+      webSearchCredential: { configured: false, source: 'none' },
+    }),
+    saveUser: async (input) => ({
+      config: input, userConfig: input, source: 'user', selectedSource: 'user',
+      availableSources: ['default', 'user'], configVersion: 3,
+      updatedAt: new Date().toISOString(), webSearchCredential: { configured: false, source: 'none' },
+    }),
+    clearUser: async () => {},
+    relayReady: async () => ({ ready: true }),
+    selectSource: async () => {},
+    test: async () => ({ valid: true }),
+  },
+  aiRelay: { status: async () => null, onEvent: () => () => {} },
+  nxcoreAsr: {
+    status: async () => mockAsrStatus,
+    start: async () => { mockAsrStatus = { ...mockAsrStatus, state: 'starting', step: 4, message: '正在启动服务…', detail: null }; return mockAsrStatus },
+    setTier: async (tier) => { mockAsrStatus = { ...mockAsrStatus, tier }; return mockAsrStatus },
+  },
+  cloudControl: {
+    settings: async () => ({ audioUpload: false, transcriptSync: false, remoteAgentChannel: false, aiRelay: true }),
+    update: async (patch) => ({ audioUpload: false, transcriptSync: false, remoteAgentChannel: false, aiRelay: true, ...patch }),
+    onChanged: () => () => {},
+  },
+  appPrefs: {
+    settings: async () => ({ saasBaseUrl: null, updateFeedUrl: null, crashReporting: true }),
+    update: async (patch) => ({ saasBaseUrl: null, updateFeedUrl: null, crashReporting: true, ...patch }),
+    onChanged: () => () => {},
+  },
   account: { status: async () => ({ authenticated: true, apiBaseUrl: 'https://mock.example', plan: 'pro_plan_active' }) },
   agent: {
     discoverLocalAgents: async () => [],
@@ -638,6 +689,7 @@ const base = {
     }),
     updateSession: async (id) => ({ id, roomId: null, pageLabel: 'Agent', runtimeId: 'rt-main', title: null, status: 'idle', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }),
     deleteSession: async () => {},
+    getUsage: async (range) => ({ provider: 'mock', model: 'mock', range, inputTokens: 0, outputTokens: 0, cacheHitTokens: 0, points: [], updatedAt: new Date().toISOString() }),
     subscribe: async () => {},
     unsubscribe: async () => {},
     getEvents: async () => [],

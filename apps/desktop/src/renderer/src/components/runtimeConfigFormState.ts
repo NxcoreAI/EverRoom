@@ -20,12 +20,15 @@ export interface ManualAiConfigFields {
   apiKey: string
 }
 
-/** ASR 表单：标量 + 阿里云 OSS 子表单（提交转写必须 OSS）。 */
+/** ASR 表单：标量 + 阿里云 OSS 子表单（提交转写必须 OSS）。provider 即引擎选择：
+ *  'aliyun'（默认，标量+OSS 必填）/ 'openai-compatible'（自建兼容服务，仅 baseUrl 必填）/
+ *  'nxcore-asr-managed'（内置离线引擎托管态，由主进程写入真实连接）。 */
 export interface ManualAsrFields {
   provider: string
   model: string
   baseUrl: string
   apiKey: string
+  language: string
   oss: ManualAsrOssFields
 }
 
@@ -48,6 +51,7 @@ export function emptyAsrFields(): ManualAsrFields {
     model: '',
     baseUrl: '',
     apiKey: '',
+    language: '',
     oss: { region: '', bucket: '', accessKeyId: '', accessKeySecret: '', stsToken: '', prefix: '' },
   }
 }
@@ -182,11 +186,14 @@ export function formStateFromSnapshot(snapshot: RuntimeConfigSnapshot | null): R
   const vlm = aiFieldsOf(userConfig ? sectionOf(userConfig, 'vlm') : {})
   const asrSlot = userConfig ? sectionOf(userConfig, 'asr') : {}
   const oss = sectionOf(asrSlot, 'oss')
+  // nxcore-asr 一律显示为内置托管态：连接由主进程托管写入，表单不编辑。
+  const seededProvider = textOf(asrSlot, 'provider', 'aliyun')
   const asr: ManualAsrFields = {
-    provider: textOf(asrSlot, 'provider', 'aliyun'),
+    provider: seededProvider === 'nxcore-asr' ? 'nxcore-asr-managed' : seededProvider,
     model: textOf(asrSlot, 'model'),
     baseUrl: textOf(asrSlot, 'baseUrl'),
     apiKey: '',
+    language: textOf(asrSlot, 'language'),
     oss: {
       region: textOf(oss, 'region'),
       bucket: textOf(oss, 'bucket'),
@@ -325,24 +332,31 @@ export function buildUserPayload(
   }
   if (state.vlmCustom) base.vlm = trimmedAiFields(state.vlm)
   if (state.asrCustom) {
-    const { oss, ...scalar } = state.asr
-    base.asr = {
-      ...scalar,
-      provider: scalar.provider.trim() || 'aliyun',
-      model: scalar.model.trim(),
-      baseUrl: scalar.baseUrl.trim(),
-      apiKey: scalar.apiKey.trim(),
-      // oss 全空写空串：阿里云 provider 无 OSS 提交转写直接抛错，构造分支
-      // 在 gateway 侧要求必填项齐全才生效；oss secrets 空串经 preserveMasked
-      // 保留库中原值。
-      oss: {
-        region: oss.region.trim(),
-        bucket: oss.bucket.trim(),
-        accessKeyId: oss.accessKeyId.trim(),
-        accessKeySecret: oss.accessKeySecret.trim(),
-        stsToken: oss.stsToken.trim(),
-        prefix: oss.prefix.trim(),
-      },
+    if (state.asr.provider === 'nxcore-asr-managed') {
+      // 内置托管态：占位 provider，主进程 saveUser 时改写为真实连接
+      // （引擎未就绪则整段丢弃，不阻塞保存）。
+      base.asr = { provider: 'nxcore-asr-managed' }
+    } else {
+      const { oss, ...scalar } = state.asr
+      base.asr = {
+        ...scalar,
+        provider: scalar.provider.trim() || 'aliyun',
+        model: scalar.model.trim(),
+        baseUrl: scalar.baseUrl.trim(),
+        apiKey: scalar.apiKey.trim(),
+        language: scalar.language.trim(),
+        // oss 全空写空串：阿里云 provider 无 OSS 提交转写直接抛错，构造分支
+        // 在 gateway 侧要求必填项齐全才生效；oss secrets 空串经 preserveMasked
+        // 保留库中原值。自建引擎不消费 oss。
+        oss: {
+          region: oss.region.trim(),
+          bucket: oss.bucket.trim(),
+          accessKeyId: oss.accessKeyId.trim(),
+          accessKeySecret: oss.accessKeySecret.trim(),
+          stsToken: oss.stsToken.trim(),
+          prefix: oss.prefix.trim(),
+        },
+      }
     }
   }
   if (state.webSearchCustom) {
@@ -382,6 +396,13 @@ export function aiFieldsError(fields: ManualAiConfigFields, t: (key: string) => 
  * 必填项以现填为准（region/bucket/accessKeyId 无掩码语义，播种即为原值）。
  */
 export function asrFieldsError(fields: ManualAsrFields, t: (key: string) => string, hasStoredKey = false): string | null {
+  if (fields.provider === 'nxcore-asr-managed') return null
+  if (fields.provider === 'openai-compatible') {
+    // 自建兼容引擎：不需要 OSS；标量全空 = 未配置，填了则 baseUrl 必填
+    // （model/apiKey/language 可选）。
+    if (isAsrScalarEmpty(fields)) return null
+    return fields.baseUrl.trim() ? null : t('surface:configGate.embeddingIncomplete')
+  }
   if (isAsrScalarEmpty(fields)) {
     // 标量空但 OSS 填了一半也提示（顺手填了 OSS 的人显然想配 ASR）。
     const ossFilled = [fields.oss.region, fields.oss.bucket, fields.oss.accessKeyId, fields.oss.accessKeySecret]

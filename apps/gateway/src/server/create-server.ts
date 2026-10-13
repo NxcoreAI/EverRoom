@@ -265,7 +265,8 @@ function applyRuntimeConfig(config: GatewayConfig, runtime: RuntimeConfig): void
   } else {
     apply(config.vlm as unknown as Record<string, unknown> | null, runtime.vlm);
   }
-  // ASR（仅 aliyun provider）：runtime 标量 + OSS 必填项齐全可直接构造
+  // ASR：openai-compatible / nxcore-asr 自建引擎按各自要素整体构造；aliyun 需
+  // runtime 标量 + OSS 必填项齐全才可直接构造
   // （含 OSS——env 从未应用 runtime.asr.oss，而阿里云提交转写无 OSS 直接抛错）；
   // 仅标量齐全时保持补丁行为，env 配置的 OSS 保留。
   const runtimeAsr = runtime.asr as Record<string, unknown> | undefined;
@@ -274,7 +275,23 @@ function applyRuntimeConfig(config: GatewayConfig, runtime: RuntimeConfig): void
   const runtimeOss = runtimeAsr?.oss as Record<string, unknown> | undefined;
   const ossText = (key: string): string =>
     runtimeOss && typeof runtimeOss[key] === "string" ? (runtimeOss[key] as string).trim() : "";
-  if (asrText("apiKey") && asrText("baseUrl") && asrText("model")
+  if (asrText("provider") === "openai-compatible" && asrText("baseUrl")) {
+    // 自建引擎不需要 OSS，baseUrl 即可构造（apiKey/model/language 可选）。
+    config.asr = {
+      engine: "openai-compatible",
+      baseUrl: asrText("baseUrl"),
+      ...(asrText("apiKey") ? { apiKey: asrText("apiKey") } : {}),
+      ...(asrText("model") ? { model: asrText("model") } : {}),
+      ...(asrText("language") ? { language: asrText("language") } : {}),
+    };
+  } else if (asrText("provider") === "nxcore-asr" && asrText("baseUrl") && asrText("apiKey")) {
+    // nxcore-asr：地址 + 租户 key 齐备即整体构造（说话人识别引擎，无需 OSS/model）。
+    config.asr = {
+      engine: "nxcore-asr",
+      baseUrl: asrText("baseUrl"),
+      apiKey: asrText("apiKey"),
+    };
+  } else if (asrText("apiKey") && asrText("baseUrl") && asrText("model")
     && ossText("region") && ossText("bucket") && ossText("accessKeyId") && ossText("accessKeySecret")) {
     config.asr = {
       apiKey: asrText("apiKey"),

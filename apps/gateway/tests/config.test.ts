@@ -1,6 +1,7 @@
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "../src/config.js";
+import type { AliyunAsrConfig } from "../src/config.js";
 
 describe("loadConfig", () => {
   it("defaults to the isolated fake runtime", () => {
@@ -344,10 +345,45 @@ describe("loadConfig", () => {
       NXCORE_ASR_ALIYUN_OSS_ACCESS_KEY_ID: "test-oss-id",
       NXCORE_ASR_ALIYUN_OSS_ACCESS_KEY_SECRET: "test-oss-secret",
     });
-    expect(withOss.asr?.oss).toMatchObject({
+    expect((withOss.asr as AliyunAsrConfig | null)?.oss).toMatchObject({
       region: "oss-cn-beijing",
       bucket: "private-recordings",
       prefix: "nxcore-asr",
+    });
+  });
+
+  it("loads OpenAI-compatible ASR with a required base URL and optional fields", () => {
+    expect(() => loadConfig(["--token", "0123456789abcdef"], {
+      NXCORE_ASR_PROVIDER: "openai-compatible",
+    })).toThrow("NXCORE_ASR_OPENAI_BASE_URL");
+
+    expect(() => loadConfig(["--token", "0123456789abcdef"], {
+      NXCORE_ASR_PROVIDER: "openai-compatible",
+      NXCORE_ASR_OPENAI_BASE_URL: "file:///tmp/model",
+    })).toThrow("NXCORE_ASR_OPENAI_BASE_URL");
+
+    const minimal = loadConfig(["--token", "0123456789abcdef"], {
+      NXCORE_ASR_PROVIDER: "openai-compatible",
+      NXCORE_ASR_OPENAI_BASE_URL: "http://127.0.0.1:8000/v1/",
+    });
+    expect(minimal.asr).toEqual({
+      engine: "openai-compatible",
+      baseUrl: "http://127.0.0.1:8000/v1/",
+    });
+
+    const full = loadConfig(["--token", "0123456789abcdef"], {
+      NXCORE_ASR_PROVIDER: "openai-compatible",
+      NXCORE_ASR_OPENAI_BASE_URL: "https://whisper.internal.example.com",
+      NXCORE_ASR_OPENAI_API_KEY: "self-hosted-key",
+      NXCORE_ASR_OPENAI_MODEL: "whisper-large-v3",
+      NXCORE_ASR_OPENAI_LANGUAGE: "zh",
+    });
+    expect(full.asr).toEqual({
+      engine: "openai-compatible",
+      baseUrl: "https://whisper.internal.example.com",
+      apiKey: "self-hosted-key",
+      model: "whisper-large-v3",
+      language: "zh",
     });
   });
 

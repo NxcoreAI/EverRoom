@@ -1,6 +1,6 @@
 import { Check, RefreshCw, Save, ShieldCheck, Trash2 } from 'lucide-react'
-import { useEffect, useState } from 'react'
-import type { RuntimeConfigSnapshot, RuntimeConfigTestResult } from '../../../../shared/sources'
+import { useEffect, useRef, useState } from 'react'
+import type { NxcoreAsrStatusPayload, RuntimeConfigSnapshot, RuntimeConfigTestResult } from '../../../../shared/sources'
 import { useLocale } from '@/i18n/LocaleContext'
 import {
   buildUserPayload,
@@ -25,6 +25,77 @@ const SCENARIO_LABEL_KEYS: Record<TextScenarioId, string> = {
   transcriptionSummary: 'rcScenarioTranscription',
   lite: 'rcScenarioLite',
   cursorCompletion: 'rcScenarioCursor',
+}
+
+const MANAGED_ASR_STEPS = 5
+
+/** 内置离线转写（nxcore-asr）托管状态区：档位选择 + 引擎启停 + 安装进度。
+ * 就绪即自动保存表单（把托管连接写进用户配置）。 */
+function ManagedAsrStatus({ onReady, disabled }: { onReady?: () => void; disabled: boolean }) {
+  const { t } = useLocale()
+  const [status, setStatus] = useState<NxcoreAsrStatusPayload | null>(null)
+  const [busy, setBusy] = useState(false)
+  const readyFiredRef = useRef(false)
+  const onReadyRef = useRef(onReady)
+  onReadyRef.current = onReady
+  useEffect(() => {
+    const api = window.nxcore?.nxcoreAsr
+    if (!api) return
+    let disposed = false
+    const refresh = () => {
+      void api.status().then((value) => {
+        if (disposed || !value) return
+        setStatus(value)
+        if ((value.state === 'ready' || value.state === 'reused') && !readyFiredRef.current) {
+          readyFiredRef.current = true
+          onReadyRef.current?.()
+        }
+      }).catch(() => undefined)
+    }
+    refresh()
+    // 首装（依赖/模型下载）持续数分钟且明细高频变化，1s 轮询跟进。
+    const timer = window.setInterval(refresh, 1_000)
+    return () => { disposed = true; window.clearInterval(timer) }
+  }, [])
+  const start = async () => {
+    setBusy(true)
+    try { const value = await window.nxcore?.nxcoreAsr?.start(); if (value) setStatus(value) } catch { /* 状态轮询会呈现失败 */ }
+    finally { setBusy(false) }
+  }
+  const switchTier = async (tier: 'lite' | 'full') => {
+    if (tier === (status?.tier ?? 'full')) return
+    setBusy(true)
+    readyFiredRef.current = false
+    try { const value = await window.nxcore?.nxcoreAsr?.setTier(tier); if (value) setStatus(value) } catch { /* 轮询兜底 */ }
+    finally { setBusy(false) }
+  }
+  const state = status?.state ?? 'unknown'
+  const ready = state === 'ready' || state === 'reused'
+  const working = state === 'setup-venv' || state === 'starting'
+  const failed = state === 'error' || state === 'missing-python' || state === 'missing-docker'
+  const step = Math.min(status?.step ?? 0, MANAGED_ASR_STEPS)
+  const stateText = ready ? t('surface:settings.rcAsrManagedReady') : t(`surface:settings.rcAsrManagedState.${state}`)
+  return (
+    <div className="rc-asr-managed">
+      <div className="rc-scenario-row">
+        <span className="rc-scenario-name">{t('surface:settings.rcAsrTier')}</span>
+        <select value={status?.tier ?? 'full'} disabled={busy || disabled} aria-label={t('surface:settings.rcAsrTier')}
+          onChange={(event) => { void switchTier(event.target.value as 'lite' | 'full') }}>
+          <option value="lite">{t('surface:settings.rcAsrTierLite')}</option>
+          <option value="full">{t('surface:settings.rcAsrTierFull')}</option>
+        </select>
+      </div>
+      <div className="rc-scenario-row">
+        <span className="rc-scenario-name">{t('surface:settings.rcAsrManagedStatusLabel')}</span>
+        <span className={`rc-asr-state${ready ? ' rc-asr-state-ok' : failed ? ' rc-asr-state-error' : ''}`}>{stateText}</span>
+        <button className="secondary-button rc-asr-action" type="button" disabled={busy || disabled || ready} onClick={() => void start()}>
+          {ready ? t('surface:settings.rcAsrManagedRunning') : working ? t('surface:settings.rcAsrManagedWorking') : t('surface:settings.rcAsrManagedStart')}
+        </button>
+      </div>
+      {working ? <progress className="managed-asr-progress" value={step} max={MANAGED_ASR_STEPS} /> : null}
+      {status?.message || status?.detail ? <p className="rc-asr-managed-detail">{status?.detail ?? status?.message}</p> : null}
+    </div>
+  )
 }
 
 export function RuntimeConfigSettingsSection() {
@@ -137,7 +208,7 @@ export function RuntimeConfigSettingsSection() {
     setForm((current) => ({ ...current, embedding: { ...current.embedding, [key]: value } }))
   const updateVlm = (key: keyof ManualAiConfigFields, value: string) =>
     setForm((current) => ({ ...current, vlm: { ...current.vlm, [key]: value } }))
-  const updateAsr = (key: 'model' | 'baseUrl' | 'apiKey', value: string) =>
+  const updateAsr = (key: 'provider' | 'model' | 'baseUrl' | 'apiKey' | 'language', value: string) =>
     setForm((current) => ({ ...current, asr: { ...current.asr, [key]: value } }))
   const updateOss = (key: keyof ManualAsrFields['oss'], value: string) =>
     setForm((current) => ({ ...current, asr: { ...current.asr, oss: { ...current.asr.oss, [key]: value } } }))
@@ -271,27 +342,56 @@ export function RuntimeConfigSettingsSection() {
           </div>
           {form.asrCustom ? <div className="rc-special-fields">
             <div className="rc-grid">
+              <label className="rc-form-field"><span>{t('surface:settings.rcAsrEngine')}</span>
+                <select value={form.asr.provider} disabled={busy !== null} aria-label={t('surface:settings.rcAsrEngine')}
+                  onChange={(event) => updateAsr('provider', event.target.value)}>
+                  <option value="aliyun">{t('surface:settings.rcAsrEngineAliyun')}</option>
+                  <option value="openai-compatible">{t('surface:settings.rcAsrEngineSelfHosted')}</option>
+                  <option value="nxcore-asr-managed">{t('surface:settings.rcAsrEngineManaged')}</option>
+                </select>
+              </label>
+              {form.asr.provider === 'openai-compatible' ? <label className="rc-form-field"><span>{t('surface:settings.rcAsrLanguage')}</span>
+                <select value={form.asr.language} disabled={busy !== null}
+                  onChange={(event) => updateAsr('language', event.target.value)}>
+                  <option value="">{t('surface:settings.rcAsrLanguageAuto')}</option>
+                  <option value="zh">中文</option>
+                  <option value="en">English</option>
+                </select>
+              </label> : null}
+            </div>
+            {form.asr.provider === 'nxcore-asr-managed' ? <ManagedAsrStatus onReady={() => void saveForm()} disabled={busy !== null} /> : null}
+            {form.asr.provider === 'openai-compatible' ? <div className="rc-grid">
               <label className="rc-form-field"><span>{aiLabels.model}</span>
-                <input value={form.asr.model} placeholder="qwen-audio-3.0-asr-flash-filetrans" onChange={(event) => updateAsr('model', event.target.value)} /></label>
+                <input value={form.asr.model} placeholder="whisper-1" onChange={(event) => updateAsr('model', event.target.value)} /></label>
               <label className="rc-form-field"><span>{aiLabels.baseUrl}</span>
-                <input value={form.asr.baseUrl} placeholder="https://dashscope.aliyuncs.com/api/v1" onChange={(event) => updateAsr('baseUrl', event.target.value)} /></label>
+                <input value={form.asr.baseUrl} placeholder="http://127.0.0.1:8000" onChange={(event) => updateAsr('baseUrl', event.target.value)} /></label>
               <label className="rc-form-field rc-span-2"><span>{aiLabels.apiKey}</span>
-                <input type="password" value={form.asr.apiKey} placeholder="sk-…" onChange={(event) => updateAsr('apiKey', event.target.value)} /></label>
-            </div>
-            <div className="rc-oss-group">
-              <label className="rc-form-field"><span>{t('surface:settings.rcFieldOssRegion')}</span>
-                <input value={form.asr.oss.region} placeholder="oss-cn-beijing" onChange={(event) => updateOss('region', event.target.value)} /></label>
-              <label className="rc-form-field"><span>{t('surface:settings.rcFieldOssBucket')}</span>
-                <input value={form.asr.oss.bucket} onChange={(event) => updateOss('bucket', event.target.value)} /></label>
-              <label className="rc-form-field"><span>{t('surface:settings.rcFieldOssAccessKeyId')}</span>
-                <input value={form.asr.oss.accessKeyId} onChange={(event) => updateOss('accessKeyId', event.target.value)} /></label>
-              <label className="rc-form-field"><span>{t('surface:settings.rcFieldOssAccessKeySecret')}</span>
-                <input type="password" value={form.asr.oss.accessKeySecret} onChange={(event) => updateOss('accessKeySecret', event.target.value)} /></label>
-              <label className="rc-form-field"><span>{t('surface:settings.rcFieldOssStsToken')}</span>
-                <input type="password" value={form.asr.oss.stsToken} onChange={(event) => updateOss('stsToken', event.target.value)} /></label>
-              <label className="rc-form-field"><span>{t('surface:settings.rcFieldOssPrefix')}</span>
-                <input value={form.asr.oss.prefix} placeholder="nxcore-asr" onChange={(event) => updateOss('prefix', event.target.value)} /></label>
-            </div>
+                <input type="password" value={form.asr.apiKey} placeholder={t('surface:settings.rcAsrOptionalKey')} onChange={(event) => updateAsr('apiKey', event.target.value)} /></label>
+            </div> : null}
+            {form.asr.provider === 'aliyun' ? <>
+              <div className="rc-grid">
+                <label className="rc-form-field"><span>{aiLabels.model}</span>
+                  <input value={form.asr.model} placeholder="qwen-audio-3.0-asr-flash-filetrans" onChange={(event) => updateAsr('model', event.target.value)} /></label>
+                <label className="rc-form-field"><span>{aiLabels.baseUrl}</span>
+                  <input value={form.asr.baseUrl} placeholder="https://dashscope.aliyuncs.com/api/v1" onChange={(event) => updateAsr('baseUrl', event.target.value)} /></label>
+                <label className="rc-form-field rc-span-2"><span>{aiLabels.apiKey}</span>
+                  <input type="password" value={form.asr.apiKey} placeholder="sk-…" onChange={(event) => updateAsr('apiKey', event.target.value)} /></label>
+              </div>
+              <div className="rc-oss-group">
+                <label className="rc-form-field"><span>{t('surface:settings.rcFieldOssRegion')}</span>
+                  <input value={form.asr.oss.region} placeholder="oss-cn-beijing" onChange={(event) => updateOss('region', event.target.value)} /></label>
+                <label className="rc-form-field"><span>{t('surface:settings.rcFieldOssBucket')}</span>
+                  <input value={form.asr.oss.bucket} onChange={(event) => updateOss('bucket', event.target.value)} /></label>
+                <label className="rc-form-field"><span>{t('surface:settings.rcFieldOssAccessKeyId')}</span>
+                  <input value={form.asr.oss.accessKeyId} onChange={(event) => updateOss('accessKeyId', event.target.value)} /></label>
+                <label className="rc-form-field"><span>{t('surface:settings.rcFieldOssAccessKeySecret')}</span>
+                  <input type="password" value={form.asr.oss.accessKeySecret} onChange={(event) => updateOss('accessKeySecret', event.target.value)} /></label>
+                <label className="rc-form-field"><span>{t('surface:settings.rcFieldOssStsToken')}</span>
+                  <input type="password" value={form.asr.oss.stsToken} onChange={(event) => updateOss('stsToken', event.target.value)} /></label>
+                <label className="rc-form-field"><span>{t('surface:settings.rcFieldOssPrefix')}</span>
+                  <input value={form.asr.oss.prefix} placeholder="nxcore-asr" onChange={(event) => updateOss('prefix', event.target.value)} /></label>
+              </div>
+            </> : null}
           </div> : null}
         </div>
 

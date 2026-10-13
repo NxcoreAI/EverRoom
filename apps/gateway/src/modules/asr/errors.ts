@@ -16,3 +16,17 @@ export class AliyunAsrError extends AsrError {
     this.name = "AliyunAsrError";
   }
 }
+
+export class OpenAiAsrError extends AsrError {
+  constructor(operation: string, message: string, options?: ErrorOptions) {
+    super("openai_asr_error", `OpenAI-compatible ASR ${operation} failed: ${message}`, 502, options);
+    this.name = "OpenAiAsrError";
+  }
+}
+
+export class NxCoreAsrError extends AsrError {
+  constructor(operation: string, message: string, options?: ErrorOptions) {
+    super("nxcore_asr_error", `nxcore-asr ${operation} failed: ${message}`, 502, options);
+    this.name = "NxCoreAsrError";
+  }
+}

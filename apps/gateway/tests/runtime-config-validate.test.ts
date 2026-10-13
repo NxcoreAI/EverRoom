@@ -325,3 +325,24 @@ describe("runtime config set idempotency", () => {
     expect(emissions).toBe(1);
   });
 });
+
+describe("runtime config asr section", () => {
+  it("接受 openai-compatible 引擎的 asr 段（language 可选字段不再报 unknown_field）", async () => {
+    const { manager } = await dedupeManager();
+    const snapshot = manager.set("user", {
+      schemaVersion: 1,
+      asr: {
+        provider: "openai-compatible",
+        baseUrl: "http://127.0.0.1:8000/v1",
+        apiKey: "",
+        model: "",
+        language: "zh",
+      },
+    });
+    expect(snapshot.config.asr).toMatchObject({
+      provider: "openai-compatible",
+      baseUrl: "http://127.0.0.1:8000/v1",
+      language: "zh",
+    });
+  });
+});

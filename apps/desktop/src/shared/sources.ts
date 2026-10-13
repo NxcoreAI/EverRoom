@@ -351,6 +351,21 @@ export interface CreateAsrJobInput {
   languageHints?: string[]
   diarizationEnabled: boolean
   contextPrompt?: string
+  /** 会话归组键（= recordingId）：nxcore-asr 引擎按它把分段归入同一会话，
+   * 说话人跨段连续；其他引擎忽略。 */
+  externalId?: string
+}
+
+/** 内置离线转写（nxcore-asr）托管状态：设置页轮询渲染。 */
+export interface NxcoreAsrStatusPayload {
+  state: string
+  message: string | null
+  baseUrl: string | null
+  apiKey: string | null
+  step: number
+  detail: string | null
+  /** 模型档位：lite（SenseVoice，约 1GB，无说话人识别）/ full（Fun-ASR+CAM++，约 2.1GB）。 */
+  tier: 'lite' | 'full'
 }
 
 export interface CloudAccountStatus {
@@ -1265,13 +1280,18 @@ export interface NxcoreDesktopApi {
     openSystemAudioSettings(): Promise<void>
     beginRecording(mimeType: string): Promise<{ id: string }>
     appendRecording(id: string, chunk: Uint8Array): Promise<void>
-    uploadRecordingSegment(id: string, index: number, chunk: Uint8Array, durationMs: number, meta: { mimeType: string; languageHints?: string[] }): Promise<void>
+    uploadRecordingSegment(id: string, index: number, chunk: Uint8Array, durationMs: number, meta: { mimeType: string; languageHints?: string[]; mode?: 'cloud' | 'local' }): Promise<void>
     onSegmentTranscription(listener: (event: { recordingId: string; index: number; result: AsrResult }) => void): () => void
     finishRecording(id: string): Promise<{ filePath: string }>
     cancelRecording(id: string): Promise<void>
     createJob(input: CreateAsrJobInput): Promise<AsrJob>
     getJob(id: string): Promise<AsrJob>
     renameSpeaker(jobId: string, speakerId: string, name: string | null): Promise<AsrJob>
+  }
+  nxcoreAsr: {
+    status(): Promise<NxcoreAsrStatusPayload | null>
+    start(): Promise<NxcoreAsrStatusPayload | null>
+    setTier(tier: 'lite' | 'full'): Promise<NxcoreAsrStatusPayload | null>
   }
   privateAudio: {
     list(cursor?: number): Promise<{ assets: SyncedPrivateAudioAsset[]; nextCursor: number }>

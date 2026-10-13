@@ -591,6 +591,11 @@ const api: NxcoreDesktopApi = {
     getJob: (id) => invoke('asr:get-job', id),
     renameSpeaker: (jobId, speakerId, name) => invoke('asr:rename-speaker', jobId, speakerId, name),
   },
+  nxcoreAsr: {
+    status: () => invokeQuietly('nxcore-asr:status'),
+    start: () => invokeQuietly('nxcore-asr:start'),
+    setTier: (tier: 'lite' | 'full') => invokeQuietly('nxcore-asr:set-tier', tier),
+  },
   privateAudio: {
     list: (cursor?: number) => invoke('private-audio:list', cursor ?? 0),
     download: (assetId: string, outputPath: string) => invoke('private-audio:download', assetId, outputPath),
