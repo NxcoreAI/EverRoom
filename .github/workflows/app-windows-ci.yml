@@ -24,17 +24,9 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Checkout private submodule (nxcoreasr)
+      - name: Checkout submodules
         shell: bash
-        env:
-          GITLAB_SUBMODULE_TOKEN: ${{ secrets.GITLAB_SUBMODULE_TOKEN }}
-        run: |
-          if [ -n "$GITLAB_SUBMODULE_TOKEN" ]; then
-            git config --global url."https://oauth2:${GITLAB_SUBMODULE_TOKEN}@code.vyitec.com/".insteadOf "https://code.vyitec.com/"
-            git submodule update --init --recursive
-          else
-            echo "::notice::no GITLAB_SUBMODULE_TOKEN, skip private submodule (TS build does not depend on it)"
-          fi
+        run: git submodule update --init --recursive
 
       - name: Set up pnpm
         uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
@@ -44,19 +36,6 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-
-      - name: Configure private git credentials
-        shell: bash
-        env:
-          VYITEC_USER: ${{ secrets.VYITEC_USER }}
-          VYITEC_TOKEN: ${{ secrets.VYITEC_TOKEN }}
-        run: |
-          # 用 URL 重写注入凭证（insteadOf）：任何 git 调用（含 pnpm spawn 的
-          # clone）访问 code.vyitec.com 时自动改写为带凭证的 URL。不走
-          # credential helper——Windows runner 预置的 GCM 会抢跑且在无交互
-          # 环境弹窗失败，helper 链行为在三个平台不可控。
-          printf 'https://%s:%s@code.vyitec.com' "$VYITEC_USER" "$VYITEC_TOKEN" > "$RUNNER_TEMP/vyitec-url"
-          git config --global url."$(cat "$RUNNER_TEMP/vyitec-url")/".insteadOf "https://code.vyitec.com/"
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile

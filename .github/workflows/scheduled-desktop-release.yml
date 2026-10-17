@@ -47,19 +47,9 @@ jobs:
           ref: dev
           fetch-depth: 0
           persist-credentials: false
-      - name: Checkout private submodule (nxcoreasr)
+      - name: Checkout submodules
         shell: bash
-        env:
-          GITLAB_SUBMODULE_TOKEN: ${{ secrets.GITLAB_SUBMODULE_TOKEN }}
-        run: |
-          if [ -n "$GITLAB_SUBMODULE_TOKEN" ]; then
-            git config --global url."https://oauth2:${GITLAB_SUBMODULE_TOKEN}@code.vyitec.com/".insteadOf "https://code.vyitec.com/"
-            git submodule update --init --recursive
-          else
-            echo "::error::no GITLAB_SUBMODULE_TOKEN; release packaging requires the private submodule"
-            exit 1
-          fi
-
+        run: git submodule update --init --recursive
 
       - name: Inspect release candidate
         id: candidate
@@ -104,18 +94,6 @@ jobs:
           node-version: 22
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
-
-      - name: Configure private git credentials
-        if: steps.candidate.outputs.pending == 'true'
-        shell: bash
-        env:
-          VYITEC_USER: ${{ secrets.VYITEC_USER }}
-          VYITEC_TOKEN: ${{ secrets.VYITEC_TOKEN }}
-        run: |
-          # 用 URL 重写注入凭证（insteadOf），与 release-desktop.yml 保持一致；
-          # 不依赖 credential helper（Windows 预置 GCM 行为不可控）。
-          printf 'https://%s:%s@code.vyitec.com' "$VYITEC_USER" "$VYITEC_TOKEN" > "$RUNNER_TEMP/vyitec-url"
-          git config --global url."$(cat "$RUNNER_TEMP/vyitec-url")/".insteadOf "https://code.vyitec.com/"
 
       - name: Install dependencies
         if: steps.candidate.outputs.pending == 'true'

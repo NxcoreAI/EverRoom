@@ -3,4 +3,4 @@
 	url = https://github.com/NxcoreAI/genoffice.git
 [submodule "submodules/nxcoreasr"]
 	path = submodules/nxcoreasr
-	url = https://code.vyitec.com/nexcore/nxcoreasr.git
+	url = https://github.com/NxcoreAI/nxcoreasr.git
