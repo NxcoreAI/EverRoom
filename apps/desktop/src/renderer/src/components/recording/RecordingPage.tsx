@@ -16,6 +16,19 @@ type RecordingState = 'idle' | 'requesting' | 'recording' | 'saving' | 'transcri
 type AudioSource = 'microphone' | 'system'
 
 const MIME_TYPES = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4']
+
+/** 实时分段走向：显式选择优先；auto 在本地可控引擎（内置离线/自建兼容）已配置时
+ *  一律走本地——选了内置引擎还把分段送上云是隐私违约，登录态只影响没有本地
+ *  引擎时的兜底（登录=云端官方，未登录=经 gateway 的自带 provider）。 */
+function resolveTranscriptionMode(
+  settings: { mode: 'cloud' | 'local' | 'auto' },
+  authenticated: boolean | undefined,
+  localAsrActive: boolean,
+): 'cloud' | 'local' {
+  if (settings.mode === 'cloud') return 'cloud'
+  if (settings.mode === 'local') return 'local'
+  return localAsrActive || !authenticated ? 'local' : 'cloud'
+}
 const MAX_TRANSCRIPTION_WAIT_MS = 30 * 60 * 1000
 const MIN_TRANSCRIPTION_DURATION_MS = 10_000
 const TRANSCRIPTION_POLL_INTERVAL_MS = 6_000
@@ -126,6 +139,9 @@ export function RecordingPage({
   const [audioSource, setAudioSource] = useState<AudioSource>(initialSettings.audioSource)
   const { account } = useAccount()
   const [mode,setMode]=useState<'cloud'|'local'>('local')
+  // gateway 已配置本地可控 ASR（内置离线/自建兼容引擎）：auto 模式下实时分段优先走本地，
+  // 与设置页的引擎选择保持一致——选了内置引擎，登录与否都不再把分段送上云。
+  const [localAsrActive, setLocalAsrActive] = useState(false)
   const recorderRef = useRef<MediaRecorder | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const recordingIdRef = useRef<string | null>(null)
@@ -173,15 +189,31 @@ export function RecordingPage({
 
   useEffect(() => {
     const settings = loadRealitySettings()
-    setMode(settings.mode === 'cloud' || (settings.mode === 'auto' && account?.authenticated) ? 'cloud' : 'local')
-  }, [account])
+    setMode(resolveTranscriptionMode(settings, account?.authenticated, localAsrActive))
+  }, [account, localAsrActive])
+
+  // 轮询生效的 ASR provider：引擎首次就绪/切档后 30s 内刷新 auto 模式的走向。
+  useEffect(() => {
+    let disposed = false
+    const refresh = () => {
+      void window.nxcore?.runtimeConfig.get().then((snapshot) => {
+        if (disposed) return
+        const asr = (snapshot?.config as Record<string, unknown> | undefined)?.asr as { provider?: unknown } | undefined
+        const provider = typeof asr?.provider === 'string' ? asr.provider : ''
+        setLocalAsrActive(provider === 'nxcore-asr' || provider === 'openai-compatible')
+      }).catch(() => undefined)
+    }
+    refresh()
+    const timer = window.setInterval(refresh, 30_000)
+    return () => { disposed = true; window.clearInterval(timer) }
+  }, [])
 
   useEffect(() => onRealitySettingsChanged((settings) => {
     if (state !== 'idle' && state !== 'completed' && state !== 'error') return
     setAudioSource(settings.audioSource)
     setLanguages(settings.languages)
-    setMode(settings.mode === 'cloud' || (settings.mode === 'auto' && account?.authenticated) ? 'cloud' : 'local')
-  }), [account?.authenticated, state])
+    setMode(resolveTranscriptionMode(settings, account?.authenticated, localAsrActive))
+  }), [account?.authenticated, state, localAsrActive])
 
   useEffect(() => {
     if (state !== 'recording') return

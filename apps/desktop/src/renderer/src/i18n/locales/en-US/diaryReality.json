@@ -205,7 +205,7 @@
   "recording.language": "Language",
   "recording.localCapture": "Local capture",
   "recording.localConfiguration": "Local configuration",
-  "recording.localGatewayYourAlibabaCloudConfiguration": "Local Gateway · Your Alibaba Cloud configuration",
+  "recording.localGatewayYourAlibabaCloudConfiguration": "Local Gateway · Built-in offline / your own engine",
   "recording.localProcessing": "Local processing",
   "recording.listeningControl": "Listening status",
   "recording.microphone": "Microphone",

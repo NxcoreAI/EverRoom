@@ -205,7 +205,7 @@
   "recording.language": "语言",
   "recording.localCapture": "本机采集",
   "recording.localConfiguration": "本地配置",
-  "recording.localGatewayYourAlibabaCloudConfiguration": "本地 Gateway · 自有阿里云配置",
+  "recording.localGatewayYourAlibabaCloudConfiguration": "本地 Gateway · 内置离线 / 自有引擎配置",
   "recording.localProcessing": "本地处理",
   "recording.listeningControl": "聆听状态",
   "recording.microphone": "麦克风",
