@@ -1,11 +1,14 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises'
+import { execFile as execFileCb } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { promisify } from 'node:util'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('electron', () => ({ app: { getAppPath: () => '/mock/app' } }))
+const mocks = vi.hoisted(() => ({ appPath: '/mock/app' }))
+vi.mock('electron', () => ({ app: { getAppPath: () => mocks.appPath } }))
 vi.mock('../src/main/process-cleanup', () => ({
   registerProcessRecord: vi.fn(),
   forgetProcessRecord: vi.fn(),
@@ -13,9 +16,11 @@ vi.mock('../src/main/process-cleanup', () => ({
 
 import { NxCoreAsrSupervisor } from '../src/main/asr/nxcore-asr-supervisor'
 
+const execFile = promisify(execFileCb)
 const directories: string[] = []
 
 afterEach(async () => {
+  mocks.appPath = '/mock/app'
   await Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })))
 })
 
@@ -25,11 +30,67 @@ async function useTempDataDir(): Promise<{ dataDir: string; supervisor: NxCoreAs
   return { dataDir, supervisor: new NxCoreAsrSupervisor(dataDir) }
 }
 
+/** 模拟「用户克隆了主仓但未检出子模块」：fixture 主仓（.git + gitlink 注册，
+ *  无子模块工作区）+ 本地裸镜像（离线确定，不打真网络）。 */
+async function makeFixtureRepo(): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), 'nxcore-asr-fixture-'))
+  directories.push(root)
+  const remote = join(root, 'mirror.git')
+  await execFile('git', ['clone', '--bare', '--quiet', join(import.meta.dirname, '../../..', 'submodules', 'nxcoreasr'), remote])
+  const repo = join(root, 'mainrepo')
+  await mkdir(join(repo, 'apps', 'desktop'), { recursive: true })
+  await execFile('git', ['init', '--quiet', repo])
+  // URL 用正斜杠：git 子模块 url 里的反斜杠本地路径不可靠。
+  const remoteUrl = remote.replaceAll('\\', '/')
+  await writeFile(join(repo, '.gitmodules'), [
+    '[submodule "submodules/nxcoreasr"]',
+    '\tpath = submodules/nxcoreasr',
+    `\turl = ${remoteUrl}`,
+    '',
+  ].join('\n'), 'utf8')
+  await execFile('git', ['add', '.gitmodules'], { cwd: repo })
+  await execFile('git', ['update-index', '--add', '--cacheinfo', '160000,49e513e8b4f05c794ae17ce7eb7c18f38cf0e2f8,submodules/nxcoreasr'], { cwd: repo })
+  return repo
+}
+
 describe('NxCoreAsrSupervisor', () => {
   it('初始状态为 idle（未启动不显示就绪——曾因默认 ready 误导用户）', async () => {
     const { supervisor } = await useTempDataDir()
     expect(supervisor.getStatus().state).toBe('idle')
     expect(supervisor.getConnection()).toBeNull()
+  })
+
+  it('tryInitSubmodule：未检出的子模块从镜像自动拉取（用户点启动即可用，无需终端敲命令）', async () => {
+    const repo = await makeFixtureRepo()
+    mocks.appPath = join(repo, 'apps', 'desktop')
+    // fixture 的子模块 url 是本地路径：git 默认禁 file 协议（CVE-2022-39253），
+    // 经 env 注入放行（supervisor spawn 的 git 继承本进程 env）——真实场景走
+    // https 的 GitHub 镜像，不受此限。
+    process.env.GIT_CONFIG_COUNT = '1'
+    process.env.GIT_CONFIG_KEY_0 = 'protocol.file.allow'
+    process.env.GIT_CONFIG_VALUE_0 = 'always'
+    const { supervisor } = await useTempDataDir()
+    try {
+      // 前置：子模块工作区不存在。
+      expect(existsSync(join(repo, 'submodules', 'nxcoreasr', 'app'))).toBe(false)
+      const ok = await (supervisor as unknown as { tryInitSubmodule(): Promise<boolean> }).tryInitSubmodule()
+      expect(ok, `auto init failed: ${supervisor.getStatus().message}`).toBe(true)
+      expect(existsSync(join(repo, 'submodules', 'nxcoreasr', 'app'))).toBe(true)
+    } finally {
+      delete process.env.GIT_CONFIG_COUNT
+      delete process.env.GIT_CONFIG_KEY_0
+      delete process.env.GIT_CONFIG_VALUE_0
+    }
+  })
+
+  it('tryInitSubmodule：非 git 检出（如打包形态之外的无 .git 目录）直接返回 false，不报错', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'nxcore-asr-nogit-'))
+    directories.push(root)
+    await mkdir(join(root, 'apps', 'desktop'), { recursive: true })
+    mocks.appPath = join(root, 'apps', 'desktop')
+    const { supervisor } = await useTempDataDir()
+    const ok = await (supervisor as unknown as { tryInitSubmodule(): Promise<boolean> }).tryInitSubmodule()
+    expect(ok).toBe(false)
   })
 
   it('外部模式（NXCORE_ASR_MANAGED=false）不托管', async () => {

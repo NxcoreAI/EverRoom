@@ -101,6 +101,22 @@ function detectPython(): string | null {
   return null
 }
 
+/** 源码模式自动检出服务子模块：nxcoreasr 在公共镜像（github.com/NxcoreAI/
+ *  nxcoreasr），无凭据即可拉取。仅开发态（非打包）且运行在 git 检出内时尝试
+ *  ——打包版服务码随 resources 发布，永远不会走到服务目录缺失。 */
+function findGitBinary(): string | null {
+  // GUI 启动（macOS Finder 双击）的 PATH 不含 Homebrew 路径，补常见 git 位置。
+  for (const bin of ['git', '/usr/bin/git', '/opt/homebrew/bin/git', '/usr/local/bin/git']) {
+    try {
+      const probe = spawnSync(bin, ['--version'], { encoding: 'utf8', timeout: 10_000, windowsHide: true })
+      if (probe.status === 0) return bin
+    } catch {
+      // 尝试下一个候选。
+    }
+  }
+  return null
+}
+
 export class NxCoreAsrSupervisor {
   private child: ChildProcessWithoutNullStreams | null = null
   private connection: NxCoreAsrConnection | null = null
@@ -178,6 +194,42 @@ export class NxCoreAsrSupervisor {
     return this.starting
   }
 
+  /** 源码模式自动检出服务子模块：nxcoreasr 在公共镜像上，无凭据即可拉取。
+   *  仅开发态（非打包）且运行在 git 检出内时尝试；失败原因写入 lastError。 */
+  private async tryInitSubmodule(): Promise<boolean> {
+    if (app.isPackaged) return false
+    const repoRoot = join(app.getAppPath(), '..', '..')
+    if (!existsSync(join(repoRoot, '.git'))) return false
+    const rel = 'submodules/nxcoreasr'
+    this.lastError = null
+    this.setDetail('正在获取内置转写服务源码…')
+    const git = findGitBinary()
+    if (!git) {
+      this.lastError = '未找到 git'
+      return false
+    }
+    // sync：换源后本地记录的子模块 URL 可能过期，先与 .gitmodules 对齐。
+    for (const args of [['submodule', 'sync', '--', rel], ['submodule', 'update', '--init', '--', rel]]) {
+      let output = ''
+      const code = await new Promise<number | null>((resolve) => {
+        const child = spawn(git, args, { cwd: repoRoot, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
+        child.stdout?.setEncoding('utf8')
+        child.stdout?.on('data', (chunk) => { output += chunk })
+        child.stderr?.setEncoding('utf8')
+        child.stderr?.on('data', (chunk) => { output += chunk })
+        const timer = setTimeout(() => { child.kill(); resolve(null) }, 120_000)
+        child.on('error', () => { clearTimeout(timer); resolve(null) })
+        child.on('exit', (exitCode) => { clearTimeout(timer); resolve(exitCode) })
+      })
+      if (code !== 0) {
+        this.lastError = `git ${args.join(' ')} 失败：${output.slice(-200)}`
+        return false
+      }
+    }
+    this.setDetail(null)
+    return existsSync(join(repoRoot, rel, 'app'))
+  }
+
   private async startInternal(): Promise<NxCoreAsrConnection | null> {
     if (process.env.NXCORE_ASR_MANAGED === 'false') {
       this.setState('external', 'NXCORE_ASR_MANAGED=false')
@@ -204,8 +256,13 @@ export class NxCoreAsrSupervisor {
 
     const serviceDir = serviceDirectory()
     if (!existsSync(join(serviceDir, 'app'))) {
-      this.setState('error', `内置转写服务源码缺失：${serviceDir}。源码运行先检出子模块：git submodule update --init submodules/nxcoreasr（打包安装版自带，无需此步）`, 1)
-      return null
+      // 源码模式：子模块未检出时自动从公共镜像拉取（无凭据），失败才要求手动。
+      const inited = await this.tryInitSubmodule()
+      if (!inited) {
+        const reason = this.lastError ? `（${this.lastError}）` : ''
+        this.setState('error', `内置转写服务源码缺失：自动获取失败${reason}。请手动执行 git submodule update --init submodules/nxcoreasr 后重试`, 1)
+        return null
+      }
     }
 
     const python = detectPython()
