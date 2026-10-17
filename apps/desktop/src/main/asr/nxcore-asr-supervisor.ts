@@ -85,7 +85,9 @@ function venvPython(serviceDir: string): string {
 }
 
 function detectPython(): string | null {
-  for (const command of ['python3.12', 'python', 'py -3.12']) {
+  // macOS/Linux 常见名是 python3 / python3.N（裸 python 常不存在，/usr/bin/python3
+  // 可能是系统 3.9——版本正则会拒掉继续试）；Windows 走 py 启动器。顺序即优先级。
+  for (const command of ['python3', 'python3.13', 'python3.12', 'python', 'py -3.12']) {
     const parts = command.split(' ')
     try {
       const result = spawnSync(parts[0]!, parts.slice(1).concat('--version'), { encoding: 'utf8', timeout: 10_000, windowsHide: true })
@@ -202,7 +204,7 @@ export class NxCoreAsrSupervisor {
 
     const serviceDir = serviceDirectory()
     if (!existsSync(join(serviceDir, 'app'))) {
-      this.setState('error', `服务目录不存在：${serviceDir}（submodule 未检出？）`, 1)
+      this.setState('error', `内置转写服务源码缺失：${serviceDir}。源码运行先检出子模块：git submodule update --init submodules/nxcoreasr（打包安装版自带，无需此步）`, 1)
       return null
     }
 
@@ -545,6 +547,8 @@ export class NxCoreAsrSupervisor {
       SYSTEMROOT: process.env.SYSTEMROOT,
       TEMP: process.env.TEMP,
       TMP: process.env.TMP,
+      // macOS/Linux：Python 与 modelscope 依赖 HOME（用户缓存/配置定位）。
+      HOME: process.env.HOME,
       PYTHONIOENCODING: 'utf-8',
     }
     for (const key of ['ASR_DATABASE_URL', 'ASR_FAKE_ENGINE', 'ASR_OSS_ENDPOINT', 'ASR_OSS_BUCKET', 'ASR_OSS_ACCESS_KEY_ID', 'ASR_OSS_ACCESS_KEY_SECRET', 'ASR_OSS_UPLOAD_TTL_SECONDS']) {
