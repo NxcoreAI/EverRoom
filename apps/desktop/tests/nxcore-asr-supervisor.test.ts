@@ -1,8 +1,8 @@
 import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises'
 import { execFile as execFileCb } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { delimiter, join } from 'node:path'
 import { promisify } from 'node:util'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -149,6 +149,47 @@ describe('NxCoreAsrSupervisor', () => {
     // 非法档位值忽略，不落盘不改态。
     await supervisor.setModelTier('whatever' as never)
     expect(supervisor.getStatus().tier).toBe('full')
+  })
+
+  it('ffmpeg shim：把探测到的解码器以固定名暴露（服务的 subprocess 只按名字调）', async () => {
+    const { dataDir, supervisor } = await useTempDataDir()
+    const source = join(dataDir, process.platform === 'win32' ? 'fake-ffmpeg.exe' : 'fake-ffmpeg')
+    writeFileSync(source, 'binary', 'utf8')
+    const internal = supervisor as unknown as {
+      ffmpegShimPath(): string
+      writeFfmpegShim(source: string, shimPath: string): boolean
+    }
+    const shim = internal.ffmpegShimPath()
+    expect(internal.writeFfmpegShim(source, shim)).toBe(true)
+    expect(existsSync(shim)).toBe(true)
+    // 软链与复制都读到同样内容；名字固定，Python 侧 subprocess 才能按名解析。
+    expect(readFileSync(shim, 'utf8')).toBe('binary')
+    expect(shim.endsWith(process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg')).toBe(true)
+  })
+
+  it('服务子进程 PATH 前置 ffmpeg 目录（GUI 启动的 PATH 看不到 Homebrew）', async () => {
+    const { dataDir, supervisor } = await useTempDataDir()
+    const internal = supervisor as unknown as {
+      ffmpegDirectory: string | null
+      serviceEnvironment(): NodeJS.ProcessEnv
+    }
+    expect(internal.serviceEnvironment().PATH).toBe(process.env.PATH ?? '')
+    internal.ffmpegDirectory = join(dataDir, 'nxcore-asr-bin')
+    expect(internal.serviceEnvironment().PATH?.split(delimiter)[0]).toBe(internal.ffmpegDirectory)
+  })
+
+  it('ffmpeg 候选顺序：env 覆盖最优先，含 macOS Homebrew/MacPorts 位置', async () => {
+    const { supervisor } = await useTempDataDir()
+    process.env.NXCORE_ASR_FFMPEG = '/custom/ffmpeg'
+    try {
+      const candidates = (supervisor as unknown as { ffmpegCandidates(): string[] }).ffmpegCandidates()
+      expect(candidates[0]).toBe('/custom/ffmpeg')
+      expect(candidates).toContain('/opt/homebrew/bin/ffmpeg')
+      expect(candidates).toContain('/usr/local/bin/ffmpeg')
+      expect(candidates).toContain('/opt/local/bin/ffmpeg')
+    } finally {
+      delete process.env.NXCORE_ASR_FFMPEG
+    }
   })
 
   it('服务目录缺失时给出可读错误（submodule 未检出的场景）', async () => {

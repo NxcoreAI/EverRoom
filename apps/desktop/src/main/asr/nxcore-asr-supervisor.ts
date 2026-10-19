@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
 import { spawn, spawnSync, execFileSync, type ChildProcessWithoutNullStreams } from 'node:child_process'
-import { join } from 'node:path'
+import { delimiter, dirname, join } from 'node:path'
 
 import { app } from 'electron'
 
@@ -14,8 +14,10 @@ import { forgetProcessRecord, registerProcessRecord } from '../process-cleanup'
  * 1. 外部模式：NXCORE_ASR_BASE_URL 指向别处 / NXCORE_ASR_MANAGED=false —— 不托管。
  * 2. 复用模式：127.0.0.1:8300 已有健康实例（用户手动部署）—— 直接复用托管 key。
  * 3. 托管模式：按需拉起本地服务：
- *    python 检测 → venv+依赖安装（首次约 2GB）→ config.yaml（SQLite 库文件 +
- *    持久租户 key）→ uvicorn 拉起（首装含模型下载约 2.1GB）。
+ *    python 检测 → venv+依赖安装（首次约 2GB）→ 音频解码器 ffmpeg 就位 →
+ *    config.yaml（SQLite 库文件 + 持久租户 key）→ uvicorn 拉起（首装含模型
+ *    下载约 2.1GB）。ffmpeg 是服务转码 webm/opus 的硬依赖，且按名字调用，
+ *    故此处统一探测/自动安装后以前置 PATH 的固定名暴露（见 ensureFfmpeg）。
  *
  * 按需启动：用户在设置页选「内置离线转写」才 start（FunASR 常驻内存 1-2GB，
  * 不随应用启动预载）。首次 setup 全程通过 status() 轮询呈现进度态。
@@ -128,6 +130,8 @@ export class NxCoreAsrSupervisor {
   private stateStep = 0
   private stateDetail: string | null = null
   private tier: NxCoreAsrModelTier = 'full'
+  /** 服务子进程需要前置到 PATH 的 ffmpeg 目录（固定名 shim 或来源目录）。 */
+  private ffmpegDirectory: string | null = null
 
   constructor(private readonly dataDirectory: string) {
     try {
@@ -294,6 +298,14 @@ export class NxCoreAsrSupervisor {
       this.setState('error', this.lastError ?? '依赖安装失败', 2)
       return null
     }
+    // 服务的转码步骤（webm/opus → 16k 单声道 wav）按名字调 ffmpeg：托管 venv
+    // 里没有它，用户机器也常常没装（装了 Homebrew 版时 GUI 启动的 PATH 又看不
+    // 到）。缺失会让每个任务都终止在 [Errno 2] No such file or directory。
+    const ffmpegReady = await this.ensureFfmpeg(pythonPath)
+    if (!ffmpegReady) {
+      this.setState('error', this.lastError ?? '内置转写缺少音频解码器 ffmpeg', 2)
+      return null
+    }
     // lite 档：SenseVoice 预下载到目录别名 fun-asr-nano（引擎按固定名探测，
     // 见 modelDirForTier）——必须在 uvicorn 拉起前就位，否则服务会把真正的
     // Fun-ASR-Nano（约 2.1GB）下下来。fsmn-vad/cam-plus 体量小，交给服务首启自下。
@@ -403,7 +415,7 @@ export class NxCoreAsrSupervisor {
   /** venv 创建 + pip 依赖安装。国内镜像直连 torch 等大包（官方源国内极慢，
    *  可用 NXCORE_ASR_PIP_INDEX 覆盖）；pip 输出解析为实时明细。 */
   private runSetup(python: string, serviceDir: string): Promise<void> {
-    const pipIndex = process.env.NXCORE_ASR_PIP_INDEX?.trim() || 'https://pypi.tuna.tsinghua.edu.cn/simple'
+    const pipIndex = this.pipIndex()
     /** pip 非 tty 输出按行解析：Collecting/Downloading → 当前包；Installing → 安装阶段。 */
     const parsePipLine = (line: string): void => {
       const download = line.match(/Downloading\s+(\S+)\s+\(([\d.]+\s*[KMG]B?)/)
@@ -594,12 +606,165 @@ export class NxCoreAsrSupervisor {
     }
   }
 
+  /** pip 源：官方源国内极慢，默认走清华镜像，可用 NXCORE_ASR_PIP_INDEX 覆盖。 */
+  private pipIndex(): string {
+    return process.env.NXCORE_ASR_PIP_INDEX?.trim() || 'https://pypi.tuna.tsinghua.edu.cn/simple'
+  }
+
+  /** 保证服务子进程能按名字找到 ffmpeg（转码 webm/opus 的硬依赖）：
+   *  本机探测（含 GUI 启动时不在 PATH 的 Homebrew 位置）→ 缺失则装静态版 →
+   *  统一以固定名 shim 暴露并前置到子进程 PATH。返回 false 时 lastError 已
+   *  写明原因。 */
+  private async ensureFfmpeg(pythonPath: string): Promise<boolean> {
+    const shimPath = this.ffmpegShimPath()
+    const shimDirectory = join(this.dataDirectory, 'nxcore-asr-bin')
+    // 已部署过的 shim 仍可用就直接复用（老版本用户升级后无需重装）。
+    if (existsSync(shimPath) && this.probeFfmpeg(shimPath)) {
+      this.ffmpegDirectory = shimDirectory
+      return true
+    }
+    const detected = this.detectFfmpeg()
+    if (detected) {
+      // 裸命令名说明继承来的 PATH 已能解析，无需 shim；绝对路径则暴露成固定名
+      // （macOS 的 Homebrew 目录不在 GUI 应用的 PATH 里）。
+      if (!detected.includes('/') && !detected.includes('\\')) return true
+      this.ffmpegDirectory = this.writeFfmpegShim(detected, shimPath) ? shimDirectory : dirname(detected)
+      return true
+    }
+    return this.provisionFfmpeg(pythonPath, shimPath, shimDirectory)
+  }
+
+  /** ffmpeg 探测顺序：显式 env 覆盖 → PATH → macOS/Linux 常见安装位置。
+   *  Finder 双击启动的应用 PATH 只有 /usr/bin:/bin:/usr/sbin:/sbin，必须补
+   *  绝对路径才能用到已装好的 Homebrew/MacPorts 版。 */
+  private ffmpegCandidates(): string[] {
+    const override = process.env.NXCORE_ASR_FFMPEG?.trim()
+    return [
+      ...(override ? [override] : []),
+      'ffmpeg',
+      '/opt/homebrew/bin/ffmpeg',   // macOS Apple Silicon Homebrew
+      '/usr/local/bin/ffmpeg',      // Intel Homebrew / 手动安装
+      '/opt/local/bin/ffmpeg',      // MacPorts
+    ]
+  }
+
+  private detectFfmpeg(): string | null {
+    for (const candidate of this.ffmpegCandidates()) {
+      if ((candidate.includes('/') || candidate.includes('\\')) && !existsSync(candidate)) continue
+      if (this.probeFfmpeg(candidate)) return candidate
+    }
+    return null
+  }
+
+  private probeFfmpeg(command: string): boolean {
+    try {
+      const probe = spawnSync(command, ['-version'], { encoding: 'utf8', timeout: 10_000, windowsHide: true })
+      return probe.status === 0
+    } catch {
+      return false
+    }
+  }
+
+  /** 从 PyPI 装静态 ffmpeg（imageio-ffmpeg 的 wheel 自带二进制，约 30MB，各
+   *  平台轮子齐全），免用户手动安装；装好后再以固定名暴露给服务。 */
+  private provisionFfmpeg(pythonPath: string, shimPath: string, shimDirectory: string): Promise<boolean> {
+    this.setDetail('未找到音频解码器 ffmpeg，正在自动安装（约 30MB）…')
+    return new Promise((resolve) => {
+      let settled = false
+      const finish = (ok: boolean): void => {
+        if (settled) return
+        settled = true
+        this.setDetail(null)
+        if (!ok) {
+          this.lastError ??= '未找到音频解码器 ffmpeg，自动安装失败（可手动安装后重试：macOS 执行 brew install ffmpeg）'
+          resolve(false)
+          return
+        }
+        const source = this.resolveImageioFfmpeg(pythonPath)
+        if (!source) {
+          this.lastError = '音频解码器 ffmpeg 安装完成但无法定位二进制'
+          resolve(false)
+          return
+        }
+        if (!this.writeFfmpegShim(source, shimPath)) {
+          this.lastError = '音频解码器 ffmpeg 无法部署到服务 PATH'
+          resolve(false)
+          return
+        }
+        this.ffmpegDirectory = shimDirectory
+        console.info(`[nxcore-asr] ffmpeg provisioned at ${source}`)
+        resolve(true)
+      }
+      const pip = spawn(
+        pythonPath,
+        ['-m', 'pip', 'install', '--disable-pip-version-check', 'imageio-ffmpeg', '-i', this.pipIndex()],
+        { cwd: this.dataDirectory, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true },
+      )
+      pip.stdin.end()
+      const forward = (stream: NodeJS.ReadableStream): void => {
+        stream.setEncoding('utf8')
+        stream.on('data', (chunk: string) => { process.stdout.write(`[nxcore-asr-ffmpeg] ${chunk}`) })
+      }
+      forward(pip.stdout)
+      forward(pip.stderr)
+      pip.on('error', (error) => {
+        this.lastError = `音频解码器 ffmpeg 自动安装失败：${error.message}`
+        finish(false)
+      })
+      pip.on('exit', (code) => {
+        if (code !== 0) this.lastError = `音频解码器 ffmpeg 自动安装失败（pip code=${String(code)}）`
+        finish(code === 0)
+      })
+    })
+  }
+
+  /** imageio-ffmpeg 把二进制放在 site-packages 下且带平台后缀名，这里问它拿
+   *  真实路径（固定名 shim 由 writeFfmpegShim 负责）。 */
+  private resolveImageioFfmpeg(pythonPath: string): string | null {
+    const probe = spawnSync(
+      pythonPath,
+      ['-c', 'import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())'],
+      { encoding: 'utf8', timeout: 60_000, windowsHide: true },
+    )
+    if (probe.status !== 0) return null
+    const lines = `${probe.stdout ?? ''}`.trim().split(/\r?\n/)
+    const executable = lines[lines.length - 1]?.trim()
+    return executable && existsSync(executable) ? executable : null
+  }
+
+  private ffmpegShimPath(): string {
+    return join(this.dataDirectory, 'nxcore-asr-bin', process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg')
+  }
+
+  /** 在数据目录以固定名 `ffmpeg` 暴露来源二进制：服务的 subprocess 只按名字
+   *  调用。POSIX 用软链；Windows 无符号链接权限时退化为复制。 */
+  private writeFfmpegShim(source: string, shimPath: string): boolean {
+    try {
+      mkdirSync(dirname(shimPath), { recursive: true })
+      try { unlinkSync(shimPath) } catch { /* 尚未创建 */ }
+      try {
+        symlinkSync(source, shimPath)
+      } catch {
+        copyFileSync(source, shimPath)
+      }
+      return true
+    } catch (error) {
+      console.warn('[nxcore-asr] ffmpeg shim failed |', error)
+      return false
+    }
+  }
+
   /** uvicorn 子进程的最小环境：仅系统必需 + Python 编码 + 服务自身识别的
    *  env（config.yaml 覆盖与 OSS 变量）。Electron 主进程其余 env 不透传——
    *  全量继承曾致 uvicorn 加载期静默 exit 1（纯 Node 同参 spawn 正常）。 */
   private serviceEnvironment(): NodeJS.ProcessEnv {
+    // ffmpeg 目录前置：服务只按名调用它，而 GUI 启动的应用 PATH 不含 Homebrew
+    // 等常见安装位置（探到的绝对路径/自动安装的静态版都靠这里进 PATH）。
+    const path = [this.ffmpegDirectory, process.env.PATH ?? '']
+      .filter((entry): entry is string => Boolean(entry))
+      .join(delimiter)
     const env: Record<string, string | undefined> = {
-      PATH: process.env.PATH ?? '',
+      PATH: path,
       SYSTEMDRIVE: process.env.SYSTEMDRIVE,
       SYSTEMROOT: process.env.SYSTEMROOT,
       TEMP: process.env.TEMP,
