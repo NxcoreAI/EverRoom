@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from 'node:child_process'
-import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -43,6 +43,37 @@ The Electron app bundle or its code signature is damaged. Reinstall workspace de
   process.exit(1)
 }
 
+// TCC（屏幕录制/麦克风等）只对签名校验通过的应用生效。pnpm 安装的 Electron
+// dist 可能整包缺 _CodeSignature（曾实锤 electron@40.10.6），克隆出的带牌应用
+// 会带着「签名指示有资源但资源缺失」的坏签名运行——表现为用户在系统设置授权
+// 后应用内仍然报未授权。因此缓存命中与重签结果都必须做签名校验。
+function signatureHealthy(appBundle) {
+  const result = spawnSync('/usr/bin/codesign', ['--verify', appBundle], { encoding: 'utf8' })
+  return result.status === 0
+}
+
+// pnpm 解压 Electron dist 包时会把 framework 的符号链接拍平成真实拷贝：
+// Versions/Current 与顶层二进制/Resources 全是实目录/实文件。codesign 对这种
+// 结构判「bundle format is ambiguous」拒绝签名，_CodeSignature 永远生成不了。
+// 这里恢复规范结构：Versions/Current -> A，顶层条目 -> Versions/Current/<name>。
+function repairFrameworkLayouts(frameworksDir) {
+  if (!existsSync(frameworksDir)) return
+  for (const name of readdirSync(frameworksDir)) {
+    if (!name.endsWith('.framework')) continue
+    const frameworkPath = join(frameworksDir, name)
+    const versionsA = join(frameworkPath, 'Versions/A')
+    if (!existsSync(versionsA)) continue
+    const currentPath = join(frameworkPath, 'Versions/Current')
+    rmSync(currentPath, { recursive: true, force: true })
+    symlinkSync('A', currentPath)
+    for (const entry of readdirSync(versionsA)) {
+      const topLevel = join(frameworkPath, entry)
+      rmSync(topLevel, { recursive: true, force: true })
+      symlinkSync(join('Versions/Current', entry), topLevel)
+    }
+  }
+}
+
 // 从钥匙串自动发现 Apple Development 证书（用于 dev 推送签名），找不到返回空串。
 function findDevelopmentIdentity() {
   const listed = spawnSync('/usr/bin/security', ['find-identity', '-v', '-p', 'codesigning'], { encoding: 'utf8' })
@@ -76,8 +107,10 @@ function prepareMacElectron() {
 
   if (existsSync(markerPath) && readFileSync(markerPath, 'utf8') === marker) {
     const cachedExecutable = join(brandedApp, 'Contents/MacOS/Electron')
-    if (!electronHealthCheck(cachedExecutable)) return cachedExecutable
-    console.warn('[desktop] cached branded Electron is not runnable; rebuilding it.')
+    if (!electronHealthCheck(cachedExecutable)) {
+      if (signatureHealthy(brandedApp)) return cachedExecutable
+      console.warn('[desktop] cached branded Electron has an invalid code signature; rebuilding it (TCC permissions cannot bind to a broken signature).')
+    }
     rmSync(brandedApp, { recursive: true, force: true })
     rmSync(markerPath, { force: true })
   }
@@ -105,6 +138,7 @@ function prepareMacElectron() {
   run('/usr/libexec/PlistBuddy', ['-c', 'Add :CFBundleURLTypes:0:CFBundleURLSchemes array', plistPath])
   run('/usr/libexec/PlistBuddy', ['-c', 'Add :CFBundleURLTypes:0:CFBundleURLSchemes:0 string everroom', plistPath])
   copyFileSync(iconPath, join(brandedApp, 'Contents/Resources/icon.icns'))
+  repairFrameworkLayouts(join(brandedApp, 'Contents/Frameworks'))
   // 开发推送验证需要真实 Team 签名 + aps-environment entitlement（ad-hoc 签名无法注册 APNs）。
   // 未配置开发者证书时回退 ad-hoc，推送不可用但应用可跑。
   const devEntitlements = join(cacheDirectory, 'dev-entitlements.plist')
@@ -179,9 +213,17 @@ function prepareMacElectron() {
     console.warn('[desktop] no Apple Development signing identity found; falling back to ad-hoc signing. APNs push registration will be unavailable in this dev session.')
     signing = spawnSync('/usr/bin/codesign', ['--force', '--deep', '--sign', '-', brandedApp], { stdio: 'inherit' })
   }
-  if (signing.status !== 0) {
-    console.warn(`[desktop] dev Electron signing failed (exit ${signing.status}): ${signing.stderr ?? 'no stderr'}`)
-    console.warn('[desktop] keeping branded app with its current (possibly ad-hoc) signature and continuing.')
+  if (signing.status !== 0 || !signatureHealthy(brandedApp)) {
+    console.warn(`[desktop] dev Electron signing failed (exit ${signing.status}): ${signing.stderr ?? 'no stderr'}; retrying with ad-hoc signing.`)
+    signing = spawnSync('/usr/bin/codesign', ['--force', '--deep', '--sign', '-', brandedApp], { stdio: 'inherit' })
+  }
+  if (signing.status !== 0 || !signatureHealthy(brandedApp)) {
+    console.error(`
+[desktop] branded Electron signature is invalid after signing.
+  Screen recording / microphone permissions cannot be granted to this app until fixed.
+  Try: rm -rf "${cacheDirectory}" && pnpm dev
+`)
+    process.exit(1)
   }
   const brandedExecutable = join(brandedApp, 'Contents/MacOS/Electron')
   const brandedFailure = electronHealthCheck(brandedExecutable)

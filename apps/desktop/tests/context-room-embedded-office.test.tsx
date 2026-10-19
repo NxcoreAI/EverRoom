@@ -149,6 +149,10 @@ describe('Room 右区内嵌 Office 预览（Agent 产物替换云文档位置）
     act(() => root!.unmount())
     root = null
     expect(getEmbeddedOffice()).toBeNull()
+    // 卸载当帧发零尺寸：原生视图立即隐藏，不靠 App 仲裁 IPC 慢一步收尾。
+    expect(bridge.setWorkspaceBounds).toHaveBeenLastCalledWith(
+      expect.objectContaining({ width: 0, height: 0 }),
+    )
   })
 
   it('pptx/xlsx 产物同样传 editable；legacy 与 pdf 不传', async () => {

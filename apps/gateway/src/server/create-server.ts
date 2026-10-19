@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { Readable } from "node:stream";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import Fastify, { LogController } from "fastify";
@@ -24,6 +25,11 @@ import {
   channelToolsFromRuntimeTools,
 } from "../modules/agent/channel-mcp-host.js";
 import { channelMcpRoutes } from "../modules/agent/channel-mcp-routes.js";
+import { AgentAccessMcpHost } from "../modules/agent-access/mcp-host.js";
+import { agentAccessMcpRoutes } from "../modules/agent-access/mcp-routes.js";
+import { agentAccessRoutes } from "../modules/agent-access/routes.js";
+import { AgentAccessService } from "../modules/agent-access/service.js";
+import { createAgentAccessTools } from "../modules/agent-access/tools.js";
 import { AgentService } from "../modules/agent/service.js";
 import { DocumentEventBroker } from "../modules/documents/event-broker.js";
 import { DocumentMcpHost } from "../modules/documents/mcp-host.js";
@@ -43,6 +49,7 @@ import { documentOverviewRoutes } from "../modules/documents/overview-routes.js"
 import { documentSectionPreviewRoutes } from "../modules/documents/section-preview-routes.js";
 import { createSelectionRewriteContentResolver } from "../modules/documents/capabilities/selection-rewrite-content.js";
 import { createBuiltinDocumentCapabilityRegistry } from "../modules/documents/capabilities/builtins.js";
+import { SlidesVisualReviewer } from "../modules/slides-visual-review/review.js";
 import { OfficeBridgeClient } from "../modules/documents/capabilities/office-bridge-client.js";
 import { DocumentReadAuthority } from "../modules/documents/capabilities/read-authority.js";
 import { ExternalDocumentProjectionService } from "../modules/documents/external-projections/service.js";
@@ -90,7 +97,7 @@ import { createContextRoomAgentTools } from "../modules/context-rooms/room-agent
 import { createDocumentPiTools } from "../modules/documents/pi-tools.js";
 import { createWebSearchPiTools } from "../modules/agent/web-search-tools.js";
 import { createDocWriterAgentTools } from "../modules/subagents/doc-writer-tools.js";
-import { createSlidesPlannerAgentTools, createSlidesBuilderAgentTools } from "../modules/subagents/slides-agent-tools.js";
+import { createSlidesPlannerAgentTools, createSlidesBuilderAgentTools, createSlidesLayouterAgentTools, createSlidesReviewerAgentTools } from "../modules/subagents/slides-agent-tools.js";
 import { buildRoomContextDigest } from "../modules/context-rooms/room-context-digest.js";
 import { RoomOverviewService } from "../modules/context-rooms/overview-service.js";
 import { RoomOverviewScheduler } from "../modules/context-rooms/overview-scheduler.js";
@@ -108,12 +115,16 @@ import { DocumentIndexBackfillWorker } from "../modules/documents/index-backfill
 import { DocumentIndexBackfillReadTrigger } from "../modules/documents/index-backfill/read-trigger.js";
 import { IndexBackfillLlm } from "../modules/documents/index-backfill/llm.js";
 import { DataMigrationService } from "../modules/data-migrations/service.js";
+import { SearchService } from "../modules/search/service.js";
+import { SearchBackfill } from "../modules/search/backfill.js";
+import { searchRoutes } from "../modules/search/routes.js";
 import { dataMigrationRoutes } from "../modules/data-migrations/routes.js";
 import { filesRoutes } from "../modules/files/routes.js";
 import { materialsRoutes } from "../modules/materials/routes.js";
 import { createMaterialSearchPiTools } from "../modules/materials/agent-tool.js";
 import { MaterialsService } from "../modules/materials/service.js";
 import { FilesService } from "../modules/files/service.js";
+import { ImageDescribeService } from "../modules/files/image-describe.js";
 import { FileClusteringService } from "../modules/files/clustering-service.js";
 import { ClipperService } from "../modules/clipper/service.js";
 import { clipperRoutes } from "../modules/clipper/routes.js";
@@ -196,6 +207,8 @@ import { SlidesStyleSessionStore } from "../modules/slides-style/style-session.j
 import { SlidesPageImageSessionStore } from "../modules/subagents/slides-page-images-store.js";
 import { SlidesPageImageRunner } from "../modules/subagents/slides-page-images-runner.js";
 import { slidesPageImagesRoutes } from "../modules/slides/page-images-routes.js";
+import { ThesisFormatService } from "../modules/thesis-format/service.js";
+import { thesisFormatRoutes } from "../modules/thesis-format/routes.js";
 import type { SlidesStyleStageDeps } from "../modules/subagents/slides-style-stage.js";
 import { aiRelayRoutes } from "../modules/ai-relay/routes.js";
 import { WritingStyleService } from "../modules/writing-style/service.js";
@@ -265,6 +278,10 @@ function applyRuntimeConfig(config: GatewayConfig, runtime: RuntimeConfig): void
   } else {
     apply(config.vlm as unknown as Record<string, unknown> | null, runtime.vlm);
   }
+  // 审页档（slides-reviewer）同样吃 vlm 槽：SaaS 套餐下发的视觉模型（或内置
+  // 默认/BYOK）直接作为审页模型。vlm 槽自带连接（中转重写或 BYOK 继承）时一并
+  // 补齐；空连接时审页档保留从 pi 继承的连接。model 未变化时 apply 不触碰。
+  apply(config.slidesReviewerPi as unknown as Record<string, unknown> | null, runtime.vlm);
   // ASR：openai-compatible / nxcore-asr 自建引擎按各自要素整体构造；aliyun 需
   // runtime 标量 + OSS 必填项齐全才可直接构造
   // （含 OSS——env 从未应用 runtime.asr.oss，而阿里云提交转写无 OSS 直接抛错）；
@@ -529,8 +546,15 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   // /v1/runtime-config/secrets 是唯一允许真密钥出站的端点：主进程派生托管
   // 子进程 env 用（token 鉴权，token 只在主进程）；若在此脱敏，子进程会拿
   // "[REDACTED]" 当 key 起服务并静默 401。其余响应一律按键名/注册密钥脱敏。
+  // agent-access 的连接签发/轮换/安装代写同为有意出站的密钥面（连接 token
+  // 仅创建时返回一次；三端点都走全局 bearer，install 另需 token 匹配）。
   app.addHook("preSerialization", async (request, _reply, payload) => {
     if (request.routeOptions.url === "/v1/runtime-config/secrets") return payload;
+    if (request.routeOptions.url === "/v1/agent-access/connections"
+      || request.routeOptions.url === "/v1/agent-access/connections/:id/token"
+      || request.routeOptions.url === "/v1/agent-access/connections/:id/install/:target") {
+      return payload;
+    }
     return redactSecrets(payload);
   });
 
@@ -712,6 +736,9 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   // PPT 逐页进度上报器（只报不定）：早于 documentMcpHost 构建共享单实例——
   // registry 的 set_page 落页即广播快照，slides_draft 布闸挂转发。
   const slidesProgress = new SlidesProgressTracker();
+  // Office 桥与视觉复检器共享单实例：office-plugin 工具与 slides-layout-tail 落页尾部共用。
+  const officeBridgeClient = config.officeBridge ? new OfficeBridgeClient(config.officeBridge) : null;
+  const slidesVisualReviewer = new SlidesVisualReviewer({ vlm: () => createVlmProvider(config) });
   // 无模版风格管线依赖 filesService/materials（晚于工具装配创建）：getter 惰性取。
   const slidesStyleDepsRef: { current: SlidesStyleStageDeps | null } = { current: null };
   const documentMcpHost = new DocumentMcpHost(
@@ -727,7 +754,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       documentCommentService,
       (event) => documentService.broker.publish(event),
       // agent 写 Word：桌面注入 NXCORE_OFFICE_BRIDGE_URL/TOKEN 后启用。
-      config.officeBridge ? new OfficeBridgeClient(config.officeBridge) : null,
+      officeBridgeClient,
       // 写作路线拍板工具：服务在 orchestrator 之后构造，getter 惰性取用。
       () => routeMindmapServiceRef.current,
       // 任务生产管线（PPT/长文档）：夹 + workplan + 澄清表单。
@@ -735,6 +762,9 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       () => agentServiceRef.current,
       // PPT 逐页进度上报：set_page 成功落页即广播快照。
       slidesProgress,
+      // PPT 落页视觉复检：配置 vlm 时启用（内部自带降级）。惰性解析——
+      // 设置页保存 vlm 段后 runtime config 热替换，复检无需重启网关即生效。
+      slidesVisualReviewer,
     ),
     documentOperationService,
     (diagnostic) => {
@@ -867,6 +897,11 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   subagentRuntimeManager.registerAgentTools("slides-builder", () => createSlidesBuilderAgentTools({
     documentTools: createDocumentPiTools(documentMcpHost),
   }));
+  // slides-layouter（每页布局树设计代理）工具面：只有 slides_layout_validate——
+  // 归一→编译→量测的确定性环，契约经 deck-contract-context 按 token 取用。须在首次 dispatch 前注册。
+  subagentRuntimeManager.registerAgentTools("slides-layouter", () => createSlidesLayouterAgentTools());
+  // slides-reviewer（审页代理）工具面：说明书按需取（review-context 按 manualToken）+ 复用布局树校验。须在首次 dispatch 前注册。
+  subagentRuntimeManager.registerAgentTools("slides-reviewer", () => createSlidesReviewerAgentTools());
   // room-corrector 输出校验：edits 的 targetClaimId 必须来自网关组装的 claims 快照
   //（服务端 applyCitations 还有二次强校验，这里提前拒绝省一次转发）。
   subagentRuntimeManager.registerAgentResultValidator("room-corrector", (invocationInput, result) => {
@@ -1150,6 +1185,31 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
             slidesProgress,
             // PPT 无模版风格管线（纵览图→提取→风格卡→自校）。
             slidesStyle: subagentConfig.enabled ? () => slidesStyleDepsRef.current : null,
+            // 布局树落页装配（generate 尾部）：与 office-plugin 共享同一批实例；
+            // readMaterialBlob 供图片 AR 解析（everroom-material:// 按 hash 回源）。
+            slidesLayoutOffice: subagentConfig.enabled
+              ? {
+                  bridge: officeBridgeClient,
+                  visualReviewer: slidesVisualReviewer,
+                  readMaterialBlob: async (hash) => {
+                    const content = await materialsService.readByHash(hash).catch(() => null);
+                    return content ? new Uint8Array(content.buffer) : null;
+                  },
+                  fetchImageHead: async (url) => {
+                    try {
+                      const response = await fetch(url, {
+                        headers: { Range: "bytes=0-65535" },
+                        signal: AbortSignal.timeout(3000),
+                        redirect: "follow",
+                      });
+                      if (!response.ok && response.status !== 206) return null;
+                      return new Uint8Array(await response.arrayBuffer());
+                    } catch {
+                      return null;
+                    }
+                  },
+                }
+              : null,
             // PPT 草稿文档：planner 内容方案 → 落成 Room 可编辑文档（用户确认后再生成）。
             createSlidesDraftDocument: async ({ roomId, title, markdown }) => {
               const documentId = randomUUID();
@@ -1382,6 +1442,13 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   // 文件管理中心（U9 唯一字节入口）：对象库 + uploaded/parsed 登记；
   // 删除级联经钩子回调 knowledge（wiki 清理）与 memory（文档删除）。
   const filesService = new FilesService(db, config.dataDir);
+  // 论文排版管线：模版解析与装订映射走子代理，渲染走桌面 office-bridge。
+  const thesisFormatService = new ThesisFormatService({
+    db,
+    files: filesService,
+    orchestrator: subagentOrchestrator,
+    officeBridge: config.officeBridge ? new OfficeBridgeClient(config.officeBridge) : null,
+  });
   // 本地素材库（PPT 配图）：检索走结构化表（perception/剪藏/文档内嵌图），
   // 取图按内容哈希回源本地字节。slides-planner 专属工具 + /v1/materials/:hash。
   const materialsService = new MaterialsService(db, config.dataDir);
@@ -1413,8 +1480,18 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     saveDemoPng: async (png) => materialsService.saveImageBlob(png, "image/png"),
     pageImageSessions: pageImageSessionsStore,
     pageImageRunner: pageImageRunner,
+    // settle 的 outlineRoles 来源：按风格会话绑定的草稿读回页结构（读取失败时省略该输入）。
+    resolveDraftDocument: (documentId, roomId) => {
+      try {
+        return documentService.readDocumentForAgent(documentId, roomId);
+      } catch {
+        return null;
+      }
+    },
   };
   const dataMigrationService = new DataMigrationService(db, sqlite, memoryService);
+  const searchService = new SearchService(db, sqlite);
+  await app.register(searchRoutes(searchService));
   dataMigrationService.setFilesService(filesService);
   dataMigrationService.recover();
   // @ 引用解析：先查导入的外部线程；未命中（本应用自有会话 id）回退读 agent_sessions 历史。
@@ -1612,6 +1689,54 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   ));
   await app.register(documentMcpRoutes(documentMcpHost));
   await app.register(channelMcpRoutes(channelMcpHost));
+  // 外部 Agent 访问（PRD 0.2.0 第 7 章 L2.5）：持久连接 token + 范围过滤的对外
+  // MCP 端点。REST（/v1/agent-access/*，连接页）走全局 bearer；MCP 端点
+  // /v1/mcp/agents 以连接 token 自鉴权（auth 插件已豁免全局 bearer）。
+  // 产物入库走 files 管线（sourceKind=agent-generated，CAS sha256 去重），
+  // 与渠道 MCP 互不影响：渠道面向 EverRoom 自己拉起的 CLI，这里面向用户
+  // 自行安装的外部工具。
+  const agentAccessImportArtifact = async (input: {
+    filename: string;
+    buffer: Buffer;
+    roomId: string | null;
+    sourceKey: string;
+  }) => {
+    const result = await filesService.importFileStream({
+      sourceKind: "agent-generated",
+      sourceKey: input.sourceKey,
+      originalName: input.filename,
+      stream: Readable.from(input.buffer),
+      ...(input.roomId ? { roomId: input.roomId, pipelines: { room: true, wiki: false, memory: false } } : {}),
+    });
+    return {
+      fileEntryId: result.fileEntryId,
+      contentHash: result.contentHash,
+      filename: input.filename,
+    };
+  };
+  const agentAccessService = new AgentAccessService(db, {
+    importArtifact: agentAccessImportArtifact,
+    log: (level, event, fields) => app.log[level](fields ?? {}, event),
+  });
+  const agentAccessMcpHost = new AgentAccessMcpHost(
+    agentAccessService,
+    (connection) => createAgentAccessTools(
+      {
+        db,
+        search: searchService,
+        memory: memoryService,
+        documents: documentService,
+        files: filesService,
+        agent: agentService,
+      },
+      connection,
+      agentAccessService,
+      agentAccessImportArtifact,
+    ),
+    (level, event, fields) => app.log[level](fields ?? {}, event),
+  );
+  await app.register(agentAccessRoutes(agentAccessService, agentAccessMcpHost, channelMcpBaseUrl));
+  await app.register(agentAccessMcpRoutes(agentAccessMcpHost));
   await app.register(notificationMcpRoutes(notificationMcpHost));
   // 版本概览 worker：保存（document.changed）后异步判定重要性。重要变更
   // （标题变更/小节增删/变更块 ≥3/首版）直接生成 AI 概览；不重要变更先把
@@ -1673,6 +1798,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   await app.register(memoryRoutes(memoryService));
   await app.register(materialsRoutes(materialsService));
   await app.register(slidesPageImagesRoutes(pageImageSessionsStore));
+  await app.register(thesisFormatRoutes(thesisFormatService));
   await app.register(dataMigrationRoutes(dataMigrationService));
   await app.register(filesRoutes(filesService, {
     // 删除级联（§8.2）：Room/wiki 走 knowledge cleanup job，记忆按 caller_ref 删文档
@@ -1752,6 +1878,8 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       "ingest filter gate enabled",
     );
   }
+  // 图片描述器：VLM 结果同时喂文件链路（markdown 解析产物）与视觉库（素材检索）。
+  const imageDescribeService = new ImageDescribeService(filesService, perceptionService, app.log);
   const ingestService = new IngestService(
     db,
     filesService,
@@ -1765,6 +1893,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     ingestFilterService,
     // 暂停闸状态文件（记忆页「继续/暂停」，重启保持）
     resolve(config.dataDir, "ingest-gate.json"),
+    imageDescribeService,
   );
   // 启动恢复：进程被杀时 pending 滞留的过滤事件重新入队（幂等）
   ingestService.recoverPendingFilters();
@@ -1926,6 +2055,10 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   documentHistoryBackfillWorker.start();
   writingStyleWorker = new WritingStyleWorker(db, writingStyleService, app.log);
   writingStyleWorker.start();
+  // 统一搜索索引 worker（2s 轮询 + 启动回填）。
+  searchService.start();
+  const searchBackfill = new SearchBackfill(db);
+  searchBackfill.schedule();
   // 新记忆自动绑定 Room（推导 worker）：构造不以 config.memory 为前提——runtime
   // config 可事后热注入，drain 内自查 memory.enabled 兜底。
   if (config.memoryRoomDerive?.enabled !== false) {

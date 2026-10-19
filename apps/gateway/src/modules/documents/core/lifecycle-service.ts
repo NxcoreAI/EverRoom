@@ -5,6 +5,7 @@ import { documents, jobs } from "../../../infrastructure/database/schema.js";
 import { DocumentServiceError } from "../errors.js";
 import { DOCUMENT_HISTORY_BACKFILL_JOB_TYPE, enqueueDocumentDelete } from "../integration-outbox.js";
 import { enqueueWritingStyleExtract } from "../../writing-style/jobs.js";
+import { enqueueSearchIndex } from "../../search/jobs.js";
 import { DocumentRepository } from "./repository.js";
 
 export interface DocumentLifecycleHooks {
@@ -31,6 +32,7 @@ export class DocumentLifecycleService {
       .where(eq(documents.id, documentId)).run();
     // 风格语料跟随文档生命周期：trash 后 worker 会看到 deletedAt 并清 sketch。
     enqueueWritingStyleExtract(this.db, { documentId, roomId: current.roomId, version: current.version }, now);
+    enqueueSearchIndex(this.db, { itemType: "document", refId: documentId, priority: "high" });
     const trashed = this.repository.get(documentId)!;
     this.hooks.trashed?.(trashed);
     return trashed;
@@ -44,6 +46,7 @@ export class DocumentLifecycleService {
       .where(eq(documents.id, documentId)).run();
     // 恢复后重新评估风格语料资格。
     enqueueWritingStyleExtract(this.db, { documentId, roomId: current.roomId, version: current.version }, now);
+    enqueueSearchIndex(this.db, { itemType: "document", refId: documentId, priority: "high" });
     const restored = this.repository.get(documentId)!;
     this.hooks.restored?.(restored);
     return restored;

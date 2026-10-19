@@ -173,7 +173,18 @@ function FileDetail({
         <button
           type="button"
           className="context-room-primary context-room-small"
-          onClick={() => setNotice(t('contextRoom:objectDetail.sentTheFileAndSummaryToAgent'))}
+          onClick={() =>
+            window.dispatchEvent(new CustomEvent('everroom:room-agent-ask', {
+              detail: {
+                roomId: room.id,
+                message: t('contextRoom:objectDetail.analyzeFilePrompt', {
+                  room: room.title,
+                  name: file.name,
+                  summary: file.summary?.trim() || '—',
+                }),
+              },
+            }))
+          }
         >
           {t('contextRoom:objectDetail.askAgentToAnalyze')}
         </button>
@@ -413,7 +424,24 @@ function TaskDetail({
                 {t('contextRoom:objectDetail.openRoom')}
               </button>
             </div>
-            <button type="button" className="context-room-primary context-room-agent-action">
+            <button
+              type="button"
+              className="context-room-primary context-room-agent-action"
+              onClick={() =>
+                window.dispatchEvent(new CustomEvent('everroom:room-agent-ask', {
+                  detail: {
+                    roomId: room.id,
+                    message: t('contextRoom:objectDetail.assistTaskPrompt', {
+                      room: room.title,
+                      task: task.title,
+                      status: t(uiText(task.status)),
+                      owner: t(uiText(task.owner)),
+                      deadline: t(uiText(task.deadline)),
+                    }),
+                  },
+                }))
+              }
+            >
               <Sparkles aria-hidden="true" />
               {t('contextRoom:objectDetail.askAgentToHelp')}
             </button>

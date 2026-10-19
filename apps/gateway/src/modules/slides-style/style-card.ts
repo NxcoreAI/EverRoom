@@ -7,10 +7,7 @@
  */
 
 import type { SlidesStyleSessionData } from "./types.js";
-import { renderWireframeSvg, wireframeForRole, type WireframeRole } from "./wireframe.js";
-
-/** 风格卡默认展示的页型线框（覆盖大纲最常见角色；closing 并入 cover 展示语义）。 */
-const CARD_WIREFRAME_ROLES: WireframeRole[] = ["cover", "content", "data"];
+import { presetThumbnails, type ThumbnailRole } from "./preset-thumbnails.js";
 
 function materialUrl(hash: string): string {
   return `everroom-material://${hash}`;
@@ -27,7 +24,9 @@ export interface StyleCardTypographyRow {
 }
 
 export interface StyleCardWireframe {
-  role: WireframeRole;
+  role: ThumbnailRole;
+  /** 预设标签（如「封面 P1a」）——真实版式编号，随构图家族变化。 */
+  label: string;
   svg: string;
 }
 
@@ -96,10 +95,11 @@ export function styleCardPayload(
       { label: "字体", value: params.typography.fontHeading },
     ]
     : [];
-  const spacing = params?.spacing ?? { margin: 60, gutter: 20, cardPadding: 16, cornerRadius: 8 };
-  const wireframes: StyleCardWireframe[] = CARD_WIREFRAME_ROLES.map((role) => ({
+  // 版式缩略图按构图家族出真实预设（封面/内容/数据三张），直接展示用户挑中的构图方向。
+  const wireframes: StyleCardWireframe[] = presetThumbnails(params).map(({ role, label, svg }) => ({
     role,
-    svg: renderWireframeSvg(wireframeForRole(role, spacing)),
+    label,
+    svg,
   }));
   return {
     stage: "style_card_ready",

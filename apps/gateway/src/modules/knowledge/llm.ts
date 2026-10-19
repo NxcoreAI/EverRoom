@@ -229,6 +229,15 @@ export class KnowledgeLlm {
   }
 
   /**
+   * 判定错误是否为 KS 侧 LLM 配置缺失（「LLM apiKey/baseUrl 未配置」）——
+   * 永久态：配置修正前重试必失败，job 应一次落败而不是烧满重试次数。
+   */
+  static isLlmUnconfigured(error: unknown): boolean {
+    const message = error instanceof Error ? error.message : String(error);
+    return /LLM (?:apiKey|baseUrl) 未配置/.test(message);
+  }
+
+  /**
    * 判定错误是否为输出预算截断（finish_reason=length）——瞬时态：runtime
    * 侧已有 4 倍加预算重试，仍截断说明预算配置偏小，交 worker 退避后重试；
    * 不得落 awaiting_review 死信（否则资料被永久定罪为"抽取失败"）。

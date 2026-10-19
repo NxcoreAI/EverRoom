@@ -8,9 +8,12 @@ import { useRoomDocumentsState } from '@/components/context-room/RoomDocumentsPr
 import { FilterSelect } from '@/components/context-room/ported/components/shared'
 import { useLocale, type AppLocale, type Translate } from '@/i18n/LocaleContext'
 import { officePreviewKindForFileName, type OfficePreviewKind, type OfficePreviewTab } from '../../../../shared/sources'
+import { requestArtifactCreateIntent } from '@/components/context-room/artifactCreateIntent'
+import { saveRoomWorkspaceState } from '@/components/context-room/ported/roomWorkspaceState'
 import { showToast } from '@/state/toast'
 import { useRoomAgentFiles } from './useRoomAgentFiles'
 import { PageHeader } from './PageHeader'
+import { RoomPickerDialog } from './RoomPickerDialog'
 
 function formatDocumentTime(iso: string, locale: AppLocale, t: Translate): string {
   const time = new Date(iso).getTime()
@@ -54,10 +57,13 @@ export function DocsPage({
   onNavigate,
   onOpenDocument,
   onOpenOfficePreview,
+  onOpenRoom,
 }: {
   onNavigate: (page: PageId) => void
   onOpenDocument: (target: { roomId: string; documentId: string }) => void
   onOpenOfficePreview: (tab: OfficePreviewTab) => void
+  /** 「+新建文档」选完 Room 后的跳转：直达该 Room 详情（工作台）。 */
+  onOpenRoom?: (roomId: string) => void
 }) {
   const { locale, t } = useLocale()
   const { state } = useContextRoomState()
@@ -68,6 +74,16 @@ export function DocsPage({
   const [roomFilter, setRoomFilter] = useState<string>('all')
   const [typeFilter, setTypeFilter] = useState<ManuscriptType | 'all'>('all')
   const [busyKey, setBusyKey] = useState<string | null>(null)
+  const [roomPickerOpen, setRoomPickerOpen] = useState(false)
+
+  // 「+新建文档」：选 Room → 预写工作现场为产物库板块 → 登记自动展开新建产物面板的
+  // 一次性意图 → 直达该 Room 详情（产物库挂载时消费意图，直接停在创建界面）。
+  const pickRoomForNewDocument = (roomId: string) => {
+    requestArtifactCreateIntent(roomId)
+    saveRoomWorkspaceState(roomId, { board: 'artifacts' })
+    if (onOpenRoom) onOpenRoom(roomId)
+    else onNavigate('rooms')
+  }
 
   const roomTitleById = useMemo(() => {
     const map = new Map<string, string>()
@@ -193,7 +209,12 @@ export function DocsPage({
       <PageHeader
         title={t('surface:docs.documents')}
         action={t('surface:docs.newDocument')}
-        onAction={() => onNavigate('rooms')}
+        onAction={() => setRoomPickerOpen(true)}
+      />
+      <RoomPickerDialog
+        open={roomPickerOpen}
+        onOpenChange={setRoomPickerOpen}
+        onPick={pickRoomForNewDocument}
       />
       <div className="doc-toolbar">
         <label className="doc-search">

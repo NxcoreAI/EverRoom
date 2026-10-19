@@ -1,6 +1,7 @@
 import { AlertCircle, ChevronRight, FileClock, RefreshCw, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { useLocale } from '../../../i18n/LocaleContext'
+import { FilterSelect } from '../../ui/FilterSelect'
 
 import { requestDocumentOperationNavigation } from './documentOperationNavigation'
 import { useDocumentOperations } from './DocumentOperationProvider'
@@ -82,23 +83,31 @@ export function DocumentOperationCenter({ activeRoomId }: { activeRoomId: string
             <button type="button" aria-label={t('contextRoom:documentOperationCenter.closeOperationsCenter')} onClick={() => setOpen(false)}><X aria-hidden="true" /></button>
           </header>
           <div className="document-operation-center-filters">
-            <select aria-label={t('contextRoom:documentOperationCenter.filterByRoom')} value={roomFilter} onChange={(event) => { setRoomFilter(event.target.value); setDocumentFilter('') }}>
-              <option value="">{t('contextRoom:documentOperationCenter.allRooms')}</option>
-              {rooms.map((roomId) => <option key={roomId} value={roomId}>{roomId}</option>)}
-            </select>
-            <select aria-label={t('contextRoom:documentOperationCenter.filterByDocument')} value={documentFilter} onChange={(event) => setDocumentFilter(event.target.value)}>
-              <option value="">{t('contextRoom:documentOperationCenter.allDocuments')}</option>
-              {documents.map((entry) => <option key={entry.id} value={entry.summary.documentId ?? ''}>{entry.summary.documentTitle}</option>)}
-            </select>
-            <select aria-label={t('contextRoom:documentOperationCenter.filterByCapability')} value={capabilityFilter} onChange={(event) => setCapabilityFilter(event.target.value)}>
-              <option value="">{t('contextRoom:documentOperationCenter.allCapabilities')}</option>
-              {capabilities.map((capability) => <option key={capability} value={capability}>{capability}</option>)}
-            </select>
-            <select aria-label={t('contextRoom:documentOperationCenter.filterBySession')} value={sessionFilter} onChange={(event) => setSessionFilter(event.target.value)}>
-              <option value="">{t('contextRoom:documentOperationCenter.allSessions')}</option>
-              {sessions.map((sessionId) => <option key={sessionId} value={sessionId}>{sessionId}</option>)}
-            </select>
-            <button type="button" aria-label={t('contextRoom:documentOperationCenter.refreshOperations')} onClick={() => void refresh()}><RefreshCw aria-hidden="true" /></button>
+            <FilterSelect
+              value={roomFilter}
+              options={[{ value: '', label: t('contextRoom:documentOperationCenter.allRooms') }, ...rooms.map((roomId) => ({ value: roomId, label: roomId }))]}
+              onChange={(value) => { setRoomFilter(value); setDocumentFilter('') }}
+              ariaLabel={t('contextRoom:documentOperationCenter.filterByRoom')}
+            />
+            <FilterSelect
+              value={documentFilter}
+              options={[{ value: '', label: t('contextRoom:documentOperationCenter.allDocuments') }, ...documents.map((entry) => ({ value: entry.summary.documentId ?? '', label: entry.summary.documentTitle }))]}
+              onChange={setDocumentFilter}
+              ariaLabel={t('contextRoom:documentOperationCenter.filterByDocument')}
+            />
+            <FilterSelect
+              value={capabilityFilter}
+              options={[{ value: '', label: t('contextRoom:documentOperationCenter.allCapabilities') }, ...capabilities.map((capability) => ({ value: capability, label: capability }))]}
+              onChange={setCapabilityFilter}
+              ariaLabel={t('contextRoom:documentOperationCenter.filterByCapability')}
+            />
+            <FilterSelect
+              value={sessionFilter}
+              options={[{ value: '', label: t('contextRoom:documentOperationCenter.allSessions') }, ...sessions.map((sessionId) => ({ value: sessionId, label: sessionId }))]}
+              onChange={setSessionFilter}
+              ariaLabel={t('contextRoom:documentOperationCenter.filterBySession')}
+            />
+            <button type="button" className="document-operation-center-refresh" aria-label={t('contextRoom:documentOperationCenter.refreshOperations')} onClick={() => void refresh()}><RefreshCw aria-hidden="true" /></button>
           </div>
           <div className="document-operation-center-list">
             {filtered.length ? filtered.map((entry) => (

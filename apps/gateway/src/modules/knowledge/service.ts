@@ -34,6 +34,7 @@ import {
 import { bestMatch } from "./entity-index.js";
 import { buildDocumentEnvelope, envelopeFilename, type DocEnvelope } from "./envelope.js";
 import { truncateUtf8 } from "../ingest/normalizers.js";
+import { enqueueSearchIndex } from "../search/jobs.js";
 import { convertUploadedFile } from "./file-convert.js";
 import {
   KnowledgeLlm,
@@ -776,19 +777,35 @@ export class KnowledgeService {
     pageCount: number | null;
     summary: string | null;
     updatedAt: string | null;
+    pendingSources: number | null;
+    totalSources: number | null;
   }> {
     const knowledgeId = this.resolveRoomWikiId(roomId);
-    if (!knowledgeId) return { status: "none", items: [], pageCount: null, summary: null, updatedAt: null };
+    if (!knowledgeId) return { status: "none", items: [], pageCount: null, summary: null, updatedAt: null, pendingSources: null, totalSources: null };
     const wiki = await this.ks.getWiki(knowledgeId);
-    if (!wiki) return { status: "none", items: [], pageCount: null, summary: null, updatedAt: null };
+    if (!wiki) return { status: "none", items: [], pageCount: null, summary: null, updatedAt: null, pendingSources: null, totalSources: null };
     const items = await this.ks.listPages(knowledgeId);
-    // page_count：KS 内部已产出页数（processing 期间 ls 为空，用它透出构建进度）
+    // 构建期 page_count 停在上一轮成功值（KS 整轮结束才落账），页数不动会像
+    // 卡死——附上源级剩余量（uploaded/failed），让 UI 能透出「还有 N 份在排队」。
+    let pendingSources: number | null = null;
+    let totalSources: number | null = null;
+    if (wiki.status === "processing" || wiki.status === "pending") {
+      try {
+        const sources = await this.ks.rawLs(knowledgeId);
+        totalSources = sources.length;
+        pendingSources = sources.filter((source) => source.status !== "ingested").length;
+      } catch {
+        // 进度是增强信号：raw/ls 失败不拖垮页面清单
+      }
+    }
     return {
       status: wiki.status,
       items,
       pageCount: wiki.page_count,
       summary: this.wikiContentSummary(wiki),
       updatedAt: wiki.last_sync_at ?? wiki.updated_at ?? null,
+      pendingSources,
+      totalSources,
     };
   }
 
@@ -1594,7 +1611,10 @@ export class KnowledgeService {
         const backoffMs = rateLimited
           ? Math.min(30_000 * 2 ** (attempts - 1), 300_000)
           : BUSY_RETRY_DELAY_MS * attempts;
-        if (attempts < maxAttempts) {
+        // LLM 配置缺失是永久态：改配置前重试必失败（曾以 15 秒一轮连烧两天），
+        // 一次落败即可，配置修复后新 job 自然走通。
+        const configMissing = KnowledgeLlm.isLlmUnconfigured(error);
+        if (attempts < maxAttempts && !configMissing) {
           this.db.update(jobs).set({ status: "pending", updatedAt: new Date() }).where(eq(jobs.id, job.id)).run();
           this.retryAfter.set(job.id, Date.now() + backoffMs);
           this.transientAttempts.set(job.id, attempts);
@@ -1622,7 +1642,7 @@ export class KnowledgeService {
             this.deadLetterRoute(job.payload as RouteJobPayload, message);
           }
           this.logger.error(
-            { event: "knowledge.job.failed", jobId: job.id, error: message },
+            { event: "knowledge.job.failed", jobId: job.id, configMissing, error: message },
             "knowledge job failed permanently",
           );
         }
@@ -1930,6 +1950,7 @@ export class KnowledgeService {
       createdAt: new Date(),
       updatedAt: new Date(),
     }).onConflictDoNothing().run();
+    enqueueSearchIndex(this.db, { itemType: "room", refId: roomId, priority: "high" });
     this.entityRegistry.promoteToRoom(entity.id, roomId);
 
     // 资料沉淀拆为 per-room 串行的普通 ingest job。Room 创建在这里即可完成，
@@ -2333,7 +2354,11 @@ export class KnowledgeService {
     for (;;) {
       const wiki = await this.ks.getWiki(knowledgeId);
       if (!wiki) throw new Error(`wiki disappeared during ingest: ${knowledgeId}`);
-      if (wiki.status === "failed") throw new Error(`wiki ingest failed: ${knowledgeId}`);
+      if (wiki.status === "failed") {
+        // 带上 KS 的失败原因（含「LLM apiKey 未配置」等配置类根因），
+        // 让 job 错误可诊断、可按类分流（配置缺失不退避重试）。
+        throw new Error(`wiki ingest failed: ${knowledgeId}${wiki.sync_error ? `（${wiki.sync_error}）` : ""}`);
+      }
       if (wiki.status === "ready" || wiki.status === "draft") return;
       if (Date.now() > deadline) throw new Error(`wiki ingest timed out: ${knowledgeId}`);
       await delay(INGEST_POLL_INTERVAL_MS);
@@ -2855,6 +2880,7 @@ export class KnowledgeService {
   private async retireRoomWiki(roomId: string, reason: string): Promise<void> {
     this.db.update(rooms).set({ deletedAt: new Date(), updatedAt: new Date() })
       .where(eq(rooms.id, roomId)).run();
+    enqueueSearchIndex(this.db, { itemType: "room", refId: roomId, priority: "high" });
     this.db.update(roomWikis).set({ status: "archived" })
       .where(eq(roomWikis.roomId, roomId)).run();
     this.logger.info(
@@ -3567,6 +3593,7 @@ export class KnowledgeService {
     }
     this.relationRegistry.recomputeAll();
     this.roomDuplicateIndexTrigger?.();
+    enqueueSearchIndex(this.db, { itemType: "room", refId: input.id, priority: "high" });
     return this.toRoomDto(row!);
   }
 

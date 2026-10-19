@@ -228,7 +228,12 @@
         "filter": [
           "**/*",
           "!**/*.md",
-          "!**/package-lock.json"
+          "!**/package-lock.json",
+          "!**/.env*",
+          "!**/{test,tests,__tests__}/**",
+          "!**/{test,spec}.*",
+          "!**/*.{map,ts,tsx,mts,cts}",
+          "!**/*.{test,spec}.*"
         ]
       },
       {

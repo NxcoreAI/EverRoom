@@ -105,6 +105,7 @@ function toPayload(interval: ClosedInterval): Record<string, unknown> {
     endedAt: interval.endedAt.toISOString(),
     endReason: interval.endReason,
     textLines: interval.textLines,
+    textBlocks: interval.textBlocks,
     keyframes: interval.keyframes.map((frame) => ({
       capturedAt: frame.capturedAt.toISOString(),
       imagePath: frame.imagePath,

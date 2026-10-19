@@ -491,17 +491,76 @@ describe('ObsidianVaultService', () => {
     await service.shutdown()
   })
 
-  it('requires a Vault root and scans notes and supported attachments without .obsidian data', async () => {
-    const { root, vaultPath, service } = await fixture()
-    await expect(service.mount(root)).rejects.toThrow('.obsidian')
-
+  it('scans notes and supported attachments without .obsidian data', async () => {
+    const { vaultPath, service } = await fixture()
     const binding = await service.mount(vaultPath)
     const tree = await service.tree(binding.id)
 
-    expect(binding).toMatchObject({ name: 'Product Vault', noteCount: 1, attachmentCount: 1, attachmentFolderPath: 'assets' })
+    expect(binding).toMatchObject({ name: 'Product Vault', sourceType: 'obsidian-vault', noteCount: 1, attachmentCount: 1, attachmentFolderPath: 'assets' })
     expect(binding).not.toHaveProperty('rootPath')
     expect(tree.resources.map((resource) => resource.relativePath)).toEqual(['cover.png', 'notes/roadmap.md'])
     expect(tree.resources.some((resource) => resource.relativePath.includes('.obsidian'))).toBe(false)
+    await service.shutdown()
+  })
+
+  it('mounts a plain directory as a one-shot local-directory source that keeps write-back but skips watching', async () => {
+    const { root, service } = await fixture()
+    const plainPath = join(root, 'Plain Docs')
+    await mkdir(join(plainPath, 'docs'), { recursive: true })
+    await writeFile(join(plainPath, 'docs', 'guide.md'), '# Guide')
+    await writeFile(join(plainPath, 'docs', 'second.md'), '# Second')
+    await writeFile(join(plainPath, 'logo.png'), Buffer.from('image'))
+
+    const binding = await service.mount(plainPath)
+    expect(binding).toMatchObject({ name: 'Plain Docs', sourceType: 'local-directory', noteCount: 2, attachmentCount: 1 })
+    expect((await service.tree(binding.id)).resources.map((resource) => resource.relativePath))
+      .toEqual(['docs/guide.md', 'docs/second.md', 'logo.png'])
+
+    const events: ObsidianVaultChangedEvent[] = []
+    service.onChanged((event) => events.push(event))
+    await writeFile(join(plainPath, 'docs', 'guide.md'), '# Guide edited externally')
+    await new Promise((resolve) => setTimeout(resolve, 700))
+    expect(events).toHaveLength(0)
+
+    const note = (await service.tree(binding.id)).resources.find((resource) => resource.kind === 'note' && resource.name === 'second.md')!
+    const saved = await service.saveNote(binding.id, note.id, '# Second rewritten', note.sourceHash)
+    expect(saved.status).toBe('saved')
+    expect(await readFile(join(plainPath, 'docs', 'second.md'), 'utf8')).toBe('# Second rewritten')
+    await service.shutdown()
+  })
+
+  it('normalizes legacy stores without sourceType and keeps watching Vault bindings', async () => {
+    const { dataDirectory, vaultPath, service } = await fixture()
+    const binding = await service.mount(vaultPath)
+    expect(binding.sourceType).toBe('obsidian-vault')
+    await service.shutdown()
+
+    const storePath = join(dataDirectory, 'obsidian-vaults.json')
+    const legacy = JSON.parse(await readFile(storePath, 'utf8')) as { vaults: Array<Record<string, unknown>> }
+    for (const vault of legacy.vaults) delete vault.sourceType
+    await writeFile(storePath, JSON.stringify(legacy))
+
+    const upgraded = new ObsidianVaultService(dataDirectory, vi.fn(async () => undefined))
+    await upgraded.initialize()
+    expect(upgraded.list()[0]).toMatchObject({ id: binding.id, sourceType: 'obsidian-vault' })
+
+    const events: ObsidianVaultChangedEvent[] = []
+    upgraded.onChanged((event) => events.push(event))
+    await writeFile(join(vaultPath, 'notes', 'roadmap.md'), '# Roadmap changed')
+    for (let attempt = 0; attempt < 60 && events.length === 0; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+    expect(events.length).toBeGreaterThan(0)
+    await upgraded.shutdown()
+  })
+
+  it('emits sourceType on the removal event so cleanup can pick the right sourceKind', async () => {
+    const { vaultPath, service } = await fixture()
+    const binding = await service.mount(vaultPath)
+    const removals: Array<{ vaultId: string; sourceType: string }> = []
+    service.onRemoved((event) => { removals.push(event) })
+    await service.disconnect(binding.id)
+    expect(removals[0]).toMatchObject({ vaultId: binding.id, sourceType: 'obsidian-vault' })
     await service.shutdown()
   })
 

@@ -17,6 +17,8 @@ const SessionBody = Type.Object({
     lite: Type.Optional(Type.String({ minLength: 1 })),
     cursorCompletion: Type.Optional(Type.String({ minLength: 1 })),
     vlm: Type.Optional(Type.String({ minLength: 1 })),
+    // 生图模型随套餐下发；允许空串=未配置（image-gen 据此禁用生图）。
+    image: Type.Optional(Type.String()),
     webSearch: Type.Optional(Type.String({ minLength: 1 })),
     embedding: Type.Optional(Type.String({ minLength: 1 })),
     embeddingDimensions: Type.Optional(Type.Integer({ minimum: 1 })),

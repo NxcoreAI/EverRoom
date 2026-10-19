@@ -145,6 +145,10 @@ export interface KnowledgeWikiPagesResultDto {
   /** KS ingest 成功后生成的内容摘要（概览卡要点）；身份卡/未生成为 null */
   summary?: string | null
   updatedAt?: string | null
+  /** 构建期待处理源文件数（uploaded/failed）；非构建期为 null */
+  pendingSources?: number | null
+  /** 源文件总数（构建期附带）；非构建期为 null */
+  totalSources?: number | null
 }
 
 /** Room ↔ wiki 映射行（GET /v1/knowledge/wikis）。 */

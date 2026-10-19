@@ -8,6 +8,7 @@
  */
 
 import type {
+  StyleComposition,
   StyleDecoration,
   StyleParams,
   StylePalette,
@@ -38,7 +39,51 @@ export const STYLE_FONT_OPTIONS = [
 const DEFAULT_FONT = "PingFang SC";
 
 /** layout 技能预设 id 形态（P1a / T3 / D2 / F6 / R1…）。 */
-const LAYOUT_HINT_PATTERN = /^[PDTFR]\d[ab]?$/;
+
+/** 构图家族词表与用户可读名（风格卡 effectLines / 预设缩略图复用）。 */
+export const STYLE_COMPOSITIONS = ["swiss", "editorial", "poster", "immersive"] as const;
+
+export const COMPOSITION_LABELS: Record<StyleComposition, string> = {
+  swiss: "瑞士网格",
+  editorial: "杂志编辑",
+  poster: "海报大字",
+  immersive: "沉浸大图",
+};
+
+/** 候选 composition 缺失/重复时的确定性补位顺序。 */
+export const COMPOSITION_FILL_ORDER: readonly StyleComposition[] = ["swiss", "editorial", "poster", "immersive"];
+
+/**
+ * 构图效果文案（effectLines 规范：只写达成效果，无来源说明）。
+ */
+const COMPOSITION_EFFECT_LINES: Record<StyleComposition, string> = {
+  swiss: "整篇严格网格对齐，版面秩序统一",
+  editorial: "不对称分栏与大留白，杂志编辑式排版",
+  poster: "每页一个超大字或大数字，重点极醒目",
+  immersive: "大图与深底主导，沉浸式氛围",
+};
+
+export function isStyleComposition(value: unknown): value is StyleComposition {
+  return typeof value === "string" && (STYLE_COMPOSITIONS as readonly string[]).includes(value);
+}
+
+/**
+ * 构图家族缺失/非法时的确定性推导（幂等：只依赖归一后的 palette 与字体，
+ * 第二次归一看到合法值直接保留）。immersive 不参与推导——它只来自用户挑图。
+ */
+function deriveComposition(palette: StylePalette, fontHeading: string): StyleComposition {
+  if (luminance(hexToRgb(palette.background)) < 0.35) return "poster";
+  if (fontHeading.includes("Songti") || fontHeading.includes("Georgia")) return "editorial";
+  return "swiss";
+}
+
+/** 风格卡效果行追加构图条目（幂等：已有「构图：」行不重复；超上限替换末条）。 */
+export function appendCompositionEffectLine(effectLines: string[], composition: StyleComposition): string[] {
+  const line = `构图：${COMPOSITION_LABELS[composition]}——${COMPOSITION_EFFECT_LINES[composition]}`;
+  if (effectLines.some((item) => item.startsWith("构图："))) return effectLines;
+  if (effectLines.length >= 10) return [...effectLines.slice(0, 9), line];
+  return [...effectLines, line];
+}
 
 function clampNumber(value: unknown, min: number, max: number, field: string, fallback: number): number {
   const parsed = typeof value === "number" && Number.isFinite(value) ? value : fallback;
@@ -265,19 +310,16 @@ export function normalizeStyleParams(raw: unknown, notes: string[] = []): StyleP
     if (typeof value === "string" || typeof value === "number") motifSpec[key] = value;
   }
 
-  const hintsRow = (row.layoutHints ?? {}) as Record<string, unknown>;
-  const layoutHints: StyleParams["layoutHints"] = {};
-  for (const role of ["cover", "section", "content", "closing"] as const) {
-    const value = hintsRow[role];
-    if (typeof value === "string" && LAYOUT_HINT_PATTERN.test(value)) layoutHints[role] = value;
-  }
-
   const effectLines = Array.isArray(row.effectLines)
     ? (row.effectLines as unknown[])
       .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
       .map((item) => item.trim().slice(0, 120))
       .slice(0, 10)
     : [];
+
+  const composition = isStyleComposition(row.composition)
+    ? row.composition
+    : deriveComposition(palette, typography.fontHeading);
 
   return {
     palette,
@@ -289,9 +331,9 @@ export function normalizeStyleParams(raw: unknown, notes: string[] = []): StyleP
         ["ghost-number", "ghost-word", "color-band", "corner-accent", "none"] as const, "motif.kind"),
       spec: motifSpec,
     },
-    layoutHints,
     darkCover: typeof row.darkCover === "boolean" ? row.darkCover : true,
     effectLines,
+    composition,
   };
 }
 
@@ -331,7 +373,6 @@ export function defaultStyleParams(
       imageFit: "cover",
     },
     motif: { kind: "none", spec: {} },
-    layoutHints: {},
     darkCover: roles.darkCover,
     effectLines: [],
   });

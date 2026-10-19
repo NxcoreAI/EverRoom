@@ -310,6 +310,91 @@ export class PerceptionService {
     return { observationId, node: this.dtoForVisual(node), grouped };
   }
 
+  currentVlm(): VisualInferenceClient | null {
+    return this.vlm;
+  }
+
+  observationOf(fileId: string): {
+    observation: typeof visualObservations.$inferSelect;
+    node: typeof visualNodes.$inferSelect;
+  } | null {
+    const observation = this.db.select().from(visualObservations)
+      .where(eq(visualObservations.fileId, fileId)).get();
+    if (!observation) return null;
+    return { observation, node: this.requireVisualNode(observation.nodeId) };
+  }
+
+  /** 文件导入链路专用：描述结果已在调用方算出，直接落 ready 节点。
+   *  不排 visual_processing_jobs、不 notifyReady——文件链 fanOut 是唯一 ingest 入口，
+   *  避免同一描述经感知 readySink 二次进记忆。 */
+  registerResolvedObservation(input: {
+    fileId: string;
+    kind: "photo";
+    capturedAt: Date;
+    result: VisualInferenceResult;
+    model: string | null;
+  }): { observationId: string; nodeId: string; deduped: boolean } {
+    const file = this.files.get(input.fileId);
+    if (!file) throw new Error("file_not_found");
+    if (!file.mime.startsWith("image/")) throw new Error("visual_file_must_be_image");
+    const existing = this.observationOf(input.fileId);
+    const now = new Date();
+    if (existing) {
+      const node = existing.node;
+      if (node.vlmStatus === "ready") {
+        return { observationId: existing.observation.id, nodeId: node.id, deduped: true };
+      }
+      this.db.transaction((tx) => {
+        tx.update(visualNodes).set({
+          vlmStatus: "ready", eventType: input.result.eventType, title: input.result.title,
+          summary: input.result.summary, keyPoints: input.result.keyPoints,
+          representativeTags: input.result.representativeTags, confidence: input.result.confidence,
+          model: input.model, resultVersion: node.resultVersion + 1, error: null, updatedAt: now,
+        }).where(eq(visualNodes.id, node.id)).run();
+        tx.update(visualProcessingJobs).set({
+          status: "completed", leaseOwner: null, leaseExpiresAt: null, error: null, updatedAt: now,
+        }).where(and(eq(visualProcessingJobs.nodeId, node.id), eq(visualProcessingJobs.status, "pending"))).run();
+      });
+      return { observationId: existing.observation.id, nodeId: node.id, deduped: false };
+    }
+    const nodeId = `visual-${randomUUID()}`;
+    const observationId = `observation-${randomUUID()}`;
+    this.db.transaction((tx) => {
+      tx.insert(visualNodes).values({
+        id: nodeId,
+        kind: input.kind,
+        startAt: input.capturedAt,
+        endAt: input.capturedAt,
+        sampleCount: 1,
+        representativeObservationId: observationId,
+        vlmStatus: "ready",
+        eventType: input.result.eventType,
+        title: input.result.title,
+        summary: input.result.summary,
+        keyPoints: input.result.keyPoints,
+        representativeTags: input.result.representativeTags,
+        confidence: input.result.confidence,
+        model: input.model,
+        resultVersion: 1,
+      }).run();
+      tx.insert(visualObservations).values({
+        id: observationId,
+        nodeId,
+        fileId: input.fileId,
+        kind: input.kind,
+        capturedAt: input.capturedAt,
+      }).run();
+      tx.update(uploadedFiles).set({
+        assetKind: input.kind,
+        visibility: "private",
+        capturedAt: input.capturedAt,
+        updatedAt: now,
+      }).where(eq(uploadedFiles.id, input.fileId)).run();
+    });
+    this.markDiaryStale?.(input.capturedAt);
+    return { observationId, nodeId, deduped: false };
+  }
+
   list(input: { from?: Date; to?: Date; kind?: string; status?: string }): PerceptionNodeDto[] {
     const visualConditions = [isNull(visualNodes.deletedAt)];
     if (input.from) visualConditions.push(gte(visualNodes.endAt, input.from));

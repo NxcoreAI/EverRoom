@@ -14,6 +14,7 @@ import { enqueueWritingStyleExtract } from "../../writing-style/jobs.js";
 import { DocumentContentEngine } from "./content-engine.js";
 import { DocumentRepository } from "./repository.js";
 import { YjsHistoryService } from "./yjs-history-service.js";
+import { enqueueSearchIndex } from "../../search/jobs.js";
 
 export interface DocumentCommitHooks {
   afterCommit?: (
@@ -144,6 +145,7 @@ export class DocumentCommitService {
       documentId: input.documentId,
       linkedAt: now,
     }).run();
+    enqueueSearchIndex(tx, { itemType: "document", refId: input.documentId, priority: "high" });
     if (input.writeVersion !== false && input.version > 0) {
       this.insertVersion(tx, input, normalized, now);
       this.yjsHistory.writeCommit(tx, {
@@ -333,5 +335,6 @@ export class DocumentCommitService {
       ...(input.sourceTransactionId ? { sourceTransactionId: input.sourceTransactionId } : {}),
       createdAt: now,
     }).run();
+    enqueueSearchIndex(tx, { itemType: "document", refId: input.documentId, priority: "high" });
   }
 }

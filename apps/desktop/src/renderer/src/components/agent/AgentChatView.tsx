@@ -1,4 +1,4 @@
-import { Check, ChevronRight, CircleHelp, Copy, FileText, Folder, FolderKanban, Link2, MessageSquareText, RotateCcw, X } from 'lucide-react'
+import { ArrowDown, Check, ChevronRight, CircleHelp, Copy, FileText, Folder, FolderKanban, Link2, MessageSquareText, RotateCcw, X } from 'lucide-react'
 import { Fragment, memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 
 import { AgentExecutionTimeline } from './AgentExecutionTimeline'
@@ -7,8 +7,6 @@ import { SlidesProgressCard, slidesProgressFromToolCall, type SlidesProgressStat
 import { AgentAuthChallengeCard, useAgentAuthChallenge } from './AgentAuthChallengeCard'
 import {
   AGENT_CHAT_REPIN_DISTANCE_PX,
-  AGENT_CHAT_UNPIN_GRACE_MS,
-  AGENT_CHAT_WHEEL_REPIN_DISTANCE_PX,
 } from './agentChatScroll'
 import type { PendingShellApproval } from './agentShellApprovals'
 import type { AgentRunActivity } from './agentRunActivity'
@@ -52,6 +50,11 @@ function ThinkingStatus({ label, tail }: { label: string; tail?: string }) {
 
 function hasLiveTool(tools: DisplayAgentToolCall[]): boolean {
   return tools.some((tool) => tool.status === 'running' || tool.status === 'pending')
+}
+
+/** 徽标计数只算用户真正会看到的条目，system 事件不占位。 */
+function countVisibleMessages(messages: DisplayAgentMessage[]): number {
+  return messages.filter((message) => message.role !== 'system').length
 }
 
 function reasoningTail(text: string | undefined): string | undefined {
@@ -396,6 +399,7 @@ export function AgentChatView({
   messages,
   notificationRunTarget,
   onNotificationRunLocated,
+  onRetryError,
   pendingApprovals = [],
   composerNotice,
   onRetryPrompt,
@@ -433,6 +437,8 @@ export function AgentChatView({
   messages: DisplayAgentMessage[]
   notificationRunTarget?: { key: string; runId: string } | null
   onNotificationRunLocated?: (key: string) => void
+  /** 会话加载/运行报错后的手动重试（重连并重拉当前会话）；缺省只展示错误文案。 */
+  onRetryError?: () => void
   pendingApprovals?: PendingShellApproval[]
   composerNotice?: ReactNode
   onRetryPrompt: (prompt: string, runId: string) => void
@@ -483,7 +489,26 @@ export function AgentChatView({
   const conversationRef = useRef<HTMLDivElement>(null)
   const pinnedToBottomRef = useRef(true)
   const lastScrollTopRef = useRef(0)
-  const lastUnpinAtRef = useRef(0)
+  /** 脱离底部期间新增的可见消息数：「回到最新」按钮的计数徽标（#297）。
+   * unpin 时记下基准，随消息追加累加，回到底部清零。 */
+  const detachedBaseCountRef = useRef(0)
+  const [scrollDetached, setScrollDetached] = useState(false)
+  const [detachedNewCount, setDetachedNewCount] = useState(0)
+  const attachChatScroll = (element: HTMLElement) => {
+    pinnedToBottomRef.current = true
+    detachedBaseCountRef.current = 0
+    setScrollDetached(false)
+    setDetachedNewCount(0)
+    element.scrollTop = element.scrollHeight
+    lastScrollTopRef.current = element.scrollTop
+    lastScrollHeightRef.current = element.scrollHeight
+  }
+  const detachChatScroll = () => {
+    if (!pinnedToBottomRef.current) return
+    pinnedToBottomRef.current = false
+    detachedBaseCountRef.current = countVisibleMessages(messages)
+    setScrollDetached(true)
+  }
   /** 上一帧的内容总高度：滚动事件比帧回调先触发，用它还原「滚动发生时的底部」，
    * 不被同一帧里流式插入的新高度污染（竞态消除的关键）。 */
   const lastScrollHeightRef = useRef(0)
@@ -722,8 +747,10 @@ export function AgentChatView({
     lastUserMessageIdRef.current = null
     lastScrollTopRef.current = 0
     lastScrollHeightRef.current = 0
-    lastUnpinAtRef.current = 0
     pinnedToBottomRef.current = true
+    detachedBaseCountRef.current = 0
+    setScrollDetached(false)
+    setDetachedNewCount(0)
   }, [currentSessionId])
 
   useEffect(() => {
@@ -732,9 +759,15 @@ export function AgentChatView({
       if (message.role !== 'user') continue
       if (message.id !== lastUserMessageIdRef.current) {
         lastUserMessageIdRef.current = message.id
-        pinnedToBottomRef.current = true
+        // 用户发出新消息 = 明确的「看最新」意图：无论当前是否脱离底部都回到底部。
+        const element = conversationRef.current
+        if (element) attachChatScroll(element)
+        else pinnedToBottomRef.current = true
       }
-      return
+      break
+    }
+    if (!pinnedToBottomRef.current) {
+      setDetachedNewCount(Math.max(0, countVisibleMessages(messages) - detachedBaseCountRef.current))
     }
   }, [messages])
 
@@ -749,6 +782,8 @@ export function AgentChatView({
 
   // DOM 级滚动跟随：吸底时内容一长就贴底，不依赖 React 状态形状。MutationObserver
   // 每次正文变化都会回调，逐次读 scrollHeight 强制布局，事件风暴下按帧合并掉。
+  // 解除吸底后这里不做任何自动回吸（#297：流式出字慢时上滑阅读会被拽回底部）；
+  // 恢复跟随只由用户手势触发——滚回底部附近、点「回到最新」、发新消息。
   useEffect(() => {
     const element = conversationRef.current
     if (!element || typeof MutationObserver === 'undefined') return undefined
@@ -760,13 +795,7 @@ export function AgentChatView({
         frame = null
         lastScrollHeightRef.current = element.scrollHeight
         if (notificationTargetActiveRef.current) return
-        if (!pinnedToBottomRef.current) {
-          // 每个内容批次都补一次恢复判定：滚动事件在触发前一帧可能被流式增长
-          // 顶出阈值（概率性吸不上），这里持续兜底；解除保护期内不回吸。
-          if (Date.now() - lastUnpinAtRef.current < AGENT_CHAT_UNPIN_GRACE_MS) return
-          if (element.scrollHeight - element.scrollTop - element.clientHeight > AGENT_CHAT_REPIN_DISTANCE_PX) return
-          pinnedToBottomRef.current = true
-        }
+        if (!pinnedToBottomRef.current) return
         element.scrollTop = element.scrollHeight
         lastScrollTopRef.current = element.scrollTop
       })
@@ -897,34 +926,33 @@ export function AgentChatView({
           const lastTop = lastScrollTopRef.current
           lastScrollTopRef.current = element.scrollTop
           if (element.scrollTop < lastTop - 1) {
-            pinnedToBottomRef.current = false
-            lastUnpinAtRef.current = Date.now()
+            detachChatScroll()
             return
           }
+          // 亚像素步进（触控板慢扫、滚轮平滑滚动收尾常为 ±0.5px）不能当方向信号：
+          // 上滑初段必然还在回吸阈值内，落进回吸判定就会被逐步拽回底部
+          //（表现为在底部上滑时抖动、慢扫离不开底部），只有明确向下才回吸。
+          if (element.scrollTop <= lastTop + 1) return
           // 到过「上一帧的底部」即算跟到底：同一帧里流式插入会推高当前底部，
           // 用当前几何判定会被顶出阈值（概率性吸不上），上一帧高度没有这个问题。
           // 还没有任何内容批次时（初始为 0）退回当前高度，避免误判成「到底了」。
           const referenceHeight = lastScrollHeightRef.current || element.scrollHeight
           const reachedPreviousBottom = element.scrollTop
             >= referenceHeight - element.clientHeight - AGENT_CHAT_REPIN_DISTANCE_PX
-          if (reachedPreviousBottom) pinnedToBottomRef.current = true
+          if (reachedPreviousBottom && !pinnedToBottomRef.current) attachChatScroll(element)
         }}
         onWheel={(event) => {
           // wheel 先于 scroll 事件：向上立即解除吸底，向上滚动不会被下一次
-          // 强制滚底吃掉；向下且已接近底部视为「想跟回」，直接重新吸底——
-          // 不留给流式增长在 scroll 事件触发前冲过阈值的竞态窗口。
+          // 强制滚底吃掉；向下且已接近底部视为「想跟回」，直接重新吸底。
+          // 两个方向都用同一个手势回吸阈值，且只由手势触发（#297）。
           const element = conversationRef.current
           if (!element) return
           if (event.deltaY < 0) {
-            pinnedToBottomRef.current = false
-            lastUnpinAtRef.current = Date.now()
+            detachChatScroll()
             return
           }
           const distance = element.scrollHeight - element.scrollTop - element.clientHeight
-          if (distance < AGENT_CHAT_WHEEL_REPIN_DISTANCE_PX) {
-            pinnedToBottomRef.current = true
-            lastUnpinAtRef.current = 0
-          }
+          if (distance < AGENT_CHAT_REPIN_DISTANCE_PX && !pinnedToBottomRef.current) attachChatScroll(element)
         }}
       >
           {incomingLink ? (
@@ -1198,8 +1226,32 @@ export function AgentChatView({
             />
           ) : null}
           {loading && messages.length === 0 ? <div className="agent-loading">{t('surface:agentChat.loadingConversation')}</div> : null}
-          {error ? <div className="agent-error" role="alert">{error}</div> : null}
+          {error ? (
+            <div className="agent-error" role="alert">
+              <span>{error}</span>
+              {onRetryError ? (
+                <button type="button" className="agent-error-retry" onClick={onRetryError}>
+                  {t('surface:agentComposer.retry')}
+                </button>
+              ) : null}
+            </div>
+          ) : null}
       </div>
+      {scrollDetached ? (
+        <button
+          type="button"
+          className="agent-chat-jump-latest"
+          aria-label={t('surface:agentChat.backToLatest')}
+          title={t('surface:agentChat.backToLatest')}
+          onClick={() => {
+            const element = conversationRef.current
+            if (element) attachChatScroll(element)
+          }}
+        >
+          <ArrowDown aria-hidden="true" />
+          {detachedNewCount > 0 ? <span className="agent-chat-jump-latest-count">{detachedNewCount}</span> : null}
+        </button>
+      ) : null}
       {composer}
       <div className="agent-chat-quick-prompts" aria-label={t('surface:agentChat.suggestedPrompts')} aria-hidden={!quickPromptsReady}>
         {starterPrompts?.length

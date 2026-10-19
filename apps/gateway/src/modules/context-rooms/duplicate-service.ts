@@ -35,6 +35,7 @@ import {
 } from "../../infrastructure/database/schema.js";
 import { cosineSimilarity, decodeCentroid } from "../knowledge/embedding.js";
 import { bigramDiceSimilarity, normalizeEntityName } from "../knowledge/entity-index.js";
+import { enqueueSearchIndex } from "../search/jobs.js";
 
 const SCORING_VERSION = 2;
 const OVERRIDE_TTL_MS = 10 * 60_000;
@@ -938,6 +939,7 @@ export class RoomDuplicateService {
         createdAt: now, updatedAt: now,
       }).run();
       tx.insert(rooms).values({ id: newRoomId, title, kind, origin: "user", aliases: [a.title, b.title].filter((name) => normalizeEntityName(name) !== normalizeEntityName(title)).slice(0, 50), createdAt: now, updatedAt: now }).run();
+      enqueueSearchIndex(tx, { itemType: "room", refId: newRoomId, priority: "high" });
       // 实体收养：新 Room 继承 A 的实体（roomId 重指向新 Room），B 的实体在
       // 第二段 merge 的 mergeEntities 中并入。无实体则两源各自并入空 target 跳过。
       const knowledgeA = tx.select({ entityId: rooms.entityId }).from(rooms).where(eq(rooms.id, a.id)).get();

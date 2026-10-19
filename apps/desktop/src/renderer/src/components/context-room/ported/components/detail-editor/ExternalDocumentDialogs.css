@@ -73,6 +73,17 @@
   font-size: 13px;
 }
 
+.context-room-external-export-body button.filter-select {
+  width: 100%;
+  min-height: 33px;
+  justify-content: space-between;
+  padding: 7px 10px;
+  border-color: var(--border, #d8dee4);
+  background: var(--bg, #fff);
+  color: inherit;
+  font-size: 13px;
+}
+
 .context-room-external-export-mode {
   display: flex;
   gap: 16px;

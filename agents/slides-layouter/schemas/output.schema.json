@@ -1,0 +1,13 @@
+{
+  "type": "object",
+  "properties": {
+    "status": { "type": "string", "enum": ["done"] },
+    "tree": {
+      "type": "object",
+      "description": "LayoutTree root: role/title?/dark?/direction/weights?/gapScale?/pad?/children. Grammar is enforced by slides_layout_validate (normalizeTree); passing validation before submitting is mandatory."
+    },
+    "notes": { "type": "string", "maxLength": 500 }
+  },
+  "required": ["status", "tree"],
+  "additionalProperties": false
+}

@@ -25,6 +25,7 @@ import QRCode from 'qrcode'
 import { useAccount } from '@/state/AccountContext'
 import { ConnectorModeSection } from '@/components/settings/ConnectorModeSection'
 import { UpdateSection } from '@/components/settings/UpdateSection'
+import { ScreenRecordingPermissionCard } from '@/components/settings/ScreenRecordingPermissionCard'
 import { loadRealitySettings, saveRealitySettings, type RealitySettings } from '@/state/realitySettings'
 import {
   loadDocumentCursorCompletionSettings,
@@ -138,6 +139,7 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
   const [screenCaptureStatus, setScreenCaptureStatus] = useState<WindowScreenshotStatus | null>(null)
   const [screenCaptureInterval, setScreenCaptureInterval] = useState(5)
   const [screenCaptureBusy, setScreenCaptureBusy] = useState(false)
+  const [screenCaptureError, setScreenCaptureError] = useState<string | null>(null)
   const [perceptionSettings, setPerceptionSettings] = useState<PerceptionSettings | null>(null)
   const [perceptionBusy, setPerceptionBusy] = useState(false)
   const [lastScreenshotPath, setLastScreenshotPath] = useState<string | null>(null)
@@ -445,7 +447,12 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
     setScreenCaptureBusy(true)
     try {
       const result = await window.nxcore.screenCapture.captureCurrentWindow()
-      if (result.ok) setLastScreenshotPath(result.filePath)
+      if (result.ok) {
+        setLastScreenshotPath(result.filePath)
+        setScreenCaptureError(null)
+      } else {
+        setScreenCaptureError(result.message)
+      }
       const status = await window.nxcore.screenCapture.status()
       setScreenCaptureStatus(status)
     } catch {
@@ -950,6 +957,7 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
             {t(screenCaptureStatus?.enabled ? 'surface:settings.on' : 'surface:settings.off')}
           </button>
         </div>
+        <ScreenRecordingPermissionCard permission={screenCaptureStatus?.permission} />
         <div className="reality-setting-row">
           <div><strong>{t('surface:settings.visualUnderstanding')}</strong></div>
           <button
@@ -985,7 +993,11 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
           </select>
         </div>
         <div className="reality-setting-row">
-          <div><strong>{t('surface:settings.captureNow')}</strong>{lastScreenshotPath ? <small>{lastScreenshotPath}</small> : null}</div>
+          <div>
+            <strong>{t('surface:settings.captureNow')}</strong>
+            {lastScreenshotPath ? <small>{lastScreenshotPath}</small> : null}
+            {screenCaptureError ? <small className="screen-capture-error">{screenCaptureError}</small> : null}
+          </div>
           <button className="secondary-button" type="button" disabled={screenCaptureBusy} onClick={() => void captureWindowNow()}>
             {screenCaptureBusy ? <LoaderCircle className="spin" aria-hidden="true" /> : <Camera aria-hidden="true" />}
             {t('surface:settings.captureCurrentWindow')}

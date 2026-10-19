@@ -78,6 +78,48 @@
   pointer-events: none;
 }
 
+/* 脱离底部时的「回到最新」悬浮按钮（#297）。 */
+.agent-chat-jump-latest {
+  position: absolute;
+  bottom: calc(var(--agent-composer-height) + 14px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  border: 1px solid rgba(100, 116, 139, 0.25);
+  border-radius: 999px;
+  background: #fff;
+  color: #334155;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 6px 20px rgba(15, 23, 42, 0.14);
+}
+
+.agent-chat-jump-latest:hover {
+  color: var(--accent-strong, #4d6faf);
+  border-color: rgba(88, 118, 216, 0.4);
+}
+
+.agent-chat-jump-latest svg {
+  width: 14px;
+  height: 14px;
+}
+
+.agent-chat-jump-latest-count {
+  min-width: 16px;
+  padding: 2px 5px;
+  border-radius: 999px;
+  background: #eef1fb;
+  color: #5876d8;
+  font-size: 10px;
+  line-height: 1.2;
+  text-align: center;
+}
+
 .agent-message {
   display: flex;
   width: 100%;
@@ -1210,7 +1252,77 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
 }
 
 .agent-error {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
   color: #b42318;
+}
+
+.agent-error > span {
+  min-width: 0;
+}
+
+.agent-error-retry {
+  flex-shrink: 0;
+  padding: 1px 8px;
+  border: 1px solid rgba(180, 35, 24, 0.35);
+  border-radius: 5px;
+  background: transparent;
+  color: #b42318;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.agent-error-retry:hover {
+  background: rgba(180, 35, 24, 0.06);
+}
+
+/* Agent 桥不可用：唤起失败时的明确提示 + 重试（App 内嵌环境才会出现）。 */
+.agent-availability-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 12px 8px;
+  padding: 9px 12px;
+  border: 1px solid #f0c6c0;
+  border-radius: 8px;
+  background: #fdf3f2;
+  animation: agent-content-enter 200ms cubic-bezier(.22, 1, .36, 1);
+}
+
+.agent-availability-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.agent-availability-copy strong {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #b42318;
+}
+
+.agent-availability-copy span {
+  font-size: 12px;
+  line-height: 1.45;
+  color: #8a4a43;
+}
+
+.agent-availability-retry {
+  flex-shrink: 0;
+  padding: 4px 12px;
+  border: 1px solid rgba(180, 35, 24, 0.35);
+  border-radius: 6px;
+  background: #fff;
+  color: #b42318;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.agent-availability-retry:hover {
+  background: rgba(180, 35, 24, 0.06);
 }
 
 .agent-shell-approval {
@@ -1751,10 +1863,20 @@ button.agent-slides-style-candidate:disabled {
 }
 
 .agent-slides-style-wireframe {
+  margin: 0;
   border: 1px solid #e3e9f1;
   border-radius: 6px;
   overflow: hidden;
   line-height: 0;
+}
+
+.agent-slides-style-wireframe figcaption {
+  line-height: 1;
+  padding: 5px 8px 6px;
+  font-size: 11px;
+  color: #7c8794;
+  background: #fbfcfe;
+  border-top: 1px solid #eef2f7;
 }
 
 .agent-slides-style-demo {

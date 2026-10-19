@@ -526,6 +526,41 @@
       "when": 1791804717613,
       "tag": "0076_screen_keyframe_material",
       "breakpoints": true
+    },
+    {
+      "idx": 78,
+      "version": "6",
+      "when": 1791876600000,
+      "tag": "0077_screen_text_blocks",
+      "breakpoints": true
+    },
+    {
+      "idx": 79,
+      "version": "6",
+      "when": 1791882844057,
+      "tag": "0078_search_index",
+      "breakpoints": true
+    },
+    {
+      "idx": 80,
+      "version": "6",
+      "when": 1791890340513,
+      "tag": "0079_thesis_format_cards",
+      "breakpoints": true
+    },
+    {
+      "idx": 81,
+      "version": "6",
+      "when": 1791980400000,
+      "tag": "0080_thesis_format_cards_multi",
+      "breakpoints": true
+    },
+    {
+      "idx": 82,
+      "version": "6",
+      "when": 1792210966000,
+      "tag": "0081_agent_access",
+      "breakpoints": true
     }
   ]
 }

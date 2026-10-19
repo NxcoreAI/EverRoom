@@ -79,6 +79,24 @@ describe('collectImportCandidates', () => {
     ])
   })
 
+  it('collects image files by default (heic included on darwin)', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'everroom-import-images-'))
+    temporaryDirectories.push(directory)
+    await writeFile(join(directory, 'photo.png'), 'png')
+    await writeFile(join(directory, 'shot.bmp'), 'bmp')
+    await writeFile(join(directory, 'camera.heic'), 'heic')
+
+    const plan = await collectImportPlan([directory])
+    const filenames = plan.candidates.map((candidate) => candidate.filename)
+    expect(filenames).toContain('photo.png')
+    expect(filenames).toContain('shot.bmp')
+    if (process.platform === 'darwin') {
+      expect(filenames).toContain('camera.heic')
+    } else {
+      expect(plan.unsupported.map((candidate) => candidate.filename)).toContain('camera.heic')
+    }
+  })
+
   it('counts supported non-Office/PDF files as high risk', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'everroom-import-risk-'))
     temporaryDirectories.push(directory)
@@ -372,5 +390,40 @@ describe('FilesGatewayBridge.createClipCapture', () => {
       canonicalUrl: 'https://example.com/article', capturedAt: '2026-08-24T12:00:00.000Z', captureId: 'capture-1',
       extractionMode: 'article', extractorVersion: 'test-1', assets: [],
     })).resolves.toMatchObject({ fileEntryId: 'file-1', fileVersionId: 'version-1' })
+  })
+})
+
+describe('FilesGatewayBridge.importAgentAttachments', () => {
+  it('uploads chat image attachments then registers them with the visual library', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'everroom-agent-attach-'))
+    temporaryDirectories.push(directory)
+    await writeFile(join(directory, 'pic.png'), 'png-bytes')
+    const calls: string[] = []
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input)
+      if (url === 'http://gateway.test/v1/files') {
+        calls.push('upload')
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>
+        expect(body).toMatchObject({ filename: 'pic.png', assetKind: 'photo', originChannel: 'agent-composer' })
+        return new Response(JSON.stringify({ id: 'upl-1', bytes: 9, originalName: 'pic.png' }), {
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      if (url === 'http://gateway.test/v1/perception/visual-observations') {
+        calls.push('register')
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>
+        expect(body).toMatchObject({ fileId: 'upl-1', kind: 'photo' })
+        return new Response(JSON.stringify({ observationId: 'obs-1' }), {
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      throw new Error(`unexpected fetch: ${url}`)
+    })
+    const supervisor = { getConnection: () => ({ baseUrl: 'http://gateway.test', token: 'token' }) } as unknown as GatewaySupervisor
+
+    const attachments = await new FilesGatewayBridge(supervisor).importAgentAttachments([join(directory, 'pic.png')])
+
+    expect(attachments).toEqual([expect.objectContaining({ fileId: 'upl-1', kind: 'image', mimeType: 'image/png' })])
+    expect(calls).toEqual(['upload', 'register'])
   })
 })

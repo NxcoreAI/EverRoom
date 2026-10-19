@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { desktopCapturer, systemPreferences } from 'electron'
 
 vi.mock('electron', () => ({
   app: {
@@ -7,6 +8,9 @@ vi.mock('electron', () => ({
     getPath: () => '/workspace/user-data',
   },
   BrowserWindow: { getAllWindows: () => [] },
+  desktopCapturer: { getSources: async () => [] },
+  screen: { getPrimaryDisplay: () => ({ id: 1, size: { width: 100, height: 100 }, scaleFactor: 1 }) },
+  systemPreferences: { getMediaAccessStatus: () => 'granted' },
 }))
 
 import {
@@ -30,6 +34,22 @@ function success(filePath = '/workspace/screenshots/test.jpg'): WindowScreenshot
 }
 
 describe('window screenshot scheduler', () => {
+  it('rejects capture with a permission failure before touching desktopCapturer', async () => {
+    const { captureUserScreen } = await import('../src/main/screenshot/window-screenshot-service')
+    const permissionSpy = vi.spyOn(systemPreferences, 'getMediaAccessStatus').mockReturnValue('denied')
+    const sourcesSpy = vi.spyOn(desktopCapturer, 'getSources')
+
+    const result = await captureUserScreen()
+
+    expect(result).toEqual({
+      ok: false,
+      code: 'permission-denied',
+      message: expect.any(String),
+    })
+    expect(sourcesSpy).not.toHaveBeenCalled()
+    permissionSpy.mockRestore()
+  })
+
   it('computes a stable 64-bit perceptual hash from a 9 by 8 sample', () => {
     const pixels = Buffer.alloc(9 * 8 * 4)
     for (let y = 0; y < 8; y += 1) {

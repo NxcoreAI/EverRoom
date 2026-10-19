@@ -114,13 +114,17 @@ window.nxcore = new Proxy(base, {
         }
       case 'screenCapture':
         return {
-          status: async () => ({ enabled: true, intervalMs: 300_000, lastResult: null }),
+          status: async () => ({ enabled: true, intervalMs: 300_000, permission: 'not-determined' as const, lastResult: null }),
           perceptionSettings: async () => ({ captureEnabled: true, captureIntervalSeconds: 300, onlineVlmEnabled: true, configVersion: 3, updatedAt: iso(3600_000) }),
-          start: async () => ({ enabled: true, intervalMs: 300_000, lastResult: null }),
-          stop: async () => ({ enabled: false, intervalMs: 300_000, lastResult: null }),
-          updateInterval: async (ms: number) => ({ enabled: true, intervalMs: ms, lastResult: null }),
+          start: async () => ({ enabled: true, intervalMs: 300_000, permission: 'not-determined' as const, lastResult: null }),
+          stop: async () => ({ enabled: false, intervalMs: 300_000, permission: 'not-determined' as const, lastResult: null }),
+          updateInterval: async (ms: number) => ({ enabled: true, intervalMs: ms, permission: 'not-determined' as const, lastResult: null }),
           updateOnlineVlm: async (_enabled: boolean, configVersion: number) => ({ captureEnabled: true, captureIntervalSeconds: 300, onlineVlmEnabled: true, configVersion: configVersion + 1, updatedAt: new Date().toISOString() }),
           captureCurrentWindow: async () => ({ ok: true, filePath: '/Users/xjwang/EverRoom/screenshots/2026-09-10-15-30-01.png' }),
+          appInfo: async () => ({ appPath: '/Applications/EverRoom.app', appName: 'EverRoom', iconDataUrl: '', devMode: false }),
+          openPermissionSettings: async () => {},
+          startAppDrag: () => {},
+          relaunchApp: async () => {},
         }
       case 'browserExtension':
         return {

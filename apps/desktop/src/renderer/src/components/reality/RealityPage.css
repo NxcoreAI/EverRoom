@@ -136,8 +136,6 @@
 
 .screen-memory-panel { display: flex; flex-direction: column; gap: 10px; padding: 12px 0; }
 .screen-memory-toolbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-.screen-memory-search { display: flex; gap: 6px; flex: 1; min-width: 240px; }
-.screen-memory-search input { flex: 1; }
 .screen-memory-hint { opacity: 0.6; font-size: 12px; }
 .screen-memory-cards { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .screen-memory-card { border: 1px solid rgba(128, 128, 128, 0.25); border-radius: 10px; padding: 10px 12px; cursor: pointer; }

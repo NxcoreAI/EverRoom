@@ -58,6 +58,38 @@ describe("external document projections", () => {
     database.sqlite.close();
   });
 
+  it("supports local-directory projections with identity isolated from obsidian-vault by sourceKind", async () => {
+    const { database, projections } = await harness();
+    const obsidian = await projections.sync({
+      sourceKind: "obsidian-vault",
+      sourceId: "dir-1",
+      resourceId: "note-1",
+      roomId: "room-1",
+      relativePath: "docs/Readme.md",
+      sourceHash: "d".repeat(64),
+      title: "Readme",
+      markdown: "# Readme\n\nVault view",
+    });
+    const local = await projections.sync({
+      sourceKind: "local-directory",
+      sourceId: "dir-1",
+      resourceId: "note-1",
+      roomId: "room-1",
+      relativePath: "docs/Readme.md",
+      sourceHash: "d".repeat(64),
+      title: "Readme",
+      markdown: "# Readme\n\nVault view",
+    });
+
+    expect(local.documentId).not.toBe(obsidian.documentId);
+    expect(local.documentId.startsWith("external-document-")).toBe(true);
+
+    await expect(projections.remove("local-directory", "dir-1")).resolves.toBe(1);
+    expect(projections.getByDocument(local.documentId)).toBeNull();
+    expect(projections.getByDocument(obsidian.documentId)).not.toBeNull();
+    database.sqlite.close();
+  });
+
   it("prepares a raw Markdown patch and completes the operation only after source confirmation", async () => {
     const { database, documents, capabilities, projections } = await harness();
     const sourceHash = "b".repeat(64);

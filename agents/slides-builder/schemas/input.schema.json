@@ -3,8 +3,8 @@
   "properties": {
     "task": {
       "type": "string",
-      "enum": ["create", "edit"],
-      "description": "The slides task to execute. create carries a plan from slides-planner; edit modifies an existing deck."
+      "enum": ["edit"],
+      "description": "The slides task to execute: modify an existing deck per the instruction."
     },
     "instruction": {
       "type": "string",
@@ -23,23 +23,10 @@
       "maxLength": 120,
       "description": "Optional room title for context framing."
     },
-    "title": {
-      "type": "string",
-      "maxLength": 120,
-      "description": "Deck title for create, from the plan; also the default file name."
-    },
     "fileId": {
       "type": "string",
       "maxLength": 128,
       "description": "Target deck for edit: a file entry id or \"active\" (the deck currently open on the user's desktop). Defaults to \"active\"."
-    },
-    "plan": {
-      "type": "object",
-      "description": "Page plan produced by slides-planner (title, narrative, pages with per-page titles/roles/density tiers/points/data/material links/notes). Present on create; execute it faithfully — density drives the layout and content budget per page."
-    },
-    "styleParams": {
-      "type": "object",
-      "description": "Style params from the user-confirmed style card (no-template style pipeline). Contains palette hexes (background/surface/primary/accent/text/textMuted/onDarkText/chartSeries), typography (fontHeading/fontBody, sizes pt ladder, headingBold), spacing (margin/gutter/cardPadding/cornerRadius), decoration (cardStroke/cardStrokeWidthPt/cardShadow/divider/imageFit), motif, layoutHints (layout preset ids), darkCover. When present it is the SOLE style authority for the whole deck: every page must use exactly these colors, fonts, size ladder and decoration — do not re-derive, do not deviate; skip the design-craft tuning step and go straight to layout. Absent on create = derive the brief yourself via design-craft."
     }
   },
   "required": ["task", "instruction", "roomId"],

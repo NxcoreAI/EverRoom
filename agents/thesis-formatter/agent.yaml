@@ -1,0 +1,22 @@
+schemaVersion: 1
+id: thesis-formatter
+name: Thesis Formatter
+description: 论文模版解析与 docx 装订映射——parse_template 任务把模版规范条文与 OOXML 版式事实凝成完整论文格式卡，bind_thesis 任务把源论文块大纲映射成装订规格（封面字段、摘要、章节区间、参考文献、致谢），全程无工具调用、不与用户对话
+mode: dispatch_only
+enabled: true
+
+systemPrompt: ./SYSTEM.md
+
+skills: []
+
+mcp: []
+
+inputSchema: ./schemas/input.schema.json
+outputSchema: ./schemas/output.schema.json
+
+policy:
+  allowedCallers: [primary-agent, internal-workflow]
+  maxConcurrency: 2
+  # 纯文本判断无工具需求；余量容纳自检重读。
+  maxToolCalls: 8
+  timeoutSeconds: 300

@@ -1,0 +1,13 @@
+{
+  "type": "object",
+  "properties": {
+    "status": { "type": "string", "enum": ["ok", "revised"] },
+    "tree": {
+      "type": "object",
+      "description": "Revised LayoutTree for this page. Required when status=revised; grammar is enforced by slides_layout_validate — passing validation before submitting is mandatory."
+    },
+    "notes": { "type": "string", "maxLength": 500 }
+  },
+  "required": ["status"],
+  "additionalProperties": false
+}

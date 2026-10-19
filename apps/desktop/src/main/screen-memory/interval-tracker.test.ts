@@ -25,6 +25,7 @@ function keyframeInput(overrides: Partial<Parameters<IntervalTracker['acceptKeyf
     keyframe: keyframe(now),
     stableLines: ['标题行', '内容行一'],
     newLines: ['标题行', '内容行一'],
+    newBlocks: ['标题行\n内容行一'],
     ...overrides,
   }
 }
@@ -42,10 +43,24 @@ describe('IntervalTracker', () => {
       keyframe: keyframe(t2, '/tmp/sm-2.jpg'),
       stableLines: ['标题行', '内容行一', '内容行二'],
       newLines: ['内容行二'],
+      newBlocks: ['标题行\n内容行一', '内容行二'],
     }))
     expect(tracker.openInterval).toBe(true)
     expect(tracker.lastStableLines()).toEqual(['标题行', '内容行一', '内容行二'])
     expect(closed).toEqual([])
+  })
+
+  it('文本块并集去重，随区间关闭带出', () => {
+    const closed: ClosedInterval[] = []
+    const tracker = new IntervalTracker({ onIntervalClosed: (interval) => closed.push(interval) })
+    tracker.acceptKeyframe(keyframeInput({ newBlocks: ['块一\n块一行二', '块二'] }))
+    tracker.acceptKeyframe(keyframeInput({
+      keyframe: keyframe(new Date('2026-10-12T14:03:00Z'), '/tmp/sm-2.jpg'),
+      newLines: ['新行'],
+      newBlocks: ['块二', '块三'],
+    }))
+    tracker.stop(new Date('2026-10-12T14:04:00Z'))
+    expect(closed[0]?.textBlocks).toEqual(['块一\n块一行二', '块二', '块三'])
   })
 
   it('应用切换关区间，原因与起止时间正确', () => {

@@ -1,0 +1,429 @@
+/* Agent 连接页：布局与页面特有样式。控件基底复用全局类
+ * （.page/.page-header/.primary-button/.secondary-button/.icon-button），
+ * 表单控件配方与 AgentSchedulesPage / source-connect-form 对齐。 */
+
+.agent-connections-page {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 980px;
+}
+
+.agent-connections-subtitle {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: -6px 0 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.agent-connections-subtitle svg {
+  width: 14px;
+  height: 14px;
+}
+
+.agent-connections-error {
+  border: 1px solid color-mix(in srgb, #b5493a 35%, var(--border));
+  border-radius: 6px;
+  padding: 11px 14px;
+  font-size: 12px;
+  color: #b5493a;
+}
+
+/* 固定端口设置卡 */
+.agent-connections-port {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 14px 18px;
+}
+
+.agent-connections-port-copy h2 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  margin: 0 0 4px;
+}
+
+.agent-connections-port-copy h2 svg {
+  width: 15px;
+  height: 15px;
+}
+
+.agent-connections-port-copy p {
+  margin: 0 0 4px;
+  color: var(--muted);
+  font-size: 11px;
+  max-width: 560px;
+}
+
+.agent-connections-port-copy small {
+  color: var(--subtle);
+  font-size: 10px;
+}
+
+.agent-connections-port-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  max-width: 360px;
+}
+
+.agent-connections-port-controls input {
+  width: 96px;
+}
+
+.agent-connections-port-message {
+  flex-basis: 100%;
+  text-align: right;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+/* 新建表单（配方同 schedule-form） */
+.agent-connections-form {
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  padding: 18px;
+}
+
+.agent-connections-form-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.agent-connections-form-header h2 {
+  font-size: 15px;
+  margin: 0;
+}
+
+.agent-connections-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.agent-connections-form-grid label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.agent-connections-form-grid fieldset {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.agent-connections-form-grid legend {
+  padding: 0 4px;
+}
+
+.agent-connections-form-grid input:not([type='checkbox']):not([type='radio']),
+.agent-connections-form-grid select,
+.agent-connections-form-grid textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--background);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+}
+
+.agent-connections-form-grid input[type='checkbox'],
+.agent-connections-form-grid input[type='radio'] {
+  accent-color: var(--accent);
+  margin: 0;
+}
+
+.agent-connections-form-wide {
+  grid-column: 1 / -1;
+}
+
+.agent-connections-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.agent-connections-room-picker {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 4px;
+  max-height: 148px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+
+.agent-connections-capabilities {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 4px;
+}
+
+.agent-connections-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+/* 连接卡片（版式同 schedule-card） */
+.agent-connections-list {
+  display: grid;
+  gap: 10px;
+}
+
+.agent-connections-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  padding: 16px 18px;
+}
+
+.agent-connections-card[data-status='revoked'] {
+  opacity: 0.6;
+}
+
+.agent-connections-card-copy {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.agent-connections-card-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.agent-connections-card-title h2 {
+  font-size: 14px;
+  margin: 0;
+}
+
+.agent-connections-card-copy p {
+  margin: 7px 0 5px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.agent-connections-card-copy small {
+  color: var(--subtle);
+  font-size: 10px;
+}
+
+.agent-connections-card-copy code {
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font: 10px ui-monospace, monospace;
+}
+
+/* 徽标/状态（配方同 schedule-badge） */
+.agent-connections-badge {
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.agent-connections-status {
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  font-size: 10px;
+}
+
+.agent-connections-status.status-active {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  color: var(--accent);
+}
+
+.agent-connections-status.status-paused {
+  color: var(--muted);
+}
+
+.agent-connections-status.status-revoked {
+  color: var(--subtle);
+}
+
+.agent-connections-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+/* 动作按钮：复用 .secondary-button 基底，仅做紧凑修饰 */
+.agent-connections-action {
+  min-height: 28px;
+  padding: 4px 10px;
+  gap: 5px;
+  font-size: 11px;
+}
+
+.agent-connections-action svg {
+  width: 13px;
+  height: 13px;
+}
+
+.agent-connections-action.danger {
+  color: #b5493a;
+}
+
+/* token 一次性展示 */
+.agent-connections-token {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  padding: 8px 10px;
+  background: var(--background);
+}
+
+.agent-connections-token strong {
+  font-size: 12px;
+}
+
+.agent-connections-token small {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.agent-connections-token-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.agent-connections-token-row code {
+  flex: 1;
+  word-break: break-all;
+  font-size: 11px;
+}
+
+/* 结果面板（自检/示例/安装/调试） */
+.agent-connections-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-top: 1px dashed var(--border);
+  padding-top: 8px;
+}
+
+.agent-connections-panel h3 {
+  font-size: 12px;
+  margin: 0;
+  color: var(--muted);
+}
+
+.agent-connections-steps,
+.agent-connections-hits,
+.agent-connections-files,
+.agent-connections-notes {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.agent-connections-steps li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.agent-connections-steps li[data-tone='ok'] code { color: #1c7d4d; }
+.agent-connections-steps li[data-tone='warn'] code { color: #9a6b15; }
+.agent-connections-steps li[data-tone='error'] code { color: #b5493a; }
+
+.agent-connections-hits li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.agent-connections-hit-kind {
+  padding: 0 5px;
+  border: 1px solid var(--border);
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.agent-connections-hits code,
+.agent-connections-files code {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.agent-connections-panel pre {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--background);
+  overflow-x: auto;
+  font-size: 11px;
+}
+
+.agent-connections-notes {
+  color: var(--subtle);
+  font-size: 10px;
+}
+
+.agent-connections-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 150px;
+  color: var(--muted);
+  font-size: 12px;
+  border: 1px dashed var(--border);
+}
+
+@media (max-width: 760px) {
+  .agent-connections-port,
+  .agent-connections-card-copy {
+    flex-direction: column;
+  }
+
+  .agent-connections-form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .agent-connections-form-wide {
+    grid-column: auto;
+  }
+}

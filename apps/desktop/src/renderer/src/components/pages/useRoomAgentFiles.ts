@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import type { KnowledgeFileDto } from '../../../../shared/knowledge'
+import { isRoomArtifactSourceKind } from '../../../../shared/sources'
 
 /**
- * 各 Room 的 Agent 生成产物清单（uploaded_files 按 sourceKind=agent-generated 过滤），
+ * 各 Room 的产物文件清单（uploaded_files 按 Agent 生成 + 导入来源过滤），
  * 供文稿页把 Office 产物与云文档合并成一份「最近更新」列表。
  * knowledge 服务可选：不可用/失败时静默降级为空清单。
  * 刷新：Room 列表变化首载 + 监听全局 DOM 事件 'everroom:knowledge-changed'
@@ -37,7 +38,7 @@ export function useRoomAgentFiles(roomIds: string[]): {
       const results = await Promise.all(currentRoomIds.map(async (roomId) => {
         try {
           const { items } = await knowledge.listRoomFiles(roomId)
-          return [roomId, items.filter((item) => item.sourceKind === 'agent-generated')] as const
+          return [roomId, items.filter((item) => isRoomArtifactSourceKind(item.sourceKind))] as const
         } catch {
           return [roomId, [] as KnowledgeFileDto[]] as const
         }

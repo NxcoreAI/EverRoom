@@ -995,7 +995,15 @@ summary:focus-visible {
 .obsidian-import-header h2 { margin: 3px 0 4px; font-size: 16px; letter-spacing: 0; }
 .obsidian-import-header p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
 .obsidian-import-toolbar { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+.obsidian-import-toolbar-actions { display: flex; align-items: center; gap: 8px; }
+.obsidian-import-mode { display: flex; align-items: center; gap: 6px; }
+.obsidian-import-mode label { display: inline-flex; align-items: center; gap: 6px; padding: 5px 11px; border: 1px solid var(--border); border-radius: 999px; cursor: pointer; font-size: 11px; color: var(--muted); }
+.obsidian-import-mode label:has(input:checked) { border-color: var(--accent); color: var(--text); background: color-mix(in srgb, var(--accent) 7%, var(--surface)); }
+.obsidian-import-mode input { accent-color: var(--accent); margin: 0; }
 .obsidian-candidate-list { min-height: 0; overflow-y: auto; }
+.directory-mount-panel { display: flex; flex-direction: column; min-height: 0; flex: 1; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); overflow: hidden; }
+.directory-mount-panel .obsidian-candidate-list { flex: 1; min-height: 220px; }
+.directory-mount-panel .source-feedback { margin: 12px 16px 0; }
 
 .obsidian-candidate-row {
   display: grid;
@@ -1426,6 +1434,235 @@ summary:focus-visible {
 
 @media (prefers-reduced-motion: reduce) {
   .doc-filter-menu {
+    animation: none;
+  }
+}
+
+/* 文稿页「+新建文档」的选 Room 弹窗：Portal 挂 body 且文稿页不加载 ContextRoom.css，
+   因此样式全部自带（名字空间 .room-picker-*），不依赖懒加载样式表与 Tailwind 工具类。
+   视觉规范：24px 内边距、18px 圆角、柔和阴影、40px 搜索框、46px 列表行。 */
+.room-picker-overlay {
+  position: fixed;
+  z-index: 1000;
+  inset: 0;
+  background: rgba(24, 28, 36, 0.34);
+  animation: room-picker-overlay-in 0.16s ease;
+}
+
+.room-picker-dialog {
+  position: fixed;
+  z-index: 1001;
+  top: 50%;
+  left: 50%;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  width: min(480px, calc(100vw - 32px));
+  max-height: calc(100dvh - 48px);
+  padding: 24px;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: var(--surface);
+  box-shadow:
+    0 24px 70px rgba(21, 26, 34, 0.24),
+    0 2px 8px rgba(21, 26, 34, 0.06);
+  transform: translate(-50%, -50%);
+  font-family: inherit;
+  animation: room-picker-dialog-in 0.18s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.room-picker-header {
+  display: grid;
+  gap: 6px;
+  padding-right: 40px;
+}
+
+.room-picker-title {
+  margin: 0;
+  color: var(--text);
+  font-size: 17px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+}
+
+.room-picker-subtitle {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.room-picker-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  display: inline-flex;
+  width: 30px;
+  height: 30px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--subtle);
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.room-picker-close:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.room-picker-close:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.room-picker-close svg {
+  width: 16px;
+  height: 16px;
+}
+
+.room-picker-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.room-picker-search svg {
+  position: absolute;
+  left: 13px;
+  width: 15px;
+  height: 15px;
+  color: var(--subtle);
+  pointer-events: none;
+}
+
+.room-picker-search input {
+  width: 100%;
+  height: 40px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  padding: 0 12px 0 38px;
+  background: var(--surface-alt);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.room-picker-search input::placeholder {
+  color: var(--subtle);
+}
+
+.room-picker-search input:focus-visible {
+  border-color: var(--accent);
+  background: var(--surface);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.room-picker-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 0;
+  max-height: 300px;
+  margin: 0 -4px;
+  padding: 4px;
+  overflow-y: auto;
+}
+
+.room-picker-item {
+  display: flex;
+  width: 100%;
+  min-height: 46px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+/* 悬浮态：浅灰底；键盘/选中态：浅蓝底 + 蓝字（在 hover 之后声明以取得优先级）。 */
+.room-picker-item:hover {
+  background: var(--hover);
+}
+
+.room-picker-item[data-highlighted] {
+  background: var(--accent-soft);
+}
+
+.room-picker-item[data-highlighted] .room-picker-item-title {
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+
+.room-picker-item[data-highlighted] .room-picker-badge {
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--accent-strong);
+}
+
+.room-picker-item-title {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.room-picker-badge {
+  flex: 0 0 auto;
+  border-radius: 6px;
+  padding: 3px 8px;
+  background: var(--surface-alt);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.room-picker-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 0;
+  padding: 22px 12px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.room-picker-empty svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+}
+
+@keyframes room-picker-overlay-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes room-picker-dialog-in {
+  from { opacity: 0; transform: translate(-50%, -48%) scale(0.98); }
+  to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .room-picker-overlay,
+  .room-picker-dialog {
     animation: none;
   }
 }

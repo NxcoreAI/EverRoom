@@ -198,6 +198,7 @@ export function createContextRoomResourceLibrary(
     originalName: file.originalName,
     bytes: file.bytes,
     uploadedAt: file.uploadedAt,
+    sourceKind: file.sourceKind,
     statusLabel: knowledgeFileStatusLabel(file),
     sizeLabel: formatBytes(file.bytes),
   }));

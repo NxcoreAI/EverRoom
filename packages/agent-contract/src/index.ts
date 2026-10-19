@@ -1418,8 +1418,10 @@ export interface DocumentOperationCommandResult {
   duplicate: boolean;
 }
 
+export type ExternalDocumentSourceKind = "obsidian-vault" | "local-directory";
+
 export interface ExternalDocumentProjectionBinding {
-  sourceKind: "obsidian-vault";
+  sourceKind: ExternalDocumentSourceKind;
   sourceId: string;
   resourceId: string;
   roomId: string;
@@ -1430,7 +1432,7 @@ export interface ExternalDocumentProjectionBinding {
 }
 
 export interface SyncExternalDocumentProjectionInput {
-  sourceKind: "obsidian-vault";
+  sourceKind: ExternalDocumentSourceKind;
   sourceId: string;
   resourceId: string;
   roomId: string;

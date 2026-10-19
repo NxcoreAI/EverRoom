@@ -199,7 +199,12 @@ export class SubagentRuntimeManager {
 
   private createRuntime(revision: LoadedSubagentRevision): AgentRuntime {
     if (this.gatewayConfig.agentRuntime === "fake") return new FakeAgentRuntime();
-    const base = this.gatewayConfig.backgroundPi ?? this.gatewayConfig.pi;
+    // slides-reviewer 专用档（多模态审页）：model 来自 env 专用键或 vlm 槽
+    // （SaaS 下发视觉模型）——恒建对象后 model 仍空＝未配置，回退 background。
+    const reviewerPi = this.gatewayConfig.slidesReviewerPi;
+    const base = (revision.manifest.id === "slides-reviewer" && reviewerPi?.model
+      ? reviewerPi
+      : null) ?? this.gatewayConfig.backgroundPi ?? this.gatewayConfig.pi;
     if (!base) throw new Error("subagent_pi_runtime_not_configured");
     // 降级启动：空字段 PiAgentRuntime 会在 pi SDK 深处炸出晦涩错误，
     // 换成类型化占位（runtime_config_not_ready）。

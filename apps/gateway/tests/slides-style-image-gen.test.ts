@@ -15,7 +15,7 @@ function fakeResponse(body: unknown, ok = true, status = 200): Response {
   } as unknown as Response;
 }
 
-function setupStore(active: boolean): AiRelaySessionStore {
+function setupStore(active: boolean, imageModel: string | null = "qwen-image-3.0"): AiRelaySessionStore {
   const store = new AiRelaySessionStore();
   if (active) {
     store.set({
@@ -23,6 +23,7 @@ function setupStore(active: boolean): AiRelaySessionStore {
       token: "tok",
       expiresAt: new Date(Date.now() + 60_000).toISOString(),
       proxyOrigin: "http://127.0.0.1:1",
+      ...(imageModel === null ? {} : { models: { image: imageModel } }),
     });
   }
   return store;
@@ -262,5 +263,40 @@ describe("SlidesStyleImageGenerator", () => {
     });
     await expect(generator.generateImage({ prompt: "p" }))
       .rejects.toThrow("生图模型在服务端不可用（可能已被上游下架，或渠道未配置）。请联系管理员检查生图模型配置后重试。");
+  });
+
+  it("套餐未下发生图模型（无 models）时拒绝且不请求中转", async () => {
+    const store = setupStore(true, null);
+    const { files } = setupFiles();
+    const fetchImpl = vi.fn();
+    const generator = new SlidesStyleImageGenerator(store, files, fetchImpl as unknown as typeof fetch);
+    await expect(generator.generateOverviewImages({ candidates: [{ prompt: "p" }], idempotencyKey: "k" }))
+      .rejects.toThrow(/生图模型未在套餐中配置/);
+    await expect(generator.generateImage({ prompt: "p" })).rejects.toThrow(/生图模型未在套餐中配置/);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("套餐下发生图模型为空串视为未配置", async () => {
+    const store = setupStore(true, "");
+    const { files } = setupFiles();
+    const fetchImpl = vi.fn();
+    const generator = new SlidesStyleImageGenerator(store, files, fetchImpl as unknown as typeof fetch);
+    await expect(generator.generateImage({ prompt: "p" })).rejects.toThrow(/生图模型未在套餐中配置/);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("生图模型名取自套餐下发并进请求体", async () => {
+    const store = setupStore(true, "mimage-v2");
+    const { files } = setupFiles();
+    let bodyModel = "";
+    const fetchImpl = vi.fn(async (_url: string, init?: RequestInit) => {
+      bodyModel = JSON.parse(String(init?.body)).model as string;
+      return fakeResponse({ data: [{ b64_json: Buffer.from("x").toString("base64") }] });
+    });
+    const generator = new SlidesStyleImageGenerator(store, files, fetchImpl as unknown as typeof fetch);
+
+    await generator.generateImage({ prompt: "p" });
+
+    expect(bodyModel).toBe("mimage-v2");
   });
 });

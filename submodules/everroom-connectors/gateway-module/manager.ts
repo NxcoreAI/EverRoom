@@ -8,7 +8,7 @@ import type {
 import type { ConnectorExecutor } from "./types.js";
 import { ConnectorDocumentStore } from "./document-store.js";
 import { calendarEventToMarkdown, mailToMarkdown } from "./connector-memory.js";
-import type { ConnectorDomainProjection } from "./domain-projection.js";
+import { isEmptyMailShell, type ConnectorDomainProjection } from "./domain-projection.js";
 import { ConnectorRepository } from "./repository.js";
 import { syncProviderOf } from "./sync-providers/index.js";
 import { SyncEngine } from "./sync-engine.js";
@@ -221,6 +221,8 @@ export class ConnectorManager {
         }
         for (const change of page.changes) {
           if (change.kind !== "upsert" || !this.memorySink) continue;
+          // 空壳邮件不投影也不进知识库（domain-projection 同判，见 isEmptyMailShell）。
+          if (isEmptyMailShell(change.message)) continue;
           await this.memorySink({
             kind: "mail",
             provider: connection.provider,

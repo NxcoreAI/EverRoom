@@ -31,6 +31,7 @@ export const SCREEN_MEMORY_CHANNELS = {
   correct: 'screen-memory:correct',
   storage: 'screen-memory:storage',
   frontmost: 'screen-memory:frontmost',
+  openPermissionSettings: 'screen-memory:open-permission-settings',
   registerMaterial: 'screen-memory:register-material',
   backfillEstimate: 'screen-memory:backfill-estimate',
   backfillRun: 'screen-memory:backfill-run',
@@ -122,7 +123,7 @@ export function createScreenMemoryController(deps: ScreenMemoryControllerDeps): 
     const settings = settingsStore.read()
     const current = ensureScheduler()
     const status = current.status()
-    if (settings.enabled && settings.allowedApps.length > 0 && !status.running) {
+    if (settings.enabled && (settings.scopeMode === 'all' || settings.allowedApps.length > 0) && !status.running) {
       await current.start()
       startDispatchLoop()
     } else if ((!settings.enabled || settings.allowedApps.length === 0) && status.running) {

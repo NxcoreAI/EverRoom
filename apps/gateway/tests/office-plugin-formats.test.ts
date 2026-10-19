@@ -2,9 +2,11 @@ import { describe, expect, it, vi } from "vitest";
 
 import { OfficeBridgeClient } from "../src/modules/documents/capabilities/office-bridge-client.js";
 import { officePlugin } from "../src/modules/documents/capabilities/office-plugin.js";
+import { SlidesVisualReviewer } from "../src/modules/slides-visual-review/review.js";
+import type { VlmPromptAnalyzer } from "../src/modules/perception/vlm-client.js";
 import type { DocumentExecutionContext } from "../src/modules/documents/capabilities/types.js";
 
-function createHarness() {
+function createHarness(options?: { reviewer?: SlidesVisualReviewer | null }) {
   const bridge = new OfficeBridgeClient({ baseUrl: "http://127.0.0.1:9", token: "test-token" });
   const generate = vi.spyOn(bridge, "generate").mockResolvedValue({
     fileEntryId: "fe-1",
@@ -34,9 +36,10 @@ function createHarness() {
     saved: true,
     outline: "Page 1\n  (filled)",
   });
-  const plugin = officePlugin(bridge);
+  const renderPage = vi.spyOn(bridge, "renderPage").mockResolvedValue(Buffer.from("fake-png").toString("base64"));
+  const plugin = officePlugin(bridge, null, options?.reviewer);
   const tools = new Map(plugin.tools.map((tool) => [tool.name, tool]));
-  return { generate, readDeck, editDeck, fillPage, plugin, tools };
+  return { generate, readDeck, editDeck, fillPage, renderPage, plugin, tools };
 }
 
 const context: DocumentExecutionContext = { agentSessionId: "session-1", runId: "run-1", roomId: "room-1" };
@@ -314,5 +317,84 @@ describe("office 工具：PPT 编辑（slides read / edit）", () => {
       context,
     );
     expect(editDeck).toHaveBeenLastCalledWith({ fileId: "file-9", ops, isolation: "atomic" });
+  });
+});
+
+describe("office 工具：set_page 视觉复检接线", () => {
+  const failVlm: VlmPromptAnalyzer = {
+    model: "fake-vlm",
+    async analyze() {
+      return {
+        pass: false,
+        issues: [{ item: "text_overlap", where: "标题与第一张卡片之间", severity: "major" }],
+      };
+    },
+  };
+  const passVlm: VlmPromptAnalyzer = {
+    model: "fake-vlm",
+    async analyze() {
+      return { pass: true };
+    },
+  };
+  const spec = {
+    background: "#FFFFFF",
+    elements: [
+      { type: "text", x: 80, y: 80, w: 400, h: 80, paragraphs: [{ runs: [{ text: "目录", sizePt: 44, bold: true }] }] },
+      { type: "text", x: 80, y: 200, w: 400, h: 60, paragraphs: [{ runs: [{ text: "市场 · 产品 · 渠道 · 财务", sizePt: 18 }] }] },
+    ],
+  };
+
+  it("复检通过：visualReview.status=pass、nextAction=fill_next_page、renderPage 被调用", async () => {
+    const { tools, renderPage } = createHarness({ reviewer: new SlidesVisualReviewer({ vlm: passVlm }) });
+    const result = await tools.get("context_room_slides_set_page")!.execute(
+      { fileId: "fe-1", slideIndex: 0, spec },
+      context,
+    );
+    expect(renderPage).toHaveBeenCalledWith({ fileId: "fe-1", slideIndex: 0 });
+    expect(result.structuredContent).toMatchObject({
+      visualReview: { status: "pass" },
+      nextAction: "fill_next_page",
+    });
+  });
+
+  it("复检不通过：issues 中文映射进返回、nextAction=revise_page_and_retry；同页第二次 → retriesExhausted → fill_next_page", async () => {
+    const { tools } = createHarness({ reviewer: new SlidesVisualReviewer({ vlm: failVlm }) });
+    const first = await tools.get("context_room_slides_set_page")!.execute(
+      { fileId: "fe-1", slideIndex: 0, spec },
+      context,
+    );
+    expect(first.structuredContent).toMatchObject({
+      visualReview: {
+        status: "fail",
+        retriesExhausted: false,
+        issues: [{ 问题: "文字互相重叠", 位置: "标题与第一张卡片之间" }],
+      },
+      nextAction: "revise_page_and_retry",
+    });
+    const second = await tools.get("context_room_slides_set_page")!.execute(
+      { fileId: "fe-1", slideIndex: 0, spec },
+      context,
+    );
+    expect(second.structuredContent).toMatchObject({
+      visualReview: { status: "fail", retriesExhausted: true },
+      nextAction: "fill_next_page",
+    });
+  });
+
+  it("未注入 reviewer：无 visualReview 字段、renderPage 不被调用；注入 reviewer 时 spec 形态同样复检", async () => {
+    const noReviewer = createHarness();
+    const plain = await noReviewer.tools.get("context_room_slides_set_page")!.execute(
+      { fileId: "fe-1", slideIndex: 0, spec },
+      context,
+    );
+    expect(plain.structuredContent.visualReview).toBeUndefined();
+    expect(noReviewer.renderPage).not.toHaveBeenCalled();
+
+    const withReviewer = createHarness({ reviewer: new SlidesVisualReviewer({ vlm: passVlm }) });
+    await withReviewer.tools.get("context_room_slides_set_page")!.execute(
+      { fileId: "fe-1", slideIndex: 0, spec },
+      context,
+    );
+    expect(withReviewer.renderPage).toHaveBeenCalledWith({ fileId: "fe-1", slideIndex: 0 });
   });
 });

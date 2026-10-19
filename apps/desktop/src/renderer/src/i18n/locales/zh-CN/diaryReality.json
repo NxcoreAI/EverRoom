@@ -306,8 +306,6 @@
   "diary.todayShort": "今",
   "recording.english": "英语",
   "screenMemory.title": "屏幕记忆",
-  "screenMemory.searchPlaceholder": "按内容、应用搜索看过什么",
-  "screenMemory.searchAction": "搜索",
   "screenMemory.disabledHint": "未开启",
   "screenMemory.keyframeCount": "{{count}} 帧",
   "screenMemory.summaryWaiting": "摘要等待中",

@@ -59,6 +59,12 @@ export default defineConfig({
     cacheDir: 'node_modules/.vite-electron-renderer',
     build: {
       sourcemap: sourceMap,
+      rollupOptions: {
+        input: {
+          index: resolve('src/renderer/index.html'),
+          'permission-card': resolve('src/renderer/permission-card.html'),
+        },
+      },
     },
     server: {
       headers: crossOriginIsolationHeaders,

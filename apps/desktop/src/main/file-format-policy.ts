@@ -53,9 +53,21 @@ export const LOCAL_AUTO_SCAN_EXTENSIONS = new Set([
   '.htm',
 ])
 
-/** Office/OpenDocument and PDF files can enter a batch without confirmation. */
+/** Manually importable image formats (heic transcodes to jpg before upload). */
+export const IMAGE_FILE_EXTENSIONS = new Set([
+  '.bmp',
+  '.gif',
+  '.heic',
+  '.jpeg',
+  '.jpg',
+  '.png',
+  '.webp',
+])
+
+/** Office/OpenDocument, PDF and image files can enter a batch without confirmation. */
 export function isLowRiskFileExtension(extension: string): boolean {
-  return OFFICE_FILE_EXTENSIONS.has(extension.toLowerCase())
+  const normalized = extension.toLowerCase()
+  return OFFICE_FILE_EXTENSIONS.has(normalized) || IMAGE_FILE_EXTENSIONS.has(normalized)
 }
 
 export const HIGH_RISK_FILE_BATCH_THRESHOLD = 100

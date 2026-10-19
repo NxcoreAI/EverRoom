@@ -30,6 +30,7 @@ export interface ClosedInterval {
   endReason: IntervalEndReason
   keyframes: KeyframeRecord[]
   textLines: string[]
+  textBlocks: string[]
 }
 
 interface OpenIntervalState {
@@ -41,6 +42,8 @@ interface OpenIntervalState {
   keyframes: KeyframeRecord[]
   textSet: Set<string>
   textLines: string[]
+  textBlockSet: Set<string>
+  textBlocks: string[]
   stableLines: string[]
 }
 
@@ -85,7 +88,8 @@ export class IntervalTracker {
 
   /**
    * 收到一帧已判定为「内容有变化」的关键帧。首帧开区间。
-   * stableLines 供下一帧差异比对，newLines 并入区间文本。
+   * stableLines 供下一帧差异比对，newLines 并入区间文本，
+   * newBlocks（含新行的文本块）并入区间文本块。
    */
   acceptKeyframe(input: {
     now: Date
@@ -95,6 +99,7 @@ export class IntervalTracker {
     keyframe: KeyframeRecord
     stableLines: string[]
     newLines: string[]
+    newBlocks: string[]
   }): void {
     if (this.open && this.open.bundleId !== input.bundleId) {
       this.close('app-switch', input.now)
@@ -109,6 +114,8 @@ export class IntervalTracker {
         keyframes: [],
         textSet: new Set<string>(),
         textLines: [],
+        textBlockSet: new Set<string>(),
+        textBlocks: [],
         stableLines: [],
       }
     }
@@ -121,6 +128,12 @@ export class IntervalTracker {
       if (this.open.textSet.has(key)) continue
       this.open.textSet.add(key)
       this.open.textLines.push(line)
+    }
+    for (const block of input.newBlocks) {
+      const key = block.replace(/\s+/g, '').toLowerCase()
+      if (this.open.textBlockSet.has(key)) continue
+      this.open.textBlockSet.add(key)
+      this.open.textBlocks.push(block)
     }
   }
 
@@ -144,6 +157,7 @@ export class IntervalTracker {
       endReason: reason,
       keyframes: open.keyframes,
       textLines: open.textLines,
+      textBlocks: open.textBlocks,
     }
     this.events.onIntervalClosed(interval)
     return interval

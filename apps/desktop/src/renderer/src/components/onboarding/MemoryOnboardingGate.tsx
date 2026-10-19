@@ -1,3 +1,4 @@
+import type { OnboardingFlowStage } from './OnboardingFlowChrome'
 import {
   ArrowLeft,
   ArrowRight,
@@ -54,8 +55,8 @@ interface MemoryOnboardingGateProps {
   onFinished?: () => void
   onExistingData?: () => void
   onMemoryGenerated?: (item: MemoryAtomicItemDto) => void
-  onNavigateStage?: (stage: 'memory' | 'room' | 'folder' | 'microphone' | 'ready') => void
-  activeStage?: 'idle' | 'memory' | 'room' | 'folder' | 'microphone' | 'agents' | 'ready'
+  onNavigateStage?: (stage: Exclude<OnboardingFlowStage, 'idle' | 'screen' | 'agents'>) => void
+  activeStage?: OnboardingFlowStage
 }
 
 const MEMORY_TYPE_KEYS: Record<string, string> = {

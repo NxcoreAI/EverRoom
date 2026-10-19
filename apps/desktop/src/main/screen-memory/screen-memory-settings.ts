@@ -3,18 +3,23 @@ import { join } from 'node:path'
 import { app } from 'electron'
 import { VersionedJsonStore } from '@nxcore/migration-kit'
 
+export type ScreenMemoryScopeMode = 'all' | 'allowlist'
+
 export interface ScreenMemorySettings {
   enabled: boolean
   paused: boolean
-  /** 允许采集的前台应用 bundleId 列表；空列表视为未配置任何覆盖。 */
+  /** all=采集全部前台应用（排除清单之外）；allowlist=仅采集 allowedApps 内应用。 */
+  scopeMode: ScreenMemoryScopeMode
+  /** 允许采集的前台应用 bundleId 列表；allowlist 模式下生效。 */
   allowedApps: string[]
-  /** 排除应用，优先级高于 allowedApps。 */
+  /** 排除应用，优先级高于任何允许。 */
   excludedApps: string[]
 }
 
 export const DEFAULT_SCREEN_MEMORY_SETTINGS: ScreenMemorySettings = {
   enabled: false,
   paused: false,
+  scopeMode: 'all',
   allowedApps: [],
   excludedApps: [],
 }
@@ -32,7 +37,7 @@ export function getScreenMemoryImagesDirectory(base: string): string {
 export function isAppInScope(settings: ScreenMemorySettings, bundleId: string | null): boolean {
   if (!bundleId) return false
   if (settings.excludedApps.includes(bundleId)) return false
-  return settings.allowedApps.includes(bundleId)
+  return settings.scopeMode === 'all' ? true : settings.allowedApps.includes(bundleId)
 }
 
 interface SettingsFile {
@@ -55,11 +60,13 @@ export class ScreenMemorySettingsStore {
         if (!settings || typeof settings !== 'object') {
           return { version: 1, settings: { ...DEFAULT_SCREEN_MEMORY_SETTINGS } }
         }
+        const scopeModeRaw = (settings as Record<string, unknown>).scopeMode
         return {
           version: 1,
           settings: {
             enabled: (settings as Record<string, unknown>).enabled === true,
             paused: (settings as Record<string, unknown>).paused === true,
+            scopeMode: scopeModeRaw === 'allowlist' ? 'allowlist' : 'all',
             allowedApps: readStringArray((settings as Record<string, unknown>).allowedApps),
             excludedApps: readStringArray((settings as Record<string, unknown>).excludedApps),
           },
@@ -81,6 +88,7 @@ export class ScreenMemorySettingsStore {
     const next: ScreenMemorySettings = {
       enabled: patch.enabled ?? current.enabled,
       paused: patch.paused ?? current.paused,
+      scopeMode: patch.scopeMode ?? current.scopeMode,
       allowedApps: patch.allowedApps ?? current.allowedApps,
       excludedApps: patch.excludedApps ?? current.excludedApps,
     }

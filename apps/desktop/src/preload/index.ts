@@ -4,6 +4,16 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron'
 
 import type { KnowledgeAttachInput, KnowledgeEntityStatus } from '../shared/knowledge'
 import type {
+  AgentAccessCreateInput,
+  AgentAccessExampleQueryDto,
+  AgentAccessInstallOutcomeDto,
+  AgentAccessSelftestDto,
+  AgentAccessSettingsDto,
+  AgentAccessUninstallOutcomeDto,
+  AgentAccessUpdateInput,
+  AgentConnectionDto,
+} from '../shared/agent-access'
+import type {
   CreateContextRoomInput,
   RoomDuplicateCheckInput,
   RoomDuplicateCandidateStatus,
@@ -16,6 +26,13 @@ import type {
   MemoryOnboardingInput,
   MemoryRoomMemoriesPageDto,
 } from '../shared/memory'
+import type {
+  SearchItemType,
+  SearchMessageContextDto,
+  SearchPageDto,
+  SearchRequestDto,
+  SearchScopeDto,
+} from '../shared/search'
 import type { IngestPipelines } from '../shared/ingest'
 import type { McpServersSnapshot } from '../shared/mcp'
 import type { OfficeAgentAskEvent, OfficeAgentFileEvent } from '../shared/office'
@@ -402,6 +419,10 @@ const api: NxcoreDesktopApi = {
     updateInterval: (intervalMs: number) => invoke('screen-capture:update-interval', intervalMs),
     stop: () => invoke('screen-capture:stop'),
     status: () => invoke('screen-capture:status'),
+    appInfo: () => invoke('screen-capture:app-info'),
+    openPermissionSettings: () => invoke('screen-capture:open-permission-settings'),
+    startAppDrag: () => ipcRenderer.send('screen-capture:start-app-drag'),
+    relaunchApp: () => invoke('screen-capture:relaunch-app'),
     perceptionSettings: () => invoke('perception:settings'),
     updateOnlineVlm: (enabled, configVersion) => invoke('perception:update-online-vlm', enabled, configVersion),
     listPerceptionNodes: (query) => invokeQuietly('perception:nodes', query),
@@ -455,6 +476,34 @@ const api: NxcoreDesktopApi = {
     update: (id, input) => invoke('agent-scheduler:update', id, input),
     remove: (id) => invoke('agent-scheduler:remove', id),
     runNow: (id) => invoke('agent-scheduler:run-now', id),
+  },
+  agentAccess: {
+    listConnections: () => invokeQuietly<{ connections: AgentConnectionDto[] }>('agent-access:list-connections'),
+    createConnection: (input: AgentAccessCreateInput) =>
+      invoke<{ connection: AgentConnectionDto; token: string }>('agent-access:create-connection', input),
+    updateConnection: (id: string, input: AgentAccessUpdateInput) =>
+      invoke<{ connection: AgentConnectionDto }>('agent-access:update-connection', id, input),
+    revokeConnection: (id: string) => invoke<{ connection: AgentConnectionDto }>('agent-access:revoke-connection', id),
+    rotateToken: (id: string) => invoke<{ connection: AgentConnectionDto; token: string }>('agent-access:rotate-token', id),
+    submissions: (id: string) =>
+      invokeQuietly<{ submissions: Array<Record<string, unknown>> }>('agent-access:submissions', id),
+    events: (id: string) =>
+      invokeQuietly<{ events: Array<Record<string, unknown>> }>('agent-access:events', id),
+    selftest: (id: string) => invoke<AgentAccessSelftestDto>('agent-access:selftest', id),
+    exampleQuery: (id: string, query?: string) =>
+      invoke<AgentAccessExampleQueryDto>('agent-access:example-query', id, query),
+    install: (connectionId: string, target: string, token: string) =>
+      invoke<{ outcome: AgentAccessInstallOutcomeDto; plan: { url: string; notes: string[] } }>(
+        'agent-access:install',
+        connectionId,
+        target,
+        token,
+      ),
+    uninstall: (target: string) => invoke<AgentAccessUninstallOutcomeDto>('agent-access:uninstall', target),
+    settingsGet: () => invoke<AgentAccessSettingsDto>('agent-access:settings-get'),
+    setFixedPort: (port: number | null) =>
+      invoke<{ fixedPort: number | null; needsRestart: boolean }>('agent-access:settings-set-fixed-port', port),
+    restartGateway: () => invoke<{ baseUrl: string }>('agent-access:restart-gateway'),
   },
   slides: {
     /** 配图过目卡轮询：后台逐张生成期间按草稿文档拉最新会话快照。 */
@@ -616,6 +665,14 @@ const api: NxcoreDesktopApi = {
     replaceSummaryTags: (summaryRecordId, tags) => invoke('transcription:replace-summary-tags', summaryRecordId, tags),
     renameTag: (tagId, label) => invoke('transcription:rename-tag', tagId, label),
     mergeTag: (targetTagId, sourceTagId) => invoke('transcription:merge-tag', targetTagId, sourceTagId),
+  },
+  search: {
+    invoke: (request: SearchRequestDto): Promise<SearchPageDto> => invoke('search:invoke', request),
+    status: (): Promise<SearchScopeDto> => invoke('search:status'),
+    prioritize: (itemType: SearchItemType, refId: string): Promise<{ ok: boolean }> =>
+      invoke('search:prioritize', itemType, refId),
+    messageContext: (messageId: string, before?: number, after?: number): Promise<SearchMessageContextDto> =>
+      invoke('search:message-context', messageId, before, after),
   },
   memory: {
     overview: () => invoke('memory:overview'),
@@ -823,7 +880,6 @@ const api: NxcoreDesktopApi = {
       invoke('sources:disconnect', id, deleteLocalData),
   },
   obsidian: {
-    pickAndMount: () => invoke('obsidian:pick-and-mount'),
     discover: () => invoke('obsidian:discover'),
     pickCandidate: () => invoke('obsidian:pick-candidate'),
     importCandidate: (candidateId, target) => invoke('obsidian:import-candidate', candidateId, target),
@@ -946,6 +1002,10 @@ const api: NxcoreDesktopApi = {
       const paths = files.map((file) => webUtils.getPathForFile(file)).filter(Boolean)
       return invoke('files:import-paths-once', paths, options)
     },
+    importArtifacts: (files: File[], roomId: string) => {
+      const paths = files.map((file) => webUtils.getPathForFile(file)).filter(Boolean)
+      return invoke('files:import-artifacts', paths, roomId)
+    },
     importAgentAttachments: (files: File[]) => {
       const paths = files.map((file) => webUtils.getPathForFile(file)).filter(Boolean)
       return invoke('files:import-agent-attachments', paths)
@@ -962,6 +1022,28 @@ const api: NxcoreDesktopApi = {
       const handleChanged = () => listener()
       ipcRenderer.on('files:high-risk-reviews:changed', handleChanged)
       return () => ipcRenderer.removeListener('files:high-risk-reviews:changed', handleChanged)
+    },
+  },
+  thesisFormat: {
+    listCards: (roomId: string): Promise<Array<{
+      id: string
+      sourceName: string
+      sourceFileEntryId: string | null
+      updatedAt: string
+      card: Record<string, unknown>
+    }>> => invoke('thesis-format:cards:list', roomId),
+    setFromLibrary: (roomId: string, fileEntryId: string) =>
+      invoke('thesis-format:parse:library', roomId, fileEntryId),
+    pickAndSet: (roomId: string): Promise<{ canceled: boolean; cardId: string; sourceName: string }> =>
+      invoke('thesis-format:parse:pick', roomId),
+    reformat: (roomId: string, fileEntryId: string, cardId?: string) =>
+      invoke('thesis-format:reformat', roomId, fileEntryId, cardId),
+    removeCard: (roomId: string, cardId: string) =>
+      invoke('thesis-format:cards:remove', roomId, cardId),
+    onCardChanged: (listener: () => void) => {
+      const handler = () => listener()
+      ipcRenderer.on('thesis-format:card-changed', handler)
+      return () => ipcRenderer.removeListener('thesis-format:card-changed', handler)
     },
   },
   ingest: {

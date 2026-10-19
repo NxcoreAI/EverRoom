@@ -63,7 +63,7 @@
 .document-operation-center-panel > header strong { font-size: 13px; }
 .document-operation-center-panel > header span { color: var(--cr-muted); font-size: 11px; }
 .document-operation-center-panel > header button,
-.document-operation-center-filters > button {
+.document-operation-center-filters > .document-operation-center-refresh {
   display: grid;
   width: 28px;
   height: 28px;
@@ -80,14 +80,12 @@
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 28px;
 }
 
-.document-operation-center-filters select {
+.document-operation-center-filters .filter-select {
   min-width: 0;
   height: 28px;
-  padding: 0 6px;
-  border-radius: 5px;
   font-size: 11px;
 }
-.document-operation-center-filters > button {
+.document-operation-center-filters > .document-operation-center-refresh {
   grid-column: 3;
   grid-row: 1 / span 2;
   align-self: center;

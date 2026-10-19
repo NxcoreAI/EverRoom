@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { FileText, Brain, Network, Target, ExternalLink, LocateFixed } from 'lucide-react'
 
 import { useLocale } from '../../../../../i18n/LocaleContext';
+import { FilterSelect } from '../../../../ui/FilterSelect'
 import type { ContextRoomRecord } from '../../types'
 import { requestDocumentBlockNavigation } from '../detail-editor/documentBlockNavigation'
 import { LinkGraphCanvas } from '../LinkGraphCanvas'
@@ -175,16 +176,12 @@ export function LinkGraphPane({
   return (
     <div className="context-room-memory-pane">
       <header>
-        <select
-          className="context-room-link-graph-filter"
-          aria-label={t('contextRoom:linkGraph.filterLabel')}
+        <FilterSelect
           value={filter}
-          onChange={(event) => setFilter(event.target.value as LinkGraphFilter)}
-        >
-          {filterOptions.map((option) => (
-            <option key={option.value} value={option.value}>{option.label}</option>
-          ))}
-        </select>
+          options={filterOptions}
+          onChange={setFilter}
+          ariaLabel={t('contextRoom:linkGraph.filterLabel')}
+        />
         <small>
           {t('contextRoom:linkGraph.totals', {
             documents: data.totals.documents,

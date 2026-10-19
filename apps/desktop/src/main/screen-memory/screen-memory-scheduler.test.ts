@@ -44,7 +44,7 @@ class FakeOcr {
       width: 2560,
       height: 1440,
       elapsedMs: 5,
-      lines: lines.map((text, index) => ({ text, confidence: 0.5, box: [0.01 * index, 0.9, 0.1, 0.02] })),
+      lines: lines.map((text, index) => ({ text, confidence: 0.5, box: [0.01, 0.9 - 0.05 * index, 0.1, 0.02] })),
       ...(options?.compressOut ? { compressedPath: options.compressOut, compressedBytes: 10 } : {}),
     }
   }
@@ -103,7 +103,7 @@ describe('createScreenMemoryScheduler', () => {
     baseDirectory = await mkdtemp(join(tmpdir(), 'screen-memory-test-'))
     ocr = new FakeOcr()
     savedIntervals = []
-    settings = { enabled: true, paused: false, allowedApps: ['com.apple.Safari'], excludedApps: [] }
+    settings = { enabled: true, paused: false, scopeMode: 'allowlist', allowedApps: ['com.apple.Safari'], excludedApps: [] }
     captureCalls = []
     powerOnEvent = null
   })
@@ -201,6 +201,19 @@ describe('createScreenMemoryScheduler', () => {
     await scheduler.beat()
     expect(scheduler.status().currentKeyframes).toBe(1)
     expect(scheduler.status().lastError).toBeNull()
+    await scheduler.stop()
+  })
+
+
+  it('all 模式下未列入列表的应用也会采集', async () => {
+    settings.scopeMode = 'all'
+    const { timerApi } = fakeTimer()
+    const scheduler = buildScheduler(timerApi)
+    ocr.frontmostResult = { bundleId: 'com.apple.finder', appName: 'Finder', pid: 400, windowTitle: null }
+    ocr.ocrTexts = [['访达里的新内容']]
+    await scheduler.start()
+    expect(captureCalls).toHaveLength(1)
+    expect(scheduler.status().currentBundleId).toBe('com.apple.finder')
     await scheduler.stop()
   })
 

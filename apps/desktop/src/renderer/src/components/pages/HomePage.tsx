@@ -74,10 +74,12 @@ export function HomePage({
   onNavigate,
   onFocusAgent,
   onOpenDocument,
+  onOpenRoom,
 }: {
   onNavigate: (page: PageId) => void
   onFocusAgent: () => void
   onOpenDocument?: (target: { roomId: string; documentId: string }) => void
+  onOpenRoom?: (roomId: string) => void
 }) {
   const { locale, t } = useLocale()
   const { state: roomState } = useContextRoomState()
@@ -209,7 +211,7 @@ export function HomePage({
                   <span>{roomState.rooms.length}</span>
                 </div>
                 {recentRooms.length > 0 ? recentRooms.map((room) => (
-                  <button key={room.id} type="button" className="workspace-home-list-item" onClick={() => onNavigate('rooms')}>
+                  <button key={room.id} type="button" className="workspace-home-list-item" onClick={() => onOpenRoom ? onOpenRoom(room.id) : onNavigate('rooms')}>
                     <span className="workspace-home-item-mark" data-tone={room.tone} aria-hidden="true" />
                     <span>
                       <strong>{room.title}</strong>

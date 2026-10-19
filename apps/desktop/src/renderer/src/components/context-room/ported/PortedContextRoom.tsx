@@ -137,22 +137,25 @@ export function PortedContextRoom({
     setState((current) => {
       const dedicatedBindings = bindings.filter((vault) => vault.mountMode === 'dedicated')
       const byRoomId = new Map(dedicatedBindings.map((vault) => [vault.roomId, vault]))
+      const sourceTypeOf = (binding: { sourceType: 'obsidian-vault' | 'local-directory' }) =>
+        binding.sourceType === 'local-directory' ? '本地目录' : 'Obsidian Vault'
       const existingIds = new Set(current.rooms.map((room) => room.id))
       const rooms = current.rooms.map((room) => {
         const binding = byRoomId.get(room.id)
         return binding && (room.origin !== 'source' || room.title !== binding.name)
-          ? { ...room, title: binding.name, kind: '项目' as const, origin: 'source' as const, recentSource: { type: 'Obsidian Vault', name: binding.name } }
+          ? { ...room, title: binding.name, kind: '项目' as const, origin: 'source' as const, recentSource: { type: sourceTypeOf(binding), name: binding.name } }
           : room
       })
       for (const binding of dedicatedBindings) {
         if (existingIds.has(binding.roomId)) continue
+        const isVault = binding.sourceType === 'obsidian-vault'
         rooms.unshift(createEmptyContextRoom({
           id: binding.roomId, title: binding.name, kind: '项目', origin: 'source',
-          background: '持续挂载的 Obsidian Vault，源文件始终保留在原目录。',
-          goal: '在 EverRoom 中浏览、编辑并让 Agent 理解 Vault 内容。',
+          background: isVault ? '持续挂载的 Obsidian Vault，源文件始终保留在原目录。' : '挂载的本地目录，源文件始终保留在原位置。',
+          goal: '在 EverRoom 中浏览、编辑并让 Agent 理解目录内容。',
           briefStatus: binding.status === 'connected' ? '来源已连接' : '来源离线',
         }))
-        rooms[0] = { ...rooms[0]!, recentSource: { type: 'Obsidian Vault', name: binding.name } }
+        rooms[0] = { ...rooms[0]!, recentSource: { type: sourceTypeOf(binding), name: binding.name } }
       }
       return { ...current, rooms }
     })
@@ -403,6 +406,16 @@ export function PortedContextRoom({
       : current
   })
 
+  // 首页/搜索等入口直接以 activeRoomId 标记目标 Room；本地快照缺失时（合并/删除残留）
+  // 补一次 knowledge 后端合并并直进详情，避免落入 Context Room 列表首页。
+  const openRoomRef = useRef(openRoom)
+  openRoomRef.current = openRoom
+  useEffect(() => {
+    if (!activeRoomId) return
+    if (roomsRef.current.some((room) => room.id === activeRoomId)) return
+    openRoomRef.current(activeRoomId)
+  }, [activeRoomId])
+
   if (activeRoom) {
     return (
       <PortedDetail
@@ -458,11 +471,9 @@ export function PortedContextRoom({
     <HomeView
       rooms={state.rooms}
       deletedRooms={state.deletedRooms}
-      onMountObsidian={async () => {
-        const binding = await window.nxcore?.obsidian.pickAndMount()
-        if (!binding) return
+      onRoomMounted={async (room) => {
         await refreshVaults()
-        onOpenRoomTab({ id: binding.roomId, title: binding.name })
+        onOpenRoomTab({ id: room.id, title: room.title })
       }}
       onRenameRoom={renameRoom}
       onDeleteRoom={deleteRoom}

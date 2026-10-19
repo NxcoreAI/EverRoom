@@ -64,6 +64,7 @@ import {
   sealDelegationPayload,
 } from "../local-agents/delegation.js";
 import type { FilesService } from "../files/service.js";
+import { enqueueSearchIndex } from "../search/jobs.js";
 import { clearRedactionDelta, flushRedactionDelta, redactDelta, redactSecrets, redactText } from "../../security/secret-redaction.js";
 
 export interface AgentServiceLogger {
@@ -1513,14 +1514,16 @@ export class AgentService {
       }
       tx.insert(agentRuns).values(runRow).run();
       if (options.persistUserMessage !== false) {
+        const userMessageId = randomUUID();
         tx.insert(agentMessages).values({
-          id: randomUUID(),
+          id: userMessageId,
           sessionId,
           runId,
           role: "user",
           content: safePrompt,
           createdAt: now,
         }).run();
+        enqueueSearchIndex(tx, { itemType: "message", refId: userMessageId, priority: "high" });
       }
       tx.update(agentSessions)
         .set({
@@ -2008,8 +2011,9 @@ export class AgentService {
 
       if (runtimeEvent.type === "message.completed") {
         const payload = runtimeEvent.payload as { content?: unknown };
+        const assistantMessageId = randomUUID();
         tx.insert(agentMessages).values({
-          id: randomUUID(),
+          id: assistantMessageId,
           sessionId,
           runId,
           role: "assistant",
@@ -2017,6 +2021,7 @@ export class AgentService {
           content: typeof payload.content === "string" ? payload.content : "",
           createdAt: now,
         }).run();
+        enqueueSearchIndex(tx, { itemType: "message", refId: assistantMessageId, priority: "high" });
       }
       if (nextStatus && nextStatus !== "running") {
         tx.update(agentSessions)

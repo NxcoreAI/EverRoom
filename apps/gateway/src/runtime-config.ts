@@ -57,6 +57,8 @@ export interface RelayModels {
   lite?: string;
   cursorCompletion?: string;
   vlm?: string;
+  /** 生图（/v1/images/generations）：不走 runtime-config 槽位，image-gen 直读会话；空串=未配置（禁用生图）。 */
+  image?: string;
   webSearch?: string;
   embedding?: string;
   embeddingDimensions?: number;
@@ -379,19 +381,6 @@ export class RuntimeConfigManager {
         userOwned.add(key);
       }
     }
-    // 文本场景槽位连接留空（只存模型）时继承通用模型（primary）的连接：
-    // 密钥只在通用模型存一份，轮换后所有跟随场景自动同步；独立连接
-    // （baseUrl 非空）不动。官方槽位不参与继承（空连接走中转重写）。
-    const genericSource = config.primary;
-    if (genericSource) {
-      for (const key of ["background", "transcriptionSummary", "lite", "cursorCompletion"] as const) {
-        const slot = (config as Record<string, unknown>)[key] as RuntimeAiConfig | undefined;
-        if (!userOwned.has(key) || !slot || typeof slot !== "object" || slot.baseUrl) continue;
-        for (const field of ["provider", "baseUrl", "api", "apiKey"] as const) {
-          if (!slot[field] && genericSource[field]) (slot as Record<string, unknown>)[field] = genericSource[field];
-        }
-      }
-    }
     if (record.memory !== undefined) {
       config.memory = { ...(config.memory ?? {}), ...(record.memory as Record<string, unknown>) };
     }
@@ -403,6 +392,27 @@ export class RuntimeConfigManager {
         if ((key === "llm" || key === "embedding") && value !== undefined) userOwned.add(`knowledge.${key}`);
       }
       config.knowledge = knowledge;
+    }
+    // 槽位连接留空（只存模型）时继承通用模型（primary）的连接：密钥只在
+    // 通用模型存一份，轮换后所有跟随槽位自动同步；独立连接（baseUrl 非空）
+    // 不动。官方槽位不参与继承（空连接走中转重写）。文本场景与特殊模型
+    // （vlm / knowledge.embedding）同规则；asr 与 webSearch 不参与
+    // （连接语义独立：OSS/密钥专存）。须在 knowledge 覆盖之后执行。
+    const genericSource = config.primary;
+    if (genericSource) {
+      const inheritConnection = (slot: unknown, owned: boolean): void => {
+        if (!owned || !slot || typeof slot !== "object") return;
+        const item = slot as Record<string, undefined | string>;
+        if (item.baseUrl) return;
+        for (const field of ["provider", "baseUrl", "api", "apiKey"] as const) {
+          if (!item[field] && genericSource[field]) item[field] = genericSource[field];
+        }
+      };
+      for (const key of ["background", "transcriptionSummary", "lite", "cursorCompletion", "vlm"] as const) {
+        inheritConnection((config as Record<string, unknown>)[key], userOwned.has(key));
+      }
+      const embeddingSlot = (config.knowledge as { embedding?: unknown } | undefined)?.embedding;
+      inheritConnection(embeddingSlot, userOwned.has("knowledge.embedding"));
     }
   }
 

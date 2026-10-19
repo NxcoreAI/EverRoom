@@ -3,7 +3,10 @@
   "properties": {
     "task": {
       "type": "string",
-      "enum": ["direction", "settle"],
+      "enum": [
+        "direction",
+        "settle"
+      ],
       "description": "direction = compose the overview image-generation prompt; settle = review extraction results into full style params."
     },
     "instruction": {
@@ -24,7 +27,10 @@
     },
     "feedback": {
       "type": "array",
-      "items": { "type": "string", "maxLength": 500 },
+      "items": {
+        "type": "string",
+        "maxLength": 500
+      },
       "maxItems": 20,
       "description": "Accumulated user dissatisfaction notes; every entry must be honored as a hard constraint."
     },
@@ -33,10 +39,20 @@
       "items": {
         "type": "object",
         "properties": {
-          "hex": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
-          "ratio": { "type": "number", "minimum": 0, "maximum": 1 }
+          "hex": {
+            "type": "string",
+            "pattern": "^#[0-9a-fA-F]{6}$"
+          },
+          "ratio": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          }
         },
-        "required": ["hex", "ratio"],
+        "required": [
+          "hex",
+          "ratio"
+        ],
         "additionalProperties": false
       },
       "maxItems": 6,
@@ -49,10 +65,28 @@
     "fontTemperament": {
       "type": "object",
       "properties": {
-        "serif": { "type": "boolean" },
-        "weight": { "type": "string", "enum": ["light", "regular", "bold"] },
-        "geometric": { "type": "string", "enum": ["geometric", "humanist", "neutral"] },
-        "rounded": { "type": "boolean" }
+        "serif": {
+          "type": "boolean"
+        },
+        "weight": {
+          "type": "string",
+          "enum": [
+            "light",
+            "regular",
+            "bold"
+          ]
+        },
+        "geometric": {
+          "type": "string",
+          "enum": [
+            "geometric",
+            "humanist",
+            "neutral"
+          ]
+        },
+        "rounded": {
+          "type": "boolean"
+        }
       },
       "additionalProperties": false,
       "description": "Closed-question VLM reading of the overview typography temperament."
@@ -60,31 +94,76 @@
     "decorationReading": {
       "type": "object",
       "properties": {
-        "cornerRadius": { "type": "string", "enum": ["none", "small", "medium", "large"] },
-        "stroke": { "type": "string", "enum": ["none", "thin", "medium", "thick"] },
-        "shadow": { "type": "string", "enum": ["none", "soft", "strong"] },
-        "motif": { "type": "string", "enum": ["ghost", "band", "corner", "none"] }
+        "cornerRadius": {
+          "type": "string",
+          "enum": [
+            "none",
+            "small",
+            "medium",
+            "large"
+          ]
+        },
+        "stroke": {
+          "type": "string",
+          "enum": [
+            "none",
+            "thin",
+            "medium",
+            "thick"
+          ]
+        },
+        "shadow": {
+          "type": "string",
+          "enum": [
+            "none",
+            "soft",
+            "strong"
+          ]
+        },
+        "motif": {
+          "type": "string",
+          "enum": [
+            "ghost",
+            "band",
+            "corner",
+            "none"
+          ]
+        }
       },
       "additionalProperties": false,
       "description": "Closed-question VLM reading of the decoration language."
     },
     "fontOptions": {
       "type": "array",
-      "items": { "type": "string" },
+      "items": {
+        "type": "string"
+      },
       "maxItems": 12,
       "description": "Allowed font stacks; settle must pick heading/body fonts from this list only."
     },
-    "layoutPresetIds": {
-      "type": "object",
-      "description": "Allowed layout preset ids grouped by page role (cover/section/content/closing); hints must reference these ids only."
-    },
     "outlineRoles": {
       "type": "array",
-      "items": { "type": "string", "enum": ["cover", "toc", "section", "content", "data", "table", "flow", "quote", "closing"] },
+      "items": {
+        "type": "string",
+        "enum": [
+          "cover",
+          "toc",
+          "section",
+          "content",
+          "data",
+          "table",
+          "flow",
+          "quote",
+          "closing"
+        ]
+      },
       "maxItems": 24,
       "description": "Page roles of the confirmed outline, for motif and type-ladder decisions."
     }
   },
-  "required": ["task", "instruction"],
+  "required": [
+    "task",
+    "instruction"
+  ],
   "additionalProperties": false
 }

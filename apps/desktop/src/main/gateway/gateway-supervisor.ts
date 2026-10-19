@@ -131,6 +131,12 @@ export class GatewaySupervisor {
       packagedEntry?: string
       logLabel?: string
       devPortEnvironment?: string
+      /**
+       * 固定端口（外部 Agent 访问等需要稳定地址的场景）：每次 launchGatewayOnce
+       * 求值，返回 >0 的端口时覆盖 --port（优先级高于 dev 环境变量与 0）。
+       * 端口被占用时 gateway 启动失败走既有的重试/报错路径。
+       */
+      portProvider?: () => number | null
       /** 连接变化（首次建立、dev 热重载换端口/token、恢复）时回调——依赖 gateway 稳定地址的子进程 env 需要联动刷新。 */
       onConnectionChanged?: (connection: GatewayConnection) => void
     } = {},
@@ -202,13 +208,17 @@ export class GatewaySupervisor {
       environment.NXCORE_NANGO_SECRET = ''
       environment.NXCORE_ENV_FILE = join(this.dataDirectory, 'runtime', '.desktop-gateway.env')
     }
+    const fixedPort = this.options.portProvider?.() ?? null
+    const portArgument = fixedPort && fixedPort > 0
+      ? String(fixedPort)
+      : app.isPackaged
+        ? '0'
+        : (process.env[this.options.devPortEnvironment ?? 'NXCORE_GATEWAY_DEV_PORT'] ?? '0')
     const gatewayArguments = [
       '--host',
       '127.0.0.1',
       '--port',
-      app.isPackaged
-        ? '0'
-        : (process.env[this.options.devPortEnvironment ?? 'NXCORE_GATEWAY_DEV_PORT'] ?? '0'),
+      portArgument,
       '--data-dir',
       this.dataDirectory,
       '--migrations-dir',

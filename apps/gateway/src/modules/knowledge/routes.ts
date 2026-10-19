@@ -604,6 +604,10 @@ export function knowledgeRoutes(service: KnowledgeService): FastifyPluginAsyncTy
               summary: Type.Optional(Type.Union([Type.String(), Type.Null()])),
               /** 最近一次同步/更新时间 */
               updatedAt: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+              /** 构建期待处理源文件数（uploaded/failed）；非构建期为 null */
+              pendingSources: Type.Optional(Type.Union([Type.Integer(), Type.Null()])),
+              /** 源文件总数（构建期附带）；非构建期为 null */
+              totalSources: Type.Optional(Type.Union([Type.Integer(), Type.Null()])),
             }),
           },
         },

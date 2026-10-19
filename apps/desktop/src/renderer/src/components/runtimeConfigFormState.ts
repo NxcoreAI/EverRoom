@@ -7,7 +7,8 @@ import type { RuntimeConfigSnapshot } from '../../../shared/sources'
  *   生效快照在中转激活时含代理地址与令牌，摊进保存值会把官方出口冻结进
  *   用户配置；
  * - payload 里「不出现的槽位 = 用官方」；文本场景可选择跟随通用模型、
- *   单独配模型名或整段用官方；
+ *   单独配模型名或整段用官方；特殊模型（embedding/vlm）自定义时连接
+ *   留空同样继承通用连接；
  * - 快照里的 secret 掩码 "********" 播种为空（gateway 侧 preserveMasked
  *   会在保存时保留库中原值，空串提交不清空已存 secret）。
  */
@@ -72,14 +73,18 @@ export interface ScenarioAssignment {
   apiKey: string
 }
 
+/** 特殊模型（embedding/vlm）启用方式：官方 / 自定义。
+ * 自定义时连接留空 = 继承通用连接（解析层从 primary 继承）；填全 = 独立连接。 */
+export interface SpecialModelAssignment extends ManualAiConfigFields {
+  mode: 'official' | 'custom'
+}
+
 export interface RuntimeConfigFormState {
   /** 通用文本模型四要素；场景启用（跟随通用/单独配置）时必须填全。 */
   generic: ManualAiConfigFields
   scenarios: Record<TextScenarioId, ScenarioAssignment>
-  embedding: ManualAiConfigFields
-  embeddingCustom: boolean
-  vlm: ManualAiConfigFields
-  vlmCustom: boolean
+  embedding: SpecialModelAssignment
+  vlm: SpecialModelAssignment
   asr: ManualAsrFields
   asrCustom: boolean
   webSearch: ManualAiConfigFields
@@ -182,8 +187,8 @@ export function formStateFromSnapshot(snapshot: RuntimeConfigSnapshot | null): R
   }
 
   const knowledge = userConfig ? sectionOf(userConfig, 'knowledge') : {}
-  const embedding = aiFieldsOf(sectionOf(knowledge, 'embedding'))
-  const vlm = aiFieldsOf(userConfig ? sectionOf(userConfig, 'vlm') : {})
+  const embeddingFields = aiFieldsOf(sectionOf(knowledge, 'embedding'))
+  const vlmFields = aiFieldsOf(userConfig ? sectionOf(userConfig, 'vlm') : {})
   const asrSlot = userConfig ? sectionOf(userConfig, 'asr') : {}
   const oss = sectionOf(asrSlot, 'oss')
   // nxcore-asr 一律显示为内置托管态：连接由主进程托管写入，表单不编辑。
@@ -214,10 +219,8 @@ export function formStateFromSnapshot(snapshot: RuntimeConfigSnapshot | null): R
   return {
     generic,
     scenarios,
-    embedding,
-    embeddingCustom: Boolean(embedding.model || embedding.baseUrl),
-    vlm,
-    vlmCustom: Boolean(vlm.model || vlm.baseUrl),
+    embedding: { ...embeddingFields, mode: embeddingFields.model || embeddingFields.baseUrl ? 'custom' : 'official' },
+    vlm: { ...vlmFields, mode: vlmFields.model || vlmFields.baseUrl ? 'custom' : 'official' },
     asr,
     asrCustom: Boolean(asr.model || asr.baseUrl || Object.values(asr.oss).some((value) => value)),
     webSearch,
@@ -277,6 +280,13 @@ export function buildManualEntryPayload(
   return { ...base, schemaVersion: 1 }
 }
 
+/** 特殊模型槽位落盘：独立连接存全量；连接留空只存 provider+model（解析层
+ * 从 primary 继承连接，密钥轮换自动同步）。 */
+function specialSlotPayload(slot: SpecialModelAssignment, generic: ManualAiConfigFields): Record<string, string> {
+  if (slot.baseUrl.trim() || slot.apiKey.trim()) return trimmedAiFields(slot)
+  return { provider: generic.provider.trim() || 'openai-compatible', model: slot.model.trim() }
+}
+
 /**
  * 表单 → user 源 payload。只写配置过的槽位，其余槽位从 payload 删除
  * （= 用官方）；不管理的键（memory、knowledge 服务字段与 knowledge.llm）
@@ -326,11 +336,11 @@ export function buildUserPayload(
       }
     }
   }
-  if (state.embeddingCustom) {
+  if (state.embedding.mode === 'custom') {
     const knowledge = (base.knowledge ?? {}) as Record<string, unknown>
-    base.knowledge = { ...knowledge, embedding: trimmedAiFields(state.embedding) }
+    base.knowledge = { ...knowledge, embedding: specialSlotPayload(state.embedding, state.generic) }
   }
-  if (state.vlmCustom) base.vlm = trimmedAiFields(state.vlm)
+  if (state.vlm.mode === 'custom') base.vlm = specialSlotPayload(state.vlm, state.generic)
   if (state.asrCustom) {
     if (state.asr.provider === 'nxcore-asr-managed') {
       // 内置托管态：占位 provider，主进程 saveUser 时改写为真实连接
@@ -373,18 +383,6 @@ export function buildUserPayload(
     }
   }
   return { ...base, schemaVersion: 1 }
-}
-
-/**
- * 可选 AI 段校验：全空 OK；填了必须填全（部分填写最常见于漏 apiKey，
- * 保存出去是必然失败的配置）。hasStoredKey：库中已存密钥时 apiKey 留空
- * 视为「沿用原值」（掩码播种为空、空串提交保留原值），不算缺失。
- */
-export function aiFieldsError(fields: ManualAiConfigFields, t: (key: string) => string, hasStoredKey = false): string | null {
-  if (isAiFieldsEmpty(fields)) return null
-  const filled = [fields.model, fields.baseUrl].filter((value) => value.trim()).length
-  const keyReady = fields.apiKey.trim() || hasStoredKey ? 1 : 0
-  return filled === 2 && keyReady === 1 ? null : t('surface:configGate.embeddingIncomplete')
 }
 
 /**
@@ -440,14 +438,19 @@ export function runtimeConfigFormError(state: RuntimeConfigFormState, t: (key: s
       if (!pairReady) return t('surface:settings.rcScenarioConnectionIncomplete')
     }
   }
-  if (state.embeddingCustom) {
-    const error = aiFieldsError(state.embedding, t, state.keyConfigured.embedding)
-    if (error) return error
+  const specialSlotError = (slot: SpecialModelAssignment, hasStoredKey: boolean): string | null => {
+    if (slot.mode !== 'custom') return null
+    if (!slot.model.trim()) return t('surface:settings.rcScenarioModelRequired')
+    const ownConnection = slot.baseUrl.trim() || slot.apiKey.trim()
+    if (!ownConnection) return genericActive ? null : t('surface:settings.rcGenericIncomplete')
+    return slot.baseUrl.trim() && (slot.apiKey.trim() || hasStoredKey)
+      ? null
+      : t('surface:settings.rcScenarioConnectionIncomplete')
   }
-  if (state.vlmCustom) {
-    const error = aiFieldsError(state.vlm, t, state.keyConfigured.vlm)
-    if (error) return error
-  }
+  const embeddingError = specialSlotError(state.embedding, state.keyConfigured.embedding)
+  if (embeddingError) return embeddingError
+  const vlmError = specialSlotError(state.vlm, state.keyConfigured.vlm)
+  if (vlmError) return vlmError
   if (state.asrCustom) {
     const error = asrFieldsError(state.asr, t, state.keyConfigured.asr)
     if (error) return error

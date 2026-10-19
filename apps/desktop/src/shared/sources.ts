@@ -525,7 +525,7 @@ export type WindowScreenshotResult =
     }
   | {
       ok: false
-      code: 'window-unavailable' | 'capture-failed' | 'save-failed'
+      code: 'window-unavailable' | 'permission-denied' | 'capture-failed' | 'save-failed'
       message: string
     }
 
@@ -533,6 +533,7 @@ export type WindowScreenshotResult =
 export interface ScreenMemorySettingsDto {
   enabled: boolean
   paused: boolean
+  scopeMode: 'all' | 'allowlist'
   allowedApps: string[]
   excludedApps: string[]
 }
@@ -639,6 +640,7 @@ export interface ScreenMemoryFrontmostDto {
 export interface WindowScreenshotStatus {
   enabled: boolean
   intervalMs: number
+  permission: 'granted' | 'denied' | 'not-determined' | 'restricted' | 'unknown'
   lastResult: WindowScreenshotResult | null
 }
 
@@ -901,6 +903,24 @@ export function officePreviewKindForFileName(fileName: string): OfficePreviewKin
   return null
 }
 
+/** 产物库认可的 Room 文件来源：Agent 生成 + 用户导入的 Office 产物（其余 sourceKind 归资料）。 */
+export const ROOM_ARTIFACT_SOURCE_KINDS = ['agent-generated', 'artifact-imported'] as const
+
+export function isRoomArtifactSourceKind(sourceKind: string | null | undefined): boolean {
+  return sourceKind === 'agent-generated' || sourceKind === 'artifact-imported'
+}
+
+/** 产物库导入的 Office 扩展名（内嵌预览/编辑覆盖的格式；PDF 走资料导入，不在此列）。 */
+export const ARTIFACT_IMPORT_EXTENSIONS = [
+  '.doc', '.docx', '.ppt', '.pptx', '.xls', '.xlsm', '.xlsx',
+] as const
+
+export function isArtifactImportFileName(fileName: string): boolean {
+  const dot = fileName.lastIndexOf('.')
+  const extension = dot >= 0 ? fileName.slice(dot).toLowerCase() : ''
+  return (ARTIFACT_IMPORT_EXTENSIONS as readonly string[]).includes(extension)
+}
+
 /** Context Room 子 Agent（划词改写）dispatch 入参，见 gateway /v1/context-rooms/selection-rewrite。 */
 export interface RoomAgentSelectionRewriteInput {
   roomId?: string
@@ -1147,6 +1167,10 @@ export interface NxcoreDesktopApi {
     updateInterval(intervalMs: number): Promise<WindowScreenshotStatus>
     stop(): Promise<WindowScreenshotStatus>
     status(): Promise<WindowScreenshotStatus>
+    appInfo(): Promise<{ appPath: string; appName: string; iconDataUrl: string; devMode: boolean } | null>
+    openPermissionSettings(): Promise<void>
+    startAppDrag(): void
+    relaunchApp(): Promise<void>
     perceptionSettings(): Promise<PerceptionSettings>
     updateOnlineVlm(enabled: boolean, configVersion: number): Promise<PerceptionSettings>
     listPerceptionNodes(query?: PerceptionNodeQuery): Promise<{ items: PerceptionNode[] }>
@@ -1204,6 +1228,22 @@ export interface NxcoreDesktopApi {
     update(id: string, input: Partial<Pick<AgentScheduledTask, 'name' | 'description' | 'prompt' | 'enabled' | 'localTime' | 'timezone'>> & { configVersion: number }): Promise<AgentScheduledTask>
     remove(id: string): Promise<void>
     runNow(id: string): Promise<{ runId: string }>
+  }
+  agentAccess: {
+    listConnections(): Promise<{ connections: import('./agent-access').AgentConnectionDto[] }>
+    createConnection(input: import('./agent-access').AgentAccessCreateInput): Promise<{ connection: import('./agent-access').AgentConnectionDto; token: string }>
+    updateConnection(id: string, input: import('./agent-access').AgentAccessUpdateInput): Promise<{ connection: import('./agent-access').AgentConnectionDto }>
+    revokeConnection(id: string): Promise<{ connection: import('./agent-access').AgentConnectionDto }>
+    rotateToken(id: string): Promise<{ connection: import('./agent-access').AgentConnectionDto; token: string }>
+    submissions(id: string): Promise<{ submissions: Array<Record<string, unknown>> }>
+    events(id: string): Promise<{ events: Array<Record<string, unknown>> }>
+    selftest(id: string): Promise<import('./agent-access').AgentAccessSelftestDto>
+    exampleQuery(id: string, query?: string): Promise<import('./agent-access').AgentAccessExampleQueryDto>
+    install(connectionId: string, target: string, token: string): Promise<{ outcome: import('./agent-access').AgentAccessInstallOutcomeDto; plan: { url: string; notes: string[] } }>
+    uninstall(target: string): Promise<import('./agent-access').AgentAccessUninstallOutcomeDto>
+    settingsGet(): Promise<import('./agent-access').AgentAccessSettingsDto>
+    setFixedPort(port: number | null): Promise<{ fixedPort: number | null; needsRestart: boolean }>
+    restartGateway(): Promise<{ baseUrl: string }>
   }
   slides: {
     pageImagesStatus(documentId: string): Promise<import('./slides').SlidesPageImagesStatus | null>
@@ -1306,6 +1346,12 @@ export interface NxcoreDesktopApi {
     replaceSummaryTags(summaryRecordId: string, tags: RealityTag[]): Promise<void>
     renameTag(tagId: string, label: string): Promise<void>
     mergeTag(targetTagId: string, sourceTagId: string): Promise<void>
+  }
+  search: {
+    invoke(request: SearchRequestDto): Promise<SearchPageDto>
+    status(): Promise<SearchScopeDto>
+    prioritize(itemType: SearchItemType, refId: string): Promise<{ ok: boolean }>
+    messageContext(messageId: string, before?: number, after?: number): Promise<SearchMessageContextDto>
   }
   memory: {
     overview(): Promise<MemoryOverviewDto>
@@ -1604,11 +1650,32 @@ export interface NxcoreDesktopApi {
     importPaths(paths: string[], options?: { pipelines?: IngestPipelines; roomId?: string }): Promise<FileImportOutcome[]>
     /** 拖拽文件/目录的一次性导入；不注册数据源，也不持续监听。 */
     importDropped(files: File[], options?: { pipelines?: IngestPipelines; roomId?: string }): Promise<FileImportOutcome[]>
+    /** 产物库导入：本地 Office 文件以 artifact-imported 直达 Room 产物库（成功项逐个回报）。 */
+    importArtifacts(files: File[], roomId: string): Promise<Array<{ fileId: string; originalName: string }>>
     importAgentAttachments(files: File[]): Promise<AgentAttachmentReference[]>
     onImportProgress(listener: (event: FileImportProgressEvent) => void): () => void
     listHighRiskReviews(): Promise<{ items: HighRiskImportReview[] }>
     resolveHighRiskReview(id: string, accepted: boolean): Promise<HighRiskImportResolution>
     onHighRiskReviewsChanged(listener: () => void): () => void
+  }
+  thesisFormat: {
+    /** Room 的论文格式卡列表（最新在前）；card 为 ThesisFormatCard 全量 JSON（样张预览数据源）。 */
+    listCards(roomId: string): Promise<Array<{
+      id: string
+      sourceName: string
+      sourceFileEntryId: string | null
+      updatedAt: string
+      card: Record<string, unknown>
+    }>>
+    /** 资料库内文件设为论文模版（docx/doc/pdf；同名模版覆盖旧卡）。 */
+    setFromLibrary(roomId: string, fileEntryId: string): Promise<{ cardId: string; sourceName: string }>
+    /** 系统选择框直传模版（zip/docx/doc/pdf；zip 不进文件库）。用户取消返回 canceled=true。 */
+    pickAndSet(roomId: string): Promise<{ canceled: boolean; cardId: string; sourceName: string }>
+    /** 删除一张格式卡。 */
+    removeCard(roomId: string, cardId: string): Promise<void>
+    /** 一键装订：按指定格式卡（缺省最新）把 docx 论文装订成 xxx-排版版.docx 新文件。 */
+    reformat(roomId: string, fileEntryId: string, cardId?: string): Promise<{ fileEntryId: string; originalName: string }>
+    onCardChanged(listener: () => void): () => void
   }
   ingest: {
     /** 统一进入台账（导入记录）。策略不在此面：defaults 在代码，覆盖走部署期配置文件。 */
@@ -1652,6 +1719,7 @@ import type {
   MemoryScenarioContentDto,
   MemoryScenarioEntryDto,
 } from './memory'
+import type { SearchItemType, SearchMessageContextDto, SearchPageDto, SearchRequestDto, SearchScopeDto } from './search'
 import type {
   FileCatalogDto,
   FileDto,

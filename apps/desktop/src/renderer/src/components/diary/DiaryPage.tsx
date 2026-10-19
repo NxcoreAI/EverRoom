@@ -699,7 +699,7 @@ function DiaryTimeline({ events, onOpenSource }: {
 
   return (
     <div className="diary-timeline-list">
-      {events.map((event) => {
+      {[...events].reverse().map((event) => {
         const EventIcon = EVENT_ICONS[event.kind]
         const images = event.images
         return (

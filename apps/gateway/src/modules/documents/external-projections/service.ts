@@ -3,6 +3,7 @@ import type {
   CompleteExternalDocumentPatchInput,
   DocumentOperationCommandResult,
   ExternalDocumentProjectionBinding,
+  ExternalDocumentSourceKind,
   PreparedExternalDocumentPatch,
   PrepareExternalDocumentPatchInput,
   SyncExternalDocumentProjectionInput,
@@ -110,7 +111,7 @@ export class ExternalDocumentProjectionService {
     return preparation ? this.operations.get(preparation.operationId) : null;
   }
 
-  async remove(sourceKind: "obsidian-vault", sourceId: string, resourceId?: string): Promise<number> {
+  async remove(sourceKind: ExternalDocumentSourceKind, sourceId: string, resourceId?: string): Promise<number> {
     const rows = this.db.select().from(externalDocumentBindings).where(and(
       eq(externalDocumentBindings.sourceKind, sourceKind),
       eq(externalDocumentBindings.sourceId, sourceId),
@@ -235,7 +236,7 @@ export class ExternalDocumentProjectionService {
     return result;
   }
 
-  private findSource(sourceKind: "obsidian-vault", sourceId: string, resourceId: string): BindingRow | undefined {
+  private findSource(sourceKind: ExternalDocumentSourceKind, sourceId: string, resourceId: string): BindingRow | undefined {
     return this.db.select().from(externalDocumentBindings).where(and(
       eq(externalDocumentBindings.sourceKind, sourceKind),
       eq(externalDocumentBindings.sourceId, sourceId),

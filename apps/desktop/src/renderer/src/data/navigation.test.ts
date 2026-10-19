@@ -7,7 +7,7 @@ describe('desktop navigation', () => {
     const execution = navigationSections.find((section) => section.id === 'execution')
     const pageIds = navigationSections.flatMap((section) => section.items.map((item) => item.id))
 
-    expect(execution?.items.map((item) => item.id)).toEqual(['office', 'diary', 'schedules'])
+    expect(execution?.items.map((item) => item.id)).toEqual(['office', 'diary', 'schedules', 'agent-connections'])
     expect(pageIds).not.toContain('agents')
     expect(pageIds).not.toContain('tasks')
     expect(pageIds).not.toContain('office-test')

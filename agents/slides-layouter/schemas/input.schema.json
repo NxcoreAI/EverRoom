@@ -1,0 +1,38 @@
+{
+  "type": "object",
+  "properties": {
+    "task": { "type": "string", "enum": ["layout"] },
+    "deckToken": { "type": "string", "minLength": 8, "maxLength": 80, "description": "Deck contract token; pass verbatim to slides_layout_validate." },
+    "pageIndex": { "type": "integer", "minimum": 0, "maximum": 23 },
+    "totalPages": { "type": "integer", "minimum": 1, "maximum": 24 },
+    "role": { "type": "string", "enum": ["cover", "toc", "section", "content", "data", "table", "flow", "quote", "closing"] },
+    "density": { "type": "string", "enum": ["sparse", "standard", "dense"] },
+    "title": { "type": "string", "maxLength": 80 },
+    "points": { "type": "array", "items": { "type": "string", "maxLength": 400 }, "maxItems": 8 },
+    "data": { "type": "string", "maxLength": 2000, "description": "Inline data convention from planner (chart/table source)." },
+    "materials": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "url": { "type": "string", "maxLength": 500 },
+          "desc": { "type": "string", "maxLength": 200 },
+          "aspectRatio": { "type": "number", "description": "Width/height when known; keep the image leaf frame ratio close." }
+        },
+        "required": ["url"],
+        "additionalProperties": false
+      },
+      "maxItems": 4
+    },
+    "notes": { "type": "string", "maxLength": 1000 },
+    "styleBrief": { "type": "string", "maxLength": 400, "description": "Natural-language deck style tendency (e.g. strong grid, restrained whitespace)." },
+    "neighborSignatures": {
+      "type": "array",
+      "items": { "type": "string", "maxLength": 200 },
+      "maxItems": 4,
+      "description": "Adjacent-page structure signatures (re-roll tasks only); your tree must differ structurally."
+    }
+  },
+  "required": ["task", "deckToken", "pageIndex", "totalPages", "role", "density"],
+  "additionalProperties": false
+}

@@ -25,4 +25,21 @@ export const gatewayDataMigrations: readonly SqliteDataMigration[] = [
         .run();
     },
   },
+  {
+    version: 3,
+    name: "purge-empty-mail-shells",
+    up: (ctx) => {
+      // Outlook Graph delta 偶发只回 id 的空壳邮件（无主题/正文/收发时间）。
+      // 它们 sentAt 为空，日记按 syncedAt 兜底取时间，全部滑进当天窗口，
+      // 940 条来源清单曾把日记 Agent 撑爆（2026-10-12 事故）。入库侧已在
+      // domain-projection isEmptyMailShell 拦截，这里清存量。幂等：重放删 0 行。
+      const hasTable = ctx.sqlite
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'connector_emails'")
+        .get();
+      if (!hasTable) return;
+      ctx.sqlite
+        .prepare("DELETE FROM connector_emails WHERE sent_at IS NULL AND source_updated_at IS NULL AND subject = '（无主题）' AND body_text = ''")
+        .run();
+    },
+  },
 ];

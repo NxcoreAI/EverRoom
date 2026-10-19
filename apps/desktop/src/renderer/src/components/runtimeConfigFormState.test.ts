@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest'
 import type { RuntimeConfigSnapshot } from '../../../shared/sources'
 
 import {
-  aiFieldsError,
   asrFieldsError,
   buildManualEntryPayload,
   buildUserPayload,
@@ -45,8 +44,8 @@ describe('formStateFromSnapshot — 场景解析', () => {
     for (const id of ['primary', 'background', 'transcriptionSummary', 'lite', 'cursorCompletion'] as const) {
       expect(state.scenarios[id]).toEqual({ mode: 'generic', model: '', baseUrl: '', apiKey: '' })
     }
-    expect(state.embeddingCustom).toBe(false)
-    expect(state.vlmCustom).toBe(false)
+    expect(state.embedding.mode).toBe('official')
+    expect(state.vlm.mode).toBe('official')
     expect(state.asrCustom).toBe(false)
     expect(state.webSearchCustom).toBe(false)
   })
@@ -78,19 +77,34 @@ describe('formStateFromSnapshot — 场景解析', () => {
     expect(state.keyConfigured.scenarios.cursorCompletion).toBe(true)
   })
 
-  it('特殊模型：槽位有内容即自定义，缺失即官方', () => {
+  it('特殊模型：槽位有内容即自定义（有 baseUrl = 独立连接），缺失即官方', () => {
     const state = formStateFromSnapshot(snapshot({
       schemaVersion: 1,
       vlm: { provider: 'openai-compatible', model: 'qwen-vl-max', baseUrl: 'https://api.example.com/v1', apiKey: '********' },
       knowledge: { embedding: { provider: 'qwen', model: 'v4', baseUrl: 'u', apiKey: 'k' } },
     }))
-    expect(state.vlmCustom).toBe(true)
+    expect(state.vlm.mode).toBe('custom')
     expect(state.vlm.model).toBe('qwen-vl-max')
+    expect(state.vlm.baseUrl).toBe('https://api.example.com/v1')
     expect(state.vlm.apiKey).toBe('')
-    expect(state.embeddingCustom).toBe(true)
+    expect(state.embedding.mode).toBe('custom')
     expect(state.embedding.model).toBe('v4')
+    expect(state.embedding.baseUrl).toBe('u')
     expect(state.asrCustom).toBe(false)
     expect(state.webSearchCustom).toBe(false)
+  })
+
+  it('特殊模型：只存模型（连接空）= 继承通用连接的自定义', () => {
+    const state = formStateFromSnapshot(snapshot({
+      schemaVersion: 1,
+      primary: { provider: 'p', model: 'm', baseUrl: 'https://api.example.com/v1', apiKey: 'sk' },
+      vlm: { provider: 'p', model: 'qwen-vl-max' },
+      knowledge: { embedding: { model: 'text-embedding-v4' } },
+    }))
+    expect(state.vlm.mode).toBe('custom')
+    expect(state.vlm.baseUrl).toBe('')
+    expect(state.embedding.mode).toBe('custom')
+    expect(state.embedding.baseUrl).toBe('')
   })
 })
 
@@ -129,7 +143,7 @@ describe('buildUserPayload — 槽位级构建', () => {
     expect((payload.webSearch as Record<string, unknown>).apiKey).toEqual({ operation: 'keep' })
   })
 
-  it('全部场景用官方时不写任何文本槽位；embedding 自定义写进 knowledge', () => {
+  it('全部场景用官方时不写任何文本槽位；embedding 自定义写进 knowledge（独立连接存全量）', () => {
     const state = stateWith({
       generic: ai('main-m'),
       scenarios: {
@@ -139,14 +153,24 @@ describe('buildUserPayload — 槽位级构建', () => {
         lite: { mode: 'official', model: '', baseUrl: '', apiKey: '' },
         cursorCompletion: { mode: 'official', model: '', baseUrl: '', apiKey: '' },
       },
-      embeddingCustom: true,
-      embedding: ai('embed-m'),
+      embedding: { ...ai('embed-m'), mode: 'custom' },
     })
     const payload = buildUserPayload(snapshot(null), state) as Record<string, unknown>
     expect(payload.primary).toBeUndefined()
     expect(payload.background).toBeUndefined()
     expect(payload.knowledge).toEqual({ embedding: { provider: 'openai-compatible', model: 'embed-m', baseUrl: 'https://api.example.com/v1', apiKey: 'sk' } })
     expect(payload.schemaVersion).toBe(1)
+  })
+
+  it('特殊模型连接留空只存 provider+model（继承通用连接）；填全走独立连接', () => {
+    const state = stateWith({
+      generic: ai('main-m'),
+      embedding: { provider: 'qwen', model: 'text-embedding-v4', baseUrl: '', apiKey: '', mode: 'custom' },
+      vlm: { provider: 'openai-compatible', model: 'qwen-vl-max', baseUrl: 'https://vlm.example.com/v1', apiKey: 'vlm-key', mode: 'custom' },
+    })
+    const payload = buildUserPayload(snapshot(null), state) as Record<string, Record<string, unknown>>
+    expect(payload.knowledge?.embedding).toEqual({ provider: 'openai-compatible', model: 'text-embedding-v4' })
+    expect(payload.vlm).toEqual({ provider: 'openai-compatible', model: 'qwen-vl-max', baseUrl: 'https://vlm.example.com/v1', apiKey: 'vlm-key' })
   })
 
   it('webSearch 密钥 envelope：输入新值 set、勾删 delete', () => {
@@ -185,9 +209,24 @@ describe('runtimeConfigFormError', () => {
     expect(runtimeConfigFormError(customNoModel, t)).toBe('surface:settings.rcScenarioModelRequired')
   })
 
-  it('特殊模型段沿用 all-or-nothing 校验', () => {
-    const partialEmbedding = stateWith({ generic: ai('m'), embeddingCustom: true, embedding: { provider: 'p', model: 'm', baseUrl: '', apiKey: '' } })
-    expect(runtimeConfigFormError(partialEmbedding, t)).toBe('surface:configGate.embeddingIncomplete')
+  it('特殊模型：自定义必须有模型名；独立连接要么成对填全要么留空；继承需通用启用', () => {
+    expect(runtimeConfigFormError(stateWith({ generic: ai('m'), embedding: { provider: 'p', model: ' ', baseUrl: '', apiKey: '', mode: 'custom' } }), t))
+      .toBe('surface:settings.rcScenarioModelRequired')
+    expect(runtimeConfigFormError(stateWith({ generic: ai('m'), vlm: { provider: 'p', model: 'v', baseUrl: 'https://vlm.example.com/v1', apiKey: '', mode: 'custom' } }), t))
+      .toBe('surface:settings.rcScenarioConnectionIncomplete')
+    const allOfficial = {
+      generic: { provider: 'p', model: '', baseUrl: '', apiKey: '' },
+      scenarios: {
+        primary: { mode: 'official', model: '', baseUrl: '', apiKey: '' },
+        background: { mode: 'official', model: '', baseUrl: '', apiKey: '' },
+        transcriptionSummary: { mode: 'official', model: '', baseUrl: '', apiKey: '' },
+        lite: { mode: 'official', model: '', baseUrl: '', apiKey: '' },
+        cursorCompletion: { mode: 'official', model: '', baseUrl: '', apiKey: '' },
+      },
+    } as const
+    expect(runtimeConfigFormError(stateWith({ ...allOfficial, embedding: { provider: 'p', model: 'embed', baseUrl: '', apiKey: '', mode: 'custom' } }), t))
+      .toBe('surface:settings.rcGenericIncomplete')
+    expect(runtimeConfigFormError(stateWith({ generic: ai('m'), embedding: { provider: 'p', model: 'embed', baseUrl: '', apiKey: '', mode: 'custom' } }), t)).toBeNull()
   })
 
   it('已存密钥（掩码播种）时 apiKey 留空沿用原值，不算缺失', () => {
@@ -200,12 +239,11 @@ describe('runtimeConfigFormError', () => {
     expect(state.keyConfigured.generic).toBe(true)
     expect(state.keyConfigured.vlm).toBe(true)
     expect(state.generic.apiKey).toBe('')
-    // 视觉段切自定义、apiKey 留空：校验通过。
-    const withVlm = { ...state, vlmCustom: true }
-    expect(runtimeConfigFormError(withVlm, t)).toBeNull()
-    // 从未存过密钥（userConfig 为空）时留空仍报错。
-    const fresh = stateWith({ generic: ai('m'), embeddingCustom: true, embedding: { provider: 'p', model: 'embed', baseUrl: 'https://api.example.com/v1', apiKey: '' } })
-    expect(runtimeConfigFormError(fresh, t)).toBe('surface:configGate.embeddingIncomplete')
+    // 视觉段独立连接、apiKey 留空：校验通过（沿用库中原值）。
+    expect(runtimeConfigFormError(state, t)).toBeNull()
+    // 从未存过密钥（userConfig 为空）时独立连接缺密钥仍报错。
+    const fresh = stateWith({ generic: ai('m'), embedding: { provider: 'p', model: 'embed', baseUrl: 'https://api.example.com/v1', apiKey: '', mode: 'custom' } })
+    expect(runtimeConfigFormError(fresh, t)).toBe('surface:settings.rcScenarioConnectionIncomplete')
   })
 })
 
@@ -240,13 +278,6 @@ describe('buildManualEntryPayload — 启动 gate', () => {
 })
 
 describe('runtime config form state — shared ai fields', () => {
-  it('aiFieldsError: all-or-nothing per section', () => {
-    const t = (key: string) => key
-    expect(aiFieldsError({ provider: 'p', model: '', baseUrl: '', apiKey: '' }, t)).toBeNull()
-    expect(aiFieldsError({ provider: 'p', model: 'm', baseUrl: '', apiKey: '' }, t)).toBe('surface:configGate.embeddingIncomplete')
-    expect(aiFieldsError(ai('m'), t)).toBeNull()
-  })
-
   it('asr 校验：空过；标量填了必须 OSS 四件套；填一半报 incomplete', () => {
     const t = (key: string) => key
     expect(asrFieldsError(emptyAsrFields(), t)).toBeNull()

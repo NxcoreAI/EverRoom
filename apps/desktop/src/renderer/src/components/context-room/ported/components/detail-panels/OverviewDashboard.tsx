@@ -73,48 +73,6 @@ function timeLabel(value: string): string {
   return value.match(/\b\d{1,2}:\d{2}\b/)?.[0] ?? value;
 }
 
-/** 概览/状态长文折叠：超过 lines 行时截断显示，展开按钮只在真溢出时出现。 */
-function ClampedText({
-  lines,
-  section,
-  children,
-}: {
-  lines: number;
-  section: string;
-  children: React.ReactNode;
-}) {
-  const { t } = useLocale();
-  const [expanded, setExpanded] = useState(false);
-  const [overflowing, setOverflowing] = useState(false);
-  const ref = useRef<HTMLParagraphElement>(null);
-  useEffect(() => {
-    // 展开态不测量（scrollHeight==clientHeight 会误判为不溢出，收起按钮会闪没）。
-    if (expanded || !ref.current) return;
-    setOverflowing(ref.current.scrollHeight - ref.current.clientHeight > 2);
-  });
-  return (
-    <>
-      <p
-        data-room-citation-section={section}
-        data-clamp={expanded ? undefined : String(lines)}
-        style={{ '--clamp-lines': String(lines) } as React.CSSProperties}
-        ref={ref}
-      >
-        {children}
-      </p>
-      {overflowing || expanded ? (
-        <button
-          type="button"
-          className="context-room-dashboard-clamp-toggle"
-          onClick={() => setExpanded((current) => !current)}
-        >
-          {t(expanded ? 'contextRoom:overviewDashboard.collapse' : 'contextRoom:overviewDashboard.expand')}
-        </button>
-      ) : null}
-    </>
-  );
-}
-
 export function OverviewDashboard({
   room,
   backendDocuments,
@@ -348,11 +306,12 @@ export function OverviewDashboard({
           <header data-icon-tone="document"><FileText aria-hidden="true" />{t('contextRoom:overviewDashboard.roomOverview')}</header>
           {hasOverview ? (
             <>
-              <ClampedText lines={4} section="overview">
+              {/* 简介与状态长文不再折叠：概览卡直接展示全部文字（划词引用 section 属性保留）。 */}
+              <p data-room-citation-section="overview">
                 {overviewClaims.length
                   ? overviewClaims.map((claim, index) => <span key={claim.id} data-room-citation-claim-id={claim.id} data-room-citation-claim-text={claim.text}>{index ? ' ' : ''}{localizedUiText(claim.text, t)}</span>)
                   : localizedUiText(generatedOverview || room.brief.background, t) || t('contextRoom:overviewDashboard.noBackgroundProvided')}
-              </ClampedText>
+              </p>
               <small data-room-citation-section="overview"><b>{t('contextRoom:overviewDashboard.goal')}</b><span data-room-citation-claim-id={goalClaim?.id} data-room-citation-claim-text={goalClaim?.text}>{localizedUiText(projectedGoal, t) || t('contextRoom:overviewDashboard.notSet')}</span></small>
             </>
           ) : (
@@ -362,11 +321,11 @@ export function OverviewDashboard({
         <article>
           <header data-icon-tone="room"><BarChart3 aria-hidden="true" />{t('contextRoom:overviewDashboard.currentStatus')} <em>AI</em></header>
           {dashboard.aiStatus.trim() ? (
-            <ClampedText lines={3} section="status">
+            <p data-room-citation-section="status">
               {overviewProjection?.status.length
                 ? overviewProjection.status.map((claim, index) => <span key={claim.id} data-room-citation-claim-id={claim.id} data-room-citation-claim-text={claim.text}>{index ? ' ' : ''}{localizedUiText(claim.text, t)}</span>)
                 : localizedUiText(dashboard.aiStatus, t)}
-            </ClampedText>
+            </p>
           ) : <PanelEmptyState compact icon={Info} title={t('contextRoom:overviewDashboard.noStatusSummaryYet')} description={t('contextRoom:overviewDashboard.thisStatusWillUpdateAsNewResourcesAnd')} />}
         </article>
         <article>

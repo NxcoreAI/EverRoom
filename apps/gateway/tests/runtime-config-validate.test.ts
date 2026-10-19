@@ -346,3 +346,23 @@ describe("runtime config asr section", () => {
     });
   });
 });
+
+describe("runtime config slot connection inheritance", () => {
+  it("vlm / knowledge.embedding 连接留空继承 primary 连接；独立连接与未持有槽位不动", async () => {
+    const { manager } = await dedupeManager();
+    manager.set("user", {
+      schemaVersion: 1,
+      primary: { provider: "openai-compatible", model: "m", baseUrl: "https://api.example.com/v1", apiKey: "sk" },
+      vlm: { provider: "openai-compatible", model: "qwen-vl-max" },
+      knowledge: { embedding: { provider: "openai-compatible", model: "text-embedding-v4" } },
+      lite: { provider: "openai-compatible", model: "lite-m", baseUrl: "https://own.example.com/v1", apiKey: "own-key" },
+    });
+    const config = manager.snapshot(false).config;
+    expect(config.vlm).toMatchObject({ model: "qwen-vl-max", baseUrl: "https://api.example.com/v1", apiKey: "sk" });
+    const embedding = (config.knowledge as { embedding?: Record<string, unknown> }).embedding;
+    expect(embedding).toMatchObject({ model: "text-embedding-v4", baseUrl: "https://api.example.com/v1", apiKey: "sk" });
+    expect(config.lite).toMatchObject({ baseUrl: "https://own.example.com/v1", apiKey: "own-key" });
+    // 未出现在 payload 的官方槽位不继承（保持内置未配置态，交给中转重写）。
+    expect(config.transcriptionSummary?.baseUrl ?? "").toBe("");
+  });
+});

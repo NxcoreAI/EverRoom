@@ -30,6 +30,7 @@ describe("gateway.sqlite 迁移框架接入", () => {
     expect(claim).toEqual([
       { version: 1, name: "baseline", via: "fresh-claim" },
       { version: 2, name: "purge-saas-runtime-config", via: "fresh-claim" },
+      { version: 3, name: "purge-empty-mail-shells", via: "fresh-claim" },
     ]);
     sqlite.close();
   });
@@ -112,7 +113,32 @@ describe("gateway.sqlite 迁移框架接入", () => {
     expect(claim).toEqual([
       { version: 1, name: "baseline", via: "baseline-claim" },
       { version: 2, name: "purge-saas-runtime-config", via: "migration" },
+      { version: 3, name: "purge-empty-mail-shells", via: "migration" },
     ]);
+    reopened.sqlite.close();
+  });
+
+  it("v3 清除空壳邮件行，有正文或有时间的邮件保留", () => {
+    const databasePath = join(workspace, "shells", "database", "gateway.sqlite");
+    const { sqlite } = createDatabase(databasePath, migrationsDir);
+    sqlite.close();
+
+    const legacy = new Database(databasePath);
+    legacy.prepare("DELETE FROM data_migrations").run();
+    const insertEmail = legacy.prepare(
+      "INSERT INTO connector_emails (id, owner_id, service, connection_name, source_record_id, synced_at, schema_version, prompt_version, content_hash, message_id, recipients, subject, sent_at, body_text, labels, has_attachments) VALUES (?, 'local-user', 'outlook', 'conn-1', ?, ?, 1, 0, ?, ?, '[]', ?, ?, ?, '[]', 0)",
+    );
+    insertEmail.run("shell-1", "shell-1", 0, "h1", "shell-1", "（无主题）", null, "");
+    insertEmail.run("shell-2", "shell-2", 0, "h2", "shell-2", "（无主题）", null, "");
+    insertEmail.run("real-body", "real-body", 0, "h3", "real-body", "（无主题）", null, "有正文，保留");
+    insertEmail.run("real-date", "real-date", 0, "h4", "real-date", "周报", 1790000000000, "");
+    legacy.close();
+
+    const reopened = createDatabase(databasePath, migrationsDir);
+    const ids = (reopened.sqlite
+      .prepare("SELECT id FROM connector_emails ORDER BY id")
+      .all() as Array<{ id: string }>).map((row) => row.id);
+    expect(ids).toEqual(["real-body", "real-date"]);
     reopened.sqlite.close();
   });
 

@@ -42,6 +42,15 @@ describe("visual inference parser", () => {
     })).toThrow();
   });
 
+  it("falls back to a neutral eventType when the model returns it empty", () => {
+    for (const eventType of ["", "   ", undefined, null]) {
+      expect(parseVisualInference({
+        eventType, title: "锁屏画面", summary: "屏幕处于锁定状态", keyPoints: [],
+        representativeTags: [], confidence: 0.5,
+      }).eventType).toBe("屏幕活动");
+    }
+  });
+
   it("validates normalized document OCR blocks", () => {
     expect(parseDocumentOcr({
       text: "Invoice 42",

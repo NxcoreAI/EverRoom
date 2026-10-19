@@ -23,8 +23,67 @@ export interface GenOfficeDocsRuntime {
   docsQueryDirty(contents: WebContents): Promise<boolean>
   setActiveDocsResolver(resolve: (() => WebContents | null) | null): void
   setDocsFileSavedHook(hook: (contents: WebContents, filePath: string) => void): void
+  /** AI 页签论文排版面板：embed 宿主接管（wcId 反查 Room 与文件；payload 不带 id）。 */
+  setDocsThesisPanelHook(
+    hook:
+      | ((
+          wcId: number,
+          action:
+            | { kind: 'list' }
+            | { kind: 'pick' }
+            | { kind: 'remove'; cardId: string }
+            | { kind: 'reformat'; cardId?: string },
+        ) => Promise<
+          { ok: true; value: unknown } | { ok: false; reason: 'no_room' | 'error'; message?: string }
+        >)
+      | null,
+  ): void
   setDocsShellWindow(window: BrowserWindow | null): void
   teardownDocsRenderer(contents: WebContents): void
+  /** 论文装订：源 docx + 格式卡 + 装订规格 → 装订版 docx 字节（主进程纯函数）。 */
+  buildThesisDocx(
+    sourceBytes: Uint8Array,
+    formatCard: ThesisFormatCardPayload,
+    bindingSpec: ThesisBindingSpecPayload,
+  ): Promise<Uint8Array>
+  /** 源论文 docx → 块大纲（装订映射的区间事实源，索引与 buildThesisDocx 对齐）。 */
+  describeThesisBlocks(bytes: Uint8Array): Promise<ThesisOutlineBlock[]>
+}
+
+export interface ThesisOutlineBlock {
+  index: number
+  kind: 'heading' | 'paragraph' | 'table' | 'image' | 'list'
+  level?: number
+  text: string
+}
+
+/** 装订引擎侧格式卡载荷（与 genoffice docx-engine ThesisFormatCardInput 同构）。 */
+export interface ThesisFormatCardPayload {
+  page: Record<string, number | string>
+  base: Record<string, unknown>
+  header: Record<string, unknown>
+  footer: Record<string, unknown>
+  headings: Array<Record<string, unknown>>
+  abstract: Record<string, unknown>
+  toc: Record<string, unknown>
+  references: Record<string, unknown>
+  cover: Record<string, unknown>
+  fixedTexts: Record<string, unknown>
+  [key: string]: unknown
+}
+
+export interface ThesisBindingSpecPayload {
+  title: string
+  coverFields: Record<string, string>
+  abstractZh: string
+  keywordsZh: string[]
+  abstractEn: string
+  keywordsEn: string[]
+  chapters: Array<{ level: number; headingText: string; blockStart: number; blockEnd: number }>
+  references: string[]
+  appendixBlocks: { start: number; end: number } | null
+  acknowledgementParagraphs: string[]
+  achievements: string[]
 }
 export interface GenOfficeSheetsRuntime {
   configureSheetsRuntime(config: { preloadPath: string; rendererFile: string; sidecarPath: string }): void
@@ -118,6 +177,11 @@ export interface GenOfficeSlidesRuntime {
     req: { slideIndex: number; specJson: string },
     imageResolver?: GenOfficeMaterialResolver,
   ): Promise<AgentSlidesEditResult>
+  /** 视觉复检：活会话渲染层离屏栅格化一页为 1x PNG（base64，不带 data: 前缀）。 */
+  renderAgentDeckPagePng(
+    webContentsId: number,
+    slideIndex: number,
+  ): Promise<{ pngBase64: string } | { error: string }>
 }
 
 export interface GenOfficePdfRuntime {

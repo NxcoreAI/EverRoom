@@ -19,6 +19,7 @@ import type {
   ExternalDocumentProjectionBinding,
   ImportRoomDocumentInput,
   PreparedExternalDocumentPatch,
+  ExternalDocumentSourceKind,
   PrepareExternalDocumentPatchInput,
   RoomDocument,
   ResolveDocumentBlockReferencesInput,
@@ -254,10 +255,10 @@ export class DocumentGatewayBridge {
     )
   }
 
-  removeExternalProjections(sourceId: string, resourceId?: string): Promise<{ removed: number }> {
+  removeExternalProjections(sourceId: string, resourceId: string | undefined, sourceKind: ExternalDocumentSourceKind): Promise<{ removed: number }> {
     const query = resourceId ? `?${new URLSearchParams({ resourceId })}` : ''
     return this.request(
-      `/v1/external-document-projections/obsidian-vault/${encodeURIComponent(sourceId)}${query}`,
+      `/v1/external-document-projections/${sourceKind}/${encodeURIComponent(sourceId)}${query}`,
       { method: 'DELETE' },
       true,
     )

@@ -1,5 +1,6 @@
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
+import { Readable } from "node:stream";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import Fastify from "fastify";
@@ -181,6 +182,34 @@ describe("unified file catalog", () => {
     });
     expect(test.service.listCatalog().items.every((item) => item.sharedTitle === "2026 Launch Plan")).toBe(true);
     await clustering.dispose();
+    await test.service.dispose();
+    test.sqlite.close();
+  });
+
+  it("accepts artifact-imported office uploads as a first-class source kind", async () => {
+    const test = await catalogForTest();
+    const imported = await test.service.importFileStream({
+      sourceKind: "artifact-imported", sourceKey: "artifact:path:case1", originalName: "方案.docx",
+      stream: Readable.from([Buffer.from("PK\u0003\u0004 stub")]),
+      mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      roomId: "room-1", pipelines: { room: true, wiki: false, memory: true },
+    });
+    expect(imported.fileEntryId).toBeTruthy();
+    // 目录回读带出来源与标签（产物导入），渲染端产物库按该 kind 分流。
+    expect(test.service.catalogEntry(imported.fileEntryId)).toMatchObject({
+      sourceKind: "artifact-imported",
+      sourceLabel: "产物导入",
+      originalName: "方案.docx",
+    });
+    // 同 sourceKey 重导入命中同一 entry（版本链），不铸新条目。
+    const again = await test.service.importFileStream({
+      sourceKind: "artifact-imported", sourceKey: "artifact:path:case1", originalName: "方案.docx",
+      stream: Readable.from([Buffer.from("PK\u0003\u0004 v2")]),
+      mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      roomId: "room-1", pipelines: { room: true, wiki: false, memory: true },
+    });
+    expect(again.fileEntryId).toBe(imported.fileEntryId);
+    expect(again.versionDeduped).toBe(false);
     await test.service.dispose();
     test.sqlite.close();
   });

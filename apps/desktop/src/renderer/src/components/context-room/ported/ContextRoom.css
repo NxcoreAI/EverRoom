@@ -61,9 +61,11 @@
   letter-spacing: 0;
 }
 
-/* Keep inactive controls white even without the source app's Tailwind preflight. */
+/* Keep inactive controls white even without the source app's Tailwind preflight.
+   主行动按钮（.primary-button 等带强调底色的全局控件）除外——否则会被此条
+   同权覆盖成白底白字，直到 hover 才露出底色。 */
 .context-room-app :where(button, [role='button'], [role='tab']),
-.context-room-dialog-content :where(button, [role='button'], [role='tab']),
+.context-room-dialog-content :where(button:not(.primary-button), [role='button'], [role='tab']),
 .context-room-card-menu :where(button, [role='menuitem']),
 .context-room-tab-menu :where(button, [role='menuitem'], [role='menuitemcheckbox']),
 .context-room-schedule-popover :where(button, [role='button']) {
@@ -2527,7 +2529,6 @@
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  border-right: 1px solid var(--cr-border);
   background: var(--cr-surface);
   container-name: context-room-detail-content;
   container-type: inline-size;
@@ -3678,48 +3679,56 @@
   fill: #ffffff;
 }
 
+/* 新建产物浮层：与文稿页「+新建文档」选 Room 弹窗同一视觉档——呼吸感内边距、
+   16px 大圆角、柔和双层阴影、40px 高圆角输入框。Portal 挂 body，故自带 --cr-* 变量。 */
 .context-room-document-create-popover {
   --cr-surface: #ffffff;
+  --cr-surface-secondary: #f7f8fa;
   --cr-surface-hover: #f1f2f3;
   --cr-text: #1f1f1f;
   --cr-muted: #6b7280;
   --cr-border: #e5e7eb;
   --cr-blue: #408cf0;
+  --cr-blue-soft: rgba(64, 140, 240, 0.14);
   z-index: 1050;
-  width: min(224px, calc(100vw - 24px));
-  padding: 10px;
+  width: min(320px, calc(100vw - 24px));
+  padding: 20px;
   border: 1px solid var(--cr-border);
-  border-radius: 7px;
+  border-radius: 16px;
   background: var(--cr-surface);
-  box-shadow: 0 8px 24px rgba(31, 31, 31, 0.14);
+  box-shadow:
+    0 24px 70px rgba(21, 26, 34, 0.24),
+    0 2px 8px rgba(21, 26, 34, 0.06);
   color: var(--cr-text);
   font-family: 'Context Room Inter', 'HarmonyOS Sans SC', 'PingFang SC', sans-serif;
 }
 
 .context-room-document-create-popover label {
   display: block;
-  margin-bottom: 5px;
+  margin-bottom: 7px;
   color: var(--cr-muted);
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 600;
 }
 
 .context-room-document-create-popover input {
   width: 100%;
-  height: 30px;
-  padding: 0 8px;
+  height: 40px;
+  padding: 0 12px;
   border: 1px solid var(--cr-border);
-  border-radius: 5px;
+  border-radius: 10px;
   outline: none;
-  background: var(--cr-surface);
+  background: var(--cr-surface-secondary);
   color: var(--cr-text);
   font: inherit;
-  font-size: 11px;
+  font-size: 13px;
+  transition: border-color 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .context-room-document-create-popover input:focus {
   border-color: var(--cr-blue);
-  box-shadow: 0 0 0 2px rgba(64, 140, 240, 0.12);
+  background: var(--cr-surface);
+  box-shadow: 0 0 0 3px var(--cr-blue-soft);
 }
 
 .context-room-document-create-popover .context-room-document-import-input {
@@ -3729,22 +3738,24 @@
 .context-room-document-create-popover .context-room-document-import {
   display: flex;
   width: 100%;
-  height: 30px;
+  height: 40px;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  margin-top: 8px;
+  gap: 7px;
+  margin-top: 12px;
   border: 1px solid var(--cr-border);
-  border-radius: 5px;
+  border-radius: 10px;
   background: var(--cr-surface);
   color: var(--cr-blue);
-  font-size: 11px;
+  font-size: 12.5px;
   font-weight: 550;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
 }
 
 .context-room-document-create-popover .context-room-document-import:hover:not(:disabled) {
   border-color: rgba(64, 140, 240, 0.45);
-  background: rgba(64, 140, 240, 0.08);
+  background: var(--cr-blue-soft);
 }
 
 .context-room-document-create-popover .context-room-document-import:disabled {
@@ -3753,35 +3764,39 @@
 }
 
 .context-room-document-create-popover .context-room-document-import svg {
-  width: 14px;
-  height: 14px;
+  width: 15px;
+  height: 15px;
 }
 
-.context-room-document-create-popover small {
+/* 仅错误提示走警示红：原 `small` 通配选择器（0-1-1）会盖过文件后方的
+   .context-room-document-create-hint（0-1-0），把说明文字也染成红色。 */
+.context-room-document-create-popover small[role='alert'] {
   display: block;
-  margin-top: 6px;
+  margin-top: 8px;
   color: #b54732;
-  font-size: 10px;
-  line-height: 15px;
+  font-size: 11px;
+  line-height: 1.6;
 }
 
 .context-room-document-create-popover footer {
   display: flex;
   justify-content: flex-end;
-  gap: 6px;
-  margin-top: 9px;
+  gap: 8px;
+  margin-top: 16px;
 }
 
 .context-room-document-create-popover footer button {
-  min-width: 48px;
-  height: 26px;
-  padding: 0 9px;
+  min-width: 64px;
+  height: 34px;
+  padding: 0 14px;
   border: 1px solid var(--cr-border);
-  border-radius: 5px;
+  border-radius: 9px;
   background: var(--cr-surface);
   color: var(--cr-muted);
-  font-size: 11px;
+  font-size: 12.5px;
   font-weight: 550;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
 }
 
 .context-room-document-create-popover footer button:hover:not(:disabled) {
@@ -5046,28 +5061,7 @@
   line-height: 1.65;
 }
 
-/* 概览/状态长文折叠（行数由组件经 --clamp-lines 注入）。 */
-.context-room-dashboard-grid article > p[data-clamp] {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: var(--clamp-lines, 4);
-  overflow: hidden;
-}
-
-.context-room-dashboard-clamp-toggle {
-  display: inline-block;
-  margin: -4px 14px 8px;
-  padding: 2px 8px;
-  border: 0;
-  background: none;
-  color: var(--cr-blue);
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.context-room-dashboard-clamp-toggle:hover {
-  text-decoration: underline;
-}
+/* 概览/状态长文不再折叠：简介与状态直接全文展示（原 data-clamp 行数截断已移除）。 */
 
 .context-room-dashboard-grid article > small {
   display: block;
@@ -8806,6 +8800,18 @@
   background: var(--cr-surface);
   color: var(--cr-text);
   font: inherit;
+  font-size: 11px;
+}
+
+.context-room-relation-form button.filter-select,
+.context-room-relation-create button.filter-select {
+  width: 100%;
+  min-height: 32px;
+  justify-content: space-between;
+  padding: 6px 8px;
+  border-color: var(--cr-border);
+  background: var(--cr-surface);
+  color: var(--cr-text);
   font-size: 11px;
 }
 
@@ -13250,8 +13256,9 @@
   inset: 0;
   z-index: 6;
   display: flex;
-  align-items: center;
-  justify-content: center;
+  /* safe：容器仍矮于进度卡时贴边对齐，不再上下出血溢出。 */
+  align-items: safe center;
+  justify-content: safe center;
   padding: 18px;
   border-radius: inherit;
   background: rgba(255, 255, 255, 0.72);
@@ -13321,6 +13328,111 @@
   padding: 0;
   border: 0;
   background: transparent;
+}
+
+/* 后台进度横幅（strip 用）：文档流内一行，不蒙层、不挡推荐卡与页面其余交互。 */
+.context-room-knowledge-run-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+  padding: 10px 14px;
+  border: 1px solid var(--cr-border);
+  border-radius: 10px;
+  background: var(--cr-blue-soft);
+}
+
+.context-room-knowledge-run-banner > svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  color: var(--cr-blue);
+}
+
+.context-room-knowledge-run-banner[data-phase='failed'] > svg {
+  color: var(--cr-danger);
+}
+
+.context-room-knowledge-run-banner[data-phase='timeout'] > svg {
+  color: var(--cr-muted);
+}
+
+.context-room-knowledge-run-banner-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.context-room-knowledge-run-banner-body strong {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 18px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-room-knowledge-run-banner-body span {
+  color: var(--cr-muted);
+  font-size: 11px;
+  line-height: 16px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-room-knowledge-run-banner-percent {
+  flex: none;
+  color: var(--cr-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 收起态小状态点：后台任务常驻入口，点击展开进度横幅。 */
+.context-room-knowledge-run-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 12px;
+  padding: 6px 12px;
+  border: 1px solid var(--cr-border);
+  border-radius: 999px;
+  background: var(--cr-surface);
+  color: var(--cr-muted);
+  font: inherit;
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.context-room-knowledge-run-chip > svg {
+  width: 13px;
+  height: 13px;
+  flex: none;
+  color: var(--cr-blue);
+}
+
+.context-room-knowledge-run-chip[data-phase='timeout'] > svg,
+.context-room-knowledge-run-chip[data-phase='failed'] > svg {
+  color: var(--cr-danger);
+}
+
+.context-room-knowledge-run-chip > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-room-knowledge-run-chip > b {
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+
+.context-room-knowledge-run-chip:hover {
+  border-color: var(--cr-blue);
+  color: var(--cr-blue);
 }
 
 .context-room-knowledge-overlay-note {
@@ -13854,17 +13966,6 @@
   background: var(--cr-surface);
   color: var(--cr-muted);
   text-align: left;
-}
-
-/* 建联图谱头部筛选下拉。 */
-.context-room-link-graph-filter {
-  min-height: 26px;
-  padding: 2px 6px;
-  border: 1px solid var(--cr-border);
-  border-radius: 6px;
-  background: var(--cr-surface);
-  color: var(--cr-muted);
-  font-size: 12px;
 }
 
 /* 版本时间轴的"导入版本"卡片（外部更新候选） */
@@ -15236,37 +15337,43 @@ button.eg-walk.is-next:hover {
 
 /* 新建产物：类型选择网格（轻文档 / Word / PPT / Excel）。 */
 .context-room-document-create-popover.is-chooser {
-  width: min(360px, calc(100vw - 24px));
+  width: min(400px, calc(100vw - 24px));
 }
 
 .context-room-document-create-types {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px;
+  gap: 8px;
 }
 
 .context-room-document-create-type {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   min-width: 0;
-  padding: 9px 10px;
+  padding: 12px 14px;
   border: 1px solid var(--cr-border);
-  border-radius: 7px;
+  border-radius: 10px;
   background: var(--cr-surface);
   color: var(--cr-text);
   cursor: pointer;
   text-align: left;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
 }
 
 .context-room-document-create-type:hover {
-  border-color: var(--cr-blue);
-  background: color-mix(in srgb, var(--cr-blue) 6%, var(--cr-surface));
+  border-color: rgba(64, 140, 240, 0.45);
+  background: var(--cr-surface-hover);
+}
+
+.context-room-document-create-type:focus-visible {
+  outline: 2px solid var(--cr-blue);
+  outline-offset: 2px;
 }
 
 .context-room-document-create-type > svg {
-  width: 17px;
-  height: 17px;
+  width: 18px;
+  height: 18px;
   flex: none;
   color: var(--cr-blue);
 }
@@ -15275,25 +15382,426 @@ button.eg-walk.is-next:hover {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: 1px;
+  gap: 2px;
 }
 
 .context-room-document-create-type-body b {
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
 }
 
 .context-room-document-create-type-body small {
+  margin: 0;
   overflow: hidden;
   color: var(--cr-muted);
-  font-size: 10px;
+  font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.context-room-document-create-hint {
+.context-room-document-create-popover .context-room-document-create-hint {
   display: block;
+  margin-top: 10px;
+  color: var(--cr-muted);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+/* 论文模版：资料行尾「设为论文模版」钮（与纠正菜单同视觉档，悬停浮现）。 */
+.context-room-materials-template {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin-right: 2px;
+  flex: none;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--cr-muted);
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.context-room-materials-row:hover .context-room-materials-template,
+.context-room-materials-row:focus-within .context-room-materials-template,
+.context-room-materials-template:focus-visible {
+  opacity: 1;
+}
+
+.context-room-materials-template:hover:not(:disabled) {
+  background: var(--cr-surface-hover);
+  color: var(--cr-blue);
+}
+
+.context-room-materials-template:disabled {
+  cursor: default;
+  opacity: 1;
+}
+
+.context-room-materials-template .is-spinning {
+  animation: context-room-spin 900ms linear infinite;
+}
+
+/* ===== 论文排版：docx 产物行按钮 + 格式卡选择面板 + 样张预览 ===== */
+
+.context-room-artifact-reformat {
+  display: inline-flex;
+  height: 24px;
+  width: 24px;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--cr-muted, #6b7280);
+  cursor: pointer;
+}
+
+.context-room-artifact-reformat:hover:not(:disabled) {
+  background: #f1f2f3;
+  color: #408cf0;
+}
+
+.context-room-artifact-reformat:disabled {
+  cursor: default;
+}
+
+.context-room-artifact-reformat .is-spinning {
+  animation: context-room-spin 900ms linear infinite;
+}
+
+.context-room-thesis-panel {
+  --cr-surface: #ffffff;
+  --cr-surface-hover: #f1f2f3;
+  --cr-text: #1f1f1f;
+  --cr-muted: #6b7280;
+  --cr-border: #e5e7eb;
+  --cr-blue: #408cf0;
+  z-index: 1050;
+  width: min(312px, calc(100vw - 24px));
+  padding: 10px;
+  border: 1px solid var(--cr-border);
+  border-radius: 7px;
+  background: var(--cr-surface);
+  box-shadow: 0 8px 24px rgba(31, 31, 31, 0.14);
+  color: var(--cr-text);
+  font-family: 'Context Room Inter', 'HarmonyOS Sans SC', 'PingFang SC', sans-serif;
+}
+
+.context-room-thesis-panel-title {
+  margin: 0 0 8px;
   color: var(--cr-muted);
   font-size: 10px;
+  font-weight: 600;
+}
+
+.context-room-thesis-panel-loading {
+  display: flex;
+  height: 48px;
+  align-items: center;
+  justify-content: center;
+  color: var(--cr-muted);
+}
+
+.context-room-thesis-panel-loading .is-spinning {
+  animation: context-room-spin 900ms linear infinite;
+}
+
+.context-room-thesis-panel-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 6px 2px 2px;
+}
+
+.context-room-thesis-panel-empty p {
+  margin: 0;
+  color: var(--cr-muted);
+  font-size: 11px;
   line-height: 1.5;
+}
+
+.context-room-thesis-cards {
+  display: flex;
+  max-height: 276px;
+  flex-direction: column;
+  gap: 4px;
+  overflow-y: auto;
+}
+
+.context-room-thesis-card {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+}
+
+.context-room-thesis-card-main {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  padding: 6px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.context-room-thesis-card-main:hover:not(:disabled) {
+  border-color: var(--cr-border);
+  background: var(--cr-surface-hover);
+}
+
+.context-room-thesis-card-main:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.context-room-thesis-card-body {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.context-room-thesis-card-body b {
+  overflow: hidden;
+  font-size: 11px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-room-thesis-card-body time {
+  color: var(--cr-muted);
+  font-size: 10px;
+}
+
+.context-room-thesis-card-act {
+  display: inline-flex;
+  width: 24px;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--cr-muted);
+  cursor: pointer;
+}
+
+.context-room-thesis-card-act:hover:not(:disabled) {
+  background: var(--cr-surface-hover);
+  color: var(--cr-blue);
+}
+
+.context-room-thesis-card-act.is-danger:hover:not(:disabled) {
+  color: #d5484f;
+}
+
+.context-room-thesis-card-act:disabled {
+  cursor: default;
+}
+
+.context-room-thesis-card-act .is-spinning {
+  animation: context-room-spin 900ms linear infinite;
+}
+
+.context-room-thesis-upload {
+  display: flex;
+  width: 100%;
+  height: 30px;
+  margin-top: 8px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid var(--cr-border);
+  border-radius: 5px;
+  background: var(--cr-surface);
+  color: var(--cr-text);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.context-room-thesis-upload:hover:not(:disabled) {
+  border-color: var(--cr-blue);
+  color: var(--cr-blue);
+}
+
+.context-room-thesis-upload:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.context-room-thesis-upload .is-spinning {
+  animation: context-room-spin 900ms linear infinite;
+}
+
+/* 迷你纸样：比例来自卡（A4 等），内容为版式示意 */
+.context-room-thesis-mini-paper {
+  position: relative;
+  display: flex;
+  width: 52px;
+  flex: none;
+  flex-direction: column;
+  gap: 2px;
+  border: 1px solid var(--cr-border);
+  border-radius: 2px;
+  background: #fafafa;
+  color: var(--cr-muted);
+  overflow: hidden;
+  padding: 5% 10%;
+}
+
+.context-room-thesis-mini-school {
+  align-self: center;
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 7px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-room-thesis-mini-rule {
+  width: 46%;
+  height: 1px;
+  margin: 1px auto 3px;
+  background: var(--cr-border);
+}
+
+.context-room-thesis-mini-h1 {
+  width: 38%;
+  height: 4px;
+  margin: 2px auto 3px;
+  border-radius: 1px;
+  background: #9ca3af;
+}
+
+.context-room-thesis-mini-line {
+  height: 2px;
+  border-radius: 1px;
+  background: #d3d7de;
+}
+
+.context-room-thesis-mini-line.is-w1 { width: 100%; }
+.context-room-thesis-mini-line.is-w2 { width: 92%; }
+.context-room-thesis-mini-line.is-w3 { width: 64%; }
+
+.context-room-thesis-mini-page {
+  margin-top: auto;
+  align-self: center;
+  font-size: 6px;
+  line-height: 1;
+}
+
+/* 大预览弹窗：封面页 + 正文页整页样张 */
+.context-room-thesis-preview-dialog {
+  max-width: min(560px, calc(100vw - 48px));
+  max-height: min(82vh, 900px);
+  overflow-y: auto;
+}
+
+.context-room-thesis-full-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  align-items: center;
+}
+
+.context-room-thesis-full-paper {
+  position: relative;
+  display: flex;
+  box-sizing: border-box;
+  flex-direction: column;
+  border: 1px solid #e5e7eb;
+  border-radius: 2px;
+  background: #ffffff;
+  box-shadow: 0 2px 10px rgba(31, 31, 31, 0.08);
+  color: #1f1f1f;
+}
+
+.context-room-thesis-full-school {
+  margin-top: 28px;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.context-room-thesis-full-degree {
+  margin-top: 18px;
+  text-align: center;
+}
+
+.context-room-thesis-full-fields {
+  display: flex;
+  width: 70%;
+  margin: 34px auto 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 16px;
+  justify-content: center;
+}
+
+.context-room-thesis-full-field {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.context-room-thesis-full-field em {
+  font-style: normal;
+  white-space: nowrap;
+}
+
+.context-room-thesis-full-field u {
+  flex: 1;
+  text-decoration: none;
+  border-bottom: 1px solid currentColor;
+  min-height: 1em;
+}
+
+.context-room-thesis-full-year {
+  margin-top: 20px;
+  text-align: center;
+}
+
+.context-room-thesis-full-cover-footer {
+  margin-top: auto;
+  margin-bottom: 8px;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.context-room-thesis-full-header {
+  margin-bottom: 18px;
+  padding-bottom: 4px;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.context-room-thesis-full-h1 {
+  margin: 0 0 12px;
+}
+
+.context-room-thesis-full-para {
+  margin: 0 0 8px;
+  text-align: justify;
+}
+
+.context-room-thesis-full-footer {
+  position: absolute;
+  bottom: 12px;
+  left: 0;
+  right: 0;
+  text-align: center;
 }

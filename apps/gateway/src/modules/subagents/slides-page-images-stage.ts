@@ -92,7 +92,7 @@ function waitingResult(payload: SlidesPageImagesStageResult["content"]): SlidesP
   return { content: payload, details: JSON.parse(payload) as Record<string, unknown> };
 }
 
-/** 新会话：arrange 后发现配图缺口，落库并广播 confirm 卡。 */
+/** 新会话：arrange 后发现配图缺口即落库。有后台 runner 时生图立即并发开跑，过目卡实时亮出；无 runner 走确认卡（用户确认后同步生成）。 */
 export function openPageImagesConfirm(
   input: {
     roomId: string;
@@ -117,6 +117,24 @@ export function openPageImagesConfirm(
     contentHash: null,
   }));
   const session = deps.sessions.upsertForDraft({ ...input, pages });
+  if (deps.runner) {
+    deps.sessions.patch(session.id, { stage: "review" });
+    const live: SlidesPageImageSessionData = { ...session, stage: "review" };
+    void deps.runner.start(
+      { roomId: input.roomId, draftDocumentId: input.draftDocumentId },
+      { ...deps, sessionId: session.id },
+    ).catch(() => {});
+    broadcast(deps, pageImagesReviewPayload(live));
+    return {
+      kind: "waiting",
+      result: waitingResult(JSON.stringify({
+        status: "page_images_review",
+        documentId: session.draftDocumentId,
+        pages: session.pages.length,
+        message: `配图已在后台开始生成（共 ${String(session.pages.length)} 张，并发进行），过目卡逐张亮出。告诉用户：可打回/重生成单张；确认落页传 pageImagesDecision="accept"（未完成的张数自动放弃）；全部不要传 pageImagesDecision="skip"。`,
+      })),
+    };
+  }
   broadcast(deps, pageImagesConfirmPayload(session));
   return {
     kind: "waiting",

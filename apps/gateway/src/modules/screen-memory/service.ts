@@ -40,6 +40,7 @@ export interface ScreenIntervalInput {
   endedAt: string;
   endReason: ScreenIntervalEndReason;
   textLines: string[];
+  textBlocks?: string[];
   keyframes: ScreenKeyframeInput[];
 }
 
@@ -66,6 +67,7 @@ export interface ScreenIntervalDto {
   endReason: ScreenIntervalEndReason;
   keyframeCount: number;
   textLines: string[];
+  textBlocks: string[];
   summaryStatus: ScreenSummaryStatus;
   summary: string | null;
   summaryKeyPoints: string[];
@@ -211,6 +213,7 @@ export class ScreenMemoryService {
         startedAt: interval.startedAt,
         endedAt: interval.endedAt,
         textLines: interval.textLines,
+        textBlocks: interval.textBlocks ?? [],
       }), { pageLabel: "screen-memory summary", timeoutMs: SUMMARY_TIMEOUT_MS })
       const parsed = parseSummaryResponse(content)
       this.db
@@ -238,7 +241,9 @@ export class ScreenMemoryService {
             ...(parsed.keyPoints.length > 0 ? ["", "要点：", ...parsed.keyPoints.map((point) => `- ${point}`)] : []),
             "",
             "原文片段：",
-            ...interval.textLines.slice(0, 30).map((line) => `- ${line}`),
+            ...(interval.textBlocks && interval.textBlocks.length > 0
+              ? interval.textBlocks.slice(0, 12).map((block) => block.split("\n").map((line) => `- ${line}`).join("\n"))
+              : interval.textLines.slice(0, 30).map((line) => `- ${line}`)),
           ].join("\n"),
           occurredAt: interval.endedAt.toISOString(),
           version: 2,
@@ -273,6 +278,7 @@ export class ScreenMemoryService {
           endReason: input.endReason,
           keyframeCount: input.keyframes.length,
           textLines: input.textLines,
+          textBlocks: input.textBlocks ?? [],
           summaryStatus: "pending",
         })
         .run();
@@ -361,7 +367,7 @@ export class ScreenMemoryService {
     return { items: rows.map((row) => toDto(row)) };
   }
 
-  async updateInterval(id: string, patch: { title?: string; textLines?: string[] }): Promise<ScreenIntervalDto | null> {
+  async updateInterval(id: string, patch: { title?: string; textLines?: string[]; textBlocks?: string[] }): Promise<ScreenIntervalDto | null> {
     const row = this.db.select().from(screenIntervals).where(eq(screenIntervals.id, id)).get();
     if (!row) return null;
     this.db
@@ -369,6 +375,7 @@ export class ScreenMemoryService {
       .set({
         ...(patch.title !== undefined ? { title: patch.title } : {}),
         ...(patch.textLines !== undefined ? { textLines: patch.textLines } : {}),
+        ...(patch.textBlocks !== undefined ? { textBlocks: patch.textBlocks } : {}),
         userEdited: true,
         updatedAt: new Date(),
       })
@@ -483,18 +490,22 @@ export interface SummaryPromptInput {
   startedAt: Date;
   endedAt: Date;
   textLines: string[];
+  textBlocks?: string[];
 }
 
 export function buildSummaryPrompt(input: SummaryPromptInput): string {
   const minutes = Math.max(1, Math.round((input.endedAt.getTime() - input.startedAt.getTime()) / 60_000))
-  const text = input.textLines.slice(0, 120).join("\n").slice(0, SUMMARY_PROMPT_TEXT_LIMIT)
+  const source = input.textBlocks && input.textBlocks.length > 0
+    ? input.textBlocks.join("\n\n")
+    : input.textLines.join("\n")
+  const text = source.slice(0, SUMMARY_PROMPT_TEXT_LIMIT)
   return [
     "你是屏幕活动记录助手。根据以下观察区间的信息，输出严格的 JSON（不要任何其他文字）：",
     '{"summary": "一句话摘要，不超过 80 字", "keyPoints": ["要点，最多 5 条"]}',
     `应用：${input.appName}`,
     input.windowTitle ? `页面标题：${input.windowTitle}` : "",
     `观察时长：约 ${String(minutes)} 分钟`,
-    "屏幕文本片段：",
+    "屏幕文本片段（按屏幕区域分块）：",
     text,
   ].filter(Boolean).join("\n");
 }
@@ -538,6 +549,7 @@ function toDto(row: ScreenIntervalRow): ScreenIntervalDto {
     endReason: row.endReason,
     keyframeCount: row.keyframeCount,
     textLines: row.textLines,
+    textBlocks: row.textBlocks ?? [],
     summaryStatus: row.summaryStatus,
     summary: row.summary,
     summaryKeyPoints: row.summaryKeyPoints,

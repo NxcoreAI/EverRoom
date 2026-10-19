@@ -152,6 +152,103 @@ export class OfficeBridgeClient {
     return { ...(data as unknown as OfficeSlidesEditResult), ok: data.ok !== false };
   }
 
+  /** 视觉复检：已打开 slides 产物的一页 → 1x PNG base64（渲染层离屏栅格化，秒级）。 */
+  async renderPage(input: { fileId: string; slideIndex: number }): Promise<string> {
+    const response = await fetch(`${this.config.baseUrl}/v1/office-render-page`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.config.token}`,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify(input),
+      // 渲染层栅格化 + 应答回传；桌面端主进程侧另有 20s 请求超时兜底。
+      signal: AbortSignal.timeout(30_000),
+    });
+    const parsed = await response.json().catch(() => ({})) as {
+      message?: unknown;
+      data?: { pngBase64?: unknown };
+    };
+    if (!response.ok) {
+      throw new Error(typeof parsed.message === "string" ? parsed.message : `Office render-page failed (${response.status})`);
+    }
+    const base64 = parsed.data?.pngBase64;
+    if (typeof base64 !== "string" || base64.length === 0) throw new Error("Office render-page 返回缺少 pngBase64");
+    return base64;
+  }
+
+  /** /v1/office-reformat describe：源论文 docx → 块大纲（装订映射的区间事实源）。 */
+  async describeThesisDocx(input: { docxBase64: string }): Promise<{
+    blockCount: number;
+    outline: Array<{ index: number; kind: string; level?: number; text: string }>;
+  }> {
+    const response = await fetch(`${this.config.baseUrl}/v1/office-reformat`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.config.token}`,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify({ action: "describe", ...input }),
+      signal: AbortSignal.timeout(60_000),
+    });
+    const parsed = await response.json().catch(() => ({})) as {
+      message?: unknown;
+      data?: { blockCount?: unknown; outline?: unknown };
+    };
+    if (!response.ok) {
+      throw new Error(typeof parsed.message === "string" ? parsed.message : `Office reformat failed (${response.status})`);
+    }
+    const outline = Array.isArray(parsed.data?.outline)
+      ? (parsed.data!.outline as Array<Record<string, unknown>>).map((block) => ({
+        index: Number(block.index),
+        kind: String(block.kind ?? "paragraph"),
+        ...(block.level !== undefined && block.level !== null ? { level: Number(block.level) } : {}),
+        text: String(block.text ?? "").slice(0, 400),
+      }))
+      : [];
+    return { blockCount: Number(parsed.data?.blockCount ?? outline.length), outline };
+  }
+
+  /** /v1/office-reformat build：源 docx + 格式卡 + 装订规格 → 装订版 docx 入库并广播。 */
+  async reformatThesisDocx(input: {
+    docxBase64: string;
+    formatCard: unknown;
+    bindingSpec: unknown;
+    roomId: string;
+    sourceFileName: string;
+    sourceFileEntryId: string;
+    idempotencyKey: string;
+  }): Promise<OfficeGenerateResult> {
+    const response = await fetch(`${this.config.baseUrl}/v1/office-reformat`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.config.token}`,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify({ action: "build", ...input }),
+      // 解析 + 装订渲染 + 入库整链路可到分钟级。
+      signal: AbortSignal.timeout(5 * 60_000),
+    });
+    const body = await response.json().catch(() => ({})) as { message?: unknown; data?: Record<string, unknown> };
+    if (!response.ok) {
+      throw new Error(typeof body.message === "string" ? body.message : `Office reformat failed (${response.status})`);
+    }
+    const data = body.data ?? {};
+    const str = (key: string) => typeof data[key] === "string" ? data[key] as string : "";
+    return {
+      fileEntryId: str("fileEntryId"),
+      fileVersionId: str("fileVersionId"),
+      jobId: str("jobId"),
+      contentHash: str("contentHash"),
+      blobDeduped: data.blobDeduped === true,
+      versionDeduped: data.versionDeduped === true,
+      roomRequested: data.roomRequested === true,
+      originalName: str("originalName"),
+    };
+  }
+
   private async postEdit(body: Record<string, unknown>): Promise<Record<string, unknown>> {
     const response = await fetch(`${this.config.baseUrl}/v1/office-edit`, {
       method: "POST",

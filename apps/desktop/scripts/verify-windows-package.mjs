@@ -124,6 +124,14 @@ for (const app of ['docs', 'sheets', 'slides', 'pdf']) {
   expectFile(join(resourcesRoot, 'genoffice', app, 'main', 'embed.js'), `genoffice ${app} embed entry`)
 }
 
+// Bundled ACP adapters (extraResources) for local agents (claude/codex).
+for (const [provider, pkg] of [
+  ['claude', '@zed-industries/claude-agent-acp'],
+  ['codex', '@agentclientprotocol/codex-acp'],
+]) {
+  expectFile(join(resourcesRoot, 'acp-adapters', provider, 'node_modules', pkg, 'package.json'), `acp adapter ${pkg}`)
+}
+
 // Run the packaged oo CLI once — the macOS audit does the same.
 if (existsSync(ooExe)) {
   try {

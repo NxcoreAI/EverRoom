@@ -59,6 +59,8 @@ export function AgentPanel({
   navigationRequest,
   sessionRouteRequest,
   askRequest,
+  prefillRequest,
+  onPrefillConsumed,
   onNavigate,
   onNavigatePage,
   onRestoreRoomTab,
@@ -81,6 +83,13 @@ export function AgentPanel({
   navigationRequest: AgentNavigationRequest | null
   sessionRouteRequest: AgentSessionRouteRequest | null
   askRequest: { key: string; roomId: string; message: string } | null
+  /** 统一搜索「加入上下文/交给 Agent」预填：注入文本与可选附件，不自动发送。 */
+  prefillRequest: {
+    key: string
+    text: string
+    attachment?: { fileId: string; fileName: string } | null
+  } | null
+  onPrefillConsumed?: (key: string) => void
   onNavigate: (request: AgentNavigationRequest) => void
   /** 应用级页面跳转（与 Sidebar 同源）；用于「去设置」类提示动作。 */
   onNavigatePage?: (page: PageId) => void
@@ -104,10 +113,12 @@ export function AgentPanel({
   const [composerResetKey, setComposerResetKey] = useState(0)
   const [localAgents, setLocalAgents] = useState<LocalAgentInstallation[]>([])
   const [selectedExternalConversation, setSelectedExternalConversation] = useState<ExternalConversationSummary | null>(null)
+  const [pendingExternalAttachment, setPendingExternalAttachment] = useState<{ fileId: string; fileName: string } | null>(null)
   const [notificationRunTarget, setNotificationRunTarget] = useState<{ key: string; runId: string } | null>(null)
   const composerRef = useRef<HTMLTextAreaElement>(null)
   const previousSessionIdRef = useRef<string | null>(null)
   const handledNavigationKeysRef = useRef(new Set<string>())
+  const handledPrefillKeysRef = useRef(new Set<string>())
   const handledRequestKeysRef = useRef(new Set<string>())
   const handledSessionRouteKeysRef = useRef(new Set<string>())
   const handledAskKeysRef = useRef(new Set<string>())
@@ -139,6 +150,8 @@ export function AgentPanel({
   const citationPrompt = buildRoomOverviewCitationPrompt(roomCitations, locale)
   const session = useAgentSession(pageLabel, roomId, rooms)
   const agentAvailable = Boolean(window.nxcore?.agent)
+  // 「重试」仅用于强制重渲染以重读 agent 桥可用性；桥就绪/恢复后引导 effect 会因 api 变化自动重跑。
+  const [, setAvailabilityNonce] = useState(0)
 
   const [conversationSuggestionSettings, setConversationSuggestionSettings] =
     useState<ConversationSuggestionSettings>(loadConversationSuggestionSettings)
@@ -581,6 +594,23 @@ export function AgentPanel({
         const known = new Set((attachments ?? []).map((item) => item.fileId))
         attachments = [...(attachments ?? []), ...referenced.filter((item) => !known.has(item.fileId))]
       }
+      if (pendingExternalAttachment) {
+        const filesApi = window.nxcore?.files
+        if (filesApi) {
+          const entry = await filesApi.catalogEntry(pendingExternalAttachment.fileId)
+          if (entry?.currentVersionId) {
+            const known = new Set((attachments ?? []).map((item) => item.fileId))
+            if (!known.has(pendingExternalAttachment.fileId)) {
+              attachments = [...(attachments ?? []), {
+                fileId: pendingExternalAttachment.fileId,
+                fileVersionId: entry.currentVersionId,
+                fileName: pendingExternalAttachment.fileName,
+                status: (entry.processingState === 'ready' ? 'ready' : 'processing') as 'ready' | 'processing',
+              }]
+            }
+          }
+        }
+      }
       // selectedRoomId 只在 Room 仍存在时提交：Room 已合并/删除/同步丢失时
       // 提交死 id 会被网关 409 拒绝（room_not_available），转而以全局会话运行。
       const validRoomId = roomId && rooms.some((room) => room.id === roomId) ? roomId : undefined
@@ -601,6 +631,7 @@ export function AgentPanel({
       )
       if (externalConversation) setSelectedExternalConversation(null)
       if (roomCitations.length) onClearRoomCitations()
+      setPendingExternalAttachment(null)
       setComposerResetKey((current) => current + 1)
     } catch {
       setDraft(prompt.trim())
@@ -619,6 +650,16 @@ export function AgentPanel({
       .catch(() => handledAskKeysRef.current.delete(askRequest.key))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [askRequest, roomId, session.loading])
+
+  // 统一搜索预填注入：填文本（追加）+挂附件（发送时解析版本），由用户手动发送。
+  useEffect(() => {
+    if (!prefillRequest || handledPrefillKeysRef.current.has(prefillRequest.key)) return
+    handledPrefillKeysRef.current.add(prefillRequest.key)
+    setDraft((current) => (current.trim() ? `${current}\n${prefillRequest.text}` : prefillRequest.text))
+    if (prefillRequest.attachment) setPendingExternalAttachment(prefillRequest.attachment)
+    onPrefillConsumed?.(prefillRequest.key)
+    composerRef.current?.focus()
+  }, [prefillRequest, onPrefillConsumed])
 
   const selectDocument = async ({ document, originalPrompt }: AgentDocumentSelectionSubmission) => {
     if (!roomBackendReady) return
@@ -771,6 +812,23 @@ export function AgentPanel({
         />
       </AgentToolbar>
 
+      {!agentAvailable ? (
+        <div className="agent-availability-banner" role="alert" data-testid="agent-panel-unavailable">
+          <div className="agent-availability-copy">
+            <strong>{t('surface:agentPanel.unavailableTitle')}</strong>
+            <span>{t('surface:agentPanel.unavailableBody')}</span>
+          </div>
+          <button
+            type="button"
+            className="agent-availability-retry"
+            onClick={() => {
+              setAvailabilityNonce((nonce) => nonce + 1)
+              session.reload()
+            }}
+          >{t('surface:agentComposer.retry')}</button>
+        </div>
+      ) : null}
+
       <WritingStyleInsightBanner />
 
       <AgentChatView
@@ -790,6 +848,7 @@ export function AgentPanel({
         messages={session.messages}
         notificationRunTarget={notificationRunTarget}
         onNotificationRunLocated={handleNotificationRunLocated}
+        onRetryError={() => session.reload()}
         pendingApprovals={session.pendingApprovals}
         onRejectDocumentIntent={focusComposer}
         onRetryPrompt={(prompt, runId) => void sendPrompt(prompt, runId)}

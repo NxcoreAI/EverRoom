@@ -39,6 +39,8 @@ const STARTUP_TIMEOUT_MS = 120_000
 const SHUTDOWN_TIMEOUT_MS = 5_000
 /** 服务默认 32768,常见兼容端点(qwen-turbo 等)上限 16384,取安全缺省。 */
 const DEFAULT_LLM_MAX_TOKENS = 16_384
+// 崩溃自愈重拉的最小间隔，防崩溃风暴（与 memory-core 同款约定）。
+const RESPAWN_MIN_INTERVAL_MS = 30_000
 
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds))
@@ -54,6 +56,9 @@ export class KnowledgeServiceSupervisor {
   private connection: KnowledgeServiceConnection | null = null
   private stopping = false
   private lastError: string | null = null
+  /** 最近一次注入托管实例的 AI 覆盖 env；崩溃自愈重拉时原样带回。 */
+  private lastAiEnvironment: Record<string, string> | null = null
+  private lastRespawnAt = 0
 
   constructor(private readonly dataDirectory: string) {}
 
@@ -111,6 +116,7 @@ export class KnowledgeServiceSupervisor {
     )
     this.child = child
     this.stopping = false
+    this.lastAiEnvironment = options.aiEnvironment ?? null
     child.stdin.end()
     // pid 登记：父进程被强杀后残留实例占住 8421，下次启动 probe 会误判「复用
     // 外部实例」（issue #179）。
@@ -122,10 +128,21 @@ export class KnowledgeServiceSupervisor {
     child.on('exit', (code, signal) => {
       this.child = null
       forgetProcessRecord(join(this.dataDirectory, 'runtime'), 'knowledge')
-      if (!this.stopping) {
-        this.lastError = `Knowledge service 进程已退出（code=${String(code)}, signal=${String(signal)}）`
-        console.error(this.lastError)
-      }
+      if (this.stopping) return
+      this.lastError = `Knowledge service 进程已退出（code=${String(code)}, signal=${String(signal)}）`
+      console.error(this.lastError)
+      // 托管实例异常退出的自愈：原样带回最近一次注入的 AI env 重拉一次。
+      // KS 重启自带恢复（pending/processing 的 wiki 洗成 failed），卡死的
+      // 构建态随重拉落到失败态，UI 露出重试入口。30 秒内只拉一次防崩溃风暴，
+      // 失败留给后续 syncManagedChildProcesses / 冷启动兜底。复用/外部模式不适用。
+      const connection = this.connection
+      if (!connection?.managed || Date.now() - this.lastRespawnAt < RESPAWN_MIN_INTERVAL_MS) return
+      this.lastRespawnAt = Date.now()
+      this.connection = null
+      const aiEnvironment = this.lastAiEnvironment
+      void delay(1_000)
+        .then(() => (this.stopping ? undefined : this.start({ aiEnvironment: aiEnvironment ?? undefined })))
+        .catch((error) => console.error('[knowledge] respawn after unexpected exit failed:', error))
     })
 
     try {
@@ -137,6 +154,7 @@ export class KnowledgeServiceSupervisor {
         teamId: TEAM_ID,
         managed: true,
       }
+      this.warnIfLlmIncomplete(options)
       return this.connection
     } catch (error) {
       this.killChild(child, 'SIGTERM')
@@ -215,6 +233,23 @@ export class KnowledgeServiceSupervisor {
       return response.ok
     } catch {
       return false
+    }
+  }
+
+  /**
+   * 启动自检 LLM 配置：托管实例固定 custom 模式，缺 apiKey/baseUrl 时 wiki
+   * ingest 必失败（KS 报「LLM apiKey 未配置」）。立刻报错，而不是等每次生成
+   * 才一轮轮烧重试。只诊断不阻断——KS 的读路径（页面/源清单）不依赖 LLM。
+   * 注：不能探 /v3/llm-binding/status——env 直配模式不写绑定表，探针会误报。
+   */
+  private warnIfLlmIncomplete(options: KnowledgeServiceStartOptions): void {
+    const merged = { ...this.llmEnvironment(), ...(options.aiEnvironment ?? {}) }
+    if (merged.LLM_MODE !== 'custom') return
+    const missing = [merged.LLM_API_KEY ? null : 'LLM_API_KEY', merged.LLM_BASE_URL ? null : 'LLM_BASE_URL']
+      .filter((entry): entry is string => entry !== null)
+    if (missing.length > 0) {
+      this.lastError = `Knowledge service 缺少 LLM 配置（${missing.join('、')}）：wiki 生成会失败，请检查 AI 运行时配置`
+      console.error(`[knowledge] ${this.lastError}`)
     }
   }
 

@@ -2,8 +2,9 @@ import { mkdir, rename, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 
-import { app, BrowserWindow, type NativeImage } from 'electron'
+import { app, type NativeImage } from 'electron'
 import { desktopText } from '../desktop-locale'
+import { capturePrimaryScreen, getScreenCapturePermission, type ScreenPermissionStatus } from '../screen-memory/capture-current-screen'
 
 export const SCREENSHOT_DEFAULT_INTERVAL_MS = 300_000
 export const SCREENSHOT_MIN_INTERVAL_MS = 30_000
@@ -22,7 +23,7 @@ export interface WindowScreenshotResult {
 
 export interface WindowScreenshotFailure {
   ok: false
-  code: 'window-unavailable' | 'capture-failed' | 'save-failed'
+  code: 'window-unavailable' | 'permission-denied' | 'capture-failed' | 'save-failed'
   message: string
 }
 
@@ -31,6 +32,7 @@ export type WindowScreenshotCaptureResult = WindowScreenshotResult | WindowScree
 export interface WindowScreenshotStatus {
   enabled: boolean
   intervalMs: number
+  permission: ScreenPermissionStatus
   lastResult: WindowScreenshotCaptureResult | null
 }
 
@@ -75,16 +77,16 @@ export function calculateDHash(image: NativeImage): string {
   return hash.toString(16).padStart(16, '0')
 }
 
-export async function captureCurrentWindow(
-  window: BrowserWindow | null = BrowserWindow.getAllWindows()[0] ?? null,
-): Promise<WindowScreenshotCaptureResult> {
-  if (!window || window.isDestroyed() || window.webContents.isDestroyed()) {
-    return { ok: false, code: 'window-unavailable', message: desktopText('error.screenshot.windowUnavailable') }
+export async function captureUserScreen(): Promise<WindowScreenshotCaptureResult> {
+  if (getScreenCapturePermission() !== 'granted') {
+    return { ok: false, code: 'permission-denied', message: desktopText('error.screenshot.permissionDenied') }
   }
 
-  let image
+  let image: NativeImage
   try {
-    image = await window.webContents.capturePage()
+    const captured = await capturePrimaryScreen()
+    if (!captured) return { ok: false, code: 'capture-failed', message: desktopText('error.screenshot.empty') }
+    image = captured.image
   } catch {
     return { ok: false, code: 'capture-failed', message: desktopText('error.screenshot.captureFailed') }
   }
@@ -106,7 +108,7 @@ export async function captureCurrentWindow(
   }
 
   const capturedAt = new Date()
-  const fileName = `EverRoom-window-${sanitizeFileTimestamp(capturedAt)}-${randomUUID()}.jpg`
+  const fileName = `Screen-${sanitizeFileTimestamp(capturedAt)}-${randomUUID()}.jpg`
   const directory = getScreenshotDirectory()
   const filePath = join(directory, fileName)
   const temporaryPath = `${filePath}.${randomUUID()}.tmp`
@@ -133,7 +135,7 @@ export async function captureCurrentWindow(
 }
 
 export function createWindowScreenshotScheduler(
-  capture: () => Promise<WindowScreenshotCaptureResult> = () => captureCurrentWindow(),
+  capture: () => Promise<WindowScreenshotCaptureResult> = () => captureUserScreen(),
   timerApi: Pick<typeof globalThis, 'setTimeout' | 'clearTimeout'> = globalThis,
   onCaptured?: (result: WindowScreenshotResult) => Promise<void> | void,
 ): WindowScreenshotScheduler {
@@ -142,13 +144,14 @@ export function createWindowScreenshotScheduler(
   let timer: ReturnType<typeof setTimeout> | null = null
   let inFlight: Promise<void> | null = null
   let lastResult: WindowScreenshotCaptureResult | null = null
+  let lastFailureCode: WindowScreenshotFailure['code'] | null = null
 
   const clearScheduledTimer = () => {
     if (timer) timerApi.clearTimeout(timer)
     timer = null
   }
 
-  const getStatus = (): WindowScreenshotStatus => ({ enabled, intervalMs, lastResult })
+  const getStatus = (): WindowScreenshotStatus => ({ enabled, intervalMs, permission: getScreenCapturePermission(), lastResult })
 
   const scheduleNext = () => {
     if (!enabled || timer || inFlight) return
@@ -162,6 +165,11 @@ export function createWindowScreenshotScheduler(
     if (!enabled || inFlight) return
     const current = capture().then(async (result) => {
       lastResult = result
+      const failureCode = result.ok ? null : result.code
+      if (failureCode !== lastFailureCode) {
+        lastFailureCode = failureCode
+        if (failureCode && !result.ok) console.warn(`[screen-capture] capture failed (${failureCode}): ${result.message}`)
+      }
       if (result.ok) await Promise.resolve(onCaptured?.(result)).catch(() => undefined)
     }).catch(() => {
       lastResult = { ok: false, code: 'capture-failed', message: desktopText('error.screenshot.captureFailed') }

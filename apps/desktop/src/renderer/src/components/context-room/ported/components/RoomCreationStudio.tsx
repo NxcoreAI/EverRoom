@@ -1,8 +1,10 @@
 import { FileText, Folder, LoaderCircle, Send, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
+import type { ObsidianImportResult } from '../../../../../../shared/obsidian'
 import { showToast } from '@/state/toast'
 import { useLocale } from '../../../../i18n/LocaleContext'
+import { DirectoryMountPanel } from '@/components/pages/sources/DirectoryMountPanel'
 import {
   ROOM_RECOMMENDATION_RUN_EVENT,
   type RoomRecommendationRunPayload,
@@ -12,21 +14,24 @@ import {
 const basenameOf = (path: StagedPath): string => path.split(/[\\/]/).filter(Boolean).pop() ?? path
 
 /**
- * 新建 Room 统一入口：只暂存文件/文件夹路径与目标描述，不导入。
- * 提交后关闭弹窗，由首页「推荐 Rooms」卡片接手：先统一导入，再走原有
- * 推荐机制（路由 → 实体证据累积 → 达阈值进推荐池），整卡蒙层显示进度。
+ * 新建 Room 统一入口，双模式：
+ * - 描述与文件：只暂存路径与目标描述，不导入；提交后由首页「推荐 Rooms」卡片接手。
+ * - 挂载本地目录：选中目录即挂载（新建房间或只进记忆），源文件保留在原目录。
  */
 export function RoomCreationStudio({
   open,
   onOpenChange,
+  onRoomMounted,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
+  onRoomMounted?: (room: { id: string; title: string }) => void
 }) {
   const { t } = useLocale()
   const [intent, setIntent] = useState('')
   const [paths, setPaths] = useState<StagedPath[]>([])
   const [picking, setPicking] = useState(false)
+  const [mode, setMode] = useState<'smart' | 'mount'>('smart')
 
   // 重新打开时保留上一轮暂存内容，避免误关丢列表。
   useEffect(() => {
@@ -77,83 +82,111 @@ export function RoomCreationStudio({
     onOpenChange(false)
   }
 
+  const handleMounted = (result: ObsidianImportResult) => {
+    if (result.kind === 'new-room') {
+      showToast({ title: t('contextRoom:creation.mountSuccess', { name: result.vault.name }) })
+      onRoomMounted?.({ id: result.vault.roomId, title: result.vault.name })
+    } else if (result.kind === 'memory') {
+      showToast({ title: t('surface:obsidian.memoryImportComplete', { name: result.projectName, succeeded: result.succeeded, failed: result.failed }) })
+    }
+  }
+
   return (
     <div className="context-room-creation-studio" data-testid="context-room-creation-studio">
       <header className="context-room-creation-header">
         <h2>{t('contextRoom:home.newContextRoom')}</h2>
-        <p>{t('contextRoom:creation.headerSubtitle')}</p>
+        <div className="context-room-segmented" role="tablist" aria-label={t('contextRoom:creation.modeLabel')}>
+          <button type="button" role="tab" aria-pressed={mode === 'smart'} onClick={() => setMode('smart')}>
+            {t('contextRoom:creation.modeSmart')}
+          </button>
+          <button type="button" role="tab" aria-pressed={mode === 'mount'} onClick={() => setMode('mount')}>
+            {t('contextRoom:creation.modeMount')}
+          </button>
+        </div>
       </header>
 
       <div className="context-room-creation-body">
-        <div className="context-room-creation-tabpanel context-room-creation-smart">
-          <label className="context-room-creation-description">
-            <span>{t('contextRoom:creation.descriptionLabel')}</span>
-            <textarea
-              rows={3}
-              maxLength={2_000}
-              value={intent}
-              placeholder={t('contextRoom:creation.descriptionPlaceholder')}
-              onChange={(event) => setIntent(event.target.value)}
-            />
-          </label>
+        {mode === 'smart' ? (
+          <div className="context-room-creation-tabpanel context-room-creation-smart">
+            <label className="context-room-creation-description">
+              <span>{t('contextRoom:creation.descriptionLabel')}</span>
+              <textarea
+                rows={3}
+                maxLength={2_000}
+                value={intent}
+                placeholder={t('contextRoom:creation.descriptionPlaceholder')}
+                onChange={(event) => setIntent(event.target.value)}
+              />
+            </label>
 
-          <div className="context-room-creation-files">
-            <button
-              type="button"
-              className="context-room-creation-dropzone"
-              data-testid="context-room-creation-dropzone"
-              disabled={picking}
-              onClick={() => void pickPaths()}
-            >
-              <span className="context-room-creation-dropzone-icon" aria-hidden="true">
-                {picking ? <LoaderCircle className="spin" /> : <Folder />}
-              </span>
-              <b>{t('contextRoom:creation.pickFiles')}</b>
-              <small>{t('contextRoom:creation.dropzoneHint')}</small>
-            </button>
-            {paths.length > 0 ? (
-              <>
-                <p className="context-room-creation-filelist-count">
-                  {t('contextRoom:creation.filesSelected', { count: paths.length })}
+            <div className="context-room-creation-files">
+              <button
+                type="button"
+                className="context-room-creation-dropzone"
+                data-testid="context-room-creation-dropzone"
+                disabled={picking}
+                onClick={() => void pickPaths()}
+              >
+                <span className="context-room-creation-dropzone-icon" aria-hidden="true">
+                  {picking ? <LoaderCircle className="spin" /> : <Folder />}
+                </span>
+                <b>{t('contextRoom:creation.pickFiles')}</b>
+                <small>{t('contextRoom:creation.dropzoneHint')}</small>
+              </button>
+              {paths.length > 0 ? (
+                <>
+                  <p className="context-room-creation-filelist-count">
+                    {t('contextRoom:creation.filesSelected', { count: paths.length })}
+                  </p>
+                  <ul data-testid="context-room-creation-filelist">
+                    {paths.map((path) => (
+                      <li key={path}>
+                        <FileText aria-hidden="true" />
+                        <span title={path}>{basenameOf(path)}</span>
+                        <button
+                          type="button"
+                          className="context-room-creation-file-remove"
+                          aria-label={t('contextRoom:creation.removeFile', { filename: basenameOf(path) })}
+                          onClick={() => removePath(path)}
+                        >
+                          <X aria-hidden="true" />
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              ) : (
+                // #241：不选内容时明确告知行为——按描述直接创建空 Room，后续可再添加
+                <p className="context-room-creation-empty-hint" data-testid="context-room-creation-empty-hint">
+                  {t('contextRoom:creation.emptyRoomHint')}
                 </p>
-                <ul data-testid="context-room-creation-filelist">
-                  {paths.map((path) => (
-                    <li key={path}>
-                      <FileText aria-hidden="true" />
-                      <span title={path}>{basenameOf(path)}</span>
-                      <button
-                        type="button"
-                        className="context-room-creation-file-remove"
-                        aria-label={t('contextRoom:creation.removeFile', { filename: basenameOf(path) })}
-                        onClick={() => removePath(path)}
-                      >
-                        <X aria-hidden="true" />
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              </>
-            ) : (
-              // #241：不选内容时明确告知行为——按描述直接创建空 Room，后续可再添加
-              <p className="context-room-creation-empty-hint" data-testid="context-room-creation-empty-hint">
-                {t('contextRoom:creation.emptyRoomHint')}
-              </p>
-            )}
-          </div>
+              )}
+            </div>
 
-          <div className="context-room-creation-footer">
-            <button
-              type="button"
-              className="context-room-primary context-room-creation-submit"
-              data-testid="context-room-creation-start"
-              disabled={picking || (paths.length === 0 && !intent.trim())}
-              onClick={submit}
-            >
-              <Send aria-hidden="true" />
-              {t('contextRoom:creation.submit')}
-            </button>
+            <div className="context-room-creation-footer">
+              <button
+                type="button"
+                className="context-room-primary context-room-creation-submit"
+                data-testid="context-room-creation-start"
+                disabled={picking || (paths.length === 0 && !intent.trim())}
+                onClick={submit}
+              >
+                <Send aria-hidden="true" />
+                {t('contextRoom:creation.submit')}
+              </button>
+            </div>
           </div>
-        </div>
+        ) : (
+          <div className="context-room-creation-tabpanel">
+            <div className="directory-mount-panel">
+              <DirectoryMountPanel
+                target={{ kind: 'choose' }}
+                onClose={() => onOpenChange(false)}
+                onImported={handleMounted}
+              />
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )

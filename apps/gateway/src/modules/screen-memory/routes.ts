@@ -31,6 +31,7 @@ const IntervalInput = Type.Object({
     Type.Literal("stopped"),
   ]),
   textLines: Type.Array(Type.String({ maxLength: 2_000 }), { maxItems: 5_000 }),
+  textBlocks: Type.Optional(Type.Array(Type.String({ maxLength: 20_000 }), { maxItems: 1_000 })),
   keyframes: Type.Array(KeyframeInput, { maxItems: 200 }),
 });
 
@@ -110,6 +111,7 @@ export function screenMemoryRoutes(service: ScreenMemoryService): FastifyPluginA
         body: Type.Object({
           title: Type.Optional(Type.String({ minLength: 1, maxLength: 512 })),
           textLines: Type.Optional(Type.Array(Type.String({ maxLength: 2_000 }), { maxItems: 5_000 })),
+          textBlocks: Type.Optional(Type.Array(Type.String({ maxLength: 20_000 }), { maxItems: 1_000 })),
         }),
       },
     }, async (request, reply) => {

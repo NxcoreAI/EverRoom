@@ -1,6 +1,6 @@
 import { createReadStream, readFileSync } from 'node:fs'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
-import { basename, extname, join, parse, resolve } from 'node:path'
+import { basename, dirname, extname, join, parse, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { existsSync, accessSync, constants as fsConstants } from 'node:fs'
 import { access } from 'node:fs/promises'
@@ -8,7 +8,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { pipeline } from 'node:stream/promises'
 import { loadEnvFile } from 'node:process'
 
-import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, nativeTheme, Notification, protocol, session, shell, systemPreferences } from 'electron'
+import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, nativeImage, nativeTheme, Notification, protocol, screen, session, shell, systemPreferences } from 'electron'
 import type {
   ImportRoomDocumentInput,
   DocumentOperationCommandInput,
@@ -20,6 +20,7 @@ import type {
 } from '@nxcore/agent-contract'
 
 import type { CloudAccountStatus, DefaultLocalFolder, DefaultLocalFolderConnectionResult } from '../shared/sources'
+import type { SearchItemType, SearchRequestDto } from '../shared/search'
 import type { PrivateTranscriptionSyncCompletedEvent, RuntimeConfigSnapshot } from '../shared/sources'
 import { officePreviewKindForFileName } from '../shared/sources'
 import { CURSOR_COMPLETION_AGENT_ERROR_KEY } from '../shared/cursor-completion'
@@ -37,11 +38,15 @@ import { AccountKeyringService } from './security/account-keyring-service'
 import { AgentGatewayBridge } from './gateway/agent-gateway-bridge'
 import { AsrGatewayBridge } from './gateway/asr-gateway-bridge'
 import { GatewaySupervisor } from './gateway/gateway-supervisor'
+import { AgentAccessSettingsStore, isValidFixedPort } from './agent-access/settings-store'
+import { AgentAccessInstaller } from './agent-access/installer'
+import { AgentAccessGatewayBridge } from './gateway/agent-access-gateway-bridge'
 import { cleanupStaleProcessRecords, installExitCleanupHook } from './process-cleanup'
 import { startDesktopUpdater } from './updater'
 import { RuntimeConfigBridge, type RuntimeMemoryConfig } from './gateway/runtime-config-bridge'
 import { cursorCompletionEnvFromConfig } from './gateway/cursor-completion-env'
 import { MemoryGatewayBridge } from './gateway/memory-gateway-bridge'
+import { SearchGatewayBridge } from './gateway/search-gateway-bridge'
 import { KnowledgeServiceSupervisor } from './knowledge/knowledge-supervisor'
 import { knowledgeServiceLlmEnv } from './knowledge/llm-env'
 import { MemoryCoreSupervisor } from './memory/memory-core-supervisor'
@@ -62,6 +67,7 @@ import { McpGatewayBridge } from './gateway/mcp-gateway-bridge'
 import { ExternalCallsGatewayBridge } from './gateway/external-calls-gateway-bridge'
 import { cleanupLegacyGatewaySecretKey } from './security/gateway-secret-key'
 import { FilesGatewayBridge } from './gateway/files-gateway-bridge'
+import { ThesisFormatGatewayBridge } from './gateway/thesis-format-gateway-bridge'
 import { IngestGatewayBridge } from './gateway/ingest-gateway-bridge'
 import { ContextRoomGatewayBridge } from './gateway/context-room-gateway-bridge'
 import { SlidesGatewayBridge } from './gateway/slides-gateway-bridge'
@@ -102,7 +108,7 @@ import { PrivateSyncScheduler } from './transcription/private-sync-scheduler'
 import { TranscriptionProcessingCoordinator } from './transcription/processing-coordinator'
 import { PrivateAudioSyncService } from './transcription/private-audio-sync'
 import {
-  captureCurrentWindow,
+  captureUserScreen,
   createWindowScreenshotScheduler,
 } from './screenshot/window-screenshot-service'
 import { ScreenshotOutbox } from './screenshot/screenshot-outbox'
@@ -115,6 +121,7 @@ import {
 } from './screen-memory/screen-memory-controller'
 import { VisionOcrClient } from './vision-ocr/vision-ocr-client'
 import { ScreenMemoryGatewayBridge } from './screen-memory/screen-memory-gateway-bridge'
+import { getScreenCapturePermission } from './screen-memory/capture-current-screen'
 import { getScreenMemoryDirectory } from './screen-memory/screen-memory-settings'
 import { runScreenMemoryBackfill } from './screen-memory/screen-memory-backfill'
 import { registerDocumentPdfExportHandler } from './document-pdf-export'
@@ -145,7 +152,7 @@ import type {
 } from '../shared/agent-auth'
 import { BrowserExtensionService } from './browser-extension/browser-extension-service'
 import { CLIPPER_ASSET_SCHEME, type BrowserExtensionStatus } from '../shared/browser-extension'
-import { OBSIDIAN_VAULT_ASSET_SCHEME } from '../shared/obsidian'
+import { OBSIDIAN_VAULT_ASSET_SCHEME, type ObsidianImportResult, type ObsidianImportTarget } from '../shared/obsidian'
 import { ObsidianVaultService } from './obsidian/obsidian-vault-service'
 import { pushDocumentSaveToVault, trashDocumentInVault } from './obsidian/vault-document-sync'
 import { createLocalAgentDiscovery, isSafeLocalAgentPath, probeLocalAgentAcpAdapter } from './local-agents/discovery'
@@ -258,7 +265,6 @@ const SOURCE_CHANNELS = {
 } as const
 
 const OBSIDIAN_CHANNELS = {
-  pickAndMount: 'obsidian:pick-and-mount',
   discover: 'obsidian:discover',
   pickCandidate: 'obsidian:pick-candidate',
   importCandidate: 'obsidian:import-candidate',
@@ -557,6 +563,13 @@ const MEMORY_CHANNELS = {
   captureDocumentRewrite: 'memory:capture-document-rewrite',
 } as const
 
+const SEARCH_CHANNELS = {
+  invoke: 'search:invoke',
+  status: 'search:status',
+  prioritize: 'search:prioritize',
+  messageContext: 'search:message-context',
+} as const
+
 const MCP_CHANNELS = {
   listServers: 'mcp:servers:list',
   saveServers: 'mcp:servers:save',
@@ -636,6 +649,7 @@ const FILES_CHANNELS = {
   pickAndImport: 'files:pick-and-import',
   pickPaths: 'files:pick-paths',
   importPathsOnce: 'files:import-paths-once',
+  importArtifacts: 'files:import-artifacts',
   importAgentAttachments: 'files:import-agent-attachments',
   importProgress: 'files:import-progress',
   listHighRiskReviews: 'files:high-risk-reviews:list',
@@ -653,12 +667,25 @@ const INGEST_CHANNELS = {
   setPause: 'ingest:pause:set',
 } as const
 
+const THESIS_FORMAT_CHANNELS = {
+  listCards: 'thesis-format:cards:list',
+  parseFromLibrary: 'thesis-format:parse:library',
+  pickAndParse: 'thesis-format:parse:pick',
+  removeCard: 'thesis-format:cards:remove',
+  reformat: 'thesis-format:reformat',
+  cardChanged: 'thesis-format:card-changed',
+} as const
+
 const SCREEN_CAPTURE_CHANNELS = {
   captureCurrentWindow: 'screen-capture:capture-current-window',
   start: 'screen-capture:start',
   updateInterval: 'screen-capture:update-interval',
   stop: 'screen-capture:stop',
   status: 'screen-capture:status',
+  appInfo: 'screen-capture:app-info',
+  openPermissionSettings: 'screen-capture:open-permission-settings',
+  startAppDrag: 'screen-capture:start-app-drag',
+  relaunchApp: 'screen-capture:relaunch-app',
 } as const
 
 const PERCEPTION_CHANNELS = {
@@ -708,6 +735,25 @@ const AGENT_SCHEDULER_CHANNELS = {
   update: 'agent-scheduler:update',
   remove: 'agent-scheduler:remove',
   runNow: 'agent-scheduler:run-now',
+} as const
+
+// 外部 Agent 访问（PRD 第 7 章）：连接管理/自检/示例查询/安装代写/调试数据 +
+// 桌面侧固定端口设置与网关重启（安装到外部工具的配置依赖稳定地址）。
+const AGENT_ACCESS_CHANNELS = {
+  listConnections: 'agent-access:list-connections',
+  createConnection: 'agent-access:create-connection',
+  updateConnection: 'agent-access:update-connection',
+  revokeConnection: 'agent-access:revoke-connection',
+  rotateToken: 'agent-access:rotate-token',
+  submissions: 'agent-access:submissions',
+  events: 'agent-access:events',
+  selftest: 'agent-access:selftest',
+  exampleQuery: 'agent-access:example-query',
+  install: 'agent-access:install',
+  uninstall: 'agent-access:uninstall',
+  settingsGet: 'agent-access:settings-get',
+  settingsSetFixedPort: 'agent-access:settings-set-fixed-port',
+  restartGateway: 'agent-access:restart-gateway',
 } as const
 
 // 窗口先显示、服务后台初始化:所有 IPC 通道提前挂上路由,处理器注册前先等待就绪。
@@ -760,6 +806,7 @@ function installIpcRouters(): void {
     ACCOUNT_CHANNELS,
     TRANSCRIPTION_CHANNELS,
     MEMORY_CHANNELS,
+    SEARCH_CHANNELS,
     KNOWLEDGE_CHANNELS,
     MCP_CHANNELS,
     EXTERNAL_CALL_CHANNELS,
@@ -772,8 +819,10 @@ function installIpcRouters(): void {
     PERCEPTION_CHANNELS,
     DIARY_CHANNELS,
     AGENT_SCHEDULER_CHANNELS,
+    AGENT_ACCESS_CHANNELS,
     WRITING_STYLE_CHANNELS,
     SLIDES_CHANNELS,
+    THESIS_FORMAT_CHANNELS,
   ]
   for (const group of channelGroups) {
     for (const channel of Object.values(group)) {
@@ -819,6 +868,7 @@ function registerBrowserExtensionHandlers(service: BrowserExtensionService): voi
 let localDataService: LocalDataService | null = null
 let obsidianVaultService: ObsidianVaultService | null = null
 let gatewaySupervisor: GatewaySupervisor | null = null
+let agentAccessSettingsStore: AgentAccessSettingsStore | null = null
 /** 系统代理探测结果（app 启动时求值一次，supervisor getter 每次 respawn 读取）。 */
 let gatewayProxyEnv: Record<string, string> = {}
 /** gateway:recover 的 in-flight 去重（网络失败风暴时并发请求只触发一次恢复）。 */
@@ -855,6 +905,8 @@ let perceptionGatewayBridge: PerceptionGatewayBridge | null = null
 let diaryGatewayBridge: DiaryGatewayBridge | null = null
 let writingStyleGatewayBridge: WritingStyleGatewayBridge | null = null
 let agentSchedulerGatewayBridge: AgentSchedulerGatewayBridge | null = null
+let agentAccessGatewayBridge: AgentAccessGatewayBridge | null = null
+let agentAccessInstaller: AgentAccessInstaller | null = null
 let connectorGatewayBridge: ConnectorGatewayBridge | null = null
 let migrationCoordinator: MigrationCoordinator | null = null
 let recordingStore: RecordingStore | null = null
@@ -882,6 +934,8 @@ const officePreviewRegistry = new OfficePreviewRegistry(
   // everroom-material:// 素材回源：文件桥惰性取（网关启动后才赋值），每次调用现建（闭包零成本）。
   () => createEverroomMaterialResolver(() => officeFilesBridge),
 )
+/** 论文格式网关桥：网关就绪后赋值；pick 直传共用同一实例。 */
+let thesisFormatBridgeRef: ThesisFormatGatewayBridge | null = null
 
 /** office:agent-file 事件扇出到所有渲染窗口（生成进度/完成 + 编辑回填结果共用通道）。 */
 function broadcastOfficeAgentFileEvent(event: OfficeAgentFileEvent): void {
@@ -900,7 +954,7 @@ function broadcastAgentAskEvent(event: AgentAskForwardEvent): void {
 const queuedProtocolUrls: string[] = []
 let screenshotOutbox: ScreenshotOutbox | null = null
 const captureAndQueueCurrentWindow = async () => {
-  const result = await captureCurrentWindow()
+  const result = await captureUserScreen()
   if (result.ok) await screenshotOutbox?.enqueue(result).catch(() => undefined)
   return result
 }
@@ -1093,6 +1147,7 @@ function registerObsidianHandlers(service: ObsidianVaultService): void {
     vaultId: string
     roomId: string
     mountMode: 'dedicated' | 'embedded' | 'memory'
+    sourceType: 'obsidian-vault' | 'local-directory'
     projectionFileIds: string[]
     memoryProjectionFileIds: string[]
   }, attemptsRemaining = 120): Promise<void> => {
@@ -1108,7 +1163,7 @@ function registerObsidianHandlers(service: ObsidianVaultService): void {
     const files = new FilesGatewayBridge(gatewaySupervisor)
     const fileIds = new Set([...event.projectionFileIds, ...event.memoryProjectionFileIds])
     for (const fileId of fileIds) await files.delete(fileId).catch(() => undefined)
-    await new DocumentGatewayBridge(gatewaySupervisor).removeExternalProjections(event.vaultId).catch(() => undefined)
+    await new DocumentGatewayBridge(gatewaySupervisor).removeExternalProjections(event.vaultId, undefined, event.sourceType).catch(() => undefined)
     if (event.mountMode === 'dedicated') {
       await new KnowledgeGatewayBridge(gatewaySupervisor).deleteRoom(event.roomId).catch(() => undefined)
     }
@@ -1132,16 +1187,8 @@ function registerObsidianHandlers(service: ObsidianVaultService): void {
     for (const outcome of outcomes) {
       if (outcome.fileId) await service.setMemoryProjectionFileId(vaultId, outcome.filename, outcome.fileId)
     }
-    // 图片附件注册进看图理解：导入链路本身不看图（只有截图管线会），而 PPT
-    // 素材检索按 VLM 中文描述搜图——vault 图不入 perception 就永远搜不到。
-    // 同一 fileId 重复注册幂等（服务端命中既有 observation 直接返回）。
-    const kindByPath = new Map(resources.map((resource) => [resource.relativePath, resource.kind]))
-    for (const outcome of outcomes) {
-      if (!outcome.fileId || kindByPath.get(outcome.filename) !== 'image') continue
-      await bridge.registerVisualObservation({ fileId: outcome.fileId }).catch((error) => {
-        console.warn('Unable to register vault image observation', { vaultId, filename: outcome.filename, error })
-      })
-    }
+    // vault 图片的视觉库注册由网关导入链路完成（VLM 描述在 file.ingest 内生成，
+    // 结果直接落 visual_nodes），桌面端不再补注册。
     for (const fileId of service.takeRemovedMemoryProjectionFileIds(vaultId)) {
       await bridge.delete(fileId).catch(() => undefined)
     }
@@ -1164,7 +1211,7 @@ function registerObsidianHandlers(service: ObsidianVaultService): void {
       })
       await service.readNote(vaultId, note.resourceId).then(async (snapshot) => {
         const projected = await documents.syncExternalProjection({
-          sourceKind: 'obsidian-vault',
+          sourceKind: vault.sourceType,
           sourceId: vaultId,
           resourceId: note.resourceId,
           roomId: note.roomId,
@@ -1187,6 +1234,28 @@ function registerObsidianHandlers(service: ObsidianVaultService): void {
     for (const window of BrowserWindow.getAllWindows()) {
       if (!window.isDestroyed()) window.webContents.send('knowledge:changed')
     }
+  }
+  // 用户主动挂载完成后的收尾：投影落库后触发一次概览再生（一次性，不接增量）。
+  const projectRoomVaultAndKickOverview = async (vaultId: string): Promise<void> => {
+    await projectRoomVault(vaultId)
+    if (!gatewaySupervisor) return
+    const vault = service.list().find((item) => item.id === vaultId)
+    if (!vault || vault.mountMode === 'memory') return
+    if (service.projectionNotes(vaultId).length === 0) return
+    void new ContextRoomGatewayBridge(gatewaySupervisor)
+      .refreshOverview(vault.roomId)
+      .catch((error) => console.warn('Overview refresh after mount failed', { vaultId, error }))
+  }
+  const mountAsNewRoom = async (rootPath: string, registryId: string | null) => {
+    if (!gatewaySupervisor) throw new Error('本地服务尚未就绪。')
+    const vault = await service.mount(rootPath, undefined, 'dedicated', registryId)
+    await new KnowledgeGatewayBridge(gatewaySupervisor).upsertRoom({
+      id: vault.roomId,
+      title: vault.name,
+      kind: '项目',
+    })
+    await projectRoomVaultAndKickOverview(vault.id)
+    return vault
   }
   service.onChanged((event) => {
     for (const window of BrowserWindow.getAllWindows()) {
@@ -1212,37 +1281,11 @@ function registerObsidianHandlers(service: ObsidianVaultService): void {
     if (vault.memoryEnabled) void syncMemoryVault(vault.id)
     if (vault.mountMode !== 'memory') void projectRoomVault(vault.id)
   }
-  handle(OBSIDIAN_CHANNELS.pickAndMount, async (event) => {
-    const parent = BrowserWindow.fromWebContents(event.sender)
-    const selection = parent && !parent.isDestroyed()
-      ? await dialog.showOpenDialog(parent, {
-        title: '选择 Obsidian Vault',
-        buttonLabel: '挂载为 Room',
-        properties: ['openDirectory'],
-      })
-      : await dialog.showOpenDialog({
-        title: '选择 Obsidian Vault',
-        buttonLabel: '挂载为 Room',
-        properties: ['openDirectory'],
-      })
-    const rootPath = selection.filePaths[0]
-    if (selection.canceled || !rootPath) return null
-    const vault = await service.mount(rootPath)
-    if (gatewaySupervisor) {
-      await new KnowledgeGatewayBridge(gatewaySupervisor).upsertRoom({
-        id: vault.roomId,
-        title: vault.name,
-        kind: '项目',
-      })
-      void projectRoomVault(vault.id)
-    }
-    return vault
-  })
   handle(OBSIDIAN_CHANNELS.discover, () => service.discover())
   handle(OBSIDIAN_CHANNELS.pickCandidate, async (event) => {
     const parent = BrowserWindow.fromWebContents(event.sender)
     const options: Electron.OpenDialogOptions = {
-      title: '选择 Obsidian Vault',
+      title: '选择目录',
       buttonLabel: '添加到列表',
       properties: ['openDirectory'],
     }
@@ -1255,16 +1298,20 @@ function registerObsidianHandlers(service: ObsidianVaultService): void {
   handle(OBSIDIAN_CHANNELS.importCandidate, async (
     _event,
     candidateId: string,
-    target: { kind: 'memory'; enableRegistryAutoImport?: boolean } | { kind: 'room'; roomId: string },
-  ) => {
+    target: ObsidianImportTarget,
+  ): Promise<ObsidianImportResult> => {
     if (!gatewaySupervisor) throw new Error('本地服务尚未就绪。')
     const rootPath = service.candidatePath(candidateId)
     const registryId = service.candidateRegistryId(candidateId)
     const candidate = await service.registerCandidate(rootPath)
+    if (target.kind === 'new-room') {
+      const vault = await mountAsNewRoom(rootPath, registryId)
+      return { kind: 'new-room', vault }
+    }
     if (target.kind === 'room') {
       if (typeof target.roomId !== 'string' || !target.roomId.trim()) throw new Error('请选择目标 Room。')
       const vault = await service.mount(rootPath, target.roomId, 'embedded', registryId)
-      void projectRoomVault(vault.id)
+      await projectRoomVaultAndKickOverview(vault.id)
       return { kind: 'room' as const, vault }
     }
     const vault = await service.mount(rootPath, undefined, 'memory', registryId)
@@ -2587,13 +2634,13 @@ function registerDocumentHandlers(
       title: string
       markdown: string
     }) => {
-      const roomId = vaults.list().find((vault) => vault.id === input.vaultId)?.roomId
-      if (!roomId) throw new Error(`Vault room not found for ${input.vaultId}`)
+      const vault = vaults.list().find((item) => item.id === input.vaultId)
+      if (!vault) throw new Error(`Vault room not found for ${input.vaultId}`)
       await bridge.syncExternalProjection({
-        sourceKind: 'obsidian-vault',
+        sourceKind: vault.sourceType,
         sourceId: input.vaultId,
         resourceId: input.resourceId,
-        roomId,
+        roomId: vault.roomId,
         relativePath: input.relativePath,
         sourceHash: input.sourceHash,
         title: input.title,
@@ -2785,6 +2832,46 @@ async function hashFileBytes(path: string): Promise<string> {
   return hash.digest('hex')
 }
 
+/** 磁盘选择模版直传（zip/docx/doc/pdf；zip 不进文件库）。用户取消返回 canceled:true。 */
+async function pickThesisTemplateFromDisk(roomId: string): Promise<{ canceled: boolean; cardId: string; sourceName: string }> {
+  const thesisBridgeForPick = thesisFormatBridgeRef
+  if (!thesisBridgeForPick) return { canceled: true, cardId: '', sourceName: '' }
+  const picked = await dialog.showOpenDialog({
+    title: '选择论文格式模版',
+    properties: ['openFile'],
+    filters: [{ name: '论文格式模版', extensions: ['zip', 'docx', 'doc', 'dotx', 'pdf'] }],
+  })
+  const filePath = picked.filePaths[0]
+  if (!filePath) return { canceled: true, cardId: '', sourceName: '' }
+  return { canceled: false, ...await thesisBridgeForPick.parseFromDisk(roomId, filePath) }
+}
+
+function registerThesisFormatHandlers(bridge: ThesisFormatGatewayBridge, registry: OfficePreviewRegistry): void {
+  const cardChanged = () => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) window.webContents.send(THESIS_FORMAT_CHANNELS.cardChanged)
+    }
+    registry.notifyThesisCardsChanged()
+  }
+  handle(THESIS_FORMAT_CHANNELS.listCards, (_event, roomId: string) => bridge.listCards(roomId))
+  handle(THESIS_FORMAT_CHANNELS.parseFromLibrary, async (_event, roomId: string, fileEntryId: string) => {
+    const meta = await bridge.parseFromLibrary(roomId, fileEntryId)
+    cardChanged()
+    return meta
+  })
+  handle(THESIS_FORMAT_CHANNELS.pickAndParse, async (_event, roomId: string) => {
+    const meta = await pickThesisTemplateFromDisk(roomId)
+    if (!meta.canceled) cardChanged()
+    return meta
+  })
+  handle(THESIS_FORMAT_CHANNELS.removeCard, async (_event, roomId: string, cardId: string) => {
+    await bridge.removeCard(roomId, cardId)
+    cardChanged()
+  })
+  handle(THESIS_FORMAT_CHANNELS.reformat, (_event, roomId: string, fileEntryId: string, cardId?: string) =>
+    bridge.reformat(roomId, fileEntryId, cardId))
+}
+
 function registerFilesHandlers(
   bridge: FilesGatewayBridge,
   highRiskImports: HighRiskImportCoordinator,
@@ -2889,6 +2976,17 @@ function registerFilesHandlers(
     FILES_CHANNELS.importPathsOnce,
     (_event, paths: string[], options?: { pipelines?: IngestPipelines; roomId?: string }) =>
       bridge.importPathsOnce(paths, options),
+  )
+  handle(
+    FILES_CHANNELS.importArtifacts,
+    (_event, paths: string[], roomId: string) => {
+      if (typeof roomId !== 'string' || !roomId) throw new Error('缺少目标 Room。')
+      if (!Array.isArray(paths)) throw new Error('无效的导入请求。')
+      return bridge.importArtifactFiles(
+        paths.filter((path: unknown): path is string => typeof path === 'string'),
+        roomId,
+      )
+    },
   )
   handle(
     FILES_CHANNELS.importAgentAttachments,
@@ -3017,6 +3115,23 @@ async function waitForCloudMaterializeGate(): Promise<void> {
   const gate = new Promise<void>((resolve) => cloudMaterializeWaiters.push(resolve))
   await Promise.race([gate, timeout])
 }
+
+function registerSearchHandlers(bridge: SearchGatewayBridge): void {
+  handle(SEARCH_CHANNELS.invoke, (_event, request: SearchRequestDto) =>
+    bridge.invoke(request))
+  handle(SEARCH_CHANNELS.status, () => bridge.status())
+  handle(
+    SEARCH_CHANNELS.prioritize,
+    (_event, itemType: SearchItemType, refId: string) =>
+      bridge.prioritize(itemType, refId),
+  )
+  handle(
+    SEARCH_CHANNELS.messageContext,
+    (_event, messageId: string, before?: number, after?: number) =>
+      bridge.messageContext(messageId, before, after),
+  )
+}
+
 
 function registerMemoryHandlers(bridge: MemoryGatewayBridge): void {
   handle(MEMORY_CHANNELS.overview, () => bridge.overview())
@@ -3298,16 +3413,98 @@ function registerPrivateTranscriptionHandlers(
     rateLimitAware(() => sync.mergeTag(targetTagId, sourceTagId)))
 }
 
+let screenPermissionCardWindow: BrowserWindow | null = null
+
+// 拖拽授权悬浮卡：系统设置打开时置顶悬浮在屏幕下半部，用户从卡上把应用
+// 图标拖进「屏幕录制」列表；权限到手后自动收卡。
+// 卡片必须不可聚焦且用 showInactive：show/focus 会激活 EverRoom 应用，
+// macOS 会连带把主窗口顶到系统设置之上，遮住设置页。
+function showScreenPermissionCard(): void {
+  if (screenPermissionCardWindow && !screenPermissionCardWindow.isDestroyed()) {
+    screenPermissionCardWindow.showInactive()
+    return
+  }
+  const cardWidth = 420
+  const cardHeight = 150
+  const workArea = screen.getPrimaryDisplay().workArea
+  const card = new BrowserWindow({
+    width: cardWidth,
+    height: cardHeight,
+    x: Math.round(workArea.x + (workArea.width - cardWidth) / 2),
+    y: Math.round(workArea.y + workArea.height - cardHeight - 96),
+    frame: false,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    transparent: true,
+    show: false,
+    alwaysOnTop: true,
+    focusable: false,
+    title: 'EverRoom',
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  })
+  screenPermissionCardWindow = card
+  card.setAlwaysOnTop(true, 'screen-saver')
+  card.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  const permissionWatcher = setInterval(() => {
+    if (card.isDestroyed()) {
+      clearInterval(permissionWatcher)
+      return
+    }
+    if (getScreenCapturePermission() === 'granted') card.close()
+  }, 2000)
+  card.on('closed', () => {
+    clearInterval(permissionWatcher)
+    if (screenPermissionCardWindow === card) screenPermissionCardWindow = null
+  })
+  card.once('ready-to-show', () => card.showInactive())
+  if (process.env.ELECTRON_RENDERER_URL) {
+    void card.loadURL(`${process.env.ELECTRON_RENDERER_URL}/permission-card.html`)
+  } else {
+    void card.loadFile(join(__dirname, '../renderer/permission-card.html'))
+  }
+}
+
 function registerScreenCaptureHandlers(): void {
-  const isAuthorized = (event: Electron.IpcMainInvokeEvent): boolean => {
-    const window = BrowserWindow.getAllWindows()[0]
+  const isAuthorized = (event: { sender: Electron.WebContents }): boolean => {
+    const window = BrowserWindow.getAllWindows().find((candidate) => candidate !== screenPermissionCardWindow)
     return Boolean(
-      window &&
-      !window.isDestroyed() &&
-      !window.webContents.isDestroyed() &&
-      event.sender === window.webContents,
+      ((window && !window.isDestroyed() && !window.webContents.isDestroyed() && event.sender === window.webContents)
+        || (screenPermissionCardWindow && !screenPermissionCardWindow.isDestroyed()
+          && event.sender === screenPermissionCardWindow.webContents)),
     )
   }
+
+  let cachedAppInfo: { appPath: string; appName: string; iconDataUrl: string; dragIcon: Electron.NativeImage } | null = null
+  const getScreenCaptureAppInfo = async () => {
+    if (cachedAppInfo) return cachedAppInfo
+    const appPath = dirname(dirname(dirname(process.execPath)))
+    const icon = await app.getFileIcon(appPath, { size: 'normal' }).catch(() => null)
+    const dragIcon = icon && !icon.isEmpty() ? icon : nativeImage.createEmpty()
+    const info = {
+      appPath,
+      appName: basename(appPath).replace(/\.app$/i, ''),
+      iconDataUrl: dragIcon.isEmpty() ? '' : dragIcon.toDataURL(),
+      dragIcon,
+    }
+    cachedAppInfo = info
+    return info
+  }
+
+  ipcMain.on(SCREEN_CAPTURE_CHANNELS.startAppDrag, (event) => {
+    if (!isAuthorized(event)) return
+    void getScreenCaptureAppInfo().then((info) => {
+      if (info.dragIcon.isEmpty()) return
+      event.sender.startDrag({ file: info.appPath, icon: info.dragIcon })
+    })
+  })
 
   handle(SCREEN_CAPTURE_CHANNELS.captureCurrentWindow, async (event) => {
     if (!isAuthorized(event)) {
@@ -3337,6 +3534,36 @@ function registerScreenCaptureHandlers(): void {
     if (!isAuthorized(event)) return screenshotScheduler.getStatus()
     return screenshotScheduler.getStatus()
   })
+  handle(SCREEN_CAPTURE_CHANNELS.appInfo, async (event) => {
+    if (!isAuthorized(event)) return null
+    const { appPath, appName, iconDataUrl } = await getScreenCaptureAppInfo()
+    return { appPath, appName, iconDataUrl, devMode: !app.isPackaged }
+  })
+  handle(SCREEN_CAPTURE_CHANNELS.openPermissionSettings, (event) => {
+    if (!isAuthorized(event)) return
+    showScreenPermissionCard()
+    const opened = shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture')
+    // 系统设置启动会抢走层级，延迟两次把卡片顶回去（保持卡片第一、系统设置第二）。
+    for (const delay of [600, 1600]) {
+      setTimeout(() => {
+        if (screenPermissionCardWindow && !screenPermissionCardWindow.isDestroyed()) {
+          screenPermissionCardWindow.setAlwaysOnTop(true, 'screen-saver')
+          screenPermissionCardWindow.moveTop()
+        }
+      }, delay)
+    }
+    return opened
+  })
+  handle(SCREEN_CAPTURE_CHANNELS.relaunchApp, (event) => {
+    if (!isAuthorized(event)) return
+    // dev 下 relaunch 会丢 electron-vite 注入的环境，重启出裸 Electron 窗口。
+    if (!app.isPackaged) {
+      app.quit()
+      return
+    }
+    app.relaunch()
+    app.quit()
+  })
 }
 
 function registerScreenMemoryHandlers(): void {
@@ -3360,6 +3587,7 @@ function registerScreenMemoryHandlers(): void {
     const next: Record<string, unknown> = {}
     if (typeof row.enabled === 'boolean') next.enabled = row.enabled
     if (typeof row.paused === 'boolean') next.paused = row.paused
+    if (row.scopeMode === 'all' || row.scopeMode === 'allowlist') next.scopeMode = row.scopeMode
     if (Array.isArray(row.allowedApps)) next.allowedApps = row.allowedApps.filter((item): item is string => typeof item === 'string')
     if (Array.isArray(row.excludedApps)) next.excludedApps = row.excludedApps.filter((item): item is string => typeof item === 'string')
     return screenMemoryController.updateSettings(next)
@@ -3595,6 +3823,82 @@ function registerPerceptionAndDiaryHandlers(): void {
   handle(AGENT_SCHEDULER_CHANNELS.remove, (_event, id: unknown) => {
     if (!agentSchedulerGatewayBridge || typeof id !== 'string') throw new Error('Agent 定时任务参数无效。')
     return agentSchedulerGatewayBridge.remove(id)
+  })
+}
+
+function registerAgentAccessHandlers(): void {
+  const requireBridge = (): AgentAccessGatewayBridge => {
+    if (!agentAccessGatewayBridge) throw new Error('Agent 连接服务尚未就绪。')
+    return agentAccessGatewayBridge
+  }
+  const requireString = (value: unknown, label: string): string => {
+    if (typeof value !== 'string' || !value.trim()) throw new Error(`${label}无效。`)
+    return value
+  }
+  handle(AGENT_ACCESS_CHANNELS.listConnections, () => requireBridge().listConnections())
+  handle(AGENT_ACCESS_CHANNELS.createConnection, (_event, input: unknown) => {
+    if (!input || typeof input !== 'object') throw new Error('Agent 连接参数无效。')
+    return requireBridge().createConnection(input as never)
+  })
+  handle(AGENT_ACCESS_CHANNELS.updateConnection, (_event, id: unknown, input: unknown) => {
+    if (typeof id !== 'string' || !input || typeof input !== 'object') throw new Error('Agent 连接参数无效。')
+    return requireBridge().updateConnection(id, input as never)
+  })
+  handle(AGENT_ACCESS_CHANNELS.revokeConnection, (_event, id: unknown) =>
+    requireBridge().revokeConnection(requireString(id, '连接 ID')))
+  handle(AGENT_ACCESS_CHANNELS.rotateToken, (_event, id: unknown) =>
+    requireBridge().rotateToken(requireString(id, '连接 ID')))
+  handle(AGENT_ACCESS_CHANNELS.submissions, (_event, id: unknown) =>
+    requireBridge().submissions(requireString(id, '连接 ID')))
+  handle(AGENT_ACCESS_CHANNELS.events, (_event, id: unknown) =>
+    requireBridge().events(requireString(id, '连接 ID')))
+  handle(AGENT_ACCESS_CHANNELS.selftest, (_event, id: unknown) =>
+    requireBridge().selftest(requireString(id, '连接 ID')))
+  handle(AGENT_ACCESS_CHANNELS.exampleQuery, (_event, id: unknown, query: unknown) => {
+    if (typeof query !== 'string' && query !== undefined) throw new Error('查询参数无效。')
+    return requireBridge().exampleQuery(requireString(id, '连接 ID'), query)
+  })
+  handle(AGENT_ACCESS_CHANNELS.install, async (_event, connectionId: unknown, target: unknown, token: unknown) => {
+    const plan = await requireBridge().install(
+      requireString(connectionId, '连接 ID'),
+      requireString(target, '目标工具'),
+      requireString(token, '连接 token'),
+    )
+    if (!agentAccessInstaller) throw new Error('安装服务尚未就绪。')
+    const outcome = agentAccessInstaller.apply(plan.install)
+    return { plan: plan.install, outcome }
+  })
+  handle(AGENT_ACCESS_CHANNELS.uninstall, (_event, target: unknown) => {
+    if (!agentAccessInstaller) throw new Error('安装服务尚未就绪。')
+    return agentAccessInstaller.uninstall(requireString(target, '目标工具'))
+  })
+  handle(AGENT_ACCESS_CHANNELS.settingsGet, () => {
+    if (!agentAccessSettingsStore || !gatewaySupervisor) throw new Error('Agent 连接服务尚未就绪。')
+    return {
+      fixedPort: agentAccessSettingsStore.read().fixedPort,
+      currentPort: agentAccessSettingsStore.currentGatewayPort(gatewaySupervisor),
+    }
+  })
+  handle(AGENT_ACCESS_CHANNELS.settingsSetFixedPort, async (_event, port: unknown) => {
+    if (!agentAccessSettingsStore) throw new Error('Agent 连接服务尚未就绪。')
+    if (port === null) {
+      agentAccessSettingsStore.write({ fixedPort: null })
+      return { fixedPort: null as number | null, needsRestart: true }
+    }
+    if (typeof port !== 'number' || !isValidFixedPort(port)) {
+      throw new Error('端口必须是 1024–65535 的整数。')
+    }
+    if (!(await AgentAccessSettingsStore.isPortFree(port))) {
+      throw new Error(`端口 ${port} 已被占用，请换一个。`)
+    }
+    agentAccessSettingsStore.write({ fixedPort: port })
+    return { fixedPort: port, needsRestart: true }
+  })
+  handle(AGENT_ACCESS_CHANNELS.restartGateway, async () => {
+    if (!gatewaySupervisor) throw new Error('网关尚未就绪。')
+    await gatewaySupervisor.shutdown()
+    const connection = await gatewaySupervisor.start()
+    return { baseUrl: connection.baseUrl }
   })
 }
 
@@ -4003,12 +4307,15 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       // Agent 编辑已打开的 slides 产物：registry 持有可编辑实例 → fork 活会话事务
       // （编辑实时重绘 + 静默保存回填版本链）。
       () => (fileId, req) => officePreviewRegistry.editSlidesArtifact(fileId, req),
+      // 视觉复检：已打开 slides 产物的一页 → 1x PNG（渲染层离屏栅格化）。
+      () => (fileId, slideIndex) => officePreviewRegistry.renderSlidesPagePng(fileId, slideIndex),
     )
     const officeBridge = await officeBridgeServer.start().catch((error) => {
       console.warn('Office bridge unavailable; office generation tool stays disabled.', error)
       officeBridgeServer = null
       return null
     })
+    agentAccessSettingsStore = new AgentAccessSettingsStore(dataDirectory)
     gatewaySupervisor = new GatewaySupervisor(
       dataDirectory,
       () => ({
@@ -4055,6 +4362,9 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
           : {}),
       }),
       {
+        // 外部 Agent 访问（PRD 第 7 章）固定端口：连接页可设置；设置后安装到
+        // 外部工具的 MCP 配置在网关重启后仍有效（随机端口会失效）。
+        portProvider: () => agentAccessSettingsStore?.portProvider() ?? null,
         // gateway 连接变化（dev 热重载换端口/token）时，MemoryCore/KS 等子进程
         // 指向 /ai-relay 的稳定 token 随之失效——联动补一次 env 同步。
         onConnectionChanged: () => {
@@ -4064,6 +4374,12 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         },
       },
     )
+    // agent-access 桥只包 supervisor（ensureConnection 惰性等待网关就绪），处理器
+    // 提前到 start() 前注册：否则早期 IPC 会排队等 servicesReady（全量服务初始化），
+    // 冷启动即开连接页时列表加载会超时失败（需点「应用」触发二次加载才成功）。
+    agentAccessGatewayBridge = new AgentAccessGatewayBridge(gatewaySupervisor)
+    agentAccessInstaller = new AgentAccessInstaller()
+    registerAgentAccessHandlers()
     const gateway = await gatewaySupervisor.start()
     console.info(`NxCore Gateway ready at ${gateway.baseUrl} (pid=${gateway.pid})`)
     void screenshotOutbox.flush()
@@ -4154,6 +4470,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     // Agent status reporting is attached after the authenticated SaaS client is created below.
     const memoryGatewayBridge = new MemoryGatewayBridge(gatewaySupervisor)
     registerMemoryHandlers(memoryGatewayBridge)
+    registerSearchHandlers(new SearchGatewayBridge(gatewaySupervisor))
     documentGatewayBridge = new DocumentGatewayBridge(gatewaySupervisor)
     registerDocumentHandlers(documentGatewayBridge, documentAssets, obsidianVaultService)
     registerExternalDocumentHandlers(new ExternalDocumentsGatewayBridge(gatewaySupervisor))
@@ -4186,6 +4503,16 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       retry: (captureId) => filesGatewayBridge.retryClipCapture(captureId),
     })
     registerFilesHandlers(filesGatewayBridge, highRiskImports)
+    const thesisFormatBridge = new ThesisFormatGatewayBridge(gatewaySupervisor)
+    thesisFormatBridgeRef = thesisFormatBridge
+    registerThesisFormatHandlers(thesisFormatBridge, officePreviewRegistry)
+    // AI 页签（docs 视图内）论文排版桥：复用同一网关实现，pick 走磁盘选择直传。
+    officePreviewRegistry.setThesisPanelBridge({
+      listCards: (roomId) => thesisFormatBridge.listCards(roomId),
+      pickAndSet: (roomId) => pickThesisTemplateFromDisk(roomId),
+      removeCard: (roomId, cardId) => thesisFormatBridge.removeCard(roomId, cardId),
+      reformat: (roomId, fileEntryId, cardId) => thesisFormatBridge.reformat(roomId, fileEntryId, cardId),
+    })
     registerIngestHandlers(new IngestGatewayBridge(gatewaySupervisor))
     macosPushNotifications = new MacosPushNotificationService(() => saasClient, openAgentNotificationTarget)
     macosPushNotifications.install()

@@ -11,11 +11,12 @@ import {
   AudioLines,
   NotebookPen,
   ListTodo,
+  PlugZap,
   Settings,
   FilePenLine,
 } from 'lucide-react'
 
-export type PageId = 'home' | 'office' | 'office-document' | 'rooms' | 'docs' | 'recording' | 'sources' | 'files' | 'inspiration' | 'memory' | 'wiki' | 'diary' | 'schedules' | 'settings'
+export type PageId = 'home' | 'office' | 'office-document' | 'rooms' | 'docs' | 'recording' | 'sources' | 'files' | 'inspiration' | 'memory' | 'wiki' | 'diary' | 'schedules' | 'agent-connections' | 'settings'
 
 export interface NavigationItem {
   id: PageId
@@ -58,6 +59,7 @@ export const navigationSections: NavigationSection[] = [
       { id: 'office', label: 'surface:navigation.office', icon: Building2, tone: 'blue' },
       { id: 'diary', label: 'surface:navigation.diary', icon: NotebookPen, tone: 'blue' },
       { id: 'schedules', label: 'surface:navigation.schedules', icon: ListTodo, tone: 'orange' },
+      { id: 'agent-connections', label: 'surface:navigation.agentConnections', icon: PlugZap, tone: 'indigo' },
     ],
   },
   {

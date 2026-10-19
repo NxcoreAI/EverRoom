@@ -64,6 +64,7 @@ const RawConfigSchema = Type.Object(
     aiModel: Type.String(),
     aiBackgroundModel: Type.String(),
     aiTranscriptionModel: Type.String(),
+    aiSlidesReviewerModel: Type.String(),
     aiLiteModel: Type.String(),
     aiBaseUrl: Type.String(),
     aiApiKey: Type.String(),
@@ -356,6 +357,8 @@ export interface GatewayConfig {
   transcriptionSummaryPi: PiRuntimeConfig | null;
   /** 轻量模型档（main-lite）；model 为空＝未配置（lite 档隐藏）。 */
   litePi: PiRuntimeConfig | null;
+  /** 审页代理专用档（slides-reviewer，需多模态模型）；未配置＝回退 backgroundPi。 */
+  slidesReviewerPi?: PiRuntimeConfig | null;
   diaryMaxTokens?: number;
   subagents?: SubagentFrameworkConfig;
   /** agent MCP 配置文件绝对路径（设置页管理用）。 */
@@ -629,6 +632,7 @@ export function loadConfig(
     aiModel: env.NXCORE_AI_MODEL?.trim() ?? "",
     aiBackgroundModel: env.NXCORE_AI_BACKGROUND_MODEL?.trim() || env.NXCORE_AI_MODEL?.trim() || "",
     aiTranscriptionModel: env.NXCORE_AI_TRANSCRIPTION_MODEL?.trim() || "",
+    aiSlidesReviewerModel: env.NXCORE_AI_SLIDES_REVIEWER_MODEL?.trim() || "",
     aiBaseUrl: env.NXCORE_AI_BASE_URL?.trim() ?? "",
     aiApiKey: env.NXCORE_AI_API_KEY?.trim() ?? "",
     aiApi: env.NXCORE_AI_API ?? "openai-completions",
@@ -1179,6 +1183,12 @@ export function loadConfig(
           model: rawConfig.aiLiteModel,
           maxTokens: rawConfig.aiLiteMaxTokens,
         }
+      : null,
+    // 审页档（slides-reviewer 专用，多模态）：model 可来自 env 专用键，也可由
+    // runtime config 的 vlm 槽（SaaS 套餐下发的视觉模型）apply 补齐。恒建对象
+    // 使 apply 可打补丁；model 仍空时消费端回退 backgroundPi（主模型多模态时开箱可用）。
+    slidesReviewerPi: pi
+      ? { ...pi, model: rawConfig.aiSlidesReviewerModel }
       : null,
     subagents: {
       enabled: rawConfig.subagentsEnabled,

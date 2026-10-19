@@ -7,11 +7,15 @@
  */
 
 import type { SlidesStyleImageGenerator } from "../slides-style/image-gen.js";
+import { IMAGE_MODEL_UNCONFIGURED_MARKER } from "../slides-style/image-gen.js";
 
 export const MAX_PAGE_IMAGES = 8;
 export const PAGE_IMAGES_DEADLINE_MS = 15 * 60_000;
-/** 页图串行多张：重试收紧为 2 试（0s/20s），把最坏单张耗时压在 ~380s 内。 */
+/** 页图限流重试收紧为 2 试（0s/20s），把最坏单张耗时压在 ~380s 内。 */
 export const PAGE_IMAGE_RETRY_DELAYS_MS = [0, 20_000];
+/** 并发窗口与首批 stagger（平滑中转 429）。 */
+const V1_CONCURRENCY = 4;
+const V1_FIRST_BURST_STAGGER_MS = 3000;
 const MAX_COMPOSED_PROMPT_CHARS = 600;
 const NO_RELAY_SESSION_MARKER = "生图中转会话不可用";
 
@@ -110,39 +114,60 @@ export async function generateSlidesPageImages(
     deps.onUpdate({ content: JSON.stringify(payload), details: payload });
   };
 
-  for (const item of pending) {
-    if (deps.signal?.aborted) {
-      summary.skipped = "已中止，剩余页未生成配图";
-      break;
-    }
-    if (now() - startedAt > PAGE_IMAGES_DEADLINE_MS) {
-      summary.skipped = "配图生成超过时限，剩余页退化为图形版式";
-      break;
-    }
-    try {
-      const result = await deps.images.generateImage({
-        prompt: composePageImagePrompt(item.imagePrompt, deps.stylePalette),
-        retryDelaysMs: PAGE_IMAGE_RETRY_DELAYS_MS,
-      });
-      item.page.materials = [{
-        url: `everroom-material://${result.contentHash}`,
-        desc: `AI 生成配图：${item.imagePrompt.slice(0, 180)}`,
-      }];
-      summary.generated += 1;
-      summary.results.push({ pageIndex: item.pageIndex, contentHash: result.contentHash });
-    } catch (error) {
-      // 无中转会话是环境性失败：后续页同样生不出，整批放弃（该次 generate 照常落页）。
-      if (error instanceof Error && error.message.includes(NO_RELAY_SESSION_MARKER)) {
-        summary.skipped = "生图中转会话不可用，正文配图全部跳过";
-        break;
+  let skipped: string | undefined;
+  let cursor = 0;
+  const worker = async (): Promise<void> => {
+    for (;;) {
+      if (deps.signal?.aborted) {
+        skipped ??= "已中止，剩余页未生成配图";
+        return;
       }
-      summary.failed += 1;
-      summary.results.push({
-        pageIndex: item.pageIndex,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      if (skipped) return;
+      if (now() - startedAt > PAGE_IMAGES_DEADLINE_MS) {
+        skipped ??= "配图生成超过时限，剩余页退化为图形版式";
+        return;
+      }
+      const index = cursor++;
+      if (index >= pending.length) return;
+      const item = pending[index]!;
+      if (index < V1_CONCURRENCY && index > 0) {
+        await new Promise((resolve) => setTimeout(resolve, index * V1_FIRST_BURST_STAGGER_MS));
+        if (deps.signal?.aborted) {
+          skipped ??= "已中止，剩余页未生成配图";
+          return;
+        }
+      }
+      try {
+        const result = await deps.images.generateImage({
+          prompt: composePageImagePrompt(item.imagePrompt, deps.stylePalette),
+          retryDelaysMs: PAGE_IMAGE_RETRY_DELAYS_MS,
+        });
+        item.page.materials = [{
+          url: `everroom-material://${result.contentHash}`,
+          desc: `AI 生成配图：${item.imagePrompt.slice(0, 180)}`,
+        }];
+        summary.generated += 1;
+        summary.results.push({ pageIndex: item.pageIndex, contentHash: result.contentHash });
+      } catch (error) {
+        // 无中转会话/套餐未配生图模型都是环境性失败：后续页同样生不出，整批放弃（该次 generate 照常落页）。
+        if (error instanceof Error && error.message.includes(NO_RELAY_SESSION_MARKER)) {
+          skipped = "生图中转会话不可用，正文配图全部跳过";
+          return;
+        }
+        if (error instanceof Error && error.message.includes(IMAGE_MODEL_UNCONFIGURED_MARKER)) {
+          skipped = `${IMAGE_MODEL_UNCONFIGURED_MARKER}，正文配图全部跳过`;
+          return;
+        }
+        summary.failed += 1;
+        summary.results.push({
+          pageIndex: item.pageIndex,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+      emit(summary.generated);
     }
-    emit(summary.generated);
-  }
+  };
+  await Promise.all(Array.from({ length: Math.min(V1_CONCURRENCY, pending.length) }, () => worker()));
+  if (skipped !== undefined) summary.skipped = skipped;
   return summary;
 }

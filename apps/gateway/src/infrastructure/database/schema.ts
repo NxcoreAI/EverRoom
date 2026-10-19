@@ -1083,7 +1083,7 @@ export const externalDocumentBindings = sqliteTable(
   {
     documentId: text("document_id").primaryKey()
       .references(() => documents.id, { onDelete: "cascade" }),
-    sourceKind: text("source_kind", { enum: ["obsidian-vault"] }).notNull(),
+    sourceKind: text("source_kind", { enum: ["obsidian-vault", "local-directory"] }).notNull(),
     sourceId: text("source_id").notNull(),
     resourceId: text("resource_id").notNull(),
     roomId: text("room_id").notNull(),
@@ -2060,7 +2060,7 @@ export const fileEntries = sqliteTable(
   {
     id: text("id").primaryKey(),
     sourceKind: text("source_kind", {
-      enum: ["manual-upload", "local-folder", "connector", "migration", "web-clipper", "legacy-upload", "agent-generated"],
+      enum: ["manual-upload", "local-folder", "connector", "migration", "web-clipper", "legacy-upload", "agent-generated", "artifact-imported"],
     }).notNull(),
     sourceKey: text("source_key").notNull(),
     originalName: text("original_name").notNull(),
@@ -2456,6 +2456,7 @@ export const screenIntervals = sqliteTable(
     }).notNull(),
     keyframeCount: integer("keyframe_count").notNull().default(0),
     textLines: text("text_lines", { mode: "json" }).$type<string[]>().notNull().default([]),
+    textBlocks: text("text_blocks", { mode: "json" }).$type<string[]>(),
     summaryStatus: text("summary_status", {
       enum: ["pending", "processing", "ready", "waiting", "failed"],
     }).notNull().default("pending"),
@@ -2850,6 +2851,25 @@ export const slidesPageImageSessions = sqliteTable(
   ],
 );
 
+/** 论文格式卡（thesis-format 管线）：一 Room 多卡，同 Room 内 (room_id, source_name) 唯一，重传同名模版即覆盖。 */
+export const thesisFormatCards = sqliteTable(
+  "thesis_format_cards",
+  {
+    id: text("id").primaryKey(),
+    roomId: text("room_id").notNull(),
+    /** validate 后的 ThesisFormatCard 全量 JSON。 */
+    formatCard: text("format_card", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
+    /** 设为模版的库内文件（parseFromDisk 直传时为空）。 */
+    sourceFileEntryId: text("source_file_entry_id"),
+    sourceName: text("source_name").notNull().default(""),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("thesis_format_cards_room_source_idx").on(table.roomId, table.sourceName),
+  ],
+);
+
 export const localAgentDispatches = sqliteTable(
   "local_agent_dispatches",
   {    id: text("id").primaryKey(),
@@ -3054,3 +3074,144 @@ export const writingStyleUserContent = sqliteTable("writing_style_user_content",
     .notNull()
     .$defaultFn(() => new Date()),
 });
+
+/**
+ * 统一搜索索引（PRD 0.2.0 §2.5）：每类内容一行，itemType+refId 即去重身份。
+ * 元信息先行（status=meta_only），正文解析后经队列写入 FTS（status=indexed）。
+ * FTS5 虚拟表 search_index_fts 由应用层维护，rowid 对齐本表 id 的 INTEGER 行号。
+ */
+export const searchIndex = sqliteTable(
+  "search_index",
+  {
+    id: text("id").primaryKey(),
+    itemType: text("item_type", {
+      enum: ["file", "message", "room", "document", "export"],
+    }).notNull(),
+    refId: text("ref_id").notNull(),
+    title: text("title").notNull(),
+    bodyPreview: text("body_preview").notNull().default(""),
+    sourceKind: text("source_kind"),
+    occurredAt: integer("occurred_at", { mode: "timestamp_ms" }),
+    ingestedAt: integer("ingested_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    timeBasis: text("time_basis", { enum: ["occurred", "ingested"] }).notNull().default("ingested"),
+    fileVersionId: text("file_version_id"),
+    versionLabel: text("version_label"),
+    /** itemType=message 时存所属会话 id（结果跳转用）；其余为 null。 */
+    sessionId: text("session_id"),
+    status: text("status", {
+      enum: ["meta_only", "indexed", "failed"],
+    })
+      .notNull()
+      .default("meta_only"),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("search_index_item_ref_idx").on(table.itemType, table.refId),
+    index("search_index_status_idx").on(table.status),
+    index("search_index_item_type_idx").on(table.itemType),
+  ],
+);
+
+/** 搜索索引与 Room 的多对多关联（筛选维度独立成表，改名/移出不触碰 FTS token）。 */
+export const searchIndexRooms = sqliteTable(
+  "search_index_rooms",
+  {
+    indexId: text("index_id").notNull(),
+    roomId: text("room_id").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.indexId, table.roomId] }),
+    index("search_index_rooms_room_idx").on(table.roomId),
+  ],
+);
+
+/**
+ * 外部 Agent 连接（PRD 0.2.0 第 7 章 L2.5）：Agent 连接页签发的持久凭证。
+ * token 只存 sha256（tokenHash），创建/轮换时明文返回一次；status=paused
+ * 拒绝校验但保留，revoked 终结。scopes 为能力 + Room 范围 + 回写位置的快照。
+ */
+export const agentConnections = sqliteTable(
+  "agent_connections",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    tool: text("tool", {
+      enum: ["claude-code", "cursor", "codex", "cherry-studio", "openclaw", "hermes", "generic"],
+    }).notNull(),
+    tokenHash: text("token_hash").notNull(),
+    tokenPrefix: text("token_prefix").notNull(),
+    scopes: text("scopes", { mode: "json" }).$type<{
+      roomIds: string[] | "all";
+      capabilities: string[];
+      writebackRoomId: string | null;
+    }>().notNull(),
+    status: text("status", { enum: ["active", "paused", "revoked"] }).notNull().default("active"),
+    lastSeenAt: integer("last_seen_at", { mode: "timestamp_ms" }),
+    exampleQueryAt: integer("example_query_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    revokedAt: integer("revoked_at", { mode: "timestamp_ms" }),
+  },
+  (table) => [
+    uniqueIndex("agent_connections_token_hash_idx").on(table.tokenHash),
+    index("agent_connections_status_idx").on(table.status),
+  ],
+);
+
+/**
+ * 外部 Agent 幂等提交（PRD 7.4 / A.3 提交键）：会话增量、结果文本、产物文件、
+ * 来源引用与候选统一落此表，(connectionId, clientSubmissionId) 唯一去重，
+ * 重试重放返回已存结果（duplicate）。items 保留原始载荷（含两链合并键：
+ * 平台/线程/消息 ID + 内容），results 为逐项处理结果。
+ */
+export const agentSubmissions = sqliteTable(
+  "agent_submissions",
+  {
+    id: text("id").primaryKey(),
+    connectionId: text("connection_id").notNull().references(() => agentConnections.id, { onDelete: "cascade" }),
+    clientSubmissionId: text("client_submission_id").notNull(),
+    items: text("items", { mode: "json" }).$type<unknown[]>().notNull(),
+    status: text("status", {
+      enum: ["received", "completed", "partial_failed", "rejected"],
+    }).notNull().default("received"),
+    results: text("results", { mode: "json" }).$type<unknown[] | null>(),
+    duplicateCount: integer("duplicate_count").notNull().default(0),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    completedAt: integer("completed_at", { mode: "timestamp_ms" }),
+  },
+  (table) => [
+    uniqueIndex("agent_submissions_connection_client_idx").on(table.connectionId, table.clientSubmissionId),
+    index("agent_submissions_recent_idx").on(table.connectionId, table.createdAt),
+  ],
+);
+
+/** 外部 Agent 访问事件（PRD 7.5 调试页）：每次 MCP 调用/连接/提交一行，每连接保留最近 200 条。 */
+export const agentAccessEvents = sqliteTable(
+  "agent_access_events",
+  {
+    id: text("id").primaryKey(),
+    connectionId: text("connection_id").notNull().references(() => agentConnections.id, { onDelete: "cascade" }),
+    kind: text("kind", { enum: ["call", "connect", "submit"] }).notNull(),
+    tool: text("tool"),
+    status: text("status").notNull(),
+    durationMs: integer("duration_ms"),
+    detail: text("detail", { mode: "json" }).$type<Record<string, unknown> | null>(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [index("agent_access_events_recent_idx").on(table.connectionId, table.createdAt)],
+);

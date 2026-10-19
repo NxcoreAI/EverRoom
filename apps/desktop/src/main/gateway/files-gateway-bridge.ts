@@ -1,6 +1,8 @@
 import { app, dialog, shell } from 'electron'
+import { execFileSync } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
-import { copyFile, mkdir, readdir, readFile, stat } from 'node:fs/promises'
+import { copyFile, mkdir, mkdtemp, readdir, readFile, stat } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { basename, extname, join, relative, resolve, sep } from 'node:path'
 import type { AgentAttachmentReference } from '@nxcore/agent-contract'
 import type {
@@ -22,6 +24,7 @@ import type {
 } from '../../shared/browser-extension'
 import type { GatewaySupervisor } from './gateway-supervisor'
 import { desktopText } from '../desktop-locale'
+import { isArtifactImportFileName } from '../../shared/sources'
 import {
   HIGH_RISK_FILE_BATCH_THRESHOLD,
   isIgnoredLocalDirectory,
@@ -37,20 +40,37 @@ export interface ImportCandidate {
   filename: string
 }
 
-const DEFAULT_IMPORT_EXTENSIONS = new Set([
+const DOCUMENT_IMPORT_EXTENSIONS = new Set([
   '.csv', '.doc', '.docx', '.docm', '.dot', '.dotx', '.dotm', '.html', '.htm', '.md', '.markdown',
   '.mdx', '.ods', '.odp', '.pdf', '.pot', '.potx', '.potm', '.pps', '.ppsx', '.ppsm', '.ppt',
   '.pptx', '.pptm', '.rtf', '.sldx', '.sldm', '.text', '.txt', '.xls', '.xla', '.xlam', '.xlsb',
   '.xlsx', '.xlsm', '.xlt', '.xltx', '.xltm',
 ])
-const AGENT_IMAGE_EXTENSIONS = new Set(['.gif', '.jpeg', '.jpg', '.png', '.webp'])
+/** 手动导入图片；heic 仅 macOS（导入时 sips 转 jpg 后再上传，网关不收裸 heic）。 */
+const IMAGE_FILE_EXTENSIONS = new Set([
+  '.bmp', '.gif', '.jpeg', '.jpg', '.png', '.webp',
+  ...(process.platform === 'darwin' ? ['.heic'] : []),
+])
+const HEIC_EXTENSION = '.heic'
+const DEFAULT_IMPORT_EXTENSIONS = new Set([...DOCUMENT_IMPORT_EXTENSIONS, ...IMAGE_FILE_EXTENSIONS])
+const AGENT_IMAGE_EXTENSIONS = new Set(['.gif', '.jpeg', '.jpg', '.png', '.webp', '.bmp'])
 const AGENT_MAX_ATTACHMENTS = 5
 const AGENT_MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
 
 function imageMime(extension: string): string {
   return extension === '.jpg' || extension === '.jpeg' ? 'image/jpeg'
     : extension === '.png' ? 'image/png'
-      : extension === '.gif' ? 'image/gif' : 'image/webp'
+      : extension === '.gif' ? 'image/gif'
+        : extension === '.bmp' ? 'image/bmp' : 'image/webp'
+}
+
+/** heic 转 jpg（临时文件）：网关识别与应用内显示都不收 heic。 */
+async function convertHeicToJpg(filePath: string): Promise<{ filePath: string; filename: string }> {
+  const base = basename(filePath).replace(/\.heic$/i, '')
+  const directory = await mkdtemp(join(tmpdir(), 'everroom-heic-'))
+  const target = join(directory, `${base}.jpg`)
+  execFileSync('/usr/bin/sips', ['-s', 'format', 'jpeg', filePath, '--out', target], { stdio: 'pipe' })
+  return { filePath: target, filename: `${base}.jpg` }
 }
 
 interface ImportCollectionPlan {
@@ -294,6 +314,9 @@ export class FilesGatewayBridge {
             visibility: 'private',
           }),
         })
+        // 与截图管线同款两步：上传后注册视觉库（VLM 出描述，素材检索才能命中）；
+        // 注册失败不阻断附件发送。
+        await this.registerVisualObservation({ fileId: uploaded.id }).catch(() => {})
         attachments.push({
           fileId: uploaded.id,
           filename: uploaded.originalName,
@@ -394,7 +417,11 @@ export class FilesGatewayBridge {
       filters: [
         {
           name: desktopText('dialog.importFiles.documents'),
-          extensions: [...DEFAULT_IMPORT_EXTENSIONS].map((extension) => extension.slice(1)),
+          extensions: [...DOCUMENT_IMPORT_EXTENSIONS].map((extension) => extension.slice(1)),
+        },
+        {
+          name: desktopText('dialog.importFiles.images'),
+          extensions: [...IMAGE_FILE_EXTENSIONS].map((extension) => extension.slice(1)),
         },
       ],
     })
@@ -414,7 +441,11 @@ export class FilesGatewayBridge {
       filters: [
         {
           name: desktopText('dialog.importFiles.documents'),
-          extensions: [...DEFAULT_IMPORT_EXTENSIONS].map((extension) => extension.slice(1)),
+          extensions: [...DOCUMENT_IMPORT_EXTENSIONS].map((extension) => extension.slice(1)),
+        },
+        {
+          name: desktopText('dialog.importFiles.images'),
+          extensions: [...IMAGE_FILE_EXTENSIONS].map((extension) => extension.slice(1)),
         },
       ],
     })
@@ -433,12 +464,21 @@ export class FilesGatewayBridge {
   }): Promise<FileImportOutcome[]> {
     if (!Array.isArray(selectedPaths) || selectedPaths.length === 0) return []
 
-    const manualExtensions = new Set((await this.capabilities()).items
-      .filter((item) => item.manualImport).map((item) => item.extension))
+    const manualExtensions = await this.manualImportExtensions()
+    // 目录展开阶段先发 scanning：大目录 walk 可能数分钟且无文件计数，
+    // 不发则界面停在 0/0 且无法区分「扫描中」与「卡死」。
+    this.emitImportProgress({ batchId: randomUUID(), status: 'scanning', total: 0, completed: 0, filename: null, succeeded: 0, failed: 0 })
+    const scanStartedAt = Date.now()
     const importPlan = await collectImportPlan(
       selectedPaths.filter((filePath): filePath is string => typeof filePath === 'string' && filePath.length > 0),
       manualExtensions,
     )
+    console.info('[files] import plan ready', {
+      paths: selectedPaths.length,
+      candidates: importPlan.candidates.length,
+      unsupported: importPlan.unsupported.length,
+      scanMs: Date.now() - scanStartedAt,
+    })
     // 本会话已明确跳过的文件直接排除：重试/再导入同一目录不再重复进入高风险审查。
     const highRiskImports = this.highRiskImports
     let candidates = highRiskImports
@@ -475,8 +515,7 @@ export class FilesGatewayBridge {
     roomId?: string
     resourceIdsByRelativePath?: Readonly<Record<string, string>>
   }): Promise<FileImportOutcome[]> {
-    const manualExtensions = new Set((await this.capabilities()).items
-      .filter((item) => item.manualImport).map((item) => item.extension))
+    const manualExtensions = await this.manualImportExtensions()
     const collected = await collectImportCandidates([input.rootPath], manualExtensions)
     const candidates = input.resourceIdsByRelativePath
       ? collected.filter((candidate) => Object.hasOwn(input.resourceIdsByRelativePath!, candidate.filename))
@@ -496,6 +535,14 @@ export class FilesGatewayBridge {
    *  截图管线会注册 observation——vault 图片附件走记忆同步入库后需补注册，
    *  PPT 素材检索才能按中文描述搜到。同一 fileId 重复注册幂等（服务端命中
    *  既有 observation 直接返回）。 */
+  /** 网关 manualImport 集；darwin 下补 heic（导入前转 jpg，网关能力表不登记 heic）。 */
+  private async manualImportExtensions(): Promise<Set<string>> {
+    const extensions = new Set((await this.capabilities()).items
+      .filter((item) => item.manualImport).map((item) => item.extension))
+    if (process.platform === 'darwin') extensions.add(HEIC_EXTENSION)
+    return extensions
+  }
+
   async registerVisualObservation(input: { fileId: string; capturedAt?: Date }): Promise<void> {
     await this.request('/v1/perception/visual-observations', {
       method: 'POST',
@@ -556,16 +603,27 @@ export class FilesGatewayBridge {
     for (const { filePath, filename } of candidates) {
       this.emitImportProgress({ batchId, status: 'file-started', total: candidates.length, completed: outcomes.length, filename, succeeded, failed })
       try {
+        let uploadPath = filePath
+        let originalName = basename(filePath)
+        let sourceModifiedAt: string | undefined
+        if (extname(filePath).toLowerCase() === HEIC_EXTENSION && process.platform === 'darwin') {
+          const originalStat = await stat(filePath)
+          const converted = await convertHeicToJpg(filePath)
+          uploadPath = converted.filePath
+          originalName = converted.filename
+          sourceModifiedAt = originalStat.mtime.toISOString()
+        }
         const uploaded = await this.importPath({
-          filePath,
+          filePath: uploadPath,
           sourceKind: 'manual-upload',
           sourceKey: options?.source
             ? `obsidian:${options.source.id}:${options.source.resourceIdsByRelativePath?.[filename] ?? filename}`
             // 确定性 key（同路径重导入命中同一 entry）：版本级去重才生效，
             // 否则每次重导入都铸新 entry + 重复排队路由，决策也挂到新 id 上。
             : `manual:path:${createHash('sha256').update(filePath).digest('hex').slice(0, 40)}`,
-          originalName: basename(filePath),
+          originalName,
           relativePath: filename,
+          ...(sourceModifiedAt ? { sourceModifiedAt } : {}),
           ...(options?.source ? { provider: options.source.label, connectionId: options.source.id } : {}),
           ...(options?.pipelines ? { pipelines: options.pipelines } : {}),
           ...(options?.roomId ? { roomId: options.roomId } : {}),
@@ -585,6 +643,10 @@ export class FilesGatewayBridge {
         })
         succeeded += 1
       } catch (error) {
+        console.warn('[files] manual import failed', {
+          filename,
+          error: error instanceof Error ? error.message : String(error),
+        })
         outcomes.push({
           filename,
           fileId: null,
@@ -737,7 +799,7 @@ export class FilesGatewayBridge {
 
   private async importPath(input: {
     filePath: string
-    sourceKind: 'manual-upload' | 'local-folder' | 'connector' | 'migration' | 'agent-generated'
+    sourceKind: 'manual-upload' | 'local-folder' | 'connector' | 'migration' | 'agent-generated' | 'artifact-imported'
     sourceKey: string
     originalName: string
     localSourceId?: string
@@ -774,12 +836,16 @@ export class FilesGatewayBridge {
       ...(input.roomId ? { roomId: input.roomId } : {}),
       ...(input.fileEntryId ? { fileEntryId: input.fileEntryId } : {}),
     }))
-    form.append('file', new Blob([new Uint8Array(buffer)]), input.originalName)
+    const uploadMime = imageMime(extname(input.originalName).toLowerCase())
+    form.append('file', new Blob([new Uint8Array(buffer)], uploadMime ? { type: uploadMime } : undefined), input.originalName)
     const connection = this.supervisor.getConnection()
+    // 上传必须有超时：网关侧或连接异常挂起时，无超时的 fetch 会把整个
+    // 目录导入循环无声冻结（2026-10-14 实证：扫描完成后 30 分钟零上传）。
     const response = await fetch(`${connection.baseUrl}/v1/file-imports`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${connection.token}` },
       body: form,
+      signal: AbortSignal.timeout(180_000),
     })
     if (!response.ok) {
       const body = await response.json().catch(() => null) as { error?: unknown } | null
@@ -812,6 +878,44 @@ export class FilesGatewayBridge {
     })
   }
 
+  /**
+   * 产物库「导入本地 Office 文件」（渲染端经 webUtils 取路径后调用）：
+   * 以 sourceKind=artifact-imported 入库并显式归属 Room（room+memory 管线，
+   * 与 Agent 产物同组——Room Agent 可引用，不进 wiki）。单文件、用户显式
+   * 意图，不走统一导入的高风险审查队列。同路径重复导入命中同一 entry 走版本链。
+   * 逐文件互不影响，仅回报成功项（fileId 供渲染端选中打开）。
+   */
+  async importArtifactFiles(selectedPaths: string[], roomId: string): Promise<Array<{ fileId: string; originalName: string }>> {
+    if (!roomId || typeof roomId !== 'string') throw new Error('缺少目标 Room。')
+    const imported: Array<{ fileId: string; originalName: string }> = []
+    for (const filePath of selectedPaths) {
+      if (typeof filePath !== 'string' || !filePath) continue
+      const filename = basename(filePath)
+      if (!isArtifactImportFileName(filename)) {
+        console.warn('[files] artifact import skipped (unsupported format)', { filename })
+        continue
+      }
+      try {
+        const uploaded = await this.importPath({
+          filePath,
+          sourceKind: 'artifact-imported',
+          // 确定性 key（同路径重导入命中同一 entry，内容变化走版本链）。
+          sourceKey: `artifact:path:${createHash('sha256').update(filePath).digest('hex').slice(0, 40)}`,
+          originalName: filename,
+          roomId,
+          pipelines: { room: true, wiki: false, memory: true },
+        })
+        imported.push({ fileId: uploaded.fileEntryId, originalName: filename })
+      } catch (error) {
+        console.warn('[files] artifact import failed', {
+          filename,
+          error: error instanceof Error ? error.message : String(error),
+        })
+      }
+    }
+    return imported
+  }
+
   private async waitForMarkdown(fileId: string): Promise<void> {
     const deadline = Date.now() + 60_000
     while (Date.now() < deadline) {
@@ -837,6 +941,7 @@ export class FilesGatewayBridge {
         ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
         ...init?.headers,
       },
+      signal: init?.signal ?? AbortSignal.timeout(60_000),
     })
     if (!response.ok) {
       const body = await response.json().catch(() => null) as { message?: unknown; error?: unknown } | null

@@ -1,0 +1,23 @@
+schemaVersion: 1
+id: slides-reviewer
+name: Slides Reviewer
+description: 双输入审页代理——多模态原生看 PPT 页面截图，判断这一页好不好看、元素有没有问题；决定修改时才取说明书（该页内容+当前布局树）并自己重排该页，经确定性校验后提交修正树；单代理闭环，网关只机械套用
+mode: dispatch_only
+enabled: true
+
+systemPrompt: ./SYSTEM.md
+
+skills:
+  - ./skills/layout-tree-skill
+
+mcp: []
+
+inputSchema: ./schemas/input.schema.json
+outputSchema: ./schemas/output.schema.json
+
+policy:
+  allowedCallers: [primary-agent]
+  maxConcurrency: 4
+  # 看图判断 1 轮 + 决定修改时：读说明书/语法 2~3 次 + validate ≤4 次 + 提交 1 次。
+  maxToolCalls: 12
+  timeoutSeconds: 240

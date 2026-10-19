@@ -4,12 +4,15 @@ export type ObsidianVaultResourceKind = 'note' | 'image' | 'pdf'
 
 export type ObsidianVaultMountMode = 'dedicated' | 'embedded' | 'memory'
 
+export type ObsidianVaultSourceType = 'obsidian-vault' | 'local-directory'
+
 export interface ObsidianVaultCandidate {
   id: string
   name: string
   noteCount: number
   attachmentCount: number
   discoveredFrom: 'registry' | 'scan' | 'manual'
+  sourceType: ObsidianVaultSourceType
   lastOpenedAt: string | null
   mountedVaultId: string | null
   mountedRoomId: string | null
@@ -20,6 +23,7 @@ export interface ObsidianVaultBinding {
   id: string
   roomId: string
   mountMode: ObsidianVaultMountMode
+  sourceType: ObsidianVaultSourceType
   memoryEnabled: boolean
   name: string
   attachmentFolderPath: string
@@ -77,14 +81,20 @@ export interface ObsidianDiscoveryChangedEvent {
   updatedAt: string
 }
 
+export type ObsidianImportTarget =
+  | { kind: 'new-room' }
+  | { kind: 'memory'; enableRegistryAutoImport?: boolean }
+  | { kind: 'room'; roomId: string }
+
+export type ObsidianImportResult =
+  | { kind: 'new-room'; vault: ObsidianVaultBinding }
+  | { kind: 'memory'; projectName: string; total: number; succeeded: number; failed: number }
+  | { kind: 'room'; vault: ObsidianVaultBinding }
+
 export interface ObsidianVaultApi {
-  pickAndMount(): Promise<ObsidianVaultBinding | null>
   discover(): Promise<ObsidianVaultCandidate[]>
   pickCandidate(): Promise<ObsidianVaultCandidate | null>
-  importCandidate(candidateId: string, target: { kind: 'memory'; enableRegistryAutoImport?: boolean } | { kind: 'room'; roomId: string }): Promise<
-    | { kind: 'memory'; projectName: string; total: number; succeeded: number; failed: number }
-    | { kind: 'room'; vault: ObsidianVaultBinding }
-  >
+  importCandidate(candidateId: string, target: ObsidianImportTarget): Promise<ObsidianImportResult>
   list(): Promise<ObsidianVaultBinding[]>
   tree(vaultId: string): Promise<ObsidianVaultTree>
   readNote(vaultId: string, resourceId: string): Promise<VaultNoteSnapshot>

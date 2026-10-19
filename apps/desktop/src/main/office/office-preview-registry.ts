@@ -1,4 +1,5 @@
 import type { BrowserWindow } from 'electron'
+import { webContents } from 'electron'
 
 import type { OfficeAgentFileEvent } from '../../shared/office'
 import {
@@ -88,6 +89,14 @@ interface EditSyncState {
   runner: Promise<void> | null
 }
 
+/** AI 页签论文排版桥（index.ts 注入网关实现；缺省 → docs 视图报 no_room）。 */
+export interface OfficeThesisPanelBridge {
+  listCards(roomId: string): Promise<unknown[]>
+  pickAndSet(roomId: string): Promise<{ canceled: boolean; cardId: string; sourceName: string }>
+  removeCard(roomId: string, cardId: string): Promise<void>
+  reformat(roomId: string, fileEntryId: string, cardId?: string): Promise<{ originalName: string }>
+}
+
 /** 内嵌 Office 文件扩展名 → 预览运行时分流（shared 实现，渲染端入口与 files:open-original 共用同一白名单）。 */
 export const officePreviewKindFor = officePreviewKindForFileName
 
@@ -103,6 +112,7 @@ export class OfficePreviewRegistry {
   private activeId: string | null = null
   private readonly editStates = new Map<string, EditSyncState>()
   private agentAskForward: ((event: AgentAskForwardEvent) => void) | null = null
+  private thesisBridge: OfficeThesisPanelBridge | null = null
 
   /** 生成完成 → 渲染端自动打开的等待窗口；测试可传 0 关闭。 */
   constructor(
@@ -129,6 +139,48 @@ export class OfficePreviewRegistry {
   /** 「AI 修改」转发出口：slides 弹层提交 → wcId 反查 Room → 注入 Room 对话框。 */
   setAgentAskForward(forward: ((event: AgentAskForwardEvent) => void) | null): void {
     this.agentAskForward = forward
+  }
+
+  /** AI 页签论文排版桥：网关就绪后由 index.ts 注入（幂等，晚于首开也生效）。 */
+  setThesisPanelBridge(bridge: OfficeThesisPanelBridge | null): void {
+    this.thesisBridge = bridge
+    if (this.runtime && bridge) this.wireDocsThesisHook(this.runtime)
+  }
+
+  /** 格式卡变更 → 通知打开中的 docs 视图（AI 页签面板刷新）。 */
+  notifyThesisCardsChanged(): void {
+    for (const instance of this.instances.values()) {
+      const wcId = instance.view.webContentsId
+      if (typeof wcId !== 'number' || instance.descriptor.kind !== 'docx') continue
+      const wc = webContents.fromId(wcId)
+      if (wc && !wc.isDestroyed()) wc.send('docs:thesis-changed')
+    }
+  }
+
+  private wireDocsThesisHook(runtime: PreparedGenOfficeRuntime): void {
+    const bridge = this.thesisBridge
+    if (!bridge) return
+    runtime.docs.setDocsThesisPanelHook(async (wcId, action) => {
+      const instance = this.findByWebContentsId(wcId)
+      const roomId = instance?.roomId ?? null
+      if (!instance || !roomId) return { ok: false, reason: 'no_room' as const }
+      try {
+        switch (action.kind) {
+          case 'list':
+            return { ok: true as const, value: await bridge.listCards(roomId) }
+          case 'pick':
+            return { ok: true as const, value: await bridge.pickAndSet(roomId) }
+          case 'remove':
+            await bridge.removeCard(roomId, action.cardId)
+            return { ok: true as const, value: null }
+          case 'reformat':
+            return { ok: true as const, value: await bridge.reformat(roomId, instance.fileId, action.cardId) }
+        }
+      } catch (error) {
+        return { ok: false as const, reason: 'error' as const, message: error instanceof Error ? error.message : String(error) }
+      }
+      return { ok: false as const, reason: 'error' as const, message: 'unknown thesis panel action' }
+    })
   }
 
   /** 打开（或复用）一个预览实例；instanceId = fileId，contentHash 或 editable 变化时原地重建。 */
@@ -228,6 +280,33 @@ export class OfficePreviewRegistry {
           isolation: req.isolation,
         }),
     }
+  }
+
+  /**
+   * 渲染一个已打开 slides 产物的指定页为 1x PNG（视觉复检用）。fileId 解析
+   * 与 editSlidesArtifact 同规则（active/显式 id + 自动打开等待窗口）；只读
+   * 实例同样可渲染（复检不改内容）。
+   */
+  async renderSlidesPagePng(
+    fileId: string,
+    slideIndex: number,
+  ): Promise<{ ok: true; pngBase64: string } | { ok: false; error: string }> {
+    const resolvedId = fileId === 'active' ? this.resolveActiveSlides() : fileId
+    let instance = resolvedId === null ? undefined : this.instances.get(resolvedId)
+    if (!instance && fileId !== 'active') {
+      instance = await this.waitForInstance(fileId)
+    }
+    const wcId = instance?.view.webContentsId
+    if (!instance || !this.runtime || typeof wcId !== 'number') {
+      return { ok: false, error: 'no open slides instance for this fileId' }
+    }
+    if (instance.descriptor.kind !== 'slides') {
+      return { ok: false, error: 'the open instance is not a slides deck' }
+    }
+    const rendered = await this.runtime.slides.renderAgentDeckPagePng(wcId, slideIndex)
+    return 'pngBase64' in rendered
+      ? { ok: true, pngBase64: rendered.pngBase64 }
+      : { ok: false, error: rendered.error }
   }
 
   private async waitForInstance(
@@ -471,6 +550,8 @@ export class OfficePreviewRegistry {
         forward: this.agentAskForward,
       })
     }
+    // AI 页签论文排版桥（注入晚于首开也在此补挂，幂等）。
+    this.wireDocsThesisHook(this.runtime)
     // shell window 是三个运行时共享的对话框父窗口，换绑后需要重新指向。
     this.runtime.docs.setDocsShellWindow(window)
     this.runtime.sheets.setSheetsShellWindow(window)

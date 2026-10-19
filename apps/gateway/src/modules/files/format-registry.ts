@@ -20,6 +20,7 @@ const capability = (
   dataType: string,
   parserId: string,
   maxBytes: number = DEFAULT_FILE_MAX_BYTES,
+  overrides?: Partial<Pick<FileFormatCapability, "manualImport" | "autoScan" | "connectorImport">>,
 ): FileFormatCapability[] => extensions.map((extension) => ({
   extension,
   dataType,
@@ -28,6 +29,7 @@ const capability = (
   manualImport: true,
   autoScan: true,
   connectorImport: true,
+  ...overrides,
   maxBytes,
 }));
 
@@ -44,7 +46,11 @@ export const FILE_FORMAT_CAPABILITIES: readonly FileFormatCapability[] = [
   ...capability([".ppt", ".pot", ".pps", ".odp"], "slides", "legacy-slides-soffice", RICH_MEDIA_FILE_MAX_BYTES),
   ...capability([".csv"], "spreadsheet", "csv-rfc4180"),
   ...capability([".html", ".htm"], "html", "html-turndown"),
+  ...capability([".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"], "image", "image-vlm",
+    RICH_MEDIA_FILE_MAX_BYTES, { autoScan: false, connectorImport: false }),
 ];
+
+export const IMAGE_IMPORT_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"]);
 
 const byExtension = new Map(FILE_FORMAT_CAPABILITIES.map((item) => [item.extension, item]));
 

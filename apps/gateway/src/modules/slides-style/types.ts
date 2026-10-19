@@ -3,7 +3,7 @@
  *
  * StyleParams 是风格的唯一机器事实源（「确定性从数据来」）：
  * - 色板/字号/字体/装饰/母题全部在此定稿，builder 不得偏离；
- * - 布局坐标仍归 layout 技能，这里只放按页角色的预设倾向（layoutHints）；
+ * - 布局坐标归布局树链路（slides-layouter/编译器），风格侧只留构图家族倾向；
  * - 用户可见的效果文案（effectLines）由 styler 一并产出，走风格卡展示，
  *   不含任何来源说明（像素换算/近似匹配等禁词归 styler SYSTEM 约束）。
  */
@@ -89,13 +89,12 @@ export interface StyleMotif {
   spec: Record<string, string | number>;
 }
 
-/** 布局倾向：按页角色引用 layout 技能的预设 id（P1a/T3/D2…），可空。 */
-export interface StyleLayoutHints {
-  cover?: string;
-  section?: string;
-  content?: string;
-  closing?: string;
-}
+/**
+ * 构图家族：全篇版式选型与节奏的倾向轴（颜色/字体之外的风格第三轴）。
+ * swiss=严格网格对齐；editorial=不对称分栏大留白；poster=超大字/大数字主导；
+ * immersive=大图/深底氛围主导。权威来源是用户挑中的纵览候选（direction 绑定）。
+ */
+export type StyleComposition = "swiss" | "editorial" | "poster" | "immersive";
 
 export interface StyleParams {
   palette: StylePalette;
@@ -103,11 +102,12 @@ export interface StyleParams {
   spacing: StyleSpacing;
   decoration: StyleDecoration;
   motif: StyleMotif;
-  layoutHints: StyleLayoutHints;
   /** 封面/章节页是否深底反白。 */
   darkCover: boolean;
   /** 风格卡效果语言（用户可读，禁止来源说明）。 */
   effectLines: string[];
+  /** 构图家族；归一层保证始终有值（缺失时按色板/字体确定性推导）。 */
+  composition?: StyleComposition;
 }
 
 /** 聚类结果的一簇：色值与面积占比。 */
@@ -122,6 +122,8 @@ export interface StyleOverviewImage {
   contentHash: string;
   /** 风格方向短名（styler direction 候选或兜底变体名），挑图卡展示用。 */
   label?: string;
+  /** 该候选绑定的构图家族；用户挑中即成为全篇 composition 的唯一权威。 */
+  composition?: StyleComposition;
   /** 生成轮次（第几次「不满意」重生成）。 */
   generation: number;
 }

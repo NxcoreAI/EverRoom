@@ -121,6 +121,41 @@ describe("connector domain projection", () => {
     client.sqlite.close();
   });
 
+  it("does not rewrite syncedAt when content is unchanged", async () => {    const { client } = await setupMain();
+    const projection = new ConnectorDomainProjection(client.db, "local-user");
+    const firstSync = new Date("2026-08-19T10:00:00Z");
+    const secondSync = new Date("2026-08-20T10:00:00Z");
+    projection.projectMail("gmail", "conn-1", mailChange, firstSync);
+    projection.projectMail("gmail", "conn-1", mailChange, secondSync);
+    const row = client.db.select().from(connectorEmails).where(eq(connectorEmails.sourceRecordId, "msg-1")).get();
+    // syncedAt 不随无变化重放刷新：无 sentAt 的记录靠它做日记时间兜底，刷新会让旧邮件滑进当天窗口。
+    expect(row?.syncedAt).toEqual(firstSync);
+    const revised = { kind: "upsert" as const, message: { ...mailChange.message, subject: "修订" } };
+    projection.projectMail("gmail", "conn-1", revised, secondSync);
+    const updated = client.db.select().from(connectorEmails).where(eq(connectorEmails.sourceRecordId, "msg-1")).get();
+    expect(updated?.syncedAt).toEqual(secondSync);
+    client.sqlite.close();
+  });
+
+  it("skips id-only mail shells without subject, body, or dates", async () => {
+    const { client } = await setupMain();
+    const projection = new ConnectorDomainProjection(client.db, "local-user");
+    const shell = {
+      kind: "upsert" as const,
+      message: { providerMessageId: "graph-immutable-id-1" },
+    };
+    expect(projection.projectMail("outlook", "conn-1", shell)).toMatchObject({ outcome: "skipped", id: null });
+    expect(client.db.select().from(connectorEmails).all()).toHaveLength(0);
+    // 无主题但有正文/时间的记录仍正常入库。
+    projection.projectMail("outlook", "conn-1", {
+      kind: "upsert",
+      message: { providerMessageId: "m-real", textBody: "正文", sentAt: "2026-08-19T09:00:00Z" },
+    });
+    const real = client.db.select().from(connectorEmails).where(eq(connectorEmails.sourceRecordId, "m-real")).get();
+    expect(real?.sentAt).toEqual(new Date("2026-08-19T09:00:00Z"));
+    client.sqlite.close();
+  });
+
   it("soft-deletes on mail tombstones and stays noop afterwards", async () => {
     const { client } = await setupMain();
     const projection = new ConnectorDomainProjection(client.db, "local-user");

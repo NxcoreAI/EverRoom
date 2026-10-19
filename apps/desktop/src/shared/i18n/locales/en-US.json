@@ -33,9 +33,10 @@
   "error.rateLimited.title": "Operation will resume shortly",
   "error.rateLimited.message": "Too many requests. Try again later.",
   "error.screenshot.windowUnavailable": "The application window is unavailable.",
-  "error.screenshot.captureFailed": "The application window could not be captured. Try again later.",
-  "error.screenshot.empty": "The application window capture is empty. Try again later.",
-  "error.screenshot.encodingFailed": "The application window capture could not be encoded. Try again later.",
+  "error.screenshot.permissionDenied": "Screen recording permission is missing. Grant it in System Settings and try again.",
+  "error.screenshot.captureFailed": "The screen could not be captured. Try again later.",
+  "error.screenshot.empty": "The screen capture is empty. Try again later.",
+  "error.screenshot.encodingFailed": "The screen capture could not be encoded. Try again later.",
   "error.screenshot.saveFailed": "The screenshot could not be saved. Check the folder permissions and available disk space.",
   "error.screenshot.invalidSource": "The screenshot request source could not be verified.",
   "error.pdf.invalidSource": "The PDF export request source could not be verified.",
@@ -46,5 +47,6 @@
   "document.untitled": "Untitled document",
   "error.transcript.invalidSource": "The export request source could not be verified.",
   "error.transcript.invalidRequest": "The transcript export request is invalid.",
-  "error.memory.fileTooLarge": "The file exceeds the 2 MB import limit ({size} MB)."
+  "error.memory.fileTooLarge": "The file exceeds the 2 MB import limit ({size} MB).",
+  "dialog.importFiles.images": "Images"
 }

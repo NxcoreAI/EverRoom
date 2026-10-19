@@ -1,4 +1,4 @@
-import { Check, RefreshCw, Save, ShieldCheck, Trash2 } from 'lucide-react'
+import { Check, Loader2, PlugZap, Save, ShieldCheck, Trash2 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import type { NxcoreAsrStatusPayload, RuntimeConfigSnapshot, RuntimeConfigTestResult } from '../../../../shared/sources'
 import { useLocale } from '@/i18n/LocaleContext'
@@ -109,6 +109,10 @@ export function RuntimeConfigSettingsSection() {
   const [busy, setBusy] = useState<'save' | 'json' | 'test' | null>(null)
   const [message, setMessage] = useState<string | null>(null)
   const [testResult, setTestResult] = useState<RuntimeConfigTestResult | null>(null)
+  /** 清除二次确认：首次点击进入待确认态，3 秒内再点执行，超时自动取消。 */
+  const [confirmClear, setConfirmClear] = useState(false)
+  const confirmResetTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => () => { if (confirmResetTimer.current) clearTimeout(confirmResetTimer.current) }, [])
 
   const seedFromSnapshot = (next: RuntimeConfigSnapshot) => {
     setSnapshot(next)
@@ -163,6 +167,17 @@ export function RuntimeConfigSettingsSection() {
     } finally { setBusy(null) }
   }
 
+  const requestClear = () => {
+    if (!confirmClear) {
+      setConfirmClear(true)
+      confirmResetTimer.current = setTimeout(() => setConfirmClear(false), 3000)
+      return
+    }
+    if (confirmResetTimer.current) clearTimeout(confirmResetTimer.current)
+    setConfirmClear(false)
+    void clearUser()
+  }
+
   const switchMode = async (mode: 'official' | 'custom') => {
     if (mode === 'official') {
       if (snapshot?.selectedSource === 'default') { setCustomView(false); return }
@@ -204,10 +219,8 @@ export function RuntimeConfigSettingsSection() {
     setForm((current) => ({ ...current, generic: { ...current.generic, [key]: value } }))
   const updateScenario = (id: TextScenarioId, patch: Partial<{ mode: ScenarioMode; model: string; baseUrl: string; apiKey: string }>) =>
     setForm((current) => ({ ...current, scenarios: { ...current.scenarios, [id]: { ...current.scenarios[id], ...patch } } }))
-  const updateEmbedding = (key: keyof ManualAiConfigFields, value: string) =>
-    setForm((current) => ({ ...current, embedding: { ...current.embedding, [key]: value } }))
-  const updateVlm = (key: keyof ManualAiConfigFields, value: string) =>
-    setForm((current) => ({ ...current, vlm: { ...current.vlm, [key]: value } }))
+  const updateSpecial = (slot: 'embedding' | 'vlm', key: keyof ManualAiConfigFields, value: string) =>
+    setForm((current) => ({ ...current, [slot]: { ...current[slot], [key]: value } }))
   const updateAsr = (key: 'provider' | 'model' | 'baseUrl' | 'apiKey' | 'language', value: string) =>
     setForm((current) => ({ ...current, asr: { ...current.asr, [key]: value } }))
   const updateOss = (key: keyof ManualAsrFields['oss'], value: string) =>
@@ -243,23 +256,24 @@ export function RuntimeConfigSettingsSection() {
     { value: 'custom', label: t('surface:settings.rcModeCustom') },
   ] as const
 
-  const renderAiFields = (
-    fields: ManualAiConfigFields,
-    onChange: (key: keyof ManualAiConfigFields, value: string) => void,
-    options: { provider?: boolean; modelPlaceholder?: string } = {},
-  ) => <div className="rc-grid">
-    {options.provider !== false ? <label className="rc-form-field"><span>{aiLabels.provider}</span>
-      <input value={fields.provider} onChange={(event) => onChange('provider', event.target.value)} /></label> : null}
-    <label className="rc-form-field"><span>{aiLabels.model}</span>
-      <input value={fields.model} placeholder={options.modelPlaceholder} onChange={(event) => onChange('model', event.target.value)} /></label>
-    <label className="rc-form-field rc-span-2"><span>{aiLabels.baseUrl}</span>
-      <input value={fields.baseUrl} placeholder="https://api.example.com/v1" onChange={(event) => onChange('baseUrl', event.target.value)} /></label>
-    <label className="rc-form-field rc-span-2"><span>{aiLabels.apiKey}</span>
-      <input type="password" value={fields.apiKey} placeholder="sk-…" onChange={(event) => onChange('apiKey', event.target.value)} /></label>
-  </div>
-
-  return <section id="settings-runtime-config" className="reality-settings-section settings-anchor-section" aria-labelledby="runtime-config-title">
-    <header><span><ShieldCheck aria-hidden="true" /></span><div><h2 id="runtime-config-title">{t('surface:settings.navigationRuntimeConfig')}</h2></div></header>
+  return <section id="settings-runtime-config" className="reality-settings-section rc-settings-section settings-anchor-section" aria-labelledby="runtime-config-title">
+    <header>
+      <span><ShieldCheck aria-hidden="true" /></span>
+      <div><h2 id="runtime-config-title">{t('surface:settings.navigationRuntimeConfig')}</h2></div>
+      <div className="rc-header-actions">
+        <button type="button" className="rc-icon-button" onClick={() => void runTest()} disabled={busy !== null}
+          title={t('surface:settings.rcRunTest')} aria-label={t('surface:settings.rcRunTest')}>
+          {busy === 'test' ? <Loader2 aria-hidden="true" className="is-spinning" /> : <PlugZap aria-hidden="true" />}
+        </button>
+        {snapshot?.userConfig ? (
+          <button type="button" className="rc-icon-button" data-armed={String(confirmClear)} onClick={requestClear} disabled={busy !== null}
+            title={confirmClear ? t('surface:settings.rcClearConfirm') : t('surface:settings.rcClearUser')}
+            aria-label={confirmClear ? t('surface:settings.rcClearConfirm') : t('surface:settings.rcClearUser')}>
+            <Trash2 aria-hidden="true" />
+          </button>
+        ) : null}
+      </div>
+    </header>
 
     <div className="rc-mode-switch">
       <div className="segmented-control" role="group" aria-label={t('surface:settings.rcSourceLabel')}>
@@ -270,7 +284,16 @@ export function RuntimeConfigSettingsSection() {
 
     {customView ? <div className="rc-form">
       <h3 className="rc-group-title">{t('surface:settings.rcGenericGroup')}</h3>
-      {renderAiFields(form.generic, updateGeneric, { modelPlaceholder: 'gpt-4o-mini / glm-4-flash / …' })}
+      <div className="rc-grid">
+        <label className="rc-form-field"><span>{aiLabels.provider}</span>
+          <input value={form.generic.provider} onChange={(event) => updateGeneric('provider', event.target.value)} /></label>
+        <label className="rc-form-field"><span>{aiLabels.model}</span>
+          <input value={form.generic.model} placeholder="gpt-4o-mini / glm-4-flash / …" onChange={(event) => updateGeneric('model', event.target.value)} /></label>
+        <label className="rc-form-field rc-span-2"><span>{aiLabels.baseUrl}</span>
+          <input value={form.generic.baseUrl} placeholder="https://api.example.com/v1" onChange={(event) => updateGeneric('baseUrl', event.target.value)} /></label>
+        <label className="rc-form-field rc-span-2"><span>{aiLabels.apiKey}</span>
+          <input type="password" value={form.generic.apiKey} placeholder="sk-…" onChange={(event) => updateGeneric('apiKey', event.target.value)} /></label>
+      </div>
 
       <h3 className="rc-group-title">{t('surface:settings.rcScenarioGroup')}</h3>
       <div className="rc-scenario-list">
@@ -309,27 +332,49 @@ export function RuntimeConfigSettingsSection() {
         <div className="rc-scenario-item">
           <div className="rc-scenario-row">
             <span className="rc-scenario-name">{t('surface:settings.rcSpecialEmbedding')}</span>
-            <select value={form.embeddingCustom ? 'custom' : 'official'} disabled={busy !== null} aria-label={t('surface:settings.rcSpecialEmbedding')}
-              onChange={(event) => setForm((current) => ({ ...current, embeddingCustom: event.target.value === 'custom', embedding: current.embedding.model || current.embedding.baseUrl ? current.embedding : emptyAiFields() }))}>
+            <select value={form.embedding.mode} disabled={busy !== null} aria-label={t('surface:settings.rcSpecialEmbedding')}
+              onChange={(event) => setForm((current) => ({ ...current, embedding: { ...current.embedding, mode: event.target.value as 'custom' | 'official' } }))}>
               {specialOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
             </select>
+            {form.embedding.mode === 'custom' ? <input className="rc-scenario-model" value={form.embedding.model} placeholder="text-embedding-3-small / text-embedding-v4 / …" disabled={busy !== null}
+              onChange={(event) => updateSpecial('embedding', 'model', event.target.value)} /> : null}
           </div>
-          {form.embeddingCustom ? <div className="rc-special-fields">
-            {renderAiFields(form.embedding, updateEmbedding, { modelPlaceholder: 'text-embedding-3-small / text-embedding-v4 / …' })}
-          </div> : null}
+          {form.embedding.mode === 'custom' ? <details className="rc-own-connection">
+            <summary>{t('surface:settings.rcOwnConnection')}</summary>
+            <div className="rc-grid">
+              <label className="rc-form-field"><span>{aiLabels.provider}</span>
+                <input value={form.embedding.provider} disabled={busy !== null} onChange={(event) => updateSpecial('embedding', 'provider', event.target.value)} /></label>
+              <label className="rc-form-field"><span>{aiLabels.baseUrl}</span>
+                <input value={form.embedding.baseUrl} placeholder="https://api.example.com/v1" disabled={busy !== null}
+                  onChange={(event) => updateSpecial('embedding', 'baseUrl', event.target.value)} /></label>
+              <label className="rc-form-field rc-span-2"><span>{aiLabels.apiKey}</span>
+                <input type="password" value={form.embedding.apiKey} placeholder="sk-…" disabled={busy !== null}
+                  onChange={(event) => updateSpecial('embedding', 'apiKey', event.target.value)} /></label>
+            </div>
+          </details> : null}
         </div>
 
         <div className="rc-scenario-item">
           <div className="rc-scenario-row">
             <span className="rc-scenario-name">{t('surface:settings.rcSpecialVlm')}</span>
-            <select value={form.vlmCustom ? 'custom' : 'official'} disabled={busy !== null} aria-label={t('surface:settings.rcSpecialVlm')}
-              onChange={(event) => setForm((current) => ({ ...current, vlmCustom: event.target.value === 'custom', vlm: current.vlm.model || current.vlm.baseUrl ? current.vlm : emptyAiFields() }))}>
+            <select value={form.vlm.mode} disabled={busy !== null} aria-label={t('surface:settings.rcSpecialVlm')}
+              onChange={(event) => setForm((current) => ({ ...current, vlm: { ...current.vlm, mode: event.target.value as 'custom' | 'official' } }))}>
               {specialOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
             </select>
+            {form.vlm.mode === 'custom' ? <input className="rc-scenario-model" value={form.vlm.model} placeholder="qwen-vl-max / gpt-4o-mini / …" disabled={busy !== null}
+              onChange={(event) => updateSpecial('vlm', 'model', event.target.value)} /> : null}
           </div>
-          {form.vlmCustom ? <div className="rc-special-fields">
-            {renderAiFields(form.vlm, updateVlm, { provider: false, modelPlaceholder: 'qwen-vl-max / gpt-4o-mini / …' })}
-          </div> : null}
+          {form.vlm.mode === 'custom' ? <details className="rc-own-connection">
+            <summary>{t('surface:settings.rcOwnConnection')}</summary>
+            <div className="rc-grid">
+              <label className="rc-form-field rc-span-2"><span>{aiLabels.baseUrl}</span>
+                <input value={form.vlm.baseUrl} placeholder="https://api.example.com/v1" disabled={busy !== null}
+                  onChange={(event) => updateSpecial('vlm', 'baseUrl', event.target.value)} /></label>
+              <label className="rc-form-field rc-span-2"><span>{aiLabels.apiKey}</span>
+                <input type="password" value={form.vlm.apiKey} placeholder="sk-…" disabled={busy !== null}
+                  onChange={(event) => updateSpecial('vlm', 'apiKey', event.target.value)} /></label>
+            </div>
+          </details> : null}
         </div>
 
         <div className="rc-scenario-item">
@@ -427,18 +472,10 @@ export function RuntimeConfigSettingsSection() {
       ) : null}
 
       <div className="runtime-config-actions">
-        <button type="button" className="secondary-button" onClick={() => void load()} disabled={busy !== null}><RefreshCw aria-hidden="true" />{t('surface:settings.rcReload')}</button>
-        <button type="button" className="secondary-button" onClick={() => void clearUser()} disabled={busy !== null}><Trash2 aria-hidden="true" />{t('surface:settings.rcClearUser')}</button>
-        <button type="button" className="secondary-button" onClick={() => void runTest()} disabled={busy !== null}>{busy === 'test' ? t('surface:settings.rcTesting') : t('surface:settings.rcRunTest')}</button>
         <button type="button" className="primary-button" onClick={() => void saveForm()} disabled={busy !== null}><Save aria-hidden="true" />{t('surface:settings.rcSaveForm')}</button>
       </div>
       {message ? <p className="runtime-config-message"><Check aria-hidden="true" />{message}</p> : null}
     </div> : <div className="rc-form">
-      <div className="runtime-config-actions">
-        <button type="button" className="secondary-button" onClick={() => void load()} disabled={busy !== null}><RefreshCw aria-hidden="true" />{t('surface:settings.rcReload')}</button>
-        {snapshot?.userConfig ? <button type="button" className="secondary-button" onClick={() => void clearUser()} disabled={busy !== null}><Trash2 aria-hidden="true" />{t('surface:settings.rcClearUser')}</button> : null}
-        <button type="button" className="secondary-button" onClick={() => void runTest()} disabled={busy !== null}>{busy === 'test' ? t('surface:settings.rcTesting') : t('surface:settings.rcRunTest')}</button>
-      </div>
       {message ? <p className="runtime-config-message"><Check aria-hidden="true" />{message}</p> : null}
       {testResult ? (
         testLines.length === 0

@@ -272,12 +272,14 @@ export function SourceDrawer({
           <div className="src-list-head"><h4>{t('surface:sources.obsidianProject')} · {(vaults.length + pending.length).toLocaleString()}</h4></div>
           {vaults.map((vault) => (
             <div key={vault.id} className="src-vault-row">
-              <span className="src-file-glyph"><SourceIcon kind="obsidian-vault" /></span>
+              <span className="src-file-glyph"><SourceIcon kind={vault.sourceType === 'local-directory' ? 'local-folder' : 'obsidian-vault'} /></span>
               <span className="src-file-copy">
                 <strong>{vault.name}</strong>
                 <small>{t('surface:sources.obsidianNotesAndProjects', { notes: vault.noteCount, projects: 1 })}</small>
               </span>
-              <span className="src-file-badge">{t(vault.mountMode === 'memory' ? 'surface:sources.obsidianMemory' : vault.mountMode === 'embedded' ? 'surface:sources.obsidianRoomPart' : 'surface:sources.obsidianProjectRoom')}</span>
+              <span className="src-file-badge">{t(vault.sourceType === 'local-directory'
+                ? vault.mountMode === 'memory' ? 'surface:sources.localDirMemory' : vault.mountMode === 'embedded' ? 'surface:sources.obsidianRoomPart' : 'surface:sources.localDirRoom'
+                : vault.mountMode === 'memory' ? 'surface:sources.obsidianMemory' : vault.mountMode === 'embedded' ? 'surface:sources.obsidianRoomPart' : 'surface:sources.obsidianProjectRoom')}</span>
               <StatePill tone={vault.status === 'connected' ? 'ok' : 'danger'} label={t(vault.status === 'connected' ? 'surface:obsidian.connected' : 'surface:obsidian.offline')} />
               <span className="src-file-actions">
                 {vault.mountMode !== 'memory' ? <button type="button" className="icon-button" aria-label={t('surface:sources.openRoom')} title={t('surface:sources.openRoom')} onClick={() => onOpenVaultRoom(vault)}><ExternalLink aria-hidden="true" strokeWidth={1.8} /></button> : null}
@@ -287,7 +289,7 @@ export function SourceDrawer({
           ))}
           {pending.map((candidate) => (
             <div key={candidate.id} className="src-vault-row">
-              <span className="src-file-glyph"><SourceIcon kind="obsidian-vault" /></span>
+              <span className="src-file-glyph"><SourceIcon kind={candidate.sourceType === 'local-directory' ? 'local-folder' : 'obsidian-vault'} /></span>
               <span className="src-file-copy">
                 <strong>{candidate.name}</strong>
                 <small>{t('surface:sources.obsidianNotesAndProjects', { notes: candidate.noteCount, projects: 1 })}</small>

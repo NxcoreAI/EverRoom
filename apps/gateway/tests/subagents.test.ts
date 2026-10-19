@@ -377,6 +377,62 @@ describe("filesystem subagent framework", () => {
     fixture.database.sqlite.close();
   }, 15_000);
 
+  it("透传 dispatch attachments 到 runtime.start（多模态看图通道），input JSON 不携带", async () => {
+    const fixture = await createFixture();
+    await fixture.registry.initialize();
+
+    class RecordingFakeRuntime extends FakeAgentRuntime {
+      readonly startedInputs: StartRuntimeRunInput[] = [];
+      override async start(input: StartRuntimeRunInput): Promise<Awaited<ReturnType<AgentRuntime["start"]>>> {
+        this.startedInputs.push(input);
+        return super.start(input);
+      }
+    }
+    class RecordingRuntimeManager extends SubagentRuntimeManager {
+      private readonly recording = new RecordingFakeRuntime();
+      override acquire(_revision: Parameters<SubagentRuntimeManager["acquire"]>[0]): AgentRuntime {
+        return this.recording;
+      }
+    }
+    const runtimeManager = new RecordingRuntimeManager({ agentRuntime: "fake" } as GatewayConfig, fixture.config);
+    const orchestrator = new SubagentOrchestrator(
+      fixture.database.db,
+      fixture.config,
+      fixture.registry,
+      runtimeManager,
+      logger,
+    );
+    orchestrator.initialize();
+
+    const recording = (runtimeManager as RecordingRuntimeManager)["recording"];
+    const attachment = { filename: "page.png", mimeType: "image/png", kind: "image" as const, dataUrl: "data:image/png;base64,aGk=" };
+    const invocation = await orchestrator.dispatch({
+      agentId: "researcher",
+      task: "Review",
+      input: { pageIndex: 3 },
+      attachments: [attachment],
+      idempotencyKey: "attachment-passthrough",
+      source: "primary_agent",
+      parentRunId: "run-attach",
+    });
+    expect(recording.startedInputs.at(-1)?.attachments).toEqual([attachment]);
+    // 落库 input 不含 base64 附件。
+    expect(JSON.stringify(invocation.input)).not.toContain("data:image/png");
+
+    await orchestrator.dispatch({
+      agentId: "researcher",
+      task: "Research",
+      input: { topic: "plain" },
+      idempotencyKey: "attachment-absent",
+      source: "primary_agent",
+      parentRunId: "run-noattach",
+    });
+    expect(recording.startedInputs.at(-1)?.attachments).toBeUndefined();
+
+    await orchestrator.dispose();
+    fixture.database.sqlite.close();
+  }, 15_000);
+
   it("accepts formal results only through the schema-validated submit tool and isolates concurrent runs", async () => {
     const fixture = await createFixture({ outputSchema: true });
     await fixture.registry.initialize();

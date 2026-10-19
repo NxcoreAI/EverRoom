@@ -313,6 +313,255 @@ describe('AgentChatView', () => {
     act(() => renderer.unmount())
   })
 
+  it('never auto-repins while detached, and the jump button returns to the latest (#297)', async () => {
+    const conversationNode = {
+      clientHeight: 400,
+      scrollHeight: 1_000,
+      scrollTop: 600,
+    }
+    const message = (id: string, role: 'user' | 'assistant') => ({
+      id,
+      sessionId: 'session-1',
+      runId: 'run-1',
+      role,
+      content: `content-${id}`,
+      createdAt: '2026-08-20T00:00:00.000Z',
+    })
+    const renderView = (messages: Parameters<typeof AgentChatView>[0]['messages']) => (
+      <AgentChatView
+        activeDocument={null}
+        activeRunId={null}
+        agentIdByRun={{}}
+        agentNamesById={{}}
+        activityByRun={{}}
+        availableRooms={[]}
+        composer={null}
+        currentSessionId="session-1"
+        draftHasContent={false}
+        error={null}
+        loading={false}
+        messages={messages}
+        onOpenSessionLink={vi.fn()}
+        onRejectDocumentIntent={vi.fn()}
+        onRetryPrompt={vi.fn()}
+        onSelectDocument={vi.fn()}
+        onSelectPrompt={vi.fn()}
+        onSelectRoom={vi.fn().mockResolvedValue(undefined)}
+        pendingNavigationByRun={{}}
+        runCompletedAtByRun={{}}
+        runStartedAtByRun={{}}
+        scopeReady
+        sessionLinks={[]}
+        submitting={false}
+        toolCallsByRun={{}}
+      />
+    )
+
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(renderView([message('user-1', 'user'), message('assistant-1', 'assistant')]), {
+        createNodeMock: (element) => element.props.className === 'agent-conversation'
+          ? conversationNode
+          : {},
+      })
+    })
+    expect(conversationNode.scrollTop).toBe(1_000)
+
+    const conversation = renderer.root.findByProps({ className: 'agent-conversation' })
+    // 上滑一小段（距底 100px，在旧的自动回吸阈值内），流式追加内容也不得被拽回底部。
+    conversationNode.scrollTop = 500
+    act(() => {
+      conversation.props.onScroll({ currentTarget: conversationNode })
+    })
+    expect(renderer.root.findAll((node) => node.props.className === 'agent-chat-jump-latest')).not.toHaveLength(0)
+
+    await act(async () => {
+      renderer.update(renderView([
+        message('user-1', 'user'),
+        message('assistant-1', 'assistant'),
+        message('stream-1', 'assistant'),
+      ]))
+    })
+    expect(conversationNode.scrollTop).toBe(500)
+    expect(renderer.root.findByProps({ className: 'agent-chat-jump-latest-count' }).children).toEqual(['1'])
+    const jumpButton = renderer.root.findByProps({ className: 'agent-chat-jump-latest' })
+
+    act(() => {
+      jumpButton.props.onClick()
+    })
+    expect(conversationNode.scrollTop).toBe(1_000)
+    expect(renderer.root.findAll((node) => node.props.className === 'agent-chat-jump-latest')).toHaveLength(0)
+    act(() => renderer.unmount())
+  })
+
+  it('detaches on an upward wheel and repins only when a downward wheel lands near the bottom (#297)', async () => {
+    const conversationNode = {
+      clientHeight: 400,
+      scrollHeight: 1_000,
+      scrollTop: 600,
+    }
+    const message = (id: string, role: 'user' | 'assistant') => ({
+      id,
+      sessionId: 'session-1',
+      runId: 'run-1',
+      role,
+      content: `content-${id}`,
+      createdAt: '2026-08-20T00:00:00.000Z',
+    })
+    const renderView = (messages: Parameters<typeof AgentChatView>[0]['messages']) => (
+      <AgentChatView
+        activeDocument={null}
+        activeRunId={null}
+        agentIdByRun={{}}
+        agentNamesById={{}}
+        activityByRun={{}}
+        availableRooms={[]}
+        composer={null}
+        currentSessionId="session-1"
+        draftHasContent={false}
+        error={null}
+        loading={false}
+        messages={messages}
+        onOpenSessionLink={vi.fn()}
+        onRejectDocumentIntent={vi.fn()}
+        onRetryPrompt={vi.fn()}
+        onSelectDocument={vi.fn()}
+        onSelectPrompt={vi.fn()}
+        onSelectRoom={vi.fn().mockResolvedValue(undefined)}
+        pendingNavigationByRun={{}}
+        runCompletedAtByRun={{}}
+        runStartedAtByRun={{}}
+        scopeReady
+        sessionLinks={[]}
+        submitting={false}
+        toolCallsByRun={{}}
+      />
+    )
+
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(renderView([message('user-1', 'user'), message('assistant-1', 'assistant')]), {
+        createNodeMock: (element) => element.props.className === 'agent-conversation'
+          ? conversationNode
+          : {},
+      })
+    })
+    const conversation = renderer.root.findByProps({ className: 'agent-conversation' })
+
+    act(() => {
+      conversation.props.onWheel({ deltaY: -120 })
+    })
+    conversationNode.scrollTop = 500
+    expect(renderer.root.findByProps({ className: 'agent-chat-jump-latest' })).toBeTruthy()
+
+    // 距底 100px 的下滚手势恢复跟随并贴底。
+    act(() => {
+      conversation.props.onWheel({ deltaY: 120 })
+    })
+    expect(conversationNode.scrollTop).toBe(1_000)
+    expect(renderer.root.findAll((node) => node.props.className === 'agent-chat-jump-latest')).toHaveLength(0)
+
+    // 远离底部的下滚不恢复跟随，仍显示按钮。
+    act(() => {
+      conversation.props.onWheel({ deltaY: -120 })
+    })
+    conversationNode.scrollTop = 0
+    act(() => {
+      conversation.props.onWheel({ deltaY: 120 })
+    })
+    expect(conversationNode.scrollTop).toBe(0)
+    expect(renderer.root.findByProps({ className: 'agent-chat-jump-latest' })).toBeTruthy()
+    act(() => renderer.unmount())
+  })
+
+  it('sub-pixel upward steps must not repin — no jitter when scrolling up from the bottom', async () => {
+    const conversationNode = {
+      clientHeight: 400,
+      scrollHeight: 1_000,
+      scrollTop: 600,
+    }
+    const message = (id: string, role: 'user' | 'assistant') => ({
+      id,
+      sessionId: 'session-1',
+      runId: 'run-1',
+      role,
+      content: `content-${id}`,
+      createdAt: '2026-08-20T00:00:00.000Z',
+    })
+    const renderView = (messages: Parameters<typeof AgentChatView>[0]['messages']) => (
+      <AgentChatView
+        activeDocument={null}
+        activeRunId={null}
+        agentIdByRun={{}}
+        agentNamesById={{}}
+        activityByRun={{}}
+        availableRooms={[]}
+        composer={null}
+        currentSessionId="session-1"
+        draftHasContent={false}
+        error={null}
+        loading={false}
+        messages={messages}
+        onOpenSessionLink={vi.fn()}
+        onRejectDocumentIntent={vi.fn()}
+        onRetryPrompt={vi.fn()}
+        onSelectDocument={vi.fn()}
+        onSelectPrompt={vi.fn()}
+        onSelectRoom={vi.fn().mockResolvedValue(undefined)}
+        pendingNavigationByRun={{}}
+        runCompletedAtByRun={{}}
+        runStartedAtByRun={{}}
+        scopeReady
+        sessionLinks={[]}
+        submitting={false}
+        toolCallsByRun={{}}
+      />
+    )
+
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(renderView([message('user-1', 'user'), message('assistant-1', 'assistant')]), {
+        createNodeMock: (element) => element.props.className === 'agent-conversation'
+          ? conversationNode
+          : {},
+      })
+    })
+    const conversation = renderer.root.findByProps({ className: 'agent-conversation' })
+
+    // 上滑手势先解除吸底（wheel 先于 scroll 触发）。
+    act(() => {
+      conversation.props.onWheel({ deltaY: -120 })
+    })
+    expect(renderer.root.findByProps({ className: 'agent-chat-jump-latest' })).toBeTruthy()
+
+    // 触控板慢扫/滚轮平滑滚动收尾会产生 ±0.5px 的亚像素步进：不足以判定方向，
+    // 既不解除也不回吸。修复前这些步进落进回吸分支，每步被拽回 scrollHeight（抖动）。
+    act(() => {
+      conversationNode.scrollTop = 999.5
+      conversation.props.onScroll({ currentTarget: conversationNode })
+    })
+    expect(conversationNode.scrollTop).toBe(999.5)
+    act(() => {
+      conversationNode.scrollTop = 999
+      conversation.props.onScroll({ currentTarget: conversationNode })
+    })
+    expect(conversationNode.scrollTop).toBe(999)
+    act(() => {
+      conversationNode.scrollTop = 850
+      conversation.props.onScroll({ currentTarget: conversationNode })
+    })
+    expect(conversationNode.scrollTop).toBe(850)
+
+    // 明确的向下位移回到阈值内才恢复吸底。
+    act(() => {
+      conversationNode.scrollTop = 900
+      conversation.props.onScroll({ currentTarget: conversationNode })
+    })
+    expect(conversationNode.scrollTop).toBe(1_000)
+    expect(renderer.root.findAll((node) => node.props.className === 'agent-chat-jump-latest')).toHaveLength(0)
+    act(() => renderer.unmount())
+  })
+
   it('shows an unframed byline only for non-main Agent responses', async () => {
     let renderer!: TestRenderer.ReactTestRenderer
     await act(async () => {

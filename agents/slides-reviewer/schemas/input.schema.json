@@ -1,0 +1,14 @@
+{
+  "type": "object",
+  "properties": {
+    "task": { "type": "string", "enum": ["review"] },
+    "manualToken": { "type": "string", "minLength": 4, "maxLength": 120, "description": "Manual lookup token; pass verbatim to slides_review_manual when you decide to revise this page." },
+    "pageIndex": { "type": "integer", "minimum": 0, "maximum": 23 },
+    "totalPages": { "type": "integer", "minimum": 1, "maximum": 24 },
+    "title": { "type": "string", "maxLength": 80 },
+    "role": { "type": "string", "maxLength": 24 },
+    "density": { "type": "string", "maxLength": 16 }
+  },
+  "required": ["task", "manualToken", "pageIndex", "totalPages"],
+  "additionalProperties": false
+}

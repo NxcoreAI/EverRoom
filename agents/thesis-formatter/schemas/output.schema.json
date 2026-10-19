@@ -1,0 +1,60 @@
+{
+  "type": "object",
+  "properties": {
+    "task": {
+      "type": "string",
+      "enum": ["parse_template", "bind_thesis"]
+    },
+    "formatCard": {
+      "type": "object",
+      "description": "parse_template only: complete thesis format card (page/base/headerFooter/headings/parts/abstract/toc/figuresTables/references/cover/fixedTexts).",
+      "additionalProperties": true
+    },
+    "bindingSpec": {
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "maxLength": 300 },
+        "coverFields": {
+          "type": "object",
+          "additionalProperties": { "type": "string", "maxLength": 200 }
+        },
+        "abstractZh": { "type": "string", "maxLength": 8000 },
+        "keywordsZh": { "type": "array", "items": { "type": "string", "maxLength": 60 }, "maxItems": 12 },
+        "abstractEn": { "type": "string", "maxLength": 8000 },
+        "keywordsEn": { "type": "array", "items": { "type": "string", "maxLength": 60 }, "maxItems": 12 },
+        "chapters": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "level": { "type": "integer", "minimum": 1, "maximum": 4 },
+              "headingText": { "type": "string", "minLength": 1, "maxLength": 200 },
+              "blockStart": { "type": "integer", "minimum": 0 },
+              "blockEnd": { "type": "integer", "minimum": 1 }
+            },
+            "required": ["level", "headingText", "blockStart", "blockEnd"],
+            "additionalProperties": false
+          },
+          "maxItems": 400
+        },
+        "references": { "type": "array", "items": { "type": "string", "maxLength": 600 }, "maxItems": 200 },
+        "appendixBlocks": {
+          "type": ["object", "null"],
+          "properties": {
+            "start": { "type": "integer", "minimum": 0 },
+            "end": { "type": "integer", "minimum": 1 }
+          },
+          "required": ["start", "end"],
+          "additionalProperties": false
+        },
+        "acknowledgementParagraphs": { "type": "array", "items": { "type": "string", "maxLength": 2000 }, "maxItems": 40 },
+        "achievements": { "type": "array", "items": { "type": "string", "maxLength": 600 }, "maxItems": 40 }
+      },
+      "required": ["title", "coverFields", "abstractZh", "keywordsZh", "abstractEn", "keywordsEn", "chapters", "references", "appendixBlocks", "acknowledgementParagraphs", "achievements"],
+      "additionalProperties": false,
+      "description": "bind_thesis only: source-to-skeleton mapping. Block ranges reference sourceOutline indices, half-open [start, end)."
+    }
+  },
+  "required": ["task"],
+  "additionalProperties": false
+}

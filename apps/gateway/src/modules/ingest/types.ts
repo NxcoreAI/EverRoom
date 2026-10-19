@@ -72,6 +72,12 @@ export const DATA_TYPES: DataTypeDef[] = [
     defaults: { room: true, wiki: true, memory: false },
   },
   {
+    key: "image",
+    label: "图片",
+    matchExtensions: ["png", "jpg", "jpeg", "gif", "webp", "bmp"],
+    defaults: { room: true, wiki: true, memory: true },
+  },
+  {
     key: "mail",
     label: "邮件（连接器）",
     matchExtensions: [],

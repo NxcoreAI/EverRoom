@@ -1,5 +1,6 @@
 import {
   BookOpen,
+  Search,
   FileSpreadsheet,
   FileText,
   FileType,
@@ -36,6 +37,7 @@ export function TopBar({
   onActivateOfficeTab,
   onCloseOfficeTab,
   onToggleAgent,
+  onOpenSearch,
 }: {
   contextRoomTabs: ContextRoomWorkspaceTab[]
   activeContextRoomId: string | null
@@ -48,6 +50,7 @@ export function TopBar({
   onActivateOfficeTab: (instanceId: string) => void
   onCloseOfficeTab: (instanceId: string) => void
   onToggleAgent: () => void
+  onOpenSearch: () => void
 }) {
   const { t } = useLocale()
   const workbenchActive = activeContextRoomId === null && activeOfficeId === null
@@ -128,6 +131,15 @@ export function TopBar({
       </div>
 
       <div className="top-actions no-drag">
+        <button
+          type="button"
+          className="icon-button"
+          title={t('surface:topBar.openSearch')}
+          aria-label={t('surface:topBar.openSearch')}
+          onClick={onOpenSearch}
+        >
+          <Search aria-hidden="true" strokeWidth={1.8} />
+        </button>
         <button
           type="button"
           className="icon-button"

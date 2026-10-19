@@ -1,3 +1,5 @@
+/** @vitest-environment happy-dom */
+
 import TestRenderer, { act } from 'react-test-renderer'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ContextRoomRecord } from '../src/renderer/src/components/context-room/ported/types'

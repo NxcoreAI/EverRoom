@@ -8,6 +8,7 @@ import {
   FileText,
   GraduationCap,
   Handshake,
+  Image as ImageIcon,
   Presentation,
   Scissors,
   ScrollText,
@@ -26,6 +27,7 @@ export interface FileCategoryDefinition {
 
 export const FILE_CATEGORY_DEFINITIONS: FileCategoryDefinition[] = [
   { key: 'clipper', label: 'surface:files.categoryClipper', icon: Scissors, tone: 'teal' },
+  { key: 'image', label: 'surface:files.categoryImage', icon: ImageIcon, tone: 'teal' },
   { key: 'data', label: 'surface:files.categoryData', icon: BarChart3, tone: 'green' },
   { key: 'form', label: 'surface:files.categoryForm', icon: ClipboardList, tone: 'blue' },
   { key: 'lesson', label: 'surface:files.categoryLesson', icon: Presentation, tone: 'orange' },
@@ -62,6 +64,8 @@ function extensionOf(file: FileCatalogDto): string {
 
 export function categoryForFile(file: FileCatalogDto): FileCategoryDefinition {
   if (file.sourceKind === 'web-clipper') return categoryByKey.get('clipper')!
+  // 图片按 dataType 直判：分类器读的是 VLM 描述文本，会把图片误归报告/总结等文档类。
+  if (file.dataType === 'image') return categoryByKey.get('image')!
   if (file.agentCategory && categoryByKey.has(file.agentCategory)) return categoryByKey.get(file.agentCategory)!
   const haystack = `${file.originalName} ${file.sharedTitle}`.toLocaleLowerCase()
   for (const matcher of MATCHERS) {

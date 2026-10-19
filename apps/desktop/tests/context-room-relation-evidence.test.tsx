@@ -1,3 +1,5 @@
+/** @vitest-environment happy-dom */
+
 import TestRenderer, { act } from 'react-test-renderer'
 import { describe, expect, it, vi } from 'vitest'
 

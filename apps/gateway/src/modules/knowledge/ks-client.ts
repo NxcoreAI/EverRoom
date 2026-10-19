@@ -49,6 +49,21 @@ export interface KsWikiDetail {
   /** KS 在 ingest 成功后用 LLM 重写 summary（≤100 字内容摘要）；创建时是网关写的身份卡。 */
   updated_at?: string | null;
   last_sync_at?: string | null;
+  /** 最近一次构建失败原因（failed 态诊断用；ready/processing 为 null）。 */
+  sync_error?: string | null;
+}
+
+/** /v3/wiki/raw/ls 条目：源文件生命周期状态（uploaded=待处理 / ingested / failed）。 */
+export interface KsSourceRow {
+  filename: string;
+  sha256: string;
+  size: number;
+  status: "uploaded" | "ingested" | "failed";
+  created_at: string;
+  updated_at: string;
+  last_modified_by: string | null;
+  ingested_at: string | null;
+  ingest_error: string | null;
 }
 
 export interface KsRawFile {
@@ -122,6 +137,12 @@ export class KsAdminClient {
   /** 删除源文件（KS 按 sources 并集级联清理页面）。 */
   async rawRm(wikiId: string, filenames: string[]): Promise<void> {
     await this.post("/v3/wiki/raw/rm", { wiki_id: wikiId, team_id: this.teamId, filenames });
+  }
+
+  /** 源文件清单（构建进度：uploaded=待处理）。KS 的源状态在整轮 ingest 结束才落账。 */
+  async rawLs(wikiId: string): Promise<KsSourceRow[]> {
+    const data = await this.post<{ items: KsSourceRow[] }>("/v3/wiki/raw/ls", { wiki_id: wikiId });
+    return data?.items ?? [];
   }
 
   async getWiki(wikiId: string): Promise<KsWikiDetail | null> {

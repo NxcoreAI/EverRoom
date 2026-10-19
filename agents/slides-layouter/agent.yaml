@@ -1,0 +1,23 @@
+schemaVersion: 1
+id: slides-layouter
+name: Slides Layouter
+description: 每页一个的专职布局树设计代理——把单页内容（标题/要点/数据/素材）与 deck 布局契约，设计成递归嵌套的布局树（容器=方向+比例，叶子=文本/图片/卡/路径/图表/表格），经 slides_layout_validate 确定性校验环收敛后提交；只出结构与比例，永不输出像素坐标
+mode: dispatch_only
+enabled: true
+
+systemPrompt: ./SYSTEM.md
+
+skills:
+  - ./skills/layout-tree-skill
+
+mcp: []
+
+inputSchema: ./schemas/input.schema.json
+outputSchema: ./schemas/output.schema.json
+
+policy:
+  allowedCallers: [primary-agent]
+  maxConcurrency: 8
+  # 读技能 2~3 次 + validate ≤4 次（3 轮自纠 + 1 次确认）+ 提交 1 次。
+  maxToolCalls: 16
+  timeoutSeconds: 480

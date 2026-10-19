@@ -33,9 +33,21 @@ import {
  */
 type ProjectionDatabase = Pick<GatewayDatabase, "select" | "insert" | "update" | "delete">;
 
-export type DomainProjectionOutcome = "inserted" | "updated" | "unchanged" | "deleted" | "noop";
+export type DomainProjectionOutcome = "inserted" | "updated" | "unchanged" | "deleted" | "noop" | "skipped";
 /** 投影结果：outcome + 域行 id（M4：memorySink 的 sourceId 直接用行 id）。 */
 export interface DomainProjectionResult { outcome: DomainProjectionOutcome; id: string | null; }
+
+/**
+ * id-only 空壳邮件（Graph delta 偶发只回 id：无主题/正文/收发时间）。
+ * 这种行入库后 sentAt 为空，日记按 syncedAt 兜底取时间，全部滑进当天窗口。
+ */
+export function isEmptyMailShell(message: NormalizedMail): boolean {
+  return !message.subject?.trim()
+    && !message.textBody?.trim()
+    && !message.htmlBody?.trim()
+    && !message.sentAt
+    && !message.receivedAt;
+}
 
 function stableJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
@@ -104,6 +116,7 @@ export class ConnectorDomainProjection {
   projectMail(provider: string, connectionId: string, change: NormalizedMailChange, syncedAt = new Date()): DomainProjectionResult {
     if (change.kind === "tombstone") return this.softDelete(connectorEmails, provider, connectionId, change.providerMessageId, syncedAt);
     const message: NormalizedMail = change.message;
+    if (isEmptyMailShell(message)) return { outcome: "skipped", id: null };
     const receivedAt = dateOf(message.receivedAt ?? message.sentAt);
     const bodyText = message.textBody?.trim() || (message.htmlBody ? htmlToText(message.htmlBody) : "");
     const { senderName, senderAddress } = senderOf(message.addresses);
@@ -179,13 +192,18 @@ export class ConnectorDomainProjection {
       ))
       .get();
     const hash = domainContentHash(normalized);
+    // 内容未变化的记录跳过写入：否则每次同步/回填都把 syncedAt 刷成当前时刻，
+    // 无 sentAt 的记录经日记的 syncedAt 兜底全部滑进"今天"的窗口（日记 agent 被撑爆的根因）。
+    if (existing && existing.contentHash === hash && !existing.deletedAt) {
+      return { outcome: "unchanged", id: existing.id };
+    }
     const values = { ...normalized, id: existing?.id ?? randomUUID(), syncedAt, contentHash: hash, deletedAt: null };
     this.db.insert(table).values(values as never).onConflictDoUpdate({
       target: [table.ownerId, table.service, table.connectionName, table.sourceRecordId],
       set: values as never,
     }).run();
     return {
-      outcome: !existing ? "inserted" : existing.contentHash === hash && !existing.deletedAt ? "unchanged" : "updated",
+      outcome: !existing ? "inserted" : "updated",
       id: values.id as string,
     };
   }

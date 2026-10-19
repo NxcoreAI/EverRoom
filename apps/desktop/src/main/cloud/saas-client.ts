@@ -190,6 +190,8 @@ export interface AiPlanModels {
   lite: string
   cursorCompletion: string
   vlm: string
+  /** 生图（中转 /v1/images/generations）；空串=套餐未启用生图。 */
+  image?: string
   webSearch: string
   embedding: string
   embeddingDimensions: number

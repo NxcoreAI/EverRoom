@@ -1,8 +1,10 @@
 import * as Popover from '@radix-ui/react-popover';
 import {
   ArrowDownUp,
+  BookText,
   FileSpreadsheet,
   FileText,
+  LoaderCircle,
   Mail,
   Mic,
   Paperclip,
@@ -13,6 +15,7 @@ import {
 import type { RoomDocument } from '@nxcore/agent-contract';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocale } from '../../../../../i18n/LocaleContext';
+import { showToast } from '@/state/toast';
 
 import type { KnowledgeFileDto } from '../../../../../../../shared/knowledge';
 import { createContextRoomResourceLibrary, formatBytes, knowledgeFileStatusLabel } from '../../resources';
@@ -51,6 +54,9 @@ interface MaterialsViewMemory {
 }
 
 const MATERIALS_SORTS: readonly MaterialsSort[] = ['source', 'name'];
+
+/** 可设为论文模版的库内文件扩展名。 */
+const THESIS_TEMPLATE_EXTENSIONS = /\.(docx|doc|dotx|pdf)$/i;
 
 function loadMaterialsView(roomId: string): MaterialsViewMemory {
   try {
@@ -181,6 +187,65 @@ export function MaterialsPane({
   const [deletingDocumentId, setDeletingDocumentId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+
+  // 论文格式卡（一 Room 多卡）：作为模版来源的库内文件带「论文模版」标记 + docx/pdf 行的「设为论文模版」入口。
+  const [templateFileEntryIds, setTemplateFileEntryIds] = useState<ReadonlySet<string>>(new Set());
+  const [parsingTemplateId, setParsingTemplateId] = useState<string | null>(null);
+  const [uploadingTemplate, setUploadingTemplate] = useState(false);
+  const refreshTemplate = useCallback(() => {
+    const thesisFormat = window.nxcore?.thesisFormat;
+    if (!thesisFormat) return;
+    void thesisFormat.listCards(room.id)
+      .then((rows) => setTemplateFileEntryIds(new Set(
+        rows
+          .map((row) => row.sourceFileEntryId)
+          .filter((id): id is string => typeof id === 'string'),
+      )))
+      .catch(() => setTemplateFileEntryIds(new Set()));
+  }, [room.id]);
+  useEffect(() => {
+    setTemplateFileEntryIds(new Set());
+    refreshTemplate();
+    return window.nxcore?.thesisFormat?.onCardChanged(() => refreshTemplate());
+  }, [refreshTemplate]);
+
+  const setThesisTemplateFromLibrary = async (fileEntryId: string, name: string) => {
+    const thesisFormat = window.nxcore?.thesisFormat;
+    if (!thesisFormat) return;
+    setParsingTemplateId(fileEntryId);
+    try {
+      await thesisFormat.setFromLibrary(room.id, fileEntryId);
+      showToast({ title: t('contextRoom:thesisFormat.templateReady'), message: name });
+    } catch (error: unknown) {
+      showToast({
+        title: t('contextRoom:thesisFormat.templateParseFailed'),
+        message: `${name}：${error instanceof Error ? error.message : String(error)}。${t('contextRoom:thesisFormat.templateParseFailedHint')}`,
+        variant: 'error',
+      });
+    } finally {
+      setParsingTemplateId(null);
+    }
+  };
+
+  const uploadThesisTemplate = async () => {
+    const thesisFormat = window.nxcore?.thesisFormat;
+    if (!thesisFormat) return;
+    setUploadingTemplate(true);
+    try {
+      const meta = await thesisFormat.pickAndSet(room.id);
+      if (!meta.canceled) {
+        showToast({ title: t('contextRoom:thesisFormat.templateReady'), message: meta.sourceName });
+      }
+    } catch (error: unknown) {
+      showToast({
+        title: t('contextRoom:thesisFormat.templateParseFailed'),
+        message: `${error instanceof Error ? error.message : String(error)}。${t('contextRoom:thesisFormat.templateParseFailedHint')}`,
+        variant: 'error',
+      });
+    } finally {
+      setUploadingTemplate(false);
+    }
+  };
 
   useEffect(() => {
     setMemory(loadMaterialsView(room.id));
@@ -399,6 +464,17 @@ export function MaterialsPane({
             ? 'contextRoom:materialsPane.sortBySourceTime'
             : 'contextRoom:materialsPane.sortByName')}
         </button>
+        <button
+          type="button"
+          className="context-room-materials-sort-toggle"
+          disabled={uploadingTemplate}
+          onClick={() => void uploadThesisTemplate()}
+        >
+          {uploadingTemplate
+            ? <LoaderCircle aria-hidden="true" className="is-spinning" />
+            : <BookText aria-hidden="true" />}
+          {t('contextRoom:thesisFormat.uploadTemplate')}
+        </button>
       </header>
       {actionError ? <div className="context-room-resource-error" role="alert">{actionError}</div> : null}
       <div className="context-room-materials-list" role="list">
@@ -421,10 +497,29 @@ export function MaterialsPane({
               <span className="context-room-materials-icon">{rowIcon(row)}</span>
               <span className="context-room-materials-main">
                 <b>{row.title}</b>
-                <small>{row.subtitle}</small>
+                <small>
+                  {row.subtitle}
+                  {row.knowledgeFileId && templateFileEntryIds.has(row.knowledgeFileId)
+                    ? ` · ${t('contextRoom:thesisFormat.templateBadge')}`
+                    : ''}
+                </small>
               </span>
               <time>{row.timeLabel}</time>
             </button>
+            {row.knowledgeFileId && THESIS_TEMPLATE_EXTENSIONS.test(row.title) ? (
+              <button
+                type="button"
+                className="context-room-materials-template"
+                aria-label={t('contextRoom:thesisFormat.setTemplate')}
+                title={t('contextRoom:thesisFormat.setTemplate')}
+                disabled={parsingTemplateId !== null}
+                onClick={() => void setThesisTemplateFromLibrary(row.knowledgeFileId!, row.title)}
+              >
+                {parsingTemplateId === row.knowledgeFileId
+                  ? <LoaderCircle aria-hidden="true" className="is-spinning" />
+                  : <BookText aria-hidden="true" />}
+              </button>
+            ) : null}
             {row.knowledgeFileId && row.resource?.kind === 'knowledge-file' ? (
               <ResourceCorrectionMenu
                 room={room}

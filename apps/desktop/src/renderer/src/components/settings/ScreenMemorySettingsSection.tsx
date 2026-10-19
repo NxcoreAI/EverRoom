@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 
 import { useLocale } from '@/i18n/LocaleContext'
+import { ScreenRecordingPermissionCard } from '@/components/settings/ScreenRecordingPermissionCard'
 import type { ScreenMemorySettingsDto, ScreenMemoryStatusDto, ScreenMemoryStorageDto } from '../../../../shared/sources'
 
 function formatBytes(bytes: number): string {
@@ -89,10 +90,6 @@ export function ScreenMemorySettingsSection() {
     }
   }, [backfillFrom, backfillTo, backfillEstimateCount, t, reload])
 
-  const permissionLabel = status?.permission === 'granted'
-    ? t('surface:screenMemory.permissionGranted')
-    : t('surface:screenMemory.permissionMissing')
-
   return (
     <section id="settings-screen-memory" className="reality-settings-section settings-anchor-section" aria-labelledby="screen-memory-settings-title">
       <header>
@@ -130,9 +127,32 @@ export function ScreenMemorySettingsSection() {
           {t(settings?.paused ? 'surface:settings.on' : 'surface:settings.off')}
         </button>
       </div>
+      <ScreenRecordingPermissionCard permission={status?.permission} />
+      {status?.running ? (
+        <div className="reality-setting-row">
+          <div>
+            <strong>{t('surface:screenMemory.currentApp')}</strong>
+            <span className="settings-value-text">{status.currentAppName ?? '—'}</span>
+          </div>
+        </div>
+      ) : null}
       <div className="reality-setting-row">
-        <div><strong>{t('surface:screenMemory.permission')}</strong><span className="settings-value-text">{permissionLabel}</span></div>
+        <div><strong>{t('surface:screenMemory.scope')}</strong></div>
+        <div className="screen-memory-scope-switch">
+          {([['all', 'surface:screenMemory.scopeAll'], ['allowlist', 'surface:screenMemory.scopeAllowlist']] as const).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              disabled={busy || settings === null}
+              data-active={String(settings?.scopeMode === value)}
+              onClick={() => void patch({ scopeMode: value })}
+            >
+              {t(label)}
+            </button>
+          ))}
+        </div>
       </div>
+      {settings?.scopeMode === 'allowlist' ? (
       <div className="reality-setting-row">
         <div>
           <strong>{t('surface:screenMemory.allowedApps')}</strong>
@@ -161,6 +181,7 @@ export function ScreenMemorySettingsSection() {
           </div>
         </div>
       </div>
+      ) : null}
       <div className="reality-setting-row">
         <div>
           <strong>{t('surface:screenMemory.excludedApps')}</strong>

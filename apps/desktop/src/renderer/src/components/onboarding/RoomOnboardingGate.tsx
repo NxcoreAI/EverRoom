@@ -1,3 +1,4 @@
+import type { OnboardingFlowStage } from './OnboardingFlowChrome'
 import {
   BookOpen,
   BrainCircuit,
@@ -34,9 +35,9 @@ interface RoomOnboardingGateProps {
   suppressOnboarding?: boolean
   onFinished?: (reason?: 'created' | 'existing') => void
   onExistingData?: () => void
-  onNavigateStage?: (stage: 'memory' | 'room' | 'folder' | 'microphone' | 'ready') => void
+  onNavigateStage?: (stage: Exclude<OnboardingFlowStage, 'idle' | 'screen' | 'agents'>) => void
   memoryReady?: boolean
-  activeStage?: 'idle' | 'memory' | 'room' | 'folder' | 'microphone' | 'agents' | 'ready'
+  activeStage?: OnboardingFlowStage
 }
 
 // The guide is shown only on first use. Its marker is still updated during a

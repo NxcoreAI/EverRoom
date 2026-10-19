@@ -23,6 +23,7 @@ import {
   type SourceKind,
 } from "./entity-registry.js";
 import { normalizeEntityName } from "./entity-index.js";
+import { enqueueSearchIndex, type SearchItemType } from "../search/jobs.js";
 
 export const ROOM_RELATION_SCORING_VERSION = 1;
 export const ROOM_RELATION_INDEX_JOB_TYPE = "knowledge.relation-index";
@@ -272,6 +273,8 @@ export class RoomRelationRegistry {
       }
     });
     this.recomputeAll();
+    const searchItem = toSearchIndexItem(input.sourceKind);
+    if (searchItem) enqueueSearchIndex(this.db, { itemType: searchItem, refId: input.sourceId, priority: "high" });
     return true;
   }
 
@@ -282,6 +285,8 @@ export class RoomRelationRegistry {
       tx.delete(roomSourceMemberships).where(and(eq(roomSourceMemberships.sourceKind, sourceKind), eq(roomSourceMemberships.sourceId, sourceId))).run();
     });
     this.recomputeAll();
+    const removedItem = toSearchIndexItem(sourceKind);
+    if (removedItem) enqueueSearchIndex(this.db, { itemType: removedItem, refId: sourceId, priority: "high" });
   }
 
   /** Backfill durable projections without importing the old heuristic graph. */
@@ -908,4 +913,12 @@ export class RoomRelationRegistry {
       updatedAt: relation.updatedAt.toISOString(),
     };
   }
+}
+
+
+/** Room 关联变化 → 触发对应内容重索引（file/everroom-doc 之外的类型暂不入统一索引）。 */
+function toSearchIndexItem(sourceKind: SourceKind): SearchItemType | null {
+  if (sourceKind === "file") return "file";
+  if (sourceKind === "everroom-doc") return "document";
+  return null;
 }

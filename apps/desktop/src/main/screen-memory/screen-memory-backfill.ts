@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 
 import { diffKeyframeText } from './text-diff'
+import { blocksWithNewLines, clusterOcrLines } from './line-clustering'
 import { IntervalTracker, type ClosedInterval } from './interval-tracker'
 import { getScreenMemoryImagesDirectory } from './screen-memory-settings'
 import type { VisionOcrResult } from '../vision-ocr/vision-ocr-client'
@@ -87,7 +88,8 @@ export async function runScreenMemoryBackfill(
         await mkdir(imageDirectory, { recursive: true })
         await writeFile(rawPath, Buffer.from(item.bytesBase64, 'base64'))
         const result = await deps.ocr.ocr(rawPath, { compressOut: compressedPath })
-        const decision = diffKeyframeText(tracker.lastStableLines(), result.lines.map((line) => line.text))
+        const clustered = clusterOcrLines(result.lines, { width: result.width, height: result.height })
+        const decision = diffKeyframeText(tracker.lastStableLines(), clustered.orderedLines)
         if (!decision.changed) {
           await rm(compressedPath, { force: true }).catch(() => undefined)
           continue
@@ -109,6 +111,7 @@ export async function runScreenMemoryBackfill(
           },
           stableLines: decision.stableLines,
           newLines: decision.newLines,
+          newBlocks: blocksWithNewLines(clustered.blocks, decision.newLines),
         })
         summary.keyframes += 1
       } catch (error) {

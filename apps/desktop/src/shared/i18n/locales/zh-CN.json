@@ -33,9 +33,10 @@
   "error.rateLimited.title": "操作稍后继续",
   "error.rateLimited.message": "请求过于频繁，请稍后重试。",
   "error.screenshot.windowUnavailable": "当前应用窗口不可用。",
-  "error.screenshot.captureFailed": "应用窗口截图失败，请稍后重试。",
-  "error.screenshot.empty": "应用窗口截图为空，请稍后重试。",
-  "error.screenshot.encodingFailed": "应用窗口截图编码失败，请稍后重试。",
+  "error.screenshot.permissionDenied": "缺少屏幕录制权限，请在系统设置中授权后重试。",
+  "error.screenshot.captureFailed": "屏幕截图失败，请稍后重试。",
+  "error.screenshot.empty": "屏幕截图为空，请稍后重试。",
+  "error.screenshot.encodingFailed": "屏幕截图编码失败，请稍后重试。",
   "error.screenshot.saveFailed": "截图无法保存，请检查目录权限和磁盘空间。",
   "error.screenshot.invalidSource": "无法验证截图请求来源。",
   "error.pdf.invalidSource": "无法验证 PDF 导出请求来源。",
@@ -46,5 +47,6 @@
   "document.untitled": "无标题文档",
   "error.transcript.invalidSource": "无法验证导出请求来源。",
   "error.transcript.invalidRequest": "无效的逐字稿导出请求。",
-  "error.memory.fileTooLarge": "文件超过 2MB 导入上限（{size}MB）"
+  "error.memory.fileTooLarge": "文件超过 2MB 导入上限（{size}MB）",
+  "dialog.importFiles.images": "图片"
 }

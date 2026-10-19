@@ -23,6 +23,9 @@ import { clampDate, hash, iso } from "./utils.js";
 
 export interface DiarySourceCollectionState { memoryFailed: boolean }
 
+/** 来源清单硬上限：清单元数据全量进日记 Agent 提示词，超限会撑爆模型上下文/输出。 */
+const MAX_DIARY_SOURCES = 200;
+
 function sourceRef(kind: string, id: string): string { return `${kind}:${id}`; }
 
 function textFromJson(value: unknown): string {
@@ -289,7 +292,21 @@ export class DiarySourceCollector {
         ...(source.endedAt ? { endedAt: iso(endedAt) } : {}),
       });
     }
-    return [...unique.values()].sort((a, b) =>
-      a.occurredAt.localeCompare(b.occurredAt) || a.sourceId.localeCompare(b.sourceId));
+    const byTimeline = (a: DiarySource, b: DiarySource) =>
+      a.occurredAt.localeCompare(b.occurredAt) || a.sourceId.localeCompare(b.sourceId);
+    const ordered = [...unique.values()].sort(byTimeline);
+    if (ordered.length <= MAX_DIARY_SOURCES) return ordered;
+    // 超上限时优先丢弃 connector_updated 兜底时间的来源（无真实发生时间的记录），
+    // 保留集仍按时间线排序；静默全量塞进清单会把日记 Agent 的提示词撑爆。
+    const pinned = ordered.filter((source) => source.timeBasis !== "connector_updated");
+    const fallbackTimed = ordered.filter((source) => source.timeBasis === "connector_updated");
+    const kept = [...pinned, ...fallbackTimed].slice(0, MAX_DIARY_SOURCES).sort(byTimeline);
+    this.logger?.warn({
+      event: "diary.sources.truncated",
+      total: ordered.length,
+      kept: kept.length,
+      droppedFallbackTimed: ordered.length - kept.length,
+    }, "diary sources over manifest cap; fallback-timed sources dropped first");
+    return kept;
   }
 }

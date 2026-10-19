@@ -334,6 +334,36 @@ describe("DiaryService", () => {
     });
   });
 
+  it("caps the source manifest and drops fallback-timed sources first", async () => {
+    const generate = vi.fn<DiaryGenerator["generate"]>(async (input) => ({
+      headline: "大批来源", summary: "被截断的一天", reflection: "", range: input.range,
+      events: [{ time: input.sources[0]!.occurredAt, title: "首条", summary: input.sources[0]!.evidenceSummary, sourceRefs: [input.sources[0]!.sourceId] }],
+      closing: "",
+    }));
+    const { database, service } = await setup({ model: "test", generate });
+    const insert = database.sqlite.prepare(
+      "INSERT INTO connector_emails (id, owner_id, service, connection_name, source_record_id, synced_at, schema_version, prompt_version, content_hash, message_id, recipients, subject, sent_at, body_text, labels, has_attachments) VALUES (?, 'local-user', 'outlook', 'conn-1', ?, ?, 1, 0, ?, ?, '[]', ?, ?, ?, '[]', 0)",
+    );
+    // 240 条无 sentAt 的空壳（occurredAt 落 syncedAt 兜底）+ 10 条真实邮件。
+    for (let index = 0; index < 240; index += 1) {
+      insert.run(`junk-${index}`, `junk-${index}`, new Date("2026-08-20T07:00:00.000Z").getTime(), `h-junk-${index}`, `junk-${index}`, "（无主题）", null, "");
+    }
+    for (let index = 0; index < 10; index += 1) {
+      insert.run(`real-${index}`, `real-${index}`, NOW.getTime(), `h-real-${index}`, `real-${index}`, `真实邮件 ${index}`, new Date("2026-08-20T05:00:00.000Z").getTime(), "正文");
+    }
+
+    service.createRun("2026-08-20");
+    await service.drain();
+
+    expect(generate).toHaveBeenCalledOnce();
+    const sources = generate.mock.calls[0]?.[0].sources!;
+    expect(sources).toHaveLength(200);
+    // 真实邮件（email_sent 基准）全部保留，空壳只保留到上限为止。
+    const sourceIds = new Set(sources.map((source) => source.sourceId));
+    for (let index = 0; index < 10; index += 1) expect(sourceIds.has(`connector_email:real-${index}`)).toBe(true);
+    expect(sources.filter((source) => source.timeBasis === "connector_updated")).toHaveLength(190);
+  });
+
   it("includes a visual range that started before the local diary day", async () => {
     const generate = vi.fn<DiaryGenerator["generate"]>(async (input) => ({
       headline: "跨日记录", summary: "跨日活动", reflection: "", range: input.range,

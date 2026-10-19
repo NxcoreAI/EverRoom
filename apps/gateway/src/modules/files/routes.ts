@@ -30,7 +30,7 @@ const CatalogFileDto = Type.Object({
   sourceKind: Type.Union([
     Type.Literal("manual-upload"), Type.Literal("local-folder"),
     Type.Literal("connector"), Type.Literal("migration"), Type.Literal("web-clipper"), Type.Literal("legacy-upload"),
-    Type.Literal("agent-generated"),
+    Type.Literal("agent-generated"), Type.Literal("artifact-imported"),
   ]),
   sourceLabel: Type.String(),
   relativePath: Type.Union([Type.String(), Type.Null()]),
@@ -308,7 +308,7 @@ export function filesRoutes(
         } catch {
           return reply.code(400).send(errorOf("metadata_invalid"));
         }
-        if (metadata.sourceKind !== "manual-upload" && metadata.sourceKind !== "connector" && metadata.sourceKind !== "migration" && metadata.sourceKind !== "web-clipper" && metadata.sourceKind !== "agent-generated") {
+        if (metadata.sourceKind !== "manual-upload" && metadata.sourceKind !== "connector" && metadata.sourceKind !== "migration" && metadata.sourceKind !== "web-clipper" && metadata.sourceKind !== "agent-generated" && metadata.sourceKind !== "artifact-imported") {
           return reply.code(400).send(errorOf("source_kind_invalid"));
         }
         if (typeof metadata.sourceKey !== "string" || !metadata.sourceKey.trim()) {

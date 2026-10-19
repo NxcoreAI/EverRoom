@@ -228,6 +228,9 @@ export function useAgentSession(
   const [permissionModeState, setPermissionModeState] = useState<AgentPermissionModeState | null>(null)
   /** 待发队列：run 进行中提交的消息先排队，run 终态后自动逐条发出。 */
   const [queuedSubmissions, setQueuedSubmissions] = useState<QueuedAgentSubmission[]>([])
+  /** 手动重试载体：失败后重拉会话清单/快照（变更即重跑引导 effect）。 */
+  const [reloadNonce, setReloadNonce] = useState(0)
+  const reload = useCallback(() => setReloadNonce((nonce) => nonce + 1), [])
   const sequenceByRun = useRef(new Map<string, number>())
   /** 每个 run 的活动折叠器：实时事件按 seq 增量折叠，不再全量重放历史事件。 */
   const activityAccByRun = useRef(new Map<string, AgentRunActivityAccumulator>())
@@ -779,7 +782,7 @@ export function useAgentSession(
       pendingEventsRef.current = []
       void api?.unsubscribe()
     }
-  }, [api, applyEvent, hydrateSnapshot, selectSession, scheduleAgentEventFlush])
+  }, [api, applyEvent, hydrateSnapshot, reloadNonce, selectSession, scheduleAgentEventFlush])
 
   // 全局默认档位：新会话创建时锁定到 session.activeAgentId（后端权威）。
   // 切换只影响下一个新会话，进行中的会话档位以 currentSession.modelPreference 为准。
@@ -1316,6 +1319,7 @@ export function useAgentSession(
     setSessionPermissionMode,
     queuedSubmissions,
     removeQueuedSubmission,
+    reload,
     reasoningByRun,
     runCompletedAtByRun,
     runStartedAtByRun,

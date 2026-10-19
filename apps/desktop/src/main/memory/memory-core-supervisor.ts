@@ -44,7 +44,12 @@ const MEMORY_CORE_PORT = 8420
 const DEFAULT_BASE_URL = `http://127.0.0.1:${MEMORY_CORE_PORT}`
 // 全新数据目录 + 多服务并行冷启动（tsx 编译争抢 IO）时 30s 不够，实测可超一分钟。
 const STARTUP_TIMEOUT_MS = 120_000
-const SHUTDOWN_TIMEOUT_MS = 5_000
+// SIGTERM 后留给孙进程优雅停机（OTel flush、worker/SQLite 池）的宽限；超时整组 SIGKILL。
+const SHUTDOWN_GRACE_MS = 5_000
+// 关停硬上限：宽限 + SIGKILL 后端口释放的兜底等待。
+const SHUTDOWN_TIMEOUT_MS = 10_000
+// 崩溃自愈重拉的最小间隔，防崩溃风暴。
+const RESPAWN_MIN_INTERVAL_MS = 30_000
 
 type MemoryLogLevel = 'debug' | 'info' | 'warn' | 'error' | 'off'
 
@@ -76,6 +81,9 @@ export class MemoryCoreSupervisor {
   private connection: MemoryCoreConnection | null = null
   private stopping = false
   private lastError: string | null = null
+  /** 最近一次注入托管实例的 AI 覆盖 env；崩溃自愈重拉时原样带回。 */
+  private lastAiEnvironment: Record<string, string> | null = null
+  private lastRespawnAt = 0
 
   constructor(private readonly dataDirectory: string) {}
 
@@ -140,6 +148,7 @@ export class MemoryCoreSupervisor {
     )
     this.child = child
     this.stopping = false
+    this.lastAiEnvironment = options.aiEnvironment ?? null
     child.stdin.end()
     // pid 登记：父进程被强杀后残留实例占住 8420，下次启动 probe 会误判「复用
     // 外部实例」并带不匹配 apiKey 静默 401（issue #179）。
@@ -152,10 +161,23 @@ export class MemoryCoreSupervisor {
     child.on('exit', (code, signal) => {
       this.child = null
       forgetProcessRecord(join(this.dataDirectory, 'runtime'), 'memory-core')
-      if (!this.stopping) {
-        this.lastError = `MemoryCore 进程已退出（code=${String(code)}, signal=${String(signal)}）`
-        console.error(this.lastError)
-      }
+      if (this.stopping) return
+      this.lastError = `MemoryCore 进程已退出（code=${String(code)}, signal=${String(signal)}）`
+      console.error(this.lastError)
+      // 托管实例异常退出的自愈：原样带回 apiKey 与最近一次注入的 AI env 重拉
+      // 一次（网关 env 不变，无需联动重启）。30 秒内只拉一次防崩溃风暴，失败
+      // 留给后续 syncManagedChildProcesses / 冷启动兜底。复用/外部模式不适用。
+      const connection = this.connection
+      if (!connection?.managed || Date.now() - this.lastRespawnAt < RESPAWN_MIN_INTERVAL_MS) return
+      this.lastRespawnAt = Date.now()
+      this.connection = null
+      const aiEnvironment = this.lastAiEnvironment
+      void delay(1_000)
+        .then(() => (this.stopping ? undefined : this.start({
+          apiKey: connection.apiKey,
+          aiEnvironment: aiEnvironment ?? undefined,
+        })))
+        .catch((error) => console.error('[memory-core] respawn after unexpected exit failed:', error))
     })
 
     try {
@@ -164,7 +186,12 @@ export class MemoryCoreSupervisor {
       console.info(`[memory-core] managed instance ready at ${DEFAULT_BASE_URL} (pid=${child.pid})`)
       return this.connection
     } catch (error) {
-      this.killChild(child, 'SIGTERM')
+      // 启动失败同样整组回收：只杀 wrapper 会留下孙进程占住 8420。
+      try {
+        process.kill(-child.pid!, 'SIGTERM')
+      } catch {
+        this.killChild(child, 'SIGTERM')
+      }
       this.child = null
       this.lastError = error instanceof Error ? error.message : 'MemoryCore 启动失败'
       throw error
@@ -197,37 +224,43 @@ export class MemoryCoreSupervisor {
     if (!child) return
 
     this.stopping = true
-    // 杀整棵进程树（负 PID）：dev 模式入口是 tsx wrapper，SIGTERM 只杀
-    // wrapper 时它 fork 的 gateway 孙进程会残留并占住 8420，下一轮
-    // start() 的 probe 会误判「复用外部实例」，带新 env 的重启被吞掉。
-    const processGroupKill = (): boolean => {
-      try {
-        return process.kill(-child.pid!, 'SIGTERM')
-      } catch {
-        // 进程组 kill 不可用（如非组长）退回单进程 kill。
-        return this.killChild(child, 'SIGTERM')
-      }
+    const pid = child.pid
+    // SIGTERM 整组。dev 入口 wrapper（spawnSync）收到信号即退，真正的 server 是
+    // 它 fork 的孙进程：优雅停机走完 OTel flush / worker 池 / SQLite 池才关
+    // listener，期间 /health 仍应答。若以 wrapper 退出为完成信号（旧实现），
+    // SIGKILL 升级定时器随 wrapper 退出被清除，3 秒端口等待等不过优雅停机时，
+    // start() 的 probe 会把垂死实例判成「可复用」——端口随后被清空，网关侧
+    // 记忆永久 unreachable（2026-10-13 事故）。故以端口释放为唯一完成信号，
+    // 宽限后整组 SIGKILL 兜底。
+    try {
+      process.kill(-pid!, 'SIGTERM')
+    } catch {
+      this.killChild(child, 'SIGTERM')
     }
-    await new Promise<void>((resolve) => {
-      let settled = false
-      const finish = (): void => {
-        if (settled) return
-        settled = true
-        clearTimeout(timeout)
-        resolve()
+    const graceDeadline = Date.now() + SHUTDOWN_GRACE_MS
+    const hardDeadline = Date.now() + SHUTDOWN_TIMEOUT_MS
+    let escalated = false
+    while (Date.now() < hardDeadline) {
+      if (!(await this.probe())) break
+      if (!escalated && Date.now() >= graceDeadline) {
+        escalated = true
+        try {
+          process.kill(-pid!, 'SIGKILL')
+        } catch {
+          this.killChild(child, 'SIGKILL')
+        }
       }
-      const timeout = setTimeout(() => {
-        try { process.kill(-child.pid!, 'SIGKILL') } catch { /* 已死 */ }
+      await delay(100)
+    }
+    // wrapper 仍挂着（理论上 spawnSync 会随孙进程一起退）：补刀并稍等收尸。
+    if (child.exitCode === null && child.signalCode === null) {
+      try {
+        process.kill(-pid!, 'SIGKILL')
+      } catch {
         this.killChild(child, 'SIGKILL')
-        finish()
-      }, SHUTDOWN_TIMEOUT_MS)
-      child.once('exit', finish)
-      if (!processGroupKill()) finish()
-    })
-    // 孙进程可能比 wrapper 晚退出几百毫秒：等待端口释放，避免 start() 的
-    // probe 抢在残留进程死亡前把它当成「可复用实例」。
-    const deadline = Date.now() + 3_000
-    while (Date.now() < deadline && await this.probe()) await delay(100)
+      }
+      await delay(200)
+    }
     this.child = null
     this.lastError = null
   }

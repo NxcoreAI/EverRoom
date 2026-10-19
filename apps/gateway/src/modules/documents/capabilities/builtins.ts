@@ -16,6 +16,7 @@ import type { CapabilityBackend } from "./shared.js";
 import type { DocumentRoomRegistry, SlidesPageProgressReporter } from "./types.js";
 import { taskPlugin, type TaskClarifyIssuerInput } from "./task-plugin.js";
 import type { TaskFolderService } from "../task-folders.js";
+import type { SlidesVisualReviewer } from "../../slides-visual-review/review.js";
 
 export function createBuiltinDocumentCapabilityRegistry(
   backend: CapabilityBackend,
@@ -49,6 +50,8 @@ export function createBuiltinDocumentCapabilityRegistry(
   } | null,
   /** PPT 逐页进度上报器（只报不定）：传入则 slides 落页即广播进度快照。 */
   slidesProgress?: SlidesPageProgressReporter | null,
+  /** 落页视觉复检器：传入则 preset 落页后截图送 VLM 判定（未配置 VLM 时内部跳过）。 */
+  visualReviewer?: SlidesVisualReviewer | null,
 ): DocumentCapabilityRegistry {
   const registry = new DocumentCapabilityRegistry(operations);
   const reads = sharedReads ?? new DocumentReadAuthority((documentId) => backend.get(documentId));
@@ -68,6 +71,6 @@ export function createBuiltinDocumentCapabilityRegistry(
     }));
   }
   // agent 写 Word：桌面 office-bridge 未注入（如测试环境）时工具不暴露。
-  if (officeBridge) registry.register(officePlugin(officeBridge, slidesProgress));
+  if (officeBridge) registry.register(officePlugin(officeBridge, slidesProgress, visualReviewer ?? null));
   return registry;
 }

@@ -208,6 +208,8 @@ export interface ContextRoomKnowledgeFileResource extends ContextRoomResourceBas
   originalName: string;
   bytes: number;
   uploadedAt: string;
+  /** 目录来源：产物库按 agent-generated/artifact-imported 分流（AI 生成 vs 导入）。 */
+  sourceKind: string;
   /** 预格式化副文本（状态如"已沉淀/归类中" + 体积如"12.3 KB"）。 */
   statusLabel: string;
   sizeLabel: string;

@@ -9,6 +9,7 @@ import { ExternalLink, Loader2, Search, X , Plus, Replace} from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocale } from '../../../../../i18n/LocaleContext'
 import { showToast } from '../../../../../state/toast'
+import { FilterSelect } from '../../../../ui/FilterSelect'
 import { SourceIcon } from '../../../../pages/sources/SourceIcon'
 import './ExternalDocumentDialogs.css'
 
@@ -297,11 +298,12 @@ export function ExternalExportDialog({
             <>
               <label>
                 <span>{t('contextRoom:externalExportDialog.versionLabel')}</span>
-                <select value={version} onChange={(event) => setVersion(Number(event.target.value))}>
-                  {versions.map((item) => (
-                    <option key={item.version} value={item.version}>V{String(item.version)}</option>
-                  ))}
-                </select>
+                <FilterSelect
+                  value={String(version)}
+                  options={versions.map((item) => ({ value: String(item.version), label: `V${String(item.version)}` }))}
+                  onChange={(value) => setVersion(Number(value))}
+                  ariaLabel={t('contextRoom:externalExportDialog.versionLabel')}
+                />
               </label>
               <div className="context-room-external-export-mode">
                 {importSource && (

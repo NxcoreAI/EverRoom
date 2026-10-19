@@ -147,6 +147,7 @@ jobs:
           pnpm --filter @nxcore/desktop exec node scripts/prepare-oo-cli.mjs
           pnpm --filter @nxcore/desktop exec node scripts/prepare-lark-cli.mjs
           pnpm --filter @nxcore/desktop exec node scripts/prepare-ntn.mjs
+          pnpm --filter @nxcore/desktop exec node scripts/prepare-acp-adapters.mjs
           pnpm --filter @nxcore/desktop exec node scripts/generate-packaged-env.mjs
 
       - name: Package macOS arm64
@@ -193,10 +194,18 @@ jobs:
           unexpected_typescript="$(printf '%s\n' "$loose_files" | grep -Ei '\.(ts|tsx|mts|cts)$' | grep -Ev "^$resources/open-connector/" || true)"
           test -z "$unexpected_typescript" || { printf '%s\n' "$unexpected_typescript" >&2; exit 1; }
 
-          # 四件套运行时必须在包内：缺失说明 prepare 脚本没跑或 extraResources
-          # 源目录不存在（electron-builder 会静默跳过），装出去导出/连接器直接废。
-          for dir in open-connector oo lark-cli ntn; do
+          # 四件套运行时 + ACP 适配器必须在包内：缺失说明 prepare 脚本没跑或
+          # extraResources 源目录不存在（electron-builder 会静默跳过），装出去
+          # 导出/连接器/本机 Agent 直接废。
+          for dir in open-connector oo lark-cli ntn acp-adapters; do
             test -d "$resources/$dir" || { echo "missing bundled runtime: $resources/$dir" >&2; exit 1; }
+          done
+          # 内置 ACP 适配器清单（claude/codex）必须落包：目录在而包不在说明
+          # prepare-acp-adapters.mjs 半途而废，开箱即用的兜底就没了。
+          for adapter_manifest in \
+            "$resources/acp-adapters/claude/node_modules/@zed-industries/claude-agent-acp/package.json" \
+            "$resources/acp-adapters/codex/node_modules/@agentclientprotocol/codex-acp/package.json"; do
+            test -f "$adapter_manifest" || { echo "missing bundled ACP adapter: $adapter_manifest" >&2; exit 1; }
           done
 
           asar_path="$(cd "$resources" && pwd)/app.asar"
@@ -343,6 +352,7 @@ jobs:
           pnpm --filter @nxcore/desktop exec node scripts/prepare-oo-cli.mjs
           pnpm --filter @nxcore/desktop exec node scripts/prepare-lark-cli.mjs
           pnpm --filter @nxcore/desktop exec node scripts/prepare-ntn.mjs
+          pnpm --filter @nxcore/desktop exec node scripts/prepare-acp-adapters.mjs
           pnpm --filter @nxcore/desktop exec node scripts/generate-packaged-env.mjs
 
       - name: Package Windows x64

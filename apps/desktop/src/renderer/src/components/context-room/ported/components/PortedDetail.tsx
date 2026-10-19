@@ -7,7 +7,7 @@ import { consumeRoomOfficeFocus, useRoomOfficeFocus } from '../embeddedOffice'
 import { logDocumentFocusDiagnostic } from './detail-editor/documentBlockNavigation'
 import { onRoomMemoryNavigation } from './detail-editor/blockIndexNavigation'
 import { isMarkdownFileName } from '../../knowledgeMarkdownImport'
-import { officePreviewKindForFileName } from '../../../../../../shared/sources'
+import { isRoomArtifactSourceKind, officePreviewKindForFileName } from '../../../../../../shared/sources'
 import {
   createContextRoomResourceLibrary,
   getRoomResource,
@@ -146,11 +146,14 @@ export function PortedDetail({
 
   const openResource = useCallback((resource: ContextRoomResource) => {
     if (resource.roomId !== room.id) return
-    // Agent 生成的 Office 产物：右区原位内嵌预览（替换云文档位置），不走顶栏新标签。
-    const isAgentOfficeFile = resource.kind === 'knowledge-file'
-      && knowledgeFiles.find((file) => file.id === resource.fileId)?.sourceKind === 'agent-generated'
+    // Room 产物文件（Agent 生成 + 导入的 Office）：右区原位内嵌预览（替换云文档位置），不走顶栏新标签。
+    // 文件清单尚未刷新时（刚导入完即点击）回退资源自带 sourceKind。
+    const isArtifactOfficeFile = resource.kind === 'knowledge-file'
+      && isRoomArtifactSourceKind(
+        knowledgeFiles.find((file) => file.id === resource.fileId)?.sourceKind ?? resource.sourceKind,
+      )
     // 其余 Office 可预览文件（资料）：顶栏新标签打开内嵌只读预览，不在编辑栏内展示
-    if (resource.kind === 'knowledge-file' && !isAgentOfficeFile
+    if (resource.kind === 'knowledge-file' && !isArtifactOfficeFile
       && officePreviewKindForFileName(resource.originalName)) {
       window.dispatchEvent(new CustomEvent('nxcore:office:open', {
         detail: { fileId: resource.fileId, originalName: resource.originalName },
@@ -162,7 +165,7 @@ export function PortedDetail({
     // 产物（用户创建文档 + Agent 生成 Office 文件）进产物板块；资料（导入文档/上传文件）进工作/资料。
     if ((resource.kind === 'cloud-doc'
         && backendDocuments.find((document) => document.id === resource.binding.docId)?.origin === 'native')
-      || isAgentOfficeFile) {
+      || isArtifactOfficeFile) {
       if (!layout.panels.includes('artifacts')) layout.switchBoard('artifacts')
     } else if (!(layout.panels.includes('work') && layout.subtabs.work === 'materials')) {
       layout.switchBoard('work', 'materials')
@@ -310,10 +313,12 @@ export function PortedDetail({
         ?? library.resources.find((candidate) =>
           candidate.kind === 'office-file' && candidate.id === `${room.id}:file:${source.sourceId}`)
       if (resource) {
-        // Agent 生成的 Office 产物在右区原位打开；其余 Office 可预览文件与资源树一致：顶栏新标签
+        // Room 产物文件（Agent 生成 + 导入）在右区原位打开；其余 Office 可预览文件与资源树一致：顶栏新标签
         if (resource.kind === 'knowledge-file'
           && officePreviewKindForFileName(resource.originalName)
-          && knowledgeFiles.find((file) => file.id === resource.fileId)?.sourceKind !== 'agent-generated') {
+          && !isRoomArtifactSourceKind(
+            knowledgeFiles.find((file) => file.id === resource.fileId)?.sourceKind ?? resource.sourceKind,
+          )) {
           window.dispatchEvent(new CustomEvent('nxcore:office:open', {
             detail: { fileId: resource.fileId, originalName: resource.originalName },
           }))

@@ -20,6 +20,8 @@ import {
   type IngestMemoryOk,
 } from "../../infrastructure/database/schema.js";
 import { FilesService } from "../files/service.js";
+import { IMAGE_IMPORT_EXTENSIONS } from "../files/format-registry.js";
+import type { ImageDescribeOutcome, ImageDescriber } from "../files/image-describe.js";
 import { contentHashOf, fileIdOf } from "../files/storage.js";
 import type { KnowledgeService } from "../knowledge/service.js";
 import type { MemoryService } from "../memory/service.js";
@@ -150,6 +152,8 @@ export class IngestService {
     private readonly filter: IngestFilterService | null = null,
     /** 暂停闸状态文件（<dataDir>/ingest-gate.json）；null = 暂停闸不可用（默认放行）。 */
     private readonly gateStatePath: string | null = null,
+    /** 图片描述器；null = 图片仍按 unsupported_type 拒绝（向后兼容）。 */
+    private readonly imageDescriber: ImageDescriber | null = null,
   ) {
     // 暂停闸状态从 dataDir 状态文件恢复（进程重启不丢）；文件缺失/损坏按未暂停处理。
     if (gateStatePath) {
@@ -416,6 +420,7 @@ export class IngestService {
             origin: context.entry.sourceKind === "manual-upload" ? "upload" : "file",
             parserVersion: `${context.version.parserId}@${context.version.parserVersion}`,
             touchFileRow: false,
+            ...(context.version.sourceModifiedAt ? { sourceModifiedAt: context.version.sourceModifiedAt } : {}),
           });
         }
         const row = this.files.get(sourceId);
@@ -625,6 +630,8 @@ export class IngestService {
       parserVersion?: string;
       /** ref 形态回填 uploaded_files.current_parsed_id；path 形态无登记行。 */
       touchFileRow: boolean;
+      /** 文件版本源修改时间（图片描述用它当 capturedAt，进感知时间线）。 */
+      sourceModifiedAt?: Date;
     },
   ): Promise<IngestResult> {
     const contentHash = contentHashOf(ctx.buffer);
@@ -632,6 +639,43 @@ export class IngestService {
     // 闸1（台账层）：同源同指纹零成本跳过——归一化/解析/扇出全免
     const existing = this.ledgerHit(ctx.sourceKind, ctx.sourceId, contentHash);
     if (existing) return this.toResult(existing, true);
+
+    // 图片：VLM 描述替代 converter markdown；描述器缺席或自身出错回退占位，不阻断导入。
+    if (this.imageDescriber && IMAGE_IMPORT_EXTENSIONS.has(`.${extensionOf(ctx.filename)}`)) {
+      let described: ImageDescribeOutcome;
+      try {
+        described = await this.imageDescriber.describe({
+          buffer: ctx.buffer,
+          filename: ctx.filename,
+          capturedAt: ctx.sourceModifiedAt ?? new Date(),
+        });
+      } catch (error) {
+        this.logger.warn({
+          filename: ctx.filename,
+          err: error instanceof Error ? error.message : String(error),
+        }, "image describe service failed, using placeholder");
+        described = {
+          dataType: "image",
+          title: titleOfFilename(ctx.filename),
+          markdown: `# ${ctx.filename}\n\n> 暂无 AI 描述（描述服务异常）。`,
+        };
+      }
+      return this.processNormalized(input, {
+        sourceKind: ctx.sourceKind,
+        sourceId: ctx.sourceId,
+        sourceVersion: ctx.sourceVersion ?? this.nextLedgerVersion(ctx.sourceKind, ctx.sourceId),
+        dataType: "image",
+        detectedBy: "extension",
+        title: input.title ?? described.title,
+        markdown: described.markdown,
+        occurredAt: input.occurredAt,
+        contentHash,
+        origin: ctx.origin,
+        touchFileRow: ctx.touchFileRow,
+        parserVersion: ctx.parserVersion,
+        filename: ctx.filename,
+      });
+    }
 
     const normalized = await normalizeFileBytes(ctx.filename, ctx.buffer, input.dataType);
     return this.processNormalized(input, {

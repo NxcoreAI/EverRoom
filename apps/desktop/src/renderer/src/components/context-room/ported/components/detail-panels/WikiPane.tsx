@@ -72,6 +72,7 @@ export function WikiPane({ room, selectedResourceId, onOpenPage, view = 'tree' }
   const [status, setStatus] = useState<string>('loading');
   const [pages, setPages] = useState<KnowledgeWikiPageDto[]>([]);
   const [pageCount, setPageCount] = useState<number | null>(null);
+  const [pendingSources, setPendingSources] = useState<number | null>(null);
   const [files, setFiles] = useState<KnowledgeFileDto[]>([]);
   const [selectedFile, setSelectedFile] = useState<
     { title: string; markdown: string; fileId: string } | null
@@ -125,6 +126,7 @@ export function WikiPane({ room, selectedResourceId, onOpenPage, view = 'tree' }
       setStatus(data.status);
       setPages(data.items);
       setPageCount(data.pageCount);
+      setPendingSources(data.pendingSources ?? null);
       setFiles(roomFiles);
       setError(null);
     } catch (cause) {
@@ -330,9 +332,13 @@ export function WikiPane({ room, selectedResourceId, onOpenPage, view = 'tree' }
             <b>{building ? t('contextRoom:wiki.generatingPages') : t('contextRoom:wiki.buildFailed')}</b>
             {building ? (
               <small>
-                {t('contextRoom:wiki.countPagesGenerated', { count: pageCount ?? 0 })}
+                {pendingSources != null && pendingSources > 0 ? (
+                  t('contextRoom:wiki.countSourcesPending', { count: pendingSources })
+                ) : (
+                  t('contextRoom:wiki.countSources', { count: files.length })
+                )}
                 {' · '}
-                {t('contextRoom:wiki.countSources', { count: files.length })}
+                {t('contextRoom:wiki.countPagesGenerated', { count: pageCount ?? 0 })}
               </small>
             ) : null}
             {building ? <span aria-hidden="true" className="context-room-wp-bar" /> : null}

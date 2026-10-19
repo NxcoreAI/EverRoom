@@ -4,6 +4,7 @@ import type {
   EmergenceFocusInput,
   KnowledgeFileDto,
 } from '../../../../../../../shared/knowledge';
+import { isRoomArtifactSourceKind } from '../../../../../../../shared/sources';
 import type { BoardId, BoardSubtab } from '../RoomIconSidebar';
 import {
   ActivityPane,
@@ -101,8 +102,8 @@ export function WorkspacePaneBody({
   const ownedDetail = selectedObject && board === 'work' && subtab !== null && detailOwnerSubtabs(selectedObject).includes(subtab)
     ? selectedObject
     : null;
-  // Agent 生成的 Office 文件是产物（产物库单列一节），不进工作/资料清单。
-  const externalKnowledgeFiles = knowledgeFiles.filter((file) => file.sourceKind !== 'agent-generated');
+  // Room 产物文件（Agent 生成 + 用户导入）是产物（产物库单列一节），不进工作/资料清单。
+  const externalKnowledgeFiles = knowledgeFiles.filter((file) => !isRoomArtifactSourceKind(file.sourceKind));
 
   if (board === 'work') {
     if (subtab === 'activity') {
@@ -168,16 +169,16 @@ export function WorkspacePaneBody({
   }
 
   if (board === 'artifacts') {
-    // 产物库：用户在 EverRoom 创建的文档 + Agent 生成的 Office 文件；
+    // 产物库：用户在 EverRoom 创建的文档 + Room 产物文件（Agent 生成 + 导入的 Office）；
     // 外部导入归工作/资料。
-    const agentFiles = knowledgeFiles.filter((file) => file.sourceKind === 'agent-generated');
+    const artifactFiles = knowledgeFiles.filter((file) => isRoomArtifactSourceKind(file.sourceKind));
     return (
       <ArtifactLibraryPane
         room={room}
         selectedId={selectedResourceId}
         backendDocuments={backendDocuments.filter((document) => document.origin === 'native')}
         trashedDocuments={trashedDocuments.filter((document) => document.origin === 'native')}
-        agentFiles={agentFiles}
+        artifactFiles={artifactFiles}
         onSelect={onSelectResource}
         onCreateDocument={onCreateDocument}
         onDeleteDocument={onDeleteDocument}

@@ -7,7 +7,7 @@ import type {
   SubagentInvocationSource,
   SubagentInvocationStatus,
 } from "@nxcore/agent-contract";
-import type { AgentRuntime, RuntimeEvent } from "@nxcore/agent-runtime";
+import type { AgentRuntime, RuntimeAttachment, RuntimeEvent } from "@nxcore/agent-runtime";
 import { Ajv, type ValidateFunction } from "ajv";
 import { asc, and, desc, eq, gt, inArray, isNull } from "drizzle-orm";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
@@ -24,6 +24,11 @@ export interface DispatchSubagentInput {
   agentId: string;
   task: string;
   input?: unknown;
+  /**
+   * 图片等富附件（dataUrl）：直透 runtime.start 的 attachments 供多模态模型原生看图。
+   * 不落库（base64 体积大）、不拼 prompt 文本——input JSON 里不携带。
+   */
+  attachments?: RuntimeAttachment[];
   idempotencyKey: string;
   source: SubagentInvocationSource;
   parentSessionId?: string | null;
@@ -270,7 +275,7 @@ export class SubagentOrchestrator {
       invocationId,
       input.input ?? null,
     );
-    const promise = this.executeInvocation(invocationId, definition, runtime);
+    const promise = this.executeInvocation(invocationId, definition, runtime, input.attachments);
     this.active.set(invocationId, { runtime, promise });
     return { invocationId, completion: promise, joined: false };
   }
@@ -313,6 +318,7 @@ export class SubagentOrchestrator {
     invocationId: string,
     definition: LoadedSubagentDefinition,
     runtime: AgentRuntime,
+    attachments?: RuntimeAttachment[],
   ): Promise<SubagentInvocation> {
     const startedAt = new Date();
     this.db.update(subagentInvocations).set({ status: "running", startedAt })
@@ -354,6 +360,8 @@ export class SubagentOrchestrator {
         captureMemory: false,
         recallMemory: false,
         toolsEnabled: true,
+        // 多模态附件（图片 dataUrl）直透 pi images；不进 prompt 文本、不落库。
+        ...(attachments && attachments.length > 0 ? { attachments } : {}),
       });
       this.db.update(subagentInvocations).set({ runtimeSessionRef: runtimeRun.runtimeSessionRef })
         .where(eq(subagentInvocations.id, invocationId)).run();

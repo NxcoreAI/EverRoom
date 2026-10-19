@@ -33,7 +33,7 @@ export interface StyleCandidate {
 export interface StyleCardData {
   swatches: Array<{ hex: string; label: string }>
   typography: Array<{ label: string; value: string }>
-  wireframes: Array<{ role: string; svg: string }>
+  wireframes: Array<{ role: string; label: string; svg: string }>
   demoImageUrl: string | null
   effectLines: string[]
 }
@@ -266,7 +266,10 @@ export function SlidesProgressCard({
           {state.styleCard.wireframes.length ? (
             <div className="agent-slides-style-wireframes">
               {state.styleCard.wireframes.map((frame) => (
-                <div key={frame.role} className="agent-slides-style-wireframe" dangerouslySetInnerHTML={{ __html: frame.svg }} />
+                <figure key={frame.role} className="agent-slides-style-wireframe">
+                  <div dangerouslySetInnerHTML={{ __html: frame.svg }} />
+                  <figcaption>{frame.label}</figcaption>
+                </figure>
               ))}
             </div>
           ) : null}

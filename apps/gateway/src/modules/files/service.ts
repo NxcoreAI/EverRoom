@@ -5,6 +5,8 @@ import { isAbsolute, join } from "node:path";
 import { Readable } from "node:stream";
 import { and, desc, eq, isNull, ne, or } from "drizzle-orm";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
+import { sniffImageMime } from "../../infrastructure/image-mime.js";
+import { enqueueSearchIndex } from "../search/jobs.js";
 import {
   fileBlobs,
   clipperAssets,
@@ -44,7 +46,7 @@ export function isSupportedUploadFilename(filename: string): boolean {
   return SUPPORTED_UPLOAD_EXTENSIONS.has(normalizedFileExtension(filename));
 }
 
-export type FileSourceKind = "manual-upload" | "local-folder" | "connector" | "migration" | "web-clipper" | "legacy-upload" | "agent-generated";
+export type FileSourceKind = "manual-upload" | "local-folder" | "connector" | "migration" | "web-clipper" | "legacy-upload" | "agent-generated" | "artifact-imported";
 
 export interface FileImportInput {
   sourceKind: Exclude<FileSourceKind, "legacy-upload">;
@@ -461,6 +463,8 @@ export class FilesService {
     entry = this.db.select().from(fileEntries).where(eq(fileEntries.id, fileEntryId)).get();
     if (!input.deferIngest) this.kickFileJobs();
     this.emitRoomEntry(input, fileEntryId);
+    // 统一搜索：登记即建 meta（正文等解析完成后再入队补齐）。
+    enqueueSearchIndex(this.db, { itemType: "file", refId: fileEntryId, priority: "high" });
     return { fileEntryId, fileVersionId, jobId, contentHash, blobDeduped: Boolean(existingBlob), versionDeduped: false };
   }
 
@@ -509,6 +513,7 @@ export class FilesService {
         .where(eq(fileEntries.id, fileEntryId)).run();
     }
     this.versionClassifier?.(fileEntryId, fileVersionId);
+    enqueueSearchIndex(this.db, { itemType: "file", refId: fileEntryId, priority: "high" });
   }
 
   listCatalog(limit = 100, offset = 0): { items: CatalogFileDto[]; total: number } {
@@ -533,7 +538,7 @@ export class FilesService {
       displayName: entry.displayName,
       sharedTitle: cluster?.canonicalTitle ?? entry.displayName ?? entry.originalName,
       sourceKind: entry.sourceKind,
-      sourceLabel: entry.provider ?? (entry.sourceKind === "local-folder" ? "本地文件夹" : entry.sourceKind === "manual-upload" ? "手动上传" : entry.sourceKind === "web-clipper" ? "网页剪藏" : entry.sourceKind === "agent-generated" ? "Agent 生成" : "历史上传"),
+      sourceLabel: entry.provider ?? (entry.sourceKind === "local-folder" ? "本地文件夹" : entry.sourceKind === "manual-upload" ? "手动上传" : entry.sourceKind === "web-clipper" ? "网页剪藏" : entry.sourceKind === "agent-generated" ? "Agent 生成" : entry.sourceKind === "artifact-imported" ? "产物导入" : "历史上传"),
       relativePath: entry.relativePath,
       provider: entry.provider,
       bytes: blob?.byteSize ?? 0,
@@ -607,7 +612,9 @@ export class FilesService {
       }
       return null;
     }
-    return { buffer: await readFile(path), mime: row.blob.mime, filename: row.entry.originalName };
+    const buffer = await readFile(path);
+    // 旧导入的 blob.mime 常为 octet-stream（multipart 未设 type 时期）：图片字节嗅探兜底。
+    return { buffer, mime: sniffImageMime(buffer) ?? row.blob.mime, filename: row.entry.originalName };
   }
 
   async markLocalFileMissing(localSourceId: string, localItemId: string): Promise<boolean> {
@@ -654,6 +661,7 @@ export class FilesService {
     if (!normalized) throw new Error("显示名不能为空");
     this.db.update(fileEntries).set({ displayName: normalized, updatedAt: new Date() })
       .where(eq(fileEntries.id, fileEntryId)).run();
+    enqueueSearchIndex(this.db, { itemType: "file", refId: fileEntryId, priority: "high" });
     return this.listCatalog(200, 0).items.find((item) => item.id === fileEntryId) ?? null;
   }
 
@@ -672,6 +680,8 @@ export class FilesService {
       ? await hooks.deleteMemoryDocuments(fileEntryId)
       : [];
     this.db.delete(fileEntries).where(eq(fileEntries.id, fileEntryId)).run();
+    // 源行已删：worker 重读时移除索引行。
+    enqueueSearchIndex(this.db, { itemType: "file", refId: fileEntryId, priority: "high" });
     if (membership) {
       const remaining = this.db.select({ id: fileClusterMemberships.fileEntryId }).from(fileClusterMemberships)
         .where(eq(fileClusterMemberships.clusterId, membership.clusterId)).limit(1).get();

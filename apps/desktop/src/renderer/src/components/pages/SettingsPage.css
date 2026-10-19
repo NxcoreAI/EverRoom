@@ -1404,6 +1404,48 @@
   padding: 12px 18px 10px;
 }
 
+/* header 右上角图标操作区（测试连通性 / 清除自定义配置） */
+.rc-settings-section > header { grid-template-columns: 30px minmax(0, 1fr) auto; }
+
+.rc-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rc-icon-button {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--surface);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.rc-icon-button:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.rc-icon-button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.rc-icon-button[data-armed='true'] {
+  border-color: var(--danger, #b64f4f);
+  color: var(--danger, #b64f4f);
+}
+
+.rc-icon-button svg {
+  width: 13px;
+  height: 13px;
+}
+
 .rc-group-title {
   margin: 12px 0 4px;
   color: var(--text-muted, #536070);
@@ -1673,3 +1715,21 @@
 .screen-memory-app-list li button { font-size: 12px; }
 .screen-memory-app-add { display: flex; gap: 6px; margin-top: 6px; }
 .screen-memory-app-add input { flex: 1; min-width: 160px; }
+
+.screen-memory-scope-switch { display: inline-flex; gap: 0; border: 1px solid var(--border); border-radius: 7px; overflow: hidden; }
+.screen-memory-scope-switch button { border: none; border-radius: 0; background: transparent; padding: 6px 14px; }
+.screen-memory-scope-switch button[data-active='true'] { background: var(--border); }
+
+.screen-permission-row { display: block; }
+.screen-permission-card { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 16px; padding: 14px; border: 1px solid color-mix(in srgb, #3d6ff6 35%, var(--border)); border-radius: 8px; background: color-mix(in srgb, #3d6ff6 5%, var(--surface)); }
+.screen-permission-card[data-state='granted'] { border-color: color-mix(in srgb, #22a06b 45%, var(--border)); background: color-mix(in srgb, #22a06b 6%, var(--surface)); }
+.screen-permission-card-main { display: flex; min-width: 0; align-items: center; gap: 14px; }
+.screen-permission-card-text { display: grid; gap: 4px; }
+.screen-permission-drag-icon { width: 44px; height: 44px; border-radius: 10px; cursor: grab; }
+.screen-permission-drag-icon:active { cursor: grabbing; }
+.screen-permission-card > button { flex: none; }
+.reality-setting-row small.screen-capture-error { color: #b42318; }
+@media (max-width: 720px) {
+  .screen-permission-card { flex-direction: column; align-items: stretch; }
+  .screen-permission-card > button { width: 100%; }
+}

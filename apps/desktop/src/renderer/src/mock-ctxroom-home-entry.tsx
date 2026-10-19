@@ -37,7 +37,6 @@ createRoot(document.getElementById('mock-root')!).render(
         <HomeView
           rooms={rooms}
           deletedRooms={[]}
-          onMountObsidian={async () => undefined}
           onRenameRoom={() => undefined}
           onDeleteRoom={() => undefined}
           onRestoreRoom={() => undefined}

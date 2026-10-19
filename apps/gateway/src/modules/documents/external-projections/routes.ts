@@ -13,6 +13,8 @@ function errorPayload(error: DocumentServiceError) {
   return { error: error.code, message: error.message, ...error.details };
 }
 
+const SourceKind = Type.Union([Type.Literal("obsidian-vault"), Type.Literal("local-directory")]);
+
 export function externalDocumentProjectionRoutes(
   service: ExternalDocumentProjectionService,
   authorizeContext?: (context: {
@@ -23,10 +25,11 @@ export function externalDocumentProjectionRoutes(
   }) => void,
 ): FastifyPluginAsyncTypebox {
   return async (app) => {
-    app.put("/v1/external-document-projections/obsidian-vault/:sourceId/:resourceId", {
+    app.put("/v1/external-document-projections/:sourceKind/:sourceId/:resourceId", {
       schema: {
         tags: ["documents", "external-projections"],
         params: Type.Object({
+          sourceKind: SourceKind,
           sourceId: Type.String({ minLength: 1, maxLength: 128 }),
           resourceId: Type.String({ minLength: 1, maxLength: 128 }),
         }),
@@ -41,7 +44,7 @@ export function externalDocumentProjectionRoutes(
     }, async (request, reply) => {
       try {
         return await service.sync({
-          sourceKind: "obsidian-vault",
+          sourceKind: request.params.sourceKind,
           sourceId: request.params.sourceId,
           resourceId: request.params.resourceId,
           ...request.body,
@@ -52,16 +55,19 @@ export function externalDocumentProjectionRoutes(
       }
     });
 
-    app.delete("/v1/external-document-projections/obsidian-vault/:sourceId", {
+    app.delete("/v1/external-document-projections/:sourceKind/:sourceId", {
       schema: {
         tags: ["documents", "external-projections"],
-        params: Type.Object({ sourceId: Type.String({ minLength: 1, maxLength: 128 }) }),
+        params: Type.Object({
+          sourceKind: SourceKind,
+          sourceId: Type.String({ minLength: 1, maxLength: 128 }),
+        }),
         querystring: Type.Object({
           resourceId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         }),
       },
     }, async (request) => ({
-      removed: await service.remove("obsidian-vault", request.params.sourceId, request.query.resourceId),
+      removed: await service.remove(request.params.sourceKind, request.params.sourceId, request.query.resourceId),
     }));
 
     app.delete("/v1/external-document-projections/documents/:documentId", {

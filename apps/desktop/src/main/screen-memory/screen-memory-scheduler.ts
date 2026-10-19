@@ -5,6 +5,7 @@ import { join } from 'node:path'
 
 import { calculateDHash } from '../screenshot/window-screenshot-service'
 import { diffKeyframeText } from './text-diff'
+import { blocksWithNewLines, clusterOcrLines } from './line-clustering'
 import { IntervalTracker, type ClosedInterval } from './interval-tracker'
 import { isAppInScope, getScreenMemoryImagesDirectory, type ScreenMemorySettings } from './screen-memory-settings'
 import type { CaptureScreen, ScreenPermissionStatus } from './capture-current-screen'
@@ -222,7 +223,8 @@ export function createScreenMemoryScheduler(deps: ScreenMemorySchedulerDeps): Sc
     await rm(rawPath, { force: true }).catch(() => undefined)
 
     const previousStable = tracker.lastStableLines()
-    const decision = diffKeyframeText(previousStable, result.lines.map((line) => line.text))
+    const clustered = clusterOcrLines(result.lines, { width: result.width, height: result.height })
+    const decision = diffKeyframeText(previousStable, clustered.orderedLines)
     if (!decision.changed) {
       await rm(compressedPath, { force: true }).catch(() => undefined)
       tracker.heartbeat(capturedAt)
@@ -249,6 +251,7 @@ export function createScreenMemoryScheduler(deps: ScreenMemorySchedulerDeps): Sc
       },
       stableLines: decision.stableLines,
       newLines: decision.newLines,
+      newBlocks: blocksWithNewLines(clustered.blocks, decision.newLines),
     })
     if (openSince === null) {
       openSince = capturedAt

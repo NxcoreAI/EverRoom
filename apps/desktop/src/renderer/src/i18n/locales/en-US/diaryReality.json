@@ -306,8 +306,6 @@
   "diary.todayShort": "Today",
   "recording.english": "English",
   "screenMemory.title": "Screen Memory",
-  "screenMemory.searchPlaceholder": "Search what you viewed by content or app",
-  "screenMemory.searchAction": "Search",
   "screenMemory.disabledHint": "Off",
   "screenMemory.keyframeCount": "{{count}} frames",
   "screenMemory.summaryWaiting": "Summary waiting",

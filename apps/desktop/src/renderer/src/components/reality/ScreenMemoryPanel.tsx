@@ -23,7 +23,6 @@ function formatRange(locale: string, startedAt: string, endedAt: string): string
 
 export function ScreenMemoryPanel({ refreshTick = 0 }: { refreshTick?: number }) {
   const { t, locale } = useLocale()
-  const [query, setQuery] = useState('')
   const [items, setItems] = useState<ScreenMemoryIntervalDto[]>([])
   const [status, setStatus] = useState<ScreenMemoryStatusDto | null>(null)
   const [expandedId, setExpandedId] = useState<string | null>(null)
@@ -48,22 +47,6 @@ export function ScreenMemoryPanel({ refreshTick = 0 }: { refreshTick?: number })
   useEffect(() => {
     void loadRecent()
   }, [loadRecent, refreshTick])
-
-  const runSearch = useCallback(async () => {
-    if (!window.nxcore || query.trim().length === 0) {
-      void loadRecent()
-      return
-    }
-    setBusy(true)
-    try {
-      const result = await window.nxcore.screenMemory.search({ q: query.trim(), limit: 50 })
-      setItems(result.items)
-      setExpandedId(null)
-      setDetail(null)
-    } finally {
-      setBusy(false)
-    }
-  }, [query, loadRecent])
 
   const openDetail = useCallback(async (id: string) => {
     if (!window.nxcore) return
@@ -140,19 +123,6 @@ export function ScreenMemoryPanel({ refreshTick = 0 }: { refreshTick?: number })
     <section className="screen-memory-panel" aria-labelledby="screen-memory-title">
       <div className="screen-memory-toolbar">
         <strong id="screen-memory-title">{t('diaryReality:screenMemory.title')}</strong>
-        <div className="screen-memory-search">
-          <input
-            value={query}
-            placeholder={t('diaryReality:screenMemory.searchPlaceholder')}
-            onChange={(event) => setQuery(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') void runSearch()
-            }}
-          />
-          <button type="button" disabled={busy} onClick={() => void runSearch()}>
-            {t('diaryReality:screenMemory.searchAction')}
-          </button>
-        </div>
         {status && !status.enabled ? <span className="screen-memory-hint">{t('diaryReality:screenMemory.disabledHint')}</span> : null}
       </div>
 

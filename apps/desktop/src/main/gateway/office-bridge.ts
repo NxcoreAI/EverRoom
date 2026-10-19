@@ -11,7 +11,8 @@ import type {
   SlidesEditArtifactOutcome,
   SlidesEditArtifactRequest,
 } from '../office/office-preview-registry'
-import { generateDocxFromHtml, generatePptxFromPageSpecs, generateXlsxFromSheets, type DocxGenerationPhase } from '../office/office-generation'
+import { generateDocxFromHtml, generatePptxFromPageSpecs, generateThesisDocx, generateXlsxFromSheets, describeThesisDocxBlocks, type DocxGenerationPhase } from '../office/office-generation'
+import type { ThesisBindingSpecPayload, ThesisFormatCardPayload } from '../office/office-runtime'
 import { createEverroomMaterialResolver } from '../office/office-material-resolver'
 import type { AgentSheetInput } from '../office/xlsx-generation'
 
@@ -46,10 +47,35 @@ export interface OfficeEditRequest {
   isolation?: 'atomic' | 'per_op'
 }
 
+/** 论文装订请求（gateway thesis-format → /v1/office-reformat）。 */
+export interface OfficeReformatRequest {
+  action: 'describe' | 'build'
+  docxBase64: string
+  formatCard?: ThesisFormatCardPayload
+  bindingSpec?: ThesisBindingSpecPayload
+  roomId?: string
+  sourceFileName?: string
+  sourceFileEntryId?: string
+  idempotencyKey?: string
+}
+
 /** 只渲染不入库的请求（风格演示页自校用：PageSpec → pptx 字节）。 */
 export interface OfficeRenderRequest {
   title: string
   pages: string[]
+}
+
+/** 视觉复检：把已打开 slides 产物的某一页渲染成 1x PNG（gateway slides 复检 → /v1/office-render-page）。 */
+export interface OfficeRenderPageRequest {
+  fileId: string
+  slideIndex: number
+}
+
+function validRenderPageBody(value: unknown): value is OfficeRenderPageRequest {
+  if (!value || typeof value !== 'object') return false
+  const input = value as Partial<OfficeRenderPageRequest>
+  return typeof input.fileId === 'string' && input.fileId.trim().length > 0
+    && Number.isInteger(input.slideIndex) && (input.slideIndex as number) >= 0
 }
 
 function validRenderBody(value: unknown): value is OfficeRenderRequest {
@@ -142,6 +168,9 @@ export class OfficeBridgeServer {
     private readonly slidesEdit: () =>
       | ((fileId: string, req: SlidesEditArtifactRequest) => Promise<SlidesEditArtifactOutcome>)
       | null = () => null,
+    private readonly slidesRenderPage: () =>
+      | ((fileId: string, slideIndex: number) => Promise<{ ok: true; pngBase64: string } | { ok: false; error: string }>)
+      | null = () => null,
   ) {}
 
   async start(): Promise<{ baseUrl: string; token: string }> {
@@ -174,33 +203,122 @@ export class OfficeBridgeServer {
 
   private async handle(request: IncomingMessage): Promise<{ status: number; body: Record<string, unknown> }> {
     if (request.method !== 'POST') return { status: 404, body: { message: 'Not found' } }
-    if (request.url !== '/v1/office-generate' && request.url !== '/v1/office-edit' && request.url !== '/v1/office-render') {
+    const known = request.url === '/v1/office-generate'
+      || request.url === '/v1/office-edit'
+      || request.url === '/v1/office-render'
+      || request.url === '/v1/office-render-page'
+      || request.url === '/v1/office-reformat'
+    if (!known) {
       return { status: 404, body: { message: 'Not found' } }
     }
     if (!authorized(request, this.token)) return { status: 401, body: { message: 'Unauthorized' } }
-    const read = await this.readJsonBody(request)
+    const read = await this.readJsonBody(request, request.url === '/v1/office-reformat' ? 60 * 1024 * 1024 : undefined)
     if ('error' in read) return read.error
     if (request.url === '/v1/office-edit') {
       if (!validEditBody(read.parsed)) return { status: 422, body: { message: 'Invalid office edit request' } }
       return this.edit(read.parsed)
     }
+    if (request.url === '/v1/office-render-page') {
+      if (!validRenderPageBody(read.parsed)) return { status: 422, body: { message: 'Invalid office render-page request' } }
+      return this.renderPage(read.parsed)
+    }
     if (request.url === '/v1/office-render') {
       if (!validRenderBody(read.parsed)) return { status: 422, body: { message: 'Invalid office render request' } }
       return this.render(read.parsed)
+    }
+    if (request.url === '/v1/office-reformat') {
+      return this.reformat(read.parsed as OfficeReformatRequest)
     }
     if (!validBody(read.parsed)) return { status: 422, body: { message: 'Invalid office generate request' } }
     return this.generate(read.parsed)
   }
 
+  /**
+   * /v1/office-reformat：论文装订。describe = 源 docx → 块大纲（装订映射的
+   * 区间事实源）；build = 源 docx + 格式卡 + 装订规格 → 装订版 docx，走
+   * file-imports 入库（版本链幂等）并广播 done（渲染层 toast + 产物库刷新）。
+   */
+  private async reformat(req: OfficeReformatRequest): Promise<{ status: number; body: Record<string, unknown> }> {
+    try {
+      if (req.action === 'describe') {
+        const sourceBytes = Buffer.from(req.docxBase64, 'base64')
+        if (sourceBytes.length === 0) return { status: 422, body: { message: 'docxBase64 required' } }
+        const outline = await describeThesisDocxBlocks(sourceBytes)
+        return { status: 200, body: { data: { blockCount: outline.length, outline } } }
+      }
+      if (req.action === 'build') {
+        const files = this.filesBridge()
+        if (!files) return { status: 503, body: { message: 'EverRoom 文件服务尚未就绪' } }
+        if (!req.docxBase64 || !req.formatCard || !req.bindingSpec || !req.sourceFileName) {
+          return { status: 422, body: { message: 'docxBase64/formatCard/bindingSpec/sourceFileName required' } }
+        }
+        const sourceBytes = Buffer.from(req.docxBase64, 'base64')
+        if (sourceBytes.length === 0) return { status: 422, body: { message: 'docxBase64 required' } }
+        const sourceFileName = req.sourceFileName
+        const broadcastPhase = (phase: DocxGenerationPhase) => {
+          this.broadcast({ type: 'phase', title: sourceFileName, phase, format: 'docx' })
+        }
+        const generated = await generateThesisDocx(
+          { sourceBytes, formatCard: req.formatCard, bindingSpec: req.bindingSpec },
+          broadcastPhase,
+        )
+        const baseName = sourceFileName.replace(/\.(docx|doc)$/i, '').trim() || generated.title
+        const originalName = `${baseName}-排版版.docx`
+        this.broadcast({ type: 'phase', title: baseName, phase: 'importing', format: 'docx' })
+        let accepted: FileImportAcceptedDto
+        try {
+          accepted = await files.importAgentGeneratedFile({
+            filePath: generated.filePath,
+            originalName,
+            sourceKey: `agent:docx-thesis:${req.sourceFileEntryId}:${req.idempotencyKey}`,
+            ...(req.roomId ? { roomId: req.roomId } : {}),
+          })
+        } catch (error) {
+          throw new Error(
+            `论文已装订（${generated.filePath}）但入库失败：${error instanceof Error ? error.message : String(error)}`,
+          )
+        }
+        await rm(generated.filePath, { force: true }).catch(() => undefined)
+        this.broadcast({
+          type: 'done',
+          title: baseName,
+          format: 'docx',
+          fileId: accepted.fileEntryId,
+          originalName,
+          roomId: req.roomId,
+        })
+        return {
+          status: 200,
+          body: {
+            data: {
+              fileEntryId: accepted.fileEntryId,
+              fileVersionId: accepted.fileVersionId,
+              jobId: accepted.jobId,
+              contentHash: accepted.contentHash,
+              blobDeduped: accepted.blobDeduped,
+              versionDeduped: accepted.versionDeduped,
+              roomRequested: Boolean(req.roomId),
+              originalName,
+            },
+          },
+        }
+      }
+      return { status: 422, body: { message: 'action must be describe or build' } }
+    } catch (error) {
+      return { status: 502, body: { message: error instanceof Error ? error.message : 'Office reformat failed' } }
+    }
+  }
+
   private async readJsonBody(
     request: IncomingMessage,
+    maxBytes: number = MAX_BODY_BYTES,
   ): Promise<{ parsed: unknown } | { error: { status: number; body: Record<string, unknown> } }> {
     const chunks: Buffer[] = []
     let bytes = 0
     for await (const chunk of request) {
       const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
       bytes += buffer.length
-      if (bytes > MAX_BODY_BYTES) return { error: { status: 413, body: { message: 'Request body is too large' } } }
+      if (bytes > maxBytes) return { error: { status: 413, body: { message: 'Request body is too large' } } }
       chunks.push(buffer)
     }
     try {
@@ -274,9 +392,17 @@ export class OfficeBridgeServer {
     }
   }
 
+  /** /v1/office-render-page：视觉复检——已打开 slides 产物的一页 → 1x PNG base64。 */
+  private async renderPage(req: OfficeRenderPageRequest): Promise<{ status: number; body: Record<string, unknown> }> {
+    const render = this.slidesRenderPage()
+    if (!render) return { status: 503, body: { message: 'EverRoom Office 预览会话尚未就绪' } }
+    const outcome = await render(req.fileId.trim(), req.slideIndex)
+    if (!outcome.ok) return { status: 422, body: { message: outcome.error } }
+    return { status: 200, body: { data: { pngBase64: outcome.pngBase64 } } }
+  }
+
   /** /v1/office-render：只走生成管线出 pptx 字节，不 file-imports、不广播——风格演示页自校专用。 */
-  private async render(req: OfficeRenderRequest): Promise<{ status: number; body: Record<string, unknown> }> {
-    try {
+  private async render(req: OfficeRenderRequest): Promise<{ status: number; body: Record<string, unknown> }> {    try {
       const imageResolver = createEverroomMaterialResolver(this.filesBridge)
       const generated = await generatePptxFromPageSpecs(
         { title: req.title.trim(), pages: req.pages },

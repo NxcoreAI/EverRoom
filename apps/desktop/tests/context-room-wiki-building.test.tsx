@@ -24,7 +24,7 @@ function pageDto(path: string, title: string): KnowledgeWikiPageDto {
   return { id: path, title, type: 'topic', path }
 }
 
-type PagesResponse = { status: string; items: KnowledgeWikiPageDto[]; pageCount: number | null }
+type PagesResponse = { status: string; items: KnowledgeWikiPageDto[]; pageCount: number | null; pendingSources?: number | null; totalSources?: number | null }
 
 function installKnowledgeBridge(responses: PagesResponse[], sourceCount = 2) {
   let call = 0
@@ -88,6 +88,32 @@ describe('Wiki 板块：构建进度步骤条（原型 cr-wiki-progress 对照�
       await vi.advanceTimersByTimeAsync(4000)
     })
     expect(knowledge.listWikiPages).toHaveBeenCalledTimes(2)
+  })
+
+  it('构建中显示源级待处理量：pendingSources 优先于房间文件数', async () => {
+    installKnowledgeBridge([
+      { status: 'processing', items: [], pageCount: 221, pendingSources: 34, totalSources: 52 },
+    ])
+    let renderer: TestRenderer.ReactTestRenderer | null = null
+    await act(async () => {
+      renderer = renderWikiPane()
+    })
+    const text = textOf(renderer!)
+    expect(text).toContain('待处理 34 份资料')
+    expect(text).toContain('已生成 221 页')
+    // 构建期页数是上一轮旧值，不再把它当作「房间资料数」重复展示
+    expect(text).not.toContain('2 份资料')
+  })
+
+  it('构建中无 pendingSources 数据时回退为房间资料数', async () => {
+    installKnowledgeBridge([
+      { status: 'processing', items: [], pageCount: 0, pendingSources: null },
+    ])
+    let renderer: TestRenderer.ReactTestRenderer | null = null
+    await act(async () => {
+      renderer = renderWikiPane()
+    })
+    expect(textOf(renderer!)).toContain('2 份资料')
   })
 
   it('构建完成自动切换为目录树，进度条消失', async () => {

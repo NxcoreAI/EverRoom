@@ -3,6 +3,11 @@ import { createHash } from "node:crypto";
 import { annotations, manifest } from "./shared.js";
 import { stringArg, success, type DocumentCapabilityPlugin, type DocumentCapabilityTool, type SlidesPageProgressReporter } from "./types.js";
 import type { OfficeBridgeClient, OfficeSheetBridgeInput } from "./office-bridge-client.js";
+import {
+  SlidesVisualReviewer,
+  visualReviewToolPayload,
+  type VisualReviewOutcome,
+} from "../../slides-visual-review/review.js";
 
 /**
  * Agent 写 Office：Word（受限 HTML）、PPT（两阶段：建文件 + 逐页生成）、Excel
@@ -24,7 +29,7 @@ import type { OfficeBridgeClient, OfficeSheetBridgeInput } from "./office-bridge
 
 const MAX_HTML_LENGTH = 400_000;
 const MAX_SLIDES_PAGES = 24;
-const MAX_PAGE_SPEC_LENGTH = 80_000;
+export const MAX_PAGE_SPEC_LENGTH = 80_000;
 const MAX_SHEETS = 20;
 const MAX_ROWS = 5000;
 const MAX_COLS = 50;
@@ -44,7 +49,8 @@ const HTML_GUIDE = "内容用受限 HTML 片段表达，只允许这些标签：
   + "代码示例用 pre，引用用 blockquote；长内容用 h2/h3 分节组织。"
   + "不要包含 html/body 标签、markdown 代码围栏或任何解释性文字。";
 
-const PAGESPEC_GUIDE = "每一页是一个 JSON 对象（PageSpec），画布固定 1280×720 像素、坐标原点左上，x/y/w/h 用整数像素："
+const PAGESPEC_GUIDE = "每页是一个 JSON 对象（PageSpec）"
+  +   + "spec 手写兜底形态：每一页是一个 JSON 对象（PageSpec），画布固定 1280×720 像素、坐标原点左上，x/y/w/h 用整数像素："
   + '{"background":"#RRGGBB"(可选),"elements":[…按绘制顺序排列…]}。'
   + "元素按数组顺序绘制：背景/装饰形状在前、图片其次、文本最后（文本绝不能被形状盖住）。"
   + "元素七种："
@@ -66,8 +72,6 @@ const PAGESPEC_GUIDE = "每一页是一个 JSON 对象（PageSpec），画布固
   + "表格 {\"type\":\"table\",\"x\",\"y\",\"w\",\"h\",\"rows\":[[单元格,…],…](1~12 行 × 1~8 列；单元格是字符串或 {\"text\",\"bold\",\"color\",\"fill\",\"align\":\"left|center|right\",\"span\":跨列数}；每行跨列总数必须一致，否则整页拒绝),\"colWidths\":[0.9,1,1,1](可选相对列宽),\"rowHeights\":[1.2,1,1](可选相对行高),\"fontSize\":13(可选 9~24,默认 13),\"borderColor\":\"#RRGGBB\",\"horizontalBordersOnly\":true(只画行间横线),\"verticalBordersOnly\":true(只画列间竖线),\"borderWidthPt\":0.5(可选 0.25~3),\"zebra\":\"#RRGGBB\"(可选隔行浅底,自动套在偶数数据行)}。"
   + "line/lineArrow 画的是所在盒子的对角线（水平分隔线 = 高 1px 的盒子加 stroke）。"
   + "限制：每页最多 48 个元素；sizePt 6~160；颜色只写 #RGB/#RRGGBB/#RRGGBBAA。"
-  + "文本渲染事实（写 spec 前按此估算）：文本框零内边距，框左上角就是首字位置；一行高约 sizePt*1.8px（lineSpacingPct 110），"
-  + "CJK 字宽约 sizePt*1.35px、拉丁字符约 sizePt*0.7px——按框宽估算折行数，框高按实际行数计算再加一行余量。"
   + "引擎硬校验（违规整页拒绝，报错回传后修正该页重试）：① 任何文本中出现 emoji（含变体选择符）直接拒绝——图标用 icon 元素；"
   + "② 任何两个「有文字的元素」（文本框或带文字的形状）的估算文字区域相交（留 6px 容差）直接拒绝；"
   + "③ 构建时按真实排版实测：单元格折行把表格撑得超出声明框高、或文本框实际高度伸出画布底边，整页拒绝——按报错里的实测数字砍行数、缩短单元格文字或加大框高，数据量大时拆成两页，不要缩字号硬塞。"
@@ -111,7 +115,7 @@ function normalizeOutline(outline: unknown): string[] {
 }
 
 /** 骨架页：中性占位版式（演示标题 + 首页标题），set_page slideIndex=0 时整页替换。 */
-function skeletonPageSpec(deckTitle: string, pageTitle: string, index: number, total: number): string {
+export function skeletonPageSpec(deckTitle: string, pageTitle: string, index: number, total: number): string {
   return JSON.stringify({
     background: "#F5F6F8",
     elements: [
@@ -165,6 +169,8 @@ export function officePlugin(
   bridge: OfficeBridgeClient,
   /** PPT 逐页进度上报器（只报不定）：未注入时落页无进度广播。 */
   slidesProgress?: SlidesPageProgressReporter | null,
+  /** 落页视觉复检（preset 形态）：未注入或 VLM 未配置时复检整体跳过。 */
+  visualReviewer?: SlidesVisualReviewer | null,
 ): DocumentCapabilityPlugin {
   const officeCreate: DocumentCapabilityTool = {
     name: "context_room_office_create",
@@ -263,6 +269,7 @@ export function officePlugin(
         idempotencyKey: idempotencyKey("agent-slides", context.runId, title),
       });
       if (!result.fileEntryId) throw new Error("OFFICE_GENERATION_FAILED: 桌面端未返回文件条目");
+      visualReviewer?.forgetDeck(result.fileEntryId);
       return success({
         fileEntryId: result.fileEntryId,
         fileVersionId: result.fileVersionId,
@@ -276,6 +283,7 @@ export function officePlugin(
         deduped: result.versionDeduped || result.blobDeduped,
         roomRoutingRequested: result.roomRequested,
         nextAction: "fill_pages",
+        ...(visualReviewer ? { visualReview: "enabled" } : {}),
         hint: `文件已创建并正在自动打开（初始只有 1 页骨架）；接下来用 context_room_slides_set_page（fileId=${result.fileEntryId} 或 \"active\"）一页一页生成：先填 slideIndex=0（替换骨架页），此后每页 slideIndex=当前页数，会自动在末尾追加新页；每页成功再继续下一页。`,
       });
     },
@@ -284,12 +292,14 @@ export function officePlugin(
   const slidesSetPage: DocumentCapabilityTool = {
     name: "context_room_slides_set_page",
     title: "逐页生成 PPT",
-    description: "用一份完整 PageSpec 生成已打开 PPT 的一页：slideIndex 小于当前页数时原地替换该页（旧内容整体丢弃）；"
+    description: "生成已打开 PPT 的一页（spec 形态：整页 PageSpec 直填）：slideIndex 小于当前页数时原地替换该页（旧内容整体丢弃）；"
       + "slideIndex 等于当前页数时在末尾追加新页（页数 +1）。"
       + "这是 PPT 生成的第二步：context_room_slides_create 建好文件（1 页骨架）后，用本工具一页一页生成——"
       + "从 slideIndex=0 起按 0、1、2… 顺序推进，每页等成功结果（用户实时看到该页成形）再继续下一页；"
       + "某页失败只需重试该页，不影响已完成的页；生成到第几页，文件就有几页。"
       + `${PAGESPEC_GUIDE}`
+      + "落页成功后系统会把该页渲染成图并做视觉复检（配置视觉模型时启用），结果在返回值 visualReview 字段："
+      + "不通过（status=fail）时按 issues 指出的位置修正该页后重新 set_page 同一页，retriesExhausted=true 时停止重试继续下一页。"
       + "刚创建的文件会自动打开，fileId 用 create 返回的 fileEntryId 或 \"active\"。",
     inputSchema: {
       type: "object",
@@ -324,6 +334,22 @@ export function officePlugin(
       if (result.applied === true) {
         slidesProgress?.notify(context.runId, slideIndex);
       }
+      // 视觉复检：落页成功后截图 → VLM 封闭清单判定；结果进
+      // 工具返回，模型按 SYSTEM.md 纪律修正重落（同页最多一次，超限放行）。
+      let visualReview: VisualReviewOutcome | null = null;
+      if (result.applied === true && visualReviewer) {
+        visualReview = await visualReviewer.reviewPage({
+          fileId,
+          slideIndex,
+          fetchPng: async () => Buffer.from(await bridge.renderPage({ fileId, slideIndex }), "base64"),
+        });
+      }
+      const reviewStatus = visualReview?.status;
+      const nextAction = result.applied !== true
+        ? "fix_spec_and_retry"
+        : reviewStatus === "fail"
+          ? (visualReview?.status === "fail" && visualReview.retriesExhausted ? "fill_next_page" : "revise_page_and_retry")
+          : "fill_next_page";
       return success({
         fileId,
         slideIndex,
@@ -334,7 +360,8 @@ export function officePlugin(
         ...(result.saved !== undefined ? { saved: result.saved } : {}),
         ...(result.saveError ? { saveError: result.saveError } : {}),
         ...(result.outline ? { outline: result.outline } : {}),
-        nextAction: result.applied === true ? "fill_next_page" : "fix_spec_and_retry",
+        ...(visualReview ? { visualReview: visualReviewToolPayload(visualReview) } : {}),
+        nextAction,
       });
     },
   };

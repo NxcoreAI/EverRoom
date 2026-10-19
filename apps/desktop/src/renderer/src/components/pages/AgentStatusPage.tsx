@@ -90,6 +90,57 @@ function runStatusLabel(status: AgentWorkspaceRunStatus, t: Translate): string {
   return t('surface:agentStatus.interrupted')
 }
 
+// ── Sky clock: the coast follows local time ──
+// The sun rides 6:00–18:00 and the moon 18:00–6:00, both arcing across
+// the sky; the palette warms at dusk/dawn and darkens into night.
+const DAY_START = 6
+const DAY_END = 18
+const DAY_SKY = '#deeee8'
+const DUSK_SKY = '#f2c79c'
+const NIGHT_SKY = '#22344a'
+const STARS: [number, number, number][] = [
+  [80, 44, 1.6], [188, 106, 2.2], [322, 58, 1.5], [436, 128, 1.8], [562, 38, 2.2],
+  [694, 94, 1.5], [812, 148, 1.7], [942, 54, 2.1], [1062, 118, 1.5], [1242, 42, 2.2],
+  [1332, 100, 1.6], [1386, 64, 1.4], [246, 148, 1.4], [764, 28, 1.8], [1164, 148, 1.5],
+]
+
+function clamp01(value: number) {
+  return Math.min(1, Math.max(0, value))
+}
+
+function mixHex(a: string, b: string, k: number): string {
+  const pa = parseInt(a.slice(1), 16)
+  const pb = parseInt(b.slice(1), 16)
+  const channel = (shift: number) => Math.round(((pa >> shift) & 255) * (1 - k) + ((pb >> shift) & 255) * k)
+  const hex = (shift: number) => channel(shift).toString(16).padStart(2, '0')
+  return `#${hex(16)}${hex(8)}${hex(0)}`
+}
+
+function skyPhaseOf(now: Date) {
+  const h = now.getHours() + now.getMinutes() / 60
+  const wrap = (start: number) => ((((h - start) % 24) + 24) % 24) / 12
+  let darkness = 1
+  if (h >= 7 && h < 17) darkness = 0
+  else if (h >= 17 && h < 19) darkness = (h - 17) / 2
+  else if (h >= 5 && h < 7) darkness = 1 - (h - 5) / 2
+  return { isDay: h >= DAY_START && h < DAY_END, sunT: wrap(DAY_START), moonT: wrap(DAY_END), darkness }
+}
+
+function useSkyClock() {
+  const [phase, setPhase] = useState(() => skyPhaseOf(new Date()))
+  useEffect(() => {
+    const timer = window.setInterval(() => setPhase(skyPhaseOf(new Date())), 30_000)
+    return () => window.clearInterval(timer)
+  }, [])
+  return phase
+}
+
+// The sun/moon travel a shallow arc: rising from the horizon on the left,
+// peaking near the top at mid-cycle, setting on the right.
+function orbPoint(t: number) {
+  return { x: 50 + t * 1340, y: 210 - Math.sin(t * Math.PI) * 160 }
+}
+
 function StateMark({ state }: { state: AgentWorkspaceState }) {
   if (state === 'running') return <LoaderCircle aria-hidden="true" />
   if (state === 'error') return <CircleAlert aria-hidden="true" />
@@ -229,16 +280,39 @@ function CoastScene({
   }, [groups])
   const scrollDuration = runningCount > 0 ? Math.max(18, 84 / runningCount) : 95
 
+  const { isDay, sunT, moonT, darkness } = useSkyClock()
+  const sun = orbPoint(sunT)
+  const moon = orbPoint(moonT)
+  const skyFill = mixHex(mixHex(DAY_SKY, NIGHT_SKY, darkness), DUSK_SKY, Math.sin(darkness * Math.PI) * 0.55)
+  const sunFill = mixHex('#f6cb69', '#e0804f', clamp01(1 - Math.sin(sunT * Math.PI)) * 0.85)
+
   return (
-    <section className="coast-scene" aria-label={t('surface:agentStatus.agentOffice')} style={{ '--scroll-dur': `${scrollDuration}s` } as CSSProperties}>
+    <section
+      className="coast-scene"
+      aria-label={t('surface:agentStatus.agentOffice')}
+      data-night={String(darkness >= 0.5)}
+      style={{ '--scroll-dur': `${scrollDuration}s` } as CSSProperties}
+    >
       <svg className="coast-scene-art" viewBox="0 0 1440 620" preserveAspectRatio="none" aria-hidden="true">
         <defs>
           <path id="coast-cloud" d="M0 39C-7 24 8 12 25 17C31-5 67-5 76 17C91 10 111 20 112 35C125 35 137 43 138 49H-11C-11 44-6 40 0 39Z" fill="#f6faf1" />
         </defs>
 
-        <rect x="-10" y="-10" width="1460" height="640" fill="#deeee8" />
-        <circle cx="1150" cy="92" r="58" fill="#f6cb69" opacity=".35" />
-        <circle cx="1150" cy="92" r="44" fill="#f6cb69" />
+        <rect x="-10" y="-10" width="1460" height="640" fill={skyFill} style={{ transition: 'fill 2.5s ease' }} />
+        <g className="coast-stars" style={{ opacity: darkness }}>
+          {STARS.map(([x, y, r], i) => (
+            <circle key={`${x}-${y}`} cx={x} cy={y} r={r} fill="#eef3fb" style={{ animationDelay: `${(i * 0.9) % 5}s` }} />
+          ))}
+        </g>
+        <g className="coast-orb" style={{ opacity: isDay ? 1 : 0 }}>
+          <circle cx={sun.x} cy={sun.y} r="58" fill={sunFill} opacity=".35" />
+          <circle cx={sun.x} cy={sun.y} r="44" fill={sunFill} />
+        </g>
+        <g className="coast-orb" style={{ opacity: isDay ? 0 : 1 }}>
+          <circle cx={moon.x} cy={moon.y} r="50" fill="#e7ecf6" opacity=".22" />
+          <circle cx={moon.x} cy={moon.y} r="40" fill="#edf1f8" />
+          <circle cx={moon.x + 14} cy={moon.y - 9} r="33" fill={skyFill} />
+        </g>
 
         <g className="coast-scroll coast-scroll-clouds">
           <g opacity=".92">
@@ -306,6 +380,8 @@ function CoastScene({
           <MilePost x={700} y={374} />
           <MilePost x={2140} y={374} />
         </g>
+
+        <rect className="coast-veil" x="-10" y="-10" width="1460" height="640" fill="#0d1c30" style={{ opacity: darkness * 0.45 }} />
       </svg>
 
       <div className="coast-masthead" aria-hidden="true">

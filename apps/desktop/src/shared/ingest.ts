@@ -28,7 +28,7 @@ export interface FileCatalogDto {
   originalName: string
   displayName: string | null
   sharedTitle: string
-  sourceKind: 'manual-upload' | 'local-folder' | 'connector' | 'web-clipper' | 'legacy-upload' | 'agent-generated'
+  sourceKind: 'manual-upload' | 'local-folder' | 'connector' | 'web-clipper' | 'legacy-upload' | 'agent-generated' | 'artifact-imported'
   sourceLabel: string
   relativePath: string | null
   provider: string | null
@@ -91,7 +91,8 @@ export interface FileImportOutcome {
 /** 手动导入批次的桌面端实时进度。 */
 export interface FileImportProgressEvent {
   batchId: string
-  status: 'started' | 'file-started' | 'file-completed' | 'completed'
+  /** scanning = 目录展开阶段（尚无文件计数，界面应显示「正在扫描目录」而非 0/0）。 */
+  status: 'started' | 'scanning' | 'file-started' | 'file-completed' | 'completed'
   total: number
   completed: number
   filename: string | null

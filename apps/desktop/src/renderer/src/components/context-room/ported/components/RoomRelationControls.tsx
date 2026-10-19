@@ -7,6 +7,7 @@ import type {
   KnowledgeRoomRelationReasonDto,
 } from '../../../../../../shared/knowledge'
 import { useLocale } from '../../../../i18n/LocaleContext'
+import { FilterSelect } from '../../../ui/FilterSelect'
 import type { ContextRoomRecord, ContextRoomResource } from '../types'
 import { RoomGraphInspectorShell } from './RoomGraphInspector'
 import { ReferenceDialog } from './shared'
@@ -201,9 +202,12 @@ export function RoomRelationInspector({
         <h4>{t('contextRoom:relations.editRelation')}</h4>
         <label>
           <span>{t('contextRoom:relations.relationType')}</span>
-          <select value={type} onChange={(event) => setType(event.target.value as KnowledgeRoomRelationManualType)}>
-            {ROOM_RELATION_TYPES.map((value) => <option key={value} value={value}>{relationTypeLabel(value, t)}</option>)}
-          </select>
+          <FilterSelect
+            value={type}
+            options={ROOM_RELATION_TYPES.map((value) => ({ value, label: relationTypeLabel(value, t) }))}
+            onChange={setType}
+            ariaLabel={t('contextRoom:relations.relationType')}
+          />
         </label>
         <label className="context-room-relation-checkbox">
           <input type="checkbox" checked={directed} onChange={(event) => setDirected(event.target.checked)} />
@@ -282,15 +286,21 @@ export function CreateRoomRelationDialog({
         <header><Link2 aria-hidden="true" /><div><h2>{t('contextRoom:relations.newRelation')}</h2><p>{t('contextRoom:relations.newRelationDescription')}</p></div></header>
         <label>
           <span>{t('contextRoom:relations.targetRoom')}</span>
-          <select required value={targetRoomId} onChange={(event) => setTargetRoomId(event.target.value)}>
-            {candidates.map((room) => <option key={room.id} value={room.id}>{room.title}</option>)}
-          </select>
+          <FilterSelect
+            value={targetRoomId}
+            options={candidates.map((room) => ({ value: room.id, label: room.title }))}
+            onChange={setTargetRoomId}
+            ariaLabel={t('contextRoom:relations.targetRoom')}
+          />
         </label>
         <label>
           <span>{t('contextRoom:relations.relationType')}</span>
-          <select value={type} onChange={(event) => setType(event.target.value as KnowledgeRoomRelationManualType)}>
-            {ROOM_RELATION_TYPES.map((value) => <option key={value} value={value}>{relationTypeLabel(value, t)}</option>)}
-          </select>
+          <FilterSelect
+            value={type}
+            options={ROOM_RELATION_TYPES.map((value) => ({ value, label: relationTypeLabel(value, t) }))}
+            onChange={setType}
+            ariaLabel={t('contextRoom:relations.relationType')}
+          />
         </label>
         <label className="context-room-relation-checkbox">
           <input type="checkbox" checked={directed} onChange={(event) => setDirected(event.target.checked)} />

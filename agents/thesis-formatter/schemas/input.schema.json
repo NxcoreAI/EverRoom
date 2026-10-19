@@ -1,0 +1,81 @@
+{
+  "type": "object",
+  "properties": {
+    "task": {
+      "type": "string",
+      "enum": ["parse_template", "bind_thesis"],
+      "description": "parse_template = distill template facts into a thesis format card; bind_thesis = map source document block outline into a binding spec."
+    },
+    "sourceName": {
+      "type": "string",
+      "maxLength": 300,
+      "description": "Template file name (parse_template only, informational)."
+    },
+    "facts": {
+      "type": "object",
+      "properties": {
+        "ooxml": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "styles": { "type": "array", "items": { "type": "object" } },
+              "sections": { "type": "array", "items": { "type": "object" } },
+              "headers": { "type": "array", "items": { "type": "object" } },
+              "footers": { "type": "array", "items": { "type": "object" } }
+            },
+            "required": ["name"],
+            "additionalProperties": true
+          },
+          "maxItems": 12,
+          "description": "Per-docx layout facts extracted from OOXML."
+        },
+        "documentsText": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "text": { "type": "string" }
+            },
+            "required": ["name", "text"],
+            "additionalProperties": false
+          },
+          "maxItems": 12,
+          "description": "Full plain text of each member document (spec clauses and sample content, including annotations)."
+        }
+      },
+      "required": ["ooxml", "documentsText"],
+      "additionalProperties": false,
+      "description": "Template facts (parse_template only)."
+    },
+    "formatCard": {
+      "type": "object",
+      "description": "Validated thesis format card (bind_thesis only)."
+    },
+    "sourceOutline": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "index": { "type": "integer", "minimum": 0 },
+          "kind": { "type": "string", "enum": ["heading", "paragraph", "table", "image", "list"] },
+          "level": { "type": "integer", "minimum": 1, "maximum": 6 },
+          "text": { "type": "string", "maxLength": 400 }
+        },
+        "required": ["index", "kind", "text"],
+        "additionalProperties": false
+      },
+      "maxItems": 2000,
+      "description": "Source document block outline from the desktop describe step (bind_thesis only). Indices must be referenced verbatim in the binding spec."
+    },
+    "titleHint": {
+      "type": "string",
+      "maxLength": 300,
+      "description": "Known title clue (file name or largest heading) for cover title (bind_thesis only)."
+    }
+  },
+  "required": ["task"],
+  "additionalProperties": false
+}

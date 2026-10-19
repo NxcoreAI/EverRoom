@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { app } from 'electron'
 import type { WebContents, WebContentsView } from 'electron'
 
-import { loadPreparedGenOfficeRuntime, type GenOfficeMaterialResolver, type PreparedGenOfficeRuntime } from './office-runtime'
+import { loadPreparedGenOfficeRuntime, type GenOfficeMaterialResolver, type PreparedGenOfficeRuntime, type ThesisBindingSpecPayload, type ThesisFormatCardPayload } from './office-runtime'
 import { buildAgentXlsxBytes, type AgentSheetInput } from './xlsx-generation'
 import type { OfficeAgentAskEvent } from '../../shared/office'
 
@@ -198,6 +198,33 @@ export interface GeneratedPptx {
   title: string
   /** 页级容错警告（无效元素被丢弃等），供工具回传给模型自纠。 */
   warnings: string[]
+}
+
+/** 源论文 docx → 块大纲（论文排版映射的区间事实源）。 */
+export async function describeThesisDocxBlocks(sourceBytes: Buffer) {
+  const { docs } = ensureRuntime()
+  return docs.describeThesisBlocks(new Uint8Array(sourceBytes))
+}
+
+/** 论文装订：源 docx + 格式卡 + 装订规格 → 装订版 docx（主进程纯函数，无渲染端）。 */
+export async function generateThesisDocx(
+  input: {
+    sourceBytes: Buffer
+    formatCard: ThesisFormatCardPayload
+    bindingSpec: ThesisBindingSpecPayload
+  },
+  onPhase?: (phase: DocxGenerationPhase) => void,
+): Promise<GeneratedDocx> {
+  const title = (input.bindingSpec.title || input.bindingSpec.coverFields.title || '论文').trim().slice(0, 120)
+  const { docs } = ensureRuntime()
+  onPhase?.('rendering')
+  const bytes = await docs.buildThesisDocx(
+    new Uint8Array(input.sourceBytes),
+    input.formatCard,
+    input.bindingSpec,
+  )
+  onPhase?.('saved')
+  return { filePath: await writeGeneratedTempFile(Buffer.from(bytes), '.docx'), bytes: Buffer.from(bytes), title }
 }
 
 /**

@@ -104,8 +104,8 @@ function keyFor(id: RequestId): string {
   return `${typeof id}:${String(id)}`;
 }
 
-/** documents/mcp-host.ts 同款：单请求 JSON-RPC 交换 over POST。 */
-class ExchangeTransport implements Transport {
+/** documents/mcp-host.ts 同款：单请求 JSON-RPC 交换 over POST（agent-access 模块复用）。 */
+export class ExchangeTransport implements Transport {
   onclose?: () => void;
   onerror?: (error: Error) => void;
   onmessage?: <T extends JSONRPCMessage>(message: T) => void;

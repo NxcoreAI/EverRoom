@@ -3,7 +3,10 @@
   "properties": {
     "task": {
       "type": "string",
-      "enum": ["direction", "settle"],
+      "enum": [
+        "direction",
+        "settle"
+      ],
       "description": "Which task this submission answers."
     },
     "candidates": {
@@ -24,12 +27,26 @@
             "minLength": 40,
             "maxLength": 1200,
             "description": "direction: complete Chinese prompt for this candidate's overview image (structured layout spec with fake-text-bar rules)."
+          },
+          "composition": {
+            "type": "string",
+            "enum": [
+              "swiss",
+              "editorial",
+              "poster",
+              "immersive"
+            ],
+            "description": "Layout composition family this candidate commits to: swiss = strict grid alignment; editorial = asymmetric magazine columns with generous whitespace; poster = oversized type / big-number dominance; immersive = large imagery or dark immersive fields. The three candidates must use three pairwise distinct families, and the prompt's layout paragraph must visibly express the family."
           }
         },
-        "required": ["label", "imagePrompt"],
+        "required": [
+          "label",
+          "imagePrompt",
+          "composition"
+        ],
         "additionalProperties": false
       },
-      "description": "direction: exactly 3 mutually distinct style directions; any two must differ in at least two of color mood / light-dark base / layout temperament."
+      "description": "direction: exactly 3 mutually distinct style directions; any two must differ in at least two of color mood / light-dark base / layout temperament, and the three composition families must be pairwise distinct."
     },
     "styleParams": {
       "type": "object",
@@ -37,103 +54,275 @@
         "palette": {
           "type": "object",
           "properties": {
-            "background": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
-            "surface": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
-            "primary": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
-            "accent": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
-            "text": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
-            "textMuted": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
-            "onDarkText": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
+            "background": {
+              "type": "string",
+              "pattern": "^#[0-9a-fA-F]{6}$"
+            },
+            "surface": {
+              "type": "string",
+              "pattern": "^#[0-9a-fA-F]{6}$"
+            },
+            "primary": {
+              "type": "string",
+              "pattern": "^#[0-9a-fA-F]{6}$"
+            },
+            "accent": {
+              "type": "string",
+              "pattern": "^#[0-9a-fA-F]{6}$"
+            },
+            "text": {
+              "type": "string",
+              "pattern": "^#[0-9a-fA-F]{6}$"
+            },
+            "textMuted": {
+              "type": "string",
+              "pattern": "^#[0-9a-fA-F]{6}$"
+            },
+            "onDarkText": {
+              "type": "string",
+              "pattern": "^#[0-9a-fA-F]{6}$"
+            },
             "chartSeries": {
               "type": "array",
               "minItems": 3,
               "maxItems": 6,
-              "items": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" }
+              "items": {
+                "type": "string",
+                "pattern": "^#[0-9a-fA-F]{6}$"
+              }
             }
           },
-          "required": ["background", "surface", "primary", "accent", "text", "textMuted", "onDarkText", "chartSeries"],
+          "required": [
+            "background",
+            "surface",
+            "primary",
+            "accent",
+            "text",
+            "textMuted",
+            "onDarkText",
+            "chartSeries"
+          ],
           "additionalProperties": false
         },
         "typography": {
           "type": "object",
           "properties": {
-            "fontHeading": { "type": "string" },
-            "fontBody": { "type": "string" },
+            "fontHeading": {
+              "type": "string"
+            },
+            "fontBody": {
+              "type": "string"
+            },
             "sizes": {
               "type": "object",
               "properties": {
-                "coverTitle": { "type": "number", "minimum": 40, "maximum": 110 },
-                "sectionTitle": { "type": "number", "minimum": 28, "maximum": 60 },
-                "pageTitle": { "type": "number", "minimum": 20, "maximum": 40 },
-                "subtitle": { "type": "number", "minimum": 14, "maximum": 24 },
-                "body": { "type": "number", "minimum": 12, "maximum": 18 },
-                "caption": { "type": "number", "minimum": 9, "maximum": 13 },
-                "kpi": { "type": "number", "minimum": 28, "maximum": 90 },
-                "table": { "type": "number", "minimum": 9, "maximum": 24 }
+                "coverTitle": {
+                  "type": "number",
+                  "minimum": 40,
+                  "maximum": 110
+                },
+                "sectionTitle": {
+                  "type": "number",
+                  "minimum": 28,
+                  "maximum": 60
+                },
+                "pageTitle": {
+                  "type": "number",
+                  "minimum": 20,
+                  "maximum": 40
+                },
+                "subtitle": {
+                  "type": "number",
+                  "minimum": 14,
+                  "maximum": 24
+                },
+                "body": {
+                  "type": "number",
+                  "minimum": 12,
+                  "maximum": 18
+                },
+                "caption": {
+                  "type": "number",
+                  "minimum": 9,
+                  "maximum": 13
+                },
+                "kpi": {
+                  "type": "number",
+                  "minimum": 28,
+                  "maximum": 90
+                },
+                "table": {
+                  "type": "number",
+                  "minimum": 9,
+                  "maximum": 24
+                }
               },
-              "required": ["coverTitle", "sectionTitle", "pageTitle", "subtitle", "body", "caption", "kpi", "table"],
+              "required": [
+                "coverTitle",
+                "sectionTitle",
+                "pageTitle",
+                "subtitle",
+                "body",
+                "caption",
+                "kpi",
+                "table"
+              ],
               "additionalProperties": false
             },
-            "headingBold": { "type": "boolean" }
+            "headingBold": {
+              "type": "boolean"
+            }
           },
-          "required": ["fontHeading", "fontBody", "sizes", "headingBold"],
+          "required": [
+            "fontHeading",
+            "fontBody",
+            "sizes",
+            "headingBold"
+          ],
           "additionalProperties": false
         },
         "spacing": {
           "type": "object",
           "properties": {
-            "margin": { "type": "number", "minimum": 32, "maximum": 96 },
-            "gutter": { "type": "number", "minimum": 8, "maximum": 40 },
-            "cardPadding": { "type": "number", "minimum": 8, "maximum": 32 },
-            "cornerRadius": { "type": "number", "minimum": 0, "maximum": 32 }
+            "margin": {
+              "type": "number",
+              "minimum": 32,
+              "maximum": 96
+            },
+            "gutter": {
+              "type": "number",
+              "minimum": 8,
+              "maximum": 40
+            },
+            "cardPadding": {
+              "type": "number",
+              "minimum": 8,
+              "maximum": 32
+            },
+            "cornerRadius": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 32
+            }
           },
-          "required": ["margin", "gutter", "cardPadding", "cornerRadius"],
+          "required": [
+            "margin",
+            "gutter",
+            "cardPadding",
+            "cornerRadius"
+          ],
           "additionalProperties": false
         },
         "decoration": {
           "type": "object",
           "properties": {
-            "cardStroke": { "type": ["string", "null"], "pattern": "^#[0-9a-fA-F]{6}$" },
-            "cardStrokeWidthPt": { "type": "number", "minimum": 0.25, "maximum": 3 },
-            "cardShadow": { "type": "string", "enum": ["none", "soft", "medium", "strong"] },
-            "divider": { "type": "string", "enum": ["line", "none"] },
-            "imageFit": { "type": "string", "enum": ["cover", "contain"] }
+            "cardStroke": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "pattern": "^#[0-9a-fA-F]{6}$"
+            },
+            "cardStrokeWidthPt": {
+              "type": "number",
+              "minimum": 0.25,
+              "maximum": 3
+            },
+            "cardShadow": {
+              "type": "string",
+              "enum": [
+                "none",
+                "soft",
+                "medium",
+                "strong"
+              ]
+            },
+            "divider": {
+              "type": "string",
+              "enum": [
+                "line",
+                "none"
+              ]
+            },
+            "imageFit": {
+              "type": "string",
+              "enum": [
+                "cover",
+                "contain"
+              ]
+            }
           },
-          "required": ["cardStrokeWidthPt", "cardShadow", "divider", "imageFit"],
+          "required": [
+            "cardStrokeWidthPt",
+            "cardShadow",
+            "divider",
+            "imageFit"
+          ],
           "additionalProperties": false
         },
         "motif": {
           "type": "object",
           "properties": {
-            "kind": { "type": "string", "enum": ["ghost-number", "ghost-word", "color-band", "corner-accent", "none"] },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "ghost-number",
+                "ghost-word",
+                "color-band",
+                "corner-accent",
+                "none"
+              ]
+            },
             "spec": {
               "type": "object",
               "maxProperties": 6,
-              "additionalProperties": { "type": ["string", "number"] }
+              "additionalProperties": {
+                "type": [
+                  "string",
+                  "number"
+                ]
+              }
             }
           },
-          "required": ["kind", "spec"],
+          "required": [
+            "kind",
+            "spec"
+          ],
           "additionalProperties": false
         },
-        "layoutHints": {
-          "type": "object",
-          "properties": {
-            "cover": { "type": "string", "pattern": "^[PDTF]\\d[ab]?$" },
-            "section": { "type": "string", "pattern": "^[PDTF]\\d[ab]?$" },
-            "content": { "type": "string", "pattern": "^[PDTF]\\d[ab]?$" },
-            "closing": { "type": "string", "pattern": "^[PDTF]\\d[ab]?$" }
-          },
-          "additionalProperties": false
+        "darkCover": {
+          "type": "boolean"
         },
-        "darkCover": { "type": "boolean" },
+        "composition": {
+          "type": "string",
+          "enum": [
+            "swiss",
+            "editorial",
+            "poster",
+            "immersive"
+          ],
+          "description": "Optional layout composition family; the gateway overwrites it with the user-picked candidate's family, so omit unless reviewing."
+        },
         "effectLines": {
           "type": "array",
           "minItems": 3,
           "maxItems": 10,
-          "items": { "type": "string", "minLength": 2, "maxLength": 120 }
+          "items": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 120
+          }
         }
       },
-      "required": ["palette", "typography", "spacing", "decoration", "motif", "layoutHints", "darkCover", "effectLines"],
+      "required": [
+        "palette",
+        "typography",
+        "spacing",
+        "decoration",
+        "motif",
+        "darkCover",
+        "effectLines"
+      ],
       "additionalProperties": false
     },
     "notes": {
@@ -142,6 +331,8 @@
       "description": "Reviewer notes for the orchestrator (what roles were adjusted and why)."
     }
   },
-  "required": ["task"],
+  "required": [
+    "task"
+  ],
   "additionalProperties": false
 }

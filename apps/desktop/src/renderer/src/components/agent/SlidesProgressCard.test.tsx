@@ -482,7 +482,7 @@ describe('SlidesProgressCard', () => {
               { hex: '#1e3a5f', label: '主色' },
             ],
             typography: [{ label: '正文', value: '14pt' }],
-            wireframes: [{ role: 'cover', svg: '<svg xmlns="http://www.w3.org/2000/svg"></svg>' }],
+            wireframes: [{ role: 'cover', label: '封面 P1a', svg: '<svg xmlns="http://www.w3.org/2000/svg"></svg>' }],
             demoImageUrl: 'everroom-material://dd',
             effectLines: ['主色 深藏青 #1E3A5F'],
           },

@@ -38,3 +38,6 @@ TencentDB-Agent-Memory/
 
 
 .claude/
+
+# PPT 实验产物（渲染图/PPTX/评审画廊）只留本地，不入库
+materials/ppt-style-experiments/

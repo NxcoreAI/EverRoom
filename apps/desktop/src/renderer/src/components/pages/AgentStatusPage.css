@@ -81,10 +81,21 @@
 @keyframes coast-scroll-1350 { to { transform: translateX(-1350px); } }
 @keyframes coast-scroll-1800 { to { transform: translateX(-1800px); } }
 
+/* Sky clock: sun and moon arc with local time; dusk dims the coast. */
+.coast-orb { transition: opacity 2.5s ease; }
+.coast-stars { transition: opacity 2.5s ease; }
+.coast-stars circle { animation: coast-star-twinkle 4.6s ease-in-out infinite; }
+.coast-veil { mix-blend-mode: multiply; transition: opacity 2.5s ease; }
+@keyframes coast-star-twinkle { 50% { opacity: .25; } }
+
 .coast-masthead { position: absolute; z-index: 4; top: 20px; left: 24px; display: flex; gap: 16px; align-items: flex-start; pointer-events: none; }
-.coast-masthead p { margin: 0 0 5px; color: #4a6a60; font-size: clamp(8px, .75cqw, 11px); font-weight: 700; letter-spacing: .16em; }
-.coast-masthead h2 { margin: 0; color: #244740; font-family: Georgia, 'Times New Roman', serif; font-size: clamp(15px, 1.5cqw, 24px); font-weight: 400; line-height: 1.15; }
-.coast-edition { padding-top: 3px; color: #6d8a80; font-size: clamp(7px, .68cqw, 10px); line-height: 1.75; text-align: right; }
+.coast-masthead p { margin: 0 0 5px; color: #4a6a60; font-size: clamp(8px, .75cqw, 11px); font-weight: 700; letter-spacing: .16em; transition: color 2.5s ease; }
+.coast-masthead h2 { margin: 0; color: #244740; font-family: Georgia, 'Times New Roman', serif; font-size: clamp(15px, 1.5cqw, 24px); font-weight: 400; line-height: 1.15; transition: color 2.5s ease; }
+.coast-edition { padding-top: 3px; color: #6d8a80; font-size: clamp(7px, .68cqw, 10px); line-height: 1.75; text-align: right; transition: color 2.5s ease; }
+/* 夜幕下深底压不住原来的墨绿刊头，翻成浅色保持可读。 */
+.coast-scene[data-night='true'] .coast-masthead p { color: #9db8bd; }
+.coast-scene[data-night='true'] .coast-masthead h2 { color: #e8f0ee; }
+.coast-scene[data-night='true'] .coast-edition { color: #86a3a8; }
 
 /* ── Pelican riders ──────────────────────────────────────────────
    Agents ride as a peloton: dropped (error) at the back, cruisers
