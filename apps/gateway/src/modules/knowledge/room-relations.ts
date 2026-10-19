@@ -192,6 +192,15 @@ export class RoomRelationRegistry {
     const activeRoomIds = new Set(this.db.select({ id: rooms.id }).from(rooms)
       .where(and(isNull(rooms.deletedAt), eq(rooms.lifecycle, "active"))).all().map((room) => room.id));
     const roomIds = [...new Set(input.roomIds)].filter((roomId) => activeRoomIds.has(roomId));
+    // 同一来源可能对同一实体抽出多行（别名解析到同一 id、重复提及）：唯一索引
+    // (roomId, entityId, sourceKind, sourceId) 只允许一行，先按实体合并取最高
+    // 显著度。否则插入直接撞唯一约束、整个来源替换事务回滚，job 永久失败。
+    const mentionsByEntity = new Map<string, RelationIndexMentionInput>();
+    for (const mention of input.mentions) {
+      const existing = mentionsByEntity.get(mention.entityId);
+      if (!existing || mention.salience > existing.salience) mentionsByEntity.set(mention.entityId, mention);
+    }
+    const mentions = [...mentionsByEntity.values()];
     const now = new Date();
     this.db.transaction((tx) => {
       tx.delete(roomEntityFacts).where(and(
@@ -227,7 +236,7 @@ export class RoomRelationRegistry {
           createdAt: now,
           updatedAt: now,
         }).run();
-        for (const mention of input.mentions) {
+        for (const mention of mentions) {
           const relevanceFactor = mention.salience >= PRIMARY_SALIENCE_MIN ? 1 : mention.salience >= 0.35 ? 0.5 : 0;
           if (relevanceFactor === 0 || !sourceScore.trusted) continue;
           tx.insert(roomEntityMentions).values({

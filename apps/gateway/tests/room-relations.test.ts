@@ -350,6 +350,33 @@ describe('RoomRelationRegistry', () => {
     sqlite.close()
   })
 
+  it('merges duplicate mentions of the same entity into one row (unique source index)', async () => {
+    const { db, registry, sqlite } = await harness()
+    addRooms(db, 2)
+    db.update(rooms).set({ entityId: 'entity-room-0' }).where(eq(rooms.id, 'room-0')).run()
+    db.insert(entities).values({ id: 'entity-room-0', name: 'Room 0', kind: '项目', status: 'room', roomId: 'room-0' }).run()
+    addIngest(db, { id: 'doc-dup', sourceKind: 'file' })
+    // 别名解析到同一实体 / 同一实体被重复抽取：唯一索引
+    // (roomId, entityId, sourceKind, sourceId) 只允许一行。旧实现直接抛
+    // UNIQUE constraint，整个来源替换事务回滚，relation-index job 永久失败。
+    expect(() => registry.replaceSource({
+      sourceKind: 'file',
+      sourceId: 'doc-dup',
+      sourceVersion: 1,
+      roomIds: ['room-0'],
+      mentions: [
+        { entityId: 'entity-room-0', salience: 0.4, evidence: 'weak mention' },
+        { entityId: 'entity-room-0', salience: 0.9, evidence: 'strong mention' },
+      ],
+    })).not.toThrow()
+    const rows = db.select().from(roomEntityMentions).where(eq(roomEntityMentions.roomId, 'room-0')).all()
+    expect(rows).toHaveLength(1)
+    // 合并保留最高显著度的证据（弱提及不覆盖强提及）。
+    expect(rows[0]!.salience).toBe(0.9)
+    expect(rows[0]!.evidence).toBe('strong mention')
+    sqlite.close()
+  })
+
   it('zero-hides disappeared auto relations instead of deleting and revives them when data returns', async () => {
     const { db, registry, sqlite } = await harness()
     addRooms(db, 4)
