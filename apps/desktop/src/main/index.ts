@@ -1012,6 +1012,10 @@ ipcMain.on('app:get-system-locale-sync', (event) => {
   event.returnValue = getSystemLocale()
 })
 ipcMain.handle('app:get-system-locale', () => getSystemLocale())
+// 内嵌 genoffice 视图（文档/表格/演示）按 app:get-theme 取宿主主题：EverRoom
+// 固定浅色（见 nativeTheme.themeSource），缺这个 handler 时内嵌视图的控制台会
+// 报 "No handler registered for 'app:get-theme'" 并在应用日志里刷错。
+ipcMain.handle('app:get-theme', () => nativeTheme.themeSource)
 ipcMain.handle('app:clear-user-data', () => {
   const target = parse(resolvedDataDirectory)
   if (resolvedDataDirectory === target.root || resolvedDataDirectory === resolve(appDataDirectory) || resolvedDataDirectory === resolve(process.cwd())) {

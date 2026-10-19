@@ -278,10 +278,12 @@ export class AgentGatewayBridge {
     recentSessions?: Array<{ title: string | null; updatedAt: string }>
     language?: string
   }): Promise<{ suggestion: string }> {
+    // 建议由一次完整 LLM 轮次产出（网关侧不设内部超时）：15s 对慢模型必然
+    // 中断，对齐 session-title 的 30s，避免网关干完活客户端已经放弃。
     return this.request('/v1/processing/conversation-suggestion', {
       method: 'POST',
       data: input,
-      timeout: 15_000,
+      timeout: 30_000,
     })
   }
 
