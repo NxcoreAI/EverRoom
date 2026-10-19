@@ -11,7 +11,7 @@ import type { AsrProvider, AsrResult, AsrTaskSnapshot, SubmitAsrInput, Submitted
 
 /**
  * nxcore-asr 自建转写服务（FunASR 离线引擎 + 说话人识别/跨音频认人）：
- * https://code.vyitec.com/nexcore/nxcoreasr 。
+ * https://github.com/NxcoreAI/nxcoreasr 。
  *
  * 接口是自有四步契约（非 OpenAI 兼容）：
  *   建任务(external_id 幂等建会话) → 换直传授权 → PUT 裸字节 → 确认入队；

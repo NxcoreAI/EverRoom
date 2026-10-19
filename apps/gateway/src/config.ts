@@ -190,7 +190,7 @@ export interface OpenAiCompatibleAsrConfig {
   language?: string;
 }
 
-/** nxcore-asr 自建转写服务（FunASR 离线 + 说话人识别），见 code.vyitec.com/nexcore/nxcoreasr。 */
+/** nxcore-asr 自建转写服务（FunASR 离线 + 说话人识别），见 https://github.com/NxcoreAI/nxcoreasr 。 */
 export interface NxCoreAsrConfig {
   engine: "nxcore-asr";
   baseUrl: string;
