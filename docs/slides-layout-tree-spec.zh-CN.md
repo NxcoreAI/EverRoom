@@ -1,6 +1,6 @@
 # 幻灯片布局语法（v2 唯一写入格式）
 
-状态：权威正文 · 2026-10-27（组件表新增「槽位下限」列；组件溢出的 `hint` 由引擎按本页实测槽位给出）
+状态：权威正文 · 2026-10-29（weights 统一：父级优先、缺省从子节点 weight 推导；`fit:"shrink"` 编译期缩字 ≤15%、守场景下限；`focus` 不改图框比例，不能消除 `image_ar`；完整呈现图片不得改 `cover`）
 
 本文件是布局语法的权威来源。`scripts/render-layout-skills.mjs` 从这里生成 layouter 的基础技能与组件参考 `components.md`；语法变更在本文件维护。任务目标、内容保真、设计与自审流程由 SYSTEM.md 负责，旧模式契约见 `skills/layout-tree-skill/legacy.md`。
 
@@ -68,7 +68,7 @@
 | `valign` | `top / middle / bottom` | 缺省 `top`。 |
 | `letterSpacing` | -4~12 | 可省略。 |
 | `lineHeightPct` | 60~160 | 缺省 110。 |
-| `fit` | `none / shrink / ellipsis` | 缺省 `none`；`shrink` 自动缩字。 |
+| `fit` | `none / shrink / ellipsis` | 缺省 `none` 原字号。`shrink`：溢出时按同一比例缩全部 run（保留字号比例与段落结构），最多缩小 15%，且不低于场景字号下限；已低于下限的 run 保持原字号。缩到下限仍放不下照常报 `overflow`。 |
 | `maxLines` | 1~4 | 配合 `ellipsis` 截断。 |
 | `direction` | `horizontal`（默认）/ `vertical` | `vertical` 是中文单字竖排。 |
 
@@ -83,8 +83,8 @@
 ```
 
 - `url` 必填，≤500 字符，只接受 `http(s)://` 直链或 `everroom-material://` 素材引用。
-- `fit`：`cover`（默认，裁切填满）或 `contain`（完整呈现，可能留空带）。两者都不变形；框比例尽量贴近素材。
-- `focus`：`{ x?, y? }`（0~100）把 cover 裁切对准画面主体。
+- `fit`：`cover`（默认，裁切填满）或 `contain`（完整呈现，可能留空带）。两者都不变形；框比例尽量贴近素材。要求完整呈现的图片不得为通过 `image_ar` 检查改成 `cover`。
+- `focus`：`{ x?, y? }`（0~100）把 cover 裁切对准画面主体。只改变裁切位置，不改变图框比例；不能用它消除 `image_ar` 比例检查。
 - `caption` ≤40 字，只留一处。
 - `grayscale / duotone / radius`：`true` 才生效；`mask` 取 `circle / rounded`。
 - `scrim`：`{ color?, opacity? }`（`color` 是色号，`opacity` 0~1，缺省 0.55），给压图文字留可读底。
@@ -182,7 +182,7 @@ slot 栅格表达不了的自由版式，用 `group` 把一块 slot 切成 v2 �
 | 字段 | 取值 | 说明 |
 |---|---|---|
 | `direction` | `row / column / overlay` | 必填。主轴方向。 |
-| `weights` | 正数数组，0.1~20，个数 = children 数 | 仅 row/column；缺省均分。悬殊比例用 1.6/1、2/1 这一档。 |
+| `weights` | 正数数组，0.1~20，个数 = children 数 | 仅 row/column。显式父级 `weights` 优先；未提供时按各子节点 `weight` 推导（缺省 1）。`row` 的 weights 沿主轴分配宽度，`column` 的分配高度；加大一个子节点的权重会压缩兄弟节点。悬殊比例用 1.6/1、2/1 这一档。 |
 | `gapScale` | 0~4 | 缝隙 = 主题 gutter（row）/ rowGutter（column）× gapScale。overlay 不写。 |
 | `pad` | 0~48 | 帧内边距（px）。先扣内边距再分区。 |
 | `justify` | `start / center / end` | 仅 column。子区域划分不变，内容未铺满时整组按 justify 平移。 |

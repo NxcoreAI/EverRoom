@@ -5,7 +5,7 @@ description: 单页 v2 布局语法。设计和自审时查阅节点、几何约
 
 # 幻灯片布局语法（v2 唯一写入格式）
 
-状态：权威正文 · 2026-10-27（组件表新增「槽位下限」列；组件溢出的 `hint` 由引擎按本页实测槽位给出）
+状态：权威正文 · 2026-10-29（weights 统一：父级优先、缺省从子节点 weight 推导；`fit:"shrink"` 编译期缩字 ≤15%、守场景下限；`focus` 不改图框比例，不能消除 `image_ar`；完整呈现图片不得改 `cover`）
 
 本文件是布局语法的权威来源。`scripts/render-layout-skills.mjs` 从这里生成 layouter 的基础技能与组件参考 `components.md`；语法变更在本文件维护。任务目标、内容保真、设计与自审流程由 SYSTEM.md 负责，旧模式契约见 `skills/layout-tree-skill/legacy.md`。
 
@@ -73,7 +73,7 @@ description: 单页 v2 布局语法。设计和自审时查阅节点、几何约
 | `valign` | `top / middle / bottom` | 缺省 `top`。 |
 | `letterSpacing` | -4~12 | 可省略。 |
 | `lineHeightPct` | 60~160 | 缺省 110。 |
-| `fit` | `none / shrink / ellipsis` | 缺省 `none`；`shrink` 自动缩字。 |
+| `fit` | `none / shrink / ellipsis` | 缺省 `none` 原字号。`shrink`：溢出时按同一比例缩全部 run（保留字号比例与段落结构），最多缩小 15%，且不低于场景字号下限；已低于下限的 run 保持原字号。缩到下限仍放不下照常报 `overflow`。 |
 | `maxLines` | 1~4 | 配合 `ellipsis` 截断。 |
 | `direction` | `horizontal`（默认）/ `vertical` | `vertical` 是中文单字竖排。 |
 
@@ -88,8 +88,8 @@ description: 单页 v2 布局语法。设计和自审时查阅节点、几何约
 ```
 
 - `url` 必填，≤500 字符，只接受 `http(s)://` 直链或 `everroom-material://` 素材引用。
-- `fit`：`cover`（默认，裁切填满）或 `contain`（完整呈现，可能留空带）。两者都不变形；框比例尽量贴近素材。
-- `focus`：`{ x?, y? }`（0~100）把 cover 裁切对准画面主体。
+- `fit`：`cover`（默认，裁切填满）或 `contain`（完整呈现，可能留空带）。两者都不变形；框比例尽量贴近素材。要求完整呈现的图片不得为通过 `image_ar` 检查改成 `cover`。
+- `focus`：`{ x?, y? }`（0~100）把 cover 裁切对准画面主体。只改变裁切位置，不改变图框比例；不能用它消除 `image_ar` 比例检查。
 - `caption` ≤40 字，只留一处。
 - `grayscale / duotone / radius`：`true` 才生效；`mask` 取 `circle / rounded`。
 - `scrim`：`{ color?, opacity? }`（`color` 是色号，`opacity` 0~1，缺省 0.55），给压图文字留可读底。
@@ -187,7 +187,7 @@ slot 栅格表达不了的自由版式，用 `group` 把一块 slot 切成 v2 �
 | 字段 | 取值 | 说明 |
 |---|---|---|
 | `direction` | `row / column / overlay` | 必填。主轴方向。 |
-| `weights` | 正数数组，0.1~20，个数 = children 数 | 仅 row/column；缺省均分。悬殊比例用 1.6/1、2/1 这一档。 |
+| `weights` | 正数数组，0.1~20，个数 = children 数 | 仅 row/column。显式父级 `weights` 优先；未提供时按各子节点 `weight` 推导（缺省 1）。`row` 的 weights 沿主轴分配宽度，`column` 的分配高度；加大一个子节点的权重会压缩兄弟节点。悬殊比例用 1.6/1、2/1 这一档。 |
 | `gapScale` | 0~4 | 缝隙 = 主题 gutter（row）/ rowGutter（column）× gapScale。overlay 不写。 |
 | `pad` | 0~48 | 帧内边距（px）。先扣内边距再分区。 |
 | `justify` | `start / center / end` | 仅 column。子区域划分不变，内容未铺满时整组按 justify 平移。 |
@@ -269,21 +269,16 @@ slot 栅格表达不了的自由版式，用 `group` 把一块 slot 切成 v2 �
 | 缺陷 | 调整方向 |
 |---|---|
 | `schema`（含 `V2_INVALID`） | 按语法修正字段名、枚举、必填项或版本。 |
-| `overflow` | 先看 `hint` 里给的槽位建议（如「至少需要约 640×320px（6 列 × 4 行）」）：组件溢出优先扩大槽位，扩不动再减条目，最后换更简单的节点/组件；文本溢出才用扩大区域、重新分配空间或拆节点。保留原文和数据；标题缩放只允许 `fit:"shrink"` 且需检查可读性。 |
-| `min_size` | 调整相邻区域或用 group 比例重分配空间，合并过碎结构。 |
+| `overflow` | 先看 `hint` 里给的槽位建议（如「至少需要约 640×320px（6 列 × 4 行）」）：组件溢出优先扩大槽位，扩不动再减条目，最后换更简单的节点/组件；文本溢出先比较所需高度与实际高度，再扩大宽度或高度（优先宽度——宽度不够时加高度只会得到更多窄行）。保留原文和数据；标题缩放只允许 `fit:"shrink"`（最多缩 15%、守场景字号下限），需检查可读性。 |
+| `min_size` | 调整相邻区域或用 group 比例重分配空间（`row.weights` 管宽度、`column.weights` 管高度，加大权重会压缩兄弟节点），合并过碎结构。 |
 | `element_cap` | 减少装饰、合并重复结构；按编译后元素数评估组件，而非只看树节点数。 |
-| `image_ar` | 只调一次：先按图长宽比反推框高（框宽 ÷ 图宽高比），并排两张图先分别算出框高再分配行；超过 25% 容差改用 `cover`，仍超差就删掉这张非必留图或换纯色版式。落页要求零缺陷，但只允许一次确定性降级，不要反复试构图。 |
-| `contrast` | 一次调整语义 tone、底板或压图 scrim；仍不达标就换版式后提交。 |
+| `image_ar` | 先按图长宽比反推框高（框宽 ÷ 图宽高比），并排两张图先分别算出框高再分配行；偏差过大且该图无完整呈现要求时才改 `cover`，仍超差就删掉这张非必留图或换纯色版式。`focus` 只改变裁切位置、不改变图框比例，不能消除本检查；要求完整呈现的图片不得改 `cover`。 |
+| `contrast` | 调整语义 tone、底板或压图 scrim；仍不达标就换版式或按 SYSTEM.md 报告阻塞。 |
 | `emoji` | 使用合法 icon/path 表达相同的视觉意图。 |
 
 内容、表格或图片超过某组件的容量时，选择能完整承载它的节点结构；组件中标注「超出丢弃」的字段尤其需要核对。无法保留必留信息时按 SYSTEM.md 的阻塞流程报告。
 
-## 收敛策略（单页定稿）
-
-- `slides_layout_validate` 每页最多 4 次：第 1 次确认，最多 2 次按缺陷修正，最后 1 次在简化结构后确认。第一次 `ok:true` 后立即提交，禁止再做变体或审美重排。
-- 同一缺陷改 2 次仍不消失就停：按「删装饰 → 合并卡片 → 降层级 → 换更简单的 composition」顺序简化，简化后校验一次并提交；仍不行走 blocked。禁止整页重画，也禁止借 validate 对比多套构图。
-- `image_ar` / `min_size` / `contrast` 是 warning 级：只做一次确定性调整；仍在就删掉该装饰/非必留图或换成不含它的版式，确认最终交付树零缺陷后提交。不要为 warning 反复改整页，也不要带着已知缺陷硬交。
-- 单页工具调用（read + validate + submit）目标 ≤8 次、硬上限 12 次；超过 8 次时用当前树提交或改交 blocked。
+修复流程、校验轮次预算与结束条件以 SYSTEM.md「校验与提交」为准，本文不重复。
 
 ## 提交前自检
 
@@ -293,4 +288,4 @@ slot 栅格表达不了的自由版式，用 `group` 把一块 slot 切成 v2 �
 - 每个 `mustShow` block 都有 binding，路径指向实际承载该文案/数值/图片的节点，节点可见文本逐字包含原文（标点、数字、单位不改）。
 - 树的 `notes` 与 `content.notes` 完全一致（直接复制，不写摘要、不加编排提示）。
 - 顶层 `notes` 只写交付状态或限制，不混入演讲备注。
-- 同一页 `subagent_submit_result` 最多 3 次；第 3 次仍被拒就提交 `status:"blocked"`（reason/attempts/requestedAction）。
+- 提交被拒的重试与 blocked 门槛按 SYSTEM.md「校验与提交」执行。

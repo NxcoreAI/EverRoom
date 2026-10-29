@@ -20,6 +20,7 @@ import { SubagentOrchestrator } from "./orchestrator.js";
 import { SubagentRegistry } from "./registry.js";
 import {
   parseDraftMarkdown,
+  draftParseDiagnostic,
   renderDraftMarkdown,
   slidesProgressPlanFrom,
 } from "./slides-draft-doc.js";
@@ -2227,7 +2228,7 @@ export function createSubagentPiTools(
                 status: "failed",
                 errorCode: "slides_draft_document_empty",
                 retryable: false,
-                message: "草稿里解析不到「## 章节=页」结构（可能被清空）；请用户恢复章节结构后重试。",
+                message: `${draftParseDiagnostic(draftSnapshot.markdown)}；请用户把每页恢复为「## 标题」后重试，或核对 draftDocumentId 是否指向 PPT 草稿。`,
               }),
               details: { errorCode: "slides_draft_document_empty" },
             };

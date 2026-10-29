@@ -32,6 +32,9 @@ const OVERLAP_TOLERANCE_PX = 6;
 /** overlay 子节点的最小尺寸下限（角标类小件，低于常规叶子下限）。 */
 const OVERLAY_MIN_W = 48;
 const OVERLAY_MIN_H = 32;
+
+/** group 子节点路径特征：hint 指向父 weights；页面级节点指向 slot 跨度。 */
+const inGroupChild = (path: string): boolean => path.includes("/children/");
 /**
  * 与 genoffice 引擎同口径的 emoji 判定（引擎：apps/desktop/vendor/genoffice/apps/slides/src/main/page-spec.ts
  * 的 emojiCodePoints）。引擎只拒 pictograph 区段（1F000–1FAFF）、VS16（FE0F），以及
@@ -100,7 +103,9 @@ export function measureDefects(result: CompileResult, contract: LayoutContract, 
         placement.path,
         "min_size",
         `区域过小（${Math.round(frame.w)}×${Math.round(frame.h)}px，下限 ${minW}×${minHeight}px）`,
-        "加大该子树的权重，或减少兄弟节点数量",
+        inGroupChild(placement.path)
+          ? "加大该子节点在父 group 的 weight（row 分宽、column 分高），或减少兄弟节点"
+          : "扩大该节点的 slot 列/行跨度，或精简该区域内容",
       );
       continue;
     }
@@ -110,7 +115,9 @@ export function measureDefects(result: CompileResult, contract: LayoutContract, 
           placement.path,
           "overflow",
           `文字估算 ${Math.round(placement.neededHeight)}px 超出区域 ${Math.round(frame.h)}px（${placement.label ?? placement.variant ?? "text"} ${placement.sizePt}pt）`,
-          "加大权重/换更宽的区域，精简文字，或拆成多个文字叶子",
+          inGroupChild(placement.path)
+            ? "调整父 group 的 weights 或扩大父区域（先查宽度是否够），或精简文字、拆成多个文字叶子"
+            : "扩大该节点 slot 的列/行跨度（先查宽度是否够），或精简文字、拆成多个文字叶子",
         );
       }
     }

@@ -195,7 +195,7 @@ interface ValidateOutcome {
   stats: { elements: number; leaves: number; depth: number; images: number; paths: number };
 }
 
-/** 同一 run 连续校验上限：超过后网关收下当前树（落页仍会降档兜底）。 */
+/** 同一 run 连续校验上限：超过后网关收下当前树并要求提交（落页侧仍会重新量测并记录缺陷）。 */
 const LAYOUT_VALIDATE_MAX_ROUNDS = 5;
 /** runId → 已执行的 validate 轮次（工具实例跨 run 共享，需按 run 隔离并清理）。 */
 const validateRoundByRun = new Map<string, number>();
@@ -230,7 +230,7 @@ export const LAYOUTER_VALIDATE_TOOL: PiAgentRuntimeTool = {
   label: "布局树校验",
   description:
     "校验你设计的布局树：结构归一 → 确定性编译 → 量测。返回结构化缺陷清单（节点路径+缺陷类型+改法）。"
-    + "ok=true 才可用 subagent_submit_result 提交；有缺陷按 hint 修正后重交整棵树，最多 3 轮。",
+    + "ok=true 才可用 subagent_submit_result 提交；有缺陷按 hint 修正后重交整棵树，按系统提示词的修复预算执行。",
   parameters: {
     type: "object",
     properties: {
@@ -250,7 +250,8 @@ export const LAYOUTER_VALIDATE_TOOL: PiAgentRuntimeTool = {
     }
     // 网关收口：同一 run 连续多轮 validate 不收敛时不再让模型空转（实测一页
     // 连调 17 次 validate 打穿工具预算、480s 超时）。收下当前树并提示提交——
-    // 落页前 finalizeTree 仍会确定性 shrinkToFit + 引擎硬闸兜底，不会把坏树画上去。
+    // forcedSubmission 只代表网关收树，不证明缺陷已修复；落页侧 finalizeTree 会
+    // 重新量测并记录剩余缺陷（v2 不做字号降档），由模型在 notes 里如实上报。
     if (round >= LAYOUT_VALIDATE_MAX_ROUNDS) {
       validateRoundByRun.delete(input.runId);
       return {
@@ -258,7 +259,7 @@ export const LAYOUTER_VALIDATE_TOOL: PiAgentRuntimeTool = {
           ...outcome,
           ok: true,
           forcedSubmission: true,
-          warning: `已连续 ${round} 轮校验未完全收敛；网关收下当前树，落页时会做引擎降档兜底。请立即调用 subagent_submit_result 提交，不要再校验。`,
+          warning: `已连续 ${round} 轮校验未完全收敛；网关收下当前树。请立即调用 subagent_submit_result 提交，并在结果 notes 中如实记录未解决的缺陷，不要再校验。`,
         }),
       };
     }

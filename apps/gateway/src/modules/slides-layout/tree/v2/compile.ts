@@ -142,6 +142,40 @@ function runSize(run: V2Run, node: Unplaced<V2TextNode>, theme: ResolvedTheme): 
   return theme.typeScale[run.token ?? node.token];
 }
 
+/**
+ * v2 token → 场景字号下限变体（fit:"shrink" 缩字到此为止）。
+ * 标题级归 heading、hero/display 归 display、说明级（label/kicker/caption）归 caption。
+ */
+const TOKEN_FLOOR_VARIANT: Record<string, "display" | "heading" | "subtitle" | "body" | "caption"> = {
+  display: "display",
+  hero: "display",
+  h1: "heading",
+  h2: "heading",
+  h3: "heading",
+  lead: "subtitle",
+  body: "body",
+  label: "caption",
+  kicker: "caption",
+  caption: "caption",
+};
+
+function tokenFloors(contract: LayoutContract): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const [token, variant] of Object.entries(TOKEN_FLOOR_VARIANT)) {
+    out[token] = contract.fontFloors[variant];
+  }
+  return out;
+}
+
+/** fit:"shrink" 的缩放档：最多缩小 15%，取能容纳内容的最大一档。 */
+const SHRINK_STEPS = [0.95, 0.9, 0.85] as const;
+
+/** 缩一个字号：原字号已低于下限时保持原字号（不再缩小）。 */
+function shrinkSize(size: number, scale: number, floor: number | undefined): number {
+  if (floor === undefined || size < floor) return size;
+  return Math.max(floor, Math.round(size * scale));
+}
+
 function runColor(run: V2Run, node: Unplaced<V2TextNode>, theme: ResolvedTheme): string {
   return toneColor(run.tone ?? node.tone ?? "text", theme);
 }
@@ -154,8 +188,15 @@ function runFont(run: V2Run, node: Unplaced<V2TextNode>, theme: ResolvedTheme): 
   return HEADING_TOKENS.has(node.token) ? theme.fonts.heading : theme.fonts.body;
 }
 
-function buildRun(run: V2Run, node: Unplaced<V2TextNode>, theme: ResolvedTheme): SpecRun {
-  const size = runSize(run, node, theme);
+function buildRun(
+  run: V2Run,
+  node: Unplaced<V2TextNode>,
+  theme: ResolvedTheme,
+  scale = 1,
+  floors?: Record<string, number>,
+): SpecRun {
+  const base = runSize(run, node, theme);
+  const size = floors ? shrinkSize(base, scale, floors[run.token ?? node.token]) : base;
   const bold = run.bold ?? node.bold ?? ["display", "hero", "h1", "h2", "h3", "kicker", "label"].includes(node.token);
   const letterSpacing = run.letterSpacing ?? node.letterSpacing;
   const font = runFont(run, node, theme);
@@ -169,7 +210,12 @@ function buildRun(run: V2Run, node: Unplaced<V2TextNode>, theme: ResolvedTheme):
   };
 }
 
-function textParagraphs(node: Unplaced<V2TextNode>, theme: ResolvedTheme): SpecParagraph[] {
+function textParagraphs(
+  node: Unplaced<V2TextNode>,
+  theme: ResolvedTheme,
+  scale = 1,
+  floors?: Record<string, number>,
+): SpecParagraph[] {
   const paragraphs = node.paragraphs
     ?? [{ runs: node.runs ?? [{ text: node.text ?? "" }] }];
   return paragraphs.map((paragraph) => ({
@@ -179,7 +225,7 @@ function textParagraphs(node: Unplaced<V2TextNode>, theme: ResolvedTheme): SpecP
       : {}),
     ...(paragraph.spaceBeforePt !== undefined ? { spaceBeforePt: paragraph.spaceBeforePt } : {}),
     ...(paragraph.spaceAfterPt !== undefined ? { spaceAfterPt: paragraph.spaceAfterPt } : {}),
-    runs: paragraph.runs.map((run) => buildRun(run, node, theme)),
+    runs: paragraph.runs.map((run) => buildRun(run, node, theme, scale, floors)),
   }));
 }
 
@@ -210,9 +256,25 @@ function verticalParagraphs(paragraphs: SpecParagraph[]): SpecParagraph[] {
   return out;
 }
 
-function buildText(node: Unplaced<V2TextNode>, frame: Frame, theme: ResolvedTheme): { element: SpecElement; neededHeight: number } {
-  const source = textParagraphs(node, theme);
-  const paragraphs = node.direction === "vertical" ? verticalParagraphs(source) : source;
+function buildText(
+  node: Unplaced<V2TextNode>,
+  frame: Frame,
+  theme: ResolvedTheme,
+  floors?: Record<string, number>,
+): { element: SpecElement; neededHeight: number; maxPt: number } {
+  const build = (scale: number): SpecParagraph[] => {
+    const source = textParagraphs(node, theme, scale, floors);
+    return node.direction === "vertical" ? verticalParagraphs(source) : source;
+  };
+  let paragraphs = build(1);
+  // fit:"shrink"：溢出时同一比例缩全部 run（保留字号比例与段落结构），取能容纳的最大档；
+  // 缩到下限/15% 仍放不下就按最小档落元素，缺陷照常上报（量测用同一份字号）。
+  if (node.fit === "shrink" && floors && textNeededHeight(paragraphs, frame.w) > frame.h) {
+    for (const scale of SHRINK_STEPS) {
+      paragraphs = build(scale);
+      if (textNeededHeight(paragraphs, frame.w) <= frame.h) break;
+    }
+  }
   const element: SpecElement = {
     type: "text",
     x: frame.x,
@@ -222,7 +284,8 @@ function buildText(node: Unplaced<V2TextNode>, frame: Frame, theme: ResolvedThem
     paragraphs,
     valign: node.valign ?? "top",
   };
-  return { element, neededHeight: textNeededHeight(paragraphs, frame.w) };
+  const maxPt = Math.max(9, ...paragraphs.flatMap((paragraph) => paragraph.runs.map((run) => run.sizePt ?? 12)));
+  return { element, neededHeight: textNeededHeight(paragraphs, frame.w), maxPt };
 }
 
 function buildImage(node: Unplaced<V2ImageNode>, frame: Frame, theme: ResolvedTheme): { element: SpecElement; extra: SpecElement[] } {
@@ -518,6 +581,8 @@ interface CompileState {
   backdrop: string | null;
   /** 主题缝隙：row 用 gutter、column 用 rowGutter（页面 grid 覆盖优先）。 */
   gap: { row: number; column: number };
+  /** token → 场景字号下限（fit:"shrink" 用）。 */
+  tokenFloors: Record<string, number>;
   /** 本页内容区与栅格口径：组件溢出时用它把"需要多大"换算成列×行。 */
   area: Frame;
   grid: { cols: number; rows: number; gutter: number; rowGutter: number };
@@ -632,10 +697,12 @@ function groupChildFrames(node: GroupLike, inner: Frame, state: CompileState): F
       };
     });
   }
+  // 统一权重规则：显式父 weights 优先；未提供时从各子节点 weight 推导（缺省 1）。
+  const weights = node.weights ?? node.children.map((child) => child.weight ?? 1);
   return splitByWeights(
     inner,
     node.children.length,
-    node.weights,
+    weights,
     groupGap(node.direction, node.gapScale, state),
     node.direction,
   );
@@ -710,10 +777,10 @@ function compileNode(node: V2Node | V2GroupChild, frame: Frame, path: string, st
     return;
   }
   if (node.type === "text") {
-    const { element, neededHeight } = buildText(node, frame, theme);
+    const { element, neededHeight, maxPt } = buildText(node, frame, theme, state.tokenFloors);
     state.push(element);
     state.stats.leaves += 1;
-    state.placements.push({ path, kind: "text", frame, label: node.token, sizePt: theme.typeScale[node.token], neededHeight, flexible: true });
+    state.placements.push({ path, kind: "text", frame, label: node.token, sizePt: maxPt, neededHeight, flexible: true });
     return;
   }
   if (node.type === "image") {
@@ -843,6 +910,7 @@ export function compileV2Page(page: V2Page, contract: LayoutContract, options: C
       row: page.grid?.gutter ?? theme.spacing.gutter,
       column: page.grid?.rowGutter ?? 16,
     },
+    tokenFloors: tokenFloors(contract),
     area: areaFor(page, theme),
     grid: {
       cols: page.grid?.cols ?? 12,

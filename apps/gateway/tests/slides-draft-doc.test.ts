@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  draftParseDiagnostic,
   parseDraftMarkdown,
   renderDraftMarkdown,
   slidesProgressPlanFrom,
@@ -125,6 +126,19 @@ describe("renderDraftMarkdown → parseDraftMarkdown 往返", () => {
     expect(parseDraftMarkdown("## 页\n| a | b |\n| 1 | 2 |")?.[0]?.data).toBe("| a | b |\n| 1 | 2 |");
     expect(parseDraftMarkdown("没有章节的普通文档")).toBeNull();
     expect(parseDraftMarkdown("")).toBeNull();
+  });
+
+  it("解析失败诊断：区分清空、标题层级不对、无标题", () => {
+    expect(draftParseDiagnostic("")).toBe("草稿正文为空（可能被清空）");
+    expect(draftParseDiagnostic("# 用 H1 改过的草稿\n正文")).toBe(
+      "草稿有 2 行内容但没有「## 章节」结构（最高标题层级 H1）",
+    );
+    expect(draftParseDiagnostic("### 只有三级标题\n正文")).toBe(
+      "草稿有 2 行内容但没有「## 章节」结构（最高标题层级 H3）",
+    );
+    expect(draftParseDiagnostic("没有标题的普通文档")).toBe(
+      "草稿有 1 行内容但没有「## 章节」结构（最高标题层级 无任何标题）",
+    );
   });
 });
 
