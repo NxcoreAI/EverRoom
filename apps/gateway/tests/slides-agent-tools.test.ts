@@ -39,23 +39,62 @@ const PLANNER_DOCUMENT_TOOLS = [
   tool("document_write_begin"), tool("document_patch_begin"),
 ];
 
+const PLANNER_WORKSPACE_TOOLS = [tool("workspace_files_list"), tool("send_notification")];
+
+const PLANNER_READ_FILE_TEXT = async (fileEntryId: string) =>
+  fileEntryId === "file-1" ? { text: "一二三四五六七八九十".repeat(1_000), filename: "锥光 BP-1020.md" } : null;
+
 describe("createSlidesPlannerAgentTools（slides-planner 工具面）", () => {
   it("只放行读取/联网/素材/配图预热类；slides 四件套、写入、调度、通知类一律拒绝", () => {
     const tools = createSlidesPlannerAgentTools({
       documentTools: PLANNER_DOCUMENT_TOOLS,
       webSearchTools: [tool("web_search"), tool("agent_dispatch"), tool("agent_catalog"), tool("send_notification")],
+      workspaceFileTools: PLANNER_WORKSPACE_TOOLS,
+      readWorkspaceFileText: PLANNER_READ_FILE_TEXT,
     });
     expect(tools.map((item) => item.name).sort()).toEqual([
       "document_list",
       "document_read",
       "slides_image_prewarm",
       "web_search",
+      "workspace_file_read",
+      "workspace_files_list",
     ]);
   });
 
   it("空依赖时只含配图预热（token 注册表寻址，装配零依赖）", () => {
     expect(createSlidesPlannerAgentTools({ documentTools: [], webSearchTools: [] })
       .map((item) => item.name)).toEqual(["slides_image_prewarm"]);
+  });
+
+  it("工作区文件读取：draft 单次限 8k 字符并给 nextOffset，arrange 拒读，未知文件报错", async () => {
+    const tools = createSlidesPlannerAgentTools({
+      documentTools: [],
+      webSearchTools: [],
+      workspaceFileTools: PLANNER_WORKSPACE_TOOLS,
+      readWorkspaceFileText: PLANNER_READ_FILE_TEXT,
+    });
+    const wrapped = tools.find((item) => item.name === "workspace_file_read")!;
+    const page1 = JSON.parse((await wrapped.execute(runInput("draft"), { fileEntryId: "file-1" })).content) as {
+      text: string;
+      totalCharacters: number;
+      truncated: boolean;
+      nextOffset?: number;
+    };
+    expect(page1.text.length).toBe(8_000);
+    expect(page1.truncated).toBe(true);
+    expect(page1.nextOffset).toBe(8_000);
+    expect(page1.totalCharacters).toBe(10_000);
+
+    const arrange = JSON.parse((await wrapped.execute(runInput("arrange"), { fileEntryId: "file-1" })).content) as {
+      skipped?: boolean;
+    };
+    expect(arrange.skipped).toBe(true);
+
+    const missing = JSON.parse((await wrapped.execute(runInput("draft"), { fileEntryId: "nope" })).content) as {
+      error?: string;
+    };
+    expect(missing.error).toContain("workspace_files_list");
   });
 
   it("文档读取：draft 单次限 8k 字符，arrange 阶段直接拒读", async () => {

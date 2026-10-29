@@ -1411,6 +1411,7 @@
   "agentChat.SLIDES_ELAPSED_DONE": "Finished in {{time}}",
   "agentChat.SLIDES_ERROR_AGENTS_UNAVAILABLE": "The layout agents are temporarily at capacity. Finished pages are kept — retry in a moment to continue.",
   "agentChat.SLIDES_ERROR_LAYOUT_APPLY": "Page layout failed completely. Your content draft is safe — you can retry.",
+  "agentChat.SLIDES_ERROR_DESIGN_FAILED": "Page designs all failed validation. Your content draft is safe — you can retry.",
   "agentChat.SLIDES_ERROR_LAYOUT_TAIL": "Something went wrong while finishing the layout. You can retry.",
   "agentChat.SLIDES_ERROR_NONE_NEEDED": "No pages need images.",
   "agentChat.SLIDES_ERROR_OFFICE_GENERATION": "The deck couldn't be saved as a file. You can retry.",

@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { readFile, rm, stat } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { Readable } from "node:stream";
-import { and, desc, eq, isNull, ne, or } from "drizzle-orm";
+import { and, desc, eq, isNull, ne, or, sql, type SQL } from "drizzle-orm";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
 import { sniffImageMime } from "../../infrastructure/image-mime.js";
 import { enqueueSearchIndex } from "../search/jobs.js";
@@ -453,6 +453,13 @@ export class FilesService {
     };
   }
 
+  /** 条目当前版本 id：document_analysis 的 fileVersionId 兜底解析用。 */
+  currentVersionIdOf(fileEntryId: string): string | null {
+    const row = this.db.select({ currentVersionId: fileEntries.currentVersionId })
+      .from(fileEntries).where(eq(fileEntries.id, fileEntryId)).get();
+    return row?.currentVersionId ?? null;
+  }
+
   touchVersionParsed(fileEntryId: string, fileVersionId: string, parsedId: string | null): void {
     const now = new Date();
     this.db.update(fileVersions).set({
@@ -467,7 +474,11 @@ export class FilesService {
     enqueueSearchIndex(this.db, { itemType: "file", refId: fileEntryId, priority: "high" });
   }
 
-  listCatalog(limit = 100, offset = 0): { items: CatalogFileDto[]; total: number } {
+  listCatalog(limit = 100, offset = 0, nameLikePatterns?: string[]): { items: CatalogFileDto[]; total: number } {
+    const patterns = [...new Set(
+      (nameLikePatterns ?? []).map((pattern) => pattern.trim().toLowerCase()).filter(Boolean),
+    )];
+    const nameFilter = catalogNameFilter(patterns);
     const rows = this.db.select({
       entry: fileEntries,
       version: fileVersions,
@@ -477,7 +488,7 @@ export class FilesService {
       .leftJoin(fileVersions, eq(fileEntries.currentVersionId, fileVersions.id))
       .leftJoin(fileBlobs, eq(fileVersions.contentHash, fileBlobs.contentHash))
       .leftJoin(fileClassifications, eq(fileVersions.id, fileClassifications.fileVersionId))
-      .where(isNull(fileEntries.deletedAt))
+      .where(nameFilter ? and(isNull(fileEntries.deletedAt), nameFilter) : isNull(fileEntries.deletedAt))
       .orderBy(desc(fileEntries.updatedAt)).limit(limit).offset(offset).all();
     const items = rows.map(({ entry, version, blob, classification }) => ({
       id: entry.id,
@@ -502,7 +513,7 @@ export class FilesService {
       updatedAt: entry.updatedAt.toISOString(),
     } satisfies CatalogFileDto));
     const total = this.db.select({ id: fileEntries.id }).from(fileEntries)
-      .where(isNull(fileEntries.deletedAt)).all().length;
+      .where(nameFilter ? and(isNull(fileEntries.deletedAt), nameFilter) : isNull(fileEntries.deletedAt)).all().length;
     return { items, total };
   }
 
@@ -1036,4 +1047,14 @@ export class FilesService {
     if (nonLocalCatalogReference || legacyReference) return;
     await rm(join(this.dataDir, storageRelPath(contentHash)), { force: true }).catch(() => undefined);
   }
+}
+
+/** LIKE 通配符转义（与 search 模块同规则）：pattern 由调用方小写化，ASCII 大小写由 SQLite LIKE 天然忽略。 */
+function catalogNameFilter(patterns: string[]): SQL | undefined {
+  if (patterns.length === 0) return undefined;
+  const columns = [fileEntries.originalName, fileEntries.displayName, fileEntries.relativePath];
+  return or(...patterns.flatMap((pattern) => {
+    const escaped = `%${pattern.replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`;
+    return columns.map((column) => sql`${column} LIKE ${escaped} ESCAPE '\\'`);
+  }));
 }

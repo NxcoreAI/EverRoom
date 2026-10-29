@@ -261,6 +261,8 @@ export interface SubagentInvocation {
   result: SubagentInvocationResult | null;
   errorCode: string | null;
   errorMessage: string | null;
+  /** 续会话：本次 run 实际使用的 pi 会话 ref（deck 级共享上下文链式传递用）。 */
+  runtimeSessionRef?: string | null;
   createdAt: string;
   startedAt: string | null;
   completedAt: string | null;

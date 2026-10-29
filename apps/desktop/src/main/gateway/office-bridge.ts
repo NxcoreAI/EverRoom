@@ -51,6 +51,12 @@ export interface OfficeCompleteRequest {
   failedPages?: number[]
 }
 
+/** 「产物未以可编辑会话打开」：未打开（not_open）或开着只读预览（not_editable）——都可经 open-edit 重建可编辑实例自愈。 */
+function notEditableSessionReason(outcome: SlidesEditArtifactOutcome): 'not_open' | 'not_editable' | null {
+  if (outcome.ok) return null
+  return outcome.reason === 'not_open' || outcome.reason === 'not_editable' ? outcome.reason : null
+}
+
 /** Agent 编辑已打开 slides 产物的请求（gateway 工具 → /v1/office-edit）。 */
 export interface OfficeEditRequest {
   mode: 'read' | 'apply'
@@ -380,15 +386,21 @@ export class OfficeBridgeServer {
     let outcome: SlidesEditArtifactOutcome
     try {
       outcome = await slidesEdit(req.fileId, artifactReq)
-      // 重启后产物未打开：显式 fileEntryId 先请渲染端以可编辑方式打开再重试
-      //（每次调用自带 8s 等待窗口，外层再兜到 30s 覆盖 genoffice 冷启动 + 大文件解包）。
-      if (!outcome.ok && outcome.reason === 'not_open' && req.fileId !== 'active') {
-        console.info('office-bridge: office-edit 命中 not_open，尝试请渲染端自动打开', { fileId: req.fileId })
+      // 重启后产物未打开 / 开着的是只读预览：显式 fileEntryId 先请渲染端以可编辑方式
+      // 打开再重试（open-edit 会原地重建只读实例为可编辑；每次调用自带 8s 等待窗口，
+      // 外层再兜到 30s 覆盖 genoffice 冷启动 + 大文件解包）。
+      const reopenReason = notEditableSessionReason(outcome)
+      if (reopenReason && req.fileId !== 'active') {
+        console.info('office-bridge: office-edit 命中未以可编辑会话打开，尝试请渲染端自动打开', {
+          fileId: req.fileId,
+          reason: reopenReason,
+        })
         const opened = await this.requestRendererOpen(req.fileId)
         if (!opened) {
           // requestRendererOpen 内部已带具体跳过原因，这里补一条调用方视角的结论日志。
-          console.warn('office-bridge: office-edit 自动打开未生效（requestRendererOpen 返回 false），保持 not_open 报错', {
+          console.warn('office-bridge: office-edit 自动打开未生效（requestRendererOpen 返回 false），保持报错', {
             fileId: req.fileId,
+            reason: reopenReason,
           })
         } else {
           const startedAt = Date.now()
@@ -397,7 +409,7 @@ export class OfficeBridgeServer {
           do {
             outcome = await slidesEdit(req.fileId, artifactReq)
             attempts += 1
-          } while (!outcome.ok && outcome.reason === 'not_open' && Date.now() < deadline)
+          } while (notEditableSessionReason(outcome) && Date.now() < deadline)
           console.warn('office-bridge: office-edit 自动打开重试结束', {
             fileId: req.fileId,
             ok: outcome.ok,

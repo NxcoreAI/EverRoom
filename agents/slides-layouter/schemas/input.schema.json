@@ -247,35 +247,6 @@
       },
       "additionalProperties": false
     },
-    "neighbors": {
-      "type": "array",
-      "maxItems": 2,
-      "items": {
-        "type": "object",
-        "properties": {
-          "pageIndex": {
-            "type": "integer"
-          },
-          "composition": {
-            "type": "string"
-          },
-          "takeaway": {
-            "type": "string"
-          },
-          "form": {
-            "type": "string"
-          },
-          "role": {
-            "type": "string"
-          },
-          "message": {
-            "type": "string",
-            "maxLength": 8000
-          }
-        },
-        "additionalProperties": false
-      }
-    },
     "budget": {
       "type": "object",
       "properties": {
@@ -990,6 +961,37 @@
             }
           }
         }
+      }
+    },
+    "deckOutline": {
+      "type": "array",
+      "maxItems": 64,
+      "description": "全册页清单概要（仅本对话首个任务携带）：各页页序、标题、角色、密度与内容形态，用于把握整册节奏与前后页差异。后续任务不再重复携带；前面页的设计已在本对话上下文里。",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "pageIndex": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "title": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          },
+          "density": {
+            "type": "string"
+          },
+          "form": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "pageIndex",
+          "title"
+        ]
       }
     }
   },

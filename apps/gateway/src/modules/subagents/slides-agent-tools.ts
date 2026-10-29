@@ -23,6 +23,8 @@ const SLIDES_PLANNER_DOCUMENT_TOOL_ALLOWLIST = new Set([
   "document_read",
 ]);
 
+const SLIDES_PLANNER_WORKSPACE_TOOL_ALLOWLIST = new Set(["workspace_files_list"]);
+
 const SLIDES_PLANNER_WEB_SEARCH_TOOL_ALLOWLIST = new Set(["web_search"]);
 
 
@@ -32,6 +34,11 @@ const SLIDES_BUILDER_TOOL_ALLOWLIST = new Set<string>(SLIDES_TOOL_NAMES);
 
 /** planner 取数预算：draft 阶段需要背景，但单篇正文不该整篇进上下文。 */
 const PLANNER_DOCUMENT_READ_LIMIT = 8_000;
+
+export interface WorkspaceFileText {
+  text: string;
+  filename: string;
+}
 
 function filterTools(
   tools: PiAgentRuntimeTool[],
@@ -78,16 +85,96 @@ function createPlannerDocumentReadTool(tool: PiAgentRuntimeTool): PiAgentRuntime
   };
 }
 
+/**
+ * 工作区文件正文读取：用户上传的资料（md/docx 等）在文件库而不在文稿表，
+ * document_list 够不到。planner 与主 Agent 共用；mainAgent 变体不带编排阶段
+ * 拒读（那是 slides 编排的专属语义）。
+ */
+export function createWorkspaceFileReadTool(
+  readText: (fileEntryId: string) => Promise<WorkspaceFileText | null>,
+  options?: { mainAgent?: boolean },
+): PiAgentRuntimeTool {
+  const mainAgent = options?.mainAgent === true;
+  return {
+    name: "workspace_file_read",
+    label: "读取工作区文件",
+    description:
+      `按 fileEntryId 读工作区上传文件的文本正文（文档解析出的 Markdown 优先，文本类原文件兜底）。`
+      + `单次最多 ${PLANNER_DOCUMENT_READ_LIMIT} 字符，超出用 offset/limit 分页；fileEntryId 先用 workspace_files_list 查。`
+      + (mainAgent
+        ? "文本类文件（md/txt/csv 等）的内容问题用本工具读正文回答；Office/PDF 附件仍走 document_analysis。"
+        : "编排阶段素材已定型，不需要再读。"),
+    parameters: {
+      type: "object",
+      properties: {
+        fileEntryId: { type: "string", minLength: 1, maxLength: 128, description: "workspace_files_list 返回的 fileEntryId" },
+        offset: { type: "integer", minimum: 0, description: "正文字符偏移（分页时传上一页返回的 nextOffset）" },
+        limit: { type: "integer", minimum: 1, description: `本次返回字符数上限（缺省 ${PLANNER_DOCUMENT_READ_LIMIT}）` },
+      },
+      required: ["fileEntryId"],
+      additionalProperties: false,
+    },
+    executionMode: "sequential",
+    async execute(input, params) {
+      if (!mainAgent && subagentPhase(input) === "arrange") {
+        return {
+          content: JSON.stringify({
+            skipped: true,
+            reason: "编排阶段的结构化输入 draftPages 已包含全部页内容，禁止再读工作区文件；直接基于输入产出方案。",
+          }),
+          details: { skipped: true },
+        };
+      }
+      const fileEntryId = typeof params.fileEntryId === "string" ? params.fileEntryId.trim() : "";
+      if (!fileEntryId) {
+        return { content: JSON.stringify({ error: "缺少 fileEntryId；先调用 workspace_files_list 按文件名查清单。" }) };
+      }
+      const file = await readText(fileEntryId);
+      if (!file) {
+        return {
+          content: JSON.stringify({
+            error: "文件不存在或没有可读的文本内容（图片与未解析的二进制不可读）；用 workspace_files_list 核对 fileEntryId。",
+          }),
+        };
+      }
+      const total = file.text.length;
+      const requestedLimit = typeof params.limit === "number" && Number.isFinite(params.limit) ? Math.floor(params.limit) : PLANNER_DOCUMENT_READ_LIMIT;
+      const limit = Math.max(1, Math.min(requestedLimit, PLANNER_DOCUMENT_READ_LIMIT));
+      const offset = typeof params.offset === "number" && Number.isFinite(params.offset) && params.offset >= 0 ? Math.floor(params.offset) : 0;
+      const start = Math.min(offset, total);
+      const end = Math.min(start + limit, total);
+      const text = file.text.slice(start, end);
+      return {
+        content: JSON.stringify({
+          fileEntryId,
+          filename: file.filename,
+          text,
+          offset: start,
+          totalCharacters: total,
+          truncated: start > 0 || end < total,
+          ...(end < total ? { nextOffset: end } : {}),
+        }),
+      };
+    },
+  };
+}
+
 export function createSlidesPlannerAgentTools(deps: {
   /** createDocumentPiTools 的产物（取文档只读子集）。 */
   documentTools: PiAgentRuntimeTool[];
   /** createWebSearchPiTools 的产物（未配置时传空数组）。 */
   webSearchTools: PiAgentRuntimeTool[];
+  /** createWorkspaceFilesPiTools 的产物；planner 用于定位用户上传的资料文件。 */
+  workspaceFileTools?: PiAgentRuntimeTool[];
+  /** 读工作区上传文件的文本正文（createWorkspaceFileTextReader 装配注入）。 */
+  readWorkspaceFileText?: (fileEntryId: string) => Promise<WorkspaceFileText | null>;
 }): PiAgentRuntimeTool[] {
   return [
     ...filterTools(deps.documentTools, SLIDES_PLANNER_DOCUMENT_TOOL_ALLOWLIST)
       .map((tool) => (tool.name === "document_read" ? createPlannerDocumentReadTool(tool) : tool)),
     ...filterTools(deps.webSearchTools, SLIDES_PLANNER_WEB_SEARCH_TOOL_ALLOWLIST),
+    ...filterTools(deps.workspaceFileTools ?? [], SLIDES_PLANNER_WORKSPACE_TOOL_ALLOWLIST),
+    ...(deps.readWorkspaceFileText ? [createWorkspaceFileReadTool(deps.readWorkspaceFileText)] : []),
     // 配图预热：编排中生图入池（模块内 token 注册表寻址，装配无额外依赖）。
     ...filterTools(createSlidesImagePrewarmTools(), SLIDES_PLANNER_PREWARM_TOOL_ALLOWLIST),
   ];

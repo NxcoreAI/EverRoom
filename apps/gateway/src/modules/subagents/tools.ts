@@ -754,6 +754,12 @@ export function createSubagentPiTools(
   orchestrator: SubagentOrchestrator,
   options: {
     resolveFileMarkdown?: (fileId: string) => Promise<string | null>;
+    /**
+     * 文件条目 → 当前版本 id。document_analysis 的 fileVersionId 兜底解析：
+     * workspace_files_list 只回 fileEntryId，模型拿 entry id 顶替版本 id 时
+     * （线上实测的最常见形态），派发前换成条目当前版本，避免解析子代理空转一轮。
+     */
+    resolveFileCurrentVersionId?: (fileEntryId: string) => string | null;
     /** doc-writer 组装数据源（doc-writer-subagent-plan §4）：读权威文档快照。 */
     resolveDocumentForDraft?: (documentId: string) => DocumentDraftSnapshot;
     /**
@@ -956,9 +962,15 @@ export function createSubagentPiTools(
         const question = typeof params.question === "string" && params.question.trim()
           ? params.question.trim()
           : "概括这份文档的主题、关键事实和结论。";
+        const requestedEntryId = String(params.fileEntryId);
+        let requestedVersionId = String(params.fileVersionId);
+        if (requestedVersionId === requestedEntryId) {
+          const currentVersionId = options.resolveFileCurrentVersionId?.(requestedEntryId) ?? null;
+          if (currentVersionId) requestedVersionId = currentVersionId;
+        }
         const input = {
-          fileEntryId: String(params.fileEntryId),
-          fileVersionId: String(params.fileVersionId),
+          fileEntryId: requestedEntryId,
+          fileVersionId: requestedVersionId,
           question,
           profile: params.profile ?? "full",
           privacyPolicy: "local_only",
@@ -1830,7 +1842,8 @@ export function createSubagentPiTools(
             makeKey: dispatchKey,
             // 单页布局；第 4 参带附件时是"自审回投"——把该页渲染图投回同一个
             // 视觉模型，让它看自己的成品。整册不再有独立的审页代理。
-            dispatchPage: (input, idempotencyKey, tailParentRunId, attachments) =>
+            // 第 5 参 session：deck 级续会话（同册逐页共享上下文），见 runLayouterTail。
+            dispatchPage: (input, idempotencyKey, tailParentRunId, attachments, session) =>
               retryDispatch(() => dispatch({
                 agentId: "slides-layouter",
                 task: "单页布局",
@@ -1840,6 +1853,7 @@ export function createSubagentPiTools(
                 source: "primary_agent",
                 parentSessionId: run.sessionId,
                 ...(tailParentRunId ? { parentRunId: tailParentRunId } : {}),
+                ...(session ? { runtimeSession: session } : {}),
                 ...(signal ? { signal } : {}),
               }), slidesConcurrencyRetry(orchestrator, "slides-layouter")),
           });

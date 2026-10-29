@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { StartRuntimeRunInput } from "@nxcore/agent-runtime";
 import {
+  catalogQueryLikePatterns,
   createWorkspaceFileCatalog,
   createWorkspaceFilesPiTools,
   type WorkspaceFileSource,
@@ -24,8 +25,13 @@ interface Row {
 
 function sourceOf(rows: Row[]): WorkspaceFileSource {
   return {
-    listCatalog: () => ({
-      items: rows.map((row) => ({ ...row, updatedAt: UPDATED_AT })),
+    // 与 FilesService 的 SQL 下推同语义：先按模式过滤，再截 limit（模拟扫描窗口）。
+    listCatalog: (limit, _offset, patterns) => ({
+      items: rows
+        .filter((row) => !patterns?.length || patterns.some((pattern) =>
+          [row.originalName, row.sharedTitle, row.relativePath ?? ""].join("\n").toLowerCase().includes(pattern)))
+        .slice(0, limit)
+        .map((row) => ({ ...row, updatedAt: UPDATED_AT })),
     }),
     catalogStoragePathOf: (fileEntryId) => `/data/files/${fileEntryId}`,
   };
@@ -109,6 +115,50 @@ describe("workspace file catalog", () => {
     expect(catalog.list({ query: "BP-1020" }).map((entry) => entry.fileEntryId)).toEqual(["doc-1"]);
     expect(catalog.list({ kind: "image", limit: 1 })).toHaveLength(1);
     expect(catalog.list({ query: "不存在的名字" })).toEqual([]);
+  });
+
+  it("带词检索经 LIKE 下推，能命中扫描窗口外的老文件", () => {
+    // 复现线上问题：本地文件夹同步灌入上万文件后，手动上传的老文件排在扫描窗口
+    // （SCAN_LIMIT=500）之外，仅内存过滤时按名检索会漏检。
+    // 垃圾文件取自真实转录：路径含「p-」「-1」（whatsapp-business / polyvox_app_rn-1），
+    // 旧的全 token 滑窗会召回它们灌满结果窗。
+    const junkRelativePaths = [
+      "polyvox_app_rn-1/src/assets/agreements/privacy.html",
+      "nango-master/docs/snippets/generated/whatsapp-business/PreBuiltUseCases.mdx",
+    ] as const;
+    const junk: Row[] = Array.from({ length: 600 }, (_, index) => {
+      const even = index % 2 === 0;
+      return {
+        id: `filler-${index}`,
+        originalName: even ? "privacy.html" : "PreBuiltUseCases.mdx",
+        sharedTitle: even ? "privacy.html" : "PreBuiltUseCases.mdx",
+        relativePath: even ? junkRelativePaths[0] : junkRelativePaths[1],
+        bytes: 1,
+        dataType: "document",
+        contentHash: HASH_C,
+      } satisfies Row;
+    });
+    const target: Row = {
+      id: "doc-1",
+      originalName: "锥光 BP-1020.md",
+      sharedTitle: "锥光 BP-1020",
+      relativePath: "锥光 BP-1020.md",
+      bytes: 512,
+      dataType: "document",
+      contentHash: HASH_C,
+    };
+    const catalog = createWorkspaceFileCatalog(sourceOf([...junk, target]));
+
+    // 无词路径仍只看到窗口内最新文件（受缺省 limit 截断）。
+    expect(catalog.list({})).toHaveLength(30);
+    // 用户输入常不带空格（「锥光BP-1020」）：噪声窗已去掉，只有目标命中。
+    expect(catalog.list({ query: "锥光BP-1020" }).map((entry) => entry.fileEntryId)).toEqual(["doc-1"]);
+  });
+
+  it("模式展开只在 CJK 连续段内成窗，不产生 ASCII 噪声窗", () => {
+    expect(catalogQueryLikePatterns("锥光BP-1020")).toEqual(["锥光bp-1020", "锥光"]);
+    expect(catalogQueryLikePatterns("产品图")).toEqual(["产品图", "产品", "品图"]);
+    expect(catalogQueryLikePatterns("BP-1020")).toEqual(["bp-1020"]);
   });
 });
 

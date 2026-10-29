@@ -79,6 +79,35 @@ describe('office-edit 未打开产物的自动打开重试', () => {
     }
   })
 
+  it('开着的是只读预览（not_editable）同样广播 open-edit 重建可编辑实例后重试', async () => {
+    const events: OfficeAgentFileEvent[] = []
+    const slidesEdit = vi.fn<(fileId: string, req: SlidesEditArtifactRequest) => Promise<SlidesEditArtifactOutcome>>()
+      .mockImplementationOnce(async () => ({ ok: false, reason: 'not_editable', open: [] }))
+      .mockImplementationOnce(async () => ({
+        ok: true,
+        info: { outline: 'deck-outline', opVocabulary: 'vocab', editable: true },
+      }))
+    const server = new OfficeBridgeServer(
+      () => ({ get: async () => fileEntry() }) as unknown as FilesGatewayBridge,
+      (event) => events.push(event),
+      () => slidesEdit,
+    )
+    const { baseUrl, token } = await server.start()
+    try {
+      const response = await fetch(`${baseUrl}/v1/office-edit`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: 'read', fileId: 'file-1' }),
+      })
+      expect(response.status).toBe(200)
+      expect(slidesEdit).toHaveBeenCalledTimes(2)
+      expect(events).toHaveLength(1)
+      expect(events[0]?.type).toBe('open-edit')
+    } finally {
+      await server.stop()
+    }
+  })
+
   it('fileId 为 active 时保持原报错，不触发自动打开', async () => {
     const events: OfficeAgentFileEvent[] = []
     const slidesEdit = vi.fn<(fileId: string, req: SlidesEditArtifactRequest) => Promise<SlidesEditArtifactOutcome>>()

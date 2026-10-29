@@ -52,6 +52,7 @@ const ERROR_MESSAGE_KEYS: Record<string, string> = {
   slides_office_generation_failed: 'surface:agentChat.SLIDES_ERROR_OFFICE_GENERATION',
   slides_layout_agents_unavailable: 'surface:agentChat.SLIDES_ERROR_AGENTS_UNAVAILABLE',
   slides_layout_apply_failed: 'surface:agentChat.SLIDES_ERROR_LAYOUT_APPLY',
+  slides_layout_design_failed: 'surface:agentChat.SLIDES_ERROR_DESIGN_FAILED',
   slides_layout_tail_failed: 'surface:agentChat.SLIDES_ERROR_LAYOUT_TAIL',
   slides_storyboard_unavailable: 'surface:agentChat.SLIDES_ERROR_STORYBOARD_UNAVAILABLE',
   slides_page_images_generation_failed: 'surface:agentChat.SLIDES_ERROR_PAGE_IMAGES',

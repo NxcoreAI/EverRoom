@@ -559,11 +559,12 @@ export function App() {
         showToast({ title: t('surface:agentOffice.done.title', { kind }), message: t('surface:agentOffice.done.message', { title: payload.title }) })
       }
       window.dispatchEvent(new CustomEvent('everroom:knowledge-changed'))
-      // 产物库已随 Context Room 移除：生成完成后直接以顶栏预览打开该产物（可编辑）。
+      // 产物库已随 Context Room 移除：生成完成后直接以顶栏标签打开该产物（可编辑——
+      // 生成期间落页/fillPage 依赖可编辑实例，只读打开会把实例翻成预览导致后续落页被拒）。
       if (!payload.fileId || !payload.originalName) return
       const files = window.nxcore?.files
       if (!files) return
-      void files.openOriginal(payload.fileId, payload.originalName)
+      void files.openOriginal(payload.fileId, payload.originalName, undefined, { editable: true })
         .then((result) => {
           if (result?.openedWith === 'office') {
             openOfficeTab({ id: result.instanceId, title: result.title, kind: result.kind })

@@ -132,6 +132,13 @@ describe('slidesProgressFromToolCall', () => {
     expect(slidesProgressFromToolCall(bash)).toBeNull()
   })
 
+  it('参数校验拒绝（调用从未开始）不渲染失败卡', () => {
+    expect(slidesProgressFromToolCall(wrap(undefined, {
+      status: 'error',
+      error: 'Validation failed for tool "slides_draft":\n  - targetPages: must be >= 4',
+    }))).toBeNull()
+  })
+
   it('进度阶段要求 pages，配图阶段要求 documentId，风格阶段要求 styleSessionId', () => {
     expect(slidesProgressFromToolCall(wrap({ stage: 'draft_ready', pages: [] }))?.stage).toBe('draft_ready')
     expect(slidesProgressFromToolCall(wrap({ stage: 'draft_ready' }))).toBeNull()
@@ -220,6 +227,20 @@ describe('selectSlidesTasks', () => {
     ])
     expect(selection.primary).toBeNull()
     expect(selection.receipts).toHaveLength(1)
+  })
+
+  it('失败回执已被更新的调用重试过：剥掉 retryable，不再显示「再试一次」', () => {
+    // 网关失败载荷没有 documentId/title，key 是 tool:id——agent 自动重试的新调用顶不掉它。
+    const failed = entryOf({ stage: 'failed', errorCode: 'slides_layout_apply_failed', errorMessage: '全部页面落页失败', retryable: true }, { id: 't1', startedAt: at(1), status: 'error' })
+    expect(selectSlidesTasks([failed]).receipts[0]?.progress.retryable).toBe(true)
+    const selection = selectSlidesTasks([
+      entryOf({ stage: 'planning', title: '失败的 PPT', documentId: 'doc-r' }, { id: 't2', startedAt: at(2) }),
+      failed,
+    ])
+    expect(selection.primary?.tool.id).toBe('t2')
+    const receipt = selection.receipts.find((entry) => entry.tool.id === 't1')
+    expect(receipt).toBeDefined()
+    expect(receipt?.progress.retryable).toBe(false)
   })
 
   it('被取消的任务也收成回执，不再常驻完整卡', () => {
@@ -535,6 +556,33 @@ describe('SlidesProgressCard 风格大图选择器（P1-3）', () => {
     // 选完浮层关闭，卡片也一起收起（选择即完成，不留常驻卡）。
     expect(renderer.root.findAllByProps({ className: 'agent-slides-style-overlay' })).toHaveLength(0)
     expect(renderer.root.findAll((node) => node.props?.className === 'agent-slides-card')).toHaveLength(0)
+  })
+
+  it('点第三张缩略图：大浮层显示第三张，「用这套」发 index=3（不能回落到第一张）', () => {
+    const onAction = vi.fn()
+    const threeCandidates = {
+      ...styleState,
+      styleCandidates: [
+        { url: 'everroom-material://s0', label: '深色杂志', generation: 1 },
+        { url: 'everroom-material://s1', label: '暖纸手作', generation: 1 },
+        { url: 'everroom-material://s2', label: '冷静商务', generation: 1 },
+      ],
+    }
+    const renderer = TestRenderer.create(cardFixture({ state: threeCandidates, toolRunning: false, onAction }))
+    // 自动弹出的浮层先关掉，走「缩略图 → 大浮层」路径。
+    const overlay0 = renderer.root.findByProps({ className: 'agent-slides-style-overlay' })
+    act(() => overlay0.findByProps({ className: 'agent-slides-style-overlay-close' }).props.onClick())
+    expect(renderer.root.findAllByProps({ className: 'agent-slides-style-overlay' })).toHaveLength(0)
+
+    const thumbs = renderer.root.findAll((node) => typeof node.props?.className === 'string' && node.props.className.includes('agent-slides-style-thumb'))
+    expect(thumbs).toHaveLength(3)
+    act(() => thumbs[2]!.props.onClick())
+
+    const overlay = renderer.root.findByProps({ className: 'agent-slides-style-overlay' })
+    expect(overlay.findByProps({ className: 'agent-slides-style-overlay-figure' }).findByType('img').props.src)
+      .toBe('everroom-material://s2')
+    act(() => buttonWithText(overlay, `${KEY}SLIDES_STYLE_USE`).props.onClick())
+    expect(onAction.mock.calls[0]![0]).toBe(`${KEY}SLIDES_STYLE_PICK_PROMPT?index=3&sessionId=style-9`)
   })
 
   it('「都换一批」带 regenerate=true 的 hiddenPrompt（含 documentId）', () => {

@@ -48,6 +48,15 @@ export interface DispatchSubagentInput {
    * 以该 id 注册跨模块运行时状态（如 PPT 逐页审阅闸门 arm）。
    */
   onInvocationId?: (invocationId: string) => void;
+  /**
+   * 续会话：传 deck 级稳定 sessionId + 上一轮返回的 runtimeSessionRef，多次 dispatch
+   * 共享同一 pi 会话（后轮看得到前轮上下文）。缺省每 dispatch 独立会话（原行为）。
+   * runId 恒为 invocationId——超时/事件/validate 按 run 隔离的语义不变。
+   */
+  runtimeSession?: {
+    sessionId: string;
+    runtimeSessionRef: string | null;
+  };
 }
 
 interface ActiveInvocation {
@@ -125,6 +134,7 @@ function toInvocation(row: typeof subagentInvocations.$inferSelect): SubagentInv
     result: row.result,
     errorCode: row.errorCode,
     errorMessage: row.errorMessage,
+    runtimeSessionRef: row.runtimeSessionRef,
     createdAt: row.createdAt.toISOString(),
     startedAt: row.startedAt?.toISOString() ?? null,
     completedAt: row.completedAt?.toISOString() ?? null,
@@ -430,7 +440,7 @@ export class SubagentOrchestrator {
       invocationId,
       input.input ?? null,
     );
-    const promise = this.executeInvocation(invocationId, definition, runtime, input.attachments, input.timeoutMs, input.onUsage);
+    const promise = this.executeInvocation(invocationId, definition, runtime, input.attachments, input.timeoutMs, input.onUsage, input.runtimeSession);
     this.active.set(invocationId, { runtime, promise, cancellationRequested: false, agentDefinitionId: definition.id });
     return { invocationId, completion: promise, joined: false };
   }
@@ -485,6 +495,7 @@ export class SubagentOrchestrator {
     attachments?: RuntimeAttachment[],
     timeoutMsOverride?: number,
     onUsage?: DispatchSubagentInput["onUsage"],
+    runtimeSession?: DispatchSubagentInput["runtimeSession"],
   ): Promise<SubagentInvocation> {
     const startedAt = new Date();
     // 调用方只能收紧预算，不能突破 agent 定义的 policy；分批链路用更短的单批上限。
@@ -519,8 +530,9 @@ export class SubagentOrchestrator {
     try {
       runtimeRun = await runtime.start({
         runId: invocationId,
-        sessionId: invocationId,
-        runtimeSessionRef: null,
+        // 续会话：deck 级稳定 sessionId + 上一轮 ref → 同一 pi 会话追加任务消息。
+        sessionId: runtimeSession?.sessionId ?? invocationId,
+        runtimeSessionRef: runtimeSession?.runtimeSessionRef ?? null,
         originalPrompt: row.task,
         prompt,
         pageLabel: `Subagent: ${definition.name}`,

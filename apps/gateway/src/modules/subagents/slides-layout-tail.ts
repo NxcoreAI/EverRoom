@@ -64,13 +64,15 @@ export interface LayouterTailDeps {
   /** 带并发限额退避的 dispatch（tools.ts 的 dispatchWithConcurrencyRetry 单一出处）。 */
   /**
    * 单页布局 dispatch。第 4 参是附件——自审回投时把该页渲染图直接投给布局代理，
-   * 让它"看着自己的成品"改，而不是读一段二手文字描述。
+   * 让它"看着自己的成品"改，而不是读一段二手文字描述。第 5 参是 deck 级续会话：
+   * 同册逐页共享同一 pi 会话（后面页看得到前面页的树与自审）。
    */
   dispatchPage(
     input: Record<string, unknown>,
     idempotencyKey: string,
     parentRunId: string | null,
     attachments?: Array<{ filename: string; mimeType: string; kind: "image"; dataUrl: string }>,
+    session?: { sessionId: string; runtimeSessionRef: string | null },
   ): Promise<SubagentInvocation>;
 }
 
@@ -89,6 +91,8 @@ export interface LayouterExistingDeck {
   /** 已落定页（0 起页序）；这些页不再 dispatch、不再重落。 */
   appliedPages: number[];
   totalPages: number;
+  /** deck 级续会话 ref（重启续跑时从磁盘恢复共享上下文；无则新会话）。 */
+  runtimeSessionRef?: string | null;
 }
 
 export interface LayouterTailArgs {
@@ -530,10 +534,17 @@ const BLOCKING_DEFECTS = new Set(["overlap", "emoji", "overflow", "font_floor", 
 
 /**
  * 桌面端「产物未以可编辑会话打开」：落页被拒的确定性原因，不是树/内容的问题。
- * 这种页要明确告诉用户「去文件库打开这本 PPT 再重试」，不要笼统记成落页失败。
+ * 优先看结构化 code（office-bridge-client 会把 422 的 code 挂到 Error 上）；
+ * 没带 code 时（旧桌面端构建）退回文案匹配。这种页要明确告诉用户「去文件库打开
+ * 这本 PPT 再重试」，不要笼统记成落页失败。
  */
-function isDeckNotOpenMessage(message: string): boolean {
-  return /not_open|未打开|可编辑的\s*PPT|可编辑方式打开/i.test(message);
+function isDeckNotOpen(error: unknown): boolean {
+  if (error instanceof Error) {
+    const code = (error as Error & { code?: unknown }).code;
+    if (typeof code === "string" && code) return code === "not_open" || code === "not_editable";
+    return /not_open|未打开|可编辑的\s*PPT|可编辑方式打开/i.test(error.message);
+  }
+  return /not_open|未打开|可编辑的\s*PPT|可编辑方式打开/i.test(String(error));
 }
 
 function createSemaphore(limit: number): <T>(task: () => Promise<T>) => Promise<T> {
@@ -709,7 +720,8 @@ function layouterInputFor(
   if (page.content) return {
     task: "layout", deckToken: base.token, pageIndex: index, totalPages: base.totalPages,
     layoutVersion: 2, content: page.content, role: page.content.role,
-    density: page.density ?? "standard", materials, neighbors: page.neighbors ?? [],
+    // neighbors 不再注入：deck 续会话下前页设计已在上下文里，全册骨架由首 dispatch 的 deckOutline 给出。
+    density: page.density ?? "standard", materials,
     ...(page.revisionFeedback ? { revisionFeedback: page.revisionFeedback.slice(0, 300) } : {}),
     ...(base.styleBrief ? { styleBrief: base.styleBrief } : {}), styleTokens: base.styleTokens,
   };
@@ -736,7 +748,6 @@ function layouterInputFor(
     ...(page.copy ? { copy: page.copy } : {}),
     ...(page.data !== undefined && page.data !== null ? { data: page.data } : {}),
     ...(materials.length > 0 ? { materials } : {}),
-    ...(Array.isArray(page.neighbors) && page.neighbors.length > 0 ? { neighbors: page.neighbors.slice(0, 2) } : {}),
     ...(page.budget ? { budget: page.budget } : {}),
     ...(typeof page.revisionFeedback === "string" && page.revisionFeedback.trim()
       ? { revisionFeedback: page.revisionFeedback.slice(0, 300) }
@@ -930,10 +941,17 @@ export async function runLayouterTail(
 
   let fileEntryId = "";
   let originalName: string | null = null;
+  // deck 级续会话状态（见下方 dispatchDeck）：提前声明，checkpoint 首调（deck 创建后）
+  // 早于 try 块内的串行门初始化。
+  const deckSessionId = `slides-deck:${args.runId}`;
+  let deckSessionRef: string | null = existingDeck?.runtimeSessionRef ?? null;
+  /** 首 dispatch（或降级重建会话后的首 dispatch）带全册概要 deckOutline，之后不再带。 */
+  let deckOutlinePending = true;
   const checkpoint = () => {
     if (!fileEntryId) return;
     args.onCheckpoint?.({ fileEntryId, originalName, totalPages,
-      appliedPages: [...appliedPages].filter(index => !degradedPages.has(index)).sort((a, b) => a - b) });
+      appliedPages: [...appliedPages].filter(index => !degradedPages.has(index)).sort((a, b) => a - b),
+      ...(deckSessionRef ? { runtimeSessionRef: deckSessionRef } : {}) });
   };
 
   /** 最终全量快照：全部页落定后的真完成载荷（failedPages 用 0 起页序）。 */
@@ -1013,10 +1031,8 @@ export async function runLayouterTail(
     const styleBrief = styleBriefFrom(args.styleParams);
     const base = { token, totalPages, styleBrief, styleTokens, imageArs };
 
-    // 每页并发取树（页序占位）。页级窗口=deps.deckConcurrency（NXCORE_SLIDES_DECK_CONCURRENCY，
-    // 缺省 16）；实际同时在飞的上限还受 slides 池容量（NXCORE_SUBAGENT_SLIDES_MAX_CONCURRENT）与
-    // 单代理限额（layouter policy.maxConcurrency）约束，被拒会走页级退避重试，耗尽才兜底该页。
-    // 落页与取树流水线化：worker 只负责把页级窗口压住，落页侧按**完成顺序**消费。
+    // 逐页取树（页序占位，deck 续会话串行——见下方 dispatchDeck）。落页与取树流水线化：
+    // worker 只负责按序压页，落页侧按**完成顺序**消费（串行下即页序）。
     // promise 必须一次建全（而不是 worker 认领时才建）：落页侧要立刻订阅全部页，
     // 否则窗口外的页在订阅时还是数组空洞，会被 map 静默跳过。
     type TreeOutcome = {
@@ -1043,12 +1059,59 @@ export async function runLayouterTail(
     const appliedFromDeck = new Set<number>(existingDeck?.appliedPages ?? []);
     /** 流式页携带的父调用（批次 planner invocation）：布局调用挂到对应批次下，时间线成链。 */
     const pageParents: Array<string | null | undefined> = new Array(totalPages);
+    // ── deck 级续会话（共享上下文串行逐页）────────────────────────────────
+    // 同册所有 layouter dispatch（取树/丰富度/减配/自审/重排）复用同一 pi 会话：后面页
+    // 看得到前面页的树与自审，跨页多样性与节奏由上下文承载。pi 守卫「同 session 同时仅
+    // 一个 active run」→ 全部 dispatch 过同一条 promise 链互斥（窗口因此恒 1，页序严格）。
+    // 会话状态（deckSessionId/deckSessionRef/deckOutlinePending）已提前到 checkpoint 旁声明。
+    let deckChain: Promise<unknown> = Promise.resolve();
+    /** 流式页源下 pages 逐页到达：概要惰性现算，首个 dispatch 时能带上多少是多少。 */
+    const buildDeckOutline = () => Array.from({ length: totalPages }, (_, index) => {
+      const page = pages[index];
+      return {
+        pageIndex: index,
+        title: (typeof page?.title === "string" && page.title.trim() ? page.title : titleOf(index)).slice(0, 80),
+        ...(typeof page?.role === "string" ? { role: page.role } : {}),
+        ...(typeof page?.density === "string" ? { density: page.density } : {}),
+        ...(typeof page?.form === "string" ? { form: page.form } : {}),
+      };
+    }).slice(0, 64);
+    /** 会话文件丢失/状态异常（续跑后 sessionsDir 被清、owner 冲突）：可安全降级新会话重试。 */
+    const SESSION_GONE_RE = /ENOENT|no such file or directory|Pi session is already active|belongs to a different Agent session/i;
+    const sessionGone = (invocation: SubagentInvocation): boolean =>
+      invocation.status !== "completed"
+      && invocation.errorMessage !== null
+      && SESSION_GONE_RE.test(invocation.errorMessage);
+    const dispatchDeck = (
+      taskTag: string,
+      input: Record<string, unknown>,
+      parentRunId: string | null,
+      attachments?: Array<{ filename: string; mimeType: string; kind: "image"; dataUrl: string }>,
+    ): Promise<SubagentInvocation> => {
+      const attempt = async (session: { sessionId: string; runtimeSessionRef: string | null }): Promise<SubagentInvocation> => {
+        const effective = deckOutlinePending ? { ...input, deckOutline: buildDeckOutline() } : input;
+        const invocation = await dispatchWithPageRetry(() =>
+          deps.dispatchPage(effective, deps.makeKey(args.runId, "slides-layouter", taskTag, effective), parentRunId, attachments, session), args.signal);
+        if (sessionGone(invocation) && session.runtimeSessionRef !== null) {
+          deckSessionRef = null;
+          deckOutlinePending = true;
+          return attempt({ sessionId: deckSessionId, runtimeSessionRef: null });
+        }
+        if (invocation.status === "completed") {
+          deckOutlinePending = false;
+          deckSessionRef = invocation.runtimeSessionRef ?? deckSessionRef;
+        }
+        return invocation;
+      };
+      const next = deckChain.then(() => attempt({ sessionId: deckSessionId, runtimeSessionRef: deckSessionRef }));
+      deckChain = next.catch(() => undefined);
+      return next;
+    };
     const fetchTreeOnce = async (index: number): Promise<TreeOutcome> => {
       args.signal?.throwIfAborted();
       const input = layouterInputFor(base, pages[index]!, index);
       try {
-        const invocation = await dispatchWithPageRetry(() =>
-          deps.dispatchPage(input, deps.makeKey(args.runId, "slides-layouter", `page:${index}`, input), pageParents[index] ?? args.parentRunId), args.signal);
+        const invocation = await dispatchDeck(`page:${index}`, input, pageParents[index] ?? args.parentRunId);
         args.signal?.throwIfAborted();
         const placed = treeFromInvocation(invocation, pages[index]!);
         if (placed.blocked) return placed;
@@ -1066,8 +1129,7 @@ export async function runLayouterTail(
               const revisionPage = { ...page, revisionFeedback: richness.join("；") };
               const revisionInput = layouterInputFor(base, revisionPage, index);
               try {
-                const revision = await dispatchWithPageRetry(() =>
-                  deps.dispatchPage(revisionInput, deps.makeKey(args.runId, "slides-layouter", `visual:${index}`, revisionInput), pageParents[index] ?? args.parentRunId), args.signal);
+                const revision = await dispatchDeck(`visual:${index}`, revisionInput, pageParents[index] ?? args.parentRunId);
                 const revised = treeFromInvocation(revision, revisionPage);
                 if (!revised.fellBack && revised.tree.version === 2 && revised.tree.v2
                   && visualRichnessIssues(revised.tree.v2).length === 0) {
@@ -1089,8 +1151,7 @@ export async function runLayouterTail(
           : trimmedPage(pages[index]!);
         const retryInput = layouterInputFor(base, trimmed, index);
         try {
-          const retry = await dispatchWithPageRetry(() =>
-            deps.dispatchPage(retryInput, deps.makeKey(args.runId, "slides-layouter", `page:${index}:trimmed`, retryInput), pageParents[index] ?? args.parentRunId), args.signal);
+          const retry = await dispatchDeck(`page:${index}:trimmed`, retryInput, pageParents[index] ?? args.parentRunId);
           const retryPlaced = treeFromInvocation(retry, pages[index]!);
           if (retryPlaced.blocked) return retryPlaced;
           if (retryPlaced.fellBack) return placed;
@@ -1157,13 +1218,12 @@ export async function runLayouterTail(
             ? "附件是 currentTree 的真实渲染图。按 SYSTEM.md「视觉自审」先记录图上观察，再逐项核对内容、焦点与关系、空白与容器、对齐与层级、断行与裁切、页脚页码；对照 previousDesignIntent 验收。自审只做一次：最多改 1 个根因、校验 1 次后提交；没有图上证据的问题不改，不要借自审探索新构图。保留全部内容，修正后防止原有表达退化。notes 写观察、修改或保留理由及待确认项；返回完整 tree、designIntent、bindings。无需修改则原样交树；修改版不会再次回投看图。"
             : "附件是 currentTree 的真实渲染图。按 SYSTEM.md「视觉自审」先记录图上观察，再逐项核对内容、焦点与关系、空白与容器、对齐与层级、断行与裁切、页脚页码及旧模式兼容门槛。自审只做一次：最多改 1 个根因、校验 1 次后提交；没有图上证据的问题不改，不要借自审探索新构图。保留全部内容，修正后防止原有表达退化。notes 写观察、修改或保留理由及待确认项；返回完整 v2 tree。无需修改则原样交树；修改版不会再次回投看图。",
         };
-        const invocation = await dispatchWithPageRetry(() =>
-          deps.dispatchPage(
-            reviewInput,
-            deps.makeKey(args.runId, "slides-layouter", `self-review:${index}`, reviewInput),
-            pageParents[index] ?? args.parentRunId,
-            [{ filename: `page-${String(index + 1)}.${mimeType === "image/jpeg" ? "jpg" : "png"}`, mimeType, kind: "image", dataUrl: `data:${mimeType};base64,${shotBase64}` }],
-          ), args.signal);
+        const invocation = await dispatchDeck(
+          `self-review:${index}`,
+          reviewInput,
+          pageParents[index] ?? args.parentRunId,
+          [{ filename: `page-${String(index + 1)}.${mimeType === "image/jpeg" ? "jpg" : "png"}`, mimeType, kind: "image", dataUrl: `data:${mimeType};base64,${shotBase64}` }],
+        );
         args.signal?.throwIfAborted();
         const revised = treeFromInvocation(invocation, pages[index]!);
         if (revised.fellBack || revised.tree.version !== 2) return outcome;
@@ -1194,10 +1254,10 @@ export async function runLayouterTail(
 
     // 自审改为「落页之后」的独立阶段（见下），不再阻塞取树/落页。
 
-    // 页级并发：改造前硬编码 8（= 当时的全局子代理窗口），一册 15 页只能 8 页同时在飞，
-    // 其余页干等 worker 归还，足足多出一整轮单页耗时（实测 P50 141s → 165s）。
-    // 改为可配置后，一册 15 页可一次全飞；上限仍取总页数，页数少于窗口时不空转。
-    const deckWindow = deps.deckConcurrency ?? DEFAULT_DECK_CONCURRENCY;
+    // 页级窗口恒 1：deck 级续会话下所有 dispatch 过同一条串行门（pi 守卫同 session 仅一个
+    // active run），窗口>1 只会让页在门口乱序排队。deps.deckConcurrency 配置链保留但在此
+    // 模式下不参与（后续若恢复并发模式可重新启用）。
+    const deckWindow = 1;
     /** 一页取树（挂到页级并发闸内）。 */
     const dispatchPageTree = async (index: number): Promise<void> => {
       const slot = pending[index]!;
@@ -1313,7 +1373,7 @@ export async function runLayouterTail(
       } catch (error) {
         degradedPages.add(index);
         const message = error instanceof Error ? error.message : String(error);
-        if (isDeckNotOpenMessage(message)) {
+        if (isDeckNotOpen(error)) {
           deckNotOpen = true;
           warnings.push(`第 ${index + 1} 页落页失败：桌面端未打开该 PPT 的可编辑会话（not_open），保留占位页；在文件库打开该 PPT 后可重试`);
         } else {
@@ -1324,7 +1384,7 @@ export async function runLayouterTail(
       if (!result.ok || result.applied !== true) {
         degradedPages.add(index);
         const reason = result.error ?? "桌面端拒绝";
-        if (isDeckNotOpenMessage(reason)) {
+        if (/not_open|未打开|可编辑的\s*PPT|可编辑方式打开/i.test(String(reason))) {
           deckNotOpen = true;
           warnings.push(`第 ${index + 1} 页落页失败：桌面端未打开该 PPT 的可编辑会话（not_open），保留占位页；在文件库打开该 PPT 后可重试`);
         } else {
@@ -1450,8 +1510,7 @@ export async function runLayouterTail(
       ];
       const input = layouterInputFor(base, pages[index]!, index, signatures);
       try {
-        const invocation = await dispatchWithPageRetry(() =>
-          deps.dispatchPage(input, deps.makeKey(args.runId, "slides-layouter", `reroll:${index}`, input), args.parentRunId), args.signal);
+        const invocation = await dispatchDeck(`reroll:${index}`, input, args.parentRunId);
         const rerolled = treeFromInvocation(invocation, pages[index]!);
         if (!rerolled.fellBack && treeSignature(rerolled.tree) !== treeSignature(trees[index]!.tree)) {
           trees[index] = rerolled;
@@ -1481,9 +1540,11 @@ export async function runLayouterTail(
       const zeroPayload = finalPayloadFor(false, failedPages);
       args.onUpdate?.({ content: JSON.stringify(zeroPayload), details: zeroPayload });
       await notifyComplete(false, failedPages);
-      return fail("slides_layout_apply_failed", deckNotOpen
+      // 两种「零页落定」成因分码：桌面端没开可编辑会话（apply 失败）与设计校验全挂
+      // （fellBack 内容页不落占位页）——用户侧文案与处置不同，不能共用一个码。
+      return fail(deckNotOpen ? "slides_layout_apply_failed" : "slides_layout_design_failed", deckNotOpen
         ? "全部页面落页失败：桌面端没有以可编辑会话打开这本 PPT（not_open）。在文件库打开该 PPT 后重试即可复用已生成方案。"
-        : "全部页面落页失败；方案已就绪，可重试 generate。", true, {
+        : "全部页面设计未通过校验（具体原因见 warnings）；内容稿还在，可重试 generate。", true, {
         fileEntryId,
         failedPages,
         ...(warnings.length > 0 ? { warnings } : {}),

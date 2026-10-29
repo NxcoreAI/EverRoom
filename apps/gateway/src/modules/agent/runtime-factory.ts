@@ -87,6 +87,14 @@ export function createAgentRuntime(
 }
 
 /**
+ * 用户档不暴露 document_list（文稿库清单）：文件查找一律走 workspace_files_list，
+ * 不再把「读导入文件」的请求绕去文稿库空转；改稿目标由 activeDocument 上下文
+ * 或直接问用户确定。子代理（doc-writer / slides 系）各自的 documentTools
+ * 不经此过滤，仍保留 document_list。
+ */
+const USER_FACING_EXCLUDED_DOCUMENT_TOOLS = ["document_list"] as const;
+
+/**
  * 用户档 runtime 统一装配（main / main-direct / main-lite 共用）：
  * 同一 primary 人设 bundle、同套工具（文档/连接器/联网搜索/外部 MCP），
  * 差异仅在 pi 配置与 lite 委派工具。返回 null＝该 pi 未配置（调用方
@@ -129,8 +137,9 @@ function createUserFacingRuntime(
       // PPT 四件套归 slides 子代理独占（create：slides-planner 方案 → slides-builder 落页；
       // edit：slides-builder 直改）：用户档（main/main-direct/main-lite）
       // 剔除，改走 slides_draft 调度；doc-writer 消费点另有 allowlist 不受影响。
+      // document_list（文稿库清单）同样剔除，见 USER_FACING_EXCLUDED_DOCUMENT_TOOLS。
       ...createDocumentPiTools(mcpHost)
-        .filter((tool) => !(SLIDES_TOOL_NAMES as readonly string[]).includes(tool.name)),
+        .filter((tool) => ![...(SLIDES_TOOL_NAMES as readonly string[]), ...USER_FACING_EXCLUDED_DOCUMENT_TOOLS].includes(tool.name)),
       // 会话门控：cliConnector 恒在场（create-server 归一化），baseUrl 空 =
       // 登出态，不暴露 oo 工具；会话热更新后经 hotReloadAgentRuntimes 重建。
       ...(config.cliConnector?.baseUrl

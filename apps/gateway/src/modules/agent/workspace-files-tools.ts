@@ -42,7 +42,12 @@ export interface WorkspaceFileCatalog {
  * 检索很关键，uploaded_files 行里没有。
  */
 export interface WorkspaceFileSource {
-  listCatalog(limit: number, offset: number): {
+  listCatalog(
+    limit: number,
+    offset: number,
+    /** 检索词的 LIKE 模式（见 catalogQueryLikePatterns）：在库内过滤，避免大目录只扫最新一页而漏检。 */
+    nameLikePatterns?: string[],
+  ): {
     items: ReadonlyArray<{
       id: string;
       originalName: string;
@@ -67,19 +72,31 @@ function isImageEntry(entry: { dataType: string | null; originalName: string }):
   return entry.dataType === "image" || IMAGE_NAME.test(entry.originalName);
 }
 
-/** 含 CJK 的词按 2 字窗口兜底匹配（「产品图」能命中「…/产品图/xxx.jpg」）。 */
+/** 见 catalogQueryLikePatterns：内存过滤与 SQL 下推共用同一套模式展开。 */
 function matchesQuery(text: string, query: string): boolean {
   const haystack = text.toLowerCase();
-  const tokens = query.toLowerCase().split(/\s+/).filter(Boolean);
-  return tokens.some((token) => {
-    if (haystack.includes(token)) return true;
-    if (!/[\u2e80-\u9fff]/.test(token) || token.length < 2) return false;
-    const chars = [...token];
-    for (let index = 0; index + 2 <= chars.length; index += 1) {
-      if (haystack.includes(chars.slice(index, index + 2).join(""))) return true;
+  return catalogQueryLikePatterns(query).some((pattern) => haystack.includes(pattern));
+}
+
+/**
+ * 把检索词展开成匹配模式（token 本身 + CJK 连续段的 2 字窗口）。
+ * 窗口只在 CJK 段内成窗、不跨 ASCII 字符：「锥光BP-1020」展开为「锥光bp-1020 / 锥光」。
+ * 旧的全 token 滑窗会产生「p-」「-1」这类噪声窗，把 whatsapp-business、polyvox_app_rn-1
+ * 等批量同步文件全召回来，灌满 500 条结果窗后目标文件仍被挤出。
+ * 段内窗口保留兜底语义：文件名「锥光 BP-1020.md」带空格时整串 includes 不中，「锥光」窗仍命中。
+ */
+export function catalogQueryLikePatterns(query: string): string[] {
+  const patterns: string[] = [];
+  for (const token of query.toLowerCase().split(/\s+/).filter(Boolean)) {
+    patterns.push(token);
+    for (const run of token.match(/[\u2e80-\u9fff]{2,}/g) ?? []) {
+      const chars = [...run];
+      for (let index = 0; index + 2 <= chars.length; index += 1) {
+        patterns.push(chars.slice(index, index + 2).join(""));
+      }
     }
-    return false;
-  });
+  }
+  return [...new Set(patterns)];
 }
 
 /** 用 FilesService 构造目录（生产实现）。 */
@@ -91,7 +108,11 @@ export function createWorkspaceFileCatalog(
   const cacheTtlMs = options?.cacheTtlMs ?? 10_000;
   let cachedAt = 0;
   let cachedRows: ReturnType<WorkspaceFileSource["listCatalog"]>["items"] | null = null;
-  const rows = () => {
+  const rows = (query?: string) => {
+    if (query) {
+      // 带词检索在库内完成（结果集与无词缓存不同，不走共享缓存）。
+      return source.listCatalog(SCAN_LIMIT, 0, catalogQueryLikePatterns(query)).items;
+    }
     const now = Date.now();
     if (!cachedRows || now - cachedAt > cacheTtlMs) {
       cachedRows = source.listCatalog(SCAN_LIMIT, 0).items;
@@ -105,7 +126,7 @@ export function createWorkspaceFileCatalog(
       const limit = Math.min(MAX_LIMIT, Math.max(1, input.limit ?? DEFAULT_LIMIT));
       const query = input.query?.trim() ?? "";
       const entries: WorkspaceFileEntry[] = [];
-      for (const row of rows()) {
+      for (const row of rows(query || undefined)) {
         const image = isImageEntry(row);
         if (kind === "image" && !image) continue;
         if (kind === "document" && image) continue;
@@ -128,6 +149,39 @@ export function createWorkspaceFileCatalog(
       }
       return entries;
     },
+  };
+}
+
+/** 文本类原文件兜底：按扩展名判断（mime 常缺失）。 */
+const TEXT_FILENAME = /\.(md|markdown|txt|csv|json|xml|html?)$/i;
+
+/** FilesService 的结构子集：读文件库正文本体（文档解析结果优先，文本原文件兜底）。 */
+export interface WorkspaceFileTextSource {
+  catalogEntry(fileEntryId: string): { sharedTitle?: string | null; originalName: string } | null;
+  catalogMarkdownOf(fileEntryId: string): string | null;
+  catalogContentOf(fileEntryId: string): Promise<{ buffer: Buffer; mime: string; filename: string } | null>;
+}
+
+/**
+ * 读工作区上传文件的文本正文：先取文档解析出的 Markdown（docx/pdf 等只有这条路），
+ * 没有解析结果时对文本类原文件（md/txt 等）直接 utf8 读字节；二进制无解析返回 null。
+ */
+export function createWorkspaceFileTextReader(
+  getSource: () => WorkspaceFileTextSource | null,
+): (fileEntryId: string) => Promise<{ text: string; filename: string } | null> {
+  return async (fileEntryId) => {
+    const source = getSource();
+    if (!source) return null;
+    const entry = source.catalogEntry(fileEntryId);
+    if (!entry) return null;
+    const markdown = source.catalogMarkdownOf(fileEntryId);
+    if (markdown) return { text: markdown, filename: entry.sharedTitle || entry.originalName };
+    const content = await source.catalogContentOf(fileEntryId);
+    if (!content) return null;
+    if (TEXT_FILENAME.test(content.filename) || content.mime.startsWith("text/")) {
+      return { text: content.buffer.toString("utf8"), filename: content.filename };
+    }
+    return null;
   };
 }
 

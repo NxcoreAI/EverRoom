@@ -298,12 +298,16 @@ export class OfficeBridgeClient {
     });
     const parsed = await response.json().catch(() => ({})) as {
       message?: unknown;
+      code?: unknown;
       data?: Record<string, unknown>;
     };
     if (!response.ok) {
-      throw new Error(
-        typeof parsed.message === "string" ? parsed.message : `Office edit failed (${response.status})`,
-      );
+      // 桌面端 422 带结构化 code（not_open/not_editable）：挂在 Error 上，
+      // 调用方按 code 判定，不再对中文文案跑正则（not_editable 文案会被 not_open 正则误伤）。
+      const message = typeof parsed.message === "string" ? parsed.message : `Office edit failed (${response.status})`;
+      const error = new Error(message) as Error & { code?: string };
+      if (typeof parsed.code === "string" && parsed.code) error.code = parsed.code;
+      throw error;
     }
     return parsed.data ?? {};
   }

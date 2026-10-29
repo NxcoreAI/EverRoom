@@ -20,8 +20,8 @@ export function deletePlugin(backend: CapabilityBackend): DocumentCapabilityPlug
     name: "document_delete",
     title: "删除文档（移入回收站）",
     description: "把一篇文档移入回收站（可恢复）。只能在用户明确要求删除该文档时调用，"
-      + "且必须传 confirm=true 表示已与用户确认目标文档；无法确定用户指哪篇时先用 "
-      + "document_list 列出标题与用户核对。删除成功后在回复中明确告知用户"
+      + "且必须传 confirm=true 表示已与用户确认目标文档；无法确定用户指哪篇时先向"
+      + "用户复述标题核对。删除成功后在回复中明确告知用户"
       + "删除了哪篇文档、可从回收站恢复。不要批量删除，除非用户逐一点名。",
     inputSchema: {
       type: "object",
@@ -72,7 +72,7 @@ export function deletePlugin(backend: CapabilityBackend): DocumentCapabilityPlug
     manifest: manifest("document.delete", "mutation", null, null, true),
     promptGuidelines: [
       "只有用户明确要求删除文档（如「删掉这篇」「把它移到回收站」）时才调用 document_delete："
-      + "先用 document_list 或 document_read 确认目标文档，拿不准用户指哪篇时先向用户复述标题核对；"
+      + "拿不准用户指哪篇时先向用户复述标题核对；"
       + "确认后必须传 confirm=true。删除是移入回收站（可恢复），完成后在回复中明确说明删除了哪篇文档、"
       + "以及可从回收站恢复。禁止顺手清理或批量删除；用户点名多篇时逐篇确认后删除，并在回复中汇总结果。",
     ],

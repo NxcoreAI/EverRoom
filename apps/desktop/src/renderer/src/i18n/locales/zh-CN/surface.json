@@ -1411,6 +1411,7 @@
   "agentChat.SLIDES_ELAPSED_DONE": "用时 {{time}}",
   "agentChat.SLIDES_ERROR_AGENTS_UNAVAILABLE": "排版代理暂时排不上队，已完成的页都保留着，稍后重试即可继续",
   "agentChat.SLIDES_ERROR_LAYOUT_APPLY": "页面排版全部失败，内容稿还在，可以重试",
+  "agentChat.SLIDES_ERROR_DESIGN_FAILED": "页面设计都没通过校验，内容稿还在，可以重试",
   "agentChat.SLIDES_ERROR_LAYOUT_TAIL": "排版收尾时出了错，可以重试",
   "agentChat.SLIDES_ERROR_NONE_NEEDED": "内容里没有需要配图的页面",
   "agentChat.SLIDES_ERROR_OFFICE_GENERATION": "演示文稿没能保存成文件，可以重试",

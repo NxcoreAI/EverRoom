@@ -178,6 +178,29 @@ describe("unified file catalog", () => {
   });
 
 
+  it("listCatalog 检索词下推：扫描窗口外的老文件仍能按名命中", async () => {
+    const test = await catalogForTest();
+    const target = await test.service.importFile({
+      sourceKind: "manual-upload", sourceKey: "manual:bp1020", originalName: "锥光 BP-1020.md",
+      buffer: Buffer.from("# bp"), deferIngest: true,
+    });
+    test.sqlite.prepare("UPDATE file_entries SET updated_at = 1000 WHERE id = ?").run(target.fileEntryId);
+    for (let index = 0; index < 600; index += 1) {
+      await test.service.importFile({
+        sourceKind: "manual-upload", sourceKey: `manual:filler:${index}`, originalName: "filler.md",
+        buffer: Buffer.from("filler"), deferIngest: true,
+      });
+    }
+    // workspace_files_list 对「锥光BP-1020」展开出的模式（token + CJK 段窗，无 ASCII 噪声窗）。
+    const patterns = ["锥光bp-1020", "锥光"];
+    expect(test.service.listCatalog(30, 0, patterns).items.map((item) => item.originalName))
+      .toEqual(["锥光 BP-1020.md"]);
+    // 无检索词仍是默认分页：只回最新一页，老文件不在其中（行为不变）。
+    expect(test.service.listCatalog(30, 0).items.some((item) => item.id === target.fileEntryId)).toBe(false);
+    await test.service.dispose();
+    test.sqlite.close();
+  });
+
   it("catalogEntry 目录超过一页时仍能按 id 命中（分页兜底）", async () => {
     const test = await catalogForTest();
     const deep = {

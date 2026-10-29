@@ -36,7 +36,7 @@ interface Harness {
     notify: ReturnType<typeof vi.fn>;
     disarm: ReturnType<typeof vi.fn>;
   };
-  dispatches: Array<{ input: Record<string, unknown>; key: string }>;
+  dispatches: Array<{ input: Record<string, unknown>; key: string; session?: { sessionId: string; runtimeSessionRef: string | null } }>;
   /** 自审回投（带 currentTree + 渲染图附件）的调用记录。 */
   selfReviews: Array<{ input: Record<string, unknown>; key: string; attachments?: unknown[] }>;
   settled: string[];
@@ -47,9 +47,10 @@ function makeHarness(
   treesPerDispatch: Array<unknown | "FAIL">,
   persistentlyFailingPages: Set<number> = new Set(),
 ): Harness {
-  const dispatches: Array<{ input: Record<string, unknown>; key: string }> = [];
+  const dispatches: Array<{ input: Record<string, unknown>; key: string; session?: { sessionId: string; runtimeSessionRef: string | null } }> = [];
   const selfReviews: Array<{ input: Record<string, unknown>; key: string; attachments?: unknown[] }> = [];
   let dispatchCursor = 0;
+  let refCounter = 0;
   const bridge = {
     generate: vi.fn().mockResolvedValue({ fileEntryId: "file-1", originalName: "deck.pptx" }),
     renderPptx: vi.fn().mockResolvedValue(Buffer.from("pptx-bytes")),
@@ -71,13 +72,13 @@ function makeHarness(
     readMaterialBlob: vi.fn().mockResolvedValue(null),
     fetchImageHead: vi.fn().mockResolvedValue(null),
     makeKey: (runId, agentId, task) => `${runId}:${agentId}:${task}`,
-    dispatchPage: async (input, key, _parentRunId, attachments) => {
+    dispatchPage: async (input, key, _parentRunId, attachments, session) => {
       // 自审回投：带 currentTree 的调用不消耗"每页一张树"的游标，默认原样返回。
       if (input.currentTree) {
         selfReviews.push({ input, key, ...(attachments ? { attachments } : {}) });
         return invocationWithTree(input.currentTree);
       }
-      dispatches.push({ input, key });
+      dispatches.push({ input, key, ...(session ? { session } : {}) });
       const pageIndex = typeof input.pageIndex === "number" ? input.pageIndex : -1;
       if (persistentlyFailingPages.has(pageIndex)) throw new Error("subagent_concurrency_limit");
       const entry = treesPerDispatch[dispatchCursor++] ?? treesPerDispatch[treesPerDispatch.length - 1];
@@ -86,7 +87,9 @@ function makeHarness(
       if (entry === "RUN_FAIL") {
         return { status: "failed", result: null, error_code: "runtime_error" } as unknown as SubagentInvocation;
       }
-      return invocationWithTree(entry);
+      // 模拟 pi 续会话：每次成功 run 返回新的会话 ref，链式传给下一页。
+      refCounter += 1;
+      return { ...invocationWithTree(entry), runtimeSessionRef: `ref-${refCounter}` } as SubagentInvocation;
     },
   };
   return { deps, bridge, progress, dispatches, selfReviews, settled, trashed };
@@ -527,7 +530,7 @@ describe("runLayouterTail", () => {
     expect(progress.notify.mock.calls.map((call: unknown[]) => call[1])).toEqual([0, 1]);
   });
 
-  it("完成顺序落页：后页先就绪就先落，不排队等前页（head-of-line 消除）", async () => {
+  it("deck 续会话串行：前一页 dispatch 未完成后页不开始，落页按页序；会话 ref 链式传递、首轮带 deckOutline", async () => {
     let releaseSlowPage: ((invocation: SubagentInvocation) => void) | null = null;
     const bridge = {
       generate: vi.fn().mockResolvedValue({ fileEntryId: "file-1", originalName: "deck.pptx" }),
@@ -535,21 +538,23 @@ describe("runLayouterTail", () => {
       renderPage: vi.fn().mockResolvedValue(""),
     };
     const progress = { arm: vi.fn(), notify: vi.fn(), disarm: vi.fn(), setRelay: vi.fn() };
+    const pageCalls: Array<{ pageIndex: number; session?: { sessionId: string; runtimeSessionRef: string | null } }> = [];
     const deps: LayouterTailDeps = {
       progress: progress as unknown as SlidesProgressTracker,
       bridge: bridge as never,
       readMaterialBlob: vi.fn().mockResolvedValue(null),
       fetchImageHead: vi.fn().mockResolvedValue(null),
       makeKey: (runId, agentId, task) => `${runId}:${agentId}:${task}`,
-      dispatchPage: (input: Record<string, unknown>) => {
+      dispatchPage: (input, _key, _parentRunId, _attachments, session) => {
         const pageIndex = typeof input.pageIndex === "number" ? input.pageIndex : -1;
-        // 第 1 页最慢（模拟长 validate/预览自纠），第 2、3 页先就绪。
+        pageCalls.push({ pageIndex, ...(session ? { session } : {}) });
+        // 第 0 页挂起（模拟长设计）：串行门下第 1、2 页必须等它完成才能 dispatch。
         if (pageIndex === 0) {
           return new Promise<SubagentInvocation>((resolve) => {
-            releaseSlowPage = resolve;
+            releaseSlowPage = (invocation) => resolve({ ...invocation, runtimeSessionRef: "ref-a" });
           });
         }
-        return Promise.resolve(invocationWithTree(pageIndex === 1 ? CHART_TREE : QUOTE_TREE));
+        return Promise.resolve({ ...invocationWithTree(pageIndex === 1 ? CHART_TREE : QUOTE_TREE), runtimeSessionRef: `ref-${pageIndex}` } as SubagentInvocation);
       },
     };
     const plan = planOf([CONTENT_TREE, CHART_TREE, QUOTE_TREE]);
@@ -567,15 +572,41 @@ describe("runLayouterTail", () => {
       pageImagesStore: null,
       trashDraft: async () => {},
     });
-    // 首页树还挂着，第 2、3 页已经各自落进自己的页号——落页不再被前页堵住。
-    await vi.waitFor(() => expect(bridge.fillPage).toHaveBeenCalledTimes(2));
-    expect(bridge.fillPage.mock.calls.map((call: unknown[]) => (call[0] as { slideIndex: number }).slideIndex)).toEqual([1, 2]);
-    expect(progress.notify.mock.calls.at(-1)![2]).toEqual([1, 2]);
+    // 首页还在设计：后页既没 dispatch 也没落页——串行门挡住。
+    await new Promise((resolveWait) => setTimeout(resolveWait, 50));
+    expect(pageCalls.map((call) => call.pageIndex)).toEqual([0]);
+    expect(bridge.fillPage).not.toHaveBeenCalled();
     releaseSlowPage!(invocationWithTree(CONTENT_TREE));
     const payload = JSON.parse((await runPromise).content);
     expect(payload.status).toBe("completed");
     expect(payload.appliedPages).toEqual([0, 1, 2]);
-    expect(bridge.fillPage.mock.calls.map((call: unknown[]) => (call[0] as { slideIndex: number }).slideIndex)).toEqual([1, 2, 0]);
+    // dispatch 严格按页序；落页按页序。
+    expect(pageCalls.map((call) => call.pageIndex)).toEqual([0, 1, 2]);
+    expect(bridge.fillPage.mock.calls.map((call: unknown[]) => (call[0] as { slideIndex: number }).slideIndex)).toEqual([0, 1, 2]);
+    // 会话：全部同 deckSessionId；首页从 null 起，之后每页拿到前一页返回的 ref。
+    expect(pageCalls[0]!.session).toEqual({ sessionId: "slides-deck:run-1", runtimeSessionRef: null });
+    expect(pageCalls[1]!.session).toEqual({ sessionId: "slides-deck:run-1", runtimeSessionRef: "ref-a" });
+    expect(pageCalls[2]!.session).toEqual({ sessionId: "slides-deck:run-1", runtimeSessionRef: "ref-1" });
+  });
+
+  it("deck 续会话输入瘦身：首 dispatch 带 deckOutline，后续页不带、也不再带 neighbors", async () => {
+    const harness = makeHarness([CONTENT_TREE, CHART_TREE, QUOTE_TREE]);
+    const plan = planOf([{ ...CONTENT_TREE }, { ...CHART_TREE }, { ...QUOTE_TREE }]);
+    const result = await runLayouterTail(harness.deps, tailArgs(plan, harness));
+    expect(JSON.parse(result.content).status).toBe("completed");
+    const pageDispatches = harness.dispatches.filter((entry) => /^run-1:slides-layouter:page:\d+$/.test(entry.key));
+    expect(pageDispatches).toHaveLength(3);
+    expect(pageDispatches[0]!.input.deckOutline).toEqual([
+      { pageIndex: 0, title: "第 1 页", role: "content", density: "standard" },
+      { pageIndex: 1, title: "第 2 页", role: "data", density: "standard" },
+      { pageIndex: 2, title: "第 3 页", role: "quote", density: "standard" },
+    ]);
+    for (const entry of pageDispatches.slice(1)) {
+      expect(entry.input.deckOutline).toBeUndefined();
+    }
+    for (const entry of pageDispatches) {
+      expect(entry.input.neighbors).toBeUndefined();
+    }
   });
 
   it("素材分辨率不足时丢图并告警，避免低清图铺满页面", async () => {
@@ -760,9 +791,9 @@ describe("runLayouterTail", () => {
     expect((trimmed!.input.data as Record<string, unknown>).chart).toBeUndefined();
     expect((trimmed!.input.copy as Record<string, unknown>).speakerNotes).toBeUndefined();
     const appliedIndexes = harness.bridge.fillPage.mock.calls.map((call: unknown[]) => (call[0] as { slideIndex: number }).slideIndex);
-    // 减配重试让第 1 页变慢，第 2 页因此先落——落页按完成顺序，不再被前页堵住。
+    // 串行会话链下取树与落页都按页序：第 0 页减配重试完成前，第 1 页不开始。
     expect(appliedIndexes.slice().sort()).toEqual([0, 1]);
-    expect(appliedIndexes).toEqual([1, 0]);
+    expect(appliedIndexes).toEqual([0, 1]);
   });
 
   it("减配重试仍不收敛才落结构化兜底：pointList 条目 + stats KPI，不再是圆点文本墙", async () => {
