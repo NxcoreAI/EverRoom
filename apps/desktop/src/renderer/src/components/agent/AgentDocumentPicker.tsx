@@ -4,11 +4,14 @@ import type { AgentDocumentSelectionItem } from './agentDocumentSelection'
 import { useLocale } from '@/i18n/LocaleContext'
 
 export function AgentDocumentPicker({
+  awaitingInput = true,
   busy,
   documents,
   onCancel,
   onSelect,
 }: {
+  /** agent 正挂着 run 等用户选（区别于「确认中」的 busy）。 */
+  awaitingInput?: boolean
   busy: boolean
   documents: AgentDocumentSelectionItem[]
   onCancel: () => void
@@ -16,7 +19,10 @@ export function AgentDocumentPicker({
 }) {
   const { t } = useLocale()
   return (
-    <section className="agent-room-selection agent-document-selection" aria-label={t('surface:agentDocumentPicker.chooseADocumentToEdit')}>
+    <section
+      className="agent-room-selection agent-document-selection"
+      data-awaiting-input={String(awaitingInput && !busy)}
+      aria-label={t('surface:agentDocumentPicker.chooseADocumentToEdit')}>
       <header>
         <span><FileText aria-hidden="true" /><strong>{t('surface:agentDocumentPicker.chooseADocumentToEdit')}</strong></span>
         <button type="button" aria-label={t('surface:agentDocumentPicker.cancelDocumentSelection')} title={t('surface:agentDocumentPicker.cancel')} disabled={busy} onClick={onCancel}>

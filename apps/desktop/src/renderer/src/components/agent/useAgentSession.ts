@@ -11,12 +11,13 @@ import type {
   AgentSession,
   AgentSessionLink,
   AgentSessionSnapshot,
+  AgentThinkingLevel,
   CreateAgentSessionLinkInput,
 } from '@nxcore/agent-contract'
 import { createVersionedLocalStorageStore } from '@nxcore/migration-kit/local'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useLocale } from '@/i18n/LocaleContext'
-import type { AgentApprovalDecision } from '../../../../shared/sources'
+import type { AgentApprovalDecision } from '@/shared/sources'
 
 import {
   createAgentRunActivityAccumulator,
@@ -35,6 +36,7 @@ import {
 import { buildAgentRunContext } from './agentRunContext'
 import type { MentionedAgent, MentionedItem } from './agentMentions'
 import { plainTextFromMarkdown } from './agentTextUtils'
+import { persistThinkingLevel, storedThinkingLevel } from './agentThinkingLevel'
 import {
   applyShellApprovalEvent,
   reducePendingShellApprovals,
@@ -198,13 +200,39 @@ export function isAutoFallbackTitle(serverTitle: string | null | undefined, acce
   return serverTitle?.trim() === acceptedPrompt.slice(0, 48).trim()
 }
 
+export interface UseAgentSessionOptions {
+  /** 工作区工作台：会话清单按 workspaceId 过滤，新建会话归属该工作区。 */
+  workspaceId?: string | null
+  /**
+   * 初始选中会话：
+   * - undefined = 沿用原有行为（本地记忆 → 第一条）
+   * - null = 草稿态（不自动选会话）
+   * - string = 选中该会话
+   */
+  initialSessionId?: string | null
+  /**
+   * 会话分区键（缺省 = pageLabel）。停靠栏按文件隔离会话时应传文件的稳定 id：
+   * 文件重命名、同名、超长（网关 pageLabel 上限 120）都不会把历史落进另一个分区。
+   * pageLabel 只作为「当前页面」展示/运行时上下文，不参与分区。
+   */
+  sessionKey?: string
+}
+
 export function useAgentSession(
   pageLabel: string,
   roomId: string | null,
   rooms: AgentRoomReference[],
+  options: UseAgentSessionOptions = {},
 ) {
   const { locale, t } = useLocale()
   const api = window.nxcore?.agent
+  const workspaceId = options.workspaceId ?? null
+  const workspaceIdRef = useRef<string | null>(workspaceId)
+  workspaceIdRef.current = workspaceId
+  /** 会话读写的分区键：停靠栏 = 文件稳定 id；工作台 = workspaceId（缺省回退 pageLabel）。 */
+  const sessionKey = options.sessionKey || pageLabel
+  /** 只在挂载时生效：之后切会话由工作台调用 selectSessionById。 */
+  const initialSessionIdRef = useRef<string | null | undefined>(options.initialSessionId)
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [sessions, setSessions] = useState<AgentSession[]>([])
   const [currentSession, setCurrentSession] = useState<AgentSession | null>(null)
@@ -771,14 +799,27 @@ export function useAgentSession(
 
     if (api) {
       setLoading(true)
-      void api.listSessions()
+      // 停靠栏按 sessionKey（文件稳定 id）列会话，只看到本文件的会话；工作台
+      // （workspaceId）模式下列出全部会话再按工作区过滤——工作区是会话分区键，
+      // pageLabel 只是最后出现的界面。
+      void api.listSessions(workspaceId ? undefined : sessionKey)
         .then(async (listedSessions) => {
           if (!alive) return
-          const userSessions = listedSessions.filter(isUserSession)
+          const scoped = workspaceId
+            ? listedSessions.filter((session) => session.workspaceId === workspaceId)
+            : listedSessions
+          const userSessions = scoped.filter(isUserSession)
           setSessions(userSessions)
+          const requested = initialSessionIdRef.current
           const storedSessionId = readStoredSession()
-          const selected = userSessions.find((session) => session.id === storedSessionId)
-            ?? userSessions[0]
+          const wanted = requested !== undefined ? requested : storedSessionId
+          // 显式传了 initialSessionId（工作台的会话视图）就严格按它选；未传（文件
+          // 停靠栏）时「全局记住的会话」可能属于别的分区，找不到就回落到本分区最近
+          // 一条，否则停靠栏会误停在草稿态、看不到本文件的对话记录。
+          const selected = (wanted
+            ? userSessions.find((session) => session.id === wanted)
+            : undefined)
+            ?? (requested === undefined ? userSessions[0] : undefined)
           if (selected) await selectSession(selected)
           else if (alive) {
             // 无历史会话：停在草稿态（不建会话），首条消息发出时才创建——
@@ -827,7 +868,7 @@ export function useAgentSession(
       pendingEventsRef.current = []
       void api?.unsubscribe()
     }
-  }, [api, applyEvent, hydrateSnapshot, reloadNonce, selectSession, scheduleAgentEventFlush])
+  }, [api, applyEvent, hydrateSnapshot, reloadNonce, selectSession, scheduleAgentEventFlush, sessionKey, workspaceId])
 
   // 全局默认档位：新会话创建时锁定到 session.activeAgentId（后端权威）。
   // 切换只影响下一个新会话，进行中的会话档位以 currentSession.modelPreference 为准。
@@ -837,6 +878,16 @@ export function useAgentSession(
     modelPreferenceRef.current = tier
     setModelPreferenceDefaultState(tier)
     persistModelPreference(tier)
+  }, [])
+
+  // 全局默认思考档位：只决定「下次新建会话」的默认值（null=跟随模型配置）；
+  // 已有会话以 currentSession.thinkingLevel 为准，切换走 setSessionThinkingLevel。
+  const [thinkingLevelDefault, setThinkingLevelDefaultState] = useState<AgentThinkingLevel | null>(storedThinkingLevel)
+  const thinkingLevelRef = useRef(thinkingLevelDefault)
+  const setThinkingLevelDefault = useCallback((level: AgentThinkingLevel | null) => {
+    thinkingLevelRef.current = level
+    setThinkingLevelDefaultState(level)
+    persistThinkingLevel(level)
   }, [])
 
   // 全局默认渠道：新会话整体锁定到某个本机 CLI Agent（ACP 持久会话连续对话）。
@@ -858,12 +909,18 @@ export function useAgentSession(
     if (activeRunId) throw new Error(t('surface:useAgentSession.stopBeforeCreating'))
     try {
       const session = await api.createSession({
-        pageLabel: 'Agent',
+        // 分区键必须与 listSessions 一致：停靠栏按 sessionKey（文件稳定 id）列会话，
+        // 建会话若写死 'Agent' 或写成随文件改名的显示名，它永远列不出自己刚建的会话
+        // （离开再回来即丢失）。pageLabel 只用于「当前页面」上下文。
+        pageLabel: sessionKey,
         roomId: null,
+        ...(workspaceIdRef.current ? { workspaceId: workspaceIdRef.current } : {}),
         // 渠道优先：锁定后整个会话由该 CLI Agent 连续执行，档位被忽略。
         ...(channelAgentDefaultRef.current
           ? { channelAgentId: channelAgentDefaultRef.current }
           : { modelPreference: modelPreferenceRef.current }),
+        // 思考档位不锁定会话：显式发 null 表示「跟随模型配置」，创建后仍可 PUT 修改。
+        thinkingLevel: thinkingLevelRef.current ?? null,
       })
       setSessions((current) => [session, ...current])
       await selectSession(session, pendingMessages)
@@ -1291,7 +1348,14 @@ export function useAgentSession(
     selectedRoomId: string,
     documentId?: string,
   ): Promise<string | null> => {
-    if (!api || activeRunId || loading || sending) return null
+    if (!api || loading || sending) return null
+    // 决策卡的「等待输入」态：run 还挂着，但用户必须能作答。
+    // 这里不再静默 return null（审查指出的「看起来能点、点了没反应」），
+    // 而是把「仍在处理中」显性告诉用户——真的提交不了时至少知道原因。
+    if (activeRunId) {
+      setError(t('surface:useAgentSession.agentBusy'))
+      return null
+    }
     setSending(true)
     setError(null)
     try {
@@ -1379,6 +1443,35 @@ export function useAgentSession(
     setQueuedSubmissions((current) => current.filter((item) => item.id !== id))
   }, [])
 
+  /**
+   * 切换会话思考档位（null=跟随模型配置）。
+   * - 任何一次选择都持久化为「下次新会话默认值」；
+   * - 会话已存在：PUT 修改（网关从下一轮 run 生效），并用响应回读值更新
+   *   currentSession / sessions 列表；失败只报错，不改本地值；
+   * - 草稿态（无会话/无 API）：只改默认值，首条消息建会话时带上。
+   */
+  const setSessionThinkingLevel = useCallback(async (level: AgentThinkingLevel | null): Promise<boolean> => {
+    setThinkingLevelDefault(level)
+    const targetSessionId = sessionIdRef.current
+    if (!api || !targetSessionId) return true
+    setError(null)
+    let next: AgentThinkingLevel | null = level
+    try {
+      const result = await api.setThinkingLevel(targetSessionId, level)
+      next = result.thinkingLevel
+    } catch (requestError) {
+      setError(requestErrorMessage(requestError, t('surface:useAgentSession.thinkingLevelUpdateFailed')))
+      return false
+    }
+    setCurrentSession((current) => current && current.id === targetSessionId
+      ? { ...current, thinkingLevel: next }
+      : current)
+    setSessions((current) => current.map((session) => session.id === targetSessionId
+      ? { ...session, thinkingLevel: next }
+      : session))
+    return true
+  }, [api, setThinkingLevelDefault, t])
+
   return {
     activeRunId,
     agentIdByRun,
@@ -1396,6 +1489,9 @@ export function useAgentSession(
     messages,
     modelPreferenceDefault,
     setModelPreferenceDefault,
+    thinkingLevelDefault,
+    setThinkingLevelDefault,
+    setSessionThinkingLevel,
     channelAgentIdDefault,
     setChannelAgentIdDefault,
     pendingApprovals,

@@ -996,7 +996,10 @@ export function createSubagentPiTools(
     tools.push({
       name: "document_analysis",
       label: "Analyze uploaded document",
-      description: "调度受限的 Office/PDF 解析子 Agent，等待指定文件版本解析、校验和总结完成，并将总结返回当前 Agent。用户询问已上传文档内容时使用。",
+      description: "调度受限的 Office/PDF 解析子 Agent，等待指定文件版本解析、校验和总结完成，并将总结返回当前 Agent。"
+        + "用户询问已上传 Office/PDF 附件的内容、摘要、数据或结论时使用："
+        + "fileEntryId/fileVersionId 传附件元数据给出的精确值，不要按文件名猜测；"
+        + "调用后等解析结果返回再回答。",
       parameters: Type.Object({
         fileEntryId: Type.String({ minLength: 1, maxLength: 200 }),
         fileVersionId: Type.String({ minLength: 1, maxLength: 200 }),
@@ -1439,6 +1442,8 @@ export function createSubagentPiTools(
         + "style_select 需 styleSessionId 与 candidateIndex，确认候选并生成风格卡。"
         + "generate 可传 draftDocumentId（优先）或本轮对话内返回的 styleSessionId；任一 id 都拿不到时就都不传——网关按最新风格会话自动恢复整条链，绝不写占位符或凭记忆编 id；用户要求先看效果时传 previewPages=N 只落前 N 页试看（指令说「先生成/只生成 N 页」也会自动按试看处理；草稿与风格保留，确认后重新 generate 出整册）；可传 pageImagesDecision 及配图页序处理确认/续接；instruction 可省略，网关恢复原主题要求。"
         + "edit 需 instruction 并直接修改 PPT；fileId 可选，缺省为当前打开文件。"
+        + "修改此前生成的成品（尤其应用重启后）：把上一轮 generate/edit 返回的 fileEntryId 作为 fileId 传入——"
+        + "未打开的 PPT 会自动以可编辑方式打开；PPT 产物始终在产物库里，不存在\"找不到\"。"
         + "结果以 status/summary 为准；失败或部分成功时如实转告 warnings 与原因。禁止主 Agent 自行拼页面内容或代替子代理重试底层工具。",
       parameters: SLIDES_DRAFT_PARAMETERS,
       execute: async (run, params, parentSignal, onUpdate) => {
@@ -1630,7 +1635,7 @@ export function createSubagentPiTools(
               try {
                 snapshot = options.resolveDocumentForDraft(documentId);
               } catch {
-                // 指令里引用了不存在的 documentId：忽略，留给 planner 自行读取或向用户确认。
+                // 指令里引用了不存在的 id：忽略，留给 planner 自行读取或向用户确认。
                 continue;
               }
               const markdown = snapshot.markdown ?? "";

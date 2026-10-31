@@ -18,6 +18,8 @@ export interface OfficeGenerateInput {
   /** xlsx：sheets→rows。 */
   sheets?: OfficeSheetBridgeInput[] | null;
   roomId: string | null;
+  /** 会话所属工作区：产物入库归属（资料库/产物库按空间隔离）。 */
+  workspaceId?: string | null;
   fileName: string | null;
   idempotencyKey: string;
   /** pptx：true = 不广播 done（骨架入库阶段），由网关全部落页后经 completeDeck 补发真完成。 */
@@ -47,6 +49,44 @@ export interface OfficeGenerateResult {
   versionDeduped: boolean;
   roomRequested: boolean;
   originalName: string;
+  /** 出稿提示：模版骨架回落、自检软伤等。面板要展示给用户，不能吞。 */
+  warnings?: string[];
+}
+
+/** /v1/office-apply-bytes：把 Agent 改好的 Office 文件字节落回当前打开的实例。 */
+export interface OfficeApplyBytesInput {
+  fileId: string;
+  bytesBase64: string;
+  /** 基线版本内容指纹（桌面端据此判断文件在生成字节期间是否被保存过）。 */
+  expectedContentHash: string;
+}
+
+export interface OfficeApplyBytesResult {
+  ok: boolean;
+  reason?: "not_open" | "not_editable" | "unsaved" | "conflict" | "error";
+  message?: string;
+  /** 落盘后的库内版本号（桌面端回填版本链后返回）。 */
+  version?: number;
+  fileVersionId?: string;
+}
+
+/** /v1/office-export-pdf：把文件库里的 .docx 导出成 PDF 并作为新文件入库。 */
+export interface OfficeExportPdfInput {
+  fileId: string;
+  /** 输出文件名（可选，默认取原文件名 .pdf）；桌面端校验 .pdf 后缀。 */
+  fileName?: string | null;
+  roomId?: string | null;
+  /** 产物归属工作区（与源文件同空间；资料库/产物库按空间隔离）。 */
+  workspaceId?: string | null;
+}
+
+export interface OfficeExportPdfResult {
+  ok: boolean;
+  /** 新 PDF 的 fileEntryId（入库后）。 */
+  fileId: string;
+  originalName: string;
+  /** PDF 内容指纹（有则透传，便于去重/引用）。 */
+  contentHash?: string;
 }
 
 /** /v1/office-edit read：活会话大纲 + op 词汇表。 */
@@ -78,6 +118,48 @@ export interface OfficeSlidesEditInput {
   ops: unknown[];
   dryRun?: boolean;
   isolation?: "atomic" | "per_op";
+}
+
+/** /v1/office-agent-tools 工具调用（docs/sheets 渲染层 AI 工具）。 */
+export interface OfficeAgentToolCall {
+  id: string;
+  name: string;
+  input: Record<string, unknown>;
+}
+
+/** describe 结果：上下文 + 工具词汇表（+ 指南）。 */
+export interface OfficeAgentArtifactDescription {
+  context: string;
+  tools?: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }>;
+  commandsGuide?: string;
+  htmlRules?: string;
+  guides?: Record<string, string>;
+  /** current text watermark (Word), null when the document has none */
+  watermark?: string | null;
+  /** current page setup: orientation/paper/margins/columns/pageColor/sectionCount */
+  pageSetup?: Record<string, unknown>;
+  /** Word：word_agent_ops 的 op 词汇表（按能力分组的 op 名 + 字段说明，渲染层是唯一事实源）。 */
+  operationsGuide?: string;
+  /** Word：文档对象现状（章节/页眉页脚/批注/域/引用/修订/表格等），供 ops 定位。 */
+  documentState?: Record<string, unknown>;
+}
+
+/** apply 结果：逐调用结果（isError = 该调用失败；mutated = 有落盘变更）。 */
+export interface OfficeAgentToolsResult {
+  ok: boolean;
+  error?: string;
+  /** 后台 Word 会话在本次 apply 内完成版本回填后的新版本 id。 */
+  version?: string;
+  results?: Array<{
+    id: string;
+    name: string;
+    output: string;
+    isError?: boolean;
+    mutated?: boolean;
+    summary?: string;
+    /** 端侧附加的逐条明细（如 word_agent_ops 的 per-op 结果），原样透传给模型。 */
+    details?: unknown;
+  }>;
 }
 
 export class OfficeBridgeClient {
@@ -187,6 +269,75 @@ export class OfficeBridgeClient {
     return { ...(data as unknown as OfficeSlidesEditResult), ok: data.ok !== false };
   }
 
+  /** 活 Word/Excel describe：上下文 + 工具词汇表 + 指南（fileId 'active' = 当前打开的那个）。 */
+  async describeAgentArtifact(
+    input: {
+      kind: "docx" | "spreadsheet";
+      fileId: string;
+      /** 会话所属 Room/工作区：桌面端为 headless 编辑补齐实例归属（可选，旧端忽略）。 */
+      roomId?: string | null;
+      workspaceId?: string | null;
+    },
+  ): Promise<OfficeAgentArtifactDescription> {
+    const data = await this.postAgentTools({
+      kind: input.kind,
+      fileId: input.fileId,
+      mode: "read",
+      ...(input.roomId ? { roomId: input.roomId } : {}),
+      ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
+    });
+    const describe = (data.describe ?? {}) as Record<string, unknown>;
+    const result: OfficeAgentArtifactDescription = {
+      context: typeof describe.context === "string" ? describe.context : "",
+      tools: [],
+      guides: {},
+    };
+    if (Array.isArray(describe.tools)) result.tools = describe.tools as NonNullable<OfficeAgentArtifactDescription["tools"]>;
+    if (describe.guides && typeof describe.guides === "object") result.guides = describe.guides as Record<string, string>;
+    if (typeof describe.commandsGuide === "string") result.commandsGuide = describe.commandsGuide;
+    if (typeof describe.htmlRules === "string") result.htmlRules = describe.htmlRules;
+    if (typeof describe.watermark === "string" || describe.watermark === null) {
+      result.watermark = describe.watermark;
+    }
+    if (describe.pageSetup && typeof describe.pageSetup === "object") {
+      result.pageSetup = describe.pageSetup as Record<string, unknown>;
+    }
+    if (typeof describe.operationsGuide === "string") result.operationsGuide = describe.operationsGuide;
+    if (describe.documentState && typeof describe.documentState === "object") {
+      result.documentState = describe.documentState as Record<string, unknown>;
+    }
+    return result;
+  }
+
+  /** 活 Word/Excel apply：渲染层执行 docs/sheets AI 工具调用（编辑实时重绘，随后静默保存）。 */
+  async applyAgentArtifactTools(
+    input: {
+      kind: "docx" | "spreadsheet";
+      fileId: string;
+      calls: OfficeAgentToolCall[];
+      /** 会话所属 Room/工作区：桌面端为 headless 编辑补齐实例归属（可选，旧端忽略）。 */
+      roomId?: string | null;
+      workspaceId?: string | null;
+    },
+  ): Promise<OfficeAgentToolsResult> {
+    const data = await this.postAgentTools({
+      kind: input.kind,
+      fileId: input.fileId,
+      calls: input.calls,
+      mode: "apply",
+      ...(input.roomId ? { roomId: input.roomId } : {}),
+      ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
+    });
+    const result: OfficeAgentToolsResult = {
+      ok: true,
+      results: [],
+    };
+    if (typeof data.error === "string") result.error = data.error;
+    if (typeof data.version === "string") result.version = data.version;
+    if (Array.isArray(data.results)) result.results = data.results as NonNullable<OfficeAgentToolsResult["results"]>;
+    return result;
+  }
+
   /** 视觉复检：已打开 slides 产物的一页 → 1x PNG base64（渲染层离屏栅格化，秒级）。 */
   async renderPage(input: { fileId: string; slideIndex: number }): Promise<string> {
     const response = await fetch(`${this.config.baseUrl}/v1/office-render-page`, {
@@ -248,12 +399,19 @@ export class OfficeBridgeClient {
   /** /v1/office-reformat build：源 docx + 格式卡 + 装订规格 → 装订版 docx 入库并广播。 */
   async reformatThesisDocx(input: {
     docxBase64: string;
+    /** 模版 docx（base64）：有则按「模板骨架」装订，模版元素按原位置保留。 */
+    templateBase64?: string;
     formatCard: unknown;
     bindingSpec: unknown;
-    roomId: string;
+    /** 产物入库归属（工作区）：排版结果与源文件落在同一空间（资料库按空间隔离）。 */
+    workspaceId: string;
     sourceFileName: string;
     sourceFileEntryId: string;
     idempotencyKey: string;
+    /** false = 不回填模版 Logo（规则面板勾选项）。 */
+    keepLogo?: boolean;
+    /** true = 本次勾选了「AI 补写」，产物文件名要带 -ai补写版 后缀。 */
+    aiFill?: boolean;
   }): Promise<OfficeGenerateResult> {
     const response = await fetch(`${this.config.baseUrl}/v1/office-reformat`, {
       method: "POST",
@@ -272,6 +430,9 @@ export class OfficeBridgeClient {
     }
     const data = body.data ?? {};
     const str = (key: string) => typeof data[key] === "string" ? data[key] as string : "";
+    const warnings = Array.isArray(data.warnings)
+      ? data.warnings.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
+      : [];
     return {
       fileEntryId: str("fileEntryId"),
       fileVersionId: str("fileVersionId"),
@@ -281,7 +442,110 @@ export class OfficeBridgeClient {
       versionDeduped: data.versionDeduped === true,
       roomRequested: data.roomRequested === true,
       originalName: str("originalName"),
+      ...(warnings.length > 0 ? { warnings } : {}),
     };
+  }
+
+  /**
+   * /v1/office-apply-bytes：把 Agent 改好的字节写回「用户正开着的那份」，
+   * 由桌面端完成工作副本覆盖、版本链回填、访达原文件写回与视图重开。
+   */
+  async applyFileBytes(input: OfficeApplyBytesInput): Promise<OfficeApplyBytesResult> {
+    const response = await fetch(`${this.config.baseUrl}/v1/office-apply-bytes`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.config.token}`,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify(input),
+      // 覆盖工作副本 + 版本回填 + 视图重开；大文件走 base64，超时放宽。
+      signal: AbortSignal.timeout(120_000),
+    })
+    const parsed = await response.json().catch(() => ({})) as {
+      message?: unknown;
+      data?: Record<string, unknown>;
+    }
+    const data = parsed.data ?? {}
+    if (!response.ok) {
+      const reason = typeof data.reason === "string" ? data.reason as OfficeApplyBytesResult["reason"] : "error"
+      return {
+        ok: false,
+        ...(reason ? { reason } : {}),
+        message: typeof data.message === "string"
+          ? data.message
+          : typeof parsed.message === "string" ? parsed.message : `Office apply failed (${response.status})`,
+      }
+    }
+    return {
+      ok: true,
+      ...(typeof data.version === "number" ? { version: data.version } : {}),
+      ...(typeof data.fileVersionId === "string" ? { fileVersionId: data.fileVersionId } : {}),
+    }
+  }
+
+  /**
+   * /v1/office-export-pdf：桌面端用 LibreOffice 把文件库里的 .docx 转成 PDF，
+   * 并作为新文件入库（返回新 fileId/文件名）。网关不搬字节，只传目标与归属。
+   */
+  async exportPdf(input: OfficeExportPdfInput): Promise<OfficeExportPdfResult> {
+    const response = await fetch(`${this.config.baseUrl}/v1/office-export-pdf`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.config.token}`,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify(input),
+      // LibreOffice 转换 + PDF 入库整链路；大文档可到分钟级。
+      signal: AbortSignal.timeout(5 * 60_000),
+    });
+    const parsed = await response.json().catch(() => ({})) as {
+      message?: unknown;
+      data?: Record<string, unknown>;
+      ok?: unknown;
+    };
+    // 桌面端成功走 { data: {...} } 信封；个别错误路径直接给扁平 { ok:false, message }。
+    const data = parsed.data ?? (parsed as Record<string, unknown>);
+    const messageOf = (fallback: string): string =>
+      typeof data.message === "string"
+        ? data.message
+        : typeof parsed.message === "string" ? parsed.message : fallback;
+    if (!response.ok) throw new Error(messageOf(`Office export-pdf failed (${response.status})`));
+    if (data.ok === false) throw new Error(messageOf("Office export-pdf failed"));
+    const fileId = typeof data.fileId === "string" ? data.fileId.trim() : "";
+    const originalName = typeof data.originalName === "string" ? data.originalName.trim() : "";
+    if (!fileId) throw new Error("OFFICE_EXPORT_FAILED: 桌面端未返回 PDF 文件条目");
+    return {
+      ok: true,
+      fileId,
+      originalName: originalName || `${fileId}.pdf`,
+      ...(typeof data.contentHash === "string" ? { contentHash: data.contentHash } : {}),
+    };
+  }
+
+  private async postAgentTools(body: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const response = await fetch(`${this.config.baseUrl}/v1/office-agent-tools`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.config.token}`,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify(body),
+      // 渲染层执行 + 一次静默保存；大文档的 insert/replace 可能接近这个量级。
+      signal: AbortSignal.timeout(150_000),
+    });
+    const parsed = await response.json().catch(() => ({})) as {
+      message?: unknown;
+      data?: Record<string, unknown>;
+    };
+    if (!response.ok) {
+      throw new Error(
+        typeof parsed.message === "string" ? parsed.message : `Office agent-tools failed (${response.status})`,
+      );
+    }
+    return parsed.data ?? {};
   }
 
   private async postEdit(body: Record<string, unknown>): Promise<Record<string, unknown>> {

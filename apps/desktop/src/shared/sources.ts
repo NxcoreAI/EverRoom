@@ -11,6 +11,20 @@ export type SourceFileStatus =
   | 'error'
 export type EvidenceParseStatus = 'pending' | 'running' | 'success' | 'failed' | 'unsupported'
 
+/** 全局外观主题：与 renderer styles/themes.css 的 [data-theme] 一一对应。 */
+export type AppearanceThemeId = 'paper' | 'plain' | 'moss' | 'night'
+export const APPEARANCE_THEME_IDS: readonly AppearanceThemeId[] = ['paper', 'plain', 'moss', 'night']
+/** 主进程建窗底色：深色主题下避免首帧/缩放时闪白。 */
+export const APPEARANCE_THEME_BACKGROUND: Record<AppearanceThemeId, string> = {
+  paper: '#fbfaf6',
+  plain: '#f7f8fa',
+  moss: '#f4f6ef',
+  night: '#15191c',
+}
+export function isAppearanceThemeId(value: unknown): value is AppearanceThemeId {
+  return typeof value === 'string' && (APPEARANCE_THEME_IDS as readonly string[]).includes(value)
+}
+
 import type {
   AgentEvent,
   AgentAttachmentReference,
@@ -23,6 +37,11 @@ import type {
   AgentSessionLink,
   AgentSessionSnapshot,
   AgentSocketFrame,
+  AgentWorkspace,
+  CreateAgentWorkspaceInput,
+  UpdateAgentWorkspaceInput,
+  MovedRoomDocument,
+  MoveRoomDocumentsResult,
   SubagentInvocation,
   CreateAgentSessionInput,
   CreateAgentSessionLinkInput,
@@ -66,6 +85,8 @@ import type {
   ImportCandidateDiffView,
   AgentPermissionMode,
   AgentPermissionModeState,
+  AgentThinkingLevel,
+  AgentThinkingLevelUpdate,
 } from '@nxcore/agent-contract'
 import type { ObsidianVaultApi } from './obsidian'
 import type { OfficeAgentAskEvent, OfficeAgentFileEvent, OsOpenedDocument } from './office'
@@ -531,6 +552,22 @@ export interface OfficePreviewTab {
   kind: OfficePreviewKind
 }
 
+/**
+ * 主进程主动发起的预览：实例已经在主进程建好（例：排版面板点 👁 预览模版原文件），
+ * 渲染端只需要开一个顶栏标签并激活它。
+ *
+ * 少了这条通知，实例的 WebContentsView 会一直是 setVisible(false)：没人开标签、
+ * 没人上报矩形、没人调 setActiveInstance，用户看到的就是「点了预览完全没反应」。
+ */
+export interface OfficePreviewRequest {
+  instanceId: string
+  title: string
+  kind: OfficePreviewKind
+}
+
+/** 主进程 → 主窗口渲染端：请把已建好的预览实例显示出来。 */
+export const OFFICE_PREVIEW_REQUEST_CHANNEL = 'office:preview-request'
+
 /** 内嵌 Office 预览的文件名分流（主进程白名单与渲染端入口共用；旧格式经 LibreOffice 转换后同样内嵌）。 */
 export function officePreviewKindForFileName(fileName: string): OfficePreviewKind | null {
   const dot = fileName.lastIndexOf('.')
@@ -540,6 +577,13 @@ export function officePreviewKindForFileName(fileName: string): OfficePreviewKin
   if (extension === '.xlsx' || extension === '.xlsm' || extension === '.xls') return 'spreadsheet'
   if (extension === '.pdf') return 'pdf'
   return null
+}
+
+/** 产物库认可的 Room 文件来源：Agent 生成 + 用户导入的 Office 产物（其余 sourceKind 归资料）。 */
+export const ROOM_ARTIFACT_SOURCE_KINDS = ['agent-generated', 'artifact-imported'] as const
+
+export function isRoomArtifactSourceKind(sourceKind: string | null | undefined): boolean {
+  return sourceKind === 'agent-generated' || sourceKind === 'artifact-imported'
 }
 
 /** 产物库导入的 Office 扩展名（内嵌预览/编辑覆盖的格式；PDF 走资料导入，不在此列）。 */
@@ -578,13 +622,15 @@ export interface NxcoreDesktopApi {
   }
   updater: {
     /** 当前版本、渠道与安装标识（诊断/白名单登记用） */
-    getStatus(): Promise<{ version: string; channel: 'stable' | 'nightly'; installId: string; supported: boolean }>
+    getStatus(): Promise<{ version: string; channel: 'stable' | 'nightly'; installId: string; supported: boolean; lastError: string | null }>
     /** 手动检查更新：update-found=有新版正在后台下载（完成后弹窗）；no-update=已是最新 */
     checkNow(): Promise<'update-found' | 'no-update' | 'busy' | 'error'>
     /** 订阅下载进度（percent 0-100、bytesPerSecond），返回取消函数 */
     onProgress(listener: (progress: { percent: number; bytesPerSecond: number }) => void): () => void
     /** 订阅下载完成（version），返回取消函数 */
     onDownloaded(listener: (info: { version: string }) => void): () => void
+    /** 订阅更新链路错误（检查/下载/校验/安装失败），返回取消函数 */
+    onError(listener: (payload: { message: string }) => void): () => void
   }
   window: {
     minimize(): Promise<void>
@@ -593,17 +639,32 @@ export interface NxcoreDesktopApi {
     getState(): Promise<{ maximized: boolean }>
     onMaximizedChange(listener: (maximized: boolean) => void): () => void
   }
+  appearance: {
+    /** 把全局外观主题持久化到主进程（窗口底色 / 原生主题跟随；渲染端仍以 localStorage 为准）。 */
+    setTheme(theme: AppearanceThemeId): Promise<void>
+  }
   office: {
-    /** 激活指定 Office 预览实例并隐藏其余实例；null = 全部隐藏（标签仍保留）。 */
-    setActiveInstance(id: string | null): Promise<void>
+    /** 激活指定 Office 预览实例并隐藏其余实例；null = 全部隐藏（标签仍保留）。false = 实例未找到。 */
+    setActiveInstance(id: string | null): Promise<boolean>
     /** 关闭并销毁一个预览实例（标签关闭时调用）。 */
     /** 关闭预览实例；false = 可编辑实例在脏关闭守卫里被取消（保留标签）。 */
     closeInstance(id: string): Promise<boolean>
+    /**
+     * 干净画布：隐藏/显示 Word 编辑器操作区（Ribbon/状态栏/标尺/导航）。
+     * fileId 省略 = 当前焦点 Word 页签；hidden 省略 = 切换。false = 没命中可见 Word 实例。
+     */
+    toggleChrome(input?: { fileId?: string; hidden?: boolean }): Promise<boolean>
+    /** Doc 生成流程原型：真实走 genoffice 管线生成 docx 并入库，返回 fileId。 */
+    generateDocxPrototype(input: { title: string; html: string }): Promise<{ fileEntryId: string; originalName: string }>
     setWorkspaceBounds(bounds: OfficeWorkspaceBounds): void
+    /** 主进程主动打开的预览实例（渲染端负责开标签并激活；如排版面板预览模版原文件）。 */
+    onPreviewRequest(listener: (request: OfficePreviewRequest) => void): () => void
     /** Agent 生成 Office 文件的进度/完成事件（完成带 fileId 用于自动打开预览）。 */
     onAgentFile(listener: (event: OfficeAgentFileEvent) => void): () => void
     /** slides「AI 修改」弹层转发事件（切到对应 Room 并自动发送注入消息）。 */
     onAgentAsk(listener: (event: OfficeAgentAskEvent) => void): () => void
+    /** Agent 改写落盘后实例被重开：渲染端需重新上报视口矩形（原生视图换了一个）。 */
+    onInstanceReloaded(listener: (event: { id: string; kind: OfficePreviewKind }) => void): () => void
   }
   locale: {
     system: string
@@ -633,29 +694,18 @@ export interface NxcoreDesktopApi {
     test(): Promise<RuntimeConfigTestResult>
   }
   nangoConnector: {
-    runtimeStatus(): Promise<NangoRuntimeStatus>
     status(): Promise<ConnectorStatus>
     providers(): Promise<ConnectorProvidersResponse>
-    /** SaaS 已配置 OAuth 的 provider 名单；null = 不可用（local 模式/未登录/旧主进程），渲染层回落注册表全量。 */
-    oauthConfigs?(): Promise<string[] | null>
+    /** SaaS 已配置 OAuth 的应用全集（连接器目录源）；null = 不可用（local 模式/未登录/旧主进程），渲染层回落网关注册表。
+     *  新版主进程返回带 displayName/iconUrl 的明细（SaaS 配置即目录）；旧版只有 provider 名（仅作过滤）。 */
+    oauthConfigs?(): Promise<Array<{ provider: string; displayName: string | null; iconUrl: string | null }> | string[] | null>
     startAuthorization(provider: string): Promise<ConnectorAuthorizationAttempt>
     authorizationStatus(id: string): Promise<ConnectorAuthorizationAttempt>
     /** 远端 oo 租户的活跃旧授权探测（saas 模式；local/无会话返回 null）——重连弹窗选择用。 */
     remoteAccount(provider: string): Promise<ConnectorRemoteAccount | null>
-    registerConnection(input: { provider: string; service: string; connectionName: string; filters?: Record<string, unknown> }): Promise<ConnectorConnection>
-    createWebcalSubscription(url: string): Promise<ConnectorConnection>
-    disableConnection(id: string): Promise<void>
-    enableConnection(id: string): Promise<void>
     purgeConnection(id: string): Promise<void>
-    triggerSync(id: string, mode: SyncMode): Promise<SyncRun>
-    cancelRun(id: string): Promise<SyncRun>
-    scopes(connectionId?: string): Promise<SyncScope[]>
-    runs(connectionId?: string): Promise<SyncRun[]>
-    mail(query?: { connectionId?: string; scopeId?: string; search?: string; limit?: number; cursor?: string }): Promise<MailMessage[]>
-    documents(connectionId: string): Promise<WikiDocumentSummary[]>
-    document(connectionId: string, documentId: string): Promise<WikiDocumentPreview>
-    records(connectionId: string, type: 'mail' | 'calendar'): Promise<ConnectorJsonRecord[]>
-    recordTotals(connectionId: string): Promise<{ mail: number; calendar: number }>
+    /** 重新开启：移除本地墓碑（oo 凭据保留），连接回到可见/可查询状态。 */
+    reconnectConnection?(id: string): Promise<void>
   }
   cliConnector: {
     status(): Promise<OpenConnectorStatus>
@@ -695,7 +745,7 @@ export interface NxcoreDesktopApi {
     activeImportBatch(provider: ExternalDocumentProvider, connectionName?: string): Promise<DocumentImportBatchView | null>
     cancelImportBatch(batchId: string): Promise<DocumentImportBatchView>
     importPreview(provider: ExternalDocumentProvider, remoteDocumentId: string): Promise<ExternalDocumentPreview>
-    importCommit(input: { runId: string; roomId?: string; targetDocumentId?: string }): Promise<{
+    importCommit(input: { runId: string; roomId: string; targetDocumentId?: string }): Promise<{
       run: DocumentImportRunView
       roomImportId: string | null
       relation: 'primary' | 'candidate'
@@ -793,6 +843,14 @@ export interface NxcoreDesktopApi {
     settingsGet(): Promise<import('./agent-access').AgentAccessSettingsDto>
     setFixedPort(port: number | null): Promise<{ fixedPort: number | null; needsRestart: boolean }>
     restartGateway(): Promise<{ baseUrl: string }>
+  }
+  agentDebug: {
+    listAgents(): Promise<import('./agent-debug').AgentDebugAgentsResponse>
+    getAgent(id: string): Promise<import('./agent-debug').AgentDebugAgentResponse>
+    /** 使用记录（内置 Agent = agent_runs，子 Agent = subagent_invocations）。 */
+    listUsage(id: string, limit?: number): Promise<import('./agent-debug').AgentDebugUsageResponse>
+    /** 打开独立调试窗口（单例；已打开时聚焦）。 */
+    openWindow(): Promise<void>
   }
   slides: {
     pageImagesStatus(documentId: string): Promise<import('./slides').SlidesPageImagesStatus | null>
@@ -905,9 +963,20 @@ export interface NxcoreDesktopApi {
     ): Promise<{ approvalId: string; decision: string }>
     getPermissionMode(sessionId: string): Promise<AgentPermissionModeState>
     setPermissionMode(sessionId: string, mode: AgentPermissionMode): Promise<{ mode: AgentPermissionMode; applied: boolean }>
+    /** 会话思考档位（null=跟随模型配置）；返回后端权威回读值。 */
+    setThinkingLevel(sessionId: string, level: AgentThinkingLevel | null): Promise<AgentThinkingLevelUpdate>
     subscribe(sessionId: string): Promise<void>
     unsubscribe(): Promise<void>
     onEvent(listener: (frame: AgentSocketFrame) => void): () => void
+  }
+  /** 工作区（Workspace）：本地目录 + 会话组织容器；默认工作区永远存在。 */
+  workspace: {
+    list(): Promise<AgentWorkspace[]>
+    create(input: CreateAgentWorkspaceInput): Promise<AgentWorkspace>
+    update(workspaceId: string, input: UpdateAgentWorkspaceInput): Promise<AgentWorkspace>
+    remove(workspaceId: string): Promise<void>
+    /** 原生目录选择器；用户取消返回 null。 */
+    pickDirectory(): Promise<string | null>
   }
   cursorCompletionAgent: {
     createSession(input: CreateAgentSessionInput): Promise<AgentSession>
@@ -920,12 +989,10 @@ export interface NxcoreDesktopApi {
     onEvent(listener: (frame: AgentSocketFrame) => void): () => void
   }
   documents: {
-    /** roomId 省略/null = 工作区文稿 */
-    list(roomId?: string | null): Promise<RoomDocument[]>
-    listTrash(roomId?: string | null): Promise<RoomDocument[]>
+    list(roomId: string): Promise<RoomDocument[]>
+    listTrash(roomId: string): Promise<RoomDocument[]>
     get(documentId: string): Promise<RoomDocument>
-    /** 工作区文稿正文 markdown（只读预览用） */
-    readMarkdown(documentId: string): Promise<{ documentId: string; markdown: string }>
+    readMarkdown(documentId: string): Promise<{ markdown: string }>
     listBlocks(documentId: string): Promise<DocumentBlockList>
     listBlockBacklinks(documentId: string, blockId?: string): Promise<DocumentBlockBacklinkList>
     listVersions(documentId: string, options?: DocumentVersionListOptions): Promise<DocumentVersionSummary[]>
@@ -957,11 +1024,13 @@ export interface NxcoreDesktopApi {
     import(input: ImportRoomDocumentInput): Promise<RoomDocument>
     save(documentId: string, input: SaveRoomDocumentInput): Promise<RoomDocument>
     delete(documentId: string): Promise<void>
+    move(documentId: string, fromRoomId: string, roomId: string): Promise<MovedRoomDocument>
+    moveMany(documentIds: string[], fromRoomId: string, roomId: string): Promise<MoveRoomDocumentsResult>
     restore(documentId: string): Promise<RoomDocument>
     deletePermanently(documentId: string): Promise<void>
-    emptyTrash(roomId?: string | null): Promise<void>
+    emptyTrash(roomId: string): Promise<void>
     exportPdf(input: ExportDocumentPdfInput): Promise<ExportDocumentPdfResult>
-    subscribe(roomId?: string | null): Promise<void>
+    subscribe(roomId: string): Promise<void>
     unsubscribe(roomId?: string): Promise<void>
     onEvent(listener: (frame: DocumentEventFrame) => void): () => void
     onOperationChanged(listener: (operationId: string) => void): () => void
@@ -987,7 +1056,7 @@ export interface NxcoreDesktopApi {
   }
   obsidian: ObsidianVaultApi
   files: {
-    list(limit?: number, offset?: number): Promise<{ items: FileCatalogDto[]; total: number }>
+    list(limit?: number, offset?: number, options?: { workspaceId?: string }): Promise<{ items: FileCatalogDto[]; total: number }>
     catalogEntry(fileId: string): Promise<FileCatalogDto>
     get(fileId: string): Promise<FileDto & { storagePath: string; currentParsedId: string | null }>
     /** 解析产物 markdown（未进过链路的裸上传 404）。 */
@@ -1012,22 +1081,24 @@ export interface NxcoreDesktopApi {
       fileId: string,
       originalName?: string,
       contentHash?: string,
-      options?: { editable?: boolean; roomId?: string },
+      options?: { editable?: boolean; roomId?: string; workspaceId?: string },
     ): Promise<
       | { openedWith: 'office'; instanceId: string; kind: OfficePreviewKind; title: string }
       /** legacyFallback：旧版 .doc/.xls/.ppt 转换失败，已交给系统默认应用。 */
       | { openedWith: 'external'; legacyFallback?: boolean }
     >
-    /** 统一导入：选择框 → /v1/files → /v1/ingest（逐文件结果）。roomId（Room 内上传）= 显式归属直达该 Room。 */
-    pickAndImport(options?: { pipelines?: IngestPipelines; roomId?: string }): Promise<FileImportOutcome[]>
+    /** 统一导入：选择框 → /v1/files → /v1/ingest（逐文件结果）。roomId（Room 内上传）= 显式归属直达该 Room；
+     * workspaceId = 归属工作空间（资料库/产物库按空间隔离，缺省归 default）。 */
+    pickAndImport(options?: { pipelines?: IngestPipelines; roomId?: string; workspaceId?: string }): Promise<FileImportOutcome[]>
     /** 仅选择：返回文件/文件夹路径，不导入（创建 Room 弹窗暂存用）。 */
     pickPaths(): Promise<string[]>
     /** 提交后的一次性导入：把暂存路径交给统一导入链路。 */
-    importPaths(paths: string[], options?: { pipelines?: IngestPipelines; roomId?: string }): Promise<FileImportOutcome[]>
+    importPaths(paths: string[], options?: { pipelines?: IngestPipelines; roomId?: string; workspaceId?: string }): Promise<FileImportOutcome[]>
     /** 拖拽文件/目录的一次性导入；不注册数据源，也不持续监听。 */
-    importDropped(files: File[], options?: { pipelines?: IngestPipelines; roomId?: string }): Promise<FileImportOutcome[]>
-    /** 产物库导入：本地 Office 文件以 artifact-imported 直达 Room 产物库（成功项逐个回报）。 */
-    importArtifacts(files: File[], roomId: string): Promise<Array<{ fileId: string; originalName: string }>>
+    importDropped(files: File[], options?: { pipelines?: IngestPipelines; roomId?: string; workspaceId?: string }): Promise<FileImportOutcome[]>
+    /** 产物库导入：本地 Office 文件以 artifact-imported 直达 Room 产物库（成功项逐个回报）。
+     *  workspaceId = 归属工作空间（产物库按空间隔离，缺省归 default）。 */
+    importArtifacts(files: File[], roomId: string, workspaceId?: string): Promise<Array<{ fileId: string; originalName: string }>>
     importAgentAttachments(files: File[]): Promise<AgentAttachmentReference[]>
     onImportProgress(listener: (event: FileImportProgressEvent) => void): () => void
     listHighRiskReviews(): Promise<{ items: HighRiskImportReview[] }>
@@ -1039,22 +1110,68 @@ export interface NxcoreDesktopApi {
     takePendingOsOpen(): Promise<OsOpenedDocument | null>
   }
   thesisFormat: {
-    /** 工作区论文格式卡列表（最新在前）；card 为 ThesisFormatCard 全量 JSON（样张预览数据源）。 */
-    listCards(): Promise<Array<{
+    /** 当前工作区的论文格式卡列表（最新在前）；card 为 ThesisFormatCard 全量 JSON（样张预览数据源）。 */
+    listCards(workspaceId: string): Promise<Array<{
       id: string
       sourceName: string
       sourceFileEntryId: string | null
       updatedAt: string
       card: Record<string, unknown>
     }>>
-    /** 资料库内文件设为论文模版（docx/doc/pdf；同名模版覆盖旧卡）。 */
-    setFromLibrary(fileEntryId: string): Promise<{ cardId: string; sourceName: string }>
-    /** 系统选择框直传模版（zip/docx/doc/pdf；zip 不进文件库）。用户取消返回 canceled=true。 */
-    pickAndSet(): Promise<{ canceled: boolean; cardId: string; sourceName: string }>
+    /** 资料库内文件设为论文模版（docx/doc/pdf；同名模版覆盖旧卡）。factGaps 非空 = 模版部分信息未能解析（UI 必须提示，不得静默）。 */
+    setFromLibrary(workspaceId: string, fileEntryId: string): Promise<{ cardId: string; sourceName: string; factGaps?: string[] }>
+    /** 系统选择框直传模版（zip/docx/doc/pdf；zip 不进文件库）。用户取消返回 canceled=true。factGaps 语义同 setFromLibrary。
+     *  options.wordOnly（产物区「排版工具」用）：选择框只接受 Word .docx。 */
+    pickAndSet(workspaceId: string, options?: { wordOnly?: boolean }): Promise<{ canceled: boolean; cardId: string; sourceName: string; factGaps?: string[] }>
     /** 删除一张格式卡。 */
-    removeCard(cardId: string): Promise<void>
-    /** 一键装订：按指定格式卡（缺省最新）把 docx 论文装订成 xxx-排版版.docx 新文件。 */
-    reformat(fileEntryId: string, cardId?: string): Promise<{ fileEntryId: string; originalName: string }>
+    removeCard(workspaceId: string, cardId: string): Promise<void>
+    /** 工作台拖拽上传：字节直传网关解析成格式卡（不落盘）。factGaps 语义同 setFromLibrary。 */
+    parseUpload(workspaceId: string, name: string, bytes: ArrayBuffer): Promise<{ cardId: string; sourceName: string; factGaps?: string[] }>
+    /** 彻底删除模版：模版文件 + 格式卡。 */
+    deleteTemplate(workspaceId: string, cardId: string): Promise<{ fileDeleted: boolean; hadFile: boolean }>
+    /** 一键装订：按指定格式卡（缺省最新）把 docx 论文装订成 xxx-排版版.docx 新文件。
+     *  report 为 v2 槽位映射报告（守恒核对/规则/未匹配块/待复核章节）。 */
+    reformat(
+      workspaceId: string,
+      fileEntryId: string,
+      cardId?: string,
+      /** 工作台规则面板：严格/融合、Logo 与页眉页脚保留、标题层级映射。 */
+      options?: {
+        keepLogo?: boolean
+        keepHeaderFooter?: boolean
+        headingMapping?: { chapter?: number; section?: number; subsection?: number }
+        /** 允许 AI 补写空白小节（默认关）。 */
+        aiFill?: boolean
+      },
+    ): Promise<{
+      fileEntryId: string
+      originalName: string
+      report?: Record<string, unknown>
+    }>
+    /** 任务化排版：提交即返回 jobId（长任务不占客户端请求槽）。 */
+    reformatStart(
+      workspaceId: string,
+      fileEntryId: string,
+      cardId?: string,
+      options?: {
+        keepLogo?: boolean
+        keepHeaderFooter?: boolean
+        headingMapping?: { chapter?: number; section?: number; subsection?: number }
+      },
+    ): Promise<{ jobId: string; phase: string }>
+    /** 轮询排版作业：phase ∈ parsing|mapping|rendering|done，progress 0–100。 */
+    reformatStatus(jobId: string): Promise<{
+      id: string
+      status: 'running' | 'completed' | 'failed'
+      phase: string
+      progress: number
+      result?: { fileEntryId: string; originalName: string; report?: Record<string, unknown> }
+      error?: string
+    }>
+    /** 导出 PDF：本机无 LibreOffice 时 unavailable=true（UI 需给出可执行说明）。 */
+    exportPdf(workspaceId: string, fileEntryId: string): Promise<
+      { unavailable: true } | { unavailable: false; path: string }
+    >
     onCardChanged(listener: () => void): () => void
   }
 }

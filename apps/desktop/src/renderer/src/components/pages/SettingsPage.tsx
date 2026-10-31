@@ -7,6 +7,7 @@ import {
   Languages,
   LogOut,
   Laptop,
+  Palette,
   Plug,
   RefreshCw,
   ShieldCheck,
@@ -40,6 +41,7 @@ import { McpSettingsSection } from '@/components/settings/McpSettingsSection'
 import { useLocale, type AppLocale, type Translate } from '@/i18n/LocaleContext'
 import { LocalAgentSettingsSection } from '@/components/settings/LocalAgentSettingsSection'
 import { UsageAndBudgetSettingsSection } from '@/components/settings/UsageAndBudgetSettingsSection'
+import { AppearanceSettingsSection } from '@/components/settings/AppearanceSettingsSection'
 import { RuntimeConfigSettingsSection } from '@/components/settings/RuntimeConfigSettingsSection'
 import { RedeemCodeField, useRedeemCode } from '@/components/account/RedeemCodeField'
 import { QrLoginPanel } from '@/components/account/QrLoginPanel'
@@ -55,6 +57,7 @@ const SETTINGS_NAV: SettingsNavItem[] = [
   { id: 'settings-token-usage', label: 'surface:settings.usageAndBudgets', icon: Activity },
   { id: 'settings-onboarding', label: 'surface:settings.onboardingSetupTitle', icon: Sparkles },
   { id: 'settings-editor', label: 'surface:settings.documentEditing', icon: Sparkles },
+  { id: 'settings-appearance', label: 'surface:settings.appearanceTitle', icon: Palette },
   { id: 'settings-interface', label: 'surface:settings.interfaceLanguage', icon: Languages },
   { id: 'settings-update', label: 'surface:settings.navigationUpdate', icon: RefreshCw },
 ]
@@ -356,6 +359,8 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
         </nav>
 
         <main className="settings-content" data-active-setting={activeSetting}>
+
+      <AppearanceSettingsSection />
 
       <section id="settings-interface" className="reality-settings-section settings-anchor-section" aria-labelledby="interface-language-settings-title">
         <header>

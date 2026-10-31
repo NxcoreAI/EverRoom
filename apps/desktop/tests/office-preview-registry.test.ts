@@ -1,3 +1,7 @@
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { BrowserWindow } from 'electron'
 
@@ -8,6 +12,10 @@ const { savedListenersByWc, createCalls, slidesCalls, sheetCalls } = vi.hoisted(
   sheetCalls: { options: [] as Array<{ editable?: boolean }> },
 }))
 
+vi.mock('electron', () => ({
+  webContents: { fromId: vi.fn((id: number) => ({ id, isDestroyed: () => false })) },
+  BrowserWindow: { getAllWindows: vi.fn(() => []) },
+}))
 vi.mock('../src/main/office/office-runtime', () => ({
   loadPreparedGenOfficeRuntime: vi.fn(() => runtime),
   preparedGenOfficeFixture: vi.fn(() => '/fixtures/simple.docx'),
@@ -51,10 +59,12 @@ vi.mock('../src/main/office/spreadsheet-view-manager', () => ({
       return { ...makeView('spreadsheet'), documentPath: '/tmp/workdir/book.xlsx' }
     }),
   },
+  prepareSpreadsheet: vi.fn(async () => '/tmp/workdir/book.xlsx'),
 }))
 
 import { OfficePreviewRegistry, officePreviewKindFor } from '../src/main/office/office-preview-registry'
-import { WORKSPACE_DOCUMENT_CHANNEL } from '@nxcore/agent-contract'
+import { prepareOfficeDocument } from '../src/main/office/office-view-manager'
+import { prepareSpreadsheet } from '../src/main/office/spreadsheet-view-manager'
 
 /** 每个视图实例的 mock：记录 setActive/dispose 调用；disposeNextCancel 控制下一次返回。 */
 interface ViewRecord {
@@ -63,6 +73,7 @@ interface ViewRecord {
   disposed: boolean
   webContentsId: number
   disposeNextCancel: boolean
+  dirty: boolean
 }
 const viewCalls: ViewRecord[] = []
 function makeView(kind: string): {
@@ -74,6 +85,7 @@ function makeView(kind: string): {
     kind, setActive: [], disposed: false,
     webContentsId: 1000 + viewCalls.length,
     disposeNextCancel: false,
+    dirty: false,
   }
   viewCalls.push(entry)
   return {
@@ -84,6 +96,16 @@ function makeView(kind: string): {
       return true
     }),
     webContentsId: entry.webContentsId,
+    isDirty: vi.fn(async () => entry.dirty),
+    // 后台 Agent 隐藏会话需要的最小 view 面（setBounds/setVisible/close/once）。
+    setBounds: vi.fn(),
+    setVisible: vi.fn(),
+    webContents: {
+      id: entry.webContentsId,
+      isDestroyed: () => entry.disposed,
+      close: vi.fn(() => { entry.disposed = true }),
+      once: vi.fn(),
+    },
   }
 }
 
@@ -91,11 +113,35 @@ const runtime = {
   docs: {
     setDocsShellWindow: vi.fn(),
     setActiveDocsResolver: vi.fn(),
+    setDocsMenuGate: vi.fn(),
+    setDocsChromeHidden: vi.fn(),
+    registerDocsIpc: vi.fn(),
+    teardownDocsRenderer: vi.fn(),
+    createDocsView: vi.fn(() => makeView('docx')),
+    waitForAgentReady: vi.fn(async () => true),
+    describeAgentDoc: vi.fn(async () => ({ context: 'Document block list:\n0|h1|Title' })),
+    applyAgentDocTools: vi.fn(async () => ({
+      results: [{ id: 'call-1', name: 'insert_content', output: 'ok', mutated: true }],
+    })),
   },
   sheets: {
     setSheetsShellWindow: vi.fn(),
     setActiveSheetsWebContents: vi.fn(),
     stopSheetsSidecar: vi.fn(),
+    registerSheetsIpc: vi.fn(),
+    // 后台 Excel 隐藏会话的面：建视图 / 排队工作簿 / 就绪闸门 / 描述 / 应用 / 拆除。
+    createSheetsView: vi.fn(() => makeView('sheets-hidden')),
+    queueWorkbookForView: vi.fn(),
+    waitForAgentReady: vi.fn(async () => true),
+    teardownSheetsRenderer: vi.fn(),
+    sheetsPendingEditCount: vi.fn(() => 0),
+    describeAgentWorkbook: vi.fn(async () => ({
+      context: 'Workbook sheets:\n0|Sheet1|A1:D20',
+      guides: { writing: 'propose_operations' },
+    })),
+    applyAgentWorkbookTools: vi.fn(async () => ({
+      results: [{ id: 'call-1', name: 'propose_operations', output: 'ok', mutated: true }],
+    })),
   },
   slides: {
     setSlidesShellWindow: vi.fn(),
@@ -108,8 +154,10 @@ const runtime = {
 
 function makeWindow(): BrowserWindow {
   return {
-    contentView: { addChildView: vi.fn() },
+    contentView: { addChildView: vi.fn(), removeChildView: vi.fn() },
     once: vi.fn(),
+    isDestroyed: () => false,
+    webContents: { isDestroyed: () => false, send: vi.fn() },
     getContentBounds: () => ({ x: 0, y: 0, width: 1440, height: 900 }),
   } as unknown as BrowserWindow
 }
@@ -137,11 +185,10 @@ describe('officePreviewKindFor', () => {
 
 describe('OfficePreviewRegistry', () => {
   // 论文排版桥是 genoffice 后加的导出：旧运行时（vendored 子模块还没升到含该导出的提交）
-  // 缺这个函数时，曾把整个 ensureRuntime 打挂，Office 内嵌预览一起退回
+  // 缺这个函数时，曾把整个 ensureRuntime 打挂，Room 内所有 Office 内嵌预览一起退回
   // 「用系统默认应用打开」。这里钉住「缺能力只跳过桥、预览照开」。
   describe('thesis panel bridge', () => {
     type DocsWithThesisHook = { setDocsThesisPanelHook?: (hook: (wcId: number, action: unknown) => Promise<unknown>) => void }
-    type ThesisHook = (wcId: number, action: unknown) => Promise<unknown>
 
     afterEach(() => {
       delete (runtime.docs as DocsWithThesisHook).setDocsThesisPanelHook
@@ -179,43 +226,25 @@ describe('OfficePreviewRegistry', () => {
       expect(typeof hook.mock.calls[0]![0]).toBe('function')
     })
 
-    it('Room 已删除：实例不带 roomId 也按工作区 scope 列卡/删除/装订（不再报 no_room）', async () => {
+    it('scopes the AI thesis panel to the document workspace', async () => {
       const hook = vi.fn()
       ;(runtime.docs as DocsWithThesisHook).setDocsThesisPanelHook = hook
-      const window = makeWindow()
       const listCards = vi.fn(async () => [])
-      const removeCard = vi.fn(async () => undefined)
-      const reformat = vi.fn(async () => ({ originalName: '论文-排版版.docx' }))
       registry.setThesisPanelBridge({
         listCards,
         pickAndSet: vi.fn(async () => null),
-        removeCard,
-        reformat,
+        removeCard: vi.fn(async () => undefined),
+        reformat: vi.fn(async () => null),
       })
+      const window = makeWindow()
+      await registry.open(window, { ...file('file-w', 'thesis.docx'), workspaceId: 'ws-9' })
 
-      // 打开实例时不传 roomId：论文排版桥以前会在这里返回 no_room。
-      await registry.open(window, file('file-1', 'file-1.docx'))
-      const thesisHook = hook.mock.calls[0]![0] as ThesisHook
-      const wcId = viewCalls[0]!.webContentsId
+      const handler = hook.mock.calls[0]![0] as (wcId: number, action: unknown) => Promise<unknown>
+      const outcome = await handler(viewCalls[0]!.webContentsId, { kind: 'list' })
 
-      await expect(thesisHook(wcId, { kind: 'list' })).resolves.toEqual({ ok: true, value: [] })
-      expect(listCards).toHaveBeenCalledWith(WORKSPACE_DOCUMENT_CHANNEL)
-
-      await expect(thesisHook(wcId, { kind: 'remove', cardId: 'card-1' })).resolves.toEqual({ ok: true, value: null })
-      expect(removeCard).toHaveBeenCalledWith('card-1', WORKSPACE_DOCUMENT_CHANNEL)
-
-      // 装订只需要实例的源文件 fileId，不看实例的 roomId。
-      await expect(thesisHook(wcId, { kind: 'reformat', cardId: 'card-1' })).resolves.toEqual({
-        ok: true,
-        value: { originalName: '论文-排版版.docx' },
-      })
-      expect(reformat).toHaveBeenCalledWith('file-1', 'card-1', WORKSPACE_DOCUMENT_CHANNEL)
-
-      // 未知 wcId：列卡不需要实例（工作区作用域），装订才要源文件 fileId → 通用 error。
-      await expect(thesisHook(999_999, { kind: 'list' })).resolves.toEqual({ ok: true, value: [] })
-      const unknownReformat = await thesisHook(999_999, { kind: 'reformat', cardId: 'card-1' }) as { ok: boolean; reason?: string }
-      expect(unknownReformat).toMatchObject({ ok: false, reason: 'error' })
-      expect(unknownReformat.reason).not.toBe('no_room')
+      // 「排版」面板按工作区取模版卡：文档在哪个空间，就只列哪个空间的模版。
+      expect(listCards).toHaveBeenCalledWith('ws-9')
+      expect(outcome).toEqual({ ok: true, value: [] })
     })
   })
 
@@ -229,6 +258,210 @@ describe('OfficePreviewRegistry', () => {
     sheetCalls.options.length = 0
     savedListenersByWc.clear()
     registry = new OfficePreviewRegistry(0)
+  })
+
+  describe('后台 Word 编辑（UI 隐藏/未打开）', () => {
+    it('未打开的 docx：describe/apply 走隐藏会话，且不进可见页签清单', async () => {
+      const dir = await mkdtemp(join(tmpdir(), 'agent-doc-'))
+      const storage = join(dir, 'hidden.docx')
+      await writeFile(storage, Buffer.from('PK\u0003\u0004 not a real docx'))
+      try {
+        const window = makeWindow()
+        // 先开一份可见 docx，给 registry 一个主窗口（隐藏会话挂在它上面）。
+        await registry.open(window, file('file-visible', 'visible.docx'))
+        registry.setAgentFileResolver(async (fileId) => ({
+          fileId,
+          originalName: 'hidden.docx',
+          storagePath: storage,
+          contentHash: 'c'.repeat(64),
+        }))
+        // 工作副本用真实文件（隐藏会话 apply 后会校验“保存是否真的落盘”）。
+        vi.mocked(prepareOfficeDocument).mockResolvedValueOnce(storage)
+
+        const described = await registry.describeDocArtifact('file-hidden')
+        expect(described.ok).toBe(true)
+        expect(runtime.docs.createDocsView).toHaveBeenCalledWith(
+          storage,
+          { hostMode: 'everroom' },
+        )
+        expect(runtime.docs.waitForAgentReady).toHaveBeenCalled()
+
+        const applied = await registry.applyDocAgentTools('file-hidden', [
+          { id: 'call-1', name: 'insert_content', input: { html: '<p>x</p>' } },
+        ])
+        expect(applied.ok).toBe(true)
+        if (applied.ok) expect(applied.results).toHaveLength(1)
+
+        // 隐藏会话不是用户页签：openFiles 里只有可见的那份。
+        expect(registry.openOfficeFiles().map((entry) => entry.fileId)).toEqual(['file-visible'])
+        await registry.disposeAll()
+      } finally {
+        await rm(dir, { recursive: true, force: true })
+      }
+    })
+
+    it('干净画布：宿主可隐藏可见 Word 实例的操作区，未命中返回 false', async () => {
+      const window = makeWindow()
+      await registry.open(window, file('file-chrome', 'chrome.docx'))
+
+      expect(registry.setDocsChromeHidden('active', true)).toBe(true)
+      expect(runtime.docs.setDocsChromeHidden).toHaveBeenCalledWith(
+        expect.objectContaining({ id: viewCalls[0]!.webContentsId }),
+        true,
+      )
+      expect(registry.setDocsChromeHidden('file-chrome', false)).toBe(true)
+      expect(runtime.docs.setDocsChromeHidden).toHaveBeenLastCalledWith(
+        expect.objectContaining({ id: viewCalls[0]!.webContentsId }),
+        false,
+      )
+      expect(registry.setDocsChromeHidden('missing', true)).toBe(false)
+    })
+
+    it('已打开的只读 docx 不会被后台会话绕过（保持 not_editable）', async () => {
+      const window = makeWindow()
+      await registry.open(window, {...file('file-readonly', 'readonly.docx'), editable: false})
+      registry.setAgentFileResolver(async (fileId) => ({
+        fileId,
+        originalName: 'readonly.docx',
+        storagePath: '/tmp/never-used.docx',
+        contentHash: 'd'.repeat(64),
+      }))
+
+      const applied = await registry.applyDocAgentTools('file-readonly', [
+        { id: 'call-1', name: 'insert_content', input: {} },
+      ])
+      expect(applied).toMatchObject({ ok: false, reason: 'not_editable' })
+      expect(runtime.docs.createDocsView).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('后台 Excel 编辑（未打开/隐藏）', () => {
+    async function withStorageBytes(
+      name: string,
+      bytes: Buffer,
+      run: (storage: string) => Promise<void>,
+    ): Promise<void> {
+      const dir = await mkdtemp(join(tmpdir(), 'agent-sheet-'))
+      const storage = join(dir, name)
+      await writeFile(storage, bytes)
+      try {
+        await run(storage)
+      } finally {
+        await rm(dir, { recursive: true, force: true })
+      }
+    }
+
+    function hiddenSheetMeta(storage: string) {
+      return {
+        fileId: 'file-hidden-sheet',
+        originalName: 'hidden.xlsx',
+        storagePath: storage,
+        contentHash: 'c'.repeat(64),
+      }
+    }
+
+    it('未打开的 xlsx：describe/apply 走隐藏会话，且不进可见页签清单', async () => {
+      await withStorageBytes('hidden.xlsx', Buffer.from('PK\u0003\u0004 not a real xlsx'), async (storage) => {
+        const window = makeWindow()
+        // 先开一份可见文件，给 registry 一个主窗口（隐藏会话挂在它上面）。
+        await registry.open(window, file('file-visible', 'visible.docx'))
+        const importAgentFile = vi.fn(async () => ({ fileVersionId: 'file-version-2' }))
+        registry.setEditSync({ importAgentFile, broadcast: vi.fn() })
+        registry.setAgentFileResolver(async (fileId) => ({ ...hiddenSheetMeta(storage), fileId }))
+        // 工作副本用真实文件（隐藏会话 apply 后会校验“保存是否真的落盘”）。
+        vi.mocked(prepareSpreadsheet).mockResolvedValueOnce(storage)
+
+        const described = await registry.describeSpreadsheetArtifact('file-hidden-sheet', { roomId: 'room-s1' })
+        expect(described.ok).toBe(true)
+        if (described.ok) expect(described.describe.context).toContain('Workbook sheets')
+        expect(runtime.sheets.createSheetsView).toHaveBeenCalledWith({
+          includeAiHandlers: false,
+          readonly: false,
+          claimActive: false,
+        })
+        expect(runtime.sheets.waitForAgentReady).toHaveBeenCalled()
+
+        const applied = await registry.applySpreadsheetAgentTools('file-hidden-sheet', [
+          { id: 'call-1', name: 'propose_operations', input: {} },
+        ])
+        expect(applied.ok).toBe(true)
+        if (applied.ok) {
+          expect(applied.results).toHaveLength(1)
+          // 版本回填走与活实例同一条 sheets sourceKey / xlsx 广播链。
+          expect(applied.version).toBe('file-version-2')
+        }
+        expect(importAgentFile).toHaveBeenCalledWith(expect.objectContaining({
+          fileEntryId: 'file-hidden-sheet',
+          sourceKey: 'agent:sheets:edit:file-hidden-sheet',
+          filePath: storage,
+          roomId: 'room-s1',
+          originalName: 'hidden.xlsx',
+        }))
+
+        // 隐藏会话不是用户页签：openFiles 里只有可见的那份。
+        expect(registry.openOfficeFiles().map((entry) => entry.fileId)).toEqual(['file-visible'])
+        expect(registry.has('file-hidden-sheet')).toBe(false)
+        await registry.disposeAll()
+      })
+    })
+
+    it('已打开的只读 xlsx：读走可见会话（只读可读），写保持 not_editable、不绕过用户现场', async () => {
+      const window = makeWindow()
+      await registry.open(window, { ...file('file-ro', 'readonly.xlsx'), editable: false })
+      const resolver = vi.fn(async (fileId: string) => ({ ...hiddenSheetMeta('/tmp/never-used.xlsx'), fileId }))
+      registry.setAgentFileResolver(resolver)
+      // 只读渲染器允许 describe（工作簿上下文/指南是只读信息），写仍由 desktop
+      // 的 not_editable 闸门拒绝；registry 绝不偷偷开一份可编辑隐藏工作簿顶替。
+      const read = await registry.describeSpreadsheetArtifact('file-ro')
+      expect(read.ok).toBe(true)
+      if (read.ok) expect(read.describe.context).toContain('Workbook sheets')
+      expect(runtime.sheets.describeAgentWorkbook).toHaveBeenCalledWith(
+        expect.objectContaining({ id: viewCalls[0]!.webContentsId }),
+      )
+
+      const applied = await registry.applySpreadsheetAgentTools('file-ro', [
+        { id: 'call-1', name: 'propose_operations', input: {} },
+      ])
+      expect(applied).toMatchObject({ ok: false, reason: 'not_editable' })
+      expect(runtime.sheets.applyAgentWorkbookTools).not.toHaveBeenCalled()
+      expect(runtime.sheets.createSheetsView).not.toHaveBeenCalled()
+      expect(resolver).not.toHaveBeenCalled()
+    })
+
+    it('隐藏工作簿会话存活时不停止 sheets sidecar（关闭最后一个可见实例后）', async () => {
+      await withStorageBytes('hidden.xlsx', Buffer.from('PK\u0003\u0004 not a real xlsx'), async (storage) => {
+        const window = makeWindow()
+        await registry.open(window, file('file-visible', 'visible.docx'))
+        registry.setAgentFileResolver(async (fileId) => ({ ...hiddenSheetMeta(storage), fileId }))
+        vi.mocked(prepareSpreadsheet).mockResolvedValueOnce(storage)
+
+        const described = await registry.describeSpreadsheetArtifact('file-hidden-sheet')
+        expect(described.ok).toBe(true)
+
+        await registry.close('file-visible')
+        // teardownIfIdle 会跑，但隐藏会话还活着（它持有 live sidecar 会话）：不能停。
+        expect(runtime.sheets.stopSheetsSidecar).not.toHaveBeenCalled()
+        expect(runtime.sheets.setActiveSheetsWebContents).not.toHaveBeenCalledWith(null)
+
+        await registry.disposeAll()
+        expect(runtime.sheets.stopSheetsSidecar).toHaveBeenCalledTimes(1)
+      })
+    })
+
+    it('已打开可编辑 xlsx 有未保存修改 → unsaved（写闸门保留，不走后台会话）', async () => {
+      const window = makeWindow()
+      await registry.open(window, { ...file('file-x1', '预算表.xlsx'), editable: true })
+      const resolver = vi.fn(async (fileId: string) => ({ ...hiddenSheetMeta('/tmp/never-used.xlsx'), fileId }))
+      registry.setAgentFileResolver(resolver)
+      runtime.sheets.sheetsPendingEditCount.mockReturnValueOnce(1)
+
+      const applied = await registry.applySpreadsheetAgentTools('file-x1', [
+        { id: 'call-1', name: 'propose_operations', input: {} },
+      ])
+      expect(applied).toMatchObject({ ok: false, reason: 'unsaved' })
+      expect(runtime.sheets.applyAgentWorkbookTools).not.toHaveBeenCalled()
+      expect(runtime.sheets.createSheetsView).not.toHaveBeenCalled()
+    })
   })
 
   it('opens a preview per extension family without auto-activating it', async () => {
@@ -413,7 +646,7 @@ describe('OfficePreviewRegistry', () => {
       })
     })
 
-    it('findByWebContentsId：按视图 wcId 反查文件（roomId 仅编辑回填兜底保留）', async () => {
+    it('findByWebContentsId：按视图 wcId 反查文件与 Room（「AI 修改」转发用）', async () => {
       const window = makeWindow()
       await registry.open(window, { ...file('file-e1', 'deck-edit.pptx'), editable: true, roomId: 'room-e1' })
       await registry.open(window, file('file-d1', 'notes.docx'))
@@ -423,11 +656,14 @@ describe('OfficePreviewRegistry', () => {
         title: 'deck-edit.pptx',
         kind: 'slides',
         roomId: 'room-e1',
+        // 没有显式归属时按默认工作区兜底（论文排版面板按工作区取模版卡）。
+        workspaceId: 'default',
       })
-      // 不带 roomId 的工作区实例：转发层（「AI 修改」/论文排版）已不依赖它。
+      // 非 Room 打开的实例 roomId 为空（转发层据此报错引导）。
       expect(registry.findByWebContentsId(viewCalls[1]!.webContentsId)).toMatchObject({
         fileId: 'file-d1',
         roomId: null,
+        workspaceId: 'default',
       })
       expect(registry.findByWebContentsId(999_999)).toBeNull()
     })
@@ -519,6 +755,100 @@ describe('OfficePreviewRegistry', () => {
         { fileId: 'file-l2', title: 'b.pptx', kind: 'slides', editable: true, active: true },
         { fileId: 'file-l1', title: 'a.docx', kind: 'docx', editable: false, active: false },
       ])
+    })
+
+    it('activeOfficeFile：只认焦点实例，离开 Office 页签即为 null', async () => {
+      const window = makeWindow()
+      await registry.open(window, file('file-a1', 'a.docx'))
+      // 打开 ≠ 正在浏览：渲染端切到 office-document 才会 setActive。
+      expect(registry.activeOfficeFile()).toBeNull()
+
+      await registry.open(window, { ...file('file-a2', 'b.pptx'), editable: true })
+      registry.setActive('file-a2')
+      expect(registry.activeOfficeFile()).toEqual({
+        fileId: 'file-a2',
+        title: 'b.pptx',
+        kind: 'slides',
+        editable: true,
+      })
+
+      registry.setActive(null)
+      expect(registry.activeOfficeFile()).toBeNull()
+    })
+
+    it('applyAgentFileBytes：覆盖工作副本、重开视图并通知渲染端', async () => {
+      const directory = await mkdtemp(join(tmpdir(), 'everroom-agent-apply-'))
+      const target = join(directory, 'contract.docx')
+      const baseBytes = Buffer.from('old-docx-bytes')
+      await writeFile(target, baseBytes)
+      const baseHash = createHash('sha256').update(baseBytes).digest('hex')
+      vi.mocked(prepareOfficeDocument).mockResolvedValue(target)
+      try {
+        const window = makeWindow()
+        await registry.open(window, { ...file('file-apply', 'contract.docx', baseHash), editable: true })
+        const nextBytes = Buffer.from('new-docx-bytes-from-agent')
+        const result = await registry.applyAgentFileBytes('file-apply', nextBytes, baseHash)
+
+        expect(result.ok).toBe(true)
+        expect((await readFile(target)).toString()).toBe('new-docx-bytes-from-agent')
+        expect(window.webContents.send).toHaveBeenCalledWith('office:instance-reloaded', {
+          id: 'file-apply',
+          kind: 'docx',
+        })
+      } finally {
+        await rm(directory, { recursive: true, force: true })
+      }
+    })
+
+    it('applyAgentFileBytes：工作副本与基线不符时拒绝覆盖（期间被保存过）', async () => {
+      const directory = await mkdtemp(join(tmpdir(), 'everroom-agent-conflict-'))
+      const target = join(directory, 'contract.docx')
+      await writeFile(target, Buffer.from('saved-by-user'))
+      vi.mocked(prepareOfficeDocument).mockResolvedValue(target)
+      try {
+        const window = makeWindow()
+        await registry.open(window, { ...file('file-conflict', 'contract.docx', 'a'.repeat(64)), editable: true })
+        const result = await registry.applyAgentFileBytes('file-conflict', Buffer.from('agent'), 'a'.repeat(64))
+        expect(result).toMatchObject({ ok: false, reason: 'conflict' })
+      } finally {
+        await rm(directory, { recursive: true, force: true })
+      }
+    })
+
+    it('applyAgentFileBytes：未打开/只读/有未保存修改时拒绝写回', async () => {
+      const window = makeWindow()
+      expect(await registry.applyAgentFileBytes('file-missing', Buffer.from('x'), 'a'.repeat(64))).toEqual({
+        ok: false,
+        reason: 'not_open',
+        open: [],
+      })
+
+      await registry.open(window, file('file-pdf', 'manual.pdf'))
+      expect(await registry.applyAgentFileBytes('file-pdf', Buffer.from('x'), 'a'.repeat(64)))
+        .toMatchObject({ ok: false, reason: 'not_editable' })
+
+      await registry.open(window, { ...file('file-dirty', 'contract.docx'), editable: true })
+      viewCalls.at(-1)!.dirty = true
+      expect(await registry.applyAgentFileBytes('file-dirty', Buffer.from('x'), 'a'.repeat(64)))
+        .toEqual({ ok: false, reason: 'unsaved', message: '文档有未保存的修改' })
+    })
+
+    it('openOfficeFiles：完整列出工作区打开的页签，并标出焦点项', async () => {
+      const window = makeWindow()
+      await registry.open(window, file('file-o1', 'a.docx'))
+      await registry.open(window, { ...file('file-o2', 'b.xlsx'), editable: true })
+      await registry.open(window, { ...file('file-o3', 'c.pptx'), editable: true })
+      registry.setActive('file-o2')
+
+      expect(registry.openOfficeFiles()).toEqual([
+        { fileId: 'file-o2', title: 'b.xlsx', kind: 'spreadsheet', editable: true, active: true },
+        { fileId: 'file-o1', title: 'a.docx', kind: 'docx', editable: false, active: false },
+        { fileId: 'file-o3', title: 'c.pptx', kind: 'slides', editable: true, active: false },
+      ])
+
+      // 切到别的页面（不关页签）后仍然知道开着哪些文件，只是没有焦点项。
+      registry.setActive(null)
+      expect(registry.openOfficeFiles().map((entry) => entry.active)).toEqual([false, false, false])
     })
   })
 

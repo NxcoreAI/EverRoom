@@ -44,6 +44,10 @@ export interface AgentAuthEnvironmentStatus {
   feishu: {
     cliState: 'ready' | 'missing' | 'error' | 'unknown'
     cliPath: string
+    /** CLI 来源：随应用内置 / 系统安装 / 环境变量指定 / 未找到（历史版本无此字段）。 */
+    cliSource?: 'bundled' | 'system' | 'env' | 'missing'
+    /** CLI 语义版本（`--version` 解析结果）；不可用时为 null。 */
+    cliVersion?: string | null
     appConfigured: boolean | null
     userAuthorized: boolean | null
     userName: string | null

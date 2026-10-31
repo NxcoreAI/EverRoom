@@ -60,8 +60,8 @@ Everroom 补上的正是这一层。它面向文档、文件和已连接服务�
 | --- | --- | --- |
 | **Documents** | 支持版本化、块级编辑的 Word 文档、表格和演示文稿 | 确保最终产物仍由人掌控 |
 | **Agent** | 拥有明确工具、会话、run 记录和取消能力的任务执行者 | 让自动化能够被检查、停止和替换 |
-| **Sources** | 汇集本地文件、文件夹、代码仓库和连接器记录的统一素材库 | 让 Agent 可读的素材只有一个入口 |
-| **Connectors** | 托管 OpenConnector/`oo` bridge、可选 Nango 集成与飞书自动化 | 通过明确且经确认的操作触达外部系统 |
+| **Sources** | 汇集本地文件、文件夹和代码仓库的统一素材库；连接器由 Agent 即席查询 | 让 Agent 可读的素材只有一个入口 |
+| **Connectors** | 通过 OpenConnector MCP 即席检索外部资料；不做定时同步、不留内容副本 | 用用户自己的凭据触达外部数据，Everroom 不存储 |
 | **Schedules** | 周期性 Agent run 与 dispatch-only 子 Agent | 长耗时工作始终可见、可中断 |
 
 原始文件和解析后的 Markdown 只有一个存储所有者：文档与 Agent run 通过稳定引用、哈希和溯源信息使用它们，而不是复制多份。
@@ -92,7 +92,7 @@ Everroom 刻意收窄范围：不做自治多 Agent 集群、不做企业管理�
 | 文件与导入 | 已可用，持续完善 | 本地文件浏览、文件夹与 Obsidian 导入、Markdown / 文本与 Office / Web 内容解析、内容哈希与溯源，以及访达「打开方式」直接打开 Word / Excel / PPT |
 | Agent 服务 | 已可用 | 持久化会话、run 记录、流式事件、取消，以及文档与文件范围的工具 |
 | Agent 工作管理 | 已可用，持续完善 | Agent Office 状态、定时 run、dispatch-only 子 Agent、通知和手动执行 |
-| Connectors | 基础能力已可用 | 托管本地 OpenConnector、`oo` bridge、可选 Nango 集成与飞书 Issue 自动化，连接器覆盖持续扩展 |
+| Connectors | 基础能力已可用 | Agent 通过 OpenConnector MCP 即席检索（Gmail、Notion、Drive、Calendar、Outlook、Slack）；无后台同步 |
 
 ### 在访达中直接打开 Word / Excel / PPT
 
@@ -201,11 +201,11 @@ pnpm package:win  # 生成 Windows x64 NSIS 安装包
 <details>
 <summary><b>构建 Windows 安装包</b></summary>
 
-`pnpm package:win` 与 macOS 构建走同一条链路 —— Gateway、内置 Windows PostgreSQL 的 Nango runtime、OpenConnector、oo CLI、GenOffice runtimes（含 Rust `xlsx-sidecar.exe`）、打包环境，最后执行 `electron-builder --win nsis --x64`。前置要求：
+`pnpm package:win` 与 macOS 构建走同一条链路 —— Gateway、OpenConnector、oo CLI、GenOffice runtimes（含 Rust `xlsx-sidecar.exe`）、打包环境，最后执行 `electron-builder --win nsis --x64`。前置要求：
 
 - Node 22 与 `packageManager` 固定的 pnpm 版本（`corepack enable`）
 - Rust 工具链（`cargo`），用于 GenOffice xlsx sidecar
-- `git submodule update --init --recursive`（Nango connector 与 GenOffice）
+- `git submodule update --init --recursive`（GenOffice）
 - `apps/desktop/scripts/generate-packaged-env.mjs` 所需的打包环境变量；本地测试构建使用占位值，切勿使用生产密钥
 
 未签名的安装包输出到 `release/EverRoom-<version>-windows-x64.exe`。可通过 `pnpm --filter @nxcore/desktop exec node scripts/verify-windows-package.mjs` 免安装验证。脚本化安装时可使用 `/S`（静默）与 `/D=<dir>` 指定目标目录。由于构建未签名，Microsoft Defender SmartScreen 可能会在首次启动前提示。
@@ -214,14 +214,14 @@ pnpm package:win  # 生成 Windows x64 NSIS 安装包
 
 ## 技术架构
 
-Everroom 保持产品边界稳定，同时允许底层引擎替换。桌面端负责生命周期与信任边界；NxCore Gateway 负责持久化编排；连接器和 Agent runtime 各自维护自己的数据契约。Renderer 无法直接访问数据库、文件系统或 Gateway 凭据；所有 IPC 请求由主进程处理，再转发给 Gateway。
+Everroom 保持产品边界稳定，同时允许底层引擎替换。桌面端负责生命周期与信任边界；NxCore Gateway 负责本地编排与持久化；连接器和 Agent runtime 各自维护自己的数据契约。Renderer 无法直接访问数据库、文件系统或 Gateway 凭据；所有 IPC 请求由主进程处理，再转发给 Gateway。
 
 ### 实现策略
 
 - **一份资产，多处引用。** 原始文件与解析后的 Markdown 只有一个存储所有者，文档与 Agent run 通过稳定引用、哈希和溯源信息使用它们，而不是复制多份。
 - **有边界的上下文。** Agent 只会获得当前请求需要的文档、文件和工具，而不是无边界的全局语料。
 - **先提交，再执行副作用。** 文档修改先通过事务化提交内核与 outbox 落盘，外部服务失败不会破坏权威文档版本。
-- **确定性的外部操作。** Connector 调用基于真实 Action Schema 和连接准备，凭据留在可信进程中；破坏性或对外可见的操作需要确认边界。
+- **确定性的外部操作。** Connector 检索基于真实 action schema 和连接准备，凭据留在可信进程中；当前版本只放行只读 action，写操作后续需显式确认。
 - **优雅降级。** Fake Agent、不可用连接器和模型错误都有明确状态，可选服务缺失不会让本地文档不可访问。
 
 ### 技术栈
@@ -234,7 +234,7 @@ Everroom 保持产品边界稳定，同时允许底层引擎替换。桌面端�
 | 文档 | Tiptap 文档模型、版本化提交、块引用、操作内核 |
 | Office 产物 | 内置 GenOffice runtime，生成 docx、xlsx 与 pptx |
 | Agent 边界 | 共享 Agent 契约、Pi runtime adapter、MCP 文档端点 |
-| 连接器 | OpenConnector sidecar、`oo` CLI bridge、可选 Nango supervisor |
+| 连接器 | OpenConnector MCP bridge、`oo` HTTP 客户端、每 provider 查询档案 |
 | 可观测性 | Pino 结构化日志、可读终端输出、按日切分的 JSON 日志 |
 | 验证 | Vitest、严格 TypeScript 检查、Gateway 与 runtime 集成测试 |
 
@@ -262,7 +262,7 @@ macOS 默认运行时目录：
 
 ```text
 ~/Library/Application Support/NxCore/
-├── database/   # Gateway、文档与连接器数据库
+├── database/   # Gateway 与文档数据库
 ├── logs/       # Gateway 按日切分的 JSON 日志
 ├── objects/    # 内容寻址的来源与解析对象
 ├── runtime/    # 临时 Gateway 发现清单
@@ -326,7 +326,6 @@ Everroom 建立在众多开源项目和理念之上：
 - [Pi](https://github.com/earendil-works/pi) 与 Model Context Protocol 生态为可替换 Agent runtime 方向提供基础。
 - OOMOL 的 [OpenConnector](https://github.com/oomol-lab/open-connector) 与 [`oo-cli`](https://github.com/oomol-lab/oo-cli) 提供本地 Connector Bridge。
 - [Liminon](https://liminon.ai/) 为 AI 工作流和上下文产品方向提供启发。
-- [Nango](https://nango.dev/) 提供 Connector 集成和 OAuth 管理能力。
 
 ## 开源协议与贡献
 

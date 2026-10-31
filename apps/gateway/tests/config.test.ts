@@ -24,6 +24,22 @@ describe("loadConfig", () => {
     });
   });
 
+  it("reads the desktop-injected lark-cli binary and private home", () => {
+    const config = loadConfig(["--token", "0123456789abcdef"], {
+      NXCORE_LARK_CLI_PATH: "/Applications/EverRoom.app/Contents/Resources/lark-cli/darwin-arm64/lark-cli",
+      NXCORE_LARK_CLI_HOME: "/Users/someone/Library/Application Support/EverRoom/lark-cli/home",
+    });
+    expect(config.larkCli).toEqual({
+      executable: "/Applications/EverRoom.app/Contents/Resources/lark-cli/darwin-arm64/lark-cli",
+      homeDirectory: "/Users/someone/Library/Application Support/EverRoom/lark-cli/home",
+    });
+  });
+
+  it("omits the lark-cli private home when the desktop did not inject it", () => {
+    const config = loadConfig(["--token", "0123456789abcdef"], {});
+    expect(config.larkCli).toEqual({ executable: "lark-cli" });
+  });
+
   it("loads server-owned external call budget identity", () => {
     const config = loadConfig(["--token", "0123456789abcdef"], {
       NXCORE_EXTERNAL_CALL_USER_ID: "user-a",
@@ -115,15 +131,9 @@ describe("loadConfig", () => {
       NXCORE_NANGO_SECRET: "legacy-secret",
       NXCORE_NANGO_GMAIL_CONFIG_KEY: "legacy-gmail",
       NXCORE_NANGO_GOOGLE_CLIENT_ID: "legacy-google-id",
-      NXCORE_CONNECTOR_POLL_MS: "120000",
     });
 
     expect(config.cliConnector).toBeNull();
-    // P3：Nango env 全族忽略；link-A 编排恒可用，仅 poll 周期仍读 env
-    expect(config.nangoConnector).toMatchObject({
-      enabled: true,
-      pollingIntervalMs: 120_000,
-    });
   });
 
   it("loads a validated Pi runtime configuration", () => {
@@ -295,12 +305,6 @@ describe("loadConfig", () => {
       NXCORE_VLM_API_KEY: "test-key",
       NXCORE_VLM_MODEL: "vision-model",
     })).toThrow("expected an absolute HTTP(S) URL");
-  });
-
-  it("keeps link-A connector orchestration always enabled after Nango removal (P3)", () => {
-    const config = loadConfig(["--token", "0123456789abcdef"], {});
-    expect(config.nangoConnector).toMatchObject({ enabled: true, pollingIntervalMs: 300000 });
-    expect(config.nangoConnector?.databasePath).toContain("connectors.sqlite");
   });
 
   it("no longer accepts removed ASR credentials in the web search fallback chain", () => {

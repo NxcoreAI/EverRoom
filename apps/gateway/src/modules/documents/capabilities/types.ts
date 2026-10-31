@@ -1,5 +1,6 @@
 import type {
   AgentActiveDocumentContext,
+  AgentActiveFileContext,
   AgentRoomReference,
   CreateContextRoomInput,
   CreateContextRoomResult,
@@ -17,8 +18,12 @@ export interface DocumentExecutionContext {
   agentSessionId: string;
   runId: string;
   roomId: string | null;
+  /** 会话所属工作区：Agent 生成产物（office_*）入库时带上，资料库/产物库按空间隔离。 */
+  workspaceId?: string | null;
   availableRooms?: AgentRoomReference[];
   activeDocument?: AgentActiveDocumentContext;
+  /** 用户当前浏览的 Office 文件（file_entries）：编辑工具默认指向它。 */
+  activeFile?: AgentActiveFileContext;
 }
 
 /**

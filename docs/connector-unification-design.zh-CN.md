@@ -1,5 +1,7 @@
 # 连接器架构统一设计 v3（OpenConnector 为唯一连接层）
 
+> **历史文档（2026-10-28 起）**：连接器已从同步管道改为 Agent 即席检索，不再做定时同步/本地存储。现行方案与实施记录见 [connector-agent-query-refactor-plan.zh-CN.md](./connector-agent-query-refactor-plan.zh-CN.md)。
+
 > 状态：提案（待评审）
 > 日期：2026-08-31
 > 演进：v1 自建 OAuth 层 → v2 oo 单连接层 → **v3 定稿方向：以 oo 为唯一连接层，明确与现有架构的衔接缝**。

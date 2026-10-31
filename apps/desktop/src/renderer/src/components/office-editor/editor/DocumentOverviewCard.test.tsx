@@ -58,7 +58,7 @@ describe('DocumentOverviewCard', () => {
 
   it('renders only a hint bar for too-short documents', () => {
     const renderer = render({ state: 'ineligible', reason: 'too_short' })
-    expect(textOf(renderer)).toContain('documentQuickView.tooShort')
+    expect(textOf(renderer)).toContain('文档内容较短，暂无速览')
     expect(renderer.root.findAllByProps({ className: 'context-room-document-overview-body' })).toHaveLength(0)
   })
 
@@ -69,14 +69,14 @@ describe('DocumentOverviewCard', () => {
     expect(json).toContain('模块分层重构')
     expect(json).toContain('网关进程拆分')
     expect(json).toContain('架构已趋于稳定')
-    expect(json).toContain('documentQuickView.generatedAt')
-    expect(json).toContain('documentQuickView.regenerate')
-    expect(json).not.toContain('documentQuickView.staleBadge')
+    expect(json).toContain('生成于')
+    expect(json).toContain('重新生成')
+    expect(json).not.toContain('已过期')
   })
 
   it('shows the stale badge when the document moved past the generated version', () => {
     const renderer = render({ state: 'stale', view: view() }, true)
-    expect(textOf(renderer)).toContain('documentQuickView.staleBadge')
+    expect(textOf(renderer)).toContain('已过期')
   })
 
   it('keeps a collapsed entry bar with a topic preview when not expanded', () => {
@@ -90,18 +90,18 @@ describe('DocumentOverviewCard', () => {
   it('shows the generating hint without icons while generating', () => {
     const renderer = render({ state: 'generating', view: null })
     const json = textOf(renderer)
-    expect(json).toContain('documentQuickView.generating')
+    expect(json).toContain('正在生成速览')
     expect(json).not.toContain('context-room-overview-spinning')
     expect(json).not.toContain('documentQuickView.entryLabel')
   })
 
   it('shows the unavailable state without a retry button, and the error state with one', () => {
     const unavailable = render({ state: 'failed', kind: 'unavailable' })
-    expect(textOf(unavailable)).toContain('documentQuickView.unavailable')
+    expect(textOf(unavailable)).toContain('AI 服务未配置')
     expect(unavailable.root.findAllByProps({ className: 'context-room-document-overview-retry' })).toHaveLength(0)
 
     const failed = render({ state: 'failed', kind: 'error' })
-    expect(textOf(failed)).toContain('documentQuickView.failed')
+    expect(textOf(failed)).toContain('速览生成失败')
     expect(failed.root.findAllByProps({ className: 'context-room-document-overview-retry' })).toHaveLength(1)
   })
 })

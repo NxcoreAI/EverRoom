@@ -66,7 +66,10 @@ function runAdditiveMigrationIdempotently(
     if (createIndex && hasObject("index", createIndex)) continue;
     const addColumn = statement.match(/^ALTER TABLE [`"]([^`"]+)[`"] ADD [`"]([^`"]+)[`"]+/);
     if (addColumn && (!hasObject("table", addColumn[1]!) || hasColumn(addColumn[1]!, addColumn[2]!))) continue;
-    sqlite.exec(statement);
+    // 种子行插入（如默认工作区）也要可重放：重复回放时命中主键就忽略，
+    // 而不是让补丁路径以 UNIQUE 冲突炸掉启动。
+    const isInsert = /^INSERT INTO\b/i.test(statement);
+    sqlite.exec(isInsert ? statement.replace(/^INSERT INTO\b/i, "INSERT OR IGNORE INTO") : statement);
   }
 }
 
@@ -233,21 +236,6 @@ function adoptAlreadyAppliedLateMigrations(sqlite: Database.Database, migrations
     (sqlite.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((row) => row.name),
   ).has(column);
   const entries = readMigrationJournal(migrationsDir);
-  let connectorTodosEnsured = false;
-  // 0033_room_entity_facts / 0034_room_overviews_and_corrections 建的表已随 0084 删除，
-  // 0085 又删掉了最后 5 张 Room 表（context_rooms / room_overviews / room_doc_links /
-  // rooms / room_source_memberships），对应的形态修复（context-room-compatibility）一并删除，
-  // 因此这里不再整体重放 0033-0035，只补仍然存活的 connector_todos。
-  const ensureConnectorTodosMigration = () => {
-    if (connectorTodosEnsured) return;
-    connectorTodosEnsured = true;
-    const tag = "0035_eager_hannibal_king";
-    sqlite.transaction(() => {
-      runAdditiveMigrationIdempotently(sqlite, migrationsDir, tag);
-      const entry = entries.find((item) => item.tag === tag);
-      if (entry) recordMigration(sqlite, migrationsDir, entry);
-    })();
-  };
   const record = (tag: string) => {
     const entry = entries.find((item) => item.tag === tag);
     if (!entry?.tag || typeof entry.when !== "number") return;
@@ -264,9 +252,178 @@ function adoptAlreadyAppliedLateMigrations(sqlite: Database.Database, migrations
     && hasColumn("agent_runs", "agent_id")
     && hasColumn("agent_runs", "invocation_mode")
     && hasColumn("agent_messages", "author_agent_id")) {
-    ensureConnectorTodosMigration();
     record("0039_multi_agent_conversations");
   }
+}
+
+/**
+ * 修复「跑过 dev 分支又被本分支接续升级」的混合库。
+ *
+ * dev 分支曾把 slides 分批 checkpoints 迁移编为 0083（when=1792771200000），
+ * 合并后在本分支重编号为 0092；而本分支自己的 0083–0087 时间戳比它更早
+ * （1792742x–1792749x）。在跑过 dev 的库上，游标已被 dev 的 0083 推到
+ * 1792771200000 之后，本分支的 0083–0087 会被 Drizzle 当作已应用而静默跳过，
+ * 随后 0092（时间戳最新）又会重复执行 CREATE TABLE。症状：
+ *   ① 启动即失败：`table slides_generation_checkpoints already exists`；
+ *   ② document_operations.room_id 仍 NOT NULL —— 没有归属 Room 的文档操作
+ *      （本分支已去掉 Room 维度）插入直接违反约束；
+ *   ③ Room / 采集旧表残留、文件页 (deleted_at, updated_at) 索引缺失。
+ *
+ * 判据用 schema 效果而不是迁移记录：只有「room_id 仍 NOT NULL」的混合库才补跑
+ * 0083–0087（健康库——含我们分支自己的库——完全不受影响），再把 0092 记为已应用。
+ * 0083 是重建表的脚本，必须在事务内执行（脚本注释：事务内 PRAGMA foreign_keys
+ * 为空操作，DROP 父表会级联删子表，脚本用临时表快照规避，依赖事务语义）。
+ */
+function repairMixedDevBranchMigrations(sqlite: Database.Database, migrationsDir: string): void {
+  const hasTable = (name: string) => Boolean(sqlite.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
+  ).get(name));
+  if (!hasTable("__drizzle_migrations")) return;
+  const entries = readMigrationJournal(migrationsDir);
+  const entryFor = (tag: string) => entries.find((item) => item.tag === tag);
+  const isRecorded = (tag: string) => {
+    const when = entryFor(tag)?.when;
+    return typeof when !== "number"
+      || Boolean(sqlite.prepare("SELECT 1 FROM __drizzle_migrations WHERE created_at = ? LIMIT 1").get(when));
+  };
+  const roomIdColumn = hasTable("document_operations")
+    ? (sqlite.prepare("PRAGMA table_info(document_operations)").all() as Array<{ name: string; notnull: number }>)
+      .find((row) => row.name === "room_id")
+    : undefined;
+
+  // ① 混合库：本分支 0083–0087 被跳过（room_id 仍 NOT NULL 是可靠判据）。
+  const skippedPhase2 = [
+    "0083_document_operations_room_nullable",
+    "0084_drop_memory_room_ingest_tables",
+    "0085_drop_room_tables",
+    "0086_drop_room_compat_tables",
+    "0087_file_entries_deleted_updated_idx",
+  ];
+  if (roomIdColumn && roomIdColumn.notnull === 1) {
+    // 0083 的脚本先快照四张子表再重建父表：子表缺一不可。
+    const prerequisites = [
+      "document_operation_items",
+      "document_operation_commands",
+      "document_operation_events",
+      "external_document_patch_preparations",
+    ].every(hasTable);
+    const pending = skippedPhase2.filter((tag) => !isRecorded(tag) && existsSync(join(migrationsDir, `${tag}.sql`)));
+    if (prerequisites && pending.length > 0) {
+      sqlite.transaction(() => {
+        for (const tag of pending) {
+          if (tag === "0084_drop_memory_room_ingest_tables"
+            || tag === "0085_drop_room_tables"
+            || tag === "0086_drop_room_compat_tables"
+            || tag === "0087_file_entries_deleted_updated_idx") {
+            // 删表/建索引迁移本身幂等；用带对象存在性守卫的重放，避免索引已建时撞名。
+            runAdditiveMigrationIdempotently(sqlite, migrationsDir, tag);
+          } else {
+            const sql = readFileSync(join(migrationsDir, `${tag}.sql`), "utf8");
+            for (const raw of sql.split(/--> statement-breakpoint/g)) {
+              const statement = raw.trim();
+              if (statement) sqlite.exec(statement);
+            }
+          }
+          recordMigration(sqlite, migrationsDir, entryFor(tag)!);
+        }
+      })();
+    }
+  }
+
+  // ② 0092（dev 的 0083）：表已存在时直接补记录，避免 Drizzle 重复建表。
+  if (hasTable("slides_generation_checkpoints")) {
+    const checkpoints = entryFor("0092_slides_generation_checkpoints");
+    if (checkpoints) recordMigration(sqlite, migrationsDir, checkpoints);
+  }
+
+  // ③ 0093：混合库可能已由 dev/预览构建加过 thinking_level 列（② 记下 0092 后
+  // Drizzle 游标直接跳到 0093），按 schema 效果补记录，避免重复 ADD COLUMN。
+  if (hasTable("agent_sessions")) {
+    const columns = new Set(
+      (sqlite.prepare("PRAGMA table_info(agent_sessions)").all() as Array<{ name: string }>)
+        .map((row) => row.name),
+    );
+    if (columns.has("thinking_level")) {
+      const thinkingLevel = entryFor("0093_agent_thinking_level");
+      if (thinkingLevel) recordMigration(sqlite, migrationsDir, thinkingLevel);
+    }
+  }
+}
+
+/**
+ * 修复「0092 快捷记录把游标推过 0088–0091」的库。
+ *
+ * dev 分支的 slides 迁移（0083_slides_generation_checkpoints，when=1792771200000）
+ * 合并后被重编号为 0092（when=1793500000000）。为了绕开 dev 已建好的表，
+ * repairMixedDevBranchMigrations 会在 migrate 之前直接把 0092 记为已应用；对
+ * 「只跑过 dev、从未跑过本分支 0088–0091」的库，这会把游标一次性推到 0092，
+ * Drizzle 于是把 0088–0091 当作已应用静默跳过。症状：
+ *   ① 启动即崩：`table file_entries has no column named workspace_id`（0091 未跑）；
+ *   ② 工作区接口报 `no such table: agent_workspaces`（0089 未跑）；
+ *   ③ connector_tombstones 缺失，连接器「已断开」状态不可见（0088 未跑）。
+ *
+ * 判据是迁移记录 + 游标位置：窗口内仍有未记录的迁移、且游标已越过窗口起点
+ * （0087）时才回放。直接从 0087 升级的健康库本来就会在原地跑这几支，提前
+ * 幂等回放再补记，结果与 Drizzle 顺序执行一致；窗口已全部记录的库不受影响。
+ */
+function repairSkippedWorkspaceMigrations(sqlite: Database.Database, migrationsDir: string): void {
+  const hasTable = (name: string) => Boolean(sqlite.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
+  ).get(name));
+  if (!hasTable("__drizzle_migrations") || !hasTable("file_entries") || !hasTable("agent_sessions")) return;
+
+  const entries = readMigrationJournal(migrationsDir);
+  const whenFor = (tag: string) => {
+    const value = entries.find((item) => item.tag === tag)?.when;
+    return typeof value === "number" ? value : null;
+  };
+  const windowStart = whenFor("0087_file_entries_deleted_updated_idx");
+  if (windowStart === null) return;
+  const appliedCursor = Number((sqlite.prepare(
+    "SELECT created_at FROM __drizzle_migrations ORDER BY created_at DESC LIMIT 1",
+  ).get() as { created_at?: number } | undefined)?.created_at ?? 0);
+  if (appliedCursor < windowStart) return;
+
+  const pending = [
+    "0088_connector_agent_query",
+    "0089_agent_workspaces",
+    "0090_agent_workspace_meta",
+    "0091_file_entries_workspace",
+  ].filter((tag) => {
+    const when = whenFor(tag);
+    return when !== null
+      && existsSync(join(migrationsDir, `${tag}.sql`))
+      && !sqlite.prepare("SELECT 1 FROM __drizzle_migrations WHERE created_at = ? LIMIT 1").get(when);
+  });
+  if (pending.length === 0) return;
+
+  sqlite.transaction(() => {
+    for (const tag of pending) {
+      runAdditiveMigrationIdempotently(sqlite, migrationsDir, tag);
+      recordMigration(sqlite, migrationsDir, { tag, when: whenFor(tag)! });
+    }
+  })();
+}
+
+/**
+ * 0094（论文格式卡从 Room 改按工作区）在本地预览构建里曾以旧编号 0093
+ * （when=1793590000000）执行过：这些库的 thesis_format_cards 已经是
+ * workspace_id 形态，但迁移记录里没有 0094 的时间戳。Drizzle 会把它当新迁移
+ * 重放——脚本先 RENAME 再按 room_id 复制，直接以 `no such column: room_id` 失败。
+ * 按 schema 效果（已是 workspace_id 且没有 room_id）补记录，健康库不受影响。
+ */
+function repairAppliedThesisCardsWorkspaceMigration(sqlite: Database.Database, migrationsDir: string): void {
+  const hasTable = (name: string) => Boolean(sqlite.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
+  ).get(name));
+  if (!hasTable("__drizzle_migrations") || !hasTable("thesis_format_cards")) return;
+  const columns = new Set((sqlite.prepare("PRAGMA table_info(thesis_format_cards)").all() as Array<{ name: string }>)
+    .map((row) => row.name));
+  if (!columns.has("workspace_id") || columns.has("room_id")) return;
+  const entry = readMigrationJournal(migrationsDir)
+    .find((item) => item.tag === "0094_thesis_format_cards_workspace");
+  if (!entry) return;
+  recordMigration(sqlite, migrationsDir, entry);
 }
 
 /** Repair installs whose migration cursor advanced across the diary/perception
@@ -321,7 +478,6 @@ function repairIncompleteUnderstandingMigration(sqlite: Database.Database, migra
       }
     }
   }
-  if (!hasObject("table", "connector_markdown_artifacts")) runMigrationStatements("0018_charming_vampiro");
   if (!hasObject("table", "subagent_definitions")) runMigrationStatements("0019_sturdy_fantastic_four");
   if (!hasObject("table", "runtime_config_store")) runMigrationStatements("0023_runtime_config_store");
   if (!hasObject("table", "agent_schedules")) runMigrationStatements("0025_greedy_the_santerians");
@@ -348,6 +504,12 @@ export function createDatabase(databasePath: string, migrationsDir: string): Dat
   adoptPreReleaseConnectorConfigMigration(sqlite, migrationsDir);
   adoptPreReleaseConnectorMarkdownMigrations(sqlite, migrationsDir);
   adoptAlreadyAppliedLateMigrations(sqlite, migrationsDir);
+  repairMixedDevBranchMigrations(sqlite, migrationsDir);
+  // 0092 的快捷记录会越过 0088–0091：必须在 migrate 之前补齐，否则 Drizzle
+  // 会把这些迁移当作已应用而永久跳过（file_entries.workspace_id 等列缺失）。
+  repairSkippedWorkspaceMigrations(sqlite, migrationsDir);
+  // 本地预览构建跑过旧编号 0093 的库：格式卡已是工作区形态，补记 0094 防重放。
+  repairAppliedThesisCardsWorkspaceMigration(sqlite, migrationsDir);
   // Compatibility repairs may create file_entries from the current schema,
   // including source_path, before the canonical additive migration runs.
   // Apply/record it idempotently so Drizzle never repeats ADD COLUMN.

@@ -1,0 +1,1228 @@
+/* 主区大对话区（WorkBuddy 风格）。
+ *
+ * 结构：
+ *   .wb-conversation
+ *     ├─ 空态：.wb-conversation-hero（品牌缎带 + 大输入框 + 建议 chips）
+ *     └─ 会话态：.agent-chat-conversation-frame（AgentChatView 自带滚动区 + 吸底输入框）
+ *
+ * 视觉语言（design-brief B 区）：
+ *   · 画布 = 暖纸 --ui-bg，卡片/输入框 = 白 --ui-surface，细线 --ui-border；
+ *   · 聚焦 = 青绿 --ui-accent ring；主按钮 = 圆形青绿；状态色用 running/warm/danger；
+ *   · AgentChat.css / AgentPanel.css 是按旧 360px 编辑器停靠栏写的紧凑规则，
+ *     这里只在 .wb-conversation 作用域内覆盖成适配大画布的数值与配色，
+ *     不改组件本身的全局样式（office-proto 停靠栏仍在用）。
+ */
+
+.wb-conversation {
+  --wb-conv-max: 800px; /* 消息列宽（brief：760–820） */
+  --wb-hero-max: 720px;
+  /* 内容列左右留白：窄窗下固定 32px，宽窗下把 800px 内容列居中。 */
+  --wb-gutter: max(32px, calc((100% - var(--wb-conv-max)) / 2));
+  --wb-hero-glow-teal: color-mix(in srgb, var(--ui-accent) 6%, transparent);
+  --wb-hero-glow-peach: color-mix(in srgb, var(--ui-warm) 5%, transparent);
+  --wb-user-bubble: color-mix(in srgb, var(--ui-accent) 8%, var(--ui-surface));
+  --wb-user-bubble-border: color-mix(in srgb, var(--ui-accent) 11%, transparent);
+  --wb-focus-ring: 0 0 0 3px var(--ui-accent-soft);
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--ui-bg);
+  color: var(--ui-text);
+}
+
+/* 极淡的暖色光晕：只在空态出现，给 hero 一点空气感（青绿 + 蜜桃 4–6%）。 */
+.wb-conversation[data-state='empty']::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(660px 520px at 50% 22%, var(--wb-hero-glow-teal), transparent 70%),
+    radial-gradient(520px 400px at 66% 64%, var(--wb-hero-glow-peach), transparent 72%);
+}
+
+/* ───────────── 顶部提示条（未就绪 / 错误 / 连接中） ───────────── */
+
+.wb-conversation-notice {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 7px 16px;
+  border-bottom: 1px solid var(--ui-border);
+  background: var(--ui-surface-alt);
+  color: var(--ui-text-2);
+  font-size: var(--ui-text-sm);
+}
+
+.wb-conversation-error {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 16px;
+  border-bottom: 1px solid color-mix(in srgb, var(--ui-danger) 22%, transparent);
+  background: var(--ui-danger-soft);
+  color: var(--ui-danger);
+  font-size: var(--ui-text-sm);
+}
+.wb-conversation-error > span {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.wb-conversation-retry {
+  display: inline-flex;
+  height: 28px;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, var(--ui-danger) 32%, transparent);
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-surface);
+  color: var(--ui-danger);
+  font-size: var(--ui-text-xs);
+  transition: background var(--ui-duration-fast) var(--ui-ease);
+}
+.wb-conversation-retry:hover { background: var(--ui-danger-soft); }
+.wb-conversation-retry:focus-visible { outline: 2px solid color-mix(in srgb, var(--ui-danger) 45%, transparent); outline-offset: 2px; }
+
+/* 连接中提示：做成居中的轻量胶囊，不打断消息阅读，也不像一条系统横幅。 */
+.wb-conversation-status {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  align-self: center;
+  gap: 7px;
+  width: fit-content;
+  max-width: calc(100% - 48px);
+  min-height: 28px;
+  margin: 10px auto 0;
+  padding: 4px 13px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-full);
+  background: var(--ui-surface);
+  color: var(--ui-text-2);
+  font-size: var(--ui-text-xs);
+  box-shadow: var(--ui-shadow-sm);
+}
+.wb-conversation-status-retry {
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-full);
+  background: var(--ui-surface);
+  color: var(--ui-text-2);
+  font-size: var(--ui-text-xs);
+  transition: background var(--ui-duration-fast) var(--ui-ease), color var(--ui-duration-fast) var(--ui-ease);
+}
+.wb-conversation-status-retry:hover { color: var(--ui-text); border-color: var(--ui-border-strong); background: var(--ui-hover); }
+
+/* ───────────── 加载骨架 ───────────── */
+
+.wb-conversation-loading {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 22px;
+  padding: 48px 24px;
+  overflow-y: auto;
+}
+.wb-conversation-loading p {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  color: var(--ui-text-3);
+  font-size: var(--ui-text-sm);
+}
+.wb-conversation-skeleton {
+  width: min(var(--wb-conv-max), 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.wb-skeleton-row { display: flex; flex-direction: column; gap: 9px; }
+.wb-skeleton-row.is-user { align-items: flex-end; }
+.wb-skeleton-line {
+  display: block;
+  width: 100%;
+  height: 12px;
+  border-radius: var(--ui-radius-full);
+  background: linear-gradient(
+    90deg,
+    var(--ui-surface-alt) 25%,
+    color-mix(in srgb, var(--ui-surface) 70%, var(--ui-border-subtle)) 37%,
+    var(--ui-surface-alt) 63%
+  );
+  background-size: 400% 100%;
+  animation: wb-conversation-shimmer 1.5s ease infinite;
+}
+.wb-skeleton-row .wb-skeleton-line:last-child { width: 68%; }
+.wb-skeleton-row.is-user .wb-skeleton-line {
+  width: 46%;
+  height: 36px;
+  border-radius: var(--ui-radius-xl) var(--ui-radius-xl) var(--ui-radius-xs) var(--ui-radius-xl);
+}
+.wb-skeleton-row.is-user .wb-skeleton-line:last-child { width: 46%; }
+@keyframes wb-conversation-shimmer {
+  from { background-position: 100% 0; }
+  to { background-position: 0 0; }
+}
+
+/* ───────────── 空态 hero（品牌时刻） ───────────── */
+
+.wb-conversation-hero {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  overflow-y: auto;
+  padding: 48px 32px 64px;
+}
+.wb-hero {
+  width: min(var(--wb-hero-max), 100%);
+  margin: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  animation: wb-hero-in var(--ui-duration-slow) var(--ui-ease-out) both;
+}
+@keyframes wb-hero-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* 缎带 = 唯一品牌动作；高度由 BrandRibbon 按比例给出，这里只留呼吸。 */
+.wb-hero-brand {
+  display: flex;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 24px;
+}
+
+.wb-hero-title {
+  margin: 0;
+  color: var(--ui-text);
+  font-family: var(--ui-font-display);
+  font-size: clamp(var(--ui-text-2xl), 2.4vw, var(--ui-text-3xl));
+  font-weight: 600;
+  letter-spacing: var(--ui-tracking-tight);
+  line-height: var(--ui-leading-tight);
+}
+
+/* 大输入框：白底 + 1px 细线，聚焦青绿 ring（与 AgentComposer 同一语言）。 */
+.wb-hero-input {
+  position: relative;
+  display: flex;
+  width: 100%;
+  margin-top: 34px;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px 16px 12px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-2xl);
+  background: var(--ui-surface);
+  text-align: left;
+  transition:
+    border-color var(--ui-duration) var(--ui-ease),
+    box-shadow var(--ui-duration) var(--ui-ease);
+}
+.wb-hero-input:hover { border-color: var(--ui-border-strong); }
+.wb-hero-input:focus-within {
+  border-color: var(--ui-accent-line);
+  box-shadow: var(--wb-focus-ring);
+}
+.wb-hero-input[data-disabled='true'] { background: var(--ui-surface-alt); }
+.wb-hero-input textarea {
+  width: 100%;
+  min-height: 76px;
+  max-height: 200px;
+  padding: 2px;
+  resize: none;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--ui-text);
+  font-family: var(--ui-font-sans);
+  font-size: var(--ui-text-md);
+  line-height: 1.6;
+}
+/* 焦点框只画在卡片上（:focus-within 的青绿描边 + 柔环）。外壳兜底规则
+   `.wb-root :focus-visible` 特异性更高，会再给 textarea 叠一圈 2px 焦点环，
+   在卡片里看就是一道多余的内边框；这里显式清掉。 */
+.wb-hero-input textarea:focus,
+.wb-hero-input textarea:focus-visible {
+  outline: 0;
+  outline-offset: 0;
+}
+.wb-hero-input textarea::placeholder { color: var(--ui-text-3); }
+.wb-hero-input textarea:disabled { opacity: 0.6; cursor: default; }
+
+.wb-hero-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 0 1px;
+}
+.wb-hero-send {
+  display: inline-flex;
+  width: 34px;
+  height: 34px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--ui-radius-full);
+  background: var(--ui-accent-fill);
+  color: var(--ui-accent-contrast);
+  cursor: pointer;
+  transition:
+    background var(--ui-duration-fast) var(--ui-ease),
+    transform var(--ui-duration-fast) var(--ui-ease),
+    opacity var(--ui-duration-fast) var(--ui-ease);
+}
+.wb-hero-send svg { width: 17px; height: 17px; }
+.wb-hero-send:hover:not(:disabled) { background: var(--ui-accent-fill-hover); transform: translateY(-1px); }
+.wb-hero-send:active:not(:disabled) { transform: translateY(0) scale(0.96); }
+.wb-hero-send:disabled {
+  /* 保留品牌青绿但明显减淡，避免禁用时变成一块无关的灰。 */
+  background: var(--ui-accent-fill);
+  color: var(--ui-accent-contrast);
+  cursor: default;
+  opacity: 0.32;
+}
+.wb-hero-send:focus-visible { outline: 2px solid var(--ui-accent-line); outline-offset: 2px; }
+
+/* 建议 chips：白底细描边，悬停抬起；图标与文字同基线。 */
+.wb-hero-chips {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 24px;
+}
+.wb-hero-chip {
+  display: inline-flex;
+  height: 34px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 14px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-full);
+  background: var(--ui-surface);
+  color: var(--ui-text-2);
+  font-size: var(--ui-text-sm);
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    background var(--ui-duration-fast) var(--ui-ease),
+    border-color var(--ui-duration-fast) var(--ui-ease),
+    color var(--ui-duration-fast) var(--ui-ease),
+    box-shadow var(--ui-duration-fast) var(--ui-ease),
+    transform var(--ui-duration-fast) var(--ui-ease);
+}
+.wb-hero-chip svg {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+  color: var(--ui-text-3);
+  transition: color var(--ui-duration-fast) var(--ui-ease);
+}
+.wb-hero-chip:hover:not(:disabled) {
+  border-color: var(--ui-border-strong);
+  background: var(--ui-surface);
+  color: var(--ui-text);
+  box-shadow: var(--ui-shadow-sm);
+  transform: translateY(-1px);
+}
+.wb-hero-chip:hover:not(:disabled) svg { color: var(--ui-accent); }
+.wb-hero-chip:active:not(:disabled) { transform: translateY(0); }
+.wb-hero-chip:disabled { opacity: 0.5; cursor: default; }
+.wb-hero-chip:focus-visible { outline: 2px solid var(--ui-accent-line); outline-offset: 2px; }
+
+/* ───────────── 会话态：AgentChatView 大画布适配 ───────────── */
+
+.wb-conversation > .agent-chat-conversation-frame {
+  flex: 1;
+  min-height: 0;
+  /* 吸底 composer 实际高度（prompt 108 + shell padding 30 + 余量），
+     消息区底部留白与「回到最新」定位都基于它。 */
+  --agent-composer-height: 150px;
+  background: transparent;
+}
+
+/* 消息区：内容最大宽 800px 居中（滚动条仍在主区右缘）。 */
+.wb-conversation .agent-conversation {
+  gap: 24px;
+  padding-top: 32px;
+  padding-right: var(--wb-gutter);
+  /* 底部留出吸底输入框 + 一点呼吸，最后一条消息不会被 composer 盖住。 */
+  padding-bottom: calc(var(--agent-composer-height, 150px) + 24px);
+  padding-left: var(--wb-gutter);
+  /* 滚动到中间时，顶部被裁切的那一行柔化淡出，避免出现「半截字」的硬边。 */
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 20px);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 20px);
+}
+
+/* ── 用户消息：右对齐浅青绿气泡 ─────────────────────────────────────── */
+
+.wb-conversation .agent-message[data-role='user'] {
+  align-self: flex-end;
+  width: fit-content;
+  max-width: min(72%, 600px);
+  padding: 11px 16px;
+  border: 1px solid var(--wb-user-bubble-border);
+  border-radius: var(--ui-radius-xl) var(--ui-radius-xl) var(--ui-radius-xs) var(--ui-radius-xl);
+  background: var(--wb-user-bubble);
+}
+.wb-conversation .agent-message[data-role='user'] p {
+  color: var(--ui-text);
+  font-size: var(--ui-text-base);
+  line-height: 1.7;
+}
+.wb-conversation .agent-message[data-role='user'] p + p { margin-top: 6px; }
+.wb-conversation .agent-message[data-role='user'] p strong { font-weight: 600; }
+
+/* 复制按钮：悬停气泡才明显。 */
+.wb-conversation .agent-user-copy {
+  right: calc(100% + 6px);
+  bottom: 6px;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--ui-radius-sm);
+  color: var(--ui-text-3);
+  transition:
+    opacity var(--ui-duration-fast) var(--ui-ease),
+    background var(--ui-duration-fast) var(--ui-ease),
+    color var(--ui-duration-fast) var(--ui-ease);
+}
+.wb-conversation .agent-user-copy:hover { background: var(--ui-hover); color: var(--ui-text); }
+.wb-conversation .agent-user-copy:focus-visible { outline: 2px solid var(--ui-accent-line); outline-offset: 2px; }
+
+.wb-conversation .agent-user-mention {
+  align-self: flex-end;
+  margin: 0 4px 4px;
+  color: var(--ui-text-3);
+  font-size: var(--ui-text-2xs);
+}
+.wb-conversation button.agent-user-mention {
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-full);
+  background: var(--ui-surface);
+  color: var(--ui-text-2);
+  transition: background var(--ui-duration-fast) var(--ui-ease), color var(--ui-duration-fast) var(--ui-ease);
+}
+.wb-conversation button.agent-user-mention:hover {
+  background: var(--ui-selected);
+  color: var(--ui-accent-strong);
+  text-decoration: none;
+}
+
+/* ── 助手消息：左对齐无气泡，markdown 层级清楚 ──────────────────────── */
+
+.wb-conversation .agent-assistant-turn {
+  gap: 12px;
+}
+.wb-conversation .agent-assistant-response {
+  gap: 6px;
+}
+.wb-conversation .agent-message[data-role='assistant'] {
+  color: var(--ui-text);
+}
+
+/* 正文：13.5px / 1.75 / 800px 内容列。 */
+.wb-conversation .agent-message p {
+  margin: 0;
+  color: var(--ui-text);
+  font-size: var(--ui-text-base);
+  line-height: var(--ui-leading-relaxed);
+}
+.wb-conversation .agent-message .agent-markdown {
+  color: var(--ui-text);
+  font-size: var(--ui-text-base);
+  line-height: var(--ui-leading-relaxed);
+}
+.wb-conversation .agent-message .agent-markdown p {
+  margin: 0;
+  color: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  white-space: pre-wrap;
+}
+.wb-conversation .agent-message .agent-markdown strong { color: var(--ui-text); font-weight: 600; }
+.wb-conversation .agent-message .agent-markdown em { font-style: italic; }
+
+/* 段落/块级元素之间 12px；标题另给更大的上间距，形成节拍。 */
+.wb-conversation .agent-message .agent-markdown > * + * { margin-top: var(--ui-space-3); }
+.wb-conversation .agent-message .agent-markdown > :first-child { margin-top: 0; }
+.wb-conversation .agent-message .agent-markdown > :last-child { margin-bottom: 0; }
+
+.wb-conversation .agent-message .agent-markdown h4,
+.wb-conversation .agent-message .agent-markdown h5,
+.wb-conversation .agent-message .agent-markdown h6 {
+  margin: 0;
+  color: var(--ui-text);
+  letter-spacing: -0.01em;
+  line-height: 1.45;
+}
+.wb-conversation .agent-message .agent-markdown h4 {
+  margin-top: var(--ui-space-6);
+  font-size: var(--ui-text-md);
+  font-weight: 600;
+}
+.wb-conversation .agent-message .agent-markdown h5 {
+  margin-top: var(--ui-space-5);
+  font-size: var(--ui-text-base);
+  font-weight: 600;
+}
+.wb-conversation .agent-message .agent-markdown h6 {
+  margin-top: var(--ui-space-4);
+  color: var(--ui-text-2);
+  font-size: var(--ui-text-sm);
+  font-weight: 600;
+}
+.wb-conversation .agent-message .agent-markdown > h4:first-child,
+.wb-conversation .agent-message .agent-markdown > h5:first-child,
+.wb-conversation .agent-message .agent-markdown > h6:first-child { margin-top: 0; }
+
+.wb-conversation .agent-message .agent-markdown ul,
+.wb-conversation .agent-message .agent-markdown ol {
+  margin: 0;
+  padding-left: 22px;
+  color: inherit;
+  font-size: inherit;
+  line-height: inherit;
+}
+.wb-conversation .agent-message .agent-markdown li { padding-left: 2px; overflow-wrap: anywhere; }
+.wb-conversation .agent-message .agent-markdown li + li { margin-top: 6px; }
+.wb-conversation .agent-message .agent-markdown li > p { margin: 0; }
+.wb-conversation .agent-message .agent-markdown li > p + p { margin-top: 6px; }
+.wb-conversation .agent-message .agent-markdown li::marker { color: var(--ui-text-3); }
+
+.wb-conversation .agent-message .agent-markdown a {
+  color: var(--ui-accent-strong);
+  text-decoration: underline;
+  text-decoration-color: var(--ui-accent-line);
+  text-underline-offset: 3px;
+}
+.wb-conversation .agent-message .agent-markdown a:hover { color: var(--ui-accent); }
+
+.wb-conversation .agent-message .agent-markdown blockquote {
+  margin: var(--ui-space-3) 0 0;
+  padding: 10px 14px;
+  border-left: 2px solid var(--ui-accent-line);
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-surface-alt);
+  color: var(--ui-text-2);
+}
+.wb-conversation .agent-message .agent-markdown blockquote p { color: inherit; }
+
+.wb-conversation .agent-message .agent-markdown hr {
+  margin: var(--ui-space-5) 0 0;
+  border: 0;
+  border-top: 1px solid var(--ui-border-subtle);
+}
+
+.wb-conversation .agent-message .agent-markdown code {
+  padding: 1px 5px;
+  border: 1px solid var(--ui-border-subtle);
+  border-radius: var(--ui-radius-xs);
+  background: var(--ui-surface-alt);
+  color: var(--ui-text);
+  font-family: var(--ui-font-mono);
+  font-size: 12.5px;
+}
+.wb-conversation .agent-message .agent-markdown pre {
+  margin: var(--ui-space-3) 0 0;
+  padding: 14px 16px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface-alt);
+  overflow-x: auto;
+  white-space: pre;
+}
+.wb-conversation .agent-message .agent-markdown pre code {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--ui-text);
+  font-size: 12.5px;
+  line-height: 1.65;
+}
+
+.wb-conversation .agent-message .agent-markdown table {
+  display: block;
+  width: fit-content;
+  max-width: 100%;
+  margin: var(--ui-space-3) 0 0;
+  overflow-x: auto;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-md);
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: var(--ui-text-sm);
+  line-height: 1.55;
+}
+.wb-conversation .agent-message .agent-markdown th,
+.wb-conversation .agent-message .agent-markdown td {
+  padding: 7px 12px;
+  border: 0;
+  border-bottom: 1px solid var(--ui-border-subtle);
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+.wb-conversation .agent-message .agent-markdown tr:last-child td { border-bottom: 0; }
+.wb-conversation .agent-message .agent-markdown th {
+  background: var(--ui-surface-alt);
+  color: var(--ui-text-2);
+  font-weight: 600;
+}
+
+/* ── 回复署名 / 操作：弱化，悬停才明显 ───────────────────────────────── */
+
+.wb-conversation .agent-response-byline {
+  gap: 7px;
+  color: var(--ui-text-3);
+  font-size: var(--ui-text-xs);
+  font-weight: 500;
+  line-height: 16px;
+}
+.wb-conversation .agent-response-byline::before {
+  width: 2px;
+  height: 10px;
+  border-radius: 1px;
+  background: var(--ui-accent-line);
+}
+.wb-conversation .agent-response-byline .agent-model-tier-badge {
+  padding: 0 7px;
+  border: 1px solid var(--ui-border-subtle);
+  border-radius: var(--ui-radius-full);
+  background: var(--ui-surface-alt);
+  color: var(--ui-text-3);
+  font-size: var(--ui-text-2xs);
+  font-weight: 500;
+}
+
+.wb-conversation .agent-message-actions {
+  gap: 2px;
+  margin-top: 2px;
+  opacity: 0.42;
+  transition: opacity var(--ui-duration-fast) var(--ui-ease);
+}
+.wb-conversation .agent-assistant-turn:hover .agent-message-actions,
+.wb-conversation .agent-assistant-turn:focus-within .agent-message-actions {
+  opacity: 1;
+}
+.wb-conversation .agent-message-actions button {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--ui-radius-sm);
+  color: var(--ui-text-3);
+  transition:
+    background var(--ui-duration-fast) var(--ui-ease),
+    color var(--ui-duration-fast) var(--ui-ease);
+}
+.wb-conversation .agent-message-actions button:hover:not(:disabled) {
+  background: var(--ui-hover);
+  color: var(--ui-text);
+}
+.wb-conversation .agent-message-actions button:disabled { opacity: 0.4; }
+.wb-conversation .agent-message-actions button:focus-visible {
+  outline: 2px solid var(--ui-accent-line);
+  outline-offset: 2px;
+}
+
+.wb-conversation .agent-assistant-turn[data-notification-target='true'] {
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-selected);
+  box-shadow: 0 0 0 6px var(--ui-accent-softer);
+}
+.wb-conversation .agent-message[data-role='user'][data-notification-target='true'] {
+  box-shadow: 0 0 0 4px var(--ui-accent-soft);
+}
+
+/* ── 运行状态 / 工具时间线 / 审批卡 / 错误条 ─────────────────────────── */
+
+.wb-conversation .agent-thinking {
+  min-height: 24px;
+  color: var(--ui-running);
+  font-size: var(--ui-text-sm);
+  font-weight: 500;
+}
+.wb-conversation .agent-thinking-text { color: var(--ui-running); }
+/* 只覆盖渐变图像本身：这里若写 `background:` 简写，会一并重置基础规则里的
+   background-size / background-position / background-clip:text，光带既不贴字
+   也不扫动，退化成一块静止色块。光带取 --ui-warm（与 --ui-running 同色系，
+   对应原版「浅蓝文字 + 浅蓝光带」的同色相关系）。 */
+.wb-conversation .agent-thinking-text::after {
+  background-image: linear-gradient(
+    90deg,
+    transparent 24%,
+    color-mix(in srgb, var(--ui-warm) 62%, transparent) 43%,
+    color-mix(in srgb, var(--ui-warm) 30%, var(--ui-surface)) 50%,
+    color-mix(in srgb, var(--ui-warm) 62%, transparent) 57%,
+    transparent 76%
+  );
+}
+.wb-conversation .agent-thinking-tail { color: var(--ui-text-3); }
+
+.wb-conversation .agent-reasoning summary { color: var(--ui-text-2); font-weight: 500; }
+.wb-conversation .agent-reasoning summary svg { color: var(--ui-text-3); }
+.wb-conversation .agent-reasoning-content { border-left-color: var(--ui-border); color: var(--ui-text-2); }
+
+.wb-conversation .agent-execution-summary { color: var(--ui-text-3); }
+.wb-conversation .agent-execution-summary > svg { color: var(--ui-text-3); }
+.wb-conversation .agent-execution-summary strong {
+  color: var(--ui-text-2);
+  font-size: var(--ui-text-xs);
+  font-weight: 550;
+}
+.wb-conversation .agent-execution-summary > span { color: var(--ui-text-3); font-size: var(--ui-text-2xs); }
+.wb-conversation .agent-execution[data-running='true'] .agent-execution-summary > svg:first-child { color: var(--ui-running); }
+.wb-conversation .agent-execution-summary:focus-visible { outline: 2px solid var(--ui-accent-line); outline-offset: 2px; }
+.wb-conversation .agent-execution-reasoning { color: var(--ui-text-3); }
+.wb-conversation .agent-execution-reasoning > p { color: var(--ui-text-2); }
+
+.wb-conversation .agent-tool-command {
+  min-height: 26px;
+  border-radius: var(--ui-radius-sm);
+  color: var(--ui-text-2);
+}
+.wb-conversation .agent-tool-command:hover { background: var(--ui-hover); color: var(--ui-text); }
+.wb-conversation .agent-tool-rail { color: var(--ui-text-3); }
+.wb-conversation .agent-tool-row[data-status='running'] .agent-tool-rail,
+.wb-conversation .agent-tool-row[data-status='pending'] .agent-tool-rail { color: var(--ui-running); }
+.wb-conversation .agent-tool-row[data-status='error'] .agent-tool-rail { color: var(--ui-danger); }
+.wb-conversation .agent-tool-command-text { font-size: var(--ui-text-xs); line-height: 18px; }
+.wb-conversation .agent-tool-command-text strong { color: var(--ui-text-2); font-weight: 550; }
+.wb-conversation .agent-tool-command-text > span { color: var(--ui-text-3); }
+.wb-conversation .agent-tool-status { color: var(--ui-text-3); }
+.wb-conversation .agent-tool-row[data-status='running'] .agent-tool-status,
+.wb-conversation .agent-tool-row[data-status='pending'] .agent-tool-status { color: var(--ui-running); }
+.wb-conversation .agent-tool-row[data-status='error'] .agent-tool-status { color: var(--ui-danger); }
+.wb-conversation .agent-tool-chevron { color: var(--ui-text-3); }
+.wb-conversation .agent-tool-details { color: var(--ui-text-3); }
+.wb-conversation .agent-tool-details p { color: var(--ui-text-2); }
+.wb-conversation .agent-tool-details small { color: var(--ui-text-3); }
+.wb-conversation .agent-tool-meta { color: var(--ui-text-3); }
+.wb-conversation .agent-tool-meta code { color: var(--ui-text-2); }
+.wb-conversation .agent-tool-details pre {
+  border: 1px solid var(--ui-border-subtle);
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-surface-alt);
+  color: var(--ui-text-2);
+}
+.wb-conversation .agent-tool-error { color: var(--ui-danger); }
+.wb-conversation .agent-subagent-tools { border-left-color: var(--ui-border); }
+.wb-conversation .agent-tool-stage { color: var(--ui-text); font-size: var(--ui-text-base); line-height: 1.65; }
+.wb-conversation .agent-tool-stage[data-status='running'],
+.wb-conversation .agent-tool-stage[data-status='pending'] { color: var(--ui-running); }
+.wb-conversation .agent-tool-stage[data-status='error'] { color: var(--ui-danger); }
+.wb-conversation .agent-activity-commentary { color: var(--ui-text); font-size: var(--ui-text-base); line-height: 1.7; }
+
+/* 审批卡：暖色提示 + 白卡细线；确认键用青绿，拒绝键用描边。 */
+.wb-conversation .agent-shell-approval {
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-xl);
+  background: var(--ui-surface);
+  box-shadow: none;
+}
+.wb-conversation .agent-shell-approval-icon {
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-warm-soft);
+  color: var(--ui-warm-strong);
+}
+.wb-conversation .agent-shell-approval-header strong {
+  color: var(--ui-text);
+  font-size: var(--ui-text-sm);
+  font-weight: 600;
+}
+.wb-conversation .agent-shell-approval-header small {
+  color: var(--ui-text-3);
+  font-size: var(--ui-text-2xs);
+}
+.wb-conversation .agent-shell-approval-count {
+  background: var(--ui-warm-soft);
+  color: var(--ui-warm-strong);
+  font-weight: 600;
+}
+.wb-conversation .agent-shell-approval-detail { color: var(--ui-text-3); }
+.wb-conversation .agent-shell-approval-detail code { color: var(--ui-text-2); }
+.wb-conversation .agent-shell-approval > p {
+  color: var(--ui-text-2);
+  font-size: var(--ui-text-xs);
+  line-height: 1.6;
+}
+/* 待执行的 shell 命令：与 markdown 代码块同一暖白代码块语言。 */
+.wb-conversation .agent-shell-command {
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface-alt);
+}
+.wb-conversation .agent-shell-command > span {
+  border-bottom-color: var(--ui-border-subtle);
+  color: var(--ui-text-3);
+}
+.wb-conversation .agent-shell-command code {
+  color: var(--ui-text);
+  font-family: var(--ui-font-mono);
+}
+.wb-conversation .agent-shell-approval button {
+  min-height: 30px;
+  border-radius: var(--ui-radius-sm);
+  font-size: var(--ui-text-xs);
+  font-weight: 550;
+}
+.wb-conversation .agent-shell-deny {
+  /* 旧规则用 !important 固定边框色，这里同样需要 !important 才能覆盖。 */
+  border-color: var(--ui-border) !important;
+  background: var(--ui-surface);
+  color: var(--ui-text-2);
+}
+.wb-conversation .agent-shell-deny:hover:not(:disabled) { background: var(--ui-hover); color: var(--ui-text); }
+.wb-conversation .agent-shell-approve { background: var(--ui-accent-fill); color: var(--ui-accent-contrast); }
+.wb-conversation .agent-shell-approve:hover:not(:disabled) { background: var(--ui-accent-fill-hover); }
+.wb-conversation .agent-shell-approval button:focus-visible { outline: 2px solid var(--ui-accent-line); outline-offset: 2px; }
+
+/* 房间 / 文档选择卡 */
+.wb-conversation .agent-room-selection {
+  gap: 4px;
+  padding: 8px 10px 10px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface);
+}
+.wb-conversation .agent-room-selection > header > span { color: var(--ui-text); }
+.wb-conversation .agent-room-selection > header strong { font-size: var(--ui-text-sm); font-weight: 600; }
+.wb-conversation .agent-room-selection > header svg { color: var(--ui-accent); }
+.wb-conversation .agent-room-selection > header button { border-radius: var(--ui-radius-sm); color: var(--ui-text-3); }
+.wb-conversation .agent-room-selection > header button:hover:not(:disabled) { background: var(--ui-hover); color: var(--ui-text); }
+.wb-conversation .agent-room-selection-list { border-top-color: var(--ui-border-subtle); }
+.wb-conversation .agent-room-selection-list > button {
+  border-bottom-color: var(--ui-border-subtle);
+  color: var(--ui-text-2);
+  border-radius: var(--ui-radius-sm);
+}
+.wb-conversation .agent-room-selection-list > button:hover:not(:disabled) {
+  background: var(--ui-selected);
+  color: var(--ui-text);
+}
+.wb-conversation .agent-room-selection-list strong { color: var(--ui-text); font-size: var(--ui-text-sm); font-weight: 550; }
+.wb-conversation .agent-room-selection-list small { color: var(--ui-text-3); }
+.wb-conversation .agent-room-selection-list > button > svg:last-child { color: var(--ui-text-3); }
+.wb-conversation .agent-room-selection-list > p { color: var(--ui-text-3); }
+.wb-conversation .agent-document-intent-question { color: var(--ui-text-2); font-size: var(--ui-text-xs); }
+
+/* 工具/导航状态 */
+.wb-conversation .agent-navigation-status { color: var(--ui-text-3); font-size: var(--ui-text-xs); }
+.wb-conversation .agent-navigation-status:hover { color: var(--ui-accent-strong); }
+.wb-conversation .agent-navigation-status svg { color: var(--ui-text-3); }
+.wb-conversation .agent-navigation-status > svg:last-child { color: var(--ui-text-3); }
+.wb-conversation .agent-linked-status { color: var(--ui-text-3); font-size: var(--ui-text-xs); }
+.wb-conversation .agent-linked-run { gap: 6px; }
+
+/* 产物卡（生成的文档） */
+.wb-conversation .agent-artifact {
+  gap: 11px;
+  padding: 10px 14px 10px 10px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface);
+  color: var(--ui-text);
+  transition:
+    background var(--ui-duration-fast) var(--ui-ease),
+    border-color var(--ui-duration-fast) var(--ui-ease);
+}
+.wb-conversation .agent-artifact:hover { background: var(--ui-surface-alt); border-color: var(--ui-border-strong); }
+.wb-conversation .agent-artifact-icon {
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent-strong);
+}
+.wb-conversation .agent-artifact-copy strong { color: var(--ui-text); font-size: var(--ui-text-sm); font-weight: 600; }
+.wb-conversation .agent-artifact-copy small { color: var(--ui-text-3); font-size: var(--ui-text-2xs); }
+
+/* 授权引导卡（飞书 / Notion 导出）：白卡细线，顶部状态条跟随状态色。 */
+.wb-conversation .agent-auth-challenge {
+  margin: 0;
+  padding: 13px 15px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-xl);
+  background: var(--ui-surface);
+  color: var(--ui-text);
+  font-size: var(--ui-text-sm);
+  box-shadow: none;
+}
+.wb-conversation .agent-auth-challenge::before { background: var(--ui-running); }
+.wb-conversation .agent-auth-challenge[data-status='failed']::before { background: var(--ui-danger); }
+.wb-conversation .agent-auth-challenge[data-status='expired']::before { background: var(--ui-warning); }
+.wb-conversation .agent-auth-challenge header strong { font-size: var(--ui-text-sm); font-weight: 600; }
+.wb-conversation .agent-auth-challenge header small,
+.wb-conversation .agent-auth-challenge-message,
+.wb-conversation .agent-auth-challenge-steps small { color: var(--ui-text-3); }
+.wb-conversation .agent-auth-challenge header button { border-radius: var(--ui-radius-sm); color: var(--ui-text-3); }
+.wb-conversation .agent-auth-challenge header button:hover { background: var(--ui-hover); color: var(--ui-text); }
+.wb-conversation .agent-auth-challenge-icon {
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent-strong);
+}
+.wb-conversation .agent-auth-challenge-steps li:not(:last-child)::before { background: var(--ui-border); }
+.wb-conversation .agent-auth-challenge-steps li[data-completed='true']:not(:last-child)::before { background: var(--ui-success); }
+.wb-conversation .agent-auth-challenge-step-state {
+  background: var(--ui-success-soft);
+  color: var(--ui-success);
+}
+.wb-conversation .agent-auth-challenge-step-dot { border-color: var(--ui-accent); }
+.wb-conversation .agent-auth-challenge-steps a { color: var(--ui-accent-strong); }
+.wb-conversation .agent-auth-challenge-console {
+  border-color: var(--ui-border-strong);
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-surface-alt);
+  color: var(--ui-text-2);
+}
+.wb-conversation .agent-auth-challenge-console:hover { border-color: var(--ui-accent-line); }
+
+/* 子代理派发卡 */
+.wb-conversation .agent-dispatch-card {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface);
+}
+.wb-conversation .agent-dispatch-executor { color: var(--ui-text-2); font-size: var(--ui-text-xs); }
+.wb-conversation .agent-dispatch-executor svg { color: var(--ui-text-3); }
+.wb-conversation .agent-dispatch-executor span { color: var(--ui-text-3); }
+.wb-conversation .agent-dispatch-card > p { color: var(--ui-text-2); font-size: var(--ui-text-xs); }
+.wb-conversation .agent-dispatch-card > small { color: var(--ui-text-3); }
+.wb-conversation .agent-dispatch-constraints li { color: var(--ui-text-2); font-size: var(--ui-text-xs); }
+.wb-conversation .agent-dispatch-constraints li::before { color: var(--ui-text-3); }
+
+/* 错误条 / 加载 */
+.wb-conversation .agent-error {
+  gap: 10px;
+  padding: 9px 12px;
+  border: 1px solid color-mix(in srgb, var(--ui-danger) 20%, transparent);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-danger-soft);
+  color: var(--ui-danger);
+  font-size: var(--ui-text-xs);
+  line-height: 1.5;
+}
+.wb-conversation .agent-error-retry {
+  padding: 2px 9px;
+  border: 1px solid color-mix(in srgb, var(--ui-danger) 32%, transparent);
+  border-radius: var(--ui-radius-xs);
+  background: var(--ui-surface);
+  color: var(--ui-danger);
+  font-size: var(--ui-text-xs);
+}
+.wb-conversation .agent-error-retry:hover { background: var(--ui-danger-soft); }
+.wb-conversation .agent-loading {
+  padding: 8px 10px;
+  background: transparent;
+  color: var(--ui-text-3);
+  font-size: var(--ui-text-xs);
+}
+
+.wb-conversation .agent-chat-jump-latest {
+  bottom: calc(var(--agent-composer-height, 150px) + 14px);
+  padding: 7px 13px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-full);
+  background: var(--ui-surface);
+  color: var(--ui-text-2);
+  font-size: var(--ui-text-xs);
+  box-shadow: var(--ui-shadow-md);
+  transition:
+    color var(--ui-duration-fast) var(--ui-ease),
+    border-color var(--ui-duration-fast) var(--ui-ease),
+    background var(--ui-duration-fast) var(--ui-ease);
+}
+.wb-conversation .agent-chat-jump-latest:hover {
+  border-color: var(--ui-accent-line);
+  background: var(--ui-surface);
+  color: var(--ui-accent-strong);
+}
+.wb-conversation .agent-chat-jump-latest-count {
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent-strong);
+}
+.wb-conversation .agent-chat-jump-latest:focus-visible { outline: 2px solid var(--ui-accent-line); outline-offset: 2px; }
+
+/* 快捷提示（AgentChatView 自带空态布局，工作台主区通常由 hero 接管） */
+.wb-conversation .agent-chat-quick-prompts {
+  left: var(--wb-gutter);
+  right: var(--wb-gutter);
+}
+.wb-conversation .agent-chat-empty-heading {
+  left: var(--wb-gutter);
+  right: var(--wb-gutter);
+}
+.wb-conversation .agent-chat-quick-prompts button {
+  min-height: 34px;
+  padding: 7px 14px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface);
+  color: var(--ui-text-2);
+  font-size: var(--ui-text-sm);
+  transition:
+    border-color var(--ui-duration-fast) var(--ui-ease),
+    color var(--ui-duration-fast) var(--ui-ease),
+    transform var(--ui-duration-fast) var(--ui-ease);
+}
+.wb-conversation .agent-chat-quick-prompts button:hover {
+  border-color: var(--ui-border-strong);
+  background: var(--ui-surface);
+  color: var(--ui-text);
+  transform: translateY(-1px);
+}
+.wb-conversation .agent-chat-quick-prompts button:focus-visible { outline: 2px solid var(--ui-accent-line); outline-offset: 2px; }
+.wb-conversation .agent-chat-empty-heading h2 {
+  color: var(--ui-text);
+  font-size: var(--ui-text-2xl);
+  font-weight: 600;
+  letter-spacing: var(--ui-tracking-tight);
+}
+
+/* ───────────── 输入区（AgentComposer）：与 hero 输入框同一语言 ─────── */
+
+/* 输入框吸底，与消息区同一列宽；顶部渐变淡出，让消息从下方「滑入」。 */
+.wb-conversation .agent-composer-shell {
+  padding: 12px var(--wb-gutter) 18px;
+  background: linear-gradient(to bottom, transparent 0, var(--ui-bg) 24px);
+  box-shadow: 0 16px 0 var(--ui-bg);
+}
+/* 空态布局下 composer 是浮起的；工作台里空态由 hero 接管，这里只做兜底。 */
+.wb-conversation .agent-composer-shell::before { display: none; }
+
+.wb-conversation .agent-prompt {
+  min-height: 108px;
+  gap: 8px;
+  padding: 14px 16px 12px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-2xl);
+  background: var(--ui-surface);
+  box-shadow: none;
+  transition:
+    border-color var(--ui-duration) var(--ui-ease),
+    box-shadow var(--ui-duration) var(--ui-ease);
+}
+.wb-conversation .agent-prompt:hover { border-color: var(--ui-border-strong); }
+.wb-conversation .agent-prompt:focus-within {
+  border-color: var(--ui-accent-line);
+  box-shadow: var(--wb-focus-ring);
+}
+.wb-conversation .agent-composer-shell[data-dragging='true'] .agent-prompt {
+  border-color: var(--ui-accent-line);
+  box-shadow: var(--wb-focus-ring);
+}
+
+.wb-conversation .agent-prompt textarea {
+  padding: 2px;
+  color: var(--ui-text);
+  font-size: var(--ui-text-md);
+  line-height: 1.6;
+}
+.wb-conversation .agent-prompt textarea::placeholder { color: var(--ui-text-3); }
+.wb-conversation .agent-prompt textarea:disabled { color: var(--ui-text-3); opacity: 0.7; }
+.wb-conversation .agent-composer-overlay {
+  padding: 2px;
+  font-size: var(--ui-text-md);
+  line-height: 1.6;
+}
+.wb-conversation .agent-mention-token { border-radius: var(--ui-radius-xs); background: var(--ui-accent-soft); }
+
+.wb-conversation .agent-prompt-actions {
+  min-height: 32px;
+  gap: 6px;
+}
+
+/* 模型 / 权限 / 附件入口：幽灵按钮，等高的底栏控件语言。 */
+.wb-conversation .agent-model-tier-toggle {
+  height: 28px;
+  padding: 0 8px;
+  border-radius: var(--ui-radius-sm);
+  color: var(--ui-text-2);
+  font-size: var(--ui-text-sm);
+  font-weight: 500;
+  transition:
+    background var(--ui-duration-fast) var(--ui-ease),
+    color var(--ui-duration-fast) var(--ui-ease);
+}
+.wb-conversation .agent-model-tier-toggle:hover:not(:disabled) { background: var(--ui-hover); color: var(--ui-text); }
+.wb-conversation .agent-model-tier-toggle[data-tier='primary'],
+.wb-conversation .agent-model-tier-toggle[data-tier='lite'],
+.wb-conversation .agent-model-tier-toggle[data-channel] { color: var(--ui-text); font-weight: 550; }
+.wb-conversation .agent-model-tier-toggle[data-danger='true'] { color: var(--ui-danger); }
+.wb-conversation .agent-model-tier-toggle[data-danger='true']:hover:not(:disabled) {
+  background: var(--ui-danger-soft);
+  color: var(--ui-danger-hover);
+}
+.wb-conversation .agent-model-tier-toggle:focus-visible { outline: 2px solid var(--ui-accent-line); outline-offset: 2px; }
+
+.wb-conversation .agent-composer-context { color: var(--ui-text-3); font-size: var(--ui-text-xs); }
+.wb-conversation .agent-composer-context > button { border-radius: var(--ui-radius-xs); color: var(--ui-text-3); }
+.wb-conversation .agent-composer-context > button:hover { background: var(--ui-hover); color: var(--ui-text); }
+.wb-conversation .agent-context-ring { color: var(--ui-accent); }
+.wb-conversation .agent-context-ring-track { stroke: var(--ui-border); }
+.wb-conversation .agent-context-ring:hover,
+.wb-conversation .agent-context-ring[aria-expanded='true'] { background: var(--ui-hover); }
+.wb-conversation .agent-context-ring[data-level='high'] { color: var(--ui-warm-strong); }
+.wb-conversation .agent-context-ring:focus-visible { outline: 2px solid var(--ui-accent-line); outline-offset: 2px; }
+
+/* 发送键：圆形青绿；运行中变停止键（危险色，可识别）。 */
+.wb-conversation .agent-prompt-submit {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  margin-left: auto;
+  border-radius: var(--ui-radius-full);
+  background: var(--ui-accent-fill);
+  color: var(--ui-accent-contrast);
+  cursor: pointer;
+  transition:
+    background var(--ui-duration-fast) var(--ui-ease),
+    color var(--ui-duration-fast) var(--ui-ease),
+    transform var(--ui-duration-fast) var(--ui-ease),
+    opacity var(--ui-duration-fast) var(--ui-ease);
+}
+.wb-conversation .agent-prompt-submit:hover:not(:disabled) { background: var(--ui-accent-fill-hover); color: var(--ui-accent-contrast); }
+.wb-conversation .agent-prompt-submit:active:not(:disabled) { transform: scale(0.94); }
+.wb-conversation .agent-prompt-submit:disabled {
+  /* 与 hero 发送键同一禁用语言：青绿减淡。 */
+  background: var(--ui-accent-fill);
+  color: var(--ui-accent-contrast);
+  cursor: default;
+  opacity: 0.32;
+}
+.wb-conversation .agent-prompt-submit svg { width: 15px; height: 15px; }
+.wb-conversation .agent-prompt-submit.is-stop { background: var(--ui-danger); color: var(--ui-accent-contrast); }
+.wb-conversation .agent-prompt-submit.is-stop:hover:not(:disabled) { background: var(--ui-danger-hover); }
+.wb-conversation .agent-prompt-submit:focus-visible { outline: 2px solid var(--ui-accent-line); outline-offset: 2px; }
+
+/* 附件 / 引用 / 排队 chip */
+.wb-conversation .agent-attachment {
+  border-color: var(--ui-border);
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-surface-alt);
+  color: var(--ui-text-2);
+}
+.wb-conversation .agent-context-citation {
+  border-color: var(--ui-border);
+  border-radius: var(--ui-radius-full);
+  background: var(--ui-surface-alt);
+  color: var(--ui-text-2);
+}
+.wb-conversation .agent-queued-item {
+  border-color: var(--ui-border);
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-surface-alt);
+  color: var(--ui-text-2);
+}
+.wb-conversation .agent-external-selection { color: var(--ui-text-3); }
+
+/* 输入区弹层（模型 / @ / 命令）：暖纸白卡 + 新阴影圆角。
+   弹层锚在输入框上沿，左右对齐内容列（而不是贴主区边缘）。 */
+.wb-conversation .agent-composer-popover {
+  left: var(--wb-gutter);
+  right: var(--wb-gutter);
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface);
+  box-shadow: var(--ui-shadow-md);
+}
+/* 模型 / 权限弹层是 max-content 宽，只锚左缘，不拉伸。 */
+.wb-conversation .agent-composer-popover.agent-model-picker,
+.wb-conversation .agent-composer-popover.agent-permission-mode-picker {
+  right: auto;
+  left: var(--wb-gutter);
+}
+/* 上下文占用面板锚右缘（跟随右下角的圆环）。 */
+.wb-conversation .agent-composer-popover.agent-context-breakdown {
+  left: auto;
+  right: var(--wb-gutter);
+}
+.wb-conversation .agent-model-option { border-radius: var(--ui-radius-sm); color: var(--ui-text); }
+.wb-conversation .agent-model-option:hover { background: var(--ui-hover); }
+.wb-conversation .agent-model-option small { color: var(--ui-text-3); }
+.wb-conversation .agent-model-option > svg { color: var(--ui-accent); }
+.wb-conversation .agent-mention-option { border-radius: var(--ui-radius-sm); color: var(--ui-text); }
+.wb-conversation .agent-mention-option:hover,
+.wb-conversation .agent-mention-option[data-active='true'] { background: var(--ui-hover); }
+.wb-conversation .agent-mention-option small { color: var(--ui-text-3); }
+.wb-conversation .agent-mention-group-label { color: var(--ui-text-3); }
+.wb-conversation .agent-mention-tab { color: var(--ui-text-3); border-radius: var(--ui-radius-xs); }
+.wb-conversation .agent-mention-tab[data-selected='true'] { background: var(--ui-selected); color: var(--ui-text); }
+.wb-conversation .agent-mention-tab[data-selected='true'] span { color: var(--ui-text-3); }
+.wb-conversation .agent-command-picker button {
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-surface-alt);
+  color: var(--ui-text);
+}
+.wb-conversation .agent-command-picker button:hover,
+.wb-conversation .agent-command-picker button:focus-visible { background: var(--ui-hover); }
+.wb-conversation .agent-command-picker small { color: var(--ui-text-3); }
+.wb-conversation .agent-command-picker kbd {
+  border-color: var(--ui-border);
+  border-radius: var(--ui-radius-xs);
+  background: var(--ui-surface);
+  color: var(--ui-text-3);
+}
+.wb-conversation .agent-mention-icon { border-radius: var(--ui-radius-sm); background: var(--ui-accent-soft); color: var(--ui-accent-strong); }
+.wb-conversation .agent-model-picker-hint { color: var(--ui-text-3); border-top-color: var(--ui-border-subtle); }
+.wb-conversation .agent-context-breakdown { border-radius: var(--ui-radius-lg); }
+.wb-conversation .agent-context-breakdown-bar { background: var(--ui-surface-sunken); }
+.wb-conversation .agent-context-breakdown-head { color: var(--ui-text-3); }
+.wb-conversation .agent-context-breakdown-head strong { color: var(--ui-text); }
+.wb-conversation .agent-context-breakdown-empty { color: var(--ui-text-3); }
+
+/* ───────────── 响应式 / 动效降级 ───────────── */
+
+@media (max-width: 720px) {
+  .wb-conversation { --wb-gutter: 20px; }
+  .wb-conversation .agent-conversation {
+    gap: 22px;
+    padding-top: 24px;
+  }
+  .wb-conversation .agent-chat-quick-prompts { left: 12px; right: 12px; }
+  .wb-conversation-hero { padding: 32px 20px 48px; }
+  .wb-hero { padding-bottom: 8px; }
+  .wb-hero-input { margin-top: 26px; }
+}
+
+@media (max-height: 760px) {
+  .wb-conversation-hero { padding-top: 32px; padding-bottom: 40px; }
+  .wb-hero-brand { margin-bottom: 18px; }
+  .wb-hero-input { margin-top: 26px; }
+  .wb-hero-chips { margin-top: 20px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wb-hero { animation: none; }
+  .wb-hero-chip:hover:not(:disabled),
+  .wb-hero-send:hover:not(:disabled),
+  .wb-conversation .agent-chat-quick-prompts button:hover { transform: none; }
+}

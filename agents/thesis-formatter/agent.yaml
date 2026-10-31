@@ -19,4 +19,11 @@ policy:
   maxConcurrency: 2
   # 纯文本判断无工具需求；余量容纳自检重读。
   maxToolCalls: 8
-  timeoutSeconds: 300
+  # 长任务：实测解析耗时 364–394s 成功、偶发 >480s（模型/中转波动）。留足 15 分钟，
+  # 避免「跑了八分钟被杀」——用户看到的就是「没反应」。
+  timeoutSeconds: 900
+  model:
+    # 解析要输出完整论文格式卡 JSON：规范条文长的模版（7k+ 字条文）在全局缺省
+    # 8192 输出预算下顶爆 stopReason=length，报「本次处理达到模型输出上限」
+    # （2026-10-26 实测两次 failed）。32k 给思考 + 完整 JSON 留空间。
+    maxTokens: 32768

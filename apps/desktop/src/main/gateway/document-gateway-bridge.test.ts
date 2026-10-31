@@ -38,7 +38,7 @@ describe('DocumentGatewayBridge 幂等读 5xx 静默重试（issue #259）', () 
 
     await expect(pending).resolves.toEqual([])
     expect(fetchMock).toHaveBeenCalledTimes(2)
-    expect(fetchMock.mock.calls[0]![0]).toBe('http://127.0.0.1:1/v1/documents?roomId=room-1')
+    expect(fetchMock.mock.calls[0]![0]).toBe('http://127.0.0.1:1/v1/documents')
   })
 
   it('重试耗尽后照常透传网关错误（保持既有语义）', async () => {

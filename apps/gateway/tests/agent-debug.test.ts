@@ -1,960 +1,984 @@
-import type {
-  AgentDebugAgent,
-  AgentDebugEvent,
-  AgentDebugRun,
-  AgentDebugRunEvents,
-  AgentDebugSnapshot,
-  LocalAgentInvocationTarget,
-} from "@nxcore/agent-contract";
-import type {
-  AgentRuntime,
-  ResumeRuntimeRunInput,
-  RuntimeEvent,
-  RuntimeRun,
-  StartRuntimeRunInput,
-} from "@nxcore/agent-runtime";
-import { FakeAgentRuntime } from "@nxcore/agent-runtime/testing";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import Fastify from "fastify";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { auth } from "../src/server/auth.js";
-import type { GatewayConfig, SubagentFrameworkConfig } from "../src/config.js";
-import { AgentResolver } from "../src/modules/agent/resolver.js";
-import { AgentDebugArchive } from "../src/modules/agent-debug/archive.js";
+import type { AgentStatusSnapshot, SubagentInvocation } from "@nxcore/agent-contract";
+import type { AgentRuntime, AgentRuntimeDescription } from "@nxcore/agent-runtime";
+import type { GatewayConfig } from "../src/config.js";
+import { createDatabase, type GatewayDatabase } from "../src/infrastructure/database/client.js";
 import {
-  AgentDebugTraceStore,
-  MAX_EVENTS_PER_RUN,
-  MAX_EVENT_BYTES,
-  MAX_RUNS,
-} from "../src/modules/agent-debug/trace-store.js";
-import { traceRuntime } from "../src/modules/agent-debug/instrument.js";
-import {
-  agentDebugRoutes,
-  debugAgentsFromResolver,
-  debugAgentsFromStatusSnapshot,
-  mergeDebugAgents,
-  type AgentDebugRoutesOptions,
-} from "../src/modules/agent-debug/routes.js";
-import { LocalAgentRuntimeRegistry } from "../src/modules/local-agents/runtime-registry.js";
-import type { LoadedSubagentRevision } from "../src/modules/subagents/types.js";
-import { SubagentRuntimeManager } from "../src/modules/subagents/runtime-manager.js";
+  agentEvents,
+  agentRuns,
+  agentSessions,
+  subagentDefinitions,
+  subagentInvocationEvents,
+  subagentInvocations,
+  subagentRevisions,
+} from "../src/infrastructure/database/schema.js";
+import type { BuiltinAgentBundle } from "../src/modules/agent/builtin-bundles.js";
+import type { AgentDefinition, AgentResolver } from "../src/modules/agent/resolver.js";
+import type { AgentStatusService } from "../src/modules/agent/status-service.js";
+import { AgentDebugService } from "../src/modules/agent-debug/service.js";
+import { agentDebugRoutes } from "../src/modules/agent-debug/routes.js";
+import type { AgentDebugUsageRecord } from "../src/modules/agent-debug/types.js";
+import { AgentDebugUsageStore } from "../src/modules/agent-debug/usage-store.js";
+import type { SubagentOrchestrator } from "../src/modules/subagents/orchestrator.js";
+import type { SubagentRegistry } from "../src/modules/subagents/registry.js";
+import type { LoadedSubagentDefinition } from "../src/modules/subagents/types.js";
 
-/** 本机 CLI Agent（ACP）在单测里替换成 FakeAgentRuntime，只验证 trace 接线。 */
-vi.mock("../src/modules/local-agents/acp-runtime.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../src/modules/local-agents/acp-runtime.js")>();
-  return { ...actual, AcpAgentRuntime: FakeAgentRuntime };
-});
+/**
+ * Agent 调试面板网关层（/v1/agent-debug/*）单测：service/routes 全部 stub，不建库；
+ * 仅 usage-store 用一次临时 SQLite（迁移 + 直插数据）验证查询与事件聚合。
+ * 固化「能力字段以 runtime.describe() 的实际装配为准，而不是 agent.yaml 声明」、
+ * 「响应绝不含 apiKey / MCP headers」以及 usage 的 limit 夹取与 totals 语义。
+ */
 
-const AUTH_TOKEN = "agent-debug-test-token-0123456789";
-const DESCRIPTOR = { agentId: "main", agentName: "EverRoom", agentKind: "builtin" as const, description: "主 Agent" };
-
-const stores: AgentDebugTraceStore[] = [];
-const tempDirs: string[] = [];
+const temporaryDirectories: string[] = [];
+const openDatabases: Array<ReturnType<typeof createDatabase>> = [];
 
 afterEach(async () => {
-  for (const store of stores.splice(0)) await store.dispose();
-  for (const dir of tempDirs.splice(0)) await rm(dir, { recursive: true, force: true });
+  for (const database of openDatabases.splice(0)) database.sqlite.close();
+  await Promise.all(temporaryDirectories.splice(0).map((path) => rm(path, { recursive: true, force: true })));
 });
 
-function createStore(archive?: AgentDebugArchive): AgentDebugTraceStore {
-  const store = new AgentDebugTraceStore(archive);
-  stores.push(store);
-  return store;
-}
+const MAIN_DEFINITION: AgentDefinition = {
+  id: "main",
+  name: "主 Agent",
+  description: "处理用户对话",
+  configDirectory: "/tmp/main",
+  kind: "builtin",
+};
 
-async function tempDir(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "agent-debug-routes-"));
-  tempDirs.push(dir);
-  return dir;
-}
+const DOC_WRITER_DEFINITION: AgentDefinition = {
+  id: "doc-writer",
+  name: "Document Writer",
+  description: "承接文档正文生成",
+  configDirectory: "/tmp/doc-writer",
+  kind: "developer",
+};
 
-function event(type: RuntimeEvent["type"], payload: unknown = {}): RuntimeEvent {
-  return { type, payload };
-}
+/** 静态 bundle：声明了 slides_create/slides_edit，但 runtime 并未装配这些工具。 */
+const MAIN_BUNDLE: BuiltinAgentBundle = {
+  id: "main",
+  name: "Main Agent",
+  description: "bundle description（不应覆盖 registration）",
+  runtime: "pi",
+  systemPrompt: "BUNDLE SYSTEM PROMPT",
+  capabilities: ["conversation.respond", "slides.create"],
+  tools: ["document_list", "slides_create", "slides_edit"],
+  skills: ["./skills/document-export"],
+  skillPrompts: { "document-export": "BUNDLE SKILL BODY" },
+  directory: "/agents/main",
+};
 
-function begin(store: AgentDebugTraceStore, runId: string, overrides: Partial<Parameters<AgentDebugTraceStore["beginRun"]>[0]> = {}): void {
-  store.beginRun({
-    runId,
+const MAIN_DESCRIPTION: AgentRuntimeDescription = {
+  runtimeId: "pi:main",
+  model: {
+    provider: "bailian",
+    model: "qwen-max",
+    baseUrl: "https://ai.example.test/v1",
+    api: "openai-completions",
+    reasoning: "medium",
+    temperature: 0.3,
+    maxTokens: 8192,
+    contextWindow: 128_000,
+  },
+  role: "user-facing",
+  systemPrompt: "RUNTIME SYSTEM PROMPT",
+  skills: [{ name: "document-export", prompt: "RUNTIME SKILL BODY" }],
+  tools: [
+    { name: "document_list", label: "List documents", description: "列出文档" },
+    { name: "connector_query", label: "Query", description: "查询连接器" },
+  ],
+  builtinTools: ["read", "bash"],
+  mcpServers: ["everroom-connectors"],
+  promptGuidelines: ["guideline-1"],
+  limits: { maxToolCallsPerRun: null, maxToolResultChars: null, runContextGuard: null },
+  capabilities: { streaming: true, reasoning: true, tools: true, steering: true, resume: false },
+};
+
+const MAIN_RUNTIME = {
+  id: "pi",
+  describe: async () => MAIN_DESCRIPTION,
+  getCapabilities: async () => MAIN_DESCRIPTION.capabilities,
+} as unknown as AgentRuntime;
+
+/** 子 Agent 的 runtime 不提供 describe：走 revision/config 回退分支。 */
+const DOC_WRITER_RUNTIME = {
+  id: "pi",
+  getCapabilities: async () => ({ streaming: true, reasoning: false, tools: true, steering: false, resume: false }),
+} as unknown as AgentRuntime;
+
+const CONFIG: Pick<GatewayConfig, "pi" | "litePi" | "cursorCompletionPi" | "backgroundPi" | "webSearch"> = {
+  pi: null,
+  litePi: null,
+  cursorCompletionPi: null,
+  backgroundPi: {
+    provider: "bailian",
+    model: "qwen-plus",
+    baseUrl: "https://background.example.test/v1",
+    apiKey: "sk-background-secret",
+    api: "openai-completions",
+    maxTokens: 4096,
+    contextWindow: 128_000,
+    temperature: 0.3,
+    reasoning: "medium",
+    sessionsDir: "/tmp/sessions",
+    workingDirectory: "/tmp/workspace",
+    agentDirectory: "/tmp/config",
+  },
+  webSearch: null,
+};
+
+const STATUS_SNAPSHOT: AgentStatusSnapshot = {
+  generatedAt: "2026-10-29T08:00:00.000Z",
+  summary: { total: 2, running: 2, idle: 0, error: 0 },
+  agents: [{
     agentId: "main",
-    agentName: "EverRoom",
-    agentKind: "builtin",
-    runtimeId: "pi:main",
-    sessionId: "session-1",
-    pageLabel: "Home",
-    task: "hello",
-    agentDescription: "主 Agent",
-    ...overrides,
+    name: "主 Agent",
+    description: "处理用户对话",
+    kind: "builtin",
+    state: "running",
+    activeRunCount: 1,
+    workspace: { id: "agent://main", isolation: "dedicated", revisionId: null },
+    currentRun: {
+      id: "run-current",
+      task: "写周报",
+      pageLabel: "办公室",
+      status: "running",
+      startedAt: "2026-10-29T07:58:00.000Z",
+      completedAt: null,
+    },
+    lastRun: {
+      id: "run-last",
+      task: "改标题",
+      pageLabel: "文档",
+      status: "completed",
+      startedAt: "2026-10-29T07:00:00.000Z",
+      completedAt: "2026-10-29T07:01:00.000Z",
+    },
+    updatedAt: "2026-10-29T07:59:00.000Z",
+  }, {
+    // 子 Agent 的 currentRun 由 AgentStatusService 从 invocation 折成同一形状。
+    agentId: "doc-writer",
+    name: "Document Writer",
+    description: "承接文档正文生成",
+    kind: "developer",
+    state: "running",
+    activeRunCount: 1,
+    workspace: { id: "agent://doc-writer", isolation: "dedicated", revisionId: "rev-1" },
+    currentRun: {
+      id: "inv-3",
+      task: "续写第二段",
+      pageLabel: null,
+      status: "accepted",
+      startedAt: null,
+      completedAt: null,
+    },
+    lastRun: {
+      id: "inv-2",
+      task: "写一段开头",
+      pageLabel: null,
+      status: "completed",
+      startedAt: "2026-10-29T07:10:01.000Z",
+      completedAt: "2026-10-29T07:11:00.000Z",
+    },
+    updatedAt: "2026-10-29T07:12:05.000Z",
+  }],
+};
+
+const SUBAGENT_DEFINITION = {
+  id: "doc-writer",
+  name: "Document Writer",
+  description: "承接文档正文生成",
+  enabled: true,
+  currentRevisionId: "rev-1",
+  createdAt: "2026-10-01T00:00:00.000Z",
+  updatedAt: "2026-10-02T00:00:00.000Z",
+  revision: {
+    id: "rev-1",
+    agentDefinitionId: "doc-writer",
+    version: 3,
+    digest: "digest-1",
+    createdAt: "2026-10-01T00:00:00.000Z",
+    manifest: {
+      schemaVersion: 1,
+      id: "doc-writer",
+      name: "Document Writer",
+      description: "承接文档正文生成",
+      enabled: true,
+      mode: "dispatch_only",
+      promptPath: "./SYSTEM.md",
+      skills: ["./skills/draft-create"],
+      mcp: [{ server: "everroom-connectors", includeTools: ["*"] }],
+      inputSchemaPath: null,
+      outputSchemaPath: null,
+      policy: { allowedCallers: ["primary-agent"], maxConcurrency: 2, timeoutMs: 600_000, maxToolCalls: 24 },
+    },
+    systemPrompt: "REVISION SYSTEM PROMPT",
+    agentDirectory: "/tmp/subagents/revisions/digest-1/agent",
+    // 注册的 MCP 配置可能带 headers/token：调试端点只允许暴露服务器名。
+    mcpServers: { "everroom-connectors": { headers: { authorization: "Bearer mcp-secret-token" } } },
+    policy: {
+      allowedCallers: ["primary-agent"],
+      maxConcurrency: 2,
+      timeoutMs: 600_000,
+      maxToolCalls: 24,
+      model: { maxTokens: 2048 },
+    },
+    inputSchema: { type: "object" },
+    outputSchema: { type: "object" },
+  },
+} as unknown as LoadedSubagentDefinition;
+
+const INVOCATIONS: SubagentInvocation[] = [
+  {
+    id: "inv-2",
+    agentDefinitionId: "doc-writer",
+    agentRevisionId: "rev-1",
+    source: "primary_agent",
+    parentSessionId: null,
+    parentRunId: null,
+    task: "写一段开头",
+    input: null,
+    status: "completed",
+    result: null,
+    errorCode: null,
+    errorMessage: null,
+    createdAt: "2026-10-29T07:10:00.000Z",
+    startedAt: "2026-10-29T07:10:01.000Z",
+    completedAt: "2026-10-29T07:11:00.000Z",
+  },
+  {
+    id: "inv-1",
+    agentDefinitionId: "slides-builder",
+    agentRevisionId: "rev-x",
+    source: "scheduler",
+    parentSessionId: null,
+    parentRunId: null,
+    task: "其它子代理的调用",
+    input: null,
+    status: "completed",
+    result: null,
+    errorCode: null,
+    errorMessage: null,
+    createdAt: "2026-10-29T07:00:00.000Z",
+    startedAt: null,
+    completedAt: null,
+  },
+  {
+    id: "inv-3",
+    agentDefinitionId: "doc-writer",
+    agentRevisionId: "rev-1",
+    source: "primary_agent",
+    parentSessionId: null,
+    parentRunId: null,
+    task: "续写第二段",
+    input: null,
+    status: "accepted",
+    result: null,
+    errorCode: null,
+    errorMessage: null,
+    createdAt: "2026-10-29T07:12:00.000Z",
+    startedAt: null,
+    completedAt: null,
+  },
+];
+
+function createService(
+  usage?: Pick<AgentDebugUsageStore, "listRuns" | "listInvocations">,
+): AgentDebugService {
+  const resolver = {
+    list: () => [MAIN_DEFINITION, DOC_WRITER_DEFINITION],
+    getDefinition: (agentId: string) => {
+      const definition = [MAIN_DEFINITION, DOC_WRITER_DEFINITION].find(({ id }) => id === agentId);
+      if (!definition) throw new Error(`Agent is not registered: ${agentId}`);
+      return definition;
+    },
+    resolve: (agentId: string) => (agentId === "main" ? MAIN_RUNTIME : DOC_WRITER_RUNTIME),
+  } as unknown as AgentResolver;
+  return new AgentDebugService({
+    config: CONFIG,
+    resolver,
+    statuses: { snapshot: () => STATUS_SNAPSHOT } as unknown as Pick<AgentStatusService, "snapshot">,
+    subagents: {
+      get: (agentId: string) => (agentId === "doc-writer" ? SUBAGENT_DEFINITION : null),
+    } as unknown as Pick<SubagentRegistry, "get">,
+    invocations: {
+      listInvocations: () => INVOCATIONS,
+    } as unknown as Pick<SubagentOrchestrator, "listInvocations">,
+    usage: usage ?? {
+      listRuns: () => [],
+      listInvocations: () => [],
+    },
+    loadBundle: (id) => {
+      if (id === "main") return MAIN_BUNDLE;
+      throw new Error(`bundle is missing: ${id}`);
+    },
   });
 }
 
-function startInput(runId: string, overrides: Partial<StartRuntimeRunInput> = {}): StartRuntimeRunInput {
-  return {
-    runId,
-    sessionId: "session-1",
-    runtimeSessionRef: null,
-    prompt: "hello",
-    pageLabel: "Home",
-    roomId: null,
-    ...overrides,
-  };
-}
+describe("AgentDebugService", () => {
+  it("列表摘要来自注册信息 + 运行时装配（kind 映射 builtin/subagent）", async () => {
+    const response = await createService().listAgents();
 
-async function drain(events: AsyncIterable<RuntimeEvent>): Promise<RuntimeEvent[]> {
-  const collected: RuntimeEvent[] = [];
-  for await (const item of events) collected.push(item);
-  return collected;
-}
+    expect(response.generatedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(response.agents.map(({ id }) => id)).toEqual(["main", "doc-writer"]);
 
-function scriptedRuntime(events: AsyncIterable<RuntimeEvent>, id = "scripted"): AgentRuntime {
-  const start = async (input: StartRuntimeRunInput): Promise<RuntimeRun> => ({
-    runId: input.runId,
-    runtimeSessionRef: input.runtimeSessionRef ?? "stub-session",
-    events,
-  });
-  return {
-    id,
-    getCapabilities: async () => ({ streaming: true, reasoning: true, tools: false, steering: false, resume: true }),
-    start,
-    resume: async (input: ResumeRuntimeRunInput) => start(input),
-    sendInput: async () => undefined,
-    cancel: async () => undefined,
-    deleteSession: async () => undefined,
-    dispose: async () => undefined,
-  };
-}
-
-describe("AgentDebugTraceStore", () => {
-  it("merges adjacent same-type deltas into one cumulative event with the same seq", () => {
-    const store = createStore();
-    begin(store, "run-1");
-    store.recordEvent("run-1", event("reasoning.delta", { delta: "思考" }));
-    store.recordEvent("run-1", event("reasoning.delta", { delta: "过程" }));
-    store.recordEvent("run-1", event("message.delta", { delta: "你" }));
-    store.recordEvent("run-1", event("message.delta", { delta: "好" }));
-
-    const page = store.listEvents("run-1", 0)!;
-    expect(page.events.map(({ seq }) => seq)).toEqual([1, 2]);
-    expect(page.events[0]).toMatchObject({ type: "reasoning.delta", payload: { delta: "思考过程" } });
-    expect(page.events[1]).toMatchObject({ type: "message.delta", payload: { delta: "你好" } });
-    expect(page.latestSeq).toBe(2);
-
-    const run = store.getRun("run-1")!;
-    expect(run.eventCount).toBe(2);
-    expect(run.reasoningChars).toBe(4);
-    expect(run.toolCallCount).toBe(0);
-  });
-
-  it("counts tool calls and stops merging when the delta type changes", () => {
-    const store = createStore();
-    begin(store, "run-1");
-    store.recordEvent("run-1", event("reasoning.delta", { delta: "a" }));
-    store.recordEvent("run-1", event("tool.started", { toolCallId: "t1", name: "read", args: {} }));
-    store.recordEvent("run-1", event("tool.completed", { toolCallId: "t1", name: "read", result: {} }));
-    store.recordEvent("run-1", event("reasoning.delta", { delta: "b" }));
-
-    const run = store.getRun("run-1")!;
-    expect(run.toolCallCount).toBe(1);
-    expect(run.reasoningChars).toBe(2);
-    expect(store.listEvents("run-1", 0)!.events.map(({ seq }) => seq)).toEqual([1, 2, 3, 4]);
-  });
-
-  it("truncates oversized payloads and records the original serialized byte size", () => {
-    const store = createStore();
-    begin(store, "run-1");
-    store.recordEvent("run-1", event("tool.completed", { text: "x".repeat(100_000) }));
-
-    const [stored] = store.listEvents("run-1", 0)!.events;
-    expect(stored?.truncatedBytes).toBeGreaterThan(MAX_EVENT_BYTES);
-    expect(typeof stored?.payload).toBe("string");
-    expect((stored?.payload as string).length).toBeLessThanOrEqual(MAX_EVENT_BYTES);
-  });
-
-  it("evicts oldest events beyond the per-run event cap and counts droppedEvents", () => {
-    const store = createStore();
-    begin(store, "run-1");
-    for (let index = 0; index < MAX_EVENTS_PER_RUN + 5; index += 1) {
-      store.recordEvent("run-1", event("context.updated", { index }));
-    }
-
-    const run = store.getRun("run-1")!;
-    expect(run.eventCount).toBe(MAX_EVENTS_PER_RUN);
-    expect(run.droppedEvents).toBe(5);
-    expect(store.listEvents("run-1", 0, 1)!.events[0]?.seq).toBe(6);
-    expect(store.listEvents("run-1", 0)!.latestSeq).toBe(MAX_EVENTS_PER_RUN + 5);
-  });
-
-  it("evicts oldest events when a single run exceeds its byte budget", () => {
-    const store = createStore();
-    begin(store, "run-1");
-    for (let index = 0; index < 160; index += 1) {
-      store.recordEvent("run-1", event("tool.updated", { index, text: "x".repeat(60_000) }));
-    }
-
-    const run = store.getRun("run-1")!;
-    expect(run.droppedEvents).toBeGreaterThan(0);
-    expect(run.eventCount).toBeLessThan(160);
-  });
-
-  it("caps total runs, evicting the oldest terminal run first", () => {
-    const store = createStore();
-    for (let index = 0; index < MAX_RUNS + 5; index += 1) {
-      begin(store, `run-${index}`);
-      store.finishRun(`run-${index}`, "completed");
-    }
-
-    expect(store.listRuns(1_000)).toHaveLength(MAX_RUNS);
-    expect(store.droppedRuns).toBe(5);
-    expect(store.getRun("run-0")).toBeNull();
-    expect(store.getRun("run-4")).toBeNull();
-    expect(store.getRun("run-5")).not.toBeNull();
-    expect(store.getRun(`run-${MAX_RUNS + 4}`)).not.toBeNull();
-  });
-
-  it("lists running runs first, then terminal runs by startedAt desc", () => {
-    const store = createStore();
-    begin(store, "run-done");
-    store.finishRun("run-done", "completed");
-    begin(store, "run-running");
-    begin(store, "run-running-local", { agentId: "codex:test", agentName: "Codex", agentKind: "local" });
-
-    const runIds = store.listRuns(10).map(({ runId }) => runId);
-    expect(runIds.at(-1)).toBe("run-done");
-    expect(new Set(runIds.slice(0, 2))).toEqual(new Set(["run-running", "run-running-local"]));
-  });
-
-  it("writes terminal state once and keeps the first terminal status", () => {
-    const store = createStore();
-    begin(store, "run-1");
-    store.recordEvent("run-1", event("run.completed"));
-    const completedAt = store.getRun("run-1")!.completedAt;
-
-    store.finishRun("run-1", "failed", "late failure");
-    store.finishRun("run-1", "cancelled");
-    const run = store.getRun("run-1")!;
-    expect(run.status).toBe("completed");
-    expect(run.completedAt).toBe(completedAt);
-    expect(run.errorMessage).toBeNull();
-  });
-
-  it("maps run.failed payload.message into errorMessage", () => {
-    const store = createStore();
-    begin(store, "run-1");
-    store.recordEvent("run-1", event("run.failed", { message: "provider exploded" }));
-
-    const run = store.getRun("run-1")!;
-    expect(run.status).toBe("failed");
-    expect(run.errorMessage).toBe("provider exploded");
-  });
-
-  it("reopens a terminal run when resume reuses the same run id", () => {
-    const store = createStore();
-    begin(store, "run-1");
-    store.recordEvent("run-1", event("run.interrupted"));
-    expect(store.getRun("run-1")!.status).toBe("interrupted");
-
-    // resume 复用 runId：保留事件，重新进入 running，后续终态仍可回写。
-    begin(store, "run-1");
-    const resumed = store.getRun("run-1")!;
-    expect(resumed.status).toBe("running");
-    expect(resumed.completedAt).toBeNull();
-    expect(resumed.eventCount).toBe(1);
-
-    store.recordEvent("run-1", event("run.completed"));
-    expect(store.getRun("run-1")!.status).toBe("completed");
-  });
-
-  it("returns events after afterSeq and replays the growing tail delta event", () => {
-    const store = createStore();
-    begin(store, "run-1");
-    store.recordEvent("run-1", event("message.delta", { delta: "a" }));
-    store.recordEvent("run-1", event("message.delta", { delta: "b" }));
-    store.recordEvent("run-1", event("tool.started", { toolCallId: "t1", name: "read", args: {} }));
-
-    const first = store.listEvents("run-1", 0)!;
-    expect(first.events.map(({ seq }) => seq)).toEqual([1, 2]);
-    const incremental = store.listEvents("run-1", 1)!;
-    expect(incremental.events.map(({ seq }) => seq)).toEqual([2]);
-    expect(incremental.latestSeq).toBe(2);
-
-    // 运行中的 delta 事件 seq 不变但内容继续增长：afterSeq 对齐后仍会带回尾部事件。
-    store.recordEvent("run-1", event("message.delta", { delta: "c" }));
-    const replayed = store.listEvents("run-1", 3)!;
-    expect(replayed.events).toHaveLength(1);
-    expect(replayed.events[0]).toMatchObject({ seq: 3, payload: { delta: "c" } });
-    expect(replayed.latestSeq).toBe(3);
-  });
-
-  it("returns null for unknown runs and tolerates events for evicted runs", () => {
-    const store = createStore();
-    expect(store.getRun("missing")).toBeNull();
-    expect(store.listEvents("missing", 0)).toBeNull();
-    expect(() => store.recordEvent("missing", event("run.started"))).not.toThrow();
-    expect(() => store.finishRun("missing", "failed")).not.toThrow();
-  });
-
-  it("reports agents observed in the buffer with running/error state", () => {
-    const store = createStore();
-    begin(store, "local-run-1", { agentId: "codex:/usr/bin/codex", agentName: "Codex", agentKind: "local", agentDescription: "CLI" });
-    store.finishRun("local-run-1", "failed", "acp crashed");
-    begin(store, "local-run-2", { agentId: "codex:/usr/bin/codex", agentName: "Codex", agentKind: "local" });
-
-    const observed = store.listObservedAgents();
-    expect(observed).toHaveLength(1);
-    expect(observed[0]).toMatchObject({
-      id: "codex:/usr/bin/codex",
-      name: "Codex",
-      kind: "local",
+    const main = response.agents[0]!;
+    expect(main).toEqual({
+      id: "main",
+      kind: "builtin",
+      // registration 的名字（bundle 的 "Main Agent" 不覆盖）。
+      name: "主 Agent",
+      description: "处理用户对话",
+      runtime: "pi",
+      runtimeRole: "user-facing",
+      model: "bailian/qwen-max",
       state: "running",
       activeRunCount: 1,
-    });
-    expect(observed[0]?.lastRunAt).not.toBeNull();
-    expect(store.droppedRuns).toBe(0);
-  });
-});
-
-describe("traceRuntime", () => {
-  it("records a FakeAgentRuntime run end-to-end without changing the event stream", async () => {
-    const store = createStore();
-    const traced = traceRuntime(new FakeAgentRuntime(), store, DESCRIPTOR);
-    const types: string[] = [];
-    const events = await drain((await traced.start(startInput("run-fake"))).events);
-    for (const item of events) types.push(item.type);
-
-    const plain = await drain((await new FakeAgentRuntime().start(startInput("run-fake-plain"))).events);
-    expect(types).toEqual(plain.map((item) => item.type));
-
-    const run = store.getRun("run-fake")!;
-    expect(run.status).toBe("completed");
-    expect(run.agentId).toBe("main");
-    expect(run.agentKind).toBe("builtin");
-    expect(run.runtimeId).toBe("fake");
-    expect(run.sessionId).toBe("session-1");
-    expect(run.pageLabel).toBe("Home");
-    expect(run.task).toBe("hello");
-    expect(run.eventCount).toBeGreaterThan(0);
-    expect(run.reasoningChars).toBeGreaterThan(0);
-
-    const page = store.listEvents("run-fake", 0, 5_000)!;
-    expect(page.events[0]?.type).toBe("run.started");
-    expect(page.events.at(-1)?.type).toBe("run.completed");
-    const deltas = page.events.filter(({ type }) => type === "message.delta");
-    expect(deltas).toHaveLength(1);
-    expect(typeof (deltas[0]?.payload as { delta?: string }).delta).toBe("string");
-  });
-
-  it("records slides 逐页任务的页序（dispatch input 0 起 pageIndex → 调试页 1 起）", async () => {
-    const store = createStore();
-    const traced = traceRuntime(new FakeAgentRuntime(), store, {
-      agentId: "slides-layouter",
-      agentName: "Slides Layouter",
-      agentKind: "developer",
-    });
-    await drain((await traced.start(startInput("run-slide-page", {
-      runtimeMetadata: {
-        subagentAgentId: "slides-layouter",
-        subagentInput: { task: "layout", pageIndex: 2, totalPages: 12 },
+      // 来自 AgentStatusService.snapshot().currentRun，内置 Agent 无 source。
+      currentRun: {
+        id: "run-current",
+        task: "写周报",
+        status: "running",
+        startedAt: "2026-10-29T07:58:00.000Z",
+        completedAt: null,
+        pageLabel: "办公室",
+        source: null,
       },
-    }))).events);
+      // 2 个自定义工具 + 2 个 pi 内置工具；bundle 声明的 slides_create 不算。
+      toolCount: 4,
+      skillCount: 1,
+      revisionId: null,
+      updatedAt: "2026-10-29T07:59:00.000Z",
+    });
 
-    expect(store.getRun("run-slide-page")).toMatchObject({
-      agentId: "slides-layouter",
-      slidePageIndex: 3,
-      slidePageCount: 12,
+    const docWriter = response.agents[1]!;
+    expect(docWriter).toMatchObject({
+      kind: "subagent",
+      name: "Document Writer",
+      runtime: "pi",
+      runtimeRole: null,
+      // runtime 无 describe 时回退 backgroundPi 档位 + policy.model 覆盖。
+      model: "bailian/qwen-plus",
+      state: "running",
+      activeRunCount: 1,
+      toolCount: 0,
+      skillCount: 1,
+      revisionId: "rev-1",
+      updatedAt: "2026-10-29T07:12:05.000Z",
+    });
+    // 子 Agent 的 currentRun 同形映射；accepted 折成 running，pageLabel 为 null。
+    expect(docWriter.currentRun).toEqual({
+      id: "inv-3",
+      task: "续写第二段",
+      status: "running",
+      startedAt: null,
+      completedAt: null,
+      pageLabel: null,
+      source: null,
     });
   });
 
-  it("非逐页 run 不写页序字段，非法 pageIndex 也被忽略", async () => {
-    const store = createStore();
-    const traced = traceRuntime(new FakeAgentRuntime(), store, DESCRIPTOR);
-    await drain((await traced.start(startInput("run-no-page"))).events);
-    await drain((await traced.start(startInput("run-bad-page", {
-      runtimeMetadata: { subagentInput: { pageIndex: -1, totalPages: 12 } },
-    }))).events);
+  it("内置 Agent 详情以 describe() 为准，不使用 agent.yaml 声明的工具/能力", async () => {
+    const response = await createService().getAgent("main");
+    expect(response).not.toBeNull();
+    const { agent } = response!;
 
-    const plain = store.getRun("run-no-page")!;
-    expect(plain.slidePageIndex).toBeUndefined();
-    expect(plain.slidePageCount).toBeUndefined();
-    const bad = store.getRun("run-bad-page")!;
-    expect(bad.slidePageIndex).toBeUndefined();
-    expect(bad.slidePageCount).toBeUndefined();
-  });
-
-  it("records terminal failure from an event stream error, keeps the exception and calls once", async () => {
-    const store = createStore();
-    const failing: AsyncIterable<RuntimeEvent> = {
-      async *[Symbol.asyncIterator]() {
-        yield event("run.started");
-        throw new Error("stream exploded");
-      },
-    };
-    const traced = traceRuntime(scriptedRuntime(failing), store, DESCRIPTOR);
-    const run = await traced.start(startInput("run-error"));
-
-    await expect(drain(run.events)).rejects.toThrow("stream exploded");
-    const debugRun = store.getRun("run-error")!;
-    expect(debugRun.status).toBe("failed");
-    expect(debugRun.errorMessage).toBe("stream exploded");
-  });
-
-  it("marks a run failed when start() throws before any event", async () => {
-    const store = createStore();
-    const runtime = scriptedRuntime((async function* () {})());
-    runtime.start = async () => {
-      throw new Error("start exploded");
-    };
-    const traced = traceRuntime(runtime, store, DESCRIPTOR);
-
-    await expect(traced.start(startInput("run-start-error"))).rejects.toThrow("start exploded");
-    expect(store.getRun("run-start-error")).toMatchObject({
-      status: "failed",
-      errorMessage: "start exploded",
-    });
-  });
-
-  it("finishes interrupted when the consumer stops iterating early", async () => {
-    const store = createStore();
-    const events: AsyncIterable<RuntimeEvent> = {
-      async *[Symbol.asyncIterator]() {
-        yield event("run.started");
-        yield event("message.delta", { delta: "a" });
-        yield event("message.delta", { delta: "b" });
-      },
-    };
-    const traced = traceRuntime(scriptedRuntime(events), store, DESCRIPTOR);
-    const run = await traced.start(startInput("run-broken"));
-
-    for await (const _item of run.events) break;
-    expect(store.getRun("run-broken")?.status).toBe("interrupted");
-  });
-
-  it("finishes interrupted when the stream ends without a terminal event", async () => {
-    const store = createStore();
-    const events: AsyncIterable<RuntimeEvent> = {
-      async *[Symbol.asyncIterator]() {
-        yield event("run.started");
-      },
-    };
-    const traced = traceRuntime(scriptedRuntime(events), store, DESCRIPTOR);
-    await drain((await traced.start(startInput("run-truncated"))).events);
-
-    expect(store.getRun("run-truncated")?.status).toBe("interrupted");
-  });
-
-  it("wraps start and resume for the same run id without double recording", async () => {
-    const store = createStore();
-    const firstStore = createStore();
-    const runtime = scriptedRuntime((async function* () {
-      yield event("run.started");
-      yield event("run.completed");
-    })());
-    const traced = traceRuntime(runtime, store, DESCRIPTOR);
-    const again = traceRuntime(traced, firstStore, DESCRIPTOR);
-    expect(again).toBe(traced);
-
-    await drain((await traced.resume({ ...startInput("run-resume"), lastEventSeq: 0 })).events);
-    expect(store.getRun("run-resume")?.status).toBe("completed");
-    expect(firstStore.getRun("run-resume")).toBeNull();
-  });
-});
-
-describe("agent debug wiring", () => {
-  it("skips trace for developer definitions in AgentResolver, records builtin runs", async () => {
-    const store = createStore();
-    const resolver = new AgentResolver(store);
-    resolver.register({
-      id: "slides-planner",
-      name: "Slides Planner",
-      description: "子 Agent",
-      configDirectory: "/tmp/slides-planner/config",
-      kind: "developer",
-    }, () => scriptedRuntime((async function* () {
-      yield event("run.started");
-      yield event("run.completed");
-    })()));
-    resolver.register({
-      id: "main",
-      name: "EverRoom",
-      description: "主 Agent",
-      configDirectory: "/tmp/main/config",
-      kind: "builtin",
-    }, () => new FakeAgentRuntime());
-
-    await drain((await resolver.resolve("slides-planner").start(startInput("run-developer"))).events);
-    expect(store.getRun("run-developer")).toBeNull();
-
-    await drain((await resolver.resolve("main").start(startInput("run-builtin"))).events);
-    expect(store.getRun("run-builtin")).toMatchObject({ agentId: "main", agentKind: "builtin" });
-    await resolver.dispose();
-  });
-
-  it("traces dispatch-only subagent runtimes from SubagentRuntimeManager", async () => {
-    const store = createStore();
-    const manager = new SubagentRuntimeManager(
-      { agentRuntime: "fake" } as GatewayConfig,
-      {} as SubagentFrameworkConfig,
-      undefined,
-      store,
-    );
-    const revision = {
-      id: "revision-1",
-      manifest: {
-        id: "slides-planner",
-        name: "Slides Planner",
-        description: "规划 PPT 结构",
-      },
-    } as unknown as LoadedSubagentRevision;
-    const runtime = manager.acquire(revision);
-    await drain((await runtime.start(startInput("run-subagent", { pageLabel: "Slides" }))).events);
-
-    expect(store.getRun("run-subagent")).toMatchObject({
-      agentId: "slides-planner",
-      agentName: "Slides Planner",
-      agentKind: "developer",
-    });
-
-    // 逐页 dispatch：orchestrator 放在 runtimeMetadata.subagentInput 的 0 起 pageIndex
-    // 要穿透到调试 run（1 起页序），Agent 列表才能显示「负责哪一页」。
-    await drain((await runtime.start(startInput("run-subagent-page", {
-      pageLabel: "Slides",
-      runtimeMetadata: { subagentAgentId: "slides-layouter", subagentInput: { pageIndex: 4, totalPages: 16 } },
-    }))).events);
-    expect(store.getRun("run-subagent-page")).toMatchObject({
-      slidePageIndex: 5,
-      slidePageCount: 16,
-    });
-    await manager.dispose();
-  });
-
-  it("traces local CLI agent runtimes from LocalAgentRuntimeRegistry", async () => {
-    const store = createStore();
-    const registry = new LocalAgentRuntimeRegistry(undefined, undefined, store);
-    const target = {
-      id: "codex:/usr/local/bin/codex",
-      provider: "codex",
-      displayName: "My Codex",
-      executablePath: "/usr/local/bin/codex",
-      workingDirectory: "/tmp/workspace",
-      permissionProfile: "inspect",
-      card: {
-        name: "Codex",
-        description: "本机 CLI",
-        version: "1.0.0",
-        supportedInterfaces: [],
-        capabilities: {},
-        defaultInputModes: ["text/plain"],
-        defaultOutputModes: ["text/plain"],
-        skills: [],
-      },
-    } satisfies LocalAgentInvocationTarget;
-    const runtime = registry.resolve(target);
-    await drain((await runtime.start(startInput("run-local"))).events);
-
-    expect(store.getRun("run-local")).toMatchObject({
-      agentId: "codex:/usr/local/bin/codex",
-      agentName: "My Codex",
-      agentKind: "local",
-    });
-    await registry.dispose();
-  });
-});
-
-describe("agent debug routes", () => {
-  function catalog(): AgentDebugAgent[] {
-    return [{
-      id: "main",
-      name: "EverRoom",
-      description: "主 Agent",
-      kind: "builtin",
-      state: "idle",
-      activeRunCount: 0,
-      lastRunAt: null,
-    }];
-  }
-
-  async function buildApp(store: AgentDebugTraceStore, options?: AgentDebugRoutesOptions) {
-    const app = Fastify();
-    await app.register(auth, { token: AUTH_TOKEN });
-    await app.register(agentDebugRoutes(store, catalog, options));
-    return app;
-  }
-
-  function archivedRun(runId: string, overrides: Partial<AgentDebugRun> = {}): AgentDebugRun {
-    return {
-      runId,
-      agentId: "main",
-      agentName: "EverRoom",
-      agentKind: "builtin",
-      runtimeId: "pi:main",
-      sessionId: "session-history",
-      pageLabel: "Home",
-      task: "历史任务",
-      status: "completed",
-      startedAt: "2026-01-01T00:00:00.000Z",
-      completedAt: "2026-01-01T00:00:05.000Z",
-      eventCount: 3,
-      droppedEvents: 0,
-      toolCallCount: 0,
-      reasoningChars: 0,
-      lastEventAt: "2026-01-01T00:00:05.000Z",
-      errorMessage: null,
-      ...overrides,
-    };
-  }
-
-  function archivedEvents(): AgentDebugEvent[] {
-    return [
-      { seq: 1, type: "run.started", occurredAt: "2026-01-01T00:00:00.000Z", payload: {} },
-      { seq: 2, type: "message.delta", occurredAt: "2026-01-01T00:00:01.000Z", payload: { delta: "hi" } },
-      { seq: 3, type: "run.completed", occurredAt: "2026-01-01T00:00:05.000Z", payload: {} },
-    ];
-  }
-
-  async function seededArchive(): Promise<AgentDebugArchive> {
-    const dir = await tempDir();
-    // 固定 now 到归档时间之后一天，避免历史 run 被默认 7 天保留策略裁剪。
-    const archive = new AgentDebugArchive({ dir, now: () => Date.parse("2026-01-02T00:00:00.000Z") });
-    await archive.archiveRun(archivedRun("run-history"), archivedEvents());
-    await archive.flush();
-    return archive;
-  }
-
-  function headers(): Record<string, string> {
-    return { authorization: `Bearer ${AUTH_TOKEN}` };
-  }
-
-  it("round-trips slide page fields through the disk archive", async () => {
-    const dir = await tempDir();
-    const archive = new AgentDebugArchive({ dir, now: () => Date.parse("2026-01-02T00:00:00.000Z") });
-    await archive.archiveRun(archivedRun("run-archive-page", {
-      agentId: "slides-layouter",
-      agentName: "Slides Layouter",
-      agentKind: "developer",
-      slidePageIndex: 5,
-      slidePageCount: 12,
-    }), archivedEvents());
-    await archive.flush();
-
-    expect(archive.listRuns(10)[0]).toMatchObject({ slidePageIndex: 5, slidePageCount: 12 });
-  });
-
-  it("serves slide page fields on snapshot runs", async () => {
-    const store = createStore();
-    begin(store, "run-page", { slidePageIndex: 4, slidePageCount: 12 });
-    const app = await buildApp(store);
-
-    const body = (await app.inject({
-      method: "GET",
-      url: "/v1/agent-debug/snapshot",
-      headers: headers(),
-    })).json() as AgentDebugSnapshot;
-    expect(body.runs.find(({ runId }) => runId === "run-page")).toMatchObject({
-      slidePageIndex: 4,
-      slidePageCount: 12,
-    });
-    await app.close();
-  });
-
-  it("rejects unauthenticated requests with 401", async () => {
-    const app = await buildApp(createStore());
-    const response = await app.inject({ method: "GET", url: "/v1/agent-debug/snapshot" });
-    expect(response.statusCode).toBe(401);
-    await app.close();
-  });
-
-  it("serves snapshot with catalog agents merged with observed local agents", async () => {
-    const store = createStore();
-    begin(store, "run-main");
-    store.recordEvent("run-main", event("run.completed"));
-    begin(store, "run-local", { agentId: "codex:test", agentName: "Codex", agentKind: "local" });
-
-    const app = await buildApp(store);
-    const response = await app.inject({
-      method: "GET",
-      url: "/v1/agent-debug/snapshot?runs=10",
-      headers: headers(),
-    });
-    expect(response.statusCode).toBe(200);
-    const body = response.json() as AgentDebugSnapshot;
-    expect(body.agents.map(({ id }) => id)).toEqual(["main", "codex:test"]);
-    expect(body.runs[0]).toMatchObject({ runId: "run-local", status: "running", agentKind: "local" });
-    expect(body.runs.map(({ runId }) => runId)).toContain("run-main");
-    expect(body.droppedRuns).toBe(0);
-    await app.close();
-  });
-
-  it("deduplicates agents already present in the injected catalog", async () => {
-    const store = createStore();
-    begin(store, "run-main");
-    const app = await buildApp(store);
-
-    const body = (await app.inject({
-      method: "GET",
-      url: "/v1/agent-debug/snapshot",
-      headers: headers(),
-    })).json() as AgentDebugSnapshot;
-    expect(body.agents.filter(({ id }) => id === "main")).toHaveLength(1);
-    await app.close();
-  });
-
-  it("serves incremental run events and 404 for unknown runs", async () => {
-    const store = createStore();
-    begin(store, "run-main");
-    store.recordEvent("run-main", event("run.started"));
-    store.recordEvent("run-main", event("message.delta", { delta: "hi" }));
-    store.recordEvent("run-main", event("run.completed"));
-
-    const app = await buildApp(store);
-    const full = await app.inject({
-      method: "GET",
-      url: "/v1/agent-debug/runs/run-main/events",
-      headers: headers(),
-    });
-    expect(full.statusCode).toBe(200);
-    const body = full.json() as AgentDebugRunEvents;
-    expect(body.run).toMatchObject({ runId: "run-main", status: "completed" });
-    expect(body.events.map(({ seq }) => seq)).toEqual([1, 2, 3]);
-    expect(body.latestSeq).toBe(3);
-
-    const incremental = await app.inject({
-      method: "GET",
-      url: "/v1/agent-debug/runs/run-main/events?afterSeq=1",
-      headers: headers(),
-    });
-    expect((incremental.json() as AgentDebugRunEvents).events.map(({ seq }) => seq)).toEqual([2, 3]);
-
-    const missing = await app.inject({
-      method: "GET",
-      url: "/v1/agent-debug/runs/missing/events",
-      headers: headers(),
-    });
-    expect(missing.statusCode).toBe(404);
-    await app.close();
-  });
-
-  it("supports archived=include|only|exclude with origin and archive info", async () => {
-    const archive = await seededArchive();
-    const store = createStore(archive);
-    begin(store, "run-live");
-    const app = await buildApp(store);
-
-    const include = (await app.inject({
-      method: "GET",
-      url: "/v1/agent-debug/snapshot",
-      headers: headers(),
-    })).json() as AgentDebugSnapshot;
-    expect(include.runs.map(({ runId, origin }) => ({ runId, origin }))).toEqual([
-      { runId: "run-live", origin: "live" },
-      { runId: "run-history", origin: "archive" },
+    expect(agent.systemPrompt).toBe("RUNTIME SYSTEM PROMPT");
+    expect(agent.systemPrompt).not.toContain("BUNDLE");
+    expect(agent.tools).toEqual([
+      { name: "document_list", label: "List documents", description: "列出文档", source: "custom" },
+      { name: "connector_query", label: "Query", description: "查询连接器", source: "custom" },
+      { name: "read", label: null, description: null, source: "builtin" },
+      { name: "bash", label: null, description: null, source: "builtin" },
     ]);
-    expect(include.archive).toEqual(expect.objectContaining({
-      enabled: true,
-      retentionDays: 7,
-      runCount: 1,
-      oldestStartedAt: "2026-01-01T00:00:00.000Z",
-    }));
-    expect(include.archive?.bytes).toBeGreaterThan(0);
-
-    const only = (await app.inject({
-      method: "GET",
-      url: "/v1/agent-debug/snapshot?archived=only",
-      headers: headers(),
-    })).json() as AgentDebugSnapshot;
-    expect(only.runs.map(({ runId, origin }) => ({ runId, origin }))).toEqual([
-      { runId: "run-history", origin: "archive" },
+    // agent.yaml 里声明的 slides_create/slides_edit 未参与装配，不能出现在「实际工具」里。
+    expect(agent.tools.map(({ name }) => name)).not.toContain("slides_create");
+    expect(agent.skills).toEqual([
+      { name: "document-export", path: "./skills/document-export", prompt: "RUNTIME SKILL BODY" },
     ]);
-
-    const exclude = (await app.inject({
-      method: "GET",
-      url: "/v1/agent-debug/snapshot?archived=exclude",
-      headers: headers(),
-    })).json() as AgentDebugSnapshot;
-    expect(exclude.runs.map(({ runId, origin }) => ({ runId, origin }))).toEqual([
-      { runId: "run-live", origin: "live" },
-    ]);
-
-    const invalid = await app.inject({
-      method: "GET",
-      url: "/v1/agent-debug/snapshot?archived=bogus",
-      headers: headers(),
+    expect(agent.mcpServers).toEqual(["everroom-connectors"]);
+    expect(agent.promptGuidelines).toEqual(["guideline-1"]);
+    expect(agent.modelInfo).toEqual(MAIN_DESCRIPTION.model);
+    expect(agent.capabilities).toEqual(MAIN_DESCRIPTION.capabilities);
+    expect(agent.limits).toEqual({
+      maxToolCallsPerRun: null,
+      maxToolResultChars: null,
+      runContextGuard: null,
     });
-    expect(invalid.statusCode).toBe(400);
-    await app.close();
-  });
-
-  it("serves archived run events with origin archive and keeps 404 for unknown runs", async () => {
-    const archive = await seededArchive();
-    const store = createStore(archive);
-    const app = await buildApp(store);
-
-    const full = await app.inject({
-      method: "GET",
-      url: "/v1/agent-debug/runs/run-history/events",
-      headers: headers(),
-    });
-    expect(full.statusCode).toBe(200);
-    const body = full.json() as AgentDebugRunEvents;
-    expect(body.run).toMatchObject({ runId: "run-history", origin: "archive", status: "completed" });
-    expect(body.events.map(({ seq }) => seq)).toEqual([1, 2, 3]);
-    expect(body.latestSeq).toBe(3);
-
-    const incremental = (await app.inject({
-      method: "GET",
-      url: "/v1/agent-debug/runs/run-history/events?afterSeq=1&limit=1",
-      headers: headers(),
-    })).json() as AgentDebugRunEvents;
-    expect(incremental.events.map(({ seq }) => seq)).toEqual([2]);
-    expect(incremental.latestSeq).toBe(3);
-
-    const missing = await app.inject({
-      method: "GET",
-      url: "/v1/agent-debug/runs/missing/events",
-      headers: headers(),
-    });
-    expect(missing.statusCode).toBe(404);
-    await app.close();
-  });
-
-  it("batch fills sessionTitle for live and archived runs in one lookup", async () => {
-    const archive = await seededArchive();
-    const store = createStore(archive);
-    begin(store, "run-live", { sessionId: "session-live" });
-    begin(store, "run-subagent", {
-      sessionId: null,
-      agentId: "slides-planner",
-      agentName: "Slides Planner",
-      agentKind: "developer",
-    });
-    const lookups: string[][] = [];
-    const app = await buildApp(store, {
-      sessionTitles: (sessionIds) => {
-        lookups.push([...sessionIds]);
-        return new Map([
-          ["session-live", "本次对话"],
-          ["session-history", "历史对话"],
-        ]);
-      },
-    });
-
-    const snapshot = (await app.inject({
-      method: "GET",
-      url: "/v1/agent-debug/snapshot",
-      headers: headers(),
-    })).json() as AgentDebugSnapshot;
-    expect(lookups).toHaveLength(1);
-    expect(new Set(lookups[0])).toEqual(new Set(["session-live", "session-history"]));
-    const byRunId = new Map(snapshot.runs.map((run) => [run.runId, run]));
-    expect(byRunId.get("run-live")?.sessionTitle).toBe("本次对话");
-    expect(byRunId.get("run-history")?.sessionTitle).toBe("历史对话");
-    expect(byRunId.get("run-subagent")?.sessionTitle).toBeNull();
-
-    // events 路由同样补全会话标题（历史 run 来自归档）。
-    const historyEvents = (await app.inject({
-      method: "GET",
-      url: "/v1/agent-debug/runs/run-history/events",
-      headers: headers(),
-    })).json() as AgentDebugRunEvents;
-    expect(historyEvents.run.sessionTitle).toBe("历史对话");
-    await app.close();
-  });
-
-  it("validates query limits with typebox schemas", async () => {
-    const app = await buildApp(createStore());
-    const tooManyRuns = await app.inject({
-      method: "GET",
-      url: "/v1/agent-debug/snapshot?runs=1000",
-      headers: headers(),
-    });
-    expect(tooManyRuns.statusCode).toBe(400);
-
-    const tooManyEvents = await app.inject({
-      method: "GET",
-      url: "/v1/agent-debug/runs/run-main/events?limit=6000",
-      headers: headers(),
-    });
-    expect(tooManyEvents.statusCode).toBe(400);
-    await app.close();
-  });
-});
-
-describe("agent debug catalog helpers", () => {
-  it("maps AgentStatusService snapshots and resolver definitions into debug agents", () => {
-    const fromStatus = debugAgentsFromStatusSnapshot({
-      generatedAt: "2026-01-01T00:00:00.000Z",
-      summary: { total: 1, running: 0, idle: 1, error: 0 },
-      agents: [{
-        agentId: "main",
-        name: "EverRoom",
-        description: "主 Agent",
-        kind: "builtin",
-        state: "idle",
-        activeRunCount: 0,
-        workspace: { id: "agent://main", isolation: "dedicated", revisionId: null },
-        currentRun: null,
-        lastRun: {
-          id: "run-1",
-          task: "hello",
-          pageLabel: "Home",
-          status: "completed",
-          startedAt: "2026-01-01T00:00:00.000Z",
-          completedAt: "2026-01-01T00:00:01.000Z",
-        },
-        updatedAt: "2026-01-01T00:00:01.000Z",
-      }],
-    });
-    expect(fromStatus).toEqual([{
-      id: "main",
-      name: "EverRoom",
-      description: "主 Agent",
-      kind: "builtin",
-      state: "idle",
-      activeRunCount: 0,
-      lastRunAt: "2026-01-01T00:00:01.000Z",
-    }]);
-
-    const resolver = new AgentResolver();
-    resolver.register({
-      id: "cursor-completion",
-      name: "Cursor Completion",
-      description: "补全",
-      configDirectory: "/tmp/cursor/config",
-      kind: "builtin",
-    }, () => new FakeAgentRuntime());
-    expect(debugAgentsFromResolver(resolver)).toEqual([{
-      id: "cursor-completion",
-      name: "Cursor Completion",
-      description: "补全",
-      kind: "builtin",
-      state: "idle",
-      activeRunCount: 0,
-      lastRunAt: null,
-    }]);
-  });
-
-  it("merges observed agents without overriding the injected catalog", () => {
-    const catalog = [{
-      id: "main",
-      name: "EverRoom（catalog）",
-      description: "",
-      kind: "builtin" as const,
-      state: "idle" as const,
-      activeRunCount: 0,
-      lastRunAt: null,
-    }];
-    const merged = mergeDebugAgents(catalog, [
-      { ...catalog[0]!, name: "EverRoom（observed）" },
+    expect(agent.policy).toBeNull();
+    expect(agent.subagent).toBeNull();
+    // run 活动来自 AgentStatusService.snapshot()：当前 run 在前，内置 Agent 无 source。
+    expect(agent.recentActivity).toEqual([
       {
-        id: "codex:test",
-        name: "Codex",
-        description: "",
-        kind: "local",
-        state: "running",
-        activeRunCount: 1,
-        lastRunAt: null,
+        id: "run-current",
+        task: "写周报",
+        status: "running",
+        startedAt: "2026-10-29T07:58:00.000Z",
+        completedAt: null,
+        pageLabel: "办公室",
+        source: null,
+      },
+      {
+        id: "run-last",
+        task: "改标题",
+        status: "completed",
+        startedAt: "2026-10-29T07:00:00.000Z",
+        completedAt: "2026-10-29T07:01:00.000Z",
+        pageLabel: "文档",
+        source: null,
       },
     ]);
-    expect(merged.map(({ id }) => id)).toEqual(["main", "codex:test"]);
-    expect(merged[0]?.name).toBe("EverRoom（catalog）");
+  });
+
+  it("子 Agent 详情回退 revision：systemPrompt/policy/mcp，Skill 只给路径不内联正文", async () => {
+    const response = await createService().getAgent("doc-writer");
+    expect(response).not.toBeNull();
+    const { agent } = response!;
+
+    expect(agent.systemPrompt).toBe("REVISION SYSTEM PROMPT");
+    expect(agent.skills).toEqual([
+      { name: "draft-create", path: "./skills/draft-create", prompt: null },
+    ]);
+    expect(agent.mcpServers).toEqual(["everroom-connectors"]);
+    expect(agent.policy).toEqual({
+      allowedCallers: ["primary-agent"],
+      maxConcurrency: 2,
+      timeoutMs: 600_000,
+      maxToolCalls: 24,
+      model: { maxTokens: 2048 },
+    });
+    expect(agent.subagent).toMatchObject({
+      revisionId: "rev-1",
+      version: 3,
+      digest: "digest-1",
+      agentDirectory: "/tmp/subagents/revisions/digest-1/agent",
+      skills: ["./skills/draft-create"],
+      mcp: [{ server: "everroom-connectors", includeTools: ["*"], excludeTools: null }],
+      inputSchema: { type: "object" },
+      outputSchema: { type: "object" },
+    });
+    expect(agent.modelInfo).toMatchObject({
+      provider: "bailian",
+      model: "qwen-plus",
+      maxTokens: 2048,
+      contextWindow: 128_000,
+    });
+    // 无 describe 时用 revision.policy.maxToolCalls 作预算回退。
+    expect(agent.limits).toEqual({
+      maxToolCallsPerRun: 24,
+      maxToolResultChars: null,
+      runContextGuard: null,
+    });
+    // 最近调用只取本 agent 的前 5 条，pageLabel 恒 null，source 透传。
+    expect(agent.recentActivity).toEqual([
+      {
+        id: "inv-2",
+        task: "写一段开头",
+        status: "completed",
+        startedAt: "2026-10-29T07:10:01.000Z",
+        completedAt: "2026-10-29T07:11:00.000Z",
+        pageLabel: null,
+        source: "primary_agent",
+      },
+      {
+        id: "inv-3",
+        task: "续写第二段",
+        // accepted（尚未开跑）折叠为 running。
+        status: "running",
+        startedAt: null,
+        completedAt: null,
+        pageLabel: null,
+        source: "primary_agent",
+      },
+    ]);
+  });
+
+  it("响应绝不含 apiKey 与 MCP headers", async () => {
+    const service = createService();
+    const payload = JSON.stringify({
+      list: await service.listAgents(),
+      main: await service.getAgent("main"),
+      docWriter: await service.getAgent("doc-writer"),
+    });
+
+    expect(payload).not.toContain("sk-background-secret");
+    expect(payload).not.toContain("mcp-secret-token");
+    expect(payload).not.toContain("apiKey");
+    expect(payload).not.toContain("authorization");
+  });
+});
+
+/** usage 记录测试数据：默认一条已完成的 run。 */
+function usageRecord(overrides: Partial<AgentDebugUsageRecord> & { id: string }): AgentDebugUsageRecord {
+  return {
+    kind: "run",
+    sessionId: "session-1",
+    sessionTitle: "季度总结",
+    task: "写周报",
+    status: "completed",
+    roomId: null,
+    pageLabel: null,
+    startedAt: null,
+    completedAt: null,
+    durationMs: null,
+    toolCalls: 0,
+    inputTokens: null,
+    outputTokens: null,
+    cacheReadTokens: null,
+    error: null,
+    source: null,
+    revisionId: null,
+    ...overrides,
+  };
+}
+
+describe("AgentDebugService usage", () => {
+  it("内置 Agent 走 listRuns，子 Agent 走 listInvocations，totals 按该批记录求和", async () => {
+    const runRecords = [
+      usageRecord({ id: "run-2", status: "running", toolCalls: 1 }),
+      usageRecord({ id: "run-1", inputTokens: 120, outputTokens: 30, cacheReadTokens: 10 }),
+    ];
+    const invocationRecords = [
+      usageRecord({
+        id: "inv-1",
+        kind: "invocation",
+        source: "primary_agent",
+        revisionId: "rev-1",
+        inputTokens: 200,
+        outputTokens: 50,
+      }),
+    ];
+    const listRuns = vi.fn((_agentId: string, _limit: number) => runRecords);
+    const listInvocations = vi.fn((_agentId: string, _limit: number) => invocationRecords);
+    const service = createService({ listRuns, listInvocations });
+
+    const builtin = await service.usage("main", 20);
+    expect(listRuns).toHaveBeenCalledWith("main", 20);
+    expect(listInvocations).not.toHaveBeenCalled();
+    expect(builtin).not.toBeNull();
+    expect(builtin!.agentId).toBe("main");
+    expect(builtin!.records).toEqual(runRecords);
+    // 无 usage 的记录按 0 计入（不是 null 传染）。
+    expect(builtin!.totals).toEqual({ runs: 2, inputTokens: 120, outputTokens: 30 });
+    expect(builtin!.generatedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+
+    const subagent = await service.usage("doc-writer", 20);
+    expect(listInvocations).toHaveBeenCalledWith("doc-writer", 20);
+    expect(subagent).toMatchObject({
+      agentId: "doc-writer",
+      records: invocationRecords,
+      totals: { runs: 1, inputTokens: 200, outputTokens: 50 },
+    });
+  });
+
+  it("limit 夹取到 1..100（非法值回落缺省 20）", async () => {
+    const listRuns = vi.fn((_agentId: string, _limit: number) => []);
+    const service = createService({ listRuns, listInvocations: () => [] });
+
+    await service.usage("main", 500);
+    await service.usage("main", 0);
+    await service.usage("main", Number.NaN);
+    await service.usage("main", 42);
+
+    expect(listRuns.mock.calls.map(([, limit]) => limit)).toEqual([100, 1, 20, 42]);
+  });
+
+  it("未知 agent 返回 null 且不查库", async () => {
+    const listRuns = vi.fn((_agentId: string, _limit: number) => []);
+    const listInvocations = vi.fn((_agentId: string, _limit: number) => []);
+    const service = createService({ listRuns, listInvocations });
+
+    await expect(service.usage("unknown-agent", 20)).resolves.toBeNull();
+    expect(listRuns).not.toHaveBeenCalled();
+    expect(listInvocations).not.toHaveBeenCalled();
+  });
+});
+
+describe("agentDebugRoutes", () => {
+  it("GET /v1/agent-debug/agents 返回摘要列表", async () => {
+    const app = Fastify();
+    await app.register(agentDebugRoutes(createService()));
+
+    const response = await app.inject({ method: "GET", url: "/v1/agent-debug/agents" });
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as { agents: Array<{ id: string }>; generatedAt: string };
+    expect(body.agents.map(({ id }) => id)).toEqual(["main", "doc-writer"]);
+    expect(body.generatedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+
+    await app.close();
+  });
+
+  it("GET /v1/agent-debug/agents/:id 返回详情，未知 id 404", async () => {
+    const app = Fastify();
+    await app.register(agentDebugRoutes(createService()));
+
+    const detail = await app.inject({ method: "GET", url: "/v1/agent-debug/agents/main" });
+    expect(detail.statusCode).toBe(200);
+    expect(detail.json()).toMatchObject({
+      agent: { id: "main", systemPrompt: "RUNTIME SYSTEM PROMPT" },
+    });
+
+    const missing = await app.inject({ method: "GET", url: "/v1/agent-debug/agents/unknown-agent" });
+    expect(missing.statusCode).toBe(404);
+    expect(missing.json()).toEqual({
+      error: "not_found",
+      message: "Unknown Agent: unknown-agent",
+    });
+
+    await app.close();
+  });
+
+  it("GET /v1/agent-debug/agents/:id/usage 透传记录、默认 limit 20、未知 id 404", async () => {
+    const records = [usageRecord({ id: "run-1", inputTokens: 7 })];
+    const listRuns = vi.fn((_agentId: string, _limit: number) => records);
+    const app = Fastify();
+    await app.register(agentDebugRoutes(createService({ listRuns, listInvocations: () => [] })));
+
+    const response = await app.inject({ method: "GET", url: "/v1/agent-debug/agents/main/usage" });
+    expect(response.statusCode).toBe(200);
+    expect(listRuns).toHaveBeenCalledWith("main", 20);
+    expect(response.json()).toMatchObject({
+      agentId: "main",
+      records,
+      totals: { runs: 1, inputTokens: 7, outputTokens: 0 },
+    });
+
+    const limited = await app.inject({ method: "GET", url: "/v1/agent-debug/agents/main/usage?limit=5" });
+    expect(limited.statusCode).toBe(200);
+    expect(listRuns).toHaveBeenCalledWith("main", 5);
+
+    // TypeBox 在入口就拒绝越界 limit（服务层另有夹取，双保险）。
+    const tooLarge = await app.inject({ method: "GET", url: "/v1/agent-debug/agents/main/usage?limit=101" });
+    expect(tooLarge.statusCode).toBe(400);
+
+    const missing = await app.inject({ method: "GET", url: "/v1/agent-debug/agents/nope/usage" });
+    expect(missing.statusCode).toBe(404);
+    expect(missing.json()).toEqual({ error: "not_found", message: "Unknown Agent: nope" });
+
+    await app.close();
+  });
+});
+
+/* ── usage-store：临时 SQLite（真实迁移 + 直插数据） ───────────────────── */
+
+async function createUsageDatabase(): Promise<GatewayDatabase> {
+  const dataDir = await mkdtemp(join(tmpdir(), "nxcore-agent-debug-usage-"));
+  temporaryDirectories.push(dataDir);
+  const database = createDatabase(join(dataDir, "gateway.sqlite"), resolve("drizzle"));
+  openDatabases.push(database);
+  return database.db;
+}
+
+function seedUsageDatabase(db: GatewayDatabase): void {
+  db.insert(agentSessions).values({
+    id: "session-1",
+    roomId: "room-1",
+    pageLabel: "办公室",
+    runtimeId: "pi:main",
+    activeAgentId: "main",
+    title: "季度总结",
+    status: "idle",
+  }).run();
+  db.insert(agentRuns).values([
+    {
+      id: "run-completed",
+      sessionId: "session-1",
+      agentId: "main",
+      idempotencyKey: "key-1",
+      prompt: "写周报",
+      roomId: "room-1",
+      status: "completed",
+      startedAt: new Date("2026-10-29T07:00:00.000Z"),
+      completedAt: new Date("2026-10-29T07:00:10.000Z"),
+      createdAt: new Date("2026-10-29T07:00:00.000Z"),
+    },
+    {
+      id: "run-running",
+      sessionId: "session-1",
+      agentId: "main",
+      idempotencyKey: "key-2",
+      prompt: "继续写",
+      status: "running",
+      startedAt: new Date(Date.now() - 5_000),
+      completedAt: null,
+      createdAt: new Date("2026-10-29T07:04:00.000Z"),
+    },
+    {
+      id: "run-accepted",
+      sessionId: "session-1",
+      agentId: "main",
+      idempotencyKey: "key-3",
+      prompt: "被接受的请求",
+      status: "accepted",
+      startedAt: null,
+      completedAt: null,
+      createdAt: new Date("2026-10-29T07:05:00.000Z"),
+    },
+    {
+      id: "run-other-agent",
+      sessionId: "session-1",
+      agentId: "main-lite",
+      idempotencyKey: "key-4",
+      prompt: "别的档位",
+      status: "completed",
+      startedAt: new Date("2026-10-29T07:06:00.000Z"),
+      completedAt: new Date("2026-10-29T07:06:01.000Z"),
+      createdAt: new Date("2026-10-29T07:06:00.000Z"),
+    },
+  ]).run();
+  db.insert(agentEvents).values([
+    { id: "ev-run-1", sessionId: "session-1", runId: "run-completed", seq: 1, type: "tool.started", payload: { name: "document_list" } },
+    { id: "ev-run-2", sessionId: "session-1", runId: "run-completed", seq: 2, type: "tool.started", payload: { name: "document_read" } },
+    {
+      id: "ev-run-3",
+      sessionId: "session-1",
+      runId: "run-completed",
+      seq: 3,
+      type: "message.completed",
+      payload: { role: "assistant", content: "ok", usage: { input: 120, output: 30, cacheRead: 10, cacheWrite: 5 } },
+    },
+    { id: "ev-run-4", sessionId: "session-1", runId: "run-running", seq: 1, type: "tool.started", payload: { name: "file_read" } },
+    // 别的 Agent 的事件不能混入 main 的聚合。
+    {
+      id: "ev-run-5",
+      sessionId: "session-1",
+      runId: "run-other-agent",
+      seq: 1,
+      type: "message.completed",
+      payload: { usage: { input: 999, output: 999, cacheRead: 999 } },
+    },
+  ]).run();
+
+  db.insert(subagentDefinitions).values([
+    { id: "doc-writer", name: "Document Writer", description: "写作", enabled: true, currentRevisionId: "rev-1" },
+    { id: "slides-builder", name: "Slides Builder", description: "落页", enabled: true, currentRevisionId: "rev-2" },
+  ]).run();
+  db.insert(subagentRevisions).values([
+    {
+      id: "rev-1",
+      agentDefinitionId: "doc-writer",
+      version: 1,
+      digest: "digest-1",
+      manifest: {},
+      systemPrompt: "prompt",
+      agentDirectory: "/tmp/subagents/rev-1",
+      mcpServers: {},
+      policy: {},
+    },
+    {
+      id: "rev-2",
+      agentDefinitionId: "slides-builder",
+      version: 1,
+      digest: "digest-2",
+      manifest: {},
+      systemPrompt: "prompt",
+      agentDirectory: "/tmp/subagents/rev-2",
+      mcpServers: {},
+      policy: {},
+    },
+  ]).run();
+  db.insert(subagentInvocations).values([
+    {
+      id: "inv-completed",
+      agentDefinitionId: "doc-writer",
+      agentRevisionId: "rev-1",
+      source: "primary_agent",
+      idempotencyKey: "inv-key-1",
+      task: "写一段开头",
+      input: {},
+      status: "completed",
+      startedAt: new Date("2026-10-29T07:10:01.000Z"),
+      completedAt: new Date("2026-10-29T07:10:06.000Z"),
+      createdAt: new Date("2026-10-29T07:10:00.000Z"),
+    },
+    {
+      id: "inv-running",
+      agentDefinitionId: "doc-writer",
+      agentRevisionId: "rev-1",
+      source: "scheduler",
+      parentSessionId: "session-1",
+      idempotencyKey: "inv-key-2",
+      task: "续写第二段",
+      input: {},
+      status: "running",
+      startedAt: new Date(Date.now() - 2_000),
+      completedAt: null,
+      createdAt: new Date("2026-10-29T07:12:00.000Z"),
+    },
+    {
+      id: "inv-timedout",
+      agentDefinitionId: "doc-writer",
+      agentRevisionId: "rev-1",
+      source: "internal_workflow",
+      idempotencyKey: "inv-key-3",
+      task: "超时任务",
+      input: {},
+      status: "timed_out",
+      startedAt: new Date("2026-10-29T07:11:00.000Z"),
+      completedAt: new Date("2026-10-29T07:11:30.000Z"),
+      errorCode: "timeout",
+      errorMessage: "subagent invocation timed out",
+      createdAt: new Date("2026-10-29T07:11:30.000Z"),
+    },
+    {
+      id: "inv-other-agent",
+      agentDefinitionId: "slides-builder",
+      agentRevisionId: "rev-2",
+      source: "primary_agent",
+      idempotencyKey: "inv-key-4",
+      task: "别的子代理",
+      input: {},
+      status: "completed",
+      createdAt: new Date("2026-10-29T07:14:00.000Z"),
+    },
+  ]).run();
+  db.insert(subagentInvocationEvents).values([
+    { id: "ev-inv-1", invocationId: "inv-completed", seq: 1, type: "tool.started", payload: { name: "document_list" } },
+    { id: "ev-inv-2", invocationId: "inv-completed", seq: 2, type: "tool.started", payload: { name: "document_read" } },
+    { id: "ev-inv-3", invocationId: "inv-completed", seq: 3, type: "tool.started", payload: { name: "subagent_submit_result" } },
+    {
+      id: "ev-inv-4",
+      invocationId: "inv-completed",
+      seq: 4,
+      type: "message.completed",
+      payload: { role: "assistant", content: "done", usage: { input: 200, output: 50, cacheRead: 20 } },
+    },
+    { id: "ev-inv-5", invocationId: "inv-running", seq: 1, type: "tool.started", payload: { name: "file_read" } },
+    {
+      id: "ev-inv-6",
+      invocationId: "inv-other-agent",
+      seq: 1,
+      type: "message.completed",
+      payload: { usage: { input: 999, output: 999, cacheRead: 999 } },
+    },
+  ]).run();
+}
+
+describe("AgentDebugUsageStore", () => {
+  it("listRuns：按 agent 过滤 + createdAt desc + 会话 title/pageLabel + 事件聚合 + duration", async () => {
+    const db = await createUsageDatabase();
+    seedUsageDatabase(db);
+    const store = new AgentDebugUsageStore(db);
+
+    const runs = store.listRuns("main", 10);
+    expect(runs.map(({ id }) => id)).toEqual(["run-accepted", "run-running", "run-completed"]);
+
+    const accepted = runs[0]!;
+    expect(accepted).toMatchObject({
+      kind: "run",
+      task: "被接受的请求",
+      status: "running", // accepted → running
+      startedAt: null,
+      durationMs: null,
+      toolCalls: 0,
+      inputTokens: null,
+    });
+
+    const running = runs[1]!;
+    expect(running).toMatchObject({
+      kind: "run",
+      sessionId: "session-1",
+      sessionTitle: "季度总结",
+      task: "继续写",
+      status: "running",
+      roomId: null,
+      pageLabel: "办公室",
+      completedAt: null,
+      toolCalls: 1,
+      inputTokens: null,
+      source: null,
+      revisionId: null,
+    });
+    // 运行中：durationMs = now - startedAt（不等待完成）。
+    expect(running.durationMs).toBeGreaterThanOrEqual(4_000);
+    expect(running.durationMs).toBeLessThan(60_000);
+
+    const completed = runs[2]!;
+    expect(completed).toMatchObject({
+      sessionId: "session-1",
+      sessionTitle: "季度总结",
+      task: "写周报",
+      status: "completed",
+      roomId: "room-1",
+      pageLabel: "办公室",
+      startedAt: "2026-10-29T07:00:00.000Z",
+      completedAt: "2026-10-29T07:00:10.000Z",
+      durationMs: 10_000,
+      // 2 条 tool.started；message.completed.usage 求和，别的 Agent 的 999 不混入。
+      toolCalls: 2,
+      inputTokens: 120,
+      outputTokens: 30,
+      cacheReadTokens: 10,
+      error: null,
+    });
+
+    // limit 与 agent 过滤都生效。
+    expect(store.listRuns("main", 1).map(({ id }) => id)).toEqual(["run-accepted"]);
+    expect(store.listRuns("main-lite", 10).map(({ id }) => id)).toEqual(["run-other-agent"]);
+    expect(store.listRuns("nobody", 10)).toEqual([]);
+  });
+
+  it("listInvocations：状态映射 / 错误 / source / revision / 父会话 title + 事件聚合", async () => {
+    const db = await createUsageDatabase();
+    seedUsageDatabase(db);
+    const store = new AgentDebugUsageStore(db);
+
+    const invocations = store.listInvocations("doc-writer", 10);
+    expect(invocations.map(({ id }) => id)).toEqual(["inv-running", "inv-timedout", "inv-completed"]);
+
+    const running = invocations[0]!;
+    expect(running).toMatchObject({
+      kind: "invocation",
+      sessionId: "session-1",
+      sessionTitle: "季度总结",
+      task: "续写第二段",
+      status: "running",
+      roomId: null,
+      pageLabel: null,
+      completedAt: null,
+      toolCalls: 1,
+      inputTokens: null,
+      source: "scheduler",
+      revisionId: "rev-1",
+      error: null,
+    });
+    expect(running.durationMs).toBeGreaterThanOrEqual(1_000);
+    expect(running.durationMs).toBeLessThan(60_000);
+
+    const timedOut = invocations[1]!;
+    expect(timedOut).toMatchObject({
+      // timed_out → failed
+      status: "failed",
+      durationMs: 30_000,
+      toolCalls: 0,
+      inputTokens: null,
+      error: "subagent invocation timed out",
+      source: "internal_workflow",
+      sessionId: null,
+      sessionTitle: null,
+    });
+
+    const completed = invocations[2]!;
+    expect(completed).toMatchObject({
+      status: "completed",
+      sessionId: null,
+      sessionTitle: null,
+      startedAt: "2026-10-29T07:10:01.000Z",
+      completedAt: "2026-10-29T07:10:06.000Z",
+      durationMs: 5_000,
+      toolCalls: 3,
+      inputTokens: 200,
+      outputTokens: 50,
+      cacheReadTokens: 20,
+      source: "primary_agent",
+      revisionId: "rev-1",
+    });
+
+    expect(store.listInvocations("slides-builder", 10).map(({ id }) => id)).toEqual(["inv-other-agent"]);
+    expect(store.listInvocations("nobody", 10)).toEqual([]);
   });
 });

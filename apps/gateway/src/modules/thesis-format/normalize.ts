@@ -24,10 +24,21 @@ export interface TemplateMember {
 const MEMBER_EXTENSIONS = new Set([".docx", ".doc", ".dotx", ".pdf"]);
 
 /** 解 zip（GBK 文件名修复）或单文件 → 模版成员清单（跳过 __MACOSX 与超大成员）。 */
+/** 按文件头判定真实格式：很多「.docx」其实是改了扩展名的老 .doc（OLE 复合文档）。 */
+function sniffTemplateExt(bytes: Buffer): ".docx" | ".doc" | null {
+  if (bytes.length >= 4 && bytes[0] === 0x50 && bytes[1] === 0x4b) return ".docx"; // PK..
+  if (bytes.length >= 8 && bytes[0] === 0xd0 && bytes[1] === 0xcf && bytes[2] === 0x11 && bytes[3] === 0xe0) return ".doc"; // OLE2
+  return null;
+}
+
 export async function unpackTemplateInput(bytes: Buffer, name: string): Promise<TemplateMember[]> {
   const ext = extname(name).toLowerCase();
   if (ext !== ".zip") {
     if (!MEMBER_EXTENSIONS.has(ext)) throw new Error(`thesis_template_unsupported_extension:${ext || "(none)"}`);
+    // 扩展名不可信：把 .doc 改名成 .docx（或反过来）的模板很常见。
+    // 认错会导致后续「当成 OOXML 直接解析」失败——模版骨架装订整条路都走不通。
+    const sniffed = sniffTemplateExt(bytes);
+    if (sniffed && sniffed !== ext) return [{ name: name.replace(/\.[^.]+$/, sniffed), ext: sniffed, bytes }];
     return [{ name, ext, bytes }];
   }
   const zip = await JSZip.loadAsync(bytes);
@@ -121,14 +132,24 @@ export async function buildTemplateFacts(members: TemplateMember[]): Promise<The
       continue;
     }
     if (member.ext === ".docx") {
+      // docx 成员的版式事实是解析的主输入：抽不出=这张模版解析不了，
+      // 必须显性失败（带成员名），不能静默丢掉后用默认样式出卡。
       try {
         const facts = await extractOoxmlFacts(member.bytes);
         ooxml.push({ name: member.name, ...facts });
-      } catch { /* 版式抽取失败不阻断 */ }
+      } catch (error) {
+        throw new Error(
+          `thesis_template_facts_extract_failed:${member.name}:${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
       try {
         const text = await docxPlainText(member.bytes);
         if (text.trim()) documentsText.push({ name: member.name, text: text.slice(0, 60_000) });
-      } catch { /* 同上 */ }
+      } catch (error) {
+        throw new Error(
+          `thesis_template_text_extract_failed:${member.name}:${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
       continue;
     }
     if (member.ext === ".doc") {

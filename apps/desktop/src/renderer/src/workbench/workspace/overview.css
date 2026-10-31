@@ -1,0 +1,404 @@
+/* 工作空间「概览」页：项目头 / 小 E 洞察 / 动态时间线。
+ *
+ * 只使用 --ui-* token（暖纸主题的克制语言：1px hairline + 底色分层，无阴影、无毛玻璃）。
+ * 页面骨架 .wb-wspage 在 workspace.css（Lead 的公共壳），这里只追加概览内部样式，
+ * 用 .wb-wspage.wb-ov 复合选择器覆盖骨架的间距，避免依赖 CSS 加载顺序。 */
+
+.wb-wspage.wb-ov {
+  gap: 22px;
+  padding: 32px 32px 72px;
+}
+
+/* ───────────── 项目头 ───────────── */
+
+.wb-ov-head {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.wb-ov-head-top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.wb-ov-head-top > .ui-btn {
+  margin-left: auto;
+  flex: none;
+}
+
+.wb-ov-title-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.wb-ov-title {
+  margin: 0;
+  min-width: 0;
+  max-width: 100%;
+  font-family: var(--ui-font-display);
+  font-size: var(--ui-text-2xl);
+  font-weight: 750;
+  letter-spacing: var(--ui-tracking-tight);
+  color: var(--ui-text);
+}
+
+.wb-ov-title-btn {
+  display: block;
+  max-width: 100%;
+  margin: 0;
+  padding: 1px 2px;
+  border: 0;
+  border-radius: var(--ui-radius-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-align: left;
+  cursor: text;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wb-ov-title-btn:hover { background: var(--ui-hover); }
+.wb-ov-title-btn:focus-visible {
+  outline: 2px solid var(--ui-accent);
+  outline-offset: 2px;
+}
+
+.wb-ov-title-input {
+  width: 100%;
+  max-width: 640px;
+  height: auto;
+  padding: 3px 8px;
+  font-family: var(--ui-font-display);
+  font-size: var(--ui-text-xl);
+  font-weight: 700;
+  letter-spacing: var(--ui-tracking-tight);
+}
+
+.wb-ov-desc {
+  display: block;
+  max-width: 720px;
+  margin: 0;
+  padding: 2px 4px;
+  border: 0;
+  border-radius: var(--ui-radius-sm);
+  background: transparent;
+  color: var(--ui-text-2);
+  font-family: inherit;
+  font-size: var(--ui-text-base);
+  line-height: var(--ui-leading-relaxed);
+  text-align: left;
+  white-space: pre-wrap;
+  cursor: text;
+}
+.wb-ov-desc:hover { color: var(--ui-text); background: var(--ui-hover); }
+.wb-ov-desc:focus-visible {
+  outline: 2px solid var(--ui-accent);
+  outline-offset: 2px;
+}
+.wb-ov-desc.is-empty { color: var(--ui-text-3); }
+
+.wb-ov-desc-input {
+  max-width: 720px;
+  min-height: 74px;
+  background: var(--ui-surface);
+  font-size: var(--ui-text-base);
+  line-height: var(--ui-leading-relaxed);
+}
+
+/* 目标药丸 */
+
+.wb-ov-goals {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 10px;
+  min-width: 0;
+}
+
+.wb-ov-goal {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 4px 6px 4px 10px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-full);
+  background: var(--ui-surface);
+  color: var(--ui-text-2);
+  font-size: var(--ui-text-xs);
+  font-weight: 550;
+}
+.wb-ov-goal > svg {
+  flex: none;
+  color: var(--ui-accent);
+  opacity: 0.85;
+}
+
+.wb-ov-goal-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wb-ov-goal-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--ui-text-3);
+  cursor: pointer;
+}
+.wb-ov-goal-remove:hover {
+  background: var(--ui-hover-strong);
+  color: var(--ui-danger);
+}
+.wb-ov-goal-remove:focus-visible {
+  outline: 2px solid var(--ui-accent);
+  outline-offset: 1px;
+}
+.wb-ov-goal-remove:disabled { opacity: 0.4; cursor: default; }
+
+.wb-ov-goal-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 11px;
+  border: 1px dashed var(--ui-border-strong);
+  border-radius: var(--ui-radius-full);
+  background: transparent;
+  color: var(--ui-text-3);
+  font-family: inherit;
+  font-size: var(--ui-text-xs);
+  font-weight: 550;
+  cursor: pointer;
+}
+.wb-ov-goal-add:hover {
+  border-color: var(--ui-accent-line);
+  background: var(--ui-accent-softer);
+  color: var(--ui-accent-strong);
+}
+.wb-ov-goal-add:focus-visible {
+  outline: 2px solid var(--ui-accent);
+  outline-offset: 2px;
+}
+.wb-ov-goal-add:disabled { opacity: 0.45; cursor: default; }
+
+.wb-ov-goal-input {
+  width: 208px;
+  max-width: 100%;
+  height: 26px;
+  padding: 0 11px;
+  border: 1px solid var(--ui-accent);
+  border-radius: var(--ui-radius-full);
+  background: var(--ui-surface);
+  color: var(--ui-text);
+  font-family: inherit;
+  font-size: var(--ui-text-xs);
+}
+.wb-ov-goal-input:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--ui-accent-softer);
+}
+
+.wb-ov-goals-spinner {
+  flex: none;
+  color: var(--ui-text-3);
+}
+
+.wb-ov-meta {
+  margin: 0;
+  font-size: var(--ui-text-xs);
+  color: var(--ui-text-3);
+}
+
+/* ───────────── 卡片（洞察 / 动态） ───────────── */
+
+.wb-ov-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  padding: 16px 18px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface);
+}
+
+.wb-ov-card-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  min-width: 0;
+}
+.wb-ov-card-head h2 {
+  margin: 0;
+  font-size: var(--ui-text-md);
+  font-weight: 650;
+  color: var(--ui-text);
+}
+
+.wb-ov-card-action {
+  margin-left: auto;
+  flex: none;
+}
+
+.wb-ov-insight-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: var(--ui-radius-full);
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent-strong);
+  font-size: var(--ui-text-2xs);
+  font-weight: 650;
+  letter-spacing: 0.04em;
+}
+
+.wb-ov-insight-text {
+  margin: 0;
+  max-width: 78ch;
+  color: var(--ui-text-2);
+  font-size: var(--ui-text-base);
+  line-height: var(--ui-leading-relaxed);
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+
+.wb-ov-insight-state {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--ui-text-3);
+  font-size: var(--ui-text-sm);
+  line-height: var(--ui-leading-normal);
+}
+
+/* ───────────── 动态时间线 ───────────── */
+
+.wb-ov-timeline {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.wb-ov-timeline li + li { border-top: 1px solid var(--ui-border-subtle); }
+
+.wb-ov-activity {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 6px;
+  border: 0;
+  border-radius: var(--ui-radius-sm);
+  background: transparent;
+  color: var(--ui-text);
+  font-family: inherit;
+  font-size: var(--ui-text-sm);
+  text-align: left;
+  cursor: pointer;
+}
+.wb-ov-activity:hover { background: var(--ui-hover); }
+.wb-ov-activity:focus-visible {
+  outline: 2px solid var(--ui-accent);
+  outline-offset: -2px;
+}
+
+.wb-ov-activity-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-surface-alt);
+  color: var(--ui-text-2);
+}
+.wb-ov-activity-icon.is-accent {
+  background: var(--ui-accent-softer);
+  color: var(--ui-accent-strong);
+}
+.wb-ov-activity-icon.is-running {
+  background: var(--ui-running-soft);
+  color: var(--ui-running);
+}
+
+.wb-ov-activity-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wb-ov-activity-time {
+  flex: none;
+  font-size: var(--ui-text-2xs);
+  color: var(--ui-text-3);
+}
+
+.wb-ov-more {
+  align-self: flex-start;
+  height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--ui-radius-sm);
+  background: transparent;
+  color: var(--ui-accent-strong);
+  font-family: inherit;
+  font-size: var(--ui-text-xs);
+  font-weight: 600;
+  cursor: pointer;
+}
+.wb-ov-more:hover { background: var(--ui-accent-softer); }
+.wb-ov-more:focus-visible {
+  outline: 2px solid var(--ui-accent);
+  outline-offset: 2px;
+}
+
+.wb-ov-empty { padding: 20px 0 8px; }
+
+.wb-ov-note {
+  margin: 0;
+  font-size: var(--ui-text-2xs);
+  color: var(--ui-text-3);
+}
+
+/* ───────────── 窄窗（≤1100px） ───────────── */
+
+@media (max-width: 1100px) {
+  .wb-wspage.wb-ov {
+    padding: 26px 20px 56px;
+    gap: 18px;
+  }
+  .wb-ov-card { padding: 14px 14px; }
+  .wb-ov-title-input { font-size: var(--ui-text-lg); }
+}
+
+/* 概览没有任何依赖动画的表达；下面只兜底系统级减弱动效偏好。 */
+@media (prefers-reduced-motion: reduce) {
+  .wb-ov-activity,
+  .wb-ov-more,
+  .wb-ov-goal-add,
+  .wb-ov-goal-remove {
+    transition: none;
+  }
+}

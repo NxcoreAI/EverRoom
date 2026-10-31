@@ -1,5 +1,8 @@
 # 连接器栈 token 链路时序（connector-mode = 'saas'）
 
+> **2026-10-28 更新**：同步链路已删除；本文的 token 分层、会话换取与授权时序仍然有效，查询改为 Agent 即席检索（见 [connector-agent-query-refactor-plan.zh-CN.md](./connector-agent-query-refactor-plan.zh-CN.md)）。
+
+
 > 范围：仅连接器栈的 saas 连接层（默认模式），不含 local 模式、本地数据源与迁移导入。
 > 代码依据：`apps/desktop/src/main/cloud/saas-client.ts`、`apps/desktop/src/main/gateway/saas-connector-bridge.ts`、`apps/desktop/src/main/index.ts`（connector-mode 段）、`submodules/everroom-connectors/gateway-module/open-connector-sync-executor.ts`。
 

@@ -76,3 +76,11 @@ export function useAccount(): AccountContextValue {
   if (!context) throw new Error('useAccount must be used inside AccountProvider.')
   return context
 }
+
+/**
+ * 可选账号上下文：供原型外壳（OfficeProto）这类既要在 Electron 里显示真实账号、
+ * 又可能被单独挂载（浏览器预览 / 组件单测，无 AccountProvider）的组件使用。
+ */
+export function useOptionalAccount(): AccountContextValue | null {
+  return useContext(AccountContext)
+}

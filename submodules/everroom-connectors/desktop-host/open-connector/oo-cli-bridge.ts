@@ -21,6 +21,8 @@ export interface OoCliBridgeOptions {
   gatewayPid?: number | null
   gatewayVersion?: string | null
   runtimeToken?: string
+  /** 本地 oo 的 admin token（仅 local 模式注入 gateway，用于代发起 OAuth）。 */
+  adminToken?: string
   configDirectory: string
   dataDirectory: string
   timeoutMs?: number

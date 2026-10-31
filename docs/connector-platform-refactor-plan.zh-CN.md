@@ -1,5 +1,7 @@
 # 连接器数据源平台化 — 域表合流与 Provider 插件化重构方案（v1 草案）
 
+> **历史文档（2026-10-28 起）**：连接器已从同步管道改为 Agent 即席检索，不再做定时同步/本地存储。现行方案与实施记录见 [connector-agent-query-refactor-plan.zh-CN.md](./connector-agent-query-refactor-plan.zh-CN.md)。
+
 > 状态：**草案，待评审**
 > 日期：2026-08-31
 > 范围：`apps/gateway`（`modules/connectors` 主体重构、`modules/context-rooms` 读侧、`infrastructure/database` 迁移）、`apps/desktop`（连接入口与管理面板数据驱动化）、`packages/connector-contract`（类型放宽）

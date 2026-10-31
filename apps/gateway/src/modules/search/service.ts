@@ -9,6 +9,7 @@ import {
   fileVersions,
   jobs,
   parsedContents,
+  parsedDocuments,
   searchIndex,
 } from "../../infrastructure/database/schema.js";
 import { isSingleCharQuery, tokenizeJoined } from "./tokenizer.js";
@@ -189,7 +190,11 @@ export class SearchService {
       : undefined;
     const parsed = version?.parsedId
       ? this.db.select({ markdown: parsedContents.markdown }).from(parsedContents).where(eq(parsedContents.id, version.parsedId)).get()
-      : undefined;
+      : version
+        // 新解析器落 parsed_documents（parsed_id 对 pdoc 无效）：按版本反查正文，
+        // 否则 Office 文件在统一搜索里始终是空正文。
+        ? this.db.select({ markdown: parsedDocuments.markdown }).from(parsedDocuments).where(eq(parsedDocuments.fileVersionId, version.id)).get()
+        : undefined;
     const occurredAt = version?.sourceModifiedAt ?? null;
     return {
       title: entry.displayName || entry.originalName,

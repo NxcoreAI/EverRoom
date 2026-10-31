@@ -11,6 +11,8 @@ export interface OfficeAgentFileEvent {
   fileId?: string
   originalName?: string
   roomId?: string | null
+  /** 产物归属工作区（资料库/产物库按空间隔离）；排版产物落在这份空间。 */
+  workspaceId?: string
   message?: string
   /** done：部分完成（有页失败/退化）——不走「已生成」文案。 */
   partial?: boolean

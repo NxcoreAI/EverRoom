@@ -1,0 +1,654 @@
+/* 标签页工作台外壳：窗口级标签栏 + 互斥侧栏 + 内容区。
+ *
+ * 视觉语言（沿用 styles/tokens.css 的暖纸/四主题）：
+ *   - 外壳/侧栏 = --ui-chrome 暖纸；内容画布 = --ui-bg；卡片/编辑器 = --ui-surface。
+ *   - 层次靠 1px hairline + 底色分层；只有浮层（菜单/弹窗/toast）用阴影。
+ *   - 选中态：暖纸底上用「白色浮起卡片」，白色表面上用「青绿 10% 淡底」。
+ *   - 顶部标签栏整条可拖拽；macOS 红绿灯在左，Windows 自绘按钮在右。 */
+
+.wb-root {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  width: 100%;
+  overflow: hidden;
+  background: var(--ui-bg);
+  color: var(--ui-text);
+  font-family: var(--ui-font-sans);
+  font-size: var(--ui-text-base);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+.wb-root *,
+.wb-root *::before,
+.wb-root *::after { box-sizing: border-box; }
+
+/* 旧全局 styles.css 的 button 复位（border:0）随迁移删除后，嵌入工作台的
+   Agent 面板按钮（会话下拉框、发送键、ghost 图标钮…）会露出 UA 默认边框。
+   用 :where() 保持零特异性，仅复位默认值；任何类名规则里的显式描边
+   （.ui-btn、快捷提示胶囊、审批按钮…）不受影响。 */
+:where(.wb-root) button { font-family: inherit; cursor: pointer; border: 0; }
+.wb-root input,
+.wb-root textarea { font-family: inherit; }
+.wb-root :focus-visible {
+  outline: 2px solid var(--ui-accent-line);
+  outline-offset: 2px;
+}
+.wb-root ::-webkit-scrollbar { width: 9px; height: 9px; }
+.wb-root ::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--ui-text) 16%, transparent);
+  border-radius: 9px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+.wb-root ::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--ui-text) 28%, transparent);
+  background-clip: content-box;
+}
+.wb-root ::-webkit-scrollbar-track { background: transparent; }
+
+@media (prefers-reduced-motion: reduce) {
+  .wb-root *, .wb-root *::before, .wb-root *::after {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* ───────────────── 标签栏 ───────────────── */
+
+.wb-tabbar {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  flex: none;
+  height: 44px;
+  padding: 0 10px;
+  background: var(--ui-chrome);
+  border-bottom: 1px solid var(--ui-border);
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
+.wb-tabbar button,
+.wb-tabbar .wb-tab,
+.wb-tabbar .wb-tablist { -webkit-app-region: no-drag; }
+
+.wb-tabbar-spacer { flex: 1; min-width: 12px; }
+
+.wb-tabbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  align-self: center;
+  flex: none;
+  -webkit-app-region: no-drag;
+}
+
+.wb-tablist {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.wb-tablist::-webkit-scrollbar { display: none; }
+
+.wb-tab {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: none;
+  max-width: 220px;
+  height: 33px;
+  margin-bottom: -1px;
+  padding: 0 6px 0 10px;
+  border: 1px solid transparent;
+  border-bottom: 0;
+  border-radius: var(--ui-radius-md) var(--ui-radius-md) 0 0;
+  color: var(--ui-text-2);
+  font-size: var(--ui-text-sm);
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--ui-duration-fast) var(--ui-ease), color var(--ui-duration-fast) var(--ui-ease);
+}
+.wb-tab:hover { background: var(--ui-hover); color: var(--ui-text); }
+
+/* 主页标签：图标 + 文字，像一个小房子按钮 */
+.wb-tab--home { padding: 0 12px; }
+.wb-tab--home.is-active {
+  background: var(--ui-surface);
+  border-color: var(--ui-border);
+  color: var(--ui-text);
+  font-weight: 600;
+  box-shadow: 0 -1px 0 var(--ui-border) inset;
+}
+
+.wb-tab--page.is-active {
+  background: var(--ui-surface);
+  border-color: var(--ui-border);
+  color: var(--ui-text);
+  font-weight: 550;
+}
+/* 激活标签与下方内容区相接：遮住标签栏底边 hairline */
+.wb-tab--page.is-active::after,
+.wb-tab--home.is-active::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 2px;
+  background: var(--ui-surface);
+}
+.wb-tab { position: relative; }
+
+.wb-tab-icon { display: inline-flex; flex: none; }
+.wb-tab-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.wb-tab-close {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 19px;
+  height: 19px;
+  border: 0;
+  border-radius: var(--ui-radius-xs);
+  background: transparent;
+  color: var(--ui-text-3);
+  opacity: 0;
+  transition: opacity var(--ui-duration-fast) var(--ui-ease), background var(--ui-duration-fast) var(--ui-ease);
+}
+.wb-tab:hover .wb-tab-close,
+.wb-tab.is-active .wb-tab-close,
+.wb-tab-close:focus-visible { opacity: 1; }
+.wb-tab-close:hover { background: var(--ui-hover-strong); color: var(--ui-text); }
+
+.wb-tab-add {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 27px;
+  height: 27px;
+  margin-bottom: 4px;
+  border: 1px dashed transparent;
+  border-radius: var(--ui-radius-sm);
+  background: transparent;
+  color: var(--ui-text-2);
+}
+.wb-tab-add:hover { background: var(--ui-hover); color: var(--ui-text); border-color: var(--ui-border); }
+
+.wb-new-menu { min-width: 188px; }
+
+/* ───────────────── 主体布局 ───────────────── */
+
+.wb-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+
+.wb-sidebar-slot {
+  flex: none;
+  display: flex;
+  min-height: 0;
+  max-width: 260px;
+  overflow: hidden;
+  transition:
+    max-width var(--ui-duration) var(--ui-ease),
+    opacity var(--ui-duration-fast) var(--ui-ease);
+}
+/* 收起态：宽度归零 + 淡出，内容区自动铺满；侧栏组件保持挂载，再次展开不丢滚动/会话状态。 */
+.wb-sidebar-slot.is-collapsed {
+  max-width: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .wb-sidebar-slot { transition: none; }
+}
+
+.wb-content {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  background: var(--ui-bg);
+}
+
+.wb-tabpanes { position: relative; flex: 1; min-height: 0; display: flex; }
+.wb-tabpane {
+  display: none;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+}
+.wb-tabpane.is-active { display: flex; }
+
+.wb-errorbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: none;
+  padding: 8px 16px;
+  border-bottom: 1px solid color-mix(in srgb, var(--ui-danger) 30%, transparent);
+  background: var(--ui-danger-soft);
+  color: var(--ui-danger);
+  font-size: var(--ui-text-sm);
+}
+.wb-errorbar > span { flex: 1; min-width: 0; }
+
+/* ───────────────── 侧栏 ───────────────── */
+
+.wb-sidebar {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  width: 244px;
+  min-height: 0;
+  padding: 0 10px 10px;
+  background: var(--ui-chrome);
+  border-right: 1px solid var(--ui-border);
+}
+
+/* macOS 红绿灯落在窗口左上：侧栏顶部留出拖拽/让位区（标签栏已占 44px，这里再留 6px 呼吸）。 */
+.wb-sidebar-titlebar { flex: none; height: 6px; }
+
+.wb-sidebar-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px 14px;
+}
+.wb-sidebar-brand-mark {
+  width: 30px;
+  height: 30px;
+  flex: none;
+  border-radius: var(--ui-radius-sm);
+  object-fit: contain;
+}
+.wb-sidebar-brand-text { display: flex; flex-direction: column; line-height: 1.2; min-width: 0; }
+.wb-sidebar-brand-text strong {
+  font-size: var(--ui-text-base);
+  font-weight: 700;
+  letter-spacing: var(--ui-tracking-tight);
+}
+.wb-sidebar-brand-text span { font-size: var(--ui-text-2xs); color: var(--ui-text-3); }
+
+.wb-sidebar-nav { display: flex; flex-direction: column; gap: 2px; flex: none; }
+.wb-sidebar-nav + .wb-sidebar-nav { margin-top: 4px; }
+
+.wb-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: var(--ui-radius-sm);
+  background: transparent;
+  color: var(--ui-text-2);
+  font-size: var(--ui-text-sm);
+  font-weight: 500;
+  text-align: left;
+  transition: background var(--ui-duration-fast) var(--ui-ease), color var(--ui-duration-fast) var(--ui-ease);
+}
+.wb-nav-item:hover { background: var(--ui-hover); color: var(--ui-text); }
+.wb-nav-item.is-active {
+  background: var(--ui-surface);
+  border-color: var(--ui-border);
+  color: var(--ui-text);
+  font-weight: 600;
+  box-shadow: var(--ui-shadow-sm);
+}
+.wb-nav-item.is-active .wb-nav-icon { color: var(--ui-accent-strong); }
+.wb-nav-icon { display: grid; place-items: center; flex: none; width: 18px; }
+.wb-nav-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.wb-sidebar-foot {
+  margin-top: auto;
+  padding-top: 8px;
+  border-top: 1px solid var(--ui-border);
+}
+.wb-account {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px;
+  border: 1px solid transparent;
+  border-radius: var(--ui-radius-sm);
+  background: transparent;
+  color: var(--ui-text);
+  text-align: left;
+  transition: background var(--ui-duration-fast) var(--ui-ease);
+}
+.wb-account:hover { background: var(--ui-hover); }
+.wb-account.is-active { background: var(--ui-surface); border-color: var(--ui-border); box-shadow: var(--ui-shadow-sm); }
+.wb-account-avatar {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--ui-accent-fill);
+  color: var(--ui-accent-contrast);
+  font-size: var(--ui-text-sm);
+  font-weight: 650;
+}
+.wb-account-text { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.wb-account-text strong {
+  font-size: var(--ui-text-sm);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wb-account-text span {
+  font-size: var(--ui-text-2xs);
+  color: var(--ui-text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wb-account-gear { flex: none; color: var(--ui-text-3); opacity: 0; transition: opacity var(--ui-duration-fast) var(--ui-ease); }
+.wb-account:hover .wb-account-gear,
+.wb-account.is-active .wb-account-gear { opacity: 1; }
+
+/* ───────────────── 工作空间侧栏 ───────────────── */
+
+.wb-ws-sidebar { width: 250px; }
+
+.wb-ws-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 4px 12px 8px;
+}
+.wb-ws-name {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--ui-text-md);
+  font-weight: 700;
+  letter-spacing: var(--ui-tracking-tight);
+}
+.wb-ws-name-input { height: 30px; font-weight: 600; }
+
+.wb-ws-work {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--ui-border);
+}
+.wb-ws-work-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px 6px;
+  font-size: var(--ui-text-2xs);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ui-text-3);
+}
+.wb-ws-work-count {
+  margin-left: auto;
+  padding: 0 6px;
+  border-radius: var(--ui-radius-full);
+  background: var(--ui-hover);
+  font-size: var(--ui-text-2xs);
+  letter-spacing: 0;
+}
+.wb-ws-work-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 2px;
+}
+.wb-ws-work-empty {
+  padding: 14px 8px;
+  color: var(--ui-text-3);
+  font-size: var(--ui-text-xs);
+  line-height: var(--ui-leading-normal);
+}
+.wb-ws-work-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 32px;
+  padding: 1px 3px 1px 8px;
+  border-radius: var(--ui-radius-sm);
+}
+.wb-ws-work-row:hover { background: var(--ui-hover); }
+.wb-ws-work-row.is-active { background: var(--ui-surface); box-shadow: var(--ui-shadow-sm); }
+.wb-ws-work-main {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  border: 0;
+  background: transparent;
+  color: var(--ui-text);
+  font-size: var(--ui-text-xs);
+  text-align: left;
+  cursor: pointer;
+}
+.wb-ws-work-dot {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ui-text-3);
+  opacity: 0.5;
+}
+.wb-ws-work-dot.is-running { background: var(--ui-running); opacity: 1; box-shadow: 0 0 0 3px var(--ui-running-soft); }
+.wb-ws-work-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wb-ws-work-time { flex: none; font-size: var(--ui-text-2xs); color: var(--ui-text-3); }
+.wb-ws-work-status { display: none; }
+.wb-ws-work-more {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: var(--ui-radius-xs);
+  background: transparent;
+  color: var(--ui-text-3);
+  opacity: 0;
+}
+.wb-ws-work-row:hover .wb-ws-work-more,
+.wb-ws-work-more:focus-visible { opacity: 1; }
+.wb-ws-work-more:hover { background: var(--ui-hover-strong); color: var(--ui-text); }
+.wb-ws-work-row.is-draft .wb-ws-work-title { font-style: italic; }
+.wb-ws-work-row.is-renaming { padding: 2px 4px; }
+.wb-ws-work-rename { height: 28px; font-size: var(--ui-text-xs); }
+
+/* ───────────────── 文件标签 ───────────────── */
+
+.wb-filetab {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  background: var(--ui-surface);
+}
+
+/* ───────────────── 新建空间弹窗表单 ───────────────── */
+
+.wb-newspace-form { display: flex; flex-direction: column; gap: 16px; }
+
+/* 描述框固定三行：弹窗里不提供手动拖拽，右侧不留 resize 手柄。 */
+.wb-newspace-form .ui-textarea { resize: none; }
+
+/* 目标药丸与「添加目标」同高（28px）、同圆角，避免相邻胶囊一高一低。 */
+.wb-newspace-goals { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.wb-newspace-goal {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  height: 28px;
+  padding: 0 5px 0 11px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-full);
+  background: var(--ui-surface);
+  font-size: var(--ui-text-xs);
+  font-weight: 550;
+  line-height: 1;
+}
+.wb-newspace-goal-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wb-newspace-goal button {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 17px;
+  height: 17px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--ui-text-3);
+}
+.wb-newspace-goal button:hover { background: var(--ui-hover-strong); color: var(--ui-text); }
+.wb-newspace-goal-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 11px;
+  border: 1px dashed var(--ui-border-strong);
+  border-radius: var(--ui-radius-full);
+  color: var(--ui-text-3);
+  font-size: var(--ui-text-xs);
+}
+.wb-newspace-goal-add:focus-within { border-color: var(--ui-accent); color: var(--ui-accent-strong); }
+.wb-newspace-goal-add input {
+  width: 150px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--ui-text);
+  font: inherit;
+  font-size: var(--ui-text-xs);
+}
+
+/* 目录行三项（值 / 清除 / 选择）与输入框同高 32px，垂直居中对齐。 */
+.wb-newspace-path { display: flex; align-items: center; gap: 8px; }
+.wb-newspace-path-value {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  height: 32px;
+  overflow: hidden;
+  padding: 0 10px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-surface-alt);
+  font-size: var(--ui-text-sm);
+  color: var(--ui-text);
+}
+.wb-newspace-path-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wb-newspace-path-value.is-empty { color: var(--ui-text-3); }
+
+/* ───────────────── Toast / 启动态 ───────────────── */
+
+.wb-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 26px;
+  transform: translateX(-50%);
+  z-index: 140;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: min(560px, 80vw);
+  padding: 9px 14px;
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-text);
+  color: var(--ui-text-inverse);
+  font-size: var(--ui-text-sm);
+  line-height: var(--ui-leading-snug);
+  box-shadow: var(--ui-shadow-lg);
+  pointer-events: none;
+  animation: wb-toast-in var(--ui-duration) var(--ui-ease);
+}
+.wb-toast-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  color: var(--ui-warm);
+}
+.wb-toast-text { min-width: 0; overflow-wrap: anywhere; }
+@keyframes wb-toast-in {
+  from { opacity: 0; transform: translate(-50%, 8px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+
+.wb-boot {
+  display: grid;
+  place-items: center;
+  height: 100vh;
+  width: 100%;
+  color: var(--ui-text-3);
+}
+.wb-boot-inner {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--ui-text-sm);
+}
+
+/* 标签栏左侧：侧栏开关（固定占位，文件标签时隐藏按钮但不改变标签位置）。 */
+.wb-tabbar-left {
+  display: flex;
+  align-items: center;
+  flex: none;
+  align-self: center;
+}
+.wb-sidebar-toggle-slot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  flex: none;
+}

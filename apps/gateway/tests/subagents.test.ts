@@ -822,3 +822,82 @@ describe("filesystem subagent framework", () => {
     fixture.database.sqlite.close();
   });
 });
+
+/**
+ * 2026-10-27 事故回归：runtime config 会被周期性重推（桌面端同步 / 中转会话刷新），
+ * 旧实现在 invalidate() 里直接 dispose 全部缓存 runtime，等于每隔几分钟腰斩一次
+ * 长任务——论文模版解析跑到一半就变 cancelled。现在改为「在跑的先标记待回收，
+ * 跑完再 dispose」。
+ */
+describe("subagent runtime invalidate 不打断在跑的调用", () => {
+  it("忙碌中的 runtime 延迟到 release 才 dispose", async () => {
+    const disposed: string[] = [];
+    const runtimeOf = (id: string) => ({
+      id,
+      dispose: async () => { disposed.push(id); },
+      cancel: async () => undefined,
+    });
+    // 私有字段无法从类型面直接构造：只取 invalidate/release 两个方法（原型上），
+    // 其余状态按运行时形状手工装一遍。
+    const manager = Object.create(SubagentRuntimeManager.prototype) as unknown as {
+      runtimes: Map<string, unknown>;
+      users: Map<string, number>;
+      retiring: Map<string, unknown>;
+      resultCollector: { clear: () => void };
+      invalidate(): Promise<void>;
+      release(revisionId: string): void;
+    };
+    manager.runtimes = new Map();
+    manager.users = new Map();
+    manager.retiring = new Map();
+    manager.resultCollector = { clear: () => undefined };
+
+    const busy = runtimeOf("busy");
+    manager.runtimes.set("revision-busy", busy as never);
+    manager.users.set("revision-busy", 1);
+    const idle = runtimeOf("idle");
+    manager.runtimes.set("revision-idle", idle as never);
+
+    await manager.invalidate();
+
+    // 空闲的立即回收；忙碌的留着继续跑
+    expect(disposed).toContain("idle");
+    expect(disposed).not.toContain("busy");
+    expect(manager.retiring.has("revision-busy")).toBe(true);
+    expect(manager.runtimes.size).toBe(0);
+
+    manager.release("revision-busy");
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(disposed).toContain("busy");
+    expect(manager.retiring.size).toBe(0);
+  });
+
+  it("release 到仍有其他调用时先不回收", async () => {
+    const disposed: string[] = [];
+    // 私有字段无法从类型面直接构造：只取 invalidate/release 两个方法（原型上），
+    // 其余状态按运行时形状手工装一遍。
+    const manager = Object.create(SubagentRuntimeManager.prototype) as unknown as {
+      runtimes: Map<string, unknown>;
+      users: Map<string, number>;
+      retiring: Map<string, unknown>;
+      resultCollector: { clear: () => void };
+      invalidate(): Promise<void>;
+      release(revisionId: string): void;
+    };
+    manager.runtimes = new Map();
+    manager.users = new Map();
+    manager.retiring = new Map();
+    manager.resultCollector = { clear: () => undefined };
+
+    manager.runtimes.set("r1", { dispose: async () => { disposed.push("r1"); } } as never);
+    manager.users.set("r1", 2);
+    await manager.invalidate();
+    manager.release("r1");
+    expect(disposed).toHaveLength(0);
+    manager.release("r1");
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(disposed).toEqual(["r1"]);
+  });
+});

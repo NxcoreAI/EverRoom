@@ -1,0 +1,220 @@
+/* 外观设置：风格卡片 + 迷你窗口预览。
+   预览样本色直接写在这里（它们是「风格样本」而不是当前主题的颜色），
+   每个 [data-theme-sample] 与 styles/themes.css 的取值保持一致。 */
+
+.appearance-settings-description {
+  margin: 0;
+  padding: var(--ui-space-4) var(--ui-space-4) 0;
+  color: var(--ui-text-2);
+  font-size: var(--ui-text-xs);
+  line-height: var(--ui-leading-snug);
+}
+
+.appearance-theme-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--ui-space-3);
+  padding: var(--ui-space-4);
+}
+
+.appearance-theme-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-space-3);
+  padding: 10px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-xl);
+  background: var(--ui-surface);
+  color: var(--ui-text);
+  text-align: left;
+  transition:
+    border-color var(--ui-duration-fast) var(--ui-ease),
+    box-shadow var(--ui-duration-fast) var(--ui-ease),
+    transform var(--ui-duration-fast) var(--ui-ease);
+}
+
+.appearance-theme-card:hover {
+  border-color: var(--ui-border-strong);
+  box-shadow: var(--ui-shadow-md);
+  transform: translateY(-1px);
+}
+
+.appearance-theme-card[data-active='true'] {
+  border-color: var(--ui-accent-line);
+  box-shadow: 0 0 0 1px var(--ui-accent-line), var(--ui-shadow-sm);
+}
+
+.appearance-theme-card:focus-visible {
+  outline: 2px solid var(--ui-accent-line);
+  outline-offset: 2px;
+}
+
+/* ── 迷你窗口预览 ─────────────────────────────────────────────────────── */
+
+.appearance-theme-preview {
+  display: flex;
+  height: 76px;
+  overflow: hidden;
+  border: 1px solid var(--sample-border);
+  border-radius: var(--ui-radius-lg);
+  background: var(--sample-canvas);
+}
+
+.appearance-theme-preview-chrome {
+  display: flex;
+  width: 30%;
+  flex-direction: column;
+  gap: 6px;
+  padding: 9px 7px;
+  background: var(--sample-chrome);
+  border-right: 1px solid var(--sample-border);
+}
+
+.appearance-theme-preview-chrome i {
+  display: block;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--sample-chrome-line);
+}
+.appearance-theme-preview-chrome i:first-child {
+  width: 82%;
+  background: var(--sample-accent);
+}
+
+.appearance-theme-preview-canvas {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 6px;
+  padding: 11px 10px;
+}
+
+.appearance-theme-preview-line {
+  display: block;
+  width: 88%;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--sample-text);
+  opacity: 0.82;
+}
+
+.appearance-theme-preview-line.is-short {
+  width: 58%;
+  opacity: 0.5;
+}
+
+.appearance-theme-preview-pill {
+  display: block;
+  width: 34%;
+  height: 12px;
+  margin-top: auto;
+  border-radius: 999px;
+  background: var(--sample-accent);
+}
+
+/* 样本色板（不随当前主题变化） */
+
+[data-theme-sample='paper'] {
+  --sample-canvas: #fbfaf6;
+  --sample-chrome: #f3f0e7;
+  --sample-chrome-line: #e0d8c8;
+  --sample-border: #e8e2d4;
+  --sample-text: #162f37;
+  --sample-accent: #1d7f7b;
+}
+
+[data-theme-sample='plain'] {
+  --sample-canvas: #f7f8fa;
+  --sample-chrome: #eaeef4;
+  --sample-chrome-line: #d7dde6;
+  --sample-border: #e2e7ee;
+  --sample-text: #1b2430;
+  --sample-accent: #2563eb;
+}
+
+[data-theme-sample='moss'] {
+  --sample-canvas: #f4f6ef;
+  --sample-chrome: #e5ecda;
+  --sample-chrome-line: #d3ddc3;
+  --sample-border: #dfe5d3;
+  --sample-text: #1f2b23;
+  --sample-accent: #3f7f5b;
+}
+
+[data-theme-sample='night'] {
+  --sample-canvas: #15191c;
+  --sample-chrome: #1b2023;
+  --sample-chrome-line: #2f393c;
+  --sample-border: #303a3d;
+  --sample-text: #e6ecec;
+  --sample-accent: #6fd4ce;
+}
+
+/* ── 文案 / 选中角标 / 说明 ─────────────────────────────────────────────── */
+
+.appearance-theme-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: 0 2px 2px;
+}
+
+.appearance-theme-meta strong {
+  color: var(--ui-text);
+  font-size: var(--ui-text-sm);
+  font-weight: 600;
+}
+
+.appearance-theme-meta small {
+  color: var(--ui-text-3);
+  font-size: var(--ui-text-xs);
+  line-height: var(--ui-leading-snug);
+}
+
+.appearance-theme-check {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  display: grid;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--ui-accent-fill);
+  color: var(--ui-accent-contrast);
+  opacity: 0;
+  transform: scale(0.7);
+  transition:
+    opacity var(--ui-duration-fast) var(--ui-ease),
+    transform var(--ui-duration-fast) var(--ui-ease);
+}
+
+.appearance-theme-check svg {
+  width: 12px;
+  height: 12px;
+  stroke-width: 3;
+}
+
+.appearance-theme-card[data-active='true'] .appearance-theme-check {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.appearance-settings-note {
+  margin: 0;
+  padding: 0 var(--ui-space-4) var(--ui-space-4);
+  color: var(--ui-text-3);
+  font-size: var(--ui-text-xs);
+}
+
+@media (max-width: 820px) {
+  .appearance-theme-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .appearance-theme-card,
+  .appearance-theme-check { transition: none; }
+  .appearance-theme-card:hover { transform: none; }
+}

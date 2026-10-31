@@ -46,6 +46,8 @@ const CatalogFileDto = Type.Object({
   contentHash: Type.String(),
   currentVersionId: Type.Union([Type.String(), Type.Null()]),
   parsed: Type.Boolean(),
+  /** 归属工作区 id（资料库/产物库按空间过滤；NULL 归一为 default）。 */
+  workspaceId: Type.String(),
   updatedAt: Type.String(),
 });
 
@@ -187,11 +189,15 @@ export function filesRoutes(service: FilesService): FastifyPluginAsyncTypebox {
           querystring: Type.Object({
             limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 200, default: 100 })),
             offset: Type.Optional(Type.Integer({ minimum: 0, default: 0 })),
+            /** 工作区过滤（资料库/产物页）：缺省 = 全库。 */
+            workspaceId: Type.Optional(Type.String({ minLength: 1, maxLength: 100 })),
           }),
           response: { 200: Type.Object({ items: Type.Array(CatalogFileDto), total: Type.Integer() }) },
         },
       },
-      async (request) => service.listCatalog(request.query.limit, request.query.offset),
+      async (request) => service.listCatalog(request.query.limit, request.query.offset, {
+        ...(request.query.workspaceId !== undefined ? { workspaceId: request.query.workspaceId } : {}),
+      }),
     );
 
     app.get(
@@ -225,6 +231,8 @@ export function filesRoutes(service: FilesService): FastifyPluginAsyncTypebox {
             localItemId: Type.String({ minLength: 1 }),
             relativePath: Type.String({ minLength: 1 }),
             sourceModifiedAt: Type.String(),
+            /** 归属工作区（资料库/产物库按空间隔离）；缺省归 default。 */
+            workspaceId: Type.Optional(Type.String({ minLength: 1, maxLength: 100 })),
           }),
           response: {
             202: Type.Object({
@@ -248,6 +256,7 @@ export function filesRoutes(service: FilesService): FastifyPluginAsyncTypebox {
             localItemId: request.body.localItemId,
             relativePath: request.body.relativePath,
             sourceModifiedAt: new Date(request.body.sourceModifiedAt),
+            ...(request.body.workspaceId ? { workspaceId: request.body.workspaceId } : {}),
           });
           return reply.code(202).send(result);
         } catch (error) {
@@ -303,6 +312,7 @@ export function filesRoutes(service: FilesService): FastifyPluginAsyncTypebox {
           provider?: unknown; connectionId?: unknown; localSourceId?: unknown; localItemId?: unknown;
           relativePath?: unknown; sourceUri?: unknown; sourceModifiedAt?: unknown;
           pipelines?: unknown; roomId?: unknown; clipCaptureId?: unknown; fileEntryId?: unknown;
+          workspaceId?: unknown;
         };
         try {
           metadata = JSON.parse(metadataText) as typeof metadata;
@@ -337,6 +347,7 @@ export function filesRoutes(service: FilesService): FastifyPluginAsyncTypebox {
             ...(parsedModifiedAt && !Number.isNaN(parsedModifiedAt.getTime()) ? { sourceModifiedAt: parsedModifiedAt } : {}),
             ...(pipelines ? { pipelines } : {}),
             ...(text(metadata.roomId) ? { roomId: text(metadata.roomId) } : {}),
+            ...(text(metadata.workspaceId) ? { workspaceId: text(metadata.workspaceId) } : {}),
             ...(text(metadata.fileEntryId) ? { fileEntryId: text(metadata.fileEntryId) } : {}),
           });
           return reply.code(202).send(result);

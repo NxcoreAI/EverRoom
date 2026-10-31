@@ -3,11 +3,11 @@ import { resolve } from "node:path";
 import { Ajv } from "ajv";
 import { describe, expect, it, vi } from "vitest";
 
+import type { MaterialHit } from "../src/modules/subagents/slides-material-prefetch.js";
 import type { SlidesProgressPage } from "../src/modules/subagents/slides-draft-doc.js";
 import {
   materialSearchTerms,
   prefetchSlidesMaterials,
-  type MaterialHit,
 } from "../src/modules/subagents/slides-material-prefetch.js";
 
 function hit(ref: string, rank = 4, desc = "素材描述"): MaterialHit {

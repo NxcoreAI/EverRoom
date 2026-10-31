@@ -1,22 +1,14 @@
 import type { FastifyPluginAsyncTypebox } from "@fastify/type-provider-typebox";
 import multipart from "@fastify/multipart";
 import { Type } from "@sinclair/typebox";
-import { WORKSPACE_DOCUMENT_CHANNEL } from "@nxcore/agent-contract";
 import type { ThesisFormatService } from "./service.js";
 
-/** 工作区作用域：论文格式卡按工作区读写（Room 已删除，scope 写入 room_id 历史列）。 */
-const WORKSPACE_SCOPE = WORKSPACE_DOCUMENT_CHANNEL;
-
-const RoomParams = Type.Object({
-  roomId: Type.String({ minLength: 1, maxLength: 128 }),
-});
-
-const LegacyCardParams = Type.Object({
-  roomId: Type.String({ minLength: 1, maxLength: 128 }),
-  cardId: Type.String({ minLength: 1, maxLength: 64 }),
+const WorkspaceParams = Type.Object({
+  workspaceId: Type.String({ minLength: 1, maxLength: 128 }),
 });
 
 const CardParams = Type.Object({
+  workspaceId: Type.String({ minLength: 1, maxLength: 128 }),
   cardId: Type.String({ minLength: 1, maxLength: 64 }),
 });
 
@@ -24,9 +16,23 @@ const ParseBody = Type.Object({
   fileEntryId: Type.String({ minLength: 1, maxLength: 200 }),
 }, { additionalProperties: false });
 
+const ReformatOptions = Type.Object({
+  keepLogo: Type.Optional(Type.Boolean()),
+  keepHeaderFooter: Type.Optional(Type.Boolean()),
+  /** 允许 AI 补写空白小节（默认关）。 */
+  aiFill: Type.Optional(Type.Boolean()),
+  headingMapping: Type.Optional(Type.Object({
+    chapter: Type.Optional(Type.Union([Type.Literal(1), Type.Literal(2), Type.Literal(3), Type.Literal(4)])),
+    section: Type.Optional(Type.Union([Type.Literal(1), Type.Literal(2), Type.Literal(3), Type.Literal(4)])),
+    subsection: Type.Optional(Type.Union([Type.Literal(1), Type.Literal(2), Type.Literal(3), Type.Literal(4)])),
+  }, { additionalProperties: false })),
+}, { additionalProperties: false });
+
 const ReformatBody = Type.Object({
   fileEntryId: Type.String({ minLength: 1, maxLength: 200 }),
   cardId: Type.Optional(Type.String({ minLength: 1, maxLength: 64 })),
+  /** 工作台规则面板：模式/固定元素/标题层级映射（全部可缺省）。 */
+  options: Type.Optional(ReformatOptions),
 }, { additionalProperties: false });
 
 const CardDto = Type.Object({
@@ -38,11 +44,8 @@ const CardDto = Type.Object({
 });
 
 /**
- * 论文格式管线路由：模版解析（库内文件 / multipart 直传，zip 不进文件库）、
+ * 论文格式管线路由（按工作区隔离）：模版解析（库内文件 / multipart 直传，zip 不进文件库）、
  * 格式卡列表/删除与一键装订。装订是长任务（子代理映射 + 桌面渲染 + 入库），HTTP 同步等待。
- *
- * 工作区作用域为默认入口（Room 已删除）：`/v1/thesis-format/{cards,parse,parse-upload,reformat}`。
- * 旧 `/v1/thesis-format/rooms/:roomId/...` 保留兼容，roomId 直接当 scope 用（旧数据仍可读）。
  */
 export function thesisFormatRoutes(service: ThesisFormatService): FastifyPluginAsyncTypebox {
   return async (app) => {
@@ -51,28 +54,25 @@ export function thesisFormatRoutes(service: ThesisFormatService): FastifyPluginA
       limits: { fileSize: 80 * 1024 * 1024, files: 1 },
     });
 
-    const listCards = (scope: string) => service.cardStore().listInScope(scope).map((row) => ({
-      id: row.id,
-      sourceName: row.sourceName,
-      sourceFileEntryId: row.sourceFileEntryId,
-      updatedAt: row.updatedAt.toISOString(),
-      card: row.card,
-    }));
-
-    // ── 工作区作用域（新入口） ──
-
-    app.get("/v1/thesis-format/cards", {
+    app.get("/v1/thesis-format/workspaces/:workspaceId/cards", {
       schema: {
         tags: ["thesis-format"],
+        params: WorkspaceParams,
         response: {
           200: Type.Array(CardDto),
         },
       },
-    }, async () => {
-      return listCards(WORKSPACE_SCOPE);
+    }, async (request) => {
+      return service.cardStore().list(request.params.workspaceId).map((row) => ({
+        id: row.id,
+        sourceName: row.sourceName,
+        sourceFileEntryId: row.sourceFileEntryId,
+        updatedAt: row.updatedAt.toISOString(),
+        card: row.card,
+      }));
     });
 
-    app.delete("/v1/thesis-format/cards/:cardId", {
+    app.delete("/v1/thesis-format/workspaces/:workspaceId/cards/:cardId", {
       schema: {
         tags: ["thesis-format"],
         params: CardParams,
@@ -82,35 +82,46 @@ export function thesisFormatRoutes(service: ThesisFormatService): FastifyPluginA
         },
       },
     }, async (request, reply) => {
-      const removed = service.removeCard(WORKSPACE_SCOPE, request.params.cardId);
-      if (!removed) return reply.code(404).send({ error: "thesis_format_card_not_found" });
+      const removed = service.removeCard(request.params.workspaceId, request.params.cardId);
+      if (!removed) {
+        request.log.warn({ ...request.params }, "thesis card remove rejected");
+        return reply.code(404).send({ error: "thesis_format_card_not_found" });
+      }
       return { removed: true };
     });
 
-    app.post("/v1/thesis-format/parse", {
+    app.post("/v1/thesis-format/workspaces/:workspaceId/parse", {
       schema: {
         tags: ["thesis-format"],
+        params: WorkspaceParams,
         body: ParseBody,
         response: {
           200: Type.Object({
             cardId: Type.String(),
             sourceName: Type.String(),
             card: Type.Unknown(),
+            factGaps: Type.Array(Type.String()),
           }),
           400: Type.Object({ error: Type.String() }),
         },
       },
     }, async (request, reply) => {
       try {
-        const result = await service.parseFromLibrary(WORKSPACE_SCOPE, request.body.fileEntryId);
-        return reply.send({ cardId: result.cardId, sourceName: result.sourceName, card: result.card });
+        const result = await service.parseFromLibrary(request.params.workspaceId, request.body.fileEntryId);
+        return reply.send({ cardId: result.cardId, sourceName: result.sourceName, card: result.card, factGaps: result.factGaps });
       } catch (error) {
-        return reply.code(400).send({ error: error instanceof Error ? error.message : "thesis_parse_failed" });
+        const message = error instanceof Error ? error.message : "thesis_parse_failed";
+        request.log.warn({ ...request.params, fileEntryId: request.body.fileEntryId, error: message }, "thesis parse rejected");
+        return reply.code(400).send({ error: message });
       }
     });
 
-    app.post("/v1/thesis-format/parse-upload", {
-      schema: { tags: ["thesis-format"] },
+    app.post("/v1/thesis-format/workspaces/:workspaceId/parse-upload", {
+      schema: {
+        tags: ["thesis-format"],
+        params: WorkspaceParams,
+        querystring: Type.Object({ fileEntryId: Type.Optional(Type.String()) }),
+      },
       bodyLimit: 80 * 1024 * 1024,
     }, async (request, reply) => {
       const file = await request.file();
@@ -119,21 +130,32 @@ export function thesisFormatRoutes(service: ThesisFormatService): FastifyPluginA
       const bytes = await file.toBuffer();
       if (bytes.length === 0) return reply.code(400).send({ error: "file_empty" });
       try {
-        const result = await service.parseFromUpload(WORKSPACE_SCOPE, bytes, name);
-        return reply.send({ cardId: result.cardId, sourceName: result.sourceName, card: result.card });
+        const result = await service.parseFromUpload(
+          request.params.workspaceId,
+          bytes,
+          name,
+          request.query.fileEntryId ?? null,
+        );
+        return reply.send({ cardId: result.cardId, sourceName: result.sourceName, card: result.card, factGaps: result.factGaps });
       } catch (error) {
-        return reply.code(400).send({ error: error instanceof Error ? error.message : "thesis_parse_failed" });
+        const message = error instanceof Error ? error.message : "thesis_parse_failed";
+        request.log.warn({ ...request.params, fileEntryId: request.query.fileEntryId ?? null, error: message }, "thesis upload parse rejected");
+        return reply.code(400).send({ error: message });
       }
     });
 
-    app.post("/v1/thesis-format/reformat", {
+    app.post("/v1/thesis-format/workspaces/:workspaceId/reformat", {
       schema: {
         tags: ["thesis-format"],
+        params: WorkspaceParams,
         body: ReformatBody,
         response: {
           200: Type.Object({
             fileEntryId: Type.String(),
             originalName: Type.String(),
+            // 映射报告 + 出稿提示（warnings）。少了这一行，Fastify 的序列化会把
+            // report 整个丢掉——同步路径的调用方就永远看不到「为什么这次排版不对」。
+            report: Type.Optional(Type.Unknown()),
           }),
           400: Type.Object({ error: Type.String() }),
           404: Type.Object({ error: Type.String() }),
@@ -142,114 +164,74 @@ export function thesisFormatRoutes(service: ThesisFormatService): FastifyPluginA
     }, async (request, reply) => {
       try {
         const result = await service.reformat(
-          WORKSPACE_SCOPE,
+          request.params.workspaceId,
           request.body.fileEntryId,
           request.body.cardId,
+          request.body.options as Parameters<typeof service.reformat>[3],
         );
         return reply.send(result);
       } catch (error) {
         const message = error instanceof Error ? error.message : "thesis_reformat_failed";
         const code = message === "thesis_format_card_not_found" ? 404 : 400;
+        request.log.warn({ ...request.params, fileEntryId: request.body.fileEntryId, cardId: request.body.cardId ?? null, error: message }, "thesis reformat rejected");
         return reply.code(code).send({ error: message });
       }
     });
 
-    // ── 旧 Room 路径（兼容保留）：roomId 直接作为 scope，旧数据按原 roomId 读 ──
-
-    app.get("/v1/thesis-format/rooms/:roomId/cards", {
+    /**
+     * 任务化排版：立即返回 jobId（长任务不占客户端请求槽，避免 5 分钟被中间层掐断）。
+     * 客户端用 GET /v1/thesis-format/jobs/:jobId 轮询阶段与进度。
+     */
+    app.post("/v1/thesis-format/workspaces/:workspaceId/reformat-jobs", {
       schema: {
         tags: ["thesis-format"],
-        params: RoomParams,
-        response: {
-          200: Type.Array(CardDto),
-        },
-      },
-    }, async (request) => {
-      return listCards(request.params.roomId);
-    });
-
-    app.delete("/v1/thesis-format/rooms/:roomId/cards/:cardId", {
-      schema: {
-        tags: ["thesis-format"],
-        params: LegacyCardParams,
-        response: {
-          200: Type.Object({ removed: Type.Boolean() }),
-          404: Type.Object({ error: Type.String() }),
-        },
-      },
-    }, async (request, reply) => {
-      const removed = service.removeCard(request.params.roomId, request.params.cardId);
-      if (!removed) return reply.code(404).send({ error: "thesis_format_card_not_found" });
-      return { removed: true };
-    });
-
-    app.post("/v1/thesis-format/rooms/:roomId/parse", {
-      schema: {
-        tags: ["thesis-format"],
-        params: RoomParams,
-        body: ParseBody,
-        response: {
-          200: Type.Object({
-            cardId: Type.String(),
-            sourceName: Type.String(),
-            card: Type.Unknown(),
-          }),
-          400: Type.Object({ error: Type.String() }),
-        },
-      },
-    }, async (request, reply) => {
-      try {
-        const result = await service.parseFromLibrary(request.params.roomId, request.body.fileEntryId);
-        return reply.send({ cardId: result.cardId, sourceName: result.sourceName, card: result.card });
-      } catch (error) {
-        return reply.code(400).send({ error: error instanceof Error ? error.message : "thesis_parse_failed" });
-      }
-    });
-
-    app.post("/v1/thesis-format/rooms/:roomId/parse-upload", {
-      schema: { tags: ["thesis-format"], params: RoomParams },
-      bodyLimit: 80 * 1024 * 1024,
-    }, async (request, reply) => {
-      const file = await request.file();
-      if (!file) return reply.code(400).send({ error: "file_part_required" });
-      const name = file.filename || "模版.zip";
-      const bytes = await file.toBuffer();
-      if (bytes.length === 0) return reply.code(400).send({ error: "file_empty" });
-      try {
-        const result = await service.parseFromUpload(request.params.roomId, bytes, name);
-        return reply.send({ cardId: result.cardId, sourceName: result.sourceName, card: result.card });
-      } catch (error) {
-        return reply.code(400).send({ error: error instanceof Error ? error.message : "thesis_parse_failed" });
-      }
-    });
-
-    app.post("/v1/thesis-format/rooms/:roomId/reformat", {
-      schema: {
-        tags: ["thesis-format"],
-        params: RoomParams,
+        params: WorkspaceParams,
         body: ReformatBody,
         response: {
-          200: Type.Object({
-            fileEntryId: Type.String(),
-            originalName: Type.String(),
-          }),
+          200: Type.Object({ jobId: Type.String(), phase: Type.String() }),
           400: Type.Object({ error: Type.String() }),
           404: Type.Object({ error: Type.String() }),
         },
       },
     }, async (request, reply) => {
       try {
-        const result = await service.reformat(
-          request.params.roomId,
+        const job = service.startReformatJob(
+          request.params.workspaceId,
           request.body.fileEntryId,
           request.body.cardId,
+          request.body.options as Parameters<typeof service.reformat>[3],
         );
-        return reply.send(result);
+        return reply.send({ jobId: job.id, phase: job.phase });
       } catch (error) {
         const message = error instanceof Error ? error.message : "thesis_reformat_failed";
         const code = message === "thesis_format_card_not_found" ? 404 : 400;
+        request.log.warn({ ...request.params, fileEntryId: request.body.fileEntryId, cardId: request.body.cardId ?? null, error: message }, "thesis reformat job rejected");
         return reply.code(code).send({ error: message });
       }
+    });
+
+    app.get("/v1/thesis-format/jobs/:jobId", {
+      schema: {
+        tags: ["thesis-format"],
+        params: Type.Object({ jobId: Type.String({ minLength: 1, maxLength: 80 }) }),
+        response: {
+          200: Type.Object({
+            id: Type.String(),
+            status: Type.Union([Type.Literal("running"), Type.Literal("completed"), Type.Literal("failed")]),
+            phase: Type.String(),
+            progress: Type.Number(),
+            startedAt: Type.String(),
+            finishedAt: Type.Optional(Type.String()),
+            result: Type.Optional(Type.Unknown()),
+            error: Type.Optional(Type.String()),
+          }),
+          404: Type.Object({ error: Type.String() }),
+        },
+      },
+    }, async (request, reply) => {
+      const job = service.reformatJob(request.params.jobId);
+      if (!job) return reply.code(404).send({ error: "thesis_job_not_found" });
+      return reply.send(job);
     });
   };
 }

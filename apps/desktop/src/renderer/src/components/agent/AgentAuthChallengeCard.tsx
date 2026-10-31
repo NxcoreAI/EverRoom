@@ -1,9 +1,9 @@
-import type { AgentAuthEnvironmentStatus, AgentAuthEventFrame, DesktopAgentAuthChallenge } from '../../../../shared/agent-auth'
+import type { AgentAuthEnvironmentStatus, AgentAuthEventFrame, DesktopAgentAuthChallenge } from '@/shared/agent-auth'
 import { BadgeCheck, ExternalLink, Loader2, RefreshCw, ShieldQuestion, X } from 'lucide-react'
 import QRCode from 'qrcode'
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { useLocale } from '../../i18n/LocaleContext'
+import { useLocale } from '@/i18n/LocaleContext'
 
 /**
  * AuthChallenge 授权卡片（feishu-notion-document-export-plan.md §7）。挂在会话流

@@ -24,6 +24,7 @@ import {
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocale, type Translate } from '@/i18n/LocaleContext'
 
+import { ReasoningBlock } from './ReasoningBlock'
 import {
   agentToolCommand,
   agentToolKind,
@@ -512,6 +513,10 @@ export const AgentExecutionTimeline = memo(function AgentExecutionTimeline({
               return (
                 <div key={step.id} className="agent-tool-step" data-status={step.tool.status}>
                   {beforeText ? <p className="agent-activity-commentary">{beforeText}</p> : null}
+                  <ReasoningBlock
+                    variant="segment"
+                    content={step.reasoningBefore}
+                  />
                   <ToolRow tool={step.tool} now={now} sessionId={sessionId} />
                   {stageText ? <p className="agent-tool-stage" data-status={step.tool.status}>{stageText}</p> : null}
                 </div>
@@ -520,6 +525,11 @@ export const AgentExecutionTimeline = memo(function AgentExecutionTimeline({
           </div>
         </div>
       </div>
+      {/* 正在流动的未封段思考：放在折叠区域外——用户收起时间线也不打断阅读；
+          shimmer 行实时滚动，下一个工具出现即被封段、收进上方某个 step 的静态折叠段。 */}
+      {active && activity.liveReasoning ? (
+        <ReasoningBlock variant="live" active content={activity.liveReasoning} />
+      ) : null}
     </section>
   )
 })

@@ -43,6 +43,8 @@ export interface FileCatalogDto {
   /** 当前版本 id（@ 文件引用拼 context.attachments 用）。 */
   currentVersionId: string | null
   parsed: boolean
+  /** 归属工作区 id（资料库/产物库按空间隔离；旧数据缺省为 'default'）。 */
+  workspaceId: string
   updatedAt: string
 }
 

@@ -1,5 +1,7 @@
 # 连接器统一整改执行方向 v1
 
+> **历史文档（2026-10-28 起）**：连接器已从同步管道改为 Agent 即席检索，不再做定时同步/本地存储。现行方案与实施记录见 [connector-agent-query-refactor-plan.zh-CN.md](./connector-agent-query-refactor-plan.zh-CN.md)。
+
 > 状态：**已执行**（P0-P3 完成，2026-09-03；实施提交见 §11）
 > 待办：P4-2 submodule 独立仓库化（待 remote）、P4-4 打包验收
 > 日期：2026-09-03

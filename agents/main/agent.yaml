@@ -10,8 +10,8 @@ skills:
 
 capabilities:
   - conversation.respond
+  - connector.query
   - connector.read
-  - connector.write-with-approval
   - web.search
   - subagent.catalog
   - subagent.dispatch
@@ -36,14 +36,23 @@ tools:
   - slides_read
   - slides_edit
   - sheets_create
+  - word_agent_read
+  - word_agent_edit
+  - word_agent_ops
+  - word_agent_illustration
+  - word_compare
+  - word_export_pdf
+  - sheets_agent_read
+  - sheets_agent_edit
+  - file_search
   - document_export
-  - connector_data_search
-  - connector_record_get
-  - connector_sync_status
-  - connector_search
-  - connector_schema
-  - connector_apps
-  - connector_run
+  - connector_query
+  - connector_read
+  - list_apps
+  - list_connections
+  - search_actions
+  - get_action_guide
+  - execute_action
   - web_search
   - agent_catalog
   - agent_dispatch

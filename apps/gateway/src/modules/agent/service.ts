@@ -1,11 +1,16 @@
 import { randomUUID } from "node:crypto";
+import { isAbsolute } from "node:path";
 import type {
   AgentActiveDocumentContext,
+  AgentActiveFileContext,
+  AgentOpenFileContext,
   AgentEvent,
   AgentEventType,
   AgentModelPreference,
   AgentNavigationTarget,
   AgentMessage,
+  AgentWorkspace,
+  CreateAgentWorkspaceInput,
   LocalAgentDelegationContext,
   AgentRun,
   AgentRunStatus,
@@ -14,6 +19,8 @@ import type {
   AgentSessionParticipant,
   AgentSessionLink,
   AgentSessionSnapshot,
+  AgentThinkingLevel,
+  AgentThinkingLevelUpdate,
   AgentUsageRange,
   AgentUsageSnapshot,
   CreateAgentSessionLinkInput,
@@ -24,13 +31,16 @@ import type {
   SubmitPendingAgentIntentInput,
   TrustedMcpSession,
   UpdateAgentSessionInput,
+  UpdateAgentWorkspaceInput,
 } from "@nxcore/agent-contract";
 import {
+  DEFAULT_AGENT_WORKSPACE_ID,
   MAIN_AGENT_ID,
   MODEL_PREFERENCE_AGENT_IDS,
   MODEL_TIER_AGENT_IDS,
   WORKSPACE_DOCUMENT_CHANNEL,
   channelAgentIdFromAgentId,
+  isAgentThinkingLevel,
   modelPreferenceFromAgentId,
 } from "@nxcore/agent-contract";
 import type { AgentPermissionMode } from "@nxcore/agent-contract";
@@ -51,6 +61,7 @@ import {
   agentSessionLinks,
   agentSessionParticipants,
   agentSessions,
+  agentWorkspaces,
   documents,
   pendingAgentIntents,
 } from "../../infrastructure/database/schema.js";
@@ -114,6 +125,63 @@ function normalizeRoomId(roomId: string | null | undefined): string | null {
   return normalized ? normalized : null;
 }
 
+function normalizeWorkspaceId(workspaceId: string | null | undefined): string | null {
+  const normalized = workspaceId?.trim();
+  return normalized ? normalized : null;
+}
+
+/** 默认工作区展示名（迁移文件 0089 与懒初始化共用同一文案）。 */
+const DEFAULT_AGENT_WORKSPACE_NAME = "默认工作区";
+
+/** 空串/空白 → null；非空路径必须是绝对路径（跨平台按当前平台语义校验）。 */
+function normalizeWorkspacePath(path: string | null | undefined): string | null {
+  const normalized = path?.trim();
+  if (!normalized) return null;
+  if (!isAbsolute(normalized)) throw new Error("agent_workspace_path_invalid");
+  return normalized;
+}
+
+/** 工作区描述上限（trim 后按字符数计）。 */
+const AGENT_WORKSPACE_DESCRIPTION_MAX_LENGTH = 2_000;
+/** 工作区目标条数上限与单条长度上限。 */
+const AGENT_WORKSPACE_GOALS_MAX_COUNT = 12;
+const AGENT_WORKSPACE_GOAL_MAX_LENGTH = 200;
+
+/** 描述归一：null/空白 → null；超长抛错（路由映射为 400）。 */
+function normalizeWorkspaceDescription(description: string | null | undefined): string | null {
+  if (description === null || description === undefined) return null;
+  if (typeof description !== "string") throw new Error("agent_workspace_description_invalid");
+  const normalized = description.trim();
+  if (!normalized) return null;
+  if (normalized.length > AGENT_WORKSPACE_DESCRIPTION_MAX_LENGTH) {
+    throw new Error("agent_workspace_description_too_long");
+  }
+  return normalized;
+}
+
+/**
+ * 目标归一：null/undefined → null（调用方决定空数组语义）；每条 trim 后必须非空，
+ * 条数 ≤ 12、单条 ≤ 200 字符，否则抛错（路由映射为 400）。
+ */
+function normalizeWorkspaceGoals(goals: string[] | null | undefined): string[] | null {
+  if (goals === null || goals === undefined) return null;
+  if (!Array.isArray(goals)) throw new Error("agent_workspace_goals_invalid");
+  if (goals.length > AGENT_WORKSPACE_GOALS_MAX_COUNT) {
+    throw new Error("agent_workspace_goals_too_many");
+  }
+  const normalized: string[] = [];
+  for (const goal of goals) {
+    if (typeof goal !== "string") throw new Error("agent_workspace_goals_invalid");
+    const trimmed = goal.trim();
+    if (!trimmed) throw new Error("agent_workspace_goal_empty");
+    if (trimmed.length > AGENT_WORKSPACE_GOAL_MAX_LENGTH) {
+      throw new Error("agent_workspace_goal_too_long");
+    }
+    normalized.push(trimmed);
+  }
+  return normalized;
+}
+
 function resolveRoomId(registry: AgentRoomRegistry | undefined, roomId: string | null | undefined): string | null {
   const normalized = normalizeRoomId(roomId);
   if (!normalized) return null;
@@ -156,16 +224,35 @@ function toSession(row: typeof agentSessions.$inferSelect): AgentSession {
   const channelAgentId = channelAgentIdFromAgentId(row.activeAgentId);
   return {
     id: row.id,
+    // 兼容迁移前/直插留空的旧行：空归属按默认工作区暴露，避免会话在 UI 里成为孤儿。
+    workspaceId: normalizeWorkspaceId(row.workspaceId) ?? DEFAULT_AGENT_WORKSPACE_ID,
     roomId: normalizeRoomId(row.roomId),
     pageLabel: row.pageLabel,
     runtimeId: row.runtimeId,
     activeAgentId: row.activeAgentId,
     ...(modelPreference ? { modelPreference } : {}),
     ...(channelAgentId ? { channelAgentId } : {}),
+    // 会话级思考档位覆盖：NULL 暴露为 null＝跟随模型配置的 reasoning。
+    thinkingLevel: row.thinkingLevel ?? null,
     title: row.title,
     status: row.status,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+function toWorkspace(row: typeof agentWorkspaces.$inferSelect): AgentWorkspace {
+  return {
+    id: row.id,
+    name: row.name,
+    description: row.description ?? null,
+    // 兼容迁移前/直插留空的旧行：NULL 与空数组都暴露为 []。
+    goals: Array.isArray(row.goals) ? row.goals : [],
+    path: row.path,
+    kind: row.kind,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+    lastOpenedAt: row.lastOpenedAt.toISOString(),
   };
 }
 
@@ -274,6 +361,47 @@ function normalizeAgentLocale(value: string | undefined): string | undefined {
     : undefined;
 }
 
+const ACTIVE_FILE_KINDS = new Set(["docx", "spreadsheet", "slides", "pdf"]);
+
+/**
+ * 用户当前浏览的 Office 文件上下文：只做形状校验（fileId/title/kind）。
+ * 文件本体是否存在交给读取工具判断——打开中的文件可能刚导入、条目尚未就绪，
+ * 这里拒绝整轮 run 只会让用户看到莫名其妙的失败。
+ */
+function normalizeActiveFile(value: AgentActiveFileContext | undefined): AgentActiveFileContext | undefined {
+  if (!value) return undefined;
+  const fileId = typeof value.fileId === "string" ? value.fileId.trim() : "";
+  const title = typeof value.title === "string" ? value.title.trim() : "";
+  const kind = typeof value.kind === "string" && ACTIVE_FILE_KINDS.has(value.kind) ? value.kind : null;
+  if (!fileId || !title || !kind) return undefined;
+  return {
+    fileId,
+    title: title.slice(0, 200),
+    kind: kind as AgentActiveFileContext["kind"],
+    ...(value.editable === false ? { editable: false } : {}),
+  };
+}
+
+/** 打开中的页签清单上限：与运行提示的展示上限一致，超出部分对定位没有帮助。 */
+const OPEN_FILES_LIMIT = 20;
+
+/** 工作区打开的全部 Office 页签：逐条做形状校验、按 fileId 去重并限量。 */
+function normalizeOpenFiles(
+  values: readonly AgentOpenFileContext[] | undefined,
+): AgentOpenFileContext[] | undefined {
+  if (!Array.isArray(values) || values.length === 0) return undefined;
+  const seen = new Set<string>();
+  const files: AgentOpenFileContext[] = [];
+  for (const value of values) {
+    const normalized = normalizeActiveFile(value);
+    if (!normalized || seen.has(normalized.fileId)) continue;
+    seen.add(normalized.fileId);
+    files.push({ ...normalized, active: value.active === true });
+    if (files.length >= OPEN_FILES_LIMIT) break;
+  }
+  return files.length ? files : undefined;
+}
+
 function localAgentDelegationContext(input: {
   request: StartAgentRunInput;
   pageLabel: string;
@@ -324,7 +452,7 @@ function runtimePrompt(
   const selectedText = input.context?.selectedText?.trim();
   const attachments = input.context?.attachments ?? [];
   const connectorRouting = EXTERNAL_CONNECTOR_REQUEST.test(input.prompt)
-    ? "外部服务路由规则：当用户请求读取、搜索、创建、发送或管理 Gmail、GitHub、Notion、Google Drive、Slack、Dropbox、日历、云盘等第三方服务中的数据时，必须在当前回合立即使用对应 connector 工具完成请求；不要只描述将要调用工具，也不要调用文档工具。"
+    ? "外部服务路由规则：当用户请求读取、搜索、创建、发送或管理 Gmail、GitHub、Notion、Google Drive、Slack、Dropbox、日历、云盘等第三方服务中的数据时，必须在当前回合立即使用 connector 工具完成请求。外部资料优先用 connector_query 检索（命中后用 connector_read 读 ref）；需要特殊 action 时才用 search_actions / get_action_guide / execute_action。不要只描述将要调用工具，也不要调用文档工具。"
     : null;
   const attachmentContext = attachments.length
     ? [
@@ -429,8 +557,14 @@ export class AgentService {
   private readonly executionContexts = new Map<string, {
     sessionId: string;
     roomId: string | null;
+    /** 会话所属工作区：Agent 产物入库带 workspaceId（资料库/产物库按空间隔离）。 */
+    workspaceId: string | null;
     availableRooms: AgentRoomReference[];
     activeDocument?: AgentActiveDocumentContext;
+    /** 用户当前浏览的 Office 文件：工具（file_read）按它兜底 fileId。 */
+    activeFile?: AgentActiveFileContext;
+    /** 工作区打开的全部 Office 页签（含 active 标记）：运行时据此告知 Agent。 */
+    openFiles?: AgentOpenFileContext[];
     dispatchSource?: LocalAgentDispatchRunSource;
   }>();
   private readonly trustedMcpSessions = new Map<string, Set<string>>();
@@ -475,6 +609,14 @@ export class AgentService {
   }
 
   /**
+   * 连接器上下文（create-server 注入）：每次 run 开始时生成一段已连接服务摘要。
+   * 失败/未登录返回 null，不阻断对话。
+   */
+  setConnectorContextResolver(resolve: () => Promise<string | null>): void {
+    this.resolveConnectorContext = resolve;
+  }
+
+  /**
    * 渠道会话 MCP token 回收（create-server 注入）：deleteSession 时撤销
    * 该会话挂在 CLI 子进程上的 EverRoom 工具端点。
    */
@@ -483,6 +625,7 @@ export class AgentService {
   }
 
   private resolveTierRuntime: ((agentId: string) => AgentRuntime | null) | undefined;
+  private resolveConnectorContext: (() => Promise<string | null>) | undefined;
   private revokeChannelSession: ((sessionId: string) => Promise<void>) | undefined;
 
   /** replaceRuntime 热替换后也必须重挂，否则审批立即回落 false（无 UI 询问）。 */
@@ -606,6 +749,45 @@ export class AgentService {
       setSessionPermissionMode?: (sessionId: string, mode: AgentPermissionMode) => Promise<{ applied: boolean } | null> | void;
     };
     const result = await structural.setSessionPermissionMode?.(sessionId, mode);
+    return Boolean(result && typeof result === "object" && result.applied);
+  }
+
+  /**
+   * 设置会话思考档位：写 DB（跨 run 事实源）+ 尽力转发活跃 run 的 runtime
+   * （pi 立即 setSessionThinkingLevel；run 间隙不转发——下次 startRun 从 DB 预热）。
+   * null 表示清除覆盖、回到「跟随模型配置的 reasoning」。
+   */
+  async setSessionThinkingLevel(
+    sessionId: string,
+    level: AgentThinkingLevel | null,
+  ): Promise<AgentThinkingLevelUpdate> {
+    if (level !== null && !isAgentThinkingLevel(level)) throw new Error("agent_thinking_level_invalid");
+    const updated = this.db.update(agentSessions)
+      .set({ thinkingLevel: level, updatedAt: new Date() })
+      .where(eq(agentSessions.id, sessionId))
+      .returning({ id: agentSessions.id }).get();
+    if (!updated) throw new Error("agent_session_not_found");
+    let applied = false;
+    const liveRun = this.db.select({ id: agentRuns.id })
+      .from(agentRuns)
+      .where(and(eq(agentRuns.sessionId, sessionId), eq(agentRuns.status, "running")))
+      .get();
+    const liveRuntime = liveRun ? this.runRuntimes.get(liveRun.id) : undefined;
+    if (liveRuntime) {
+      applied = await this.applyThinkingLevelToRuntime(liveRuntime, sessionId, level);
+    }
+    return { thinkingLevel: level, applied };
+  }
+
+  private async applyThinkingLevelToRuntime(
+    runtime: AgentRuntime,
+    sessionId: string,
+    level: AgentThinkingLevel | null,
+  ): Promise<boolean> {
+    const structural = runtime as AgentRuntime & {
+      setSessionThinkingLevel?: (sessionId: string, level: AgentThinkingLevel | null) => Promise<{ applied: boolean } | void> | void;
+    };
+    const result = await structural.setSessionThinkingLevel?.(sessionId, level);
     return Boolean(result && typeof result === "object" && result.applied);
   }
 
@@ -764,6 +946,130 @@ export class AgentService {
     await Promise.allSettled(consumers);
   }
 
+  /** 默认工作区懒初始化：迁移之外（老库、手工建库、测试库）也保证默认工作区可用。 */
+  ensureDefaultWorkspace(): AgentWorkspace {
+    const existing = this.db.select().from(agentWorkspaces)
+      .where(eq(agentWorkspaces.id, DEFAULT_AGENT_WORKSPACE_ID)).get();
+    if (existing) return toWorkspace(existing);
+    const now = new Date();
+    const inserted = this.db.insert(agentWorkspaces).values({
+      id: DEFAULT_AGENT_WORKSPACE_ID,
+      name: DEFAULT_AGENT_WORKSPACE_NAME,
+      description: null,
+      goals: [],
+      path: null,
+      kind: "default",
+      createdAt: now,
+      updatedAt: now,
+      lastOpenedAt: now,
+    }).onConflictDoNothing().returning().get();
+    if (inserted) return toWorkspace(inserted);
+    // 并发初始化：另一路已建好（或 id 被占用），复读兜底。
+    const concurrent = this.db.select().from(agentWorkspaces)
+      .where(eq(agentWorkspaces.id, DEFAULT_AGENT_WORKSPACE_ID)).get();
+    if (!concurrent) throw new Error("agent_default_workspace_unavailable");
+    return toWorkspace(concurrent);
+  }
+
+  /** 工作区清单：默认工作区保证存在，按最近打开时间倒序。 */
+  listWorkspaces(): AgentWorkspace[] {
+    this.ensureDefaultWorkspace();
+    return this.db.select().from(agentWorkspaces)
+      .orderBy(desc(agentWorkspaces.lastOpenedAt), desc(agentWorkspaces.createdAt))
+      .all()
+      .map(toWorkspace);
+  }
+
+  createWorkspace(input: CreateAgentWorkspaceInput): AgentWorkspace {
+    const name = input.name?.trim();
+    if (!name) throw new Error("agent_workspace_name_required");
+    const path = normalizeWorkspacePath(input.path);
+    const description = normalizeWorkspaceDescription(input.description);
+    const goals = normalizeWorkspaceGoals(input.goals) ?? [];
+    const now = new Date();
+    const created = this.db.insert(agentWorkspaces).values({
+      id: randomUUID(),
+      name,
+      description,
+      goals,
+      path,
+      kind: "custom",
+      createdAt: now,
+      updatedAt: now,
+      lastOpenedAt: now,
+    }).returning().get();
+    return toWorkspace(created);
+  }
+
+  /** 更新工作区；不存在返回 null。lastOpenedAt 接受 ISO 字符串并落库为 Date。 */
+  updateWorkspace(workspaceId: string, input: UpdateAgentWorkspaceInput): AgentWorkspace | null {
+    const id = workspaceId.trim();
+    if (!id) return null;
+    const patch: {
+      name?: string;
+      description?: string | null;
+      goals?: string[];
+      path?: string | null;
+      lastOpenedAt?: Date;
+      updatedAt: Date;
+    } = { updatedAt: new Date() };
+    if (input.name !== undefined) {
+      const name = input.name.trim();
+      if (!name) throw new Error("agent_workspace_name_required");
+      patch.name = name;
+    }
+    // description 传 null/空白串 → 清空（落库 NULL）；goals 传 [] → 清空。
+    if (input.description !== undefined) {
+      patch.description = normalizeWorkspaceDescription(input.description);
+    }
+    if (input.goals !== undefined) {
+      patch.goals = normalizeWorkspaceGoals(input.goals) ?? [];
+    }
+    if (input.path !== undefined) {
+      patch.path = normalizeWorkspacePath(input.path);
+    }
+    if (input.lastOpenedAt !== undefined) {
+      const parsed = new Date(input.lastOpenedAt);
+      if (Number.isNaN(parsed.getTime())) throw new Error("agent_workspace_last_opened_at_invalid");
+      patch.lastOpenedAt = parsed;
+    }
+    const updated = this.db.update(agentWorkspaces).set(patch)
+      .where(eq(agentWorkspaces.id, id)).returning().get();
+    return updated ? toWorkspace(updated) : null;
+  }
+
+  /**
+   * 删除自定义工作区：默认工作区不可删；该工作区下的会话回落到默认工作区，
+   * 不留孤儿会话。不存在返回 false。
+   */
+  deleteWorkspace(workspaceId: string): boolean {
+    const id = workspaceId.trim();
+    if (!id) return false;
+    if (id === DEFAULT_AGENT_WORKSPACE_ID) throw new Error("agent_workspace_default_immutable");
+    const existing = this.db.select({ id: agentWorkspaces.id }).from(agentWorkspaces)
+      .where(eq(agentWorkspaces.id, id)).get();
+    if (!existing) return false;
+    this.db.transaction((tx) => {
+      tx.update(agentSessions)
+        .set({ workspaceId: DEFAULT_AGENT_WORKSPACE_ID })
+        .where(eq(agentSessions.workspaceId, id))
+        .run();
+      tx.delete(agentWorkspaces).where(eq(agentWorkspaces.id, id)).run();
+    });
+    return true;
+  }
+
+  /** 会话归属解析：传入且存在则用之，否则回落默认工作区（非法 id 不报错）。 */
+  private resolveWorkspaceIdForSession(workspaceId: string | null | undefined): string {
+    const requested = normalizeWorkspaceId(workspaceId);
+    if (requested) {
+      const exists = this.db.select({ id: agentWorkspaces.id }).from(agentWorkspaces)
+        .where(eq(agentWorkspaces.id, requested)).get();
+      if (exists) return requested;
+    }
+    return this.ensureDefaultWorkspace().id;
+  }
+
   createSession(input: CreateAgentSessionInput): AgentSession {
     const now = new Date();
     // 档位在创建时锁定为 activeAgentId；lite 未配置（tier resolver 缺席）
@@ -782,12 +1088,15 @@ export class AgentService {
     }
     const row: typeof agentSessions.$inferInsert = {
       id: randomUUID(),
+      workspaceId: this.resolveWorkspaceIdForSession(input.workspaceId),
       // Room is run context, not session identity. Keep the legacy column
       // nullable so old databases and specialized callers remain compatible.
       roomId: null,
       pageLabel: input.pageLabel.trim(),
       runtimeId: this.runtime.id,
       activeAgentId,
+      // 思考档位创建时写入；undefined 落库为 null＝跟随模型配置。
+      thinkingLevel: input.thinkingLevel ?? null,
       status: "idle",
       createdAt: now,
       updatedAt: now,
@@ -821,6 +1130,8 @@ export class AgentService {
       const now = new Date();
       session = this.db.insert(agentSessions).values({
         id: sessionId,
+        // 远程命令会话无 UI 工作区归属，按默认工作区登记，保持归属非空。
+        workspaceId: this.ensureDefaultWorkspace().id,
         roomId: null,
         pageLabel: "Remote Agent",
         runtimeId: this.runtime.id,
@@ -860,13 +1171,18 @@ export class AgentService {
     return run;
   }
 
-  listSessions(pageLabel?: string, roomId?: string | null): AgentSession[] {
+  listSessions(pageLabel?: string, roomId?: string | null, workspaceId?: string | null): AgentSession[] {
     const normalizedRoomId = roomId === undefined ? undefined : normalizeRoomId(roomId);
+    const normalizedWorkspaceId = workspaceId === undefined || workspaceId === null
+      ? undefined
+      : normalizeWorkspaceId(workspaceId);
     const rows = this.db.select().from(agentSessions)
       .orderBy(desc(agentSessions.updatedAt), desc(agentSessions.createdAt)).all();
     return rows
       .filter((row) => pageLabel === undefined || row.pageLabel === pageLabel)
       .filter((row) => normalizedRoomId === undefined || normalizeRoomId(row.roomId) === normalizedRoomId)
+      .filter((row) => normalizedWorkspaceId === undefined
+        || (normalizeWorkspaceId(row.workspaceId) ?? DEFAULT_AGENT_WORKSPACE_ID) === normalizedWorkspaceId)
       .map(toSession);
   }
 
@@ -945,6 +1261,7 @@ export class AgentService {
     this.bashAuthorizedSessions.delete(sessionId);
     this.editAuthorizedSessions.delete(sessionId);
     this.forgetSessionPermissionMode(this.runtime, sessionId);
+    this.forgetSessionThinkingLevel(this.runtime, sessionId);
     await this.revokeChannelSession?.(sessionId);
     return true;
   }
@@ -955,6 +1272,14 @@ export class AgentService {
       forgetSessionPermissionMode?: (sessionId: string) => void;
     };
     structural.forgetSessionPermissionMode?.(sessionId);
+  }
+
+  /** 会话删除后清理 runtime 侧思考档位缓存（结构化可选，pi 实现）。 */
+  private forgetSessionThinkingLevel(runtime: AgentRuntime, sessionId: string): void {
+    const structural = runtime as AgentRuntime & {
+      forgetSessionThinkingLevel?: (sessionId: string) => void;
+    };
+    structural.forgetSessionThinkingLevel?.(sessionId);
   }
 
   /**
@@ -1200,6 +1525,7 @@ export class AgentService {
       agentSessionId,
       runId,
       roomId: room,
+      workspaceId: normalizeWorkspaceId(session.workspaceId) ?? DEFAULT_AGENT_WORKSPACE_ID,
       ...(execution?.availableRooms ? { availableRooms: execution.availableRooms } : {}),
       ...(execution?.activeDocument ? { activeDocument: execution.activeDocument } : {}),
     });
@@ -1305,6 +1631,11 @@ export class AgentService {
       ? this.documentRegistry?.validateActiveDocumentContext(input.context.activeDocument, runRoomId)
         ?? input.context.activeDocument
       : undefined;
+    const openFiles = normalizeOpenFiles(input.context?.openFiles);
+    // 页签清单里的 active 项就是当前文件：桌面端漏传 activeFile 时也能兜住。
+    const activeFile = normalizeActiveFile(input.context?.activeFile)
+      ?? openFiles?.find((file) => file.active)
+      ?? undefined;
 
     // 档位（main/main-direct/main-lite）在会话创建时锁定：会话已锁档位时
     // 请求另一个档位不生效（静默沿用会话档位）；local agent 切换不受影响。
@@ -1376,6 +1707,9 @@ export class AgentService {
     if (session.permissionMode) {
       await this.applyPermissionModeToRuntime(selectedRuntime, sessionId, session.permissionMode);
     }
+    // 思考档位预热：每轮都推（runtime 热替换/进程重启后 Map 丢失），
+    // null＝清除覆盖、回到「跟随模型配置」。
+    await this.applyThinkingLevelToRuntime(selectedRuntime, sessionId, session.thinkingLevel ?? null);
     let participant = this.db.select().from(agentSessionParticipants).where(and(
       eq(agentSessionParticipants.sessionId, sessionId),
       eq(agentSessionParticipants.agentId, selectedAgentId),
@@ -1528,8 +1862,11 @@ export class AgentService {
     this.executionContexts.set(runId, {
       sessionId,
       roomId: runRoomId,
+      workspaceId: normalizeWorkspaceId(session.workspaceId) ?? DEFAULT_AGENT_WORKSPACE_ID,
       availableRooms: rooms,
       ...(activeDocument ? { activeDocument } : {}),
+      ...(activeFile ? { activeFile } : {}),
+      ...(openFiles ? { openFiles } : {}),
       dispatchSource: {
         priorMessages: priorMessages.slice(-LOCAL_AGENT_HISTORY_MESSAGE_LIMIT).map((message) => ({
           role: message.role,
@@ -1571,7 +1908,9 @@ export class AgentService {
             "materials 按最小必要声明子 Agent 需要的材料。子 Agent 不与用户直接对话，结果返回后由你汇总转述；你仍是对用户说话的唯一角色，不要替本机 Agent 回答或切换 Agent。",
           ].join("\n")
         : null;
-      const externalContext = nativeContinuationRef ? null : importedContext ?? referencedLocalAgentContext ?? referencedConversationContext;
+      const baseExternalContext = nativeContinuationRef ? null : importedContext ?? referencedLocalAgentContext ?? referencedConversationContext;
+      const connectorContext = await this.resolveConnectorContext?.().catch(() => null) ?? null;
+      const externalContext = [connectorContext, baseExternalContext].filter(Boolean).join("\n\n") || null;
       const responseLanguage = normalizeAgentLocale(input.responseLanguage);
       const attachments = await this.resolveAttachments(input.attachments);
       const delegationContext = targetRuntime ? localAgentDelegationContext({
@@ -1597,6 +1936,7 @@ export class AgentService {
         ...(responseLanguage ? { responseLanguage } : {}),
         pageLabel: runPageLabel,
         roomId: runRoomId,
+        workspaceId: normalizeWorkspaceId(session.workspaceId) ?? DEFAULT_AGENT_WORKSPACE_ID,
         availableRooms: rooms,
         captureMemory: input.captureMemory !== false,
         recallMemory: input.recallMemory !== false,
@@ -1604,6 +1944,8 @@ export class AgentService {
         ...(referencedConversationId ? { referencedConversationId } : {}),
         ...(referencedTargets.length ? { referencedLocalAgents: referencedTargets } : {}),
         ...(activeDocument ? { activeDocument } : {}),
+        ...(activeFile ? { activeFile } : {}),
+        ...(openFiles ? { openFiles } : {}),
         ...(delegationContext ? { delegationContext } : {}),
       });
     } catch (error) {

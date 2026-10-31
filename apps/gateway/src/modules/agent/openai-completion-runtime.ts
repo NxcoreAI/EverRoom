@@ -6,6 +6,7 @@ import { proxyFetch } from "../../infrastructure/network/proxy-fetch.js";
 import {
   AsyncEventQueue,
   type AgentRuntime,
+  type AgentRuntimeDescription,
   type ResumeRuntimeRunInput,
   type RuntimeEvent,
   type RuntimeRun,
@@ -48,6 +49,32 @@ export class OpenAiCompletionAgentRuntime implements AgentRuntime {
 
   async getCapabilities(): Promise<RuntimeCapabilities> {
     return { streaming: false, reasoning: false, tools: false, steering: false, resume: false };
+  }
+
+  /** 调试面板数据源：单次补全 runtime 只有模型/baseUrl + 系统提示词，无工具与预算。 */
+  async describe(): Promise<AgentRuntimeDescription> {
+    return {
+      runtimeId: this.id,
+      model: {
+        provider: null,
+        model: this.config.model,
+        baseUrl: this.config.baseUrl,
+        api: "openai-completions",
+        reasoning: null,
+        temperature: this.config.temperature ?? null,
+        maxTokens: this.config.maxTokens ?? null,
+        contextWindow: null,
+      },
+      role: null,
+      systemPrompt: this.config.systemPrompt,
+      skills: Object.entries(this.config.skillPrompts ?? {}).map(([name, prompt]) => ({ name, prompt })),
+      tools: [],
+      builtinTools: [],
+      mcpServers: [],
+      promptGuidelines: [],
+      limits: null,
+      capabilities: await this.getCapabilities(),
+    };
   }
 
   async start(input: StartRuntimeRunInput): Promise<RuntimeRun> {

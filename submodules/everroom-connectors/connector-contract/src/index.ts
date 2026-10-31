@@ -14,7 +14,7 @@ export interface ConnectorConnection { id:string; provider:ConnectorProvider; /*
 export interface SyncScope { id:string; connectionId:string; providerScopeId:string; displayName:string; state:SyncState; sourceCursor:string|null; deliveryCursor:number; checkpointRevision:number; leaseOwner:string|null; leaseExpiresAt:string|null; fenceToken:number; updatedAt:string; }
 export interface SyncRun { id:string; scopeId:string; mode:SyncMode; status:"queued"|"running"|"completed"|"failed"|"interrupted"; processed:number; failed:number; error:string|null; startedAt:string; finishedAt:string|null; }
 export interface MailMessage { id:string; connectionId:string; providerMessageId:string; providerThreadId:string|null; subject:string|null; snippet:string|null; textBody:string|null; htmlBody:string|null; receivedAt:string|null; sentAt:string|null; isRead:boolean; isStarred:boolean; isDraft:boolean; isTombstone:boolean; updatedAt:string; }
-export interface ConnectorStatus { enabled:boolean; connections:ConnectorConnection[]; scopes:SyncScope[]; runs:SyncRun[]; }
+export interface ConnectorStatus { enabled:boolean; connections:ConnectorConnection[]; scopes:SyncScope[]; runs:SyncRun[]; /** 本地墓碑（断开的连接）：oo 凭据仍在但被关掉——桌面据此区分「未开启」与「未连接」。旧网关无此字段。 */ disconnected?:Array<{ service:string; connectionName:string }>; }
 /** SyncProvider 注册表元数据（网关 /v1/nango-connectors/providers 端点）——桌面连接菜单/图标/分类的数据源。 */
 export type ConnectorAuthChannel = "nango-oauth" | "api-token" | "webcal-url" | "password" | "manual-import";
 export interface ConnectorProviderSummary { provider:ConnectorProvider; label:string; category:"mail"|"calendar"|"docs"; iconKey:string; dataTypes:string[]; authChannel:ConnectorAuthChannel; connected:boolean; comingSoon:boolean; }

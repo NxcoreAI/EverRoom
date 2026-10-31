@@ -194,6 +194,10 @@ export function resolveSubagentRuntimeBase(input: {
 
 export class SubagentRuntimeManager {
   private readonly runtimes = new Map<string, AgentRuntime>();
+  /** revisionId → 正在跑的调用数（invalidate 据此判断能否立即回收）。 */
+  private readonly users = new Map<string, number>();
+  /** 已移出缓存但仍有调用在跑的 runtime：跑完即 dispose。 */
+  private readonly retiring = new Map<string, AgentRuntime>();
   private readonly agentTools = new Map<string, () => PiAgentRuntimeTool[]>();
   private readonly agentResultValidators = new Map<string, SubagentResultValidator>();
   private readonly resultCollector = new SubagentResultCollector();
@@ -206,6 +210,7 @@ export class SubagentRuntimeManager {
   ) {}
 
   acquire(revision: LoadedSubagentRevision): AgentRuntime {
+    this.users.set(revision.id, (this.users.get(revision.id) ?? 0) + 1);
     const cached = this.runtimes.get(revision.id);
     if (cached) return cached;
     const runtime = this.trace(this.createRuntime(revision), revision);
@@ -252,18 +257,51 @@ export class SubagentRuntimeManager {
   }
 
   async dispose(): Promise<void> {
-    await Promise.all([...this.runtimes.values()].map((runtime) => runtime.dispose()));
+    await Promise.all([
+      ...[...this.runtimes.values()].map((runtime) => runtime.dispose()),
+      ...[...this.retiring.values()].map((runtime) => runtime.dispose()),
+    ]);
     this.runtimes.clear();
+    this.retiring.clear();
+    this.users.clear();
     this.resultCollector.clear();
   }
 
   /**
    * runtime config 变更后作废缓存：下次 acquire 用新配置重建。
-   * dispose 会中断进行中的子 Agent run（orchestrator 有重启恢复），
-   * 配置变更是罕见手动操作，可接受。
+   *
+   * **在跑的调用不能被中断**：runtime config 会被周期性重推（桌面端同步、中转
+   * 会话刷新、连接器会话变更都触发），早期实现直接 dispose 全部缓存 runtime，
+   * 等于每隔几分钟腰斩一次长任务——论文模版解析（约 6 分钟）实测每次跑到一半就
+   * 变 cancelled（2026-10-27 定位）。现在把仍有调用在跑的 runtime 标记为「待回收」，
+   * 等它跑完再 dispose；缓存条目本身立即移出，新调用照常拿新配置。
    */
   async invalidate(): Promise<void> {
-    await this.dispose();
+    for (const [revisionId, runtime] of [...this.runtimes]) {
+      this.runtimes.delete(revisionId);
+      if ((this.users.get(revisionId) ?? 0) > 0) {
+        this.retiring.set(revisionId, runtime);
+        continue;
+      }
+      await runtime.dispose().catch(() => undefined);
+    }
+    if (this.retiring.size === 0) this.resultCollector.clear();
+  }
+
+  /** 调用结束归还配额：延迟回收的 runtime 在这里才真正 dispose。 */
+  release(revisionId: string): void {
+    const count = (this.users.get(revisionId) ?? 1) - 1;
+    if (count > 0) {
+      this.users.set(revisionId, count);
+      return;
+    }
+    this.users.delete(revisionId);
+    const retired = this.retiring.get(revisionId);
+    if (!retired) return;
+    this.retiring.delete(revisionId);
+    void retired.dispose().catch(() => undefined).then(() => {
+      if (this.retiring.size === 0 && this.runtimes.size === 0) this.resultCollector.clear();
+    });
   }
 
   private createRuntime(revision: LoadedSubagentRevision): AgentRuntime {

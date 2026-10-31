@@ -3,7 +3,12 @@
   "properties": {
     "task": {
       "type": "string",
-      "enum": ["parse_template", "bind_thesis"]
+      "enum": [
+        "parse_template",
+        "bind_thesis",
+        "adjudicate_mapping",
+        "fill_sections"
+      ]
     },
     "formatCard": {
       "type": "object",
@@ -13,48 +18,202 @@
     "bindingSpec": {
       "type": "object",
       "properties": {
-        "title": { "type": "string", "maxLength": 300 },
+        "title": {
+          "type": "string",
+          "maxLength": 300
+        },
         "coverFields": {
           "type": "object",
-          "additionalProperties": { "type": "string", "maxLength": 200 }
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 200
+          }
         },
-        "abstractZh": { "type": "string", "maxLength": 8000 },
-        "keywordsZh": { "type": "array", "items": { "type": "string", "maxLength": 60 }, "maxItems": 12 },
-        "abstractEn": { "type": "string", "maxLength": 8000 },
-        "keywordsEn": { "type": "array", "items": { "type": "string", "maxLength": 60 }, "maxItems": 12 },
+        "abstractZh": {
+          "type": "string",
+          "maxLength": 8000
+        },
+        "keywordsZh": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 60
+          },
+          "maxItems": 12
+        },
+        "abstractEn": {
+          "type": "string",
+          "maxLength": 8000
+        },
+        "keywordsEn": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 60
+          },
+          "maxItems": 12
+        },
         "chapters": {
           "type": "array",
           "items": {
             "type": "object",
             "properties": {
-              "level": { "type": "integer", "minimum": 1, "maximum": 4 },
-              "headingText": { "type": "string", "minLength": 1, "maxLength": 200 },
-              "blockStart": { "type": "integer", "minimum": 0 },
-              "blockEnd": { "type": "integer", "minimum": 1 }
+              "level": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 4
+              },
+              "headingText": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "blockStart": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "blockEnd": {
+                "type": "integer",
+                "minimum": 1
+              }
             },
-            "required": ["level", "headingText", "blockStart", "blockEnd"],
+            "required": [
+              "level",
+              "headingText",
+              "blockStart",
+              "blockEnd"
+            ],
             "additionalProperties": false
           },
           "maxItems": 400
         },
-        "references": { "type": "array", "items": { "type": "string", "maxLength": 600 }, "maxItems": 200 },
-        "appendixBlocks": {
-          "type": ["object", "null"],
-          "properties": {
-            "start": { "type": "integer", "minimum": 0 },
-            "end": { "type": "integer", "minimum": 1 }
+        "references": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 600
           },
-          "required": ["start", "end"],
+          "maxItems": 200
+        },
+        "appendixBlocks": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "start": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "end": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "required": [
+            "start",
+            "end"
+          ],
           "additionalProperties": false
         },
-        "acknowledgementParagraphs": { "type": "array", "items": { "type": "string", "maxLength": 2000 }, "maxItems": 40 },
-        "achievements": { "type": "array", "items": { "type": "string", "maxLength": 600 }, "maxItems": 40 }
+        "acknowledgementParagraphs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "maxItems": 40
+        },
+        "achievements": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 600
+          },
+          "maxItems": 40
+        }
       },
-      "required": ["title", "coverFields", "abstractZh", "keywordsZh", "abstractEn", "keywordsEn", "chapters", "references", "appendixBlocks", "acknowledgementParagraphs", "achievements"],
+      "required": [
+        "title",
+        "coverFields",
+        "abstractZh",
+        "keywordsZh",
+        "abstractEn",
+        "keywordsEn",
+        "chapters",
+        "references",
+        "appendixBlocks",
+        "acknowledgementParagraphs",
+        "achievements"
+      ],
       "additionalProperties": false,
       "description": "bind_thesis only: source-to-skeleton mapping. Block ranges reference sourceOutline indices, half-open [start, end)."
+    },
+    "templateFactsGaps": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 300
+      },
+      "maxItems": 20,
+      "description": "parse_template only: template facts that could NOT be determined (image in header without extractable bytes, clause conflicts, missing sections). Empty when the template was fully readable. NEVER silently fall back to a default — list the gap here instead."
+    },
+    "decisions": {
+      "type": "array",
+      "maxItems": 40,
+      "description": "adjudicate_mapping only: one line per uncertain chapter. slotId = the template slot id it belongs to, or null when no template slot fits (the system will append it at the end instead of dropping it).",
+      "items": {
+        "type": "object",
+        "properties": {
+          "chapterTraceId": {
+            "type": "string",
+            "maxLength": 40
+          },
+          "slotId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 40
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 120
+          }
+        },
+        "required": [
+          "chapterTraceId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "generatedSections": {
+      "type": "array",
+      "maxItems": 60,
+      "description": "fill_sections only: 空小节的补写内容。只能改写论文已有事实，不许编造。",
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "text": {
+            "type": "string",
+            "minLength": 20,
+            "maxLength": 1200
+          }
+        },
+        "required": [
+          "title",
+          "text"
+        ]
+      }
     }
   },
-  "required": ["task"],
+  "required": [
+    "task"
+  ],
   "additionalProperties": false
 }

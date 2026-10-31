@@ -6,6 +6,7 @@ import type { GenOfficeSlidesRuntime } from './office-runtime'
 import { convertLegacyOfficeFile } from './legacy-convert'
 import { ensureWorkingCopyWritable } from './working-copy'
 import { OFFICE_WORKSPACE_BOUNDS_CHANNEL } from './office-view-manager'
+import { OfficeViewFirstFrameGate } from './office-view-first-frame'
 
 async function preparePresentation(fileId: string, hash: string, name: string, storagePath: string): Promise<string> {
   if (!/^file-[a-z0-9-]+$/i.test(fileId) || !/^[a-f0-9]{64}$/i.test(hash)) throw new Error('Presentation identity is invalid.')
@@ -34,13 +35,16 @@ export class SlidesViewManager {
   private disposed = false
   private active = false
   private bounds: Rectangle | null = null
+  private readonly gate: OfficeViewFirstFrameGate
   private constructor(
     private readonly window: BrowserWindow,
     private readonly slides: GenOfficeSlidesRuntime,
     private readonly view: WebContentsView,
     private readonly editable: boolean,
     readonly documentPath: string,
-  ) {}
+  ) {
+    this.gate = new OfficeViewFirstFrameGate(view, window)
+  }
 
   get webContentsId(): number {
     return this.view.webContents.id
@@ -72,9 +76,9 @@ export class SlidesViewManager {
     if (active) {
       // 多实例并存时全局激活指针只有一个：每次激活都要重新指向本视图。
       this.slides.setActiveSlidesWebContents(this.view.webContents)
-      if (this.bounds) this.view.setBounds(this.bounds)
     }
-    this.view.setVisible(active && Boolean(this.bounds?.width && this.bounds.height))
+    // 首次出帧闸门：空视图直接显示会让宿主占位界面透出来。
+    this.gate.setActive(active)
   }
 
   private readonly handleBounds = (event: Electron.IpcMainEvent, input: unknown): void => {
@@ -91,8 +95,7 @@ export class SlidesViewManager {
       height: Math.max(0, Math.min(Math.round(value.height!), content.height - y)),
     }
     this.bounds = bounds
-    this.view.setBounds(bounds)
-    this.view.setVisible(this.active && bounds.width > 0 && bounds.height > 0)
+    this.gate.setBounds(bounds)
   }
 
   readonly dispose = async (): Promise<boolean> => {
@@ -102,6 +105,7 @@ export class SlidesViewManager {
       if (!proceed) return false
     }
     this.disposed = true
+    this.gate.dispose()
     ipcMain.removeListener(OFFICE_WORKSPACE_BOUNDS_CHANNEL, this.handleBounds)
     if (!this.view.webContents.isDestroyed()) this.view.webContents.close({ waitForBeforeUnload: false })
     return true

@@ -33,7 +33,16 @@ function sse(): Response {
   });
 }
 
-async function captureRequest(config: Partial<PiAgentRuntimeConfig> & { model: string }): Promise<Record<string, unknown>> {
+interface CapturedRuntime {
+  runtime: PiAgentRuntime;
+  /** 每轮请求体，按发出顺序追加。 */
+  bodies: Record<string, unknown>[];
+}
+
+/** 建 runtime + fetch stub：每个模型请求的 body 收进 bodies，响应统一是 sse。 */
+async function createCapturedRuntime(
+  config: Partial<PiAgentRuntimeConfig> & { model: string },
+): Promise<CapturedRuntime> {
   const root = await mkdtemp(join(tmpdir(), "pi-thinking-request-"));
   temporary.push(root);
   const bodies: Record<string, unknown>[] = [];
@@ -58,10 +67,18 @@ async function captureRequest(config: Partial<PiAgentRuntimeConfig> & { model: s
     systemPrompt: "你是测试助手。",
     ...config,
   });
+  return { runtime, bodies };
+}
+
+/** 跑一轮并 drain 事件，返回 runtimeSessionRef 供下一轮复用。 */
+async function startRound(
+  runtime: PiAgentRuntime,
+  input: { sessionId: string; runtimeSessionRef: string | null; runId: string },
+): Promise<string> {
   const run = await runtime.start({
-    runId: `run-${Math.random().toString(16).slice(2)}`,
-    sessionId: `session-${Math.random().toString(16).slice(2)}`,
-    runtimeSessionRef: null,
+    runId: input.runId,
+    sessionId: input.sessionId,
+    runtimeSessionRef: input.runtimeSessionRef,
     prompt: "1+1 等于几？",
     pageLabel: "thinking request",
     roomId: null,
@@ -70,7 +87,22 @@ async function captureRequest(config: Partial<PiAgentRuntimeConfig> & { model: s
     recallMemory: false,
   } as never);
   for await (const _event of run.events) { /* drain */ }
-  await runtime.dispose();
+  return run.runtimeSessionRef;
+}
+
+async function captureRequest(
+  config: Partial<PiAgentRuntimeConfig> & { model: string },
+): Promise<Record<string, unknown>> {
+  const { runtime, bodies } = await createCapturedRuntime(config);
+  try {
+    await startRound(runtime, {
+      runId: `run-${Math.random().toString(16).slice(2)}`,
+      sessionId: `session-${Math.random().toString(16).slice(2)}`,
+      runtimeSessionRef: null,
+    });
+  } finally {
+    await runtime.dispose();
+  }
   expect(bodies.length).toBeGreaterThan(0);
   return bodies[0]!;
 }
@@ -89,5 +121,48 @@ describe("DeepSeek thinking 请求参数", () => {
   it("非 DeepSeek 模型不注入思考开关，避免第三方端点 400", async () => {
     const body = await captureRequest({ model: "qwen-plus" });
     expect(body.thinking).toBeUndefined();
+  });
+});
+
+describe("会话级 thinkingLevel 覆盖", () => {
+  it("覆盖从下一轮生效，重置为 null 后恢复跟随配置", async () => {
+    const { runtime, bodies } = await createCapturedRuntime({ model: "deepseek-v4.1-flash", reasoning: "off" });
+    const sessionId = "session-thinking-override";
+    try {
+      const ref = await startRound(runtime, { sessionId, runtimeSessionRef: null, runId: "run-1" });
+      // 第一轮建会话时还没有覆盖值，跟随 config.reasoning="off"。
+      expect(await runtime.setSessionThinkingLevel(sessionId, "medium")).toEqual({ applied: true });
+      await startRound(runtime, { sessionId, runtimeSessionRef: ref, runId: "run-2" });
+      await runtime.setSessionThinkingLevel(sessionId, null);
+      await startRound(runtime, { sessionId, runtimeSessionRef: ref, runId: "run-3" });
+    } finally {
+      await runtime.dispose();
+    }
+    expect(bodies.map((body) => body.thinking)).toEqual([
+      { type: "disabled" },
+      { type: "enabled" },
+      { type: "disabled" },
+    ]);
+  });
+
+  it("建会话前设置：applied=false 但生效；覆盖互不影响，forget 后回到跟随配置", async () => {
+    const { runtime, bodies } = await createCapturedRuntime({ model: "deepseek-v4.1-flash", reasoning: "off" });
+    const sessionId = "session-thinking-pending";
+    try {
+      expect(await runtime.setSessionThinkingLevel(sessionId, "medium")).toEqual({ applied: false });
+      const ref = await startRound(runtime, { sessionId, runtimeSessionRef: null, runId: "run-1" });
+      // 另一个网关会话没有覆盖，仍跟随 config.reasoning。
+      await startRound(runtime, { sessionId: "session-other", runtimeSessionRef: null, runId: "run-2" });
+      // forget 清掉覆盖记录后，同一个缓存会话在下一轮回到跟随配置。
+      runtime.forgetSessionThinkingLevel(sessionId);
+      await startRound(runtime, { sessionId, runtimeSessionRef: ref, runId: "run-3" });
+    } finally {
+      await runtime.dispose();
+    }
+    expect(bodies.map((body) => body.thinking)).toEqual([
+      { type: "enabled" },
+      { type: "disabled" },
+      { type: "disabled" },
+    ]);
   });
 });

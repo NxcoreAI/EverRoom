@@ -1,25 +1,33 @@
 /**
  * everroom-connectors · gateway-module 出口
  *
- * 宿主（apps/gateway）经 workspace 别名 `@nxcore/connectors-module` 引用本模块。
- * 模块内文件自旧路径 `apps/gateway/src/modules/connectors/` 平移而来，
- * 相对导入保持不变；对宿主的依赖收敛为：
- *   - `@nxcore/connector-contract`（submodule 内兄弟包）
- *   - `#gateway/*`（宿主注入类型：config / database / schema，见 host-types.ts）
- *   - `#agent/*`（宿主 agent 运行时，见 host-types.ts）
+ * 连接器已从「同步管道」收敛为「Agent 即席检索」：
+ *   - 传输：OpenConnectorHttpClient（oo HTTP 唯一传输缝）
+ *   - 授权：OpenConnectorAuthorizationService（本地模式）
+ *   - 连接目录：ConnectorConnectionCatalog（oo 为准 + 本地墓碑）
+ *   - 查询：query/ 下的档案、扇出、coverage、ref、read
+ *   - 文件转换：converters / email-content / legacy-office（服务文档理解，不属于同步）
  */
-export * from "./types.js";
-export { SYNC_PROVIDERS, assertSyncProvidersValid } from "./sync-providers/index.js";
-export { ConnectorManager } from "./manager.js";
-export { projectDomainRecords } from "./domain-projection.js";
-export { nangoConnectorRoutes } from "./routes.js";
+export {
+  OpenConnectorHttpClient,
+  envelopeData,
+  runOoHttp,
+  type OoHttpRunner,
+} from "./open-connector-http-client.js";
+export {
+  OpenConnectorAuthorizationService,
+  ooServiceOfProvider,
+  type ConnectorAuthorizationStart,
+} from "./open-connector-authorization.js";
+export {
+  ConnectorConnectionCatalog,
+  providerOfService,
+  connectionIdOf,
+  parseConnectionId,
+  type ConnectorDisconnectStore,
+} from "./connection-runtime.js";
+export { connectorRoutes, type AuthorizationLike } from "./routes.js";
 export { htmlToMarkdown, converterOfExtension } from "./converters.js";
 export { convertEmailBody, convertRawEmailToMarkdown } from "./email-content.js";
-export {
-  connectorEmailToMarkdown,
-  connectorDocumentToMarkdown,
-  connectorCalendarEventToMarkdown,
-  connectorTodoToMarkdown,
-  connectorGenericRecordToMarkdown,
-} from "./connector-markdown.js";
-export { parseIcsCalendar } from "./ics.js";
+export * from "./query/index.js";
+export type { OpenConnectorCliConfig } from "./host-types.js";

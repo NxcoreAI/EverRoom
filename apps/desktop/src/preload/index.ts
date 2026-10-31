@@ -13,6 +13,11 @@ import type {
   AgentConnectionDto,
 } from '../shared/agent-access'
 import type {
+  AgentDebugAgentResponse,
+  AgentDebugAgentsResponse,
+  AgentDebugUsageResponse,
+} from '../shared/agent-debug'
+import type {
   SearchItemType,
   SearchMessageContextDto,
   SearchPageDto,
@@ -23,7 +28,7 @@ import type { IngestPipelines } from '../shared/ingest'
 import type { McpServersSnapshot } from '../shared/mcp'
 import type { OfficeAgentAskEvent, OfficeAgentFileEvent, OsOpenedDocument } from '../shared/office'
 import type { SlidesPageImagesStatus } from '../shared/slides'
-import { OIDC_LOGIN_CANCELLED_MESSAGE, type AiRelayKeeperEventType, type CloudAccountStatus, type DesktopRequestError, type NxcoreDesktopApi, type SubagentSelectionRewriteInput } from '../shared/sources'
+import { OIDC_LOGIN_CANCELLED_MESSAGE, OFFICE_PREVIEW_REQUEST_CHANNEL, type AiRelayKeeperEventType, type CloudAccountStatus, type DesktopRequestError, type NxcoreDesktopApi, type OfficePreviewKind, type OfficePreviewRequest, type SubagentSelectionRewriteInput } from '../shared/sources'
 import { isCursorCompletionAgentErrorPayload } from '../shared/cursor-completion'
 import {
   isDesktopLocale,
@@ -208,6 +213,10 @@ const api: NxcoreDesktopApi = {
       ipcRenderer.on('update:downloaded', (_event, info) => listener(info))
       return () => ipcRenderer.removeAllListeners('update:downloaded')
     },
+    onError: (listener) => {
+      ipcRenderer.on('update:error', (_event, payload) => listener(payload))
+      return () => ipcRenderer.removeAllListeners('update:error')
+    },
   },
   window: {
     minimize: () => ipcRenderer.invoke('window:minimize'),
@@ -220,9 +229,20 @@ const api: NxcoreDesktopApi = {
       return () => ipcRenderer.removeListener('window:maximized-changed', handler)
     },
   },
+  appearance: {
+    setTheme: (theme) => ipcRenderer.invoke('appearance:set-theme', theme),
+  },
   office: {
     setActiveInstance: (id) => ipcRenderer.invoke('office:instance:set-active', id),
     closeInstance: (id) => ipcRenderer.invoke('office:instance:close', id),
+    /**
+     * 干净画布：隐藏/显示 Word 编辑器操作区（Ribbon/状态栏/标尺/导航）。
+     * fileId 省略 = 当前焦点 Word 页签；hidden 省略 = 切换。
+     */
+    toggleChrome: (input?: { fileId?: string; hidden?: boolean }) =>
+      ipcRenderer.invoke('office:chrome-toggle', input ?? {}),
+    /** Doc 生成流程原型：真实走 genoffice 管线生成 docx 并入库，返回 fileId。 */
+    generateDocxPrototype: (input) => ipcRenderer.invoke('office:generate-docx-prototype', input),
     setWorkspaceBounds: (bounds) => ipcRenderer.send('office:workspace-bounds', bounds),
     /** Agent 生成 Office 文件的进度/完成事件（完成带 fileId 用于自动打开预览）。 */
     onAgentFile: (listener: (event: OfficeAgentFileEvent) => void) => {
@@ -235,6 +255,22 @@ const api: NxcoreDesktopApi = {
       const handler = (_event: Electron.IpcRendererEvent, payload: OfficeAgentAskEvent) => listener(payload)
       ipcRenderer.on('office:agent-ask', handler)
       return () => ipcRenderer.removeListener('office:agent-ask', handler)
+    },
+    /** Agent 改写后实例被重开：重新挂一次视口，把新原生视图的矩形上报给主进程。 */
+    onInstanceReloaded: (listener: (event: { id: string; kind: OfficePreviewKind }) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: { id: string; kind: OfficePreviewKind }) => listener(payload)
+      ipcRenderer.on('office:instance-reloaded', handler)
+      return () => ipcRenderer.removeListener('office:instance-reloaded', handler)
+    },
+    /**
+     * 主进程主动打开的预览实例（排版面板 👁 预览模版原文件等）：
+     * 实例已在主进程建好，渲染端只需开顶栏标签并激活——不接这条事件，
+     * 原生视图会一直隐藏，用户看到的就是「点了预览没反应」。
+     */
+    onPreviewRequest: (listener: (request: OfficePreviewRequest) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: OfficePreviewRequest) => listener(payload)
+      ipcRenderer.on(OFFICE_PREVIEW_REQUEST_CHANNEL, handler)
+      return () => ipcRenderer.removeListener(OFFICE_PREVIEW_REQUEST_CHANNEL, handler)
     },
   },
   locale: {
@@ -292,27 +328,14 @@ const api: NxcoreDesktopApi = {
     },
   },
   nangoConnector: {
-    runtimeStatus: () => invokeQuietly('nango-connector:runtime-status'),
     status: () => invoke('nango-connector:status'),
     providers: () => invoke('nango-connector:providers'),
-    oauthConfigs: () => invokeQuietly<string[] | null>('nango-connector:oauth-configs'),
+    oauthConfigs: () => invokeQuietly<Array<{ provider: string; displayName: string | null; iconUrl: string | null }> | string[] | null>('nango-connector:oauth-configs'),
     startAuthorization: (provider) => invoke('nango-connector:start-authorization', provider),
     authorizationStatus: (id) => invoke('nango-connector:authorization-status', id),
     remoteAccount: (provider) => invoke('nango-connector:remote-account', provider),
-    registerConnection: (input) => invoke('nango-connector:register-connection', input),
-    createWebcalSubscription: (url) => invoke('nango-connector:create-webcal-subscription', url),
-    disableConnection: (id) => invoke('nango-connector:disable-connection', id),
-    enableConnection: (id) => invoke('nango-connector:enable-connection', id),
     purgeConnection: (id) => invoke('nango-connector:purge-connection', id),
-    triggerSync: (id, mode) => invoke('nango-connector:trigger-sync', id, mode),
-    cancelRun: (id) => invoke('nango-connector:cancel-run', id),
-    scopes: (connectionId) => invoke('nango-connector:list-scopes', connectionId),
-    runs: (connectionId) => invoke('nango-connector:list-runs', connectionId),
-    mail: (query) => invoke('nango-connector:list-mail', query),
-    documents: (connectionId) => invoke('nango-connector:list-documents', connectionId),
-    document: (connectionId, documentId) => invoke('nango-connector:read-document', connectionId, documentId),
-    records: (connectionId, type) => invoke('nango-connector:list-records', connectionId, type),
-    recordTotals: (connectionId) => invoke('nango-connector:record-totals', connectionId),
+    reconnectConnection: (id) => invoke('nango-connector:reconnect-connection', id),
   },
   cliConnector: {
     // 通道名与主进程 OPEN_CONNECTOR_CHANNELS 对齐（open-connector:*；统一改名前的
@@ -432,6 +455,16 @@ const api: NxcoreDesktopApi = {
     setFixedPort: (port: number | null) =>
       invoke<{ fixedPort: number | null; needsRestart: boolean }>('agent-access:settings-set-fixed-port', port),
     restartGateway: () => invoke<{ baseUrl: string }>('agent-access:restart-gateway'),
+  },
+  agentDebug: {
+    // 调试面板是只读查询：quiet 调用（不弹全局错误、不做 gateway recovery 重试），
+    // 失败文本由面板自己以一行弱化文字展示。
+    listAgents: () => invokeQuietly<AgentDebugAgentsResponse>('agent-debug:list-agents'),
+    getAgent: (id: string) => invokeQuietly<AgentDebugAgentResponse>('agent-debug:get-agent', id),
+    listUsage: (id: string, limit?: number) =>
+      invokeQuietly<AgentDebugUsageResponse>('agent-debug:list-usage', id, limit),
+    // 打开独立调试窗口（单例）。窗口的生命周期由主进程持有，渲染层只触发。
+    openWindow: () => invoke<void>('agent-debug:open-window'),
   },
   slides: {
     /** 配图过目卡轮询：后台逐张生成期间按草稿文档拉最新会话快照。 */
@@ -561,6 +594,7 @@ const api: NxcoreDesktopApi = {
     resolveApproval: (approvalId, decision, feedback) => invoke('agent:resolve-approval', approvalId, decision, feedback),
     getPermissionMode: (sessionId) => invoke('agent:get-permission-mode', sessionId),
     setPermissionMode: (sessionId, mode) => invoke('agent:set-permission-mode', sessionId, mode),
+    setThinkingLevel: (sessionId, level) => invoke('agent:set-thinking-level', sessionId, level),
     subscribe: (sessionId) => invoke('agent:subscribe', sessionId),
     unsubscribe: () => invoke('agent:unsubscribe'),
     onEvent: (listener) => {
@@ -570,6 +604,13 @@ const api: NxcoreDesktopApi = {
       ipcRenderer.on('agent:event', handleEvent)
       return () => ipcRenderer.removeListener('agent:event', handleEvent)
     },
+  },
+  workspace: {
+    list: () => invoke('workspace:list'),
+    create: (input) => invoke('workspace:create', input),
+    update: (workspaceId, input) => invoke('workspace:update', workspaceId, input),
+    remove: (workspaceId) => invoke('workspace:remove', workspaceId),
+    pickDirectory: () => invoke('workspace:pick-directory'),
   },
   cursorCompletionAgent: {
     createSession: (input) => invokeQuietly('cursor-completion-agent:create-session', input),
@@ -595,7 +636,7 @@ const api: NxcoreDesktopApi = {
     list: (roomId?: string | null) => invoke('documents:list', roomId),
     listTrash: (roomId?: string | null) => invoke('documents:list-trash', roomId),
     get: (documentId) => invoke('documents:get', documentId),
-    readMarkdown: (documentId) => invoke('documents:read-markdown', documentId),
+    readMarkdown: (documentId: string) => invoke('documents:read-markdown', documentId),
     listBlocks: (documentId) => invoke('documents:list-blocks', documentId),
     listBlockBacklinks: (documentId, blockId) => invoke('documents:list-block-backlinks', documentId, blockId),
     listVersions: (documentId, options) => invoke('documents:list-versions', documentId, options),
@@ -621,6 +662,8 @@ const api: NxcoreDesktopApi = {
     import: (input) => invoke('documents:import', input),
     save: (documentId, input) => invoke('documents:save', documentId, input),
     delete: (documentId) => invoke('documents:delete', documentId),
+    move: (documentId, fromRoomId, roomId) => invoke('documents:move', documentId, fromRoomId, roomId),
+    moveMany: (documentIds, fromRoomId, roomId) => invoke('documents:move-many', documentIds, fromRoomId, roomId),
     restore: (documentId) => invoke('documents:restore', documentId),
     deletePermanently: (documentId) => invoke('documents:delete-permanently', documentId),
     emptyTrash: (roomId?: string | null) => invoke('documents:empty-trash', roomId),
@@ -705,7 +748,8 @@ const api: NxcoreDesktopApi = {
     },
   },
   files: {
-    list: (limit?: number, offset?: number) => invoke('files:list', limit, offset),
+    list: (limit?: number, offset?: number, options?: { workspaceId?: string }) =>
+      invoke('files:list', limit, offset, options),
     catalogEntry: (fileId: string) => invoke('files:catalog-entry', fileId),
     get: (fileId: string) => invoke('files:get', fileId),
     readMarkdown: (fileId: string, options?: { waitMs?: number; pollMs?: number }) =>
@@ -720,23 +764,23 @@ const api: NxcoreDesktopApi = {
       fileId: string,
       originalName?: string,
       contentHash?: string,
-      options?: { editable?: boolean; roomId?: string },
+      options?: { editable?: boolean; roomId?: string; workspaceId?: string },
     ) =>
       invoke('files:open-original', fileId, originalName, contentHash, options),
-    pickAndImport: (options?: { pipelines?: IngestPipelines; roomId?: string }) =>
+    pickAndImport: (options?: { pipelines?: IngestPipelines; roomId?: string; workspaceId?: string }) =>
       invoke('files:pick-and-import', options),
     /** 仅选择：返回文件/文件夹路径，不导入（创建 Room 弹窗暂存用）。 */
     pickPaths: () => invoke<string[]>('files:pick-paths'),
     /** 提交后的一次性导入：把暂存路径交给统一导入链路。 */
-    importPaths: (paths: string[], options?: { pipelines?: IngestPipelines; roomId?: string }) =>
+    importPaths: (paths: string[], options?: { pipelines?: IngestPipelines; roomId?: string; workspaceId?: string }) =>
       invoke('files:import-paths-once', paths, options),
-    importDropped: (files: File[], options?: { pipelines?: IngestPipelines; roomId?: string }) => {
+    importDropped: (files: File[], options?: { pipelines?: IngestPipelines; roomId?: string; workspaceId?: string }) => {
       const paths = files.map((file) => webUtils.getPathForFile(file)).filter(Boolean)
       return invoke('files:import-paths-once', paths, options)
     },
-    importArtifacts: (files: File[], roomId: string) => {
+    importArtifacts: (files: File[], roomId: string, workspaceId?: string) => {
       const paths = files.map((file) => webUtils.getPathForFile(file)).filter(Boolean)
-      return invoke('files:import-artifacts', paths, roomId)
+      return invoke('files:import-artifacts', paths, roomId, workspaceId)
     },
     importAgentAttachments: (files: File[]) => {
       const paths = files.map((file) => webUtils.getPathForFile(file)).filter(Boolean)
@@ -764,21 +808,50 @@ const api: NxcoreDesktopApi = {
     takePendingOsOpen: () => invoke('files:take-pending-os-open'),
   },
   thesisFormat: {
-    listCards: (): Promise<Array<{
+    listCards: (workspaceId: string): Promise<Array<{
       id: string
       sourceName: string
       sourceFileEntryId: string | null
       updatedAt: string
       card: Record<string, unknown>
-    }>> => invoke('thesis-format:cards:list'),
-    setFromLibrary: (fileEntryId: string) =>
-      invoke('thesis-format:parse:library', fileEntryId),
-    pickAndSet: (): Promise<{ canceled: boolean; cardId: string; sourceName: string }> =>
-      invoke('thesis-format:parse:pick'),
-    reformat: (fileEntryId: string, cardId?: string) =>
-      invoke('thesis-format:reformat', fileEntryId, cardId),
-    removeCard: (cardId: string) =>
-      invoke('thesis-format:cards:remove', cardId),
+    }>> => invoke('thesis-format:cards:list', workspaceId),
+    setFromLibrary: (workspaceId: string, fileEntryId: string) =>
+      invoke('thesis-format:parse:library', workspaceId, fileEntryId),
+    pickAndSet: (workspaceId: string, options?: { wordOnly?: boolean }): Promise<{ canceled: boolean; cardId: string; sourceName: string; factGaps?: string[] }> =>
+      invoke('thesis-format:parse:pick', workspaceId, options),
+    /** 工作台拖拽上传：直接把字节交给网关解析成格式卡（不落盘、不进文件库）。 */
+    parseUpload: (workspaceId: string, name: string, bytes: ArrayBuffer) =>
+      invoke('thesis-format:parse:upload', workspaceId, name, bytes),
+    /** 彻底删除模版：模版文件 + 格式卡（先删文件含级联清理，再删卡）。 */
+    deleteTemplate: (workspaceId: string, cardId: string) =>
+      invoke('thesis-format:template:delete', workspaceId, cardId),
+    reformat: (
+      workspaceId: string,
+      fileEntryId: string,
+      cardId?: string,
+      options?: {
+        keepLogo?: boolean
+        keepHeaderFooter?: boolean
+        headingMapping?: { chapter?: number; section?: number; subsection?: number }
+      },
+    ) => invoke('thesis-format:reformat', workspaceId, fileEntryId, cardId, options),
+    /** 任务化排版：立即返回 jobId，用 reformatStatus 轮询阶段进度。 */
+    reformatStart: (
+      workspaceId: string,
+      fileEntryId: string,
+      cardId?: string,
+      options?: {
+        keepLogo?: boolean
+        keepHeaderFooter?: boolean
+        headingMapping?: { chapter?: number; section?: number; subsection?: number }
+      },
+    ) => invoke('thesis-format:reformat:start', workspaceId, fileEntryId, cardId, options),
+    reformatStatus: (jobId: string) => invoke('thesis-format:reformat:status', jobId),
+    /** 导出 PDF（LibreOffice）；本机未安装时返回 { unavailable: true }。 */
+    exportPdf: (workspaceId: string, fileEntryId: string) =>
+      invoke('thesis-format:export:pdf', fileEntryId),
+    removeCard: (workspaceId: string, cardId: string) =>
+      invoke('thesis-format:cards:remove', workspaceId, cardId),
     onCardChanged: (listener: () => void) => {
       const handler = () => listener()
       ipcRenderer.on('thesis-format:card-changed', handler)
@@ -788,3 +861,24 @@ const api: NxcoreDesktopApi = {
 }
 
 contextBridge.exposeInMainWorld('nxcore', api)
+
+// everoffice UI 迁移：office-proto 原型的 GenOffice 编辑器桥（window.desktop）。
+// 通道由 src/main/genoffice/bridge.ts 注册，独立于上面的 office:instance:* 体系。
+contextBridge.exposeInMainWorld('desktop', {
+  platform: process.platform,
+  versions: {
+    electron: process.versions.electron,
+    chrome: process.versions.chrome,
+  },
+  office: {
+    open: (request: { fileId: string; title: string; spec: unknown }) =>
+      ipcRenderer.invoke('office:open', request) as Promise<{ ok: boolean; error?: string }>,
+    activate: (fileId: string | null) => ipcRenderer.invoke('office:activate', fileId) as Promise<boolean>,
+    close: (fileId: string) => ipcRenderer.invoke('office:close', fileId) as Promise<boolean>,
+    dirty: (fileId: string) => ipcRenderer.invoke('office:dirty', fileId) as Promise<boolean>,
+    sendBounds: (bounds: { x: number; y: number; width: number; height: number }) =>
+      ipcRenderer.send('office:bounds', bounds),
+    pickMaterials: () =>
+      ipcRenderer.invoke('office:pick-materials') as Promise<Array<{ name: string; size: number }>>,
+  },
+})

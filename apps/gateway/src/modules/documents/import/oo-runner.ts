@@ -1,6 +1,9 @@
 import type { OpenConnectorCliConfig } from "../../../config.js";
-import { envelopeData } from "@nxcore/connectors-module/open-connector-http-client.js";
-import { runOoHttp, type OoHttpRunner } from "@nxcore/connectors-module/open-connector-tools.js";
+import {
+  envelopeData,
+  runOoHttp,
+  type OoHttpRunner,
+} from "@nxcore/connectors-module/open-connector-http-client.js";
 
 /**
  * 导入链路专用的 OpenConnector 调用层：只做读操作（apps / run 只读 action），

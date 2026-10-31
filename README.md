@@ -60,8 +60,8 @@ A generated draft is useful only when a person can inspect what changed, correct
 | --- | --- | --- |
 | **Documents** | Word documents, spreadsheets, and slide decks with versioned, block-aware editing | Human ownership of the final artifact |
 | **Agent** | A scoped worker with explicit tools, sessions, runs, and cancellation | Automation that can be inspected, stopped, and replaced |
-| **Sources** | Local files, folders, repositories, and connector records brought into one library | A single place for the material an Agent may read |
-| **Connectors** | The managed OpenConnector/`oo` bridge, optional Nango integrations, and Feishu automation | External systems reached through explicit, approved actions |
+| **Sources** | Local files, folders, and repositories brought into one library; connectors are queried live by the Agent | A single place for the material an Agent may read |
+| **Connectors** | On-demand external retrieval through OpenConnector MCP; no periodic sync or local content copies | External data reached with the user's credentials, never stored by Everroom |
 | **Schedules** | Recurring Agent runs and dispatch-only subagents | Long-running work that stays visible and interruptible |
 
 Original files and parsed Markdown have one storage owner: documents and Agent runs keep stable references, hashes, and provenance instead of copying the same source into several places.
@@ -92,7 +92,7 @@ The main branch now contains the Office + Agent surface. Some features require o
 | Files and import | Available, evolving | Local file browser, folder and Obsidian import, Markdown/text and Office/web normalization, content hashes, provenance, and Finder "Open With" for Word/Excel/PowerPoint files |
 | Agent sessions | Available | Persistent sessions, runs, streaming events, cancellation, and scoped document and file tools |
 | Agent work management | Available, evolving | Agent Office presence, scheduled runs, dispatch-only subagents, notifications, and explicit run-now controls |
-| Connectors | Foundation available | Managed local OpenConnector + `oo` bridge, optional Nango integrations, and Feishu issue automation; provider coverage is still expanding |
+| Connectors | Foundation available | Agent just-in-time retrieval through the OpenConnector MCP bridge (Gmail, Notion, Drive, Calendar, Outlook, Slack); no background sync |
 
 ### Open Word, Excel, and PowerPoint files from Finder
 
@@ -134,7 +134,7 @@ NXCORE_AI_API=openai-responses
 
 The same boundary can target compatible OpenAI-style providers. Keep credentials in the Gateway environment; they are never sent to the renderer.
 
-Generative model calls in the Gateway are resolved through `AgentResolver` using stable Agent IDs. Primary chat, connector sync, Cursor Completion, document subagents, and Web Search each use independent runtime and workspace directories. Business modules do not call model APIs directly.
+Generative model calls in the Gateway are resolved through `AgentResolver` using stable Agent IDs. Primary chat, connector retrieval, Cursor Completion, document subagents, and Web Search each use independent runtime and workspace directories. Business modules do not call model APIs directly.
 
 NxCore Gateway also exposes the bearer-protected `/v1/mcp/documents/:sessionId` Streamable HTTP MCP endpoint for authenticated clients.
 
@@ -168,11 +168,11 @@ pnpm package:win  # Create the Windows x64 NSIS installer
 <details>
 <summary><b>Building the Windows installer</b></summary>
 
-`pnpm package:win` runs the same chain as the macOS build — Gateway, Nango runtime with Windows embedded PostgreSQL, OpenConnector, oo CLI, GenOffice runtimes (including the Rust `xlsx-sidecar.exe`), packaged environment, then `electron-builder --win nsis --x64`. Prerequisites:
+`pnpm package:win` runs the same chain as the macOS build — Gateway, OpenConnector, oo CLI, GenOffice runtimes (including the Rust `xlsx-sidecar.exe`), packaged environment, then `electron-builder --win nsis --x64`. Prerequisites:
 
 - Node 22 and the pnpm version pinned in `packageManager` (`corepack enable`)
 - The Rust toolchain (`cargo`) for the GenOffice xlsx sidecar
-- `git submodule update --init --recursive` (Nango connector and GenOffice)
+- `git submodule update --init --recursive` (GenOffice)
 - The packaged-environment variables listed in `apps/desktop/scripts/generate-packaged-env.mjs`; for local test builds use placeholder values, never production secrets
 
 The unsigned installer is written to `release/EverRoom-<version>-windows-x64.exe`. Verify it without installing by running `pnpm --filter @nxcore/desktop exec node scripts/verify-windows-package.mjs`. For scripted installs, run the NSIS installer with `/S` (silent) and `/D=<dir>` to pick the target directory. Because the build is unsigned, Microsoft Defender SmartScreen may show a warning before the first launch.
@@ -181,14 +181,14 @@ The unsigned installer is written to `release/EverRoom-<version>-windows-x64.exe
 
 ## Architecture
 
-Everroom keeps the product boundary stable while allowing the underlying engines to change. The desktop owns lifecycle and trust boundaries; the Gateway owns durable orchestration; connectors and Agent runtimes sit behind their own contracts.
+Everroom keeps the product boundary stable while allowing the underlying engines to change. The desktop owns lifecycle and trust boundaries; the Gateway owns local orchestration and persistence; connectors and Agent runtimes sit behind their own contracts.
 
 ### The implementation strategy
 
 - **One asset, many references.** Original files and parsed Markdown have one storage owner. Documents and Agent runs keep stable references, hashes, and provenance instead of duplicating the source.
 - **Scoped context.** An Agent receives only the documents, files, and tools needed for the current request, not a global unbounded corpus.
 - **Commit before side effects.** Document edits go through a transactional commit core and outbox, so an external service failure cannot corrupt the document.
-- **Deterministic external actions.** Connector calls are prepared against real Action Schemas and real connections before execution. Tokens remain in trusted processes, and destructive or externally visible actions are designed to require approval.
+- **Deterministic external actions.** Connector retrieval is prepared against real action schemas and real connections before execution. Tokens remain in trusted processes; this version only allows read-only actions, and mutations will require explicit approval.
 - **Graceful degradation.** The fake Agent runtime, unavailable connectors, and model failures have explicit fallback states. A missing optional service should not make local documents inaccessible.
 
 ### Technology stack
@@ -201,7 +201,7 @@ Everroom keeps the product boundary stable while allowing the underlying engines
 | Documents | Tiptap document model, versioned commits, block references, operation kernel |
 | Office output | Bundled GenOffice runtimes for docx, xlsx, and pptx generation |
 | Agent boundary | Shared Agent contracts, Pi runtime adapter, MCP document endpoint |
-| Connectors | OpenConnector sidecar, `oo` CLI bridge, optional Nango supervisor |
+| Connectors | OpenConnector MCP bridge, `oo` HTTP client, per-provider query profiles |
 | Observability | Pino structured logs, readable console output, rotating daily JSON files |
 | Verification | Vitest, strict TypeScript checks, Gateway and runtime integration tests |
 
@@ -229,7 +229,7 @@ On macOS, runtime data is stored under:
 
 ```text
 ~/Library/Application Support/NxCore/
-├── database/   # Gateway, document, and connector databases
+├── database/   # Gateway and document databases
 ├── logs/       # Daily Gateway JSON logs
 ├── objects/    # Content-addressed source and parsed objects
 ├── runtime/    # Ephemeral Gateway discovery manifest
@@ -238,7 +238,7 @@ On macOS, runtime data is stored under:
 
 On Windows, the same layout lives under `%APPDATA%\EverRoom\` (that is `C:\Users\<user>\AppData\Roaming\EverRoom\`). Set `NXCORE_DATA_DIR` to relocate it.
 
-See [`apps/gateway/README.md`](./apps/gateway/README.md) for the mail connector and standalone Gateway details. The OpenConnector lifecycle and security boundary are documented in [`docs/open-connector-desktop-integration.zh-CN.md`](./docs/open-connector-desktop-integration.zh-CN.md).
+See [`apps/gateway/README.md`](./apps/gateway/README.md) for standalone Gateway details. The OpenConnector lifecycle and security boundary are documented in [`docs/open-connector-desktop-integration.zh-CN.md`](./docs/open-connector-desktop-integration.zh-CN.md).
 
 ## Security and privacy model
 
@@ -291,7 +291,6 @@ Everroom builds on a number of open-source projects and ideas:
 - [Pi](https://github.com/earendil-works/pi) and the surrounding Model Context Protocol ecosystem for the replaceable Agent runtime direction.
 - [OpenConnector](https://github.com/oomol-lab/open-connector) and [`oo-cli`](https://github.com/oomol-lab/oo-cli) from OOMOL for the local connector bridge.
 - [Liminon](https://liminon.ai/) for inspiration around AI workflows and context products.
-- [Nango](https://nango.dev/) for connector integrations and OAuth management.
 
 Everroom is released under the [Apache License 2.0](./LICENSE). Upstream licenses remain applicable to their respective components; see their individual notices and license files where applicable.
 

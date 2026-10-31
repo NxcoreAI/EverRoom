@@ -1,0 +1,384 @@
+/* 工作空间「资料库 / 产物」页：真实文件库的浏览与管理。
+ *
+ * 只属于这两个页面：页面根节点带 .wb-library-page / .wb-outputs-page，
+ * 用 container query 按「内容栏实际宽度」降级（气泡窗挤压内容栏时也生效），
+ * 不改 workspace.css / ui.css；颜色/间距只用 --ui-* token。
+ */
+
+.wb-library-page,
+.wb-outputs-page {
+  gap: 14px;
+  /* 让 @container 跟随内容栏宽度，而不是窗口宽度（气泡窗打开时内容栏会变窄）。 */
+  container-type: inline-size;
+}
+
+.wb-file-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  flex: none;
+}
+
+/* ───────────────── 工具条 ───────────────── */
+
+.wb-file-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.wb-file-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1 1 220px;
+  min-width: 170px;
+  max-width: 380px;
+}
+.wb-file-search-icon {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--ui-text-3);
+  pointer-events: none;
+}
+.wb-file-search .ui-input {
+  padding-left: 30px;
+}
+
+.wb-file-filters {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.wb-file-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-full);
+  background: var(--ui-surface);
+  color: var(--ui-text-2);
+  font-size: var(--ui-text-xs);
+  font-weight: 550;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background var(--ui-duration-fast) var(--ui-ease),
+    color var(--ui-duration-fast) var(--ui-ease),
+    border-color var(--ui-duration-fast) var(--ui-ease);
+}
+.wb-file-chip:hover { background: var(--ui-hover); color: var(--ui-text); }
+.wb-file-chip.is-active {
+  background: var(--ui-accent-soft);
+  border-color: transparent;
+  color: var(--ui-accent-strong);
+}
+.wb-file-chip:focus-visible {
+  outline: 2px solid var(--ui-accent-line);
+  outline-offset: 2px;
+}
+.wb-file-chip-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 5px;
+  border-radius: var(--ui-radius-full);
+  background: var(--ui-hover);
+  color: var(--ui-text-3);
+  font-size: var(--ui-text-2xs);
+  font-weight: 650;
+}
+.wb-file-chip.is-active .wb-file-chip-count {
+  background: var(--ui-surface);
+  color: var(--ui-accent-strong);
+}
+
+.wb-file-viewtoggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+  padding: 2px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-surface-alt);
+}
+
+/* 工作台原语本身没有 focus-visible 样式（Lead 的 ui.css 管辖）；
+ * 这里只给本页按钮补可见焦点，保证键盘可操作。 */
+.wb-library-page .ui-btn:focus-visible,
+.wb-library-page .ui-iconbtn:focus-visible,
+.wb-outputs-page .ui-btn:focus-visible,
+.wb-outputs-page .ui-iconbtn:focus-visible {
+  outline: 2px solid var(--ui-accent-line);
+  outline-offset: 2px;
+}
+
+/* ───────────────── 加载 / 空 / 不可用 ───────────────── */
+
+.wb-file-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 34px 24px;
+  color: var(--ui-text-3);
+  font-size: var(--ui-text-sm);
+}
+
+.wb-file-state.ui-empty {
+  border: 1px dashed var(--ui-border-strong);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface-alt);
+}
+.wb-file-state.is-unavailable .ui-empty-icon {
+  background: var(--ui-warning-soft);
+  color: var(--ui-warning);
+}
+
+/* ───────────────── 列表 ───────────────── */
+
+.wb-file-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.wb-file-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.wb-file-group-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 0 2px;
+  font-size: var(--ui-text-xs);
+  font-weight: 650;
+  color: var(--ui-text-2);
+}
+.wb-file-group-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wb-file-group-count {
+  flex: none;
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: var(--ui-radius-full);
+  background: var(--ui-hover);
+  color: var(--ui-text-3);
+  font-size: var(--ui-text-2xs);
+  font-weight: 650;
+  text-align: center;
+}
+
+.wb-file-rows {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface);
+  overflow: hidden;
+}
+
+.wb-file-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  padding-right: 6px;
+  transition: background var(--ui-duration-fast) var(--ui-ease);
+}
+.wb-file-row + .wb-file-row { border-top: 1px solid var(--ui-border-subtle); }
+.wb-file-row:hover { background: var(--ui-hover); }
+
+.wb-file-row-main {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr) minmax(84px, 140px) 84px 64px;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  padding: 9px 4px 9px 12px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ui-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.wb-file-row-main:focus-visible {
+  outline: 2px solid var(--ui-accent-line);
+  outline-offset: -3px;
+  border-radius: var(--ui-radius-sm);
+}
+
+.wb-file-row-name {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.wb-file-row-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--ui-text-sm);
+  font-weight: 550;
+}
+.wb-file-row-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--ui-text-2xs);
+  color: var(--ui-text-3);
+}
+.wb-file-row-source,
+.wb-file-row-time,
+.wb-file-row-size {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--ui-text-xs);
+  color: var(--ui-text-3);
+}
+.wb-file-row-time,
+.wb-file-row-size { justify-self: end; }
+.wb-file-row-size { font-variant-numeric: tabular-nums; }
+
+.wb-file-menu-trigger { opacity: 0.55; }
+.wb-file-row:hover .wb-file-menu-trigger,
+.wb-file-row:focus-within .wb-file-menu-trigger,
+.wb-file-card:hover .wb-file-menu-trigger,
+.wb-file-card:focus-within .wb-file-menu-trigger {
+  opacity: 1;
+}
+
+/* ───────────────── 网格 ───────────────── */
+
+.wb-file-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.wb-outputs-page .wb-file-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.wb-file-card {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface);
+  transition:
+    border-color var(--ui-duration-fast) var(--ui-ease),
+    box-shadow var(--ui-duration-fast) var(--ui-ease);
+}
+.wb-file-card:hover {
+  border-color: var(--ui-border-strong);
+  box-shadow: var(--ui-shadow-sm);
+}
+
+.wb-file-card-main {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  padding: 14px 12px 12px;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  color: var(--ui-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.wb-file-card-main:focus-visible {
+  outline: 2px solid var(--ui-accent-line);
+  outline-offset: 2px;
+}
+.wb-file-card-name {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: var(--ui-text-sm);
+  font-weight: 600;
+  line-height: var(--ui-leading-snug);
+  word-break: break-all;
+}
+.wb-file-card-path {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--ui-text-2xs);
+  color: var(--ui-text-3);
+}
+.wb-file-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  margin-top: auto;
+  font-size: var(--ui-text-2xs);
+  color: var(--ui-text-3);
+}
+.wb-file-card .wb-file-menu-trigger {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+}
+
+/* ───────────────── 窄内容栏降级（气泡窗挤压 / 小窗口） ───────────────── */
+
+@container (max-width: 720px) {
+  .wb-outputs-page .wb-file-grid { grid-template-columns: minmax(0, 1fr); }
+
+  .wb-file-row-main {
+    grid-template-columns: 26px minmax(0, 1fr) 78px;
+    gap: 8px;
+    padding-left: 10px;
+  }
+  .wb-file-row-source,
+  .wb-file-row-size { display: none; }
+
+  .wb-file-search { max-width: none; }
+  .wb-file-viewtoggle { margin-left: 0; }
+}
+
+@container (max-width: 480px) {
+  .wb-file-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+
+  .wb-file-toolbar { gap: 8px; }
+  .wb-file-search { flex-basis: 100%; }
+  .wb-file-filters { flex: 1 1 100%; flex-wrap: nowrap; overflow-x: auto; padding-bottom: 2px; }
+  .wb-file-filters::-webkit-scrollbar { display: none; }
+}

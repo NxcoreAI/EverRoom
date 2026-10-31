@@ -4,6 +4,7 @@ import { app, ipcMain } from 'electron'
 import type { BrowserWindow, Rectangle, WebContentsView } from 'electron'
 import type { GenOfficePdfRuntime } from './office-runtime'
 import { OFFICE_WORKSPACE_BOUNDS_CHANNEL } from './office-view-manager'
+import { OfficeViewFirstFrameGate } from './office-view-first-frame'
 
 async function preparePdf(fileId: string, hash: string, name: string, storagePath: string): Promise<string> {
   if (!/^file-[a-z0-9-]+$/i.test(fileId) || !/^[a-f0-9]{64}$/i.test(hash)) throw new Error('PDF identity is invalid.')
@@ -25,10 +26,13 @@ export class PdfViewManager {
   private disposed = false
   private active = false
   private bounds: Rectangle | null = null
+  private readonly gate: OfficeViewFirstFrameGate
   private constructor(
     private readonly window: BrowserWindow,
     private readonly view: WebContentsView,
-  ) {}
+  ) {
+    this.gate = new OfficeViewFirstFrameGate(view, window)
+  }
 
   static async create(
     window: BrowserWindow,
@@ -49,8 +53,8 @@ export class PdfViewManager {
   setActive(active: boolean): void {
     if (this.disposed) return
     this.active = active
-    if (active && this.bounds) this.view.setBounds(this.bounds)
-    this.view.setVisible(active && Boolean(this.bounds?.width && this.bounds.height))
+    // 首次出帧闸门：空视图直接显示会让宿主占位界面透出来。
+    this.gate.setActive(active)
   }
 
   private readonly handleBounds = (event: Electron.IpcMainEvent, input: unknown): void => {
@@ -67,13 +71,13 @@ export class PdfViewManager {
       height: Math.max(0, Math.min(Math.round(value.height!), content.height - y)),
     }
     this.bounds = bounds
-    this.view.setBounds(bounds)
-    this.view.setVisible(this.active && bounds.width > 0 && bounds.height > 0)
+    this.gate.setBounds(bounds)
   }
 
   readonly dispose = async (): Promise<boolean> => {
     if (this.disposed) return true
     this.disposed = true
+    this.gate.dispose()
     ipcMain.removeListener(OFFICE_WORKSPACE_BOUNDS_CHANNEL, this.handleBounds)
     if (!this.view.webContents.isDestroyed()) this.view.webContents.close({ waitForBeforeUnload: false })
     return true

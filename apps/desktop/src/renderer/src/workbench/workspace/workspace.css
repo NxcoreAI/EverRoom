@@ -1,0 +1,207 @@
+/* 工作空间标签内页面骨架 + 概览/计划第一版样式。
+ * 页面 owner 可以在自己的文件里继续追加，公共壳（.wb-wspage / .wb-wspage-scroll）保持稳定。 */
+
+.wb-ws {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  background: var(--ui-bg);
+}
+
+.wb-ws-main {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 320px;
+  min-height: 0;
+  overflow: hidden;
+  /* 面板宽度动画时把重排限制在本区域，减少整页 layout 抖动。 */
+  contain: layout paint;
+}
+
+.wb-ws-missing {
+  display: grid;
+  place-items: center;
+  flex: 1;
+  color: var(--ui-text-3);
+  font-size: var(--ui-text-sm);
+}
+
+.wb-ws-inactive-hint {
+  display: grid;
+  place-items: center;
+  flex: 1;
+  color: var(--ui-text-3);
+  font-size: var(--ui-text-sm);
+}
+
+/* ───────────── 页面骨架 ───────────── */
+
+.wb-wspage {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 30px 32px 64px;
+  overflow-y: auto;
+}
+.wb-wspage::-webkit-scrollbar { width: 9px; }
+.wb-wspage::-webkit-scrollbar-thumb {
+  background: var(--ui-scrollbar-thumb);
+  border-radius: 9px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+.wb-wspage-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px 12px;
+  padding-bottom: 4px;
+}
+.wb-wspage-title {
+  margin: 0;
+  font-family: var(--ui-font-display);
+  font-size: var(--ui-text-xl);
+  font-weight: 700;
+  letter-spacing: var(--ui-tracking-tight);
+}
+.wb-wspage-head > .ui-btn { margin-left: auto; }
+
+/* 状态点 */
+.wb-status-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ui-text-3);
+}
+.wb-status-dot.is-running { background: var(--ui-running); box-shadow: 0 0 0 3px var(--ui-running-soft); }
+.wb-status-dot.is-idle { background: var(--ui-accent); opacity: 0.7; }
+.wb-status-dot.is-done { background: var(--ui-text-3); opacity: 0.5; }
+.wb-status-dot.is-closed, .wb-status-dot.is-interrupted { background: var(--ui-text-3); opacity: 0.5; }
+
+/* ───────────── 计划看板（第一版） ───────────── */
+
+.wb-plan-board {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  min-height: 0;
+}
+.wb-plan-col {
+  flex: 1 1 0;
+  min-width: 220px;
+  padding: 10px;
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface-alt);
+}
+.wb-plan-col-head { display: flex; align-items: center; gap: 8px; padding: 2px 4px 10px; }
+.wb-plan-col-head strong { font-size: var(--ui-text-sm); font-weight: 650; }
+.wb-plan-col-count {
+  margin-left: auto;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 7px;
+  border-radius: var(--ui-radius-full);
+  background: var(--ui-hover);
+  color: var(--ui-text-2);
+  font-size: var(--ui-text-2xs);
+  font-weight: 650;
+  display: grid;
+  place-items: center;
+}
+.wb-plan-col-body { display: flex; flex-direction: column; gap: 8px; }
+.wb-plan-card {
+  padding: 10px 12px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface);
+  color: var(--ui-text);
+  text-align: left;
+  cursor: pointer;
+  transition: box-shadow var(--ui-duration-fast) var(--ui-ease), transform var(--ui-duration-fast) var(--ui-ease);
+}
+.wb-plan-card:hover { box-shadow: var(--ui-shadow-sm); transform: translateY(-1px); }
+.wb-plan-card-title {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: var(--ui-text-sm);
+  line-height: var(--ui-leading-snug);
+}
+
+/* ───────────── 新建空间三步引导 ───────────── */
+
+.wb-setup { display: flex; flex-direction: column; gap: 16px; }
+.wb-setup-steps {
+  display: flex;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.wb-setup-steps li {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: 1;
+  padding: 9px 10px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface-alt);
+  color: var(--ui-text-3);
+  font-size: var(--ui-text-xs);
+  font-weight: 550;
+}
+.wb-setup-steps li.is-current {
+  border-color: var(--ui-accent-line);
+  background: var(--ui-accent-softer);
+  color: var(--ui-accent-strong);
+}
+.wb-setup-steps li.is-done { color: var(--ui-text-2); }
+.wb-setup-step-icon { display: inline-flex; flex: none; }
+.wb-setup-body { display: flex; flex-direction: column; gap: 10px; }
+
+/* ───────────── 工作会话：对话区头部（右上角「资料与文件」入口） ───────────── */
+
+.wb-chat {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.wb-chat-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+  height: 38px;
+  padding: 0 8px 0 18px;
+  border-bottom: 1px solid var(--ui-border-subtle);
+  background: var(--ui-bg);
+}
+.wb-chat-head-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--ui-text-xs);
+  font-weight: 550;
+  color: var(--ui-text-2);
+}
+.wb-chat-head-actions { display: flex; align-items: center; gap: 2px; flex: none; }
+.wb-chat > .wb-conversation { flex: 1; min-height: 0; contain: layout paint; }
+
+/* 对话区「资料与文件」入口：面板打开时只隐藏不卸载，保证标题不被挤动。 */
+.wb-chat-files-slot { display: inline-flex; }
+.wb-chat-files-slot.is-hidden { visibility: hidden; pointer-events: none; }

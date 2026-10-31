@@ -19,6 +19,7 @@ import { Type } from "typebox";
 import {
   AsyncEventQueue,
   type AgentRuntime,
+  type AgentRuntimeDescription,
   type ResumeRuntimeRunInput,
   type RuntimeEvent,
   type RuntimeRun,
@@ -33,6 +34,9 @@ import { MemoryCoreClient } from "./memory/client.js";
 import { createMemoryExtension, type MemoryRunContext } from "./memory/extension.js";
 import { createMemoryTools, MEMORY_TOOL_NAMES, type RoomMemorySearch } from "./memory/tools.js";
 import type { MemoryRuntimeConfig, RoomMemorySnapshot } from "./memory/types.js";
+import { buildActiveFileContext, buildOpenFilesContext } from "./active-file-context.js";
+
+export { buildActiveFileContext, buildOpenFilesContext } from "./active-file-context.js";
 
 export { KnowledgeServiceClient, KnowledgeServiceError } from "./knowledge/client.js";
 export type { KnowledgeServiceErrorKind } from "./knowledge/client.js";
@@ -564,6 +568,42 @@ export class PiAgentRuntime implements AgentRuntime {
     this.sessionPermissionModes.delete(sessionId);
   }
 
+  /**
+   * 会话级思考档位覆盖（网关 sessionId 键）；null = 跟随 this.config.reasoning。
+   * 网关每轮 run 前预热，只影响 ownerSessionId 相同的缓存会话。
+   */
+  private readonly sessionThinkingLevels = new Map<string, PiReasoningLevel | null>();
+
+  /**
+   * 覆盖指定网关会话的思考档位：缓存里已有该会话时立即套用（pi 会按模型支持
+   * 档位 clamp，且幂等）；没有缓存会话时只记下，下一轮 getSession 建会话时生效。
+   * applied 表示本次是否命中缓存会话。
+   */
+  async setSessionThinkingLevel(
+    sessionId: string,
+    level: PiReasoningLevel | null,
+  ): Promise<{ applied: boolean }> {
+    this.sessionThinkingLevels.set(sessionId, level);
+    const effective = this.sessionThinkingLevel(sessionId);
+    let applied = false;
+    for (const handle of this.sessions.values()) {
+      if (handle.ownerSessionId !== sessionId) continue;
+      // pi 的 ThinkingLevel 与 PiReasoningLevel 字面量完全一致，仅类型名不同。
+      handle.session.setThinkingLevel(effective as Parameters<AgentSession["setThinkingLevel"]>[0]);
+      applied = true;
+    }
+    return { applied };
+  }
+
+  forgetSessionThinkingLevel(sessionId: string): void {
+    this.sessionThinkingLevels.delete(sessionId);
+  }
+
+  /** 当前网关会话生效的思考档位：覆盖值优先，null/缺省跟随 runtime 配置。 */
+  private sessionThinkingLevel(sessionId: string): PiReasoningLevel {
+    return this.sessionThinkingLevels.get(sessionId) ?? this.config.reasoning;
+  }
+
   /** Internal bridge used by the sandbox shell tool to surface approval state. */
   async requestBashApproval(request: PiBashApprovalRequest): Promise<boolean> {
     return this.requestToolApproval({ ...request, kind: "shell", toolName: request.toolName ?? "bash" });
@@ -612,6 +652,75 @@ export class PiAgentRuntime implements AgentRuntime {
       steering: true,
       resume: false,
     };
+  }
+
+  /**
+   * 调试面板数据源：只读报告本 runtime 实际装配的 systemPrompt/工具/模型参数。
+   * 全部来自构造参数与 integration（与 getSession 的装配口径一致），不读任何声明文件，
+   * 也不含 apiKey。
+   */
+  async describe(): Promise<AgentRuntimeDescription> {
+    const memoryToolNames = this.config.memory && this.memoryClient ? [...MEMORY_TOOL_NAMES] : [];
+    const knowledgeToolNames = this.config.knowledge && this.knowledgeClient ? [...KNOWLEDGE_TOOL_NAMES] : [];
+    return {
+      runtimeId: this.config.runtimeId ?? this.id,
+      model: {
+        provider: this.config.provider,
+        model: this.config.model,
+        baseUrl: this.config.baseUrl,
+        api: this.config.api,
+        reasoning: this.config.reasoning,
+        temperature: this.config.temperature,
+        maxTokens: this.config.maxTokens,
+        contextWindow: this.config.contextWindow,
+      },
+      role: this.config.runtimeRole ?? null,
+      // 未配置 systemPrompt 时运行期会用默认聊天人设兜底；这里如实返回 null。
+      systemPrompt: this.config.systemPrompt ?? null,
+      skills: Object.entries(this.config.skillPrompts ?? {}).map(([name, prompt]) => ({ name, prompt })),
+      tools: [
+        ...(this.integration.tools ?? []).map((tool) => ({
+          name: tool.name,
+          label: tool.label,
+          description: tool.description,
+        })),
+        ...memoryToolNames.map((name) => ({ name })),
+        ...knowledgeToolNames.map((name) => ({ name })),
+      ],
+      builtinTools: this.enabledBuiltinTools(),
+      mcpServers: Object.keys(this.config.mcp?.mcpServers ?? {}),
+      promptGuidelines: [...(this.integration.promptGuidelines ?? [])],
+      limits: {
+        maxToolCallsPerRun: this.config.maxToolCallsPerRun ?? null,
+        maxToolResultChars: this.config.maxToolResultChars ?? null,
+        runContextGuard: this.config.runContextGuard
+          ? {
+              triggerTokens: this.config.runContextGuard.triggerTokens,
+              keepRecentTurns: this.config.runContextGuard.keepRecentTurns,
+            }
+          : null,
+      },
+      capabilities: await this.getCapabilities(),
+    };
+  }
+
+  /**
+   * 实际启用的 pi 内置工具集合：与 getSession 里 toolNames 的口径一致
+   * （白名单收窄 + bash 受 includeBashTool 控制）。describe 与运行时共用，
+   * 避免面板另抄一份 DEFAULT 列表而与实际装配漂移。
+   */
+  private enabledBuiltinTools(): PiBuiltinToolName[] {
+    const configured = (this.config.builtinTools ?? DEFAULT_PI_BUILTIN_TOOLS).filter((name) =>
+      DEFAULT_PI_BUILTIN_TOOLS.includes(name as PiBuiltinToolName),
+    ) as PiBuiltinToolName[];
+    const names: PiBuiltinToolName[] = [
+      ...(this.config.includeBashTool === false ? [] : (["bash"] as PiBuiltinToolName[])),
+      ...configured,
+    ];
+    // includeBashTool=false 是显式关闭 shell 的语义：白名单里残留的 bash 也不挂载。
+    return [
+      ...new Set(this.config.includeBashTool === false ? names.filter((name) => name !== "bash") : names),
+    ];
   }
 
   async start(input: StartRuntimeRunInput): Promise<RuntimeRun> {
@@ -772,7 +881,14 @@ export class PiAgentRuntime implements AgentRuntime {
   ): Promise<PiSessionHandle> {
     if (runtimeSessionRef) {
       const cached = this.sessions.get(runtimeSessionRef);
-      if (cached) return cached;
+      if (cached) {
+        // 复用缓存会话前同步本轮生效档位：网关可能在两轮之间改过覆盖值。
+        // pi 的 setThinkingLevel 幂等（档位未变化不写 session 日志）。
+        cached.session.setThinkingLevel(
+          this.sessionThinkingLevel(initialInput.sessionId) as Parameters<AgentSession["setThinkingLevel"]>[0],
+        );
+        return cached;
+      }
       this.assertOwnedSessionPath(runtimeSessionRef);
     }
 
@@ -833,9 +949,7 @@ export class PiAgentRuntime implements AgentRuntime {
       },
     }));
     const toolNames = customTools.map((tool) => tool.name);
-    const builtinTools = (this.config.builtinTools ?? DEFAULT_PI_BUILTIN_TOOLS).filter((name) =>
-      DEFAULT_PI_BUILTIN_TOOLS.includes(name as PiBuiltinToolName),
-    ) as PiBuiltinToolName[];
+    const builtinTools = this.enabledBuiltinTools();
 
     const settingsManager = SettingsManager.inMemory({
       defaultProvider: this.config.provider,
@@ -952,7 +1066,7 @@ export class PiAgentRuntime implements AgentRuntime {
       agentDir: this.config.agentDirectory,
       modelRuntime,
       model,
-      thinkingLevel: this.config.reasoning,
+      thinkingLevel: this.sessionThinkingLevel(initialInput.sessionId) as Parameters<AgentSession["setThinkingLevel"]>[0],
       tools: [
         ...(this.config.includeBashTool === false ? [] : ["bash"]),
         ...builtinTools,
@@ -1067,7 +1181,16 @@ export class PiAgentRuntime implements AgentRuntime {
               ? `仅在用户明确要求当前位置时可使用光标候选：块 ${input.activeDocument.cursorAnchorCandidate.blockId}，UTF-16 偏移 ${input.activeDocument.cursorAnchorCandidate.offset}。`
               : "本轮没有可靠的光标候选锚点。",
           ].join("\n")
-        : "当前视口没有已确认的活动文档；若用户明确要求修改已有文档，应调用 document_list 触发选择。";
+        : input.activeFile
+          // 有 Office 页签时不要再说“没有活动文档，去调 document_list”：
+          // 用户说的“这份文档”几乎必然指页签里的文件，指南会误导模型去猜文稿。
+          ? "当前视口没有文档内核里的活动文稿；用户正在浏览的是 Office 文件（见下一条），按它的 fileId 读取，不要先调 document_list。"
+          : "当前视口没有已确认的活动文档；若用户明确要求修改已有文档，应调用 document_list 触发选择。";
+      // Office 文件（Word/Excel/PPT/PDF）是 file_entries，不是文档内核的 activeDocument：
+      // 这里给出“用户正在看哪一份”的唯一事实，并指明读取正文的工具（file_read）。
+      const activeFileContext = buildActiveFileContext(input.activeFile);
+      // 「工作区一共开了哪些页签」：只认识当前这份时，用户问“另一个文件”模型会失明。
+      const openFilesContext = buildOpenFilesContext(input.openFiles, input.activeFile);
       const runBoundary = input.toolsEnabled === false
         ? null
         : [
@@ -1079,6 +1202,8 @@ export class PiAgentRuntime implements AgentRuntime {
       const prompt = [
         `当前工作区：${input.pageLabel}`,
         documentContext,
+        ...(activeFileContext ? [activeFileContext] : []),
+        ...(openFilesContext ? [openFilesContext] : []),
         ...(runBoundary ? [runBoundary] : []),
         "",
         `用户请求：${input.prompt}`,

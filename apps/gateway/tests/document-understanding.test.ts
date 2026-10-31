@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import ExcelJS from "exceljs";
@@ -65,6 +65,31 @@ function minimalPdf(text: string): Buffer {
 }
 
 describe("DocumentUnderstandingService", () => {
+  it("parses legacy binary Office bytes in-process without an external converter", async () => {
+    const test = await setup();
+    const fixture = (name: string) => readFile(new URL(
+      `../../../submodules/everroom-connectors/gateway-module/tests/fixtures/${name}`,
+      import.meta.url,
+    ));
+    const cases = [
+      { name: "legacy-sample.doc", expected: "Legacy DOC body text" },
+      { name: "legacy-sample.ppt", expected: "Second legacy slide" },
+      { name: "legacy-sample.xls", expected: "| banana | 12 | 0.25 |" },
+    ];
+    for (const [index, item] of cases.entries()) {
+      const imported = await test.files.importFile({
+        sourceKind: "manual-upload",
+        sourceKey: `manual:legacy-${index}`,
+        originalName: item.name,
+        buffer: await fixture(item.name),
+        mime: "application/octet-stream",
+      });
+      const parsed = await test.service.parseVersion(imported.fileEntryId, imported.fileVersionId);
+      expect(parsed?.artifact.document.format).toBe("legacy-office");
+      expect(parsed?.markdown).toContain(item.expected);
+    }
+  });
+
   it("persists a page-aware PDF artifact and reuses it by parser revision", async () => {
     const test = await setup();
     const imported = await test.files.importFile({

@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="paper" data-color-mode="light">
+  <head>
+    <script>
+      // 首帧前应用全局外观，避免从默认主题闪一下再切换（与 state/appearanceSettings.ts 对齐）。
+      ;(() => {
+        try {
+          const allowed = ['paper', 'plain', 'moss', 'night']
+          const stored = window.localStorage.getItem('everroom:appearance-theme:v1')
+          const theme = allowed.includes(stored) ? stored : 'paper'
+          document.documentElement.dataset.theme = theme
+          document.documentElement.dataset.colorMode = theme === 'night' ? 'dark' : 'light'
+        } catch {
+          // localStorage 不可用时保持 HTML 上的默认主题。
+        }
+      })()
+    </script>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Agent 调试</title>
+  </head>
+  <body>
+    <div id="root" style="height: 100vh"></div>
+    <script type="module" src="/src/debugEntry.tsx"></script>
+  </body>
+</html>

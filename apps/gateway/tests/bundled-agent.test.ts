@@ -44,12 +44,9 @@ describe("bundled project Agent", () => {
     expect(registry.get("multimodal-document-parser")?.revision.outputSchema).toMatchObject({
       required: expect.arrayContaining(["summary", "facts", "missingFields"]),
     });
-    // 布局代理不设工具预算上限（长链路可能读资料 + 多轮校验/提交）。
-    expect(registry.get("slides-layouter")?.revision.policy.maxToolCalls).toBeUndefined();
-    // slides-editor 是 v2 落页的唯一 storyboard 来源：manifest 非法会让整条 PPT
-    // 生成链路在启动时被静默拒收（2026-10-23 policy.model.reasoning 大小写事故），
-    // 因此这里必须断言它真的从 agents/ 装载成功，而不是只靠别的代理间接覆盖。
-    expect(registry.get("slides-editor")?.revision.policy.model?.reasoning).toBe("low");
+    // 仓库内 slides 代理的上下文/预算配置可被注册表解析（审页降思考档、布局工具预算放宽）。
+    expect(registry.get("slides-reviewer")?.revision.policy.model).toMatchObject({ reasoning: "low" });
+    expect(registry.get("slides-layouter")?.revision.policy.maxToolCalls).toBe(24);
 
     const catalog = createSubagentPiTools(registry, orchestrator)
       .find((tool) => tool.name === "agent_catalog")!;

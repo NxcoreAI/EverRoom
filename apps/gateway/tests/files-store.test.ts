@@ -319,3 +319,45 @@ describe("REST /v1/files", () => {
     test.sqlite.close();
   });
 });
+
+/**
+ * 2026-10-27 回归：论文排版（reformat / 资料区设为模版）在真实库（1460 个文件）上
+ * 一律报 thesis_source_file_not_found——catalogEntry 当时只扫「最近更新的 200 条」，
+ * 排名之外的文件永远查不到，用户点「排版」没有任何产出。
+ */
+describe("catalogEntry 按 id 直查（不受目录分页窗口限制）", () => {
+  it("排名 200 之外的老文件仍能按 id 取到", async () => {
+    const test = await serviceForTest();
+    // 先传目标文档（最老），再传 205 个新文件把它挤出前 200；initializeCatalog 把
+    // 历史上传迁成 file_entries（listCatalog 的数据源）。
+    const target = await test.service.upload({ filename: "开题与需求、系统设计报告.docx", buffer: Buffer.from("target", "utf8") });
+    for (let index = 0; index < 205; index += 1) {
+      await test.service.upload({ filename: `填充-${index}.docx`, buffer: Buffer.from(`fill-${index}`, "utf8") });
+    }
+    test.service.initializeCatalog();
+
+    const page = test.service.listCatalog(200, 0);
+    expect(page.total).toBeGreaterThan(200);
+    expect(page.items.some((item) => item.id === target.fileId)).toBe(false);
+
+    const entry = test.service.catalogEntry(target.fileId);
+    expect(entry?.id).toBe(target.fileId);
+    expect(entry?.originalName).toBe("开题与需求、系统设计报告.docx");
+    test.sqlite.close();
+  });
+
+  it("不存在的 id 返回 null；软删除的条目不返回", async () => {
+    const test = await serviceForTest();
+    const uploaded = await test.service.upload({ filename: "文档.docx", buffer: Buffer.from("x", "utf8") });
+    test.service.initializeCatalog();
+    expect(test.service.catalogEntry(uploaded.fileId)?.id).toBe(uploaded.fileId);
+    expect(test.service.catalogEntry("file-does-not-exist")).toBeNull();
+
+    // initializeCatalog 迁出的行是 legacy-upload（deleteCatalogEntry 明确不处理这一类），
+    // 这里改成普通上传来源，模拟真实产物文件后再验证删除后的可查性。
+    test.sqlite.prepare("UPDATE file_entries SET source_kind = 'manual-upload' WHERE id = ?").run(uploaded.fileId);
+    await test.service.deleteCatalogEntry(uploaded.fileId);
+    expect(test.service.catalogEntry(uploaded.fileId)).toBeNull();
+    test.sqlite.close();
+  });
+});

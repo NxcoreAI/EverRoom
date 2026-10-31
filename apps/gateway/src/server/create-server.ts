@@ -15,7 +15,6 @@ import { agentSessions } from "../infrastructure/database/schema.js";
 import { eq, inArray } from "drizzle-orm";
 import { AgentDebugArchive } from "../modules/agent-debug/archive.js";
 import { AgentDebugTraceStore } from "../modules/agent-debug/trace-store.js";
-import { agentDebugRoutes, debugAgentsFromStatusSnapshot } from "../modules/agent-debug/routes.js";
 import { channelAgentIdFromAgentId } from "@nxcore/agent-contract";
 import { systemRoutes } from "../modules/system/routes.js";
 import { AgentEventBroker } from "../modules/agent/event-broker.js";
@@ -50,6 +49,7 @@ import { createSelectionRewriteContentResolver } from "../modules/documents/capa
 import { createBuiltinDocumentCapabilityRegistry } from "../modules/documents/capabilities/builtins.js";
 import { SlidesVisualReviewer } from "../modules/slides-visual-review/review.js";
 import { OfficeBridgeClient } from "../modules/documents/capabilities/office-bridge-client.js";
+import type { DocumentIllustrationPorts } from "../modules/documents/capabilities/office-plugin.js";
 import { DocumentReadAuthority } from "../modules/documents/capabilities/read-authority.js";
 import { ExternalDocumentProjectionService } from "../modules/documents/external-projections/service.js";
 import { externalDocumentProjectionRoutes } from "../modules/documents/external-projections/routes.js";
@@ -75,9 +75,8 @@ import {
   type AgentRuntimeIntegrationOptions,
 } from "../modules/agent/runtime-factory.js";
 import { BUILTIN_AGENT_IDS } from "../modules/agent/resolver.js";
-import { registerWebSearchAgentIfMissing, registerConnectorMapperAgent } from "../modules/agent/runtime-factory.js";
+import { registerWebSearchAgentIfMissing } from "../modules/agent/runtime-factory.js";
 import { connectorSessionRoutes } from "../modules/connectors/session-routes.js";
-import { FormatMappingService } from "../modules/connectors/format-mapping-service.js";
 import type { AgentRuntime } from "@nxcore/agent-runtime";
 import { DocumentServiceError } from "../modules/documents/errors.js";
 import { DocWriterAgentDispatcher, isSelectionRewriteInvocationAuthorized } from "../modules/subagents/doc-writer-dispatcher.js";
@@ -86,7 +85,7 @@ import { createWebSearchPiTools } from "../modules/agent/web-search-tools.js";
 import { createWorkspaceFileCatalog, createWorkspaceFileTextReader, createWorkspaceFilesPiTools, type WorkspaceFileCatalog } from "../modules/agent/workspace-files-tools.js";
 import { createWorkspaceImageMaterialSearch } from "../modules/subagents/workspace-materials.js";
 import { createDocWriterAgentTools } from "../modules/subagents/doc-writer-tools.js";
-import { createSlidesPlannerAgentTools, createSlidesBuilderAgentTools, createSlidesLayouterAgentTools, createSlidesReviewerAgentTools, createSlidesTreeResultValidator, createWorkspaceFileReadTool } from "../modules/subagents/slides-agent-tools.js";
+import { createSlidesPlannerAgentTools, createSlidesBuilderAgentTools, createSlidesLayouterAgentTools, createSlidesTreeResultValidator, createWorkspaceFileReadTool } from "../modules/subagents/slides-agent-tools.js";
 import { DocumentIndexBackfillWorker } from "../modules/documents/index-backfill/worker.js";
 import { DocumentIndexBackfillReadTrigger } from "../modules/documents/index-backfill/read-trigger.js";
 import { IndexBackfillLlm } from "../modules/documents/index-backfill/llm.js";
@@ -99,10 +98,17 @@ import { filesRoutes } from "../modules/files/routes.js";
 import { SlideImageStore } from "../modules/slides-style/image-store.js";
 import { slideImageRoutes } from "../modules/slides-style/image-routes.js";
 import { FilesService } from "../modules/files/service.js";
+import { createFileReadPiTool, createFileSearchPiTool } from "../modules/files/pi-tools.js";
 import { DocumentListSyncWorker } from "../modules/documents/import/list-sync-worker.js";
 import { DocumentHistoryBackfillWorker } from "../modules/documents/index-backfill/history-worker.js";
-import { nangoConnectorRoutes } from "@nxcore/connectors-module/routes.js";
-import { purgeConnectorConnectionCascade } from "../modules/connectors/connection-purge.js";
+import { connectorRoutes } from "@nxcore/connectors-module/routes.js";
+import { ConnectorQueryService, FilteredConnectorRuntime, HttpConnectorActionRuntime } from "@nxcore/connectors-module/query/index.js";
+import { ConnectorMcpHost } from "../modules/connectors/connector-mcp-host.js";
+import { ConnectorMcpServer } from "../modules/connectors/connector-mcp-server.js";
+import { createConnectorContextResolver } from "../modules/connectors/connector-context.js";
+import { ConnectorConnectionCatalog } from "@nxcore/connectors-module/connection-runtime.js";
+import { createConnectorTombstoneStore } from "../modules/connectors/tombstone-store.js";
+import { cleanupLegacyConnectorData } from "../modules/connectors/cleanup.js";
 import { ConversationSuggestionService } from "../modules/processing/conversation-suggestion.js";
 import { processingRoutes } from "../modules/processing/routes.js";
 import { SessionTitleService } from "../modules/processing/session-title.js";
@@ -118,25 +124,21 @@ import { agentSchedulerMcpRoutes } from "../modules/agent-scheduler/mcp-routes.j
 import { auth } from "./auth.js";
 import { createGatewayLogger } from "./logger.js";
 import "./types.js";
-import { createConnectorDatabase } from "../infrastructure/connectors/client.js";
-import { ConnectorRepository } from "@nxcore/connectors-module/repository.js";
-import { ConnectorManager } from "@nxcore/connectors-module/manager.js";
-import { ConnectorDomainProjection, backfillDomainProjection } from "@nxcore/connectors-module/domain-projection.js";
-import { SYNC_PROVIDERS, assertSyncProvidersValid } from "@nxcore/connectors-module/sync-providers/index.js";
-import { SyncEngine } from "@nxcore/connectors-module/sync-engine.js";
-import { OpenConnectorSyncExecutor } from "@nxcore/connectors-module/open-connector-sync-executor.js";
 import { OpenConnectorAuthorizationService } from "@nxcore/connectors-module/open-connector-authorization.js";
-import { ConnectorDocumentStore } from "@nxcore/connectors-module/document-store.js";
 import { SubagentRegistry } from "../modules/subagents/registry.js";
 import { SubagentRuntimeManager } from "../modules/subagents/runtime-manager.js";
 import { SubagentOrchestrator } from "../modules/subagents/orchestrator.js";
 import { SlidesProgressTracker } from "../modules/subagents/slides-progress-tracker.js";
+import { SlidesGenerationCheckpointStore } from "../modules/subagents/slides-generation-checkpoints.js";
 import { createSubagentPiTools, inferMaterialSourcesFromReads } from "../modules/subagents/tools.js";
 import { createDocWriterResultValidator } from "../modules/subagents/document-draft.js";
 import { createDocWriterDraftResolver } from "../modules/subagents/doc-writer-content.js";
 import { LocalAgentRuntimeRegistry } from "../modules/local-agents/runtime-registry.js";
 import { subagentRoutes } from "../modules/subagents/routes.js";
 import { AgentStatusService } from "../modules/agent/status-service.js";
+import { AgentDebugService } from "../modules/agent-debug/service.js";
+import { agentDebugRoutes } from "../modules/agent-debug/routes.js";
+import { AgentDebugUsageStore } from "../modules/agent-debug/usage-store.js";
 import { createReferencedAgentConversationTools } from "../modules/agent/reference-tools.js";
 import { createLocalAgentDispatchTools } from "../modules/local-agents/dispatch-tools.js";
 import { LocalAgentDispatchStore } from "../modules/local-agents/dispatch-store.js";
@@ -308,75 +310,46 @@ export async function createServer(config: GatewayConfig) {
     primaryConfigured: isRuntimePrimaryConfigured(initialRuntimeSnapshot.config),
     configJson: JSON.stringify(redactedRuntimeSnapshot.config),
   }, "runtime config selected");
-  const nangoConnectorConfig = config.nangoConnector ?? { enabled:false, databasePath:resolve(config.dataDir,"database","connectors.sqlite"), nangoUrl:"", nangoSecret:"", gmailConfigKey:"", outlookConfigKey:"", googleDocsConfigKey:"", notionConfigKey:"", googleCalendarConfigKey:"", googleClientId:"", googleClientSecret:"", notionClientId:"", notionClientSecret:"", outlookClientId:"", outlookClientSecret:"", pollingIntervalMs:300_000, providerConfigKeys:{} };
-  // 阶段二：注册表启动自检（补偿 union 放宽后丢失的编译期穷尽性）——违例拒启。
-  assertSyncProvidersValid();
-  const pollingIntervalMs = "pollingIntervalMs" in nangoConnectorConfig
-    ? nangoConnectorConfig.pollingIntervalMs
-    : 300_000;
-  const nangoConnectorDb = createConnectorDatabase(nangoConnectorConfig.enabled ? nangoConnectorConfig.databasePath : ":memory:");
-  // Seam 1（连接器统一 P1，P3 Nango 删除定稿）：链路A取数走 OpenConnector action。
-  // executor 恒在场（env 会话缺席时 baseUrl 留空）：登录态热更新（PUT
-  // /v1/connector-session）原地 patch 同一对象即生效，无需重启 gateway；登出态
-  // 由 SyncEngine.canServe 按 isAvailable 静默跳过（与 executor 缺席同语义）。
+  // 连接器：Agent 即席查询。没有 scope / run / 游标 / 定时同步；
+  // 连接事实源是 oo，本地只叠加「已断开」墓碑。
   config.cliConnector ??= {
     executable: "oo",
     baseUrl: "",
     configDirectory: resolve(config.dataDir, "open-connector", "oo-config"),
     dataDirectory: resolve(config.dataDir, "open-connector", "oo-data"),
   };
-  const ooSyncExecutor = new OpenConnectorSyncExecutor({ config: config.cliConnector, logger: app.log });
-  const nangoExecutor = ooSyncExecutor;
-  // 阶段三：拉取引擎（nango 代理 + direct 直连双路）；direct 凭据取连接的 credentialsRef。
-  const nangoSyncEngine = new SyncEngine(
-    nangoExecutor,
-    (connection) => connection.credentialsRef ?? null,
-  );
-  const nangoConnectorDocumentStore = nangoConnectorConfig.enabled
-    ? new ConnectorDocumentStore(resolve(config.dataDir, "connectors", "documents"))
-    : null;
-  const nangoConnectorManager = new ConnectorManager(
-    new ConnectorRepository(nangoConnectorDb.sqlite),
-    nangoExecutor,
-    nangoConnectorDocumentStore,
-    nangoSyncEngine,
-  );
-  // Nango 连接器的 agent 工具（连接发现 / 触发同步 / 只读代理请求）。
-  const nangoConnectorAuthorization = config.cliConnector?.adminToken
-    ? new OpenConnectorAuthorizationService(config.cliConnector, nangoConnectorManager)
+  const removedLegacyConnectorFiles = cleanupLegacyConnectorData(config.dataDir);
+  if (removedLegacyConnectorFiles.length > 0) {
+    app.log.info({ removed: removedLegacyConnectorFiles }, "legacy connector sync artifacts removed");
+  }
+  const connectorActionRuntime = new HttpConnectorActionRuntime(config.cliConnector);
+  const connectorTombstones = createConnectorTombstoneStore(db, "local-user");
+  const connectorRuntime = new FilteredConnectorRuntime(connectorActionRuntime, connectorTombstones);
+  const connectorQueryService = new ConnectorQueryService(connectorRuntime);
+  const connectorCatalog = new ConnectorConnectionCatalog(connectorActionRuntime, connectorTombstones);
+  const connectorAuthorization = config.cliConnector.adminToken
+    ? new OpenConnectorAuthorizationService(config.cliConnector, connectorCatalog)
     : undefined;
-  // When the configured value is a bootstrap placeholder, wait for the
-  // dashboard API key before polling. Nango rejects non-UUID secrets with a
-  // noisy 401 on every scheduled sync.
-  if (nangoConnectorConfig.enabled) {
-    // 轮询常开：引擎门控在 secret 未就绪期间跳过 OAuth 源（无 401 噪音），
-    // direct 源（WebCal 订阅）不受 Nango 冷启动影响、立即按周期同步。
-    nangoSyncEngine.setNangoReady(true); // P3：Nango 门控移除，oo executor 即绪即放行
-    nangoConnectorManager.startPolling(pollingIntervalMs);
-  }
-  // 阶段一域投影（connector-platform-refactor-plan）：Nango 拉取的邮件/日程
-  // 与 CLI 推送路径同落主库 connector_* 域表，Room 读侧单轨；启动后延迟 1s
-  // 幂等回填 connectors.sqlite 存量（唯一键 upsert，重复执行产出 unchanged）。
-  const connectorDomainOwner = "local-user";
-  nangoConnectorManager.setDomainProjection(new ConnectorDomainProjection(db, connectorDomainOwner));
-  // 格式映射体系：agent 生成的 JSONata 映射缓存直通；未就绪时同步 pending，后台生成。
-  const formatMappingService = new FormatMappingService(db, app.log);
-  nangoConnectorManager.setFormatMapper(formatMappingService);
-  if (nangoConnectorConfig.enabled) {
-    const backfillTimer = setTimeout(() => {
-      try {
-        const summary = backfillDomainProjection(db, nangoConnectorManager.repository, connectorDomainOwner);
-        if (summary.mail + summary.calendar + summary.failures > 0)
-          app.log.info({ module: "connector-domain-backfill", ...summary }, "Connector domain backfill applied");
-      } catch (error) {
-        app.log.warn(
-          { module: "connector-domain-backfill", error: error instanceof Error ? error.message : String(error) },
-          "Connector domain backfill failed; incremental sync will keep projecting new records",
-        );
-      }
-    }, 1_000);
-    backfillTimer.unref?.();
-  }
+  const connectorMcpHost = new ConnectorMcpHost({
+    query: connectorQueryService,
+    session: () =>
+      config.cliConnector?.baseUrl
+        ? {
+            baseUrl: config.cliConnector.baseUrl,
+            ...(config.cliConnector.runtimeToken ? { runtimeToken: config.cliConnector.runtimeToken } : {}),
+          }
+        : null,
+    logger: app.log,
+    disconnected: (service, connectionName) => connectorTombstones.has(service, connectionName),
+  });
+  const connectorMcpServer = new ConnectorMcpServer(connectorMcpHost, { logger: app.log });
+  const connectorMcp = await connectorMcpServer.start().catch((error: unknown) => {
+    app.log.warn(
+      { error: error instanceof Error ? error.message : String(error) },
+      "connector MCP server failed to start; connector tools stay disabled",
+    );
+    return null;
+  });
 
   // /v1/runtime-config/secrets 是唯一允许真密钥出站的端点：主进程派生托管
   // 子进程 env 用（token 鉴权，token 只在主进程）；若在此脱敏，子进程会拿
@@ -479,6 +452,8 @@ export async function createServer(config: GatewayConfig) {
       notionCli: config.notionCli ?? null,
       // 飞书导入通道（列举/正文/评论/媒体）换轨 lark-cli。
       larkCli: config.larkCli ?? null,
+      // 连接器页「关闭飞书」闸门：墓碑存在即视为关闭（lark-cli 凭据保留）。
+      isFeishuDisabled: () => connectorTombstones.has("feishu", "default"),
     },
   );
   const agentDocumentExportService = new AgentDocumentExportService(
@@ -490,6 +465,7 @@ export async function createServer(config: GatewayConfig) {
       logger: { info: (obj, msg) => app.log.info(obj, msg), warn: (obj, msg) => app.log.warn(obj, msg) },
       assetBridgeUrl: config.documentAssetBridgeUrl ?? null,
       notionCli: config.notionCli ?? null,
+      isFeishuDisabled: () => connectorTombstones.has("feishu", "default"),
     },
   );
   // 共享读凭证权威（doc-writer-subagent-plan §5.3）：document_draft 代发的 receipt 与
@@ -504,6 +480,17 @@ export async function createServer(config: GatewayConfig) {
   // Office 桥与视觉复检器共享单实例：office-plugin 工具与 slides-layout-tail 落页尾部共用。
   const officeBridgeClient = config.officeBridge ? new OfficeBridgeClient(config.officeBridge) : null;
   const slidesVisualReviewer = new SlidesVisualReviewer({ vlm: () => createVlmProvider(config) });
+  // 图片对象库 + 生图中转：PPT 配图与 Word 配图（word_agent_illustration）共用同一实例——
+  // 生图产物按内容哈希进 CAS，读回字节再插进文档，模型不搬运 base64。
+  const slideImageStore = new SlideImageStore(db, config.dataDir);
+  const slidesStyleImageGenerator = new SlidesStyleImageGenerator(aiRelaySessions, slideImageStore);
+  const documentIllustration: DocumentIllustrationPorts = {
+    generate: async (prompt) => {
+      const generated = await slidesStyleImageGenerator.generateImage({ prompt });
+      return { contentHash: generated.contentHash };
+    },
+    read: (contentHash) => slideImageStore.readByHash(contentHash),
+  };
   // 无模版风格管线依赖 filesService/materials（晚于工具装配创建）：getter 惰性取。
   const slidesStyleDepsRef: { current: SlidesStyleStageDeps | null } = { current: null };
   const documentMcpHost = new DocumentMcpHost(
@@ -523,6 +510,10 @@ export async function createServer(config: GatewayConfig) {
       // PPT 落页视觉复检：配置 vlm 时启用（内部自带降级）。惰性解析——
       // 设置页保存 vlm 段后 runtime config 热替换，复检无需重启网关即生效。
       slidesVisualReviewer,
+      // 改“用户正开着的那份”Word/Excel：filesService 在更后面创建，惰性取。
+      () => filesService,
+      // Word 配图：宿主生图（ai-relay）+ 图片对象库，一步生成并插入。
+      documentIllustration,
     ),
     documentOperationService,
     (diagnostic) => {
@@ -540,49 +531,8 @@ export async function createServer(config: GatewayConfig) {
     documentMcpHost.capabilities,
   );
   await documentMcpHost.capabilities.recover();
-  // Agent 调试页（独立浏览器调试台）的内存 trace：不落库、不参与业务链路，
-  // 仅在 runtime 边界旁路记录，供 /v1/agent-debug/* 只读查询。
-  // run 终态后异步落到 dataDir/agent-debug/main（重启后仍可回放）；归档关闭时只留内存缓冲。
-  const agentDebugArchiveConfig = config.agentDebugArchive;
-  const agentDebugStore = new AgentDebugTraceStore(
-    agentDebugArchiveConfig?.enabled === false
-      ? undefined
-      : new AgentDebugArchive({
-          dir: join(config.dataDir, "agent-debug", "main"),
-          ...(agentDebugArchiveConfig
-            ? {
-                retentionDays: agentDebugArchiveConfig.retentionDays,
-                maxRuns: agentDebugArchiveConfig.maxRuns,
-                maxBytes: agentDebugArchiveConfig.maxBytes,
-              }
-            : {}),
-          warn: (message, error) => app.log.warn({ err: error }, message),
-        }),
-  );
-  // 调试页 run 列表补全会话标题：唯一 sessionId 一次 inArray 查询；查不到为 null。
-  const agentDebugSessionTitles = (
-    sessionIds: readonly string[],
-  ): ReadonlyMap<string, string | null> => {
-    const titles = new Map<string, string | null>();
-    if (sessionIds.length === 0) return titles;
-    try {
-      const rows = db
-        .select({ id: agentSessions.id, title: agentSessions.title })
-        .from(agentSessions)
-        .where(inArray(agentSessions.id, [...sessionIds]))
-        .all();
-      for (const row of rows) titles.set(row.id, row.title ?? null);
-    } catch (error) {
-      app.log.warn({ err: error }, "agent debug session titles lookup failed");
-    }
-    return titles;
-  };
-  const agentResolver = createAgentResolver(config, agentDebugStore);
+  const agentResolver = createAgentResolver(config);
   // 格式映射 agent：就绪即 attach（映射生成依赖它；未配置 AI 时保持 pending 语义）。
-  registerConnectorMapperAgent(agentResolver, config, formatMappingService);
-  if (agentResolver.has(BUILTIN_AGENT_IDS.connectorMapper)) {
-    formatMappingService.attachAgentRuntime(agentResolver.resolve(BUILTIN_AGENT_IDS.connectorMapper));
-  }
   const subagentConfig = config.subagents ?? {
     enabled: true,
     definitionsDir: bundledAgentDefinitionsDir(),
@@ -597,7 +547,7 @@ export async function createServer(config: GatewayConfig) {
     app.log,
   );
   await subagentRegistry.initialize();
-  const subagentRuntimeManager = new SubagentRuntimeManager(config, subagentConfig, externalCalls, agentDebugStore);
+  const subagentRuntimeManager = new SubagentRuntimeManager(config, subagentConfig, externalCalls);
   // doc-writer 输出的跨字段校验（doc-writer-subagent-plan §3.4）：baseVersion 回显、
   // hunks 目标 ∈ blockIndex、分块预算。须在首次 dispatch 前注册。
   subagentRuntimeManager.registerAgentResultValidator("doc-writer", createDocWriterResultValidator());
@@ -631,12 +581,9 @@ export async function createServer(config: GatewayConfig) {
   // slides-layouter（每页布局树设计代理）工具面：只有 slides_layout_validate——
   // 归一→编译→量测的确定性环，契约经 deck-contract-context 按 token 取用。须在首次 dispatch 前注册。
   subagentRuntimeManager.registerAgentTools("slides-layouter", () => createSlidesLayouterAgentTools());
-  // slides-reviewer（审页代理）工具面：说明书按需取（review-context 按 manualToken）+ 复用布局树校验。须在首次 dispatch 前注册。
-  subagentRuntimeManager.registerAgentTools("slides-reviewer", () => createSlidesReviewerAgentTools());
   // layouter/reviewer 的提交期树校验：validate 过的好树在 submit 一步被模型抄坏过（2026-10-17
   // 深圳 deck 第 6 页，根节点 direction 丢失静默兜底）——坏树在 submit 处拒收，让模型当场重交。
   subagentRuntimeManager.registerAgentResultValidator("slides-layouter", createSlidesTreeResultValidator());
-  subagentRuntimeManager.registerAgentResultValidator("slides-reviewer", createSlidesTreeResultValidator());
   for (const developerAgent of subagentRegistry.listAvailable()) {
     agentResolver.register({
       id: developerAgent.id,
@@ -725,7 +672,6 @@ export async function createServer(config: GatewayConfig) {
       return channelMcpHost.mcpServersForRun(input);
     },
     (input) => isChannelAgentSession(input.sessionId),
-    agentDebugStore,
   );
   const localAgentDispatchStore = new LocalAgentDispatchStore(db);
   // dispatch 工具先于 AgentService 构建，run 级分发来源用晚绑定引用接线。
@@ -742,6 +688,7 @@ export async function createServer(config: GatewayConfig) {
   const readWorkspaceFileText = createWorkspaceFileTextReader(() => filesService);
   const primaryIntegrations: AgentRuntimeIntegrationOptions = {
     externalCalls,
+    ...(connectorMcp ? { connectorMcp: { url: connectorMcp.url } } : {}),
     workspaceFiles: () => workspaceFilesRef.current,
     tools: [
       // 文本类工作区文件（md/txt/csv 等）的正文直读：document_analysis 只覆盖
@@ -749,10 +696,18 @@ export async function createServer(config: GatewayConfig) {
       createWorkspaceFileReadTool(readWorkspaceFileText, { mainAgent: true }),
       ...createDocumentExportPiTools(agentDocumentExportService),
       ...createDocumentImportPiTools(documentImportService),
+      // 当前浏览的 Office 文件（file_entries）正文读取：filesService 与本服务
+      // 都晚于本对象创建，用惰性取值；activeFile 由运行期 input 提供。
+      createFileReadPiTool({
+        files: () => filesService,
+        understanding: () => documentUnderstandingService,
+      }),
+      // 按文件名在文件库定位 fileId：用户只说“那份报告”/要改的文件没打开时，
+      // 先搜出 fileId 再交给 file_read / word_agent_*（同样惰性取 filesService）。
+      createFileSearchPiTool({ files: () => filesService }),
       ...(subagentConfig.enabled
         ? createSubagentPiTools(subagentRegistry, subagentOrchestrator, {
             resolveFileMarkdown: async (fileId) => resolveFileMarkdown?.(fileId) ?? null,
-            resolveFileCurrentVersionId: (fileEntryId) => resolveFileCurrentVersionId?.(fileEntryId) ?? null,
             // document_draft 组装与代发凭证（doc-writer-subagent-plan §4/§5.3）：
             // 读权威文档快照 + 以主 run 名义签发 read receipt（与 document_read 同构）。
             resolveDocumentForDraft: (documentId) => documentService.readDocumentForAgent(documentId),
@@ -881,6 +836,7 @@ export async function createServer(config: GatewayConfig) {
     false,
     (target) => localAgentRuntimeRegistry.resolve(target),
   );
+  agentService.setConnectorContextResolver(createConnectorContextResolver(connectorRuntime));
   // 档位 runtime 解析：现取 resolver 缓存（热重载后自然换新）；配置缺席时
   // 返回 null，service 回落 primary——main-direct 未配置（AI 全空）时与
   // main 同为占位，回落行为一致。
@@ -942,12 +898,6 @@ export async function createServer(config: GatewayConfig) {
         const { previous } = agentResolver.reload(agentId);
         await previous?.dispose();
       }
-      // 格式映射 agent 热替换（初始 attach 见 registerConnectorMapperAgent 处）。
-      if (agentResolver.has(BUILTIN_AGENT_IDS.connectorMapper)) {
-        const mapper = agentResolver.reload(BUILTIN_AGENT_IDS.connectorMapper);
-        formatMappingService.attachAgentRuntime(mapper.current);
-        await mapper.previous?.dispose();
-      }
       // 子 Agent 缓存作废（下次 acquire 以新 backgroundPi 重建）。
       await subagentRuntimeManager.invalidate();
     } catch (error) {
@@ -967,10 +917,11 @@ export async function createServer(config: GatewayConfig) {
     files: filesService,
     orchestrator: subagentOrchestrator,
     officeBridge: config.officeBridge ? new OfficeBridgeClient(config.officeBridge) : null,
+    // 排版作业的阶段耗时/失败原因必须落网关日志：否则只能靠外部记录反推。
+    logger: { info: (obj, msg) => app.log.info(obj, msg), warn: (obj, msg) => app.log.warn(obj, msg) },
   });
-  // 幻灯片图片对象库（原素材库的字节存取部分）：生图产物与文档内嵌图按内容哈希
-  // 寻址，服务 everroom-material:// 引用与 GET /v1/materials/:hash 回源。
-  const slideImageStore = new SlideImageStore(db, config.dataDir);
+  // 幻灯片图片对象库（原素材库的字节存取部分）：与 Word 配图共用上面的 slideImageStore，
+  // 生图产物与文档内嵌图按内容哈希寻址，服务 everroom-material:// 引用与 GET /v1/materials/:hash 回源。
   filesService.initializeCatalog();
   // PPT 无模版风格管线装配：生图走 ai-relay 会话、读图走素材按哈希回源、
   // 演示页渲染走桌面 office-bridge 的只渲染端点、VLM 走 runtime vlm 槽位。
@@ -980,7 +931,7 @@ export async function createServer(config: GatewayConfig) {
   const pageImageRunner = new SlidesPageImageRunner();
   slidesStyleDepsRef.current = {
     sessions: new SlidesStyleSessionStore(db),
-    images: new SlidesStyleImageGenerator(aiRelaySessions, slideImageStore),
+    images: slidesStyleImageGenerator,
     vlm: createVlmProvider(config),
     readMaterialBytes: (hash) => slideImageStore.readByHash(hash),
     demoRenderer: slidesStyleOfficeClient
@@ -1063,12 +1014,11 @@ export async function createServer(config: GatewayConfig) {
   app.addHook("onClose", async () => {
     // Stop producers while all ingest/classification dependencies are still alive.
     await filesService.dispose();
-    await nangoConnectorManager.dispose();
-    nangoConnectorDb.close();
     clearInterval(documentOperationExpiryTimer);
     await agentService.dispose();
     await localAgentRuntimeRegistry.dispose();
     await channelMcpHost.close();
+    await connectorMcpServer.close().catch(() => undefined);
     await subagentOrchestrator.dispose();
     slidesProgress.dispose();
     await documentMcpHost.close();
@@ -1077,21 +1027,23 @@ export async function createServer(config: GatewayConfig) {
     await documentIndexBackfillWorker?.dispose();
     await agentSchedulerService.dispose();
     await agentResolver.dispose();
-    // 先把自己仍在 running 的 run 归档为 interrupted，再等待写盘队列排空。
-    await agentDebugStore.dispose();
     await notificationMcpHost.close();
     sqlite.close();
     await gatewayLogger.close();
   });
+  // 同一份状态快照同时服务 /v1/agent/status 与 /v1/agent-debug/*（运行态口径一致）。
   const agentStatusService = new AgentStatusService(agentResolver, subagentOrchestrator);
   await app.register(agentRoutes(agentService, agentStatusService, localAgentDispatchStore));
-  // 调试页 Agent 目录复用同一份 status 快照；store 观测到的本机 CLI Agent 由路由合并。
-  await app.register(agentDebugRoutes(
-    agentDebugStore,
-    () => debugAgentsFromStatusSnapshot(agentStatusService.snapshot()),
-    { sessionTitles: agentDebugSessionTitles },
-  ));
   await app.register(subagentRoutes(subagentOrchestrator));
+  // Agent 调试面板（只读）：数据来自 runtime.describe() 的实际装配 + 使用记录。
+  await app.register(agentDebugRoutes(new AgentDebugService({
+    config,
+    resolver: agentResolver,
+    statuses: agentStatusService,
+    subagents: subagentRegistry,
+    invocations: subagentOrchestrator,
+    usage: new AgentDebugUsageStore(db),
+  })));
   const reloadMcpRuntimes = async (): Promise<void> => {
     const primary = agentResolver.reload(BUILTIN_AGENT_IDS.primary);
     await agentService.replaceRuntime(primary.current);
@@ -1300,27 +1252,7 @@ export async function createServer(config: GatewayConfig) {
   await app.register(processingRoutes(sessionTitleService, conversationSuggestionService));
   await app.register(agentSchedulerRoutes(agentSchedulerService));
   await app.register(agentSchedulerMcpRoutes(agentSchedulerService));
-  await app.register(nangoConnectorRoutes(
-    nangoConnectorManager,
-    nangoConnectorConfig.enabled,
-    nangoConnectorAuthorization,
-    // 连接删除级联：先清 gateway.sqlite 下游（域表/台账/落盘文档），
-    // 再由路由内 repository.purgeConnection 收尾 connectors.sqlite。失败抛错则
-    // 连接保留（路由 500），各步幂等、重试安全。
-    async (id) => {
-      const connection = nangoConnectorManager.repository.getConnection(id);
-      if (!connection) return;
-      await purgeConnectorConnectionCascade(
-        {
-          db,
-          documentStore: nangoConnectorDocumentStore,
-          ownerId: connectorDomainOwner,
-          log: app.log,
-        },
-        connection,
-      );
-    },
-  ));
+  await app.register(connectorRoutes(connectorCatalog, connectorAuthorization));
   await app.register(connectorSessionRoutes({
     config,
     onSessionChanged: () => {
@@ -1328,16 +1260,11 @@ export async function createServer(config: GatewayConfig) {
     },
   }));
 
-  // 阶段三 M3b：REST 前缀泛化——/v1/connectors/* 为主入口。Fastify v5 路由先于
-  // onRequest（改写 URL 无效），别名经 404 兜底内部转发（app.inject 不走网络，
-  // 鉴权/解析全生命周期照常）；旧前缀由插件作用域钩子打弃用头。
-  // /v1/connectors/connections 是独立的通用连接入口，不参与转发。
+  // REST 前缀泛化：/v1/connectors/* 为主入口。Fastify v5 路由先于 onRequest
+  // （改写 URL 无效），别名经 404 兜底内部转发（app.inject 不走网络，鉴权/解析
+  // 全生命周期照常）；旧前缀由插件作用域钩子打弃用头。
   app.setNotFoundHandler(async (request, reply) => {
-    if (
-      request.url.startsWith("/v1/connectors/") &&
-      request.url !== "/v1/connectors/connections" &&
-      !request.url.startsWith("/v1/connectors/connections/")
-    ) {
+    if (request.url.startsWith("/v1/connectors/")) {
       const rewritten = `/v1/nango-connectors/${request.url.slice("/v1/connectors/".length)}`;
       let body: unknown;
       if (request.method !== "GET" && request.method !== "HEAD") body = request.body;

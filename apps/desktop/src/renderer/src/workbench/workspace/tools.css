@@ -1,0 +1,172 @@
+/* 工作空间「计划 / 新建空间引导」工具页样式。
+ *
+ * 约定：
+ * - 只用 --ui-* token，四套主题自动生效；
+ * - 不改 workspace.css / ui.css；需要覆盖公共壳时用「页面作用域 + 双类」提高特异性，
+ *   避免 CSS 注入顺序（页面 import 的样式通常先于 WorkspaceTabHost 的 workspace.css）导致失效；
+ * - 层次靠 1px hairline + 底色，浮层才用阴影。
+ */
+
+/* ───────────────── 页面骨架 ───────────────── */
+
+.wb-wspage.wb-tools-page { gap: 20px; }
+
+.wb-tool-error {
+  padding: 9px 12px;
+  border: 1px solid color-mix(in srgb, var(--ui-danger) 30%, transparent);
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-danger-soft);
+  color: var(--ui-danger);
+  font-size: var(--ui-text-xs);
+  line-height: var(--ui-leading-normal);
+}
+
+/* ───────────────── 计划看板 ───────────────── */
+
+.wb-plan-board.wb-plan-board--tools { align-items: stretch; }
+.wb-plan-board--tools .wb-plan-col { min-width: 0; }
+.wb-plan-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+.wb-plan-card-time {
+  font-size: var(--ui-text-2xs);
+  color: var(--ui-text-3);
+  white-space: nowrap;
+}
+
+@media (max-width: 960px) {
+  .wb-plan-board.wb-plan-board--tools { flex-direction: column; }
+}
+
+/* ───────────────── 新建空间两步引导 ───────────────── */
+
+.wb-setup { gap: 14px; }
+
+.wb-setup .wb-setup-steps { gap: 6px; }
+.wb-setup .wb-setup-steps li { padding: 0; overflow: hidden; }
+.wb-setup .wb-setup-step-btn {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 9px 10px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: var(--ui-text-xs);
+  font-weight: 550;
+  text-align: left;
+  cursor: pointer;
+}
+.wb-setup .wb-setup-step-btn:hover { background: var(--ui-hover); }
+.wb-setup .wb-setup-step-btn:focus-visible {
+  outline: 2px solid var(--ui-accent);
+  outline-offset: -2px;
+}
+.wb-setup .wb-setup-steps li.is-current .wb-setup-step-btn { color: var(--ui-accent-strong); }
+.wb-setup-step-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wb-setup-step-state {
+  flex: none;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--ui-success);
+}
+
+.wb-setup-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  padding: 9px 12px;
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface-alt);
+  color: var(--ui-text-3);
+  font-size: var(--ui-text-2xs);
+}
+.wb-setup-summary strong {
+  margin-right: 2px;
+  color: var(--ui-text);
+  font-size: var(--ui-text-xs);
+  font-weight: 700;
+}
+
+.wb-setup-body { gap: 8px; }
+.wb-setup-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 4px;
+}
+.wb-setup-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.wb-setup-row .wb-tool-error { flex: 1 1 100%; }
+.wb-setup-count { font-size: var(--ui-text-2xs); color: var(--ui-text-3); }
+
+.wb-setup-result-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 200px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow: auto;
+}
+.wb-setup-result {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border: 1px solid var(--ui-border-subtle);
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-surface);
+  font-size: var(--ui-text-xs);
+}
+.wb-setup-result.is-failed {
+  border-color: color-mix(in srgb, var(--ui-danger) 30%, transparent);
+  background: var(--ui-danger-soft);
+}
+.wb-setup-result-icon { display: flex; flex: none; color: var(--ui-success); }
+.wb-setup-result.is-failed .wb-setup-result-icon { color: var(--ui-danger); }
+.wb-setup-result-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wb-setup-result-state {
+  flex: none;
+  max-width: 46%;
+  overflow: hidden;
+  font-size: 10px;
+  color: var(--ui-text-3);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wb-setup-work-form {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.wb-setup-work-form .ui-input:first-child { flex: 1 1 220px; }
+.wb-setup-foot-spacer { flex: 1; }
+
+@media (prefers-reduced-motion: reduce) {
+  .wb-plan-card { transition: none; }
+}

@@ -13,9 +13,9 @@ export interface ConnectorSessionPayload {
 }
 
 /**
- * 会话热应用：原地 patch config.cliConnector（HTTP client / 授权服务 /
- * SyncEngine 持同一引用、每次调用时读字段，改完即生效，无需重启 gateway）。
- * executor 永远在场，缺席语义 = baseUrl 置空（canServe 静默跳过轮询）。
+ * 会话热应用：原地 patch config.cliConnector（HTTP client / 连接目录 /
+ * 查询层持同一引用、每次调用时读字段，改完即生效，无需重启 gateway）。
+ * 缺席语义 = baseUrl 置空（查询/连接列表返回空，MCP 工具报未连接）。
  */
 export function applyCliConnectorSession(
   config: GatewayConfig,

@@ -3,8 +3,13 @@
   "properties": {
     "task": {
       "type": "string",
-      "enum": ["parse_template", "bind_thesis"],
-      "description": "parse_template = distill template facts into a thesis format card; bind_thesis = map source document block outline into a binding spec."
+      "enum": [
+        "parse_template",
+        "bind_thesis",
+        "adjudicate_mapping",
+        "fill_sections"
+      ],
+      "description": "parse_template = distill template facts into a thesis format card; bind_thesis = map source document block outline into a binding spec; adjudicate_mapping = decide which template slot each low-confidence chapter belongs to.; fill_sections = 为模版里论文没写的小节补写内容（只许改写已有事实）"
     },
     "sourceName": {
       "type": "string",
@@ -19,13 +24,37 @@
           "items": {
             "type": "object",
             "properties": {
-              "name": { "type": "string" },
-              "styles": { "type": "array", "items": { "type": "object" } },
-              "sections": { "type": "array", "items": { "type": "object" } },
-              "headers": { "type": "array", "items": { "type": "object" } },
-              "footers": { "type": "array", "items": { "type": "object" } }
+              "name": {
+                "type": "string"
+              },
+              "styles": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              },
+              "sections": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              },
+              "headers": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              },
+              "footers": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              }
             },
-            "required": ["name"],
+            "required": [
+              "name"
+            ],
             "additionalProperties": true
           },
           "maxItems": 12,
@@ -36,17 +65,27 @@
           "items": {
             "type": "object",
             "properties": {
-              "name": { "type": "string" },
-              "text": { "type": "string" }
+              "name": {
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              }
             },
-            "required": ["name", "text"],
+            "required": [
+              "name",
+              "text"
+            ],
             "additionalProperties": false
           },
           "maxItems": 12,
           "description": "Full plain text of each member document (spec clauses and sample content, including annotations)."
         }
       },
-      "required": ["ooxml", "documentsText"],
+      "required": [
+        "ooxml",
+        "documentsText"
+      ],
       "additionalProperties": false,
       "description": "Template facts (parse_template only)."
     },
@@ -59,12 +98,35 @@
       "items": {
         "type": "object",
         "properties": {
-          "index": { "type": "integer", "minimum": 0 },
-          "kind": { "type": "string", "enum": ["heading", "paragraph", "table", "image", "list"] },
-          "level": { "type": "integer", "minimum": 1, "maximum": 6 },
-          "text": { "type": "string", "maxLength": 400 }
+          "index": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "heading",
+              "paragraph",
+              "table",
+              "image",
+              "list"
+            ]
+          },
+          "level": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 6
+          },
+          "text": {
+            "type": "string",
+            "maxLength": 400
+          }
         },
-        "required": ["index", "kind", "text"],
+        "required": [
+          "index",
+          "kind",
+          "text"
+        ],
         "additionalProperties": false
       },
       "maxItems": 2000,
@@ -74,8 +136,133 @@
       "type": "string",
       "maxLength": 300,
       "description": "Known title clue (file name or largest heading) for cover title (bind_thesis only)."
+    },
+    "mappingSlots": {
+      "type": "array",
+      "maxItems": 60,
+      "description": "adjudicate_mapping only: template slots to choose from.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "maxLength": 40
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 120
+          },
+          "intent": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "tokens": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 20
+            },
+            "maxItems": 16
+          }
+        },
+        "required": [
+          "id",
+          "title"
+        ],
+        "additionalProperties": true
+      }
+    },
+    "mappingCandidates": {
+      "type": "array",
+      "maxItems": 40,
+      "description": "adjudicate_mapping only: source chapters whose slot is uncertain.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "chapterTraceId": {
+            "type": "string",
+            "maxLength": 40
+          },
+          "chapterText": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "tokens": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 20
+            },
+            "maxItems": 16
+          },
+          "candidateSlotIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 40
+            },
+            "maxItems": 5
+          }
+        },
+        "required": [
+          "chapterTraceId",
+          "chapterText"
+        ],
+        "additionalProperties": true
+      }
+    },
+    "emptySections": {
+      "type": "array",
+      "maxItems": 30,
+      "description": "fill_sections: 需要补写的模版小节（论文没有对应内容）。",
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          }
+        },
+        "required": [
+          "title"
+        ]
+      }
+    },
+    "sourceSummary": {
+      "type": "array",
+      "maxItems": 400,
+      "description": "fill_sections: 论文素材（章节标题 + 首句），补写只能基于这些内容。",
+      "items": {
+        "type": "object",
+        "properties": {
+          "level": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 6
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "snippet": {
+            "type": "string",
+            "maxLength": 300
+          }
+        },
+        "required": [
+          "title"
+        ]
+      }
+    },
+    "sourceText": {
+      "type": "string",
+      "maxLength": 20000,
+      "description": "论文全文（已做长度截断）。补写必须基于这份全文归纳，不得编造全文之外的事实。"
     }
   },
-  "required": ["task"],
+  "required": [
+    "task"
+  ],
   "additionalProperties": false
 }

@@ -5,8 +5,8 @@
   display: grid;
   grid-template-rows: 64px minmax(0, 1fr);
   overflow: auto;
-  background: #f6f7f9;
-  color: #151a22;
+  background: var(--ui-bg);
+  color: var(--ui-text);
 }
 
 .runtime-config-gate-header {
@@ -18,8 +18,8 @@
   align-items: center;
   justify-content: space-between;
   padding: 0 clamp(22px, 4vw, 56px);
-  border-bottom: 1px solid #e1e5eb;
-  background: rgb(246 247 249 / 94%);
+  border-bottom: 1px solid var(--ui-border);
+  background: color-mix(in srgb, var(--ui-bg) 86%, transparent);
   backdrop-filter: blur(18px);
   -webkit-backdrop-filter: blur(18px);
 }
@@ -30,6 +30,13 @@
   transform: translateX(-50%);
   font-size: 15px;
   font-weight: 720;
+}
+
+/* 完整 logo 是深墨字，深色外观下整体反白（品牌色块变单色白，但保证可读）。 */
+:root[data-color-mode='dark'] .runtime-config-gate-brand img,
+:root[data-color-mode='dark'] .runtime-config-gate-brand {
+  filter: brightness(0) invert(1);
+  opacity: 0.92;
 }
 
 .runtime-config-gate-actions {
@@ -45,16 +52,17 @@
   align-items: center;
   gap: 2px;
   padding: 3px;
-  border: 1px solid #e1e5eb;
-  border-radius: 6px;
-  background: #fff;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-md);
+  /* 与设置页 .segmented-control 同一语言：暖灰轨道 + 白色浮起选中块 */
+  background: var(--ui-surface-alt);
 }
 
 .runtime-config-gate-language svg {
   width: 15px;
   height: 15px;
   margin: 0 4px;
-  color: #536070;
+  color: var(--ui-text-2);
 }
 
 .runtime-config-gate-language button {
@@ -62,16 +70,28 @@
   height: 24px;
   padding: 0 7px;
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--ui-radius-sm);
   background: transparent;
-  color: #536070;
+  color: var(--ui-text-2);
   font-size: 12px;
+  font-weight: 500;
   cursor: pointer;
 }
 
+.runtime-config-gate-language button:hover {
+  color: var(--ui-text);
+}
+
 .runtime-config-gate-language button[data-active='true'] {
-  background: #151a22;
-  color: #fff;
+  background: var(--ui-surface);
+  box-shadow: var(--ui-shadow-sm);
+  color: var(--ui-text);
+  font-weight: 600;
+}
+
+.runtime-config-gate-language button:focus-visible {
+  outline: 2px solid var(--ui-accent-line);
+  outline-offset: -1px;
 }
 
 .runtime-config-gate-main {
@@ -89,7 +109,7 @@
   flex-direction: column;
   align-items: center;
   gap: 16px;
-  color: #536070;
+  color: var(--ui-text-2);
   font-size: 14px;
 }
 
@@ -111,8 +131,8 @@
 .runtime-config-gate-loader-ring-outer {
   width: 62px;
   height: 62px;
-  border: 1px solid #d8dee7;
-  border-top-color: #b66e17;
+  border: 1px solid var(--ui-border-strong);
+  border-top-color: var(--ui-warm-strong);
   animation: runtime-config-gate-orbit 1.8s linear infinite;
 }
 
@@ -121,10 +141,10 @@
   width: 30px;
   height: 30px;
   place-items: center;
-  border: 1px solid #e6b778;
+  border: 1px solid var(--ui-warm);
   border-radius: 50%;
-  background: #fff8ed;
-  color: #b66e17;
+  background: var(--ui-warm-soft);
+  color: var(--ui-warm-strong);
   animation: runtime-config-gate-core-pulse 1.5s ease-in-out infinite;
 }
 
@@ -145,7 +165,7 @@
   width: 5px;
   height: 5px;
   border-radius: 50%;
-  background: #b66e17;
+  background: var(--ui-warm-strong);
   animation: runtime-config-gate-dot 1.1s ease-in-out infinite;
 }
 
@@ -179,14 +199,14 @@
   flex-direction: column;
   gap: 12px;
   padding: clamp(24px, 4vw, 36px);
-  border: 1px solid #e1e5eb;
+  border: 1px solid var(--ui-border);
   border-radius: 14px;
-  background: #fff;
-  box-shadow: 0 18px 44px rgb(21 26 34 / 6%);
+  background: var(--ui-surface);
+  box-shadow: var(--ui-shadow-lg);
 }
 
 .runtime-config-gate-kicker {
-  color: #7c8798;
+  color: var(--ui-text-3);
   font-size: 12px;
   font-weight: 640;
   letter-spacing: 0.14em;
@@ -195,7 +215,7 @@
 
 .runtime-config-gate-panel h1 {
   margin: 0;
-  color: #151a22;
+  color: var(--ui-text);
   font-size: clamp(20px, 3vw, 26px);
   font-weight: 740;
 }
@@ -217,13 +237,13 @@
   border: none;
   border-radius: 8px;
   background: none;
-  color: #7c8798;
+  color: var(--ui-text-3);
   cursor: pointer;
 }
 
 .runtime-config-gate-heading-back:hover {
-  color: #151a22;
-  background: rgb(21 26 34 / 6%);
+  color: var(--ui-text);
+  background: var(--ui-hover);
 }
 
 .runtime-config-gate-heading-back svg {
@@ -233,7 +253,7 @@
 
 .runtime-config-gate-panel p {
   margin: 0;
-  color: #536070;
+  color: var(--ui-text-2);
   font-size: 14px;
   line-height: 1.6;
 }
@@ -250,9 +270,9 @@
   flex-direction: column;
   gap: 8px;
   padding: 18px;
-  border: 1px solid #e1e5eb;
+  border: 1px solid var(--ui-border);
   border-radius: 10px;
-  background: #fbfcfd;
+  background: var(--ui-surface-alt);
   color: inherit;
   text-align: left;
   cursor: pointer;
@@ -260,8 +280,8 @@
 }
 
 .runtime-config-gate-option:hover {
-  border-color: #9aa7b8;
-  box-shadow: 0 10px 26px rgb(21 26 34 / 8%);
+  border-color: var(--ui-border-strong);
+  box-shadow: var(--ui-shadow-md);
 }
 
 .runtime-config-gate-option-icon {
@@ -270,8 +290,8 @@
   width: 36px;
   height: 36px;
   border-radius: 8px;
-  background: #eef1f5;
-  color: #151a22;
+  background: var(--ui-surface-sunken);
+  color: var(--ui-text);
 }
 
 .runtime-config-gate-option-icon svg {
@@ -284,7 +304,7 @@
 }
 
 .runtime-config-gate-option > span:last-child {
-  color: #7c8798;
+  color: var(--ui-text-3);
   font-size: 13px;
   line-height: 1.5;
 }
@@ -304,7 +324,7 @@
   justify-content: center;
   gap: 10px;
   padding: 9px 16px;
-  border: 1px solid #d8dee7;
+  border: 1px solid var(--ui-border-strong);
   border-radius: 7px;
   font: inherit;
   font-size: 14px;
@@ -341,7 +361,7 @@
 .runtime-config-gate-apple-login {
   border-color: #000;
   background: #000;
-  color: #fff;
+  color: var(--ui-text-inverse);
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
 }
 
@@ -355,9 +375,14 @@
   height: 20px;
 }
 
+/* 深色外观下 Apple 按钮按品牌规范用浅底深字，白色 Apple 标需要反相才可见。 */
+:root[data-color-mode='dark'] .runtime-config-gate-apple-login .runtime-config-gate-brand-login-icon img {
+  filter: invert(1);
+}
+
 .runtime-config-gate-google-login {
   border-color: #747775;
-  background: #fff;
+  background: var(--ui-surface);
   color: #1f1f1f;
   font-family: Roboto, Arial, sans-serif;
   font-weight: 500;
@@ -365,7 +390,7 @@
 
 .runtime-config-gate-google-login:hover:not(:disabled) {
   border-color: #747775;
-  background: #f8faff;
+  background: var(--ui-hover);
 }
 
 .runtime-config-gate-google-login .runtime-config-gate-brand-login-icon img {
@@ -374,7 +399,7 @@
 }
 
 .runtime-config-gate-note {
-  color: #7c8798 !important;
+  color: var(--ui-text-3) !important;
   font-size: 12.5px !important;
 }
 
@@ -383,9 +408,9 @@
   gap: 6px;
   margin-top: 14px;
   padding: 4px;
-  border: 1px solid #d8dee7;
+  border: 1px solid var(--ui-border-strong);
   border-radius: 10px;
-  background: #f2f4f8;
+  background: var(--ui-surface-alt);
 }
 
 .runtime-config-gate-tabs button {
@@ -398,23 +423,23 @@
   border: none;
   border-radius: 7px;
   background: transparent;
-  color: #536070;
+  color: var(--ui-text-2);
   font-size: 13px;
   font-weight: 620;
   cursor: pointer;
 }
 
 .runtime-config-gate-tabs button[data-active='true'] {
-  background: #fff;
-  color: #151a22;
-  box-shadow: 0 1px 2px rgb(21 26 34 / 10%);
+  background: var(--ui-surface);
+  color: var(--ui-text);
+  box-shadow: var(--ui-shadow-sm);
 }
 
 .runtime-config-gate-tab-badge {
   padding: 1px 6px;
   border-radius: 999px;
-  background: #e7ebf2;
-  color: #7c8798;
+  background: var(--ui-surface-sunken);
+  color: var(--ui-text-3);
   font-size: 10.5px;
   font-weight: 600;
 }
@@ -427,7 +452,7 @@
 }
 
 .runtime-config-gate-field span {
-  color: #536070;
+  color: var(--ui-text-2);
   font-size: 12.5px;
   font-weight: 620;
 }
@@ -435,21 +460,21 @@
 .runtime-config-gate-field input {
   height: 38px;
   padding: 0 12px;
-  border: 1px solid #d8dee7;
+  border: 1px solid var(--ui-border-strong);
   border-radius: 8px;
-  background: #fff;
-  color: #151a22;
+  background: var(--ui-surface);
+  color: var(--ui-text);
   font-size: 14px;
 }
 
 .runtime-config-gate-field input:focus {
   outline: none;
-  border-color: #151a22;
+  border-color: var(--ui-text);
 }
 
 .runtime-config-gate-validation {
   min-height: 18px;
-  color: #b4232a;
+  color: var(--ui-danger);
   font-size: 12.5px;
 }
 
@@ -459,10 +484,10 @@
   gap: 8px;
   margin: 10px 0 0;
   padding: 10px 12px;
-  border: 1px solid #f0c6c6;
+  border: 1px solid color-mix(in srgb, var(--ui-danger) 30%, var(--ui-border));
   border-radius: 8px;
-  background: #fdf3f3;
-  color: #b4232a;
+  background: var(--ui-danger-soft);
+  color: var(--ui-danger);
   font-size: 13px;
   line-height: 1.5;
 }
@@ -496,15 +521,15 @@
   justify-content: space-between;
   gap: 12px;
   padding: 12px 14px;
-  border: 1px solid #d7dce4;
+  border: 1px solid var(--ui-border-strong);
   border-radius: 10px;
-  background: #fff;
+  background: var(--ui-surface);
   cursor: pointer;
   text-align: left;
 }
 
 .runtime-config-gate-admission-device:hover:not(:disabled) {
-  border-color: #151a22;
+  border-color: var(--ui-text);
 }
 
 .runtime-config-gate-admission-device:disabled {
@@ -521,12 +546,12 @@
 
 .runtime-config-gate-admission-device-meta strong {
   font-size: 14px;
-  color: #151a22;
+  color: var(--ui-text);
 }
 
 .runtime-config-gate-admission-device-meta small {
   font-size: 12px;
-  color: #7c8798;
+  color: var(--ui-text-3);
 }
 
 .runtime-config-gate-admission-device em {
@@ -534,7 +559,7 @@
   font-style: normal;
   font-size: 13px;
   font-weight: 500;
-  color: #151a22;
+  color: var(--ui-text);
 }
 
 /* 手动配置是低频逃生入口：右对齐的一行弱化文字，不做按钮。 */
@@ -545,14 +570,14 @@
   background: none;
   border: none;
   cursor: pointer;
-  color: #7c8798;
+  color: var(--ui-text-3);
   font-size: 13px;
   font-weight: 400;
   text-decoration: none;
 }
 
 .runtime-config-gate-manual-link:hover {
-  color: #536070;
+  color: var(--ui-text-2);
   text-decoration: underline;
 }
 
@@ -565,9 +590,9 @@
   gap: 12px;
   margin-top: 10px;
   padding: 10px 12px;
-  border: 1px solid #c9d9f4;
+  border: 1px solid color-mix(in srgb, var(--ui-accent) 30%, var(--ui-border));
   border-radius: 8px;
-  background: #f3f7fe;
+  background: var(--ui-accent-softer);
 }
 
 .runtime-config-gate-waiting p {
@@ -577,7 +602,7 @@
   gap: 8px;
   min-width: 0;
   margin: 0;
-  color: #536070;
+  color: var(--ui-text-2);
   font-size: 13px;
   line-height: 1.5;
 }
@@ -593,7 +618,7 @@
   padding: 0;
   border: none;
   background: none;
-  color: #536070;
+  color: var(--ui-text-2);
   font: inherit;
   font-size: 13px;
   cursor: pointer;
@@ -601,7 +626,7 @@
 }
 
 .runtime-config-gate-waiting .runtime-config-gate-cancel:hover {
-  color: #151a22;
+  color: var(--ui-text);
   text-decoration: underline;
 }
 
@@ -619,23 +644,23 @@
 }
 
 .runtime-config-gate-primary {
-  border: 1px solid #151a22;
-  background: #151a22;
-  color: #fff;
+  border: 1px solid var(--ui-text);
+  background: var(--ui-text);
+  color: var(--ui-text-inverse);
 }
 
 .runtime-config-gate-primary:hover {
-  background: #232c39;
+  background: var(--ui-accent-fill-hover);
 }
 
 .runtime-config-gate-secondary {
-  border: 1px solid #d8dee7;
-  background: #fff;
-  color: #151a22;
+  border: 1px solid var(--ui-border-strong);
+  background: var(--ui-surface);
+  color: var(--ui-text);
 }
 
 .runtime-config-gate-secondary:hover {
-  border-color: #9aa7b8;
+  border-color: var(--ui-border-strong);
 }
 
 .runtime-config-gate-primary:disabled,
@@ -668,5 +693,466 @@
   .runtime-config-gate-secondary,
   .runtime-config-gate-social-button {
     justify-content: center;
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   D 区焕新：登录门视觉
+   暖纸画布 + 极淡青绿/蜜桃光晕；登录卡 460–520 宽、白底、20px 圆角、
+   --ui-shadow-lg；Apple / Google / 扫码同一 46px 高度与图标尺寸；
+   「手动配置模型」保持弱化文字链接。全部取 --ui-* token。
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.runtime-config-gate {
+  background-color: var(--ui-bg);
+  background-image:
+    radial-gradient(54% 46% at 16% -6%, color-mix(in srgb, var(--ui-accent) 8%, transparent) 0%, transparent 72%),
+    radial-gradient(48% 44% at 90% 104%, color-mix(in srgb, var(--ui-warm) 11%, transparent) 0%, transparent 74%);
+  background-attachment: fixed;
+  color: var(--ui-text);
+  font-family: var(--ui-font-sans);
+  font-size: var(--ui-text-base);
+}
+
+.runtime-config-gate-header {
+  border-bottom: 1px solid var(--ui-border);
+  background: color-mix(in srgb, var(--ui-bg) 82%, transparent);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+
+.runtime-config-gate-language {
+  height: 32px;
+  padding: 2px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-md);
+  background: color-mix(in srgb, var(--ui-surface) 70%, transparent);
+}
+
+.runtime-config-gate-language svg {
+  color: var(--ui-text-3);
+}
+
+.runtime-config-gate-language button {
+  height: 26px;
+  min-width: 40px;
+  border-radius: var(--ui-radius-sm);
+  color: var(--ui-text-2);
+  font-size: 11.5px;
+  font-weight: 500;
+  transition: background-color var(--ui-duration-fast) var(--ui-ease), color var(--ui-duration-fast) var(--ui-ease);
+}
+
+.runtime-config-gate-language button:hover {
+  color: var(--ui-text);
+}
+
+.runtime-config-gate-language button[data-active='true'] {
+  background: var(--ui-selected);
+  color: var(--ui-accent-strong);
+  font-weight: 600;
+}
+
+.runtime-config-gate-main {
+  padding: clamp(24px, 4vh, 56px) clamp(20px, 6vw, 80px);
+}
+
+.runtime-config-gate-stage {
+  width: min(512px, 100%);
+}
+
+/* 登录卡：白底、20px 圆角、暖墨轻阴影。 */
+.runtime-config-gate-panel {
+  gap: 14px;
+  padding: clamp(26px, 3.4vw, 34px);
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-2xl);
+  background: var(--ui-surface);
+  box-shadow: var(--ui-shadow-lg);
+}
+
+.runtime-config-gate-panel h1 {
+  color: var(--ui-text);
+  font-family: var(--ui-font-display);
+  font-size: clamp(20px, 2.4vw, 23px);
+  font-weight: 620;
+  letter-spacing: -0.02em;
+  line-height: var(--ui-leading-tight);
+}
+
+/* 登录卡内的品牌时刻：一处缎带，说明“这是 EverRoom”，不做别的装饰。 */
+.runtime-config-gate-ribbon {
+  display: flex;
+  align-items: center;
+  margin: 2px 0 2px;
+}
+
+.runtime-config-gate-login-heading {
+  gap: 8px;
+  margin-top: -2px;
+}
+
+.runtime-config-gate-heading-back {
+  width: 30px;
+  height: 30px;
+  margin-left: -6px;
+  border-radius: var(--ui-radius-md);
+  color: var(--ui-text-3);
+}
+
+.runtime-config-gate-heading-back:hover {
+  background: var(--ui-hover);
+  color: var(--ui-text);
+}
+
+.runtime-config-gate-panel p {
+  color: var(--ui-text-2);
+  font-size: var(--ui-text-base);
+  line-height: var(--ui-leading-normal);
+}
+
+.runtime-config-gate-kicker {
+  color: var(--ui-text-3);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+}
+
+/* 登录方式：Apple / Google / 扫码统一 46px 高、10px 圆角、18px 图标。 */
+.runtime-config-gate-login-row {
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.runtime-config-gate-social-button {
+  min-height: 46px;
+  gap: 10px;
+  padding: 0 16px;
+  border-radius: var(--ui-radius-lg);
+  border: 1px solid var(--ui-border-strong);
+  font-size: var(--ui-text-base);
+  font-weight: 600;
+  transition:
+    background-color var(--ui-duration-fast) var(--ui-ease),
+    border-color var(--ui-duration-fast) var(--ui-ease),
+    box-shadow var(--ui-duration-fast) var(--ui-ease);
+}
+
+.runtime-config-gate-brand-login-icon {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+}
+
+.runtime-config-gate-brand-login-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.runtime-config-gate-apple-login {
+  border-color: var(--ui-text);
+  background: var(--ui-text);
+  color: var(--ui-text-inverse);
+}
+
+.runtime-config-gate-apple-login:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--ui-text) 88%, var(--ui-bg));
+  background: color-mix(in srgb, var(--ui-text) 88%, var(--ui-bg));
+}
+
+.runtime-config-gate-google-login {
+  border-color: var(--ui-border-strong);
+  background: var(--ui-surface);
+  color: var(--ui-text);
+}
+
+.runtime-config-gate-google-login:hover:not(:disabled) {
+  border-color: var(--ui-text-3);
+  background: var(--ui-hover);
+}
+
+.runtime-config-gate-social-button:focus-visible,
+.runtime-config-gate-manual-link:focus-visible,
+.runtime-config-gate-primary:focus-visible,
+.runtime-config-gate-secondary:focus-visible,
+.runtime-config-gate-heading-back:focus-visible,
+.runtime-config-gate-language button:focus-visible {
+  outline: 2px solid var(--ui-accent-line);
+  outline-offset: 2px;
+}
+
+/* 二维码入口（QrLoginPanel）在 gate 内与登录按钮同高同圆角。 */
+.runtime-config-gate .qr-login-divider {
+  margin: 18px 0;
+  color: var(--ui-text-3);
+  font-size: 11.5px;
+}
+
+.runtime-config-gate .qr-login-divider::before,
+.runtime-config-gate .qr-login-divider::after {
+  background: var(--ui-border);
+}
+
+.runtime-config-gate .qr-login-entry-button {
+  min-height: 46px;
+  border-color: var(--ui-border-strong);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface);
+  color: var(--ui-text);
+  font-size: var(--ui-text-base);
+}
+
+.runtime-config-gate .qr-login-entry-button svg {
+  width: 18px;
+  height: 18px;
+  color: var(--ui-accent);
+}
+
+.runtime-config-gate .qr-login-entry-button:hover {
+  border-color: var(--ui-accent-line);
+  background: var(--ui-accent-softer);
+}
+
+/* 手动配置模型：低频逃生入口，保持右对齐弱化文字链接。 */
+.runtime-config-gate-manual-link {
+  margin: 18px 2px 0 auto;
+  color: var(--ui-text-3);
+  font-size: var(--ui-text-sm);
+  font-weight: 450;
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  text-underline-offset: 3px;
+  transition: color var(--ui-duration-fast) var(--ui-ease), text-decoration-color var(--ui-duration-fast) var(--ui-ease);
+}
+
+.runtime-config-gate-manual-link:hover {
+  color: var(--ui-text-2);
+  text-decoration-color: currentColor;
+}
+
+/* 手动配置表单：同一张卡里的表单字段，36–38px 高、9px 圆角、青绿聚焦 ring。 */
+.runtime-config-gate-panel-form {
+  gap: 10px;
+}
+
+.runtime-config-gate-field {
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.runtime-config-gate-field span {
+  color: var(--ui-text-2);
+  font-size: 12px;
+  font-weight: 550;
+}
+
+.runtime-config-gate-field input {
+  height: 38px;
+  padding: 0 12px;
+  border: 1px solid var(--ui-border-strong);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface);
+  color: var(--ui-text);
+  font-family: var(--ui-font-mono);
+  font-size: 13px;
+  transition: border-color var(--ui-duration-fast) var(--ui-ease), box-shadow var(--ui-duration-fast) var(--ui-ease);
+}
+
+.runtime-config-gate-field input::placeholder {
+  color: var(--ui-text-3);
+  font-family: var(--ui-font-mono);
+}
+
+.runtime-config-gate-field input:hover {
+  border-color: var(--ui-text-3);
+}
+
+.runtime-config-gate-field input:focus {
+  outline: none;
+  border-color: var(--ui-accent);
+  box-shadow: 0 0 0 3px var(--ui-accent-soft);
+}
+
+.runtime-config-gate-validation {
+  min-height: 16px;
+  color: var(--ui-danger);
+  font-size: 12px;
+}
+
+.runtime-config-gate-error {
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--ui-danger) 30%, var(--ui-border));
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-danger-soft);
+  color: var(--ui-danger);
+  font-size: 12.5px;
+}
+
+.runtime-config-gate-button-row {
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.runtime-config-gate-primary,
+.runtime-config-gate-secondary {
+  height: 38px;
+  padding: 0 16px;
+  border-radius: var(--ui-radius-md);
+  font-size: var(--ui-text-base);
+  font-weight: 600;
+  transition:
+    background-color var(--ui-duration-fast) var(--ui-ease),
+    border-color var(--ui-duration-fast) var(--ui-ease);
+}
+
+.runtime-config-gate-primary {
+  border: 1px solid var(--ui-accent-fill);
+  background: var(--ui-accent-fill);
+  color: var(--ui-accent-contrast);
+}
+
+.runtime-config-gate-primary:hover {
+  border-color: var(--ui-accent-fill-hover);
+  background: var(--ui-accent-fill-hover);
+}
+
+.runtime-config-gate-secondary {
+  border: 1px solid var(--ui-border);
+  background: var(--ui-surface);
+  color: var(--ui-text);
+}
+
+.runtime-config-gate-secondary:hover {
+  border-color: var(--ui-border-strong);
+  background: var(--ui-hover);
+}
+
+.runtime-config-gate-primary:disabled,
+.runtime-config-gate-secondary:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* 选择卡（登录 / 手动配置两条路）：白底细描边，hover 只提亮描边。 */
+.runtime-config-gate-option {
+  padding: 18px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface-alt);
+  transition: border-color var(--ui-duration-fast) var(--ui-ease), background-color var(--ui-duration-fast) var(--ui-ease);
+}
+
+.runtime-config-gate-option:hover {
+  border-color: var(--ui-border-strong);
+  background: var(--ui-surface);
+  box-shadow: none;
+}
+
+.runtime-config-gate-option-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-accent-softer);
+  color: var(--ui-accent);
+}
+
+.runtime-config-gate-option > span:last-child {
+  color: var(--ui-text-3);
+  font-size: var(--ui-text-sm);
+}
+
+/* Tabs / 等待 / 设备清单 */
+.runtime-config-gate-tabs {
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface-alt);
+}
+
+.runtime-config-gate-tabs button {
+  height: 32px;
+  border-radius: var(--ui-radius-sm);
+  color: var(--ui-text-2);
+  font-size: var(--ui-text-sm);
+  font-weight: 500;
+}
+
+.runtime-config-gate-tabs button[data-active='true'] {
+  background: var(--ui-surface);
+  color: var(--ui-text);
+  font-weight: 600;
+  box-shadow: var(--ui-shadow-sm);
+}
+
+.runtime-config-gate-tab-badge {
+  background: var(--ui-surface-sunken);
+  color: var(--ui-text-3);
+  font-size: 10.5px;
+}
+
+.runtime-config-gate-waiting {
+  border: 1px solid color-mix(in srgb, var(--ui-accent) 26%, var(--ui-border));
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-accent-softer);
+}
+
+.runtime-config-gate-waiting p {
+  color: var(--ui-text-2);
+  font-size: 12.5px;
+}
+
+.runtime-config-gate-waiting .runtime-config-gate-cancel {
+  color: var(--ui-text-2);
+  font-size: 12.5px;
+}
+
+.runtime-config-gate-waiting .runtime-config-gate-cancel:hover {
+  color: var(--ui-text);
+}
+
+.runtime-config-gate-admission-device {
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface);
+  transition: border-color var(--ui-duration-fast) var(--ui-ease), background-color var(--ui-duration-fast) var(--ui-ease);
+}
+
+.runtime-config-gate-admission-device:hover:not(:disabled) {
+  border-color: var(--ui-accent-line);
+  background: var(--ui-accent-softer);
+}
+
+.runtime-config-gate-admission-device-meta strong {
+  color: var(--ui-text);
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.runtime-config-gate-admission-device-meta small {
+  color: var(--ui-text-3);
+  font-size: 11.5px;
+}
+
+.runtime-config-gate-admission-device em {
+  color: var(--ui-accent-strong);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.runtime-config-gate-status-only {
+  color: var(--ui-text-2);
+  font-size: var(--ui-text-base);
+}
+
+.runtime-config-gate-note {
+  color: var(--ui-text-3) !important;
+  font-size: 12px !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .runtime-config-gate * {
+    transition-duration: 0.001ms !important;
   }
 }

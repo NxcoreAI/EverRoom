@@ -14,6 +14,8 @@ export interface PendingManualImportBatch {
   files: PendingManualImportFile[]
   pipelines?: IngestPipelines
   roomId?: string
+  /** 归属工作区（资料库/产物库按空间隔离）。 */
+  workspaceId?: string
 }
 
 export interface PendingAutoScanBatch {

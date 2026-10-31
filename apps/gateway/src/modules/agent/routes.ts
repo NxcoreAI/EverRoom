@@ -110,6 +110,42 @@ const LocalAgentTarget = Type.Object({
   }, { additionalProperties: false }),
 });
 
+/** AgentService 的工作区入参校验错误 → 400 响应体（沿用其余路由的 error/message 风格）。 */
+function workspaceValidationErrorPayload(error: unknown): { error: string; message: string } | null {
+  if (!(error instanceof Error)) return null;
+  switch (error.message) {
+    case "agent_workspace_name_required":
+      return { error: "invalid_workspace_name", message: "Workspace name is required" };
+    case "agent_workspace_path_invalid":
+      return { error: "invalid_workspace_path", message: "Workspace path must be an absolute path" };
+    case "agent_workspace_last_opened_at_invalid":
+      return { error: "invalid_last_opened_at", message: "lastOpenedAt must be an ISO timestamp" };
+    case "agent_workspace_description_invalid":
+      return { error: "invalid_workspace_description", message: "Workspace description must be a string or null" };
+    case "agent_workspace_description_too_long":
+      return {
+        error: "invalid_workspace_description",
+        message: "Workspace description must be at most 2000 characters",
+      };
+    case "agent_workspace_goals_invalid":
+    case "agent_workspace_goals_too_many":
+    case "agent_workspace_goal_empty":
+    case "agent_workspace_goal_too_long":
+      return {
+        error: "invalid_workspace_goals",
+        message: "Workspace goals must be at most 12 non-empty strings, each at most 200 characters",
+      };
+    default:
+      return null;
+  }
+}
+
+/** 工作区元数据（描述 + 目标）的共享 JSON schema，POST/PATCH 共用。 */
+const WorkspaceMetaSchema = {
+  description: Type.Optional(Type.Union([Type.String({ maxLength: 2_000 }), Type.Null()])),
+  goals: Type.Optional(Type.Array(Type.String({ maxLength: 200 }), { maxItems: 12 })),
+};
+
 export function agentRoutes(
   service: AgentService,
   statusService?: AgentStatusService,
@@ -157,6 +193,77 @@ export function agentRoutes(
       },
     );
     app.get(
+      "/v1/agent/workspaces",
+      { schema: { tags: ["agent"] } },
+      async () => service.listWorkspaces(),
+    );
+    app.post(
+      "/v1/agent/workspaces",
+      {
+        schema: {
+          tags: ["agent"],
+          body: Type.Object({
+            name: Type.String({ minLength: 1, maxLength: 120 }),
+            path: Type.Optional(Type.Union([Type.String({ maxLength: 2_000 }), Type.Null()])),
+            ...WorkspaceMetaSchema,
+          }),
+        },
+      },
+      async (request, reply) => {
+        try {
+          return reply.code(201).send(service.createWorkspace(request.body));
+        } catch (error) {
+          const invalid = workspaceValidationErrorPayload(error);
+          if (invalid) return reply.code(400).send(invalid);
+          throw error;
+        }
+      },
+    );
+    app.patch(
+      "/v1/agent/workspaces/:id",
+      {
+        schema: {
+          tags: ["agent"],
+          params: IdParams,
+          body: Type.Object({
+            name: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
+            path: Type.Optional(Type.Union([Type.String({ maxLength: 2_000 }), Type.Null()])),
+            lastOpenedAt: Type.Optional(Type.String({ maxLength: 40 })),
+            ...WorkspaceMetaSchema,
+          }),
+        },
+      },
+      async (request, reply) => {
+        try {
+          return service.updateWorkspace(request.params.id, request.body)
+            ?? reply.code(404).send({ error: "not_found", message: "Agent workspace not found" });
+        } catch (error) {
+          const invalid = workspaceValidationErrorPayload(error);
+          if (invalid) return reply.code(400).send(invalid);
+          throw error;
+        }
+      },
+    );
+    app.delete(
+      "/v1/agent/workspaces/:id",
+      { schema: { tags: ["agent"], params: IdParams } },
+      async (request, reply) => {
+        try {
+          return service.deleteWorkspace(request.params.id)
+            ? reply.code(204).send()
+            : reply.code(404).send({ error: "not_found", message: "Agent workspace not found" });
+        } catch (error) {
+          if (error instanceof Error && error.message === "agent_workspace_default_immutable") {
+            return reply.code(409).send({
+              error: "default_immutable",
+              message: "The default workspace cannot be deleted",
+            });
+          }
+          throw error;
+        }
+      },
+    );
+    app.get(
       "/v1/agent/sessions",
       {
         schema: {
@@ -164,10 +271,15 @@ export function agentRoutes(
           querystring: Type.Object({
             pageLabel: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
             roomId: Type.Optional(Type.Union([Type.String({ maxLength: 100 }), Type.Null()])),
+            workspaceId: Type.Optional(Type.String({ maxLength: 100 })),
           }),
         },
       },
-      async (request) => service.listSessions(request.query.pageLabel, request.query.roomId),
+      async (request) => service.listSessions(
+        request.query.pageLabel,
+        request.query.roomId,
+        request.query.workspaceId,
+      ),
     );
 
     app.post(
@@ -177,6 +289,7 @@ export function agentRoutes(
           tags: ["agent"],
           body: Type.Object({
             pageLabel: Type.String({ minLength: 1, maxLength: 120 }),
+            workspaceId: Type.Optional(Type.Union([Type.String({ maxLength: 100 }), Type.Null()])),
             roomId: Type.Optional(Type.Union([Type.String({ maxLength: 100 }), Type.Null()])),
             modelPreference: Type.Optional(Type.Union([
               Type.Literal("smart"),
@@ -184,6 +297,16 @@ export function agentRoutes(
               Type.Literal("lite"),
             ])),
             channelAgentId: Type.Optional(Type.String({ maxLength: 500 })),
+            thinkingLevel: Type.Optional(Type.Union([
+              Type.Literal("off"),
+              Type.Literal("minimal"),
+              Type.Literal("low"),
+              Type.Literal("medium"),
+              Type.Literal("high"),
+              Type.Literal("xhigh"),
+              Type.Literal("max"),
+              Type.Null(),
+            ])),
           }),
         },
       },
@@ -306,6 +429,42 @@ export function agentRoutes(
       },
     );
 
+    app.put(
+      "/v1/agent/sessions/:sessionId/thinking-level",
+      {
+        schema: {
+          tags: ["agent"],
+          params: SessionParams,
+          body: Type.Object({
+            level: Type.Union([
+              Type.Literal("off"),
+              Type.Literal("minimal"),
+              Type.Literal("low"),
+              Type.Literal("medium"),
+              Type.Literal("high"),
+              Type.Literal("xhigh"),
+              Type.Literal("max"),
+              Type.Null(),
+            ]),
+          }),
+        },
+      },
+      async (request, reply) => {
+        try {
+          return await service.setSessionThinkingLevel(request.params.sessionId, request.body.level);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (message.includes("not_found")) {
+            return reply.code(404).send({ error: "not_found", message: "Agent session not found" });
+          }
+          if (message === "agent_thinking_level_invalid") {
+            return reply.code(400).send({ error: "invalid_thinking_level", message });
+          }
+          return reply.code(400).send({ error: "invalid_request", message });
+        }
+      },
+    );
+
     app.patch(
       "/v1/agent/sessions/:sessionId",
       {
@@ -408,6 +567,33 @@ export function agentRoutes(
                   affinity: Type.Literal("after"),
                 })),
               })),
+              // 用户当前浏览的 Office 文件页签（桌面 main 注入）：Agent 据此
+              // 知道“这份文档”是哪个 fileId，再用 file_read 读取正文。
+              activeFile: Type.Optional(Type.Object({
+                fileId: Type.String({ minLength: 1, maxLength: 200 }),
+                title: Type.String({ minLength: 1, maxLength: 300 }),
+                kind: Type.Union([
+                  Type.Literal("docx"),
+                  Type.Literal("spreadsheet"),
+                  Type.Literal("slides"),
+                  Type.Literal("pdf"),
+                ]),
+                editable: Type.Optional(Type.Boolean()),
+              }, { additionalProperties: false })),
+              // 工作区打开的全部 Office 页签（含 active）：让 Agent 知道除了
+              // 眼前这份，工作区里还开着哪些文件。
+              openFiles: Type.Optional(Type.Array(Type.Object({
+                fileId: Type.String({ minLength: 1, maxLength: 200 }),
+                title: Type.String({ minLength: 1, maxLength: 300 }),
+                kind: Type.Union([
+                  Type.Literal("docx"),
+                  Type.Literal("spreadsheet"),
+                  Type.Literal("slides"),
+                  Type.Literal("pdf"),
+                ]),
+                editable: Type.Optional(Type.Boolean()),
+                active: Type.Boolean(),
+              }, { additionalProperties: false }), { maxItems: 20 })),
               attachments: Type.Optional(Type.Array(Type.Object({
                 fileId: Type.String({ minLength: 1, maxLength: 200 }),
                 fileVersionId: Type.String({ minLength: 1, maxLength: 200 }),

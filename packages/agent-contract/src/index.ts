@@ -87,8 +87,50 @@ export interface AgentContextCompaction {
   error?: string;
 }
 
+/**
+ * 工作区：会话的组织容器。默认工作区（id='default'）永远存在且不可删除；
+ * path 为本地目录（默认工作区为 null，表示不绑定具体目录）。
+ */
+export interface AgentWorkspace {
+  id: string;
+  name: string;
+  /** 空间描述（概览页展示）；未填写为 null，落库前 trim，最长 2000 字符。 */
+  description: string | null;
+  /** 目标列表（概览页药丸）；无目标为空数组，最多 12 条、每条 trim 后 ≤ 200 字符。 */
+  goals: string[];
+  path: string | null;
+  kind: "default" | "custom";
+  createdAt: string;
+  updatedAt: string;
+  lastOpenedAt: string;
+}
+
+export interface CreateAgentWorkspaceInput {
+  name: string;
+  path?: string | null;
+  /** 可选描述；空串/空白按 null 存。 */
+  description?: string | null;
+  /** 可选目标列表；省略等价于空数组。 */
+  goals?: string[];
+}
+
+export interface UpdateAgentWorkspaceInput {
+  name?: string;
+  path?: string | null;
+  /** 传 null 或空白串清空描述。 */
+  description?: string | null;
+  /** 传 [] 清空目标，传数组整体替换。 */
+  goals?: string[];
+  lastOpenedAt?: string;
+}
+
+/** 默认工作区 id（迁移与懒初始化共用；不可删除）。 */
+export const DEFAULT_AGENT_WORKSPACE_ID = "default" as const;
+
 export interface AgentSession {
   id: string;
+  /** 会话所属工作区；旧会话迁移后为 'default'。 */
+  workspaceId: string | null;
   /** Legacy metadata; user sessions are not Room-scoped. */
   roomId: string | null;
   /** Last/creation UI surface, never a session partition key. */
@@ -100,6 +142,11 @@ export interface AgentSession {
   modelPreference?: AgentModelPreference;
   /** 会话锁定的本机 CLI Agent 渠道（activeAgentId 为本机 Agent 时由其反推）；后端权威。 */
   channelAgentId?: string;
+  /**
+   * 会话级思考档位覆盖；null/缺省＝跟随模型配置里的 reasoning（runtime config）。
+   * 可随时修改（PUT thinking-level），从下一轮 run 起生效。
+   */
+  thinkingLevel?: AgentThinkingLevel | null;
   title: string | null;
   status: AgentSessionStatus;
   createdAt: string;
@@ -422,6 +469,8 @@ export interface AgentDebugRunEvents {
 
 export interface CreateAgentSessionInput {
   pageLabel: string;
+  /** 会话所属工作区；缺省/非法时归入默认工作区。 */
+  workspaceId?: string | null;
   /** Legacy input accepted for compatibility; ignored for user sessions. */
   roomId?: string | null;
   /**
@@ -434,10 +483,41 @@ export interface CreateAgentSessionInput {
    * 整个会话由该 Agent 连续对话（ACP 持久会话）。设置后 modelPreference 被忽略。
    */
   channelAgentId?: string;
+  /**
+   * 会话思考档位（创建时写入；null/缺省＝跟随模型配置的 reasoning）。
+   * 与模型档位不同，它不锁定：会话内可随时 PUT 修改，从下一轮 run 生效。
+   */
+  thinkingLevel?: AgentThinkingLevel | null;
 }
 
 /** 会话模型档位：smart=强模型主会话+轻量模型委派；primary=纯强模型；lite=轻量模型直答。 */
 export type AgentModelPreference = "smart" | "primary" | "lite";
+
+/** 思考档位（pi thinkingLevel 七档）：off 关闭思考；null 表示跟随模型配置。 */
+export type AgentThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+
+/** 七档全集（校验与 UI 展示共用；顺序＝由弱到强）。 */
+export const AGENT_THINKING_LEVELS: readonly AgentThinkingLevel[] = [
+  "off",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+];
+
+export function isAgentThinkingLevel(value: unknown): value is AgentThinkingLevel {
+  return typeof value === "string" && (AGENT_THINKING_LEVELS as readonly string[]).includes(value);
+}
+
+/** PUT /v1/agent/sessions/:id/thinking-level 的响应。 */
+export interface AgentThinkingLevelUpdate {
+  /** 当前覆盖值；null＝已清回「跟随模型配置」。 */
+  thinkingLevel: AgentThinkingLevel | null;
+  /** 是否已即时推到活跃 run 的 runtime（false＝仅落库，下一轮起生效）。 */
+  applied: boolean;
+}
 
 /** 档位 → 内置 agentId（写入 agent_sessions.activeAgentId）。 */
 export const MODEL_PREFERENCE_AGENT_IDS: Record<AgentModelPreference, string> = {
@@ -906,6 +986,17 @@ export interface StartAgentRunInput {
     /** Explicit UI-confirmed target for a global Agent session. */
     selectedRoomId?: string | null;
     activeDocument?: AgentActiveDocumentContext;
+    /**
+     * 用户当前正在浏览的 Office 文件页签（Word/Excel/PPT/PDF）。
+     * 与 activeDocument（文档内核里的文稿）是两套对象：Office 文件是 file_entries，
+     * 没有 documentId/version，读取正文走 fileId。
+     */
+    activeFile?: AgentActiveFileContext;
+    /**
+     * 工作区当前打开的全部 Office 页签（含焦点项，active=true）。
+     * 让 Agent 知道“一共开着哪些文件”，而不只是用户眼前的这一份。
+     */
+    openFiles?: AgentOpenFileContext[];
     /** Files uploaded from the conversation composer and parsed by the unified file engine. */
     attachments?: AgentFileAttachment[];
     /** Read-only imported conversation to use once when this native session starts. */
@@ -1289,12 +1380,41 @@ export interface AgentActiveDocumentContext {
   cursorAnchorCandidate?: AgentDocumentCursorAnchor;
 }
 
+/** 内嵌 Office 视图的文件形态（与桌面端 OfficePreviewKind 同构）。 */
+export type AgentActiveFileKind = "docx" | "spreadsheet" | "slides" | "pdf";
+
+/** 用户当前正在浏览的 Office 文件（页签）：Agent 感知“这份文档”指谁的最小事实。 */
+export interface AgentActiveFileContext {
+  fileId: string;
+  title: string;
+  kind: AgentActiveFileKind;
+  /** 打开时是否可编辑（只读打开的文件不承诺能改，但可以读正文）。 */
+  editable?: boolean;
+}
+
+/** 工作区里打开的一个 Office 页签；active = 用户此刻正在看的那一个。 */
+export interface AgentOpenFileContext extends AgentActiveFileContext {
+  active: boolean;
+}
+
 export interface TiptapJsonContent {
   type: string;
   attrs?: Record<string, unknown>;
   content?: TiptapJsonContent[];
   marks?: Array<{ type: string; attrs?: Record<string, unknown> }>;
   text?: string;
+}
+
+/** 单篇文稿移动结果：fromRoomId 为空表示从工作区级归入 Room。 */
+export interface MovedRoomDocument {
+  document: RoomDocument;
+  fromRoomId: string | null;
+}
+
+/** 批量移动结果：部分失败时 failed 带原因，成功项照常返回。 */
+export interface MoveRoomDocumentsResult {
+  moved: MovedRoomDocument[];
+  failed: Array<{ documentId: string; reason: string }>;
 }
 
 export interface RoomDocument {

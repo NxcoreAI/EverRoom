@@ -8,7 +8,6 @@ import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 // 阶段二：注册表只被用于「读取元数据」（env 名/默认 configKey），provider 文件本身
 // 无副作用依赖，可安全进入 config 层（新增 provider 时 config 解析自动跟随注册表）。
-import { SYNC_PROVIDERS } from "@nxcore/connectors-module/sync-providers/index.js";
 
 const LogLevelSchema = Type.Union([
   Type.Literal("fatal"),
@@ -94,7 +93,6 @@ const RawConfigSchema = Type.Object(
     webSearchBaseUrl: Type.String(),
     webSearchModel: Type.String({ minLength: 1 }),
     webSearchApiKey: Type.String(),
-    nangoConnectorPollMs: Type.Integer({ minimum: 1000 }),
     documentIndexBackfillEnabled: Type.Boolean(),
     documentIndexBackfillScanIntervalMs: Type.Integer({ minimum: 1_000 }),
     documentIndexBackfillQuietWindowMs: Type.Integer({ minimum: 0 }),
@@ -218,15 +216,9 @@ export interface GatewayConfig {
   /** 百炼（DashScope）联网搜索工具配置；null 时 agent 不提供 web_search。 */
   webSearch: WebSearchConfig | null;
   vlm?: VlmConfig | null;
-  /** 链路A连接编排（P3 Nango 删除后仅剩编排自身配置；命名遗留 P4 清理）。 */
-  nangoConnector?: {
-    enabled: boolean;
-    databasePath: string;
-    pollingIntervalMs: number;
-  };
   cliConnector?: OpenConnectorCliConfig | null;
   /** Agent 飞书导出用 lark-cli（发行包预装；桌面注入 NXCORE_LARK_CLI_PATH）。 */
-  larkCli?: { executable: string } | null;
+  larkCli?: { executable: string; homeDirectory?: string } | null;
   /** Notion 导出用官方 ntn CLI（macOS 随包；桌面注入 NXCORE_NTN_CLI_PATH）。 */
   notionCli?: { executable: string } | null;
   /** 桌面文档资产本地桥（loopback）；飞书导出时本地图改写为该 URL 前缀由 lark-cli 下载。 */
@@ -603,10 +595,6 @@ export function loadConfig(
         ? env.NXCORE_AI_API_KEY?.trim()
         : "")
       ?? "",
-    nangoConnectorPollMs: parsePositiveInteger(
-      "NXCORE_CONNECTOR_POLL_MS",
-      env.NXCORE_CONNECTOR_POLL_MS?.trim() || "300000",
-    ),
     documentIndexBackfillEnabled: env.NXCORE_DOCUMENT_INDEX_BACKFILL_ENABLED == null
       ? true
       : parseBoolean("NXCORE_DOCUMENT_INDEX_BACKFILL_ENABLED", env.NXCORE_DOCUMENT_INDEX_BACKFILL_ENABLED.trim()),
@@ -765,12 +753,6 @@ export function loadConfig(
       values["migrations-dir"] ?? env.NXCORE_GATEWAY_MIGRATIONS_DIR ?? defaultMigrationsDir(),
     ),
     runtimeManifestPath: join(dataDir, "runtime", "gateway.json"),
-    nangoConnector: {
-      // P3：Nango runtime 删除——链路A编排恒可用（executor 走 oo）。
-      enabled: true,
-      databasePath: join(dataDir,"database","connectors.sqlite"),
-      pollingIntervalMs: rawConfig.nangoConnectorPollMs,
-    },
     cliConnector: cliConnectorUrl
       ? {
           executable: env.NXCORE_CLI_CONNECTOR_CLI_PATH?.trim() || 'oo',
@@ -793,6 +775,10 @@ export function loadConfig(
       : null,
     larkCli: {
       executable: firstEnvValue(env, "NXCORE_LARK_CLI_PATH")?.trim() || "lark-cli",
+      // 桌面注入的应用私有 HOME：lark-cli 配置与用户终端里的安装相互隔离。
+      ...(firstEnvValue(env, "NXCORE_LARK_CLI_HOME")?.trim()
+        ? { homeDirectory: firstEnvValue(env, "NXCORE_LARK_CLI_HOME")!.trim() }
+        : {}),
     },
     documentAssetBridgeUrl: firstEnvValue(env, "NXCORE_DOCUMENT_ASSET_BRIDGE_URL")?.trim() || null,
     notionCli: firstEnvValue(env, "NXCORE_NTN_CLI_PATH")?.trim()

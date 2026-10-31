@@ -1,0 +1,238 @@
+/* ──────────────────────────────────────────────────────────────────────────
+   EverRoom 全局风格（外观主题）
+   ──────────────────────────────────────────────────────────────────────────
+   四套可选外观，全部由 tokens.css 的 `--ui-*` 语义 token 派生：
+   - paper  暖纸（默认）：品牌暖白 + 青绿 + 蜜桃
+   - plain  素白：冷调中性灰 + 系统蓝，适合长时间办公
+   - moss   苔原：鼠尾草绿底色 + 深绿主色，安静克制
+   - night  夜墨：深色玻璃 + 浅青绿主色，文档画布仍保持浅色
+   切换方式：<html data-theme="…" data-color-mode="light|dark">，
+   由 state/appearanceSettings.ts 写入；tokens.css 里的旧别名会自动跟随。
+   ────────────────────────────────────────────────────────────────────────── */
+
+/* ── 素白 ───────────────────────────────────────────────────────────────── */
+:root[data-theme='plain'] {
+  color-scheme: light;
+
+  --ui-bg: #f7f8fa;
+  --ui-chrome: #f0f2f5;
+  --ui-chrome-strong: #e6eaf0;
+  --ui-surface: #ffffff;
+  --ui-surface-alt: #f5f7fa;
+  --ui-surface-sunken: #eceff4;
+
+  --ui-text: #1b2430;
+  --ui-text-2: #4e5c6b;
+  --ui-text-3: #5d6b7a;
+  --ui-text-inverse: #ffffff;
+
+  --ui-border: #e2e7ee;
+  --ui-border-strong: #cfd6e0;
+  --ui-border-subtle: #ebeff4;
+
+  --ui-hover: rgba(27, 36, 48, 0.045);
+  --ui-hover-strong: rgba(27, 36, 48, 0.08);
+  --ui-selected: rgba(37, 99, 235, 0.09);
+  --ui-selected-strong: rgba(37, 99, 235, 0.15);
+
+  --ui-accent: #1d4ed8;
+  --ui-accent-hover: #1e40af;
+  --ui-accent-strong: #1e3a8a;
+  --ui-accent-soft: rgba(37, 99, 235, 0.09);
+  --ui-accent-softer: rgba(37, 99, 235, 0.05);
+  --ui-accent-line: rgba(37, 99, 235, 0.35);
+  --ui-accent-fill: #2563eb;
+  --ui-accent-fill-hover: #1d4ed8;
+  --ui-accent-contrast: #ffffff;
+
+  --ui-warm: #d98c4a;
+  --ui-warm-strong: #9a5a1f;
+  --ui-warm-soft: rgba(217, 140, 74, 0.15);
+
+  --ui-danger: #b3402c;
+  --ui-danger-hover: #94301f;
+  --ui-danger-soft: rgba(179, 64, 44, 0.09);
+  --ui-success: #2b7a56;
+  --ui-success-soft: rgba(43, 122, 86, 0.1);
+  --ui-warning: #9a6a1f;
+  --ui-warning-soft: rgba(154, 106, 31, 0.12);
+  --ui-running: #9a5a1f;
+  --ui-running-soft: rgba(217, 140, 74, 0.16);
+
+  --ui-icon-doc: #2f6fa8;
+  --ui-icon-sheet: #2b7a56;
+  --ui-icon-slide: #b8742e;
+  --ui-icon-pdf: #b3402c;
+  --ui-icon-md: #5b6670;
+  --ui-icon-image: #7a5fa8;
+  --ui-icon-audio: #3d7f9e;
+
+  --ui-overlay: rgba(15, 23, 42, 0.28);
+  --ui-overlay-strong: rgba(15, 23, 42, 0.42);
+  --ui-scrollbar-thumb: rgba(27, 36, 48, 0.16);
+  --ui-scrollbar-thumb-hover: rgba(27, 36, 48, 0.28);
+
+  --ui-shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.06);
+  --ui-shadow-md: 0 2px 4px rgba(15, 23, 42, 0.04), 0 12px 28px -14px rgba(15, 23, 42, 0.16);
+  --ui-shadow-lg: 0 2px 6px rgba(15, 23, 42, 0.05), 0 28px 64px -28px rgba(15, 23, 42, 0.3);
+  --ui-shadow-inset: inset 0 1px 1px rgba(15, 23, 42, 0.04);
+
+  --wb-primary: #1b2430;
+  --wb-primary-contrast: #ffffff;
+
+  /* 品牌缎带在冷调里收敛为蓝 / 墨 / 琥珀 */
+  --brand-teal: #2f6fd0;
+  --brand-ink: #1b2430;
+  --brand-peach: #d98c4a;
+}
+
+/* ── 苔原 ───────────────────────────────────────────────────────────────── */
+:root[data-theme='moss'] {
+  color-scheme: light;
+
+  --ui-bg: #f4f6ef;
+  --ui-chrome: #eaeee1;
+  --ui-chrome-strong: #e0e6d4;
+  --ui-surface: #fdfefb;
+  --ui-surface-alt: #f1f4ea;
+  --ui-surface-sunken: #e8eddf;
+
+  --ui-text: #1f2b23;
+  --ui-text-2: #4d5c52;
+  --ui-text-3: #5f7064;
+  --ui-text-inverse: #ffffff;
+
+  --ui-border: #dfe5d3;
+  --ui-border-strong: #ccd5bc;
+  --ui-border-subtle: #e8ecdf;
+
+  --ui-hover: rgba(31, 43, 35, 0.05);
+  --ui-hover-strong: rgba(31, 43, 35, 0.085);
+  --ui-selected: rgba(63, 127, 91, 0.11);
+  --ui-selected-strong: rgba(63, 127, 91, 0.18);
+
+  --ui-accent: #35694a;
+  --ui-accent-hover: #2b563c;
+  --ui-accent-strong: #234832;
+  --ui-accent-soft: rgba(63, 127, 91, 0.1);
+  --ui-accent-softer: rgba(63, 127, 91, 0.06);
+  --ui-accent-line: rgba(63, 127, 91, 0.35);
+  --ui-accent-fill: #3f7f5b;
+  --ui-accent-fill-hover: #35694a;
+  --ui-accent-contrast: #ffffff;
+
+  --ui-warm: #c98a4f;
+  --ui-warm-strong: #8a5626;
+  --ui-warm-soft: rgba(201, 138, 79, 0.16);
+
+  --ui-danger: #ad4a32;
+  --ui-danger-hover: #8f3a25;
+  --ui-danger-soft: rgba(173, 74, 50, 0.09);
+  --ui-success: #2f6f4f;
+  --ui-success-soft: rgba(47, 111, 79, 0.1);
+  --ui-warning: #8f6a26;
+  --ui-warning-soft: rgba(143, 106, 38, 0.12);
+  --ui-running: #8a5626;
+  --ui-running-soft: rgba(201, 138, 79, 0.18);
+
+  --ui-icon-doc: #3a6f9a;
+  --ui-icon-sheet: #3f7f5b;
+  --ui-icon-slide: #b8792f;
+  --ui-icon-pdf: #ad4a32;
+  --ui-icon-md: #5b6b60;
+  --ui-icon-image: #7a5fa0;
+  --ui-icon-audio: #417f8e;
+
+  --ui-overlay: rgba(30, 42, 33, 0.3);
+  --ui-overlay-strong: rgba(30, 42, 33, 0.44);
+  --ui-scrollbar-thumb: rgba(31, 43, 35, 0.16);
+  --ui-scrollbar-thumb-hover: rgba(31, 43, 35, 0.28);
+
+  --ui-shadow-sm: 0 1px 2px rgba(30, 42, 33, 0.07);
+  --ui-shadow-md: 0 2px 4px rgba(30, 42, 33, 0.05), 0 12px 28px -14px rgba(30, 42, 33, 0.18);
+  --ui-shadow-lg: 0 2px 6px rgba(30, 42, 33, 0.06), 0 28px 64px -28px rgba(30, 42, 33, 0.32);
+  --ui-shadow-inset: inset 0 1px 1px rgba(30, 42, 33, 0.05);
+
+  --wb-primary: #243029;
+  --wb-primary-contrast: #ffffff;
+
+  --brand-teal: #3f7f5b;
+  --brand-ink: #1f2b23;
+  --brand-peach: #c98a4f;
+}
+
+/* ── 夜墨（深色） ─────────────────────────────────────────────────────────── */
+:root[data-theme='night'] {
+  color-scheme: dark;
+
+  --ui-bg: #15191c;
+  --ui-chrome: #1b2023;
+  --ui-chrome-strong: #242a2e;
+  --ui-surface: #20262a;
+  --ui-surface-alt: #252c30;
+  --ui-surface-sunken: #121619;
+
+  --ui-text: #e6ecec;
+  --ui-text-2: #a7b4b4;
+  --ui-text-3: #8b999a;
+  --ui-text-inverse: #0d1214;
+
+  --ui-border: #2f393c;
+  --ui-border-strong: #3d484b;
+  --ui-border-subtle: #283134;
+
+  --ui-hover: rgba(255, 255, 255, 0.055);
+  --ui-hover-strong: rgba(255, 255, 255, 0.09);
+  --ui-selected: rgba(111, 212, 206, 0.13);
+  --ui-selected-strong: rgba(111, 212, 206, 0.2);
+
+  --ui-accent: #6fd4ce;
+  --ui-accent-hover: #8fe0db;
+  --ui-accent-strong: #aeeae6;
+  --ui-accent-soft: rgba(111, 212, 206, 0.14);
+  --ui-accent-softer: rgba(111, 212, 206, 0.08);
+  --ui-accent-line: rgba(111, 212, 206, 0.45);
+  /* 深色下实底按钮用浅青绿 + 深色文字，保证 10:1 对比度 */
+  --ui-accent-fill: #6fd4ce;
+  --ui-accent-fill-hover: #8fe0db;
+  --ui-accent-contrast: #0b1e1f;
+
+  --ui-warm: #e9a06a;
+  --ui-warm-strong: #e9a06a;
+  --ui-warm-soft: rgba(233, 160, 106, 0.2);
+
+  --ui-danger: #e07a5f;
+  --ui-danger-hover: #e8927a;
+  --ui-danger-soft: rgba(224, 122, 95, 0.16);
+  --ui-success: #6fbf8f;
+  --ui-success-soft: rgba(111, 191, 143, 0.16);
+  --ui-warning: #d8a75a;
+  --ui-warning-soft: rgba(216, 167, 90, 0.18);
+  --ui-running: #e9a06a;
+  --ui-running-soft: rgba(233, 160, 106, 0.2);
+
+  --ui-icon-doc: #7fa9d9;
+  --ui-icon-sheet: #7fc49a;
+  --ui-icon-slide: #e0a06a;
+  --ui-icon-pdf: #e08a75;
+  --ui-icon-md: #a2aeb2;
+  --ui-icon-image: #b99ad8;
+  --ui-icon-audio: #7ab8d0;
+
+  --ui-overlay: rgba(3, 8, 10, 0.62);
+  --ui-overlay-strong: rgba(3, 8, 10, 0.78);
+  --ui-scrollbar-thumb: rgba(255, 255, 255, 0.18);
+  --ui-scrollbar-thumb-hover: rgba(255, 255, 255, 0.3);
+
+  --ui-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --ui-shadow-md: 0 2px 4px rgba(0, 0, 0, 0.4), 0 12px 28px -14px rgba(0, 0, 0, 0.7);
+  --ui-shadow-lg: 0 2px 8px rgba(0, 0, 0, 0.5), 0 28px 64px -24px rgba(0, 0, 0, 0.8);
+  --ui-shadow-inset: inset 0 1px 1px rgba(255, 255, 255, 0.04);
+
+  --wb-primary: #e6ecec;
+  --wb-primary-contrast: #15191c;
+
+  --brand-teal: #4fc7c1;
+  --brand-ink: #c9d8d6;
+  --brand-peach: #e9a06a;
+}

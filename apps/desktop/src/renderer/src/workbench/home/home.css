@@ -1,0 +1,568 @@
+/* 主页标签六个页面（最近 / 项目空间 / 所有文件 / Agent / 连接器 / 设置）的样式。
+ *
+ * 约定：
+ * - 只用 tokens.css 的 --ui-* token（四套主题自动生效），不引第三套色板。
+ * - 层次靠 1px hairline + 底色分层；只有浮层（弹窗/菜单）用阴影。
+ * - 内容列最大宽 1080 居中；段落节奏：页头 → 分节（26px gap）→ 卡片/列表。
+ * - 公共 UI 原语样式在 ui/ui.css，这里只补主页自己的排版。
+ */
+
+/* ───────────────── 页面骨架 ───────────────── */
+
+.wb-home-scroll {
+  display: flex;
+  flex-direction: column;
+  gap: 26px;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px 36px 64px;
+}
+/* 内容列统一最大宽 1080 居中（含页头）。 */
+.wb-home-scroll > * {
+  width: 100%;
+  max-width: 1080px;
+  margin-inline: auto;
+}
+
+/* 嵌入型页面（连接器）：复用原型组件的页头，只补外边距。 */
+.wb-home-scroll.is-embed { padding-top: 22px; gap: 18px; }
+.wb-home-embed-inner { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+
+/* 整页复用型页面（设置）：组件自带页头与内部滚动，宿主只负责撑满内容区。 */
+.wb-home-embed {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.wb-home-embed > .page {
+  flex: 1;
+  width: 100%;
+  max-width: 1200px;
+  height: auto;
+  min-height: 0;
+  margin: 0 auto;
+  overflow-y: auto;
+  padding: 24px 36px 48px;
+}
+.wb-home-embed > .ui-empty { flex: 1; }
+.wb-home-embed > .wb-home-state { padding: 24px 32px; }
+
+/* 主页按钮统一可见 focus（输入框有 ui.css 自己的 focus ring）。 */
+.wb-home-scroll button:focus-visible,
+.wb-home-embed button:focus-visible {
+  outline: 2px solid var(--ui-accent);
+  outline-offset: 2px;
+}
+
+/* 单行省略：flex 行里文字太长时用（外层 min-width:0 才能真正收缩）。 */
+.wb-home-truncate {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ───────────────── 分节 ───────────────── */
+
+.wb-home-section { display: flex; flex-direction: column; gap: 10px; }
+.wb-home-section-head { display: flex; align-items: center; gap: 8px; min-height: 24px; }
+.wb-home-section-head h2 {
+  margin: 0;
+  font-size: var(--ui-text-md);
+  font-weight: 650;
+  letter-spacing: var(--ui-tracking-tight);
+}
+.wb-home-section-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: var(--ui-radius-full);
+  background: var(--ui-hover);
+  color: var(--ui-text-3);
+  font-size: var(--ui-text-2xs);
+  font-weight: 600;
+}
+.wb-home-more {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  height: 26px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--ui-radius-xs);
+  background: transparent;
+  color: var(--ui-text-2);
+  font-size: var(--ui-text-xs);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--ui-duration-fast) var(--ui-ease), color var(--ui-duration-fast) var(--ui-ease);
+}
+.wb-home-more:hover { background: var(--ui-hover); color: var(--ui-text); }
+
+/* ───────────────── 行内状态 / 空数据 ───────────────── */
+
+.wb-home-note {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px dashed var(--ui-border-strong);
+  border-radius: var(--ui-radius-lg);
+  color: var(--ui-text-2);
+  font-size: var(--ui-text-sm);
+}
+.wb-home-empty {
+  padding: 22px;
+  border: 1px dashed var(--ui-border-strong);
+  border-radius: var(--ui-radius-lg);
+  text-align: center;
+  color: var(--ui-text-3);
+  font-size: var(--ui-text-sm);
+}
+.wb-home-state {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 2px;
+  color: var(--ui-text-3);
+  font-size: var(--ui-text-sm);
+}
+.wb-home-footnote {
+  margin: 0;
+  font-size: var(--ui-text-2xs);
+  line-height: var(--ui-leading-normal);
+  color: var(--ui-text-3);
+}
+
+/* ───────────────── 加载骨架 ───────────────── */
+
+.wb-home-skeleton {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface);
+  overflow: hidden;
+}
+.wb-home-skeleton-row { display: flex; align-items: center; gap: 12px; padding: 12px 14px; }
+.wb-home-skeleton-row + .wb-home-skeleton-row { border-top: 1px solid var(--ui-border-subtle); }
+.wb-home-skeleton-icon {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-hover);
+  animation: wb-home-shimmer 1.4s var(--ui-ease) infinite;
+}
+.wb-home-skeleton-lines { display: flex; flex-direction: column; gap: 6px; flex: 1; min-width: 0; }
+.wb-home-skeleton-line {
+  width: 100%;
+  height: 9px;
+  border-radius: var(--ui-radius-full);
+  background: var(--ui-hover);
+  animation: wb-home-shimmer 1.4s var(--ui-ease) infinite;
+}
+.wb-home-skeleton-line.is-short { width: 24%; opacity: 0.7; }
+@keyframes wb-home-shimmer { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
+
+/* ───────────────── 卡片网格（最近空间 / Agent） ───────────────── */
+
+.wb-home-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 10px;
+}
+
+.wb-home-space-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+  padding: 14px 16px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface);
+  color: var(--ui-text);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color var(--ui-duration-fast) var(--ui-ease),
+    box-shadow var(--ui-duration-fast) var(--ui-ease),
+    background var(--ui-duration-fast) var(--ui-ease);
+}
+.wb-home-space-card:hover { border-color: var(--ui-border-strong); box-shadow: var(--ui-shadow-sm); }
+.wb-home-space-card.is-new {
+  border-style: dashed;
+  color: var(--ui-text-2);
+  background: var(--ui-surface-alt);
+}
+.wb-home-space-card.is-new:hover { color: var(--ui-text); }
+
+.wb-home-space-icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent-strong);
+}
+.wb-home-space-main { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; }
+.wb-home-space-main strong {
+  display: block;
+  min-width: 0;
+  font-size: var(--ui-text-base);
+  font-weight: 600;
+  letter-spacing: var(--ui-tracking-tight);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wb-home-space-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: var(--ui-text-base);
+  font-weight: 600;
+  letter-spacing: var(--ui-tracking-tight);
+  white-space: nowrap;
+}
+.wb-home-space-main > span:not(.wb-home-space-name) {
+  font-size: var(--ui-text-2xs);
+  color: var(--ui-text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wb-home-space-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  flex: none;
+}
+.wb-home-space-meta { font-size: var(--ui-text-2xs); color: var(--ui-text-3); white-space: nowrap; }
+
+/* ───────────────── 项目空间页（卡片 + 行内操作） ───────────────── */
+
+.wb-home-space-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 12px;
+}
+.wb-home-space-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface);
+  transition:
+    border-color var(--ui-duration-fast) var(--ui-ease),
+    box-shadow var(--ui-duration-fast) var(--ui-ease);
+}
+.wb-home-space-tile:hover { border-color: var(--ui-border-strong); box-shadow: var(--ui-shadow-sm); }
+.wb-home-space-tile.is-renaming { border-color: var(--ui-accent); box-shadow: 0 0 0 3px var(--ui-accent-softer); }
+.wb-home-space-tile.is-new {
+  justify-content: center;
+  min-height: 116px;
+  border-style: dashed;
+  background: var(--ui-surface-alt);
+  color: var(--ui-text-2);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.wb-home-space-tile.is-new:hover { color: var(--ui-text); }
+.wb-home-space-tile.is-new .wb-home-space-main strong { color: inherit; }
+.wb-home-space-tile-head { display: flex; min-width: 0; }
+.wb-home-space-open {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--ui-radius-sm);
+  background: transparent;
+  color: var(--ui-text);
+  text-align: left;
+  cursor: pointer;
+}
+.wb-home-space-open.is-static { cursor: default; }
+.wb-home-space-tile-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: auto;
+  padding-top: 10px;
+  border-top: 1px solid var(--ui-border-subtle);
+}
+.wb-home-space-tile-meta { flex: 1; min-width: 0; font-size: var(--ui-text-2xs); color: var(--ui-text-3); }
+.wb-home-space-tile-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+  opacity: 0;
+  transition: opacity var(--ui-duration-fast) var(--ui-ease);
+}
+.wb-home-space-tile:hover .wb-home-space-tile-actions,
+.wb-home-space-tile:focus-within .wb-home-space-tile-actions { opacity: 1; }
+.wb-home-rename-input { height: 28px; font-size: var(--ui-text-sm); font-weight: 600; }
+
+/* ───────────────── 行列表（最近工作 / 文件 / Agent / MCP） ───────────────── */
+
+.wb-home-list {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface);
+  overflow: hidden;
+}
+.wb-home-list > * + * { border-top: 1px solid var(--ui-border-subtle); }
+.wb-home-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 11px 14px;
+  border: 0;
+  background: transparent;
+  color: var(--ui-text);
+  text-align: left;
+  cursor: pointer;
+}
+.wb-home-row:hover { background: var(--ui-hover); }
+.wb-home-row.is-static { cursor: default; }
+.wb-home-row.is-static:hover { background: transparent; }
+.wb-home-row-main { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; }
+.wb-home-row-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: var(--ui-text-sm);
+  font-weight: 550;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wb-home-row-sub {
+  font-size: var(--ui-text-xs);
+  color: var(--ui-text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wb-home-row-sub.is-danger { color: var(--ui-danger); }
+.wb-home-row-meta { flex: none; font-size: var(--ui-text-2xs); color: var(--ui-text-3); }
+
+/* 会话状态点（值来自 session.status）。 */
+.wb-home-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ui-text-3);
+}
+.wb-home-dot.is-running { background: var(--ui-running); box-shadow: 0 0 0 3px var(--ui-running-soft); }
+.wb-home-dot.is-idle { background: var(--ui-accent); opacity: 0.7; }
+.wb-home-dot.is-closed,
+.wb-home-dot.is-interrupted { background: var(--ui-text-3); opacity: 0.5; }
+
+/* ───────────────── 工具条 / 搜索 / 筛选 ───────────────── */
+
+.wb-home-toolbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.wb-home-toolbar-meta { font-size: var(--ui-text-2xs); color: var(--ui-text-3); white-space: nowrap; }
+.wb-home-toolbar-right { display: flex; align-items: center; gap: 10px; margin-left: auto; }
+.wb-home-search { flex: 1 1 260px; max-width: 420px; min-width: 200px; }
+.wb-home-search .ui-input { height: 32px; }
+
+.wb-home-chips { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.wb-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-full);
+  background: var(--ui-surface);
+  color: var(--ui-text-2);
+  font-size: var(--ui-text-xs);
+  font-weight: 550;
+  cursor: pointer;
+  transition: background var(--ui-duration-fast) var(--ui-ease), color var(--ui-duration-fast) var(--ui-ease);
+}
+.wb-chip:hover { background: var(--ui-hover); color: var(--ui-text); }
+.wb-chip.is-active { background: var(--ui-accent-soft); border-color: transparent; color: var(--ui-accent-strong); }
+.wb-chip-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: var(--ui-radius-full);
+  background: var(--ui-hover);
+  color: var(--ui-text-3);
+  font-size: var(--ui-text-2xs);
+  font-weight: 600;
+}
+.wb-chip.is-active .wb-chip-count { background: var(--ui-selected-strong); color: var(--ui-accent-strong); }
+
+/* ───────────────── 所有文件：网格视图 ───────────────── */
+
+.wb-home-file-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px;
+}
+.wb-home-file-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  min-height: 116px;
+  padding: 14px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface);
+  color: var(--ui-text);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color var(--ui-duration-fast) var(--ui-ease),
+    box-shadow var(--ui-duration-fast) var(--ui-ease);
+}
+.wb-home-file-tile:hover { border-color: var(--ui-border-strong); box-shadow: var(--ui-shadow-sm); }
+.wb-home-file-tile-name {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: var(--ui-text-sm);
+  font-weight: 550;
+  line-height: var(--ui-leading-snug);
+  word-break: break-word;
+}
+.wb-home-file-tile-meta {
+  width: 100%;
+  margin-top: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--ui-text-2xs);
+  color: var(--ui-text-3);
+}
+
+/* ───────────────── Agent 页：统计 / 卡片 ───────────────── */
+
+.wb-home-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 10px;
+}
+.wb-home-stat-grid.is-compact { grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); }
+.wb-home-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px 14px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface-alt);
+}
+.wb-home-stat-value {
+  font-family: var(--ui-font-display);
+  font-size: var(--ui-text-xl);
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: var(--ui-tracking-tight);
+  color: var(--ui-text);
+}
+.wb-home-stat-grid.is-compact .wb-home-stat-value { font-size: var(--ui-text-lg); }
+.wb-home-stat-value.is-running { color: var(--ui-running); }
+.wb-home-stat-value.is-danger { color: var(--ui-danger); }
+.wb-home-stat-label { font-size: var(--ui-text-2xs); color: var(--ui-text-3); }
+
+.wb-home-agent-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 0;
+  padding: 14px 16px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface);
+}
+.wb-home-agent-avatar {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent-strong);
+}
+.wb-home-agent-main { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 0; }
+.wb-home-agent-title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+  font-size: var(--ui-text-base);
+}
+.wb-home-agent-title strong { font-weight: 600; letter-spacing: var(--ui-tracking-tight); }
+.wb-home-agent-desc {
+  font-size: var(--ui-text-xs);
+  line-height: var(--ui-leading-normal);
+  color: var(--ui-text-2);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.wb-home-agent-meta { font-size: var(--ui-text-2xs); color: var(--ui-text-3); }
+
+/* ───────────────── 窄窗兜底（窗口最小 1080，这里防逐级压缩破版） ───────────────── */
+
+@media (max-width: 980px) {
+  .wb-home-scroll { padding: 4px 24px 48px; gap: 22px; }
+  .wb-home-scroll .ui-pagehead { flex-wrap: wrap; }
+  .wb-home-scroll .ui-pagehead-actions { margin-left: 0; }
+  .wb-home-card-grid { grid-template-columns: 1fr; }
+  .wb-home-space-grid { grid-template-columns: 1fr; }
+  .wb-home-toolbar-right { margin-left: 0; width: 100%; justify-content: flex-start; }
+  .wb-home-search { flex: 1 1 100%; max-width: none; }
+  .wb-home-embed > .page { padding: 20px 24px 40px; }
+  .wb-home-scroll.is-embed { padding: 16px 24px 40px; }
+}
+
+/* 触控/无 hover 设备上，卡片操作不能被 hover 藏住。 */
+@media (hover: none) {
+  .wb-home-space-tile-actions { opacity: 1; }
+}

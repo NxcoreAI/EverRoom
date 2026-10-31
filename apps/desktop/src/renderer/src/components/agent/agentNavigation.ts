@@ -8,9 +8,9 @@ import type {
 import type { PageId } from '@/data/navigation'
 import type { DisplayAgentToolCall } from './useAgentSession'
 
-const pages = new Set<PageId>(['home', 'office', 'docs', 'sources', 'files', 'schedules'])
+const pages = new Set<PageId>(['home', 'office', 'rooms', 'docs', 'sources', 'memory', 'diary', 'schedules'])
 const actions = new Set<AgentNavigationAction>(['created', 'updated', 'opened', 'referenced'])
-const objectTypes = new Set<AgentNavigationObjectType>(['document', 'source', 'task'])
+const objectTypes = new Set<AgentNavigationObjectType>(['room', 'document', 'source', 'memory', 'task', 'diary'])
 
 export function isAgentPageId(value: string): value is PageId {
   return pages.has(value as PageId)
@@ -105,6 +105,7 @@ export function parseAgentNavigationTarget(result: unknown): (AgentNavigationTar
   const objectType = candidate.objectType as AgentNavigationObjectType | undefined
   const blockId = typeof candidate.blockId === 'string' ? candidate.blockId.trim() : ''
   if (candidate.objectType !== undefined && !objectTypes.has(objectType as AgentNavigationObjectType)) return null
+  if (pageId === 'rooms' && !roomId) return null
   if (objectType === 'document' && !objectId) return null
 
   return {
@@ -116,6 +117,29 @@ export function parseAgentNavigationTarget(result: unknown): (AgentNavigationTar
     ...(objectType ? { objectType } : {}),
     ...(blockId ? { blockId } : {}),
   }
+}
+
+/**
+ * 回放导航的处理方式：只有当前活跃 run 的工具调用属于实时导航（允许跳转）；
+ * 重启或面板重挂载后从历史加载的工具调用只恢复 Room 标签页显示，不自动
+ * 跳转打断用户操作。
+ */
+export type AgentReplayNavigationMode = 'live' | 'restore-tab' | 'defer' | 'skip'
+
+export function replayNavigationMode({
+  toolRunId,
+  activeRunId,
+  target,
+  roomIds,
+}: {
+  toolRunId: string
+  activeRunId: string | null
+  target: AgentNavigationTarget & { pageId: PageId }
+  roomIds: ReadonlySet<string>
+}): AgentReplayNavigationMode {
+  if (toolRunId === activeRunId) return 'live'
+  if (target.pageId !== 'rooms' || !target.roomId) return 'skip'
+  return roomIds.has(target.roomId) ? 'restore-tab' : 'defer'
 }
 
 export function navigationKey(tool: DisplayAgentToolCall, target: AgentNavigationTarget): string {

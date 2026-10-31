@@ -606,6 +606,7 @@ const base = {
     { id: 'thread-1', provider: 'claude', sourceId: 's1', title: '历史会话示例', agentId: 'claude', externalSessionId: 'x', messageCount: 2, lastMessageAt: '2026-09-08T00:00:00.000Z', lastMessageExcerpt: '上次的结论…', available: true },
   ], nextCursor: null }) },
   files: {
+    openOriginal: async (_fileId, originalName) => ({ openedWith: 'office', instanceId: 'inst-doc-flow', kind: 'docx', title: originalName ?? 'Q3 进展汇报.docx' }),
     list: async (limit = 200, offset = 0) => {
       const items = [
         { id: 'f-img-1', originalName: '007 一杯咖啡与一本书的相遇 — 副本.jpeg', displayName: null, sharedTitle: '007 一杯咖啡与一本书的相遇 — 副本.jpeg', sourceKind: 'manual-upload', sourceLabel: '手动上传', relativePath: null, provider: null, bytes: 430842, dataType: 'image', agentCategory: null, summary: null, tags: [], processingState: 'ready', clusterId: null, contentHash: 'a1'.repeat(32), currentVersionId: 'v1', parsed: true, updatedAt: '2026-10-17T09:24:00.000Z' },
@@ -613,21 +614,49 @@ const base = {
         { id: 'f-heic-1', originalName: '现场实拍原片.heic', displayName: null, sharedTitle: '现场实拍原片.heic', sourceKind: 'manual-upload', sourceLabel: '手动上传', relativePath: null, provider: null, bytes: 3800000, dataType: 'image', agentCategory: null, summary: null, tags: [], processingState: 'ready', clusterId: null, contentHash: 'c3'.repeat(32), currentVersionId: 'v3', parsed: true, updatedAt: '2026-10-17T09:10:00.000Z' },
         { id: 'f-doc-1', originalName: '微信公众号《构建复杂系统认知框架》文章片段 — 4.1.1 关于控制论与复杂性的边界讨论.pdf', displayName: null, sharedTitle: '微信公众号《构建复杂系统认知框架》文章片段 — 4.1.1 关于控制论与复杂性的边界讨论.pdf', sourceKind: 'manual-upload', sourceLabel: '手动上传', relativePath: null, provider: null, bytes: 5120, dataType: 'document', agentCategory: null, summary: null, tags: [], processingState: 'ready', clusterId: null, contentHash: 'd4'.repeat(32), currentVersionId: 'v4', parsed: true, updatedAt: '2026-10-17T09:00:00.000Z' },
         { id: 'f-cat-1', originalName: 'overview.md', displayName: '产品概览', sharedTitle: '产品概览', sourceKind: 'manual-upload', sourceLabel: '手动上传', relativePath: 'docs/overview.md', provider: null, bytes: 2048, dataType: null, agentCategory: null, summary: null, tags: [], processingState: 'ready', clusterId: null, contentHash: 'h1', currentVersionId: 'v5', parsed: true, updatedAt: '2026-09-05T02:00:00.000Z' },
+        { id: 'f-weekly', originalName: '周报：连接器统一排期.docx', displayName: null, sharedTitle: '周报：连接器统一排期', sourceKind: 'agent-generated', sourceLabel: 'Agent 生成', relativePath: 'reports/weekly.docx', provider: null, bytes: 131072, dataType: 'document', agentCategory: 'report', summary: '本周连接器进展周报', tags: ['周报'], processingState: 'ready', clusterId: null, contentHash: 'w1'.repeat(32), currentVersionId: 'w1', parsed: true, updatedAt: new Date(Date.now() - 2 * 3_600_000).toISOString() },
+        { id: 'f-supplier', originalName: '供应商比价（Q4）.xlsx', displayName: null, sharedTitle: '供应商比价（Q4）', sourceKind: 'agent-generated', sourceLabel: 'Agent 生成', relativePath: 'buy/quotes.xlsx', provider: null, bytes: 47104, dataType: 'sheet', agentCategory: 'table', summary: '三家供应商报价与交期对比', tags: ['比价'], processingState: 'ready', clusterId: null, contentHash: 'x2'.repeat(32), currentVersionId: 'x2', parsed: true, updatedAt: new Date(Date.now() - 26 * 3_600_000).toISOString() },
+        { id: 'f-release', originalName: 'V1 视觉定稿 · 发布计划.pptx', displayName: null, sharedTitle: 'V1 视觉定稿 · 发布计划', sourceKind: 'artifact-imported', sourceLabel: '产物导入', relativePath: 'design/release.pptx', provider: null, bytes: 2516582, dataType: 'slides', agentCategory: 'slides', summary: '三页发布计划与回滚预案', tags: ['发布'], processingState: 'ready', clusterId: null, contentHash: 'p3'.repeat(32), currentVersionId: 'p3', parsed: true, updatedAt: new Date(Date.now() - 30 * 3_600_000).toISOString() },
+        { id: 'f-meet', originalName: '会议纪要：飞书周会 0928.docx', displayName: null, sharedTitle: '会议纪要：飞书周会 0928', sourceKind: 'manual-upload', sourceLabel: '手动上传', relativePath: 'meetings/0928.docx', provider: null, bytes: 88064, dataType: 'document', agentCategory: null, summary: null, tags: [], processingState: 'ready', clusterId: null, contentHash: 'm4'.repeat(32), currentVersionId: 'm4', parsed: true, updatedAt: new Date(Date.now() - 3 * 86_400_000).toISOString() },
       ]
       return { items: items.slice(offset, offset + limit), total: items.length }
     },
     onImportProgress: () => () => {},
     catalogEntry: async (fileId) => null,
   },
+  office: {
+    // Doc 生成流程原型：浏览器 mock 只回假 fileId（真实管线在 Electron 主进程）。
+    generateDocxPrototype: async (input) => ({ fileEntryId: 'proto-doc-1', originalName: (input.title || '文档') + '.docx' }),
+  },
   documents: { list: async () => [], listTrash: async () => [] },
   // 完整 App 入口（/）验证用：已配置 + 已登录，越过 RuntimeConfigGate。
   runtimeConfig: { get: async () => ({ primaryConfigured: true, configSource: 'manual' }) },
   account: { status: async () => ({ authenticated: true, apiBaseUrl: 'https://mock.example', plan: 'pro_plan_active' }) },
+  workspace: {
+    list: async () => [
+      { id: 'default', name: '默认工作区', path: null, kind: 'default', description: null, goals: [], createdAt: '2026-09-01T00:00:00.000Z', updatedAt: '2026-09-01T00:00:00.000Z', lastOpenedAt: '2026-10-17T09:30:00.000Z' },
+      { id: 'ws-connector', name: '连接器统一项目', path: '/Users/xjwang/Projects/connectors', kind: 'custom', description: '统一 EverRoom 与飞书的连接器品牌、命名与排期：Q4 完成供应商定点，V1 灰度 10%。', goals: ['Q4 完成供应商定点', 'V1 视觉灰度 10% 上线', '连接器统一命名上线'], createdAt: '2026-09-21T00:00:00.000Z', updatedAt: '2026-10-17T09:30:00.000Z', lastOpenedAt: '2026-10-17T09:30:00.000Z' },
+      { id: 'ws-q4', name: 'Q4 采购', path: '/Users/xjwang/Projects/q4-buy', kind: 'custom', description: '三家供应商比价与定点，10 月底前拍板。', goals: ['比价表定稿', '供应商定点'], createdAt: '2026-10-02T00:00:00.000Z', updatedAt: '2026-10-16T09:30:00.000Z', lastOpenedAt: '2026-10-16T09:30:00.000Z' },
+    ],
+    create: async (input) => ({ id: 'ws-new', name: input.name, path: input.path ?? null, kind: 'custom', description: input.description ?? null, goals: input.goals ?? [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), lastOpenedAt: new Date().toISOString() }),
+    update: async (id, input) => ({ id, name: input.name ?? '默认工作区', path: input.path ?? null, kind: 'custom', description: input.description ?? null, goals: input.goals ?? [], createdAt: '2026-09-01T00:00:00.000Z', updatedAt: new Date().toISOString(), lastOpenedAt: new Date().toISOString() }),
+    remove: async () => {},
+    pickDirectory: async () => '/Users/xjwang/Projects/new-space',
+  },
+  mcp: {
+    listServers: async () => ({ configPath: '/tmp/mock-mcp.json', servers: {} }),
+    saveServers: async () => ({ configPath: '/tmp/mock-mcp.json', servers: {} }),
+  },
   agent: {
-    discoverLocalAgents: async () => [],
+    discoverLocalAgents: async () => ({ agents: [
+      { id: 'claude-code', displayName: 'Claude Code', provider: 'claude', installed: true },
+      { id: 'codex', displayName: 'Codex', provider: 'codex', installed: false },
+    ] }),
     listSessions: async () => [
-      { id: 'sess-1', roomId: null, pageLabel: '首页', runtimeId: 'rt-main', title: '本应用会话示例', status: 'idle', createdAt: '2026-09-10T00:00:00.000Z', updatedAt: '2026-09-10T01:00:00.000Z' },
-      { id: 'sess-2', roomId: null, pageLabel: '首页', runtimeId: 'rt-main', title: null, status: 'idle', createdAt: '2026-09-11T00:00:00.000Z', updatedAt: '2026-09-11T00:00:00.000Z' },
+      { id: 'sess-1', workspaceId: 'ws-connector', roomId: null, pageLabel: 'Agent', runtimeId: 'rt-main', title: '起草周报：连接器统一排期', status: 'running', createdAt: '2026-10-10T00:00:00.000Z', updatedAt: new Date(Date.now() - 12 * 60_000).toISOString() },
+      { id: 'sess-2', workspaceId: 'ws-connector', roomId: null, pageLabel: 'Agent', runtimeId: 'rt-main', title: '对比三家供应商 Q4 报价', status: 'idle', createdAt: '2026-10-12T00:00:00.000Z', updatedAt: new Date(Date.now() - 3 * 3_600_000).toISOString() },
+      { id: 'sess-3', workspaceId: 'ws-connector', roomId: null, pageLabel: 'Agent', runtimeId: 'rt-main', title: '整理 V1 视觉定稿发布计划', status: 'closed', createdAt: '2026-10-09T00:00:00.000Z', updatedAt: new Date(Date.now() - 26 * 3_600_000).toISOString() },
+      { id: 'sess-4', workspaceId: 'ws-q4', roomId: null, pageLabel: 'Agent', runtimeId: 'rt-main', title: '供应商报价汇总', status: 'idle', createdAt: '2026-10-14T00:00:00.000Z', updatedAt: new Date(Date.now() - 2 * 86_400_000).toISOString() },
     ],
     createSession: async () => ({ id: 'sess-3', roomId: null, pageLabel: 'Agent', runtimeId: 'rt-main', title: null, status: 'idle', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }),
     getSession: async (id) => ({
@@ -650,6 +679,16 @@ const base = {
     submitPendingIntent: async () => ({ run: { id: 'run-1', sessionId: 'sess-1', status: 'running', prompt: '', lastEventSeq: 0, error: null, startedAt: null, completedAt: null, createdAt: new Date().toISOString() } }),
     createSessionLink: async () => ({ id: 'link-1', sessionId: 'sess-1', createdAt: new Date().toISOString() }),
     markSessionLinkReturned: async () => {},
+    getUsage: async (range) => ({
+      provider: 'mock',
+      model: 'mock-model',
+      range: range ?? '7d',
+      inputTokens: 12000,
+      outputTokens: 3400,
+      cacheHitTokens: 5400,
+      points: [],
+      updatedAt: new Date().toISOString(),
+    }),
   },
   reality: { listEvents: async () => [], onEvent: () => () => {} },
   // 首页关系图谱（RoomGraph）走顶层 API，不在 knowledge 命名空间下。

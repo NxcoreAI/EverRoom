@@ -11,6 +11,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { OIDC_LOGIN_CANCELLED_MESSAGE, type RuntimeConfigSnapshot, type RuntimeConfigTestResult } from '../../../../shared/sources'
 import appleLogo from '@/assets/apple-logo.svg'
 import googleLogo from '@/assets/google-logo.svg'
+import { BrandRibbon } from '@/components/ui/BrandRibbon'
 import { ProductBrand } from '@/components/ui/ProductBrand'
 import { StartupSplash } from '@/components/ui/StartupSplash'
 import { WindowControls } from '@/components/WindowControls'
@@ -485,6 +486,9 @@ export function RuntimeConfigGate({ children }: { children: ReactNode }) {
 
           {mode === 'login' && !admission ? (
             <div className="runtime-config-gate-panel">
+              <div className="runtime-config-gate-ribbon" aria-hidden="true">
+                <BrandRibbon size={42} animated />
+              </div>
               <h1 className="runtime-config-gate-login-heading">
                 {qrActive ? (
                   <button
@@ -551,6 +555,9 @@ export function RuntimeConfigGate({ children }: { children: ReactNode }) {
 
           {mode === 'manual' ? (
             <div className="runtime-config-gate-panel runtime-config-gate-panel-form">
+              <div className="runtime-config-gate-ribbon" aria-hidden="true">
+                <BrandRibbon size={36} animated />
+              </div>
               <h1>{t('surface:configGate.manualHeading')}</h1>
               <p>{t('surface:configGate.manualBody')}</p>
 

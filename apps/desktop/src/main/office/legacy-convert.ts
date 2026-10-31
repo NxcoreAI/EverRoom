@@ -105,3 +105,59 @@ export async function convertLegacyOfficeFile(
     await rm(workDirectory, { recursive: true, force: true }).catch(() => undefined)
   }
 }
+
+/**
+ * 把 Office 文件转成 PDF，落到 targetDir/<原文件名>.pdf 并返回路径。
+ *
+ * 找不到 LibreOffice 时返回 { unavailable: true }（而不是抛错）——
+ * 「本机没装转换器」是可预期的环境状态，UI 需要给出可执行的说明。
+ */
+export async function convertOfficeFileToPdf(
+  sourcePath: string,
+  originalName: string,
+  targetDir: string,
+): Promise<{ pdfPath: string } | { unavailable: true }> {
+  const base = basename(originalName, extname(originalName)) || 'document'
+  mkdirSync(targetDir, { recursive: true })
+  const target = join(targetDir, `${base}.pdf`)
+  const workDirectory = await mkdtemp(join(tmpdir(), 'everroom-pdf-'))
+  try {
+    const inputPath = join(workDirectory, `input${extname(originalName).toLowerCase()}`)
+    const profilePath = join(workDirectory, 'profile')
+    copyFileSync(sourcePath, inputPath)
+    const args = [
+      '--headless',
+      '--nologo',
+      '--nodefault',
+      '--norestore',
+      '--nolockcheck',
+      `-env:UserInstallation=${pathToFileURL(profilePath).href}`,
+      '--convert-to',
+      'pdf',
+      '--outdir',
+      workDirectory,
+      inputPath,
+    ]
+
+    let converted = false
+    for (const executable of [...new Set(sofficeCandidates())]) {
+      try {
+        await execFileAsync(executable, args, { timeout: SOFFICE_TIMEOUT_MS })
+        converted = true
+        break
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue
+        const detail = error instanceof Error ? error.message : String(error)
+        throw new Error(`LibreOffice 导出 PDF 失败：${detail}`)
+      }
+    }
+    if (!converted) return { unavailable: true }
+
+    const generated = readdirSync(workDirectory).find((name) => name.toLowerCase().endsWith('.pdf'))
+    if (!generated) throw new Error('LibreOffice 转换后没有生成 PDF 文件')
+    copyFileSync(join(workDirectory, generated), target)
+    return { pdfPath: target }
+  } finally {
+    await rm(workDirectory, { recursive: true, force: true }).catch(() => undefined)
+  }
+}

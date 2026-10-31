@@ -1,8 +1,8 @@
 export interface AppToastDetail {
   title: string
   message?: string
-  /** error：顶部居中红色横幅；缺省 info：右下角通知。 */
-  variant?: 'error' | 'info'
+  /** error：顶部居中红色横幅；warning：琥珀色横幅（如模版解析缺口）；缺省 info：右下角通知。 */
+  variant?: 'error' | 'warning' | 'info'
   /** 附加操作（如打开系统设置）；带操作的 error 展示更久。 */
   actionLabel?: string
   onAction?: () => void

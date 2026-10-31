@@ -1,4 +1,4 @@
-import { ArrowLeft, Bot, Brain, Check, ChevronDown, Clock, CornerDownLeft, Feather, FileText, History, LoaderCircle, Lock, MessagesSquare, Search, ShieldCheck, Square, Terminal, Unlock, X, Zap } from 'lucide-react'
+import { ArrowLeft, Bot, Brain, Check, ChevronDown, Clock, CornerDownLeft, Feather, FileText, FolderOpen, History, LoaderCircle, Lock, MessagesSquare, Quote, Search, ShieldCheck, Square, Terminal, Unlock, X, Zap } from 'lucide-react'
 import {
   forwardRef,
   useEffect,
@@ -10,8 +10,8 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from 'react'
-import type { AgentContextUsage, AgentModelPreference, AgentPermissionMode, AgentSession, ExternalConversationSummary, LocalAgentInstallation, MigrationProvider } from '@nxcore/agent-contract'
-import type { FileCatalogDto } from '../../../../shared/ingest'
+import type { AgentContextUsage, AgentModelPreference, AgentPermissionMode, AgentRoomReference, AgentSession, AgentThinkingLevel, ExternalConversationSummary, LocalAgentInstallation, MigrationProvider } from '@nxcore/agent-contract'
+import type { FileCatalogDto } from '@/shared/ingest'
 
 import { showToast } from '@/state/toast'
 import { useLocale } from '@/i18n/LocaleContext'
@@ -25,6 +25,7 @@ import {
   type MentionedItem,
 } from './agentMentions'
 import { ContextUsageRing, formatContextPercent, formatContextTokens } from './contextUsageRing'
+import { THINKING_LEVEL_OPTIONS, thinkingLevelOption } from './agentThinkingLevel'
 
 const ATTACHMENT_PATTERN = /\.(txt|md|csv|json|pdf|docx|xlsx|pptx)$/i
 const MAX_ATTACHMENTS = 5
@@ -49,7 +50,7 @@ const PERMISSION_MODE_META: Record<AgentPermissionMode, { icon: typeof Zap; labe
 const PERMISSION_MODE_ORDER: AgentPermissionMode[] = ['ask_before_write', 'accept_edits', 'auto', 'full_access']
 
 type ExternalPickerStatus = 'idle' | 'loading' | 'ready' | 'loading-more' | 'error'
-type MentionCategory = 'all' | 'agent' | 'file' | 'conversation'
+type MentionCategory = 'all' | 'agent' | 'room' | 'file' | 'conversation'
 
 /** @ 弹层「对话记录」条目：导入的外部会话 + 本应用自有会话（provider 'everroom'）。 */
 interface MentionConversationItem {
@@ -107,7 +108,11 @@ function displayDate(
 }
 
 export const AgentComposer = forwardRef<HTMLTextAreaElement, {
+  contextSummary: string
+  contextItems: Array<{ id: string; label: string; detail: string }>
+  hasSelectedText: boolean
   /** 有可提交的上下文（引用/选区）时空输入也允许发送；缺省视为无。 */
+  hasSubmittableContext?: boolean
   resetKey: number
   value: string
   active: boolean
@@ -116,6 +121,8 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   selectedExternalConversation: ExternalConversationSummary | null
   /** 本机已发现的 CLI Agent 候选（@ 点名弹层数据源）。 */
   localAgents: LocalAgentInstallation[]
+  /** Room 引用候选（@ 弹层「房间」组；AgentPanel 已持有完整列表）。 */
+  rooms?: AgentRoomReference[]
   /** 当前生效档位：会话已存在＝会话锁定档，否则＝全局默认档。 */
   modelPreference: AgentModelPreference
   /** 实时上下文用量（context.usage 事件快照；缺省=未知，不渲染）。 */
@@ -136,6 +143,10 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   /** provider 可用语义档（网关按渠道过滤后的权威列表）。 */
   permissionModeAvailable?: readonly AgentPermissionMode[]
   onSelectPermissionMode?: (mode: AgentPermissionMode) => void | Promise<unknown>
+  /** 思考档位：会话已存在＝会话值（null=跟随模型配置）；草稿态＝下次新会话默认值。 */
+  thinkingLevel?: AgentThinkingLevel | null
+  /** 选择思考档位（null=跟随模型配置）；渠道会话不显示该切换钮。 */
+  onSelectThinkingLevel?: (level: AgentThinkingLevel | null) => void | Promise<unknown>
   /** 强模型未配置时提示去设置（跳应用设置页）。 */
   onOpenSettings?: () => void
   /** 空态建议（推断的下一个提问）；仅输入框为空时作为 placeholder 展示，Tab/Enter 采纳。 */
@@ -147,15 +158,22 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   onRemoveQueuedSubmission?: (id: string) => void
   onChange: (value: string) => void
   onSelectExternalConversation: (conversation: ExternalConversationSummary | null) => void
+  onClearContext: () => void
+  onRemoveContext: (id: string) => void
   onStop: () => void
   onSubmit: (files: File[], mentioned: MentionedItem[]) => void
 }>(function AgentComposer({
   active,
   available,
+  contextSummary,
+  contextItems,
+  hasSelectedText,
+  hasSubmittableContext = false,
   loading,
   resetKey,
   selectedExternalConversation,
   localAgents,
+  rooms = [],
   modelPreference,
   modelPreferenceLocked = false,
   contextUsage = null,
@@ -167,6 +185,8 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   permissionMode = null,
   permissionModeAvailable = [],
   onSelectPermissionMode,
+  thinkingLevel = null,
+  onSelectThinkingLevel,
   onOpenSettings,
   ghostSuggestion = null,
   onAcceptGhost,
@@ -175,6 +195,8 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   onRemoveQueuedSubmission,
   value,
   onChange,
+  onClearContext,
+  onRemoveContext,
   onStop,
   onSubmit,
   onSelectExternalConversation,
@@ -209,6 +231,8 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   /** full_access 两步确认：true=弹层切到危险确认态。 */
   const [confirmingFullAccess, setConfirmingFullAccess] = useState(false)
   const permissionModeRef = useRef<HTMLElement | null>(null)
+  const [thinkingLevelOpen, setThinkingLevelOpen] = useState(false)
+  const thinkingLevelRef = useRef<HTMLElement | null>(null)
   const [contextPanelOpen, setContextPanelOpen] = useState(false)
   const [liteAvailable, setLiteAvailable] = useState(false)
   const [primaryAvailable, setPrimaryAvailable] = useState(true)
@@ -235,7 +259,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
 
   useLayoutEffect(() => {
     resizeTextarea()
-  }, [attachments.length, value])
+  }, [attachments.length, contextItems.length, value])
 
   useEffect(() => {
     const shell = shellRef.current
@@ -281,11 +305,12 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
     setContextPanelOpen(false)
     setPermissionModeOpen(false)
     setConfirmingFullAccess(false)
+    setThinkingLevelOpen(false)
     mentionHints.current.clear()
   }, [resetKey])
 
   useEffect(() => {
-    if (!externalPickerOpen && !agentPickerOpen && !modelPickerOpen && !contextPanelOpen && !permissionModeOpen) return undefined
+    if (!externalPickerOpen && !agentPickerOpen && !modelPickerOpen && !contextPanelOpen && !permissionModeOpen && !thinkingLevelOpen) return undefined
     const closeOnOutsidePress = (event: PointerEvent) => {
       const target = event.target as Element
       if (shellRef.current?.contains(target)) {
@@ -294,6 +319,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
         if (modelPickerOpen && !modelPickerRef.current?.contains(target) && !target.closest('.agent-model-tier-toggle')) setModelPickerOpen(false)
         if (contextPanelOpen && !contextPanelRef.current?.contains(target) && !target.closest('.agent-context-ring')) setContextPanelOpen(false)
         if (permissionModeOpen && !permissionModeRef.current?.contains(target) && !target.closest('.agent-permission-mode-toggle')) setPermissionModeOpen(false)
+        if (thinkingLevelOpen && !thinkingLevelRef.current?.contains(target) && !target.closest('.agent-thinking-level-toggle')) setThinkingLevelOpen(false)
         return
       }
       externalRequestRef.current += 1
@@ -302,10 +328,11 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
       setModelPickerOpen(false)
       setContextPanelOpen(false)
       setPermissionModeOpen(false)
+      setThinkingLevelOpen(false)
     }
     document.addEventListener?.('pointerdown', closeOnOutsidePress)
     return () => document.removeEventListener?.('pointerdown', closeOnOutsidePress)
-  }, [externalPickerOpen, agentPickerOpen, modelPickerOpen, contextPanelOpen, permissionModeOpen])
+  }, [externalPickerOpen, agentPickerOpen, modelPickerOpen, contextPanelOpen, permissionModeOpen, thinkingLevelOpen])
 
   const submitMentions = () => resolveMentions(value, mentionHints.current, localAgents)
 
@@ -327,6 +354,13 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
         event.preventDefault()
         setPermissionModeOpen(false)
         setConfirmingFullAccess(false)
+      }
+      return
+    }
+    if (thinkingLevelOpen) {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        setThinkingLevelOpen(false)
       }
       return
     }
@@ -484,6 +518,10 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
       textarea.setSelectionRange(nextCaret, nextCaret)
     })
   }
+  const chooseRoom = (room: AgentRoomReference) => {
+    const token = allocateMentionToken(room.title, room.id, mentionHints.current)
+    applyMentionToken(token, { kind: 'room', id: room.id, displayName: room.title })
+  }
   const chooseFile = (file: { id: string; title: string }) => {
     const token = allocateMentionToken(file.title, file.id, mentionHints.current)
     applyMentionToken(token, { kind: 'file', id: file.id, displayName: file.title })
@@ -545,6 +583,12 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
     if (mode !== permissionMode) void onSelectPermissionMode?.(mode)
     window.requestAnimationFrame(() => textareaRef.current?.focus())
   }
+  /** 选择思考档位：立即生效并收起弹层（后端从下一轮 run 起使用该档位）。 */
+  const chooseThinkingLevel = (level: AgentThinkingLevel | null) => {
+    setThinkingLevelOpen(false)
+    if (level !== thinkingLevel) void onSelectThinkingLevel?.(level)
+    window.requestAnimationFrame(() => textareaRef.current?.focus())
+  }
   const callableLocalAgents = localAgents.filter((agent) => agent.invocationSupported && agent.callable)
   const agentQueryNormalized = mentionQuery.trim().toLocaleLowerCase()
   const matchesQuery = (haystack: string) => !agentQueryNormalized || haystack.toLocaleLowerCase().includes(agentQueryNormalized)
@@ -556,6 +600,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
       || item.id.toLocaleLowerCase().includes(agentQueryNormalized)
       || item.provider.toLocaleLowerCase().includes(agentQueryNormalized))
     : callableLocalAgents
+  const filteredRoomItems = rooms.filter((room) => matchesQuery(room.title) || matchesQuery(room.id))
   const filteredFileItems = mentionFiles.filter((file) => matchesQuery(file.title) || matchesQuery(file.id) || matchesQuery(file.detail))
   // 查询词与当前服务端检索一致时，导入条目已按 FTS 命中（含消息正文），
   // 不再做客户端标题过滤以免误杀；应用自有会话仍走客户端过滤。
@@ -566,8 +611,9 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
       || matchesQuery(conversation.provider)
   })
   const mentionCategoryTabs: Array<{ id: MentionCategory; labelKey: string; count: number }> = [
-    { id: 'all', labelKey: 'surface:agentComposer.mentionTabAll', count: filteredAgentItems.length + filteredFileItems.length + filteredConversationItems.length },
+    { id: 'all', labelKey: 'surface:agentComposer.mentionTabAll', count: filteredAgentItems.length + filteredRoomItems.length + filteredFileItems.length + filteredConversationItems.length },
     { id: 'agent', labelKey: 'surface:agentComposer.mentionGroupAgents', count: filteredAgentItems.length },
+    { id: 'room', labelKey: 'surface:agentComposer.mentionGroupRooms', count: filteredRoomItems.length },
     { id: 'file', labelKey: 'surface:agentComposer.mentionGroupFiles', count: filteredFileItems.length },
     { id: 'conversation', labelKey: 'surface:agentComposer.mentionGroupConversations', count: filteredConversationItems.length },
   ]
@@ -581,20 +627,23 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   }
   type MentionOption =
     | { kind: 'agent'; item: LocalAgentInstallation }
+    | { kind: 'room'; item: AgentRoomReference }
     | { kind: 'file'; item: { id: string; title: string; detail: string } }
     | { kind: 'conversation'; item: MentionConversationItem }
   const mentionOptions: MentionOption[] = [
     ...(showMentionGroup('agent') ? filteredAgentItems.map((item) => ({ kind: 'agent' as const, item })) : []),
+    ...(showMentionGroup('room') ? filteredRoomItems.map((item) => ({ kind: 'room' as const, item })) : []),
     ...(showMentionGroup('file') ? filteredFileItems.map((item) => ({ kind: 'file' as const, item })) : []),
     ...(showMentionGroup('conversation') ? filteredConversationItems.map((item) => ({ kind: 'conversation' as const, item })) : []),
   ]
   const mentionOptionCount = mentionOptions.length
   const chooseMentionOption = (option: MentionOption) => {
     if (option.kind === 'agent') chooseAgent(option.item)
+    else if (option.kind === 'room') chooseRoom(option.item)
     else if (option.kind === 'file') chooseFile(option.item)
     else chooseConversation(option.item)
   }
-  // 弹层打开时懒加载文件与对话记录（Agent 由 props 同步提供）。
+  // 弹层打开时懒加载文件与对话记录（Agent/Room 由 props 同步提供）。
   // 对话记录合并导入的外部会话与本应用自有会话（provider 'everroom'），按最近活跃排序。
   useEffect(() => {
     if (!agentPickerOpen || mentionSourcesLoading) return
@@ -719,7 +768,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   }
 
   // 弹层引用对象为空时弹层不渲染，composer 也不抬升（menuOpen 与可见弹层保持一致）。
-  const menuOpen = slashPickerOpen || externalPickerOpen || modelPickerOpen || permissionModeOpen || (agentPickerOpen && mentionOptionCount > 0)
+  const menuOpen = slashPickerOpen || externalPickerOpen || modelPickerOpen || permissionModeOpen || thinkingLevelOpen || (agentPickerOpen && mentionOptionCount > 0)
   const channelAgent = channelAgentId ? localAgents.find((agent) => agent.id === channelAgentId) ?? null : null
   const channelActive = Boolean(channelAgentId)
   const activeTierMeta = MODEL_TIER_META[modelPreference]
@@ -732,6 +781,10 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
     && Boolean(onSelectPermissionMode)
   const activePermissionMeta = permissionMode ? PERMISSION_MODE_META[permissionMode] : null
   const ActivePermissionIcon = activePermissionMeta?.icon ?? ShieldCheck
+  // 思考档切换钮：仅非渠道会话显示（ACP/CLI 渠道没有思考档概念）。
+  // 契约七档里 minimal/xhigh/max 归到最接近的常用档展示（thinkingLevelOption 兜底）。
+  const thinkingLevelToggleVisible = !channelActive && Boolean(onSelectThinkingLevel)
+  const activeThinkingOption = thinkingLevelOption(thinkingLevel)
   // 上下文占用构成：按占比降序，tokens 已知时补一段剩余空间。
   const contextBreakdown = contextUsage?.contextWindow
     ? {
@@ -892,6 +945,30 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
                 <strong>{item.displayName}</strong>
               </button>
             )) : null}
+            {mentionCategory === 'all' && filteredRoomItems.length ? (
+              <div className="agent-mention-group-label"><FolderOpen aria-hidden="true" />{t('surface:agentComposer.mentionGroupRooms')}</div>
+            ) : null}
+            {showMentionGroup('room') ? filteredRoomItems.map((room) => {
+              const index = mentionOptions.findIndex((option) => option.kind === 'room' && option.item.id === room.id)
+              return (
+                <button
+                  key={`room:${room.id}`}
+                  type="button"
+                  className="agent-mention-option"
+                  role="option"
+                  aria-selected={index === agentIndex}
+                  data-active={String(index === agentIndex)}
+                  data-result-index={index}
+                  onMouseEnter={() => setAgentIndex(index)}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => chooseRoom(room)}
+                >
+                  <span className="agent-mention-option-icon"><FolderOpen aria-hidden="true" /></span>
+                  <strong>{room.title}</strong>
+                  {room.kind ? <small>{room.kind}</small> : null}
+                </button>
+              )
+            }) : null}
                           {mentionCategory === 'all' && filteredFileItems.length ? (
               <div className="agent-mention-group-label"><FileText aria-hidden="true" />{t('surface:agentComposer.mentionGroupFiles')}</div>
             ) : null}
@@ -1056,6 +1133,36 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
           })}
         </section>
       ) : null}
+      {thinkingLevelOpen && thinkingLevelToggleVisible ? (
+        <section
+          ref={thinkingLevelRef}
+          className="agent-composer-popover agent-thinking-level-picker"
+          role="listbox"
+          aria-label={t('surface:agentComposer.thinkingLevelPickerTitle')}
+        >
+          {THINKING_LEVEL_OPTIONS.map((option) => {
+            const optionSelected = activeThinkingOption.value === option.value
+            return (
+              <button
+                key={option.value ?? 'default'}
+                type="button"
+                className="agent-model-option"
+                role="option"
+                aria-selected={optionSelected}
+                data-active={String(optionSelected)}
+                data-level={option.value ?? 'default'}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => chooseThinkingLevel(option.value)}
+              >
+                <span className="agent-picker-header-icon"><Brain aria-hidden="true" /></span>
+                <span><strong>{t(option.labelKey)}</strong><small>{t(option.hintKey)}</small></span>
+                {optionSelected ? <Check aria-hidden="true" /> : null}
+              </button>
+            )
+          })}
+          <footer className="agent-model-picker-hint">{t('surface:agentComposer.thinkingLevelFooterHint')}</footer>
+        </section>
+      ) : null}
       {contextPanelOpen && contextBreakdown ? (
         <section ref={contextPanelRef} className="agent-composer-popover agent-context-breakdown" aria-label={t('surface:agentComposer.contextWindow')}>
           <header className="agent-context-breakdown-head">
@@ -1108,6 +1215,24 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
       ) : null}
       <div className="agent-prompt" data-has-attachments={String(attachments.length > 0)}>
         {selectedExternalConversation ? <div className="agent-external-selection"><span><History />{t('surface:agentComposer.referencedConversation')} · {selectedExternalConversation.title}</span><button type="button" title={t('surface:agentComposer.removeExternalConversation')} aria-label={t('surface:agentComposer.removeExternalConversation')} onClick={() => onSelectExternalConversation(null)}><X /></button></div> : null}
+        {contextItems.length > 0 ? (
+          <div className="agent-context-citations" aria-label={t('surface:agentComposer.referencedRoomContent')}>
+            {contextItems.map((item) => (
+              <span key={item.id} className="agent-context-citation" title={item.detail}>
+                <Quote aria-hidden="true" />
+                <span>{item.label}</span>
+                <button
+                  type="button"
+                  aria-label={t('surface:agentComposer.removeReference')}
+                  title={t('surface:agentComposer.removeReference')}
+                  onClick={() => onRemoveContext(item.id)}
+                >
+                  <X aria-hidden="true" />
+                </button>
+              </span>
+            ))}
+          </div>
+        ) : null}
         {queuedSubmissions.length > 0 ? (
           <div className="agent-queued-submissions" aria-label={t('surface:agentComposer.queuedCount', { count: queuedSubmissions.length })}>
             {queuedSubmissions.map((item) => (
@@ -1218,8 +1343,35 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
               <ChevronDown aria-hidden="true" className="agent-model-tier-caret" />
             </button>
           ) : null}
-          {/* 占位 flex 撑开发送钮；引用已随 Context Room 移除，这里只剩上下文用量环。 */}
-          <span className="agent-composer-context">
+          {thinkingLevelToggleVisible && activeThinkingOption ? (
+            <button
+              type="button"
+              className="agent-model-tier-toggle agent-thinking-level-toggle"
+              data-level={thinkingLevel ?? 'default'}
+              aria-haspopup="listbox"
+              aria-expanded={thinkingLevelOpen}
+              title={t('surface:agentComposer.thinkingLevelPickerTitle')}
+              disabled={controlsDisabled}
+              onClick={() => {
+                // 与模型/权限弹层互斥：它们锚在同一位置，同时打开会重叠。
+                setModelPickerOpen(false)
+                setPermissionModeOpen(false)
+                setThinkingLevelOpen((open) => !open)
+              }}
+            >
+              <Brain aria-hidden="true" />
+              <span>{t(activeThinkingOption.labelKey)}</span>
+              <ChevronDown aria-hidden="true" className="agent-model-tier-caret" />
+            </button>
+          ) : null}
+          {/* 占位 flex 撑开发送钮；无引用时不渲染文案。 */}
+          <span className="agent-composer-context" title={hasSelectedText ? contextSummary : undefined}>
+            {hasSelectedText ? <span>{contextSummary}</span> : null}
+            {hasSelectedText ? (
+              <button type="button" aria-label={t('surface:agentComposer.clearAllReferences')} title={t('surface:agentComposer.clearAllReferences')} onClick={onClearContext}>
+                <X aria-hidden="true" />
+              </button>
+            ) : null}
             {/* 实时上下文用量：默认只有小圆环，悬停看数字，点击展开占用构成；压缩中圆环呼吸。 */}
             {contextUsage?.contextWindow ? (
               <ContextUsageRing
@@ -1247,7 +1399,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
               <Square aria-hidden="true" />
             </button>
           ) : (
-            <button type="submit" className="agent-prompt-submit" title={t('surface:agentComposer.send')} aria-label={t('surface:agentComposer.send')} disabled={!available || (!value.trim() && attachments.length === 0) || loading}>
+            <button type="submit" className="agent-prompt-submit" title={t('surface:agentComposer.send')} aria-label={t('surface:agentComposer.send')} disabled={!available || (!value.trim() && attachments.length === 0 && !hasSubmittableContext) || loading}>
               <CornerDownLeft aria-hidden="true" />
             </button>
           )}

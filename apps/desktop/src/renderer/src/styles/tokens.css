@@ -1,118 +1,253 @@
+/* ──────────────────────────────────────────────────────────────────────────
+   EverRoom 设计系统 · 唯一 token 源
+   ──────────────────────────────────────────────────────────────────────────
+   品牌来自 app 图标与 splash：暖纸底色 + 墨青文字 + 青绿主色 + 蜜桃点缀。
+   这一层定义三套命名：
+   1. `--ui-*`     新代码首选（语义化：背景/表面/文字/线条/强调/节奏）。
+   2. 旧语义名     `--bg / --surface / --text / --border / --accent …`，
+                   由 `--ui-*` 派生，兼容 office-proto / SettingsPage / 旧组件。
+   3. `--wb-*`     工作台外壳别名，由 `--ui-*` 派生，兼容 workbench/sidebar/
+                   conversation/artifacts 的既有规则（含挂到 body 的 Radix portal）。
+   不要再在局部作用域里覆写这些值；需要新色请先在这里加语义 token。
+   ────────────────────────────────────────────────────────────────────────── */
+
 :root {
   color-scheme: light;
-  --bg: #fdfcfc;
-  --chrome: #f7f8fa;
-  --surface: #ffffff;
-  --surface-alt: #f9fafb;
-  --text: #151a22;
-  --muted: #536070;
-  --subtle: #8490a0;
-  --border: #e1e5eb;
-  --border-strong: #ccd3dd;
-  --hover: #e8ecf1;
-  --selected: #e7edfc;
-  --accent: #3d6ff6;
-  --accent-strong: #1e47c4;
-  --accent-soft: rgba(61, 111, 246, 0.14);
-  --accent-contrast: #ffffff;
-  --danger: #c83232;
-  --icon-ai: #8b63c7;
-  --icon-calendar: #e2764f;
-  --icon-task: #2fac68;
-  --icon-document: #6676d9;
-  --icon-room: #3e87df;
-  --icon-communication: #dd5c64;
-  --icon-people: #397fd3;
-  --icon-memory: #d98c2f;
-  --icon-data: #239f91;
-  --nav-tone-blue: #4d8ac8;
-  --nav-tone-cyan: #51a8b5;
-  --nav-tone-green: #59a579;
-  --nav-tone-indigo: #6172c8;
-  --nav-tone-orange: #d9954f;
-  --nav-tone-slate: #7c817f;
-  --shadow: 0 1px 1px rgba(21, 26, 34, 0.04), 0 8px 22px rgba(21, 26, 34, 0.07);
-  --raised-shadow: 0 1px 2px rgba(21, 26, 34, 0.06);
-  --inset-shadow: inset 0 1px 1px rgba(21, 26, 34, 0.04);
+
+  /* ── 品牌原色（只在品牌时刻使用：splash / 登录 / hero / 状态点） ───────── */
+  --brand-ink: #16323b;
+  --brand-teal: #2c9c99;
+  --brand-peach: #e9a06a;
+  --brand-paper: #f7f4ec;
+
+  /* ── 背景与表面 ──────────────────────────────────────────────────────── */
+  --ui-bg: #fbfaf6; /* 工作台画布（暖白） */
+  --ui-chrome: #f3f0e7; /* 侧栏 / 窗口外框（暖纸） */
+  --ui-chrome-strong: #ece8dc; /* 侧栏内的 pressed / 分隔块 */
+  --ui-surface: #ffffff; /* 卡片、输入框、文档画布 */
+  --ui-surface-alt: #f7f4ec; /* 次级块、表头、代码块 */
+  --ui-surface-sunken: #f1ede3; /* 空槽 / 轨道 */
+
+  /* ── 文字 ────────────────────────────────────────────────────────────── */
+  --ui-text: #162f37; /* 主文字（墨） */
+  --ui-text-2: #52666a; /* 次级说明 */
+  --ui-text-3: #607073; /* 元信息 / 占位（对白底 4.95:1、暖纸 4.54:1，达到 AA 小字标准） */
+  --ui-text-inverse: #fdfcf8;
+
+  /* ── 线条 ────────────────────────────────────────────────────────────── */
+  --ui-border: #e8e2d4;
+  --ui-border-strong: #d8d0bf;
+  --ui-border-subtle: #efeae0;
+
+  /* ── 交互态 ──────────────────────────────────────────────────────────── */
+  --ui-hover: rgba(22, 47, 55, 0.045);
+  --ui-hover-strong: rgba(22, 47, 55, 0.075);
+  --ui-selected: rgba(29, 127, 123, 0.1);
+  --ui-selected-strong: rgba(29, 127, 123, 0.16);
+
+  /* ── 强调色（青绿，来自品牌） ────────────────────────────────────────── */
+  /* 强调色分两种角色：--ui-accent 用于文字/图标/描边（随主题可变浅），
+     --ui-accent-fill 用于实底按钮/指示点（保证其上文字对比度）。 */
+  --ui-accent: #1d7f7b;
+  --ui-accent-hover: #146663;
+  --ui-accent-strong: #0f534f;
+  --ui-accent-soft: rgba(29, 127, 123, 0.1);
+  --ui-accent-softer: rgba(29, 127, 123, 0.06);
+  --ui-accent-contrast: #ffffff;
+  --ui-accent-line: rgba(29, 127, 123, 0.35);
+  --ui-accent-fill: #1d7f7b;
+  --ui-accent-fill-hover: #146663;
+
+  /* ── 蜜桃暖色：运行中 / 提醒 / 品牌点缀，不做正文色 ──────────────────── */
+  --ui-warm: #e9a06a;
+  --ui-warm-strong: #a25e2f; /* 暖色文字用（对白底 4.8:1） */
+  --ui-warm-soft: rgba(233, 160, 106, 0.16);
+
+  /* ── 浮层 / 滚动条（深色主题需要整体换色） ───────────────────────────── */
+  --ui-overlay: rgba(22, 47, 55, 0.28);
+  --ui-overlay-strong: rgba(22, 47, 55, 0.42);
+  --ui-scrollbar-thumb: rgba(22, 47, 55, 0.16);
+  --ui-scrollbar-thumb-hover: rgba(22, 47, 55, 0.28);
+
+  /* ── 状态 ────────────────────────────────────────────────────────────── */
+  --ui-danger: #b0452f;
+  --ui-danger-hover: #93371f;
+  --ui-danger-soft: rgba(176, 69, 47, 0.09);
+  --ui-success: #2c7a57;
+  --ui-success-soft: rgba(44, 122, 87, 0.1);
+  --ui-warning: #a8762a;
+  --ui-warning-soft: rgba(168, 118, 42, 0.12);
+  /* 「进行中」用蜜桃暖色（与 sidebar 运行中指示一致）；绿色只用于成功/已连接。 */
+  --ui-running: #a25e2f;
+  --ui-running-soft: rgba(233, 160, 106, 0.18);
+
+  /* ── 文件类型 / 内容分类色（图标底，保持品牌邻近色相） ───────────────── */
+  --ui-icon-doc: #2f6fa8;
+  --ui-icon-sheet: #2c7a57;
+  --ui-icon-slide: #c4763a;
+  --ui-icon-pdf: #b0452f;
+  --ui-icon-md: #5b6670;
+  --ui-icon-image: #8a5fa8;
+  --ui-icon-audio: #3d7f9e;
+
+  /* ── 字体 ────────────────────────────────────────────────────────────── */
+  --ui-font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC',
+    'Segoe UI', 'Microsoft YaHei', 'Noto Sans SC', sans-serif;
+  --ui-font-display: -apple-system, 'SF Pro Display', BlinkMacSystemFont, 'PingFang SC',
+    'Segoe UI', 'Microsoft YaHei', 'Noto Sans SC', sans-serif;
+  --ui-font-mono: 'SF Mono', ui-monospace, 'JetBrains Mono', 'Cascadia Code', Menlo,
+    Consolas, monospace;
+
+  /* 字号阶梯（正文 13.5px，桌面端信息密度） */
+  --ui-text-2xs: 10.5px;
+  --ui-text-xs: 11.5px;
+  --ui-text-sm: 12.5px;
+  --ui-text-base: 13.5px;
+  --ui-text-md: 15px;
+  --ui-text-lg: 17px;
+  --ui-text-xl: 21px;
+  --ui-text-2xl: 27px;
+  --ui-text-3xl: 34px;
+  --ui-leading-tight: 1.24;
+  --ui-leading-snug: 1.4;
+  --ui-leading-normal: 1.6;
+  --ui-leading-relaxed: 1.75;
+  --ui-tracking-tight: -0.018em;
+  --ui-tracking-wide: 0.08em;
+
+  /* ── 间距（4px 基线） ────────────────────────────────────────────────── */
+  --ui-space-1: 4px;
+  --ui-space-2: 8px;
+  --ui-space-3: 12px;
+  --ui-space-4: 16px;
+  --ui-space-5: 20px;
+  --ui-space-6: 24px;
+  --ui-space-7: 32px;
+  --ui-space-8: 40px;
+  --ui-space-9: 48px;
+  --ui-space-10: 64px;
+
+  /* ── 圆角 ────────────────────────────────────────────────────────────── */
+  --ui-radius-xs: 5px;
+  --ui-radius-sm: 7px;
+  --ui-radius-md: 9px;
+  --ui-radius-lg: 12px;
+  --ui-radius-xl: 16px;
+  --ui-radius-2xl: 20px;
+  --ui-radius-full: 999px;
+
+  /* ── 阴影（暖墨色调，不用纯黑） ──────────────────────────────────────── */
+  --ui-shadow-sm: 0 1px 2px rgba(22, 47, 55, 0.06);
+  --ui-shadow-md: 0 2px 4px rgba(22, 47, 55, 0.04), 0 12px 28px -14px rgba(22, 47, 55, 0.16);
+  --ui-shadow-lg: 0 2px 6px rgba(22, 47, 55, 0.05), 0 28px 64px -28px rgba(22, 47, 55, 0.3);
+  --ui-shadow-inset: inset 0 1px 1px rgba(22, 47, 55, 0.04);
+
+  /* ── 动效 ────────────────────────────────────────────────────────────── */
+  --ui-duration-fast: 120ms;
+  --ui-duration: 180ms;
+  --ui-duration-slow: 320ms;
+  --ui-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ui-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+
+  /* ── 布局 ────────────────────────────────────────────────────────────── */
+  --ui-sidebar-width: 280px;
+  --ui-header-height: 52px;
+  --ui-content-max: 860px;
   --nav-width: 220px;
   --agent-width: 360px;
-  --topbar-height: 48px;
+  --topbar-height: var(--ui-header-height);
   --shell-motion-duration: 240ms;
-  --shell-motion-easing: cubic-bezier(0.22, 1, 0.36, 1);
+  --shell-motion-easing: var(--ui-ease-out);
+
+  /* ──────────────────────────────────────────────────────────────────────
+     兼容别名 1：旧全局语义名（office-proto / SettingsPage / 旧组件）
+     值全部指向 --ui-*，改主题只需要改上面一处。
+     ────────────────────────────────────────────────────────────────────── */
+  --bg: var(--ui-bg);
+  --chrome: var(--ui-chrome);
+  --surface: var(--ui-surface);
+  --surface-alt: var(--ui-surface-alt);
+  --text: var(--ui-text);
+  --muted: var(--ui-text-2);
+  --subtle: var(--ui-text-3);
+  --border: var(--ui-border);
+  --border-strong: var(--ui-border-strong);
+  --hover: var(--ui-hover);
+  --selected: var(--ui-selected);
+  --accent: var(--ui-accent-fill);
+  --accent-strong: var(--ui-accent-fill-hover);
+  --accent-soft: var(--ui-accent-soft);
+  --accent-contrast: var(--ui-accent-contrast);
+  --danger: var(--ui-danger);
+  --shadow: var(--ui-shadow-md);
+  --raised-shadow: var(--ui-shadow-sm);
+  --inset-shadow: var(--ui-shadow-inset);
+
+  /* 内容分类色（旧名 → 新色） */
+  --icon-ai: #7a5fa8;
+  --icon-calendar: #c4763a;
+  --icon-task: var(--ui-success);
+  --icon-document: var(--ui-icon-doc);
+  --icon-room: #3d7f9e;
+  --icon-communication: var(--ui-danger);
+  --icon-people: #3d6fa8;
+  --icon-memory: #a8762a;
+  --icon-data: var(--ui-accent);
+  --nav-tone-blue: #4d8ac8;
+  --nav-tone-cyan: #4f9e9b;
+  --nav-tone-green: #2c7a57;
+  --nav-tone-indigo: #5f6bb0;
+  --nav-tone-orange: #c4763a;
+  --nav-tone-slate: #7c817f;
+
+  /* ──────────────────────────────────────────────────────────────────────
+     兼容别名 2：工作台外壳（workbench / sidebar / conversation / artifacts）
+     含 Radix portal：token 挂 :root 时 portal 内容也能继承。
+     ────────────────────────────────────────────────────────────────────── */
+  --wb-bg: var(--ui-bg);
+  --wb-chrome: var(--ui-chrome);
+  --wb-chrome-strong: var(--ui-chrome-strong);
+  --wb-hover: var(--ui-hover);
+  --wb-selected: var(--ui-selected);
+  --wb-border: var(--ui-border);
+  --wb-border-strong: var(--ui-border-strong);
+  --wb-text: var(--ui-text);
+  --wb-muted: var(--ui-text-2);
+  --wb-subtle: var(--ui-text-3);
+  --wb-primary: #22282a;
+  --wb-primary-contrast: #ffffff;
+  --wb-accent: var(--ui-accent);
+  --wb-accent-soft: var(--ui-accent-soft);
+  --wb-danger: var(--ui-danger);
+  --wb-running: var(--ui-running);
+  --wb-shadow-sm: var(--ui-shadow-sm);
+  --wb-shadow-md: var(--ui-shadow-md);
+  --wb-shadow-lg: var(--ui-shadow-lg);
+  --wb-sidebar-width: var(--ui-sidebar-width);
 }
 
-:root[data-theme='mono'] {
-  --bg: #f5f5f5;
-  --chrome: #ececec;
-  --surface-alt: #f8f8f8;
-  --text: #171717;
-  --muted: #686868;
-  --subtle: #929292;
-  --border: #dadada;
-  --border-strong: #c8c8c8;
-  --hover: #e5e5e5;
-  --selected: #dedede;
-  --accent: #171717;
-  --accent-strong: #000000;
-  --accent-soft: rgba(23, 23, 23, 0.09);
-  --shadow: 0 1px 2px rgba(0, 0, 0, 0.05), 0 10px 28px rgba(0, 0, 0, 0.06);
-  --raised-shadow: 0 4px 16px rgba(0, 0, 0, 0.07);
+/* 全局画布：桌面端窗口底色（desktop-frame.css 不再单独覆写） */
+html,
+body {
+  background: var(--ui-bg);
+  color: var(--ui-text);
 }
 
-:root[data-theme='soft'] {
-  --bg: #e5e5e5;
-  --chrome: #e2e2e2;
-  --surface: #e7e7e7;
-  --surface-alt: #e3e3e3;
-  --text: #202020;
-  --muted: #626262;
-  --subtle: #888888;
-  --border: rgba(0, 0, 0, 0.08);
-  --border-strong: rgba(0, 0, 0, 0.14);
-  --hover: #ebebeb;
-  --selected: #dddddd;
-  --accent: #292929;
-  --accent-strong: #101010;
-  --accent-soft: rgba(0, 0, 0, 0.08);
-  --shadow: 10px 10px 22px rgba(174, 174, 174, 0.62), -10px -10px 22px rgba(255, 255, 255, 0.86);
-  --raised-shadow: 6px 6px 13px rgba(174, 174, 174, 0.58), -6px -6px 13px rgba(255, 255, 255, 0.84);
-  --inset-shadow: inset 4px 4px 8px rgba(174, 174, 174, 0.52), inset -4px -4px 8px rgba(255, 255, 255, 0.78);
+::selection {
+  background: var(--ui-accent-soft);
+  color: var(--ui-text);
 }
 
-:root[data-theme='crimson'] {
-  --bg: #f5f5f3;
-  --chrome: #ededeb;
-  --surface-alt: #faf9f8;
-  --text: #171717;
-  --muted: #67635f;
-  --subtle: #96908b;
-  --border: #dedbd8;
-  --border-strong: #cbc6c2;
-  --hover: #f1ecec;
-  --selected: #f5e6e8;
-  --accent: #b51f2e;
-  --accent-strong: #8f1421;
-  --accent-soft: rgba(181, 31, 46, 0.1);
-  --shadow: 0 1px 2px rgba(30, 18, 18, 0.05), 0 10px 28px rgba(30, 18, 18, 0.06);
-  --raised-shadow: 0 4px 16px rgba(30, 18, 18, 0.08);
+/* 旧主题标记保留为无害空壳：历史 HTML 上仍有 data-theme="nxcore"，
+   现在全应用只有一套暖纸主题，避免出现没人维护的第二套色值。 */
+:root[data-theme] {
+  --ui-theme-marker: nxcore;
 }
 
-:root[data-theme='nxcore'] {
-  --bg: #fdfcfc;
-  --chrome: #f7f8fa;
-  --surface: #ffffff;
-  --surface-alt: #f9fafb;
-  --text: #151a22;
-  --muted: #536070;
-  --subtle: #8490a0;
-  --border: #e1e5eb;
-  --border-strong: #ccd3dd;
-  --hover: #e8ecf1;
-  --selected: #e7edfc;
-  --accent: #3d6ff6;
-  --accent-strong: #1e47c4;
-  --accent-soft: rgba(61, 111, 246, 0.14);
-  --shadow: 0 1px 1px rgba(21, 26, 34, 0.04), 0 8px 22px rgba(21, 26, 34, 0.07);
-  --raised-shadow: 0 1px 2px rgba(21, 26, 34, 0.06);
-  --inset-shadow: inset 0 1px 1px rgba(21, 26, 34, 0.04);
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --ui-duration-fast: 0.001ms;
+    --ui-duration: 0.001ms;
+    --ui-duration-slow: 0.001ms;
+  }
 }

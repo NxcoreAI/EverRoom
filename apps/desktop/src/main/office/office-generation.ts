@@ -6,6 +6,8 @@ import { app } from 'electron'
 import type { WebContents, WebContentsView } from 'electron'
 
 import { loadPreparedGenOfficeRuntime, type GenOfficeMaterialResolver, type PreparedGenOfficeRuntime, type ThesisBindingSpecPayload, type ThesisFormatCardPayload } from './office-runtime'
+import { backfillThesisCoverLogo, backfillThesisHeaderLogos } from './thesis-logo-backfill'
+import { selfCheckThesisDocx } from './thesis-selfcheck'
 import { buildAgentXlsxBytes, type AgentSheetInput } from './xlsx-generation'
 import type { OfficeAgentAskEvent } from '../../shared/office'
 
@@ -141,6 +143,8 @@ export interface GeneratedDocx {
   filePath: string
   bytes: Buffer
   title: string
+  /** 出稿提示（模版骨架回落、自检软伤）：必须能传到面板，否则用户只看到成品、猜不到原因。 */
+  warnings?: string[]
 }
 
 /** Agent 生成产物的临时落盘（导入成功后由 bridge 清理；失败保留供恢复）。 */
@@ -214,25 +218,167 @@ export async function describeThesisDocxBlocks(sourceBytes: Buffer) {
   return docs.describeThesisBlocks(new Uint8Array(sourceBytes))
 }
 
+/** 取一级标题的中文字体（自检抽样用；格式卡结构宽松，这里做防御式读取）。 */
+function headingFontOf(card: ThesisFormatCardPayload): string | undefined {
+  const headings = (card as { headings?: Array<{ level?: number; font?: { eastAsia?: string } }> }).headings ?? []
+  const first = headings.find((entry) => entry.level === 1) ?? headings[0]
+  return typeof first?.font?.eastAsia === 'string' ? first.font.eastAsia : undefined
+}
+
+export interface ThesisUnmatchedRange {
+  start?: number
+  end?: number
+  label?: string
+}
+
+/**
+ * 出稿自检口径：哪些未匹配区间**会**在成品里单独成「未归类内容」小节。
+ *
+ * start===0 的区间是论文开头（题目/摘要/说明）：两个渲染器都把它原样落在首个章节
+ * 之前、故意不打「未归类」标记——那是文档本来该有的开头，标红等于把封面当成垃圾。
+ * 因此自检的「报告说有未匹配、成品里却没看到小节」必须只数这些**非开头**区间，
+ * 否则正常出稿会被硬伤拦下、用户拿不到文件（真实模版实测必中）。
+ */
+export function unmatchedRangesBeyondFront(
+  spec: { unmatchedBlocks?: ThesisUnmatchedRange[] } | null | undefined,
+): ThesisUnmatchedRange[] {
+  const ranges = Array.isArray(spec?.unmatchedBlocks) ? spec!.unmatchedBlocks! : []
+  return ranges.filter((range) => range?.start !== 0)
+}
+
 /** 论文装订：源 docx + 格式卡 + 装订规格 → 装订版 docx（主进程纯函数，无渲染端）。 */
 export async function generateThesisDocx(
   input: {
     sourceBytes: Buffer
+    /** 模版原文件：有则走 v3「模板骨架」装订（模版元素原位置保留）。 */
+    templateBytes?: Buffer
     formatCard: ThesisFormatCardPayload
     bindingSpec: ThesisBindingSpecPayload
+    /** false = 不回填模版 Logo（规则面板勾选项）。 */
+    keepLogo?: boolean
   },
   onPhase?: (phase: DocxGenerationPhase) => void,
 ): Promise<GeneratedDocx> {
   const title = (input.bindingSpec.title || input.bindingSpec.coverFields.title || '论文').trim().slice(0, 120)
   const { docs } = ensureRuntime()
   onPhase?.('rendering')
-  const bytes = await docs.buildThesisDocx(
-    new Uint8Array(input.sourceBytes),
-    input.formatCard,
-    input.bindingSpec,
-  )
+  // v3：以模版为底装订——封面/核心信息区/表格/教师评价表/目录按模版原位置透传，
+  // 只替换内容槽位。没有模版字节（老格式卡）时回落 v2 的重建路径。
+  const templateBytes = input.templateBytes
+  const canUseTemplateSkeleton = Boolean(templateBytes && templateBytes.length > 0)
+    && typeof docs.buildThesisDocxOnTemplate === 'function'
+  let usedTemplateSkeleton = false
+  /** v3 失败原因：透出到 warnings，让面板提示「为什么退回了内容重建」。 */
+  let skeletonFallbackReason: string | null = null
+  /** v3 成功但没匹配到任何章节锚点时的诊断说明（模版原样保留、正文追加文末）。 */
+  let skeletonDiagnosticNote: string | null = null
+  let bytes: Uint8Array
+  if (canUseTemplateSkeleton) {
+    try {
+      const skeleton = await docs.buildThesisDocxOnTemplate({
+        templateBytes: new Uint8Array(templateBytes!),
+        sourceBytes: new Uint8Array(input.sourceBytes),
+        card: input.formatCard,
+        spec: input.bindingSpec,
+      })
+      bytes = skeleton.bytes
+      usedTemplateSkeleton = true
+      // 锚点一个都没命中：**不再回落 v2**。v2 会按内容重建封面/目录，把模版里
+      // 核心信息区下方的表格、教师评价表搬到别处——这正是用户反复反馈的问题。
+      // 模版原样透传 + 正文追加文末虽然版式不完美，但模版元素位置 100% 不动。
+      if (skeleton.diagnostics.templateFirstDowngraded) {
+        // 「模版只有目录、正文没有章节标题」这类模版：骨架排版降级为内容重建。
+        // 必须说清楚原因和出路，否则用户只会看到「排版结果不像模版」。
+        skeletonDiagnosticNote = '模版正文里没有可识别的章节标题（常见于「只有目录 + 格式说明」的模版），'
+          + '本次已按论文内容重建排版；用 Word/WPS 给模版正文的「第一章」等标题套用「标题1/标题2」样式后重新导入，'
+          + '即可按模版骨架排版'
+      } else if (skeleton.diagnostics.appendedOnly) {
+        skeletonDiagnosticNote = `模版章节骨架未识别（slots=${skeleton.diagnostics.slots}，`
+          + `候选=${skeleton.diagnostics.anchors}，正文区起点=${skeleton.diagnostics.bodyStart}，`
+          + `章节=${skeleton.diagnostics.chapters}），模版表格与表单位置已原样保留，`
+          + '论文正文已追加到文末；重新导入一次模版可让排版重新识别章节位置'
+      }
+    } catch (error) {
+      // 真正的异常（文件损坏、OOXML 不可解析）才回落 v2，否则宁可给「模版原样 + 正文追加」。
+      console.warn('[thesis] 模板骨架装订失败，回落内容重建', error)
+      skeletonFallbackReason = error instanceof Error ? error.message : String(error)
+      bytes = await docs.buildThesisDocx(
+        new Uint8Array(input.sourceBytes),
+        input.formatCard,
+        input.bindingSpec,
+      )
+    }
+  } else {
+    bytes = await docs.buildThesisDocx(
+      new Uint8Array(input.sourceBytes),
+      input.formatCard,
+      input.bindingSpec,
+    )
+  }
+  // 模版页眉的校徽 logo 回填：装订是「重排版」，页眉部件由引擎新生成，
+  // 模版页眉图片不会自动带入——这里从格式卡的 header.images 原样写回。
+  // v3 模板骨架装订不需要回填：模版的页眉/封面部件本来就原样保留，再补一次
+  // 会在同一页出现两个 logo。
+  const keepLogo = input.keepLogo !== false && !usedTemplateSkeleton
+  const headerImages = keepLogo ? input.formatCard.header?.images : undefined
+  if (Array.isArray(headerImages) && headerImages.length > 0) {
+    try {
+      bytes = await backfillThesisHeaderLogos(bytes, headerImages)
+    } catch (error) {
+      // 回填失败不阻断出稿，但要在 warnings 通道可见——挂到控制台与广播 phase
+      console.warn('[thesis] 页眉 logo 回填失败', error)
+    }
+  }
+  // 模版封面上的校徽/校名标识：装订重建封面不会带入，这里补到正文最前。
+  const coverLogo = keepLogo ? (input.formatCard.cover as { logo?: Record<string, unknown> } | undefined)?.logo : undefined
+  if (coverLogo) {
+    try {
+      bytes = await backfillThesisCoverLogo(bytes, coverLogo)
+    } catch (error) {
+      console.warn('[thesis] 封面 logo 回填失败', error)
+    }
+  }
+  // 出稿前自检（方案 §7.3）：logo 字节、页眉页脚、目录域、未归类小节、标题字体。
+  // 硬伤直接抛错——宁可不给文件，也不给一个"看起来正常"的假货；软伤进 warnings。
+  const selfCheck = await selfCheckThesisDocx(bytes, {
+    expectLogos: [
+      ...(Array.isArray(headerImages) ? headerImages.map((image, index) => ({ role: `header#${index}`, dataUrl: String((image as { dataUrl?: unknown }).dataUrl ?? '') })) : []),
+      ...(coverLogo ? [{ role: 'cover', dataUrl: String(coverLogo.dataUrl ?? '') }] : []),
+    ].filter((entry) => entry.dataUrl.startsWith('data:image/')),
+    // v3 模板骨架装订：页眉页脚/目录都是模版自己的部件，原样保留，不按卡片声明核对
+    // （卡片声明与模版部件不一致时那是解析问题，不该把好文件判成硬伤）。
+    headerEnabled: usedTemplateSkeleton ? false : input.formatCard.header?.enabled === true,
+    footerEnabled: usedTemplateSkeleton ? false : input.formatCard.footer?.enabled === true,
+    tocEnabled: (input.formatCard.toc as { enabled?: boolean } | undefined)?.enabled === true,
+    // 只有「真正没地方放」的区间才会在成品里出现「未归类内容」小节。
+    // start===0 的是论文开头（题目/摘要/说明）：两个渲染器都把它落在首个章节之前、
+    // 故意不打「未归类」标记（打上去等于把封面标题标成垃圾）。用「有未匹配块」当
+    // 判据会把这种正常出稿判成硬伤——实测真实论文必中，用户拿不到任何文件。
+    expectUnmatchedSection: unmatchedRangesBeyondFront(input.bindingSpec).length > 0,
+    ...(headingFontOf(input.formatCard) ? { expectHeadingFont: headingFontOf(input.formatCard)! } : {}),
+  })
+  if (!selfCheck.ok) {
+    throw new Error(`论文排版自检未通过：${selfCheck.failures.join('；')}`)
+  }
+  if (selfCheck.warnings.length > 0) {
+    console.warn('[thesis] 自检提示', selfCheck.warnings)
+  }
+  // 回落提示排在前面：用户先要知道「模版骨架没用上」，再看其它细节提示。
+  const warnings = [
+    ...(skeletonFallbackReason
+      ? [`模版结构未识别（${skeletonFallbackReason}），已按内容重建排版，请检查模版是否含可识别的章节标题`]
+      : []),
+    ...(skeletonDiagnosticNote ? [skeletonDiagnosticNote] : []),
+    ...selfCheck.warnings,
+  ]
+
   onPhase?.('saved')
-  return { filePath: await writeGeneratedTempFile(Buffer.from(bytes), '.docx'), bytes: Buffer.from(bytes), title }
+  return {
+    filePath: await writeGeneratedTempFile(Buffer.from(bytes), '.docx'),
+    bytes: Buffer.from(bytes),
+    title,
+    ...(warnings.length > 0 ? { warnings } : {}),
+  }
 }
 
 /**

@@ -76,7 +76,8 @@
 .settings-content[data-active-setting='settings-account'] > #settings-account,
 .settings-content[data-active-setting='settings-interface'] > #settings-interface,
 .settings-content[data-active-setting='settings-onboarding'] > #settings-onboarding,
-.settings-content[data-active-setting='settings-editor'] > #settings-editor {
+.settings-content[data-active-setting='settings-editor'] > #settings-editor,
+.settings-content[data-active-setting='settings-appearance'] > #settings-appearance {
   display: block;
 }
 
@@ -787,8 +788,6 @@
   .cloud-subscription > div:last-child {
     border-bottom: 0;
   }
-}
-  align-items: center;
 }
 
 .mcp-settings-section > header .secondary-button {
@@ -1641,17 +1640,17 @@
   opacity: 0.8;
 }
 
-/* —— 控制件规范：与「+新建文档」弹窗（.room-picker-*）保持一致 ——
-   参考值：40px 控件高度、10px 控件圆角、24px 级内边距、柔和阴影、浅蓝强调。
+/* —— 控制件规范：设置页内统一的桌面控件语言 ——
+   参考值：36px 控件高度、9px 控件圆角、青绿强调、白底细描边、无阴影分层。
    全部规则限定在 .settings-page 内，避免波及应用其它页面。 */
 .settings-page {
-  --settings-control-height: 40px;
-  --settings-control-radius: 10px;
-  --settings-card-radius: 16px;
-  --settings-soft-shadow: 0 1px 2px rgba(21, 26, 34, 0.05), 0 12px 32px rgba(21, 26, 34, 0.05);
+  --settings-control-height: 36px;
+  --settings-control-radius: var(--ui-radius-md);
+  --settings-card-radius: var(--ui-radius-xl);
+  --settings-soft-shadow: none;
 }
 
-/* 主/次按钮：统一 40px 高、10px 圆角、13px 字，图标与文字垂直居中。 */
+/* 主/次按钮：统一 36px 高、9px 圆角、13px 字，图标与文字垂直居中。 */
 .settings-page .primary-button,
 .settings-page .secondary-button {
   min-height: var(--settings-control-height);
@@ -1668,7 +1667,7 @@
   height: 16px;
 }
 
-/* 文本类控件：同高同圆角，聚焦给和搜索框一致的柔和外圈。 */
+/* 文本类控件：同高同圆角，白底细描边，聚焦给青绿 ring。 */
 .settings-page input[type='text'],
 .settings-page input[type='search'],
 .settings-page input[type='password'],
@@ -1679,14 +1678,25 @@
 .settings-page select {
   min-height: var(--settings-control-height);
   padding: 0 12px;
-  border: 1px solid var(--border-strong);
+  border: 1px solid var(--ui-border-strong);
   border-radius: var(--settings-control-radius);
-  background: var(--surface-alt);
-  color: var(--text);
+  background: var(--ui-surface);
+  color: var(--ui-text);
   font: inherit;
   font-size: 13px;
   outline: none;
   transition: border-color 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.settings-page input[type='text']:hover,
+.settings-page input[type='search']:hover,
+.settings-page input[type='password']:hover,
+.settings-page input[type='number']:hover,
+.settings-page input[type='time']:hover,
+.settings-page input[type='url']:hover,
+.settings-page input[type='email']:hover,
+.settings-page select:hover {
+  border-color: var(--ui-text-3);
 }
 
 .settings-page input[type='text']:focus-visible,
@@ -1698,68 +1708,95 @@
 .settings-page input[type='email']:focus-visible,
 .settings-page select:focus-visible,
 .settings-page textarea:focus-visible {
-  border-color: var(--accent);
-  background: var(--surface);
-  box-shadow: 0 0 0 3px var(--accent-soft);
+  border-color: var(--ui-accent);
+  background: var(--ui-surface);
+  box-shadow: 0 0 0 3px var(--ui-accent-soft);
 }
 
-/* 按钮聚焦圈：与弹窗输入框同款，键盘操作时可见。 */
+/* 按钮聚焦圈：与输入框同款，键盘操作时可见。 */
 .settings-page button:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 3px var(--accent-soft);
+  outline: 2px solid var(--ui-accent-line);
+  outline-offset: 2px;
 }
 
-/* 分段控件：外壳 12px、内部 9px，跟弹窗里 10px 的控件圆角同一档；
-   3px 内衬 + 32px 按钮 + 1px 边框 = 整条 40px，与 h-10 控件高度对齐。 */
+/* 分段控件：外壳 10px、内部 7px，3px 内衬 + 30px 按钮 + 1px 边框 ≈ 38px。 */
 .settings-page .segmented-control {
   padding: 3px;
-  border-radius: 12px;
+  border-radius: var(--ui-radius-lg);
 }
 
 .settings-page .segmented-control button {
-  min-height: 32px;
-  padding: 0 14px;
-  border-radius: 9px;
-  font-size: 12px;
+  min-height: 30px;
+  padding: 0 12px;
+  border-radius: var(--ui-radius-sm);
+  font-size: 12.5px;
 }
 
-/* 左侧导航：行高对齐弹窗列表行（实际 46px）、10px 圆角；选中态改浅蓝底 + 蓝字。 */
+/* 左侧导航：38px 行高、9px 圆角；选中态青绿淡底 + 图标/文字变深。 */
 .settings-navigation {
-  gap: 4px;
+  gap: 2px;
   padding: 0;
 }
 
 .settings-navigation-item {
-  min-height: var(--settings-control-height);
-  grid-template-columns: 28px minmax(0, 1fr);
-  gap: 10px;
-  padding: 8px 12px;
-  border-radius: var(--settings-control-radius);
+  min-height: 38px;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 9px;
+  padding: 7px 10px;
+  border-radius: var(--ui-radius-md);
+}
+
+.settings-navigation-item:hover {
+  border-color: transparent;
+  background: var(--ui-hover);
+  color: var(--ui-text);
 }
 
 .settings-navigation-item strong {
   font-size: 12.5px;
+  font-weight: 560;
 }
 
 .settings-navigation-icon {
-  width: 28px;
-  height: 28px;
-  border-radius: 8px;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--ui-radius-sm);
+  background: transparent;
+  color: var(--ui-text-3);
 }
 
+.settings-navigation-item:hover .settings-navigation-icon {
+  color: var(--ui-text-2);
+}
+
+/* 选中态与外壳侧栏同一语言：暖纸底材上的白色浮起卡片 + 青绿图标。 */
 .settings-navigation-item[data-active='true'] {
   border-color: transparent;
-  background: var(--accent-soft);
-  box-shadow: none;
-  color: var(--accent-strong);
+  background: var(--ui-surface);
+  box-shadow: 0 0 0 1px var(--ui-border), var(--ui-shadow-sm);
+  color: var(--ui-text);
+}
+
+.settings-navigation-item[data-active='true']:hover {
+  background: var(--ui-surface);
+}
+
+.settings-navigation-item[data-active='true'] strong {
+  color: var(--ui-text);
+  font-weight: 600;
 }
 
 .settings-navigation-item[data-active='true'] .settings-navigation-icon {
-  background: rgba(255, 255, 255, 0.72);
-  color: var(--accent-strong);
+  background: transparent;
+  color: var(--ui-accent);
 }
 
-/* 连接模式选项：本质是可点列表行，对齐弹窗里 46px / 10px 的列表行规格。 */
+.settings-navigation-icon svg {
+  width: 15px;
+  height: 15px;
+}
+
+/* 连接模式选项：本质是可点列表行，46px 高、9px 圆角。 */
 .settings-page .connector-mode-option {
   min-height: 46px;
   padding: 10px 14px;
@@ -1852,13 +1889,15 @@
   stroke-width: 3.2;
 }
 
-/* 卡片：16px 圆角 + 柔和阴影 + 更松的行内边距，撑出呼吸感。
+/* 卡片：16px 圆角 + 1px 暖纸描边，靠描边和底色分层（不用阴影）。
    注意只描真实卡片（section / .reality-settings-section）：models 与 token-usage
-   两组只是透明栅格容器，给它们加阴影会凭空多出一个矩形。 */
+   两组只是透明栅格容器，给它们加边框会凭空多出一个矩形。 */
 .settings-content > section,
 .settings-page .reality-settings-section,
 .settings-page .cloud-account-section {
+  border: 1px solid var(--ui-border);
   border-radius: var(--settings-card-radius);
+  background: var(--ui-surface);
   box-shadow: var(--settings-soft-shadow);
 }
 
@@ -1869,16 +1908,27 @@
   flex-wrap: nowrap;
   align-items: center;
   gap: 12px;
-  padding: 15px 20px;
-  border-bottom: 1px solid var(--border);
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--ui-border);
   background: transparent;
 }
 
+/* 图标块：品牌青绿淡底，不描边、不抢标题。 */
 .settings-page .reality-settings-section > header > span {
+  display: grid;
   width: 32px;
   height: 32px;
   flex: 0 0 32px;
-  border-radius: 9px;
+  place-items: center;
+  border: 0;
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-accent-softer);
+  color: var(--ui-accent);
+}
+
+.settings-page .reality-settings-section > header > span svg {
+  width: 16px;
+  height: 16px;
 }
 
 .settings-page .reality-settings-section > header > div:not(.rc-header-actions) {
@@ -1888,8 +1938,21 @@
 
 .settings-page .reality-settings-section > header h2 {
   overflow: hidden;
+  margin: 0;
+  color: var(--ui-text);
+  font-size: 14.5px;
+  font-weight: 620;
+  letter-spacing: -0.01em;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 卡片头部副标题（软件更新等）：与标题同一栅格，弱化到第二行。 */
+.settings-page .reality-settings-section > header p {
+  margin: 3px 0 0;
+  color: var(--ui-text-3);
+  font-size: 11.5px;
+  line-height: 1.45;
 }
 
 .settings-page .reality-settings-section > header > .rc-header-actions {
@@ -1901,24 +1964,24 @@
   flex: 0 0 auto;
 }
 
-/* 带文字的操作按钮：轻量次级样式——浅灰底、极细描边、32px 高，
+/* 带文字的操作按钮：轻量次级样式——白底、极细描边、32px 高，
    宽度随文字、绝不折行。 */
 .settings-page .reality-settings-section > header > button:not(.cloud-account-refresh):not(.rc-icon-button) {
   width: auto;
   min-height: 32px;
   padding: 0 12px;
   white-space: nowrap;
-  border: 1px solid transparent;
+  border: 1px solid var(--ui-border);
   border-radius: var(--settings-control-radius);
-  background: var(--surface-alt);
-  color: var(--text);
+  background: var(--ui-surface);
+  color: var(--ui-text);
   font-size: 12px;
   font-weight: 600;
 }
 
 .settings-page .reality-settings-section > header > button:not(.cloud-account-refresh):not(.rc-icon-button):hover:not(:disabled) {
-  border-color: var(--border);
-  background: var(--hover);
+  border-color: var(--ui-border-strong);
+  background: var(--ui-hover);
 }
 
 .settings-page .reality-settings-section h2 {
@@ -1926,7 +1989,1161 @@
 }
 
 .settings-page .reality-setting-row {
-  min-height: 58px;
+  min-height: 56px;
   gap: 16px;
+  padding: 13px 20px;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   D 区焕新：设置页细部（账号卡数据块 / 用量 / 连接层 / 空态 / 危险操作）
+   以下规则只作用于 .settings-page，全部取 --ui-* token，不写死颜色。
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* 底部复位：旧全局样式没覆盖设置页根节点，未声明边框的按钮会露出 UA 默认边框。
+   用 :where() 保持零特异性，任何具名类规则都能覆盖它。 */
+:where(.settings-page) button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  letter-spacing: 0;
+  cursor: pointer;
+}
+
+:where(.settings-page) input,
+:where(.settings-page) textarea,
+:where(.settings-page) select {
+  font: inherit;
+  letter-spacing: 0;
+}
+
+/* 两栏骨架：导航与内容区留出稳定间距，窄窗自动退化为单栏。 */
+.settings-layout {
+  grid-template-columns: 184px minmax(0, 1fr);
+  gap: 32px;
+}
+
+.settings-content {
+  gap: 16px;
+}
+
+/* 导航：未选中次级字色；选中态由下方白色浮起卡片规则接管。 */
+.settings-navigation-item {
+  color: var(--ui-text-2);
+  transition:
+    background-color var(--ui-duration-fast) var(--ui-ease),
+    color var(--ui-duration-fast) var(--ui-ease);
+}
+
+.settings-navigation-item[data-active='true'] .settings-navigation-icon {
+  background: transparent;
+}
+
+.settings-navigation-item:focus-visible {
+  outline: 2px solid var(--ui-accent-line);
+  outline-offset: -1px;
+}
+
+/* ── 账号卡：身份行 / 数据块 / 设备清单 ─────────────────────────────────── */
+
+.settings-page .cloud-account-section > .cloud-account-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--ui-border);
+  background: transparent;
+}
+
+.settings-page .cloud-account-icon {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  border: 0;
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent);
+}
+
+.settings-page .cloud-account-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.settings-page .cloud-account-header h2 {
+  margin: 0;
+  color: var(--ui-text);
+  font-size: 14.5px;
+  font-weight: 620;
+  letter-spacing: -0.01em;
+}
+
+.settings-page .cloud-account-header-actions {
+  margin-left: auto;
+  gap: 10px;
+}
+
+.settings-page .cloud-account-refresh {
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-surface);
+  color: var(--ui-text-2);
+  transition:
+    background-color var(--ui-duration-fast) var(--ui-ease),
+    border-color var(--ui-duration-fast) var(--ui-ease),
+    color var(--ui-duration-fast) var(--ui-ease);
+}
+
+.settings-page .cloud-account-refresh:hover:not(:disabled) {
+  border-color: var(--ui-border-strong);
+  background: var(--ui-hover);
+  color: var(--ui-text);
+}
+
+.settings-page .cloud-account-refresh svg {
+  width: 14px;
+  height: 14px;
+}
+
+.settings-page .cloud-account-state {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px 3px 7px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-full);
+  background: var(--ui-surface-alt);
+  color: var(--ui-text-3);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.settings-page .cloud-account-state > span {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--ui-radius-full);
+  background: var(--ui-text-3);
+}
+
+.settings-page .cloud-account-state[data-connected='true'] {
+  border-color: color-mix(in srgb, var(--ui-success) 28%, var(--ui-border));
+  background: var(--ui-success-soft);
+  color: var(--ui-success);
+}
+
+.settings-page .cloud-account-state[data-connected='true'] > span {
+  background: var(--ui-success);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ui-success) 16%, transparent);
+}
+
+.settings-page .cloud-account-session {
+  grid-template-columns: 40px minmax(0, 1fr) auto;
+  gap: 14px;
+  padding: 18px 20px;
+}
+
+.settings-page .cloud-account-avatar {
+  width: 40px;
+  height: 40px;
+  background: linear-gradient(140deg, var(--brand-teal), var(--ui-accent-strong));
+  color: var(--ui-text-inverse);
+  font-size: 15px;
+  font-weight: 620;
+}
+
+.settings-page .cloud-account-identity strong {
+  color: var(--ui-text);
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.settings-page .cloud-account-identity span {
+  color: var(--ui-text-3);
+  font-size: 11.5px;
+}
+
+/* 退出登录：危险动作用 danger 色，但保持次级按钮的克制体积。 */
+.settings-page .cloud-account-session .secondary-button {
+  min-height: 32px;
+  padding: 0 12px;
+  border-color: color-mix(in srgb, var(--ui-danger) 20%, var(--ui-border));
+  background: var(--ui-surface);
+  color: var(--ui-danger);
+  font-size: 12px;
+  font-weight: 550;
+}
+
+.settings-page .cloud-account-session .secondary-button:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--ui-danger) 38%, var(--ui-border));
+  background: var(--ui-danger-soft);
+  color: var(--ui-danger);
+}
+
+.settings-page .cloud-account-session .secondary-button svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* 套餐 / 余量 / 周期：四个数据块一行，数字用等宽数字保证纵向对齐。 */
+.settings-page .cloud-subscription {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  border-top: 1px solid var(--ui-border);
+  border-bottom: 1px solid var(--ui-border);
+  background: var(--ui-surface-alt);
+}
+
+.settings-page .cloud-subscription > div {
+  padding: 16px 20px;
+  border-right: 1px solid var(--ui-border-subtle);
+}
+
+.settings-page .cloud-subscription > div:last-child {
+  border-right: 0;
+}
+
+.settings-page .cloud-subscription span {
+  color: var(--ui-text-3);
+  font-size: 11.5px;
+  font-weight: 500;
+}
+
+.settings-page .cloud-subscription span svg {
+  width: 13px;
+  height: 13px;
+  color: var(--ui-text-3);
+}
+
+.settings-page .cloud-subscription strong {
+  margin-top: 7px;
+  color: var(--ui-text);
+  font-size: 16px;
+  font-weight: 620;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+.settings-page .cloud-subscription-plan strong {
+  font-size: 15px;
+  font-weight: 620;
+}
+
+.settings-page .cloud-subscription small {
+  margin-top: 5px;
+  color: var(--ui-text-3);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.settings-page .cloud-subscription-quota > div strong {
+  font-size: 17px;
+  letter-spacing: -0.015em;
+}
+
+.settings-page .cloud-subscription-quota progress {
+  height: 6px;
+  margin-top: 10px;
+  border-radius: var(--ui-radius-full);
+  background: var(--ui-surface-sunken);
+}
+
+.settings-page .cloud-subscription-quota progress::-webkit-progress-bar {
+  border-radius: var(--ui-radius-full);
+  background: var(--ui-surface-sunken);
+}
+
+.settings-page .cloud-subscription-quota progress::-webkit-progress-value {
+  border-radius: var(--ui-radius-full);
+  background: var(--ui-accent-fill);
+}
+
+.settings-page .cloud-subscription-period strong {
+  font-size: 15px;
+}
+
+/* 设备清单：整段浅底分区，行用白卡，和上面的数据块分层。 */
+.settings-page .cloud-devices {
+  gap: 12px;
+  padding: 18px 20px 20px;
+  border-top: 0;
+  background: var(--ui-surface);
+}
+
+.settings-page .cloud-devices-heading strong {
+  color: var(--ui-text);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.settings-page .cloud-devices-heading small {
+  color: var(--ui-text-3);
+  font-size: 11.5px;
+}
+
+.settings-page .cloud-device-list {
+  gap: 8px;
+}
+
+.settings-page .cloud-device-row {
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+  min-height: 48px;
+  padding: 8px 12px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface);
+  transition: border-color var(--ui-duration-fast) var(--ui-ease);
+}
+
+.settings-page .cloud-device-row:hover {
+  border-color: var(--ui-border-strong);
+}
+
+.settings-page .cloud-device-icon {
+  width: 30px;
+  height: 30px;
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-accent-softer);
+  color: var(--ui-accent);
+}
+
+.settings-page .cloud-device-info strong {
+  color: var(--ui-text);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.settings-page .cloud-device-info span {
+  color: var(--ui-text-3);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.settings-page .cloud-device-status {
+  min-width: 132px;
+  column-gap: 6px;
+}
+
+.settings-page .cloud-device-status > span {
+  width: 6px;
+  height: 6px;
+  background: var(--ui-text-3);
+}
+
+.settings-page .cloud-device-status[data-online='true'] {
+  color: var(--ui-success);
+}
+
+.settings-page .cloud-device-status[data-online='true'] > span {
+  background: var(--ui-success);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ui-success) 16%, transparent);
+}
+
+.settings-page .cloud-device-status small {
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.settings-page .cloud-device-status em {
+  color: var(--ui-text-3);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.settings-page .cloud-device-empty {
+  color: var(--ui-text-3);
+  font-size: 11.5px;
+}
+
+/* ── 通用卡片内的开关 / 空态 / 提示 ─────────────────────────────────────── */
+
+.settings-page .settings-toggle {
+  min-width: 76px;
+  min-height: 30px;
+  padding: 0 11px;
+  border: 1px solid var(--ui-border-strong);
+  border-radius: var(--ui-radius-full);
+  background: var(--ui-surface);
+  color: var(--ui-text-3);
+  font-size: 11.5px;
+  font-weight: 550;
+  transition:
+    background-color var(--ui-duration-fast) var(--ui-ease),
+    border-color var(--ui-duration-fast) var(--ui-ease),
+    color var(--ui-duration-fast) var(--ui-ease);
+}
+
+.settings-page .settings-toggle:hover:not(:disabled) {
+  border-color: var(--ui-text-3);
+  color: var(--ui-text-2);
+}
+
+.settings-page .settings-toggle > span {
+  width: 7px;
+  height: 7px;
+  background: var(--ui-text-3);
+}
+
+.settings-page .settings-toggle[data-active='true'] {
+  border-color: color-mix(in srgb, var(--ui-success) 40%, var(--ui-border));
+  background: var(--ui-success-soft);
+  color: var(--ui-success);
+}
+
+.settings-page .settings-toggle[data-active='true'] > span {
+  background: var(--ui-success);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ui-success) 16%, transparent);
+}
+
+.settings-page .reality-setting-row select,
+.settings-page .reality-setting-row > input[type='time'] {
+  border-color: var(--ui-border-strong);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface);
+}
+
+.settings-page .segmented-control {
+  background: var(--ui-surface-alt);
+}
+
+.settings-page .segmented-control button[data-active='true'] {
+  color: var(--ui-accent-strong);
+  box-shadow: var(--ui-shadow-sm);
+}
+
+/* 卡片内的空态：细虚线描边 + 居中说明，不放大段空白。 */
+.settings-page .local-agent-empty,
+.settings-page .mcp-server-empty {
+  border: 1px dashed var(--ui-border-strong);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface-alt);
+  color: var(--ui-text-3);
+  font-size: 12px;
+}
+
+.settings-page .local-agent-list,
+.settings-page .mcp-server-list {
+  gap: 8px;
+  padding: 4px 16px 16px;
+}
+
+.settings-page .mcp-server-row {
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface);
+}
+
+.settings-page .mcp-config-path {
+  margin: 0 16px 14px;
+  padding: 8px 12px;
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-surface-alt);
+  color: var(--ui-text-3);
+  font-size: 11px;
+}
+
+.settings-page .mcp-delete-button {
+  color: var(--ui-danger);
+}
+
+.settings-page .mcp-delete-button:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--ui-danger) 38%, var(--ui-border));
+  background: var(--ui-danger-soft);
+  color: var(--ui-danger);
+}
+
+.settings-page .mcp-server-row .settings-toggle {
+  min-height: 28px;
+}
+
+/* 软件更新：安装标识旁的迷你链接按钮。 */
+.settings-page .link-button {
+  display: inline-grid;
+  width: 24px;
+  height: 24px;
+  margin-left: 6px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--ui-radius-xs);
+  background: transparent;
+  color: var(--ui-text-3);
+  vertical-align: middle;
+  cursor: pointer;
+}
+
+.settings-page .link-button:hover {
+  background: var(--ui-hover);
+  color: var(--ui-text);
+}
+
+/* ── 用量与预算：Tab、指标、图表、图例 ─────────────────────────────────── */
+
+.settings-page .usage-budget-switcher {
+  width: max-content;
+  max-width: 100%;
+  padding: 3px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface-alt);
+}
+
+.settings-page .usage-budget-switcher button {
+  min-height: 30px;
+  padding: 0 14px;
+  border-radius: var(--ui-radius-sm);
+  color: var(--ui-text-2);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.settings-page .usage-budget-switcher button[data-active='true'] {
+  background: var(--ui-surface);
+  color: var(--ui-accent-strong);
+  font-weight: 600;
+  box-shadow: var(--ui-shadow-sm);
+}
+
+.settings-page .token-usage-preview-badge {
+  padding: 2px 7px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-full);
+  background: var(--ui-surface-alt);
+  color: var(--ui-text-3);
+  font-size: 10.5px;
+  font-weight: 550;
+}
+
+.settings-page .token-usage-toolbar {
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--ui-border);
+}
+
+.settings-page .token-usage-mock-note {
+  color: var(--ui-text-3);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.settings-page .token-usage-metrics {
+  border-bottom: 1px solid var(--ui-border);
+}
+
+.settings-page .token-usage-metric {
+  padding: 16px 20px;
+}
+
+.settings-page .token-usage-metric > span {
+  color: var(--ui-text-3);
+  font-size: 11.5px;
+}
+
+.settings-page .token-usage-metric strong {
+  margin-top: 4px;
+  color: var(--ui-text);
+  font-size: 22px;
+  font-weight: 620;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.015em;
+}
+
+.settings-page .token-usage-metric.input > span {
+  color: var(--ui-icon-doc);
+}
+
+.settings-page .token-usage-metric.output > span {
+  color: var(--ui-warm-strong);
+}
+
+.settings-page .token-usage-metric.cache > span {
+  color: var(--ui-success);
+}
+
+.settings-page .token-usage-legend .input {
+  color: var(--ui-icon-doc);
+}
+
+.settings-page .token-usage-legend .output {
+  color: var(--ui-icon-slide);
+}
+
+.settings-page .token-usage-legend .cache {
+  color: var(--ui-success);
+}
+
+.settings-page .token-line.input {
+  stroke: var(--ui-icon-doc);
+}
+
+.settings-page .token-line.output {
+  stroke: var(--ui-icon-slide);
+}
+
+.settings-page .token-line.cache {
+  stroke: var(--ui-success);
+}
+
+.settings-page .token-usage-chart-header strong {
+  color: var(--ui-text);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.settings-page .token-usage-chart-header small {
+  color: var(--ui-text-3);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.settings-page .token-usage-legend {
+  color: var(--ui-text-2);
+  font-size: 11px;
+}
+
+.settings-page .token-usage-x-labels {
+  color: var(--ui-text-3);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── 外部调用预算 ────────────────────────────────────────────────────────── */
+
+.settings-page .external-calls-toolbar {
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--ui-border);
+}
+
+.settings-page .external-calls-filters select {
+  min-width: 112px;
+  border-color: var(--ui-border-strong);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface);
+  font-size: 11.5px;
+}
+
+.settings-page .external-calls-metrics > div {
+  padding: 16px 20px;
+  border-right: 1px solid var(--ui-border-subtle);
+}
+
+.settings-page .external-calls-metrics span {
+  color: var(--ui-text-3);
+  font-size: 11.5px;
+}
+
+.settings-page .external-calls-metrics strong {
+  color: var(--ui-text);
+  font-size: 22px;
+  font-weight: 620;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.015em;
+}
+
+.settings-page .external-calls-subheading {
   padding: 14px 20px;
+  border-bottom: 1px solid var(--ui-border-subtle);
+  background: var(--ui-surface-alt);
+}
+
+.settings-page .external-calls-subheading strong {
+  color: var(--ui-text);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.settings-page .external-calls-subheading small {
+  color: var(--ui-text-3);
+  font-size: 11.5px;
+}
+
+.settings-page .external-calls-progress-row {
+  padding: 12px 20px;
+  border-top: 1px solid var(--ui-border-subtle);
+}
+
+.settings-page .external-calls-progress i {
+  border-radius: var(--ui-radius-full);
+  background: var(--ui-success);
+}
+
+.settings-page .external-calls-progress-row[data-state='warning'] .external-calls-progress i {
+  background: var(--ui-warning);
+}
+
+.settings-page .external-calls-progress-row[data-state='limit'] .external-calls-progress i {
+  background: var(--ui-danger);
+}
+
+.settings-page .external-calls-service-icon {
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface-alt);
+  color: var(--ui-accent);
+}
+
+.settings-page .external-calls-empty {
+  color: var(--ui-text-3);
+  font-size: 11.5px;
+}
+
+.settings-page .external-calls-outcome[data-outcome='SUCCEEDED'] {
+  border-color: color-mix(in srgb, var(--ui-success) 32%, var(--ui-border));
+  color: var(--ui-success);
+}
+
+.settings-page .external-calls-outcome[data-outcome='FAILED'],
+.settings-page .external-calls-outcome[data-outcome='BLOCKED'] {
+  border-color: color-mix(in srgb, var(--ui-danger) 32%, var(--ui-border));
+  color: var(--ui-danger);
+}
+
+.settings-page .external-calls-table th {
+  color: var(--ui-text-3);
+  background: var(--ui-surface-alt);
+  font-size: 11px;
+  font-weight: 550;
+}
+
+.settings-page .external-calls-table td {
+  border-top: 1px solid var(--ui-border-subtle);
+  color: var(--ui-text-2);
+}
+
+.settings-page .external-calls-table code {
+  color: var(--ui-text-2);
+  font-family: var(--ui-font-mono);
+}
+
+/* ── 运行时 AI 配置：tabs / 表单 / JSON 折叠块 ──────────────────────────── */
+
+.settings-page .rc-tabs {
+  margin: 16px 20px;
+  padding: 3px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface-alt);
+  gap: 2px;
+}
+
+.settings-page .rc-tabs button {
+  height: 30px;
+  border: 0;
+  border-radius: var(--ui-radius-sm);
+  color: var(--ui-text-2);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.settings-page .rc-tabs button[data-active='true'] {
+  background: var(--ui-surface);
+  color: var(--ui-text);
+  font-weight: 600;
+  box-shadow: var(--ui-shadow-sm);
+}
+
+.settings-page .rc-tab-badge {
+  border: 1px solid var(--ui-border);
+  background: var(--ui-surface-sunken);
+  color: var(--ui-text-3);
+  font-size: 10.5px;
+  font-weight: 550;
+}
+
+.settings-page .rc-form {
+  gap: 10px;
+  padding: 0 20px;
+}
+
+.settings-page .rc-form .runtime-config-actions {
+  margin: 4px -20px 0;
+  padding: 12px 20px 16px;
+  border-top: 1px solid var(--ui-border-subtle);
+}
+
+.settings-page .rc-form-field span,
+.settings-page .rc-form-hint {
+  color: var(--ui-text-3);
+  font-size: 11.5px;
+}
+
+.settings-page .rc-form-field input,
+.settings-page .rc-scenario-row select,
+.settings-page .rc-scenario-model {
+  height: 34px;
+  border: 1px solid var(--ui-border-strong);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface);
+  color: var(--ui-text);
+  font-size: 12px;
+}
+
+.settings-page .rc-form-field input:focus-visible,
+.settings-page .rc-scenario-row select:focus-visible,
+.settings-page .rc-scenario-model:focus-visible {
+  border-color: var(--ui-accent);
+  outline: none;
+  box-shadow: 0 0 0 3px var(--ui-accent-soft);
+}
+
+.settings-page .rc-group-title {
+  color: var(--ui-text-3);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.settings-page .rc-icon-button {
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-surface);
+  color: var(--ui-text-2);
+}
+
+.settings-page .rc-icon-button:hover:not(:disabled) {
+  border-color: var(--ui-border-strong);
+  background: var(--ui-hover);
+  color: var(--ui-text);
+}
+
+.settings-page .rc-icon-button[data-armed='true'] {
+  border-color: color-mix(in srgb, var(--ui-danger) 40%, var(--ui-border));
+  background: var(--ui-danger-soft);
+  color: var(--ui-danger);
+}
+
+.settings-page .rc-json-details summary {
+  color: var(--ui-text-2);
+  font-size: 11.5px;
+}
+
+.settings-page .runtime-config-editor {
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface-alt);
+  color: var(--ui-text-2);
+  font-family: var(--ui-font-mono);
+  font-size: 11.5px;
+}
+
+.settings-page .runtime-config-meta {
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--ui-border-subtle);
+  color: var(--ui-text-3);
+  font-size: 11px;
+}
+
+.settings-page .runtime-config-source-selector {
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--ui-border-subtle);
+  color: var(--ui-text-3);
+}
+
+.settings-page .runtime-config-source-selector button {
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-surface);
+  color: var(--ui-text-2);
+  font-size: 11.5px;
+}
+
+.settings-page .runtime-config-source-selector button.active {
+  border-color: var(--ui-accent-line);
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent-strong);
+}
+
+.settings-page .runtime-config-saas-safe-state {
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface-alt);
+  color: var(--ui-text-2);
+}
+
+.settings-page .runtime-config-message {
+  color: var(--ui-text-3);
+  font-size: 11px;
+}
+
+.settings-page .external-calls-error,
+.settings-page .mcp-form-field input,
+.settings-page .mcp-server-form {
+  border-color: var(--ui-border);
+}
+
+.settings-page .mcp-form-field input {
+  border: 1px solid var(--ui-border-strong);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface);
+}
+
+/* 账号未登录态的登录区：与页面卡片同一套留白。 */
+.settings-page .cloud-login-content {
+  padding: 20px;
+}
+
+.settings-page .qr-login-divider {
+  margin: 18px 0;
+  color: var(--ui-text-3);
+  font-size: 11.5px;
+}
+
+.settings-page .qr-login-entry-button,
+.settings-page .social-login-button {
+  min-height: 44px;
+  border-radius: var(--ui-radius-md);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.settings-page .qr-login-entry-button {
+  border-color: var(--ui-border-strong);
+  background: var(--ui-surface);
+  color: var(--ui-text);
+}
+
+.settings-page .qr-login-entry-button svg {
+  width: 18px;
+  height: 18px;
+}
+
+.settings-page .social-login-button:not(.apple-login):not(.google-login) {
+  border-color: var(--ui-border-strong);
+  background: var(--ui-surface);
+  color: var(--ui-text);
+}
+
+.settings-page .cloud-login-cancel {
+  color: var(--ui-text-3);
+  font-size: 12.5px;
+}
+
+.settings-page .cloud-login-cancel:hover {
+  color: var(--ui-text-2);
+}
+
+/* 窄窗：导航变成顶部横向滚动条，卡片与控件退化为单列。 */
+@media (max-width: 900px) {
+  .settings-layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 18px;
+  }
+
+  .settings-navigation {
+    gap: 4px;
+  }
+
+  .settings-navigation-item {
+    min-height: 34px;
+  }
+
+  .settings-page .cloud-subscription {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings-page .cloud-subscription > div {
+    border-right: 0;
+    border-bottom: 1px solid var(--ui-border-subtle);
+  }
+
+  .settings-page .cloud-subscription > div:last-child {
+    border-bottom: 0;
+  }
+
+  .settings-page .cloud-device-status {
+    min-width: 0;
+  }
+}
+
+/* ―― 收口：模型与 Agent 两卡的间距与其它分区保持同一 16px 节奏 ―― */
+.settings-content[data-active-setting='settings-models'] > #settings-models {
+  gap: 16px;
+}
+
+/* ―― 连接层模式：单选项用 radio 圆点表达，未选中也有明确形状 ―― */
+.settings-page .connector-mode-options {
+  gap: 10px;
+  padding: 18px 20px;
+}
+
+.settings-page .connector-mode-option {
+  border-color: var(--ui-border);
+  background: var(--ui-surface);
+}
+
+.settings-page .connector-mode-option:hover:not(:disabled) {
+  border-color: var(--ui-border-strong);
+  background: var(--ui-hover);
+}
+
+.settings-page .connector-mode-option[data-active='true'] {
+  border-color: var(--ui-accent-line);
+  background: var(--ui-accent-softer);
+}
+
+.settings-page .connector-mode-option[data-active='true'] .connector-mode-option-icon {
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent-strong);
+}
+
+.settings-page .connector-mode-option-icon {
+  color: var(--ui-text-2);
+}
+
+.settings-page .connector-mode-option-body strong {
+  color: var(--ui-text);
+  font-size: 13px;
+  font-weight: 550;
+}
+
+.settings-page .connector-mode-option[data-active='true'] .connector-mode-option-body strong {
+  font-weight: 600;
+}
+
+.settings-page .connector-mode-option-state {
+  display: inline-grid;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  place-items: center;
+  border: 1.5px solid var(--ui-border-strong);
+  border-radius: var(--ui-radius-full);
+  background: var(--ui-surface);
+  color: transparent;
+  font-size: 0;
+  transition: border-color var(--ui-duration-fast) var(--ui-ease), background-color var(--ui-duration-fast) var(--ui-ease);
+}
+
+.settings-page .connector-mode-option[data-active='true'] .connector-mode-option-state {
+  border-color: var(--ui-accent-fill);
+  background: var(--ui-accent-fill);
+  box-shadow: inset 0 0 0 3px var(--ui-surface);
+}
+
+.settings-page .connector-mode-option:focus-visible {
+  outline: 2px solid var(--ui-accent-line);
+  outline-offset: 2px;
+}
+
+.settings-page .connector-mode-notice {
+  padding: 0 20px 16px;
+  color: var(--ui-warm-strong);
+  font-size: 11.5px;
+  opacity: 1;
+}
+
+/* ―― 运行时 AI 配置：JSON 折叠入口做成弱化链接行 ―― */
+.settings-page .rc-json-details {
+  margin: 4px 20px 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--ui-border-subtle);
+}
+
+.settings-page .rc-json-details summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--ui-text-2);
+  font-size: 11.5px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.settings-page .rc-json-details summary:hover {
+  color: var(--ui-text);
+}
+
+/* ―― 空态/加载态的呼吸感（卡片内不贴边） ―― */
+.settings-page .local-agent-empty,
+.settings-page .mcp-server-empty {
+  margin: 0 20px 4px;
+  padding: 26px 20px;
+  text-align: center;
+}
+
+.settings-page .local-agent-import-result {
+  color: var(--ui-success);
+  font-size: 11.5px;
+}
+
+.settings-page .local-agent-empty strong,
+.settings-page .mcp-server-empty strong {
+  color: var(--ui-text-2);
+  font-size: 12.5px;
+  font-weight: 550;
+}
+
+.settings-page .local-agent-empty small,
+.settings-page .mcp-server-empty small {
+  color: var(--ui-text-3);
+  font-size: 11.5px;
+}
+
+.settings-page .local-agent-row {
+  border-bottom: 1px solid var(--ui-border-subtle);
+}
+
+.settings-page .local-agent-row:last-child {
+  border-bottom: 0;
+}
+
+/* ―― 本机 Agent 行内「导入历史」：与卡片其它次级按钮同高同描边 ―― */
+.settings-page .local-agent-import-button {
+  display: inline-flex;
+  height: 30px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-surface);
+  color: var(--ui-text-2);
+  font-size: 11.5px;
+  font-weight: 550;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: border-color var(--ui-duration-fast) var(--ui-ease), background-color var(--ui-duration-fast) var(--ui-ease);
+}
+
+.settings-page .local-agent-import-button:hover:not(:disabled) {
+  border-color: var(--ui-accent-line);
+  background: var(--ui-accent-softer);
+  color: var(--ui-accent-strong);
+}
+
+.settings-page .local-agent-import-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.settings-page .local-agent-import-button svg {
+  width: 13px;
+  height: 13px;
+}
+
+.settings-page .local-agent-row {
+  padding: 10px 12px;
+  border-radius: var(--ui-radius-md);
+}
+
+.settings-page .local-agent-row + .local-agent-row {
+  border-top: 1px solid var(--ui-border-subtle);
+}
+
+.settings-page .local-agent-status {
+  color: var(--ui-text-3);
+  font-size: 11.5px;
+}
+
+.settings-page .local-agent-row[data-ready='true'] .local-agent-status {
+  color: var(--ui-success);
+}
+
+.settings-page .local-agent-provider {
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-surface-alt);
+  color: var(--ui-text-2);
 }

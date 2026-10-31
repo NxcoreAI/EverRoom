@@ -7,6 +7,7 @@ import type {
 } from '../../shared/agent-auth'
 import { extractVerificationUrl, LarkAuthRunner } from './lark-auth-runner'
 import { NtnAuthRunner } from './ntn-auth-runner'
+import { parseLarkCliVersion } from '../runtime/lark-cli-runtime'
 
 /**
  * Agent 授权引导控制器（本地、内存态）。飞书两阶段（应用初始化 → 用户 OAuth）
@@ -499,15 +500,19 @@ export class AgentAuthController {
 
   private async feishuEnvironment(): Promise<AgentAuthEnvironmentStatus['feishu']> {
     const cliPath = this.runner.gatewayEnvironment().NXCORE_LARK_CLI_PATH ?? 'lark-cli'
+    const cliSource = this.runner.cliSource()
     const version = await this.runner.version()
+    const cliVersion = parseLarkCliVersion(version)
     if (!version) {
       return {
         cliState: 'missing',
         cliPath,
+        cliSource,
+        cliVersion: null,
         appConfigured: null,
         userAuthorized: null,
         userName: null,
-        message: 'lark-cli 未随产品预装或不可用（导出环境未就绪）',
+        message: 'lark-cli 不可用（导出环境未就绪），请更新或重新安装应用',
       }
     }
     try {
@@ -515,6 +520,8 @@ export class AgentAuthController {
       return {
         cliState: 'ready',
         cliPath,
+        cliSource,
+        cliVersion,
         appConfigured: status.appConfigured,
         userAuthorized: status.userAuthorized,
         userName: status.userName,
@@ -524,6 +531,8 @@ export class AgentAuthController {
       return {
         cliState: 'error',
         cliPath,
+        cliSource,
+        cliVersion,
         appConfigured: null,
         userAuthorized: null,
         userName: null,

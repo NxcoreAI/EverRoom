@@ -603,6 +603,62 @@
       "when": 1792748200000,
       "tag": "0086_drop_room_compat_tables",
       "breakpoints": true
+    },
+    {
+      "idx": 89,
+      "version": "6",
+      "when": 1792749000000,
+      "tag": "0087_file_entries_deleted_updated_idx",
+      "breakpoints": true
+    },
+    {
+      "idx": 90,
+      "version": "6",
+      "when": 1793150000000,
+      "tag": "0088_connector_agent_query",
+      "breakpoints": true
+    },
+    {
+      "idx": 91,
+      "version": "6",
+      "when": 1793274371822,
+      "tag": "0089_agent_workspaces",
+      "breakpoints": true
+    },
+    {
+      "idx": 92,
+      "version": "6",
+      "when": 1793339200000,
+      "tag": "0090_agent_workspace_meta",
+      "breakpoints": true
+    },
+    {
+      "idx": 93,
+      "version": "6",
+      "when": 1793420000000,
+      "tag": "0091_file_entries_workspace",
+      "breakpoints": true
+    },
+    {
+      "idx": 94,
+      "version": "6",
+      "when": 1793500000000,
+      "tag": "0092_slides_generation_checkpoints",
+      "breakpoints": true
+    },
+    {
+      "idx": 95,
+      "version": "6",
+      "when": 1793600000000,
+      "tag": "0093_agent_thinking_level",
+      "breakpoints": true
+    },
+    {
+      "idx": 96,
+      "version": "6",
+      "when": 1793650000000,
+      "tag": "0094_thesis_format_cards_workspace",
+      "breakpoints": true
     }
   ]
 }

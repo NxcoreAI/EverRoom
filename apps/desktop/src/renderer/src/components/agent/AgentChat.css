@@ -501,6 +501,24 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
   animation: agent-content-enter 220ms cubic-bezier(.22, 1, .36, 1);
 }
 
+/* 「等待用户输入」态：agent 挂着 run 在等答案 —— 卡片呼吸描边，明确可点。
+   这不是执行中的加载遮罩：即使在 run 进行中（等待决策）也保持可交互。 */
+.agent-room-selection[data-awaiting-input='true'] {
+  border-color: rgba(61, 111, 246, 0.55);
+  animation: agent-content-enter 220ms cubic-bezier(.22, 1, .36, 1), agent-awaiting-input-pulse 2.4s ease-in-out infinite;
+}
+
+@keyframes agent-awaiting-input-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(61, 111, 246, 0); }
+  50% { box-shadow: 0 0 0 4px rgba(61, 111, 246, 0.12); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-room-selection[data-awaiting-input='true'] {
+    animation: agent-content-enter 220ms cubic-bezier(.22, 1, .36, 1);
+  }
+}
+
 .agent-room-selection > header {
   display: flex;
   min-height: 28px;
@@ -696,6 +714,12 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
   white-space: nowrap;
 }
 
+.agent-reasoning {
+  width: 100%;
+  color: #6f7784;
+  font-size: 12px;
+}
+
 .agent-reasoning summary {
   display: flex;
   width: fit-content;
@@ -717,12 +741,96 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
   color: #6c7ba8;
 }
 
+.agent-reasoning[data-active='true'] summary svg {
+  animation: agent-reasoning-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes agent-reasoning-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
 .agent-reasoning-content {
   margin-top: 7px;
   padding: 2px 0 2px 12px;
   border-left: 1px solid #d9dde5;
   color: #707886;
   line-height: 1.65;
+}
+
+/* 思考串随 run 无限增长：限高滚动，展开后可读完整内容而不撑爆对话区。 */
+.agent-reasoning[open] > .agent-reasoning-content {
+  max-height: 240px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* 时间线内嵌段：紧凑、缩进对齐工具行，「思考 → 执行」节奏的竖直阅读序。 */
+.agent-reasoning-segment {
+  margin: 2px 0 2px 6px;
+  font-size: 11px;
+}
+
+.agent-reasoning-segment summary {
+  min-height: 20px;
+  font-weight: 450;
+}
+
+.agent-reasoning-segment summary svg {
+  width: 12px;
+  height: 12px;
+}
+
+/* 封段小节的摘要：直接显示思考首行文本（不再显示「思考」字样/字数）。 */
+.agent-reasoning-summary-text {
+  overflow: hidden;
+  color: #656d79;
+  font-weight: 450;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 420px;
+}
+
+.agent-reasoning-segment[open] > .agent-reasoning-content {
+  max-height: 180px;
+  margin-top: 4px;
+  padding-left: 10px;
+  line-height: 1.55;
+}
+
+/* 流动思考行（时间线尾部）：与「正在整理结果」状态行同款 shimmer + tail 预览。 */
+.agent-reasoning-live {
+  margin: 2px 0 0 6px;
+  font-size: 12px;
+}
+
+.agent-reasoning-live summary {
+  min-height: 22px;
+  color: #4664c8;
+  font-weight: 540;
+}
+
+.agent-reasoning-live summary svg {
+  width: 13px;
+  height: 13px;
+  color: #6c7ba8;
+}
+
+.agent-reasoning-live-tail {
+  margin-left: 8px;
+  max-width: 320px;
+  overflow: hidden;
+  color: #6f7784;
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-reasoning-live[open] > .agent-reasoning-content {
+  max-height: 180px;
+  margin-top: 4px;
+  padding-left: 10px;
+  line-height: 1.55;
 }
 
 .agent-reasoning-content p {
@@ -3494,6 +3602,21 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
   box-shadow: 0 10px 28px rgba(25, 31, 41, 0.1), 0 2px 6px rgba(25, 31, 41, 0.05);
 }
 
+/* 思考档位弹层：与模型/权限选择器同族，锚在底栏左上方。 */
+.agent-composer-popover.agent-thinking-level-picker {
+  right: auto;
+  left: 12px;
+  bottom: 52px;
+  display: grid;
+  gap: 1px;
+  width: max-content;
+  min-width: 232px;
+  max-width: 320px;
+  padding: 4px;
+  border-color: #e8eaee;
+  box-shadow: 0 10px 28px rgba(25, 31, 41, 0.1), 0 2px 6px rgba(25, 31, 41, 0.05);
+}
+
 /* full_access 危险档：选项标题与当前态切换钮同用危险色。 */
 .agent-model-option[data-danger='true'] strong { color: #b42318; }
 .agent-permission-mode-toggle[data-danger='true'] { color: #b42318; font-weight: 500; }
@@ -3731,7 +3854,8 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
   .agent-thinking-text::after,
   .spin,
   .agent-context-usage-pulse,
-  .agent-context-ring--compacting {
+  .agent-context-ring--compacting,
+  .agent-reasoning[data-active='true'] summary svg {
     animation: none;
   }
 

@@ -1,52 +1,22 @@
 import type { AxiosRequestConfig } from 'axios'
 import type {
   ConnectorAuthorizationAttempt,
-  ConnectorConnection,
-  ConnectorJsonRecord,
   ConnectorProvidersResponse,
   ConnectorRemoteAccount,
   ConnectorStatus,
-  MailMessage,
-  SyncMode,
-  SyncRun,
-  SyncScope,
-  WikiDocumentPreview,
-  WikiDocumentSummary,
 } from '@nxcore/connector-contract'
 import { createLoggedHttpClient } from '../network/http-client'
 import type { GatewaySupervisor } from './gateway-supervisor'
 
 const http = createLoggedHttpClient('gateway-connectors')
-const ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/
-const FAULT_POINTS = new Set(['before_page_commit', 'after_page_commit_before_cursor_cas', 'rate_limited', 'cursor_expired'])
+const ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$/
 
-export interface ConnectorConnectionInput {
-  provider: string
-  service: string
-  connectionName: string
-  filters?: Record<string, unknown>
-}
-
-export interface ConnectorMailQuery {
-  connectionId?: string
-  scopeId?: string
-  search?: string
-  limit?: number
-  offset?: number
-  provider?: 'gmail' | 'outlook'
-  cursor?: string
-}
-
-export interface ConnectorFailure {
-  id: string
-  scopeId: string | null
-  runId: string | null
-  category: string
-  message: string
-  itemKey: string | null
-  createdAt: string
-}
-
+/**
+ * 连接器的桌面桥（统一后的一版）：
+ *   - 连接列表/状态实时读 oo（Gateway 代理）
+ *   - 只保留授权、断开、远端旧账号探测
+ *   - 同步 / scope / run / 邮件 / 文档 / 记录相关方法已随同步链路删除
+ */
 export class NangoConnectorGatewayBridge {
   constructor(
     private readonly supervisor: GatewaySupervisor,
@@ -56,8 +26,7 @@ export class NangoConnectorGatewayBridge {
   ) {}
 
   async status(): Promise<ConnectorStatus> {
-    const status = await this.request<ConnectorStatus>('/v1/nango-connectors/status')
-    return { ...status, scopes: status.scopes.map((scope) => this.sanitizeScope(scope)) }
+    return this.request<ConnectorStatus>('/v1/nango-connectors/status')
   }
 
   providers(): Promise<ConnectorProvidersResponse> {
@@ -66,15 +35,22 @@ export class NangoConnectorGatewayBridge {
 
   /**
    * SaaS 侧已配置 OAuth 的 provider 名单（「待连接」网格只显示这些）。
-   * 仅 saas 连接层有实现；local 模式返回 null，渲染层回落注册表全量展示。
+   * 仅 saas 连接层有实现；local 模式返回 null，渲染层回落注册表。
    */
   configuredProviders(): Promise<string[] | null> {
     return Promise.resolve(null)
   }
 
   /**
-   * oo 会话热推送（登录换取/登出拆除）：gateway 原地 patch 连接配置并热重载
-   * agent 工具，不再重启进程。冷启动会话仍经 spawn env 注入。
+   * 同上，但带 SaaS 下发的应用元数据（provider → displayName/iconUrl）。
+   * local 模式无 SaaS 目录，同样返回 null。
+   */
+  configuredProvidersDetailed(): Promise<Array<{ provider: string; displayName: string | null; iconUrl: string | null }> | null> {
+    return Promise.resolve(null)
+  }
+
+  /**
+   * oo 会话热推送（登录换取/登出拆除）：gateway 原地 patch 连接配置。
    */
   applyConnectorSession(session: { baseUrl: string; runtimeToken?: string } | null): Promise<{ configured: boolean; baseUrl: string }> {
     return session
@@ -85,21 +61,7 @@ export class NangoConnectorGatewayBridge {
       : this.request('/v1/connector-session', { method: 'DELETE' })
   }
 
-  /** WebCal/ICS 日历订阅（webcal-url 通道）：同 URL 幂等，网关不回显 URL 令牌。 */
-  createWebcalSubscription(url: string, provider = 'ics-calendar'): Promise<ConnectorConnection> {
-    const trimmed = url.trim()
-    if (!/^https?:\/\/[^\s]+$/i.test(trimmed) && !/^webcal:\/\//i.test(trimmed)) throw new Error('请输入有效的日历订阅地址（https:// 或 webcal://）。')
-    return this.request('/v1/connectors/connections', { method: 'POST', data: { provider, url: trimmed } })
-  }
-
-  registerConnection(input: ConnectorConnectionInput): Promise<ConnectorConnection> {
-    if (!/^[a-z][a-z0-9-]*$/.test(input.provider)) throw new Error('不支持的连接提供方。')
-    if (!input.service.trim() || !input.connectionName.trim()) throw new Error('连接配置不能为空。')
-    return this.request('/v1/nango-connectors/connections', { method: 'POST', data: { ...input, service: input.service.trim(), connectionName: input.connectionName.trim() } })
-  }
-
   async startAuthorization(provider: string): Promise<ConnectorAuthorizationAttempt> {
-    // 注册表白名单校验在网关侧（isConnectorProvider + syncProviderNames）；桥层只做格式约束。
     if (!/^[a-z][a-z0-9-]*$/.test(provider)) throw new Error('不支持的连接提供方。')
     const result = await this.request<ConnectorAuthorizationAttempt & { authorizationUrl: string }>(
       '/v1/nango-connectors/authorizations',
@@ -107,7 +69,7 @@ export class NangoConnectorGatewayBridge {
     )
     const authorizationUrl = new URL(result.authorizationUrl)
     if (authorizationUrl.protocol !== 'https:' && authorizationUrl.protocol !== 'http:') {
-      throw new Error('Nango 返回了不安全的授权地址。')
+      throw new Error('返回了不安全的授权地址。')
     }
     await this.openExternal(authorizationUrl.toString())
     return {
@@ -129,79 +91,16 @@ export class NangoConnectorGatewayBridge {
     return Promise.resolve(null)
   }
 
-  async disableConnection(id: string): Promise<void> {
-    await this.request(`/v1/nango-connectors/connections/${this.id(id)}/disable`, { method: 'POST', data: {} })
-  }
-  async enableConnection(id: string): Promise<void> {
-    await this.request(`/v1/nango-connectors/connections/${this.id(id)}/enable`, { method: 'POST', data: {} })
-  }
-
   async purgeConnection(id: string): Promise<void> {
     await this.request(`/v1/nango-connectors/connections/${this.id(id)}`, { method: 'DELETE' })
   }
 
-  triggerSync(id: string, mode: SyncMode): Promise<SyncRun> {
-    if (!['full', 'incremental', 'rebuild'].includes(mode)) throw new Error('无效的同步模式。')
-    return this.request(`/v1/nango-connectors/scopes/${this.id(id)}/sync`, { method: 'POST', data: { mode } })
-  }
-
-  cancelRun(id: string): Promise<SyncRun> {
-    return this.request(`/v1/nango-connectors/runs/${this.id(id)}/cancel`, { method: 'POST', data: {} })
-  }
-
-  async scopes(connectionId?: string): Promise<SyncScope[]> {
-    const scopes = await this.request<SyncScope[]>('/v1/nango-connectors/scopes', { params: connectionId ? { connectionId: this.id(connectionId) } : undefined })
-    return scopes.map((scope) => this.sanitizeScope(scope))
-  }
-
-  runs(connectionId?: string): Promise<SyncRun[]> {
-    return this.request('/v1/nango-connectors/runs', { params: connectionId ? { connectionId: this.id(connectionId) } : undefined })
-  }
-
-  async mail(query: ConnectorMailQuery = {}): Promise<MailMessage[]> {
-    const all = query.connectionId
-      ? [this.id(query.connectionId)]
-      : (await this.status()).connections.filter((item) => !query.provider || item.provider === query.provider).map((item) => this.id(item.id))
-    const limit = Math.min(200, Math.max(1, query.limit ?? 100))
-    const pages = await Promise.all(all.map((id) =>
-      this.request<{ items?: MailMessage[] } | MailMessage[]>(`/v1/nango-connectors/connections/${id}/messages`, { params: { limit: 500, ...(query.provider ? { provider: query.provider } : {}), ...(query.offset ? { offset: query.offset } : {}) } })
-    ))
-    const search = query.search?.trim().toLocaleLowerCase()
-    const messages = pages.flatMap((page) => Array.isArray(page) ? page : (page.items ?? [])).filter((item) => !search || `${item.subject ?? ''} ${item.snippet ?? ''}`.toLocaleLowerCase().includes(search))
-    return messages.slice(0, limit)
-  }
-
-  failures(query: { connectionId?: string; runId?: string; limit?: number } = {}): Promise<ConnectorFailure[]> {
-    return this.request('/v1/nango-connectors/failures', { params: query })
-  }
-
-  documents(connectionId: string): Promise<WikiDocumentSummary[]> {
-    return this.request(`/v1/nango-connectors/connections/${this.id(connectionId)}/documents`)
-  }
-
-  document(connectionId: string, documentId: string): Promise<WikiDocumentPreview> {
-    return this.request(`/v1/nango-connectors/connections/${this.id(connectionId)}/documents/${this.id(documentId)}`)
-  }
-
-  async records(connectionId: string, type: 'mail' | 'calendar', page: { limit?: number; offset?: number; provider?: string } = {}): Promise<ConnectorJsonRecord[]> {
-    if (type !== 'mail' && type !== 'calendar') throw new Error('无效的数据记录类型。')
-    const result = await this.request<{ items?: ConnectorJsonRecord[] } | ConnectorJsonRecord[]>(`/v1/nango-connectors/connections/${this.id(connectionId)}/records`, { params: { type, ...page } })
-    return Array.isArray(result) ? result : (result.items ?? [])
-  }
-
-  /** 连接的已同步记录总数（records 端点 total；limit=1 只为取计数）。 */
-  async recordTotals(connectionId: string): Promise<{ mail: number; calendar: number }> {
-    const total = (type: 'mail' | 'calendar') =>
-      this.request<{ items?: ConnectorJsonRecord[]; total?: number }>(`/v1/nango-connectors/connections/${this.id(connectionId)}/records`, { params: { type, limit: 1 } })
-        .then((result) => (Array.isArray(result) ? 0 : result.total ?? 0))
-        .catch(() => 0)
-    const [mail, calendar] = await Promise.all([total('mail'), total('calendar')])
-    return { mail, calendar }
-  }
-
-  armFault(point: string): Promise<void> {
-    if (!FAULT_POINTS.has(point)) throw new Error('无效的故障注入点。')
-    return this.request('/v1/nango-connectors/debug/faults', { method: 'POST', data: { point } })
+  /**
+   * 重新开启：移除本地墓碑（oo 凭据一直在），连接回到可见/可查询状态。
+   * 「开启开关」的实现——与 oo 侧 token 的存在性解耦。
+   */
+  async reconnectConnection(id: string): Promise<void> {
+    await this.request(`/v1/nango-connectors/connections/${this.id(id)}/reconnect`, { method: 'POST' })
   }
 
   private async request<T>(path: string, config: AxiosRequestConfig = {}): Promise<T> {
@@ -222,10 +121,6 @@ export class NangoConnectorGatewayBridge {
   private id(value: string): string {
     if (!ID_PATTERN.test(value)) throw new Error('无效的连接器标识。')
     return encodeURIComponent(value)
-  }
-
-  private sanitizeScope(scope: SyncScope): SyncScope {
-    return { ...scope, sourceCursor: null }
   }
 }
 

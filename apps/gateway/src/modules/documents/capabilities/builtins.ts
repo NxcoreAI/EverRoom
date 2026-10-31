@@ -5,6 +5,7 @@ import { commentPlugin } from "./comment-plugin.js";
 import { createPlugin } from "./create-plugin.js";
 import { deletePlugin } from "./delete-plugin.js";
 import type { OfficeBridgeClient } from "./office-bridge-client.js";
+import type { DocumentIllustrationPorts, OfficeFileAccess } from "./office-plugin.js";
 import { officePlugin } from "./office-plugin.js";
 import { queryPlugins } from "./query-plugin.js";
 import { DocumentCapabilityRegistry } from "./registry.js";
@@ -32,6 +33,10 @@ export function createBuiltinDocumentCapabilityRegistry(
   slidesProgress?: SlidesPageProgressReporter | null,
   /** 落页视觉复检器：传入则 preset 落页后截图送 VLM 判定（未配置 VLM 时内部跳过）。 */
   visualReviewer?: SlidesVisualReviewer | null,
+  /** 文件库访问（惰性）：传入则启用改当前打开 Word/Excel 的 office_edit / sheets_read / sheets_edit。 */
+  fileAccess?: () => OfficeFileAccess | null,
+  /** 宿主生图端口：传入则启用 word_agent_illustration（Word 配图一步到位）。 */
+  illustration?: DocumentIllustrationPorts | null,
 ): DocumentCapabilityRegistry {
   const registry = new DocumentCapabilityRegistry(operations);
   const reads = sharedReads ?? new DocumentReadAuthority((documentId) => backend.get(documentId));
@@ -43,6 +48,8 @@ export function createBuiltinDocumentCapabilityRegistry(
   // #242：agent 文档删除（trash，带 confirm 防误删闸门）。
   registry.register(deletePlugin(backend));
   // agent 写 Word：桌面 office-bridge 未注入（如测试环境）时工具不暴露。
-  if (officeBridge) registry.register(officePlugin(officeBridge, slidesProgress, visualReviewer ?? null));
+  if (officeBridge) {
+    registry.register(officePlugin(officeBridge, slidesProgress, visualReviewer ?? null, fileAccess, illustration ?? null));
+  }
   return registry;
 }

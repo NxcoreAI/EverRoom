@@ -43,30 +43,15 @@ TencentDB-Agent-Memory/
 # PPT 实验产物（渲染图/PPTX/评审画廊）只留本地，不入库
 materials/ppt-style-experiments/
 
-# 本地工作区/评测产物，只留在本机，不入库
-.local/
+# 本地调试截图 / 临时检查产物（UI 迁移验证等），不入库
 .tmp-inspect/
-worktrees/
-.claude/worktrees/
 
-# 编辑器/IDE 本地配置
-.idea/
-*.iml
-.vscode/
-!.vscode/extensions.json
-
-# 测试/构建过程产物
-coverage/
+# 本地工具 / 调试产物（不入库）
+# DeepSeek Harness 的 office 渲染临时目录（随机后缀，每次运行不同）
+.dsh-office.*/
+# WorkBuddy 本地会话记忆
+.workbuddy-ai/
+# 论文排版/文档调试脚手架与临时 docx（只留本机）
+/scratch/
+# TypeScript 增量构建信息
 *.tsbuildinfo
-.turbo/
-
-# Electron 主进程打包产物（构建输出，勿提交；源码在 apps/desktop/src/main/）
-/index.js
-
-# 本地草稿/调研笔记，只留本地，不入库
-/feishu-notion-*.md
-/测试要点-*.md
-
-# 外部资料 PDF，体积大且可从原始渠道获取，不入库
-*.pdf
-!apps/desktop/build/*.pdf

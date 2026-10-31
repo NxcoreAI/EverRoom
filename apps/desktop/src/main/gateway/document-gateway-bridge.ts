@@ -18,6 +18,8 @@ import type {
   CompleteExternalDocumentPatchInput,
   ExternalDocumentProjectionBinding,
   ImportRoomDocumentInput,
+  MovedRoomDocument,
+  MoveRoomDocumentsResult,
   PreparedExternalDocumentPatch,
   ExternalDocumentSourceKind,
   PrepareExternalDocumentPatchInput,
@@ -308,6 +310,20 @@ export class DocumentGatewayBridge {
     return this.request(`/v1/documents/${encodeURIComponent(documentId)}`, {
       method: 'PUT',
       body: JSON.stringify(input),
+    }, true)
+  }
+
+  move(documentId: string, fromRoomId: string, roomId: string): Promise<MovedRoomDocument> {
+    return this.request(`/v1/documents/${encodeURIComponent(documentId)}/move`, {
+      method: 'POST',
+      body: JSON.stringify({ fromRoomId, roomId }),
+    }, true)
+  }
+
+  moveMany(documentIds: string[], fromRoomId: string, roomId: string): Promise<MoveRoomDocumentsResult> {
+    return this.request('/v1/documents/move', {
+      method: 'POST',
+      body: JSON.stringify({ documentIds, fromRoomId, roomId }),
     }, true)
   }
 
