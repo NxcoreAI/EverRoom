@@ -9,7 +9,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { desc, eq } from "drizzle-orm";
+import { desc, eq, inArray } from "drizzle-orm";
 import { WORKSPACE_DOCUMENT_CHANNEL } from "@nxcore/agent-contract";
 import { slidesPageImageSessions } from "../../infrastructure/database/schema.js";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
@@ -95,6 +95,16 @@ export class SlidesPageImageSessionStore {
   byDraftId(draftDocumentId: string): SlidesPageImageSessionData | null {
     const row = this.db.select().from(slidesPageImageSessions)
       .where(eq(slidesPageImageSessions.draftDocumentId, draftDocumentId))
+      .orderBy(desc(slidesPageImageSessions.updatedAt))
+      .limit(1)
+      .get();
+    return row ? toData(row) : null;
+  }
+
+  /** 最新等待用户动作（confirm/review）的会话：传入草稿 id 失效（占位/上下文压缩）时的回退寻址。 */
+  latestWaiting(): SlidesPageImageSessionData | null {
+    const row = this.db.select().from(slidesPageImageSessions)
+      .where(inArray(slidesPageImageSessions.stage, ["confirm", "review"]))
       .orderBy(desc(slidesPageImageSessions.updatedAt))
       .limit(1)
       .get();

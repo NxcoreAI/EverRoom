@@ -599,8 +599,19 @@ function groupGap(direction: "row" | "column", gapScale: number | undefined, sta
   return Math.max(0, Math.round(base * (gapScale ?? 1)));
 }
 
-/** 组件溢出时按当前内容量反推最小槽位：逐档扩框重试展开，取第一个装得下的尺寸。 */
-const COMPONENT_HINT_SCALES = [1.1, 1.25, 1.5, 2, 3] as const;
+/** 组件溢出时按当前内容量反推最小槽位：分轴（加宽/加高/整体）逐档扩框重试展开。 */
+const COMPONENT_HINT_PROBES: Array<{ w: number; h: number; axis: "" | "加宽" | "加高" }> = [
+  { w: 1.1, h: 1.1, axis: "" },
+  { w: 1.25, h: 1.25, axis: "" },
+  { w: 1.5, h: 1.25, axis: "加宽" },
+  { w: 1.25, h: 1.5, axis: "加高" },
+  { w: 1.5, h: 1.5, axis: "" },
+  { w: 2, h: 1.5, axis: "加宽" },
+  { w: 1.5, h: 2, axis: "加高" },
+  { w: 2, h: 2, axis: "" },
+  { w: 3, h: 2, axis: "加宽" },
+  { w: 2, h: 3, axis: "加高" },
+];
 
 /**
  * 组件装不下时的可执行建议。
@@ -615,10 +626,10 @@ function componentSlotHint(leaf: ComponentLeaf, frame: Frame, state: CompileStat
     const { theme, area, grid } = state;
     const maxW = Math.max(frame.w, Math.round(area.x + area.w - frame.x));
     const maxH = Math.max(frame.h, Math.round(area.y + area.h - frame.y));
-    for (const scale of COMPONENT_HINT_SCALES) {
-      const w = Math.round(frame.w * scale);
-      const h = Math.round(frame.h * scale);
-      if (w > maxW || h > maxH) break;
+    for (const probe of COMPONENT_HINT_PROBES) {
+      const w = Math.round(frame.w * probe.w);
+      const h = Math.round(frame.h * probe.h);
+      if (w > maxW || h > maxH) continue;
       try {
         expandComponent(leaf, { ...frame, w, h }, theme, "slot-hint");
       } catch (error) {
@@ -629,7 +640,7 @@ function componentSlotHint(leaf: ComponentLeaf, frame: Frame, state: CompileStat
       const rowH = (area.h - (grid.rows - 1) * grid.rowGutter) / grid.rows;
       const cols = Math.min(grid.cols, Math.ceil((w + grid.gutter) / (colW + grid.gutter)));
       const rows = Math.min(grid.rows, Math.ceil((h + grid.rowGutter) / (rowH + grid.rowGutter)));
-      return `该组件至少需要约 ${w}×${h}px（${cols} 列 × ${rows} 行，当前 ${frame.w}×${frame.h}px）：先扩大槽位，不要缩字号或删内容`;
+      return `该组件至少需要约 ${w}×${h}px（${cols} 列 × ${rows} 行${probe.axis ? `，优先${probe.axis}` : ""}，当前 ${frame.w}×${frame.h}px）：先扩大槽位，不要缩字号或删内容`;
     }
     return generic;
   } catch {

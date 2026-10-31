@@ -195,7 +195,7 @@ export function createWorkspaceFilesPiTools(
   const tool: PiAgentRuntimeTool = {
     name: "workspace_files_list",
     label: "工作区文件清单",
-    description: "列出用户工作区里的文件（可按图片/文档筛选、按文件名/目录搜索），返回 fileEntryId、文件名、类型、大小、本地绝对路径，以及图片可直接用于 PPT 配图的 everroom-material 引用。用户要求使用工作区/上传/历史资料里的图片或文件时先调用它；不要用 shell、sqlite 或直接读应用数据目录来查找文件。",
+    description: "列出用户工作区里的文件（可按图片/文档筛选、按文件名/目录搜索），返回 fileEntryId、文件名、类型、大小、本地绝对路径，以及图片可直接用于 PPT 配图的 everroom-material 引用。query 支持空格分隔多个关键词、任一命中即返回：找图片一次传「png jpg jpeg webp gif」，找资料一次传多个主题词或扩展名，不要按扩展名逐个查询；要浏览全部图片直接 kind=image 不带 query。用户要求使用工作区/上传/历史资料里的图片或文件时先调用它；不要用 shell、sqlite 或直接读应用数据目录来查找文件。",
     parameters: {
       type: "object",
       properties: {

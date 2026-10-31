@@ -349,7 +349,7 @@ describe("layout tree v2", () => {
     const defects = measureDefects(compileTree(tree, CONTRACT), CONTRACT, {});
     const overflow = defects.find((defect) => defect.type === "overflow");
     expect(overflow).toBeTruthy();
-    expect(overflow!.hint).toMatch(/该组件至少需要约 \d+×\d+px（\d+ 列 × \d+ 行，当前 \d+×\d+px）/);
+    expect(overflow!.hint).toMatch(/该组件至少需要约 \d+×\d+px（\d+ 列 × \d+ 行(，优先(加宽|加高))?，当前 \d+×\d+px）/);
   });
 
   it("风格卡的字号覆盖被忽略：字号只由场景决定", () => {

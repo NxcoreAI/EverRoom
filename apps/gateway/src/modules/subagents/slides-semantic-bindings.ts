@@ -1,4 +1,4 @@
-import type { SemanticPage } from "./slides-semantic-contract.js";
+import type { SemanticBlock, SemanticPage } from "./slides-semantic-contract.js";
 import { payloadStrings } from "./slides-semantic-contract.js";
 import { normalizeSpeakerNotes } from "../slides-layout/tree/v2/schema.js";
 
@@ -82,8 +82,7 @@ export function checkSemanticBindings(page: SemanticPage, tree: unknown, result:
 }
 
 /** Components may normalize unused fields or truncate their own items; verify the compiled visible payload too. */
-export function checkSemanticRendered(page: SemanticPage, spec: { elements: unknown[]; notes?: string }): string[] {
-  const payload = visiblePayload(spec.elements).map(compact);
+export function checkSemanticRendered(page: SemanticPage, spec: { elements: unknown[]; notes?: string }): string[] {  const payload = visiblePayload(spec.elements).map(compact);
   const joined = payload.join("");
   const errors: string[] = [];
   if (!joined.includes(compact(page.message))) errors.push("编译后 message 缺失");
@@ -100,4 +99,70 @@ export function checkSemanticRendered(page: SemanticPage, spec: { elements: unkn
     errors.push(`讲稿未完整保留（期望 ${expectedNotes.length} 字，实际 ${spec.notes?.length ?? 0} 字）`);
   }
   return errors;
+}
+
+interface FlatNode {
+  node: Record<string, unknown>;
+  /** 父 group 的 weights（缺省=均匀）；页面级节点为 null。 */
+  parentWeights: number[] | null;
+}
+
+function flattenTree(tree: unknown, into: FlatNode[] = [], parentWeights: number[] | null = null): FlatNode[] {
+  if (!tree || typeof tree !== "object") return into;
+  const nodes = Array.isArray((tree as Record<string, unknown>).nodes)
+    ? ((tree as Record<string, unknown>).nodes as unknown[])
+    : Array.isArray(tree) ? tree : [];
+  for (const node of nodes) {
+    if (!node || typeof node !== "object") continue;
+    const record = node as Record<string, unknown>;
+    into.push({ node: record, parentWeights });
+    if (Array.isArray(record.children)) {
+      const weights = Array.isArray(record.weights) ? (record.weights as number[]) : null;
+      flattenTree(record.children, into, weights);
+    }
+  }
+  return into;
+}
+
+/**
+ * 关系表达验收（语义模式替代旧丰富度闸门的跳过）：主关系不能只靠等宽文本列承载。
+ *
+ * 判据克制：只拦"长文段落被拆进同一父容器的等宽 text 列"这一反模式——
+ * 短标签等宽并列、组件/图表/表格承载、单一 text 承载都不算问题；
+ * supports/navigates 是辅助关系不检查；封面/引语/章节/收尾页允许纯文字。
+ */
+export function semanticRelationIssues(page: SemanticPage, tree: unknown): string[] {
+  if (["cover", "quote", "section", "closing"].includes(page.role)) return [];
+  const flat = flattenTree(tree);
+  const issues: string[] = [];
+  for (const relation of page.relations) {
+    if (relation.type === "supports" || relation.type === "navigates" || relation.refs.length < 2) continue;
+    const carriers: FlatNode[] = [];
+    let missing = false;
+    for (const ref of relation.refs) {
+      const block = page.blocks.find(b => b.id === ref);
+      if (!block) { missing = true; break; }
+      const expected = compact(payloadStrings(block).join(""));
+      if (!expected) continue;
+      const carrier = flat.find(f => f.node.type !== "group" && visiblePayload(f.node).map(compact).join("").includes(expected));
+      if (!carrier) continue;
+      carriers.push(carrier);
+    }
+    if (missing || carriers.length < 2) continue;
+    if (carriers.some(f => ["component", "chart", "table", "stats"].includes(String(f.node.type)))) continue;
+    const texts = relation.refs
+      .map(ref => page.blocks.find(b => b.id === ref))
+      .filter((b): b is SemanticBlock => Boolean(b));
+    const avgLength = texts.reduce((sum, b) => sum + payloadStrings(b).join("").length, 0) / Math.max(1, texts.length);
+    if (avgLength < 36) continue;
+    const allText = carriers.every(f => f.node.type === "text");
+    const uniform = (weights: number[] | null): boolean => weights === null
+      || weights.every(w => Math.abs(w - weights[0]!) < 0.05);
+    const sameParentUniform = carriers.every(f => uniform(f.parentWeights));
+    if (allText && sameParentUniform) {
+      issues.push(`关系 ${relation.type}（${relation.refs.slice(0, 3).join("、")}）由等宽文本列承载：改用组件或分组结构表达顺序/对比/层级`);
+    }
+    if (issues.length >= 3) break;
+  }
+  return issues;
 }

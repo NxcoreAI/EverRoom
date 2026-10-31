@@ -6,7 +6,7 @@
 
 ## 任务与上下文
 
-- 带 `content`：语义内容模式。`content` 是本页内容的权威来源，按下节设计。
+- 带 `content`：语义内容模式。`content` 是本页内容的权威来源，按下节设计；`componentCandidates` 是网关按本页实际 blocks 预检过的组件候选（含可行性与最小槽位），供选型参考，不强制使用。
 - 无 `content`：旧内容模式。先读 `skills/layout-tree-skill/legacy.md`，按其兼容契约解释输入。
 - 带 `currentTree`：本次是自审。以它为修改基线，附件是它的真实渲染图；`previousDesignIntent` 是首轮目标，供对照验收，沿用本页的内容模式。
 - `revisionFeedback` 是本轮反馈，在当前内容与布局契约内解决。
@@ -28,7 +28,11 @@
 
 在此基础上自主选择合法 `composition` 和节点结构。重点与关系决定模块数量；文字层级和留白也能建立有效页面。相同用途的连续页可以保持一致，结构变化应服务于内容和全册节奏。
 
-组件是首选表达，不是装饰：结构化内容优先用语义匹配的组件承载，而不是等宽文本列或一张大表。
+表达结构先于排版，按三步决策：
+
+1. **先识别主关系**：本页 `relations` 里被 `focusRefs` 命中的关系是主表达对象，确认其承载 blocks。先后、比较、层级、占比等关系必须在页面上有可指认的结构（顺序编号、方向、两端标签、层级面积），不能只把原文拆成等宽文本列。
+2. **再选主表达组件**：输入的 `componentCandidates` 是按本页实际 blocks 预检过的候选——`feasible:true` 附 `minSlot` 最小可行区域，`feasible:false` 附缺口说明。候选绑定真实 block，按内容匹配选择，不凭 role 猜，也不强制使用；候选之外按下方形态表自选时，先核对 `components.md` 的容量。主表达组件先获得满足实际内容容量的区域（不小于 `minSlot`），标题与辅助信息随后布局。
+3. **最后处理装不下**：优先给组件换更大区域或更少条目（必留条目完整迁移）；确实无合适组件时可用原子节点，但须在 `designIntent` 说明主关系如何表达。容量不足时如实报告缺口；不得为通过校验把结构化表达退化为长文本。
 
 - 按信息形态选：并列/对照用 `comparison`、`pointList`、`featureCards`、`teamGrid`；先后/阶段用 `timeline`、`steps`、`chevron`；层级/收窄用 `pyramid`、`funnel`；交叉定位用 `matrix2x2`；进程/完成度用 `progress`、`cycle`；引用/金句用 `quote`、`fullBleedQuote`；目录/章节用 `agenda`、`sectionHeader`、`indexHeader`；量化指标用 `stats`、`kpiRows`。
 - 表格只承载真正的行列数据。2~5 条短标签或短要点默认用组件；只有行列、跨列合并或数值对齐全靠表格时才用 `table`。

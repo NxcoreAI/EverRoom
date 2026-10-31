@@ -25,8 +25,9 @@ import { measureDefects, shrinkToFit, type LayoutDefect } from "../slides-layout
 import { auditSimilarity, treeSignature } from "../slides-layout/tree/similarity.js";
 import { imageDimensions, resolveImageArs } from "../slides-layout/tree/aspect-ratio.js";
 import { pngBase64ToJpegBase64 } from "./screenshot-jpeg.js";
-import { checkSemanticBindings, checkSemanticRendered } from "./slides-semantic-bindings.js";
+import { checkSemanticBindings, checkSemanticRendered, semanticRelationIssues } from "./slides-semantic-bindings.js";
 import type { SemanticPage } from "./slides-semantic-contract.js";
+import { componentCandidatesFor } from "../slides-layout/tree/v2/component-candidates.js";
 import {
   deriveComposition,
   deriveSkeleton,
@@ -112,6 +113,8 @@ export interface LayouterTailArgs {
   trashDraft: (documentId: string) => Promise<void>;
   /** 流式页源：与 plan.pages 二选一。给定时 plan.pages 只用于标题/页数。 */
   stream?: LayouterPageInputStream;
+  /** 试看模式：只落切片后的前 N 页；完成时不回收草稿、不落定风格/配图会话。 */
+  preview?: boolean;
   /** 复用已有 deck：跳过建骨架，只补落 appliedPages 之外的页。 */
   existingDeck?: LayouterExistingDeck;
   signal?: AbortSignal;
@@ -694,6 +697,8 @@ function layouterInputFor(
     styleTokens: Record<string, unknown>;
     /** 素材长宽比（宽/高）。validate 与落页用同一份 map 量测；这里同步给模型，避免它盲猜框比例。 */
     imageArs: Map<string, number>;
+    /** deck 布局契约：组件候选可行性预检用。 */
+    contract: LayoutContract;
   },
   page: PageInput,
   index: number,
@@ -722,6 +727,8 @@ function layouterInputFor(
     layoutVersion: 2, content: page.content, role: page.content.role,
     // neighbors 不再注入：deck 续会话下前页设计已在上下文里，全册骨架由首 dispatch 的 deckOutline 给出。
     density: page.density ?? "standard", materials,
+    // 组件候选：按本页 relations/metrics 预检过的可行表达（绑定真实 block），写树前供选型。
+    componentCandidates: componentCandidatesFor(page.content, base.contract),
     ...(page.revisionFeedback ? { revisionFeedback: page.revisionFeedback.slice(0, 300) } : {}),
     ...(base.styleBrief ? { styleBrief: base.styleBrief } : {}), styleTokens: base.styleTokens,
   };
@@ -1029,7 +1036,7 @@ export async function runLayouterTail(
     checkpoint();
     args.signal?.throwIfAborted();
     const styleBrief = styleBriefFrom(args.styleParams);
-    const base = { token, totalPages, styleBrief, styleTokens, imageArs };
+    const base = { token, totalPages, styleBrief, styleTokens, imageArs, contract };
 
     // 逐页取树（页序占位，deck 续会话串行——见下方 dispatchDeck）。落页与取树流水线化：
     // worker 只负责按序压页，落页侧按**完成顺序**消费（串行下即页序）。
@@ -1124,22 +1131,31 @@ export async function runLayouterTail(
             );
           }
           if (placed.tree.version === 2 && placed.tree.v2) {
-            const richness = page.content ? [] : visualRichnessIssues(placed.tree.v2);
-            if (richness.length > 0) {
-              const revisionPage = { ...page, revisionFeedback: richness.join("；") };
+            // 语义模式查关系表达（长文等宽文本列等反模式），旧模式查视觉丰富度；
+            // 都是一次回投修订，修不动保留原树，不阻塞整册。
+            const expressionIssues = page.content
+              ? semanticRelationIssues(page.content, placed.tree.v2)
+              : visualRichnessIssues(placed.tree.v2);
+            if (expressionIssues.length > 0) {
+              const gateLabel = page.content ? "关系表达未结构化" : "视觉丰富度不足";
+              const revisionPage = { ...page, revisionFeedback: expressionIssues.join("；") };
               const revisionInput = layouterInputFor(base, revisionPage, index);
               try {
                 const revision = await dispatchDeck(`visual:${index}`, revisionInput, pageParents[index] ?? args.parentRunId);
                 const revised = treeFromInvocation(revision, revisionPage);
-                if (!revised.fellBack && revised.tree.version === 2 && revised.tree.v2
-                  && visualRichnessIssues(revised.tree.v2).length === 0) {
-                  warnings.push(`第 ${index + 1} 页视觉丰富度不足，已按闸门提示补图形`);
+                const stillFailing = !revised.fellBack && revised.tree.version === 2 && revised.tree.v2
+                  ? (page.content
+                    ? semanticRelationIssues(page.content, revised.tree.v2)
+                    : visualRichnessIssues(revised.tree.v2))
+                  : null;
+                if (stillFailing !== null && stillFailing.length === 0) {
+                  warnings.push(`第 ${index + 1} 页${gateLabel}，已按闸门提示修订`);
                   return revised;
                 }
               } catch {
                 // 视觉补救失败：保留原树并告警，不阻塞整册。
               }
-              warnings.push(`第 ${index + 1} 页视觉丰富度不足（纯文字白底），保留当前树`);
+              warnings.push(`第 ${index + 1} 页${gateLabel}（${expressionIssues[0]}），保留当前树`);
             }
           }
           return placed;
@@ -1552,15 +1568,16 @@ export async function runLayouterTail(
       });
     }
     args.signal?.throwIfAborted();
-    if (completed && args.draftDocumentId) {
+    // 试看（preview）完成不回收草稿、不落定会话：用户确认后还要跑整册。
+    if (completed && !args.preview && args.draftDocumentId) {
       await args.trashDraft(args.draftDocumentId).catch(() => {});
     }
     args.signal?.throwIfAborted();
     const settleStyleSessionId = args.settle.styleSessionIdToSettle ?? null;
-    if (completed && settleStyleSessionId && args.styleSessions) {
+    if (completed && !args.preview && settleStyleSessionId && args.styleSessions) {
       args.styleSessions.patch(settleStyleSessionId, { stage: "confirmed" });
     }
-    if (completed && args.settle.pageImagesSessionId && args.pageImagesStore) {
+    if (completed && !args.preview && args.settle.pageImagesSessionId && args.pageImagesStore) {
       args.pageImagesStore.patch(args.settle.pageImagesSessionId, { stage: "resolved" });
     }
     // 最终全量快照 + 真完成通知（done 后移到全部页落定）。

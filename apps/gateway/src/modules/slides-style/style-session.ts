@@ -82,6 +82,16 @@ export class SlidesStyleSessionStore {
     return row ? toData(row) : null;
   }
 
+  /** 最新一条已产出风格卡（card_ready/confirmed）的会话：generate 无有效 id 时的自动恢复入口。 */
+  latestWithStyleCard(): SlidesStyleSessionData | null {
+    const row = this.db.select().from(slidesStyleSessions)
+      .where(inArray(slidesStyleSessions.stage, ["card_ready", "confirmed"]))
+      .orderBy(desc(slidesStyleSessions.updatedAt))
+      .limit(1)
+      .get();
+    return row ? toData(row) : null;
+  }
+
   /** Find the latest style session attached to a confirmed draft for continuation calls. */
   byDraftId(draftDocumentId: string): SlidesStyleSessionData | null {
     const row = this.db.select().from(slidesStyleSessions)

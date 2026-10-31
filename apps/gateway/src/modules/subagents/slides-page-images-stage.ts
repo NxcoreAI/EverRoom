@@ -174,7 +174,11 @@ function findSession(
   deps: SlidesPageImagesStageDeps,
   draftDocumentId: string,
 ): SlidesPageImageSessionData | null {
-  return deps.sessions.byDraftId(draftDocumentId);
+  const exact = deps.sessions.byDraftId(draftDocumentId);
+  if (exact) return exact;
+  // 草稿 id 失效（占位符/上下文压缩后编造）时回退到最新等待中的配图会话：
+  // 单工作区同一时间只有一册在配图确认，按钮罐头消息与对话重试都应能接上。
+  return deps.sessions.latestWaiting();
 }
 
 function stageConflict(session: SlidesPageImageSessionData): SlidesPageImagesStageResult {

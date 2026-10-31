@@ -272,6 +272,29 @@
       "maxLength": 300,
       "description": "本轮修正或自审反馈；按当前内容模式处理，并保留内容契约。"
     },
+    "componentCandidates": {
+      "type": "array",
+      "maxItems": 4,
+      "description": "按本页 relations/metrics 预检过的组件候选：feasible=true 表示在 minSlot 区域可展开。候选绑定真实 block；按内容匹配选择表达，不强制使用，也不凭 role 猜。",
+      "items": {
+        "type": "object",
+        "required": ["name", "relation", "blockRefs", "feasible"],
+        "additionalProperties": false,
+        "properties": {
+          "name": { "type": "string" },
+          "relation": { "type": "string", "description": "触发候选的关系类型；metrics 表示指标组" },
+          "blockRefs": { "type": "array", "items": { "type": "string" }, "maxItems": 8 },
+          "feasible": { "type": "boolean" },
+          "minSlot": {
+            "type": "object",
+            "required": ["w", "h"],
+            "additionalProperties": false,
+            "properties": { "w": { "type": "integer" }, "h": { "type": "integer" } }
+          },
+          "note": { "type": "string" }
+        }
+      }
+    },
     "currentTree": {
       "type": "object",
       "description": "视觉自审的修改基线；附件为此 v2 页面的真实渲染图，沿用当前内容模式。"

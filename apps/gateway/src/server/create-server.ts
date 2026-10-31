@@ -829,6 +829,10 @@ export async function createServer(config: GatewayConfig) {
             trashSlidesDraftDocument: async (documentId) => {
               await documentService.delete(documentId);
             },
+            // 草稿复活：generate 再入（如"再生成"）时草稿已被回收——先还原再读。
+            restoreSlidesDraftDocument: async (documentId) => {
+              await documentService.restore(documentId);
+            },
             // 本地素材预取：用户工作区里的图片（晚绑定 filesService）。命中以
             // everroom-material://<hash> 下发，planner 可直接放进页面 materials。
             searchMaterials: (query, limit) => workspaceMaterialsRef.current?.(query, limit) ?? [],

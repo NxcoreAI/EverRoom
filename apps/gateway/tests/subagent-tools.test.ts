@@ -318,7 +318,10 @@ describe('createSubagentPiTools slides_draft', () => {
     expect(validate({ task: 'style_select', styleSessionId: 'style-1', candidateIndex: 2 })).toBe(true)
     expect(validate({ task: 'generate', draftDocumentId: 'draft-1', pageImagesDecision: 'accept' })).toBe(true)
     expect(validate({ task: 'generate', styleSessionId: 'style-1', pageImagesDecision: 'accept' })).toBe(true)
-    expect(validate({ task: 'generate', pageImagesDecision: 'accept' })).toBe(false)
+    // 无 id 裸 generate 合法：对话路径拿不到 id 时网关按最新风格会话自动恢复。
+    expect(validate({ task: 'generate', pageImagesDecision: 'accept' })).toBe(true)
+    // 试看：previewPages 只落前 N 页，草稿与风格保留。
+    expect(validate({ task: 'generate', draftDocumentId: 'draft-1', previewPages: 2 })).toBe(true)
     expect(validate({ task: 'edit', instruction: '放大标题', fileId: 'file-1' })).toBe(true)
     expect(validate({ task: 'edit', instruction: '放大标题', rejectPageImage: 2 })).toBe(false)
     expect(validate({ task: 'style_select', styleSessionId: 'style-1', candidateIndex: 2, instruction: '选这个' })).toBe(false)
@@ -1129,11 +1132,15 @@ describe('createSubagentPiTools slides_draft', () => {
     })
     const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
 
-    await expect(slidesDraft.execute(
+    // 无 id 且无可恢复的风格会话：不再在参数校验抛错，走 JSON 失败（网关按最新会话自动恢复的入口）。
+    const noId = await slidesDraft.execute(
       run as never,
       { task: 'generate', instruction: '生成' } as never,
       undefined,
-    )).rejects.toThrow('slides_draft_document_required')
+    )
+    const noIdPayload = JSON.parse((noId as { content: string }).content)
+    expect(noIdPayload.status).toBe('failed')
+    expect(noIdPayload.errorCode).toBe('slides_draft_document_required')
 
     const emptyDraft = await slidesDraft.execute(
       run as never,
@@ -2883,9 +2890,10 @@ describe('createSubagentPiTools slides_draft 配图打回', () => {
       { task: 'generate', instruction: '打回', draftDocumentId: 'doc-draft-other', rejectPageImage: 1 } as never,
       undefined,
     )
+    // 错草稿 id 回退到最新等待中的配图会话（单工作区一册在配图）：正常打回，不再是 session_invalid。
     expect(JSON.parse((noSession as { content: string }).content)).toMatchObject({
-      status: 'failed',
-      errorCode: 'slides_page_images_session_invalid',
+      status: 'page_images_review',
+      rejected: 1,
     })
   })
 })

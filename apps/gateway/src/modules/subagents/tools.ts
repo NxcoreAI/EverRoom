@@ -88,12 +88,40 @@ const SLIDES_DRAFT_FIELDS_BY_TASK: Record<SlidesDraftTask, ReadonlySet<string>> 
   style_select: new Set(["task", "title", "styleSessionId", "candidateIndex", "referenceStyle"]),
   generate: new Set([
     "task", "resetGenerationBudget", "instruction", "draftDocumentId", "styleSessionId",
-    "referenceStyle", "referenceOutline", "targetPages", "pageImagesDecision", "regeneratePageImage",
+    "referenceStyle", "referenceOutline", "targetPages", "pageImagesDecision", "previewPages", "regeneratePageImage",
     "regeneratePageImages", "regenerateFeedback", "rejectPageImage", "rejectPageImages", "restorePageImage",
     "restorePageImages",
   ]),
   edit: new Set(["task", "instruction", "fileId"]),
 };
+
+/** 参数别名：模型常写近形名（如 previewPage 少 s）；校验按归一后的规范名放行。 */
+const SLIDES_PARAM_ALIASES: Record<string, string> = {
+  previewPage: "previewPages",
+  preview_page: "previewPages",
+};
+
+const CN_NUMERALS: Record<string, number> = { 单: 1, 一: 1, 两: 2, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10 };
+/** 数字/数词前缀＝复合页码引用（第 N 页、每页、四十页、126 页），不当目标页数。 */
+const PAGE_REF_BEFORE = /[第每一两二三四五六七八九十\d]/u;
+
+/**
+ * 指令里的显式页数要求（「一页/单页/12 页」）。取最后一个匹配当目标页数
+ * （「把四页合并为一页」的目标是后者）；「第 N 页」「每页」与复合数字不算。
+ * 识别不出返回 undefined——宁可不拦，也不误拦。
+ */
+export function instructionPageIntent(instruction: string): number | undefined {
+  const matches = [...instruction.matchAll(/(单|一|两|二|三|四|五|六|七|八|九|十|\d{1,2})\s*页/gu)];
+  const wanted = matches.filter((m) => {
+    const before = instruction.slice(0, m.index!).replace(/\s+$/u, "").at(-1);
+    return before === undefined || !PAGE_REF_BEFORE.test(before);
+  });
+  const last = wanted.at(-1);
+  if (!last) return undefined;
+  const token = last[1]!;
+  const value = /^\d+$/u.test(token) ? Number(token) : CN_NUMERALS[token];
+  return value !== undefined && value >= 1 && value <= 32 ? value : undefined;
+}
 
 function validateSlidesDraftTaskParams(params: Record<string, unknown>): SlidesDraftTask {
   const task = params.task;
@@ -102,7 +130,7 @@ function validateSlidesDraftTaskParams(params: Record<string, unknown>): SlidesD
   }
   const allowed = SLIDES_DRAFT_FIELDS_BY_TASK[task];
   for (const key of Object.keys(params)) {
-    if (!allowed.has(key)) throw new Error(`slides_draft_parameter_not_allowed:${task}:${key}`);
+    if (!allowed.has(SLIDES_PARAM_ALIASES[key] ?? key)) throw new Error(`slides_draft_parameter_not_allowed:${task}:${key}`);
   }
   const instruction = typeof params.instruction === "string" ? params.instruction.trim() : "";
   if ((task === "draft" || task === "edit") && !instruction) {
@@ -117,11 +145,7 @@ function validateSlidesDraftTaskParams(params: Record<string, unknown>): SlidesD
     }
     if (typeof params.candidateIndex !== "number") throw new Error("slides_style_candidate_required");
   }
-  if (task === "generate") {
-    const hasDraftId = typeof params.draftDocumentId === "string" && params.draftDocumentId.trim().length > 0;
-    const hasStyleSessionId = typeof params.styleSessionId === "string" && params.styleSessionId.trim().length > 0;
-    if (!hasDraftId && !hasStyleSessionId) throw new Error("slides_draft_document_required");
-  }
+  // generate 不再强制任何 id：网关按最新风格会话自动恢复；占位符/失效 id 也走恢复链。
   return task;
 }
 
@@ -138,12 +162,13 @@ const SLIDES_GENERATE_FIELDS: Record<string, TSchema> = {
   instruction: Type.Optional(Type.String({ minLength: 1, maxLength: 16_000 })),
   referenceStyle: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
   referenceOutline: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 80 }), { minItems: 1, maxItems: 30 })),
-  targetPages: Type.Optional(Type.Integer({ minimum: 4, maximum: 32 })),
+  targetPages: Type.Optional(Type.Integer({ minimum: 1, maximum: 32 })),
   pageImagesDecision: Type.Optional(Type.Union([
     Type.Literal("generate"),
     Type.Literal("skip"),
     Type.Literal("accept"),
   ])),
+  previewPages: Type.Optional(Type.Integer({ minimum: 1, maximum: 8, description: "试看：只落前 N 页（整册方案仍按草稿完整编排校验）。草稿与风格会话保留，用户确认后重新 generate 出整册。" })),
   regeneratePageImage: Type.Optional(Type.Integer({ minimum: 1, maximum: 8 })),
   /** 批量重生成：一次调用内循环处理并逐张广播（1 起页序，≤8 项）。 */
   regeneratePageImages: Type.Optional(Type.Array(Type.Integer({ minimum: 1, maximum: 8 }), { minItems: 1, maxItems: 8 })),
@@ -162,13 +187,30 @@ function slidesGenerateTaskSchema(
   return Type.Union([
     slidesDraftTaskSchema("generate", {
       ...fields,
-      draftDocumentId: Type.String({ minLength: 1, maxLength: 128 }),
-      styleSessionId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+      draftDocumentId: Type.String({
+        minLength: 1,
+        maxLength: 128,
+        description: "已确认内容稿的文档 id。generate 优先传它：网关按它自动回查该草稿的风格会话。",
+      }),
+      styleSessionId: Type.Optional(Type.String({
+        minLength: 1,
+        maxLength: 128,
+        description: "风格会话 id，取自本轮 style/style_select 的结果；拿不准时传 draftDocumentId 让网关回查，不要凭记忆编造。",
+      })),
     }),
     slidesDraftTaskSchema("generate", {
       ...fields,
       draftDocumentId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
       styleSessionId: Type.String({ minLength: 1, maxLength: 128 }),
+    }),
+    // 对话路径兜底：两个 id 都拿不到时允许裸 generate——网关按最新风格会话恢复。
+    slidesDraftTaskSchema("generate", {
+      ...fields,
+      draftDocumentId: Type.Optional(Type.String({
+        minLength: 1,
+        maxLength: 128,
+        description: "已确认内容稿的文档 id；拿不到就整个省略（不要写占位符），网关按最新风格会话恢复。",
+      })),
     }),
   ]);
 }
@@ -187,7 +229,7 @@ const SLIDES_DRAFT_PARAMETERS = Type.Union([
     /** 参考 deck 的章节标题（可含 27 页原序）；planner 用它补全主干，最多 32 页。 */
     referenceOutline: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 80 }), { minItems: 1, maxItems: 30 })),
     /** 目标页数；缺省由参考 style.pageBudget 或 planner 判断。 */
-    targetPages: Type.Optional(Type.Integer({ minimum: 4, maximum: 32 })),
+    targetPages: Type.Optional(Type.Integer({ minimum: 1, maximum: 32 })),
     /** draft 阶段点名要读的工作区文档（最多 2 篇）；缺省时网关从 instruction 里的 UUID 自动识别。 */
     sourceDocumentIds: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 128 }), { minItems: 1, maxItems: 2 })),
   }),
@@ -798,6 +840,11 @@ export function createSubagentPiTools(
      * 失败/部分完成时草稿保留以便重试，不调用本项。
      */
     trashSlidesDraftDocument?: (documentId: string) => Promise<void>;
+    /**
+     * 草稿从回收站恢复（generate 再入时按需）：生成成功后草稿已回收，但用户可能
+     * 要求再生成——generate 读不到草稿时先经本项恢复再重读。
+     */
+    restoreSlidesDraftDocument?: (documentId: string) => Promise<void>;
     /** 无模版风格管线（slides_draft 的 style/style_select 阶段与 generate 风格注入）。
      *  create-server 侧 filesService/materials 晚于工具装配创建：支持 getter 惰性取。 */
     slidesStyle?: SlidesStyleStageDeps | null | (() => SlidesStyleStageDeps | null);
@@ -1390,7 +1437,7 @@ export function createSubagentPiTools(
         + "draft 需 instruction，生成内容草稿并暂停；完成后等用户确认。可选 title/outline、参考文件和 sourceDocumentIds。"
         + "style 可选 draftDocumentId/instruction，生成或重显风格候选；只有用户要求换一批时传 regenerate=true 和反馈 instruction。"
         + "style_select 需 styleSessionId 与 candidateIndex，确认候选并生成风格卡。"
-        + "generate 需 draftDocumentId 或 styleSessionId，可传 pageImagesDecision 及配图页序处理确认/续接；instruction 可省略，网关恢复原主题要求。"
+        + "generate 可传 draftDocumentId（优先）或本轮对话内返回的 styleSessionId；任一 id 都拿不到时就都不传——网关按最新风格会话自动恢复整条链，绝不写占位符或凭记忆编 id；用户要求先看效果时传 previewPages=N 只落前 N 页试看（指令说「先生成/只生成 N 页」也会自动按试看处理；草稿与风格保留，确认后重新 generate 出整册）；可传 pageImagesDecision 及配图页序处理确认/续接；instruction 可省略，网关恢复原主题要求。"
         + "edit 需 instruction 并直接修改 PPT；fileId 可选，缺省为当前打开文件。"
         + "结果以 status/summary 为准；失败或部分成功时如实转告 warnings 与原因。禁止主 Agent 自行拼页面内容或代替子代理重试底层工具。",
       parameters: SLIDES_DRAFT_PARAMETERS,
@@ -1758,6 +1805,7 @@ export function createSubagentPiTools(
         // ── generate：读回用户确认的草稿（风格会话可代取）→ planner arrange → builder 按风格参数落页。 ──
         if (task === "generate") {
           let styleSessionId = typeof params.styleSessionId === "string" ? params.styleSessionId.trim() : "";
+          let draftDocumentId = typeof params.draftDocumentId === "string" ? params.draftDocumentId.trim() : "";
           // 风格会话存储必须无条件加载：配图确认的续跑调用只带 draftDocumentId（桌面罐头消息
           // 不带 styleSessionId），落页尾部要靠 byDraftId 回查风格会话补注入——按 styleSessionId
           // 门控会让回查永远拿到 null，确认配图后的落页丢掉整张风格卡。
@@ -1765,27 +1813,50 @@ export function createSubagentPiTools(
           const styleSessions = styleDepsForResume?.sessions ?? null;
           const pageImageSessionsForResume = styleDepsForResume?.pageImageSessions ?? null;
           let styleSession: import("../slides-style/types.js").SlidesStyleSessionData | null = null;
+          /** 恢复注记：传入 id 无效但网关自动找回会话时，写进结果让主代理知道实际用了哪个。 */
+          let styleSessionRecovered = "";
+          /** 草稿从回收站自动恢复的注记（结果回显用；须早于 dispatchBuilderTail 声明，配图路径先于草稿读取执行）。 */
+          let draftRestoredNote = "";
+          /** 试看页数（须早于 dispatchBuilderTail 声明：配图确认路径先于页数门控执行）。
+           *  指令/参数里"本轮只出 N 页"（N < 草稿页数）会自动落到这里；previewPage（少 s）等近形名兼容。 */
+          const previewPagesRaw = params.previewPages ?? params.previewPage;
+          let previewPages = typeof previewPagesRaw === "number"
+            ? Math.max(1, Math.min(8, Math.floor(previewPagesRaw)))
+            : undefined;
+          /** 自动试看注记（指令页数被当作生成范围时写进结果 warnings）。 */
+          let previewAutoNote = "";
+          const usableSession = (session: import("../slides-style/types.js").SlidesStyleSessionData | null): boolean =>
+            Boolean(session?.styleParams && (session.stage === "card_ready" || session.stage === "confirmed"));
           if (styleSessionId && styleSessions) {
             const session = styleSessions.byId(styleSessionId);
-            if (!session || session.stage !== "card_ready" || !session.styleParams) {
+            if (usableSession(session)) styleSession = session;
+          }
+          // 传入 id 无效（占位符、压缩丢 UUID 后的编造值）或未传：按草稿回查 → 最新活跃会话自动恢复。
+          // 生成链路很长，早期工具结果里的会话 id 会被上下文压缩摘掉——重试时靠记忆必错，靠回查才稳。
+          if (!styleSession && styleSessions) {
+            const byDraft = draftDocumentId ? styleSessions.byDraftId(draftDocumentId) : null;
+            const active = byDraft ?? styleSessions.latestWithStyleCard();
+            if (active && usableSession(active)) {
+              styleSession = active;
+              if (styleSessionId) styleSessionRecovered = `传入的 styleSessionId 无效（可能是上下文压缩后凭记忆写的），已按${byDraft ? "草稿回查" : "最新活跃会话"}恢复为当前会话`;
+              styleSessionId = active.id;
+            } else if (styleSessionId) {
               return {
                 content: JSON.stringify({
                   status: "failed",
                   errorCode: "slides_style_session_invalid",
                   retryable: false,
-                  message: "风格会话不存在或未确认到风格卡阶段；请先走 style → style_select 产出风格卡。",
+                  message: `styleSessionId「${styleSessionId.slice(0, 40)}」无效且网关找不到可恢复的风格会话（会话 id 只在本轮对话内由 style/style_select 返回，长对话会被压缩丢失）。请改传 draftDocumentId 让网关按草稿回查；或重新走 style → style_select。`,
                 }),
-                details: { errorCode: "slides_style_session_invalid" },
+                details: { errorCode: "slides_style_session_invalid", styleSessionId: styleSessionId.slice(0, 40) },
               };
             }
-            styleSession = session;
           }
-          let draftDocumentId = typeof params.draftDocumentId === "string" ? params.draftDocumentId.trim() : "";
           if (!styleSessionId && draftDocumentId) {
             styleSessionId = pageImageSessionsForResume?.byDraftId(draftDocumentId)?.styleSessionId
               ?? styleSessions?.byDraftId(draftDocumentId)?.id
               ?? "";
-            if (styleSessionId && styleSessions) styleSession = styleSessions.byId(styleSessionId);
+            if (styleSessionId && styleSessions && !styleSession) styleSession = styleSessions.byId(styleSessionId);
           }
           if (!draftDocumentId && styleSession?.draftDocumentId) draftDocumentId = styleSession.draftDocumentId;
           // UI continuation calls intentionally carry only a session/document id. Restore the
@@ -1993,7 +2064,15 @@ export function createSubagentPiTools(
               };
             }
 
-            const savedDeck = tailKey ? generationCheckpoints.read(tailKey).deck : undefined;
+            // 试看模式：整册方案已过语义契约校验，只把落页范围切到前 N 页。
+            if (previewPages && Array.isArray(activePlan.pages) && activePlan.pages.length > previewPages) {
+              activePlan = { ...activePlan, pages: activePlan.pages.slice(0, previewPages) };
+            }
+            const tailArmPlan = previewPages && builderArmPlan.pages.length > previewPages
+              ? { ...builderArmPlan, pages: builderArmPlan.pages.slice(0, previewPages) }
+              : builderArmPlan;
+            // 试看不落 checkpoint/不续用旧 deck：确认后的整册 generate 建新文件，不撞页数校验。
+            const savedDeck = previewPages ? undefined : (tailKey ? generationCheckpoints.read(tailKey).deck : undefined);
             const tailResult = await runLayouterTail(
               {
                 progress: options.slidesProgress ?? null,
@@ -2023,12 +2102,13 @@ export function createSubagentPiTools(
                 parentRunId,
                 instruction,
                 plan: activePlan,
-                armPlan: builderArmPlan,
+                armPlan: tailArmPlan,
                 styleParams: (builderStyleParams !== null && typeof builderStyleParams === "object" && !Array.isArray(builderStyleParams))
                   ? builderStyleParams as Record<string, unknown>
                   : null,
                 scene: deckScene.id,
                 draftDocumentId,
+                ...(previewPages ? { preview: true } : {}),
                 settle: {
                   ...(settle.pageImagesSessionId ? { pageImagesSessionId: settle.pageImagesSessionId } : {}),
                   ...(styleSessionIdToSettle ? { styleSessionIdToSettle } : {}),
@@ -2038,14 +2118,35 @@ export function createSubagentPiTools(
                 trashDraft: trashDraftDocument,
                 // 配图确认暂停时把 deck 进度写进了 plan.__deck：恢复时复用同一个 deck 续落，不再新建文件。
                 ...((savedDeck ?? deckStateOf(builderPlan)) ? { existingDeck: (savedDeck ?? deckStateOf(builderPlan))! } : {}),
-                onCheckpoint: deck => { if (tailKey) generationCheckpoints.patch(tailKey, { deck }); },
+                ...(previewPages ? {} : { onCheckpoint: deck => { if (tailKey) generationCheckpoints.patch(tailKey, { deck }); } }),
                 ...(signal ? { signal } : {}),
                 ...(onUpdate ? { onUpdate } : {}),
               },
             );
             generationCompleted = parseToolContentJson(tailResult.content)?.status === "completed";
+            // 结果回显恢复凭据：生成链路长、上下文会压缩，重试时主代理照抄最近一次结果里的
+            // styleSessionId/draftDocumentId，不再凭（已被压缩的）记忆编造。
+            const echoPayload = parseToolContentJson(tailResult.content);
+            if (echoPayload) {
+              if (styleSessionIdToSettle) echoPayload.styleSessionId = styleSessionIdToSettle;
+              if (draftDocumentId) echoPayload.draftDocumentId = draftDocumentId;
+              if (previewPages) {
+                echoPayload.previewPages = previewPages;
+                echoPayload.message = `试看版：已生成前 ${previewPages} 页。告诉用户：确认版式与视觉后说「继续」即重新 generate 生成整册（草稿与风格已保留）。`;
+              }
+              const notes = [styleSessionRecovered, draftRestoredNote, previewAutoNote].filter(Boolean);
+              if (notes.length > 0) {
+                echoPayload.warnings = [...new Set([
+                  ...(Array.isArray(echoPayload.warnings) ? echoPayload.warnings : []),
+                  ...notes,
+                ])];
+              }
+            }
             // 内容契约报告挂到 details（不改变落页结果）；semanticReport 在此处必非空（未通过已提前失败）。
-            return { ...tailResult, details: { ...(tailResult.details as Record<string, unknown>), contentReport: semanticReport } };
+            return {
+              content: echoPayload ? JSON.stringify(echoPayload) : tailResult.content,
+              details: { ...(tailResult.details as Record<string, unknown>), contentReport: semanticReport },
+            };
           };
 
           // 正文配图交互路由：带 decision/regenerate 参数续跑已落库的配图会话；
@@ -2208,14 +2309,44 @@ export function createSubagentPiTools(
             ])];
             return { ...tailResult, content: JSON.stringify(tailPayload) };
           }
-          const draftSnapshot = options.resolveDocumentForDraft?.(draftDocumentId) ?? null;
+          // readDocumentForAgent 对缺失/回收站文档是抛异常（"Document not found"）而不是返回
+          // null——不包 try/catch 的话异常会直接穿透工具层，主代理只看到英文报错，恢复逻辑不执行。
+          const readDraftSnapshot = (): DocumentDraftSnapshot | null => {
+            try {
+              return options.resolveDocumentForDraft?.(draftDocumentId) ?? null;
+            } catch {
+              return null;
+            }
+          };
+          // 读 → 不在则从回收站还原再读（生成成功后草稿被 trashDraft；"再生成"就是恢复意图）。
+          const readWithRestore = async (): Promise<DocumentDraftSnapshot | null> => {
+            let snapshot = readDraftSnapshot();
+            if (!snapshot && options.restoreSlidesDraftDocument) {
+              try {
+                await options.restoreSlidesDraftDocument(draftDocumentId);
+                snapshot = readDraftSnapshot();
+                if (snapshot) draftRestoredNote = "草稿在上轮生成成功后已回收，本轮已自动从回收站恢复";
+              } catch {
+                // 不在回收站（彻底删除或从未存在）。
+              }
+            }
+            return snapshot;
+          };
+          let draftSnapshot = await readWithRestore();
+          // 传入的草稿 id 失效（占位符/压缩后编造）且风格会话关联了另一个草稿：改用它再试。
+          if (!draftSnapshot && styleSession?.draftDocumentId && draftDocumentId !== styleSession.draftDocumentId) {
+            draftDocumentId = styleSession.draftDocumentId;
+            draftSnapshot = await readWithRestore();
+          }
           if (!draftSnapshot) {
             return {
               content: JSON.stringify({
                 status: "failed",
                 errorCode: "slides_draft_document_not_found",
                 retryable: false,
-                message: "草稿文档不存在；与用户确认文档后重新提供 draftDocumentId。",
+                message: !styleSession && !draftDocumentId
+                  ? "当前没有可恢复的风格会话与草稿：请先走 draft → style → style_select 流程。"
+                  : "草稿文档不存在（传入 id 可能是占位符，且草稿已无法从回收站恢复）；与用户确认后重新走 draft 阶段。",
               }),
               details: { errorCode: "slides_draft_document_not_found" },
             };
@@ -2232,6 +2363,31 @@ export function createSubagentPiTools(
               }),
               details: { errorCode: "slides_draft_document_empty" },
             };
+          }
+          // 页数在草稿层冻结（编排合同不得增删页）：指令/参数的页数要求与草稿不符时，
+          // 与其让 planner 违规合并后被拒，不如入口直接给出改草稿的指引。
+          // 试看语境（「先生成 N 页试看/预览」）的 N 是本轮生成范围不是整册页数：previewPages
+          // 参数优先表达试看意图；纯文本试看指令也不触发整册页数冲突。
+          const scopeIntent = /(试看|预览|试一页|先出一页|先生成|逐页试)/u.test(instruction);
+          const pageCountIntent = previewPages || scopeIntent ? undefined : (instructionPageIntent(instruction) ?? targetPages);
+          if (pageCountIntent !== undefined && pageCountIntent !== draftPages.length) {
+            // 小于草稿页数的 N 几乎都是"本轮只出 N 页"的范围语义：自动按试看处理，
+            // 只落前 N 页（草稿/风格保留）。只有明确的整册重整措辞（合并/压到/拆分…）才拦下引导改草稿。
+            const restructureIntent = /(合并|压到|压缩|缩减|拆分|扩到|扩成|整册|全册|总共|一共)/u.test(instruction);
+            if (pageCountIntent < draftPages.length && !restructureIntent) {
+              previewPages = Math.min(8, pageCountIntent);
+              previewAutoNote = `指令要求本轮生成 ${pageCountIntent} 页：已按试看处理，只落前 ${previewPages} 页；整册请确认后重新 generate`;
+            } else {
+              return {
+                content: JSON.stringify({
+                  status: "failed",
+                  errorCode: "slides_page_count_conflict",
+                  retryable: false,
+                  message: `页数在草稿层决定：当前草稿为 ${draftPages.length} 页，本轮指令要求 ${pageCountIntent} 页；编排阶段不能增删页。请把草稿的「## 章节」合并/拆分为 ${pageCountIntent} 个后重试，或重新发起草稿（draft）阶段按 ${pageCountIntent} 页生成。`,
+                }),
+                details: { errorCode: "slides_page_count_conflict", draftPages: draftPages.length, requestedPages: pageCountIntent },
+              };
+            }
           }
           const planner = registry.get("slides-planner");
           if (!planner) {
@@ -2311,7 +2467,8 @@ export function createSubagentPiTools(
           // ── 分批流水线（内容→布局→落页）：批一完成就装配本批内容并推进落页尾部，不等全部批次。
           // 单批路径没有重叠收益，保持原逻辑；配图页攒到批次全部完成后再走过目卡/自动生图。
           const streamingScene = resolveScene(inferSceneId(instruction));
-          const streamingOffice = arrangeBatches.length > 1 ? resolveLayoutOffice() : null;
+          // 试看走非流式（整册流式按草稿全量建 deck 文件，与"只落前 N 页"矛盾）。
+          const streamingOffice = arrangeBatches.length > 1 && !previewPages ? resolveLayoutOffice() : null;
           const streamingStyleParams = (effectiveStyleParams !== null && typeof effectiveStyleParams === "object" && !Array.isArray(effectiveStyleParams))
             ? effectiveStyleParams as Record<string, unknown>
             : null;
