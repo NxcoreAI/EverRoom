@@ -2767,9 +2767,11 @@ describe('createSubagentPiTools slides_draft 配图打回', () => {
     )
     const firstPayload = JSON.parse((first as { content: string }).content)
     // 配图页（第 6 页）停在过目卡；其余 9 页已先落进 deck。
+    // 逐页追加：等确认的配图页先补一页骨架占位（slideIndex 5 的第一次 fillPage），
+    // 让后页 6-9 的页序/页脚不错位；确认后第二轮用真实页原地替换（5 的第二次 fillPage）。
     expect(firstPayload.status).toBe('page_images_confirm')
     const landedFirst = office.fillPage.mock.calls.map((call) => (call[0] as { slideIndex: number }).slideIndex).sort((a, b) => a - b)
-    expect(landedFirst).toEqual([0, 1, 2, 3, 4, 6, 7, 8, 9])
+    expect(landedFirst).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
     expect(office.generate).toHaveBeenCalledTimes(1)
     const session = deps.pageImageSessions!.byDraftId('doc-draft-10')!
     expect(session.stage).toBe('confirm')
@@ -2785,10 +2787,10 @@ describe('createSubagentPiTools slides_draft 配图打回', () => {
     const secondPayload = JSON.parse((second as { content: string }).content)
     expect(secondPayload.status).toBe('completed')
     expect(secondPayload.pages).toBe(10)
-    // 复用同一个 deck（没有第二次 generate）；只补落配图页。
+    // 复用同一个 deck（没有第二次 generate）；只补落配图页（5 被真实页替换，出现第二次）。
     expect(office.generate).toHaveBeenCalledTimes(1)
     const landedAll = office.fillPage.mock.calls.map((call) => (call[0] as { slideIndex: number }).slideIndex).sort((a, b) => a - b)
-    expect(landedAll).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
+    expect(landedAll).toEqual([0, 1, 2, 3, 4, 5, 5, 6, 7, 8, 9])
     expect(deps.pageImageSessions!.byDraftId('doc-draft-10')?.stage).toBe('resolved')
     database.sqlite.close()
   })

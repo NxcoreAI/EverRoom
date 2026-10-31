@@ -276,7 +276,9 @@ describe("runLayouterTail", () => {
       { pageIndex: 0, requestedAction: "提供原始表格" }, { pageIndex: 1, requestedAction: "提供原始表格" },
     ] });
     expect(dispatch).toHaveBeenCalledTimes(2);
-    expect(harness.bridge.fillPage).not.toHaveBeenCalled();
+    // 逐页追加模式：第 0 页骨架已随文件创建（不补）；第 1 页阻塞也补一页骨架保住页序。
+    expect(harness.bridge.fillPage).toHaveBeenCalledTimes(1);
+    expect((harness.bridge.fillPage.mock.calls[0]![0] as { slideIndex: number }).slideIndex).toBe(1);
     expect(harness.trashed).toEqual([]);
   });
 
@@ -402,19 +404,20 @@ describe("runLayouterTail", () => {
     expect(JSON.parse(bridge.renderPptx.mock.calls[1][0].pages[0])).toEqual(JSON.parse(harness.bridge.fillPage.mock.calls[1]![0].specJson));
   });
 
-  it("三页直落：占位页一次建满、按页序替换、逐页进度、回收草稿与落定风格", async () => {
+  it("三页直落：文件只建 1 页骨架、逐页末尾追加、页序落页、回收草稿与落定风格", async () => {
     const harness = makeHarness([CONTENT_TREE, CHART_TREE, QUOTE_TREE]);
     const result = await runLayouterTail(harness.deps, tailArgs(planOf([CONTENT_TREE, CHART_TREE, QUOTE_TREE]), harness));
     const payload = JSON.parse(result.content);
     expect(payload.status).toBe("completed");
     expect(payload.pages).toBe(3);
     expect(payload.fileEntryId).toBe("file-1");
+    // 逐页追加：fillPage 严格按页序（slideIndex===当前页数即末尾追加），0 替换骨架、1/2 追加。
     const appliedIndexes = harness.bridge.fillPage.mock.calls.map((call: unknown[]) => (call[0] as { slideIndex: number }).slideIndex);
-    expect(appliedIndexes.slice().sort()).toEqual([0, 1, 2]);
+    expect(appliedIndexes).toEqual([0, 1, 2]);
     expect(harness.progress.notify.mock.calls.map((call: unknown[]) => call[1]).sort()).toEqual([0, 1, 2]);
-    // 占位页一次建满：deck 一开始就有 N 页骨架，落页只做「按页序替换」。
-    expect((harness.bridge.generate.mock.calls[0]![0] as { pages: string[] }).pages.length).toBe(3);
-    // 进度快照带落定页号集合（完成顺序 ≠ 页序，卡按集合打勾）。
+    // 文件初始只有第 1 页骨架：deck 随落页一页页长出来，不再一次铺满。
+    expect((harness.bridge.generate.mock.calls[0]![0] as { pages: string[] }).pages.length).toBe(1);
+    // 进度快照带落定页号集合（卡按集合打勾）。
     expect(harness.progress.notify.mock.calls.at(-1)![2]).toEqual([0, 1, 2]);
     expect(payload.appliedPages).toEqual([0, 1, 2]);
     expect(harness.progress.arm.mock.calls[0]![0]).toBe("slides-generate:run-1");

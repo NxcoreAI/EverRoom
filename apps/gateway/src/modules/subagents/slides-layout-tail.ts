@@ -92,6 +92,8 @@ export interface LayouterExistingDeck {
   /** 已落定页（0 起页序）；这些页不再 dispatch、不再重落。 */
   appliedPages: number[];
   totalPages: number;
+  /** 物理 slide 数：逐页追加模式下文件只长到已落前缀；旧检查点缺省视为骨架全量。 */
+  deckPages?: number;
   /** deck 级续会话 ref（重启续跑时从磁盘恢复共享上下文；无则新会话）。 */
   runtimeSessionRef?: string | null;
 }
@@ -952,11 +954,13 @@ export async function runLayouterTail(
   // 早于 try 块内的串行门初始化。
   const deckSessionId = `slides-deck:${args.runId}`;
   let deckSessionRef: string | null = existingDeck?.runtimeSessionRef ?? null;
+  /** 物理 slide 数：追加模式的真相源（引擎 slideIndex===deckPages 即末尾追加）；建文件时初始化。 */
+  let deckPages = 0;
   /** 首 dispatch（或降级重建会话后的首 dispatch）带全册概要 deckOutline，之后不再带。 */
   let deckOutlinePending = true;
   const checkpoint = () => {
     if (!fileEntryId) return;
-    args.onCheckpoint?.({ fileEntryId, originalName, totalPages,
+    args.onCheckpoint?.({ fileEntryId, originalName, totalPages, deckPages,
       appliedPages: [...appliedPages].filter(index => !degradedPages.has(index)).sort((a, b) => a - b),
       ...(deckSessionRef ? { runtimeSessionRef: deckSessionRef } : {}) });
   };
@@ -1007,16 +1011,14 @@ export async function runLayouterTail(
     /** 占位页标题：流式源可能短于总页数，缺省「未命名页」。 */
     const titleOf = (index: number): string => outline[index] ?? "未命名页";
     if (existingDeck) {
-      // 续落：deck 与占位页都已存在，只补没落定的页，不再 generate（避免产生第二个文件）。
+      // 续落：deck 已存在（逐页追加的半成品或旧骨架全量），只补没落定的页。
       fileEntryId = existingDeck.fileEntryId;
       originalName = existingDeck.originalName;
     } else {
       const deckIdempotency = `agent-slides:${createHash("sha256").update(JSON.stringify([args.runId, deckTitle]), "utf8").digest("hex")}`;
-      // 占位页：按计划页数一次建满（骨架页自带页号，打开即见 N 页的进行时骨架）。
-      // 落页因此只做「按页序替换」，不再依赖「末尾追加」语义——于是可以按完成顺序落，
-      // 慢页不挡快页（2026-10-21：逐页落页从按页序改为按完成顺序）。
-      const placeholders = Array.from({ length: totalPages }, (_, index) =>
-        skeletonPageSpec(deckTitle, titleOf(index), index, totalPages));
+      // 逐页追加：文件只建 1 页骨架，不再一次铺满 N 页——后续页按页序在末尾追加
+      // （引擎 fillPage 的 slideIndex===当前页数即追加），用户看着 deck 一页页长出来。
+      const placeholders = [skeletonPageSpec(deckTitle, titleOf(0), 0, totalPages)];
       args.signal?.throwIfAborted();
       const created = await bridge.generate({
         title: deckTitle,
@@ -1032,6 +1034,8 @@ export async function runLayouterTail(
       fileEntryId = created.fileEntryId;
       originalName = created.originalName ?? null;
     }
+    /** 物理 slide 数初始化：续落读检查点（旧检查点=骨架全量），新文件=1 页骨架。 */
+    deckPages = existingDeck?.deckPages ?? (existingDeck ? totalPages : 1);
 
     checkpoint();
     args.signal?.throwIfAborted();
@@ -1342,13 +1346,9 @@ export async function runLayouterTail(
       })();
     }
 
-    // 按完成顺序落页：占位页已按计划页序建满，谁的树先就绪谁先替换自己那页
-    // （slideIndex = 计划页序，与完成顺序无关；某页失败只留它自己的占位页，不连累后页）。
-    // fillPage 打的是同一个活会话，调用本身必须串行——用一条队列按「到达顺序」排队，
-    // 慢页只延迟自己，不再挡住后面已就绪的页。
-    // 两条防线保留：① 降档后仍有引擎硬闸类缺陷（重叠/emoji/溢出）的页落确定性兜底版式；
-    // ② 页号集合统计落定页，重排重落不重复计数。
-    let landingTail: Promise<unknown> = Promise.resolve();
+    // 按完成顺序落页改为**按页序追加**：fillPage 的 slideIndex===当前页数即末尾追加，
+    // 因此第 N 页必须等第 N-1 页落定；后页先就绪就排在页序队列里等。失败/未就绪页补一页
+    // 骨架占位（deckPages 之内已有骨架的不重复补），让后页页序与页脚页码不错位。
     const applyPage = async (index: number, tree: LayoutTree): Promise<boolean> => {
       args.signal?.throwIfAborted();
       // 页脚页码用逻辑页号（1 基）；总页数按计划页数（兜底占位页仍占页码）。
@@ -1410,15 +1410,17 @@ export async function runLayouterTail(
       }
       appliedPages.add(index);
       appliedSlideIndex.set(index, slideIndex);
+      deckPages = Math.max(deckPages, index + 1);
       checkpoint();
       // 完成顺序 ≠ 页序：进度快照带落定页号集合，卡按页号打勾（不能用「前 doneCount 页已完成」）。
       progress?.notify(progressKey, slideIndex, [...appliedPages]);
       if (final.focusHints.length > 0) appliedFocusHints.set(index, final.focusHints);
       return true;
     };
-    /** 落页排队：按到达顺序串行（会话不是并发安全的），不按页序。 */
-    const landPage = (index: number, tree: LayoutTree): Promise<boolean> => {
-      const task = landingTail.then(() => applyPage(index, tree));
+    /** 落页串行队列：fillPage 打同一个活会话，必须排队；逐页追加还要求严格按页序。 */
+    let landingTail: Promise<unknown> = Promise.resolve();
+    const serialize = <T>(fn: () => Promise<T>): Promise<T> => {
+      const task = landingTail.then(fn);
       landingTail = task.then(() => undefined, () => undefined);
       return task;
     };
@@ -1429,59 +1431,97 @@ export async function runLayouterTail(
     for (let index = 0; index < totalPages; index += 1) {
       landingSettled.set(index, new Promise<void>((resolve) => landingSignals.set(index, resolve)));
     }
-    // 落页阶段：树一到就落页（用户先看到这一页），自审放在落页之后——
-    // 把本页渲染图回投布局代理，采纳的修正树再补落同一页（先交付、后提质）。
-    // 自审不阻塞落页，也不改变「已完成页」判定：首版页先落定，修正只做覆盖。
-    const selfReviewTasks: Array<Promise<void>> = [];
-    const landings = treePromises.map((promise, index) => promise.then(async (outcome) => {
-      trees[index] = outcome;
-      if (outcome.blocked) {
-        blockedPages.push({ pageIndex: index, ...outcome.blocked });
-        degradedPages.add(index);
-        landingSignals.get(index)?.();
-        return;
-      }
-      // 复用 deck 的已落定页 / 内容未就绪页：占位页保持原样，不落页、不自审。
-      if (outcome.skipped) {
-        if (outcome.skipped === "missing") {
-          warnings.push(`第 ${index + 1} 页内容未就绪（${outcome.reason ?? "批次未完成"}），保留占位页`);
-        }
-        landingSignals.get(index)?.();
-        return;
-      }
-      if (outcome.fellBack) {
-        if (pages[index]?.content) {
-          degradedPages.add(index);
-          warnings.push(`第 ${index + 1} 页设计未通过：${outcome.reason ?? "未收敛"}；未落入占位页，内容与草稿保留`);
-          landingSignals.get(index)?.();
-          return;
-        }
-        warnings.push(`第 ${index + 1} 页布局代理未交合格树（${outcome.reason ?? "未收敛"}），已用 v2 兜底页`);
-      }
+    /** 追加模式的空洞页：补一页骨架让后页页序/页脚页码不错位（deckPages 内已有骨架则跳过）。 */
+    const appendPlaceholderPage = async (index: number): Promise<void> => {
+      if (!fileEntryId || index < deckPages) return;
       try {
-        await landPage(index, outcome.tree);
-      } catch (error) {
-        // 单页异常不拖垮整册：该页留占位页，其余页继续落。
-        degradedPages.add(index);
-        warnings.push(`第 ${index + 1} 页落页异常（${error instanceof Error ? error.message : String(error)}），保留占位页`);
-      } finally {
-        landingSignals.get(index)?.();
+        const result = await bridge.fillPage({
+          fileId: fileEntryId,
+          slideIndex: index,
+          specJson: skeletonPageSpec(deckTitle, titleOf(index), index, totalPages),
+        });
+        if (result.ok && result.applied === true) deckPages = Math.max(deckPages, index + 1);
+      } catch {
+        // 占位补不上（会话不在等）：后页会以 slideIndex 超界被拒、退化为跳过，不阻塞整册。
       }
-      if (outcome.fellBack) return;
-      // 落页后再自审：看着自己这一页的真实渲染图改；修正树只覆盖同一页，不动别的页。
-      if (args.signal?.aborted) return;
-      const review = reviewSlots(() => selfReviewPage(index, outcome)).then(async (reviewed) => {
-        args.signal?.throwIfAborted();
-        // 无修正（原样交回）时不重落；只有树真的变了才覆盖同一页。
-        if (JSON.stringify(reviewed.tree) === JSON.stringify(outcome.tree)) return;
-        trees[index] = reviewed;
-        try {
-          await landPage(index, reviewed.tree);
-        } catch (error) {
-          warnings.push(`第 ${index + 1} 页自审修正补落异常（${error instanceof Error ? error.message : String(error)}），保留首版页`);
+    };
+    // 落页阶段：**严格按页序排水**（追加语义要求第 N 页等第 N-1 页落定）；树一到就入队，
+    // 自审放在落页之后——把本页渲染图回投布局代理，采纳的修正树再补落同一页（先交付、后提质）。
+    const selfReviewTasks: Array<Promise<void>> = [];
+    const readyOutcomes = new Map<number, TreeOutcome>();
+    let nextLandIndex = 0;
+    let draining = false;
+    const drainLandings = async (): Promise<void> => {
+      if (draining) return;
+      draining = true;
+      try {
+        while (nextLandIndex < totalPages) {
+          const outcome = readyOutcomes.get(nextLandIndex);
+          if (!outcome) return;
+          const index = nextLandIndex;
+          readyOutcomes.delete(index);
+          nextLandIndex += 1;
+          trees[index] = outcome;
+          if (outcome.blocked) {
+            blockedPages.push({ pageIndex: index, ...outcome.blocked });
+            degradedPages.add(index);
+            await serialize(() => appendPlaceholderPage(index));
+            landingSignals.get(index)?.();
+            continue;
+          }
+          // 复用 deck 的已落定页：文件里已有该页，不追加不替换；内容未就绪页补骨架占位。
+          if (outcome.skipped) {
+            if (outcome.skipped === "missing") {
+              warnings.push(`第 ${index + 1} 页内容未就绪（${outcome.reason ?? "批次未完成"}），保留占位页`);
+              await serialize(() => appendPlaceholderPage(index));
+            }
+            landingSignals.get(index)?.();
+            continue;
+          }
+          if (outcome.fellBack) {
+            if (pages[index]?.content) {
+              degradedPages.add(index);
+              warnings.push(`第 ${index + 1} 页设计未通过：${outcome.reason ?? "未收敛"}；未落入占位页，内容与草稿保留`);
+              await serialize(() => appendPlaceholderPage(index));
+              landingSignals.get(index)?.();
+              continue;
+            }
+            warnings.push(`第 ${index + 1} 页布局代理未交合格树（${outcome.reason ?? "未收敛"}），已用 v2 兜底页`);
+          }
+          let landed = false;
+          try {
+            landed = await serialize(() => applyPage(index, outcome.tree));
+          } catch (error) {
+            // 单页异常不拖垮整册：该页留占位页，其余页继续落。
+            degradedPages.add(index);
+            warnings.push(`第 ${index + 1} 页落页异常（${error instanceof Error ? error.message : String(error)}），保留占位页`);
+          }
+          if (!landed) await serialize(() => appendPlaceholderPage(index));
+          landingSignals.get(index)?.();
+          if (outcome.fellBack || args.signal?.aborted) continue;
+          // 落页后再自审：看着自己这一页的真实渲染图改；修正树只覆盖同一页，不动别的页。
+          const review = reviewSlots(() => selfReviewPage(index, outcome)).then(async (reviewed) => {
+            args.signal?.throwIfAborted();
+            // 无修正（原样交回）时不重落；只有树真的变了才覆盖同一页。
+            if (JSON.stringify(reviewed.tree) === JSON.stringify(outcome.tree)) return;
+            trees[index] = reviewed;
+            try {
+              await serialize(() => applyPage(index, reviewed.tree));
+            } catch (error) {
+              warnings.push(`第 ${index + 1} 页自审修正补落异常（${error instanceof Error ? error.message : String(error)}），保留首版页`);
+            }
+          });
+          selfReviewTasks.push(review.catch(() => undefined));
         }
-      });
-      selfReviewTasks.push(review.catch(() => undefined));
+      } finally {
+        draining = false;
+        // 只有下一页真的就绪才重入：缺页时 return 不经任何 await，无条件重入会纯同步递归爆栈。
+        if (nextLandIndex < totalPages && readyOutcomes.has(nextLandIndex)) void drainLandings();
+      }
+    };
+    const landings = treePromises.map((promise, index) => promise.then((outcome) => {
+      readyOutcomes.set(index, outcome);
+      return drainLandings();
     }));
     await Promise.all(landings);
     await Promise.all(selfReviewTasks);
@@ -1531,7 +1571,7 @@ export async function runLayouterTail(
         if (!rerolled.fellBack && treeSignature(rerolled.tree) !== treeSignature(trees[index]!.tree)) {
           trees[index] = rerolled;
           warnings.push(`第 ${index + 1} 页与邻页结构雷同，已重排`);
-          await landPage(index, rerolled.tree);
+          await serialize(() => applyPage(index, rerolled.tree));
         }
       } catch {
         // 重排失败保留原页
