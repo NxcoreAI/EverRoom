@@ -615,19 +615,21 @@
 
 **不通过**：形状没落盘；文本乱码；锚点跑到别的工作表
 
-### XL-V-05 · 插入图片 `P2`
+### XL-V-05 · 插入图片（位图 + SVG）`P2`
 
 **提示词**
 ```
-把 /Users/nxcore/EverRoom/everroom.svg 这张图插到「编制说明」下方。
+把 /Users/nxcore/EverRoom/everroom.svg 这张图插到「编制说明」下方；再插一张 PNG 做对比。
 ```
 
 **预期结果**
-- Agent：`add_image {path}`（仅本地绝对路径或公网 URL，≤20MB）
-- 文件：图片对象写进 `编制说明`，锚点在 A10 附近；若格式不被支持（SVG）则明确报错并建议转 PNG
-- 回复：说明路径、锚点或明确的不支持原因
+- Agent：`add_image {path}`（本地绝对路径或公网 URL，≤20MB；不收 base64/dataURL）
+- **SVG 走「矢量 + 位图回退」**：渲染层先光栅化出 PNG；保存后 `xl/media/` 里同时有 `.svg` 与 `.png` 两份，drawing 中 `<a:blip r:embed=PNG>` 是主显示、`<asvg:svgBlip r:embed=SVG>` 挂在 `a:extLst` 上（ext uri `{96DAC541-7B7A-43D3-8B79-37D633B846F1}`）
+- 文件断言（解包）：`xl/media/*.svg` 存在且内容以 `<svg` 开头；同名回退 `*.png` 存在；`[Content_Types].xml` 含 `<Default Extension="svg" ContentType="image/svg+xml"/>`；`xl/drawings/_rels/*.rels` 有两条 `relationships/image`（png + svg）
+- PNG 那条：1 份 media、1 条关系
+- Excel 侧：图片可见，SVG 放大不失真；旧版 Excel / 预览 / 导出 PDF 仍能显示（回退）
 
-**不通过**：静默跳过；用 base64 硬塞；插进来导致文件打不开
+**不通过**：只写 SVG 不写回退（老环境空白图）；把 SVG 冒充 PNG 写入（魔数不符、打不开）；静默跳过；拒绝 dataURL 却不说明原因
 
 ### XL-V-06 · 超链接与批注 `P2`
 
