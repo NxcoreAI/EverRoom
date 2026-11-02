@@ -207,6 +207,26 @@ export interface AiGatewayToken {
   models?: AiPlanModels | null
 }
 
+/** 充值档位（`GET /app/billing/packs`）。 */
+export interface CreditPack {
+  id: string
+  code: string
+  name: string
+  amountCents: number
+  grantQuota: number
+  active: boolean
+}
+
+/** 充值下单结果（`POST /app/billing/topup`）。 */
+export interface TopupOrder {
+  orderId: string
+  /** PayPal approval 页(系统浏览器打开);mock 模式为 mock:// 协议。 */
+  approvalUrl: string
+  provider: 'paypal' | 'mock'
+}
+
+export type TopupStatus = 'pending' | 'completed' | 'failed' | 'expired'
+
 
 /**
  * SaaS 代发的 oo（OpenConnector 多租户实例）用户会话：登录后经
@@ -830,6 +850,30 @@ export class SaasClient {
   async aiGatewayStatus(): Promise<AiGatewayStatus | null> {
     await this.initialize()
     return this.request<AiGatewayStatus | null>('/app/ai-gateway/status')
+  }
+
+  /** 充值档位列表。 */
+  async creditPacks(): Promise<CreditPack[]> {
+    await this.initialize()
+    return this.request<CreditPack[]>('/app/billing/packs')
+  }
+
+  /** 充值下单:返回 approvalUrl(系统浏览器打开完成支付)。 */
+  async createTopup(packCode: string): Promise<TopupOrder> {
+    await this.initialize()
+    return this.request<TopupOrder>('/app/billing/topup', { method: 'POST', data: { packCode } })
+  }
+
+  /** 充值订单状态轮询(pending 时服务端主动核对支付渠道)。 */
+  async topupStatus(orderId: string): Promise<{ status: TopupStatus; amountCents: number }> {
+    await this.initialize()
+    return this.request<{ status: TopupStatus; amountCents: number }>(`/app/billing/topup/${encodeURIComponent(orderId)}/status`)
+  }
+
+  /** Mock 模式联调:模拟买家批准。真 paypal 模式服务端 409。 */
+  async topupMockApprove(orderId: string): Promise<{ status: 'completed'; amountCents: number }> {
+    await this.initialize()
+    return this.request<{ status: 'completed'; amountCents: number }>(`/app/billing/topup/${encodeURIComponent(orderId)}/mock-approve`, { method: 'POST' })
   }
 
   async updateNotificationPreferences(input: Partial<NotificationPreferences>): Promise<NotificationPreferences> {

@@ -363,6 +363,25 @@ export interface CloudDevice {
 }
 
 /** 中转额度视图（`GET /app/ai-gateway/status`，按订阅周期开窗）。 */
+/** 充值档位(主进程经 SaaS /app/billing/packs 拉取)。 */
+export interface CreditPack {
+  id: string
+  code: string
+  name: string
+  amountCents: number
+  grantQuota: number
+  active: boolean
+}
+
+/** 充值下单结果:approvalUrl 为 PayPal approval 页(mock:// 为本地联调协议)。 */
+export interface TopupOrder {
+  orderId: string
+  approvalUrl: string
+  provider: 'paypal' | 'mock'
+}
+
+export type TopupStatus = 'pending' | 'completed' | 'failed' | 'expired'
+
 export interface AiGatewayStatus {
   configured: boolean
   subscriptionStatus: string | null
@@ -890,6 +909,16 @@ export interface NxcoreDesktopApi {
     /** SaaS 权威额度判定；keeper 未启动/未判定时 false。 */
     verdict(): Promise<{ quotaExhausted: boolean }>
     onEvent(listener: (event: { type: AiRelayKeeperEventType }) => void): () => void
+  }
+  billing: {
+    /** 充值档位(登录后可用)。 */
+    packs(): Promise<CreditPack[]>
+    /** 下单:真实渠道时主进程自动用系统浏览器打开 approval 页。 */
+    topup(packCode: string): Promise<TopupOrder>
+    /** 订单状态轮询(pending 时服务端主动核对渠道)。 */
+    topupStatus(orderId: string): Promise<{ status: TopupStatus; amountCents: number }>
+    /** Mock 联调批准;真实渠道服务端 409。 */
+    topupMockApprove(orderId: string): Promise<{ status: 'completed'; amountCents: number }>
   }
   notifications: {
     preferences(): Promise<NotificationPreferences>

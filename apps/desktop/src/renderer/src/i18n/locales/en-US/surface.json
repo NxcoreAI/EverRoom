@@ -2198,5 +2198,12 @@
   "agentChat.SLIDES_STYLE_VIEW_BIG_ACTION": "View large previews",
   "agentChat.SLIDES_WARNINGS_SUMMARY": "{{count}} notes",
   "agentChat.SLIDES_DRAFT_ARCHIVED": "The content draft was archived; you can restore it from the Materials panel.",
-  "agentConnections.loadTimeout": "Load timed out: gateway not responding. Use the refresh button; if it persists, restart the app."
+  "agentConnections.loadTimeout": "Load timed out: gateway not responding. Use the refresh button; if it persists, restart the app.",
+  "settings.topupBuy": "Buy credits",
+  "settings.topupPending": "Processing…",
+  "settings.topupCompleted": "Top-up credited",
+  "settings.topupFailed": "Top-up did not complete, please retry",
+  "settings.topupBrowserOpened": "Browser opened to complete payment; credits apply automatically",
+  "settings.topupMockHint": "Mock payment submitted, crediting…",
+  "settings.topupPackSelect": "Select a credit pack"
 }
