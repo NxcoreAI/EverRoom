@@ -82,6 +82,33 @@ Agent (gateway)
 | 已落盘但版本回填失败 | 结果照返 + `error` | 明确告知版本未回填 |
 | 超过 100MB | `too_large` | 明确拒绝 |
 
+## 6.5 落盘契约：agent 改完必须自己保存（2026-10-31）
+
+**产品约定：用户让 agent 改表格，不需要再手动按 ⌘S。** 这条不是"体验优化"，
+是可用性底线：宿主通道下用户没有保存按钮的位置，而桌面端在**每次** agent 调用
+前都会检查编辑日志（`isDirty` → `unsaved`），一旦上一轮改动留在日志里，下一次
+调用就会被自己的脏闸门拦下，形成「改一格就脏 → 被拦 → 让用户按 ⌘S」的死循环。
+
+实现（`renderer/App.tsx`）：
+
+- 宿主 agent 通道（`onAgentToolRequest` → `executeWorkbookTool`）在有改动时调用
+  `autoSaveCompletedAiRun({ force: true })`，**force 绕过 AutoSave 开关**——
+  该开关是给应用内 AI 面板和 30 秒定时保存用的，对宿主通道不成立。
+- 落盘走与手动保存同一条路（`handleSave('save', true)`）：静默、状态栏显示
+  「已保存。」、`fileSaved` 钩子回填版本链（版本 +1）。
+- 保存失败如实上报：返回 `applied but the silent save failed`，**不谎报成功**
+  （与 Word 的后台会话同一口径：字节没变就是没保存）。
+- 强制落盘会重建会话，因此 AI 改动的撤销栈会重置；回退走版本历史。
+- 界面上的「自动保存」开关（`appAutoSave`）因此只剩两个作用：应用内 AI 面板改完
+  后是否落盘、以及每 30 秒/窗口失焦的定时保存；tooltip 已点明「AI / Agent 的改动
+  始终自动保存，不受此开关影响」，避免用户以为关掉它就能拦住 agent 的写入。
+
+仍然会（正确地）拒绝的情况：**用户自己在界面改了没保存**（防覆盖）、只读打开、
+加密/超大文件。这三类返回 `unsaved` / `not_editable` / `encrypted`，不是自动保存
+该越过的东西。
+
+对应测试：`XL-H-09`（AI 连续编辑不得依赖用户手动保存）、`XL-H-05`（脏闸门）。
+
 ## 7. 与 Word 的差异
 
 | 维度 | Word | Excel |
