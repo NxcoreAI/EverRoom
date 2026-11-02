@@ -2198,5 +2198,8 @@
   "agentChat.SLIDES_STYLE_VIEW_BIG_ACTION": "View large previews",
   "agentChat.SLIDES_WARNINGS_SUMMARY": "{{count}} notes",
   "agentChat.SLIDES_DRAFT_ARCHIVED": "The content draft was archived; you can restore it from the Materials panel.",
-  "agentConnections.loadTimeout": "Load timed out: gateway not responding. Use the refresh button; if it persists, restart the app."
+  "agentConnections.loadTimeout": "Load timed out: gateway not responding. Use the refresh button; if it persists, restart the app.",
+  "agentExecutionTimeline": {
+    "noopFolded": "Collapsed {count} no-op tool calls (echo / reading /dev/null)"
+  }
 }

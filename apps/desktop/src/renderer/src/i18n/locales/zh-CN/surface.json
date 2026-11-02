@@ -2198,5 +2198,8 @@
   "agentChat.SLIDES_STYLE_VIEW_BIG_ACTION": "看大图挑选",
   "agentChat.SLIDES_WARNINGS_SUMMARY": "{{count}} 条提示",
   "agentChat.SLIDES_DRAFT_ARCHIVED": "内容稿已归档，可在资料面板恢复。",
-  "agentConnections.loadTimeout": "加载超时：网关未响应，请点右上角刷新重试；若持续超时请重启应用。"
+  "agentConnections.loadTimeout": "加载超时：网关未响应，请点右上角刷新重试；若持续超时请重启应用。",
+  "agentExecutionTimeline": {
+    "noopFolded": "已折叠 {count} 次空调用（echo / 读取 /dev/null 这类打点）"
+  }
 }

@@ -934,6 +934,36 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
   min-width: 0;
 }
 
+/* 空转调用折叠：默认一行摘要，展开看明细。用语义 token，跟随主题。 */
+.agent-noop-group > .agent-noop-summary {
+  cursor: pointer;
+  color: var(--slides-muted);
+  font-size: var(--ui-text-xs, 11px);
+  line-height: 1.5;
+  list-style: none;
+}
+
+.agent-noop-group > .agent-noop-summary::-webkit-details-marker { display: none; }
+
+.agent-noop-group > .agent-noop-summary::before {
+  content: '▸';
+  display: inline-block;
+  margin-right: 6px;
+  transition: transform 120ms ease;
+}
+
+.agent-noop-group[open] > .agent-noop-summary::before { transform: rotate(90deg); }
+
+.agent-noop-list {
+  margin: 4px 0 8px 14px;
+  padding: 0;
+  color: var(--slides-muted);
+  font-size: var(--ui-text-xs, 11px);
+  line-height: 1.6;
+}
+
+.agent-noop-list code { font-family: var(--ui-font-mono, ui-monospace, monospace); }
+
 .agent-tool-stage {
   min-height: 18px;
   margin: 0 0 8px;

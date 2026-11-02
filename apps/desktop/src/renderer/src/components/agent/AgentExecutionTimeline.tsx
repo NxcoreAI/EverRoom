@@ -25,6 +25,7 @@ import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocale, type Translate } from '@/i18n/LocaleContext'
 
 import { ReasoningBlock } from './ReasoningBlock'
+import { noOpCommandSummary } from './noopToolCall'
 import {
   agentToolCommand,
   agentToolKind,
@@ -515,6 +516,21 @@ export const AgentExecutionTimeline = memo(function AgentExecutionTimeline({
             {rows.map((row) => {
               if (row.kind === 'subagent') {
                 return <SubagentRow key={row.key} sub={row.subagent} now={now} sessionId={sessionId} />
+              }
+              if (row.kind === 'noop') {
+                // 空转折叠行：默认一行摘要，展开才看每次打点的命令（原生 details，无需状态）。
+                return (
+                  <details key={row.key} className="agent-tool-step agent-noop-group" data-status="completed">
+                    <summary className="agent-noop-summary">
+                      {t('surface:agentExecutionTimeline.noopFolded', { count: row.count })}
+                    </summary>
+                    <ul className="agent-noop-list">
+                      {row.steps.map((step) => (
+                        <li key={step.id}><code>{noOpCommandSummary(step.tool.args)}</code></li>
+                      ))}
+                    </ul>
+                  </details>
+                )
               }
               const step = row.step
               const beforeText = localizeAgentActivityText(step.beforeText, t)
