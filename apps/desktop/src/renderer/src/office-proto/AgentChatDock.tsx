@@ -139,6 +139,7 @@ function AgentChatDockInner({ file }: { file: OfficeFile }) {
         reasoningByRun={session.reasoningByRun}
         runCompletedAtByRun={session.runCompletedAtByRun}
         failedRunIds={session.failedRunIds}
+        onContinueRun={session.outputLimitRunId ? session.continueRun : undefined}
         runStartedAtByRun={session.runStartedAtByRun}
         resolvingApprovalIds={session.resolvingApprovalIds}
         sessionLinks={[]}

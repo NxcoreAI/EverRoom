@@ -244,6 +244,11 @@ export function useAgentSession(
   const [runCompletedAtByRun, setRunCompletedAtByRun] = useState<Record<string, string>>({})
   /** run.failed 的 runId：时间线的「处理失败」只认这个，不看单个工具调用是否报错过。 */
   const [failedRunIds, setFailedRunIds] = useState<ReadonlySet<string>>(() => new Set())
+  /**
+   * 因输出额度耗尽（reason=output_limit）而失败的 run：上下文还在、只差收尾，
+   * 界面给一个「继续」按钮接着做，不用用户重述需求。
+   */
+  const [outputLimitRunId, setOutputLimitRunId] = useState<string | null>(null)
   const [reasoningByRun, setReasoningByRun] = useState<Record<string, string>>({})
   const [agentIdByRun, setAgentIdByRun] = useState<Record<string, string>>({})
   const [activeRunId, setActiveRunId] = useState<string | null>(null)
@@ -555,6 +560,8 @@ export function useAgentSession(
         setInterruptedRunIds((current) => current.has(event.runId) ? current : new Set(current).add(event.runId))
       } else if (event.type === 'run.failed') {
         setFailedRunIds((current) => current.has(event.runId) ? current : new Set(current).add(event.runId))
+        const reason = (event.payload as { reason?: unknown }).reason
+        setOutputLimitRunId(reason === 'output_limit' ? event.runId : null)
       }
       setActiveRunId((current) => current === event.runId ? null : current)
       setMessages((current) => current.map((message) => message.runId === event.runId && message.streaming
@@ -1293,6 +1300,25 @@ export function useAgentSession(
   const sendPromptRef = useRef(sendPrompt)
   sendPromptRef.current = sendPrompt
 
+  /** 「继续」：接着上一轮把剩余步骤做完；气泡用用户能看懂的一句话。 */
+  const continueRun = useCallback(async (): Promise<void> => {
+    setOutputLimitRunId(null)
+    await sendPromptRef.current(
+      '继续。上一轮因为输出上限中断了，接着把剩下的步骤做完：不要重复已完成的修改，'
+      + '先说明还差哪几项，然后逐项完成并给出最终结论。',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      '继续完成刚才没做完的部分',
+    )
+  }, [])
+
   /**
    * 确定性入口（进度卡按钮、AI 修改、产物库建文件）：hiddenPrompt 只交给运行时，
    * displayText 存进会话并渲染成用户气泡。排队/重试语义与 sendPrompt 完全一致。
@@ -1516,6 +1542,8 @@ export function useAgentSession(
     cancelledRunIds,
     interruptedRunIds,
     failedRunIds,
+    outputLimitRunId,
+    continueRun,
     runNotice,
     markSessionLinkReturned,
     selectSession,

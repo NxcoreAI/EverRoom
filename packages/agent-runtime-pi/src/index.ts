@@ -1,5 +1,10 @@
 import { mkdir, rm } from "node:fs/promises";
 import { DEFAULT_MAX_NOOP_TOOL_CALLS, isNoOpToolCall } from "./noop-tool-call.js";
+import {
+  createToolResultDedupeState,
+  dedupeToolResult,
+  type ToolResultDedupeState,
+} from "./tool-result-dedupe.js";
 import { randomUUID } from "node:crypto";
 import { resolve, sep } from "node:path";
 import type { AgentContextUsageSegment, AgentPermissionMode, RuntimeCapabilities } from "@nxcore/agent-contract";
@@ -281,6 +286,8 @@ interface ActivePiRun {
   /** 连续无副作用工具调用计数与超限标记（空转守卫）。 */
   noOpStreak: number;
   noOpLimitExceeded: boolean;
+  /** 本 run 已见过的工具结果指纹（重复的大结果折叠成占位，省上下文）。 */
+  toolResults: ToolResultDedupeState;
   terminal: boolean;
   finishPromise: Promise<void> | null;
 }
@@ -748,6 +755,7 @@ export class PiAgentRuntime implements AgentRuntime {
       toolLimitExceeded: false,
       noOpStreak: 0,
       noOpLimitExceeded: false,
+      toolResults: createToolResultDedupeState(),
       terminal: false,
       finishPromise: null,
     };
@@ -918,10 +926,15 @@ export class PiAgentRuntime implements AgentRuntime {
             ),
             signal,
           );
+          const clamped = clampToolResultText(
+            result.content,
+            this.config.maxToolResultChars ?? 0,
+          );
           return {
             content: [{
               type: "text" as const,
-              text: clampToolResultText(result.content, this.config.maxToolResultChars ?? 0),
+              // 同一 run 内字节级相同的大结果只保留一份，避免重复快照反复进上下文。
+              text: active ? dedupeToolResult(active.toolResults, tool.name, clamped) : clamped,
             }],
             details: result.details ?? {},
           };
@@ -1393,8 +1406,12 @@ export class PiAgentRuntime implements AgentRuntime {
             : sessionError
             ? new Error(friendlyRunError(sessionError))
             : outputLimitReached
-              ? new Error("本次处理达到模型输出上限，未能生成最终结论。已保留处理过程，请缩小范围后重试。")
+              ? new Error(
+                  "本次处理达到模型输出上限，未能生成最终结论。已保留处理过程——" +
+                    "直接点「继续」即可接着做完，不必重新描述需求。",
+                )
               : undefined,
+        outputLimitReached ? "output_limit" : undefined,
       );
     }
   }
@@ -1492,6 +1509,8 @@ export class PiAgentRuntime implements AgentRuntime {
     runId: string,
     outcome: "completed" | "failed" | "cancelled",
     error?: unknown,
+    /** 失败原因分类：界面据此给不同动作（output_limit → 直接"继续"）。 */
+    reason?: string,
   ): Promise<void> {
     const active = this.activeRuns.get(runId);
     if (!active) return Promise.resolve();
@@ -1522,7 +1541,10 @@ export class PiAgentRuntime implements AgentRuntime {
       } else {
         active.queue.push({
           type: "run.failed",
-          payload: { message: finalError instanceof Error ? finalError.message : "Pi runtime failed" },
+          payload: {
+            message: finalError instanceof Error ? finalError.message : "Pi runtime failed",
+            ...(reason === undefined ? {} : { reason }),
+          },
         });
       }
 

@@ -137,6 +137,10 @@ function createUserFacingRuntime(
     skillsEnabled: true,
     skillPrompts: bundle.skillPrompts,
     systemPrompt: bundle.systemPrompt,
+    // 主 agent 的工具结果不再无限大：一次无参 Excel 读取曾回 82KB（其中指南 69KB），
+    // 三份重复快照直接把上下文顶到 80%、末轮输出额度被思考吃光。60k 字符足够放下
+    // 一份正常文档读取，超出部分按 JSON 感知截断并提示改读具体范围。
+    maxToolResultChars: 60_000,
   }, {
     tools: [
       ...(integrations?.tools ?? []),

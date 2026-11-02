@@ -2201,5 +2201,8 @@
   "agentConnections.loadTimeout": "加载超时：网关未响应，请点右上角刷新重试；若持续超时请重启应用。",
   "agentExecutionTimeline": {
     "noopFolded": "已折叠 {count} 次空调用（echo / 读取 /dev/null 这类打点）"
+  },
+  "agentChat": {
+    "continueRun": "继续"
   }
 }

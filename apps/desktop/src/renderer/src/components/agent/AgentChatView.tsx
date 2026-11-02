@@ -446,6 +446,7 @@ export function AgentChatView({
   cancelledRunIds,
   interruptedRunIds,
   failedRunIds,
+  onContinueRun,
   pendingNavigationByRun,
   reasoningByRun = {},
   runCompletedAtByRun,
@@ -487,6 +488,8 @@ export function AgentChatView({
   interruptedRunIds?: ReadonlySet<string>
   /** 网关判定失败的 run：时间线标题显示「处理失败」（唯一权威口径）。 */
   failedRunIds?: ReadonlySet<string>
+  /** 上一轮因输出额度耗尽而中断时提供：点「继续」接着做完，无需重述需求。 */
+  onContinueRun?: () => void
   onOpenMention?: (item: MentionedItem) => void
   onRejectDocumentIntent: () => void
   onSelectRoom: (
@@ -1411,6 +1414,11 @@ export function AgentChatView({
           {error ? (
             <div className="agent-error" role="alert">
               <span>{error}</span>
+              {onContinueRun ? (
+                <button type="button" className="agent-error-retry" onClick={onContinueRun}>
+                  {t('surface:agentChat.continueRun')}
+                </button>
+              ) : null}
               {onRetryError ? (
                 <button type="button" className="agent-error-retry" onClick={onRetryError}>
                   {t('surface:agentComposer.retry')}

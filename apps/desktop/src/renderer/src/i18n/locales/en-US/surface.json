@@ -2201,5 +2201,8 @@
   "agentConnections.loadTimeout": "Load timed out: gateway not responding. Use the refresh button; if it persists, restart the app.",
   "agentExecutionTimeline": {
     "noopFolded": "Collapsed {count} no-op tool calls (echo / reading /dev/null)"
+  },
+  "agentChat": {
+    "continueRun": "Continue"
   }
 }
