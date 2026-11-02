@@ -2204,5 +2204,10 @@
   },
   "agentChat": {
     "continueRun": "继续"
+  },
+  "settings": {
+    "rcMaxTokens": "单次输出上限（tokens）",
+    "rcMaxTokensHint": "留空 = 用服务端默认值（通常 8192）。长任务里思考可能吃掉整份预算，正文还没写完就被截断；把上限调到 16384~32768 可明显减少「达到模型输出上限」。",
+    "rcMaxTokensInvalid": "单次输出上限需在 1024 ~ 1000000 之间"
   }
 }

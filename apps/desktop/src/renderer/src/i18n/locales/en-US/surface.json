@@ -2204,5 +2204,10 @@
   },
   "agentChat": {
     "continueRun": "Continue"
+  },
+  "settings": {
+    "rcMaxTokens": "Max output tokens per turn",
+    "rcMaxTokensHint": "Leave empty to use the server default (usually 8192). Long tasks may spend the whole budget on thinking and get cut off before the answer — 16384–32768 reduces \"output limit reached\".",
+    "rcMaxTokensInvalid": "Max output tokens must be between 1024 and 1000000"
   }
 }

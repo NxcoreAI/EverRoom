@@ -133,6 +133,11 @@ export interface PiAgentRuntimeConfig {
   includeBashTool?: boolean;
   maxToolCallsPerRun?: number;
   /**
+   * 单轮命中输出上限（stopReason=length）时自动续写几轮。默认 2：长任务里模型常常
+   * 思考就把 8192 的输出额度烧完、正文还没开始写，直接判失败等于把活甩回给用户。
+   */
+  maxAutoContinuesPerRun?: number;
+  /**
    * 连续多少次"无副作用工具调用"（echo/printf/read /dev/null 之类打点）判定为空转并
    * 中止 run。模型偶尔用 echo 当心跳，实测有 run 连刷 269 次直到用户手动取消。
    * 缺省 DEFAULT_MAX_NOOP_TOOL_CALLS；0/负数关闭。
@@ -288,11 +293,23 @@ interface ActivePiRun {
   noOpLimitExceeded: boolean;
   /** 本 run 已见过的工具结果指纹（重复的大结果折叠成占位，省上下文）。 */
   toolResults: ToolResultDedupeState;
+  /** 已经自动续写过几轮（命中输出上限后接续，防死循环）。 */
+  autoContinues: number;
+  /** 正在自动续写：期间不能被 start() 的收尾逻辑提前判完成。 */
+  continuing: boolean;
   terminal: boolean;
   finishPromise: Promise<void> | null;
 }
 
 const EMPTY_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+/** 命中输出上限后默认自动续写轮数。 */
+export const DEFAULT_MAX_AUTO_CONTINUES = 2;
+/** 续写提示词：只要求"接着写完"，避免模型重头再来或重新复述需求。 */
+const AUTO_CONTINUE_PROMPT = [
+  "上一轮输出被长度上限截断了，没有写完。",
+  "接着把剩下的部分做完：不要重复已经完成的修改，不要重新查已经读过的东西。",
+  "先一句话说明还差哪几项，然后直接动手完成，最后给出结论。",
+].join("");
 const TOOL_HISTORY_SUMMARY_MAX_CHARS = 8_000;
 function createBashSandboxExtension(
   config: PiAgentRuntimeConfig,
@@ -756,6 +773,8 @@ export class PiAgentRuntime implements AgentRuntime {
       noOpStreak: 0,
       noOpLimitExceeded: false,
       toolResults: createToolResultDedupeState(),
+      autoContinues: 0,
+      continuing: false,
       terminal: false,
       finishPromise: null,
     };
@@ -1281,7 +1300,10 @@ export class PiAgentRuntime implements AgentRuntime {
         }
         throw error;
       }
-      if (!active.terminal) await this.finish(input.runId, active.cancelled ? "cancelled" : "completed");
+      // 自动续写进行中时不能在这里收尾：真正的结束由续写那轮的 agent_settled 决定。
+      if (!active.terminal && !active.continuing) {
+        await this.finish(input.runId, active.cancelled ? "cancelled" : "completed");
+      }
     } catch (error) {
       if (active.cancelled) {
         await this.finish(input.runId, "cancelled");
@@ -1386,12 +1408,21 @@ export class PiAgentRuntime implements AgentRuntime {
         payload: { toolCallId: event.toolCallId, name: event.toolName, result: event.result },
       });
     } else if (event.type === "agent_settled") {
+      active.continuing = false;
       const sessionError = active.handle.session.state.errorMessage;
       const lastAssistant = [...active.handle.session.state.messages]
         .reverse()
         .find((message) => message.role === "assistant");
       const outputLimitReached = active.stopReason === "length"
         || (lastAssistant?.role === "assistant" && lastAssistant.stopReason === "length");
+      // 命中输出上限先自动续写（工作记忆都还在，只差把剩下的输出补完），
+      // 续满次数才判失败——否则用户每次都得手动点"继续"或重述需求。
+      const autoContinueLimit = this.config.maxAutoContinuesPerRun ?? DEFAULT_MAX_AUTO_CONTINUES;
+      if (outputLimitReached && active.autoContinues < autoContinueLimit) {
+        active.autoContinues += 1;
+        void this.continueAfterOutputLimit(runId);
+        return;
+      }
       void this.finish(
         runId,
         active.cancelled
@@ -1413,6 +1444,27 @@ export class PiAgentRuntime implements AgentRuntime {
               : undefined,
         outputLimitReached ? "output_limit" : undefined,
       );
+    }
+  }
+
+  /**
+   * 命中输出上限后自动续写一轮：会话、工具结果、已完成修改都在上下文里，模型只要
+   * 接着把剩下的输出吐完即可。新一轮结束会再次触发 agent_settled，由那里正常收尾。
+   */
+  private async continueAfterOutputLimit(runId: string): Promise<void> {
+    const active = this.activeRuns.get(runId);
+    if (!active || active.terminal) return;
+    active.continuing = true;
+    // 上一轮留下的 length 不能算到续写这轮头上，否则会一直判超限。
+    delete active.stopReason;
+    try {
+      await active.handle.session.prompt(AUTO_CONTINUE_PROMPT, {
+        expandPromptTemplates: false,
+        source: "rpc",
+      });
+    } catch (error) {
+      active.continuing = false;
+      await this.finish(runId, "failed", error, "output_limit");
     }
   }
 

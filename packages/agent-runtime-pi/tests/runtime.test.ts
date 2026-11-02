@@ -279,6 +279,78 @@ describe("PiAgentRuntime", () => {
     }
   });
 
+  it("自动续写：命中输出上限后接着跑完，而不是判失败", async () => {
+    const requestBodies: Array<Record<string, unknown>> = [];
+    const endpoint = createServer((_request, response) => {
+      let raw = "";
+      _request.on("data", (chunk) => { raw += chunk.toString(); });
+      _request.on("end", () => {
+        requestBodies.push(JSON.parse(raw) as Record<string, unknown>);
+        response.writeHead(200, { "content-type": "text/event-stream" });
+        const chunk = (content: string, finishReason: string | null = null) => JSON.stringify({
+          id: "chatcmpl-auto-continue",
+          object: "chat.completion.chunk",
+          created: 1,
+          model: "nxcore-test-model",
+          choices: [{ index: 0, delta: content ? { content } : {}, finish_reason: finishReason }],
+        });
+        // 第一轮被长度截断，续写这一轮正常说完
+        const first = requestBodies.length === 1;
+        response.write(`data: ${chunk(first ? "先说明还差哪几项：" : "剩余步骤已完成，结论如下。")}\n\n`);
+        response.write(`data: ${chunk("", first ? "length" : "stop")}\n\n`);
+        response.end("data: [DONE]\n\n");
+      });
+    });
+    await new Promise<void>((resolvePromise) => endpoint.listen(0, "127.0.0.1", resolvePromise));
+    const address = endpoint.address();
+    if (!address || typeof address === "string") throw new Error("Test endpoint did not bind a TCP port");
+    const dataDir = await mkdtemp(join(tmpdir(), "nxcore-pi-auto-continue-test-"));
+    temporaryDirectories.push(dataDir);
+    const runtime = new PiAgentRuntime({
+      provider: "nxcore-test-provider",
+      model: "nxcore-test-model",
+      baseUrl: `http://127.0.0.1:${address.port}/v1`,
+      apiKey: "nxcore-test-key",
+      api: "openai-completions",
+      maxTokens: 32,
+      contextWindow: 8192,
+      temperature: 0.3,
+      reasoning: "off",
+      sessionsDir: join(dataDir, "sessions"),
+      workingDirectory: join(dataDir, "workspace"),
+      agentDirectory: join(dataDir, "config"),
+    });
+
+    try {
+      const run = await runtime.start({
+        runId: "run-auto-continue",
+        sessionId: "session-auto-continue",
+        runtimeSessionRef: null,
+        prompt: "把报告改完",
+        pageLabel: "首页",
+        roomId: null,
+        roomSelectionRequired: false,
+        availableRooms: [],
+      });
+      const events: RuntimeEvent[] = [];
+      for await (const event of run.events) events.push(event);
+
+      // 续写补完了输出 → 整轮成功，不再把球踢回给用户
+      expect(events.at(-1)).toMatchObject({ type: "run.completed" });
+      expect(events.some((event) => event.type === "run.failed")).toBe(false);
+      // 续写提示词要求"接着写、别重复"，且新请求带上了上一轮的上下文
+      expect(requestBodies).toHaveLength(2);
+      const continuation = JSON.stringify(requestBodies[1]);
+      expect(continuation).toContain("上一轮输出被长度上限截断");
+      expect(continuation).toContain("接着把剩下的部分做完");
+      // 续写不是重开：原始请求仍在同一条会话里
+      expect(continuation).toContain("把报告改完");
+    } finally {
+      await runtime.dispose();
+      await new Promise<void>((resolvePromise, reject) => endpoint.close((error) => error ? reject(error) : resolvePromise()));
+    }
+  });
+
   it("hides every tool for a disabled run and restores them by default", async () => {
     const requestBodies: Array<Record<string, unknown>> = [];
     const endpoint = createServer((request, response) => {
