@@ -242,6 +242,8 @@ export function useAgentSession(
   const [activityByRun, setActivityByRun] = useState<Record<string, AgentRunActivity>>({})
   const [runStartedAtByRun, setRunStartedAtByRun] = useState<Record<string, string>>({})
   const [runCompletedAtByRun, setRunCompletedAtByRun] = useState<Record<string, string>>({})
+  /** run.failed 的 runId：时间线的「处理失败」只认这个，不看单个工具调用是否报错过。 */
+  const [failedRunIds, setFailedRunIds] = useState<ReadonlySet<string>>(() => new Set())
   const [reasoningByRun, setReasoningByRun] = useState<Record<string, string>>({})
   const [agentIdByRun, setAgentIdByRun] = useState<Record<string, string>>({})
   const [activeRunId, setActiveRunId] = useState<string | null>(null)
@@ -551,6 +553,8 @@ export function useAgentSession(
         })
       } else if (event.type === 'run.interrupted') {
         setInterruptedRunIds((current) => current.has(event.runId) ? current : new Set(current).add(event.runId))
+      } else if (event.type === 'run.failed') {
+        setFailedRunIds((current) => current.has(event.runId) ? current : new Set(current).add(event.runId))
       }
       setActiveRunId((current) => current === event.runId ? null : current)
       setMessages((current) => current.map((message) => message.runId === event.runId && message.streaming
@@ -1511,6 +1515,7 @@ export function useAgentSession(
     resolvingApprovalIds,
     cancelledRunIds,
     interruptedRunIds,
+    failedRunIds,
     runNotice,
     markSessionLinkReturned,
     selectSession,

@@ -402,6 +402,7 @@ export const AgentExecutionTimeline = memo(function AgentExecutionTimeline({
   continuing = false,
   continuationLabel = 'surface:agentExecutionTimeline.continuing',
   sessionId,
+  failedRunIds,
 }: {
   activity: AgentRunActivity
   runStartedAt?: string
@@ -409,6 +410,8 @@ export const AgentExecutionTimeline = memo(function AgentExecutionTimeline({
   continuing?: boolean
   continuationLabel?: string
   sessionId?: string | null
+  /** 网关判定为 run.failed 的 runId 集合：权威的失败口径（不传则退回"最后一步是否报错"）。 */
+  failedRunIds?: ReadonlySet<string> | undefined
 }) {
   const { t } = useLocale()
   const tools = activity.steps.map((step) => step.tool)
@@ -466,7 +469,13 @@ export const AgentExecutionTimeline = memo(function AgentExecutionTimeline({
 
   if (!activity.hasTools) return null
 
-  const failed = tools.some((tool) => tool.status === 'error')
+  // 失败口径以 run 的终态为准：run.failed 才算处理失败。中途的失败重试（工具参数
+  // 校验、工作表名猜错后改对…）后续步骤已经补齐，不能把整轮标成失败——那会和
+  // run 的 completed 状态、以及助手的最终结论自相矛盾。没有 run 终态信息时退回
+  // "最后一步是否报错"的近似判断。失败明细仍留在展开后的时间线里。
+  const failed = failedRunIds
+    ? runId !== undefined && failedRunIds.has(runId)
+    : tools.length > 0 && tools[tools.length - 1]!.status === 'error'
   const stopped = tools.some((tool) => tool.status === 'stopped')
   const summary = continuing && !running
     ? t(continuationLabel)
