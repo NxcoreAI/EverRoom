@@ -328,7 +328,9 @@ describe("database migrations", () => {
     )`);
     seeded.sqlite.exec("CREATE UNIQUE INDEX thesis_format_cards_room_source_idx ON thesis_format_cards (room_id, source_name)");
     seeded.sqlite.exec("DROP TABLE thesis_format_cards_workspace_new");
-    seeded.sqlite.prepare("DELETE FROM __drizzle_migrations WHERE created_at = ?").run(workspaceMigrationWhen);
+    // 把游标退回到 0094 之前：0094 之后的迁移记录也要一并删掉，否则游标停在后
+    // 面的迁移上，0094 会被当成历史跳过。
+    seeded.sqlite.prepare("DELETE FROM __drizzle_migrations WHERE created_at >= ?").run(workspaceMigrationWhen);
     seeded.sqlite.prepare(
       "INSERT INTO thesis_format_cards (id, room_id, format_card, source_file_entry_id, source_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
     ).run("card-legacy", "room-1", "{\"page\":{}}", null, "模版.docx", now, now);
@@ -381,6 +383,47 @@ describe("database migrations", () => {
     expect(recorded).toBe(true);
     expect(card?.workspace_id).toBe("default");
     reopened.sqlite.close();
+  });
+
+  it("repairs local-folder updated_at bumped by startup rescans", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "nxcore-local-folder-updated-test-"));
+    temporaryDirectories.push(dataDir);
+    const databasePath = join(dataDir, "gateway.sqlite");
+    const migrationsDir = resolve("drizzle");
+    const repairWhen = 1793700000000;
+
+    // 本地夹条目入库于 9 月、文件本身也是 9 月改的，但上一次启动重扫把
+    // updated_at 刷成了「现在」——资料库按最近更新取 200 条时它就会长期压过
+    // 用户自己上传的文件。
+    const seeded = createDatabase(databasePath, migrationsDir);
+    const createdAt = 1790000000000;
+    const fileMtime = 1790100000000;
+    const scanTime = Date.now();
+    seeded.sqlite.prepare(
+      "INSERT INTO file_entries (id, source_kind, source_key, original_name, extension, state, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    ).run("file-local", "local-folder", "local:s:i", "README.md", ".md", "ready", createdAt, scanTime);
+    seeded.sqlite.prepare(
+      "INSERT INTO file_blobs (content_hash, storage_path, byte_size, mime, created_at) VALUES (?, ?, ?, ?, ?)",
+    ).run("a".repeat(64), `sha256/${"a".repeat(64)}`, 1, "text/markdown", createdAt);
+    seeded.sqlite.prepare(
+      "INSERT INTO file_versions (id, file_entry_id, version_no, content_hash, source_modified_at, parser_id, parser_version, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    ).run("fver-local", "file-local", 1, "a".repeat(64), fileMtime, "markdown@1", 1, "parsed", createdAt);
+    seeded.sqlite.prepare("UPDATE file_entries SET current_version_id = 'fver-local' WHERE id = 'file-local'").run();
+    seeded.sqlite.prepare("DELETE FROM __drizzle_migrations WHERE created_at = ?").run(repairWhen);
+    seeded.sqlite.close();
+
+    const migrated = createDatabase(databasePath, migrationsDir);
+    const row = migrated.sqlite.prepare(
+      "SELECT updated_at FROM file_entries WHERE id = 'file-local'",
+    ).get() as { updated_at: number } | undefined;
+    const recorded = Boolean(migrated.sqlite.prepare(
+      "SELECT 1 FROM __drizzle_migrations WHERE created_at = ? LIMIT 1",
+    ).get(repairWhen));
+
+    // 归位到文件自身的最后修改时间，而不是重扫时间。
+    expect(row?.updated_at).toBe(fileMtime);
+    expect(recorded).toBe(true);
+    migrated.sqlite.close();
   });
 
   it("repairs dev-branch databases whose cursor jumped over 0088–0091", async () => {

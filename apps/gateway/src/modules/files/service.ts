@@ -324,6 +324,7 @@ export class FilesService {
       : null;
 
     if (existingVersion) {
+      if (!entry) throw new Error("file_entry_not_found");
       const shouldEnqueue = !input.deferIngest
         && (existingVersion.status === "stored" || existingVersion.status === "failed");
       const jobId = this.fileJobId(existingVersion.id, capability.parserId, capability.parserVersion);
@@ -349,6 +350,20 @@ export class FilesService {
           }).run();
         });
       }
+      const nextState = existingVersion.status === "parsed" ? "ready" : existingVersion.status === "failed" ? "failed" : "processing";
+      // 本地夹来源每次应用启动都会把整批文件重新登记一遍（local-file-references）。
+      // 内容没变时只刷新 lastSeenAt：如果连 updatedAt 一起顶到 now，文件库/首页按
+      // 「最近更新」排序（只取最近 200 条）时，这些没有被改动过的本地文件会反复
+      // 挤到最前面，把用户真正上传的文件挤出可见范围——现象就是「重启后我上传的
+      // 文件不见了」。
+      const metadataChanged = entry.originalName !== input.originalName
+        || (input.relativePath !== undefined && entry.relativePath !== input.relativePath)
+        || (input.sourcePath !== undefined && entry.sourcePath !== input.sourcePath)
+        || (input.sourceUri !== undefined && entry.sourceUri !== input.sourceUri)
+        || entry.workspaceId !== workspaceId
+        || entry.deletedAt !== null
+        || entry.state !== nextState
+        || entry.currentVersionId !== existingVersion.id;
       this.db.update(fileEntries).set({
         originalName: input.originalName,
         relativePath: input.relativePath,
@@ -357,9 +372,9 @@ export class FilesService {
         // 重新导入会覆盖归属：显式传入 workspaceId 时以最新入口为准。
         workspaceId,
         lastSeenAt: now,
-        updatedAt: now,
+        ...(metadataChanged ? { updatedAt: now } : {}),
         deletedAt: null,
-        state: existingVersion.status === "parsed" ? "ready" : existingVersion.status === "failed" ? "failed" : "processing",
+        state: nextState,
         ...(entry?.currentVersionId === existingVersion.id ? {} : { currentVersionId: existingVersion.id }),
       }).where(eq(fileEntries.id, fileEntryId)).run();
       const result: FileImportResult = {
