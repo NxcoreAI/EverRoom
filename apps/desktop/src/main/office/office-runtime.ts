@@ -73,6 +73,27 @@ export interface GenOfficeDocsRuntime {
    * hidden 省略 = 切换；渲染层自带恢复胶囊与 ⌘⇧F，隐藏后始终可恢复。
    */
   setDocsChromeHidden(contents: WebContents, hidden?: boolean): void
+  /**
+   * 选区「AI 修改」浮层（EverRoom embed）：宿主接管——按 wcId 反查文件与工作空间，
+   * 载荷只描述选区（顶层块索引区间 + 类型 + 文本摘要），不带任何 id。
+   */
+  setDocsAgentAskHook(
+    hook:
+      | ((
+          wcId: number,
+          op: {
+            instruction: string
+            fromBlockIndex: number
+            toBlockIndex: number
+            kind: 'text' | 'image' | 'chart' | 'table'
+            excerpt?: string
+            blockType?: string
+            /** 'queue' = 攒成批注一起发；缺省立即发送。 */
+            mode?: 'now' | 'queue'
+          },
+        ) => Promise<{ ok: true } | { ok: false; error: string }>)
+      | null,
+  ): void
   setActiveDocsResolver(resolve: (() => WebContents | null) | null): void
   setDocsFileSavedHook(hook: (contents: WebContents, filePath: string) => void): void
   /** AI 页签论文排版面板：embed 宿主接管（wcId 反查 Room 与文件；payload 不带 id）。 */
@@ -227,6 +248,24 @@ export interface GenOfficeSheetsRuntime {
   setActiveSheetsWebContents(contents: WebContents | null): void
   /** 未保存编辑条数（>0 = 脏）：Agent 写回工作副本前的闸门。 */
   sheetsPendingEditCount(webContentsId: number): number
+  /**
+   * 选区「AI 修改」浮层（EverRoom embed）：宿主接管——按 wcId 反查文件与工作空间，
+   * 载荷带工作表 id（sheets 工具按 sheetId 定位）+ A1 区域 + 指令。
+   */
+  setSheetsAgentAskHook(
+    hook:
+      | ((
+          wcId: number,
+          op: {
+            instruction: string
+            sheetId?: string
+            sheetName?: string
+            range?: string
+            mode?: 'now' | 'queue'
+          },
+        ) => Promise<{ ok: true } | { ok: false; error: string }>)
+      | null,
+  ): void
   setSheetsFileSavedHook(hook: (contents: WebContents, filePath: string) => void): void
   setSheetsShellWindow(window: BrowserWindow | null): void
   stopSheetsSidecar(): void

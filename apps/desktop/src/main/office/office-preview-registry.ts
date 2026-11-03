@@ -11,7 +11,14 @@ import {
   officePreviewKindForFileName,
   type OfficePreviewKind,
 } from '../../shared/sources'
-import { onOfficeFileSaved, wireOfficeSavedHooks, wireSlidesAgentAsk, type AgentAskForwardEvent } from './office-generation'
+import {
+  onOfficeFileSaved,
+  wireDocsAgentAsk,
+  wireOfficeSavedHooks,
+  wireSheetsAgentAsk,
+  wireSlidesAgentAsk,
+  type AgentAskForwardEvent,
+} from './office-generation'
 import type { GenOfficeMaterialResolver } from './office-runtime'
 import {
   loadPreparedGenOfficeRuntime,
@@ -1320,6 +1327,16 @@ export class OfficePreviewRegistry {
     // 「AI 修改」弹层转发：slides 视图提交 → wcId 反查 Room → 广播渲染层注入（幂等）。
     if (this.agentAskForward) {
       wireSlidesAgentAsk(this.runtime, {
+        resolveInstance: (wcId) => this.findByWebContentsId(wcId),
+        forward: this.agentAskForward,
+      })
+      // Word 选区「AI 修改」浮层：同一条转发链（docs 侧无 AI 后端，宿主接管）。
+      wireDocsAgentAsk(this.runtime, {
+        resolveInstance: (wcId) => this.findByWebContentsId(wcId),
+        forward: this.agentAskForward,
+      })
+      // Excel 选区浮层：同一协议（工作簿按 sheetId + A1 区域定位）。
+      wireSheetsAgentAsk(this.runtime, {
         resolveInstance: (wcId) => this.findByWebContentsId(wcId),
         forward: this.agentAskForward,
       })

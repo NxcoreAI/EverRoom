@@ -2,6 +2,7 @@ import { LoaderCircle, RefreshCw } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { AgentChatView } from '@/components/agent/AgentChatView'
+import { buildAskBatch } from '@/components/agent/askDrafts'
 import { AgentComposer } from '@/components/agent/AgentComposer'
 import { useAgentSession } from '@/components/agent/useAgentSession'
 import { RoomDocumentsProvider } from '@/components/context-room/RoomDocumentsProvider'
@@ -71,6 +72,11 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
   const hook = useAgentSession('Agent', null, [], { workspaceId, initialSessionId: sessionId })
   const syncTabSession = useWorkbenchStore((state) => state.syncTabSession)
 
+  const pendingAgentAsk = useWorkbenchStore((state) => state.pendingAgentAsk)
+  const askDrafts = useWorkbenchStore((state) => state.askDrafts)
+  const removeAskDraft = useWorkbenchStore((state) => state.removeAskDraft)
+  const clearAskDrafts = useWorkbenchStore((state) => state.clearAskDrafts)
+
   const [draft, setDraft] = useState('')
   const [composerResetKey, setComposerResetKey] = useState(0)
   const [connectingVisible, setConnectingVisible] = useState(false)
@@ -122,6 +128,44 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
     })
   }, [onRestartConversationKernel, sessionId])
 
+  /**
+   * Office「AI 修改」浮层的待注入消息（Word 选区浮层等）：本面板是这个工作空间的
+   * 对话出口，挂载/激活后消费一次——技术指令进 runtime，人话进气泡（displayPrompt）。
+   * 忙或未就绪时退化为填进输入框，绝不静默丢掉用户敲的东西。
+   */
+  useEffect(() => {
+    if (!pendingAgentAsk || pendingAgentAsk.workspaceId !== workspaceId) return
+    // 会话内核还没就绪：等它就绪再注入，别把消息降级成「Agent 正忙」。
+    if (!hook.scopeReady || hook.loading) return
+    const pending = pendingAgentAsk
+    // 消费即置空，避免重挂载/重渲染重复发送。
+    useWorkbenchStore.getState().setPendingAgentAsk(null)
+    const fallback = () => setDraft(pending.displayMessage ?? pending.message)
+    /** 有在跑的 run 时 sendPrompt 会排队并返回 null——排队也算投递成功，不能再回填输入框。 */
+    const queuesBehindRun = Boolean(hookRef.current.activeRunId)
+    void hookRef.current
+      .sendPrompt(
+        pending.message,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        // displayPrompt：气泡/标题只显示人话，块索引与工具名只进 runtime。
+        pending.displayMessage,
+      )
+      .then((runId) => {
+        if (runId !== null || queuesBehindRun) return
+        fallback()
+        workbenchToast('Agent 正忙，修改意见已放进输入框')
+      })
+      .catch(fallback)
+  }, [pendingAgentAsk, workspaceId, hook.scopeReady, hook.loading])
+
   // 会话快照同步回 store：首次发送自动建会话后，侧栏立刻出现该会话（不必等轮询）。
   // 只把「当前请求的会话」（或草稿态自动创建的会话）写回 store；切会话过程中旧的
   // 快照不能把侧栏选中态抢回去。
@@ -167,8 +211,88 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
     })
   }
 
+  /** 本工作空间的批注草稿（其它空间的留在各自对话里）。 */
+  const workspaceAskDrafts = askDrafts.filter((draft) => draft.workspaceId === workspaceId)
+
+  /**
+   * 一次发出所有批注：合成一条消息（技术指令带编号，人话用圈号），投递成功才清空。
+   * 排队（有 run 在跑）也算投递成功；真正失败时草稿留着，用户可以再发一次。
+   */
+  const sendAskDrafts = () => {
+    const batch = buildAskBatch(workspaceAskDrafts)
+    if (!batch || !workspaceId || !canSend || hook.loading) return
+    void hook
+      .sendPrompt(
+        batch.message,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        batch.displayMessage,
+      )
+      .then((runId) => {
+        if (runId === null && !hookRef.current.activeRunId) {
+          workbenchToast('Agent 正忙，批注先留着，稍后再发')
+          return
+        }
+        clearAskDrafts(workspaceId)
+      })
+      .catch(() => workbenchToast('发送失败，批注已保留'))
+  }
+
+  const askDraftBar = workspaceAskDrafts.length > 0
+    ? (
+        <div className="wb-ask-drafts" role="group" aria-label="待发送批注">
+          <div className="wb-ask-drafts-head">
+            <span className="wb-ask-drafts-count">待发送批注 {workspaceAskDrafts.length} 条</span>
+            <button
+              type="button"
+              className="wb-ask-drafts-send"
+              disabled={!canSend || hook.loading}
+              onClick={sendAskDrafts}
+            >
+              全部发送
+            </button>
+            <button
+              type="button"
+              className="wb-ask-drafts-clear"
+              onClick={() => { if (workspaceId) clearAskDrafts(workspaceId) }}
+            >
+              清空
+            </button>
+          </div>
+          <ul className="wb-ask-drafts-list">
+            {workspaceAskDrafts.map((draft) => (
+              <li key={draft.id} className="wb-ask-drafts-item">
+                <span className="wb-ask-drafts-text">
+                  {draft.title ? <b>{draft.title}</b> : null}
+                  {draft.title ? ' · ' : null}
+                  {draft.displayMessage ?? draft.message}
+                </span>
+                <button
+                  type="button"
+                  className="wb-ask-drafts-remove"
+                  aria-label="移除这条批注"
+                  onClick={() => removeAskDraft(draft.id)}
+                >
+                  ✕
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )
+    : null
+
   const composer = (
-    <AgentComposer
+    <>
+      {askDraftBar}
+      <AgentComposer
       ref={composerRef}
       contextSummary=""
       contextItems={[]}
@@ -209,6 +333,7 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
         send()
       }}
     />
+    </>
   )
 
   const standaloneError = hook.error && !conversationState ? hook.error : null

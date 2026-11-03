@@ -119,7 +119,13 @@ let agentAskWired = false
 export function wireSlidesAgentAsk(
   target: PreparedGenOfficeRuntime,
   deps: {
-    resolveInstance(wcId: number): { fileId: string; title: string; kind: string; roomId: string | null } | null
+    resolveInstance(wcId: number): {
+      fileId: string
+      title: string
+      kind: string
+      roomId: string | null
+      workspaceId?: string | null
+    } | null
     forward(event: AgentAskForwardEvent): void
   },
 ): void {
@@ -133,12 +139,188 @@ export function wireSlidesAgentAsk(
     }
     deps.forward({
       roomId: instance.roomId,
+      ...(instance.workspaceId ? { workspaceId: instance.workspaceId } : {}),
       message: buildAgentAskMessage(instance.title, op),
       displayMessage: buildAgentAskDisplayMessage(instance.title, op),
     })
     return { ok: true }
   })
   agentAskWired = true
+}
+
+// ── 「AI 修改」转发：docs 视图里的选区浮层提交 → 工作空间对话 ──
+
+/**
+ * docs 选区浮层的载荷：宿主 word 工具按**顶层块索引**定位，不认页码/行号，
+ * 所以这里只带块索引区间 + 选区类型 + 文本摘要（编辑后索引会漂移，摘要供
+ * Agent 重新 read 后交叉校验）。
+ */
+export interface DocsAgentAskPayload {
+  instruction: string
+  fromBlockIndex: number
+  toBlockIndex: number
+  kind: 'text' | 'image' | 'chart' | 'table'
+  excerpt?: string
+  blockType?: string
+  /** 'queue' = 攒成批注一起发；缺省立即发送。 */
+  mode?: 'now' | 'queue'
+}
+
+const DOCS_ASK_KIND_LABEL: Record<DocsAgentAskPayload['kind'], string> = {
+  text: '正文',
+  image: '图片',
+  chart: '图表',
+  table: '表格',
+}
+
+function clipAskText(text: string, max: number): string {
+  const flat = text.replace(/\s+/g, ' ').trim()
+  return flat.length > max ? `${flat.slice(0, max)}…` : flat
+}
+
+function describeDocsAskScope(op: DocsAgentAskPayload): string {
+  const range = op.fromBlockIndex === op.toBlockIndex
+    ? `第 ${op.fromBlockIndex} 块`
+    : `第 ${op.fromBlockIndex}–${op.toBlockIndex} 块`
+  const label = DOCS_ASK_KIND_LABEL[op.kind] ?? op.kind
+  const excerpt = op.excerpt ? `「${clipAskText(op.excerpt, 40)}」` : ''
+  return `${range}（${label}${excerpt}）`
+}
+
+/** 注入对话的用户消息：用户口吻的修改指令 + 给 Agent 的工具定位提示。 */
+export function buildDocsAgentAskMessage(title: string, op: DocsAgentAskPayload): string {
+  return (
+    `请修改 Word《${title}》${describeDocsAskScope(op)}选中的内容：${op.instruction.trim()}。`
+    + '先用 word_agent_read 读一次最新块索引确认目标（选中的块索引可能已因前序编辑漂移），'
+    + '再用 word_agent_edit 或 word_agent_ops 只改这几块，其他内容保持不动。'
+  )
+}
+
+/** 同一请求的用户可见文案：只留位置与修改意图，块索引/工具名不出现在社交层。 */
+export function buildDocsAgentAskDisplayMessage(title: string, op: DocsAgentAskPayload): string {
+  const instruction = op.instruction.trim().replace(/[。.!！]+$/, '')
+  const where = op.fromBlockIndex === op.toBlockIndex
+    ? `第 ${op.fromBlockIndex + 1} 段`
+    : `第 ${op.fromBlockIndex + 1}–${op.toBlockIndex + 1} 段`
+  return `把 Word《${title}》${where}选中的内容改一下：${instruction}。`
+}
+
+let docsAgentAskWired = false
+
+/** 全局只装一次（幂等）：docs 选区浮层 → 反查工作空间 → 广播渲染层注入对话框。 */
+export function wireDocsAgentAsk(
+  target: PreparedGenOfficeRuntime,
+  deps: {
+    resolveInstance(wcId: number): {
+      fileId: string
+      title: string
+      kind: string
+      roomId: string | null
+      workspaceId?: string | null
+    } | null
+    forward(event: AgentAskForwardEvent): void
+  },
+): void {
+  if (docsAgentAskWired) return
+  // 老 runtime（未重建 genoffice）没有这个 hook：静默跳过，浮层保持关闭。
+  if (typeof target.docs.setDocsAgentAskHook !== 'function') return
+  target.docs.registerDocsIpc()
+  target.docs.setDocsAgentAskHook(async (wcId, op) => {
+    const instance = deps.resolveInstance(wcId)
+    if (!instance) return { ok: false, error: '未找到该 Word 对应的打开实例' }
+    const workspaceId = instance.workspaceId ?? instance.roomId ?? null
+    if (!workspaceId) {
+      return { ok: false, error: '该文件未归属任何工作空间，无法转发给 Agent（请在工作空间产物库中打开后再试）' }
+    }
+    deps.forward({
+      roomId: instance.roomId,
+      workspaceId,
+      ...(op.mode === 'queue' ? { mode: 'queue' as const } : {}),
+      title: instance.title,
+      fileId: instance.fileId,
+      message: buildDocsAgentAskMessage(instance.title, op),
+      displayMessage: buildDocsAgentAskDisplayMessage(instance.title, op),
+    })
+    return { ok: true }
+  })
+  docsAgentAskWired = true
+}
+
+// ── 「AI 修改」转发：sheets 选区浮层提交 → 工作空间对话 ──
+
+/**
+ * sheets 选区浮层的载荷：宿主 sheets 工具按 **sheetId + A1 区域**定位（不认工作表
+ * 名），所以这里带 sheetId，区域与表名只用于文案与交叉校验。
+ */
+export interface SheetsAgentAskPayload {
+  instruction: string
+  sheetId?: string
+  sheetName?: string
+  range?: string
+  mode?: 'now' | 'queue'
+}
+
+function describeSheetsAskScope(op: SheetsAgentAskPayload): string {
+  const sheet = op.sheetName?.trim() ? `工作表「${op.sheetName.trim()}」` : '当前工作表'
+  const range = op.range?.trim()
+  return range ? `${sheet} ${range}` : sheet
+}
+
+/** 注入对话的用户消息：用户口吻的修改指令 + 给 Agent 的工具定位提示。 */
+export function buildSheetsAgentAskMessage(title: string, op: SheetsAgentAskPayload): string {
+  const sheetId = op.sheetId?.trim() ? `（sheetId=${op.sheetId.trim()}）` : ''
+  return (
+    `请修改 Excel《${title}》${describeSheetsAskScope(op)}${sheetId} 选中的内容：${op.instruction.trim()}。`
+    + '先用 sheets_agent_read 读一次工作簿确认 sheetId 与区域，再用 sheets_agent_edit 下发'
+    + ' read_range / propose_operations，只改这块区域，其他单元格保持不动。'
+  )
+}
+
+/** 同一请求的用户可见文案：只留位置与修改意图，sheetId 与工具名不出现在社交层。 */
+export function buildSheetsAgentAskDisplayMessage(title: string, op: SheetsAgentAskPayload): string {
+  const instruction = op.instruction.trim().replace(/[。.!！]+$/, '')
+  return `把 Excel《${title}》${describeSheetsAskScope(op)}选中的内容改一下：${instruction}。`
+}
+
+let sheetsAgentAskWired = false
+
+/** 全局只装一次（幂等）：sheets 选区浮层 → 反查工作空间 → 广播渲染层注入对话框。 */
+export function wireSheetsAgentAsk(
+  target: PreparedGenOfficeRuntime,
+  deps: {
+    resolveInstance(wcId: number): {
+      fileId: string
+      title: string
+      kind: string
+      roomId: string | null
+      workspaceId?: string | null
+    } | null
+    forward(event: AgentAskForwardEvent): void
+  },
+): void {
+  if (sheetsAgentAskWired) return
+  // 老 runtime（未重建 genoffice）没有这个 hook：静默跳过，浮层保持关闭。
+  if (typeof target.sheets.setSheetsAgentAskHook !== 'function') return
+  target.sheets.registerSheetsIpc()
+  target.sheets.setSheetsAgentAskHook(async (wcId, op) => {
+    const instance = deps.resolveInstance(wcId)
+    if (!instance) return { ok: false, error: '未找到该 Excel 对应的打开实例' }
+    const workspaceId = instance.workspaceId ?? instance.roomId ?? null
+    if (!workspaceId) {
+      return { ok: false, error: '该文件未归属任何工作空间，无法转发给 Agent（请在工作空间产物库中打开后再试）' }
+    }
+    deps.forward({
+      roomId: instance.roomId,
+      workspaceId,
+      ...(op.mode === 'queue' ? { mode: 'queue' as const } : {}),
+      title: instance.title,
+      fileId: instance.fileId,
+      message: buildSheetsAgentAskMessage(instance.title, op),
+      displayMessage: buildSheetsAgentAskDisplayMessage(instance.title, op),
+    })
+    return { ok: true }
+  })
+  sheetsAgentAskWired = true
 }
 
 export interface GeneratedDocx {

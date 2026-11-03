@@ -32,12 +32,22 @@ export interface OsOpenedDocument {
   originalName: string
 }
 
-/** slides「AI 修改」弹层转发的主进程 → 渲染层事件（channel office:agent-ask）。 */
+/** Office「AI 修改」浮层转发的主进程 → 渲染层事件（channel office:agent-ask）。 */
 export interface OfficeAgentAskEvent {
-  /** 目标 Room：渲染层切到该 Room 并注入对话框。 */
-  roomId: string
-  /** 已组装好的用户消息（含元素 id 与工具定位提示），直接自动发送。 */
+  /** 目标 Room（slides 分支沿用；Room 并入工作空间后可能为空）。 */
+  roomId: string | null
+  /** 目标工作空间：渲染层按它激活对应标签并注入对话框（缺省时回退 roomId）。 */
+  workspaceId?: string
+  /** 已组装好的用户消息（含文件/元素定位与工具提示），直接自动发送。 */
   message: string
   /** 给用户看的人话（聊天层只展示它，不再把内部指令渲染成用户气泡）。 */
   displayMessage?: string
+  /**
+   * 'queue' = 攒成批注，先不放出去（渲染层收进待发送清单，用户一次全发）；
+   * 缺省 = 立即发送。
+   */
+  mode?: 'now' | 'queue'
+  /** 目标文件标题与 id：批注清单里点名用。 */
+  title?: string
+  fileId?: string
 }
