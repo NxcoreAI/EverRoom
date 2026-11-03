@@ -194,6 +194,14 @@ export const agentWorkspaces = sqliteTable("agent_workspaces", {
   /** 目标列表，以 JSON 文本存放；NULL/空数组都按 [] 暴露。 */
   goals: text("goals", { mode: "json" }).$type<string[]>(),
   path: text("path"),
+  /** 空间目录名（ASCII slug）；老数据/未初始化为 NULL。 */
+  slug: text("slug"),
+  /** 目录归属模式：managed（应用托管根 `dataDir/Workspace`）/ external（用户自选目录）。 */
+  rootMode: text("root_mode", { enum: ["managed", "external"] }).notNull().default("managed"),
+  /** 目录布局版本：0 = 未初始化（首次 ensureLayout 时 provision），1 = 当前布局。 */
+  layoutVersion: integer("layout_version").notNull().default(0),
+  /** 目录被外部删除/移动的发现时间；正常为 NULL。 */
+  rootMissingAt: integer("root_missing_at", { mode: "timestamp_ms" }),
   kind: text("kind", { enum: ["default", "custom"] }).notNull().default("custom"),
   createdAt: integer("created_at", { mode: "timestamp_ms" })
     .notNull()
@@ -232,6 +240,20 @@ export const agentSessions = sqliteTable("agent_sessions", {
   createdAt: integer("created_at", { mode: "timestamp_ms" })
     .notNull()
     .$defaultFn(() => new Date()),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
+/**
+ * Agent 技能的启停状态（「技能」页）。
+ *
+ * 技能本体是随应用发布的只读资源（内置 bundle 的 SKILL.md / 子 Agent 清单），
+ * 这里只存被改过的那些：没有行＝启用。id 形如 `builtin:main:document-export`。
+ */
+export const agentSkillStates = sqliteTable("agent_skill_states", {
+  id: text("id").primaryKey(),
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
   updatedAt: integer("updated_at", { mode: "timestamp_ms" })
     .notNull()
     .$defaultFn(() => new Date()),
@@ -1370,18 +1392,10 @@ export interface DiaryPayload {
 
 // ═══════════════════ 统一理解引擎（docs/unified-ingest-plan.md）═══════════════════
 
-/** 三链路开关（Room / wiki / 记忆）。wiki 依赖 Room（U2：无 Room 不设全局 wiki）。 */
+/** 双链路开关（Room / wiki）。wiki 依赖 Room（U2：无 Room 不设全局 wiki）。 */
 export interface IngestPipelines {
   room: boolean;
   wiki: boolean;
-  memory: boolean;
-}
-
-/** 记忆链路扇出结果：成功摘要或错误（失败不阻塞 Room 链路）。 */
-export interface IngestMemoryOk {
-  documentId: string;
-  chunkCount: number;
-  deduplicated: boolean;
 }
 
 /** agent 过滤器判定（ingest 第一级闸门）：无价值资料不进下游链路。 */
@@ -1394,8 +1408,7 @@ export interface IngestFilterVerdict {
   /** 置信 0~1，低于阈值放行（宁漏勿错杀）。 */
   confidence: number;
   /** 状态/参考分流（2026-09-24 定案）：这条数据会被更新/覆盖、需要唯一
-   * 权威版本吗。true 时即便类型默认 memory:false（参考型兜底）也单独打开
-   * 记忆链路；缺省 = 未判定，不触发恢复（fail-closed，保 token）。 */
+   * 权威版本吗。缺省 = 未判定，不触发恢复（fail-closed，保 token）。 */
   stateLike?: boolean;
 }
 
@@ -1757,4 +1770,154 @@ export const agentAccessEvents = sqliteTable(
       .$defaultFn(() => new Date()),
   },
   (table) => [index("agent_access_events_recent_idx").on(table.connectionId, table.createdAt)],
+);
+
+/**
+ * 每日洞察（主页「今日洞察」）的日状态：一天一行，指向当前可用版本。
+ *
+ * 与已删除的旧 `diary_*`（见 drizzle/0084）只继承两个概念：**版本化**与**证据留痕**。
+ * 供料端不同——现在是当天新写入的长期记忆条目（`modules/journal/collector.ts`），
+ * 不是已下线的屏幕记忆采集链路。设计见 docs/daily-journal-plan.zh-CN.md。
+ */
+export const journalDays = sqliteTable(
+  "journal_days",
+  {
+    /** 本地时区日期（YYYY-MM-DD）；日界不做 UTC 截断。 */
+    date: text("date").primaryKey(),
+    /** 预留：`global` = 全工作区一份；将来可落 `workspace:<id>`。 */
+    scope: text("scope").notNull().default("global"),
+    status: text("status", {
+      enum: ["pending", "generating", "ready", "failed"],
+    }).notNull().default("pending"),
+    currentEntryId: text("current_entry_id"),
+    /** 参与汇总的证据指纹；相同即跳过重写（0 次模型调用）。 */
+    sourceFingerprint: text("source_fingerprint"),
+    /** 当天证据条数（卡片副标题「基于 N 条记忆」）。 */
+    signalCount: integer("signal_count").notNull().default(0),
+    lastError: text("last_error"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [index("journal_days_status_date_idx").on(table.status, table.date)],
+);
+
+/** 每日洞察的版本快照：同一天可多次重写，每次 +1 版（保留最近 30 版）。 */
+export const journalEntries = sqliteTable(
+  "journal_entries",
+  {
+    id: text("id").primaryKey(),
+    date: text("date").notNull(),
+    version: integer("version").notNull(),
+    /** 触发来源：boot|memory|tick|manual（排查"为什么又重写了一版"用）。 */
+    trigger: text("trigger").notNull(),
+    headline: text("headline").notNull(),
+    summary: text("summary").notNull(),
+    bullets: text("bullets", { mode: "json" }).$type<Array<{ text: string; sourceIds: string[] }>>().notNull(),
+    actions: text("actions", { mode: "json" }).$type<Array<{ label: string; kind: string; targetId: string }>>().notNull(),
+    /** 进 prompt 的证据快照：可追溯来源，也便于排查"卡片为什么这么说"。 */
+    evidence: text("evidence", { mode: "json" }).$type<unknown[]>().notNull(),
+    /** 产出该版本的模型名；null = 模板兜底（模型档位未就绪/调用失败）。 */
+    model: text("model"),
+    sourceFingerprint: text("source_fingerprint").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("journal_entries_date_version_idx").on(table.date, table.version),
+    index("journal_entries_date_idx").on(table.date, table.createdAt),
+  ],
+);
+
+/**
+ * 工作空间「计划」里的任务（todo）。
+ *
+ * 与 `agent_sessions` 的关系：任务可以有 0..n 个会话（`assignee_session_id` 指最新那个），
+ * 会话也可以不属于任何任务。设计见 docs/workspace-plan-task-design.zh-CN.md。
+ */
+export const workspacePlanItems = sqliteTable(
+  "workspace_plan_items",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id").notNull(),
+    title: text("title").notNull(),
+    /** 背景与要求（markdown）；认领包原样给模型，不做概括。 */
+    detail: text("detail"),
+    /** 验收标准（Agent 的完成判据）。 */
+    acceptance: text("acceptance"),
+    /** 硬约束（口径/格式/禁止项）；NULL 按 [] 暴露。 */
+    constraints: text("constraints", { mode: "json" }).$type<string[]>(),
+    status: text("status", { enum: ["todo", "doing", "done", "dropped"] }).notNull().default("todo"),
+    priority: text("priority", { enum: ["low", "normal", "high", "urgent"] }).notNull().default("normal"),
+    ownerKind: text("owner_kind", { enum: ["unassigned", "user", "agent"] }).notNull().default("unassigned"),
+    ownerAgentId: text("owner_agent_id"),
+    /** 执行载体会话（认领 / 指派产生）；用户自己做时不绑会话。 */
+    assigneeSessionId: text("assignee_session_id"),
+    lastRunId: text("last_run_id"),
+    createdBy: text("created_by", { enum: ["user", "agent"] }).notNull().default("user"),
+    createdByAgentId: text("created_by_agent_id"),
+    dueAt: integer("due_at", { mode: "timestamp_ms" }),
+    /** 列内排序键：分数序字符串，字串比较即顺序。 */
+    rank: text("rank").notNull(),
+    tags: text("tags", { mode: "json" }).$type<string[]>(),
+    checklist: text("checklist", { mode: "json" }).$type<Array<{ id: string; text: string; done: boolean }>>(),
+    /** 材料引用（只存引用不存正文）。 */
+    refs: text("refs", { mode: "json" }).$type<Array<{ kind: string; id: string; title: string }>>(),
+    blockedBy: text("blocked_by", { mode: "json" }).$type<string[]>(),
+    resultSummary: text("result_summary"),
+    closeReason: text("close_reason"),
+    /** 认领租约：持有者（会话 id）+ 到期时间；无租约为 NULL。 */
+    leaseOwner: text("lease_owner"),
+    leaseExpiresAt: integer("lease_expires_at", { mode: "timestamp_ms" }),
+    leaseHeartbeatAt: integer("lease_heartbeat_at", { mode: "timestamp_ms" }),
+    /** 乐观锁：每次写入 +1，写操作必须带旧值。 */
+    version: integer("version").notNull().default(1),
+    completedAt: integer("completed_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("plan_items_ws_status_rank_idx").on(table.workspaceId, table.status, table.rank),
+    index("plan_items_ws_updated_idx").on(table.workspaceId, table.updatedAt),
+    index("plan_items_assignee_idx").on(table.assigneeSessionId),
+    index("plan_items_lease_idx").on(table.status, table.leaseExpiresAt),
+  ],
+);
+
+/**
+ * 计划项事件流：卡片时间线、审计、认领包 history 的共同来源。
+ *
+ * 为什么不只存"最后状态"：用户误拖拽后的理解成本、Agent"上次为什么没做完"
+ * 的线索、看板实时推送的 payload，三件事都要因果，不能只有结果。
+ */
+export const workspacePlanItemEvents = sqliteTable(
+  "workspace_plan_item_events",
+  {
+    id: text("id").primaryKey(),
+    itemId: text("item_id")
+      .notNull()
+      .references(() => workspacePlanItems.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(),
+    actorKind: text("actor_kind", { enum: ["user", "agent", "system"] }).notNull(),
+    actorId: text("actor_id"),
+    fromStatus: text("from_status"),
+    toStatus: text("to_status"),
+    /** 一句话摘要（时间线直接显示）。 */
+    summary: text("summary").notNull(),
+    /** JSON 细节（旧值/新值/释放原因），排查用。 */
+    payload: text("payload", { mode: "json" }).$type<Record<string, unknown>>(),
+    sessionId: text("session_id"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [index("plan_events_item_idx").on(table.itemId, table.createdAt)],
 );

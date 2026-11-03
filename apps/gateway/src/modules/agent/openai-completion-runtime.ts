@@ -35,7 +35,7 @@ interface ActiveRun {
   queue: AsyncEventQueue<RuntimeEvent>;
 }
 
-/** length 重试的预算封顶（与 MemoryCore runner 的 4 倍重试封顶一致）。 */
+/** length 重试的预算封顶（4 倍重试封顶）。 */
 const LENGTH_RETRY_MAX_TOKENS = 32_768;
 
 /** AgentRuntime adapter for providers whose extra request fields are not supported by Pi. */
@@ -127,7 +127,7 @@ export class OpenAiCompletionAgentRuntime implements AgentRuntime {
       // length 防护：推理型模型的思考段会先消耗 max_tokens，烧尽时以
       // finish_reason=length 且无正文返回。一次 4 倍加预算重试（封顶
       // LENGTH_RETRY_MAX_TOKENS，配置本身更大时保持原值不缩水）再判失败
-      // ——与 MemoryCore runner 同款策略。
+      // ——固定倍率重试策略。
       let content: string | null = null;
       const retryBudget = this.config.maxTokens === undefined
         ? undefined

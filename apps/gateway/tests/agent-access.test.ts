@@ -352,7 +352,7 @@ describe("提交幂等（PRD 7.4 重试复用同一提交标识）", () => {
         { kind: "result_text", title: "调研结论", content: "# 结论\n……" },
         { kind: "artifact_file", filename: "report.md", contentBase64: Buffer.from("# 报告").toString("base64") },
         { kind: "citation", targetUri: "everroom://documents/doc-1", quote: "上线时间" },
-        { kind: "candidate", candidateType: "memory", content: "用户偏好结论先行" },
+        { kind: "candidate", candidateType: "wiki", content: "用户偏好结论先行" },
       ]);
       expect(outcome.status).toBe("accepted");
       expect(outcome.results.map((item) => item.status)).toEqual([
@@ -375,7 +375,7 @@ describe("提交幂等（PRD 7.4 重试复用同一提交标识）", () => {
 
       await expect(service.submit(connection, "bad id!", [])).rejects.toThrow("agent_access_submission");
       await expect(
-        service.submit(connection, "ok-id", [{ kind: "candidate", candidateType: "memory", content: "  " }]),
+        service.submit(connection, "ok-id", [{ kind: "candidate", candidateType: "wiki", content: "  " }]),
       ).resolves.toMatchObject({ status: "accepted", results: [{ status: "rejected" }] });
     } finally {
       client.sqlite.close();

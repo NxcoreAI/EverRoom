@@ -262,7 +262,7 @@ describe("unified file catalog", () => {
       sourceKind: "artifact-imported", sourceKey: "artifact:path:case1", originalName: "方案.docx",
       stream: Readable.from([Buffer.from("PK\u0003\u0004 stub")]),
       mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-      roomId: "room-1", pipelines: { room: true, wiki: false, memory: true },
+      roomId: "room-1", pipelines: { room: true, wiki: false },
     });
     expect(imported.fileEntryId).toBeTruthy();
     // 目录回读带出来源与标签（产物导入），渲染端产物库按该 kind 分流。
@@ -276,7 +276,7 @@ describe("unified file catalog", () => {
       sourceKind: "artifact-imported", sourceKey: "artifact:path:case1", originalName: "方案.docx",
       stream: Readable.from([Buffer.from("PK\u0003\u0004 v2")]),
       mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-      roomId: "room-1", pipelines: { room: true, wiki: false, memory: true },
+      roomId: "room-1", pipelines: { room: true, wiki: false },
     });
     expect(again.fileEntryId).toBe(imported.fileEntryId);
     expect(again.versionDeduped).toBe(false);

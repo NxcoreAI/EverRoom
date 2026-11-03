@@ -10,16 +10,16 @@ export interface SlidesGenerationCheckpoint {
   budget?: GenerationBudgetSnapshot;
 }
 
-/** SQLite in production; an instance-local memory store for hosts without a database. */
+/** SQLite in production; an instance-local store for hosts without a database. */
 export class SlidesGenerationCheckpointStore {
-  private readonly memory = new Map<string, SlidesGenerationCheckpoint>();
+  private readonly entries = new Map<string, SlidesGenerationCheckpoint>();
 
   constructor(private readonly db?: GatewayDatabase) {}
 
   read(key: string): SlidesGenerationCheckpoint {
     const value = this.db
       ? this.db.select().from(slidesGenerationCheckpoints).where(eq(slidesGenerationCheckpoints.key, key)).get()?.state
-      : this.memory.get(key);
+      : this.entries.get(key);
     return structuredClone(value ?? { batches: {} });
   }
 
@@ -30,7 +30,7 @@ export class SlidesGenerationCheckpointStore {
       if (this.db) {
         this.db.insert(slidesGenerationCheckpoints).values({ key, state, updatedAt: new Date() })
           .onConflictDoUpdate({ target: slidesGenerationCheckpoints.key, set: { state, updatedAt: new Date() } }).run();
-      } else this.memory.set(key, structuredClone(state));
+      } else this.entries.set(key, structuredClone(state));
     };
     if (this.db) this.db.transaction(write);
     else write();
@@ -38,6 +38,6 @@ export class SlidesGenerationCheckpointStore {
 
   clear(key: string): void {
     if (this.db) this.db.delete(slidesGenerationCheckpoints).where(eq(slidesGenerationCheckpoints.key, key)).run();
-    else this.memory.delete(key);
+    else this.entries.delete(key);
   }
 }

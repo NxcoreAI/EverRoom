@@ -328,7 +328,9 @@ describe("database migrations", () => {
     )`);
     seeded.sqlite.exec("CREATE UNIQUE INDEX thesis_format_cards_room_source_idx ON thesis_format_cards (room_id, source_name)");
     seeded.sqlite.exec("DROP TABLE thesis_format_cards_workspace_new");
-    seeded.sqlite.prepare("DELETE FROM __drizzle_migrations WHERE created_at = ?").run(workspaceMigrationWhen);
+    // 删掉 0094 及其之后的记录：Drizzle 只重放 folderMillis 大于「最新已记录」的迁移，
+    // 后面还有新迁移时单删 0094 不会重放（0095 已把游标推过去）。
+    seeded.sqlite.prepare("DELETE FROM __drizzle_migrations WHERE created_at >= ?").run(workspaceMigrationWhen);
     seeded.sqlite.prepare(
       "INSERT INTO thesis_format_cards (id, room_id, format_card, source_file_entry_id, source_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
     ).run("card-legacy", "room-1", "{\"page\":{}}", null, "模版.docx", now, now);

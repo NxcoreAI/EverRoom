@@ -57,8 +57,6 @@ describe("cursor completion process server", () => {
       payload: {
         prompt: "KEEP\n补全文本",
         idempotencyKey: "cursor-completion-run-1",
-        captureMemory: false,
-        recallMemory: false,
         toolsEnabled: false,
         context: {
           selectedRoomId: "room-1",

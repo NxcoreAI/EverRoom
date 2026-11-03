@@ -133,6 +133,71 @@ describe("PiAgentRuntime", () => {
     }
   });
 
+  it("injects the user profile block into the system prompt", async () => {
+    let requestBody: { messages?: Array<{ role: string; content: unknown }> } | null = null;
+    const endpoint = createServer((request, response) => {
+      let raw = "";
+      request.on("data", (chunk) => { raw += chunk.toString(); });
+      request.on("end", () => {
+        requestBody = JSON.parse(raw) as typeof requestBody;
+        response.writeHead(200, { "content-type": "text/event-stream" });
+        response.end([
+          `data: ${JSON.stringify({ id: "profile", object: "chat.completion.chunk", model: "nxcore-test-model", choices: [{ index: 0, delta: { content: "ok" }, finish_reason: null }] })}`,
+          `data: ${JSON.stringify({ id: "profile", object: "chat.completion.chunk", model: "nxcore-test-model", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] })}`,
+          "data: [DONE]",
+          "",
+        ].join("\n\n"));
+      });
+    });
+    await new Promise<void>((resolvePromise) => endpoint.listen(0, "127.0.0.1", resolvePromise));
+    const address = endpoint.address();
+    if (!address || typeof address === "string") throw new Error("Test endpoint did not bind a TCP port");
+    const dataDir = await mkdtemp(join(tmpdir(), "nxcore-pi-profile-test-"));
+    temporaryDirectories.push(dataDir);
+    const runtime = new PiAgentRuntime({
+      provider: "nxcore-test-provider",
+      model: "nxcore-test-model",
+      baseUrl: `http://127.0.0.1:${address.port}/v1`,
+      apiKey: "nxcore-test-key",
+      api: "openai-completions",
+      maxTokens: 1024,
+      contextWindow: 8192,
+      temperature: 0.3,
+      reasoning: "off",
+      sessionsDir: join(dataDir, "sessions"),
+      workingDirectory: join(dataDir, "workspace"),
+      agentDirectory: join(dataDir, "config"),
+    });
+
+    try {
+      const run = await runtime.start({
+        runId: "run-profile",
+        sessionId: "session-profile",
+        runtimeSessionRef: null,
+        prompt: "帮我把这份周报改短",
+        pageLabel: "测试",
+        roomId: null,
+        userProfilePrompt: "【用户画像】\n- 职业：前端负责人",
+      });
+      for await (const _event of run.events) { /* consume */ }
+
+      // 回调里赋值会让 CFA 把 requestBody 收窄成 null，这里重新按声明类型取值
+      const body = requestBody as { messages?: Array<{ role: string; content: unknown }> } | null;
+      const system = (body?.messages ?? []).find((message) => message.role === "system");
+      const systemText = typeof system?.content === "string"
+        ? system.content
+        : JSON.stringify(system?.content ?? null);
+      expect(systemText).toContain("【用户画像】");
+      expect(systemText).toContain("职业：前端负责人");
+      // 画像只进 system prompt，不污染用户可见的 prompt
+      const user = (body?.messages ?? []).find((message) => message.role === "user");
+      expect(JSON.stringify(user?.content ?? null)).not.toContain("职业：前端负责人");
+    } finally {
+      await runtime.dispose();
+      await new Promise<void>((resolvePromise, reject) => endpoint.close((error) => error ? reject(error) : resolvePromise()));
+    }
+  });
+
   it("adds document text and image blocks to a multimodal prompt", async () => {
     let requestBody: Record<string, unknown> | null = null;
     const endpoint = createServer((request, response) => {
@@ -240,7 +305,6 @@ describe("PiAgentRuntime", () => {
         prompt: "整理检索结果",
         pageLabel: "首页",
         roomId: null,
-        roomSelectionRequired: true,
         availableRooms: [{
           id: "room-java",
           title: "Java Space",
@@ -268,11 +332,13 @@ describe("PiAgentRuntime", () => {
       });
       expect(events.some((event) => event.type === "run.completed")).toBe(false);
       const request = JSON.stringify(requestBodies[0]);
-      expect(request).toContain("<available_rooms>");
-      expect(request).toContain("Java Space");
-      expect(request).toContain("Java 后端学习材料");
-      expect(request).toContain("形成完整的后端知识体系");
-      expect(request).toContain("candidateRoomIds");
+      // Room 归属选择已从写入链路摘除：不再注入可写入 Room 快照，也不再引导
+      // 模型传 roomId 或调用已删除的 context_room_list。
+      expect(request).toContain("不需要用户先选择或确认 Room 归属");
+      expect(request).not.toContain("<available_rooms>");
+      expect(request).not.toContain("candidateRoomIds");
+      expect(request).not.toContain("document_write_begin.roomId");
+      expect(request).not.toContain("context_room_list");
     } finally {
       await runtime.dispose();
       await new Promise<void>((resolvePromise, reject) => endpoint.close((error) => error ? reject(error) : resolvePromise()));
@@ -766,136 +832,6 @@ describe("PiAgentRuntime", () => {
     }
   });
 
-  it("injects Room-bound memories into the memory-recall block when the run has a roomId", async () => {
-    const requestBodies: unknown[] = [];
-    const endpoint = createServer((request, response) => {
-      let raw = "";
-      request.on("data", (chunk: string) => { raw += chunk; });
-      request.on("end", () => {
-        if (request.url?.includes("/chat/completions")) requestBodies.push(JSON.parse(raw));
-        response.writeHead(200, {
-          "content-type": "text/event-stream",
-          "cache-control": "no-cache",
-          connection: "keep-alive",
-        });
-        response.write(`data: ${JSON.stringify({
-          id: "chatcmpl-room-memory",
-          object: "chat.completion.chunk",
-          created: 1,
-          model: "nxcore-test-model",
-          choices: [{ index: 0, delta: { content: "好的" }, finish_reason: null }],
-        })}\n\n`);
-        response.write(`data: ${JSON.stringify({
-          id: "chatcmpl-room-memory",
-          object: "chat.completion.chunk",
-          created: 1,
-          model: "nxcore-test-model",
-          choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
-        })}\n\n`);
-        response.end("data: [DONE]\n\n");
-      });
-    });
-    // MemoryCore 全端点 500：四路全局召回静默降级，只剩 Room 注入段——
-    // 同时验证 MemoryCore 故障不影响 Room 记忆注入。
-    const memoryCore = createServer((_request, response) => {
-      response.writeHead(500, { "content-type": "application/json" });
-      response.end(JSON.stringify({ error: "memory core unavailable" }));
-    });
-    await Promise.all([
-      new Promise<void>((resolvePromise) => endpoint.listen(0, "127.0.0.1", resolvePromise)),
-      new Promise<void>((resolvePromise) => memoryCore.listen(0, "127.0.0.1", resolvePromise)),
-    ]);
-    const address = endpoint.address();
-    const memoryAddress = memoryCore.address();
-    if (!address || typeof address === "string" || !memoryAddress || typeof memoryAddress === "string") {
-      throw new Error("Test endpoints did not bind TCP ports");
-    }
-
-    const dataDir = await mkdtemp(join(tmpdir(), "nxcore-pi-room-memory-test-"));
-    temporaryDirectories.push(dataDir);
-    const resolvedRoomIds: Array<string | null> = [];
-    const runtime = new PiAgentRuntime({
-      provider: "nxcore-test-provider",
-      model: "nxcore-test-model",
-      baseUrl: `http://127.0.0.1:${address.port}/v1`,
-      apiKey: "nxcore-test-key",
-      api: "openai-completions",
-      maxTokens: 1024,
-      contextWindow: 8192,
-      temperature: 0.3,
-      reasoning: "off",
-      sessionsDir: join(dataDir, "sessions"),
-      workingDirectory: join(dataDir, "workspace"),
-      agentDirectory: join(dataDir, "config"),
-      memory: {
-        baseUrl: `http://127.0.0.1:${memoryAddress.port}`,
-        apiKey: "memory-key",
-        serviceId: "everroom",
-        teamId: "everroom",
-        agentId: "pi-agent",
-        userId: "local-user",
-        recallLimit: 5,
-        charBudget: 2000,
-      },
-    }, {
-      resolveRoomMemories: async (input) => {
-        resolvedRoomIds.push(input.roomId);
-        return input.roomId === "room-a"
-          ? [{ memoryId: "m1", type: "fact", content: "Room A 的甄选记忆", updatedAt: "2026-09-01T00:00:00Z" }]
-          : [];
-      },
-    });
-
-    try {
-      const run = await runtime.start({
-        runId: "run-room-memory",
-        sessionId: "agent-session",
-        runtimeSessionRef: null,
-        prompt: "这个 Room 里我存了什么记忆",
-        pageLabel: "Room A",
-        roomId: "room-a",
-        availableRooms: [{ id: "room-a", title: "Room A" }],
-      });
-      const events: RuntimeEvent[] = [];
-      for await (const event of run.events) events.push(event);
-      expect(events.at(-1)?.type).toBe("run.completed");
-
-      const firstRequest = JSON.stringify(requestBodies[0]);
-      expect(firstRequest).toContain("<memory-context>");
-      expect(firstRequest).toContain("[Room 记忆]");
-      expect(firstRequest).toContain("Room A 的甄选记忆");
-      expect(firstRequest).not.toContain("[相关记忆]");
-      expect(resolvedRoomIds).toEqual(["room-a"]);
-
-      // recallMemory=false 的 run 不触发解析；无 Room 的 run 同样不触发。
-      const noRecall = await runtime.start({
-        runId: "run-no-recall",
-        sessionId: "agent-session",
-        runtimeSessionRef: run.runtimeSessionRef,
-        prompt: "再问一句",
-        pageLabel: "Room A",
-        roomId: "room-a",
-        recallMemory: false,
-      });
-      for await (const event of noRecall.events) { /* drain */ }
-      const noRoom = await runtime.start({
-        runId: "run-no-room",
-        sessionId: "agent-session",
-        runtimeSessionRef: run.runtimeSessionRef,
-        prompt: "再问一句",
-        pageLabel: "Room A",
-        roomId: null,
-      });
-      for await (const event of noRoom.events) { /* drain */ }
-      expect(resolvedRoomIds).toEqual(["room-a"]);
-    } finally {
-      await runtime.dispose();
-      await Promise.all([
-        new Promise<void>((resolvePromise, reject) => endpoint.close((error) => error ? reject(error) : resolvePromise())),
-        new Promise<void>((resolvePromise, reject) => memoryCore.close((error) => error ? reject(error) : resolvePromise())),
-      ]);
-    }
-  });
 
   it("resets the streamed message body when pi retries a truncated stream (#199)", async () => {
     let requestCount = 0;

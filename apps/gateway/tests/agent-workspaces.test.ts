@@ -44,10 +44,14 @@ describe("agent workspaces", () => {
     expect(initial.statusCode).toBe(200);
     const workspaces = initial.json<AgentWorkspace[]>();
     expect(workspaces).toHaveLength(1);
+    // 项目空间目录化（P0）：默认空间也绑目录，固定落在 Workspace/inbox。
     expect(workspaces[0]).toMatchObject({
       id: "default",
       name: "默认工作区",
-      path: null,
+      path: join(config.dataDir, "Workspace", "inbox"),
+      slug: "inbox",
+      rootMode: "managed",
+      layoutVersion: 2,
       kind: "default",
     });
 

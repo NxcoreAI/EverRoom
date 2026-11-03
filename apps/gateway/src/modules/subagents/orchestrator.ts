@@ -542,8 +542,6 @@ export class SubagentOrchestrator {
         prompt,
         pageLabel: `Subagent: ${definition.name}`,
         roomId,
-        captureMemory: false,
-        recallMemory: false,
         toolsEnabled: true,
         // 结构化输入同时以元数据交给工具（不重复进 prompt）：工具可按阶段
         // 收紧取数，例如 planner 的 arrange 阶段不再回文档正文。

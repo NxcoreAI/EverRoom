@@ -83,8 +83,6 @@ async function startRound(
     pageLabel: "thinking request",
     roomId: null,
     toolsEnabled: false,
-    captureMemory: false,
-    recallMemory: false,
   } as never);
   for await (const _event of run.events) { /* drain */ }
   return run.runtimeSessionRef;

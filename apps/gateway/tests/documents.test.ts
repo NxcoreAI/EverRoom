@@ -1313,7 +1313,9 @@ describe('document transactions', () => {
       method: 'tools/list',
       params: {},
     }, { agentSessionId: 'session-1', runId: 'run-1', roomId: 'room-1' })
-    const result = messages[0]?.result as { tools?: Array<{ name: string; description: string }> }
+    const result = messages[0]?.result as {
+      tools?: Array<{ name: string; description: string; inputSchema?: { properties?: Record<string, unknown> } }>
+    }
     expect(result.tools?.map((tool) => tool.name)).toEqual([
       'document_list',
       'document_read',
@@ -1338,6 +1340,9 @@ describe('document transactions', () => {
       .toContain('只要求分析、总结、整理、写方案、起草、润色，都不代表要创建文档')
     expect(result.tools?.find((tool) => tool.name === 'document_write_begin')?.description)
       .toContain('不需要先让用户选择 Room')
+    // Room 归属选择已摘除：begin 不再暴露 roomId 参数（原为声明了但 execute 从不读取的死参数）。
+    const beginSchema = result.tools?.find((tool) => tool.name === 'document_write_begin')?.inputSchema
+    expect(Object.keys(beginSchema?.properties ?? {})).toEqual(['mode', 'title', 'format'])
     // 写作规则已迁往 doc-writer skill；append 描述只保留机械契约与引用转交纪律（M3/V2）。
     expect(result.tools?.find((tool) => tool.name === 'document_write_append')?.description)
       .toContain('document_draft 返回的 invocationId 与 chunkIndex')
