@@ -113,10 +113,13 @@ export function openPageImagesConfirm(
     styleSessionId: string | null;
     plan: Record<string, unknown>;
     stylePalette: { primary?: string; accent?: string; background?: string } | null;
+    /** 试看轮的落页范围（0 基页序）：范围外页不进会话不生图，配图留给整册生成。plan 本身保持整册。 */
+    pageScope?: ReadonlySet<number>;
   },
   deps: SlidesPageImagesStageDeps,
 ): PageImagesStageOutcome {
-  const pending = collectPendingImagePages(input.plan);
+  const pending = collectPendingImagePages(input.plan)
+    .filter((item) => !input.pageScope || input.pageScope.has(item.pageIndex));
   if (pending.length === 0) {
     return {
       kind: "failed",

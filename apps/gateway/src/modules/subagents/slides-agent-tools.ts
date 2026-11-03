@@ -165,6 +165,32 @@ function createPlannerPrewarmTool(tool: PiAgentRuntimeTool): PiAgentRuntimeTool 
   };
 }
 
+/** planner 工作区清单调用闸：模型反复列目录是编排超时的另一来源（实测把已知
+ *  文件名全串进一个 query 连查多次）；超过上限直接返回 skip 指令推回产出。 */
+const PLANNER_WORKSPACE_LIST_LIMIT = 4;
+const plannerWorkspaceListByRun = new Map<string, number>();
+
+function createPlannerWorkspaceListTool(tool: PiAgentRuntimeTool): PiAgentRuntimeTool {
+  return {
+    ...tool,
+    execute: async (input, params, signal, onUpdate) => {
+      const count = (plannerWorkspaceListByRun.get(input.runId) ?? 0) + 1;
+      plannerWorkspaceListByRun.set(input.runId, count);
+      if (plannerWorkspaceListByRun.size > 1_000) plannerWorkspaceListByRun.clear();
+      if (count > PLANNER_WORKSPACE_LIST_LIMIT) {
+        return {
+          content: JSON.stringify({
+            skipped: true,
+            reason: "工作区文件检索已达上限（本批最多 4 次）。请用已返回的素材结果编排；确实缺素材的页写 imagePrompt，不要再列目录。",
+          }),
+          details: { skipped: true, count },
+        };
+      }
+      return tool.execute(input, params, signal, onUpdate);
+    },
+  };
+}
+
 /** arrange 阶段 conversation_search 限额：模型反复查历史而不提交时，明确推回产出。 */
 function createPlannerConversationSearchTool(tool: PiAgentRuntimeTool): PiAgentRuntimeTool {
   return {
@@ -281,7 +307,9 @@ export function createSlidesPlannerAgentTools(deps: {
     ...filterTools(deps.documentTools, SLIDES_PLANNER_DOCUMENT_TOOL_ALLOWLIST)
       .map((tool) => (tool.name === "document_read" ? createPlannerDocumentReadTool(tool) : tool)),
     ...filterTools(deps.webSearchTools, SLIDES_PLANNER_WEB_SEARCH_TOOL_ALLOWLIST),
-    ...(deps.workspaceFileTools ? filterTools(deps.workspaceFileTools, new Set(["workspace_files_list"])) : []),
+    ...(deps.workspaceFileTools
+      ? filterTools(deps.workspaceFileTools, new Set(["workspace_files_list"])).map(createPlannerWorkspaceListTool)
+      : []),
     ...(deps.readWorkspaceFileText ? [createWorkspaceFileReadTool(deps.readWorkspaceFileText)] : []),
     // 配图预热：编排中生图入池（模块内 token 注册表寻址，装配无额外依赖）。
     // 分批编排的预热由网关统一处理：模型在批内调用预热工具时直接跳过，不耗轮次。

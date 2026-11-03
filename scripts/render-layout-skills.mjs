@@ -55,7 +55,7 @@ function renderSkill(agent) {
   const core = [
     spec.slice(0, componentStart).trimEnd(),
     "",
-    "使用 component 时，先读 `skills/layout-tree-skill/components.md`：按信息语义选择组件，再核对该组件的参数、容量和实际支持的 style。该参考由权威正文生成；基础节点页无需加载。",
+    "使用 component 前读一遍 `skills/layout-tree-skill/components.md`：按信息语义选择组件，再核对该组件的参数、容量和实际支持的 style。同一对话只读这一次，后续页面直接沿用上下文内容核对，不重复读取。该参考由权威正文生成；基础节点页无需加载。",
     "",
     spec.slice(componentEnd),
   ].join("\n");

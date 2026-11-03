@@ -38,6 +38,21 @@ function firstColumnNames(text: string): string[] {
   return names;
 }
 
+/** 用途分类表的组件列（第 2 列）里的全部反引号名；条件列的提及不计入。 */
+function purposeColumnNames(text: string): string[] {
+  const names: string[] = [];
+  for (const line of text.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("|")) continue;
+    const cells = trimmed.split("|");
+    const componentCell = cells[2] ?? "";
+    for (const match of componentCell.matchAll(/`([A-Za-z][A-Za-z0-9]*)`/gu)) {
+      names.push(match[1]!);
+    }
+  }
+  return names;
+}
+
 const ENGINE_NAMES = [...COMPONENT_NAMES].sort();
 
 describe("布局语法文档与引擎组件清单同步", () => {
@@ -55,5 +70,24 @@ describe("布局语法文档与引擎组件清单同步", () => {
 
   it("清单数量与引擎一致（27 核心 + 10 原子 = 37）", () => {
     expect(ENGINE_NAMES).toHaveLength(37);
+  });
+
+  it("用途分类恰好 10 类，覆盖全部组件：无重复、无遗漏、无引擎外名字", () => {
+    const spec = readSpec();
+    const table = section(spec, "按展示用途选组件");
+    const rows = table.split("\n").filter((line) => line.trim().startsWith("|") && !/^\|\s*---/.test(line.trim()) && !line.includes("展示用途"));
+    expect(rows).toHaveLength(10);
+    const classified = purposeColumnNames(table);
+    expect(new Set(classified).size).toBe(classified.length);
+    expect([...new Set(classified)].sort()).toEqual(ENGINE_NAMES);
+  });
+
+  it("生成后的主技能（SKILL.md）包含用途索引", () => {
+    const skill = readFileSync(
+      join(__dirname, "../../../../../../agents/slides-layouter/skills/layout-tree-skill/SKILL.md"),
+      "utf8",
+    );
+    expect(skill).toContain("## 按展示用途选组件");
+    expect(skill).toContain("导航与章节组织");
   });
 });

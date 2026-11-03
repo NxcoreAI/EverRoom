@@ -207,7 +207,9 @@ describe("semantic content contract", () => {
     expect(validate({ schemaVersion: "storyboard/v3", pages: [semanticCases[0]!.page] })).toBe(true);
     expect(validate({})).toBe(false);
     expect(validate({ schemaVersion: "storyboard/v2", pages: [semanticCases[0]!.page] })).toBe(false);
-    expect(validate({ schemaVersion: "storyboard/v3", pages: Array(5).fill(semanticCases[0]!.page) })).toBe(false);
+    // 修复批量与输入 repairPageIds 对齐（12）：满批可交，超批仍拒。
+    expect(validate({ schemaVersion: "storyboard/v3", pages: Array(12).fill(semanticCases[0]!.page) })).toBe(true);
+    expect(validate({ schemaVersion: "storyboard/v3", pages: Array(13).fill(semanticCases[0]!.page) })).toBe(false);
   });
 });
 

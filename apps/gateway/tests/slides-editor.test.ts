@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -398,5 +398,17 @@ describe("页级修复的边界（只收被点名的页）", () => {
     expect((input.priorStoryboard as { pages: unknown[] }).pages.length).toBe(1);
     expect(input.repairPageIds).toEqual(["page-02"]);
     expect((input.defects as string[])[0]).toContain("形态");
+  });
+});
+
+describe("编辑器 schema 批量口径一致", () => {
+  it("输出 pages 上限不小于输入 repairPageIds 上限（v2 每 4 页的旧限曾拒收 5+ 页修复）", () => {
+    const readSchema = (name: string) =>
+      JSON.parse(readFileSync(resolve("../../agents/slides-editor/schemas", name), "utf8")) as {
+        properties: Record<string, { maxItems?: number; items?: { maxItems?: number } }>;
+      };
+    const outputPages = readSchema("output.schema.json").properties.pages!.maxItems!;
+    const repairIds = readSchema("input.schema.json").properties.repairPageIds!.maxItems!;
+    expect(outputPages).toBeGreaterThanOrEqual(repairIds);
   });
 });

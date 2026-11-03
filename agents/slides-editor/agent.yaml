@@ -23,8 +23,8 @@ policy:
   # 冒烟测试期放宽到 900s，与 planner 的修复轮余量对齐。
   timeoutSeconds: 900
   model:
-    # 与主 Agent 同底座（主模型，deepseek 系；已具备视觉能力，自审直接看渲染图）。
-    # 输出预算 32768 覆盖「整页 v2 树 + 校验修复轮」；思考档位按 A/B 结论调整
-    # （DeepSeek 系 reasoning:"off" 会显式发 thinking:disabled，不再烧输出预算）。
+    # 与主 Agent 同底座（主模型，deepseek 系）。修复任务=拿长页逐字文本对照来源逐数字
+    # 核对，推理量远超输出本体（2026-10-31 实测 98k 思考字符直接烧穿 32768 预算、
+    # 0 次工具调用即截断）。与 planner/layouter 对齐 131072，覆盖多页修复 + 思考。
     reasoning: "low"
-    maxTokens: 32768
+    maxTokens: 131072

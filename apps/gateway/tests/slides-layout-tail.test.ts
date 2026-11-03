@@ -324,6 +324,56 @@ describe("runLayouterTail", () => {
     expect(result.visualValidation).toEqual(["reviewed", "reviewed"]);
   });
 
+  it("主内容未采用组件时回投修订一次，采纳后统计采用率；修订不收敛则保留原页", async () => {
+    const validateInput = new Ajv({ strict: false }).compile(JSON.parse(readFileSync(resolve("../../agents/slides-layouter/schemas/input.schema.json"), "utf8")));
+    const mkBlock = (id: string, body: string) => ({ id, type: "text" as const, text: body, sourceRefs: ["src-1"], priority: "primary" as const, mustShow: true });
+    const page = {
+      id: "page-1", sourceRefs: ["src-1"], role: "content" as const, message: "推进节奏",
+      blocks: [mkBlock("b1", "调研市场"), mkBlock("b2", "设计方案"), mkBlock("b3", "交付上线")],
+      relations: [{ type: "precedes" as const, refs: ["b1", "b2", "b3"], basis: "先后推进" }],
+      focusRefs: ["b1", "b2", "b3"], constraints: { verbatimRefs: [] }, notes: "", omissions: [],
+    };
+    const heading = { type: "text", token: "h2", text: "推进节奏", slot: { col: [1, 12], row: [1, 1] } };
+    // 首轮：3 个独立 text 节点承载（短文本不触发等宽列检查；无组件触发采用修订）。
+    const plainTree = { version: 2, role: "content", composition: "swiss", notes: "", nodes: [
+      heading,
+      { type: "text", token: "body", text: "调研市场", slot: { col: [1, 3], row: [3, 4] } },
+      { type: "text", token: "body", text: "设计方案", slot: { col: [5, 8], row: [3, 5] } },
+      { type: "text", token: "body", text: "交付上线", slot: { col: [9, 12], row: [3, 6] } },
+    ] };
+    // 修订轮：timeline 组件承载整组。
+    const componentTree = { version: 2, role: "content", composition: "swiss", notes: "", nodes: [
+      heading,
+      { type: "component", name: "timeline", items: [
+        { label: "调研市场", text: "调研市场" }, { label: "设计方案", text: "设计方案" }, { label: "交付上线", text: "交付上线" },
+      ], slot: { col: [1, 12], row: [2, 8] } },
+    ] };
+    const outputs = [plainTree, componentTree, componentTree];
+    const calls: Record<string, unknown>[] = [];
+    const harness = makeHarness([]);
+    harness.deps.dispatchPage = async input => {
+      calls.push(input);
+      expect(validateInput(input), JSON.stringify(validateInput.errors)).toBe(true);
+      const tree = input.currentTree ?? outputs.shift()!;
+      const bindings = tree === componentTree
+        ? page.blocks.map(b => ({ blockId: b.id, paths: ["nodes/1"] }))
+        : page.blocks.map((b, i) => ({ blockId: b.id, paths: [`nodes/${i + 1}`] }));
+      return { status: "completed", result: { structuredOutput: { tree, designIntent: "标题在上", bindings } } } as any;
+    };
+    const plan = { title: "test", pages: [{ content: page }] };
+    const result = JSON.parse((await runLayouterTail(harness.deps, tailArgs(plan, harness))).content);
+    expect(result.status).toBe("completed");
+    // 设计 → 采用修订 → 自审，共 3 次派发；修订反馈点名推荐组件。
+    expect(calls).toHaveLength(3);
+    expect(String((calls[1] as { revisionFeedback?: string }).revisionFeedback)).toContain("timeline");
+    expect(result.warnings.join()).toContain("已按闸门提示修订");
+    expect(result.componentAdoption).toMatchObject({
+      eligibleGroups: 1,
+      adoptedGroups: 1,
+      componentUsage: { timeline: 1 },
+    });
+  });
+
   it("素材长宽比回填进 layouter 输入：模型按真实比例切框，不必盲猜", async () => {
     const png = new Uint8Array(createCanvas(1600, 900).toBuffer("image/png")).slice();
     const harness = makeHarness([]);
@@ -433,12 +483,15 @@ describe("runLayouterTail", () => {
     const onUpdate = vi.fn();
     const result = await runLayouterTail(harness.deps, {
       ...tailArgs(planOf([CONTENT_TREE, CHART_TREE]), harness),
+      workspaceId: "ws-1",
       onUpdate,
     });
     const payload = JSON.parse(result.content);
     expect(payload.status).toBe("completed");
     // 骨架入库阶段不广播 done：generate 请求带 deferDone。
     expect(harness.bridge.generate).toHaveBeenCalledWith(expect.objectContaining({ deferDone: true }));
+    // 骨架入会话所属工作区：漏传会落到默认工作区，用户在当前空间看不到产物。
+    expect(harness.bridge.generate).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: "ws-1" }));
     const final = onUpdate.mock.calls.at(-1)?.[0] as { details: Record<string, unknown> };
     expect(final.details).toMatchObject({
       stage: "page_applied",

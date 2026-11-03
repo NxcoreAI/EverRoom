@@ -322,6 +322,13 @@ describe('createSubagentPiTools slides_draft', () => {
     expect(validate({ task: 'generate', pageImagesDecision: 'accept' })).toBe(true)
     // 试看：previewPages 只落前 N 页，草稿与风格保留。
     expect(validate({ task: 'generate', draftDocumentId: 'draft-1', previewPages: 2 })).toBe(true)
+    expect(validate({ task: 'generate', draftDocumentId: 'draft-1', previewPages: 32 })).toBe(true)
+    expect(validate({ task: 'generate', draftDocumentId: 'draft-1', previewPages: 33 })).toBe(false)
+    // 整轮重生成：复用上一轮方案与 deck 文件重排落页。
+    expect(validate({ task: 'generate', draftDocumentId: 'draft-1', regenerateDeck: true })).toBe(true)
+    // 指定页重生成：只重排这些页。
+    expect(validate({ task: 'generate', draftDocumentId: 'draft-1', regeneratePages: [2] })).toBe(true)
+    expect(validate({ task: 'generate', draftDocumentId: 'draft-1', regeneratePages: [] })).toBe(false)
     expect(validate({ task: 'edit', instruction: '放大标题', fileId: 'file-1' })).toBe(true)
     expect(validate({ task: 'edit', instruction: '放大标题', rejectPageImage: 2 })).toBe(false)
     expect(validate({ task: 'style_select', styleSessionId: 'style-1', candidateIndex: 2, instruction: '选这个' })).toBe(false)
@@ -585,6 +592,209 @@ describe('createSubagentPiTools slides_draft', () => {
     expect(trashDraft).toHaveBeenCalledWith('doc-draft-1')
   })
 
+  it('generate → regenerateDeck：复用方案与同一 deck 文件重排，不再编排不再建文件', async () => {
+    const arrangePlan = {
+      ...planFixture,
+      phase: 'arrange',
+      pages: withSemanticContent(DRAFT_MD_MAIN, 'doc-draft-1').map((page) => ({ ...page, density: 'standard' })),
+    }
+    const orchestrator = orchestratorByAgent({
+      'slides-planner': { result: { text: '', structuredOutput: arrangePlan } },
+    })
+    const { office, generate, fillPage } = makeLayouterOffice()
+    const trashDraft = vi.fn(async () => {})
+    const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestrator, {
+      resolveDocumentForDraft: () => draftSnapshot,
+      trashSlidesDraftDocument: trashDraft,
+      slidesLayoutOffice: office,
+      slidesEditor: { active: true },
+      searchMaterials: () => [],
+    })
+    const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
+
+    const first = await slidesDraft.execute(
+      run as never,
+      { task: 'generate', instruction: '受众是领导，内容均衡', draftDocumentId: 'doc-draft-1' } as never,
+      undefined,
+      vi.fn(),
+    )
+    expect(JSON.parse((first as { content: string }).content)).toMatchObject({ status: 'completed', fileEntryId: 'file-1' })
+    expect(generate).toHaveBeenCalledTimes(1)
+
+    orchestrator.dispatch.mockClear()
+    fillPage.mockClear()
+    const second = await slidesDraft.execute(
+      run as never,
+      { task: 'generate', draftDocumentId: 'doc-draft-1', regenerateDeck: true } as never,
+      undefined,
+      vi.fn(),
+    )
+
+    const payload = JSON.parse((second as { content: string }).content)
+    expect(payload).toMatchObject({ status: 'completed', fileEntryId: 'file-1', fileName: '季度汇报.pptx' })
+    // 不再编排：无 planner 派发，三页布局全部重跑。
+    const agents = orchestrator.dispatch.mock.calls.map((call) => (call[0] as Record<string, unknown>).agentId)
+    expect(agents).not.toContain('slides-planner')
+    expect(agents.filter((agentId) => agentId === 'slides-layouter')).toHaveLength(3)
+    // 同一 deck：不新建文件，三页全部原地重填。
+    expect(generate).toHaveBeenCalledTimes(1)
+    expect(fillPage).toHaveBeenCalledTimes(3)
+    expect(fillPage.mock.calls.every((call) => call[0]!.fileId === 'file-1')).toBe(true)
+  })
+
+  it('generate → regeneratePages=[2]：只重排指定页，其余页保持已落定', async () => {
+    const arrangePlan = {
+      ...planFixture,
+      phase: 'arrange',
+      pages: withSemanticContent(DRAFT_MD_MAIN, 'doc-draft-1').map((page) => ({ ...page, density: 'standard' })),
+    }
+    const orchestrator = orchestratorByAgent({
+      'slides-planner': { result: { text: '', structuredOutput: arrangePlan } },
+    })
+    const { office, generate, fillPage } = makeLayouterOffice()
+    const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestrator, {
+      resolveDocumentForDraft: () => draftSnapshot,
+      trashSlidesDraftDocument: async () => {},
+      slidesLayoutOffice: office,
+      slidesEditor: { active: true },
+      searchMaterials: () => [],
+    })
+    const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
+    await slidesDraft.execute(
+      run as never,
+      { task: 'generate', instruction: '受众是领导，内容均衡', draftDocumentId: 'doc-draft-1' } as never,
+      undefined,
+      vi.fn(),
+    )
+
+    orchestrator.dispatch.mockClear()
+    fillPage.mockClear()
+    const result = await slidesDraft.execute(
+      run as never,
+      { task: 'generate', draftDocumentId: 'doc-draft-1', regeneratePages: [2] } as never,
+      undefined,
+      vi.fn(),
+    )
+    const payload = JSON.parse((result as { content: string }).content)
+    expect(payload).toMatchObject({ status: 'completed', fileEntryId: 'file-1' })
+    // 只重排第 2 页：无编排，布局只派发一页（页序 1），其余页按已落定跳过。
+    const agents = orchestrator.dispatch.mock.calls.map((call) => (call[0] as Record<string, unknown>).agentId)
+    expect(agents).not.toContain('slides-planner')
+    const layouterInputs = orchestrator.dispatch.mock.calls
+      .map((call) => call[0] as Record<string, unknown>)
+      .filter((dispatch) => dispatch.agentId === 'slides-layouter')
+      .map((dispatch) => dispatch.input as Record<string, unknown>)
+    expect(layouterInputs).toHaveLength(1)
+    expect(layouterInputs[0]!.pageIndex).toBe(1)
+    expect(fillPage).toHaveBeenCalledTimes(1)
+    expect((fillPage.mock.calls[0]![0] as { slideIndex: number }).slideIndex).toBe(1)
+    expect(generate).toHaveBeenCalledTimes(1)
+  })
+
+  it('regeneratePages 越界：返回 failed 并给出本轮有效页码范围', async () => {
+    const arrangePlan = {
+      ...planFixture,
+      phase: 'arrange',
+      pages: withSemanticContent(DRAFT_MD_MAIN, 'doc-draft-1').map((page) => ({ ...page, density: 'standard' })),
+    }
+    const orchestrator = orchestratorByAgent({
+      'slides-planner': { result: { text: '', structuredOutput: arrangePlan } },
+    })
+    const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestrator, {
+      resolveDocumentForDraft: () => draftSnapshot,
+      slidesLayoutOffice: makeLayouterOffice().office,
+      slidesEditor: { active: true },
+      searchMaterials: () => [],
+    })
+    const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
+    await slidesDraft.execute(
+      run as never,
+      { task: 'generate', instruction: '生成', draftDocumentId: 'doc-draft-1' } as never,
+      undefined,
+      vi.fn(),
+    )
+    orchestrator.dispatch.mockClear()
+    const result = await slidesDraft.execute(
+      run as never,
+      { task: 'generate', draftDocumentId: 'doc-draft-1', regeneratePages: [9] } as never,
+      undefined,
+      vi.fn(),
+    )
+    const payload = JSON.parse((result as { content: string }).content)
+    expect(payload).toMatchObject({ status: 'failed', errorCode: 'slides_regenerate_pages_invalid' })
+    expect(String(payload.message)).toContain('1~3')
+    expect(orchestrator.dispatch).not.toHaveBeenCalled()
+  })
+
+  it('generate：试看 1 页不含封面——编排与落页都只做首个内容页，草稿保留', async () => {
+    // 编排输入已按试看范围裁剪（只剩业绩页），夹具须按裁剪后的草稿算来源 hash。
+    const scopedArrangePlan = {
+      ...planFixture,
+      phase: 'arrange',
+      pages: withSemanticContent('## 业绩\n数据：Q1: 1.2 亿；Q2: 1.5 亿\n', 'doc-draft-1')
+        .map((page) => ({ ...page, density: 'standard' })),
+    }
+    const orchestrator = orchestratorByAgent({
+      'slides-planner': { result: { text: '', structuredOutput: scopedArrangePlan } },
+    })
+    const trashDraft = vi.fn(async () => {})
+    const { office, generate, fillPage } = makeLayouterOffice()
+    const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestrator, {
+      resolveDocumentForDraft: () => draftSnapshot,
+      trashSlidesDraftDocument: trashDraft,
+      slidesLayoutOffice: office,
+      slidesEditor: { active: true },
+      searchMaterials: () => [],
+    })
+    const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
+    const result = await slidesDraft.execute(
+      run as never,
+      { task: 'generate', instruction: '先看一页效果', draftDocumentId: 'doc-draft-1', previewPages: 1 } as never,
+      undefined,
+      vi.fn(),
+    )
+    const payload = JSON.parse((result as { content: string }).content)
+    expect(payload).toMatchObject({ status: 'completed', previewPages: 1, fileEntryId: 'file-1' })
+    expect(String(payload.message)).toContain('不含封面')
+    // 编排只收到 1 个内容页（业绩），封面不进编排。
+    const plannerInput = orchestrator.dispatch.mock.calls[0]![0] as { input: Record<string, unknown> }
+    expect(plannerInput.input.draftPages).toHaveLength(1)
+    expect((plannerInput.input.draftPages as Array<{ title: string }>)[0]!.title).toBe('业绩')
+    // 只落 1 页，且是首个内容页（业绩），封面不占试看名额；
+    // planner 把单页编成 cover 时（夹具 index 0 即 cover），落页前改回 content 角色。
+    const layouterInputs = orchestrator.dispatch.mock.calls
+      .map((call) => call[0] as Record<string, unknown>)
+      .filter((dispatch) => dispatch.agentId === 'slides-layouter')
+      .map((dispatch) => dispatch.input as Record<string, unknown>)
+    expect(layouterInputs).toHaveLength(1)
+    expect((layouterInputs[0]!.content as { message?: string }).message).toBe('业绩')
+    expect(layouterInputs[0]!.role).not.toBe('cover')
+    expect(fillPage).toHaveBeenCalledTimes(1)
+    // 试看不回收草稿。
+    expect(trashDraft).not.toHaveBeenCalled()
+    expect(generate).toHaveBeenCalledTimes(1)
+  })
+
+  it('regenerateDeck：没有可复用的生成记录时返回 failed 并指引重新生成', async () => {
+    const orchestrator = orchestratorByAgent({})
+    const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestrator, {
+      resolveDocumentForDraft: () => draftSnapshot,
+      slidesLayoutOffice: makeLayouterOffice().office,
+      slidesEditor: { active: true },
+      searchMaterials: () => [],
+    })
+    const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
+    const result = await slidesDraft.execute(
+      run as never,
+      { task: 'generate', draftDocumentId: 'doc-draft-1', regenerateDeck: true } as never,
+      undefined,
+      vi.fn(),
+    )
+    const payload = JSON.parse((result as { content: string }).content)
+    expect(payload).toMatchObject({ status: 'failed', errorCode: 'slides_regenerate_unavailable' })
+    expect(orchestrator.dispatch).not.toHaveBeenCalled()
+  })
+
   it('generate：整册拆批编排——按批派发、按全册序合并（长 deck 不再整册一次成稿）', async () => {
     const tenPageMarkdown = Array.from({ length: 10 }, (_, index) => `## 第${index + 1}页\n- 要点${index + 1}`).join('\n\n') + '\n'
     const draftSnapshot10 = {
@@ -726,6 +936,64 @@ describe('createSubagentPiTools slides_draft', () => {
     expect(payload.pages).toBe(10)
     const landed = office.fillPage.mock.calls.map((call) => (call[0] as { slideIndex: number }).slideIndex)
     expect(landed.sort((a, b) => a - b)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
+  })
+
+  it('generate（流式）→ regenerateDeck：重生成凭据在流式收尾写入，重排复用同一文件', async () => {
+    const tenPageMarkdown = Array.from({ length: 10 }, (_, index) => `## 第${index + 1}页\n- 要点${index + 1}`).join('\n\n') + '\n'
+    const draftSnapshot10 = {
+      ...draftSnapshot,
+      document: { ...draftSnapshot.document, id: 'doc-draft-10', title: '十页汇报' },
+      markdown: tenPageMarkdown,
+    }
+    const globalPages = withSemanticContent(tenPageMarkdown, 'doc-draft-10')
+    const orchestrator = orchestratorByAgent({
+      'slides-planner': (input) => {
+        const dispatchInput = input as unknown as { input: Record<string, unknown> }
+        const sources = dispatchInput.input.sources as Array<{ pageId: string }>
+        const pageIds = new Set(sources.map((source) => source.pageId))
+        const pages = globalPages.filter((page) => pageIds.has((page.content as { id: string }).id))
+        return {
+          result: {
+            text: '',
+            structuredOutput: { phase: 'arrange', title: '十页汇报', pages, warnings: [], summary: '' },
+          },
+        }
+      },
+    })
+    const { office, generate, fillPage } = makeLayouterOffice()
+    const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestrator, {
+      resolveDocumentForDraft: () => draftSnapshot10,
+      slidesLayoutOffice: office,
+      slidesEditor: { active: true },
+      searchMaterials: () => [],
+    })
+    const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
+    const first = await slidesDraft.execute(
+      run as never,
+      { task: 'generate', instruction: '做一份十页汇报', draftDocumentId: 'doc-draft-10' } as never,
+      undefined,
+      vi.fn(),
+    )
+    expect(JSON.parse((first as { content: string }).content)).toMatchObject({ status: 'completed', pages: 10 })
+    expect(generate).toHaveBeenCalledTimes(1)
+
+    orchestrator.dispatch.mockClear()
+    fillPage.mockClear()
+    const second = await slidesDraft.execute(
+      run as never,
+      { task: 'generate', draftDocumentId: 'doc-draft-10', regenerateDeck: true } as never,
+      undefined,
+      vi.fn(),
+    )
+    const payload = JSON.parse((second as { content: string }).content)
+    expect(payload).toMatchObject({ status: 'completed', fileEntryId: 'file-1' })
+    const agents = orchestrator.dispatch.mock.calls.map((call) => (call[0] as Record<string, unknown>).agentId)
+    expect(agents).not.toContain('slides-planner')
+    expect(agents.filter((agentId) => agentId === 'slides-layouter')).toHaveLength(10)
+    // 同一 deck：不新建文件，10 页全部原地重填。
+    expect(generate).toHaveBeenCalledTimes(1)
+    expect(fillPage).toHaveBeenCalledTimes(10)
+    expect(fillPage.mock.calls.every((call) => call[0]!.fileId === 'file-1')).toBe(true)
   })
 
   it('generate：共享 token 预算停止多页排版，重试保留已耗预算，显式重置后续跑', async () => {
@@ -2156,7 +2424,7 @@ describe('createSubagentPiTools slides_draft 配图交互', () => {
   }
 
   async function setupPageImages(
-    options: { outcomes?: Array<{ ok: true; hash: string } | { ok: false; error: Error }> } = {},
+    options: { outcomes?: Array<{ ok: true; hash: string } | { ok: false; error: Error }>; arrangePlan?: Record<string, unknown> } = {},
   ): Promise<PageImagesSetup> {
     const dir = await mkdtemp(join(tmpdir(), 'nxcore-page-images-test-'))
     temporaryDirectories.push(dir)
@@ -2180,7 +2448,7 @@ describe('createSubagentPiTools slides_draft 配图交互', () => {
       pageImageSessions: new SlidesPageImageSessionStore(database.db),
     }
     const orchestrator = orchestratorByAgent({
-      'slides-planner': { result: { text: '', structuredOutput: arrangePlanWithGaps } },
+      'slides-planner': { result: { text: '', structuredOutput: options.arrangePlan ?? arrangePlanWithGaps } },
       'slides-builder': { result: { text: '', structuredOutput: builderDone } },
     })
     const office = makeLayouterOffice()
@@ -2222,6 +2490,41 @@ describe('createSubagentPiTools slides_draft 配图交互', () => {
     expect(stages).toEqual(['planning', 'plan_ready', 'page_images_confirm'])
     const confirmPayload = onUpdate.mock.calls.at(-1)?.[0] as { details: Record<string, unknown> }
     expect(confirmPayload.details).toMatchObject({ stage: 'page_images_confirm', documentId: 'doc-draft-1', totalPages: 2 })
+    expect(setup.generateImage).not.toHaveBeenCalled()
+  })
+
+  it('试看轮配图只做范围内页：封面与范围外缺口页不进会话不生图', async () => {
+    // 编排输入已按试看范围裁剪为 [业绩, 计划]（封面排除），夹具按裁剪后草稿算来源 hash。
+    const scopedGapPlan = {
+      phase: 'arrange',
+      title: '季度汇报',
+      narrative: '业绩回顾',
+      pages: withSemanticContent('## 业绩\n数据：Q1: 1.2 亿\n\n## 计划\n- 三线扩张\n', 'doc-draft-1', [
+        (page) => ({ ...page, role: 'data', density: 'dense' }),
+        (page) => ({ ...page, density: 'standard', imagePrompt: '团队协作白板特写，暖光' }),
+      ]),
+      warnings: [],
+      summary: '2 页方案',
+    }
+    const setup = await setupPageImages({ arrangePlan: scopedGapPlan })
+    const slidesDraft = buildTools(setup)
+
+    const result = await slidesDraft.execute(
+      run as never,
+      { task: 'generate', instruction: '先试两页', draftDocumentId: 'doc-draft-1', previewPages: 2 } as never,
+      undefined,
+      vi.fn(),
+    )
+
+    // 范围 = [业绩, 计划]：缺口页只剩「计划」进会话，封面缺口不进。
+    const payload = JSON.parse((result as { content: string }).content)
+    expect(payload.status).toBe('page_images_confirm')
+    expect(payload.pages).toBe(1)
+    const session = setup.deps.pageImageSessions!.byDraftId('doc-draft-1')
+    expect(session?.pages).toHaveLength(1)
+    expect(session?.pages[0]).toMatchObject({ pageIndex: 1, title: '计划' })
+    // 会话方案与编排一致（裁剪后的范围页），确认后装配同源。
+    expect((session?.plan as { pages: unknown[] }).pages).toHaveLength(2)
     expect(setup.generateImage).not.toHaveBeenCalled()
   })
 

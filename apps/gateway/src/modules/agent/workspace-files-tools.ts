@@ -96,7 +96,9 @@ export function catalogQueryLikePatterns(query: string): string[] {
       }
     }
   }
-  return [...new Set(patterns)];
+  // 模式数硬上限：模型会把已知文件名/路径全串进一次 query（实测数百 token、重复三遍），
+  // 展开出上百个 LIKE 既烧库也把工具参数撑爆上下文。超限只取前 16 个模式。
+  return [...new Set(patterns)].slice(0, 16);
 }
 
 /** 用 FilesService 构造目录（生产实现）。 */

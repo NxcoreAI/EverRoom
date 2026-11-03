@@ -137,7 +137,7 @@ import { LocalAgentRuntimeRegistry } from "../modules/local-agents/runtime-regis
 import { subagentRoutes } from "../modules/subagents/routes.js";
 import { AgentStatusService } from "../modules/agent/status-service.js";
 import { AgentDebugService } from "../modules/agent-debug/service.js";
-import { agentDebugRoutes } from "../modules/agent-debug/routes.js";
+import { agentDebugRoutes, agentDebugTraceRoutes, debugAgentsFromStatusSnapshot } from "../modules/agent-debug/routes.js";
 import { AgentDebugUsageStore } from "../modules/agent-debug/usage-store.js";
 import { createReferencedAgentConversationTools } from "../modules/agent/reference-tools.js";
 import { createLocalAgentDispatchTools } from "../modules/local-agents/dispatch-tools.js";
@@ -531,7 +531,44 @@ export async function createServer(config: GatewayConfig) {
     documentMcpHost.capabilities,
   );
   await documentMcpHost.capabilities.recover();
-  const agentResolver = createAgentResolver(config);
+  // Agent 调试页（独立浏览器调试台）的内存 trace：不落库、不参与业务链路，
+  // 仅在 runtime 边界旁路记录，供 /v1/agent-debug/* 只读查询。
+  // run 终态后异步落到 dataDir/agent-debug/main（重启后仍可回放）；归档关闭时只留内存缓冲。
+  const agentDebugArchiveConfig = config.agentDebugArchive;
+  const agentDebugStore = new AgentDebugTraceStore(
+    agentDebugArchiveConfig?.enabled === false
+      ? undefined
+      : new AgentDebugArchive({
+          dir: join(config.dataDir, "agent-debug", "main"),
+          ...(agentDebugArchiveConfig
+            ? {
+                retentionDays: agentDebugArchiveConfig.retentionDays,
+                maxRuns: agentDebugArchiveConfig.maxRuns,
+                maxBytes: agentDebugArchiveConfig.maxBytes,
+              }
+            : {}),
+          warn: (message, error) => app.log.warn({ err: error }, message),
+        }),
+  );
+  // 调试页 run 列表补全会话标题：唯一 sessionId 一次 inArray 查询；查不到为 null。
+  const agentDebugSessionTitles = (
+    sessionIds: readonly string[],
+  ): ReadonlyMap<string, string | null> => {
+    const titles = new Map<string, string | null>();
+    if (sessionIds.length === 0) return titles;
+    try {
+      const rows = db
+        .select({ id: agentSessions.id, title: agentSessions.title })
+        .from(agentSessions)
+        .where(inArray(agentSessions.id, [...sessionIds]))
+        .all();
+      for (const row of rows) titles.set(row.id, row.title ?? null);
+    } catch (error) {
+      app.log.warn({ err: error }, "agent debug session titles lookup failed");
+    }
+    return titles;
+  };
+  const agentResolver = createAgentResolver(config, agentDebugStore);
   // 格式映射 agent：就绪即 attach（映射生成依赖它；未配置 AI 时保持 pending 语义）。
   const subagentConfig = config.subagents ?? {
     enabled: true,
@@ -547,7 +584,7 @@ export async function createServer(config: GatewayConfig) {
     app.log,
   );
   await subagentRegistry.initialize();
-  const subagentRuntimeManager = new SubagentRuntimeManager(config, subagentConfig, externalCalls);
+  const subagentRuntimeManager = new SubagentRuntimeManager(config, subagentConfig, externalCalls, agentDebugStore);
   // doc-writer 输出的跨字段校验（doc-writer-subagent-plan §3.4）：baseVersion 回显、
   // hunks 目标 ∈ blockIndex、分块预算。须在首次 dispatch 前注册。
   subagentRuntimeManager.registerAgentResultValidator("doc-writer", createDocWriterResultValidator());
@@ -672,6 +709,7 @@ export async function createServer(config: GatewayConfig) {
       return channelMcpHost.mcpServersForRun(input);
     },
     (input) => isChannelAgentSession(input.sessionId),
+    agentDebugStore,
   );
   const localAgentDispatchStore = new LocalAgentDispatchStore(db);
   // dispatch 工具先于 AgentService 构建，run 级分发来源用晚绑定引用接线。
@@ -1027,6 +1065,8 @@ export async function createServer(config: GatewayConfig) {
     await documentIndexBackfillWorker?.dispose();
     await agentSchedulerService.dispose();
     await agentResolver.dispose();
+    // running run 收尾为 interrupted 后等待写盘队列排空。
+    await agentDebugStore.dispose();
     await notificationMcpHost.close();
     sqlite.close();
     await gatewayLogger.close();
@@ -1044,6 +1084,12 @@ export async function createServer(config: GatewayConfig) {
     invocations: subagentOrchestrator,
     usage: new AgentDebugUsageStore(db),
   })));
+  // 调试页 Agent 目录复用同一份 status 快照；store 观测到的本机 CLI Agent 由路由合并。
+  await app.register(agentDebugTraceRoutes(
+    agentDebugStore,
+    () => debugAgentsFromStatusSnapshot(agentStatusService.snapshot()),
+    { sessionTitles: agentDebugSessionTitles },
+  ));
   const reloadMcpRuntimes = async (): Promise<void> => {
     const primary = agentResolver.reload(BUILTIN_AGENT_IDS.primary);
     await agentService.replaceRuntime(primary.current);

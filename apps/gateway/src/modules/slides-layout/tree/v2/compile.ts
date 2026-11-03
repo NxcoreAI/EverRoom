@@ -380,15 +380,25 @@ function buildStats(node: Unplaced<V2StatsNode>, frame: Frame, theme: ResolvedTh
     const row = Math.floor(index / columns);
     const x = Math.round(frame.x + column * cellWidth);
     const y = Math.round(frame.y + row * cellHeight + 4);
-    const paragraphs: SpecParagraph[] = [
+    // value 字号按格子高度降档（h2→h3→lead）：页面级 stats 没有组件层的缩字重试，
+    // 写死 h2 会让塞在 group 深处的小帧必然溢出 + 墨迹重叠（模型只剩手写 text 数字一条路）。
+    const valueTiers = [theme.typeScale.h2, theme.typeScale.h3, theme.typeScale.lead].filter(
+      (size, i, tiers) => size <= tiers[0]! && tiers.indexOf(size) === i,
+    );
+    const buildParagraphs = (valueSize: number): SpecParagraph[] => [
       {
         runs: [
-          { text: item.value, sizePt: theme.typeScale.h2, bold: true, color: theme.colors.primary, font: theme.fonts.heading },
+          { text: item.value, sizePt: valueSize, bold: true, color: theme.colors.primary, font: theme.fonts.heading },
           ...(item.unit ? [{ text: ` ${item.unit}`, sizePt: theme.typeScale.label, color: theme.colors.textMuted, font: theme.fonts.body }] : []),
         ],
       },
       { spaceBeforePt: 4, runs: [{ text: item.label, sizePt: theme.typeScale.caption, color: theme.colors.textMuted, font: theme.fonts.body }] },
     ];
+    let paragraphs = buildParagraphs(valueTiers[0]!);
+    for (const tier of valueTiers.slice(1)) {
+      if (textNeededHeight(paragraphs, cellWidth) > boxHeight) paragraphs = buildParagraphs(tier);
+      else break;
+    }
     elements.push({
       type: "text",
       x,

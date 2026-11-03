@@ -220,8 +220,30 @@ slot 栅格表达不了的自由版式，用 `group` 把一块 slot 切成 v2 �
 - 组件只读 `frame / theme / skin`：不含客户名、品牌色或参考页文案。样式由 deck 的 `styleTokens` 决定。
 - 字段名照抄本文档；未知字段报错。
 - `style` 可选，使用语义枚举，缺省继承 `styleTokens.componentDefaults`。
+- 存在语义匹配且完整内容预检通过的组件时，默认采用它承载主内容；不采用时在 `designIntent` 说明候选名称、具体不适用原因与替代表达。
+- 栏头（`indexHeader`/`sectionHeader`）、结论框（`calloutBox`）等辅助组件不能替代主内容的组件化表达。
+- 纯文字封面、章节、引语、收尾页，以及真实明细表（`table` 节点）的既有用法不受「默认采用」约束。
 
-使用 component 时，先读 `skills/layout-tree-skill/components.md`：按信息语义选择组件，再核对该组件的参数、容量和实际支持的 style。该参考由权威正文生成；基础节点页无需加载。
+## 按展示用途选组件
+
+先确定这一页要让观众看懂什么（顺序、比较、层级、规模…），再按下表选主表达组件；每个组件只有一个主要用途，实际使用允许跨类。选中后到组件参数表核对参数、素材要求、条目容量与槽位下限。
+
+| 展示用途 | 组件 | 适用条件 |
+|---|---|---|
+| 导航与章节组织 | `agenda`、`sectionHeader`、`indexHeader` | 目录、章节分隔、编号开篇；不承载论据 |
+| 要点、卖点与产品介绍 | `pointList`、`featureCards`、`bentoGrid`、`categoryCards`、`featureRail` | 平行要点或多卖点陈列；并列本身是一种内容关系，也适用于无层级结构的清单 |
+| 时间与顺序推进 | `timeline`、`eraRail`、`steps`、`chevron` | 有时间节点用 `timeline`/`eraRail`，操作步骤用 `steps`，单向阶段推进用 `chevron` |
+| 层级与组织结构 | `orgChart`、`pyramid`、`layeredStack` | 人员/组织归属用 `orgChart`，重要性分层用 `pyramid`，架构堆叠用 `layeredStack` |
+| 转化、汇聚与循环 | `funnel`、`radialFunnel`、`cycle` | 逐级收窄转化用 `funnel`，中心辐射汇聚用 `radialFunnel`（汇聚不等于逐级收窄），闭环流程用 `cycle` |
+| 比较、定位与选择 | `comparison`、`prosCons`、`matrix2x2`、`venn`、`competitorBoard`、`pricingTiers` | 两方对照用 `comparison`；`prosCons` 仅限明确的利弊清单（优势/风险），泛化的比较不等于利弊 |
+| 指标、进度与财务 | `stats`、`kpiRows`、`progress`、`financialBoard` | 数值标签成组用 `stats`/`kpiRows`，完成度用 `progress`，财务结构用 `financialBoard` |
+| 人物与团队介绍 | `persona`、`teamGrid`、`founderProfile` | 单人画像用 `persona`/`founderProfile`，团队陈列用 `teamGrid` |
+| 引用与外部背书 | `quote`、`quotes`、`logoWall` | 单条金句用 `quote`，多条评价用 `quotes`，客户/合作方标识用 `logoWall` |
+| 结论强调与视觉叙事 | `calloutBox`、`fullBleedQuote`、`photoTriptych` | 单点结论框用 `calloutBox`，整页金句用 `fullBleedQuote`，三图并置叙事用 `photoTriptych` |
+
+边界：趋势与分布用 `chart` 节点、逐格读取的明细用 `table` 节点；二者可与上表组件**同页组合**，但上游已定型的 table/chart 内容契约优先，须保留原有行列、分类和序列对应关系，不得因组件选型擅自转换或丢失数据。
+
+使用 component 前读一遍 `skills/layout-tree-skill/components.md`：按信息语义选择组件，再核对该组件的参数、容量和实际支持的 style。同一对话只读这一次，后续页面直接沿用上下文内容核对，不重复读取。该参考由权威正文生成；基础节点页无需加载。
 
 ## Composition 硬约束（validate 会拒收）
 

@@ -275,23 +275,38 @@
     "componentCandidates": {
       "type": "array",
       "maxItems": 4,
-      "description": "按本页 relations/metrics 预检过的组件候选：feasible=true 表示在 minSlot 区域可展开。候选绑定真实 block；按内容匹配选择表达，不强制使用，也不凭 role 猜。",
+      "description": "按本页 relations/metrics/引用预检过的组件候选。存在 feasible=true 的语义匹配候选时，默认采用它承载主内容；确不适用时在 designIntent 说明候选名称、具体原因与替代表达。候选绑定真实 block，预检不截断任何内容。",
       "items": {
         "type": "object",
         "required": ["name", "relation", "blockRefs", "feasible"],
         "additionalProperties": false,
         "properties": {
           "name": { "type": "string" },
-          "relation": { "type": "string", "description": "触发候选的关系类型；metrics 表示指标组" },
+          "relation": { "type": "string", "description": "触发候选的关系类型；metrics 表示指标组，quote 表示引用，navigates 表示导航" },
           "blockRefs": { "type": "array", "items": { "type": "string" }, "maxItems": 8 },
           "feasible": { "type": "boolean" },
           "minSlot": {
             "type": "object",
             "required": ["w", "h"],
             "additionalProperties": false,
-            "properties": { "w": { "type": "integer" }, "h": { "type": "integer" } }
+            "properties": { "w": { "type": "integer" }, "h": { "type": "integer" } },
+            "description": "已验证槽位尺寸（px）：候选在该尺寸通过归一、展开与内容覆盖预检；不是全局最小值。"
           },
-          "note": { "type": "string" }
+          "suggestedSlot": {
+            "type": "object",
+            "required": ["col", "row"],
+            "additionalProperties": false,
+            "properties": {
+              "col": { "type": "array", "items": { "type": "integer" }, "minItems": 2, "maxItems": 2 },
+              "row": { "type": "array", "items": { "type": "integer" }, "minItems": 2, "maxItems": 2 }
+            },
+            "description": "与 minSlot 对应的合法栅格槽位（12 列 × 8 行，已预留标题与页脚区）。"
+          },
+          "template": {
+            "type": "object",
+            "description": "已通过预检的组件参数（不含 type/name/slot），可直接用于组件节点承载 blockRefs 的内容。"
+          },
+          "note": { "type": "string", "description": "不可行时的分类原因：参数超限 / 内容无法完整映射 / 空间不足。" }
         }
       }
     },

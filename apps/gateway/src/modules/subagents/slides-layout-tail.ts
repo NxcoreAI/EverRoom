@@ -25,7 +25,7 @@ import { measureDefects, shrinkToFit, type LayoutDefect } from "../slides-layout
 import { auditSimilarity, treeSignature } from "../slides-layout/tree/similarity.js";
 import { imageDimensions, resolveImageArs } from "../slides-layout/tree/aspect-ratio.js";
 import { pngBase64ToJpegBase64 } from "./screenshot-jpeg.js";
-import { checkSemanticBindings, checkSemanticRendered, semanticRelationIssues } from "./slides-semantic-bindings.js";
+import { checkSemanticBindings, checkSemanticRendered, semanticRelationIssues, componentAdoptionFor, adoptionFeedback, type ComponentAdoption, type ContentBinding } from "./slides-semantic-bindings.js";
 import type { SemanticPage } from "./slides-semantic-contract.js";
 import { componentCandidatesFor } from "../slides-layout/tree/v2/component-candidates.js";
 import {
@@ -102,6 +102,8 @@ export interface LayouterTailArgs {
   sessionId: string;
   runId: string;
   parentRunId: string | null;
+  /** 会话所属工作区：deck 骨架入库归属（资料库/产物库按空间隔离）；缺省落默认工作区。 */
+  workspaceId?: string | null;
   instruction: string;
   plan: Record<string, unknown>;
   armPlan: SlidesProgressPlan;
@@ -635,7 +637,7 @@ async function dispatchWithPageRetry(
 function treeFromInvocation(
   invocation: SubagentInvocation,
   page: PageInput,
-): { tree: LayoutTree; fellBack: boolean; designIntent?: string; reason?: string; blocked?: Record<string, unknown> } {
+): { tree: LayoutTree; fellBack: boolean; designIntent?: string; bindings?: ContentBinding[]; reason?: string; blocked?: Record<string, unknown> } {
   if (invocation.status === "completed") {
     const structured = invocation.result?.structuredOutput;
     if (structured !== null && typeof structured === "object" && !Array.isArray(structured)) {
@@ -654,9 +656,14 @@ function treeFromInvocation(
                 Array.isArray(page.materials) ? (page.materials as PageMaterial[]).flatMap(m => typeof m.url === "string" ? [m.url] : []) : []);
               if (errors.length) return { tree: fallbackPage(page), fellBack: true, reason: errors.join("; ") };
             }
+            // bindings 已过提交期校验（路径存在、载荷完整）；采用检查与最终统计按实际绑定节点判断。
+            const bindings = Array.isArray(result.bindings)
+              ? (result.bindings as ContentBinding[]).filter(b => b && typeof b.blockId === "string" && Array.isArray(b.paths))
+              : undefined;
             return { tree, fellBack: false,
               ...(typeof result.designIntent === "string" && result.designIntent.trim()
                 ? { designIntent: result.designIntent.slice(0, 1000) } : {}),
+              ...(bindings && bindings.length ? { bindings } : {}),
             };
           }
           return { tree: fallbackPage(page), fellBack: true, reason: "交回的是 v1 树，已按 v2 兜底页落页" };
@@ -1024,8 +1031,10 @@ export async function runLayouterTail(
         title: deckTitle,
         format: "pptx",
         pages: placeholders,
-        // 单工作区语义：PPT 不再绑定 Room，工作区产物写 null。
+        // 单工作区语义：PPT 不再绑定 Room；workspaceId 归会话所属空间（资料库/产物库按空间隔离），
+        // 缺省会落到默认工作区，用户在当前工作区看不到产物。
         roomId: null,
+        workspaceId: args.workspaceId ?? null,
         fileName: null,
         idempotencyKey: deckIdempotency,
         deferDone: true,
@@ -1050,6 +1059,7 @@ export async function runLayouterTail(
       tree: LayoutTree;
       fellBack: boolean;
       designIntent?: string;
+      bindings?: ContentBinding[];
       unavailable?: boolean;
       reason?: string;
       blocked?: Record<string, unknown>;
@@ -1135,13 +1145,22 @@ export async function runLayouterTail(
             );
           }
           if (placed.tree.version === 2 && placed.tree.v2) {
-            // 语义模式查关系表达（长文等宽文本列等反模式），旧模式查视觉丰富度；
-            // 都是一次回投修订，修不动保留原树，不阻塞整册。
+            // 语义模式查关系表达（长文等宽文本列等反模式）与主内容组件采用；
+            // 旧模式查视觉丰富度。都是一次回投修订，修不动保留原树，不阻塞整册。
             const expressionIssues = page.content
-              ? semanticRelationIssues(page.content, placed.tree.v2)
+              ? (() => {
+                const candidates = componentCandidatesFor(page.content, base.contract);
+                return [
+                  ...semanticRelationIssues(page.content, placed.tree.v2),
+                  ...adoptionFeedback(
+                    componentAdoptionFor(page.content, placed.tree.v2, placed.bindings ?? [], candidates),
+                    candidates,
+                  ),
+                ];
+              })()
               : visualRichnessIssues(placed.tree.v2);
             if (expressionIssues.length > 0) {
-              const gateLabel = page.content ? "关系表达未结构化" : "视觉丰富度不足";
+              const gateLabel = page.content ? "主内容未组件化或关系表达未结构化" : "视觉丰富度不足";
               const revisionPage = { ...page, revisionFeedback: expressionIssues.join("；") };
               const revisionInput = layouterInputFor(base, revisionPage, index);
               try {
@@ -1149,7 +1168,16 @@ export async function runLayouterTail(
                 const revised = treeFromInvocation(revision, revisionPage);
                 const stillFailing = !revised.fellBack && revised.tree.version === 2 && revised.tree.v2
                   ? (page.content
-                    ? semanticRelationIssues(page.content, revised.tree.v2)
+                    ? (() => {
+                      const candidates = componentCandidatesFor(page.content, base.contract);
+                      return [
+                        ...semanticRelationIssues(page.content, revised.tree.v2),
+                        ...adoptionFeedback(
+                          componentAdoptionFor(page.content, revised.tree.v2, revised.bindings ?? [], candidates),
+                          candidates,
+                        ),
+                      ];
+                    })()
                     : visualRichnessIssues(revised.tree.v2))
                   : null;
                 if (stillFailing !== null && stillFailing.length === 0) {
@@ -1579,6 +1607,40 @@ export async function runLayouterTail(
     }
 
 
+    // 组件采用统计（语义模式）：自审与页间重排全部完成后按最终树重新统计；
+    // 只统计有可行候选的重点内容组，装饰性组件不在统计口径内（componentAdoptionFor 只认主表达匹配）。
+    const componentAdoption = pages.some(p => p?.content)
+      ? (() => {
+        const pageStats: Array<{ page: number; groups: ComponentAdoption[] }> = [];
+        const usage = new Map<string, number>();
+        let eligible = 0;
+        let adopted = 0;
+        for (let index = 0; index < totalPages; index++) {
+          const page = pages[index];
+          const outcome = trees[index];
+          if (!page?.content || !outcome || outcome.fellBack || outcome.skipped
+            || outcome.tree.version !== 2 || !outcome.tree.v2) continue;
+          const groups = componentAdoptionFor(page.content, outcome.tree.v2, outcome.bindings ?? [],
+            componentCandidatesFor(page.content, base.contract));
+          if (groups.length === 0) continue;
+          pageStats.push({ page: index + 1, groups });
+          for (const group of groups) {
+            eligible += 1;
+            if (group.adopted) {
+              adopted += 1;
+              usage.set(group.component!, (usage.get(group.component!) ?? 0) + 1);
+            }
+          }
+        }
+        return {
+          eligibleGroups: eligible,
+          adoptedGroups: adopted,
+          pages: pageStats,
+          ...(usage.size > 0 ? { componentUsage: Object.fromEntries([...usage.entries()].sort()) } : {}),
+        };
+      })()
+      : null;
+
     // 失败/退化页（0 起页序）：未落定、引擎降档兜底、布局代理兜底都算——完成摘要要能定位。
     const failedPages = [...new Set(
       Array.from({ length: totalPages }, (_, index) => index).filter((index) =>
@@ -1638,7 +1700,11 @@ export async function runLayouterTail(
         outline,
         warnings,
         ...(blockedPages.length ? { blockedPages } : {}),
-        ...(pages.some(p => p?.content) ? { contentMode: "semantic-v3", visualValidation: Array.from({ length: totalPages }, (_, i) => visualValidation.get(i) ?? "unverified") } : {}),
+        ...(pages.some(p => p?.content) ? {
+          contentMode: "semantic-v3",
+          visualValidation: Array.from({ length: totalPages }, (_, i) => visualValidation.get(i) ?? "unverified"),
+          ...(componentAdoption ? { componentAdoption } : {}),
+        } : {}),
         ...(failedPages.length > 0 ? { failedPages } : {}),
         ...(deckNotOpen ? { landingBlocked: "deck_not_open" } : {}),
         summary: completed

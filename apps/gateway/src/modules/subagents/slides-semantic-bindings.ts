@@ -101,6 +101,119 @@ export function checkSemanticRendered(page: SemanticPage, spec: { elements: unkn
   return errors;
 }
 
+/** 关系类型 → 语义匹配的主表达组件（候选外匹配同样认可；与候选映射同口径）。 */
+export const RELATION_COMPONENTS: Record<string, string[]> = {
+  precedes: ["timeline", "eraRail", "steps", "chevron"],
+  causes: ["steps", "chevron", "cycle"],
+  contains: ["orgChart", "pyramid", "layeredStack"],
+  compares: ["comparison", "matrix2x2", "venn", "competitorBoard", "pricingTiers"],
+  parallel: ["featureCards", "pointList", "bentoGrid", "categoryCards", "featureRail", "teamGrid"],
+  metrics: ["stats", "kpiRows"],
+  quote: ["quote", "quotes", "fullBleedQuote"],
+  navigates: ["agenda"],
+};
+/** 辅助组件：不承载主内容，不能替代主表达组件化。 */
+const AUXILIARY_COMPONENTS = new Set(["sectionHeader", "indexHeader", "calloutBox"]);
+
+export interface CandidateLike {
+  name: string;
+  relation: string;
+  blockRefs: string[];
+  feasible: boolean;
+  suggestedSlot?: { col: [number, number]; row: [number, number] };
+}
+
+export interface ComponentAdoption {
+  relation: string;
+  blockRefs: string[];
+  /** 命中的语义匹配组件；未采用时缺省。 */
+  component?: string;
+  adopted: boolean;
+}
+
+/**
+ * 主内容组件采用检查：具有可行候选的重点内容组（优先 focusRefs 命中；否则含
+ * priority=primary 内容的组）是否整组绑定到语义匹配的主表达组件。
+ *
+ * 判据：组内每个 block 都有绑定，且至少一个绑定路径落在该关系类型匹配的组件
+ * 节点上（栏头/结论框等辅助组件不算；table/chart 节点不算；metrics 组额外认可
+ * 页面级 stats 节点——它是指标组的引擎原生等价承载）。内容完整性由提交期
+ * checkSemanticBindings 保证，这里不再重复。
+ */
+export function componentAdoptionFor(
+  page: SemanticPage,
+  tree: unknown,
+  bindings: Array<Partial<ContentBinding>>,
+  candidates: CandidateLike[],
+): ComponentAdoption[] {
+  if (["cover", "quote", "section", "closing"].includes(page.role)) return [];
+  const blocks = new Map(page.blocks.map(b => [b.id, b]));
+  const bound = new Map<string, string[]>();
+  for (const binding of bindings) {
+    if (typeof binding.blockId === "string" && Array.isArray(binding.paths)) {
+      bound.set(binding.blockId, binding.paths);
+    }
+  }
+  // 重点组：feasible 候选按 block 集合去重成组。
+  const groups = new Map<string, { relation: string; refs: string[]; candidates: CandidateLike[] }>();
+  for (const candidate of candidates.filter(c => c.feasible)) {
+    const key = [...candidate.blockRefs].sort().join(",");
+    const group = groups.get(key) ?? { relation: candidate.relation, refs: candidate.blockRefs, candidates: [] };
+    group.candidates.push(candidate);
+    groups.set(key, group);
+  }
+  const focus = new Set(page.focusRefs);
+  const focusGroups = [...groups.values()].filter(g => g.refs.some(ref => focus.has(ref)));
+  const pool = focusGroups.length > 0
+    ? focusGroups
+    : [...groups.values()].filter(g => g.refs.some(ref => blocks.get(ref)?.priority === "primary"));
+  const out: ComponentAdoption[] = [];
+  for (const group of pool) {
+    const matched = RELATION_COMPONENTS[group.relation] ?? [];
+    let component: string | undefined;
+    let fullyBound = group.refs.every(ref => bound.has(ref));
+    if (fullyBound) {
+      for (const ref of group.refs) {
+        for (const path of bound.get(ref) ?? []) {
+          const node = nodeAt(tree, path) as Record<string, unknown> | undefined;
+          if (!node) continue;
+          if (node.type === "component" && !AUXILIARY_COMPONENTS.has(String(node.name)) && matched.includes(String(node.name))) {
+            component = String(node.name);
+          } else if (group.relation === "metrics" && node.type === "stats") {
+            // 页面级 stats 节点是指标组的引擎原生等价承载，认可为采用。
+            component = component ?? "stats";
+          }
+        }
+        if (component) break;
+      }
+    }
+    out.push({ relation: group.relation, blockRefs: group.refs, ...(component ? { component } : {}), adopted: component !== undefined });
+  }
+  return out;
+}
+
+/** 未采用组的回投反馈：点名 block、推荐组件与已验证槽位，并允许模型说明例外。 */
+export function adoptionFeedback(adoption: ComponentAdoption[], candidates: CandidateLike[]): string[] {
+  // 同组多个可行候选时取最贴合的第一个（候选按表达贴合度排序），不让 Map 覆盖成末位。
+  const byGroup = new Map<string, CandidateLike>();
+  for (const candidate of candidates.filter(c => c.feasible)) {
+    const key = [...candidate.blockRefs].sort().join(",");
+    if (!byGroup.has(key)) byGroup.set(key, candidate);
+  }
+  const feedback: string[] = [];
+  for (const group of adoption.filter(g => !g.adopted)) {
+    const candidate = byGroup.get([...group.blockRefs].sort().join(","));
+    if (!candidate) continue;
+    const slot = candidate.suggestedSlot
+      ? `，建议槽位 col ${candidate.suggestedSlot.col[0]}~${candidate.suggestedSlot.col[1]} / row ${candidate.suggestedSlot.row[0]}~${candidate.suggestedSlot.row[1]}（参数用候选 template）`
+      : "（参数与槽位见 componentCandidates）";
+    feedback.push(
+      `重点内容（${group.blockRefs.slice(0, 3).join("、")}）主内容未采用组件表达：默认改用 ${candidate.name} 组件承载${slot}；如确不适用，在 designIntent 说明候选名称、具体原因与替代表达`,
+    );
+  }
+  return feedback;
+}
+
 interface FlatNode {
   node: Record<string, unknown>;
   /** 父 group 的 weights（缺省=均匀）；页面级节点为 null。 */

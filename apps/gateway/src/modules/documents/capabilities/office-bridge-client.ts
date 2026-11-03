@@ -265,7 +265,8 @@ export class OfficeBridgeClient {
       mode: "apply",
       fileId: input.fileId,
       page: { slideIndex: input.slideIndex, specJson: input.specJson },
-    });
+    // 与整册 generate 同级预算：嵌大图 + 栅格化 + 保存，30s 会把首页落页打成超时失败。
+    }, 5 * 60_000);
     return { ...(data as unknown as OfficeSlidesEditResult), ok: data.ok !== false };
   }
 
@@ -548,7 +549,7 @@ export class OfficeBridgeClient {
     return parsed.data ?? {};
   }
 
-  private async postEdit(body: Record<string, unknown>): Promise<Record<string, unknown>> {
+  private async postEdit(body: Record<string, unknown>, timeoutMs = 30_000): Promise<Record<string, unknown>> {
     const response = await fetch(`${this.config.baseUrl}/v1/office-edit`, {
       method: "POST",
       headers: {
@@ -557,8 +558,9 @@ export class OfficeBridgeClient {
         Accept: "application/json",
       },
       body: JSON.stringify(body),
-      // 活会话事务（内存应用 + 一次静默保存），不是分钟级的生成链路。
-      signal: AbortSignal.timeout(30_000),
+      // 常规 op 事务是内存应用 + 一次静默保存；fillPage 走整册 builder/merge 管线
+      // + 实时重绘（带大图首页可超 30s），由调用方放宽。
+      signal: AbortSignal.timeout(timeoutMs),
     });
     const parsed = await response.json().catch(() => ({})) as {
       message?: unknown;

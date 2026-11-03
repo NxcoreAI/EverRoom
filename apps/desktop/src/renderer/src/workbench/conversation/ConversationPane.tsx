@@ -280,6 +280,7 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
             onResolveApproval={(approvalId, decision, feedback) => void hook.resolveApproval(approvalId, decision, feedback)}
             onRetryError={() => hook.reload()}
             onRetryPrompt={(prompt, runId) => void hook.sendPrompt(prompt, undefined, undefined, null, runId)}
+            onSlidesAction={(prompt) => void hook.sendPrompt(prompt)}
             onSelectDocument={() => workbenchToast('文档选择暂未接入工作台产物面板')}
             onSelectPrompt={(prompt) => {
               setDraft(prompt)

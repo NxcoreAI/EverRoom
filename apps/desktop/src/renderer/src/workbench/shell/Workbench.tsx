@@ -95,6 +95,20 @@ export function Workbench() {
     }
   }, [])
 
+  // 主进程 open-edit 广播：Agent 落页/续落时该产物未以可编辑会话打开（用户关了页签
+  // 或应用重启后点「重新生成」），按广播以可编辑方式打开，fillPage 的 not_open 自动
+  // 打开兜底才能闭环——此前该事件没有任何消费方，续落必报「请先在文件库打开」。
+  useEffect(() => {
+    const office = window.nxcore?.office
+    if (typeof office?.onAgentFile !== 'function') return
+    return office.onAgentFile((event) => {
+      if (event.type !== 'open-edit' || !event.fileId) return
+      void window.nxcore?.files
+        ?.openOriginal(event.fileId, event.originalName ?? event.title, undefined, { editable: true })
+        .catch(() => undefined)
+    })
+  }, [])
+
   // 快捷键：⌘N 新建工作 / ⌘B 侧栏 / ⌘J 气泡窗（由工作空间标签自己响应）。
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {

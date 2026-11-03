@@ -127,6 +127,7 @@ function AgentChatDockInner({ file }: { file: OfficeFile }) {
         pendingApprovals={session.pendingApprovals}
         onRejectDocumentIntent={() => composerRef.current?.focus()}
         onRetryPrompt={(prompt, runId) => void session.sendPrompt(prompt, undefined, undefined, null, runId)}
+        onSlidesAction={(prompt) => void session.sendPrompt(prompt)}
         onOpenSessionLink={() => {}}
         onResolveApproval={(approvalId, decision, feedback) => void session.resolveApproval(approvalId, decision, feedback)}
         onSelectDocument={() => {}}

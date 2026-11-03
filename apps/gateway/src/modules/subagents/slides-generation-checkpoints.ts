@@ -13,6 +13,12 @@ export interface SlidesGenerationCheckpoint {
   batchErrors?: Record<string, string[]>;
   deck?: LayouterExistingDeck;
   budget?: GenerationBudgetSnapshot;
+  /** 整轮重生成凭据（slides-regenerate:{draftDocumentId}）：最近一次落页的已装配方案与 deck 进度。 */
+  regen?: {
+    plan: Record<string, unknown>;
+    deck: { fileEntryId: string; originalName: string | null; appliedPages: number[]; totalPages: number };
+    previewPages?: number;
+  };
 }
 
 /** SQLite in production; an instance-local memory store for hosts without a database. */

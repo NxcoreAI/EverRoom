@@ -149,6 +149,8 @@ export function SlidesProgressCard({
     state.stage === 'style_images_ready' && (state.styleCandidates?.length ?? 0) > 0,
   )
   const [styleIndex, setStyleIndex] = useState(0)
+  /** 风格确认时的本轮生成页数（'' = 全部按大纲）。 */
+  const [pageCount, setPageCount] = useState('')
   const [expandedPages, setExpandedPages] = useState<ReadonlySet<number>>(new Set())
 
   const pages = state.pages ?? []
@@ -174,6 +176,7 @@ export function SlidesProgressCard({
     // 新阶段需要用户做决定时重新出现（关掉的卡不该错过下一个决策点）。
     if (SLIDES_WAITING_STAGES.has(state.stage)) setDismissed(false)
     setExpandedPages(new Set())
+    setPageCount('')
     setStylePickerOpen(state.stage === 'style_images_ready' && (state.styleCandidates?.length ?? 0) > 0)
   }
 
@@ -247,6 +250,22 @@ export function SlidesProgressCard({
             }))}
           >
             {t('surface:agentChat.SLIDES_RETRY')}
+          </button>
+        ) : null}
+        {tone === 'done' && state.documentId ? (
+          <button
+            type="button"
+            className="agent-slides-receipt-open"
+            aria-label={t('surface:agentChat.SLIDES_REGENERATE_LABEL', { title })}
+            onClick={() => runAction('regenerate', () => ({
+              prompt: t('surface:agentChat.SLIDES_REGENERATE_PROMPT', {
+                documentId: state.documentId ?? '',
+                title,
+              }),
+              display: t('surface:agentChat.SLIDES_REGENERATE_DISPLAY'),
+            }))}
+          >
+            {t('surface:agentChat.SLIDES_REGENERATE')}
           </button>
         ) : null}
         {state.fileEntryId ? (
@@ -530,15 +549,39 @@ export function SlidesProgressCard({
             ) : null}
         </details>
         <div className="agent-slides-actions">
+          <label className="agent-slides-page-count">
+            <span>{t('surface:agentChat.SLIDES_PAGE_COUNT_LABEL')}</span>
+            <select
+              value={pageCount}
+              disabled={busy || pendingAction !== null}
+              aria-label={t('surface:agentChat.SLIDES_PAGE_COUNT_LABEL')}
+              onChange={(event) => setPageCount(event.target.value)}
+            >
+              <option value="">{t('surface:agentChat.SLIDES_PAGE_COUNT_ALL')}</option>
+              {[1, 2, 3, 5, 8, 10, 12, 15, 20, 25, 30].map((count) => (
+                <option key={count} value={String(count)}>
+                  {t('surface:agentChat.SLIDES_PAGE_COUNT_N', { count })}
+                </option>
+              ))}
+            </select>
+            {pageCount ? (
+              <em className="agent-slides-page-count-note">{t('surface:agentChat.SLIDES_PAGE_COUNT_NO_COVER')}</em>
+            ) : null}
+          </label>
           <button
             type="button"
             className="agent-slides-action is-primary"
             aria-label={t('surface:agentChat.SLIDES_STYLE_CONFIRM_LABEL', { title })}
             disabled={busy || pendingAction === 'style-confirm' || !state.styleSessionId}
             onClick={() => runAction('style-confirm', () => ({
-              prompt: t('surface:agentChat.SLIDES_STYLE_CONFIRM_PROMPT', {
-                sessionId: state.styleSessionId ?? '',
-              }),
+              prompt: pageCount
+                ? t('surface:agentChat.SLIDES_STYLE_CONFIRM_PROMPT_PAGES', {
+                  sessionId: state.styleSessionId ?? '',
+                  pages: pageCount,
+                })
+                : t('surface:agentChat.SLIDES_STYLE_CONFIRM_PROMPT', {
+                  sessionId: state.styleSessionId ?? '',
+                }),
               display: t('surface:agentChat.SLIDES_STYLE_CONFIRM_DISPLAY'),
             }))}
           >
