@@ -60,6 +60,12 @@ export function wireOfficeSavedHooks(target: PreparedGenOfficeRuntime): void {
   target.docs.setDocsFileSavedHook(fanOut)
   target.slides.setSlidesFileSavedHook(fanOut)
   target.sheets.setSheetsFileSavedHook(fanOut)
+  // pdf 的保存 hook 是 genoffice cba38b8 起的后加导出：老运行时（或测试里的
+  // 部分 runtime mock）缺 pdf 面时静默跳过（后台 PDF 会话的版本回填退化为
+  // drain/flush 兜底路径）。
+  if (typeof target.pdf?.setPdfFileSavedHook === 'function') {
+    target.pdf.setPdfFileSavedHook(fanOut)
+  }
   hookWired = true
 }
 

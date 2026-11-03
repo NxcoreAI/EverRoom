@@ -26,6 +26,7 @@ import {
   type AgentSlidesDeckInfo,
   type AgentSlidesEditResult,
   type GenOfficeAgentDocDescription,
+  type GenOfficeAgentPdfDescription,
   type GenOfficeAgentToolCall,
   type GenOfficeAgentToolResult,
   type GenOfficeAgentWorkbookDescription,
@@ -43,6 +44,11 @@ import {
   type AgentSheetFileHints,
   type AgentSheetFailureReason,
 } from './office-agent-sheet-session'
+import {
+  AgentPdfSessionManager,
+  type AgentPdfFileHints,
+  type AgentPdfFailureReason,
+} from './office-agent-pdf-session'
 import { writeBackEditedDocument } from './write-back'
 import { PdfViewManager } from './pdf-view-manager'
 import { SlidesViewManager } from './slides-view-manager'
@@ -129,6 +135,7 @@ export type AgentArtifactFailureReason =
   | 'unsaved'
   | Exclude<AgentDocFailureReason, 'not_open' | 'not_editable' | 'unsaved'>
   | Exclude<AgentSheetFailureReason, 'not_open' | 'not_editable' | 'unsaved'>
+  | Exclude<AgentPdfFailureReason, 'not_open' | 'not_editable' | 'unsaved'>
 
 /** 活 Word/Excel 宿主执行器结果：apply 的错误随行（已应用但保存失败等）。 */
 export type AgentArtifactToolsOutcome =
@@ -154,8 +161,8 @@ export type SlidesEditArtifactOutcome =
 interface EditSyncState {
   filePath: string
   originalName: string
-  /** sourceKey 前缀与广播 format 按形态派生（word/slides/sheets → docx/pptx/xlsx）。 */
-  kind: 'docx' | 'slides' | 'spreadsheet'
+  /** sourceKey 前缀与广播 format 按形态派生（word/slides/sheets/pdf → docx/pptx/xlsx/pdf）。 */
+  kind: 'docx' | 'slides' | 'spreadsheet' | 'pdf'
   roomId: string | null
   /** 条目归属工作区：保存回填重导入时带上，避免归属被重置（资料库按空间隔离）。 */
   workspaceId: string | null
@@ -241,6 +248,8 @@ export class OfficePreviewRegistry {
   private agentDocs: AgentDocSessionManager | null = null
   /** 未打开文件的后台 Excel 编辑会话（同上；持有自己的 sidecar 会话）。 */
   private agentSheets: AgentSheetSessionManager | null = null
+  /** 未打开文件的后台 PDF 编辑会话（同上；pdf embed 无 sidecar）。 */
+  private agentPdfs: AgentPdfSessionManager | null = null
   /** Agent 后台编辑的文件解析端口（index.ts 注入文件库访问）。 */
   private agentFileResolver: ((fileId: string) => Promise<AgentDocFileMeta | null>) | null = null
   /** 后台会话的保存回填订阅（fileId → unsubscribe）。 */
@@ -303,13 +312,14 @@ export class OfficePreviewRegistry {
   }
 
   /**
-   * 注入「按 fileId 解析工作副本」的端口：后台 Word/Excel 编辑会话用它把任意
+   * 注入「按 fileId 解析工作副本」的端口：后台 Word/Excel/PDF 编辑会话用它把任意
    * file_entry 变成可编辑工作副本（名称/内容哈希/存储路径/归属）。
    */
   setAgentFileResolver(resolver: ((fileId: string) => Promise<AgentDocFileMeta | null>) | null): void {
     this.agentFileResolver = resolver
     this.agentDocs = null
     this.agentSheets = null
+    this.agentPdfs = null
   }
 
   /** 是否有正在显示的 docs 页签（应用菜单接管闸门；后台会话不算）。 */
@@ -454,13 +464,16 @@ export class OfficePreviewRegistry {
       ? file.writeBackPath
       : null
 
-    // 同一文件存在后台 Agent 会话（Word 或 Excel）时先排空并关闭：可见视图与
+    // 同一文件存在后台 Agent 会话（Word / Excel / PDF）时先排空并关闭：可见视图与
     // 隐藏视图绝不共用同一份工作副本（否则就是双写者）。
     if (this.agentDocs?.has(file.id)) {
       await this.agentDocs.dispose(file.id)
     }
     if (this.agentSheets?.has(file.id)) {
       await this.agentSheets.dispose(file.id)
+    }
+    if (this.agentPdfs?.has(file.id)) {
+      await this.agentPdfs.dispose(file.id)
     }
 
     const existing = this.instances.get(file.id)
@@ -607,7 +620,7 @@ export class OfficePreviewRegistry {
   }
 
   /** 'active' 的解析：焦点实例优先；无焦点时该 kind 唯一打开的实例兜底。 */
-  private resolveActiveKind(kind: 'docx' | 'spreadsheet'): string | null {
+  private resolveActiveKind(kind: 'docx' | 'spreadsheet' | 'pdf'): string | null {
     if (this.activeId) {
       const instance = this.instances.get(this.activeId)
       if (instance?.descriptor.kind === kind) return this.activeId
@@ -621,7 +634,7 @@ export class OfficePreviewRegistry {
   /** 定位目标实例（active/显式 id + 自动打开等待窗口），并校验 kind。 */
   private async resolveAgentInstance(
     fileId: string,
-    kind: 'docx' | 'spreadsheet',
+    kind: 'docx' | 'spreadsheet' | 'pdf',
     options?: {
       /** 显式 fileId 未打开时是否等自动打开窗口（后台 Word 会话不需要等）。 */
       waitForOpen?: boolean
@@ -706,6 +719,40 @@ export class OfficePreviewRegistry {
     return this.agentSheets
   }
 
+  /**
+   * 未打开的 PDF 的后台编辑会话（惰性创建）。运行时缺少 agent 导出（老
+   * genoffice 构建）或没有主窗口/文件解析端口时返回 null，调用方保持原
+   * not_open 路径。
+   */
+  private ensureAgentPdfs(): AgentPdfSessionManager | null {
+    const resolver = this.agentFileResolver
+    if (!resolver) return null
+    if (this.agentPdfs) return this.agentPdfs
+    const window = this.window && !this.window.isDestroyed()
+      ? this.window
+      : BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed()) ?? null
+    if (!window) return null
+    this.bindWindow(window)
+    const runtime = this.ensureRuntime(window)
+    // pdf 的 agent 面是 genoffice cba38b8 起的后加导出：老运行时（或部分测试
+    // mock）缺 pdf 面时静默退化，调用方保持 not_open 兜底。
+    if (typeof runtime.pdf?.describeAgentPdf !== 'function') return null
+    if (typeof runtime.pdf?.applyAgentPdfTools !== 'function') return null
+    if (typeof runtime.pdf?.waitForAgentReady !== 'function') return null
+    this.agentPdfs = new AgentPdfSessionManager({
+      pdf: runtime.pdf,
+      getWindow: () => (this.window && !this.window.isDestroyed() ? this.window : null),
+      resolveFile: resolver,
+      editSync: {
+        register: (input) => this.registerAgentEditState({ ...input, kind: 'pdf' }),
+        drain: (fileId) => this.drainAgentEdits(fileId),
+        flush: (fileId) => this.flushAgentEdit(fileId),
+        release: (fileId) => this.releaseAgentEditState(fileId),
+      },
+    })
+    return this.agentPdfs
+  }
+
   /** 后台会话接入既有 editStates + fileSaved 回填链（与活实例编辑同一条导入路径）。 */
   private registerAgentEditState(input: {
     fileId: string
@@ -714,8 +761,8 @@ export class OfficePreviewRegistry {
     originalName: string
     roomId: string | null
     workspaceId: string | null
-    /** 回填导入与广播的形态：docx = Word，spreadsheet = Excel（xlsx）。 */
-    kind: 'docx' | 'spreadsheet'
+    /** 回填导入与广播的形态：docx = Word，spreadsheet = Excel（xlsx），pdf = PDF。 */
+    kind: 'docx' | 'spreadsheet' | 'pdf'
   }): () => void {
     this.editStates.set(input.fileId, {
       filePath: input.filePath,
@@ -950,6 +997,104 @@ export class OfficePreviewRegistry {
       ...(outcome.version ? { version: outcome.version } : {}),
       ...(outcome.error ? { error: outcome.error } : {}),
     }
+  }
+
+  /**
+   * Agent 读 PDF：已打开实例优先（读走用户眼前的会话，页码/滚动现场一致）；
+   * 未打开则拉起后台隐藏会话。可见但不是 PDF 的实例不顶替（not_editable）。
+   */
+  async describePdfArtifact(
+    fileId: string,
+    hints?: AgentPdfFileHints,
+  ): Promise<
+    | { ok: true; describe: GenOfficeAgentPdfDescription }
+    | {
+      ok: false
+      reason: AgentArtifactFailureReason
+      message?: string
+      open?: OpenOfficeInstanceInfo[]
+    }
+  > {
+    const resolved = await this.resolveAgentInstance(fileId, 'pdf', { waitForOpen: false })
+    if (resolved.ok) {
+      const target = webContents.fromId(resolved.wcId)
+      if (!target || target.isDestroyed() || typeof this.runtime?.pdf?.describeAgentPdf !== 'function') {
+        // 老运行时 / 视图已死：落回后台会话路径（agent 导出缺失时它也会拒绝）。
+      } else {
+        const described = await this.runtime.pdf.describeAgentPdf(target)
+        if ('error' in described) {
+          return { ok: false, reason: 'not_open', open: this.listOpenOffice() }
+        }
+        return { ok: true, describe: described }
+      }
+    }
+    if (resolved.ok || resolved.reason === 'not_editable') {
+      if (resolved.ok) return { ok: false, reason: 'not_open', open: this.listOpenOffice() }
+      return resolved
+    }
+    const headless = fileId === 'active' ? null : this.ensureAgentPdfs()
+    if (!headless) return { ...resolved, open: this.listOpenOffice() }
+    const outcome = await headless.describe(fileId, hints)
+    if (!outcome.ok) {
+      return {
+        ok: false,
+        reason: outcome.reason,
+        ...(outcome.message ? { message: outcome.message } : {}),
+        open: this.listOpenOffice(),
+      }
+    }
+    return { ok: true, describe: outcome.describe }
+  }
+
+  /**
+   * Agent 编辑 PDF：后台隐藏会话执行并回填版本链。可见 PDF 实例是宿主
+   * 只读预览（readonly=1，渲染层拒写），编辑一律走隐藏可编辑会话——同一
+   * 文件已有可见实例时先排空其后台会话（open() 已保证不双写）。
+   */
+  async applyPdfAgentTools(
+    fileId: string,
+    calls: GenOfficeAgentToolCall[],
+    hints?: AgentPdfFileHints,
+  ): Promise<AgentArtifactToolsOutcome> {
+    if (fileId === 'active') {
+      const activeId = this.resolveActivePdf()
+      if (!activeId) return { ok: false, reason: 'not_open', open: this.listOpenOffice() }
+      return this.applyPdfAgentTools(activeId, calls, hints)
+    }
+    // 有可见实例但不是 PDF：不能拿隐藏会话顶替用户眼前的那份。
+    const instance = this.instances.get(fileId)
+    if (instance && instance.descriptor.kind !== 'pdf') {
+      return { ok: false, reason: 'not_editable', open: this.listOpenOffice() }
+    }
+    const headless = this.ensureAgentPdfs()
+    if (!headless) return { ok: false, reason: 'not_open', open: this.listOpenOffice() }
+    const outcome = await headless.apply(fileId, calls, hints)
+    if (!outcome.ok) {
+      return {
+        ok: false,
+        reason: outcome.reason,
+        ...(outcome.message ? { message: outcome.message } : {}),
+        open: this.listOpenOffice(),
+      }
+    }
+    return {
+      ok: true,
+      results: outcome.results,
+      ...(outcome.version ? { version: outcome.version } : {}),
+      ...(outcome.error ? { error: outcome.error } : {}),
+    }
+  }
+
+  /** 'active' 的 PDF 解析：焦点实例优先；无焦点时唯一打开的 pdf 实例兜底。 */
+  private resolveActivePdf(): string | null {
+    if (this.activeId) {
+      const instance = this.instances.get(this.activeId)
+      if (instance?.descriptor.kind === 'pdf') return this.activeId
+    }
+    const ids = [...this.instances.entries()]
+      .filter(([, instance]) => instance.descriptor.kind === 'pdf')
+      .map(([id]) => id)
+    return ids.length === 1 ? ids[0]! : null
   }
 
   private async waitForInstance(
@@ -1193,6 +1338,9 @@ export class OfficePreviewRegistry {
     if (this.agentSheets) {
       await this.agentSheets.disposeAll().catch(() => undefined)
     }
+    if (this.agentPdfs) {
+      await this.agentPdfs.disposeAll().catch(() => undefined)
+    }
     const closedIds: string[] = []
     for (const [id, instance] of entries) {
       const closed = await instance.view.dispose().catch(() => false)
@@ -1238,8 +1386,20 @@ export class OfficePreviewRegistry {
   private async performEditImport(fileId: string, state: EditSyncState): Promise<void> {
     const bindings = this.editSyncBindings
     if (!bindings) return
-    const kindPrefix = state.kind === 'docx' ? 'word' : state.kind === 'slides' ? 'slides' : 'sheets'
-    const format = state.kind === 'docx' ? 'docx' : state.kind === 'slides' ? 'pptx' : 'xlsx'
+    const kindPrefix = state.kind === 'docx'
+      ? 'word'
+      : state.kind === 'slides'
+        ? 'slides'
+        : state.kind === 'pdf'
+          ? 'pdf'
+          : 'sheets'
+    const format = state.kind === 'docx'
+      ? 'docx'
+      : state.kind === 'slides'
+        ? 'pptx'
+        : state.kind === 'pdf'
+          ? 'pdf'
+          : 'xlsx'
     const input = {
       filePath: state.filePath,
       originalName: state.originalName,

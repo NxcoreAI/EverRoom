@@ -1,5 +1,5 @@
 /** Agent 生成 Office 文件的主进程 → 渲染层事件（channel office:agent-file）。 */
-export type OfficeAgentFileFormat = 'docx' | 'pptx' | 'xlsx'
+export type OfficeAgentFileFormat = 'docx' | 'pptx' | 'xlsx' | 'pdf'
 
 export interface OfficeAgentFileEvent {
   type: 'phase' | 'done' | 'error' | 'edited' | 'open-edit' | 'write-back-failed'

@@ -392,6 +392,27 @@ export interface GenOfficePdfRuntime {
   ): WebContentsView
   requestPdfClose(contents: WebContents, parent?: BrowserWindow | null): Promise<boolean>
   pdfIsDirty(webContentsId: number): boolean
+  /** 后加的 agent 面（genoffice cba38b8 起）：老运行时缺这些导出时返回 undefined，调用方降级。 */
+  describeAgentPdf?(
+    contents: WebContents,
+  ): Promise<GenOfficeAgentPdfDescription | { error: string }>
+  applyAgentPdfTools?(
+    contents: WebContents,
+    calls: GenOfficeAgentToolCall[],
+  ): Promise<{ results: GenOfficeAgentToolResult[] } | { error: string }>
+  /**
+   * 就绪信号：渲染层装载完目标工作副本后上报 filePath；true = 目标文件
+   * 已在视图里打开（身份一致），false = 超时/视图销毁/身份不符。
+   */
+  waitForAgentReady?(contents: WebContents, expectedPath: string, timeoutMs?: number): Promise<boolean>
+  /** 保存落盘 hook（渲染层静默保存含）：宿主版本回填链的触发点。 */
+  setPdfFileSavedHook?(hook: ((wc: WebContents, filePath: string) => void) | null): void
+}
+
+/** pdf describe 结果：上下文 + embed 安全的工具词汇表。 */
+export interface GenOfficeAgentPdfDescription {
+  context: string
+  tools?: { name: string; description: string; inputSchema: Record<string, unknown> }[]
 }
 
 export interface PreparedGenOfficeRuntime {

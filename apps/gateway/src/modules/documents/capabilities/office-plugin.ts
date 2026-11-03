@@ -1693,6 +1693,125 @@ export function officePlugin(
     },
   };
 
+  const pdfAgentRead: DocumentCapabilityTool = {
+    name: "pdf_agent_read",
+    title: "读取任意 PDF 的文档上下文与操作指南",
+    description: "按 fileId 读取任意已入库 .pdf 的活文档状态（不需要文件在界面上打开，后台编辑器可 headless 打开）："
+      + "文件名/页数/是否有书签大纲/批注统计，以及 PDF 编辑工具词汇表（read_pages/search_text/get_outline/"
+      + "edit_text/edit_block/insert_text/markup_text/add_note/reply_note/list_form_fields/fill_form_field/"
+      + "list_page_images/insert_image/rotate_page/delete_page 等）。"
+      + "fileId 省略 = 用户当前浏览的文件；要改的 PDF 没打开时先用 file_search 按文件名定位 fileId。"
+      + "加密 PDF 只能读不能改（工具会拒绝写操作）。",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        fileId: { type: "string", minLength: 1, description: "文件 id；省略 = 当前正在浏览的文件（可用 file_search 查找）" },
+      },
+      required: [],
+    },
+    annotations: annotations(true, false),
+    execute: async (args, context) => {
+      const target = await resolveOfficeTarget(args, context);
+      if (!/\.pdf$/i.test(target.entry.originalName)) {
+        throw new Error(`INVALID_TARGET: pdf_agent_read 只支持 .pdf；《${target.entry.originalName}》不是 PDF 文档`);
+      }
+      try {
+        const described = await bridge.describeAgentArtifact({
+          kind: "pdf",
+          fileId: target.fileId,
+          roomId: context.roomId,
+          workspaceId: context.workspaceId ?? null,
+        });
+        return success({
+          fileId: target.fileId,
+          title: target.entry.displayName ?? target.entry.originalName,
+          ...described,
+          hint: "读内容用 read_pages/search_text（页码是文档原始页码）；改文字前先读原文，"
+            + "edit_text 的 old_text 必须是页面上逐字存在的片段。修改不需要这份 PDF 已经打开："
+            + "后台会 headless 打开一份隐藏视图，编辑静默保存并更新版本。",
+        });
+      } catch (error) {
+        throw new Error(agentToolsFailureMessage(
+          target.entry.displayName ?? target.entry.originalName,
+          error instanceof Error ? error.message : String(error),
+        ));
+      }
+    },
+  };
+
+  const pdfAgentEdit: DocumentCapabilityTool = {
+    name: "pdf_agent_edit",
+    title: "用 PDF AI 工具链编辑任意 PDF",
+    description: "把 GenOffice PDF 的编辑器 AI 工具调用直接作用到任意已入库 .pdf 上（按 fileId；不需要文件在界面上打开，"
+      + "桌面端在后台以隐藏视图 headless 打开，编辑自动保存并更新文件版本）。"
+      + "先 pdf_agent_read 拿上下文与工具表。常用工具："
+      + "read_pages / search_text / get_outline（读）、edit_text（原地短改，不重排）、"
+      + "edit_block（整段重写，段内重排）、insert_text（空白处新增文字）、"
+      + "markup_text（高亮/下划线/删除线）、add_note / reply_note（便签批注与回复）、"
+      + "read_annotations（读已有批注）、list_form_fields / fill_form_field（表单）、"
+      + "list_page_images / insert_image / transform_image / rotate_image / replace_image / delete_image（图片）、"
+      + "rotate_page / delete_page（页面）。"
+      + "calls 1-50 条，按序执行；结果逐条返回（isError=true 表示该条失败，不影响已执行的其他条）。"
+      + "加密 PDF 无法编辑（pdf-lib 不能写回加密文件）。",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        fileId: { type: "string", minLength: 1, description: "文件 id；省略 = 当前正在浏览的文件（可用 file_search 查找）" },
+        calls: {
+          type: "array",
+          minItems: 1,
+          maxItems: 50,
+          description: "工具调用数组（{id, name, input}），name 必须是 pdf_agent_read 返回的 tools 之一",
+          items: {
+            type: "object",
+            additionalProperties: true,
+            required: ["id", "name", "input"],
+            properties: {
+              id: { type: "string", minLength: 1 },
+              name: { type: "string", minLength: 1 },
+            },
+          },
+        },
+      },
+      required: ["calls"],
+    },
+    annotations: annotations(false, false),
+    execute: async (args, context) => {
+      if (!Array.isArray(args.calls) || args.calls.length === 0) {
+        throw new Error("INVALID_REQUEST: calls 必须是非空数组");
+      }
+      const target = await resolveOfficeTarget(args, context);
+      if (!/\.pdf$/i.test(target.entry.originalName)) {
+        throw new Error(`INVALID_TARGET: pdf_agent_edit 只支持 .pdf；《${target.entry.originalName}》不是 PDF 文档`);
+      }
+      try {
+        const applied = await bridge.applyAgentArtifactTools({
+          kind: "pdf",
+          fileId: target.fileId,
+          roomId: context.roomId,
+          workspaceId: context.workspaceId ?? null,
+          calls: args.calls as OfficeAgentToolCall[],
+        });
+        return success({
+          fileId: target.fileId,
+          title: target.entry.displayName ?? target.entry.originalName,
+          ...applied,
+          nextAction: "report_result",
+          hint: applied.results?.some((r) => r.isError)
+            ? "部分调用失败：读每条 output 修正后重试失败的调用；成功条目已生效，不要重复执行。"
+            : "修改已生效并保存（文件版本 +1）；回复里只说明改了哪些页/哪些内容。",
+        });
+      } catch (error) {
+        throw new Error(agentToolsFailureMessage(
+          target.entry.displayName ?? target.entry.originalName,
+          error instanceof Error ? error.message : String(error),
+        ));
+      }
+    },
+  };
+
   return {
     manifest: manifest("office.create", "mutation", null, null, false),
     promptGuidelines: [
@@ -1716,6 +1835,11 @@ export function officePlugin(
       + "propose_operations 是唯一写路径，一次 1-50 条，本环境不支持 dry-run（不要传 dryRun、不要说“先生成预览”）。"
       + "后台会按 fileId headless 打开一份隐藏工作簿并静默保存（文件版本 +1），不要要求用户先打开、先另存或先切到那个页签，"
       + "也不要用 sheets_create 重建一份；只有该文件正开着且有未保存修改时才需要用户先保存（FILE_UNSAVED）。",
+      "读改任意 PDF（填表、改文字、高亮批注、插页删页等；文件不必已经打开）：先 pdf_agent_read（要现成 fileId 就先用 file_search 按文件名找），"
+      + "再按任务用 pdf_agent_edit 下发工具调用：短改用 edit_text（old_text 必须逐字来自页面）、整段重写用 edit_block、"
+      + "空白处加字用 insert_text、高亮/便签用 markup_text/add_note、表单先 list_form_fields 再 fill_form_field、"
+      + "页面操作用 rotate_page/delete_page。PDF 没有自动重排：改动词保持与原文长度接近。"
+      + "后台会 headless 打开并静默保存（文件版本 +1），不要要求用户先打开；加密 PDF 只读不能改。",
       "用户要求在 Word 里配图/插图时：先 word_agent_read 拿块索引，再调用 word_agent_illustration 生成并插入"
       + "（prompt 只描述画面，不要把正文长句原样丢给生图模型）；不要用 bash/matplotlib 现画图再想办法把 base64 传进工具参数。"
       + "已有本地图片（用户给的路径或你自己生成的 PNG）用 word_agent_edit 的 insert_image_base64 {path}；"
@@ -1738,7 +1862,7 @@ export function officePlugin(
       slidesEdit,
       ...(files ? [officeRead, officeEdit, sheetsRead, sheetsEdit] : []),
       ...(files
-        ? [wordAgentRead, wordAgentEdit, wordAgentOps, wordCompare, wordExportPdf, sheetsAgentRead, sheetsAgentEdit]
+        ? [wordAgentRead, wordAgentEdit, wordAgentOps, wordCompare, wordExportPdf, sheetsAgentRead, sheetsAgentEdit, pdfAgentRead, pdfAgentEdit]
         : []),
       ...(files && wordAgentIllustration ? [wordAgentIllustration] : []),
     ],

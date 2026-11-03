@@ -5,16 +5,19 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { BrowserWindow } from 'electron'
 
-const { savedListenersByWc, createCalls, slidesCalls, sheetCalls } = vi.hoisted(() => ({
+const { savedListenersByWc, createCalls, slidesCalls, sheetCalls, pdfUserData } = vi.hoisted(() => ({
   savedListenersByWc: new Map<number, Set<(filePath: string) => void>>(),
   createCalls: { options: [] as Array<{ editable?: boolean }> },
   slidesCalls: { options: [] as Array<{ editable?: boolean }> },
   sheetCalls: { options: [] as Array<{ editable?: boolean }> },
+  // 后台 PDF 会话的工作副本桶（app.getPath('userData')）：每个用例指到临时目录。
+  pdfUserData: { dir: '' as string },
 }))
 
 vi.mock('electron', () => ({
   webContents: { fromId: vi.fn((id: number) => ({ id, isDestroyed: () => false })) },
   BrowserWindow: { getAllWindows: vi.fn(() => []) },
+  app: { getPath: (_name: string) => pdfUserData.dir },
 }))
 vi.mock('../src/main/office/office-runtime', () => ({
   loadPreparedGenOfficeRuntime: vi.fn(() => runtime),
@@ -149,6 +152,18 @@ const runtime = {
     describeAgentDeck: vi.fn(),
     applyAgentDeckOps: vi.fn(),
     applyAgentDeckPage: vi.fn(),
+  },
+  pdf: {
+    // 后台 PDF 隐藏会话的面：建视图 / 就绪闸门 / 描述 / 应用（pdf 无 teardown 通道）。
+    createPdfView: vi.fn(() => makeView('pdf-hidden')),
+    waitForAgentReady: vi.fn(async () => true),
+    describeAgentPdf: vi.fn(async () => ({
+      context: 'Current document: "hidden.pdf", 3 pages.',
+      tools: [{ name: 'read_pages', description: 'read', inputSchema: {} }],
+    })),
+    applyAgentPdfTools: vi.fn(async () => ({
+      results: [{ id: 'call-1', name: 'edit_text', output: 'ok', mutated: true }],
+    })),
   },
 }
 
@@ -461,6 +476,155 @@ describe('OfficePreviewRegistry', () => {
       expect(applied).toMatchObject({ ok: false, reason: 'unsaved' })
       expect(runtime.sheets.applyAgentWorkbookTools).not.toHaveBeenCalled()
       expect(runtime.sheets.createSheetsView).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('后台 PDF 编辑（未打开/隐藏）', () => {
+    async function withPdfStorage(
+      run: (storage: string, dir: string) => Promise<void>,
+    ): Promise<void> {
+      const dir = await mkdtemp(join(tmpdir(), 'agent-pdf-reg-'))
+      pdfUserData.dir = dir
+      const storage = join(dir, 'hidden.pdf')
+      await writeFile(storage, Buffer.from('%PDF-1.4 not a real pdf but has magic'))
+      try {
+        await run(storage, dir)
+      } finally {
+        await rm(dir, { recursive: true, force: true })
+      }
+    }
+
+    it('未打开的 pdf：describe/apply 走隐藏可编辑会话，工作副本进 agent 桶，不进可见页签', async () => {
+      await withPdfStorage(async (storage) => {
+        const window = makeWindow()
+        await registry.open(window, file('file-visible', 'visible.docx'))
+        const importAgentFile = vi.fn(async () => ({ fileVersionId: 'file-version-9' }))
+        registry.setEditSync({ importAgentFile, broadcast: vi.fn() })
+        registry.setAgentFileResolver(async (fileId) => ({
+          fileId,
+          originalName: 'hidden.pdf',
+          storagePath: storage,
+          // 内容指纹必须是 64 位十六进制（preparePdfWorkingCopy 的身份校验）。
+          contentHash: 'a1'.repeat(32),
+        }))
+
+        const described = await registry.describePdfArtifact('file-visible-pdf', { roomId: 'room-p1' })
+        expect(described.ok).toBe(true)
+        // 工作副本按 (fileId, hash) 分桶落在 userData 下，绝不碰 CAS blob。
+        const workingCopy = join(pdfUserData.dir, 'office-pdfs', 'file-visible-pdf', 'a1'.repeat(32), 'hidden.pdf')
+        expect(runtime.pdf.createPdfView).toHaveBeenCalledWith(workingCopy, { readonly: false })
+        expect(runtime.pdf.waitForAgentReady).toHaveBeenCalled()
+
+        // apply 前 mock 一份「已保存」字节：会话用工作副本字节变化判保存成败。
+        await writeFile(workingCopy, Buffer.from('%PDF-1.4 edited bytes'))
+        const applied = await registry.applyPdfAgentTools('file-visible-pdf', [
+          { id: 'call-1', name: 'edit_text', input: {} },
+        ])
+        expect(applied.ok).toBe(true)
+        if (applied.ok) expect(applied.version).toBe('file-version-9')
+        expect(importAgentFile).toHaveBeenCalledWith(expect.objectContaining({
+          fileEntryId: 'file-visible-pdf',
+          sourceKey: 'agent:pdf:edit:file-visible-pdf',
+          originalName: 'hidden.pdf',
+          roomId: 'room-p1',
+        }))
+
+        // 隐藏会话不是用户页签。
+        expect(registry.openOfficeFiles().map((entry) => entry.fileId)).toEqual(['file-visible'])
+        expect(registry.has('file-visible-pdf')).toBe(false)
+        await registry.disposeAll()
+      })
+    })
+
+    it('active 解析：焦点是 pdf 时走它；焦点是其他类型且无唯一 pdf → not_open', async () => {
+      const window = makeWindow()
+      await registry.open(window, file('file-focus', 'focus.docx'))
+      registry.setAgentFileResolver(async (fileId) => ({
+        fileId,
+        originalName: 'doc.pdf',
+        storagePath: '/tmp/never.pdf',
+        contentHash: 'b2'.repeat(32),
+      }))
+      // 焦点是 docx、且没有打开的 pdf：active 落不到 pdf 上。
+      const applied = await registry.applyPdfAgentTools('active', [
+        { id: 'call-1', name: 'edit_text', input: {} },
+      ])
+      expect(applied).toMatchObject({ ok: false, reason: 'not_open' })
+      expect(runtime.pdf.createPdfView).not.toHaveBeenCalled()
+    })
+
+    it('可见 pdf 页签在场时：describe 读可见会话（不重复拉隐藏编辑器）', async () => {
+      const window = makeWindow()
+      await registry.open(window, file('file-pdf-vis', 'vis.pdf'))
+      registry.setAgentFileResolver(async (fileId) => ({
+        fileId,
+        originalName: 'vis.pdf',
+        storagePath: '/tmp/never.pdf',
+        contentHash: 'c3'.repeat(32),
+      }))
+
+      const read = await registry.describePdfArtifact('file-pdf-vis')
+      expect(read.ok).toBe(true)
+      // 读的是可见实例的 webContents，不是新拉的隐藏会话。
+      expect(runtime.pdf.describeAgentPdf).toHaveBeenCalledWith(
+        expect.objectContaining({ id: viewCalls[0]!.webContentsId }),
+      )
+      expect(runtime.pdf.createPdfView).not.toHaveBeenCalled()
+    })
+
+    it('加密 pdf → encrypted，不拉起编辑器；catalog 指纹变化 → 重建会话', async () => {
+      await withPdfStorage(async (storage) => {
+        await writeFile(storage, Buffer.from('%PDF-1.7 /Encrypt 4 0 R encrypted body'))
+        const window = makeWindow()
+        await registry.open(window, file('file-visible', 'visible.docx'))
+        registry.setAgentFileResolver(async (fileId) => ({
+          fileId,
+          originalName: 'locked.pdf',
+          storagePath: storage,
+          contentHash: 'e'.repeat(64),
+        }))
+        const encrypted = await registry.describePdfArtifact('file-enc-pdf')
+        expect(encrypted).toMatchObject({ ok: false, reason: 'encrypted' })
+        expect(runtime.pdf.createPdfView).not.toHaveBeenCalled()
+
+        // 换成正常字节 + 新指纹：会话建立后再改指纹 → 下次编辑重建。
+        await writeFile(storage, Buffer.from('%PDF-1.4 clean bytes'))
+        let metaHash = 'f'.repeat(64)
+        const meta = { originalName: 'clean.pdf', storagePath: storage, contentHash: metaHash }
+        registry.setAgentFileResolver(async (fileId) => ({ ...meta, fileId }))
+        const first = await registry.describePdfArtifact('file-rebuild-pdf')
+        expect(first.ok).toBe(true)
+        expect(runtime.pdf.createPdfView).toHaveBeenCalledTimes(1)
+        const workingCopy = join(pdfUserData.dir, 'office-pdfs', 'file-rebuild-pdf', metaHash, 'clean.pdf')
+
+        metaHash = '0'.repeat(64)
+        meta.contentHash = metaHash
+        const second = await registry.describePdfArtifact('file-rebuild-pdf')
+        expect(second.ok).toBe(true)
+        expect(runtime.pdf.createPdfView).toHaveBeenCalledTimes(2)
+        expect(workingCopy).toBeTruthy()
+        await registry.disposeAll()
+      })
+    })
+
+    it('disposeAll 排空后台 pdf 会话（不再持有隐藏视图）', async () => {
+      await withPdfStorage(async (storage) => {
+        const window = makeWindow()
+        await registry.open(window, file('file-visible', 'visible.docx'))
+        registry.setEditSync({ importAgentFile: vi.fn(async () => null), broadcast: vi.fn() })
+        registry.setAgentFileResolver(async (fileId) => ({
+          fileId,
+          originalName: 'hidden.pdf',
+          storagePath: storage,
+          contentHash: 'd'.repeat(64),
+        }))
+        await registry.describePdfArtifact('file-final-pdf')
+        const hidden = viewCalls.find((entry) => entry.kind === 'pdf-hidden')
+        expect(hidden).toBeTruthy()
+
+        await registry.disposeAll()
+        expect(hidden!.disposed).toBe(true)
+      })
     })
   })
 

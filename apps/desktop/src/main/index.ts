@@ -3791,7 +3791,9 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         if (req.mode === 'read') {
           const outcome = req.kind === 'docx'
             ? await officePreviewRegistry.describeDocArtifact(req.fileId, hints)
-            : await officePreviewRegistry.describeSpreadsheetArtifact(req.fileId, hints)
+            : req.kind === 'pdf'
+              ? await officePreviewRegistry.describePdfArtifact(req.fileId, hints)
+              : await officePreviewRegistry.describeSpreadsheetArtifact(req.fileId, hints)
           return outcome.ok
             ? { ok: true, data: { describe: outcome.describe } as unknown as Record<string, unknown> }
             : outcome
@@ -3803,7 +3805,9 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         }))
         const outcome = req.kind === 'docx'
           ? await officePreviewRegistry.applyDocAgentTools(req.fileId, calls, hints)
-          : await officePreviewRegistry.applySpreadsheetAgentTools(req.fileId, calls, hints)
+          : req.kind === 'pdf'
+            ? await officePreviewRegistry.applyPdfAgentTools(req.fileId, calls, hints)
+            : await officePreviewRegistry.applySpreadsheetAgentTools(req.fileId, calls, hints)
         return outcome.ok
           ? {
             ok: true,
