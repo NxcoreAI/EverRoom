@@ -1,0 +1,211 @@
+/* 检索洞察面板：首屏 = 一句结论 + 4 个指标 + 最近一次检索；
+   逐次检索与召回片段收进「展开明细」。颜色只用令牌：检索 var(--ctx)、
+   已注入 var(--ok)、未注入 var(--warn)，缺失一律灰阶。 */
+
+/* ── 首屏 ─────────────────────────────────────────────────────────────────── */
+.rag-hero {
+  display: grid;
+  gap: var(--sp-3);
+}
+
+.rag-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--sp-3);
+}
+
+.rag-latest {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  min-width: 0;
+  padding-top: var(--sp-3);
+  border-top: 1px solid var(--line-soft);
+}
+
+.rag-latest-label {
+  flex: 0 0 auto;
+  font-size: var(--fs-label);
+  color: var(--ink-3);
+}
+
+.rag-latest-query {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--fs-body);
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rag-latest-meta {
+  flex: 0 0 auto;
+  font-size: var(--fs-label);
+  color: var(--ctx);
+}
+
+.rag-tool-names {
+  margin: 0;
+  font-size: var(--fs-small);
+  color: var(--ink-3);
+}
+
+/* ── 逐次检索 ─────────────────────────────────────────────────────────────── */
+.rag-items {
+  display: grid;
+  gap: var(--sp-3);
+}
+
+.rag-item {
+  display: grid;
+  gap: 2px;
+  padding-bottom: var(--sp-2);
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.rag-item:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.rag-item[data-future] {
+  opacity: 0.45;
+}
+
+.rag-item[data-selected] {
+  background: var(--accent-soft);
+  border-radius: var(--radius);
+}
+
+.rag-item-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  min-width: 0;
+  width: 100%;
+  padding: 0 var(--sp-1);
+  text-align: left;
+}
+
+.rag-item-head:hover .rag-item-tool {
+  color: var(--accent);
+}
+
+.rag-item-tool {
+  flex: 0 0 auto;
+  font-size: var(--fs-body);
+  font-weight: 500;
+  color: var(--ctx);
+}
+
+.rag-item-meta {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--fs-small);
+  color: var(--ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rag-fed {
+  flex: 0 0 auto;
+  font-size: var(--fs-label);
+  color: var(--ink-4);
+}
+
+.rag-fed[data-fed='yes'] {
+  color: var(--ok);
+}
+
+.rag-fed[data-fed='no'] {
+  color: var(--warn);
+}
+
+.rag-item-empty {
+  margin: 0;
+  padding-left: var(--sp-3);
+  font-size: var(--fs-small);
+  color: var(--ink-4);
+}
+
+/* 召回片段：两行（来源 / 字符数 / 相似度 + 预览一行） */
+.rag-chunks {
+  display: grid;
+  gap: 1px;
+  margin: 0;
+  padding: 0 0 0 var(--sp-3);
+  list-style: none;
+}
+
+.rag-chunks-note {
+  padding: 2px var(--sp-2);
+  font-size: var(--fs-label);
+  color: var(--ink-4);
+}
+
+.rag-chunk {
+  display: grid;
+  gap: 1px;
+  width: 100%;
+  padding: 2px var(--sp-2);
+  border-radius: var(--radius);
+  text-align: left;
+}
+
+.rag-chunk:hover {
+  background: var(--surface-2);
+}
+
+.rag-chunk-top {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  min-width: 0;
+  font-size: var(--fs-label);
+  color: var(--ink-3);
+}
+
+.rag-chunk-source {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rag-chunk-chars {
+  flex: 0 0 auto;
+}
+
+.rag-score {
+  flex: 0 0 auto;
+  color: var(--ink-3);
+}
+
+.rag-score[data-absent] {
+  color: var(--ink-4);
+}
+
+.rag-chunk-preview {
+  font-size: var(--fs-small);
+  color: var(--ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rag-more {
+  margin-top: var(--sp-2);
+  font-size: var(--fs-label);
+  color: var(--ink-2);
+  padding: 2px var(--sp-2);
+  border-radius: var(--radius);
+}
+
+.rag-more:hover {
+  background: var(--surface-3);
+  color: var(--ink);
+}

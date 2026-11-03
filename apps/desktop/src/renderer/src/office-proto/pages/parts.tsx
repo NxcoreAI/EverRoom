@@ -63,6 +63,45 @@ export function FileTypeIcon({
   )
 }
 
+/** 资料库 / 目录列表的文件夹图标：与 FileTypeIcon 同一套「描边色块 + 同色墨」比例，
+ *  只把形状换成文件夹（前片浅底 + 标签页稍深），避免在暖纸底上出现高饱和蓝。 */
+export function FolderGlyphIcon({
+  size = 32, className,
+}: {
+  size?: number
+  className?: string
+}) {
+  const ink = 'var(--ui-icon-doc)'
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 48 48"
+      aria-hidden
+      className={className ? `op-ft-icon ${className}` : 'op-ft-icon'}
+    >
+      <path
+        d="M5.5 13.4c0-1.7 1.3-3 3-3h8.4c.8 0 1.6.33 2.2.9l2.5 2.5h14.9c1.7 0 3 1.3 3 3v2.6H5.5z"
+        style={{ fill: ink, fillOpacity: 0.3 }}
+      />
+      <rect
+        x="5.5"
+        y="17.6"
+        width="37"
+        height="21.9"
+        rx="3.4"
+        strokeWidth="1.5"
+        style={{ fill: ink, fillOpacity: 0.12, stroke: ink, strokeOpacity: 0.22 }}
+      />
+      <path
+        d="M9.5 21.8h29"
+        strokeWidth="1.2"
+        style={{ stroke: ink, strokeOpacity: 0.2 }}
+      />
+    </svg>
+  )
+}
+
 /** 文件行（表格式单行）：图标 + 文件名 + 修改时间 + 大小 + 悬停更多。 */
 export function FileRow({
   file, onOpen, onMore,

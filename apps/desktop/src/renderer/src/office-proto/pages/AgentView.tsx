@@ -3,14 +3,14 @@ import { Bot, Sparkles } from 'lucide-react'
 
 import {
   type OfficeFile, agentSessions, agentSkills, files, knowledgeCards,
-  mcpServers, memoryKindMeta, persona, userProfile,
+  mcpServers, knowledgeKindMeta, persona, userProfile,
 } from '../data'
 import { FileTypeIcon, PageHead, Seg } from './parts'
 
-type AgentTab = 'memory' | 'sessions' | 'mcp' | 'skills' | 'persona' | 'profile'
+type AgentTab = 'knowledge' | 'sessions' | 'mcp' | 'skills' | 'persona' | 'profile'
 
 const agentTabs: { key: AgentTab; label: string }[] = [
-  { key: 'memory', label: '记忆' },
+  { key: 'knowledge', label: '知识卡片' },
   { key: 'sessions', label: '会话记录' },
   { key: 'mcp', label: 'MCP 工具' },
   { key: 'skills', label: 'Skills' },
@@ -24,7 +24,7 @@ export function AgentView({
   onOpenFile: (f: OfficeFile) => void
   onToast: (msg: string) => void
 }) {
-  const [tab, setTab] = useState<AgentTab>('memory')
+  const [tab, setTab] = useState<AgentTab>('knowledge')
 
   /** 调试面板是独立窗口：这里只触发主进程开窗（单例），失败给出可读提示。 */
   const openAgentDebug = () => {
@@ -40,7 +40,7 @@ export function AgentView({
 
   return (
     <>
-      <PageHead title="智能体" hint="管理本地 Agent 的记忆、工具与人格" />
+      <PageHead title="智能体" hint="管理本地 Agent 的知识、工具与人格" />
 
       <section className="op-agent-hero">
         <div className="op-agent-avatar"><Bot size={24} /></div>
@@ -57,7 +57,7 @@ export function AgentView({
       <Seg items={agentTabs} value={tab} onChange={setTab} />
 
       <div className="op-agent-body">
-        {tab === 'memory' && <MemoryTab onToast={onToast} />}
+        {tab === 'knowledge' && <KnowledgeTab onToast={onToast} />}
         {tab === 'sessions' && <SessionsTab onOpenFile={onOpenFile} onToast={onToast} />}
         {tab === 'mcp' && <McpTab />}
         {tab === 'skills' && <SkillsTab onToast={onToast} />}
@@ -68,11 +68,11 @@ export function AgentView({
   )
 }
 
-function MemoryTab({ onToast }: { onToast: (msg: string) => void }) {
+function KnowledgeTab({ onToast }: { onToast: (msg: string) => void }) {
   return (
     <div className="op-list-card">
       {knowledgeCards.map((k) => {
-        const meta = memoryKindMeta[k.kind]
+        const meta = knowledgeKindMeta[k.kind]
         return (
           <button
             key={k.id}

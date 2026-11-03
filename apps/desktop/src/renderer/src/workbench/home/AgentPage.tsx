@@ -1,321 +1,214 @@
-import type { ReactNode } from 'react'
-import { Bot, Bug, RotateCw, Server } from 'lucide-react'
+import { useState } from 'react'
+import { Bot } from 'lucide-react'
 
-import { relativeTimeLabel } from '../types'
 import { workbenchToast } from '../shell/toast'
-import { Badge, Button, PageHeader, Spinner, type BadgeTone } from '../ui/primitives'
-import { HomeNote, HomeSection } from './parts'
-import {
-  useAgentOverview,
-  type LocalAgentView,
-  type Loadable,
-  type McpView,
-  type RuntimeAgentView,
-  type RuntimeAgentState,
-  type RuntimeView,
-  type UsageView,
-} from './useAgentOverview'
+import { useAgentPersona } from './useAgentPersona'
 
-const PROVIDER_LABELS: Record<string, string> = {
-  codex: 'Codex',
-  claude: 'Claude Code',
-  openclaw: 'OpenClaw',
-  opencode: 'OpenCode',
-  custom: '自定义渠道',
+/**
+ * 主页「Agent」页。
+ *
+ * **页面代码直接复制自原型 `office-proto/pages/AgentView.tsx`**（页头 / Hero / Seg /
+ * `.op-info-card` 卡片），样式全部沿用 `office-proto.css`（`main.tsx` 已全局引入），
+ * 这里不另造样式，只做两件事：
+ *   1. 把原型里的 mock 数据换成网关真实数据（`useAgentPersona`：人格 / 用户画像 / 经验）；
+ *   2. 原型的六个 tab 里，我们在这页有数据源的是「人格 / 用户画像 / 经验」，其余
+ *      （知识卡片 / 会话记录 / MCP 工具 / Skills）各有自己的页面，不在这里重复造。
+ */
+
+type AgentTab = 'persona' | 'profile' | 'insights'
+
+const agentTabs: { key: AgentTab; label: string }[] = [
+  { key: 'persona', label: '人格' },
+  { key: 'profile', label: '用户画像' },
+  { key: 'insights', label: '经验' },
+]
+
+/* ───────────── 以下两段结构复制自 `office-proto/pages/parts.tsx` ─────────────
+   只复制 PageHead / Seg 的 JSX 与类名：parts.tsx 本身 import 了原型的 mock 文件数据，
+   整包引进来会把 mock 打进工作台 bundle。 */
+
+function PageHead({ title, hint }: { title: string; hint?: string }) {
+  return (
+    <header className="op-page-head">
+      <div className="op-page-head-text">
+        <h1>{title}</h1>
+        {hint && <p>{hint}</p>}
+      </div>
+    </header>
+  )
 }
 
-const LOCAL_STATUS_META: Record<string, { label: string; tone: BadgeTone }> = {
-  verified: { label: '已验证', tone: 'success' },
-  history_available: { label: '有历史记录', tone: 'success' },
-  discovered: { label: '已发现', tone: 'neutral' },
-  unavailable: { label: '不可用', tone: 'warning' },
-  unknown: { label: '状态未知', tone: 'neutral' },
+function Seg<T extends string>({
+  items, value, onChange,
+}: {
+  items: { key: T; label: string }[]
+  value: T
+  onChange: (key: T) => void
+}) {
+  return (
+    <div className="op-seg" role="tablist">
+      {items.map((item) => (
+        <button
+          key={item.key}
+          type="button"
+          role="tab"
+          aria-selected={value === item.key}
+          className={`op-seg-btn${value === item.key ? ' active' : ''}`}
+          onClick={() => onChange(item.key)}
+        >
+          {item.label}
+        </button>
+      ))}
+    </div>
+  )
 }
 
-const RUNTIME_STATE_META: Record<RuntimeAgentState, { label: string; tone: BadgeTone }> = {
-  running: { label: '运行中', tone: 'running' },
-  idle: { label: '空闲', tone: 'success' },
-  error: { label: '异常', tone: 'danger' },
-  unknown: { label: '状态未知', tone: 'neutral' },
+/* ───────────── 原型三个 tab 的同一套结构，数据换成真实数据 ───────────── */
+
+/** 人格：原型 `PersonaTab`（`op-info-card op-persona-card` + 技能 chips + 提示词摘要）。 */
+function PersonaTab({ persona }: {
+  persona: { name: string; tagline: string; skills: string[]; promptSummary: string }
+}) {
+  return (
+    <section className="op-info-card op-persona-card">
+      <div className="op-persona-head">
+        <div className="op-agent-avatar sm"><Bot size={17} /></div>
+        <div className="op-persona-head-text">
+          <div className="op-info-title">{persona.name}</div>
+          <p>{persona.tagline || '还没有简介'}</p>
+        </div>
+      </div>
+      {persona.skills.length > 0 && (
+        <div className="op-chips">
+          {persona.skills.map((skill) => <span key={skill} className="op-chip">{skill}</span>)}
+        </div>
+      )}
+      {persona.promptSummary ? (
+        <div className="op-persona-prompt">
+          <div className="op-persona-prompt-label">系统提示词（摘要）</div>
+          <p>{persona.promptSummary}</p>
+        </div>
+      ) : null}
+    </section>
+  )
 }
 
-function formatNumber(value: number): string {
-  return value.toLocaleString('zh-CN')
+/** 用户画像：原型 `ProfileTab`（`op-profile-grid` + 每组一张 `op-info-card`）。 */
+function ProfileTab({ groups }: {
+  groups: { title: string; items: { id: string; content: string }[] }[]
+}) {
+  return (
+    <div className="op-profile-grid">
+      {groups.map((group) => (
+        <section key={group.title} className="op-info-card">
+          <div className="op-info-title">{group.title}</div>
+          <ul>
+            {group.items.map((item) => <li key={item.id}>{item.content}</li>)}
+          </ul>
+        </section>
+      ))}
+    </div>
+  )
 }
 
-/** Agent 页：真实 `agent.*` / `mcp.listServers` 状态，无 mock 记忆/人格/技能。 */
+/**
+ * 读取失败 ≠ 真的没有：接口 400/网络异常时绝不能显示「还没有用户画像」
+ * （用户会以为自己的信息没被记住）。样式沿用原型 `.op-empty`，只加一个就地重试。
+ */
+function ReadFailed({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <div className="op-empty" role="alert">
+      {message}
+      <button className="op-ghost-btn" type="button" onClick={onRetry} style={{ marginLeft: 10 }}>重试</button>
+    </div>
+  )
+}
+
+/** 经验：原型没有这个 tab，沿用同一张 `op-info-card` 与列表结构。 */
+function InsightsTab({ items }: { items: { id: string; text: string; whenLabel: string }[] }) {
+  return (
+    <section className="op-info-card">
+      <div className="op-info-title">经验</div>
+      <ul>
+        {items.map((item) => (
+          <li key={item.id}>
+            {item.text}
+            {item.whenLabel && <span className="wb-home-exp-meta">{item.whenLabel}</span>}
+          </li>
+        ))}
+      </ul>
+    </section>
+  )
+}
+
 export function AgentPage() {
-  const overview = useAgentOverview()
+  const [tab, setTab] = useState<AgentTab>('profile')
+  const { state, reload } = useAgentPersona()
 
-  const openDebugWindow = () => {
-    const open = window.nxcore?.agentDebug?.openWindow
-    if (!open) {
-      workbenchToast('当前环境不支持打开 Agent 调试窗口')
+  const persona = state.status === 'ready' ? state.value.persona : null
+  const profile = state.status === 'ready' ? state.value.profile : []
+  const experiences = state.status === 'ready' ? state.value.experiences : []
+  const failed = state.status === 'ready' ? state.value.failed : { profile: false, experiences: false }
+  const ready = state.status === 'ready'
+
+  /** 调试面板是独立窗口：这里只触发主进程开窗（单例），失败给出可读提示。 */
+  const openAgentDebug = () => {
+    const api = window.nxcore?.agentDebug
+    if (!api?.openWindow) {
+      workbenchToast('调试窗口不可用（桌面服务未就绪）')
       return
     }
-    void open().catch((error) => {
-      workbenchToast(error instanceof Error && error.message ? error.message : '打开调试窗口失败')
+    void api.openWindow().catch((error: unknown) => {
+      workbenchToast(error instanceof Error ? error.message : '打开调试窗口失败')
     })
   }
 
-  const canOpenDebug = typeof window.nxcore?.agentDebug?.openWindow === 'function'
-  const runtimeReady = overview.runtime.status === 'ready' ? overview.runtime.value : null
-  const localReady = overview.localAgents.status === 'ready' ? overview.localAgents.value : null
-  const mcpReady = overview.mcp.status === 'ready' ? overview.mcp.value : null
-  const usageReady = overview.usage.status === 'ready' ? overview.usage.value : null
-
   return (
-    <div className="wb-home-scroll">
-      <PageHeader
-        eyebrow="Agent"
-        title="智能体"
-        subtitle="主 Agent、本机 Agent、MCP 工具与近 7 天用量的真实状态。"
-        actions={(
-          <Button variant="secondary" icon={<Bug size={15} />} disabled={!canOpenDebug} onClick={openDebugWindow}>
-            打开调试窗口
-          </Button>
-        )}
-      />
+    <div className="wb-home-scroll wb-home-agent-host">
+      <PageHead title="智能体" hint="管理本地 Agent 的知识、工具与人格" />
 
-      <HomeSection title="工作台 Agent" count={runtimeReady?.summary.total}>
-        <RuntimeBlock
-          state={overview.runtime}
-          onRetry={overview.reload}
-          render={(runtime) => <RuntimeContent runtime={runtime} />}
-        />
-      </HomeSection>
+      <section className="op-agent-hero">
+        <div className="op-agent-avatar"><Bot size={24} /></div>
+        <div className="op-agent-hero-text">
+          <div className="op-agent-hero-name">
+            {persona?.name ?? '工作台 Agent'}
+            <span className={`op-pill${ready ? ' on' : ''}`}>
+              <i className={`op-dot${ready ? ' on' : ''}`} />
+              {state.status === 'error' ? '未连接' : ready ? '运行中' : '连接中'}
+            </span>
+          </div>
+          <p>{persona?.tagline || (state.status === 'loading' ? '正在读取简介…' : '还没有简介')}</p>
+        </div>
+        <button className="op-ghost-btn" type="button" title="打开独立的 Agent 调试窗口" onClick={openAgentDebug}>调试</button>
+      </section>
 
-      <HomeSection title="本机 Agent" count={localReady?.length}>
-        <LocalAgentBlock
-          state={overview.localAgents}
-          onRetry={overview.reload}
-          render={(agents) => <LocalAgentContent agents={agents} />}
-        />
-      </HomeSection>
-
-      <HomeSection title="MCP 工具" count={mcpReady?.servers.length}>
-        <McpBlock state={overview.mcp} onRetry={overview.reload} render={(view) => <McpContent view={view} />} />
-      </HomeSection>
-
-      {overview.usage.status === 'error' ? (
-        <HomeSection title="近 7 天用量">
-          <HomeNote>
-            用量数据暂不可用
-            <Button variant="ghost" size="sm" icon={<RotateCw size={12} />} onClick={overview.reload}>重试</Button>
-          </HomeNote>
-        </HomeSection>
-      ) : null}
-      {usageReady ? (
-        <HomeSection title="近 7 天用量">
-          <UsageContent usage={usageReady} />
-        </HomeSection>
-      ) : null}
-    </div>
-  )
-}
-
-/* ───────────────── 通用块状态 ───────────────── */
-
-function LoadingBlock() {
-  return <div className="wb-home-state"><Spinner /> 正在读取…</div>
-}
-
-function ErrorBlock({ message, onRetry }: { message: string; onRetry: () => void }) {
-  return (
-    <HomeNote>
-      {message}
-      <Button variant="ghost" size="sm" icon={<RotateCw size={12} />} onClick={onRetry}>重试</Button>
-    </HomeNote>
-  )
-}
-
-function RuntimeBlock({
-  state, onRetry, render,
-}: {
-  state: Loadable<RuntimeView>
-  onRetry: () => void
-  render: (runtime: RuntimeView) => ReactNode
-}) {
-  if (state.status === 'loading') return <LoadingBlock />
-  if (state.status === 'error') return <ErrorBlock message="Agent 服务暂不可用 · 检查桌面服务是否已启动。" onRetry={onRetry} />
-  return <>{render(state.value)}</>
-}
-
-function LocalAgentBlock({
-  state, onRetry, render,
-}: {
-  state: Loadable<LocalAgentView[]>
-  onRetry: () => void
-  render: (agents: LocalAgentView[]) => ReactNode
-}) {
-  if (state.status === 'loading') return <LoadingBlock />
-  if (state.status === 'error') return <ErrorBlock message="本机 Agent 探测暂不可用。" onRetry={onRetry} />
-  return <>{render(state.value)}</>
-}
-
-function McpBlock({
-  state, onRetry, render,
-}: {
-  state: Loadable<McpView>
-  onRetry: () => void
-  render: (view: McpView) => ReactNode
-}) {
-  if (state.status === 'loading') return <LoadingBlock />
-  if (state.status === 'error') return <ErrorBlock message="MCP 配置暂不可用。" onRetry={onRetry} />
-  return <>{render(state.value)}</>
-}
-
-/* ───────────────── 各块内容 ───────────────── */
-
-function RuntimeContent({ runtime }: { runtime: RuntimeView }) {
-  return (
-    <>
-      <div className="wb-home-stat-grid">
-        <StatCard label="Agent 总数" value={runtime.summary.total} />
-        <StatCard label="运行中" value={runtime.summary.running} tone="running" />
-        <StatCard label="空闲" value={runtime.summary.idle} />
-        <StatCard label="异常" value={runtime.summary.error} tone={runtime.summary.error > 0 ? 'danger' : undefined} />
-      </div>
-      {runtime.agents.length === 0 ? (
-        <HomeNote>网关还没有注册任何工作台 Agent。</HomeNote>
+      {state.status === 'error' ? (
+        <ReadFailed message="Agent 设定读取失败。" onRetry={reload} />
+      ) : state.status === 'loading' ? (
+        <div className="op-empty">正在读取…</div>
       ) : (
-        <div className="wb-home-card-grid">
-          {runtime.agents.map((agent) => <RuntimeAgentCard key={agent.id} agent={agent} />)}
-        </div>
+        <>
+          <Seg items={agentTabs} value={tab} onChange={setTab} />
+
+          <div className="op-agent-body">
+            {tab === 'persona' && (persona
+              ? <PersonaTab persona={persona} />
+              : <div className="op-empty">这个 Agent 没有可展示的系统提示词。</div>)}
+
+            {tab === 'profile' && (failed.profile
+              ? <ReadFailed message="用户画像读取失败。" onRetry={reload} />
+              : profile.length > 0
+                ? <ProfileTab groups={profile} />
+                : <div className="op-empty">还没有用户画像。在对话里告诉 Agent 关于你的事，它记下来后会出现在这里。</div>)}
+
+            {tab === 'insights' && (failed.experiences
+              ? <ReadFailed message="经验列表读取失败。" onRetry={reload} />
+              : experiences.length > 0
+                ? <InsightsTab items={experiences} />
+                : <div className="op-empty">还没有积累经验。做过的工作越多，这里沉淀越完整。</div>)}
+          </div>
+        </>
       )}
-    </>
-  )
-}
-
-function RuntimeAgentCard({ agent }: { agent: RuntimeAgentView }) {
-  const meta = RUNTIME_STATE_META[agent.state]
-  const runLabel = agent.currentRunTask
-    ? `正在处理：${agent.currentRunTask}`
-    : agent.activeRunCount > 0
-      ? `${agent.activeRunCount} 个任务运行中`
-      : agent.lastRunAt
-        ? `上次运行 ${relativeTimeLabel(agent.lastRunAt)}`
-        : '还没有运行记录'
-  return (
-    <article className="wb-home-agent-card">
-      <span className="wb-home-agent-avatar" aria-hidden="true"><Bot size={16} /></span>
-      <div className="wb-home-agent-main">
-        <div className="wb-home-agent-title">
-          <strong className="wb-home-truncate">{agent.name}</strong>
-          <Badge tone={meta.tone} dot={agent.state === 'running'}>{meta.label}</Badge>
-          {agent.kind === 'developer' ? <Badge tone="neutral">开发者</Badge> : null}
-        </div>
-        <span className="wb-home-agent-desc">{agent.description || '内置工作台 Agent'}</span>
-        <span className="wb-home-agent-meta">{runLabel}</span>
-      </div>
-    </article>
-  )
-}
-
-function LocalAgentContent({ agents }: { agents: LocalAgentView[] }) {
-  if (agents.length === 0) {
-    return <HomeNote>没有检测到本机 Agent · 安装 Codex / Claude Code 等 CLI 后会自动发现。</HomeNote>
-  }
-  return (
-    <div className="wb-home-list">
-      {agents.map((agent) => {
-        const meta = LOCAL_STATUS_META[agent.status] ?? LOCAL_STATUS_META.unknown
-        return (
-          <div key={agent.id} className="wb-home-row is-static">
-            <span className="wb-home-agent-avatar" aria-hidden="true"><Bot size={15} /></span>
-            <span className="wb-home-row-main">
-              <span className="wb-home-row-title">
-                <span className="wb-home-truncate">{agent.displayName}</span>
-                <Badge tone={meta.tone}>{meta.label}</Badge>
-                {agent.callable ? <Badge tone="accent">可调用</Badge> : null}
-              </span>
-              <span className="wb-home-row-sub">
-                {[
-                  PROVIDER_LABELS[agent.provider] ?? agent.provider,
-                  agent.version ? `v${agent.version}` : null,
-                  agent.executablePath,
-                ].filter((part): part is string => Boolean(part)).join(' · ')}
-              </span>
-              {agent.error ? <span className="wb-home-row-sub is-danger">{agent.error}</span> : null}
-            </span>
-          </div>
-        )
-      })}
-    </div>
-  )
-}
-
-function McpContent({ view }: { view: McpView }) {
-  if (view.servers.length === 0) {
-    return <HomeNote>还没有配置 MCP 服务 · 可在设置页添加 MCP 服务器后，这里会显示工具数量。</HomeNote>
-  }
-  return (
-    <>
-      <div className="wb-home-stat-grid is-compact">
-        <StatCard label="MCP 服务" value={view.servers.length} />
-        <StatCard label="已启用" value={view.enabledCount} />
-        <StatCard label="已停用" value={view.servers.length - view.enabledCount} />
-      </div>
-      <div className="wb-home-list">
-        {view.servers.slice(0, 8).map((server) => (
-          <div key={server.name} className="wb-home-row is-static">
-            <span className="wb-home-agent-avatar" aria-hidden="true"><Server size={15} /></span>
-            <span className="wb-home-row-main">
-              <span className="wb-home-row-title">
-                <span className="wb-home-truncate">{server.name}</span>
-                {server.disabled ? <Badge tone="neutral">已停用</Badge> : <Badge tone="success">已启用</Badge>}
-              </span>
-              <span className="wb-home-row-sub">
-                {[server.url ? `http · ${server.url}` : server.command ? `stdio · ${server.command}` : '未配置启动命令']
-                  .concat(server.lifecycle ? [server.lifecycle] : [])
-                  .join(' · ')}
-              </span>
-            </span>
-          </div>
-        ))}
-      </div>
-      {view.servers.length > 8 ? (
-        <HomeNote>仅显示前 8 个 MCP 服务，共 {view.servers.length} 个。</HomeNote>
-      ) : null}
-      {view.configPath ? <p className="wb-home-footnote">配置文件：{view.configPath}</p> : null}
-    </>
-  )
-}
-
-function UsageContent({ usage }: { usage: UsageView | null }) {
-  if (!usage) return <HomeNote>网关未返回用量数据。</HomeNote>
-  if (usage.totalTokens === 0 && usage.cacheHitTokens === 0) {
-    return <HomeNote>近 7 天还没有用量记录。</HomeNote>
-  }
-  return (
-    <>
-      <div className="wb-home-stat-grid is-compact">
-        <StatCard label="输入 tokens" value={usage.inputTokens} formatted />
-        <StatCard label="输出 tokens" value={usage.outputTokens} formatted />
-        <StatCard label="缓存命中 tokens" value={usage.cacheHitTokens} formatted />
-      </div>
-      <p className="wb-home-footnote">
-        {[usage.provider, usage.model].filter((part): part is string => Boolean(part)).join(' · ') || '内置 Agent'}
-        {' · '}近 7 天
-      </p>
-    </>
-  )
-}
-
-function StatCard({
-  label, value, tone, formatted = false,
-}: {
-  label: string
-  value: number
-  tone?: 'running' | 'danger'
-  formatted?: boolean
-}) {
-  return (
-    <div className="wb-home-stat">
-      <span className={`wb-home-stat-value${tone ? ` is-${tone}` : ''}`}>
-        {formatted ? formatNumber(value) : value}
-      </span>
-      <span className="wb-home-stat-label">{label}</span>
     </div>
   )
 }

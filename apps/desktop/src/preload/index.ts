@@ -18,6 +18,15 @@ import type {
   AgentDebugUsageResponse,
 } from '../shared/agent-debug'
 import type {
+  AgentAttachmentReference,
+  CreatePlanItemInput,
+  MovePlanItemInput,
+  PlanBatchInput,
+  PlanChangePayload,
+  PlanItemListQuery,
+  UpdatePlanItemInput,
+} from '@nxcore/agent-contract'
+import type {
   SearchItemType,
   SearchMessageContextDto,
   SearchPageDto,
@@ -71,7 +80,6 @@ function networkOperation(channel: string): string {
   if (/agent.*session|session.*agent/i.test(channel)) return desktopText('error.network.agentSessions')
   if (/runtime-config/i.test(channel)) return desktopText('error.network.runtimeConfig')
   if (/gateway.*status/i.test(channel)) return desktopText('error.network.gatewayStatus')
-  if (/memory/i.test(channel)) return desktopText('error.network.memory')
   if (/knowledge|wiki/i.test(channel)) return desktopText('error.network.knowledge')
   if (/document/i.test(channel)) return desktopText('error.network.document')
   if (/source|file/i.test(channel)) return desktopText('error.network.files')
@@ -81,18 +89,8 @@ function networkOperation(channel: string): string {
 
 function networkErrorDetail(channel: string, error: unknown): Pick<DesktopRequestError, 'title' | 'message'> | null {
   const raw = error instanceof Error ? error.message : String(error)
-  // [memory_unreachable] 前缀 = 本地网关已应答、但记忆服务上游不可达：如实提示，
-  // 不能落进下面的"无法连接 EverRoom Gateway"模板（真机上 MemoryCore fetch failed 误报的根因）。
-  if (/^\[memory_unreachable\]/.test(raw)) {
-    return {
-      title: desktopText('error.memoryUnreachable.title'),
-      message: desktopText('error.memoryUnreachable.message')
-        .replace('{operation}', networkOperation(channel))
-        .replace('{channel}', channel || 'unknown'),
-    }
-  }
   // 带 [code] 前缀的结构化网关错误说明本地网关已应答，其文本里可能含上游的
-  // "fetch failed"，不能据此判定本地网关断连（memory 桥的错误码前缀约定）。
+  // "fetch failed"，不能据此判定本地网关断连（桥接层错误码前缀约定）。
   if (/^\[[a-z][a-z0-9_]*\]/.test(raw)) return null
   // timeout of 10000ms exceeded：gateway 忙碌（ingest 高峰同步写卡事件循环）时
   // loopback axios 客户端（reality bridge / supervisor 健康探活）的响应超时原话，
@@ -471,6 +469,38 @@ const api: NxcoreDesktopApi = {
       invoke<{ fixedPort: number | null; needsRestart: boolean }>('agent-access:settings-set-fixed-port', port),
     restartGateway: () => invoke<{ baseUrl: string }>('agent-access:restart-gateway'),
   },
+  memory: {
+    listEntries: (input?: { limit?: number; scope?: string }) =>
+      invokeQuietly('memory:list-entries', input ?? {}),
+    getProfile: (input?: { limit?: number }) =>
+      invokeQuietly('memory:get-profile', input ?? {}),
+  },
+  // 主页「今日洞察」：静默调用——卡片自己渲染空态/失败态，不弹全局错误。
+  journal: {
+    today: () => invokeQuietly('journal:today'),
+    refresh: () => invokeQuietly('journal:refresh'),
+  },
+  // 工作空间「计划」：读写走普通 invoke（失败要能被看板接住并回滚）。
+  plan: {
+    list: (query: PlanItemListQuery) => invoke('plan:list', query),
+    create: (input: CreatePlanItemInput) => invoke('plan:create', input),
+    get: (itemId: string) => invoke('plan:get', itemId),
+    update: (itemId: string, input: UpdatePlanItemInput) => invoke('plan:update', itemId, input),
+    move: (itemId: string, input: MovePlanItemInput) => invoke('plan:move', itemId, input),
+    release: (itemId: string, reason: string) => invoke('plan:release', itemId, reason),
+    assign: (itemId: string, agentId?: string) => invoke('plan:assign', itemId, agentId),
+    remove: (itemId: string) => invoke('plan:remove', itemId),
+    events: (itemId: string) => invoke('plan:events', itemId),
+    claimPackage: (itemId: string) => invoke('plan:claim-package', itemId),
+    batch: (input: PlanBatchInput) => invoke('plan:batch', input),
+    subscribe: (workspaceId: string) => invoke('plan:subscribe', workspaceId),
+    unsubscribe: (workspaceId?: string) => invoke('plan:unsubscribe', workspaceId),
+    onChanged: (listener: (payload: PlanChangePayload) => void) => {
+      const handleChange = (_event: Electron.IpcRendererEvent, payload: PlanChangePayload) => listener(payload)
+      ipcRenderer.on('plan:changed', handleChange)
+      return () => ipcRenderer.removeListener('plan:changed', handleChange)
+    },
+  },
   agentDebug: {
     // 调试面板是只读查询：quiet 调用（不弹全局错误、不做 gateway recovery 重试），
     // 失败文本由面板自己以一行弱化文字展示。
@@ -586,8 +616,19 @@ const api: NxcoreDesktopApi = {
     importLocalAgentHistory: (agentId: string) => invoke('agent:import-local-agent-history', agentId),
     bindLocalAgentWorkspace: (agentId: string, sessionId: string) => invoke('agent:bind-local-agent-workspace', agentId, sessionId),
     getStatus: () => invokeQuietly('agent:get-status'),
+    getDefinition: (agentId: string) => invokeQuietly('agent:get-definition', agentId),
+    listSkills: () => invokeQuietly('agent:list-skills'),
+    getSkill: (skillId: string) => invokeQuietly('agent:get-skill', skillId),
+    setSkillEnabled: (skillId: string, enabled: boolean) =>
+      invoke('agent:set-skill-enabled', skillId, enabled),
+    createSkill: (input) => invoke('agent:create-skill', input),
+    importSkillDirectory: (sourceDirectory: string) => invoke('agent:import-skill-directory', sourceDirectory),
+    pickSkillDirectory: () => invokeQuietly('agent:pick-skill-directory'),
+    deleteSkill: (skillId: string) => invoke('agent:delete-skill', skillId),
     getUsage: (range) => invoke('agent:get-usage', range),
-    listSessions: (pageLabel, roomId) => invoke('agent:list-sessions', pageLabel, roomId),
+    /** 「+ → 挂载目录」：系统选择框选本地目录，取消返回 null。 */
+    pickMountDirectory: () => invoke<string | null>('agent:pick-mount-directory'),
+    listSessions: (pageLabel, roomId, workspaceId) => invoke('agent:list-sessions', pageLabel, roomId, workspaceId),
     createSession: (input) => invoke('agent:create-session', input),
     createSessionLink: (input) => invoke('agent:create-session-link', input),
     listSessionLinks: (sessionId) => invoke('agent:list-session-links', sessionId),
@@ -624,8 +665,39 @@ const api: NxcoreDesktopApi = {
     list: () => invoke('workspace:list'),
     create: (input) => invoke('workspace:create', input),
     update: (workspaceId, input) => invoke('workspace:update', workspaceId, input),
+    /** 概览「动态」：按 (at, id) 游标分页的派生事件流（runs + 文件库 + 计划）。 */
+    activities: (workspaceId: string, query?: { limit?: number; beforeAt?: string; beforeId?: string }) =>
+      invoke('workspace:activities', workspaceId, query ?? {}),
     remove: (workspaceId) => invoke('workspace:remove', workspaceId),
     pickDirectory: () => invoke('workspace:pick-directory'),
+    /** 新建弹窗的默认落点预览（`<dataDir>/Workspace/<slug>`）。 */
+    defaultRoot: (name: string) => invoke('workspace:default-root', name),
+    /** 判定目录是否为项目空间（读 `.everoffice/space.json`）。 */
+    detect: (dir: string) => invoke('workspace:detect', dir),
+    /** 扫容器根，发现未注册/失效的项目空间。 */
+    discover: () => invoke('workspace:discover'),
+    /** 接管已有目录（复制品传 reassignSpaceId=true 另立身份）。 */
+    adopt: (input: { dir: string; name?: string; reassignSpaceId?: boolean }) =>
+      invoke('workspace:adopt', input),
+    /** 搬移空间目录。 */
+    relocate: (workspaceId: string, dir: string) => invoke('workspace:relocate', workspaceId, dir),
+    /** 空间目录快照（路径 + 健康）；未绑定目录时抛错，调用方按空态处理。 */
+    layout: (workspaceId: string) => invoke('workspace:layout', workspaceId),
+    /** 幂等修复：补缺失目录 / 补缺失标记。 */
+    repair: (workspaceId: string) => invoke('workspace:repair', workspaceId),
+    /** 在访达里选中某个目录。 */
+    reveal: (dir: string) => invoke('workspace:reveal', dir),
+    /** 资料库对账：盘上删了→missing、回来了→恢复、多了→入库。 */
+    reconcileLibrary: (workspaceId: string) => invoke('workspace:library-reconcile', workspaceId),
+    /** 存量懒回填：把只在对象库里的老条目落到空间 Library。 */
+    backfillLibrary: (workspaceId: string, limit?: number) =>
+      invoke('workspace:library-backfill', workspaceId, limit),
+    /** 空间缓存占用（tmp / derived / objects）。 */
+    cacheStats: (workspaceId: string) => invoke('workspace:cache-stats', workspaceId),
+    /** 缓存回收（tmp/derived 按龄、objects 按引用、回收站 30 天）。 */
+    gcCache: (workspaceId: string) => invoke('workspace:cache-gc', workspaceId),
+    /** `.tmp/` 只读清单（临时文件入口，不入资料库索引）。 */
+    scratchFiles: (workspaceId: string) => invoke('workspace:cache-scratch', workspaceId),
   },
   cursorCompletionAgent: {
     createSession: (input) => invokeQuietly('cursor-completion-agent:create-session', input),
@@ -800,6 +872,8 @@ const api: NxcoreDesktopApi = {
       const paths = files.map((file) => webUtils.getPathForFile(file)).filter(Boolean)
       return invoke('files:import-agent-attachments', paths)
     },
+    /** 「+ → 导入文件」：系统选择框直选文件并导入为对话附件（取消返回空数组）。 */
+    pickAgentAttachments: () => invoke<AgentAttachmentReference[]>('files:pick-agent-attachments'),
     onImportProgress: (listener) => {
       const handleProgress = (_event: Electron.IpcRendererEvent, progress: Parameters<typeof listener>[0]) => listener(progress)
       ipcRenderer.on('files:import-progress', handleProgress)

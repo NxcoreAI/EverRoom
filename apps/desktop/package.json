@@ -97,7 +97,7 @@
     "vitest": "^4.1.10"
   },
   "build": {
-    "appId": "ai.nxcore.everroom",
+    "appId": "ai.nxcore.everoffice",
     "productName": "EverRoom",
     "protocols": [
       {
@@ -156,6 +156,14 @@
       {
         "from": "../gateway/dist/node_modules/@napi-rs",
         "to": "gateway/node_modules/@napi-rs",
+        "filter": [
+          "**/*",
+          "!**/*.d.ts"
+        ]
+      },
+      {
+        "from": "../gateway/dist/node_modules/@node-rs",
+        "to": "gateway/node_modules/@node-rs",
         "filter": [
           "**/*",
           "!**/*.d.ts"

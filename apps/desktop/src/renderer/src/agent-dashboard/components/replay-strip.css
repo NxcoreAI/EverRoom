@@ -1,0 +1,166 @@
+.strip {
+  padding: var(--sp-3) var(--sp-4) var(--sp-2);
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.strip-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-2);
+}
+
+.strip-title {
+  font-size: var(--fs-title);
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.strip-sub {
+  font-size: var(--fs-micro);
+  color: var(--ink-4);
+}
+
+.strip-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-left: auto;
+}
+
+.strip-play {
+  height: 22px;
+  padding: 0 var(--sp-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  font-size: var(--fs-label);
+  color: var(--ink);
+  background: var(--surface);
+}
+
+.strip-play:hover {
+  background: var(--surface-3);
+}
+
+.strip-speeds {
+  display: flex;
+  height: 22px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.strip-speed {
+  padding: 0 6px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  color: var(--ink-3);
+  border-right: 1px solid var(--line-soft);
+}
+
+.strip-speed:last-child {
+  border-right: 0;
+}
+
+.strip-speed.is-on {
+  background: var(--surface-3);
+  color: var(--ink);
+}
+
+.strip-reset {
+  height: 22px;
+  padding: 0 var(--sp-2);
+  font-size: var(--fs-label);
+  color: var(--ink-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.strip-reset:hover {
+  border-color: var(--line-strong);
+}
+
+.strip-clock {
+  font-size: var(--fs-small);
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+.strip-clock-total {
+  color: var(--ink-4);
+  font-size: var(--fs-micro);
+}
+
+.strip-track {
+  position: relative;
+  cursor: crosshair;
+  user-select: none;
+  touch-action: none;
+  border-radius: var(--radius);
+}
+
+.strip-track:focus-visible {
+  outline: 2px solid var(--accent-soft);
+  outline-offset: 2px;
+}
+
+.strip-lane {
+  position: relative;
+  height: 22px;
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--surface-2);
+}
+
+.strip-wait {
+  position: absolute;
+  inset: 0;
+  background: var(--wait);
+  opacity: 0.45;
+}
+
+.strip-piece {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  min-width: 1.5px;
+  border-radius: 1px;
+}
+
+.strip-gen {
+  background: var(--accent);
+}
+
+.strip-tool {
+  background: var(--tool);
+}
+
+.strip-future {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  background: rgb(255 255 255 / 62%);
+  pointer-events: none;
+}
+
+.strip-cursor {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--ink);
+  pointer-events: none;
+}
+
+.strip-cursor::after {
+  content: '';
+  position: absolute;
+  top: -3px;
+  left: -3px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ink);
+}

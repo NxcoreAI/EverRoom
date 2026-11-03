@@ -2,7 +2,6 @@ import type { LucideIcon } from 'lucide-react'
 import {
   BookOpen,
   BookOpenText,
-  Brain,
   Building2,
   FileText,
   FolderOpen,
@@ -16,7 +15,7 @@ import {
   FilePenLine,
 } from 'lucide-react'
 
-export type PageId = 'home' | 'office' | 'office-document' | 'rooms' | 'docs' | 'recording' | 'sources' | 'files' | 'inspiration' | 'memory' | 'wiki' | 'diary' | 'schedules' | 'agent-connections' | 'settings'
+export type PageId = 'home' | 'office' | 'office-document' | 'rooms' | 'docs' | 'recording' | 'sources' | 'files' | 'inspiration' | 'wiki' | 'diary' | 'schedules' | 'agent-connections' | 'settings'
 
 export interface NavigationItem {
   id: PageId
@@ -48,7 +47,6 @@ export const navigationSections: NavigationSection[] = [
     items: [
       { id: 'sources', label: 'surface:navigation.sources', icon: FolderSync, tone: 'cyan' },
       { id: 'files', label: 'surface:navigation.files', icon: FolderOpen, tone: 'green' },
-      { id: 'memory', label: 'surface:navigation.memory', icon: Brain, tone: 'orange' },
       { id: 'wiki', label: 'surface:navigation.wiki', icon: BookOpenText, tone: 'indigo' },
     ],
   },
@@ -102,8 +100,6 @@ const LEGACY_PAGE_LABEL_KEYS: Record<string, string> = {
   'Files': 'surface:navigation.files',
   '灵感': 'surface:navigation.inspiration',
   'Inspiration': 'surface:navigation.inspiration',
-  '记忆': 'surface:navigation.memory',
-  'Memory': 'surface:navigation.memory',
   'Wiki': 'surface:navigation.wiki',
   '办公室': 'surface:navigation.office',
   'Office': 'surface:navigation.office',

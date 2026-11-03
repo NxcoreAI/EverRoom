@@ -4,14 +4,18 @@ import type { OfficeFile } from '@/office-proto/data'
 
 /* ───────────────── 主页标签 ───────────────── */
 
-/** 主页侧栏的一级入口（只保留有真实数据能力的页面；知识库后端已移除，不迁移）。 */
-export type HomePageKey = 'recent' | 'spaces' | 'files' | 'agent' | 'connectors' | 'settings'
+/**
+ * 主页侧栏的页面入口（只保留有真实数据能力的页面；知识库后端已移除，不迁移）。
+ * 设置与其它五个页面平级，只是排到侧栏底部单独一组。
+ */
+export type HomePageKey = 'recent' | 'spaces' | 'files' | 'agent' | 'skills' | 'connectors' | 'settings'
 
 export const HOME_PAGES: ReadonlyArray<{ key: HomePageKey; label: string }> = [
   { key: 'recent', label: '最近' },
   { key: 'spaces', label: '项目空间' },
   { key: 'files', label: '所有文件' },
   { key: 'agent', label: 'Agent' },
+  { key: 'skills', label: '技能' },
   { key: 'connectors', label: '连接器' },
   { key: 'settings', label: '设置' },
 ]

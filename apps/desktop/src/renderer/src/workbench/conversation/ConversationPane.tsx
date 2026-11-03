@@ -1,6 +1,8 @@
 import { LoaderCircle, RefreshCw } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
+import type { AgentAttachmentReference, AgentMountedDirectory } from '@nxcore/agent-contract'
+
 import { AgentChatView } from '@/components/agent/AgentChatView'
 import { buildAskBatch } from '@/components/agent/askDrafts'
 import { AgentComposer } from '@/components/agent/AgentComposer'
@@ -199,13 +201,30 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
     return () => window.clearTimeout(timer)
   }, [hook.connected, hook.error, hook.sessionId])
 
-  const send = () => {
+  /**
+   * 发送一轮：输入框里的文件附件（文件引擎引用）与挂载目录一起进本轮运行上下文。
+   * sendPrompt 的入参是长参数位，这里按位补齐并在末尾追加 mountedDirectories。
+   */
+  const send = (attachments: AgentAttachmentReference[] = [], mountedDirectories: AgentMountedDirectory[] = []) => {
     const text = draft.trim()
-    if (!text || !canSend || hook.loading) return
+    if ((!text && attachments.length === 0) || !canSend || hook.loading) return
     setDraft('')
     setComposerResetKey((key) => key + 1)
     // 首条消息在草稿态发出时由 hook 自动建会话（归属当前 workspaceId）。
-    void hook.sendPrompt(text).catch(() => {
+    void hook.sendPrompt(
+      text,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      attachments.length ? attachments : undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      mountedDirectories.length ? mountedDirectories : undefined,
+    ).catch(() => {
       // 发送失败：内容还回输入框；用户已重新输入则不覆盖。
       setDraft((current) => (current ? current : text))
     })
@@ -291,13 +310,7 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
       onClearContext={() => undefined}
       onRemoveContext={() => undefined}
       onStop={() => void hook.stop()}
-      onSubmit={(files) => {
-        if (!draft.trim() && files.length) {
-          workbenchToast('工作台暂不支持直接发送附件，请先用文字描述任务')
-          return
-        }
-        send()
-      }}
+      onSubmit={(payload) => send(payload.attachments, payload.mountedDirectories)}
     />
   )
 

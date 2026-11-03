@@ -303,7 +303,6 @@ const navigationPageLabels: Record<string, string> = {
   rooms: 'surface:navigation.contextRoom',
   docs: 'surface:navigation.documents',
   sources: 'surface:navigation.sources',
-  memory: 'surface:navigation.memory',
   diary: 'surface:navigation.diary',
 }
 

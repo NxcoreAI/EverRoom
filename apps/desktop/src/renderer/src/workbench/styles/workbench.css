@@ -1,9 +1,13 @@
 /* 标签页工作台外壳：窗口级标签栏 + 互斥侧栏 + 内容区。
  *
- * 视觉语言（沿用 styles/tokens.css 的暖纸/四主题）：
- *   - 外壳/侧栏 = --ui-chrome 暖纸；内容画布 = --ui-bg；卡片/编辑器 = --ui-surface。
+ * 视觉语言（沿用 styles/tokens.css，四套主题自动生效）：
+ *   - 外壳/侧栏 = --ui-chrome；内容画布 = --ui-bg；卡片/编辑器 = --ui-surface。
+ *     素白主题的 --ui-chrome 是半透明的，所以侧栏/顶栏在这里额外挂
+ *     backdrop-filter（--ui-glass-blur / --ui-glass-saturate）：暖纸下模糊为 0，
+ *     等于纯色；素白下就是原型的毛玻璃窗口。
  *   - 层次靠 1px hairline + 底色分层；只有浮层（菜单/弹窗/toast）用阴影。
- *   - 选中态：暖纸底上用「白色浮起卡片」，白色表面上用「青绿 10% 淡底」。
+ *   - 选中态由主题决定（--ui-nav-active-*）：暖纸是「白色浮起卡片」，
+ *     素白是原型的「系统蓝实底白字」。
  *   - 顶部标签栏整条可拖拽；macOS 红绿灯在左，Windows 自绘按钮在右。 */
 
 .wb-root {
@@ -32,8 +36,8 @@
 .wb-root input,
 .wb-root textarea { font-family: inherit; }
 .wb-root :focus-visible {
-  outline: 2px solid var(--ui-accent-line);
-  outline-offset: 2px;
+  outline: var(--ui-focus-ring-width) solid var(--ui-focus-ring-color);
+  outline-offset: var(--ui-focus-ring-offset);
 }
 .wb-root ::-webkit-scrollbar { width: 9px; height: 9px; }
 .wb-root ::-webkit-scrollbar-thumb {
@@ -55,6 +59,22 @@
   }
 }
 
+/* ───────────────── 无障碍工具 ───────────────── */
+
+/* 视觉隐藏但读屏可读（打字机动画期间提供完整洞察正文）。 */
+.wb-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
 /* ───────────────── 标签栏 ───────────────── */
 
 .wb-tabbar {
@@ -65,6 +85,8 @@
   height: 44px;
   padding: 0 10px;
   background: var(--ui-chrome);
+  backdrop-filter: blur(var(--ui-glass-blur)) saturate(var(--ui-glass-saturate));
+  -webkit-backdrop-filter: blur(var(--ui-glass-blur)) saturate(var(--ui-glass-saturate));
   border-bottom: 1px solid var(--ui-border);
   -webkit-app-region: drag;
   user-select: none;
@@ -115,6 +137,7 @@
   transition: background var(--ui-duration-fast) var(--ui-ease), color var(--ui-duration-fast) var(--ui-ease);
 }
 .wb-tab:hover { background: var(--ui-hover); color: var(--ui-text); }
+.wb-tab:active { background: var(--ui-hover-strong); }
 
 /* 主页标签：图标 + 文字，像一个小房子按钮 */
 .wb-tab--home { padding: 0 12px; }
@@ -274,6 +297,9 @@
   min-height: 0;
   padding: 0 10px 10px;
   background: var(--ui-chrome);
+  /* 素白主题的半透明外框 + 20px 模糊（毛玻璃侧栏）；暖纸下 --ui-glass-blur 为 0，等于纯色。 */
+  backdrop-filter: blur(var(--ui-glass-blur)) saturate(var(--ui-glass-saturate));
+  -webkit-backdrop-filter: blur(var(--ui-glass-blur)) saturate(var(--ui-glass-saturate));
   border-right: 1px solid var(--ui-border);
 }
 
@@ -320,19 +346,25 @@
   text-align: left;
   transition: background var(--ui-duration-fast) var(--ui-ease), color var(--ui-duration-fast) var(--ui-ease);
 }
+/* 悬停/按下：原型里导航行是「浅灰底 + 按下一档更深」，没有位移。 */
 .wb-nav-item:hover { background: var(--ui-hover); color: var(--ui-text); }
+.wb-nav-item:active { background: var(--ui-hover-strong); }
+/* 选中态交给主题：暖纸 = 白色浮起卡片，素白 = 系统蓝实底白字（--ui-nav-active-*）。 */
 .wb-nav-item.is-active {
-  background: var(--ui-surface);
-  border-color: var(--ui-border);
-  color: var(--ui-text);
+  background: var(--ui-nav-active-bg);
+  border-color: var(--ui-nav-active-border);
+  color: var(--ui-nav-active-color);
   font-weight: 600;
-  box-shadow: var(--ui-shadow-sm);
+  box-shadow: var(--ui-nav-active-shadow);
 }
-.wb-nav-item.is-active .wb-nav-icon { color: var(--ui-accent-strong); }
+.wb-nav-item.is-active .wb-nav-icon { color: var(--ui-nav-active-icon); }
 .wb-nav-icon { display: grid; place-items: center; flex: none; width: 18px; }
 .wb-nav-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .wb-sidebar-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
   margin-top: auto;
   padding-top: 8px;
   border-top: 1px solid var(--ui-border);
@@ -351,7 +383,7 @@
   transition: background var(--ui-duration-fast) var(--ui-ease);
 }
 .wb-account:hover { background: var(--ui-hover); }
-.wb-account.is-active { background: var(--ui-surface); border-color: var(--ui-border); box-shadow: var(--ui-shadow-sm); }
+.wb-account:active { background: var(--ui-hover-strong); }
 .wb-account-avatar {
   display: grid;
   place-items: center;
@@ -379,9 +411,12 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.wb-account-gear { flex: none; color: var(--ui-text-3); opacity: 0; transition: opacity var(--ui-duration-fast) var(--ui-ease); }
-.wb-account:hover .wb-account-gear,
-.wb-account.is-active .wb-account-gear { opacity: 1; }
+.wb-account[data-state='open'] { background: var(--ui-surface); border-color: var(--ui-border); box-shadow: var(--ui-shadow-sm); }
+/* 账号行是菜单触发器：常驻一个上下箭头，提示「点开还有东西」。 */
+.wb-account-chevron { flex: none; color: var(--ui-text-3); }
+
+/* 账号菜单：与侧栏同宽，贴着底部弹出。 */
+.wb-account-menu { min-width: 184px; }
 
 /* ───────────────── 工作空间侧栏 ───────────────── */
 

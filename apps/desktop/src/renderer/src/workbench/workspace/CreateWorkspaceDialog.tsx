@@ -1,12 +1,19 @@
 import { FolderOpen, Plus, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
+import { workbenchApi } from '../api'
 import { useWorkbenchStore } from '../state/store'
 import { Button, Field, IconButton, TextArea, TextInput } from '../ui/primitives'
 import { Modal } from '../ui/modal'
 import { cn } from '../ui/cn'
 
-/** 新建项目空间：名称 / 描述 / 目标（药丸增删）/ 本地目录，创建后开标签并进入三步引导。 */
+/**
+ * 新建项目空间：名称 / 描述 / 目标（药丸增删）/ 空间目录。
+ *
+ * 目录不再需要手动选：默认落点是 `<dataDir>/Workspace/<slug>`（由网关按名称生成），
+ * 弹窗实时预览并在用户改名时更新；想放到别处再点「改到其他位置」（external 模式）。
+ * 方案见 docs/project-space-layout-plan.zh-CN.md §8.1。
+ */
 export function CreateWorkspaceDialog({ open, onOpenChange }: {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -17,6 +24,7 @@ export function CreateWorkspaceDialog({ open, onOpenChange }: {
   const [goals, setGoals] = useState<string[]>([])
   const [goalDraft, setGoalDraft] = useState('')
   const [path, setPath] = useState<string | null>(null)
+  const [defaultRoot, setDefaultRoot] = useState<{ root: string; slug: string; exists: boolean } | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -31,6 +39,22 @@ export function CreateWorkspaceDialog({ open, onOpenChange }: {
     setError(null)
     setBusy(false)
   }, [open])
+
+  // 默认落点预览：手选了目录就不查；名称变化去抖 200ms，避免每个按键都打网关。
+  useEffect(() => {
+    if (!open || path) return
+    let cancelled = false
+    const timer = setTimeout(() => {
+      void workbenchApi
+        .defaultRoot(name.trim() || 'New space')
+        .then((result) => { if (!cancelled) setDefaultRoot(result) })
+        .catch(() => { if (!cancelled) setDefaultRoot(null) })
+    }, 200)
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [open, name, path])
 
   const addGoal = () => {
     const value = goalDraft.trim()
@@ -144,16 +168,28 @@ export function CreateWorkspaceDialog({ open, onOpenChange }: {
           </div>
         </Field>
 
-        <Field label="本地目录（可选）">
+        <Field
+          label="空间目录"
+          hint={path
+            ? '目录将就地接管为项目空间（只新增 .everoffice/ 元数据目录，其余文件原样保留、直接作为资料库）'
+            : defaultRoot
+              ? `默认建在应用目录下；根上只有 .everoffice/（元数据）和 .tmp/（过程缓存），其余位置都留给你放资料${defaultRoot.exists ? '。同名目录已存在，将自动改用带后缀的名字' : ''}`
+              : '默认建在应用目录下（Workspace）'}
+        >
           <div className="wb-newspace-path">
-            <span className={cn('wb-newspace-path-value', !path && 'is-empty')} title={path ?? undefined}>
-              <span className="wb-newspace-path-text">{path ?? '未选择目录'}</span>
+            <span
+              className={cn('wb-newspace-path-value', !path && !defaultRoot && 'is-empty')}
+              title={path ?? defaultRoot?.root ?? undefined}
+            >
+              <span className="wb-newspace-path-text">
+                {path ?? defaultRoot?.root ?? '正在解析默认目录…'}
+              </span>
             </span>
             {path ? (
-              <IconButton label="清除目录" size="sm" icon={<X size={13} />} onClick={() => setPath(null)} />
+              <IconButton label="恢复默认目录" size="sm" icon={<X size={13} />} onClick={() => setPath(null)} />
             ) : null}
             <Button variant="secondary" icon={<FolderOpen size={14} />} onClick={() => { void pickDirectory() }}>
-              选择
+              {path ? '换目录' : '改到其他位置'}
             </Button>
           </div>
         </Field>

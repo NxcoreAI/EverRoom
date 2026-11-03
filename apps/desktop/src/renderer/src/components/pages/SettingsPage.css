@@ -7,6 +7,9 @@
   margin: 0 auto;
 }
 
+/* 嵌进工作台主页：内容列宽度与其它主页页面（1080）对齐。 */
+.settings-page.is-embedded .settings-layout { width: min(1080px, 100%); }
+
 .settings-navigation {
   position: sticky;
   top: 0;

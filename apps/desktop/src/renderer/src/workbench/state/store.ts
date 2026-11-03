@@ -146,6 +146,8 @@ interface WorkbenchStore {
   sidebarCollapsed: boolean
   /** 刚创建、还没走完三步引导的工作空间 id（引导弹窗由工作空间标签渲染）。 */
   pendingSetupWorkspaceId: string | null
+  /** 设置页默认打开的分区 id（`settings-account` 等）：账号菜单等入口可直达某个分区。 */
+  settingsSection: string | null
   /**
    * Office「AI 修改」浮层转发来的待注入消息：工作台先激活目标工作空间标签，
    * 会话面板挂载后再由它消费（消费即置空）。key = workspaceId。
@@ -169,6 +171,8 @@ interface WorkbenchStore {
 
   openHome(page?: HomePageKey): void
   setHomePage(page: HomePageKey): void
+  /** 打开设置页（主页「设置」页），可指定要落到哪个分区。 */
+  openSettings(section?: string | null): void
   openWorkspaceTab(workspaceId: string, view?: WorkspaceTabView): void
   openFileTab(file: OfficeFile): void
   activateTab(tabId: string): void
@@ -221,6 +225,7 @@ export const useWorkbenchStore = create<WorkbenchStore>()((set, get) => ({
   activeTabId: HOME_TAB_ID,
   sidebarCollapsed: false,
   pendingSetupWorkspaceId: null,
+  settingsSection: null,
   pendingAgentAsk: null,
   askDrafts: [],
   askQueueSendNonce: 0,
@@ -313,6 +318,11 @@ export const useWorkbenchStore = create<WorkbenchStore>()((set, get) => ({
 
   setHomePage(page) {
     get().openHome(page)
+  },
+
+  openSettings(section) {
+    set({ settingsSection: section ?? null })
+    get().openHome('settings')
   },
 
   openWorkspaceTab(workspaceId, view) {

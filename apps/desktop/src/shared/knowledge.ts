@@ -470,9 +470,9 @@ export type EmergenceCardKind =
 
 /** 统一对象层节点（PRD 8.2 CanonicalNode 的 DTO 投影）。 */
 export interface EmergenceNodeDto {
-  /** nodeRef 形如 entity:12 / fact:7 / doc:9 / block:9:3 / memory:x / wiki:3 / room:4。 */
+  /** nodeRef 形如 entity:12 / fact:7 / doc:9 / block:9:3 / wiki:3 / room:4。 */
   id: string
-  nodeType: 'room' | 'entity' | 'fact' | 'document' | 'block' | 'memory' | 'wikiPage' | 'wikiTopic'
+  nodeType: 'room' | 'entity' | 'fact' | 'document' | 'block' | 'wikiPage' | 'wikiTopic'
   label: string
   sourceGraph: 'roomGraph' | 'entityFacts' | 'linkGraph' | 'wiki'
   /** 来源 Room（跨 Room 结果标注用）。 */

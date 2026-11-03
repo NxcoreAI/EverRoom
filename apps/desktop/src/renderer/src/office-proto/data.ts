@@ -27,7 +27,6 @@ export interface OfficeFile {
   roomId: string | null
   updatedLabel: string
   sizeLabel: string
-  memoryCount: number
   content: FileContent
   /** 真实文件库条目：存在时编辑页走 nxcore 文件库内置预览（可编辑 + 保存回填版本链），
    *  不存在（mock 文件）才走原型 GenOffice 桥。 */
@@ -42,7 +41,6 @@ export const files: OfficeFile[] = [
     roomId: 'kb-connector',
     updatedLabel: '2 小时前',
     sizeLabel: '128 KB',
-    memoryCount: 6,
     content: { type: 'doc', blocks: [
       { type: 'h1', text: '连接器统一排期 · 周报' },
       { type: 'p', text: '本周连接器统一进入阶段一：身份合并与命名对齐。Gmail 双链路排障入口已明确，映射表三处同值收口过半。' },
@@ -62,7 +60,6 @@ export const files: OfficeFile[] = [
     roomId: 'kb-buy',
     updatedLabel: '昨天',
     sizeLabel: '46 KB',
-    memoryCount: 3,
     content: { type: 'sheet', columns: ['供应商', '报价（万）', '交期', '付款条件', '备注'], rows: [
       ['华辰科技', '42.0', '4 周', '3-6-1', '含一年驻场'],
       ['远大智造', '38.5', '6 周', '5-5', '本地化支持较弱'],
@@ -77,7 +74,6 @@ export const files: OfficeFile[] = [
     roomId: 'kb-visual',
     updatedLabel: '昨天',
     sizeLabel: '2.4 MB',
-    memoryCount: 4,
     content: { type: 'slides', slides: [
       { title: 'V1 视觉定稿 · 发布计划', bullets: ['动效统一 240ms，列表错峰 40ms', '11 月第一周灰度，第二周全量', '回滚预案：视觉开关一键退回 V0'], note: '封面页 · 场景字阶 L1' },
       { title: '时间线', bullets: ['10/28 冻结视觉资产', '11/04 灰度 10%', '11/11 全量发布'], note: '时间线页 · 值轴刻度自动' },
@@ -91,7 +87,6 @@ export const files: OfficeFile[] = [
     roomId: 'kb-connector',
     updatedLabel: '昨天',
     sizeLabel: '12 KB',
-    memoryCount: 2,
     content: { type: 'md', source: [
       '# 产品调研笔记',
       '',
@@ -113,7 +108,6 @@ export const files: OfficeFile[] = [
     roomId: 'kb-meet',
     updatedLabel: '3 天前',
     sizeLabel: '86 KB',
-    memoryCount: 5,
     content: { type: 'doc', blocks: [
       { type: 'h1', text: '飞书周会纪要 · 0928' },
       { type: 'p', text: '连接器阶段一范围确认，联调窗口定为 10/28–11/05。' },
@@ -127,7 +121,6 @@ export const files: OfficeFile[] = [
     roomId: 'kb-visual',
     updatedLabel: '3 天前',
     sizeLabel: '1.8 MB',
-    memoryCount: 1,
     content: { type: 'pdf', pages: [
       { paragraphs: [
         '一、市场格局：Notion AI 的优势在通用写作补全与模板生态，其 AI 能力面向「任何人在任何文档」的通用场景，付费墙较高（每席 $10/月）。',
@@ -149,7 +142,6 @@ export const files: OfficeFile[] = [
     roomId: 'kb-personal',
     updatedLabel: '上周',
     sizeLabel: '32 KB',
-    memoryCount: 0,
     content: { type: 'sheet', columns: ['目标', '关键结果', '进度', '负责人'], rows: [
       ['视觉体系落地', 'V1 定稿并全量', '80%', '林薇'],
       ['连接器统一', '阶段一联调完成', '45%', '李明'],
@@ -163,7 +155,6 @@ export const files: OfficeFile[] = [
     roomId: null,
     updatedLabel: '上周',
     sizeLabel: '214 KB',
-    memoryCount: 0,
     content: { type: 'doc', blocks: [
       { type: 'h1', text: '复杂系统认知框架' },
       { type: 'p', text: '4.1 关于控制论与复杂性的边界讨论。' },
@@ -211,7 +202,7 @@ export const knowledgeCards: KnowledgeCard[] = [
   { id: 'k5', kind: 'fact', title: '事实 · 排期冲突', source: '自动提炼 · 9/10', quote: '视觉与连接器里程碑在同一周重叠，需提前取舍。', refCount: 2 },
 ]
 
-export const memoryKindMeta: Record<KnowledgeCard['kind'], { label: string; color: string }> = {
+export const knowledgeKindMeta: Record<KnowledgeCard['kind'], { label: string; color: string }> = {
   mail: { label: '邮件', color: '#e8823a' },
   meeting: { label: '会议', color: '#d9504a' },
   wiki: { label: 'Wiki', color: '#7d5bd6' },
@@ -403,28 +394,28 @@ export function blankFile(kind: FileKind): OfficeFile {
   if (kind === 'xlsx') {
     return {
       id: `f-blank-xlsx-${stamp}`, name: '未命名表格.xlsx', kind, roomId: null,
-      updatedLabel: '刚刚', sizeLabel: '—', memoryCount: 0,
+      updatedLabel: '刚刚', sizeLabel: '—',
       content: { type: 'sheet', columns: ['列 1', '列 2', '列 3', '列 4'], rows: Array.from({ length: 6 }, () => ['', '', '', '']) },
     }
   }
   if (kind === 'pptx') {
     return {
       id: `f-blank-pptx-${stamp}`, name: '未命名演示.pptx', kind, roomId: null,
-      updatedLabel: '刚刚', sizeLabel: '—', memoryCount: 0,
+      updatedLabel: '刚刚', sizeLabel: '—',
       content: { type: 'slides', slides: [{ title: '点击编辑标题', bullets: ['要点一', '要点二'], note: '新建页 · 场景字阶 L1' }] },
     }
   }
   if (kind === 'md') {
     return {
       id: `f-blank-md-${stamp}`, name: '未命名笔记.md', kind, roomId: null,
-      updatedLabel: '刚刚', sizeLabel: '—', memoryCount: 0,
+      updatedLabel: '刚刚', sizeLabel: '—',
       content: { type: 'md', source: '# 未命名笔记\n\n' },
     }
   }
   // docx / pdf 新建都落到文档编辑器（原型不新建 pdf）
   return {
     id: `f-blank-docx-${stamp}`, name: '未命名文档.docx', kind: 'docx', roomId: null,
-    updatedLabel: '刚刚', sizeLabel: '—', memoryCount: 0,
+    updatedLabel: '刚刚', sizeLabel: '—',
     content: { type: 'doc', blocks: [{ type: 'p', text: '' }] },
   }
 }
@@ -437,7 +428,6 @@ export function draftFile(): OfficeFile {
     roomId: 'kb-connector',
     updatedLabel: '刚刚',
     sizeLabel: '—',
-    memoryCount: 6,
     content: { type: 'doc', blocks: draftedWeeklyBlocks },
   }
 }
@@ -591,7 +581,6 @@ export function catalogToOfficeFile(catalog: FileCatalogDto): RealOfficeFile | n
       roomId: catalog.clusterId,
       updatedLabel: updatedLabelFrom(catalog.updatedAt),
       sizeLabel: bytesToLabel(catalog.bytes),
-      memoryCount: 0,
       // 真实文件内容不走 mock content：编辑页按 realCatalog 打开文件库内置预览。
       content: { type: 'md', source: '' },
       realCatalog: catalog,

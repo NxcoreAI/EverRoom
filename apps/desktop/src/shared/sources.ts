@@ -17,7 +17,7 @@ export const APPEARANCE_THEME_IDS: readonly AppearanceThemeId[] = ['paper', 'pla
 /** 主进程建窗底色：深色主题下避免首帧/缩放时闪白。 */
 export const APPEARANCE_THEME_BACKGROUND: Record<AppearanceThemeId, string> = {
   paper: '#fbfaf6',
-  plain: '#f7f8fa',
+  plain: '#ffffff',
   moss: '#f4f6ef',
   night: '#15191c',
 }
@@ -38,6 +38,16 @@ import type {
   AgentSessionSnapshot,
   AgentSocketFrame,
   AgentWorkspace,
+  AgentSpaceBackfillReport,
+  AgentSpaceCacheGcResult,
+  AgentSpaceCacheStats,
+  AgentScratchListing,
+  AgentSpaceCandidate,
+  AgentSpaceDefaultRoot,
+  AgentSpaceDetectResult,
+  AgentSpaceLayout,
+  AgentSpaceReconcileReport,
+  AgentSpaceRepairReport,
   CreateAgentWorkspaceInput,
   UpdateAgentWorkspaceInput,
   MovedRoomDocument,
@@ -87,6 +97,8 @@ import type {
   AgentPermissionModeState,
   AgentThinkingLevel,
   AgentThinkingLevelUpdate,
+  WorkspaceActivityPage,
+  WorkspaceActivityQuery,
 } from '@nxcore/agent-contract'
 import type { ObsidianVaultApi } from './obsidian'
 import type { OfficeAgentAskEvent, OfficeAgentFileEvent, OsOpenedDocument } from './office'
@@ -466,7 +478,7 @@ export interface RuntimeConfigTestResult {
   embedding?: {
     valid: boolean
     error?: string
-    /** 成功时的向量维度(MemoryCore TDAI_EMBEDDING_DIMENSIONS 注入用)。 */
+    /** 成功时的向量维度。 */
     dimensions?: number
   }
   /** vlm 四要素齐全时才返回的 chat/completions 连通测试结果。 */
@@ -614,6 +626,135 @@ export type AgentApprovalDecision =
   | 'approved'
   | 'approved_session'
   | 'denied'
+
+/** 网关 `/v1/agent/definition/:agentId` 的返回：内置 Agent 的人格定义。 */
+export interface AgentPersonaDto {
+  id: string
+  name: string
+  description: string
+  systemPrompt: string
+  skills: string[]
+  capabilities: string[]
+}
+
+/**
+ * 「技能」页的一行（网关 `/v1/skills`）。
+ *
+ * 技能是随应用发布的只读能力（内置 Agent bundle 的 SKILL.md / 子 Agent 清单），
+ * 唯一可变的是 `enabled`：状态落网关 agent_skill_states，并作用到运行时装配。
+ */
+export interface AgentSkillDto {
+  /** `<kind>:<ownerId>:<目录名>`，如 builtin:main:document-export。 */
+  id: string
+  name: string
+  description: string
+  ownerId: string
+  ownerName: string
+  ownerKind: 'builtin' | 'subagent' | 'user'
+  /** manifest 里声明的相对路径（./skills/document-export）。 */
+  path: string
+  enabled: boolean
+  bytes: number
+  /** 最近一次显式启停的时刻；从未改过为 null。 */
+  updatedAt: string | null
+}
+
+/** 技能详情（`/v1/skills/:id`）：多带 SKILL.md 全文。 */
+export interface AgentSkillDetailDto extends AgentSkillDto {
+  prompt: string
+}
+
+/** 手写一个用户技能（网关生成 SKILL.md frontmatter）。 */
+export interface CreateAgentSkillInput {
+  name: string
+  description: string
+  body: string
+}
+
+/** 技能清单（`/v1/skills`）。 */
+export interface AgentSkillsSnapshotDto {
+  skills: AgentSkillDto[]
+  counts: { total: number; enabled: number }
+}
+
+/** 长期记忆条目（网关 `/v1/memory/entries`，hippo-memory 库）。 */
+export interface MemoryEntryDto {
+  id: string
+  content: string
+  tags: string[]
+  strength: number
+  halfLifeDays: number
+  retrievalCount: number
+  createdAt: string
+  score: number
+  /** 记忆层：episodic/semantic（hippo 原始层；整理回合会把聚集的经验合并成 semantic）。 */
+  layer: string
+  /** 对外类别：fact=长期事实，lesson=经验。以它为准，layer 只作参考。 */
+  category?: 'fact' | 'lesson'
+  /** 作用域：`workspace:<id>`；null/缺省 = 全局记忆。 */
+  scope?: string | null
+}
+
+/** 画像分组（网关 `/v1/memory/profile`：聚合优先、标签兜底）。 */
+export interface MemoryProfileGroupDto {
+  title: string
+  items: Array<{ id: string; content: string }>
+}
+
+export interface MemoryProfileDto {
+  /** aggregate=模型聚合出的画像；fallback=按标签分组的原始事实；empty=记忆库为空。 */
+  source: 'aggregate' | 'fallback' | 'empty'
+  groups: MemoryProfileGroupDto[]
+}
+
+/**
+ * 每日洞察（`/v1/journal/today`）：当天日记的**当前版本**。
+ *
+ * 数据源是当天新写入的长期记忆条目（见 docs/daily-journal-plan.zh-CN.md）；
+ * 卡片只负责渲染，文案口径只在网关侧有一份。
+ */
+export interface JournalBulletDto {
+  text: string
+  /** 支撑该要点的证据 id（如 `memory:<id>`）；渲染层只做可追溯展示，不解析。 */
+  sourceIds: string[]
+}
+
+export interface JournalActionDto {
+  label: string
+  /** open-file=打开证据里的真实文件；ask-agent=带着当天上下文起一条会话。 */
+  kind: 'open-file' | 'ask-agent'
+  /** 证据 id（`file:<fileId>` / `memory:<id>`）；不存在的目标网关侧已丢弃。 */
+  targetId: string
+}
+
+export interface JournalEntryDto {
+  id: string
+  /** 本地时区日期（YYYY-MM-DD）。 */
+  date: string
+  /** 同一天的第几版（每次重写 +1）。 */
+  version: number
+  /** 一句话主题（≤16 字）。 */
+  headline: string
+  /** 2–4 句正文。 */
+  summary: string
+  bullets: JournalBulletDto[]
+  actions: JournalActionDto[]
+  /** 产出该版本的模型名；null = 模板兜底（模型档位未就绪或调用失败）。 */
+  model: string | null
+  createdAt: string
+}
+
+export interface JournalTodayDto {
+  /** 本地时区日期（YYYY-MM-DD）。 */
+  date: string
+  /** null = 当天还没有可用条目（没有信号 / 正在生成 / 生成失败）。 */
+  entry: JournalEntryDto | null
+  status: 'pending' | 'generating' | 'ready' | 'failed'
+  /** 进汇总的证据条数（当天新增记忆条数），用于卡片副标题「基于 N 条记忆」。 */
+  signalCount: number
+  /** status=failed 时的失败原因（一句话，可直接展示）。 */
+  lastError: string | null
+}
 
 export interface NxcoreDesktopApi {
   platform: string
@@ -864,6 +1005,45 @@ export interface NxcoreDesktopApi {
     setFixedPort(port: number | null): Promise<{ fixedPort: number | null; needsRestart: boolean }>
     restartGateway(): Promise<{ baseUrl: string }>
   }
+  memory: {
+    listEntries(input?: { limit?: number; scope?: string }): Promise<{ items: MemoryEntryDto[] }>
+    /** 「智能体 → 用户画像」：聚合优先、标签兜底（分组口径在网关侧维护）。 */
+    getProfile(input?: { limit?: number }): Promise<MemoryProfileDto>
+  }
+  journal: {
+    /** 当天日记的当前版本（无条目时 entry=null，不是错误）。 */
+    today(): Promise<JournalTodayDto>
+    /** 手动重写当天（绕过最小间隔，仍受去抖与单飞行保护）。 */
+    refresh(): Promise<JournalTodayDto>
+  }
+  /**
+   * 工作空间「计划」（任务 / todo）。
+   *
+   * 读写都走普通 invoke：写失败要冒泡给看板回滚（读失败由页面自己渲染空态）。
+   * `onChanged` 是网关 SSE 转发的实时变更，用于"Agent 认领后卡片自己动"。
+   */
+  plan: {
+    list(query: import('@nxcore/agent-contract').PlanItemListQuery): Promise<{ items: import('@nxcore/agent-contract').PlanItem[] }>
+    create(input: import('@nxcore/agent-contract').CreatePlanItemInput): Promise<import('@nxcore/agent-contract').PlanItem>
+    get(itemId: string): Promise<import('@nxcore/agent-contract').PlanItem>
+    update(itemId: string, input: import('@nxcore/agent-contract').UpdatePlanItemInput): Promise<import('@nxcore/agent-contract').PlanItem>
+    move(itemId: string, input: import('@nxcore/agent-contract').MovePlanItemInput): Promise<import('@nxcore/agent-contract').PlanItem>
+    release(itemId: string, reason: string): Promise<import('@nxcore/agent-contract').PlanItem>
+    /** 交给 Agent：建会话 + 起 run，返回绑定的会话与 run。 */
+    assign(itemId: string, agentId?: string): Promise<import('@nxcore/agent-contract').PlanAssignResult>
+    /** 删除 = 取消（可恢复）。 */
+    remove(itemId: string): Promise<import('@nxcore/agent-contract').PlanItem>
+    events(itemId: string): Promise<{ events: import('@nxcore/agent-contract').PlanItemEvent[] }>
+    /** 认领包预览（详情页"Agent 会看到什么"）。 */
+    claimPackage(itemId: string): Promise<import('@nxcore/agent-contract').PlanClaimPackage>
+    /** 批量移动 / 取消（多选后操作；单条失败不影响其它条）。 */
+    batch(input: import('@nxcore/agent-contract').PlanBatchInput): Promise<import('@nxcore/agent-contract').PlanBatchResult>
+    /** 订阅本空间的实时变更（每窗口一条）。 */
+    subscribe(workspaceId: string): Promise<void>
+    /** 不传 workspaceId = 退订本窗口全部计划流。 */
+    unsubscribe(workspaceId?: string): Promise<void>
+    onChanged(listener: (payload: import('@nxcore/agent-contract').PlanChangePayload) => void): () => void
+  }
   agentDebug: {
     listAgents(): Promise<import('./agent-debug').AgentDebugAgentsResponse>
     getAgent(id: string): Promise<import('./agent-debug').AgentDebugAgentResponse>
@@ -939,8 +1119,27 @@ export interface NxcoreDesktopApi {
     importLocalAgentHistory(agentId: string): Promise<LocalAgentHistoryImportResult>
     bindLocalAgentWorkspace(agentId: string, sessionId: string): Promise<LocalAgentWorkspaceBinding | null>
     getStatus(): Promise<AgentStatusSnapshot>
+    /** 单个 Agent 的人格定义（名称/简介/系统提示词/技能）；网关未知 agent 时 null。 */
+    getDefinition(agentId: string): Promise<AgentPersonaDto | null>
+    /** 技能清单（「技能」页）：内置 Agent bundle + 子 Agent 清单的 SKILL.md。 */
+    listSkills(): Promise<AgentSkillsSnapshotDto>
+    /** 单个技能详情（含 SKILL.md 全文）；不存在时 null。 */
+    getSkill(skillId: string): Promise<AgentSkillDetailDto | null>
+    /** 启停一个技能；网关会随即重装运行时，使其立刻生效。 */
+    setSkillEnabled(skillId: string, enabled: boolean): Promise<AgentSkillDto>
+    /** 手写一个用户技能（落在网关数据目录的 agent/skills 下）。 */
+    createSkill(input: CreateAgentSkillInput): Promise<AgentSkillDto>
+    /** 从一个含 SKILL.md 的本地文件夹导入技能。 */
+    importSkillDirectory(sourceDirectory: string): Promise<AgentSkillDto>
+    /** 选择技能文件夹（系统选择器，返回绝对路径；取消为 null）。 */
+    pickSkillDirectory(): Promise<string | null>
+    /** 删除一个用户技能（内置/子 Agent 技能会 409）。 */
+    deleteSkill(skillId: string): Promise<void>
     getUsage(range?: AgentUsageRange): Promise<AgentUsageSnapshot>
-    listSessions(pageLabel?: string, roomId?: string | null): Promise<AgentSession[]>
+    /** 「+ → 挂载目录」：系统选择框选本地目录，取消返回 null。 */
+    pickMountDirectory(): Promise<string | null>
+    /** 列表；workspaceId 可选（P1 起按空间过滤，缺省仍返回全量，兼容旧调用）。 */
+    listSessions(pageLabel?: string, roomId?: string | null, workspaceId?: string): Promise<AgentSession[]>
     createSession(input: CreateAgentSessionInput): Promise<AgentSession>
     createSessionLink(input: CreateAgentSessionLinkInput): Promise<AgentSessionLink>
     listSessionLinks(sessionId: string): Promise<AgentSessionLink[]>
@@ -986,7 +1185,8 @@ export interface NxcoreDesktopApi {
     /** 会话思考档位（null=跟随模型配置）；返回后端权威回读值。 */
     setThinkingLevel(sessionId: string, level: AgentThinkingLevel | null): Promise<AgentThinkingLevelUpdate>
     subscribe(sessionId: string): Promise<void>
-    unsubscribe(): Promise<void>
+    /** 不传 workspaceId = 退订本窗口全部计划流。 */
+    unsubscribe(workspaceId?: string): Promise<void>
     onEvent(listener: (frame: AgentSocketFrame) => void): () => void
   }
   /** 工作区（Workspace）：本地目录 + 会话组织容器；默认工作区永远存在。 */
@@ -994,9 +1194,40 @@ export interface NxcoreDesktopApi {
     list(): Promise<AgentWorkspace[]>
     create(input: CreateAgentWorkspaceInput): Promise<AgentWorkspace>
     update(workspaceId: string, input: UpdateAgentWorkspaceInput): Promise<AgentWorkspace>
+    /**
+     * 概览「动态」：网关按 (at, id) 游标派生的一页事件
+     * （runs + 文件库 + 计划事件流）。无桥/失败由调用方降级为本地派生。
+     */
+    activities(workspaceId: string, query?: WorkspaceActivityQuery): Promise<WorkspaceActivityPage>
     remove(workspaceId: string): Promise<void>
     /** 原生目录选择器；用户取消返回 null。 */
     pickDirectory(): Promise<string | null>
+    /** 默认落点预览：`<dataDir>/Workspace/<slug>`；目录服务不可用时返回 null。 */
+    defaultRoot(name: string): Promise<AgentSpaceDefaultRoot | null>
+    /** 判定目录是否为项目空间（只要 `.everoffice/space.json` 可解析就算）。 */
+    detect(dir: string): Promise<AgentSpaceDetectResult>
+    /** 扫容器根，发现磁盘上的项目空间（含是否已注册）。 */
+    discover(): Promise<AgentSpaceCandidate[]>
+    /** 接管已有目录为项目空间（复制品需显式 reassignSpaceId）。 */
+    adopt(input: { dir: string; name?: string; reassignSpaceId?: boolean }): Promise<AgentWorkspace>
+    /** 搬移空间目录（整个目录跟着走）。 */
+    relocate(workspaceId: string, dir: string): Promise<AgentWorkspace>
+    /** 空间目录快照（路径 + 健康）。未绑定目录时抛错，调用方按空态处理。 */
+    layout(workspaceId: string): Promise<AgentSpaceLayout>
+    /** 幂等修复：补缺失目录 / 补缺失标记。 */
+    repair(workspaceId: string): Promise<AgentSpaceRepairReport>
+    /** 在访达里选中某个目录。 */
+    reveal(dir: string): Promise<boolean>
+    /** 资料库对账（盘上删了→missing、回来了→恢复、多了→入库）。 */
+    reconcileLibrary(workspaceId: string): Promise<AgentSpaceReconcileReport>
+    /** 存量懒回填：把只在对象库里的老条目落到空间 Library。 */
+    backfillLibrary(workspaceId: string, limit?: number): Promise<AgentSpaceBackfillReport>
+    /** 空间缓存占用（tmp / derived / objects）。 */
+    cacheStats(workspaceId: string): Promise<AgentSpaceCacheStats>
+    /** 缓存回收（tmp/derived 按龄、objects 按引用、回收站 30 天）。 */
+    gcCache(workspaceId: string): Promise<AgentSpaceCacheGcResult>
+    /** `.tmp/` 只读清单（「临时文件」入口，不入资料库索引、不写库）。 */
+    scratchFiles(workspaceId: string): Promise<AgentScratchListing>
   }
   cursorCompletionAgent: {
     createSession(input: CreateAgentSessionInput): Promise<AgentSession>
@@ -1005,7 +1236,8 @@ export interface NxcoreDesktopApi {
     startRun(sessionId: string, input: StartAgentRunInput): Promise<AgentRun>
     cancelRun(runId: string): Promise<AgentRun>
     subscribe(sessionId: string): Promise<void>
-    unsubscribe(): Promise<void>
+    /** 不传 workspaceId = 退订本窗口全部计划流。 */
+    unsubscribe(workspaceId?: string): Promise<void>
     onEvent(listener: (frame: AgentSocketFrame) => void): () => void
   }
   documents: {
@@ -1082,11 +1314,10 @@ export interface NxcoreDesktopApi {
     readMarkdown(fileId: string, options?: { waitMs?: number; pollMs?: number }): Promise<{ markdown: string }>
     readDataUrl(fileId: string): Promise<{ dataUrl: string }>
     rename(fileId: string, displayName: string): Promise<FileCatalogDto>
-    /** 删除：级联 knowledge cleanup + memory 文档 + 对象库 GC。 */
+    /** 删除：级联 knowledge cleanup + 对象库 GC。 */
     delete(fileId: string): Promise<{
       deleted: boolean
       knowledgeCleanup: boolean
-      deletedMemoryDocuments: string[]
       blobCollected: boolean
     }>
     /** 在系统文件管理器中定位文件本体。 */
@@ -1119,6 +1350,8 @@ export interface NxcoreDesktopApi {
      *  workspaceId = 归属工作空间（产物库按空间隔离，缺省归 default）。 */
     importArtifacts(files: File[], roomId: string, workspaceId?: string): Promise<Array<{ fileId: string; originalName: string }>>
     importAgentAttachments(files: File[]): Promise<AgentAttachmentReference[]>
+    /** 「+ → 导入文件」：系统选择框直选文件并导入为对话附件（取消返回空数组）。 */
+    pickAgentAttachments(): Promise<AgentAttachmentReference[]>
     onImportProgress(listener: (event: FileImportProgressEvent) => void): () => void
     listHighRiskReviews(): Promise<{ items: HighRiskImportReview[] }>
     resolveHighRiskReview(id: string, accepted: boolean): Promise<HighRiskImportResolution>

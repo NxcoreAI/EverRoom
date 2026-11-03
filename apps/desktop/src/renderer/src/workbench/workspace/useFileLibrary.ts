@@ -50,8 +50,11 @@ function sortByUpdatedDesc(items: readonly RealOfficeFile[]): RealOfficeFile[] {
  * 真实文件库数据源：读 `window.nxcore.files.list`。
  * workspaceId = 按工作空间过滤（资料库/产物库独立）；未传/为空拉全库
  * （主页「所有文件」等全局入口用）。工作空间变化时自动重拉。
+ *
+ * options.limit 给「只要最近几条」的页面用（概览动态只合并最近 20 条），
+ * 缺省仍拉满一页（200），避免资料库/产物页行为变化。
  */
-export function useFileLibrary(workspaceId?: string): FileLibrary {
+export function useFileLibrary(workspaceId?: string, options?: { limit?: number }): FileLibrary {
   const [state, setState] = useState<FileLibraryState>('loading')
   const [items, setItems] = useState<RealOfficeFile[]>([])
   const [total, setTotal] = useState(0)
@@ -60,13 +63,14 @@ export function useFileLibrary(workspaceId?: string): FileLibrary {
   const requestSeq = useRef(0)
   // 以 workspaceId 为请求键：切换空间时旧响应直接作废，不回写新空间列表。
   const scope = workspaceId?.trim() || null
+  const limit = options?.limit ?? FILE_LIBRARY_LIMIT
 
   const load = useCallback(async (initial: boolean) => {
     const seq = requestSeq.current + 1
     requestSeq.current = seq
     if (initial) setState('loading')
     else setRefreshing(true)
-    const result = await fetchRealFiles(FILE_LIBRARY_LIMIT, scope ? { workspaceId: scope } : undefined)
+    const result = await fetchRealFiles(limit, scope ? { workspaceId: scope } : undefined)
     // 并发刷新时只认最后一次请求，避免旧响应回写。
     if (seq !== requestSeq.current) return
     if (!result) {
@@ -79,7 +83,7 @@ export function useFileLibrary(workspaceId?: string): FileLibrary {
       setState('ready')
     }
     setRefreshing(false)
-  }, [scope])
+  }, [limit, scope])
 
   useEffect(() => {
     void load(true)

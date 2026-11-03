@@ -91,6 +91,32 @@ describe('AgentGatewayBridge requests', () => {
     expect(ensureConnection).toHaveBeenCalledTimes(4)
   })
 
+  it('passes workspaceId through to the sessions query（按空间列会话）', async () => {
+    const requests: string[] = []
+    const server = createServer((request, response) => {
+      requests.push(request.url ?? '')
+      json(response, 200, [])
+    })
+    const port = await listen(server)
+    const supervisor = {
+      ensureConnection: async () => ({
+        pid: 1,
+        baseUrl: `http://127.0.0.1:${String(port)}`,
+        token: 'test-token',
+        version: 'test',
+      }),
+    } as unknown as GatewaySupervisor
+    const bridge = new AgentGatewayBridge(supervisor)
+
+    await bridge.listSessions(undefined, undefined, 'ws-9')
+    await bridge.listSessions('Agent', null)
+
+    expect(requests).toEqual([
+      '/v1/agent/sessions?workspaceId=ws-9',
+      '/v1/agent/sessions?pageLabel=Agent&roomId=',
+    ])
+  })
+
   it('refreshes a stale gateway connection and retries the request once', async () => {
     const staleServer = createServer((_request, response) => json(response, 200, {}))
     const stalePort = await listen(staleServer)

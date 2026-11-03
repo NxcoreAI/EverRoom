@@ -1,8 +1,9 @@
 import type {
+  AgentAttachmentReference,
   AgentContextUsage,
   AgentEvent,
   AgentActiveDocumentContext,
-  AgentFileAttachment,
+  AgentMountedDirectory,
   AgentMessage,
   AgentModelPreference,
   AgentPermissionMode,
@@ -88,7 +89,8 @@ export interface QueuedAgentSubmission {
   selectedText?: string
   selectedRoomId?: string
   activeDocument?: AgentActiveDocumentContext | null
-  attachments?: AgentFileAttachment[]
+  attachments?: AgentAttachmentReference[]
+  mountedDirectories?: AgentMountedDirectory[]
   referencedConversationId?: string
   mentionedAgents?: MentionedAgent[]
   mentions?: MentionedItem[]
@@ -1114,13 +1116,16 @@ export function useAgentSession(
     selectedRoomId?: string,
     activeDocument?: AgentActiveDocumentContext | null,
     replaceRunId?: string,
-    attachments?: AgentFileAttachment[],
+    /** 输入区导入的文件（文件引擎引用）：作为本轮 run 的 attachments 下发。 */
+    attachments?: AgentAttachmentReference[],
     targetAgentId?: string,
     referencedConversationId?: string,
     mentionedAgents?: MentionedAgent[],
     mentions?: MentionedItem[],
     /** 用户可见文案：卡片按钮等入口的 prompt 是技术指令，气泡/会话标题用它。 */
     displayPrompt?: string,
+    /** 输入区「挂载目录」：目录路径进本轮运行上下文，Agent 可直接读取。 */
+    mountedDirectories?: AgentMountedDirectory[],
   ): Promise<string | null> => {
     const message = prompt.trim()
     const displayPromptValue = displayPrompt?.trim() || undefined
@@ -1139,6 +1144,7 @@ export function useAgentSession(
         selectedRoomId,
         activeDocument,
         attachments,
+        mountedDirectories,
         referencedConversationId,
         mentionedAgents,
         mentions,
@@ -1224,6 +1230,9 @@ export function useAgentSession(
         invocationMode: 'explicit_switch',
         ...(replaceRunId ? { replaceRunId } : {}),
         responseLanguage: locale,
+        // 输入区导入的文件走顶层 attachments：网关 resolveAttachments 负责取
+        // markdown 正文 / 图片 dataUrl，不再塞 context.attachments。
+        ...(attachments?.length ? { attachments } : {}),
         // 渠道会话下 @ 其他 Agent / 引用对话是主代理专属能力，网关会拒
         // （referenced_*_requires_main_agent）；UI 已隐藏入口，这里兜底剥离，
         // 覆盖重试、外部注入等绕过输入框的路径。
@@ -1233,7 +1242,7 @@ export function useAgentSession(
           selectedRoomId,
           activeDocument,
           pageLabel,
-          attachments,
+          mountedDirectories,
           channelLocked ? undefined : referencedConversationId,
           channelLocked ? undefined : mentionedAgents?.map((agent) => agent.id),
         ),
@@ -1334,6 +1343,7 @@ export function useAgentSession(
           next.mentionedAgents,
           next.mentions,
           next.displayPrompt,
+          next.mountedDirectories,
         )
       } catch {
         // 失败已在 sendPrompt 内 setError；丢弃该条继续排后面的，避免卡队列。

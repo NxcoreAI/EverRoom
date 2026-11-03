@@ -1144,6 +1144,22 @@
 }
 .wb-conversation .agent-external-selection { color: var(--ui-text-3); }
 
+/* 「+」入口：与档位钮同一套无边框幽灵语言（悬停才给底），只是正方形图标钮。 */
+.wb-conversation .agent-add-button {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  border-radius: var(--ui-radius-sm);
+  color: var(--ui-text-2);
+  transition:
+    background var(--ui-duration-fast) var(--ui-ease),
+    color var(--ui-duration-fast) var(--ui-ease);
+}
+.wb-conversation .agent-add-button:hover:not(:disabled) { background: var(--ui-hover); color: var(--ui-text); }
+.wb-conversation .agent-add-button:active:not(:disabled) { background: var(--ui-hover); }
+.wb-conversation .agent-add-button:focus-visible { outline: 2px solid var(--ui-accent-line); outline-offset: 2px; }
+.wb-conversation .agent-mount { border-color: var(--ui-border); border-radius: var(--ui-radius-sm); background: var(--ui-surface-alt); color: var(--ui-text-2); }
+
 /* 输入区弹层（模型 / @ / 命令）：暖纸白卡 + 新阴影圆角。
    弹层锚在输入框上沿，左右对齐内容列（而不是贴主区边缘）。 */
 .wb-conversation .agent-composer-popover {
@@ -1154,9 +1170,11 @@
   background: var(--ui-surface);
   box-shadow: var(--ui-shadow-md);
 }
-/* 模型 / 权限弹层是 max-content 宽，只锚左缘，不拉伸。 */
+/* 模型 / 权限 / 「+」弹层是 max-content 宽，只锚左缘，不拉伸。 */
 .wb-conversation .agent-composer-popover.agent-model-picker,
-.wb-conversation .agent-composer-popover.agent-permission-mode-picker {
+.wb-conversation .agent-composer-popover.agent-permission-mode-picker,
+.wb-conversation .agent-composer-popover.agent-thinking-level-picker,
+.wb-conversation .agent-composer-popover.agent-add-menu {
   right: auto;
   left: var(--wb-gutter);
 }
@@ -1173,6 +1191,12 @@
 .wb-conversation .agent-mention-option:hover,
 .wb-conversation .agent-mention-option[data-active='true'] { background: var(--ui-hover); }
 .wb-conversation .agent-mention-option small { color: var(--ui-text-3); }
+.wb-conversation .agent-add-menu-item { border-radius: var(--ui-radius-sm); color: var(--ui-text); }
+.wb-conversation .agent-add-menu-item:hover:not(:disabled) { background: var(--ui-hover); }
+.wb-conversation .agent-add-menu-item:focus-visible { outline: 2px solid var(--ui-accent-line); outline-offset: -2px; }
+.wb-conversation .agent-add-menu-item > svg { color: var(--ui-text-2); }
+.wb-conversation .agent-add-menu-item strong { color: var(--ui-text); }
+.wb-conversation .agent-add-menu-item small { color: var(--ui-text-3); }
 .wb-conversation .agent-mention-group-label { color: var(--ui-text-3); }
 .wb-conversation .agent-mention-tab { color: var(--ui-text-3); border-radius: var(--ui-radius-xs); }
 .wb-conversation .agent-mention-tab[data-selected='true'] { background: var(--ui-selected); color: var(--ui-text); }
