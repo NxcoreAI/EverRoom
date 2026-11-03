@@ -7,6 +7,13 @@
 与 PPT 已有的「AI 修改」弹层是同一条链路的复用：
 `slides:agent-ask` / `docs:agent-ask` / `sheets:agent-ask` → `office:agent-ask`。
 
+批注队列在**两个地方**都可见（同一份事实，宿主是唯一来源）：
+
+- **文档内**（Word）：原文按块索引重新高亮（复用 `ai-queue-anchors` 装饰器），右侧
+  悬浮面板逐条列出「原文摘录 + 我的批注」，可点原文定位、单条移除、「全部发送」。
+- **对话区**：输入框上方的「待发送批注 N 条」条，每条同样是「原文 + 批注」，
+  支持单条移除 / 清空 / 全部发送；正常打字发消息不受队列影响。
+
 两种发送方式（同一个 `mode` 字段）：
 
 - `now`（默认，回车）：立刻作为一条用户消息发出，主窗口切到对应工作空间对话。
@@ -24,13 +31,19 @@ Excel：sheets 选区浮层（AiSelectionAsk，embed）
   → ipc 'docs:agent-ask' / 'sheets:agent-ask'（genoffice：normalize + setXxxAgentAskHook）
   → desktop main wireDocsAgentAsk / wireSheetsAgentAsk（wcId 反查实例 → 文件 + 工作空间）
   → buildXxxAgentAskMessage / buildXxxAgentAskDisplayMessage（技术指令 / 人话分开）
-  → ipc 'office:agent-ask' 扇出到渲染层（带 workspaceId / mode / title）
+  → ipc 'office:agent-ask' 扇出到渲染层（带 workspaceId / mode / title / instruction /
+    excerpt / anchor）
   → workbench 消费：
        mode=now   → 激活该工作空间标签（无对话视图则切新工作草稿）+ store.pendingAgentAsk
        mode=queue → store.addAskDraft（不抢焦点，toast 报条数）
+  → 批注镜像（双向，事实只在宿主侧）：
+       store.askDrafts → office.syncAskQueue → main → docs 视图 'docs:ask-queue'
+         → 文档内锚点高亮 + 右侧面板（原文 + 批注）
+       文档面板动作 → 'docs:ask-queue-action' → main → 渲染层 'office:ask-queue-action'
+         → 移除一条 = store.removeAskDraft；全部发送 = 激活该空间标签 + 请求对话面板发送
   → ConversationPane：
        pendingAgentAsk → sendPrompt(message, …, displayPrompt) 自动发送
-       批注清单      → 上方「待发送批注 N 条」条，全部发送 = buildAskBatch 合成一条
+       批注清单      → 上方「待发送批注 N 条」条（原文 + 批注），全部发送 = buildAskBatch 合成一条
 ```
 
 ## 载荷契约（`DocsAgentAskOp`）
@@ -83,6 +96,10 @@ genoffice（submodule，分支 `everroom/host-agent-tools`，两个提交：
 - `apps/sheets/src/renderer/ExcelShell.tsx`：embed 下把选区浮层接到宿主（`onAiSelectionAskHost`）
 - `apps/sheets/src/renderer/App.tsx`：`handleAiSelectionAskHost`（取活动 sheetId/表名 + A1 区域）
 - `apps/sheets/src/renderer/i18n/strings-ai.ts`：新增 `aiAskQueue`（19 个语言块）
+- `apps/docs/src/renderer/components/AskQueuePanel.tsx`（新）：文档内批注面板（原文 + 批注 + 发送/移除）
+- `apps/docs/src/renderer/App.tsx`：订阅宿主队列快照、块索引 → PM 位置重建锚点、面板挂载
+- `apps/docs/src/main/docs-main.ts`：`pushDocsAskQueue` / `setDocsAskQueueActionHook` + 两个 IPC
+- `apps/docs/src/renderer/styles.css`：面板与锚点样式（semantic tokens）
 
 desktop：
 
@@ -92,8 +109,8 @@ desktop：
 - `src/main/office/office-preview-registry.ts`：注册三条 wire
 - `src/renderer/src/components/agent/askDrafts.ts`（+ `.test.ts`）：批注合批（多条 → 一条，技术指令带编号、气泡用圈号人话）
 - `src/renderer/src/workbench/state/store.ts`：`pendingAgentAsk` + `askDrafts`（add/remove/clear）
-- `src/renderer/src/workbench/shell/Workbench.tsx`：消费 `office.onAgentAsk`（now = 激活标签；queue = 入批注清单）
-- `src/renderer/src/workbench/conversation/ConversationPane.tsx`：消费 `pendingAgentAsk` 自动发送；渲染「待发送批注」条 + 全部发送
+- `src/renderer/src/workbench/shell/Workbench.tsx`：消费 `office.onAgentAsk`（now = 激活标签；queue = 入批注清单）；批注队列快照下发 + 文档面板动作回灌
+- `src/renderer/src/workbench/conversation/ConversationPane.tsx`：消费 `pendingAgentAsk` 自动发送；渲染「待发送批注」条（原文 + 批注）+ 全部发送；消费文档侧「全部发送」请求
 - `tests/office-agent-ask.test.ts`：docs / sheets 组包 + 转发 + 幂等 + 失败分支
 
 ## 手工验收
@@ -110,8 +127,10 @@ desktop：
 
 ## 已知未做（原型边界）
 
-- 批注清单**没有文档内锚点**：docs standalone 那套「锚在选区上、点开可编辑」没搬过来——
-  embed 下清单存在 EverRoom（工作空间维度），文档页签关掉也不会丢，但看不到锚点。
+- 文档内锚点按**块索引**重建（不是字符级锚点）：选中之后、发送之前如果大改过文档，
+  高亮可能落到相邻块；面板里的原文摘录仍以选中时的快照为准。
+- 批注清单**不可在文档内编辑文字**：改批注要移除后重新加（standalone 那套锚点内联编辑没搬）。
+- Excel / PPT 还没有文档内锚点（只有对话侧清单）。
 - 批注清单只在内存（store），重启应用即失效；要不要落库待定。
 - PPT 只补了 `workspaceId`（消息能定位到工作空间），还没有 Excel 那种「加入批注」。
 - 浮层错误文案：Word 走 i18n 的 `aiErrorPrefix`，Excel 暂直接显示宿主返回的原始 code。
