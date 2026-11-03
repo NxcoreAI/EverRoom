@@ -504,27 +504,32 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
                   <strong>{account.subscription.planName}</strong>
                   <small>{subscriptionStatusLabel(account.subscription.status, t)}</small>
                 </div>
-                {aiRelayStatus?.configured && aiRelayStatus.llmCredits ? (
+{aiRelayStatus?.configured && aiRelayStatus.llmCredits ? (() => {
+                  const periodRemaining = aiRelayStatus.periodRemainingCredits ?? aiRelayStatus.remainingCredits
+                  // 月度口径总量 = 套餐月度额度(周期剩余 + 本周期已用),与充值无关
+                  const monthlyQuota = periodRemaining + (aiRelayStatus.usedCredits ?? 0)
+                  return (
                   <div className="cloud-subscription-quota">
                     <div>
                       <span>{t('surface:settings.llmRemaining')}</span>
-                      <strong>{formatLlmUsd(aiRelayStatus.periodRemainingCredits ?? aiRelayStatus.remainingCredits, locale)}</strong>
+                      <strong>{formatLlmUsd(periodRemaining, locale)}</strong>
                     </div>
                     <progress
                       aria-label={t('surface:settings.llmRemaining')}
-                      max={Math.max(1, Math.min(aiRelayStatus.llmCredits, (aiRelayStatus.periodRemainingCredits ?? aiRelayStatus.remainingCredits) + (aiRelayStatus.usedCredits ?? 0)))}
-                      value={Math.min(Math.max(0, aiRelayStatus.periodRemainingCredits ?? aiRelayStatus.remainingCredits), aiRelayStatus.llmCredits)}
+                      max={Math.max(1, monthlyQuota)}
+                      value={Math.min(Math.max(0, periodRemaining), monthlyQuota)}
                     />
                     <small>
                       {aiRelayStatus.remainingCredits <= 0
                         ? t('surface:settings.llmQuotaExhausted')
                         : t('surface:settings.usedUsedTotalTotal', {
                           used: formatLlmUsd(aiRelayStatus.usedCredits ?? 0, locale),
-                          total: formatLlmUsd(aiRelayStatus.llmCredits, locale),
+                          total: formatLlmUsd(monthlyQuota, locale),
                         })}
                     </small>
                   </div>
-                ) : null}
+                  )
+                })() : null}
                 {aiRelayStatus?.configured && (aiRelayStatus.topupRemainingCredits ?? 0) > 0 ? (
                   <div className="cloud-subscription-quota cloud-subscription-quota--topup">
                     <div>
