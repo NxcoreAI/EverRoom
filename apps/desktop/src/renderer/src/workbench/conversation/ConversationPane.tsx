@@ -74,7 +74,6 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
 
   const pendingAgentAsk = useWorkbenchStore((state) => state.pendingAgentAsk)
   const askDrafts = useWorkbenchStore((state) => state.askDrafts)
-  const removeAskDraft = useWorkbenchStore((state) => state.removeAskDraft)
   const clearAskDrafts = useWorkbenchStore((state) => state.clearAskDrafts)
   const askQueueSendNonce = useWorkbenchStore((state) => state.askQueueSendNonce)
 
@@ -258,58 +257,8 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
     sendAskDrafts()
   }, [askQueueSendNonce, workspaceAskDrafts.length, hook.scopeReady, hook.loading])
 
-  const askDraftBar = workspaceAskDrafts.length > 0
-    ? (
-        <div className="wb-ask-drafts" role="group" aria-label="待发送批注">
-          <div className="wb-ask-drafts-head">
-            <span className="wb-ask-drafts-count">待发送批注 {workspaceAskDrafts.length} 条</span>
-            <button
-              type="button"
-              className="wb-ask-drafts-send"
-              disabled={!canSend || hook.loading}
-              onClick={sendAskDrafts}
-            >
-              全部发送
-            </button>
-            <button
-              type="button"
-              className="wb-ask-drafts-clear"
-              onClick={() => { if (workspaceId) clearAskDrafts(workspaceId) }}
-            >
-              清空
-            </button>
-          </div>
-          <ul className="wb-ask-drafts-list">
-            {workspaceAskDrafts.map((draft) => (
-              <li key={draft.id} className="wb-ask-drafts-item">
-                <span className="wb-ask-drafts-text">
-                  {draft.title ? <b>{draft.title}</b> : null}
-                  {draft.excerpt ? (
-                    <span className="wb-ask-drafts-excerpt">「{draft.excerpt}」</span>
-                  ) : null}
-                  <span className="wb-ask-drafts-note">
-                    {draft.instruction ?? draft.displayMessage ?? draft.message}
-                  </span>
-                </span>
-                <button
-                  type="button"
-                  className="wb-ask-drafts-remove"
-                  aria-label="移除这条批注"
-                  onClick={() => removeAskDraft(draft.id)}
-                >
-                  ✕
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )
-    : null
-
   const composer = (
-    <>
-      {askDraftBar}
-      <AgentComposer
+    <AgentComposer
       ref={composerRef}
       contextSummary=""
       contextItems={[]}
@@ -350,7 +299,6 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
         send()
       }}
     />
-    </>
   )
 
   const standaloneError = hook.error && !conversationState ? hook.error : null

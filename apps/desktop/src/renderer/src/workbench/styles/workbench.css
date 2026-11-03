@@ -151,6 +151,23 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* 待发送批注角标：工作空间标签上的小数字（对话区批注条的另一处提示）。 */
+.wb-tab-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: var(--ui-radius-full);
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent-strong);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+}
+
 .wb-tab-close {
   display: grid;
   place-items: center;

@@ -131,7 +131,10 @@ export function Workbench() {
         })
         const count = useWorkbenchStore.getState().askDrafts
           .filter((draft) => draft.workspaceId === workspaceId).length
-        workbenchToast(`已加入批注（${count} 条），回到对话上方可一次全部发送`)
+        const spaceName = state.workspaces.find((workspace) => workspace.id === workspaceId)?.name
+        workbenchToast(
+          `已加入批注（${count} 条${spaceName ? ` · ${spaceName}` : ''}），在该空间的对话上方可一次全部发送`,
+        )
         return
       }
       const tab = state.tabs.find(

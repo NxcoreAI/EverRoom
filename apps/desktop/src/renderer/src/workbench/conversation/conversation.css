@@ -1230,9 +1230,12 @@
 /* ── 待发送批注（Office「AI 修改」攒批注）────────────────────────────────
  * 位置：输入框上方的一条窄卡，宽度跟消息列一致；只做「看得见 + 一次全发 + 单条移除」。
  */
+/* 待发送批注条：对话列里的一行（flow），在输入框上方、对话面板之外。
+ * 早前把它塞进 AgentChatView 的 composer 插槽会被 absolute 定位的输入框层盖住，
+ * 所以这里改成独立的一行，从结构上保证可见。 */
 .wb-ask-drafts {
-  width: min(100%, var(--wb-conv-max));
-  margin: 0 auto 8px;
+  flex: none;
+  margin: 0 8px 6px;
   padding: 8px 10px;
   border: 1px solid var(--ui-border-subtle);
   border-radius: var(--ui-radius-sm);

@@ -5,6 +5,7 @@ import type { AgentWorkspace } from '@nxcore/agent-contract'
 
 import type { OfficeFile } from '@/office-proto/data'
 
+import { AskQueueBar } from '../conversation/AskQueueBar'
 import { ConversationPane } from '../conversation/ConversationPane'
 import { useWorkbenchStore, useWorkspaceSessions, useWorkspace } from '../state/store'
 import {
@@ -119,6 +120,8 @@ export function WorkspaceTabHost({ tab, active }: { tab: WorkspaceTab; active: b
                 </span>
               </div>
             </header>
+            {/* 待发送批注：放在对话面板上方的 flow 行，保证一定看得见。 */}
+            <AskQueueBar workspaceId={tab.workspaceId} />
             {view.kind === 'session' ? (
               <ConversationPane
                 key={`session:${view.sessionId}`}
