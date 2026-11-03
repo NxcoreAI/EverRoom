@@ -711,8 +711,10 @@ export class OfficeBridgeServer {
     }
     if (!outcome.ok) {
       const openSummary = describeOpenInstances(outcome.open)
-      const message =
-        outcome.reason === 'not_editable'
+      // 后台隐藏会话的失败原因（文件不存在/加密/超限/就绪超时）优先透传，不被通用文案掩盖。
+      const message = outcome.message
+        ? `${outcome.message}${openSummary}`
+        : outcome.reason === 'not_editable'
           ? `该 PPT 当前不是以可编辑的 PPT 产物打开的，无法应用编辑。请在文件库中重新以可编辑方式打开后再试。${openSummary}`
           : req.fileId === 'active'
             ? `当前没有已打开的 PPT。若知道目标 PPT 的 fileEntryId（此前生成/编辑结果里返回过），把它作为 fileId 传入即可自动打开并编辑；不知道时请用户先在文件库打开该文件。${openSummary}`

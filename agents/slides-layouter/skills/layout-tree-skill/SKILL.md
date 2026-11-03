@@ -1,13 +1,13 @@
 ---
 name: layout-tree-skill
-description: 单页 v2 布局语法。设计和自审时查阅节点、几何约束与校验缺陷；使用 component 时继续读取 components.md 中的参数。
+description: 单页 v2 布局语法。设计和自审时查阅节点、几何约束与校验缺陷；语义布局前读 design-guide.md，使用组件时按用途索引读取对应类别参考。
 ---
 
 # 幻灯片布局语法（v2 唯一写入格式）
 
 状态：权威正文 · 2026-10-29（weights 统一：父级优先、缺省从子节点 weight 推导；`fit:"shrink"` 编译期缩字 ≤15%、守场景下限；`focus` 不改图框比例，不能消除 `image_ar`；完整呈现图片不得改 `cover`）
 
-本文件是布局语法的权威来源。`scripts/render-layout-skills.mjs` 从这里生成 layouter 的基础技能与组件参考 `components.md`；语法变更在本文件维护。任务目标、内容保真、设计与自审流程由 SYSTEM.md 负责，旧模式契约见 `skills/layout-tree-skill/legacy.md`。
+本文件是布局语法与组件参考的权威来源。`scripts/render-layout-skills.mjs` 从这里生成 layouter 的基础技能 `SKILL.md`、设计指引 `design-guide.md` 与按展示用途拆分的组件参考 `components/*.md`；语法变更在本文件维护。任务目标、内容保真、设计与自审流程由 SYSTEM.md 负责。
 
 写入格式为 **v2 页面**（`version: 2` + `composition` + `nodes`），`group` 使用原生 `children` 分区。
 
@@ -30,7 +30,7 @@ description: 单页 v2 布局语法。设计和自审时查阅节点、几何约
 |---|---|---|
 | `version` | `2` | 必填。 |
 | `role` | 照抄输入的 `role` | 内容语义标签，不改写。 |
-| `composition` | `immersive / hero-data / editorial / swiss / poster / chapter` | 必填。语义内容模式由 Layouter 根据实际设计选择；旧模式等于输入的 composition。 |
+| `composition` | `immersive / hero-data / editorial / swiss / poster / chapter` | 必填。由 Layouter 根据实际设计选择。 |
 | `safeArea` | `content`（默认）/ `full` | 图片与色块用节点 `bleed` 出血。 |
 | `grid` | `cols 1~12`、`rows 1~12`、`gutter 0~48`、`rowGutter 0~48`、`margin 0~96` | 可省略，用风格卡默认（12 列 × 8 行）。 |
 | `footer` | `left? / center? / right?` 各 ≤120 字；`pageNumbers?`；`tone?` `text \| muted \| inverse` | 语法可省略，使用规则见 SYSTEM.md。仅显式写 `pageNumbers:true` 时网关填入页码；省略 footer 不生成页码与页脚线。`inverse` 适用于深色页且不绘制页脚线。 |
@@ -224,27 +224,6 @@ slot 栅格表达不了的自由版式，用 `group` 把一块 slot 切成 v2 �
 - 栏头（`indexHeader`/`sectionHeader`）、结论框（`calloutBox`）等辅助组件不能替代主内容的组件化表达。
 - 纯文字封面、章节、引语、收尾页，以及真实明细表（`table` 节点）的既有用法不受「默认采用」约束。
 
-## 按展示用途选组件
-
-先确定这一页要让观众看懂什么（顺序、比较、层级、规模…），再按下表选主表达组件；每个组件只有一个主要用途，实际使用允许跨类。选中后到组件参数表核对参数、素材要求、条目容量与槽位下限。
-
-| 展示用途 | 组件 | 适用条件 |
-|---|---|---|
-| 导航与章节组织 | `agenda`、`sectionHeader`、`indexHeader` | 目录、章节分隔、编号开篇；不承载论据 |
-| 要点、卖点与产品介绍 | `pointList`、`featureCards`、`bentoGrid`、`categoryCards`、`featureRail` | 平行要点或多卖点陈列；并列本身是一种内容关系，也适用于无层级结构的清单 |
-| 时间与顺序推进 | `timeline`、`eraRail`、`steps`、`chevron` | 有时间节点用 `timeline`/`eraRail`，操作步骤用 `steps`，单向阶段推进用 `chevron` |
-| 层级与组织结构 | `orgChart`、`pyramid`、`layeredStack` | 人员/组织归属用 `orgChart`，重要性分层用 `pyramid`，架构堆叠用 `layeredStack` |
-| 转化、汇聚与循环 | `funnel`、`radialFunnel`、`cycle` | 逐级收窄转化用 `funnel`，中心辐射汇聚用 `radialFunnel`（汇聚不等于逐级收窄），闭环流程用 `cycle` |
-| 比较、定位与选择 | `comparison`、`prosCons`、`matrix2x2`、`venn`、`competitorBoard`、`pricingTiers` | 两方对照用 `comparison`；`prosCons` 仅限明确的利弊清单（优势/风险），泛化的比较不等于利弊 |
-| 指标、进度与财务 | `stats`、`kpiRows`、`progress`、`financialBoard` | 数值标签成组用 `stats`/`kpiRows`，完成度用 `progress`，财务结构用 `financialBoard` |
-| 人物与团队介绍 | `persona`、`teamGrid`、`founderProfile` | 单人画像用 `persona`/`founderProfile`，团队陈列用 `teamGrid` |
-| 引用与外部背书 | `quote`、`quotes`、`logoWall` | 单条金句用 `quote`，多条评价用 `quotes`，客户/合作方标识用 `logoWall` |
-| 结论强调与视觉叙事 | `calloutBox`、`fullBleedQuote`、`photoTriptych` | 单点结论框用 `calloutBox`，整页金句用 `fullBleedQuote`，三图并置叙事用 `photoTriptych` |
-
-边界：趋势与分布用 `chart` 节点、逐格读取的明细用 `table` 节点；二者可与上表组件**同页组合**，但上游已定型的 table/chart 内容契约优先，须保留原有行列、分类和序列对应关系，不得因组件选型擅自转换或丢失数据。
-
-使用 component 前读一遍 `skills/layout-tree-skill/components.md`：按信息语义选择组件，再核对该组件的参数、容量和实际支持的 style。同一对话只读这一次，后续页面直接沿用上下文内容核对，不重复读取。该参考由权威正文生成；基础节点页无需加载。
-
 ## Composition 硬约束（validate 会拒收）
 
 | composition | 必须 |
@@ -281,6 +260,27 @@ slot 栅格表达不了的自由版式，用 `group` 把一块 slot 切成 v2 �
   ]
 }
 ```
+
+## 按展示用途选组件
+
+先确定这一页要让观众看懂什么（顺序、比较、层级、规模…），再按下表选主表达组件；每个组件只有一个主要用途，实际使用允许跨类。选中后读该类别的参数文档 `skills/layout-tree-skill/components/<文档>`，核对参数、素材要求、条目容量与槽位下限（同一类别同一对话读一次即可）。
+
+| 展示用途 | 文档 | 组件 | 适用条件 |
+|---|---|---|---|
+| 导航与章节组织 | `navigation.md` | `agenda`、`sectionHeader`、`indexHeader` | 目录、章节分隔、编号开篇；不承载论据 |
+| 要点、卖点与产品介绍 | `points.md` | `pointList`、`featureCards`、`bentoGrid`、`categoryCards`、`featureRail` | 平行要点或多卖点陈列；并列本身是一种内容关系，也适用于无层级结构的清单 |
+| 时间与顺序推进 | `sequence.md` | `timeline`、`eraRail`、`steps`、`chevron` | 有时间节点用 `timeline`/`eraRail`，操作步骤用 `steps`，单向阶段推进用 `chevron` |
+| 层级与组织结构 | `hierarchy.md` | `orgChart`、`pyramid`、`layeredStack` | 人员/组织归属用 `orgChart`，重要性分层用 `pyramid`，架构堆叠用 `layeredStack` |
+| 转化、汇聚与循环 | `conversion.md` | `funnel`、`radialFunnel`、`cycle` | 逐级收窄转化用 `funnel`，中心辐射汇聚用 `radialFunnel`（汇聚不等于逐级收窄），闭环流程用 `cycle` |
+| 比较、定位与选择 | `comparison.md` | `comparison`、`prosCons`、`matrix2x2`、`venn`、`competitorBoard`、`pricingTiers` | 两方对照用 `comparison`；`prosCons` 仅限明确的利弊清单（优势/风险），泛化的比较不等于利弊 |
+| 指标、进度与财务 | `metrics.md` | `stats`、`kpiRows`、`progress`、`financialBoard` | 数值标签成组用 `stats`/`kpiRows`，完成度用 `progress`，财务结构用 `financialBoard` |
+| 人物与团队介绍 | `people.md` | `persona`、`teamGrid`、`founderProfile` | 单人画像用 `persona`/`founderProfile`，团队陈列用 `teamGrid` |
+| 引用与外部背书 | `quotes.md` | `quote`、`quotes`、`logoWall` | 单条金句用 `quote`，多条评价用 `quotes`，客户/合作方标识用 `logoWall` |
+| 结论强调与视觉叙事 | `emphasis.md` | `calloutBox`、`fullBleedQuote`、`photoTriptych` | 单点结论框用 `calloutBox`，整页金句用 `fullBleedQuote`，三图并置叙事用 `photoTriptych` |
+
+边界：趋势与分布用 `chart` 节点、逐格读取的明细用 `table` 节点；二者可与上表组件**同页组合**，但上游已定型的 table/chart 内容契约优先，须保留原有行列、分类和序列对应关系，不得因组件选型擅自转换或丢失数据。
+
+语义布局任务先读 `skills/layout-tree-skill/design-guide.md`（内容关系、构图与空间分配；同一对话读一次即可）。使用 component 前按上方索引读对应类别的 `skills/layout-tree-skill/components/<文档>`，核对该组件的参数、容量和实际支持的 style；同一类别同一对话读一次即可。两者均由权威正文生成；基础节点页无需加载。
 
 ---
 

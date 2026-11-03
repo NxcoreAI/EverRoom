@@ -2,7 +2,7 @@
 
 状态：权威正文 · 2026-10-29（weights 统一：父级优先、缺省从子节点 weight 推导；`fit:"shrink"` 编译期缩字 ≤15%、守场景下限；`focus` 不改图框比例，不能消除 `image_ar`；完整呈现图片不得改 `cover`）
 
-本文件是布局语法的权威来源。`scripts/render-layout-skills.mjs` 从这里生成 layouter 的基础技能与组件参考 `components.md`；语法变更在本文件维护。任务目标、内容保真、设计与自审流程由 SYSTEM.md 负责，旧模式契约见 `skills/layout-tree-skill/legacy.md`。
+本文件是布局语法与组件参考的权威来源。`scripts/render-layout-skills.mjs` 从这里生成 layouter 的基础技能 `SKILL.md`、设计指引 `design-guide.md` 与按展示用途拆分的组件参考 `components/*.md`；语法变更在本文件维护。任务目标、内容保真、设计与自审流程由 SYSTEM.md 负责。
 
 写入格式为 **v2 页面**（`version: 2` + `composition` + `nodes`），`group` 使用原生 `children` 分区。
 
@@ -25,7 +25,7 @@
 |---|---|---|
 | `version` | `2` | 必填。 |
 | `role` | 照抄输入的 `role` | 内容语义标签，不改写。 |
-| `composition` | `immersive / hero-data / editorial / swiss / poster / chapter` | 必填。语义内容模式由 Layouter 根据实际设计选择；旧模式等于输入的 composition。 |
+| `composition` | `immersive / hero-data / editorial / swiss / poster / chapter` | 必填。由 Layouter 根据实际设计选择。 |
 | `safeArea` | `content`（默认）/ `full` | 图片与色块用节点 `bleed` 出血。 |
 | `grid` | `cols 1~12`、`rows 1~12`、`gutter 0~48`、`rowGutter 0~48`、`margin 0~96` | 可省略，用风格卡默认（12 列 × 8 行）。 |
 | `footer` | `left? / center? / right?` 各 ≤120 字；`pageNumbers?`；`tone?` `text \| muted \| inverse` | 语法可省略，使用规则见 SYSTEM.md。仅显式写 `pageNumbers:true` 时网关填入页码；省略 footer 不生成页码与页脚线。`inverse` 适用于深色页且不绘制页脚线。 |
@@ -221,22 +221,62 @@ slot 栅格表达不了的自由版式，用 `group` 把一块 slot 切成 v2 �
 
 ## 按展示用途选组件
 
-先确定这一页要让观众看懂什么（顺序、比较、层级、规模…），再按下表选主表达组件；每个组件只有一个主要用途，实际使用允许跨类。选中后到组件参数表核对参数、素材要求、条目容量与槽位下限。
+先确定这一页要让观众看懂什么（顺序、比较、层级、规模…），再按下表选主表达组件；每个组件只有一个主要用途，实际使用允许跨类。选中后读该类别的参数文档 `skills/layout-tree-skill/components/<文档>`，核对参数、素材要求、条目容量与槽位下限（同一类别同一对话读一次即可）。
 
-| 展示用途 | 组件 | 适用条件 |
-|---|---|---|
-| 导航与章节组织 | `agenda`、`sectionHeader`、`indexHeader` | 目录、章节分隔、编号开篇；不承载论据 |
-| 要点、卖点与产品介绍 | `pointList`、`featureCards`、`bentoGrid`、`categoryCards`、`featureRail` | 平行要点或多卖点陈列；并列本身是一种内容关系，也适用于无层级结构的清单 |
-| 时间与顺序推进 | `timeline`、`eraRail`、`steps`、`chevron` | 有时间节点用 `timeline`/`eraRail`，操作步骤用 `steps`，单向阶段推进用 `chevron` |
-| 层级与组织结构 | `orgChart`、`pyramid`、`layeredStack` | 人员/组织归属用 `orgChart`，重要性分层用 `pyramid`，架构堆叠用 `layeredStack` |
-| 转化、汇聚与循环 | `funnel`、`radialFunnel`、`cycle` | 逐级收窄转化用 `funnel`，中心辐射汇聚用 `radialFunnel`（汇聚不等于逐级收窄），闭环流程用 `cycle` |
-| 比较、定位与选择 | `comparison`、`prosCons`、`matrix2x2`、`venn`、`competitorBoard`、`pricingTiers` | 两方对照用 `comparison`；`prosCons` 仅限明确的利弊清单（优势/风险），泛化的比较不等于利弊 |
-| 指标、进度与财务 | `stats`、`kpiRows`、`progress`、`financialBoard` | 数值标签成组用 `stats`/`kpiRows`，完成度用 `progress`，财务结构用 `financialBoard` |
-| 人物与团队介绍 | `persona`、`teamGrid`、`founderProfile` | 单人画像用 `persona`/`founderProfile`，团队陈列用 `teamGrid` |
-| 引用与外部背书 | `quote`、`quotes`、`logoWall` | 单条金句用 `quote`，多条评价用 `quotes`，客户/合作方标识用 `logoWall` |
-| 结论强调与视觉叙事 | `calloutBox`、`fullBleedQuote`、`photoTriptych` | 单点结论框用 `calloutBox`，整页金句用 `fullBleedQuote`，三图并置叙事用 `photoTriptych` |
+| 展示用途 | 文档 | 组件 | 适用条件 |
+|---|---|---|---|
+| 导航与章节组织 | `navigation.md` | `agenda`、`sectionHeader`、`indexHeader` | 目录、章节分隔、编号开篇；不承载论据 |
+| 要点、卖点与产品介绍 | `points.md` | `pointList`、`featureCards`、`bentoGrid`、`categoryCards`、`featureRail` | 平行要点或多卖点陈列；并列本身是一种内容关系，也适用于无层级结构的清单 |
+| 时间与顺序推进 | `sequence.md` | `timeline`、`eraRail`、`steps`、`chevron` | 有时间节点用 `timeline`/`eraRail`，操作步骤用 `steps`，单向阶段推进用 `chevron` |
+| 层级与组织结构 | `hierarchy.md` | `orgChart`、`pyramid`、`layeredStack` | 人员/组织归属用 `orgChart`，重要性分层用 `pyramid`，架构堆叠用 `layeredStack` |
+| 转化、汇聚与循环 | `conversion.md` | `funnel`、`radialFunnel`、`cycle` | 逐级收窄转化用 `funnel`，中心辐射汇聚用 `radialFunnel`（汇聚不等于逐级收窄），闭环流程用 `cycle` |
+| 比较、定位与选择 | `comparison.md` | `comparison`、`prosCons`、`matrix2x2`、`venn`、`competitorBoard`、`pricingTiers` | 两方对照用 `comparison`；`prosCons` 仅限明确的利弊清单（优势/风险），泛化的比较不等于利弊 |
+| 指标、进度与财务 | `metrics.md` | `stats`、`kpiRows`、`progress`、`financialBoard` | 数值标签成组用 `stats`/`kpiRows`，完成度用 `progress`，财务结构用 `financialBoard` |
+| 人物与团队介绍 | `people.md` | `persona`、`teamGrid`、`founderProfile` | 单人画像用 `persona`/`founderProfile`，团队陈列用 `teamGrid` |
+| 引用与外部背书 | `quotes.md` | `quote`、`quotes`、`logoWall` | 单条金句用 `quote`，多条评价用 `quotes`，客户/合作方标识用 `logoWall` |
+| 结论强调与视觉叙事 | `emphasis.md` | `calloutBox`、`fullBleedQuote`、`photoTriptych` | 单点结论框用 `calloutBox`，整页金句用 `fullBleedQuote`，三图并置叙事用 `photoTriptych` |
 
 边界：趋势与分布用 `chart` 节点、逐格读取的明细用 `table` 节点；二者可与上表组件**同页组合**，但上游已定型的 table/chart 内容契约优先，须保留原有行列、分类和序列对应关系，不得因组件选型擅自转换或丢失数据。
+
+## 设计指引（语义内容布局）
+
+### 内容契约与必留
+
+- `message` 是页面主标题，完整展示。`blocks` 是待呈现的内容；`mustShow` 决定必留范围，`priority` 与 `focusRefs` 决定主次。
+- 上游已完成文案精炼，沿用其短句，不补写解释段落或装饰性口号。message 与标题 block 相同时共用一个标题节点，绑定到该 block；多个 block 承载相同文字时可共用节点，分别绑定，避免重复上屏。
+- `relations` 及其 `basis` 说明内容之间的关系。为每项关系选择图上可指认的线索，保持其原意：比较有明确的两端标签与对应维度，先后有方向或编号，层级有字号、位置或面积主次。平等对照可以等宽同色；确有侧重点时才用面积、底色或强调区分，视觉权重须符合内容。
+- `constraints.verbatimRefs` 标记逐字保留的来源。排版本身保留普通文案、数值、单位、引用归属、表格行列及图表分类与序列对应关系；可拆分、分组和调整换行。
+- `content.notes` 原样写入树的 `notes`。`omissions` 是上游已记录的取舍；本轮以必留内容为底线，不通过转入备注或隐藏内容来解决拥挤。
+- 图片从实际 `materials` 中取用，遵守 block 的素材引用与 fit 要求。图片保持比例，`contain` 完整呈现，`cover` 的裁切保留主体。
+
+### 构图与选型
+
+先理解这一页要让观众记住什么，再决定如何组织空间。表达结构先于排版，按四步决策：
+
+1. **先定展示用途**：根据核心内容与主关系确定这一页要让观众看懂什么（顺序、比较、层级、规模、指标…），不只按页面 `role` 判断。
+2. **按用途选主表达组件**：优先查「按展示用途选组件」索引；输入的 `componentCandidates` 是按本页实际 blocks 预检过的参考（`feasible:true` 附已验证槽位 `minSlot`/`suggestedSlot` 与可直接使用的 `template` 参数），候选列表不是全部可用组件。选中后读该类别的参数文档核对该组件的参数、素材要求、条目容量与槽位下限，再分配空间——主表达组件先获得满足实际内容容量的区域，标题与辅助信息随后布局。
+3. **按需补辅助表达**：指标用 `stats`/`kpiRows`、单点结论用 `calloutBox`、引用背书用 `quote`/`logoWall`、章节与栏头组织用 `sectionHeader`/`indexHeader`。
+4. **装不下时如实处理**：优先换更大区域或更少条目（必留条目完整迁移）；确实无合适组件时可用原子节点，但须在 `designIntent` 说明主关系如何表达。容量不足如实报告缺口；不得为通过校验把结构化表达退化为长文本。
+
+在此基础上自主选择合法 `composition` 和节点结构。重点与关系决定模块数量；相同用途的连续页可以保持一致，结构变化应服务于内容和全册节奏。
+
+选型边界：
+
+- `pointList` 只承载无层级结构的要点清单；并列（parallel）本身是一种内容关系，可用并列类组件承载。
+- 趋势、分布用 `chart` 节点；逐格读取的明细用 `table` 节点。图表、表格可与组件**同页组合**；已定型的 table/chart 内容块须保留原有行列、分类和序列对应关系，不得因组件选型擅自转换或丢失数据。
+- 栏头（`indexHeader`/`sectionHeader`）、结论框（`calloutBox`）等辅助组件不能替代主内容的组件化表达。
+- 纯文字封面、章节、引语、收尾页，以及真实明细表的既有用法不受「默认采用」约束。
+- 静态容量（条目上限、单条字数、槽位下限）只作参考，以 `componentCandidates` 预检和最终校验的实测 `hint` 为准；禁止截断必留内容。
+- `density` 是本页信息量的预期：`sparse` 页保持单焦点与少容器，`dense` 页优先结构化承载（组件、表格、图表、统计），不用大段正文占位。
+- 主内容不采用候选组件时，在 `designIntent` 的取舍里说明候选名称、具体不适用原因与替代表达（内容形态不匹配、槽位不足或内容超出容量）。
+
+### 空间分配
+
+空间按内容量分配：先按实际文案量、字号档与组件容量算出各块内容所需面积，再选容器与栅格跨度；扣除 margin、pad、gap 后逐区核对是否装得下。短文案优先紧凑分组；卡片大部分为空、标题与正文被空带隔开、重心偏向一角时，收紧容器、重排分区或调整图文比例。`pad` 控制内边距，父级 `weights` 分配子区域，`justify`/`valign` 只调内容位置、不增加容量；居中不解决装不下。留白须服务聚焦、分组或节奏，避免用新增文案或装饰填空。
+
+全册页脚默认规则：除 `cover`、`closing` 外，写 `footer:{pageNumbers:true}`，为页码与页脚线留出底部空间；深色页用合适的 `tone`。明确的任务或风格约定优先于此默认值。`neighbors` 只有内容摘要时，按本页网格与主题建立稳定边距，不据此声称已核对邻页标题基线或构图。
+
+设计完成须同时满足：必留内容完整、主焦点与关系可指认、空间与内容量匹配、主题与页脚规则一致、几何校验通过。`ok=true` 仅证明结构与几何合格；视觉质量按 SYSTEM.md「视觉自审」判据验收。
 
 ## 组件样式（style）与 styleTokens
 

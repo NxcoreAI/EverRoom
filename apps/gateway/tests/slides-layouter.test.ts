@@ -1,8 +1,8 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { createSlidesLayouterAgentTools, createSlidesTreeResultValidator, validateLayoutTree } from "../src/modules/subagents/slides-agent-tools.js";
-import { registerDeckLayoutContext, dropDeckLayoutContext } from "../src/modules/slides-layout/deck-contract-context.js";
+import { createSlidesLayouterAgentTools, createSlidesTreeResultValidator, LAYOUTER_VALIDATE_TOOL, validateLayoutTree } from "../src/modules/subagents/slides-agent-tools.js";
+import { registerDeckLayoutContext, dropDeckLayoutContext, getDeckLayoutContext } from "../src/modules/slides-layout/deck-contract-context.js";
 import { contractFromStyleParams } from "../src/modules/slides-layout/tree/layout-contract.js";
 import type { SemanticPage } from "../src/modules/subagents/slides-semantic-contract.js";
 
@@ -94,6 +94,12 @@ describe("slides-layouter agent 包完整性", () => {
     const input = JSON.parse(readFileSync(join(AGENT_DIR, "schemas/input.schema.json"), "utf8"));
     const output = JSON.parse(readFileSync(join(AGENT_DIR, "schemas/output.schema.json"), "utf8"));
     expect(input.required).toContain("deckToken");
+    // 语义 content 必填：旧内容模式契约已删除，缺 content 的输入不合法。
+    expect(input.required).toContain("content");
+    // 旧模式专用字段已从 schema 移除，网关不得再注入。
+    for (const legacyField of ["copy", "composition", "form", "skeleton", "units", "emphasis", "intent", "takeaway", "data", "budget", "points", "notes", "neighborSignatures", "title"]) {
+      expect(input.properties).not.toHaveProperty(legacyField);
+    }
     // blocked 分支是无解页的出口（内容契约连续失败后由 validator 引导到这里），必须合法且不带 tree。
     const branches = output.oneOf as Array<{ properties: { status: { const: string } }; required: string[] }>;
     expect(output.required).toEqual(["status"]);
@@ -106,6 +112,68 @@ describe("slides-layouter agent 包完整性", () => {
     const skill = readFileSync(join(AGENT_DIR, "skills/layout-tree-skill/SKILL.md"), "utf8");
     expect(/^---\r?\n[\s\S]*?\r?\n---/.test(skill)).toBe(true);
     expect(skill).toMatch(/^name: layout-tree-skill$/m);
+  });
+});
+
+describe("布局技能按需加载", () => {
+  const skillDir = join(AGENT_DIR, "skills/layout-tree-skill");
+
+  /** SKILL.md「按展示用途选组件」索引行 → { doc, components }。 */
+  function categoryIndex(): Array<{ doc: string; components: string[] }> {
+    const skill = readFileSync(join(skillDir, "SKILL.md"), "utf8");
+    const at = skill.indexOf("## 按展示用途选组件");
+    const end = skill.indexOf("## Composition 硬约束");
+    expect(at).toBeGreaterThan(-1);
+    const section = skill.slice(at, end > at ? end : undefined);
+    const rows = section.split("\n").filter((line) => line.trim().startsWith("|"));
+    return rows.slice(2).map((line) => {
+      const cells = line.split("|").map((cell) => cell.trim());
+      return {
+        doc: (cells[2] ?? "").replace(/`/g, ""),
+        components: [...(cells[3] ?? "").matchAll(/`([^`]+)`/g)].map((m) => m[1]!),
+      };
+    }).filter((row) => row.components.length > 0);
+  }
+
+  it("旧模式契约与整册组件参考已删除；设计指引与类别文档存在", () => {
+    expect(existsSync(join(skillDir, "legacy.md"))).toBe(false);
+    expect(existsSync(join(skillDir, "components.md"))).toBe(false);
+    expect(existsSync(join(skillDir, "design-guide.md"))).toBe(true);
+    // SYSTEM.md 常驻提示保留「默认采用」规则，并给出按需读取路由。
+    const system = readFileSync(join(AGENT_DIR, "SYSTEM.md"), "utf8");
+    expect(system).toMatch(/默认采用它承载主内容/);
+    expect(system).toMatch(/design-guide\.md/);
+    expect(system).not.toMatch(/legacy\.md|旧内容模式/);
+  });
+
+  it("组件索引覆盖全部 37 个组件，每个只归属一个类别且类别文档含其参数", () => {
+    const categories = categoryIndex();
+    expect(categories).toHaveLength(10);
+    const owner = new Map<string, string>();
+    for (const { doc, components } of categories) {
+      expect(doc).toMatch(/^[\w-]+\.md$/);
+      const docText = readFileSync(join(skillDir, "components", doc), "utf8");
+      for (const name of components) {
+        expect(owner.has(name), `${name} 重复出现在 ${owner.get(name)} 与 ${doc}`).toBe(false);
+        owner.set(name, doc);
+        // 参数行以 | `name` | 出现在该类别文档里。
+        expect(docText.includes(`| \`${name}\` |`), `${name} 缺参数行（${doc}）`).toBe(true);
+      }
+    }
+    // 37 = 27 核心 + 10 原子，与权威正文组件清单一致（生成器已做三方一致性校验）。
+    expect(owner.size).toBe(37);
+    // 类别目录里没有索引之外的孤儿文档。
+    const expectedDocs = new Set(categories.map((c) => c.doc));
+    expect(readdirSync(join(skillDir, "components")).sort())
+      .toEqual([...expectedDocs].sort());
+  });
+
+  it("SKILL.md 只留基础语法与索引：不内嵌整套组件参数", () => {
+    const skill = readFileSync(join(skillDir, "SKILL.md"), "utf8");
+    expect(skill).toMatch(/按展示用途选组件/);
+    expect(skill).toMatch(/design-guide\.md/);
+    // 组件参数明细（如 timeline 的形态描述）留在类别文档里按需读取。
+    expect(skill).not.toMatch(/轴线串节点/);
   });
 });
 
@@ -188,6 +256,50 @@ describe("slides-layouter 提交期内容契约", () => {
     submitted.tree.notes = "这是讲稿原文，标注为改写版。";
     expect(() => validator({ content, deckToken: token }, submitted)).not.toThrow();
     expect(submitted.tree.notes).toBe(content.notes);
+    dropDeckLayoutContext(token);
+  });
+
+  it("提交树几何漂移在校验提交时被拒（validate 好树、重抄改槽位不再漏到落页）", () => {
+    registerDeckLayoutContext(token, { contract: contractFromStyleParams(null), imageArs: new Map() });
+    const validator = createSlidesTreeResultValidator();
+    // h1(40pt) 压进单行 61px：validate 同口径必报 overflow——模型若校验的是宽框版本、
+    // 提交时重抄窄了，落页闸才发现就是「校验过了却没落成」。
+    const drifted = doneResult();
+    drifted.tree = {
+      ...pageTree(),
+      nodes: [{ type: "text", token: "h1", text: "讲稿测试页", slot: { col: [1, 12], row: [1, 1] } }],
+    } as unknown as Record<string, unknown>;
+    expect(() => validator({ content, deckToken: token }, drifted)).toThrow(/几何未过/);
+    // 无漂移的提交照常通过。
+    expect(() => validator({ content, deckToken: token }, doneResult())).not.toThrow();
+    dropDeckLayoutContext(token);
+  });
+
+  it("树复用对账：validate 缓存通过树，原样提交免复检，漂移提交被点名", async () => {
+    registerDeckLayoutContext(token, { contract: contractFromStyleParams(null), imageArs: new Map() });
+    const context = getDeckLayoutContext(token)!;
+    const validator = createSlidesTreeResultValidator();
+    // 经真实 validate 工具走一遍：ok=true 时缓存归一树。
+    const outcome = await LAYOUTER_VALIDATE_TOOL.execute({ runId: "run-x" } as never, { token, tree: pageTree() } as never);
+    expect(JSON.parse(outcome.content).ok).toBe(true);
+    expect(context.lastValidatedTreeJson).toBeTruthy();
+    // 原样（含等价省略缺省字段）提交：对账命中，不误拒。
+    expect(() => validator({ content, deckToken: token }, doneResult())).not.toThrow();
+    // 漂移提交：对账未命中，错误点名「与最后校验通过的树不一致」。
+    const drifted = doneResult();
+    drifted.tree = {
+      ...pageTree(),
+      nodes: [{ type: "text", token: "h2", text: "讲稿测试页", slot: { col: [1, 8], row: [1, 2] } }],
+    } as unknown as Record<string, unknown>;
+    // h2 单行同样放得下（几何本身没问题），对账差异不构成拒收——几何过就放行。
+    expect(() => validator({ content, deckToken: token }, drifted)).not.toThrow();
+    // 几何也坏的漂移：拒收且信息指向原样重交。
+    const driftedBad = doneResult();
+    driftedBad.tree = {
+      ...pageTree(),
+      nodes: [{ type: "text", token: "h1", text: "讲稿测试页", slot: { col: [1, 8], row: [1, 1] } }],
+    } as unknown as Record<string, unknown>;
+    expect(() => validator({ content, deckToken: token }, driftedBad)).toThrow(/与最后校验通过的树不一致/);
     dropDeckLayoutContext(token);
   });
 

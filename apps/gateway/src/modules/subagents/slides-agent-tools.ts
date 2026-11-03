@@ -397,6 +397,16 @@ export const LAYOUTER_VALIDATE_TOOL: PiAgentRuntimeTool = {
     const outcome = validateLayoutTree(params.token, params.tree);
     if (outcome.ok) {
       validateRoundByRun.delete(input.runId);
+      // 缓存通过树供提交闸对账：deck 会话串行，这一棵就是当前页应提交的树。
+      // forcedSubmission 分支不缓存——树带缺陷，提交闸的几何复检是其唯一闸口。
+      const context = getDeckLayoutContext(params.token);
+      if (context) {
+        try {
+          context.lastValidatedTreeJson = JSON.stringify(normalizeTree(params.tree));
+        } catch {
+          context.lastValidatedTreeJson = undefined;
+        }
+      }
       return { content: JSON.stringify(outcome) };
     }
     // 网关收口：同一 run 连续多轮 validate 不收敛时不再让模型空转（实测一页
@@ -468,7 +478,19 @@ export function createSlidesTreeResultValidator(): SubagentResultValidator {
     if (input?.content) {
       const errors = checkSemanticBindings(input.content, normalized.v2, result, (input.materials ?? []).map(m => m.url));
       const context = getDeckLayoutContext(input.deckToken);
-      if (context) errors.push(...checkSemanticRendered(input.content, compileTree(normalized, context.contract).spec));
+      if (context) {
+        const compiled = compileTree(normalized, context.contract);
+        errors.push(...checkSemanticRendered(input.content, compiled.spec));
+        // 树复用对账：与最后一次 validate 通过的树逐字一致时，几何结论直接复用 validate
+        // （同一棵树、同口径量测）；不一致 = 模型重抄引入漂移，复检并把对账事实写进错误，
+        // 指导模型原样重交校验通过的那棵，而不是继续在漂移树上修补。
+        if (JSON.stringify(normalized) !== context.lastValidatedTreeJson) {
+          const geometry = measureDefects(compiled, context.contract, { imageArs: context.imageArs });
+          for (const defect of geometry.slice(0, 3)) {
+            errors.push(`几何未过（提交树与最后校验通过的树不一致——原样重交校验通过的那棵，不要在提交时改动槽位/权重/结构）：${defect.path} ${defect.detail}`);
+          }
+        }
+      }
       if (errors.length) {
         const attempts = counterKey ? (rejections.get(counterKey) ?? 0) + 1 : 1;
         if (counterKey) rejections.set(counterKey, attempts);

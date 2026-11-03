@@ -45,30 +45,6 @@
         "dense"
       ]
     },
-    "title": {
-      "type": "string",
-      "maxLength": 80
-    },
-    "points": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "maxLength": 400
-      },
-      "maxItems": 8
-    },
-    "data": {
-      "description": "Structured page data: stats [{value,unit,label}] and optional chart {kind,categories,series}.",
-      "anyOf": [
-        {
-          "type": "string",
-          "maxLength": 2000
-        },
-        {
-          "type": "object"
-        }
-      ]
-    },
     "materials": {
       "type": "array",
       "items": {
@@ -94,23 +70,10 @@
       },
       "maxItems": 8
     },
-    "notes": {
-      "type": "string",
-      "maxLength": 1000
-    },
     "styleBrief": {
       "type": "string",
       "maxLength": 400,
       "description": "Natural-language deck style tendency (e.g. strong grid, restrained whitespace)."
-    },
-    "neighborSignatures": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "maxLength": 200
-      },
-      "maxItems": 4,
-      "description": "仅旧内容模式重排任务使用：返回的页面须与给定邻页结构不同构。"
     },
     "layoutVersion": {
       "type": "integer",
@@ -118,149 +81,6 @@
         2
       ],
       "description": "Always 2: the page you return is a v2 page (version/composition/slot nodes). There is no other layout format."
-    },
-    "composition": {
-      "type": "string",
-      "enum": [
-        "immersive",
-        "hero-data",
-        "editorial",
-        "swiss",
-        "poster",
-        "chapter"
-      ],
-      "description": "旧内容模式：上游确定的 composition，原样写入页面。语义内容模式由 Layouter 自主选择。"
-    },
-    "form": {
-      "type": "string",
-      "enum": [
-        "single-fact",
-        "contrast",
-        "sequence",
-        "hierarchy",
-        "breakdown",
-        "image-led",
-        "quotation",
-        "table",
-        "light-page"
-      ],
-      "description": "旧内容模式：内容形态，结合 skeleton 理解本页结构。"
-    },
-    "units": {
-      "type": "integer",
-      "minimum": 1,
-      "maximum": 8,
-      "description": "这页有几个单元（对照的方数、序列的步数、表格行数）。"
-    },
-    "skeleton": {
-      "type": "string",
-      "maxLength": 140,
-      "description": "旧内容模式：分区与权重的骨架意图。"
-    },
-    "emphasis": {
-      "type": "string",
-      "enum": [
-        "title",
-        "number",
-        "image",
-        "quote",
-        "chart",
-        "table"
-      ],
-      "description": "v2 only: the page's single visual anchor."
-    },
-    "intent": {
-      "type": "string",
-      "maxLength": 200,
-      "description": "v2 only: what this page should change in the audience's mind."
-    },
-    "takeaway": {
-      "type": "string",
-      "maxLength": 40,
-      "description": "v2 only: one line the audience should remember."
-    },
-    "copy": {
-      "type": "object",
-      "description": "旧内容模式的文案来源；排版保持原文。",
-      "properties": {
-        "kicker": {
-          "type": "string",
-          "maxLength": 40
-        },
-        "message": {
-          "type": "string",
-          "maxLength": 120
-        },
-        "supporting": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "maxLength": 80
-          },
-          "maxItems": 2
-        },
-        "facts": {
-          "type": "array",
-          "maxItems": 4,
-          "items": {
-            "type": "object",
-            "properties": {
-              "label": {
-                "type": "string"
-              },
-              "value": {
-                "type": "string"
-              },
-              "unit": {
-                "type": "string"
-              },
-              "body": {
-                "type": "string"
-              },
-              "note": {
-                "type": "string"
-              }
-            },
-            "additionalProperties": false
-          }
-        },
-        "quote": {
-          "type": "object",
-          "properties": {
-            "text": {
-              "type": "string"
-            },
-            "attribution": {
-              "type": "string"
-            }
-          },
-          "additionalProperties": false
-        },
-        "source": {
-          "type": "string",
-          "maxLength": 120
-        },
-        "speakerNotes": {
-          "type": "string",
-          "maxLength": 400
-        }
-      },
-      "additionalProperties": false
-    },
-    "budget": {
-      "type": "object",
-      "properties": {
-        "prose": {
-          "type": "number"
-        },
-        "copy": {
-          "type": "number"
-        },
-        "notes": {
-          "type": "number"
-        }
-      },
-      "additionalProperties": false
     },
     "styleTokens": {
       "type": "object",
@@ -270,7 +90,7 @@
     "revisionFeedback": {
       "type": "string",
       "maxLength": 300,
-      "description": "本轮修正或自审反馈；按当前内容模式处理，并保留内容契约。"
+      "description": "本轮修正或自审反馈；在内容契约内处理，不改变必留内容。"
     },
     "componentCandidates": {
       "type": "array",
@@ -312,7 +132,7 @@
     },
     "currentTree": {
       "type": "object",
-      "description": "视觉自审的修改基线；附件为此 v2 页面的真实渲染图，沿用当前内容模式。"
+      "description": "视觉自审的修改基线；附件为此 v2 页面的真实渲染图。"
     },
     "previousDesignIntent": {
       "type": "string",
@@ -1004,7 +824,7 @@
     "deckOutline": {
       "type": "array",
       "maxItems": 64,
-      "description": "全册页清单概要（仅本对话首个任务携带）：各页页序、标题、角色、密度与内容形态，用于把握整册节奏与前后页差异。后续任务不再重复携带；前面页的设计已在本对话上下文里。",
+      "description": "全册页清单概要（仅本对话首个任务携带）：各页页序、标题、角色与密度，用于把握整册节奏与前后页差异。后续任务不再重复携带；前面页的设计已在本对话上下文里。",
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -1021,9 +841,6 @@
           },
           "density": {
             "type": "string"
-          },
-          "form": {
-            "type": "string"
           }
         },
         "required": [
@@ -1038,6 +855,7 @@
     "deckToken",
     "pageIndex",
     "totalPages",
+    "content",
     "role",
     "density"
   ],
