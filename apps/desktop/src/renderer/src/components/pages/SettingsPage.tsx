@@ -16,7 +16,7 @@ import {
   Smartphone,
   WalletCards,
 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import QRCode from 'qrcode'
 
 import { useTranslation } from 'react-i18next'
@@ -116,6 +116,7 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
   const [pairingError, setPairingError] = useState<string | null>(null)
   const [activeSetting, setActiveSetting] = useState<string>(SETTINGS_NAV[0].id)
   const [aiRelayStatus, setAiRelayStatus] = useState<AiGatewayStatus | null>(null)
+  const refreshAiRelay = useRef<(() => void) | null>(null)
   const redeemCode = useRedeemCode()
   const [qrActive, setQrActive] = useState(false)
 
@@ -158,16 +159,16 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
       return
     }
     let cancelled = false
-    const refresh = () => {
+    refreshAiRelay.current = () => {
       void window.nxcore?.aiRelay.status()
         .then((status) => { if (!cancelled) setAiRelayStatus(status) })
         .catch(() => undefined)
     }
-    refresh()
+    refreshAiRelay.current()
     const removeListener = window.nxcore.aiRelay.onEvent((event) => {
-      if (event.type === 'quota-exhausted') refresh()
+      if (event.type === 'quota-exhausted') refreshAiRelay.current?.()
     })
-    return () => { cancelled = true; removeListener() }
+    return () => { cancelled = true; refreshAiRelay.current = null; removeListener() }
   }, [account?.authenticated, account?.user?.id])
 
   useEffect(() => {
@@ -539,7 +540,7 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
                     <small>{t('surface:settings.topupBalanceNote')}</small>
                   </div>
                 ) : null}
-                <TopupPanel aiRelayConfigured={Boolean(aiRelayStatus?.configured)} />
+                <TopupPanel aiRelayConfigured={Boolean(aiRelayStatus?.configured)} onSettled={() => refreshAiRelay.current?.()} />
                 <div className="cloud-subscription-period">
                   <span><CalendarClock aria-hidden="true" />{t('surface:settings.periodEnds')}</span>
                   <strong>{formatPeriodEnd(account.subscription.periodEnd, locale)}</strong>
@@ -747,7 +748,7 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
  * 档位选择 → 下单(真渠道自动开系统浏览器 approval 页/mock 就地批准)
  * → 轮询订单状态 → 到账后刷新 LLM 余量显示。mock 模式提供"模拟支付"按钮
  * 供本地联调(SaaS 未配 PayPal 凭证时整链离线可验)。 */
-export function TopupPanel({ aiRelayConfigured }: { aiRelayConfigured: boolean }) {
+export function TopupPanel({ aiRelayConfigured, onSettled }: { aiRelayConfigured: boolean; onSettled?: () => void }) {
   const { t } = useTranslation()
   const [packs, setPacks] = useState<Array<{ id: string; code: string; name: string; amountCents: number }>>([])
   const [selected, setSelected] = useState<string>('')
@@ -773,7 +774,7 @@ export function TopupPanel({ aiRelayConfigured }: { aiRelayConfigured: boolean }
       void window.nxcore?.billing?.topupStatus(orderId)
         .then((status) => {
           if (cancelled) return
-          if (status.status === 'completed') { setPhase('completed'); setMessage(t('surface:settings.topupCompleted')) }
+          if (status.status === 'completed') { setPhase('completed'); setMessage(t('surface:settings.topupCompleted')); onSettled?.() }
           else if (status.status === 'failed' || status.status === 'expired') { setPhase('failed'); setMessage(t('surface:settings.topupFailed')) }
         })
         .catch(() => undefined)

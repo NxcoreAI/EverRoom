@@ -49,7 +49,7 @@ describe('TopupPanel', () => {
     ;(window as unknown as { nxcore: unknown }).nxcore = undefined
   })
 
-  function mount(props: { aiRelayConfigured: boolean }) {
+  function mount(props: { aiRelayConfigured: boolean; onSettled?: () => void }) {
     container = document.createElement('div')
     document.body.appendChild(container)
     root = createRoot(container)
@@ -65,7 +65,8 @@ describe('TopupPanel', () => {
 
   it('loads packs, starts a mock topup and settles to completed via polling', async () => {
     const bridge = installBridge()
-    mount({ aiRelayConfigured: true })
+    const onSettled = vi.fn()
+    mount({ aiRelayConfigured: true, onSettled })
     await act(async () => { await vi.advanceTimersByTimeAsync(0) })
     const select = container?.querySelector('.topup-pack-select') as HTMLSelectElement | null
     expect(select).toBeTruthy()
