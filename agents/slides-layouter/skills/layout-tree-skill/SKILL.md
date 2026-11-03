@@ -68,7 +68,7 @@ description: 单页 v2 布局语法。设计和自审时查阅节点、几何约
 | `text` | 字符串 ≤2000 字 | `text`、`runs`、`paragraphs` 三者至少一个。 |
 | `runs` | `[{ text, token?, bold?, tone?, font?, letterSpacing? }]` | 行内混排。`font` 取 `heading / body / serif`。 |
 | `paragraphs` | `[{ runs, align?, lineSpacingPct?, spaceBeforePt?, spaceAfterPt? }]` | 多段混排；`runs` 非空。 |
-| `tone` | `text / muted / primary / accent / inverse / inverseMuted / surface / primarySoft / divider / chart1~chart6` | 缺省 `text`。 |
+| `tone` | `text / muted / primary / accent / inverse / inverseMuted / surface / primarySoft / divider / chart1~chart6` | 缺省 `text`。`inverse` / `inverseMuted` 是深底亮字口径（深色页、压图、深色面板用，对应 `styleTokens.palette.onDarkText`）；其余 tone 通常是深色字。 |
 | `align` | `left / center / right` | 缺省 `left`。 |
 | `valign` | `top / middle / bottom` | 缺省 `top`。 |
 | `letterSpacing` | -4~12 | 可省略。 |
@@ -89,6 +89,7 @@ description: 单页 v2 布局语法。设计和自审时查阅节点、几何约
 
 - `url` 必填，≤500 字符，只接受 `http(s)://` 直链或 `everroom-material://` 素材引用。
 - `fit`：`cover`（默认，裁切填满）或 `contain`（完整呈现，可能留空带）。两者都不变形；框比例尽量贴近素材。要求完整呈现的图片不得为通过 `image_ar` 检查改成 `cover`。
+- **压图文字规则（overlap 检查）**：文字与图片同区叠压时，文字须是浅色口径——`inverse` / `inverseMuted`（深底亮字），或放进 overlay 分组有意压放；默认 `text` / `muted` / `primary` 等深色字压图会报 `overlap`。实际色号以输入 `styleTokens.palette` 为准（`onDarkText` 即压图文字色）。
 - `focus`：`{ x?, y? }`（0~100）把 cover 裁切对准画面主体。只改变裁切位置，不改变图框比例；不能用它消除 `image_ar` 比例检查。
 - `caption` ≤40 字，只留一处。
 - `grayscale / duotone / radius`：`true` 才生效；`mask` 取 `circle / rounded`。

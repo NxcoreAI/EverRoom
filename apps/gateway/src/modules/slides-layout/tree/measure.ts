@@ -44,7 +44,27 @@ const inGroupChild = (path: string): boolean => path.includes("/children/");
  */
 const EMOJI_PATTERN = /[\u{1F000}-\u{1FAFF}\u{FE0F}]/u;
 
-interface InkBox { label: string; x: number; y: number; w: number; h: number }
+interface InkBox {
+  label: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  /** overlay place 的有意压放文字：与图片相交合法。 */
+  overlay?: boolean;
+  /** 全部 run 是浅色字（inverse/inverseMuted 等压图可读口径）：与图片相交合法（图注、压图标签）。 */
+  lightInk?: boolean;
+}
+
+/** 相对亮度（0~1）；压图文字按浅色口径豁免——深色字压图不可读。 */
+function lumaOf(color: string): number {
+  const hex = color.replace("#", "");
+  const rgb = hex.length >= 6 ? hex.slice(0, 6) : hex.padEnd(6, "0");
+  const r = Number.parseInt(rgb.slice(0, 2), 16) / 255;
+  const g = Number.parseInt(rgb.slice(2, 4), 16) / 255;
+  const b = Number.parseInt(rgb.slice(4, 6), 16) / 255;
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
 
 /** 引擎 estimateTextInk 同口径的墨迹框（引擎墨迹重叠闸门的镜像，超限即被拒页）。 */
 function inkBoxesOf(spec: PageSpec): InkBox[] {
@@ -54,18 +74,24 @@ function inkBoxesOf(spec: PageSpec): InkBox[] {
     const paragraphs = el.type === "text" ? el.paragraphs : el.paragraphs!;
     let contentH = 0;
     let label = "";
+    let lightInk = paragraphs.length > 0;
     for (const p of paragraphs) {
       const size = Math.max(18, ...p.runs.map((r) => r.sizePt ?? 18));
       let textW = 0;
       for (const r of p.runs) {
         label += r.text;
         textW += estimateTextWidth(r.text, r.sizePt ?? 18);
+        if (!(r.color && lumaOf(r.color) >= 0.45)) lightInk = false;
       }
       contentH += Math.max(1, Math.ceil(textW / Math.max(1, el.w))) * estimateLineHeight(size, p.lineSpacingPct);
     }
     const anchor = el.valign ?? (el.type === "shape" ? "middle" : "top");
     const y = anchor === "top" ? el.y : anchor === "bottom" ? el.y + el.h - contentH : el.y + (el.h - contentH) / 2;
-    boxes.push({ label: label.slice(0, 16), x: el.x, y, w: el.w, h: contentH });
+    boxes.push({
+      label: label.slice(0, 16), x: el.x, y, w: el.w, h: contentH,
+      ...((el as { overlay?: boolean }).overlay === true ? { overlay: true } : {}),
+      ...(lightInk ? { lightInk: true } : {}),
+    });
   }
   return boxes;
 }
@@ -173,17 +199,38 @@ export function measureDefects(result: CompileResult, contract: LayoutContract, 
   }
 
   // 引擎硬闸镜像②：有字元素墨迹两两相交（6px 容差）直接拒页。
+  // 图片框（placement 口径，天然排除页级背景图）参与检查——文字/组件压图若非
+  // 有意压放（overlay place）且非浅色压图口径（inverse/inverseMuted/图注），同样重叠。
   const inkBoxes = inkBoxesOf(result.spec);
-  for (let i = 0; i < inkBoxes.length; i++) {
-    for (let j = i + 1; j < inkBoxes.length; j++) {
-      if (boxesOverlap(inkBoxes[i]!, inkBoxes[j]!)) {
+  const imageBoxes: InkBox[] = result.placements
+    .filter((p) => p.kind === "image")
+    .map((p) => ({ label: `图片 ${p.path.split(" ").pop() ?? ""}`.trim(), x: p.frame.x, y: p.frame.y, w: p.frame.w, h: p.frame.h }));
+  const overlapBoxes = [...inkBoxes, ...imageBoxes];
+  for (let i = 0; i < overlapBoxes.length; i++) {
+    for (let j = i + 1; j < overlapBoxes.length; j++) {
+      const a = overlapBoxes[i]!;
+      const b = overlapBoxes[j]!;
+      if (!boxesOverlap(a, b)) continue;
+      const aInk = inkBoxes.includes(a);
+      const bInk = inkBoxes.includes(b);
+      if (aInk !== bInk) {
+        // 文字 vs 图片：overlay place 的有意压放、浅色压图口径（inverse/图注）合法，其余报。
+        const ink = aInk ? a : b;
+        if (ink.overlay === true || ink.lightInk === true) continue;
         push(
           "root",
           "overlap",
-          `「${inkBoxes[i]!.label}」与「${inkBoxes[j]!.label}」墨迹重叠（引擎会整页拒绝）`,
-          "加大该区域的权重/比例，或精简其中一方的内容——通常是区域太小装不下内容",
+          `「${ink.label}」压在图片上且为深色文字——图上文字不可读`,
+          "错开该文字与图片的槽位；确属有意压图时把文字放进 overlay 分组或改用 inverse 色并压纱罩",
         );
+        continue;
       }
+      push(
+        "root",
+        "overlap",
+        `「${a.label}」与「${b.label}」重叠（引擎会整页拒绝）`,
+        "加大该区域的权重/比例，或精简其中一方的内容——通常是区域太小装不下内容",
+      );
     }
   }
 

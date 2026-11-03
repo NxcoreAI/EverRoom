@@ -770,6 +770,9 @@ export async function createServer(config: GatewayConfig) {
               documentReadAuthority.issue(context, documentId, version, blockIds),
             // PPT 逐页进度：create 编排方案产出后登记，落页即广播快照。
             slidesProgress,
+            // PPT 生成检查点必须挂 DB：regenerateDeck 复用凭据与批次断点跨重启才不丢
+            //（漏传时工厂兜底成内存 store，重启即「没有可复用的生成记录」）。
+            slidesCheckpoints: new SlidesGenerationCheckpointStore(db),
             // PPT 无模版风格管线（纵览图→提取→风格卡→自校）。
             slidesStyle: subagentConfig.enabled ? () => slidesStyleDepsRef.current : null,
             // slides 编辑层影子模式（M1）：默认开启，不改变可见产物；关闭只需在装配层不传本项。

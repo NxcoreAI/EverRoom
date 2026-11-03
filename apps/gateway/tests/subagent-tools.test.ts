@@ -328,6 +328,10 @@ describe('createSubagentPiTools slides_draft', () => {
     expect(validate({ task: 'generate', draftDocumentId: 'draft-1', regenerateDeck: true })).toBe(true)
     // 指定页重生成：只重排这些页。
     expect(validate({ task: 'generate', draftDocumentId: 'draft-1', regeneratePages: [2] })).toBe(true)
+    // 上下文压缩后的占位符 id（[internal-id] 等）在参数校验层被拒：模型必须省略字段
+    // 走恢复链，而不是拿假 id 查库（实测 deepseek 压缩后会把占位符当真 id 回传）。
+    expect(validate({ task: 'generate', draftDocumentId: '[internal-id]', regeneratePages: [1] })).toBe(false)
+    expect(validate({ task: 'generate', styleSessionId: '[REDACTED]', pageImagesDecision: 'accept' })).toBe(false)
     expect(validate({ task: 'generate', draftDocumentId: 'draft-1', regeneratePages: [] })).toBe(false)
     expect(validate({ task: 'edit', instruction: '放大标题', fileId: 'file-1' })).toBe(true)
     expect(validate({ task: 'edit', instruction: '放大标题', rejectPageImage: 2 })).toBe(false)

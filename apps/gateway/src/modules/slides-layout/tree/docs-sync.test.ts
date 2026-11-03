@@ -38,14 +38,14 @@ function firstColumnNames(text: string): string[] {
   return names;
 }
 
-/** 用途分类表的组件列（第 2 列）里的全部反引号名；条件列的提及不计入。 */
+/** 用途分类表的组件列（第 3 列，「文档」列之后）里的全部反引号名；条件列的提及不计入。 */
 function purposeColumnNames(text: string): string[] {
   const names: string[] = [];
   for (const line of text.split("\n")) {
     const trimmed = line.trim();
     if (!trimmed.startsWith("|")) continue;
     const cells = trimmed.split("|");
-    const componentCell = cells[2] ?? "";
+    const componentCell = cells[3] ?? "";
     for (const match of componentCell.matchAll(/`([A-Za-z][A-Za-z0-9]*)`/gu)) {
       names.push(match[1]!);
     }

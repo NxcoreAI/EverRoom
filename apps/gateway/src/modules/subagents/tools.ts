@@ -244,18 +244,20 @@ function slidesGenerateTaskSchema(
       draftDocumentId: Type.String({
         minLength: 1,
         maxLength: 128,
-        description: "已确认内容稿的文档 id。generate 优先传它：网关按它自动回查该草稿的风格会话。",
+        pattern: "^[^\\[\\]]+$",
+        description: "已确认内容稿的文档 id。generate 优先传它：网关按它自动回查该草稿的风格会话。上下文压缩丢了 id 就省略本字段走恢复链，绝不写 [internal-id] 之类占位符（会被参数校验拒绝）。",
       }),
       styleSessionId: Type.Optional(Type.String({
         minLength: 1,
         maxLength: 128,
-        description: "风格会话 id，取自本轮 style/style_select 的结果；拿不准时传 draftDocumentId 让网关回查，不要凭记忆编造。",
+        pattern: "^[^\\[\\]]+$",
+        description: "风格会话 id，取自本轮 style/style_select 的结果；拿不准时传 draftDocumentId 让网关回查，不要凭记忆编造；丢了就省略，不写占位符。",
       })),
     }),
     slidesDraftTaskSchema("generate", {
       ...fields,
-      draftDocumentId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-      styleSessionId: Type.String({ minLength: 1, maxLength: 128 }),
+      draftDocumentId: Type.Optional(Type.String({ minLength: 1, maxLength: 128, pattern: "^[^\\[\\]]+$" })),
+      styleSessionId: Type.String({ minLength: 1, maxLength: 128, pattern: "^[^\\[\\]]+$" }),
     }),
     // 对话路径兜底：两个 id 都拿不到时允许裸 generate——网关按最新风格会话恢复。
     slidesDraftTaskSchema("generate", {
@@ -263,6 +265,7 @@ function slidesGenerateTaskSchema(
       draftDocumentId: Type.Optional(Type.String({
         minLength: 1,
         maxLength: 128,
+        pattern: "^[^\\[\\]]+$",
         description: "已确认内容稿的文档 id；拿不到就整个省略（不要写占位符），网关按最新风格会话恢复。",
       })),
     }),

@@ -216,6 +216,48 @@ describe("技能语法示例与网关归一一致", () => {
     dropDeckLayoutContext(token);
     expect(outcome.defects.filter((d) => d.type === "emoji")).toEqual([]);
   });
+
+  it("图片与文字/组件同槽叠压时报 overlap（旧口径只查文字墨迹，图片完全缺席）", () => {
+    const token = "overlap-image-token-007";
+    registerDeckLayoutContext(token, { contract: contractFromStyleParams(null), imageArs: new Map() });
+    const outcome = validateLayoutTree(token, {
+      version: 2,
+      role: "content",
+      composition: "swiss",
+      nodes: [
+        { type: "image", url: "https://example.com/a.jpg", slot: { col: [1, 8], row: [1, 8] } },
+        { type: "text", token: "h1", text: "压在图上的标题", slot: { col: [1, 8], row: [1, 2] } },
+        {
+          type: "component", name: "stats",
+          items: [{ value: "2.83", unit: "万亿元", label: "甲指标" }, { value: "3.87", unit: "万亿元", label: "乙指标" }],
+          slot: { col: [1, 8], row: [3, 6] },
+        },
+      ],
+    });
+    dropDeckLayoutContext(token);
+    expect(outcome.ok).toBe(false);
+    const overlaps = outcome.defects.filter((d) => d.type === "overlap");
+    expect(overlaps.length).toBeGreaterThan(0);
+    expect(overlaps[0]!.detail).toContain("压在图片上");
+  });
+
+  it("合法压图不误报：inverse 文字与图注（onDark 口径）压图通过", () => {
+    const token = "overlap-exempt-token-008";
+    registerDeckLayoutContext(token, { contract: contractFromStyleParams(null), imageArs: new Map() });
+    const outcome = validateLayoutTree(token, {
+      version: 2,
+      role: "content",
+      composition: "immersive",
+      dark: true,
+      nodes: [
+        { type: "image", url: "https://example.com/hero.jpg", caption: "蛇口 · 1979", slot: { col: [1, 12], row: [1, 8] }, bleed: true },
+        { type: "text", token: "display", text: "深色口径压图标题", tone: "inverse", slot: { col: [1, 10], row: [3, 5] } },
+      ],
+    });
+    dropDeckLayoutContext(token);
+    expect(outcome.defects.filter((d) => d.type === "overlap")).toEqual([]);
+    expect(outcome.ok).toBe(true);
+  });
 });
 
 describe("slides-layouter 提交期内容契约", () => {
