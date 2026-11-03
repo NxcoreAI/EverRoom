@@ -63,6 +63,42 @@ describe("unified file catalog", () => {
     expect(test.service.findBySourcePath(join(test.dataDir, "other.md"), hash)).toBeNull();
   });
 
+  it("keeps updatedAt when a local-folder rescan finds unchanged content", async () => {
+    const test = await catalogForTest();
+    const buffer = Buffer.from("# stable", "utf8");
+    const sourcePath = join(test.dataDir, "stable.md");
+    await writeFile(sourcePath, buffer);
+    const input = {
+      sourceKind: "local-folder" as const,
+      sourceKey: "local:source:stable",
+      originalName: "stable.md",
+      sourcePath,
+      contentHash: createHash("sha256").update(buffer).digest("hex"),
+      byteSize: buffer.byteLength,
+      localSourceId: "source",
+      localItemId: "stable",
+    };
+    const imported = await test.service.importLocalFileReference(input);
+    // 模拟上一次扫描留下的旧时间戳：重扫不该把它顶到现在。
+    test.sqlite.prepare("UPDATE file_entries SET updated_at = 1000 WHERE id = ?").run(imported.fileEntryId);
+    const seenBefore = test.sqlite
+      .prepare("SELECT last_seen_at FROM file_entries WHERE id = ?")
+      .get(imported.fileEntryId) as { last_seen_at: number | null };
+
+    await new Promise((resolveWait) => setTimeout(resolveWait, 5));
+    const again = await test.service.importLocalFileReference(input);
+
+    expect(again.fileEntryId).toBe(imported.fileEntryId);
+    expect(test.sqlite
+      .prepare("SELECT updated_at FROM file_entries WHERE id = ?")
+      .get(imported.fileEntryId)).toMatchObject({ updated_at: 1000 });
+    const seenAfter = test.sqlite
+      .prepare("SELECT last_seen_at FROM file_entries WHERE id = ?")
+      .get(imported.fileEntryId) as { last_seen_at: number | null };
+    expect(seenAfter.last_seen_at ?? 0).toBeGreaterThan(seenBefore.last_seen_at ?? 0);
+    test.sqlite.close();
+  });
+
   it("references local files without retaining an internal original mirror", async () => {
     const test = await catalogForTest();
     const buffer = Buffer.from("# shared", "utf8");

@@ -41,14 +41,15 @@ function circled(index: number): string {
 
 function documentPhrase(drafts: readonly PendingAskDraft[]): string {
   const titles = [...new Set(drafts.map((draft) => draft.title?.trim() || '').filter(Boolean))]
-  if (titles.length === 1) return `《${titles[0]}》里`
-  if (titles.length > 1) return `《${titles.join('》《')}》里`
-  return '打开的文件里'
+  if (titles.length === 1) return `《${titles[0]}》`
+  if (titles.length > 1) return `《${titles.join('》《')}》`
+  return '打开的文件'
 }
 
 /**
  * 把多条草稿合并成一轮请求；空数组返回 null（调用方据此禁用发送）。
  * 单条时不做「1)」编号，保持和技术指令原样一致。
+ * 开场白不预设「修改」——草稿可能是提问，具体做什么由 Agent 按每条原话理解。
  */
 export function buildAskBatch(
   drafts: readonly PendingAskDraft[],
@@ -57,13 +58,13 @@ export function buildAskBatch(
   const message = drafts.length === 1
     ? drafts[0]!.message
     : [
-        `我在${documentPhrase(drafts)}攒了 ${drafts.length} 条修改意见，请一次性处理：`
-          + '同一份文件按顺序改，改完回一句总的说明，不要重复解释每一步。',
+        `我在${documentPhrase(drafts)}的 ${drafts.length} 处内容上做了批注，请逐条看原话处理：`
+          + '同一份文件按顺序来，处理完回一句总的说明，不要重复解释每一步。',
         ...drafts.map((draft, index) => `${index + 1}) ${draft.message}`),
       ].join('\n')
   const displayMessage = drafts.length === 1
     ? (drafts[0]!.displayMessage ?? drafts[0]!.message)
-    : `一起改这几处：${drafts
+    : `我对这几处做了批注：${drafts
         .map((draft, index) => `${circled(index)} ${(draft.displayMessage ?? draft.message).replace(/[。.]$/, '')}`)
         .join(' ')}`
   return { message, displayMessage }

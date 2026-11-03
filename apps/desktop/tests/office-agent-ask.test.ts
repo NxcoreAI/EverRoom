@@ -101,16 +101,19 @@ const OP: SlidesAgentAskPayload = {
 }
 
 describe('buildAgentAskMessage', () => {
-  it('组成：标题、页码（slideIndex+1）、元素 id+类型+文本摘要、指令、工具指引', () => {
+  it('组成：标题、页码（slideIndex+1）、元素 id+类型+文本摘要、指令；不带动作预设与工具提示', () => {
     const message = buildAgentAskMessage('季度汇报.pptx', OP)
     expect(message).toContain('《季度汇报.pptx》')
     expect(message).toContain('第 3 页')
     expect(message).toContain('text-7（文本框「季度营收概览」）')
     expect(message).toContain('shape-1（形状）')
     expect(message).toContain('字号调大并改成主色')
-    expect(message).toContain('slides_draft(task=edit, fileId="active")')
-    expect(message).toContain('slides-builder')
-    expect(message).toContain('只改列出的元素')
+    // 框选不一定是要改（可能只是提问）：消息不能替用户预设动作，也不复述工具路线。
+    expect(message).not.toContain('请修改')
+    expect(message).not.toContain('改一下')
+    expect(message).not.toContain('slides_draft')
+    expect(message).not.toContain('slides-builder')
+    expect(message).not.toContain('保持不动')
   })
 
   it('长文本只取首行并截 24 字，未知类型沿用原名', () => {
@@ -173,15 +176,17 @@ const DOCS_OP: DocsAgentAskPayload = {
 }
 
 describe('buildDocsAgentAskMessage', () => {
-  it('组成：标题、块索引区间、选区类型+摘要、指令、word 工具指引', () => {
+  it('组成：标题、块索引区间、选区类型+摘要、用户原话；不带动作预设与工具指引', () => {
     const message = buildDocsAgentAskMessage('方案.docx', DOCS_OP)
     expect(message).toContain('《方案.docx》')
     expect(message).toContain('第 4–6 块')
     expect(message).toContain('正文「综上所述')
     expect(message).toContain('改成三句以内的结论句')
-    expect(message).toContain('word_agent_read')
-    expect(message).toContain('word_agent_edit')
-    expect(message).toContain('其他内容保持不动')
+    // 框选可能是提问不是修改：位置事实 + 原话即可，工具路线由工具描述与路由表兜底。
+    expect(message).not.toContain('请修改')
+    expect(message).not.toContain('word_agent_read')
+    expect(message).not.toContain('word_agent_edit')
+    expect(message).not.toContain('保持不动')
   })
 
   it('单块选区不写成区间；无摘要时不带空引号', () => {
@@ -197,7 +202,7 @@ describe('buildDocsAgentAskMessage', () => {
     expect(message).not.toContain('「」')
   })
 
-  it('用户可见文案只留段号与人话，不出现块索引语法和工具名', () => {
+  it('用户可见文案只留段号与原话，不出现块索引语法和工具名', () => {
     const display = buildDocsAgentAskDisplayMessage('方案.docx', DOCS_OP)
     expect(display).toContain('《方案.docx》第 5–7 段')
     expect(display).not.toContain('word_agent')
@@ -303,28 +308,31 @@ const SHEETS_OP: SheetsAgentAskPayload = {
 }
 
 describe('buildSheetsAgentAskMessage', () => {
-  it('组成：标题、工作表+区域、sheetId、指令、sheets 工具指引', () => {
+  it('组成：标题、工作表+区域、sheetId、用户原话；不带动作预设与工具指引', () => {
     const message = buildSheetsAgentAskMessage('预算.xlsx', SHEETS_OP)
     expect(message).toContain('《预算.xlsx》')
     expect(message).toContain('工作表「预算」 B2:C4')
     expect(message).toContain('sheetId=sheet-01')
     expect(message).toContain('合计行加粗并加底色')
-    expect(message).toContain('sheets_agent_read')
-    expect(message).toContain('sheets_agent_edit')
-    expect(message).toContain('其他单元格保持不动')
+    expect(message).not.toContain('请修改')
+    expect(message).not.toContain('sheets_agent_read')
+    expect(message).not.toContain('sheets_agent_edit')
+    expect(message).not.toContain('保持不动')
   })
 
   it('缺 sheetName/range 时退化成「当前工作表」且不出现空区域', () => {
     const message = buildSheetsAgentAskMessage('t.xlsx', { instruction: '加粗' })
-    expect(message).toContain('当前工作表 选中的内容')
+    expect(message).toContain('当前工作表')
     expect(message).not.toContain('sheetId=')
+    expect(message).not.toContain('选中的内容')
   })
 
-  it('用户可见文案不出现 sheetId 与工具名', () => {
+  it('用户可见文案不出现 sheetId 与工具名，也不预设修改', () => {
     const display = buildSheetsAgentAskDisplayMessage('预算.xlsx', SHEETS_OP)
     expect(display).toContain('工作表「预算」 B2:C4')
     expect(display).not.toContain('sheet-01')
     expect(display).not.toContain('sheets_agent')
+    expect(display).not.toContain('改一下')
   })
 })
 

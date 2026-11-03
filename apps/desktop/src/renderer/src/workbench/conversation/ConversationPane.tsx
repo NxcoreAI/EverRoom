@@ -163,7 +163,7 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
       .then((runId) => {
         if (runId !== null || queuesBehindRun) return
         fallback()
-        workbenchToast('Agent 正忙，修改意见已放进输入框')
+        workbenchToast('Agent 正忙，批注已放进输入框')
       })
       .catch(fallback)
   }, [pendingAgentAsk, workspaceId, hook.scopeReady, hook.loading])

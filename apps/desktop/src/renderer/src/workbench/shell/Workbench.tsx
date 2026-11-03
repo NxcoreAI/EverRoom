@@ -107,7 +107,7 @@ export function Workbench() {
     return office.onAgentAsk((event) => {
       const workspaceId = event.workspaceId ?? event.roomId ?? null
       if (!workspaceId) {
-        workbenchToast('这条修改意见没有归属工作空间，无法发送给 Agent')
+        workbenchToast('这条批注没有归属工作空间，无法发送给 Agent')
         return
       }
       const state = useWorkbenchStore.getState()

@@ -94,20 +94,21 @@ function describeAskTarget(target: SlidesAgentAskPayload['targets'][number]): st
   return `${target.id}（${label}「${brief}」）`
 }
 
-/** 注入 Room 对话的用户消息：用户口吻的修改指令 + 给 Agent 的工具定位提示。 */
+/**
+ * 注入 Room 对话的用户消息：只带「哪份文件、哪页、哪些元素（id + 类型 + 摘要）」的
+ * 位置事实 + 用户原话。不带任何动作预设（改还是答由 Agent 按原话自行理解），
+ * 也不带工具提示——编辑路线由 SYSTEM.md 路由表与工具描述兜底。
+ */
 export function buildAgentAskMessage(title: string, op: SlidesAgentAskPayload): string {
   const targets = op.targets.map(describeAskTarget).join('、')
-  return (
-    `请修改 PPT《${title}》第 ${op.slideIndex + 1} 页选中的元素（${targets}）：${op.instruction}。`
-    + '用 slides_draft(task=edit, fileId="active") 调度 slides-builder 子代理，把上述元素 id 与修改要求写进 instruction，'
-    + '只改列出的元素，其他内容保持不动。'
-  )
+  const instruction = op.instruction.trim().replace(/[。.!！]+$/, '')
+  return `我在 PPT《${title}》第 ${op.slideIndex + 1} 页选中了元素 ${targets}：${instruction}。`
 }
 
-/** 同一请求的用户可见文案：只留页码与修改意图，元素 id / fileId / 子代理名不出现在社交层。 */
+/** 同一请求的用户可见文案：只留页码与用户原话，元素 id / fileId 不出现在社交层。 */
 export function buildAgentAskDisplayMessage(title: string, op: SlidesAgentAskPayload): string {
   const instruction = op.instruction.trim().replace(/[。.!！]+$/, '')
-  return `把 PPT《${title}》第 ${op.slideIndex + 1} 页选中的内容改一下：${instruction}。`
+  return `关于 PPT《${title}》第 ${op.slideIndex + 1} 页选中的内容：${instruction}。`
 }
 
 /** 渲染层注入事件：room 确定后由主进程广播（channel office:agent-ask）。 */
@@ -187,22 +188,23 @@ function describeDocsAskScope(op: DocsAgentAskPayload): string {
   return `${range}（${label}${excerpt}）`
 }
 
-/** 注入对话的用户消息：用户口吻的修改指令 + 给 Agent 的工具定位提示。 */
+/**
+ * 注入对话的用户消息：只带「哪份文件、哪几块（块索引 + 类型 + 摘要）」的位置事实 +
+ * 用户原话，不预设是修改还是提问（excerpt 同时供提问时对照原文）。工具路线由
+ * SYSTEM.md 路由表与 word_agent_read 的工具描述兜底，这里不再复述。
+ */
 export function buildDocsAgentAskMessage(title: string, op: DocsAgentAskPayload): string {
-  return (
-    `请修改 Word《${title}》${describeDocsAskScope(op)}选中的内容：${op.instruction.trim()}。`
-    + '先用 word_agent_read 读一次最新块索引确认目标（选中的块索引可能已因前序编辑漂移），'
-    + '再用 word_agent_edit 或 word_agent_ops 只改这几块，其他内容保持不动。'
-  )
+  const instruction = op.instruction.trim().replace(/[。.!！]+$/, '')
+  return `我在 Word《${title}》${describeDocsAskScope(op)}选中了这段内容：${instruction}。`
 }
 
-/** 同一请求的用户可见文案：只留位置与修改意图，块索引/工具名不出现在社交层。 */
+/** 同一请求的用户可见文案：只留段号与用户原话，块索引语法不出现。 */
 export function buildDocsAgentAskDisplayMessage(title: string, op: DocsAgentAskPayload): string {
   const instruction = op.instruction.trim().replace(/[。.!！]+$/, '')
   const where = op.fromBlockIndex === op.toBlockIndex
     ? `第 ${op.fromBlockIndex + 1} 段`
     : `第 ${op.fromBlockIndex + 1}–${op.toBlockIndex + 1} 段`
-  return `把 Word《${title}》${where}选中的内容改一下：${instruction}。`
+  return `关于 Word《${title}》${where}选中的内容：${instruction}。`
 }
 
 let docsAgentAskWired = false
@@ -273,20 +275,20 @@ function describeSheetsAskScope(op: SheetsAgentAskPayload): string {
   return range ? `${sheet} ${range}` : sheet
 }
 
-/** 注入对话的用户消息：用户口吻的修改指令 + 给 Agent 的工具定位提示。 */
+/**
+ * 注入对话的用户消息：只带「哪份文件、哪个工作表、哪个区域」的位置事实 + 用户原话，
+ * 不预设修改（sheetId 是 sheets_agent_read/edit 的定位依据，Agent 决定要用时自然能取到）。
+ */
 export function buildSheetsAgentAskMessage(title: string, op: SheetsAgentAskPayload): string {
   const sheetId = op.sheetId?.trim() ? `（sheetId=${op.sheetId.trim()}）` : ''
-  return (
-    `请修改 Excel《${title}》${describeSheetsAskScope(op)}${sheetId} 选中的内容：${op.instruction.trim()}。`
-    + '先用 sheets_agent_read 读一次工作簿确认 sheetId 与区域，再用 sheets_agent_edit 下发'
-    + ' read_range / propose_operations，只改这块区域，其他单元格保持不动。'
-  )
+  const instruction = op.instruction.trim().replace(/[。.!！]+$/, '')
+  return `我在 Excel《${title}》${describeSheetsAskScope(op)}${sheetId} 选中了这块内容：${instruction}。`
 }
 
-/** 同一请求的用户可见文案：只留位置与修改意图，sheetId 与工具名不出现在社交层。 */
+/** 同一请求的用户可见文案：只留位置与用户原话，sheetId 与工具名不出现。 */
 export function buildSheetsAgentAskDisplayMessage(title: string, op: SheetsAgentAskPayload): string {
   const instruction = op.instruction.trim().replace(/[。.!！]+$/, '')
-  return `把 Excel《${title}》${describeSheetsAskScope(op)}选中的内容改一下：${instruction}。`
+  return `关于 Excel《${title}》${describeSheetsAskScope(op)}选中的内容：${instruction}。`
 }
 
 let sheetsAgentAskWired = false
