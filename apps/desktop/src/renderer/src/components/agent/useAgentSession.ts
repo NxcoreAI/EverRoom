@@ -685,22 +685,29 @@ export function useAgentSession(
     if (expectedScope !== activeScopeRef.current || snapshot.session.id !== sessionIdRef.current) return false
 
     const nextMessages = mergePendingAgentMessages(snapshot.messages, pendingMessages)
-    if (snapshot.activeRun) {
-      const reduced = reducedByRun.get(snapshot.activeRun.id)
+    // 回到会话时为「事件里出过 assistant 活动、但消息表里没有落库 assistant
+    // 消息」的 run 重建占位消息。旧实现只覆盖 snapshot.activeRun——异常中断
+    // （gateway-restarted）的 run 不再是 activeRun，而它从未收到
+    // message.completed、assistant 消息不会落库；渲染层完全由 messages 驱动
+    // （按 runId 挂 toolCallsByRun / reasoningByRun），没有这条占位消息，
+    // 工具调用记录与推理过程就整段消失（#会话恢复丢失过程）。
+    for (const [runId, reduced] of reducedByRun) {
       const hasAssistant = nextMessages.some((message) => (
-        message.runId === snapshot.activeRun?.id && message.role === 'assistant'
+        message.runId === runId && message.role === 'assistant'
       ))
-      if (!hasAssistant && reduced && (reduced.messageStarted || reduced.streamingContent)) {
-        nextMessages.push({
-          id: `stream-${snapshot.activeRun.id}`,
-          sessionId: snapshot.session.id,
-          runId: snapshot.activeRun.id,
-          role: 'assistant',
-          content: reduced.streamingContent,
-          createdAt: reduced.startedAt ?? snapshot.activeRun.createdAt,
-          streaming: !reduced.messageCompleted,
-        })
-      }
+      if (hasAssistant || !(reduced.messageStarted || reduced.streamingContent)) continue
+      const isActiveRun = snapshot.activeRun?.id === runId
+      // 历史中断/停止的 run 不再流式：占位消息静止展示（streaming=false），
+      // 终态标记由 nextInterruptedRunIds / nextCancelledRunIds 提供。
+      nextMessages.push({
+        id: `stream-${runId}`,
+        sessionId: snapshot.session.id,
+        runId,
+        role: 'assistant',
+        content: reduced.streamingContent,
+        createdAt: reduced.startedAt ?? snapshot.activeRun?.createdAt ?? snapshot.session.updatedAt,
+        streaming: isActiveRun && !reduced.messageCompleted,
+      })
     }
 
     setMessages(nextMessages)
