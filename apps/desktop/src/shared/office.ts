@@ -50,4 +50,28 @@ export interface OfficeAgentAskEvent {
   /** 目标文件标题与 id：批注清单里点名用。 */
   title?: string
   fileId?: string
+  /** 用户敲的原始批注（不含「请修改 Word《X》…」那层包装）：文档内面板直接显示这句话。 */
+  instruction?: string
+  /** 原文摘录（选区文本快照）：批注清单在文档与对话两侧都要显示原文。 */
+  excerpt?: string
+  /** 选区锚点（Word 顶层块索引区间）：文档侧据此重新高亮原文。 */
+  anchor?: OfficeAskAnchor
+}
+
+/** 选区锚点：Word 用顶层块索引区间，Excel 用 sheetId + A1 区域。 */
+export interface OfficeAskAnchor {
+  fromBlockIndex?: number
+  toBlockIndex?: number
+  kind?: string
+  sheetId?: string
+  sheetName?: string
+  range?: string
+}
+
+/** 文档侧批注面板发起的动作（全部发送 / 移除一条）→ 渲染层处理。 */
+export interface OfficeAskQueueActionEvent {
+  /** 动作来自哪个文件的文档视图。 */
+  fileId: string | null
+  workspaceId: string
+  action: { kind: 'send-all' } | { kind: 'remove'; draftId: string }
 }

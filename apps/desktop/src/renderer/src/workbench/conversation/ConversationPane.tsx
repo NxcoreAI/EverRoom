@@ -76,6 +76,7 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
   const askDrafts = useWorkbenchStore((state) => state.askDrafts)
   const removeAskDraft = useWorkbenchStore((state) => state.removeAskDraft)
   const clearAskDrafts = useWorkbenchStore((state) => state.clearAskDrafts)
+  const askQueueSendNonce = useWorkbenchStore((state) => state.askQueueSendNonce)
 
   const [draft, setDraft] = useState('')
   const [composerResetKey, setComposerResetKey] = useState(0)
@@ -245,6 +246,18 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
       .catch(() => workbenchToast('发送失败，批注已保留'))
   }
 
+  /**
+   * 文档内批注面板点了「全部发送」：主进程把动作转成 nonce，这里消费一次。
+   * 用 ref 记住已处理的 nonce，避免重挂载后重复发送。
+   */
+  const handledSendNonce = useRef(0)
+  useEffect(() => {
+    if (askQueueSendNonce === 0 || askQueueSendNonce === handledSendNonce.current) return
+    handledSendNonce.current = askQueueSendNonce
+    if (workspaceAskDrafts.length === 0 || !hook.scopeReady || hook.loading) return
+    sendAskDrafts()
+  }, [askQueueSendNonce, workspaceAskDrafts.length, hook.scopeReady, hook.loading])
+
   const askDraftBar = workspaceAskDrafts.length > 0
     ? (
         <div className="wb-ask-drafts" role="group" aria-label="待发送批注">
@@ -271,8 +284,12 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
               <li key={draft.id} className="wb-ask-drafts-item">
                 <span className="wb-ask-drafts-text">
                   {draft.title ? <b>{draft.title}</b> : null}
-                  {draft.title ? ' · ' : null}
-                  {draft.displayMessage ?? draft.message}
+                  {draft.excerpt ? (
+                    <span className="wb-ask-drafts-excerpt">「{draft.excerpt}」</span>
+                  ) : null}
+                  <span className="wb-ask-drafts-note">
+                    {draft.instruction ?? draft.displayMessage ?? draft.message}
+                  </span>
                 </span>
                 <button
                   type="button"

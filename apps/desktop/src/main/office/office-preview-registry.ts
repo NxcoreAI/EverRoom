@@ -14,6 +14,7 @@ import {
 import {
   onOfficeFileSaved,
   wireDocsAgentAsk,
+  wireDocsAskQueue,
   wireOfficeSavedHooks,
   wireSheetsAgentAsk,
   wireSlidesAgentAsk,
@@ -232,6 +233,9 @@ export class OfficePreviewRegistry {
   private activeId: string | null = null
   private readonly editStates = new Map<string, EditSyncState>()
   private agentAskForward: ((event: AgentAskForwardEvent) => void) | null = null
+  private askQueueActionForward:
+    | ((event: { fileId: string | null; workspaceId: string; action: { kind: 'send-all' } | { kind: 'remove'; draftId: string } }) => void)
+    | null = null
   private thesisBridge: OfficeThesisPanelBridge | null = null
   /** 未打开文件的后台 Word 编辑会话（独立于页签实例，不进 instances）。 */
   private agentDocs: AgentDocSessionManager | null = null
@@ -266,6 +270,34 @@ export class OfficePreviewRegistry {
   }
 
   /** 「AI 修改」转发出口：slides 弹层提交 → wcId 反查 Room → 注入 Room 对话框。 */
+  setAskQueueActionForward(
+    forward:
+      | ((event: { fileId: string | null; workspaceId: string; action: { kind: 'send-all' } | { kind: 'remove'; draftId: string } }) => void)
+      | null,
+  ): void {
+    this.askQueueActionForward = forward
+  }
+
+  /** 批注队列快照下发到该文件的 docs 视图（空数组 = 清空文档内锚点）。 */
+  pushAskQueue(
+    fileId: string,
+    items: Array<{
+      id: string
+      instruction: string
+      excerpt?: string
+      fromBlockIndex: number
+      toBlockIndex: number
+      kind: string
+    }>,
+  ): boolean {
+    const instance = this.instances.get(fileId)
+    if (!instance || instance.descriptor.kind !== 'docx' || !this.runtime) return false
+    const wcId = instance.view.webContentsId
+    if (typeof wcId !== 'number' || wcId < 0) return false
+    this.runtime.docs.pushDocsAskQueue(wcId, items)
+    return true
+  }
+
   setAgentAskForward(forward: ((event: AgentAskForwardEvent) => void) | null): void {
     this.agentAskForward = forward
   }
@@ -1340,6 +1372,13 @@ export class OfficePreviewRegistry {
         resolveInstance: (wcId) => this.findByWebContentsId(wcId),
         forward: this.agentAskForward,
       })
+      // 批注队列：文档内锚点/面板 ↔ 宿主（队列事实只在宿主侧）。
+      if (this.askQueueActionForward) {
+        wireDocsAskQueue(this.runtime, {
+          resolveInstance: (wcId) => this.findByWebContentsId(wcId),
+          forwardAction: this.askQueueActionForward,
+        })
+      }
     }
     // AI 页签论文排版桥（注入晚于首开也在此补挂，幂等）。
     this.wireDocsThesisHook(this.runtime)

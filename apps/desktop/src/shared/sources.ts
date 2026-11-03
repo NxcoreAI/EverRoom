@@ -661,6 +661,26 @@ export interface NxcoreDesktopApi {
     onPreviewRequest(listener: (request: OfficePreviewRequest) => void): () => void
     /** Agent 生成 Office 文件的进度/完成事件（完成带 fileId 用于自动打开预览）。 */
     onAgentFile(listener: (event: OfficeAgentFileEvent) => void): () => void
+    /** 批注队列快照：渲染层（队列事实）→ 主进程 → 对应文件的 docs 视图。 */
+    syncAskQueue(input: {
+      fileId: string
+      items: Array<{
+        id: string
+        instruction: string
+        excerpt?: string
+        fromBlockIndex: number
+        toBlockIndex: number
+        kind: string
+      }>
+    }): void
+    /** 文档内批注面板动作（全部发送 / 移除一条）→ 渲染层队列事实。 */
+    onAskQueueAction(
+      listener: (event: {
+        fileId: string | null
+        workspaceId: string
+        action: { kind: 'send-all' } | { kind: 'remove'; draftId: string }
+      }) => void,
+    ): () => void
     /** slides「AI 修改」弹层转发事件（切到对应 Room 并自动发送注入消息）。 */
     onAgentAsk(listener: (event: OfficeAgentAskEvent) => void): () => void
     /** Agent 改写落盘后实例被重开：渲染端需重新上报视口矩形（原生视图换了一个）。 */

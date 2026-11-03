@@ -9,8 +9,23 @@
 export interface PendingAskDraft {
   id: string
   workspaceId: string
+  /** 所属文件（文档视图按 fileId 接收队列快照，用来渲染锚点与面板）。 */
+  fileId?: string
   /** 所属文件标题（合并文案里点名用；缺失时退化成「几份文件」）。 */
   title?: string
+  /** 用户敲的原始批注（文档内面板显示这句，而不是包装后的指令）。 */
+  instruction?: string
+  /** 原文摘录（选中时的文本快照）。 */
+  excerpt?: string
+  /** 选区锚点（Word 块索引区间；Excel 为 sheetId + A1 区域）。 */
+  anchor?: {
+    fromBlockIndex?: number
+    toBlockIndex?: number
+    kind?: string
+    sheetId?: string
+    sheetName?: string
+    range?: string
+  }
   /** 技术指令：块索引/区域/工具提示，只进 runtime。 */
   message: string
   /** 用户可见的一句（气泡与会话标题用它）。 */

@@ -1,5 +1,5 @@
 import { Loader2, X } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { catalogToOfficeFile } from '@/office-proto/data'
 import { HomePageHost } from '../home/HomePageHost'
@@ -120,7 +120,11 @@ export function Workbench() {
         state.addAskDraft({
           id: crypto.randomUUID(),
           workspaceId,
+          ...(event.fileId ? { fileId: event.fileId } : {}),
           ...(event.title ? { title: event.title } : {}),
+          ...(event.instruction ? { instruction: event.instruction } : {}),
+          ...(event.excerpt ? { excerpt: event.excerpt } : {}),
+          ...(event.anchor ? { anchor: event.anchor } : {}),
           message: event.message,
           ...(event.displayMessage ? { displayMessage: event.displayMessage } : {}),
           createdAt: new Date().toISOString(),
@@ -143,6 +147,54 @@ export function Workbench() {
         message: event.message,
         ...(event.displayMessage ? { displayMessage: event.displayMessage } : {}),
       })
+    })
+  }, [])
+
+  /** 批注队列快照同步：宿主队列（事实）→ 主进程 → 对应文档视图（锚点 + 面板）。 */
+  const askDrafts = useWorkbenchStore((state) => state.askDrafts)
+  const syncedAskQueues = useRef<Map<string, string>>(new Map())
+  useEffect(() => {
+    const office = window.nxcore?.office
+    if (!office?.syncAskQueue) return
+    const grouped = new Map<string, typeof askDrafts>()
+    for (const draft of askDrafts) {
+      if (!draft.fileId) continue
+      grouped.set(draft.fileId, [...(grouped.get(draft.fileId) ?? []), draft])
+    }
+    const fileIds = new Set([...grouped.keys(), ...syncedAskQueues.current.keys()])
+    for (const fileId of fileIds) {
+      const items = (grouped.get(fileId) ?? []).map((draft) => ({
+        id: draft.id,
+        instruction: draft.instruction ?? draft.displayMessage ?? draft.message,
+        ...(draft.excerpt ? { excerpt: draft.excerpt } : {}),
+        fromBlockIndex: draft.anchor?.fromBlockIndex ?? 0,
+        toBlockIndex: draft.anchor?.toBlockIndex ?? 0,
+        kind: draft.anchor?.kind ?? 'text',
+      }))
+      const signature = JSON.stringify(items)
+      if (syncedAskQueues.current.get(fileId) === signature) continue
+      syncedAskQueues.current.set(fileId, signature)
+      office.syncAskQueue({ fileId, items })
+    }
+  }, [askDrafts])
+
+  /** 文档内批注面板的动作：移除一条 / 全部发送（后者先激活对话标签，再点一次发送）。 */
+  useEffect(() => {
+    const office = window.nxcore?.office
+    if (!office?.onAskQueueAction) return
+    return office.onAskQueueAction((event) => {
+      const state = useWorkbenchStore.getState()
+      if (event.action.kind === 'remove') {
+        state.removeAskDraft(event.action.draftId)
+        return
+      }
+      const tab = state.tabs.find(
+        (item) => item.kind === 'workspace' && item.workspaceId === event.workspaceId,
+      )
+      const keepsConversation = tab?.kind === 'workspace'
+        && (tab.view.kind === 'session' || tab.view.kind === 'draft')
+      state.openWorkspaceTab(event.workspaceId, keepsConversation ? undefined : { kind: 'draft' })
+      state.requestAskQueueSend()
     })
   }, [])
 

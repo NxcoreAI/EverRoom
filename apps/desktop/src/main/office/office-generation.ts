@@ -238,6 +238,13 @@ export function wireDocsAgentAsk(
       ...(op.mode === 'queue' ? { mode: 'queue' as const } : {}),
       title: instance.title,
       fileId: instance.fileId,
+      instruction: op.instruction,
+      ...(op.excerpt ? { excerpt: op.excerpt } : {}),
+      anchor: {
+        fromBlockIndex: op.fromBlockIndex,
+        toBlockIndex: op.toBlockIndex,
+        kind: op.kind,
+      },
       message: buildDocsAgentAskMessage(instance.title, op),
       displayMessage: buildDocsAgentAskDisplayMessage(instance.title, op),
     })
@@ -315,12 +322,55 @@ export function wireSheetsAgentAsk(
       ...(op.mode === 'queue' ? { mode: 'queue' as const } : {}),
       title: instance.title,
       fileId: instance.fileId,
+      instruction: op.instruction,
+      ...(op.range ? { anchor: { sheetId: op.sheetId, sheetName: op.sheetName, range: op.range } } : {}),
       message: buildSheetsAgentAskMessage(instance.title, op),
       displayMessage: buildSheetsAgentAskDisplayMessage(instance.title, op),
     })
     return { ok: true }
   })
   sheetsAgentAskWired = true
+}
+
+// ── 批注队列：宿主下发快照 ↔ 文档面板动作 ──
+
+/** 文档内批注面板动作的类型（主进程内部用；跨进程见 shared/office.ts）。 */
+export type DocsAskQueueAction =
+  | { kind: 'send-all' }
+  | { kind: 'remove'; draftId: string }
+
+let docsAskQueueWired = false
+
+/**
+ * 全局只装一次（幂等）：把宿主的批注队列快照下发给文档视图，并把文档面板的
+ * 动作（全部发送 / 移除）回灌给渲染层。队列事实只存在宿主侧，文档只渲染。
+ */
+export function wireDocsAskQueue(
+  target: PreparedGenOfficeRuntime,
+  deps: {
+    resolveInstance(wcId: number): {
+      fileId: string
+      title: string
+      kind: string
+      roomId: string | null
+      workspaceId?: string | null
+    } | null
+    forwardAction(event: {
+      fileId: string | null
+      workspaceId: string
+      action: DocsAskQueueAction
+    }): void
+  },
+): void {
+  if (docsAskQueueWired) return
+  if (typeof target.docs.setDocsAskQueueActionHook !== 'function') return
+  target.docs.setDocsAskQueueActionHook((wcId, action) => {
+    const instance = deps.resolveInstance(wcId)
+    const workspaceId = instance?.workspaceId ?? instance?.roomId ?? null
+    if (!workspaceId) return
+    deps.forwardAction({ fileId: instance?.fileId ?? null, workspaceId, action })
+  })
+  docsAskQueueWired = true
 }
 
 export interface GeneratedDocx {

@@ -272,6 +272,10 @@ describe('wireDocsAgentAsk', () => {
       workspaceId: 'ws-3',
       title: '方案.docx',
       fileId: 'f2',
+      instruction: DOCS_OP.instruction,
+      excerpt: DOCS_OP.excerpt,
+      // 文档侧靠 anchor 重新高亮原文、面板展示「原文 + 批注」
+      anchor: { fromBlockIndex: 4, toBlockIndex: 6, kind: 'text' },
       message: buildDocsAgentAskMessage('方案.docx', DOCS_OP),
       displayMessage: buildDocsAgentAskDisplayMessage('方案.docx', DOCS_OP),
     })
@@ -364,6 +368,8 @@ describe('wireSheetsAgentAsk', () => {
       mode: 'queue',
       title: '预算.xlsx',
       fileId: 'f3',
+      instruction: SHEETS_OP.instruction,
+      anchor: { sheetId: 'sheet-01', sheetName: '预算', range: 'B2:C4' },
       message: buildSheetsAgentAskMessage('预算.xlsx', SHEETS_OP),
       displayMessage: buildSheetsAgentAskDisplayMessage('预算.xlsx', SHEETS_OP),
     })

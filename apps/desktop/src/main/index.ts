@@ -76,7 +76,7 @@ import {
   type OfficeExportPdfRequest,
   type OfficeExportPdfResult,
 } from './gateway/office-bridge'
-import type { OfficeAgentFileEvent, OsOpenedDocument } from '../shared/office'
+import type { OfficeAgentFileEvent, OfficeAskQueueActionEvent, OsOpenedDocument } from '../shared/office'
 import type { AgentAskForwardEvent } from './office/office-generation'
 import { generateDocxFromHtml } from './office/office-generation'
 import { createEverroomMaterialResolver } from './office/office-material-resolver'
@@ -736,6 +736,13 @@ function broadcastOfficeAgentFileEvent(event: OfficeAgentFileEvent): void {
 function broadcastAgentAskEvent(event: AgentAskForwardEvent): void {
   for (const window of BrowserWindow.getAllWindows()) {
     if (!window.isDestroyed()) window.webContents.send('office:agent-ask', event)
+  }
+}
+
+/** office:ask-queue-action 扇出：文档内批注面板的动作（全部发送 / 移除）→ 渲染层队列事实。 */
+function broadcastAskQueueActionEvent(event: OfficeAskQueueActionEvent): void {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) window.webContents.send('office:ask-queue-action', event)
   }
 }
 
@@ -3931,6 +3938,27 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     })
     // slides「AI 修改」弹层 → 反查 Room → 渲染层注入对话框（hook 在运行时首用时懒装）。
     officePreviewRegistry.setAgentAskForward(broadcastAgentAskEvent)
+    officePreviewRegistry.setAskQueueActionForward(broadcastAskQueueActionEvent)
+
+    // 批注队列快照（渲染层→主进程→对应文件的 docs 视图）：文档内高亮/面板据此渲染。
+    // 空数组同样下发，用来清掉文档里已发送/已移除的锚点。
+    ipcMain.on('office:ask-queue-sync', (_event, payload?: unknown) => {
+      const value = (payload ?? {}) as { fileId?: unknown; items?: unknown }
+      if (typeof value.fileId !== 'string' || !value.fileId || !Array.isArray(value.items)) return
+      const items = value.items
+        .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object')
+        .slice(0, 20)
+        .map((item) => ({
+          id: String(item.id ?? ''),
+          instruction: String(item.instruction ?? ''),
+          excerpt: typeof item.excerpt === 'string' ? item.excerpt : undefined,
+          fromBlockIndex: Number.isFinite(Number(item.fromBlockIndex)) ? Number(item.fromBlockIndex) : 0,
+          toBlockIndex: Number.isFinite(Number(item.toBlockIndex)) ? Number(item.toBlockIndex) : 0,
+          kind: typeof item.kind === 'string' ? item.kind : 'text',
+        }))
+        .filter((item) => item.id && item.instruction)
+      officePreviewRegistry.pushAskQueue(value.fileId, items)
+    })
     registerFilesHandlers(filesGatewayBridge, highRiskImports)
     // 文件桥就位：排空启动前/启动中累积的「访达打开」请求。
     osOpenQueue.setHandler(openDocumentFromSystem)

@@ -1302,6 +1302,21 @@
   flex: 1;
   min-width: 0;
   overflow-wrap: anywhere;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px;
+}
+
+/* 原文摘录：灰色引号，视觉上先于批注 */
+.wb-ask-drafts-excerpt {
+  color: var(--ui-text-muted, var(--ui-text));
+  opacity: 0.75;
+}
+
+/* 我的批注：正文色，跟在原文后面 */
+.wb-ask-drafts-note {
+  color: var(--ui-text);
 }
 
 .wb-ask-drafts-remove {

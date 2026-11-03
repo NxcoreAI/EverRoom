@@ -156,6 +156,11 @@ interface WorkbenchStore {
    * 「加入批注」时追加，用户在对话上方一次全发。
    */
   askDrafts: PendingAskDraft[]
+  /**
+   * 「全部发送」请求序号：文档内批注面板点了发送，但对话面板不在同一处时，
+   * 由这里通知对话面板消费（每次 +1）。
+   */
+  askQueueSendNonce: number
 
   boot(): Promise<void>
   refresh(): Promise<void>
@@ -178,6 +183,8 @@ interface WorkbenchStore {
   removeAskDraft(id: string): void
   /** 清空某个工作空间的批注草稿（发送成功/用户主动清空）。 */
   clearAskDrafts(workspaceId: string): void
+  /** 请求对话面板把当前批注一次性发出。 */
+  requestAskQueueSend(): void
 
   createWorkspace(input: CreateAgentWorkspaceInput): Promise<AgentWorkspace | null>
   /** 关闭三步引导（完成/全部跳过）。 */
@@ -216,6 +223,7 @@ export const useWorkbenchStore = create<WorkbenchStore>()((set, get) => ({
   pendingSetupWorkspaceId: null,
   pendingAgentAsk: null,
   askDrafts: [],
+  askQueueSendNonce: 0,
 
   setError(error) {
     set({ error })
@@ -558,6 +566,10 @@ export const useWorkbenchStore = create<WorkbenchStore>()((set, get) => ({
 
   clearAskDrafts(workspaceId) {
     set((state) => ({ askDrafts: state.askDrafts.filter((draft) => draft.workspaceId !== workspaceId) }))
+  },
+
+  requestAskQueueSend() {
+    set((state) => ({ askQueueSendNonce: state.askQueueSendNonce + 1 }))
   },
 
   toggleSidebar() {

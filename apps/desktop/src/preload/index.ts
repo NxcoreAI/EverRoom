@@ -250,6 +250,21 @@ const api: NxcoreDesktopApi = {
       ipcRenderer.on('office:agent-file', handler)
       return () => ipcRenderer.removeListener('office:agent-file', handler)
     },
+    /** 批注队列快照：渲染层（队列事实）→ 主进程 → 对应文件的 docs 视图（文档内高亮/面板）。 */
+    syncAskQueue: (input: { fileId: string; items: Array<{
+      id: string
+      instruction: string
+      excerpt?: string
+      fromBlockIndex: number
+      toBlockIndex: number
+      kind: string
+    }> }) => ipcRenderer.send('office:ask-queue-sync', input),
+    /** 文档内批注面板动作（全部发送 / 移除一条）→ 渲染层队列事实。 */
+    onAskQueueAction: (listener: (event: { fileId: string | null; workspaceId: string; action: { kind: 'send-all' } | { kind: 'remove'; draftId: string } }) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: { fileId: string | null; workspaceId: string; action: { kind: 'send-all' } | { kind: 'remove'; draftId: string } }) => listener(payload)
+      ipcRenderer.on('office:ask-queue-action', handler)
+      return () => ipcRenderer.removeListener('office:ask-queue-action', handler)
+    },
     /** slides「AI 修改」弹层转发事件（切到对应 Room 并自动发送注入消息）。 */
     onAgentAsk: (listener: (event: OfficeAgentAskEvent) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, payload: OfficeAgentAskEvent) => listener(payload)

@@ -73,6 +73,21 @@ export interface GenOfficeDocsRuntime {
    * hidden 省略 = 切换；渲染层自带恢复胶囊与 ⌘⇧F，隐藏后始终可恢复。
    */
   setDocsChromeHidden(contents: WebContents, hidden?: boolean): void
+  /** 批注队列快照下发到某个 docs 视图（空数组 = 清空文档内锚点）。 */
+  pushDocsAskQueue(wcId: number, items: Array<{
+    id: string
+    instruction: string
+    excerpt?: string
+    fromBlockIndex: number
+    toBlockIndex: number
+    kind: string
+  }>): void
+  /** 文档内批注面板的动作（全部发送 / 移除一条）→ 宿主。 */
+  setDocsAskQueueActionHook(
+    hook:
+      | ((wcId: number, action: { kind: 'send-all' } | { kind: 'remove'; draftId: string }) => void)
+      | null,
+  ): void
   /**
    * 选区「AI 修改」浮层（EverRoom embed）：宿主接管——按 wcId 反查文件与工作空间，
    * 载荷只描述选区（顶层块索引区间 + 类型 + 文本摘要），不带任何 id。
