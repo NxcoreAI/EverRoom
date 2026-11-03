@@ -388,6 +388,10 @@ export interface AiGatewayStatus {
   llmCredits: number | null
   usedCredits: number
   remainingCredits: number
+  /** 周期内剩余(套餐月额度口径;旧后端无此字段时等于 remainingCredits)。 */
+  periodRemainingCredits?: number
+  /** 充值余额(旁路,长期有效;旧后端无此字段时为 0)。 */
+  topupRemainingCredits?: number
   periodEnd: string | null
 }
 

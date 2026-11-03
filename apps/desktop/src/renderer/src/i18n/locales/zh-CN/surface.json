@@ -2208,5 +2208,7 @@
   "settings.topupPackSelect": "选择充值档位",
   "agentExecutionTimeline": {
     "noopFolded": "已折叠 {count} 次空调用（echo / 读取 /dev/null 这类打点）"
-  }
+  },
+  "settings.topupBalance": "充值余额",
+  "settings.topupBalanceNote": "长期有效，不影响月度额度"
 }

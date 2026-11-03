@@ -508,21 +508,30 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
                   <div className="cloud-subscription-quota">
                     <div>
                       <span>{t('surface:settings.llmRemaining')}</span>
-                      <strong>{formatLlmUsd(aiRelayStatus.remainingCredits, locale)}</strong>
+                      <strong>{formatLlmUsd(aiRelayStatus.periodRemainingCredits ?? aiRelayStatus.remainingCredits, locale)}</strong>
                     </div>
                     <progress
                       aria-label={t('surface:settings.llmRemaining')}
-                      max={Math.max(1, aiRelayStatus.llmCredits)}
-                      value={Math.min(Math.max(0, aiRelayStatus.remainingCredits), aiRelayStatus.llmCredits)}
+                      max={Math.max(1, Math.min(aiRelayStatus.llmCredits, (aiRelayStatus.periodRemainingCredits ?? aiRelayStatus.remainingCredits) + (aiRelayStatus.usedCredits ?? 0)))}
+                      value={Math.min(Math.max(0, aiRelayStatus.periodRemainingCredits ?? aiRelayStatus.remainingCredits), aiRelayStatus.llmCredits)}
                     />
                     <small>
                       {aiRelayStatus.remainingCredits <= 0
                         ? t('surface:settings.llmQuotaExhausted')
                         : t('surface:settings.usedUsedTotalTotal', {
-                            used: formatLlmUsd(aiRelayStatus.usedCredits ?? 0, locale),
-                            total: formatLlmUsd(aiRelayStatus.llmCredits, locale),
-                          })}
+                          used: formatLlmUsd(aiRelayStatus.usedCredits ?? 0, locale),
+                          total: formatLlmUsd(aiRelayStatus.llmCredits, locale),
+                        })}
                     </small>
+                  </div>
+                ) : null}
+                {aiRelayStatus?.configured && (aiRelayStatus.topupRemainingCredits ?? 0) > 0 ? (
+                  <div className="cloud-subscription-quota cloud-subscription-quota--topup">
+                    <div>
+                      <span>{t('surface:settings.topupBalance')}</span>
+                      <strong>{formatLlmUsd(aiRelayStatus.topupRemainingCredits ?? 0, locale)}</strong>
+                    </div>
+                    <small>{t('surface:settings.topupBalanceNote')}</small>
                   </div>
                 ) : null}
                 <TopupPanel aiRelayConfigured={Boolean(aiRelayStatus?.configured)} />

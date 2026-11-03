@@ -2208,5 +2208,7 @@
   "settings.topupPackSelect": "Select a credit pack",
   "agentExecutionTimeline": {
     "noopFolded": "Folded {count} no-op calls (echo / reading /dev/null probes)"
-  }
+  },
+  "settings.topupBalance": "Credit balance",
+  "settings.topupBalanceNote": "No expiry, separate from monthly credits"
 }
