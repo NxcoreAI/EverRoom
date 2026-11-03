@@ -426,6 +426,34 @@ function repairAppliedThesisCardsWorkspaceMigration(sqlite: Database.Database, m
   recordMigration(sqlite, migrationsDir, entry);
 }
 
+/**
+ * 0095（本地夹 updated_at 归位）与后续迁移合入同一分支时，游标可能已停在时间戳
+ * 更新的迁移上（Drizzle 只看最后一条记录的 created_at），0095 的记录一旦缺失
+ * （测试删过、或跑过只含后续迁移的中间构建）就会被永久跳过，本地夹条目的
+ * updated_at 永远停在重扫时间。判据：游标已越过 0095、但记录里没有 0095 的
+ * 时间戳时，幂等重放一次 UPDATE 并补记——该语句从 created_at/source_modified_at
+ * 确定性计算，重复执行结果不变，健康库（已有记录）不受影响。
+ */
+function repairSkippedLocalFolderUpdatedAtMigration(sqlite: Database.Database, migrationsDir: string): void {
+  const hasTable = (name: string) => Boolean(sqlite.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
+  ).get(name));
+  if (!hasTable("__drizzle_migrations") || !hasTable("file_entries") || !hasTable("file_versions")) return;
+
+  const entry = readMigrationJournal(migrationsDir)
+    .find((item) => item.tag === "0095_local_folder_updated_at");
+  if (!entry?.tag || typeof entry.when !== "number") return;
+  if (sqlite.prepare("SELECT 1 FROM __drizzle_migrations WHERE created_at = ? LIMIT 1").get(entry.when)) return;
+
+  const appliedCursor = Number((sqlite.prepare(
+    "SELECT created_at FROM __drizzle_migrations ORDER BY created_at DESC LIMIT 1",
+  ).get() as { created_at?: number } | undefined)?.created_at ?? 0);
+  if (appliedCursor < entry.when) return;
+
+  runAdditiveMigrationIdempotently(sqlite, migrationsDir, entry.tag);
+  recordMigration(sqlite, migrationsDir, entry);
+}
+
 /** Repair installs whose migration cursor advanced across the diary/perception
  * branch without applying its schema (a transient merge produced this state). */
 function repairIncompleteUnderstandingMigration(sqlite: Database.Database, migrationsDir: string): void {
@@ -510,6 +538,8 @@ export function createDatabase(databasePath: string, migrationsDir: string): Dat
   repairSkippedWorkspaceMigrations(sqlite, migrationsDir);
   // 本地预览构建跑过旧编号 0093 的库：格式卡已是工作区形态，补记 0094 防重放。
   repairAppliedThesisCardsWorkspaceMigration(sqlite, migrationsDir);
+  // 游标被时间戳更新的迁移推过 0095 时（同分支合入），补放本地夹 updated_at 归位。
+  repairSkippedLocalFolderUpdatedAtMigration(sqlite, migrationsDir);
   // Compatibility repairs may create file_entries from the current schema,
   // including source_path, before the canonical additive migration runs.
   // Apply/record it idempotently so Drizzle never repeats ADD COLUMN.
