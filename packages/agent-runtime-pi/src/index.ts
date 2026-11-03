@@ -1,4 +1,5 @@
 import { mkdir, rm } from "node:fs/promises";
+import { DEFAULT_MAX_NOOP_TOOL_CALLS, isNoOpToolCall } from "./noop-tool-call.js";
 import { randomUUID } from "node:crypto";
 import { resolve, sep } from "node:path";
 import type { AgentContextUsageSegment, AgentPermissionMode, RuntimeCapabilities } from "@nxcore/agent-contract";
@@ -126,6 +127,12 @@ export interface PiAgentRuntimeConfig {
   systemPrompt?: string;
   includeBashTool?: boolean;
   maxToolCallsPerRun?: number;
+  /**
+   * 连续多少次"无副作用工具调用"（echo/printf/read /dev/null 之类打点）判定为空转并
+   * 中止 run。模型偶尔用 echo 当心跳，实测有 run 连刷 269 次直到用户手动取消。
+   * 缺省 DEFAULT_MAX_NOOP_TOOL_CALLS；0/负数关闭。
+   */
+  maxNoOpToolCalls?: number;
   /**
    * 单条工具结果进入上下文的字符预算（JSON 感知截断）；缺省/0 = 不截断。
    * 建议只在子 Agent runtime 配置：主 Agent 的文档 read/patch 需要完整结果。
@@ -271,6 +278,9 @@ interface ActivePiRun {
   cancelled: boolean;
   toolCallCount: number;
   toolLimitExceeded: boolean;
+  /** 连续无副作用工具调用计数与超限标记（空转守卫）。 */
+  noOpStreak: number;
+  noOpLimitExceeded: boolean;
   terminal: boolean;
   finishPromise: Promise<void> | null;
 }
@@ -736,6 +746,8 @@ export class PiAgentRuntime implements AgentRuntime {
       cancelled: false,
       toolCallCount: 0,
       toolLimitExceeded: false,
+      noOpStreak: 0,
+      noOpLimitExceeded: false,
       terminal: false,
       finishPromise: null,
     };
@@ -1337,6 +1349,15 @@ export class PiAgentRuntime implements AgentRuntime {
         void this.abortForToolLimit(runId);
         return;
       }
+      // 空转守卫：连续多次"打点式"调用（echo / read /dev/null）说明模型在原地转圈，
+      // 继续跑只会刷满时间线而不推进任务，直接中止并如实报告。
+      const noOpLimit = this.config.maxNoOpToolCalls ?? DEFAULT_MAX_NOOP_TOOL_CALLS;
+      active.noOpStreak = isNoOpToolCall(event.toolName, event.args) ? active.noOpStreak + 1 : 0;
+      if (noOpLimit > 0 && active.noOpStreak >= noOpLimit) {
+        active.noOpLimitExceeded = true;
+        void this.abortForToolLimit(runId);
+        return;
+      }
       active.queue.push({
         type: "tool.started",
         payload: { toolCallId: event.toolCallId, name: event.toolName, args: event.args },
@@ -1362,16 +1383,29 @@ export class PiAgentRuntime implements AgentRuntime {
         runId,
         active.cancelled
           ? "cancelled"
-          : active.toolLimitExceeded || sessionError || outputLimitReached ? "failed" : "completed",
+          : active.toolLimitExceeded || active.noOpLimitExceeded || sessionError || outputLimitReached
+            ? "failed"
+            : "completed",
         active.toolLimitExceeded
           ? new Error(this.toolLimitErrorMessage())
-          : sessionError
+          : active.noOpLimitExceeded
+            ? new Error(this.noOpLimitErrorMessage())
+            : sessionError
             ? new Error(friendlyRunError(sessionError))
             : outputLimitReached
               ? new Error("本次处理达到模型输出上限，未能生成最终结论。已保留处理过程，请缩小范围后重试。")
               : undefined,
       );
     }
+  }
+
+  /** 空转中止的用户可读说明：告诉用户这不是失败在业务上，而是模型在原地打转。 */
+  private noOpLimitErrorMessage(): string {
+    const limit = this.config.maxNoOpToolCalls ?? DEFAULT_MAX_NOOP_TOOL_CALLS;
+    return (
+      `本次处理在空转：连续 ${limit} 次无副作用的工具调用（echo / read /dev/null 这类打点），` +
+      "没有任何实际进展，已自动中止。可以把任务拆小、或直接说明期望的结果后重试。"
+    );
   }
 
   private toolLimitErrorMessage(): string {

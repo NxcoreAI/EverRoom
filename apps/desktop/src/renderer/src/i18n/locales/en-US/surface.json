@@ -2205,5 +2205,8 @@
   "settings.topupFailed": "Top-up did not complete, please retry",
   "settings.topupBrowserOpened": "Browser opened to complete payment; credits apply automatically",
   "settings.topupMockHint": "Mock payment submitted, crediting…",
-  "settings.topupPackSelect": "Select a credit pack"
+  "settings.topupPackSelect": "Select a credit pack",
+  "agentExecutionTimeline": {
+    "noopFolded": "Folded {count} no-op calls (echo / reading /dev/null probes)"
+  }
 }

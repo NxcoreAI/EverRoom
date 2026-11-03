@@ -2205,5 +2205,8 @@
   "settings.topupFailed": "充值未完成，请重试",
   "settings.topupBrowserOpened": "已打开浏览器完成支付，付款后自动到账",
   "settings.topupMockHint": "模拟支付已提交，正在到账…",
-  "settings.topupPackSelect": "选择充值档位"
+  "settings.topupPackSelect": "选择充值档位",
+  "agentExecutionTimeline": {
+    "noopFolded": "已折叠 {count} 次空调用（echo / 读取 /dev/null 这类打点）"
+  }
 }

@@ -5,6 +5,7 @@ import type {
   SubagentInvocationNode,
 } from '@nxcore/agent-contract'
 import type { Translate } from '@/i18n/LocaleContext'
+import { isNoOpToolCall, noOpCommandSummary } from './noopToolCall'
 
 export type DisplayAgentToolStatus = 'pending' | 'running' | 'completed' | 'error' | 'stopped'
 
@@ -64,6 +65,8 @@ export interface AgentSubagentStep {
 export type TimelineRow =
   | { kind: 'tool'; key: string; at: number; step: AgentActivityStep }
   | { kind: 'subagent'; key: string; at: number; subagent: AgentSubagentStep }
+  /** 连续空转调用（echo stepN / read /dev/null …）折叠成一行，展开才看明细。 */
+  | { kind: 'noop'; key: string; at: number; count: number; samples: string[]; steps: AgentActivityStep[] }
 
 export interface ReducedAgentRunEvents {
   tools: DisplayAgentToolCall[]
@@ -981,7 +984,51 @@ export function buildTimelineRows(
       },
     })
   }
-  return rows.sort((left, right) => left.at - right.at)
+  return collapseNoOpRows(rows.sort((left, right) => left.at - right.at))
+}
+
+/** 折叠阈值：少于这么多连续空转就直接照常显示（一两次打点不值得折叠）。 */
+const NOOP_FOLD_MIN = 3
+
+/**
+ * 把连续的空转工具行折叠成一行。模型空转时可能连刷上百次 `echo stepN`，
+ * 原样铺开会把时间线冲垮，而它们没有信息量。
+ */
+function collapseNoOpRows(rows: TimelineRow[]): TimelineRow[] {
+  const output: TimelineRow[] = []
+  let pending: AgentActivityStep[] = []
+  const flush = (): void => {
+    if (pending.length === 0) return
+    if (pending.length < NOOP_FOLD_MIN) {
+      output.push(...pending.map((step) => ({
+        kind: 'tool' as const,
+        key: step.id,
+        at: Date.parse(step.tool.startedAt) || 0,
+        step,
+      })))
+    } else {
+      const first = pending[0]!
+      output.push({
+        kind: 'noop',
+        key: `noop-${first.id}`,
+        at: Date.parse(first.tool.startedAt) || 0,
+        count: pending.length,
+        samples: pending.slice(0, 5).map((step) => noOpCommandSummary(step.tool.args)),
+        steps: pending,
+      })
+    }
+    pending = []
+  }
+  for (const row of rows) {
+    if (row.kind === 'tool' && isNoOpToolCall(row.step.tool.name, row.step.tool.args)) {
+      pending.push(row.step)
+      continue
+    }
+    flush()
+    output.push(row)
+  }
+  flush()
+  return output
 }
 
 /**

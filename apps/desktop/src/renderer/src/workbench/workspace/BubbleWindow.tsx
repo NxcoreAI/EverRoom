@@ -15,6 +15,9 @@ import { Hint, IconButton, Spinner } from '../ui/primitives'
 import { isArtifactFile } from './fileBrowser'
 import { useFileLibrary } from './useFileLibrary'
 import { BUBBLE_DEFAULT_WIDTH, type BubbleExitKind, type BubbleState } from './useBubble'
+/** 对话区最小宽度：与 workspace.css 的 .wb-ws-main min-width 同步。 */
+const CHAT_MIN_WIDTH = 240
+
 import './bubble.css'
 
 /**
@@ -126,10 +129,15 @@ export function BubbleWindow({
         'wb-bubble',
         bubble.maximized && 'is-maximized',
         resizing && 'is-resizing',
+        // 宽度过渡（入场/最大化/还原）期间的原生区由 CSS 隐藏：native view 跟随 IPC
+        // 重定位会滞后，否则会短暂画到对话区上（视口遮挡）。
+        freezeWidth !== null && 'is-settling',
         exiting === 'close' && 'is-closing',
         exiting === 'minimize' && 'is-minimizing',
       )}
-      style={bubble.maximized ? undefined : { width: bubble.width || BUBBLE_DEFAULT_WIDTH }}
+      // 宽度按容器收敛：对话区至少保留 CHAT_MIN_WIDTH，窄窗口下不再让两者最小宽度
+      // 之和超过容器（flex 溢出会让原生视图画到对话区上，见 NativeEditorHost 的裁剪兜底）。
+      style={bubble.maximized ? undefined : { width: bubble.width || BUBBLE_DEFAULT_WIDTH, maxWidth: `calc(100% - ${CHAT_MIN_WIDTH}px)` }}
       aria-label="资料与文件"
     >
       {!bubble.maximized ? (
