@@ -2180,10 +2180,13 @@
   "settings.topupPackCredits": "{credits} credits",
   "settings.topupPackNote": "No expiry, deducted as you use",
   "settings.topupLoadFailed": "Failed to load credit packs, please retry later",
+  "settings.planOverviewTotal": "Total credits left",
+  "settings.planOverviewBuiltin": "Included in plan",
+  "settings.planOverviewBonus": "Bonus credits",
+  "settings.planOverviewPurchased": "Purchased credits",
   "plans.modalTitle": "Choose the plan that fits you",
   "plans.modalDescription": "Upgrade to Pro for more credits and capabilities, billed monthly",
   "plans.freeForever": "Free",
-  "plans.creditsUnit": "credits/mo",
   "plans.currentPlan": "Current plan",
   "plans.defaultPlan": "Default",
   "plans.buyPro": "Upgrade to Pro",
@@ -2195,8 +2198,9 @@
   "plans.browserOpened": "Browser opened to complete payment, Pro activates right after",
   "plans.mockHint": "Mock payment submitted, activating…",
   "plans.featureCredits": "{credits} credits of AI usage per month",
-  "plans.featureAsr": "{{minutes}} minutes of transcription per month",
-  "plans.featureDevices": "Up to {{count}} devices online",
-  "plans.featureRetention": "{{days}} days of cloud sync retention",
-  "settings.navigationPlan": "Plan & Credits"
+  "plans.featureDevices": "Up to {count} devices online",
+  "plans.featureRetention": "{days} days of cloud sync retention",
+  "settings.navigationPlan": "Plan & Credits",
+  "plans.perMonth": "mo",
+  "settings.planOverviewNoPurchase": "No purchased credits yet"
 }

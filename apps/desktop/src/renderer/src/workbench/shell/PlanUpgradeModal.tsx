@@ -25,9 +25,6 @@ function planFeatureLines(tier: PlanTier, t: (key: string, opts?: Record<string,
   if (typeof e.llmCreditsPerPeriod === 'number' && e.llmCreditsPerPeriod > 0) {
     lines.push(t('surface:plans.featureCredits', { credits: formatCredits(e.llmCreditsPerPeriod, 'en') }))
   }
-  if (typeof e.asrSecondsPerPeriod === 'number' && e.asrSecondsPerPeriod > 0) {
-    lines.push(t('surface:plans.featureAsr', { minutes: Math.round(e.asrSecondsPerPeriod / 60).toLocaleString('en') }))
-  }
   if (typeof e.maxDevices === 'number') {
     lines.push(t('surface:plans.featureDevices', { count: e.maxDevices }))
   }
@@ -40,9 +37,11 @@ function planFeatureLines(tier: PlanTier, t: (key: string, opts?: Record<string,
 function PlanCard({ tier, current, purchasable, phase, onBuy }: PlanCardProps) {
   const { t } = useTranslation()
   const busy = phase === 'creating' || phase === 'pending'
+  /* 价格用美元(支付页同口径);权益里的积分是库配额度,与价格不换算——
+     避免「290 积分价格 vs 300 积分权益」两套数字打架。 */
   const price = tier.priceCents === 0
     ? t('surface:plans.freeForever')
-    : `${Math.round(tier.priceCents / 10)} ${t('surface:plans.creditsUnit')}`
+    : `$${(tier.priceCents / 100).toFixed(0)}/${t('surface:plans.perMonth')}`
   const features = planFeatureLines(tier, t)
 
   return (
@@ -59,7 +58,7 @@ function PlanCard({ tier, current, purchasable, phase, onBuy }: PlanCardProps) {
       ) : purchasable ? (
         <button type="button" className="plan-card-cta is-primary" onClick={onBuy} disabled={busy}>
           {busy ? <LoaderCircle className="spin" size={14} aria-hidden="true" /> : <Sparkles size={14} aria-hidden="true" />}
-          {busy ? t('surface:plans.purchasing') : t('surface:plans.buyPro', { price: `${Math.round(tier.priceCents / 10)}` })}
+          {busy ? t('surface:plans.purchasing') : t('surface:plans.buyPro')}
         </button>
       ) : (
         <button type="button" className="plan-card-cta" disabled>{t('surface:plans.defaultPlan')}</button>

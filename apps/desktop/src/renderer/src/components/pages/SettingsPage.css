@@ -3151,3 +3151,20 @@
   background: var(--ui-surface-alt);
   color: var(--ui-text-2);
 }
+
+/* ===== 套餐与积分:总览卡(三列明细) ===== */
+.plan-overview-card { display: flex; flex-direction: column; gap: 14px; padding: 16px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+.plan-overview-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+.plan-overview-head .cloud-subscription-plan { border: none; padding: 0; margin: 0; background: none; }
+.plan-overview-total { display: flex; align-items: baseline; gap: 10px; }
+.plan-overview-total strong { font-size: 34px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -0.5px; }
+.plan-overview-total span { color: var(--muted); font-size: 12px; }
+.plan-overview-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; }
+.plan-overview-cell { display: flex; flex-direction: column; gap: 6px; padding: 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-alt); }
+.plan-overview-cell > div:first-child { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.plan-overview-cell span { color: var(--muted); font-size: 11.5px; }
+.plan-overview-cell strong { font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.plan-overview-cell progress { width: 100%; }
+.plan-overview-cell small { color: var(--muted); font-size: 10.5px; }
+.plan-overview-grant { display: flex; flex-direction: column; gap: 3px; margin-top: 4px; }
+.plan-overview-topup { align-self: flex-start; }
