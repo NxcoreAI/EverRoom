@@ -131,16 +131,17 @@ jobs:
             exit 0
           fi
           test -n "$CSC_KEY_PASSWORD"
+          # notarize 只要签名就必走，API Key 装配与 profile 无关，必须在 profile 提前退出之前。
+          test -n "$APPLE_API_KEY_BASE64"
+          test -n "$APPLE_API_KEY_ID"
+          test -n "$APPLE_API_ISSUER"
+          printf '%s' "$APPLE_API_KEY_BASE64" | base64 --decode > "$RUNNER_TEMP/AuthKey.p8"
+          echo "APPLE_API_KEY=$RUNNER_TEMP/AuthKey.p8" >> "$GITHUB_ENV"
           if [[ -z "$MACOS_PROVISIONING_PROFILE_BASE64" ]]; then
             echo "::warning::APNs provisioning profile is not configured; push entitlements will not be verified."
             exit 0
           fi
-          test -n "$APPLE_API_KEY_BASE64"
-          test -n "$APPLE_API_KEY_ID"
-          test -n "$APPLE_API_ISSUER"
           printf '%s' "$MACOS_PROVISIONING_PROFILE_BASE64" | base64 --decode > apps/desktop/build/embedded.provisionprofile
-          printf '%s' "$APPLE_API_KEY_BASE64" | base64 --decode > "$RUNNER_TEMP/AuthKey.p8"
-          echo "APPLE_API_KEY=$RUNNER_TEMP/AuthKey.p8" >> "$GITHUB_ENV"
           security cms -D -i apps/desktop/build/embedded.provisionprofile > "$RUNNER_TEMP/everroom-profile.plist"
           /usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.application-identifier' "$RUNNER_TEMP/everroom-profile.plist" | grep -E '^.+\.ai\.nxcore\.everroom$'
           /usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.developer.aps-environment' "$RUNNER_TEMP/everroom-profile.plist" | grep -Fx production
