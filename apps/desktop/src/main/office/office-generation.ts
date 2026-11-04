@@ -9,7 +9,7 @@ import { loadPreparedGenOfficeRuntime, type GenOfficeMaterialResolver, type Prep
 import { backfillThesisCoverLogo, backfillThesisHeaderLogos } from './thesis-logo-backfill'
 import { selfCheckThesisDocx } from './thesis-selfcheck'
 import { buildAgentXlsxBytes, type AgentSheetInput } from './xlsx-generation'
-import type { OfficeAgentAskEvent } from '../../shared/office'
+import type { OfficeAgentAskEvent, OfficeAskQueueAction } from '../../shared/office'
 
 /** 生成卡死兜底：渲染端 boot → 填充 → 静默保存正常在秒级完成。 */
 const GENERATION_TIMEOUT_MS = 3 * 60_000
@@ -204,13 +204,12 @@ export function buildDocsAgentAskMessage(title: string, op: DocsAgentAskPayload)
   return `我在 Word《${title}》${describeDocsAskScope(op)}选中了这段内容：${instruction}。`
 }
 
-/** 同一请求的用户可见文案：只留段号与用户原话，块索引语法不出现。 */
-export function buildDocsAgentAskDisplayMessage(title: string, op: DocsAgentAskPayload): string {
-  const instruction = op.instruction.trim().replace(/[。.!！]+$/, '')
-  const where = op.fromBlockIndex === op.toBlockIndex
-    ? `第 ${op.fromBlockIndex + 1} 段`
-    : `第 ${op.fromBlockIndex + 1}–${op.toBlockIndex + 1} 段`
-  return `关于 Word《${title}》${where}选中的内容：${instruction}。`
+/**
+ * 用户气泡只显示用户原话：定位信息（文件名/段号）是给 Agent 的技术语境，出现在
+ * 气泡里就是噪音——原话本身用户自己刚敲过，认得出。定位与块索引只进 message。
+ */
+export function buildDocsAgentAskDisplayMessage(_title: string, op: DocsAgentAskPayload): string {
+  return op.instruction.trim().replace(/[。.!！]+$/, '')
 }
 
 let docsAgentAskWired = false
@@ -342,10 +341,8 @@ export function wireSheetsAgentAsk(
 
 // ── 批注队列：宿主下发快照 ↔ 文档面板动作 ──
 
-/** 文档内批注面板动作的类型（主进程内部用；跨进程见 shared/office.ts）。 */
-export type DocsAskQueueAction =
-  | { kind: 'send-all' }
-  | { kind: 'remove'; draftId: string }
+/** 文档内批注面板动作：跨进程形状见 shared/office.ts（update 分支由文档侧同事补充）。 */
+export type DocsAskQueueAction = OfficeAskQueueAction
 
 let docsAskQueueWired = false
 

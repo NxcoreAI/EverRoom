@@ -202,12 +202,14 @@ describe('buildDocsAgentAskMessage', () => {
     expect(message).not.toContain('「」')
   })
 
-  it('用户可见文案只留段号与原话，不出现块索引语法和工具名', () => {
+  it('用户可见文案只留用户原话（trim 尾句号），不出现定位前缀与块索引语法', () => {
     const display = buildDocsAgentAskDisplayMessage('方案.docx', DOCS_OP)
-    expect(display).toContain('《方案.docx》第 5–7 段')
+    expect(display).toBe('这段结论太绕，改成三句以内的结论句')
+    // 定位信息（文件名/段号）只进 runtime 的 message，气泡里是噪音。
+    expect(display).not.toContain('方案.docx')
+    expect(display).not.toContain('第 5–7 段')
     expect(display).not.toContain('word_agent')
     expect(display).not.toContain('blockIndex')
-    expect(display.endsWith('。')).toBe(true)
   })
 })
 

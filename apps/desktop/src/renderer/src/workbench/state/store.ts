@@ -185,6 +185,12 @@ interface WorkbenchStore {
   /** 追加一条批注草稿（超过上限时丢掉最旧的）。 */
   addAskDraft(draft: PendingAskDraft): void
   removeAskDraft(id: string): void
+  /**
+   * 改写一条批注草稿的原话（文档内面板/徽章列表的行内编辑）。
+   * message/displayMessage 是主进程按旧原话组好的包，这里同步重写：
+   * displayMessage = 新原话；message 里旧原话原样出现，直接子串替换。
+   */
+  updateAskDraft(id: string, instruction: string): void
   /** 清空某个工作空间的批注草稿（发送成功/用户主动清空）。 */
   clearAskDrafts(workspaceId: string): void
   /** 请求对话面板把当前批注一次性发出。 */
@@ -572,6 +578,23 @@ export const useWorkbenchStore = create<WorkbenchStore>()((set, get) => ({
 
   removeAskDraft(id) {
     set((state) => ({ askDrafts: state.askDrafts.filter((draft) => draft.id !== id) }))
+  },
+
+  updateAskDraft(id, instruction) {
+    const text = instruction.trim()
+    set((state) => ({
+      askDrafts: state.askDrafts.map((draft) => {
+        if (draft.id !== id) return draft
+        // message 是主进程组好的「定位前缀 + 原话」技术指令；原话在其中原样出现，
+        // 替换第一个匹配即可保住定位信息。旧草稿可能没存 instruction（只有组好的
+        // 包）：此时找不到子串，退化为只更新 instruction/displayMessage。
+        const oldText = draft.instruction?.trim()
+        const message = oldText && draft.message.includes(oldText)
+          ? draft.message.replace(oldText, text)
+          : draft.message
+        return { ...draft, instruction: text, displayMessage: text, message }
+      }),
+    }))
   },
 
   clearAskDrafts(workspaceId) {

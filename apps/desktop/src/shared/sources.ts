@@ -101,7 +101,7 @@ import type {
   WorkspaceActivityQuery,
 } from '@nxcore/agent-contract'
 import type { ObsidianVaultApi } from './obsidian'
-import type { OfficeAgentAskEvent, OfficeAgentFileEvent, OsOpenedDocument } from './office'
+import type { OfficeAgentAskEvent, OfficeAgentFileEvent, OfficeAskQueueActionEvent, OsOpenedDocument } from './office'
 import type {
   AgentAuthEnvironmentStatus,
   AgentAuthEventFrame,
@@ -814,14 +814,8 @@ export interface NxcoreDesktopApi {
         kind: string
       }>
     }): void
-    /** 文档内批注面板动作（全部发送 / 移除一条）→ 渲染层队列事实。 */
-    onAskQueueAction(
-      listener: (event: {
-        fileId: string | null
-        workspaceId: string
-        action: { kind: 'send-all' } | { kind: 'remove'; draftId: string }
-      }) => void,
-    ): () => void
+    /** 文档内批注面板动作（全部发送 / 移除 / 改写一条）→ 渲染层队列事实。 */
+    onAskQueueAction(listener: (event: OfficeAskQueueActionEvent) => void): () => void
     /** slides「AI 修改」弹层转发事件（切到对应 Room 并自动发送注入消息）。 */
     onAgentAsk(listener: (event: OfficeAgentAskEvent) => void): () => void
     /** Agent 改写落盘后实例被重开：渲染端需重新上报视口矩形（原生视图换了一个）。 */

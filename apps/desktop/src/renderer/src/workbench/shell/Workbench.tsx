@@ -117,6 +117,7 @@ export function Workbench() {
       }
       if (event.mode === 'queue') {
         // 攒批注不抢焦点：用户还在文档里挑下一处，跳标签会打断他。
+        // 可见性交给对话输入框上方的批注徽章（NoteQueueChip），这里不再 toast。
         state.addAskDraft({
           id: crypto.randomUUID(),
           workspaceId,
@@ -129,12 +130,6 @@ export function Workbench() {
           ...(event.displayMessage ? { displayMessage: event.displayMessage } : {}),
           createdAt: new Date().toISOString(),
         })
-        const count = useWorkbenchStore.getState().askDrafts
-          .filter((draft) => draft.workspaceId === workspaceId).length
-        const spaceName = state.workspaces.find((workspace) => workspace.id === workspaceId)?.name
-        workbenchToast(
-          `已加入批注（${count} 条${spaceName ? ` · ${spaceName}` : ''}），在该空间的对话上方可一次全部发送`,
-        )
         return
       }
       const tab = state.tabs.find(
@@ -181,7 +176,7 @@ export function Workbench() {
     }
   }, [askDrafts])
 
-  /** 文档内批注面板的动作：移除一条 / 全部发送（后者先激活对话标签，再点一次发送）。 */
+  /** 文档内批注面板的动作：移除 / 改写一条 / 全部发送（后者先激活对话标签再触发一次发送）。 */
   useEffect(() => {
     const office = window.nxcore?.office
     if (!office?.onAskQueueAction) return
@@ -189,6 +184,10 @@ export function Workbench() {
       const state = useWorkbenchStore.getState()
       if (event.action.kind === 'remove') {
         state.removeAskDraft(event.action.draftId)
+        return
+      }
+      if (event.action.kind === 'update') {
+        state.updateAskDraft(event.action.draftId, event.action.instruction)
         return
       }
       const tab = state.tabs.find(

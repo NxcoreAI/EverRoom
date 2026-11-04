@@ -16,6 +16,7 @@ import '@/components/agent/AgentPanel.css'
 import { useWorkbenchStore } from '../state/store'
 import { workbenchToast } from '../shell/toast'
 import { ConversationEmpty } from './ConversationEmpty'
+import { NoteQueueChip } from './NoteQueueChip'
 import './conversation.css'
 
 /** 连接失败的「正在连接」提示延迟出现，避免 ready 帧到达前的闪烁。 */
@@ -201,18 +202,39 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
     return () => window.clearTimeout(timer)
   }, [hook.connected, hook.error, hook.sessionId])
 
+  /** 本工作空间的批注草稿（其它空间的留在各自对话里）。 */
+  const workspaceAskDrafts = askDrafts.filter((draft) => draft.workspaceId === workspaceId)
+
+  /**
+   * 待发送批注徽章：挂在输入框（composer / hero 输入框）正上方一行。空队列时
+   * NoteQueueChip 自身返回 null，不占任何空间。
+   */
+  const noteQueueChip = (
+    <NoteQueueChip workspaceId={workspaceId} drafts={workspaceAskDrafts} />
+  )
+
   /**
    * 发送一轮：输入框里的文件附件（文件引擎引用）与挂载目录一起进本轮运行上下文。
    * sendPrompt 的入参是长参数位，这里按位补齐并在末尾追加 mountedDirectories。
+   *
+   * 批注队列自动附带：有未发批注时合并进**本次**发送（prompt 尾部拼 batch.message，
+   * displayPrompt 拼人话）——sendPrompt 在 loading/sending 时直接丢弃（返回 null，
+   * 不排队），连发两次第二条必丢，所以必须单次合并。投递成功（含排队）才清空队列。
    */
   const send = (attachments: AgentAttachmentReference[] = [], mountedDirectories: AgentMountedDirectory[] = []) => {
     const text = draft.trim()
     if ((!text && attachments.length === 0) || !canSend || hook.loading) return
+    // 合并路径总有用户文本（text 为空时只有附件能触发发送，批注跟着下一轮文本走）。
+    const batch = workspaceAskDrafts.length > 0 ? buildAskBatch(workspaceAskDrafts) : null
+    const prompt = batch ? `${text}\n\n${batch.message}` : text
+    const displayPrompt = batch ? `${text}\n\n${batch.displayMessage}` : undefined
     setDraft('')
     setComposerResetKey((key) => key + 1)
+    /** 有在跑的 run 时 sendPrompt 会排队并返回 null——排队也算投递成功，不清回输入框。 */
+    const queuesBehindRun = Boolean(hookRef.current.activeRunId)
     // 首条消息在草稿态发出时由 hook 自动建会话（归属当前 workspaceId）。
     void hook.sendPrompt(
-      text,
+      prompt,
       undefined,
       undefined,
       undefined,
@@ -222,16 +244,18 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
       undefined,
       undefined,
       undefined,
-      undefined,
+      displayPrompt,
       mountedDirectories.length ? mountedDirectories : undefined,
-    ).catch(() => {
+    ).then((runId) => {
+      // 批注已随本轮发出（或已排队）：清掉队列；失败时留在队列里下次再带。
+      if (batch && workspaceId && (runId !== null || queuesBehindRun)) {
+        clearAskDrafts(workspaceId)
+      }
+    }).catch(() => {
       // 发送失败：内容还回输入框；用户已重新输入则不覆盖。
       setDraft((current) => (current ? current : text))
     })
   }
-
-  /** 本工作空间的批注草稿（其它空间的留在各自对话里）。 */
-  const workspaceAskDrafts = askDrafts.filter((draft) => draft.workspaceId === workspaceId)
 
   /**
    * 一次发出所有批注：合成一条消息（技术指令带编号，人话用圈号），投递成功才清空。
@@ -276,42 +300,52 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
     sendAskDrafts()
   }, [askQueueSendNonce, workspaceAskDrafts.length, hook.scopeReady, hook.loading])
 
+  /**
+   * 会话态输入框：AgentChatView 在消息列表底部渲染 {composer}（normal flow）。
+   * 徽章与 AgentComposer 平级放同一个 fragment——**不要**包一层 wrapper div：
+   * AgentComposer 的 ResizeObserver 把 --agent-composer-height 写在
+   * shell.parentElement 上（frame 级消费者都依赖它），多包一层就会写到 wrapper
+   * 上、frame 拿不到。徽章自身 absolute 吸在输入框上方（见 .wb-note-chip）。
+   */
   const composer = (
-    <AgentComposer
-      ref={composerRef}
-      contextSummary=""
-      contextItems={[]}
-      hasSelectedText={false}
-      resetKey={composerResetKey}
-      selectedExternalConversation={null}
-      localAgents={[]}
-      rooms={[]}
-      modelPreference={hook.currentSession?.modelPreference ?? hook.modelPreferenceDefault}
-      modelPreferenceLocked={Boolean(hook.sessionId)}
-      loadModelAvailability={async () => ({ lite: true, primary: true })}
-      onSelectModelPreference={hook.setModelPreferenceDefault}
-      channelAgentId={null}
-      permissionMode={hook.permissionMode}
-      permissionModeAvailable={hook.permissionModeAvailable}
-      onSelectPermissionMode={hook.setSessionPermissionMode}
-      thinkingLevel={hook.sessionId ? hook.currentSession?.thinkingLevel ?? null : hook.thinkingLevelDefault}
-      onSelectThinkingLevel={hook.setSessionThinkingLevel}
-      contextUsage={hook.contextUsage}
-      contextCompacting={hook.contextCompacting}
-      ghostSuggestion={null}
-      queuedSubmissions={hook.queuedSubmissions}
-      onRemoveQueuedSubmission={hook.removeQueuedSubmission}
-      value={draft}
-      active={Boolean(hook.activeRunId)}
-      loading={hook.loading}
-      available={canSend}
-      onChange={setDraft}
-      onSelectExternalConversation={() => undefined}
-      onClearContext={() => undefined}
-      onRemoveContext={() => undefined}
-      onStop={() => void hook.stop()}
-      onSubmit={(payload) => send(payload.attachments, payload.mountedDirectories)}
-    />
+    <>
+      {noteQueueChip}
+      <AgentComposer
+        ref={composerRef}
+        contextSummary=""
+        contextItems={[]}
+        hasSelectedText={false}
+        resetKey={composerResetKey}
+        selectedExternalConversation={null}
+        localAgents={[]}
+        rooms={[]}
+        modelPreference={hook.currentSession?.modelPreference ?? hook.modelPreferenceDefault}
+        modelPreferenceLocked={Boolean(hook.sessionId)}
+        loadModelAvailability={async () => ({ lite: true, primary: true })}
+        onSelectModelPreference={hook.setModelPreferenceDefault}
+        channelAgentId={null}
+        permissionMode={hook.permissionMode}
+        permissionModeAvailable={hook.permissionModeAvailable}
+        onSelectPermissionMode={hook.setSessionPermissionMode}
+        thinkingLevel={hook.sessionId ? hook.currentSession?.thinkingLevel ?? null : hook.thinkingLevelDefault}
+        onSelectThinkingLevel={hook.setSessionThinkingLevel}
+        contextUsage={hook.contextUsage}
+        contextCompacting={hook.contextCompacting}
+        ghostSuggestion={null}
+        queuedSubmissions={hook.queuedSubmissions}
+        onRemoveQueuedSubmission={hook.removeQueuedSubmission}
+        value={draft}
+        active={Boolean(hook.activeRunId)}
+        loading={hook.loading}
+        available={canSend}
+        onChange={setDraft}
+        onSelectExternalConversation={() => undefined}
+        onClearContext={() => undefined}
+        onRemoveContext={() => undefined}
+        onStop={() => void hook.stop()}
+        onSubmit={(payload) => send(payload.attachments, payload.mountedDirectories)}
+      />
+    </>
   )
 
   const standaloneError = hook.error && !conversationState ? hook.error : null
@@ -320,6 +354,7 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
     <div
       className="wb-conversation"
       data-state={loadingView ? 'loading' : conversationState ? 'active' : 'empty'}
+      data-has-note-queue={workspaceAskDrafts.length > 0 ? 'true' : undefined}
     >
       {!bridgeAvailable || !workspaceId ? (
         <div className="wb-conversation-notice" role="status">
@@ -410,6 +445,7 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
           disabled={!canSend || hook.loading}
           onDraftChange={setDraft}
           onSubmit={send}
+          aboveInput={noteQueueChip}
         />
       )}
     </div>

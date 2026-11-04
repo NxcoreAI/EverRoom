@@ -68,10 +68,18 @@ export interface OfficeAskAnchor {
   range?: string
 }
 
-/** 文档侧批注面板发起的动作（全部发送 / 移除一条）→ 渲染层处理。 */
+/**
+ * 文档侧批注面板发起的动作（全部发送 / 移除一条 / 改写一条）→ 渲染层处理。
+ * update：行内编辑保存后的新原话（渲染层改写对应草稿的 instruction 与已组包文案）。
+ */
+export type OfficeAskQueueAction =
+  | { kind: 'send-all' }
+  | { kind: 'remove'; draftId: string }
+  | { kind: 'update'; draftId: string; instruction: string }
+
 export interface OfficeAskQueueActionEvent {
   /** 动作来自哪个文件的文档视图。 */
   fileId: string | null
   workspaceId: string
-  action: { kind: 'send-all' } | { kind: 'remove'; draftId: string }
+  action: OfficeAskQueueAction
 }

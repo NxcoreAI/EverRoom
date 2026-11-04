@@ -59,31 +59,34 @@ function makeUserMessage(): AgentMessage {
   }
 }
 
-/** 与真实中断会话同形状的事件序列（真实库导出样本的最小化）。 */
-function makeEvents(): AgentEvent[] {
+/**
+ * 与真实中断会话同形状的事件序列（真实库导出样本的最小化）。
+ * runId/时间戳可参数化，用于构造「多轮中断」场景。
+ */
+function makeEvents(runId = RUN_ID, startedAt = ISO): AgentEvent[] {
   return [
-    { id: 'ev-1', sessionId: SESSION_ID, runId: RUN_ID, seq: 1, type: 'run.accepted', occurredAt: ISO, payload: {} },
-    { id: 'ev-2', sessionId: SESSION_ID, runId: RUN_ID, seq: 2, type: 'run.started', occurredAt: ISO, payload: {} },
+    { id: `ev-1-${runId}`, sessionId: SESSION_ID, runId, seq: 1, type: 'run.accepted', occurredAt: startedAt, payload: {} },
+    { id: `ev-2-${runId}`, sessionId: SESSION_ID, runId, seq: 2, type: 'run.started', occurredAt: startedAt, payload: {} },
     {
-      id: 'ev-3', sessionId: SESSION_ID, runId: RUN_ID, seq: 3, type: 'reasoning.delta', occurredAt: ISO,
+      id: `ev-3-${runId}`, sessionId: SESSION_ID, runId, seq: 3, type: 'reasoning.delta', occurredAt: startedAt,
       payload: { delta: '先搜索飞书联系人' },
     },
     {
-      id: 'ev-4', sessionId: SESSION_ID, runId: RUN_ID, seq: 4, type: 'tool.started', occurredAt: ISO,
+      id: `ev-4-${runId}`, sessionId: SESSION_ID, runId, seq: 4, type: 'tool.started', occurredAt: startedAt,
       payload: { toolCallId: 'call-1', name: 'search', args: { query: '谢国新' } },
     },
     {
-      id: 'ev-5', sessionId: SESSION_ID, runId: RUN_ID, seq: 5, type: 'tool.completed', occurredAt: ISO,
+      id: `ev-5-${runId}`, sessionId: SESSION_ID, runId, seq: 5, type: 'tool.completed', occurredAt: startedAt,
       payload: { toolCallId: 'call-1', name: 'search', content: [{ type: 'text', text: '命中 3 条' }] },
     },
     {
-      id: 'ev-6', sessionId: SESSION_ID, runId: RUN_ID, seq: 6, type: 'reasoning.delta', occurredAt: ISO,
+      id: `ev-6-${runId}`, sessionId: SESSION_ID, runId, seq: 6, type: 'reasoning.delta', occurredAt: startedAt,
       payload: { delta: '再整理成 PDF' },
     },
     // 关键：没有 message.completed —— run 在输出正文前被 gateway-restarted 打断。
-    { id: 'ev-7', sessionId: SESSION_ID, runId: RUN_ID, seq: 7, type: 'message.started', occurredAt: ISO, payload: {} },
+    { id: `ev-7-${runId}`, sessionId: SESSION_ID, runId, seq: 7, type: 'message.started', occurredAt: startedAt, payload: {} },
     {
-      id: 'ev-8', sessionId: SESSION_ID, runId: RUN_ID, seq: 8, type: 'run.interrupted', occurredAt: ISO,
+      id: `ev-8-${runId}`, sessionId: SESSION_ID, runId, seq: 8, type: 'run.interrupted', occurredAt: startedAt,
       payload: { reason: 'gateway-restarted' },
     },
   ]
@@ -94,11 +97,11 @@ function fakeGateway() {
   const messages = [makeUserMessage()]
   const events = makeEvents()
 
-  const snapshotOf = (): AgentSessionSnapshot => ({
+  const snapshotOf = (messageList: AgentMessage[] = messages): AgentSessionSnapshot => ({
     session,
     participants: [],
     activeRun: null,
-    messages: [...messages],
+    messages: [...messageList],
     lastEventSeq: events.length,
   })
 
@@ -120,7 +123,7 @@ function fakeGateway() {
     updateSession: vi.fn(async () => session),
   }
 
-  return { api }
+  return { api, snapshotOf, session }
 }
 
 type Hook = ReturnType<typeof useAgentSession>
@@ -201,5 +204,55 @@ describe('中断会话恢复', () => {
 
     // ★ 核心断言 4：run 终态时间被还原（卡片不再显示「生成中」）。
     expect(hook.runCompletedAtByRun[RUN_ID]).toBeTruthy()
+  })
+
+  it('多个中断 run 恢复后必须保持「一问一答」交替排版', async () => {
+    // 场景（用户实测）：run 中断 → 用户再发消息 → 又中断 → 反复多次。
+    // 所有 run 都没走到 message.completed，assistant 全靠占位消息重建。
+    // 旧实现把占位消息追加到列表末尾：重进会话看到「user×N 连排、
+    // agent 卡片×N 连排」，像自己连发了几条消息、agent 连跑了几次。
+    const later = (minutes: number) => new Date(Date.parse(ISO) + minutes * 60_000).toISOString()
+    const runs = ['run-a', 'run-b', 'run-c'].map((runId, index) => ({
+      runId,
+      startedAt: later(index * 10),
+      userText: [`第一条：整理 PDF`, `第二条：请继续工作`, `第三条：再继续`][index],
+    }))
+    const allEvents = runs.flatMap(({ runId, startedAt }) => makeEvents(runId, startedAt))
+    const userMessages: AgentMessage[] = runs.map(({ runId, startedAt, userText }) => ({
+      id: `msg-user-${runId}`,
+      sessionId: SESSION_ID,
+      runId,
+      role: 'user',
+      content: userText,
+      createdAt: startedAt,
+    }))
+    gateway.api.getEvents.mockImplementation(async (_sessionId: string, runId: string) =>
+      allEvents.filter((event) => event.runId === runId))
+    gateway.api.getSession.mockImplementation(async () => gateway.snapshotOf(userMessages))
+
+    const probe = harness()
+    await act(async () => {
+      root.render(<probe.Probe />)
+    })
+    await flush()
+
+    const messages = probe.hook.messages
+    // 占位消息全部重建（3 个 run 各一条 assistant）。
+    expect(messages.filter((message) => message.role === 'assistant')).toHaveLength(3)
+    // ★ 交替排版：每条 user 消息的下一条（同 run 视角）必须是 assistant，
+    // 不允许两条 user 消息相邻出现。
+    for (let index = 0; index < messages.length - 1; index += 1) {
+      if (messages[index].role !== 'user') continue
+      expect(
+        messages[index + 1].role,
+        `user "${messages[index].content}" 后面紧跟的必须是 assistant 占位，实际是 ${messages[index + 1].role}`,
+      ).toBe('assistant')
+    }
+    // 顺序总检：user/assistant 严格交替且一一配对到各自 run。
+    expect(messages.map((message) => `${message.role}:${message.runId}`)).toEqual([
+      'user:run-a', 'assistant:run-a',
+      'user:run-b', 'assistant:run-b',
+      'user:run-c', 'assistant:run-c',
+    ])
   })
 })

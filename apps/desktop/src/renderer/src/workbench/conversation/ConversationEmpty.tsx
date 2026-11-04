@@ -1,5 +1,5 @@
 import { ArrowUp, ClipboardList, FileText, LineChart, Presentation } from 'lucide-react'
-import { useEffect, useLayoutEffect, useRef, type KeyboardEvent } from 'react'
+import { useEffect, useLayoutEffect, useRef, type KeyboardEvent, type ReactNode } from 'react'
 
 import { BrandRibbon } from '@/components/ui/BrandRibbon'
 
@@ -15,6 +15,8 @@ export interface ConversationEmptyProps {
   disabled: boolean
   onDraftChange: (value: string) => void
   onSubmit: () => void
+  /** 渲染在大输入框正上方的附加行（待发送批注徽章）：hero 垂直居中，外挂会飘到很上面。 */
+  aboveInput?: ReactNode
 }
 
 interface HeroSuggestion {
@@ -39,6 +41,7 @@ export function ConversationEmpty({
   disabled,
   onDraftChange,
   onSubmit,
+  aboveInput,
 }: ConversationEmptyProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -77,6 +80,8 @@ export function ConversationEmpty({
         </div>
 
         <h1 className="wb-hero-title">EverRoom，我帮你</h1>
+
+        {aboveInput ? <div className="wb-hero-above-input">{aboveInput}</div> : null}
 
         <div className="wb-hero-input" data-disabled={disabled ? 'true' : undefined}>
           <textarea

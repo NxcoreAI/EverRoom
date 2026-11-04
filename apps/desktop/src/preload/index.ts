@@ -35,7 +35,7 @@ import type {
 } from '../shared/search'
 import type { IngestPipelines } from '../shared/ingest'
 import type { McpServersSnapshot } from '../shared/mcp'
-import type { OfficeAgentAskEvent, OfficeAgentFileEvent, OsOpenedDocument } from '../shared/office'
+import type { OfficeAgentAskEvent, OfficeAgentFileEvent, OfficeAskQueueActionEvent, OsOpenedDocument } from '../shared/office'
 import type { SlidesPageImagesStatus } from '../shared/slides'
 import { OIDC_LOGIN_CANCELLED_MESSAGE, OFFICE_PREVIEW_REQUEST_CHANNEL, type AiRelayKeeperEventType, type CloudAccountStatus, type DesktopRequestError, type NxcoreDesktopApi, type OfficePreviewKind, type OfficePreviewRequest, type SubagentSelectionRewriteInput } from '../shared/sources'
 import { isCursorCompletionAgentErrorPayload } from '../shared/cursor-completion'
@@ -257,9 +257,9 @@ const api: NxcoreDesktopApi = {
       toBlockIndex: number
       kind: string
     }> }) => ipcRenderer.send('office:ask-queue-sync', input),
-    /** 文档内批注面板动作（全部发送 / 移除一条）→ 渲染层队列事实。 */
-    onAskQueueAction: (listener: (event: { fileId: string | null; workspaceId: string; action: { kind: 'send-all' } | { kind: 'remove'; draftId: string } }) => void) => {
-      const handler = (_event: Electron.IpcRendererEvent, payload: { fileId: string | null; workspaceId: string; action: { kind: 'send-all' } | { kind: 'remove'; draftId: string } }) => listener(payload)
+    /** 文档内批注面板动作（全部发送 / 移除 / 改写一条）→ 渲染层队列事实。 */
+    onAskQueueAction: (listener: (event: OfficeAskQueueActionEvent) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: OfficeAskQueueActionEvent) => listener(payload)
       ipcRenderer.on('office:ask-queue-action', handler)
       return () => ipcRenderer.removeListener('office:ask-queue-action', handler)
     },

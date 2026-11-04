@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path'
 
 import { BrowserWindow, webContents } from 'electron'
 
-import type { OfficeAgentFileEvent } from '../../shared/office'
+import type { OfficeAgentFileEvent, OfficeAskQueueActionEvent } from '../../shared/office'
 import { describeThesisError } from '../../shared/thesis-error-message'
 import { logDesktop } from '../logging/desktop-logger'
 import {
@@ -241,7 +241,7 @@ export class OfficePreviewRegistry {
   private readonly editStates = new Map<string, EditSyncState>()
   private agentAskForward: ((event: AgentAskForwardEvent) => void) | null = null
   private askQueueActionForward:
-    | ((event: { fileId: string | null; workspaceId: string; action: { kind: 'send-all' } | { kind: 'remove'; draftId: string } }) => void)
+    | ((event: OfficeAskQueueActionEvent) => void)
     | null = null
   private thesisBridge: OfficeThesisPanelBridge | null = null
   /** 未打开文件的后台 Word 编辑会话（独立于页签实例，不进 instances）。 */
@@ -281,7 +281,7 @@ export class OfficePreviewRegistry {
   /** 「AI 修改」转发出口：slides 弹层提交 → wcId 反查 Room → 注入 Room 对话框。 */
   setAskQueueActionForward(
     forward:
-      | ((event: { fileId: string | null; workspaceId: string; action: { kind: 'send-all' } | { kind: 'remove'; draftId: string } }) => void)
+      | ((event: OfficeAskQueueActionEvent) => void)
       | null,
   ): void {
     this.askQueueActionForward = forward

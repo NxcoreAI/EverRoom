@@ -5,6 +5,8 @@ import { join } from 'node:path'
 import { app } from 'electron'
 import type { BrowserWindow, WebContents, WebContentsView } from 'electron'
 
+import type { OfficeAskQueueAction } from '../../shared/office'
+
 export interface GenOfficeAgentToolCall {
   id: string
   name: string
@@ -82,10 +84,13 @@ export interface GenOfficeDocsRuntime {
     toBlockIndex: number
     kind: string
   }>): void
-  /** 文档内批注面板的动作（全部发送 / 移除一条）→ 宿主。 */
+  /**
+   * 文档内批注面板的动作（全部发送 / 移除 / 改写一条）→ 宿主。
+   * update 分支由 docs 侧补充；宿主只透传（跨进程形状见 shared/office.ts）。
+   */
   setDocsAskQueueActionHook(
     hook:
-      | ((wcId: number, action: { kind: 'send-all' } | { kind: 'remove'; draftId: string }) => void)
+      | ((wcId: number, action: OfficeAskQueueAction) => void)
       | null,
   ): void
   /**
