@@ -44,7 +44,6 @@ function context(activeFile?: { fileId: string; title: string; kind: "docx" | "s
   return {
     agentSessionId: "session-1",
     runId: "run-1",
-    roomId: null,
     ...(activeFile ? { activeFile } : {}),
   };
 }

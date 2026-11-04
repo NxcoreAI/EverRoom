@@ -62,6 +62,8 @@ export default defineConfig({
       rollupOptions: {
         input: {
           index: resolve('src/renderer/index.html'),
+          // Agent 调试面板的独立窗口入口（主进程 openAgentDebugWindow 装载）
+          'agent-debug': resolve('src/renderer/debug.html'),
         },
       },
     },
@@ -76,6 +78,9 @@ export default defineConfig({
     resolve: {
       dedupe: ['react', 'react-dom'],
       alias: {
+        // everoffice UI 迁移：复制来的组件用 '@/shared/*' 引用主进程/渲染层共享类型，
+        // 解析到真实 shared 目录（与 tsconfig paths 对齐）。
+        '@/shared': resolve('src/shared'),
         '@': resolve('src/renderer/src'),
       },
     },

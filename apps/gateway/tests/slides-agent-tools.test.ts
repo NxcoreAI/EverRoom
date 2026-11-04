@@ -25,7 +25,6 @@ function runInput(phase?: string): StartRuntimeRunInput {
     runtimeSessionRef: null,
     prompt: "prompt",
     pageLabel: "Subagent: Slides Planner",
-    roomId: "room-1",
     toolsEnabled: true,
     ...(phase ? { runtimeMetadata: { subagentInput: { phase } } } : {}),
   };
@@ -98,6 +97,85 @@ describe("createSlidesBuilderAgentTools（slides-builder 工具面）", () => {
 
   it("空依赖时返回空数组", () => {
     expect(createSlidesBuilderAgentTools({ documentTools: [] })).toEqual([]);
+  });
+});
+
+describe("createSlidesPlannerAgentTools（网关预取协同）", () => {
+  it("网关预取在 sourceDocuments 里的文档：planner 再读直接跳过，不重复占上下文", async () => {
+    let executed = 0;
+    const documentRead: PiAgentRuntimeTool = {
+      name: "document_read",
+      label: "read",
+      description: "read",
+      parameters: { type: "object", properties: {}, additionalProperties: false },
+      execute: async () => {
+        executed += 1;
+        return { content: JSON.stringify({ markdown: "正文" }) };
+      },
+    };
+    const tools = createSlidesPlannerAgentTools({
+      documentTools: [documentRead],
+      webSearchTools: [],
+    });
+    const wrapped = tools.find((item) => item.name === "document_read")!;
+    const prefetched = {
+      ...runInput("draft"),
+      runtimeMetadata: {
+        subagentInput: {
+          phase: "draft",
+          sourceDocuments: [
+            { documentId: "doc-prefetched", title: "大纲", version: 1, markdown: "正文", markdownTotalCharacters: 2 },
+          ],
+        },
+      },
+    };
+    const skipped = JSON.parse((await wrapped.execute(prefetched, { documentId: "doc-prefetched" })).content) as {
+      skipped?: boolean;
+      reason?: string;
+    };
+    expect(skipped.skipped).toBe(true);
+    expect(skipped.reason).toContain("sourceDocuments");
+    expect(executed).toBe(0);
+
+    // 未预取的文档仍正常读取。
+    const read = JSON.parse((await wrapped.execute(prefetched, { documentId: "doc-other" })).content) as {
+      markdown?: string;
+    };
+    expect(read.markdown).toBe("正文");
+    expect(executed).toBe(1);
+
+    // 预取时被预算截断的文档不拦：planner 还需要用 offset/limit 读剩余部分。
+    const truncatedPrefetch = {
+      ...runInput("draft"),
+      runtimeMetadata: {
+        subagentInput: {
+          phase: "draft",
+          sourceDocuments: [{
+            documentId: "doc-truncated",
+            title: "超长文档",
+            version: 1,
+            markdown: "前 40k",
+            markdownTotalCharacters: 90_000,
+            truncated: true,
+          }],
+        },
+      },
+    };
+    await wrapped.execute(truncatedPrefetch, { documentId: "doc-truncated", offset: 40_000 });
+    expect(executed).toBe(2);
+  });
+
+  it("分批编排时预热工具直接跳过，不把无效 token 变成失败轮次", async () => {
+    const tools = createSlidesPlannerAgentTools({ documentTools: [], webSearchTools: [] });
+    const prewarm = tools.find((item) => item.name === "slides_image_prewarm")!;
+    const input = {
+      ...runInput("arrange"),
+      runtimeMetadata: { subagentInput: { phase: "arrange", arrangeBatch: { index: 0 } } },
+    };
+    const result = JSON.parse((await prewarm.execute(input, { prewarmToken: "none", pageIndex: 1, imagePrompt: "画面" })).content) as {
+      skipped?: boolean;
+    };
+    expect(result.skipped).toBe(true);
   });
 });
 

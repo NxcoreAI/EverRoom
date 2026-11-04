@@ -1,0 +1,600 @@
+/* Agent 调试覆盖层（极简）：单色 + 发丝线 + 等宽正文。
+   全部限定在 .op-agent-debug-view 下，沿用 .op-root 的 Apple token。 */
+
+.op-agent-debug-view {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+}
+
+.op-agent-debug-view-bar {
+  display: flex;
+  height: 48px;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px 0 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--chrome);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  -webkit-app-region: drag;
+}
+
+html[data-desktop='darwin'] .op-agent-debug-view-bar {
+  /* 系统红绿灯占 x=16..68，与标签栏/设置页保持一致让出到 96px */
+  padding-left: 96px;
+}
+
+.op-agent-debug-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 12.5px;
+  -webkit-app-region: no-drag;
+}
+
+.op-agent-debug-back:hover { background: var(--hover); }
+
+.op-agent-debug-title {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.op-agent-debug-subtitle {
+  margin-left: 4px;
+  color: var(--subtle);
+  font-size: 11.5px;
+}
+
+.op-agent-debug-view-actions {
+  display: flex;
+  align-items: center;
+  margin-left: auto;
+  -webkit-app-region: no-drag;
+}
+
+.op-agent-debug-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+/* 左栏：Agent 列表 */
+.op-agent-debug-rail {
+  width: 236px;
+  flex: 0 0 236px;
+  padding: 12px 8px 24px;
+  border-right: 1px solid var(--border);
+  overflow: auto;
+  background: var(--bg);
+}
+
+.op-agent-debug-rail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 10px 8px;
+  color: var(--subtle);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+}
+
+.op-agent-debug-count {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+}
+
+.op-agent-debug-group { margin-top: 14px; }
+
+.op-agent-debug-group-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px 6px;
+  color: var(--subtle);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+}
+
+.op-agent-debug-group.is-live .op-agent-debug-group-title { color: var(--muted); }
+
+.op-agent-debug-live-dot {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.op-agent-debug-item {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 12.5px;
+  text-align: left;
+}
+
+.op-agent-debug-item:hover { background: var(--hover); }
+
+.op-agent-debug-item.is-active {
+  background: var(--hover);
+  box-shadow: inset 2px 0 0 var(--text);
+}
+
+.op-agent-debug-item-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.op-agent-debug-item-meta {
+  flex: 0 0 auto;
+  color: var(--subtle);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.op-agent-debug-dot {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 6px;
+  border-radius: 50%;
+  background: var(--border-strong);
+}
+
+.op-agent-debug-dot.is-running { background: var(--accent); }
+.op-agent-debug-dot.is-error { background: var(--danger); }
+
+/* 右栏：详情 */
+.op-agent-debug-main {
+  flex: 1;
+  min-width: 0;
+  padding: 22px 28px 64px;
+  overflow: auto;
+  background: var(--bg);
+}
+
+.op-agent-debug-head h2 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  word-break: break-word;
+}
+
+.op-agent-debug-desc {
+  max-width: 760px;
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
+.op-agent-debug-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.op-agent-debug-meta b {
+  color: var(--subtle);
+  font-weight: 400;
+}
+
+.op-agent-debug-state { color: var(--text); }
+
+/* 头部「运行中」实时行 */
+.op-agent-debug-live {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.op-agent-debug-live span:nth-child(2) { color: var(--text); }
+
+/* 使用记录总量 */
+.op-agent-debug-usage-totals {
+  margin: 0 0 10px;
+  color: var(--subtle);
+  font-size: 11.5px;
+}
+
+.op-agent-debug-tabs {
+  display: flex;
+  gap: 18px;
+  margin-top: 18px;
+  border-bottom: 1px solid var(--border);
+}
+
+.op-agent-debug-tabs button {
+  margin-bottom: -1px;
+  padding: 0 0 9px;
+  border: none;
+  border-bottom: 1.5px solid transparent;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12.5px;
+}
+
+.op-agent-debug-tabs button:hover { color: var(--text); }
+
+.op-agent-debug-tabs button.is-active {
+  border-bottom-color: var(--text);
+  color: var(--text);
+}
+
+.op-agent-debug-content {
+  max-width: 860px;
+  padding-top: 18px;
+}
+
+.op-agent-debug-section { margin-bottom: 26px; }
+
+.op-agent-debug-section-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.op-agent-debug-section-head h3 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.op-agent-debug-section-head span {
+  color: var(--subtle);
+  font-size: 11px;
+}
+
+/* 键值表 */
+.op-agent-debug-kv {
+  margin: 0;
+  border-top: 1px solid var(--border);
+}
+
+.op-agent-debug-kv > div {
+  display: flex;
+  gap: 16px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 12.5px;
+}
+
+.op-agent-debug-kv dt {
+  flex: 0 0 160px;
+  color: var(--muted);
+}
+
+.op-agent-debug-kv dd {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  word-break: break-word;
+}
+
+.op-agent-debug-inline-code {
+  color: var(--muted);
+  font-family: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  word-break: break-all;
+}
+
+.op-agent-debug-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.op-agent-debug-chips span {
+  padding: 2px 7px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--subtle);
+  font-size: 11px;
+}
+
+.op-agent-debug-chips span.is-on {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+/* 代码块 */
+.op-agent-debug-pre {
+  max-height: 560px;
+  margin: 0;
+  padding: 14px 16px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-alt);
+  color: var(--text);
+  font-family: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.op-agent-debug-pre.is-compact {
+  max-height: 360px;
+  padding: 10px 12px;
+  font-size: 11px;
+}
+
+.op-agent-debug-lines {
+  margin: 0;
+  padding-left: 16px;
+  font-size: 12.5px;
+  line-height: 1.7;
+}
+
+.op-agent-debug-lines li { word-break: break-word; }
+
+/* 上下文块 */
+.op-agent-debug-block {
+  margin-bottom: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.op-agent-debug-block > summary {
+  display: flex;
+  list-style: none;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  cursor: pointer;
+  font-size: 12.5px;
+}
+
+.op-agent-debug-block > summary::-webkit-details-marker { display: none; }
+
+.op-agent-debug-block-title { flex: 1; }
+
+.op-agent-debug-tag {
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--subtle);
+  font-size: 10.5px;
+}
+
+.op-agent-debug-block-body {
+  padding: 0 12px 12px;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.op-agent-debug-block-body p { margin: 0 0 8px; }
+
+.op-agent-debug-skill { margin-top: 10px; }
+
+.op-agent-debug-skill-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.op-agent-debug-skill-head code {
+  font-family: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+}
+
+.op-agent-debug-skill-head span {
+  color: var(--subtle);
+  font-size: 11px;
+}
+
+.op-agent-debug-schema { margin-top: 12px; }
+
+.op-agent-debug-schema > span {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+/* 工具列表 */
+.op-agent-debug-tools {
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--border);
+  list-style: none;
+}
+
+.op-agent-debug-tools li {
+  display: flex;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.op-agent-debug-tools code {
+  flex: 0 0 190px;
+  font-family: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  word-break: break-all;
+}
+
+.op-agent-debug-tools > li > div { flex: 1; min-width: 0; }
+
+.op-agent-debug-tool-label {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.op-agent-debug-tools p {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+/* 运行记录 */
+.op-agent-debug-runs {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.op-agent-debug-runs li {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.op-agent-debug-run-main {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.op-agent-debug-run-task {
+  min-width: 0;
+  font-size: 12.5px;
+  word-break: break-word;
+}
+
+.op-agent-debug-run-time {
+  flex: 0 0 auto;
+  color: var(--subtle);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.op-agent-debug-run-meta {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.op-agent-debug-run-status.is-running { color: var(--accent); }
+.op-agent-debug-run-status.is-failed { color: var(--danger); }
+
+/* 外部连接调试数据 */
+.op-agent-debug-subhead {
+  margin: 14px 0 6px;
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.op-agent-debug-debug-list {
+  margin: 0 0 6px;
+  padding: 0;
+  border-top: 1px solid var(--border);
+  list-style: none;
+}
+
+.op-agent-debug-debug-list li {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+
+.op-agent-debug-debug-list code {
+  flex: 1;
+  min-width: 0;
+  font-family: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  word-break: break-all;
+}
+
+.op-agent-debug-debug-list span {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.op-agent-debug-debug-list small {
+  flex: 0 0 auto;
+  color: var(--subtle);
+  font-size: 10.5px;
+}
+
+/* 状态文案 */
+.op-agent-debug-hint {
+  margin: 0;
+  padding: 8px 10px;
+  color: var(--subtle);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.op-agent-debug-error {
+  margin: 0;
+  padding: 8px 0;
+  color: var(--danger);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.op-agent-debug-empty-inline {
+  margin: 0;
+  color: var(--subtle);
+  font-size: 12px;
+}
+
+.op-agent-debug-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 48px 0;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.op-agent-debug-empty p { margin: 0; }
+.op-agent-debug-empty span { color: var(--subtle); font-size: 11.5px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .op-agent-debug-view *,
+  .op-agent-debug-view *::before,
+  .op-agent-debug-view *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}

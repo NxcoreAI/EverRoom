@@ -5,6 +5,8 @@ import type {
   RuntimeRun,
   StartRuntimeRunInput,
 } from "@nxcore/agent-runtime";
+import type { AgentDebugTraceStore } from "../agent-debug/trace-store.js";
+import { traceRuntime } from "../agent-debug/instrument.js";
 
 export const BUILTIN_AGENT_IDS = {
   primary: "main",
@@ -14,7 +16,6 @@ export const BUILTIN_AGENT_IDS = {
   lite: "main-lite",
   cursorCompletion: "cursor-completion",
   webSearch: "web-search",
-  connectorMapper: "connector-mapper",
 } as const;
 
 export type BuiltinAgentId = (typeof BUILTIN_AGENT_IDS)[keyof typeof BUILTIN_AGENT_IDS];
@@ -132,6 +133,8 @@ function trackedRuntime(runtime: AgentRuntime, activity: AgentRuntimeActivity): 
 export class AgentResolver {
   private readonly registrations = new Map<string, AgentRegistration>();
 
+  constructor(private readonly agentDebugStore?: AgentDebugTraceStore) {}
+
   register(
     definition: AgentDefinition,
     createRuntime: () => AgentRuntime,
@@ -156,7 +159,7 @@ export class AgentResolver {
   resolve(agentId: string): AgentRuntime {
     const registration = this.registrations.get(agentId);
     if (!registration) throw new Error(`Agent is not registered: ${agentId}`);
-    registration.runtime ??= trackedRuntime(registration.createRuntime(), registration.activity);
+    registration.runtime ??= this.wrapRuntime(registration);
     return registration.runtime;
   }
 
@@ -164,8 +167,24 @@ export class AgentResolver {
     const registration = this.registrations.get(agentId);
     if (!registration) throw new Error(`Agent is not registered: ${agentId}`);
     const previous = registration.runtime;
-    registration.runtime = trackedRuntime(registration.createRuntime(), registration.activity);
+    registration.runtime = this.wrapRuntime(registration);
     return { previous, current: registration.runtime };
+  }
+
+  /**
+   * Agent 调试 trace 接入点。developer 类型 Agent 的 runtime 来自
+   * SubagentRuntimeManager.acquire()（那边已包 trace），这里跳过以免同一 run 双记。
+   */
+  private wrapRuntime(registration: AgentRegistration): AgentRuntime {
+    const runtime = trackedRuntime(registration.createRuntime(), registration.activity);
+    const { definition } = registration;
+    if (!this.agentDebugStore || definition.kind === "developer") return runtime;
+    return traceRuntime(runtime, this.agentDebugStore, {
+      agentId: definition.id,
+      agentName: definition.name,
+      agentKind: "builtin",
+      description: definition.description,
+    });
   }
 
   getDefinition(agentId: string): AgentDefinition {

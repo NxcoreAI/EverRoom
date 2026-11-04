@@ -13,7 +13,7 @@
       "type": "string",
       "minLength": 1,
       "maxLength": 16000,
-      "description": "User instruction for this slides task; always the highest priority."
+      "description": "User goal and requirements for this slides task, within the system and schema contract. In arrange, the confirmed draft defines the content boundary."
     },
     "roomId": {
       "type": "string",
@@ -26,12 +26,6 @@
       "maxLength": 120,
       "description": "Optional room title for context framing."
     },
-    "prewarmToken": {
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 200,
-      "description": "arrange only: image-prewarm token injected by the gateway when image generation is available. Copy it verbatim into slides_image_prewarm for pages with an imagePrompt."
-    },
     "title": {
       "type": "string",
       "maxLength": 120,
@@ -40,7 +34,7 @@
     "outline": {
       "type": "array",
       "minItems": 1,
-      "maxItems": 24,
+      "maxItems": 32,
       "items": {
         "type": "string",
         "minLength": 1,
@@ -51,41 +45,40 @@
     "draftPages": {
       "type": "array",
       "minItems": 1,
-      "maxItems": 24,
+      "maxItems": 32,
       "items": {
         "type": "object",
         "properties": {
           "title": {
             "type": "string",
-            "maxLength": 80
+            "maxLength": 8000
           },
           "points": {
             "type": "array",
-            "maxItems": 8,
+            "maxItems": 128,
             "items": {
               "type": "string",
-              "maxLength": 200
+              "maxLength": 8000
             }
           },
           "data": {
             "type": "string",
-            "maxLength": 2000
+            "maxLength": 8000
           },
           "materialHints": {
             "type": "string",
-            "maxLength": 300
+            "maxLength": 8000
           },
           "notes": {
             "type": "string",
-            "maxLength": 300
+            "maxLength": 16000
           }
         },
         "required": [
           "title"
         ],
         "additionalProperties": false
-      },
-      "description": "arrange only: pages parsed back from the user-confirmed draft document (their edits are authoritative)."
+      }
     },
     "referenceStyle": {
       "type": "object",
@@ -100,23 +93,287 @@
         "minLength": 1,
         "maxLength": 80
       },
-      "description": "Reference deck section titles; cover the main sections without dropping them."
+      "description": "Reference deck section titles used as draft coverage guidance; related or repeated sections may be merged. In arrange, preserve the confirmed draft's pages and order."
     },
     "targetPages": {
       "type": "integer",
       "minimum": 4,
-      "maximum": 24,
-      "description": "Desired page count; overrides reference pageBudget."
+      "maximum": 32,
+      "description": "Desired draft page count; overrides reference pageBudget. An explicit per-page outline takes precedence on conflict. In arrange, preserve the confirmed draft's page count."
+    },
+    "sourceDocuments": {
+      "type": "array",
+      "maxItems": 2,
+      "description": "draft only: gateway-prefetched Room document content referenced by the user. Use markdown directly as source text; do not call document read tools for these documentIds. truncated=true means only the first markdownTotalCharacters chars are included.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "documentId",
+          "title",
+          "version",
+          "markdown",
+          "markdownTotalCharacters"
+        ],
+        "properties": {
+          "documentId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "markdown": {
+            "type": "string",
+            "maxLength": 40000
+          },
+          "markdownTotalCharacters": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        }
+      }
     },
     "deckStyle": {
       "type": "object",
       "additionalProperties": true,
       "description": "Minimal design brief from the confirmed style card (composition / darkCover / motif / palette). Use it for material choice and imagePrompt light-dark base; do not write hex colors into copy."
+    },
+    "contentMode": {
+      "type": "string",
+      "const": "semantic-v3"
+    },
+    "arrangeBatch": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "arrange only: present when the confirmed deck is arranged in batches. draftPages/sources then cover only this batch; preserve their order and output only these pages. Do not add, drop, or reorder pages.",
+      "required": [
+        "index",
+        "total",
+        "startPageIndex",
+        "pageCount",
+        "deckTitle"
+      ],
+      "properties": {
+        "index": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 31
+        },
+        "total": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "startPageIndex": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 31
+        },
+        "pageCount": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "deckTitle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "previousPageTitles": {
+          "type": "array",
+          "maxItems": 2,
+          "items": {
+            "type": "string",
+            "maxLength": 80
+          }
+        },
+        "nextPageTitle": {
+          "type": "string",
+          "maxLength": 80
+        }
+      }
+    },
+    "materialHits": {
+      "type": "array",
+      "maxItems": 32,
+      "description": "arrange only: gateway-prefetched local material hits per page. pageIndex is 0-based in draftPages order (prewarm pageIndex is 1-based). Prefer these refs for materials.url / image assetRef; do not call material search yourself.",
+      "items": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "pageIndex",
+          "query",
+          "hits"
+        ],
+        "properties": {
+          "pageIndex": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 31
+          },
+          "query": {
+            "type": "string",
+            "maxLength": 160
+          },
+          "hits": {
+            "type": "array",
+            "maxItems": 6,
+            "items": {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "ref",
+                "kind",
+                "desc",
+                "meta"
+              ],
+              "properties": {
+                "ref": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 500
+                },
+                "kind": {
+                  "type": "string",
+                  "maxLength": 40
+                },
+                "desc": {
+                  "type": "string",
+                  "maxLength": 120
+                },
+                "meta": {
+                  "type": "string",
+                  "maxLength": 48
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "sources": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 512,
+      "items": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "pageId",
+          "kind",
+          "value",
+          "mustShow"
+        ],
+        "properties": {
+          "id": {
+            "minLength": 1,
+            "maxLength": 128,
+            "type": "string"
+          },
+          "pageId": {
+            "minLength": 1,
+            "maxLength": 128,
+            "type": "string"
+          },
+          "kind": {
+            "minLength": 1,
+            "maxLength": 128,
+            "type": "string"
+          },
+          "value": {
+            "minLength": 1,
+            "maxLength": 8000,
+            "type": "string"
+          },
+          "mustShow": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "prewarmToken": {
+      "type": "string",
+      "minLength": 8,
+      "maxLength": 200,
+      "description": "Non-batched arrange only: image-prewarm token injected by the gateway. Copy it verbatim into slides_image_prewarm for pages with an imagePrompt. Batched arrange never receives this field; the gateway handles prewarm."
     }
   },
   "required": [
     "instruction",
     "roomId"
   ],
-  "additionalProperties": false
+  "additionalProperties": false,
+  "$defs": {},
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "phase": {
+            "const": "arrange"
+          }
+        },
+        "required": [
+          "phase"
+        ]
+      },
+      "then": {
+        "required": [
+          "contentMode",
+          "sources",
+          "draftPages"
+        ],
+        "properties": {
+          "draftPages": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 32,
+            "items": {
+              "type": "object",
+              "properties": {
+                "title": {
+                  "type": "string",
+                  "maxLength": 8000
+                },
+                "points": {
+                  "type": "array",
+                  "maxItems": 128,
+                  "items": {
+                    "type": "string",
+                    "maxLength": 8000
+                  }
+                },
+                "data": {
+                  "type": "string",
+                  "maxLength": 8000
+                },
+                "materialHints": {
+                  "type": "string",
+                  "maxLength": 8000
+                },
+                "notes": {
+                  "type": "string",
+                  "maxLength": 16000
+                }
+              },
+              "required": [
+                "title"
+              ],
+              "additionalProperties": false
+            }
+          }
+        }
+      }
+    }
+  ]
 }

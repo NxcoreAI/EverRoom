@@ -1,0 +1,176 @@
+.gantt {
+  display: grid;
+}
+
+.gantt-toggle {
+  height: 22px;
+  padding: 0 var(--sp-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font-size: var(--fs-label);
+  color: var(--ink-2);
+  background: var(--surface);
+}
+
+.gantt-toggle:hover {
+  border-color: var(--line-strong);
+  color: var(--ink);
+}
+
+.gantt-toggle.is-on {
+  background: var(--surface-3);
+  color: var(--ink);
+  border-color: var(--line-strong);
+}
+
+.gantt-head,
+.gantt-row {
+  display: grid;
+  grid-template-columns: 132px minmax(0, 1fr) 64px;
+  align-items: center;
+  gap: var(--sp-3);
+}
+
+.gantt-head {
+  padding-bottom: 2px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.gantt-col-meta {
+  text-align: right;
+}
+
+.gantt-row {
+  width: 100%;
+  height: 26px;
+  text-align: left;
+  padding: 0 var(--sp-1);
+  border-bottom: 1px solid var(--line-soft);
+  border-radius: 2px;
+}
+
+.gantt-row:hover {
+  background: var(--surface-2);
+}
+
+.gantt-row[data-selected] {
+  background: var(--accent-soft);
+}
+
+.gantt-row[data-future] {
+  opacity: 0.38;
+}
+
+.gantt-row-tool {
+  height: 22px;
+}
+
+.gantt-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.gantt-round {
+  font-size: var(--fs-small);
+  color: var(--ink);
+}
+
+.gantt-tool-name {
+  font-size: var(--fs-label);
+  color: var(--ink-3);
+  padding-left: var(--sp-4);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gantt-flag {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--err);
+  flex: 0 0 auto;
+}
+
+.gantt-flag-live {
+  background: var(--ok);
+}
+
+.gantt-track {
+  position: relative;
+  height: 14px;
+}
+
+.gantt-bar {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  min-width: 2px;
+  border-radius: 1px;
+  background: var(--wait);
+}
+
+.gantt-bar[data-kind='llm'] {
+  /* 回合条 = 该回合吃掉的墙钟：中性灰，生成片段才用蓝色，避免整行都像「模型时间」 */
+  background: var(--wait);
+}
+
+.gantt-bar[data-kind='tool'] {
+  background: var(--tool);
+  opacity: 0.9;
+}
+
+.gantt-bar[data-slow] {
+  background: var(--warn);
+  opacity: 0.55;
+}
+
+.gantt-bar[data-fail] {
+  background: var(--err);
+  opacity: 0.9;
+}
+
+.gantt-gen {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  min-width: 1.5px;
+  background: var(--accent);
+}
+
+.gantt-cursor {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 1px;
+  background: var(--ink-4);
+  pointer-events: none;
+}
+
+.gantt-duration {
+  text-align: right;
+  font-size: var(--fs-label);
+  color: var(--ink-2);
+}
+
+.gantt-more {
+  margin-top: var(--sp-2);
+  height: 24px;
+  font-size: var(--fs-label);
+  color: var(--accent);
+  text-align: left;
+  padding-left: 2px;
+}
+
+.gantt-more:hover {
+  text-decoration: underline;
+}
+
+.gantt-empty {
+  padding: var(--sp-4) 0;
+  font-size: var(--fs-small);
+  color: var(--ink-3);
+}

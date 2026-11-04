@@ -423,14 +423,17 @@ describe("引擎硬闸镜像（真机 2026-10-15 第 4 页事故回归）", () =
     expect(result.spec.elements.length).toBeGreaterThan(0);
   });
 
-  it("文本含 emoji 报 emoji 缺陷", () => {
-    const result = compileTree(tree({
-      direction: "column", children: [
-        { type: "text", variant: "body", text: "要点一 🎉 与要点二" },
-      ],
-    }), CONTRACT);
-    const defects = measureDefects(result, CONTRACT);
-    expect(defects.some((d) => d.type === "emoji")).toBe(true);
+  it("只把引擎会拒的 emoji 判成 emoji，箭头与裸符号是合法文本", () => {
+    const emojiDefects = (text: string) => measureDefects(compileTree(tree({
+      direction: "column", children: [{ type: "text", variant: "body", text }],
+    }), CONTRACT), CONTRACT).filter((d) => d.type === "emoji");
+    expect(emojiDefects("要点一 🎉 与要点二")).toHaveLength(1);
+    // 2026-10-24 死锁：必留内容里的「→」被旧正则（2190–21FF）误判 emoji，validate 永远不收敛。
+    expect(emojiDefects("Road／Gravel → XC／MTB／Folding")).toHaveLength(0);
+    // 引擎只拒 pictograph 与 VS16；裸 ★/●/▲ 等文本字形合法。
+    expect(emojiDefects("★ 三条要点 ●")).toHaveLength(0);
+    expect(emojiDefects("⭐ 评级")).toHaveLength(0);
+    expect(emojiDefects("⭐️ 评级")).toHaveLength(1);
   });
 
   it("编译产物文本墨迹两两重叠时报 overlap 缺陷", () => {

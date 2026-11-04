@@ -8,8 +8,6 @@ interface DocumentReadReceipt {
   token: string;
   sessionId: string;
   runId: string;
-  /** 工作区级文稿为 null（P0-2d）。 */
-  roomId: string | null;
   documentId: string;
   version: number;
   blockIds: ReadonlySet<string>;
@@ -39,7 +37,6 @@ export class DocumentReadAuthority {
       token,
       sessionId: context.agentSessionId,
       runId: context.runId,
-      roomId: context.roomId,
       documentId,
       version,
       blockIds: new Set(blockIds),
@@ -57,10 +54,10 @@ export class DocumentReadAuthority {
     this.prune();
     this.assertReadable(documentId);
     const receipt = this.receipts.get(token);
+    // Phase 2i 后无 Room 维度：凭证 scope 只按 sessionId + runId 比对。
     if (!receipt
       || receipt.sessionId !== context.agentSessionId
       || receipt.runId !== context.runId
-      || receipt.roomId !== context.roomId
       || receipt.documentId !== documentId
       || receipt.version !== version) {
       throw new DocumentServiceError(
@@ -88,7 +85,6 @@ export class DocumentReadAuthority {
     const receipt = [...this.receipts.values()].reverse().find((candidate) =>
       candidate.sessionId === context.agentSessionId
       && candidate.runId === context.runId
-      && candidate.roomId === context.roomId
       && candidate.documentId === documentId
       && candidate.version === version);
     if (!receipt) {
@@ -108,15 +104,14 @@ export class DocumentReadAuthority {
   }
 
   /** 本 run 读过的文档（按 documentId 去重，保留最新版本）——供 document_draft 兜底推断素材来源。 */
-  documentsReadByRun(runId: string): Array<{ roomId: string | null; documentId: string; version: number }> {
+  documentsReadByRun(runId: string): Array<{ documentId: string; version: number }> {
     this.prune();
-    const seen = new Map<string, { roomId: string | null; documentId: string; version: number }>();
+    const seen = new Map<string, { documentId: string; version: number }>();
     for (const receipt of this.receipts.values()) {
       if (receipt.runId !== runId) continue;
       const existing = seen.get(receipt.documentId);
       if (!existing || existing.version < receipt.version) {
         seen.set(receipt.documentId, {
-          roomId: receipt.roomId,
           documentId: receipt.documentId,
           version: receipt.version,
         });

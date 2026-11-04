@@ -110,6 +110,55 @@ const LocalAgentTarget = Type.Object({
   }, { additionalProperties: false }),
 });
 
+/** AgentService 的工作区入参校验错误 → 400 响应体（沿用其余路由的 error/message 风格）。 */
+function workspaceValidationErrorPayload(error: unknown): { error: string; message: string } | null {
+  if (!(error instanceof Error)) return null;
+  switch (error.message) {
+    case "agent_workspace_name_required":
+      return { error: "invalid_workspace_name", message: "Workspace name is required" };
+    case "agent_workspace_path_invalid":
+      return { error: "invalid_workspace_path", message: "Workspace path must be an absolute path" };
+    case "agent_workspace_last_opened_at_invalid":
+      return { error: "invalid_last_opened_at", message: "lastOpenedAt must be an ISO timestamp" };
+    case "agent_workspace_description_invalid":
+      return { error: "invalid_workspace_description", message: "Workspace description must be a string or null" };
+    case "agent_workspace_description_too_long":
+      return {
+        error: "invalid_workspace_description",
+        message: "Workspace description must be at most 2000 characters",
+      };
+    // 项目空间目录（modules/workspace-layout）：目录落盘失败要能被客户端分辨。
+    case "space_marker_conflict":
+      return {
+        error: "space_marker_conflict",
+        message: "The target directory already belongs to another project space",
+      };
+    case "space_marker_exists":
+      return {
+        error: "space_marker_exists",
+        message: "The target directory is already a project space (.everoffice/space.json)",
+      };
+    case "agent_workspace_goals_invalid":
+    case "agent_workspace_goals_too_many":
+    case "agent_workspace_goal_empty":
+    case "agent_workspace_goal_too_long":
+      return {
+        error: "invalid_workspace_goals",
+        message: "Workspace goals must be at most 12 non-empty strings, each at most 200 characters",
+      };
+    default:
+      return null;
+  }
+}
+
+/** 工作区元数据（描述 + 目标）的共享 JSON schema，POST/PATCH 共用。 */
+const WorkspaceMetaSchema = {
+  description: Type.Optional(Type.Union([Type.String({ maxLength: 2_000 }), Type.Null()])),
+  goals: Type.Optional(Type.Array(Type.String({ maxLength: 200 }), { maxItems: 12 })),
+  /** 目录归属模式：缺省按 path 是否给出推断（有 path=external，无=managed）。 */
+  rootMode: Type.Optional(Type.Union([Type.Literal("managed"), Type.Literal("external")])),
+};
+
 export function agentRoutes(
   service: AgentService,
   statusService?: AgentStatusService,
@@ -121,6 +170,21 @@ export function agentRoutes(
         "/v1/agent/status",
         { schema: { tags: ["agent"] } },
         async () => statusService.snapshot(),
+      );
+      // 「智能体」页人格段：内置 Agent 的名称/简介/系统提示词/技能清单。
+      app.get(
+        "/v1/agent/definition/:agentId",
+        {
+          schema: {
+            tags: ["agent"],
+            params: Type.Object({ agentId: Type.String({ minLength: 1, maxLength: 64 }) }),
+          },
+        },
+        async (request, reply) => {
+          const persona = statusService.persona(request.params.agentId);
+          if (!persona) return reply.code(404).send({ message: "agent_not_found" });
+          return persona;
+        },
       );
     }
     app.get(
@@ -157,17 +221,91 @@ export function agentRoutes(
       },
     );
     app.get(
+      "/v1/agent/workspaces",
+      { schema: { tags: ["agent"] } },
+      async () => service.listWorkspaces(),
+    );
+    app.post(
+      "/v1/agent/workspaces",
+      {
+        schema: {
+          tags: ["agent"],
+          body: Type.Object({
+            name: Type.String({ minLength: 1, maxLength: 120 }),
+            path: Type.Optional(Type.Union([Type.String({ maxLength: 2_000 }), Type.Null()])),
+            ...WorkspaceMetaSchema,
+          }),
+        },
+      },
+      async (request, reply) => {
+        try {
+          return reply.code(201).send(service.createWorkspace(request.body));
+        } catch (error) {
+          const invalid = workspaceValidationErrorPayload(error);
+          if (invalid) return reply.code(400).send(invalid);
+          throw error;
+        }
+      },
+    );
+    app.patch(
+      "/v1/agent/workspaces/:id",
+      {
+        schema: {
+          tags: ["agent"],
+          params: IdParams,
+          body: Type.Object({
+            name: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
+            path: Type.Optional(Type.Union([Type.String({ maxLength: 2_000 }), Type.Null()])),
+            lastOpenedAt: Type.Optional(Type.String({ maxLength: 40 })),
+            ...WorkspaceMetaSchema,
+          }),
+        },
+      },
+      async (request, reply) => {
+        try {
+          return service.updateWorkspace(request.params.id, request.body)
+            ?? reply.code(404).send({ error: "not_found", message: "Agent workspace not found" });
+        } catch (error) {
+          const invalid = workspaceValidationErrorPayload(error);
+          if (invalid) return reply.code(400).send(invalid);
+          throw error;
+        }
+      },
+    );
+    app.delete(
+      "/v1/agent/workspaces/:id",
+      { schema: { tags: ["agent"], params: IdParams } },
+      async (request, reply) => {
+        try {
+          return service.deleteWorkspace(request.params.id)
+            ? reply.code(204).send()
+            : reply.code(404).send({ error: "not_found", message: "Agent workspace not found" });
+        } catch (error) {
+          if (error instanceof Error && error.message === "agent_workspace_default_immutable") {
+            return reply.code(409).send({
+              error: "default_immutable",
+              message: "The default workspace cannot be deleted",
+            });
+          }
+          throw error;
+        }
+      },
+    );
+    app.get(
       "/v1/agent/sessions",
       {
         schema: {
           tags: ["agent"],
           querystring: Type.Object({
             pageLabel: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
-            roomId: Type.Optional(Type.Union([Type.String({ maxLength: 100 }), Type.Null()])),
+            workspaceId: Type.Optional(Type.String({ maxLength: 100 })),
           }),
         },
       },
-      async (request) => service.listSessions(request.query.pageLabel, request.query.roomId),
+      async (request) => service.listSessions(
+        request.query.pageLabel,
+        request.query.workspaceId,
+      ),
     );
 
     app.post(
@@ -177,13 +315,23 @@ export function agentRoutes(
           tags: ["agent"],
           body: Type.Object({
             pageLabel: Type.String({ minLength: 1, maxLength: 120 }),
-            roomId: Type.Optional(Type.Union([Type.String({ maxLength: 100 }), Type.Null()])),
+            workspaceId: Type.Optional(Type.Union([Type.String({ maxLength: 100 }), Type.Null()])),
             modelPreference: Type.Optional(Type.Union([
               Type.Literal("smart"),
               Type.Literal("primary"),
               Type.Literal("lite"),
             ])),
             channelAgentId: Type.Optional(Type.String({ maxLength: 500 })),
+            thinkingLevel: Type.Optional(Type.Union([
+              Type.Literal("off"),
+              Type.Literal("minimal"),
+              Type.Literal("low"),
+              Type.Literal("medium"),
+              Type.Literal("high"),
+              Type.Literal("xhigh"),
+              Type.Literal("max"),
+              Type.Null(),
+            ])),
           }),
         },
       },
@@ -306,6 +454,42 @@ export function agentRoutes(
       },
     );
 
+    app.put(
+      "/v1/agent/sessions/:sessionId/thinking-level",
+      {
+        schema: {
+          tags: ["agent"],
+          params: SessionParams,
+          body: Type.Object({
+            level: Type.Union([
+              Type.Literal("off"),
+              Type.Literal("minimal"),
+              Type.Literal("low"),
+              Type.Literal("medium"),
+              Type.Literal("high"),
+              Type.Literal("xhigh"),
+              Type.Literal("max"),
+              Type.Null(),
+            ]),
+          }),
+        },
+      },
+      async (request, reply) => {
+        try {
+          return await service.setSessionThinkingLevel(request.params.sessionId, request.body.level);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (message.includes("not_found")) {
+            return reply.code(404).send({ error: "not_found", message: "Agent session not found" });
+          }
+          if (message === "agent_thinking_level_invalid") {
+            return reply.code(400).send({ error: "invalid_thinking_level", message });
+          }
+          return reply.code(400).send({ error: "invalid_request", message });
+        }
+      },
+    );
+
     app.patch(
       "/v1/agent/sessions/:sessionId",
       {
@@ -363,6 +547,14 @@ export function agentRoutes(
             prompt: Type.String({ maxLength: 20_000 }),
             /** 用户可见文案（人话）：落库消息/会话标题用它，prompt 仍原样交给 runtime。 */
             displayPrompt: Type.Optional(Type.String({ maxLength: 20_000 })),
+            /** 气泡正文（只影响展示）：批注场景气泡只显示输入框正文，空串＝无气泡。 */
+            displayContent: Type.Optional(Type.String({ maxLength: 20_000 })),
+            /** 文档批注卡片（结构化展示）：存在时落库消息带卡片，气泡按卡片渲染。 */
+            noteCards: Type.Optional(Type.Array(Type.Object({
+              excerpt: Type.String({ minLength: 1, maxLength: 2_000 }),
+              note: Type.String({ minLength: 1, maxLength: 2_000 }),
+              title: Type.Optional(Type.String({ minLength: 1, maxLength: 300 })),
+            }), { maxItems: 20 })),
             idempotencyKey: Type.String({ minLength: 8, maxLength: 100 }),
             targetAgentId: Type.Optional(Type.String({ minLength: 1, maxLength: 500 })),
             invocationMode: Type.Optional(Type.Union([
@@ -381,23 +573,11 @@ export function agentRoutes(
             }), { maxItems: 5 })),
             replaceRunId: Type.Optional(Type.String({ minLength: 1, maxLength: 100 })),
             responseLanguage: Type.Optional(ResponseLanguage),
-            captureMemory: Type.Optional(Type.Boolean()),
-            recallMemory: Type.Optional(Type.Boolean()),
             toolsEnabled: Type.Optional(Type.Boolean()),
             context: Type.Optional(Type.Object({
               pageLabel: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
               selectedText: Type.Optional(Type.String({ minLength: 1, maxLength: 8_000 })),
-              rooms: Type.Optional(Type.Array(Type.Object({
-                id: Type.String({ minLength: 1, maxLength: 100 }),
-                title: Type.String({ minLength: 1, maxLength: 120 }),
-                kind: Type.Optional(Type.String({ minLength: 1, maxLength: 40 })),
-              }), { maxItems: 200 })),
-              selectedRoomId: Type.Optional(Type.Union([
-                Type.String({ minLength: 1, maxLength: 100 }),
-                Type.Null(),
-              ])),
               activeDocument: Type.Optional(Type.Object({
-                roomId: Type.String({ minLength: 1, maxLength: 128 }),
                 documentId: Type.String({ minLength: 1, maxLength: 128 }),
                 title: Type.String({ minLength: 1, maxLength: 120 }),
                 version: Type.Integer({ minimum: 0 }),
@@ -435,6 +615,12 @@ export function agentRoutes(
                 editable: Type.Optional(Type.Boolean()),
                 active: Type.Boolean(),
               }, { additionalProperties: false }), { maxItems: 20 })),
+              // 输入区「+ → 挂载目录」：桌面端系统选择框里由用户显式授权的本地目录，
+              // 本轮 Agent 可直接 read / ls / grep，改文件仍走权限确认。
+              mountedDirectories: Type.Optional(Type.Array(Type.Object({
+                path: Type.String({ minLength: 1, maxLength: 1024 }),
+                name: Type.String({ minLength: 1, maxLength: 200 }),
+              }, { additionalProperties: false }), { maxItems: 8 })),
               attachments: Type.Optional(Type.Array(Type.Object({
                 fileId: Type.String({ minLength: 1, maxLength: 200 }),
                 fileVersionId: Type.String({ minLength: 1, maxLength: 200 }),
@@ -475,14 +661,6 @@ export function agentRoutes(
           }
           if (error instanceof Error && error.message === "agent_replace_run_active") {
             return reply.code(409).send({ error: "replace_run_active", message: "An active Agent run cannot be regenerated" });
-          }
-          if (error instanceof Error && error.message === "agent_room_not_available") {
-            const roomId = (error as Error & { roomId?: string }).roomId;
-            return reply.code(409).send({
-              error: "room_not_available",
-              message: "The selected Context Room is no longer available",
-              ...(roomId ? { roomId } : {}),
-            });
           }
           // 引用/目标校验类：客户端组合出网关不支持的运行形态（如渠道会话里
           // @ 其他 Agent 或引用其他对话）——语义错误用 422，而不是裸 500。
@@ -575,7 +753,6 @@ export function agentRoutes(
           tags: ["agent"],
           params: IntentParams,
           body: Type.Object({
-            roomId: Type.String({ minLength: 1, maxLength: 100 }),
             documentId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
             idempotencyKey: Type.String({ minLength: 8, maxLength: 100 }),
             responseLanguage: Type.Optional(ResponseLanguage),
@@ -624,7 +801,6 @@ export function agentRoutes(
           body: Type.Object({
             agentSessionId: Type.String({ minLength: 1, maxLength: 128 }),
             runId: Type.String({ minLength: 1, maxLength: 128 }),
-            roomId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
           }),
         },
       },
@@ -633,7 +809,6 @@ export function agentRoutes(
           return reply.code(201).send(service.createTrustedMcpSession(
             request.body.agentSessionId,
             request.body.runId,
-            request.body.roomId,
           ));
         } catch (error) {
           const code = error instanceof Error ? error.message : "";
@@ -641,8 +816,7 @@ export function agentRoutes(
             return reply.code(404).send({ error: "not_found", message: "Agent MCP context not found" });
           }
           if (
-            code === "mcp_agent_room_not_available"
-            || code === "mcp_agent_context_mismatch"
+            code === "mcp_agent_context_mismatch"
             || code === "mcp_agent_context_not_active"
           ) {
             return reply.code(409).send({ error: code, message: "Agent MCP context is not valid" });

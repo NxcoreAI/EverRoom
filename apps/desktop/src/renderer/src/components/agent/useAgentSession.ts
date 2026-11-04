@@ -1,22 +1,24 @@
 import type {
+  AgentAttachmentReference,
   AgentContextUsage,
   AgentEvent,
   AgentActiveDocumentContext,
-  AgentFileAttachment,
+  AgentMountedDirectory,
   AgentMessage,
   AgentModelPreference,
+  AgentNoteCard,
   AgentPermissionMode,
   AgentPermissionModeState,
-  AgentRoomReference,
   AgentSession,
   AgentSessionLink,
   AgentSessionSnapshot,
+  AgentThinkingLevel,
   CreateAgentSessionLinkInput,
 } from '@nxcore/agent-contract'
 import { createVersionedLocalStorageStore } from '@nxcore/migration-kit/local'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useLocale } from '@/i18n/LocaleContext'
-import type { AgentApprovalDecision } from '../../../../shared/sources'
+import type { AgentApprovalDecision } from '@/shared/sources'
 
 import {
   createAgentRunActivityAccumulator,
@@ -35,6 +37,7 @@ import {
 import { buildAgentRunContext } from './agentRunContext'
 import type { MentionedAgent, MentionedItem } from './agentMentions'
 import { plainTextFromMarkdown } from './agentTextUtils'
+import { persistThinkingLevel, storedThinkingLevel } from './agentThinkingLevel'
 import {
   applyShellApprovalEvent,
   reducePendingShellApprovals,
@@ -56,7 +59,6 @@ export interface DisplayAgentMessage extends AgentMessage {
   /** 展示用：发送时 @ 的全部条目（含 Room/文件/对话记录），供消息区点击跳转；不落库。 */
   mentions?: MentionedItem[]
 }
-
 export function mergePendingAgentMessages(
   messages: DisplayAgentMessage[],
   pendingMessages: DisplayAgentMessage[],
@@ -83,10 +85,14 @@ export interface QueuedAgentSubmission {
   sessionId?: string | null
   /** 用户可见文案（技术指令排队时保留人话气泡）。 */
   displayPrompt?: string
+  /** 文档批注卡片：排队期间乐观气泡仍按卡片渲染。 */
+  noteCards?: AgentNoteCard[]
+  /** 气泡正文：批注场景气泡只显示输入框正文；空串＝无气泡（只有卡片）。 */
+  displayContent?: string
   selectedText?: string
-  selectedRoomId?: string
   activeDocument?: AgentActiveDocumentContext | null
-  attachments?: AgentFileAttachment[]
+  attachments?: AgentAttachmentReference[]
+  mountedDirectories?: AgentMountedDirectory[]
   referencedConversationId?: string
   mentionedAgents?: MentionedAgent[]
   mentions?: MentionedItem[]
@@ -142,7 +148,7 @@ function isUserSession(session: AgentSession): boolean {
     && !session.pageLabel.startsWith('AI ')
 }
 
-function sessionScope(_pageLabel?: string, _roomId?: string | null): string {
+function sessionScope(_pageLabel?: string): string {
   return 'global'
 }
 
@@ -198,13 +204,38 @@ export function isAutoFallbackTitle(serverTitle: string | null | undefined, acce
   return serverTitle?.trim() === acceptedPrompt.slice(0, 48).trim()
 }
 
+export interface UseAgentSessionOptions {
+  /** 工作区工作台：会话清单按 workspaceId 过滤，新建会话归属该工作区。 */
+  workspaceId?: string | null
+  /**
+   * 初始选中会话：
+   * - undefined = 沿用原有行为（本地记忆 → 第一条）
+   * - null = 草稿态（不自动选会话）
+   * - string = 选中该会话
+   */
+  initialSessionId?: string | null
+  /**
+   * 会话分区键（缺省 = pageLabel）。停靠栏按文件隔离会话时应传文件的稳定 id：
+   * 文件重命名、同名、超长（网关 pageLabel 上限 120）都不会把历史落进另一个分区。
+   * pageLabel 只作为「当前页面」展示/运行时上下文，不参与分区。
+   */
+  sessionKey?: string
+}
+
+/** Phase 2i 后无 Room 维度：hook 不再接收 roomId/rooms。 */
 export function useAgentSession(
   pageLabel: string,
-  roomId: string | null,
-  rooms: AgentRoomReference[],
+  options: UseAgentSessionOptions = {},
 ) {
   const { locale, t } = useLocale()
   const api = window.nxcore?.agent
+  const workspaceId = options.workspaceId ?? null
+  const workspaceIdRef = useRef<string | null>(workspaceId)
+  workspaceIdRef.current = workspaceId
+  /** 会话读写的分区键：停靠栏 = 文件稳定 id；工作台 = workspaceId（缺省回退 pageLabel）。 */
+  const sessionKey = options.sessionKey || pageLabel
+  /** 只在挂载时生效：之后切会话由工作台调用 selectSessionById。 */
+  const initialSessionIdRef = useRef<string | null | undefined>(options.initialSessionId)
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [sessions, setSessions] = useState<AgentSession[]>([])
   const [currentSession, setCurrentSession] = useState<AgentSession | null>(null)
@@ -254,7 +285,7 @@ export function useAgentSession(
   const terminalRunIdsRef = useRef(new Set<string>())
   const messageStartedRunIdsRef = useRef(new Set<string>())
   const sessionIdRef = useRef<string | null>(null)
-  const activeScopeRef = useRef(sessionScope(pageLabel, roomId))
+  const activeScopeRef = useRef(sessionScope(pageLabel))
   /** AI 标题生成素材：runId → 网关脱敏后的用户 prompt（与兜底标题同源）。 */
   const userPromptByRun = useRef(new Map<string, string>())
   const assistantContentByRun = useRef(new Map<string, string>())
@@ -655,22 +686,37 @@ export function useAgentSession(
     if (expectedScope !== activeScopeRef.current || snapshot.session.id !== sessionIdRef.current) return false
 
     const nextMessages = mergePendingAgentMessages(snapshot.messages, pendingMessages)
-    if (snapshot.activeRun) {
-      const reduced = reducedByRun.get(snapshot.activeRun.id)
+    // 回到会话时为「事件里出过 assistant 活动、但消息表里没有落库 assistant
+    // 消息」的 run 重建占位消息。旧实现只覆盖 snapshot.activeRun——异常中断
+    // （gateway-restarted）的 run 不再是 activeRun，而它从未收到
+    // message.completed、assistant 消息不会落库；渲染层完全由 messages 驱动
+    // （按 runId 挂 toolCallsByRun / reasoningByRun），没有这条占位消息，
+    // 工具调用记录与推理过程就整段消失（#会话恢复丢失过程）。
+    for (const [runId, reduced] of reducedByRun) {
       const hasAssistant = nextMessages.some((message) => (
-        message.runId === snapshot.activeRun?.id && message.role === 'assistant'
+        message.runId === runId && message.role === 'assistant'
       ))
-      if (!hasAssistant && reduced && (reduced.messageStarted || reduced.streamingContent)) {
-        nextMessages.push({
-          id: `stream-${snapshot.activeRun.id}`,
-          sessionId: snapshot.session.id,
-          runId: snapshot.activeRun.id,
-          role: 'assistant',
-          content: reduced.streamingContent,
-          createdAt: reduced.startedAt ?? snapshot.activeRun.createdAt,
-          streaming: !reduced.messageCompleted,
-        })
+      if (hasAssistant || !(reduced.messageStarted || reduced.streamingContent)) continue
+      const isActiveRun = snapshot.activeRun?.id === runId
+      // 历史中断/停止的 run 不再流式：占位消息静止展示（streaming=false），
+      // 终态标记由 nextInterruptedRunIds / nextCancelledRunIds 提供。
+      const placeholder: DisplayAgentMessage = {
+        id: `stream-${runId}`,
+        sessionId: snapshot.session.id,
+        runId,
+        role: 'assistant',
+        content: reduced.streamingContent,
+        createdAt: reduced.startedAt ?? snapshot.activeRun?.createdAt ?? snapshot.session.updatedAt,
+        streaming: isActiveRun && !reduced.messageCompleted,
       }
+      // 插到本 run 的 user 气泡后面，保持「我一问、agent 一答」的交替时序。
+      // 追加到末尾会把多个中断 run 的占位全堆在所有 user 消息之后，重进会话
+      // 时看到「连发 N 条消息、连跑 N 个任务」的错乱排版（#中断会话排版）。
+      const userIndex = nextMessages.findIndex((message) => (
+        message.runId === runId && message.role === 'user'
+      ))
+      if (userIndex >= 0) nextMessages.splice(userIndex + 1, 0, placeholder)
+      else nextMessages.push(placeholder)
     }
 
     setMessages(nextMessages)
@@ -709,7 +755,7 @@ export function useAgentSession(
     pendingMessages: DisplayAgentMessage[] = [],
   ): Promise<void> => {
     if (!api) return
-    const expectedScope = sessionScope(pageLabel, roomId)
+    const expectedScope = sessionScope(pageLabel)
     setLoading(true)
     setScopeReady(false)
     setError(null)
@@ -738,7 +784,7 @@ export function useAgentSession(
 
   useLayoutEffect(() => {
     let alive = true
-    activeScopeRef.current = sessionScope(pageLabel, roomId)
+    activeScopeRef.current = sessionScope(pageLabel)
     setScopeReady(false)
     setMessages([])
     setToolCallsByRun({})
@@ -771,14 +817,27 @@ export function useAgentSession(
 
     if (api) {
       setLoading(true)
-      void api.listSessions()
+      // 停靠栏按 sessionKey（文件稳定 id）列会话，只看到本文件的会话；工作台
+      // （workspaceId）模式下列出全部会话再按工作区过滤——工作区是会话分区键，
+      // pageLabel 只是最后出现的界面。
+      void api.listSessions(workspaceId ? undefined : sessionKey)
         .then(async (listedSessions) => {
           if (!alive) return
-          const userSessions = listedSessions.filter(isUserSession)
+          const scoped = workspaceId
+            ? listedSessions.filter((session) => session.workspaceId === workspaceId)
+            : listedSessions
+          const userSessions = scoped.filter(isUserSession)
           setSessions(userSessions)
+          const requested = initialSessionIdRef.current
           const storedSessionId = readStoredSession()
-          const selected = userSessions.find((session) => session.id === storedSessionId)
-            ?? userSessions[0]
+          const wanted = requested !== undefined ? requested : storedSessionId
+          // 显式传了 initialSessionId（工作台的会话视图）就严格按它选；未传（文件
+          // 停靠栏）时「全局记住的会话」可能属于别的分区，找不到就回落到本分区最近
+          // 一条，否则停靠栏会误停在草稿态、看不到本文件的对话记录。
+          const selected = (wanted
+            ? userSessions.find((session) => session.id === wanted)
+            : undefined)
+            ?? (requested === undefined ? userSessions[0] : undefined)
           if (selected) await selectSession(selected)
           else if (alive) {
             // 无历史会话：停在草稿态（不建会话），首条消息发出时才创建——
@@ -827,7 +886,7 @@ export function useAgentSession(
       pendingEventsRef.current = []
       void api?.unsubscribe()
     }
-  }, [api, applyEvent, hydrateSnapshot, reloadNonce, selectSession, scheduleAgentEventFlush])
+  }, [api, applyEvent, hydrateSnapshot, reloadNonce, selectSession, scheduleAgentEventFlush, sessionKey, workspaceId])
 
   // 全局默认档位：新会话创建时锁定到 session.activeAgentId（后端权威）。
   // 切换只影响下一个新会话，进行中的会话档位以 currentSession.modelPreference 为准。
@@ -837,6 +896,16 @@ export function useAgentSession(
     modelPreferenceRef.current = tier
     setModelPreferenceDefaultState(tier)
     persistModelPreference(tier)
+  }, [])
+
+  // 全局默认思考档位：只决定「下次新建会话」的默认值（null=跟随模型配置）；
+  // 已有会话以 currentSession.thinkingLevel 为准，切换走 setSessionThinkingLevel。
+  const [thinkingLevelDefault, setThinkingLevelDefaultState] = useState<AgentThinkingLevel | null>(storedThinkingLevel)
+  const thinkingLevelRef = useRef(thinkingLevelDefault)
+  const setThinkingLevelDefault = useCallback((level: AgentThinkingLevel | null) => {
+    thinkingLevelRef.current = level
+    setThinkingLevelDefaultState(level)
+    persistThinkingLevel(level)
   }, [])
 
   // 全局默认渠道：新会话整体锁定到某个本机 CLI Agent（ACP 持久会话连续对话）。
@@ -858,12 +927,18 @@ export function useAgentSession(
     if (activeRunId) throw new Error(t('surface:useAgentSession.stopBeforeCreating'))
     try {
       const session = await api.createSession({
-        pageLabel: 'Agent',
+        // 分区键必须与 listSessions 一致：停靠栏按 sessionKey（文件稳定 id）列会话，
+        // 建会话若写死 'Agent' 或写成随文件改名的显示名，它永远列不出自己刚建的会话
+        // （离开再回来即丢失）。pageLabel 只用于「当前页面」上下文。
+        pageLabel: sessionKey,
         roomId: null,
+        ...(workspaceIdRef.current ? { workspaceId: workspaceIdRef.current } : {}),
         // 渠道优先：锁定后整个会话由该 CLI Agent 连续执行，档位被忽略。
         ...(channelAgentDefaultRef.current
           ? { channelAgentId: channelAgentDefaultRef.current }
           : { modelPreference: modelPreferenceRef.current }),
+        // 思考档位不锁定会话：显式发 null 表示「跟随模型配置」，创建后仍可 PUT 修改。
+        thinkingLevel: thinkingLevelRef.current ?? null,
       })
       setSessions((current) => [session, ...current])
       await selectSession(session, pendingMessages)
@@ -1054,21 +1129,32 @@ export function useAgentSession(
   const sendPrompt = async (
     prompt: string,
     selectedText?: string,
-    selectedRoomId?: string,
     activeDocument?: AgentActiveDocumentContext | null,
     replaceRunId?: string,
-    attachments?: AgentFileAttachment[],
+    /** 输入区导入的文件（文件引擎引用）：作为本轮 run 的 attachments 下发。 */
+    attachments?: AgentAttachmentReference[],
     targetAgentId?: string,
     referencedConversationId?: string,
     mentionedAgents?: MentionedAgent[],
     mentions?: MentionedItem[],
     /** 用户可见文案：卡片按钮等入口的 prompt 是技术指令，气泡/会话标题用它。 */
     displayPrompt?: string,
+    /** 输入区「挂载目录」：目录路径进本轮运行上下文，Agent 可直接读取。 */
+    mountedDirectories?: AgentMountedDirectory[],
+    /** 文档批注卡片：存在时用户气泡按卡片渲染（原文摘录 + 注释）。 */
+    noteCards?: AgentNoteCard[],
+    /** 气泡正文：批注场景气泡只显示输入框正文；空串＝无气泡（只有卡片）。 */
+    displayContent?: string,
   ): Promise<string | null> => {
     const message = prompt.trim()
     const displayPromptValue = displayPrompt?.trim() || undefined
     // 技术指令只进运行时；落库/气泡/标题一律用 displayPrompt（缺省＝用户原话）。
     const displayMessage = displayPromptValue ?? message
+    const noteCardsValue = noteCards?.length ? noteCards : undefined
+    // 气泡正文只对批注消息有意义：没有卡片时忽略（普通消息气泡就是正文）。
+    const displayContentValue = noteCardsValue && typeof displayContent === 'string'
+      ? displayContent
+      : undefined
     if ((!message && !attachments?.length) || loading || sending) return null
     if (activeRunId) {
       // 重试（replaceRunId）不排队：replace 只对已终态 run 有意义，排队会丢失其语义。
@@ -1078,10 +1164,12 @@ export function useAgentSession(
         sessionId: sessionIdRef.current,
         prompt: message,
         ...(displayPromptValue ? { displayPrompt: displayPromptValue } : {}),
+        ...(noteCardsValue ? { noteCards: noteCardsValue } : {}),
+        ...(displayContentValue !== undefined ? { displayContent: displayContentValue } : {}),
         selectedText,
-        selectedRoomId,
         activeDocument,
         attachments,
+        mountedDirectories,
         referencedConversationId,
         mentionedAgents,
         mentions,
@@ -1139,6 +1227,8 @@ export function useAgentSession(
       authorAgentId: null,
       content: displayMessage,
       createdAt: new Date().toISOString(),
+      ...(noteCardsValue ? { noteCards: noteCardsValue } : {}),
+      ...(displayContentValue !== undefined ? { displayContent: displayContentValue } : {}),
       ...(mentionedAgents?.length && !channelAgentRef.current
         ? { referencedAgentNames: mentionedAgents.map((agent) => agent.displayName) }
         : {}),
@@ -1162,21 +1252,26 @@ export function useAgentSession(
         idempotencyKey: crypto.randomUUID(),
         // 技术指令照旧进运行时；displayPrompt 仅供落库/展示（网关不把它给 runtime）。
         ...(displayPromptValue ? { displayPrompt: displayPromptValue } : {}),
+        // 批注卡片只影响气泡渲染，runtime 不收。
+        ...(noteCardsValue ? { noteCards: noteCardsValue } : {}),
+        // 气泡正文（批注场景）：空串＝无气泡。runtime 不收。
+        ...(displayContentValue !== undefined ? { displayContent: displayContentValue } : {}),
         // 'main' 时省略 targetAgentId：档位锁定在会话上，由网关按 session.activeAgentId 选运行时。
         ...(selectedAgentId !== 'main' ? { targetAgentId: selectedAgentId } : {}),
         invocationMode: 'explicit_switch',
         ...(replaceRunId ? { replaceRunId } : {}),
         responseLanguage: locale,
+        // 输入区导入的文件走顶层 attachments：网关 resolveAttachments 负责取
+        // markdown 正文 / 图片 dataUrl，不再塞 context.attachments。
+        ...(attachments?.length ? { attachments } : {}),
         // 渠道会话下 @ 其他 Agent / 引用对话是主代理专属能力，网关会拒
         // （referenced_*_requires_main_agent）；UI 已隐藏入口，这里兜底剥离，
         // 覆盖重试、外部注入等绕过输入框的路径。
         context: buildAgentRunContext(
-          rooms,
           selectedText,
-          selectedRoomId,
           activeDocument,
           pageLabel,
-          attachments,
+          mountedDirectories,
           channelLocked ? undefined : referencedConversationId,
           channelLocked ? undefined : mentionedAgents?.map((agent) => agent.id),
         ),
@@ -1247,7 +1342,6 @@ export function useAgentSession(
       undefined,
       undefined,
       undefined,
-      undefined,
       displayText,
     )
   )
@@ -1268,7 +1362,6 @@ export function useAgentSession(
         await sendPromptRef.current(
           next.prompt,
           next.selectedText,
-          next.selectedRoomId,
           next.activeDocument,
           undefined,
           next.attachments,
@@ -1277,6 +1370,9 @@ export function useAgentSession(
           next.mentionedAgents,
           next.mentions,
           next.displayPrompt,
+          next.mountedDirectories,
+          next.noteCards,
+          next.displayContent,
         )
       } catch {
         // 失败已在 sendPrompt 内 setError；丢弃该条继续排后面的，避免卡队列。
@@ -1288,15 +1384,21 @@ export function useAgentSession(
 
   const submitPendingIntent = async (
     intentId: string,
-    selectedRoomId: string,
     documentId?: string,
   ): Promise<string | null> => {
-    if (!api || activeRunId || loading || sending) return null
+    if (!api || loading || sending) return null
+    // 决策卡的「等待输入」态：run 还挂着，但用户必须能作答。
+    // 这里不再静默 return null（审查指出的「看起来能点、点了没反应」），
+    // 而是把「仍在处理中」显性告诉用户——真的提交不了时至少知道原因。
+    if (activeRunId) {
+      setError(t('surface:useAgentSession.agentBusy'))
+      return null
+    }
     setSending(true)
     setError(null)
     try {
       const { run } = await api.submitPendingIntent(intentId, {
-        roomId: selectedRoomId,
+        // Phase 2i 后无 Room 维度：pending intent 决策只按 documentId 提交。
         ...(documentId ? { documentId } : {}),
         idempotencyKey: crypto.randomUUID(),
         responseLanguage: locale,
@@ -1379,6 +1481,35 @@ export function useAgentSession(
     setQueuedSubmissions((current) => current.filter((item) => item.id !== id))
   }, [])
 
+  /**
+   * 切换会话思考档位（null=跟随模型配置）。
+   * - 任何一次选择都持久化为「下次新会话默认值」；
+   * - 会话已存在：PUT 修改（网关从下一轮 run 生效），并用响应回读值更新
+   *   currentSession / sessions 列表；失败只报错，不改本地值；
+   * - 草稿态（无会话/无 API）：只改默认值，首条消息建会话时带上。
+   */
+  const setSessionThinkingLevel = useCallback(async (level: AgentThinkingLevel | null): Promise<boolean> => {
+    setThinkingLevelDefault(level)
+    const targetSessionId = sessionIdRef.current
+    if (!api || !targetSessionId) return true
+    setError(null)
+    let next: AgentThinkingLevel | null = level
+    try {
+      const result = await api.setThinkingLevel(targetSessionId, level)
+      next = result.thinkingLevel
+    } catch (requestError) {
+      setError(requestErrorMessage(requestError, t('surface:useAgentSession.thinkingLevelUpdateFailed')))
+      return false
+    }
+    setCurrentSession((current) => current && current.id === targetSessionId
+      ? { ...current, thinkingLevel: next }
+      : current)
+    setSessions((current) => current.map((session) => session.id === targetSessionId
+      ? { ...session, thinkingLevel: next }
+      : session))
+    return true
+  }, [api, setThinkingLevelDefault, t])
+
   return {
     activeRunId,
     agentIdByRun,
@@ -1396,6 +1527,9 @@ export function useAgentSession(
     messages,
     modelPreferenceDefault,
     setModelPreferenceDefault,
+    thinkingLevelDefault,
+    setThinkingLevelDefault,
+    setSessionThinkingLevel,
     channelAgentIdDefault,
     setChannelAgentIdDefault,
     pendingApprovals,

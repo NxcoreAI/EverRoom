@@ -1,0 +1,1 @@
+ALTER TABLE `agent_sessions` ADD COLUMN `thinking_level` text;

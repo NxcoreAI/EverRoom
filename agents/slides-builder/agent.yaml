@@ -17,6 +17,10 @@ outputSchema: ./schemas/output.schema.json
 policy:
   allowedCallers: [primary-agent]
   maxConcurrency: 2
-  # edit 预算：read + edit 事务若干 + 失败重试 + 提交。
+  # edit 事务：read + edit 若干 + 失败重试 + 提交。
   maxToolCalls: 48
-  timeoutSeconds: 900
+  timeoutSeconds: 1800
+  model:
+    # builder 走 background 档，未显式声明会继承 8192 输出上限：多条编辑事务的
+    # JSON 一旦打满就被判 length 失败，这里显式给足（与 planner/layouter 同档）。
+    maxTokens: 32768

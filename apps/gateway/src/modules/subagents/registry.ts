@@ -168,7 +168,11 @@ function parseManifest(raw: unknown, defaults: SubagentFrameworkConfig): Subagen
     allowedCallers: allowedCallers as SubagentPolicy["allowedCallers"],
     maxConcurrency: positiveInteger(policyValue.maxConcurrency, 1, "policy.maxConcurrency"),
     timeoutMs,
-    maxToolCalls: positiveInteger(policyValue.maxToolCalls, 40, "policy.maxToolCalls"),
+    // 不声明＝不设工具预算上限：布局类长链路由 timeoutMs 与输出预算兜底，硬预算
+    // 中途 abort 会把已收敛的树一起丢掉。
+    ...(policyValue.maxToolCalls === undefined
+      ? {}
+      : { maxToolCalls: positiveInteger(policyValue.maxToolCalls, 40, "policy.maxToolCalls") }),
     ...(policyValue.model === undefined ? {} : { model: parseModelPolicy(policyValue.model) }),
   };
   return {

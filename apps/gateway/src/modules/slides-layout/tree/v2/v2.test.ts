@@ -206,6 +206,26 @@ describe("layout tree v2", () => {
     expect(result.spec.elements.some((element) => element.type === "path" && element.d === "M0 0 H160")).toBe(true);
   });
 
+  it.each([
+    { col: [1, 12], row: [1, 1] },
+    { col: [1, 1], row: [1, 8] },
+  ])("contains icons without stretching in rectangular slots: %j", (slot) => {
+    const { result } = compile({
+      version: 2, role: "content", composition: "swiss",
+      nodes: [
+        { type: "shape", shape: "rect", tone: "surface", slot },
+        { type: "icon", name: "bolt", slot },
+      ],
+    });
+    const icon = result.spec.elements.find(e => e.type === "icon")!;
+    const frame = result.spec.elements.find(e => e.type === "shape")!;
+    expect(icon.w).toBe(icon.h);
+    expect(icon.w).toBe(Math.round(Math.min(frame.w, frame.h)));
+    expect(Math.abs(icon.x + icon.w / 2 - frame.x - frame.w / 2)).toBeLessThanOrEqual(1);
+    expect(Math.abs(icon.y + icon.h / 2 - frame.y - frame.h / 2)).toBeLessThanOrEqual(1);
+    expect(result.placements.find(p => p.kind === "icon")?.frame).toEqual({ x: icon.x, y: icon.y, w: icon.w, h: icon.h });
+  });
+
   it("rejects an icon outside the engine set", () => {
     expect(() => normalizeTree({
       version: 2,

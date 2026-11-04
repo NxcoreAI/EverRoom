@@ -1,0 +1,292 @@
+/* 工作空间文件面板（气泡窗）：停靠在内容栏右侧，参与 flex 布局。
+ *
+ * 状态：打开 / 收起（minimize）/ 关闭 都通过宽度动画完成，内容区同步让位；
+ * 不渲染任何「长条把手」——收起后对话区右上角的同一个图标按钮负责再次打开。
+ */
+
+.wb-bubble {
+  position: relative;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  margin: 8px 8px 8px 0;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface);
+  box-shadow: var(--ui-shadow-sm);
+  overflow: hidden;
+  contain: layout paint;
+  /* 面板宽度变化（打开 / 最大化 / 还原）统一走过渡，对话区随之逐帧让位。 */
+  transition: width 240ms cubic-bezier(0.4, 0, 0.6, 1);
+  animation: wb-bubble-in 240ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+/* 拖拽改宽与退场动画期间关掉过渡，避免和指针/关键帧互相抢值。 */
+.wb-bubble.is-resizing,
+.wb-bubble.is-closing,
+.wb-bubble.is-minimizing { transition: none; }
+
+/* 宽度动画期间隐藏原生编辑器：WebContentsView 跟随 IPC 重定位会滞后，看起来会抖。 */
+.wb-bubble.is-closing .op-native-wrap,
+.wb-bubble.is-minimizing .op-native-wrap,
+.wb-bubble.is-resizing .op-native-wrap { visibility: hidden; }
+
+.wb-bubble-inner {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+}
+
+/* ── 打开 / 退场动画 ─────────────────────────────────────────── */
+
+@keyframes wb-bubble-in {
+  from { width: 0; margin-right: 0; opacity: 0; transform: translateX(12px) scale(0.995); }
+  to { opacity: 1; transform: translateX(0) scale(1); }
+}
+
+.wb-bubble.is-closing {
+  animation: wb-bubble-out 220ms cubic-bezier(0.4, 0, 0.6, 1) forwards;
+  pointer-events: none;
+}
+@keyframes wb-bubble-out {
+  from { opacity: 1; transform: translateX(0); }
+  /* 宽度/右外边距/边框都收到 0：面板卸载时对话区不会因这 8px 边距 + 2px 边框再跳一下。 */
+  to { width: 0; margin-right: 0; margin-left: 0; border-width: 0; opacity: 0; transform: translateX(16px); }
+}
+
+.wb-bubble.is-minimizing {
+  animation: wb-bubble-min-out 220ms cubic-bezier(0.4, 0, 0.6, 1) forwards;
+  pointer-events: none;
+}
+@keyframes wb-bubble-min-out {
+  from { opacity: 1; transform: translateX(0) scale(1); }
+  to { width: 0; margin-right: 0; margin-left: 0; border-width: 0; opacity: 0; transform: translateX(10px) scale(0.985); }
+}
+
+/* ── 最大化：留在 flex 布局里占满除对话区最小宽之外的空间 ─────── */
+
+.wb-bubble.is-maximized {
+  /* 不能用 !important：退场 keyframes 需要能把宽度动画收到 0；
+     也不能改 margin（左右 margin 变化会在退场结束时多跳 8px）。 */
+  width: clamp(320px, calc(100% - 336px), 1040px);
+  box-shadow: var(--ui-shadow-md);
+}
+
+/* ── 左侧拖拽调宽 ───────────────────────────────────────────── */
+
+.wb-bubble-resize {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 8px;
+  cursor: col-resize;
+  z-index: 5;
+}
+.wb-bubble-resize::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 3px;
+  width: 2px;
+  height: 36px;
+  margin-top: -18px;
+  border-radius: 2px;
+  background: var(--ui-border);
+  opacity: 0;
+  transition: opacity var(--ui-duration-fast) var(--ui-ease);
+}
+.wb-bubble-resize:hover::after { opacity: 1; }
+
+/* ── 头部：图标 + 文件标签 ──────────────────────────────────── */
+
+.wb-bubble-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  height: 36px;
+  padding: 0 4px 0 6px;
+  border-bottom: 1px solid var(--ui-border-subtle);
+  background: var(--ui-surface);
+}
+
+.wb-bubble-tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.wb-bubble-tabs::-webkit-scrollbar { display: none; }
+
+.wb-bubble-tab {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  max-width: 180px;
+  height: 26px;
+  padding: 0 3px 0 7px;
+  border-radius: var(--ui-radius-sm);
+  color: var(--ui-text-2);
+  font-size: var(--ui-text-xs);
+  cursor: pointer;
+  transition: background var(--ui-duration-fast) var(--ui-ease), color var(--ui-duration-fast) var(--ui-ease);
+}
+.wb-bubble-tab:hover { background: var(--ui-hover); color: var(--ui-text); }
+.wb-bubble-tab.is-active { background: var(--ui-surface); color: var(--ui-text); box-shadow: var(--ui-shadow-sm); }
+.wb-bubble-tab-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wb-bubble-tab-close {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--ui-text-3);
+  cursor: pointer;
+  opacity: 0;
+}
+.wb-bubble-tab:hover .wb-bubble-tab-close,
+.wb-bubble-tab.is-active .wb-bubble-tab-close { opacity: 1; }
+.wb-bubble-tab-close:hover { background: var(--ui-hover-strong); color: var(--ui-text); }
+
+.wb-bubble-ctl { display: flex; align-items: center; gap: 1px; flex: none; }
+
+/* ── 内容区 ────────────────────────────────────────────────── */
+
+.wb-bubble-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 6px;
+}
+/* 浏览列表 ↔ 文档切换时的轻量淡入（元素重挂载时触发）。 */
+.wb-bubble-body > * { animation: wb-bubble-content-in 140ms var(--ui-ease); }
+@keyframes wb-bubble-content-in {
+  from { opacity: 0; transform: translateY(3px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.wb-bubble-doc {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.wb-bubble-doc > * { flex: 1; min-height: 0; }
+.wb-bubble-empty {
+  display: grid;
+  place-items: center;
+  flex: 1;
+  color: var(--ui-text-3);
+  font-size: var(--ui-text-sm);
+}
+
+/* ── 浏览态：资料与文件列表 ─────────────────────────────────── */
+
+.wb-bubble-browser {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  gap: 8px;
+}
+
+.wb-bubble-browser-scopes { display: flex; align-items: center; gap: 4px; flex: none; }
+.wb-bubble-scope {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 9px;
+  border: 1px solid transparent;
+  border-radius: var(--ui-radius-full);
+  background: transparent;
+  color: var(--ui-text-2);
+  font-size: var(--ui-text-2xs);
+  font-weight: 550;
+  cursor: pointer;
+}
+.wb-bubble-scope:hover { background: var(--ui-hover); color: var(--ui-text); }
+.wb-bubble-scope.is-active { background: var(--ui-accent-soft); color: var(--ui-accent-strong); }
+.wb-bubble-scope span { font-size: var(--ui-text-2xs); opacity: 0.75; }
+
+.wb-bubble-browser-list {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  gap: 1px;
+  padding-right: 2px;
+}
+.wb-bubble-browser-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  flex: none;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: var(--ui-radius-sm);
+  background: transparent;
+  color: var(--ui-text);
+  text-align: left;
+  cursor: pointer;
+}
+.wb-bubble-browser-row:hover { background: var(--ui-hover); }
+.wb-bubble-browser-row-main { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.wb-bubble-browser-row-name {
+  font-size: var(--ui-text-xs);
+  font-weight: 550;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wb-bubble-browser-row-meta {
+  font-size: var(--ui-text-2xs);
+  color: var(--ui-text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wb-bubble-browser-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  padding: 28px 16px;
+  color: var(--ui-text-3);
+  font-size: var(--ui-text-xs);
+  text-align: center;
+}
+.wb-bubble-browser-note {
+  flex: none;
+  padding: 2px 4px 0;
+  border-top: 1px solid var(--ui-border-subtle);
+  color: var(--ui-text-3);
+  font-size: var(--ui-text-2xs);
+}
+
+/* ── 减少动效 ─────────────────────────────────────────────── */
+
+@media (prefers-reduced-motion: reduce) {
+  .wb-bubble,
+  .wb-bubble.is-closing,
+  .wb-bubble.is-minimizing,
+  .wb-bubble-body > * { animation: none !important; transition: none !important; }
+}

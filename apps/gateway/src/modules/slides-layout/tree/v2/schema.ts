@@ -284,6 +284,15 @@ const MAX_GROUP_DEPTH = 3;
 const MAX_GROUP_CHILDREN = 12;
 /** 页面节点预算：group 子节点同样计入（与页面级 1~64 同口径）。 */
 const MAX_TOTAL_NODES = 64;
+
+/**
+ * 演讲备注的唯一归一：去首尾空白并截到 2000 字。
+ * schema 归一、提交期内容校验（checkSemanticRendered）与落页编译必须共用同一口径，
+ * 否则长备注/带空白的备注会被判成「讲稿未完整保留」永远提交不过。
+ */
+export function normalizeSpeakerNotes(value: string): string {
+  return value.trim().slice(0, 2000);
+}
 const SHAPES = new Set(["rect", "roundRect", "ellipse", "line", "lineArrow"]);
 const CHART_KINDS = new Set(["bar", "barStacked", "line", "area", "waterfall", "pie", "doughnut", "scatter", "comboBarLine"]);
 
@@ -925,7 +934,7 @@ export function normalizeV2Page(raw: unknown): V2Page {
     safeArea: page.safeArea === "full" ? "full" : "content",
     ...(stringField(page.background, "background", 9) ? { background: page.background as string } : {}),
     ...(page.dark === true ? { dark: true } : {}),
-    ...(typeof page.notes === "string" && page.notes.trim() ? { notes: page.notes.trim().slice(0, 2000) } : {}),
+    ...(typeof page.notes === "string" && page.notes.trim() ? { notes: normalizeSpeakerNotes(page.notes) } : {}),
     ...(Object.keys(grid).length > 0 ? { grid } : {}),
     ...(footer ? { footer } : {}),
     nodes,

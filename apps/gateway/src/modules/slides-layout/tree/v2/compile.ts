@@ -685,6 +685,9 @@ function compileNode(node: V2Node | V2GroupChild, frame: Frame, path: string, st
   }
   if (node.type === "shape") {
     state.push(buildShape(node, frame, theme));
+    // 分隔线（line 或 1~2px 细条）登记成 divider：天然是窄条，量尺寸下限时会豁免。
+    const thin = node.shape === "line" || frame.h <= 2 || frame.w <= 2;
+    if (thin) state.placements.push({ path, kind: "divider", frame });
     return;
   }
   if (node.type === "stats") {
@@ -704,17 +707,21 @@ function compileNode(node: V2Node | V2GroupChild, frame: Frame, path: string, st
     return;
   }
   if (node.type === "icon") {
+    const size = Math.round(Math.min(frame.w, frame.h));
+    const iconFrame = {
+      x: Math.round(frame.x + (frame.w - size) / 2),
+      y: Math.round(frame.y + (frame.h - size) / 2),
+      w: size,
+      h: size,
+    };
     state.push({
       type: "icon",
       icon: node.name,
       ...(node.tone ? { color: toneColor(node.tone, theme) } : {}),
-      x: Math.round(frame.x),
-      y: Math.round(frame.y),
-      w: Math.round(frame.w),
-      h: Math.round(frame.h),
+      ...iconFrame,
     });
     state.stats.leaves += 1;
-    state.placements.push({ path, kind: "icon", frame, flexible: true });
+    state.placements.push({ path, kind: "icon", frame: iconFrame, flexible: true });
     return;
   }
   if (node.type === "path") {

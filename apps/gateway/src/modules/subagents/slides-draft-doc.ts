@@ -42,7 +42,7 @@ export interface SlidesProgressPlan {
 }
 
 /** 渲染/解析上限（与 planner 输出 schema 同口径的防爆量截断）。 */
-const MAX_PAGES = 24;
+const MAX_PAGES = 32;
 const MAX_POINTS = 8;
 const MAX_POINT_CHARS = 200;
 const MAX_DATA_CHARS = 2000;
@@ -61,7 +61,15 @@ export function slidesProgressPlanFrom(output: unknown): SlidesProgressPlan | nu
       ? raw as Record<string, unknown>
       : {};
     const title = typeof page.title === "string" ? page.title.trim().slice(0, MAX_TITLE_CHARS) : "";
-    const role = typeof page.role === "string" ? page.role.trim().slice(0, 20) : "";
+    // page 级 role 已不是 arrange 必填：模型常只写 content.role，进度卡回退读它。
+    const contentRecord = page.content !== null && typeof page.content === "object" && !Array.isArray(page.content)
+      ? page.content as Record<string, unknown>
+      : null;
+    const role = typeof page.role === "string" && page.role.trim()
+      ? page.role.trim().slice(0, 20)
+      : typeof contentRecord?.role === "string"
+        ? contentRecord.role.trim().slice(0, 20)
+        : "";
     const densityOk = page.density === "sparse" || page.density === "standard" || page.density === "dense";
     const density = densityOk ? page.density as SlidesProgressPage["density"] : undefined;
     const points = Array.isArray(page.points)
@@ -154,9 +162,14 @@ interface ParsedPageAccumulator {
  * 草稿文档 markdown → 页结构（generate 阶段读回用户确认的草稿）。
  * 容忍用户编辑：无编号页序、插页删页改字都不破坏；无任何 `## ` 章节返回 null。
  */
-export function parseDraftMarkdown(markdown: string): SlidesProgressPage[] | null {
+export function parseDraftMarkdown(markdown: string, options: { preserveContent?: boolean } = {}): SlidesProgressPage[] | null {
   const pages: SlidesProgressPage[] = [];
-  const collect = (page: ParsedPageAccumulator): SlidesProgressPage => ({
+  const collect = (page: ParsedPageAccumulator): SlidesProgressPage => options.preserveContent ? {
+    title: page.title, points: page.points,
+    ...(page.dataLines.length ? { data: page.dataLines.join("\n") } : {}),
+    ...(page.hints.length ? { materialHints: page.hints.join("；") } : {}),
+    ...(page.notes.length ? { notes: page.notes.join("\n") } : {}),
+  } : ({
     title: page.title.slice(0, MAX_TITLE_CHARS),
     ...(page.points.length ? { points: page.points.slice(0, MAX_POINTS).map((p) => p.slice(0, MAX_POINT_CHARS)) } : {}),
     ...(page.dataLines.length ? { data: page.dataLines.join("\n").slice(0, MAX_DATA_CHARS) } : {}),
@@ -200,5 +213,6 @@ export function parseDraftMarkdown(markdown: string): SlidesProgressPage[] | nul
     current.notes.push(line);
   }
   if (hasPage) pages.push(collect(current));
+  if (options.preserveContent && pages.length > MAX_PAGES) throw new Error("semantic_draft_capacity: 最多支持 32 页，草稿未截断");
   return pages.length > 0 ? pages.slice(0, MAX_PAGES) : null;
 }

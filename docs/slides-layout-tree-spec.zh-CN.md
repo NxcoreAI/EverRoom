@@ -1,10 +1,10 @@
 # 幻灯片布局语法（v2 唯一写入格式）
 
-状态：权威正文 · 2026-10-21
+状态：权威正文 · 2026-10-22
 
-本文件是幻灯片布局的唯一语法正文。layouter 与 reviewer 的技能文件 `skills/layout-tree-skill/SKILL.md` 由 `scripts/render-layout-skills.mjs` 从本文件生成。只改本文件，不要直接改生成物。
+本文件是布局语法的权威来源。`scripts/render-layout-skills.mjs` 从这里生成 layouter 的基础技能与组件参考 `components.md`；语法变更在本文件维护。任务目标、内容保真、设计与自审流程由 SYSTEM.md 负责，旧模式契约见 `skills/layout-tree-skill/legacy.md`。
 
-布局只有一种写入格式：**v2 页面**（`version: 2` + `composition` + `nodes`）。v1 树的编译代码只服务历史 deck 的读，不再有写入路径。`group.tree` 已删除；`group` 是 v2 原生分区容器。
+写入格式为 **v2 页面**（`version: 2` + `composition` + `nodes`），`group` 使用原生 `children` 分区。
 
 ## 根
 
@@ -25,13 +25,13 @@
 |---|---|---|
 | `version` | `2` | 必填。 |
 | `role` | 照抄输入的 `role` | 内容语义标签，不改写。 |
-| `composition` | `immersive / hero-data / editorial / swiss / poster / chapter` | 必填，必须等于输入的 `composition`；不得自行换 recipe。 |
+| `composition` | `immersive / hero-data / editorial / swiss / poster / chapter` | 必填。语义内容模式由 Layouter 根据实际设计选择；旧模式等于输入的 composition。 |
 | `safeArea` | `content`（默认）/ `full` | 图片与色块用节点 `bleed` 出血。 |
 | `grid` | `cols 1~12`、`rows 1~12`、`gutter 0~48`、`rowGutter 0~48`、`margin 0~96` | 可省略，用风格卡默认（12 列 × 8 行）。 |
-| `footer` | `left? / center? / right?` 各 ≤120 字；`pageNumbers?`；`tone?` `text \| muted \| inverse` | 可省略；`pageNumbers` 由网关注入页码。 |
+| `footer` | `left? / center? / right?` 各 ≤120 字；`pageNumbers?`；`tone?` `text \| muted \| inverse` | 语法可省略，使用规则见 SYSTEM.md。仅显式写 `pageNumbers:true` 时网关填入页码；省略 footer 不生成页码与页脚线。`inverse` 适用于深色页且不绘制页脚线。 |
 | `background` | 色号，≤9 字符（如 `"#0E0D0C"`） | 可省略，缺省用主题底色。 |
 | `dark` | `true` | 整页深色口径。封面/收尾角色在风格卡 `darkCover` 下自动深色。 |
-| `notes` | 字符串，≤2000 字 | 演讲备注，原样放输入的 `copy.speakerNotes`。 |
+| `notes` | 字符串，≤2000 字 | 演讲备注；输入超过此容量时报告阻塞，避免引擎截断。 |
 | `nodes` | 1~64 个页面级节点 | 含 group 子节点后总数 ≤64。 |
 
 页面不写标题带；message 与标题都做成 text 节点。
@@ -42,7 +42,7 @@
 - 页面级节点必须写 `slot`：`{ "col": [c1, c2], "row": [r1, r2] }`。编号 1 起、闭区间；`c1 ≤ c2 ≤ cols`、`r1 ≤ r2 ≤ rows`。
 - `bleed`：`true`、`"left" | "right" | "top" | "bottom" | "x" | "y" | "all"`，或这些值的数组。出血到画布边缘。
 - `group` 子节点不写 `slot`、不写 `bleed`。
-- 文字只用 type token。不写任意 pt、字号、颜色、字体。
+- 文字层级用 type token，颜色用 tone，字体用文档列出的语义枚举。仅本文明确列出的字段接受数值尺寸或色号，取值服从 styleTokens；其余字段不自造像素样式。
 - 不写 emoji：引擎直接拒页。装饰图形用 `path`，图标用 `icon`。
 - 页面预算（引擎硬限制，超了 validate 报）：元素总数 ≤48、图片 ≤8、路径 ≤4、单条文本 ≤2000 字符。
 
@@ -100,10 +100,8 @@
 
 - `icon.name` 必须来自引擎图标集：`check-circle`、`check`、`bolt`、`shield-check`、`users`、`chart-bar`、`chart-pie`、`globe-alt`、`rocket-launch`、`light-bulb`、`map-pin`、`clock`、`arrow-trending-up`、`sparkles` 等。名字不在集合内报错。
 - `icon.tone` 与 text 的 `tone` 同源。
-- 每页 1~3 个 icon 足够：门槛页给三项各一个，团队页给人/团队，流程页给节点。不要整页铺图标。
 - `path.d` 只写简单 SVG path（4~3000 字符），不写文字。
 - `path.fill` / `path.stroke.color` 可写语义色（如 `tone:primary`）或色号；`stroke.widthPt` 0.25~12。
-- 图形是第二层：先保证 message，再用 icon/path/shape 做「信息图形」，不要把页面做成纯文字白底。
 
 ## table
 
@@ -124,9 +122,8 @@
 - 首行默认表头（primary 底反白）；`header: false` 时按普通行。
 - 单元格是字符串，或对象 `{ "text", "bold"?, "tone"?, "fill"?, "align"?, "span"? }`；单元格 ≤120 字。
 - `style` 三选一：`banded`（蓝底表头 + 隔行，默认）、`outline`（白底 + 主色边框）、`minimal`（无底色，仅横线）。
-- `colWidths` 按内容分配，不要等宽。`fontSize` 8~20，密集页用 9~10。
-- 表格页优先用 table，不要把 5 行以上表格拆成卡片。
-- 表格不要孤零零放页面中央：标题区 + 表格 + 一条 source 脚注，必要时补一个结论数字或 icon。
+- `colWidths` 是列宽比例；按内容分配。`fontSize` 可选，8~20，缺省继承引擎字号。
+- 结构化表格 block 使用 `table`，保留表头、行列顺序和全部单元格。
 
 ## stats / chart / shape
 
@@ -197,8 +194,8 @@ slot 栅格表达不了的自由版式，用 `group` 把一块 slot 切成 v2 �
 - overlay 分组不写 `weights`、不写 `gapScale`：子节点间距用 `place` 自己留出。
 - 子节点类型与页面级完全相同：`text / image / shape / stats / chart / table / component / icon / path / group`。group 内不允许 `connector`。
 - 嵌套深度 ≤3 层（`group` 套 `group` 套 `group` 为止）。第 4 层报错。
-- group 子节点同样不写 px/pt/字号。色号只有 `shape.fill`、`path.stroke`、`image.scrim.color` 三处例外，按各自规则。
-- 只把 group 用在 slot 表达不了的自由版式（架构图、拼贴、复杂嵌套卡）。普通页面先走 slot。
+- group 子节点使用与页面级相同的节点字段和主题规则。
+- slot 适合页面级分区；group 适合局部比例分配、叠放与嵌套结构。按表达需要选择。
 - `tree` 已废弃：收到即报错「group 不再接受 v1 树：把 tree 拆成 children 的 v2 节点，用 weight 表达比例」。
 
 ## component（组件节点）
@@ -214,10 +211,10 @@ slot 栅格表达不了的自由版式，用 `group` 把一块 slot 切成 v2 �
   "slot": { "col": [1, 6], "row": [4, 8] } }
 ```
 
-- `name` 必须是 `COMPONENT_NAMES` 里的名字（清单见下节）。未知名字报错。
+- `name` 必须来自组件清单。使用组件时先查组件参考中的参数与容量，未知名字或字段会报错。
 - 组件只读 `frame / theme / skin`：不含客户名、品牌色或参考页文案。样式由 deck 的 `styleTokens` 决定。
 - 字段名照抄本文档；未知字段报错。
-- `style` 可选，见下节「组件样式」。
+- `style` 可选，使用语义枚举，缺省继承 `styleTokens.componentDefaults`。
 
 ## 组件样式（style）与 styleTokens
 
@@ -248,15 +245,15 @@ slot 栅格表达不了的自由版式，用 `group` 把一块 slot 切成 v2 �
 | `teamGrid` | `avatar` | `circle \| initial` |
 | `logoWall` | `monochrome` | `true \| false` |
 
-**styleTokens 语义**（输入字段，是像素口径的唯一真源）：
+**styleTokens 语义**（输入字段，是主题口径的权威来源）：
 
 - `composition`：构图家族（`swiss / editorial / poster / immersive`），决定页面骨架倾向。
 - `darkCover`：封面/收尾是否自动深色。
 - `motif`：页级母题（色带 / 角标 / 幽灵块）。母题由引擎统一铺，`surface:"none"` 的组件不重复画。
-- `palette` / `typeScale` / `fonts` / `spacing` / `decoration`：色板、字号档、字体、间距、装饰口径。所有像素由它们决定。
+- `palette` / `typeScale` / `fonts` / `spacing` / `decoration`：色板、字号档、字体、间距和装饰的默认口径。
 - `componentDefaults`：组件 `style` 的默认值。省略即继承。
 
-输入里的 `styleBrief` 只是风格意图的散文说明。像素口径与冲突时一律以 `styleTokens` 为准。
+组件 style 使用上述语义枚举，在主题口径内选择变体。
 
 **组件语义子集**（哪些 style 真的有差）。组件只表达与自己语义相关的维度，未列出的组合对该组件是 no-op：不报错，也没有视觉变化。默认底面写「卡片」的组件用风格卡卡面；写「平铺」的组件只有显式 `style.surface` 才铺底。
 
@@ -334,7 +331,7 @@ slot 栅格表达不了的自由版式，用 `group` 把一块 slot 切成 v2 �
 
 ## 组件参数
 
-「约几元素」是排页时的元素预算参考。同排并列栏共用 `indexHeader` 做栏头；年代/进程序列用 `eraRail`，页脚节奏带优先于零散 caption。
+「约几元素」用于估算编译后的元素预算；组件选择依据其信息语义和实际容量。
 
 ### 27 个核心组件
 
@@ -370,18 +367,18 @@ slot 栅格表达不了的自由版式，用 `group` 把一块 slot 切成 v2 �
 
 ### 10 个页面原子
 
-页面原子只用下表的字段。它们不走核心组件的参数校验：内容放不下时报叶子缺陷（`LAYOUT_LEAF_INVALID`），提示要精简的字段写在括号里。`style` 语义同核心组件。
+页面原子只用下表的字段。它们不走核心组件的参数校验：内容放不下时报叶子缺陷（`LAYOUT_LEAF_INVALID`）。以下容量描述用于选型；必留信息超出容量时改用其他合法节点完整承载。`style` 语义同核心组件。
 
 | 组件 | 形态与语义 | 参数 | 条目与上限 |
 |---|---|---|---|
-| `founderProfile` | 创始人履历：左轨节点 + 章节正文 + 底部技能条 | `personName`（必填）、`role?`、`subtitle?`、`variant?`（`timeline` 默认 / `resume` 左轨更宽）、`showHeader?`（`false` 时只画正文，页面已有 `sectionHeader`）、`sections: [{ label?, heading, bullets?, columns?, timeline?, weight? }]`、`skills?: [{ title, text }]` | `sections` 每段给 `bullets` 或 `columns: [{ title, meta?, text }]`（columns 画横向公司时间轴，`timeline: false` 关掉）；`weight` 0.5~2.2（引擎夹取）；正文每行不足 44px 报错——减 `sections`；单栏文字超高报错——精简 `columns` 或 `bullets` |
+| `founderProfile` | 创始人履历：左轨节点 + 章节正文 + 底部技能条 | `personName`（必填）、`role?`、`subtitle?`、`variant?`（`timeline` 默认 / `resume` 左轨更宽）、`showHeader?`（`false` 时只画正文，页面已有 `sectionHeader`）、`sections: [{ label?, heading, bullets?, columns?, timeline?, weight? }]`、`skills?: [{ title, text }]` | `sections` 每段给 `bullets` 或 `columns: [{ title, meta?, text }]`（columns 画横向公司时间轴，`timeline: false` 关掉）；`weight` 0.5~2.2（引擎夹取）；正文每行不足 44px 或单栏文字超高时报错 |
 | `radialFunnel` | 中心辐射 → 漏斗汇聚 → 结论 | `centerTitle`（必填）、`centerSubtitle?`、`satellites: string[]`、`bridge?`、`conclusionTitle`（必填）、`conclusionBody?`、`footnote?` | `satellites` 最多画 6 个（超出丢弃）；`bridge` 是中心与结论之间的桥接字 |
-| `kpiRows` | 左标签胶囊 + 大数字 + 注脚，逐行列出 | `rows: [{ label, value, note? }]` | 行高不足 28px 报错——减少 `rows` |
+| `kpiRows` | 左标签胶囊 + 大数字 + 注脚，逐行列出 | `rows: [{ label, value, note? }]` | 行高不足 28px 报错 |
 | `categoryCards` | 四栏「标题条 + 图形 + 指标」卡，无照片时的图像卡替代 | `items: [{ title, metric, note?, imageUrl? }]` | `title` 画顶部标题条；给 `imageUrl` 时卡片下半画图，否则画 `metric` 大数字 |
-| `featureRail` | 产品特征页：左侧参数块 + 中间曲线节点 + 右侧说明 | `params: [{ label, value }]`、`features: [{ title, text }]`、`imageUrl?` | 每行不足 54px 报错——减少 `features`；说明文字超高报错——精简 `text`；给 `imageUrl` 时左上画图与同心圆注记 |
-| `sectionHeader` | 三枚 chevron + 标题 + 副标题的章节头 | `title`（必填）、`subtitle?`、`marker?` | `marker: false` 不画 chevron；标题超宽报错——缩短标题 |
+| `featureRail` | 产品特征页：左侧参数块 + 中间曲线节点 + 右侧说明 | `params: [{ label, value }]`、`features: [{ title, text }]`、`imageUrl?` | 每行不足 54px 或说明文字超高时报错；给 `imageUrl` 时左上画图与同心圆注记 |
+| `sectionHeader` | 三枚 chevron + 标题 + 副标题的章节头 | `title`（必填）、`subtitle?`、`marker?` | `marker: false` 不画 chevron；标题超宽报错 |
 | `photoTriptych` | 三张满版图片并排，标签压在图上 | `images: [{ url, label? }]`、`overlay?`、`labelMode?`（`overlay` 默认 / `none`） | `images` 最多画 3 张（超出丢弃）；`overlay: true` 压一层深色罩 |
-| `competitorBoard` | 竞品行：厂商 / 产品图 / 特点胶囊 / 市场数据 | `competitors: [{ name, imageUrl?, tags: string[], facts: string[] }]` | 最多画 3 家（超出丢弃）；表头固定为厂商/产品/特点/市场情况；行高不足 60px 报错——减少 `competitors`；`facts` 超高报错——精简 `facts` |
+| `competitorBoard` | 竞品行：厂商 / 产品图 / 特点胶囊 / 市场数据 | `competitors: [{ name, imageUrl?, tags: string[], facts: string[] }]` | 最多画 3 家（超出丢弃）；表头固定为厂商/产品/特点/市场情况；行高不足 60px 或 `facts` 超高时报错 |
 | `fullBleedQuote` | 满版图片 + 居中大字，文字位置由组件锁住 | `imageUrl`（必填）、`kicker?`、`titleLines: string[]`、`subtitle?`、`caption?`、`overlay?` | `titleLines` 逐行居中，引擎按最长行自动缩字；`overlay: false` 关掉压暗罩（默认压） |
 | `financialBoard` | 财务页：左财务表 + 右销量柱 + 底部资金用途 | `columns: string[]`、`rows: string[][]`、`chart: { categories: string[], values: number[] }`、`funding: [{ label, value }]`、`caption?` | `rows` 首列左对齐、其余居中；`chart.values` 与 `chart.categories` 一一对应；`funding` 每项一条底部格子 |
 
@@ -396,38 +393,6 @@ slot 栅格表达不了的自由版式，用 `group` 把一块 slot 切成 v2 �
 | swiss | 无额外要求 |
 
 约束统计递归到 group 子节点。
-
-## 内容纪律
-
-1. 文案以输入 `copy` 为准：主标题必须用 `copy.message`（v2 输入不提供 planner 标题）；`kicker` / `supporting` / `facts` / `quote` / `source` 各就各位；不改写、不加句。
-2. 不重复：message 说过的不要再做 supporting。
-3. 一页一个视觉锚点（emphasis）：image / 大数字 / 引语 / chart / table。
-4. 全出血 cover、quote 图必须叠 60~80% 深色 scrim 或压暗图。反白标题在亮天空、浅背景上仍要可读。
-5. 相邻页 composition 不同；整册至少 3 种。
-6. 先按 composition 定骨架，再填 slot。分区从大块到小块，一次只切一层。
-7. 表格页用 `table`：参数表、成本表、竞品表、财务表都走 table。
-
-## 页面密度与骨架
-
-内容页至少 4 个模块：标题、结论标题、主内容、底部结论或导航。
-
-普通页优先 slot；slot 表达不了的自由版式用 `group`，页面级元素关系用 `connector`。
-
-无图片时用 icon/path/shape/table/chart/component 建立视觉锚点。有图片时优先让图片承担证据，文字只做结论和注释。具体用哪种页眉、色彩和图片处理，由 `styleTokens` 与当前 style pack 决定；不要把任何客户风格写进本技能。
-
-标题不要只放一行裸 h1：kicker 前加一条 24~40px 的 primary 短线（shape），或把 kicker 放进 primarySoft 色块；标题区与内容区用一条细分隔线（shape）分开。数据/表格页在标题右侧放一个「结论数字/关键词」小色块，避免左侧一大片空白。
-
-## 视觉丰富度闸门
-
-内容/数据/表格/流程页不能只有文字 + 白底。validate 要求至少一个 `icon / path / image / chart / table / stats / component`，或一条**非全屏**的 shape（短线/色块/分隔）。group 是分区容器，不是视觉锚点：统计递归到子节点，只有 text 的 group 不算有图形。
-
-输入带 `revisionFeedback` 时，按它补视觉锚点后重新 validate。
-
-## 校验
-
-调 `slides_layout_validate`，传 `deckToken` 与整页 JSON。有缺陷按每条缺陷的 `path` 定位节点、按 `hint` 修，重交整页。最多 3 轮。
-
-`ok=true` 后调 `slides_page_preview`（传 deckToken/pageIndex/当前树）。它临时渲染单页，返回确定性 defects 与设计审阅。预览只读，不写当前 deck；多页并发不会互相踩。
 
 ## 示例（hero-data）
 

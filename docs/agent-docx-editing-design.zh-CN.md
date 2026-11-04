@@ -1,7 +1,7 @@
 # Agent 对 Word 文档完整编辑方案
 
-> 状态：设计稿，未排期  
-> 日期：2026-10-17  
+> 状态：已落地（M1–M5，2026-10-30）；实现说明见 `docs/word-agent-editing-implementation.zh-CN.md`  
+> 日期：2026-10-17（设计）/ 2026-10-30（落地）  
 > 关联工程：EverRoom 主仓（网关 documents 模块、桌面 office-bridge）、genoffice 子模块（docx-engine、docs 应用）
 
 ## 1. 方案结论
@@ -195,7 +195,7 @@ op 词汇表由 read 响应下发，agent 不硬编码。理由：词汇演进�
 ## 8. 不做什么
 
 1. 不给 agent 接受或拒绝修订的权限。审阅权留给用户。
-2. 不在本通道做 Excel 编辑。另立方案。
+2. 不在本通道做 Excel 编辑。Excel 的 agent 编辑已另立实现，见 `docs/xlsx-agent-editing-implementation.zh-CN.md`。
 3. 第一期不做表格结构编辑与合并单元格。
 4. 不做多人协同编辑。
 5. 不改 docs 应用现有内嵌 AI 的行为。

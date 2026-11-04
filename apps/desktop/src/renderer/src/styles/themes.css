@@ -1,0 +1,293 @@
+/* ──────────────────────────────────────────────────────────────────────────
+   EverRoom 全局风格（外观主题）
+   ──────────────────────────────────────────────────────────────────────────
+   四套可选外观，全部由 tokens.css 的 `--ui-*` 语义 token 派生：
+   - plain  素白（默认）：照 everoffice 原型的 Apple iWork 皮肤——纯白画布 +
+            毛玻璃侧栏/顶栏 + 系统蓝实底、卡片悬停抬升、按钮按下内收
+   - paper  暖纸：品牌暖白 + 青绿 + 蜜桃
+   - moss   苔原：鼠尾草绿底色 + 深绿主色，安静克制
+   - night  夜墨：深色玻璃 + 浅青绿主色，文档画布仍保持浅色
+   切换方式：<html data-theme="…" data-color-mode="light|dark">，
+   由 state/appearanceSettings.ts 写入；tokens.css 里的旧别名会自动跟随。
+   ────────────────────────────────────────────────────────────────────────── */
+
+/* ── 素白（默认）· 原型 iWork 皮肤 ─────────────────────────────────────────
+   取自 everoffice 原型 office-proto.css 的 `.op-root` 局部 token（Apple iWork 皮肤）。
+   它不是「换一套色」，而是一整套层次与手势，逐条对应：
+
+   1. 背景分层靠「白 + 半透明毛玻璃」，不靠灰底：
+      画布是纯白 #ffffff，侧栏 / 顶栏是 rgba(246,246,248,0.78) + 20px 模糊 + 1.6 饱和
+      （--ui-glass-blur / --ui-glass-saturate），所以滚动时侧栏后面的内容会透出来；
+   2. 线条是黑色低透明（10% / 16% / 6%），在不同的白上都能站住；
+   3. 强调色是系统蓝 #007aff 一族：文字 / 图标用 #0064d2（白底 5.6:1，AA），
+      实底按钮用 #0071e3（其上白字 4.7:1），深压态 #0064d2；
+   4. 交互手势照原型：按钮按下 scale(0.98)、卡片悬停抬升 1~2px + 两段式投影、
+      聚焦环 3px 半透明系统蓝；侧栏导航选中态是「系统蓝实底白字」（Finder 惯例），
+      而不是暖纸那套「白色浮起卡片」；
+   5. 元信息文字用 #6e6e73（白底 5.1:1），原型更浅的 #aeaeb2 只有 2.2:1，这里不采纳。
+   ────────────────────────────────────────────────────────────────────────── */
+:root[data-theme='plain'] {
+  color-scheme: light;
+
+  /* 纯白画布 + 半透明外框（毛玻璃由 --ui-glass-* 驱动） */
+  --ui-bg: #ffffff;
+  --ui-chrome: rgba(246, 246, 248, 0.78);
+  --ui-chrome-strong: #ececef;
+  --ui-surface: #ffffff;
+  --ui-surface-alt: #f9f9fb;
+  --ui-surface-sunken: #f2f2f7;
+
+  --ui-text: #1d1d1f;
+  --ui-text-2: #5a5a5f;
+  --ui-text-3: #6e6e73;
+  --ui-text-inverse: #ffffff;
+
+  --ui-border: rgba(0, 0, 0, 0.1);
+  --ui-border-strong: rgba(0, 0, 0, 0.16);
+  --ui-border-subtle: rgba(0, 0, 0, 0.06);
+
+  /* 悬停是实色（原型 --hover #f2f2f7），不是叠在暖纸上的半透明墨。
+     selected 保留系统蓝 12% 淡底，用于白色表面内的选中。 */
+  --ui-hover: #f2f2f7;
+  --ui-hover-strong: #e8e8ed;
+  --ui-selected: rgba(0, 122, 255, 0.12);
+  --ui-selected-strong: rgba(0, 122, 255, 0.2);
+
+  --ui-accent: #0064d2;
+  --ui-accent-hover: #0059bd;
+  --ui-accent-strong: #0059bd;
+  --ui-accent-soft: rgba(0, 122, 255, 0.1);
+  --ui-accent-softer: rgba(0, 122, 255, 0.06);
+  --ui-accent-line: rgba(0, 122, 255, 0.4);
+  --ui-accent-fill: #0071e3;
+  --ui-accent-fill-hover: #0064d2;
+  --ui-accent-contrast: #ffffff;
+
+  --ui-warm: #e8823a;
+  --ui-warm-strong: #a8551f;
+  --ui-warm-soft: rgba(232, 130, 58, 0.14);
+
+  --ui-danger: #c83232;
+  --ui-danger-hover: #a82828;
+  --ui-danger-soft: rgba(217, 80, 74, 0.1);
+  --ui-success: #1a7f37;
+  --ui-success-soft: rgba(47, 161, 78, 0.1);
+  --ui-warning: #96601c;
+  --ui-warning-soft: rgba(217, 140, 47, 0.12);
+  --ui-running: #a8551f;
+  --ui-running-soft: rgba(232, 130, 58, 0.16);
+
+  /* 文件类型色：原型的多彩图标底色，图标在 12% 同色底上仍可辨 */
+  --ui-icon-doc: #6676d9;
+  --ui-icon-sheet: #2fa14e;
+  --ui-icon-slide: #d96a3f;
+  --ui-icon-pdf: #cf4a52;
+  --ui-icon-md: #7c817f;
+  --ui-icon-image: #8b63c7;
+  --ui-icon-audio: #2f8fa0;
+
+  /* 内容分类色：直接沿用原型 tokens.css 的 icon-* / nav-tone-* 六级色板
+     （tokens.css 里是全局默认值，这里只在素白下覆写成原型色） */
+  --icon-ai: #8b63c7;
+  --icon-calendar: #e8823a;
+  --icon-task: #2fa14e;
+  --icon-document: #6676d9;
+  --icon-room: #3e87df;
+  --icon-communication: #d9504a;
+  --icon-people: #397fd3;
+  --icon-memory: #b88a2e;
+  --icon-data: #239f91;
+  --nav-tone-blue: #4d8ac8;
+  --nav-tone-cyan: #51a8b5;
+  --nav-tone-green: #59a579;
+  --nav-tone-indigo: #6172c8;
+  --nav-tone-orange: #d9954f;
+  --nav-tone-slate: #7c817f;
+
+  --ui-overlay: rgba(0, 0, 0, 0.28);
+  --ui-overlay-strong: rgba(0, 0, 0, 0.42);
+  --ui-scrollbar-thumb: rgba(0, 0, 0, 0.18);
+  --ui-scrollbar-thumb-hover: rgba(0, 0, 0, 0.3);
+
+  /* 原型的两段式投影：1px 贴地 + 大扩散；sm 用于「悬停抬升」，md/lg 给浮层 */
+  --ui-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05), 0 4px 14px rgba(0, 0, 0, 0.07);
+  --ui-shadow-md: 0 1px 2px rgba(0, 0, 0, 0.04), 0 10px 34px rgba(0, 0, 0, 0.1);
+  --ui-shadow-lg: 0 2px 6px rgba(0, 0, 0, 0.06), 0 24px 56px -24px rgba(0, 0, 0, 0.26);
+  --ui-shadow-inset: inset 0 1px 1px rgba(0, 0, 0, 0.04);
+
+  /* 手势：按下内收 + 卡片抬升 + 毛玻璃 + 系统蓝聚焦环 */
+  --ui-press-scale: 0.98;
+  --ui-card-lift: -2px;
+  --ui-card-lift-sm: -1px;
+  --ui-glass-blur: 20px;
+  --ui-glass-saturate: 1.6;
+  --ui-focus-ring-width: 3px;
+  --ui-focus-ring-color: rgba(0, 122, 255, 0.35);
+  --ui-focus-ring-offset: 1px;
+
+  /* 侧栏导航选中 = 系统蓝实底白字（Finder 惯例） */
+  --ui-nav-active-bg: var(--ui-accent-fill);
+  --ui-nav-active-border: transparent;
+  --ui-nav-active-color: #ffffff;
+  --ui-nav-active-icon: #ffffff;
+  --ui-nav-active-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+
+  --wb-primary: #1d1d1f;
+  --wb-primary-contrast: #ffffff;
+
+  /* 品牌缎带跟随系统蓝 / 墨 / 珊瑚 */
+  --brand-teal: #007aff;
+  --brand-ink: #1d1d1f;
+  --brand-peach: #e8823a;
+}
+
+/* ── 苔原 ───────────────────────────────────────────────────────────────── */
+:root[data-theme='moss'] {
+  color-scheme: light;
+
+  --ui-bg: #f4f6ef;
+  --ui-chrome: #eaeee1;
+  --ui-chrome-strong: #e0e6d4;
+  --ui-surface: #fdfefb;
+  --ui-surface-alt: #f1f4ea;
+  --ui-surface-sunken: #e8eddf;
+
+  --ui-text: #1f2b23;
+  --ui-text-2: #4d5c52;
+  --ui-text-3: #5f7064;
+  --ui-text-inverse: #ffffff;
+
+  --ui-border: #dfe5d3;
+  --ui-border-strong: #ccd5bc;
+  --ui-border-subtle: #e8ecdf;
+
+  --ui-hover: rgba(31, 43, 35, 0.05);
+  --ui-hover-strong: rgba(31, 43, 35, 0.085);
+  --ui-selected: rgba(63, 127, 91, 0.11);
+  --ui-selected-strong: rgba(63, 127, 91, 0.18);
+
+  --ui-accent: #35694a;
+  --ui-accent-hover: #2b563c;
+  --ui-accent-strong: #234832;
+  --ui-accent-soft: rgba(63, 127, 91, 0.1);
+  --ui-accent-softer: rgba(63, 127, 91, 0.06);
+  --ui-accent-line: rgba(63, 127, 91, 0.35);
+  --ui-accent-fill: #3f7f5b;
+  --ui-accent-fill-hover: #35694a;
+  --ui-accent-contrast: #ffffff;
+
+  --ui-warm: #c98a4f;
+  --ui-warm-strong: #8a5626;
+  --ui-warm-soft: rgba(201, 138, 79, 0.16);
+
+  --ui-danger: #ad4a32;
+  --ui-danger-hover: #8f3a25;
+  --ui-danger-soft: rgba(173, 74, 50, 0.09);
+  --ui-success: #2f6f4f;
+  --ui-success-soft: rgba(47, 111, 79, 0.1);
+  --ui-warning: #8f6a26;
+  --ui-warning-soft: rgba(143, 106, 38, 0.12);
+  --ui-running: #8a5626;
+  --ui-running-soft: rgba(201, 138, 79, 0.18);
+
+  --ui-icon-doc: #3a6f9a;
+  --ui-icon-sheet: #3f7f5b;
+  --ui-icon-slide: #b8792f;
+  --ui-icon-pdf: #ad4a32;
+  --ui-icon-md: #5b6b60;
+  --ui-icon-image: #7a5fa0;
+  --ui-icon-audio: #417f8e;
+
+  --ui-overlay: rgba(30, 42, 33, 0.3);
+  --ui-overlay-strong: rgba(30, 42, 33, 0.44);
+  --ui-scrollbar-thumb: rgba(31, 43, 35, 0.16);
+  --ui-scrollbar-thumb-hover: rgba(31, 43, 35, 0.28);
+
+  --ui-shadow-sm: 0 1px 2px rgba(30, 42, 33, 0.07);
+  --ui-shadow-md: 0 2px 4px rgba(30, 42, 33, 0.05), 0 12px 28px -14px rgba(30, 42, 33, 0.18);
+  --ui-shadow-lg: 0 2px 6px rgba(30, 42, 33, 0.06), 0 28px 64px -28px rgba(30, 42, 33, 0.32);
+  --ui-shadow-inset: inset 0 1px 1px rgba(30, 42, 33, 0.05);
+
+  --wb-primary: #243029;
+  --wb-primary-contrast: #ffffff;
+
+  --brand-teal: #3f7f5b;
+  --brand-ink: #1f2b23;
+  --brand-peach: #c98a4f;
+}
+
+/* ── 夜墨（深色） ─────────────────────────────────────────────────────────── */
+:root[data-theme='night'] {
+  color-scheme: dark;
+
+  --ui-bg: #15191c;
+  --ui-chrome: #1b2023;
+  --ui-chrome-strong: #242a2e;
+  --ui-surface: #20262a;
+  --ui-surface-alt: #252c30;
+  --ui-surface-sunken: #121619;
+
+  --ui-text: #e6ecec;
+  --ui-text-2: #a7b4b4;
+  --ui-text-3: #8b999a;
+  --ui-text-inverse: #0d1214;
+
+  --ui-border: #2f393c;
+  --ui-border-strong: #3d484b;
+  --ui-border-subtle: #283134;
+
+  --ui-hover: rgba(255, 255, 255, 0.055);
+  --ui-hover-strong: rgba(255, 255, 255, 0.09);
+  --ui-selected: rgba(111, 212, 206, 0.13);
+  --ui-selected-strong: rgba(111, 212, 206, 0.2);
+
+  --ui-accent: #6fd4ce;
+  --ui-accent-hover: #8fe0db;
+  --ui-accent-strong: #aeeae6;
+  --ui-accent-soft: rgba(111, 212, 206, 0.14);
+  --ui-accent-softer: rgba(111, 212, 206, 0.08);
+  --ui-accent-line: rgba(111, 212, 206, 0.45);
+  /* 深色下实底按钮用浅青绿 + 深色文字，保证 10:1 对比度 */
+  --ui-accent-fill: #6fd4ce;
+  --ui-accent-fill-hover: #8fe0db;
+  --ui-accent-contrast: #0b1e1f;
+
+  --ui-warm: #e9a06a;
+  --ui-warm-strong: #e9a06a;
+  --ui-warm-soft: rgba(233, 160, 106, 0.2);
+
+  --ui-danger: #e07a5f;
+  --ui-danger-hover: #e8927a;
+  --ui-danger-soft: rgba(224, 122, 95, 0.16);
+  --ui-success: #6fbf8f;
+  --ui-success-soft: rgba(111, 191, 143, 0.16);
+  --ui-warning: #d8a75a;
+  --ui-warning-soft: rgba(216, 167, 90, 0.18);
+  --ui-running: #e9a06a;
+  --ui-running-soft: rgba(233, 160, 106, 0.2);
+
+  --ui-icon-doc: #7fa9d9;
+  --ui-icon-sheet: #7fc49a;
+  --ui-icon-slide: #e0a06a;
+  --ui-icon-pdf: #e08a75;
+  --ui-icon-md: #a2aeb2;
+  --ui-icon-image: #b99ad8;
+  --ui-icon-audio: #7ab8d0;
+
+  --ui-overlay: rgba(3, 8, 10, 0.62);
+  --ui-overlay-strong: rgba(3, 8, 10, 0.78);
+  --ui-scrollbar-thumb: rgba(255, 255, 255, 0.18);
+  --ui-scrollbar-thumb-hover: rgba(255, 255, 255, 0.3);
+
+  --ui-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --ui-shadow-md: 0 2px 4px rgba(0, 0, 0, 0.4), 0 12px 28px -14px rgba(0, 0, 0, 0.7);
+  --ui-shadow-lg: 0 2px 8px rgba(0, 0, 0, 0.5), 0 28px 64px -24px rgba(0, 0, 0, 0.8);
+  --ui-shadow-inset: inset 0 1px 1px rgba(255, 255, 255, 0.04);
+
+  --wb-primary: #e6ecec;
+  --wb-primary-contrast: #15191c;
+
+  --brand-teal: #4fc7c1;
+  --brand-ink: #c9d8d6;
+  --brand-peach: #e9a06a;
+}

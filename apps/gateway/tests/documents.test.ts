@@ -469,29 +469,27 @@ describe('document transactions', () => {
     const operations = new DocumentOperationService(db, service.broker)
     const host = new DocumentMcpHost(service, undefined, undefined, operations)
     disposables.push(() => host.close())
+    // Phase 2i 去 Room：context 不再有 roomId/availableRooms，操作一律落工作区级。
     const globalContext = {
       agentSessionId: 'session-1',
       runId: 'run-global',
-      roomId: null,
-      availableRooms: [
-        { id: 'room-1', title: '产品规划', kind: '项目' },
-        { id: 'room-2', title: '后端进阶', kind: '主题' },
-      ],
     }
 
     // P0-2d：没有绑定 Room 时不再要求先选房，直接落到工作区级文稿。
     const workspaceStarted = await host.callTool('document_write_begin', {
       mode: 'create', title: '服务端学习路径', format: 'markdown',
     }, globalContext)
-    expect(workspaceStarted.structuredContent).toMatchObject({ roomId: null, state: 'running' })
+    expect(workspaceStarted.structuredContent).toMatchObject({ state: 'running' })
+    expect(workspaceStarted.structuredContent).not.toHaveProperty('roomId')
     expect(service.list()).toEqual([
       expect.objectContaining({ title: '服务端学习路径', status: 'draft', version: 0 }),
     ])
 
     const started = await host.callTool('document_write_begin', {
       mode: 'create', title: '服务端学习路径', format: 'markdown',
-    }, { ...globalContext, roomId: 'room-2' })
-    expect(started.structuredContent).toMatchObject({ roomId: 'room-2', state: 'running' })
+    }, { ...globalContext, runId: 'run-global-second' })
+    expect(started.structuredContent).toMatchObject({ state: 'running' })
+    expect(started.structuredContent).not.toHaveProperty('roomId')
     const operationId = String(started.structuredContent.operationId)
     const documentId = String(started.structuredContent.docId)
     expect(service.list()).toEqual([
@@ -505,7 +503,7 @@ describe('document transactions', () => {
       }),
     ])
     expect(db.select().from(documentVersions).where(eq(documentVersions.documentId, documentId)).all()).toEqual([])
-    expect(operations.list({ roomId: 'room-2', statuses: ['running'] })).toHaveLength(1)
+    expect(operations.list({ sessionId: 'session-1', runId: 'run-global-second', statuses: ['running'] })).toHaveLength(1)
   })
 
   it('assigns stable IDs recursively and resolves block references without Room gates', async () => {
@@ -741,18 +739,18 @@ describe('document transactions', () => {
     })
     const blockId = service.listBlocks(document.id)[0]!.blockId
     expect(service.validateActiveDocumentContext({
-      roomId: 'room-1', documentId: document.id, title: '不可信标题', version: 1,
+      documentId: document.id, title: '不可信标题', version: 1,
       defaultAnchor: 'end', cursorAnchorCandidate: { blockId, offset: 3, affinity: 'after' },
-    }, 'room-1')).toMatchObject({
+    })).toMatchObject({
       title: '活动文档', defaultAnchor: 'end', cursorAnchorCandidate: { blockId, offset: 3 },
     })
     expect(() => service.validateActiveDocumentContext({
-      roomId: 'room-1', documentId: document.id, title: document.title, version: 0, defaultAnchor: 'end',
-    }, 'room-1')).toThrow(expect.objectContaining({ code: 'DOCUMENT_CONFLICT' }))
+      documentId: document.id, title: document.title, version: 0, defaultAnchor: 'end',
+    })).toThrow(expect.objectContaining({ code: 'DOCUMENT_CONFLICT' }))
     expect(() => service.validateActiveDocumentContext({
-      roomId: 'room-1', documentId: document.id, title: document.title, version: 1,
+      documentId: document.id, title: document.title, version: 1,
       defaultAnchor: 'end', cursorAnchorCandidate: { blockId, offset: 5, affinity: 'after' },
-    }, 'room-1')).toThrow(expect.objectContaining({ code: 'ANCHOR_INVALID' }))
+    })).toThrow(expect.objectContaining({ code: 'ANCHOR_INVALID' }))
   })
 
   it('prepares a continuation through Agent tools without exposing apply', async () => {
@@ -1306,14 +1304,16 @@ describe('document transactions', () => {
       id: 1,
       method: 'initialize',
       params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'test', version: '1' } },
-    }, { agentSessionId: 'session-1', runId: 'run-1', roomId: 'room-1' })
+    }, { agentSessionId: 'session-1', runId: 'run-1' })
     const messages = await host.exchange('mcp-session', {
       jsonrpc: '2.0',
       id: 2,
       method: 'tools/list',
       params: {},
-    }, { agentSessionId: 'session-1', runId: 'run-1', roomId: 'room-1' })
-    const result = messages[0]?.result as { tools?: Array<{ name: string; description: string }> }
+    }, { agentSessionId: 'session-1', runId: 'run-1' })
+    const result = messages[0]?.result as {
+      tools?: Array<{ name: string; description: string; inputSchema?: { properties?: Record<string, unknown> } }>
+    }
     expect(result.tools?.map((tool) => tool.name)).toEqual([
       'document_list',
       'document_read',
@@ -1338,6 +1338,9 @@ describe('document transactions', () => {
       .toContain('只要求分析、总结、整理、写方案、起草、润色，都不代表要创建文档')
     expect(result.tools?.find((tool) => tool.name === 'document_write_begin')?.description)
       .toContain('不需要先让用户选择 Room')
+    // Room 归属选择已摘除：begin 不再暴露 roomId 参数（原为声明了但 execute 从不读取的死参数）。
+    const beginSchema = result.tools?.find((tool) => tool.name === 'document_write_begin')?.inputSchema
+    expect(Object.keys(beginSchema?.properties ?? {})).toEqual(['mode', 'title', 'format'])
     // 写作规则已迁往 doc-writer skill；append 描述只保留机械契约与引用转交纪律（M3/V2）。
     expect(result.tools?.find((tool) => tool.name === 'document_write_append')?.description)
       .toContain('document_draft 返回的 invocationId 与 chunkIndex')
@@ -1359,10 +1362,10 @@ describe('document transactions', () => {
       id: 3,
       method: 'initialize',
       params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'reconnect', version: '2' } },
-    }, { agentSessionId: 'session-1', runId: 'run-1', roomId: 'room-1' })
+    }, { agentSessionId: 'session-1', runId: 'run-1' })
     const reconnected = await host.exchange('mcp-session', {
       jsonrpc: '2.0', id: 4, method: 'tools/list', params: {},
-    }, { agentSessionId: 'session-1', runId: 'run-1', roomId: 'room-1' })
+    }, { agentSessionId: 'session-1', runId: 'run-1' })
     expect((reconnected[0]?.result as { tools?: unknown[] }).tools).toHaveLength(12)
   })
 })

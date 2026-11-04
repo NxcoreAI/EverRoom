@@ -21,6 +21,9 @@
     "jsx": "react-jsx",
     "baseUrl": ".",
     "paths": {
+      "@/shared/*": [
+        "src/shared/*"
+      ],
       "@/*": [
         "src/renderer/src/*"
       ],
@@ -46,6 +49,8 @@
   },
   "include": [
     "src",
+    "debug",
+    "vite.agent-debug.config.mts",
     "electron.vite.config.ts"
   ]
 }

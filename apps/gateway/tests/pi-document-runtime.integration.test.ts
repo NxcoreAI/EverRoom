@@ -247,7 +247,6 @@ describe('Pi document tool integration', () => {
       runtimeSessionRef: null,
       prompt: '在 Room A 创建文档',
       pageLabel: 'Context Room',
-      roomId: 'room-a',
     }
     const firstRun = await runtime.start(firstInput)
     const firstEvents = await collect(firstRun.events)
@@ -268,7 +267,6 @@ describe('Pi document tool integration', () => {
       runId: 'run-b',
       runtimeSessionRef: firstRun.runtimeSessionRef,
       prompt: '在 Room B 创建后中止',
-      roomId: 'room-b',
     })
     const secondEvents = await collect(secondRun.events)
     expect(secondEvents.filter((event) => event.type === 'tool.completed').map((event) =>
@@ -283,12 +281,13 @@ describe('Pi document tool integration', () => {
 
     const persistedOperations = db.select().from(documentOperations)
       .orderBy(asc(documentOperations.createdAt)).all()
+    // Phase 2i 去 Room：operation 落库一律工作区级（roomId 恒 null）。
     expect(persistedOperations).toEqual([
       expect.objectContaining({
-        agentSessionId: 'session-shared', runId: 'run-a', roomId: 'room-a', status: 'completed',
+        agentSessionId: 'session-shared', runId: 'run-a', roomId: null, status: 'completed',
       }),
       expect.objectContaining({
-        agentSessionId: 'session-shared', runId: 'run-b', roomId: 'room-b', status: 'cancelled',
+        agentSessionId: 'session-shared', runId: 'run-b', roomId: null, status: 'cancelled',
       }),
     ])
     await expect(runtime.start({
@@ -425,9 +424,8 @@ describe('Pi document tool integration', () => {
       runtimeSessionRef: null,
       prompt: '重写 Java 学习文档的开头部分，使其更加详细',
       pageLabel: 'Context Room',
-      roomId: 'room-edit-review',
       activeDocument: {
-        roomId: 'room-edit-review', documentId: document.id, title: document.title,
+        documentId: document.id, title: document.title,
         version: document.version, defaultAnchor: 'end',
       },
     })
@@ -532,7 +530,8 @@ describe('Pi document tool integration', () => {
 
     const appendNotifications: Array<() => void> = []
     const waitForAppend = () => new Promise<void>((resolvePromise) => appendNotifications.push(resolvePromise))
-    const unsubscribe = service.broker.subscribe('room-cancel', {
+    // Phase 2i 去 Room：工作区级事件统一落在 WORKSPACE_DOCUMENT_CHANNEL（subscribe(null)）。
+    const unsubscribe = service.broker.subscribe(null, {
       readyState: 1,
       send(data) {
         const frame = JSON.parse(data) as { event?: { type?: string; payload?: { operation?: { id?: unknown } } } }
@@ -555,7 +554,6 @@ describe('Pi document tool integration', () => {
       runtimeSessionRef: null,
       prompt: '创建后等待确认',
       pageLabel: 'Context Room',
-      roomId: 'room-cancel',
     })
     const eventsPromise = collect(run.events)
     await firstAppend
@@ -576,7 +574,7 @@ describe('Pi document tool integration', () => {
     expect(db.select().from(documentOperations)
       .where(eq(documentOperations.runId, 'run-cancel')).get()).toMatchObject({
       agentSessionId: 'session-cancel',
-      roomId: 'room-cancel',
+      roomId: null,
       status: 'cancelled',
     })
 
@@ -587,7 +585,6 @@ describe('Pi document tool integration', () => {
       runtimeSessionRef: run.runtimeSessionRef,
       prompt: '创建后由 runtime dispose 清理',
       pageLabel: 'Context Room',
-      roomId: 'room-cancel',
     })
     const disposeEventsPromise = collect(disposeRun.events)
     await secondAppend
@@ -599,7 +596,7 @@ describe('Pi document tool integration', () => {
     expect(db.select().from(documentOperations)
       .where(eq(documentOperations.runId, 'run-dispose')).get()).toMatchObject({
       agentSessionId: 'session-cancel',
-      roomId: 'room-cancel',
+      roomId: null,
       status: 'cancelled',
     })
   }, 20_000)
@@ -679,7 +676,6 @@ describe('Pi document tool integration', () => {
       runtimeSessionRef: null,
       prompt: '创建文档后模拟模型失败',
       pageLabel: 'Context Room',
-      roomId: 'room-terminal',
     })
     const failedEvents = await collect(failedRun.events)
     expect(failedEvents.at(-1)?.type).toBe('run.failed')
@@ -687,7 +683,7 @@ describe('Pi document tool integration', () => {
     expect(db.select().from(documentOperations)
       .where(eq(documentOperations.runId, 'run-failed')).get()).toMatchObject({
       agentSessionId: 'session-terminal',
-      roomId: 'room-terminal',
+      roomId: null,
       status: 'cancelled',
     })
 
@@ -697,7 +693,6 @@ describe('Pi document tool integration', () => {
       runtimeSessionRef: failedRun.runtimeSessionRef,
       prompt: '创建文档但不提交',
       pageLabel: 'Context Room',
-      roomId: 'room-terminal',
     })
     const completedEvents = await collect(completedRun.events)
     expect(completedEvents.at(-1)?.type).toBe('run.completed')
@@ -705,7 +700,7 @@ describe('Pi document tool integration', () => {
     expect(db.select().from(documentOperations)
       .where(eq(documentOperations.runId, 'run-uncommitted')).get()).toMatchObject({
       agentSessionId: 'session-terminal',
-      roomId: 'room-terminal',
+      roomId: null,
       status: 'cancelled',
     })
   }, 20_000)

@@ -1,0 +1,236 @@
+/* 主页「技能」页（workbench/home/SkillsPage.tsx）。
+ *
+ * 约定与 home.css 一致：只用 --ui-* token；层次靠 hairline + 底色分层；
+ * 选择器全部 scoped 到 .wb-skills-*，不碰全局。 */
+
+/* ───────────────── 工具条 ───────────────── */
+
+.wb-skills-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.wb-skills-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1 1 240px;
+  min-width: 200px;
+  gap: 7px;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface);
+  color: var(--ui-text-3);
+}
+.wb-skills-search:focus-within {
+  border-color: var(--ui-accent-line);
+  box-shadow: 0 0 0 2px var(--ui-accent-softer);
+}
+.wb-skills-search .ui-input {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+/* ───────────────── 分组 ───────────────── */
+
+.wb-skills-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 26px;
+}
+
+.wb-skills-group { display: flex; flex-direction: column; gap: 8px; }
+
+.wb-skills-group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 22px;
+}
+.wb-skills-group-head h2 {
+  margin: 0;
+  font-size: var(--ui-text-md);
+  font-weight: 650;
+  letter-spacing: var(--ui-tracking-tight);
+}
+.wb-skills-group-count {
+  margin-left: auto;
+  font-size: var(--ui-text-2xs);
+  color: var(--ui-text-3);
+}
+.wb-skills-group-hint {
+  margin: 0;
+  font-size: var(--ui-text-2xs);
+  line-height: var(--ui-leading-normal);
+  color: var(--ui-text-3);
+}
+
+/* ───────────────── 技能行 ───────────────── */
+
+.wb-skills-list {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface);
+  overflow: hidden;
+}
+.wb-skills-list > * + * { border-top: 1px solid var(--ui-border-subtle); }
+
+.wb-skills-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  transition: background var(--ui-duration-fast) var(--ui-ease);
+}
+.wb-skills-row:hover { background: var(--ui-hover); }
+
+.wb-skills-row-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+}
+.wb-skills-row-name {
+  font-size: var(--ui-text-sm);
+  font-weight: 650;
+  letter-spacing: var(--ui-tracking-tight);
+  color: var(--ui-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wb-skills-row-desc {
+  font-size: var(--ui-text-sm);
+  line-height: var(--ui-leading-normal);
+  color: var(--ui-text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wb-skills-row-meta {
+  font-family: var(--ui-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: var(--ui-text-2xs);
+  color: var(--ui-text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 停用行整体压暗，但正文仍可读（不是禁用态，随时能点开看说明）。 */
+.wb-skills-row[data-disabled] .wb-skills-row-name { color: var(--ui-text-2); }
+.wb-skills-row[data-disabled] .wb-skills-row-desc { color: var(--ui-text-3); }
+
+.wb-skills-row-side {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+}
+.wb-skills-row-state {
+  font-size: var(--ui-text-2xs);
+  font-weight: 600;
+  color: var(--ui-text-3);
+  white-space: nowrap;
+}
+.wb-skills-row:not([data-disabled]) .wb-skills-row-state { color: var(--ui-accent-strong); }
+
+/* ───────────────── 新增/删除弹窗 ───────────────── */
+
+.wb-skills-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+/* 正文输入：够写一段说明，又不把弹窗撑出屏幕。 */
+.wb-skills-body-input {
+  min-height: 148px;
+  font-family: var(--ui-font-mono);
+  font-size: var(--ui-text-xs);
+  line-height: 1.6;
+  resize: vertical;
+}
+.wb-skills-form-error {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-danger-soft);
+  color: var(--ui-danger);
+  font-size: var(--ui-text-xs);
+  line-height: var(--ui-leading-normal);
+}
+.wb-skills-form-note {
+  margin: 0;
+  font-family: var(--ui-font-mono);
+  font-size: var(--ui-text-2xs);
+  color: var(--ui-text-3);
+  word-break: break-all;
+}
+
+/* ───────────────── 详情弹窗 ───────────────── */
+
+.wb-skills-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+.wb-skills-detail-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: var(--ui-text-2xs);
+  color: var(--ui-text-3);
+}
+.wb-skills-detail-meta > * + *::before {
+  content: '·';
+  margin-right: 10px;
+  color: var(--ui-border-strong);
+}
+.wb-skills-detail-desc {
+  margin: 0;
+  font-size: var(--ui-text-sm);
+  line-height: var(--ui-leading-normal);
+  color: var(--ui-text-2);
+}
+.wb-skills-prompt {
+  margin: 0;
+  padding: 12px 14px;
+  max-height: 52vh;
+  overflow: auto;
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface-alt);
+  color: var(--ui-text);
+  font-family: var(--ui-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: var(--ui-text-xs);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+@media (max-width: 1100px) {
+  .wb-skills-toolbar { gap: 8px; }
+  .wb-skills-row { padding: 9px 12px; }
+  .wb-skills-row-side { gap: 8px; }
+  .wb-skills-row-state { display: none; }
+}

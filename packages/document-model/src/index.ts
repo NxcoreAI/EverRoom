@@ -117,66 +117,13 @@ export function isValidBlockId(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0 && value.length <= 128;
 }
 
-export interface EverroomMemoryIndex {
-  roomId: string;
-  memoryId: string;
-  fallbackTitle?: string | null;
-  fallbackPreview?: string | null;
-}
-
 /**
- * Block index mark targets. `document` points at a same-Room document block;
- * `memory` points at a Room-local memory item. The two URL hosts (`room` with
- * 3 path segments vs `memory` with 2) are disjoint by construction, so the
- * legacy `parseEverroomBlockReferenceUrl` never misreads a memory URL.
+ * Block index mark targets. `document` points at a same-Room document block.
  */
-export type EverroomBlockIndexTarget =
-  | ({ kind: "document" } & EverroomBlockReference)
-  | ({ kind: "memory" } & EverroomMemoryIndex);
-
-const MEMORY_INDEX_HOST = "memory";
-
-export function createEverroomMemoryIndexUrl(target: EverroomMemoryIndex): string {
-  const path = [target.roomId, target.memoryId]
-    .map((part) => encodeURIComponent(part))
-    .join("/");
-  const query = new URLSearchParams();
-  const title = cleanOptionalText(target.fallbackTitle);
-  const preview = cleanOptionalText(target.fallbackPreview);
-  if (title) query.set("title", title);
-  if (preview) query.set("preview", preview);
-  const suffix = query.size > 0 ? `?${query.toString()}` : "";
-  return `everroom://${MEMORY_INDEX_HOST}/${path}${suffix}`;
-}
-
-export function parseEverroomMemoryIndexUrl(value: string): EverroomMemoryIndex | null {
-  let url: URL;
-  try {
-    url = new URL(value);
-  } catch {
-    return null;
-  }
-  if (url.protocol !== "everroom:" || url.hostname !== MEMORY_INDEX_HOST) return null;
-  const parts = url.pathname.split("/").filter(Boolean);
-  if (parts.length !== 2) return null;
-  try {
-    const [roomId, memoryId] = parts.map(decodeURIComponent);
-    if (!roomId || !memoryId) return null;
-    return {
-      roomId,
-      memoryId,
-      fallbackTitle: cleanOptionalText(url.searchParams.get("title")),
-      fallbackPreview: cleanOptionalText(url.searchParams.get("preview")),
-    };
-  } catch {
-    return null;
-  }
-}
+export type EverroomBlockIndexTarget = { kind: "document" } & EverroomBlockReference;
 
 export function everroomBlockIndexUrl(target: EverroomBlockIndexTarget): string {
-  return target.kind === "document"
-    ? createEverroomBlockReferenceUrl(target)
-    : createEverroomMemoryIndexUrl(target);
+  return createEverroomBlockReferenceUrl(target);
 }
 
 function escapeBlockIndexLabel(value: string): string {
@@ -231,18 +178,6 @@ export function parseBlockIndexMarkMarkdown(
   if (!match || !raw || rawLabel === undefined || !rawUrl) return null;
   const label = unescapeBlockIndexLabel(rawLabel) || null;
 
-  const memory = parseEverroomMemoryIndexUrl(rawUrl);
-  if (memory) {
-    return {
-      target: {
-        kind: "memory",
-        ...memory,
-        fallbackTitle: memory.fallbackTitle || cleanOptionalText(label ?? undefined),
-      },
-      label,
-      raw,
-    };
-  }
   const reference = parseEverroomBlockReferenceUrl(rawUrl);
   if (!reference) return null;
   return {

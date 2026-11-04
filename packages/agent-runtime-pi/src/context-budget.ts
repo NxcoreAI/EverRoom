@@ -8,14 +8,19 @@
  *
  * - clampToolResultText：单条工具结果进入上下文前的字符预算（JSON 感知，
  *   优先缩短长字符串，尽量保持结构可读）。
- * - pruneToolHistory：轮次级历史裁剪——上下文估算超过阈值后，把最近 N 轮
+ * - pruneToolHistory：轮次级历史裁剪——上下文用量超过阈值后，把最近 N 轮
  *   之外的 toolResult 正文与 assistant 工具参数替换成占位符，消息顺序/ID 不变。
  *
  * 两者都只影响「发给模型的那份上下文」；会话落盘与事件流仍是完整历史。
+ *
+ * 阈值口径：优先用 provider 返回的真实 usage（pi session.getContextUsage）；
+ * 拿不到时退回 estimateContextTokens。早期版本用 chars/4 单一口径，实测中文
+ * 文档 + JSON 内容会把用量低估一半左右（2026-10-23 planner 实测 113k 真实 token
+ * 只估到 52.7k），导致 64k 阈值永不触发、最后靠 pi overflow 压缩兜底。
  */
 
 export interface RunContextGuardOptions {
-  /** 上下文估算（chars/4）超过该 token 数才裁剪。 */
+  /** 真实上下文 token 数（provider usage）超过该值才裁剪。 */
   triggerTokens: number;
   /** 最近 N 个带工具调用的 assistant 轮保持原样。 */
   keepRecentTurns: number;
@@ -122,6 +127,54 @@ export function estimateContextChars(messages: readonly unknown[]): number {
   return chars;
 }
 
+/** ASCII 每 token 字符数（与 pi 的 chars/4 口径一致）。 */
+const ASCII_CHARS_PER_TOKEN = 4;
+/** 非 ASCII（中文/全角标点）每字符 token 数：实测中文 tokenizer 约 0.5~0.6。 */
+const CJK_TOKENS_PER_CHAR = 0.6;
+
+/** 单段文本的保守 token 估算：ASCII 走 chars/4，CJK 按字计。 */
+function textTokens(text: string): number {
+  let ascii = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    if (text.charCodeAt(index) < 128) ascii += 1;
+  }
+  return ascii / ASCII_CHARS_PER_TOKEN + (text.length - ascii) * CJK_TOKENS_PER_CHAR;
+}
+
+function contentTokens(content: unknown): number {
+  if (typeof content === "string") return textTokens(content);
+  if (!Array.isArray(content)) return 0;
+  let tokens = 0;
+  for (const block of content as ContentBlockLike[]) {
+    if (!block || typeof block !== "object") continue;
+    if (typeof block.text === "string") tokens += textTokens(block.text);
+    if (typeof block.thinking === "string") tokens += textTokens(block.thinking);
+    if (block.type === "toolCall" && block.arguments !== undefined) {
+      try {
+        tokens += textTokens(JSON.stringify(block.arguments));
+      } catch {
+        // 忽略不可序列化参数
+      }
+    }
+    // 图片按 pi 的估算口径取固定字符数。
+    if (block.type === "image") tokens += 4_800 / ASCII_CHARS_PER_TOKEN;
+  }
+  return tokens;
+}
+
+/**
+ * provider usage 缺失时的兜底 token 估算：比 estimateContextChars/4 更贴近
+ * 中文 + JSON 的真实用量，避免守卫在中文内容上永不触发。
+ */
+export function estimateContextTokens(messages: readonly unknown[]): number {
+  let tokens = 0;
+  for (const message of messages) {
+    if (!message || typeof message !== "object") continue;
+    tokens += contentTokens((message as MessageLike).content);
+  }
+  return Math.ceil(tokens);
+}
+
 function hasToolCall(message: MessageLike | undefined): boolean {
   return Boolean(
     message
@@ -183,12 +236,20 @@ export function pruneToolHistory(
   return changed ? pruned : (messages as unknown[]);
 }
 
-/** 上下文超过 triggerTokens 才裁剪；未超阈值时返回原数组（不制造无谓副本）。 */
+/**
+ * 上下文超过 triggerTokens 才裁剪；未超阈值时返回原数组（不制造无谓副本）。
+ * usageTokens 为 provider 返回的真实上下文 token 数（pi session.getContextUsage）；
+ * 为 null/undefined 时退回 estimateContextTokens。
+ */
 export function guardRunMessages(
   messages: readonly unknown[],
   options: RunContextGuardOptions,
+  usageTokens?: number | null,
 ): readonly unknown[] {
-  const triggerChars = Math.max(1, options.triggerTokens) * 4;
-  if (estimateContextChars(messages) <= triggerChars) return messages;
+  const triggerTokens = Math.max(1, options.triggerTokens);
+  const tokens = typeof usageTokens === "number" && Number.isFinite(usageTokens) && usageTokens > 0
+    ? usageTokens
+    : estimateContextTokens(messages);
+  if (tokens <= triggerTokens) return messages;
   return pruneToolHistory(messages, options);
 }

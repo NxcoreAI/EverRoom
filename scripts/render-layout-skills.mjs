@@ -7,7 +7,8 @@
  *   agents/<agent>/skills/layout-tree-skill/appendix.md   该 agent 的增量章节（顶部注释给 description）
  *
  * 输出：
- *   agents/<agent>/skills/layout-tree-skill/SKILL.md      front-matter + 权威正文 + --- + appendix 正文
+ *   agents/<agent>/skills/layout-tree-skill/SKILL.md      基础语法 + 组件参考指针 + appendix
+ *   agents/<agent>/skills/layout-tree-skill/components.md 组件样式、清单与详细参数
  *
  * 用法：
  *   node scripts/render-layout-skills.mjs            生成（覆盖磁盘文件）
@@ -45,7 +46,20 @@ function renderSkill(agent) {
   const { description, body } = parseAppendix(readNormalized(appendixPath));
   const spec = readNormalized(SPEC_PATH);
   if (!body) throw new Error(`${relative(ROOT, appendixPath)} 除了 description 注释之外没有正文`);
-  return {
+  const componentStart = spec.indexOf("## 组件样式（style）与 styleTokens");
+  const componentEnd = spec.indexOf("## Composition 硬约束（validate 会拒收）");
+  if (componentStart < 0 || componentEnd <= componentStart) {
+    throw new Error("权威正文缺少组件参考分界章节");
+  }
+  const components = spec.slice(componentStart, componentEnd).trim();
+  const core = [
+    spec.slice(0, componentStart).trimEnd(),
+    "",
+    "使用 component 时，先读 `skills/layout-tree-skill/components.md`：按信息语义选择组件，再核对该组件的参数、容量和实际支持的 style。该参考由权威正文生成；基础节点页无需加载。",
+    "",
+    spec.slice(componentEnd),
+  ].join("\n");
+  return [{
     path: join(skillDir, "SKILL.md"),
     text: [
       "---",
@@ -53,14 +67,24 @@ function renderSkill(agent) {
       `description: ${description}`,
       "---",
       "",
-      spec,
+      core,
       "",
       "---",
       "",
       body,
       "",
     ].join("\n"),
-  };
+  }, {
+    path: join(skillDir, "components.md"),
+    text: [
+      "# 布局组件参考",
+      "",
+      "由 scripts/render-layout-skills.mjs 从 docs/slides-layout-tree-spec.zh-CN.md 生成；语法变更在权威正文维护。",
+      "",
+      components,
+      "",
+    ].join("\n"),
+  }];
 }
 
 /** 差异摘要：首个不同的行、行数、增删行数。 */
@@ -82,8 +106,7 @@ function summarizeDiff(expected, actual) {
 const checkOnly = process.argv.includes("--check");
 const failures = [];
 
-for (const agent of AGENTS) {
-  const { path, text } = renderSkill(agent);
+for (const { path, text } of AGENTS.flatMap(renderSkill)) {
   const relativePath = relative(ROOT, path);
   if (checkOnly) {
     const actual = existsSync(path) ? readFileSync(path, "utf8").replace(/\r\n/g, "\n") : "";

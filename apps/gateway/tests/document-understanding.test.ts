@@ -161,8 +161,6 @@ describe("DocumentUnderstandingService", () => {
       originalPrompt: "validate",
       pageLabel: "Document parser",
       roomId: null,
-      captureMemory: false,
-      recallMemory: false,
       toolsEnabled: true,
     };
     const validation = await tools.find((tool) => tool.name === "document_validate_artifact")!

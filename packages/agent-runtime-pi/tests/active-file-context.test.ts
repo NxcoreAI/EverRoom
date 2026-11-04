@@ -21,9 +21,50 @@ describe("buildActiveFileContext", () => {
     expect(context).toContain("先调用 file_read");
     // 不再让模型去猜文档内核里的其他文稿。
     expect(context).toContain("不要用 document_list/document_read");
-    // 改这份 Word 用 office_edit，而不是另建一份。
-    expect(context).toContain("office_edit");
-    expect(context).toContain("不要用 office_create");
+    // 改这份 Word 用 word_agent_* 工具链（f04147ea 的新路由），而不是另建一份。
+    expect(context).toContain("word_agent_edit");
+    expect(context).toContain("word_agent_read");
+    expect(context).toContain("office_create 是另建一份新文件");
+  });
+
+  it("强调任意 docx 可按 fileId 后台编辑，不再要求用户先打开", () => {
+    const context = buildActiveFileContext({
+      fileId: "file-abc",
+      title: "软件开发合同.docx",
+      kind: "docx",
+      editable: true,
+    });
+    // 结构化操作用 word_agent_ops；找不到 fileId 时先 file_search。
+    expect(context).toContain("word_agent_ops");
+    expect(context).toContain("file_search");
+    expect(context).toContain("不要求文件已经打开");
+    // 未保存修改仍是硬闸门，但“没打开”不再是拒绝理由。
+    expect(context).toContain("FILE_UNSAVED");
+    expect(context).toContain("后台编辑器里打开它");
+    expect(context).toContain("不需要让用户先手动打开");
+    expect(context).not.toContain("请用户先以可编辑方式打开");
+  });
+
+  it("Excel 同样按 fileId 后台编辑：不要求用户先打开，找不到 fileId 先 file_search", () => {
+    const context = buildActiveFileContext({
+      fileId: "file-sheet",
+      title: "预算.xlsx",
+      kind: "spreadsheet",
+      editable: true,
+    });
+    // 修改走 sheets_agent_read → sheets_agent_edit 的活工作簿通道。
+    expect(context).toContain("Excel 表格");
+    expect(context).toContain("sheets_agent_read");
+    expect(context).toContain("sheets_agent_edit");
+    // 与 Word 对齐：headless 隐藏工作簿，不要求文件已经打开。
+    expect(context).toContain("不要求文件已经打开");
+    expect(context).toContain("headless");
+    expect(context).toContain("file_search");
+    // sheets_create 是另建一份新文件，不是修改当前文件。
+    expect(context).toContain("sheets_create 是另建一份新文件");
+    // “没打开”不是拒绝理由：不应退回“请用户先打开/先保存”。
+    expect(context).not.toContain("请用户先以可编辑方式打开");
+    expect(context).not.toContain("必须先打开");
   });
 
   it("PPT 额外指向 slides_read；只读打开明确不承诺修改", () => {
@@ -44,8 +85,8 @@ describe("buildActiveFileContext", () => {
     const sheet = buildActiveFileContext({ fileId: "f1", title: "预算.xlsx", kind: "spreadsheet" });
     expect(sheet).toContain("Excel 表格");
     expect(sheet).not.toContain("slides_read");
-    expect(sheet).toContain("sheets_edit");
-    expect(sheet).toContain("sheets_read");
+    expect(sheet).toContain("sheets_agent_edit");
+    expect(sheet).toContain("sheets_agent_read");
     const pdf = buildActiveFileContext({ fileId: "f2", title: "说明.pdf", kind: "pdf" });
     expect(pdf).toContain("类型：PDF");
   });

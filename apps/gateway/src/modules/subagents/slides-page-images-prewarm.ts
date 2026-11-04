@@ -118,8 +118,8 @@ export function enqueuePrewarmImage(token: string, pageIndex: number, imagePromp
   const hit = registry.get(token);
   if (!hit) return { ok: false, reason: "prewarmToken 未注册或已失效；继续完成方案即可，生图按原路径进行" };
   const prompt = imagePrompt.trim();
-  if (!Number.isInteger(pageIndex) || pageIndex < 1 || pageIndex > 24) {
-    return { ok: false, reason: "pageIndex 须为该页在 pages 中的序号（1~24 的整数）" };
+  if (!Number.isInteger(pageIndex) || pageIndex < 1 || pageIndex > 32) {
+    return { ok: false, reason: "pageIndex 须为该页在 pages 中的序号（1~32 的整数）" };
   }
   if (prompt.length < 8 || prompt.length > 600) {
     return { ok: false, reason: "imagePrompt 须为 8~600 字的生图提示词定稿" };
@@ -247,7 +247,7 @@ export function createSlidesImagePrewarmTools(): PiAgentRuntimeTool[] {
       }),
       pageIndex: Type.Number({
         minimum: 1,
-        maximum: 24,
+        maximum: 32,
         description: "该页在方案 pages 中的序号（1 起）",
       }),
       imagePrompt: Type.String({

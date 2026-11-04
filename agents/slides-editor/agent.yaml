@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: slides-editor
 name: Slides Editor
-description: 用户确认草稿后的编辑/剪辑代理——把长文 points 压成每页 1 句 message + ≤3 条 facts + speakerNotes，并给出 composition/emphasis/intent/takeaway 的 storyboard；不检索、不排版、不建文件
+description: 语义内容指定页修复器——按 defects 修复 storyboard/v3 页面的来源、关系与完整性；不检索、不排版、不建文件
 mode: dispatch_only
 enabled: true
 
@@ -16,8 +16,15 @@ outputSchema: ./schemas/output.schema.json
 
 policy:
   allowedCallers: [primary-agent]
-  maxConcurrency: 2
-  # 12~24 页 storyboard 的 JSON 输出量接近 planner 方案，90s 实测必超时；
-  # 与 planner 对齐 420s，并留出一次 schema 修正的调用余量。
-  maxToolCalls: 8
-  timeoutSeconds: 420
+  # 12~24 页 storyboard 的 JSON 输出量接近 planner 方案，90s 实测必超时。
+  maxConcurrency: 16
+  # 不设工具调用上限：修复是「读资料 → 校验 → 修复 → 提交」的长链路，硬预算中途
+  # abort 会把已收敛的树一起丢掉；run 只受 timeoutSeconds 与输出预算约束。
+  # 冒烟测试期放宽到 900s，与 planner 的修复轮余量对齐。
+  timeoutSeconds: 900
+  model:
+    # 与主 Agent 同底座（主模型，deepseek 系；已具备视觉能力，自审直接看渲染图）。
+    # 输出预算 32768 覆盖「整页 v2 树 + 校验修复轮」；思考档位按 A/B 结论调整
+    # （DeepSeek 系 reasoning:"off" 会显式发 thinking:disabled，不再烧输出预算）。
+    reasoning: "low"
+    maxTokens: 32768

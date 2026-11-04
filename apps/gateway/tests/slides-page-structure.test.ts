@@ -143,9 +143,14 @@ describe("单页结构指标", () => {
     expect(page.measureOver).toBe(0);
   });
 
-  it("两块叠在一起 → 记一处压叠", () => {
-    const page = measurePage([shape(80, 160, 400, 300), shape(120, 200, 400, 300, "#334455")], { theme });
+  it("两块文字叠在一起 → 记一处压叠", () => {
+    const page = measurePage([text(80, 160, 400, 300, "第一段", 20), text(120, 200, 400, 300, "第二段", 20)], { theme });
     expect(page.overlaps).toBe(1);
+  });
+
+  it("文字压在色块上不算压叠（底色是有意的）", () => {
+    const page = measurePage([shape(80, 160, 400, 300), text(120, 200, 300, 100, "压在色块上的字", 20)], { theme });
+    expect(page.overlaps).toBe(0);
   });
 
   it("字号全挤成一档 → 1 档（页面显平）", () => {

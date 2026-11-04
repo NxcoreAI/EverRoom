@@ -36,7 +36,7 @@ function storedLocalePreference(): LocalePreference | null {
 
 function detectLocale(): AppLocale {
   const preference = storedLocalePreference()
-  const systemLocale = window.nxcore?.locale.system ?? window.navigator.language
+  const systemLocale = window.nxcore?.locale?.system ?? window.navigator.language
   return resolveLocale(preference === 'system' ? null : preference, systemLocale)
 }
 
@@ -79,7 +79,7 @@ export function LocaleProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     void i18n.changeLanguage(locale)
     document.documentElement.lang = locale
-    window.nxcore?.locale.set(locale)
+    window.nxcore?.locale?.set(locale)
   }, [locale])
 
   useEffect(() => {
@@ -88,8 +88,8 @@ export function LocaleProvider({ children }: { children: ReactNode }) {
       return
     }
     let cancelled = false
-    setLocaleState(resolveLocale(null, window.nxcore?.locale.system ?? window.navigator.language))
-    void window.nxcore?.locale.getSystem().then((systemLocale) => {
+    setLocaleState(resolveLocale(null, window.nxcore?.locale?.system ?? window.navigator.language))
+    void window.nxcore?.locale?.getSystem().then((systemLocale) => {
       if (cancelled || storedLocalePreference() !== 'system') return
       const detected = resolveLocale(null, systemLocale)
       setLocaleState(detected)

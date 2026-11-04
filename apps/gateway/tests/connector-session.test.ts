@@ -2,7 +2,6 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { SyncEngine } from "@nxcore/connectors-module/sync-engine.js";
 import { applyCliConnectorSession, connectorSessionRoutes } from "../src/modules/connectors/session-routes.js";
 import { createServer } from "../src/server/create-server.js";
 import type { GatewayConfig } from "../src/config.js";
@@ -27,18 +26,6 @@ describe("applyCliConnectorSession", () => {
     const config = { cliConnector: null } as Pick<GatewayConfig, "cliConnector">;
     expect(() => applyCliConnectorSession(config as GatewayConfig, { baseUrl: "https://oo.example.com" })).not.toThrow();
     expect(config.cliConnector).toBeNull();
-  });
-});
-
-describe("SyncEngine session gating", () => {
-  it("treats an unavailable executor like a missing one", () => {
-    const unavailable = { isAvailable: () => false, async *pull() {} } as never;
-    const available = { isAvailable: () => true, async *pull() {} } as never;
-    expect(new SyncEngine(null, () => null).canServe("gmail")).toBe(false);
-    expect(new SyncEngine(unavailable, () => null).canServe("gmail")).toBe(false);
-    expect(new SyncEngine(available, () => null).canServe("gmail")).toBe(true);
-    // direct 源（WebCal）不依赖 oo 会话，登出态仍可服务。
-    expect(new SyncEngine(unavailable, () => null).canServe("ics-calendar")).toBe(true);
   });
 });
 

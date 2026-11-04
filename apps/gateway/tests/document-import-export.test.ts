@@ -106,6 +106,8 @@ async function createHarness(options: {
   lark?: { executable: string } | null
   assetBridgeUrl?: string | null
   ntn?: { executable: string } | null
+  /** 连接器页「关闭飞书」（墓碑）的测试缝。 */
+  feishuDisabled?: () => boolean
 } = {}) {
   dataDirectory = await mkdtemp(join(tmpdir(), 'nxcore-doc-import-'))
   const created = createDatabase(join(dataDirectory, 'gateway.sqlite'), resolve('drizzle'))
@@ -127,6 +129,7 @@ async function createHarness(options: {
       larkCli: options.lark === undefined ? null : options.lark,
       ...(options.assetBridgeUrl !== undefined ? { assetBridgeUrl: options.assetBridgeUrl } : {}),
       ...(options.ntn !== undefined ? { notionCli: options.ntn } : {}),
+      ...(options.feishuDisabled ? { isFeishuDisabled: options.feishuDisabled } : {}),
     },
   )
   const exports_ = new AgentDocumentExportService(
@@ -137,6 +140,7 @@ async function createHarness(options: {
     {
       ...(options.assetBridgeUrl !== undefined ? { assetBridgeUrl: options.assetBridgeUrl } : {}),
       ...(options.ntn !== undefined ? { notionCli: options.ntn } : {}),
+      ...(options.feishuDisabled ? { isFeishuDisabled: options.feishuDisabled } : {}),
     },
   )
   return { documents, imports, exports_ }
@@ -767,6 +771,20 @@ describe('agent document export service', () => {
     const row = db.select().from(agentDocumentExports).all()[0]!
     expect(row.payloadHash).toBeTruthy()
     expect(row.payloadMarkdownRef).toBeTruthy()
+  })
+
+  it('连接器页关闭飞书后：lark-cli 导出被拦截（凭据保留，重新开启即恢复）', async () => {
+    const larkPath = await writeFakeLarkCli('ok')
+    let disabled = true
+    const harness = await createHarness({ connector: null, lark: { executable: larkPath }, feishuDisabled: () => disabled })
+    const { roomId, documentId } = await createRoomDocument(harness.documents)
+    const blocked = await harness.exports_.runExport({ roomId, documentId, provider: 'feishu', mode: 'create' })
+    expect(blocked.status).toBe('failed')
+    expect(blocked.errorCode).toBe('FEISHU_CONNECTOR_DISABLED')
+
+    disabled = false
+    const resumed = await harness.exports_.runExport({ roomId, documentId, provider: 'feishu', mode: 'create' })
+    expect(resumed.status).toBe('succeeded')
   })
 
   it('update mode requires explicit confirmation before overwrite', async () => {

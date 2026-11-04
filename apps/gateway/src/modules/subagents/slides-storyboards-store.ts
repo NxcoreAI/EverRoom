@@ -9,14 +9,15 @@ import { and, desc, eq } from "drizzle-orm";
 import { slidesStoryboards } from "../../infrastructure/database/schema.js";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
 import type { EditorShadowReport, EditorStoryboard } from "./slides-editor.js";
+import type { SemanticReport, SemanticStoryboard } from "./slides-semantic-contract.js";
 
 export interface SlidesStoryboardRecord {
   id: string;
   roomId: string;
   draftDocumentId: string;
   draftHash: string;
-  storyboard: EditorStoryboard;
-  report: EditorShadowReport;
+  storyboard: EditorStoryboard | SemanticStoryboard;
+  report: EditorShadowReport | SemanticReport;
   updatedAt: number;
 }
 
@@ -28,8 +29,8 @@ function toRecord(row: Row): SlidesStoryboardRecord {
     roomId: row.roomId,
     draftDocumentId: row.draftDocumentId,
     draftHash: row.draftHash,
-    storyboard: row.storyboard as unknown as EditorStoryboard,
-    report: row.report as unknown as EditorShadowReport,
+    storyboard: row.storyboard as unknown as SlidesStoryboardRecord["storyboard"],
+    report: row.report as unknown as SlidesStoryboardRecord["report"],
     updatedAt: row.updatedAt.getTime(),
   };
 }
@@ -42,9 +43,12 @@ export class SlidesStoryboardStore {
     roomId: string;
     draftDocumentId: string;
     draftHash: string;
-    storyboard: EditorStoryboard;
-    report: EditorShadowReport;
+    storyboard: EditorStoryboard | SemanticStoryboard;
+    report: EditorShadowReport | SemanticReport;
   }): SlidesStoryboardRecord {
+    if (input.storyboard.schemaVersion === "storyboard/v3" && !input.draftHash.startsWith("semantic-v3:")) {
+      throw new Error("semantic_storyboard_key_required: include contract, source, style and asset configuration in the hash");
+    }
     const now = new Date();
     const existing = this.db.select({ id: slidesStoryboards.id })
       .from(slidesStoryboards)

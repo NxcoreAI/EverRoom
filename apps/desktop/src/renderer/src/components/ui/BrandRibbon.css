@@ -1,0 +1,57 @@
+/* 品牌缎带：三段错位色块（青绿 / 墨青 / 蜜桃），右端斜切，复刻 app 图标。 */
+
+.ui-ribbon {
+  display: inline-flex;
+  flex-direction: column;
+  flex: none;
+  gap: 12%;
+  --ui-ribbon-teal: var(--brand-teal);
+  --ui-ribbon-ink: var(--brand-ink);
+  --ui-ribbon-peach: var(--brand-peach);
+}
+
+.ui-ribbon-bar {
+  display: block;
+  height: calc((100% - 24%) / 3);
+  border-radius: 1px 0 0 1px;
+  transform-origin: left center;
+  /* 右端斜切，接近图标里缎带的透视收口 */
+  clip-path: polygon(0 0, 100% 0, calc(100% - 14%) 100%, 0 100%);
+}
+
+.ui-ribbon-teal {
+  width: 100%;
+  background: var(--ui-ribbon-teal);
+}
+
+.ui-ribbon-ink {
+  width: 76%;
+  background: var(--ui-ribbon-ink);
+}
+
+.ui-ribbon-peach {
+  width: 52%;
+  background: var(--ui-ribbon-peach);
+}
+
+/* 入场：三条依次从左展开；只在品牌时刻（hero / 登录门）使用。 */
+.ui-ribbon.is-animated .ui-ribbon-bar {
+  animation: ui-ribbon-slide 560ms var(--ui-ease-out, cubic-bezier(0.22, 1, 0.36, 1)) both;
+}
+.ui-ribbon.is-animated .ui-ribbon-ink { animation-delay: 70ms; }
+.ui-ribbon.is-animated .ui-ribbon-peach { animation-delay: 140ms; }
+
+@keyframes ui-ribbon-slide {
+  from {
+    opacity: 0;
+    transform: translateX(-28%) scaleX(0.4);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scaleX(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-ribbon.is-animated .ui-ribbon-bar { animation: none; }
+}

@@ -23,10 +23,13 @@ afterEach(async () => {
   server = null
 })
 
-async function startServer(): Promise<{ baseUrl: string; token: string }> {
+async function startServer(options: {
+  files?: Record<string, unknown> | null
+  onBroadcast?: (event: Record<string, unknown>) => void
+} = {}): Promise<{ baseUrl: string; token: string }> {
   server = new OfficeBridgeServer(
-    () => null,
-    () => undefined,
+    () => (options.files ?? null) as never,
+    (event) => options.onBroadcast?.(event as never),
     () => slidesEditImpl as never,
   )
   return server.start()
@@ -139,6 +142,55 @@ describe('OfficeBridgeServer /v1/office-edit', () => {
     expect(status).toBe(422)
     expect(String(json.message)).toContain('当前没有打开任何 Office 文件')
     expect(json.open).toEqual([])
+  })
+
+  it('not_open 自动打开：catalog 命中 → 广播 open-edit 并重试落页成功', async () => {
+    let attempts = 0
+    slidesEditImpl = vi.fn(async () => {
+      attempts += 1
+      return attempts === 1
+        ? { ok: false, reason: 'not_open', open: [] }
+        : { ok: true, result: { ok: true, applied: true, saved: true } }
+    })
+    const files = {
+      catalogEntry: vi.fn(async () => ({ id: 'file-1', originalName: '锥光（CYPLORE）品牌介绍.pptx', displayName: null })),
+      get: vi.fn(async () => { throw new Error('file_not_found') }),
+    }
+    const events: Array<Record<string, unknown>> = []
+    const { baseUrl, token } = await startServer({ files, onBroadcast: (event) => events.push(event) })
+    const { status, json } = await postEdit(baseUrl, token, {
+      mode: 'apply',
+      fileId: 'file-1',
+      page: { slideIndex: 0, specJson: '{}' },
+    })
+    expect(status).toBe(200)
+    expect(json.data).toMatchObject({ applied: true })
+    // agent 生成的产物在 catalog（file_entries）里：优先走 catalog，legacy get 不被调用。
+    expect(files.catalogEntry).toHaveBeenCalledWith('file-1')
+    expect(files.get).not.toHaveBeenCalled()
+    expect(events).toContainEqual(expect.objectContaining({ type: 'open-edit', fileId: 'file-1', format: 'pptx' }))
+    expect(attempts).toBe(2)
+  })
+
+  it('not_open 自动打开：catalog 未命中退回 legacy get 条目', async () => {
+    let attempts = 0
+    slidesEditImpl = vi.fn(async () => {
+      attempts += 1
+      return attempts === 1
+        ? { ok: false, reason: 'not_open', open: [] }
+        : { ok: true, info: { outline: '', opVocabulary: '' } }
+    })
+    const files = {
+      catalogEntry: vi.fn(async () => { throw new Error('file_not_found') }),
+      get: vi.fn(async () => ({ originalName: 'legacy.pptx' })),
+    }
+    const events: Array<Record<string, unknown>> = []
+    const { baseUrl, token } = await startServer({ files, onBroadcast: (event) => events.push(event) })
+    const { status } = await postEdit(baseUrl, token, { mode: 'read', fileId: 'file-2' })
+    expect(status).toBe(200)
+    expect(files.get).toHaveBeenCalledWith('file-2')
+    expect(events).toContainEqual(expect.objectContaining({ type: 'open-edit', originalName: 'legacy.pptx' }))
+    expect(attempts).toBe(2)
   })
 
   it('not_editable → 422 + 重新打开提示', async () => {

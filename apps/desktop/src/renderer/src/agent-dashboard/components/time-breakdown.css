@@ -1,0 +1,207 @@
+/* 时间构成：100% 堆叠条 + 图例 + 3 个指标；逐回合排行与口径收在折叠区。
+   颜色只走令牌（往返 --wait / 工具 --tool / 生成 --accent / 其他灰阶），
+   无阴影、无渐变，圆角只用 --radius。 */
+
+/* ── 100% 堆叠条 ─────────────────────────────────────────────────────────── */
+.bd-bar {
+  display: flex;
+  height: 20px;
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--surface-3);
+}
+
+.bd-seg {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: var(--fs-label);
+  line-height: 1;
+}
+
+.bd-seg[data-tone='wait'] {
+  background: var(--wait);
+  color: var(--ink-2);
+}
+
+.bd-seg[data-tone='tool'] {
+  background: var(--tool);
+  color: var(--surface);
+}
+
+.bd-seg[data-tone='gen'] {
+  background: var(--accent);
+  color: var(--surface);
+}
+
+.bd-seg[data-tone='gap'] {
+  background: color-mix(in srgb, var(--ink-3) 45%, var(--surface));
+  color: var(--ink);
+}
+
+/* ── 图例：色块 + 中文标签 + 耗时 + 占比 ───────────────────────────────────── */
+.bd-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px var(--sp-4);
+  margin-top: var(--sp-2);
+}
+
+.bd-legend-item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  font-size: var(--fs-label);
+  color: var(--ink-3);
+}
+
+.bd-swatch {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 1px;
+  align-self: center;
+  background: var(--line-strong);
+}
+
+.bd-swatch[data-tone='wait'] {
+  background: var(--wait);
+}
+
+.bd-swatch[data-tone='tool'] {
+  background: var(--tool);
+}
+
+.bd-swatch[data-tone='gen'] {
+  background: var(--accent);
+}
+
+.bd-swatch[data-tone='gap'] {
+  background: color-mix(in srgb, var(--ink-3) 45%, var(--surface));
+}
+
+.bd-legend-ms {
+  color: var(--ink-2);
+}
+
+.bd-legend-pct {
+  color: var(--ink-3);
+}
+
+/* ── 3 个关键指标 ─────────────────────────────────────────────────────────── */
+.bd-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--sp-4);
+  margin-top: var(--sp-3);
+  padding-top: var(--sp-3);
+  border-top: 1px solid var(--line-soft);
+}
+
+/* ── 逐回合往返排行（折叠区）：每行 4 个字段 ───────────────────────────────── */
+.bd-rows {
+  display: grid;
+}
+
+.bd-row {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) 64px 84px;
+  align-items: center;
+  gap: var(--sp-2);
+  width: 100%;
+  padding: 3px 4px;
+  border-bottom: 1px solid var(--line-soft);
+  text-align: left;
+}
+
+.bd-row:last-child {
+  border-bottom: 0;
+}
+
+.bd-row:hover {
+  background: var(--surface-3);
+}
+
+.bd-row[data-selected] {
+  background: var(--accent-soft);
+}
+
+.bd-row[data-future] {
+  opacity: 0.38;
+}
+
+.bd-row-id {
+  font-size: var(--fs-small);
+  color: var(--ink-2);
+}
+
+.bd-row-track {
+  height: 6px;
+  border-radius: 1px;
+  background: var(--surface-3);
+  overflow: hidden;
+}
+
+.bd-row-bar {
+  display: block;
+  height: 100%;
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--wait) 45%, var(--ink-3));
+}
+
+.bd-row-ms {
+  font-size: var(--fs-small);
+  color: var(--ink);
+  text-align: right;
+}
+
+.bd-row-tool {
+  font-size: var(--fs-small);
+  color: var(--ink-3);
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bd-more-btn {
+  margin-top: var(--sp-2);
+  font-size: var(--fs-label);
+  color: var(--accent);
+}
+
+.bd-more-btn:hover {
+  text-decoration: underline;
+}
+
+/* ── 口径说明（明细区最后一节） ───────────────────────────────────────────── */
+.bd-note {
+  margin-top: var(--sp-3);
+  padding-top: var(--sp-2);
+  border-top: 1px solid var(--line-soft);
+}
+
+.bd-note-title {
+  margin: 0 0 2px;
+  font-size: var(--fs-label);
+  color: var(--ink-2);
+}
+
+.bd-note ul {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding-left: 14px;
+  font-size: var(--fs-label);
+  line-height: 1.7;
+  color: var(--ink-3);
+}
+
+.bd-empty {
+  margin: 0;
+  font-size: var(--fs-body);
+  color: var(--ink-3);
+}

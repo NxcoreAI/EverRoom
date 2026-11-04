@@ -21,11 +21,9 @@ import { ensureSeriesVisible, guardPalette } from "../slides-layout/color-guard.
 import {
   contrast,
   hexToRgb,
-  hueDistance,
   luminance,
   mix,
   rgbToHex,
-  rotateHue,
   saturation,
 } from "./extract.js";
 
@@ -51,9 +49,6 @@ export const COMPOSITION_LABELS: Record<StyleComposition, string> = {
   poster: "海报大字",
   immersive: "沉浸大图",
 };
-
-/** 候选 composition 缺失/重复时的确定性补位顺序。 */
-export const COMPOSITION_FILL_ORDER: readonly StyleComposition[] = ["swiss", "editorial", "poster", "immersive"];
 
 /**
  * 构图效果文案（effectLines 规范：只写达成效果，无来源说明）。
@@ -112,24 +107,24 @@ function font(value: unknown, field: string): string {
   throw new Error(`风格字体 ${field} 不在词表内：${JSON.stringify(value)}`);
 }
 
-/** 图表系列色：主色同色调渐次 + 强调色收尾（确定性推导，可被显式值覆盖）。 */
+/** 主色渐次与强调色；同色强调时保留三档，不重复系列色。 */
 export function deriveChartSeries(primary: string, accent: string, background: string): string[] {
   const p = hexToRgb(primary);
   const bg = hexToRgb(background);
   const ac = hexToRgb(accent);
-  return [
+  return [...new Set([
     primary,
     rgbToHex(mix(p, bg, 0.3)),
     rgbToHex(mix(p, bg, 0.55)),
     accent,
     rgbToHex(mix(ac, bg, 0.3)),
-  ];
+  ])];
 }
 
 /**
  * 色板关系闸门（美学硬约束的确定性修复层）。
  * 单个色号合法不等于整块色板可用：正文压底色对比不足、主色艳到廉价、
- * 强调色撞主色、卡面与页底无层次——这些关系问题不整体打回（会丢掉
+ * 强调色不可读、卡面与页底无层次——这些关系问题不整体打回（会丢掉
  * styler 的整体意图），而是逐项修复并记录，修复本身确定性可复现。
  */
 const PRIMARY_SATURATION_CAP = 0.72;
@@ -187,10 +182,6 @@ export function sanitizePaletteRelations(
   if (saturation(accent) > ACCENT_SATURATION_CAP) {
     accent = desaturateToCap(accent, ACCENT_SATURATION_CAP);
     notes.push(`accent 饱和度超过 ${String(ACCENT_SATURATION_CAP)}，已降饱和`);
-  }
-  if (hueDistance(accent, primary) < 40) {
-    accent = rotateHue(accent, 170, bg);
-    notes.push("accent 与 primary 色距不足 40°（撞色），已旋转分离");
   }
   if (contrast(accent, bg) < 2.5) {
     accent = stepToContrast(accent, bg, 2.5, lightBg ? INK : PURE_WHITE);
@@ -362,7 +353,7 @@ export function normalizeStyleParams(raw: unknown, notes: string[] = []): StyleP
         ["ghost-number", "ghost-word", "color-band", "corner-accent", "none"] as const, "motif.kind"),
       spec: motifSpec,
     },
-    darkCover: typeof row.darkCover === "boolean" ? row.darkCover : true,
+    darkCover: typeof row.darkCover === "boolean" ? row.darkCover : luminance(hexToRgb(palette.background)) < 0.35,
     effectLines,
     composition,
   };

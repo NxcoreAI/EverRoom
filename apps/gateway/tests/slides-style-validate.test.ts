@@ -111,6 +111,21 @@ describe("deriveChartSeries", () => {
     expect(series[3]).toBe("#e0a03c");
     expect(new Set(series).size).toBe(5);
   });
+
+  it("uses three distinct shades when the accent reuses the primary", () => {
+    const series = deriveChartSeries("#1e3a5f", "#1e3a5f", "#ffffff");
+    expect(series[0]).toBe("#1e3a5f");
+    expect(series).toHaveLength(3);
+    expect(new Set(series).size).toBe(3);
+    const params = normalizeStyleParams({
+      ...validParams,
+      palette: { ...validParams.palette, background: "#ffffff", accent: "#1e3a5f" },
+    });
+    expect(new Set(params.palette.chartSeries).size).toBe(3);
+    for (const color of params.palette.chartSeries) {
+      expect(contrast(hexToRgb(color), hexToRgb(params.palette.background))).toBeGreaterThanOrEqual(3);
+    }
+  });
 });
 
 describe("色板关系闸门（确定性修复）", () => {
@@ -138,12 +153,32 @@ describe("色板关系闸门（确定性修复）", () => {
     expect(contrast(hexToRgb(params.palette.textMuted), hexToRgb("#f5f2ec"))).toBeGreaterThanOrEqual(3);
   });
 
-  it("强调色撞主色时旋转分离，且与底色对比达标", () => {
+  it("同色系强调色保留色相，且与底色对比达标", () => {
     const params = normalizeStyleParams(
       { ...validParams, palette: { ...validParams.palette, accent: "#26466b" } },
     );
-    expect(hueDistance(hexToRgb(params.palette.accent), hexToRgb("#1e3a5f"))).toBeGreaterThanOrEqual(40);
+    expect(hueDistance(hexToRgb(params.palette.accent), hexToRgb("#26466b"))).toBeLessThan(1);
     expect(contrast(hexToRgb(params.palette.accent), hexToRgb("#f5f2ec"))).toBeGreaterThanOrEqual(2.5);
+  });
+
+  it("允许强调色复用主色，归一后不引入新的色相", () => {
+    const params = normalizeStyleParams({
+      ...validParams,
+      palette: { ...validParams.palette, accent: validParams.palette.primary },
+    });
+    expect(params.palette.accent).toBe(params.palette.primary);
+    expect(normalizeStyleParams(params)).toEqual(params);
+  });
+
+  it("未指定封面明暗时跟随内容页，明确指定时保留", () => {
+    expect(normalizeStyleParams({ ...validParams, darkCover: undefined }).darkCover).toBe(false);
+    expect(normalizeStyleParams({
+      ...validParams,
+      darkCover: undefined,
+      palette: { ...validParams.palette, background: "#101418" },
+    }).darkCover).toBe(true);
+    expect(normalizeStyleParams({ ...validParams, darkCover: true }).darkCover).toBe(true);
+    expect(normalizeStyleParams({ ...validParams, darkCover: false }).darkCover).toBe(false);
   });
 
   it("卡面与页底无层次时按底色重推", () => {

@@ -1,5 +1,7 @@
 # 连接器数据自动 Markdown 化设计
 
+> **历史文档（2026-10-28 起）**：连接器已从同步管道改为 Agent 即席检索，不再做定时同步/本地存储。现行方案与实施记录见 [connector-agent-query-refactor-plan.zh-CN.md](./connector-agent-query-refactor-plan.zh-CN.md)。
+
 ## 1. 背景与目标
 
 当前连接器同步链路是：OpenConnector 拉取数据 → 写入 `connector_*` 领域表 → 用户或桌面端显式调用 `/v1/cli-connectors/data/ingest` → 统一理解引擎生成 Markdown 并扇出到 Room/Memory。

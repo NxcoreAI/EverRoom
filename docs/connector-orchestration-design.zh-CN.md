@@ -1,5 +1,7 @@
 # Connector 确定性编排与 Agent 完成门设计
 
+> **历史文档（2026-10-28 起）**：连接器已从同步管道改为 Agent 即席检索，不再做定时同步/本地存储。现行方案与实施记录见 [connector-agent-query-refactor-plan.zh-CN.md](./connector-agent-query-refactor-plan.zh-CN.md)。
+
 状态：Proposal
 
 适用范围：EverRoom Desktop、NxCore Gateway、Pi Agent Runtime、OpenConnector、`oo-cli`

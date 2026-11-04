@@ -1,0 +1,135 @@
+/* 主区补充：run 摘要行、分页标签、两栏布局、提示条。 */
+
+/* ── run 摘要行：一行说明「这是哪条 run」 ───────────────────────────────── */
+.db-runbar {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-4);
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.db-runbar-agent {
+  font-size: var(--fs-small);
+  font-weight: 600;
+  color: var(--accent);
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+.db-runbar-task {
+  font-size: var(--fs-body);
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.db-runbar-meta {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  margin-left: auto;
+  font-size: var(--fs-micro);
+  color: var(--ink-4);
+  white-space: nowrap;
+  flex: 0 1 auto;
+  overflow: hidden;
+}
+
+.db-runbar-session {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.db-runbar-origin {
+  color: var(--ink-3);
+}
+
+.db-runbar-live {
+  color: var(--ok);
+}
+
+/* ── 分页：一行文字标签，选中项下方 2px 蓝线 ───────────────────────────── */
+.db-tabs {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  padding: 0 var(--sp-3);
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.db-tab {
+  height: 34px;
+  padding: 0 var(--sp-3);
+  font-size: var(--fs-body);
+  color: var(--ink-3);
+  border-bottom: 2px solid transparent;
+}
+
+.db-tab:hover {
+  color: var(--ink);
+}
+
+.db-tab.is-on {
+  color: var(--ink);
+  font-weight: 600;
+  border-bottom-color: var(--accent);
+}
+
+.db-tabs-hint {
+  margin-left: auto;
+  font-size: var(--fs-micro);
+  color: var(--ink-4);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── 面板内部通用两栏（宽屏并排，窄屏堆叠） ─────────────────────────────── */
+.db-split {
+  display: grid;
+  gap: var(--sp-4);
+  grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+}
+
+/* ── 提示条 ─────────────────────────────────────────────────────────────── */
+.db-toast {
+  position: fixed;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--fs-label);
+  color: var(--ink-2);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 6px var(--sp-3);
+}
+
+.db-toast-close {
+  font-size: var(--fs-micro);
+  color: var(--accent);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0 6px;
+}
+
+.db-toast-close:hover {
+  border-color: var(--line-strong);
+}
+
+@media (max-width: 1200px) {
+  :root {
+    --rail-width: 208px;
+  }
+}

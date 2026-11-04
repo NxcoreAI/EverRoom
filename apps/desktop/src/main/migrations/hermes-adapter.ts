@@ -23,7 +23,6 @@ export interface HermesIdentityMapping {
 
 export interface HermesSampleVerification {
   sessions: boolean
-  memory: boolean
   attachments: boolean
   identity: HermesIdentityMapping | null
 }
@@ -49,7 +48,7 @@ export async function readHermesSource(_sourcePath: string): Promise<{ threads: 
 }
 
 export async function verifyHermesSample(_sample: unknown): Promise<HermesSampleVerification> {
-  return { sessions: false, memory: false, attachments: false, identity: null }
+  return { sessions: false, attachments: false, identity: null }
 }
 
 export { hash as hermesPathHash }

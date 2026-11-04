@@ -6,7 +6,19 @@ import type {
   SubagentInvocation,
 } from "@nxcore/agent-contract";
 import type { SubagentOrchestrator } from "../subagents/orchestrator.js";
-import type { AgentResolver, AgentRuntimeRunActivity } from "./resolver.js";
+import { bundledAgentDefinitionsDir } from "../../config.js";
+import { loadBuiltinAgentBundle } from "./builtin-bundles.js";
+import type { AgentResolver, AgentRuntimeRunActivity, BuiltinAgentId } from "./resolver.js";
+
+/** Agent 本体（人格）快照：内置 Agent 读 bundle 的 SYSTEM.md，开发者 Agent 只有清单字段。 */
+export interface AgentPersonaSnapshot {
+  id: string;
+  name: string;
+  description: string;
+  systemPrompt: string;
+  skills: string[];
+  capabilities: string[];
+}
 
 function runtimeRun(run: AgentRuntimeRunActivity | null): AgentWorkspaceRunSummary | null {
   if (!run) return null;
@@ -51,6 +63,38 @@ export class AgentStatusService {
     private readonly resolver: AgentResolver,
     private readonly subagents: SubagentOrchestrator,
   ) {}
+
+  /** 单个 Agent 的人格定义（「智能体」页人格段的数据源）。 */
+  persona(agentId: string): AgentPersonaSnapshot | null {
+    const definition = this.resolver.list().find((candidate) => candidate.id === agentId);
+    if (!definition) return null;
+    if (definition.kind === "builtin") {
+      try {
+        const bundle = loadBuiltinAgentBundle(
+          bundledAgentDefinitionsDir(),
+          definition.id as BuiltinAgentId,
+        );
+        return {
+          id: definition.id,
+          name: bundle.name,
+          description: bundle.description,
+          systemPrompt: bundle.systemPrompt,
+          skills: bundle.skills,
+          capabilities: bundle.capabilities,
+        };
+      } catch {
+        // bundle 读不到（缺 SYSTEM.md / 清单损坏）时退回清单字段，不让接口整体失败。
+      }
+    }
+    return {
+      id: definition.id,
+      name: definition.name,
+      description: definition.description,
+      systemPrompt: "",
+      skills: [],
+      capabilities: [],
+    };
+  }
 
   snapshot(): AgentStatusSnapshot {
     const invocations = this.subagents.listInvocations(500);

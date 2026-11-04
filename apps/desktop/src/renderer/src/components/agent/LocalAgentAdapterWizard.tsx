@@ -1,6 +1,6 @@
 import { AlertCircle, Check, Download, LoaderCircle, X } from 'lucide-react'
 import { useRef, useState } from 'react'
-import type { LocalAgentAdapterCheck } from '../../../../shared/sources'
+import type { LocalAgentAdapterCheck } from '@/shared/sources'
 import { useLocale } from '@/i18n/LocaleContext'
 import './LocalAgentAdapterWizard.css'
 

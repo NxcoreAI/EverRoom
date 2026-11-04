@@ -13,14 +13,15 @@ import {
   type DisplayAgentToolCall,
 } from './agentRunActivity'
 import type { DisplayAgentMessage } from './useAgentSession'
-import { useWorkspaceDocuments } from '@/components/documents/WorkspaceDocumentsProvider'
-import { useDocumentOperations } from '@/components/office-editor/operations/index'
+import { useRoomDocumentsState } from '../context-room/RoomDocumentsProvider'
+import { useDocumentOperations } from '../context-room/operations'
 
 export interface LinkedAgentRunState {
   sessionId: string | null
   status: AgentRunStatus | null
   messages: DisplayAgentMessage[]
   activity: AgentRunActivity
+  /** @deprecated 思考过程已按工具调用分段：用 activity.steps[].reasoningBefore + activity.tailReasoning。 */
   reasoning: string
   tools: DisplayAgentToolCall[]
   startedAt?: string
@@ -34,7 +35,7 @@ const EMPTY_STATE: LinkedAgentRunState = {
   sessionId: null,
   status: null,
   messages: [],
-  activity: { steps: [], pendingAnswer: '', finalAnswer: '', hasTools: false, completed: false },
+  activity: { steps: [], pendingAnswer: '', finalAnswer: '', hasTools: false, completed: false, tailReasoning: '', liveReasoning: '' },
   reasoning: '',
   tools: [],
   error: null,
@@ -137,13 +138,13 @@ function errorMessage(error: unknown): string {
 
 export function useLinkedAgentRun(link: AgentSessionLink | null): LinkedAgentRunState {
   const api = window.nxcore?.agent
-  const { documents } = useWorkspaceDocuments()
+  const { documentsByRoom } = useRoomDocumentsState()
   const { operations, presentingOperationIds } = useDocumentOperations()
   const sourceSessionId = link?.sourceSessionId ?? null
   const sourceRunId = link?.sourceRunId ?? null
   const documentId = link?.target.objectType === 'document' ? link.target.objectId : undefined
   const document = documentId
-    ? documents.find((candidate) => candidate.id === documentId)
+    ? Object.values(documentsByRoom).flat().find((candidate) => candidate.id === documentId)
     : undefined
   const documentPending = Boolean(document?.activeTransactionId || (documentId && operations.some((entry) => {
     const operation = entry.summary

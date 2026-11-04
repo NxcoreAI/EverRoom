@@ -1,5 +1,7 @@
 # OpenConnector 桌面端集成
 
+> **历史文档（2026-10-28 起）**：连接器已从同步管道改为 Agent 即席检索，不再做定时同步/本地存储。现行方案与实施记录见 [connector-agent-query-refactor-plan.zh-CN.md](./connector-agent-query-refactor-plan.zh-CN.md)。
+
 EverRoom 随桌面发行包分发并托管 OpenConnector，通过 `oo` CLI 在 Agent 与本地网关之间建立统一桥接。默认安装后直接可用：不依赖 Docker、不在用户启动时下载代码，也不要求手工启动服务或配置 Token。渲染进程不持有 Runtime Token，也不能提交任意 CLI 参数。
 
 本文描述当前桌面集成和运行基线。下一阶段将把 Agent 直接调用 `search/schema/apps/run` 的方式收口为 `connector_prepare` + `connector_execute(planId)`，并通过不可变 Plan、Provider Adapter 和 Completion Gate 约束 Action 选择、参数构造与失败恢复。完整方案见 [Connector 确定性编排与 Agent 完成门设计](./connector-orchestration-design.zh-CN.md)。

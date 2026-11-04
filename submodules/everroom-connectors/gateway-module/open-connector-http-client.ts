@@ -228,3 +228,34 @@ export class OpenConnectorHttpClient {
     });
   }
 }
+
+/**
+ * 语义化调用封套（文档导入等宿主链路复用）：把 apps/search/schema/run
+ * 统一到 OpenConnectorHttpClient，避免再 spawn CLI。
+ */
+export type OoHttpRunner = (
+  config: OpenConnectorCliConfig,
+  call:
+    | { kind: "apps"; service?: string }
+    | { kind: "search"; query: string }
+    | { kind: "schema"; service: string; action: string }
+    | { kind: "run"; service: string; action: string; input: Record<string, unknown>; connectionName?: string | undefined },
+  signal?: AbortSignal,
+) => Promise<unknown>;
+
+export const runOoHttp: OoHttpRunner = (config, call, signal) => {
+  const client = new OpenConnectorHttpClient(config);
+  switch (call.kind) {
+    case "apps":
+      return call.service ? client.listAppsByService(call.service, { signal }) : client.listApps({ signal });
+    case "search":
+      return client.searchActions(call.query, { signal });
+    case "schema":
+      return client.getAction(call.service, call.action, { signal });
+    case "run":
+      return client.runAction(call.service, call.action, call.input, {
+        ...(call.connectionName ? { connectionName: call.connectionName } : {}),
+        ...(signal ? { signal } : {}),
+      });
+  }
+};

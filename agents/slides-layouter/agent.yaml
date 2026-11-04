@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: slides-layouter
 name: Slides Layouter
-description: 每页一个的专职布局设计代理——把单页内容（copy/data/materials）与 deck 布局契约，设计成一页 v2 布局页面（composition + 12×8 slot + bleed + 37 个组件），经 slides_layout_validate 确定性校验环与 slides_page_preview 视觉闸门收敛后提交；只出结构与比例，永不输出像素坐标
+description: 单页布局设计与视觉自审；依据内容重点和关系自主组织 v2 页面，经校验后交由网关编译渲染。
 mode: dispatch_only
 enabled: true
 
@@ -22,7 +22,13 @@ policy:
   # subagent_concurrency_limit 秒拒 → 秒级退避耗尽 → 抛错 → 该页落 v2 兜底页并告警。
   # 旧值 8 是改造前的页级窗口；页级窗口上调到 16 后这里必须同步放开，否则 >8 页的册会掉兜底页。
   maxConcurrency: 16
-  # 读技能 1 次 + validate ≤4 次（3 轮自纠 + 1 次确认）+ 预览 1~2 次 + 提交 1 次。
-  # 24 保留余量（实测 17 轮 validate 打穿过 16）。
-  maxToolCalls: 24
-  timeoutSeconds: 480
+  # 不设工具调用上限：单页是「读资料 → 校验 → 修复 → 提交」的长链路，硬预算中途
+  # abort 会把已收敛的树一起丢掉；run 只受 timeoutSeconds 与输出预算约束。
+  # 冒烟测试期放宽到 1800s：单页设计 + 视觉自审一轮不再被墙钟提前打断。
+  timeoutSeconds: 1800
+  model:
+    # 与主 Agent 同底座（主模型，deepseek 系；已具备视觉能力，自审直接看渲染图）。
+    # 输出预算 131072 覆盖「整页 v2 树 + 校验修复轮」；思考档位按 A/B 结论调整
+    # （DeepSeek 系 reasoning:"off" 会显式发 thinking:disabled，不再烧输出预算）。
+    reasoning: "low"
+    maxTokens: 131072

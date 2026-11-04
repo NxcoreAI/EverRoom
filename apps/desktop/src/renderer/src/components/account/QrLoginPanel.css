@@ -93,8 +93,8 @@
   padding: 8px;
   border: 1px solid var(--border);
   border-radius: 16px;
-  background: #fff;
-  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04), 0 10px 30px rgba(16, 24, 40, 0.07);
+  background: var(--ui-surface);
+  box-shadow: var(--ui-shadow-md);
 }
 
 /* 创建会话：真二维码底图先糊着（灰块只是底图未就绪的兜底），
@@ -111,7 +111,7 @@
   width: 180px;
   height: 180px;
   border-radius: 10px;
-  background: linear-gradient(135deg, rgb(21 26 34 / 5%), rgb(21 26 34 / 10%));
+  background: linear-gradient(135deg, rgb(22 47 55 / 5%), rgb(22 47 55 / 10%));
   filter: blur(3px);
 }
 
@@ -176,15 +176,15 @@
   place-items: center;
   border: 0;
   border-radius: 50%;
-  background: #22a06b;
-  box-shadow: 0 10px 28px rgba(34, 160, 107, 0.4);
+  background: var(--ui-success);
+  box-shadow: 0 10px 28px color-mix(in srgb, var(--ui-success) 38%, transparent);
   animation: qr-pop 0.55s cubic-bezier(0.3, 1.4, 0.5, 1) both;
 }
 
 .qr-login-hit-badge svg {
   width: 44px;
   height: 44px;
-  color: #fff;
+  color: var(--ui-accent-contrast);
   stroke-dasharray: 40;
   stroke-dashoffset: 40;
   animation: qr-check-draw 0.4s ease-out 0.2s forwards;
@@ -201,7 +201,7 @@
   position: absolute;
   width: 96px;
   height: 96px;
-  border: 2px solid #22a06b;
+  border: 2px solid var(--ui-success);
   border-radius: 50%;
   animation: qr-ring 0.9s cubic-bezier(0.22, 1, 0.36, 1) 0.12s both;
 }
@@ -242,7 +242,7 @@
 .qr-login-hint strong { font-size: 13px; }
 .qr-login-hint small { color: var(--muted); font-size: 10.5px; }
 
-.qr-login-hint .qr-login-scanned-title { font-size: 14.5px; font-weight: 700; color: #16845b; }
+.qr-login-hint .qr-login-scanned-title { font-size: 14.5px; font-weight: 700; color: var(--ui-success); }
 
 /* 扫码成功后的确认码：等宽大字，方便与手机比对 */
 .qr-login-code {
@@ -262,8 +262,8 @@
   margin: 4px 0 0;
   padding: 8px 10px;
   border-radius: 6px;
-  background: color-mix(in srgb, #d97706 12%, transparent);
-  color: #b45309;
+  background: var(--ui-warm-soft);
+  color: var(--ui-warm-strong);
   font-size: 11px;
   text-align: left;
 }
@@ -282,7 +282,7 @@
 .qr-login-admission { align-items: stretch; }
 .qr-login-admission .qr-login-stage { align-items: stretch; }
 .qr-login-admission-heading { display: flex; gap: 10px; align-items: flex-start; }
-.qr-login-admission-heading svg { flex: none; width: 15px; height: 15px; margin-top: 2px; color: #b45309; }
+.qr-login-admission-heading svg { flex: none; width: 15px; height: 15px; margin-top: 2px; color: var(--ui-warm-strong); }
 .qr-login-admission-heading div { display: flex; flex-direction: column; gap: 3px; }
 .qr-login-admission-heading strong { font-size: 12px; }
 .qr-login-admission-heading small { color: var(--muted); font-size: 10.5px; }
@@ -318,8 +318,174 @@
 .qr-login-device span { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .qr-login-device strong { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .qr-login-device small { overflow: hidden; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
-.qr-login-device em { font-style: normal; font-size: 11px; font-weight: 600; color: #b45309; }
+.qr-login-device em { font-style: normal; font-size: 11px; font-weight: 600; color: var(--ui-warm-strong); }
 
 @media (prefers-reduced-motion: reduce) {
   .qr-login-panel, .qr-login-panel * { animation: none !important; transition: none !important; }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   D 区焕新：扫码登录面板与登录门 / 设置页同一套控件语言。
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.qr-login-divider {
+  margin: 18px 0;
+  color: var(--ui-text-3);
+  font-size: 11.5px;
+}
+
+.qr-login-divider::before,
+.qr-login-divider::after {
+  background: var(--ui-border);
+}
+
+.qr-login-entry-button {
+  min-height: 46px;
+  gap: 9px;
+  border: 1px solid var(--ui-border-strong);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface);
+  color: var(--ui-text);
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.qr-login-entry-button svg {
+  width: 18px;
+  height: 18px;
+  color: var(--ui-accent);
+}
+
+.qr-login-entry-button:hover {
+  border-color: var(--ui-accent-line);
+  background: var(--ui-accent-softer);
+}
+
+.qr-login-entry-button:focus-visible {
+  outline: 2px solid var(--ui-accent-line);
+  outline-offset: 2px;
+}
+
+.qr-login-qr-box {
+  padding: 10px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-xl);
+  background: var(--ui-surface);
+}
+
+.qr-login-hint strong {
+  color: var(--ui-text);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.qr-login-hint small {
+  color: var(--ui-text-3);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.qr-login-hint .qr-login-scanned-title {
+  color: var(--ui-success);
+  font-size: 14.5px;
+  font-weight: 650;
+}
+
+.qr-login-code {
+  font-family: var(--ui-font-mono);
+  font-size: 22px;
+  font-weight: 620;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.18em;
+}
+
+.qr-login-stage p {
+  color: var(--ui-text-2);
+  font-size: 12.5px;
+}
+
+.qr-login-stage small {
+  color: var(--ui-text-3);
+  font-size: 11px;
+}
+
+.qr-login-switch-warning {
+  border: 1px solid color-mix(in srgb, var(--ui-warm) 36%, var(--ui-border));
+  background: var(--ui-warm-soft);
+  color: var(--ui-warm-strong);
+  font-size: 11px;
+}
+
+.qr-login-actions {
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.qr-login-admission-heading svg {
+  color: var(--ui-warm-strong);
+}
+
+.qr-login-admission-heading strong {
+  color: var(--ui-text);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.qr-login-admission-heading small {
+  color: var(--ui-text-3);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.qr-login-device {
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+  gap: 10px;
+  min-height: 48px;
+  padding: 8px 12px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface);
+  transition: border-color var(--ui-duration-fast) var(--ui-ease), background-color var(--ui-duration-fast) var(--ui-ease);
+}
+
+.qr-login-device:hover {
+  border-color: var(--ui-accent-line);
+  background: var(--ui-accent-softer);
+}
+
+.qr-login-device > svg {
+  width: 30px;
+  height: 30px;
+  padding: 7px;
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-accent-softer);
+  color: var(--ui-accent);
+}
+
+.qr-login-device strong {
+  color: var(--ui-text);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.qr-login-device small {
+  color: var(--ui-text-3);
+  font-size: 10.5px;
+}
+
+.qr-login-device em {
+  color: var(--ui-accent-strong);
+  font-size: 11.5px;
+  font-weight: 550;
+}
+
+.qr-login-hit-badge {
+  background: var(--ui-success);
+}
+
+.qr-login-hit-avatar {
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent-strong);
+  font-size: 32px;
+  font-weight: 620;
 }

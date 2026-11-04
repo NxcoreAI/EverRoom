@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 
-import type { ConnectorAuthorizationAttempt, ConnectorRemoteAccount } from '@nxcore/connector-contract'
+import type { ConnectorAuthorizationAttempt, ConnectorConnection, ConnectorRemoteAccount } from '@nxcore/connector-contract'
 
 import { ConnectorGatewayBridge } from './connector-gateway-bridge'
 import type { GatewaySupervisor } from './gateway-supervisor'
@@ -62,7 +62,6 @@ interface PendingAttempt {
 export class SaasConnectorBridge extends ConnectorGatewayBridge {
   private readonly pending = new Map<string, PendingAttempt>()
   private readonly completed = new Map<string, ConnectorAuthorizationAttempt>()
-  private readonly registering = new Set<string>()
   private readonly openAuthorizationPage: (url: string) => Promise<void>
 
   constructor(
@@ -117,27 +116,32 @@ export class SaasConnectorBridge extends ConnectorGatewayBridge {
       if (response.ok) {
         const payload = (await response.json().catch(() => null)) as { data?: unknown } | null
         if (Array.isArray(payload?.data) && payload.data.length > 0) {
-          // 连接已落在 oo 租户，但 gateway 的连接注册表（连接器列表/scope/同步
-          // 的数据源）只在 manager.register 时建立——与 Seam4 授权完成路径对齐，
-          // 此处显式补注册；失败则留在 pending 由下一轮轮询重试。
-          if (this.registering.has(id)) return base
-          this.registering.add(id)
-          try {
-            const connection = await this.registerConnection({
-              provider: attempt.provider,
-              service,
-              connectionName: 'default',
-            })
-            this.pending.delete(id)
-            const result: ConnectorAuthorizationAttempt = { ...base, status: 'connected', connection }
-            this.completed.set(id, result)
-            return result
-          } catch {
-            // gateway 暂不可达/注册失败：恢复 pending，下轮重试。
-            return base
-          } finally {
-            this.registering.delete(id)
+          // 连接已落在 oo 租户。同步链路删除后不再需要本地注册/建 scope：
+          // Gateway 的 status/查询都实时读 oo，这里只把 oo 的连接映射成桌面契约。
+          const first = payload.data[0] as { alias?: unknown; connectionName?: unknown; status?: unknown } | null
+          const connectionName =
+            typeof first?.alias === 'string' && first.alias.trim()
+              ? first.alias.trim()
+              : typeof first?.connectionName === 'string' && first.connectionName.trim()
+                ? first.connectionName.trim()
+                : 'default'
+          const now = new Date().toISOString()
+          const connection: ConnectorConnection = {
+            id: `${service}:${connectionName}`,
+            provider: attempt.provider,
+            service,
+            connectionName,
+            accountIdentityHash: null,
+            status: 'active',
+            filters: {},
+            createdAt: now,
+            updatedAt: now,
+            authMethod: 'nango-oauth',
           }
+          this.pending.delete(id)
+          const result: ConnectorAuthorizationAttempt = { ...base, status: 'connected', connection }
+          this.completed.set(id, result)
+          return result
         }
       }
     } catch {
@@ -153,6 +157,23 @@ export class SaasConnectorBridge extends ConnectorGatewayBridge {
       .map((config) => PROVIDER_OF_SERVICE[config.service])
       .filter((provider): provider is string => Boolean(provider))
     return [...new Set(providers)]
+  }
+
+  /**
+   * SaaS 已配置 OAuth 的应用全集（连接器页目录的数据源）：
+   * service → provider 映射未知时原样透传（能否授权由 SaaS 配置决定，
+   * 不依赖网关查询档案）；displayName/iconUrl 一并透传。
+   * 同 provider 多条配置取第一条。
+   */
+  async configuredProvidersDetailed(): Promise<Array<{ provider: string; displayName: string | null; iconUrl: string | null }>> {
+    const configs = await this.deps.oauthConfigs()
+    const byProvider = new Map<string, { provider: string; displayName: string | null; iconUrl: string | null }>()
+    for (const config of configs) {
+      const provider = PROVIDER_OF_SERVICE[config.service] ?? config.service
+      if (byProvider.has(provider)) continue
+      byProvider.set(provider, { provider, displayName: config.displayName, iconUrl: config.iconUrl })
+    }
+    return [...byProvider.values()]
   }
 
   /**

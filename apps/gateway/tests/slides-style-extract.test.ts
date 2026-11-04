@@ -82,6 +82,7 @@ describe("extractColorClusters + assignPaletteRoles", () => {
 
     const roles = assignPaletteRoles(clusters);
     expect(roles.background).toMatch(/^#f[0-9a-f]/);
+    expect(roles.darkCover).toBe(false);
     // 主色应是深藏青块：深、蓝相（量化均值允许小幅漂移，按明度+色相断言）。
     const primary = hexToRgb(roles.primary);
     expect(luminance(primary)).toBeLessThan(0.15);
@@ -113,13 +114,28 @@ describe("extractColorClusters + assignPaletteRoles", () => {
 
     const roles = assignPaletteRoles(clusters);
     expect(roles.background).toBe("#0d1520");
+    expect(roles.darkCover).toBe(true);
     expect(contrast(hexToRgb(roles.text), hexToRgb(roles.background))).toBeGreaterThanOrEqual(4.5);
   });
 
   it("returns a neutral fallback for empty clusters", () => {
     const roles = assignPaletteRoles([]);
+    expect(roles.background).toBe("#ffffff");
+    expect(roles.darkCover).toBe(false);
+    expect(roles.accent).toBe(roles.primary);
     expect(roles.primary).toMatch(/^#[0-9a-f]{6}$/);
     expect(roles.accent).toMatch(/^#[0-9a-f]{6}$/);
+  });
+
+  it("keeps a single-brand palette instead of inventing a complementary accent", () => {
+    const roles = assignPaletteRoles([
+      { hex: "#ffffff", ratio: 0.8 },
+      { hex: "#315b83", ratio: 0.12 },
+      { hex: "#222222", ratio: 0.08 },
+    ]);
+    expect(roles.primary).toBe("#315b83");
+    expect(roles.accent).toBe(roles.primary);
+    expect(roles.darkCover).toBe(false);
   });
 
   it("smoke-runs on the real qwen overview sample", async () => {

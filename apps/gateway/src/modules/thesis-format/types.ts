@@ -59,6 +59,8 @@ export interface ThesisHeaderRule {
   underline: boolean;
   /** 封面页是否省略页眉页脚。 */
   skipOnCover: boolean;
+  /** 模版页眉里的图片（校徽 logo 等）：装机时按版位事实回填到输出页眉。 */
+  images?: ThesisHfImage[];
 }
 
 export interface ThesisFooterRule {
@@ -151,6 +153,9 @@ export interface ThesisCoverField {
 
 export interface ThesisCoverRule {
   schoolName: string;
+  /** 模版封面上的图片（校徽/校名标识）：装机时回填到重建后的封面顶部。
+   *  由网关从模版 OOXML 事实确定性写入，不经解析代理。 */
+  logo?: ThesisHfImage;
   /** 文种行（本科毕业论文（设计））。 */
   degreeLine: string;
   yearLine: string;
@@ -167,6 +172,8 @@ export interface ThesisFixedTexts {
 }
 
 export interface ThesisFormatCard {
+  /** v2 模板剖面（槽位骨架 + 固定元素 + 样式锁）。缺省 = 老卡片，走区间映射。 */
+  profile?: import("./template-profile.js").TemplateProfile;
   page: ThesisPageSetup;
   /** 正文基础样式（Normal）。 */
   base: { font: ThesisFontSpec; paragraph: ThesisParagraphSpec };
@@ -193,11 +200,36 @@ export interface ThesisTemplateFacts {
     name: string;
     styles: Array<{ id: string; name: string; fontEastAsia?: string; fontAscii?: string; sizePt?: number; bold?: boolean; lineSpacingMultiple?: number; lineSpacingExactPt?: number; align?: string; firstLineIndentChars?: number }>;
     sections: Array<{ widthMm?: number; heightMm?: number; marginTopMm?: number; marginBottomMm?: number; marginLeftMm?: number; marginRightMm?: number; gutterMm?: number; pageFormat?: string }>;
-    headers: Array<{ file: string; text: string }>;
-    footers: Array<{ file: string; text: string }>;
+    headers: Array<{ file: string; text: string; images: ThesisHfImage[] }>;
+    footers: Array<{ file: string; text: string; images: ThesisHfImage[] }>;
+    /** 封面区正文图片（校徽等）：装订重建封面时按此回填。 */
+    coverImages?: ThesisHfImage[];
+    /** 封面区文本行（段落序）：代理据此填封面字段。 */
+    coverText?: string[];
+    /** 模板正文大纲（章节骨架）。 */
+    outline?: import("./ooxml-facts.js").OoxmlOutlineEntry[];
+    /** 编号方案。 */
+    numbering?: import("./ooxml-facts.js").OoxmlNumberingFact;
+    /** 模板固定表单（评价表等，原样 XML）：装订时回插，保证模板自有内容不丢。 */
+    fixedBlocks?: import("./ooxml-facts.js").OoxmlFixedBlockFact[];
   }>;
   /** 规范条文/样例全文（文件名 → 文本）。 */
   documentsText: Array<{ name: string; text: string }>;
+}
+
+/** 页眉/页脚图片（从模版 OOXML 抽出的事实，装机时原样回填）。 */
+export interface ThesisHfImage {
+  dataUrl: string;
+  widthPx?: number | undefined;
+  heightPx?: number | undefined;
+  floating?: boolean | undefined;
+  behind?: boolean | undefined;
+  posH?: "left" | "center" | "right" | undefined;
+  posV?: "top" | "center" | "bottom" | undefined;
+  posXPx?: number | undefined;
+  posYPx?: number | undefined;
+  posHRel?: "page" | "margin" | undefined;
+  posVRel?: "page" | "margin" | "paragraph" | undefined;
 }
 
 /** 装订规格：解析代理第二任务输出——源文档内容 → 骨架槽位映射。块区间索引与
@@ -212,13 +244,29 @@ export interface ThesisBindingSpec {
   abstractEn: string;
   keywordsEn: string[];
   /** 正文章节：headingText 为去编号干净标题（编号由引擎按卡生成）。 */
-  chapters: Array<{ level: 1 | 2 | 3 | 4; headingText: string; blockStart: number; blockEnd: number }>;
+  chapters: Array<{
+    level: 1 | 2 | 3 | 4;
+    headingText: string;
+    blockStart: number;
+    blockEnd: number;
+    /** 该章节归属的模板槽位 id（v3 模板骨架装订据此把内容放回模版原位）。 */
+    slotId?: string;
+  }>;
   /** 参考文献条目（已按卡模板逐条排好的最终文本，含 [n] 前缀）。 */
   references: string[];
   /** 附录：复用源块区间；null = 无附录。 */
   appendixBlocks: { start: number; end: number } | null;
+  /**
+   * AI 补写的空小节内容（仅当用户打开「AI 补写空白小节」时存在）。
+   * title 对应模版小节标题；渲染器插入时自带「AI 生成」标记。
+   */
+  generatedSections?: Array<{ title: string; text: string }>;
   /** 致谢段落；空数组 = 源文档无致谢（仅排标题页）。 */
   acknowledgementParagraphs: string[];
+  /** v2 未归类内容区间（渲染为正文末尾独立小节并高亮标记，不丢内容）。 */
+  unmatchedBlocks?: Array<{ start: number; end: number; label?: string }>;
+  /** 模板自有固定表单（原样 XML）：prelim=目录后首个槽位前；appendix=全文末尾。 */
+  fixedBlocks?: Array<{ placement: 'prelim' | 'appendix'; heading?: string; xml: string }>;
   /** 攻读学位期间研究成果；空数组 = 无。 */
   achievements: string[];
 }
@@ -229,4 +277,23 @@ export interface ThesisSourceOutlineBlock {
   kind: "heading" | "paragraph" | "table" | "image" | "list";
   level?: number;
   text: string;
+}
+
+/**
+ * 工作台规则面板下发的一次排版选项。
+ * 全部可缺省——缺省即严格模式 + 保留全部固定元素（与既有行为一致）。
+ */
+export interface ThesisReformatOptions {
+  /** 是否回填模版 Logo（封面校徽 + 页眉图）。 */
+  keepLogo?: boolean;
+  /** 是否沿用模版的页眉页脚（false = 输出不带页眉页脚）。 */
+  keepHeaderFooter?: boolean;
+  /** 允许 AI 补写空白小节（默认关；生成内容带「AI 生成」标记）。 */
+  aiFill?: boolean;
+  /** 标题层级映射：源文档角色 → 模板标题级别（1–4）。 */
+  headingMapping?: {
+    chapter?: 1 | 2 | 3 | 4;
+    section?: 1 | 2 | 3 | 4;
+    subsection?: 1 | 2 | 3 | 4;
+  };
 }

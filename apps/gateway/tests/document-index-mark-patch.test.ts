@@ -217,9 +217,7 @@ describe("patch hunk block index marks", () => {
       documentId: target.id,
       baseVersion: target.version,
       kind: "edit",
-      summary: "无记忆清单",
+      summary: "无索引清单",
     }, context);
-    expect(begun.structuredContent.memoryIndex).toBeUndefined();
-    expect(begun.structuredContent).not.toHaveProperty("memoryIndexCount");
   });
 });

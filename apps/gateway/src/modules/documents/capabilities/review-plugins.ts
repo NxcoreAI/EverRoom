@@ -204,7 +204,7 @@ function indexMarkSignature(node: TiptapJsonContent): string {
   const visit = (current: TiptapJsonContent): void => {
     if (current.type === BLOCK_INDEX_MARK_NODE) {
       marks.push(`${current.attrs?.kind ?? ""}:${current.attrs?.targetDocumentId ?? ""}:`
-        + `${current.attrs?.targetBlockId ?? ""}:${current.attrs?.targetMemoryId ?? ""}`);
+        + `${current.attrs?.targetBlockId ?? ""}`);
       return;
     }
     (current.content ?? []).forEach(visit);
@@ -249,7 +249,7 @@ function validateIndexMarkTargets(backend: CapabilityBackend, fragment: TiptapJs
   const byDocument = new Map<string, Set<string>>();
   const visit = (node: TiptapJsonContent): void => {
     if (node.type === BLOCK_INDEX_MARK_NODE) {
-      const kind = node.attrs?.kind === "memory" ? "memory" : "document";
+      const kind = String(node.attrs?.kind ?? "document") === "document" ? "document" : null;
       if (kind !== "document") return;
       const documentId = String(node.attrs?.targetDocumentId ?? "");
       const blockId = String(node.attrs?.targetBlockId ?? "");

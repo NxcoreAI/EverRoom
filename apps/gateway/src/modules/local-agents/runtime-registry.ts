@@ -2,6 +2,8 @@ import type { LocalAgentInvocationTarget } from "@nxcore/agent-contract";
 import type { AgentRuntime, StartRuntimeRunInput } from "@nxcore/agent-runtime";
 import type { McpServer } from "@zed-industries/agent-client-protocol";
 import { resolve } from "node:path";
+import { traceRuntime } from "../agent-debug/instrument.js";
+import type { AgentDebugTraceStore } from "../agent-debug/trace-store.js";
 import { AcpAgentRuntime, acpAdapterCommand, type LocalAcpProvider } from "./acp-runtime.js";
 
 const ACP_PROVIDERS = new Set<LocalAcpProvider>(["codex", "claude", "openclaw"]);
@@ -15,6 +17,7 @@ export class LocalAgentRuntimeRegistry {
   constructor(
     private readonly mcpServersForRun?: LocalAgentMcpServersForRun,
     private readonly humanApprovalForRun?: LocalAgentHumanApprovalForRun,
+    private readonly agentDebugStore?: AgentDebugTraceStore,
   ) {}
 
   resolve(target: LocalAgentInvocationTarget): AgentRuntime {
@@ -33,8 +36,20 @@ export class LocalAgentRuntimeRegistry {
       this.humanApprovalForRun,
       target.provider as LocalAcpProvider,
     );
-    this.runtimes.set(runtimeKey, runtime);
-    return runtime;
+    const traced = this.trace(runtime, target);
+    this.runtimes.set(runtimeKey, traced);
+    return traced;
+  }
+
+  /** 本机 CLI Agent（ACP）的 trace 接入点（agentKind=local）。 */
+  private trace(runtime: AgentRuntime, target: LocalAgentInvocationTarget): AgentRuntime {
+    if (!this.agentDebugStore) return runtime;
+    return traceRuntime(runtime, this.agentDebugStore, {
+      agentId: target.id,
+      agentName: target.displayName ?? target.card.name,
+      agentKind: "local",
+      description: target.card.description,
+    });
   }
 
   async dispose(): Promise<void> {

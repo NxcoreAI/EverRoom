@@ -3,6 +3,11 @@ import { describe, expect, it } from "vitest";
 import { loadConfig } from "../src/config.js";
 
 describe("loadConfig", () => {
+  it("ignores the removed content-mode switch (semantic-v3 is the only path)", () => {
+    // 配置项已删除：语义链路是唯一内容路径，残留的 env 不再影响启动也不报错。
+    const config = loadConfig(["--token", "0123456789abcdef"], { NXCORE_SLIDES_CONTENT_MODE: "legacy-v2" });
+    expect("slidesContentMode" in (config.subagents ?? {})).toBe(false);
+  });
   it("defaults to the isolated fake runtime", () => {
     const config = loadConfig(["--token", "0123456789abcdef"], {});
 
@@ -16,8 +21,29 @@ describe("loadConfig", () => {
       enabled: true,
       definitionsDir: resolve("../..", "agents"),
       defaultTimeoutMs: 300_000,
-      maxConcurrent: 8,
+      // 全池上限 = slides 池 + default 池（16 + 4）。
+      maxConcurrent: 22,
+      slidesMaxConcurrent: 16,
+      defaultMaxConcurrent: 4,
+      backgroundMaxConcurrent: 2,
+      slidesDeckConcurrency: 16,
     });
+  });
+
+  it("reads the desktop-injected lark-cli binary and private home", () => {
+    const config = loadConfig(["--token", "0123456789abcdef"], {
+      NXCORE_LARK_CLI_PATH: "/Applications/EverRoom.app/Contents/Resources/lark-cli/darwin-arm64/lark-cli",
+      NXCORE_LARK_CLI_HOME: "/Users/someone/Library/Application Support/EverRoom/lark-cli/home",
+    });
+    expect(config.larkCli).toEqual({
+      executable: "/Applications/EverRoom.app/Contents/Resources/lark-cli/darwin-arm64/lark-cli",
+      homeDirectory: "/Users/someone/Library/Application Support/EverRoom/lark-cli/home",
+    });
+  });
+
+  it("omits the lark-cli private home when the desktop did not inject it", () => {
+    const config = loadConfig(["--token", "0123456789abcdef"], {});
+    expect(config.larkCli).toEqual({ executable: "lark-cli" });
   });
 
   it("loads server-owned external call budget identity", () => {
@@ -42,7 +68,28 @@ describe("loadConfig", () => {
       definitionsDir: resolve("./fixtures/agents"),
       runtimeDir: join(config.dataDir, "agent", "subagents"),
       defaultTimeoutMs: 45_000,
+      // 未知键不受 --flag 限制：三个池旋钮各自有独立 env（下面是它们的缺省值）。
       maxConcurrent: 7,
+      slidesMaxConcurrent: 16,
+      defaultMaxConcurrent: 4,
+      backgroundMaxConcurrent: 2,
+      slidesDeckConcurrency: 16,
+    });
+  });
+
+  it("honours the per-pool concurrency knobs", () => {
+    const config = loadConfig(["--token", "0123456789abcdef"], {
+      NXCORE_SUBAGENT_MAX_CONCURRENT: "24",
+      NXCORE_SUBAGENT_SLIDES_MAX_CONCURRENT: "18",
+      NXCORE_SUBAGENT_DEFAULT_MAX_CONCURRENT: "6",
+      NXCORE_SLIDES_DECK_CONCURRENCY: "15",
+    });
+
+    expect(config.subagents).toMatchObject({
+      maxConcurrent: 24,
+      slidesMaxConcurrent: 18,
+      defaultMaxConcurrent: 6,
+      slidesDeckConcurrency: 15,
     });
   });
 
@@ -107,15 +154,9 @@ describe("loadConfig", () => {
       NXCORE_NANGO_SECRET: "legacy-secret",
       NXCORE_NANGO_GMAIL_CONFIG_KEY: "legacy-gmail",
       NXCORE_NANGO_GOOGLE_CLIENT_ID: "legacy-google-id",
-      NXCORE_CONNECTOR_POLL_MS: "120000",
     });
 
     expect(config.cliConnector).toBeNull();
-    // P3：Nango env 全族忽略；link-A 编排恒可用，仅 poll 周期仍读 env
-    expect(config.nangoConnector).toMatchObject({
-      enabled: true,
-      pollingIntervalMs: 120_000,
-    });
   });
 
   it("loads a validated Pi runtime configuration", () => {
@@ -287,12 +328,6 @@ describe("loadConfig", () => {
       NXCORE_VLM_API_KEY: "test-key",
       NXCORE_VLM_MODEL: "vision-model",
     })).toThrow("expected an absolute HTTP(S) URL");
-  });
-
-  it("keeps link-A connector orchestration always enabled after Nango removal (P3)", () => {
-    const config = loadConfig(["--token", "0123456789abcdef"], {});
-    expect(config.nangoConnector).toMatchObject({ enabled: true, pollingIntervalMs: 300000 });
-    expect(config.nangoConnector?.databasePath).toContain("connectors.sqlite");
   });
 
   it("no longer accepts removed ASR credentials in the web search fallback chain", () => {

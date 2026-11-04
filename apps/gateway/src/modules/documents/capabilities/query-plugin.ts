@@ -37,11 +37,8 @@ export function queryPlugins(
     annotations: annotations(true),
     execute: (_args, context) => {
       return success({
-        roomId: context.roomId,
         documents: backend.list().map((document) => ({
           id: document.id,
-          // 桌面端选择卡片要求每条候选文档自带 roomId（否则按无效条目丢弃，卡片永远为空）
-          roomId: context.roomId,
           title: document.title,
           version: document.version,
           updatedAt: document.updatedAt,
@@ -93,7 +90,6 @@ export function queryPlugins(
       const end = Math.min(start + limit, totalCharacters);
       const markdownTruncated = start > 0 || end < totalCharacters;
       return success({
-        roomId: context.roomId,
         documentId: result.document.id,
         title: result.document.title,
         version: result.document.version,

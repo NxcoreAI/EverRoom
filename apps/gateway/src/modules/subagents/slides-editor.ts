@@ -1,29 +1,45 @@
 /**
- * slides-editor 影子模式：用户确认草稿后，把 draftPages 交给 slides-editor 压成
- * storyboard/v2，并在网关侧做确定性预算与保真检查。
- *
- * M1 只做影子：结果落库 + 进 tool details，不替换现有 planner arrange 方案；
- * 装配层默认启用，不依赖 .env；关闭只需在 create-server 不传 slidesEditor。
+ * slides-editor 语义修复支撑：storyboard/v2 时代它是「草稿压缩成页文案」的影子
+ * 压缩器；该链路（含 storyboard/v2 写入）已删除，现在的内容契约是 storyboard/v3
+ * （见 slides-semantic-contract.ts）。本文件保留的确定性检查/归一化纯函数只服务
+ * 历史 storyboard/v2 记录的读回与校验，semantic 修复经 slides-semantic-stage 派发。
  */
 
 import { createHash } from "node:crypto";
 import type { SubagentInvocation } from "@nxcore/agent-contract";
+import type { SceneDensity } from "../slides-layout/scene.js";
+import {
+  PAGE_FORMS,
+  PAGE_WEIGHTS,
+  PAGE_FORM_SPEC,
+  deriveComposition,
+  deriveSkeleton,
+  factsMaxForForm,
+  isPageForm,
+  isPageWeight,
+  proseBudgetForForm,
+  unitsValid,
+  type PageForm,
+  type PageWeight,
+} from "./slides-page-form.js";
 
-export const EDITOR_COMPOSITIONS = ["immersive", "hero-data", "editorial", "swiss", "poster", "chapter"] as const;
-
-/** 风格卡构图家族 → storyboard 允许的构图集合（核心家族必须出现，且至少半数页落在家族内）。 */
-export const DECK_COMPOSITION_FAMILIES = {
-  swiss: { core: "swiss", preferred: ["swiss", "hero-data", "editorial"] },
-  editorial: { core: "editorial", preferred: ["editorial", "swiss", "quote", "hero-data"] },
-  poster: { core: "poster", preferred: ["poster", "hero-data", "chapter", "immersive"] },
-  immersive: { core: "immersive", preferred: ["immersive", "chapter", "poster", "hero-data"] },
-} as const;
+/** 大纲每页要声明的内容形态与分量；版式名不再出现在大纲输出里。 */
+export const EDITOR_FORMS = PAGE_FORMS;
+export const EDITOR_WEIGHTS = PAGE_WEIGHTS;
 
 export interface StoryboardCheckOptions {
-  /** 风格卡 composition：用于校验 storyboard 的构图节奏是否忠于风格卡。 */
+  /**
+   * 已停用：页面版式不再由风格卡的构图家族决定，改由每页的内容形态推导。
+   * 字段保留只为兼容既有调用方；传了也不参与校验。
+   */
   deckComposition?: string;
+  /**
+   * 场景密度：字数预算的基准（宽密场景一页能承载更多字）。
+   * 代码压缩与校对器必须用同一个密度，否则会出现"压得下的字数被判超预算"。
+   */
+  density?: SceneDensity;
 }
-export const EDITOR_ROLES = ["cover", "section", "content", "data", "table", "flow", "quote", "closing"] as const;
+export const EDITOR_ROLES = ["cover", "toc", "section", "content", "data", "table", "flow", "quote", "closing"] as const;
 export const EDITOR_EMPHASIS = ["title", "number", "image", "quote", "chart", "table"] as const;
 export const EDITOR_DENSITIES = ["sparse", "standard", "dense"] as const;
 
@@ -99,7 +115,12 @@ export interface EditorPage {
   id: string;
   role: string;
   density: string;
-  composition: string;
+  /** 内容形态：这页靠什么证据成立。版式由它推导，不走大纲。 */
+  form: PageForm;
+  /** 单元数：对照的"方"、序列的"步"、拆解的"块"、表格的行数。 */
+  units: number;
+  /** 全册分量，用于节奏曲线。 */
+  weight: PageWeight;
   emphasis: string;
   intent: string;
   takeaway: string;
@@ -137,7 +158,7 @@ export interface StoryboardCheck {
   stats: {
     pages: number;
     draftPages: number;
-    compositions: string[];
+    forms: string[];
     proseChars: number;
     copyChars: number;
     draftPointsChars: number;
@@ -149,6 +170,8 @@ export interface StoryboardCheck {
 export interface ShadowPageReport {
   id: string;
   role: string;
+  form: string;
+  /** 由形态推导出来的引擎构图（只读，供排查用）。 */
   composition: string;
   emphasis: string;
   proseChars: number;
@@ -164,7 +187,7 @@ export interface EditorShadowReport {
   draftHash: string;
   pageCount: number;
   draftPageCount: number;
-  compositions: string[];
+  forms: string[];
   proseChars: number;
   copyChars: number;
   draftPointsChars: number;
@@ -258,15 +281,27 @@ export function normalizeStoryboard(raw: unknown): { storyboard: EditorStoryboar
   if (!title) errors.push("deck.title 缺失");
   if (!spine) errors.push("deck.spine 缺失");
   const pagesRaw = Array.isArray(body.pages) ? body.pages : [];
-  if (pagesRaw.length < 1 || pagesRaw.length > 24) errors.push(`pages 数量 ${pagesRaw.length} 不在 1~24`);
-  const pages: EditorPage[] = pagesRaw.slice(0, 24).map((item, index) => {
+  if (pagesRaw.length < 1 || pagesRaw.length > 32) errors.push(`pages 数量 ${pagesRaw.length} 不在 1~32`);
+  const pages: EditorPage[] = pagesRaw.slice(0, 32).map((item, index) => {
     const page = objectValue(item) ?? {};
     if (!Array.isArray(page.dropped)) errors.push(`第 ${index + 1} 页缺 dropped 数组`);
+    // 形态/单元数/分量不给默认值：缺了就是缺陷，回上游重写这一页，不静默兜到某个版式。
+    const formRaw = stringValue(page.form, 24);
+    const form = isPageForm(formRaw) ? formRaw : null;
+    if (!form) errors.push(`第 ${index + 1} 页 form 缺失或非法：${JSON.stringify(formRaw)}`);
+    const unitsRaw = typeof page.units === "number" ? page.units : Number.parseInt(String(page.units ?? ""), 10);
+    const units = Number.isFinite(unitsRaw) ? Math.round(unitsRaw) : null;
+    if (units === null) errors.push(`第 ${index + 1} 页 units 缺失`);
+    const weightRaw = stringValue(page.weight, 12);
+    const weight = isPageWeight(weightRaw) ? weightRaw : null;
+    if (!weight) errors.push(`第 ${index + 1} 页 weight 缺失或非法：${JSON.stringify(weightRaw)}`);
     return {
       id: stringValue(page.id, 64) || `page-${String(index + 1).padStart(2, "0")}`,
       role: stringValue(page.role, 20) || "content",
       density: stringValue(page.density, 20) || "standard",
-      composition: stringValue(page.composition, 20) || "swiss",
+      form: form ?? "light-page",
+      units: units ?? 1,
+      weight: weight ?? "medium",
       emphasis: stringValue(page.emphasis, 20) || "title",
       intent: stringValue(page.intent, 200),
       takeaway: stringValue(page.takeaway, 120),
@@ -312,11 +347,41 @@ export function copyLength(copy: EditorCopy): number {
   ].filter((value): value is string => typeof value === "string").join(" ").length;
 }
 
-function proseBudget(role: string): number {
-  if (role === "cover") return 60;
-  if (role === "data" || role === "table") return 60;
-  return 80;
+/**
+ * 页面叙事文案预算按内容形态给，不按 role 给。
+ * 序列/拆解这类页天生要 5 个单元，用全局 60~80 字会把它写死成两页。
+ *
+ * 封面/收尾是固定三行结构（kicker + 主张 + 一行说明），给一个 40 字固定额度，
+ * 不跟着形态系数一起缩——否则轻页系数 0.5 会把封面压到写不完一句话。
+ */
+const COVER_PROSE_ALLOWANCE = 40;
+
+function proseBudget(form: PageForm, role: string, density: SceneDensity = "standard"): number {
+  const base = proseBudgetForForm(form, density);
+  if (role === "cover" || role === "closing") return Math.max(base, COVER_PROSE_ALLOWANCE);
+  return base;
 }
+
+/** 主角形态必须与内容形态相容（声明义务的一部分）。 */
+function emphasisAllowed(form: PageForm, emphasis: string): boolean {
+  switch (form) {
+    case "single-fact":
+      return emphasis === "number" || emphasis === "title";
+    case "image-led":
+      return emphasis === "image";
+    case "quotation":
+      return emphasis === "quote";
+    case "table":
+      return emphasis === "table";
+    case "light-page":
+      return emphasis === "title";
+    default:
+      return true;
+  }
+}
+
+/** 序列页要有先后线索：序号、年份、或先后词。用来查"声明了串行却没给顺序"。 */
+const ORDER_HINT_RE = /(第[一二三四五六七八九十]|[①②③④⑤]|首先|其次|再次|然后|接着|最后|之后|随后|→|->|\b(?:19|20)\d{2}\b)/;
 
 /**
  * 确定性验收：与设计文档 §6.1 C1~C9 同口径。返回的 errors 非空即 editor 输出不可用；
@@ -345,16 +410,49 @@ export function checkStoryboard(
     const where = `第 ${index + 1} 页`;
     if (!EDITOR_ROLES.includes(page.role as never)) errors.push(`${where}: role 非法 ${page.role}`);
     if (!EDITOR_DENSITIES.includes(page.density as never)) errors.push(`${where}: density 非法 ${page.density}`);
-    if (!EDITOR_COMPOSITIONS.includes(page.composition as never)) errors.push(`${where}: composition 非法 ${page.composition}`);
+    if (!EDITOR_FORMS.includes(page.form as never)) errors.push(`形态：${where} 的 form 非法 ${page.form}`);
+    const form = page.form;
+    const spec = PAGE_FORM_SPEC[form];
+    if (!unitsValid(form, page.units)) {
+      errors.push(`形态：${where} 是${spec.label}，units 需 ${spec.units[0]}~${spec.units[1]}（当前 ${page.units}）`);
+    }
+    if (!EDITOR_WEIGHTS.includes(page.weight as never)) errors.push(`形态：${where} 的 weight 非法 ${page.weight}`);
     if (!EDITOR_EMPHASIS.includes(page.emphasis as never)) errors.push(`${where}: emphasis 非法 ${page.emphasis}`);
+    if (!emphasisAllowed(form, page.emphasis)) {
+      errors.push(`形态：${where} 是${spec.label}，主角不能是 ${page.emphasis}`);
+    }
     const visualKind = page.visual && typeof page.visual.kind === "string" ? page.visual.kind : "none";
     if (!["none", "material", "generated"].includes(visualKind)) errors.push(`${where}: visual.kind 非法 ${visualKind}`);
+    // 声明义务：声明的形态必须真的有对应的材料支撑。约束由内容承担，不由版式选择承担。
+    if (form === "image-led" && visualKind === "none") {
+      errors.push(`形态：${where} 是「图为主视觉」但没有配图（visual.kind=none）——补图，或换一个形态`);
+    }
+    if (form === "table") {
+      const table = page.data && typeof page.data === "object" && !Array.isArray(page.data)
+        ? (page.data as Record<string, unknown>).table
+        : undefined;
+      const rows = table && typeof table === "object" && !Array.isArray(table)
+        ? (table as Record<string, unknown>).rows
+        : undefined;
+      if (!Array.isArray(rows) || rows.length < 3) {
+        errors.push(`形态：${where} 声明了「对照表」但 data.table.rows 不足 3 行——改形态或补表`);
+      }
+    }
+    if (form === "sequence") {
+      const orderText = [copy.message, ...copy.supporting, ...copy.facts.map((fact) => `${fact.label ?? ""}${fact.value ?? fact.body ?? ""}`)]
+        .filter(Boolean).join(" ");
+      if (!ORDER_HINT_RE.test(orderText)) {
+        warnings.push(`形态：${where} 声明了「一串先后」，但页面上没有序号/年份/先后词——确认单元顺序真的不可调换`);
+      }
+    }
     if (page.intent.length < 10 || page.intent.length > 60) errors.push(`${where}: intent ${page.intent.length} 字，需 10~60`);
     if (!page.takeaway || page.takeaway.length > 22) errors.push(`${where}: takeaway 需 1~22 字（当前 ${page.takeaway.length}）`);
     if (!copy.message || copy.message.length > 24) errors.push(`${where}: message 需 1~24 字（当前 ${copy.message.length}）`);
     if (copy.supporting.length > 1) errors.push(`${where}: supporting 最多 1 行`);
     if (copy.supporting.some((item) => item.length > 32)) errors.push(`${where}: supporting 单行超过 32 字`);
-    if (copy.facts.length > 3) errors.push(`${where}: facts 最多 3 条`);
+    if (copy.facts.length > spec.factsMax) {
+      errors.push(`${where}: ${spec.label} 的 facts 最多 ${spec.factsMax} 条（当前 ${copy.facts.length}）`);
+    }
     for (const fact of copy.facts) {
       if (fact.label && fact.label.length > 10) errors.push(`${where}: fact label「${fact.label}」超过 10 字`);
       const value = fact.body ?? fact.value ?? "";
@@ -366,7 +464,8 @@ export function checkStoryboard(
     }
     if (copy.source && copy.source.length > 80) errors.push(`${where}: source 超过 80 字`);
     const prose = proseLength(copy);
-    if (prose > proseBudget(page.role)) errors.push(`${where}: 叙事文字 ${prose} 字，超过 ${page.role} 预算 ${proseBudget(page.role)}`);
+    const budget = proseBudget(form, page.role, options.density ?? "standard");
+    if (prose > budget) errors.push(`${where}: 叙事文字 ${prose} 字，超过 ${spec.label} 预算 ${budget}`);
     const onSlide = [copy.kicker, copy.message, ...copy.supporting, copy.quote?.text].filter(Boolean).join(" ");
     if (METADATA_RE.test(onSlide)) errors.push(`${where}: 页面上出现制作元数据（页数/时长/受众/配比）`);
     const flavorText = [
@@ -388,30 +487,52 @@ export function checkStoryboard(
     speakerNotesChars += copy.speakerNotes.length;
     dropped += page.dropped.length;
   }
-  const compositions = [...new Set(pages.map((page) => page.composition))];
-  if (pages.length >= 8 && compositions.length < 3) errors.push(`composition 仅 ${compositions.length} 种，≥8 页 deck 至少 3 种`);
-  for (let index = 1; index < pages.length; index += 1) {
-    if (pages[index]!.composition === pages[index - 1]!.composition) {
-      warnings.push(`第 ${index + 1} 页与上一页 composition 相同，节奏可能单调`);
+  const forms = [...new Set(pages.map((page) => page.form))];
+  // 分布约束：防止换掉版式菜单之后「并列拆解」变成新的安全牌。
+  if (pages.length >= 8 && forms.length < 3) {
+    errors.push(`形态：全册只有 ${forms.length} 种内容形态，≥8 页 deck 至少 3 种`);
+  }
+  const breakdownCount = pages.filter((page) => page.form === "breakdown").length;
+  if (pages.length > 0 && breakdownCount / pages.length > 0.5) {
+    errors.push(`形态：「并列拆解」占 ${breakdownCount}/${pages.length} 页，超过一半——结构不同的内容被压成了清单，请回上游重写这些页`);
+  }
+  // 轻页配额只统计内容页：封面/章节/收尾本来就是轻的，把它们算进来任何小册都会超线。
+  const contentPages = pages.filter(
+    (page) => page.role !== "cover" && page.role !== "section" && page.role !== "closing",
+  );
+  const lightCount = contentPages.filter((page) => page.form === "light-page").length;
+  if (contentPages.length >= 3 && lightCount / contentPages.length > 0.15) {
+    errors.push(`形态：「轻页」占 ${lightCount}/${contentPages.length} 个内容页，超过 15%——轻页是内容少，不是省略结构的出口`);
+  }
+  // 节奏：分量曲线（替代原来「相邻页版式不得相同」的弱约束）。
+  if (pages.length >= 8 && !pages.some((page) => page.weight === "heavy")) {
+    errors.push("形态：全册没有一页是重分量，缺少高潮页");
+  }
+  for (let index = 2; index < pages.length; index += 1) {
+    if (pages[index]!.weight === "light" && pages[index - 1]!.weight === "light" && pages[index - 2]!.weight === "light") {
+      errors.push(`形态：第 ${index - 1}~${index + 1} 页连续三页都是轻分量，全册没有推进`);
+      break;
+    }
+  }
+  if (pages.length >= 4) {
+    const head = pages[0]!;
+    const tail = pages[pages.length - 1]!;
+    if (head.weight === "heavy" && tail.weight === "heavy") {
+      warnings.push("封面与收尾都是重分量，中间没有回落");
+    }
+  }
+  if (pages.length >= 8) {
+    const heavyIndex = pages.findIndex((page) => page.weight === "heavy");
+    if (heavyIndex >= 0) {
+      const ratio = heavyIndex / (pages.length - 1);
+      if (ratio < 0.55 || ratio > 0.75) {
+        warnings.push(`最重的一页在第 ${heavyIndex + 1} 页（${Math.round(ratio * 100)}%），建议落在 55%~75%`);
+      }
     }
   }
   if (pages.length >= 8) {
     const sparse = pages.filter((page) => page.density === "sparse").length;
     if (sparse < 2) warnings.push(`sparse 页仅 ${sparse} 页（≥8 页 deck 建议 ≥2）`);
-  }
-  const family = options.deckComposition
-    ? DECK_COMPOSITION_FAMILIES[options.deckComposition as keyof typeof DECK_COMPOSITION_FAMILIES]
-    : undefined;
-  if (family && pages.length > 0) {
-    const preferred = family.preferred as readonly string[];
-    const inFamily = pages.filter((page) => preferred.includes(page.composition));
-    const need = Math.ceil(pages.length / 2);
-    if (!pages.some((page) => page.composition === family.core)) {
-      errors.push(`构图家族 ${options.deckComposition}：没有一页使用 ${family.core} 作为核心构图——请至少安排 1 页 ${family.core}`);
-    }
-    if (inFamily.length < need) {
-      errors.push(`构图家族 ${options.deckComposition}：仅 ${inFamily.length}/${pages.length} 页落在 ${preferred.join("/")}，需 ≥${need} 页`);
-    }
   }
   return {
     errors,
@@ -419,7 +540,7 @@ export function checkStoryboard(
     stats: {
       pages: pages.length,
       draftPages: draftPages.length,
-      compositions,
+      forms,
       proseChars,
       copyChars,
       draftPointsChars: draftPages.reduce((sum, page) => sum + (page.points ?? []).reduce((n, point) => n + point.length, 0), 0),
@@ -443,7 +564,7 @@ export function buildShadowReport(
     draftHash: draftPagesHash(draftPages),
     pageCount: stats.pages,
     draftPageCount: stats.draftPages,
-    compositions: stats.compositions,
+    forms: stats.forms,
     proseChars: stats.proseChars,
     copyChars: stats.copyChars,
     draftPointsChars: stats.draftPointsChars,
@@ -455,7 +576,11 @@ export function buildShadowReport(
     pages: storyboard.pages.map((page) => ({
       id: page.id,
       role: page.role,
-      composition: page.composition,
+      form: page.form,
+      composition: deriveComposition(page.form, {
+        hasImage: pageHasImage(page),
+        role: page.role,
+      }),
       emphasis: page.emphasis,
       proseChars: proseLength(page.copy),
       copyChars: copyLength(page.copy),
@@ -467,6 +592,11 @@ export function buildShadowReport(
     })),
   };
 }
+
+// 已拆除：dispatchEditorStoryboard（整册按 6 页一批调用模型的压缩器）。
+// 内容链路现在只有 semantic-v3：slides-condense 代码压缩与整册影子均已删除，
+// editor 只经 slides-semantic-stage 做指定页修复；本文件的纯函数保留用于
+// 历史 storyboard/v2 记录的读回与校验，不再有任何写路径调用。
 
 export interface EditorDispatchInput {
   /** storyboard 批量压缩时本批首屏在整本 deck 中的 0-based 页码。 */
@@ -483,8 +613,8 @@ export interface EditorDispatchInput {
   visualThesis?: string;
   /** 风格卡给内容侧的最小 design brief（构图家族/明暗/母题/主色系）。 */
   deckStyle?: Record<string, unknown>;
-  /** 构图家族校验未过时的重排反馈（只用于第二次 dispatch）。 */
-  compositionFeedback?: string;
+  /** 内容形态/声明义务未过时的返工反馈（只用于第二次 dispatch）。 */
+  formFeedback?: string;
 }
 
 export function buildEditorInput(input: EditorDispatchInput): Record<string, unknown> {
@@ -500,7 +630,74 @@ export function buildEditorInput(input: EditorDispatchInput): Record<string, unk
     ...(typeof input.durationMin === "number" ? { durationMin: input.durationMin } : {}),
     ...(input.visualThesis ? { visualThesis: input.visualThesis.slice(0, 500) } : {}),
     ...(input.deckStyle ? { deckStyle: input.deckStyle } : {}),
-    ...(input.compositionFeedback ? { compositionFeedback: input.compositionFeedback.slice(0, 500) } : {}),
+    ...(input.formFeedback ? { formFeedback: input.formFeedback.slice(0, 500) } : {}),
+  };
+}
+
+export interface EditorRepairInput extends Omit<EditorDispatchInput, "pageOffset" | "pageCount"> {
+  /** 已经定稿的整册 storyboard：修复器只改选中页，其余页必须原样还回来。 */
+  priorStoryboard: EditorStoryboard;
+  /** 允许改动的页 id（其余页改动一律丢弃）。 */
+  repairPageIds: string[];
+  /** 校对器给出的具体缺陷（逐条对应到页）。 */
+  defects: string[];
+}
+
+/**
+ * 页级修复的 dispatch 输入。
+ * 与"整册压缩"输入的区别：草稿页被裁到只有要修的那几页，并附上已经定稿的 storyboard。
+ * 这样模型看到的是"这几页哪里不合格"，而不是"把整册重排一遍"。
+ */
+export function buildEditorRepairInput(input: EditorRepairInput): Record<string, unknown> {
+  const base = buildEditorInput(input);
+  const keep = new Set(input.repairPageIds);
+  const pages = input.priorStoryboard.pages.filter((page) => keep.has(page.id));
+  return {
+    ...base,
+    draftPages: input.draftPages.filter((_page, index) => {
+      const storyPage = input.priorStoryboard.pages[index];
+      return !storyPage || keep.has(storyPage.id);
+    }),
+    priorStoryboard: { deck: input.priorStoryboard.deck, pages },
+    repairPageIds: input.repairPageIds,
+    defects: input.defects.slice(0, 12),
+  };
+}
+
+/**
+ * 把修复结果并回定稿 storyboard：**只接受被点名的页**。
+ * 修复器顺手改别的页、改页数、改 deck 元信息，一律丢弃并记一条 rejected。
+ * 这是"页级修复"与"整册重排"的边界，必须由代码守，不能靠提示词自觉。
+ */
+export function mergeRepairedPages(
+  base: EditorStoryboard,
+  repaired: EditorStoryboard,
+  pageIds: string[],
+): { storyboard: EditorStoryboard; rejected: string[] } {
+  const allowed = new Set(pageIds);
+  const byId = new Map(repaired.pages.map((page) => [page.id, page]));
+  const rejected: string[] = [];
+  if (repaired.pages.length !== base.pages.length) {
+    rejected.push(`修复结果页数 ${repaired.pages.length} 与原册 ${base.pages.length} 不一致，只采纳同名页`);
+  }
+  const pages = base.pages.map((page) => {
+    const replacement = byId.get(page.id);
+    if (!replacement) {
+      if (allowed.has(page.id)) rejected.push(`缺少第 ${page.id} 页的修复结果`);
+      return page;
+    }
+    if (allowed.has(page.id)) return replacement;
+    const changed = JSON.stringify(replacement) !== JSON.stringify(page);
+    if (changed) rejected.push(`${page.id} 不在本次修复范围，改动已丢弃`);
+    return page;
+  });
+  return {
+    storyboard: {
+      ...base,
+      pages,
+      warnings: [...new Set([...(base.warnings ?? []), ...(repaired.warnings ?? [])])],
+    },
+    rejected,
   };
 }
 
@@ -539,19 +736,27 @@ export function editorPagesFromPlan(plan: Record<string, unknown>): EditorDraftP
     }));
 }
 
-function budgetForRole(role: string): { prose: number; copy: number; notes: number } {
-  const prose = role === "cover" ? 60 : role === "data" || role === "table" ? 60 : 80;
-  return { prose, copy: 120, notes: 260 };
+function budgetForForm(form: PageForm, role: string, density: SceneDensity = "standard"): { prose: number; copy: number; notes: number } {
+  return { prose: proseBudget(form, role, density), copy: 120, notes: 260 };
+}
+
+/** 这页能不能有图：看视觉方案，也看 planner 在 plan 页上挂的素材。 */
+function pageHasImage(page: EditorPage, planPage?: Record<string, unknown>): boolean {
+  const visualKind = page.visual && typeof page.visual.kind === "string" ? page.visual.kind : "none";
+  if (visualKind !== "none") return true;
+  const materials = planPage?.materials;
+  return Array.isArray(materials) && materials.length > 0;
 }
 
 /**
  * editor storyboard + planner plan → layouter 的 v2 plan。
- * 保留 plan 的 points/materials 作为 v1 兜底与配图来源；只把文案/构图/密度换成 storyboard 口径。
- * 页数不一致返回 null（调用方回退 v1，不静默错位）。
+ * 只把文案/构图/密度换成 storyboard 口径，保留 plan 的 materials 作为配图来源。
+ * 页数不一致返回 null（调用方按可重试失败回报，不静默错位）。
  */
 export function mergeStoryboardIntoPlan(
   plan: Record<string, unknown>,
   storyboard: EditorStoryboard,
+  options: { density?: SceneDensity } = {},
 ): Record<string, unknown> | null {
   const pages = Array.isArray(plan.pages) ? plan.pages : [];
   if (pages.length !== storyboard.pages.length) return null;
@@ -564,14 +769,14 @@ export function mergeStoryboardIntoPlan(
       ...(index > 0
         ? [{
             pageIndex: index - 1,
-            composition: storyboard.pages[index - 1]!.composition,
+            form: storyboard.pages[index - 1]!.form,
             takeaway: storyboard.pages[index - 1]!.takeaway.slice(0, 40),
           }]
         : []),
       ...(index + 1 < storyboard.pages.length
         ? [{
             pageIndex: index + 1,
-            composition: storyboard.pages[index + 1]!.composition,
+            form: storyboard.pages[index + 1]!.form,
             takeaway: storyboard.pages[index + 1]!.takeaway.slice(0, 40),
           }]
         : []),
@@ -581,88 +786,22 @@ export function mergeStoryboardIntoPlan(
       role: story.role,
       density: story.density,
       layoutVersion: 2,
-      composition: story.composition,
+      // 版式由内容形态推导，大纲不再声明它。
+      form: story.form,
+      units: story.units,
+      weight: story.weight,
+      composition: deriveComposition(story.form, { hasImage: pageHasImage(story, page), role: story.role }),
+      skeleton: deriveSkeleton(story.form, story.units),
       emphasis: story.emphasis,
       intent: story.intent,
       takeaway: story.takeaway,
       copy: scrubPageCopy(story.copy),
       ...(story.data ? { data: story.data } : {}),
       ...(neighbors.length > 0 ? { neighbors } : {}),
-      budget: budgetForRole(story.role),
+      budget: budgetForForm(story.form, story.role, options.density ?? "standard"),
     };
   });
   return { ...plan, pages: merged };
 }
 
 
-export interface EditorBatchDispatchArgs {
-  draftPages: EditorDraftPage[];
-  /** 由调用方注入完整 input 构造（包含 instruction/roomId/title 等）。 */
-  buildInput: (pages: EditorDraftPage[], batchIndex: number, batchCount: number) => Record<string, unknown>;
-  dispatch: (input: Record<string, unknown>, batchIndex: number) => Promise<SubagentInvocation>;
-  options?: StoryboardCheckOptions;
-  batchSize?: number;
-  concurrency?: number;
-}
-
-/**
- * 压缩文稿分片：每批 6 页并行（最多 2 批同时），再合并成整本 storyboard。
- * 目的不是改变验收口径，而是把单次 24 页的巨型输出拆成 4 次小输出，避免 420s invocation 超时。
- */
-export async function dispatchEditorStoryboard(args: EditorBatchDispatchArgs): Promise<{
-  storyboard: EditorStoryboard | null;
-  errors: string[];
-  warnings: string[];
-}> {
-  const batchSize = Math.max(1, Math.min(8, args.batchSize ?? 6));
-  const concurrency = Math.max(1, Math.min(3, args.concurrency ?? 2));
-  const batches: EditorDraftPage[][] = [];
-  for (let i = 0; i < args.draftPages.length; i += batchSize) {
-    batches.push(args.draftPages.slice(i, i + batchSize));
-  }
-  const errors: string[] = [];
-  const warnings: string[] = [];
-  const outcomes: Array<{ storyboard: EditorStoryboard | null; errors: string[] }> = new Array(batches.length);
-  let cursor = 0;
-  const worker = async () => {
-    while (cursor < batches.length) {
-      const index = cursor;
-      cursor += 1;
-      const pages = batches[index]!;
-      try {
-        const input = args.buildInput(pages, index, batches.length);
-        const invocation = await args.dispatch(input, index);
-        const got = storyboardFromInvocation(invocation, pages);
-        outcomes[index] = { storyboard: got.storyboard, errors: got.errors };
-      } catch (error) {
-        outcomes[index] = { storyboard: null, errors: [error instanceof Error ? error.message : String(error)] };
-      }
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(concurrency, batches.length) }, () => worker()));
-  const stories: EditorStoryboard[] = [];
-  for (let i = 0; i < outcomes.length; i += 1) {
-    const outcome = outcomes[i];
-    if (!outcome?.storyboard) {
-      errors.push(`批次 ${i + 1}/${batches.length}：${outcome?.errors.join("; ") || "未返回 storyboard"}`);
-      continue;
-    }
-    errors.push(...outcome.errors.map((error) => `批次 ${i + 1}/${batches.length}：${error}`));
-    warnings.push(...outcome.storyboard.warnings.map((warning) => `批次 ${i + 1}/${batches.length}：${warning}`));
-    stories.push(outcome.storyboard);
-  }
-  if (stories.length !== batches.length) {
-    return { storyboard: null, errors, warnings };
-  }
-  const first = stories[0]!;
-  const merged: EditorStoryboard = {
-    schemaVersion: "storyboard/v2",
-    deck: first.deck,
-    pages: stories.flatMap((story) => story.pages),
-    warnings,
-  };
-  const fullCheck = checkStoryboard(merged, args.draftPages, args.options ?? {});
-  errors.push(...fullCheck.errors);
-  warnings.push(...fullCheck.warnings);
-  return { storyboard: merged, errors: [...new Set(errors)], warnings: [...new Set(warnings)] };
-}

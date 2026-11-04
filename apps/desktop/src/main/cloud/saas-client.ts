@@ -501,11 +501,20 @@ function decodeJwtPayload(token: string): Record<string, unknown> {
   }
 }
 
-/** 心跳上行投影：剥掉 SaaS schema 尚不认识的多 Agent 字段，避免 strict 校验整包 422。 */
+/** SaaS 心跳里的会话投影：本地 contract 的超集字段不在服务端 schema 里。 */
+type SaasCompatibleSession = Omit<AgentSession, 'workspaceId'>
+  & Pick<AgentSessionSnapshot, 'messages' | 'activeRun' | 'lastEventSeq'>
+
+/** 心跳上行投影：剥掉 SaaS schema 尚不认识的多 Agent / 工作区字段，避免 strict 校验整包 422。 */
 function saasCompatibleSession(
   session: AgentSession & Pick<AgentSessionSnapshot, 'messages' | 'activeRun' | 'lastEventSeq'>,
-): AgentSession & Pick<AgentSessionSnapshot, 'messages' | 'activeRun' | 'lastEventSeq'> {
-  const { activeAgentId: _activeAgentId, channelAgentId: _channelAgentId, ...rest } = session
+): SaasCompatibleSession {
+  const {
+    activeAgentId: _activeAgentId,
+    channelAgentId: _channelAgentId,
+    workspaceId: _workspaceId,
+    ...rest
+  } = session
   return {
     ...rest,
     messages: session.messages.map(({ authorAgentId: _authorAgentId, ...message }) => message),

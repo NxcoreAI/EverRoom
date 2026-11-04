@@ -3,45 +3,33 @@ import { describe, expect, it } from 'vitest'
 import { buildAgentRunContext } from './agentRunContext'
 
 describe('buildAgentRunContext', () => {
-  it('includes the latest user-authored Room information', () => {
-    expect(buildAgentRunContext([{
-      id: 'room-1',
-      title: '发布计划',
-      kind: '项目',
-      background: '  聚合发布资料  ',
-      goal: '完成 V1',
-      status: '等待评审',
-      contextSummary: {
-        overview: '该 Room 聚焦发布计划与评审。',
-        nextSteps: ['确认评审意见'],
-        entities: [],
-        actionItems: [],
-        meetings: [],
-        sourceDocuments: [],
-      },
-    }], undefined, 'room-1')).toMatchObject({
-      selectedRoomId: 'room-1',
-      rooms: [{
-        id: 'room-1',
-        title: '发布计划',
-        kind: '项目',
-        background: '聚合发布资料',
-        goal: '完成 V1',
-        status: '等待评审',
-        contextSummary: expect.objectContaining({ nextSteps: ['确认评审意见'] }),
-      }],
-    })
+  it('Phase 2i 去 Room：run context 不再携带 rooms/selectedRoomId', () => {
+    const context = buildAgentRunContext('选中文本', undefined, '首页')
+    expect(context).toMatchObject({ pageLabel: '首页', selectedText: '选中文本' })
+    expect(context).not.toHaveProperty('rooms')
+    expect(context).not.toHaveProperty('selectedRoomId')
   })
 
   it('passes a previous Agent chat as a one-turn reference', () => {
-    expect(buildAgentRunContext([], undefined, undefined, undefined, undefined, undefined, 'thread-1'))
+    expect(buildAgentRunContext(undefined, undefined, undefined, undefined, 'thread-1'))
       .toMatchObject({ referencedConversationId: 'thread-1' })
   })
 
+  it('passes mounted directories into the run context', () => {
+    expect(buildAgentRunContext(undefined, undefined, undefined, [
+      { path: '/Users/me/docs/', name: 'docs' },
+    ])).toMatchObject({
+      mountedDirectories: [{ path: '/Users/me/docs/', name: 'docs' }],
+    })
+    // 只提交目录名/路径两个字段，其余运行上下文键保持缺席。
+    expect(buildAgentRunContext(undefined, undefined, undefined, []))
+      .not.toHaveProperty('mountedDirectories')
+  })
+
   it('passes @ mentioned local Agent ids as dispatch references', () => {
-    expect(buildAgentRunContext([], undefined, undefined, undefined, undefined, undefined, undefined, ['codex:/usr/local/bin/codex', 'claude:/usr/local/bin/claude']))
+    expect(buildAgentRunContext(undefined, undefined, undefined, undefined, undefined, ['codex:/usr/local/bin/codex', 'claude:/usr/local/bin/claude']))
       .toMatchObject({ referencedLocalAgentIds: ['codex:/usr/local/bin/codex', 'claude:/usr/local/bin/claude'] })
-    expect(buildAgentRunContext([], undefined, undefined, undefined, undefined, undefined, undefined, undefined))
+    expect(buildAgentRunContext(undefined, undefined, undefined, undefined, undefined, undefined))
       .not.toHaveProperty('referencedLocalAgentIds')
   })
 })

@@ -76,6 +76,19 @@ export class SlidesStyleSessionStore {
     return row ? toData(row) : null;
   }
 
+  /** Find the latest style session attached to a confirmed draft for continuation calls. */
+  byDraftId(roomId: string, draftDocumentId: string): SlidesStyleSessionData | null {
+    const row = this.db.select().from(slidesStyleSessions)
+      .where(and(
+        eq(slidesStyleSessions.roomId, roomId),
+        eq(slidesStyleSessions.draftDocumentId, draftDocumentId),
+      ))
+      .orderBy(desc(slidesStyleSessions.updatedAt))
+      .limit(1)
+      .get();
+    return row ? toData(row) : null;
+  }
+
   patch(id: string, fields: Partial<{
     instruction: string;
     feedback: string[];

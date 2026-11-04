@@ -50,6 +50,11 @@ export class PdfViewManager {
     return manager
   }
 
+  /** pdf webContents id：wcId 反查（「注释」转发、批注锚点投递）按它键控。 */
+  get webContentsId(): number {
+    return this.view.webContents.id
+  }
+
   setActive(active: boolean): void {
     if (this.disposed) return
     this.active = active

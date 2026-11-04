@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   clampToolResultText,
   estimateContextChars,
+  estimateContextTokens,
   guardRunMessages,
   pruneToolHistory,
 } from "./context-budget.js";
@@ -110,5 +111,38 @@ describe("pruneToolHistory", () => {
       { role: "toolResult", content: [{ type: "text", text: "r".repeat(5) }, { type: "image", data: "" }] },
     ]);
     expect(chars).toBeGreaterThan(3 + 10 + 5 + 4_800);
+  });
+
+  it("estimateContextTokens 对中文按字计，不再用 chars/4 低估一半", () => {
+    const message = { role: "toolResult", content: [{ type: "text", text: "中".repeat(2_000) }] };
+    expect(estimateContextChars([message]) / 4).toBe(500);
+    expect(estimateContextTokens([message])).toBe(1_200);
+    // ASCII 口径与 pi 的 chars/4 保持一致。
+    expect(estimateContextTokens([{ role: "toolResult", content: [{ type: "text", text: "r".repeat(2_000) }] }])).toBe(500);
+  });
+
+  it("guardRunMessages 优先采用 provider 真实 usage：小消息但真实用量超标也裁剪", () => {
+    const messages = [{ role: "user", content: "短任务" }, ...toolTurn(1, 100), ...toolTurn(2, 100), ...toolTurn(3, 100)];
+    // chars/4 估算只有 ~100 token，真实 usage 报 5,000：必须按真实 usage 触发。
+    const guarded = guardRunMessages(messages, { triggerTokens: 1_000, keepRecentTurns: 1 }, 5_000) as Array<Record<string, unknown>>;
+    expect(guarded).not.toBe(messages);
+    expect((guarded[1]!.content as Array<Record<string, unknown>>)[1]!.arguments).toEqual({});
+  });
+
+  it("guardRunMessages 采用 provider 真实 usage：真实用量未超标时不做字符估算误裁", () => {
+    const messages = [{ role: "user", content: "任务" }, ...toolTurn(1, 5_000), ...toolTurn(2, 5_000), ...toolTurn(3, 5_000)];
+    expect(guardRunMessages(messages, { triggerTokens: 1_000, keepRecentTurns: 1 }, 900)).toBe(messages);
+  });
+
+  it("estimateContextTokens 兜底：中文内容在 chars/4 未过阈值时也能触发裁剪", () => {
+    const cjkTurn = (index: number) => [
+      { role: "assistant", content: [{ type: "text", text: `轮 ${index}` }, { type: "toolCall", id: `call-${index}`, name: "doc", arguments: { big: "中".repeat(100) } }] },
+      { role: "toolResult", toolCallId: `call-${index}`, toolName: "doc", content: [{ type: "text", text: "中".repeat(2_000) }], isError: false },
+    ];
+    const messages = [{ role: "user", content: "任务" }, ...cjkTurn(1), ...cjkTurn(2), ...cjkTurn(3)];
+    // chars/4 ≈ 1,500 < 2,000；CJK 感知估算 ≈ 3,900 > 2,000。
+    expect((estimateContextChars(messages) / 4)).toBeLessThan(2_000);
+    const guarded = guardRunMessages(messages, { triggerTokens: 2_000, keepRecentTurns: 1 });
+    expect(guarded).not.toBe(messages);
   });
 });

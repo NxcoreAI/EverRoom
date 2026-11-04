@@ -1,4 +1,4 @@
-import { app, dialog, shell } from 'electron'
+import { app, BrowserWindow, dialog, shell } from 'electron'
 import { execFileSync } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { copyFile, mkdir, mkdtemp, readdir, readFile, stat } from 'node:fs/promises'
@@ -166,7 +166,6 @@ function skippedOutcome(filename: string, skippedReason: 'unsupported_format' | 
     deduped: false,
     skippedReason,
     pipelines: null,
-    memoryResult: null,
     routeJobId: null,
     error: null,
   }
@@ -199,13 +198,15 @@ export class FilesGatewayBridge {
     return () => this.importProgressListeners.delete(listener)
   }
 
-  list(limit = 100, offset = 0): Promise<{ items: FileCatalogDto[]; total: number }> {
+  list(limit = 100, offset = 0, options?: { workspaceId?: string }): Promise<{ items: FileCatalogDto[]; total: number }> {
     const query = new URLSearchParams({ limit: String(limit), offset: String(offset) })
+    if (options?.workspaceId) query.set('workspaceId', options.workspaceId)
     return this.request(`/v1/files/catalog?${query}`)
   }
 
-  catalog(limit = 100, offset = 0): Promise<{ items: FileCatalogDto[]; total: number }> {
+  catalog(limit = 100, offset = 0, options?: { workspaceId?: string }): Promise<{ items: FileCatalogDto[]; total: number }> {
     const query = new URLSearchParams({ limit: String(limit), offset: String(offset) })
+    if (options?.workspaceId) query.set('workspaceId', options.workspaceId)
     return this.request(`/v1/files/catalog?${query}`)
   }
 
@@ -326,6 +327,30 @@ export class FilesGatewayBridge {
     return attachments
   }
 
+  /** 「+ → 导入文件」：系统选择框直选文件，导入文件引擎后作为本轮对话附件。 */
+  async pickAgentAttachments(parent?: BrowserWindow | null): Promise<AgentAttachmentReference[]> {
+    const options: Electron.OpenDialogOptions = {
+      title: '添加文件到对话',
+      buttonLabel: '添加到对话',
+      properties: ['openFile', 'multiSelections'],
+      filters: [
+        {
+          name: desktopText('dialog.importFiles.documents'),
+          extensions: [...DOCUMENT_IMPORT_EXTENSIONS].map((extension) => extension.slice(1)),
+        },
+        {
+          name: desktopText('dialog.importFiles.images'),
+          extensions: [...IMAGE_FILE_EXTENSIONS].map((extension) => extension.slice(1)),
+        },
+      ],
+    }
+    const picked = parent && !parent.isDestroyed()
+      ? await dialog.showOpenDialog(parent, options)
+      : await dialog.showOpenDialog(options)
+    if (picked.canceled || picked.filePaths.length === 0) return []
+    return this.importAgentAttachments(picked.filePaths)
+  }
+
   rename(fileId: string, displayName: string): Promise<FileCatalogDto> {
     return this.request(`/v1/file-entries/${encodeURIComponent(fileId)}`, {
       method: 'PATCH',
@@ -336,7 +361,6 @@ export class FilesGatewayBridge {
   delete(fileId: string): Promise<{
     deleted: boolean
     knowledgeCleanup: boolean
-    deletedMemoryDocuments: string[]
     blobCollected: boolean
   }> {
     return this.request(`/v1/files/${encodeURIComponent(fileId)}`, { method: 'DELETE' })
@@ -381,6 +405,7 @@ export class FilesGatewayBridge {
   async pickAndImport(options?: {
     pipelines?: IngestPipelines
     roomId?: string
+    workspaceId?: string
   }): Promise<FileImportOutcome[]> {
     const picked = await dialog.showOpenDialog({
       title: desktopText('dialog.importFiles.title'),
@@ -435,6 +460,7 @@ export class FilesGatewayBridge {
   async importPathsOnce(selectedPaths: string[], options?: {
     pipelines?: IngestPipelines
     roomId?: string
+    workspaceId?: string
   }): Promise<FileImportOutcome[]> {
     if (!Array.isArray(selectedPaths) || selectedPaths.length === 0) return []
 
@@ -468,6 +494,7 @@ export class FilesGatewayBridge {
         files: highRiskCandidates,
         ...(options?.pipelines ? { pipelines: options.pipelines } : {}),
         ...(options?.roomId ? { roomId: options.roomId } : {}),
+        ...(options?.workspaceId ? { workspaceId: options.workspaceId } : {}),
       }, basename(resolve(selectedPaths[0]!)))
       candidates = lowRiskCandidates
       heldForReview = highRiskCandidates
@@ -529,7 +556,7 @@ export class FilesGatewayBridge {
       relativePath: input.relativePath,
       provider: input.provider,
       connectionId: input.sourceId,
-      pipelines: { room: true, wiki: true, memory: true },
+      pipelines: { room: true, wiki: true },
     })
   }
 
@@ -541,6 +568,7 @@ export class FilesGatewayBridge {
     const outcomes = await this.importCandidates(batch.files, {
       ...(batch.pipelines ? { pipelines: batch.pipelines } : {}),
       ...(batch.roomId ? { roomId: batch.roomId } : {}),
+      ...(batch.workspaceId ? { workspaceId: batch.workspaceId } : {}),
     })
     return {
       accepted: true,
@@ -552,6 +580,7 @@ export class FilesGatewayBridge {
   private async importCandidates(candidates: ImportCandidate[], options?: {
     pipelines?: IngestPipelines
     roomId?: string
+    workspaceId?: string
     source?: { id: string; label: string; resourceIdsByRelativePath?: Readonly<Record<string, string>> }
   }): Promise<FileImportOutcome[]> {
     const outcomes: FileImportOutcome[] = []
@@ -586,6 +615,7 @@ export class FilesGatewayBridge {
           ...(options?.source ? { provider: options.source.label, connectionId: options.source.id } : {}),
           ...(options?.pipelines ? { pipelines: options.pipelines } : {}),
           ...(options?.roomId ? { roomId: options.roomId } : {}),
+          ...(options?.workspaceId ? { workspaceId: options.workspaceId } : {}),
         })
         outcomes.push({
           filename,
@@ -596,8 +626,7 @@ export class FilesGatewayBridge {
           deduped: uploaded.versionDeduped,
           skippedReason: null,
           pipelines: options?.pipelines ?? null,
-          memoryResult: null,
-          routeJobId: uploaded.jobId,
+              routeJobId: uploaded.jobId,
           error: null,
         })
         succeeded += 1
@@ -615,8 +644,7 @@ export class FilesGatewayBridge {
           deduped: false,
           skippedReason: null,
           pipelines: null,
-          memoryResult: null,
-          routeJobId: null,
+              routeJobId: null,
           error: error instanceof Error ? error.message : String(error),
         })
         failed += 1
@@ -642,6 +670,7 @@ export class FilesGatewayBridge {
     relativePath: string
     sourceModifiedAt: string
     roomId?: string
+    workspaceId?: string
   }): Promise<FileImportAcceptedDto> {
     return this.request('/v1/local-file-references', {
       method: 'POST',
@@ -655,6 +684,7 @@ export class FilesGatewayBridge {
         localItemId: input.localItemId,
         relativePath: input.relativePath,
         sourceModifiedAt: input.sourceModifiedAt,
+        ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
       }),
     })
   }
@@ -667,7 +697,7 @@ export class FilesGatewayBridge {
   }
 
   /** 整源级联清理：该源在理解引擎的全部文件条目 + 记忆/台账/Room 归属。 */
-  purgeLocalSource(localSourceId: string): Promise<{ entries: number; deletedMemoryDocuments: string[] }> {
+  purgeLocalSource(localSourceId: string): Promise<{ entries: number }> {
     const query = new URLSearchParams({ localSourceId })
     return this.request(`/v1/local-file-references?${query.toString()}`, { method: 'DELETE' })
   }
@@ -719,6 +749,8 @@ export class FilesGatewayBridge {
     sourceModifiedAt?: string
     pipelines?: IngestPipelines
     roomId?: string
+    /** 归属工作区（资料库/产物库按空间隔离）；Agent 会话产物 = 会话所属空间。 */
+    workspaceId?: string
     provider?: string
     connectionId?: string
     sourceUri?: string
@@ -745,6 +777,7 @@ export class FilesGatewayBridge {
       sourceModifiedAt: input.sourceModifiedAt ?? after.mtime.toISOString(),
       ...(input.pipelines ? { pipelines: input.pipelines } : {}),
       ...(input.roomId ? { roomId: input.roomId } : {}),
+      ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
       ...(input.fileEntryId ? { fileEntryId: input.fileEntryId } : {}),
     }))
     const uploadMime = imageMime(extname(input.originalName).toLowerCase())
@@ -785,6 +818,7 @@ export class FilesGatewayBridge {
     originalName: string
     sourceKey: string
     roomId?: string
+    workspaceId?: string
     fileEntryId?: string
   }): Promise<FileImportAcceptedDto> {
     return this.importPath({
@@ -793,20 +827,25 @@ export class FilesGatewayBridge {
       sourceKey: input.sourceKey,
       originalName: input.originalName,
       ...(input.roomId
-        ? { roomId: input.roomId, pipelines: { room: true, wiki: false, memory: true } }
+        ? { roomId: input.roomId, pipelines: { room: true, wiki: false } }
         : {}),
+      ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
       ...(input.fileEntryId ? { fileEntryId: input.fileEntryId } : {}),
     })
   }
 
   /**
    * 产物库「导入本地 Office 文件」（渲染端经 webUtils 取路径后调用）：
-   * 以 sourceKind=artifact-imported 入库并显式归属 Room（room+memory 管线，
+   * 以 sourceKind=artifact-imported 入库并显式归属 Room（room 管线，
    * 与 Agent 产物同组——Room Agent 可引用，不进 wiki）。单文件、用户显式
    * 意图，不走统一导入的高风险审查队列。同路径重复导入命中同一 entry 走版本链。
    * 逐文件互不影响，仅回报成功项（fileId 供渲染端选中打开）。
    */
-  async importArtifactFiles(selectedPaths: string[], roomId: string): Promise<Array<{ fileId: string; originalName: string }>> {
+  async importArtifactFiles(
+    selectedPaths: string[],
+    roomId: string,
+    workspaceId?: string,
+  ): Promise<Array<{ fileId: string; originalName: string }>> {
     if (!roomId || typeof roomId !== 'string') throw new Error('缺少目标 Room。')
     const imported: Array<{ fileId: string; originalName: string }> = []
     for (const filePath of selectedPaths) {
@@ -824,7 +863,8 @@ export class FilesGatewayBridge {
           sourceKey: `artifact:path:${createHash('sha256').update(filePath).digest('hex').slice(0, 40)}`,
           originalName: filename,
           roomId,
-          pipelines: { room: true, wiki: false, memory: true },
+          ...(workspaceId ? { workspaceId } : {}),
+          pipelines: { room: true, wiki: false },
         })
         imported.push({ fileId: uploaded.fileEntryId, originalName: filename })
       } catch (error) {

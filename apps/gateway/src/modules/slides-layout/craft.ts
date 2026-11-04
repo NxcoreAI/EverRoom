@@ -140,28 +140,45 @@ export const CRAFT_BANDS: Record<"projected" | "document", CraftBand> = {
 export interface FormRule {
   /** 最大块的面积下限（内容区占比）。 */
   heroMin: number;
+  /** 最大块的面积上限：表格/图片满版本来就该占大头，别当成"满版图"拦掉。 */
+  heroMax: number;
   /** 对齐轴上限：约等于该形态允许的列数。 */
   maxAxes: number;
+  /** 字号档下限：满宽表格全表同字号是正常的，不逼它凑档。 */
+  minTiers: number;
+  /** 留白率上限：过渡页/单线索页本来就该空，按形态放宽而不是按密度死卡。 */
+  whitespaceMax: number;
+  /** 留白率下限：表格/满版图本来就塞满，不按密度档的下限去逼它留空。 */
+  whitespaceMin: number;
 }
 
 export const FORM_RULES: Record<string, FormRule> = {
   // 文字型主角（一个大数字）按墨迹面积量：60pt 数字 + 标签的墨迹约 25%，
   // 换成 0.3 会让所有"一句结论 + 一个大数字"的页都不达标——照实测定档。
-  "single-fact": { heroMin: 0.25, maxAxes: 2 },
-  quotation: { heroMin: 0.3, maxAxes: 2 },
-  "image-led": { heroMin: 0.28, maxAxes: 2 },
-  contrast: { heroMin: 0.2, maxAxes: 3 },
-  hierarchy: { heroMin: 0.2, maxAxes: 3 },
-  table: { heroMin: 0.25, maxAxes: 2 },
-  sequence: { heroMin: 0.18, maxAxes: 5 },
-  breakdown: { heroMin: 0.18, maxAxes: 4 },
-  "light-page": { heroMin: 0.15, maxAxes: 2 },
+  // minTiers 1：一句话海报（没有数字也没有支撑）本来就是全页一个字号，
+  // 靠"大"吃饭而不是靠"层次"；有支撑/数值时骨架自然会摊出 2~4 档。
+  "single-fact": { heroMin: 0.25, heroMax: 0.72, maxAxes: 2, minTiers: 1, whitespaceMax: 0.6, whitespaceMin: 0.18 },
+  quotation: { heroMin: 0.3, heroMax: 0.72, maxAxes: 2, minTiers: 2, whitespaceMax: 0.65, whitespaceMin: 0.18 },
+  "image-led": { heroMin: 0.28, heroMax: 0.85, maxAxes: 2, minTiers: 2, whitespaceMax: 0.45, whitespaceMin: 0.12 },
+  contrast: { heroMin: 0.2, heroMax: 0.72, maxAxes: 3, minTiers: 2, whitespaceMax: 0.55, whitespaceMin: 0.18 },
+  hierarchy: { heroMin: 0.18, heroMax: 0.75, maxAxes: 5, minTiers: 2, whitespaceMax: 0.6, whitespaceMin: 0.15 },
+  table: { heroMin: 0.25, heroMax: 0.85, maxAxes: 2, minTiers: 1, whitespaceMax: 0.8, whitespaceMin: 0.08 },
+  sequence: { heroMin: 0.18, heroMax: 0.72, maxAxes: 5, minTiers: 2, whitespaceMax: 0.7, whitespaceMin: 0.15 },
+  breakdown: { heroMin: 0.18, heroMax: 0.72, maxAxes: 4, minTiers: 2, whitespaceMax: 0.62, whitespaceMin: 0.18 },
+  "light-page": { heroMin: 0.15, heroMax: 0.72, maxAxes: 2, minTiers: 1, whitespaceMax: 0.8, whitespaceMin: 0.25 },
 };
 
 /** 形态规则；未登记的形态退回投影档的通用值。 */
 export function formRuleFor(form: string | undefined, band: CraftBand = CRAFT_BANDS.projected): FormRule {
   const rule = form ? FORM_RULES[form] : undefined;
-  return rule ?? { heroMin: band.heroAreaRatio.min, maxAxes: band.maxAlignAxes };
+  return rule ?? {
+    heroMin: band.heroAreaRatio.min,
+    heroMax: band.heroAreaRatio.max,
+    maxAxes: band.maxAlignAxes,
+    minTiers: band.tierSpan.min,
+    whitespaceMax: band.whitespaceRatio.max,
+    whitespaceMin: band.whitespaceRatio.min,
+  };
 }
 
 /** 场景距离 → 结构档。近距（培训/研读）用 document 档，远距（路演/发布会/评审）用 projected 档。 */

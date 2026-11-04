@@ -123,7 +123,12 @@ export class OfficeViewManager {
     const editable = options?.editable === true
     docs.registerDocsIpc()
     docs.setDocsShellWindow(window)
-    const view = docs.createDocsView(filePath, { hostMode: 'everroom', readonly: !editable })
+    // GenOffice 自带的对话区/侧栏已删除，停靠栏统一由主窗口渲染层挂 SideDock
+    // （见 office-preview-registry.ts）。
+    const view = docs.createDocsView(filePath, {
+      hostMode: 'everroom',
+      readonly: !editable,
+    })
     docs.setActiveDocsResolver(() => view.webContents.isDestroyed() ? null : view.webContents)
     view.setVisible(false)
     window.contentView.addChildView(view)

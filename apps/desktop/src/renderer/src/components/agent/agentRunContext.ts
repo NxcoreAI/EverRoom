@@ -1,35 +1,33 @@
 import type {
   AgentActiveDocumentContext,
-  AgentFileAttachment,
-  AgentRoomReference,
+  AgentMountedDirectory,
   StartAgentRunInput,
 } from '@nxcore/agent-contract'
 
+/**
+ * Phase 2i 后无 Room 维度：run context 不再携带 rooms / selectedRoomId，
+ * 文稿一律工作区级（activeDocument 亦无 roomId 字段）。
+ */
 export function buildAgentRunContext(
-  rooms: AgentRoomReference[],
   selectedText?: string,
-  selectedRoomId?: string,
   activeDocument?: AgentActiveDocumentContext | null,
   pageLabel?: string,
-  attachments?: AgentFileAttachment[],
+  mountedDirectories?: AgentMountedDirectory[],
   referencedConversationId?: string,
   referencedLocalAgentIds?: string[],
 ): NonNullable<StartAgentRunInput['context']> {
   return {
     ...(pageLabel?.trim() ? { pageLabel: pageLabel.trim() } : {}),
-    rooms: rooms.map(({ id, title, kind, background, goal, status, contextSummary }) => ({
-      id,
-      title,
-      ...(kind ? { kind } : {}),
-      ...(background?.trim() ? { background: background.trim().slice(0, 2_000) } : {}),
-      ...(goal?.trim() ? { goal: goal.trim().slice(0, 2_000) } : {}),
-      ...(status?.trim() ? { status: status.trim().slice(0, 500) } : {}),
-      ...(contextSummary ? { contextSummary } : {}),
-    })),
     ...(selectedText?.trim() ? { selectedText: selectedText.trim().slice(0, 8_000) } : {}),
-    ...(selectedRoomId?.trim() ? { selectedRoomId: selectedRoomId.trim() } : {}),
     ...(activeDocument ? { activeDocument } : {}),
-    ...(attachments?.length ? { attachments } : {}),
+    ...(mountedDirectories?.length
+      ? {
+          mountedDirectories: mountedDirectories.map((directory) => ({
+            name: directory.name,
+            path: directory.path,
+          })),
+        }
+      : {}),
     ...(referencedConversationId ? { referencedConversationId } : {}),
     ...(referencedLocalAgentIds?.length ? { referencedLocalAgentIds } : {}),
   }

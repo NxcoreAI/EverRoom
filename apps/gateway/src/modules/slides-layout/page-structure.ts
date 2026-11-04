@@ -48,6 +48,9 @@ export function contentBox(): Rect {
  */
 export const CHROME_TOP = 660;
 
+/** 大字（≥40pt）不参与"行长度"判定：一屏一句的标语天生就是长行。 */
+const MEASURE_SKIP_PT = 40;
+
 function clip(rect: Rect, box: Rect): Rect | null {
   const x = Math.max(rect.x, box.x);
   const y = Math.max(rect.y, box.y);
@@ -195,12 +198,20 @@ export function measurePage(elements: ReadonlyArray<SpecElement>, options: Measu
       const lines = sample.boxW > 0 ? estimateLines(sample.text, sample.sizePt, sample.boxW) : sample.text.length;
       const chars = Math.max(1, Math.round(sample.text.length / Math.max(1, lines)));
       measureMax = Math.max(measureMax, chars);
+      // 行长度限制针对"需要连续读的正文"：display/hero 这种一屏一句的大字，
+      // 长一点是排版问题（折行由 measure 的溢出检查管），不是"读不动"。
+      if (sample.sizePt >= MEASURE_SKIP_PT) continue;
       if (chars > measureCharsFor(sample.sizePt, options.theme.typeScale, options.band ?? CRAFT_BANDS.projected)) measureOver += 1;
     }
   }
 
-  // 发丝线（分隔线/页脚横线）压到文字不算"块压叠"，那是版式的正常关系。
-  const solid = blocks.filter((block) => block.w > 3 && block.h > 3);
+  // 压叠只算"文字压文字"：发丝线、色块底、组件内部层叠都是有意为之，
+  // 真看起来断掉的是两段字叠在一起。发丝线（<3px）本来就不是块，一并排除。
+  const textBlocks = elements.filter((element) => {
+    if (!isVisualBlock(element, box) || element.y >= CHROME_TOP) return false;
+    return paragraphsOf(element).some((paragraph) => paragraph.runs.some((run) => run.text.trim().length > 0));
+  });
+  const solid = textBlocks.filter((block) => block.w > 3 && block.h > 3);
   let overlaps = 0;
   for (let i = 0; i < solid.length; i += 1) {
     for (let j = i + 1; j < solid.length; j += 1) {
@@ -294,9 +305,12 @@ export function deckStructure(input: DeckStructureInput): DeckStructureReport {
     if (page.heroAreaRatio < rule.heroMin) {
       failures.push(`${where}：主角面积 ${(page.heroAreaRatio * 100).toFixed(0)}% < ${rule.heroMin * 100}%（这页没有主角）`);
     }
-    if (page.whitespaceRatio < whitespaceBand.min || page.whitespaceRatio > whitespaceBand.max) {
+    // 上限先由密度决定，形态可以再放宽（过渡页本来就该空）。下限仍按密度。
+    const whiteMax = Math.max(whitespaceBand.max, rule.whitespaceMax);
+    const whiteMin = Math.min(whitespaceBand.min, rule.whitespaceMin);
+    if (page.whitespaceRatio < whiteMin || page.whitespaceRatio > whiteMax) {
       failures.push(
-        `${where}：留白率 ${(page.whitespaceRatio * 100).toFixed(0)}% 落在 ${whitespaceBand.min * 100}~${whitespaceBand.max * 100}% 之外`,
+        `${where}：留白率 ${(page.whitespaceRatio * 100).toFixed(0)}% 落在 ${whiteMin * 100}~${whiteMax * 100}% 之外`,
       );
     }
     if (page.alignAxes > rule.maxAxes) {
@@ -308,6 +322,12 @@ export function deckStructure(input: DeckStructureInput): DeckStructureReport {
     }
     if (page.tierSpan > band.tierSpan.max) {
       failures.push(`${where}：字号 ${page.tierSpan} 档（上限 ${band.tierSpan.max} 档，太多显乱）`);
+    }
+    if (page.tierSpan < rule.minTiers) {
+      failures.push(`${where}：全页只有 ${page.tierSpan} 档字号（该形态下限 ${rule.minTiers} 档，太平）`);
+    }
+    if (page.heroAreaRatio > rule.heroMax) {
+      failures.push(`${where}：主角面积 ${(page.heroAreaRatio * 100).toFixed(0)}% > ${rule.heroMax * 100}%（一块吃掉整页）`);
     }
     if (page.overlaps > 0) failures.push(`${where}：${page.overlaps} 处块压叠`);
   });

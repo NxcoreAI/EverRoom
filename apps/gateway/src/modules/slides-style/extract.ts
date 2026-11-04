@@ -211,17 +211,17 @@ export interface PaletteRoles {
 export function assignPaletteRoles(clusters: StyleColorCluster[]): PaletteRoles {
   if (clusters.length === 0) {
     // 空输入给一套中性兜底（调用方几乎不会走到；保函数完备）。
-    const background = "#f5f5f2";
+    const background = "#ffffff";
     const primary = "#2f3e4e";
     return {
       background,
       surface: "#ffffff",
       primary,
-      accent: "#c97b2d",
+      accent: primary,
       text: "#2b2b2b",
       textMuted: "#7a7a76",
       onDarkText: "#f5f5f2",
-      darkCover: true,
+      darkCover: false,
     };
   }
   const byRatio = [...clusters].sort((a, b) => b.ratio - a.ratio);
@@ -243,12 +243,13 @@ export function assignPaletteRoles(clusters: StyleColorCluster[]): PaletteRoles 
     .sort((a, b) => b.score - a.score)[0];
   const primary = primaryCandidate?.rgb ?? mix(bg, dark ? { r: 255, g: 255, b: 255 } : { r: 20, g: 24, b: 32 }, 0.55);
 
-  // 强调色：与主色色距足够远的饱和簇；没有就同亮度换相推导（确定性）。
+  // Keep observed accents; normalization handles readability without inventing a hue.
   const accentCandidate = byRatio
     .slice(1)
+    .filter((cluster) => cluster.ratio >= 0.02)
     .map((cluster) => hexToRgb(cluster.hex))
-    .find((rgb) => saturation(rgb) >= 0.35 && contrast(rgb, bg) >= 2.5 && hueDistance(rgb, primary) >= 40);
-  const accent = accentCandidate ?? rotateHue(primary, 170, bg);
+    .find((rgb) => saturation(rgb) >= 0.35 && contrast(rgb, bg) >= 1.5 && hueDistance(rgb, primary) >= 40);
+  const accent = accentCandidate ?? primary;
 
   // 文字色：与底色对比达标的最深（浅底）/最浅（深底）簇；不够就推导加深/提亮。
   const readable = byRatio
@@ -266,7 +267,7 @@ export function assignPaletteRoles(clusters: StyleColorCluster[]): PaletteRoles 
     text: rgbToHex(text),
     textMuted: rgbToHex(mix(text, bg, 0.45)),
     onDarkText: rgbToHex(mix({ r: 255, g: 255, b: 255 }, primary, 0.1)),
-    darkCover: true,
+    darkCover: dark,
   };
 }
 

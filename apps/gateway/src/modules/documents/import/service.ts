@@ -409,6 +409,9 @@ export class DocumentImportService {
 
   private larkAuthCache: { at: number; ok: boolean; reason: string } | null = null;
 
+  /** 飞书连接器开关（连接器页「关闭」）：关闭后 lark-cli 导入被拦截。 */
+  private readonly isFeishuDisabled: (() => boolean) | null;
+
   constructor(
     private readonly db: GatewayDatabase,
     private readonly documents: DocumentService,
@@ -423,6 +426,8 @@ export class DocumentImportService {
       /** 飞书导入通道（lark-cli，桌面注入）：缺省时飞书导入报连接不可用。 */
       larkCli?: LarkCliConfig | null;
       larkActionFn?: ImportActionFn;
+      /** 飞书连接器开关：返回 true 时飞书导入报「连接已关闭」。 */
+      isFeishuDisabled?: () => boolean;
     },
   ) {
     this.actionRunner = options?.actionRunner ?? runImportConnectorAction;
@@ -430,6 +435,7 @@ export class DocumentImportService {
     this.notionCli = options?.notionCli ?? null;
     this.larkCli = options?.larkCli ?? null;
     this.larkActionFn = options?.larkActionFn ?? null;
+    this.isFeishuDisabled = options?.isFeishuDisabled ?? null;
   }
 
   async search(
@@ -1553,10 +1559,22 @@ export class DocumentImportService {
     return this.connectorConfig;
   }
 
+  /** 飞书连接器开关：连接器页「关闭」后拒绝一切 lark-cli 导入（凭据仍在本机）。 */
+  private assertFeishuEnabled(): void {
+    if (this.isFeishuDisabled?.()) {
+      throw new ImportServiceError(
+        "IMPORT_CONNECTION_REQUIRED",
+        "飞书连接已在连接器页关闭，请先开启后再导入文档",
+        422,
+      );
+    }
+  }
+
   /** 飞书 lark-cli 授权门禁：结果缓存 30s，批量导入（逐篇 preview）不会
    * 每篇都 spawn 一次 auth status。未授权抛 authentication_required，
    * 经 mapConnectorError 映射 422 引导用户去数据源页连接飞书。 */
   private async ensureFeishuLarkAuth(): Promise<void> {
+    this.assertFeishuEnabled();
     if (this.larkAuthCache && Date.now() - this.larkAuthCache.at < 30_000) {
       if (!this.larkAuthCache.ok) {
         throw new ImportConnectorError("authentication_required", this.larkAuthCache.reason);
@@ -1588,6 +1606,7 @@ export class DocumentImportService {
   private adapterOf(provider: ExternalDocumentProvider, connectionName?: string): ExternalDocumentProviderAdapter {
     // 飞书换轨 lark-cli：不经 OpenConnector 配置/连接解析，connectionName 无意义。
     if (provider === "feishu") {
+      this.assertFeishuEnabled();
       const run = this.larkActionFn
         ?? (this.larkCli
           ? createLarkImportActionRunner(this.larkCli, { ensureAuth: () => this.ensureFeishuLarkAuth() })

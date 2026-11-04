@@ -21,6 +21,31 @@ function planFixture(): SlidesProgressPlan {
   };
 }
 
+describe("页数上限", () => {
+  // 上限是 32（曾为 24）：逐页 BP 大纲常在 25~30 页，卡在 24 会静默丢页。
+  const pagesMarkdown = (count: number) =>
+    Array.from({ length: count }, (_, index) => `## 第${index + 1}页标题\n- 要点一\n数据：指标 | 值\n`).join("\n");
+
+  it("27 页草稿文档整册保留，不截断", () => {
+    const parsed = parseDraftMarkdown(pagesMarkdown(27));
+    expect(parsed).toHaveLength(27);
+    expect(parsed?.[26]?.title).toBe("第27页标题");
+  });
+
+  it("32 页仍保留；超过 32 页按上限截断", () => {
+    expect(parseDraftMarkdown(pagesMarkdown(32))).toHaveLength(32);
+    expect(parseDraftMarkdown(pagesMarkdown(33))).toHaveLength(32);
+  });
+
+  it("方案结构化输出同样放到 32 页", () => {
+    const plan = slidesProgressPlanFrom({
+      title: "27 页 BP",
+      pages: Array.from({ length: 27 }, (_, index) => ({ title: `页 ${index + 1}` })),
+    });
+    expect(plan?.pages).toHaveLength(27);
+  });
+});
+
 describe("slidesProgressPlanFrom", () => {
   it("完整方案照常通过，字段截长与白名单按上限执行", () => {
     const plan = slidesProgressPlanFrom(planFixture());

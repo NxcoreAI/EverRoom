@@ -39,48 +39,37 @@ describe('SaasConnectorBridge authorization flow', () => {
     await expect(bridge.startAuthorization('Gmail!')).rejects.toThrow('不支持的连接提供方。')
 
     const unsafe = buildBridge(async () => ({ authorizationUrl: 'javascript:alert(1)' }), () => null)
-    await expect(unsafe.bridge.startAuthorization('gmail')).rejects.toThrow('SaaS 返回了不安全的授权地址。')
+    await expect(unsafe.bridge.startAuthorization('gmail')).rejects.toThrow('不安全的授权地址')
   })
 
-  it('reports connected once the connection lands in the oo tenant and registers it with the gateway', async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ success: true, data: [{ service: 'gmail' }] }), { status: 200 }))
+  it('reports connected once the connection lands in the oo tenant, without local registration', async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response(JSON.stringify({ success: true, data: [{ service: 'gmail', alias: 'default' }] }), { status: 200 }),
+    )
     vi.stubGlobal('fetch', fetchMock)
     const { bridge } = buildBridge(async () => ({ authorizationUrl: 'https://accounts.google.com/x' }), () => ({
       baseUrl: 'http://127.0.0.1:3000',
       token: 'oct_user-token',
     }))
-    const connection = { id: 'conn-1', provider: 'gmail', connectionName: 'default', status: 'active' }
-    const register = vi.spyOn(bridge, 'registerConnection').mockResolvedValue(connection as never)
 
     const attempt = await bridge.startAuthorization('gmail')
     const status = await bridge.authorizationStatus(attempt.id)
     expect(status.status).toBe('connected')
-    expect(status.connection).toEqual(connection)
-    expect(register).toHaveBeenCalledWith({ provider: 'gmail', service: 'gmail', connectionName: 'default' })
+    expect(status.connection).toMatchObject({
+      id: 'gmail:default',
+      provider: 'gmail',
+      service: 'gmail',
+      connectionName: 'default',
+      status: 'active',
+    })
 
-    // 已完成的授权短路返回，不再探测/重复注册。
+    // 已完成的授权短路返回，不再探测。
     const second = await bridge.authorizationStatus(attempt.id)
     expect(second.status).toBe('connected')
     expect(fetchMock).toHaveBeenCalledTimes(1)
-    expect(register).toHaveBeenCalledTimes(1)
   })
 
-  it('keeps polling when gateway registration fails while the connection exists in oo', async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ success: true, data: [{ service: 'gmail' }] }), { status: 200 }))
-    vi.stubGlobal('fetch', fetchMock)
-    const { bridge } = buildBridge(async () => ({ authorizationUrl: 'https://accounts.google.com/x' }), () => ({
-      baseUrl: 'http://127.0.0.1:3000',
-      token: 'oct_user-token',
-    }))
-    vi.spyOn(bridge, 'registerConnection').mockRejectedValue(new Error('gateway down'))
-
-    const attempt = await bridge.startAuthorization('gmail')
-    // 注册失败 → 仍报 pending（渲染层继续轮询），下轮重试注册。
-    await expect(bridge.authorizationStatus(attempt.id)).resolves.toMatchObject({ status: 'pending' })
-    expect(fetchMock).toHaveBeenCalledTimes(1)
-  })
-
-  it('keeps pending while the connection has not landed and falls back for unknown ids', async () => {
+  it('keeps polling while the oo tenant has no connection yet', async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({ success: true, data: [] }), { status: 200 }))
     vi.stubGlobal('fetch', fetchMock)
     const { bridge } = buildBridge(async () => ({ authorizationUrl: 'https://accounts.google.com/x' }), () => ({
@@ -90,52 +79,44 @@ describe('SaasConnectorBridge authorization flow', () => {
 
     const attempt = await bridge.startAuthorization('gmail')
     await expect(bridge.authorizationStatus(attempt.id)).resolves.toMatchObject({ status: 'pending' })
-
-    // 未知 id 走 gateway 原路径（委托父类）。
-    await expect(bridge.authorizationStatus('nango-flow-id').catch((error: unknown) => error)).resolves.toBeDefined()
-  })
-
-  it('translates provider names to oo service names across the authorization chain', async () => {
-    const startAuthorization = vi.fn(async () => ({ authorizationUrl: 'https://accounts.google.com/x' }))
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ success: true, data: [{ service: 'googledrive' }] }), { status: 200 }))
-    vi.stubGlobal('fetch', fetchMock)
-    const { bridge } = buildBridge(startAuthorization, () => ({
-      baseUrl: 'http://127.0.0.1:3000',
-      token: 'oct_user-token',
-    }))
-    const register = vi.spyOn(bridge, 'registerConnection').mockResolvedValue({ id: 'conn-1' } as never)
-
-    await bridge.startAuthorization('google-docs')
-    // SaaS/oo 按 oo service 名索引（Google 系无连字符），attempt 仍用 provider 名。
-    expect(startAuthorization).toHaveBeenCalledWith('googledrive')
-
-    const started = await bridge.startAuthorization('google-docs')
-    await bridge.authorizationStatus(started.id)
-    expect(fetchMock).toHaveBeenCalledWith(
-      'http://127.0.0.1:3000/v1/apps/services/googledrive',
-      expect.objectContaining({ headers: { authorization: 'Bearer oct_user-token' } }),
-    )
-    expect(register).toHaveBeenCalledWith({ provider: 'google-docs', service: 'googledrive', connectionName: 'default' })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 })
 
-describe('SaasConnectorBridge.configuredProviders', () => {
-  it('maps oo service names to registry provider names and drops unknown services', async () => {
-    const { bridge } = buildBridge(async () => ({ authorizationUrl: 'https://x.example/x' }), () => null, async () => [
-      { service: 'gmail', displayName: 'Gmail', iconUrl: null },
-      { service: 'googledrive', displayName: 'Google Drive', iconUrl: null },
-      { service: 'googlecalendar', displayName: 'Google Calendar', iconUrl: null },
-      { service: 'discord', displayName: 'Discord', iconUrl: null },
-    ])
+describe('SaasConnectorBridge configured providers', () => {
+  it('passes the whole SaaS OAuth catalog through, mapping service → provider', async () => {
+    const { bridge } = buildBridge(
+      async () => ({ authorizationUrl: 'https://example.com/x' }),
+      () => null,
+      async () => [
+        { service: 'gmail', displayName: 'Gmail', iconUrl: 'https://cdn.example.com/gmail.png' },
+        { service: 'googledrive', displayName: 'Drive', iconUrl: null },
+        { service: 'unknown-svc', displayName: '未知应用', iconUrl: 'https://cdn.example.com/x.png' },
+      ],
+    )
 
-    await expect(bridge.configuredProviders()).resolves.toEqual(['gmail', 'google-docs', 'google-calendar'])
+    // 旧接口（名单）：只回网关有适配器的 provider。
+    await expect(bridge.configuredProviders()).resolves.toEqual(['gmail', 'google-docs'])
+    // 新接口（目录）：SaaS 配置即目录，未知 service 原样透传（不依赖网关查询档案）。
+    await expect(bridge.configuredProvidersDetailed()).resolves.toEqual([
+      { provider: 'gmail', displayName: 'Gmail', iconUrl: 'https://cdn.example.com/gmail.png' },
+      { provider: 'google-docs', displayName: 'Drive', iconUrl: null },
+      { provider: 'unknown-svc', displayName: '未知应用', iconUrl: 'https://cdn.example.com/x.png' },
+    ])
   })
 
-  it('propagates SaaS failures so the renderer can fall back', async () => {
-    const { bridge } = buildBridge(async () => ({ authorizationUrl: 'https://x.example/x' }), () => null, async () => {
-      throw new Error('登录已过期，请重新登录。')
-    })
+  it('keeps the first entry when the same provider is configured twice', async () => {
+    const { bridge } = buildBridge(
+      async () => ({ authorizationUrl: 'https://example.com/x' }),
+      () => null,
+      async () => [
+        { service: 'gmail', displayName: 'Gmail', iconUrl: 'https://cdn.example.com/first.png' },
+        { service: 'gmail', displayName: 'Gmail 2', iconUrl: 'https://cdn.example.com/second.png' },
+      ],
+    )
 
-    await expect(bridge.configuredProviders()).rejects.toThrow('登录已过期，请重新登录。')
+    await expect(bridge.configuredProvidersDetailed()).resolves.toEqual([
+      { provider: 'gmail', displayName: 'Gmail', iconUrl: 'https://cdn.example.com/first.png' },
+    ])
   })
 })

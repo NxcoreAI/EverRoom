@@ -6,6 +6,7 @@ import { proxyFetch } from "../../infrastructure/network/proxy-fetch.js";
 import {
   AsyncEventQueue,
   type AgentRuntime,
+  type AgentRuntimeDescription,
   type ResumeRuntimeRunInput,
   type RuntimeEvent,
   type RuntimeRun,
@@ -34,7 +35,7 @@ interface ActiveRun {
   queue: AsyncEventQueue<RuntimeEvent>;
 }
 
-/** length 重试的预算封顶（与 MemoryCore runner 的 4 倍重试封顶一致）。 */
+/** length 重试的预算封顶（4 倍重试封顶）。 */
 const LENGTH_RETRY_MAX_TOKENS = 32_768;
 
 /** AgentRuntime adapter for providers whose extra request fields are not supported by Pi. */
@@ -48,6 +49,32 @@ export class OpenAiCompletionAgentRuntime implements AgentRuntime {
 
   async getCapabilities(): Promise<RuntimeCapabilities> {
     return { streaming: false, reasoning: false, tools: false, steering: false, resume: false };
+  }
+
+  /** 调试面板数据源：单次补全 runtime 只有模型/baseUrl + 系统提示词，无工具与预算。 */
+  async describe(): Promise<AgentRuntimeDescription> {
+    return {
+      runtimeId: this.id,
+      model: {
+        provider: null,
+        model: this.config.model,
+        baseUrl: this.config.baseUrl,
+        api: "openai-completions",
+        reasoning: null,
+        temperature: this.config.temperature ?? null,
+        maxTokens: this.config.maxTokens ?? null,
+        contextWindow: null,
+      },
+      role: null,
+      systemPrompt: this.config.systemPrompt,
+      skills: Object.entries(this.config.skillPrompts ?? {}).map(([name, prompt]) => ({ name, prompt })),
+      tools: [],
+      builtinTools: [],
+      mcpServers: [],
+      promptGuidelines: [],
+      limits: null,
+      capabilities: await this.getCapabilities(),
+    };
   }
 
   async start(input: StartRuntimeRunInput): Promise<RuntimeRun> {
@@ -100,7 +127,7 @@ export class OpenAiCompletionAgentRuntime implements AgentRuntime {
       // length 防护：推理型模型的思考段会先消耗 max_tokens，烧尽时以
       // finish_reason=length 且无正文返回。一次 4 倍加预算重试（封顶
       // LENGTH_RETRY_MAX_TOKENS，配置本身更大时保持原值不缩水）再判失败
-      // ——与 MemoryCore runner 同款策略。
+      // ——固定倍率重试策略。
       let content: string | null = null;
       const retryBudget = this.config.maxTokens === undefined
         ? undefined

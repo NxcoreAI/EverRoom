@@ -63,6 +63,42 @@ describe("unified file catalog", () => {
     expect(test.service.findBySourcePath(join(test.dataDir, "other.md"), hash)).toBeNull();
   });
 
+  it("keeps updatedAt when a local-folder rescan finds unchanged content", async () => {
+    const test = await catalogForTest();
+    const buffer = Buffer.from("# stable", "utf8");
+    const sourcePath = join(test.dataDir, "stable.md");
+    await writeFile(sourcePath, buffer);
+    const input = {
+      sourceKind: "local-folder" as const,
+      sourceKey: "local:source:stable",
+      originalName: "stable.md",
+      sourcePath,
+      contentHash: createHash("sha256").update(buffer).digest("hex"),
+      byteSize: buffer.byteLength,
+      localSourceId: "source",
+      localItemId: "stable",
+    };
+    const imported = await test.service.importLocalFileReference(input);
+    // 模拟上一次扫描留下的旧时间戳：重扫不该把它顶到现在。
+    test.sqlite.prepare("UPDATE file_entries SET updated_at = 1000 WHERE id = ?").run(imported.fileEntryId);
+    const seenBefore = test.sqlite
+      .prepare("SELECT last_seen_at FROM file_entries WHERE id = ?")
+      .get(imported.fileEntryId) as { last_seen_at: number | null };
+
+    await new Promise((resolveWait) => setTimeout(resolveWait, 5));
+    const again = await test.service.importLocalFileReference(input);
+
+    expect(again.fileEntryId).toBe(imported.fileEntryId);
+    expect(test.sqlite
+      .prepare("SELECT updated_at FROM file_entries WHERE id = ?")
+      .get(imported.fileEntryId)).toMatchObject({ updated_at: 1000 });
+    const seenAfter = test.sqlite
+      .prepare("SELECT last_seen_at FROM file_entries WHERE id = ?")
+      .get(imported.fileEntryId) as { last_seen_at: number | null };
+    expect(seenAfter.last_seen_at ?? 0).toBeGreaterThan(seenBefore.last_seen_at ?? 0);
+    test.sqlite.close();
+  });
+
   it("references local files without retaining an internal original mirror", async () => {
     const test = await catalogForTest();
     const buffer = Buffer.from("# shared", "utf8");
@@ -147,11 +183,9 @@ describe("unified file catalog", () => {
     expect(extensions).toContain(".ppt");
     expect(extensions).toContain(".pptm");
     expect(extensions).toContain(".pdf");
-    expect(extensions).not.toContain(".odt");
+    // .odt 自 958bd342 起重新入库（legacy-word-text 解析，供 Agent 读当前阅览文档），
+    // 这里只保留「真正不该进库」的 JSON 守卫。
     expect(extensions).not.toContain(".json");
-    await expect(test.service.importFile({
-      sourceKind: "manual-upload", sourceKey: "manual:odt", originalName: "unsupported.odt", buffer: Buffer.from("odt"),
-    })).rejects.toThrow("不支持的文件格式");
     await expect(test.service.importFile({
       sourceKind: "manual-upload", sourceKey: "manual:json", originalName: "ignored.json", buffer: Buffer.from("{}"),
     })).rejects.toThrow("JSON 文件不会进入文件库");
@@ -177,6 +211,84 @@ describe("unified file catalog", () => {
     test.sqlite.close();
   });
 
+  it("scopes catalog entries to their workspace and defaults missing attribution to default", async () => {
+    const test = await catalogForTest();
+    const buffer = Buffer.from("# ws", "utf8");
+    await test.service.importFile({
+      sourceKind: "manual-upload", sourceKey: "manual:ws-a", originalName: "ws-a.md",
+      buffer, workspaceId: "ws-alpha",
+    });
+    // 未显式带 workspaceId 的入库（旧客户端/旧链路）归 default。
+    await test.service.importFile({
+      sourceKind: "manual-upload", sourceKey: "manual:ws-b", originalName: "ws-b.md", buffer,
+    });
+
+    // 全库（未传 workspaceId）：两个都在，DTO 暴露归一后的归属。
+    const all = test.service.listCatalog();
+    expect(all.total).toBe(2);
+    expect(all.items.find((item) => item.originalName === "ws-a.md")).toMatchObject({ workspaceId: "ws-alpha" });
+    expect(all.items.find((item) => item.originalName === "ws-b.md")).toMatchObject({ workspaceId: "default" });
+
+    // 按空间过滤：只看到自己名下的。
+    expect(test.service.listCatalog(100, 0, { workspaceId: "ws-alpha" })).toMatchObject({ total: 1 });
+    const alpha = test.service.listCatalog(100, 0, { workspaceId: "ws-alpha" }).items;
+    expect(alpha.map((item) => item.originalName)).toEqual(["ws-a.md"]);
+    // default 过滤同时命中显式 default 与 NULL 归属（迁移前旧行兜底）。
+    const defaults = test.service.listCatalog(100, 0, { workspaceId: "default" }).items;
+    expect(defaults.map((item) => item.originalName)).toEqual(["ws-b.md"]);
+
+    // REST 查询参数同样生效。
+    const app = Fastify().withTypeProvider<TypeBoxTypeProvider>();
+    await app.register(filesRoutes(test.service));
+    const response = await app.inject({ method: "GET", url: "/v1/files/catalog?workspaceId=ws-alpha" });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ total: 1, items: [{ originalName: "ws-a.md", workspaceId: "ws-alpha" }] });
+    await app.close();
+    await test.service.dispose();
+    test.sqlite.close();
+  });
+
+  it("re-import without workspaceId keeps the entry's original workspace (edit-sync / rescan safety)", async () => {
+    const test = await catalogForTest();
+    // Agent 在 ws-alpha 会话里生成 word（office_create → file-imports 带 workspaceId）。
+    const first = await test.service.importFileStream({
+      sourceKind: "agent-generated", sourceKey: "agent:word:run-1", originalName: "报告.docx",
+      stream: Readable.from([Buffer.from("PK\u0003\u0004 v1")]),
+      mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      workspaceId: "ws-alpha",
+    });
+    expect(test.service.catalogEntry(first.fileEntryId)).toMatchObject({ workspaceId: "ws-alpha" });
+
+    // 用户打开编辑并保存：edit-sync 按 fileEntryId 重导入，不带 workspaceId。
+    // 旧逻辑会把它默默改归 default（重启后文件「跑到」默认空间）；现在必须保留 ws-alpha。
+    const edited = await test.service.importFileStream({
+      sourceKind: "agent-generated", sourceKey: "agent:word:edit:ignored-by-fileEntryId", originalName: "报告.docx",
+      stream: Readable.from([Buffer.from("PK\u0003\u0004 v2")]),
+      mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      fileEntryId: first.fileEntryId,
+    });
+    expect(edited.fileEntryId).toBe(first.fileEntryId);
+    expect(test.service.catalogEntry(first.fileEntryId)).toMatchObject({ workspaceId: "ws-alpha" });
+
+    // 同 sourceKey 重导入（本地夹重扫路径）同样保留归属。
+    await test.service.importFileStream({
+      sourceKind: "agent-generated", sourceKey: "agent:word:run-1", originalName: "报告.docx",
+      stream: Readable.from([Buffer.from("PK\u0003\u0004 v3")]),
+      mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    });
+    expect(test.service.catalogEntry(first.fileEntryId)).toMatchObject({ workspaceId: "ws-alpha" });
+
+    // 显式传 workspaceId 才允许迁移归属（重新导入覆盖语义保留给显式入口）。
+    await test.service.importFileStream({
+      sourceKind: "agent-generated", sourceKey: "agent:word:run-1", originalName: "报告.docx",
+      stream: Readable.from([Buffer.from("PK\u0003\u0004 v4")]),
+      mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      workspaceId: "ws-beta",
+    });
+    expect(test.service.catalogEntry(first.fileEntryId)).toMatchObject({ workspaceId: "ws-beta" });
+    await test.service.dispose();
+    test.sqlite.close();
+  });
 
   it("accepts artifact-imported office uploads as a first-class source kind", async () => {
     const test = await catalogForTest();
@@ -184,7 +296,7 @@ describe("unified file catalog", () => {
       sourceKind: "artifact-imported", sourceKey: "artifact:path:case1", originalName: "方案.docx",
       stream: Readable.from([Buffer.from("PK\u0003\u0004 stub")]),
       mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-      roomId: "room-1", pipelines: { room: true, wiki: false, memory: true },
+      roomId: "room-1", pipelines: { room: true, wiki: false },
     });
     expect(imported.fileEntryId).toBeTruthy();
     // 目录回读带出来源与标签（产物导入），渲染端产物库按该 kind 分流。
@@ -198,7 +310,7 @@ describe("unified file catalog", () => {
       sourceKind: "artifact-imported", sourceKey: "artifact:path:case1", originalName: "方案.docx",
       stream: Readable.from([Buffer.from("PK\u0003\u0004 v2")]),
       mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-      roomId: "room-1", pipelines: { room: true, wiki: false, memory: true },
+      roomId: "room-1", pipelines: { room: true, wiki: false },
     });
     expect(again.fileEntryId).toBe(imported.fileEntryId);
     expect(again.versionDeduped).toBe(false);

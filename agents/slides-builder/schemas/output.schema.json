@@ -19,12 +19,12 @@
     "pages": {
       "type": "integer",
       "minimum": 1,
-      "maximum": 24,
+      "maximum": 32,
       "description": "Total page count of the deck."
     },
     "outline": {
       "type": "array",
-      "maxItems": 24,
+      "maxItems": 32,
       "items": { "type": "string", "maxLength": 80 },
       "description": "Final per-page titles of the deck."
     },

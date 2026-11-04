@@ -1,16 +1,15 @@
 /**
  * Seam 4 · 授权流（oo 版）：取代 NangoAuthorizationService。
  *
- * 流程（契约 ConnectorAuthorizationAttempt 不变，renderer 轮询零改动）：
- *   start:  POST {base}/api/oauth/authorizations {service, connectionName?}
- *           （Bearer adminToken）→ {authorizationUrl, state}
- *   桌面:   console 窗口打开 authorizationUrl 完成 provider OAuth，
- *           token 落 oo 密文存储（gateway 不接触 token）
- *   status: 轮询 GET {base}/v1/apps/services/{service}（runtime token）
- *           → 发现新 connectionName → manager.register（service/connectionName 标识）
+ * 流程：
+ *   start:  POST {base}/api/oauth/authorizations {service, connectionName}（admin token）
+ *           → {authorizationUrl}
+ *   桌面:   系统浏览器完成 provider OAuth，token 落 oo 密文存储
+ *   status: 轮询 oo /v1/apps/services/{service}（runtime token）
+ *           → 出现同名 connection → 返回连接（不再写本地连接表/scope）
  *
- * 连接名规范（P0 §5）：`{provider}:{attemptId 前 8 位}`——避免多授权互相覆盖，
- * 同账号重授权由 oo 侧同名覆盖语义收敛（UI 层默认仍用 default）。
+ * 本地模式由 Gateway 代发起（需要 admin token）；SaaS 模式由桌面经 SaaS 代发起，
+ * 不经过这里。
  */
 import { randomUUID } from "node:crypto";
 import type {
@@ -19,7 +18,7 @@ import type {
   ConnectorProvider,
 } from "@nxcore/connector-contract";
 import type { OpenConnectorCliConfig } from "./host-types.js";
-import type { ConnectorManager } from "./manager.js";
+import type { ConnectorConnectionCatalog } from "./connection-runtime.js";
 
 export interface ConnectorAuthorizationStart extends ConnectorAuthorizationAttempt {
   authorizationUrl: string;
@@ -37,16 +36,6 @@ interface StoredAttempt {
   connectionName: string;
 }
 
-interface OoAppSummary {
-  service?: unknown;
-  connectionName?: unknown;
-  status?: unknown;
-}
-
-function text(value: unknown): string | null {
-  return typeof value === "string" && value.trim() ? value.trim() : null;
-}
-
 /** provider（EverRoom 侧）→ oo service。 */
 const SERVICE_OF_PROVIDER: Partial<Record<ConnectorProvider, string>> = {
   gmail: "gmail",
@@ -54,7 +43,12 @@ const SERVICE_OF_PROVIDER: Partial<Record<ConnectorProvider, string>> = {
   notion: "notion",
   "google-calendar": "googlecalendar",
   "google-docs": "googledrive",
+  feishu: "feishu",
 };
+
+function text(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
 
 export function ooServiceOfProvider(provider: ConnectorProvider): string | null {
   return SERVICE_OF_PROVIDER[provider] ?? null;
@@ -65,32 +59,11 @@ export class OpenConnectorAuthorizationService {
 
   constructor(
     private readonly config: OpenConnectorCliConfig,
-    private readonly manager: ConnectorManager,
+    private readonly catalog: ConnectorConnectionCatalog,
   ) {}
 
   private baseUrl(): string {
     return this.config.baseUrl.replace(/\/+$/, "");
-  }
-
-  private async listServiceConnections(service: string): Promise<OoAppSummary[]> {
-    const response = await fetch(
-      new URL(`/v1/apps/services/${encodeURIComponent(service)}`, this.baseUrl()),
-      {
-        headers: this.config.runtimeToken
-          ? { authorization: `Bearer ${this.config.runtimeToken}` }
-          : {},
-        signal: AbortSignal.timeout(15_000),
-      },
-    );
-    if (!response.ok) return [];
-    const payload = (await response.json().catch(() => null)) as
-      | { data?: unknown }
-      | unknown[]
-      | null;
-    const items = Array.isArray(payload) ? payload : Array.isArray((payload as { data?: unknown })?.data)
-      ? ((payload as { data: unknown[] }).data)
-      : [];
-    return items as OoAppSummary[];
   }
 
   async start(provider: ConnectorProvider): Promise<ConnectorAuthorizationStart> {
@@ -101,24 +74,15 @@ export class OpenConnectorAuthorizationService {
 
     const id = randomUUID();
     const connectionName = `${provider}:${id.slice(0, 8)}`;
-    const known = new Set<string>();
-    for (const app of await this.listServiceConnections(service)) {
-      const name = text(app.connectionName);
-      if (name) known.add(name);
-    }
-
-    const response = await fetch(
-      new URL("/api/oauth/authorizations", this.baseUrl()),
-      {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          authorization: `Bearer ${this.config.adminToken}`,
-        },
-        body: JSON.stringify({ service, connectionName }),
-        signal: AbortSignal.timeout(30_000),
+    const response = await fetch(new URL("/api/oauth/authorizations", this.baseUrl()), {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${this.config.adminToken}`,
       },
-    );
+      body: JSON.stringify({ service, connectionName }),
+      signal: AbortSignal.timeout(30_000),
+    });
     const payload = (await response.json().catch(() => null)) as {
       authorizationUrl?: unknown;
       message?: unknown;
@@ -130,7 +94,6 @@ export class OpenConnectorAuthorizationService {
       );
     }
 
-    void known;
     const now = new Date();
     const attempt: StoredAttempt = {
       id,
@@ -152,14 +115,14 @@ export class OpenConnectorAuthorizationService {
     if (!attempt) throw new Error("authorization_attempt_not_found");
     if (attempt.status === "pending") {
       try {
-        const apps = await this.listServiceConnections(attempt.service);
-        const active = apps.filter((app) => {
-          const status = text(app.status)?.toLowerCase();
-          return !status || ["active", "connected", "ready"].includes(status);
-        });
-        const fresh = active.find((app) => text(app.connectionName) === attempt.connectionName);
+        const connections = await this.catalog.list();
+        const fresh = connections.find(
+          (connection) =>
+            connection.service === attempt.service &&
+            connection.connectionName === attempt.connectionName,
+        );
         if (fresh) {
-          attempt.connection = await this.register(attempt, text(fresh.connectionName)!);
+          attempt.connection = fresh;
           attempt.status = "connected";
         } else if (Date.now() > Date.parse(attempt.expiresAt)) {
           attempt.status = "expired";
@@ -171,14 +134,6 @@ export class OpenConnectorAuthorizationService {
       }
     }
     return this.toAttempt(attempt);
-  }
-
-  private async register(attempt: StoredAttempt, connectionName: string): Promise<ConnectorConnection> {
-    return this.manager.register({
-      provider: attempt.provider,
-      service: attempt.service,
-      connectionName,
-    });
   }
 
   private toAttempt(attempt: StoredAttempt): ConnectorAuthorizationAttempt {

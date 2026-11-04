@@ -85,7 +85,7 @@ export class SlidesProgressTracker {
       snapshot: {
         title: state.plan.title,
         totalPages: state.plan.pages.length,
-        pages: state.plan.pages.slice(0, 24),
+        pages: state.plan.pages.slice(0, 32),
         doneCount: state.appliedCount,
         ...(applied ? { appliedPages: applied } : {}),
         ...(state.plan.narrative ? { narrative: state.plan.narrative } : {}),

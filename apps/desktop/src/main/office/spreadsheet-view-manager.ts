@@ -9,7 +9,29 @@ import { ensureWorkingCopyWritable } from './working-copy'
 import { OFFICE_WORKSPACE_BOUNDS_CHANNEL } from './office-view-manager'
 import { OfficeViewFirstFrameGate } from './office-view-first-frame'
 
-async function prepareSpreadsheet(fileId: string, hash: string, name: string, storagePath: string): Promise<string> {
+/**
+ * 后台 Agent 会话的工作副本变体：文件名加 `agent-` 前缀，与用户可见视图的
+ * 工作副本分开。
+ *
+ * 为什么不能共用：GenOffice Sheets 的崩溃恢复副本按「工作副本路径」哈希存放。
+ * 用户在可见视图里改完未保存就退出，下一次后台会话如果用同一条路径打开，就会
+ * 命中那份恢复副本并弹出「是否恢复」对话框——隐藏视图没有人能点它，工作簿
+ * 永远打不开。独立路径也让后台编辑的静默保存不会清掉用户待恢复的副本。
+ */
+const AGENT_WORK_COPY_PREFIX = 'agent-'
+
+/**
+ * 把 catalog 里的表格准备成可编辑工作副本（按 fileId+contentHash 缓存，边界校验
+ * 与 prepareOfficeDocument 对齐）。可见视图与后台隐藏 Agent 会话共用这一份逻辑，
+ * 但用不同文件名（见 AGENT_WORK_COPY_PREFIX）。
+ */
+export async function prepareSpreadsheet(
+  fileId: string,
+  hash: string,
+  name: string,
+  storagePath: string,
+  options: { agent?: boolean } = {},
+): Promise<string> {
   if (!/^file-[a-z0-9-]+$/i.test(fileId) || !/^[a-f0-9]{64}$/i.test(hash)) throw new Error('Spreadsheet identity is invalid.')
   if (!/\.(xlsx|xlsm|xls)$/i.test(name)) throw new Error(`Unsupported internal spreadsheet: ${name}`)
   const source = resolve(storagePath)
@@ -17,7 +39,8 @@ async function prepareSpreadsheet(fileId: string, hash: string, name: string, st
   const dir = join(app.getPath('userData'), 'office-spreadsheets', fileId, hash)
   // 旧版 .xls 先经 LibreOffice 转成 .xlsx，与 OOXML 一样按 (fileId, hash) 缓存工作副本。
   const legacyTarget = extname(name).toLowerCase() === '.xls' ? 'xlsx' as const : null
-  const target = join(dir, legacyTarget ? `${basename(name, extname(name))}.${legacyTarget}` : basename(name))
+  const baseName = legacyTarget ? `${basename(name, extname(name))}.${legacyTarget}` : basename(name)
+  const target = join(dir, options.agent === true ? `${AGENT_WORK_COPY_PREFIX}${baseName}` : baseName)
   mkdirSync(dir, { recursive: true })
   if (!existsSync(target)) {
     if (legacyTarget) await convertLegacyOfficeFile(source, name, dir, legacyTarget)
@@ -57,7 +80,10 @@ export class SpreadsheetViewManager {
     const path = await prepareSpreadsheet(file.id, file.contentHash, file.originalName, file.storagePath)
     const editable = options?.editable === true
     sheets.setSheetsShellWindow(window)
-    const view = sheets.createSheetsView({ includeAiHandlers: false, readonly: !editable })
+    const view = sheets.createSheetsView({
+      includeAiHandlers: false,
+      readonly: !editable,
+    })
     sheets.queueWorkbookForView(view.webContents, path)
     sheets.setActiveSheetsWebContents(view.webContents)
     view.setVisible(false)

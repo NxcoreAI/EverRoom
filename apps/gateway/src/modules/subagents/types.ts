@@ -19,7 +19,12 @@ export interface SubagentPolicy {
   allowedCallers: Array<"primary-agent" | "scheduler" | "internal-workflow">;
   maxConcurrency: number;
   timeoutMs: number;
-  maxToolCalls: number;
+  /**
+   * 单次 run 的工具调用上限；缺省＝不设上限（run 仍受 timeoutMs 与输出预算约束）。
+   * 布局这类「读资料 → 校验 → 修复」多轮任务，硬预算耗尽会把已收敛的树一起丢掉，
+   * 因此允许 agent 不声明。
+   */
+  maxToolCalls?: number;
   /** 模型档位覆盖；缺省沿用 background/主模型档（见 runtime-manager.buildPiConfig）。 */
   model?: SubagentModelPolicy;
 }

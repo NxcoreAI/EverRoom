@@ -121,6 +121,29 @@ describe('飞书 lark-cli 注入隔离', () => {
       statusCode: 503,
     })
   })
+
+  it('连接器页「关闭飞书」（墓碑）后：lark-cli 导入被拦截，凭据仍在', async () => {
+    const documents = new DocumentService(db, new DocumentEventBroker())
+    const actionRunner = fakeRunner({
+      'feishu.list_drive_files': { items: [], hasMore: false },
+      'feishu.list_wiki_spaces': { items: [], hasMore: false },
+    })
+    let disabled = true
+    const imports = new DocumentImportService(db, documents, null, dataDirectory, {
+      larkActionFn: (call) => actionRunner(connectorConfig, call),
+      isFeishuDisabled: () => disabled,
+    })
+    await expect(imports.listAllDocuments('feishu')).rejects.toMatchObject({
+      code: 'IMPORT_CONNECTION_REQUIRED',
+      statusCode: 422,
+      message: expect.stringContaining('连接已在连接器页关闭'),
+    })
+
+    // 重新开启（移除墓碑）后恢复，lark-cli 凭据不受影响。
+    disabled = false
+    const response = await imports.listAllDocuments('feishu')
+    expect(response.items).toEqual([])
+  })
 })
 
 describe('document-import list', () => {

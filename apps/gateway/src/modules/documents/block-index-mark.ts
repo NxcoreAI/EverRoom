@@ -8,7 +8,7 @@ import {
 export const BLOCK_INDEX_MARK_NODE = "blockIndexMark";
 
 interface BlockIndexMarkNodeAttrs {
-  kind: "document" | "memory";
+  kind: "document";
   targetRoomId: string;
   targetDocumentId: string;
   targetBlockId: string;
@@ -18,16 +18,6 @@ interface BlockIndexMarkNodeAttrs {
 }
 
 function attrsToTarget(attrs: Partial<BlockIndexMarkNodeAttrs>): EverroomBlockIndexTarget | null {
-  if (attrs.kind === "memory") {
-    if (!attrs.targetRoomId || !attrs.targetMemoryId) return null;
-    return {
-      kind: "memory",
-      roomId: attrs.targetRoomId,
-      memoryId: attrs.targetMemoryId,
-      fallbackTitle: attrs.fallbackTitle ?? null,
-      fallbackPreview: attrs.fallbackPreview ?? null,
-    };
-  }
   if (!attrs.targetRoomId || !attrs.targetDocumentId || !attrs.targetBlockId) return null;
   return {
     kind: "document",
@@ -43,9 +33,9 @@ function targetToAttrs(target: EverroomBlockIndexTarget): BlockIndexMarkNodeAttr
   return {
     kind: target.kind,
     targetRoomId: target.roomId,
-    targetDocumentId: target.kind === "document" ? target.documentId : "",
-    targetBlockId: target.kind === "document" ? target.blockId : "",
-    targetMemoryId: target.kind === "memory" ? target.memoryId : "",
+    targetDocumentId: target.documentId,
+    targetBlockId: target.blockId,
+    targetMemoryId: "",
     fallbackTitle: target.fallbackTitle ?? null,
     fallbackPreview: target.fallbackPreview ?? null,
   };

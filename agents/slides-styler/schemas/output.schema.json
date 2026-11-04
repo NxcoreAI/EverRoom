@@ -20,7 +20,7 @@
             "type": "string",
             "minLength": 2,
             "maxLength": 12,
-            "description": "User-facing short name of this style direction (e.g. 深空科技); the three labels must differ."
+            "description": "User-facing short name of this suitable design direction (e.g. 清晰数据); the three labels must differ."
           },
           "imagePrompt": {
             "type": "string",
@@ -36,7 +36,7 @@
               "poster",
               "immersive"
             ],
-            "description": "Layout composition family this candidate commits to: swiss = strict grid alignment; editorial = asymmetric magazine columns with generous whitespace; poster = oversized type / big-number dominance; immersive = large imagery or dark immersive fields. The three candidates must use three pairwise distinct families, and the prompt's layout paragraph must visibly express the family."
+            "description": "Layout family suited to the content: swiss = aligned grid; editorial = asymmetric columns; poster = a dominant conclusion or metric; immersive = relevant large imagery, including bright imagery. Families may repeat across candidates. The prompt must express its declared family."
           }
         },
         "required": [
@@ -46,7 +46,7 @@
         ],
         "additionalProperties": false
       },
-      "description": "direction: exactly 3 mutually distinct style directions; any two must differ in at least two of color mood / light-dark base / layout temperament, and the three composition families must be pairwise distinct."
+      "description": "direction: exactly 3 suitable, meaningfully different directions using shared content and comparable information density. Preserve locked preferences; distinguish through unlocked palette use, whitespace, columns or visual emphasis. Light-dark base and composition may repeat."
     },
     "styleParams": {
       "type": "object",
@@ -68,7 +68,8 @@
             },
             "accent": {
               "type": "string",
-              "pattern": "^#[0-9a-fA-F]{6}$"
+              "pattern": "^#[0-9a-fA-F]{6}$",
+              "description": "Highlight color from the observed palette. May reuse primary or its hue; a contrasting hue is not required."
             },
             "text": {
               "type": "string",
@@ -167,14 +168,15 @@
                 "kpi",
                 "table"
               ],
-              "additionalProperties": false
+              "additionalProperties": false,
+              "description": "【已弃用】字号不再由风格卡决定：由场景（距离 × 密度）在代码里算，风格卡只提供字体与色相。保留字段仅为兼容历史数据，运行时忽略。"
             },
             "headingBold": {
               "type": "boolean"
             },
             "typeScale": {
               "type": "object",
-              "description": "Optional v2 type token sizes (pt); omitted tokens derive from sizes.",
+              "description": "【已弃用】同上，v2 字阶由场景派生，运行时忽略。",
               "properties": {
                 "display": {
                   "type": "number",
@@ -233,7 +235,6 @@
           "required": [
             "fontHeading",
             "fontBody",
-            "sizes",
             "headingBold"
           ],
           "additionalProperties": false
@@ -348,7 +349,8 @@
           "additionalProperties": false
         },
         "darkCover": {
-          "type": "boolean"
+          "type": "boolean",
+          "description": "Separate cover/section treatment. Follow explicit requirements or reference; otherwise match the content-page light-dark base."
         },
         "composition": {
           "type": "string",

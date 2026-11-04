@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: slides-styler
 name: Slides Styler
-description: 无模版风格管线的文本判断环节——direction 阶段把用户指令与累积反馈凝成纵览图生图提示词，settle 阶段把聚类色板与视觉属性复核成完整风格参数（字号阶梯、字体映射、母题、效果文案），全程不做检索不落页
+description: 无模板幻灯片的视觉设计判断：direction 提供 3 个可比较的纵览图生图方向；settle 复核色板与视觉属性，提交完整风格参数及效果说明。字号由下游负责。
 mode: dispatch_only
 enabled: true
 
@@ -19,4 +19,8 @@ policy:
   maxConcurrency: 2
   # 纯文本判断，无工具调用预算需求；给少量余量容纳重试。
   maxToolCalls: 8
-  timeoutSeconds: 240
+  timeoutSeconds: 600
+  model:
+    # styler 同样走 background 档：风格卡 + 效果说明的 JSON 显式给足输出上限，
+    # 避免 8192 打满后被判 length 失败。
+    maxTokens: 32768

@@ -31,7 +31,6 @@ function runInput(sessionId: string, roomId: string | null): StartRuntimeRunInpu
     runtimeSessionRef: null,
     prompt: "hi",
     pageLabel: "Agent",
-    roomId,
   };
 }
 
@@ -64,7 +63,7 @@ describe("ChannelMcpHost", () => {
     expect(issuedUrl(host, runInput("s1", null))).toMatch(/^http:\/\/127\.0\.0\.1:53399\/v1\/mcp\/everroom\//);
   });
 
-  it("reuses the token for the same session and room, rotates on room change", () => {
+  it("reuses the token for the same session (Phase 2i 后无 Room 维度，不再按 Room 轮换)", () => {
     const host = new ChannelMcpHost(fakeRegistry(), "http://127.0.0.1:7654");
 
     const first = issuedUrl(host, runInput("s1", "room-a"));
@@ -72,11 +71,12 @@ describe("ChannelMcpHost", () => {
     expect(again).toBe(first);
     expect(first).toBe(`http://127.0.0.1:7654/v1/mcp/everroom/${tokenFrom(first)}`);
 
-    const rotated = issuedUrl(host, runInput("s1", "room-b"));
-    expect(rotated).not.toBe(first);
-    expect(tokenFrom(rotated)).toMatch(/^[0-9a-f]{32}$/);
+    // 同 session 恒复用同一 token：Room 维度已删除，不存在按 Room 轮换。
+    const onceMore = issuedUrl(host, runInput("s1", "room-b"));
+    expect(onceMore).toBe(first);
+    expect(tokenFrom(onceMore)).toMatch(/^[0-9a-f]{32}$/);
 
-    // 旧 token 在 TTL 内仍可解析（claude 适配器 loadSession 不更新 mcpServers）。
+    // token 在 TTL 内可解析（claude 适配器 loadSession 不更新 mcpServers）。
     expect(() => host.exchangeTrusted(tokenFrom(first), { jsonrpc: "2.0", method: "initialize", params: {} }))
       .not.toThrow();
   });

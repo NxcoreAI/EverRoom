@@ -143,7 +143,7 @@ jobs:
           fi
           printf '%s' "$MACOS_PROVISIONING_PROFILE_BASE64" | base64 --decode > apps/desktop/build/embedded.provisionprofile
           security cms -D -i apps/desktop/build/embedded.provisionprofile > "$RUNNER_TEMP/everroom-profile.plist"
-          /usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.application-identifier' "$RUNNER_TEMP/everroom-profile.plist" | grep -E '^.+\.ai\.nxcore\.everroom$'
+          /usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.application-identifier' "$RUNNER_TEMP/everroom-profile.plist" | grep -E '^.+\.ai\.nxcore\.everoffice$'
           /usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.developer.aps-environment' "$RUNNER_TEMP/everroom-profile.plist" | grep -Fx production
 
       - name: Build app and bundled runtimes

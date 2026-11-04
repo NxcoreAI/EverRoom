@@ -204,6 +204,9 @@ export class AgentDocumentExportService {
   private readonly assetBridgeUrl: string | null;
   private readonly notionCli: NtnCliConfig | null;
 
+  /** 飞书连接器开关（连接器页「关闭」）：node 侧墓碑判定，缺省视为开启。 */
+  private readonly isFeishuDisabled: (() => boolean) | null;
+
   constructor(
     private readonly db: GatewayDatabase,
     private readonly documents: DocumentService,
@@ -213,11 +216,14 @@ export class AgentDocumentExportService {
       logger?: { info: (obj: object, msg: string) => void; warn: (obj: object, msg: string) => void };
       assetBridgeUrl?: string | null;
       notionCli?: NtnCliConfig | null;
+      /** 飞书连接器开关（连接器页「关闭」）：关闭后 lark-cli 导出被拦截。 */
+      isFeishuDisabled?: () => boolean;
     },
   ) {
     this.logger = options?.logger ?? null;
     this.assetBridgeUrl = options?.assetBridgeUrl ?? null;
     this.notionCli = options?.notionCli ?? null;
+    this.isFeishuDisabled = options?.isFeishuDisabled ?? null;
   }
 
   /** 创建导出任务并执行前置检查；create 模式在授权就绪时直接完成写入。 */
@@ -397,6 +403,12 @@ export class AgentDocumentExportService {
     const run = this.loadRun(runId);
     const target = run.targetJson ?? {};
     if (run.provider === "feishu") {
+      if (this.isFeishuDisabled?.()) {
+        return this.transition(runId, "failed", {
+          errorCode: "FEISHU_CONNECTOR_DISABLED",
+          errorMessage: "飞书连接已在连接器页关闭，请先开启后再导出",
+        });
+      }
       if (!this.lark) {
         return this.transition(runId, "environment_not_ready", {
           errorCode: "ENVIRONMENT_NOT_READY",

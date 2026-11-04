@@ -2,7 +2,7 @@ import type { AgentActiveDocumentContext, RoomDocument } from '@nxcore/agent-con
 
 export interface AgentDocumentSelectionItem {
   documentId: string
-  /** null = 工作区级文稿（无 Room 归属）。 */
+  /** EverRoomMac 工作区级文稿可无 Room（roomId: null）；选择项里归到工作区频道。 */
   roomId: string | null
   title: string
   version?: number
@@ -124,7 +124,7 @@ export function findPendingAgentDocumentSelection(
   dismissedToolIds: ReadonlySet<string>,
 ): PendingAgentDocumentSelection | null {
   const candidates = tools
-    .filter((tool) => tool.name === 'document_list' && tool.status === 'completed')
+    .filter((tool) => tool.name === 'context_room_document_list' && tool.status === 'completed')
     .flatMap((tool) => {
       if (!selectionParseCache.has(tool)) {
         selectionParseCache.set(tool, parseAgentDocumentSelectionResult(tool.result))
@@ -167,9 +167,8 @@ export function buildAgentDocumentSelectionRunRequest(
 ): AgentDocumentSelectionRunRequest {
   return {
     prompt: originalPrompt.trim(),
+    // Phase 2i 后无 Room 维度：activeDocument 只按 documentId 定位工作区文稿。
     activeDocument: {
-      // 工作区级文稿的 activeDocument.roomId 为 null。
-      roomId: document.roomId,
       documentId: document.id,
       title: document.title,
       version: document.version,

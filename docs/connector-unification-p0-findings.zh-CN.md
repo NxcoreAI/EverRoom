@@ -1,5 +1,7 @@
 # P0 覆盖验证结论（连接器统一整改）
 
+> **历史文档（2026-10-28 起）**：连接器已从同步管道改为 Agent 即席检索，不再做定时同步/本地存储。现行方案与实施记录见 [connector-agent-query-refactor-plan.zh-CN.md](./connector-agent-query-refactor-plan.zh-CN.md)。
+
 > 状态：已完成（2026-09-03）
 > 依据：《连接器统一整改执行方向 v1》§3 Phase 0
 > 上游版本：`@oomol-lab/open-connector@1.3.5`（tarball 钉 commit `5719a69`）

@@ -4,6 +4,7 @@ import {
   FileText,
   LoaderCircle,
   Presentation,
+  Square,
   TriangleAlert,
   X,
 } from 'lucide-react'
@@ -142,7 +143,6 @@ export function SlidesProgressCard({
   const { t } = useLocale()
   const [dismissed, setDismissed] = useState(false)
   const [pendingAction, setPendingAction] = useState<string | null>(null)
-  const [note, setNote] = useState<string | null>(null)
   const [openError, setOpenError] = useState<string | null>(null)
   const [stylePickerOpen, setStylePickerOpen] = useState(
     state.stage === 'style_images_ready' && (state.styleCandidates?.length ?? 0) > 0,
@@ -163,13 +163,12 @@ export function SlidesProgressCard({
   const failedPages = state.failedPages ?? []
   const warnings = state.warnings ?? []
   const elapsed = useElapsedLabel(startedAt, completedAt, running)
-  // 阶段翻转/新一批图到来：清掉「已提交」局部状态、重新展开、按新阶段决定是否弹大图。
+  // 阶段翻转/新一批图到来：清掉局部状态、重新展开、按新阶段决定是否弹大图。
   const stageKey = `${state.stage}:${state.generation ?? ''}:${state.documentId ?? state.styleSessionId ?? ''}`
   const [prevStageKey, setPrevStageKey] = useState(stageKey)
   if (prevStageKey !== stageKey) {
     setPrevStageKey(stageKey)
     setPendingAction(null)
-    setNote(null)
     setOpenError(null)
     // 新阶段需要用户做决定时重新出现（关掉的卡不该错过下一个决策点）。
     if (SLIDES_WAITING_STAGES.has(state.stage)) setDismissed(false)
@@ -182,8 +181,9 @@ export function SlidesProgressCard({
     const spec = build()
     setPendingAction(actionId)
     setOpenError(null)
-    setNote(t('surface:agentChat.SLIDES_ACTION_SUBMITTED'))
     onAction?.(spec.prompt, spec.display)
+    // 用户已经做出明确选择：这张卡立刻收起，不在对话区里常驻。
+    setDismissed(true)
   }
   const openDeck = useDeckOpener(state, title, setOpenError)
   const openDraft = () => {
@@ -218,10 +218,36 @@ export function SlidesProgressCard({
   })()
 
   if (compact) {
+    const compactFailed = state.stage === 'failed'
+    const compactStopped = !compactFailed && (stopped || interrupted)
+    const failedText = compactFailed
+      ? (state.errorCode && ERROR_MESSAGE_KEYS[state.errorCode]
+        ? t(ERROR_MESSAGE_KEYS[state.errorCode]!)
+        : (state.errorMessage || t('surface:agentChat.SLIDES_ERROR_UNKNOWN')))
+      : ''
+    const tone = compactFailed ? 'failed' : compactStopped ? 'stopped' : 'done'
     return (
-      <div className="agent-slides-receipt" role="status">
-        <Check aria-hidden="true" />
-        <span>{t('surface:agentChat.SLIDES_RECEIPT_DONE', { title })}</span>
+      <div className="agent-slides-receipt" role="status" data-tone={tone}>
+        {compactFailed ? <TriangleAlert aria-hidden="true" /> : compactStopped ? <Square aria-hidden="true" /> : <Check aria-hidden="true" />}
+        <span title={compactFailed ? failedText : undefined}>
+          {compactFailed
+            ? `${title} · ${failedText}`
+            : compactStopped
+              ? `${title} · ${interrupted ? t('surface:agentChat.SLIDES_INTERRUPTED') : t('surface:agentChat.SLIDES_STOPPED')}`
+              : t('surface:agentChat.SLIDES_RECEIPT_DONE', { title })}
+        </span>
+        {compactFailed && state.retryable ? (
+          <button
+            type="button"
+            className="agent-slides-receipt-open"
+            onClick={() => runAction('retry', () => ({
+              prompt: t('surface:agentChat.SLIDES_RETRY_PROMPT', { reason: failedText }),
+              display: t('surface:agentChat.SLIDES_RETRY_DISPLAY'),
+            }))}
+          >
+            {t('surface:agentChat.SLIDES_RETRY')}
+          </button>
+        ) : null}
         {state.fileEntryId ? (
           <button
             type="button"
@@ -769,10 +795,7 @@ export function SlidesProgressCard({
       ) : null}
       {errorsBanner}
       {state.narrative ? <p className="agent-slides-narrative">{state.narrative}</p> : null}
-      <div className="agent-slides-card-body">
-        {body}
-        {note ? <p className="agent-slides-action-note" role="status">{note}</p> : null}
-      </div>
+      <div className="agent-slides-card-body">{body}</div>
       {stylePickerOpen && state.styleCandidates?.length ? (
         <SlidesStylePicker
           candidates={state.styleCandidates as StyleCandidate[]}

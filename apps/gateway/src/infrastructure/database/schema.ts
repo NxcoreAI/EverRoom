@@ -164,265 +164,60 @@ export const externalCallAudits = sqliteTable(
   ],
 );
 
-export const connectorAccounts = sqliteTable(
-  "connector_accounts",
+export const connectorTombstones = sqliteTable(
+  "connector_tombstones",
   {
     id: text("id").primaryKey(),
     ownerId: text("owner_id").notNull(),
     service: text("service").notNull(),
     connectionName: text("connection_name").notNull(),
-    displayName: text("display_name"),
-    accountLabel: text("account_label"),
-    credentialRef: text("credential_ref"),
-    status: text("status", {
-      enum: ["active", "needs_connection", "disabled"],
-    }).notNull().default("active"),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .notNull()
       .$defaultFn(() => new Date()),
-    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
-      .notNull()
-      .$defaultFn(() => new Date()),
   },
   (table) => [
-    uniqueIndex("connector_accounts_owner_service_connection_idx")
-      .on(table.ownerId, table.service, table.connectionName),
-    index("connector_accounts_owner_idx").on(table.ownerId),
-  ],
-);
-
-export const connectorRecords = sqliteTable(
-  "connector_records",
-  {
-    id: text("id").primaryKey(),
-    ownerId: text("owner_id").notNull(),
-    service: text("service").notNull(),
-    dataset: text("dataset").notNull(),
-    sourceRecordId: text("source_record_id").notNull(),
-    payload: text("payload", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
-    sourceUpdatedAt: integer("source_updated_at", { mode: "timestamp_ms" }),
-    contentHash: text("content_hash").notNull(),
-    syncedAt: integer("synced_at", { mode: "timestamp_ms" })
-      .notNull()
-      .$defaultFn(() => new Date()),
-    expiresAt: integer("expires_at", { mode: "timestamp_ms" }),
-    deletedAt: integer("deleted_at", { mode: "timestamp_ms" }),
-  },
-  (table) => [
-    uniqueIndex("connector_records_owner_source_idx")
-      .on(table.ownerId, table.service, table.dataset, table.sourceRecordId),
-    index("connector_records_owner_dataset_idx").on(table.ownerId, table.dataset),
-    index("connector_records_synced_idx").on(table.syncedAt),
-  ],
-);
-
-const connectorDomainColumns = {
-  id: text("id").primaryKey(),
-  ownerId: text("owner_id").notNull(),
-  service: text("service").notNull(),
-  connectionName: text("connection_name"),
-  sourceRecordId: text("source_record_id").notNull(),
-  sourceUpdatedAt: integer("source_updated_at", { mode: "timestamp_ms" }),
-  syncedAt: integer("synced_at", { mode: "timestamp_ms" }).notNull(),
-  schemaVersion: integer("schema_version").notNull(),
-  promptVersion: integer("prompt_version").notNull(),
-  contentHash: text("content_hash").notNull(),
-  extensionPayload: text("extension_payload", { mode: "json" }).$type<Record<string, unknown>>(),
-  deletedAt: integer("deleted_at", { mode: "timestamp_ms" }),
-};
-
-export const connectorEmails = sqliteTable(
-  "connector_emails",
-  {
-    ...connectorDomainColumns,
-    messageId: text("message_id").notNull(),
-    threadId: text("thread_id"),
-    senderName: text("sender_name"),
-    senderAddress: text("sender_address"),
-    recipients: text("recipients", { mode: "json" }).$type<Array<{ name?: string; address: string }>>().notNull(),
-    subject: text("subject").notNull(),
-    sentAt: integer("sent_at", { mode: "timestamp_ms" }),
-    bodyText: text("body_text").notNull(),
-    labels: text("labels", { mode: "json" }).$type<string[]>().notNull(),
-    hasAttachments: integer("has_attachments", { mode: "boolean" }).notNull().default(false),
-  },
-  (table) => [
-    uniqueIndex("connector_emails_owner_source_idx")
-      .on(table.ownerId, table.service, table.connectionName, table.sourceRecordId),
-    index("connector_emails_owner_sent_idx").on(table.ownerId, table.sentAt),
-    index("connector_emails_owner_sender_idx").on(table.ownerId, table.senderAddress),
-    index("connector_emails_owner_message_idx").on(table.ownerId, table.messageId),
-  ],
-);
-
-export const connectorDocuments = sqliteTable(
-  "connector_documents",
-  {
-    ...connectorDomainColumns,
-    documentId: text("document_id").notNull(),
-    title: text("title").notNull(),
-    ownerName: text("owner_name"),
-    documentType: text("document_type"),
-    bodyText: text("body_text").notNull(),
-    sourceUrl: text("source_url"),
-  },
-  (table) => [
-    uniqueIndex("connector_documents_owner_source_idx")
-      .on(table.ownerId, table.service, table.connectionName, table.sourceRecordId),
-    index("connector_documents_owner_updated_idx").on(table.ownerId, table.sourceUpdatedAt),
-    index("connector_documents_owner_document_idx").on(table.ownerId, table.documentId),
-  ],
-);
-
-export const connectorCalendarEvents = sqliteTable(
-  "connector_calendar_events",
-  {
-    ...connectorDomainColumns,
-    eventId: text("event_id").notNull(),
-    title: text("title").notNull(),
-    description: text("description").notNull(),
-    organizer: text("organizer", { mode: "json" }).$type<{ name?: string; address?: string }>(),
-    attendees: text("attendees", { mode: "json" }).$type<Array<{ name?: string; address?: string; status?: string }>>().notNull(),
-    startAt: integer("start_at", { mode: "timestamp_ms" }),
-    endAt: integer("end_at", { mode: "timestamp_ms" }),
-    allDay: integer("all_day", { mode: "boolean" }).notNull().default(false),
-    status: text("status"),
-    location: text("location"),
-  },
-  (table) => [
-    uniqueIndex("connector_calendar_events_owner_source_idx")
-      .on(table.ownerId, table.service, table.connectionName, table.sourceRecordId),
-    index("connector_calendar_events_owner_start_idx").on(table.ownerId, table.startAt),
-    index("connector_calendar_events_owner_event_idx").on(table.ownerId, table.eventId),
-  ],
-);
-
-export const connectorTodos = sqliteTable(
-  "connector_todos",
-  {
-    ...connectorDomainColumns,
-    todoId: text("todo_id").notNull(),
-    title: text("title").notNull(),
-    notes: text("notes").notNull(),
-    /** null = 来源未提供（needsAction/completed 等语义由连接器 Skill 归一）。 */
-    status: text("status"),
-    dueAt: integer("due_at", { mode: "timestamp_ms" }),
-    completedAt: integer("completed_at", { mode: "timestamp_ms" }),
-    priority: text("priority"),
-    listId: text("list_id"),
-    listName: text("list_name"),
-  },
-  (table) => [
-    uniqueIndex("connector_todos_owner_source_idx")
-      .on(table.ownerId, table.service, table.connectionName, table.sourceRecordId),
-    index("connector_todos_owner_due_idx").on(table.ownerId, table.dueAt),
-    index("connector_todos_owner_todo_idx").on(table.ownerId, table.todoId),
-  ],
-);
-
-/**
- * 格式映射体系：provider 原始格式 → canonical schema 的 JSONata 映射（缓存复用）。
- * 每 (service, record_kind) 一行；agent 首次见到该格式时后台生成，之后同步直通。
- */
-export const connectorFormatMappings = sqliteTable(
-  "connector_format_mappings",
-  {
-    id: text("id").primaryKey(),
-    service: text("service").notNull(),
-    recordKind: text("record_kind").notNull(),
-    version: integer("version").notNull().default(0),
-    status: text("status").notNull().$type<"generating" | "active" | "failed">(),
-    mappingJson: text("mapping_json", { mode: "json" }).$type<Record<string, unknown>>(),
-    samplesJson: text("samples_json", { mode: "json" }).$type<unknown[]>().notNull().default([]),
-    error: text("error"),
-    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
-    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
-    activatedAt: integer("activated_at", { mode: "timestamp_ms" }),
-  },
-  (table) => [
-    uniqueIndex("connector_format_mappings_service_kind_idx").on(table.service, table.recordKind),
-  ],
-);
-
-export const connectorMarkdownArtifacts = sqliteTable(
-  "connector_markdown_artifacts",
-  {
-    id: text("id").primaryKey(),
-    ownerId: text("owner_id").notNull(),
-    service: text("service").notNull(),
-    connectionName: text("connection_name").notNull(),
-    resourceType: text("resource_type", { enum: ["email", "document", "calendar", "todo", "generic"] }).notNull(),
-    sourceRecordId: text("source_record_id").notNull(),
-    ingestSourceId: text("ingest_source_id").notNull(),
-    activePath: text("active_path").notNull(),
-    sourceContentHash: text("source_content_hash").notNull(),
-    markdownContentHash: text("markdown_content_hash"),
-    rendererVersion: text("renderer_version").notNull(),
-    version: integer("version").notNull().default(1),
-    status: text("status", { enum: ["pending", "ready", "failed", "deleted"] }).notNull().default("pending"),
-    ingestStatus: text("ingest_status", { enum: ["pending", "succeeded", "failed", "skipped"] }).notNull().default("pending"),
-    lastError: text("last_error"),
-    parsedId: text("parsed_id"),
-    ingestEventId: text("ingest_event_id"),
-    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
-    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
-    deletedAt: integer("deleted_at", { mode: "timestamp_ms" }),
-  },
-  (table) => [
-    uniqueIndex("connector_markdown_artifacts_source_idx").on(
-      table.ownerId, table.service, table.connectionName, table.resourceType, table.sourceRecordId,
+    uniqueIndex("connector_tombstones_owner_service_connection_idx").on(
+      table.ownerId,
+      table.service,
+      table.connectionName,
     ),
-    uniqueIndex("connector_markdown_artifacts_ingest_source_idx").on(table.resourceType, table.ingestSourceId),
-    index("connector_markdown_artifacts_status_idx").on(table.status, table.ingestStatus, table.updatedAt),
+    index("connector_tombstones_owner_idx").on(table.ownerId),
   ],
 );
 
-export const connectorMarkdownOutbox = sqliteTable(
-  "connector_markdown_outbox",
-  {
-    id: text("id").primaryKey(),
-    ownerId: text("owner_id").notNull(),
-    resourceType: text("resource_type", { enum: ["email", "document", "calendar", "todo", "generic"] }).notNull(),
-    ingestSourceId: text("ingest_source_id").notNull(),
-    operation: text("operation", { enum: ["upsert", "delete"] }).notNull(),
-    sourceContentHash: text("source_content_hash").notNull(),
-    status: text("status", { enum: ["pending", "processing", "done", "dead"] }).notNull().default("pending"),
-    attempts: integer("attempts").notNull().default(0),
-    availableAt: integer("available_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
-    leaseOwner: text("lease_owner"),
-    leaseUntil: integer("lease_until", { mode: "timestamp_ms" }),
-    lastError: text("last_error"),
-    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
-    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
-  },
-  (table) => [
-    index("connector_markdown_outbox_due_idx").on(table.status, table.availableAt, table.leaseUntil),
-    index("connector_markdown_outbox_source_idx").on(table.resourceType, table.ingestSourceId, table.createdAt),
-  ],
-);
-
-export const connectorAuditEvents = sqliteTable(
-  "connector_audit_events",
-  {
-    id: text("id").primaryKey(),
-    ownerId: text("owner_id").notNull(),
-    requestId: text("request_id").notNull(),
-    actor: text("actor").notNull(),
-    operation: text("operation").notNull(),
-    effect: text("effect").notNull(),
-    result: text("result", { mode: "json" }).$type<Record<string, unknown>>(),
-    createdAt: integer("created_at", { mode: "timestamp_ms" })
-      .notNull()
-      .$defaultFn(() => new Date()),
-  },
-  (table) => [
-    index("connector_audit_events_owner_created_idx").on(table.ownerId, table.createdAt),
-    index("connector_audit_events_request_idx").on(table.requestId),
-  ],
-);
+/** 工作区：会话的组织容器；id='default' 的默认工作区由迁移与懒初始化保证存在。 */
+export const agentWorkspaces = sqliteTable("agent_workspaces", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  /** 空间描述（概览页展示）；未填写为 NULL。 */
+  description: text("description"),
+  /** 目标列表，以 JSON 文本存放；NULL/空数组都按 [] 暴露。 */
+  goals: text("goals", { mode: "json" }).$type<string[]>(),
+  path: text("path"),
+  /** 空间目录名（ASCII slug）；老数据/未初始化为 NULL。 */
+  slug: text("slug"),
+  /** 目录归属模式：managed（应用托管根 `dataDir/Workspace`）/ external（用户自选目录）。 */
+  rootMode: text("root_mode", { enum: ["managed", "external"] }).notNull().default("managed"),
+  /** 目录布局版本：0 = 未初始化（首次 ensureLayout 时 provision），1 = 当前布局。 */
+  layoutVersion: integer("layout_version").notNull().default(0),
+  /** 目录被外部删除/移动的发现时间；正常为 NULL。 */
+  rootMissingAt: integer("root_missing_at", { mode: "timestamp_ms" }),
+  kind: text("kind", { enum: ["default", "custom"] }).notNull().default("custom"),
+  createdAt: integer("created_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+  lastOpenedAt: integer("last_opened_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
 
 export const agentSessions = sqliteTable("agent_sessions", {
   id: text("id").primaryKey(),
+  /** 会话所属工作区；旧会话迁移后回填为 'default'。 */
+  workspaceId: text("workspace_id"),
   roomId: text("room_id"),
   pageLabel: text("page_label").notNull(),
   runtimeId: text("runtime_id").notNull(),
@@ -433,6 +228,10 @@ export const agentSessions = sqliteTable("agent_sessions", {
   permissionMode: text("permission_mode", {
     enum: ["ask_before_write", "accept_edits", "auto", "full_access"],
   }),
+  /** 会话级思考档位覆盖；null = 跟随 runtime config 的 reasoning（现有行为）。 */
+  thinkingLevel: text("thinking_level", {
+    enum: ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
+  }),
   status: text("status", {
     enum: ["idle", "running", "interrupted", "closed"],
   })
@@ -441,6 +240,20 @@ export const agentSessions = sqliteTable("agent_sessions", {
   createdAt: integer("created_at", { mode: "timestamp_ms" })
     .notNull()
     .$defaultFn(() => new Date()),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
+/**
+ * Agent 技能的启停状态（「技能」页）。
+ *
+ * 技能本体是随应用发布的只读资源（内置 bundle 的 SKILL.md / 子 Agent 清单），
+ * 这里只存被改过的那些：没有行＝启用。id 形如 `builtin:main:document-export`。
+ */
+export const agentSkillStates = sqliteTable("agent_skill_states", {
+  id: text("id").primaryKey(),
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
   updatedAt: integer("updated_at", { mode: "timestamp_ms" })
     .notNull()
     .$defaultFn(() => new Date()),
@@ -516,6 +329,10 @@ export const agentMessages = sqliteTable("agent_messages", {
   role: text("role", { enum: ["user", "assistant", "system"] }).notNull(),
   authorAgentId: text("author_agent_id"),
   content: text("content").notNull(),
+  /** 文档批注卡片（JSON 序列化的 AgentNoteCard[]；普通消息为 null）。 */
+  noteCards: text("note_cards"),
+  /** 批注消息的气泡正文（空＝只有卡片没有气泡）；null 回退 content。 */
+  displayContent: text("display_content"),
   createdAt: integer("created_at", { mode: "timestamp_ms" })
     .notNull()
     .$defaultFn(() => new Date()),
@@ -1419,6 +1236,8 @@ export const fileEntries = sqliteTable(
     localItemId: text("local_item_id"),
     /** 本地文件只引用用户磁盘上的原路径，不在 EverRoom 对象库保留原始字节镜像。 */
     sourcePath: text("source_path"),
+    /** 归属工作区（资料库/产物库按空间隔离）；NULL 按服务层归一为 default。 */
+    workspaceId: text("workspace_id"),
     relativePath: text("relative_path"),
     sourceUri: text("source_uri"),
     currentVersionId: text("current_version_id"),
@@ -1434,6 +1253,7 @@ export const fileEntries = sqliteTable(
     uniqueIndex("file_entries_source_key_idx").on(table.sourceKind, table.sourceKey),
     index("file_entries_state_updated_idx").on(table.state, table.updatedAt),
     index("file_entries_local_item_idx").on(table.localSourceId, table.localItemId),
+    index("file_entries_workspace_idx").on(table.workspaceId),
     // 文件页目录分页（WHERE deleted_at IS NULL ORDER BY updated_at DESC）的覆盖索引：
     // 缺它时每页都要全表 SCAN + 临时 B-Tree 排序，桌面端一次全量刷新（17k 条目 ≈ 87 页
     // 并发）会把网关主线程占满数十秒，健康检查随之超时。见 0087 迁移。
@@ -1576,18 +1396,10 @@ export interface DiaryPayload {
 
 // ═══════════════════ 统一理解引擎（docs/unified-ingest-plan.md）═══════════════════
 
-/** 三链路开关（Room / wiki / 记忆）。wiki 依赖 Room（U2：无 Room 不设全局 wiki）。 */
+/** 双链路开关（Room / wiki）。wiki 依赖 Room（U2：无 Room 不设全局 wiki）。 */
 export interface IngestPipelines {
   room: boolean;
   wiki: boolean;
-  memory: boolean;
-}
-
-/** 记忆链路扇出结果：成功摘要或错误（失败不阻塞 Room 链路）。 */
-export interface IngestMemoryOk {
-  documentId: string;
-  chunkCount: number;
-  deduplicated: boolean;
 }
 
 /** agent 过滤器判定（ingest 第一级闸门）：无价值资料不进下游链路。 */
@@ -1600,8 +1412,7 @@ export interface IngestFilterVerdict {
   /** 置信 0~1，低于阈值放行（宁漏勿错杀）。 */
   confidence: number;
   /** 状态/参考分流（2026-09-24 定案）：这条数据会被更新/覆盖、需要唯一
-   * 权威版本吗。true 时即便类型默认 memory:false（参考型兜底）也单独打开
-   * 记忆链路；缺省 = 未判定，不触发恢复（fail-closed，保 token）。 */
+   * 权威版本吗。缺省 = 未判定，不触发恢复（fail-closed，保 token）。 */
   stateLike?: boolean;
 }
 
@@ -1739,6 +1550,14 @@ export const slidesPageImageSessions = sqliteTable(
   ],
 );
 
+/** Durable generation progress; identity includes content, agent revisions and model configuration. */
+export const slidesGenerationCheckpoints = sqliteTable("slides_generation_checkpoints", {
+  key: text("key").primaryKey(),
+  state: text("state", { mode: "json" })
+    .$type<import("../../modules/subagents/slides-generation-checkpoints.js").SlidesGenerationCheckpoint>().notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+});
+
 /** slides 编辑层 storyboard（M1 影子模式）：按草稿 + 内容 hash 存最近一次的压缩结果与验收报告。 */
 export const slidesStoryboards = sqliteTable(
   "slides_storyboards",
@@ -1760,12 +1579,12 @@ export const slidesStoryboards = sqliteTable(
   ],
 );
 
-/** 论文格式卡（thesis-format 管线）：一 Room 多卡，同 Room 内 (room_id, source_name) 唯一，重传同名模版即覆盖。 */
+/** 论文格式卡（thesis-format 管线）：一工作区多卡，同工作区内 (workspace_id, source_name) 唯一，重传同名模版即覆盖。 */
 export const thesisFormatCards = sqliteTable(
   "thesis_format_cards",
   {
     id: text("id").primaryKey(),
-    roomId: text("room_id").notNull(),
+    workspaceId: text("workspace_id").notNull(),
     /** validate 后的 ThesisFormatCard 全量 JSON。 */
     formatCard: text("format_card", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
     /** 设为模版的库内文件（parseFromDisk 直传时为空）。 */
@@ -1775,7 +1594,7 @@ export const thesisFormatCards = sqliteTable(
     updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
   },
   (table) => [
-    uniqueIndex("thesis_format_cards_room_source_idx").on(table.roomId, table.sourceName),
+    uniqueIndex("thesis_format_cards_workspace_source_idx").on(table.workspaceId, table.sourceName),
   ],
 );
 
@@ -1955,4 +1774,156 @@ export const agentAccessEvents = sqliteTable(
       .$defaultFn(() => new Date()),
   },
   (table) => [index("agent_access_events_recent_idx").on(table.connectionId, table.createdAt)],
+);
+
+/**
+ * 每日洞察（主页「今日洞察」）的日状态：一天一行，指向当前可用版本。
+ *
+ * 与已删除的旧 `diary_*`（见 drizzle/0084）只继承两个概念：**版本化**与**证据留痕**。
+ * 供料端不同——现在是当天新写入的长期记忆条目（`modules/journal/collector.ts`），
+ * 不是已下线的屏幕记忆采集链路。设计见 docs/daily-journal-plan.zh-CN.md。
+ */
+export const journalDays = sqliteTable(
+  "journal_days",
+  {
+    /** 本地时区日期（YYYY-MM-DD）；日界不做 UTC 截断。 */
+    date: text("date").primaryKey(),
+    /** 预留：`global` = 全工作区一份；将来可落 `workspace:<id>`。 */
+    scope: text("scope").notNull().default("global"),
+    status: text("status", {
+      enum: ["pending", "generating", "ready", "failed"],
+    }).notNull().default("pending"),
+    currentEntryId: text("current_entry_id"),
+    /** 参与汇总的证据指纹；相同即跳过重写（0 次模型调用）。 */
+    sourceFingerprint: text("source_fingerprint"),
+    /** 当天证据条数（卡片副标题「基于 N 条记忆」）。 */
+    signalCount: integer("signal_count").notNull().default(0),
+    lastError: text("last_error"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [index("journal_days_status_date_idx").on(table.status, table.date)],
+);
+
+/** 每日洞察的版本快照：同一天可多次重写，每次 +1 版（保留最近 30 版）。 */
+export const journalEntries = sqliteTable(
+  "journal_entries",
+  {
+    id: text("id").primaryKey(),
+    date: text("date").notNull(),
+    version: integer("version").notNull(),
+    /** 触发来源：boot|memory|tick|manual（排查"为什么又重写了一版"用）。 */
+    trigger: text("trigger").notNull(),
+    headline: text("headline").notNull(),
+    summary: text("summary").notNull(),
+    bullets: text("bullets", { mode: "json" }).$type<Array<{ text: string; sourceIds: string[] }>>().notNull(),
+    actions: text("actions", { mode: "json" }).$type<Array<{ label: string; kind: string; targetId: string }>>().notNull(),
+    /** 给用户的下一步建议（0–2 条，每条 ≤48 字）；旧条目为 null。 */
+    advice: text("advice", { mode: "json" }).$type<string[] | null>(),
+    /** 进 prompt 的证据快照：可追溯来源，也便于排查"卡片为什么这么说"。 */
+    evidence: text("evidence", { mode: "json" }).$type<unknown[]>().notNull(),
+    /** 产出该版本的模型名；null = 模板兜底（模型档位未就绪/调用失败）。 */
+    model: text("model"),
+    sourceFingerprint: text("source_fingerprint").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("journal_entries_date_version_idx").on(table.date, table.version),
+    index("journal_entries_date_idx").on(table.date, table.createdAt),
+  ],
+);
+
+/**
+ * 工作空间「计划」里的任务（todo）。
+ *
+ * 与 `agent_sessions` 的关系：任务可以有 0..n 个会话（`assignee_session_id` 指最新那个），
+ * 会话也可以不属于任何任务。设计见 docs/workspace-plan-task-design.zh-CN.md。
+ */
+export const workspacePlanItems = sqliteTable(
+  "workspace_plan_items",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id").notNull(),
+    title: text("title").notNull(),
+    /** 背景与要求（markdown）；认领包原样给模型，不做概括。 */
+    detail: text("detail"),
+    /** 验收标准（Agent 的完成判据）。 */
+    acceptance: text("acceptance"),
+    /** 硬约束（口径/格式/禁止项）；NULL 按 [] 暴露。 */
+    constraints: text("constraints", { mode: "json" }).$type<string[]>(),
+    status: text("status", { enum: ["todo", "doing", "done", "dropped"] }).notNull().default("todo"),
+    priority: text("priority", { enum: ["low", "normal", "high", "urgent"] }).notNull().default("normal"),
+    ownerKind: text("owner_kind", { enum: ["unassigned", "user", "agent"] }).notNull().default("unassigned"),
+    ownerAgentId: text("owner_agent_id"),
+    /** 执行载体会话（认领 / 指派产生）；用户自己做时不绑会话。 */
+    assigneeSessionId: text("assignee_session_id"),
+    lastRunId: text("last_run_id"),
+    createdBy: text("created_by", { enum: ["user", "agent"] }).notNull().default("user"),
+    createdByAgentId: text("created_by_agent_id"),
+    dueAt: integer("due_at", { mode: "timestamp_ms" }),
+    /** 列内排序键：分数序字符串，字串比较即顺序。 */
+    rank: text("rank").notNull(),
+    tags: text("tags", { mode: "json" }).$type<string[]>(),
+    checklist: text("checklist", { mode: "json" }).$type<Array<{ id: string; text: string; done: boolean }>>(),
+    /** 材料引用（只存引用不存正文）。 */
+    refs: text("refs", { mode: "json" }).$type<Array<{ kind: string; id: string; title: string }>>(),
+    blockedBy: text("blocked_by", { mode: "json" }).$type<string[]>(),
+    resultSummary: text("result_summary"),
+    closeReason: text("close_reason"),
+    /** 认领租约：持有者（会话 id）+ 到期时间；无租约为 NULL。 */
+    leaseOwner: text("lease_owner"),
+    leaseExpiresAt: integer("lease_expires_at", { mode: "timestamp_ms" }),
+    leaseHeartbeatAt: integer("lease_heartbeat_at", { mode: "timestamp_ms" }),
+    /** 乐观锁：每次写入 +1，写操作必须带旧值。 */
+    version: integer("version").notNull().default(1),
+    completedAt: integer("completed_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("plan_items_ws_status_rank_idx").on(table.workspaceId, table.status, table.rank),
+    index("plan_items_ws_updated_idx").on(table.workspaceId, table.updatedAt),
+    index("plan_items_assignee_idx").on(table.assigneeSessionId),
+    index("plan_items_lease_idx").on(table.status, table.leaseExpiresAt),
+  ],
+);
+
+/**
+ * 计划项事件流：卡片时间线、审计、认领包 history 的共同来源。
+ *
+ * 为什么不只存"最后状态"：用户误拖拽后的理解成本、Agent"上次为什么没做完"
+ * 的线索、看板实时推送的 payload，三件事都要因果，不能只有结果。
+ */
+export const workspacePlanItemEvents = sqliteTable(
+  "workspace_plan_item_events",
+  {
+    id: text("id").primaryKey(),
+    itemId: text("item_id")
+      .notNull()
+      .references(() => workspacePlanItems.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(),
+    actorKind: text("actor_kind", { enum: ["user", "agent", "system"] }).notNull(),
+    actorId: text("actor_id"),
+    fromStatus: text("from_status"),
+    toStatus: text("to_status"),
+    /** 一句话摘要（时间线直接显示）。 */
+    summary: text("summary").notNull(),
+    /** JSON 细节（旧值/新值/释放原因），排查用。 */
+    payload: text("payload", { mode: "json" }).$type<Record<string, unknown>>(),
+    sessionId: text("session_id"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [index("plan_events_item_idx").on(table.itemId, table.createdAt)],
 );

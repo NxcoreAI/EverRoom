@@ -3,6 +3,7 @@ import { Fragment, memo, useEffect, useLayoutEffect, useMemo, useRef, useState, 
 
 import { AgentExecutionTimeline } from './AgentExecutionTimeline'
 import { AgentShellApproval } from './AgentShellApproval'
+import { ReasoningBlock } from './ReasoningBlock'
 import {
   SlidesProgressCard,
   selectSlidesTasks,
@@ -23,19 +24,21 @@ import { parseAgentNavigationTarget } from './agentNavigation'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { AgentDocumentPicker } from './AgentDocumentPicker'
+import { uiText } from '../context-room/ported/adapters'
 import {
   findPendingAgentDocumentSelection,
+  type AgentDocumentSelectionItem,
   type AgentDocumentSelectionSubmission,
 } from './agentDocumentSelection'
 import { useLinkedAgentRun, type LinkedAgentRunState } from './useLinkedAgentRun'
 import type { DisplayAgentMessage, DisplayAgentToolCall } from './useAgentSession'
 import type { MentionedItem } from './agentMentions'
-import { modelPreferenceFromAgentId, type AgentNavigationTarget, type AgentSessionLink } from '@nxcore/agent-contract'
+import { modelPreferenceFromAgentId, type AgentNavigationTarget, type AgentNoteCard, type AgentRoomReference, type AgentSessionLink, type PendingAgentIntent, type RoomDocument } from '@nxcore/agent-contract'
 import type { ActiveDocumentDescriptor } from './activeDocumentContext'
-import type { AgentApprovalDecision } from '../../../../shared/sources'
-import { writeTextToClipboard } from '../../lib/systemClipboard'
-import { useLocale, type Translate } from '../../i18n/LocaleContext'
-import { pageLabelKey } from '../../data/navigation'
+import type { AgentApprovalDecision } from '@/shared/sources'
+import { writeTextToClipboard } from '@/lib/systemClipboard'
+import { useLocale, type Translate } from '@/i18n/LocaleContext'
+import { pageLabelKey } from '@/data/navigation'
 
 const quickPrompts = [
   ['surface:agentChat.quickPromptSummarizeLabel', 'surface:agentChat.quickPromptSummarize'],
@@ -183,10 +186,10 @@ function AgentResponseByline({ agentId, names }: { agentId?: string | null; name
 const navigationPageLabels: Record<string, string> = {
   home: 'surface:navigation.home',
   office: 'surface:navigation.office',
+  rooms: 'surface:navigation.contextRoom',
   docs: 'surface:navigation.documents',
   sources: 'surface:navigation.sources',
-  files: 'surface:navigation.files',
-  schedules: 'surface:navigation.schedules',
+  diary: 'surface:navigation.diary',
 }
 
 function SessionReference({ link, onOpen }: { link: AgentSessionLink; onOpen: () => void }) {
@@ -241,8 +244,35 @@ function RunNavigation({
   )
 }
 
-function LinkedRunProgress({ agentNamesById, state }: { agentNamesById: Record<string, string>; state: LinkedAgentRunState }) {
-  const { t } = useLocale()
+/**
+ * 文档批注卡片（用户气泡内，只读）：每条 = 原文摘录 + 我的注释。
+ * 长文本行内截断，hover 卡片完整展示（title 原生 tooltip 即可，只读无操作）。
+ */
+function UserNoteCards({ cards }: { cards: AgentNoteCard[] }) {
+  const noteText = (note: string) => note.length > 120 ? `${note.slice(0, 120)}…` : note
+  const excerptText = (excerpt: string) => {
+    const flat = excerpt.replace(/\s+/g, ' ').trim()
+    return flat.length > 80 ? `${flat.slice(0, 80)}…` : flat
+  }
+  return (
+    <div className="agent-note-cards" role="list">
+      {cards.map((card, index) => (
+        <div
+          key={`${index}:${card.note.slice(0, 24)}`}
+          className="agent-note-card"
+          role="listitem"
+          title={`${card.excerpt}\n——\n${card.note}`}
+        >
+          {card.title ? <div className="agent-note-card-source">{card.title}</div> : null}
+          {card.excerpt ? <div className="agent-note-card-excerpt">{excerptText(card.excerpt)}</div> : null}
+          <div className="agent-note-card-note">{noteText(card.note)}</div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function LinkedRunProgress({ agentNamesById, state }: { agentNamesById: Record<string, string>; state: LinkedAgentRunState }) {  const { t } = useLocale()
   const active = state.status === 'accepted' || state.status === 'running'
   const assistantMessage = [...state.messages].reverse().find((message) => message.role === 'assistant')
   const rawFinalContent = state.documentPending
@@ -260,6 +290,10 @@ function LinkedRunProgress({ agentNamesById, state }: { agentNamesById: Record<s
         {state.loading ? <ThinkingStatus label={t('surface:agentChat.syncingProgress')} /> : null}
         {active ? (
           <ThinkingStatus label={state.documentPending ? t('surface:agentChat.editingDocument') : getThinkingLabel(assistantMessage, state.tools, t)} />
+        ) : null}
+        {/* 思考已按工具分段进时间线：有工具活动时不再重复顶部总块；无工具时整段展示。 */}
+        {!state.activity.hasTools ? (
+          <ReasoningBlock active={active} content={state.reasoning} />
         ) : null}
         {state.activity.hasTools ? (
           <AgentExecutionTimeline
@@ -539,7 +573,6 @@ export function AgentChatView({
   const userRunIds = useMemo(() => new Set(
     messages.filter((message) => message.role === 'user').map((message) => message.runId),
   ), [messages])
-  const activeRunPending = Boolean(activeRunId && !runCompletedAtByRun[activeRunId])
   const activeRunHasUserMessage = Boolean(activeRunId && userRunIds.has(activeRunId))
   const activeNavigationLink = activeRunId
     ? outgoingLinks.find((link) => link.sourceRunId === activeRunId)
@@ -765,10 +798,18 @@ export function AgentChatView({
     return () => window.clearTimeout(timer)
   }, [highlightedNotificationTarget])
 
+  /** 「已复制」回执的自动复位：短暂展示后回到复制图标，保证再次点击仍有可见反馈。 */
+  const copiedResetTimerRef = useRef<number | null>(null)
+  useEffect(() => () => {
+    if (copiedResetTimerRef.current !== null) window.clearTimeout(copiedResetTimerRef.current)
+  }, [])
+
   const copyMessage = async (messageId: string, content: string) => {
     try {
       await writeTextToClipboard(content)
       setCopiedMessageId(messageId)
+      if (copiedResetTimerRef.current !== null) window.clearTimeout(copiedResetTimerRef.current)
+      copiedResetTimerRef.current = window.setTimeout(() => setCopiedMessageId(null), 1600)
     } catch {
       setCopiedMessageId(null)
     }
@@ -905,6 +946,11 @@ export function AgentChatView({
               const mentionItems: MentionedItem[] | null = message.mentions?.length ? message.mentions : null
               const mentionClickable = (item: MentionedItem) => item.kind === 'room' || item.kind === 'file'
                 || (item.kind === 'conversation' && (item.provider === undefined || item.provider === 'everroom'))
+              // 气泡正文：批注消息只显示输入框正文（displayContent）；空串＝纯批注
+              // 发送——无气泡，只有上方卡片。旧数据/普通消息回退 content。
+              const bubbleText = message.noteCards?.length
+                ? (message.displayContent ?? message.content)
+                : message.content
               return (
                 <Fragment key={message.id}>
                   {index === authCardInsertIndex ? <AgentAuthChallengeCard /> : null}
@@ -928,24 +974,41 @@ export function AgentChatView({
                     : message.referencedAgentNames?.map((name) => (
                       <span key={name} className="agent-user-mention">@{name}</span>
                     ))}
-                  <article
-                    className="agent-message"
-                    data-agent-message-id={message.id}
-                    data-notification-target={String(highlightedNotificationTarget?.messageId === message.id)}
-                    data-role="user"
-                  >
-                    <p>{message.content}</p>
-                    <button
-                      type="button"
-                      className="agent-user-copy"
-                      data-copied={String(copiedMessageId === message.id)}
-                      aria-label={t('surface:agentChat.copyPrompt')}
-                      title={t('surface:agentChat.copyPrompt')}
-                      onClick={() => void copyMessage(message.id, message.content)}
-                    >
-                      {copiedMessageId === message.id ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
-                    </button>
-                  </article>
+                  {/* 用户气泡 + 操作行（复制 / 重新发送）包成一个右对齐整体：
+                      按钮与 agent 消息下方按钮同规格，默认隐藏、hover 整块才浮现。
+                      纯批注消息（无气泡）不显示操作行——content 是展示文案，
+                      重发会以新 run 重跑技术指令，语义不对。 */}
+                  <div className="agent-user-turn" data-agent-message-id={message.id} data-notification-target={String(highlightedNotificationTarget?.messageId === message.id)}>
+                    {message.noteCards?.length ? (
+                      <UserNoteCards cards={message.noteCards} />
+                    ) : null}
+                    {bubbleText ? (
+                      <>
+                        <article className="agent-message" data-role="user">
+                          <p>{bubbleText}</p>
+                        </article>
+                        <div className="agent-message-actions agent-user-actions">
+                          <button
+                            type="button"
+                            aria-label={t('surface:agentChat.copyPrompt')}
+                            title={t('surface:agentChat.copyPrompt')}
+                            onClick={() => void copyMessage(message.id, message.content)}
+                          >
+                            <Copy aria-hidden="true" />
+                          </button>
+                          <button
+                            type="button"
+                            aria-label={t('surface:agentChat.resend')}
+                            title={t('surface:agentChat.resend')}
+                            disabled={!message.content.trim() || message.content.includes('[附件：')}
+                            onClick={() => onRetryPrompt(message.content, message.runId)}
+                          >
+                            <RotateCcw aria-hidden="true" />
+                          </button>
+                        </div>
+                      </>
+                    ) : null}
+                  </div>
                   <RunNavigation link={link} pending={link ? undefined : pending} onOpen={onOpenSessionLink} />
                 </Fragment>
               )
@@ -966,12 +1029,21 @@ export function AgentChatView({
                   ? (
                     <ThinkingStatus
                       label={getThinkingLabel(message, tools, t)}
-                      tail={!hasLiveTool(tools) && !rawFinalContent.trim()
+                      // 时间线已带流动思考行（live）时，状态行不再重复 tail 预览。
+                      tail={!hasToolActivity && !hasLiveTool(tools) && !rawFinalContent.trim()
                         ? reasoningTail(reasoningByRun[message.runId])
                         : undefined}
                     />
                   )
                   : null}
+                {/* 思考已按工具分段进时间线（segment + live 行）：有工具活动时
+                    不再在顶部渲染总块，避免同一段思考两处重复。 */}
+                {!hasToolActivity ? (
+                  <ReasoningBlock
+                    active={message.runId === activeRunId}
+                    content={reasoningByRun[message.runId] ?? ''}
+                  />
+                ) : null}
                 {hasToolActivity && activity ? (
                   <AgentExecutionTimeline
                     activity={activity}
@@ -1022,8 +1094,13 @@ export function AgentChatView({
               <AgentResponseByline agentId={agentIdByRun[activeRunId]} names={agentNamesById} />
               <ThinkingStatus
                 label={getThinkingLabel(undefined, latestTools, t)}
-                tail={reasoningTail(reasoningByRun[activeRunId])}
+                // 时间线已带流动思考行（live）时，状态行不再重复 tail 预览。
+                tail={latestActivity?.hasTools ? undefined : reasoningTail(reasoningByRun[activeRunId])}
               />
+              {/* 思考已按工具分段进时间线：有工具活动时不再重复顶部总块。 */}
+              {!latestActivity?.hasTools ? (
+                <ReasoningBlock active content={reasoningByRun[activeRunId] ?? ''} />
+              ) : null}
               {latestActivity?.hasTools ? (
                 <AgentExecutionTimeline
                   activity={latestActivity}
@@ -1036,13 +1113,14 @@ export function AgentChatView({
           ) : null}
           {activeRunId && activeHasAssistant && !latestStreamingMessage && !latestActivity?.hasTools
             ? (
+              // 该分支下消息循环里最后一条 assistant 消息已带 active 的
+              // ReasoningBlock（active=true），这里只补状态行，不再重复折叠块。
               <ThinkingStatus
                 label={getThinkingLabel(undefined, latestTools, t)}
                 tail={reasoningTail(reasoningByRun[activeRunId])}
               />
             )
-            : null}
-          {composerNotice}
+            : null}          {composerNotice}
           {slidesTaskCards.length > 0 ? (
             <div className="agent-slides-task-stack">
               {slidesTaskCards.map(({ entry, compact }) => (
@@ -1078,9 +1156,13 @@ export function AgentChatView({
             resolvingApprovalIds={resolvingApprovalIds}
             onResolve={onResolveApproval}
           />
+          {/* 等待用户决策 ≠ 执行中：run 挂着正是「agent 在等输入」的正常形态，
+              卡片此时必须可点；busy 只保留「提交通道被占用/会话加载中」。
+              Phase 2i 去 Room：Room 选择/文档归属确认卡已删除，仅保留文档选择卡。 */}
           {pendingDocumentSelection ? (
             <AgentDocumentPicker
-              busy={loading || submitting || activeRunPending}
+              awaitingInput
+              busy={loading || submitting}
               documents={pendingDocumentSelection.documents}
               onCancel={() => {
                 handledDocumentSelectionsRef.current.add(pendingDocumentSelection.toolId)

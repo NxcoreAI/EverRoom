@@ -230,37 +230,39 @@ const MAX_FULL_CARDS = 3
 const MAX_RECEIPTS = 3
 
 /**
- * 任务槽选择：最新一张 + 所有等待态 + 已完成回执，最多 3 张完整卡，其余折叠计数。
+ * 任务槽选择：只把「还在等用户决定 / 还在跑」的任务留成完整卡，最多 3 张，其余折叠计数。
+ * 已完成、已停止、已失败的任务一律收成一行回执——工作结束（无论成败）就不该有
+ * 常驻卡片占着对话区；失败回执自带「再试一次」。
  * 同一文档出现更新的 slides_draft 调用后，旧调用即视为被顶掉（不重复展示）。
  */
 export function selectSlidesTasks(entries: SlidesTaskEntry[], maxFullCards: number = MAX_FULL_CARDS): SlidesTaskSelection {
   if (entries.length === 0) return { primary: null, waiting: [], receipts: [], foldedCount: 0 }
-  const primary = entries[0]!
   const isSuperseded = (entry: SlidesTaskEntry): boolean => {
     const key = taskKey(entry)
     return entries.some((other) => other !== entry
       && Date.parse(other.tool.startedAt) > Date.parse(entry.tool.startedAt)
       && taskKey(other) === key)
   }
-  const seen = new Set<string>([taskKey(primary)])
-  const rest = entries.slice(1).filter((entry) => {
+  const seen = new Set<string>()
+  const kept = entries.filter((entry) => {
     if (isSuperseded(entry)) return false
     const key = taskKey(entry)
     if (seen.has(key)) return false
     seen.add(key)
     return true
   })
-  // 等待态 + 仍在跑的其他任务都保留成完整卡（并行任务不能只剩最新一张）。
-  const waiting = rest.filter((entry) => SLIDES_WAITING_STAGES.has(entry.progress.stage)
-    || SLIDES_IN_PROGRESS_STAGES.has(entry.progress.stage)
-    || entry.tool.status === 'running'
-    || entry.tool.status === 'pending')
-  const receipts = rest
-    .filter((entry) => entry.progress.stage === 'page_applied' && entry.progress.completed !== false)
-    .slice(0, MAX_RECEIPTS)
-  const fullCards = [primary, ...waiting]
-  const shownFull = fullCards.slice(0, Math.max(1, maxFullCards))
-  const foldedCount = (fullCards.length - shownFull.length)
-    + Math.max(0, rest.filter((entry) => entry.progress.stage === 'page_applied' && entry.progress.completed !== false).length - MAX_RECEIPTS)
-  return { primary: shownFull[0]!, waiting: shownFull.slice(1), receipts, foldedCount }
+  const isCompleted = (entry: SlidesTaskEntry): boolean => entry.progress.stage === 'page_applied'
+    && entry.progress.completed !== false
+    && entry.tool.status === 'completed'
+  const isStopped = (entry: SlidesTaskEntry): boolean => entry.tool.status === 'stopped'
+  const isFailed = (entry: SlidesTaskEntry): boolean => entry.progress.stage === 'failed'
+    || entry.tool.status === 'error'
+  const isReceipt = (entry: SlidesTaskEntry): boolean => isCompleted(entry) || isStopped(entry) || isFailed(entry)
+  // 等待态 + 仍在跑的任务保留成完整卡（并行任务不能只剩最新一张）。
+  const actionable = kept.filter((entry) => !isReceipt(entry))
+  const shownFull = actionable.slice(0, Math.max(1, maxFullCards))
+  const receipts = kept.filter(isReceipt).slice(0, MAX_RECEIPTS)
+  const foldedCount = (actionable.length - shownFull.length)
+    + Math.max(0, kept.filter(isReceipt).length - MAX_RECEIPTS)
+  return { primary: shownFull[0] ?? null, waiting: shownFull.slice(1), receipts, foldedCount }
 }

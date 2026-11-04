@@ -1,0 +1,862 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>EverRoom 记忆链路 · 从一次 run 到一条长期事实</title>
+<style>
+  :root {
+    --paper: #e8edf0;
+    --paper-raise: #f3f6f7;
+    --ink: #131c26;
+    --ink-2: #43525d;
+    --ink-3: #7b8892;
+    --rule: #bcc7ce;
+    --rule-soft: #d3dbe0;
+
+    --agent: #c13122;
+    --agent-wash: rgba(193, 49, 34, 0.10);
+    --llm: #0d6f68;
+    --llm-wash: rgba(13, 111, 104, 0.10);
+    --store: #2b4a9c;
+    --store-wash: rgba(43, 74, 156, 0.10);
+    --code: #6d7b87;
+    --mech: #9d6410;
+    --mech-wash: rgba(157, 100, 16, 0.12);
+    --model: #6a479c;
+
+    --font-display: "Songti SC", "Source Han Serif SC", "Noto Serif CJK SC", Georgia, "Times New Roman", serif;
+    --font-body: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
+    --font-mono: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background:
+      repeating-linear-gradient(0deg, rgba(19,28,38,0.038) 0 1px, transparent 1px 34px),
+      repeating-linear-gradient(90deg, rgba(19,28,38,0.038) 0 1px, transparent 1px 34px),
+      var(--paper);
+    color: var(--ink);
+    font-family: var(--font-body);
+    font-size: 14px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  ::selection { background: rgba(193, 49, 34, 0.18); }
+
+  .sheet {
+    max-width: 1240px;
+    margin: 0 auto;
+    padding: 34px 32px 64px;
+  }
+
+  /* ---------- header ---------- */
+  header.masthead {
+    border-top: 2px solid var(--ink);
+    padding-top: 14px;
+  }
+  .meta-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0 18px;
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--rule-soft);
+    margin-bottom: 18px;
+  }
+  .meta-row b { color: var(--ink-2); font-weight: 600; }
+  .meta-row a { color: var(--ink-2); text-decoration: none; border-bottom: 1px solid var(--rule); }
+  .meta-row a:hover { border-color: var(--ink); }
+
+  h1 {
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: clamp(28px, 3.6vw, 44px);
+    line-height: 1.08;
+    letter-spacing: -0.015em;
+    margin: 0 0 8px;
+  }
+  h1 em { font-style: normal; color: var(--store); }
+
+  .thesis {
+    max-width: 72ch;
+    color: var(--ink-2);
+    font-size: 14.5px;
+    margin: 0;
+  }
+  .thesis b { color: var(--ink); font-weight: 600; }
+
+  /* ---------- answer strip ---------- */
+  .answer {
+    margin: 24px 0 0;
+    border: 1px solid var(--rule);
+    border-left: 4px solid var(--agent);
+    background: var(--paper-raise);
+    padding: 16px 20px 18px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 300px;
+    gap: 6px 30px;
+  }
+  .answer .q {
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    grid-column: 1 / -1;
+    margin-bottom: 2px;
+  }
+  .answer .answer-main { grid-column: 1; grid-row: 2; min-width: 0; }
+  .answer p { margin: 0 0 8px; font-size: 13.5px; color: var(--ink-2); max-width: 66ch; }
+  .answer p:last-child { margin-bottom: 0; }
+  .answer p strong { color: var(--ink); }
+  .answer .side {
+    grid-column: 2;
+    grid-row: 2;
+    align-self: start;
+    border-left: 1px solid var(--rule-soft);
+    padding-left: 20px;
+    font-size: 12px;
+    color: var(--ink-2);
+  }
+  .answer .side dt {
+    font-family: var(--font-mono);
+    font-size: 9px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    margin-top: 7px;
+  }
+  .answer .side dd { margin: 0 0 2px; }
+
+  /* ---------- section ---------- */
+  section { margin-top: 42px; }
+  .sec-head {
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+    border-bottom: 2px solid var(--ink);
+    padding-bottom: 7px;
+    margin-bottom: 6px;
+  }
+  .sec-head .no {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    color: var(--ink-3);
+  }
+  .sec-head h2 {
+    font-family: var(--font-display);
+    font-size: 23px;
+    margin: 0;
+    font-weight: 700;
+  }
+  .sec-head .note {
+    margin-left: auto;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.05em;
+    color: var(--ink-3);
+    text-align: right;
+  }
+  .sec-lead {
+    font-size: 13px;
+    color: var(--ink-2);
+    max-width: 78ch;
+    margin: 10px 0 4px;
+  }
+  .sec-lead code, .mono { font-family: var(--font-mono); font-size: 11.5px; background: rgba(19,28,38,0.055); padding: 1px 4px; border-radius: 2px; }
+
+  /* ---------- sequence diagram ---------- */
+  .seq-wrap {
+    background: var(--paper-raise);
+    border: 1px solid var(--rule);
+    margin-top: 14px;
+    overflow-x: auto;
+  }
+  .seq-wrap svg { display: block; width: 100%; min-width: 880px; height: auto; }
+  .lifeline { stroke: var(--rule); stroke-width: 1; stroke-dasharray: 3 4; }
+  .actor-box { fill: #fbfcfd; stroke: var(--rule); }
+  .actor-name { font-family: var(--font-body); font-size: 11.5px; font-weight: 600; fill: var(--ink); }
+  .actor-sub { font-family: var(--font-mono); font-size: 8.5px; fill: var(--ink-3); }
+  .msg-line { stroke: var(--ink-2); stroke-width: 1.2; fill: none; }
+  .msg-line.write { stroke: var(--store); stroke-width: 1.8; }
+  .msg-line.return { stroke: var(--ink-3); stroke-dasharray: 4 3; }
+  .msg-line.read { stroke: var(--store); stroke-dasharray: 4 3; }
+  .msg-label { font-family: var(--font-mono); font-size: 9.5px; fill: var(--ink-2); }
+  .msg-label.write { fill: var(--store); font-weight: 600; }
+  .seq-note {
+    font-family: var(--font-mono);
+    font-size: 8.5px;
+    fill: var(--ink-3);
+  }
+  .gate-band { fill: var(--agent-wash); stroke: var(--agent); stroke-width: 0.8; stroke-dasharray: 3 2; }
+  .gate-band-label { font-family: var(--font-mono); font-size: 8.5px; letter-spacing: 0.08em; fill: var(--agent); }
+
+  /* ---------- timeline strip ---------- */
+  .timeline-wrap {
+    margin-top: 14px;
+    background: var(--paper-raise);
+    border: 1px solid var(--rule);
+    overflow-x: auto;
+  }
+  .timeline-wrap svg { display: block; width: 100%; min-width: 820px; height: auto; }
+  .tl-axis { stroke: var(--rule); stroke-width: 1; }
+  .tl-tick { stroke: var(--rule-soft); stroke-width: 1; }
+  .tl-label { font-family: var(--font-mono); font-size: 9px; fill: var(--ink-3); }
+  .tl-row-label { font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.06em; fill: var(--ink-2); }
+  .tl-run { fill: var(--ink-3); }
+  .tl-exec { fill: var(--mech); }
+  .tl-write { fill: var(--store); }
+  .tl-caption { font-family: var(--font-mono); font-size: 8.5px; fill: var(--ink-3); }
+  .tl-caption-html {
+    font-size: 12px;
+    color: var(--ink-2);
+    margin: 10px 0 0;
+    max-width: 82ch;
+    border-left: 2px solid var(--mech);
+    padding-left: 12px;
+  }
+
+  /* ---------- gates ---------- */
+  .gates { margin-top: 14px; border-top: 1px solid var(--rule); }
+  .gate {
+    display: grid;
+    grid-template-columns: 42px minmax(0, 1fr) 250px;
+    gap: 0 18px;
+    padding: 12px 0 13px;
+    border-bottom: 1px solid var(--rule-soft);
+    align-items: start;
+  }
+  .gate .gid {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--ink-3);
+    letter-spacing: 0.06em;
+    padding-top: 3px;
+  }
+  .gate .gid b { color: var(--agent); font-weight: 600; }
+  .gate h3 {
+    margin: 0 0 3px;
+    font-size: 14px;
+    font-weight: 600;
+    font-family: var(--font-body);
+  }
+  .gate p { margin: 0; font-size: 12.5px; color: var(--ink-2); }
+  .gate p code, .gate .skip code {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    background: rgba(19,28,38,0.055);
+    padding: 1px 4px;
+    border-radius: 2px;
+  }
+  .gate .skip {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--ink-3);
+    text-align: right;
+    padding-top: 4px;
+    line-height: 1.7;
+  }
+  .gate .skip b { color: var(--ink-2); font-weight: 500; display: block; letter-spacing: 0.06em; }
+  .gate.drop .gid b { color: var(--ink-3); }
+
+  /* ---------- spec card ---------- */
+  .spec {
+    margin-top: 16px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 340px;
+    gap: 26px;
+  }
+  .spec-row {
+    display: grid;
+    grid-template-columns: 148px minmax(0, 1fr);
+    gap: 0 16px;
+    padding: 7px 0;
+    border-bottom: 1px dashed var(--rule-soft);
+    align-items: baseline;
+  }
+  .spec-row dt {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--ink-3);
+    letter-spacing: 0.04em;
+  }
+  .spec-row dd { margin: 0; font-size: 12.5px; color: var(--ink-2); }
+  .spec-row dd code { font-family: var(--font-mono); font-size: 10.5px; background: rgba(19,28,38,0.055); padding: 1px 4px; border-radius: 2px; }
+  .spec-note {
+    border: 1px solid var(--rule);
+    border-top: 2px solid var(--store);
+    background: var(--paper-raise);
+    padding: 14px 16px 16px;
+    align-self: start;
+  }
+  .spec-note h3 {
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--store);
+    margin: 0 0 8px;
+  }
+  .spec-note p { margin: 0 0 8px; font-size: 12px; color: var(--ink-2); }
+  .spec-note p:last-child { margin-bottom: 0; }
+  .spec-note code { font-family: var(--font-mono); font-size: 10.5px; background: rgba(19,28,38,0.055); padding: 1px 4px; border-radius: 2px; }
+
+  /* ---------- degradation matrix ---------- */
+  .matrix {
+    margin-top: 16px;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 1px;
+    background: var(--rule-soft);
+    border: 1px solid var(--rule-soft);
+  }
+  .matrix > div { background: var(--paper-raise); padding: 13px 15px 15px; }
+  .matrix h3 {
+    margin: 0 0 5px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.06em;
+    color: var(--ink);
+    font-weight: 600;
+  }
+  .matrix p { margin: 0; font-size: 11.5px; color: var(--ink-2); }
+  .matrix p b { color: var(--ink); font-weight: 600; }
+  .matrix .tag {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 8.5px;
+    letter-spacing: 0.08em;
+    padding: 1px 5px;
+    border-radius: 2px;
+    margin-bottom: 6px;
+    color: #fff;
+    background: var(--ink-3);
+  }
+  .matrix .tag.silent { background: var(--mech); }
+  .matrix .tag.degrade { background: var(--store); }
+  .matrix .tag.block { background: var(--agent); }
+
+  /* ---------- footer ---------- */
+  footer.colophon {
+    margin-top: 40px;
+    padding-top: 12px;
+    border-top: 1px solid var(--ink);
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 10px 26px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.05em;
+    color: var(--ink-3);
+  }
+  footer.colophon b { color: var(--ink-2); font-weight: 500; }
+  footer.colophon a { color: var(--ink-2); text-decoration: none; border-bottom: 1px solid var(--rule); }
+
+  @media (max-width: 980px) {
+    .matrix { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+  @media (max-width: 720px) {
+    .matrix { grid-template-columns: minmax(0, 1fr); }
+  }
+  @media (max-width: 980px) {
+    .answer { grid-template-columns: minmax(0, 1fr); }
+    .answer .side { grid-column: 1; border-left: 0; padding-left: 0; border-top: 1px solid var(--rule-soft); padding-top: 10px; }
+    .spec { grid-template-columns: minmax(0, 1fr); }
+    .gate { grid-template-columns: 34px minmax(0, 1fr); }
+    .gate .skip { grid-column: 2; text-align: left; }
+  }
+  @media (max-width: 720px) {
+    .sheet { padding: 22px 18px 44px; }
+    .spec-row { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+  }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+  :focus-visible { outline: 2px solid var(--agent); outline-offset: 2px; }
+</style>
+</head>
+<body>
+<div class="sheet">
+
+  <header class="masthead">
+    <div class="meta-row">
+      <span>档案 <b>MEM-PIPE / 02</b></span>
+      <span>配套 <a href="./memory-architecture-map.html">MEM-ARCH / 01 分层关系图</a></span>
+      <span>范围 <b>modules/memory · modules/agent · create-server</b></span>
+      <span>采样 <b>2026-11-02</b></span>
+    </div>
+
+    <h1>一条记忆的<em>一生</em></h1>
+    <p class="thesis">
+      从一次 run 完成，到一条跨会话事实落库，中间隔着<b>九道闸门</b>和一次一次性模型调用。
+      这张图只讲记忆链路本身：谁触发、读到什么、写下什么、什么情况下什么都不写。
+    </p>
+  </header>
+
+  <div class="answer">
+    <div class="q">先回答：每次会话结束都会提炼吗</div>
+    <div class="answer-main">
+      <p><strong>不是等会话结束，而是每次 run 正常完成就试一次。</strong>触发点在 <code class="mono">AgentService</code> 的
+        <code class="mono">run.completed</code> 分支——消息落库完成即回调一次蒸馏，不等会话关闭。</p>
+      <p>但"试一次"不等于"写一条"：同一会话有 <strong>5 分钟冷却</strong>、并发直接丢弃，蒸馏读的是
+        <strong>至今全量转写</strong>（不是增量），所以第一次之后的每次执行大多只是在跟已有记忆做去重。</p>
+      <p>另外三个前置条件：转写 ≥ 600 字、用户发言 ≥ 2 轮、lite 档已配置。缺任何一个都不写，且全程静默。</p>
+    </div>
+
+    <dl class="side">
+      <dt>触发</dt><dd>run.completed（失败 / 取消 / 中断都不触发）</dd>
+      <dt>节流</dt><dd>同 session 5 分钟；in-flight 丢弃</dd>
+      <dt>取材</dt><dd>该会话全部 agent_messages，截前 12k 字</dd>
+      <dt>产出</dt><dd>0–3 条，单条 ≤120 字</dd>
+      <dt>执行者</dt><dd>lite 档，一次性 generate，60s 超时</dd>
+    </dl>
+  </div>
+
+  <!-- ============ 01 写入链路 ============ -->
+  <section>
+    <div class="sec-head">
+      <span class="no">01</span>
+      <h2>写入链路</h2>
+      <span class="note">run.completed → 去重 → hippo</span>
+    </div>
+    <p class="sec-lead">
+      五条泳道是这条链路上真正被调用到的五个东西。虚线是回传/只读，粗线是"世界被改变"的那一步：
+      只有 <code>remember</code> 会真的写进记忆库，其余全是判断。
+    </p>
+    <div class="seq-wrap"><svg id="seq-write" viewBox="0 0 1160 420" role="img"
+      aria-label="写入链路时序图：AgentService 通知 MemoryDistiller，取转写、查重、调用 lite 档生成事实、再写入 hippo 记忆库"></svg></div>
+  </section>
+
+  <!-- ============ 02 实际节奏 ============ -->
+  <section>
+    <div class="sec-head">
+      <span class="no">02</span>
+      <h2>实际节奏</h2>
+      <span class="note">一次 30 分钟的会话里会发生什么（示意）</span>
+    </div>
+    <p class="sec-lead">
+      因为触发点是"每次 run 完成"，一次多轮会话会产生很多次尝试；5 分钟冷却把实际执行压到稀疏几档，
+      而去重让后面几次执行基本写不进东西。这就是为什么记忆库长得像清单，而不是聊天记录备份。
+    </p>
+    <div class="timeline-wrap"><svg id="timeline" viewBox="0 0 1160 196" role="img"
+      aria-label="时间轴示意：run 完成密集发生，蒸馏执行被 5 分钟冷却稀疏化，写入集中在前一两次执行"></svg></div>
+    <p class="tl-caption-html">
+      阴影是首个 5 分钟冷却窗口：窗口内的后续 run 完成只记一次尝试，不执行。之后的每次执行读到的仍是"至今全量转写"，
+      里面的旧事实已经在库里，被包含式去重挡掉——所以写入几乎只发生在最初一两档，之后归于平静。
+    </p>
+  </section>
+
+  <!-- ============ 03 闸门 ============ -->
+  <section>
+    <div class="sec-head">
+      <span class="no">03</span>
+      <h2>九道闸门</h2>
+      <span class="note">任何一道不过，就什么都不写，而且不报错</span>
+    </div>
+    <p class="sec-lead">
+      闸门顺序即代码顺序。右列是 <code>DistillOutcome.skipped</code> 的取值——这些值只会进日志，不会回到对话里。
+    </p>
+    <div class="gates" id="gates"></div>
+  </section>
+
+  <!-- ============ 04 条目解剖 ============ -->
+  <section>
+    <div class="sec-head">
+      <span class="no">04</span>
+      <h2>落库的那条长什么样</h2>
+      <span class="note">hippo-memory 行（MEMORY_ENVELOPE）</span>
+    </div>
+    <p class="sec-lead">
+      一条记忆不是一句话，是一个带强度、半衰期、作用域和溯源的信封。注意 <code>tags</code> 里混着一半用户看不见的检索键。
+    </p>
+    <div class="spec">
+      <dl id="spec"></dl>
+      <div class="spec-note">
+        <h3>三个反直觉的点</h3>
+        <p><b>标签是双份的。</b>中文内容会追加 jieba 分词转写（<code>用户</code> → <code>zh7528_6237</code>）进 tags，只为让 BM25 命中；读取时再统一剔除，用户只看到原始标签。</p>
+        <p><b>召回不会变强。</b><code>markRetrieved</code> 与 <code>MemoryService.feedback</code> 目前都没有产品侧调用点——检索不计分，条目强度只会被整理回合衰减。这是接进来但没接线的一段。</p>
+        <p><b>没有对外写入口。</b>网关只暴露 status / entries / search / delete 四个端点；写入只能来自 agent 工具或蒸馏，避免绕过提炼规则灌数据。</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 05 读取链路 ============ -->
+  <section>
+    <div class="sec-head">
+      <span class="no">05</span>
+      <h2>读取链路</h2>
+      <span class="note">「上次说的那个方案」→ 命中 → 进上下文</span>
+    </div>
+    <p class="sec-lead">
+      读取没有自动注入这一步：靠系统提示词里的两条行为指引，让模型自己决定要不要检索。
+      检索为空时它被要求如实说"没有相关记忆"，而不是编一个。
+    </p>
+    <div class="seq-wrap"><svg id="seq-read" viewBox="0 0 1160 404" role="img"
+      aria-label="读取链路时序图：主 Agent 依据提示词指引调用 memory_search，MemoryService 做中文转写后 BM25 检索，命中结果进上下文"></svg></div>
+  </section>
+
+  <!-- ============ 06 维护链路 ============ -->
+  <section>
+    <div class="sec-head">
+      <span class="no">06</span>
+      <h2>维护链路</h2>
+      <span class="note">不在请求链上，每 6 小时跑一次</span>
+    </div>
+    <p class="sec-lead">
+      写入是事件驱动的，整理是定时驱动的。这一环决定记忆库会变成"越用越准的清单"还是"越用越乱的日志"：
+      衰减让久不用的条目退场，合并把零散情景并成语义条目，冲突留在清单里等人判断。
+    </p>
+    <div class="seq-wrap"><svg id="seq-maintain" viewBox="0 0 1160 236" role="img"
+      aria-label="维护链路：定时触发的整理回合，依次做衰减、合并、冲突刷新、写回，然后等待下一轮"></svg></div>
+    <p class="tl-caption-html">
+      三个硬约束：<b>noShare</b>（不向全局库复制，单租户产品不需要）、<b>extraction.enabled = false</b>（关掉库自带的 LLM 事实提取，
+      保证整理全程不出网）、<b>并发丢弃</b>（一次整理可能持续数秒，重入直接放弃）。
+    </p>
+  </section>
+
+  <!-- ============ 07 失败与降级 ============ -->
+  <section>
+    <div class="sec-head">
+      <span class="no">07</span>
+      <h2>失败时会发生什么</h2>
+      <span class="note">记忆是增强能力，从不是依赖</span>
+    </div>
+    <p class="sec-lead">这张表决定了"记忆坏了用户会不会感觉到"：记忆相关的每一条失败路径都被有意压成静音。</p>
+    <div class="matrix" id="matrix"></div>
+  </section>
+
+  <footer class="colophon">
+    <span><b>数据来源</b> · modules/memory/{service,hippo-adapter,distill,pi-tools,cjk,routes}.ts · modules/agent/service.ts:2192 · server/create-server.ts:1229 · apps/gateway/src/types/hippo-memory.d.ts</span>
+    <span><b>配套</b> · <a href="./memory-architecture-map.html">01 分层关系图 / Agent 与 LLM 边界</a></span>
+  </footer>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var SVG_NS = "http://www.w3.org/2000/svg";
+  function el(name, attrs, text) {
+    var node = document.createElementNS(SVG_NS, name);
+    if (attrs) Object.keys(attrs).forEach(function (k) { node.setAttribute(k, attrs[k]); });
+    if (text !== undefined && text !== null) node.textContent = text;
+    return node;
+  }
+
+  /* ================================================================
+     时序图（两个链路共用同一个渲染器）
+     ================================================================ */
+
+  function renderSequence(svgId, spec) {
+    var svg = document.getElementById(svgId);
+    var W = 1160;
+    var PAD_L = 18;
+    var TOP = 20;
+    var ACTOR_W = 168;
+    var ACTOR_H = 46;
+    var ROW = 40;
+    var H = spec.height || 420;
+
+    var defs = el("defs");
+    [["a-call", "var(--ink-2)"], ["a-write", "var(--store)"], ["a-return", "var(--ink-3)"]].forEach(function (p) {
+      var m = el("marker", {
+        id: p[0], viewBox: "0 0 8 8", refX: "7.5", refY: "4",
+        markerWidth: "7", markerHeight: "7", orient: "auto-start-reverse"
+      });
+      m.appendChild(el("path", { d: "M 0 0 L 8 4 L 0 8 z", fill: p[1] }));
+      defs.appendChild(m);
+    });
+    svg.appendChild(defs);
+
+    var n = spec.actors.length;
+    var span = W - PAD_L * 2;
+    var xs = spec.actors.map(function (_, i) {
+      return PAD_L + (span * (i + 0.5)) / n;
+    });
+
+    /* 泳道 */
+    spec.actors.forEach(function (a, i) {
+      var x = xs[i];
+      svg.appendChild(el("line", {
+        x1: x, y1: TOP + ACTOR_H, x2: x, y2: H - 14, class: "lifeline"
+      }));
+      svg.appendChild(el("rect", {
+        x: x - ACTOR_W / 2, y: TOP, width: ACTOR_W, height: ACTOR_H, rx: 2, class: "actor-box"
+      }));
+      svg.appendChild(el("rect", {
+        x: x - ACTOR_W / 2, y: TOP, width: 4, height: ACTOR_H, rx: 1.5, fill: a.color || "var(--ink-3)"
+      }));
+      svg.appendChild(el("text", { x: x - ACTOR_W / 2 + 14, y: TOP + 21, class: "actor-name" }, a.label));
+      svg.appendChild(el("text", { x: x - ACTOR_W / 2 + 14, y: TOP + 35, class: "actor-sub" }, a.sub));
+    });
+
+    /* 消息 */
+    var y = TOP + ACTOR_H + 34;
+    spec.msgs.forEach(function (m) {
+      var fi = spec.actors.findIndex(function (a) { return a.id === m.from; });
+      var ti = spec.actors.findIndex(function (a) { return a.id === m.to; });
+      var x1 = xs[fi], x2 = xs[ti];
+      var cls = "msg-line" + (m.kind ? " " + m.kind : "");
+      var marker = m.kind === "write" ? "a-write" : (m.kind === "return" || m.kind === "read" ? "a-return" : "a-call");
+
+      if (m.from === m.to) {
+        /* 自调用：向右绕一个小环 */
+        var loop = el("path", {
+          d: "M " + x1 + " " + (y - 8) + " h 34 v 22 h -34",
+          class: cls, "marker-end": "url(#" + marker + ")"
+        });
+        svg.appendChild(loop);
+        svg.appendChild(el("text", { x: x1 + 42, y: y + 2, class: "msg-label" + (m.kind === "write" ? " write" : "") }, m.text));
+        y += ROW;
+        return;
+      }
+
+      var dir = x2 > x1 ? 1 : -1;
+      var line = el("line", {
+        x1: x1 + 2 * dir, y1: y, x2: x2 - 2 * dir, y2: y,
+        class: cls, "marker-end": "url(#" + marker + ")"
+      });
+      svg.appendChild(line);
+      var label = el("text", {
+        x: (x1 + x2) / 2, y: y - 7, "text-anchor": "middle",
+        class: "msg-label" + (m.kind === "write" ? " write" : "")
+      }, m.text);
+      svg.appendChild(label);
+      if (m.note) {
+        svg.appendChild(el("text", {
+          x: (x1 + x2) / 2, y: y + 13, "text-anchor": "middle", class: "seq-note"
+        }, m.note));
+      }
+      y += ROW;
+    });
+
+    /* 收尾注脚 */
+    if (spec.footnote) {
+      svg.appendChild(el("text", { x: PAD_L, y: H - 10, class: "tl-caption" }, spec.footnote));
+    }
+  }
+
+  renderSequence("seq-write", {
+    height: 430,
+    actors: [
+      { id: "svc", label: "AgentService", sub: "run 生命周期", color: "var(--code)" },
+      { id: "distill", label: "MemoryDistiller", sub: "节流 · 解析 · 去重", color: "var(--code)" },
+      { id: "db", label: "会话库", sub: "agent_messages", color: "var(--store)" },
+      { id: "lite", label: "lite 档模型", sub: "一次性 generate", color: "var(--llm)" },
+      { id: "hippo", label: "hippo 记忆库", sub: "node:sqlite", color: "var(--store)" }
+    ],
+    msgs: [
+      { from: "svc", to: "distill", text: "run.completed(sessionId)", note: "失败 / 取消 / 中断不触发" },
+      { from: "distill", to: "distill", text: "冷却 5 分钟？in-flight？→ 丢弃" },
+      { from: "distill", to: "db", text: "读该会话全部消息", kind: "read", note: "拼成 role: content 转写" },
+      { from: "db", to: "distill", text: "transcript（截前 12k 字）", kind: "return", note: "<600 字或用户轮次 <2 → 到此为止" },
+      { from: "distill", to: "hippo", text: "recall(content) 查重", kind: "read", note: "包含式近似去重" },
+      { from: "distill", to: "lite", text: "generate(prompt + 转写)" },
+      { from: "lite", to: "distill", text: "JSON 事实数组", kind: "return", note: "60s 超时；解析失败即放弃" },
+      { from: "distill", to: "hippo", text: "remember × 0–3", kind: "write", note: "带 sourceSessionId 溯源" }
+    ],
+    footnote: "异步：整理回合每 6 小时跑一次 sleep()，做衰减 / 去重 / 情景合并成语义记忆——不在这条请求链上。"
+  });
+
+  renderSequence("seq-read", {
+    height: 404,
+    actors: [
+      { id: "user", label: "用户", sub: "提一个指向前文的问题", color: "var(--code)" },
+      { id: "agent", label: "主 Agent（harness）", sub: "带 memory_* 工具", color: "var(--agent)" },
+      { id: "tool", label: "memory_search / remember", sub: "工具边界", color: "var(--agent)" },
+      { id: "svc", label: "MemoryService", sub: "作用域 · 截断", color: "var(--code)" },
+      { id: "hippo", label: "hippo 记忆库", sub: "BM25 + 中文检索键", color: "var(--store)" }
+    ],
+    msgs: [
+      { from: "user", to: "agent", text: "「上次那个方案怎么定的？」" },
+      { from: "agent", to: "agent", text: "上下文里没依据 → 先检索（提示词指引）" },
+      { from: "agent", to: "tool", text: "memory_search(query, limit≤8, scope?)" },
+      { from: "tool", to: "svc", text: "recall(...)" },
+      { from: "svc", to: "hippo", text: "query 中文转写 → BM25 检索", kind: "read", note: "过滤 superseded" },
+      { from: "hippo", to: "tool", text: "命中 ≤8 条，单条正文截 600 字", kind: "return" },
+      { from: "tool", to: "agent", text: "编号列表进上下文", kind: "return", note: "为空则要求如实回答「没有相关记忆」" }
+    ],
+    footnote: "另有一条只读展示链路：智能体页 → GET /v1/memory/entries → 按标签分流成「用户画像 / 经验」，同一批数据换个视角。"
+  });
+
+  /* ================================================================
+     时间轴
+     ================================================================ */
+
+  (function renderTimeline() {
+    var svg = document.getElementById("timeline");
+    var W = 1160, H = 196;
+    var LEFT = 148, RIGHT = 32;
+    var plotW = W - LEFT - RIGHT;
+    var minutes = 30;
+    function X(t) { return LEFT + (plotW * t) / minutes; }
+    var rows = [
+      { y: 96, label: "run 完成", cls: "tl-run", r: 3.5, at: [0.4, 2.6, 5.2, 7.9, 10.4, 12.8, 15.6, 18.9, 21.4, 24.2, 26.6, 28.7] },
+      { y: 138, label: "蒸馏真正执行", cls: "tl-exec", r: 5, at: [0.4, 5.6, 11.2, 17.0, 22.8, 28.4] },
+      { y: 178, label: "新记忆写入", cls: "tl-write", r: 5, at: [0.4, 0.9, 5.6] }
+    ];
+
+    /* 轴与刻度 */
+    for (var t = 0; t <= minutes; t += 5) {
+      svg.appendChild(el("line", { x1: X(t), y1: 74, x2: X(t), y2: 184, class: "tl-tick" }));
+      svg.appendChild(el("text", { x: X(t), y: 194, "text-anchor": "middle", class: "tl-label" }, t + "’"));
+    }
+    svg.appendChild(el("line", { x1: LEFT, y1: 188, x2: W - RIGHT, y2: 188, class: "tl-axis" }));
+
+    rows.forEach(function (row) {
+      svg.appendChild(el("text", { x: LEFT - 12, y: row.y + 3.5, "text-anchor": "end", class: "tl-row-label" }, row.label));
+      svg.appendChild(el("line", { x1: LEFT, y1: row.y, x2: W - RIGHT, y2: row.y, class: "tl-tick" }));
+      row.at.forEach(function (t) {
+        svg.appendChild(el("circle", { cx: X(t), cy: row.y, r: row.r, class: row.cls }));
+      });
+    });
+
+    /* 冷却窗口标注：只画一条色带 + 极小标注，长解释放到图下 */
+    svg.appendChild(el("rect", { x: X(0.4) - 4, y: 62, width: X(5.6) - X(0.4) + 8, height: 84, fill: "rgba(157,100,16,0.10)" }));
+    svg.appendChild(el("text", { x: X(0.4) - 2, y: 58, class: "tl-caption" }, "首个冷却窗口内 2 次尝试被丢弃"));
+  })();
+
+  /* ================================================================
+     维护链路：一条横向环路
+     ================================================================ */
+
+  (function renderMaintain() {
+    var svg = document.getElementById("seq-maintain");
+    var steps = [
+      { t: "① 定时触发", d: ["启动后 5 分钟首跑", "之后固定 6 小时一次", "定时器 unref，不阻塞退出"] },
+      { t: "② 衰减", d: ["按 half_life_days 计算", "低于强度阈值直接丢弃", "唯一会变弱的地方"] },
+      { t: "③ 合并", d: ["重叠的情景条目并成", "一条语义条目并记 parents", "再与既有语义条目去重"] },
+      { t: "④ 冲突", d: ["互相矛盾的活条目", "保留双方 + 标注分歧", "留给人和下一次整理"] },
+      { t: "⑤ 写回", d: ["更新 hippo.db", "同步 markdown 镜像", "等下一轮"] }
+    ];
+    var PAD = 22;
+    var W = 1160;
+    var gap = 16;
+    var bw = (W - PAD * 2 - gap * (steps.length - 1)) / steps.length;
+    var by = 54;
+    var bh = 96;
+
+    steps.forEach(function (step, i) {
+      var x = PAD + i * (bw + gap);
+      svg.appendChild(el("rect", { x: x, y: by, width: bw, height: bh, rx: 2, fill: "#f7f9fa", stroke: "var(--rule)" }));
+      svg.appendChild(el("rect", { x: x, y: by, width: 4, height: bh, rx: 1.5, fill: "var(--mech)" }));
+      svg.appendChild(el("text", {
+        x: x + 14, y: by + 22,
+        "font-family": "var(--font-body)", "font-size": "12px", "font-weight": "600", fill: "var(--ink)"
+      }, step.t));
+      step.d.forEach(function (line, li) {
+        svg.appendChild(el("text", {
+          x: x + 14, y: by + 40 + li * 15,
+          "font-family": "var(--font-mono)", "font-size": "8.5px", fill: "var(--ink-3)"
+        }, line));
+      });
+      if (i < steps.length - 1) {
+        svg.appendChild(el("path", {
+          d: "M " + (x + bw) + " " + (by + bh / 2) + " h " + gap,
+          stroke: "var(--ink-3)", "stroke-width": "1.2", "marker-end": "url(#mnt-arrow)", fill: "none"
+        }));
+      }
+    });
+
+    /* 回路：最后一格回到第一格 */
+    var lastX = PAD + (steps.length - 1) * (bw + gap) + bw / 2;
+    var firstX = PAD + bw / 2;
+    svg.appendChild(el("path", {
+      d: "M " + lastX + " " + (by + bh) + " V 196 H " + firstX + " V " + (by + bh + 2),
+      fill: "none", stroke: "var(--mech)", "stroke-width": "1.2", "stroke-dasharray": "4 3",
+      "marker-end": "url(#mnt-arrow)"
+    }));
+    svg.appendChild(el("text", {
+      x: (lastX + firstX) / 2, y: 190, "text-anchor": "middle",
+      "font-family": "var(--font-mono)", "font-size": "8.5px", fill: "var(--ink-3)"
+    }, "下一个 6 小时窗口"));
+
+    /* 箭头 marker */
+    var defs = svg.querySelector("defs") || el("defs");
+    var m = el("marker", {
+      id: "mnt-arrow", viewBox: "0 0 8 8", refX: "7.5", refY: "4",
+      markerWidth: "6", markerHeight: "6", orient: "auto-start-reverse"
+    });
+    m.appendChild(el("path", { d: "M 0 0 L 8 4 L 0 8 z", fill: "var(--ink-3)" }));
+    defs.appendChild(m);
+    svg.insertBefore(defs, svg.firstChild);
+  })();
+
+  /* ================================================================
+     闸门
+     ================================================================ */
+
+  var GATES = [
+    { id: "G0", title: "run 必须正常完成", body: "触发点在 run.completed 分支。失败、取消、中断的 run 一律不进入蒸馏——半途而废的对话不该沉淀成事实。", skip: "—", drop: true },
+    { id: "G1", title: "同会话 5 分钟冷却", body: "按 sessionId 记 lastRunAt；窗口内再次触发直接返回。并发触发被 in-flight 集合丢弃。<b>失败的尝试同样占用窗口</b>——时间戳在执行前就写下了。", skip: "cooldown", drop: true },
+    { id: "G2", title: "转写 ≥ 600 字", body: "取该会话全部消息拼成 role: content。太短的对话没有值得跨会话保留的东西。", skip: "too-short" },
+    { id: "G3", title: "用户发言 ≥ 2 轮", body: "纯工具往返或单句问答不提炼——那多半是操作，不是偏好或约定。", skip: "too-few-turns" },
+    { id: "G4", title: "lite 档可用且 60s 内返回", body: "蒸馏走 lite 档的一次性 generate。未配置 lite 时运行时直接失败、超时也放弃，全程静默。", skip: "model-error" },
+    { id: "G5", title: "输出能解析成 JSON 数组", body: "剥代码围栏、取第一个 [ … ]。模型话太多或返回空数组都算没有结论。", skip: "empty" },
+    { id: "G6", title: "单条 ≤ 120 字、标签在白名单", body: "超长事实被丢弃；标签只允许 偏好 / 决策 / 经验 / 约束，缺省记「经验」。防止把总结段落塞进记忆。", skip: "丢弃该条" },
+    { id: "G7", title: "最多 3 条", body: "单会话写入上限。一次长对话灌进几十条，记忆库就退化成日志。", skip: "截断" },
+    { id: "G8", title: "与已有记忆不重复", body: "写前逐条 recall 比对：已有包含新的、或新的包含已有，都视为重复跳过。", skip: "跳过该条" }
+  ];
+
+  document.getElementById("gates").innerHTML = GATES.map(function (g) {
+    return '<div class="gate' + (g.drop ? " drop" : "") + '">' +
+      '<div class="gid"><b>' + g.id + "</b></div>" +
+      "<div><h3>" + g.title + "</h3><p>" + g.body + "</p></div>" +
+      '<div class="skip"><b>skipped</b>' + g.skip + "</div>" +
+      "</div>";
+  }).join("");
+
+  /* ================================================================
+     条目解剖
+     ================================================================ */
+
+  var SPEC = [
+    ["id", "行 id（uuid）", "删除 / 反馈时的唯一键"],
+    ["content", "一句话事实，≤120 字", "「用户偏好用简体中文撰写正式文档」"],
+    ["tags", "分类标签 + 中文检索键", "用户只看得见前者；后者是 jieba 转写，只为 BM25 命中"],
+    ["scope", "作用域，如 room:&lt;id&gt;", "缺省全局；检索可限定单作用域"],
+    ["strength", "0–1，衰减后强度", "整理回合按半衰期衰减；检索不改变它"],
+    ["half_life_days", "半衰期（天）", "决定衰减速度"],
+    ["retrieval_count", "被检索次数", "库里留着，产品没接线——恒为初始值"],
+    ["kind", "raw / distilled / superseded / archived", "蒸馏写入的是 distilled；superseded 不参与检索"],
+    ["layer", "buffer / episodic / semantic / trace", "整理回合把重叠的情景条目并成语义条目"],
+    ["source_session_id", "来源会话", "溯源：这条记忆是哪次对话提炼的"],
+    ["其余字段", "confidence / schema_fit / conflicts_with / pinned / dag_level …", "库自带的能力面，网关侧不读不写；适配层只暴露白名单视图"],
+    ["created / last_retrieved", "时间戳", "排序与衰减计算依据"]
+  ];
+
+  document.getElementById("spec").innerHTML = SPEC.map(function (row) {
+    return '<div class="spec-row"><dt>' + row[0] + "</dt><dd>" + row[1] +
+      '<span style="color:var(--ink-3)"> · ' + row[2] + "</span></dd></div>";
+  }).join("");
+
+  /* ================================================================
+     失败矩阵
+     ================================================================ */
+
+  var MATRIX = [
+    { tag: "degrade", kind: "记忆库打不开", body: "网关照常启动，只是不注册记忆工具。库是进程内 SQLite，初始化失败只记一条 error 日志。" },
+    { tag: "silent", kind: "蒸馏失败 / 超时", body: "只写日志，对话完全不受影响。蒸馏是 run 结束后的旁路回调，异常在 AgentService 里被吞掉。" },
+    { tag: "silent", kind: "写入返回 null", body: "适配层所有方法不抛异常：写失败返回 null，agent 的工具调用才可能因此报错（仅 memory_remember 显式触发的路径）。" },
+    { tag: "silent", kind: "检索失败", body: "返回空数组。模型收到「没有检索到相关长期记忆」，会如实说没有，而不是卡住。" },
+    { tag: "block", kind: "用户显式要「记住」但库不可用", body: "memory_remember 会抛错并回一句「记忆写入失败（记忆库可能未就绪）」——这是唯一会冒泡到对话的失败。" },
+    { tag: "silent", kind: "整理回合跑不动", body: "并发触发被丢弃、异常记日志；定时器 unref，不阻塞进程退出。" }
+  ];
+
+  document.getElementById("matrix").innerHTML = MATRIX.map(function (m) {
+    return "<div><span class=\"tag " + m.tag + "\">" +
+      (m.tag === "silent" ? "静默" : m.tag === "degrade" ? "降级" : "会冒泡") +
+      "</span><h3>" + m.kind + "</h3><p>" + m.body + "</p></div>";
+  }).join("");
+})();
+</script>
+</body>
+</html>

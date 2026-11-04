@@ -1,10 +1,18 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
+import {
+  larkCliSpawnEnvironment,
+  type LarkCliSource,
+} from '../runtime/lark-cli-runtime'
 
 /**
  * 主进程 lark-cli 授权运行器。只负责授权相关命令（--version / auth status /
  * config init --new / auth login --no-wait / auth login --device-code），导出
  * 写入由网关侧执行。device code 只留在本模块与 CLI 之间，不进入渲染层。
+ *
+ * 环境策略（见 runtime/lark-cli-runtime.ts）：配置了 homeDirectory 时，子进程
+ * 只继承白名单环境并把 HOME 重定向到应用私有目录，与用户终端里的 lark-cli
+ * 配置完全隔离；未配置时（单测/兼容路径）沿用历史的全量继承。
  */
 
 const PROBE_TIMEOUT_MS = 10_000
@@ -39,16 +47,40 @@ interface RunOptions {
   onOutput?: (chunk: string) => void
 }
 
+export interface LarkAuthRunnerOptions {
+  /** 基础环境（默认 process.env）；仅在未配置 homeDirectory 时整体继承。 */
+  environment?: NodeJS.ProcessEnv
+  /** 应用私有 HOME（配置隔离落点）；省略时沿用历史的全量继承（单测/兼容路径）。 */
+  homeDirectory?: string
+  /** CLI 来源，用于设置页/日志展示（bundled/system/env/missing）。 */
+  source?: LarkCliSource
+}
+
 export class LarkAuthRunner {
   private readonly active = new Map<string, ChildProcess>()
 
   constructor(
     private readonly executable: string,
-    private readonly environment: NodeJS.ProcessEnv = process.env,
+    private readonly options: LarkAuthRunnerOptions = {},
   ) {}
 
+  /** 子进程环境：私有 HOME + 白名单继承；未配置私有 HOME 时保持旧行为。 */
+  private spawnEnvironment(): NodeJS.ProcessEnv {
+    const base = this.options.environment ?? process.env
+    if (this.options.homeDirectory) return larkCliSpawnEnvironment(base, this.options.homeDirectory)
+    return { ...base, NO_COLOR: '1' }
+  }
+
+  /** CLI 来源（bundled/system/env），未显式注入时返回 undefined（旧调用点）。 */
+  cliSource(): LarkCliSource | undefined {
+    return this.options.source
+  }
+
   gatewayEnvironment(): Record<string, string> {
-    return { NXCORE_LARK_CLI_PATH: this.executable }
+    return {
+      NXCORE_LARK_CLI_PATH: this.executable,
+      ...(this.options.homeDirectory ? { NXCORE_LARK_CLI_HOME: this.options.homeDirectory } : {}),
+    }
   }
 
   cancel(requestId: string): boolean {
@@ -67,7 +99,7 @@ export class LarkAuthRunner {
   version(): Promise<string | null> {
     return new Promise((resolve) => {
       const child = spawn(this.executable, ['--version'], {
-        env: { ...this.environment, NO_COLOR: '1' },
+        env: this.spawnEnvironment(),
         shell: false,
         windowsHide: true,
         stdio: ['ignore', 'pipe', 'ignore'],
@@ -90,7 +122,20 @@ export class LarkAuthRunner {
   async authStatus(): Promise<LarkAuthStatusPayload> {
     const outcome = await this.run(['auth', 'status', '--json'], { timeoutMs: AUTH_STATUS_TIMEOUT_MS })
     if (outcome.code !== 0) {
-      throw new Error(outcome.stderr.trim() || `lark-cli auth status 退出码 ${String(outcome.code)}`)
+      const envelope = parseJsonObject(outcome.stdout) ?? parseJsonObject(outcome.stderr)
+      // 尚未初始化飞书应用是正常的初始状态（首次使用 / 应用私有配置刚创建），
+      // 不是错误：返回「未配置」，由连接器页展示「未连接」并引导创建应用，
+      // 避免把 CLI 的原始 JSON 错误直接抛到界面上。
+      if (envelope && isNotConfiguredEnvelope(envelope)) {
+        return {
+          appConfigured: false,
+          userAuthorized: false,
+          userName: null,
+          tokenStatus: null,
+          raw: envelope,
+        }
+      }
+      throw new Error(describeCliFailure(outcome))
     }
     const raw = parseJsonObject(outcome.stdout) ?? {}
     const appId = typeof raw.appId === 'string' && raw.appId.trim() ? raw.appId.trim() : null
@@ -170,7 +215,7 @@ export class LarkAuthRunner {
   ): Promise<LarkRunOutcome> {
     return new Promise((resolve, reject) => {
       const child = spawn(this.executable, arguments_, {
-        env: { ...this.environment, NO_COLOR: '1' },
+        env: this.spawnEnvironment(),
         shell: false,
         windowsHide: true,
         stdio: ['ignore', 'pipe', 'pipe'],
@@ -239,6 +284,31 @@ function pickString(record: Record<string, unknown>, keys: string[]): string | n
     if (typeof value === 'string' && value.trim()) return value.trim()
   }
   return null
+}
+
+/** lark-cli 的 `{ok:false,error:{type,subtype,message}}` 是否表示「应用尚未配置」。 */
+function isNotConfiguredEnvelope(envelope: Record<string, unknown>): boolean {
+  const error = envelope.error && typeof envelope.error === 'object'
+    ? envelope.error as Record<string, unknown>
+    : null
+  if (!error) return false
+  const type = pickString(error, ['type']) ?? ''
+  const subtype = pickString(error, ['subtype']) ?? ''
+  const message = pickString(error, ['message']) ?? ''
+  return subtype === 'not_configured' || (type === 'config' && /not\s*config/i.test(message))
+}
+
+/** 把 CLI 失败信封转成可展示的短文案，避免把原始 JSON 直接抛给界面。 */
+function describeCliFailure(outcome: LarkRunOutcome): string {
+  const envelope = parseJsonObject(outcome.stdout) ?? parseJsonObject(outcome.stderr)
+  const error = envelope?.error && typeof envelope.error === 'object'
+    ? envelope.error as Record<string, unknown>
+    : null
+  const message = error ? pickString(error, ['message']) : null
+  if (message) return message
+  const firstLine = (outcome.stderr.trim() || outcome.stdout.trim()).split('\n')[0]?.trim() ?? ''
+  if (firstLine && !firstLine.startsWith('{')) return firstLine
+  return `lark-cli 执行失败（退出码 ${String(outcome.code)}）`
 }
 
 /** 从 CLI 流式输出中提取第一个 http(s) URL（config init 的浏览器引导链接）。 */

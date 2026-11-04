@@ -106,9 +106,9 @@ export class AgentStatusReporter {
       if (this.sessionsProvider) {
         try {
           sessions = (await this.sessionsProvider()).map((session) => {
-            // SaaS schema 严格拒收未知字段：modelPreference 是本地/gateway 的
-            // 会话档位，服务端 contract 没有它，透传会整包 422。
-            const { modelPreference: _localOnly, ...rest } = session
+            // SaaS schema 严格拒收未知字段：modelPreference / thinkingLevel 是
+            // 本地/gateway 的会话档位，服务端 contract 没有它，透传会整包 422。
+            const { modelPreference: _localOnly, thinkingLevel: _thinkingOnly, ...rest } = session
             return { ...rest, messages: session.messages }
           })
           // SaaS 校验 sessions 数组上限 50：超限整包 422，心跳持续失败。

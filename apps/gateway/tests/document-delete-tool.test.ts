@@ -80,7 +80,7 @@ describe("document_delete", () => {
       documentId: document.id,
       confirm: true,
       reason: "用户要求删除",
-    }, { agentSessionId: "s1", runId: "run-happy", roomId: "room-1" });
+    }, { agentSessionId: "s1", runId: "run-happy" });
 
     const structured = result.structuredContent as {
       deleted: boolean;
@@ -107,14 +107,14 @@ describe("document_delete", () => {
     const document = await seedDocument(documents, "doc-del-2");
     await expectServiceError(registry.execute(TOOL, {
       documentId: document.id,
-    }, { agentSessionId: "s2", runId: "run-c1", roomId: "room-1" }), "DOCUMENT_DELETE_CONFIRM_REQUIRED", {
+    }, { agentSessionId: "s2", runId: "run-c1" }), "DOCUMENT_DELETE_CONFIRM_REQUIRED", {
       retryable: true,
       nextAction: "ask_user_for_confirmation",
     });
     await expectServiceError(registry.execute(TOOL, {
       documentId: document.id,
       confirm: false,
-    }, { agentSessionId: "s2", runId: "run-c2", roomId: "room-1" }), "DOCUMENT_DELETE_CONFIRM_REQUIRED");
+    }, { agentSessionId: "s2", runId: "run-c2" }), "DOCUMENT_DELETE_CONFIRM_REQUIRED");
     expect(documents.list().some((item) => item.id === document.id)).toBe(true);
   });
 
@@ -125,19 +125,20 @@ describe("document_delete", () => {
     await expectServiceError(registry.execute(TOOL, {
       documentId: trashedDoc.id,
       confirm: true,
-    }, { agentSessionId: "s3", runId: "run-trash", roomId: "room-1" }), "DOCUMENT_TRASHED");
+    }, { agentSessionId: "s3", runId: "run-trash" }), "DOCUMENT_TRASHED");
 
+    // Phase 2i 去 Room：不同 run 的调用（原跨 Room 场景）不再有归属校验，照常删除成功。
     const other = await seedDocument(documents, "doc-del-4");
-    const crossRoom = await registry.execute(TOOL, {
+    const otherRun = await registry.execute(TOOL, {
       documentId: other.id,
       confirm: true,
-    }, { agentSessionId: "s3", runId: "run-room", roomId: "room-other" });
-    expect(crossRoom.structuredContent).toMatchObject({ documentId: other.id, deleted: true });
+    }, { agentSessionId: "s3", runId: "run-room" });
+    expect(otherRun.structuredContent).toMatchObject({ documentId: other.id, deleted: true });
 
     await expectServiceError(registry.execute(TOOL, {
       documentId: "doc-missing",
       confirm: true,
-    }, { agentSessionId: "s3", runId: "run-missing", roomId: "room-1" }), "NOT_FOUND");
+    }, { agentSessionId: "s3", runId: "run-missing" }), "NOT_FOUND");
   });
 
   it("P0-2d：工作区级文稿（roomId 为 null）也能删除", async () => {
@@ -147,7 +148,7 @@ describe("document_delete", () => {
     const result = await registry.execute(TOOL, {
       documentId: document.id,
       confirm: true,
-    }, { agentSessionId: "s4", runId: "run-workspace", roomId: null });
+    }, { agentSessionId: "s4", runId: "run-workspace" });
     expect(result.structuredContent).toMatchObject({ documentId: document.id });
     expect(documents.get(document.id)?.deletedAt).toBeTruthy();
     expect(documents.list().some((item) => item.id === document.id)).toBe(false);

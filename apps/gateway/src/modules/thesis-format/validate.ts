@@ -3,7 +3,36 @@
  * 原则：字段缺失给中文论文常见默认值；非法值抛错（不静默放行脏卡）。
  */
 
-import { CHINESE_SIZE_PT, type ThesisFontSpec, type ThesisFormatCard } from "./types.js";
+import { CHINESE_SIZE_PT, type ThesisFontSpec, type ThesisFormatCard, type ThesisHfImage } from "./types.js";
+
+/** 模版页眉图片守门：data:URL 结构合法才收，防脏 JSON 进卡；上限 6 张。 */
+function hfImages(value: unknown): ThesisHfImage[] {
+  if (!Array.isArray(value)) return [];
+  const out: ThesisHfImage[] = [];
+  for (const raw of value.slice(0, 6)) {
+    if (!raw || typeof raw !== "object") continue;
+    const src = raw as Record<string, unknown>;
+    const dataUrl = src.dataUrl;
+    if (typeof dataUrl !== "string" || !/^data:image\/(png|jpeg|gif|bmp|x-emf|x-wmf);base64,[A-Za-z0-9+/=]+$/.test(dataUrl)) continue;
+    const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : undefined);
+    const oneOf = <T extends string>(v: unknown, allowed: readonly T[]): T | undefined =>
+      typeof v === "string" && (allowed as readonly string[]).includes(v) ? v as T : undefined;
+    out.push({
+      dataUrl,
+      widthPx: num(src.widthPx),
+      heightPx: num(src.heightPx),
+      floating: src.floating === true ? true : undefined,
+      behind: src.behind === true ? true : undefined,
+      posH: oneOf(src.posH, ["left", "center", "right"] as const),
+      posV: oneOf(src.posV, ["top", "center", "bottom"] as const),
+      posXPx: num(src.posXPx),
+      posYPx: num(src.posYPx),
+      posHRel: oneOf(src.posHRel, ["page", "margin"] as const),
+      posVRel: oneOf(src.posVRel, ["page", "margin", "paragraph"] as const),
+    });
+  }
+  return out;
+}
 
 export function resolveSizePt(size: unknown, fallbackPt: number, field: string): number {
   if (typeof size === "number" && Number.isFinite(size) && size > 0 && size <= 200) return size;
@@ -60,6 +89,12 @@ function paragraph(value: any, fallback: { align: "left" | "center" | "right" | 
 const SONG = { eastAsia: "宋体", ascii: "Times New Roman", size: 12, bold: false };
 
 /** 校验并兜底出完整格式卡；输入须是解析代理输出的对象。 */
+/** 封面图片守门：单张、data:URL 结构合法才收；缺省不写字段（不编造 logo）。 */
+function coverLogo(value: unknown): { logo: ThesisHfImage } | Record<string, never> {
+  const [image] = hfImages(value === undefined ? [] : [value]);
+  return image ? { logo: image } : {};
+}
+
 export function validateThesisFormatCard(raw: unknown, sourceName: string): ThesisFormatCard {
   if (!raw || typeof raw !== "object") throw new Error("论文格式卡必须是对象");
   const src: any = raw;
@@ -165,6 +200,7 @@ export function validateThesisFormatCard(raw: unknown, sourceName: string): Thes
       font: font(header.font, { eastAsia: "宋体", ascii: "Times New Roman", size: 10.5, bold: false }, "header.font"),
       underline: bool(header.underline, true),
       skipOnCover: bool(header.skipOnCover, true),
+      images: hfImages(header.images),
     },
     footer: {
       enabled: bool(footer.enabled, true),
@@ -201,6 +237,7 @@ export function validateThesisFormatCard(raw: unknown, sourceName: string): Thes
     },
     cover: {
       schoolName: str(cover.schoolName, ""),
+      ...coverLogo(cover.logo),
       degreeLine: str(cover.degreeLine, "本科毕业论文（设计）"),
       yearLine: str(cover.yearLine, ""),
       fields: coverFields,

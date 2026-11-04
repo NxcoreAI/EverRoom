@@ -6,8 +6,9 @@ import { createDatabase } from "../src/infrastructure/database/client.js";
 import {
   buildShadowReport,
   checkStoryboard,
-  dispatchEditorStoryboard,
+  buildEditorRepairInput,
   editorPagesFromPlan,
+  mergeRepairedPages,
   mergeStoryboardIntoPlan,
   normalizeStoryboard,
   scrubPageCopy,
@@ -15,6 +16,8 @@ import {
   type EditorDraftPage,
 } from "../src/modules/subagents/slides-editor.js";
 import { SlidesStoryboardStore } from "../src/modules/subagents/slides-storyboards-store.js";
+import { semanticCases } from "./fixtures/slides-semantic.js";
+import { checkSemanticStoryboard } from "../src/modules/subagents/slides-semantic-contract.js";
 
 const drafts = [
   {
@@ -51,14 +54,16 @@ function fixture(): EditorStoryboard {
         id: "page-01",
         role: "cover",
         density: "sparse",
-        composition: "immersive",
+        form: "light-page",
+        units: 1,
+        weight: "heavy",
         emphasis: "title",
         intent: "先给城市定性：不是自然生长出来的。",
         takeaway: "四十五年，一座城仍在生长。",
         copy: {
           kicker: "深圳专题 · 2026",
           message: "深圳：一座仍在生长的城市",
-          supporting: ["从 1979 年建市到 2025 年，四十五年造出一座城"],
+          supporting: ["从 1979 到 2025，四十五年造出一座城"],
           facts: [],
           source: "数据口径：1980 年期初 · 2025 年初步统计",
           speakerNotes: "开场先不报数据。用这张照片让听众先看到尺度，停顿两秒再报标题。全片只讲一条主线：城市是被设计出来的。".repeat(2).slice(0, 100),
@@ -69,7 +74,9 @@ function fixture(): EditorStoryboard {
         id: "page-02",
         role: "data",
         density: "dense",
-        composition: "hero-data",
+        form: "single-fact",
+        units: 1,
+        weight: "medium",
         emphasis: "number",
         intent: "用一个量级跨越建立规模的事实底座。",
         takeaway: "四十五年，经济量级已完全不同。",
@@ -90,7 +97,9 @@ function fixture(): EditorStoryboard {
         id: "page-03",
         role: "content",
         density: "standard",
-        composition: "editorial",
+        form: "breakdown",
+        units: 3,
+        weight: "medium",
         emphasis: "quote",
         intent: "把制度起点落到一个具体动作上：蛇口填海。",
         takeaway: "蛇口的一声炮响，拉开了特区建设的帷幕。",
@@ -115,28 +124,74 @@ function fixture(): EditorStoryboard {
 }
 
 describe("slides-editor shadow checks", () => {
-  it("deckComposition：核心构图必须出现，且至少半数页落在风格卡家族内", () => {
-    const board = fixture();
-    for (const page of board.pages) page.composition = "swiss";
-    const poster = checkStoryboard(board, drafts, { deckComposition: "poster" });
-    expect(poster.errors.some((error) => error.includes("构图家族 poster"))).toBe(true);
-
-    // 两页落回 poster 家族（core + hero-data）后应通过构图家族校验。
-    board.pages[0]!.composition = "poster";
-    board.pages[1]!.composition = "hero-data";
-    const fixed = checkStoryboard(board, drafts, { deckComposition: "poster" });
-    expect(fixed.errors.some((error) => error.includes("构图家族"))).toBe(false);
-
-    // 未传 deckComposition 时不启用家族约束。
-    expect(checkStoryboard(board, drafts).errors.some((error) => error.includes("构图家族"))).toBe(false);
+  it("缺 form/units/weight 时归一阶段就报错，不给默认版式兜底", () => {
+    const raw = fixture() as unknown as Record<string, unknown>;
+    const pages = raw.pages as Array<Record<string, unknown>>;
+    delete pages[0]!.form;
+    delete pages[1]!.units;
+    delete pages[2]!.weight;
+    const normalized = normalizeStoryboard(raw);
+    expect(normalized.errors.some((error) => error.includes("form"))).toBe(true);
+    expect(normalized.errors.some((error) => error.includes("units"))).toBe(true);
+    expect(normalized.errors.some((error) => error.includes("weight"))).toBe(true);
+    expect(normalized.storyboard).not.toBeNull();
   });
+
+  it("units 超出形态范围时报形态缺陷（供网关返工）", () => {
+    const board = fixture();
+    board.pages[1]!.units = 3; // single-fact 只允许 1
+    const check = checkStoryboard(board, drafts);
+    const hit = check.errors.find((error) => error.startsWith("形态"));
+    expect(hit).toBeDefined();
+    expect(hit).toContain("units");
+  });
+
+  it("声明义务：图为主视觉必须有图、对照表必须真给表", () => {
+    const board = fixture();
+    board.pages[0]!.form = "image-led";
+    board.pages[0]!.emphasis = "image";
+    board.pages[1]!.form = "table";
+    const check = checkStoryboard(board, drafts);
+    expect(check.errors.some((error) => error.includes("图为主视觉") && error.includes("没有配图"))).toBe(true);
+    expect(check.errors.some((error) => error.includes("对照表") && error.includes("不足 3 行"))).toBe(true);
+  });
+
+  it("图的来源不参与形态判定：素材和生成图一视同仁", () => {
+    const board = fixture();
+    board.pages[0]!.form = "image-led";
+    board.pages[0]!.emphasis = "image";
+    board.pages[0]!.visual = { kind: "generated" };
+    board.pages[1]!.form = "image-led";
+    board.pages[1]!.emphasis = "image";
+    board.pages[1]!.visual = { kind: "material" };
+    const check = checkStoryboard(board, drafts);
+    expect(check.errors.some((error) => error.includes("图为主视觉"))).toBe(false);
+  });
+
+  it("并列拆解超过一半页时报错，防止它变成新的安全牌", () => {
+    const board = fixture();
+    for (const page of board.pages) {
+      page.form = "breakdown";
+      page.units = 3;
+    }
+    const check = checkStoryboard(board, drafts);
+    expect(check.errors.some((error) => error.includes("并列拆解"))).toBe(true);
+  });
+
+  it("连续三页轻分量时报错", () => {
+    const board = fixture();
+    for (const page of board.pages) page.weight = "light";
+    const check = checkStoryboard(board, drafts);
+    expect(check.errors.some((error) => error.includes("连续三页都是轻分量"))).toBe(true);
+  });
+
   it("passes a valid 3-page storyboard and reports prose reduction", () => {
     const report = buildShadowReport(fixture(), drafts);
     expect(report.errors).toEqual([]);
     expect(report.passed).toBe(true);
     expect(report.pageCount).toBe(3);
     expect(report.draftPageCount).toBe(3);
-    expect(report.compositions).toEqual(["immersive", "hero-data", "editorial"]);
+    expect(report.forms).toEqual(["light-page", "single-fact", "breakdown"]);
     expect(report.reductionPct).not.toBeNull();
     expect(report.pages[1]?.proseChars).toBeLessThan(40);
   });
@@ -159,13 +214,28 @@ describe("slides-editor shadow checks", () => {
     expect(check.errors.some((error) => error.includes("supporting"))).toBe(true);
   });
 
-  it("rejects page count mismatch and same adjacent composition", () => {
+  it("rejects page count mismatch", () => {
     const board = fixture();
     board.pages.pop();
-    board.pages[1]!.composition = "immersive";
     const check = checkStoryboard(board, drafts);
     expect(check.errors.some((error) => error.includes("页数"))).toBe(true);
-    expect(check.warnings.some((warning) => warning.includes("composition"))).toBe(true);
+  });
+
+  it("内容页里轻页超过 15% 时报错", () => {
+    const board = fixture();
+    // 三页都是内容页，全部标成轻页 → 100% > 15%
+    board.pages[0]!.role = "content";
+    board.pages[1]!.role = "content";
+    board.pages[2]!.role = "content";
+    for (const page of board.pages) {
+      page.form = "light-page";
+      page.units = 1;
+      page.emphasis = "title";
+      page.copy.facts = [];
+    }
+    board.pages[2]!.weight = "heavy";
+    const check = checkStoryboard(board, drafts);
+    expect(check.errors.some((error) => error.includes("「轻页」"))).toBe(true);
   });
 
   it("normalizes missing ids and filters malformed dropped entries", () => {
@@ -203,7 +273,7 @@ describe("copy scrub", () => {
 });
 
 describe("storyboard plan merge", () => {
-  it("keeps planner materials/points and adds v2 copy/composition/neighbors", () => {
+  it("keeps planner materials/points and derives composition from form", () => {
     const plan = {
       title: "深圳",
       pages: [
@@ -219,10 +289,13 @@ describe("storyboard plan merge", () => {
     expect(pages[0]!.materials).toEqual([{ url: "everroom-material://x" }]);
     expect(pages[0]!.points).toEqual(["a"]);
     expect(pages[0]!.copy.message).toBe("深圳：一座仍在生长的城市");
+    expect(pages[1]!.form).toBe("single-fact");
+    // 版式由内容形态推导：single-fact → hero-data
     expect(pages[1]!.composition).toBe("hero-data");
+    expect(pages[1]!.skeleton).toContain("单一事实");
     expect(pages[1]!.neighbors).toHaveLength(2);
-    expect(pages[1]!.neighbors[0].composition).toBe("immersive");
-    expect(pages[1]!.budget.prose).toBe(60);
+    expect(pages[1]!.neighbors[0].form).toBe("light-page");
+    expect(pages[1]!.budget.prose).toBe(48);
   });
 
   it("returns null when page counts differ", () => {
@@ -240,30 +313,6 @@ describe("storyboard plan merge", () => {
   });
 });
 
-
-describe("dispatchEditorStoryboard", () => {
-  it("splits a long draft into bounded batches and merges pages in order", async () => {
-    const calls: EditorDraftPage[][] = [];
-    const result = await dispatchEditorStoryboard({
-      draftPages: drafts,
-      batchSize: 2,
-      buildInput: (pages) => ({ draftPages: pages }),
-      dispatch: async (input) => {
-        const pages = (input.draftPages as EditorDraftPage[]) ?? [];
-        calls.push(pages);
-        const start = drafts.findIndex((draft) => draft.title === pages[0]?.title);
-        const board = fixture();
-        return {
-          status: "completed",
-          result: { structuredOutput: { ...board, pages: board.pages.slice(start, start + pages.length) } },
-        } as never;
-      },
-    });
-    expect(calls).toHaveLength(2);
-    expect(result.storyboard?.pages).toHaveLength(drafts.length);
-    expect(result.storyboard?.pages.map((page) => page.role)).toEqual(fixture().pages.map((page) => page.role));
-  });
-});
 
 describe("SlidesStoryboardStore", () => {
   const dirs: string[] = [];
@@ -285,5 +334,70 @@ describe("SlidesStoryboardStore", () => {
     store.save({ roomId: "room-1", draftDocumentId: "doc-1", draftHash: "hash-1", storyboard: board, report });
     expect(store.byDraftHash("room-1", "doc-1", "hash-1")?.draftHash).toBe("hash-1");
     expect(store.byDraft("room-1", "doc-1")?.report.pageCount).toBe(3);
+  });
+  it("persists semantic and legacy experiments separately without migrating existing records", () => {
+    const dir = mkdtempSync(join(tmpdir(), "nxcore-slides-storyboard-")); dirs.push(dir);
+    const database = createDatabase(join(dir, "gateway.sqlite"), resolve("drizzle"));
+    const store = new SlidesStoryboardStore(database.db);
+    const legacy = fixture();
+    store.save({ roomId: "r", draftDocumentId: "d", draftHash: "same-source", storyboard: legacy, report: buildShadowReport(legacy, drafts) });
+    const { page, sources } = semanticCases[0]!;
+    const storyboard = { schemaVersion: "storyboard/v3" as const, title: "Deck", pages: [page], sources };
+    const report = checkSemanticStoryboard([page], sources);
+    expect(() => store.save({ roomId: "r", draftDocumentId: "d", draftHash: "same-source", storyboard, report })).toThrow("key_required");
+    const first = store.save({ roomId: "r", draftDocumentId: "d", draftHash: "semantic-v3:style-a", storyboard, report });
+    const second = store.save({ roomId: "r", draftDocumentId: "d", draftHash: "semantic-v3:style-b", storyboard, report });
+    expect(first.id).not.toBe(second.id);
+    expect(store.byDraftHash("r", "d", "same-source")?.storyboard.schemaVersion).toBe("storyboard/v2");
+    expect(store.byDraftHash("r", "d", "semantic-v3:style-a")?.storyboard).toEqual(storyboard);
+  });
+});
+
+describe("页级修复的边界（只收被点名的页）", () => {
+  const base: EditorStoryboard = {
+    schemaVersion: "storyboard/v2",
+    deck: { title: "季度汇报", spine: "从业绩到计划" },
+    pages: [
+      { id: "page-01", role: "cover", density: "sparse", form: "light-page", units: 1, weight: "light", emphasis: "title", intent: "开场定调，交代这次汇报要解决什么", takeaway: "季度汇报", copy: { message: "季度汇报", supporting: [], facts: [], speakerNotes: "开场先讲结论。".repeat(8) }, dropped: [] },
+      { id: "page-02", role: "data", density: "dense", form: "single-fact", units: 1, weight: "heavy", emphasis: "number", intent: "用一个数字说明本季度业绩成色", takeaway: "营收涨两成", copy: { message: "营收涨两成", supporting: [], facts: [{ label: "营收", value: "1.5", unit: "亿" }], speakerNotes: "这一页只讲营收。".repeat(8) }, dropped: [] },
+    ],
+    warnings: [],
+  };
+
+  const repairedPage = { ...base.pages[1]!, copy: { ...base.pages[1]!.copy, message: "营收涨了两成" } };
+
+  it("被点名的页采纳修复结果", () => {
+    const merged = mergeRepairedPages(base, { ...base, pages: [base.pages[0]!, repairedPage] }, ["page-02"]);
+    expect(merged.storyboard.pages[1]!.copy.message).toBe("营收涨了两成");
+    expect(merged.rejected).toEqual([]);
+  });
+
+  it("顺手改到的其它页一律丢弃，并留下 rejected 记录", () => {
+    const sneaky = { ...base.pages[0]!, copy: { ...base.pages[0]!.copy, message: "被顺手改掉的封面" } };
+    const merged = mergeRepairedPages(base, { ...base, pages: [sneaky, repairedPage] }, ["page-02"]);
+    expect(merged.storyboard.pages[0]!.copy.message).toBe("季度汇报");
+    expect(merged.rejected.join(" ")).toContain("page-01");
+  });
+
+  it("页数变了也照样只并同名页", () => {
+    const merged = mergeRepairedPages(base, { ...base, pages: [repairedPage] }, ["page-02"]);
+    expect(merged.storyboard.pages).toHaveLength(2);
+    expect(merged.rejected.length).toBeGreaterThan(0);
+  });
+
+  it("修复输入只带被打回的页与缺陷清单（不把整册再发一遍）", () => {
+    const input = buildEditorRepairInput({
+      instruction: "复盘",
+      roomId: "room-1",
+      title: "季度汇报",
+      draftPages: [{ title: "封面", points: [] }, { title: "业绩", points: ["营收涨两成"] }],
+      priorStoryboard: base,
+      repairPageIds: ["page-02"],
+      defects: ["形态：第 2 页 声明了对照表但行数不足"],
+    });
+    expect((input.draftPages as unknown[]).length).toBe(1);
+    expect((input.priorStoryboard as { pages: unknown[] }).pages.length).toBe(1);
+    expect(input.repairPageIds).toEqual(["page-02"]);
+    expect((input.defects as string[])[0]).toContain("形态");
   });
 });
