@@ -1,17 +1,21 @@
 // @vitest-environment happy-dom
 /**
- * 充值面板(TopupPanel)回归:
- * 1) 未配置 aiRelay(后端未接 new-api)时不渲染——充值入口跟随额度条;
- * 2) 档位加载后可选,下单走 billing.topup;mock 渠道自动提交模拟批准;
- * 3) pending 轮询到 completed 后展示到账文案。
- * 只 mock preload 桥 window.nxcore,真实渲染 SettingsPage 内的 TopupPanel。
+ * 充值弹窗(TopupModal)回归:
+ * 1) 打开时拉档位并过滤 productKind==='credits',渲染「X 积分 · $Y」卡片;
+ * 2) 点卡片下单走 billing.topup;mock 渠道自动提交模拟批准;
+ * 3) pending 轮询到 completed 后展示到账文案并回调 onSettled;
+ * 4) 暂时性轮询错误不致失败,pending→failed 有失败文案。
+ * 只 mock preload 桥 window.nxcore,真实渲染 TopupModal。
+ * Radix Dialog.Portal 挂到 document.body,断言一律查 body 而非挂载容器。
  */
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import i18n from '../src/renderer/src/i18n/i18next'
-import { TopupPanel } from '../src/renderer/src/components/pages/SettingsPage'
+import { TopupModal } from '../src/renderer/src/workbench/shell/TopupModal'
+
+;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 interface PanelBridge {
   billing: {
@@ -27,6 +31,7 @@ function installBridge(overrides: Partial<Record<keyof PanelBridge['billing'], R
     packs: vi.fn().mockResolvedValue([
       { id: 'p1', code: 'pack_10', name: 'Credits $10', amountCents: 1000, grantQuota: 5000000, active: true },
       { id: 'p2', code: 'pack_20', name: 'Credits $20', amountCents: 2000, grantQuota: 10000000, active: true },
+      { id: 'p3', code: 'pro_month', name: 'Pro', amountCents: 2000, grantQuota: 0, active: true, productKind: 'pro_month' },
     ]),
     topup: vi.fn().mockResolvedValue({ orderId: 'order-1', approvalUrl: 'mock://checkout/order-1', provider: 'mock' }),
     topupStatus: vi.fn().mockResolvedValue({ status: 'completed' as const, amountCents: 1000 }),
@@ -37,7 +42,7 @@ function installBridge(overrides: Partial<Record<keyof PanelBridge['billing'], R
   return { billing }
 }
 
-describe('TopupPanel', () => {
+describe('TopupModal', () => {
   let container: HTMLElement | null = null
   let root: Root | null = null
 
@@ -46,40 +51,52 @@ describe('TopupPanel', () => {
     vi.useRealTimers()
     act(() => { root?.unmount() })
     container?.remove()
+    document.body.innerHTML = ''
     ;(window as unknown as { nxcore: unknown }).nxcore = undefined
   })
 
-  function mount(props: { aiRelayConfigured: boolean; onSettled?: () => void }) {
+  function mount(props: { onSettled?: () => void } = {}) {
     container = document.createElement('div')
     document.body.appendChild(container)
     root = createRoot(container)
-    act(() => { root!.render(<TopupPanel {...props} />) })
+    act(() => { root!.render(<TopupModal open onOpenChange={() => undefined} {...props} />) })
   }
 
-  it('renders nothing when aiRelay is not configured', async () => {
+  function packCards(): HTMLElement[] {
+    return Array.from(document.body.querySelectorAll('.plan-card'))
+  }
+
+  it('loads credit packs only and renders credits/price cards', async () => {
     installBridge()
-    mount({ aiRelayConfigured: false })
+    mount()
     await act(async () => { await vi.advanceTimersByTimeAsync(0) })
-    expect(container?.textContent).toBe('')
+    const cards = packCards()
+    // pro_month 被过滤,只剩两个积分档位
+    expect(cards.length).toBe(2)
+    // 1 积分 = $0.1:$10 → 100 积分
+    expect(cards[0].textContent).toContain('100')
+    expect(cards[0].textContent).toContain('$10')
+    expect(cards[1].textContent).toContain('200')
+    expect(cards[1].textContent).toContain('$20')
   })
 
-  it('loads packs, starts a mock topup and settles to completed via polling', async () => {
+  it('starts a mock topup from a card and settles to completed via polling', async () => {
     const bridge = installBridge()
     const onSettled = vi.fn()
-    mount({ aiRelayConfigured: true, onSettled })
+    mount({ onSettled })
     await act(async () => { await vi.advanceTimersByTimeAsync(0) })
-    const select = container?.querySelector('.topup-pack-select') as HTMLSelectElement | null
-    expect(select).toBeTruthy()
-    expect(select?.options.length).toBe(2)
-    const buy = container?.querySelector('.topup-buy-button') as HTMLButtonElement | null
-    act(() => { buy?.click() })
+    const cards = packCards()
+    const secondCta = cards[1].querySelector('.plan-card-cta') as HTMLButtonElement | null
+    expect(secondCta).toBeTruthy()
+    act(() => { secondCta?.click() })
     await act(async () => { await vi.advanceTimersByTimeAsync(0) })
-    expect(bridge.billing.topup).toHaveBeenCalledWith('pack_10')
+    expect(bridge.billing.topup).toHaveBeenCalledWith('pack_20')
     expect(bridge.billing.topupMockApprove).toHaveBeenCalledWith('order-1')
-    // 轮询 2s 后 completed 文案出现
+    // 轮询 2s 后 completed 文案出现,onSettled 触发外层刷新
     await act(async () => { await vi.advanceTimersByTimeAsync(2500) })
     expect(bridge.billing.topupStatus).toHaveBeenCalledWith('order-1')
-    expect(container?.textContent).toContain(i18n.t('surface:settings.topupCompleted'))
+    expect(document.body.textContent).toContain(i18n.t('surface:settings.topupCompleted'))
+    expect(onSettled).toHaveBeenCalled()
   })
 
   it('keeps polling pending without failing on transient errors', async () => {
@@ -89,13 +106,21 @@ describe('TopupPanel', () => {
         .mockResolvedValueOnce({ status: 'pending' as const, amountCents: 1000 })
         .mockResolvedValue({ status: 'failed' as const, amountCents: 1000 }),
     })
-    mount({ aiRelayConfigured: true })
+    mount()
     await act(async () => { await vi.advanceTimersByTimeAsync(0) })
-    const buy = container?.querySelector('.topup-buy-button') as HTMLButtonElement | null
-    act(() => { buy?.click() })
+    const cta = packCards()[0].querySelector('.plan-card-cta') as HTMLButtonElement | null
+    act(() => { cta?.click() })
     await act(async () => { await vi.advanceTimersByTimeAsync(0) })
     await act(async () => { await vi.advanceTimersByTimeAsync(6500) })
     expect(bridge.billing.topupStatus.mock.calls.length).toBeGreaterThanOrEqual(3)
-    expect(container?.textContent).toContain(i18n.t('surface:settings.topupFailed'))
+    expect(document.body.textContent).toContain(i18n.t('surface:settings.topupFailed'))
+  })
+
+  it('shows load-failure message when packs request rejects', async () => {
+    installBridge({ packs: vi.fn().mockRejectedValue(new Error('offline')) })
+    mount()
+    await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+    expect(packCards().length).toBe(0)
+    expect(document.body.textContent).toContain(i18n.t('surface:settings.topupLoadFailed'))
   })
 })

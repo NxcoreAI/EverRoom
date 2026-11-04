@@ -48,6 +48,7 @@ import { RuntimeConfigSettingsSection } from '@/components/settings/RuntimeConfi
 import { RedeemCodeField, useRedeemCode } from '@/components/account/RedeemCodeField'
 import { QrLoginPanel } from '@/components/account/QrLoginPanel'
 import { PlanUpgradeModal } from '@/workbench/shell/PlanUpgradeModal'
+import { TopupModal } from '@/workbench/shell/TopupModal'
 
 import './SettingsPage.css'
 
@@ -135,6 +136,7 @@ export function SettingsPage({
   const redeemCode = useRedeemCode()
   const [qrActive, setQrActive] = useState(false)
   const [planModalOpen, setPlanModalOpen] = useState(false)
+  const [topupModalOpen, setTopupModalOpen] = useState(false)
 
   useEffect(() => {
     if (section) setActiveSetting(section)
@@ -635,11 +637,11 @@ export function SettingsPage({
                   return (
                   <div className="cloud-subscription-quota">
                     <div>
-                      <span>{t('surface:settings.llmRemaining')}</span>
+                      <span>{t('surface:settings.planCredits')}</span>
                       <strong>{formatCredits(periodRemaining, locale)}</strong>
                     </div>
                     <progress
-                      aria-label={t('surface:settings.llmRemaining')}
+                      aria-label={t('surface:settings.planCredits')}
                       max={Math.max(1, monthlyQuota)}
                       value={Math.min(Math.max(0, periodRemaining), monthlyQuota)}
                     />
@@ -654,16 +656,35 @@ export function SettingsPage({
                   </div>
                   )
                 })() : null}
-                {aiRelayStatus?.configured && (aiRelayStatus.topupRemainingCredits ?? 0) > 0 ? (
-                  <div className="cloud-subscription-quota cloud-subscription-quota--topup">
+                {(aiRelayStatus?.configured && aiRelayStatus.llmCredits && (aiRelayStatus.grants ?? []).length
+                  ? aiRelayStatus.grants!
+                  : // 无 grants 明细时退化为单条充值合计行(旧后端兼容)
+                    (aiRelayStatus?.configured && (aiRelayStatus.topupRemainingCredits ?? 0) > 0
+                      ? [{ id: '__topup_total__', remainingCredits: aiRelayStatus.topupRemainingCredits ?? 0, amountCredits: aiRelayStatus.topupRemainingCredits ?? 0, expiresAt: null }]
+                      : [])
+                ).map((grant) => (
+                  <div key={grant.id} className="cloud-subscription-quota cloud-subscription-quota--topup">
                     <div>
-                      <span>{t('surface:settings.topupBalance')}</span>
-                      <strong>{formatCredits(aiRelayStatus.topupRemainingCredits ?? 0, locale)}</strong>
+                      <span>{t('surface:settings.topupCredits')}</span>
+                      <strong>{formatCredits(grant.remainingCredits, locale)}</strong>
                     </div>
-                    <small>{t('surface:settings.topupBalanceNote')}</small>
+                    <progress
+                      aria-label={t('surface:settings.topupCredits')}
+                      max={Math.max(1, grant.amountCredits)}
+                      value={Math.min(Math.max(0, grant.remainingCredits), Math.max(1, grant.amountCredits))}
+                    />
+                    <small>
+                      {grant.expiresAt
+                        ? t('surface:settings.topupGrantExpires', { date: formatPeriodEnd(grant.expiresAt, locale) })
+                        : t('surface:settings.topupBalanceNote')}
+                    </small>
                   </div>
+                ))}
+                {aiRelayStatus?.configured ? (
+                  <button type="button" className="topup-buy-button" onClick={() => setTopupModalOpen(true)}>
+                    {t('surface:settings.topupBuy')}
+                  </button>
                 ) : null}
-                <TopupPanel aiRelayConfigured={Boolean(aiRelayStatus?.configured)} onSettled={() => refreshAiRelay.current?.()} />
                 <div className="cloud-subscription-period">
                   <span><CalendarClock aria-hidden="true" />{t('surface:settings.periodEnds')}</span>
                   <strong>{formatPeriodEnd(account.subscription.periodEnd, locale)}</strong>
@@ -688,6 +709,11 @@ export function SettingsPage({
           onOpenChange={setPlanModalOpen}
           currentPlanCode={account?.subscription?.planCode ?? null}
           onSettled={() => { void refreshAccountStatus(); refreshAiRelay.current?.() }}
+        />
+        <TopupModal
+          open={topupModalOpen}
+          onOpenChange={setTopupModalOpen}
+          onSettled={() => refreshAiRelay.current?.()}
         />
       </section>
 
@@ -785,97 +811,6 @@ export function SettingsPage({
 
         </main>
       </div>
-    </div>
-  )
-}
-
-/* ── 充值面板(旁路额度)────────────────────────────────────────
- * 档位选择 → 下单(真渠道自动开系统浏览器 approval 页/mock 就地批准)
- * → 轮询订单状态 → 到账后刷新 LLM 余量显示。mock 模式提供"模拟支付"按钮
- * 供本地联调(SaaS 未配 PayPal 凭证时整链离线可验)。 */
-export function TopupPanel({ aiRelayConfigured, onSettled }: { aiRelayConfigured: boolean; onSettled?: () => void }) {
-  const { t } = useTranslation()
-  const [packs, setPacks] = useState<Array<{ id: string; code: string; name: string; amountCents: number }>>([])
-  const [selected, setSelected] = useState<string>('')
-  const [phase, setPhase] = useState<'idle' | 'creating' | 'pending' | 'completed' | 'failed'>('idle')
-  const [message, setMessage] = useState<string | null>(null)
-  const [orderId, setOrderId] = useState<string | null>(null)
-
-  useEffect(() => {
-    if (!aiRelayConfigured || !window.nxcore?.billing) return
-    void window.nxcore.billing.packs()
-      .then((items) => {
-        // 只列积分类档位;pro_month 走升级弹窗,不混进充值选择器
-        const creditOnly = items.filter((item) => item.active && (item.productKind ?? 'credits') === 'credits')
-        setPacks(creditOnly)
-        if (creditOnly.length) setSelected(creditOnly[0].code)
-      })
-      .catch(() => undefined)
-  }, [aiRelayConfigured])
-
-  // pending 轮询:2s 间隔,完结即刷新余量(经事件/重挂载自然联动)。
-  useEffect(() => {
-    if (phase !== 'pending' || !orderId || !window.nxcore?.billing) return
-    let cancelled = false
-    const timer = window.setInterval(() => {
-      void window.nxcore?.billing?.topupStatus(orderId)
-        .then((status) => {
-          if (cancelled) return
-          if (status.status === 'completed') { setPhase('completed'); setMessage(t('surface:settings.topupCompleted')); onSettled?.() }
-          else if (status.status === 'failed' || status.status === 'expired') { setPhase('failed'); setMessage(t('surface:settings.topupFailed')) }
-        })
-        .catch(() => undefined)
-    }, 2000)
-    return () => { cancelled = true; window.clearInterval(timer) }
-  }, [phase, orderId, t])
-
-  if (!aiRelayConfigured || !packs.length) return null
-
-  const startTopup = async () => {
-    if (!selected || !window.nxcore?.billing) return
-    setPhase('creating'); setMessage(null)
-    try {
-      const order = await window.nxcore.billing.topup(selected)
-      setOrderId(order.orderId)
-      if (order.provider === 'mock') {
-        // Mock 模式:模拟买家批准(联调),随后轮询自然到账
-        setPhase('pending')
-        setMessage(t('surface:settings.topupMockHint'))
-        void window.nxcore.billing.topupMockApprove(order.orderId).catch(() => undefined)
-      } else {
-        setPhase('pending')
-        setMessage(t('surface:settings.topupBrowserOpened'))
-      }
-    } catch (error) {
-      setPhase('failed')
-      setMessage(error instanceof Error ? error.message : String(error))
-    }
-  }
-
-  return (
-    <div className="cloud-subscription-topup">
-      <div className="cloud-subscription-topup-row">
-        <select
-          className="topup-pack-select"
-          value={selected}
-          onChange={(event) => setSelected(event.target.value)}
-          disabled={phase === 'creating' || phase === 'pending'}
-          aria-label={t('surface:settings.topupPackSelect')}
-        >
-          {packs.map((pack) => (
-            <option key={pack.code} value={pack.code}>{pack.name}(${(pack.amountCents / 100).toFixed(0)})</option>
-          ))}
-        </select>
-        <button
-          type="button"
-          className="topup-buy-button"
-          onClick={() => void startTopup()}
-          disabled={phase === 'creating' || phase === 'pending' || !selected}
-        >
-          {phase === 'creating' || phase === 'pending' ? t('surface:settings.topupPending') : t('surface:settings.topupBuy')}
-        </button>
-      </div>
-      {message ? <small className="topup-message">{message}</small> : null}
     </div>
   )
 }

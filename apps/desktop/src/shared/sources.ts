@@ -422,6 +422,8 @@ export interface AiGatewayStatus {
   periodRemainingCredits?: number
   /** 充值余额(旁路,长期有效;旧后端无此字段时为 0)。 */
   topupRemainingCredits?: number
+  /** 活跃充值 grant 明细(新后端下发;无此字段时只展示充值合计行)。 */
+  grants?: Array<{ id: string; remainingCredits: number; amountCredits: number; expiresAt: string | null }>
   periodEnd: string | null
 }
 

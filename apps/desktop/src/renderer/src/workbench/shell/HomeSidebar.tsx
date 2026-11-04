@@ -3,6 +3,7 @@ import {
   ChevronsUpDown,
   ChevronRight,
   Clock,
+  Crown,
   FolderOpen,
   LayoutGrid,
   LogOut,
@@ -58,12 +59,22 @@ export function HomeSidebar() {
   const [upgradeOpen, setUpgradeOpen] = useState(false)
   // 菜单打开时拉一次总额度(remainingCredits = 周期剩余 + 充值余额,积分取整)
   const [creditsValue, setCreditsValue] = useState<number | null>(null)
+  // 余额行 tooltip 用同口径拆分:套餐内积分(周期)与充值积分(长期有效)
+  const [creditsTooltip, setCreditsTooltip] = useState<string | null>(null)
   const [menuOpen, setMenuOpen] = useState(false)
 
   const refreshCredits = useCallback(() => {
     if (!signedIn || !window.nxcore?.aiRelay) return
     void window.nxcore.aiRelay.status()
-      .then((status) => { if (status?.configured) setCreditsValue(status.remainingCredits) })
+      .then((status) => {
+        if (!status?.configured) return
+        setCreditsValue(status.remainingCredits)
+        const periodRemaining = status.periodRemainingCredits ?? status.remainingCredits
+        const topupRemaining = status.topupRemainingCredits ?? 0
+        setCreditsTooltip(
+          `套餐内积分 ${formatCredits(periodRemaining, 'en')} · 充值积分 ${formatCredits(topupRemaining, 'en')}`,
+        )
+      })
       .catch(() => undefined)
   }, [signedIn])
 
@@ -135,7 +146,7 @@ export function HomeSidebar() {
             {signedIn ? (
               <>
                 <div className="wb-account-plan" role="group" aria-label="当前套餐">
-                  <UserRound size={14} aria-hidden="true" />
+                  <Crown size={14} aria-hidden="true" />
                   <strong>{isPro ? 'Pro' : 'Free'}</strong>
                   {isPro ? null : (
                     <button type="button" className="wb-account-plan-upgrade" onClick={() => setUpgradeOpen(true)}>
@@ -143,7 +154,12 @@ export function HomeSidebar() {
                     </button>
                   )}
                 </div>
-                <button type="button" className="wb-account-credits" onClick={openPlanSection}>
+                <button
+                  type="button"
+                  className="wb-account-credits"
+                  onClick={openPlanSection}
+                  title={creditsTooltip ?? '积分余额'}
+                >
                   <Sparkles size={14} aria-hidden="true" />
                   <strong>积分余额</strong>
                   <span className="wb-account-credits-value">

@@ -781,6 +781,13 @@
 }
 .plan-card-features li { display: flex; gap: 6px; align-items: baseline; }
 .plan-card-features li::before { content: '✓'; color: var(--ui-accent, #0071e3); font-size: 11px; }
+/* 充值弹窗卡片:积分档位说明行 */
+.plan-card-note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ui-text-muted, #666);
+  flex: 1;
+}
 .plan-card-cta {
   border: 1px solid var(--ui-border, #d2d2d7);
   border-radius: 8px;
