@@ -384,6 +384,84 @@ describe('资料库页', () => {
     expect(container.querySelector('.ui-empty-desc')).toBeNull()
     expect(container.querySelector('.wb-lib-tile')).toBeNull()
   })
+
+  it('从访达拖文件进来：dragover 高亮，drop 调 importDropped 并按当前空间刷新', async () => {
+    const props = pageProps()
+    const nxcore = installFilesApi([], 0)
+    nxcore.files.importDropped = vi.fn().mockResolvedValue([
+      {
+        filename: MANUAL.file.name,
+        fileId: 'f-manual',
+        fileVersionId: 'v1',
+        eventId: 'e1',
+        dataType: null,
+        deduped: false,
+        skippedReason: null,
+        pipelines: null,
+        memoryResult: null,
+        routeJobId: null,
+        error: null,
+      },
+    ])
+    nxcore.files.list
+      .mockResolvedValueOnce({ items: [], total: 0 })
+      .mockResolvedValue({ items: [MANUAL.catalog], total: 1 })
+
+    await act(async () => { root.render(<LibraryPage {...props} />) })
+    await flush()
+
+    // 空库也要能拖：落点是页面根节点（.wb-library-page），不依赖浏览器内容区。
+    const dropTarget = container.querySelector<HTMLElement>('.wb-library-page')
+    expect(dropTarget).not.toBeNull()
+    const dragFile = new File(['hello'], '拖进来的文档.docx', { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' })
+
+    const dataTransfer = {
+      types: ['Files'],
+      files: { length: 1, 0: dragFile, item: () => dragFile, [Symbol.iterator]: Array.prototype[Symbol.iterator] } as unknown as FileList,
+    }
+    // dragenter → 高亮态出现（happy-dom 的 DragEvent 不接 dataTransfer，用属性注入）
+    const fireDrag = (type: string) => {
+      const event = new Event(type, { bubbles: true, cancelable: true })
+      Object.defineProperty(event, 'dataTransfer', { value: dataTransfer })
+      dropTarget!.dispatchEvent(event)
+    }
+    await act(async () => { fireDrag('dragenter') })
+    expect(dropTarget!.className).toContain('is-dragover')
+    expect(container.querySelector('.wb-lib-dropzone')).not.toBeNull()
+
+    // drop → importDropped(files, { workspaceId })，完成后刷新并 toast
+    await act(async () => { fireDrag('drop') })
+    await flush()
+
+    expect(nxcore.files.importDropped).toHaveBeenCalledTimes(1)
+    const call = (nxcore.files.importDropped as ReturnType<typeof vi.fn>).mock.calls[0]
+    expect(call[1]).toEqual({ workspaceId: 'ws-1' })
+    expect(props.onToast).toHaveBeenCalledWith('已导入 1 个文件')
+    expect(allText('.wb-lib-tile-name')).toEqual(['设计'])
+  })
+
+  it('拖放导入没有桥（importDropped 缺失）时提示不可用，不静默失败', async () => {
+    const props = pageProps()
+    installFilesApi(OPENABLE_KINDS)
+    await act(async () => { root.render(<LibraryPage {...props} />) })
+    await flush()
+
+    const dropTarget = container.querySelector<HTMLElement>('.wb-library-page')
+    expect(dropTarget).not.toBeNull()
+    const dragFile = new File(['x'], 'a.pdf', { type: 'application/pdf' })
+    const dataTransfer = {
+      types: ['Files'],
+      files: { length: 1, 0: dragFile, item: () => dragFile, [Symbol.iterator]: Array.prototype[Symbol.iterator] } as unknown as FileList,
+    }
+    await act(async () => {
+      const drop = new Event('drop', { bubbles: true, cancelable: true })
+      Object.defineProperty(drop, 'dataTransfer', { value: dataTransfer })
+      dropTarget!.dispatchEvent(drop)
+    })
+    await flush()
+
+    expect(props.onToast).toHaveBeenCalledWith('文件库不可用，无法导入')
+  })
 })
 
 describe('产物页', () => {

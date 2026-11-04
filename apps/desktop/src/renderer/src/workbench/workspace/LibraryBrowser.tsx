@@ -23,6 +23,8 @@ import { LibraryGrid, LibraryList } from './LibraryViews'
  * 布局照 everoffice 原型「资料库」文件管理器：当前目录逐级进入，搜索是**全库**
  * 范围（忽略当前目录），搜索中强制列表视图并禁用视图切换。
  * 当前目录 / 搜索词 / 视图模式是本页局部状态，切走页面即重置（与原型一致）。
+ *
+ * 访达拖放的落点在页面根节点（LibraryPage），空库/加载态也能拖；本组件只管浏览。
  */
 export function LibraryBrowser({ items, actions }: {
   items: readonly RealOfficeFile[]

@@ -1,4 +1,4 @@
-import { FileText, RefreshCw } from 'lucide-react'
+import { FilePlus2, FileText, RefreshCw } from 'lucide-react'
 import { useState } from 'react'
 
 import type { RealOfficeFile } from '@/office-proto/data'
@@ -14,6 +14,7 @@ import {
 import type { FileItemActions } from './fileItemViews'
 import { LibraryBrowser } from './LibraryBrowser'
 import { useFileLibrary } from './useFileLibrary'
+import { useLibraryDropZone } from './useLibraryDropZone'
 import './library.css'
 
 /**
@@ -24,7 +25,17 @@ import './library.css'
  * 文件入库时带 workspaceId（手动导入按当前空间，Agent 产物按其会话所属空间），
  * 本页只拉 `workspace.id` 名下的文件；存量文件迁移后归默认工作区。
  * 打开文件一律走注入的 onOpenFile → 工作空间右侧气泡窗；本页自己不挂编辑器。
+ * 访达拖文件进内容区直接导入本空间（与「导入文件」按钮同一条 importPathsOnce 链路）。
  */
+
+/** 导入结果摘要 → toast 文案（按钮导入与拖放导入共用）。 */
+function summarizeImport(summary: { imported: number; failed: number; skipped: number }): string {
+  const parts: string[] = []
+  if (summary.imported > 0) parts.push(`已导入 ${summary.imported} 个文件`)
+  if (summary.failed > 0) parts.push(`${summary.failed} 个失败`)
+  if (summary.skipped > 0) parts.push(`${summary.skipped} 个跳过`)
+  return parts.join('，') || '没有可导入的文件'
+}
 export function LibraryPage({ workspace, onOpenFile, onToast }: WorkspacePageProps) {
   const library = useFileLibrary(workspace.id)
   const [pendingDelete, setPendingDelete] = useState<RealOfficeFile | null>(null)
@@ -95,11 +106,26 @@ export function LibraryPage({ workspace, onOpenFile, onToast }: WorkspacePagePro
         onToast('已取消导入')
         return
       }
-      const parts: string[] = []
-      if (summary.imported > 0) parts.push(`已导入 ${summary.imported} 个文件`)
-      if (summary.failed > 0) parts.push(`${summary.failed} 个失败`)
-      if (summary.skipped > 0) parts.push(`${summary.skipped} 个跳过`)
-      onToast(parts.join('，') || '没有可导入的文件')
+      onToast(summarizeImport(summary))
+    } catch {
+      onToast('导入失败，请稍后重试')
+    }
+  }
+
+  /** 访达拖放导入：结果摘要与按钮导入同一套文案。 */
+  const handleDropFiles = async (files: File[]) => {
+    if (library.importing) {
+      onToast('正在导入中，请稍候')
+      return
+    }
+    try {
+      const summary = await library.importDroppedFiles(files)
+      if (!summary) {
+        onToast('文件库不可用，无法导入')
+        return
+      }
+      if (summary.kind === 'cancelled') return
+      onToast(summarizeImport(summary))
     } catch {
       onToast('导入失败，请稍后重试')
     }
@@ -139,8 +165,14 @@ export function LibraryPage({ workspace, onOpenFile, onToast }: WorkspacePagePro
     onDelete: (item) => setPendingDelete(item),
   }
 
+  // 访达拖放：落点是页面根节点——空库/加载/不可用态也能拖，不只在有内容的浏览器里。
+  const { dragActive, dragProps } = useLibraryDropZone((files) => { void handleDropFiles(files) })
+
   return (
-    <div className="wb-wspage wb-library-page">
+    <div
+      className={dragActive ? 'wb-wspage wb-library-page is-dragover' : 'wb-wspage wb-library-page'}
+      {...dragProps}
+    >
       <header className="wb-wspage-head">
         <h1 className="wb-wspage-title">资料库</h1>
         <div className="wb-file-head-actions">
@@ -167,6 +199,14 @@ export function LibraryPage({ workspace, onOpenFile, onToast }: WorkspacePagePro
 
       {library.state === 'ready' && library.items.length > 0 ? (
         <LibraryBrowser items={library.items} actions={actions} />
+      ) : null}
+
+      {/* 拖放悬停提示：只在拖着文件悬停期间出现，pointer-events:none 防抖动 */}
+      {dragActive ? (
+        <div className="wb-lib-dropzone" aria-hidden="true">
+          <FilePlus2 size={22} aria-hidden="true" />
+          <p>{library.importing ? '正在导入…' : '松手导入到资料库'}</p>
+        </div>
       ) : null}
 
       <ConfirmModal

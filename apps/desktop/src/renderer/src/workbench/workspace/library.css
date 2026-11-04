@@ -299,6 +299,38 @@
   text-align: center;
 }
 
+/* ───────────────── 资料库：访达拖放导入 ───────────────── */
+
+/* 拖着文件悬停在资料库页上：整页给一个柔和的落点提示（虚线描边 + 微提亮）。 */
+.wb-library-page.is-dragover {
+  position: relative;
+  border-radius: var(--ui-radius-lg);
+  outline: 2px dashed var(--ui-accent-line);
+  outline-offset: 4px;
+  background: var(--ui-accent-soft);
+}
+
+/* 悬停期间的覆盖提示：居中一张小卡片，pointer-events:none 防止它自己触发
+ * dragenter/dragleave 计数抖动。 */
+.wb-lib-dropzone {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 8px;
+  pointer-events: none;
+  border-radius: var(--ui-radius-lg);
+  background: color-mix(in srgb, var(--ui-surface) 72%, transparent);
+  color: var(--ui-text-2);
+  z-index: 2;
+}
+.wb-lib-dropzone p {
+  margin: 0;
+  font-size: var(--ui-text-sm);
+  font-weight: 550;
+}
+
 /* ───────────────── 产物页工具条（搜索 / 来源 chips / 视图切换） ───────────────── */
 
 .wb-file-toolbar {
