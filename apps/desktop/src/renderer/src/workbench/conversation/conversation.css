@@ -1326,10 +1326,10 @@
 .wb-note-chip[data-open='true'] .wb-note-chip-pill svg { color: var(--ui-accent); }
 .wb-note-chip-pill:focus-visible { outline: 2px solid var(--ui-accent-line); outline-offset: 2px; }
 
-/* 浮层卡片：绝对定位于徽章下方，盖在对话内容之上。 */
+/* 浮层卡片：输入框在徽章正下方——浮层向上翻（bottom 锚定），不盖输入框。 */
 .wb-note-chip-popover {
   position: absolute;
-  top: calc(100% + 6px);
+  bottom: calc(100% + 6px);
   left: 0;
   z-index: 30; /* 高于消息流与 composer 覆盖层（jump-latest 等在 10 档以内） */
   width: 300px;
@@ -1348,7 +1348,9 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
-  max-height: 240px;
+  /* 最多同时露出 4 张卡片：单卡 ≈ 摘录行(10.5×1.45≈15) + 注释两行(11.5×1.5×2≈35)
+     + 卡内行距 2 + 上下内边距 10 ≈ 62px，外加卡片间 3×2px 间隙；更多滚动。 */
+  max-height: calc(62px * 4 + 6px);
   overflow-y: auto;
 }
 
@@ -1380,12 +1382,17 @@
   text-overflow: ellipsis;
 }
 
-/* 我的注释：正文色 */
+/* 我的注释：正文色；限两行封顶（长注释截断），保证卡片行高稳定——
+   列表的 4 行可视上限（max-height）依赖它。 */
 .wb-note-chip-note {
   color: var(--ui-text);
   font-size: var(--ui-text-xs);
   line-height: 1.5;
   overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
 }
 
 /* 行尾动作：hover 才出现（铅笔改写 / 垃圾桶删除） */
