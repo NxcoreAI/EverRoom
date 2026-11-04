@@ -89,6 +89,8 @@ export interface QueuedAgentSubmission {
   displayPrompt?: string
   /** 文档批注卡片：排队期间乐观气泡仍按卡片渲染。 */
   noteCards?: AgentNoteCard[]
+  /** 气泡正文：批注场景气泡只显示输入框正文；空串＝无气泡（只有卡片）。 */
+  displayContent?: string
   selectedText?: string
   selectedRoomId?: string
   activeDocument?: AgentActiveDocumentContext | null
@@ -1146,12 +1148,18 @@ export function useAgentSession(
     mountedDirectories?: AgentMountedDirectory[],
     /** 文档批注卡片：存在时用户气泡按卡片渲染（原文摘录 + 注释）。 */
     noteCards?: AgentNoteCard[],
+    /** 气泡正文：批注场景气泡只显示输入框正文；空串＝无气泡（只有卡片）。 */
+    displayContent?: string,
   ): Promise<string | null> => {
     const message = prompt.trim()
     const displayPromptValue = displayPrompt?.trim() || undefined
     // 技术指令只进运行时；落库/气泡/标题一律用 displayPrompt（缺省＝用户原话）。
     const displayMessage = displayPromptValue ?? message
     const noteCardsValue = noteCards?.length ? noteCards : undefined
+    // 气泡正文只对批注消息有意义：没有卡片时忽略（普通消息气泡就是正文）。
+    const displayContentValue = noteCardsValue && typeof displayContent === 'string'
+      ? displayContent
+      : undefined
     if ((!message && !attachments?.length) || loading || sending) return null
     if (activeRunId) {
       // 重试（replaceRunId）不排队：replace 只对已终态 run 有意义，排队会丢失其语义。
@@ -1162,6 +1170,7 @@ export function useAgentSession(
         prompt: message,
         ...(displayPromptValue ? { displayPrompt: displayPromptValue } : {}),
         ...(noteCardsValue ? { noteCards: noteCardsValue } : {}),
+        ...(displayContentValue !== undefined ? { displayContent: displayContentValue } : {}),
         selectedText,
         selectedRoomId,
         activeDocument,
@@ -1225,6 +1234,7 @@ export function useAgentSession(
       content: displayMessage,
       createdAt: new Date().toISOString(),
       ...(noteCardsValue ? { noteCards: noteCardsValue } : {}),
+      ...(displayContentValue !== undefined ? { displayContent: displayContentValue } : {}),
       ...(mentionedAgents?.length && !channelAgentRef.current
         ? { referencedAgentNames: mentionedAgents.map((agent) => agent.displayName) }
         : {}),
@@ -1250,6 +1260,8 @@ export function useAgentSession(
         ...(displayPromptValue ? { displayPrompt: displayPromptValue } : {}),
         // 批注卡片只影响气泡渲染，runtime 不收。
         ...(noteCardsValue ? { noteCards: noteCardsValue } : {}),
+        // 气泡正文（批注场景）：空串＝无气泡。runtime 不收。
+        ...(displayContentValue !== undefined ? { displayContent: displayContentValue } : {}),
         // 'main' 时省略 targetAgentId：档位锁定在会话上，由网关按 session.activeAgentId 选运行时。
         ...(selectedAgentId !== 'main' ? { targetAgentId: selectedAgentId } : {}),
         invocationMode: 'explicit_switch',
@@ -1370,6 +1382,7 @@ export function useAgentSession(
           next.displayPrompt,
           next.mountedDirectories,
           next.noteCards,
+          next.displayContent,
         )
       } catch {
         // 失败已在 sendPrompt 内 setError；丢弃该条继续排后面的，避免卡队列。

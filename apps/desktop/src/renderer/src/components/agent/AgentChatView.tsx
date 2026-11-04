@@ -1146,6 +1146,11 @@ export function AgentChatView({
               const mentionItems: MentionedItem[] | null = message.mentions?.length ? message.mentions : null
               const mentionClickable = (item: MentionedItem) => item.kind === 'room' || item.kind === 'file'
                 || (item.kind === 'conversation' && (item.provider === undefined || item.provider === 'everroom'))
+              // 气泡正文：批注消息只显示输入框正文（displayContent）；空串＝纯批注
+              // 发送——无气泡，只有上方卡片。旧数据/普通消息回退 content。
+              const bubbleText = message.noteCards?.length
+                ? (message.displayContent ?? message.content)
+                : message.content
               return (
                 <Fragment key={message.id}>
                   {index === authCardInsertIndex ? <AgentAuthChallengeCard /> : null}
@@ -1169,29 +1174,30 @@ export function AgentChatView({
                     : message.referencedAgentNames?.map((name) => (
                       <span key={name} className="agent-user-mention">@{name}</span>
                     ))}
-                  <article
-                    className="agent-message"
-                    data-agent-message-id={message.id}
-                    data-notification-target={String(highlightedNotificationTarget?.messageId === message.id)}
-                    data-role="user"
-                    data-note-cards={message.noteCards?.length ? 'true' : undefined}
-                  >
-                    {message.noteCards?.length ? (
-                      <UserNoteCards cards={message.noteCards} />
-                    ) : (
-                      <p>{message.content}</p>
-                    )}
-                    <button
-                      type="button"
-                      className="agent-user-copy"
-                      data-copied={String(copiedMessageId === message.id)}
-                      aria-label={t('surface:agentChat.copyPrompt')}
-                      title={t('surface:agentChat.copyPrompt')}
-                      onClick={() => void copyMessage(message.id, message.content)}
+                  {/* 批注卡片：与气泡分离，浮在气泡上方（右对齐同一列）；hover 只读。 */}
+                  {message.noteCards?.length ? (
+                    <UserNoteCards cards={message.noteCards} />
+                  ) : null}
+                  {bubbleText ? (
+                    <article
+                      className="agent-message"
+                      data-agent-message-id={message.id}
+                      data-notification-target={String(highlightedNotificationTarget?.messageId === message.id)}
+                      data-role="user"
                     >
-                      {copiedMessageId === message.id ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
-                    </button>
-                  </article>
+                      <p>{bubbleText}</p>
+                      <button
+                        type="button"
+                        className="agent-user-copy"
+                        data-copied={String(copiedMessageId === message.id)}
+                        aria-label={t('surface:agentChat.copyPrompt')}
+                        title={t('surface:agentChat.copyPrompt')}
+                        onClick={() => void copyMessage(message.id, message.content)}
+                      >
+                        {copiedMessageId === message.id ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+                      </button>
+                    </article>
+                  ) : null}
                   <RunNavigation link={link} pending={link ? undefined : pending} onOpen={onOpenSessionLink} />
                 </Fragment>
               )

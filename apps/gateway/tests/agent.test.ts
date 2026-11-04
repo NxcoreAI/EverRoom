@@ -497,6 +497,8 @@ describe("agent gateway", () => {
       payload: {
         prompt: "我在 Word《报告》选中了这段内容：改一下。 idempotency-padding",
         displayPrompt: "我对 1 处做了批注",
+        // 纯批注发送：气泡正文为空串 → 前端只渲染卡片、不渲染气泡。
+        displayContent: "",
         noteCards: [
           { excerpt: "第一段原文内容", note: "改一下这段", title: "报告" },
           { excerpt: "第二段原文内容", note: "这句删掉" },
@@ -519,8 +521,9 @@ describe("agent gateway", () => {
       { excerpt: "第一段原文内容", note: "改一下这段", title: "报告" },
       { excerpt: "第二段原文内容", note: "这句删掉" },
     ]);
-    // displayPrompt 仍是气泡文案（卡片缺失时的降级路径），noteCards 只增不改。
+    // displayPrompt 仍是落库 content（标题/检索语义），displayContent 只管气泡。
     expect(userMessage?.content).toBe("我对 1 处做了批注");
+    expect(userMessage?.displayContent).toBe("");
 
     // 坏数据（空数组）静默降级为普通消息：不落 note_cards。
     const secondSessionResponse = await app.inject({

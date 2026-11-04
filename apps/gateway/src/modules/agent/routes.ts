@@ -550,6 +550,8 @@ export function agentRoutes(
             prompt: Type.String({ maxLength: 20_000 }),
             /** 用户可见文案（人话）：落库消息/会话标题用它，prompt 仍原样交给 runtime。 */
             displayPrompt: Type.Optional(Type.String({ maxLength: 20_000 })),
+            /** 气泡正文（只影响展示）：批注场景气泡只显示输入框正文，空串＝无气泡。 */
+            displayContent: Type.Optional(Type.String({ maxLength: 20_000 })),
             /** 文档批注卡片（结构化展示）：存在时落库消息带卡片，气泡按卡片渲染。 */
             noteCards: Type.Optional(Type.Array(Type.Object({
               excerpt: Type.String({ minLength: 1, maxLength: 2_000 }),

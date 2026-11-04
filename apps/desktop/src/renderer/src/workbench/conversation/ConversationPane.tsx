@@ -238,7 +238,9 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
     const batch = workspaceAskDrafts.length > 0 ? buildAskBatch(workspaceAskDrafts) : null
     const prompt = batch ? (text ? `${text}\n\n${batch.message}` : batch.message) : text
     const displayPrompt = batch ? (text ? `${text}\n\n${batch.displayMessage}` : batch.displayMessage) : undefined
-    const noteCards = batch && !text ? buildNoteCards(workspaceAskDrafts) : undefined
+    // 批注卡片：有批注就带（气泡正文与卡片分离渲染）；displayContent＝输入框正文，
+    // 空串＝纯批注发送（无气泡，只有卡片）。
+    const noteCards = batch ? buildNoteCards(workspaceAskDrafts) : undefined
     setDraft('')
     setComposerResetKey((key) => key + 1)
     /** 有在跑的 run 时 sendPrompt 会排队并返回 null——排队也算投递成功，不清回输入框。 */
@@ -258,6 +260,7 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
       displayPrompt,
       mountedDirectories.length ? mountedDirectories : undefined,
       noteCards,
+      text,
     ).then((runId) => {
       // 批注已随本轮发出（或已排队）：清掉队列；失败时留在队列里下次再带。
       if (batch && workspaceId && (runId !== null || queuesBehindRun)) {
@@ -292,6 +295,7 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
         batch.displayMessage,
         undefined,
         buildNoteCards(workspaceAskDrafts),
+        '',
       )
       .then((runId) => {
         if (runId === null && !hookRef.current.activeRunId) {

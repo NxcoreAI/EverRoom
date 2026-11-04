@@ -183,13 +183,22 @@ button.agent-user-mention[data-kind='file'] { background: #f6efe2; }
 button.agent-user-mention[data-kind='conversation'] { background: #f3ecfa; }
 button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
 
-/* 文档批注卡片（用户气泡内，只读）：原文摘录 + 注释。气泡整体仍靠
-   .agent-message[data-role='user'] 的底色；卡片行用浅一档的嵌套面板。 */
-.agent-note-cards { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+/* 文档批注卡片（只读，与气泡分离）：浮在用户气泡上方、右对齐同列。
+   不占气泡底色——就是消息流上的一叠便签；hover 靠原生 title 展示全文。 */
+.agent-note-cards {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  min-width: 0;
+  margin-bottom: 4px; /* 与下方气泡（或下一个元素）拉开一点距离 */
+}
 .agent-note-card {
   display: flex;
   flex-direction: column;
   gap: 3px;
+  width: fit-content;
+  max-width: 78%;
   padding: 7px 10px;
   border-left: 2px solid #d0d5dd;
   border-radius: 7px;

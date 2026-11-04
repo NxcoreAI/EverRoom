@@ -331,6 +331,8 @@ export const agentMessages = sqliteTable("agent_messages", {
   content: text("content").notNull(),
   /** 文档批注卡片（JSON 序列化的 AgentNoteCard[]；普通消息为 null）。 */
   noteCards: text("note_cards"),
+  /** 批注消息的气泡正文（空＝只有卡片没有气泡）；null 回退 content。 */
+  displayContent: text("display_content"),
   createdAt: integer("created_at", { mode: "timestamp_ms" })
     .notNull()
     .$defaultFn(() => new Date()),

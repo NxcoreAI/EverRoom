@@ -45,10 +45,11 @@ describe("database migrations", () => {
 
     beforeMerge.sqlite.exec("DROP TABLE runtime_config_store");
     beforeMerge.sqlite.exec("DROP TABLE agent_schedules");
-    // 退游标到合并分支点后，0100+ 的迁移都会重放：0102/0103 的 ADD COLUMN
-    // 在全量库里已存在，先退掉这两列（表本身 0001 就有）。
+    // 退游标到合并分支点后，0100+ 的迁移都会重放：0102/0103/0104 的 ADD COLUMN
+    // 在全量库里已存在，先退掉这些列（表本身 0001 就有）。
     beforeMerge.sqlite.exec("ALTER TABLE journal_entries DROP COLUMN advice");
     beforeMerge.sqlite.exec("ALTER TABLE agent_messages DROP COLUMN note_cards");
+    beforeMerge.sqlite.exec("ALTER TABLE agent_messages DROP COLUMN display_content");
     beforeMerge.sqlite.prepare("DELETE FROM __drizzle_migrations WHERE created_at >= ?").run(1787320000000);
     beforeMerge.sqlite.prepare(
       "INSERT INTO __drizzle_migrations (hash, created_at) VALUES (?, ?)",
@@ -336,10 +337,11 @@ describe("database migrations", () => {
     // 面的迁移上，0094 会被当成历史跳过。
     seeded.sqlite.prepare("DELETE FROM __drizzle_migrations WHERE created_at >= ?").run(workspaceMigrationWhen);
     // 「0094 之前的库」不应有更晚迁移留下的列：0102 给 journal_entries 加过
-    // advice 列、0103 给 agent_messages 加过 note_cards 列，一并退掉，否则
-    // 重放链条延伸到它们时 ADD COLUMN 会撞 duplicate。
+    // advice 列、0103/0104 给 agent_messages 加过 note_cards/display_content
+    // 列，一并退掉，否则重放链条延伸到它们时 ADD COLUMN 会撞 duplicate。
     seeded.sqlite.exec("ALTER TABLE journal_entries DROP COLUMN advice");
     seeded.sqlite.exec("ALTER TABLE agent_messages DROP COLUMN note_cards");
+    seeded.sqlite.exec("ALTER TABLE agent_messages DROP COLUMN display_content");
     seeded.sqlite.prepare(
       "INSERT INTO thesis_format_cards (id, room_id, format_card, source_file_entry_id, source_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
     ).run("card-legacy", "room-1", "{\"page\":{}}", null, "模版.docx", now, now);

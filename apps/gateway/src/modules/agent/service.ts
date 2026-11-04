@@ -336,6 +336,8 @@ function toMessage(row: typeof agentMessages.$inferSelect): AgentMessage {
     content: row.content,
     createdAt: row.createdAt.toISOString(),
     ...(noteCards ? { noteCards } : {}),
+    // 空串＝无气泡（只有批注卡片）；旧数据/普通消息为 null → 气泡回退 content。
+    ...(typeof row.displayContent === "string" ? { displayContent: row.displayContent } : {}),
   };
 }
 
@@ -2211,6 +2213,10 @@ export class AgentService {
         // 批注卡片随消息入库（JSON 文本）：气泡按卡片渲染，重载会话后还原。
         // 条目先做体积/数量收敛，坏数据在这里就被丢弃。
         const noteCards = sanitizeNoteCards(input.noteCards);
+        // 气泡正文只在传了 displayContent 时落库（批注场景）；空串＝只有卡片无气泡。
+        const displayContent = typeof input.displayContent === "string"
+          ? input.displayContent.slice(0, 20_000)
+          : undefined;
         tx.insert(agentMessages).values({
           id: userMessageId,
           sessionId,
@@ -2218,6 +2224,7 @@ export class AgentService {
           role: "user",
           content: displayPrompt,
           ...(noteCards ? { noteCards: JSON.stringify(noteCards) } : {}),
+          ...(noteCards && displayContent !== undefined ? { displayContent } : {}),
           createdAt: now,
         }).run();
         enqueueSearchIndex(tx, { itemType: "message", refId: userMessageId, priority: "high" });

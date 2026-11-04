@@ -371,6 +371,12 @@ export interface AgentMessage {
    * 「原文摘录 + 我的注释」卡片而不是纯文本。content 仍是合并文案（搜索/复制用）。
    */
   noteCards?: AgentNoteCard[];
+  /**
+   * 气泡正文（只影响气泡展示）：有批注卡片的消息气泡只显示输入框正文——
+   * 空串＝不渲染气泡（只剩浮在上方、与气泡分离的批注卡片）；缺省回退 content。
+   * content 仍存合并文案（标题/检索/重试语义不变）。
+   */
+  displayContent?: string;
 }
 
 /** 一条文档批注的展示结构（气泡内卡片，只读）。 */
@@ -1153,6 +1159,12 @@ export interface StartAgentRunInput {
    * 用本字段传用户真正能看懂的一句话。运行时仍只收 prompt；落库消息、会话标题用本字段。
    */
   displayPrompt?: string;
+  /**
+   * 气泡正文（只影响气泡展示）：批注场景气泡只显示输入框正文——正文为空时传
+   * 空串，气泡不渲染（只有浮在上方、与气泡分离的批注卡片）；不传则回退
+   * displayPrompt。落库消息 content 仍用 displayPrompt（列表/检索语义不变）。
+   */
+  displayContent?: string;
   /**
    * 文档批注卡片（与 displayPrompt 同源的结构化展示）：存在时落库消息带
    * noteCards，气泡渲染成卡片列表。runtime 不收本字段。
