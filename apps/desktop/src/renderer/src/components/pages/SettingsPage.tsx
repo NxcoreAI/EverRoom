@@ -623,6 +623,12 @@ export function SettingsPage({
               const periodRemaining = aiRelayStatus?.periodRemainingCredits ?? aiRelayStatus?.remainingCredits ?? 0
               const monthlyQuota = periodRemaining + (aiRelayStatus?.usedCredits ?? 0)
               const grants = aiRelayStatus?.grants ?? []
+              // 无 grants 明细(旧后端)且充值合计>0:合成一条合计兜底行,不显示"暂无"
+              const grantRows = grants.length
+                ? grants
+                : (aiRelayStatus?.topupRemainingCredits ?? 0) > 0
+                  ? [{ id: '__topup_total__', remainingCredits: aiRelayStatus?.topupRemainingCredits ?? 0, amountCredits: aiRelayStatus?.topupRemainingCredits ?? 0, expiresAt: null }]
+                  : []
               const topupTotal = grants.length
                 ? grants.reduce((sum, grant) => sum + grant.remainingCredits, 0)
                 : (aiRelayStatus?.topupRemainingCredits ?? 0)
@@ -684,8 +690,8 @@ export function SettingsPage({
                         <span>{t('surface:settings.planOverviewPurchased')}</span>
                         <strong>{formatCredits(topupTotal, locale)}</strong>
                       </div>
-                      {grants.length ? (
-                        grants.map((grant) => (
+                      {grantRows.length ? (
+                        grantRows.map((grant) => (
                           <div key={grant.id} className="plan-overview-grant">
                             <progress
                               aria-label={t('surface:settings.topupCredits')}
