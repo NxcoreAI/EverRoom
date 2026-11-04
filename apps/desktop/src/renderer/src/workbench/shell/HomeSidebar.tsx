@@ -15,7 +15,7 @@ import {
 import React, { useCallback, useEffect, useState } from 'react'
 
 import everroomAppIcon from '@/assets/everroom-app-icon.png'
-import { formatCredits } from '@/shared/sources'
+import { formatCredits, QUOTA_PER_USD } from '@/shared/sources'
 import { useOptionalAccount } from '@/state/AccountContext'
 
 import { useHomeTab, useWorkbenchStore } from '../state/store'
@@ -68,9 +68,12 @@ export function HomeSidebar() {
     void window.nxcore.aiRelay.status()
       .then((status) => {
         if (!status?.configured) return
-        setCreditsValue(status.remainingCredits)
-        const periodRemaining = status.periodRemainingCredits ?? status.remainingCredits
-        const topupRemaining = status.topupRemainingCredits ?? 0
+        /* status 的 credits 字段是美元口径(quota/500000),formatCredits 按
+           积分口径除(quota/50000)——×QUOTA_PER_USD 还原 quota 再换算。 */
+        const usdToQuota = (usd: number) => usd * QUOTA_PER_USD
+        setCreditsValue(usdToQuota(status.remainingCredits))
+        const periodRemaining = usdToQuota(status.periodRemainingCredits ?? status.remainingCredits)
+        const topupRemaining = usdToQuota(status.topupRemainingCredits ?? 0)
         setCreditsTooltip(
           `套餐内积分 ${formatCredits(periodRemaining, 'en')} · 充值积分 ${formatCredits(topupRemaining, 'en')}`,
         )

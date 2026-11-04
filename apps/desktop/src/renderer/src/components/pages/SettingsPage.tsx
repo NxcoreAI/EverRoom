@@ -36,7 +36,7 @@ import {
 } from '@/state/conversationSuggestionSettings'
 import appleLogo from '@/assets/apple-logo.svg'
 import googleLogo from '@/assets/google-logo.svg'
-import { formatCredits, type AiGatewayStatus, type CloudOidcProvider } from '../../../../shared/sources'
+import { formatCredits, QUOTA_PER_USD, type AiGatewayStatus, type CloudOidcProvider } from '../../../../shared/sources'
 import type { AccountKeyringStatus, CloudDevice } from '../../../../shared/sources'
 import { PageHeader } from './PageHeader'
 import { McpSettingsSection } from '@/components/settings/McpSettingsSection'
@@ -620,8 +620,12 @@ export function SettingsPage({
           <div className="cloud-account-connected">
             {account.subscription ? (() => {
               const isProActive = account.subscription.planCode === 'pro' && ['active', 'trialing'].includes(account.subscription.status)
-              const periodRemaining = aiRelayStatus?.periodRemainingCredits ?? aiRelayStatus?.remainingCredits ?? 0
-              const monthlyQuota = periodRemaining + (aiRelayStatus?.usedCredits ?? 0)
+              /* 后端 credits 字段是美元口径(quota/500000),formatCredits 是积分口径
+                 (quota/50000)——统一 ×QUOTA_PER_USD 还原成 quota 再换算,堵 10 倍错位。 */
+              const usdToQuota = (usd: number) => usd * QUOTA_PER_USD
+              const periodRemaining = usdToQuota(aiRelayStatus?.periodRemainingCredits ?? aiRelayStatus?.remainingCredits ?? 0)
+              const usedQuota = usdToQuota(aiRelayStatus?.usedCredits ?? 0)
+              const monthlyQuota = periodRemaining + usedQuota
               const grants = aiRelayStatus?.grants ?? []
               // 无 grants 明细(旧后端)且充值合计>0:合成一条合计兜底行,不显示"暂无"
               const grantRows = grants.length
@@ -629,12 +633,15 @@ export function SettingsPage({
                 : (aiRelayStatus?.topupRemainingCredits ?? 0) > 0
                   ? [{ id: '__topup_total__', remainingCredits: aiRelayStatus?.topupRemainingCredits ?? 0, amountCredits: aiRelayStatus?.topupRemainingCredits ?? 0, expiresAt: null }]
                   : []
-              const topupTotal = grants.length
+              const topupTotal = usdToQuota(grants.length
                 ? grants.reduce((sum, grant) => sum + grant.remainingCredits, 0)
-                : (aiRelayStatus?.topupRemainingCredits ?? 0)
-              const totalRemaining = aiRelayStatus?.remainingCredits ?? periodRemaining + topupTotal
+                : (aiRelayStatus?.topupRemainingCredits ?? 0))
+              const totalRemaining = usdToQuota(aiRelayStatus?.remainingCredits ?? 0) || periodRemaining + topupTotal
               // 奖励积分 = 总剩余 - 套餐周期剩余 - 充值剩余(注册赠送等 signup_bonus grant)
               const bonusTotal = Math.max(0, totalRemaining - periodRemaining - topupTotal)
+              // 购买列聚合:永不过期的合成一行合计;有到期日的各自一行(过期时间相同也各自占行,因额度独立)
+              const perpetualGrants = grantRows.filter((grant) => !grant.expiresAt)
+              const expiringGrants = grantRows.filter((grant) => grant.expiresAt)
               return (
               <div className="cloud-subscription">
                 <div className="plan-overview-card">
@@ -644,11 +651,18 @@ export function SettingsPage({
                       <strong>{account.subscription.planName}</strong>
                       <small>{subscriptionStatusLabel(account.subscription.status, t)}</small>
                     </div>
-                    {!isProActive ? (
-                      <button type="button" className="topup-buy-button" onClick={() => setPlanModalOpen(true)}>
-                        {t('surface:plans.buyPro')}
-                      </button>
-                    ) : null}
+                    <div className="plan-overview-actions">
+                      {aiRelayStatus?.configured ? (
+                        <button type="button" className="topup-buy-button" onClick={() => setTopupModalOpen(true)}>
+                          {t('surface:settings.topupBuy')}
+                        </button>
+                      ) : null}
+                      {!isProActive ? (
+                        <button type="button" className="topup-buy-button" onClick={() => setPlanModalOpen(true)}>
+                          {t('surface:plans.buyPro')}
+                        </button>
+                      ) : null}
+                    </div>
                   </div>
                   <div className="plan-overview-total">
                     <strong>{aiRelayStatus?.configured ? formatCredits(totalRemaining, locale) : '—'}</strong>
@@ -667,10 +681,10 @@ export function SettingsPage({
                         value={Math.min(Math.max(0, periodRemaining), monthlyQuota)}
                       />
                       <small>
-                        {aiRelayStatus.remainingCredits <= 0
+                        {(aiRelayStatus.remainingCredits ?? 0) <= 0
                           ? t('surface:settings.llmQuotaExhausted')
                           : t('surface:settings.usedUsedTotalTotal', {
-                            used: formatCredits(aiRelayStatus.usedCredits ?? 0, locale),
+                            used: formatCredits(usedQuota, locale),
                             total: formatCredits(monthlyQuota, locale),
                           })}
                         {' · '}{t('surface:settings.periodEnds')} {formatPeriodEnd(account.subscription.periodEnd, locale)}
@@ -690,31 +704,29 @@ export function SettingsPage({
                         <span>{t('surface:settings.planOverviewPurchased')}</span>
                         <strong>{formatCredits(topupTotal, locale)}</strong>
                       </div>
-                      {grantRows.length ? (
-                        grantRows.map((grant) => (
-                          <div key={grant.id} className="plan-overview-grant">
-                            <progress
-                              aria-label={t('surface:settings.topupCredits')}
-                              max={Math.max(1, grant.amountCredits)}
-                              value={Math.min(Math.max(0, grant.remainingCredits), Math.max(1, grant.amountCredits))}
-                            />
-                            <small>
-                              {grant.expiresAt
-                                ? t('surface:settings.topupGrantExpires', { date: formatPeriodEnd(grant.expiresAt, locale) })
-                                : t('surface:settings.topupBalanceNote')}
-                            </small>
-                          </div>
-                        ))
-                      ) : (
-                        <small>{t('surface:settings.planOverviewNoPurchase')}</small>
-                      )}
+                      {perpetualGrants.length ? (
+                        <div className="plan-overview-grant">
+                          <progress
+                            aria-label={t('surface:settings.topupCredits')}
+                            max={Math.max(1, usdToQuota(perpetualGrants.reduce((sum, grant) => sum + grant.amountCredits, 0)))}
+                            value={Math.min(usdToQuota(perpetualGrants.reduce((sum, grant) => sum + grant.remainingCredits, 0)), usdToQuota(perpetualGrants.reduce((sum, grant) => sum + grant.amountCredits, 0)))}
+                          />
+                          <small>{t('surface:settings.topupBalanceNote')}</small>
+                        </div>
+                      ) : null}
+                      {expiringGrants.map((grant) => (
+                        <div key={grant.id} className="plan-overview-grant">
+                          <progress
+                            aria-label={t('surface:settings.topupCredits')}
+                            max={Math.max(1, usdToQuota(grant.amountCredits))}
+                            value={Math.min(Math.max(0, usdToQuota(grant.remainingCredits)), Math.max(1, usdToQuota(grant.amountCredits)))}
+                          />
+                          <small>{t('surface:settings.topupGrantExpires', { date: formatPeriodEnd(grant.expiresAt!, locale) })}</small>
+                        </div>
+                      ))}
+                      {!grantRows.length ? <small>{t('surface:settings.planOverviewNoPurchase')}</small> : null}
                     </div>
                   </div>
-                  ) : null}
-                  {aiRelayStatus?.configured ? (
-                    <button type="button" className="topup-buy-button plan-overview-topup" onClick={() => setTopupModalOpen(true)}>
-                      {t('surface:settings.topupBuy')}
-                    </button>
                   ) : null}
                 </div>
               </div>
