@@ -7,22 +7,8 @@ import { relativeTimeLabel } from '../types'
 import { Badge, Button, EmptyState, IconButton, PageHeader, TextInput } from '../ui/primitives'
 import { ConfirmModal } from '../ui/modal'
 import { workbenchToast } from '../shell/toast'
-import { requestNewSpace } from './parts'
+import { requestNewSpace, workspaceSummary } from './parts'
 import { cn } from '../ui/cn'
-
-function firstLine(value: string | null | undefined): string {
-  const text = value?.trim()
-  if (!text) return ''
-  return text.split(/\r?\n/, 1)[0] ?? ''
-}
-
-/** 一行摘要：描述优先，其次目标，最后本地目录。 */
-function summaryOf(workspace: AgentWorkspace): string {
-  return firstLine(workspace.description)
-    || ((workspace.goals ?? []).length > 0 ? `目标：${(workspace.goals ?? []).join(' · ')}` : '')
-    || workspace.path
-    || '应用托管空间'
-}
 
 /** 项目空间页：真实 workspace 网格 + 搜索 + 新建 / 行内重命名 / 删除确认。 */
 export function SpacesPage() {
@@ -76,9 +62,8 @@ export function SpacesPage() {
   return (
     <div className="wb-home-scroll">
       <PageHeader
-        eyebrow="工作区"
         title="项目空间"
-        subtitle={`${workspaces.length} 个项目空间 · ${totalSessions} 项工作；点开进入独立标签页。`}
+        subtitle={`${workspaces.length} 个项目空间 · ${totalSessions} 项工作`}
         actions={(
           <Button variant="primary" icon={<Plus size={15} />} onClick={requestNewSpace}>
             新建项目空间
@@ -92,13 +77,13 @@ export function SpacesPage() {
             <TextInput
               type="search"
               aria-label="搜索项目空间"
-              placeholder="搜索空间名称、描述或目标"
+              placeholder="搜索名称、描述或目标"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
             />
           </label>
           <span className="wb-home-toolbar-meta">
-            {query.trim() ? `匹配 ${filtered.length} / ${workspaces.length}` : `${workspaces.length} 个空间`}
+            {query.trim() ? `匹配 ${filtered.length} / ${workspaces.length}` : null}
           </span>
         </div>
       ) : null}
@@ -107,11 +92,11 @@ export function SpacesPage() {
         <EmptyState
           icon={<LayoutGrid size={18} />}
           title="还没有项目空间"
-          description="一个项目空间装一个项目的资料、工作与产物；创建后进入三步引导。"
+          description="一个项目空间装一个项目的资料、工作与产物。"
           action={<Button variant="primary" size="sm" icon={<Plus size={13} />} onClick={requestNewSpace}>新建项目空间</Button>}
         />
       ) : filtered.length === 0 ? (
-        <div className="wb-home-empty">没有匹配的空间 · 试试别的关键词。</div>
+        <div className="wb-home-empty">没有匹配的项目空间。</div>
       ) : (
         <div className="wb-home-space-grid">
           {filtered.map((workspace) => {
@@ -159,7 +144,7 @@ export function SpacesPage() {
                           <span className="wb-home-truncate">{workspace.name}</span>
                           {workspace.kind === 'default' ? <Badge tone="neutral">默认</Badge> : null}
                         </span>
-                        <span>{summaryOf(workspace)}</span>
+                        <span>{workspaceSummary(workspace)}</span>
                       </span>
                     </button>
                   )}
@@ -196,7 +181,7 @@ export function SpacesPage() {
               <span className="wb-home-space-icon" aria-hidden="true"><Plus size={17} /></span>
               <span className="wb-home-space-main">
                 <strong>新建项目空间</strong>
-                <span>装一个项目的资料、工作与产物</span>
+                <span>把资料、工作与产物放在一起</span>
               </span>
             </span>
           </button>
@@ -207,7 +192,7 @@ export function SpacesPage() {
         open={pendingDelete !== null}
         onOpenChange={(open) => { if (!open) setPendingDelete(null) }}
         title={`删除项目空间「${pendingDelete?.name ?? ''}」？`}
-        description="空间下的工作会移回默认空间；删除后资料与产物不会再按这个空间归类。"
+        description="空间里的工作会移回默认空间。删除后，资料与产物不再按这个空间归类。"
         confirmLabel="删除空间"
         onConfirm={() => {
           const target = pendingDelete

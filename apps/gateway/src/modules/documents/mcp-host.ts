@@ -63,7 +63,7 @@ const DIAGNOSTIC_FIELDS = [
   "readReceiptResolved", "operationIdCorrected", "blockCount",
   "operationInferred", "finalSequenceCorrected", "adjacentContextStripped",
   "requiredMaximumCharacters", "expectedFinalSequence", "beforeCharacters", "afterCharacters",
-  "originalCode", "repeatedAttempts", "memoryIndexCount", "invalidTargets", "availableTargets",
+  "originalCode", "repeatedAttempts", "invalidTargets", "availableTargets",
 ] as const;
 
 const NON_PROGRESS_PATCH_ERRORS = new Set([

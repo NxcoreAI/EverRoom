@@ -45,6 +45,8 @@ materials/ppt-style-experiments/
 
 # 本地调试截图 / 临时检查产物（UI 迁移验证等），不入库
 .tmp-inspect/
+.tmp-preview/
+.tmp-proto/
 
 # 本地工具 / 调试产物（不入库）
 # DeepSeek Harness 的 office 渲染临时目录（随机后缀，每次运行不同）

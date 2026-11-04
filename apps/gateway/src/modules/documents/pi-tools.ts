@@ -30,8 +30,9 @@ function toPiResult(result: DocumentMcpToolResult): PiAgentRuntimeToolResult {
 /**
  * 文档工具面（P0-4）：不再为每个 run 粘滞「已绑定 Room」。
  *
- * 归属只来自本次调用的 `params.roomId` 或 run 级 `input.roomId`；
- * 都没有即工作区级文稿（roomId 为 null），不再强求从 available_rooms 里选房。
+ * 归属只来自 run 级 `input.roomId`——工具 schema 已不暴露 roomId 参数，
+ * 模型传进来的同名参数不再影响归属；为 null 即工作区级文稿，
+ * 不再强求从 available_rooms 里选房。
  */
 export function createDocumentPiTools(host: DocumentMcpHost): PiAgentRuntimeTool[] {
   return host.listTools().map((definition) => ({
@@ -48,15 +49,13 @@ export function createDocumentPiTools(host: DocumentMcpHost): PiAgentRuntimeTool
         throw new DocumentRouteMismatchError();
       }
       try {
-        const requestedRoomId = typeof params.roomId === "string" ? params.roomId.trim() : "";
-        const roomId = input.roomId ?? (requestedRoomId || null);
         const result = await host.callTool(
           definition.name,
           params,
           {
             agentSessionId: input.sessionId,
             runId: input.runId,
-            roomId,
+            roomId: input.roomId ?? null,
             workspaceId: input.workspaceId ?? null,
             availableRooms: input.availableRooms ?? [],
             ...(input.activeDocument ? { activeDocument: input.activeDocument } : {}),

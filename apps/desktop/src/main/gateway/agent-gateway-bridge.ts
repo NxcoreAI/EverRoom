@@ -6,9 +6,21 @@ import type {
   AgentPermissionModeState,
   AgentThinkingLevel,
   AgentThinkingLevelUpdate,
+  AgentSpaceCandidate,
+  AgentSpaceDefaultRoot,
+  AgentSpaceDetectResult,
+  AgentSpaceLayout,
+  AgentSpaceBackfillReport,
+  AgentSpaceCacheGcResult,
+  AgentSpaceCacheStats,
+  AgentScratchListing,
+  AgentSpaceReconcileReport,
+  AgentSpaceRepairReport,
   AgentWorkspace,
   CreateAgentWorkspaceInput,
   UpdateAgentWorkspaceInput,
+  WorkspaceActivityPage,
+  WorkspaceActivityQuery,
   PendingAgentIntent,
   AgentRun,
   AgentStatusSnapshot,
@@ -23,8 +35,22 @@ import type {
   StartAgentRunInput,
   SubmitPendingAgentIntentInput,
   UpdateAgentSessionInput,
+  PlanItem,
+  PlanItemEvent,
+  PlanItemListQuery,
+  CreatePlanItemInput,
+  UpdatePlanItemInput,
+  MovePlanItemInput,
+  PlanAssignResult,
+  PlanClaimPackage,
+  PlanBatchInput,
+  PlanBatchResult,
 } from '@nxcore/agent-contract'
 import { isAgentSocketFrame } from '@nxcore/agent-contract'
+import type {
+  AgentPersonaDto, AgentSkillDetailDto, AgentSkillDto, AgentSkillsSnapshotDto,
+  CreateAgentSkillInput, JournalTodayDto, MemoryEntryDto, MemoryProfileDto,
+} from '../../shared/sources'
 import type { AxiosRequestConfig } from 'axios'
 import { isAxiosError } from 'axios'
 import type { WebContents } from 'electron'
@@ -64,6 +90,13 @@ interface Subscription {
   reconnectTimer: NodeJS.Timeout | null
 }
 
+interface PlanSubscription {
+  workspaceId: string
+  controller: AbortController
+  closed: boolean
+  reconnectTimer: NodeJS.Timeout | null
+}
+
 interface RunWatch {
   sessionId: string
   socket: WebSocket | null
@@ -74,6 +107,8 @@ interface RunWatch {
 export class AgentGatewayBridge {
   private readonly subscriptions = new Map<number, Subscription>()
   private readonly contentsLifecycle = new WebContentsLifecycle()
+  /** 每个窗口可同时订阅多个空间（两个工作空间标签都停在计划页时）。 */
+  private readonly planSubscriptions = new Map<number, Map<string, PlanSubscription>>()
   private readonly runWatches = new Map<string, RunWatch>()
   private eventObserver: ((event: AgentEvent) => void) | null = null
 
@@ -119,8 +154,6 @@ export class AgentGatewayBridge {
       return this.startRun(input.sessionId, {
         prompt: input.prompt,
         idempotencyKey: input.idempotencyKey,
-        captureMemory: false,
-        recallMemory: false,
         toolsEnabled: false,
       })
     }
@@ -139,6 +172,223 @@ export class AgentGatewayBridge {
     return this.request('/v1/agent/status')
   }
 
+  /** 单个 Agent 的人格定义（名称/简介/系统提示词/技能），「智能体」页人格段用。 */
+  getAgentDefinition(agentId: string): Promise<AgentPersonaDto> {
+    return this.request(`/v1/agent/definition/${encodeURIComponent(agentId)}`)
+  }
+
+  /** 「技能」页清单：内置 Agent bundle 与子 Agent 清单里的 SKILL.md。 */
+  listSkills(): Promise<AgentSkillsSnapshotDto> {
+    return this.request('/v1/skills')
+  }
+
+  /** 技能详情（含 SKILL.md 全文）。 */
+  async getSkill(skillId: string): Promise<AgentSkillDetailDto | null> {
+    try {
+      return await this.request<AgentSkillDetailDto>(`/v1/skills/${encodeURIComponent(skillId)}`)
+    } catch (error) {
+      if (isAxiosError(error) && error.response?.status === 404) return null
+      throw error
+    }
+  }
+
+  /** 启停技能；网关落库后立即重装运行时。 */
+  setSkillEnabled(skillId: string, enabled: boolean): Promise<AgentSkillDto> {
+    return this.request<AgentSkillDto>(`/v1/skills/${encodeURIComponent(skillId)}`, {
+      method: 'PATCH',
+      data: { enabled },
+    })
+  }
+
+  /** 手写一个用户技能（网关生成 SKILL.md 并立即重装运行时）。 */
+  createSkill(input: CreateAgentSkillInput): Promise<AgentSkillDto> {
+    return this.request<AgentSkillDto>('/v1/skills', { method: 'POST', data: input })
+  }
+
+  /** 从一个含 SKILL.md 的本地文件夹导入技能。 */
+  importSkillDirectory(sourceDirectory: string): Promise<AgentSkillDto> {
+    return this.request<AgentSkillDto>('/v1/skills/import', {
+      method: 'POST',
+      data: { sourceDirectory },
+    })
+  }
+
+  /** 删除用户技能（网关同时重装运行时）。 */
+  deleteSkill(skillId: string): Promise<void> {
+    return this.request<{ removed: boolean }>(`/v1/skills/${encodeURIComponent(skillId)}`, {
+      method: 'DELETE',
+    }).then(() => undefined)
+  }
+
+  /** 长期记忆条目（hippo-memory，网关进程内库）。 */
+  listMemoryEntries(input: { limit?: number; scope?: string } = {}): Promise<{ items: MemoryEntryDto[] }> {
+    const query = new URLSearchParams()
+    if (input.limit !== undefined) query.set('limit', String(input.limit))
+    if (input.scope !== undefined) query.set('scope', input.scope)
+    const suffix = query.size > 0 ? `?${query.toString()}` : ''
+    return this.request(`/v1/memory/entries${suffix}`)
+  }
+
+  /**
+   * 用户画像（网关 `/v1/memory/profile`）：聚合产物优先，没有聚合时按标签兜底分组。
+   * 分组口径只维护在网关侧，渲染层不做标签白名单——两处各一份必然对不上。
+   */
+  getMemoryProfile(input: { limit?: number } = {}): Promise<MemoryProfileDto> {
+    const query = new URLSearchParams()
+    if (input.limit !== undefined) query.set('limit', String(input.limit))
+    const suffix = query.size > 0 ? `?${query.toString()}` : ''
+    return this.request(`/v1/memory/profile${suffix}`)
+  }
+
+  /** 当天日记的当前版本（主页「今日洞察」）。无条目时 entry=null，不是错误。 */
+  getJournalToday(): Promise<JournalTodayDto> {
+    return this.request('/v1/journal/today')
+  }
+
+  /** 手动重写当天日记（绕过最小间隔；去抖与单飞行仍在网关侧生效）。 */
+  refreshJournal(): Promise<JournalTodayDto> {
+    return this.request('/v1/journal/refresh', { method: 'POST' })
+  }
+
+  /** 计划看板：本空间的全部任务（服务端按 rank 排序，渲染层按列分组）。 */
+  listPlanItems(query: PlanItemListQuery): Promise<{ items: PlanItem[] }> {
+    const search = new URLSearchParams({ workspaceId: query.workspaceId })
+    if (query.status) search.set('status', query.status)
+    if (query.owner) search.set('owner', query.owner)
+    if (query.q) search.set('q', query.q)
+    if (query.limit) search.set('limit', String(query.limit))
+    return this.request(`/v1/plan/items?${search.toString()}`)
+  }
+
+  createPlanItem(input: CreatePlanItemInput): Promise<PlanItem> {
+    return this.request('/v1/plan/items', { method: 'POST', data: input })
+  }
+
+  getPlanItem(itemId: string): Promise<PlanItem> {
+    return this.request(`/v1/plan/items/${encodeURIComponent(itemId)}`)
+  }
+
+  updatePlanItem(itemId: string, input: UpdatePlanItemInput): Promise<PlanItem> {
+    return this.request(`/v1/plan/items/${encodeURIComponent(itemId)}`, { method: 'PATCH', data: input })
+  }
+
+  movePlanItem(itemId: string, input: MovePlanItemInput): Promise<PlanItem> {
+    return this.request(`/v1/plan/items/${encodeURIComponent(itemId)}/move`, { method: 'POST', data: input })
+  }
+
+  releasePlanItem(itemId: string, reason: string): Promise<PlanItem> {
+    return this.request(`/v1/plan/items/${encodeURIComponent(itemId)}/release`, {
+      method: 'POST',
+      data: { reason },
+    })
+  }
+
+  assignPlanItem(itemId: string, agentId?: string): Promise<PlanAssignResult> {
+    return this.request(`/v1/plan/items/${encodeURIComponent(itemId)}/assign`, {
+      method: 'POST',
+      data: agentId ? { agentId } : {},
+    })
+  }
+
+  deletePlanItem(itemId: string): Promise<PlanItem> {
+    return this.request(`/v1/plan/items/${encodeURIComponent(itemId)}`, { method: 'DELETE' })
+  }
+
+  batchPlanItems(input: PlanBatchInput): Promise<PlanBatchResult> {
+    return this.request('/v1/plan/items/batch', { method: 'POST', data: input })
+  }
+
+  listPlanEvents(itemId: string): Promise<{ events: PlanItemEvent[] }> {
+    return this.request(`/v1/plan/items/${encodeURIComponent(itemId)}/events`)
+  }
+
+  getPlanClaimPackage(itemId: string): Promise<PlanClaimPackage> {
+    return this.request(`/v1/plan/items/${encodeURIComponent(itemId)}/claim-package`)
+  }
+
+  /**
+   * 看板实时流（SSE → 渲染层 `plan:changed`）。
+   *
+   * 每个窗口一条订阅（同一时刻只看一个空间），断线 1s 后自动重连；
+   * 渲染层还有 30s 兜底轮询，所以这里丢事件不会造成不一致。
+   */
+  subscribePlanEvents(contents: WebContents, workspaceId: string): void {
+    const rooms = this.planSubscriptions.get(contents.id) ?? new Map<string, PlanSubscription>()
+    this.planSubscriptions.set(contents.id, rooms)
+    this.contentsLifecycle.observe(contents, () => this.unsubscribePlanEvents(contents))
+    if (rooms.has(workspaceId)) return
+    const subscription: PlanSubscription = {
+      workspaceId,
+      controller: new AbortController(),
+      closed: false,
+      reconnectTimer: null,
+    }
+    rooms.set(workspaceId, subscription)
+    void this.runPlanStream(contents, subscription)
+  }
+
+  /** 不传 workspaceId = 退订该窗口的全部计划流（窗口销毁时用）。 */
+  unsubscribePlanEvents(contents: WebContents, workspaceId?: string): void {
+    const rooms = this.planSubscriptions.get(contents.id)
+    if (!rooms) return
+    const closing = workspaceId ? [workspaceId] : [...rooms.keys()]
+    for (const key of closing) {
+      const subscription = rooms.get(key)
+      if (!subscription) continue
+      rooms.delete(key)
+      subscription.closed = true
+      if (subscription.reconnectTimer) clearTimeout(subscription.reconnectTimer)
+      subscription.controller.abort()
+    }
+    if (rooms.size === 0) this.planSubscriptions.delete(contents.id)
+  }
+
+  private async runPlanStream(contents: WebContents, subscription: PlanSubscription): Promise<void> {
+    try {
+      const connection = await this.supervisor.ensureConnection()
+      const url = new URL('/v1/plan/stream', connection.baseUrl)
+      url.searchParams.set('workspaceId', subscription.workspaceId)
+      const response = await fetch(url, {
+        headers: { Authorization: `Bearer ${connection.token}` },
+        signal: subscription.controller.signal,
+      })
+      if (!response.ok || !response.body) throw new Error(`plan_stream_${response.status}`)
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      for (;;) {
+        const { value, done } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        let boundary = buffer.indexOf('\n\n')
+        while (boundary >= 0) {
+          const chunk = buffer.slice(0, boundary)
+          buffer = buffer.slice(boundary + 2)
+          const dataLine = chunk.split('\n').find((line) => line.startsWith('data:'))
+          if (dataLine) {
+            try {
+              const payload = JSON.parse(dataLine.slice(5).trim()) as unknown
+              if (!contents.isDestroyed() && !subscription.closed) {
+                contents.send('plan:changed', payload)
+              }
+            } catch {
+              // 半条 SSE 帧（网关重启）忽略，重连后靠轮询补齐。
+            }
+          }
+          boundary = buffer.indexOf('\n\n')
+        }
+      }
+    } catch {
+      // 连接失败/被中止都走同一条重连路径。
+    }
+    if (subscription.closed || contents.isDestroyed()) return
+    subscription.reconnectTimer = setTimeout(() => {
+      subscription.reconnectTimer = null
+      if (subscription.closed || contents.isDestroyed()) return
+      void this.runPlanStream(contents, subscription)
+    }, 1_000)
+  }
+
   createSession(input: CreateAgentSessionInput): Promise<AgentSession> {
     return this.request('/v1/agent/sessions', { method: 'POST', data: input })
   }
@@ -155,10 +405,15 @@ export class AgentGatewayBridge {
     return this.request(`/v1/agent/session-links/${encodeURIComponent(linkId)}/return`, { method: 'POST' })
   }
 
-  listSessions(pageLabel?: string, roomId?: string | null): Promise<AgentSession[]> {
+  listSessions(
+    pageLabel?: string,
+    roomId?: string | null,
+    workspaceId?: string,
+  ): Promise<AgentSession[]> {
     const query = new URLSearchParams()
     if (pageLabel) query.set('pageLabel', pageLabel)
     if (roomId !== undefined) query.set('roomId', roomId ?? '')
+    if (workspaceId) query.set('workspaceId', workspaceId)
     return this.request(`/v1/agent/sessions?${query}`)
   }
 
@@ -205,6 +460,21 @@ export class AgentGatewayBridge {
     return this.request('/v1/agent/workspaces', { method: 'POST', data: input })
   }
 
+  /**
+   * 概览「动态」：网关按 (at, id) 游标派生的一页事件（runs + 文件库 + 计划事件流）。
+   * 不是独立实体，见 `docs/workspace-overview-activity-plan.zh-CN.md` §5。
+   */
+  listWorkspaceActivities(workspaceId: string, query: WorkspaceActivityQuery = {}): Promise<WorkspaceActivityPage> {
+    const search = new URLSearchParams()
+    if (query.limit !== undefined) search.set('limit', String(query.limit))
+    if (query.beforeAt) search.set('beforeAt', query.beforeAt)
+    if (query.beforeId) search.set('beforeId', query.beforeId)
+    const suffix = search.size > 0 ? `?${search.toString()}` : ''
+    return this.request(
+      `/v1/agent/workspaces/${encodeURIComponent(workspaceId)}/activities${suffix}`,
+    )
+  }
+
   updateWorkspace(workspaceId: string, input: UpdateAgentWorkspaceInput): Promise<AgentWorkspace> {
     return this.request(`/v1/agent/workspaces/${encodeURIComponent(workspaceId)}`, {
       method: 'PATCH',
@@ -214,6 +484,83 @@ export class AgentGatewayBridge {
 
   deleteWorkspace(workspaceId: string): Promise<void> {
     return this.request(`/v1/agent/workspaces/${encodeURIComponent(workspaceId)}`, { method: 'DELETE' })
+  }
+
+  /** 项目空间默认落点预览（`<dataDir>/Workspace/<slug>`），新建弹窗用。 */
+  previewDefaultRoot(name: string): Promise<AgentSpaceDefaultRoot | null> {
+    return this.request(`/v1/workspaces/default-root?name=${encodeURIComponent(name)}`)
+  }
+
+  /** 判定某目录是不是项目空间（只看 `.everoffice/space.json`；v1 的根上 `space.everoffice` 也认）。 */
+  detectSpace(dir: string): Promise<AgentSpaceDetectResult> {
+    return this.request('/v1/workspaces/detect', { method: 'POST', data: { dir } })
+  }
+
+  /** 接管已有目录为项目空间（保留 spaceId；复制品可 reassignSpaceId）。 */
+  adoptSpace(input: { dir: string; name?: string; reassignSpaceId?: boolean }): Promise<AgentWorkspace> {
+    return this.request('/v1/workspaces/adopt', { method: 'POST', data: input })
+  }
+
+  /** 搬移空间目录（整个目录跟着走）。 */
+  relocateSpace(workspaceId: string, dir: string): Promise<AgentWorkspace> {
+    return this.request(`/v1/agent/workspaces/${encodeURIComponent(workspaceId)}/relocate`, {
+      method: 'POST',
+      data: { dir },
+    })
+  }
+
+  /** 扫容器根，列出磁盘上发现的项目空间（含是否已注册）。 */
+  discoverSpaces(): Promise<AgentSpaceCandidate[]> {
+    return this.request('/v1/workspaces/discover')
+  }
+
+  /** 空间目录快照（路径 + 健康）；未绑定目录时网关返回 409，调用方按空态处理。 */
+  getSpaceLayout(workspaceId: string): Promise<AgentSpaceLayout> {
+    return this.request<AgentSpaceLayout>(`/v1/agent/workspaces/${encodeURIComponent(workspaceId)}/layout`)
+  }
+
+  /** 幂等修复：补缺失目录 / 补缺失标记。 */
+  repairSpaceLayout(workspaceId: string): Promise<AgentSpaceRepairReport> {
+    return this.request<AgentSpaceRepairReport>(
+      `/v1/agent/workspaces/${encodeURIComponent(workspaceId)}/layout/repair`,
+      { method: 'POST' },
+    )
+  }
+
+  /** 资料库对账：盘上删了→missing、回来了→恢复、多了→入库。 */
+  reconcileSpaceLibrary(workspaceId: string): Promise<AgentSpaceReconcileReport> {
+    return this.request<AgentSpaceReconcileReport>(
+      `/v1/agent/workspaces/${encodeURIComponent(workspaceId)}/library/reconcile`,
+      { method: 'POST' },
+    )
+  }
+
+  /** 空间缓存占用（tmp / derived / objects）。 */
+  spaceCacheStats(workspaceId: string): Promise<AgentSpaceCacheStats> {
+    return this.request<AgentSpaceCacheStats>(`/v1/agent/workspaces/${encodeURIComponent(workspaceId)}/cache`)
+  }
+
+  /** `.tmp/` 只读清单（临时文件入口；网关只读目录，不写库）。 */
+  spaceScratchFiles(workspaceId: string): Promise<AgentScratchListing> {
+    return this.request<AgentScratchListing>(
+      `/v1/agent/workspaces/${encodeURIComponent(workspaceId)}/cache/scratch`,
+    )
+  }
+
+  /** 缓存回收：tmp/derived 按龄、objects 按引用、回收站 30 天。 */
+  gcSpaceCache(workspaceId: string): Promise<AgentSpaceCacheGcResult> {
+    return this.request<AgentSpaceCacheGcResult>(
+      `/v1/agent/workspaces/${encodeURIComponent(workspaceId)}/cache/gc`,
+      { method: 'POST' },
+    )
+  }
+
+  /** 存量懒回填：把只在对象库里的老条目落到空间 Library。 */
+  backfillSpaceLibrary(workspaceId: string, limit = 100): Promise<AgentSpaceBackfillReport> {
+    return this.request<AgentSpaceBackfillReport>(
+      `/v1/agent/workspaces/${encodeURIComponent(workspaceId)}/library/backfill`,
+      { method: 'POST', data: { limit } },
+    )
   }
 
   getEvents(sessionId: string, runId: string, afterSeq: number): Promise<AgentEvent[]> {

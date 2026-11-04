@@ -25,7 +25,7 @@ export interface GatewayConnection {
   version: string
 }
 
-// 冷启动（全新数据目录跑迁移 + electron/KS/MemoryCore 并行 tsx 编译争抢 IO）实测可达
+// 冷启动（全新数据目录跑迁移 + electron/KS 并行 tsx 编译争抢 IO）实测可达
 // 一分钟以上，60s 会误杀：拉长到 3 分钟只影响异常场景的失败反馈时延。
 const STARTUP_TIMEOUT_MS = 180_000
 const SHUTDOWN_TIMEOUT_MS = 5_000
@@ -130,7 +130,7 @@ export class GatewaySupervisor {
   constructor(
     private readonly dataDirectory: string,
     /**
-     * 注入 gateway 子进程的额外环境变量(如托管 MemoryCore 的连接信息)。
+     * 注入 gateway 子进程的额外环境变量。
      * 支持 getter:每次 start() 求值——惰性 spawn 的服务(cursor-completion)
      * 在 respawn 时拿到最新 runtime config 派生的 env。
      */

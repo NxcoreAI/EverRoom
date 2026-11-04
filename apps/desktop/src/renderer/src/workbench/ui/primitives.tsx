@@ -138,6 +138,36 @@ export function EmptyState({ icon, title, description, action, className }: {
   )
 }
 
+/* ───────────────── 开关 ───────────────── */
+
+/**
+ * 单个能力的启用/停用开关（原生 button + role="switch"）。
+ * 不用 checkbox：这里的语义是「立即生效的开关」，不是表单字段。
+ */
+export function Toggle({ checked, onChange, label, disabled = false, busy = false }: {
+  checked: boolean
+  onChange: (next: boolean) => void
+  /** 无障碍名（读屏与按钮 title 共用）。 */
+  label: string
+  disabled?: boolean
+  busy?: boolean
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      title={label}
+      disabled={disabled || busy}
+      className={cn('ui-toggle', checked && 'is-on', busy && 'is-busy')}
+      onClick={() => onChange(!checked)}
+    >
+      <span className="ui-toggle-knob" aria-hidden="true" />
+    </button>
+  )
+}
+
 /* ───────────────── 页头 ───────────────── */
 
 export function PageHeader({ title, subtitle, actions, eyebrow }: {

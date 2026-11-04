@@ -1,5 +1,5 @@
 import { Loader2, X } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { catalogToOfficeFile } from '@/office-proto/data'
 import { HomePageHost } from '../home/HomePageHost'
@@ -12,6 +12,7 @@ import { HomeSidebar } from './HomeSidebar'
 import { TabBar } from './TabBar'
 import { CommandPalette } from './CommandPalette'
 import { Toaster } from './Toaster'
+import { workbenchToast } from './toast'
 import { WorkspaceSidebar } from './WorkspaceSidebar'
 import { WorkspaceTabHost } from './WorkspaceTabHost'
 import '../ui/ui.css'
@@ -93,6 +94,111 @@ export function Workbench() {
       disposed = true
       unsubscribe()
     }
+  }, [])
+
+  /**
+   * Office「AI 修改」浮层转发（Word 选区浮层 / slides 弹层共用通道）：
+   * 主进程已按 webContents id 反查出所属工作空间，这里激活该空间标签（没有
+   * 对话视图时切到新工作草稿），再把消息放进 store 由对话面板挂载后消费。
+   */
+  useEffect(() => {
+    const office = window.nxcore?.office
+    if (!office?.onAgentAsk) return
+    return office.onAgentAsk((event) => {
+      const workspaceId = event.workspaceId ?? event.roomId ?? null
+      if (!workspaceId) {
+        workbenchToast('这条批注没有归属工作空间，无法发送给 Agent')
+        return
+      }
+      const state = useWorkbenchStore.getState()
+      if (!state.workspaces.some((workspace) => workspace.id === workspaceId)) {
+        workbenchToast('该文件所属的工作空间还没同步到工作台，请稍后重试')
+        return
+      }
+      if (event.mode === 'queue') {
+        // 攒批注不抢焦点：用户还在文档里挑下一处，跳标签会打断他。
+        state.addAskDraft({
+          id: crypto.randomUUID(),
+          workspaceId,
+          ...(event.fileId ? { fileId: event.fileId } : {}),
+          ...(event.title ? { title: event.title } : {}),
+          ...(event.instruction ? { instruction: event.instruction } : {}),
+          ...(event.excerpt ? { excerpt: event.excerpt } : {}),
+          ...(event.anchor ? { anchor: event.anchor } : {}),
+          message: event.message,
+          ...(event.displayMessage ? { displayMessage: event.displayMessage } : {}),
+          createdAt: new Date().toISOString(),
+        })
+        const count = useWorkbenchStore.getState().askDrafts
+          .filter((draft) => draft.workspaceId === workspaceId).length
+        const spaceName = state.workspaces.find((workspace) => workspace.id === workspaceId)?.name
+        workbenchToast(
+          `已加入批注（${count} 条${spaceName ? ` · ${spaceName}` : ''}），在该空间的对话上方可一次全部发送`,
+        )
+        return
+      }
+      const tab = state.tabs.find(
+        (item) => item.kind === 'workspace' && item.workspaceId === workspaceId,
+      )
+      const keepsConversation = tab?.kind === 'workspace'
+        && (tab.view.kind === 'session' || tab.view.kind === 'draft')
+      // 已有对话视图就保留（不打断正在跑的 run），否则切到新工作草稿。
+      state.openWorkspaceTab(workspaceId, keepsConversation ? undefined : { kind: 'draft' })
+      state.setPendingAgentAsk({
+        id: crypto.randomUUID(),
+        workspaceId,
+        message: event.message,
+        ...(event.displayMessage ? { displayMessage: event.displayMessage } : {}),
+      })
+    })
+  }, [])
+
+  /** 批注队列快照同步：宿主队列（事实）→ 主进程 → 对应文档视图（锚点 + 面板）。 */
+  const askDrafts = useWorkbenchStore((state) => state.askDrafts)
+  const syncedAskQueues = useRef<Map<string, string>>(new Map())
+  useEffect(() => {
+    const office = window.nxcore?.office
+    if (!office?.syncAskQueue) return
+    const grouped = new Map<string, typeof askDrafts>()
+    for (const draft of askDrafts) {
+      if (!draft.fileId) continue
+      grouped.set(draft.fileId, [...(grouped.get(draft.fileId) ?? []), draft])
+    }
+    const fileIds = new Set([...grouped.keys(), ...syncedAskQueues.current.keys()])
+    for (const fileId of fileIds) {
+      const items = (grouped.get(fileId) ?? []).map((draft) => ({
+        id: draft.id,
+        instruction: draft.instruction ?? draft.displayMessage ?? draft.message,
+        ...(draft.excerpt ? { excerpt: draft.excerpt } : {}),
+        fromBlockIndex: draft.anchor?.fromBlockIndex ?? 0,
+        toBlockIndex: draft.anchor?.toBlockIndex ?? 0,
+        kind: draft.anchor?.kind ?? 'text',
+      }))
+      const signature = JSON.stringify(items)
+      if (syncedAskQueues.current.get(fileId) === signature) continue
+      syncedAskQueues.current.set(fileId, signature)
+      office.syncAskQueue({ fileId, items })
+    }
+  }, [askDrafts])
+
+  /** 文档内批注面板的动作：移除一条 / 全部发送（后者先激活对话标签，再点一次发送）。 */
+  useEffect(() => {
+    const office = window.nxcore?.office
+    if (!office?.onAskQueueAction) return
+    return office.onAskQueueAction((event) => {
+      const state = useWorkbenchStore.getState()
+      if (event.action.kind === 'remove') {
+        state.removeAskDraft(event.action.draftId)
+        return
+      }
+      const tab = state.tabs.find(
+        (item) => item.kind === 'workspace' && item.workspaceId === event.workspaceId,
+      )
+      const keepsConversation = tab?.kind === 'workspace'
+        && (tab.view.kind === 'session' || tab.view.kind === 'draft')
+      state.openWorkspaceTab(event.workspaceId, keepsConversation ? undefined : { kind: 'draft' })
+      state.requestAskQueueSend()
+    })
   }, [])
 
   // 快捷键：⌘N 新建工作 / ⌘B 侧栏 / ⌘J 气泡窗（由工作空间标签自己响应）。

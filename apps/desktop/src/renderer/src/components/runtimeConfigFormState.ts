@@ -207,8 +207,8 @@ function specialSlotPayload(slot: SpecialModelAssignment, generic: ManualAiConfi
 
 /**
  * 表单 → user 源 payload。只写配置过的槽位，其余槽位从 payload 删除
- * （= 用官方）；已删子系统的历史槽位（asr/transcriptionSummary/memory/
- * knowledge）不在这里管理，由 gateway 读取与保存时静默剥离。
+ * （= 用官方）；已删子系统的历史槽位（asr/transcriptionSummary/knowledge）
+ * 不在这里管理，由 gateway 读取与保存时静默剥离。
  * webSearch 的 apiKey 走 mutation envelope（set/keep/delete）。
  */
 export function buildUserPayload(

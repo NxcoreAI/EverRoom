@@ -1,0 +1,141 @@
+/* ─────────────────────────────────────────────────────────────────────────────
+   Agent 链路剖析看板 — 设计令牌（浅色纸面 / 分层优先）
+
+   三条纪律：
+   1. 色彩克制：蓝色只表示「主指标 / 模型相关」，青色只表示「工具」，
+      琥珀只表示「成本 / 慢」，红色只表示「失败」。其余一律灰阶。
+   2. 层级靠留白与字号，不靠装饰：卡片只保留 1px 边线，无阴影、无渐变、圆角 ≤ 4px。
+   3. 正文最小 12px、数字最小 11px；等宽只用在数字与标识，不用在中文标签上。
+   ───────────────────────────────────────────────────────────────────────────── */
+
+:root {
+  color-scheme: light;
+
+  /* 纸面与层次 */
+  --paper: #f6f6f3;
+  --surface: #ffffff;
+  --surface-2: #fbfbf9;
+  --surface-3: #f1f1ec;
+
+  /* 描线（只用于分隔，不做装饰） */
+  --line-soft: #eeeeea;
+  --line: #e2e2dc;
+  --line-strong: #cfcfc7;
+
+  /* 文字：主 / 次 / 弱 / 极弱 */
+  --ink: #17181a;
+  --ink-2: #55575a;
+  --ink-3: #83858a;
+  --ink-4: #a8aaae;
+
+  /* 语义色（浅色背景下可读的深色版） */
+  --accent: #2f6df0;      /* 主指标 / 交互 / 模型生成 */
+  --accent-soft: #e9effe;
+  --tool: #0f8f8f;        /* 工具 */
+  --cost: #a9721a;        /* 成本 */
+  --warn: #b57a12;        /* 慢 / 需注意 */
+  --err: #c0392f;         /* 失败 */
+  --ok: #2c8159;          /* 成功 */
+  --wait: #d4d4cc;        /* 等待 / 未归因 */
+  --ctx: #5a6474;         /* 上下文 */
+
+  /* 字体 */
+  --font-ui: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, "PingFang SC", monospace;
+
+  /* 字号：数字 > 标题 > 正文 > 标签 */
+  --fs-kpi: 23px;
+  --fs-title: 14px;
+  --fs-lead: 13px;   /* 结论句 */
+  --fs-body: 12.5px;
+  --fs-small: 12px;
+  --fs-label: 11px;
+  --fs-micro: 10.5px;
+
+  /* 间距（4 的倍数，层级差 = 2×） */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 24px;
+
+  --radius: 3px;
+  --rail-width: 236px;
+  --header-height: 48px;
+  --drawer-width: 560px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font: var(--fs-body)/1.6 var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+}
+
+#agent-dashboard-root {
+  height: 100%;
+}
+
+/* 数字：等宽 + 位对齐 */
+.num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+/* 中文小标签：正常字重、不加字距（避免满屏「仪表盘」腔调） */
+.label {
+  font-size: var(--fs-label);
+  color: var(--ink-3);
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent-soft);
+  outline-offset: 1px;
+  border-radius: 2px;
+}
+
+::selection {
+  background: var(--accent-soft);
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #d9d9d2;
+  border: 3px solid var(--paper);
+  border-radius: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

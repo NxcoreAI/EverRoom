@@ -181,14 +181,14 @@ function toItem(
   const name = meta?.name ?? prettyName(provider)
   const scopes = meta?.scopes ?? (provider.dataTypes.length > 0
     ? provider.dataTypes.map((t) => DATA_TYPE_SCOPES[t] ?? t)
-    : ['即席查询'])
+    : ['按需查询'])
   const iconUrl = iconUrls.get(provider.provider) ?? null
   // 三态：有活跃连接 → active；否则有墓碑（oo 凭据在但被关）→ linked；都没有 → unlinked。
   const state: ConnState = connections.length > 0 ? 'active' : paused.length > 0 ? 'linked' : 'unlinked'
   return {
     provider: provider.provider,
     name,
-    desc: meta?.desc ?? 'Agent 工作途中可即席查询该来源',
+    desc: meta?.desc ?? 'Agent 在工作中可直接查询该来源',
     category: meta?.category ?? categoryOf(provider),
     slug: meta?.slug ?? 'generic',
     color: meta?.color ?? '#0a84ff',
@@ -464,7 +464,7 @@ export function ConnectorsView({ onToast }: { onToast: (msg: string) => void }) 
     }
     const api = window.nxcore?.nangoConnector
     if (!api) {
-      onToast('当前是原型预览，未连接桌面服务。')
+      onToast('未连接桌面服务，暂时不能操作。')
       return
     }
     if (item.comingSoon) {
@@ -486,7 +486,7 @@ export function ConnectorsView({ onToast }: { onToast: (msg: string) => void }) 
           const status = await api.authorizationStatus(attempt.id)
           if (status.status === 'connected') {
             await refresh()
-            onToast(`「${item.name}」已连接，Agent 可随时查询。`)
+            onToast(`已连接「${item.name}」，Agent 在工作中可以直接查询。`)
             return
           }
           if (status.status === 'failed' || status.status === 'expired') {
@@ -515,7 +515,7 @@ export function ConnectorsView({ onToast }: { onToast: (msg: string) => void }) 
   const connectFeishu = async (item: ConnectorItem) => {
     const api = window.nxcore?.agentAuth
     if (!api) {
-      onToast('当前是原型预览，未连接桌面服务。')
+      onToast('未连接桌面服务，暂时不能操作。')
       return
     }
     setBusyId(item.provider)
@@ -569,7 +569,7 @@ export function ConnectorsView({ onToast }: { onToast: (msg: string) => void }) 
   const disconnect = async (item: ConnectorItem, connection: ConnectorConnection) => {
     const api = window.nxcore?.nangoConnector
     if (!api) {
-      onToast('当前是原型预览，未连接桌面服务。')
+      onToast('未连接桌面服务，暂时不能操作。')
       return
     }
     setBusyId(item.provider)
@@ -595,7 +595,7 @@ export function ConnectorsView({ onToast }: { onToast: (msg: string) => void }) 
     try {
       await api.reconnectConnection(connection.id)
       await refresh()
-      onToast(`已开启「${item.name} · ${connection.connectionName}」，Agent 可即席查询。`)
+      onToast(`已开启「${item.name} · ${connection.connectionName}」，Agent 在工作中可以直接查询。`)
     } catch (error) {
       onToast(error instanceof Error ? error.message : '开启失败。')
     } finally {
@@ -611,8 +611,8 @@ export function ConnectorsView({ onToast }: { onToast: (msg: string) => void }) 
   const hint = snapshot === null
     ? '正在读取连接器…'
     : snapshot.hasApi === false
-      ? '原型预览 · 未连接桌面服务，数据仅为静态示意'
-      : `连接后，Agent 可在工作途中即席查询这些来源 · 已连接 ${connectedCount}/${items.length}`
+      ? '未连接桌面服务，当前是静态示意'
+      : `Agent 在工作中可以直接查询这些来源 · 已连接 ${connectedCount} / ${items.length}`
   const enabled = snapshot?.enabled ?? true
 
   return (
@@ -641,10 +641,10 @@ export function ConnectorsView({ onToast }: { onToast: (msg: string) => void }) 
               onOpen={() => setOpenId(c.provider)}
             />
           ))}
-          {shown.length === 0 && <div className="op-empty">该分类下没有连接器</div>}
+          {shown.length === 0 && <div className="op-empty">这个分类下还没有连接器。</div>}
         </div>
       ) : (
-        <div className="op-empty">连接器模块未启用（网关配置）</div>
+        <div className="op-empty">连接器模块未启用，需要在运行时配置里打开。</div>
       )}
 
       {cur && (

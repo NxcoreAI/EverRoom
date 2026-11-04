@@ -1144,6 +1144,22 @@
 }
 .wb-conversation .agent-external-selection { color: var(--ui-text-3); }
 
+/* 「+」入口：与档位钮同一套无边框幽灵语言（悬停才给底），只是正方形图标钮。 */
+.wb-conversation .agent-add-button {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  border-radius: var(--ui-radius-sm);
+  color: var(--ui-text-2);
+  transition:
+    background var(--ui-duration-fast) var(--ui-ease),
+    color var(--ui-duration-fast) var(--ui-ease);
+}
+.wb-conversation .agent-add-button:hover:not(:disabled) { background: var(--ui-hover); color: var(--ui-text); }
+.wb-conversation .agent-add-button:active:not(:disabled) { background: var(--ui-hover); }
+.wb-conversation .agent-add-button:focus-visible { outline: 2px solid var(--ui-accent-line); outline-offset: 2px; }
+.wb-conversation .agent-mount { border-color: var(--ui-border); border-radius: var(--ui-radius-sm); background: var(--ui-surface-alt); color: var(--ui-text-2); }
+
 /* 输入区弹层（模型 / @ / 命令）：暖纸白卡 + 新阴影圆角。
    弹层锚在输入框上沿，左右对齐内容列（而不是贴主区边缘）。 */
 .wb-conversation .agent-composer-popover {
@@ -1154,9 +1170,11 @@
   background: var(--ui-surface);
   box-shadow: var(--ui-shadow-md);
 }
-/* 模型 / 权限弹层是 max-content 宽，只锚左缘，不拉伸。 */
+/* 模型 / 权限 / 「+」弹层是 max-content 宽，只锚左缘，不拉伸。 */
 .wb-conversation .agent-composer-popover.agent-model-picker,
-.wb-conversation .agent-composer-popover.agent-permission-mode-picker {
+.wb-conversation .agent-composer-popover.agent-permission-mode-picker,
+.wb-conversation .agent-composer-popover.agent-thinking-level-picker,
+.wb-conversation .agent-composer-popover.agent-add-menu {
   right: auto;
   left: var(--wb-gutter);
 }
@@ -1173,6 +1191,12 @@
 .wb-conversation .agent-mention-option:hover,
 .wb-conversation .agent-mention-option[data-active='true'] { background: var(--ui-hover); }
 .wb-conversation .agent-mention-option small { color: var(--ui-text-3); }
+.wb-conversation .agent-add-menu-item { border-radius: var(--ui-radius-sm); color: var(--ui-text); }
+.wb-conversation .agent-add-menu-item:hover:not(:disabled) { background: var(--ui-hover); }
+.wb-conversation .agent-add-menu-item:focus-visible { outline: 2px solid var(--ui-accent-line); outline-offset: -2px; }
+.wb-conversation .agent-add-menu-item > svg { color: var(--ui-text-2); }
+.wb-conversation .agent-add-menu-item strong { color: var(--ui-text); }
+.wb-conversation .agent-add-menu-item small { color: var(--ui-text-3); }
 .wb-conversation .agent-mention-group-label { color: var(--ui-text-3); }
 .wb-conversation .agent-mention-tab { color: var(--ui-text-3); border-radius: var(--ui-radius-xs); }
 .wb-conversation .agent-mention-tab[data-selected='true'] { background: var(--ui-selected); color: var(--ui-text); }
@@ -1225,4 +1249,114 @@
   .wb-hero-chip:hover:not(:disabled),
   .wb-hero-send:hover:not(:disabled),
   .wb-conversation .agent-chat-quick-prompts button:hover { transform: none; }
+}
+
+/* ── 待发送批注（Office「AI 修改」攒批注）────────────────────────────────
+ * 位置：输入框上方的一条窄卡，宽度跟消息列一致；只做「看得见 + 一次全发 + 单条移除」。
+ */
+/* 待发送批注条：对话列里的一行（flow），在输入框上方、对话面板之外。
+ * 早前把它塞进 AgentChatView 的 composer 插槽会被 absolute 定位的输入框层盖住，
+ * 所以这里改成独立的一行，从结构上保证可见。 */
+.wb-ask-drafts {
+  flex: none;
+  margin: 0 8px 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--ui-border-subtle);
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-surface-alt);
+  color: var(--ui-text);
+}
+
+.wb-ask-drafts-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--ui-text-xs);
+}
+
+.wb-ask-drafts-count {
+  flex: 1;
+  font-weight: 600;
+}
+
+.wb-ask-drafts-send,
+.wb-ask-drafts-clear {
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-full);
+  background: var(--ui-surface);
+  color: var(--ui-text);
+  font-size: var(--ui-text-xs);
+  padding: 2px 10px;
+  cursor: pointer;
+  transition: background var(--ui-duration-fast) var(--ui-ease);
+}
+
+.wb-ask-drafts-send {
+  border-color: var(--ui-accent-line);
+  color: var(--ui-accent-strong);
+}
+
+.wb-ask-drafts-send:hover:not(:disabled),
+.wb-ask-drafts-clear:hover {
+  background: var(--ui-hover);
+}
+
+.wb-ask-drafts-send:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.wb-ask-drafts-list {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 132px;
+  overflow-y: auto;
+}
+
+.wb-ask-drafts-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: var(--ui-text-xs);
+  line-height: 1.45;
+}
+
+.wb-ask-drafts-text {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px;
+}
+
+/* 原文摘录：灰色引号，视觉上先于批注 */
+.wb-ask-drafts-excerpt {
+  color: var(--ui-text-muted, var(--ui-text));
+  opacity: 0.75;
+}
+
+/* 我的批注：正文色，跟在原文后面 */
+.wb-ask-drafts-note {
+  color: var(--ui-text);
+}
+
+.wb-ask-drafts-remove {
+  flex: none;
+  border: 0;
+  background: transparent;
+  color: var(--ui-text);
+  opacity: 0.55;
+  cursor: pointer;
+  padding: 0 2px;
+}
+
+.wb-ask-drafts-remove:hover {
+  opacity: 1;
+  color: var(--ui-danger);
 }

@@ -2,6 +2,7 @@
 // 全套交互框架（多会话切换 / 工具时间线 / 流式回答 / 写入审阅 / 排队发送 /
 // 模型档位 / 权限模式 / @提及），数据源是主窗口 preload 暴露的真实网关桥
 // （window.nxcore.agent → 主进程 IPC → AgentGatewayBridge → gateway）。
+import type { AgentAttachmentReference, AgentMountedDirectory } from '@nxcore/agent-contract'
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 
 import { LocaleProvider } from '@/i18n/LocaleContext'
@@ -46,12 +47,26 @@ function AgentChatDockInner({ file }: { file: OfficeFile }) {
   const session = useAgentSession(file.name, null, [], { sessionKey: file.id })
   const prompts = starterPrompts[file.kind]
 
-  const submit = () => {
+  /** 发送一轮：文件附件与挂载目录一并进本轮运行上下文（sendPrompt 末位参数）。 */
+  const submit = (attachments: AgentAttachmentReference[] = [], mountedDirectories: AgentMountedDirectory[] = []) => {
     const text = draft.trim()
-    if (!text) return
+    if (!text && attachments.length === 0) return
     setDraft('')
     setComposerResetKey((key) => key + 1)
-    void session.sendPrompt(text)
+    void session.sendPrompt(
+      text,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      attachments.length ? attachments : undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      mountedDirectories.length ? mountedDirectories : undefined,
+    )
   }
 
   const composer = (
@@ -86,7 +101,7 @@ function AgentChatDockInner({ file }: { file: OfficeFile }) {
       onClearContext={() => {}}
       onRemoveContext={() => {}}
       onStop={() => void session.stop()}
-      onSubmit={() => submit()}
+      onSubmit={(payload) => submit(payload.attachments, payload.mountedDirectories)}
     />
   )
 

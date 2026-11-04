@@ -331,7 +331,6 @@ export function RuntimeConfigGate({ children }: { children: ReactNode }) {
       enterApp()
       window.dispatchEvent(new CustomEvent('everroom-runtime-config-status', { detail: 'ready' }))
       try {
-        window.sessionStorage.setItem('everroom:post-login-memory-check', '1')
         window.sessionStorage.setItem('everroom:post-login-room-check', '1')
       } catch {
         // Session storage is optional; mounted gates still receive the event.

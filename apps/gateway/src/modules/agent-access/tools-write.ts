@@ -79,7 +79,7 @@ const SUBMISSION_ITEM_SCHEMA: Record<string, unknown> = {
       type: "object",
       properties: {
         kind: { type: "string", const: "candidate" },
-        candidateType: { type: "string", enum: ["memory", "wiki", "preference"] },
+        candidateType: { type: "string", enum: ["wiki", "preference"] },
         content: { type: "string", minLength: 1, maxLength: 20_000 },
         evidence: { type: "string", maxLength: 20_000 },
         roomId: { type: "string", maxLength: 128 },

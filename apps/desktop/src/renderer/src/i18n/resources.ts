@@ -1,12 +1,10 @@
 import contextRoomEnglishMessages from './locales/en-US/contextRoom.json'
 import searchEnglishMessages from './locales/en-US/search.json'
 import diaryRealityEnglishMessages from './locales/en-US/diaryReality.json'
-import memoryEnglishMessages from './locales/en-US/memory.json'
 import surfaceEnglishMessages from './locales/en-US/surface.json'
 import contextRoomChineseMessages from './locales/zh-CN/contextRoom.json'
 import searchChineseMessages from './locales/zh-CN/search.json'
 import diaryRealityChineseMessages from './locales/zh-CN/diaryReality.json'
-import memoryChineseMessages from './locales/zh-CN/memory.json'
 import surfaceChineseMessages from './locales/zh-CN/surface.json'
 
 export const SUPPORTED_LOCALES = ['zh-CN', 'en-US'] as const
@@ -17,14 +15,12 @@ export const i18nResources = {
     common: {},
     contextRoom: contextRoomChineseMessages,
     diaryReality: diaryRealityChineseMessages,
-    memory: memoryChineseMessages,
     surface: surfaceChineseMessages,
   },
   'en-US': {
     common: {},
     contextRoom: contextRoomEnglishMessages,
     diaryReality: diaryRealityEnglishMessages,
-    memory: memoryEnglishMessages,
     surface: surfaceEnglishMessages,
   },
 } as const

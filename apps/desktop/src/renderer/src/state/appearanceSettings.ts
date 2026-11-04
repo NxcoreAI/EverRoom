@@ -6,9 +6,10 @@
  */
 export type AppearanceTheme = 'paper' | 'plain' | 'moss' | 'night'
 
-export const APPEARANCE_THEMES: readonly AppearanceTheme[] = ['paper', 'plain', 'moss', 'night']
+export const APPEARANCE_THEMES: readonly AppearanceTheme[] = ['plain', 'paper', 'moss', 'night']
 
-export const DEFAULT_APPEARANCE_THEME: AppearanceTheme = 'paper'
+/** 默认外观：素白（原型 iWork 皮肤）。 */
+export const DEFAULT_APPEARANCE_THEME: AppearanceTheme = 'plain'
 
 const STORAGE_KEY = 'everroom:appearance-theme:v1'
 const CHANGE_EVENT = 'everroom:appearance-theme-changed'

@@ -105,7 +105,7 @@ export type AgentSubmissionItem =
   | { kind: "citation"; targetUri: string; quote?: string; note?: string }
   | {
       kind: "candidate";
-      candidateType: "memory" | "wiki" | "preference";
+      candidateType: "wiki" | "preference";
       content: string;
       evidence?: string;
       roomId?: string;

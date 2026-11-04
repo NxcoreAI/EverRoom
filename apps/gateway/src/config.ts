@@ -123,6 +123,12 @@ export interface WebSearchConfig {
   model: string;
 }
 
+/** 长期记忆（hippo-memory）配置，见 docs/hippo-memory-adoption-plan.zh-CN.md。 */
+export interface MemoryConfig {
+  /** `.hippo` 库根目录（其下生成 hippo.db 与 markdown 镜像）。 */
+  root: string;
+}
+
 export interface PiRuntimeConfig {
   runtimeId?: string;
   provider: string;
@@ -215,6 +221,8 @@ export interface GatewayConfig {
   mcpConfigPath: string;
   /** 百炼（DashScope）联网搜索工具配置；null 时 agent 不提供 web_search。 */
   webSearch: WebSearchConfig | null;
+  /** 长期记忆（hippo-memory）配置；loadConfig 恒定给出，测试字面量可省略。 */
+  memory?: MemoryConfig;
   vlm?: VlmConfig | null;
   cliConnector?: OpenConnectorCliConfig | null;
   /** Agent 飞书导出用 lark-cli（发行包预装；桌面注入 NXCORE_LARK_CLI_PATH）。 */
@@ -847,5 +855,6 @@ export function loadConfig(
     vlm: rawConfig.vlmBaseUrl && rawConfig.vlmApiKey && rawConfig.vlmModel
       ? { baseUrl: rawConfig.vlmBaseUrl, apiKey: rawConfig.vlmApiKey, model: rawConfig.vlmModel }
       : null,
+    memory: { root: join(dataDir, "memory", "hippo") },
   };
 }

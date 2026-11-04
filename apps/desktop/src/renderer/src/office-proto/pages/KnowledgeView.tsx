@@ -85,10 +85,6 @@ export function KnowledgeView({
 
   const Icon = kbIcon(kb.id)
   const docSources = kb.sources.filter((s) => s.fileId)
-  const memoryTotal = docSources.reduce((sum, s) => {
-    const f = files.find((x) => x.id === s.fileId)
-    return sum + (f?.memoryCount ?? 0)
-  }, 0)
 
   return (
     <>
@@ -100,7 +96,7 @@ export function KnowledgeView({
       <PageHead
         icon={<Icon size={19} strokeWidth={1.8} />}
         title={kb.title}
-        hint={`来源 ${kb.sources.length} · 文档 ${docSources.length} · 记忆 ${memoryTotal} 条`}
+        hint={`来源 ${kb.sources.length} · 文档 ${docSources.length}`}
       />
       <div className="op-list-card">
         {kb.sources.map((s) => {

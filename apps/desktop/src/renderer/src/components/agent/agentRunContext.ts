@@ -1,6 +1,6 @@
 import type {
   AgentActiveDocumentContext,
-  AgentFileAttachment,
+  AgentMountedDirectory,
   AgentRoomReference,
   StartAgentRunInput,
 } from '@nxcore/agent-contract'
@@ -11,7 +11,7 @@ export function buildAgentRunContext(
   selectedRoomId?: string,
   activeDocument?: AgentActiveDocumentContext | null,
   pageLabel?: string,
-  attachments?: AgentFileAttachment[],
+  mountedDirectories?: AgentMountedDirectory[],
   referencedConversationId?: string,
   referencedLocalAgentIds?: string[],
 ): NonNullable<StartAgentRunInput['context']> {
@@ -29,7 +29,14 @@ export function buildAgentRunContext(
     ...(selectedText?.trim() ? { selectedText: selectedText.trim().slice(0, 8_000) } : {}),
     ...(selectedRoomId?.trim() ? { selectedRoomId: selectedRoomId.trim() } : {}),
     ...(activeDocument ? { activeDocument } : {}),
-    ...(attachments?.length ? { attachments } : {}),
+    ...(mountedDirectories?.length
+      ? {
+          mountedDirectories: mountedDirectories.map((directory) => ({
+            name: directory.name,
+            path: directory.path,
+          })),
+        }
+      : {}),
     ...(referencedConversationId ? { referencedConversationId } : {}),
     ...(referencedLocalAgentIds?.length ? { referencedLocalAgentIds } : {}),
   }

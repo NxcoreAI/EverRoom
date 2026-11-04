@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 /**
  * 工作空间工具页回归：
- * 1) 计划看板分列（running / idle / closed+interrupted）与列计数；
+ * 1) 计划看板：四列（待开始/进行中/已完成/已取消）计数、卡片点开详情、新建任务；
  * 2) 新建空间两步引导——跳过某一步不丢前面已完成步骤的结果（原型 bug 回归）。
  *
  * 与 tests/office-proto-recent-view.test.tsx 同款 happy-dom + 手动 act/createRoot 写法，
@@ -11,9 +11,9 @@ import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { AgentSession, AgentWorkspace } from '@nxcore/agent-contract'
+import type { AgentSession, AgentWorkspace, PlanItem } from '@nxcore/agent-contract'
 
-import { PlanPage, groupPlanColumns } from '../src/renderer/src/workbench/workspace/PlanPage'
+import { PlanPage } from '../src/renderer/src/workbench/workspace/PlanPage'
 import { SetupWizard } from '../src/renderer/src/workbench/workspace/SetupWizard'
 import type { WorkspacePageProps } from '../src/renderer/src/workbench/workspace/contracts'
 
@@ -48,6 +48,39 @@ function makeSession(overrides: Partial<AgentSession> & { id: string }): AgentSe
   }
 }
 
+function makePlanItem(overrides: Partial<PlanItem> & { id: string }): PlanItem {
+  return {
+    workspaceId: 'ws-1',
+    title: overrides.id,
+    detail: null,
+    acceptance: null,
+    constraints: [],
+    status: 'todo',
+    priority: 'normal',
+    ownerKind: 'unassigned',
+    ownerAgentId: null,
+    assigneeSessionId: null,
+    lastRunId: null,
+    createdBy: 'user',
+    createdByAgentId: null,
+    dueAt: null,
+    rank: overrides.id,
+    tags: [],
+    checklist: [],
+    refs: [],
+    blockedBy: [],
+    resultSummary: null,
+    closeReason: null,
+    leaseOwner: null,
+    leaseExpiresAt: null,
+    version: 1,
+    completedAt: null,
+    createdAt: ISO,
+    updatedAt: ISO,
+    ...overrides,
+  }
+}
+
 function pageProps(overrides: Partial<WorkspacePageProps> = {}): WorkspacePageProps {
   return {
     tab: { id: 'ws:ws-1', kind: 'workspace', workspaceId: 'ws-1', view: { kind: 'page', page: 'plan' } },
@@ -66,6 +99,8 @@ function installNxcore(overrides: {
   pickAndImport?: () => Promise<unknown>
   createSession?: (input: unknown) => Promise<unknown>
   updateSession?: (sessionId: string, input: { title: string }) => Promise<unknown>
+  listPlanItems?: (query: unknown) => Promise<unknown>
+  createPlanItem?: (input: unknown) => Promise<unknown>
 } = {}) {
   const api = {
     agent: {
@@ -74,6 +109,33 @@ function installNxcore(overrides: {
     },
     files: {
       pickAndImport: vi.fn(overrides.pickAndImport ?? (async () => [])),
+    },
+    plan: {
+      list: vi.fn(overrides.listPlanItems ?? (async () => ({ items: [] }))),
+      create: vi.fn(overrides.createPlanItem ?? (async (input: unknown) => input)),
+      get: vi.fn(async () => null),
+      update: vi.fn(async (itemId: string, input: unknown) => ({ id: itemId, ...(input as object) })),
+      move: vi.fn(async (itemId: string, input: unknown) => ({ id: itemId, ...(input as object) })),
+      release: vi.fn(async (itemId: string) => ({ id: itemId })),
+      assign: vi.fn(async (itemId: string) => ({ item: { id: itemId }, sessionId: 'sess-1', runId: 'run-1' })),
+      remove: vi.fn(async (itemId: string) => ({ id: itemId })),
+      events: vi.fn(async () => ({ events: [] })),
+      claimPackage: vi.fn(async (itemId: string) => ({
+        item: {
+          id: itemId, workspaceId: 'ws-1', title: '任务', detail: null, acceptance: null,
+          constraints: [], priority: 'normal', dueAt: null, tags: [], checklist: [], status: 'todo',
+        },
+        why: { createdBy: 'user', createdByLabel: '你（用户）', createdAt: ISO, assignReason: null },
+        space: { name: 'ws', root: null, libraryPath: null, artifactsPath: null },
+        materials: [],
+        history: [],
+        dependencies: [],
+        contract: { mustUpdateStatus: true, mustWriteResultSummary: true, leaseTtlSec: 600, outputHint: null },
+      })),
+      subscribe: vi.fn(async () => undefined),
+      unsubscribe: vi.fn(async () => undefined),
+      batch: vi.fn(async () => ({ items: [], failed: [] })),
+      onChanged: vi.fn(() => () => {}),
     },
   }
   ;(window as unknown as { nxcore?: unknown }).nxcore = api
@@ -143,63 +205,87 @@ afterEach(async () => {
 
 /* ───────────────── 计划看板 ───────────────── */
 
-describe('计划看板分列', () => {
-  it('按 running / idle / closed+interrupted 归类，并保持输入顺序', () => {
-    const sessions = [
-      makeSession({ id: 's-run', status: 'running' }),
-      makeSession({ id: 's-idle', status: 'idle' }),
-      makeSession({ id: 's-closed', status: 'closed' }),
-      makeSession({ id: 's-interrupted', status: 'interrupted' }),
-      makeSession({ id: 's-idle-2', status: 'idle' }),
-    ]
-    const groups = groupPlanColumns(sessions)
-    expect(groups.running.map((session) => session.id)).toEqual(['s-run'])
-    expect(groups.idle.map((session) => session.id)).toEqual(['s-idle', 's-idle-2'])
-    expect(groups.done.map((session) => session.id)).toEqual(['s-closed', 's-interrupted'])
+describe('计划看板', () => {
+  it('四列渲染 + 计数 + 卡片标题来自任务（不再是会话）', async () => {
+    installNxcore({
+      listPlanItems: async () => ({
+        items: [
+          makePlanItem({ id: 't-todo', title: '对比供应商', status: 'todo' }),
+          makePlanItem({ id: 't-doing', title: '写发布计划', status: 'doing', ownerKind: 'agent', ownerAgentId: 'main' }),
+          makePlanItem({ id: 't-done', title: '整理会议纪要', status: 'done', completedAt: ISO }),
+          makePlanItem({ id: 't-dropped', title: '旧口径', status: 'dropped', completedAt: ISO }),
+        ],
+      }),
+    })
+    render(<PlanPage {...pageProps()} />)
+    await flush()
+
+    const labels = Array.from(document.querySelectorAll('.wb-plan-col-head strong')).map((node) => node.textContent)
+    expect(labels).toEqual(['待开始', '进行中', '已完成', '已取消'])
+    const counts = Array.from(document.querySelectorAll('.wb-plan-col-count')).map((node) => node.textContent)
+    expect(counts).toEqual(['1', '1', '1', '1'])
+    expect(bodyText()).toContain('对比供应商')
+    expect(bodyText()).toContain('写发布计划')
+    // 待认领 / Agent 负责人都要能看见
+    expect(bodyText()).toContain('待认领')
+    expect(bodyText()).toContain('Agent main')
   })
 
-  it('渲染三列计数、卡片点开会话', async () => {
+  it('点卡片打开详情抽屉（不再跳会话）', async () => {
     const onOpenSession = vi.fn()
+    installNxcore({
+      listPlanItems: async () => ({
+        items: [makePlanItem({ id: 't-1', title: '写发布计划', detail: '背景在这里' })],
+      }),
+    })
+    render(<PlanPage {...pageProps({ onOpenSession })} />)
+    await flush()
+
+    await click(document.querySelector('.wb-plan-task'))
+    await flush()
+    expect(document.querySelector('.wb-plan-detail')).not.toBeNull()
+    expect(bodyText()).toContain('背景与要求')
+    expect(onOpenSession).not.toHaveBeenCalled()
+  })
+
+  it('空计划显示空态，并保留「新建工作」入口', async () => {
     const onNewWork = vi.fn()
-    render(
-      <PlanPage
-        {...pageProps({
-          sessions: [
-            makeSession({ id: 's-run', title: '写发布计划', status: 'running', updatedAt: new Date().toISOString() }),
-            makeSession({ id: 's-idle', title: '对比供应商', status: 'idle' }),
-            makeSession({ id: 's-closed', title: '整理会议纪要', status: 'closed' }),
-          ],
-          onOpenSession,
-          onNewWork,
-        })}
-      />,
-    )
+    installNxcore({ listPlanItems: async () => ({ items: [] }) })
+    render(<PlanPage {...pageProps({ onNewWork })} />)
+    await flush()
 
-    const counts = Array.from(document.querySelectorAll('.wb-plan-col-count')).map((node) => node.textContent)
-    expect(counts).toEqual(['1', '1', '1'])
-    const labels = Array.from(document.querySelectorAll('.wb-plan-col-head strong')).map((node) => node.textContent)
-    expect(labels).toEqual(['进行中', '待开始', '已结束'])
-    // 去说明化：页头不再有重复 eyebrow/subtitle，看板不再有 footnote 解释段。
-    expect(document.querySelector('.ui-pagehead-eyebrow')).toBeNull()
-    expect(document.querySelector('.ui-pagehead-sub')).toBeNull()
-    expect(document.querySelector('.wb-plan-footnote')).toBeNull()
-
-    await click(document.querySelector('.wb-plan-card'))
-    expect(onOpenSession).toHaveBeenCalledWith('s-run')
-
-    const newWork = buttonByText('新建工作')
-    await click(newWork)
+    expect(bodyText()).toContain('还没有任务')
+    expect(document.querySelector('.wb-plan-board')).toBeNull()
+    await click(buttonByText('新建工作'))
     expect(onNewWork).toHaveBeenCalledTimes(1)
   })
 
-  it('空看板只显示列头计数，不额外渲染空态说明', async () => {
+  it('新建任务：输入标题回车后调用网关并渲染新卡片', async () => {
+    let created: PlanItem | null = null
+    const api = installNxcore({
+      listPlanItems: async () => ({ items: created ? [created] : [] }),
+      createPlanItem: async (input) => {
+        created = makePlanItem({ id: 't-new', title: (input as { title: string }).title })
+        return created
+      },
+    })
     render(<PlanPage {...pageProps()} />)
-    const counts = Array.from(document.querySelectorAll('.wb-plan-col-count')).map((node) => node.textContent)
-    expect(counts).toEqual(['0', '0', '0'])
-    const bodies = Array.from(document.querySelectorAll('.wb-plan-col-body'))
-    expect(bodies).toHaveLength(3)
-    for (const body of bodies) expect(body.textContent).toBe('')
-    expect(document.querySelector('.wb-plan-none')).toBeNull()
+    await flush()
+
+    await click(buttonByText('新建任务'))
+    await flush()
+    const input = document.querySelector('.wb-plan-compose-bar input') as HTMLInputElement | null
+    expect(input).not.toBeNull()
+    setInputValue(input!, '整理 Q3 成本表')
+    await act(async () => {
+      input!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    })
+    await flush()
+
+    const create = api.plan.create as ReturnType<typeof vi.fn>
+    expect(create).toHaveBeenCalledTimes(1)
+    expect(create.mock.calls[0]![0]).toMatchObject({ workspaceId: 'ws-1', title: '整理 Q3 成本表' })
+    expect(bodyText()).toContain('整理 Q3 成本表')
   })
 })
 

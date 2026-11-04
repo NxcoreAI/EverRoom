@@ -68,8 +68,8 @@ describe('Document Pi tool routing', () => {
     expect(callTool).toHaveBeenCalledOnce()
   })
 
-  it('uses the Room given on each call without carrying it over to later calls in the run', async () => {
-    const callTool = vi.fn(async (name: string, _params: Record<string, unknown>, context: { roomId: string | null }): Promise<DocumentMcpToolResult> => ({
+  it('takes document ownership from the run and ignores any roomId left in tool params', async () => {
+    const callTool = vi.fn(async (_name: string, _params: Record<string, unknown>, context: { roomId: string | null }): Promise<DocumentMcpToolResult> => ({
       content: [{ type: 'text', text: JSON.stringify({ roomId: context.roomId, operationId: 'operation-1' }) }],
       structuredContent: { roomId: context.roomId, operationId: 'operation-1' },
     }))
@@ -77,7 +77,7 @@ describe('Document Pi tool routing', () => {
       listTools: () => [
         {
           name: 'document_write_begin', title: 'Begin', description: 'Begin',
-          inputSchema: { type: 'object', properties: { roomId: { type: 'string' } } },
+          inputSchema: { type: 'object', properties: { title: { type: 'string' } } },
         },
         {
           name: 'document_write_append', title: 'Append', description: 'Append',
@@ -87,64 +87,21 @@ describe('Document Pi tool routing', () => {
       callTool,
     } as unknown as DocumentMcpHost
     const [begin, append] = createDocumentPiTools(host)
-    const input = {
-      ...runtimeInput('创建一份 Java 并发指南文档'),
-      availableRooms: [
-        { id: 'room-product', title: '产品规划' },
-        { id: 'room-java', title: 'Java Space' },
-      ],
-    }
 
-    await begin!.execute(input, { roomId: 'room-java', title: 'Java 并发指南' })
-    await append!.execute(input, { operationId: 'operation-1', sequence: 1, text: '正文' })
+    // Room 归属参数已从 write_begin 的 schema 摘除：参数里即便混入 roomId 也不生效，
+    // 归属一律取 run 级 input.roomId（本次为 null → 工作区级文稿）。
+    await begin!.execute(runtimeInput('创建一份 Java 并发指南文档'), {
+      title: 'Java 并发指南', roomId: 'room-ignored',
+    })
+    await append!.execute(runtimeInput('创建一份 Java 并发指南文档'), {
+      operationId: 'operation-1', sequence: 1, text: '正文',
+    })
 
     expect(callTool).toHaveBeenNthCalledWith(1, 'document_write_begin', expect.any(Object), expect.objectContaining({
-      roomId: 'room-java',
+      roomId: null,
     }))
-    // P0-4：归属不再为整个 run 粘滞；未再指定归属的后续调用按工作区级处理。
     expect(callTool).toHaveBeenNthCalledWith(2, 'document_write_append', expect.any(Object), expect.objectContaining({
       roomId: null,
-    }))
-  })
-
-  it('creates a workspace-level document when no Room is given (P0-2/P0-4)', async () => {
-    const { callTool } = harness()
-    const host = {
-      listTools: () => [{
-        name: 'document_write_begin', title: 'Begin', description: 'Begin',
-        inputSchema: { type: 'object', properties: { roomId: { type: 'string' } } },
-      }],
-      callTool,
-    } as unknown as DocumentMcpHost
-    const begin = createDocumentPiTools(host)[0]!
-
-    await begin.execute(runtimeInput('创建一份产品文档'), { title: '产品文档' })
-
-    expect(callTool).toHaveBeenCalledOnce()
-    expect(callTool).toHaveBeenCalledWith('document_write_begin', expect.any(Object), expect.objectContaining({
-      roomId: null,
-    }))
-  })
-
-  it('passes an explicitly requested Room through without consulting the Room registry', async () => {
-    const callTool = vi.fn(async (_name: string, _params: Record<string, unknown>, context: { roomId: string | null }): Promise<DocumentMcpToolResult> => ({
-      content: [{ type: 'text', text: JSON.stringify({ roomId: context.roomId, operationId: 'operation-1' }) }],
-      structuredContent: { roomId: context.roomId, operationId: 'operation-1' },
-    }))
-    const host = {
-      listTools: () => [{
-        name: 'document_write_begin', title: 'Begin', description: 'Begin',
-        inputSchema: { type: 'object', properties: { roomId: { type: 'string' } } },
-      }],
-      callTool,
-    } as unknown as DocumentMcpHost
-    const begin = createDocumentPiTools(host)[0]!
-
-    await begin.execute(runtimeInput('创建一份文档'), { roomId: 'room-fresh', title: '文档' })
-
-    expect(callTool).toHaveBeenCalledOnce()
-    expect(callTool).toHaveBeenCalledWith('document_write_begin', expect.any(Object), expect.objectContaining({
-      roomId: 'room-fresh',
     }))
   })
 

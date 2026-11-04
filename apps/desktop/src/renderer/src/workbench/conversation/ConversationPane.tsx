@@ -1,7 +1,10 @@
 import { LoaderCircle, RefreshCw } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
+import type { AgentAttachmentReference, AgentMountedDirectory } from '@nxcore/agent-contract'
+
 import { AgentChatView } from '@/components/agent/AgentChatView'
+import { buildAskBatch } from '@/components/agent/askDrafts'
 import { AgentComposer } from '@/components/agent/AgentComposer'
 import { useAgentSession } from '@/components/agent/useAgentSession'
 import { RoomDocumentsProvider } from '@/components/context-room/RoomDocumentsProvider'
@@ -71,6 +74,11 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
   const hook = useAgentSession('Agent', null, [], { workspaceId, initialSessionId: sessionId })
   const syncTabSession = useWorkbenchStore((state) => state.syncTabSession)
 
+  const pendingAgentAsk = useWorkbenchStore((state) => state.pendingAgentAsk)
+  const askDrafts = useWorkbenchStore((state) => state.askDrafts)
+  const clearAskDrafts = useWorkbenchStore((state) => state.clearAskDrafts)
+  const askQueueSendNonce = useWorkbenchStore((state) => state.askQueueSendNonce)
+
   const [draft, setDraft] = useState('')
   const [composerResetKey, setComposerResetKey] = useState(0)
   const [connectingVisible, setConnectingVisible] = useState(false)
@@ -122,6 +130,44 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
     })
   }, [onRestartConversationKernel, sessionId])
 
+  /**
+   * Office「AI 修改」浮层的待注入消息（Word 选区浮层等）：本面板是这个工作空间的
+   * 对话出口，挂载/激活后消费一次——技术指令进 runtime，人话进气泡（displayPrompt）。
+   * 忙或未就绪时退化为填进输入框，绝不静默丢掉用户敲的东西。
+   */
+  useEffect(() => {
+    if (!pendingAgentAsk || pendingAgentAsk.workspaceId !== workspaceId) return
+    // 会话内核还没就绪：等它就绪再注入，别把消息降级成「Agent 正忙」。
+    if (!hook.scopeReady || hook.loading) return
+    const pending = pendingAgentAsk
+    // 消费即置空，避免重挂载/重渲染重复发送。
+    useWorkbenchStore.getState().setPendingAgentAsk(null)
+    const fallback = () => setDraft(pending.displayMessage ?? pending.message)
+    /** 有在跑的 run 时 sendPrompt 会排队并返回 null——排队也算投递成功，不能再回填输入框。 */
+    const queuesBehindRun = Boolean(hookRef.current.activeRunId)
+    void hookRef.current
+      .sendPrompt(
+        pending.message,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        // displayPrompt：气泡/标题只显示人话，块索引与工具名只进 runtime。
+        pending.displayMessage,
+      )
+      .then((runId) => {
+        if (runId !== null || queuesBehindRun) return
+        fallback()
+        workbenchToast('Agent 正忙，批注已放进输入框')
+      })
+      .catch(fallback)
+  }, [pendingAgentAsk, workspaceId, hook.scopeReady, hook.loading])
+
   // 会话快照同步回 store：首次发送自动建会话后，侧栏立刻出现该会话（不必等轮询）。
   // 只把「当前请求的会话」（或草稿态自动创建的会话）写回 store；切会话过程中旧的
   // 快照不能把侧栏选中态抢回去。
@@ -155,17 +201,80 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
     return () => window.clearTimeout(timer)
   }, [hook.connected, hook.error, hook.sessionId])
 
-  const send = () => {
+  /**
+   * 发送一轮：输入框里的文件附件（文件引擎引用）与挂载目录一起进本轮运行上下文。
+   * sendPrompt 的入参是长参数位，这里按位补齐并在末尾追加 mountedDirectories。
+   */
+  const send = (attachments: AgentAttachmentReference[] = [], mountedDirectories: AgentMountedDirectory[] = []) => {
     const text = draft.trim()
-    if (!text || !canSend || hook.loading) return
+    if ((!text && attachments.length === 0) || !canSend || hook.loading) return
     setDraft('')
     setComposerResetKey((key) => key + 1)
     // 首条消息在草稿态发出时由 hook 自动建会话（归属当前 workspaceId）。
-    void hook.sendPrompt(text).catch(() => {
+    void hook.sendPrompt(
+      text,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      attachments.length ? attachments : undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      mountedDirectories.length ? mountedDirectories : undefined,
+    ).catch(() => {
       // 发送失败：内容还回输入框；用户已重新输入则不覆盖。
       setDraft((current) => (current ? current : text))
     })
   }
+
+  /** 本工作空间的批注草稿（其它空间的留在各自对话里）。 */
+  const workspaceAskDrafts = askDrafts.filter((draft) => draft.workspaceId === workspaceId)
+
+  /**
+   * 一次发出所有批注：合成一条消息（技术指令带编号，人话用圈号），投递成功才清空。
+   * 排队（有 run 在跑）也算投递成功；真正失败时草稿留着，用户可以再发一次。
+   */
+  const sendAskDrafts = () => {
+    const batch = buildAskBatch(workspaceAskDrafts)
+    if (!batch || !workspaceId || !canSend || hook.loading) return
+    void hook
+      .sendPrompt(
+        batch.message,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        batch.displayMessage,
+      )
+      .then((runId) => {
+        if (runId === null && !hookRef.current.activeRunId) {
+          workbenchToast('Agent 正忙，批注先留着，稍后再发')
+          return
+        }
+        clearAskDrafts(workspaceId)
+      })
+      .catch(() => workbenchToast('发送失败，批注已保留'))
+  }
+
+  /**
+   * 文档内批注面板点了「全部发送」：主进程把动作转成 nonce，这里消费一次。
+   * 用 ref 记住已处理的 nonce，避免重挂载后重复发送。
+   */
+  const handledSendNonce = useRef(0)
+  useEffect(() => {
+    if (askQueueSendNonce === 0 || askQueueSendNonce === handledSendNonce.current) return
+    handledSendNonce.current = askQueueSendNonce
+    if (workspaceAskDrafts.length === 0 || !hook.scopeReady || hook.loading) return
+    sendAskDrafts()
+  }, [askQueueSendNonce, workspaceAskDrafts.length, hook.scopeReady, hook.loading])
 
   const composer = (
     <AgentComposer
@@ -201,13 +310,7 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
       onClearContext={() => undefined}
       onRemoveContext={() => undefined}
       onStop={() => void hook.stop()}
-      onSubmit={(files) => {
-        if (!draft.trim() && files.length) {
-          workbenchToast('工作台暂不支持直接发送附件，请先用文字描述任务')
-          return
-        }
-        send()
-      }}
+      onSubmit={(payload) => send(payload.attachments, payload.mountedDirectories)}
     />
   )
 

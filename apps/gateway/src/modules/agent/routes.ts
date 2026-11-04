@@ -127,6 +127,17 @@ function workspaceValidationErrorPayload(error: unknown): { error: string; messa
         error: "invalid_workspace_description",
         message: "Workspace description must be at most 2000 characters",
       };
+    // 项目空间目录（modules/workspace-layout）：目录落盘失败要能被客户端分辨。
+    case "space_marker_conflict":
+      return {
+        error: "space_marker_conflict",
+        message: "The target directory already belongs to another project space",
+      };
+    case "space_marker_exists":
+      return {
+        error: "space_marker_exists",
+        message: "The target directory is already a project space (.everoffice/space.json)",
+      };
     case "agent_workspace_goals_invalid":
     case "agent_workspace_goals_too_many":
     case "agent_workspace_goal_empty":
@@ -144,6 +155,8 @@ function workspaceValidationErrorPayload(error: unknown): { error: string; messa
 const WorkspaceMetaSchema = {
   description: Type.Optional(Type.Union([Type.String({ maxLength: 2_000 }), Type.Null()])),
   goals: Type.Optional(Type.Array(Type.String({ maxLength: 200 }), { maxItems: 12 })),
+  /** 目录归属模式：缺省按 path 是否给出推断（有 path=external，无=managed）。 */
+  rootMode: Type.Optional(Type.Union([Type.Literal("managed"), Type.Literal("external")])),
 };
 
 export function agentRoutes(
@@ -157,6 +170,21 @@ export function agentRoutes(
         "/v1/agent/status",
         { schema: { tags: ["agent"] } },
         async () => statusService.snapshot(),
+      );
+      // 「智能体」页人格段：内置 Agent 的名称/简介/系统提示词/技能清单。
+      app.get(
+        "/v1/agent/definition/:agentId",
+        {
+          schema: {
+            tags: ["agent"],
+            params: Type.Object({ agentId: Type.String({ minLength: 1, maxLength: 64 }) }),
+          },
+        },
+        async (request, reply) => {
+          const persona = statusService.persona(request.params.agentId);
+          if (!persona) return reply.code(404).send({ message: "agent_not_found" });
+          return persona;
+        },
       );
     }
     app.get(
@@ -540,8 +568,6 @@ export function agentRoutes(
             }), { maxItems: 5 })),
             replaceRunId: Type.Optional(Type.String({ minLength: 1, maxLength: 100 })),
             responseLanguage: Type.Optional(ResponseLanguage),
-            captureMemory: Type.Optional(Type.Boolean()),
-            recallMemory: Type.Optional(Type.Boolean()),
             toolsEnabled: Type.Optional(Type.Boolean()),
             context: Type.Optional(Type.Object({
               pageLabel: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
@@ -594,6 +620,12 @@ export function agentRoutes(
                 editable: Type.Optional(Type.Boolean()),
                 active: Type.Boolean(),
               }, { additionalProperties: false }), { maxItems: 20 })),
+              // 输入区「+ → 挂载目录」：桌面端系统选择框里由用户显式授权的本地目录，
+              // 本轮 Agent 可直接 read / ls / grep，改文件仍走权限确认。
+              mountedDirectories: Type.Optional(Type.Array(Type.Object({
+                path: Type.String({ minLength: 1, maxLength: 1024 }),
+                name: Type.String({ minLength: 1, maxLength: 200 }),
+              }, { additionalProperties: false }), { maxItems: 8 })),
               attachments: Type.Optional(Type.Array(Type.Object({
                 fileId: Type.String({ minLength: 1, maxLength: 200 }),
                 fileVersionId: Type.String({ minLength: 1, maxLength: 200 }),

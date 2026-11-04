@@ -69,6 +69,14 @@ const MAIN_BUNDLE: BuiltinAgentBundle = {
   tools: ["document_list", "slides_create", "slides_edit"],
   skills: ["./skills/document-export"],
   skillPrompts: { "document-export": "BUNDLE SKILL BODY" },
+  skillEntries: [{
+    directoryName: "document-export",
+    name: "document-export",
+    description: "一次性导出到飞书或 Notion",
+    path: "./skills/document-export",
+    prompt: "BUNDLE SKILL BODY",
+    bytes: 17,
+  }],
   directory: "/agents/main",
 };
 

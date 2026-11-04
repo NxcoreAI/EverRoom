@@ -2,7 +2,7 @@ export const OBSIDIAN_VAULT_ASSET_SCHEME = 'nxcore-vault-asset'
 
 export type ObsidianVaultResourceKind = 'note' | 'image' | 'pdf'
 
-export type ObsidianVaultMountMode = 'dedicated' | 'embedded' | 'memory'
+export type ObsidianVaultMountMode = 'dedicated' | 'embedded'
 
 export type ObsidianVaultSourceType = 'obsidian-vault' | 'local-directory'
 
@@ -16,7 +16,6 @@ export interface ObsidianVaultCandidate {
   lastOpenedAt: string | null
   mountedVaultId: string | null
   mountedRoomId: string | null
-  memoryEnabled: boolean
 }
 
 export interface ObsidianVaultBinding {
@@ -24,7 +23,6 @@ export interface ObsidianVaultBinding {
   roomId: string
   mountMode: ObsidianVaultMountMode
   sourceType: ObsidianVaultSourceType
-  memoryEnabled: boolean
   name: string
   attachmentFolderPath: string
   noteCount: number
@@ -83,12 +81,10 @@ export interface ObsidianDiscoveryChangedEvent {
 
 export type ObsidianImportTarget =
   | { kind: 'new-room' }
-  | { kind: 'memory'; enableRegistryAutoImport?: boolean }
   | { kind: 'room'; roomId: string }
 
 export type ObsidianImportResult =
   | { kind: 'new-room'; vault: ObsidianVaultBinding }
-  | { kind: 'memory'; projectName: string; total: number; succeeded: number; failed: number }
   | { kind: 'room'; vault: ObsidianVaultBinding }
 
 export interface ObsidianVaultApi {

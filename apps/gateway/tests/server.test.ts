@@ -40,6 +40,35 @@ afterEach(async () => {
 });
 
 describe("gateway server", () => {
+  it("serves the skill catalog and applies enable/disable", async () => {
+    const config = await testConfig();
+    const app = await createServer(config);
+    const headers = { authorization: `Bearer ${config.authToken}` };
+
+    const listed = await app.inject({ method: "GET", url: "/v1/skills", headers });
+    expect(listed.statusCode).toBe(200);
+    const catalog = listed.json() as {
+      skills: Array<{ id: string; enabled: boolean; ownerKind: string }>;
+      counts: { total: number; enabled: number };
+    };
+    // 内置 bundle 的技能在清单里；子 Agent 的技能也并进同一份清单。
+    expect(catalog.skills.some((skill) => skill.id === "builtin:main:document-export")).toBe(true);
+    expect(catalog.skills.some((skill) => skill.ownerKind === "subagent")).toBe(true);
+    expect(catalog.counts.enabled).toBe(catalog.counts.total);
+
+    const skillId = encodeURIComponent("builtin:main:document-export");
+    const patched = await app.inject({
+      method: "PATCH",
+      url: `/v1/skills/${skillId}`,
+      headers,
+      payload: { enabled: false },
+    });
+    await app.close();
+
+    expect(patched.statusCode).toBe(200);
+    expect((patched.json() as { enabled: boolean }).enabled).toBe(false);
+  });
+
   it("reports liveness without authentication", async () => {
     const app = await createServer(await testConfig());
     const response = await app.inject({ method: "GET", url: "/v1/health/live" });

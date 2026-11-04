@@ -17,7 +17,7 @@ class FakeRuntime implements ConnectorActionRuntime {
   }
 }
 
-function memoryTombstones(): ConnectorTombstoneStore {
+function inMemoryTombstones(): ConnectorTombstoneStore {
   const rows = new Set<string>();
   const key = (service: string, connectionName: string) => `${service}:${connectionName}`;
   return {
@@ -38,7 +38,7 @@ afterEach(async () => {
 
 async function harness() {
   const runtime = new FakeRuntime();
-  const tombstones = memoryTombstones();
+  const tombstones = inMemoryTombstones();
   const catalog = new ConnectorConnectionCatalog(runtime, tombstones);
   const app = Fastify({ logger: false });
   apps.push(app);

@@ -31,8 +31,14 @@ export function TabBar() {
   const sidebarCollapsed = useWorkbenchStore((state) => state.sidebarCollapsed)
   const createSession = useWorkbenchStore((state) => state.createSession)
   const openHome = useWorkbenchStore((state) => state.openHome)
+  const askDrafts = useWorkbenchStore((state) => state.askDrafts)
 
   const activeWorkspaceTab = tabs.find((tab) => tab.id === activeTabId && tab.kind === 'workspace')
+  // 待发送批注按工作空间计数：标签上挂个角标，用户在任何标签下都知道哪里有待发内容。
+  const askCountByWorkspace = new Map<string, number>()
+  for (const draft of askDrafts) {
+    askCountByWorkspace.set(draft.workspaceId, (askCountByWorkspace.get(draft.workspaceId) ?? 0) + 1)
+  }
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? null
   // 文件标签没有侧栏，收起按钮在那里只会是个「点了没反应」的死按钮：直接不渲染。
   const hasSidebar = activeTab !== null && activeTab.kind !== 'file'
@@ -78,6 +84,7 @@ export function TabBar() {
             tab={tab}
             active={tab.id === activeTabId}
             title={tabTitle(tab, workspaces)}
+            badge={tab.kind === 'workspace' ? askCountByWorkspace.get(tab.workspaceId) : undefined}
             onActivate={() => activateTab(tab.id)}
             onClose={(event) => closeTab(event, tab.id)}
           />
@@ -135,10 +142,12 @@ export function TabBar() {
   )
 }
 
-function WindowTabButton({ tab, active, title, onActivate, onClose }: {
+function WindowTabButton({ tab, active, title, badge, onActivate, onClose }: {
   tab: WorkspaceTab | FileTab
   active: boolean
   title: string
+  /** 待发送批注条数（工作空间标签才有）：非 0 时在标签上挂角标。 */
+  badge?: number
   onActivate: () => void
   onClose: (event: React.MouseEvent) => void
 }) {
@@ -174,6 +183,11 @@ function WindowTabButton({ tab, active, title, onActivate, onClose }: {
           : <FileTypeIcon kind={tab.file.kind} size={17} />}
       </span>
       <span className="wb-tab-name">{title}</span>
+      {badge ? (
+        <span className="wb-tab-badge" title={`${badge} 条待发送批注`} aria-label={`${badge} 条待发送批注`}>
+          {badge}
+        </span>
+      ) : null}
       <button
         type="button"
         className="wb-tab-close"

@@ -1,13 +1,32 @@
 import { ArrowRight } from 'lucide-react'
 import React from 'react'
 
+import type { AgentWorkspace } from '@nxcore/agent-contract'
+
 import { cn } from '../ui/cn'
 
 /**
- * 主页标签六个页面共用的小排版件：
- * 分节标题（含计数与「全部」入口）、骨架行、行内状态文案。
+ * 主页标签的七个页面共用的小排版件：
+ * 分节标题（含计数与「全部」入口）、骨架行、行内状态文案、项目空间一行摘要。
  * 页面骨架/间距全部由 home.css 提供，这里只出结构。
  */
+
+function firstLine(value: string | null | undefined): string {
+  const text = value?.trim()
+  if (!text) return ''
+  return text.split(/\r?\n/, 1)[0] ?? ''
+}
+
+/**
+ * 一行项目空间摘要：描述优先，其次目标，最后本地目录（最近页与项目空间页共用）。
+ * `fallback` 传空串时，三者都没有就返回空串——最近页的行里不需要「应用托管空间」这类占位。
+ */
+export function workspaceSummary(workspace: AgentWorkspace, fallback = '应用托管空间'): string {
+  return firstLine(workspace.description)
+    || ((workspace.goals ?? []).length > 0 ? `目标：${(workspace.goals ?? []).join(' · ')}` : '')
+    || workspace.path
+    || fallback
+}
 
 export interface HomeSectionProps {
   title: React.ReactNode
