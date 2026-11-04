@@ -75,6 +75,10 @@
     "ws": "^8.18.3",
     "zustand": "^5.0.16"
   },
+  "optionalDependencies": {
+    "@esbuild/darwin-arm64": "0.28.1",
+    "@esbuild/win32-x64": "0.28.1"
+  },
   "devDependencies": {
     "@electron/asar": "3.4.1",
     "@larksuite/cli": "1.0.93",

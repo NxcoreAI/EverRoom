@@ -130,11 +130,11 @@ jobs:
             echo "::warning::macOS signing certificate is not configured; producing an unsigned build."
             exit 0
           fi
-          test -n "$CSC_KEY_PASSWORD"
+          : "${CSC_KEY_PASSWORD:?secret MACOS_CERTIFICATE_PASSWORD is not set}"
           # notarize 只要签名就必走，API Key 装配与 profile 无关，必须在 profile 提前退出之前。
-          test -n "$APPLE_API_KEY_BASE64"
-          test -n "$APPLE_API_KEY_ID"
-          test -n "$APPLE_API_ISSUER"
+          : "${APPLE_API_KEY_BASE64:?secret APPLE_API_KEY_BASE64 is not set}"
+          : "${APPLE_API_KEY_ID:?secret APPLE_API_KEY_ID is not set}"
+          : "${APPLE_API_ISSUER:?secret APPLE_API_ISSUER is not set}"
           printf '%s' "$APPLE_API_KEY_BASE64" | base64 --decode > "$RUNNER_TEMP/AuthKey.p8"
           echo "APPLE_API_KEY=$RUNNER_TEMP/AuthKey.p8" >> "$GITHUB_ENV"
           if [[ -z "$MACOS_PROVISIONING_PROFILE_BASE64" ]]; then
@@ -224,11 +224,17 @@ jobs:
           unexpected_typescript="$(grep -Ei '\.(ts|tsx|mts|cts)$' "$RUNNER_TEMP/asar-files.txt" || true)"
           test -z "$unexpected_typescript" || { printf '%s\n' "$unexpected_typescript" >&2; exit 1; }
 
-          test -x "$resources/app.asar.unpacked/node_modules/@esbuild/darwin-arm64/bin/esbuild"
-          test -f "$resources/app.asar.unpacked/node_modules/better-sqlite3/prebuilds/darwin-arm64.node"
-          test -f "$resources/open-connector/src/server/index.ts"
-          test -f "$resources/open-connector/dist/web/index.html"
-          test -x "$resources/oo/darwin-arm64/oo"
+          # 全部 test 均带失败输出：静默退出会让日志看不出挂的是哪一项。
+          test -x "$resources/app.asar.unpacked/node_modules/@esbuild/darwin-arm64/bin/esbuild" \
+            || { echo "missing asar-unpacked @esbuild/darwin-arm64 (desktop optionalDependencies 未入包?)" >&2; exit 1; }
+          test -f "$resources/app.asar.unpacked/node_modules/better-sqlite3/prebuilds/darwin-arm64.node" \
+            || { echo "missing asar-unpacked better-sqlite3 darwin-arm64 prebuild" >&2; exit 1; }
+          test -f "$resources/open-connector/src/server/index.ts" \
+            || { echo "missing open-connector TS entry" >&2; exit 1; }
+          test -f "$resources/open-connector/dist/web/index.html" \
+            || { echo "missing open-connector web dist" >&2; exit 1; }
+          test -x "$resources/oo/darwin-arm64/oo" \
+            || { echo "missing oo darwin-arm64 binary" >&2; exit 1; }
           "$resources/oo/darwin-arm64/oo" --version
 
       - name: Verify artifacts
@@ -239,8 +245,10 @@ jobs:
           zips=(release/*.zip)
           test "${#dmgs[@]}" -eq 1 && test -f "${dmgs[0]}" || { echo "Expected one DMG" >&2; exit 1; }
           test "${#zips[@]}" -eq 1 && test -f "${zips[0]}" || { echo "Expected one ZIP" >&2; exit 1; }
-          test "$(lipo -archs "$app_path/Contents/MacOS/EverRoom")" = "arm64"
-          test -f "$app_path/Contents/Resources/gateway/node_modules/better-sqlite3/prebuilds/darwin-arm64.node"
+          test "$(lipo -archs "$app_path/Contents/MacOS/EverRoom")" = "arm64" \
+            || { echo "unexpected archs in EverRoom binary" >&2; exit 1; }
+          test -f "$app_path/Contents/Resources/gateway/node_modules/better-sqlite3/prebuilds/darwin-arm64.node" \
+            || { echo "missing gateway better-sqlite3 darwin-arm64 prebuild" >&2; exit 1; }
           hdiutil verify "${dmgs[0]}"
           unzip -t "${zips[0]}"
 
