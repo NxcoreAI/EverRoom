@@ -1,10 +1,10 @@
 import { LoaderCircle, RefreshCw } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
-import type { AgentAttachmentReference, AgentMountedDirectory } from '@nxcore/agent-contract'
+import type { AgentAttachmentReference, AgentMountedDirectory, AgentNoteCard } from '@nxcore/agent-contract'
 
 import { AgentChatView } from '@/components/agent/AgentChatView'
-import { buildAskBatch } from '@/components/agent/askDrafts'
+import { buildAskBatch, type PendingAskDraft } from '@/components/agent/askDrafts'
 import { AgentComposer } from '@/components/agent/AgentComposer'
 import { useAgentSession } from '@/components/agent/useAgentSession'
 import { RoomDocumentsProvider } from '@/components/context-room/RoomDocumentsProvider'
@@ -21,6 +21,15 @@ import './conversation.css'
 
 /** 连接失败的「正在连接」提示延迟出现，避免 ready 帧到达前的闪烁。 */
 const CONNECTING_HINT_DELAY_MS = 1500
+
+/** 批注草稿 → 气泡卡片结构（原文摘录 + 注释原话；来源文件可辨时带标题）。 */
+function buildNoteCards(drafts: readonly PendingAskDraft[]): AgentNoteCard[] {
+  return drafts.map((draft) => ({
+    excerpt: (draft.excerpt ?? '').replace(/\s+/g, ' ').trim(),
+    note: (draft.instruction ?? draft.displayMessage ?? draft.message).trim(),
+    ...(draft.title?.trim() ? { title: draft.title.trim() } : {}),
+  }))
+}
 
 export interface ConversationPaneProps {
   /** 所属工作空间标签 id：草稿落成会话时把标签视图切到该会话。 */
@@ -223,11 +232,13 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
    */
   const send = (attachments: AgentAttachmentReference[] = [], mountedDirectories: AgentMountedDirectory[] = []) => {
     const text = draft.trim()
-    if ((!text && attachments.length === 0) || !canSend || hook.loading) return
+    // 只有批注也能发：批注等价于一条消息（输入框空 ≠ 没东西可发）。
+    if ((!text && attachments.length === 0 && workspaceAskDrafts.length === 0) || !canSend || hook.loading) return
     // 合并路径总有用户文本（text 为空时只有附件能触发发送，批注跟着下一轮文本走）。
     const batch = workspaceAskDrafts.length > 0 ? buildAskBatch(workspaceAskDrafts) : null
-    const prompt = batch ? `${text}\n\n${batch.message}` : text
-    const displayPrompt = batch ? `${text}\n\n${batch.displayMessage}` : undefined
+    const prompt = batch ? (text ? `${text}\n\n${batch.message}` : batch.message) : text
+    const displayPrompt = batch ? (text ? `${text}\n\n${batch.displayMessage}` : batch.displayMessage) : undefined
+    const noteCards = batch && !text ? buildNoteCards(workspaceAskDrafts) : undefined
     setDraft('')
     setComposerResetKey((key) => key + 1)
     /** 有在跑的 run 时 sendPrompt 会排队并返回 null——排队也算投递成功，不清回输入框。 */
@@ -246,6 +257,7 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
       undefined,
       displayPrompt,
       mountedDirectories.length ? mountedDirectories : undefined,
+      noteCards,
     ).then((runId) => {
       // 批注已随本轮发出（或已排队）：清掉队列；失败时留在队列里下次再带。
       if (batch && workspaceId && (runId !== null || queuesBehindRun)) {
@@ -260,6 +272,7 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
   /**
    * 一次发出所有批注：合成一条消息（技术指令带编号，人话用圈号），投递成功才清空。
    * 排队（有 run 在跑）也算投递成功；真正失败时草稿留着，用户可以再发一次。
+   * 气泡带批注卡片（原文摘录 + 注释，hover 只读展开），不显示合成文本。
    */
   const sendAskDrafts = () => {
     const batch = buildAskBatch(workspaceAskDrafts)
@@ -277,6 +290,8 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
         undefined,
         undefined,
         batch.displayMessage,
+        undefined,
+        buildNoteCards(workspaceAskDrafts),
       )
       .then((runId) => {
         if (runId === null && !hookRef.current.activeRunId) {
@@ -315,6 +330,8 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
         contextSummary=""
         contextItems={[]}
         hasSelectedText={false}
+        /** 只有批注也允许发送：批注等价于一条消息，空输入不再是空提交。 */
+        hasSubmittableContext={workspaceAskDrafts.length > 0}
         resetKey={composerResetKey}
         selectedExternalConversation={null}
         localAgents={[]}
@@ -405,7 +422,7 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
             cancelledRunIds={hook.cancelledRunIds}
             composer={composer}
             currentSessionId={hook.sessionId}
-            draftHasContent={Boolean(draft.trim())}
+            draftHasContent={Boolean(draft.trim()) || workspaceAskDrafts.length > 0}
             error={hook.error}
             interruptedRunIds={hook.interruptedRunIds}
             loading={hook.loading}
@@ -446,6 +463,7 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
           onDraftChange={setDraft}
           onSubmit={send}
           aboveInput={noteQueueChip}
+          hasPendingNotes={workspaceAskDrafts.length > 0}
         />
       )}
     </div>

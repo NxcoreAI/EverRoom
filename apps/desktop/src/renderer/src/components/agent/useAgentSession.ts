@@ -6,6 +6,7 @@ import type {
   AgentMountedDirectory,
   AgentMessage,
   AgentModelPreference,
+  AgentNoteCard,
   AgentPermissionMode,
   AgentPermissionModeState,
   AgentRoomReference,
@@ -86,6 +87,8 @@ export interface QueuedAgentSubmission {
   sessionId?: string | null
   /** 用户可见文案（技术指令排队时保留人话气泡）。 */
   displayPrompt?: string
+  /** 文档批注卡片：排队期间乐观气泡仍按卡片渲染。 */
+  noteCards?: AgentNoteCard[]
   selectedText?: string
   selectedRoomId?: string
   activeDocument?: AgentActiveDocumentContext | null
@@ -707,7 +710,15 @@ export function useAgentSession(
         content: reduced.streamingContent,
         createdAt: reduced.startedAt ?? snapshot.activeRun?.createdAt ?? snapshot.session.updatedAt,
         streaming: isActiveRun && !reduced.messageCompleted,
-      })
+      }
+      // 插到本 run 的 user 气泡后面，保持「我一问、agent 一答」的交替时序。
+      // 追加到末尾会把多个中断 run 的占位全堆在所有 user 消息之后，重进会话
+      // 时看到「连发 N 条消息、连跑 N 个任务」的错乱排版（#中断会话排版）。
+      const userIndex = nextMessages.findIndex((message) => (
+        message.runId === runId && message.role === 'user'
+      ))
+      if (userIndex >= 0) nextMessages.splice(userIndex + 1, 0, placeholder)
+      else nextMessages.push(placeholder)
     }
 
     setMessages(nextMessages)
@@ -1133,11 +1144,14 @@ export function useAgentSession(
     displayPrompt?: string,
     /** 输入区「挂载目录」：目录路径进本轮运行上下文，Agent 可直接读取。 */
     mountedDirectories?: AgentMountedDirectory[],
+    /** 文档批注卡片：存在时用户气泡按卡片渲染（原文摘录 + 注释）。 */
+    noteCards?: AgentNoteCard[],
   ): Promise<string | null> => {
     const message = prompt.trim()
     const displayPromptValue = displayPrompt?.trim() || undefined
     // 技术指令只进运行时；落库/气泡/标题一律用 displayPrompt（缺省＝用户原话）。
     const displayMessage = displayPromptValue ?? message
+    const noteCardsValue = noteCards?.length ? noteCards : undefined
     if ((!message && !attachments?.length) || loading || sending) return null
     if (activeRunId) {
       // 重试（replaceRunId）不排队：replace 只对已终态 run 有意义，排队会丢失其语义。
@@ -1147,6 +1161,7 @@ export function useAgentSession(
         sessionId: sessionIdRef.current,
         prompt: message,
         ...(displayPromptValue ? { displayPrompt: displayPromptValue } : {}),
+        ...(noteCardsValue ? { noteCards: noteCardsValue } : {}),
         selectedText,
         selectedRoomId,
         activeDocument,
@@ -1209,6 +1224,7 @@ export function useAgentSession(
       authorAgentId: null,
       content: displayMessage,
       createdAt: new Date().toISOString(),
+      ...(noteCardsValue ? { noteCards: noteCardsValue } : {}),
       ...(mentionedAgents?.length && !channelAgentRef.current
         ? { referencedAgentNames: mentionedAgents.map((agent) => agent.displayName) }
         : {}),
@@ -1232,6 +1248,8 @@ export function useAgentSession(
         idempotencyKey: crypto.randomUUID(),
         // 技术指令照旧进运行时；displayPrompt 仅供落库/展示（网关不把它给 runtime）。
         ...(displayPromptValue ? { displayPrompt: displayPromptValue } : {}),
+        // 批注卡片只影响气泡渲染，runtime 不收。
+        ...(noteCardsValue ? { noteCards: noteCardsValue } : {}),
         // 'main' 时省略 targetAgentId：档位锁定在会话上，由网关按 session.activeAgentId 选运行时。
         ...(selectedAgentId !== 'main' ? { targetAgentId: selectedAgentId } : {}),
         invocationMode: 'explicit_switch',
@@ -1351,6 +1369,7 @@ export function useAgentSession(
           next.mentions,
           next.displayPrompt,
           next.mountedDirectories,
+          next.noteCards,
         )
       } catch {
         // 失败已在 sendPrompt 内 setError；丢弃该条继续排后面的，避免卡队列。

@@ -474,4 +474,89 @@ describe("agent gateway", () => {
       .where(eq(agentSessions.id, sessionId)).get()?.runtimeSessionRef).toBeNull();
     await restartedApp.close();
   });
+
+  it("persists noteCards on the user message and returns them in the session snapshot", async () => {
+    const config = await testConfig();
+    const app = await createServer(config);
+    const headers = { authorization: `Bearer ${config.authToken}` };
+    const sessionResponse = await app.inject({
+      method: "POST",
+      url: "/v1/agent/sessions",
+      headers,
+      payload: { pageLabel: "EverRoom" },
+    });
+    if (sessionResponse.statusCode !== 201) {
+      throw new Error(`create session ${sessionResponse.statusCode}: ${sessionResponse.body.slice(0, 300)}`);
+    }
+    const session = sessionResponse.json<AgentSession>();
+
+    await app.inject({
+      method: "POST",
+      url: `/v1/agent/sessions/${session.id}/runs`,
+      headers,
+      payload: {
+        prompt: "我在 Word《报告》选中了这段内容：改一下。 idempotency-padding",
+        displayPrompt: "我对 1 处做了批注",
+        noteCards: [
+          { excerpt: "第一段原文内容", note: "改一下这段", title: "报告" },
+          { excerpt: "第二段原文内容", note: "这句删掉" },
+        ],
+        idempotencyKey: "note-cards-persist-key",
+      },
+    });
+
+    const snapshotResponse = await app.inject({
+      method: "GET",
+      url: `/v1/agent/sessions/${session.id}`,
+      headers,
+    });
+    if (snapshotResponse.statusCode !== 200) {
+      throw new Error(`snapshot ${snapshotResponse.statusCode}: ${snapshotResponse.body.slice(0, 300)}`);
+    }
+    const snapshot = snapshotResponse.json<AgentSessionSnapshot>();
+    const userMessage = snapshot.messages.find((message) => message.role === "user");
+    expect(userMessage?.noteCards).toEqual([
+      { excerpt: "第一段原文内容", note: "改一下这段", title: "报告" },
+      { excerpt: "第二段原文内容", note: "这句删掉" },
+    ]);
+    // displayPrompt 仍是气泡文案（卡片缺失时的降级路径），noteCards 只增不改。
+    expect(userMessage?.content).toBe("我对 1 处做了批注");
+
+    // 坏数据（空数组）静默降级为普通消息：不落 note_cards。
+    const secondSessionResponse = await app.inject({
+      method: "POST",
+      url: "/v1/agent/sessions",
+      headers,
+      payload: { pageLabel: "EverRoom-2" },
+    });
+    if (secondSessionResponse.statusCode !== 201) {
+      throw new Error(`second create ${secondSessionResponse.statusCode}: ${secondSessionResponse.body.slice(0, 300)}`);
+    }
+    const secondSession = secondSessionResponse.json<AgentSession>();
+    const secondRunResponse = await app.inject({
+      method: "POST",
+      url: `/v1/agent/sessions/${secondSession.id}/runs`,
+      headers,
+      payload: {
+        prompt: "普通消息一条 idempotency-padding",
+        noteCards: [],
+        idempotencyKey: "note-cards-empty-key",
+      },
+    });
+    if (secondRunResponse.statusCode >= 300) {
+      throw new Error(`second run ${secondRunResponse.statusCode}: ${secondRunResponse.body.slice(0, 300)}`);
+    }
+    const secondResponse = await app.inject({
+      method: "GET",
+      url: `/v1/agent/sessions/${secondSession.id}`,
+      headers,
+    });
+    if (secondResponse.statusCode !== 200) {
+      throw new Error(`second snapshot ${secondResponse.statusCode}: ${secondResponse.body.slice(0, 200)}`);
+    }
+    const secondSnapshot = secondResponse.json<AgentSessionSnapshot>();
+    expect(secondSnapshot.messages.find((message) => message.role === "user")?.noteCards)
+      .toBeUndefined();
+    await app.close();
+  });
 });

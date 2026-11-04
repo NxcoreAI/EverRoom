@@ -17,6 +17,8 @@ export interface ConversationEmptyProps {
   onSubmit: () => void
   /** 渲染在大输入框正上方的附加行（待发送批注徽章）：hero 垂直居中，外挂会飘到很上面。 */
   aboveInput?: ReactNode
+  /** 有待发送批注时空输入也允许发送（批注等价于一条消息）。 */
+  hasPendingNotes?: boolean
 }
 
 interface HeroSuggestion {
@@ -42,6 +44,7 @@ export function ConversationEmpty({
   onDraftChange,
   onSubmit,
   aboveInput,
+  hasPendingNotes = false,
 }: ConversationEmptyProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -57,7 +60,7 @@ export function ConversationEmpty({
     textarea.style.height = `${Math.min(TEXTAREA_MAX_HEIGHT, Math.max(TEXTAREA_MIN_HEIGHT, textarea.scrollHeight))}px`
   }, [draft])
 
-  const canSubmit = !disabled && Boolean(draft.trim())
+  const canSubmit = !disabled && (Boolean(draft.trim()) || hasPendingNotes)
 
   const submit = () => {
     if (!canSubmit) return

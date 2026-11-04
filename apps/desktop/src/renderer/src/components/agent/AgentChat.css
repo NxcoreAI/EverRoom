@@ -183,6 +183,28 @@ button.agent-user-mention[data-kind='file'] { background: #f6efe2; }
 button.agent-user-mention[data-kind='conversation'] { background: #f3ecfa; }
 button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
 
+/* 文档批注卡片（用户气泡内，只读）：原文摘录 + 注释。气泡整体仍靠
+   .agent-message[data-role='user'] 的底色；卡片行用浅一档的嵌套面板。 */
+.agent-note-cards { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.agent-note-card {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 7px 10px;
+  border-left: 2px solid #d0d5dd;
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.75);
+  cursor: default;
+}
+.agent-note-card-source { color: #7b8088; font-size: 10.5px; line-height: 1.4; }
+.agent-note-card-excerpt {
+  color: #54585f;
+  font-size: 11.5px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.agent-note-card-note { color: #17191d; font-size: 13px; line-height: 1.55; overflow-wrap: anywhere; }
+
 .agent-message p {
   margin: 0;
   color: #17191d;

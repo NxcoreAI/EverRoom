@@ -12,6 +12,7 @@ import type {
   AgentModelPreference,
   AgentNavigationTarget,
   AgentMessage,
+  AgentNoteCard,
   AgentWorkspace,
   CreateAgentWorkspaceInput,
   LocalAgentDelegationContext,
@@ -291,7 +292,41 @@ function toRun(row: typeof agentRuns.$inferSelect): AgentRun {
   };
 }
 
+/** note_cards 列（JSON 文本）→ AgentNoteCard[]；空/坏数据静默降级为普通消息。 */
+function parseNoteCards(raw: string | null): AgentNoteCard[] | undefined {
+  if (!raw) return undefined
+  try {
+    const parsed = JSON.parse(raw) as unknown
+    if (!Array.isArray(parsed)) return undefined
+    const cards = parsed.filter((item): item is AgentNoteCard =>
+      typeof item === "object" && item !== null
+      && typeof (item as AgentNoteCard).excerpt === "string"
+      && typeof (item as AgentNoteCard).note === "string")
+    return cards.length > 0 ? cards : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** 入库前的批注卡片收敛：最多 20 条，单字段 2k，来源标题 300。 */
+function sanitizeNoteCards(cards: StartAgentRunInput["noteCards"]): AgentNoteCard[] | undefined {
+  if (!Array.isArray(cards) || cards.length === 0) return undefined
+  const cleaned = cards
+    .filter((card): card is AgentNoteCard =>
+      typeof card === "object" && card !== null
+      && typeof card.excerpt === "string" && card.excerpt.trim().length > 0
+      && typeof card.note === "string" && card.note.trim().length > 0)
+    .slice(0, 20)
+    .map((card) => ({
+      excerpt: card.excerpt.slice(0, 2_000),
+      note: card.note.slice(0, 2_000),
+      ...(typeof card.title === "string" && card.title.trim() ? { title: card.title.slice(0, 300) } : {}),
+    }))
+  return cleaned.length > 0 ? cleaned : undefined
+}
+
 function toMessage(row: typeof agentMessages.$inferSelect): AgentMessage {
+  const noteCards = parseNoteCards(row.noteCards)
   return {
     id: row.id,
     sessionId: row.sessionId,
@@ -300,6 +335,7 @@ function toMessage(row: typeof agentMessages.$inferSelect): AgentMessage {
     authorAgentId: row.authorAgentId,
     content: row.content,
     createdAt: row.createdAt.toISOString(),
+    ...(noteCards ? { noteCards } : {}),
   };
 }
 
@@ -2172,12 +2208,16 @@ export class AgentService {
       tx.insert(agentRuns).values(runRow).run();
       if (options.persistUserMessage !== false) {
         const userMessageId = randomUUID();
+        // 批注卡片随消息入库（JSON 文本）：气泡按卡片渲染，重载会话后还原。
+        // 条目先做体积/数量收敛，坏数据在这里就被丢弃。
+        const noteCards = sanitizeNoteCards(input.noteCards);
         tx.insert(agentMessages).values({
           id: userMessageId,
           sessionId,
           runId,
           role: "user",
           content: displayPrompt,
+          ...(noteCards ? { noteCards: JSON.stringify(noteCards) } : {}),
           createdAt: now,
         }).run();
         enqueueSearchIndex(tx, { itemType: "message", refId: userMessageId, priority: "high" });

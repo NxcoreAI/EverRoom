@@ -550,6 +550,12 @@ export function agentRoutes(
             prompt: Type.String({ maxLength: 20_000 }),
             /** 用户可见文案（人话）：落库消息/会话标题用它，prompt 仍原样交给 runtime。 */
             displayPrompt: Type.Optional(Type.String({ maxLength: 20_000 })),
+            /** 文档批注卡片（结构化展示）：存在时落库消息带卡片，气泡按卡片渲染。 */
+            noteCards: Type.Optional(Type.Array(Type.Object({
+              excerpt: Type.String({ minLength: 1, maxLength: 2_000 }),
+              note: Type.String({ minLength: 1, maxLength: 2_000 }),
+              title: Type.Optional(Type.String({ minLength: 1, maxLength: 300 })),
+            }), { maxItems: 20 })),
             idempotencyKey: Type.String({ minLength: 8, maxLength: 100 }),
             targetAgentId: Type.Optional(Type.String({ minLength: 1, maxLength: 500 })),
             invocationMode: Type.Optional(Type.Union([

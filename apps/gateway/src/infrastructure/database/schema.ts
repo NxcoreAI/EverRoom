@@ -329,6 +329,8 @@ export const agentMessages = sqliteTable("agent_messages", {
   role: text("role", { enum: ["user", "assistant", "system"] }).notNull(),
   authorAgentId: text("author_agent_id"),
   content: text("content").notNull(),
+  /** 文档批注卡片（JSON 序列化的 AgentNoteCard[]；普通消息为 null）。 */
+  noteCards: text("note_cards"),
   createdAt: integer("created_at", { mode: "timestamp_ms" })
     .notNull()
     .$defaultFn(() => new Date()),

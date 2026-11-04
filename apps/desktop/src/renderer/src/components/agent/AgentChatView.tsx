@@ -36,7 +36,7 @@ import {
 import { useLinkedAgentRun, type LinkedAgentRunState } from './useLinkedAgentRun'
 import type { DisplayAgentMessage, DisplayAgentToolCall } from './useAgentSession'
 import type { MentionedItem } from './agentMentions'
-import { modelPreferenceFromAgentId, type AgentNavigationTarget, type AgentRoomReference, type AgentSessionLink, type PendingAgentIntent, type RoomDocument } from '@nxcore/agent-contract'
+import { modelPreferenceFromAgentId, type AgentNavigationTarget, type AgentNoteCard, type AgentRoomReference, type AgentSessionLink, type PendingAgentIntent, type RoomDocument } from '@nxcore/agent-contract'
 import type { ActiveDocumentDescriptor } from './activeDocumentContext'
 import type { AgentApprovalDecision } from '@/shared/sources'
 import { writeTextToClipboard } from '@/lib/systemClipboard'
@@ -358,8 +358,35 @@ function RunNavigation({
   )
 }
 
-function LinkedRunProgress({ agentNamesById, state }: { agentNamesById: Record<string, string>; state: LinkedAgentRunState }) {
-  const { t } = useLocale()
+/**
+ * 文档批注卡片（用户气泡内，只读）：每条 = 原文摘录 + 我的注释。
+ * 长文本行内截断，hover 卡片完整展示（title 原生 tooltip 即可，只读无操作）。
+ */
+function UserNoteCards({ cards }: { cards: AgentNoteCard[] }) {
+  const noteText = (note: string) => note.length > 120 ? `${note.slice(0, 120)}…` : note
+  const excerptText = (excerpt: string) => {
+    const flat = excerpt.replace(/\s+/g, ' ').trim()
+    return flat.length > 80 ? `${flat.slice(0, 80)}…` : flat
+  }
+  return (
+    <div className="agent-note-cards" role="list">
+      {cards.map((card, index) => (
+        <div
+          key={`${index}:${card.note.slice(0, 24)}`}
+          className="agent-note-card"
+          role="listitem"
+          title={`${card.excerpt}\n——\n${card.note}`}
+        >
+          {card.title ? <div className="agent-note-card-source">{card.title}</div> : null}
+          {card.excerpt ? <div className="agent-note-card-excerpt">{excerptText(card.excerpt)}</div> : null}
+          <div className="agent-note-card-note">{noteText(card.note)}</div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function LinkedRunProgress({ agentNamesById, state }: { agentNamesById: Record<string, string>; state: LinkedAgentRunState }) {  const { t } = useLocale()
   const active = state.status === 'accepted' || state.status === 'running'
   const assistantMessage = [...state.messages].reverse().find((message) => message.role === 'assistant')
   const rawFinalContent = state.documentPending
@@ -1147,8 +1174,13 @@ export function AgentChatView({
                     data-agent-message-id={message.id}
                     data-notification-target={String(highlightedNotificationTarget?.messageId === message.id)}
                     data-role="user"
+                    data-note-cards={message.noteCards?.length ? 'true' : undefined}
                   >
-                    <p>{message.content}</p>
+                    {message.noteCards?.length ? (
+                      <UserNoteCards cards={message.noteCards} />
+                    ) : (
+                      <p>{message.content}</p>
+                    )}
                     <button
                       type="button"
                       className="agent-user-copy"

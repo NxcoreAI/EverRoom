@@ -366,6 +366,21 @@ export interface AgentMessage {
   authorAgentId?: string | null;
   content: string;
   createdAt: string;
+  /**
+   * 文档批注卡片（Office「AI 修改」队列发出）：存在时用户气泡渲染成
+   * 「原文摘录 + 我的注释」卡片而不是纯文本。content 仍是合并文案（搜索/复制用）。
+   */
+  noteCards?: AgentNoteCard[];
+}
+
+/** 一条文档批注的展示结构（气泡内卡片，只读）。 */
+export interface AgentNoteCard {
+  /** 被批注的原文摘录（选区文本快照）。 */
+  excerpt: string;
+  /** 用户敲的批注原话。 */
+  note: string;
+  /** 来源文件标题（缺省不展示来源行）。 */
+  title?: string;
 }
 
 export interface AgentSessionParticipant {
@@ -1138,6 +1153,11 @@ export interface StartAgentRunInput {
    * 用本字段传用户真正能看懂的一句话。运行时仍只收 prompt；落库消息、会话标题用本字段。
    */
   displayPrompt?: string;
+  /**
+   * 文档批注卡片（与 displayPrompt 同源的结构化展示）：存在时落库消息带
+   * noteCards，气泡渲染成卡片列表。runtime 不收本字段。
+   */
+  noteCards?: AgentNoteCard[];
   idempotencyKey: string;
   /** Stable local Agent installation id selected by an explicit composer mention. */
   targetAgentId?: string;
