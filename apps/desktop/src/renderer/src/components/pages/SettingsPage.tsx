@@ -620,26 +620,27 @@ export function SettingsPage({
           <div className="cloud-account-connected">
             {account.subscription ? (() => {
               const isProActive = account.subscription.planCode === 'pro' && ['active', 'trialing'].includes(account.subscription.status)
-              /* 后端 credits 字段是美元口径(quota/500000),formatCredits 是积分口径
-                 (quota/50000)——统一 ×QUOTA_PER_USD 还原成 quota 再换算,堵 10 倍错位。 */
+              /* 字段单位(2026-11-04 后端 9827cd8 起):remainingCredits/usedCredits/
+                 grants[].credits = 美元口径(quota/500000);periodRemainingCredits 与
+                 planPeriodQuota = quota 原值。formatCredits 按积分除(quota/50000),
+                 美元字段 ×QUOTA_PER_USD 还原,quota 字段直用——不再混装叠乘。 */
               const usdToQuota = (usd: number) => usd * QUOTA_PER_USD
-              const periodRemaining = usdToQuota(aiRelayStatus?.periodRemainingCredits ?? aiRelayStatus?.remainingCredits ?? 0)
+              const periodRemaining = aiRelayStatus?.planPeriodQuota != null
+                ? Math.min(aiRelayStatus.periodRemainingCredits ?? 0, aiRelayStatus.planPeriodQuota)
+                : (aiRelayStatus?.periodRemainingCredits ?? 0)
+              const planPeriodQuota = aiRelayStatus?.planPeriodQuota ?? periodRemaining
               const usedQuota = usdToQuota(aiRelayStatus?.usedCredits ?? 0)
-              const monthlyQuota = periodRemaining + usedQuota
               const grants = aiRelayStatus?.grants ?? []
               // 无 grants 明细(旧后端)且充值合计>0:合成一条合计兜底行,不显示"暂无"
               const grantRows = grants.length
                 ? grants
                 : (aiRelayStatus?.topupRemainingCredits ?? 0) > 0
-                  ? [{ id: '__topup_total__', remainingCredits: aiRelayStatus?.topupRemainingCredits ?? 0, amountCredits: aiRelayStatus?.topupRemainingCredits ?? 0, expiresAt: null }]
+                  ? [{ id: '__topup_total__', remainingCredits: aiRelayStatus?.topupRemainingCredits ?? 0, amountCredits: aiRelayStatus?.topupRemainingCredits ?? 0, expiresAt: null, source: 'paypal_topup' }]
                   : []
-              const topupTotal = usdToQuota(grants.length
-                ? grants.reduce((sum, grant) => sum + grant.remainingCredits, 0)
-                : (aiRelayStatus?.topupRemainingCredits ?? 0))
-              const totalRemaining = usdToQuota(aiRelayStatus?.remainingCredits ?? 0) || periodRemaining + topupTotal
-              // 奖励积分 = 总剩余 - 套餐周期剩余 - 充值剩余(注册赠送等 signup_bonus grant)
-              const bonusTotal = Math.max(0, totalRemaining - periodRemaining - topupTotal)
-              // 购买列聚合:永不过期的合成一行合计;有到期日的各自一行(过期时间相同也各自占行,因额度独立)
+              // 额度包 = 购买 + 赠送(signup_bonus 等旁路 grant,同列展示)
+              const packsTotal = usdToQuota(grantRows.reduce((sum, grant) => sum + grant.remainingCredits, 0))
+              const totalRemaining = usdToQuota(aiRelayStatus?.remainingCredits ?? 0) || periodRemaining + packsTotal
+              // 永不过期的额度包合成一行合计;有到期日的各自一行
               const perpetualGrants = grantRows.filter((grant) => !grant.expiresAt)
               const expiringGrants = grantRows.filter((grant) => grant.expiresAt)
               return (
@@ -677,32 +678,23 @@ export function SettingsPage({
                       </div>
                       <progress
                         aria-label={t('surface:settings.planOverviewBuiltin')}
-                        max={Math.max(1, monthlyQuota)}
-                        value={Math.min(Math.max(0, periodRemaining), monthlyQuota)}
+                        max={Math.max(1, planPeriodQuota)}
+                        value={Math.min(Math.max(0, periodRemaining), Math.max(1, planPeriodQuota))}
                       />
                       <small>
                         {(aiRelayStatus.remainingCredits ?? 0) <= 0
                           ? t('surface:settings.llmQuotaExhausted')
                           : t('surface:settings.usedUsedTotalTotal', {
                             used: formatCredits(usedQuota, locale),
-                            total: formatCredits(monthlyQuota, locale),
+                            total: formatCredits(planPeriodQuota, locale),
                           })}
                         {' · '}{t('surface:settings.periodEnds')} {formatPeriodEnd(account.subscription.periodEnd, locale)}
                       </small>
                     </div>
-                    {bonusTotal > 0 ? (
-                    <div className="plan-overview-cell">
-                      <div>
-                        <span>{t('surface:settings.planOverviewBonus')}</span>
-                        <strong>{formatCredits(bonusTotal, locale)}</strong>
-                      </div>
-                      <small>{t('surface:settings.topupBalanceNote')}</small>
-                    </div>
-                    ) : null}
                     <div className="plan-overview-cell">
                       <div>
                         <span>{t('surface:settings.planOverviewPurchased')}</span>
-                        <strong>{formatCredits(topupTotal, locale)}</strong>
+                        <strong>{formatCredits(packsTotal, locale)}</strong>
                       </div>
                       {perpetualGrants.length ? (
                         <div className="plan-overview-grant">

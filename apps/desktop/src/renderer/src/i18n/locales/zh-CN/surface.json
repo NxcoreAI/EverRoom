@@ -2199,8 +2199,7 @@
   "settings.navigationPlan": "套餐与积分",
   "settings.planOverviewTotal": "总剩余积分",
   "settings.planOverviewBuiltin": "套餐基础积分",
-  "settings.planOverviewBonus": "平台奖励积分",
-  "settings.planOverviewPurchased": "购买积分",
+  "settings.planOverviewPurchased": "额度包",
   "plans.perMonth": "月",
   "settings.planOverviewNoPurchase": "暂无购买积分"
 }

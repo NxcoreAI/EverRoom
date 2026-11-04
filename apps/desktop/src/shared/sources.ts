@@ -423,7 +423,10 @@ export interface AiGatewayStatus {
   /** 充值余额(旁路,长期有效;旧后端无此字段时为 0)。 */
   topupRemainingCredits?: number
   /** 活跃充值 grant 明细(新后端下发;无此字段时只展示充值合计行)。 */
-  grants?: Array<{ id: string; remainingCredits: number; amountCredits: number; expiresAt: string | null }>
+  /** 套餐周期额度(quota 原值,2026-11-04 后端起提供):进度条分母,与美元口径字段区分。 */
+  planPeriodQuota?: number
+  /** 额度包明细(购买+赠送):credits 字段为美元口径(quota/500000)。 */
+  grants?: Array<{ id: string; remainingCredits: number; amountCredits: number; expiresAt: string | null; source?: string }>
   periodEnd: string | null
 }
 
