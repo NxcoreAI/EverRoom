@@ -521,6 +521,8 @@ const ACCOUNT_CHANNELS = {
   billingTopup: 'billing:topup',
   billingTopupStatus: 'billing:topup-status',
   billingTopupMockApprove: 'billing:topup-mock-approve',
+  /** 套餐档位(升级弹窗)。 */
+  billingPlans: 'billing:plans',
 } as const
 
 // 通知偏好与云端会话：主进程直连 SaaS，渲染端只做只读代理（通知设置页）。
@@ -3707,6 +3709,11 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     const client = saasClient
     if (!client || typeof orderId !== 'string') return Promise.reject(new Error('尚未登录。'))
     return rateLimitAware(() => client.topupMockApprove(orderId))
+  })
+  handle(ACCOUNT_CHANNELS.billingPlans, () => {
+    const client = saasClient
+    if (!client) return Promise.resolve([])
+    return rateLimitAware(() => client.planTiers())
   })
   // SaaS 客户端先于连接器栈构造：saas 连接层在 gateway 启动前就需要登录态换 oo 会话。
   // 放在 createWindow 之前：渲染层挂载即查账号，处理器必须先于首帧就位。

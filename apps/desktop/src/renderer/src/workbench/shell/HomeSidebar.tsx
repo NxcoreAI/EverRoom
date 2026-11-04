@@ -1,6 +1,7 @@
 import {
   Bot,
   ChevronsUpDown,
+  ChevronRight,
   Clock,
   FolderOpen,
   LayoutGrid,
@@ -10,15 +11,17 @@ import {
   Sparkles,
   UserRound,
 } from 'lucide-react'
-import React, { useState } from 'react'
+import React, { useCallback, useEffect, useState } from 'react'
 
 import everroomAppIcon from '@/assets/everroom-app-icon.png'
+import { formatCredits } from '@/shared/sources'
 import { useOptionalAccount } from '@/state/AccountContext'
 
 import { useHomeTab, useWorkbenchStore } from '../state/store'
 import type { HomePageKey } from '../types'
 import { cn } from '../ui/cn'
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from '../ui/menu'
+import { PlanUpgradeModal } from './PlanUpgradeModal'
 
 const NAV_ITEMS: ReadonlyArray<{ key: HomePageKey; label: string; icon: React.ReactNode }> = [
   { key: 'recent', label: '最近', icon: <Clock size={16} strokeWidth={1.8} /> },
@@ -34,7 +37,7 @@ const NAV_ITEMS: ReadonlyArray<{ key: HomePageKey; label: string; icon: React.Re
  * 主页标签的全局侧栏：品牌 + 一级入口 + 账户。
  *
  * - 设置是独立的一级页面，排在「连接器」下面，不再藏在账户行后面。
- * - 账户行只表示身份，点开是账号菜单（账号与同步 / 退出登录），不再承担页面跳转。
+ * - 账户行只表示身份，点开是账号菜单：档位+升级 / 积分余额 / 账号与同步 / 退出登录。
  */
 export function HomeSidebar() {
   const homeTab = useHomeTab()
@@ -48,8 +51,28 @@ export function HomeSidebar() {
   const accountLabel = signedIn ? (accountName ?? '已登录') : '未登录'
   const accountHint = signedIn ? (account?.subscription?.planName ?? 'EverRoom 账号') : '登录后同步项目空间'
   const avatarText = signedIn && accountName ? accountName.trim().slice(0, 1).toUpperCase() : '登'
+  const planCode = signedIn ? (account?.subscription?.planCode ?? null) : null
+  const isPro = planCode === 'pro' && ['active', 'trialing'].includes(account?.subscription?.status ?? '')
 
   const [loggingOut, setLoggingOut] = useState(false)
+  const [upgradeOpen, setUpgradeOpen] = useState(false)
+  // 菜单打开时拉一次总额度(remainingCredits = 周期剩余 + 充值余额,积分取整)
+  const [creditsValue, setCreditsValue] = useState<number | null>(null)
+  const [menuOpen, setMenuOpen] = useState(false)
+
+  const refreshCredits = useCallback(() => {
+    if (!signedIn || !window.nxcore?.aiRelay) return
+    void window.nxcore.aiRelay.status()
+      .then((status) => { if (status?.configured) setCreditsValue(status.remainingCredits) })
+      .catch(() => undefined)
+  }, [signedIn])
+
+  useEffect(() => {
+    if (menuOpen) refreshCredits()
+  }, [menuOpen, refreshCredits])
+
+  const openPlanSection = () => openSettings('settings-plan')
+
   const logout = async () => {
     if (!window.nxcore || loggingOut) return
     setLoggingOut(true)
@@ -92,7 +115,7 @@ export function HomeSidebar() {
       </nav>
 
       <div className="wb-sidebar-foot">
-        <Menu>
+        <Menu open={menuOpen} onOpenChange={setMenuOpen}>
           <MenuTrigger asChild>
             <button
               type="button"
@@ -109,6 +132,28 @@ export function HomeSidebar() {
             </button>
           </MenuTrigger>
           <MenuContent side="top" align="start" sideOffset={8} className="wb-account-menu">
+            {signedIn ? (
+              <>
+                <div className="wb-account-plan" role="group" aria-label="当前套餐">
+                  <UserRound size={14} aria-hidden="true" />
+                  <strong>{isPro ? 'Pro' : 'Free'}</strong>
+                  {isPro ? null : (
+                    <button type="button" className="wb-account-plan-upgrade" onClick={() => setUpgradeOpen(true)}>
+                      升级
+                    </button>
+                  )}
+                </div>
+                <button type="button" className="wb-account-credits" onClick={openPlanSection}>
+                  <Sparkles size={14} aria-hidden="true" />
+                  <strong>积分余额</strong>
+                  <span className="wb-account-credits-value">
+                    {creditsValue === null ? '…' : formatCredits(creditsValue, 'en')}
+                  </span>
+                  <ChevronRight size={13} aria-hidden="true" />
+                </button>
+                <MenuSeparator />
+              </>
+            ) : null}
             <MenuItem icon={<UserRound size={14} />} onSelect={() => openSettings('settings-account')}>
               {signedIn ? '账号与同步' : '登录账号'}
             </MenuItem>
@@ -123,6 +168,13 @@ export function HomeSidebar() {
           </MenuContent>
         </Menu>
       </div>
+
+      <PlanUpgradeModal
+        open={upgradeOpen}
+        onOpenChange={setUpgradeOpen}
+        currentPlanCode={planCode}
+        onSettled={() => { void accountState?.refreshAccount?.(); refreshCredits() }}
+      />
     </aside>
   )
 }

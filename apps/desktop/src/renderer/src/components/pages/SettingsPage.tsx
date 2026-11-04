@@ -36,7 +36,7 @@ import {
 } from '@/state/conversationSuggestionSettings'
 import appleLogo from '@/assets/apple-logo.svg'
 import googleLogo from '@/assets/google-logo.svg'
-import { formatLlmUsd, type AiGatewayStatus, type CloudOidcProvider } from '../../../../shared/sources'
+import { formatCredits, type AiGatewayStatus, type CloudOidcProvider } from '../../../../shared/sources'
 import type { AccountKeyringStatus, CloudDevice } from '../../../../shared/sources'
 import { PageHeader } from './PageHeader'
 import { McpSettingsSection } from '@/components/settings/McpSettingsSection'
@@ -47,13 +47,16 @@ import { AppearanceSettingsSection } from '@/components/settings/AppearanceSetti
 import { RuntimeConfigSettingsSection } from '@/components/settings/RuntimeConfigSettingsSection'
 import { RedeemCodeField, useRedeemCode } from '@/components/account/RedeemCodeField'
 import { QrLoginPanel } from '@/components/account/QrLoginPanel'
+import { PlanUpgradeModal } from '@/workbench/shell/PlanUpgradeModal'
+
 import './SettingsPage.css'
 
 type SettingsNavItem = { id: string; label: string; icon: typeof Cloud }
 
-/** 分区顺序：先「你是谁」，再「界面长什么样」，然后是能力（连接 / 模型 / 用量），最后是维护动作。 */
+/** 分区顺序：先「你是谁」，再「套餐与积分」，再「界面长什么样」，然后是能力（连接 / 模型 / 用量），最后是维护动作。 */
 const SETTINGS_NAV: SettingsNavItem[] = [
   { id: 'settings-account', label: 'surface:settings.navigationAccount', icon: Cloud },
+  { id: 'settings-plan', label: 'surface:settings.navigationPlan', icon: WalletCards },
   { id: 'settings-appearance', label: 'surface:settings.appearanceTitle', icon: Palette },
   { id: 'settings-interface', label: 'surface:settings.interfaceLanguage', icon: Languages },
   { id: 'settings-editor', label: 'surface:settings.documentEditing', icon: Sparkles },
@@ -131,6 +134,7 @@ export function SettingsPage({
   const refreshAiRelay = useRef<(() => void) | null>(null)
   const redeemCode = useRedeemCode()
   const [qrActive, setQrActive] = useState(false)
+  const [planModalOpen, setPlanModalOpen] = useState(false)
 
   useEffect(() => {
     if (section) setActiveSetting(section)
@@ -513,64 +517,6 @@ export function SettingsPage({
               </div>
             ) : null}
 
-            {account.subscription ? (
-              <div className="cloud-subscription">
-                <div className="cloud-subscription-plan">
-                  <span><WalletCards aria-hidden="true" />{t('surface:settings.currentPlan')}</span>
-                  <strong>{account.subscription.planName}</strong>
-                  <small>{subscriptionStatusLabel(account.subscription.status, t)}</small>
-                </div>
-{aiRelayStatus?.configured && aiRelayStatus.llmCredits ? (() => {
-                  const periodRemaining = aiRelayStatus.periodRemainingCredits ?? aiRelayStatus.remainingCredits
-                  // 月度口径总量 = 套餐月度额度(周期剩余 + 本周期已用),与充值无关
-                  const monthlyQuota = periodRemaining + (aiRelayStatus.usedCredits ?? 0)
-                  return (
-                  <div className="cloud-subscription-quota">
-                    <div>
-                      <span>{t('surface:settings.llmRemaining')}</span>
-                      <strong>{formatLlmUsd(periodRemaining, locale)}</strong>
-                    </div>
-                    <progress
-                      aria-label={t('surface:settings.llmRemaining')}
-                      max={Math.max(1, monthlyQuota)}
-                      value={Math.min(Math.max(0, periodRemaining), monthlyQuota)}
-                    />
-                    <small>
-                      {aiRelayStatus.remainingCredits <= 0
-                        ? t('surface:settings.llmQuotaExhausted')
-                        : t('surface:settings.usedUsedTotalTotal', {
-                          used: formatLlmUsd(aiRelayStatus.usedCredits ?? 0, locale),
-                          total: formatLlmUsd(monthlyQuota, locale),
-                        })}
-                    </small>
-                  </div>
-                  )
-                })() : null}
-                {aiRelayStatus?.configured && (aiRelayStatus.topupRemainingCredits ?? 0) > 0 ? (
-                  <div className="cloud-subscription-quota cloud-subscription-quota--topup">
-                    <div>
-                      <span>{t('surface:settings.topupBalance')}</span>
-                      <strong>{formatLlmUsd(aiRelayStatus.topupRemainingCredits ?? 0, locale)}</strong>
-                    </div>
-                    <small>{t('surface:settings.topupBalanceNote')}</small>
-                  </div>
-                ) : null}
-                <TopupPanel aiRelayConfigured={Boolean(aiRelayStatus?.configured)} onSettled={() => refreshAiRelay.current?.()} />
-                <div className="cloud-subscription-period">
-                  <span><CalendarClock aria-hidden="true" />{t('surface:settings.periodEnds')}</span>
-                  <strong>{formatPeriodEnd(account.subscription.periodEnd, locale)}</strong>
-                </div>
-              </div>
-            ) : null}
-
-            {!(account.subscription?.planCode === 'pro' && ['active', 'trialing'].includes(account.subscription.status)) ? (
-              <RedeemCodeField
-                value={redeemCode.code} state={redeemCode.state} open={redeemCode.open} disabled={isBusy}
-                actionLabel={t('surface:settings.redeemCodeRedeem')}
-                onChange={redeemCode.change} onToggle={()=>redeemCode.setOpen(value=>!value)}
-                onVerify={()=>{void redeemNow()}}
-              />
-            ) : null}
 
             <div className="cloud-devices" aria-label={t('surface:settings.connectedDevices')}>
               <div className="cloud-devices-heading">
@@ -659,6 +605,90 @@ export function SettingsPage({
             />
           </div>
         )}
+      </section>
+
+      <section id="settings-plan" className="cloud-account-section settings-anchor-section" aria-labelledby="plan-credits-title">
+        <header className="cloud-account-header">
+          <span className="cloud-account-icon"><WalletCards aria-hidden="true" /></span>
+          <div>
+            <h2 id="plan-credits-title">{t('surface:settings.navigationPlan')}</h2>
+          </div>
+        </header>
+        {account?.authenticated ? (
+          <div className="cloud-account-connected">
+            {account.subscription ? (
+              <div className="cloud-subscription">
+                <div className="cloud-subscription-plan">
+                  <span><WalletCards aria-hidden="true" />{t('surface:settings.currentPlan')}</span>
+                  <strong>{account.subscription.planName}</strong>
+                  <small>{subscriptionStatusLabel(account.subscription.status, t)}</small>
+                </div>
+                {!(account.subscription.planCode === 'pro' && ['active', 'trialing'].includes(account.subscription.status)) ? (
+                  <button type="button" className="topup-buy-button" onClick={() => setPlanModalOpen(true)}>
+                    {t('surface:plans.buyPro')}
+                  </button>
+                ) : null}
+                {aiRelayStatus?.configured && aiRelayStatus.llmCredits ? (() => {
+                  const periodRemaining = aiRelayStatus.periodRemainingCredits ?? aiRelayStatus.remainingCredits
+                  // 月度口径总量 = 套餐月度额度(周期剩余 + 本周期已用),与充值无关
+                  const monthlyQuota = periodRemaining + (aiRelayStatus.usedCredits ?? 0)
+                  return (
+                  <div className="cloud-subscription-quota">
+                    <div>
+                      <span>{t('surface:settings.llmRemaining')}</span>
+                      <strong>{formatCredits(periodRemaining, locale)}</strong>
+                    </div>
+                    <progress
+                      aria-label={t('surface:settings.llmRemaining')}
+                      max={Math.max(1, monthlyQuota)}
+                      value={Math.min(Math.max(0, periodRemaining), monthlyQuota)}
+                    />
+                    <small>
+                      {aiRelayStatus.remainingCredits <= 0
+                        ? t('surface:settings.llmQuotaExhausted')
+                        : t('surface:settings.usedUsedTotalTotal', {
+                          used: formatCredits(aiRelayStatus.usedCredits ?? 0, locale),
+                          total: formatCredits(monthlyQuota, locale),
+                        })}
+                    </small>
+                  </div>
+                  )
+                })() : null}
+                {aiRelayStatus?.configured && (aiRelayStatus.topupRemainingCredits ?? 0) > 0 ? (
+                  <div className="cloud-subscription-quota cloud-subscription-quota--topup">
+                    <div>
+                      <span>{t('surface:settings.topupBalance')}</span>
+                      <strong>{formatCredits(aiRelayStatus.topupRemainingCredits ?? 0, locale)}</strong>
+                    </div>
+                    <small>{t('surface:settings.topupBalanceNote')}</small>
+                  </div>
+                ) : null}
+                <TopupPanel aiRelayConfigured={Boolean(aiRelayStatus?.configured)} onSettled={() => refreshAiRelay.current?.()} />
+                <div className="cloud-subscription-period">
+                  <span><CalendarClock aria-hidden="true" />{t('surface:settings.periodEnds')}</span>
+                  <strong>{formatPeriodEnd(account.subscription.periodEnd, locale)}</strong>
+                </div>
+              </div>
+            ) : null}
+
+            {!(account.subscription?.planCode === 'pro' && ['active', 'trialing'].includes(account.subscription.status)) ? (
+              <RedeemCodeField
+                value={redeemCode.code} state={redeemCode.state} open={redeemCode.open} disabled={isBusy}
+                actionLabel={t('surface:settings.redeemCodeRedeem')}
+                onChange={redeemCode.change} onToggle={()=>redeemCode.setOpen(value=>!value)}
+                onVerify={()=>{void redeemNow()}}
+              />
+            ) : null}
+          </div>
+        ) : (
+          <small className="cloud-device-empty">{t('surface:settings.signedOut')}</small>
+        )}
+        <PlanUpgradeModal
+          open={planModalOpen}
+          onOpenChange={setPlanModalOpen}
+          currentPlanCode={account?.subscription?.planCode ?? null}
+          onSettled={() => { void refreshAccountStatus(); refreshAiRelay.current?.() }}
+        />
       </section>
 
       <section id="settings-editor" className="reality-settings-section settings-anchor-section" aria-labelledby="document-editing-settings-title">
@@ -775,8 +805,10 @@ export function TopupPanel({ aiRelayConfigured, onSettled }: { aiRelayConfigured
     if (!aiRelayConfigured || !window.nxcore?.billing) return
     void window.nxcore.billing.packs()
       .then((items) => {
-        setPacks(items.filter((item) => item.active))
-        if (items.length) setSelected(items[0].code)
+        // 只列积分类档位;pro_month 走升级弹窗,不混进充值选择器
+        const creditOnly = items.filter((item) => item.active && (item.productKind ?? 'credits') === 'credits')
+        setPacks(creditOnly)
+        if (creditOnly.length) setSelected(creditOnly[0].code)
       })
       .catch(() => undefined)
   }, [aiRelayConfigured])

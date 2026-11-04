@@ -383,6 +383,8 @@ export interface CreditPack {
   amountCents: number
   grantQuota: number
   active: boolean
+  /** credits = 积分包;pro_month = Pro 月卡(不发积分,开通 30 天订阅)。 */
+  productKind?: 'credits' | 'pro_month'
 }
 
 /** 充值下单结果:approvalUrl 为 PayPal approval 页(mock:// 为本地联调协议)。 */
@@ -390,6 +392,22 @@ export interface TopupOrder {
   orderId: string
   approvalUrl: string
   provider: 'paypal' | 'mock'
+}
+
+/** 套餐档位(GET /app/plans),升级弹窗动态渲染权益。 */
+export interface PlanTier {
+  id: string
+  code: string
+  name: string
+  priceCents: number
+  currency: string
+  entitlements: {
+    asrSecondsPerPeriod?: number
+    maxDevices?: number
+    syncRetentionDays?: number
+    llmCreditsPerPeriod?: number
+    [key: string]: unknown
+  }
 }
 
 export type TopupStatus = 'pending' | 'completed' | 'failed' | 'expired'
@@ -409,6 +427,14 @@ export interface AiGatewayStatus {
 
 /** LLM 额度换算：new-api 原生 quota 单位 ↔ 美元（QuotaPerUnit 默认 500000 = $1）。 */
 export const QUOTA_PER_USD = 500000
+
+/** 用户侧积分口径：1 积分 = $0.1 = 50000 quota(展示层换算,后端 quota 一概不动)。 */
+export const QUOTA_PER_CREDIT = 50000
+
+/** quota → 积分整数(四舍五入);全面积分化后所有面向用户的额度都走这里。 */
+export function formatCredits(quota: number, locale: string): string {
+  return new Intl.NumberFormat(locale, { maximumFractionDigits: 0 }).format(Math.round(quota / QUOTA_PER_CREDIT))
+}
 
 export function formatLlmUsd(quota: number, locale: string): string {
   return new Intl.NumberFormat(locale, { style: 'currency', currency: 'USD' }).format(quota / QUOTA_PER_USD)
@@ -1123,6 +1149,8 @@ export interface NxcoreDesktopApi {
     topupStatus(orderId: string): Promise<{ status: TopupStatus; amountCents: number }>
     /** Mock 联调批准;真实渠道服务端 409。 */
     topupMockApprove(orderId: string): Promise<{ status: 'completed'; amountCents: number }>
+    /** 套餐档位列表(升级弹窗)。 */
+    plans(): Promise<PlanTier[]>
   }
   notifications: {
     preferences(): Promise<NotificationPreferences>

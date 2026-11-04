@@ -2171,5 +2171,24 @@
     "noopFolded": "已折叠 {count} 次空调用（echo / 读取 /dev/null 这类打点）"
   },
   "settings.topupBalance": "充值余额",
-  "settings.topupBalanceNote": "长期有效，不影响月度额度"
+  "settings.topupBalanceNote": "长期有效，不影响月度额度",
+  "plans.modalTitle": "选择适合你的方案",
+  "plans.modalDescription": "升级 Pro 解锁更多额度与能力，按月付费，随时可停",
+  "plans.freeForever": "免费",
+  "plans.creditsUnit": "积分/月",
+  "plans.currentPlan": "当前方案",
+  "plans.defaultPlan": "默认方案",
+  "plans.buyPro": "升级 Pro",
+  "plans.purchasing": "正在处理…",
+  "plans.proActivated": "Pro 已开通！权益立即生效",
+  "plans.proActivatedNote": "Pro 已激活，30 天有效。到期后自动回到 Free，不会自动扣款。",
+  "plans.purchaseFailed": "支付未完成，请重试",
+  "plans.loadFailed": "套餐信息加载失败，请稍后重试",
+  "plans.browserOpened": "已打开浏览器完成支付，付款后自动开通",
+  "plans.mockHint": "模拟支付已提交，正在开通…",
+  "plans.featureCredits": "每月 {{credits}} 积分 AI 额度",
+  "plans.featureAsr": "每月 {{minutes}} 分钟语音转写",
+  "plans.featureDevices": "最多 {{count}} 台设备同时在线",
+  "plans.featureRetention": "云端同步保留 {{days}} 天",
+  "settings.navigationPlan": "套餐与积分"
 }

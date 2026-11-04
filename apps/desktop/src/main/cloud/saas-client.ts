@@ -167,6 +167,22 @@ interface CloudSubscription {
   entitlements?: { asrSecondsPerPeriod?: number }
 }
 
+/** 套餐档位（`GET /app/plans`），升级弹窗动态渲染权益列表。 */
+export interface PlanTier {
+  id: string
+  code: string
+  name: string
+  priceCents: number
+  currency: string
+  entitlements: {
+    asrSecondsPerPeriod?: number
+    maxDevices?: number
+    syncRetentionDays?: number
+    llmCreditsPerPeriod?: number
+    [key: string]: unknown
+  }
+}
+
 export interface KeyringDevicePackage {
   algorithm: 'X25519-HKDF-SHA256-AES-256-GCM'
   ephemeralPublicKey: string
@@ -215,6 +231,8 @@ export interface CreditPack {
   amountCents: number
   grantQuota: number
   active: boolean
+  /** credits = 积分包;pro_month = Pro 月卡(不发积分,开通 30 天订阅)。 */
+  productKind?: 'credits' | 'pro_month'
 }
 
 /** 充值下单结果（`POST /app/billing/topup`）。 */
@@ -874,6 +892,12 @@ export class SaasClient {
   async topupMockApprove(orderId: string): Promise<{ status: 'completed'; amountCents: number }> {
     await this.initialize()
     return this.request<{ status: 'completed'; amountCents: number }>(`/app/billing/topup/${encodeURIComponent(orderId)}/mock-approve`, { method: 'POST' })
+  }
+
+  /** 套餐档位列表(升级弹窗渲染)。 */
+  async planTiers(): Promise<PlanTier[]> {
+    await this.initialize()
+    return this.request<PlanTier[]>('/app/plans')
   }
 
   async updateNotificationPreferences(input: Partial<NotificationPreferences>): Promise<NotificationPreferences> {
