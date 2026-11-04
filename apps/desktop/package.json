@@ -1,6 +1,6 @@
 {
   "name": "@nxcore/desktop",
-  "version": "0.1.9",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "main": "./out/main/index.js",
@@ -82,7 +82,7 @@
     "vitest": "^4.1.10"
   },
   "build": {
-    "appId": "ai.nxcore.everroom",
+    "appId": "ai.nxcore.everoffice",
     "productName": "EverRoom",
     "protocols": [
       {
