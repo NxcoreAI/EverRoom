@@ -11,6 +11,7 @@ import {
   type SlidesProgressState,
   type SlidesTaskEntry,
 } from './SlidesProgressCard'
+import { slidesFailureSuppressed } from './slides/slidesState'
 import { AgentAuthChallengeCard, useAgentAuthChallenge } from './AgentAuthChallengeCard'
 import {
   AGENT_CHAT_REPIN_DISTANCE_PX,
@@ -603,11 +604,17 @@ export function AgentChatView({
   )
   const slidesTaskCards = useMemo(() => {
     const cards: Array<{ entry: SlidesTaskEntry; compact: boolean }> = []
-    if (slidesSelection.primary) cards.push({ entry: slidesSelection.primary, compact: false })
-    for (const entry of slidesSelection.waiting) cards.push({ entry, compact: false })
-    for (const entry of slidesSelection.receipts) cards.push({ entry, compact: true })
+    // run 终止后仍是 failed 才亮失败卡（失败不许消失）；运行中的失败先压住。
+    const suppressed = (entry: SlidesTaskEntry): boolean => slidesFailureSuppressed(entry, runCompletedAtByRun)
+    if (slidesSelection.primary && !suppressed(slidesSelection.primary)) cards.push({ entry: slidesSelection.primary, compact: false })
+    for (const entry of slidesSelection.waiting) {
+      if (!suppressed(entry)) cards.push({ entry, compact: false })
+    }
+    for (const entry of slidesSelection.receipts) {
+      if (!suppressed(entry)) cards.push({ entry, compact: true })
+    }
     return cards
-  }, [slidesSelection])
+  }, [slidesSelection, runCompletedAtByRun])
 
   // 配图后台逐张生成轮询：轮询状态以 documentId 为 key，切换文档即清 state/ref；
   // 响应校验 documentId 与 updatedAt，旧响应不得覆盖新广播（修 P1-7 串台）。

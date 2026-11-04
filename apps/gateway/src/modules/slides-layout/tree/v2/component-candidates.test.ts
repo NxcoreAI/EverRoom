@@ -36,9 +36,10 @@ describe("componentCandidatesFor：按关系预检候选", () => {
     expect(candidates.every(c => ["timeline", "steps", "chevron"].includes(c.name))).toBe(true);
     expect(candidates.every(c => c.relation === "precedes" && c.blockRefs.length === 3)).toBe(true);
     expect(candidates.every(c => typeof c.feasible === "boolean")).toBe(true);
-    // 短文本在半页槽位必可展开：至少一个 feasible 且带 minSlot
+    // 短文本在半页槽位必可展开：至少一个 feasible 且带 validatedSlot 与预检网格
     const feasible = candidates.find(c => c.feasible);
-    expect(feasible?.minSlot).toMatchObject({ w: expect.any(Number), h: expect.any(Number) });
+    expect(feasible?.validatedSlot).toMatchObject({ w: expect.any(Number), h: expect.any(Number) });
+    expect(feasible?.validatedGrid).toMatchObject({ cols: 12, rows: 8, gutter: expect.any(Number), rowGutter: expect.any(Number), margin: expect.any(Number) });
   });
 
   it("≥2 个 metric block → stats 候选（relation=metrics）", () => {
@@ -51,13 +52,14 @@ describe("componentCandidatesFor：按关系预检候选", () => {
     expect(stats?.blockRefs).toEqual(["m1", "m2"]);
   });
 
-  it("compares 两侧 → comparison/prosCons；cover 角色页不生成候选", () => {
+  it("compares 两侧 → comparison（泛化比较不映射 prosCons）；cover 角色页不生成候选", () => {
     const compared = page({
       blocks: [textBlock("a", "方案甲成本低"), textBlock("b", "方案乙性能强")],
       relations: [{ type: "compares", refs: ["a", "b"], basis: "取舍" }],
     });
     const names = componentCandidatesFor(compared, CONTRACT).map(c => c.name);
-    expect(names).toEqual(expect.arrayContaining(["comparison", "prosCons"]));
+    expect(names).toContain("comparison");
+    expect(names).not.toContain("prosCons");
     const cover = page({ role: "cover", blocks: [textBlock("a", "标题")], relations: [] });
     expect(componentCandidatesFor(cover, CONTRACT)).toEqual([]);
   });
@@ -117,5 +119,22 @@ describe("semanticRelationIssues：关系表达验收", () => {
     expect(semanticRelationIssues(page({ blocks: longBlocks, relations: [relation] }), tree)).toEqual([]);
     const supports = { type: "supports" as const, refs: ["s1", "s2"], basis: "论据" };
     expect(semanticRelationIssues(page({ blocks: longBlocks, relations: [supports] }), equalColumns)).toEqual([]);
+  });
+});
+
+describe("候选预检：完整内容组与文本量测", () => {
+  it("超过 8 条指标不再静默裁切：可行候选携带完整组，装不下的组以整体露出", () => {
+    const blocks = Array.from({ length: 10 }, (_, i) => metricBlock(`m${i + 1}`, `指标${i + 1}`, String(i + 1), "项"));
+    const candidates = componentCandidatesFor(page({ blocks, relations: [] }), CONTRACT);
+    // kpiRows 无条目上限：完整 10 条组参与预检，blockRefs 与 template 都不裁切。
+    const kpi = candidates.find(c => c.name === "kpiRows");
+    expect(kpi?.blockRefs).toHaveLength(10);
+    expect((kpi?.template as { rows: unknown[] }).rows).toHaveLength(10);
+    // 出现在候选里的 stats 类（若选中）必须声明完整组，不得悄悄取前 8 条。
+    const stats = candidates.find(c => c.name === "stats");
+    if (stats) {
+      expect(stats.blockRefs).toHaveLength(10);
+      if (!stats.feasible) expect(String(stats.note)).toMatch(/条目数 10 超出/);
+    }
   });
 });

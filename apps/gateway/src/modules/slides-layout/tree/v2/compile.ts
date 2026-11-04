@@ -9,7 +9,7 @@
 import { CANVAS_H, CANVAS_W, padFrame, type Frame } from "../../grid.js";
 import { darkPageTheme, mixHex, withAlpha, type ResolvedTheme } from "../../theme.js";
 import type { SpecElement, SpecParagraph, SpecRun, TableElement } from "../../elements.js";
-import { estimateLineHeight, estimateTextWidth } from "../../text-metrics.js";
+import { estimateLineHeight, estimateLines, estimateTextWidth } from "../../text-metrics.js";
 import type { LayoutContract } from "../layout-contract.js";
 import { valueAxisPlan } from "../../chart-axis.js";
 import { COLOR_RULES, ensureContrast, isPlainHex } from "../../color-guard.js";
@@ -413,11 +413,48 @@ function buildStats(node: Unplaced<V2StatsNode>, frame: Frame, theme: ResolvedTh
   return { elements, heights };
 }
 
+/**
+ * v2 表格行高预算（与 v1 renderTableLeaf 同口径）：单元格折行 × 行高，超框即缺陷。
+ * 落页引擎（genoffice）会按真实排版实测并整页拒绝——这里在校验阶段提前拦下，
+ * 让 layouter 能自纠，而不是漏到落页才炸。缺口 ≤15% 时 fontSize 降 1pt 通常可收口。
+ */
+function tableHeightOverflow(node: Unplaced<V2TableNode>, frame: Frame, theme: ResolvedTheme):
+  { detail: string; requiredHeight: number; availableHeight: number; overflowPx: number; frame: { x: number; y: number; w: number; h: number } } | null {
+  const fontSize = node.fontSize ?? theme.typeScale.caption;
+  const lineH = fontSize * 1.8;
+  const colCount = node.rows[0]?.length ?? 0;
+  if (colCount === 0) return null;
+  const widthSum = (node.colWidths ?? node.rows[0]!.map(() => 1)).reduce((a, b) => a + b, 0);
+  let estHeight = 0;
+  for (const [rowIndex, row] of node.rows.entries()) {
+    let maxLines = 1;
+    for (let c = 0; c < colCount; c++) {
+      const cell = row[c];
+      if (!cell) continue;
+      const colW = ((node.colWidths ?? node.rows[0]!.map(() => 1))[c]! / widthSum) * frame.w - 12;
+      maxLines = Math.max(maxLines, estimateLines(cell.text, fontSize, Math.max(1, colW)));
+    }
+    const rowFactor = node.header !== false && rowIndex === 0 ? 1.15 : 1;
+    estHeight += maxLines * lineH * rowFactor + 10;
+  }
+  if (estHeight <= frame.h + 4) return null;
+  const gapRatio = (estHeight - frame.h) / frame.h;
+  const shrinkHint = fontSize > 8 && gapRatio <= 0.15
+    ? `；缺口 ≤15%：fontSize 由 ${fontSize} 降 1pt（下限 8）通常可收口`
+    : "";
+  return {
+    detail: `表格行高预算约 ${Math.round(estHeight)}px 超过区域 ${Math.round(frame.h)}px——砍行、缩短单元格文字或扩大表格区域${shrinkHint}`,
+    requiredHeight: Math.round(estHeight),
+    availableHeight: Math.round(frame.h),
+    overflowPx: Math.round(estHeight - frame.h),
+    frame: { x: Math.round(frame.x), y: Math.round(frame.y), w: Math.round(frame.w), h: Math.round(frame.h) },
+  };
+}
+
 function buildTable(node: Unplaced<V2TableNode>, frame: Frame, theme: ResolvedTheme): TableElement {
   const header = node.header !== false;
   const style = node.style ?? "banded";
-  const fontSize = node.fontSize ?? theme.typeScale.caption;
-  const rows = node.rows.map((row, rowIndex) => row.map((cell, columnIndex) => {
+  const fontSize = node.fontSize ?? theme.typeScale.caption;  const rows = node.rows.map((row, rowIndex) => row.map((cell, columnIndex) => {
     const isHeader = header && rowIndex === 0;
     const headerFill = style === "banded" ? theme.colors.primary : style === "outline" ? theme.colors.background : undefined;
     return {
@@ -872,7 +909,13 @@ function compileNode(node: V2Node | V2GroupChild, frame: Frame, path: string, st
     return;
   }
   if (node.type === "table") {
-    state.push(buildTable(node, frame, theme));
+    const tableOverflow = tableHeightOverflow(node, frame, theme);
+    if (tableOverflow) {
+      // 编译期报 overflow 缺陷且不落元素：落页引擎对撑高表格整页拒绝，这里提前拦。
+      state.defects.push({ path, type: "overflow", hint: tableOverflow.detail, ...tableOverflow });
+    } else {
+      state.push(buildTable(node, frame, theme));
+    }
     state.stats.leaves += 1;
     state.placements.push({ path, kind: "table", frame, flexible: true });
     return;

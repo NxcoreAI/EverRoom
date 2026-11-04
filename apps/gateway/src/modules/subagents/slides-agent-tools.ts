@@ -333,10 +333,32 @@ interface ValidateOutcome {
   stats: { elements: number; leaves: number; depth: number; images: number; paths: number };
 }
 
-/** 同一 run 连续校验上限：超过后网关收下当前树（落页时引擎 shrinkToFit 再收敛一次）。 */
-const LAYOUT_VALIDATE_MAX_ROUNDS = 5;
-/** runId → 已执行的 validate 轮次（工具实例跨 run 共享，需按 run 隔离并清理）。 */
-const validateRoundByRun = new Map<string, number>();
+/** 单页几何校验预算（初次设计）：schema 类缺陷单独计数，不消耗几何次数。 */
+const LAYOUT_VALIDATE_GEOMETRY_MAX = 6;
+/** schema 修复独立预算：字段/枚举类错误修 2 次仍失败即 blocked。 */
+const LAYOUT_VALIDATE_SCHEMA_MAX = 2;
+
+interface ValidateBudget {
+  geometry: number;
+  schema: number;
+}
+
+/** runId → 剩余预算（工具实例跨 run 共享，按 run 隔离 = 按单页任务隔离）。 */
+const validateBudgetByRun = new Map<string, ValidateBudget>();
+
+type ValidateNextAction = "repair_schema" | "repair_layout" | "submit" | "blocked";
+
+interface ValidateStatus {
+  stage: "schema_repair" | "geometry_repair" | "validated" | "exhausted";
+  remainingGeometryAttempts: number;
+  remainingSchemaRepairs: number;
+  nextAction: ValidateNextAction;
+}
+
+/** 由缺陷清单判断本轮消耗哪类预算：schema 类缺陷优先（字段错了几何量测不可信）。 */
+function isSchemaRound(defects: LayoutDefect[]): boolean {
+  return defects.some((d) => d.type === "schema");
+}
 
 /** 归一 → 编译 → 量测（契约经 token 从进程内上下文取，模型不回传防漂移）。 */
 export function validateLayoutTree(token: unknown, rawTree: unknown): ValidateOutcome {
@@ -380,8 +402,9 @@ export const LAYOUTER_VALIDATE_TOOL: PiAgentRuntimeTool = {
   name: "slides_layout_validate",
   label: "布局树校验",
   description:
-    "校验你设计的布局树：结构归一 → 确定性编译 → 量测。返回结构化缺陷清单（节点路径+缺陷类型+改法）。"
-    + "单页最多调用 4 次，只用于提交前确认：第一次 ok=true 立即用 subagent_submit_result 提交，禁止再校验、再改树或再试其他构图变体。有缺陷按 hint 做最小修正；同一缺陷修 2 次仍在就简化结构后校验一次并提交，或交 blocked。",
+    "校验你设计的布局树：结构归一 → 确定性编译 → 量测。返回结构化缺陷清单（路径+类型+改法+实测几何），"
+    + "以及 stage / remainingGeometryAttempts / remainingSchemaRepairs / nextAction——预算由程序记账，"
+    + "严格按 nextAction 执行：repair_schema 只修字段、repair_layout 只修受影响区域、submit 立即提交、blocked 立即交 blocked。",
   parameters: {
     type: "object",
     properties: {
@@ -393,12 +416,11 @@ export const LAYOUTER_VALIDATE_TOOL: PiAgentRuntimeTool = {
   },
   executionMode: "sequential",
   async execute(input, params) {
-    const round = (validateRoundByRun.get(input.runId) ?? 0) + 1;
+    const budget = validateBudgetByRun.get(input.runId) ?? { geometry: LAYOUT_VALIDATE_GEOMETRY_MAX, schema: LAYOUT_VALIDATE_SCHEMA_MAX };
     const outcome = validateLayoutTree(params.token, params.tree);
     if (outcome.ok) {
-      validateRoundByRun.delete(input.runId);
+      validateBudgetByRun.delete(input.runId);
       // 缓存通过树供提交闸对账：deck 会话串行，这一棵就是当前页应提交的树。
-      // forcedSubmission 分支不缓存——树带缺陷，提交闸的几何复检是其唯一闸口。
       const context = getDeckLayoutContext(params.token);
       if (context) {
         try {
@@ -407,28 +429,49 @@ export const LAYOUTER_VALIDATE_TOOL: PiAgentRuntimeTool = {
           context.lastValidatedTreeJson = undefined;
         }
       }
-      return { content: JSON.stringify(outcome) };
+      const status: ValidateStatus = {
+        stage: "validated",
+        remainingGeometryAttempts: budget.geometry,
+        remainingSchemaRepairs: budget.schema,
+        nextAction: "submit",
+      };
+      return { content: JSON.stringify({ ...outcome, ...status }) };
     }
-    // 网关收口：同一 run 连续多轮 validate 不收敛时不再让模型空转（实测一页
-    // 连调 17 次 validate 打穿工具预算、480s 超时）。收下当前树并提示提交——
-    // 落页前 finalizeTree 仍会确定性 shrinkToFit + 引擎硬闸兜底，不会把坏树画上去。
-    if (round >= LAYOUT_VALIDATE_MAX_ROUNDS) {
-      validateRoundByRun.delete(input.runId);
+    // 预算由程序记账：成功总是出口；对应类预算耗尽后不再给修复指令，直接收口 blocked。
+    const schemaRound = isSchemaRound(outcome.defects);
+    if (schemaRound ? budget.schema <= 0 : budget.geometry <= 0) {
       return {
         content: JSON.stringify({
           ...outcome,
-          ok: true,
-          forcedSubmission: true,
-          warning: `已连续 ${round} 轮校验未完全收敛。不要再试新构图或继续微调——立即调用 subagent_submit_result 提交当前树（未解决缺陷如实写进结果 notes），提交后结束本页；不要再调用校验。`,
+          stage: "exhausted",
+          remainingGeometryAttempts: Math.max(0, budget.geometry),
+          remainingSchemaRepairs: Math.max(0, budget.schema),
+          nextAction: "blocked",
+          warning: "校验预算已耗尽，不再提供修复轮次。立即调用 subagent_submit_result 提交 status:\"blocked\"（reason 写明剩余缺陷与已尝试的调整），结束本页；不要再调用校验。",
         }),
       };
     }
-    validateRoundByRun.set(input.runId, round);
-    if (validateRoundByRun.size > 1_000) {
-      const oldest = validateRoundByRun.keys().next().value;
-      if (typeof oldest === "string") validateRoundByRun.delete(oldest);
+    if (schemaRound) budget.schema -= 1;
+    else budget.geometry -= 1;
+    validateBudgetByRun.set(input.runId, budget);
+    if (validateBudgetByRun.size > 1_000) {
+      const oldest = validateBudgetByRun.keys().next().value;
+      if (typeof oldest === "string") validateBudgetByRun.delete(oldest);
     }
-    return { content: JSON.stringify({ ...outcome, round }) };
+    const status: ValidateStatus = schemaRound
+      ? {
+          stage: "schema_repair",
+          remainingGeometryAttempts: budget.geometry,
+          remainingSchemaRepairs: Math.max(0, budget.schema),
+          nextAction: budget.schema > 0 ? "repair_schema" : "blocked",
+        }
+      : {
+          stage: "geometry_repair",
+          remainingGeometryAttempts: Math.max(0, budget.geometry),
+          remainingSchemaRepairs: budget.schema,
+          nextAction: budget.geometry > 0 ? "repair_layout" : "blocked",
+        };
+    return { content: JSON.stringify({ ...outcome, ...status }) };
   },
 };
 

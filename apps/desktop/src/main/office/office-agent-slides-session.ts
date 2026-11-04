@@ -106,10 +106,24 @@ export class AgentSlidesSessionManager {
       this.options.materialResolver() ?? undefined,
     )
     this.touch(session)
-    if (!result.ok) return { ok: false, reason: 'open_failed', message: result.error }
+    // 该错误经 registry 折叠成 not_open 后真实原因只在 message 里，网关 warning 又会
+    // 截断——在这里落一条日志，否则 fast-fail（如 slideIndex 越界/session 竞态）无从排查。
+    if (!result.ok) {
+      logDesktop('office', 'warn', {
+        event: 'office.agent-slides.apply-failed',
+        fileId,
+        slideIndex: page.slideIndex,
+        error: result.error,
+      })
+      return { ok: false, reason: 'open_failed', message: result.error }
+    }
     // applyAgentDeckPage 内部已静默保存触发 fileSaved；排空去抖让版本链立即回填，
     // 后续页若触发 catalog hash 变化（ensure 重建判定）能看到最新版本。
-    await this.options.editSync.drain(fileId).catch(() => null)
+    const drained = await this.options.editSync.drain(fileId).catch(() => null)
+    // 自己刚保存回填的新 hash 自己认下：否则下一页 ensure() 判定「会话开的是旧副本」，
+    // 逐页销毁重建隐藏会话（重新解包 + 新渲染器 + 20s 就绪竞态），落页时好时坏的根源之一。
+    // hash 仍对不上（外部写了新版本）时照旧重建。
+    if (drained?.contentHash) session.baseContentHash = drained.contentHash.toLowerCase()
     return { ok: true, result }
   }
 

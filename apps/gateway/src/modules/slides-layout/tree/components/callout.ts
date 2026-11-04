@@ -55,11 +55,17 @@ export function expandCallout(
     h: Math.max(1, base.h - Math.round(frame.h * 0.08)),
   };
   const iconSize = Math.max(36, Math.round(m.title * 1.4));
-  const textSize = Math.min(Math.round(m.title * 1.22), 40);
-  const textW = Math.min(box.w, Math.round(frame.w * 0.78));
-  const lines = estimateLines(leaf.text, textSize, textW);
-  const textH = lines * estimateLineHeight(textSize, 120) + 4;
   const iconBlock = leaf.icon ? iconSize + Math.round(m.gap * 0.7) : 0;
+  const textW = Math.min(box.w, Math.round(frame.w * 0.78));
+  // 结论句字号 29pt 起，溢出优先收缩（标题类下限 20pt），仍不够才报错。
+  let textSize = Math.min(Math.round(m.title * 1.22), 40);
+  let lines = estimateLines(leaf.text, textSize, textW);
+  let textH = lines * estimateLineHeight(textSize, 120) + 4;
+  while (textSize > 20 && iconBlock + textH > box.h + 2) {
+    textSize -= 2;
+    lines = estimateLines(leaf.text, textSize, textW);
+    textH = lines * estimateLineHeight(textSize, 120) + 4;
+  }
   const total = iconBlock + textH;
   if (total > box.h + 2) {
     bad(`${what} 内容高约 ${Math.round(total)}px 超过 ${Math.round(box.h)}px——精简文字或加大该子树权重`);

@@ -15,6 +15,7 @@ import { CANVAS_H, CANVAS_W } from "../../grid.js";
 import type { LayoutContract } from "../layout-contract.js";
 import type { ComponentLeaf } from "../components/index.js";
 import { expandComponent, normalizeComponentLeaf } from "../components/index.js";
+import { componentTextOverflow } from "../measure.js";
 import type { SemanticBlock, SemanticPage } from "../../../subagents/slides-semantic-contract.js";
 import { visiblePayload } from "../../../subagents/slides-semantic-bindings.js";
 
@@ -22,14 +23,16 @@ export interface ComponentCandidate {
   name: string;
   /** 触发候选的关系类型；"metrics" 表示指标组，"quote" 表示引用，"navigates" 表示导航。 */
   relation: string;
-  /** 候选绑定的实际 block（模型据此填参数与 bindings）。 */
+  /** 候选绑定的实际 block（模型据此填参数与 bindings）；完整内容组，不裁切。 */
   blockRefs: string[];
-  /** 代表性合法槽位上归一 + 展开 + 内容覆盖预检是否通过。 */
+  /** 代表性合法槽位上归一 + 展开 + 内容覆盖 + 文本量测预检是否通过。 */
   feasible: boolean;
-  /** 已验证槽位尺寸（px）：候选在该尺寸下通过全部预检；不是全局最小值。 */
-  minSlot?: { w: number; h: number };
-  /** 与 minSlot 对应的合法栅格槽位（页面级 slot 口径）。 */
+  /** 已验证槽位尺寸（px）：当前内容与参数曾在此尺寸通过预检；不是最小值，也不承诺更大尺寸可用。 */
+  validatedSlot?: { w: number; h: number };
+  /** 与 validatedSlot 对应的合法栅格槽位（页面级 slot 口径）。 */
   suggestedSlot?: { col: [number, number]; row: [number, number] };
+  /** 预检使用的网格配置：改变内容集合、网格或组件样式后，原预检结果不再作为通过依据。 */
+  validatedGrid?: { cols: number; rows: number; gutter: number; rowGutter: number; margin: number };
   /** 已通过预检的组件参数（不含 type/name/slot），可直接用于组件节点。 */
   template?: Record<string, unknown>;
   /** 不可行时的分类原因。 */
@@ -297,7 +300,8 @@ export function componentCandidatesFor(page: SemanticPage, contract: LayoutContr
   if (quoteBlock) drafts.push({ name: "quote", relation: "quote", refs: [quoteBlock.id] });
 
   const evaluate = (draft: Draft): ComponentCandidate => {
-    const refs = draft.refs.slice(0, 8);
+    // 完整内容组，不裁切：组太大/条目超限时以 feasible:false + 原因露出，由 agent 按语义拆组。
+    const refs = draft.refs;
     const mapped = mapFor(draft.name, refs.map(ref => blocks.get(ref)!));
     if ("overflow" in mapped) {
       return { name: draft.name, relation: draft.relation, blockRefs: refs, feasible: false, note: `参数超限：${mapped.overflow}` };
@@ -321,13 +325,23 @@ export function componentCandidatesFor(page: SemanticPage, contract: LayoutContr
           if (firstError === null) firstError = "内容无法完整映射：组件展开后未覆盖全部原文（数值、单位或正文）";
           continue;
         }
+        // 复用正式量测口径检查文本溢出：展开成功但文字超框时不得标记 feasible。
+        const textOverflow = componentTextOverflow(elements);
+        if (textOverflow) {
+          if (firstError === null) firstError = textOverflow;
+          continue;
+        }
         return {
           name: draft.name,
           relation: draft.relation,
           blockRefs: refs,
           feasible: true,
-          minSlot: size,
+          validatedSlot: size,
           suggestedSlot: slot,
+          validatedGrid: {
+            cols: 12, rows: 8,
+            gutter: theme.spacing.gutter, rowGutter: 16, margin: theme.spacing.margin,
+          },
           template: mapped.leaf,
         };
       } catch (error) {

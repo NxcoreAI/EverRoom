@@ -334,7 +334,8 @@ describe("layout tree v2", () => {
   });
 
   it("组件装不下时给出可执行的最小槽位建议", () => {
-    // 小槽位塞长文案的 calloutBox：真实展开失败，提示里要带"需要多大 + 多少列×行"。
+    // 小槽位塞不下的 calloutBox：真实展开失败，提示里要带"需要多大 + 多少列×行"。
+    // 字号有角色下限（结论句不低于 20pt），装不下靠扩大槽位救，不再靠缩字号硬塞。
     const tree = normalizeTree({
       version: 2,
       role: "content",
@@ -342,7 +343,7 @@ describe("layout tree v2", () => {
       nodes: [{
         type: "component",
         name: "calloutBox",
-        text: "结论：先把品类验证做扎实，再考虑渠道扩张；在此之前不铺全国销售网络，也不做品牌广告投放。",
+        text: "结论：先做品类验证，再扩渠道，不提前铺全国网络。",
         slot: { col: [1, 2], row: [1, 1] },
       }],
     });

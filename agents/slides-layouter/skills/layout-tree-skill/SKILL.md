@@ -73,7 +73,7 @@ description: 单页 v2 布局语法。设计和自审时查阅节点、几何约
 | `valign` | `top / middle / bottom` | 缺省 `top`。 |
 | `letterSpacing` | -4~12 | 可省略。 |
 | `lineHeightPct` | 60~160 | 缺省 110。 |
-| `fit` | `none / shrink / ellipsis` | 缺省 `none` 原字号。`shrink`：溢出时按同一比例缩全部 run（保留字号比例与段落结构），最多缩小 15%，且不低于场景字号下限；已低于下限的 run 保持原字号。缩到下限仍放不下照常报 `overflow`。 |
+| `fit` | `none / shrink / ellipsis` | 缺省 `none` 原字号。`shrink`：溢出时按同一比例缩全部 run（保留字号比例与段落结构），最多缩小 15%，且不低于场景字号下限；已低于下限的 run 保持原字号。缩到下限仍放不下照常报 `overflow`。标题与正文同规则：缺口 ≤15% 且扩区不可行时可用它收口（缩字不删字，内容保真无损）；缺口更大必须扩区或换承载结构。 |
 | `maxLines` | 1~4 | 配合 `ellipsis` 截断。 |
 | `direction` | `horizontal`（默认）/ `vertical` | `vertical` 是中文单字竖排。 |
 
@@ -128,7 +128,7 @@ description: 单页 v2 布局语法。设计和自审时查阅节点、几何约
 - 首行默认表头（primary 底反白）；`header: false` 时按普通行。
 - 单元格是字符串，或对象 `{ "text", "bold"?, "tone"?, "fill"?, "align"?, "span"? }`；单元格 ≤120 字。
 - `style` 三选一：`banded`（蓝底表头 + 隔行，默认）、`outline`（白底 + 主色边框）、`minimal`（无底色，仅横线）。
-- `colWidths` 是列宽比例；按内容分配。`fontSize` 可选，8~20，缺省继承引擎字号。
+- `colWidths` 是列宽比例；按内容分配。`fontSize` 可选，8~20，缺省继承引擎字号。表格行高按单元格折行预算，超框在校验期报 `overflow`（附实测 `requiredHeight`/`availableHeight`）；缺口 ≤15% 时 `fontSize` 降 1pt（下限 8）通常可收口——缩字号不删数据，内容保真无损。
 - 结构化表格 block 使用 `table`，保留表头、行列顺序和全部单元格。
 
 ## stats / chart / shape

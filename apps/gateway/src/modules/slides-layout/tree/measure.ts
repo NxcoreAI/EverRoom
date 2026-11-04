@@ -20,6 +20,16 @@ export interface LayoutDefect {
   type: DefectType;
   detail: string;
   hint: string;
+  /** 节点实际像素区域（引擎能给出时才返回；模型据此修 slot/weight，不必自己换算）。 */
+  frame?: { x: number; y: number; w: number; h: number };
+  /** 文本量测：内容所需高度（估算口径与引擎一致）。 */
+  requiredHeight?: number;
+  /** 文本量测：区域可用高度。 */
+  availableHeight?: number;
+  /** 文本量测：超出像素数（required - available，>0）。 */
+  overflowPx?: number;
+  /** 共同父容器路径（缺陷在 group 子节点时返回，用于定位兄弟节点间的空间争抢）。 */
+  parentPath?: string;
 }
 
 export interface MeasureInput {
@@ -102,14 +112,57 @@ function boxesOverlap(a: InkBox, b: InkBox): boolean {
   return ox > OVERLAP_TOLERANCE_PX && oy > OVERLAP_TOLERANCE_PX;
 }
 
+/**
+ * 组件展开产物的文本溢出量测（与 measureDefects 的文字估算同口径：折行 + 行高）。
+ * 候选预检复用：组件展开成功但文字量测超框时，候选不得标记 feasible。
+ * 返回首个溢出元素的描述；无溢出返回 null。
+ */
+export function componentTextOverflow(elements: PageSpec["elements"]): string | null {
+  for (const el of elements) {
+    if (el.type !== "text" && !(el.type === "shape" && el.paragraphs)) continue;
+    const paragraphs = el.type === "text" ? el.paragraphs : el.paragraphs!;
+    let contentH = 0;
+    let label = "";
+    for (const p of paragraphs) {
+      // 用实际字号（缺省 18）：装饰序号等小字号紧凑框不能按 18pt 下限虚估，
+      // 否则正常组件会被误判溢出。
+      const size = p.runs.reduce((max, r) => Math.max(max, r.sizePt ?? 18), 0) || 18;
+      let textW = 0;
+      for (const r of p.runs) {
+        if (!label) label = r.text;
+        textW += estimateTextWidth(r.text, r.sizePt ?? 18);
+      }
+      contentH += Math.max(1, Math.ceil(textW / Math.max(1, el.w))) * estimateLineHeight(size);
+    }
+    if (contentH > el.h + Math.max(OVERFLOW_TOLERANCE_PX, el.h * 0.25)) {
+      // ponytail: 相对容差 25%——装饰序号/年份等单行小件框高天然略小于行高，
+      // 真溢出（多行塞矮框）超出远大于此；需要更严时收紧这里。
+      return `文本量测溢出：「${label.slice(0, 12)}」需约 ${Math.round(contentH)}px 超出元素高 ${Math.round(el.h)}px`;
+    }
+  }
+  return null;
+}
+
 export function measureDefects(result: CompileResult, contract: LayoutContract, input: MeasureInput = {}): LayoutDefect[] {
   const defects: LayoutDefect[] = [];
-  const push = (path: string, type: DefectType, detail: string, hint: string) =>
-    defects.push({ path, type, detail, hint });
+  const push = (path: string, type: DefectType, detail: string, hint: string, extra?: Partial<LayoutDefect>) => {
+    defects.push({
+      path, type, detail, hint,
+      // 共同父容器：group 子节点缺陷附父路径，模型直接定位兄弟争抢的父区域。
+      ...(path.includes("/") ? { parentPath: path.slice(0, path.lastIndexOf("/")) } : {}),
+      ...extra,
+    });
+  };
 
   for (const compileDefect of result.defects) {
     // 组件溢出在编译期已按真实展开能力算出最小槽位；其余溢出仍给通用建议。
-    push(compileDefect.path, "overflow", compileDefect.detail, compileDefect.hint ?? "调整该区域的权重/比例，或精简内容");
+    // 表格行高等编译期实测数字（requiredHeight/frame）一并透传，模型按数字修。
+    push(compileDefect.path, "overflow", compileDefect.detail, compileDefect.hint ?? "调整该区域的权重/比例，或精简内容", {
+      ...(compileDefect.frame !== undefined ? { frame: compileDefect.frame } : {}),
+      ...(compileDefect.requiredHeight !== undefined ? { requiredHeight: compileDefect.requiredHeight } : {}),
+      ...(compileDefect.availableHeight !== undefined ? { availableHeight: compileDefect.availableHeight } : {}),
+      ...(compileDefect.overflowPx !== undefined ? { overflowPx: compileDefect.overflowPx } : {}),
+    });
   }
 
   for (const placement of result.placements) {
@@ -132,18 +185,30 @@ export function measureDefects(result: CompileResult, contract: LayoutContract, 
         inGroupChild(placement.path)
           ? "加大该子节点在父 group 的 weight（row 分宽、column 分高），或减少兄弟节点"
           : "扩大该节点的 slot 列/行跨度，或精简该区域内容",
+        { frame: { x: Math.round(frame.x), y: Math.round(frame.y), w: Math.round(frame.w), h: Math.round(frame.h) } },
       );
       continue;
     }
     if (placement.kind === "text" && placement.neededHeight !== undefined) {
       if (placement.neededHeight > frame.h + OVERFLOW_TOLERANCE_PX) {
+        // 缺口 ≤15% 时给出确定性收口路径：fit:"shrink" 恰好覆盖 15%，缩字不删字。
+        const shrinkable = placement.neededHeight <= frame.h * 1.15;
         push(
           placement.path,
           "overflow",
           `文字估算 ${Math.round(placement.neededHeight)}px 超出区域 ${Math.round(frame.h)}px（${placement.label ?? placement.variant ?? "text"} ${placement.sizePt}pt）`,
-          inGroupChild(placement.path)
-            ? "调整父 group 的 weights 或扩大父区域（先查宽度是否够），或精简文字、拆成多个文字叶子"
-            : "扩大该节点 slot 的列/行跨度（先查宽度是否够），或精简文字、拆成多个文字叶子",
+          [
+            inGroupChild(placement.path)
+              ? "调整父 group 的 weights 或扩大父区域（先查宽度是否够），或精简文字、拆成多个文字叶子"
+              : "扩大该节点 slot 的列/行跨度（先查宽度是否够），或精简文字、拆成多个文字叶子",
+            ...(shrinkable ? ["缺口 ≤15%：扩区不可行时给该 text 加 fit:\"shrink\"（最多缩 15%、守场景字号下限）即可收口"] : []),
+          ].join("；"),
+          {
+            frame: { x: Math.round(frame.x), y: Math.round(frame.y), w: Math.round(frame.w), h: Math.round(frame.h) },
+            requiredHeight: Math.round(placement.neededHeight),
+            availableHeight: Math.round(frame.h),
+            overflowPx: Math.round(placement.neededHeight - frame.h),
+          },
         );
       }
     }

@@ -163,8 +163,10 @@ export function SlidesProgressCard({
   const isInProgress = SLIDES_IN_PROGRESS_STAGES.has(state.stage)
   const completed = state.stage === 'page_applied' && state.completed !== false && !running
   const partial = state.stage === 'page_applied' && state.completed === false
-  const failedPages = state.failedPages ?? []
-  const warnings = state.warnings ?? []
+  // 重试跑起来后不显示上一轮的失败详情（红字横幅/失败页/警告）：当前载荷还是旧的，
+  // 新一轮结果没落地前展示失败会误导「这次也失败了」。终态（running=false）才显示。
+  const failedPages = running ? [] : (state.failedPages ?? [])
+  const warnings = running ? [] : (state.warnings ?? [])
   const elapsed = useElapsedLabel(startedAt, completedAt, running)
   // 阶段翻转/新一批图到来：清掉局部状态、重新展开、按新阶段决定是否弹大图。
   const stageKey = `${state.stage}:${state.generation ?? ''}:${state.documentId ?? state.styleSessionId ?? ''}`
@@ -203,7 +205,9 @@ export function SlidesProgressCard({
       case 'style_generating': return t('surface:agentChat.SLIDES_PHASE_STYLE_GENERATING', { count: 3 })
       case 'style_extracting': return t('surface:agentChat.SLIDES_PHASE_STYLE_EXTRACTING')
       case 'planning': return t('surface:agentChat.SLIDES_PHASE_PLANNING')
-      case 'failed': return t('surface:agentChat.SLIDES_FAILED_PHASE')
+      case 'failed': return running
+        ? t('surface:agentChat.SLIDES_DECK_PROGRESS', { done: doneCount, total })
+        : t('surface:agentChat.SLIDES_FAILED_PHASE')
       case 'draft_ready': return t('surface:agentChat.SLIDES_DRAFT_READY')
       case 'style_images_ready': return t('surface:agentChat.SLIDES_STYLE_PICK_PHASE')
       case 'style_card_ready': return t('surface:agentChat.SLIDES_STYLE_CARD_PHASE')
@@ -222,7 +226,7 @@ export function SlidesProgressCard({
   })()
 
   if (compact) {
-    const compactFailed = state.stage === 'failed'
+    const compactFailed = state.stage === 'failed' && !running
     const compactStopped = !compactFailed && (stopped || interrupted)
     const failedText = compactFailed
       ? (state.errorCode && ERROR_MESSAGE_KEYS[state.errorCode]
@@ -739,7 +743,7 @@ export function SlidesProgressCard({
         </>
       )
     }
-  } else if (state.stage === 'failed') {
+  } else if (state.stage === 'failed' && !running) {
     const errorText = state.errorCode && ERROR_MESSAGE_KEYS[state.errorCode]
       ? t(ERROR_MESSAGE_KEYS[state.errorCode]!)
       : (state.errorMessage || t('surface:agentChat.SLIDES_ERROR_UNKNOWN'))

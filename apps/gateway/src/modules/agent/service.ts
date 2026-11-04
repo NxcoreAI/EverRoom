@@ -189,9 +189,11 @@ function resolveRoomId(registry: AgentRoomRegistry | undefined, roomId: string |
   return registry.resolveRoomId?.(normalized) ?? (registry.isActive(normalized) ? normalized : null);
 }
 
-const NON_DOCUMENT_CREATION_TARGET = /(?:Room|房间|项目|任务|计划|方案|列表|代码|程序|函数|类|表格|图片|图像|幻灯片|演示|提醒|日记|记录|目录|文件夹|数据源|页面|会话|对话|仓库|分支|数据库|接口)/iu;
+// 「页」单字与「到/至第 N 页」覆盖分页续跑措辞（「生成到第5页看下」曾被当成
+// 文档创建话题，预检把 run 短路成等待澄清——用户看到 agent 毫无反应）。
+const NON_DOCUMENT_CREATION_TARGET = /(?:Room|房间|项目|任务|计划|方案|列表|代码|程序|函数|类|表格|图片|图像|幻灯片|演示|提醒|日记|记录|目录|文件夹|数据源|页面|页|会话|对话|仓库|分支|数据库|接口|(?:到|至)\s*第?\s*\d+)/iu;
 
-function ambiguousDocumentTopic(prompt: string): string | null {
+export function ambiguousDocumentTopic(prompt: string): string | null {
   const text = prompt.trim().replace(/[。！？!?，,]+$/gu, "");
   if (!text || requestsWorkspaceDocument(text)) return null;
   const match = /^(?:(?:请|麻烦|能否|能不能|可以)\s*)?(?:(?:帮我|给我)\s*)?(?:创建|新建|生成|建立|做)(?:\s*(?:一个|一份|一篇))?\s*(.{1,40})$/iu.exec(text);

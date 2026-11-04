@@ -61,7 +61,7 @@ describe("componentCandidatesFor", () => {
       ],
     });
     expect(feature?.suggestedSlot?.row[0]).toBeGreaterThanOrEqual(2);
-    expect(feature?.minSlot?.w).toBeGreaterThan(0);
+    expect(feature?.validatedSlot?.w).toBeGreaterThan(0);
   });
 
   it("超长正文不因截断获得 feasible：true，而是报参数超限", () => {

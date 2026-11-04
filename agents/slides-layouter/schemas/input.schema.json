@@ -105,12 +105,12 @@
           "relation": { "type": "string", "description": "触发候选的关系类型；metrics 表示指标组，quote 表示引用，navigates 表示导航" },
           "blockRefs": { "type": "array", "items": { "type": "string" }, "maxItems": 8 },
           "feasible": { "type": "boolean" },
-          "minSlot": {
+          "validatedSlot": {
             "type": "object",
             "required": ["w", "h"],
             "additionalProperties": false,
             "properties": { "w": { "type": "integer" }, "h": { "type": "integer" } },
-            "description": "已验证槽位尺寸（px）：候选在该尺寸通过归一、展开与内容覆盖预检；不是全局最小值。"
+            "description": "已验证槽位尺寸（px）：当前内容与参数曾在此尺寸通过归一、展开、内容覆盖与文本量测预检；不是最小值，也不承诺更大尺寸可用。"
           },
           "suggestedSlot": {
             "type": "object",
@@ -120,7 +120,20 @@
               "col": { "type": "array", "items": { "type": "integer" }, "minItems": 2, "maxItems": 2 },
               "row": { "type": "array", "items": { "type": "integer" }, "minItems": 2, "maxItems": 2 }
             },
-            "description": "与 minSlot 对应的合法栅格槽位（12 列 × 8 行，已预留标题与页脚区）。"
+            "description": "与 validatedSlot 对应的合法栅格槽位（已预留标题与页脚区）。"
+          },
+          "validatedGrid": {
+            "type": "object",
+            "required": ["cols", "rows", "gutter", "rowGutter", "margin"],
+            "additionalProperties": false,
+            "properties": {
+              "cols": { "type": "integer" },
+              "rows": { "type": "integer" },
+              "gutter": { "type": "integer" },
+              "rowGutter": { "type": "integer" },
+              "margin": { "type": "integer" }
+            },
+            "description": "预检使用的网格配置：改变内容集合、网格或组件样式后，原预检结果不再作为通过依据。"
           },
           "template": {
             "type": "object",
@@ -133,6 +146,40 @@
     "currentTree": {
       "type": "object",
       "description": "视觉自审的修改基线；附件为此 v2 页面的真实渲染图。"
+    },
+    "blockNeeds": {
+      "type": "array",
+      "maxItems": 64,
+      "description": "各内容块的引擎实测区域需求：text 按 3/6/12 列宽（12×8 网格、body 字号档）给出内容高度；table 给总行数、估算高度与建议槽位；chart 给建议槽位。按这些数字分配区域，不做自己的字数估算；有 validatedSlot 候选的内容组以候选为准。",
+      "items": {
+        "type": "object",
+        "required": ["blockId", "kind"],
+        "additionalProperties": false,
+        "properties": {
+          "blockId": { "type": "string" },
+          "kind": { "type": "string", "enum": ["text", "table", "chart"] },
+          "heightsByWidth": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["cols", "px"],
+              "additionalProperties": false,
+              "properties": { "cols": { "type": "integer" }, "px": { "type": "integer" } }
+            }
+          },
+          "rows": { "type": "integer" },
+          "estimatedPx": { "type": "integer" },
+          "suggestedSlot": {
+            "type": "object",
+            "required": ["col", "row"],
+            "additionalProperties": false,
+            "properties": {
+              "col": { "type": "array", "items": { "type": "integer" }, "minItems": 2, "maxItems": 2 },
+              "row": { "type": "array", "items": { "type": "integer" }, "minItems": 2, "maxItems": 2 }
+            }
+          }
+        }
+      }
     },
     "previousDesignIntent": {
       "type": "string",

@@ -26,6 +26,7 @@ import { pngBase64ToJpegBase64 } from "./screenshot-jpeg.js";
 import { checkSemanticBindings, checkSemanticRendered, semanticRelationIssues, componentAdoptionFor, adoptionFeedback, type ComponentAdoption, type ContentBinding } from "./slides-semantic-bindings.js";
 import type { SemanticPage } from "./slides-semantic-contract.js";
 import { componentCandidatesFor } from "../slides-layout/tree/v2/component-candidates.js";
+import { blockNeedsFor } from "../slides-layout/tree/v2/block-needs.js";
 
 const COMPOSITION_TENDENCY: Record<string, string> = {
   swiss: "强网格、克制留白、对齐严谨",
@@ -597,6 +598,8 @@ function layouterInputFor(
     density: page.density ?? "standard", materials,
     // 组件候选：按本页 relations/metrics 预检过的可行表达（绑定真实 block），写树前供选型。
     componentCandidates: componentCandidatesFor(page.content, base.contract),
+    // 内容块实测需求（引擎同口径量测）：文本按 3/6/12 列的高度、表格/图表的建议槽位。
+    blockNeeds: blockNeedsFor(page.content, base.contract),
     ...(page.revisionFeedback ? { revisionFeedback: page.revisionFeedback.slice(0, 300) } : {}),
     ...(base.styleBrief ? { styleBrief: base.styleBrief } : {}), styleTokens: base.styleTokens,
   };
@@ -1234,7 +1237,8 @@ export async function runLayouterTail(
         const message = error instanceof Error ? error.message : String(error);
         if (isDeckNotOpen(error)) {
           deckNotOpen = true;
-          warnings.push(`第 ${index + 1} 页落页失败：桌面端未打开该 PPT 的可编辑会话（not_open），保留占位页；在文件库打开该 PPT 后可重试`);
+          // 桌面端 422 message 携带被 registry 折叠前的真实原因（加密/超限/就绪超时/会话竞态），透传一段供排查。
+          warnings.push(`第 ${index + 1} 页落页失败：桌面端未打开该 PPT 的可编辑会话（not_open），保留占位页；桌面端原因：${message.slice(0, 120)}；在文件库打开该 PPT 后可重试`);
         } else {
           warnings.push(`第 ${index + 1} 页落页异常（${message.slice(0, 160)}），保留占位页`);
         }
@@ -1245,7 +1249,7 @@ export async function runLayouterTail(
         const reason = result.error ?? "桌面端拒绝";
         if (/not_open|未打开|可编辑的\s*PPT|可编辑方式打开/i.test(String(reason))) {
           deckNotOpen = true;
-          warnings.push(`第 ${index + 1} 页落页失败：桌面端未打开该 PPT 的可编辑会话（not_open），保留占位页；在文件库打开该 PPT 后可重试`);
+          warnings.push(`第 ${index + 1} 页落页失败：桌面端未打开该 PPT 的可编辑会话（not_open），保留占位页；桌面端原因：${String(reason).slice(0, 120)}；在文件库打开该 PPT 后可重试`);
         } else {
           warnings.push(`第 ${index + 1} 页落页失败（${reason}），保留占位页`);
         }

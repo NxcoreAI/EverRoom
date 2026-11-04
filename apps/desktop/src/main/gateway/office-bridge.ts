@@ -674,7 +674,8 @@ export class OfficeBridgeServer {
       outcome = await slidesEdit(req.fileId, artifactReq)
       // 重启后产物未打开 / 开着的是只读预览：显式 fileEntryId 先请渲染端以可编辑方式
       // 打开再重试（open-edit 会原地重建只读实例为可编辑；每次调用自带 8s 等待窗口，
-      // 外层再兜到 30s 覆盖 genoffice 冷启动 + 大文件解包）。
+      // 外层再兜到 150s：大 deck（实测 41MB）从视图打开到 genoffice session 就绪要
+      // 30s+，原 30s 窗口在就绪前 ~ms 级到期，把可恢复的竞态打成 422 not_open）。
       const reopenReason = notEditableSessionReason(outcome)
       if (reopenReason && req.fileId !== 'active') {
         console.info('office-bridge: office-edit 命中未以可编辑会话打开，尝试请渲染端自动打开', {
@@ -690,11 +691,12 @@ export class OfficeBridgeServer {
           })
         } else {
           const startedAt = Date.now()
-          const deadline = startedAt + 30_000
+          const deadline = startedAt + 150_000
           let attempts = 0
           do {
             outcome = await slidesEdit(req.fileId, artifactReq)
             attempts += 1
+            if (notEditableSessionReason(outcome)) await new Promise((resolve) => setTimeout(resolve, 500))
           } while (notEditableSessionReason(outcome) && Date.now() < deadline)
           console.warn('office-bridge: office-edit 自动打开重试结束', {
             fileId: req.fileId,

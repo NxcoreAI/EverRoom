@@ -951,7 +951,7 @@ describe("runLayouterTail", () => {
       separator: "gap",
       align: "start",
       density: "airy",
-      numeral: "serif",
+      numeral: "sans",
       accent: "accent",
     });
     // 字体名只保留首字体（OOXML 单字体），超 40 字截断由 styleTokensFrom 处理。

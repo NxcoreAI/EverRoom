@@ -55,7 +55,7 @@
 | `separator` | 条目/栏目之间 | `line` 1px 分隔线（`divider:"none"` 时降为 `gap`）；`gap` 只留间距；`none` 什么都不留 | `decoration.divider === "none"` → `gap`，否则 `line` |
 | `align` | 文本对齐 | 段落 align + 块水平落位 | `start` |
 | `density` | 内部间距密度 | 间距/内边距乘 0.75 / 1 / 1.4（snap4） | `swiss`→`tight`、`poster/immersive`→`airy`、`editorial`→`normal` |
-| `numeral` | 装饰性序号/年份/大数字的字体 | `serif` = 标题字体、`sans` = 正文字体、`none` = 去掉装饰性序号 | `serif` |
+| `numeral` | 装饰性序号/年份/大数字的字体 | `serif` = 标题字体、`sans` = 正文字体、`none` = 去掉装饰性序号 | `sans`（数字默认正文字体，显式配置可恢复衬线） |
 | `accent` | 强调标记取色 | `primary` / `accent` / `muted`（用于刻标、顶条、星、目标刻度等唯一强调位） | `accent`（accent 与 primary 相同时即 primary） |
 | `motif` | 风格卡母题是否进入本组件 | `inherit` 跟随 `motif.kind`；`none` 关掉 | `inherit` |
 
@@ -216,3 +216,17 @@ resolveTheme(styleParams) ──► ResolvedTheme
 - `motif.spec` 目前解释 `side/width/alpha/size`；`ghost-number/word` 以「幽灵场」几何块表达（避免 PPTX 文字墨迹闸门）。
 - reviewer 输入尚未下发 `styleTokens`（schema 已预留），审页仍拿 styleBrief。
 - 组件默认 `surface` 由装饰 token 决定：风格卡有描边/阴影时，`featureCards/pricingTiers/stats` 等会整体变成卡面语言——这是「风格卡说的话必须落到组件」的预期行为，也意味着旧 deck 若换成卡片风格会明显变样。
+
+### 7.5 审美收敛 v3（2026-11-04）
+
+- 面向通用融资 BP 的组件审美收敛，详见 [组件视觉系统 v3](slides-component-visual-system.zh-CN.md)：
+  字号角色固定在 1280×720 基准（数据 56–80 / 标题 24 / 正文 18 / 标签 14 / 注释 12），
+  不再随组件框高度缩放；`design.numeral` 缺省改 `sans`（数字默认正文字体）。
+- 装饰收敛：数据/内容组件去默认短强调线与纯装饰索引（标本索引、压底序号、幽灵序号）；
+  分组线、顺序连接、层级结构件保留。
+- featured 收敛：comparison/pricingTiers 用浅强调底 + 一条强调边，不叠顶条/徽章/阴影/反白；
+  徽章仅在已有标签文本时显示。bentoGrid 默认各项平级（不反白首格）。
+- 移除 `expandComponent` 的 0.85/0.72/0.6 整体缩字兜底：溢出走「换行 → 压间距 →
+  角色下限有限收缩 → 布局错误通道」；组件技能文档的槽位下限说明同步更新。
+- 回归基线：`aesthetic-convergence.test.ts`（行为）+ `aesthetic-contact-sheet.test.ts`
+  （KPI/卖点/竞品/里程碑/团队 × 全宽编译零缺陷 / 半页·窄栏字号下限）。

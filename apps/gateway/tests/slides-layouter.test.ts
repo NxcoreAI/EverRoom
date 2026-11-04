@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { createSlidesLayouterAgentTools, createSlidesTreeResultValidator, LAYOUTER_VALIDATE_TOOL, validateLayoutTree } from "../src/modules/subagents/slides-agent-tools.js";
 import { registerDeckLayoutContext, dropDeckLayoutContext, getDeckLayoutContext } from "../src/modules/slides-layout/deck-contract-context.js";
 import { contractFromStyleParams } from "../src/modules/slides-layout/tree/layout-contract.js";
@@ -65,6 +65,11 @@ describe("validateLayoutTree", () => {
     expect(outcome.ok).toBe(false);
     expect(outcome.defects.some((d) => d.type === "overflow")).toBe(true);
     expect(outcome.defects.find((d) => d.type === "overflow")!.hint.length).toBeGreaterThan(4);
+    // 结构化实测几何：模型按数字修 slot，不必从中文 hint 里提取。
+    const overflow = outcome.defects.find((d) => d.type === "overflow")!;
+    expect(overflow.requiredHeight!).toBeGreaterThan(overflow.availableHeight!);
+    expect(overflow.overflowPx).toBe(overflow.requiredHeight! - overflow.availableHeight!);
+    expect(overflow.frame).toMatchObject({ x: expect.any(Number), y: expect.any(Number), w: expect.any(Number), h: expect.any(Number) });
   });
 });
 
@@ -77,6 +82,94 @@ describe("slides-layouter 工具面", () => {
     const result = await tools[0]!.execute({} as never, { token, tree: GOOD_PAGE });
     dropDeckLayoutContext(token);
     expect(JSON.parse(result.content).ok).toBe(true);
+  });
+});
+
+describe("slides_layout_validate 预算与 nextAction 记账", () => {
+  const token = "budget-token-009";
+  const tool = LAYOUTER_VALIDATE_TOOL;
+  const call = async (runId: string, tree: unknown) => {
+    const result = await tool.execute({ runId } as never, { token, tree: tree as Record<string, unknown> });
+    return JSON.parse(result.content) as Record<string, unknown> & { nextAction: string; stage: string; remainingGeometryAttempts: number; remainingSchemaRepairs: number };
+  };
+  const schemaTree = () => ({
+    version: 2, role: "content", composition: "swiss",
+    nodes: [{ type: "text", text: "缺 token", slot: { col: [1, 4], row: [1, 2] } }],
+  });
+  const overflowTree = () => ({
+    version: 2, role: "content", composition: "swiss",
+    nodes: [{ type: "text", token: "body", text: "内容很长".repeat(400), slot: { col: [1, 3], row: [1, 2] } }],
+  });
+
+  beforeEach(() => {
+    registerDeckLayoutContext(token, { contract: contractFromStyleParams(null), imageArs: new Map() });
+  });
+  afterEach(() => {
+    dropDeckLayoutContext(token);
+  });
+
+  it("schema 修复独立预算：几何次数不动，2 次失败后 blocked，不再给修复轮", async () => {
+    const runId = "budget-schema-run";
+    const first = await call(runId, schemaTree());
+    expect(first.ok).toBe(false);
+    expect(first.stage).toBe("schema_repair");
+    expect(first.nextAction).toBe("repair_schema");
+    // schema 类失败不消耗几何预算。
+    expect(first.remainingGeometryAttempts).toBe(6);
+    expect(first.remainingSchemaRepairs).toBe(1);
+    const second = await call(runId, schemaTree());
+    expect(second.remainingSchemaRepairs).toBe(0);
+    expect(second.nextAction).toBe("blocked");
+    // 耗尽后再校验：直接 exhausted/blocked，不提供新一轮修复。
+    const third = await call(runId, schemaTree());
+    expect(third.stage).toBe("exhausted");
+    expect(third.nextAction).toBe("blocked");
+  });
+
+  it("几何预算 6 次：第 6 次失败 blocked；耗尽后不重启；修好的树仍可提交", async () => {
+    const runId = "budget-geo-run";
+    for (let i = 0; i < 5; i += 1) {
+      const round = await call(runId, overflowTree());
+      expect(round.nextAction).toBe("repair_layout");
+      expect(round.remainingGeometryAttempts).toBe(5 - i);
+    }
+    const last = await call(runId, overflowTree());
+    expect(last.ok).toBe(false);
+    expect(last.remainingGeometryAttempts).toBe(0);
+    expect(last.nextAction).toBe("blocked");
+    // 预算封死：坏树不再给修复轮，但没有强改 ok:true 的假成功。
+    const after = await call(runId, overflowTree());
+    expect(after.stage).toBe("exhausted");
+    expect(after.ok).toBe(false);
+    // 修好的树始终是出口。
+    const recovered = await call(runId, GOOD_PAGE);
+    expect(recovered.ok).toBe(true);
+    expect(recovered.nextAction).toBe("submit");
+  });
+
+  it("预算按单页任务隔离：前一页耗尽不影响后一页", async () => {
+    for (let i = 0; i < 6; i += 1) await call("budget-iso-a", overflowTree());
+    const nextPage = await call("budget-iso-b", GOOD_PAGE);
+    expect(nextPage.ok).toBe(true);
+    expect(nextPage.remainingGeometryAttempts).toBe(6);
+    expect(nextPage.nextAction).toBe("submit");
+  });
+
+  it("小幅文本溢出（≤15%）的 hint 给出 fit:\"shrink\" 收口路径", () => {
+    registerDeckLayoutContext(token, { contract: contractFromStyleParams(null), imageArs: new Map() });
+    // 200px 框、需求约 210px（缺口 5%）：hint 应直接给 shrink 路径。
+    const outcome = validateLayoutTree(token, {
+      version: 2,
+      role: "content",
+      composition: "swiss",
+      nodes: [{ type: "text", token: "body", text: "文字".repeat(30), slot: { col: [1, 3], row: [1, 1] } }],
+    });
+    dropDeckLayoutContext(token);
+    const overflow = outcome.defects.find((d) => d.type === "overflow");
+    expect(overflow).toBeDefined();
+    if (overflow!.overflowPx! / overflow!.availableHeight! <= 0.15) {
+      expect(overflow!.hint).toContain("fit:\"shrink\"");
+    }
   });
 });
 
@@ -357,5 +450,49 @@ describe("slides-layouter 提交期内容契约", () => {
     expect(() => validator(invocationInput, bad())).toThrow(/subagent_result_content_invalid/);
     expect(() => validator(invocationInput, bad())).toThrow(/subagent_result_content_invalid/);
     expect(() => validator(invocationInput, bad())).toThrow(/subagent_result_content_unrecoverable.*blocked/s);
+  });
+});
+
+describe("v2 表格行高预算：校验期拦截，不再漏到落页", () => {
+  const token = "table-budget-token-010";
+  const tallTable = {
+    version: 2, role: "table", composition: "swiss",
+    nodes: [{
+      type: "table", header: true, style: "banded",
+      rows: [
+        ["厂商", "构型 / 路线", "单价", "市场情况"],
+        ["Jetson ONE", "多旋翼 · 折叠桨 · 家用单座", "约 12 万美元", "订单排到 2027 年"],
+        ["Opener Helix", "复合翼 · 悬停加巡航", "19–26 万美元", "2025 年 5 月首批发货"],
+        ["SkyDrive SD-05", "多旋翼 · 双座 · 航程 10km", "约 92 万美元", "日本适航审定推进中"],
+        ["Lilium Jet", "电动垂直起降 · 36 翼扇", "约 900 万美元", "重整后重启交付"],
+      ],
+      slot: { col: [1, 8], row: [4, 5] },
+    }],
+  };
+
+  it("表格折行撑高在 validate 报 overflow，并按缺口给出 fontSize 降档路径", () => {
+    registerDeckLayoutContext(token, { contract: contractFromStyleParams(null), imageArs: new Map() });
+    const outcome = validateLayoutTree(token, tallTable);
+    dropDeckLayoutContext(token);
+    expect(outcome.ok).toBe(false);
+    const overflow = outcome.defects.find(d => d.type === "overflow" && d.detail.includes("表格行高预算"));
+    expect(overflow).toBeDefined();
+    // 编译期实测数字随缺陷透传：模型按 required/available 直接定修复幅度。
+    expect(overflow!.requiredHeight!).toBeGreaterThan(overflow!.availableHeight!);
+    expect(overflow!.overflowPx).toBe(overflow!.requiredHeight! - overflow!.availableHeight!);
+    // 缺口 ≤15% 时给确定性收口路径；缺口更大时只给结构建议。
+    const detail = overflow!.detail;
+    if (overflow!.overflowPx! / overflow!.availableHeight! <= 0.15) {
+      expect(detail).toContain("fontSize 由");
+    } else {
+      expect(detail).not.toContain("fontSize 由");
+    }
+  });
+
+  it("表格在足够高的区域照常通过，fontSize 降档后原区域可收敛", () => {
+    registerDeckLayoutContext(token, { contract: contractFromStyleParams(null), imageArs: new Map() });
+    const roomy = { ...tallTable, nodes: [{ ...tallTable.nodes[0], slot: { col: [1, 8], row: [2, 8] } }] };
+    expect(validateLayoutTree(token, roomy).ok).toBe(true);
+    dropDeckLayoutContext(token);
   });
 });

@@ -219,6 +219,14 @@ function taskKey(entry: SlidesTaskEntry): string {
     ?? (entry.progress.title ? `title:${entry.progress.title}` : `tool:${entry.tool.id}`)
 }
 
+/** 工具失败但所在 run 还没终止：agent 还在跑、大概率自己重试，失败红字先不亮。 */
+export function slidesFailureSuppressed(
+  entry: SlidesTaskEntry,
+  runCompletedAtByRun: Record<string, string>,
+): boolean {
+  return entry.progress.stage === 'failed' && !runCompletedAtByRun[entry.tool.runId]
+}
+
 export interface SlidesTaskSelection {
   /** 最新一张任务卡（完整渲染）。 */
   primary: SlidesTaskEntry | null
