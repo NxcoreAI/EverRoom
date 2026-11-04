@@ -476,6 +476,10 @@ const api: NxcoreDesktopApi = {
       invokeQuietly('memory:get-profile', input ?? {}),
   },
   // 主页「今日洞察」：静默调用——卡片自己渲染空态/失败态，不弹全局错误。
+  workspaceInsight: {
+    get: (workspaceId: string, options?: { force?: boolean }) =>
+      invoke('workspace-insight:get', workspaceId, options) as Promise<import('../shared/sources').WorkspaceInsightDto>,
+  },
   journal: {
     today: () => invokeQuietly('journal:today'),
     refresh: () => invokeQuietly('journal:refresh'),

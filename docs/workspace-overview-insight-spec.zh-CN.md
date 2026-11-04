@@ -601,6 +601,18 @@ P0 与 P1 已一并实现（改动面与 §12 一致，测试全绿）：
 
 **评审修复（对照首轮代码评审，8 项全部处理）**：冷却到期自动重试（§8.7，`__setInsightCooldownForTests` 可注入时长）；T6/T8 800ms 去抖（切空间立即执行）；单飞 key 收敛回 `workspaceId`（签名变化复用在飞请求，不并发）；刷新按钮 `aria-disabled`（§7.1 不丢焦点）；错误回退保留 `updating` 语义；证据行 `aria-label` 使用「打开工作」文案；打字机正文改为视觉隐藏全文节点（读屏始终可读完整内容）；`validateInsightCopy` 补 C2 下限/C3 句数/C5 URL 与模板占位符/C11 免责声明。
 
+**第四轮（2026-11-04 下午）：工作树重置后的完整重放**
+
+会话前三轮的未提交改动被外部操作清掉（仓库同期合入了 office-ask/pdf/vendor 等提交，工作树回到第一轮「洞察=复述最近一条 assistant 正文」的版本）。本轮按会话记录把三层改动全部重放并验证：
+
+1. **聚合语义**（第二轮 renderer 侧）：`composeWorkspaceInsight` 状态分布总结 + 条件建议；no-content 态有正文就渲染；
+2. **journal advice**（第二轮 gateway 侧）：drizzle 0102 + schema/types/composer(prompt/parse/模板建议)/service/routes + DailyJournalCard「建议」标签渲染 + 4 例测试 + 迁移回退测试的 `DROP COLUMN advice` 修补；
+3. **LLM 链路**（第三轮）：gateway `workspace-insight` 模块（12 例测试）+ create-server 装配（`generateMemoryText` 通道）+ desktop 桥（bridge/IPC/channelGroups/preload/API 类型）+ `deriveWorkspaceInsight` LLM 优先回落聚合 + 3 例 LLM 通道测试。
+
+验证：desktop tsc 0 错、workbench-overview 39/39、全量 921 通过（并发下 2 个环境抖动单跑即过）；gateway tsc 0 错、journal 20/20、workspace-insight 12/12、全量 1941/1946（5 失败为 thesis/yjs/document/bundled-agent 预存在）；无头 Electron + mock 验证 LLM 主路径正文（summary + 2 建议 + 来源行 + 落款）。
+
+**教训（记录给后续协作）**：本仓库工作树会被并行工作重置，跨会话的实现**必须及时提交**——本轮改动同样未提交，如再次丢失请以本节为重放索引。
+
 **与规格的偏差**：
 
 1. **打字机步进**为 2 字/24ms（规格未定参数，视觉接近原型）。

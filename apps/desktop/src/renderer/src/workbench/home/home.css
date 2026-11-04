@@ -764,6 +764,34 @@
 }
 @keyframes wb-journal-caret { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }
 
+/* 建议列表：总结之外的可执行项，前缀「建议」小签以区分要点 */
+.wb-journal-advice {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 2px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.wb-journal-advice li {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--ui-text-2);
+  font-size: var(--ui-text-sm);
+  line-height: var(--ui-leading-normal);
+}
+.wb-journal-advice-tag {
+  flex: none;
+  margin-top: 2px;
+  padding: 1px 6px;
+  border-radius: var(--ui-radius-full);
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent-strong);
+  font-size: var(--ui-text-2xs);
+  line-height: var(--ui-leading-normal);
+}
+
 /* 要点列表：每条前一个小圆点（不用 list-style，避免主题下的 marker 颜色失控） */
 .wb-journal-bullets {
   display: flex;

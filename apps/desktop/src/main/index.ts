@@ -371,6 +371,11 @@ const JOURNAL_CHANNELS = {
   refresh: 'journal:refresh',
 } as const
 
+// 工作空间洞察（概览 B 区）：LLM 总结 + 建议（网关派生，不落库）。
+const WORKSPACE_INSIGHT_CHANNELS = {
+  get: 'workspace-insight:get',
+} as const
+
 const AGENT_CHANNELS = {
   discoverLocalAgents: 'agent:discover-local-agents',
   checkLocalAgentAdapters: 'agent:check-local-agent-adapters',
@@ -691,6 +696,7 @@ function installIpcRouters(): void {
     AGENT_CHANNELS,
     MEMORY_CHANNELS,
     JOURNAL_CHANNELS,
+    WORKSPACE_INSIGHT_CHANNELS,
     PLAN_CHANNELS,
     CURSOR_COMPLETION_AGENT_CHANNELS,
     DOCUMENT_CHANNELS,
@@ -2203,6 +2209,8 @@ function registerAgentHandlers(bridge: AgentGatewayBridge, migrationCoordinator:
   // 主页「今日洞察」：只读快照 + 手动重写；失败由卡片自己显示弱化文案（quiet 通道）。
   handle(JOURNAL_CHANNELS.today, () => bridge.getJournalToday())
   handle(JOURNAL_CHANNELS.refresh, () => bridge.refreshJournal())
+  handle(WORKSPACE_INSIGHT_CHANNELS.get, (_event, workspaceId: string, options?: { force?: boolean }) =>
+    bridge.getWorkspaceInsight(workspaceId, options ?? {}))
   // 工作空间「计划」：读写走普通 invoke（写失败要冒泡给看板回滚），
   // 实时流按窗口订阅（同一时刻只看一个空间）。
   handle(PLAN_CHANNELS.list, (_event, query: PlanItemListQuery) => bridge.listPlanItems(query))

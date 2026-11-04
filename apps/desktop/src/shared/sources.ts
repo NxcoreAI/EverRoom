@@ -739,9 +739,28 @@ export interface JournalEntryDto {
   summary: string
   bullets: JournalBulletDto[]
   actions: JournalActionDto[]
+  /** 下一步建议（0–2 条，总结之外的可执行项）；旧条目没有该字段。 */
+  advice?: string[]
   /** 产出该版本的模型名；null = 模板兜底（模型档位未就绪或调用失败）。 */
   model: string | null
   createdAt: string
+}
+
+/** 工作空间洞察（概览 B 区）：LLM 总结 + 建议；由网关派生，不落库。 */
+export interface WorkspaceInsightAdviceDto {
+  text: string
+  /** 建议指向的会话 id；null = 无指向。 */
+  sessionId: string | null
+}
+
+export interface WorkspaceInsightDto {
+  /** 2–3 句状态总结；空间无工作时为空串。 */
+  summary: string
+  advice: WorkspaceInsightAdviceDto[]
+  /** 产出模型名；null = 模板兜底（确定性聚合）。 */
+  model: string | null
+  /** true = 命中网关缓存（同证据指纹 5 分钟内）。 */
+  cached: boolean
 }
 
 export interface JournalTodayDto {
@@ -1009,6 +1028,10 @@ export interface NxcoreDesktopApi {
     today(): Promise<JournalTodayDto>
     /** 手动重写当天（绕过最小间隔，仍受去抖与单飞行保护）。 */
     refresh(): Promise<JournalTodayDto>
+  }
+  workspaceInsight: {
+    /** 工作空间洞察（概览 B 区）：LLM 总结 + 建议；force 跳过网关缓存。 */
+    get(workspaceId: string, options?: { force?: boolean }): Promise<WorkspaceInsightDto>
   }
   /**
    * 工作空间「计划」（任务 / todo）。

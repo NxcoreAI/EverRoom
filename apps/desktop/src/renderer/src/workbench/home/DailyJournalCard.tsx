@@ -141,6 +141,16 @@ export function DailyJournalCard({ onAction }: DailyJournalCardProps) {
               ))}
             </ul>
           ) : null}
+          {entry.advice && entry.advice.length > 0 ? (
+            <ul className="wb-journal-advice" aria-label="下一步建议">
+              {entry.advice.map((line, index) => (
+                <li key={`${index}:${line}`}>
+                  <span className="wb-journal-advice-tag" aria-hidden="true">建议</span>
+                  {line}
+                </li>
+              ))}
+            </ul>
+          ) : null}
         </>
       ) : null}
 

@@ -1820,6 +1820,8 @@ export const journalEntries = sqliteTable(
     summary: text("summary").notNull(),
     bullets: text("bullets", { mode: "json" }).$type<Array<{ text: string; sourceIds: string[] }>>().notNull(),
     actions: text("actions", { mode: "json" }).$type<Array<{ label: string; kind: string; targetId: string }>>().notNull(),
+    /** 给用户的下一步建议（0–2 条，每条 ≤48 字）；旧条目为 null。 */
+    advice: text("advice", { mode: "json" }).$type<string[] | null>(),
     /** 进 prompt 的证据快照：可追溯来源，也便于排查"卡片为什么这么说"。 */
     evidence: text("evidence", { mode: "json" }).$type<unknown[]>().notNull(),
     /** 产出该版本的模型名；null = 模板兜底（模型档位未就绪/调用失败）。 */

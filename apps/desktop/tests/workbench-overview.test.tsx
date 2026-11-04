@@ -31,6 +31,7 @@ import {
 } from '../src/renderer/src/workbench/workspace/activity'
 import {
   INSIGHT_COPY,
+  composeWorkspaceInsight,
   deriveWorkspaceInsight,
   formatInsightSourceLine,
   formatInsightUpdatedLabel,
@@ -580,10 +581,10 @@ describe('概览页真实数据', () => {
     })
     await renderPage(props)
 
-    // 洞察：运行中的会话保留正文 + 更新中角标 + 来源行 / 落款
-    expect(textOf('.wb-ov-insight-text')).toContain('映射表收口 60%')
+    // 洞察：运行中的会话 → 聚合正文（在跑建议）+ 更新中角标 + 来源行 / 落款
+    expect(textOf('.wb-ov-insight-text')).toContain('正在跑，完成后我会把结果汇总在这里')
     expect(container.querySelector('.wb-ov-insight-text .wb-sr-only')?.textContent)
-      .toContain('映射表收口 60%')
+      .toContain('正在跑，完成后我会把结果汇总在这里')
     expect(textOf('.wb-ov-insight-badge')).toContain('洞察')
     expect(container.textContent).toContain(INSIGHT_COPY.updating)
     expect(textOf('.wb-ov-insight-source-btn')).toContain('基于本空间 1 项工作')
@@ -664,6 +665,108 @@ describe('概览页真实数据', () => {
 })
 
 describe('洞察纯逻辑（pickLatestSession / deriveWorkspaceInsight）', () => {
+  it('compose：建议按状态触发——中断提示续跑、全收尾建议开新、信号不足引用正文一句', () => {
+    const latest = sessionFixture({ id: 's-a', title: '周报整理', status: 'idle', updatedAt: '2026-10-30T11:00:00.000Z' })
+    const interrupted = sessionFixture({ id: 's-b', title: '供应商比价', status: 'interrupted', updatedAt: '2026-10-29T10:00:00.000Z' })
+    // 中断优先于「查看结果」。
+    const withInterrupted = composeWorkspaceInsight({
+      sessions: [latest, interrupted], latest, latestText: '周报已整理完成。', fileCount: 5,
+    })
+    expect(withInterrupted.summary).toContain('2 项工作')
+    expect(withInterrupted.summary).toContain('1 项待续')
+    expect(withInterrupted.summary).toContain('资料库 5 个文件')
+    expect(withInterrupted.suggestions[0]).toContain('「供应商比价」被中断过')
+
+    // 全部收尾 → 建议开新工作。
+    const done1 = sessionFixture({ id: 's-c', title: 'A', status: 'closed' })
+    const done2 = sessionFixture({ id: 's-d', title: 'B', status: 'closed' })
+    const allDone = composeWorkspaceInsight({ sessions: [done1, done2], latest: done1, latestText: null })
+    expect(allDone.suggestions[0]).toContain('都收尾了')
+
+    // 单项无状态信号 → 引用正文第一句作「最近进展」。
+    const closedSingle = sessionFixture({ id: 's-e', status: 'closed' })
+    const single = composeWorkspaceInsight({ sessions: [closedSingle], latest: closedSingle, latestText: '第一句结论。第二句补充。' })
+    expect(single.suggestions[0]).toContain('最近进展：第一句结论')
+
+    // idle + 正文 → 查看结果。
+    const idleSingle = composeWorkspaceInsight({ sessions: [latest], latest, latestText: '有新结果' })
+    expect(idleSingle.suggestions[0]).toContain('有你没细看的结果')
+  })
+
+  it('compose 文案过 validateInsightCopy 硬规则（markdown/emoji/营销词/感叹号）', () => {
+    const latest = sessionFixture({ id: 's-a', status: 'running' })
+    const composed = composeWorkspaceInsight({ sessions: [latest], latest, latestText: null, fileCount: 3 })
+    const hard = validateInsightCopy(composed.text).filter((issue) => !issue.startsWith('too-short'))
+    expect(hard).toEqual([])
+  })
+
+  it('LLM 通道：成功时正文用 LLM 产物并标注模型；失败/为空回落确定性聚合', async () => {
+    const latest = sessionFixture({ id: 's-a', title: '周报整理', status: 'idle', updatedAt: '2026-10-30T11:00:00.000Z' })
+    const reader = {
+      getSession: async () => ({
+        session: latest,
+        participants: [],
+        activeRun: null,
+        messages: [{ id: 'm-1', sessionId: 's-a', runId: null, role: 'assistant', content: '周报已按新口径整理完成。', createdAt: '2026-10-30T11:00:00.000Z' }],
+        lastEventSeq: 0,
+      }) as AgentSessionSnapshot,
+    }
+
+    // 成功：LLM summary + advice 成为正文，origin.model 记录模型名。
+    const ok = await deriveWorkspaceInsight({
+      workspaceId: 'ws-1', sessions: [latest], reader,
+      llm: {
+        get: async () => ({
+          summary: '本周两项工作都已收尾，材料库新增三份参考。',
+          advice: [{ text: '下周可从结论页直接开新工作。', sessionId: 's-a' }],
+          model: 'glm-4.7', cached: false,
+        }),
+      },
+      retryDelaysMs: [],
+    })
+    expect(ok.status).toBe('ready')
+    expect(ok.text).toContain('本周两项工作都已收尾')
+    expect(ok.text).toContain('下周可从结论页直接开新工作')
+    expect(ok.origin?.model).toBe('glm-4.7')
+
+    // 失败：回落确定性聚合（状态分布），model=null。
+    const failed = await deriveWorkspaceInsight({
+      workspaceId: 'ws-1', sessions: [latest], reader,
+      llm: { get: async () => { throw new Error('gateway down') } },
+      retryDelaysMs: [],
+    })
+    expect(failed.status).toBe('ready')
+    expect(failed.text).toContain('1 项工作')
+    expect(failed.origin?.model).toBeNull()
+
+    // 空 summary：视为无产物，同样回落。
+    const empty = await deriveWorkspaceInsight({
+      workspaceId: 'ws-1', sessions: [latest], reader,
+      llm: { get: async () => ({ summary: '', advice: [], model: 'glm-4.7', cached: false }) },
+      retryDelaysMs: [],
+    })
+    expect(empty.status).toBe('ready')
+    expect(empty.text).toContain('1 项工作')
+    expect(empty.origin?.model).toBeNull()
+
+    // 超长正文经 normalize 截断（≤240 字 + 省略号）。
+    const long = await deriveWorkspaceInsight({
+      workspaceId: 'ws-1', sessions: [latest], reader,
+      llm: {
+        get: async () => ({
+          summary: '长总结。'.repeat(80),
+          advice: [{ text: '建议。', sessionId: null }],
+          model: 'glm-4.7', cached: false,
+        }),
+      },
+      retryDelaysMs: [],
+    })
+    // normalize 口径：截断产物以「…」收尾（slice 240 + 省略号，上限 241）。
+    const longText = long.text ?? ''
+    expect(longText.endsWith('…')).toBe(true)
+    expect(longText.length).toBeLessThanOrEqual(241)
+  })
+
   it('按最近更新选会话，平手用创建时间与 id 稳定排序，并过滤其它空间', () => {
     const sessions = [
       sessionFixture({ id: 's-a', updatedAt: '2026-10-30T10:00:00.000Z' }),
@@ -703,7 +806,8 @@ describe('洞察纯逻辑（pickLatestSession / deriveWorkspaceInsight）', () =
     expect(insight).toMatchObject({
       workspaceId: 'ws-1',
       status: 'ready',
-      text: '结论\n映射表收口 60%。',
+      // 正文 = 聚合总结（状态分布 + 建议），不再复述消息原文。
+      text: expect.stringContaining('1 项工作：1 项有新结果。资料库 2 个文件。'),
       updatedAt: '2026-10-30T11:00:00.000Z',
       stats: { workCount: 1, fileCount: 2 },
       origin: {
@@ -711,8 +815,10 @@ describe('洞察纯逻辑（pickLatestSession / deriveWorkspaceInsight）', () =
         messageId: 'm-1',
         capturedAt: '2026-11-03T10:00:00.000Z',
         sourceUpdatedAt: '2026-10-30T11:00:00.000Z',
+        model: null,
       },
     })
+    expect(insight.text).not.toContain('映射表收口 60%')
     expect(insight.error).toBeNull()
   })
 
@@ -725,7 +831,9 @@ describe('洞察纯逻辑（pickLatestSession / deriveWorkspaceInsight）', () =
       retryDelaysMs: [],
     })
     expect(insight.status).toBe('updating')
-    expect(insight.text).toBe('正在核对数据。')
+    // 在跑 → 建议行「正在跑」；不复述半截正文。
+    expect(insight.text).toContain('正在跑，完成后我会把结果汇总在这里')
+    expect(insight.text).not.toBe('正在核对数据。')
   })
 
   it('无 assistant 正文 → no-content（不报错、不造文案）', async () => {
@@ -737,7 +845,8 @@ describe('洞察纯逻辑（pickLatestSession / deriveWorkspaceInsight）', () =
       retryDelaysMs: [],
     })
     expect(insight.status).toBe('no-content')
-    expect(insight.text).toBeNull()
+    // 聚合总结仍然成立：状态分布 + 建议，没有消息级证据。
+    expect(insight.text).toContain('1 项工作')
     expect(insight.origin).toMatchObject({ sessionId: 's-1', messageId: null, runId: null })
   })
 
@@ -754,7 +863,9 @@ describe('洞察纯逻辑（pickLatestSession / deriveWorkspaceInsight）', () =
       retryDelaysMs: [],
     })
     expect(insight.status).toBe('ready')
-    expect(insight.text).toBe('最终结论\n下周补完联调。')
+    // idle + 事件兜底正文 → 「查看结果」建议；正文是聚合总结而非事件原文。
+    expect(insight.text).toContain('有你没细看的结果')
+    expect(insight.text).not.toContain('下周补完联调')
     expect(insight.origin).toMatchObject({ messageId: null, runId: 'run-1' })
   })
 
@@ -850,15 +961,14 @@ describe('概览页洞察状态', () => {
     expect(container.querySelector('.wb-ov-insight-refresh')).toBeNull()
   })
 
-  it('有工作但无可归纳正文时显示 no-content 说明', async () => {
+  it('有工作但无可归纳正文时显示聚合总结，不再显示 no-content 说明', async () => {
     const idle = sessionFixture({ id: 's-1', status: 'idle' })
     installNxcore({ sessions: { 's-1': snapshotFixture(idle, [messageFixture('user', '只说了话')]) } })
     await renderPage(pageProps({ sessions: [idle] }))
 
-    expect(container.textContent).toContain(INSIGHT_COPY.noContent)
-    expect(container.querySelector('.wb-ov-insight-source-btn')).toBeNull()
-    expect(container.querySelector('.wb-ov-insight-footer')).toBeNull()
-    // 无内容不是错误，仍然允许重试/刷新语义之外的人工重取。
+    // 聚合总结成立：no-content 也渲染正文，不再显示「还没有可汇总的内容」。
+    expect(container.textContent).toContain('1 项工作')
+    expect(container.textContent).not.toContain(INSIGHT_COPY.noContent)
     expect(container.querySelector('.wb-ov-insight-refresh')).not.toBeNull()
   })
 
@@ -908,9 +1018,9 @@ describe('概览页洞察状态', () => {
     const refreshBtn = container.querySelector<HTMLButtonElement>('.wb-ov-insight-refresh')
     expect(refreshBtn?.getAttribute('aria-disabled')).toBeDefined()
     expect(refreshBtn?.disabled).toBeFalsy()
-    // 读屏可读完整正文（视觉隐藏全文节点）。
+    // 读屏可读完整正文（视觉隐藏全文节点）——聚合总结口径。
     expect(container.querySelector('.wb-ov-insight-text .wb-sr-only')?.textContent)
-      .toContain('结论：映射表收口 60%。')
+      .toContain('1 项工作：1 项有新结果')
   })
 
   it('失败进入冷却；冷却到期自动重试（不再永久停在错误态）', async () => {

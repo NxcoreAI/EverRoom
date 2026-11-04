@@ -30,6 +30,8 @@ const EntryDto = Type.Object({
   summary: Type.String(),
   bullets: Type.Array(BulletDto),
   actions: Type.Array(ActionDto),
+  /** 下一步建议（0–2 条）；旧条目没有。 */
+  advice: Type.Optional(Type.Array(Type.String())),
   /** null = 模板兜底（模型未就绪/失败）。 */
   model: Type.Union([Type.String(), Type.Null()]),
   createdAt: Type.String(),
