@@ -172,7 +172,8 @@ jobs:
             else
               # Without a profile, aps-environment is an unauthorized restricted
               # entitlement and AMFI kills the app at launch. Ship without push.
-              /usr/libexec/PlistBuddy -c 'Delete :com.apple.developer.aps-environment' apps/desktop/build/entitlements.mac.plist
+              # plist 里该键当前本就不存在（App Store 分发时才补回），Delete 需容忍缺席。
+              /usr/libexec/PlistBuddy -c 'Delete :com.apple.developer.aps-environment' apps/desktop/build/entitlements.mac.plist 2>/dev/null || true
             fi
           else
             export CSC_IDENTITY_AUTO_DISCOVERY=false
