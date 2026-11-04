@@ -94,7 +94,6 @@ export class ConversationSuggestionService {
       runtimeSessionRef: null,
       ...(language ? { responseLanguage: language } : {}),
       pageLabel: "对话建议",
-      roomId: null,
       toolsEnabled: false,
       prompt,
     });

@@ -1,4 +1,4 @@
-import { ArrowDown, Check, ChevronRight, CircleHelp, Copy, FileText, Folder, FolderKanban, Link2, MessageSquareText, RotateCcw, X } from 'lucide-react'
+import { ArrowDown, Check, ChevronRight, Copy, FileText, Link2, RotateCcw, X } from 'lucide-react'
 import { Fragment, memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 
 import { AgentExecutionTimeline } from './AgentExecutionTimeline'
@@ -20,13 +20,10 @@ import {
 } from './agentChatScroll'
 import type { PendingShellApproval } from './agentShellApprovals'
 import type { AgentRunActivity } from './agentRunActivity'
-import { parseAgentDocumentIntentResult, type AgentDocumentIntentResult } from './agentDocumentIntent'
 import { parseAgentNavigationTarget } from './agentNavigation'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { parseAgentRoomSelectionResult } from './agentRoomSelection'
 import { AgentDocumentPicker } from './AgentDocumentPicker'
-import { useRoomDocumentsState } from '../context-room/RoomDocumentsProvider'
 import { uiText } from '../context-room/ported/adapters'
 import {
   findPendingAgentDocumentSelection,
@@ -88,101 +85,6 @@ function localizeAgentAnswer(value: string, t: Translate): string {
     : value
 }
 
-function RoomSelection({
-  awaitingInput = true,
-  availableRooms,
-  busy,
-  onCancel,
-  onSelect,
-  rooms,
-}: {
-  /** agent 正挂着 run 等用户选（区别于「确认中」的 busy）。 */
-  awaitingInput?: boolean
-  availableRooms: AgentRoomReference[]
-  busy: boolean
-  onCancel: () => void
-  onSelect: (room: AgentRoomReference) => void
-  rooms: AgentRoomReference[]
-}) {
-  const { t } = useLocale()
-  const availableById = new Map(availableRooms.map((room) => [room.id, room]))
-  return (
-    <section
-      className="agent-room-selection"
-      data-awaiting-input={String(awaitingInput && !busy)}
-      aria-label={t('surface:agentChat.chooseARoomForTheDocument')}>
-      <header>
-        <span><FolderKanban aria-hidden="true" /><strong>{t('surface:agentChat.chooseARoomForTheDocument')}</strong></span>
-        <button type="button" aria-label={t('surface:agentChat.cancelRoomSelection')} title={t('surface:agentChat.cancel')} disabled={busy} onClick={onCancel}>
-          <X aria-hidden="true" />
-        </button>
-      </header>
-      <div className="agent-room-selection-list">
-        {rooms.length ? rooms.map((listedRoom) => {
-          const currentRoom = availableById.get(listedRoom.id)
-          const room = currentRoom ?? listedRoom
-          return (
-            <button
-              key={listedRoom.id}
-              type="button"
-              disabled={busy || !currentRoom}
-              title={currentRoom ? room.title : t('surface:agentChat.titleUnavailable', { title: listedRoom.title })}
-              onClick={() => currentRoom && onSelect(room)}
-            >
-              <Folder aria-hidden="true" />
-              <span>
-                <strong>{room.title}</strong>
-                <small>{currentRoom ? t(uiText(room.kind ?? 'Room')) : t('surface:agentChat.unavailable')}</small>
-              </span>
-              <ChevronRight aria-hidden="true" />
-            </button>
-          )
-        }) : <p>{t('surface:agentChat.noRoomsAvailable')}</p>}
-      </div>
-    </section>
-  )
-}
-
-function DocumentIntentClarification({
-  awaitingInput = true,
-  busy,
-  onConfirm,
-  onReject,
-  topic,
-}: {
-  /** agent 正挂着 run 等用户答复（区别于「确认中」的 busy）。 */
-  awaitingInput?: boolean
-  busy: boolean
-  onConfirm: () => void
-  onReject: () => void
-  topic: string
-}) {
-  const { t } = useLocale()
-  return (
-    <section
-      className="agent-room-selection agent-document-intent"
-      data-awaiting-input={String(awaitingInput && !busy)}
-      aria-label={t('surface:agentChat.confirmDocumentCreation')}>
-      <header>
-        <span><CircleHelp aria-hidden="true" /><strong>{t('surface:agentChat.confirmCreationMethod')}</strong></span>
-      </header>
-      <p className="agent-document-intent-question">{t('surface:agentChat.doYouWantToCreateADocumentAbout', { topic })}</p>
-      <div className="agent-room-selection-list">
-        <button type="button" disabled={busy} onClick={onConfirm}>
-          <FileText aria-hidden="true" />
-          <span><strong>{t('surface:agentChat.createDocument')}</strong><small>{t('surface:agentChat.nextChooseTheRoomWhereItWillBe')}</small></span>
-          <ChevronRight aria-hidden="true" />
-        </button>
-        <button type="button" disabled={busy} onClick={onReject}>
-          <MessageSquareText aria-hidden="true" />
-          <span><strong>{t('surface:agentChat.no')}</strong><small>{t('surface:agentChat.continueDescribingWhatYouNeed')}</small></span>
-          <ChevronRight aria-hidden="true" />
-        </button>
-      </div>
-    </section>
-  )
-}
-
 const generatedDocumentPattern = /文档已成功生成[，,]\s*您可以查看：?\s*\[([^\]]+)\]\s*\(?([0-9a-f]{8}-[0-9a-f-]{27,})\)?/iu
 
 const agentMarkdownComponents = {
@@ -203,27 +105,11 @@ const agentMarkdownComponents = {
 // 大 JSON 字符串（每次 JSON.parse 很贵）；按工具对象缓存解析结果。工具对象在
 // 转终态后不再重建，缓存长期有效。
 const navigationTargetCache = new WeakMap<DisplayAgentToolCall, boolean>()
-const roomSelectionCache = new WeakMap<DisplayAgentToolCall, ReturnType<typeof parseAgentRoomSelectionResult>>()
-const documentIntentCache = new WeakMap<DisplayAgentToolCall, ReturnType<typeof parseAgentDocumentIntentResult>>()
 
 function toolNavigationResult(tool: DisplayAgentToolCall): boolean {
   if (navigationTargetCache.has(tool)) return navigationTargetCache.get(tool)!
   const parsed = tool.status === 'completed' && Boolean(parseAgentNavigationTarget(tool.result))
   navigationTargetCache.set(tool, parsed)
-  return parsed
-}
-
-function toolRoomSelectionResult(tool: DisplayAgentToolCall) {
-  if (roomSelectionCache.has(tool)) return roomSelectionCache.get(tool)
-  const parsed = parseAgentRoomSelectionResult(tool.result)
-  roomSelectionCache.set(tool, parsed)
-  return parsed
-}
-
-function toolDocumentIntentResult(tool: DisplayAgentToolCall) {
-  if (documentIntentCache.has(tool)) return documentIntentCache.get(tool)
-  const parsed = parseAgentDocumentIntentResult(tool.result)
-  documentIntentCache.set(tool, parsed)
   return parsed
 }
 
@@ -442,7 +328,6 @@ export function AgentChatView({
   agentIdByRun,
   agentNamesById,
   activityByRun,
-  availableRooms,
   composer,
   currentSessionId,
   draftHasContent,
@@ -460,8 +345,6 @@ export function AgentChatView({
   onSlidesAction,
   onOpenDraft,
   onOpenMention,
-  onRejectDocumentIntent,
-  onSelectRoom,
   onSelectDocument,
   onSelectPrompt,
   cancelledRunIds,
@@ -482,7 +365,6 @@ export function AgentChatView({
   agentIdByRun: Record<string, string>
   agentNamesById: Record<string, string>
   activityByRun: Record<string, AgentRunActivity>
-  availableRooms: AgentRoomReference[]
   composer: ReactNode
   currentSessionId: string | null
   draftHasContent: boolean
@@ -506,12 +388,6 @@ export function AgentChatView({
   /** 网关重启等原因被中断的 run：卡片显示「运行被中断」。 */
   interruptedRunIds?: ReadonlySet<string>
   onOpenMention?: (item: MentionedItem) => void
-  onRejectDocumentIntent: () => void
-  onSelectRoom: (
-    room: AgentRoomReference,
-    intent: PendingAgentIntent,
-    document?: AgentDocumentSelectionItem,
-  ) => Promise<void>
   onSelectDocument: (selection: AgentDocumentSelectionSubmission) => void
   onSelectPrompt: (prompt: string) => void
   pendingNavigationByRun: Record<string, AgentNavigationTarget>
@@ -528,23 +404,12 @@ export function AgentChatView({
 }) {
   const { t } = useLocale()
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null)
-  const [dismissedDocumentIntents, setDismissedDocumentIntents] = useState<Set<string>>(() => new Set())
-  const [dismissedRoomSelections, setDismissedRoomSelections] = useState<Set<string>>(() => new Set())
   const [dismissedDocumentSelections, setDismissedDocumentSelections] = useState<Set<string>>(() => new Set())
-  const [confirmedDocumentIntent, setConfirmedDocumentIntent] = useState<(
-    AgentDocumentIntentResult & { pendingIntent: PendingAgentIntent }
-  ) | null>(null)
-  const [pendingIntentDocumentSelection, setPendingIntentDocumentSelection] = useState<{
-    room: AgentRoomReference
-    intent: PendingAgentIntent
-    toolId: string | null
-  } | null>(null)
   const [highlightedNotificationTarget, setHighlightedNotificationTarget] = useState<{
     key: string
     messageId: string
   } | null>(null)
   const handledDocumentSelectionsRef = useRef(new Set<string>())
-  const { documentsByRoom } = useRoomDocumentsState()
   const conversationRef = useRef<HTMLDivElement>(null)
   const pinnedToBottomRef = useRef(true)
   const lastScrollTopRef = useRef(0)
@@ -713,27 +578,6 @@ export function AgentChatView({
     ? outgoingLinks.find((link) => link.sourceRunId === activeRunId)
     : undefined
   const activeNavigationPending = activeRunId ? pendingNavigationByRun[activeRunId] : undefined
-  const pendingRoomSelection = useMemo(() => {
-    const candidates = Object.values(toolCallsByRun)
-      .flat()
-      .filter((tool) => tool.name === 'context_room_list' && tool.status === 'completed')
-      .sort((left, right) => Date.parse(right.completedAt ?? right.startedAt) - Date.parse(left.completedAt ?? left.startedAt))
-    for (const tool of candidates) {
-      if (dismissedRoomSelections.has(tool.id)) continue
-      const result = toolRoomSelectionResult(tool)
-      if (!result?.pendingIntent) continue
-      const completedAt = Date.parse(tool.completedAt ?? tool.startedAt)
-      const hasLaterUserMessage = messages.some((message) => (
-        message.role === 'user' && Date.parse(message.createdAt) > completedAt
-      ))
-      const hasLaterRun = Boolean(activeRunId && activeRunId !== tool.runId)
-        || Object.entries({ ...runStartedAtByRun, ...runCompletedAtByRun }).some(([runId, occurredAt]) => (
-          runId !== tool.runId && Date.parse(occurredAt) >= completedAt
-        ))
-      if (!hasLaterUserMessage && !hasLaterRun) return { tool, result }
-    }
-    return null
-  }, [activeRunId, dismissedRoomSelections, messages, runCompletedAtByRun, runStartedAtByRun, toolCallsByRun])
   // 授权卡片按时间插进消息流：挑战出现时锚定 startedAt，新消息自然把它顶上去。
   const authChallenge = useAgentAuthChallenge()
   const authCardInsertIndex = useMemo(() => {
@@ -746,53 +590,6 @@ export function AgentChatView({
     return messages.length
   }, [authChallenge?.id, authChallenge?.startedAt, messages])
 
-  const pendingDocumentIntent = useMemo(() => {
-    const candidates = Object.values(toolCallsByRun)
-      .flat()
-      .filter((tool) => tool.name === 'context_room_document_intent' && tool.status === 'completed')
-      .sort((left, right) => Date.parse(right.completedAt ?? right.startedAt) - Date.parse(left.completedAt ?? left.startedAt))
-    for (const tool of candidates) {
-      if (dismissedDocumentIntents.has(tool.id)) continue
-      const result = toolDocumentIntentResult(tool)
-      if (!result?.pendingIntent) continue
-      const completedAt = Date.parse(tool.completedAt ?? tool.startedAt)
-      const hasLaterUserMessage = messages.some((message) => (
-        message.role === 'user' && Date.parse(message.createdAt) > completedAt
-      ))
-      const hasLaterRun = Boolean(activeRunId && activeRunId !== tool.runId)
-        || Object.entries({ ...runStartedAtByRun, ...runCompletedAtByRun }).some(([runId, occurredAt]) => (
-          runId !== tool.runId && Date.parse(occurredAt) >= completedAt
-        ))
-      if (!hasLaterUserMessage && !hasLaterRun) return { tool, result }
-    }
-    return null
-  }, [activeRunId, dismissedDocumentIntents, messages, runCompletedAtByRun, runStartedAtByRun, toolCallsByRun])
-  const roomSelection = pendingIntentDocumentSelection ? null : pendingRoomSelection
-    ? {
-        toolId: pendingRoomSelection.tool.id,
-        rooms: pendingRoomSelection.result.rooms,
-        intent: pendingRoomSelection.result.pendingIntent!,
-      }
-    : confirmedDocumentIntent
-      ? {
-          toolId: null,
-          rooms: availableRooms.filter((room) => confirmedDocumentIntent.pendingIntent.allowedRoomIds.includes(room.id)),
-          intent: confirmedDocumentIntent.pendingIntent,
-        }
-      : null
-  const pendingIntentDocuments = useMemo(() => {
-    if (!pendingIntentDocumentSelection) return []
-    const allowedDocumentIds = new Set(pendingIntentDocumentSelection.intent.allowedDocumentIds)
-    return (documentsByRoom[pendingIntentDocumentSelection.room.id] ?? [])
-      .filter((document: RoomDocument) => allowedDocumentIds.has(document.id))
-      .map((document: RoomDocument) => ({
-        documentId: document.id,
-        roomId: document.roomId,
-        title: document.title,
-        version: document.version,
-        status: document.status,
-      }))
-  }, [documentsByRoom, pendingIntentDocumentSelection])
   const pendingDocumentSelection = useMemo(() => {
     if (activeDocument) return null
     return findPendingAgentDocumentSelection(
@@ -801,11 +598,6 @@ export function AgentChatView({
       dismissedDocumentSelections,
     )
   }, [activeDocument, dismissedDocumentSelections, messages, toolCallsByRun])
-
-  useEffect(() => {
-    setConfirmedDocumentIntent(null)
-    setPendingIntentDocumentSelection(null)
-  }, [currentSessionId])
 
   useEffect(() => {
     const reset = () => setCopiedMessageId(null)
@@ -1006,10 +798,18 @@ export function AgentChatView({
     return () => window.clearTimeout(timer)
   }, [highlightedNotificationTarget])
 
+  /** 「已复制」回执的自动复位：短暂展示后回到复制图标，保证再次点击仍有可见反馈。 */
+  const copiedResetTimerRef = useRef<number | null>(null)
+  useEffect(() => () => {
+    if (copiedResetTimerRef.current !== null) window.clearTimeout(copiedResetTimerRef.current)
+  }, [])
+
   const copyMessage = async (messageId: string, content: string) => {
     try {
       await writeTextToClipboard(content)
       setCopiedMessageId(messageId)
+      if (copiedResetTimerRef.current !== null) window.clearTimeout(copiedResetTimerRef.current)
+      copiedResetTimerRef.current = window.setTimeout(() => setCopiedMessageId(null), 1600)
     } catch {
       setCopiedMessageId(null)
     }
@@ -1174,30 +974,41 @@ export function AgentChatView({
                     : message.referencedAgentNames?.map((name) => (
                       <span key={name} className="agent-user-mention">@{name}</span>
                     ))}
-                  {/* 批注卡片：与气泡分离，浮在气泡上方（右对齐同一列）；hover 只读。 */}
-                  {message.noteCards?.length ? (
-                    <UserNoteCards cards={message.noteCards} />
-                  ) : null}
-                  {bubbleText ? (
-                    <article
-                      className="agent-message"
-                      data-agent-message-id={message.id}
-                      data-notification-target={String(highlightedNotificationTarget?.messageId === message.id)}
-                      data-role="user"
-                    >
-                      <p>{bubbleText}</p>
-                      <button
-                        type="button"
-                        className="agent-user-copy"
-                        data-copied={String(copiedMessageId === message.id)}
-                        aria-label={t('surface:agentChat.copyPrompt')}
-                        title={t('surface:agentChat.copyPrompt')}
-                        onClick={() => void copyMessage(message.id, message.content)}
-                      >
-                        {copiedMessageId === message.id ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
-                      </button>
-                    </article>
-                  ) : null}
+                  {/* 用户气泡 + 操作行（复制 / 重新发送）包成一个右对齐整体：
+                      按钮与 agent 消息下方按钮同规格，默认隐藏、hover 整块才浮现。
+                      纯批注消息（无气泡）不显示操作行——content 是展示文案，
+                      重发会以新 run 重跑技术指令，语义不对。 */}
+                  <div className="agent-user-turn" data-agent-message-id={message.id} data-notification-target={String(highlightedNotificationTarget?.messageId === message.id)}>
+                    {message.noteCards?.length ? (
+                      <UserNoteCards cards={message.noteCards} />
+                    ) : null}
+                    {bubbleText ? (
+                      <>
+                        <article className="agent-message" data-role="user">
+                          <p>{bubbleText}</p>
+                        </article>
+                        <div className="agent-message-actions agent-user-actions">
+                          <button
+                            type="button"
+                            aria-label={t('surface:agentChat.copyPrompt')}
+                            title={t('surface:agentChat.copyPrompt')}
+                            onClick={() => void copyMessage(message.id, message.content)}
+                          >
+                            <Copy aria-hidden="true" />
+                          </button>
+                          <button
+                            type="button"
+                            aria-label={t('surface:agentChat.resend')}
+                            title={t('surface:agentChat.resend')}
+                            disabled={!message.content.trim() || message.content.includes('[附件：')}
+                            onClick={() => onRetryPrompt(message.content, message.runId)}
+                          >
+                            <RotateCcw aria-hidden="true" />
+                          </button>
+                        </div>
+                      </>
+                    ) : null}
+                  </div>
                   <RunNavigation link={link} pending={link ? undefined : pending} onOpen={onOpenSessionLink} />
                 </Fragment>
               )
@@ -1347,73 +1158,8 @@ export function AgentChatView({
           />
           {/* 等待用户决策 ≠ 执行中：run 挂着正是「agent 在等输入」的正常形态，
               卡片此时必须可点；busy 只保留「提交通道被占用/会话加载中」。
-              同样适用于下方的 RoomSelection / AgentDocumentPicker。 */}
-          {pendingDocumentIntent ? (
-            <DocumentIntentClarification
-              awaitingInput
-              busy={loading || submitting}
-              topic={pendingDocumentIntent.result.topic}
-              onConfirm={() => {
-                setDismissedDocumentIntents((current) => new Set(current).add(pendingDocumentIntent.tool.id))
-                setConfirmedDocumentIntent({
-                  ...pendingDocumentIntent.result,
-                  pendingIntent: pendingDocumentIntent.result.pendingIntent!,
-                })
-              }}
-              onReject={() => {
-                setDismissedDocumentIntents((current) => new Set(current).add(pendingDocumentIntent.tool.id))
-                onRejectDocumentIntent()
-              }}
-            />
-          ) : null}
-          {roomSelection ? (
-            <RoomSelection
-              awaitingInput
-              availableRooms={availableRooms}
-              busy={loading || submitting}
-              rooms={roomSelection.rooms}
-              onCancel={() => {
-                if (roomSelection.toolId) {
-                  setDismissedRoomSelections((current) => new Set(current).add(roomSelection.toolId!))
-                }
-                setConfirmedDocumentIntent(null)
-              }}
-              onSelect={(room) => {
-                if (roomSelection.intent.targetCapability !== 'document.create') {
-                  setPendingIntentDocumentSelection({
-                    room,
-                    intent: roomSelection.intent,
-                    toolId: roomSelection.toolId,
-                  })
-                  return
-                }
-                void onSelectRoom(room, roomSelection.intent).then(() => {
-                  if (roomSelection.toolId) {
-                    setDismissedRoomSelections((current) => new Set(current).add(roomSelection.toolId!))
-                  }
-                  setConfirmedDocumentIntent(null)
-                }).catch(() => undefined)
-              }}
-            />
-          ) : null}
-          {pendingIntentDocumentSelection ? (
-            <AgentDocumentPicker
-              awaitingInput
-              busy={loading || submitting}
-              documents={pendingIntentDocuments}
-              onCancel={() => setPendingIntentDocumentSelection(null)}
-              onSelect={(document) => {
-                const selection = pendingIntentDocumentSelection
-                void onSelectRoom(selection.room, selection.intent, document).then(() => {
-                  if (selection.toolId) {
-                    setDismissedRoomSelections((current) => new Set(current).add(selection.toolId!))
-                  }
-                  setConfirmedDocumentIntent(null)
-                  setPendingIntentDocumentSelection(null)
-                }).catch(() => undefined)
-              }}
-            />
-          ) : pendingDocumentSelection ? (
+              Phase 2i 去 Room：Room 选择/文档归属确认卡已删除，仅保留文档选择卡。 */}
+          {pendingDocumentSelection ? (
             <AgentDocumentPicker
               awaitingInput
               busy={loading || submitting}

@@ -680,9 +680,9 @@ export async function createServer(config: GatewayConfig) {
   // 现校验 agentDefinitionId === "doc-writer"）；结果优先读 structuredOutput.replacementText。
   documentService.resolveSelectionRewriteContent = createSelectionRewriteContentResolver({
     getInvocation: (invocationId) => subagentOrchestrator.getInvocation(invocationId),
-    isInvocationAuthorized: (invocation, roomId) => isSelectionRewriteInvocationAuthorized(
+    isInvocationAuthorized: (invocation) => isSelectionRewriteInvocationAuthorized(
       invocation,
-      { capabilityId: "document.selection-rewrite", roomId },
+      { capabilityId: "document.selection-rewrite" },
     ),
     getDocument: (documentId) => documentService.get(documentId),
   });
@@ -857,7 +857,7 @@ export async function createServer(config: GatewayConfig) {
             // DOCUMENT_BUSY），patch_begin 接管前由工具侧清除。
             setDocumentModificationLease: (documentId, value) =>
               documentService.setAgentModificationLease(documentId, value),
-            inferMaterialSources: (runId, roomId, material) => inferMaterialSourcesFromReads(
+            inferMaterialSources: (runId, material) => inferMaterialSourcesFromReads(
               documentReadAuthority,
               (documentId) => {
                 try {
@@ -867,7 +867,6 @@ export async function createServer(config: GatewayConfig) {
                 }
               },
               runId,
-              roomId,
               material,
             ),
             issueDraftReadReceipt: (context, documentId, version, blockIds) =>
@@ -975,7 +974,6 @@ export async function createServer(config: GatewayConfig) {
     agentRuntime,
     new AgentEventBroker(),
     app.log,
-    undefined,
     documentService,
     documentMcpHost,
     false,
@@ -1344,7 +1342,7 @@ export async function createServer(config: GatewayConfig) {
       if (context.invocationId) {
         if (!isSelectionRewriteInvocationAuthorized(
           subagentOrchestrator.getInvocation(context.invocationId),
-          { capabilityId: context.capabilityId, roomId: context.roomId },
+          { capabilityId: context.capabilityId },
         )) {
           throw new Error("agent_operation_context_invalid");
         }

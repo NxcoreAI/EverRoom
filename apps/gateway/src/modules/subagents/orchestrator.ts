@@ -510,13 +510,10 @@ export class SubagentOrchestrator {
     const row = this.db.select().from(subagentInvocations)
       .where(eq(subagentInvocations.id, invocationId)).get();
     if (!row) throw new Error("subagent_invocation_not_found");
-    // Room 透传：dispatch input 携带的 roomId 绑定到子 run，文档工具（pi-tools
-    // input.roomId）据此解析，缺失保持 null（历史调用行为不变）。
+    // Phase 2i 后无 Room 维度：子 run 不再从 dispatch input 读取 roomId 绑定
+    // 文档工具；子 Agent 的文档读取按工作区级（null scope）直接可用。
     const invocationInput = row.input && typeof row.input === "object" && !Array.isArray(row.input)
       ? (row.input as Record<string, unknown>)
-      : null;
-    const roomId = typeof invocationInput?.roomId === "string" && invocationInput.roomId.trim()
-      ? invocationInput.roomId.trim()
       : null;
     const prompt = [
       "<everroom-subagent-task>",
@@ -541,7 +538,6 @@ export class SubagentOrchestrator {
         originalPrompt: row.task,
         prompt,
         pageLabel: `Subagent: ${definition.name}`,
-        roomId,
         toolsEnabled: true,
         // 结构化输入同时以元数据交给工具（不重复进 prompt）：工具可按阶段
         // 收紧取数，例如 planner 的 arrange 阶段不再回文档正文。

@@ -42,7 +42,7 @@ function createHarness(options?: { reviewer?: SlidesVisualReviewer | null }) {
   return { generate, readDeck, editDeck, fillPage, renderPage, plugin, tools };
 }
 
-const context: DocumentExecutionContext = { agentSessionId: "session-1", runId: "run-1", roomId: "room-1" };
+const context: DocumentExecutionContext = { agentSessionId: "session-1", runId: "run-1" };
 
 describe("office 工具：PPT / Excel 扩展", () => {
   it("插件暴露六个工具：word / slides 骨架 + 逐页填充 / sheets 生成 + slides 读 / 编辑", () => {

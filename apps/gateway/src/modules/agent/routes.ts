@@ -298,14 +298,12 @@ export function agentRoutes(
           tags: ["agent"],
           querystring: Type.Object({
             pageLabel: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
-            roomId: Type.Optional(Type.Union([Type.String({ maxLength: 100 }), Type.Null()])),
             workspaceId: Type.Optional(Type.String({ maxLength: 100 })),
           }),
         },
       },
       async (request) => service.listSessions(
         request.query.pageLabel,
-        request.query.roomId,
         request.query.workspaceId,
       ),
     );
@@ -318,7 +316,6 @@ export function agentRoutes(
           body: Type.Object({
             pageLabel: Type.String({ minLength: 1, maxLength: 120 }),
             workspaceId: Type.Optional(Type.Union([Type.String({ maxLength: 100 }), Type.Null()])),
-            roomId: Type.Optional(Type.Union([Type.String({ maxLength: 100 }), Type.Null()])),
             modelPreference: Type.Optional(Type.Union([
               Type.Literal("smart"),
               Type.Literal("primary"),
@@ -580,17 +577,7 @@ export function agentRoutes(
             context: Type.Optional(Type.Object({
               pageLabel: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
               selectedText: Type.Optional(Type.String({ minLength: 1, maxLength: 8_000 })),
-              rooms: Type.Optional(Type.Array(Type.Object({
-                id: Type.String({ minLength: 1, maxLength: 100 }),
-                title: Type.String({ minLength: 1, maxLength: 120 }),
-                kind: Type.Optional(Type.String({ minLength: 1, maxLength: 40 })),
-              }), { maxItems: 200 })),
-              selectedRoomId: Type.Optional(Type.Union([
-                Type.String({ minLength: 1, maxLength: 100 }),
-                Type.Null(),
-              ])),
               activeDocument: Type.Optional(Type.Object({
-                roomId: Type.String({ minLength: 1, maxLength: 128 }),
                 documentId: Type.String({ minLength: 1, maxLength: 128 }),
                 title: Type.String({ minLength: 1, maxLength: 120 }),
                 version: Type.Integer({ minimum: 0 }),
@@ -674,14 +661,6 @@ export function agentRoutes(
           }
           if (error instanceof Error && error.message === "agent_replace_run_active") {
             return reply.code(409).send({ error: "replace_run_active", message: "An active Agent run cannot be regenerated" });
-          }
-          if (error instanceof Error && error.message === "agent_room_not_available") {
-            const roomId = (error as Error & { roomId?: string }).roomId;
-            return reply.code(409).send({
-              error: "room_not_available",
-              message: "The selected Context Room is no longer available",
-              ...(roomId ? { roomId } : {}),
-            });
           }
           // 引用/目标校验类：客户端组合出网关不支持的运行形态（如渠道会话里
           // @ 其他 Agent 或引用其他对话）——语义错误用 422，而不是裸 500。
@@ -774,7 +753,6 @@ export function agentRoutes(
           tags: ["agent"],
           params: IntentParams,
           body: Type.Object({
-            roomId: Type.String({ minLength: 1, maxLength: 100 }),
             documentId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
             idempotencyKey: Type.String({ minLength: 8, maxLength: 100 }),
             responseLanguage: Type.Optional(ResponseLanguage),
@@ -823,7 +801,6 @@ export function agentRoutes(
           body: Type.Object({
             agentSessionId: Type.String({ minLength: 1, maxLength: 128 }),
             runId: Type.String({ minLength: 1, maxLength: 128 }),
-            roomId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
           }),
         },
       },
@@ -832,7 +809,6 @@ export function agentRoutes(
           return reply.code(201).send(service.createTrustedMcpSession(
             request.body.agentSessionId,
             request.body.runId,
-            request.body.roomId,
           ));
         } catch (error) {
           const code = error instanceof Error ? error.message : "";
@@ -840,8 +816,7 @@ export function agentRoutes(
             return reply.code(404).send({ error: "not_found", message: "Agent MCP context not found" });
           }
           if (
-            code === "mcp_agent_room_not_available"
-            || code === "mcp_agent_context_mismatch"
+            code === "mcp_agent_context_mismatch"
             || code === "mcp_agent_context_not_active"
           ) {
             return reply.code(409).send({ error: code, message: "Agent MCP context is not valid" });

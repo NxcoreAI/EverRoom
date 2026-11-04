@@ -52,7 +52,6 @@ function runInput(overrides: Partial<StartRuntimeRunInput> = {}): StartRuntimeRu
     runtimeSessionRef: null,
     prompt: "我们今年的营收目标是多少",
     pageLabel: "chat",
-    roomId: null,
     workspaceId: "ws-a",
     ...overrides,
   };

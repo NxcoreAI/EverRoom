@@ -44,7 +44,7 @@ function AgentChatDockInner({ file }: { file: OfficeFile }) {
   const composerRef = useRef<HTMLTextAreaElement>(null)
   // 会话按文件稳定 id 隔离（不能用文件名：改名/同名/超长会把历史落进另一个分区，
   // 离开标签再回来就「找不到对话记录」）；文件名只作为运行上下文的「当前页面」。
-  const session = useAgentSession(file.name, null, [], { sessionKey: file.id })
+  const session = useAgentSession(file.name, { sessionKey: file.id })
   const prompts = starterPrompts[file.kind]
 
   /** 发送一轮：文件附件与挂载目录一并进本轮运行上下文（sendPrompt 末位参数）。 */
@@ -55,7 +55,6 @@ function AgentChatDockInner({ file }: { file: OfficeFile }) {
     setComposerResetKey((key) => key + 1)
     void session.sendPrompt(
       text,
-      undefined,
       undefined,
       undefined,
       undefined,
@@ -130,7 +129,6 @@ function AgentChatDockInner({ file }: { file: OfficeFile }) {
         agentIdByRun={session.agentIdByRun}
         agentNamesById={{}}
         activityByRun={session.activityByRun}
-        availableRooms={[]}
         composer={composer}
         currentSessionId={session.sessionId}
         scopeReady={session.scopeReady}
@@ -140,8 +138,7 @@ function AgentChatDockInner({ file }: { file: OfficeFile }) {
         loading={session.loading}
         messages={session.messages}
         pendingApprovals={session.pendingApprovals}
-        onRejectDocumentIntent={() => composerRef.current?.focus()}
-        onRetryPrompt={(prompt, runId) => void session.sendPrompt(prompt, undefined, undefined, null, runId)}
+        onRetryPrompt={(prompt, runId) => void session.sendPrompt(prompt, undefined, null, runId)}
         onOpenSessionLink={() => {}}
         onResolveApproval={(approvalId, decision, feedback) => void session.resolveApproval(approvalId, decision, feedback)}
         onSelectDocument={() => {}}
@@ -149,7 +146,6 @@ function AgentChatDockInner({ file }: { file: OfficeFile }) {
           setDraft(prompt)
           composerRef.current?.focus()
         }}
-        onSelectRoom={async () => {}}
         pendingNavigationByRun={{}}
         reasoningByRun={session.reasoningByRun}
         runCompletedAtByRun={session.runCompletedAtByRun}

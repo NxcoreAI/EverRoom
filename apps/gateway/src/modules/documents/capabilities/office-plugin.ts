@@ -405,7 +405,8 @@ export function officePlugin(
       const result = await bridge.generate({
         title,
         html,
-        roomId: context.roomId,
+        // Phase 2i 后无 Room 维度：Office 产物一律工作区级。
+        roomId: null,
         workspaceId: context.workspaceId ?? null,
         fileName,
         idempotencyKey: idempotencyKey("agent-word", context.runId, title),
@@ -418,7 +419,8 @@ export function officePlugin(
         contentHash: result.contentHash,
         originalName: result.originalName,
         format: "docx",
-        roomId: context.roomId,
+        // Phase 2i 后无 Room 维度：Office 产物一律工作区级。
+        roomId: null,
         deduped: result.versionDeduped || result.blobDeduped,
         // Room 资料页投影由路由决策异步完成（知识路由关闭时会降级为仅入库）。
         roomRoutingRequested: result.roomRequested,
@@ -463,7 +465,8 @@ export function officePlugin(
         title,
         format: "pptx",
         pages,
-        roomId: context.roomId,
+        // Phase 2i 后无 Room 维度：Office 产物一律工作区级。
+        roomId: null,
         workspaceId: context.workspaceId ?? null,
         fileName,
         idempotencyKey: idempotencyKey("agent-slides", context.runId, title),
@@ -479,7 +482,8 @@ export function officePlugin(
         format: "pptx",
         pages: 1,
         outline,
-        roomId: context.roomId,
+        // Phase 2i 后无 Room 维度：Office 产物一律工作区级。
+        roomId: null,
         deduped: result.versionDeduped || result.blobDeduped,
         roomRoutingRequested: result.roomRequested,
         nextAction: "fill_pages",
@@ -610,7 +614,8 @@ export function officePlugin(
         title,
         format: "xlsx",
         sheets,
-        roomId: context.roomId,
+        // Phase 2i 后无 Room 维度：Office 产物一律工作区级。
+        roomId: null,
         workspaceId: context.workspaceId ?? null,
         fileName,
         idempotencyKey: idempotencyKey("agent-sheets", context.runId, title),
@@ -624,7 +629,8 @@ export function officePlugin(
         originalName: result.originalName,
         format: "xlsx",
         sheets: sheets.length,
-        roomId: context.roomId,
+        // Phase 2i 后无 Room 维度：Office 产物一律工作区级。
+        roomId: null,
         deduped: result.versionDeduped || result.blobDeduped,
         roomRoutingRequested: result.roomRequested,
         nextAction: "report_result",
@@ -1064,7 +1070,8 @@ export function officePlugin(
         const described = await bridge.describeAgentArtifact({
           kind: "docx",
           fileId: target.fileId,
-          roomId: context.roomId,
+          // Phase 2i 后无 Room 维度：Office 产物一律工作区级。
+        roomId: null,
           workspaceId: context.workspaceId ?? null,
         });
         return success({
@@ -1147,7 +1154,8 @@ export function officePlugin(
           ? await bridge.applyAgentArtifactTools({
             kind: "docx",
             fileId: target.fileId,
-            roomId: context.roomId,
+            // Phase 2i 后无 Room 维度：Office 产物一律工作区级。
+        roomId: null,
             workspaceId: context.workspaceId ?? null,
             calls: prepared.forwarded,
           })
@@ -1255,7 +1263,8 @@ export function officePlugin(
         const applied = await bridge.applyAgentArtifactTools({
           kind: "docx",
           fileId: target.fileId,
-          roomId: context.roomId,
+          // Phase 2i 后无 Room 维度：Office 产物一律工作区级。
+        roomId: null,
           workspaceId: context.workspaceId ?? null,
           calls: [{
             id: "ops-1",
@@ -1449,7 +1458,8 @@ export function officePlugin(
         exported = await bridge.exportPdf({
           fileId: target.fileId,
           ...(fileName ? { fileName } : {}),
-          roomId: context.roomId,
+          // Phase 2i 后无 Room 维度：Office 产物一律工作区级。
+        roomId: null,
           workspaceId: context.workspaceId ?? null,
         });
       } catch (error) {
@@ -1542,7 +1552,8 @@ export function officePlugin(
         const applied = await bridge.applyAgentArtifactTools({
           kind: "docx",
           fileId: target.fileId,
-          roomId: context.roomId,
+          // Phase 2i 后无 Room 维度：Office 产物一律工作区级。
+        roomId: null,
           workspaceId: context.workspaceId ?? null,
           calls: [{
             id: "illustration-1",
@@ -1601,7 +1612,8 @@ export function officePlugin(
         const described = await bridge.describeAgentArtifact({
           kind: "spreadsheet",
           fileId: target.fileId,
-          roomId: context.roomId,
+          // Phase 2i 后无 Room 维度：Office 产物一律工作区级。
+        roomId: null,
           workspaceId: context.workspaceId ?? null,
         });
         return success({
@@ -1671,7 +1683,8 @@ export function officePlugin(
         const applied = await bridge.applyAgentArtifactTools({
           kind: "spreadsheet",
           fileId: target.fileId,
-          roomId: context.roomId,
+          // Phase 2i 后无 Room 维度：Office 产物一律工作区级。
+        roomId: null,
           workspaceId: context.workspaceId ?? null,
           calls: args.calls as OfficeAgentToolCall[],
         });
@@ -1720,7 +1733,8 @@ export function officePlugin(
         const described = await bridge.describeAgentArtifact({
           kind: "pdf",
           fileId: target.fileId,
-          roomId: context.roomId,
+          // Phase 2i 后无 Room 维度：Office 产物一律工作区级。
+        roomId: null,
           workspaceId: context.workspaceId ?? null,
         });
         return success({
@@ -1790,7 +1804,8 @@ export function officePlugin(
         const applied = await bridge.applyAgentArtifactTools({
           kind: "pdf",
           fileId: target.fileId,
-          roomId: context.roomId,
+          // Phase 2i 后无 Room 维度：Office 产物一律工作区级。
+        roomId: null,
           workspaceId: context.workspaceId ?? null,
           calls: args.calls as OfficeAgentToolCall[],
         });

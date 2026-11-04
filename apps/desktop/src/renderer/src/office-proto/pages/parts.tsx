@@ -5,17 +5,76 @@ import {
 
 import { blankFile, type FileKind, type OfficeFile, kindMeta } from '../data'
 
-/* ───────────── 文件类型图标 ─────────────
-   暖纸体系下的统一文件图标：低透明度色块 + 同色墨字。
-   色相全部取自 --ui-icon-* token，同一套比例从 15px（标签栏）缩放到 46px（新建卡），
-   不再用高饱和渐变，免得在暖纸底上抢戏。 */
+/* ───────────── WPS 风格文件类型图标（自 everoffice 原型 `pages/parts.tsx`） ─────────────
+   渐变圆角方块（squircle）+ 白色类型字母 + 顶部高光，
+   配色与「新建」tiles 一致：W=文档 S=表格 P=演示，PDF / MD 小尺寸收成单字母。 */
 
-const ftThemes: Record<FileKind, { ink: string; letters: string }> = {
-  docx: { ink: 'var(--ui-icon-doc)', letters: 'W' },
-  xlsx: { ink: 'var(--ui-icon-sheet)', letters: 'S' },
-  pptx: { ink: 'var(--ui-icon-slide)', letters: 'P' },
-  pdf: { ink: 'var(--ui-icon-pdf)', letters: 'PDF' },
-  md: { ink: 'var(--ui-icon-md)', letters: 'MD' },
+const ftThemes: Record<FileKind, { from: string; to: string; letters: string }> = {
+  docx: { from: '#4aa3ff', to: '#0a6fe8', letters: 'W' },
+  xlsx: { from: '#4cc478', to: '#1f9450', letters: 'S' },
+  pptx: { from: '#ffb340', to: '#ef7d0e', letters: 'P' },
+  pdf: { from: '#ff6f61', to: '#e0362a', letters: 'PDF' },
+  md: { from: '#b9bbc2', to: '#83868f', letters: 'MD' },
+}
+
+/** office 五类之外、材料库等处用到的扩展类型主题（原型同款）。 */
+const extraGlyphThemes = {
+  image: { from: '#b78aff', to: '#7d3fe0', letters: 'IMG' },
+  txt: { from: '#4ec3d4', to: '#0f92a3', letters: 'TXT' },
+  other: { from: '#b9bbc2', to: '#83868f', letters: 'FILE' },
+} as const
+
+const allGlyphThemes: Record<string, { from: string; to: string; letters: string }> = {
+  ...ftThemes,
+  ...extraGlyphThemes,
+}
+
+/** 彩色 squircle 类型图标（通用版）：kind 取 FileKind 或扩展类型（image/txt/other），未知回落 other。 */
+export function FileGlyphIcon({
+  kind, size = 28, className,
+}: {
+  kind: string
+  size?: number
+  className?: string
+}) {
+  const th = allGlyphThemes[kind] ?? allGlyphThemes.other
+  // 渐变 id 每实例唯一：url(#id) 会解析到文档序第一个同名 def，
+  // 若它挂在 display:none 的标签页里，所有引用处一起变透明
+  const uid = React.useId().replace(/[^a-zA-Z0-9]/g, '')
+  const gid = `ftg-${kind}-${uid}`
+  // 小尺寸（标签栏）下多字母会糊成一片，收成首字母靠颜色区分
+  const letters = size < 24 && th.letters.length > 1 ? th.letters[0] : th.letters
+  const fs = letters.length > 1 ? 12.5 : 20
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 48 48"
+      aria-hidden
+      className={className ? `op-ft-icon ${className}` : 'op-ft-icon'}
+    >
+      <defs>
+        <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor={th.from} />
+          <stop offset="1" stopColor={th.to} />
+        </linearGradient>
+        <linearGradient id={`${gid}-g`} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="#fff" stopOpacity="0.32" />
+          <stop offset="1" stopColor="#fff" stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      <rect x="1.5" y="1.5" width="45" height="45" rx="11.5" fill={`url(#${gid})`} />
+      <path d="M1.5 13 A11.5 11.5 0 0 1 13 1.5 H35 A11.5 11.5 0 0 1 46.5 13 V21 H1.5 Z" fill={`url(#${gid}-g)`} />
+      <text
+        x="24" y="25.5" textAnchor="middle" dominantBaseline="central"
+        fill="#fff" fontWeight="800" fontSize={fs}
+        letterSpacing={letters.length > 1 ? 0.8 : 0}
+        fontFamily="-apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif"
+      >
+        {letters}
+      </text>
+    </svg>
+  )
 }
 
 export function FileTypeIcon({
@@ -25,53 +84,18 @@ export function FileTypeIcon({
   size?: number
   className?: string
 }) {
-  const th = ftThemes[kind]
-  // 小尺寸（标签栏）下多字母会糊成一片，收成首字母靠颜色区分
-  const letters = size < 24 && th.letters.length > 1 ? th.letters[0] : th.letters
-  const fs = letters.length > 1 ? 13 : 20
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 48 48"
-      aria-hidden
-      className={className ? `op-ft-icon ${className}` : 'op-ft-icon'}
-    >
-      <rect
-        x="1.25"
-        y="1.25"
-        width="45.5"
-        height="45.5"
-        rx="12"
-        strokeWidth="1.5"
-        style={{ fill: th.ink, fillOpacity: 0.12, stroke: th.ink, strokeOpacity: 0.18 }}
-      />
-      <text
-        x="24"
-        y="25"
-        textAnchor="middle"
-        dominantBaseline="central"
-        fontSize={fs}
-        fontWeight="650"
-        letterSpacing={letters.length > 1 ? 0.6 : 0}
-        fontFamily="-apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif"
-        style={{ fill: th.ink }}
-      >
-        {letters}
-      </text>
-    </svg>
-  )
+  return <FileGlyphIcon kind={kind} size={size} className={className} />
 }
 
-/** 资料库 / 目录列表的文件夹图标：与 FileTypeIcon 同一套「描边色块 + 同色墨」比例，
- *  只把形状换成文件夹（前片浅底 + 标签页稍深），避免在暖纸底上出现高饱和蓝。 */
+/** 资料库文件夹图标（原型同款）：macOS 风格蓝色文件夹（深色后片 + 渐变前片）。 */
 export function FolderGlyphIcon({
   size = 32, className,
 }: {
   size?: number
   className?: string
 }) {
-  const ink = 'var(--ui-icon-doc)'
+  const uid = React.useId().replace(/[^a-zA-Z0-9]/g, '')
+  const gid = `wfolder-${uid}`
   return (
     <svg
       width={size}
@@ -80,24 +104,15 @@ export function FolderGlyphIcon({
       aria-hidden
       className={className ? `op-ft-icon ${className}` : 'op-ft-icon'}
     >
-      <path
-        d="M5.5 13.4c0-1.7 1.3-3 3-3h8.4c.8 0 1.6.33 2.2.9l2.5 2.5h14.9c1.7 0 3 1.3 3 3v2.6H5.5z"
-        style={{ fill: ink, fillOpacity: 0.3 }}
-      />
-      <rect
-        x="5.5"
-        y="17.6"
-        width="37"
-        height="21.9"
-        rx="3.4"
-        strokeWidth="1.5"
-        style={{ fill: ink, fillOpacity: 0.12, stroke: ink, strokeOpacity: 0.22 }}
-      />
-      <path
-        d="M9.5 21.8h29"
-        strokeWidth="1.2"
-        style={{ stroke: ink, strokeOpacity: 0.2 }}
-      />
+      <defs>
+        <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="#6ec6ff" />
+          <stop offset="1" stopColor="#1e8fe8" />
+        </linearGradient>
+      </defs>
+      <path d="M4 13c0-2.2 1.8-4 4-4h9.5c1.1 0 2.2.47 3 1.3L24 14.5h16c2.2 0 4 1.8 4 4V21H4z" fill="#1479cf" />
+      <path d="M4 18.5h40v16.5c0 2.2-1.8 4-4 4H8c-2.2 0-4-1.8-4-4z" fill={`url(#${gid})`} />
+      <path d="M4 18.5h40v2H4z" fill="#fff" opacity="0.2" />
     </svg>
   )
 }

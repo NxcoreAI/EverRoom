@@ -31,13 +31,11 @@ const TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
 
 export interface ChannelMcpScope {
   agentSessionId: string;
-  roomId: string | null;
 }
 
 interface ChannelMcpTokenRecord {
   token: string;
   agentSessionId: string;
-  roomId: string | null;
   expiresAt: number;
 }
 
@@ -115,10 +113,10 @@ export class ChannelMcpHost {
    * （create-server 按 agent_sessions.activeAgentId 判定后转发）。
    */
   mcpServersForRun(input: StartRuntimeRunInput): McpServer[] {
-    const record = this.ensureToken(input.sessionId, input.roomId ?? null);
+    // Phase 2i 后无 Room 维度：渠道 MCP token 只按 agentSessionId 键控。
+    const record = this.ensureToken(input.sessionId);
     this.log?.("info", "channel.mcp.server.issued", {
       agentSessionId: input.sessionId,
-      roomId: record.roomId,
     });
     return [{
       type: "http",
@@ -146,7 +144,7 @@ export class ChannelMcpHost {
         const previous = await session;
         await previous.server.close().catch(() => undefined);
       }
-      session = this.createSession({ agentSessionId: record.agentSessionId, roomId: record.roomId });
+      session = this.createSession({ agentSessionId: record.agentSessionId });
       this.sessions.set(token, session);
     } else if (!session) {
       throw new Error("MCP_SESSION_INVALID: Channel MCP session must start with initialize");
@@ -182,17 +180,15 @@ export class ChannelMcpHost {
       : []));
   }
 
-  private ensureToken(agentSessionId: string, roomId: string | null): ChannelMcpTokenRecord {
+  private ensureToken(agentSessionId: string): ChannelMcpTokenRecord {
     const now = Date.now();
     const cachedToken = this.tokensByAgentSession.get(agentSessionId);
     const cached = cachedToken ? this.tokens.get(cachedToken) : undefined;
-    // 复用条件：未过期且 Room 未变。换 Room 换发新 token（旧 token 留到 TTL 过期）。
-    if (cached && cached.expiresAt > now && cached.roomId === roomId) return cached;
+    if (cached && cached.expiresAt > now) return cached;
 
     const record: ChannelMcpTokenRecord = {
       token: randomUUID().replace(/-/g, ""),
       agentSessionId,
-      roomId,
       expiresAt: now + TOKEN_TTL_MS,
     };
     this.tokens.set(record.token, record);
@@ -230,7 +226,6 @@ export class ChannelMcpHost {
     const context: DocumentExecutionContext = {
       agentSessionId: scope.agentSessionId,
       runId: `channel-mcp:${scope.agentSessionId}`,
-      roomId: scope.roomId,
     };
     const server = new Server(
       { name: "everroom-tools", version: "1.0.0" },

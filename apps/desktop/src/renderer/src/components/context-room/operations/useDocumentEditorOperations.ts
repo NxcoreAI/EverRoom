@@ -357,10 +357,9 @@ export function useDocumentEditorOperations(documentId: string): DocumentEditorO
         }, locale),
         idempotencyKey: `continuation-revision:${continuationEntry.id}:${crypto.randomUUID()}`,
         responseLanguage: locale,
+        // Phase 2i 后无 Room 维度：续写修订按工作区文稿（documentId）定位。
         context: {
-          selectedRoomId: continuationEntry.summary.roomId,
           activeDocument: {
-            roomId: continuationEntry.summary.roomId,
             documentId,
             title: continuationEntry.summary.documentTitle,
             version: closed.baseVersion ?? continuationReview.baseVersion,

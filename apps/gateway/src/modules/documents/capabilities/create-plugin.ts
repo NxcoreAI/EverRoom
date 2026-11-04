@@ -27,7 +27,7 @@ export function createPlugin(
   };
   const requireOperation = (
     operationId: string,
-    context: { agentSessionId: string; runId: string; roomId: string | null },
+    context: { agentSessionId: string; runId: string },
   ): DocumentOperation => {
     const operation = operationService().get(operationId);
     if (!operation || operation.capabilityId !== "document.create") {
@@ -36,7 +36,6 @@ export function createPlugin(
     if (
       operation.sessionId !== context.agentSessionId
       || operation.runId !== context.runId
-      || operation.roomId !== context.roomId
     ) {
       throw new DocumentServiceError("OPERATION_FORBIDDEN", "Operation belongs to another Agent run", 403);
     }
@@ -73,7 +72,8 @@ export function createPlugin(
         capabilityVersion: 1,
         interactionMode: "streaming_commit",
         presenterKey: "streaming-document",
-        roomId: context.roomId,
+        // Phase 2i 后无 Room 维度：operation 一律工作区级（legacy 列恒 null）。
+        roomId: null,
         // The draft id is persisted in operation.input until Commit Core creates
         // the real document; document_operations.document_id is a foreign key.
         documentId: null,
@@ -98,19 +98,19 @@ export function createPlugin(
         status: "running",
         draftCreate: backend.prepareAgentDocumentDraft({
           documentId,
-          roomId: context.roomId,
+          roomId: null,
           title,
           markdown: "",
         }),
       }));
       return success({
         operationId,
-        roomId: context.roomId, docId: documentId,
+        docId: documentId,
         state: "running", nextSequence: 1, nextAction: "document_write_append",
         expiresAt: expiresAt.toISOString(),
         navigation: {
           pageId: "rooms", title, action: "created",
-          roomId: context.roomId, objectId: documentId, objectType: "document",
+          objectId: documentId, objectType: "document",
         },
       });
     },

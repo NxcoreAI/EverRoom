@@ -332,7 +332,7 @@ describe("agent gateway", () => {
     await restartedApp.close();
   });
 
-  it("rejects a stale Room selection before creating an Agent run", async () => {
+  it("Phase 2i 去 Room：run 不再携带 rooms/selectedRoomId，正常创建且 run.roomId 恒 null", async () => {
     const config = await testConfig();
     const app = await createServer(config);
     const headers = { authorization: `Bearer ${config.authToken}` };
@@ -340,36 +340,24 @@ describe("agent gateway", () => {
       method: "POST",
       url: "/v1/agent/sessions",
       headers,
-      payload: { pageLabel: "首页", roomId: null },
+      payload: { pageLabel: "首页" },
     })).json<AgentSession>();
+    // Phase 2i 后会话仍暴露 legacy roomId 字段（恒 null），不再作为分区键。
+    expect(session.roomId).toBeNull();
 
     const response = await app.inject({
       method: "POST",
       url: `/v1/agent/sessions/${session.id}/runs`,
       headers,
       payload: {
-        prompt: "在已删除的 Room 中创建文档",
-        idempotencyKey: "stale-room-selection-key",
-        context: {
-          rooms: [{ id: "room-current", title: "当前 Room" }],
-          selectedRoomId: "room-deleted",
-        },
+        prompt: "帮我在工作区新建一份文档",
+        idempotencyKey: "workspace-run-no-room-key",
       },
     });
-    const snapshot = (await app.inject({
-      method: "GET",
-      url: `/v1/agent/sessions/${session.id}`,
-      headers,
-    })).json<AgentSessionSnapshot>();
 
-    expect(response.statusCode).toBe(409);
-    expect(response.json()).toEqual({
-      error: "room_not_available",
-      message: "The selected Context Room is no longer available",
-      roomId: "room-deleted",
-    });
-    expect(snapshot.messages).toEqual([]);
-    expect(snapshot.activeRun).toBeNull();
+    expect(response.statusCode).toBe(202);
+    const run = response.json<AgentRun>();
+    expect(run.roomId).toBeNull();
     await app.close();
   });
 
@@ -470,8 +458,13 @@ describe("agent gateway", () => {
       type: "run.interrupted",
       payload: { reason: "gateway-restarted" },
     }));
+    // 重启只中断 run，不销毁续聊上下文：runtimeSessionRef 指向的 pi 会话
+    // 文件保留全部历史（含被打断那轮的工具调用与推理）。旧实现把它置 null，
+    // 用户「请继续工作」只能从零开始；恢复保留后下一轮 start 走
+    // SessionManager.open 续聊（#重启不能影响继续工作）。
     expect(restartedApp.db.select().from(agentSessions)
-      .where(eq(agentSessions.id, sessionId)).get()?.runtimeSessionRef).toBeNull();
+      .where(eq(agentSessions.id, sessionId)).get()?.runtimeSessionRef)
+      .toBe("stale-runtime-session");
     await restartedApp.close();
   });
 

@@ -1,4 +1,5 @@
 import type { SubagentInvocation } from "@nxcore/agent-contract";
+import { WORKSPACE_DOCUMENT_CHANNEL } from "@nxcore/agent-contract";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -185,7 +186,7 @@ describe("createSubagentPiTools document_draft", () => {
     expect(payload).not.toHaveProperty("baseVersion");
   });
 
-  it("Room 透传：dispatch input 携带 run.roomId，子 run 文档工具据此绑定", async () => {
+  it("dispatch input 不携带 roomId：子 run 无 Room 绑定，块索引 scope 注入为工作区频道", async () => {
     const orchestrator = orchestratorReturning({});
     const tools = createSubagentPiTools(registryWith(["doc-writer"]), orchestrator, {});
     const tool = tools.find((candidate) => candidate.name === "document_draft")!;
@@ -194,10 +195,11 @@ describe("createSubagentPiTools document_draft", () => {
       instruction: "起草文档",
     } as never, undefined);
     const input = (orchestrator.dispatch.mock.calls[0]![0] as { input: Record<string, unknown> }).input;
-    expect(input.roomId).toBe("room-1");
+    expect(input).not.toHaveProperty("roomId");
+    expect(input.blockIndexScope).toBe(WORKSPACE_DOCUMENT_CHANNEL);
   });
 
-  it("Room 透传：run 无任何房间信息时 input 不含 roomId（历史行为不变）", async () => {
+  it("run 无任何房间信息时 draft-create 同样可用（工作区级文稿，无 Room 门槛）", async () => {
     const orchestrator = orchestratorReturning({});
     const tools = createSubagentPiTools(registryWith(["doc-writer"]), orchestrator, {});
     const tool = tools.find((candidate) => candidate.name === "document_draft")!;
@@ -207,25 +209,6 @@ describe("createSubagentPiTools document_draft", () => {
     } as never, undefined);
     const input = (orchestrator.dispatch.mock.calls[0]![0] as { input: Record<string, unknown> }).input;
     expect(input).not.toHaveProperty("roomId");
-  });
-
-  it("Room 透传：显式 roomId 不在 availableRooms 时拒绝；命中则放行", async () => {
-    const orchestrator = orchestratorReturning({});
-    const tools = createSubagentPiTools(registryWith(["doc-writer"]), orchestrator, {});
-    const tool = tools.find((candidate) => candidate.name === "document_draft")!;
-    const availableRooms = [{ id: "room-1", title: "Room 1" }, { id: "room-2", title: "Room 2" }];
-    await expect(tool.execute(
-      { ...baseRun, roomId: undefined, availableRooms } as never,
-      { task: "draft-create", instruction: "起草文档", roomId: "room-ghost" } as never,
-      undefined,
-    )).rejects.toThrow("ROOM_SELECTION_REQUIRED");
-    await tool.execute(
-      { ...baseRun, roomId: undefined, availableRooms } as never,
-      { task: "draft-create", instruction: "起草文档", roomId: "room-2" } as never,
-      undefined,
-    );
-    const input = (orchestrator.dispatch.mock.calls[0]![0] as { input: Record<string, unknown> }).input;
-    expect(input.roomId).toBe("room-2");
   });
 
   it("draft-create：contentMarkdown 单串返回分块计数（字节精确性由 resolver 测试覆盖）", async () => {
@@ -282,8 +265,10 @@ describe("createSubagentPiTools document_draft", () => {
     expect(input.writingStyle).toBeUndefined();
 
     // 代发凭证：主 run 上下文 + 权威版本 + 顶层 blockIds（§5.3）。
+    // Phase 2i 后无 Room 维度：凭证 scope 与主 run 文档工具一致（roomId: null），
+    // document_patch_begin 的 requireLatest 才能直接复用。
     expect(issued).toEqual([{
-      context: { agentSessionId: "session-1", runId: "run-1", roomId: "room-1" },
+      context: { agentSessionId: "session-1", runId: "run-1", roomId: null },
       documentId: "doc-1",
       version: 3,
       blockIds: ["b1", "b2"],
@@ -295,10 +280,11 @@ describe("createSubagentPiTools document_draft", () => {
       kind: "draft-edit",
       baseVersion: 3,
       documentId: "doc-1",
-      roomId: "room-1",
       hunkCount: 1,
       hunksSummary: [{ operation: "replace", target: { blockId: "b2" } }],
     });
+    // Phase 2i 后无 Room 维度：响应不再携带 roomId。
+    expect(payload).not.toHaveProperty("roomId");
     // M3/V2：hunk 正文不回传，仅摘要（operation/target）。
     expect(payload).not.toHaveProperty("hunks");
     expect(JSON.stringify(payload.hunksSummary)).not.toContain("指标全部达标");
@@ -529,7 +515,7 @@ describe("createSubagentPiTools document_draft", () => {
     expect(payload).toMatchObject({ status: "timed_out", errorCode: "timeout", retryable: true });
   });
 
-  it("materialSources 透传给 doc-writer，跨 Room 来源被拒绝", async () => {
+  it("materialSources 透传给 doc-writer（工作区文稿块，无 roomId 维度）", async () => {
     const orchestrator = orchestratorReturning({
       result: { text: "", structuredOutput: { kind: "draft-create", title: "T", appendChunks: ["正文"], digest: { summary: "s" } } },
     });
@@ -539,25 +525,17 @@ describe("createSubagentPiTools document_draft", () => {
       task: "draft-create",
       instruction: "起草",
       materialSources: [
-        { roomId: "room-1", documentId: "doc-2", blockId: "b7", label: "访谈记录", textPreview: "访谈结论……" },
+        { documentId: "doc-2", blockId: "b7", label: "访谈记录", textPreview: "访谈结论……" },
       ],
     } as never, undefined);
     const input = (orchestrator.dispatch.mock.calls[0]![0] as { input: Record<string, unknown> }).input;
     expect(input.materialSources).toEqual([
-      { roomId: "room-1", documentId: "doc-2", blockId: "b7", label: "访谈记录", textPreview: "访谈结论……" },
+      { documentId: "doc-2", blockId: "b7", label: "访谈记录", textPreview: "访谈结论……" },
     ]);
-
-    await expect(tool.execute(baseRun as never, {
-      task: "draft-create",
-      instruction: "起草",
-      materialSources: [
-        { roomId: "room-other", documentId: "doc-2", blockId: "b7" },
-      ],
-    } as never, undefined)).rejects.toThrow(/ROOM_SELECTION_MISMATCH/);
   });
 
   it("materialSources 对 draft-edit 同样透传（为既有文档补建索引）", async () => {    const snapshot = {
-      document: { id: "doc-1", title: "存量文档", version: 3, roomId: "room-1" },
+      document: { id: "doc-1", title: "存量文档", version: 3, roomId: null },
       markdown: "# 存量文档\n\n原段正文\n",
       blocks: [{ blockId: "b1", type: "paragraph", ordinal: 0, depth: 0, textPreview: "原段正文" }],
     };
@@ -567,7 +545,7 @@ describe("createSubagentPiTools document_draft", () => {
         structuredOutput: {
           kind: "draft-edit",
           baseVersion: 3,
-          hunks: [{ operation: "replace", target: { blockId: "b1" }, markdown: "原段正文^[访谈记录](everroom://room/room-1/doc-2/b7)" }],
+          hunks: [{ operation: "replace", target: { blockId: "b1" }, markdown: `原段正文^[访谈记录](everroom://room/${WORKSPACE_DOCUMENT_CHANNEL}/doc-2/b7)` }],
           digest: { summary: "补挂索引" },
         },
       },
@@ -580,14 +558,13 @@ describe("createSubagentPiTools document_draft", () => {
       task: "draft-edit",
       instruction: "仅为确有来源支撑的存量段落补挂索引标记，正文保持原样",
       documentId: "doc-1",
-      roomId: "room-1",
       materialSources: [
-        { roomId: "room-1", documentId: "doc-2", blockId: "b7", label: "访谈记录" },
+        { documentId: "doc-2", blockId: "b7", label: "访谈记录" },
       ],
     } as never, undefined);
     const input = (orchestrator.dispatch.mock.calls[0]![0] as { input: Record<string, unknown> }).input;
     expect(input.materialSources).toEqual([
-      { roomId: "room-1", documentId: "doc-2", blockId: "b7", label: "访谈记录" },
+      { documentId: "doc-2", blockId: "b7", label: "访谈记录" },
     ]);
   });
 
@@ -596,8 +573,7 @@ describe("createSubagentPiTools document_draft", () => {
       result: { text: "", structuredOutput: { kind: "draft-create", title: "T", appendChunks: ["正文"], digest: { summary: "s" } } },
     });
     const tools = createSubagentPiTools(registryWith(["doc-writer"]), orchestrator, {
-      inferMaterialSources: (_runId, _roomId, material) => [{
-        roomId: "room-1",
+      inferMaterialSources: (_runId, material) => [{
         documentId: "doc-2",
         blockId: "b7",
         label: "PyTorch 深度学习框架入门",
@@ -612,7 +588,7 @@ describe("createSubagentPiTools document_draft", () => {
     } as never, undefined);
     const input = (orchestrator.dispatch.mock.calls[0]![0] as { input: Record<string, unknown> }).input;
     expect(input.materialSources).toEqual([
-      { roomId: "room-1", documentId: "doc-2", blockId: "b7", label: "PyTorch 深度学习框架入门", textPreview: "来源块预览（素材开头：PyTorch ）" },
+      { documentId: "doc-2", blockId: "b7", label: "PyTorch 深度学习框架入门", textPreview: "来源块预览（素材开头：PyTorch ）" },
     ]);
   });
 
@@ -627,20 +603,19 @@ describe("createSubagentPiTools document_draft", () => {
       task: "draft-create",
       instruction: "写总结",
       material: "素材文本",
-      materialSources: [{ roomId: "room-1", documentId: "doc-2", blockId: "b7" }],
+      materialSources: [{ documentId: "doc-2", blockId: "b7" }],
     } as never, undefined);
     expect(inferMaterialSources).not.toHaveBeenCalled();
     const input = (orchestrator.dispatch.mock.calls[0]![0] as { input: Record<string, unknown> }).input;
-    expect(input.materialSources).toEqual([{ roomId: "room-1", documentId: "doc-2", blockId: "b7" }]);
+    expect(input.materialSources).toEqual([{ documentId: "doc-2", blockId: "b7" }]);
   });
 
-  it("inferMaterialSourcesFromReads 只取 material 中真实出现的同 Room 顶层块", () => {
+  it("inferMaterialSourcesFromReads 只取 material 中真实出现的顶层块（工作区文稿不按 Room 过滤）", () => {
     const reads = {
       documentsReadByRun: (runId: string) => runId === "run-1"
         ? [
-          { roomId: "room-1", documentId: "doc-2", version: 3 },
-          { roomId: "room-1", documentId: "doc-3", version: 1 },
-          { roomId: "room-other", documentId: "doc-x", version: 1 },
+          { roomId: null, documentId: "doc-2", version: 3 },
+          { roomId: null, documentId: "doc-3", version: 1 },
         ]
         : [],
     };
@@ -653,20 +628,19 @@ describe("createSubagentPiTools document_draft", () => {
       ],
     });
     const material = "PyTorch 是一种基于 Torch 的开源深度学习框架，由 Meta AI 维护，支持动态计算图。\n综上……";
-    const entries = inferMaterialSourcesFromReads(reads, readDocument, "run-1", "room-1", material);
-    // doc-2 命中 b1；doc-3 同样命中其 b1（内容相同）；跨 Room 的 doc-x 被过滤；嵌套/无关块不进。
+    const entries = inferMaterialSourcesFromReads(reads, readDocument, "run-1", material);
+    // doc-2 命中 b1；doc-3 同样命中其 b1（内容相同）；嵌套/无关块不进。
     expect(entries).toEqual([
-      { roomId: "room-1", documentId: "doc-2", blockId: "doc-2-b1", label: "文档 doc-2", textPreview: readDocument("doc-2").blocks[0]!.textPreview },
-      { roomId: "room-1", documentId: "doc-3", blockId: "doc-3-b1", label: "文档 doc-3", textPreview: readDocument("doc-3").blocks[0]!.textPreview },
+      { documentId: "doc-2", blockId: "doc-2-b1", label: "文档 doc-2", textPreview: readDocument("doc-2").blocks[0]!.textPreview },
+      { documentId: "doc-3", blockId: "doc-3-b1", label: "文档 doc-3", textPreview: readDocument("doc-3").blocks[0]!.textPreview },
     ]);
     // material 过短不推断。
-    expect(inferMaterialSourcesFromReads(reads, readDocument, "run-1", "room-1", "太短")).toEqual([]);
+    expect(inferMaterialSourcesFromReads(reads, readDocument, "run-1", "太短")).toEqual([]);
     // 读取抛错的文档被跳过。
     expect(inferMaterialSourcesFromReads(
       reads,
       () => { throw new Error("boom"); },
       "run-1",
-      "room-1",
       material,
     )).toEqual([]);
   });

@@ -28,14 +28,11 @@ describe('notification MCP tool', () => {
     }, {
       agentSessionId: 'trusted-session',
       runId: 'trusted-run',
-      roomId: 'trusted-room',
-      availableRooms: [],
     })
 
     expect(send).toHaveBeenCalledWith(expect.objectContaining({
       sessionId: 'trusted-session',
       runId: 'trusted-run',
-      roomId: 'trusted-room',
       platforms: ['macos', 'ios'],
       idempotencyKey: expect.stringMatching(/^agent-notification:[a-f0-9]{64}$/),
     }))
@@ -47,6 +44,6 @@ describe('notification MCP tool', () => {
       title: 'x'.repeat(81),
       body: 'summary',
       platforms: ['ios'],
-    }, { agentSessionId: 's', runId: 'r', roomId: null, availableRooms: [] })).rejects.toThrow('INVALID_REQUEST')
+    }, { agentSessionId: 's', runId: 'r' })).rejects.toThrow('INVALID_REQUEST')
   })
 })

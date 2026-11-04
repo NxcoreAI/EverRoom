@@ -156,7 +156,7 @@ export function RecentPage() {
                 title="新建空白项目空间"
                 onClick={requestNewSpace}
               >
-                <span className="wb-home-new-glyph" aria-hidden="true"><LayoutGrid size={22} /></span>
+                <span className="wb-home-new-glyph" aria-hidden="true"><LayoutGrid size={24} /></span>
                 <span className="wb-home-new-name">空白空间</span>
               </button>
             </div>

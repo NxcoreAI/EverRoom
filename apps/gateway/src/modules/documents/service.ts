@@ -731,9 +731,9 @@ export class DocumentService {
     return this.queryService.resolveBlockReferences(input);
   }
 
+  /** Phase 2i 后无 Room 维度：只校验工作区文稿的存在性/版本/锚点形状。 */
   validateActiveDocumentContext(
     context: AgentActiveDocumentContext,
-    roomId: string | null,
   ): AgentActiveDocumentContext {
     const document = this.get(context.documentId);
     if (!document) throw new DocumentServiceError("NOT_FOUND", "Active document not found", 404);
@@ -764,7 +764,6 @@ export class DocumentService {
     }
     return {
       ...context,
-      roomId: null,
       documentId: document.id,
       title: document.title,
       version: document.version,

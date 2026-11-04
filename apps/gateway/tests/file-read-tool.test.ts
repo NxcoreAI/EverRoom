@@ -23,7 +23,6 @@ function runInput(activeFile?: StartRuntimeRunInput["activeFile"]): StartRuntime
     runtimeSessionRef: null,
     prompt: "这份文档里面是什么东西",
     pageLabel: "Agent",
-    roomId: null,
     ...(activeFile ? { activeFile } : {}),
   };
 }

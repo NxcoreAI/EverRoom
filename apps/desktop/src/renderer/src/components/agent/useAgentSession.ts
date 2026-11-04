@@ -9,7 +9,6 @@ import type {
   AgentNoteCard,
   AgentPermissionMode,
   AgentPermissionModeState,
-  AgentRoomReference,
   AgentSession,
   AgentSessionLink,
   AgentSessionSnapshot,
@@ -60,7 +59,6 @@ export interface DisplayAgentMessage extends AgentMessage {
   /** 展示用：发送时 @ 的全部条目（含 Room/文件/对话记录），供消息区点击跳转；不落库。 */
   mentions?: MentionedItem[]
 }
-
 export function mergePendingAgentMessages(
   messages: DisplayAgentMessage[],
   pendingMessages: DisplayAgentMessage[],
@@ -92,7 +90,6 @@ export interface QueuedAgentSubmission {
   /** 气泡正文：批注场景气泡只显示输入框正文；空串＝无气泡（只有卡片）。 */
   displayContent?: string
   selectedText?: string
-  selectedRoomId?: string
   activeDocument?: AgentActiveDocumentContext | null
   attachments?: AgentAttachmentReference[]
   mountedDirectories?: AgentMountedDirectory[]
@@ -151,7 +148,7 @@ function isUserSession(session: AgentSession): boolean {
     && !session.pageLabel.startsWith('AI ')
 }
 
-function sessionScope(_pageLabel?: string, _roomId?: string | null): string {
+function sessionScope(_pageLabel?: string): string {
   return 'global'
 }
 
@@ -225,10 +222,9 @@ export interface UseAgentSessionOptions {
   sessionKey?: string
 }
 
+/** Phase 2i 后无 Room 维度：hook 不再接收 roomId/rooms。 */
 export function useAgentSession(
   pageLabel: string,
-  roomId: string | null,
-  rooms: AgentRoomReference[],
   options: UseAgentSessionOptions = {},
 ) {
   const { locale, t } = useLocale()
@@ -289,7 +285,7 @@ export function useAgentSession(
   const terminalRunIdsRef = useRef(new Set<string>())
   const messageStartedRunIdsRef = useRef(new Set<string>())
   const sessionIdRef = useRef<string | null>(null)
-  const activeScopeRef = useRef(sessionScope(pageLabel, roomId))
+  const activeScopeRef = useRef(sessionScope(pageLabel))
   /** AI 标题生成素材：runId → 网关脱敏后的用户 prompt（与兜底标题同源）。 */
   const userPromptByRun = useRef(new Map<string, string>())
   const assistantContentByRun = useRef(new Map<string, string>())
@@ -704,7 +700,7 @@ export function useAgentSession(
       const isActiveRun = snapshot.activeRun?.id === runId
       // 历史中断/停止的 run 不再流式：占位消息静止展示（streaming=false），
       // 终态标记由 nextInterruptedRunIds / nextCancelledRunIds 提供。
-      nextMessages.push({
+      const placeholder: DisplayAgentMessage = {
         id: `stream-${runId}`,
         sessionId: snapshot.session.id,
         runId,
@@ -759,7 +755,7 @@ export function useAgentSession(
     pendingMessages: DisplayAgentMessage[] = [],
   ): Promise<void> => {
     if (!api) return
-    const expectedScope = sessionScope(pageLabel, roomId)
+    const expectedScope = sessionScope(pageLabel)
     setLoading(true)
     setScopeReady(false)
     setError(null)
@@ -788,7 +784,7 @@ export function useAgentSession(
 
   useLayoutEffect(() => {
     let alive = true
-    activeScopeRef.current = sessionScope(pageLabel, roomId)
+    activeScopeRef.current = sessionScope(pageLabel)
     setScopeReady(false)
     setMessages([])
     setToolCallsByRun({})
@@ -1133,7 +1129,6 @@ export function useAgentSession(
   const sendPrompt = async (
     prompt: string,
     selectedText?: string,
-    selectedRoomId?: string,
     activeDocument?: AgentActiveDocumentContext | null,
     replaceRunId?: string,
     /** 输入区导入的文件（文件引擎引用）：作为本轮 run 的 attachments 下发。 */
@@ -1172,7 +1167,6 @@ export function useAgentSession(
         ...(noteCardsValue ? { noteCards: noteCardsValue } : {}),
         ...(displayContentValue !== undefined ? { displayContent: displayContentValue } : {}),
         selectedText,
-        selectedRoomId,
         activeDocument,
         attachments,
         mountedDirectories,
@@ -1274,9 +1268,7 @@ export function useAgentSession(
         // （referenced_*_requires_main_agent）；UI 已隐藏入口，这里兜底剥离，
         // 覆盖重试、外部注入等绕过输入框的路径。
         context: buildAgentRunContext(
-          rooms,
           selectedText,
-          selectedRoomId,
           activeDocument,
           pageLabel,
           mountedDirectories,
@@ -1350,7 +1342,6 @@ export function useAgentSession(
       undefined,
       undefined,
       undefined,
-      undefined,
       displayText,
     )
   )
@@ -1371,7 +1362,6 @@ export function useAgentSession(
         await sendPromptRef.current(
           next.prompt,
           next.selectedText,
-          next.selectedRoomId,
           next.activeDocument,
           undefined,
           next.attachments,
@@ -1394,7 +1384,6 @@ export function useAgentSession(
 
   const submitPendingIntent = async (
     intentId: string,
-    selectedRoomId: string,
     documentId?: string,
   ): Promise<string | null> => {
     if (!api || loading || sending) return null
@@ -1409,7 +1398,7 @@ export function useAgentSession(
     setError(null)
     try {
       const { run } = await api.submitPendingIntent(intentId, {
-        roomId: selectedRoomId,
+        // Phase 2i 后无 Room 维度：pending intent 决策只按 documentId 提交。
         ...(documentId ? { documentId } : {}),
         idempotencyKey: crypto.randomUUID(),
         responseLanguage: locale,

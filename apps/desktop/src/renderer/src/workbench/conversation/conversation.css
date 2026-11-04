@@ -409,22 +409,6 @@
 .wb-conversation .agent-message[data-role='user'] p + p { margin-top: 6px; }
 .wb-conversation .agent-message[data-role='user'] p strong { font-weight: 600; }
 
-/* 复制按钮：悬停气泡才明显。 */
-.wb-conversation .agent-user-copy {
-  right: calc(100% + 6px);
-  bottom: 6px;
-  width: 28px;
-  height: 28px;
-  border-radius: var(--ui-radius-sm);
-  color: var(--ui-text-3);
-  transition:
-    opacity var(--ui-duration-fast) var(--ui-ease),
-    background var(--ui-duration-fast) var(--ui-ease),
-    color var(--ui-duration-fast) var(--ui-ease);
-}
-.wb-conversation .agent-user-copy:hover { background: var(--ui-hover); color: var(--ui-text); }
-.wb-conversation .agent-user-copy:focus-visible { outline: 2px solid var(--ui-accent-line); outline-offset: 2px; }
-
 .wb-conversation .agent-user-mention {
   align-self: flex-end;
   margin: 0 4px 4px;
@@ -632,14 +616,18 @@
   font-weight: 500;
 }
 
+/* 操作行（复制 / 重新生成 / 重新发送）：默认完全隐藏，悬浮所在消息
+   才浮现。键盘可达性用 :has(:focus-visible)——鼠标点击不触发 focus-visible，
+   点击复制后移开鼠标，操作行会照常隐藏，不会卡在显示态。 */
 .wb-conversation .agent-message-actions {
   gap: 2px;
   margin-top: 2px;
-  opacity: 0.42;
+  opacity: 0;
   transition: opacity var(--ui-duration-fast) var(--ui-ease);
 }
 .wb-conversation .agent-assistant-turn:hover .agent-message-actions,
-.wb-conversation .agent-assistant-turn:focus-within .agent-message-actions {
+.wb-conversation .agent-user-turn:hover .agent-message-actions,
+.wb-conversation .agent-message-actions:has(:focus-visible) {
   opacity: 1;
 }
 .wb-conversation .agent-message-actions button {
@@ -666,7 +654,7 @@
   background: var(--ui-selected);
   box-shadow: 0 0 0 6px var(--ui-accent-softer);
 }
-.wb-conversation .agent-message[data-role='user'][data-notification-target='true'] {
+.wb-conversation .agent-user-turn[data-notification-target='true'] .agent-message[data-role='user'] {
   box-shadow: 0 0 0 4px var(--ui-accent-soft);
 }
 

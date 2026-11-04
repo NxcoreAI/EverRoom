@@ -98,8 +98,8 @@ interface OfficePreviewView {
   setActive(active: boolean): void
   /** false = 用户在脏关闭守卫里取消：实例原样保留。 */
   dispose(): Promise<boolean>
-  /** Office 视图的 webContents id（保存事件订阅用）；pdf 缺省。 */
-  readonly webContentsId?: number
+  /** Office 视图的 webContents id（保存事件订阅、wcId 反查、批注锚点投递用）。 */
+  readonly webContentsId: number
   /** 未保存修改：Agent 覆盖工作副本前必须为 false（pdf/slides 缺省）。 */
   isDirty?(): Promise<boolean>
 }

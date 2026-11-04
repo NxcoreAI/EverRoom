@@ -259,14 +259,23 @@
 .wb-ov-insight-badge {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 3px 10px;
-  border-radius: var(--ui-radius-full);
-  background: var(--ui-accent-soft);
-  color: var(--ui-accent-strong);
-  font-size: var(--ui-text-2xs);
+  gap: 9px;
+  color: var(--ui-text);
+  font-size: var(--ui-text-md);
   font-weight: 650;
-  letter-spacing: 0.04em;
+}
+
+/* 原型 op-insight-ai：紫色渐变方块 + 白色星火，内高光 + 柔投影 */
+.wb-ov-insight-ai {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 36px;
+  height: 36px;
+  border-radius: 26%;
+  background: linear-gradient(180deg, #9b7ce8, #6d4bd0);
+  color: #fff;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28), 0 2px 8px rgba(90, 60, 190, 0.3);
 }
 
 .wb-ov-insight-text {
@@ -611,171 +620,4 @@
   .wb-ov-goal-remove {
     transition: none;
   }
-}
-
-/* ───────────── 空间目录卡（项目空间 = 磁盘目录） ───────────── */
-
-.wb-ov-dir-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--ui-space-1);
-}
-
-.wb-ov-dir-mode {
-  margin-left: var(--ui-space-2);
-  padding: 1px 6px;
-  border-radius: var(--ui-radius-full);
-  background: var(--ui-surface-alt);
-  color: var(--ui-text-3);
-  font-size: var(--ui-text-2xs);
-  font-weight: 500;
-}
-
-.wb-ov-dir-path,
-.wb-ov-dir-hint,
-.wb-ov-dir-warn {
-  margin: 0;
-  font-size: var(--ui-text-xs);
-  line-height: 1.5;
-}
-
-.wb-ov-dir-path {
-  font-family: var(--ui-font-mono, ui-monospace, SFMono-Regular, monospace);
-  color: var(--ui-text-2);
-  overflow-wrap: anywhere;
-}
-
-.wb-ov-dir-hint {
-  margin-top: var(--ui-space-1);
-  color: var(--ui-text-3);
-}
-
-.wb-ov-dir-warn {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: var(--ui-space-1);
-  color: var(--ui-warning);
-}
-
-.wb-ov-dir-cache {
-  display: flex;
-  align-items: center;
-  gap: var(--ui-space-2);
-  margin: var(--ui-space-1) 0 0;
-  font-size: var(--ui-text-2xs);
-  color: var(--ui-text-3);
-}
-
-.wb-ov-dir-cache-parts {
-  color: var(--ui-text-3);
-  opacity: 0.8;
-}
-
-.wb-ov-dir-cache-action {
-  margin-left: auto;
-  padding: 0;
-  border: 0;
-  background: none;
-  color: var(--ui-accent);
-  font-size: var(--ui-text-2xs);
-  cursor: pointer;
-}
-
-.wb-ov-dir-cache-action:disabled {
-  color: var(--ui-text-3);
-  cursor: default;
-}
-
-/* 缓存行有两个动作（临时文件 / 清理缓存）：只有第一个靠右，第二个紧挨着。 */
-.wb-ov-dir-cache-action + .wb-ov-dir-cache-action {
-  margin-left: 0;
-}
-
-.wb-ov-dir-warn {
-  flex-wrap: wrap;
-}
-
-.wb-ov-dir-warn-actions {
-  display: inline-flex;
-  gap: var(--ui-space-2);
-  margin-left: auto;
-}
-
-.wb-ov-dir-warn-actions button {
-  padding: 0;
-  border: 0;
-  background: none;
-  color: var(--ui-accent);
-  font-size: var(--ui-text-2xs);
-  cursor: pointer;
-}
-
-.wb-ov-dir-warn-actions button:disabled {
-  color: var(--ui-text-3);
-  cursor: default;
-}
-
-/* ---- 「临时文件」只读清单（.tmp/，不进资料库索引） ---- */
-
-.wb-scratch-summary {
-  margin: 0 0 var(--ui-space-2);
-  font-size: var(--ui-text-2xs);
-  color: var(--ui-text-3);
-}
-
-.wb-scratch-empty {
-  margin: 0;
-  font-size: var(--ui-text-xs);
-  color: var(--ui-text-3);
-  line-height: 1.6;
-}
-
-.wb-scratch-list {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  max-height: 46vh;
-  overflow-y: auto;
-}
-
-.wb-scratch-item {
-  display: flex;
-  align-items: center;
-  gap: var(--ui-space-3);
-  padding: 5px 2px;
-  border-bottom: 1px solid var(--ui-border-subtle);
-  font-size: var(--ui-text-xs);
-}
-
-.wb-scratch-item:last-child {
-  border-bottom: 0;
-}
-
-.wb-scratch-path {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--ui-text-1);
-  font-family: var(--ui-font-mono, ui-monospace, monospace);
-  font-size: var(--ui-text-2xs);
-}
-
-.wb-scratch-size,
-.wb-scratch-time {
-  flex: 0 0 auto;
-  color: var(--ui-text-3);
-  font-size: var(--ui-text-2xs);
-  font-variant-numeric: tabular-nums;
-}
-
-.wb-scratch-time {
-  min-width: 62px;
-  text-align: right;
-}
-
-.wb-scratch-foot-gap {
-  flex: 1;
 }

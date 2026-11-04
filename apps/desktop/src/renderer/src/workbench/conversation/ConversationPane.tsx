@@ -81,7 +81,7 @@ export function ConversationPane({ tabId, workspaceId, sessionId }: Conversation
 function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConversationKernel }: ConversationPaneProps & {
   onRestartConversationKernel: () => void
 }) {
-  const hook = useAgentSession('Agent', null, [], { workspaceId, initialSessionId: sessionId })
+  const hook = useAgentSession('Agent', { workspaceId, initialSessionId: sessionId })
   const syncTabSession = useWorkbenchStore((state) => state.syncTabSession)
 
   const pendingAgentAsk = useWorkbenchStore((state) => state.pendingAgentAsk)
@@ -158,7 +158,6 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
     void hookRef.current
       .sendPrompt(
         pending.message,
-        undefined,
         undefined,
         undefined,
         undefined,
@@ -251,7 +250,6 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
       undefined,
       undefined,
       undefined,
-      undefined,
       attachments.length ? attachments : undefined,
       undefined,
       undefined,
@@ -283,7 +281,6 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
     void hook
       .sendPrompt(
         batch.message,
-        undefined,
         undefined,
         undefined,
         undefined,
@@ -423,7 +420,6 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
             agentIdByRun={hook.agentIdByRun}
             agentNamesById={{}}
             activityByRun={hook.activityByRun}
-            availableRooms={[]}
             cancelledRunIds={hook.cancelledRunIds}
             composer={composer}
             currentSessionId={hook.sessionId}
@@ -436,17 +432,13 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
               workbenchToast(`${item.kind === 'file' ? '文件' : item.kind === 'room' ? '房间' : '对话'}：${item.displayName}`)
             }}
             onOpenSessionLink={() => workbenchToast('会话引用跳转暂未接入工作台')}
-            onRejectDocumentIntent={() => composerRef.current?.focus()}
             onResolveApproval={(approvalId, decision, feedback) => void hook.resolveApproval(approvalId, decision, feedback)}
             onRetryError={() => hook.reload()}
-            onRetryPrompt={(prompt, runId) => void hook.sendPrompt(prompt, undefined, undefined, null, runId)}
+            onRetryPrompt={(prompt, runId) => void hook.sendPrompt(prompt, undefined, null, runId)}
             onSelectDocument={() => workbenchToast('文档选择暂未接入工作台产物面板')}
             onSelectPrompt={(prompt) => {
               setDraft(prompt)
               composerRef.current?.focus()
-            }}
-            onSelectRoom={async () => {
-              workbenchToast('房间选择暂未接入工作台')
             }}
             pendingApprovals={hook.pendingApprovals}
             pendingNavigationByRun={{}}

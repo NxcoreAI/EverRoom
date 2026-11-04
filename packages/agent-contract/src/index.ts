@@ -1192,10 +1192,10 @@ export interface StartAgentRunInput {
     /** UI surface where this run was started; never part of session identity. */
     pageLabel?: string;
     selectedText?: string;
-    /** Current, non-deleted Rooms visible to the desktop when this run starts. */
-    rooms?: AgentRoomReference[];
-    /** Explicit UI-confirmed target for a global Agent session. */
-    selectedRoomId?: string | null;
+    /**
+     * Room 维度已从 Agent/工具链路移除（Phase 2i 之后文稿一律工作区级）：
+     * run 不再携带 Room 清单，也不再接受 UI 选定的 Room。
+     */
     activeDocument?: AgentActiveDocumentContext;
     /**
      * 用户当前正在浏览的 Office 文件页签（Word/Excel/PPT/PDF）。
@@ -1514,8 +1514,7 @@ export interface LocalAgentDelegationContext {
   }>;
   resources: {
     workspaceRoot: string;
-    roomIds: string[];
-    activeDocument?: Pick<AgentActiveDocumentContext, "roomId" | "documentId" | "title" | "version">;
+    activeDocument?: Pick<AgentActiveDocumentContext, "documentId" | "title" | "version">;
   };
   grant: {
     workspaceAccess: "read-only" | "workspace-write" | "full-access";
@@ -1560,7 +1559,6 @@ export interface PendingAgentIntent {
 }
 
 export interface SubmitPendingAgentIntentInput {
-  roomId: string;
   documentId?: string;
   idempotencyKey: string;
   /** Current UI locale to carry into the resumed Agent run. */
@@ -1583,9 +1581,8 @@ export interface AgentDocumentCursorAnchor {
   affinity: "after";
 }
 
+/** 用户当前正在浏览的文稿（只按 documentId 寻址；文稿一律工作区级，无 Room 归属）。 */
 export interface AgentActiveDocumentContext {
-  /** null = 工作区级文稿（无 Room 归属）。 */
-  roomId: string | null;
   documentId: string;
   title: string;
   version: number;

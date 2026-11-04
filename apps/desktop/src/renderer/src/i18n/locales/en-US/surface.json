@@ -37,6 +37,7 @@
   "agentChat.referencedFromSourceTitle": "Referenced from {source} · {title}",
   "agentChat.referencedTaskProgress": "Referenced task progress",
   "agentChat.regenerate": "Regenerate",
+  "agentChat.resend": "Resend",
   "agentChat.startANewConversation": "Start a new conversation",
   "agentChat.suggestedPrompts": "Suggested prompts",
   "agentChat.syncingProgress": "Syncing progress...",

@@ -50,7 +50,6 @@ function runInput(overrides: Partial<StartRuntimeRunInput> = {}): StartRuntimeRu
     runtimeSessionRef: null,
     prompt: "找一下那份报告",
     pageLabel: "chat",
-    roomId: null,
     workspaceId: "ws-run",
     ...overrides,
   };

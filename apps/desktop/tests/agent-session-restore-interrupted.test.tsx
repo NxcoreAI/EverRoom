@@ -131,7 +131,7 @@ type Hook = ReturnType<typeof useAgentSession>
 function harness() {
   let current: Hook | null = null
   function Probe() {
-    current = useAgentSession('Agent', null, [], {})
+    current = useAgentSession('Agent', {})
     return <div data-testid="probe" />
   }
   return {

@@ -158,7 +158,7 @@ function serviceFixture() {
       lastEventSeq: 0,
     })),
   };
-  const compose = vi.fn(async () => ({
+  const compose = vi.fn(async (_evidence: WorkspaceInsightEvidence) => ({
     summary: "两项工作：一项在跑，一项有结果。",
     advice: [{ text: "《起草周报》正在跑。", sessionId: "s-2" }],
     model: "glm-4.7",

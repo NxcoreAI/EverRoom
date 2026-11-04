@@ -7,7 +7,6 @@ import type {
   AgentOpenFileContext,
   LocalAgentDelegationContext,
   LocalAgentInvocationTarget,
-  AgentRoomReference,
   RuntimeCapabilities,
 } from "@nxcore/agent-contract";
 
@@ -36,10 +35,8 @@ export interface StartRuntimeRunInput {
   prompt: string;
   attachments?: RuntimeAttachment[];
   pageLabel: string;
-  roomId: string | null;
   /** 会话所属工作区：Agent 产物入库时带上（资料库/产物库按空间隔离）。 */
   workspaceId?: string | null;
-  availableRooms?: AgentRoomReference[];
   toolsEnabled?: boolean;
   activeDocument?: AgentActiveDocumentContext;
   /** 用户当前正在浏览的 Office 文件页签（file_entries），工具按 fileId 读取正文。 */

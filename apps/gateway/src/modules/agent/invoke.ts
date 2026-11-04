@@ -49,7 +49,6 @@ export async function invokeRuntime(
       runtimeSessionRef: null,
       prompt,
       pageLabel: options.pageLabel,
-      roomId: null,
     });
     runtimeSessionRef = run.runtimeSessionRef;
     let content = "";

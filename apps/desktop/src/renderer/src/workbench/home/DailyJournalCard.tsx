@@ -79,7 +79,7 @@ export function DailyJournalCard({ onAction }: DailyJournalCardProps) {
   return (
     <section className="wb-journal-card" aria-labelledby={titleId}>
       <header className="wb-journal-head">
-        <span className="wb-journal-icon" aria-hidden="true"><Sparkles size={14} /></span>
+        <span className="wb-journal-icon" aria-hidden="true"><Sparkles size={15} /></span>
         {/* 用 div 而不是 span 包 h2：h2 是流内容，塞进 span 里是非法嵌套。 */}
         <div className="wb-journal-title">
           <h2 className="wb-journal-name" id={titleId}>今日洞察</h2>

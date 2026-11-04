@@ -99,7 +99,6 @@ describe("PiAgentRuntime project space root", () => {
         runtimeSessionRef: input.runtimeSessionRef,
         prompt: "整理一下这个空间",
         pageLabel: "项目空间",
-        roomId: null,
         ...(input.workspaceId !== undefined ? { workspaceId: input.workspaceId } : {}),
       });
       for await (const _event of run.events as AsyncIterable<RuntimeEvent>) { /* consume */ }
@@ -169,7 +168,6 @@ describe("PiAgentRuntime project space root", () => {
         runtimeSessionRef: null,
         prompt: "你好",
         pageLabel: "项目空间",
-        roomId: null,
         workspaceId: "ws-vanished",
       });
       for await (const _event of run.events) { /* consume */ }

@@ -39,7 +39,6 @@ export class SessionTitleService {
       runtimeSessionRef: null,
       ...(input.language ? { responseLanguage: input.language } : {}),
       pageLabel: "会话标题生成",
-      roomId: null,
       toolsEnabled: false,
       prompt,
     });

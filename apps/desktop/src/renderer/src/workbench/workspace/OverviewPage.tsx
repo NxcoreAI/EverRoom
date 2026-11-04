@@ -675,7 +675,7 @@ function InsightCard({
     <section className="wb-ov-card wb-ov-insight" aria-labelledby="wb-ov-insight-heading">
       <header className="wb-ov-card-head">
         <span className="wb-ov-insight-badge">
-          <Sparkles size={13} aria-hidden="true" />
+          <span className="wb-ov-insight-ai" aria-hidden="true"><Sparkles size={15} /></span>
           <span id="wb-ov-insight-heading">{INSIGHT_COPY.title}</span>
         </span>
         {insight.status === 'updating' ? (

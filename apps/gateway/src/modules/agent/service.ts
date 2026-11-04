@@ -18,7 +18,6 @@ import type {
   LocalAgentDelegationContext,
   AgentRun,
   AgentRunStatus,
-  AgentRoomReference,
   AgentSpaceCandidate,
   AgentSpaceLayout,
   AgentSpaceRepairReport,
@@ -115,17 +114,9 @@ const PENDING_INTENT_TTL_MS = 10 * 60 * 1000;
 /** 划词改写运行结束后仍允许登记 document operation 的宽限期（会话与子 Agent 调用溯源共用）。 */
 export const SELECTION_REWRITE_OPERATION_GRACE_MS = 10 * 60 * 1000;
 
-export interface AgentRoomRegistry {
-  listReferences(): AgentRoomReference[];
-  isActive(roomId: string): boolean;
-  resolveRoomId?(roomId: string): string | null;
-}
-
 export interface AgentDocumentRegistry {
-  validateActiveDocumentContext(
-    context: AgentActiveDocumentContext,
-    roomId: string | null,
-  ): AgentActiveDocumentContext;
+  /** Phase 2i 后无 Room 维度：只校验工作区文稿存在性与形状。 */
+  validateActiveDocumentContext(context: AgentActiveDocumentContext): AgentActiveDocumentContext;
 }
 
 export interface AgentExternalConversationResolver {
@@ -134,6 +125,7 @@ export interface AgentExternalConversationResolver {
   resolveNativeContinuation?(threadId: string, targetAgentId: string): string | null;
 }
 
+/** Legacy 列归一：Phase 2i 后 Room 维度已删除，仅用于读写旧库行的 null 归一。 */
 function normalizeRoomId(roomId: string | null | undefined): string | null {
   const normalized = roomId?.trim();
   return normalized ? normalized : null;
@@ -194,24 +186,6 @@ function normalizeWorkspaceGoals(goals: string[] | null | undefined): string[] |
     normalized.push(trimmed);
   }
   return normalized;
-}
-
-function resolveRoomId(registry: AgentRoomRegistry | undefined, roomId: string | null | undefined): string | null {
-  const normalized = normalizeRoomId(roomId);
-  if (!normalized) return null;
-  if (!registry) return normalized;
-  return registry.resolveRoomId?.(normalized) ?? (registry.isActive(normalized) ? normalized : null);
-}
-
-const NON_DOCUMENT_CREATION_TARGET = /(?:Room|房间|项目|任务|计划|方案|列表|代码|程序|函数|类|表格|图片|图像|幻灯片|演示|提醒|日记|记录|目录|文件夹|数据源|页面|会话|对话|仓库|分支|数据库|接口)/iu;
-
-function ambiguousDocumentTopic(prompt: string): string | null {
-  const text = prompt.trim().replace(/[。！？!?，,]+$/gu, "");
-  if (!text || requestsWorkspaceDocument(text)) return null;
-  const match = /^(?:(?:请|麻烦|能否|能不能|可以)\s*)?(?:(?:帮我|给我)\s*)?(?:创建|新建|生成|建立|做)(?:\s*(?:一个|一份|一篇))?\s*(.{1,40})$/iu.exec(text);
-  const topic = match?.[1]?.trim();
-  if (!topic || NON_DOCUMENT_CREATION_TARGET.test(topic)) return null;
-  return topic;
 }
 
 function iso(value: Date | null): string | null {
@@ -281,7 +255,8 @@ function toRun(row: typeof agentRuns.$inferSelect): AgentRun {
     sessionId: row.sessionId,
     agentId: row.agentId,
     invocationMode: row.invocationMode,
-    roomId: normalizeRoomId(row.roomId),
+    // Phase 2i 后无 Room 维度：legacy 列保留但恒 null（不再按 Room 归属发起 run）。
+    roomId: row.roomId?.trim() || null,
     status: row.status,
     prompt: row.prompt,
     lastEventSeq: row.lastEventSeq,
@@ -463,10 +438,9 @@ function localAgentDelegationContext(input: {
   pageLabel: string;
   priorMessages: AgentMessage[];
   attachments: RuntimeAttachment[];
-  rooms: AgentRoomReference[];
   activeDocument?: AgentActiveDocumentContext;
 }): LocalAgentDelegationContext {
-  const { request, pageLabel, priorMessages, attachments, rooms, activeDocument } = input;
+  const { request, pageLabel, priorMessages, attachments, activeDocument } = input;
   if (!request.localAgent) throw new Error("local_agent_target_missing");
   return sealDelegationPayload(buildLocalAgentDelegationPayload({
     targetAgentId: request.localAgent.id,
@@ -476,7 +450,7 @@ function localAgentDelegationContext(input: {
     attachments,
     promptAttachments: request.context?.attachments ?? [],
     ...(request.context?.selectedText?.trim() ? { selectedText: request.context.selectedText } : {}),
-    rooms,
+    // Phase 2i 后无 Room 维度：delegation 载荷不再携带 rooms。
     ...(activeDocument ? { activeDocument } : {}),
     workingDirectory: request.localAgent.workingDirectory,
     permissionProfile: request.localAgent.permissionProfile,
@@ -585,24 +559,6 @@ function runtimePrompt(
   ].join("\n");
 }
 
-function availableRooms(input: StartAgentRunInput, registry?: AgentRoomRegistry) {
-  return (registry?.listReferences() ?? input.context?.rooms ?? []).map((room) => {
-    const background = room.background?.trim();
-    const goal = room.goal?.trim();
-    const status = room.status?.trim();
-    const contextSummary = room.contextSummary;
-    return {
-      id: room.id.trim(),
-      title: room.title.trim(),
-      ...(room.kind?.trim() ? { kind: room.kind.trim() } : {}),
-      ...(background ? { background: background.slice(0, 2_000) } : {}),
-      ...(goal ? { goal: goal.slice(0, 2_000) } : {}),
-      ...(status ? { status: status.slice(0, 500) } : {}),
-      ...(contextSummary ? { contextSummary } : {}),
-    };
-  });
-}
-
 function objectRecord(value: unknown): Record<string, unknown> | null {
   if (typeof value === "string") {
     try {
@@ -614,25 +570,6 @@ function objectRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
     : null;
-}
-
-function selectedRunRoomId(
-  input: StartAgentRunInput,
-  registry?: AgentRoomRegistry,
-): string | null {
-  const selectedRoomId = input.context?.selectedRoomId?.trim()
-    || input.context?.activeDocument?.roomId?.trim();
-  if (!selectedRoomId) return null;
-  const resolved = registry
-    ? resolveRoomId(registry, selectedRoomId)
-    : availableRooms(input).some((room) => room.id === selectedRoomId) ? selectedRoomId : null;
-  if (!resolved) {
-    // 附带未解析的 roomId：排查"合并后 409"类问题时定位脏引用来源。
-    const error = new Error("agent_room_not_available") as Error & { roomId?: string };
-    error.roomId = selectedRoomId;
-    throw error;
-  }
-  return resolved;
 }
 
 export interface LocalAgentDispatchRunSource {
@@ -661,10 +598,8 @@ export class AgentService {
   private readonly sequences = new Map<string, number>();
   private readonly executionContexts = new Map<string, {
     sessionId: string;
-    roomId: string | null;
     /** 会话所属工作区：Agent 产物入库带 workspaceId（资料库/产物库按空间隔离）。 */
     workspaceId: string | null;
-    availableRooms: AgentRoomReference[];
     activeDocument?: AgentActiveDocumentContext;
     /** 用户当前浏览的 Office 文件：工具（file_read）按它兜底 fileId。 */
     activeFile?: AgentActiveFileContext;
@@ -695,7 +630,6 @@ export class AgentService {
     private runtime: AgentRuntime,
     readonly broker: AgentEventBroker,
     private readonly logger: AgentServiceLogger = silentLogger,
-    private readonly roomRegistry?: AgentRoomRegistry,
     private readonly documentRegistry?: AgentDocumentRegistry,
     private readonly completedMessageResolver?: AgentCompletedMessageResolver,
     private readonly disposeRuntime = true,
@@ -1035,15 +969,21 @@ export class AgentService {
       if (run.agentId === MAIN_AGENT_ID
         && recoveryRuntimeId === this.runtime.id
         && recoverySessionRef) {
-        try {
-          await this.runtime.deleteSession(recoverySessionRef);
-        } catch (error) {
-          this.logger.info({
-            event: "agent.recovery.remote_stop_failed",
-            sessionId: run.sessionId,
-            runId: run.id,
-            error: error instanceof Error ? error.message : String(error),
-          }, "failed to stop stale remote Agent session");
+        // 仅终止运行中的远端会话活动（ACP 渠道侧仍需远程停止）；对 pi 档
+        // deleteSession 会把整个会话文件删掉，连带历史一起销毁——中断的
+        // run 只需停止，用户「请继续工作」时还要用这份历史续聊，绝不能删。
+        if (!this.runtime.id.startsWith("pi") && !recoverySessionRef.includes("/pi-sessions/")
+          && !recoverySessionRef.endsWith(".jsonl")) {
+          try {
+            await this.runtime.deleteSession(recoverySessionRef);
+          } catch (error) {
+            this.logger.info({
+              event: "agent.recovery.remote_stop_failed",
+              sessionId: run.sessionId,
+              runId: run.id,
+              error: error instanceof Error ? error.message : String(error),
+            }, "failed to stop stale remote Agent session");
+          }
         }
       }
       await this.appendEvent(run.sessionId, run.id, {
@@ -1051,17 +991,15 @@ export class AgentService {
         payload: { reason: "gateway-restarted" },
       });
       if (MODEL_TIER_AGENT_IDS.includes(run.agentId)) {
-        const recoveredAt = new Date();
-        this.db.update(agentSessionParticipants)
-          .set({ runtimeSessionRef: null, updatedAt: recoveredAt })
-          .where(and(
-            eq(agentSessionParticipants.sessionId, run.sessionId),
-            eq(agentSessionParticipants.agentId, run.agentId),
-          )).run();
-        this.db.update(agentSessions)
-          .set({ runtimeSessionRef: null, updatedAt: recoveredAt })
-          .where(eq(agentSessions.id, run.sessionId))
-          .run();
+        // 只中断 run，不置空 runtimeSessionRef：指针指向的 pi 会话文件保留
+        // 全部历史（含被打断那轮的工具调用与推理），下一轮 start 时
+        // SessionManager.open 用它续聊，「请继续工作」才能顺着原思路继续。
+        this.logger.info({
+          event: "agent.recovery.context_preserved",
+          sessionId: run.sessionId,
+          runId: run.id,
+          runtimeSessionRef: recoverySessionRef,
+        }, "stale Agent run interrupted; runtime session context preserved for continuation");
       }
       this.logger.info({
         event: "agent.recovery.interrupted",
@@ -1605,8 +1543,7 @@ export class AgentService {
     return run;
   }
 
-  listSessions(pageLabel?: string, roomId?: string | null, workspaceId?: string | null): AgentSession[] {
-    const normalizedRoomId = roomId === undefined ? undefined : normalizeRoomId(roomId);
+  listSessions(pageLabel?: string, workspaceId?: string | null): AgentSession[] {
     const normalizedWorkspaceId = workspaceId === undefined || workspaceId === null
       ? undefined
       : normalizeWorkspaceId(workspaceId);
@@ -1614,7 +1551,6 @@ export class AgentService {
       .orderBy(desc(agentSessions.updatedAt), desc(agentSessions.createdAt)).all();
     return rows
       .filter((row) => pageLabel === undefined || row.pageLabel === pageLabel)
-      .filter((row) => normalizedRoomId === undefined || normalizeRoomId(row.roomId) === normalizedRoomId)
       .filter((row) => normalizedWorkspaceId === undefined
         || (normalizeWorkspaceId(row.workspaceId) ?? DEFAULT_AGENT_WORKSPACE_ID) === normalizedWorkspaceId)
       .map(toSession);
@@ -1909,11 +1845,9 @@ export class AgentService {
         idempotencyKey: input.idempotencyKey,
         ...(input.responseLanguage ? { responseLanguage: input.responseLanguage } : {}),
         context: {
-          // Phase 2i：工作区级文稿没有 Room 归属，续跑不再回填 selectedRoomId / rooms
-          // （合成出的空 rooms 会让 selectedRunRoomId 判为 agent_room_not_available）。
+          // Phase 2i：工作区级文稿没有 Room 归属，续跑不再回填 selectedRoomId / rooms。
           ...(documentId && selectedDocument ? {
             activeDocument: {
-              roomId: null,
               documentId,
               title: selectedDocument.title,
               version: selectedDocument.version,
@@ -1943,30 +1877,24 @@ export class AgentService {
   createTrustedMcpSession(
     agentSessionId: string,
     runId: string,
-    roomId?: string | null,
   ): TrustedMcpSession {
     const session = this.db.select().from(agentSessions).where(eq(agentSessions.id, agentSessionId)).get();
     const run = this.db.select().from(agentRuns).where(and(
       eq(agentRuns.id, runId),
       eq(agentRuns.sessionId, agentSessionId),
     )).get();
-    const requestedRoom = roomId?.trim() || null;
-    const room = requestedRoom ? resolveRoomId(this.roomRegistry, requestedRoom) : null;
     if (!session || !run) throw new Error("mcp_agent_context_not_found");
     if (run.status !== "accepted" && run.status !== "running") {
       throw new Error("mcp_agent_context_not_active");
     }
-    if (requestedRoom && !room) throw new Error("mcp_agent_room_not_available");
     const execution = this.executionContexts.get(runId);
-    if (!execution || execution.sessionId !== agentSessionId || execution.roomId !== room) {
+    if (!execution || execution.sessionId !== agentSessionId) {
       throw new Error("mcp_agent_context_mismatch");
     }
     const issued = issueTrustedMcpSession({
       agentSessionId,
       runId,
-      roomId: room,
       workspaceId: normalizeWorkspaceId(session.workspaceId) ?? DEFAULT_AGENT_WORKSPACE_ID,
-      ...(execution?.availableRooms ? { availableRooms: execution.availableRooms } : {}),
       ...(execution?.activeDocument ? { activeDocument: execution.activeDocument } : {}),
     });
     const runSessions = this.trustedMcpSessions.get(runId) ?? new Set<string>();
@@ -1980,7 +1908,6 @@ export class AgentService {
     capabilityId: string;
     agentSessionId: string;
     runId: string;
-    roomId: string;
   }): void {
     const session = this.db.select().from(agentSessions).where(eq(agentSessions.id, input.agentSessionId)).get();
     const run = this.db.select().from(agentRuns).where(and(
@@ -1988,22 +1915,18 @@ export class AgentService {
       eq(agentRuns.sessionId, input.agentSessionId),
     )).get();
     const execution = this.executionContexts.get(input.runId);
-    const roomId = resolveRoomId(this.roomRegistry, input.roomId);
     const activeContextMatches = Boolean(run
       && (run.status === "accepted" || run.status === "running")
       && execution
-      && execution.sessionId === input.agentSessionId
-      && execution.roomId === roomId);
+      && execution.sessionId === input.agentSessionId);
     const completedSelectionRewriteMatches = Boolean(session
       && run?.status === "completed"
       && input.capabilityId === "document.selection-rewrite"
       && execution?.sessionId === input.agentSessionId
-      && execution.roomId === roomId
       && run.completedAt
       && Date.now() - run.completedAt.getTime() <= SELECTION_REWRITE_OPERATION_GRACE_MS);
     if (!session || !run
-      || (!activeContextMatches && !completedSelectionRewriteMatches)
-      || !roomId) {
+      || (!activeContextMatches && !completedSelectionRewriteMatches)) {
       throw new Error("agent_operation_context_invalid");
     }
   }
@@ -2058,10 +1981,8 @@ export class AgentService {
     if (replacedRun && (replacedRun.status === "accepted" || replacedRun.status === "running")) {
       throw new Error("agent_replace_run_active");
     }
-    const rooms = availableRooms(input, this.roomRegistry);
-    const runRoomId = selectedRunRoomId(input, this.roomRegistry);
     const activeDocument = input.context?.activeDocument
-      ? this.documentRegistry?.validateActiveDocumentContext(input.context.activeDocument, runRoomId)
+      ? this.documentRegistry?.validateActiveDocumentContext(input.context.activeDocument)
         ?? input.context.activeDocument
       : undefined;
     const openFiles = normalizeOpenFiles(input.context?.openFiles);
@@ -2169,7 +2090,8 @@ export class AgentService {
       agentId: selectedAgentId,
       invocationMode,
       idempotencyKey: input.idempotencyKey,
-      roomId: runRoomId,
+      // Phase 2i 后无 Room 维度：run 一律工作区级（legacy 列保留，恒 null）。
+      roomId: null,
       status: "accepted",
       prompt: safePrompt,
       lastEventSeq: 0,
@@ -2250,56 +2172,9 @@ export class AgentService {
     );
     await this.appendEvent(sessionId, runId, { type: "run.accepted", payload: { prompt: safePrompt } });
 
-    // Clarification controls are driven by a deterministic preflight for requests
-    // that do not yet identify a document. Room routing itself is delegated to
-    // the Agent: it receives the Room metadata and can pass an exact Room id to
-    // the document-create tool when the match is clear.
-    // toolsEnabled=false 的运行是内部纯文本调用（选区重写/续写），不触发 UI 预检。
-    const interactiveRun = input.toolsEnabled !== false && isBuiltinTier;
-    const documentTopic = interactiveRun && !runRoomId
-      ? ambiguousDocumentTopic(input.prompt)
-      : null;
-    const preflightTool = documentTopic
-        ? {
-            name: "context_room_document_intent",
-            result: {
-              clarificationRequired: true,
-              originalPrompt: safePrompt.trim(),
-              topic: documentTopic,
-            },
-          }
-        : null;
-    if (preflightTool) {
-      const intent = this.createPendingIntent({
-        sessionId,
-        sourceRunId: runId,
-        originalPrompt: safePrompt,
-        targetCapability: "document.create",
-        allowedRoomIds: rooms.map((room) => room.id),
-        allowedDocumentIds: [],
-        now,
-      });
-      const toolCallId = randomUUID();
-      await this.appendEvent(sessionId, runId, {
-        type: "tool.requested",
-        payload: { toolCallId, name: preflightTool.name, args: {} },
-      });
-      await this.appendEvent(sessionId, runId, {
-        type: "tool.started",
-        payload: { toolCallId, name: preflightTool.name, args: {} },
-      });
-      await this.appendEvent(sessionId, runId, {
-        type: "tool.completed",
-        payload: {
-          toolCallId,
-          name: preflightTool.name,
-          args: {},
-          result: { ...preflightTool.result, pendingIntent: intent },
-        },
-      });
-      await this.appendEvent(sessionId, runId, { type: "run.completed", payload: {} });
-      return this.getRun(runId)!;
-    }
+    // Phase 2i：context_room_document_intent 预检整块删除。Room 维度已不存在，
+    // 旧条件 `!runRoomId` 恒真，会把「新建文档」类请求错误拦成选 Room 澄清卡；
+    // 现在 run 直接进入执行，文档创建由模型经 document 工具完成。
 
     const runWorkspaceId = normalizeWorkspaceId(session.workspaceId) ?? DEFAULT_AGENT_WORKSPACE_ID;
     // 库内规模：新会话没有页签也没有附件时，这是模型唯一能知道「工作区库里有材料」的信号。
@@ -2324,9 +2199,7 @@ export class AgentService {
 
     this.executionContexts.set(runId, {
       sessionId,
-      roomId: runRoomId,
       workspaceId: runWorkspaceId,
-      availableRooms: rooms,
       ...(activeDocument ? { activeDocument } : {}),
       ...(activeFile ? { activeFile } : {}),
       ...(openFiles ? { openFiles } : {}),
@@ -2388,7 +2261,6 @@ export class AgentService {
         pageLabel: runPageLabel,
         priorMessages,
         attachments,
-        rooms,
         ...(activeDocument ? { activeDocument } : {}),
       }) : undefined;
       runtimeRun = await selectedRuntime.start({
@@ -2406,9 +2278,7 @@ export class AgentService {
         ...(responseLanguage ? { responseLanguage } : {}),
         ...(userProfilePrompt ? { userProfilePrompt } : {}),
         pageLabel: runPageLabel,
-        roomId: runRoomId,
         workspaceId: runWorkspaceId,
-        availableRooms: rooms,
         toolsEnabled: input.toolsEnabled !== false,
         ...(referencedConversationId ? { referencedConversationId } : {}),
         ...(referencedTargets.length ? { referencedLocalAgents: referencedTargets } : {}),

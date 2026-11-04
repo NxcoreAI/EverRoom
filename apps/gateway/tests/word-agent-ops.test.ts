@@ -124,7 +124,6 @@ function context(
   const base: DocumentExecutionContext = {
     agentSessionId: "session-1",
     runId: "run-1",
-    roomId: "room-9",
     workspaceId: "ws-7",
     ...overrides,
   };
@@ -156,7 +155,8 @@ describe("word_agent_ops：结构化操作通道", () => {
     const payload = apply.mock.calls[0]![0] as FakeApplyInput;
     expect(payload.kind).toBe("docx");
     expect(payload.fileId).toBe("fe-1");
-    expect(payload.roomId).toBe("room-9");
+    // Phase 2i 后无 Room 维度：Office 元数据通道不再携带 roomId。
+    expect(payload.roomId).toBe(null);
     expect(payload.workspaceId).toBe("ws-7");
     // 一次 bridge 调用 = 一个 apply_operations 工具调用。
     expect(payload.calls).toEqual([{ id: "ops-1", name: "apply_operations", input: { ops } }]);
@@ -278,7 +278,7 @@ describe("word_agent_read / word_agent_edit / word_agent_illustration：元数�
 
     expect(catalogContentOf).not.toHaveBeenCalled();
     const payload = describe.mock.calls[0]![0] as FakeDescribeInput;
-    expect(payload).toMatchObject({ kind: "docx", fileId: "fe-1", roomId: "room-9", workspaceId: "ws-7" });
+    expect(payload).toMatchObject({ kind: "docx", fileId: "fe-1", roomId: null, workspaceId: "ws-7" });
     expect(result.structuredContent).toMatchObject({
       fileId: "fe-1",
       operationsGuide: "table.insertRow {blockIndex, afterRow} …",
@@ -299,7 +299,7 @@ describe("word_agent_read / word_agent_edit / word_agent_illustration：元数�
 
     expect(catalogContentOf).not.toHaveBeenCalled();
     const payload = apply.mock.calls[0]![0] as FakeApplyInput;
-    expect(payload).toMatchObject({ kind: "docx", fileId: "fe-1", roomId: "room-9", workspaceId: "ws-7" });
+    expect(payload).toMatchObject({ kind: "docx", fileId: "fe-1", roomId: null, workspaceId: "ws-7" });
     expect(result.structuredContent).toMatchObject({ fileId: "fe-1", nextAction: "report_result" });
   });
 
@@ -314,7 +314,7 @@ describe("word_agent_read / word_agent_edit / word_agent_illustration：元数�
 
     expect(catalogContentOf).not.toHaveBeenCalled();
     const payload = apply.mock.calls[0]![0] as FakeApplyInput;
-    expect(payload).toMatchObject({ kind: "docx", fileId: "fe-1", roomId: "room-9", workspaceId: "ws-7" });
+    expect(payload).toMatchObject({ kind: "docx", fileId: "fe-1", roomId: null, workspaceId: "ws-7" });
     expect(payload.calls[0]!.name).toBe("insert_image_base64");
     expect(result.structuredContent).toMatchObject({ fileId: "fe-1", applied: true });
   });

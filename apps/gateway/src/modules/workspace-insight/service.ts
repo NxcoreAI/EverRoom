@@ -84,7 +84,7 @@ export class WorkspaceInsightService {
   private buildEvidence(workspaceId: string): WorkspaceInsightEvidence {
     const now = this.options.now?.() ?? Date.now();
     const sessions = this.options.agent
-      .listSessions(undefined, undefined, workspaceId)
+      .listSessions(undefined, workspaceId)
       .slice(0, 8)
       .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
 
