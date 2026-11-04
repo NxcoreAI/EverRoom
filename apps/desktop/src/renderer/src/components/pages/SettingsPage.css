@@ -77,6 +77,7 @@
 
 .settings-content[data-active-setting='settings-connector-mode'] > #settings-connector-mode,
 .settings-content[data-active-setting='settings-account'] > #settings-account,
+.settings-content[data-active-setting='settings-plan'] > #settings-plan,
 .settings-content[data-active-setting='settings-interface'] > #settings-interface,
 .settings-content[data-active-setting='settings-onboarding'] > #settings-onboarding,
 .settings-content[data-active-setting='settings-editor'] > #settings-editor,
