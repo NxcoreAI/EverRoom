@@ -1458,25 +1458,3 @@
   color: var(--ui-text-3);
   font-size: var(--ui-text-2xs);
 }
-
-/* 底部一行：「全部发送」右对齐，accent 色 */
-.wb-note-chip-foot {
-  display: flex;
-  justify-content: flex-end;
-  padding: 4px 6px 2px;
-  border-top: 1px solid var(--ui-border-subtle);
-  margin-top: 4px;
-}
-.wb-note-chip-sendall {
-  border: 0;
-  background: transparent;
-  padding: 3px 6px;
-  border-radius: var(--ui-radius-xs);
-  color: var(--ui-accent-strong);
-  font-size: var(--ui-text-xs);
-  font-weight: 600;
-  cursor: pointer;
-  transition: background var(--ui-duration-fast) var(--ui-ease);
-}
-.wb-note-chip-sendall:hover { background: var(--ui-accent-soft); }
-.wb-note-chip-sendall:focus-visible { outline: 2px solid var(--ui-accent-line); outline-offset: 1px; }

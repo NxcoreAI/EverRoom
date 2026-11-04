@@ -2,10 +2,10 @@
  * Office「AI 修改」待发送批注小徽章（对话区输入框上方一行）。
  *
  * 形态：默认只是「N 条注释」的小 pill，不占行宽；hover/点击展开一个卡片列表
- * 浮层（原文摘录 + 我的注释，行内改写/删除，底部「全部发送」）。
+ * 浮层（原文摘录 + 我的注释，行内改写/删除）。浮层只读浏览 + 单条管理，
+ * 发送统一走输入框的发送按钮（批注等价于一条消息）。
  *
- * 事实来源仍是 store.askDrafts（宿主唯一队列）；「全部发送」用 nonce 通知对话
- * 面板（真正的发送要 useAgentSession hook，且排队语义由它处理）。
+ * 事实来源仍是 store.askDrafts（宿主唯一队列）。
  */
 import { Pencil, StickyNote, Trash2 } from 'lucide-react'
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
@@ -29,7 +29,6 @@ export function NoteQueueChip({ workspaceId, drafts: draftsProp }: NoteQueueChip
   const storeDrafts = useWorkbenchStore((state) => state.askDrafts)
   const removeAskDraft = useWorkbenchStore((state) => state.removeAskDraft)
   const updateAskDraft = useWorkbenchStore((state) => state.updateAskDraft)
-  const requestAskQueueSend = useWorkbenchStore((state) => state.requestAskQueueSend)
 
   const drafts = draftsProp
     ?? (workspaceId ? storeDrafts.filter((draft) => draft.workspaceId === workspaceId) : [])
@@ -150,19 +149,6 @@ export function NoteQueueChip({ workspaceId, drafts: draftsProp }: NoteQueueChip
               </li>
             ))}
           </ul>
-          <div className="wb-note-chip-foot">
-            <button
-              type="button"
-              className="wb-note-chip-sendall"
-              onClick={() => {
-                setPinned(false)
-                setOpen(false)
-                requestAskQueueSend()
-              }}
-            >
-              全部发送
-            </button>
-          </div>
         </div>
       ) : null}
     </div>
