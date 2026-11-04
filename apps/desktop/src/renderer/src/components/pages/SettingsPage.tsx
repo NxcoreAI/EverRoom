@@ -36,7 +36,7 @@ import {
 } from '@/state/conversationSuggestionSettings'
 import appleLogo from '@/assets/apple-logo.svg'
 import googleLogo from '@/assets/google-logo.svg'
-import { formatCredits, QUOTA_PER_USD, type AiGatewayStatus, type CloudOidcProvider } from '../../../../shared/sources'
+import { formatCredits, type AiGatewayStatus, type CloudOidcProvider } from '../../../../shared/sources'
 import type { AccountKeyringStatus, CloudDevice } from '../../../../shared/sources'
 import { PageHeader } from './PageHeader'
 import { McpSettingsSection } from '@/components/settings/McpSettingsSection'
@@ -620,16 +620,14 @@ export function SettingsPage({
           <div className="cloud-account-connected">
             {account.subscription ? (() => {
               const isProActive = account.subscription.planCode === 'pro' && ['active', 'trialing'].includes(account.subscription.status)
-              /* 字段单位(2026-11-04 后端 9827cd8 起):remainingCredits/usedCredits/
-                 grants[].credits = 美元口径(quota/500000);periodRemainingCredits 与
-                 planPeriodQuota = quota 原值。formatCredits 按积分除(quota/50000),
-                 美元字段 ×QUOTA_PER_USD 还原,quota 字段直用——不再混装叠乘。 */
-              const usdToQuota = (usd: number) => usd * QUOTA_PER_USD
+              /* 字段单位(2026-11-04 后端 87ef144 起):quotaStatus 所有 *Credits
+                 字段一律 quota 原值(500000 quota=$1),formatCredits 统一 ÷50000
+                 出积分——前端不做任何还原换算。 */
               const periodRemaining = aiRelayStatus?.planPeriodQuota != null
                 ? Math.min(aiRelayStatus.periodRemainingCredits ?? 0, aiRelayStatus.planPeriodQuota)
                 : (aiRelayStatus?.periodRemainingCredits ?? 0)
               const planPeriodQuota = aiRelayStatus?.planPeriodQuota ?? periodRemaining
-              const usedQuota = usdToQuota(aiRelayStatus?.usedCredits ?? 0)
+              const usedQuota = aiRelayStatus?.usedCredits ?? 0
               const grants = aiRelayStatus?.grants ?? []
               // 无 grants 明细(旧后端)且充值合计>0:合成一条合计兜底行,不显示"暂无"
               const grantRows = grants.length
@@ -638,8 +636,8 @@ export function SettingsPage({
                   ? [{ id: '__topup_total__', remainingCredits: aiRelayStatus?.topupRemainingCredits ?? 0, amountCredits: aiRelayStatus?.topupRemainingCredits ?? 0, expiresAt: null, source: 'paypal_topup' }]
                   : []
               // 额度包 = 购买 + 赠送(signup_bonus 等旁路 grant,同列展示)
-              const packsTotal = usdToQuota(grantRows.reduce((sum, grant) => sum + grant.remainingCredits, 0))
-              const totalRemaining = usdToQuota(aiRelayStatus?.remainingCredits ?? 0) || periodRemaining + packsTotal
+              const packsTotal = grantRows.reduce((sum, grant) => sum + grant.remainingCredits, 0)
+              const totalRemaining = aiRelayStatus?.remainingCredits ?? periodRemaining + packsTotal
               // 永不过期的额度包合成一行合计;有到期日的各自一行
               const perpetualGrants = grantRows.filter((grant) => !grant.expiresAt)
               const expiringGrants = grantRows.filter((grant) => grant.expiresAt)
@@ -700,8 +698,8 @@ export function SettingsPage({
                         <div className="plan-overview-grant">
                           <progress
                             aria-label={t('surface:settings.topupCredits')}
-                            max={Math.max(1, usdToQuota(perpetualGrants.reduce((sum, grant) => sum + grant.amountCredits, 0)))}
-                            value={Math.min(usdToQuota(perpetualGrants.reduce((sum, grant) => sum + grant.remainingCredits, 0)), usdToQuota(perpetualGrants.reduce((sum, grant) => sum + grant.amountCredits, 0)))}
+                            max={Math.max(1, perpetualGrants.reduce((sum, grant) => sum + grant.amountCredits, 0))}
+                            value={Math.min(perpetualGrants.reduce((sum, grant) => sum + grant.remainingCredits, 0), perpetualGrants.reduce((sum, grant) => sum + grant.amountCredits, 0))}
                           />
                           <small>{t('surface:settings.topupBalanceNote')}</small>
                         </div>
@@ -710,8 +708,8 @@ export function SettingsPage({
                         <div key={grant.id} className="plan-overview-grant">
                           <progress
                             aria-label={t('surface:settings.topupCredits')}
-                            max={Math.max(1, usdToQuota(grant.amountCredits))}
-                            value={Math.min(Math.max(0, usdToQuota(grant.remainingCredits)), Math.max(1, usdToQuota(grant.amountCredits)))}
+                            max={Math.max(1, grant.amountCredits)}
+                            value={Math.min(Math.max(0, grant.remainingCredits), Math.max(1, grant.amountCredits))}
                           />
                           <small>{t('surface:settings.topupGrantExpires', { date: formatPeriodEnd(grant.expiresAt!, locale) })}</small>
                         </div>
